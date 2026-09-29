@@ -1,0 +1,70 @@
+# The package's kernel for Arch Linux and SteamOS (Arch-based): the same
+# tree as kernel/build-deb.sh, configured from the running system's own
+# kernel (/proc/config.gz) so everything that kernel enables stays enabled.
+#
+#   cd kernel && makepkg -si
+#
+# _srcdir overrides the source (a local checkout of the stereo3d branch),
+# e.g.  _srcdir=/path/to/linux makepkg -si
+
+pkgbase=linux-stereo3d
+pkgname=("$pkgbase" "$pkgbase-headers")
+pkgver=7.3rc1
+pkgrel=1
+pkgdesc='Linux with HDMI 3D output: amdgpu stereo modes and vendor InfoFrame, nouveau deep colour'
+arch=(x86_64)
+url='https://github.com/Sparky-OS/sparky-stereo-os'
+license=(GPL-2.0-only)
+makedepends=(bc cpio gettext git libelf pahole perl python tar xz zstd)
+options=(!debug !strip)
+_branch=stereo3d
+source=("linux::git+https://github.com/danielcamposramos/linux.git#branch=$_branch")
+sha256sums=(SKIP)
+
+_src() {
+	if [ -n "${_srcdir:-}" ]; then echo "$_srcdir"; else echo "$srcdir/linux"; fi
+}
+
+prepare() {
+	cd "$(_src)"
+	if [ -r /proc/config.gz ]; then
+		zcat /proc/config.gz > .config
+	else
+		cp "/usr/lib/modules/$(uname -r)/build/.config" .config
+	fi
+	scripts/config --set-str LOCALVERSION "-stereo3d" --module DRM_AMDGPU --module DRM_NOUVEAU \
+		--disable MODULE_SIG_ALL --set-str SYSTEM_TRUSTED_KEYS "" --set-str SYSTEM_REVOCATION_KEYS ""
+	make olddefconfig
+	make -s kernelrelease > version
+}
+
+build() {
+	cd "$(_src)"
+	make all
+}
+
+package_linux-stereo3d() {
+	pkgdesc="$pkgdesc (kernel and modules)"
+	depends=(coreutils initramfs kmod)
+	cd "$(_src)"
+	local kernver
+	kernver="$(<version)"
+	local modulesdir="$pkgdir/usr/lib/modules/$kernver"
+	install -Dm644 "$(make -s image_name)" "$modulesdir/vmlinuz"
+	echo "$pkgbase" | install -Dm644 /dev/stdin "$modulesdir/pkgbase"
+	make INSTALL_MOD_PATH="$pkgdir/usr" INSTALL_MOD_STRIP=1 DEPMOD=/doesnt/exist modules_install
+	rm -f "$modulesdir"/build
+}
+
+package_linux-stereo3d-headers() {
+	pkgdesc="$pkgdesc (headers for building modules)"
+	cd "$(_src)"
+	local builddir="$pkgdir/usr/lib/modules/$(<version)/build"
+	install -Dt "$builddir" -m644 .config Makefile Module.symvers System.map version vmlinux
+	install -Dt "$builddir/kernel" -m644 kernel/Makefile
+	install -Dt "$builddir/arch/x86" -m644 arch/x86/Makefile
+	cp -t "$builddir" -a scripts include
+	cp -t "$builddir/arch/x86" -a arch/x86/include
+	install -Dt "$builddir/arch/x86/kernel" -m644 arch/x86/kernel/asm-offsets.s
+	find . -name 'Kbuild*' -o -name 'Kconfig*' | while read -r f; do install -Dm644 "$f" "$builddir/$f"; done
+}
