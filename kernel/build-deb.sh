@@ -15,9 +15,10 @@ SRC=${SRC:-$HERE/linux}
 OUT=${1:-/K3D/temp/linux-stereo3d-out}
 CONFIG=${CONFIG:-/boot/config-$(uname -r)}
 JOBS=${JOBS:-$(nproc)}
+PKGVER=${PKGVER:-1}
 mkdir -p "$OUT"
 cp "$CONFIG" "$OUT/base.config"
-docker run --rm -v "$SRC":/src -v "$OUT":/out -e JOBS="$JOBS" debian:testing sh -euc '
+docker run --rm -v "$SRC":/src -v "$OUT":/out -e JOBS="$JOBS" -e PKGVER="$PKGVER" debian:testing sh -euc '
 apt-get update -qq
 apt-get install -y -qq --no-install-recommends build-essential bc bison flex libssl-dev libelf-dev dwarves cpio kmod rsync python3 git ca-certificates debhelper libdw-dev zstd >/dev/null
 cd /src
@@ -29,7 +30,7 @@ scripts/config --set-str SYSTEM_TRUSTED_KEYS "" --set-str SYSTEM_REVOCATION_KEYS
   --enable DEBUG_INFO_NONE --disable MODULE_SIG_ALL --module DRM_NOUVEAU --module DRM_AMDGPU
 make -s olddefconfig
 grep -E "^CONFIG_DRM_(AMDGPU|NOUVEAU)=" .config
-make -s -j"$JOBS" bindeb-pkg LOCALVERSION=-stereo3d KDEB_PKGVERSION=1
-cp ../linux-image-*-stereo3d_1_amd64.deb ../linux-headers-*-stereo3d_1_amd64.deb /out/
+make -s -j"$JOBS" bindeb-pkg LOCALVERSION=-stereo3d KDEB_PKGVERSION="$PKGVER"
+cp ../linux-image-*-stereo3d_"$PKGVER"_amd64.deb ../linux-headers-*-stereo3d_"$PKGVER"_amd64.deb /out/
 sha256sum /out/*.deb
 '
