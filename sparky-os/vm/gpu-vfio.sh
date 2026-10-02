@@ -51,6 +51,9 @@ give)
 	[ -n "$h" ] && { echo "still holding the card (close them, then run give again):"; echo "$h"; exit 1; }
 	modprobe vfio-pci
 	for d in "${DEVS[@]}"; do
+		# take binds the original driver by name (the generic drivers_probe was refused, 2026-10-02)
+		[ -e "/sys/bus/pci/devices/$d/driver" ] &&
+			echo "driver $d $(basename "$(readlink "/sys/bus/pci/devices/$d/driver")")" >>"$STATE"
 		echo vfio-pci >"/sys/bus/pci/devices/$d/driver_override"
 		[ -e "/sys/bus/pci/devices/$d/driver" ] && echo "$d" >"/sys/bus/pci/devices/$d/driver/unbind"
 		echo "$d" >/sys/bus/pci/drivers_probe
@@ -64,10 +67,12 @@ take)
 	for d in "${DEVS[@]}"; do
 		echo >"/sys/bus/pci/devices/$d/driver_override"
 		[ -e "/sys/bus/pci/devices/$d/driver" ] && echo "$d" >"/sys/bus/pci/devices/$d/driver/unbind"
-		echo "$d" >/sys/bus/pci/drivers_probe
+		drv=$(awk -v d="$d" '$1 == "driver" && $2 == d {print $3}' "$STATE" 2>/dev/null)
+		if [ -n "$drv" ]; then echo "$d" >"/sys/bus/pci/drivers/$drv/bind" || true
+		else echo "$d" >/sys/bus/pci/drivers_probe || true; fi
 	done
 	if [ -f "$STATE" ]; then
-		while read -r kind name; do
+		while read -r kind name rest; do
 			case $kind in
 			service) systemctl start "$name" ;;
 			container) docker start "$name" >/dev/null ;;
