@@ -8,22 +8,23 @@ set -u
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-"$HERE/../../../../out"}
-VERSION=0.1.1
+VERSION=0.2.0
 PKG=sparky-stereo-locales
 SHARE=/usr/share/$PKG
-WORK=$(mktemp -d "$HERE/../../../../out/build.XXXXXX")
+mkdir -p "$OUT"
+WORK=$(mktemp -d "$OUT/build.XXXXXX")
 
 D=$WORK/$PKG
 rm -rf "$D"
 mkdir -p "$D/DEBIAN" \
 	"$D/usr/bin" \
-	"$D$SHARE/lang" \
+	"$D/usr/share/sparky/$PKG" \
 	"$D$SHARE/data" \
 	"$D/usr/share/applications" \
 	"$D/usr/share/polkit-1/actions" \
 	"$D/usr/share/doc/$PKG"
 install -m 0755 "$HERE/bin/$PKG" "$D/usr/bin/$PKG"
-install -m 0644 "$HERE/lang/en" "$HERE/lang/pt_BR" "$D$SHARE/lang/"
+install -m 0644 "$HERE"/lang/* "$D/usr/share/sparky/$PKG/"
 install -m 0644 "$HERE/data/language" "$D$SHARE/data/language"
 install -m 0644 "$HERE/../../lists/languages.list" "$D$SHARE/languages.list"
 install -m 0644 "$HERE/share/$PKG.desktop" "$D/usr/share/applications/$PKG.desktop"
@@ -34,6 +35,7 @@ cat >"$D/DEBIAN/postrm" <<'EOF'
 set -e
 if [ "$1" = purge ]; then
 	rm -f /etc/dpkg/dpkg.cfg.d/sparky-stereo-locales
+	rm -rf /var/lib/sparky-stereo-locales
 fi
 exit 0
 EOF
@@ -45,8 +47,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $(du -sk --exclude=DEBIAN "$D" | cut -f1)
-Depends: apt, dpkg, yad
-Recommends: sparky-remsu
+Depends: apt, dpkg, sparky-remsu, yad
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org

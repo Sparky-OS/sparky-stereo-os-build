@@ -5,12 +5,15 @@
 # Last update 2026/10/02
 
 SHARE=/usr/share/sparky-stereo-locales
+LANGDIR=/usr/share/sparky/sparky-stereo-locales
 LIST=$SHARE/languages.list
 CONFIG=/etc/dpkg/dpkg.cfg.d/sparky-stereo-locales
+STATE=/var/lib/sparky-stereo-locales/removed
 
 DRY_RUN=0
 RESTORE_ALL=0
 KEEP=()
+EXPLICIT=()
 
 if [ "$(id -u)" -ne 0 ]; then
 	echo "Must be root... Exiting..."
@@ -21,105 +24,177 @@ case "${LANG:-}" in
 	pt_BR*) lang_file=pt_BR ;;
 	*) lang_file=en ;;
 esac
-if [ -f "$SHARE/lang/$lang_file" ]; then
-	. "$SHARE/lang/$lang_file"
+. "$LANGDIR/en"
+if [ "$lang_file" != en ] && [ -f "$LANGDIR/$lang_file" ]; then
+	. "$LANGDIR/$lang_file"
 fi
 
-language_package() {
+# Language packages are matched by exact family and known language code,
+# never by prefix: libreoffice-help-common, hunspell-tools or
+# firefox-esr-l10n-all are not languages and are never touched.
+declare -A KNOWN=()
+declare -A NAME=()
+REGIONS=" de_AT de_CH de_DE en_AU en_CA en_GB en_US en_ZA es_AR es_CL es_ES es_MX fr_CA fr_FR nb_NO nn_NO pt_BR pt_PT sv_SE zh_CN zh_TW "
+
+load_languages() {
+	local code name
+	while read -r code name; do
+		case "$code" in
+			"" | "#"*) continue ;;
+		esac
+		NAME[$code]="$name"
+		case "$code" in
+			*_*) ;;
+			*) KNOWN[$code]=1 ;;
+		esac
+	done <"$SHARE/data/language"
+}
+
+# split_code CODE STRICT sets P_LANG P_REGION P_VAR (lower, upper, variant).
+# Strict is for what the user types: the code must be in the table.
+split_code() {
+	local c="${1%%.*}" mod=""
+	case "$c" in
+		*@*)
+			mod="${c#*@}"
+			c="${c%%@*}"
+			;;
+	esac
+	c="${c//-/_}"
+	P_LANG="${c%%_*}"
+	P_LANG="${P_LANG,,}"
+	P_REGION=""
+	P_VAR=""
+	case "$c" in
+		*_*)
+			P_REGION="${c#*_}"
+			P_REGION="${P_REGION%%_*}"
+			P_REGION="${P_REGION^^}"
+			;;
+	esac
+	if [ -n "$P_REGION" ] && ! [[ "$P_REGION" =~ ^[A-Z][A-Z]$ ]]; then
+		[ "$2" -eq 0 ] || return 1
+		P_REGION=""
+	fi
+	[ -n "${KNOWN[$P_LANG]:-}" ] || return 1
+	if [ "$2" -eq 1 ]; then
+		case "$mod" in
+			"" | latin | cyrillic | valencia | euro) ;;
+			*) return 1 ;;
+		esac
+		if [ -n "$P_REGION" ] && [[ "$REGIONS" != *" ${P_LANG}_${P_REGION} "* ]]; then
+			return 1
+		fi
+	fi
+	case "$P_LANG" in
+		nb | nn)
+			P_VAR="$P_LANG"
+			P_LANG=no
+			;;
+	esac
+	return 0
+}
+
+# pkg_key PACKAGE sets P_LANG P_REGION P_VAR for a language package and fails for anything else.
+pkg_key() {
+	local suffix
+	P_REGION=""
+	P_VAR=""
 	case "$1" in
-		firefox-esr-l10n-* | libreoffice-l10n-* | libreoffice-help-* | hunspell-* | hyphen-* | mythes-* | fcitx5-chewing | fcitx5-chinese-addons | fcitx5-hangul | fcitx5-mozc | fcitx5-unikey)
-			return 0
-		;;
+		firefox-esr-l10n-*) suffix="${1#firefox-esr-l10n-}" ;;
+		libreoffice-l10n-*) suffix="${1#libreoffice-l10n-}" ;;
+		libreoffice-help-*) suffix="${1#libreoffice-help-}" ;;
+		hunspell-*) suffix="${1#hunspell-}" ;;
+		hyphen-*) suffix="${1#hyphen-}" ;;
+		mythes-*) suffix="${1#mythes-}" ;;
+		fcitx5-chewing) P_LANG=zh P_REGION=TW; return 0 ;;
+		fcitx5-chinese-addons) P_LANG=zh P_REGION=CN; return 0 ;;
+		fcitx5-hangul) P_LANG=ko; return 0 ;;
+		fcitx5-mozc) P_LANG=ja; return 0 ;;
+		fcitx5-unikey) P_LANG=vi; return 0 ;;
 		*) return 1 ;;
 	esac
-}
-
-language_group() {
+	split_code "$suffix" 0 || return 1
 	case "$1" in
-		firefox-esr-l10n-*) code="${1#firefox-esr-l10n-}" ;;
-		libreoffice-l10n-*) code="${1#libreoffice-l10n-}" ;;
-		libreoffice-help-*) code="${1#libreoffice-help-}" ;;
-		hunspell-*) code="${1#hunspell-}" ;;
-		hyphen-*) code="${1#hyphen-}" ;;
-		mythes-*) code="${1#mythes-}" ;;
-		fcitx5-chewing | fcitx5-chinese-addons) echo zh ;;
-		fcitx5-hangul) echo ko ;;
-		fcitx5-mozc) echo ja ;;
-		fcitx5-unikey) echo vi ;;
-		*) return 1 ;;
+		libreoffice-*)
+			[ "$suffix" = pt ] && P_REGION=PT
+			;;
 	esac
-
-	code="${code//_/-}"
-	case "$code" in
-		nb* | nn* | no*) echo no ;;
-		*) echo "${code%%-*}" ;;
-	esac
+	return 0
 }
 
-language_groups() {
-	local package
-	while read -r package; do
-		if language_package "$package"; then
-			language_group "$package" || true
-		fi
-	done <"$LIST"
+# entry_covers ENTRY KEY: a kept ENTRY (lang|region|variant) keeps the package KEY.
+entry_covers() {
+	local el er ev kl kr kv
+	IFS='|' read -r el er ev <<<"$1"
+	IFS='|' read -r kl kr kv <<<"$2"
+	[ "$el" = "$kl" ] || return 1
+	[ -z "$er" ] || [ -z "$kr" ] || [ "$er" = "$kr" ] || return 1
+	[ -z "$ev" ] || [ -z "$kv" ] || [ "$ev" = "$kv" ] || return 1
+	return 0
 }
 
-packages_for_group() {
-	local group="$1" package
-	while read -r package; do
-		if language_package "$package" && [ "$(language_group "$package")" = "$group" ]; then
-			echo "$package"
-		fi
-	done <"$LIST"
-}
-
-installed_language_packages() {
-	dpkg-query -W -f='${binary:Package}\t${Status}\n' 2>/dev/null |
-		awk -F '\t' '$2 ~ /installed/ {print $1}' |
-		sed 's/:.*$//' |
-		sort -u
-}
-
-is_installed() {
-	dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q '^install ok installed$'
-}
-
-in_group() {
-	local group="$1" code
-	for code in "${KEEP[@]}"; do
-		if [ "$code" = "$group" ]; then
-			return 0
-		fi
+is_kept() {
+	local entry
+	for entry in "${KEEP[@]}"; do
+		entry_covers "$entry" "$1" && return 0
 	done
 	return 1
 }
 
-language_prefixes() {
-	case "$1" in
-		no) printf '%s\n' nb nn no ;;
-		*) printf '%s\n' "$1" ;;
-	esac
+is_installed() {
+	[ "$(dpkg-query -W -f='${db:Status-Abbrev}' "$1" 2>/dev/null)" = "ii " ]
 }
 
-locale_group() {
-	local code="${1%%.*}"
-	code="${code//_/-}"
-	case "$code" in
-		nb* | nn* | no*) echo no ;;
-		*) echo "${code%%-*}" ;;
+# Installed language packages, as: package lang|region|variant
+installed_language_packages() {
+	local package status
+	while read -r package status; do
+		[ "$status" = ii ] || continue
+		package="${package%%:*}"
+		pkg_key "$package" && echo "$package $P_LANG|$P_REGION|$P_VAR"
+	done < <(dpkg-query -W -f='${binary:Package} ${db:Status-Abbrev}\n' 2>/dev/null)
+}
+
+# Packages of the edition's list that belong to a language: package lang|region|variant
+list_language_packages() {
+	local package
+	while read -r package; do
+		case "$package" in
+			"" | "#"*) continue ;;
+		esac
+		pkg_key "$package" && echo "$package $P_LANG|$P_REGION|$P_VAR"
+	done <"$LIST"
+}
+
+# Simulate an apt-get action and print the names of the packages it would act on.
+# $1 is the apt-get action, then the packages. Sets APT_RC and APT_OUT.
+apt_plan() {
+	local action="$1" word
+	shift
+	case "$action" in
+		purge) word=Purg ;;
+		*) word=Inst ;;
 	esac
+	if [ "$action" = install ]; then
+		APT_OUT=$(DEBIAN_FRONTEND=noninteractive apt-get -s -y --no-install-recommends install "$@" 2>&1)
+	else
+		APT_OUT=$(DEBIAN_FRONTEND=noninteractive apt-get -s -y purge "$@" 2>&1)
+	fi
+	APT_RC=$?
+	APT_PLAN=()
+	mapfile -t APT_PLAN < <(sed -n "s/^$word \([^ ]*\).*/\1/p" <<<"$APT_OUT" | sort -u)
 }
 
 default_keep() {
 	local locale=""
 	if [ -r /etc/default/locale ]; then
-		locale=$(sed -n 's/^LANG=//p' /etc/default/locale | tail -n 1)
+		locale=$(sed -n 's/^LANG=//p' /etc/default/locale | tail -n 1 | tr -d '"')
 	fi
-	if [ -n "$locale" ]; then
-		locale_group "$locale"
+	if [ -n "$locale" ] && split_code "$locale" 0; then
+		echo "$P_LANG|$P_REGION|$P_VAR"
 	fi
-	echo en
+	echo "en||"
 }
 
 show_help() {
@@ -136,78 +211,150 @@ show_help() {
 }
 
 show_list() {
-	if [ -f "$SHARE/data/language" ]; then
-		cat "$SHARE/data/language"
-		return 0
-	fi
-	language_groups | sort -u
+	grep -v '^#' "$SHARE/data/language"
 }
 
 parse_keep() {
-	local keep="$1"
-	IFS=', ' read -r -a items <<<"$keep"
+	local items item
+	IFS=', ' read -r -a items <<<"$1"
 	for item in "${items[@]}"; do
-		if [ -n "$item" ]; then
-			KEEP+=("$item")
+		if [ -n "$item" ] && split_code "$item" 1; then
+			KEEP+=("$P_LANG|$P_REGION|$P_VAR")
 		fi
 	done
 }
 
 write_config() {
 	mkdir -p "$(dirname "$CONFIG")"
-	local group prefix
+	local code prefix
 	{
-		for group in $(language_groups | sort -u); do
-			if ! in_group "$group"; then
-				for prefix in $(language_prefixes "$group"); do
-					printf 'path-exclude=/usr/share/locale/%s*\n' "$prefix"
-					printf 'path-exclude=/usr/share/man/%s*\n' "$prefix"
-					printf 'path-exclude=/usr/share/help/%s*\n' "$prefix"
-				done
+		for code in $(printf '%s\n' "${!KNOWN[@]}" | sort); do
+			if ! is_kept "$code||"; then
+				printf 'path-exclude=/usr/share/locale/%s*\n' "$code"
+				printf 'path-exclude=/usr/share/man/%s*\n' "$code"
+				printf 'path-exclude=/usr/share/help/%s*\n' "$code"
 			fi
 		done
-		for group in "${KEEP[@]}"; do
-			for prefix in $(language_prefixes "$group"); do
-				printf 'path-include=/usr/share/locale/%s*\n' "$prefix"
-				printf 'path-include=/usr/share/man/%s*\n' "$prefix"
-				printf 'path-include=/usr/share/help/%s*\n' "$prefix"
-			done
+		for entry in "${KEEP[@]}"; do
+			code="${entry%%|*}"
+			printf 'path-include=/usr/share/locale/%s*\n' "$code"
+			printf 'path-include=/usr/share/man/%s*\n' "$code"
+			printf 'path-include=/usr/share/help/%s*\n' "$code"
 		done
 	} >"$CONFIG"
 }
 
-purge_unwanted() {
-	local package purge=()
-	while read -r package; do
-		if language_package "$package" && ! in_group "$(language_group "$package")"; then
-			purge+=("$package")
-		fi
+# Work out what to remove, simulate it with apt and refuse when apt would take
+# anything else along. Sets PURGE (the packages apt would purge).
+plan_purge() {
+	local line package key extras=()
+	PURGE=()
+	while read -r package key; do
+		is_kept "$key" || PURGE+=("$package")
 	done < <(installed_language_packages)
-	if [ "${#purge[@]}" -gt 0 ]; then
-		if [ "$DRY_RUN" -eq 1 ]; then
-			printf 'apt-get purge -y %s\n' "${purge[@]}"
-		else
-			DEBIAN_FRONTEND=noninteractive apt-get purge -y "${purge[@]}"
-		fi
+	[ "${#PURGE[@]}" -gt 0 ] || return 0
+	apt_plan purge "${PURGE[@]}"
+	if [ "$APT_RC" -ne 0 ]; then
+		echo "$LOCAL31"
+		echo "$APT_OUT"
+		return 4
 	fi
+	for package in "${APT_PLAN[@]}"; do
+		printf '%s\n' "${PURGE[@]}" | grep -qxF -- "$package" || extras+=("$package")
+	done
+	if [ "${#extras[@]}" -gt 0 ]; then
+		echo "$LOCAL12"
+		printf '  %s\n' "${extras[@]}"
+		return 3
+	fi
+	return 0
 }
 
-install_selected() {
-	local group package install=()
-	for group in "${KEEP[@]}"; do
+# Packages to bring back: the ones this tool removed earlier for a language that is kept now,
+# and the edition's packages for a language named explicitly when none of it is installed.
+plan_install() {
+	local package key entry have want=()
+	INSTALL=()
+	if [ -r "$STATE" ]; then
 		while read -r package; do
-			if ! is_installed "$package"; then
-				install+=("$package")
-			fi
-		done < <(packages_for_group "$group")
-	done
-	if [ "${#install[@]}" -gt 0 ]; then
-		if [ "$DRY_RUN" -eq 1 ]; then
-			printf 'apt-get install -y --no-install-recommends %s\n' "${install[@]}"
-		else
-			DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${install[@]}"
-		fi
+			[ -n "$package" ] || continue
+			is_installed "$package" && continue
+			pkg_key "$package" || continue
+			is_kept "$P_LANG|$P_REGION|$P_VAR" && want+=("$package")
+		done <"$STATE"
 	fi
+	for entry in "${EXPLICIT[@]}"; do
+		have=0
+		while read -r package key; do
+			entry_covers "$entry" "$key" && have=1
+		done < <(installed_language_packages)
+		[ "$have" -eq 0 ] || continue
+		while read -r package key; do
+			is_installed "$package" && continue
+			entry_covers "$entry" "$key" && want+=("$package")
+		done < <(list_language_packages)
+	done
+	[ "${#want[@]}" -gt 0 ] || return 0
+	mapfile -t INSTALL < <(printf '%s\n' "${want[@]}" | sort -u)
+}
+
+record_removed() {
+	mkdir -p "$(dirname "$STATE")"
+	{
+		[ -r "$STATE" ] && cat "$STATE"
+		printf '%s\n' "$@"
+	} | sort -u >"$STATE.new"
+	mv "$STATE.new" "$STATE"
+}
+
+forget_removed() {
+	[ -r "$STATE" ] || return 0
+	printf '%s\n' "$@" | grep -vxFf - "$STATE" >"$STATE.new"
+	mv "$STATE.new" "$STATE"
+}
+
+apply_selection() {
+	local entry rc code
+	if [ "$RESTORE_ALL" -eq 1 ]; then
+		KEEP=()
+		EXPLICIT=()
+		for code in "${!KNOWN[@]}"; do
+			KEEP+=("$code||")
+			EXPLICIT+=("$code||")
+		done
+	fi
+	if [ "${#KEEP[@]}" -eq 0 ]; then
+		mapfile -t KEEP < <(default_keep)
+	fi
+	plan_purge
+	rc=$?
+	[ "$rc" -eq 0 ] || return "$rc"
+	plan_install
+	if [ "$DRY_RUN" -eq 1 ]; then
+		echo "$LOCAL16"
+		if [ "${#PURGE[@]}" -gt 0 ]; then
+			echo "$LOCAL18"
+			printf '  %s\n' "${APT_PLAN[@]}"
+			echo "apt-get purge -y ${PURGE[*]}"
+		fi
+		if [ "${#INSTALL[@]}" -gt 0 ]; then
+			apt_plan install "${INSTALL[@]}"
+			echo "$LOCAL19"
+			printf '  %s\n' "${APT_PLAN[@]}"
+			echo "apt-get install -y --no-install-recommends ${INSTALL[*]}"
+		fi
+		return 0
+	fi
+	if [ "${#PURGE[@]}" -gt 0 ]; then
+		DEBIAN_FRONTEND=noninteractive apt-get purge -y "${PURGE[@]}" || return 4
+		record_removed "${PURGE[@]}"
+	fi
+	write_config
+	if [ "${#INSTALL[@]}" -gt 0 ]; then
+		DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${INSTALL[@]}" || return 4
+		forget_removed "${INSTALL[@]}"
+	fi
+	return 0
 }
 
 gui() {
@@ -216,7 +363,7 @@ gui() {
 		case "$code" in
 			"" | "#"*) continue ;;
 		esac
-		if in_group "$code"; then
+		if is_kept "$code||"; then
 			state=TRUE
 		else
 			state=FALSE
@@ -236,22 +383,7 @@ gui() {
 	apply_selection
 }
 
-apply_selection() {
-	if [ "$RESTORE_ALL" -eq 1 ]; then
-		KEEP=()
-		while read -r group; do
-			KEEP+=("$group")
-		done < <(language_groups | sort -u)
-	fi
-	if [ "${#KEEP[@]}" -eq 0 ]; then
-		mapfile -t KEEP < <(default_keep)
-	fi
-	if [ "$DRY_RUN" -eq 0 ]; then
-		write_config
-	fi
-	purge_unwanted
-	install_selected
-}
+load_languages
 
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -291,5 +423,8 @@ if [ "${#KEEP[@]}" -eq 0 ] && [ "$RESTORE_ALL" -eq 0 ] && [ "$DRY_RUN" -eq 0 ]; 
 		gui
 	fi
 else
+	EXPLICIT=("${KEEP[@]}")
+	KEEP+=("en||")
 	apply_selection
+	exit $?
 fi
