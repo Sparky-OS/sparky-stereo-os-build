@@ -157,4 +157,4 @@ One tool per task, KDE's where it covers the task (Daniel, 2026-10-02). Leftover
 
 ## Replaced on the KDE edition
 
-thunderbird, skanlite
+thunderbird, skanlite, blueman
