@@ -138,6 +138,8 @@ group('hardware', 'Hardware support', [
     'firmware-intel-sound', 'firmware-sof-signed', 'amd64-microcode', 'intel-microcode',
     'mesa-vulkan-drivers', 'mesa-va-drivers', 'intel-media-va-driver', 'vainfo', 'vdpauinfo',
     'evdi-dkms', 'displaylink-driver',
+    'memtest86+',   # the ISO's Memory Test boot entry (Daniel and Paweł, 2020)
+    'debconf-kde-helper',   # apt and dpkg questions as KDE dialogs
     'libfdk-aac2', 'pipewire-bluez5-codec-aac',   # Bluetooth AAC (ours: sparky-os/packages)
     'xpadneo',   # Xbox controllers over Bluetooth (DKMS; ours to package)
 ])
