@@ -36,6 +36,9 @@ fstrim -av
 if [ "$FINAL" = "--final" ]; then
 	echo "== development-only leftovers"
 	rm -f /etc/sudoers.d/90-sparky-dev
+	# emulators install from APTus Stereo AppCenter, never from the ISO (Daniel and Paweł)
+	mapfile -t emu < <(grep -v '^#' /srv/sparky-os/lists/emulation-3d.list | grep .)
+	apt-get -y -q purge "${emu[@]}" >/dev/null
 	rm -f /etc/apt/sources.list.d/sparky-stereo.list   # the file: repository; the published one replaces it
 	apt-get -y -q purge openssh-server >/dev/null
 	truncate -s 0 /etc/machine-id
