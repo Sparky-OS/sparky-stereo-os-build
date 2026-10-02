@@ -159,7 +159,7 @@ t3_no_options() {
 	timeout 20 $TOOL </dev/null >/tmp/out 2>&1
 	local rc=$?
 	check "no options and no display exits non-zero (got $rc)" test $rc -ne 0
-	check "usage printed" grep -qi usage /tmp/out
+	check "usage printed" grep -qiE 'usage|użycie' /tmp/out
 	dpkg-query -W -f='${Package}\n' | sort >/tmp/after
 	check "nothing changed" cmp -s /tmp/before /tmp/after
 	timeout 600 $TOOL --dry-run >/tmp/out 2>&1
@@ -267,6 +267,24 @@ t6_tree() {
 	for f in LICENSE install.sh lang/en lang/pl lang/pt_BR README.md CHANGELOG copyright; do check "tree has $f" test -s $t/$f; done
 	check "README has Install: and Uninstall:" bash -c "grep -q '^Install:' $t/README.md && grep -q '^Uninstall:' $t/README.md"
 	check "install.sh installs and uninstalls" bash -c "cd $t && cp -r . /tmp/tree && cd /tmp/tree && sh install.sh >/dev/null 2>&1 && test -x /usr/bin/sparky-stereo-locales && test -s /usr/share/sparky/sparky-stereo-locales/pl && sh install.sh uninstall >/dev/null 2>&1 && test ! -e /usr/bin/sparky-stereo-locales"
+}
+
+t7_restore() {
+	setup
+	dpkg-query -W -f='${Package}\n' | sort >/tmp/before
+	timeout 600 $TOOL --keep en >/dev/null 2>&1
+	absent hunspell-de-at
+	absent hunspell-sr
+	timeout 600 $TOOL --keep en,de >/tmp/out 2>&1
+	present hunspell-de-de
+	present hunspell-de-at
+	present libreoffice-help-de
+	absent hunspell-pl
+	check "de exclude lines gone" not grep -q 'exclude=/usr/share/locale/de$' /etc/dpkg/dpkg.cfg.d/sparky-stereo-locales
+	timeout 600 $TOOL --restore >/tmp/out 2>&1
+	dpkg-query -W -f='${Package}\n' | sort >/tmp/after
+	check "restore brings back every removed package (nothing missing)" test -z "$(comm -23 /tmp/before /tmp/after)"
+	check "restore leaves no path-exclude lines" not grep -q '^path-exclude' /etc/dpkg/dpkg.cfg.d/sparky-stereo-locales
 }
 
 for t in "$@"; do

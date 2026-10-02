@@ -15,8 +15,14 @@ RESTORE_ALL=0
 KEEP=()
 EXPLICIT=()
 
-case "${LANG:-}" in
-	pt_BR*) lang_file=pt_BR ;;
+locale_name=""
+if [ -r /etc/default/locale ]; then
+	locale_name=$(sed -n 's/^LANG=//p' /etc/default/locale | tail -n 1 | tr -d '"')
+fi
+[ -n "$locale_name" ] || locale_name="${LANG:-}"
+case "$locale_name" in
+	pl | pl_* | pl.*) lang_file=pl ;;
+	pt_BR | pt_BR.* | pt_BR@*) lang_file=pt_BR ;;
 	*) lang_file=en ;;
 esac
 . "$LANGDIR/en"
@@ -198,16 +204,16 @@ default_keep() {
 }
 
 show_help() {
-	echo "Usage: sparky-stereo-locales [--keep CODE[,CODE]] [--restore] [--list] [--dry-run]"
+	echo "$LOCAL21 sparky-stereo-locales [--keep CODE[,CODE]] [--restore] [--list] [--dry-run]"
 	echo
-	echo "Options:"
-	echo "  -h, --help       show this help"
-	echo "  -l, --list       list language groups"
-	echo "  -k, --keep       languages to keep"
-	echo "  -r, --restore    restore every known language"
-	echo "  -d, --dry-run    show what would happen"
+	echo "  -h, --help       $LOCAL22"
+	echo "  -l, --list       $LOCAL23"
+	echo "  -k, --keep       $LOCAL24"
+	echo "  -r, --restore    $LOCAL25"
+	echo "  -d, --dry-run    $LOCAL26"
 	echo
-	echo "The default keeps the current locale and English."
+	echo "$LOCAL27"
+	echo "$LOCAL33"
 }
 
 show_list() {
@@ -258,9 +264,8 @@ include_name() {
 # The exclude file keeps the files of removed languages out of future installs.
 # Names are matched whole (fi, fi_*, fi@*), never as prefixes: fil, frp, kok,
 # jam and csb are other languages.
-write_config() {
+config_text() {
 	local code dirkey locale entry el er ev base
-	mkdir -p "$(dirname "$CONFIG")"
 	{
 		echo "# Written by sparky-stereo-locales; it keeps the files of removed languages out."
 		echo "# Restore a language with: sparky-stereo-locales --keep CODE (or --restore)."
@@ -304,7 +309,12 @@ write_config() {
 				fi
 			done
 		fi
-	} >"$CONFIG"
+	}
+}
+
+write_config() {
+	mkdir -p "$(dirname "$CONFIG")"
+	config_text >"$CONFIG"
 }
 
 # Work out what to remove, simulate it with apt and refuse when apt would take
@@ -376,6 +386,15 @@ forget_removed() {
 	mv "$STATE.new" "$STATE"
 }
 
+keep_names() {
+	local entry names=() el er ev
+	for entry in "${KEEP[@]}"; do
+		IFS='|' read -r el er ev <<<"$entry"
+		names+=("${ev:-$el}${er:+_$er}")
+	done
+	printf '%s\n' "${names[@]}" | sort -u | tr '\n' ' '
+}
+
 apply_selection() {
 	local entry rc code
 	if [ "$RESTORE_ALL" -eq 1 ]; then
@@ -392,6 +411,7 @@ apply_selection() {
 	plan_install
 	if [ "$DRY_RUN" -eq 1 ]; then
 		echo "$LOCAL16"
+		echo "$LOCAL17 $(keep_names)"
 		if [ "${#PURGE[@]}" -gt 0 ]; then
 			echo "$LOCAL18"
 			printf '  %s\n' "${APT_PLAN[@]}"
@@ -403,17 +423,28 @@ apply_selection() {
 			printf '  %s\n' "${APT_PLAN[@]}"
 			echo "apt-get install -y --no-install-recommends ${INSTALL[*]}"
 		fi
+		if [ "${#PURGE[@]}" -eq 0 ] && [ "${#INSTALL[@]}" -eq 0 ]; then
+			echo "$LOCAL13"
+		fi
+		echo "$LOCAL20 $CONFIG"
+		config_text
 		return 0
 	fi
 	if [ "${#PURGE[@]}" -gt 0 ]; then
+		echo "$LOCAL14"
 		DEBIAN_FRONTEND=noninteractive apt-get purge -y "${PURGE[@]}" || return 4
 		record_removed "${PURGE[@]}"
 	fi
 	write_config
 	if [ "${#INSTALL[@]}" -gt 0 ]; then
+		echo "$LOCAL15"
 		DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${INSTALL[@]}" || return 4
 		forget_removed "${INSTALL[@]}"
 	fi
+	if [ "${#PURGE[@]}" -eq 0 ] && [ "${#INSTALL[@]}" -eq 0 ]; then
+		echo "$LOCAL13"
+	fi
+	echo "$LOCAL29"
 	return 0
 }
 
