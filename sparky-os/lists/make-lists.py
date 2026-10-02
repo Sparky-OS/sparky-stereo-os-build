@@ -138,9 +138,13 @@ group('hardware', 'Hardware support', [
     'firmware-intel-sound', 'firmware-sof-signed', 'amd64-microcode', 'intel-microcode',
     'mesa-vulkan-drivers', 'mesa-va-drivers', 'intel-media-va-driver', 'vainfo', 'vdpauinfo',
     'evdi-dkms', 'displaylink-driver',
-    'nvidia-settings',   # with the NVIDIA driver, when the hardware setup finds an NVIDIA card
     'libfdk-aac2', 'pipewire-bluez5-codec-aac',   # Bluetooth AAC (ours: sparky-os/packages)
     'xpadneo',   # Xbox controllers over Bluetooth (DKMS; ours to package)
+])
+
+# 7b. Installed by the hardware setup only when it finds the hardware (not in the base build).
+group('hardware-found', 'Hardware support installed when the hardware is found', [
+    'nvidia-settings',   # with the NVIDIA driver, when an NVIDIA card is found
 ])
 
 # 8. System: apps from Flathub, containers, Android, snapshots, zram.
