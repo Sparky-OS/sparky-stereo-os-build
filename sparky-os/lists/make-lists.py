@@ -60,6 +60,8 @@ group('apps', "Applications beyond the KDE edition (Daniel's, deduplicated)", ap
     'kdenlive', 'skanpage', 'subtitlecomposer', 'neochat', 'qpwgraph',
     'libreoffice-kf6', 'libreoffice-draw', 'kdenetwork-filesharing', 'kio-fuse',
     'coolercontrol',   # fans and pumps (GPL-3; its repository is the vendor's: to package)
+    # stereo editing and 3D work (Daniel, 2026-10-02): ours to package first, then Debian's
+    'stereophotoview', 'sview', 'blender', 'freecad', 'paraview', 'hugin-tools', 'libimage-exiftool-perl',
 ])
 
 # 2. Games: SteamOS-like, the chosen GameOver games, KDE's games, three well-known additions.
