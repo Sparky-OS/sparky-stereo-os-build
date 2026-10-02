@@ -1,0 +1,42 @@
+From bbfc6708254b3bdb248134ef0ddacefd805e8303 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 22 Sep 2026 15:36:27 -0300
+Subject: [PATCH 1/3] nvidia-modeset: raise default max_output_color_depth to
+ 12
+
+NVKMS already parses the sink's HDMI Deep Color capability (VSDB
+DC_30/DC_36/DC_48) and already constructs and programs 10/12-bpc output
+for RGB and YCbCr 4:4:4, 4:2:2 and 4:2:0.  The only piece keeping a
+12-bpc-capable sink at 10 bpc on Linux is this module parameter's
+default.  Windows on the same hardware drives the same sink at 12 bpc.
+
+Measured narrowing, GA106 + Sony KDL-46HX855 (EDID declares
+DC_30/DC_36): Linux 615.71.09 selects 10 bpc where amdgpu on the same
+sink selects 12 bpc.  Refs NVIDIA/open-gpu-kernel-modules#1384.
+
+The module parameter still permits capping at 10; this only lifts the
+default so the EDID-declared capability is what decides.
+
+Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Co-Authored-By: Kimi K3 (Claude Code) <noreply@anthropic.com>
+Co-Authored-By: OpenAI Codex <noreply@openai.com>
+---
+ kernel-open/nvidia-modeset/nvidia-modeset-linux.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/kernel-open/nvidia-modeset/nvidia-modeset-linux.c b/kernel-open/nvidia-modeset/nvidia-modeset-linux.c
+index 62986c4..9c0ae49 100644
+--- a/kernel-open/nvidia-modeset/nvidia-modeset-linux.c
++++ b/kernel-open/nvidia-modeset/nvidia-modeset-linux.c
+@@ -92,7 +92,7 @@ module_param_named(disable_vrr_memclk_switch, disable_vrr_memclk_switch, bool, 0
+ static bool hdmi_deepcolor = true;
+ module_param_named(hdmi_deepcolor, hdmi_deepcolor, bool, 0444);
+ 
+-static unsigned int max_output_color_depth = 10;
++static unsigned int max_output_color_depth = 12;
+ module_param_named(max_output_color_depth, max_output_color_depth, uint, 0444);
+ 
+ static bool opportunistic_display_sync = true;
+-- 
+2.53.0
+

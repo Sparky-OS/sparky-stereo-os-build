@@ -1,0 +1,491 @@
+From b94fc62722b59363d78f1293bda011a5e6618a1f Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 22 Sep 2026 02:00:00 -0300
+Subject: [PATCH 2/3] nvidia-drm: admit and synthesize HDMI VSDB stereo modes
+
+v1: set drm_connector.stereo_allowed on HDMI connectors so DRM core
+admits DRM_MODE_FLAG_3D_* modes instead of validating them away with
+MODE_NO_STEREO.  Measured necessary-but-not-sufficient on 615.71.09:
+NvKmsKapiDisplayMode carries no stereo information, so the NVKMS mode
+loop never produces a 3D-flagged mode for the gate to admit.
+
+v2: add the missing source of 3D-flagged modes, mirroring the DRM core
+reference implementation (drivers/gpu/drm/drm_edid.c,
+do_hdmi_vsdb_modes() and the CTA-mandatory stereo table) in the open
+glue.  Walk the VSDB 2.0 stereo fields of the EDID NVKMS already cached
+in nv_connector->edid and synthesize DRM_MODE_FLAG_3D_SIDE_BY_SIDE_HALF /
+TOP_AND_BOTTOM / FRAME_PACKING variants by cloning base timings the
+driver itself already listed, so every synthesized mode carries a timing
+that NVKMS itself surfaced and validated.
+
+Measured on KDL-46HX855 (GA106, HDMI): stock 17 modes/0 stereo,
+v1 17/0; with v2 the list gains up to ~26 stereo variants on this sink
+(nouveau reference on the same EDID: 51/29).
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>
+Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+---
+ kernel-open/nvidia-drm/nvidia-drm-connector.c | 433 ++++++++++++++++++
+ 1 file changed, 433 insertions(+)
+
+diff --git a/kernel-open/nvidia-drm/nvidia-drm-connector.c b/kernel-open/nvidia-drm/nvidia-drm-connector.c
+index 77ec01a..d2deb2e 100644
+--- a/kernel-open/nvidia-drm/nvidia-drm-connector.c
++++ b/kernel-open/nvidia-drm/nvidia-drm-connector.c
+@@ -416,6 +416,402 @@ static struct drm_connector_funcs nv_connector_funcs = {
+     .atomic_get_property    = nv_drm_connector_atomic_get_property,
+ };
+ 
++/*
++ * HDMI VSDB stereo-mode synthesis
++ * --------------------------------
++ *
++ * NVKMS lists only 2D timings through nvKms->getDisplayMode() and
++ * NvKmsKapiDisplayMode carries no stereo information, so no 3D-flagged
++ * mode ever reaches DRM's mode list and the stereo_allowed admission gate
++ * has nothing to admit.  Mirror the DRM core reference implementation
++ * (drivers/gpu/drm/drm_edid.c: do_hdmi_vsdb_modes() plus the CTA-mandatory
++ * stereo table) here in the open glue, using the EDID NVKMS already
++ * fetched: synthesize DRM_MODE_FLAG_3D_* variants by cloning base timings
++ * the driver itself already listed.
++ */
++
++struct nv_cea_vic_info {
++    NvU8   vic;
++    NvU16  width;
++    NvU16  height;
++    NvU8   vrefresh;    /* drm_mode_vrefresh() style, rounded */
++    NvBool interlaced;
++};
++
++/*
++ * CTA/CEA-861 VICs that 3D televisions declare in VSDB 3D fields; timings
++ * condensed from edid_cea_modes[] in drivers/gpu/drm/drm_edid.c (that table
++ * is static, i.e. not usable from here).  A VIC missing from this table is
++ * silently skipped: no stereo variant is synthesized for it.
++ */
++static const struct nv_cea_vic_info nv_cea_vic_info[] = {
++    {   1,  640,  480,  60, NV_FALSE },
++    {   2,  720,  480,  60, NV_FALSE },
++    {   3,  720,  480,  60, NV_FALSE },
++    {   4, 1280,  720,  60, NV_FALSE },
++    {   5, 1920, 1080,  60, NV_TRUE  },
++    {  16, 1920, 1080,  60, NV_FALSE },
++    {  17,  720,  576,  50, NV_FALSE },
++    {  18,  720,  576,  50, NV_FALSE },
++    {  19, 1280,  720,  50, NV_FALSE },
++    {  20, 1920, 1080,  50, NV_TRUE  },
++    {  31, 1920, 1080,  50, NV_FALSE },
++    {  32, 1920, 1080,  24, NV_FALSE },
++    {  33, 1920, 1080,  25, NV_FALSE },
++    {  34, 1920, 1080,  30, NV_FALSE },
++    {  39, 1920, 1080,  50, NV_TRUE  },
++    {  40, 1920, 1080, 100, NV_TRUE  },
++    {  41, 1280,  720, 100, NV_FALSE },
++    {  44, 1440,  576, 100, NV_TRUE  },
++    {  46, 1920, 1080, 120, NV_TRUE  },
++    {  47, 1280,  720, 120, NV_FALSE },
++    {  50, 1440,  480, 120, NV_TRUE  },
++    {  60, 1280,  720,  24, NV_FALSE },
++    {  61, 1280,  720,  25, NV_FALSE },
++    {  62, 1280,  720,  30, NV_FALSE },
++    {  63, 1920, 1080, 120, NV_FALSE },
++    {  64, 1920, 1080, 100, NV_FALSE },
++    {  93, 3840, 2160,  24, NV_FALSE },
++    {  94, 3840, 2160,  25, NV_FALSE },
++    {  95, 3840, 2160,  30, NV_FALSE },
++    {  96, 3840, 2160,  50, NV_FALSE },
++    {  97, 3840, 2160,  60, NV_FALSE },
++    {  98, 4096, 2160,  24, NV_FALSE },
++    {  99, 4096, 2160,  25, NV_FALSE },
++    { 100, 4096, 2160,  30, NV_FALSE },
++    { 101, 4096, 2160,  50, NV_FALSE },
++    { 102, 4096, 2160,  60, NV_FALSE },
++};
++
++/* CTA-mandatory stereo timings, verbatim from drm_edid.c. */
++struct nv_stereo_mandatory_mode {
++    int width, height, vrefresh;
++    NvU32 flags;
++};
++
++static const struct nv_stereo_mandatory_mode nv_stereo_mandatory_modes[] = {
++    { 1920, 1080, 24, DRM_MODE_FLAG_3D_TOP_AND_BOTTOM },
++    { 1920, 1080, 24, DRM_MODE_FLAG_3D_FRAME_PACKING },
++    { 1920, 1080, 50,
++      DRM_MODE_FLAG_INTERLACE | DRM_MODE_FLAG_3D_SIDE_BY_SIDE_HALF },
++    { 1920, 1080, 60,
++      DRM_MODE_FLAG_INTERLACE | DRM_MODE_FLAG_3D_SIDE_BY_SIDE_HALF },
++    { 1280, 720,  50, DRM_MODE_FLAG_3D_TOP_AND_BOTTOM },
++    { 1280, 720,  50, DRM_MODE_FLAG_3D_FRAME_PACKING },
++    { 1280, 720,  60, DRM_MODE_FLAG_3D_TOP_AND_BOTTOM },
++    { 1280, 720,  60, DRM_MODE_FLAG_3D_FRAME_PACKING },
++};
++
++/*
++ * Clone every already-listed mode whose timing matches
++ * (@width, @height, @interlaced, @vrefresh +- 1 Hz for 1000/1001 variants
++ * of one VIC), tag the clone with @stereo_flags and append it to the
++ * probed list.  Only base timings the driver itself surfaced are cloned.
++ */
++static int nv_stereo_clone_match(struct drm_connector *connector,
++                                 int width, int height,
++                                 NvBool interlaced, int vrefresh,
++                                 NvU32 stereo_flags)
++{
++    struct drm_device *dev = connector->dev;
++    const struct drm_display_mode *mode;
++    struct list_head synth_modes;
++    int modes = 0;
++
++    INIT_LIST_HEAD(&synth_modes);
++
++    list_for_each_entry(mode, &connector->probed_modes, head) {
++        struct drm_display_mode *new_mode;
++
++        if (mode->hdisplay != width || mode->vdisplay != height)
++            continue;
++
++        if (!!(mode->flags & DRM_MODE_FLAG_INTERLACE) != !!interlaced)
++            continue;
++
++        if (abs(drm_mode_vrefresh(mode) - vrefresh) > 1)
++            continue;
++
++        /* never derive a stereo mode from another stereo mode */
++        if (mode->flags & DRM_MODE_FLAG_3D_MASK)
++            continue;
++
++        new_mode = drm_mode_duplicate(dev, mode);
++        if (!new_mode)
++            continue;
++
++        new_mode->flags |= stereo_flags;
++        list_add_tail(&new_mode->head, &synth_modes);
++        modes++;
++    }
++
++    list_splice_tail(&synth_modes, &connector->probed_modes);
++
++    return modes;
++}
++
++static int nv_stereo_add_mandatory(struct drm_connector *connector)
++{
++    int modes = 0, i;
++
++    for (i = 0; i < ARRAY_SIZE(nv_stereo_mandatory_modes); i++) {
++        const struct nv_stereo_mandatory_mode *m =
++            &nv_stereo_mandatory_modes[i];
++
++        modes += nv_stereo_clone_match(connector,
++                                       m->width, m->height,
++                                       !!(m->flags & DRM_MODE_FLAG_INTERLACE),
++                                       m->vrefresh,
++                                       m->flags & ~DRM_MODE_FLAG_INTERLACE);
++    }
++
++    return modes;
++}
++
++/*
++ * Add @stereo_flag variants for the CTA VIC at position @vic_index in the
++ * sink's Video Data Block list (@vics; 3D_MASK and 2D_VIC_order index into
++ * this list, not into the VIC namespace).  Returns 0 when the index is out
++ * of range or the VIC has no entry in nv_cea_vic_info[].
++ */
++static int nv_stereo_add_vic_index(struct drm_connector *connector,
++                                   const NvU8 *vics, NvU32 vics_len,
++                                   NvU8 vic_index, NvU32 stereo_flag)
++{
++    size_t i;
++    NvU8 vic;
++    const struct nv_cea_vic_info *vi = NULL;
++
++    if (vic_index >= vics_len)
++        return 0;
++
++    vic = vics[vic_index];
++    if ((vic >= 1 && vic <= 64) || (vic >= 129 && vic <= 192))
++        vic &= 0x7f;    /* strip the native-mode indicator bit */
++
++    for (i = 0; i < ARRAY_SIZE(nv_cea_vic_info); i++) {
++        if (nv_cea_vic_info[i].vic == vic) {
++            vi = &nv_cea_vic_info[i];
++            break;
++        }
++    }
++
++    if (vi == NULL)
++        return 0;
++
++    return nv_stereo_clone_match(connector, vi->width, vi->height,
++                                 vi->interlaced, vi->vrefresh, stereo_flag);
++}
++
++/*
++ * Parse one HDMI VSDB (OUI 00-0C-03) for stereo declarations and add the
++ * corresponding stereo mode variants.  @db points at the data block
++ * including its header byte and @len is the payload length in bytes, the
++ * same convention do_hdmi_vsdb_modes() uses in drm_edid.c.
++ */
++static int nv_hdmi_vsdb_stereo_modes(struct drm_connector *connector,
++                                     const NvU8 *db, NvU8 len,
++                                     const NvU8 *vics, NvU32 vics_len)
++{
++    int modes = 0, offset = 0, i, multi_present = 0, multi_len;
++    NvU8 vic_len, hdmi_3d_len = 0;
++    NvU16 mask, structure_all;
++
++    if (len < 8)
++        return 0;
++
++    /* HDMI_Video_present */
++    if (!(db[8] & (1 << 5)))
++        return 0;
++
++    /* latency fields, as hdmi_vsdb_latency_length(): none / 2 / 4 bytes */
++    if (db[8] & (1 << 7))
++        offset = (db[8] & (1 << 6)) ? 4 : 2;
++
++    if (len < 8 + offset + 2)
++        return 0;
++
++    /* 3D_Present */
++    offset++;
++    if (db[8 + offset] & (1 << 7)) {
++        modes += nv_stereo_add_mandatory(connector);
++
++        /* 3D_Multi_present */
++        multi_present = (db[8 + offset] & 0x60) >> 5;
++    }
++
++    offset++;
++    vic_len = db[8 + offset] >> 5;
++    hdmi_3d_len = db[8 + offset] & 0x1f;
++
++    /*
++     * Additional 4K-only HDMI VIC entries (add_hdmi_mode() in drm_edid.c)
++     * are not synthesized here: when valid they are already on the NVKMS
++     * list.  Only the bytes matter, for offset arithmetic.
++     */
++    if (len < 8 + offset + vic_len)
++        return modes;
++    offset += 1 + vic_len;
++
++    if (multi_present == 1)
++        multi_len = 2;
++    else if (multi_present == 2)
++        multi_len = 4;
++    else
++        multi_len = 0;
++
++    if (len < 8 + offset + hdmi_3d_len - 1)
++        return modes;
++
++    if (hdmi_3d_len < multi_len)
++        return modes;
++
++    if (multi_present == 1 || multi_present == 2) {
++        /* 3D_Structure_ALL */
++        structure_all = (db[8 + offset] << 8) | db[9 + offset];
++
++        /* 3D_MASK, present only for multi_present == 2 */
++        if (multi_present == 2)
++            mask = (db[10 + offset] << 8) | db[11 + offset];
++        else
++            mask = 0xffff;
++
++        for (i = 0; i < 16; i++) {
++            if (!(mask & (1 << i)))
++                continue;
++
++            /* add_3d_struct_modes(): only structures 0/6/8 have DRM flags */
++            if (structure_all & (1 << 0))
++                modes += nv_stereo_add_vic_index(
++                             connector, vics, vics_len, (NvU8)i,
++                             DRM_MODE_FLAG_3D_FRAME_PACKING);
++            if (structure_all & (1 << 6))
++                modes += nv_stereo_add_vic_index(
++                             connector, vics, vics_len, (NvU8)i,
++                             DRM_MODE_FLAG_3D_TOP_AND_BOTTOM);
++            if (structure_all & (1 << 8))
++                modes += nv_stereo_add_vic_index(
++                             connector, vics, vics_len, (NvU8)i,
++                             DRM_MODE_FLAG_3D_SIDE_BY_SIDE_HALF);
++        }
++    }
++
++    offset += multi_len;
++
++    /* per-VIC 3D_Structure_X entries (2D_VIC_order_X | 3D_Structure_X) */
++    for (i = 0; i < hdmi_3d_len - multi_len; i++) {
++        NvU8 vic_index;
++        NvU32 stereo_flag = 0;
++        NvBool detail_present;
++
++        detail_present = ((db[8 + offset + i] & 0x0f) > 7);
++
++        if (detail_present && (i + 1 == hdmi_3d_len - multi_len))
++            break;
++
++        vic_index = db[8 + offset + i] >> 4;
++
++        switch (db[8 + offset + i] & 0x0f) {
++        case 0:
++            stereo_flag = DRM_MODE_FLAG_3D_FRAME_PACKING;
++            break;
++        case 6:
++            stereo_flag = DRM_MODE_FLAG_3D_TOP_AND_BOTTOM;
++            break;
++        case 8:
++            /* 3D_Detail_X: 1 = horizontal subsampling (SbS half) */
++            if ((db[9 + offset + i] >> 4) == 1)
++                stereo_flag = DRM_MODE_FLAG_3D_SIDE_BY_SIDE_HALF;
++            break;
++        }
++
++        if (stereo_flag != 0)
++            modes += nv_stereo_add_vic_index(connector, vics, vics_len,
++                                             vic_index, stereo_flag);
++
++        if (detail_present)
++            i++;
++    }
++
++    return modes;
++}
++
++/*
++ * Walk the cached EDID's CTA extensions: first collect the Video Data
++ * Block VIC list that 3D_MASK/2D_VIC_order index into, then parse every
++ * HDMI VSDB for stereo declarations and synthesize the corresponding
++ * DRM_MODE_FLAG_3D_* mode variants.
++ */
++static int nv_edid_vsdb_stereo_modes(struct drm_connector *connector,
++                                     const NvU8 *edid)
++{
++    NvU8 vics[64];
++    NvU32 vics_len = 0;
++    NvU32 ext, db, i;
++    int modes = 0;
++
++    /* pass 1: collect VICs from all CTA Video Data Blocks */
++    for (ext = 1; ext <= edid[126] && ext < 16; ext++) {
++        const NvU8 *ceab = edid + ext * EDID_LENGTH;
++        NvU8 end;
++
++        if (ceab[0] != 0x02)
++            continue;
++
++        end = ceab[2] ? ceab[2] : 127;
++        if (end < 4)
++            continue;
++
++        for (db = 4; db < end; ) {
++            const NvU8 tag = ceab[db] >> 5, len = ceab[db] & 0x1f;
++            const NvU8 hdr = (tag == 0x7) ? 2 : 1;
++
++            if (db + hdr + len > end)
++                break;
++
++            if (tag == 0x2) {
++                for (i = 0; i < len && vics_len < sizeof(vics); i++)
++                    vics[vics_len++] = ceab[db + hdr + i];
++            }
++
++            db += hdr + len;
++        }
++    }
++
++    /* pass 2: parse HDMI VSDBs (OUI 00-0C-03, least significant byte first) */
++    for (ext = 1; ext <= edid[126] && ext < 16; ext++) {
++        const NvU8 *ceab = edid + ext * EDID_LENGTH;
++        NvU8 end;
++
++        if (ceab[0] != 0x02)
++            continue;
++
++        end = ceab[2] ? ceab[2] : 127;
++        if (end < 4)
++            continue;
++
++        for (db = 4; db < end; ) {
++            const NvU8 tag = ceab[db] >> 5, len = ceab[db] & 0x1f;
++            const NvU8 hdr = (tag == 0x7) ? 2 : 1;
++
++            if (db + hdr + len > end)
++                break;
++
++            if (tag == 0x3 && len >= 4 &&
++                ceab[db + 1] == 0x03 &&
++                ceab[db + 2] == 0x0c &&
++                ceab[db + 3] == 0x00) {
++                modes += nv_hdmi_vsdb_stereo_modes(connector, ceab + db,
++                                                   len, vics, vics_len);
++            }
++
++            db += hdr + len;
++        }
++    }
++
++    return modes;
++}
++
+ static int nv_drm_connector_get_modes(struct drm_connector *connector)
+ {
+     struct drm_device *dev = connector->dev;
+@@ -486,6 +882,16 @@ static int nv_drm_connector_get_modes(struct drm_connector *connector)
+         count++;
+     }
+ 
++    /*
++     * Synthesize HDMI VSDB stereo-mode variants from the cached EDID.
++     * Runs only when the connector opted into stereo admission
++     * (stereo_allowed), so the synthesized modes pass DRM core's
++     * MODE_NO_STEREO validation and become visible to userspace.
++     */
++    if (count > 0 && connector->stereo_allowed && nv_connector->edid != NULL)
++        count += nv_edid_vsdb_stereo_modes(connector,
++                                           (const NvU8 *)nv_connector->edid);
++
+     return count;
+ }
+ 
+@@ -749,6 +1155,33 @@ nv_drm_connector_new(struct drm_device *dev,
+ 
+     drm_connector_helper_add(&nv_connector->base, &nv_connector_helper_funcs);
+ 
++    /* HDMI 1.4 3D support (community patch, sony-bravia-linux).
++     *
++     * What: stop the DRM core pruning the stereo modes the sink itself
++     * advertises in its EDID. The core keeps DRM_MODE_FLAG_3D modes only
++     * when connector->stereo_allowed is set (drm_probe_helper.c) and
++     * still exposes them solely to clients that opt in with
++     * DRM_CLIENT_CAP_STEREO_3D (drm_connector.c) -- so nothing changes
++     * for 2D-only userspace.
++     *
++     * Why this is safe to apply: top-and-bottom and side-by-side (half)
++     * ride the SAME link timing as the plain 2D mode (HDMI 1.4), so
++     * nv_drm_connector_mode_valid (NVKMS validateDisplayMode) already
++     * accepts them. The 3D announcement is carried with the modeset by
++     * the existing, shipped NV_HDMI_VSIF_METADATA blob property.
++     *
++     * Proven on 615.71.09: SBS-half 1080p60 and TaB 1080p24 drive a 2012
++     * Sony KDL-46HX855 into 3D with picture (runs + client:
++     * github.com/danielcamposramos/sony-bravia-linux tools/stereo-modeset/).
++     *
++     * Not included: frame packing needs doubled scanout timing inside
++     * NVKMS (what AMD's DC calls CRTC_STEREO_DOUBLE) -- the FP modes will
++     * *list* but do not expect them to display correctly yet.
++     */
++    if (nv_connector->type == NVKMS_CONNECTOR_TYPE_HDMI) {
++        nv_connector->base.stereo_allowed = true;
++    }
++
+     nv_connector->base.polled = DRM_CONNECTOR_POLL_HPD;
+ 
+     if (nv_connector->type == NVKMS_CONNECTOR_TYPE_VGA) {
+-- 
+2.53.0
+
