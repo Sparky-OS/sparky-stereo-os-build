@@ -178,7 +178,7 @@ stub_yad() {
 n=$((${COUNT:-0}))
 { echo "== yad call"; echo "argc=$#"; for a in "$@"; do printf '[%s]\n' "$a"; done; } >>/tmp/yad.args
 case " $* " in
-	*" --list "*) printf '%s' "${STUB_ANSWER-pl,}"; exit "${STUB_RC:-0}" ;;
+	*" --list "*) printf '%b' "${STUB_ANSWER-TRUE|pl|Polish|\\n}"; exit "${STUB_RC:-0}" ;;
 	*) exit "${STUB_RC2:-0}" ;;
 esac
 EOS
@@ -188,21 +188,30 @@ EOS
 
 t4_gui() {
 	setup
+	echo 'LANG=pl_PL.UTF-8' >/etc/default/locale
 	stub_yad
 	export PATH=/tmp/stub:$PATH DISPLAY=:99
-	STUB_ANSWER='pl,pt_BR,' timeout 600 $TOOL </dev/null >/tmp/out 2>&1
+	STUB_ANSWER='TRUE|pl|Polish|\nTRUE|pt_BR|Portuguese (Brazil)|\nFALSE|de|German|\n' timeout 600 $TOOL </dev/null >/tmp/out 2>&1
 	echo "exit $?"; head -c 1500 /tmp/yad.args
 	local n; n=$(sed -n 's/^argc=//p' /tmp/yad.args | head -1)
 	check "yad got many arguments (argc=$n)" test "${n:-0}" -gt 40
 	check "three --column arguments" test "$(grep -c '^\[--column=' /tmp/yad.args)" -ge 3
 	check "no argument holds a whole row with pipes" not grep -q '^\[\(TRUE\|FALSE\)|' /tmp/yad.args
-	check "separator is one argument" grep -q '^\[--separator=,\]' /tmp/yad.args
+	check "separator is one argument" grep -q '^\[--separator=|\]' /tmp/yad.args
+	check "pl row preselected from /etc/default/locale" awk '/^\[pl\]$/ && prev=="[TRUE]" {f=1} {prev=$0} END{exit !f}' /tmp/yad.args
+	check "de row not preselected" awk '/^\[de\]$/ && prev=="[FALSE]" {f=1} {prev=$0} END{exit !f}' /tmp/yad.args
+	check "a confirmation question was asked" grep -q '^\[--question\]' /tmp/yad.args
 	check "Apply and Cancel buttons" bash -c "grep -q -- '--button' /tmp/yad.args"
 	present hunspell-pl
 	present hunspell-pt-br
 	present hunspell-en-us
 	absent hunspell-de-de
 	absent hunspell-pt-pt
+	# the answer No to the question changes nothing
+	dpkg-query -W -f='${Package}\n' | sort >/tmp/before
+	STUB_RC2=1 STUB_ANSWER='TRUE|en|English|\nTRUE|fr|French|\n' timeout 600 $TOOL </dev/null >/tmp/out 2>&1
+	dpkg-query -W -f='${Package}\n' | sort >/tmp/after
+	check "answering No changes nothing" cmp -s /tmp/before /tmp/after
 	# cancel changes nothing
 	dpkg-query -W -f='${Package}\n' | sort >/tmp/before
 	STUB_RC=1 STUB_ANSWER='' timeout 600 $TOOL </dev/null >/tmp/out 2>&1

@@ -187,6 +187,11 @@ default_keep() {
 		locale=$(sed -n 's/^LANG=//p' /etc/default/locale | tail -n 1 | tr -d '"')
 	fi
 	if [ -n "$locale" ] && split_code "$locale" 0; then
+		# Only Portuguese and Chinese differ by region in what they need.
+		case "$P_LANG" in
+			pt | zh) ;;
+			*) P_REGION="" ;;
+		esac
 		echo "$P_LANG|$P_REGION|$P_VAR"
 	fi
 	echo "en||"
@@ -363,30 +368,72 @@ apply_selection() {
 	return 0
 }
 
+# row_kept CODE: the window row CODE is ticked for the languages in KEEP.
+row_kept() {
+	local entry el er ev rl rr rv
+	split_code "$1" 1 || return 1
+	rl="$P_LANG" rr="$P_REGION" rv="$P_VAR"
+	for entry in "${KEEP[@]}"; do
+		IFS='|' read -r el er ev <<<"$entry"
+		[ "$el" = "$rl" ] && [ "$ev" = "$rv" ] || continue
+		if [ -z "$rr" ]; then
+			[ -z "$er" ] && return 0
+		else
+			{ [ -z "$er" ] || [ "$er" = "$rr" ]; } && return 0
+		fi
+	done
+	return 1
+}
+
 gui() {
-	local language code name state rows=() choices
+	local code name chk rows=() answer rc picked=() log
 	while read -r code name; do
 		case "$code" in
 			"" | "#"*) continue ;;
 		esac
-		if is_kept "$code||"; then
-			state=TRUE
+		if row_kept "$code"; then
+			rows+=(TRUE "$code" "$name")
 		else
-			state=FALSE
+			rows+=(FALSE "$code" "$name")
 		fi
-		rows+=("$state|$code|$name")
 	done <"$SHARE/data/language"
-	choices=$(yad --list --checklist --print-column=2 --separator=| \
-		--column=$LOCAL5:CHK --column=$LOCAL6:TXT --column=$LOCAL1:TXT \
-		"${rows[@]}" 2>/dev/null)
-	[ "$?" -eq 0 ] || return 0
+	answer=$(yad --list --checklist --center --width=420 --height=600 \
+		--title="$LOCAL1" --text="$LOCAL2" --separator='|' \
+		--column="$LOCAL5:CHK" --column="$LOCAL6:TEXT" --column="$LOCAL1:TEXT" \
+		--button="$LOCAL4!gtk-cancel:1" --button="$LOCAL3!gtk-ok:0" \
+		"${rows[@]}")
+	rc=$?
+	[ "$rc" -eq 0 ] || return 0
+	while IFS='|' read -r chk code name; do
+		[ "$chk" = TRUE ] && picked+=("$code")
+	done <<<"$answer"
+	if [ "${#picked[@]}" -eq 0 ]; then
+		yad --image=dialog-error --text="$LOCAL30" --button="$LOCAL3:0"
+		return 1
+	fi
 	KEEP=()
-	while read -r code; do
-		if [ -n "$code" ]; then
-			KEEP+=("$code")
-		fi
-	done <<<"$choices"
-	apply_selection
+	parse_keep "${picked[*]}"
+	EXPLICIT=("${KEEP[@]}")
+	KEEP+=("en||")
+	plan_purge
+	rc=$?
+	if [ "$rc" -ne 0 ]; then
+		log=$(plan_purge 2>&1)
+		yad --text-info --title="$LOCAL1" --width=640 --height=400 \
+			--button="$LOCAL3:0" <<<"$log"
+		return "$rc"
+	fi
+	plan_install
+	# shellcheck disable=SC2059
+	yad --question --title="$LOCAL1" --text="$(printf "$LOCAL32" "${#PURGE[@]}" "${#INSTALL[@]}")" \
+		--button="$LOCAL4!gtk-cancel:1" --button="$LOCAL3!gtk-ok:0" || return 0
+	log=$(mktemp)
+	apply_selection >"$log" 2>&1
+	rc=$?
+	yad --text-info --title="$LOCAL1" --width=640 --height=400 --filename="$log" \
+		--button="$LOCAL3:0"
+	rm -f "$log"
+	return "$rc"
 }
 
 load_languages
