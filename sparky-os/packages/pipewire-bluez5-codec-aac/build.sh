@@ -29,11 +29,11 @@ docker run --rm -v "$OUT:/out" -e PWV="$PWV" -e DEBV="$DEBV" debian:testing sh -
 Package: pipewire-bluez5-codec-aac
 Version: $DEBV+aac1
 Architecture: amd64
-Maintainer: Daniel Campos Ramos <danielcamposramos.68@gmail.com>
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Depends: libspa-0.2-bluetooth (= $DEBV), libfdk-aac2 (>= 2.0.0)
 Section: non-free/sound
 Priority: optional
-Homepage: https://pipewire.org
+Homepage: https://sparkylinux.org
 Description: PipeWire Bluetooth AAC codec (A2DP)
  The AAC codec plugin of PipeWire $PWV, which Debian builds without because
  fdk-aac is non-free. Headsets that offer AAC (most earbuds and many

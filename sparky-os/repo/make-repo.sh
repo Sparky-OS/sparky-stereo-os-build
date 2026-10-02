@@ -7,6 +7,7 @@
 # (unsigned while developing; the published repository will be signed).
 set -eu
 R=${1:-/K3D/temp/sparky-os/repo}
+"$(dirname "$0")/provenance.sh" "$R"/*.deb
 cd "$R"
 apt-ftparchive packages . >Packages
 gzip -9kf Packages

@@ -33,7 +33,7 @@ control() { # dir package depends recommends description...
 		echo "Package: $p"
 		echo "Version: $VERSION"
 		echo "Architecture: all"
-		echo "Maintainer: Daniel Campos Ramos <danielcamposramos.68@gmail.com>"
+		echo "Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>"
 		echo "Section: kde"
 		echo "Priority: optional"
 		[ -n "$dep" ] && echo "Depends: $dep"
@@ -65,11 +65,11 @@ control "$D" sparky-stereo-look \
 	"icons, cursor and splash, the qt6ct application style (Qt's Fusion with no" \
 	"qt6ct configuration) and the Plastik window decoration, familiar to people" \
 	"coming from Windows. Also sets the default KWin effects: translucency with" \
-	"Daniel Campos Ramos's values, glide and wobbly windows."
+	"Daniel Ramos's values, glide and wobbly windows."
 printf '%s\n' /etc/xdg/kdeglobals /etc/xdg/kwinrc >"$D/DEBIAN/conffiles"
 cat >"$D/usr/share/doc/sparky-stereo-look/copyright" <<'EOF'
 Sparky Stereo OS default look.
-Theme definition and defaults: Copyright 2026 Daniel Campos Ramos, GPL-2.0-or-later.
+Theme definition and defaults: Copyright 2026 Daniel Ramos (Capitain Jack), GPL-2.0-or-later.
 Splash screen and previews: copied from KDE's Oxygen global theme (plasma-theme-oxygen),
 Copyright the Oxygen team, under its own licence (see /usr/share/doc/plasma-theme-oxygen/copyright).
 On Debian systems the GPL is in /usr/share/common-licenses/GPL-2.
@@ -91,17 +91,17 @@ cp -a /usr/share/sddm/themes/sparky-black "$D/usr/share/sddm/themes/"
 cp /opt/artwork/sparky-black.png "$D/usr/share/sparky-stereo/grub/"
 control "$D" sparky-stereo-look-sparkyblack "sparky-stereo-look" "plymouth, sddm" \
 	"Sparky black look, end to end" \
-	"Daniel Campos Ramos's Sparky black: the global theme (fixed: it sets its" \
+	"Daniel Ramos's Sparky black: the global theme (fixed: it sets its" \
 	"splash, names the cursor that exists, and uses the qt6ct style instead of" \
 	"QtCurve, which has no Qt 6 build), the Plasma style, icons and cursor, the" \
 	"Plymouth theme sparky-lines, the SDDM theme sparky-black and the GRUB" \
 	"background (in /usr/share/sparky-stereo/grub, not activated)."
 cat >"$D/usr/share/doc/sparky-stereo-look-sparkyblack/copyright" <<'EOF'
 Sparky black.
-Global theme, Plasma style, icons, cursor, GRUB background: Copyright Daniel Campos Ramos,
+Global theme, Plasma style, icons, cursor, GRUB background: Copyright Daniel Ramos (Capitain Jack),
 GPL-2.0-or-later (global theme) and GPL-3.0-or-later (Plasma style); based on Oxygen.
 Plymouth sparky-lines: a modified Debian 8 "Jessie" lines theme, GPL-2.0-or-later.
-SDDM sparky-black: David Edmundson, Pawel Pijanowski (pavroo), Daniel Campos Ramos;
+SDDM sparky-black: David Edmundson, Pawel Pijanowski (pavroo), Daniel Ramos (Capitain Jack);
 derived from the Breeze SDDM theme.
 On Debian systems the GPL is in /usr/share/common-licenses/.
 EOF
@@ -130,6 +130,6 @@ QPlatinum Plasma style and colour schemes: Copyright Zinjanthr0pus, AGPL-3.0 (th
 file in /usr/share/plasma/desktoptheme/QPlatinum; its metadata says GPLv3).
 QPlatinum22p window decoration: Niels / Zinjanthr0pus, GPL-3.0
 (https://github.com/nielsvm/kde-aurorae-platinum; LICENSE in its theme folder).
-Global theme definition: Copyright 2026 Daniel Campos Ramos, GPL-3.0-or-later.
+Global theme definition: Copyright 2026 Daniel Ramos (Capitain Jack), GPL-3.0-or-later.
 EOF
 build "$D" sparky-stereo-look-qplatinum
