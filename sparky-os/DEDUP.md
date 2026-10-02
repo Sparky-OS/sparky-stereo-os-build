@@ -2,7 +2,7 @@
 
 One tool per task, KDE's where it covers the task (Daniel, 2026-10-02). Leftovers of tasks and meta-packages go.
 
-## Another tool does the task (92)
+## Another tool does the task (91)
 
 | Package | Instead | Why |
 |---|---|---|
@@ -89,7 +89,6 @@ One tool per task, KDE's where it covers the task (Daniel, 2026-10-02). Leftover
 | totem | vlc | video player |
 | tuned-gtk | power-profiles-daemon | power profiles: KDE's battery applet drives power-profiles-daemon |
 | uim-gtk2.0 | fcitx5 | input method |
-| variety |  | Plasma's wallpaper slideshow and picture of the day |
 | vmg |  | KWin's zoom |
 | wdisplays |  | for wlroots compositors; KDE's display settings |
 | wpagui | plasma-nm | Wi-Fi |
