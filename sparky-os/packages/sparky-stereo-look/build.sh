@@ -1,0 +1,135 @@
+#!/bin/bash
+# Sparky Stereo OS looks (Daniel, 2026-10-02), as three packages:
+#   sparky-stereo-look             the default: Oxygen in dark mode, Daniel's transparency,
+#                                  glide and wobbly windows, the qt6ct (Fusion-like) app
+#                                  style and Plastik window borders
+#   sparky-stereo-look-sparkyblack Sparky black, fixed (splash set, the real cursor name,
+#                                  no QtCurve): global theme, Plasma style, icons and
+#                                  cursor, Plymouth sparky-lines, SDDM sparky-black, the
+#                                  GRUB background
+#   sparky-stereo-look-qplatinum   the System 8 look: QPlatinum (Platinum) style, colours and window
+#                                  decoration (Zinjanthr0pus), with Sparky black's icons,
+#                                  cursor and splash
+# The art comes from where it is installed on Daniel's system (the edition's build host);
+# the theme definitions and fixes are in this folder.
+# Usage: build.sh   (packages land in $OUT, default /K3D/temp/sparky-os/repo)
+set -euo pipefail
+HERE=$(cd "$(dirname "$0")" && pwd)
+OUT=${OUT:-/K3D/temp/sparky-os/repo}
+VERSION=${VERSION:-1.0~dev1}
+WORK=$(mktemp -d /K3D/temp/sparky-os/look-build.XXXXXX)
+trap 'rm -rf "$WORK"' EXIT
+LNF=usr/share/plasma/look-and-feel
+OXYGEN=/usr/share/plasma/look-and-feel/org.kde.oxygen
+SB=/usr/share/plasma/look-and-feel/org.kde.sparkyblack.desktop
+QP=$HOME/.local/share/plasma/desktoptheme/QPlatinum
+QPDECO=$HOME/.local/share/aurorae/themes/QPlatinum22p
+mkdir -p "$OUT"
+
+control() { # dir package depends recommends description...
+	local d=$1 p=$2 dep=$3 rec=$4; shift 4
+	mkdir -p "$d/DEBIAN" "$d/usr/share/doc/$p"
+	{
+		echo "Package: $p"
+		echo "Version: $VERSION"
+		echo "Architecture: all"
+		echo "Maintainer: Daniel Campos Ramos <danielcamposramos.68@gmail.com>"
+		echo "Section: kde"
+		echo "Priority: optional"
+		[ -n "$dep" ] && echo "Depends: $dep"
+		[ -n "$rec" ] && echo "Recommends: $rec"
+		echo "Description: $1"
+		shift
+		for l in "$@"; do echo " $l"; done
+	} >"$d/DEBIAN/control"
+}
+build() { # dir package
+	find "$1" -name '*.qmlc' -delete
+	dpkg-deb --root-owner-group -Zxz -b "$1" "$OUT/${2}_${VERSION}_all.deb" >/dev/null
+	echo "built $OUT/${2}_${VERSION}_all.deb"
+}
+
+# 1. The default look.
+D=$WORK/sparky-stereo-look
+T=$D/$LNF/org.sparkystereo.desktop
+mkdir -p "$T/contents" "$D/etc/xdg"
+cp "$HERE/default/org.sparkystereo.desktop/metadata.json" "$T/"
+cp "$HERE/default/org.sparkystereo.desktop/contents/defaults" "$T/contents/"
+cp -a "$OXYGEN/contents/splash" "$OXYGEN/contents/previews" "$T/contents/"
+cp "$HERE/default/xdg/kdeglobals" "$HERE/default/xdg/kwinrc" "$D/etc/xdg/"
+control "$D" sparky-stereo-look \
+	"plasma-theme-oxygen, oxygen-icon-theme, oxygencursors, kwin-style-aurorae, qt6ct" \
+	"kde-style-oxygen-qt6, kwin-decoration-oxygen" \
+	"Sparky Stereo OS default look: Oxygen dark" \
+	"The edition's default global theme: Oxygen's dark colours, Plasma style," \
+	"icons, cursor and splash, the qt6ct application style (Qt's Fusion with no" \
+	"qt6ct configuration) and the Plastik window decoration, familiar to people" \
+	"coming from Windows. Also sets the default KWin effects: translucency with" \
+	"Daniel Campos Ramos's values, glide and wobbly windows."
+printf '%s\n' /etc/xdg/kdeglobals /etc/xdg/kwinrc >"$D/DEBIAN/conffiles"
+cat >"$D/usr/share/doc/sparky-stereo-look/copyright" <<'EOF'
+Sparky Stereo OS default look.
+Theme definition and defaults: Copyright 2026 Daniel Campos Ramos, GPL-2.0-or-later.
+Splash screen and previews: copied from KDE's Oxygen global theme (plasma-theme-oxygen),
+Copyright the Oxygen team, under its own licence (see /usr/share/doc/plasma-theme-oxygen/copyright).
+On Debian systems the GPL is in /usr/share/common-licenses/GPL-2.
+EOF
+build "$D" sparky-stereo-look
+
+# 2. Sparky black, fixed.
+D=$WORK/sparky-stereo-look-sparkyblack
+mkdir -p "$D/$LNF" "$D/usr/share/plasma/desktoptheme" "$D/usr/share/icons" \
+	"$D/usr/share/plymouth/themes" "$D/usr/share/sddm/themes" "$D/usr/share/sparky-stereo/grub"
+cp -a "$SB" "$D/$LNF/"
+rm -f "$D/$LNF/org.kde.sparkyblack.desktop/metadata.desktop"
+cp "$HERE/sparkyblack/metadata.json" "$D/$LNF/org.kde.sparkyblack.desktop/"
+cp "$HERE/sparkyblack/defaults" "$D/$LNF/org.kde.sparkyblack.desktop/contents/defaults"
+cp -a /usr/share/plasma/desktoptheme/sparkyblack "$D/usr/share/plasma/desktoptheme/"
+rsync -a --exclude=.directory /usr/share/icons/sparkyblack "$D/usr/share/icons/"   # .directory: a root-only folder-view file
+cp -a /usr/share/plymouth/themes/sparky-lines "$D/usr/share/plymouth/themes/"
+cp -a /usr/share/sddm/themes/sparky-black "$D/usr/share/sddm/themes/"
+cp /opt/artwork/sparky-black.png "$D/usr/share/sparky-stereo/grub/"
+control "$D" sparky-stereo-look-sparkyblack "sparky-stereo-look" "plymouth, sddm" \
+	"Sparky black look, end to end" \
+	"Daniel Campos Ramos's Sparky black: the global theme (fixed: it sets its" \
+	"splash, names the cursor that exists, and uses the qt6ct style instead of" \
+	"QtCurve, which has no Qt 6 build), the Plasma style, icons and cursor, the" \
+	"Plymouth theme sparky-lines, the SDDM theme sparky-black and the GRUB" \
+	"background (in /usr/share/sparky-stereo/grub, not activated)."
+cat >"$D/usr/share/doc/sparky-stereo-look-sparkyblack/copyright" <<'EOF'
+Sparky black.
+Global theme, Plasma style, icons, cursor, GRUB background: Copyright Daniel Campos Ramos,
+GPL-2.0-or-later (global theme) and GPL-3.0-or-later (Plasma style); based on Oxygen.
+Plymouth sparky-lines: a modified Debian 8 "Jessie" lines theme, GPL-2.0-or-later.
+SDDM sparky-black: David Edmundson, Pawel Pijanowski (pavroo), Daniel Campos Ramos;
+derived from the Breeze SDDM theme.
+On Debian systems the GPL is in /usr/share/common-licenses/.
+EOF
+build "$D" sparky-stereo-look-sparkyblack
+
+# 3. QPlatinum, the System 8 look (Mac OS 8's Platinum appearance).
+D=$WORK/sparky-stereo-look-qplatinum
+T=$D/$LNF/org.sparkystereo.qplatinum
+mkdir -p "$T/contents" "$D/usr/share/plasma/desktoptheme" "$D/usr/share/aurorae/themes" \
+	"$D/usr/share/color-schemes"
+cp "$HERE/qplatinum/org.sparkystereo.qplatinum/metadata.json" "$T/"
+cp "$HERE/qplatinum/org.sparkystereo.qplatinum/contents/defaults" "$T/contents/"
+cp -a "$SB/contents/splash" "$T/contents/"
+cp -a "$QP" "$D/usr/share/plasma/desktoptheme/"
+cp -a "$QPDECO" "$D/usr/share/aurorae/themes/"
+cp "$QP"/color-schemes/*.colors "$D/usr/share/color-schemes/"
+control "$D" sparky-stereo-look-qplatinum \
+	"sparky-stereo-look-sparkyblack, kwin-style-aurorae, qt6ct" "" \
+	"QPlatinum look: the System 8 Platinum appearance" \
+	"Zinjanthr0pus's QPlatinum Plasma style and colour schemes and the" \
+	"QPlatinum22p window decoration, as a global theme with Sparky black's" \
+	"icons, cursor and splash."
+cat >"$D/usr/share/doc/sparky-stereo-look-qplatinum/copyright" <<'EOF'
+QPlatinum look.
+QPlatinum Plasma style and colour schemes: Copyright Zinjanthr0pus, AGPL-3.0 (the LICENSE
+file in /usr/share/plasma/desktoptheme/QPlatinum; its metadata says GPLv3).
+QPlatinum22p window decoration: Niels / Zinjanthr0pus, GPL-3.0
+(https://github.com/nielsvm/kde-aurorae-platinum; LICENSE in its theme folder).
+Global theme definition: Copyright 2026 Daniel Campos Ramos, GPL-3.0-or-later.
+EOF
+build "$D" sparky-stereo-look-qplatinum
