@@ -4,7 +4,9 @@
 # The VM then drives the TV on the card's HDMI port (the KDL-46EX725) with the edition's own
 # NVIDIA stack: the hardware path tested on real hardware.
 # KWin must not hold the card: log in with ~/.config/plasma-workspace/env/kwin-igpu.sh
-# (KWIN_DRM_DEVICES on the iGPU) first. While the VM has the card, the host has no NVIDIA GPU:
+# (KWIN_DRM_DEVICES on the iGPU, Mesa-only EGL/GLX/Vulkan vendors) first. Plasma's sensor
+# daemon runs nvidia-smi: systemctl --user mask --runtime plasma-ksystemstats and stop it;
+# OpenRGB holds the card's I2C buses: close it. While the VM has the card, the host has no NVIDIA GPU:
 # the services that use it are stopped by give and started again by take.
 #
 #   sudo gpu-vfio.sh give      stop the card's users, bind both devices to vfio-pci
@@ -20,7 +22,7 @@ CONTAINERS=(open-webui)
 VMUSER=${SUDO_USER:-daniel}
 
 need_root() { [ "$(id -u)" = 0 ] || { echo "run with sudo"; exit 1; }; }
-holders() { fuser "$CARD" /dev/nvidia* 2>/dev/null | tr -s ' ' '\n' | grep . | sort -u | while read -r p; do ps -o comm= -p "$p"; done | sort -u; }
+holders() { { fuser "$CARD" /dev/nvidia* 2>/dev/null || true; } | tr -s ' ' '\n' | { grep . || true; } | sort -u | while read -r p; do ps -o comm= -p "$p"; done | sort -u; }
 
 case ${1:-} in
 give)
@@ -29,7 +31,7 @@ give)
 		ps -o comm= -p "$(fuser "$CARD" 2>/dev/null | tr -s ' ' ',' | sed 's/^,//')" | grep -qx kwin_wayland &&
 			{ echo "KWin holds the card: log in with kwin-igpu.sh first"; exit 1; }
 	fi
-	: >"$STATE"
+	[ -f "$STATE" ] || : >"$STATE"   # a second give keeps the list of what the first one stopped
 	for s in "${SERVICES[@]}"; do
 		systemctl is-active -q "$s" && { systemctl stop "$s"; echo "service $s" >>"$STATE"; }
 	done
@@ -38,6 +40,14 @@ give)
 			{ docker stop "$c" >/dev/null; echo "container $c" >>"$STATE"; }
 	done
 	h=$(holders)
+	# the card's I2C buses too: NVIDIA's removal waits until nobody has them open (OpenRGB
+	# keeps every bus open for the card's lighting, 2026-10-02), and the unbind would hang
+	for a in /sys/bus/pci/devices/${DEVS[0]}/i2c-*; do
+		[ -e "$a" ] || continue
+		p=$(fuser "/dev/$(basename "$a")" 2>/dev/null || true)
+		[ -n "$p" ] && h+=$'\n'"$(ps -o comm= -p "$(echo $p | tr ' ' ',')") (on $(basename "$a"))"
+	done
+	h=$(echo "$h" | grep . | sort -u || true)
 	[ -n "$h" ] && { echo "still holding the card (close them, then run give again):"; echo "$h"; exit 1; }
 	modprobe vfio-pci
 	for d in "${DEVS[@]}"; do

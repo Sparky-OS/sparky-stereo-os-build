@@ -134,6 +134,7 @@ group('hardware', 'Hardware support', [
     'laptop-detect', 'isenkram-cli', 'discover', 'nvidia-detect', 'lm-sensors',   # fans: CoolerControl
     'thermald', 'power-profiles-daemon', 'fwupd', 'inxi', 'hw-probe', 'bluetooth',
     'firmware-linux', 'firmware-linux-nonfree', 'firmware-misc-nonfree', 'firmware-amd-graphics',
+    'firmware-nvidia-gsp',   # nouveau on Turing and newer needs it, or there is no GR engine (VM test 2026-10-02)
     'firmware-realtek', 'firmware-iwlwifi', 'firmware-atheros', 'firmware-brcm80211',
     'firmware-intel-sound', 'firmware-sof-signed', 'amd64-microcode', 'intel-microcode',
     'mesa-vulkan-drivers', 'mesa-va-drivers', 'intel-media-va-driver', 'vainfo', 'vdpauinfo',
