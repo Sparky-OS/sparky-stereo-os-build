@@ -12,11 +12,13 @@ ZONEINFO=${SPARKY_TIME_ZONEINFO:-/usr/share/zoneinfo}
 LOCALTIME=${SPARKY_TIME_LOCALTIME:-/etc/localtime}
 TIMEZONE_FILE=${SPARKY_TIME_TIMEZONE_FILE:-/etc/timezone}
 OUT=${SPARKY_TIME_OUT:-/etc/chrony/sources.d/sparky-stereo.sources}
-# chrony.conf is edited only for the real system, or where a test points SPARKY_TIME_CONF
-CONF=${SPARKY_TIME_CONF:-}
-[ -n "$CONF" ] || [ -n "${SPARKY_TIME_OUT:-}" ] || CONF=/etc/chrony/chrony.conf
-DEBIAN_POOL='pool 2.debian.pool.ntp.org iburst'
-MARK='#sparky-stereo: '
+# the generated chrony.conf.d snippet: with two or more NTS servers the Debian pool is never
+# selected while authenticated sources exist (chrony.conf(5): authselectmode prefer)
+AUTHCONF=${SPARKY_TIME_AUTHCONF:-}
+if [ -z "$AUTHCONF" ]; then
+	if [ -n "${SPARKY_TIME_OUT:-}" ]; then AUTHCONF=$(dirname "$SPARKY_TIME_OUT")/sparky-stereo-auth.conf
+	else AUTHCONF=/etc/chrony/conf.d/sparky-stereo-auth.conf; fi
+fi
 FALLBACK='pool debian.pool.ntp.org iburst'
 LANGDIR=/usr/share/sparky/sparky-stereo-time
 [ -d "$LANGDIR" ] || LANGDIR=$(dirname "$0")/../lang
@@ -115,13 +117,14 @@ fi
 
 LINES=
 COUNT=0
+NTSCOUNT=0
 if [ -n "$ROW" ]; then
 	servers=$(echo "$ROW" | cut -f2)
 	nts=$(echo "$ROW" | cut -f3)
 	for h in $servers; do
 		[ "$h" = - ] && continue
 		case " $nts " in
-			*" $h "*) LINES+="server $h iburst nts"$'\n' ;;
+			*" $h "*) LINES+="server $h iburst nts"$'\n'; NTSCOUNT=$((NTSCOUNT + 1)) ;;
 			*) LINES+="server $h iburst"$'\n' ;;
 		esac
 		COUNT=$((COUNT + 1))
@@ -138,17 +141,28 @@ else
 	WHAT=$(printf "$LOCAL6" "$CC" "$ZONE")
 fi
 
+AUTH=
+[ "$NTSCOUNT" -ge 2 ] && AUTH="# Sparky Stereo OS: written by sparky-stereo-time, do not edit
+authselectmode prefer
+"
 CONTENT="# Sparky Stereo OS: written by sparky-stereo-time from the timezone, do not edit
 ${LINES}"
 if [ "$PRINT" = 1 ]; then
 	printf '%s' "$CONTENT"
+	[ -n "$AUTH" ] && echo "# conf.d: authselectmode prefer"
 	exit 0
 fi
 
-# Debian's own pool line would run next to ours: comment it out, marked so postrm restores it
+# conf.d is read only at chrony's start: a changed authselectmode needs a restart
 CONFCHANGED=0
-if [ -n "$CONF" ] && [ -f "$CONF" ] && grep -q -x -F "$DEBIAN_POOL" "$CONF"; then
-	sed -i "s|^$DEBIAN_POOL\$|$MARK$DEBIAN_POOL|" "$CONF"
+if [ -n "$AUTH" ]; then
+	if [ "$(cat "$AUTHCONF" 2>/dev/null)" != "${AUTH%$'\n'}" ]; then
+		mkdir -p "$(dirname "$AUTHCONF")"
+		printf '%s' "$AUTH" >"$AUTHCONF.new" && mv "$AUTHCONF.new" "$AUTHCONF"
+		CONFCHANGED=1
+	fi
+elif [ -f "$AUTHCONF" ]; then
+	rm -f "$AUTHCONF"
 	CONFCHANGED=1
 fi
 
@@ -162,8 +176,7 @@ fi
 # also when nothing changed: an earlier reload may have failed while chrony was starting
 if [ "$RELOAD" = 1 ]; then
 	if [ "$CONFCHANGED" = 1 ] && [ -d /run/systemd/system ]; then
-		# chrony.conf is read only at start
-		systemctl try-restart chrony.service >/dev/null 2>&1 || printf '%s\n' "$LOCAL8"
+				systemctl try-restart chrony.service >/dev/null 2>&1 || printf '%s\n' "$LOCAL8"
 	elif command -v chronyc >/dev/null 2>&1; then
 		chronyc reload sources >/dev/null 2>&1 || printf '%s\n' "$LOCAL8"
 	fi

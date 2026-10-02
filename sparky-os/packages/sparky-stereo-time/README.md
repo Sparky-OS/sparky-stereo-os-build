@@ -15,7 +15,7 @@ ca-certificates, chrony
 
 Notes:
 -------------
-Debian's chrony.conf carries `pool 2.debian.pool.ntp.org iburst`; chrony has no way to drop a source from a snippet, so the package comments that one line out (marked `#sparky-stereo: `) and gives it back on removal. A chrony upgrade that brings the line back is fixed at the next boot. Countries without a national service use `pool debian.pool.ntp.org iburst`.
+chrony.conf is never touched (Debian manages it with ucf). The Debian pool stays configured; chrony's own source selection keeps it out of the way. Countries with two or more NTS servers (BR, DE, AT, SE) get a generated `/etc/chrony/conf.d/sparky-stereo-auth.conf` with `authselectmode prefer`: once any source is authenticated, unauthenticated ones, the pool included, are never selected. Countries with one NTS server (DK, ES, FR) keep the default `mix` and the pool fallback line; in `mix` the pool is used only while it agrees with the NTS server. Countries without a service get `pool debian.pool.ntp.org iburst` and no authselectmode line. Note that `prefer` and `mix` both need the NTS source to work: if every NTS server is unreachable, there is no fallback.
 The service runs after chrony starts: the first start reads the file written earlier, the oneshot then corrects it. The units are enabled by vendor symlinks, so `systemctl disable` does not apply. `/etc/chrony/conf.d/sparky-stereo.conf` (nocerttimecheck 1) is a conffile.
 
 Build:

@@ -87,14 +87,22 @@ rm -f "$L/localtime"; : >"$L/localtime"; echo Europe/Stockholm >"$L/timezone"; l
 rm -f "$L/localtime" "$L/timezone"; lcheck "nothing at all -> pool" '^pool debian\.pool\.ntp\.org iburst$'
 # --zone needs a value
 LANG=C $T --print --zone >/dev/null 2>&1; [ $? -eq 2 ] && echo "PASS --zone without value is refused" || { echo "FAIL --zone without value"; FAILS=$((FAILS + 1)); }
-# Debian's pool line: commented out with the marker, once, the rest of chrony.conf untouched
-C=$(mktemp -d)/chrony.conf
-printf 'pool 2.debian.pool.ntp.org iburst\nsourcedir /etc/chrony/sources.d\nrtcsync\n' >"$C"
-D=$(mktemp -d)
-SPARKY_TIME_CONF=$C SPARKY_TIME_OUT=$D/s.sources LANG=C $T --zone Europe/Berlin --no-reload >/dev/null
-[ "$(head -n1 "$C")" = '#sparky-stereo: pool 2.debian.pool.ntp.org iburst' ] && ! grep -q '^pool' "$C" && [ "$(wc -l <"$C")" = 3 ] && echo "PASS Debian pool line commented with marker" || { echo "FAIL Debian pool line: $(cat "$C")"; FAILS=$((FAILS + 1)); }
-sed 's/^#sparky-stereo: //' "$C" | cmp -s - <(printf 'pool 2.debian.pool.ntp.org iburst\nsourcedir /etc/chrony/sources.d\nrtcsync\n') && echo "PASS marker restores the line exactly" || { echo "FAIL restore"; FAILS=$((FAILS + 1)); }
-SPARKY_TIME_CONF=$C SPARKY_TIME_OUT=$D/s.sources LANG=C $T --zone Europe/Berlin --no-reload >/dev/null
-[ "$(grep -c 'sparky-stereo' "$C")" = 1 ] && echo "PASS second run does not mark twice" || { echo "FAIL double mark"; FAILS=$((FAILS + 1)); }
+# authselectmode: prefer with two or more NTS servers, default mix (no line) with one or none
+check "BR (3 NTS) -> authselectmode prefer" America/Sao_Paulo '^# conf\.d: authselectmode prefer$'
+check "SE (2 NTS) -> authselectmode prefer" Europe/Stockholm '^# conf\.d: authselectmode prefer$'
+check "AT (3 NTS) -> authselectmode prefer" Europe/Vienna '^# conf\.d: authselectmode prefer$'
+check "DK (1 NTS) -> mix, no prefer" Europe/Copenhagen '^pool debian' 'authselectmode'
+check "ES (1 NTS) -> mix, no prefer" Europe/Madrid '^pool debian' 'authselectmode'
+check "FR (1 NTS) -> mix, no prefer" Europe/Paris '^pool debian' 'authselectmode'
+check "Lisbon (no service) -> no prefer" Europe/Lisbon '^pool debian' 'authselectmode'
+# the generated snippet is written, removed for another country, and chrony.conf is never touched
+D=$(mktemp -d); export SPARKY_TIME_OUT=$D/s.sources
+printf 'pool 2.debian.pool.ntp.org iburst\nrtcsync\n' >"$D/chrony.conf"; cp "$D/chrony.conf" "$D/chrony.conf.orig"
+LANG=C $T --zone America/Sao_Paulo --no-reload >/dev/null
+[ "$(sed -n 2p "$D/sparky-stereo-auth.conf")" = "authselectmode prefer" ] && echo "PASS prefer snippet written for BR" || { echo "FAIL prefer snippet"; FAILS=$((FAILS + 1)); }
+LANG=C $T --zone Europe/Copenhagen --no-reload >/dev/null
+[ ! -e "$D/sparky-stereo-auth.conf" ] && echo "PASS snippet removed for a one-NTS country" || { echo "FAIL snippet stays"; FAILS=$((FAILS + 1)); }
+cmp -s "$D/chrony.conf" "$D/chrony.conf.orig" && echo "PASS chrony.conf untouched" || { echo "FAIL chrony.conf changed"; FAILS=$((FAILS + 1)); }
+unset SPARKY_TIME_OUT
 echo "failures: $FAILS"
 exit $((FAILS > 0))

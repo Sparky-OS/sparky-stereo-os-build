@@ -11,17 +11,18 @@ cp $C /tmp/chrony.conf.orig
 ln -sf /usr/share/zoneinfo/America/Sao_Paulo /etc/localtime
 dpkg -i "$DEB" >/dev/null 2>&1; apt-get -y -f install >/dev/null 2>&1
 ok "sources file written for BR" "grep -q 'server a.st1.ntp.br iburst nts' /etc/chrony/sources.d/sparky-stereo.sources"
-ok "Debian pool line commented with marker" "grep -qx '#sparky-stereo: pool 2.debian.pool.ntp.org iburst' $C && ! grep -q '^pool' $C"
-ok "no active pool left in chrony.conf" "[ -z \"\$(grep -h '^pool' $C /etc/chrony/sources.d/*.sources)\" ]"
+ok "chrony.conf untouched by install" "cmp -s $C /tmp/chrony.conf.orig"
+ok "BR: authselectmode prefer snippet" "grep -qx 'authselectmode prefer' /etc/chrony/conf.d/sparky-stereo-auth.conf"
 ok "nocerttimecheck conffile" "grep -qx 'nocerttimecheck 1' /etc/chrony/conf.d/sparky-stereo.conf"
 ok "conffile is registered" "dpkg-query -W -f='\${Conffiles}' sparky-stereo-time | grep -q sparky-stereo.conf"
 ok "depends on ca-certificates" "dpkg-query -W -f='\${Depends}' sparky-stereo-time | grep -q ca-certificates"
 dpkg -r sparky-stereo-time >/dev/null 2>&1
-ok "remove restores chrony.conf byte for byte" "cmp -s $C /tmp/chrony.conf.orig"
+ok "remove leaves chrony.conf identical" "cmp -s $C /tmp/chrony.conf.orig"
 ok "remove deletes the sources file" "[ ! -e /etc/chrony/sources.d/sparky-stereo.sources ]"
+ok "remove deletes the generated snippet" "[ ! -e /etc/chrony/conf.d/sparky-stereo-auth.conf ]"
 dpkg -i "$DEB" >/dev/null 2>&1
 dpkg -P sparky-stereo-time >/dev/null 2>&1
-ok "purge restores chrony.conf byte for byte" "cmp -s $C /tmp/chrony.conf.orig"
+ok "purge leaves chrony.conf identical" "cmp -s $C /tmp/chrony.conf.orig"
 ok "purge removes the conffile" "[ ! -e /etc/chrony/conf.d/sparky-stereo.conf ]"
 ok "purge removes the tool and the data" "[ ! -e /usr/bin/sparky-stereo-time ] && [ ! -e /usr/share/sparky-stereo-time ]"
 echo "failures: $FAILS"

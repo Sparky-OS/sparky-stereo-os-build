@@ -10,7 +10,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
-VERSION=20261002.1~sparky9~0
+VERSION=20261002.2~sparky9~0
 PKG=sparky-stereo-time
 W=$(mktemp -d "${TMPDIR:-/K3D/temp}/time-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
@@ -25,8 +25,8 @@ install -m 644 "$HERE"/lang/* "$D/usr/share/sparky/$PKG/"
 install -m 644 "$HERE"/systemd/sparky-stereo-time.service "$HERE"/systemd/sparky-stereo-time.path \
 	"$D/usr/lib/systemd/system/"
 cat >"$D/etc/chrony/conf.d/sparky-stereo.conf" <<'EOS'
-# Sparky Stereo OS: sparky-stereo-time. Without a Debian pool source a machine with a wrong clock
-# (no RTC) cannot check the NTS-KE certificate dates, so the first connection skips that check.
+# Sparky Stereo OS: sparky-stereo-time. A machine with a wrong clock (no RTC) cannot check the
+# NTS-KE certificate dates, and with authselectmode prefer no plain source corrects it first.
 nocerttimecheck 1
 EOS
 chmod 644 "$D/etc/chrony/conf.d/sparky-stereo.conf"
@@ -53,15 +53,11 @@ cat >"$D/DEBIAN/postrm" <<'EOS'
 set -e
 if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
 	rm -f /etc/chrony/sources.d/sparky-stereo.sources
+	# chrony.conf itself is never touched; our generated conf.d snippet goes, chrony restarts once
 	changed=0
-	# give Debian's pool line back exactly as it was (the second call, on purge, finds nothing)
-	if [ -f /etc/chrony/chrony.conf ] && grep -q '^#sparky-stereo: ' /etc/chrony/chrony.conf; then
-		sed -i 's/^#sparky-stereo: //' /etc/chrony/chrony.conf
-		changed=1
-	fi
+	[ -f /etc/chrony/conf.d/sparky-stereo-auth.conf ] && { rm -f /etc/chrony/conf.d/sparky-stereo-auth.conf; changed=1; }
 	if [ -d /run/systemd/system ]; then
 		systemctl daemon-reload || true
-		# chrony.conf is read only at start; one restart, and only when it changed
 		[ "$changed" = 1 ] && { systemctl try-restart chrony.service 2>/dev/null || true; }
 	fi
 	[ "$changed" = 1 ] || { chronyc reload sources >/dev/null 2>&1 || true; }
@@ -128,7 +124,8 @@ Homepage: https://sparkylinux.org
 Description: Sparky Stereo time servers
   Sets chrony's time sources from the timezone: the country's official
   service, with NTS where it offers it, or Debian's pool where it has none.
-  Comments out Debian's own pool line in chrony.conf (restored on removal).
+  Countries with two or more NTS servers use authselectmode prefer, so Debian's
+  pool is never selected next to them. chrony.conf is not modified.
 EOS
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT"
