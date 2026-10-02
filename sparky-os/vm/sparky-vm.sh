@@ -10,6 +10,8 @@
 #   sparky-vm.sh install [iso]     boot the Sparky KDE ISO to install it
 #   sparky-vm.sh run               boot the installed system
 #   sparky-vm.sh ssh [command]     a shell in the VM (port 2222 on the host)
+#   sparky-vm.sh compact           (VM powered off) rewrite the disk image without its freed
+#                                  clusters, after prepack.sh's TRIM
 #
 # GPU=nvidia passes the RTX 3060 (01:00.0 and its audio 01:00.1) through, for test
 # sessions of the stereo stack on real hardware; the card must be bound to vfio-pci
@@ -90,6 +92,9 @@ create) create ;;
 install) boot -drive file="${2:-$ISO_DEFAULT}",media=cdrom,readonly=on,if=none,id=cd0 \
 	-device ide-cd,drive=cd0,bootindex=0 ;;
 run) boot ;;
+compact) pgrep -f "qemu-system-x86_64 -name sparky-dev" >/dev/null && { echo "power the VM off first"; exit 1; }
+	qemu-img convert -p -O qcow2 -o cluster_size=2M,lazy_refcounts=on "$DISK" "$DISK.compact" &&
+		mv "$DISK.compact" "$DISK" && ls -la "$DISK" ;;
 ssh) shift; exec ssh -p 2222 -i "$VMDIR/id_ed25519" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$VMDIR/known_hosts" \
 	"${VMUSER:-daniel}"@127.0.0.1 "$@" ;;
 *) sed -n '2,17p' "$0"; exit 1 ;;
