@@ -137,6 +137,8 @@ group('hardware', 'Hardware support', [
     'mesa-vulkan-drivers', 'mesa-va-drivers', 'intel-media-va-driver', 'vainfo', 'vdpauinfo',
     'evdi-dkms', 'displaylink-driver',
     'nvidia-settings',   # with the NVIDIA driver, when the hardware setup finds an NVIDIA card
+    'libfdk-aac2', 'pipewire-bluez5-codec-aac',   # Bluetooth AAC (ours: sparky-os/packages)
+    'xpadneo',   # Xbox controllers over Bluetooth (DKMS; ours to package)
 ])
 
 # 8. System: apps from Flathub, containers, Android, snapshots, zram.
