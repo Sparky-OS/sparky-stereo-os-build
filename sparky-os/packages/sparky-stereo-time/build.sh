@@ -10,20 +10,27 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
-VERSION=20261002~sparky9~0
+VERSION=20261002.1~sparky9~0
 PKG=sparky-stereo-time
 W=$(mktemp -d "${TMPDIR:-/K3D/temp}/time-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 D=$W/$PKG
 S=$D/usr/share/$PKG
 mkdir -p "$D/DEBIAN" "$D/usr/bin" "$S" "$D/usr/share/sparky/$PKG" "$D/usr/share/doc/$PKG" \
-	"$D/usr/lib/systemd/system/multi-user.target.wants" "$D/usr/lib/systemd/system/paths.target.wants"
+	"$D/etc/chrony/conf.d" "$D/usr/lib/systemd/system/multi-user.target.wants" "$D/usr/lib/systemd/system/paths.target.wants"
 
 install -m 755 "$HERE/bin/sparky-stereo-time" "$D/usr/bin/sparky-stereo-time"
 install -m 644 "$HERE/data/ntp-countries.tsv" "$S/ntp-countries.tsv"
 install -m 644 "$HERE"/lang/* "$D/usr/share/sparky/$PKG/"
 install -m 644 "$HERE"/systemd/sparky-stereo-time.service "$HERE"/systemd/sparky-stereo-time.path \
 	"$D/usr/lib/systemd/system/"
+cat >"$D/etc/chrony/conf.d/sparky-stereo.conf" <<'EOS'
+# Sparky Stereo OS: sparky-stereo-time. Without a Debian pool source a machine with a wrong clock
+# (no RTC) cannot check the NTS-KE certificate dates, so the first connection skips that check.
+nocerttimecheck 1
+EOS
+chmod 644 "$D/etc/chrony/conf.d/sparky-stereo.conf"
+printf '/etc/chrony/conf.d/sparky-stereo.conf\n' >"$D/DEBIAN/conffiles"
 ln -s ../sparky-stereo-time.service "$D/usr/lib/systemd/system/multi-user.target.wants/sparky-stereo-time.service"
 ln -s ../sparky-stereo-time.path "$D/usr/lib/systemd/system/paths.target.wants/sparky-stereo-time.path"
 
@@ -46,10 +53,18 @@ cat >"$D/DEBIAN/postrm" <<'EOS'
 set -e
 if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
 	rm -f /etc/chrony/sources.d/sparky-stereo.sources
+	changed=0
+	# give Debian's pool line back exactly as it was (the second call, on purge, finds nothing)
+	if [ -f /etc/chrony/chrony.conf ] && grep -q '^#sparky-stereo: ' /etc/chrony/chrony.conf; then
+		sed -i 's/^#sparky-stereo: //' /etc/chrony/chrony.conf
+		changed=1
+	fi
 	if [ -d /run/systemd/system ]; then
 		systemctl daemon-reload || true
-		systemctl reload-or-restart chrony.service 2>/dev/null || true
+		# chrony.conf is read only at start; one restart, and only when it changed
+		[ "$changed" = 1 ] && { systemctl try-restart chrony.service 2>/dev/null || true; }
 	fi
+	[ "$changed" = 1 ] || { chronyc reload sources >/dev/null 2>&1 || true; }
 fi
 exit 0
 EOS
@@ -106,13 +121,14 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: chrony
+Depends: ca-certificates, chrony
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org
 Description: Sparky Stereo time servers
   Sets chrony's time sources from the timezone: the country's official
   service, with NTS where it offers it, or Debian's pool where it has none.
+  Comments out Debian's own pool line in chrony.conf (restored on removal).
 EOS
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT"

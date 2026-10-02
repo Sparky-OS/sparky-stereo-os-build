@@ -24,9 +24,20 @@ check "Tokyo (NICT left out) -> Debian pool only" Asia/Tokyo '^pool debian\.pool
 check "New York (NIST left out) -> Debian pool only" America/New_York '^pool debian\.pool\.ntp\.org iburst$' 'nist|^server'
 check "Lisbon (no service) -> Debian pool only" Europe/Lisbon '^pool debian\.pool\.ntp\.org iburst$' '^server'
 check "Auckland (NZ excluded) -> Debian pool only" Pacific/Auckland '^pool debian\.pool\.ntp\.org iburst$' '^server'
-check "Backward alias Asia/Calcutta resolves, no service -> pool" Asia/Calcutta '^pool debian\.pool\.ntp\.org iburst$' '^server'
+check "Backward alias Brazil/East (tzdata.zi link) -> NTP.br" Brazil/East '^server a\.st1\.ntp\.br iburst nts$' 'pool'
+check "Backward alias Asia/Calcutta, no service -> pool" Asia/Calcutta '^pool debian\.pool\.ntp\.org iburst$' '^server'
+check "Stockholm -> RISE, both nts, pool maxsources 2" Europe/Stockholm '^server nts1\.ri\.se iburst nts$' '^server nts[^12]'
+check "Stockholm second server" Europe/Stockholm '^server nts2\.ri\.se iburst nts$'
+check "Stockholm pool completes" Europe/Stockholm '^pool debian\.pool\.ntp\.org iburst maxsources 2$'
+check "Madrid -> ROA nts1 only" Europe/Madrid '^server nts1\.roa\.es iburst nts$' 'hora\.roa'
+check "Canary -> ROA" Atlantic/Canary '^server nts1\.roa\.es iburst nts$' 'hora\.roa'
+check "Paris -> LNE-OP with nts" Europe/Paris '^server ntp\.obspm\.fr iburst nts$'
+check "Paris pool completes" Europe/Paris '^pool debian\.pool\.ntp\.org iburst maxsources 2$'
+check "Vienna three servers" Europe/Vienna '^server time\.metrologie\.at iburst nts$' 'pool'
+check "Berlin three servers" Europe/Berlin '^server ptbtime3\.ptb\.de iburst nts$' 'pool'
+check "Zurich (zone.tab: CH, no row) -> pool only, not DE" Europe/Zurich '^pool debian\.pool\.ntp\.org iburst$' '^server'
 check "Unknown zone -> Debian pool" Nowhere/Land '^pool debian\.pool\.ntp\.org iburst$' '^server'
-check "Never a public country zone" Europe/Lisbon 'debian\.pool' '(^|[ .])(br|pt|jp|us|de)\.pool\.ntp\.org'
+check "Never a public country zone" Europe/Lisbon 'debian\.pool' '(^|[ ])[a-z]{2}\.pool\.ntp\.org'
 # every TSV country is reachable through some zone, and none of the excluded institutes is in the file
 bad=$(grep -v '^#' "$TSV" | grep -i -E '^(JP|US|NZ|AU)	|nict\.|nist\.gov|measurement\.go' || true)
 [ -z "$bad" ] && echo "PASS TSV has no excluded institute" || { echo "FAIL TSV: $bad"; FAILS=$((FAILS + 1)); }
@@ -42,5 +53,48 @@ for l in "pt_BR.UTF-8:Sem serviço nacional" "pl_PL.UTF-8:Brak krajowej usługi"
 	echo "$r" | grep -q "${l#*:}" && echo "PASS text ${l%%:*}" || { echo "FAIL text ${l%%:*}: $r"; FAILS=$((FAILS + 1)); }
 	rm -rf "$D"
 done
+# a fake zoneinfo: zone1970.tab without zone.tab, a tzdata.zi link, and a shared zone1970 entry
+Z=$(mktemp -d)
+printf 'BR\t-2332-04637\tAmerica/Fakepaulo\tSouth\nCH,DE,LI\t+4723+00832\tEurope/Fakezurich\n' >"$Z/zone1970.tab"
+printf 'L America/Fakepaulo Brazil/Fake\n' >"$Z/tzdata.zi"
+zcheck() { # name, zone, expected, absent
+	local out
+	out=$(SPARKY_TIME_ZONEINFO=$Z LANG=C $T --print --zone "$2" 2>&1)
+	if echo "$out" | grep -q -E "$3" && { [ -z "${4:-}" ] || ! echo "$out" | grep -q -E "$4"; }; then
+		echo "PASS $1"
+	else
+		echo "FAIL $1: $out"; FAILS=$((FAILS + 1))
+	fi
+}
+zcheck "zone1970.tab alone answers (no zone.tab)" America/Fakepaulo '^server a\.st1\.ntp\.br iburst nts$' 'pool'
+zcheck "tzdata.zi link into a zone1970 entry" Brazil/Fake '^server a\.st1\.ntp\.br iburst nts$' 'pool'
+zcheck "shared zone1970 entry (CH,DE,LI) is not DE" Europe/Fakezurich '^pool debian\.pool\.ntp\.org iburst$' '^server'
+# the zone name from /etc/localtime and /etc/timezone, with files that need not exist
+L=$(mktemp -d)
+lcheck() { # name, expected-first-line-pattern
+	local out
+	out=$(SPARKY_TIME_LOCALTIME=$L/localtime SPARKY_TIME_TIMEZONE_FILE=$L/timezone LANG=C $T --print 2>&1)
+	if echo "$out" | grep -q -E "$2"; then echo "PASS $1"; else echo "FAIL $1: $out"; FAILS=$((FAILS + 1)); fi
+}
+ln -sf /usr/share/zoneinfo/Europe/Copenhagen "$L/localtime"; lcheck "localtime symlink" '^server time\.dfm\.dk iburst nts$'
+ln -sf /nonexistent/usr/share/zoneinfo/Brazil/East "$L/localtime"; lcheck "symlink whose zone file is missing" '^server a\.st1\.ntp\.br'
+ln -sf /usr/share/zoneinfo/posix/Europe/Berlin "$L/localtime"; lcheck "posix/ prefix stripped" '^server ptbtime1\.ptb\.de'
+ln -sf ../usr/share/zoneinfo/Europe/Vienna "$L/localtime"; lcheck "relative symlink" '^server bevtime1'
+ln -sf "$L/localtime" "$L/hop"; ln -sf /usr/share/zoneinfo/Europe/Madrid "$L/localtime"
+SPARKY_TIME_LOCALTIME=$L/hop; lcheck "chain of links" '^server nts1\.roa\.es'; unset SPARKY_TIME_LOCALTIME
+ln -sf /nowhere/else "$L/localtime"; echo Europe/Paris >"$L/timezone"; lcheck "dangling link -> /etc/timezone" '^server ntp\.obspm\.fr'
+rm -f "$L/localtime"; : >"$L/localtime"; echo Europe/Stockholm >"$L/timezone"; lcheck "regular file -> /etc/timezone" '^server nts1\.ri\.se'
+rm -f "$L/localtime" "$L/timezone"; lcheck "nothing at all -> pool" '^pool debian\.pool\.ntp\.org iburst$'
+# --zone needs a value
+LANG=C $T --print --zone >/dev/null 2>&1; [ $? -eq 2 ] && echo "PASS --zone without value is refused" || { echo "FAIL --zone without value"; FAILS=$((FAILS + 1)); }
+# Debian's pool line: commented out with the marker, once, the rest of chrony.conf untouched
+C=$(mktemp -d)/chrony.conf
+printf 'pool 2.debian.pool.ntp.org iburst\nsourcedir /etc/chrony/sources.d\nrtcsync\n' >"$C"
+D=$(mktemp -d)
+SPARKY_TIME_CONF=$C SPARKY_TIME_OUT=$D/s.sources LANG=C $T --zone Europe/Berlin --no-reload >/dev/null
+[ "$(head -n1 "$C")" = '#sparky-stereo: pool 2.debian.pool.ntp.org iburst' ] && ! grep -q '^pool' "$C" && [ "$(wc -l <"$C")" = 3 ] && echo "PASS Debian pool line commented with marker" || { echo "FAIL Debian pool line: $(cat "$C")"; FAILS=$((FAILS + 1)); }
+sed 's/^#sparky-stereo: //' "$C" | cmp -s - <(printf 'pool 2.debian.pool.ntp.org iburst\nsourcedir /etc/chrony/sources.d\nrtcsync\n') && echo "PASS marker restores the line exactly" || { echo "FAIL restore"; FAILS=$((FAILS + 1)); }
+SPARKY_TIME_CONF=$C SPARKY_TIME_OUT=$D/s.sources LANG=C $T --zone Europe/Berlin --no-reload >/dev/null
+[ "$(grep -c 'sparky-stereo' "$C")" = 1 ] && echo "PASS second run does not mark twice" || { echo "FAIL double mark"; FAILS=$((FAILS + 1)); }
 echo "failures: $FAILS"
 exit $((FAILS > 0))

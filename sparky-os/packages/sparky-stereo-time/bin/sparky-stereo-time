@@ -4,7 +4,7 @@
 # Copyright 2026 under the GNU GPL3 License
 # Sets chrony's time sources from the timezone: the country's official service (with NTS where
 # it offers it), or Debian's pool where the country has none. The zone comes from /etc/localtime,
-# the country from zone.tab, then zone1970.tab (as sparky-ntp-server does).
+# the country from zone.tab, then zone1970.tab (as sparky-ntp-server does), then tzdata.zi links.
 # Last update 2026/10/02
 
 TSV=${SPARKY_TIME_TSV:-/usr/share/sparky-stereo-time/ntp-countries.tsv}
@@ -12,6 +12,11 @@ ZONEINFO=${SPARKY_TIME_ZONEINFO:-/usr/share/zoneinfo}
 LOCALTIME=${SPARKY_TIME_LOCALTIME:-/etc/localtime}
 TIMEZONE_FILE=${SPARKY_TIME_TIMEZONE_FILE:-/etc/timezone}
 OUT=${SPARKY_TIME_OUT:-/etc/chrony/sources.d/sparky-stereo.sources}
+# chrony.conf is edited only for the real system, or where a test points SPARKY_TIME_CONF
+CONF=${SPARKY_TIME_CONF:-}
+[ -n "$CONF" ] || [ -n "${SPARKY_TIME_OUT:-}" ] || CONF=/etc/chrony/chrony.conf
+DEBIAN_POOL='pool 2.debian.pool.ntp.org iburst'
+MARK='#sparky-stereo: '
 FALLBACK='pool debian.pool.ntp.org iburst'
 LANGDIR=/usr/share/sparky/sparky-stereo-time
 [ -d "$LANGDIR" ] || LANGDIR=$(dirname "$0")/../lang
@@ -38,7 +43,7 @@ usage() {
 
 while [ $# -gt 0 ]; do
 	case "$1" in
-		--zone) ZONE=$2; shift ;;
+		--zone) [ -n "${2:-}" ] || usage 2; ZONE=$2; shift ;;
 		--print) PRINT=1; RELOAD=0 ;;
 		--no-reload) RELOAD=0 ;;
 		-h|--help) usage 0 ;;
@@ -54,10 +59,20 @@ if [ "$PRINT" = 0 ] && [ -z "${SPARKY_TIME_OUT:-}" ] && [ "$(id -u)" -ne 0 ]; th
 fi
 
 zone_name() {
-	local t
-	if [ -L "$LOCALTIME" ]; then
-		t=$(readlink -f "$LOCALTIME")
-		case "$t" in */zoneinfo/*) echo "${t##*/zoneinfo/}"; return ;; esac
+	local t=$LOCALTIME i
+	if [ -L "$t" ]; then
+		# follow the links by hand: the zone file itself may be missing (tzdata-legacy)
+		for i in 1 2 3 4 5 6 7 8; do
+			case "$t" in */zoneinfo/*) break ;; esac
+			[ -L "$t" ] || break
+			t=$(readlink "$t")
+		done
+		case "$t" in */zoneinfo/*)
+			t=${t##*/zoneinfo/}
+			t=${t#posix/}
+			echo "${t#right/}"
+			return ;;
+		esac
 	fi
 	if [ -s "$TIMEZONE_FILE" ]; then
 		head -n1 "$TIMEZONE_FILE" | tr -d ' \t\r'
@@ -65,14 +80,15 @@ zone_name() {
 	fi
 }
 
-# country codes of a zone: zone.tab (one code), then zone1970.tab (a comma list),
+# country code of a zone: zone.tab, then zone1970.tab (only when one country owns the entry),
 # then the zone's canonical name when it is a backward link (Asia/Calcutta)
 codes_for() {
 	local z=$1 c f
 	for f in zone.tab zone1970.tab; do
 		[ -f "$ZONEINFO/$f" ] || continue
 		c=$(awk -F'\t' -v z="$z" '!/^#/ && $3 == z { print $1; exit }' "$ZONEINFO/$f")
-		[ "$f" = zone1970.tab ] && c=${c//,/ }
+		# a zone1970 entry shared by several countries does not say which one the zone is in
+		[ "$f" = zone1970.tab ] && case "$c" in *,*) c= ;; esac
 		[ -n "$c" ] && { echo "$c"; return; }
 	done
 	return 1
@@ -129,14 +145,27 @@ if [ "$PRINT" = 1 ]; then
 	exit 0
 fi
 
+# Debian's own pool line would run next to ours: comment it out, marked so postrm restores it
+CONFCHANGED=0
+if [ -n "$CONF" ] && [ -f "$CONF" ] && grep -q -x -F "$DEBIAN_POOL" "$CONF"; then
+	sed -i "s|^$DEBIAN_POOL\$|$MARK$DEBIAN_POOL|" "$CONF"
+	CONFCHANGED=1
+fi
+
 mkdir -p "$(dirname "$OUT")"
 if [ ! -f "$OUT" ] || [ "$(cat "$OUT")" != "${CONTENT%$'\n'}" ]; then
 	printf '%s' "$CONTENT" >"$OUT.new" && mv "$OUT.new" "$OUT"
 	printf '%s\n' "$WHAT"
-	if [ "$RELOAD" = 1 ] && command -v chronyc >/dev/null 2>&1; then
-		chronyc reload sources >/dev/null 2>&1 || printf '%s\n' "$LOCAL8"
-	fi
 else
 	printf '%s\n' "$LOCAL9"
+fi
+# also when nothing changed: an earlier reload may have failed while chrony was starting
+if [ "$RELOAD" = 1 ]; then
+	if [ "$CONFCHANGED" = 1 ] && [ -d /run/systemd/system ]; then
+		# chrony.conf is read only at start
+		systemctl try-restart chrony.service >/dev/null 2>&1 || printf '%s\n' "$LOCAL8"
+	elif command -v chronyc >/dev/null 2>&1; then
+		chronyc reload sources >/dev/null 2>&1 || printf '%s\n' "$LOCAL8"
+	fi
 fi
 exit 0

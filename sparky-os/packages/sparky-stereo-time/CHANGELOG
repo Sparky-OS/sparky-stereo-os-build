@@ -1,4 +1,14 @@
 -------------------------------------------------------------------------------
+  Version 20261002.1~sparky9~0 (2026-10-02)
+-------------------------------------------------------------------------------
+  * Comment out Debian's pool 2.debian.pool.ntp.org line in chrony.conf, restored on removal
+  * Add nocerttimecheck 1 in conf.d for the NTS-KE handshake with a wrong clock
+  * Depend on ca-certificates
+  * Keep zones whose file is missing, ignore zone1970 entries shared by several countries
+  * Refuse --zone without a value, retry the reload when nothing changed
+  * Restart chrony once on removal, only when chrony.conf changed
+  * Fix pt-BR strings, more tests that fail on real regressions
+-------------------------------------------------------------------------------
   Version 20261002~sparky9~0 (2026-10-02)
 -------------------------------------------------------------------------------
   * Initial release

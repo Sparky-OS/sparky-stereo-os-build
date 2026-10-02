@@ -11,7 +11,12 @@ You should have received a copy of the GNU General Public License along with thi
 
 Dependencies:
 -------------
-chrony
+ca-certificates, chrony
+
+Notes:
+-------------
+Debian's chrony.conf carries `pool 2.debian.pool.ntp.org iburst`; chrony has no way to drop a source from a snippet, so the package comments that one line out (marked `#sparky-stereo: `) and gives it back on removal. A chrony upgrade that brings the line back is fixed at the next boot. Countries without a national service use `pool debian.pool.ntp.org iburst`.
+The service runs after chrony starts: the first start reads the file written earlier, the oneshot then corrects it. The units are enabled by vendor symlinks, so `systemctl disable` does not apply. `/etc/chrony/conf.d/sparky-stereo.conf` (nocerttimecheck 1) is a conffile.
 
 Build:
 -------------
