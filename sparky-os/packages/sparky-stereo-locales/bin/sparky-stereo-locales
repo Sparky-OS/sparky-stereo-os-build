@@ -332,9 +332,6 @@ apply_selection() {
 			EXPLICIT+=("$code||")
 		done
 	fi
-	if [ "${#KEEP[@]}" -eq 0 ]; then
-		mapfile -t KEEP < <(default_keep)
-	fi
 	plan_purge
 	rc=$?
 	[ "$rc" -eq 0 ] || return "$rc"
@@ -440,13 +437,24 @@ if [ "$DRY_RUN" -eq 0 ] && [ "$(id -u)" -ne 0 ]; then
 	exit 1
 fi
 
-if [ "${#KEEP[@]}" -eq 0 ] && [ "$RESTORE_ALL" -eq 0 ] && [ "$DRY_RUN" -eq 0 ]; then
-	if command -v yad >/dev/null 2>&1; then
-		gui
-	fi
-else
+if [ "${#KEEP[@]}" -gt 0 ] || [ "$RESTORE_ALL" -eq 1 ]; then
 	EXPLICIT=("${KEEP[@]}")
 	KEEP+=("en||")
 	apply_selection
 	exit $?
 fi
+
+# No languages given: the default keeps the system's languages and English.
+mapfile -t KEEP < <(default_keep)
+if [ "$DRY_RUN" -eq 1 ]; then
+	apply_selection
+	exit $?
+fi
+if command -v yad >/dev/null 2>&1 && { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; }; then
+	gui
+	exit $?
+fi
+show_help >&2
+echo >&2
+echo "$LOCAL28" >&2
+exit 1
