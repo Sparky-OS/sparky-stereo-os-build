@@ -30,6 +30,30 @@ sudo -u "$USERNAME" bleachbit --clean bash.history chromium.cache chromium.histo
 	kde.recent_documents kde.tmp libreoffice.history system.recent_documents system.trash \
 	thumbnails.cache vlc.mru wine.tmp
 
+echo "== $USERNAME: edition default look (sparkybackup copies the user's dotfiles into /etc/skel)"
+# The VM user chose Breeze Light while testing; whatever sits in the user's own config would
+# reach the ISO and override /etc/xdg. lookandfeeltool needs no running session: with a private
+# D-Bus and the offscreen platform it moves the theme settings into ~/.config/kdedefaults (where
+# Plasma 6 keeps a global theme's values) and removes the user's own overrides of them
+# (ColorScheme, icons, cursor, Plasma style, splash, window decoration). It leaves
+# widgetStyle in kdeglobals when the style is not available to it, so that key is deleted too
+# (the edition's /etc/xdg/kdeglobals sets qt6ct-style). Checked 2026-10-02 in a debian:testing
+# container with a user set to Breeze Light: every override gone, kdedefaults = OxygenDark.
+LOOK=org.sparkystereo.desktop
+UHOME=$(getent passwd "$USERNAME" | cut -d: -f6)
+RT=$(mktemp -d /run/prepack-look.XXXXXX); chown "$USERNAME" "$RT"; chmod 700 "$RT"
+sudo -u "$USERNAME" env HOME="$UHOME" XDG_RUNTIME_DIR="$RT" QT_QPA_PLATFORM=offscreen \
+	dbus-run-session -- lookandfeeltool -a "$LOOK" >/dev/null 2>&1 \
+	|| echo "WARNING: lookandfeeltool failed for $USERNAME; set $LOOK by hand before packing"
+rmdir "$RT" 2>/dev/null || rm -rf "$RT"
+sudo -u "$USERNAME" env HOME="$UHOME" kwriteconfig6 --file kdeglobals --group KDE --key widgetStyle --delete
+sudo -u "$USERNAME" env HOME="$UHOME" kwriteconfig6 --file kdeglobals --group General --key ColorScheme --delete
+if grep -qx 'ColorScheme=OxygenDark' "$UHOME/.config/kdedefaults/kdeglobals" 2>/dev/null; then
+	echo "ok: $USERNAME follows $LOOK (kdedefaults ColorScheme=OxygenDark)"
+else
+	echo "WARNING: $UHOME/.config/kdedefaults/kdeglobals does not say OxygenDark; check the look before packing"
+fi
+
 echo "== TRIM, so the VM's disk can give the freed space back"
 fstrim -av
 
