@@ -68,13 +68,19 @@ take)
 		echo >"/sys/bus/pci/devices/$d/driver_override"
 		[ -e "/sys/bus/pci/devices/$d/driver" ] && echo "$d" >"/sys/bus/pci/devices/$d/driver/unbind"
 		drv=$(awk -v d="$d" '$1 == "driver" && $2 == d {print $3}' "$STATE" 2>/dev/null)
-		if [ -n "$drv" ]; then echo "$d" >"/sys/bus/pci/drivers/$drv/bind" || true
-		else echo "$d" >/sys/bus/pci/drivers_probe || true; fi
+		# right after vfio-pci lets go the card is still resetting and the bind is refused;
+		# seconds later the same bind works (2026-10-02), so retry for up to 30 s
+		for _ in $(seq 15); do
+			if [ -n "$drv" ]; then echo "$d" >"/sys/bus/pci/drivers/$drv/bind" 2>/dev/null && break
+			else echo "$d" >/sys/bus/pci/drivers_probe 2>/dev/null && break; fi
+			sleep 2
+		done
+		[ -e "/sys/bus/pci/devices/$d/driver" ] || echo "WARNING: $d has no driver; bind it by hand: echo $d > /sys/bus/pci/drivers/${drv:-<driver>}/bind"
 	done
 	if [ -f "$STATE" ]; then
 		while read -r kind name rest; do
 			case $kind in
-			service) systemctl start "$name" ;;
+			service) systemctl start "$name" || echo "WARNING: $name did not start" ;;
 			container) docker start "$name" >/dev/null ;;
 			esac
 		done <"$STATE"
