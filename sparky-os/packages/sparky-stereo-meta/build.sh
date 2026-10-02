@@ -5,18 +5,19 @@
 # Builds the edition's meta-packages from sparky-os/lists/*.list (lists/make-meta.py writes
 # the control files): sparky-stereo, sparky-stereo-desktop, sparky-stereo-gaming,
 # sparky-stereo-hardware-support, sparky-stereo-languages and sparky-stereo-system.
-# Each is a control file and a copyright file. Version: the build date.
+# The kernel pair linux-image-sparky-stereo and linux-headers-sparky-stereo is versioned after
+# the kernel in the repository (rebuild after a kernel bump). Each is a control file and a copyright file. Version: the build date.
 # Last update 2026/10/02
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
-VERSION=${VERSION:-$(date +%Y%m%d)}
+VERSION=${VERSION:-$(date +%Y%m%d)}   # second build of a day: VERSION=YYYYMMDD.1
 W=$(mktemp -d /K3D/temp/sparky-os/meta-build.XXXXXX)
 trap 'rm -rf "$W"' EXIT
 
 PKGS=$(python3 - <<PY
 import re
-print(' '.join(re.findall(r"^    '(sparky-stereo[a-z-]*)': \(", open('$HERE/../../lists/make-meta.py').read(), re.M)))
+print(' '.join(re.findall(r"^    '((?:sparky|linux)-[a-z-]*stereo[a-z-]*|sparky-stereo)': \(", open('$HERE/../../lists/make-meta.py').read(), re.M)))
 PY
 )
 for PKG in $PKGS; do
@@ -55,6 +56,7 @@ python3 "$HERE/../../lists/make-meta.py" "$VERSION" "$W"
 mkdir -p "$OUT"
 for PKG in $PKGS; do
 	(cd "$W/$PKG" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
-	dpkg-deb --root-owner-group -Zxz -b "$W/$PKG" "$OUT/${PKG}_${VERSION}_all.deb" >/dev/null
-	echo "built $OUT/${PKG}_${VERSION}_all.deb"
+	V=$(sed -n 's/^Version: //p' "$W/$PKG/DEBIAN/control")
+	dpkg-deb --root-owner-group -Zxz -b "$W/$PKG" "$OUT/${PKG}_${V}_all.deb" >/dev/null
+	echo "built $OUT/${PKG}_${V}_all.deb"
 done

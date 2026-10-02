@@ -42,6 +42,7 @@ SEL
 "${APT[@]}" full-upgrade || echo "!! full-upgrade failed"
 
 failed=()
+# emulation-3d is installed in the development VM for testing only; prepack.sh --final purges it (emulators come from APTus Stereo AppCenter, never the ISO)
 for l in look runtimes languages hardware system apps gaming games emulation-3d; do
 	mapfile -t pkgs < <(grep -v '^#' "$LISTS/$l.list" | grep .)
 	echo "== $l: ${#pkgs[@]} packages $(date -Is)"

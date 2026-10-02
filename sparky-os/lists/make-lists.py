@@ -84,7 +84,7 @@ group('gaming', 'Gaming tools', [
     # program whether Wine 10's WoW64 mode covers it before adding anything
 ])
 
-# 4. 3D emulation (APTus section "3D emulation", installed by default): emulators with a
+# 4. 3D emulation (APTus section "3D emulation": users install it from APTus Stereo AppCenter; the development VM installs it for testing and prepack.sh --final purges it, so it never reaches the ISO): emulators with a
 # stereo output, which KWin shows in the display's 3D mode.
 group('emulation-3d', '3D emulation', [
     'dolphin-emu', 'mame', 'mednafen', 'retroarch', 'libretro-beetle-vb',
