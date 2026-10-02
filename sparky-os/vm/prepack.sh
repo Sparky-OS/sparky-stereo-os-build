@@ -36,6 +36,9 @@ fstrim -av
 if [ "$FINAL" = "--final" ]; then
 	echo "== development-only leftovers"
 	rm -f /etc/sudoers.d/90-sparky-dev
+	# the build-time hold on NVIDIA's packages (provision.sh); the hardware setup installs
+	# them per machine
+	rm -f /etc/apt/preferences.d/90sparky-stereo-nvidia
 	# emulators install from APTus Stereo AppCenter, never from the ISO (Daniel and Paweł)
 	mapfile -t emu < <(grep -v '^#' /srv/sparky-os/lists/emulation-3d.list | grep .)
 	apt-get -y -q purge "${emu[@]}" >/dev/null

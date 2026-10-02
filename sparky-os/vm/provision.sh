@@ -19,10 +19,13 @@ APT::Install-Recommends "true";
 APT::Install-Suggests "true";
 CONF
 # NVIDIA's closed driver is the hardware setup's choice per machine (our package brings
-# NVIDIA's open modules); keep it out of the base build, Suggests included.
+# NVIDIA's open modules); keep it out of the base build, Suggests included. Only Debian's
+# packages are held back: our nvidia-kernel-open-dkms-stereo3d (origin Sparky Stereo) keeps
+# its candidate (a "release *" pin hid it, VM test 2026-10-02). Development only:
+# prepack.sh --final removes it, so the hardware setup can install the stack on the ISO.
 cat >/etc/apt/preferences.d/90sparky-stereo-nvidia <<PREF
 Package: nvidia-driver* nvidia-kernel-* nvidia-tesla-* *nvidia-legacy* nvidia-settings* xserver-xorg-video-nvidia*
-Pin: release *
+Pin: release o=Debian
 Pin-Priority: -1
 PREF
 # Licence questions the build answers so the run doesn't stop; end users still accept
