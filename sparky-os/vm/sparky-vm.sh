@@ -37,6 +37,9 @@ create() {
 	[ -e "$DISK" ] && { echo "exists: $DISK"; exit 1; }
 	qemu-img create -f qcow2 -o cluster_size=2M,lazy_refcounts=on "$DISK" "$DISK_SIZE"
 	cp /usr/share/OVMF/OVMF_VARS_4M.fd "$VARS"
+	# The key this host uses to work in the VM; vm-setup.sh (run once in the VM) trusts it.
+	ssh-keygen -q -t ed25519 -N '' -C sparky-dev-vm -f "$VMDIR/id_ed25519"
+	cp "$VMDIR/id_ed25519.pub" /K3D/temp/sparky-os/vm-ssh.pub
 }
 
 start_shares() {
@@ -86,7 +89,7 @@ create) create ;;
 install) boot -drive file="${2:-$ISO_DEFAULT}",media=cdrom,readonly=on,if=none,id=cd0 \
 	-device ide-cd,drive=cd0,bootindex=0 ;;
 run) boot ;;
-ssh) shift; exec ssh -p 2222 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$VMDIR/known_hosts" \
+ssh) shift; exec ssh -p 2222 -i "$VMDIR/id_ed25519" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$VMDIR/known_hosts" \
 	"${VMUSER:-daniel}"@127.0.0.1 "$@" ;;
 *) sed -n '2,17p' "$0"; exit 1 ;;
 esac
