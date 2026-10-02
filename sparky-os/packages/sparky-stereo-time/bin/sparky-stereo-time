@@ -1,0 +1,142 @@
+#!/bin/bash
+#
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/02
+# Copyright 2026 under the GNU GPL3 License
+# Sets chrony's time sources from the timezone: the country's official service (with NTS where
+# it offers it), or Debian's pool where the country has none. The zone comes from /etc/localtime,
+# the country from zone.tab, then zone1970.tab (as sparky-ntp-server does).
+# Last update 2026/10/02
+
+TSV=${SPARKY_TIME_TSV:-/usr/share/sparky-stereo-time/ntp-countries.tsv}
+ZONEINFO=${SPARKY_TIME_ZONEINFO:-/usr/share/zoneinfo}
+LOCALTIME=${SPARKY_TIME_LOCALTIME:-/etc/localtime}
+TIMEZONE_FILE=${SPARKY_TIME_TIMEZONE_FILE:-/etc/timezone}
+OUT=${SPARKY_TIME_OUT:-/etc/chrony/sources.d/sparky-stereo.sources}
+FALLBACK='pool debian.pool.ntp.org iburst'
+LANGDIR=/usr/share/sparky/sparky-stereo-time
+[ -d "$LANGDIR" ] || LANGDIR=$(dirname "$0")/../lang
+ZONE=
+PRINT=0
+RELOAD=1
+
+# strings: the whole LANG=xx_YY, then xx, then English
+LANGCODE=${LANG%%.*}
+case "$LANGCODE" in ""|C|POSIX)
+	LANGCODE=$(sed -n 's/^LANG=//p' /etc/default/locale 2>/dev/null | tr -d '"' | cut -d. -f1) ;;
+esac
+for c in "$LANGCODE" "${LANGCODE%%_*}" en; do
+	[ -f "$LANGDIR/$c" ] && { . "$LANGDIR/$c"; break; }
+done
+
+usage() {
+	printf '%s\n' "$LOCAL1"
+	printf '  --zone ZONE   %s\n' "$LOCAL2"
+	printf '  --print       %s\n' "$LOCAL3"
+	printf '  --no-reload   %s\n' "$LOCAL4"
+	exit "${1:-0}"
+}
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--zone) ZONE=$2; shift ;;
+		--print) PRINT=1; RELOAD=0 ;;
+		--no-reload) RELOAD=0 ;;
+		-h|--help) usage 0 ;;
+		*) usage 2 ;;
+	esac
+	shift
+done
+
+# a root check, unless nothing is written to the system
+if [ "$PRINT" = 0 ] && [ -z "${SPARKY_TIME_OUT:-}" ] && [ "$(id -u)" -ne 0 ]; then
+	printf '%s\n' "$LOCAL5" >&2
+	exit 1
+fi
+
+zone_name() {
+	local t
+	if [ -L "$LOCALTIME" ]; then
+		t=$(readlink -f "$LOCALTIME")
+		case "$t" in */zoneinfo/*) echo "${t##*/zoneinfo/}"; return ;; esac
+	fi
+	if [ -s "$TIMEZONE_FILE" ]; then
+		head -n1 "$TIMEZONE_FILE" | tr -d ' \t\r'
+		return
+	fi
+}
+
+# country codes of a zone: zone.tab (one code), then zone1970.tab (a comma list),
+# then the zone's canonical name when it is a backward link (Asia/Calcutta)
+codes_for() {
+	local z=$1 c f
+	for f in zone.tab zone1970.tab; do
+		[ -f "$ZONEINFO/$f" ] || continue
+		c=$(awk -F'\t' -v z="$z" '!/^#/ && $3 == z { print $1; exit }' "$ZONEINFO/$f")
+		[ "$f" = zone1970.tab ] && c=${c//,/ }
+		[ -n "$c" ] && { echo "$c"; return; }
+	done
+	return 1
+}
+
+country_for() {
+	local z=$1 c t
+	c=$(codes_for "$z") && { echo "$c"; return; }
+	if [ -f "$ZONEINFO/tzdata.zi" ]; then
+		t=$(awk -v z="$z" '$1 == "L" && $3 == z { print $2; exit }' "$ZONEINFO/tzdata.zi")
+		[ -n "$t" ] && codes_for "$t"
+	fi
+}
+
+[ -n "$ZONE" ] || ZONE=$(zone_name)
+CC=
+ROW=
+if [ -n "$ZONE" ]; then
+	for c in $(country_for "$ZONE"); do
+		r=$(awk -F'\t' -v c="$c" '!/^#/ && $1 == c { print; exit }' "$TSV" 2>/dev/null)
+		[ -n "$r" ] && { CC=$c; ROW=$r; break; }
+	done
+fi
+
+LINES=
+COUNT=0
+if [ -n "$ROW" ]; then
+	servers=$(echo "$ROW" | cut -f2)
+	nts=$(echo "$ROW" | cut -f3)
+	for h in $servers; do
+		[ "$h" = - ] && continue
+		case " $nts " in
+			*" $h "*) LINES+="server $h iburst nts"$'\n' ;;
+			*) LINES+="server $h iburst"$'\n' ;;
+		esac
+		COUNT=$((COUNT + 1))
+	done
+fi
+# fewer than three national sources: Debian's pool completes them; none: the pool alone
+if [ "$COUNT" -eq 0 ]; then
+	LINES+="$FALLBACK"$'\n'
+	WHAT=$(printf "$LOCAL7" "${ZONE:-?}")
+elif [ "$COUNT" -lt 3 ]; then
+	LINES+="$FALLBACK maxsources 2"$'\n'
+	WHAT=$(printf "$LOCAL6" "$CC" "$ZONE")
+else
+	WHAT=$(printf "$LOCAL6" "$CC" "$ZONE")
+fi
+
+CONTENT="# Sparky Stereo OS: written by sparky-stereo-time from the timezone, do not edit
+${LINES}"
+if [ "$PRINT" = 1 ]; then
+	printf '%s' "$CONTENT"
+	exit 0
+fi
+
+mkdir -p "$(dirname "$OUT")"
+if [ ! -f "$OUT" ] || [ "$(cat "$OUT")" != "${CONTENT%$'\n'}" ]; then
+	printf '%s' "$CONTENT" >"$OUT.new" && mv "$OUT.new" "$OUT"
+	printf '%s\n' "$WHAT"
+	if [ "$RELOAD" = 1 ] && command -v chronyc >/dev/null 2>&1; then
+		chronyc reload sources >/dev/null 2>&1 || printf '%s\n' "$LOCAL8"
+	fi
+else
+	printf '%s\n' "$LOCAL9"
+fi
+exit 0

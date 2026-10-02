@@ -1,0 +1,9 @@
+[Unit]
+Description=Sparky Stereo OS: run the time servers setup when the timezone changes
+
+[Path]
+PathChanged=/etc/localtime
+Unit=sparky-stereo-time.service
+
+[Install]
+WantedBy=paths.target
