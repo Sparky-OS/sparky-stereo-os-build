@@ -8,7 +8,7 @@ PWV=${1:-1.6.8}
 DEBV=${2:-1.6.8-1}
 OUT=${OUT:-/K3D/temp/bt-aac}
 mkdir -p "$OUT"
-docker run --rm -v "$OUT:/out" -e PWV="$PWV" -e DEBV="$DEBV" debian:testing sh -ec '
+docker run --rm -v "$OUT:/out" -e PWV="$PWV" -e DEBV="$DEBV" -e HOSTID="$(id -u):$(id -g)" debian:testing sh -ec '
   sed -i "s/^Types: deb$/Types: deb deb-src/; s/^Components: main$/Components: main non-free/" /etc/apt/sources.list.d/debian.sources
   apt-get -q update >/dev/null
   DEBIAN_FRONTEND=noninteractive apt-get -q -y build-dep pipewire >/dev/null
@@ -42,5 +42,6 @@ Description: PipeWire Bluetooth AAC codec (A2DP)
 CTL
   dpkg-deb --root-owner-group -b $P /out/pipewire-bluez5-codec-aac_${DEBV}+aac1_amd64.deb >/dev/null
   ldd $D/libspa-codec-bluez5-aac.so | grep -E "fdk|not found"
+  chown "$HOSTID" /out/pipewire-bluez5-codec-aac_${DEBV}+aac1_amd64.deb
 '
 ls -la "$OUT"/*.deb
