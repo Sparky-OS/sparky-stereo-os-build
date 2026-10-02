@@ -15,10 +15,12 @@ echo "== start $(date -Is)"
 echo 'deb [trusted=yes] file:/srv/sparky-work/repo ./' >/etc/apt/sources.list.d/sparky-stereo.list
 cp /srv/sparky-os/apt/90sparky-stereo-repo /srv/sparky-os/apt/90sparky-stereo-ffmpeg /etc/apt/preferences.d/
 "${APT[@]}" update
+# Our pinned stack (KWin, KScreen, libkscreen) replaces Debian's.
+"${APT[@]}" full-upgrade || echo "!! full-upgrade"
 
 # The packages provision.sh logged as failed, again (the FFmpeg pin and the carried
 # libcapi20 fix Blender and Wine).
-last=$(ls -t /srv/sparky-work/logs/provision-2*.log /srv/sparky-work/logs/provision-*.log 2>/dev/null | grep -v provision-2 | head -1)
+last=$(ls -t /srv/sparky-work/logs/provision-2*.log /srv/sparky-work/logs/provision-*.log 2>/dev/null | grep -v 'provision-2-' | head -1)
 mapfile -t failed < <(grep -o -E '^!! [a-z0-9-]+: \S+' "$last" | awk '{print $3}' | sort -u)
 echo "== retry ${#failed[@]}: ${failed[*]:-none}"
 for p in "${failed[@]}"; do "${APT[@]}" install "$p" >/dev/null 2>&1 && echo "ok $p" || echo "!! still failing: $p"; done
