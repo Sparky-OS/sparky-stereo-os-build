@@ -116,6 +116,7 @@ if [ -n "$ZONE" ]; then
 fi
 
 LINES=
+POOLS=
 COUNT=0
 NTSCOUNT=0
 if [ -n "$ROW" ]; then
@@ -123,6 +124,8 @@ if [ -n "$ROW" ]; then
 	nts=$(echo "$ROW" | cut -f3)
 	for h in $servers; do
 		[ "$h" = - ] && continue
+		# a pool of the country's own service: no NTS, never counted as a national server
+		case "$h" in pool:*) POOLS+="pool ${h#pool:} iburst maxsources 2"$'\n'; continue ;; esac
 		case " $nts " in
 			*" $h "*) LINES+="server $h iburst nts"$'\n'; NTSCOUNT=$((NTSCOUNT + 1)) ;;
 			*) LINES+="server $h iburst"$'\n' ;;
@@ -130,6 +133,7 @@ if [ -n "$ROW" ]; then
 		COUNT=$((COUNT + 1))
 	done
 fi
+LINES+=$POOLS
 # fewer than three national sources: Debian's pool completes them; none: the pool alone
 if [ "$COUNT" -eq 0 ]; then
 	LINES+="$FALLBACK"$'\n'

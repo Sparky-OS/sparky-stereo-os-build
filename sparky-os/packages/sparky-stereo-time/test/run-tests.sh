@@ -15,7 +15,10 @@ check() { # name, zone, expected-grep-pattern(s) joined by |, absent-pattern
 		echo "FAIL $1: $out"; FAILS=$((FAILS + 1))
 	fi
 }
-check "Sao_Paulo -> NTP.br with nts" America/Sao_Paulo '^server a\.st1\.ntp\.br iburst nts$' 'pool'
+check "Sao_Paulo -> NTP.br with nts" America/Sao_Paulo '^server a\.st1\.ntp\.br iburst nts$' 'debian'
+check "Sao_Paulo -> gps.ntp.br with nts" America/Sao_Paulo '^server gps\.ntp\.br iburst nts$' 'debian'
+check "Sao_Paulo -> pool.ntp.br as a plain pool line (its NTS-KE certificate does not match)" America/Sao_Paulo '^pool pool\.ntp\.br iburst maxsources 2$' 'pool\.ntp\.br.* nts|debian'
+check "Sao_Paulo has no b.st1 (no NTS answer)" America/Sao_Paulo '^server a\.st1' 'b\.st1'
 check "Berlin -> PTB with nts" Europe/Berlin '^server ptbtime1\.ptb\.de iburst nts$' 'pool'
 check "Vienna -> BEV (zone1970 or zone.tab)" Europe/Vienna '^server bevtime1\.metrologie\.at iburst nts$' 'pool'
 check "Copenhagen -> DFM plus pool" Europe/Copenhagen '^server time\.dfm\.dk iburst nts$'
@@ -24,7 +27,7 @@ check "Tokyo (NICT left out) -> Debian pool only" Asia/Tokyo '^pool debian\.pool
 check "New York (NIST left out) -> Debian pool only" America/New_York '^pool debian\.pool\.ntp\.org iburst$' 'nist|^server'
 check "Lisbon (no service) -> Debian pool only" Europe/Lisbon '^pool debian\.pool\.ntp\.org iburst$' '^server'
 check "Auckland (NZ excluded) -> Debian pool only" Pacific/Auckland '^pool debian\.pool\.ntp\.org iburst$' '^server'
-check "Backward alias Brazil/East (tzdata.zi link) -> NTP.br" Brazil/East '^server a\.st1\.ntp\.br iburst nts$' 'pool'
+check "Backward alias Brazil/East (tzdata.zi link) -> NTP.br" Brazil/East '^server a\.st1\.ntp\.br iburst nts$' 'debian'
 check "Backward alias Asia/Calcutta, no service -> pool" Asia/Calcutta '^pool debian\.pool\.ntp\.org iburst$' '^server'
 check "Stockholm -> RISE, both nts, pool maxsources 2" Europe/Stockholm '^server nts1\.ri\.se iburst nts$' '^server nts[^12]'
 check "Stockholm second server" Europe/Stockholm '^server nts2\.ri\.se iburst nts$'
@@ -66,8 +69,8 @@ zcheck() { # name, zone, expected, absent
 		echo "FAIL $1: $out"; FAILS=$((FAILS + 1))
 	fi
 }
-zcheck "zone1970.tab alone answers (no zone.tab)" America/Fakepaulo '^server a\.st1\.ntp\.br iburst nts$' 'pool'
-zcheck "tzdata.zi link into a zone1970 entry" Brazil/Fake '^server a\.st1\.ntp\.br iburst nts$' 'pool'
+zcheck "zone1970.tab alone answers (no zone.tab)" America/Fakepaulo '^server a\.st1\.ntp\.br iburst nts$' 'debian'
+zcheck "tzdata.zi link into a zone1970 entry" Brazil/Fake '^server a\.st1\.ntp\.br iburst nts$' 'debian'
 zcheck "shared zone1970 entry (CH,DE,LI) is not DE" Europe/Fakezurich '^pool debian\.pool\.ntp\.org iburst$' '^server'
 # the zone name from /etc/localtime and /etc/timezone, with files that need not exist
 L=$(mktemp -d)
