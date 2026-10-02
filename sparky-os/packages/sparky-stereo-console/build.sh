@@ -1,0 +1,184 @@
+#!/bin/bash
+#
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/02
+# Copyright 2026 under the GNU GPL3 License
+# Builds sparky-stereo-console, Daniel's console touches for Sparky Stereo OS:
+#   /etc/issue, /etc/issue.net   his ASCII art (base/*.client, 2019), edition line
+#                                "Sparky Stereo OS", live system details from getty
+#   /etc/motd                    his Sparky wording of Debian's no-warranty notice
+#   /etc/update-motd.d/10-uname  "Sparky Stereo OS based on" + uname -osnrvm
+#   SSH banner                   sshd_config.d drop-in: Banner /etc/issue.net
+#   /etc/skel/.bashrc            Debian's, with the coloured prompt forced on (the Linux
+#                                console too), red for root
+#   fastfetch                    the neofetch layout with the Sparky leaf; `neofetch` runs it
+#   command-not-found            a dependency; its index is built when the ISO is packed
+# Debian's /etc/issue, /etc/issue.net, 10-uname and skel .bashrc are diverted to *.debian
+# and given back when the package is removed.
+# Last update 2026/10/02
+set -euo pipefail
+HERE=$(cd "$(dirname "$0")" && pwd)
+OUT=${OUT:-/K3D/temp/sparky-os/repo}
+VERSION=20261002~sparky9~0
+PKG=sparky-stereo-console
+B=$HERE/base
+W=$(mktemp -d /K3D/temp/sparky-os/console-build.XXXXXX)
+trap 'rm -rf "$W"' EXIT
+D=$W/$PKG
+S=$D/usr/share/$PKG
+mkdir -p "$D/DEBIAN" "$D/etc/update-motd.d" "$D/etc/ssh/sshd_config.d" "$D/etc/skel" \
+	"$D/etc/xdg/fastfetch" "$D/usr/bin" "$S" "$D/usr/share/doc/$PKG"
+
+python3 - "$B" "$D" "$S" <<'PY'
+import json, re, sys
+b, d, s = sys.argv[1:4]
+def rd(n): return open(f'{b}/{n}', encoding='utf-8').read()
+def wr(p, t): open(p, 'w', encoding='utf-8').write(t)
+
+# /etc/issue: the edition line (kept in its 29-column field, so the "debian" art beside
+# it stays aligned) and live details from getty instead of a release typed by hand.
+t = rd('issue.client')
+t = t.replace('Small Business Client Edition', 'Sparky Stereo OS'.ljust(29))
+t = t.replace('/S /Debian GNU/Linux BullsEye', r'\S{PRETTY_NAME}')
+t = re.sub(r'(`\$\$b\.\s+)\\v', r'\1\\r \\m', t)
+t = t.replace(r'(\l) SparkyLinux 5.7', r'(\l) \4')
+wr(f'{d}/etc/issue', t.rstrip('\n') + '\n\n')
+
+# The Sparky leaf, from /etc/issue (the SSH version had some rows shifted): each row up to
+# where the block letters or the "debian" art begin.
+leaf = []
+for l in rd('issue.client').split('\n')[1:19]:
+    m = re.search(r'\s+(?:S+\b|\||/\||`\||_|Small)', l[20:])
+    leaf.append((l[:20 + m.start()] if m else l).rstrip())
+ind = min(len(l) - len(l.lstrip(' ')) for l in leaf if l.strip())
+leaf = [l[ind:] for l in leaf]
+wr(f'{s}/sparky-leaf.txt', '\n'.join(leaf) + '\n')
+
+# /etc/issue.net (SSH shows it as plain text): the leaf centred over the 60-column block
+# letters, then the edition line; "RESTRICTED" belongs to the business client.
+w = max(len(l) for l in leaf)
+net = [' ' * ((60 - w) // 2) + l for l in leaf]
+blk = [l for l in rd('issue.net.client').split('\n') if l.startswith((' SSS', 'S ', '    S', 'SSSS'))]
+assert len(blk) == 5, blk
+net += blk + [' ' * ((60 - 16) // 2) + 'Sparky Stereo OS']
+wr(f'{d}/etc/issue.net', '\n'.join(net) + '\n\n')
+
+wr(f'{d}/etc/motd', rd('motd.client').strip('\n') + '\n')
+
+# Debian's skel .bashrc with the coloured prompt forced on and red for root.
+t = rd('skel.bashrc.debian')
+t = t.replace('#force_color_prompt=yes',
+    '# Sparky Stereo OS: the coloured prompt on every terminal, the Linux console too\nforce_color_prompt=yes')
+t = t.replace('if [ "$color_prompt" = yes ]; then\n',
+    '# Sparky Stereo OS: green for users, red for root\nif [ "$(id -u)" -eq 0 ]; then _user_colour=31; else _user_colour=32; fi\nif [ "$color_prompt" = yes ]; then\n', 1)
+t = t.replace(r'\[\033[01;32m\]\u@\h', r'\[\033[01;${_user_colour}m\]\u@\h', 1)
+assert '_user_colour}m' in t and '\nforce_color_prompt=yes' in t
+wr(f'{d}/etc/skel/.bashrc', t)
+
+# fastfetch: Debian's neofetch preset with the Sparky leaf as the logo.
+c = rd('neofetch.jsonc.fastfetch')
+c = re.sub(r'^\s*//.*$', '', c, flags=re.M)
+j = json.loads(c)
+j['logo'] = {'type': 'file', 'source': '/usr/share/sparky-stereo-console/sparky-leaf.txt'}
+wr(f'{d}/etc/xdg/fastfetch/config.jsonc', json.dumps(j, indent=4, ensure_ascii=False) + '\n')
+PY
+
+printf '#!/bin/sh\necho "Sparky Stereo OS based on"\nuname -osnrvm\n' >"$D/etc/update-motd.d/10-uname"
+printf '# Sparky Stereo OS: the SSH login banner\nBanner /etc/issue.net\n' >"$D/etc/ssh/sshd_config.d/sparky-stereo-banner.conf"
+printf '#!/bin/sh\n# neofetch left Debian; fastfetch, its successor, runs in the neofetch layout\nexec fastfetch "$@"\n' >"$D/usr/bin/neofetch"
+chmod 755 "$D/etc/update-motd.d/10-uname" "$D/usr/bin/neofetch"
+chmod 644 "$D/etc/skel/.bashrc"
+
+DIVERTED="/etc/issue /etc/issue.net /etc/update-motd.d/10-uname /etc/skel/.bashrc"
+cat >"$D/DEBIAN/preinst" <<EOF
+#!/bin/sh
+# preinst script
+set -e
+if [ "\$1" = "install" ] || [ "\$1" = "upgrade" ]; then
+	for f in $DIVERTED; do
+		dpkg-divert --quiet --package $PKG --add --rename --divert "\$f.debian" "\$f"
+	done
+fi
+exit 0
+EOF
+cat >"$D/DEBIAN/postrm" <<EOF
+#!/bin/sh
+# postrm script
+set -e
+if [ "\$1" = "remove" ] || [ "\$1" = "purge" ] || [ "\$1" = "abort-install" ]; then
+	for f in $DIVERTED; do
+		dpkg-divert --quiet --package $PKG --remove --rename --divert "\$f.debian" "\$f"
+	done
+	[ -e /etc/motd ] || cp /usr/share/base-files/motd /etc/motd 2>/dev/null || true
+fi
+exit 0
+EOF
+chmod 755 "$D/DEBIAN/preinst" "$D/DEBIAN/postrm"
+printf '%s\n' /etc/ssh/sshd_config.d/sparky-stereo-banner.conf /etc/xdg/fastfetch/config.jsonc >"$D/DEBIAN/conffiles"
+
+cat >"$D/usr/share/doc/$PKG/copyright" <<'EOF'
+Sparky Stereo OS, an edition of SparkyLinux (https://sparkylinux.org), created by Paweł "pavroo" Pijanowski <pavroo@onet.eu> and Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>.
+
+Upstream Author(s):
+    Paweł "pavroo" Pijanowski <pavroo@onet.eu>
+    Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+
+Files: *
+    Copyright (C) 2026 Paweł "pavroo" Pijanowski, Daniel Ramos (Capitain Jack)
+    License: GPL-3
+
+Files: etc/issue, etc/issue.net, etc/motd, usr/share/sparky-stereo-console/sparky-leaf.txt
+    The ASCII art and texts: Copyright (C) 2018-2026 Daniel Ramos (Capitain Jack)
+    License: GPL-3
+
+File: etc/issue (the Debian swirl)
+    The Debian logo in ASCII as drawn in screenFetch, by Brett Bohnenkamper (KittyKatt)
+    License: GPL-3+
+
+File: etc/skel/.bashrc
+    Debian's /etc/skel/.bashrc (package bash), with the coloured prompt forced on
+    License: GPL-3+
+
+File: etc/xdg/fastfetch/config.jsonc
+    fastfetch's neofetch preset (package fastfetch), with the Sparky logo
+    License: MIT
+
+License:
+
+    This package is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 3 of the License, or
+    (at your option) any later version.
+
+    This package is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this package; if not, see <http://www.gnu.org/licenses/>.
+
+On Debian systems, the complete text of the GNU General
+Public License can be found in `/usr/share/common-licenses/GPL-3'.
+EOF
+
+SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
+cat >"$D/DEBIAN/control" <<EOF
+Package: $PKG
+Version: $VERSION
+Architecture: all
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Installed-Size: $SIZE
+Depends: command-not-found, fastfetch
+Conflicts: neofetch
+Section: System
+Priority: optional
+Homepage: https://sparkylinux.org
+Description: Sparky Stereo console
+  Console and SSH banners, message of the day, coloured prompts,
+  command-not-found and fastfetch with the Sparky logo, for Sparky Stereo OS.
+EOF
+(cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort |
+	grep -v -x -F -f <(sed 's|^/||' DEBIAN/conffiles) | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
+mkdir -p "$OUT"
+dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${PKG}_${VERSION}_all.deb" >/dev/null
+echo "built $OUT/${PKG}_${VERSION}_all.deb"
