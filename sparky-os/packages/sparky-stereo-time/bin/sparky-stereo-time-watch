@@ -1,0 +1,20 @@
+#!/bin/bash
+#
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/02
+# Copyright 2026 under the GNU GPL3 License
+# Runs sparky-stereo-time when timedated reports a new timezone. A PathChanged unit on
+# /etc/localtime never fires: timedated replaces the symlink by rename, and so does ln -sf.
+# Last update 2026/10/02
+
+TOOL=${SPARKY_TIME_TOOL:-/usr/bin/sparky-stereo-time}
+BUSCTL=${SPARKY_TIME_BUSCTL:-busctl}
+
+$BUSCTL --system --json=short monitor \
+	--match "type='signal',sender='org.freedesktop.timedate1',member='PropertiesChanged'" |
+while read -r line; do
+	case "$line" in
+		*'"Timezone"'*) "$TOOL" ;;
+	esac
+done
+# the monitor ended: let systemd start us again
+exit 1

@@ -1,10 +1,10 @@
 [Unit]
 Description=Sparky Stereo OS: time servers for the country of the timezone
-After=chrony.service
+Before=chrony.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/sparky-stereo-time
+ExecStart=/usr/bin/sparky-stereo-time --no-reload
 
 [Install]
 WantedBy=multi-user.target

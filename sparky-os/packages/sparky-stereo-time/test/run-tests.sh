@@ -104,5 +104,12 @@ LANG=C $T --zone Europe/Copenhagen --no-reload >/dev/null
 [ ! -e "$D/sparky-stereo-auth.conf" ] && echo "PASS snippet removed for a one-NTS country" || { echo "FAIL snippet stays"; FAILS=$((FAILS + 1)); }
 cmp -s "$D/chrony.conf" "$D/chrony.conf.orig" && echo "PASS chrony.conf untouched" || { echo "FAIL chrony.conf changed"; FAILS=$((FAILS + 1)); }
 unset SPARKY_TIME_OUT
+# the watcher runs the tool for a Timezone signal and for nothing else (fake busctl and tool)
+F=$(mktemp -d); W=$(command -v sparky-stereo-time-watch || echo "$(dirname "$T")/sparky-stereo-time-watch")
+printf '#!/bin/sh\necho "{\\"member\\":\\"PropertiesChanged\\",\\"data\\":{\\"NTP\\":true}}"\necho "{\\"member\\":\\"PropertiesChanged\\",\\"data\\":{\\"Timezone\\":\\"Europe/Madrid\\"}}"\necho "{\\"member\\":\\"PropertiesChanged\\",\\"data\\":{\\"Timezone\\":\\"Europe/Paris\\"}}"\n' >"$F/busctl"
+printf '#!/bin/sh\necho run >>%s/runs\n' "$F" >"$F/tool"; chmod +x "$F/busctl" "$F/tool"
+SPARKY_TIME_BUSCTL=$F/busctl SPARKY_TIME_TOOL=$F/tool "$W"; rc=$?
+[ "$(wc -l <"$F/runs" 2>/dev/null)" = 2 ] && echo "PASS watcher runs the tool once per Timezone signal, not for NTP" || { echo "FAIL watcher: $(cat "$F/runs" 2>/dev/null)"; FAILS=$((FAILS + 1)); }
+[ "$rc" = 1 ] && echo "PASS watcher exits 1 when the monitor ends (systemd restarts it)" || { echo "FAIL watcher exit $rc"; FAILS=$((FAILS + 1)); }
 echo "failures: $FAILS"
 exit $((FAILS > 0))

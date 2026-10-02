@@ -1,0 +1,12 @@
+[Unit]
+Description=Sparky Stereo OS: time servers again when the timezone changes
+After=dbus.service
+Requires=dbus.socket
+
+[Service]
+ExecStart=/usr/bin/sparky-stereo-time-watch
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
