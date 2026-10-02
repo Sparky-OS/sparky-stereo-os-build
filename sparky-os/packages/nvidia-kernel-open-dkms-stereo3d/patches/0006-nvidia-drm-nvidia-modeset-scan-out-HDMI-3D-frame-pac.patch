@@ -1,0 +1,224 @@
+From 2cc85892b99f44015c352129fd0c1bf9b40b3f58 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 2 Oct 2026 15:19:16 -0300
+Subject: [PATCH] nvidia-drm, nvidia-modeset: scan out HDMI 3D frame packing
+ and side by side (full)
+
+Until now the frame packing modes the HDMI VSDB declares were listed but
+could not display: they are not EDID timings, and a frame holding both
+eyes needs doubled timings (what AMD's DC calls CRTC_STEREO_DOUBLE).
+Side by side (full) was not admitted at all.
+
+ - drm_mode_to_nvkms_display_mode(): for DRM_MODE_FLAG_3D_FRAME_PACKING
+   the timings become the whole frame, as drm_mode_set_crtcinfo() times
+   them with CRTC_STEREO_DOUBLE: pixel clock x2 and the vertical timings
+   grown by the mode's vtotal (left eye, the active space, right eye).
+   For DRM_MODE_FLAG_3D_SIDE_BY_SIDE_FULL both eyes sit at full width,
+   the horizontal blanking is kept and the pixel clock grows with the
+   total width. The mode is one eye, the scanout buffer the whole frame.
+ - NvKmsKapiDisplayMode gets stereoDoubled (set by the above), carried
+   through the kapi into NVKMS: the new ApplyStereoDoubledOverrides() in
+   nvkms-kapi.c adds ALLOW_NON_EDID_MODES, NO_HORIZ_SYNC_CHECK and
+   NO_VERT_REFRESH_CHECK to the mode validation of such a mode, because
+   its line and frame rates can sit outside the EDID range limits, which
+   describe 2D timings; the sink declared the format in its HDMI VSDB.
+   Both the mode validation and the modeset path apply it.
+ - nvidia-drm-connector.c: nv_hdmi_vsdb_stereo_modes() admits
+   3D_Structure 3 (side by side, full) alongside 0, 6 and 8, in the
+   structure_all and the per-VIC cases; the comment in
+   nv_drm_connector_new() no longer says frame packing is unsupported.
+   (nvkms-kapi.h exists twice in the tree and both copies get the field.)
+
+Recovered from the NVIDIA module source that was installed on Daniel's
+machine on 2026-10-01 (overlay /K3D/temp/stereo3d-install/nvidia-new,
+never committed). Verified then: the module, built for
+7.3.0-rc1-stereo3d with the rest of this work, ran on the RTX 3060 and
+the KDL-46EX725 showed "1080p HD, 12bit, 3D" (sparky-stereo-os docs/first-runs/kwin-2026-10-01
+README, 2026-10-01 03:11, a top and bottom mode). The README records no
+separate NVIDIA run of frame packing or side by side (full) scanout.
+
+Assisted-by: claude-sonnet (Claude Code subagent)
+---
+ kernel-open/common/inc/nvkms-kapi.h           |  6 ++++
+ kernel-open/nvidia-drm/nvidia-drm-connector.c | 15 +++++---
+ kernel-open/nvidia-drm/nvidia-drm-utils.c     | 34 +++++++++++++++++++
+ .../kapi/interface/nvkms-kapi.h               |  6 ++++
+ src/nvidia-modeset/kapi/src/nvkms-kapi.c      | 18 ++++++++++
+ 5 files changed, 75 insertions(+), 4 deletions(-)
+
+diff --git a/kernel-open/common/inc/nvkms-kapi.h b/kernel-open/common/inc/nvkms-kapi.h
+index f958cf8..30f01d6 100644
+--- a/kernel-open/common/inc/nvkms-kapi.h
++++ b/kernel-open/common/inc/nvkms-kapi.h
+@@ -119,6 +119,12 @@ struct NvKmsKapiDisplayModeTimings {
+ struct NvKmsKapiDisplayMode {
+     struct NvKmsKapiDisplayModeTimings timings;
+     char name[NVKMS_KAPI_MODE_NAME_LEN];
++    /*
++     * The timings are an HDMI 1.4 3D frame holding both eyes (frame packing,
++     * side by side full), which the sink declares in its HDMI VSDB rather
++     * than as an EDID timing.
++     */
++    NvBool stereoDoubled;
+ };
+ 
+ #define NVKMS_KAPI_LAYER_MAX 8
+diff --git a/kernel-open/nvidia-drm/nvidia-drm-connector.c b/kernel-open/nvidia-drm/nvidia-drm-connector.c
+index d2deb2e..647cf13 100644
+--- a/kernel-open/nvidia-drm/nvidia-drm-connector.c
++++ b/kernel-open/nvidia-drm/nvidia-drm-connector.c
+@@ -680,11 +680,15 @@ static int nv_hdmi_vsdb_stereo_modes(struct drm_connector *connector,
+             if (!(mask & (1 << i)))
+                 continue;
+ 
+-            /* add_3d_struct_modes(): only structures 0/6/8 have DRM flags */
++            /* as add_3d_struct_modes(): structures 0, 3, 6 and 8 */
+             if (structure_all & (1 << 0))
+                 modes += nv_stereo_add_vic_index(
+                              connector, vics, vics_len, (NvU8)i,
+                              DRM_MODE_FLAG_3D_FRAME_PACKING);
++            if (structure_all & (1 << 3))
++                modes += nv_stereo_add_vic_index(
++                             connector, vics, vics_len, (NvU8)i,
++                             DRM_MODE_FLAG_3D_SIDE_BY_SIDE_FULL);
+             if (structure_all & (1 << 6))
+                 modes += nv_stereo_add_vic_index(
+                              connector, vics, vics_len, (NvU8)i,
+@@ -715,6 +719,9 @@ static int nv_hdmi_vsdb_stereo_modes(struct drm_connector *connector,
+         case 0:
+             stereo_flag = DRM_MODE_FLAG_3D_FRAME_PACKING;
+             break;
++        case 3:
++            stereo_flag = DRM_MODE_FLAG_3D_SIDE_BY_SIDE_FULL;
++            break;
+         case 6:
+             stereo_flag = DRM_MODE_FLAG_3D_TOP_AND_BOTTOM;
+             break;
+@@ -1174,9 +1181,9 @@ nv_drm_connector_new(struct drm_device *dev,
+      * Sony KDL-46HX855 into 3D with picture (runs + client:
+      * github.com/danielcamposramos/sony-bravia-linux tools/stereo-modeset/).
+      *
+-     * Not included: frame packing needs doubled scanout timing inside
+-     * NVKMS (what AMD's DC calls CRTC_STEREO_DOUBLE) -- the FP modes will
+-     * *list* but do not expect them to display correctly yet.
++     * Frame packing is sent as the whole frame-packed frame (both eyes and
++     * the active space, at twice the pixel clock), which the client draws
++     * into one buffer, as DRM defines it (drm_mode_to_nvkms_display_mode).
+      */
+     if (nv_connector->type == NVKMS_CONNECTOR_TYPE_HDMI) {
+         nv_connector->base.stereo_allowed = true;
+diff --git a/kernel-open/nvidia-drm/nvidia-drm-utils.c b/kernel-open/nvidia-drm/nvidia-drm-utils.c
+index b14947f..60f9870 100644
+--- a/kernel-open/nvidia-drm/nvidia-drm-utils.c
++++ b/kernel-open/nvidia-drm/nvidia-drm-utils.c
+@@ -30,6 +30,7 @@
+ 
+ #include <drm/drm_plane.h>
+ #include <drm/drm_modes.h>
++#include <linux/math64.h>
+ #include <uapi/drm/drm_fourcc.h>
+ 
+ #include "nvidia-drm-priv.h"
+@@ -183,6 +184,39 @@ void drm_mode_to_nvkms_display_mode(const struct drm_display_mode *src,
+     dst->timings.vSyncEnd   = src->vsync_end;
+     dst->timings.vTotal     = src->vtotal;
+ 
++    /*
++     * HDMI 1.4 layouts holding both eyes in one frame, as
++     * drm_mode_set_crtcinfo() times them with CRTC_STEREO_DOUBLE; the mode is
++     * one eye and the scanout buffer is the whole frame.
++     *
++     * Frame packing: the left eye, the mode's vertical blanking (the active
++     * space) and the right eye, at twice the pixel clock.
++     *
++     * Side by side (full): both eyes at full width, the horizontal blanking
++     * kept, the pixel clock grown with the total width.
++     */
++    dst->stereoDoubled = NV_FALSE;
++    switch (src->flags & DRM_MODE_FLAG_3D_MASK) {
++    case DRM_MODE_FLAG_3D_FRAME_PACKING:
++        dst->timings.pixelClockHz *= 2;
++        dst->timings.vVisible     += src->vtotal;
++        dst->timings.vSyncStart   += src->vtotal;
++        dst->timings.vSyncEnd     += src->vtotal;
++        dst->timings.vTotal       += src->vtotal;
++        dst->stereoDoubled = NV_TRUE;
++        break;
++    case DRM_MODE_FLAG_3D_SIDE_BY_SIDE_FULL:
++        dst->timings.pixelClockHz =
++            (NvU32)div_u64((u64)dst->timings.pixelClockHz *
++                           (src->htotal + src->hdisplay), src->htotal);
++        dst->timings.hVisible     += src->hdisplay;
++        dst->timings.hSyncStart   += src->hdisplay;
++        dst->timings.hSyncEnd     += src->hdisplay;
++        dst->timings.hTotal       += src->hdisplay;
++        dst->stereoDoubled = NV_TRUE;
++        break;
++    }
++
+     if (src->flags & DRM_MODE_FLAG_INTERLACE) {
+         dst->timings.flags.interlaced = NV_TRUE;
+     } else {
+diff --git a/src/nvidia-modeset/kapi/interface/nvkms-kapi.h b/src/nvidia-modeset/kapi/interface/nvkms-kapi.h
+index f958cf8..30f01d6 100644
+--- a/src/nvidia-modeset/kapi/interface/nvkms-kapi.h
++++ b/src/nvidia-modeset/kapi/interface/nvkms-kapi.h
+@@ -119,6 +119,12 @@ struct NvKmsKapiDisplayModeTimings {
+ struct NvKmsKapiDisplayMode {
+     struct NvKmsKapiDisplayModeTimings timings;
+     char name[NVKMS_KAPI_MODE_NAME_LEN];
++    /*
++     * The timings are an HDMI 1.4 3D frame holding both eyes (frame packing,
++     * side by side full), which the sink declares in its HDMI VSDB rather
++     * than as an EDID timing.
++     */
++    NvBool stereoDoubled;
+ };
+ 
+ #define NVKMS_KAPI_LAYER_MAX 8
+diff --git a/src/nvidia-modeset/kapi/src/nvkms-kapi.c b/src/nvidia-modeset/kapi/src/nvkms-kapi.c
+index 91b619e..a9d6c1c 100644
+--- a/src/nvidia-modeset/kapi/src/nvkms-kapi.c
++++ b/src/nvidia-modeset/kapi/src/nvkms-kapi.c
+@@ -2529,6 +2529,21 @@ static void InitNvKmsModeValidationParams(
+     params->overrides = NVKMS_MODE_VALIDATION_NO_RRX1K_CHECK;
+ }
+ 
++/*
++ * An HDMI 3D frame holding both eyes is not an EDID timing, and its line and
++ * frame rates can sit outside the EDID's range limits, which describe 2D
++ * timings; the sink declares the 3D format in its HDMI VSDB.
++ */
++static void ApplyStereoDoubledOverrides(const struct NvKmsKapiDisplayMode *mode,
++                                        struct NvKmsModeValidationParams *params)
++{
++    if (mode->stereoDoubled) {
++        params->overrides |= NVKMS_MODE_VALIDATION_ALLOW_NON_EDID_MODES |
++                             NVKMS_MODE_VALIDATION_NO_HORIZ_SYNC_CHECK |
++                             NVKMS_MODE_VALIDATION_NO_VERT_REFRESH_CHECK;
++    }
++}
++
+ static int GetDisplayMode
+ (
+     struct NvKmsKapiDevice *device,
+@@ -2642,6 +2657,7 @@ static NvBool ValidateDisplayMode
+ 
+     InitNvKmsModeValidationParams(device,
+                                   &paramsValidate.request.modeValidation);
++    ApplyStereoDoubledOverrides(mode, &paramsValidate.request.modeValidation);
+ 
+ 
+     NvKmsKapiDisplayModeToKapi(mode, &paramsValidate.request.mode);
+@@ -3369,6 +3385,8 @@ static NvBool NvKmsKapiRequestedModeSetConfigToKms(
+ 
+         InitNvKmsModeValidationParams(device,
+                                       &paramsHead->modeValidationParams);
++        ApplyStereoDoubledOverrides(&headModeSetConfig->mode,
++                                  &paramsHead->modeValidationParams);
+ 
+         for (i = 0; i < headModeSetConfig->numDisplays; i++) {
+             paramsHead->dpyIdList = nvAddDpyIdToDpyIdList(
+-- 
+2.53.0
+

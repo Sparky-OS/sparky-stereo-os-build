@@ -7,6 +7,12 @@
 #   0003 nvtiming: add the integer-rate twin of 1000/1001-rate CTA VICs
 #   0004 nvidia-modeset: HDMI Deep Colour at 16 bits per component (DC_48); the default
 #        max_output_color_depth becomes 16, so the sink's declared depth decides
+#   0005 nvidia-drm: conftests for the generic connector colour properties (kernel 7.3 API)
+#   0006 nvidia-drm, nvidia-modeset: scan out HDMI 3D frame packing and side by side (full)
+#   0007 nvidia-drm: send the HDMI 3D InfoFrame (VSIF) built from the mode, so the TV
+#        switches itself into 3D when KWin sets a 3D mode
+#   0008 nvidia-drm: "max bpc", "Broadcast RGB" and "color format" connector properties
+# 0005-0008 are recovered from the module source installed on 2026-10-01, never committed.
 # The package is NVIDIA's own nvidia-kernel-open-dkms 615.71.09-2 with the patches applied
 # to its DKMS source. It takes its own name and provides nvidia-kernel-open-dkms
 # (= 615.71.09-2), because NVIDIA's nvidia-driver depends on exactly that version.
@@ -16,7 +22,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
 UPV=615.71.09
 DEBV=$UPV-2
-REV=${REV:-2}
+REV=${REV:-3}
 SRCDEB=${SRCDEB:-/var/cache/apt/archives/nvidia-kernel-open-dkms_${DEBV}_amd64.deb}
 WORK=$(mktemp -d /K3D/temp/sparky-os/nvidia-pkg.XXXXXX)
 trap 'rm -rf "$WORK"' EXIT

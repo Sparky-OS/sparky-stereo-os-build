@@ -1,0 +1,114 @@
+From 8a935888952d69204618b397108717ebe05eddb9 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 2 Oct 2026 15:18:58 -0300
+Subject: [PATCH] nvidia-drm: conftests for the generic connector colour
+ properties
+
+Add three function compile tests, wired into nvidia-drm-sources.mk:
+
+ - drm_connector_attach_max_bpc_property
+ - drm_connector_attach_broadcast_rgb_property
+ - drm_connector_attach_color_format_property
+
+They define NV_DRM_CONNECTOR_ATTACH_MAX_BPC_PROPERTY_PRESENT,
+NV_DRM_CONNECTOR_ATTACH_BROADCAST_RGB_PROPERTY_PRESENT and
+NV_DRM_CONNECTOR_ATTACH_COLOR_FORMAT_PROPERTY_PRESENT. The helpers are
+the DRM core's generic "max bpc", "Broadcast RGB" and "color format"
+connector properties; the last two (and the hdmi.broadcast_rgb and
+color_format connector-state fields they fill) exist only in recent
+kernels, 7.3 among them, so the code that uses them has to be guarded.
+Nothing uses the macros yet; the next commits do.
+
+Recovered from the NVIDIA module source that was installed on Daniel's
+machine on 2026-10-01 (overlay /K3D/temp/stereo3d-install/nvidia-new,
+never committed). Verified then: the module built for 7.3.0-rc1-stereo3d
+and ran on the RTX 3060 (sparky-stereo-os docs/first-runs/kwin-2026-10-01 README, 2026-10-01 03:11).
+
+Assisted-by: claude-sonnet (Claude Code subagent)
+---
+ kernel-open/conftest.sh                      | 54 ++++++++++++++++++++
+ kernel-open/nvidia-drm/nvidia-drm-sources.mk |  3 ++
+ 2 files changed, 57 insertions(+)
+
+diff --git a/kernel-open/conftest.sh b/kernel-open/conftest.sh
+index 7ecfa4f..6373f36 100755
+--- a/kernel-open/conftest.sh
++++ b/kernel-open/conftest.sh
+@@ -4761,6 +4761,60 @@ compile_test() {
+             compile_check_conftest "$CODE" "NV_DRM_CONNECTOR_ATTACH_HDR_OUTPUT_METADATA_PROPERTY_PRESENT" "" "functions"
+         ;;
+ 
++        drm_connector_attach_max_bpc_property)
++            #
++            # Determine if the function
++            # drm_connector_attach_max_bpc_property() is present.
++            #
++            # The generic "max bpc" connector property helper.
++            #
++            CODE="
++            #include <drm/drm_crtc.h>
++            #include <drm/drm_connector.h>
++
++            void conftest_drm_connector_attach_max_bpc_property(void) {
++                drm_connector_attach_max_bpc_property();
++            }"
++
++            compile_check_conftest "$CODE" "NV_DRM_CONNECTOR_ATTACH_MAX_BPC_PROPERTY_PRESENT" "" "functions"
++        ;;
++
++        drm_connector_attach_broadcast_rgb_property)
++            #
++            # Determine if the function
++            # drm_connector_attach_broadcast_rgb_property() is present.
++            #
++            # The generic "Broadcast RGB" connector property helper.
++            #
++            CODE="
++            #include <drm/drm_crtc.h>
++            #include <drm/drm_connector.h>
++
++            void conftest_drm_connector_attach_broadcast_rgb_property(void) {
++                drm_connector_attach_broadcast_rgb_property();
++            }"
++
++            compile_check_conftest "$CODE" "NV_DRM_CONNECTOR_ATTACH_BROADCAST_RGB_PROPERTY_PRESENT" "" "functions"
++        ;;
++
++        drm_connector_attach_color_format_property)
++            #
++            # Determine if the function
++            # drm_connector_attach_color_format_property() is present.
++            #
++            # The generic "color format" connector property helper.
++            #
++            CODE="
++            #include <drm/drm_crtc.h>
++            #include <drm/drm_connector.h>
++
++            void conftest_drm_connector_attach_color_format_property(void) {
++                drm_connector_attach_color_format_property();
++            }"
++
++            compile_check_conftest "$CODE" "NV_DRM_CONNECTOR_ATTACH_COLOR_FORMAT_PROPERTY_PRESENT" "" "functions"
++        ;;
++
+         mmu_interval_notifier)
+             #
+             # Determine if mmu_interval_notifier struct is present or not
+diff --git a/kernel-open/nvidia-drm/nvidia-drm-sources.mk b/kernel-open/nvidia-drm/nvidia-drm-sources.mk
+index d911cd5..39279bc 100644
+--- a/kernel-open/nvidia-drm/nvidia-drm-sources.mk
++++ b/kernel-open/nvidia-drm/nvidia-drm-sources.mk
+@@ -59,6 +59,9 @@ NV_CONFTEST_FUNCTION_COMPILE_TESTS += drm_fbdev_generic_setup
+ NV_CONFTEST_FUNCTION_COMPILE_TESTS += drm_fbdev_ttm_setup
+ NV_CONFTEST_FUNCTION_COMPILE_TESTS += drm_client_setup
+ NV_CONFTEST_FUNCTION_COMPILE_TESTS += drm_connector_attach_hdr_output_metadata_property
++NV_CONFTEST_FUNCTION_COMPILE_TESTS += drm_connector_attach_max_bpc_property
++NV_CONFTEST_FUNCTION_COMPILE_TESTS += drm_connector_attach_broadcast_rgb_property
++NV_CONFTEST_FUNCTION_COMPILE_TESTS += drm_connector_attach_color_format_property
+ NV_CONFTEST_FUNCTION_COMPILE_TESTS += drm_plane_create_color_properties
+ NV_CONFTEST_FUNCTION_COMPILE_TESTS += drm_atomic_helper_legacy_gamma_set
+ NV_CONFTEST_FUNCTION_COMPILE_TESTS += vmf_insert_mixed
+-- 
+2.53.0
+

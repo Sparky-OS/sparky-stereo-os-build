@@ -1,0 +1,415 @@
+From eac28d1dae312d33b856253c35444fdf0918e00f Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 2 Oct 2026 15:19:44 -0300
+Subject: [PATCH] nvidia-drm: expose max bpc, Broadcast RGB and color format on
+ HDMI and DP
+
+KDE's display settings (and any DRM client) set output colour through
+the DRM core's generic connector properties. nvidia-drm offered none of
+them, so the colour depth the display could take could not be chosen.
+
+On HDMI and DP connectors attach, where the kernel has the helper
+(the conftests of the first commit): "max bpc" (8 to 16),
+"Broadcast RGB" and "color format" (RGB, YCbCr 4:4:4, YCbCr 4:2:2).
+
+ - nvkms-kapi: NvKmsKapiHeadModeSetConfig gets outputColor (bpc, range,
+   format) with the new enums NvKmsKapiOutputColorRange/Format, and a
+   head's outputColorChanged flag, which forces a modeset like a mode
+   change; NvKmsKapiDynamicDisplayParams gets maxBpc, the highest depth
+   the display takes in RGB, YCbCr 4:4:4 and 4:2:2 (0: unsupported),
+   filled from NVKMS's supportedOutputColorFormats. NvKmsKapi
+   RequestedModeSetConfigToKms() maps them onto the NVKMS head request
+   (colorBpc, colorRange, colorFormat, each with its Specified flag).
+ - nvidia-drm: the detect path stores maxBpc in the connector;
+   nv_drm_connector_output_color() builds the head's outputColor from the
+   connector state. "max bpc" is a ceiling: below what the display takes
+   in the chosen format it becomes the highest depth at or under it
+   (12, 10, 8 or 6), otherwise NVKMS chooses, up to the display's best
+   and the max_output_color_depth parameter. Changes of "max bpc",
+   "Broadcast RGB" and "color format" set outputColorChanged.
+ - The hdmi.broadcast_rgb and color_format connector-state fields are
+   used only where their conftests are present (kernel 7.3 has them).
+
+Recovered from the NVIDIA module source that was installed on Daniel's
+machine on 2026-10-01 (overlay /K3D/temp/stereo3d-install/nvidia-new,
+never committed). Verified then: the module built for 7.3.0-rc1-stereo3d
+and ran on the RTX 3060, where the KDL-46EX725 reported 12 bit
+(sparky-stereo-os docs/first-runs/kwin-2026-10-01 README, 2026-10-01 03:11). The README records no
+test of the individual properties.
+
+Assisted-by: claude-sonnet (Claude Code subagent)
+---
+ kernel-open/common/inc/nvkms-kapi.h           | 40 ++++++++
+ kernel-open/nvidia-drm/nvidia-drm-connector.c | 96 +++++++++++++++++++
+ kernel-open/nvidia-drm/nvidia-drm-connector.h | 10 ++
+ .../kapi/interface/nvkms-kapi.h               | 40 ++++++++
+ src/nvidia-modeset/kapi/src/nvkms-kapi.c      | 46 ++++++++-
+ 5 files changed, 231 insertions(+), 1 deletion(-)
+
+diff --git a/kernel-open/common/inc/nvkms-kapi.h b/kernel-open/common/inc/nvkms-kapi.h
+index 30f01d6..3a3ffc5 100644
+--- a/kernel-open/common/inc/nvkms-kapi.h
++++ b/kernel-open/common/inc/nvkms-kapi.h
+@@ -374,6 +374,24 @@ struct NvKmsKapiCursorRequestedConfig {
+     } flags;
+ };
+ 
++/*
++ * Output colour range and format for a head, from the DRM connector's
++ * "Broadcast RGB" and "color format" properties; DEFAULT leaves the choice to
++ * NVKMS.
++ */
++enum NvKmsKapiOutputColorRange {
++    NVKMS_KAPI_OUTPUT_COLOR_RANGE_DEFAULT = 0,
++    NVKMS_KAPI_OUTPUT_COLOR_RANGE_FULL,
++    NVKMS_KAPI_OUTPUT_COLOR_RANGE_LIMITED,
++};
++
++enum NvKmsKapiOutputColorFormat {
++    NVKMS_KAPI_OUTPUT_COLOR_FORMAT_DEFAULT = 0,
++    NVKMS_KAPI_OUTPUT_COLOR_FORMAT_RGB,
++    NVKMS_KAPI_OUTPUT_COLOR_FORMAT_YCBCR444,
++    NVKMS_KAPI_OUTPUT_COLOR_FORMAT_YCBCR422,
++};
++
+ struct NvKmsKapiHeadModeSetConfig {
+     /*
+      * DRM distinguishes between the head state "enabled" (the specified
+@@ -426,6 +444,17 @@ struct NvKmsKapiHeadModeSetConfig {
+     } dithering;
+ 
+     NvBool postcompColorPassthrough;
++
++    /*
++     * Output colour, from the DRM connector's "max bpc", "Broadcast RGB" and
++     * "color format": bits per component (0 for NVKMS's choice, else 6, 8,
++     * 10 or 12), range and format.
++     */
++    struct {
++        NvU8 bpc;
++        enum NvKmsKapiOutputColorRange range;
++        enum NvKmsKapiOutputColorFormat format;
++    } outputColor;
+ };
+ 
+ struct NvKmsKapiHeadRequestedConfig {
+@@ -441,6 +470,7 @@ struct NvKmsKapiHeadRequestedConfig {
+         NvBool ditheringChanged                : 1;
+         NvBool hdmiVsifMetadataChanged         : 1;
+         NvBool postcompColorPassthroughChanged : 1;
++        NvBool outputColorChanged              : 1;
+     } flags;
+ 
+     struct NvKmsKapiCursorRequestedConfig cursorRequestedConfig;
+@@ -561,6 +591,16 @@ struct NvKmsKapiDynamicDisplayParams {
+ 
+     /* [IN] Set true to force disconnect status */
+     NvBool forceDisconnected;
++
++    /*
++     * [OUT] Highest bits per component the display takes in each colour
++     * format, 0 where the format isn't supported
++     */
++    struct {
++        NvU8 rgb444;
++        NvU8 yuv444;
++        NvU8 yuv422;
++    } maxBpc;
+ };
+ 
+ struct NvKmsKapiCreateSurfaceParams {
+diff --git a/kernel-open/nvidia-drm/nvidia-drm-connector.c b/kernel-open/nvidia-drm/nvidia-drm-connector.c
+index 276f519..4be01bb 100644
+--- a/kernel-open/nvidia-drm/nvidia-drm-connector.c
++++ b/kernel-open/nvidia-drm/nvidia-drm-connector.c
+@@ -180,6 +180,10 @@ __nv_drm_detect_encoder(struct NvKmsKapiDynamicDisplayParams *pDetectParams,
+ #endif
+ 
+     if (pDetectParams->connected) {
++        nv_connector->maxBpc.rgb444 = pDetectParams->maxBpc.rgb444;
++        nv_connector->maxBpc.yuv444 = pDetectParams->maxBpc.yuv444;
++        nv_connector->maxBpc.yuv422 = pDetectParams->maxBpc.yuv422;
++
+         if (!pDetectParams->overrideEdid && pDetectParams->edid.bufferSize) {
+ 
+             if ((nv_connector->edid = nv_drm_calloc(
+@@ -992,6 +996,61 @@ static NvU8 nv_drm_stereo_vsif_payload(const struct drm_display_mode *mode,
+     return 5;
+ }
+ 
++/*
++ * The head's output colour from the connector's "max bpc", "Broadcast RGB" and
++ * "color format". "max bpc" is a ceiling: below what the display takes in the
++ * chosen format it becomes the highest depth at or under it, otherwise NVKMS
++ * chooses (up to the display's best and the max_output_color_depth parameter).
++ */
++static void
++nv_drm_connector_output_color(const struct nv_drm_connector *nv_connector,
++                              const struct drm_connector_state *state,
++                              struct NvKmsKapiHeadModeSetConfig *config)
++{
++    NvU8 displayMaxBpc = nv_connector->maxBpc.rgb444;
++    unsigned int ceiling = state->max_requested_bpc;
++
++    config->outputColor.bpc = 0;
++    config->outputColor.range = NVKMS_KAPI_OUTPUT_COLOR_RANGE_DEFAULT;
++    config->outputColor.format = NVKMS_KAPI_OUTPUT_COLOR_FORMAT_DEFAULT;
++
++#if defined(NV_DRM_CONNECTOR_ATTACH_COLOR_FORMAT_PROPERTY_PRESENT)
++    switch (state->color_format) {
++    case DRM_CONNECTOR_COLOR_FORMAT_RGB444:
++        config->outputColor.format = NVKMS_KAPI_OUTPUT_COLOR_FORMAT_RGB;
++        break;
++    case DRM_CONNECTOR_COLOR_FORMAT_YCBCR444:
++        config->outputColor.format = NVKMS_KAPI_OUTPUT_COLOR_FORMAT_YCBCR444;
++        displayMaxBpc = nv_connector->maxBpc.yuv444;
++        break;
++    case DRM_CONNECTOR_COLOR_FORMAT_YCBCR422:
++        config->outputColor.format = NVKMS_KAPI_OUTPUT_COLOR_FORMAT_YCBCR422;
++        displayMaxBpc = nv_connector->maxBpc.yuv422;
++        break;
++    default:
++        break;
++    }
++#endif
++
++#if defined(NV_DRM_CONNECTOR_ATTACH_BROADCAST_RGB_PROPERTY_PRESENT)
++    switch (state->hdmi.broadcast_rgb) {
++    case DRM_HDMI_BROADCAST_RGB_FULL:
++        config->outputColor.range = NVKMS_KAPI_OUTPUT_COLOR_RANGE_FULL;
++        break;
++    case DRM_HDMI_BROADCAST_RGB_LIMITED:
++        config->outputColor.range = NVKMS_KAPI_OUTPUT_COLOR_RANGE_LIMITED;
++        break;
++    default:
++        break;
++    }
++#endif
++
++    if (ceiling != 0 && displayMaxBpc != 0 && ceiling < displayMaxBpc) {
++        config->outputColor.bpc = ceiling >= 12 ? 12 :
++                                  (ceiling >= 10 ? 10 : (ceiling >= 8 ? 8 : 6));
++    }
++}
++
+ static int
+ __nv_drm_connector_atomic_check(struct drm_connector *connector,
+                                 nv_drm_atomic_state_base_t *state)
+@@ -1035,6 +1094,23 @@ __nv_drm_connector_atomic_check(struct drm_connector *connector,
+         req_config->modeSetConfig.dithering.mode = mode;
+     }
+ 
++    /* Output colour: depth, range and format */
++    req_config->flags.outputColorChanged =
++        old_connector_state->max_requested_bpc !=
++            new_connector_state->max_requested_bpc
++#if defined(NV_DRM_CONNECTOR_ATTACH_BROADCAST_RGB_PROPERTY_PRESENT)
++        || old_connector_state->hdmi.broadcast_rgb !=
++            new_connector_state->hdmi.broadcast_rgb
++#endif
++#if defined(NV_DRM_CONNECTOR_ATTACH_COLOR_FORMAT_PROPERTY_PRESENT)
++        || old_connector_state->color_format !=
++            new_connector_state->color_format
++#endif
++        ;
++    nv_drm_connector_output_color(to_nv_connector(connector),
++                                  new_connector_state,
++                                  &req_config->modeSetConfig);
++
+     /*
+      * Handle HDMI VSIF metadata changes: a client's NV_HDMI_VSIF_METADATA blob
+      * when there is one, else, on HDMI, the 3D announcement of the mode's 3D
+@@ -1313,6 +1389,26 @@ nv_drm_connector_new(struct drm_device *dev,
+     }
+ #endif /* defined(NV_DRM_CONNECTOR_ATTACH_HDR_OUTPUT_METADATA_PROPERTY_PRESENT) */
+ 
++    /*
++     * Output colour, as other drivers offer it: depth ("max bpc"), range
++     * ("Broadcast RGB") and format ("color format")
++     */
++    if (nv_connector->type == NVKMS_CONNECTOR_TYPE_HDMI ||
++        nv_connector->type == NVKMS_CONNECTOR_TYPE_DP) {
++#if defined(NV_DRM_CONNECTOR_ATTACH_MAX_BPC_PROPERTY_PRESENT)
++        drm_connector_attach_max_bpc_property(&nv_connector->base, 8, 16);
++#endif
++#if defined(NV_DRM_CONNECTOR_ATTACH_BROADCAST_RGB_PROPERTY_PRESENT)
++        drm_connector_attach_broadcast_rgb_property(&nv_connector->base);
++#endif
++#if defined(NV_DRM_CONNECTOR_ATTACH_COLOR_FORMAT_PROPERTY_PRESENT)
++        drm_connector_attach_color_format_property(&nv_connector->base,
++            BIT(DRM_OUTPUT_COLOR_FORMAT_RGB444) |
++            BIT(DRM_OUTPUT_COLOR_FORMAT_YCBCR444) |
++            BIT(DRM_OUTPUT_COLOR_FORMAT_YCBCR422));
++#endif
++    }
++
+     /* Attach dithering mode property */
+     if (nv_dev->nv_connector_dithering_mode_property) {
+         drm_object_attach_property(&nv_connector->base.base,
+diff --git a/kernel-open/nvidia-drm/nvidia-drm-connector.h b/kernel-open/nvidia-drm/nvidia-drm-connector.h
+index 787d3a5..d087ac7 100644
+--- a/kernel-open/nvidia-drm/nvidia-drm-connector.h
++++ b/kernel-open/nvidia-drm/nvidia-drm-connector.h
+@@ -65,6 +65,16 @@ struct nv_drm_connector {
+      */
+     struct nv_drm_crtc *modeset_permission_crtc;
+ 
++    /*
++     * Highest bits per component the connected display takes in each colour
++     * format (0: not supported), for "max bpc".
++     */
++    struct {
++        NvU8 rgb444;
++        NvU8 yuv444;
++        NvU8 yuv422;
++    } maxBpc;
++
+     struct drm_connector base;
+ };
+ 
+diff --git a/src/nvidia-modeset/kapi/interface/nvkms-kapi.h b/src/nvidia-modeset/kapi/interface/nvkms-kapi.h
+index 30f01d6..3a3ffc5 100644
+--- a/src/nvidia-modeset/kapi/interface/nvkms-kapi.h
++++ b/src/nvidia-modeset/kapi/interface/nvkms-kapi.h
+@@ -374,6 +374,24 @@ struct NvKmsKapiCursorRequestedConfig {
+     } flags;
+ };
+ 
++/*
++ * Output colour range and format for a head, from the DRM connector's
++ * "Broadcast RGB" and "color format" properties; DEFAULT leaves the choice to
++ * NVKMS.
++ */
++enum NvKmsKapiOutputColorRange {
++    NVKMS_KAPI_OUTPUT_COLOR_RANGE_DEFAULT = 0,
++    NVKMS_KAPI_OUTPUT_COLOR_RANGE_FULL,
++    NVKMS_KAPI_OUTPUT_COLOR_RANGE_LIMITED,
++};
++
++enum NvKmsKapiOutputColorFormat {
++    NVKMS_KAPI_OUTPUT_COLOR_FORMAT_DEFAULT = 0,
++    NVKMS_KAPI_OUTPUT_COLOR_FORMAT_RGB,
++    NVKMS_KAPI_OUTPUT_COLOR_FORMAT_YCBCR444,
++    NVKMS_KAPI_OUTPUT_COLOR_FORMAT_YCBCR422,
++};
++
+ struct NvKmsKapiHeadModeSetConfig {
+     /*
+      * DRM distinguishes between the head state "enabled" (the specified
+@@ -426,6 +444,17 @@ struct NvKmsKapiHeadModeSetConfig {
+     } dithering;
+ 
+     NvBool postcompColorPassthrough;
++
++    /*
++     * Output colour, from the DRM connector's "max bpc", "Broadcast RGB" and
++     * "color format": bits per component (0 for NVKMS's choice, else 6, 8,
++     * 10 or 12), range and format.
++     */
++    struct {
++        NvU8 bpc;
++        enum NvKmsKapiOutputColorRange range;
++        enum NvKmsKapiOutputColorFormat format;
++    } outputColor;
+ };
+ 
+ struct NvKmsKapiHeadRequestedConfig {
+@@ -441,6 +470,7 @@ struct NvKmsKapiHeadRequestedConfig {
+         NvBool ditheringChanged                : 1;
+         NvBool hdmiVsifMetadataChanged         : 1;
+         NvBool postcompColorPassthroughChanged : 1;
++        NvBool outputColorChanged              : 1;
+     } flags;
+ 
+     struct NvKmsKapiCursorRequestedConfig cursorRequestedConfig;
+@@ -561,6 +591,16 @@ struct NvKmsKapiDynamicDisplayParams {
+ 
+     /* [IN] Set true to force disconnect status */
+     NvBool forceDisconnected;
++
++    /*
++     * [OUT] Highest bits per component the display takes in each colour
++     * format, 0 where the format isn't supported
++     */
++    struct {
++        NvU8 rgb444;
++        NvU8 yuv444;
++        NvU8 yuv422;
++    } maxBpc;
+ };
+ 
+ struct NvKmsKapiCreateSurfaceParams {
+diff --git a/src/nvidia-modeset/kapi/src/nvkms-kapi.c b/src/nvidia-modeset/kapi/src/nvkms-kapi.c
+index a9d6c1c..01e8561 100644
+--- a/src/nvidia-modeset/kapi/src/nvkms-kapi.c
++++ b/src/nvidia-modeset/kapi/src/nvkms-kapi.c
+@@ -1529,6 +1529,15 @@ static NvBool GetDynamicDisplayInfo(
+ 
+     params->connected = pParamsDpyDynamic->reply.connected;
+ 
++    if (params->connected) {
++        const NvKmsDpyOutputColorFormatInfo *formats =
++            &pParamsDpyDynamic->reply.supportedOutputColorFormats;
++
++        params->maxBpc.rgb444 = formats->rgb444.maxBpc;
++        params->maxBpc.yuv444 = formats->yuv444.maxBpc;
++        params->maxBpc.yuv422 = formats->yuv422.maxBpc;
++    }
++
+     params->maxWidthInPixels  = pParamsDpyDynamic->reply.maxWidthInPixels;
+     params->maxHeightInPixels = pParamsDpyDynamic->reply.maxHeightInPixels;
+     device->caps.maxWidthInPixels  = params->maxWidthInPixels;
+@@ -3462,6 +3471,40 @@ static NvBool NvKmsKapiRequestedModeSetConfigToKms(
+         paramsHead->flip.colorimetry.specified = NV_TRUE;
+         paramsHead->flip.colorimetry.val = headModeSetConfig->colorimetry;
+ 
++        /* Output colour; anything not set is NVKMS's choice */
++        if (headModeSetConfig->outputColor.bpc != 0) {
++            paramsHead->colorBpc = headModeSetConfig->outputColor.bpc;
++            paramsHead->colorBpcSpecified = NV_TRUE;
++        }
++        switch (headModeSetConfig->outputColor.range) {
++        case NVKMS_KAPI_OUTPUT_COLOR_RANGE_FULL:
++            paramsHead->colorRange = NV_KMS_DPY_ATTRIBUTE_COLOR_RANGE_FULL;
++            paramsHead->colorRangeSpecified = NV_TRUE;
++            break;
++        case NVKMS_KAPI_OUTPUT_COLOR_RANGE_LIMITED:
++            paramsHead->colorRange = NV_KMS_DPY_ATTRIBUTE_COLOR_RANGE_LIMITED;
++            paramsHead->colorRangeSpecified = NV_TRUE;
++            break;
++        case NVKMS_KAPI_OUTPUT_COLOR_RANGE_DEFAULT:
++            break;
++        }
++        switch (headModeSetConfig->outputColor.format) {
++        case NVKMS_KAPI_OUTPUT_COLOR_FORMAT_RGB:
++            paramsHead->colorFormat = NV_KMS_DPY_ATTRIBUTE_REQUESTED_COLOR_FORMAT_RGB;
++            paramsHead->colorFormatSpecified = NV_TRUE;
++            break;
++        case NVKMS_KAPI_OUTPUT_COLOR_FORMAT_YCBCR444:
++            paramsHead->colorFormat = NV_KMS_DPY_ATTRIBUTE_REQUESTED_COLOR_FORMAT_YCbCr444;
++            paramsHead->colorFormatSpecified = NV_TRUE;
++            break;
++        case NVKMS_KAPI_OUTPUT_COLOR_FORMAT_YCBCR422:
++            paramsHead->colorFormat = NV_KMS_DPY_ATTRIBUTE_REQUESTED_COLOR_FORMAT_YCbCr422;
++            paramsHead->colorFormatSpecified = NV_TRUE;
++            break;
++        case NVKMS_KAPI_OUTPUT_COLOR_FORMAT_DEFAULT:
++            break;
++        }
++
+         paramsHead->viewPortSizeIn.width =
+             headModeSetConfig->mode.timings.hVisible;
+         paramsHead->viewPortSizeIn.height =
+@@ -3827,7 +3870,8 @@ static NvBool ApplyModeSetConfig(
+         bRequiredModeset =
+             headRequestedConfig->flags.activeChanged       ||
+             headRequestedConfig->flags.displaysChanged     ||
+-            headRequestedConfig->flags.modeChanged;
++            headRequestedConfig->flags.modeChanged         ||
++            headRequestedConfig->flags.outputColorChanged;
+ 
+         if (!device->caps.supportsFlipSynchronizedInfoframes) {
+             bRequiredModeset |=
+-- 
+2.53.0
+
