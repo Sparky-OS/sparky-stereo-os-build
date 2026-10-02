@@ -15,7 +15,8 @@
 #
 # GPU=nvidia passes the RTX 3060 (01:00.0 and its audio 01:00.1) through, for test
 # sessions of the stereo stack on real hardware; the card must be bound to vfio-pci
-# first (gpu-vfio.sh, written for the first test session). Without it the VM gets a virtual GPU drawn by the host (virgl).
+# first (sudo gpu-vfio.sh give, with KWin on the iGPU only). Without it the VM gets a virtual
+# GPU drawn by the host (virgl).
 # HEADLESS=1 opens no window on the host's desktop (virtual GPU, no display): for test
 # sessions driven over ssh while nobody is at the screens.
 set -euo pipefail
@@ -69,8 +70,12 @@ boot() {
 	QEMU_SHARES=()
 	start_shares
 	if [ "${GPU:-}" = nvidia ]; then
+		# the card's HDMI port is the VM's screen; the virtual GPU stays for the boot console,
+		# shown in a window only when HEADLESS is not set
 		gpu=(-device vfio-pci,host=01:00.0,multifunction=on -device vfio-pci,host=01:00.1
-			-vga none -device virtio-gpu-pci -display gtk)
+			-vga none -device virtio-gpu-pci -display "$([ "${HEADLESS:-}" = 1 ] && echo none || echo gtk)")
+		# the card reaches guest memory directly, so all of it must be locked
+		sudo -n prlimit --pid $$ --memlock=unlimited:unlimited
 	elif [ "${HEADLESS:-}" = 1 ]; then
 		gpu=(-device virtio-vga -display none)
 	else
@@ -101,5 +106,5 @@ compact) pgrep -f "qemu-system-x86_64 -name sparky-dev" >/dev/null && { echo "po
 		mv "$DISK.compact" "$DISK" && ls -la "$DISK" ;;
 ssh) shift; exec ssh -p 2222 -i "$VMDIR/id_ed25519" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$VMDIR/known_hosts" \
 	"${VMUSER:-daniel}"@127.0.0.1 "$@" ;;
-*) sed -n '2,20p' "$0"; exit 1 ;;
+*) sed -n '2,21p' "$0"; exit 1 ;;
 esac
