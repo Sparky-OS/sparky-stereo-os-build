@@ -5,6 +5,8 @@
 # as /srv/sparky-work/repo:
 #   deb [trusted=yes] file:/srv/sparky-work/repo ./
 # (unsigned while developing; the published repository will be signed).
+# carried/ holds unmodified Debian packages we carry for a while (not re-signed), e.g.
+# libcapi20-3t64, which Wine 10 in testing needs after isdnutils left testing.
 set -eu
 R=${1:-/K3D/temp/sparky-os/repo}
 "$(dirname "$0")/provenance.sh" "$R"/*.deb
