@@ -18,7 +18,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
-VERSION=20261002~sparky9~0
+VERSION=20261002.1~sparky9~0
 PKG=sparky-stereo-console
 B=$HERE/base
 W=$(mktemp -d /K3D/temp/sparky-os/console-build.XXXXXX)
@@ -37,10 +37,11 @@ def wr(p, t): open(p, 'w', encoding='utf-8').write(t)
 # /etc/issue: the edition line (kept in its 29-column field, so the "debian" art beside
 # it stays aligned) and live details from getty instead of a release typed by hand.
 t = rd('issue.client')
-t = t.replace('Small Business Client Edition', 'Sparky Stereo OS'.ljust(29))
-t = t.replace('/S /Debian GNU/Linux BullsEye', r'\S{PRETTY_NAME}')
-t = re.sub(r'(`\$\$b\.\s+)\\v', r'\1\\r \\m', t)
-t = t.replace(r'(\l) SparkyLinux 5.7', r'(\l) \4')
+t = t.replace('Small Business Client Edition', 'Stereo OS 9 "Mashtabba"'.ljust(29))
+t = t.replace('/S /Debian GNU/Linux BullsEye', 'Sparky Stereo OS 9 "Mashtabba"')
+t = re.sub(r'(`\$\$b\.\s+)\\v', lambda m: m.group(1) + 'based on Debian 14 "Forky"', t)
+t = t.replace(r'\n \U', r'\n \r \m')
+t = t.replace(r'(\l) SparkyLinux 5.7', r'(\l) \U  \4')
 wr(f'{d}/etc/issue', t.rstrip('\n') + '\n\n')
 
 # The Sparky leaf, from /etc/issue (the SSH version had some rows shifted): each row up to
@@ -59,7 +60,7 @@ w = max(len(l) for l in leaf)
 net = [' ' * ((60 - w) // 2) + l for l in leaf]
 blk = [l for l in rd('issue.net.client').split('\n') if l.startswith((' SSS', 'S ', '    S', 'SSSS'))]
 assert len(blk) == 5, blk
-net += blk + [' ' * ((60 - 16) // 2) + 'Sparky Stereo OS']
+net += blk + [' ' * ((60 - 23) // 2) + 'Stereo OS 9 "Mashtabba"', ' ' * ((60 - 26) // 2) + 'based on Debian 14 "Forky"']
 wr(f'{d}/etc/issue.net', '\n'.join(net) + '\n\n')
 
 wr(f'{d}/etc/motd', rd('motd.client').strip('\n') + '\n')
@@ -82,7 +83,7 @@ j['logo'] = {'type': 'file', 'source': '/usr/share/sparky-stereo-console/sparky-
 wr(f'{d}/etc/xdg/fastfetch/config.jsonc', json.dumps(j, indent=4, ensure_ascii=False) + '\n')
 PY
 
-printf '#!/bin/sh\necho "Sparky Stereo OS based on"\nuname -osnrvm\n' >"$D/etc/update-motd.d/10-uname"
+printf '#!/bin/sh\necho "Sparky Stereo OS 9 \\"Mashtabba\\", based on Debian 14 \\"Forky\\""\nuname -osnrvm\n' >"$D/etc/update-motd.d/10-uname"
 printf '# Sparky Stereo OS: the SSH login banner\nBanner /etc/issue.net\n' >"$D/etc/ssh/sshd_config.d/sparky-stereo-banner.conf"
 printf '#!/bin/sh\n# neofetch left Debian; fastfetch, its successor, runs in the neofetch layout\nexec fastfetch "$@"\n' >"$D/usr/bin/neofetch"
 chmod 755 "$D/etc/update-motd.d/10-uname" "$D/usr/bin/neofetch"
