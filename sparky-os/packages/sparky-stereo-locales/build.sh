@@ -8,7 +8,7 @@ set -u
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-"$HERE/../../../../out"}
-VERSION=0.1.0
+VERSION=0.1.1
 PKG=sparky-stereo-locales
 SHARE=/usr/share/$PKG
 WORK=$(mktemp -d "$HERE/../../../../out/build.XXXXXX")

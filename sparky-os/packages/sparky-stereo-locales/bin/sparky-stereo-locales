@@ -144,12 +144,13 @@ show_list() {
 }
 
 parse_keep() {
-	local keep="$1" item
-	while read -r item; do
+	local keep="$1"
+	IFS=', ' read -r -a items <<<"$keep"
+	for item in "${items[@]}"; do
 		if [ -n "$item" ]; then
 			KEEP+=("$item")
 		fi
-	done <<<"${keep//,/ }"
+	done
 }
 
 write_config() {
