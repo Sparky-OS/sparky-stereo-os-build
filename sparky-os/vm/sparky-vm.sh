@@ -1,7 +1,8 @@
 #!/bin/bash
 # The Sparky Stereo OS development VM: an installed Sparky KDE where the edition is
 # assembled and its ISOs are packed with Sparky's own tool. Generous on purpose (Daniel,
-# 2026-10-02: the whole machine is for this work): all 12 threads, 64 GB of RAM.
+# 2026-10-02: the whole machine is for this work): 10 of the 12 threads (two stay as the
+# host's safe lane, Daniel), 64 GB of RAM.
 # The VM's disk lives on / (the faster NVMe, room to grow); the repo, packages and ISO
 # outputs stay on /K3D and are shared into the VM over virtiofs.
 #
@@ -19,7 +20,7 @@ VMDIR=${VMDIR:-/srv/sparky-vm}
 DISK=$VMDIR/sparky-dev.qcow2
 VARS=$VMDIR/OVMF_VARS_4M.fd
 ISO_DEFAULT=/K3D/temp/sparky-os/iso/sparkylinux-2026.09-x86_64-kde.iso
-CPUS=${CPUS:-12}
+CPUS=${CPUS:-10}
 MEM=${MEM:-64G}
 DISK_SIZE=${DISK_SIZE:-240G}
 # Shared into the VM (tag:host path); mount in the VM with
