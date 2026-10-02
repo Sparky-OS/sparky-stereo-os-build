@@ -1,0 +1,27 @@
+--- a/contents/splash/Splash.qml
++++ b/contents/splash/Splash.qml
+@@ -69,6 +69,8 @@
+         }
+     }
+ 
++    // The animation also moved a "bottomRect" that this splash has no element for (a leftover of
++    // the two-rectangle design); it logged "ReferenceError: bottomRect is not defined" in Plasma 6.
+     SequentialAnimation {
+         id: introAnimation
+         running: false
+@@ -81,15 +83,6 @@
+                 duration: 1000
+                 easing.type: Easing.InOutBack
+                 easing.overshoot: 1.0
+-            }
+-
+-            PropertyAnimation {
+-                property: "y"
+-                target: bottomRect
+-                to: 2 * (root.height / 3) - bottomRect.height
+-                duration: 1000
+-                easing.type: Easing.InOutBack
+-                easing.overshoot: 1.0
+             }
+         }
+     }

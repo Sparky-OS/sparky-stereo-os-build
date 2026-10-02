@@ -5,7 +5,7 @@
 #                                  style and Plastik window borders
 #   sparky-stereo-look-sparkyblack Sparky black, fixed (splash set, the real cursor name,
 #                                  no QtCurve): global theme, Plasma style, icons and
-#                                  cursor, Plymouth sparky-lines, SDDM sparky-black, the
+#                                  cursor, Plymouth sparky-lines, SDDM sparky-stereo-black, the
 #                                  GRUB background
 #   sparky-stereo-look-qplatinum   the System 8 look: QPlatinum (Platinum) style, colours and window
 #                                  decoration (Zinjanthr0pus), with Sparky black's icons,
@@ -13,10 +13,11 @@
 # The art comes from where it is installed on Daniel's system (the edition's build host);
 # the theme definitions and fixes are in this folder.
 # Usage: build.sh   (packages land in $OUT, default /K3D/temp/sparky-os/repo)
+# Version history in CHANGELOG; fixes offered to Pawel in upstream-patches/.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
-VERSION=${VERSION:-1.0~dev1}
+VERSION=${VERSION:-20261002~sparky9~0}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
 WORK=$(mktemp -d /K3D/temp/sparky-os/look-build.XXXXXX)
 trap 'rm -rf "$WORK"' EXIT
 LNF=usr/share/plasma/look-and-feel
@@ -45,6 +46,7 @@ control() { # dir package depends recommends description...
 }
 build() { # dir package
 	find "$1" -name '*.qmlc' -delete
+	chmod -R go-w "$1"
 	dpkg-deb --root-owner-group -Zxz -b "$1" "$OUT/${2}_${VERSION}_all.deb" >/dev/null
 	echo "built $OUT/${2}_${VERSION}_all.deb"
 }
@@ -56,6 +58,8 @@ mkdir -p "$T/contents" "$D/etc/xdg"
 cp "$HERE/default/org.sparkystereo.desktop/metadata.json" "$T/"
 cp "$HERE/default/org.sparkystereo.desktop/contents/defaults" "$T/contents/"
 cp -a "$OXYGEN/contents/splash" "$OXYGEN/contents/previews" "$T/contents/"
+# Oxygen's Splash.qml animates a bottomRect that does not exist: our fixed copy (see upstream-patches/)
+cp "$HERE/default/splash/Splash.qml" "$T/contents/splash/Splash.qml"
 cp "$HERE/default/xdg/kdeglobals" "$HERE/default/xdg/kwinrc" "$D/etc/xdg/"
 control "$D" sparky-stereo-look \
 	"plasma-theme-oxygen, oxygen-icon-theme, oxygencursors, kwin-style-aurorae, qt6ct" \
@@ -82,27 +86,30 @@ mkdir -p "$D/$LNF" "$D/usr/share/plasma/desktoptheme" "$D/usr/share/icons" \
 	"$D/usr/share/plymouth/themes" "$D/usr/share/sddm/themes" "$D/usr/share/sparky-stereo/grub"
 cp -a "$SB" "$D/$LNF/"
 rm -f "$D/$LNF/org.kde.sparkyblack.desktop/metadata.desktop"
+cp "$HERE/sparkyblack/splash/Splash.qml" "$D/$LNF/org.kde.sparkyblack.desktop/contents/splash/Splash.qml"   # bottomRect fix
 cp "$HERE/sparkyblack/metadata.json" "$D/$LNF/org.kde.sparkyblack.desktop/"
 cp "$HERE/sparkyblack/defaults" "$D/$LNF/org.kde.sparkyblack.desktop/contents/defaults"
 cp -a /usr/share/plasma/desktoptheme/sparkyblack "$D/usr/share/plasma/desktoptheme/"
 rsync -a --exclude=.directory /usr/share/icons/sparkyblack "$D/usr/share/icons/"   # .directory: a root-only folder-view file
 cp -a /usr/share/plymouth/themes/sparky-lines "$D/usr/share/plymouth/themes/"
-cp -a /usr/share/sddm/themes/sparky-black "$D/usr/share/sddm/themes/"
+# Our own Qt 6 port of Pawel's sparky-black SDDM theme, under our own name (his is never modified)
+cp -a "$HERE/sparkyblack/sddm/sparky-stereo-black" "$D/usr/share/sddm/themes/"
 cp /opt/artwork/sparky-black.png "$D/usr/share/sparky-stereo/grub/"
 control "$D" sparky-stereo-look-sparkyblack "sparky-stereo-look" "plymouth, sddm" \
 	"Sparky black look, end to end" \
 	"Daniel Ramos's Sparky black: the global theme (fixed: it sets its" \
 	"splash, names the cursor that exists, and uses the qt6ct style instead of" \
 	"QtCurve, which has no Qt 6 build), the Plasma style, icons and cursor, the" \
-	"Plymouth theme sparky-lines, the SDDM theme sparky-black and the GRUB" \
+	"Plymouth theme sparky-lines, the SDDM theme sparky-stereo-black (a Qt 6 port) and the GRUB" \
 	"background (in /usr/share/sparky-stereo/grub, not activated)."
 cat >"$D/usr/share/doc/sparky-stereo-look-sparkyblack/copyright" <<'EOF'
 Sparky black.
 Global theme, Plasma style, icons, cursor, GRUB background: Copyright Daniel Ramos (Capitain Jack),
 GPL-2.0-or-later (global theme) and GPL-3.0-or-later (Plasma style); based on Oxygen.
 Plymouth sparky-lines: a modified Debian 8 "Jessie" lines theme, GPL-2.0-or-later.
-SDDM sparky-black: David Edmundson, Pawel Pijanowski (pavroo), Daniel Ramos (Capitain Jack);
-derived from the Breeze SDDM theme.
+SDDM sparky-stereo-black: David Edmundson, Pawel Pijanowski (pavroo), Daniel Ramos (Capitain Jack);
+derived from the Breeze SDDM theme; ported to Qt 6 by Daniel Ramos (Capitain Jack) 2026.
+Splash: Marco Martin (KDE, Oxygen), with the bottomRect fix by Daniel Ramos (Capitain Jack).
 On Debian systems the GPL is in /usr/share/common-licenses/.
 EOF
 build "$D" sparky-stereo-look-sparkyblack
@@ -115,6 +122,7 @@ mkdir -p "$T/contents" "$D/usr/share/plasma/desktoptheme" "$D/usr/share/aurorae/
 cp "$HERE/qplatinum/org.sparkystereo.qplatinum/metadata.json" "$T/"
 cp "$HERE/qplatinum/org.sparkystereo.qplatinum/contents/defaults" "$T/contents/"
 cp -a "$SB/contents/splash" "$T/contents/"
+cp "$HERE/sparkyblack/splash/Splash.qml" "$T/contents/splash/Splash.qml"   # bottomRect fix
 cp -a "$QP" "$D/usr/share/plasma/desktoptheme/"
 cp -a "$QPDECO" "$D/usr/share/aurorae/themes/"
 cp "$QP"/color-schemes/*.colors "$D/usr/share/color-schemes/"

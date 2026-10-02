@@ -1,0 +1,655 @@
+--- a/sparky-black/components/BreezeBlock.qml	2019-08-08 01:02:44.000000000 -0300
++++ b/sparky-black/components/BreezeBlock.qml	2026-10-02 12:10:52.580660757 -0300
+@@ -18,14 +18,18 @@
+  *   51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA .        *
+  ***************************************************************************/
+ 
+-import QtQuick 2.1
+-import QtQuick.Layouts 1.1
+-import QtQuick.Controls 1.1
++// Qt 6 port 2026: Daniel Ramos (Capitain Jack), same licence
+ 
+-import org.kde.plasma.core 2.0 as PlasmaCore
++import QtQuick
++import QtQuick.Layouts
++
++import org.kde.kirigami as Kirigami
++
++Item {
++    id: root
++    Kirigami.Theme.colorSet: Kirigami.Theme.Complementary
++    Kirigami.Theme.inherit: false
+ 
+-PlasmaCore.ColorScope {
+-    colorGroup: PlasmaCore.Theme.ComplementaryColorGroup
+     property alias main: mainView.sourceComponent
+     property alias controls: controlsView.sourceComponent
+     readonly property alias mainItem: mainView.item
+@@ -35,7 +39,7 @@
+     property bool canReboot: false
+ 
+     Rectangle {
+-        color: PlasmaCore.ColorScope.backgroundColor
++        color: Kirigami.Theme.backgroundColor
+         opacity: 0.8
+         anchors {
+             fill: parent
+@@ -45,7 +49,7 @@
+     Loader {
+         id: mainView
+         anchors {
+-            margins: units.largeSpacing
++            margins: Kirigami.Units.largeSpacing
+ 
+             left: parent.left
+             right: parent.right
+@@ -57,11 +61,11 @@
+     Rectangle {
+         id: separator
+         height: 1
+-        color: PlasmaCore.ColorScope.textColor
++        color: Kirigami.Theme.textColor
+         width: parent.width
+         opacity: 0.4
+         anchors {
+-            margins: units.largeSpacing
++            margins: Kirigami.Units.largeSpacing
+ 
+             bottom: controlsView.top
+         }
+@@ -70,7 +74,7 @@
+         id: controlsView
+         focus: true
+         anchors {
+-            margins: units.largeSpacing
++            margins: Kirigami.Units.largeSpacing
+ 
+             left: parent.left
+             right: parent.right
+--- a/sparky-black/components/BreezeHeading.qml	2019-08-08 01:02:44.000000000 -0300
++++ b/sparky-black/components/BreezeHeading.qml	2026-10-02 12:10:52.580216065 -0300
+@@ -18,12 +18,12 @@
+  *   51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA .        *
+  ***************************************************************************/
+ 
+-import QtQuick 2.1
+-import org.kde.plasma.core 2.0 as PlasmaCore
+-import org.kde.plasma.components 2.0 as PlasmaComponents
+-import org.kde.plasma.extras 2.0 as PlasmaExtras
++// Qt 6 port 2026: Daniel Ramos (Capitain Jack), same licence
+ 
+-PlasmaExtras.Heading {
++import QtQuick
++import org.kde.kirigami as Kirigami
++
++Kirigami.Heading {
+     level: 4
+-    color: PlasmaCore.ColorScope.textColor
++    color: Kirigami.Theme.textColor
+ }
+--- a/sparky-black/components/BreezeLabel.qml	2019-08-08 01:02:44.000000000 -0300
++++ b/sparky-black/components/BreezeLabel.qml	2026-10-02 12:10:52.580106425 -0300
+@@ -18,10 +18,12 @@
+  *   51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA .        *
+  ***************************************************************************/
+ 
+-import QtQuick 2.1
+-import org.kde.plasma.core 2.0 as PlasmaCore
+-import org.kde.plasma.components 2.0 as PlasmaComponents
++// Qt 6 port 2026: Daniel Ramos (Capitain Jack), same licence
++
++import QtQuick
++import org.kde.kirigami as Kirigami
++import org.kde.plasma.components as PlasmaComponents
+ 
+ PlasmaComponents.Label {
+-    color: PlasmaCore.ColorScope.textColor
++    color: Kirigami.Theme.textColor
+ }
+--- a/sparky-black/components/InfoPane.qml	2019-08-08 01:02:44.000000000 -0300
++++ b/sparky-black/components/InfoPane.qml	2026-10-02 12:10:52.581009669 -0300
+@@ -18,16 +18,25 @@
+  *   51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+  */
+ 
+-import QtQuick 2.2
+-import QtQuick.Layouts 1.1
+-import org.kde.plasma.components 2.0 as PlasmaComponents
+-import org.kde.plasma.core 2.0 as PlasmaCore
+-import org.kde.plasma.extras 2.0 as PlasmaExtras
+-import org.kde.plasma.workspace.components 2.0 as PW
++// Qt 6 port 2026: Daniel Ramos (Capitain Jack), same licence
+ 
++import QtQuick
++import QtQuick.Layouts
++
++// The Qt 5 theme also showed the battery state, from Plasma's "powermanagement" data engine,
++// which Plasma 6 no longer has; the clock now comes from a Timer.
+ ColumnLayout {
+-   BreezeLabel { //should be a heading but we want it _loads_ bigger
+-        text: Qt.formatTime(timeSource.data["Local"]["DateTime"])
++    property date now: new Date()
++
++    Timer {
++        interval: 1000
++        running: true
++        repeat: true
++        onTriggered: parent.now = new Date()
++    }
++
++    BreezeLabel { //should be a heading but we want it _loads_ bigger
++        text: Qt.formatTime(parent.now)
+         //we fill the width then align the text so that we can make the text shrink to fit
+         Layout.fillWidth: true
+         horizontalAlignment: Text.AlignRight
+@@ -38,54 +47,7 @@
+     }
+ 
+     BreezeLabel {
+-        text: Qt.formatDate(timeSource.data["Local"]["DateTime"], Qt.DefaultLocaleLongDate);
++        text: Qt.formatDate(parent.now, Locale.LongFormat)
+         Layout.alignment: Qt.AlignRight
+     }
+-
+-    RowLayout {
+-        Layout.alignment: Qt.AlignRight
+-        visible: pmSource.data["Battery"]["Has Cumulative"]
+-
+-        PW.BatteryIcon {
+-            id: battery
+-            hasBattery: true
+-            percent: pmSource.data["Battery"]["Percent"]
+-            pluggedIn: pmSource.data["AC Adapter"] ? pmSource.data["AC Adapter"]["Plugged in"] : false
+-
+-            height: batteryLabel.height
+-            width: batteryLabel.height
+-        }
+-
+-        BreezeLabel {
+-            id: batteryLabel
+-            text: {
+-                var state = pmSource.data["Battery"] ? pmSource.data["Battery"]["State"] : "";
+-                switch(state) {
+-                case "Charging":
+-                    return i18nd("plasma_lookandfeel_org.kde.lookandfeel","%1%. Charging", battery.percent)
+-                case "FullyCharged":
+-                    return i18nd("plasma_lookandfeel_org.kde.lookandfeel","Fully charged")
+-                default:
+-                    return i18nd("plasma_lookandfeel_org.kde.lookandfeel","%1% battery remaining", battery.percent)
+-                }
+-            }
+-            Layout.alignment: Qt.AlignRight
+-            wrapMode: Text.Wrap
+-        }
+-    }
+-
+-    
+-    PlasmaCore.DataSource {
+-        id: pmSource
+-        engine: "powermanagement"
+-        connectedSources: ["Battery", "AC Adapter"]
+-    }
+-
+-    PlasmaCore.DataSource {
+-        id: timeSource
+-        engine: "time"
+-        connectedSources: ["Local"]
+-        interval: 1000
+-    }
+-
+ }
+--- a/sparky-black/components/KeyboardLayoutButton.qml	2019-08-08 01:02:44.000000000 -0300
++++ b/sparky-black/components/KeyboardLayoutButton.qml	2026-10-02 12:10:52.579990244 -0300
+@@ -17,18 +17,18 @@
+  *   51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA .        *
+  ***************************************************************************/
+ 
+-import QtQuick 2.1
++// Qt 6 port 2026: Daniel Ramos (Capitain Jack), same licence
+ 
+-import org.kde.plasma.components 2.0 as PlasmaComponents
++import QtQuick
+ 
+-import org.kde.plasma.workspace.keyboardlayout 1.0
++import org.kde.plasma.components as PlasmaComponents
++
++import org.kde.plasma.workspace.keyboardlayout
+ 
+ PlasmaComponents.Button {
+     id: kbLayoutButton
+-//     flat: false
+-//     checkable: false
+     activeFocusOnTab: true
+-    implicitWidth: minimumWidth
++    implicitWidth: implicitContentWidth + leftPadding + rightPadding
+     text: layout.currentLayout
+ 
+     Accessible.name: i18ndc("plasma_lookandfeel_org.kde.lookandfeel", "Button to change keyboard layout", "Switch layout")
+@@ -37,7 +37,7 @@
+         layout.nextLayout();
+     }
+ 
+-    visible: layout.layouts.length > 1
++    visible: Boolean(layout.layouts) && layout.layouts.length > 1
+ 
+ 
+     KeyboardLayout {
+--- a/sparky-black/components/LogoutOptions.qml	2019-08-08 01:02:44.000000000 -0300
++++ b/sparky-black/components/LogoutOptions.qml	2026-10-02 12:10:52.580345186 -0300
+@@ -18,17 +18,19 @@
+  *   51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA .        *
+  ***************************************************************************/
+ 
+-import QtQuick 2.1
+-import QtQuick.Layouts 1.1
++// Qt 6 port 2026: Daniel Ramos (Capitain Jack), same licence
+ 
+-import org.kde.plasma.core 2.0 as PlasmaCore
+-import org.kde.plasma.components 2.0 as PlasmaComponents
++import QtQuick
++import QtQuick.Layouts
+ 
++import org.kde.plasma.components as PlasmaComponents
+ 
+-PlasmaComponents.ButtonRow {
++RowLayout {
+     id: root
+     spacing: 0
+ 
++    // kept from PlasmaComponents.ButtonRow of the Qt 5 theme
++    property bool exclusive: false
+     property bool canReboot
+     property bool canShutdown
+     property bool canLogout
+@@ -57,8 +59,7 @@
+ 
+     PlasmaComponents.ToolButton {
+         id: restartButton
+-        flat: false
+-        iconSource: "system-reboot"
++        icon.name: "system-reboot"
+         visible: root.canReboot
+         checkable: true
+         Accessible.name: i18ndc("plasma_lookandfeel_org.kde.lookandfeel", "Button to restart the computer", "Reboot")
+@@ -71,8 +72,7 @@
+ 
+     PlasmaComponents.ToolButton {
+         id: shutdownButton
+-        flat: false
+-        iconSource: "system-shutdown"
++        icon.name: "system-shutdown"
+         visible: root.canShutdown
+         checkable: true
+         Accessible.name: i18ndc("plasma_lookandfeel_org.kde.lookandfeel", "Button to shut down the computer", "Shutdown")
+@@ -86,8 +86,7 @@
+ 
+     PlasmaComponents.ToolButton {
+         id: logoutButton
+-        flat: false
+-        iconSource: "system-log-out"
++        icon.name: "system-log-out"
+         visible: root.canLogout
+         checkable: true
+         Accessible.name: i18ndc("plasma_lookandfeel_org.kde.lookandfeel", "Button to log out of the desktop session", "Log out")
+@@ -99,4 +98,3 @@
+ 
+     }
+ }
+-
+--- a/sparky-black/components/LogoutScreen.qml	2019-08-08 01:02:44.000000000 -0300
++++ b/sparky-black/components/LogoutScreen.qml	2026-10-02 12:10:52.580775458 -0300
+@@ -17,13 +17,13 @@
+  *   51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA .        *
+  ***************************************************************************/
+ 
+-import QtQuick 2.1
+-import QtQuick.Layouts 1.1
+-import QtQuick.Controls 1.1 as Controls
+-
+-import org.kde.plasma.core 2.0 as PlasmaCore
+-import org.kde.plasma.components 2.0 as PlasmaComponents
+-import org.kde.plasma.extras 2.0 as PlasmaExtras
++// Qt 6 port 2026: Daniel Ramos (Capitain Jack), same licence
++
++import QtQuick
++import QtQuick.Layouts
++
++import org.kde.kirigami as Kirigami
++import org.kde.plasma.components as PlasmaComponents
+ 
+ BreezeBlock {
+     id: root
+@@ -40,9 +40,9 @@
+     signal shutdownRequested()
+     signal rebootRequested()
+ 
+-    Controls.Action {
+-        onTriggered: root.cancel()
+-        shortcut: "Escape"
++    Shortcut {
++        sequence: "Escape"
++        onActivated: root.cancel()
+     }
+ 
+     onRemainingTimeChanged: {
+@@ -63,15 +63,14 @@
+             Layout.alignment: Qt.AlignHCenter
+         }
+ 
+-        Item { height: units.largeSpacing }
++        Item { height: Kirigami.Units.largeSpacing }
+ 
+-        PlasmaCore.IconItem {
+-             id: actionIcon
++        Kirigami.Icon {
++            id: actionIcon
+             Layout.alignment: Qt.AlignHCenter
+             Layout.fillHeight: true
+             Layout.minimumWidth: height
+             Layout.maximumWidth: height
+-            colorGroup: PlasmaCore.ColorScope.colorGroup
+             opacity: actionIconMouse.containsMouse ? 1 : 0.7
+             MouseArea {
+                 id: actionIconMouse
+@@ -84,17 +83,16 @@
+         PlasmaComponents.ProgressBar {
+             id: progressBar
+             Layout.alignment: Qt.AlignHCenter
+-            anchors.horizontalCenter: parent.horizontalCenter
+ 
+             //wanted to use actionIcon.paintedWidth but it doesn't work well when the image changes
+-            width: units.largeSpacing*7
+-            minimumValue: 0
+-            maximumValue: root.timeout
++            Layout.preferredWidth: Kirigami.Units.largeSpacing*7
++            from: 0
++            to: root.timeout
+             value: root.remainingTime
+         }
+ 
+         BreezeLabel {
+-            anchors.horizontalCenter: progressBar.horizontalCenter
++            Layout.alignment: Qt.AlignHCenter
+             text: i18ndp("plasma_lookandfeel_org.kde.lookandfeel", "in 1 second", "in %1 seconds", root.remainingTime);
+         }
+ 
+@@ -145,13 +143,13 @@
+                     }
+                 }
+ 
+-                Controls.Action {
+-                    onTriggered: commitButton.trigger()
+-                    shortcut: "Return"
++                Shortcut {
++                    sequence: "Return"
++                    onActivated: commitButton.trigger()
+                 }
+-                Controls.Action {
+-                    onTriggered: commitButton.trigger()
+-                    shortcut: "Enter" // on numpad
++                Shortcut {
++                    sequence: "Enter" // on numpad
++                    onActivated: commitButton.trigger()
+                 }
+             }
+         }
+--- a/sparky-black/components/UserDelegate.qml	2019-08-08 01:02:44.000000000 -0300
++++ b/sparky-black/components/UserDelegate.qml	2026-10-02 12:10:52.579832853 -0300
+@@ -18,10 +18,12 @@
+  *   51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+  */
+ 
+-import QtQuick 2.2
++// Qt 6 port 2026: Daniel Ramos (Capitain Jack), same licence
+ 
+-import org.kde.plasma.core 2.0 as PlasmaCore
+-import org.kde.plasma.components 2.0 as PlasmaComponents
++import QtQuick
++
++import org.kde.kirigami as Kirigami
++import org.kde.ksvg as KSvg
+ 
+ Item {
+     id: wrapper
+@@ -58,7 +60,7 @@
+         //we can't have that whilst using widgets/background as the base
+         //I'd quite like it back
+ 
+-        PlasmaCore.FrameSvgItem {
++        KSvg.FrameSvgItem {
+             id: frame
+             imagePath: "widgets/background"
+ 
+@@ -81,7 +83,8 @@
+         //we try loading it as a normal image, if that fails we fall back to IconItem
+         Image {
+             id: face
+-            source: wrapper.iconSource
++            // only paths load as an image; an icon name is shown by the Icon below
++            source: wrapper.iconSource.indexOf("/") >= 0 ? wrapper.iconSource : ""
+             anchors {
+                 fill: frame
+                 //negative to make frame around the image
+@@ -92,10 +95,10 @@
+             }
+         }
+ 
+-        PlasmaCore.IconItem {
++        Kirigami.Icon {
+             id: faceIcon
+             source: wrapper.iconSource
+-            visible: face.status == Image.Error
++            visible: face.status !== Image.Ready
+             anchors.fill: face
+         }
+     }
+@@ -114,7 +117,7 @@
+         wrapMode: Text.Wrap
+         //make an indication that this has active focus, this only happens when reached with text navigation
+         font.underline: wrapper.activeFocus
+-        height: Math.round(Math.max(paintedHeight, theme.mSize(theme.defaultFont).height*1.2))
++        height: Math.round(Math.max(contentHeight, Kirigami.Units.gridUnit*1.2))
+     }
+ 
+     MouseArea {
+--- a/sparky-black/components/UserList.qml	2019-08-08 01:02:44.000000000 -0300
++++ b/sparky-black/components/UserList.qml	2026-10-02 12:10:52.580452206 -0300
+@@ -17,14 +17,18 @@
+  *   51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+  */
+ 
+-import QtQuick 2.2
++// Qt 6 port 2026: Daniel Ramos (Capitain Jack), same licence
++
++import QtQuick
++
++import org.kde.kirigami as Kirigami
+ 
+ ListView {
+     id: view
+     readonly property string selectedUser: currentItem ? currentItem.userName : ""
+-    readonly property int userItemWidth: units.largeSpacing * 8
+-    readonly property int userItemHeight: units.largeSpacing * 8
+-    readonly property int userFaceSize: units.largeSpacing * 6
++    readonly property int userItemWidth: Kirigami.Units.largeSpacing * 8
++    readonly property int userItemHeight: Kirigami.Units.largeSpacing * 8
++    readonly property int userFaceSize: Kirigami.Units.largeSpacing * 6
+ 
+     /*
+      * Signals that a user was explicitly selected
+--- a/sparky-black/components/UserSelect.qml	2019-08-08 01:02:44.000000000 -0300
++++ b/sparky-black/components/UserSelect.qml	2026-10-02 12:10:52.580557467 -0300
+@@ -17,11 +17,12 @@
+  *   51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+  */
+ 
+-import QtQuick 2.2
+-import QtQuick.Layouts 1.1
++// Qt 6 port 2026: Daniel Ramos (Capitain Jack), same licence
+ 
+-import org.kde.plasma.core 2.0 as PlasmaCore
+-import org.kde.plasma.components 2.0 as PlasmaComponents
++import QtQuick
++import QtQuick.Layouts
++
++import org.kde.kirigami as Kirigami
+ 
+ FocusScope {
+     id: root
+@@ -33,6 +34,9 @@
+ 
+     activeFocusOnTab: true
+ 
++    //the Qt 5 theme read the root item's "debug" through dynamic scope; Qt 6 does not allow that
++    property bool debug: false
++
+     function incrementCurrentIndex() {
+         usersList.incrementCurrentIndex();
+     }
+@@ -90,7 +94,7 @@
+             top: usersList.bottom
+             bottom: parent.bottom
+             horizontalCenter: parent.horizontalCenter
+-            margins: units.largeSpacing
++            margins: Kirigami.Units.largeSpacing
+         }
+ 
+         width: usersList.userItemWidth * 3 //don't pass the infoPane
+--- a/sparky-black/Main.qml	2019-08-08 01:02:43.000000000 -0300
++++ b/sparky-black/Main.qml	2026-10-02 12:10:52.581164270 -0300
+@@ -17,14 +17,17 @@
+  *   51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+  */
+ 
+-import QtQuick 2.2
+-import QtQuick.Layouts 1.1
+-import QtQuick.Controls 1.1 as Controls
++// Qt 6 port 2026: Daniel Ramos (Capitain Jack), same licence
+ 
+-import org.kde.plasma.core 2.0 as PlasmaCore
+-import org.kde.plasma.components 2.0 as PlasmaComponents
++import QtQuick
++import QtQuick.Layouts
++import QtQuick.Controls as Controls
+ 
+-import SddmComponents 2.0
++import org.kde.kirigami as Kirigami
++import org.kde.plasma.components as PlasmaComponents
++import org.kde.plasma.private.keyboardindicator as KeyboardIndicator
++
++import SddmComponents
+ 
+ import "./components"
+ 
+@@ -37,11 +40,11 @@
+         model: screenModel
+         Background {
+             x: geometry.x; y: geometry.y; width: geometry.width; height:geometry.height
+-            source: config.background
++            source: Qt.resolvedUrl(config.background)
+             fillMode: Image.PreserveAspectCrop
+             onStatusChanged: {
+-                if (status == Image.Error && source != config.defaultBackground) {
+-                    source = config.defaultBackground
++                if (status == Image.Error && source != Qt.resolvedUrl("components/artwork/background.png")) {
++                    source = Qt.resolvedUrl("components/artwork/background.png")
+                 }
+             }
+         }
+@@ -49,6 +52,11 @@
+ 
+     property bool debug: false
+ 
++    KeyboardIndicator.KeyState {
++        id: capsLockState
++        key: Qt.Key_CapsLock
++    }
++
+     Rectangle {
+         id: debug3
+         color: "green"
+@@ -65,7 +73,7 @@
+         readonly property rect geometry: screenModel.geometry(screenModel.primary)
+         width: geometry.width
+         x: geometry.x
+-        height: units.largeSpacing*14
++        height: Kirigami.Units.largeSpacing*14
+         //Display the BreezeBlock in the middle of each screen
+         y: geometry.y + (geometry.height / 2) - (height / 2)
+ 
+@@ -75,10 +83,10 @@
+             //Enable clipping whilst animating, otherwise the items would be shifted to other screens in multiscreen setups
+             //As there are only 2 items (loginPrompt and logoutScreenComponent), it's sufficient to do it only in this component
+             //Remember to enable clipping whilst animating when creating additional items for the StackView!
+-            Controls.Stack.onStatusChanged: {
+-                if(Controls.Stack.status === Controls.Stack.Activating || Controls.Stack.status === Controls.Stack.Deactivating){
++            Controls.StackView.onStatusChanged: {
++                if(Controls.StackView.status === Controls.StackView.Activating || Controls.StackView.status === Controls.StackView.Deactivating){
+                     stackView.clip = true;
+-                }else if(Controls.Stack.status === Controls.Stack.Active || Controls.Stack.status === Controls.Stack.Inactive){
++                }else if(Controls.StackView.status === Controls.StackView.Active || Controls.StackView.status === Controls.StackView.Inactive){
+                     stackView.clip = false;
+                 }
+             }
+@@ -90,7 +98,7 @@
+ 
+                 Connections {
+                     target: sddm
+-                    onLoginFailed: {
++                    function onLoginFailed() {
+                         usersSelection.notification = i18nd("plasma_lookandfeel_org.kde.lookandfeel", "Login Failed")
+                     }
+                 }
+@@ -110,7 +118,7 @@
+                         //NOTE password is deliberately the first child so it gets focus
+                         //be careful when re-ordering
+ 
+-                        anchors.horizontalCenter: parent.horizontalCenter
++                        Layout.alignment: Qt.AlignHCenter
+                         PlasmaComponents.TextField {
+                             id: passwordInput
+                             placeholderText: i18nd("plasma_lookandfeel_org.kde.lookandfeel","Password")
+@@ -139,7 +147,7 @@
+ 
+                             //if empty and left or right is pressed change selection in user switch
+                             //this cannot be in keys.onLeftPressed as then it doesn't reach the password box
+-                            Keys.onPressed: {
++                            Keys.onPressed: (event) => {
+                                 if (event.key == Qt.Key_Left && !text) {
+                                     loginPrompt.mainItem.decrementCurrentIndex();
+                                     event.accepted = true
+@@ -163,16 +171,10 @@
+                     BreezeLabel {
+                         id: capsLockWarning
+                         text: i18nd("plasma_lookandfeel_org.kde.lookandfeel","Caps Lock is on")
+-                        visible: keystateSource.data["Caps Lock"]["Locked"]
++                        visible: capsLockState.locked
+ 
+-                        anchors.horizontalCenter: parent.horizontalCenter
++                        Layout.alignment: Qt.AlignHCenter
+                         font.weight: Font.Bold
+-
+-                        PlasmaCore.DataSource {
+-                            id: keystateSource
+-                            engine: "keystate"
+-                            connectedSources: "Caps Lock"
+-                        }
+                     }
+                 }
+ 
+@@ -210,7 +212,7 @@
+ 
+                 Connections {
+                     target: sddm
+-                    onLoginFailed: {
++                    function onLoginFailed() {
+                         passwordInput.enabled = true
+                         passwordInput.selectAll()
+                         passwordInput.forceActiveFocus()
+--- a/sparky-black/metadata.desktop	2019-08-08 01:02:43.000000000 -0300
++++ b/sparky-black/metadata.desktop	2026-10-02 12:10:52.594340572 -0300
+@@ -14,3 +14,4 @@
+ Email=davidedmundson@kde.org
+ Theme-Id=breeze
+ Theme-API=2.0
++QtVersion=6
