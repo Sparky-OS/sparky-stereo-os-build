@@ -238,23 +238,72 @@ parse_keep() {
 	fi
 }
 
+# exclude_name NAME: path-exclude lines for one whole locale name (NAME, NAME/*)
+exclude_name() {
+	local base
+	for base in locale man help; do
+		printf 'path-exclude=/usr/share/%s/%s\n' "$base" "$1"
+		printf 'path-exclude=/usr/share/%s/%s/*\n' "$base" "$1"
+	done
+}
+
+include_name() {
+	local base
+	for base in locale man help; do
+		printf 'path-include=/usr/share/%s/%s\n' "$base" "$1"
+		printf 'path-include=/usr/share/%s/%s/*\n' "$base" "$1"
+	done
+}
+
+# The exclude file keeps the files of removed languages out of future installs.
+# Names are matched whole (fi, fi_*, fi@*), never as prefixes: fil, frp, kok,
+# jam and csb are other languages.
 write_config() {
+	local code dirkey locale entry el er ev base
 	mkdir -p "$(dirname "$CONFIG")"
-	local code prefix
 	{
-		for code in $(printf '%s\n' "${!KNOWN[@]}" | sort); do
-			if ! is_kept "$code||"; then
-				printf 'path-exclude=/usr/share/locale/%s*\n' "$code"
-				printf 'path-exclude=/usr/share/man/%s*\n' "$code"
-				printf 'path-exclude=/usr/share/help/%s*\n' "$code"
-			fi
-		done
-		for entry in "${KEEP[@]}"; do
-			code="${entry%%|*}"
-			printf 'path-include=/usr/share/locale/%s*\n' "$code"
-			printf 'path-include=/usr/share/man/%s*\n' "$code"
-			printf 'path-include=/usr/share/help/%s*\n' "$code"
-		done
+		echo "# Written by sparky-stereo-locales; it keeps the files of removed languages out."
+		echo "# Restore a language with: sparky-stereo-locales --keep CODE (or --restore)."
+		if [ "$RESTORE_ALL" -eq 0 ]; then
+			for code in $(printf '%s\n' "${!KNOWN[@]}" | sort); do
+				case "$code" in
+					nb | nn) dirkey="no||$code" ;;
+					*) dirkey="$code||" ;;
+				esac
+				if is_kept "$dirkey"; then
+					# Kept, but a region of it may not be (pt_BR kept, pt_PT not).
+					for locale in $REGIONS; do
+						[ "${locale%%_*}" = "$code" ] || continue
+						split_code "$locale" 0
+						is_kept "$P_LANG|$P_REGION|$P_VAR" || exclude_name "$locale"
+					done
+					continue
+				fi
+				exclude_name "$code"
+				for base in locale man help; do
+					printf 'path-exclude=/usr/share/%s/%s_*\n' "$base" "$code"
+					printf 'path-exclude=/usr/share/%s/%s@*\n' "$base" "$code"
+				done
+			done
+			for entry in "${KEEP[@]}"; do
+				IFS='|' read -r el er ev <<<"$entry"
+				if [ -n "$er" ]; then
+					include_name "${el}_$er"
+				elif [ "$el" = no ] && [ -n "$ev" ]; then
+					include_name "$ev"
+				elif [ "$el" = no ]; then
+					include_name no
+					include_name nb
+					include_name nn
+				else
+					include_name "$el"
+					for base in locale man help; do
+						printf 'path-include=/usr/share/%s/%s_*\n' "$base" "$el"
+						printf 'path-include=/usr/share/%s/%s@*\n' "$base" "$el"
+					done
+				fi
+			done
+		fi
 	} >"$CONFIG"
 }
 

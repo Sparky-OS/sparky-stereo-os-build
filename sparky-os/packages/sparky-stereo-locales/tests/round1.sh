@@ -223,7 +223,7 @@ t5_path_excludes() {
 	setup
 	fake_locale_files
 	timeout 600 $TOOL --keep en,pt_BR >/tmp/out 2>&1
-	cat /etc/dpkg/dpkg.cfg.d/sparky-stereo-locales | head -30
+	check "no prefix patterns (name*) in the exclude file" not grep -Eq 'path-(exclude|include)=[^ ]*/[a-z]+\*$' /etc/dpkg/dpkg.cfg.d/sparky-stereo-locales
 	dpkg -i /tmp/fake-loc.deb >/dev/null 2>&1
 	f() { test -e /usr/share/locale/$1/LC_MESSAGES/fake.mo; }
 	for n in fil frp kok jam csb pt_BR en_GB; do check "locale $n kept" f $n; done
