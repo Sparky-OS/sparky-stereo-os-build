@@ -1,0 +1,479 @@
+From 9e8055e73b1be5d1269ef2811f3b88c08b3617d0 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 2 Oct 2026 11:26:41 -0300
+Subject: [PATCH] nvidia-modeset: HDMI Deep Colour at 16 bits per component
+ (DC_48)
+
+HDMI defines Deep Colour at 30, 36 and 48 bits per pixel (10, 12 and
+16 bits per component). The sink declares them in the HDMI VSDB of its
+EDID (CTA-861: DC_30bit, DC_36bit, DC_48bit, and DC_Y444 for YCbCr 4:4:4).
+The source signals the active depth in the General Control Packet's
+colour depth (CD) field: CD=7 means 48 bits per pixel, and the packing
+phase is 0 because a 48-bit group holds exactly one pixel (the section
+number, HDMI 1.4b 6.5.3, is taken from the nouveau change and was not
+re-checked against the spec). NVKMS stopped at 12 bpc, although it already parsed
+DC_48.
+
+Select 16 bpc when the sink declares DC_48, the GPU is Turing or newer
+(new HAL cap supportsHDMI16BPC; nouveau gates on TU102 and newer) and
+max_output_color_depth allows it:
+
+ - add NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_16 and
+   NVKMS_PIXEL_DEPTH_48_444, with the helpers that map between them
+ - nvDpyIsHdmiDepth48Evo(): DC_48, HAL cap, HDMI, module parameter;
+   YCbCr 4:4:4 additionally needs DC_Y444
+ - program the head with PIXEL_DEPTH_BPP_48_444
+ - send CD=7 with packing phase 0 in the GCP
+ - limit the pixel clock to half the single-link TMDS limit
+ - no dithering at 16 bpc; DowngradeColorBpc steps 16 to 12 to 10 to 8
+ - accept 16 in max_output_color_depth and make it the default; DP,
+   YCbCr 4:2:2 and 4:2:0 stay capped as before; other values are
+   clamped down to 6, 8, 10, 12 or 16 with a kernel log message (11 gives
+   10, 13 to 15 give 12, above 16 gives 16; 0 still means 10)
+
+Sinks that do not declare DC_48 are unchanged: nvDpyIsHdmiDepth48Evo()
+is false, so the 12 and 10 bpc selection, the clock limits and the GCP
+are exactly as before. HDMI FRL is not extended to 16 bpc: the FRL
+query still rejects it, so such modes fall back through the downgrade.
+
+Not verified: the module builds against our 7.3.0-rc1 headers, nothing
+more. The closed GSP firmware may reject or ignore a 48 bpp head
+depth. No 48-bit sink is at hand (our TVs declare only DC_30 and
+DC_36), so 16 bpc has never run on hardware. The register values come
+from the nouveau change (head BPP_48_444, GCP CD=7), itself untested.
+
+Assisted-by: claude-sonnet (Claude Code subagent)
+---
+ .../nvidia-modeset/nvidia-modeset-linux.c     | 39 +++++++++++++------
+ src/nvidia-modeset/include/nvkms-hdmi.h       |  1 +
+ src/nvidia-modeset/include/nvkms-types.h      |  2 +
+ src/nvidia-modeset/interface/nvkms-api.h      |  3 +-
+ src/nvidia-modeset/src/nvkms-attributes.c     |  5 ++-
+ src/nvidia-modeset/src/nvkms-displayless.c    |  1 +
+ src/nvidia-modeset/src/nvkms-dpy.c            | 11 +++++-
+ src/nvidia-modeset/src/nvkms-evo.c            | 36 ++++++++++++++++-
+ src/nvidia-modeset/src/nvkms-evo3.c           |  5 +++
+ src/nvidia-modeset/src/nvkms-evo4.c           |  2 +
+ src/nvidia-modeset/src/nvkms-hdmi.c           | 33 +++++++++++++++-
+ src/nvidia-modeset/src/nvkms-utils.c          |  2 +
+ src/nvidia-modeset/src/nvkms.c                |  2 +
+ 13 files changed, 122 insertions(+), 20 deletions(-)
+
+diff --git a/kernel-open/nvidia-modeset/nvidia-modeset-linux.c b/kernel-open/nvidia-modeset/nvidia-modeset-linux.c
+index 9c0ae49..0cf0fba 100644
+--- a/kernel-open/nvidia-modeset/nvidia-modeset-linux.c
++++ b/kernel-open/nvidia-modeset/nvidia-modeset-linux.c
+@@ -92,8 +92,10 @@ module_param_named(disable_vrr_memclk_switch, disable_vrr_memclk_switch, bool, 0
+ static bool hdmi_deepcolor = true;
+ module_param_named(hdmi_deepcolor, hdmi_deepcolor, bool, 0444);
+ 
+-static unsigned int max_output_color_depth = 12;
++static unsigned int max_output_color_depth = 16;
+ module_param_named(max_output_color_depth, max_output_color_depth, uint, 0444);
++MODULE_PARM_DESC(max_output_color_depth,
++                 "Maximum output colour depth in bits per component: 6, 8, 10, 12 or 16 (default 16); other values are clamped down");
+ 
+ static bool opportunistic_display_sync = true;
+ module_param_named(opportunistic_display_sync, opportunistic_display_sync, bool, 0444);
+@@ -252,18 +254,31 @@ NvBool nvkms_hdmi_deepcolor(void)
+ 
+ NvU32 nvkms_max_output_color_bpc(void)
+ {
+-    switch (max_output_color_depth) {
+-        case 6:
+-            return 6;
+-        case 8:
+-            return 8;
+-        case 12:
+-            return 12;
+-        case 10:
+-        case 0:
+-        default:
+-            return 10;
++    static const NvU32 valid[] = { 6, 8, 10, 12, 16 };
++    static bool warned;
++    NvU32 bpc = 6;
++    int i;
++
++    /* 0 keeps its old meaning: 10 */
++    if (max_output_color_depth == 0) {
++        return 10;
++    }
++
++    /* Anything else that is not a valid depth is clamped down, and logged. */
++    for (i = 0; i < ARRAY_SIZE(valid); i++) {
++        if (valid[i] <= max_output_color_depth) {
++            bpc = valid[i];
++        }
++    }
++
++    if ((bpc != max_output_color_depth) && !warned) {
++        warned = true;
++        printk(KERN_WARNING NVKMS_LOG_PREFIX
++               "max_output_color_depth=%u is not 6, 8, 10, 12 or 16; using %u\n",
++               max_output_color_depth, bpc);
+     }
++
++    return bpc;
+ }
+ 
+ NvBool nvkms_opportunistic_display_sync(void)
+diff --git a/src/nvidia-modeset/include/nvkms-hdmi.h b/src/nvidia-modeset/include/nvkms-hdmi.h
+index 72def96..807a751 100644
+--- a/src/nvidia-modeset/include/nvkms-hdmi.h
++++ b/src/nvidia-modeset/include/nvkms-hdmi.h
+@@ -49,6 +49,7 @@ void nvLogEdidCea861InfoEvo(NVDpyEvoPtr pDpyEvo,
+ NvBool nvDpyIsHdmiEvo(const NVDpyEvoRec *pDpyEvo);
+ NvBool nvDpyIsHdmiDepth30Evo(const NVDpyEvoRec *pDpyEvo);
+ NvBool nvDpyIsHdmiDepth36Evo(const NVDpyEvoRec *pDpyEvo);
++NvBool nvDpyIsHdmiDepth48Evo(const NVDpyEvoRec *pDpyEvo);
+ 
+ NvBool nvHdmi204k60HzRGB444Allowed(const NVDpyEvoRec *pDpyEvo,
+                                    const struct NvKmsModeValidationParams *pParams,
+diff --git a/src/nvidia-modeset/include/nvkms-types.h b/src/nvidia-modeset/include/nvkms-types.h
+index f0e917d..e7d04e1 100644
+--- a/src/nvidia-modeset/include/nvkms-types.h
++++ b/src/nvidia-modeset/include/nvkms-types.h
+@@ -1378,6 +1378,7 @@ enum nvKmsPixelDepth {
+     NVKMS_PIXEL_DEPTH_24_444,
+     NVKMS_PIXEL_DEPTH_30_444,
+     NVKMS_PIXEL_DEPTH_36_444,
++    NVKMS_PIXEL_DEPTH_48_444,
+     NVKMS_PIXEL_DEPTH_16_422,
+     NVKMS_PIXEL_DEPTH_20_422,
+     NVKMS_PIXEL_DEPTH_24_422,
+@@ -3348,6 +3349,7 @@ typedef const struct _nv_evo_hal {
+         NvU32 supportsVblankSyncObjects                 :1;
+         NvU32 supportsMergeMode                         :1;
+         NvU32 supportsHDMI10BPC                         :1;
++        NvU32 supportsHDMI16BPC                         :1;
+         NvU32 supportsDPAudio192KHz                     :1;
+         NvU32 supportsYCbCr422OverHDMIFRL               :1;
+         NvU32 supportsColorPassthrough                  :1;
+diff --git a/src/nvidia-modeset/interface/nvkms-api.h b/src/nvidia-modeset/interface/nvkms-api.h
+index b48bfdd..7bd3eba 100644
+--- a/src/nvidia-modeset/interface/nvkms-api.h
++++ b/src/nvidia-modeset/interface/nvkms-api.h
+@@ -1555,8 +1555,9 @@ enum NvKmsDpyAttributeColorBpcValue {
+     NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_8       =  8,
+     NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_10      = 10,
+     NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_12      = 12,
++    NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_16      = 16,
+     NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_MAX     =
+-        NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_12,
++        NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_16,
+ };
+ 
+ typedef struct _NvKmsDpyOutputColorFormatInfo {
+diff --git a/src/nvidia-modeset/src/nvkms-attributes.c b/src/nvidia-modeset/src/nvkms-attributes.c
+index 0512dcc..cdf8c9d 100644
+--- a/src/nvidia-modeset/src/nvkms-attributes.c
++++ b/src/nvidia-modeset/src/nvkms-attributes.c
+@@ -742,13 +742,14 @@ static NvBool GetColorBpcValidValues(
+ 
+     /* If new enum values are added, update the u.bits.ints assignment. */
+     ct_assert(NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_MAX ==
+-                NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_12);
++                NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_16);
+ 
+     pValidValues->u.bits.ints =
+         NVBIT(NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_6)  |
+         NVBIT(NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_8)  |
+         NVBIT(NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_10) |
+-        NVBIT(NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_12);
++        NVBIT(NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_12) |
++        NVBIT(NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_16);
+ 
+     return TRUE;
+ }
+diff --git a/src/nvidia-modeset/src/nvkms-displayless.c b/src/nvidia-modeset/src/nvkms-displayless.c
+index 363925f..8fddc29 100644
+--- a/src/nvidia-modeset/src/nvkms-displayless.c
++++ b/src/nvidia-modeset/src/nvkms-displayless.c
+@@ -856,6 +856,7 @@ NVEvoHAL nvDisplayless = {
+         FALSE,                                          /* supportsVblankSyncObjects */
+         FALSE,                                          /* supportsMergeMode */
+         FALSE,                                          /* supportsHDMI10BPC */
++        FALSE,                                          /* supportsHDMI16BPC */
+         FALSE,                                          /* supportsDPAudio192KHz */
+         FALSE,                                          /* supportsYCbCr422OverHDMIFRL */
+         FALSE,                                          /* supportsColorPassthrough */
+diff --git a/src/nvidia-modeset/src/nvkms-dpy.c b/src/nvidia-modeset/src/nvkms-dpy.c
+index 3815fe8..29f6a37 100644
+--- a/src/nvidia-modeset/src/nvkms-dpy.c
++++ b/src/nvidia-modeset/src/nvkms-dpy.c
+@@ -3784,7 +3784,10 @@ NvKmsDpyOutputColorFormatInfo nvDpyGetOutputColorFormatInfo(
+                 }
+             }
+         } else {
+-            if (nvDpyIsHdmiDepth36Evo(pDpyEvo)) {
++            if (nvDpyIsHdmiDepth48Evo(pDpyEvo)) {
++                colorFormatsInfo.rgb444.maxBpc =
++                    NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_16;
++            } else if (nvDpyIsHdmiDepth36Evo(pDpyEvo)) {
+                 colorFormatsInfo.rgb444.maxBpc =
+                     NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_12;
+             } else if (nvDpyIsHdmiDepth30Evo(pDpyEvo)) {
+@@ -3798,7 +3801,11 @@ NvKmsDpyOutputColorFormatInfo nvDpyGetOutputColorFormatInfo(
+                 NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_8;
+ 
+             if (nvDpyIsHdmiEvo(pDpyEvo)) {
+-                if (nvDpyIsHdmiDepth36Evo(pDpyEvo)) {
++                if (nvDpyIsHdmiDepth48Evo(pDpyEvo) &&
++                    pDpyEvo->parsedEdid.info.hdmiLlcInfo.dc_y444) {
++                    colorFormatsInfo.yuv444.maxBpc =
++                        NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_16;
++                } else if (nvDpyIsHdmiDepth36Evo(pDpyEvo)) {
+                     colorFormatsInfo.yuv444.maxBpc =
+                         NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_12;
+                 } else if (nvDpyIsHdmiDepth30Evo(pDpyEvo)) {
+diff --git a/src/nvidia-modeset/src/nvkms-evo.c b/src/nvidia-modeset/src/nvkms-evo.c
+index 600003f..11c5798 100644
+--- a/src/nvidia-modeset/src/nvkms-evo.c
++++ b/src/nvidia-modeset/src/nvkms-evo.c
+@@ -798,6 +798,7 @@ static NvBool HeadStateIsHdmiTmdsDeepColor(const NVDispHeadStateEvoRec *pHeadSta
+                 return FALSE;
+             case NVKMS_PIXEL_DEPTH_30_444:
+             case NVKMS_PIXEL_DEPTH_36_444:
++            case NVKMS_PIXEL_DEPTH_48_444:
+                 return TRUE;
+         }
+     }
+@@ -2675,6 +2676,14 @@ static enum NvKmsDpyAttributeColorBpcValue ChooseColorBpc(
+         return NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_UNKNOWN;
+     }
+ 
++    if (nvDpyIsHdmiEvo(pDpyEvo) &&
++        !nvDpyIsHdmiDepth36Evo(pDpyEvo) &&
++        (result == NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_12)) {
++        /* A sink that declares DC_48 but not DC_36: 12 bpc is not offered. */
++        nvAssert(requested != NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_UNKNOWN);
++        return NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_UNKNOWN;
++    }
++
+     return result;
+ }
+ 
+@@ -3164,10 +3173,12 @@ void nvChooseDitheringEvo(
+                 currDithering.depth =
+                     NV_KMS_DPY_ATTRIBUTE_CURRENT_DITHERING_DEPTH_10_BITS;
+                 break;
++            case NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_16:
+             case NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_12:
+                 nvEvoLogDevDebug(pConnectorEvo->pDispEvo->pDevEvo,
+                                  EVO_LOG_WARN,
+-                                 "Dithering is not supported for 12 BPC");
++                                 "Dithering is not supported for %u BPC",
++                                 (NvU32)bpc);
+                 currDithering.enabled = FALSE;
+                 break;
+             default:
+@@ -6909,6 +6920,14 @@ static NvBool IsColorBpcSupported(
+         return FALSE;
+     }
+ 
++    /* Each Deep Colour depth needs its own EDID bit: DC_48 does not imply DC_36. */
++    if (nvDpyIsHdmiEvo(pDpyEvo) &&
++        (!nvDpyIsHdmiDepth36Evo(pDpyEvo)) &&
++        (bpc == NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_12)) {
++
++        return FALSE;
++    }
++
+     switch (format) {
+         case NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_FORMAT_RGB:
+             return (bpc <= pSupportedColorFormats->rgb444.maxBpc) &&
+@@ -6932,6 +6951,15 @@ static NvBool DowngradeColorBpc(
+     NVDpyAttributeColor *pDpyColor)
+ {
+     switch (pDpyColor->bpc) {
++        case NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_16:
++            if (IsColorBpcSupported(pDpyEvo,
++                                    pSupportedColorFormats,
++                                    pDpyColor->format,
++                                    NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_12)) {
++                pDpyColor->bpc = NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_12;
++                break;
++            }
++            /* fall through */
+         case NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_12:
+             if (IsColorBpcSupported(pDpyEvo,
+                                     pSupportedColorFormats,
+@@ -9600,6 +9628,8 @@ enum nvKmsPixelDepth nvEvoDpyColorToPixelDepth(
+         case NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_FORMAT_YCbCr444:
+         case NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_FORMAT_YCbCr420:
+             switch (pDpyColor->bpc) {
++                case NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_16:
++                    return NVKMS_PIXEL_DEPTH_48_444;
+                 case NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_12:
+                     return NVKMS_PIXEL_DEPTH_36_444;
+                 case NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_10:
+@@ -9614,6 +9644,10 @@ enum nvKmsPixelDepth nvEvoDpyColorToPixelDepth(
+         case NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_FORMAT_YCbCr422:
+             nvAssert(pDpyColor->bpc != NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_6);
+             switch (pDpyColor->bpc) {
++                case NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_16:
++                    /* 16 BPC is only chosen for RGB and YCbCr444. */
++                    nvAssert(!"Unexpected 16 BPC with YCbCr422");
++                    /* fall through */
+                 case NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_12:
+                     return NVKMS_PIXEL_DEPTH_24_422;
+                 case NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_10:
+diff --git a/src/nvidia-modeset/src/nvkms-evo3.c b/src/nvidia-modeset/src/nvkms-evo3.c
+index 36a53a9..a31f56f 100644
+--- a/src/nvidia-modeset/src/nvkms-evo3.c
++++ b/src/nvidia-modeset/src/nvkms-evo3.c
+@@ -2339,6 +2339,8 @@ NvU32 nvEvoGetPixelDepthC3(const enum nvKmsPixelDepth pixelDepth)
+         return NVC37D_HEAD_SET_CONTROL_OUTPUT_RESOURCE_PIXEL_DEPTH_BPP_30_444;
+     case NVKMS_PIXEL_DEPTH_36_444:
+         return NVC37D_HEAD_SET_CONTROL_OUTPUT_RESOURCE_PIXEL_DEPTH_BPP_36_444;
++    case NVKMS_PIXEL_DEPTH_48_444:
++        return NVC37D_HEAD_SET_CONTROL_OUTPUT_RESOURCE_PIXEL_DEPTH_BPP_48_444;
+     case NVKMS_PIXEL_DEPTH_16_422:
+         return NVC37D_HEAD_SET_CONTROL_OUTPUT_RESOURCE_PIXEL_DEPTH_BPP_16_422;
+     case NVKMS_PIXEL_DEPTH_20_422:
+@@ -7948,6 +7950,7 @@ NVEvoHAL nvEvoC5 = {
+         FALSE,                                    /* supportsVblankSyncObjects */
+         TRUE,                                     /* supportsMergeMode */
+         FALSE,                                    /* supportsHDMI10BPC */
++        TRUE,                                     /* supportsHDMI16BPC */
+         FALSE,                                    /* supportsDPAudio192KHz */
+         FALSE,                                    /* supportsYCbCr422OverHDMIFRL */
+         FALSE,                                    /* supportsColorPassthrough */
+@@ -8033,6 +8036,7 @@ NVEvoHAL nvEvoC6 = {
+         TRUE,                                     /* supportsVblankSyncObjects */
+         TRUE,                                     /* supportsMergeMode */
+         TRUE,                                     /* supportsHDMI10BPC */
++        TRUE,                                     /* supportsHDMI16BPC */
+         FALSE,                                    /* supportsDPAudio192KHz */
+         FALSE,                                    /* supportsYCbCr422OverHDMIFRL */
+         FALSE,                                    /* supportsColorPassthrough */
+@@ -8118,6 +8122,7 @@ NVEvoHAL nvEvoC8 = {
+         TRUE,                                     /* supportsVblankSyncObjects */
+         TRUE,                                     /* supportsMergeMode */
+         TRUE,                                     /* supportsHDMI10BPC */
++        TRUE,                                     /* supportsHDMI16BPC */
+         FALSE,                                    /* supportsDPAudio192KHz */
+         TRUE,                                     /* supportsYCbCr422OverHDMIFRL */
+         TRUE,                                     /* supportsColorPassthrough */
+diff --git a/src/nvidia-modeset/src/nvkms-evo4.c b/src/nvidia-modeset/src/nvkms-evo4.c
+index b1cc61a..944285c 100644
+--- a/src/nvidia-modeset/src/nvkms-evo4.c
++++ b/src/nvidia-modeset/src/nvkms-evo4.c
+@@ -2900,6 +2900,7 @@ NVEvoHAL nvEvoC9 = {
+         TRUE,                                     /* supportsVblankSyncObjects */
+         FALSE,                                    /* supportsMergeMode */
+         TRUE,                                     /* supportsHDMI10BPC */
++        TRUE,                                     /* supportsHDMI16BPC */
+         TRUE,                                     /* supportsDPAudio192KHz */
+         TRUE,                                     /* supportsYCbCr422OverHDMIFRL */
+         FALSE,                                    /* supportsColorPassthrough */
+@@ -2985,6 +2986,7 @@ NVEvoHAL nvEvoCA = {
+         TRUE,                                     /* supportsVblankSyncObjects */
+         FALSE,                                    /* supportsMergeMode */
+         TRUE,                                     /* supportsHDMI10BPC */
++        TRUE,                                     /* supportsHDMI16BPC */
+         TRUE,                                     /* supportsDPAudio192KHz */
+         TRUE,                                     /* supportsYCbCr422OverHDMIFRL */
+         FALSE,                                    /* supportsColorPassthrough */
+diff --git a/src/nvidia-modeset/src/nvkms-hdmi.c b/src/nvidia-modeset/src/nvkms-hdmi.c
+index a4e4f76..0447ad3 100644
+--- a/src/nvidia-modeset/src/nvkms-hdmi.c
++++ b/src/nvidia-modeset/src/nvkms-hdmi.c
+@@ -306,6 +306,21 @@ NvBool nvDpyIsHdmiDepth36Evo(const NVDpyEvoRec *pDpyEvo)
+            (hdmiCap & CAP_HDMI_SUPPORT_MONITOR_36_BPP);
+ }
+ 
++/*!
++ * Returns whether the GPU and the display both support HDMI depth 48 (16 BPC).
++ */
++NvBool nvDpyIsHdmiDepth48Evo(const NVDpyEvoRec *pDpyEvo)
++{
++    const NVDevEvoRec *pDevEvo = pDpyEvo->pDispEvo->pDevEvo;
++    NvU32 hdmiCap = GetHDMISupportCap(pDpyEvo);
++
++    return nvkms_hdmi_deepcolor() &&
++           (nvkms_max_output_color_bpc() >= 16) &&
++           nvDpyIsHdmiEvo(pDpyEvo) &&
++           pDevEvo->hal->caps.supportsHDMI16BPC &&
++           (hdmiCap & CAP_HDMI_SUPPORT_MONITOR_48_BPP);
++}
++
+ /*!
+  * Updates the display's HDMI 2.0 capabilities to the RM.
+  */
+@@ -423,7 +438,11 @@ static void SendHdmiGcp(const NVDispEvoRec *pDispEvo,
+     NvU8 packingPhase = NVT_HDMI_PIXELPACKING_PHASE4;
+ 
+     if (pHeadState->procAmp.colorFormat != NVT_COLOR_FORMAT_YCbCr422) {
+-        if (pHeadState->pixelDepth == NVKMS_PIXEL_DEPTH_36_444) {
++        if (pHeadState->pixelDepth == NVKMS_PIXEL_DEPTH_48_444) {
++            /* A 48-bpp group holds one pixel, so the packing phase is 0. */
++            colorDepth = NVT_HDMI_COLOR_DEPTH_48;
++            packingPhase = NVT_HDMI_PIXELPACKING_PHASE4;
++        } else if (pHeadState->pixelDepth == NVKMS_PIXEL_DEPTH_36_444) {
+             colorDepth = NVT_HDMI_COLOR_DEPTH_36;
+             {
+                 NvU32 hActive = nvEvoVisibleWidth(&pHeadState->timings);
+@@ -2304,7 +2323,7 @@ static NvU32 GetMaxPossibleTmdsPixelClockKHz(
+     const NVDpyEvoRec *pDpyEvo,
+     const NVDpyAttributeColor *pDpyColor)
+ {
+-    ct_assert(NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_12 ==
++    ct_assert(NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_16 ==
+               NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_MAX);
+ 
+     nvAssert(nvDpyIsHdmiEvo(pDpyEvo));
+@@ -2320,6 +2339,16 @@ static NvU32 GetMaxPossibleTmdsPixelClockKHz(
+         return pDpyEvo->maxSingleLinkPixelClockKHz;
+     }
+ 
++    if (pDpyColor->bpc == NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_16) {
++        /* The TMDS clock at 48 bpp is twice the pixel clock. */
++        const NvU32 adjustedMaxPixelClock =
++            pDpyEvo->maxSingleLinkPixelClockKHz / 2U;
++
++        nvAssert(nvDpyIsHdmiDepth48Evo(pDpyEvo));
++
++        return adjustedMaxPixelClock;
++    }
++
+     if (pDpyColor->bpc == NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_12) {
+         const NvU32 adjustedMaxPixelClock =
+             (pDpyEvo->maxSingleLinkPixelClockKHz * 2ULL) / 3ULL;
+diff --git a/src/nvidia-modeset/src/nvkms-utils.c b/src/nvidia-modeset/src/nvkms-utils.c
+index b7f794c..d37c533 100644
+--- a/src/nvidia-modeset/src/nvkms-utils.c
++++ b/src/nvidia-modeset/src/nvkms-utils.c
+@@ -506,6 +506,8 @@ NvU8 nvPixelDepthToBitsPerComponent(enum nvKmsPixelDepth pixelDepth)
+     case NVKMS_PIXEL_DEPTH_36_444:
+     case NVKMS_PIXEL_DEPTH_24_422:
+         return 12;
++    case NVKMS_PIXEL_DEPTH_48_444:
++        return 16;
+     }
+     nvAssert(!"Unknown NVKMS_PIXEL_DEPTH");
+     return 0;
+diff --git a/src/nvidia-modeset/src/nvkms.c b/src/nvidia-modeset/src/nvkms.c
+index 4f9b65b..20f68bd 100644
+--- a/src/nvidia-modeset/src/nvkms.c
++++ b/src/nvidia-modeset/src/nvkms.c
+@@ -6089,6 +6089,7 @@ PixelDepthString(enum nvKmsPixelDepth pixelDepth)
+     case NVKMS_PIXEL_DEPTH_24_444: return "24";
+     case NVKMS_PIXEL_DEPTH_30_444: return "30";
+     case NVKMS_PIXEL_DEPTH_36_444: return "36";
++    case NVKMS_PIXEL_DEPTH_48_444: return "48";
+     case NVKMS_PIXEL_DEPTH_16_422: return "16";
+     case NVKMS_PIXEL_DEPTH_20_422: return "20";
+     case NVKMS_PIXEL_DEPTH_24_422: return "24";
+@@ -6109,6 +6110,7 @@ PixelFormatString(enum nvKmsPixelDepth pixelDepth,
+         case NVKMS_PIXEL_DEPTH_24_444:
+         case NVKMS_PIXEL_DEPTH_30_444:
+         case NVKMS_PIXEL_DEPTH_36_444:
++        case NVKMS_PIXEL_DEPTH_48_444:
+             return "4:4:4";
+         case NVKMS_PIXEL_DEPTH_16_422:
+         case NVKMS_PIXEL_DEPTH_20_422:
+-- 
+2.53.0
+

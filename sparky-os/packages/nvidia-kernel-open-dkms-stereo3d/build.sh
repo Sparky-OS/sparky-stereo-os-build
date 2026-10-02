@@ -5,6 +5,8 @@
 #   0001 nvidia-modeset: raise default max_output_color_depth to 12   (deep colour, PR #1386)
 #   0002 nvidia-drm: admit and synthesize HDMI VSDB stereo modes        (HDMI 3D, issue #1382)
 #   0003 nvtiming: add the integer-rate twin of 1000/1001-rate CTA VICs
+#   0004 nvidia-modeset: HDMI Deep Colour at 16 bits per component (DC_48); the default
+#        max_output_color_depth becomes 16, so the sink's declared depth decides
 # The package is NVIDIA's own nvidia-kernel-open-dkms 615.71.09-2 with the patches applied
 # to its DKMS source. It takes its own name and provides nvidia-kernel-open-dkms
 # (= 615.71.09-2), because NVIDIA's nvidia-driver depends on exactly that version.
@@ -14,7 +16,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
 UPV=615.71.09
 DEBV=$UPV-2
-REV=${REV:-1}
+REV=${REV:-2}
 SRCDEB=${SRCDEB:-/var/cache/apt/archives/nvidia-kernel-open-dkms_${DEBV}_amd64.deb}
 WORK=$(mktemp -d /K3D/temp/sparky-os/nvidia-pkg.XXXXXX)
 trap 'rm -rf "$WORK"' EXIT
