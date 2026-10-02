@@ -8,7 +8,9 @@ mkdir -p /srv/sparky-work/logs
 LOG=/srv/sparky-work/logs/provision-2-$(date +%Y%m%d-%H%M%S).log
 exec >>"$LOG" 2>&1
 export DEBIAN_FRONTEND=noninteractive
-APT=(apt-get -y -q -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
+APT=(apt-get -y -q --allow-downgrades -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
+# --allow-downgrades: the FFmpeg pin swaps deb-multimedia's orphaned 8.1 libraries (epoch 10)
+# for Debian's (epoch 7), which apt counts as downgrades.
 echo "== start $(date -Is)"
 
 # Our repository (unsigned while developing) and the edition's apt pins.
