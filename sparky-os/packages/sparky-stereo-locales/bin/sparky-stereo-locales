@@ -15,11 +15,6 @@ RESTORE_ALL=0
 KEEP=()
 EXPLICIT=()
 
-if [ "$(id -u)" -ne 0 ]; then
-	echo "Must be root... Exiting..."
-	exit 1
-fi
-
 case "${LANG:-}" in
 	pt_BR*) lang_file=pt_BR ;;
 	*) lang_file=en ;;
@@ -214,14 +209,28 @@ show_list() {
 	grep -v '^#' "$SHARE/data/language"
 }
 
+# parse_keep LIST adds the codes to KEEP; any unknown code is an error.
 parse_keep() {
-	local items item
+	local items item bad=0 given=0
 	IFS=', ' read -r -a items <<<"$1"
 	for item in "${items[@]}"; do
-		if [ -n "$item" ] && split_code "$item" 1; then
+		[ -n "$item" ] || continue
+		given=1
+		if split_code "$item" 1; then
 			KEEP+=("$P_LANG|$P_REGION|$P_VAR")
+		else
+			echo "$LOCAL8 $item" >&2
+			bad=1
 		fi
 	done
+	if [ "$bad" -eq 1 ]; then
+		echo "$LOCAL9" >&2
+		exit 2
+	fi
+	if [ "$given" -eq 0 ]; then
+		echo "$LOCAL30" >&2
+		exit 1
+	fi
 }
 
 write_config() {
@@ -396,8 +405,16 @@ while [ $# -gt 0 ]; do
 			exit 0
 			;;
 		-k | --keep)
+			if [ $# -lt 2 ] || [ "${2#-}" != "$2" ]; then
+				echo "$LOCAL10 $1" >&2
+				exit 1
+			fi
 			parse_keep "$2"
 			shift 2
+			;;
+		--keep=*)
+			parse_keep "${1#--keep=}"
+			shift
 			;;
 		-r | --restore)
 			RESTORE_ALL=1
@@ -412,11 +429,16 @@ while [ $# -gt 0 ]; do
 			break
 			;;
 		*)
-			echo "Unknown option: $1"
+			echo "$LOCAL11 $1" >&2
 			exit 1
 			;;
 	esac
 done
+
+if [ "$DRY_RUN" -eq 0 ] && [ "$(id -u)" -ne 0 ]; then
+	echo "$LOCAL7"
+	exit 1
+fi
 
 if [ "${#KEEP[@]}" -eq 0 ] && [ "$RESTORE_ALL" -eq 0 ] && [ "$DRY_RUN" -eq 0 ]; then
 	if command -v yad >/dev/null 2>&1; then
