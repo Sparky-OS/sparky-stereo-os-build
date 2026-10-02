@@ -42,7 +42,7 @@ c = re.sub(r'^Homepage: .*$', 'Homepage: https://sparkylinux.org', c, flags=re.M
 c = re.sub(r'^Provides: (.*)$', lambda m: f'Provides: nvidia-kernel-open-dkms (= {debv}), {m.group(1)}', c, flags=re.M)
 c = re.sub(r'^Replaces: (.*)$', lambda m: f'Conflicts: nvidia-kernel-open-dkms\nReplaces: nvidia-kernel-open-dkms, {m.group(1)}', c, flags=re.M)
 c = re.sub(r'^Description: .*$', 'Description: NVIDIA open kernel modules (DKMS) with the stereo 3D and deep colour patches', c, flags=re.M)
-c = c.rstrip('\n') + '\n Sparky Stereo OS: NVIDIA\'s nvidia-kernel-open-dkms ' + debv + ' with our patches\n (HDMI 1.4 3D modes, HDMI deep colour at 12 bits per component by default,\n integer-rate twins of the 1000/1001-rate CTA video formats), from the branch\n stereo3d of github.com/danielcamposramos/open-gpu-kernel-modules.\n'
+c = c.rstrip('\n') + '\n Sparky Stereo OS: NVIDIA\'s nvidia-kernel-open-dkms ' + debv + ' with our patches\n (HDMI 1.4 3D modes, HDMI deep colour at the depth the sink declares by default,\n integer-rate twins of the 1000/1001-rate CTA video formats), from the branch\n stereo3d of github.com/danielcamposramos/open-gpu-kernel-modules.\n'
 open(path, 'w').write(c)
 PY
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print0 | sort -z | xargs -0 md5sum | sed 's| \./| |' >DEBIAN/md5sums)
