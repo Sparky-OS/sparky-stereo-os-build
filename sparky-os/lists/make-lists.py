@@ -8,9 +8,13 @@ import glob, os, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, '..', 'data')
 
-# Every package apt can install, by architecture (amd64, all, i386 when multiarch is on).
+# Every package the edition's sources offer (Debian testing, Sparky, deb-multimedia; not the
+# vendor repositories of this system), by architecture (amd64, all, i386 when multiarch is on).
+SOURCES = ('deb.debian.org_', 'repo.sparkylinux.org_', 'www.deb-multimedia.org_', 'deb-multimedia.org_')
 available = set()
 for f in glob.glob('/var/lib/apt/lists/*_Packages'):
+    if not os.path.basename(f).startswith(SOURCES):
+        continue
     arch = 'i386' if 'binary-i386' in f else ''
     for line in open(f, errors='replace'):
         if line.startswith('Package: '):
@@ -28,11 +32,35 @@ def group(name, title, wanted):
     if lack:
         missing[name] = sorted(set(lack))
 
+# The KDE edition's ISO (the base we build on).
+base = set()
+for l in open(os.path.join(DATA, 'sparkylinux-2026.09-x86_64-kde.txt'), errors='replace'):
+    if l.startswith('ii'):
+        base.add(l.split()[1].split(':')[0])
+
+# Dedup (Daniel, 2026-10-02): one tool per task, KDE's where it covers the task
+# (data/dedup.tsv says, for each package taken out, what does its task instead).
+dedup = {}
+for l in open(os.path.join(DATA, 'dedup.tsv')):
+    if l.startswith('#') or not l.strip():
+        continue
+    p, action, instead, why = l.rstrip('\n').split('\t')
+    dedup[p] = (action, instead, why)
+
+# Packages of the KDE edition replaced by the dedup.
+base_remove = ['thunderbird', 'skanlite'] + sorted(p for p in base if p.startswith('thunderbird-l10n-'))
+
 # 1. Applications from Daniel's system beyond the KDE edition, from Debian or Sparky
-# (vendor and local ones go through APTus).
+# (vendor and local ones go through APTus), deduplicated, plus the KDE tools the dedup
+# chose that neither has.
 apps = [l.split('\t')[0] for l in open(os.path.join(DATA, 'daniel_only_apps.origin.tsv'))
         if l.rstrip('\n').split('\t')[1] in ('debian', 'sparky')]
-group('apps', "Applications on Daniel's system beyond the KDE edition (Debian and Sparky)", apps)
+apps = [p for p in apps if p not in dedup]
+group('apps', "Applications beyond the KDE edition (Daniel's, deduplicated)", apps + [
+    'kdenlive', 'skanpage', 'subtitlecomposer', 'neochat', 'qpwgraph',
+    'libreoffice-kf6', 'libreoffice-draw', 'kdenetwork-filesharing', 'kio-fuse',
+    'coolercontrol',   # fans and pumps (GPL-3; its repository is the vendor's: to package)
+])
 
 # 2. Games: SteamOS-like, the chosen GameOver games, KDE's games, three well-known additions.
 group('games', 'Games', [
@@ -41,6 +69,9 @@ group('games', 'Games', [
     'lbreakouthd', 'liquidwar', 'netpanzer', 'freedroid',
     'supertuxkart', '0ad', 'openttd',
     'kdegames', 'knights', 'gnuchess',
+    # Daniel's, from his applications (the dedup sent them here)
+    'flightgear', 'torcs', 'ufoai', 'd1x-rebirth', 'd2x-rebirth', 'quake3',
+    'game-data-packager-runtime',
 ])
 
 # 3. Gaming tools (Steam Gaming Mode and gamescope come from the stereo package).
@@ -80,7 +111,8 @@ steam = {
     'es-419': ['es-mx', 'es-ar', 'es-cl', 'es-419'], 'sv': ['sv', 'sv-se'], 'th': ['th'],
     'tr': ['tr'], 'uk': ['uk'], 'vi': ['vi'],
 }
-prefixes = ['firefox-esr-l10n-', 'thunderbird-l10n-', 'libreoffice-l10n-', 'libreoffice-help-',
+# (KDE programs carry their translations in their own packages; Thunderbird is not shipped)
+prefixes = ['firefox-esr-l10n-', 'libreoffice-l10n-', 'libreoffice-help-',
             'hunspell-', 'hyphen-', 'mythes-']
 langs = []
 for codes in steam.values():
@@ -90,24 +122,27 @@ for codes in steam.values():
                 langs.append(pre + c)
 group('languages', 'Languages (all of Steam\'s)', langs + [
     'locales-all', 'fonts-noto-core', 'fonts-noto-cjk', 'fonts-noto-cjk-extra', 'fonts-thai-tlwg',
-    'ibus-mozc', 'ibus-hangul', 'ibus-libpinyin', 'ibus-chewing', 'ibus-unikey', 'ibus-m17n',
+    # input methods: Fcitx 5, KDE's recommendation on Wayland
+    'fcitx5', 'kde-config-fcitx5', 'fcitx5-frontend-gtk3', 'fcitx5-frontend-gtk4', 'fcitx5-frontend-qt6',
+    'fcitx5-mozc', 'fcitx5-hangul', 'fcitx5-chinese-addons', 'fcitx5-chewing', 'fcitx5-unikey', 'fcitx5-m17n',
 ])
 
 # 7. Hardware: firmware and the tools the hardware setup uses (DKMS drivers only when found).
 group('hardware', 'Hardware support', [
-    'laptop-detect', 'isenkram-cli', 'discover', 'nvidia-detect', 'lm-sensors', 'fancontrol',
+    'laptop-detect', 'isenkram-cli', 'discover', 'nvidia-detect', 'lm-sensors',   # fans: CoolerControl
     'thermald', 'power-profiles-daemon', 'fwupd', 'inxi', 'hw-probe', 'bluetooth',
     'firmware-linux', 'firmware-linux-nonfree', 'firmware-misc-nonfree', 'firmware-amd-graphics',
     'firmware-realtek', 'firmware-iwlwifi', 'firmware-atheros', 'firmware-brcm80211',
     'firmware-intel-sound', 'firmware-sof-signed', 'amd64-microcode', 'intel-microcode',
     'mesa-vulkan-drivers', 'mesa-va-drivers', 'intel-media-va-driver', 'vainfo', 'vdpauinfo',
     'evdi-dkms', 'displaylink-driver',
+    'nvidia-settings',   # with the NVIDIA driver, when the hardware setup finds an NVIDIA card
 ])
 
 # 8. System: apps from Flathub, containers, Android, snapshots, zram.
 group('system', 'System', [
     'flatpak', 'plasma-discover-backend-flatpak', 'distrobox', 'waydroid', 'btrfs-progs',
-    'snapper', 'timeshift', 'systemd-zram-generator', 'synaptic',
+    'timeshift', 'systemd-zram-generator', 'synaptic',   # snapshots: Timeshift (with grub-btrfs)
     'grub-btrfs', 'scx-scheds', 'ananicy-cpp', 'sunshine', 'protonup-qt', 'hhd', 'decky-loader',
 ])
 
@@ -117,6 +152,10 @@ group('look', 'Look', [
     'kwin-decoration-oxygen', 'qt6ct',
 ])
 
+# Coherence: every tool the dedup kept a task for is shipped (in the base or in a list).
+shipped = (base - set(base_remove)) | {p for _, pkgs in groups.values() for p in pkgs}
+unshipped = sorted({i for a, i, _ in dedup.values() if a in ('drop', 'aptus') and i != '-'} - shipped)
+
 for name, (title, pkgs) in groups.items():
     with open(os.path.join(HERE, name + '.list'), 'w') as f:
         f.write('# ' + title + ' (' + str(len(pkgs)) + ' packages; generated by make-lists.py)\n')
@@ -125,5 +164,26 @@ with open(os.path.join(HERE, 'MISSING.md'), 'w') as f:
     f.write('# Wanted, not in apt: to package ourselves or to offer through APTus\n\n')
     for name, pkgs in missing.items():
         f.write('- **' + name + ':** ' + ', '.join(pkgs) + '\n')
+with open(os.path.join(HERE, 'base-remove.list'), 'w') as f:
+    f.write('# Packages of the KDE edition the dedup replaced (Thunderbird by Kontact, Skanlite by Skanpage)\n')
+    f.write('\n'.join(base_remove) + '\n')
+with open(os.path.join(HERE, 'aptus.list'), 'w') as f:
+    f.write('# Closed programs from Daniel\'s system: offered in APTus, not installed\n')
+    f.write('\n'.join(sorted(p for p, (a, _, _) in dedup.items() if a == 'aptus')) + '\n')
+with open(os.path.join(HERE, '..', 'DEDUP.md'), 'w') as f:
+    f.write('# Dedup of the applications (generated by lists/make-lists.py from data/dedup.tsv)\n\n')
+    f.write('One tool per task, KDE\'s where it covers the task (Daniel, 2026-10-02). '
+            'Leftovers of tasks and meta-packages go.\n\n')
+    titles = {'drop': 'Another tool does the task', 'dep': 'Libraries and data marked manual (they come with their program)',
+              'games': 'Decided in the games list', 'aptus': 'Closed: offered in APTus',
+              'hardware': 'Installed by the hardware setup'}
+    for a, t in titles.items():
+        rows = sorted((p, i, w) for p, (aa, i, w) in dedup.items() if aa == a)
+        f.write('## ' + t + ' (' + str(len(rows)) + ')\n\n| Package | Instead | Why |\n|---|---|---|\n')
+        for p, i, w in rows:
+            f.write('| ' + p + ' | ' + (i if i != '-' else '') + ' | ' + w + ' |\n')
+        f.write('\n')
+    f.write('## Replaced on the KDE edition\n\n' + ', '.join(base_remove) + '\n')
+print('instead, not shipped:', ', '.join(unshipped) or '-')
 for name, (title, pkgs) in groups.items():
     print(f'{name:14} {len(pkgs):5}  missing: {", ".join(missing.get(name, [])) or "-"}')

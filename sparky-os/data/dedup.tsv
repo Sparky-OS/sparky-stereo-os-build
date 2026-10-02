@@ -1,0 +1,135 @@
+# Dedup of the applications on Daniel's system (Daniel, 2026-10-02): one tool per task,
+# KDE's where it covers the task; leftovers of tasks and meta-packages go.
+# package	action	instead	why
+# actions: drop (another tool does the task), dep (a library or data package marked manual,
+# it comes with its program), games (decided in the games list), aptus (closed: offered in
+# APTus, not installed), hardware (installed by the hardware setup when the hardware is found)
+gkdebconf	drop	configure-debian	second debconf front end
+gnome-disk-utility	drop	partitionmanager	disks: KDE Partition Manager, plasma-disks, ISO Image Writer
+malcontent-gui	drop	-	GNOME parental controls, came with GNOME's task
+tuned-gtk	drop	power-profiles-daemon	power profiles: KDE's battery applet drives power-profiles-daemon
+code	aptus	kate	Microsoft's build is closed; Kate edits code with LSP
+gitkraken	aptus	-	closed
+nsight-compute-2026.2.1	drop	-	older version of nsight-compute-2026.3.1 (APTus)
+nsight-compute-2026.3.1	aptus	-	NVIDIA developer tools, in APTus
+nsight-systems-2026.1.3	drop	-	older version of nsight-systems-2026.3.2 (APTus)
+nsight-systems-2026.3.2	aptus	-	NVIDIA developer tools, in APTus
+snapd	drop	flatpak	one app store format: Flatpak, in Discover
+cudatext	drop	kate	text and code editing
+notepadqq	drop	kate	text and code editing
+vim-common	dep	vim	part of vim
+libts-bin	dep	-	touch screen library utilities
+d1x-rebirth	games	-	Descent, 3D
+d2x-rebirth	games	-	Descent 2, 3D
+dopewars	games	-	dropped in the games list
+flightgear	games	-	3D flight simulator
+fortune-mod	drop	-	not a game; nothing uses it
+game-data-packager-runtime	games	-	builds the data of Quake and Descent from the owner's files
+kajongg	dep	kdegames	part of kdegames
+knavalbattle	dep	kdegames	part of kdegames
+ltris	games	-	dropped: KBlocks in kdegames
+lutris	games	-	in the gaming tools
+openarena	games	-	in the games list
+quake3	games	-	Quake III launcher for ioquake3
+simutrans	games	-	dropped: OpenTTD
+steam-installer	games	-	in the gaming tools
+torcs	games	-	3D racing simulator
+ufoai	games	-	3D strategy
+warzone2100	games	-	in the games list
+brasero	drop	k3b	disc burning
+evolution-data-server	dep	-	GNOME's PIM backend, came with GNOME's task
+gaupol	drop	subtitlecomposer	subtitles: KDE's Subtitle Composer
+gnome-bluetooth-sendto	drop	bluedevil	sending files over Bluetooth
+gnome-color-manager	drop	colord-kde	colour profiles
+gnome-control-center	drop	systemsettings	GNOME's settings, came with GNOME's task
+gnome-online-accounts	drop	kaccounts-providers	online accounts
+gnome-terminal	drop	konsole	terminal
+gnome-user-share	drop	kdenetwork-filesharing	sharing folders: Dolphin's Share tab
+nm-connection-editor	drop	plasma-nm	network connections
+simple-scan	drop	skanpage	scanning: Skanpage (multi-page, OCR)
+system-config-printer	drop	print-manager	printers
+tecla	drop	-	keyboard layout viewer of GNOME; KDE shows layouts in its keyboard settings
+yelp	drop	khelpcenter	help browser
+kgamma	drop	colord-kde	X11 only; on Wayland colour goes through ICC profiles
+lios	drop	gimagereader-qt	OCR
+variety	drop	-	Plasma's wallpaper slideshow and picture of the day
+xfig	drop	libreoffice-draw	figures and diagrams
+xfractint	drop	fraqtive	fractals
+alligator	drop	akregator	feeds: Akregator, in Kontact
+kalarm	drop	kclock	alarms in KClock, reminders in KOrganizer, commands in the cron settings
+kanyremote	drop	kdeconnect	remote control from a phone
+kdepim-themeeditors	drop	-	theme editors for developers
+keurocalc	drop	-	KRunner converts currencies and units
+konsolekalendar	drop	korganizer	calendar
+merkuro	drop	kontact	mail, calendar and contacts: Kontact
+okular-mobile	drop	okular	mobile version
+peruse	drop	okular	Okular reads comic books (CBZ, CBR)
+plasma-phonebook	drop	kaddressbook	mobile version
+smb4k	drop	dolphin	Dolphin browses and mounts SMB shares (kio-fuse)
+alkimia-bin	dep	-	library binaries
+calligra-data	dep	-	data of Calligra Words, dropped
+libkf5newstuff-data	dep	-	library data
+libkf6guiaddons-bin	dep	-	library helper
+birdtray	drop	kmail	Thunderbird's tray icon; the mail client is KMail
+mutt	drop	kmail	mail client
+pim-sieve-editor	drop	kmail	KMail edits server-side filters itself
+k4dirstat	drop	filelight	disk usage
+gradio	drop	elisa	internet radio: Elisa
+akonadi-server	dep	kontact	part of Kontact
+anydesk	aptus	krdc	closed; KRDC and KRfb for open remote desktop
+avahi-discover	drop	-	debugging tool
+discord	aptus	-	closed
+element-desktop	drop	neochat	Matrix: KDE's NeoChat
+qbittorrent	drop	ktorrent	torrents: KTorrent, on the KDE edition
+wpagui	drop	plasma-nm	Wi-Fi
+nvidia-settings	hardware	-	with the NVIDIA driver, when an NVIDIA card is found
+acetoneiso	drop	dolphin	Dolphin mounts ISO images
+dosbox	drop	dosbox-x	DOS emulation
+qemu-system-data	dep	-	data of QEMU
+retroarch	games	-	in 3D emulation
+winetricks	games	-	in the gaming tools
+python3.13	dep	python3	runtime
+alsamixergui	drop	qasmixer	ALSA mixer (the sound card's own controls)
+juk	drop	elisa	music player: Elisa, on the KDE edition
+kmix	drop	plasma-pa	volume: Plasma's audio applet
+mp3splt-gtk	drop	audacity	splitting audio
+pavucontrol	drop	plasma-pa	volume and devices per application: Plasma's audio settings
+qasconfig	drop	qasmixer	ALSA tools: one
+qashctl	drop	qasmixer	ALSA tools: one
+qjackctl	drop	qpwgraph	audio connections: PipeWire's graph
+calligrawords	drop	libreoffice-writer	word processor: LibreOffice with its KDE integration
+sc-controller	drop	-	Steam Input in Steam, HHD for handhelds
+accountwizard	dep	kmail	part of KMail
+akonadiconsole	drop	-	debugging tool
+avahi-ui-utils	drop	krdc	VNC and SSH browsing
+gddccontrol	drop	ddcui	monitor controls over DDC
+ibus	drop	fcitx5	input method: Fcitx 5, KDE's recommendation on Wayland
+ibus-braille	drop	-	with IBus; braille displays go through Orca and BRLTTY
+kdf	drop	filelight	free space
+kgpg	drop	kleopatra	GnuPG
+kmag	drop	-	KWin's zoom
+kronometer	drop	kclock	stopwatch
+ktimer	drop	kclock	timers
+lshw-gtk	drop	kinfocenter	hardware information
+reportbug-gtk	drop	-	DrKonqi reports crashes; reportbug on the command line stays
+sweeper	drop	bleachbit	cleaning
+vmg	drop	-	KWin's zoom
+aegisub	drop	subtitlecomposer	subtitles
+dragonplayer	drop	vlc	video player: our VLC (mpv stays as the second stereo player)
+freetuxtv	drop	hypnotix	IPTV
+shotcut-data	drop	kdenlive	video editing: Kdenlive
+simplescreenrecorder	drop	obs-studio	X11 only; Spectacle records the screen, OBS the rest
+totem	drop	vlc	video player
+bluefish	drop	kate	web editing
+awf-gtk3	drop	-	theme preview for developers
+awf-gtk4	drop	-	theme preview for developers
+brightnesspicker	drop	-	Xorg only; Plasma sets the brightness
+codeblocks-common	drop	kate	C/C++ editing
+grsync	drop	kup-backup	backups
+kdepim-runtime	dep	kontact	part of Kontact
+kdocker	drop	-	X11 only
+remmina	drop	krdc	remote desktop client
+uim-gtk2.0	drop	fcitx5	input method
+wdisplays	drop	-	for wlroots compositors; KDE's display settings
+xmotd	drop	-	message of the day viewer
+xsensors	drop	plasma-systemmonitor	sensors
