@@ -1,0 +1,294 @@
+#!/bin/bash
+#
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/02
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/02
+
+SHARE=/usr/share/sparky-stereo-locales
+LIST=$SHARE/languages.list
+CONFIG=/etc/dpkg/dpkg.cfg.d/sparky-stereo-locales
+
+DRY_RUN=0
+RESTORE_ALL=0
+KEEP=()
+
+if [ "$(id -u)" -ne 0 ]; then
+	echo "Must be root... Exiting..."
+	exit 1
+fi
+
+case "${LANG:-}" in
+	pt_BR*) lang_file=pt_BR ;;
+	*) lang_file=en ;;
+esac
+if [ -f "$SHARE/lang/$lang_file" ]; then
+	. "$SHARE/lang/$lang_file"
+fi
+
+language_package() {
+	case "$1" in
+		firefox-esr-l10n-* | libreoffice-l10n-* | libreoffice-help-* | hunspell-* | hyphen-* | mythes-* | fcitx5-chewing | fcitx5-chinese-addons | fcitx5-hangul | fcitx5-mozc | fcitx5-unikey)
+			return 0
+		;;
+		*) return 1 ;;
+	esac
+}
+
+language_group() {
+	case "$1" in
+		firefox-esr-l10n-*) code="${1#firefox-esr-l10n-}" ;;
+		libreoffice-l10n-*) code="${1#libreoffice-l10n-}" ;;
+		libreoffice-help-*) code="${1#libreoffice-help-}" ;;
+		hunspell-*) code="${1#hunspell-}" ;;
+		hyphen-*) code="${1#hyphen-}" ;;
+		mythes-*) code="${1#mythes-}" ;;
+		fcitx5-chewing | fcitx5-chinese-addons) echo zh ;;
+		fcitx5-hangul) echo ko ;;
+		fcitx5-mozc) echo ja ;;
+		fcitx5-unikey) echo vi ;;
+		*) return 1 ;;
+	esac
+
+	code="${code//_/-}"
+	case "$code" in
+		nb* | nn* | no*) echo no ;;
+		*) echo "${code%%-*}" ;;
+	esac
+}
+
+language_groups() {
+	local package
+	while read -r package; do
+		if language_package "$package"; then
+			language_group "$package" || true
+		fi
+	done <"$LIST"
+}
+
+packages_for_group() {
+	local group="$1" package
+	while read -r package; do
+		if language_package "$package" && [ "$(language_group "$package")" = "$group" ]; then
+			echo "$package"
+		fi
+	done <"$LIST"
+}
+
+installed_language_packages() {
+	dpkg-query -W -f='${binary:Package}\t${Status}\n' 2>/dev/null |
+		awk -F '\t' '$2 ~ /installed/ {print $1}' |
+		sed 's/:.*$//' |
+		sort -u
+}
+
+is_installed() {
+	dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q '^install ok installed$'
+}
+
+in_group() {
+	local group="$1" code
+	for code in "${KEEP[@]}"; do
+		if [ "$code" = "$group" ]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+language_prefixes() {
+	case "$1" in
+		no) printf '%s\n' nb nn no ;;
+		*) printf '%s\n' "$1" ;;
+	esac
+}
+
+locale_group() {
+	local code="${1%%.*}"
+	code="${code//_/-}"
+	case "$code" in
+		nb* | nn* | no*) echo no ;;
+		*) echo "${code%%-*}" ;;
+	esac
+}
+
+default_keep() {
+	local locale=""
+	if [ -r /etc/default/locale ]; then
+		locale=$(sed -n 's/^LANG=//p' /etc/default/locale | tail -n 1)
+	fi
+	if [ -n "$locale" ]; then
+		locale_group "$locale"
+	fi
+	echo en
+}
+
+show_help() {
+	echo "Usage: sparky-stereo-locales [--keep CODE[,CODE]] [--restore] [--list] [--dry-run]"
+	echo
+	echo "Options:"
+	echo "  -h, --help       show this help"
+	echo "  -l, --list       list language groups"
+	echo "  -k, --keep       languages to keep"
+	echo "  -r, --restore    restore every known language"
+	echo "  -d, --dry-run    show what would happen"
+	echo
+	echo "The default keeps the current locale and English."
+}
+
+show_list() {
+	if [ -f "$SHARE/data/language" ]; then
+		cat "$SHARE/data/language"
+		return 0
+	fi
+	language_groups | sort -u
+}
+
+parse_keep() {
+	local keep="$1" item
+	while read -r item; do
+		if [ -n "$item" ]; then
+			KEEP+=("$item")
+		fi
+	done <<<"${keep//,/ }"
+}
+
+write_config() {
+	mkdir -p "$(dirname "$CONFIG")"
+	local group prefix
+	{
+		for group in $(language_groups | sort -u); do
+			if ! in_group "$group"; then
+				for prefix in $(language_prefixes "$group"); do
+					printf 'path-exclude=/usr/share/locale/%s*\n' "$prefix"
+					printf 'path-exclude=/usr/share/man/%s*\n' "$prefix"
+					printf 'path-exclude=/usr/share/help/%s*\n' "$prefix"
+				done
+			fi
+		done
+		for group in "${KEEP[@]}"; do
+			for prefix in $(language_prefixes "$group"); do
+				printf 'path-include=/usr/share/locale/%s*\n' "$prefix"
+				printf 'path-include=/usr/share/man/%s*\n' "$prefix"
+				printf 'path-include=/usr/share/help/%s*\n' "$prefix"
+			done
+		done
+	} >"$CONFIG"
+}
+
+purge_unwanted() {
+	local package purge=()
+	while read -r package; do
+		if language_package "$package" && ! in_group "$(language_group "$package")"; then
+			purge+=("$package")
+		fi
+	done < <(installed_language_packages)
+	if [ "${#purge[@]}" -gt 0 ]; then
+		if [ "$DRY_RUN" -eq 1 ]; then
+			printf 'apt-get purge -y %s\n' "${purge[@]}"
+		else
+			DEBIAN_FRONTEND=noninteractive apt-get purge -y "${purge[@]}"
+		fi
+	fi
+}
+
+install_selected() {
+	local group package install=()
+	for group in "${KEEP[@]}"; do
+		while read -r package; do
+			if ! is_installed "$package"; then
+				install+=("$package")
+			fi
+		done < <(packages_for_group "$group")
+	done
+	if [ "${#install[@]}" -gt 0 ]; then
+		if [ "$DRY_RUN" -eq 1 ]; then
+			printf 'apt-get install -y --no-install-recommends %s\n' "${install[@]}"
+		else
+			DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${install[@]}"
+		fi
+	fi
+}
+
+gui() {
+	local language code name state rows=() choices
+	while read -r code name; do
+		case "$code" in
+			"" | "#"*) continue ;;
+		esac
+		if in_group "$code"; then
+			state=TRUE
+		else
+			state=FALSE
+		fi
+		rows+=("$state|$code|$name")
+	done <"$SHARE/data/language"
+	choices=$(yad --list --checklist --print-column=2 --separator=| \
+		--column=$LOCAL5:CHK --column=$LOCAL6:TXT --column=$LOCAL1:TXT \
+		"${rows[@]}" 2>/dev/null)
+	[ "$?" -eq 0 ] || return 0
+	KEEP=()
+	while read -r code; do
+		if [ -n "$code" ]; then
+			KEEP+=("$code")
+		fi
+	done <<<"$choices"
+	apply_selection
+}
+
+apply_selection() {
+	if [ "$RESTORE_ALL" -eq 1 ]; then
+		KEEP=()
+		while read -r group; do
+			KEEP+=("$group")
+		done < <(language_groups | sort -u)
+	fi
+	if [ "${#KEEP[@]}" -eq 0 ]; then
+		mapfile -t KEEP < <(default_keep)
+	fi
+	if [ "$DRY_RUN" -eq 0 ]; then
+		write_config
+	fi
+	purge_unwanted
+	install_selected
+}
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+		-h | --help)
+			show_help
+			exit 0
+			;;
+		-l | --list)
+			show_list
+			exit 0
+			;;
+		-k | --keep)
+			parse_keep "$2"
+			shift 2
+			;;
+		-r | --restore)
+			RESTORE_ALL=1
+			shift
+			;;
+		-d | --dry-run)
+			DRY_RUN=1
+			shift
+			;;
+		--)
+			shift
+			break
+			;;
+		*)
+			echo "Unknown option: $1"
+			exit 1
+			;;
+	esac
+done
+
+if [ "${#KEEP[@]}" -eq 0 ] && [ "$RESTORE_ALL" -eq 0 ] && [ "$DRY_RUN" -eq 0 ]; then
+	if command -v yad >/dev/null 2>&1; then
+		gui
+	fi
+else
+	apply_selection
+fi
