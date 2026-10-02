@@ -116,32 +116,32 @@ if [ -n "$ZONE" ]; then
 fi
 
 LINES=
-POOLS=
 COUNT=0
 NTSCOUNT=0
+PLAINCOUNT=0
 if [ -n "$ROW" ]; then
 	servers=$(echo "$ROW" | cut -f2)
 	nts=$(echo "$ROW" | cut -f3)
 	for h in $servers; do
 		[ "$h" = - ] && continue
-		# a pool of the country's own service: no NTS, never counted as a national server
-		case "$h" in pool:*) POOLS+="pool ${h#pool:} iburst maxsources 2"$'\n'; continue ;; esac
 		case " $nts " in
 			*" $h "*) LINES+="server $h iburst nts"$'\n'; NTSCOUNT=$((NTSCOUNT + 1)) ;;
-			*) LINES+="server $h iburst"$'\n' ;;
+			*) LINES+="server $h iburst"$'\n'; PLAINCOUNT=$((PLAINCOUNT + 1)) ;;
 		esac
 		COUNT=$((COUNT + 1))
 	done
 fi
-LINES+=$POOLS
-# fewer than three national sources: Debian's pool completes them; none: the pool alone
+# Debian's pool is the fallback only where the country's own servers are too few: none; NTS
+# servers fewer than three with no plain official server of the country beside them; a plain
+# service with a single server. Several plain official servers need no pool.
 if [ "$COUNT" -eq 0 ]; then
 	LINES+="$FALLBACK"$'\n'
 	WHAT=$(printf "$LOCAL7" "${ZONE:-?}")
-elif [ "$COUNT" -lt 3 ]; then
-	LINES+="$FALLBACK maxsources 2"$'\n'
-	WHAT=$(printf "$LOCAL6" "$CC" "$ZONE")
 else
+	if { [ "$NTSCOUNT" -gt 0 ] && [ "$COUNT" -lt 3 ] && [ "$PLAINCOUNT" -eq 0 ]; } ||
+		{ [ "$NTSCOUNT" -eq 0 ] && [ "$COUNT" -lt 2 ]; }; then
+		LINES+="$FALLBACK maxsources 2"$'\n'
+	fi
 	WHAT=$(printf "$LOCAL6" "$CC" "$ZONE")
 fi
 

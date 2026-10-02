@@ -17,7 +17,6 @@ check() { # name, zone, expected-grep-pattern(s) joined by |, absent-pattern
 }
 check "Sao_Paulo -> NTP.br with nts" America/Sao_Paulo '^server a\.st1\.ntp\.br iburst nts$' 'debian'
 check "Sao_Paulo -> gps.ntp.br with nts" America/Sao_Paulo '^server gps\.ntp\.br iburst nts$' 'debian'
-check "Sao_Paulo -> pool.ntp.br as a plain pool line (its NTS-KE certificate does not match)" America/Sao_Paulo '^pool pool\.ntp\.br iburst maxsources 2$' 'pool\.ntp\.br.* nts|debian'
 check "Sao_Paulo has no b.st1 (no NTS answer)" America/Sao_Paulo '^server a\.st1' 'b\.st1'
 check "Berlin -> PTB with nts" Europe/Berlin '^server ptbtime1\.ptb\.de iburst nts$' 'pool'
 check "Vienna -> BEV (zone1970 or zone.tab)" Europe/Vienna '^server bevtime1\.metrologie\.at iburst nts$' 'pool'
@@ -38,7 +37,22 @@ check "Paris -> LNE-OP with nts" Europe/Paris '^server ntp\.obspm\.fr iburst nts
 check "Paris pool completes" Europe/Paris '^pool debian\.pool\.ntp\.org iburst maxsources 2$'
 check "Vienna three servers" Europe/Vienna '^server time\.metrologie\.at iburst nts$' 'pool'
 check "Berlin three servers" Europe/Berlin '^server ptbtime3\.ptb\.de iburst nts$' 'pool'
-check "Zurich (zone.tab: CH, no row) -> pool only, not DE" Europe/Zurich '^pool debian\.pool\.ntp\.org iburst$' '^server'
+check "Zurich (zone.tab: CH) -> METAS plain, not DE" Europe/Zurich '^server ntp11\.metas\.ch iburst$' 'nts|ptbtime|pool'
+check "Zurich has no authselectmode" Europe/Zurich '^server ntp13\.metas\.ch iburst$' 'authselectmode'
+check "London -> NPL plain, three servers, no pool" Europe/London '^server ntp3\.npl\.co\.uk iburst$' 'nts|pool|authselectmode'
+check "Warsaw -> GUM plain" Europe/Warsaw '^server tempus1\.gum\.gov\.pl iburst$' 'nts|pool'
+check "Johannesburg -> NMISA one plain server plus the Debian pool" Africa/Johannesburg '^pool debian\.pool\.ntp\.org iburst maxsources 2$' 'nts|authselectmode'
+check "Johannesburg server line" Africa/Johannesburg '^server time\.nmisa\.org iburst$'
+check "Moscow -> VNIIFTRI plain, four servers, no pool" Europe/Moscow '^server ntp4\.vniiftri\.ru iburst$' 'nts|pool'
+# Brazil's servers come out in the TSV order, gps.ntp.br first, all five with nts
+br=$(LANG=C $T --print --zone America/Sao_Paulo | sed -n 2,6p | tr '\n' ' ')
+[ "$br" = "server gps.ntp.br iburst nts server a.st1.ntp.br iburst nts server c.st1.ntp.br iburst nts server d.st1.ntp.br iburst nts server e.st1.ntp.br iburst nts " ] && echo "PASS BR order and five NTS servers" || { echo "FAIL BR order: $br"; FAILS=$((FAILS + 1)); }
+LANG=C $T --print --zone America/Sao_Paulo | grep -q -E 'pool|b\.st1' && { echo "FAIL BR has a pool or b.st1"; FAILS=$((FAILS + 1)); } || echo "PASS BR has no pool and no b.st1"
+# a country with one NTS server and a plain official one: the plain one replaces the Debian pool
+M=$(mktemp -d); printf 'XX\tn.example plain.example\tn.example\tfixture\n' >"$M/t.tsv"
+printf 'XX\t+0000+00000\tAfrica/Xx\n' >"$M/zone.tab"
+out=$(SPARKY_TIME_TSV=$M/t.tsv SPARKY_TIME_ZONEINFO=$M LANG=C $T --print --zone Africa/Xx)
+echo "$out" | grep -q '^server plain\.example iburst$' && ! echo "$out" | grep -q -E 'pool|authselectmode' && echo "PASS plain official server replaces the Debian pool next to one NTS server" || { echo "FAIL mixed row: $out"; FAILS=$((FAILS + 1)); }
 check "Unknown zone -> Debian pool" Nowhere/Land '^pool debian\.pool\.ntp\.org iburst$' '^server'
 check "Never a public country zone" Europe/Lisbon 'debian\.pool' '(^|[ ])[a-z]{2}\.pool\.ntp\.org'
 # every TSV country is reachable through some zone, and none of the excluded institutes is in the file
