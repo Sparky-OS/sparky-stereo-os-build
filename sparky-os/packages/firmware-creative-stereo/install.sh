@@ -1,0 +1,14 @@
+#!/bin/bash
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/03
+set -euo pipefail
+((EUID == 0)) || { echo 'Run as root'; exit 1; }
+export DEBIAN_FRONTEND=noninteractive
+if [[ ${1:-install} == uninstall ]]; then
+	apt-get -y purge firmware-creative-stereo
+else
+	HERE=$(cd "$(dirname "$0")" && pwd)
+	OUT=${OUT:?Set OUT to the directory containing the built packages}
+	apt-get -y install "$OUT/firmware-creative-stereo_20261003~sparky9~0_all.deb"
+fi

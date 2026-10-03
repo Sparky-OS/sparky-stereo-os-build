@@ -1,0 +1,8 @@
+#!/bin/bash
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/03
+set -euo pipefail
+if [[ $1 == configure ]]; then
+	/usr/lib/dkms/common.postinst hid-xpadneo 0.10.0+git3879ba0 /usr/share/doc/xpadneo-dkms "${2:-}"
+fi
