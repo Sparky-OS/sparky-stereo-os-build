@@ -4,7 +4,7 @@
 # Last update 2026/10/03
 set -euo pipefail
 if ((EUID != 0)); then echo 'Run as root (use the Hardware Setup menu entry).'; exit 1; fi
-export LC_ALL=C
+export LC_ALL=C.UTF-8
 SHARE=/usr/share/sparky/sparky-stereo-hardware
 LIB=/usr/lib/sparky-stereo-hardware
 # Used by the sourced action functions; production always targets the live root.
@@ -98,7 +98,7 @@ if ! $auto; then
 	yad --text-info --title="$LOCAL1" --filename="$WORK/plan" --width=760 --height=500 --button="$LOCAL2:1" --button="$LOCAL3:0" || exit 0
 	# The child owns the execution lock; release it before launching the visible terminal.
 	flock -u 9
-	exec sparky-xterm -e /usr/bin/sparky-stereo-hardware --auto
+	exec env SHELL=/bin/bash sparky-xterm "/usr/bin/sparky-stereo-hardware --auto"
 fi
 mapfile -t packages < <(awk -F '\t' '$1 == "package" {print $2}' "$WORK/plan")
 for package in "${packages[@]}"; do
