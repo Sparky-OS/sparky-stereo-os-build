@@ -1,0 +1,108 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""Launch one program with full side-by-side stereo for KWin."""
+import argparse
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+
+def resolution(value):
+    if value == 'auto':
+        return value
+    if not re.fullmatch(r'\d+x\d+', value):
+        raise argparse.ArgumentTypeError('use auto or WIDTHxHEIGHT per eye')
+    width, height = map(int, value.split('x'))
+    if not (64 <= width <= 8192 and 64 <= height <= 8192):
+        raise argparse.ArgumentTypeError('each dimension must be between 64 and 8192')
+    return value
+
+
+def display_settings():
+    env = os.environ.copy()
+    env['GL_STEREO'] = '0'
+    subprocess.Popen(['kcmshell6', 'kcm_kscreen'], close_fds=True, env=env)
+
+
+def settings(enabled, size):
+    import tkinter as tk
+    from tkinter import ttk, messagebox
+    root = tk.Tk()
+    root.title('OpenGL stereo')
+    root.resizable(False, False)
+    on = tk.BooleanVar(value=enabled)
+    render_size = tk.StringVar(value=size)
+    result = []
+    frame = ttk.Frame(root, padding=16)
+    frame.pack(fill='both', expand=True)
+    ttk.Checkbutton(frame, text='Enable 3D', variable=on).grid(row=0, column=0, columnspan=2, sticky='w', pady=6)
+    ttk.Label(frame, text='Render resolution per eye').grid(row=1, column=0, sticky='w', padx=(0, 12))
+    ttk.Combobox(frame, textvariable=render_size, values=['auto', '640x360', '1280x720', '1920x1080', '2560x1440', '3840x2160']).grid(row=1, column=1)
+    ttk.Label(frame, text='Auto follows the window; in fullscreen, the screen.').grid(row=2, column=0, columnspan=2, pady=8)
+    def displays():
+        try:
+            display_settings()
+        except OSError as error:
+            messagebox.showerror('Display settings', str(error), parent=root)
+    def launch():
+        try:
+            value = resolution(render_size.get())
+        except argparse.ArgumentTypeError as error:
+            messagebox.showerror('Render resolution', str(error), parent=root)
+            return
+        result.append((on.get(), value))
+        root.destroy()
+    ttk.Button(frame, text='Display settings', command=displays).grid(row=3, column=0, pady=(8,0), sticky='w')
+    ttk.Button(frame, text='Launch', command=launch).grid(row=3, column=1, pady=(8,0), sticky='e')
+    root.mainloop()
+    return result[0] if result else None
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Full side-by-side OpenGL stereo; choose the display format in KDE Display settings.')
+    parser.add_argument('--enable-3d', choices=['on', 'off'], default='on', help='Enable 3D (default: on)')
+    parser.add_argument('--render-resolution', type=resolution, default='auto', metavar='WIDTHxHEIGHT', help='render resolution per eye (default: window size)')
+    parser.add_argument('--display-settings', action='store_true', help='open KDE Display settings')
+    parser.add_argument('--settings', action='store_true', help='show settings before launching')
+    parser.add_argument('command', nargs=argparse.REMAINDER)
+    args = parser.parse_args()
+    if args.display_settings:
+        display_settings()
+        if not args.command:
+            return 0
+    command = args.command
+    if command[:1] == ['--']:
+        command = command[1:]
+    if not command:
+        parser.error('supply a program after --')
+    enabled, size = args.enable_3d == 'on', args.render_resolution
+    if args.settings:
+        choice = settings(enabled, size)
+        if choice is None:
+            return 0
+        enabled, size = choice
+    env = os.environ.copy()
+    library = Path(__file__).resolve().with_name('libgl-stereo.so')
+    if not library.is_file():
+        library = Path('/usr/lib/gl-stereo/libgl-stereo.so')
+    if enabled:
+        if not library.is_file():
+            parser.error('gl-stereo library is not installed')
+        preloads = env.get('LD_PRELOAD', '').split()
+        env['LD_PRELOAD'] = ' '.join([str(library)] + [p for p in preloads if p != str(library)])
+        env['GL_STEREO'] = '1'
+        env.pop('GL_STEREO_PASSTHROUGH', None)
+        if size != 'auto':
+            env['GL_STEREO_RENDER_RESOLUTION'] = size
+        else:
+            env.pop('GL_STEREO_RENDER_RESOLUTION', None)
+    else:
+        env['GL_STEREO'] = '0'
+        env.pop('GL_STEREO_RENDER_RESOLUTION', None)
+    os.execvpe(command[0], command, env)
+
+
+if __name__ == '__main__':
+    sys.exit(main())
