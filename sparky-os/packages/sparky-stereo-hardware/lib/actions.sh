@@ -24,8 +24,8 @@ setup_sensors() {
 	cat "$output"
 	mapfile -t modules < <(sensor_modules "$output")
 	if ((${#modules[@]})); then
-		mkdir -p "$ROOT/etc/modules-load.d"
-		printf '%s\n' "${modules[@]}" >"$ROOT/etc/modules-load.d/sparky-stereo-sensors.conf"
+		mkdir -p "$ROOT/etc/modules-load.d" || return 1
+		printf '%s\n' "${modules[@]}" >"$ROOT/etc/modules-load.d/sparky-stereo-sensors.conf" || return 1
 		for module in "${modules[@]}"; do
 			grep -Fxq "$module" "$ROOT/etc/modules-load.d/sparky-stereo-sensors.conf" || return 1
 			if ! run modprobe "$module"; then failed=1; continue; fi
@@ -56,8 +56,8 @@ setup_creative() {
 	for firmware in ctefx.bin ctefx-desktop.bin ctefx-r3di.bin ctspeq.bin; do
 		[[ -s "$ROOT/usr/lib/firmware/updates/$firmware" ]] || { log "ERROR missing Creative $firmware"; return 1; }
 	done
-	mkdir -p "$ROOT/etc/modprobe.d"
-	printf '%s\n' 'options snd_hda_intel enable_msi=1' >"$ROOT/etc/modprobe.d/sparky-stereo-creative.conf"
+	mkdir -p "$ROOT/etc/modprobe.d" || return 1
+	printf '%s\n' 'options snd_hda_intel enable_msi=1' >"$ROOT/etc/modprobe.d/sparky-stereo-creative.conf" || return 1
 	log 'Creative firmware verified; snd_hda_intel enable_msi=1 applies after reboot'
 }
 
@@ -68,6 +68,7 @@ setup_nvidia() {
 	local pin="$ROOT/etc/apt/preferences.d/91sparky-stereo-cuda"
 	local driver=nvidia-driver=615.71.09-2
 	local module=nvidia-kernel-open-dkms-stereo3d
+	local file
 	# Do not start a repository change if the edition's module is unavailable.
 	if ! apt-cache show "$module" >"$WORK/nvidia-module" 2>&1 || ! grep -q '^Package:' "$WORK/nvidia-module"; then
 		log 'FALLBACK edition NVIDIA module unavailable; nouveau firmware installed'
@@ -85,20 +86,20 @@ setup_nvidia() {
 		log 'FALLBACK CUDA key extraction failed; nouveau firmware installed'
 		return 0
 	fi
-	mkdir -p "${key%/*}" "${source%/*}" "${pin%/*}"
+	mkdir -p "${key%/*}" "${source%/*}" "${pin%/*}" || return 1
 	# Back up our previous files so a failed preflight restores the previous policy.
 	for file in "$key" "$source" "$pin"; do
-		[[ ! -e "$file" ]] || cp -p "$file" "$WORK/${file##*/}.previous"
+		[[ ! -e "$file" ]] || cp -p "$file" "$WORK/${file##*/}.previous" || return 1
 	done
-	install -m644 "$WORK/cuda.gpg" "$key"
-	cat >"$source" <<EOF
+	install -m644 "$WORK/cuda.gpg" "$key" || return 1
+	cat >"$source" <<EOF || return 1
 Types: deb
 URIs: $base/
 Suites: /
 Architectures: amd64
 Signed-By: /etc/apt/keyrings/sparky-stereo-cuda.gpg
 EOF
-	cat >"$pin" <<'EOF'
+	cat >"$pin" <<'EOF' || return 1
 Package: *
 Pin: origin developer.download.nvidia.com
 Pin-Priority: 1002
@@ -107,9 +108,9 @@ EOF
 		! run env DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests --simulate install "$driver" "$module"; then
 		for file in "$key" "$source" "$pin"; do
 			if [[ -e "$WORK/${file##*/}.previous" ]]; then
-				cp -p "$WORK/${file##*/}.previous" "$file"
+				cp -p "$WORK/${file##*/}.previous" "$file" || return 1
 			else
-				rm -f "$file"
+				rm -f "$file" || return 1
 			fi
 		done
 		log 'FALLBACK NVIDIA preflight failed; previous repository policy restored; nouveau firmware installed'

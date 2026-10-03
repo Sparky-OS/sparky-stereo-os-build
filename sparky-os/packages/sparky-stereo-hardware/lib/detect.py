@@ -49,22 +49,29 @@ for package in read("firmware-packages").split():
     match(f"isenkram missing firmware: {package}", package)
 
 gpus = []
+current_gpu = None
 for line in read("lspci").splitlines():
-    # lspci -Dn and -Dnn fixtures both carry the numeric class and vendor:device.
+    subsystem = re.search(r"Subsystem:.*?([0-9a-fA-F]{4}):([0-9a-fA-F]{4})", line)
+    if subsystem and current_gpu is not None:
+        gpus[current_gpu].extend(part.lower() for part in subsystem.groups())
+    if line and not line[0].isspace():
+        current_gpu = None
+    # lspci -Dnnv includes subsystem restrictions from NVIDIA's support table.
     pci = re.search(r"(?:\[)?([0-9a-fA-F]{4})(?:\])?: .*?(?:\[)?([0-9a-fA-F]{4}):([0-9a-fA-F]{4})(?:\])?", line)
     if not pci:
         continue
     cls, vendor, device = (part.lower() for part in pci.groups())
     if vendor == "10de" and cls.startswith("03"):
-        gpus.append(device)
+        current_gpu = len(gpus)
+        gpus.append([device])
     if vendor == "1102" and device in {"0010", "0011", "0012"}:
         match(f"Creative CA0132 {vendor}:{device}", "firmware-creative-stereo")
         emit("action", "creative-msi")
 
 if gpus:
-    match("NVIDIA display " + ", ".join(gpus), "firmware-nvidia-graphics")
-    supported = set((data / "nvidia-open.ids").read_text().split())
-    if all(device in supported for device in gpus) and read("architecture").strip() == "amd64":
+    match("NVIDIA display " + ", ".join(gpu[0] for gpu in gpus), "firmware-nvidia-graphics")
+    supported = {tuple(line.split()) for line in (data / "nvidia-open.ids").read_text().splitlines()}
+    if all((gpu[0],) in supported or tuple(gpu) in supported for gpu in gpus) and read("architecture").strip() == "amd64":
         emit("action", "nvidia-open")
     else:
         emit("found", "NVIDIA nouveau: older, unknown, mixed or non-amd64 hardware")

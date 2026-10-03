@@ -7,6 +7,8 @@ if ((EUID != 0)); then echo 'Run as root (use the Hardware Setup menu entry).'; 
 export LC_ALL=C
 SHARE=/usr/share/sparky/sparky-stereo-hardware
 LIB=/usr/lib/sparky-stereo-hardware
+# Used by the sourced action functions; production always targets the live root.
+# shellcheck disable=SC2034
 ROOT=
 fixture=
 dry=false
@@ -43,7 +45,7 @@ if [[ -n "$fixture" ]]; then
 	FACTS=$fixture
 else
 	FACTS=$WORK
-	run lspci -Dn >"$FACTS/lspci"
+	run lspci -Dnnv >"$FACTS/lspci"
 	run lsusb >"$FACTS/lsusb"
 	cp /proc/cpuinfo "$FACTS/cpuinfo"
 	if laptop-detect; then echo 0 >"$FACTS/laptop"; else
@@ -101,7 +103,8 @@ fi
 mapfile -t packages < <(awk -F '\t' '$1 == "package" {print $2}' "$WORK/plan")
 for package in "${packages[@]}"; do
 	case "$package" in
-		task-laptop|power-profiles-daemon|thermald) apt_install "$package" ;;
+		task-laptop) apt_install --install-recommends "$package" ;;
+		power-profiles-daemon|thermald) apt_install "$package" ;;
 	esac
 done
 if [[ -s "$FACTS/firmware-packages" ]]; then
