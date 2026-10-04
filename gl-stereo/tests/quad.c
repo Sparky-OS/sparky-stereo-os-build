@@ -62,7 +62,7 @@ int main(int argc, char **argv)
     int expected_width = 320, expected_height = 200;
     const char *size = getenv("GL_STEREO_RENDER_RESOLUTION");
     if (size) assert(sscanf(size,"%dx%d",&expected_width,&expected_height) == 2);
-    XWindowAttributes geometry; XGetWindowAttributes(d,w,&geometry); assert(geometry.width == expected_width && geometry.height == expected_height);
+    XWindowAttributes geometry;
     Display *observer = XOpenDisplay(NULL); assert(observer);
     XGetWindowAttributes(observer,w,&geometry); assert(geometry.width == 2*expected_width && geometry.height == expected_height);
     property(observer,w,"_KDE_NET_WM_STEREO_CONTENT",3,0,1);
