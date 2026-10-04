@@ -9,7 +9,7 @@
 # Never listed: hardware-found.list (the hardware setup installs those per machine), aptus.list
 # and base-remove.list (not installed), and emulation-3d.list (emulators install from APTus
 # Stereo AppCenter, never from the ISO; prepack.sh --final purges them).
-# Last update 2026/10/02
+# Last update 2026/10/04
 import os, re, subprocess, sys
 
 REPO = os.environ.get('REPO', '/K3D/temp/sparky-os/repo')
@@ -46,10 +46,15 @@ OURS_HARDWARE = ['pipewire-bluez5-codec-aac']
 HARDWARE_OPTIONAL = {'libfdk-aac2', 'displaylink-driver', 'evdi-dkms', 'hw-probe', 'memtest86+', 'inxi'}
 SYSTEM_OPTIONAL = {'distrobox', 'timeshift', 'waydroid'}
 
-# The edition's core (Daniel's call): our kernel and our KDE stack at the repository's versions;
-# the dependencies of these follow. NVIDIA is never listed (the hardware setup installs it).
+# The edition's core (Daniel's call): our kernel, our KDE stack and our Mesa at the repository's
+# versions, with the Vulkan stereo layer (shipped and on by default, Daniel 2026-10-04); the
+# dependencies of these follow. NVIDIA is never listed (the hardware setup installs it; our
+# libnvidia-egl-wayland1 wins by the repository pin when the driver pulls it in).
 STEREO_STACK = ['linux-image-sparky-stereo', 'linux-headers-sparky-stereo'] + [
-    f'{n} (>= {RV[n]})' for n in ('kscreen', 'kwin-wayland', 'libkscreen-bin')]
+    f'{n} (>= {RV[n]})' for n in ('kscreen', 'kwin-wayland', 'libkscreen-bin',
+                                  # Mesa's GLX, EGL and GBM libraries depend on mesa-libgallium
+                                  # at their exact version, so naming it keeps them ours too
+                                  'mesa-libgallium', 'mesa-vulkan-drivers', 'mesa-vulkan-layer-stereo')]
 
 # name: (title line, body, depends, recommends)
 META = {
