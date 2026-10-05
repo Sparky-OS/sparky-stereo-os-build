@@ -136,6 +136,13 @@ group('hardware', 'Hardware support', [
     'firmware-linux', 'firmware-linux-nonfree', 'firmware-misc-nonfree', 'firmware-amd-graphics',
     'firmware-nvidia-graphics',   # nouveau's firmware, GSP included: without it Turing and newer have no GR engine (VM test 2026-10-02); firmware-nvidia-gsp is NVIDIA's own driver firmware, not this
     'firmware-realtek', 'firmware-iwlwifi', 'firmware-atheros', 'firmware-brcm80211',
+    # The rest of Debian's live firmware task and forky's desktop and laptop firmware (Daniel,
+    # 2026-10-05: the ISO ships drivers and firmware as far as licences allow, since a machine
+    # without Wi-Fi cannot download its Wi-Fi driver). firmware-linux does not pull these.
+    'firmware-mediatek',   # MT7921, MT7922, MT7902 and others, Wi-Fi and Bluetooth
+    'bluez-firmware', 'firmware-ipw2x00',   # Debian's live task (non-free-firmware)
+    'firmware-intel-graphics', 'firmware-intel-misc',   # Intel GuC/HuC and Intel Bluetooth and misc
+    'firmware-cirrus',   # laptop sound amplifiers
     'firmware-intel-sound', 'firmware-sof-signed', 'amd64-microcode', 'intel-microcode',
     'mesa-vulkan-drivers', 'mesa-va-drivers', 'intel-media-va-driver', 'vainfo', 'vdpauinfo',
     'evdi-dkms', 'displaylink-driver',
