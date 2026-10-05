@@ -8,6 +8,15 @@ Files: * (packaging and new tool code)
     Copyright (C) 2026 Paweł Pijanowski, Daniel Ramos (Capitain Jack)
     License: GPL-3+
 
+Files: usr/share/sparky/sparky-stereo-hardware/network-ids.tsv, usr/lib/sparky-stereo-hardware/detect.py (the Broadcom device list, the CPU level test)
+    Values and methods taken from other projects, named in the comments of those files:
+    - CachyOS (https://github.com/CachyOS), chwd profile broadcom-wl (GPL-3.0): the Broadcom device list; cachyos-repo.sh: the test of the loader's "(supported, searched)" lines for the CPU level. Read 2026-10-05.
+    - Debian, broadcom-sta-dkms README: the Broadcom IDs the closed wl driver supports. Read 2026-10-05.
+    - The Linux kernel (GPL-2.0-only): the ID tables and modules.alias of the MediaTek and Realtek drivers.
+    - The OpenRGB project (https://openrgb.org), udev rules documentation: the USB vendors named as RGB makers.
+    - apt (GPL-2.0+), test/integration/varianttable: the CPU flags of each x86-64 level.
+    License: as the projects state; our packaging of them GPL-3+
+
 License:
 
 This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.

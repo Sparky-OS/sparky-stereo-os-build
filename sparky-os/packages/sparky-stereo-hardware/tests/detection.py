@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/03
+# Last update 2026/10/05
 import hashlib
 import pathlib
 import subprocess
@@ -50,6 +50,46 @@ cases = [
 for device in ('0010', '0011', '0012'):
     cases.append((f'creative-{device}', {'lspci': f'0000:03:00.0 0403: 1102:{device}\n'},
                   {'firmware-creative-stereo'}, {'creative-msi'}))
+
+
+# Fixture directories (tests/fixtures): packages, then the lines of kind fact and candidate that
+# must be present. The new facts are read-only; the packages named are ones the lists install.
+here = pathlib.Path(__file__).resolve().parent / 'fixtures'
+fixture_cases = {
+    'gigabyte-corsair-v3': ({'amd64-microcode'}, [
+        'fact\tcpu-level\tv3', 'fact\tx86-64-v3\tyes',
+        'fact\tboard\tGigabyte Technology Co., Ltd. / B550 AORUS ELITE V2',
+        'fact\tusb-vendors\t1b1c (Corsair) 1d6b'], []),
+    'razer-mt7922-v3': ({'intel-microcode', 'firmware-mediatek'}, [
+        'fact\tcpu-level\tv3', 'fact\tx86-64-v3\tyes',
+        'fact\tboard\tASUSTeK COMPUTER INC. / ROG STRIX Z370-F GAMING',
+        'fact\tusb-vendors\t1532 (Razer)',
+        'fact\tnetwork-driver\t14c3:0616 mt7921e (in our kernel) MediaTek Wi-Fi 6/7 (MT7921, MT7922, MT7902, MT7925)',
+        'fact\tnetwork-pci\t14c3:0616'], []),
+    'broadcom-4331-v2': ({'task-laptop', 'power-profiles-daemon', 'thermald', 'intel-microcode'}, [
+        'fact\tcpu-level\tv2', 'fact\tx86-64-v3\tno',
+        'fact\tnetwork-pci\t14e4:4331'], ['candidate\tbroadcom-sta-dkms\t14e4:4331: closed Broadcom wl driver']),
+    'baseline-cpu': ({'intel-microcode'}, [
+        'fact\tcpu-level\tv1', 'fact\tx86-64-v3\tno'], []),
+}
+for name, (expected_packages, expected_lines, candidate_prefixes) in fixture_cases.items():
+    out = subprocess.run([tool, '--auto', '--dry-run', '--fixture', str(here / name)], text=True,
+                         capture_output=True, check=True).stdout
+    lines = out.splitlines()
+    packages = {l.split('\t')[1] for l in lines if l.startswith('package\t')}
+    assert packages == expected_packages, (name, packages, expected_packages, out)
+    for line in expected_lines:
+        assert line in lines, (name, line, out)
+    for prefix in candidate_prefixes:
+        assert any(l.startswith(prefix) for l in lines), (name, prefix, out)
+        assert any('licence must be shown' in l for l in lines if l.startswith('candidate\t')), (name, out)
+    assert not any('broadcom-sta' in p for p in packages), name
+    assert not any('disagreement' in l for l in lines), (name, out)
+    print(f'PASS fixture {name}: packages={sorted(packages)}')
+old = subprocess.run([tool, '--auto', '--dry-run', '--fixture', str(here / 'creative-nvidia-laptop')], text=True,
+                     capture_output=True, check=True).stdout
+assert not any(l.startswith(('fact\t', 'candidate\t')) for l in old.splitlines()), old
+print('PASS existing fixture creative-nvidia-laptop prints no new facts')
 
 
 def installed_state():

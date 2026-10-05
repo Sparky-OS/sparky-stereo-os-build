@@ -1,0 +1,54 @@
+# Network PCI IDs the hardware setup recognises: id, the driver of our kernel that claims it,
+# the firmware package it needs ("-" none, BROADCOM-WL = the closed wl driver case), a note.
+# Tab separated. Sources, all read 2026-10-05:
+#  - MediaTek and Realtek rows: the ID tables and modules.alias of our own kernel
+#    (/lib/modules/7.3.0-rc1-stereo3d/modules.alias; drivers/net/wireless/{mediatek/mt76,realtek} in
+#    the linux tree), as listed in sparky-os/notes/gaming-rig-map-and-plan.md section 4b.3.
+#    rtw89_8922de is enabled by kernel/configure.sh (it was off in Debian's configuration).
+#  - Broadcom rows: Debian's broadcom-sta-dkms README (6.30.223.271-32) list of supported IDs, joined
+#    with the device list of CachyOS's chwd profile broadcom-wl
+#    (https://github.com/CachyOS/chwd, profiles/pci/network_drivers/profiles.toml; GPL-3.0). chwd also
+#    matches vendor 14a4, which is not carried here. The licence of wl is Broadcom's (Debian's
+#    copyright file of broadcom-sta-source): distribution "complete, unmodified and only for use with a
+#    Broadcom Product", with an indemnity clause; Debian ships it in non-free.
+#  - Intel and Qualcomm Atheros Wi-Fi are matched by vendor in detect.py, not listed here.
+14c3:7902	mt7921e	firmware-mediatek	MediaTek Wi-Fi 6/7 (MT7921, MT7922, MT7902, MT7925)
+14c3:7922	mt7921e	firmware-mediatek	MediaTek Wi-Fi 6/7 (MT7921, MT7922, MT7902, MT7925)
+14c3:0616	mt7921e	firmware-mediatek	MediaTek Wi-Fi 6/7 (MT7921, MT7922, MT7902, MT7925)
+14c3:7925	mt7925e	firmware-mediatek	MediaTek Wi-Fi 6/7 (MT7921, MT7922, MT7902, MT7925)
+14c3:6639	mt7925e	firmware-mediatek	MediaTek Wi-Fi 6/7 (MT7921, MT7922, MT7902, MT7925)
+14c3:7927	mt7925e	firmware-mediatek	MediaTek Wi-Fi 6/7 (MT7921, MT7922, MT7902, MT7925)
+10ec:c821	rtw88_8821ce	firmware-realtek	Realtek RTL8821CE Wi-Fi
+10ec:b822	rtw88_8822be	firmware-realtek	Realtek RTL8822BE Wi-Fi
+10ec:c822	rtw88_8822ce	firmware-realtek	Realtek RTL8822CE Wi-Fi
+10ec:8821	rtl8821ae	firmware-realtek	Realtek RTL8821AE Wi-Fi
+10ec:8852	rtw89_8852ae	firmware-realtek	Realtek RTL8852AE Wi-Fi
+10ec:b852	rtw89_8852be	firmware-realtek	Realtek RTL8852BE Wi-Fi
+10ec:8922	rtw89_8922ae	firmware-realtek	Realtek RTL8922AE Wi-Fi
+10ec:892d	rtw89_8922de	firmware-realtek	Realtek RTL8922DE Wi-Fi
+10ec:882d	rtw89_8922de	firmware-realtek	Realtek RTL8922DE Wi-Fi
+10ec:895d	rtw89_8922de	firmware-realtek	Realtek RTL8922DE Wi-Fi
+10ec:8125	r8169	firmware-realtek	Realtek Ethernet (RTL8125 2.5G, RTL8126 5G, RTL8168)
+10ec:8126	r8169	firmware-realtek	Realtek Ethernet (RTL8125 2.5G, RTL8126 5G, RTL8168)
+10ec:8168	r8169	firmware-realtek	Realtek Ethernet (RTL8125 2.5G, RTL8126 5G, RTL8168)
+14e4:4311	b43/brcmsmac/brcmfmac	BROADCOM-WL	Broadcom Wi-Fi
+14e4:4312	b43/brcmsmac/brcmfmac	BROADCOM-WL	Broadcom Wi-Fi
+14e4:4313	b43/brcmsmac/brcmfmac	BROADCOM-WL	Broadcom Wi-Fi
+14e4:4315	b43/brcmsmac/brcmfmac	BROADCOM-WL	Broadcom Wi-Fi
+14e4:4727	b43/brcmsmac/brcmfmac	BROADCOM-WL	Broadcom Wi-Fi
+14e4:4328	b43/brcmsmac/brcmfmac	BROADCOM-WL	Broadcom Wi-Fi
+14e4:4329	b43/brcmsmac/brcmfmac	BROADCOM-WL	Broadcom Wi-Fi
+14e4:432a	b43/brcmsmac/brcmfmac	BROADCOM-WL	Broadcom Wi-Fi
+14e4:432b	b43/brcmsmac/brcmfmac	BROADCOM-WL	Broadcom Wi-Fi
+14e4:432c	b43/brcmsmac/brcmfmac	BROADCOM-WL	Broadcom Wi-Fi
+14e4:432d	b43/brcmsmac/brcmfmac	BROADCOM-WL	Broadcom Wi-Fi
+14e4:4365	b43/brcmsmac/brcmfmac	BROADCOM-WL	Broadcom Wi-Fi
+14e4:4353	b43/brcmsmac/brcmfmac	BROADCOM-WL	Broadcom Wi-Fi
+14e4:4357	b43/brcmsmac/brcmfmac	BROADCOM-WL	Broadcom Wi-Fi
+14e4:4358	b43/brcmsmac/brcmfmac	BROADCOM-WL	Broadcom Wi-Fi
+14e4:4359	b43/brcmsmac/brcmfmac	BROADCOM-WL	Broadcom Wi-Fi
+14e4:4331	b43/brcmsmac/brcmfmac	BROADCOM-WL	Broadcom Wi-Fi
+14e4:43a0	b43/brcmsmac/brcmfmac	BROADCOM-WL	Broadcom Wi-Fi
+14e4:43b1	b43/brcmsmac/brcmfmac	BROADCOM-WL	Broadcom Wi-Fi
+14e4:0576	b43/brcmsmac/brcmfmac	BROADCOM-WL	Broadcom Wi-Fi
+14e4:4360	b43/brcmsmac/brcmfmac	BROADCOM-WL	Broadcom Wi-Fi

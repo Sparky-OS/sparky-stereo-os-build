@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/03
+# Last update 2026/10/05
 """Turn captured hardware facts into a deterministic installation plan."""
 import pathlib
 import re
@@ -99,5 +99,100 @@ if pad:
     match("Game controller", "steam-devices")
 else:
     emit("found", "No game controller")
+
+
+def read_optional(name):
+    """Facts added in 2026-10: a fixture or an older caller may not have them."""
+    path = facts / name
+    return path.read_text() if path.is_file() else None
+
+
+# CPU level. The loader's own list decides (the lines of `ld.so --help` marked
+# "supported, searched", the same test CachyOS's cachyos-repo.sh makes, read from
+# https://mirror.cachyos.org/cachyos-repo.tar.xz on 2026-10-05); the flags of /proc/cpuinfo are
+# checked against the x86-64 psABI level definitions (the flag lists as apt-3.3.3 test/integration/varianttable
+# writes them, read 2026-10-05) and a disagreement is printed, never hidden.
+LEVEL_FLAGS = {
+    2: {"cx16", "lahf_lm", "popcnt", "sse4_1", "sse4_2", "ssse3"},
+    3: {"avx", "avx2", "bmi1", "bmi2", "f16c", "fma", "abm", "movbe", "xsave"},
+    4: {"avx512f", "avx512bw", "avx512cd", "avx512dq", "avx512vl"},
+}
+ldso = read_optional("ldso-help")
+new_facts = ldso is not None   # a caller that predates these facts gets the old output only
+if new_facts:
+    loader_level = 1
+    for level in (2, 3, 4):
+        if re.search(rf"^\s*x86-64-v{level} \(supported, searched\)", ldso, re.M):
+            loader_level = level
+    flags = set()
+    for line in read("cpuinfo").splitlines():
+        if line.startswith("flags"):
+            flags = set(line.split(":", 1)[1].split())
+            break
+    flag_level = 1
+    for level in (2, 3, 4):
+        if LEVEL_FLAGS[level] <= flags:
+            flag_level = level
+        else:
+            break
+    emit("fact", f"cpu-level\tv{loader_level}")
+    emit("fact", f"x86-64-v3\t{'yes' if loader_level >= 3 else 'no'}")
+    if flag_level != loader_level:
+        emit("fact", f"cpu-level-disagreement\tloader v{loader_level}, cpuinfo flags v{flag_level}; the loader's answer is used")
+
+# Board: DMI vendor and name (/sys/class/dmi/id/board_vendor and board_name; the keys the
+# OpenRGB project's documentation and the study use to recognise boards, e.g. Gigabyte).
+board_vendor = read_optional("dmi-board-vendor")
+board_name = read_optional("dmi-board-name")
+if board_vendor is not None or board_name is not None:
+    emit("fact", "board\t" + " / ".join(x.strip() for x in (board_vendor or "?", board_name or "?")))
+
+# USB vendor IDs present. Names only for the vendors the gaming-rig study lists as RGB or
+# peripheral makers (sparky-os/notes/gaming-rig-map-and-plan.md section 4.1, which took them from
+# the OpenRGB project's udev rules documentation, read 2026-10-05). Nothing is installed for them.
+USB_VENDOR_NAMES = {"1b1c": "Corsair", "1532": "Razer", "046d": "Logitech", "0b05": "ASUS",
+                    "1038": "SteelSeries", "1e71": "NZXT", "1462": "MSI", "1044": "Gigabyte"}
+usb_vendors = sorted({vendor.lower() for vendor, _ in re.findall(r"\bID ([0-9a-fA-F]{4}):([0-9a-fA-F]{4})\b", read("lsusb"))})
+if usb_vendors and new_facts:
+    emit("fact", "usb-vendors\t" + " ".join(v + (f" ({USB_VENDOR_NAMES[v]})" if v in USB_VENDOR_NAMES else "") for v in usb_vendors))
+
+# Network PCI IDs (classes 0200 Ethernet, 0280 and 0282 wireless) against share/network-ids.tsv.
+network_ids = {}
+table = data / "network-ids.tsv"
+if new_facts and table.is_file():
+    for line in table.read_text().splitlines():
+        if line and not line.startswith("#"):
+            pci_id, driver, package, note = line.split("\t")
+            network_ids[pci_id] = (driver, package, note)
+network_seen = []
+for line in read("lspci").splitlines() if new_facts else []:
+    if not line or line[0].isspace():
+        continue
+    pci = re.search(r"\[?([0-9a-fA-F]{4})\]?: .*?\[?([0-9a-fA-F]{4}):([0-9a-fA-F]{4})\]?", line)
+    if not pci or pci.group(1).lower() not in {"0200", "0280", "0282"}:
+        continue
+    pci_id = f"{pci.group(2)}:{pci.group(3)}".lower()
+    network_seen.append(pci_id)
+    # Intel and Qualcomm Atheros Wi-Fi: every ID of the vendor needs the vendor's firmware package
+    # (iwlwifi has 453 aliases and ath10k/11k/12k many in our kernel's modules.alias), so by vendor.
+    driver, package, note = network_ids.get(pci_id, (None, None, None))
+    if driver is None and pci.group(1).lower() in {"0280", "0282"}:
+        vendor = pci.group(2).lower()
+        driver, package, note = {"8086": ("iwlwifi", "firmware-iwlwifi", "Intel Wi-Fi"),
+                                 "168c": ("ath9k/ath10k", "firmware-atheros", "Qualcomm Atheros Wi-Fi"),
+                                 "17cb": ("ath11k/ath12k", "firmware-atheros", "Qualcomm Atheros Wi-Fi")}.get(vendor, (None, None, None))
+    if driver is None:
+        continue
+    emit("fact", f"network-driver\t{pci_id} {driver} (in our kernel) {note}")
+    if package == "BROADCOM-WL":
+        # Daniel, 2026-10-05: Debian's unmodified broadcom-sta-dkms goes on the ISO and is
+        # installed only for a matching card, with its licence shown. Here it is only named.
+        emit("candidate", f"broadcom-sta-dkms\t{pci_id}: closed Broadcom wl driver (Debian non-free, Broadcom licence); "
+                          "a licence must be shown to the user before it is installed; nothing is installed by this tool yet")
+    elif package != "-":
+        match(f"Network {pci_id} {note}: firmware {package}", package)
+if network_seen:
+    emit("fact", "network-pci\t" + " ".join(sorted(set(network_seen))))
+
 for package in sorted(packages):
     emit("package", package)

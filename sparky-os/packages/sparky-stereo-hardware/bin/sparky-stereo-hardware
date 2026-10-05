@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/03
+# Last update 2026/10/05
 set -euo pipefail
 if ((EUID != 0)); then echo 'Run as root (use the Hardware Setup menu entry).'; exit 1; fi
 export LC_ALL=C.UTF-8
@@ -54,6 +54,11 @@ else
 		echo 1 >"$FACTS/laptop"
 	fi
 	dpkg --print-architecture >"$FACTS/architecture"
+	# CPU level: the loader's own list (lines marked "supported, searched"); board: DMI
+	if [[ -x /lib64/ld-linux-x86-64.so.2 ]]; then /lib64/ld-linux-x86-64.so.2 --help >"$FACTS/ldso-help" 2>&1 || :; fi
+	for file in board_vendor board_name; do
+		if [[ -r /sys/class/dmi/id/$file ]]; then cat "/sys/class/dmi/id/$file" >"$FACTS/dmi-${file//_/-}"; fi
+	done
 	: >"$FACTS/hid-uevents"
 	for file in /sys/bus/hid/devices/*/uevent; do
 		[[ ! -f "$file" ]] || cat "$file" >>"$FACTS/hid-uevents"
