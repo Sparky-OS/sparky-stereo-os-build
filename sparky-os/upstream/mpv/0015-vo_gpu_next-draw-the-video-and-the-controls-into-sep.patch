@@ -1,0 +1,175 @@
+From 24d56d934f3ebac5fd9bcd34c8197b4b9cc66496 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 03:19:36 -0300
+Subject: [PATCH 15/17] vo_gpu_next: draw the video and the controls into
+ separate layers with OpenGL
+
+The same two layers as with Vulkan, for the contexts that go through
+the OpenGL ra_ctx. libplacebo gets a second swapchain for the video
+layer, and the surface of each is made current before its rendering,
+since both belong to one GL context. The dither depth is that of the
+video layer, which is what is dithered.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ DOCS/man/options.rst         |  4 ++--
+ video/out/gpu_next/context.c | 26 ++++++++++++++++++++++++++
+ video/out/gpu_next/context.h |  1 +
+ video/out/vo_gpu_next.c      | 20 +++++++++++++++-----
+ 4 files changed, 44 insertions(+), 7 deletions(-)
+
+diff --git a/DOCS/man/options.rst b/DOCS/man/options.rst
+index 6b4c1418a6..4c05c108e3 100644
+--- a/DOCS/man/options.rst
++++ b/DOCS/man/options.rst
+@@ -1861,8 +1861,8 @@ Video
+     ``--vf=format:stereo-in=<mode>`` (``sbsl`` and ``abl`` are the full size
+     modes; ``--vf=format:stereo-in=help`` lists them). Where the video and
+     the window have their own surfaces (``--vo=dmabuf-wayland``, and
+-    ``--vo=gpu-next`` with Vulkan on a Wayland compositor that accepts the
+-    declaration) only the video surface is declared, and the subtitles, the
++    ``--vo=gpu-next`` with Vulkan or OpenGL on a Wayland compositor that
++    accepts the declaration) only the video surface is declared, and the subtitles, the
+     OSD and the on-screen controller stay in the window's surface, which the
+     compositor shows the same in both eyes. Elsewhere they are drawn once per
+     eye, at one eye's size. Videos that do not signal 3D are not touched.
+diff --git a/video/out/gpu_next/context.c b/video/out/gpu_next/context.c
+index 03cb69dbe8..497d16ee39 100644
+--- a/video/out/gpu_next/context.c
++++ b/video/out/gpu_next/context.c
+@@ -167,6 +167,15 @@ struct gpu_ctx *gpu_ctx_create(struct vo *vo, struct ra_ctx_opts *ctx_opts)
+         if (!ctx->swapchain)
+             goto err_out;
+ 
++        if (ctx->ra_ctx->video_swapchain) {
++            ctx->video_swapchain = pl_opengl_create_swapchain(opengl, pl_opengl_swapchain_params(
++                .max_swapchain_depth = vo->opts->swapchain_depth,
++                .framebuffer.flipped = gl->flipped,
++            ));
++            if (!ctx->video_swapchain)
++                goto err_out;
++        }
++
+         return ctx;
+     }
+ #elif HAVE_GL
+@@ -192,6 +201,21 @@ bool gpu_ctx_resize(struct gpu_ctx *ctx, int w, int h)
+     return pl_swapchain_resize(ctx->swapchain, &w, &h);
+ }
+ 
++bool gpu_ctx_resize_video(struct gpu_ctx *ctx, int w, int h)
++{
++    struct ra_ctx *ra_ctx = ctx->ra_ctx;
++    if (!ra_ctx->fns->resize_video(ra_ctx, w, h))
++        return false;
++
++#if HAVE_VULKAN
++    if (ra_vk_ctx_get(ra_ctx))
++        // vulkan RA handles this by itself
++        return true;
++#endif
++
++    return pl_swapchain_resize(ctx->video_swapchain, &w, &h);
++}
++
+ void gpu_ctx_destroy(struct gpu_ctx **ctxp)
+ {
+     struct gpu_ctx *ctx = *ctxp;
+@@ -207,6 +231,8 @@ void gpu_ctx_destroy(struct gpu_ctx **ctxp)
+         goto skip_common_pl_cleanup;
+ #endif
+ 
++    if (ctx->video_swapchain)
++        pl_swapchain_destroy(&ctx->video_swapchain);
+     if (ctx->swapchain)
+         pl_swapchain_destroy(&ctx->swapchain);
+ 
+diff --git a/video/out/gpu_next/context.h b/video/out/gpu_next/context.h
+index c2fbaf728a..0dec9b6985 100644
+--- a/video/out/gpu_next/context.h
++++ b/video/out/gpu_next/context.h
+@@ -38,4 +38,5 @@ struct gpu_ctx {
+ 
+ struct gpu_ctx *gpu_ctx_create(struct vo *vo, struct ra_ctx_opts *ctx_opts);
+ bool gpu_ctx_resize(struct gpu_ctx *ctx, int w, int h);
++bool gpu_ctx_resize_video(struct gpu_ctx *ctx, int w, int h);
+ void gpu_ctx_destroy(struct gpu_ctx **ctxp);
+diff --git a/video/out/vo_gpu_next.c b/video/out/vo_gpu_next.c
+index 8de9a3b7ea..82446be23c 100644
+--- a/video/out/vo_gpu_next.c
++++ b/video/out/vo_gpu_next.c
+@@ -1248,7 +1248,8 @@ static void apply_target_options(struct priv *p, struct pl_frame *target,
+         mp_parse_raw_primaries(mp_null_log, opts->target_gamut, &target->color.hdr.prim);
+     int dither_depth = opts->dither_depth;
+     if (dither_depth == 0) {
+-        struct ra_swapchain *sw = p->ra_ctx->swapchain;
++        struct ra_swapchain *sw = p->ra_ctx->video_swapchain ? p->ra_ctx->video_swapchain
++                                                             : p->ra_ctx->swapchain;
+         dither_depth = sw->fns->color_depth ? sw->fns->color_depth(sw) : 0;
+     }
+ #if PL_API_VER >= 362
+@@ -1577,6 +1578,7 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
+ 
+     // With a video layer, swframe is the video and ctlframe the controls over it
+     bool layered = p->sw_video;
++    struct ra_swapchain *vsw = p->ra_ctx->video_swapchain;
+     bool stereo = layered && (frame->current ?
+                   frame->current->params.stereo3d == MP_STEREO3D_SBSL :
+                   p->stereo_declared);
+@@ -1591,7 +1593,7 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
+         if (w != p->video_w || h != p->video_h) {
+             p->video_w = w;
+             p->video_h = h;
+-            pl_swapchain_resize(p->sw_video, &w, &h);
++            gpu_ctx_resize_video(p->context, w, h);
+         }
+         if (!pl_swapchain_start_frame(p->sw_video, &swframe)) {
+             // Show the controls alone, the swapchain is waiting for them
+@@ -1800,6 +1802,8 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
+     }
+ 
+     // Render frame
++    if (layered)
++        vsw->fns->start_frame(vsw, NULL); // for contexts with a surface each
+     stats_time_start(p->stats, "render");
+     bool render_ok = pl_render_image_mix(p->rr, &mix, &target, &params);
+     stats_time_end(p->stats, "render");
+@@ -1817,6 +1821,7 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
+         ctlparams.background_color[1] = 0;
+         ctlparams.background_color[2] = 0;
+         ctlparams.background_transparency = 1;
++        sw->fns->start_frame(sw, NULL);
+         stats_time_start(p->stats, "render-controls");
+         render_ok = pl_render_image(p->rr, NULL, &ctltarget, &ctlparams);
+         stats_time_end(p->stats, "render-controls");
+@@ -1852,10 +1857,14 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
+     // fall through
+ 
+ done:
++    if (layered && !valid)
++        vsw->fns->start_frame(vsw, NULL);
+     if (!valid) // clear with purple to indicate error
+         pl_tex_clear(gpu, swframe.fbo, (float[4]){ 0.5, 0.0, 1.0, 1.0 });
+-    if (layered && !valid)
++    if (layered && !valid) {
++        sw->fns->start_frame(sw, NULL);
+         pl_tex_clear(gpu, ctlframe.fbo, (float[4]){0});
++    }
+ 
+     // The declaration changes with the frame that needs it
+     if (layered && stereo != p->stereo_declared) {
+@@ -1889,8 +1898,9 @@ static void flip_page(struct vo *vo)
+         p->frame_pending = false;
+     }
+ 
+-    if (p->sw_video)
+-        pl_swapchain_swap_buffers(p->sw_video);
++    struct ra_swapchain *vsw = p->ra_ctx->video_swapchain;
++    if (vsw)
++        vsw->fns->swap_buffers(vsw);
+     sw->fns->swap_buffers(sw);
+ }
+ 
+-- 
+2.53.0
+
