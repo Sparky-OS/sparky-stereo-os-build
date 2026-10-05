@@ -6,7 +6,7 @@
 set -u
 DIR=$(cd "$(dirname "$0")" && pwd)
 BACKEND=${BACKEND:-drm}
-P=$DIR/prefix/usr
+P=$DIR/${DEPTH_PREFIX:-prefix}/usr
 L=$P/lib/x86_64-linux-gnu
 
 if [ "$BACKEND" = drm ] && { [ -n "${WAYLAND_DISPLAY:-}" ] || [ -n "${DISPLAY:-}" ]; }; then
