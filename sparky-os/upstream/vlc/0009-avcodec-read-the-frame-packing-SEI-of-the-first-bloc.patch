@@ -1,0 +1,165 @@
+From 30a0b91c537b535347780c2f59f73048ffc69d0e Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 06:57:35 -0300
+Subject: [PATCH] avcodec: read the frame packing SEI of the first block
+
+The layout of a stream read from MP4 or Matroska was only known with the
+first decoded frame, after the video output had been created for a 2D
+video. Telling it rebuilt the output, and a rebuilt output takes the
+display that VAAPI surfaces were created on with it: every following
+frame failed to decode. Read the SEI of the first block, in either
+Annex B or length-prefixed form, so that the output is created once,
+with the layout. The frames' side data stays as the fallback.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ modules/codec/Makefile.am     |  2 +
+ modules/codec/avcodec/video.c | 98 +++++++++++++++++++++++++++++++++++
+ 2 files changed, 100 insertions(+)
+
+diff --git a/modules/codec/Makefile.am b/modules/codec/Makefile.am
+index 9fe74ac803..4ca36e4dd8 100644
+--- a/modules/codec/Makefile.am
++++ b/modules/codec/Makefile.am
+@@ -379,6 +379,8 @@ libavcodec_plugin_la_SOURCES = \
+ 	codec/avcodec/audio.c \
+ 	codec/avcodec/va.c codec/avcodec/va.h \
+ 	codec/avcodec/avcodec.c codec/avcodec/avcodec.h \
++	packetizer/hxxx_nal.c packetizer/hxxx_nal.h \
++	packetizer/hxxx_sei.c packetizer/hxxx_sei.h \
+ 	packetizer/av1_obu.c packetizer/av1_obu.h packetizer/av1.h
+ if ENABLE_SOUT
+ libavcodec_plugin_la_SOURCES += codec/avcodec/encoder.c
+diff --git a/modules/codec/avcodec/video.c b/modules/codec/avcodec/video.c
+index 3c37d16fc8..93de132681 100644
+--- a/modules/codec/avcodec/video.c
++++ b/modules/codec/avcodec/video.c
+@@ -48,6 +48,9 @@
+ #include "avcodec.h"
+ #include "va.h"
+ 
++#include <vlc_bits.h>
++#include "../../packetizer/hxxx_sei.h"
++#include "../../packetizer/hxxx_nal.h"
+ #include "../../packetizer/av1_obu.h"
+ #include "../../packetizer/av1.h"
+ #include "../codec/cc.h"
+@@ -85,6 +88,9 @@ struct decoder_sys_t
+     /* Hack to force display of still pictures */
+     bool b_first_frame;
+ 
++    /* The stereoscopic layout was looked for in the first block */
++    bool b_stereo_probed;
++
+     bool b_draining;
+ 
+     /* */
+@@ -1144,6 +1150,92 @@ static int DecodeSidedata( decoder_t *p_dec, const AVFrame *frame, picture_t *p_
+     return 0;
+ }
+ 
++/**
++ * The frame packing arrangement SEI of the first access unit tells the
++ * stereoscopic layout before the first picture is output, so that the video
++ * output is created once, with the layout, instead of being rebuilt when the
++ * first frame's side data tells it (a rebuilt output takes the display that
++ * hardware surfaces were created on with it).
++ */
++static bool StereoSEICallback( const hxxx_sei_data_t *p_sei, void *priv )
++{
++    video_multiview_mode_t *p_mode = priv;
++
++    if( p_sei->i_type != HXXX_SEI_FRAME_PACKING_ARRANGEMENT )
++        return true;
++
++    const bool left_first = p_sei->frame_packing.b_left_first;
++    switch( p_sei->frame_packing.type )
++    {
++        case FRAME_PACKING_SIDE_BY_SIDE:
++            *p_mode = left_first ? MULTIVIEW_STEREO_SBS
++                                 : MULTIVIEW_STEREO_SBS_RIGHT_FIRST;
++            break;
++        case FRAME_PACKING_TOP_BOTTOM:
++            *p_mode = left_first ? MULTIVIEW_STEREO_TB
++                                 : MULTIVIEW_STEREO_TB_RIGHT_FIRST;
++            break;
++        default:
++            break;
++    }
++    return false;
++}
++
++static void ProbeStereo( decoder_t *p_dec, const block_t *p_block )
++{
++    const es_format_t *fmt = &p_dec->fmt_in;
++    const uint8_t *extra = fmt->p_extra;
++    uint8_t i_header, i_nal_length_size = 0, i_sei;
++
++    if( fmt->video.multiview_mode != MULTIVIEW_2D )
++        return;
++
++    switch( fmt->i_codec )
++    {
++        case VLC_CODEC_H264:
++            i_header = 1; i_sei = 6;
++            if( fmt->i_extra > 4 && extra[0] == 1 )
++                i_nal_length_size = ( extra[4] & 0x03 ) + 1;
++            break;
++        case VLC_CODEC_HEVC:
++            i_header = 2; i_sei = 39;
++            if( fmt->i_extra > 21 && extra[0] == 1 )
++                i_nal_length_size = ( extra[21] & 0x03 ) + 1;
++            break;
++        default:
++            return;
++    }
++
++    video_multiview_mode_t mode = MULTIVIEW_2D;
++    if( i_nal_length_size == 0 )
++    {   /* Annex B */
++        hxxx_iterator_ctx_t it;
++        const uint8_t *p_nal;
++        size_t i_nal;
++        hxxx_iterator_init( &it, p_block->p_buffer, p_block->i_buffer, 4 );
++        while( hxxx_annexb_iterate_next( &it, &p_nal, &i_nal ) )
++        {
++            hxxx_strip_AnnexB_startcode( &p_nal, &i_nal );
++            if( i_nal > i_header &&
++                ( i_header == 1 ? p_nal[0] & 0x1f : ( p_nal[0] >> 1 ) & 0x3f ) == i_sei )
++                HxxxParseSEI( p_nal, i_nal, i_header, StereoSEICallback, &mode );
++        }
++    }
++    else
++    {
++        hxxx_iterator_ctx_t it;
++        const uint8_t *p_nal;
++        size_t i_nal;
++        hxxx_iterator_init( &it, p_block->p_buffer, p_block->i_buffer,
++                            i_nal_length_size );
++        while( hxxx_iterate_next( &it, &p_nal, &i_nal ) )
++            if( i_nal > i_header &&
++                ( i_header == 1 ? p_nal[0] & 0x1f : ( p_nal[0] >> 1 ) & 0x3f ) == i_sei )
++                HxxxParseSEI( p_nal, i_nal, i_header, StereoSEICallback, &mode );
++    }
++    p_dec->fmt_out.video.multiview_mode = mode;
++}
++
+ /*****************************************************************************
+  * DecodeBlock: Called to decode one or more frames
+  *****************************************************************************/
+@@ -1182,6 +1274,12 @@ static picture_t *DecodeBlock( decoder_t *p_dec, block_t **pp_block, bool *error
+     if( !check_block_validity( p_sys, p_block ) )
+         return NULL;
+ 
++    if( p_block != NULL && !p_sys->b_stereo_probed )
++    {
++        p_sys->b_stereo_probed = true;
++        ProbeStereo( p_dec, p_block );
++    }
++
+     current_time = mdate();
+     if( p_dec->b_frame_drop_allowed &&  check_block_being_late( p_sys, p_block, current_time) )
+     {
+-- 
+2.53.0
+
