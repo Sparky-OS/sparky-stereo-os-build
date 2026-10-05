@@ -1,0 +1,33 @@
+From 008667b43d91e5d610c8876ee86fd2423189b895 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 23 Sep 2026 11:03:49 -0300
+Subject: [PATCH 2/3] transcode: pass the stereoscopic layout to the video
+ encoder
+
+The decoded format carries multiview_mode (set from the frame packing
+arrangement SEI by the H.264 packetizer), but transcode_video_encoder_init()
+only copied the orientation into the encoder input format, so encoders
+never saw the layout. Copy it as well, from the same format the encoder
+is configured from.
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>
+---
+ modules/stream_out/transcode/video.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/modules/stream_out/transcode/video.c b/modules/stream_out/transcode/video.c
+index c6fe9a571a..f3a21e7619 100644
+--- a/modules/stream_out/transcode/video.c
++++ b/modules/stream_out/transcode/video.c
+@@ -609,6 +609,8 @@ static void transcode_video_encoder_init( sout_stream_t *p_stream,
+         id->p_encoder->fmt_out.video.orientation =
+         id->p_decoder->fmt_in.video.orientation;
+ 
++    id->p_encoder->fmt_in.video.multiview_mode = p_vid_out->multiview_mode;
++
+     transcode_video_framerate_init( p_stream, id, p_vid_out );
+ 
+     transcode_video_size_init( p_stream, id, p_vid_out );
+-- 
+2.53.0
+

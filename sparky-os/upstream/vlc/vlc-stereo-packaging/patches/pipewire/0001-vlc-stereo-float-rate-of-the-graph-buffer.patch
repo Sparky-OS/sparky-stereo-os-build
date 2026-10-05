@@ -1,0 +1,198 @@
+--- a/modules/audio_output/pipewire.c
++++ b/modules/audio_output/pipewire.c
+@@ -2,6 +2,9 @@
+  * pipewire.c: PipeWire audio output plugin for VLC
+  *****************************************************************************
+  * Copyright (C) 2022 Rémi Denis-Courmont
++ * Modified for VLC Stereo (2026): floating point samples, resampling once to
++ * the rate of the graph, buffer multiplier. The original is the
++ * vlc-plugin-pipewire of Debian.
+  *
+  * This program is free software; you can redistribute it and/or modify it
+  * under the terms of the GNU General Public License as published by
+@@ -41,6 +44,7 @@
+     struct pw_stream *stream;
+     struct spa_hook listener;
+     size_t stride;
++    unsigned int rate; /**< rate negotiated with the graph, 0 if unknown */
+ 
+     struct {
+         block_t *head;
+@@ -252,15 +256,42 @@
+     vlc_pw_debug(s->context, "stream trigger done");
+ }
+ 
++/**
++ * Stream format callback.
++ *
++ * This records the sample rate that the stream negotiated with the graph.
++ */
++static void stream_param_changed(void *data, uint32_t id,
++                                 const struct spa_pod *param)
++{
++    struct vlc_pw_stream *s = data;
++    struct spa_audio_info_raw info;
++
++    if (id != SPA_PARAM_Format || param == NULL
++     || spa_format_audio_raw_parse(param, &info) < 0)
++        return;
++
++    vlc_pw_debug(s->context, "stream format %u, %u Hz", info.format,
++                 info.rate);
++    s->rate = info.rate;
++    vlc_pw_signal(s->context);
++}
++
+ static const struct pw_stream_events stream_events = {
+     PW_VERSION_STREAM_EVENTS,
+     .state_changed = stream_state_changed,
++    .param_changed = stream_param_changed,
+     .control_info = stream_control_info,
+     .process = stream_process,
+     .drained = stream_drained,
+     .trigger_done = stream_trigger_done,
+ };
+ 
++static unsigned int vlc_pw_stream_get_rate(const struct vlc_pw_stream *s)
++{
++    return s->rate;
++}
++
+ static int vlc_pw_stream_get_time(struct vlc_pw_stream *s,
+                                   mtime_t *restrict delay)
+ {
+@@ -443,16 +474,31 @@
+     } initial;
+ };
+ 
++/**
++ * Creates a stream. If the rate is zero, the stream is offered at any rate
++ * and takes the one that the graph runs at.
++ */
+ static struct vlc_pw_stream *vlc_pw_stream_create(audio_output_t *aout,
+-                                           audio_sample_format_t *restrict fmt)
++                                           audio_sample_format_t *restrict fmt,
++                                           unsigned int rate)
+ {
+     struct aout_sys_t *sys = aout->sys;
+     struct vlc_pw_context *ctx = sys->context;
+     struct spa_audio_info_raw rawfmt = {
+-        .rate = fmt->i_rate,
++        .rate = rate,
+         .channels = fmt->i_channels,
+     };
+ 
++    /* Send floating point samples, which the graph mixes in */
++    char *format_mode = var_InheritString(aout, "pipewire-audio-format");
++    if ((format_mode == NULL || strcmp(format_mode, "stream"))
++     && (fmt->i_format == VLC_CODEC_S32N || fmt->i_format == VLC_CODEC_S16N
++      || fmt->i_format == VLC_CODEC_U8)) {
++        fmt->i_format = VLC_CODEC_FL32;
++        aout_FormatPrepare(fmt);
++    }
++    free(format_mode);
++
+     /* Map possible audio output formats */
+     switch (fmt->i_format) {
+         case VLC_CODEC_FL64:
+@@ -536,6 +582,12 @@
+                               NULL);
+ 
+     if (likely(props != NULL)) {
++        long multiplier = var_InheritInteger(aout, "pipewire-buffer-multiplier");
++
++        if (multiplier > 1) /* a longer quantum than the graph's default */
++            pw_properties_setf(props, PW_KEY_NODE_LATENCY, "%ld/48000",
++                               1024 * multiplier);
++
+         char *role = var_InheritString(aout, "role");
+         if (role != NULL) { /* Capitalise the first character */
+             pw_properties_setf(props, PW_KEY_MEDIA_ROLE, "%c%s",
+@@ -562,7 +614,8 @@
+     s->queue.tailp = &s->queue.head;
+     s->queue.depth = 0;
+     s->time.pts = VLC_TS_INVALID;
+-    s->time.rate = fmt->i_rate;
++    s->rate = 0;
++    s->time.rate = rate != 0 ? rate : fmt->i_rate;
+     s->start = VLC_TS_INVALID;
+     s->starting = false;
+     s->draining = false;
+@@ -596,6 +649,10 @@
+             return NULL;
+     }
+ 
++    if (s->rate == 0)
++        s->rate = rate != 0 ? rate : fmt->i_rate;
++    s->time.rate = s->rate;
++
+     /* Apply initial controls */
+     sys->initial.device = PW_ID_ANY;
+ 
+@@ -645,9 +702,26 @@
+ static int Start(audio_output_t *aout, audio_sample_format_t *restrict fmt)
+ {
+     struct aout_sys_t *sys = aout->sys;
++    unsigned int minimum = var_InheritInteger(aout, "pipewire-audio-rate");
+ 
+-    sys->stream = vlc_pw_stream_create(aout, fmt);
+-    return (sys->stream != NULL) ? VLC_SUCCESS : -errno;
++    if (minimum == 0) { /* the rate of the stream */
++        sys->stream = vlc_pw_stream_create(aout, fmt, fmt->i_rate);
++        return (sys->stream != NULL) ? VLC_SUCCESS : -errno;
++    }
++
++    /* The rate that the graph runs at, if it is not lower than the minimum:
++     * the player's resampler is then the only one that touches the audio,
++     * and none when the rates agree. */
++    sys->stream = vlc_pw_stream_create(aout, fmt, 0);
++    if (sys->stream != NULL && vlc_pw_stream_get_rate(sys->stream) < minimum) {
++        vlc_pw_stream_destroy(sys->stream);
++        sys->stream = vlc_pw_stream_create(aout, fmt, minimum);
++    }
++    if (sys->stream == NULL)
++        return -errno;
++
++    fmt->i_rate = vlc_pw_stream_get_rate(sys->stream);
++    return VLC_SUCCESS;
+ }
+ 
+ static int VolumeSet(audio_output_t *aout, float volume)
+@@ -840,11 +914,37 @@
+ #define VLC_MODULE_LICENSE "GPLv3"
+ #define VLC_MODULE_COPYRIGHT "Copyright (c) 2022 Rémi Denis-Courmont"
+ 
++#define FORMAT_TEXT N_("Output sample format")
++#define FORMAT_LONGTEXT N_("Automatic sends floating point samples, which " \
++    "the graph mixes in. \"Stream\" sends the format of the stream.")
++static const char *const formats[] = { "auto", "stream", };
++static const char *const formats_text[] = {
++    N_("Automatic (floating point)"), N_("Format of the stream"),
++};
++
++#define RATE_TEXT N_("Output sample rate")
++#define RATE_LONGTEXT N_("Sample rate, in hertz, that the audio is " \
++    "resampled to by the player: the rate that the graph runs at when that " \
++    "is not lower, so that the audio is resampled once or not at all. " \
++    "0 keeps the rate of the stream.")
++
++#define BUFFER_TEXT N_("Buffer length multiplier")
++#define BUFFER_LONGTEXT N_("Multiplies the quantum that the stream asks the " \
++    "graph for. The default 1 keeps the graph's own, larger values give " \
++    "more headroom against scheduling and network jitter.")
++
+ vlc_module_begin()
+     set_shortname("PipeWire")
+     set_description(N_("PipeWire audio output"))
+     set_capability("audio output", 200)
+     set_subcategory(SUBCAT_AUDIO_AOUT)
++    add_string("pipewire-audio-format", "auto", FORMAT_TEXT, FORMAT_LONGTEXT,
++               false)
++        change_string_list(formats, formats_text)
++    add_integer_with_range("pipewire-audio-rate", 48000, 0, 384000, RATE_TEXT,
++                           RATE_LONGTEXT, false)
++    add_integer_with_range("pipewire-buffer-multiplier", 1, 1, 8, BUFFER_TEXT,
++                           BUFFER_LONGTEXT, true)
+     add_shortcut("pipewire", "pw")
+     set_callbacks(Open, Close)
+ vlc_module_end()

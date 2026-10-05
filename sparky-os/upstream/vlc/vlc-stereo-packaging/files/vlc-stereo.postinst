@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+#DEBHELPER#
+case "$1" in
+configure|triggered)
+    d=/usr/lib/@MULTIARCH@/vlc-stereo/vlc
+    for g in $d/vlc-cache-gen*; do
+        [ -x "$g" ] && "$g" $d/plugins || true
+        break
+    done ;;
+esac

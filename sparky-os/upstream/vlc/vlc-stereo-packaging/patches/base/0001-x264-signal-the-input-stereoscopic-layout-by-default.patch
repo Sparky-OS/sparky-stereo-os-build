@@ -1,0 +1,107 @@
+From 2c422d6c4060ce09dc221f77e27048621bf42432 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 19 Sep 2026 00:30:16 -0300
+Subject: [PATCH 1/3] x264: signal the input stereoscopic layout by default
+
+The H.264 packetizer and the avcodec decoder already parse the
+frame_packing_arrangement SEI (H.264 Annex D, payload type 45) into
+video_format_t.multiview_mode, and the transcode encoder receives it in
+fmt_in. The x264 module then dropped it: sout-x264-frame-packing
+defaulted to -1, so a re-encode of a frame-packed stream lost the SEI
+unless the option was set by hand, and displays that detect 3D from the
+SEI showed the output flat.
+
+Add a new value, -2 "Same as input", and make it the default: it maps
+the spatial layouts (checkerboard, columns, rows, side by side, top
+bottom) to their Annex D types. Frame alternation is not mapped: x264
+derives the view of each frame from its parity, so a dropped or
+duplicated frame would swap the eyes. -1 keeps its meaning (unset), and
+any explicit value still wins.
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>
+---
+ modules/codec/x264.c | 38 ++++++++++++++++++++++++++++++++------
+ 1 file changed, 32 insertions(+), 6 deletions(-)
+
+diff --git a/modules/codec/x264.c b/modules/codec/x264.c
+index b21382835b..0b1f624398 100644
+--- a/modules/codec/x264.c
++++ b/modules/codec/x264.c
+@@ -166,6 +166,7 @@ static void x264_log( void *, int i_level, const char *psz, va_list );
+ 
+ #define FRAMEPACKING_TEXT N_("Frame packing")
+ #define FRAMEPACKING_LONGTEXT N_( "For stereoscopic videos define frame arrangement:\n" \
++    "-2: same as input - signal the layout of a stereoscopic input\n" \
+     " 0: checkerboard - pixels are alternatively from L and R\n" \
+     " 1: column alternation - L and R are interlaced by column\n" \
+     " 2: row alternation - L and R are interlaced by row\n" \
+@@ -434,9 +435,9 @@ static const char *const direct_pred_list_text[] =
+   { N_("None"), N_("Spatial"), N_("Temporal"), N_("Auto") };
+ 
+ static const int framepacking_list[] =
+-  { -1, 0, 1, 2, 3, 4, 5, 6 };
++  { -2, -1, 0, 1, 2, 3, 4, 5, 6 };
+ static const char *const framepacking_list_text[] =
+-  { "", N_("checkerboard"), N_("column alternation"), N_("row alternation"), N_("side by side"), N_("top bottom"), N_("frame alternation"), N_("2D") };
++  { N_("same as input"), "", N_("checkerboard"), N_("column alternation"), N_("row alternation"), N_("side by side"), N_("top bottom"), N_("frame alternation"), N_("2D") };
+ 
+ vlc_module_begin ()
+ #ifdef MODULE_NAME_IS_x26410b
+@@ -524,9 +525,9 @@ vlc_module_begin ()
+     add_bool( SOUT_CFG_PREFIX "interlaced", false, INTERLACED_TEXT, INTERLACED_LONGTEXT,
+               true )
+ 
+-    add_integer( SOUT_CFG_PREFIX "frame-packing", -1, FRAMEPACKING_TEXT, FRAMEPACKING_LONGTEXT, true )
++    add_integer( SOUT_CFG_PREFIX "frame-packing", -2, FRAMEPACKING_TEXT, FRAMEPACKING_LONGTEXT, true )
+         change_integer_list( framepacking_list, framepacking_list_text )
+-        change_integer_range( -1, 6)
++        change_integer_range( -2, 6)
+ 
+     add_integer( SOUT_CFG_PREFIX "slices", 0, SLICE_COUNT, SLICE_COUNT_LONGTEXT, true )
+     add_integer( SOUT_CFG_PREFIX "slice-max-size", 0, SLICE_MAX_SIZE, SLICE_MAX_SIZE_LONGTEXT, true )
+@@ -775,6 +776,28 @@ static vlc_mutex_t pthread_win32_mutex = VLC_STATIC_MUTEX;
+ static int pthread_win32_count = 0;
+ #endif
+ 
++/*****************************************************************************
++ * FramePackingFromMultiview: map the decoded stereoscopic layout to the
++ * frame_packing_arrangement_type of ITU-T H.264 Annex D (payload type 45),
++ * so that a stereoscopic input keeps its signalling through a re-encode
++ * without the user having to set --sout-x264-frame-packing by hand.
++ *****************************************************************************/
++static int FramePackingFromMultiview( video_multiview_mode_t mode )
++{
++    switch( mode )
++    {
++        case MULTIVIEW_STEREO_CHECKERBOARD: return 0;
++        case MULTIVIEW_STEREO_COL:          return 1;
++        case MULTIVIEW_STEREO_ROW:          return 2;
++        case MULTIVIEW_STEREO_SBS:          return 3;
++        case MULTIVIEW_STEREO_TB:           return 4;
++        /* Not MULTIVIEW_STEREO_FRAME: x264 derives the view of each frame
++         * from its parity, so a dropped or duplicated frame would swap the
++         * eyes from then on. Frame alternation stays an explicit choice. */
++        default:                            return -1;
++    }
++}
++
+ /*****************************************************************************
+  * Open: probe the encoder
+  *****************************************************************************/
+@@ -1064,8 +1087,11 @@ static int  Open ( vlc_object_t *p_this )
+     if( fabs( var_GetFloat( p_enc, SOUT_CFG_PREFIX "aq-strength" ) - 1.0) > 0.005 )
+        p_sys->param.rc.f_aq_strength = var_GetFloat( p_enc, SOUT_CFG_PREFIX "aq-strength" );
+ 
+-    if( var_GetInteger( p_enc, SOUT_CFG_PREFIX "frame-packing" ) > -1 )
+-       p_sys->param.i_frame_packing = var_GetInteger( p_enc, SOUT_CFG_PREFIX "frame-packing" );
++    i_val = var_GetInteger( p_enc, SOUT_CFG_PREFIX "frame-packing" );
++    if( i_val == -2 )
++        i_val = FramePackingFromMultiview( p_enc->fmt_in.video.multiview_mode );
++    if( i_val > -1 )
++        p_sys->param.i_frame_packing = i_val;
+ 
+     if( var_GetBool( p_enc, SOUT_CFG_PREFIX "verbose" ) )
+         p_sys->param.i_log_level = X264_LOG_DEBUG;
+-- 
+2.53.0
+

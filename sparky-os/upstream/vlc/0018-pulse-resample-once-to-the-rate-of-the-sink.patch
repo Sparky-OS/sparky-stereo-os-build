@@ -1,0 +1,103 @@
+From 205aedee985d1063a66fde37bc7c935a09e3334b Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 15:18:06 -0300
+Subject: [PATCH 18/19] pulse: resample once, to the rate of the sink
+
+Create the stream at the rate that the sound server runs the sink at
+when that is higher than 48 kHz, instead of 48 kHz, so that a sink
+running at 96 or 192 kHz is fed at its own rate and the player's
+resampler is the only one that touches the audio. The sink is the one
+selected, or the server's default.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ modules/audio_output/pulse.c | 52 ++++++++++++++++++++++++++++++++----
+ 1 file changed, 47 insertions(+), 5 deletions(-)
+
+diff --git a/modules/audio_output/pulse.c b/modules/audio_output/pulse.c
+index bc2bc2f90e..256d43c277 100644
+--- a/modules/audio_output/pulse.c
++++ b/modules/audio_output/pulse.c
+@@ -48,10 +48,11 @@ static const char *const formats_text[] = {
+ };
+ 
+ #define RATE_TEXT N_("Output sample rate")
+-#define RATE_LONGTEXT N_("Sample rate, in hertz, that the stream is created " \
+-    "with, and that the audio is resampled to by the player. 0 keeps the " \
+-    "rate of the stream. This parameter is ignored when digital " \
+-    "pass-through is active.")
++#define RATE_LONGTEXT N_("Sample rate, in hertz, that the audio is " \
++    "resampled to by the player: the rate that the sound server runs the " \
++    "output device at when that is higher, so that the audio is resampled " \
++    "once. 0 keeps the rate of the stream. This parameter is ignored when " \
++    "digital pass-through is active.")
+ 
+ #define BUFFER_TEXT N_("Buffer length multiplier")
+ #define BUFFER_LONGTEXT N_("Multiplies the length of the audio buffer. The " \
+@@ -102,6 +103,7 @@ struct aout_sys_t
+     char *sink_force; /**< Forced sink name (stream must be NULL) */
+ 
+     struct sink *sinks; /**< Locally-cached list of sinks */
++    unsigned sink_rate; /**< Sample rate of the sink being queried */
+ };
+ 
+ static void VolumeReport(audio_output_t *aout)
+@@ -735,6 +737,43 @@ static const char *str_map(const char *key, const char *const table[][2],
+      return (r != NULL) ? r[1] : NULL;
+ }
+ 
++static void sink_rate_cb(pa_context *ctx, const pa_sink_info *i, int eol,
++                         void *userdata)
++{
++    audio_output_t *aout = userdata;
++    aout_sys_t *sys = aout->sys;
++
++    if (eol)
++        pa_threaded_mainloop_signal(sys->mainloop, 0);
++    else
++        sys->sink_rate = i->sample_spec.rate;
++    (void) ctx;
++}
++
++/**
++ * Sample rate that the sound server runs the sink at, or 0 if unknown.
++ */
++static unsigned sink_rate(audio_output_t *aout)
++{
++    aout_sys_t *sys = aout->sys;
++    const char *name = (sys->sink_force != NULL) ? sys->sink_force
++                                                 : "@DEFAULT_SINK@";
++
++    pa_threaded_mainloop_lock(sys->mainloop);
++    sys->sink_rate = 0;
++
++    pa_operation *op = pa_context_get_sink_info_by_name(sys->context, name,
++                                                        sink_rate_cb, aout);
++    if (likely(op != NULL))
++    {
++        while (pa_operation_get_state(op) == PA_OPERATION_RUNNING)
++            pa_threaded_mainloop_wait(sys->mainloop);
++        pa_operation_unref(op);
++    }
++    pa_threaded_mainloop_unlock(sys->mainloop);
++    return sys->sink_rate;
++}
++
+ /**
+  * Create a PulseAudio playback stream, a.k.a. a sink input.
+  */
+@@ -823,7 +862,10 @@ static int Start(audio_output_t *aout, audio_sample_format_t *restrict fmt)
+     {
+         unsigned rate = var_InheritInteger(aout, "pulse-audio-rate");
+         if (rate != 0)
+-            ss.rate = rate;
++        {
++            unsigned sink = sink_rate(aout);
++            ss.rate = (sink > rate) ? sink : rate;
++        }
+     }
+     ss.channels = fmt->i_channels;
+     if (!pa_sample_spec_valid(&ss)) {
+-- 
+2.53.0
+

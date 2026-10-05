@@ -1,0 +1,33 @@
+From 20189cb66a9b2983734d8e05fe8591e8a4527013 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 16:11:58 -0300
+Subject: [PATCH 19/19] pulse: query the sink that libpulse will pick
+
+When no sink is forced, libpulse connects the stream to the sink named by
+PULSE_SINK before it falls back to the server's default, so look at that
+one for the rate.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ modules/audio_output/pulse.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/modules/audio_output/pulse.c b/modules/audio_output/pulse.c
+index 256d43c277..f7c14aba56 100644
+--- a/modules/audio_output/pulse.c
++++ b/modules/audio_output/pulse.c
+@@ -757,7 +757,10 @@ static unsigned sink_rate(audio_output_t *aout)
+ {
+     aout_sys_t *sys = aout->sys;
+     const char *name = (sys->sink_force != NULL) ? sys->sink_force
+-                                                 : "@DEFAULT_SINK@";
++                                                 : getenv("PULSE_SINK");
++
++    if (name == NULL || name[0] == '\0')
++        name = "@DEFAULT_SINK@";
+ 
+     pa_threaded_mainloop_lock(sys->mainloop);
+     sys->sink_rate = 0;
+-- 
+2.53.0
+

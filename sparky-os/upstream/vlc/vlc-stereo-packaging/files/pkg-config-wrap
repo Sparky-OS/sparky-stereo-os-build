@@ -1,0 +1,6 @@
+#!/bin/sh
+# pkg-config for the PipeWire plugin: the files of the VLC being built are under a staging root, those of the system are not
+case "$*" in
+*vlc-plugin*) PKG_CONFIG_PATH="$VS_PKGCONFIG_PATH" PKG_CONFIG_SYSROOT_DIR="$VS_SYSROOT" exec pkg-config "$@" ;;
+*) exec pkg-config "$@" ;;
+esac

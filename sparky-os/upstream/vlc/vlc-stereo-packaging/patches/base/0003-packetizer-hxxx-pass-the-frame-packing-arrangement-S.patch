@@ -1,0 +1,33 @@
+From 2464dca7d3ddf55a3b78413c5fe58f21487f8066 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 23 Sep 2026 11:54:46 -0300
+Subject: [PATCH 3/3] packetizer: hxxx: pass the frame packing arrangement SEI
+ to the callback
+
+HxxxParseSEI() parsed the frame packing arrangement message but never
+handed it to the callback, unlike every other message it parses, so the
+H.264 packetizer's handler that maps it to multiview_mode could never
+run and a stream signalled only by this SEI was always treated as 2D.
+
+Fixes: 89347c3e2d ("packetizer: hxxx: parse frame_packing")
+Co-Authored-By: Claude Code <noreply@anthropic.com>
+---
+ modules/packetizer/hxxx_sei.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/modules/packetizer/hxxx_sei.c b/modules/packetizer/hxxx_sei.c
+index 18a249cdaa..0220d4ca74 100644
+--- a/modules/packetizer/hxxx_sei.c
++++ b/modules/packetizer/hxxx_sei.c
+@@ -165,7 +165,7 @@ void HxxxParseSEI(const uint8_t *p_buf, size_t i_buf,
+                     sei_data.frame_packing.b_frame0 = bs_read1( &s );
+                 }
+                 else sei_data.frame_packing.type = FRAME_PACKING_CANCEL;
+-
++                b_continue = pf_callback( &sei_data, cbdata );
+             } break;
+ 
+             /* Look for SEI recovery point */
+-- 
+2.53.0
+

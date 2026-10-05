@@ -1,0 +1,6 @@
+#!/bin/sh
+set -e
+#DEBHELPER#
+if [ "$1" = remove ] || [ "$1" = purge ]; then
+    rm -f /usr/lib/@MULTIARCH@/vlc-stereo/vlc/plugins/plugins.dat
+fi
