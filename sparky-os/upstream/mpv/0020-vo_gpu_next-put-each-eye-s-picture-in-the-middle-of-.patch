@@ -1,0 +1,79 @@
+From b8ad3c36d8076a37d8985ef048605d8ff65b9554 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 13:48:30 -0300
+Subject: [PATCH] vo_gpu_next: put each eye's picture in the middle of its own
+ view
+
+The video layer of a 3D video is twice the window's width, one view per
+eye. The destination rectangle of the picture was the one-view rectangle
+with its x coordinates doubled, which places the whole pair in the middle
+of the layer: each picture came out off the middle of its view by half
+the margin between the picture and the edge of the window (212 pixels for
+an unscaled 600 pixel wide view in a 1024 pixel wide window), the left
+one to the right and the right one to the left.
+
+Draw the two views one after the other instead: the left half of the
+source into the one-view rectangle, the right half of the source into the
+same rectangle moved by the window's width, the second without clearing
+the target again. The cached frames depend on the crop, so the second
+view has its own signatures.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ video/out/vo_gpu_next.c | 33 +++++++++++++++++++++++++--------
+ 1 file changed, 25 insertions(+), 8 deletions(-)
+
+diff --git a/video/out/vo_gpu_next.c b/video/out/vo_gpu_next.c
+index 82446be23c..77d91d7d49 100644
+--- a/video/out/vo_gpu_next.c
++++ b/video/out/vo_gpu_next.c
+@@ -1696,13 +1696,7 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
+                     frame->current && !layered ? frame->current->params.stereo3d : 0,
+                     get_ref_luma(p));
+     stats_time_end(p->stats, "osd-update");
+-    // Each eye gets the picture at the window's size
+-    struct mp_rect dst = p->dst;
+-    if (stereo) {
+-        dst.x0 *= 2;
+-        dst.x1 *= 2;
+-    }
+-    apply_crop(&target, dst, swframe.fbo->params.w, swframe.fbo->params.h);
++    apply_crop(&target, p->dst, swframe.fbo->params.w, swframe.fbo->params.h);
+     update_tm_viz(&pars->color_map_params, &target);
+ 
+     struct pl_frame_mix mix = {0};
+@@ -1805,7 +1799,30 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
+     if (layered)
+         vsw->fns->start_frame(vsw, NULL); // for contexts with a surface each
+     stats_time_start(p->stats, "render");
+-    bool render_ok = pl_render_image_mix(p->rr, &mix, &target, &params);
++    bool render_ok = true;
++    // Each eye gets its view at the window's size, centred in its half of the
++    // video layer, as for a window that shows one view.
++    for (int view = 0; view < (stereo ? 2 : 1) && render_ok; view++) {
++        struct pl_render_params view_params = params;
++        if (stereo) {
++            struct mp_rect src = p->src, dst = p->dst;
++            int half = (src.x1 - src.x0) / 2;
++            src.x0 += view * half;
++            src.x1 = src.x0 + half;
++            dst.x0 += view * ctlframe.fbo->params.w;
++            dst.x1 += view * ctlframe.fbo->params.w;
++            for (int i = 0; i < mix.num_frames; i++) {
++                apply_crop((struct pl_frame *) mix.frames[i], src,
++                           vo->params->w, vo->params->h);
++                // The cached frames depend on the crop
++                ((uint64_t *) mix.signatures)[i] ^= (uint64_t) view << 47;
++            }
++            apply_crop(&target, dst, swframe.fbo->params.w, swframe.fbo->params.h);
++            if (view)
++                view_params.border = PL_CLEAR_SKIP;
++        }
++        render_ok = pl_render_image_mix(p->rr, &mix, &target, &view_params);
++    }
+     stats_time_end(p->stats, "render");
+     if (!render_ok) {
+         MP_ERR(vo, "Failed rendering frame!\n");
+-- 
+2.53.0
+

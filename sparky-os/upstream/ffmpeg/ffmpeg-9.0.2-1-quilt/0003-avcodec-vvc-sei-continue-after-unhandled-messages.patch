@@ -1,0 +1,30 @@
+From 8b88bf20e12fa24c5f63bb1584400f32a86adae1 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 3 Oct 2026 19:16:12 -0300
+Subject: [PATCH] avcodec/vvc/sei: continue after unhandled messages
+
+An SEI NAL unit can carry several messages. Returning
+FF_H2645_SEI_MESSAGE_UNHANDLED for the first unhandled one ended the
+loop, so a frame-packing message after it (for example after an
+alternative transfer characteristics message) was never decoded. Skip
+the unhandled message and go on.
+
+Link: https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/24628
+Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+---
+ libavcodec/vvc/sei.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/libavcodec/vvc/sei.c b/libavcodec/vvc/sei.c
+index 35cb117..7dc6d8a 100644
+--- a/libavcodec/vvc/sei.c
++++ b/libavcodec/vvc/sei.c
+@@ -280,7 +280,7 @@ int ff_vvc_sei_decode(VVCSEI *s, const H266RawSEI *sei, const struct VVCFrameCon
+             av_log(fc->log_ctx, AV_LOG_DEBUG, "Skipped %s SEI %d\n",
+                 sei->nal_unit_header.nal_unit_type == VVC_PREFIX_SEI_NUT ?
+                     "PREFIX" : "SUFFIX", message->payload_type);
+-            return FF_H2645_SEI_MESSAGE_UNHANDLED;
++            break;
+         }
+ 
+         if (ret == AVERROR(ENOMEM))

@@ -1,0 +1,239 @@
+From 643f8a02b5a5beae6483ec096c3d6f1915e8f4fa Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sun, 4 Oct 2026 20:13:29 -0300
+Subject: [PATCH] fate/h264: test the frame packing arrangement in output order
+
+Check with showinfo, with four frame threads, that a message reaches the
+pictures output after it even if they were decoded earlier, that a
+cancellation does not reach the ones output before it, that nothing
+survives an IDR picture, that an unrelated SEI NAL unit does not move
+the arrangement to an earlier picture, and that temporal interleaving
+alternates the views in output order, also with AV_CODEC_FLAG2_CHUNKS.
+Check that Stereo 3D side data from the container is kept when the
+stream has no arrangement.
+
+Also check streams with pic_order_cnt_type 2, as live encoders write
+them: one made by x264 with a temporal arrangement on every picture, the
+same with one persistent message, and one with a message on every
+picture that switches between side by side, 2D and top and bottom.
+
+The samples are built from the h264-conformance/BA3_SVA_C.264 and
+h264/frame-packing-persistence.h264 samples by inserting SEI NAL units,
+and with x264.
+
+Link: https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/24628
+Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Assisted-by: Claude Sonnet via Claude Code
+---
+ tests/fate/h264.mak                           | 60 +++++++++++++++++++
+ .../fate/h264-frame-packing-container-only    |  8 +++
+ tests/ref/fate/h264-frame-packing-order       | 33 ++++++++++
+ tests/ref/fate/h264-frame-packing-poc2        | 48 +++++++++++++++
+ tests/ref/fate/h264-frame-packing-temporal    | 17 ++++++
+ 5 files changed, 166 insertions(+)
+ create mode 100644 tests/ref/fate/h264-frame-packing-container-only
+ create mode 100644 tests/ref/fate/h264-frame-packing-order
+ create mode 100644 tests/ref/fate/h264-frame-packing-poc2
+ create mode 100644 tests/ref/fate/h264-frame-packing-temporal
+
+diff --git a/tests/fate/h264.mak b/tests/fate/h264.mak
+index e12f302..5764b81 100644
+--- a/tests/fate/h264.mak
++++ b/tests/fate/h264.mak
+@@ -252,6 +252,66 @@ FATE_H264_FFPROBE-$(call PARSERDEMDEC, H264, H264, H264) += fate-h264-afd
+ fate-h264-frame-packing-persistence: CMD = threads=4 probeframes -show_entries frame=side_data_list:frame_tags= -of compact $(TARGET_SAMPLES)/h264/frame-packing-persistence.h264
+ FATE_H264_FFPROBE-$(call PARSERDEMDEC, H264, H264, H264) += fate-h264-frame-packing-persistence
+ 
++# The frame packing arrangement follows the output order: a message reaches the
++# pictures output before the one carrying it, a cancellation does not reach the
++# ones output earlier, and nothing survives a new coded video sequence.
++# showinfo prints the Stereo 3D side data of each output frame.
++fate-h264-frame-packing-order: CMD = tmplog=tests/data/fate/h264-frame-packing-order.log; \
++  threads=4 ffmpeg -i $(TARGET_SAMPLES)/h264/frame-packing-output-order.h264 \
++   -vf showinfo -f null - > /dev/null 2> $$tmplog && \
++  sed -n "s/^.* n: *\([0-9]*\) .*/frame \1/p; s/^.*side data - Stereo 3D: //p" $$tmplog
++fate-h264-frame-packing-order: CLEANFILES = tests/data/fate/h264-frame-packing-order.log
++
++# Temporal interleaving alternates the views in output order, also when the
++# decoder is fed one access unit at a time.
++fate-h264-frame-packing-temporal: CMD = tmplog=tests/data/fate/h264-frame-packing-temporal.log; \
++  threads=4 ffmpeg -i $(TARGET_SAMPLES)/h264/frame-packing-temporal.h264 \
++   -vf showinfo -f null - > /dev/null 2> $$tmplog && \
++  sed -n "s/^.*side data - Stereo 3D: //p" $$tmplog && \
++  echo "chunks:" && \
++  threads=4 ffmpeg -flags2 +chunks -i $(TARGET_SAMPLES)/h264/frame-packing-temporal.h264 \
++   -vf showinfo -f null - > /dev/null 2> $$tmplog && \
++  sed -n "s/^.*side data - Stereo 3D: //p" $$tmplog
++fate-h264-frame-packing-temporal: CLEANFILES = tests/data/fate/h264-frame-packing-temporal.log
++
++# Live encoders write pic_order_cnt_type 2: no B pictures, and the arrangement
++# on every picture, switching between layouts and 2D over time. x264 writes the
++# first stream with a temporal arrangement on each picture; the second keeps one
++# persistent message on the first picture.
++fate-h264-frame-packing-poc2: CMD = tmplog=tests/data/fate/h264-frame-packing-poc2.log; \
++  threads=4 ffmpeg -i $(TARGET_SAMPLES)/h264/frame-packing-poc2.h264 \
++   -vf showinfo -f null - > /dev/null 2> $$tmplog && \
++  sed -n "s/^.*side data - Stereo 3D: //p" $$tmplog && \
++  echo "inherited:" && \
++  threads=4 ffmpeg -i $(TARGET_SAMPLES)/h264/frame-packing-poc2-inherit.h264 \
++   -vf showinfo -f null - > /dev/null 2> $$tmplog && \
++  sed -n "s/^.*side data - Stereo 3D: //p" $$tmplog && \
++  echo "broadcast:" && \
++  threads=4 ffmpeg -i $(TARGET_SAMPLES)/h264/frame-packing-poc2-broadcast.h264 \
++   -vf showinfo -f null - > /dev/null 2> $$tmplog && \
++  sed -n "s/^.* n: *\([0-9]*\) .*/frame \1/p; s/^.*side data - Stereo 3D: //p" $$tmplog
++fate-h264-frame-packing-poc2: CLEANFILES = tests/data/fate/h264-frame-packing-poc2.log
++
++# Stereo 3D side data from the container must survive when the stream has no
++# frame packing arrangement SEI.
++fate-h264-frame-packing-container-only: CMD = tmp=$$(target_path tests/data/fate/h264-frame-packing-container-only.mkv); \
++  tmplog=tests/data/fate/h264-frame-packing-container-only.log; \
++  ffmpeg -i $(TARGET_SAMPLES)/h264/frame-packing-persistence.h264 -c copy -bsf:v filter_units=remove_types=6 \
++   -metadata:s:v:0 stereo_mode=top_bottom -f matroska -y $$tmp > /dev/null 2>&1 && \
++  ffmpeg -i $$tmp -vf showinfo -f null - > /dev/null 2> $$tmplog && \
++  sed -n "s/^.*side data - Stereo 3D: //p" $$tmplog
++fate-h264-frame-packing-container-only: CLEANFILES = tests/data/fate/h264-frame-packing-container-only.mkv tests/data/fate/h264-frame-packing-container-only.log
++
++FATE_H264_FFMPEG-$(call ALLYES, FILE_PROTOCOL H264_DEMUXER H264_PARSER H264_DECODER \
++                                NULL_MUXER WRAPPED_AVFRAME_ENCODER SHOWINFO_FILTER) += fate-h264-frame-packing-order \
++                                                                                       fate-h264-frame-packing-temporal \
++                                                                                       fate-h264-frame-packing-poc2
++FATE_H264_FFMPEG-$(call ALLYES, FILE_PROTOCOL H264_DEMUXER H264_PARSER H264_DECODER \
++                                MATROSKA_MUXER MATROSKA_DEMUXER NULL_MUXER WRAPPED_AVFRAME_ENCODER \
++                                EXTRACT_EXTRADATA_BSF FILTER_UNITS_BSF SHOWINFO_FILTER) += fate-h264-frame-packing-container-only
++FATE_SAMPLES_FFMPEG += $(FATE_H264_FFMPEG-yes)
++fate-h264: $(FATE_H264_FFMPEG-yes)
++
+ FATE_SAMPLES_AVCONV += $(FATE_H264-yes)
+ FATE_SAMPLES_FFPROBE += $(FATE_H264_FFPROBE-yes)
+ fate-h264: $(FATE_H264-yes) $(FATE_H264_FFPROBE-yes)
+diff --git a/tests/ref/fate/h264-frame-packing-container-only b/tests/ref/fate/h264-frame-packing-container-only
+new file mode 100644
+index 0000000..10fda9c
+--- /dev/null
++++ b/tests/ref/fate/h264-frame-packing-container-only
+@@ -0,0 +1,8 @@
++type - top and bottom, view - packed, primary_eye - none
++type - top and bottom, view - packed, primary_eye - none
++type - top and bottom, view - packed, primary_eye - none
++type - top and bottom, view - packed, primary_eye - none
++type - top and bottom, view - packed, primary_eye - none
++type - top and bottom, view - packed, primary_eye - none
++type - top and bottom, view - packed, primary_eye - none
++type - top and bottom, view - packed, primary_eye - none
+diff --git a/tests/ref/fate/h264-frame-packing-order b/tests/ref/fate/h264-frame-packing-order
+new file mode 100644
+index 0000000..2a981fd
+--- /dev/null
++++ b/tests/ref/fate/h264-frame-packing-order
+@@ -0,0 +1,33 @@
++frame 0
++frame 1
++type - side by side, view - packed, primary_eye - none
++frame 2
++type - side by side, view - packed, primary_eye - none
++frame 3
++type - side by side, view - packed, primary_eye - none
++frame 4
++type - side by side, view - packed, primary_eye - none
++frame 5
++frame 6
++frame 7
++frame 8
++frame 9
++frame 10
++type - side by side, view - packed, primary_eye - none
++frame 11
++frame 12
++frame 13
++frame 14
++frame 15
++frame 16
++frame 17
++frame 18
++frame 19
++frame 20
++frame 21
++frame 22
++type - side by side, view - packed, primary_eye - none
++frame 23
++type - side by side, view - packed, primary_eye - none
++frame 24
++type - side by side, view - packed, primary_eye - none
+diff --git a/tests/ref/fate/h264-frame-packing-poc2 b/tests/ref/fate/h264-frame-packing-poc2
+new file mode 100644
+index 0000000..7cf69fd
+--- /dev/null
++++ b/tests/ref/fate/h264-frame-packing-poc2
+@@ -0,0 +1,48 @@
++type - frame alternate, view - left, primary_eye - none
++type - frame alternate, view - right, primary_eye - none
++type - frame alternate, view - left, primary_eye - none
++type - frame alternate, view - right, primary_eye - none
++type - frame alternate, view - left, primary_eye - none
++type - frame alternate, view - right, primary_eye - none
++type - frame alternate, view - left, primary_eye - none
++type - frame alternate, view - right, primary_eye - none
++type - frame alternate, view - left, primary_eye - none
++type - frame alternate, view - right, primary_eye - none
++type - frame alternate, view - left, primary_eye - none
++type - frame alternate, view - right, primary_eye - none
++inherited:
++type - frame alternate, view - left, primary_eye - none
++type - frame alternate, view - right, primary_eye - none
++type - frame alternate, view - left, primary_eye - none
++type - frame alternate, view - right, primary_eye - none
++type - frame alternate, view - left, primary_eye - none
++type - frame alternate, view - right, primary_eye - none
++type - frame alternate, view - left, primary_eye - none
++type - frame alternate, view - right, primary_eye - none
++type - frame alternate, view - left, primary_eye - none
++type - frame alternate, view - right, primary_eye - none
++type - frame alternate, view - left, primary_eye - none
++type - frame alternate, view - right, primary_eye - none
++broadcast:
++frame 0
++type - side by side, view - packed, primary_eye - none
++frame 1
++type - side by side, view - packed, primary_eye - none
++frame 2
++type - side by side, view - packed, primary_eye - none
++frame 3
++type - side by side, view - packed, primary_eye - none
++frame 4
++frame 5
++frame 6
++type - side by side, view - packed, primary_eye - none
++frame 7
++type - side by side, view - packed, primary_eye - none
++frame 8
++type - side by side, view - packed, primary_eye - none
++frame 9
++type - top and bottom, view - packed, primary_eye - none
++frame 10
++type - top and bottom, view - packed, primary_eye - none
++frame 11
++type - top and bottom, view - packed, primary_eye - none
+diff --git a/tests/ref/fate/h264-frame-packing-temporal b/tests/ref/fate/h264-frame-packing-temporal
+new file mode 100644
+index 0000000..0c1e104
+--- /dev/null
++++ b/tests/ref/fate/h264-frame-packing-temporal
+@@ -0,0 +1,17 @@
++type - frame alternate, view - left, primary_eye - none
++type - frame alternate, view - right, primary_eye - none
++type - frame alternate, view - left, primary_eye - none
++type - frame alternate, view - right, primary_eye - none
++type - frame alternate, view - left, primary_eye - none
++type - frame alternate, view - right, primary_eye - none
++type - frame alternate, view - left, primary_eye - none
++type - frame alternate, view - right, primary_eye - none
++chunks:
++type - frame alternate, view - left, primary_eye - none
++type - frame alternate, view - right, primary_eye - none
++type - frame alternate, view - left, primary_eye - none
++type - frame alternate, view - right, primary_eye - none
++type - frame alternate, view - left, primary_eye - none
++type - frame alternate, view - right, primary_eye - none
++type - frame alternate, view - left, primary_eye - none
++type - frame alternate, view - right, primary_eye - none

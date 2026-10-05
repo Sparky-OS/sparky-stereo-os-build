@@ -1,0 +1,128 @@
+From db4066ab5cfad946f7a64f2e4b81c1c6d17243ff Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 13:48:30 -0300
+Subject: [PATCH] vo_gpu: put each eye's picture in the middle of its own view
+
+The video layer of a 3D video is twice the window's width, one view per
+eye. The destination rectangle was the one-view rectangle with its x
+coordinates doubled, which places the pair in the middle of the layer
+and each picture off the middle of its view, as in vo_gpu_next.
+
+Render the two views one after the other, each into its own rectangle
+(the left half of the source into the one-view rectangle, the right half
+into the same one moved by the window's width). For this, add
+RENDER_FRAME_VIEW, which draws the same frame again at another place
+(no interpolation, no cached output, both depend on the place), and
+RENDER_FRAME_KEEP, which leaves the target as the earlier view left it.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ video/out/gpu/video.c |  7 +++++--
+ video/out/gpu/video.h |  5 +++++
+ video/out/vo_gpu.c    | 27 +++++++++++++++++++++------
+ 3 files changed, 31 insertions(+), 8 deletions(-)
+
+diff --git a/video/out/gpu/video.c b/video/out/gpu/video.c
+index 9534b67bd4..86bd37d050 100644
+--- a/video/out/gpu/video.c
++++ b/video/out/gpu/video.c
+@@ -3561,7 +3561,8 @@ void gl_video_render_frame(struct gl_video *p, struct vo_frame *frame,
+     clear_color[0] *= clear_color[3];
+     clear_color[1] *= clear_color[3];
+     clear_color[2] *= clear_color[3];
+-    p->ra->fns->clear(p->ra, fbo->tex, clear_color, &target_rc);
++    if (!(flags & RENDER_FRAME_KEEP))
++        p->ra->fns->clear(p->ra, fbo->tex, clear_color, &target_rc);
+ 
+     if (p->hwdec_overlay && !controls) {
+         if (has_frame) {
+@@ -3582,7 +3583,8 @@ void gl_video_render_frame(struct gl_video *p, struct vo_frame *frame,
+ 
+     if (has_frame) {
+         bool interpolate = p->opts.interpolation && frame->display_synced &&
+-                           (p->frames_drawn || !frame->still);
++                           (p->frames_drawn || !frame->still) &&
++                           !(flags & RENDER_FRAME_VIEW);
+         if (interpolate) {
+             double ratio = frame->ideal_frame_duration / frame->vsync_interval;
+             if (fabs(ratio - 1.0) < p->opts.interpolation_threshold)
+@@ -3610,6 +3612,7 @@ void gl_video_render_frame(struct gl_video *p, struct vo_frame *frame,
+                 bool repeats = frame->num_vsyncs > 1 && frame->display_synced;
+                 bool r = false;
+                 if ((repeats || frame->still) && !p->dumb_mode &&
++                    !(flags & RENDER_FRAME_VIEW) &&
+                     (p->ra->caps & RA_CAP_BLIT) && fbo->tex->params.blit_dst)
+                 {
+                     // Attempt to use the same format as the destination FBO
+diff --git a/video/out/gpu/video.h b/video/out/gpu/video.h
+index d063112d11..f84dfe9d61 100644
+--- a/video/out/gpu/video.h
++++ b/video/out/gpu/video.h
+@@ -194,6 +194,11 @@ enum {
+     // Only the OSD and subtitles, over a transparent target, once each for the
+     // window's surface above the video layer
+     RENDER_FRAME_CONTROLS = 1 << 4,
++    // One of several views of the same frame, each drawn at its own place of the
++    // target: no interpolation and no cached output, and for the later views the
++    // target is left as it is
++    RENDER_FRAME_VIEW = 1 << 5,
++    RENDER_FRAME_KEEP = 1 << 6,
+     RENDER_FRAME_DEF = RENDER_FRAME_SUBS | RENDER_FRAME_OSD | RENDER_SCREEN_COLOR,
+ };
+ 
+diff --git a/video/out/vo_gpu.c b/video/out/vo_gpu.c
+index c6a07670d5..6f9bcece85 100644
+--- a/video/out/vo_gpu.c
++++ b/video/out/vo_gpu.c
+@@ -55,6 +55,8 @@ struct gpu_priv {
+ 
+     // The video layer, when there is one, holds both views of a 3D video
+     bool stereo;
++    struct mp_rect src, dst;
++    struct mp_osd_res osd;
+ };
+ static void resize(struct vo *vo)
+ {
+@@ -67,11 +69,9 @@ static void resize(struct vo *vo)
+     struct mp_rect src, dst;
+     struct mp_osd_res osd;
+     vo_get_src_dst_rects(vo, &src, &dst, &osd);
+-    // Each eye gets the picture at the window's size
+-    if (p->stereo) {
+-        dst.x0 *= 2;
+-        dst.x1 *= 2;
+-    }
++    p->src = src;
++    p->dst = dst;
++    p->osd = osd;
+ 
+     gl_video_resize(p->renderer, &src, &dst, &osd);
+ 
+@@ -112,8 +112,23 @@ static bool draw_frame_layers(struct vo *vo, struct vo_frame *frame)
+     if (!sw->fns->start_frame(sw, &fbo))
+         return VO_FALSE;
+     bool video_ok = video_sw->fns->start_frame(video_sw, &video_fbo);
+-    if (video_ok)
++    if (video_ok && !p->stereo) {
+         gl_video_render_frame(p->renderer, frame, &video_fbo, RENDER_SCREEN_COLOR);
++    } else if (video_ok) {
++        // Each eye gets its view at the window's size, centred in its half of the
++        // video layer, as for a window that shows one view
++        int half = (p->src.x1 - p->src.x0) / 2;
++        for (int view = 0; view < 2; view++) {
++            struct mp_rect src = p->src, dst = p->dst;
++            src.x0 += view * half;
++            src.x1 = src.x0 + half;
++            dst.x0 += view * vo->dwidth;
++            dst.x1 += view * vo->dwidth;
++            gl_video_resize(p->renderer, &src, &dst, &p->osd);
++            gl_video_render_frame(p->renderer, frame, &video_fbo, RENDER_SCREEN_COLOR |
++                                  RENDER_FRAME_VIEW | (view ? RENDER_FRAME_KEEP : 0));
++        }
++    }
+ 
+     sw->fns->start_frame(sw, NULL); // for contexts with a surface each
+     gl_video_render_frame(p->renderer, frame, &fbo,
+-- 
+2.53.0
+
