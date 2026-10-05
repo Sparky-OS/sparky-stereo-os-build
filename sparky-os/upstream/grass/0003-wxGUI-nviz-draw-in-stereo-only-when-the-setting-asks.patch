@@ -1,0 +1,53 @@
+From c1292b6270d4776ed2843bd354109adc8fe4f67f Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 03:20:06 -0300
+Subject: [PATCH 3/3] wxGUI/nviz: draw in stereo only when the setting asks for
+ it
+
+A display can offer a stereo-capable visual to a program that did not ask
+for one, and GL_STEREO then reads true. The canvas took that as a request
+and drew both eyes. Draw the two eyes only when "3D view in stereo" is
+set and the visual has stereo buffers.
+
+Assisted-by: Claude Sonnet via Claude Code
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ gui/wxpython/nviz/mapwindow.py | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/gui/wxpython/nviz/mapwindow.py b/gui/wxpython/nviz/mapwindow.py
+index 42eb201..a5b3483 100644
+--- a/gui/wxpython/nviz/mapwindow.py
++++ b/gui/wxpython/nviz/mapwindow.py
+@@ -112,6 +112,9 @@ class GLWindow(MapWindowBase, glcanvas.GLCanvas):
+         self.tree = tree
+         self.lmgr = lmgr
+         self.frame = frame
++        self.stereoRequested = bool(
++            UserSettings.Get(group="display", key="nvizStereo", subkey="enabled")
++        )
+ 
+         # for wxGTK we need to set WX_GL_DEPTH_SIZE to draw vectors correctly
+         # but we don't know the right value
+@@ -125,7 +128,7 @@ class GLWindow(MapWindowBase, glcanvas.GLCanvas):
+             )
+             attribs = [WX_GL_RGBA, WX_GL_DOUBLEBUFFER, WX_GL_DEPTH_SIZE, depthBuffer, 0]
+             # stereo (left and right eye) when asked for and offered, otherwise mono
+-            if UserSettings.Get(group="display", key="nvizStereo", subkey="enabled"):
++            if self.stereoRequested:
+                 stereoAttribs = [*attribs[:-1], WX_GL_STEREO, 0]
+                 if glcanvas.GLCanvas.IsDisplaySupported(stereoAttribs):
+                     attribs = stereoAttribs
+@@ -469,7 +472,7 @@ class GLWindow(MapWindowBase, glcanvas.GLCanvas):
+         if not self.initView:
+             self._display.InitView()
+             self.initView = True
+-            self.stereo = self._display.IsStereo()
++            self.stereo = self.stereoRequested and self._display.IsStereo()
+ 
+         self.LoadDataLayers()
+         self.UnloadDataLayers()
+-- 
+2.53.0
+

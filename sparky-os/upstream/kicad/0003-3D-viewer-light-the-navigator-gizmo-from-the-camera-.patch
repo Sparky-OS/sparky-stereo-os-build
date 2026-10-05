@@ -1,0 +1,100 @@
+From e30b6697bbc5683d613f7b155bec3d4134b0b970 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 05:06:31 -0300
+Subject: [PATCH 3/3] 3D viewer: light the navigator gizmo from the camera
+ between the eyes
+
+The gizmo is a 2D element and must be the same in both eyes of a stereo
+pair. Its matrices were already independent of the eye, but the headlight
+was placed with the eye's view matrix, so the lit pixels of the gizmo
+differed (18 of 7560 in the perspective view, 332 in the orthographic one).
+Place the headlight again with the view matrix of the camera between the
+eyes before drawing the gizmo. The two eyes' gizmo regions are now
+pixel-identical; a mono view draws as before.
+
+Assisted-by: Claude Sonnet via Claude Code
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ .../3d_rendering/opengl/render_3d_opengl.cpp  | 38 ++++++++++++-------
+ include/gal/3d/camera.h                       |  3 ++
+ 2 files changed, 28 insertions(+), 13 deletions(-)
+
+diff --git a/3d-viewer/3d_rendering/opengl/render_3d_opengl.cpp b/3d-viewer/3d_rendering/opengl/render_3d_opengl.cpp
+index 9ddaa6d4..dee1e332 100644
+--- a/3d-viewer/3d_rendering/opengl/render_3d_opengl.cpp
++++ b/3d-viewer/3d_rendering/opengl/render_3d_opengl.cpp
+@@ -593,23 +593,27 @@ bool RENDER_3D_OPENGL::Redraw( bool aIsMoving, REPORTER* aStatusReporter,
+ 
+     glEnable( GL_LIGHTING );
+ 
+-    {
+-        const SFVEC3F& cameraPos = m_camera.GetPos();
++    auto placeHeadlight =
++            [this]()
++            {
++                const SFVEC3F& cameraPos = m_camera.GetPos();
+ 
+-        // Place the light at a minimum Z so the diffuse factor will not drop
+-        // and the board will still look with good light.
+-        float zpos;
++                // Place the light at a minimum Z so the diffuse factor will not drop
++                // and the board will still look with good light.
++                float zpos;
+ 
+-        if( cameraPos.z > 0.0f )
+-            zpos = glm::max( cameraPos.z, 0.5f ) + cameraPos.z * cameraPos.z;
+-        else
+-            zpos = glm::min( cameraPos.z,-0.5f ) - cameraPos.z * cameraPos.z;
++                if( cameraPos.z > 0.0f )
++                    zpos = glm::max( cameraPos.z, 0.5f ) + cameraPos.z * cameraPos.z;
++                else
++                    zpos = glm::min( cameraPos.z,-0.5f ) - cameraPos.z * cameraPos.z;
+ 
+-        // This is a point light.
+-        const GLfloat headlight_pos[] = { cameraPos.x, cameraPos.y, zpos, 1.0f };
++                // This is a point light.
++                const GLfloat headlight_pos[] = { cameraPos.x, cameraPos.y, zpos, 1.0f };
+ 
+-        glLightfv( GL_LIGHT0, GL_POSITION, headlight_pos );
+-    }
++                glLightfv( GL_LIGHT0, GL_POSITION, headlight_pos );
++            };
++
++    placeHeadlight();
+ 
+     bool skipThickness = aIsMoving && cfg.opengl_thickness_disableOnMove;
+     bool skipRenderHoles = aIsMoving && cfg.opengl_holes_disableOnMove;
+@@ -862,7 +866,15 @@ bool RENDER_3D_OPENGL::Redraw( bool aIsMoving, REPORTER* aStatusReporter,
+ 
+     // Render 3D arrows
+     if( cfg.show_navigator )
++    {
++        // The gizmo is a 2D element, the same in both eyes of a stereo pair: light it from the
++        // camera between the eyes.
++        glMatrixMode( GL_MODELVIEW );
++        glLoadMatrixf( glm::value_ptr( m_camera.GetCentreViewMatrix() ) );
++        placeHeadlight();
++
+         m_spheres_gizmo->render3dSpheresGizmo( m_camera.GetRotationMatrix() );
++    }
+ 
+     // Return back to the original viewport (this is important if we want
+     // to take a screenshot after the render)
+diff --git a/include/gal/3d/camera.h b/include/gal/3d/camera.h
+index 62fb8e27..1d93c93a 100644
+--- a/include/gal/3d/camera.h
++++ b/include/gal/3d/camera.h
+@@ -134,6 +134,9 @@ public:
+     const glm::mat4& GetViewMatrix() const;
+     const glm::mat4& GetViewMatrix_Inv() const;
+ 
++    /// The view matrix of the camera between the eyes, whichever eye #SetStereoEye selected.
++    const glm::mat4& GetCentreViewMatrix() const { return m_viewMatrix; }
++
+     const glm::mat4& GetProjectionMatrix() const;
+     const glm::mat4& GetProjectionMatrixInv() const;
+ 
+-- 
+2.53.0
+
