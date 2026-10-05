@@ -1,0 +1,127 @@
+From 03eb99dfcf84e334010da25426e34ee0865acd7d Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sun, 4 Oct 2026 23:54:12 -0300
+Subject: [PATCH 1/2] Add a stereo eye to the 3D camera
+
+CAMERA::SetStereoEye() makes GetViewMatrix() and GetProjectionMatrix()
+return the matrices of the left or right eye of a stereo pair: the
+view moved half the eye separation along the camera's right vector and
+an off-axis frustum, so both eyes meet at the look-at point's distance.
+An orthographic view is rotated around the look-at point instead.
+
+Nothing changes until a caller selects an eye.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ common/gal/3d/camera.cpp | 38 ++++++++++++++++++++++++++++++++++++--
+ include/gal/3d/camera.h  | 24 ++++++++++++++++++++++++
+ 2 files changed, 60 insertions(+), 2 deletions(-)
+
+diff --git a/common/gal/3d/camera.cpp b/common/gal/3d/camera.cpp
+index d2490546..b791ebf5 100644
+--- a/common/gal/3d/camera.cpp
++++ b/common/gal/3d/camera.cpp
+@@ -473,7 +473,7 @@ void CAMERA::MakeRayAtCurrentMousePosition( SFVEC3F& aOutOrigin, SFVEC3F& aOutDi
+ 
+ const glm::mat4& CAMERA::GetProjectionMatrix() const
+ {
+-    return m_projectionMatrix;
++    return m_stereoEye == STEREO_EYE::NONE ? m_projectionMatrix : m_stereoProjectionMatrix;
+ }
+ 
+ 
+@@ -509,7 +509,41 @@ void CAMERA::ResetXYpos_T1()
+ 
+ const glm::mat4& CAMERA::GetViewMatrix() const
+ {
+-    return m_viewMatrix;
++    return m_stereoEye == STEREO_EYE::NONE ? m_viewMatrix : m_stereoViewMatrix;
++}
++
++
++void CAMERA::SetStereoEye( STEREO_EYE aEye, float aSeparation )
++{
++    m_stereoEye = aEye;
++
++    if( aEye == STEREO_EYE::NONE )
++        return;
++
++    // The look-at point is at m_camera_pos in the view frame: both eyes meet at its distance.
++    const float sign = aEye == STEREO_EYE::LEFT ? -1.0f : 1.0f;
++    const float halfSeparation = 0.5f * aSeparation;
++
++    m_stereoProjectionMatrix = m_projectionMatrix;
++
++    if( m_projectionType == PROJECTION_TYPE::PERSPECTIVE )
++    {
++        const float shift = sign * halfSeparation * std::abs( m_camera_pos.z );
++
++        m_stereoViewMatrix = glm::translate( glm::mat4( 1.0f ), SFVEC3F( -shift, 0.0f, 0.0f ) )
++                             * m_viewMatrix;
++
++        // Off-axis frustum, so the plane of the look-at point has no parallax.
++        m_stereoProjectionMatrix[2][0] -= sign * halfSeparation * m_projectionMatrix[0][0];
++    }
++    else
++    {
++        const float angle = -sign * std::atan( halfSeparation );
++
++        m_stereoViewMatrix = glm::translate( glm::mat4( 1.0f ), m_camera_pos )
++                             * glm::rotate( glm::mat4( 1.0f ), angle, SFVEC3F( 0.0f, 1.0f, 0.0f ) )
++                             * glm::translate( glm::mat4( 1.0f ), -m_camera_pos ) * m_viewMatrix;
++    }
+ }
+ 
+ 
+diff --git a/include/gal/3d/camera.h b/include/gal/3d/camera.h
+index c5a9d2e8..62fb8e27 100644
+--- a/include/gal/3d/camera.h
++++ b/include/gal/3d/camera.h
+@@ -42,6 +42,13 @@ enum class PROJECTION_TYPE
+     PERSPECTIVE
+ };
+ 
++enum class STEREO_EYE
++{
++    NONE = 0,   ///< The camera between the eyes, used when not rendering a stereo pair
++    LEFT,
++    RIGHT
++};
++
+ /**
+  * Frustum is a implementation based on a tutorial by
+  * http://www.lighthouse3d.com/tutorials/view-frustum-culling/
+@@ -130,6 +137,20 @@ public:
+     const glm::mat4& GetProjectionMatrix() const;
+     const glm::mat4& GetProjectionMatrixInv() const;
+ 
++    /**
++     * Make #GetViewMatrix and #GetProjectionMatrix return the matrices of one eye of a stereo pair.
++     *
++     * A perspective view moves the camera half the eye separation along its right vector and shifts
++     * the frustum (off-axis) so both eyes meet at the look-at point's distance.  An orthographic
++     * view rotates the scene around the look-at point instead.  The inverse matrices and the rays
++     * stay those of the camera between the eyes.
++     *
++     * @param aEye the eye to look through; STEREO_EYE::NONE restores the camera between the eyes.
++     * @param aSeparation the distance between the eyes as a fraction of the distance to the
++     *                    look-at point.
++     */
++    void SetStereoEye( STEREO_EYE aEye, float aSeparation );
++
+     const SFVEC3F& GetRight()    const { return m_right; }
+     const SFVEC3F& GetUp()       const { return m_up; }
+     const SFVEC3F& GetDir()      const { return m_dir; }
+@@ -345,6 +366,9 @@ protected:
+     glm::mat4 m_viewMatrixInverse;
+     glm::mat4 m_projectionMatrix;
+     glm::mat4 m_projectionMatrixInv;
++    glm::mat4 m_stereoViewMatrix;
++    glm::mat4 m_stereoProjectionMatrix;
++    STEREO_EYE m_stereoEye = STEREO_EYE::NONE;
+     PROJECTION_TYPE m_projectionType;
+ 
+     CAMERA_FRUSTUM m_frustum;
+-- 
+2.53.0
+
