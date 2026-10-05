@@ -1,4 +1,4 @@
-From a320630f99d988257b6122692c8d3a7d0cc9250b Mon Sep 17 00:00:00 2001
+From 724313aea4d2593f2f6ecd189f2fe4d784eb4700 Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Date: Mon, 5 Oct 2026 01:21:42 -0300
 Subject: [PATCH] Add a Stereo 3D and Deep Colour information page
@@ -22,9 +22,9 @@ Assisted-by: Claude Sonnet via Claude Code
  kcms/stereo3d/CMakeLists.txt            |  10 ++
  kcms/stereo3d/kcm_stereo3d.json         |  12 ++
  kcms/stereo3d/kcm_stereo3d.json.license |   2 +
- kcms/stereo3d/main.cpp                  |  76 +++++++++++++
- kcms/stereo3d/ui/main.qml               | 141 ++++++++++++++++++++++++
- 7 files changed, 252 insertions(+)
+ kcms/stereo3d/main.cpp                  | 112 ++++++++++++++++++
+ kcms/stereo3d/ui/main.qml               | 149 ++++++++++++++++++++++++
+ 7 files changed, 296 insertions(+)
  create mode 100644 cmake/Findstereo-display-info.cmake
  create mode 100644 kcms/stereo3d/CMakeLists.txt
  create mode 100644 kcms/stereo3d/kcm_stereo3d.json
@@ -104,10 +104,10 @@ index 0000000..2ee9828
 +SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 diff --git a/kcms/stereo3d/main.cpp b/kcms/stereo3d/main.cpp
 new file mode 100644
-index 0000000..11bff97
+index 0000000..ea37eeb
 --- /dev/null
 +++ b/kcms/stereo3d/main.cpp
-@@ -0,0 +1,76 @@
+@@ -0,0 +1,112 @@
 +// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 +// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +
@@ -125,13 +125,38 @@ index 0000000..11bff97
 +{
 +    Q_OBJECT
 +    Q_PROPERTY(CommandOutputContext *infoOutputContext READ outputContext CONSTANT FINAL)
-+    Q_PROPERTY(QVariantList displays READ displays CONSTANT FINAL)
++    Q_PROPERTY(QVariantList sections READ sections CONSTANT FINAL)
 +    Q_PROPERTY(bool displayCalInstalled READ displayCalInstalled CONSTANT FINAL)
 +public:
 +    explicit KCMStereo3D(QObject *parent, const KPluginMetaData &data)
 +        : KQuickConfigModule(parent, data)
 +    {
 +        m_outputContext = new CommandOutputContext(QStringLiteral("stereo-display-info"), {}, parent);
++
++        // The same text in blocks, each after a line "@@ <kind> <name>": the stack, a card or a display
++        QProcess blocks;
++        blocks.start(QStringLiteral("stereo-display-info"), {QStringLiteral("--sections")});
++        blocks.waitForFinished(30000);
++        QVariantMap section;
++        QString body;
++        const auto flush = [this, &section, &body] {
++            if (!section.isEmpty()) {
++                section[QStringLiteral("text")] = body.trimmed();
++                m_sections.append(section);
++            }
++            body.clear();
++        };
++        const QStringList text = QString::fromUtf8(blocks.readAllStandardOutput()).split(QLatin1Char('\n'));
++        for (const QString &line : text) {
++            if (line.startsWith(QLatin1String("@@ "))) {
++                flush();
++                const QStringList marker = line.split(QLatin1Char(' '));
++                section = QVariantMap{{QStringLiteral("kind"), marker.value(1)}, {QStringLiteral("name"), marker.value(2)}};
++            } else {
++                body += line + QLatin1Char('\n');
++            }
++        }
++        flush();
 +
 +        // One line per display: connector, look-up tag, EDID MD5, manufacturer name, colour profile
 +        QProcess keys;
@@ -154,9 +179,19 @@ index 0000000..11bff97
 +    {
 +        return m_outputContext;
 +    }
-+    [[nodiscard]] QVariantList displays() const
++    [[nodiscard]] QVariantList sections() const
 +    {
-+        return m_displays;
++        return m_sections;
++    }
++    // The look-up tag, MD5, manufacturer and colour profile of a connector, empty when it has none
++    Q_INVOKABLE QVariantMap displayInfo(const QString &connector) const
++    {
++        for (const QVariant &display : m_displays) {
++            if (display.toMap().value(QStringLiteral("connector")) == connector) {
++                return display.toMap();
++            }
++        }
++        return {};
 +    }
 +    [[nodiscard]] bool displayCalInstalled() const
 +    {
@@ -179,6 +214,7 @@ index 0000000..11bff97
 +private:
 +    CommandOutputContext *m_outputContext;
 +    QVariantList m_displays;
++    QVariantList m_sections;
 +};
 +
 +K_PLUGIN_CLASS_WITH_JSON(KCMStereo3D, "kcm_stereo3d.json")
@@ -186,10 +222,10 @@ index 0000000..11bff97
 +#include "main.moc"
 diff --git a/kcms/stereo3d/ui/main.qml b/kcms/stereo3d/ui/main.qml
 new file mode 100644
-index 0000000..d5fc1e0
+index 0000000..cdd718f
 --- /dev/null
 +++ b/kcms/stereo3d/ui/main.qml
-@@ -0,0 +1,141 @@
+@@ -0,0 +1,149 @@
 +// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 +// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +
@@ -202,8 +238,8 @@ index 0000000..d5fc1e0
 +import org.kde.kquickcontrolsaddons
 +import org.kde.ki18n
 +
-+// The command's text is the page; under it, one row per display with its look-up tag and
-+// buttons. Nothing goes online until a button is pressed.
++// The command's text is the page, in sections: each display's text is followed by its own row
++// with its look-up tag and buttons. Nothing goes online until a button is pressed.
 +KCM.SimpleKCM {
 +    id: root
 +
@@ -214,11 +250,10 @@ index 0000000..d5fc1e0
 +
 +    Clipboard { id: clipboard }
 +
++    // The collection files a display under its maker's name, else under the three-letter ID.
 +    function linuxHardwareUrl(display) {
-+        if (display.manufacturer !== "") {
-+            return "https://github.com/linuxhw/EDID/tree/master/Digital/" + encodeURIComponent(display.manufacturer) + "/" + display.tag
-+        }
-+        return "https://github.com/search?q=repo%3Alinuxhw%2FEDID+" + display.tag + "&type=code"
++        const maker = display.manufacturer !== "" ? display.manufacturer : display.tag.substring(0, 3)
++        return "https://github.com/linuxhw/EDID/tree/master/Digital/" + encodeURIComponent(maker) + "/" + display.tag
 +    }
 +
 +    actions: [
@@ -241,29 +276,38 @@ index 0000000..d5fc1e0
 +            icon.name: "action-unavailable-symbolic"
 +        }
 +
-+        Kirigami.SelectableLabel {
-+            Layout.fillWidth: true
-+            visible: root.output.error === ""
-+            padding: Kirigami.Units.largeSpacing
-+            text: root.output.text
-+            font.family: "monospace"
-+            wrapMode: TextEdit.Wrap
-+        }
++        Repeater {
++            model: kcm.sections
 +
-+        ColumnLayout {
-+            Layout.fillWidth: true
-+            Layout.margins: Kirigami.Units.largeSpacing
-+            spacing: Kirigami.Units.smallSpacing
++            ColumnLayout {
++                id: section
 +
-+            Repeater {
-+                model: kcm.displays
++                required property var modelData
++                readonly property var info: Object.assign({connector: "", tag: "", manufacturer: "", profile: ""}, modelData.kind === "display" ? kcm.displayInfo(modelData.name) : {})
++
++                Layout.fillWidth: true
++                visible: root.output.error === ""
++                spacing: 0
++
++                Kirigami.SelectableLabel {
++                    Layout.fillWidth: true
++                    leftPadding: Kirigami.Units.largeSpacing
++                    rightPadding: Kirigami.Units.largeSpacing
++                    text: section.modelData.text
++                    font.family: "monospace"
++                    wrapMode: TextEdit.Wrap
++                }
 +
 +                ColumnLayout {
 +                    id: row
 +
-+                    required property var modelData
++                    readonly property var info: section.info
 +
 +                    Layout.fillWidth: true
++                    Layout.leftMargin: Kirigami.Units.largeSpacing
++                    Layout.rightMargin: Kirigami.Units.largeSpacing
++                    Layout.bottomMargin: Kirigami.Units.largeSpacing
++                    visible: info.tag !== ""
 +                    spacing: 0
 +
 +                    RowLayout {
@@ -271,11 +315,11 @@ index 0000000..d5fc1e0
 +                        spacing: Kirigami.Units.smallSpacing
 +
 +                        QQC2.Label {
-+                            text: KI18n.i18nc("@label %1 is a connector name", "%1:", row.modelData.connector)
++                            text: KI18n.i18nc("@label %1 is a connector name", "%1:", row.info.connector)
 +                        }
 +                        QQC2.TextField {
 +                            readOnly: true
-+                            text: row.modelData.tag
++                            text: row.info.tag
 +                            font.family: "monospace"
 +                            Layout.preferredWidth: Kirigami.Units.gridUnit * 6
 +                        }
@@ -284,7 +328,7 @@ index 0000000..d5fc1e0
 +                            icon.name: "edit-copy-symbolic"
 +                            display: QQC2.AbstractButton.IconOnly
 +                            text: KI18n.i18nc("@action:button", "Copy the look-up tag")
-+                            onClicked: clipboard.content = row.modelData.tag
++                            onClicked: clipboard.content = row.info.tag
 +                            QQC2.ToolTip.visible: hovered
 +                            QQC2.ToolTip.text: text
 +                        }
@@ -293,7 +337,7 @@ index 0000000..d5fc1e0
 +                        }
 +                        QQC2.Button {
 +                            text: KI18n.i18nc("@action:button opens a website", "linux-hardware.org")
-+                            onClicked: Qt.openUrlExternally(root.linuxHardwareUrl(row.modelData))
++                            onClicked: Qt.openUrlExternally(root.linuxHardwareUrl(row.info))
 +                        }
 +                        QQC2.Button {
 +                            text: KI18n.i18nc("@action:button opens a website", "EDID.tv")
@@ -303,16 +347,16 @@ index 0000000..d5fc1e0
 +
 +                    RowLayout {
 +                        Layout.fillWidth: true
-+                        visible: row.modelData.profile !== ""
++                        visible: row.info.profile !== ""
 +                        spacing: Kirigami.Units.largeSpacing
 +
 +                        QQC2.Label {
 +                            text: KI18n.i18nc("@label", "Colour profile:")
 +                        }
 +                        Kirigami.UrlButton {
-+                            text: row.modelData.profile
++                            text: row.info.profile
 +                            url: ""
-+                            onClicked: kcm.openDisplaySettings(row.modelData.connector)
++                            onClicked: kcm.openDisplaySettings(row.info.connector)
 +                        }
 +                        Kirigami.UrlButton {
 +                            visible: kcm.displayCalInstalled

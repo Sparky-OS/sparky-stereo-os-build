@@ -15,6 +15,15 @@ set -eu
 keys=
 [ "${1:-}" = --keys ] && keys=yes
 
+# stereo-display-info --sections prints the same text with a line "@@ <kind> <name>" before each
+# block (stack, card, display), so the page can put each display's buttons beside it.
+sections=
+[ "${1:-}" = --sections ] && sections=yes
+mark() {
+    [ -z "$sections" ] || echo "@@ $1 $2"
+    return 0
+}
+
 if ! command -v edid-decode > /dev/null 2>&1; then
     echo "edid-decode is not installed."
     exit 0
@@ -116,13 +125,11 @@ live() {
                 sub(/\].*$/, "", range)
                 split(range, bounds, "; ")
                 sub(/, range:.*$/, "", colour)
-                if (colour ~ /^automatic \(/) {
-                    sub(/^automatic \(/, "", colour)
-                    sub(/\)$/, "", colour)
-                    colour = "automatic, " colour " bits per colour at most"
-                } else
+                if (colour ~ /^automatic \(/)
+                    colour = "automatic"
+                else
                     sub(/ bits per color/, " bits per colour", colour)
-                printf "    colour resolution: %s (it can go from %s to %s)\n", colour, bounds[1], bounds[2]
+                printf "    colour resolution: %s (this output allows %s to %s bits per colour)\n", colour, bounds[1], bounds[2]
             }
             if (profile != "")
                 print "    colour profile: " profile
@@ -228,7 +235,7 @@ stack() {
     fi
     echo
 }
-[ -n "$keys" ] || stack
+[ -n "$keys" ] || { mark stack -; stack; }
 
 seen=
 for card in /sys/class/drm/card[0-9]*; do
@@ -247,6 +254,7 @@ for card in /sys/class/drm/card[0-9]*; do
             gpu=$(lspci -s "$pci" 2> /dev/null | sed 's/^[^ ]* [^:]*: //; s/ (rev [0-9a-f]*)$//')
         fi
         [ -n "$gpu" ] || gpu="PCI device $vendor_id:$device_id"
+        mark card "$cardname"
         echo "Graphics card $cardname: $gpu"
         echo "  Driver: $driver"
         cards_of_maker=$(for other in /sys/class/drm/card[0-9]*; do case "$other" in *-*) continue ;; esac; [ "$(cat "$other/device/vendor" 2> /dev/null)" = "$vendor_id" ] && echo x; done | wc -l)
@@ -281,6 +289,7 @@ for card in /sys/class/drm/card[0-9]*; do
         continue
     fi
 
+    mark display "$name"
     edid-decode "$connector/edid" 2> /dev/null | awk -v connector="$name" -v driver="$driver" -v md5="$md5" \
         -v interlaced="$interlaced" -v vendor_name="$vendor_name" \
         -v now_width="$(live "$name" width)" -v now_format="$(live "$name" format)" '
@@ -451,6 +460,7 @@ if [ -n "$state" ] && [ -z "$keys" ]; then
         case "$seen" in
             *" $name "*) continue ;;
         esac
+        mark display "$name"
         echo "Virtual display $name: not a graphics card output"
         { live "$name"; extra "$name"; } | sed 's/^\(.\)/  \1/'
         echo
