@@ -1,0 +1,363 @@
+From f02567c9568e9b2a857d729ee2588ad6939a5e5f Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 06:55:47 -0300
+Subject: [PATCH 2/2] Declare a 3D video's layer as stereo content
+
+While mpv outputs 3D video, that is video-out-params/stereo-in is sbsl
+(mpv unpacks every packing to full side by side, left eye first), the
+video layer is declared to the compositor through libstereo-declare as
+full side by side stereo content of the video class, and removed again
+for a 2D video. The layer then has both views, each at the size of the
+rectangle of the layer, which is one view's rectangle fitted into the
+item, as mpv's render API cannot letterbox each view of a doubled frame.
+The layer is only made when libstereo-declare finds the compositor
+accepting it.
+
+MpvAbstractItem::stereoVideo and videoRect tell the window about the
+3D video and where it is, so that it can fill the rest of the item.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ CMakeLists.txt          |  3 ++-
+ src/CMakeLists.txt      |  2 +-
+ src/mpvabstractitem.cpp | 54 +++++++++++++++++++++++++++++++++++++++++
+ src/mpvabstractitem.h   | 14 +++++++++++
+ src/mpvabstractitem_p.h | 10 ++++++++
+ src/mpvrenderer.cpp     |  5 ++--
+ src/mpvrenderer.h       |  1 +
+ src/mpvvideolayer.cpp   | 32 ++++++++++++++++++++++--
+ src/mpvvideolayer.h     | 11 ++++++---
+ 9 files changed, 122 insertions(+), 10 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 1b109ef..58ee464 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -66,10 +66,11 @@ if(MPVQT_VIDEO_LAYER)
+         pkg_check_modules(WAYLAND_EGL IMPORTED_TARGET wayland-egl)
+         pkg_check_modules(EGL IMPORTED_TARGET egl)
+         pkg_check_modules(WAYLAND_PROTOCOLS wayland-protocols)
++        pkg_check_modules(STEREO_DECLARE IMPORTED_TARGET stereo-declare)
+     endif()
+     find_package(Qt6 ${REQUIRED_QT_VERSION} OPTIONAL_COMPONENTS GuiPrivate)
+     find_package(WaylandScanner)
+-    if(WAYLAND_CLIENT_FOUND AND WAYLAND_EGL_FOUND AND EGL_FOUND AND WAYLAND_PROTOCOLS_FOUND AND WaylandScanner_FOUND AND TARGET Qt6::GuiPrivate)
++    if(WAYLAND_CLIENT_FOUND AND WAYLAND_EGL_FOUND AND EGL_FOUND AND WAYLAND_PROTOCOLS_FOUND AND STEREO_DECLARE_FOUND AND WaylandScanner_FOUND AND TARGET Qt6::GuiPrivate)
+         pkg_get_variable(WAYLAND_PROTOCOLS_DIR wayland-protocols pkgdatadir)
+         set(HAVE_VIDEO_LAYER TRUE)
+     endif()
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index c973004..37c15b4 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -37,7 +37,7 @@ if(HAVE_VIDEO_LAYER)
+     target_sources(MpvQt PRIVATE mpvvideolayer.h mpvvideolayer.cpp ${MPVQT_WAYLAND_SOURCES})
+     target_compile_definitions(MpvQt PRIVATE HAVE_VIDEO_LAYER)
+     target_include_directories(MpvQt PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+-    target_link_libraries(MpvQt PRIVATE Qt6::GuiPrivate PkgConfig::WAYLAND_CLIENT PkgConfig::WAYLAND_EGL PkgConfig::EGL)
++    target_link_libraries(MpvQt PRIVATE Qt6::GuiPrivate PkgConfig::WAYLAND_CLIENT PkgConfig::WAYLAND_EGL PkgConfig::EGL PkgConfig::STEREO_DECLARE)
+ endif()
+ 
+ ecm_generate_export_header(MpvQt
+diff --git a/src/mpvabstractitem.cpp b/src/mpvabstractitem.cpp
+index e3c281c..c4e9207 100644
+--- a/src/mpvabstractitem.cpp
++++ b/src/mpvabstractitem.cpp
+@@ -24,6 +24,39 @@ MpvAbstractItemPrivate::MpvAbstractItemPrivate(MpvAbstractItem *q)
+ {
+ }
+ 
++void MpvAbstractItemPrivate::updateVideoParams()
++{
++    if (!m_videoLayer) {
++        return;
++    }
++
++    const QVariantMap params = q_ptr->getProperty(QStringLiteral("video-out-params")).toMap();
++    m_videoSize = QSizeF(params.value(QStringLiteral("dw")).toDouble(), params.value(QStringLiteral("dh")).toDouble());
++    // mpv unpacks 3D video to full side by side, left eye first
++    const bool stereo = params.value(QStringLiteral("stereo-in")).toString() == QLatin1String("sbsl");
++    if (stereo != m_stereoVideo) {
++        m_stereoVideo = stereo;
++        Q_EMIT q_ptr->stereoVideoChanged();
++    }
++    updateVideoRect();
++}
++
++void MpvAbstractItemPrivate::updateVideoRect()
++{
++    QRect rect(QPoint(0, 0), q_ptr->size().toSize());
++    if (m_stereoVideo && m_videoSize.width() > 0 && m_videoSize.height() > 0) {
++        // the window shows one view, fit it into the item
++        const qreal aspect = m_videoSize.width() / 2 / m_videoSize.height();
++        const qreal width = qMin<qreal>(rect.width(), rect.height() * aspect);
++        const qreal height = width / aspect;
++        rect = QRectF((rect.width() - width) / 2, (rect.height() - height) / 2, width, height).toRect();
++    }
++    if (rect != m_videoRect) {
++        m_videoRect = rect;
++        Q_EMIT q_ptr->videoRectChanged();
++    }
++}
++
+ MpvAbstractItem::MpvAbstractItem(QQuickItem *parent)
+     : QQuickFramebufferObject(parent)
+     , d_ptr{std::make_unique<MpvAbstractItemPrivate>(this)}
+@@ -39,6 +72,16 @@ MpvAbstractItem::MpvAbstractItem(QQuickItem *parent)
+     d_ptr->m_workerThread = new QThread(this);
+     d_ptr->m_mpvController = new MpvController;
+ 
++    connect(d_ptr->m_mpvController, &MpvController::videoReconfig, this, [this]() {
++        d_ptr->updateVideoParams();
++    });
++    connect(this, &QQuickItem::widthChanged, this, [this]() {
++        d_ptr->updateVideoRect();
++    });
++    connect(this, &QQuickItem::heightChanged, this, [this]() {
++        d_ptr->updateVideoRect();
++    });
++
+     connect(d_ptr->m_workerThread, &QThread::finished, d_ptr->m_mpvController, &MpvController::deleteLater);
+ 
+     d_ptr->m_mpvController->moveToThread(d_ptr->m_workerThread);
+@@ -85,6 +128,7 @@ void MpvAbstractItem::setVideoLayer(bool videoLayer)
+     }
+     d_ptr->m_videoLayer = videoLayer;
+     Q_EMIT videoLayerChanged();
++    d_ptr->updateVideoParams();
+     update();
+ }
+ 
+@@ -93,6 +137,16 @@ bool MpvAbstractItem::videoLayerActive() const
+     return d_ptr->m_videoLayerActive;
+ }
+ 
++bool MpvAbstractItem::stereoVideo() const
++{
++    return d_ptr->m_stereoVideo;
++}
++
++QRectF MpvAbstractItem::videoRect() const
++{
++    return d_ptr->m_videoRect;
++}
++
+ MpvController *MpvAbstractItem::mpvController()
+ {
+     return d_ptr->m_mpvController;
+diff --git a/src/mpvabstractitem.h b/src/mpvabstractitem.h
+index 1a19c1a..b41189c 100644
+--- a/src/mpvabstractitem.h
++++ b/src/mpvabstractitem.h
+@@ -70,6 +70,16 @@ class MPVQT_EXPORT MpvAbstractItem : public QQuickFramebufferObject
+      * Whether the video is drawn into its own surface, the item itself is then transparent
+      */
+     Q_PROPERTY(bool videoLayerActive READ videoLayerActive NOTIFY videoLayerActiveChanged)
++    /**
++     * Whether the video is 3D, that is, mpv unpacks it to full side by side. The video layer is
++     * then declared to the compositor as stereo content and shows one view in each eye
++     */
++    Q_PROPERTY(bool stereoVideo READ stereoVideo NOTIFY stereoVideoChanged)
++    /**
++     * Where the video is in the item: the rectangle of one view for a 3D video, which has the
++     * aspect of the view, the whole item otherwise. Only kept up to date while videoLayer is set
++     */
++    Q_PROPERTY(QRectF videoRect READ videoRect NOTIFY videoRectChanged)
+ public:
+     explicit MpvAbstractItem(QQuickItem *parent = nullptr);
+     ~MpvAbstractItem();
+@@ -82,6 +92,8 @@ public:
+     bool videoLayer() const;
+     void setVideoLayer(bool videoLayer);
+     bool videoLayerActive() const;
++    bool stereoVideo() const;
++    QRectF videoRect() const;
+ 
+     Q_INVOKABLE void observeProperty(const QString &property, mpv_format format, uint64_t id = 0);
+     Q_INVOKABLE int unobserveProperty(uint64_t id);
+@@ -106,6 +118,8 @@ Q_SIGNALS:
+     void ready();
+     void videoLayerChanged();
+     void videoLayerActiveChanged();
++    void stereoVideoChanged();
++    void videoRectChanged();
+ 
+ protected:
+     MpvController *mpvController();
+diff --git a/src/mpvabstractitem_p.h b/src/mpvabstractitem_p.h
+index f7bb219..61b9ae9 100644
+--- a/src/mpvabstractitem_p.h
++++ b/src/mpvabstractitem_p.h
+@@ -7,6 +7,9 @@
+ #ifndef MPVABSTRACTITEM_P_H_INCLUDED
+ #define MPVABSTRACTITEM_P_H_INCLUDED
+ 
++#include <QRect>
++#include <QSizeF>
++
+ #include "mpvabstractitem.h"
+ 
+ class MpvAbstractItemPrivate
+@@ -20,6 +23,13 @@ public:
+     bool m_isRendererReady{false};
+     bool m_videoLayer{false};
+     bool m_videoLayerActive{false};
++    bool m_stereoVideo{false};
++    // the display size of the video as mpv outputs it
++    QSizeF m_videoSize;
++    QRect m_videoRect;
++
++    void updateVideoParams();
++    void updateVideoRect();
+     std::shared_ptr<MpvResourceManager> m_mpvResourceManager;
+ };
+ 
+diff --git a/src/mpvrenderer.cpp b/src/mpvrenderer.cpp
+index 30ba446..d9e3226 100644
+--- a/src/mpvrenderer.cpp
++++ b/src/mpvrenderer.cpp
+@@ -74,7 +74,8 @@ void MpvRenderer::synchronize(QQuickFramebufferObject *item)
+     if (m_videoLayerWanted && m_window) {
+         // The surface of the window holds its frame, if the window has one
+         const QPoint origin = mpvAItem->mapToScene(QPointF(0, 0)).toPoint() + QPoint(m_window->frameMargins().left(), m_window->frameMargins().top());
+-        m_videoRect = QRect(origin, mpvAItem->size().toSize());
++        m_videoRect = mpvAItem->d_ptr->m_videoRect.translated(origin);
++        m_stereoVideo = mpvAItem->d_ptr->m_stereoVideo;
+         m_devicePixelRatio = m_window->devicePixelRatio();
+     }
+ }
+@@ -114,7 +115,7 @@ bool MpvRenderer::renderVideoLayer(QOpenGLFramebufferObject *fbo)
+         return false;
+     }
+ 
+-    m_videoLayer->resize(m_videoRect, m_devicePixelRatio);
++    m_videoLayer->resize(m_videoRect, m_devicePixelRatio, m_stereoVideo);
+ 
+     QOpenGLFunctions *gl = QOpenGLContext::currentContext()->functions();
+     gl->glClearColor(0, 0, 0, 0);
+diff --git a/src/mpvrenderer.h b/src/mpvrenderer.h
+index d744c08..29af85d 100644
+--- a/src/mpvrenderer.h
++++ b/src/mpvrenderer.h
+@@ -45,6 +45,7 @@ private:
+     bool m_videoLayerFailed{false};
+     QWindow *m_window{nullptr};
+     QRect m_videoRect;
++    bool m_stereoVideo{false};
+     qreal m_devicePixelRatio{1};
+     std::unique_ptr<MpvVideoLayer> m_videoLayer;
+ };
+diff --git a/src/mpvvideolayer.cpp b/src/mpvvideolayer.cpp
+index 95125c4..ce3f477 100644
+--- a/src/mpvvideolayer.cpp
++++ b/src/mpvvideolayer.cpp
+@@ -16,6 +16,8 @@
+ #include <wayland-client.h>
+ #include <wayland-egl.h>
+ 
++#include <stereo-declare.h>
++
+ #include "wayland-viewporter-client-protocol.h"
+ 
+ Q_STATIC_LOGGING_CATEGORY(MpvQt_MpvVideoLayer, "MpvQt.MpvVideoLayer")
+@@ -85,6 +87,8 @@ struct MpvVideoLayer::Private {
+     EGLSurface eglSurface{EGL_NO_SURFACE};
+     EGLSurface previousDraw{EGL_NO_SURFACE};
+     EGLSurface previousRead{EGL_NO_SURFACE};
++    bool stereoInitialized{false};
++    bool stereo{false};
+     QRect rect;
+     QSize bufferSize;
+ };
+@@ -140,6 +144,15 @@ std::unique_ptr<MpvVideoLayer> MpvVideoLayer::create(QWindow *window)
+         return nullptr;
+     }
+ 
++    if (stereo_declare_wayland_init(p->display, p->queue) != 0) {
++        return nullptr;
++    }
++    p->stereoInitialized = true;
++    wl_display_roundtrip_queue(p->display, p->queue);
++    if (!stereo_supported_wayland()) {
++        return nullptr;
++    }
++
+     p->surface = wl_compositor_create_surface(p->globals.compositor);
+     p->subsurface = wl_subcompositor_get_subsurface(p->globals.subcompositor, p->surface, windowInterface->surface());
+     wl_subsurface_place_below(p->subsurface, windowInterface->surface());
+@@ -182,6 +195,12 @@ std::unique_ptr<MpvVideoLayer> MpvVideoLayer::create(QWindow *window)
+ 
+ MpvVideoLayer::~MpvVideoLayer()
+ {
++    if (d->stereo) {
++        stereo_remove_wayland(d->surface);
++    }
++    if (d->stereoInitialized) {
++        stereo_declare_wayland_finish();
++    }
+     if (d->eglSurface != EGL_NO_SURFACE) {
+         eglDestroySurface(d->eglDisplay, d->eglSurface);
+     }
+@@ -215,12 +234,12 @@ MpvVideoLayer::~MpvVideoLayer()
+     wl_display_flush(d->display);
+ }
+ 
+-void MpvVideoLayer::resize(const QRect &rect, qreal devicePixelRatio)
++void MpvVideoLayer::resize(const QRect &rect, qreal devicePixelRatio, bool stereo)
+ {
+     // Nothing is listened to on the queue of the layer, keep it empty
+     wl_display_dispatch_queue_pending(d->display, d->queue);
+ 
+-    const QSize size(qMax(1, qRound(rect.width() * devicePixelRatio)), qMax(1, qRound(rect.height() * devicePixelRatio)));
++    const QSize size(qMax(1, qRound(rect.width() * devicePixelRatio)) * (stereo ? 2 : 1), qMax(1, qRound(rect.height() * devicePixelRatio)));
+     if (rect.topLeft() != d->rect.topLeft()) {
+         wl_subsurface_set_position(d->subsurface, rect.x(), rect.y());
+     }
+@@ -235,6 +254,15 @@ void MpvVideoLayer::resize(const QRect &rect, qreal devicePixelRatio)
+         wl_egl_window_resize(d->eglWindow, size.width(), size.height(), 0, 0);
+         d->bufferSize = size;
+     }
++    // Takes effect with the next commit of the layer, which brings the buffer of the new size
++    if (stereo != d->stereo) {
++        const int result = stereo ? stereo_declare_wayland(d->surface, STEREO_SBS_FULL, STEREO_CLASS_VIDEO, STEREO_VIDEO_CURRENT) : stereo_remove_wayland(d->surface);
++        if (result < 0) {
++            qCWarning(MpvQt_MpvVideoLayer) << "updating the stereo declaration failed:" << strerror(-result);
++        } else {
++            d->stereo = stereo;
++        }
++    }
+     d->rect = rect;
+ }
+ 
+diff --git a/src/mpvvideolayer.h b/src/mpvvideolayer.h
+index 78a03f0..d747eb1 100644
+--- a/src/mpvvideolayer.h
++++ b/src/mpvvideolayer.h
+@@ -19,8 +19,10 @@ class QWindow;
+  * surface can keep the controls with alpha over it.
+  *
+  * The layer is a synchronised subsurface placed below the window's surface, with an EGL surface
+- * of its own on the OpenGL context of the Qt Quick scene graph. All functions except
+- * isSupported() must be called on the render thread, with that context current.
++ * of its own on the OpenGL context of the Qt Quick scene graph. A 3D video is declared to the
++ * compositor as stereo content, full side by side with the left eye first, and the layer then
++ * holds both views, each at the size of the rectangle. All functions except isSupported() must be
++ * called on the render thread, with that context current.
+  */
+ class MpvVideoLayer
+ {
+@@ -31,8 +33,9 @@ public:
+ 
+     ~MpvVideoLayer();
+ 
+-    // The rectangle of the video in the window, in logical pixels, and the window's scale
+-    void resize(const QRect &rect, qreal devicePixelRatio);
++    // The rectangle of one view of the video in the window, in logical pixels, the window's scale,
++    // and whether the video is 3D
++    void resize(const QRect &rect, qreal devicePixelRatio, bool stereo);
+     QSize bufferSize() const;
+ 
+     // Draws into the layer's surface until swapBuffers(), which shows it with the window's next frame
+-- 
+2.53.0
+

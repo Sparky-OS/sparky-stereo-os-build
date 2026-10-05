@@ -1,0 +1,76 @@
+From 73dd333be65fe311b731098909ed586dd3eae55f Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 06:55:55 -0300
+Subject: [PATCH 1/2] Draw the video in a layer under the window
+
+MpvQt can draw the video into a surface of its own under the window's
+surface, on Wayland when the compositor accepts stereo declarations.
+The controls, the OSD and the playlist stay in the window's surface,
+over the video, and are the same for 2D and 3D videos; the video is
+declared as stereo content while a 3D video plays.
+
+For that the window gets an alpha buffer when the layer is supported,
+and a transparent color while it is active, so that the video shows
+through the item.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/main.cpp         | 7 +++++++
+ src/qml/Main.qml     | 2 +-
+ src/qml/MpvVideo.qml | 2 ++
+ 3 files changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/src/main.cpp b/src/main.cpp
+index d34c5371..511b4c18 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -17,6 +17,8 @@
+ 
+ #include <KDSingleApplication>
+ 
++#include <MpvAbstractItem>
++
+ #include "application.h"
+ #include "generalsettings.h"
+ #include "thumbnailimageprovider.h"
+@@ -43,6 +45,11 @@ int main(int argc, char *argv[])
+     QIcon::setFallbackThemeName(u"breeze"_s);
+ 
+     QApplication qApplication(argc, argv);
++    // the controls are drawn over the video when it is in a layer of its own
++    if (MpvAbstractItem::videoLayerSupported()) {
++        QQuickWindow::setDefaultAlphaBuffer(true);
++    }
++
+     QApplication::setWindowIcon(QIcon::fromTheme(u"haruna"_s));
+     KLocalizedString::setApplicationDomain("haruna");
+ 
+diff --git a/src/qml/Main.qml b/src/qml/Main.qml
+index 30f1361b..ca668007 100644
+--- a/src/qml/Main.qml
++++ b/src/qml/Main.qml
+@@ -34,7 +34,7 @@ ApplicationWindow {
+     height: 600
+     minimumWidth: 400
+     minimumHeight: 200
+-    color: Kirigami.Theme.backgroundColor
++    color: mpv.videoLayerActive ? "transparent" : Kirigami.Theme.backgroundColor
+ 
+     onVisibilityChanged: function(visibility) {
+         if (PlaybackSettings.pauseWhileMinimized) {
+diff --git a/src/qml/MpvVideo.qml b/src/qml/MpvVideo.qml
+index 58c0729b..fb9d0960 100644
+--- a/src/qml/MpvVideo.qml
++++ b/src/qml/MpvVideo.qml
+@@ -28,6 +28,8 @@ MpvItem {
+     property int preMinimizePlaybackState: MpvItem.PlaybackState.Playing
+     property alias mouseY: mouseArea.mouseY
+ 
++    videoLayer: true
++
+     signal mousePositionChanged(double x, double y)
+     signal openPlaylist()
+     signal closePlaylist()
+-- 
+2.53.0
+

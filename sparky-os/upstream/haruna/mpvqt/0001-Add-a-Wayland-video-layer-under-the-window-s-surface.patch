@@ -1,0 +1,683 @@
+From 3f07d32e249777965405c2606b834a41430fd8ca Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 06:43:46 -0300
+Subject: [PATCH 1/2] Add a Wayland video layer under the window's surface
+
+With MpvAbstractItem::videoLayer set, the video is drawn into a surface
+of its own that is placed below the surface of the window, so that the
+window can keep its controls, with alpha, over the video. Qt creates
+subsurfaces only above their parent, so the layer is a wl_subsurface of
+the window's wl_surface made here: synchronised, so that it is shown
+with the window's next frame, taking no input, with an EGL surface of
+its own on the OpenGL context of the scene graph. MpvRenderer draws into
+it and swaps it before Qt swaps the window; the item itself stays
+transparent.
+
+The layer is only made on Wayland when the compositor has wl_subcompositor,
+wp_viewporter and the stereo content declaration (the declaration comes
+with a following change), everywhere else MpvQt works as before.
+videoLayerSupported() tells before the first window exists whether it
+will work, as the window needs an alpha buffer and a transparent color,
+and videoLayerActive tells when it does.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ CMakeLists.txt          |  19 ++-
+ src/CMakeLists.txt      |  11 ++
+ src/mpvabstractitem.cpp |  32 +++++
+ src/mpvabstractitem.h   |  20 ++++
+ src/mpvabstractitem_p.h |   2 +
+ src/mpvrenderer.cpp     |  83 +++++++++++++
+ src/mpvrenderer.h       |  13 ++
+ src/mpvvideolayer.cpp   | 257 ++++++++++++++++++++++++++++++++++++++++
+ src/mpvvideolayer.h     |  49 ++++++++
+ 9 files changed, 485 insertions(+), 1 deletion(-)
+ create mode 100644 src/mpvvideolayer.cpp
+ create mode 100644 src/mpvvideolayer.h
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index c1d491b..1b109ef 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -6,7 +6,7 @@
+ 
+ cmake_minimum_required(VERSION 3.16...3.31)
+ 
+-project(MpvQt VERSION 1.2.0 LANGUAGES CXX)
++project(MpvQt VERSION 1.2.0 LANGUAGES C CXX)
+ 
+ set(REQUIRED_QT_VERSION 6.5.0)
+ 
+@@ -58,6 +58,23 @@ find_package(Libmpv)
+ set_package_properties(Libmpv PROPERTIES TYPE REQUIRED
+     URL "https://mpv.io")
+ 
++option(MPVQT_VIDEO_LAYER "Draw the video into a surface under the window's, on Wayland" ON)
++if(MPVQT_VIDEO_LAYER)
++    find_package(PkgConfig)
++    if(PkgConfig_FOUND)
++        pkg_check_modules(WAYLAND_CLIENT IMPORTED_TARGET wayland-client)
++        pkg_check_modules(WAYLAND_EGL IMPORTED_TARGET wayland-egl)
++        pkg_check_modules(EGL IMPORTED_TARGET egl)
++        pkg_check_modules(WAYLAND_PROTOCOLS wayland-protocols)
++    endif()
++    find_package(Qt6 ${REQUIRED_QT_VERSION} OPTIONAL_COMPONENTS GuiPrivate)
++    find_package(WaylandScanner)
++    if(WAYLAND_CLIENT_FOUND AND WAYLAND_EGL_FOUND AND EGL_FOUND AND WAYLAND_PROTOCOLS_FOUND AND WaylandScanner_FOUND AND TARGET Qt6::GuiPrivate)
++        pkg_get_variable(WAYLAND_PROTOCOLS_DIR wayland-protocols pkgdatadir)
++        set(HAVE_VIDEO_LAYER TRUE)
++    endif()
++endif()
++
+ feature_summary(WHAT ALL FATAL_ON_MISSING_REQUIRED_PACKAGES)
+ 
+ add_subdirectory(src)
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 5841717..c973004 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -29,6 +29,17 @@ target_sources(MpvQt
+         mpvrenderer.h mpvrenderer.cpp
+ )
+ 
++if(HAVE_VIDEO_LAYER)
++    ecm_add_wayland_client_protocol(MPVQT_WAYLAND_SOURCES
++        PROTOCOL ${WAYLAND_PROTOCOLS_DIR}/stable/viewporter/viewporter.xml
++        BASENAME viewporter
++    )
++    target_sources(MpvQt PRIVATE mpvvideolayer.h mpvvideolayer.cpp ${MPVQT_WAYLAND_SOURCES})
++    target_compile_definitions(MpvQt PRIVATE HAVE_VIDEO_LAYER)
++    target_include_directories(MpvQt PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
++    target_link_libraries(MpvQt PRIVATE Qt6::GuiPrivate PkgConfig::WAYLAND_CLIENT PkgConfig::WAYLAND_EGL PkgConfig::EGL)
++endif()
++
+ ecm_generate_export_header(MpvQt
+     BASE_NAME MpvQt
+     VERSION ${PROJECT_VERSION}
+diff --git a/src/mpvabstractitem.cpp b/src/mpvabstractitem.cpp
+index 29bcd66..e3c281c 100644
+--- a/src/mpvabstractitem.cpp
++++ b/src/mpvabstractitem.cpp
+@@ -13,6 +13,9 @@
+ 
+ #include "mpvcontroller.h"
+ #include "mpvrenderer.h"
++#ifdef HAVE_VIDEO_LAYER
++#include "mpvvideolayer.h"
++#endif
+ 
+ Q_LOGGING_CATEGORY(MpvQt_MpvAbstractItem, "MpvQt.MpvAbstractItem")
+ 
+@@ -61,6 +64,35 @@ QQuickFramebufferObject::Renderer *MpvAbstractItem::createRenderer() const
+     return new MpvRenderer();
+ }
+ 
++bool MpvAbstractItem::videoLayerSupported()
++{
++#ifdef HAVE_VIDEO_LAYER
++    return MpvVideoLayer::isSupported();
++#else
++    return false;
++#endif
++}
++
++bool MpvAbstractItem::videoLayer() const
++{
++    return d_ptr->m_videoLayer;
++}
++
++void MpvAbstractItem::setVideoLayer(bool videoLayer)
++{
++    if (d_ptr->m_videoLayer == videoLayer) {
++        return;
++    }
++    d_ptr->m_videoLayer = videoLayer;
++    Q_EMIT videoLayerChanged();
++    update();
++}
++
++bool MpvAbstractItem::videoLayerActive() const
++{
++    return d_ptr->m_videoLayerActive;
++}
++
+ MpvController *MpvAbstractItem::mpvController()
+ {
+     return d_ptr->m_mpvController;
+diff --git a/src/mpvabstractitem.h b/src/mpvabstractitem.h
+index 8b3a011..1a19c1a 100644
+--- a/src/mpvabstractitem.h
++++ b/src/mpvabstractitem.h
+@@ -59,12 +59,30 @@ struct MpvResourceManager {
+ class MPVQT_EXPORT MpvAbstractItem : public QQuickFramebufferObject
+ {
+     Q_OBJECT
++    /**
++     * Draw the video into a surface of its own under the surface of the window, so that
++     * the window can show its controls with alpha over it. This only has an effect on Wayland
++     * when the compositor accepts stereo declarations; the window needs an alpha buffer
++     * (QQuickWindow::setDefaultAlphaBuffer()) and a transparent color, see videoLayerActive
++     */
++    Q_PROPERTY(bool videoLayer READ videoLayer WRITE setVideoLayer NOTIFY videoLayerChanged)
++    /**
++     * Whether the video is drawn into its own surface, the item itself is then transparent
++     */
++    Q_PROPERTY(bool videoLayerActive READ videoLayerActive NOTIFY videoLayerActiveChanged)
+ public:
+     explicit MpvAbstractItem(QQuickItem *parent = nullptr);
+     ~MpvAbstractItem();
+ 
+     Renderer *createRenderer() const override;
+ 
++    // Whether videoLayer can work on this platform, to be asked once the QGuiApplication exists
++    static bool videoLayerSupported();
++
++    bool videoLayer() const;
++    void setVideoLayer(bool videoLayer);
++    bool videoLayerActive() const;
++
+     Q_INVOKABLE void observeProperty(const QString &property, mpv_format format, uint64_t id = 0);
+     Q_INVOKABLE int unobserveProperty(uint64_t id);
+ 
+@@ -86,6 +104,8 @@ public:
+ 
+ Q_SIGNALS:
+     void ready();
++    void videoLayerChanged();
++    void videoLayerActiveChanged();
+ 
+ protected:
+     MpvController *mpvController();
+diff --git a/src/mpvabstractitem_p.h b/src/mpvabstractitem_p.h
+index c8bebc1..f7bb219 100644
+--- a/src/mpvabstractitem_p.h
++++ b/src/mpvabstractitem_p.h
+@@ -18,6 +18,8 @@ public:
+     QThread *m_workerThread{nullptr};
+     MpvController *m_mpvController{nullptr};
+     bool m_isRendererReady{false};
++    bool m_videoLayer{false};
++    bool m_videoLayerActive{false};
+     std::shared_ptr<MpvResourceManager> m_mpvResourceManager;
+ };
+ 
+diff --git a/src/mpvrenderer.cpp b/src/mpvrenderer.cpp
+index 50f4e5f..30ba446 100644
+--- a/src/mpvrenderer.cpp
++++ b/src/mpvrenderer.cpp
+@@ -10,11 +10,15 @@
+ #include <QLoggingCategory>
+ #include <QOpenGLContext>
+ #include <QOpenGLFramebufferObject>
++#include <QOpenGLFunctions>
+ #include <QQuickWindow>
+ 
+ #include "mpvabstractitem.h"
+ #include "mpvabstractitem_p.h"
+ #include "mpvcontroller.h"
++#ifdef HAVE_VIDEO_LAYER
++#include "mpvvideolayer.h"
++#endif
+ 
+ Q_STATIC_LOGGING_CATEGORY(MpvQt_MpvRenderer, "MpvQt.MpvRenderer")
+ 
+@@ -42,6 +46,9 @@ MpvRenderer::MpvRenderer()
+ 
+ MpvRenderer::~MpvRenderer()
+ {
++#ifdef HAVE_VIDEO_LAYER
++    m_videoLayer.reset();
++#endif
+     if (m_mpvResourceManager) {
+         m_mpvResourceManager->freeContext();
+     }
+@@ -61,11 +68,87 @@ void MpvRenderer::synchronize(QQuickFramebufferObject *item)
+ 
+         Q_EMIT mpvAItem->ready();
+     }
++
++    m_videoLayerWanted = mpvAItem->d_ptr->m_videoLayer;
++    m_window = mpvAItem->window();
++    if (m_videoLayerWanted && m_window) {
++        // The surface of the window holds its frame, if the window has one
++        const QPoint origin = mpvAItem->mapToScene(QPointF(0, 0)).toPoint() + QPoint(m_window->frameMargins().left(), m_window->frameMargins().top());
++        m_videoRect = QRect(origin, mpvAItem->size().toSize());
++        m_devicePixelRatio = m_window->devicePixelRatio();
++    }
++}
++
++void MpvRenderer::setVideoLayerActive(bool active)
++{
++    QPointer<MpvAbstractItem> item = m_mpvAItem;
++    QMetaObject::invokeMethod(
++        item.data(),
++        [item, active]() {
++            if (item && item->d_ptr->m_videoLayerActive != active) {
++                item->d_ptr->m_videoLayerActive = active;
++                Q_EMIT item->videoLayerActiveChanged();
++            }
++        },
++        Qt::QueuedConnection);
++}
++
++// Draws the video into the video layer instead of the item: the layer goes to the compositor
++// with the next frame of the window, the item stays transparent.
++bool MpvRenderer::renderVideoLayer(QOpenGLFramebufferObject *fbo)
++{
++#ifdef HAVE_VIDEO_LAYER
++    if (!m_videoLayerWanted) {
++        if (m_videoLayer) {
++            m_videoLayer.reset();
++            setVideoLayerActive(false);
++        }
++        return false;
++    }
++    if (!m_videoLayer && !m_videoLayerFailed) {
++        m_videoLayer = MpvVideoLayer::create(m_window);
++        m_videoLayerFailed = !m_videoLayer;
++        setVideoLayerActive(!m_videoLayerFailed);
++    }
++    if (!m_videoLayer) {
++        return false;
++    }
++
++    m_videoLayer->resize(m_videoRect, m_devicePixelRatio);
++
++    QOpenGLFunctions *gl = QOpenGLContext::currentContext()->functions();
++    gl->glClearColor(0, 0, 0, 0);
++    gl->glClear(GL_COLOR_BUFFER_BIT);
++
++    m_videoLayer->makeCurrent();
++    const QSize size = m_videoLayer->bufferSize();
++    mpv_opengl_fbo mpfbo;
++    mpfbo.fbo = 0;
++    mpfbo.w = size.width();
++    mpfbo.h = size.height();
++    mpfbo.internal_format = 0;
++    // the default framebuffer of a window surface has its origin at the bottom
++    int flip_y{1};
++    mpv_render_param params[] = {{MPV_RENDER_PARAM_OPENGL_FBO, &mpfbo}, {MPV_RENDER_PARAM_FLIP_Y, &flip_y}, {MPV_RENDER_PARAM_INVALID, nullptr}};
++    int result = mpv_render_context_render(m_mpvResourceManager->mpvRenderContext, params);
++    if (result < 0) {
++        qCWarning(MpvQt_MpvRenderer) << "mpv_render_context_render failed:" << MpvController::getError(result);
++    }
++    m_videoLayer->swapBuffers();
++    fbo->bind();
++    return true;
++#else
++    Q_UNUSED(fbo)
++    return false;
++#endif
+ }
+ 
+ void MpvRenderer::render()
+ {
+     QOpenGLFramebufferObject *fbo = framebufferObject();
++    if (renderVideoLayer(fbo)) {
++        return;
++    }
+     mpv_opengl_fbo mpfbo;
+     mpfbo.fbo = static_cast<int>(fbo->handle());
+     mpfbo.w = fbo->width();
+diff --git a/src/mpvrenderer.h b/src/mpvrenderer.h
+index fc53c9f..d744c08 100644
+--- a/src/mpvrenderer.h
++++ b/src/mpvrenderer.h
+@@ -7,6 +7,7 @@
+ #ifndef MPVRENDERER_H
+ #define MPVRENDERER_H
+ 
++#include <QRect>
+ #include <QtQuick/QQuickFramebufferObject>
+ 
+ #include <mpv/render_gl.h>
+@@ -14,6 +15,8 @@
+ #include "mpvabstractitem.h"
+ 
+ class MpvAbstractItem;
++class MpvVideoLayer;
++class QWindow;
+ 
+ class MpvRenderer : public QQuickFramebufferObject::Renderer
+ {
+@@ -31,9 +34,19 @@ public:
+ 
+ private:
+     mpv_render_context *createMpvRenderContext();
++    bool renderVideoLayer(QOpenGLFramebufferObject *fbo);
++    void setVideoLayerActive(bool active);
+     QPointer<MpvAbstractItem> m_mpvAItem{nullptr};
+     bool m_isFramebufferReady{false};
+     std::shared_ptr<MpvResourceManager> m_mpvResourceManager;
++
++    // The video layer, see MpvAbstractItem::videoLayer
++    bool m_videoLayerWanted{false};
++    bool m_videoLayerFailed{false};
++    QWindow *m_window{nullptr};
++    QRect m_videoRect;
++    qreal m_devicePixelRatio{1};
++    std::unique_ptr<MpvVideoLayer> m_videoLayer;
+ };
+ 
+ #endif // MPVRENDERER_H
+diff --git a/src/mpvvideolayer.cpp b/src/mpvvideolayer.cpp
+new file mode 100644
+index 0000000..95125c4
+--- /dev/null
++++ b/src/mpvvideolayer.cpp
+@@ -0,0 +1,257 @@
++/*
++ * SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++ *
++ * SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++ */
++
++#include "mpvvideolayer.h"
++
++#include <QGuiApplication>
++#include <QLoggingCategory>
++#include <QOpenGLContext>
++#include <QtGui/qpa/qplatformwindow_p.h>
++#include <QWindow>
++
++#include <EGL/egl.h>
++#include <wayland-client.h>
++#include <wayland-egl.h>
++
++#include "wayland-viewporter-client-protocol.h"
++
++Q_STATIC_LOGGING_CATEGORY(MpvQt_MpvVideoLayer, "MpvQt.MpvVideoLayer")
++
++namespace
++{
++struct Globals {
++    wl_compositor *compositor{nullptr};
++    wl_subcompositor *subcompositor{nullptr};
++    wp_viewporter *viewporter{nullptr};
++    bool stereo{false};
++};
++
++void registryGlobal(void *data, wl_registry *registry, uint32_t name, const char *interface, uint32_t version)
++{
++    auto *globals = static_cast<Globals *>(data);
++    if (!strcmp(interface, wl_compositor_interface.name)) {
++        globals->compositor = static_cast<wl_compositor *>(wl_registry_bind(registry, name, &wl_compositor_interface, qMin(version, 4u)));
++    } else if (!strcmp(interface, wl_subcompositor_interface.name)) {
++        globals->subcompositor = static_cast<wl_subcompositor *>(wl_registry_bind(registry, name, &wl_subcompositor_interface, 1));
++    } else if (!strcmp(interface, wp_viewporter_interface.name)) {
++        globals->viewporter = static_cast<wp_viewporter *>(wl_registry_bind(registry, name, &wp_viewporter_interface, 1));
++    } else if (!strcmp(interface, "kde_stereo_content_manager_v1")) {
++        globals->stereo = true;
++    }
++}
++
++void registryGlobalRemove(void *, wl_registry *, uint32_t)
++{
++}
++
++const wl_registry_listener registryListener = {registryGlobal, registryGlobalRemove};
++
++wl_display *waylandDisplay()
++{
++    if (QGuiApplication::platformName() != QLatin1String("wayland")) {
++        return nullptr;
++    }
++    auto *app = qGuiApp->nativeInterface<QNativeInterface::QWaylandApplication>();
++    return app ? app->display() : nullptr;
++}
++
++// Reads the globals on a queue of its own, so that nothing is dispatched on the queue Qt uses
++void readGlobals(wl_display *display, wl_event_queue *queue, Globals &globals, wl_registry **registryOut)
++{
++    auto *wrapper = static_cast<wl_display *>(wl_proxy_create_wrapper(display));
++    wl_proxy_set_queue(reinterpret_cast<wl_proxy *>(wrapper), queue);
++    wl_registry *registry = wl_display_get_registry(wrapper);
++    wl_proxy_wrapper_destroy(wrapper);
++    wl_registry_add_listener(registry, &registryListener, &globals);
++    wl_display_roundtrip_queue(display, queue);
++    *registryOut = registry;
++}
++}
++
++struct MpvVideoLayer::Private {
++    wl_display *display{nullptr};
++    wl_event_queue *queue{nullptr};
++    wl_registry *registry{nullptr};
++    Globals globals;
++    wl_surface *surface{nullptr};
++    wl_subsurface *subsurface{nullptr};
++    wp_viewport *viewport{nullptr};
++    wl_egl_window *eglWindow{nullptr};
++    EGLDisplay eglDisplay{EGL_NO_DISPLAY};
++    EGLContext eglContext{EGL_NO_CONTEXT};
++    EGLSurface eglSurface{EGL_NO_SURFACE};
++    EGLSurface previousDraw{EGL_NO_SURFACE};
++    EGLSurface previousRead{EGL_NO_SURFACE};
++    QRect rect;
++    QSize bufferSize;
++};
++
++bool MpvVideoLayer::isSupported()
++{
++    static const bool supported = [] {
++        wl_display *display = waylandDisplay();
++        if (!display) {
++            return false;
++        }
++        wl_event_queue *queue = wl_display_create_queue(display);
++        Globals globals;
++        wl_registry *registry = nullptr;
++        readGlobals(display, queue, globals, &registry);
++        const bool ok = globals.compositor && globals.subcompositor && globals.viewporter && globals.stereo;
++        if (globals.compositor) {
++            wl_compositor_destroy(globals.compositor);
++        }
++        if (globals.subcompositor) {
++            wl_subcompositor_destroy(globals.subcompositor);
++        }
++        if (globals.viewporter) {
++            wp_viewporter_destroy(globals.viewporter);
++        }
++        wl_registry_destroy(registry);
++        wl_event_queue_destroy(queue);
++        return ok;
++    }();
++    return supported;
++}
++
++MpvVideoLayer::MpvVideoLayer()
++    : d(std::make_unique<Private>())
++{
++}
++
++std::unique_ptr<MpvVideoLayer> MpvVideoLayer::create(QWindow *window)
++{
++    QOpenGLContext *context = QOpenGLContext::currentContext();
++    auto *windowInterface = window ? window->nativeInterface<QNativeInterface::Private::QWaylandWindow>() : nullptr;
++    auto *eglInterface = context ? context->nativeInterface<QNativeInterface::QEGLContext>() : nullptr;
++    if (!windowInterface || !windowInterface->surface() || !eglInterface || !isSupported()) {
++        return nullptr;
++    }
++
++    std::unique_ptr<MpvVideoLayer> layer(new MpvVideoLayer);
++    Private *p = layer->d.get();
++    p->display = waylandDisplay();
++    p->queue = wl_display_create_queue(p->display);
++    readGlobals(p->display, p->queue, p->globals, &p->registry);
++    if (!p->globals.compositor || !p->globals.subcompositor || !p->globals.viewporter) {
++        return nullptr;
++    }
++
++    p->surface = wl_compositor_create_surface(p->globals.compositor);
++    p->subsurface = wl_subcompositor_get_subsurface(p->globals.subcompositor, p->surface, windowInterface->surface());
++    wl_subsurface_place_below(p->subsurface, windowInterface->surface());
++    wl_subsurface_set_sync(p->subsurface);
++    p->viewport = wp_viewporter_get_viewport(p->globals.viewporter, p->surface);
++
++    // The window's surface keeps the pointer: the layer takes no input
++    wl_region *empty = wl_compositor_create_region(p->globals.compositor);
++    wl_surface_set_input_region(p->surface, empty);
++    wl_region_destroy(empty);
++
++    p->eglDisplay = eglInterface->display();
++    p->eglContext = eglInterface->nativeContext();
++    EGLint configId = 0;
++    EGLConfig config = nullptr;
++    EGLint count = 0;
++    eglQueryContext(p->eglDisplay, p->eglContext, EGL_CONFIG_ID, &configId);
++    const EGLint attributes[] = {EGL_CONFIG_ID, configId, EGL_NONE};
++    if (!eglChooseConfig(p->eglDisplay, attributes, &config, 1, &count) || count < 1) {
++        qCWarning(MpvQt_MpvVideoLayer) << "no EGL config for the video layer";
++        return nullptr;
++    }
++
++    p->bufferSize = QSize(1, 1);
++    p->eglWindow = wl_egl_window_create(p->surface, 1, 1);
++    p->eglSurface = eglCreateWindowSurface(p->eglDisplay, config, reinterpret_cast<EGLNativeWindowType>(p->eglWindow), nullptr);
++    if (p->eglSurface == EGL_NO_SURFACE) {
++        qCWarning(MpvQt_MpvVideoLayer) << "creating the EGL surface of the video layer failed";
++        return nullptr;
++    }
++
++    // The swap must not wait for a frame callback: the layer is shown with the window's frame
++    const EGLSurface draw = eglGetCurrentSurface(EGL_DRAW);
++    const EGLSurface read = eglGetCurrentSurface(EGL_READ);
++    eglMakeCurrent(p->eglDisplay, p->eglSurface, p->eglSurface, p->eglContext);
++    eglSwapInterval(p->eglDisplay, 0);
++    eglMakeCurrent(p->eglDisplay, draw, read, p->eglContext);
++    return layer;
++}
++
++MpvVideoLayer::~MpvVideoLayer()
++{
++    if (d->eglSurface != EGL_NO_SURFACE) {
++        eglDestroySurface(d->eglDisplay, d->eglSurface);
++    }
++    if (d->eglWindow) {
++        wl_egl_window_destroy(d->eglWindow);
++    }
++    if (d->viewport) {
++        wp_viewport_destroy(d->viewport);
++    }
++    if (d->subsurface) {
++        wl_subsurface_destroy(d->subsurface);
++    }
++    if (d->surface) {
++        wl_surface_destroy(d->surface);
++    }
++    if (d->globals.compositor) {
++        wl_compositor_destroy(d->globals.compositor);
++    }
++    if (d->globals.subcompositor) {
++        wl_subcompositor_destroy(d->globals.subcompositor);
++    }
++    if (d->globals.viewporter) {
++        wp_viewporter_destroy(d->globals.viewporter);
++    }
++    if (d->registry) {
++        wl_registry_destroy(d->registry);
++    }
++    if (d->queue) {
++        wl_event_queue_destroy(d->queue);
++    }
++    wl_display_flush(d->display);
++}
++
++void MpvVideoLayer::resize(const QRect &rect, qreal devicePixelRatio)
++{
++    // Nothing is listened to on the queue of the layer, keep it empty
++    wl_display_dispatch_queue_pending(d->display, d->queue);
++
++    const QSize size(qMax(1, qRound(rect.width() * devicePixelRatio)), qMax(1, qRound(rect.height() * devicePixelRatio)));
++    if (rect.topLeft() != d->rect.topLeft()) {
++        wl_subsurface_set_position(d->subsurface, rect.x(), rect.y());
++    }
++    if (rect.size() != d->rect.size()) {
++        wp_viewport_set_destination(d->viewport, rect.width(), rect.height());
++        wl_region *opaque = wl_compositor_create_region(d->globals.compositor);
++        wl_region_add(opaque, 0, 0, rect.width(), rect.height());
++        wl_surface_set_opaque_region(d->surface, opaque);
++        wl_region_destroy(opaque);
++    }
++    if (size != d->bufferSize) {
++        wl_egl_window_resize(d->eglWindow, size.width(), size.height(), 0, 0);
++        d->bufferSize = size;
++    }
++    d->rect = rect;
++}
++
++QSize MpvVideoLayer::bufferSize() const
++{
++    return d->bufferSize;
++}
++
++void MpvVideoLayer::makeCurrent()
++{
++    d->previousDraw = eglGetCurrentSurface(EGL_DRAW);
++    d->previousRead = eglGetCurrentSurface(EGL_READ);
++    eglMakeCurrent(d->eglDisplay, d->eglSurface, d->eglSurface, d->eglContext);
++}
++
++void MpvVideoLayer::swapBuffers()
++{
++    eglSwapBuffers(d->eglDisplay, d->eglSurface);
++    eglMakeCurrent(d->eglDisplay, d->previousDraw, d->previousRead, d->eglContext);
++}
+diff --git a/src/mpvvideolayer.h b/src/mpvvideolayer.h
+new file mode 100644
+index 0000000..78a03f0
+--- /dev/null
++++ b/src/mpvvideolayer.h
+@@ -0,0 +1,49 @@
++/*
++ * SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++ *
++ * SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++ */
++
++#ifndef MPVVIDEOLAYER_H
++#define MPVVIDEOLAYER_H
++
++#include <memory>
++
++#include <QRect>
++#include <QSize>
++
++class QWindow;
++
++/**
++ * A surface under the surface of a Wayland window that holds the video, so that the window's
++ * surface can keep the controls with alpha over it.
++ *
++ * The layer is a synchronised subsurface placed below the window's surface, with an EGL surface
++ * of its own on the OpenGL context of the Qt Quick scene graph. All functions except
++ * isSupported() must be called on the render thread, with that context current.
++ */
++class MpvVideoLayer
++{
++public:
++    // True if the platform is Wayland and the compositor offers what the layer needs
++    static bool isSupported();
++    static std::unique_ptr<MpvVideoLayer> create(QWindow *window);
++
++    ~MpvVideoLayer();
++
++    // The rectangle of the video in the window, in logical pixels, and the window's scale
++    void resize(const QRect &rect, qreal devicePixelRatio);
++    QSize bufferSize() const;
++
++    // Draws into the layer's surface until swapBuffers(), which shows it with the window's next frame
++    void makeCurrent();
++    void swapBuffers();
++
++private:
++    MpvVideoLayer();
++
++    struct Private;
++    std::unique_ptr<Private> d;
++};
++
++#endif // MPVVIDEOLAYER_H
+-- 
+2.53.0
+
