@@ -1,0 +1,315 @@
+From b8820679a6fdb8b308723f5a0dc3cc38b4c2f79b Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 00:15:35 -0300
+Subject: [PATCH 2/2] wxGUI/nviz: draw the 3D view in stereo
+
+Ask the GL canvas for a stereo visual (WX_GL_STEREO) when "3D view in stereo"
+is set in the Map Display settings, and use the mono visual when the display
+does not offer one. In stereo, UpdateMap() draws the scene once per eye and
+the decorations into each eye's back buffer, then swaps once. The north arrow,
+scale bar and fringe are part of the scene and follow the eye's camera, the
+legend and text images are 2D and are drawn the same in both eyes.
+
+New settings next to the depth buffer: "3D view in stereo" (applies to 3D
+views opened afterwards, the visual is chosen when the canvas is created) and
+"3D view eye separation" in percent of the distance to the focus point.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ gui/wxpython/core/settings.py        |   6 ++
+ gui/wxpython/gui_core/preferences.py |  44 ++++++++++++
+ gui/wxpython/nviz/mapwindow.py       | 101 ++++++++++++++++++---------
+ gui/wxpython/nviz/wxnviz.py          |  30 ++++++++
+ 4 files changed, 149 insertions(+), 32 deletions(-)
+
+diff --git a/gui/wxpython/core/settings.py b/gui/wxpython/core/settings.py
+index 22502b1..206bef8 100644
+--- a/gui/wxpython/core/settings.py
++++ b/gui/wxpython/core/settings.py
+@@ -228,6 +228,12 @@ class Settings:
+                 "nvizDepthBuffer": {
+                     "value": 16,
+                 },
++                "nvizStereo": {
++                    "enabled": False,
++                },
++                "nvizEyeSeparation": {
++                    "value": 3,
++                },
+             },
+             #
+             # projection
+diff --git a/gui/wxpython/gui_core/preferences.py b/gui/wxpython/gui_core/preferences.py
+index 73ad6f3..7722a6f 100644
+--- a/gui/wxpython/gui_core/preferences.py
++++ b/gui/wxpython/gui_core/preferences.py
+@@ -1176,6 +1176,50 @@ class PreferencesDialog(PreferencesBaseDialog):
+                 textCtrl, flag=wx.ALIGN_RIGHT | wx.ALIGN_CENTER_VERTICAL, pos=(row, 1)
+             )
+ 
++            row += 1
++            nvizStereo = wx.CheckBox(
++                parent=panel,
++                id=wx.ID_ANY,
++                label=_(
++                    "3D view in stereo, left and right eye (when the display offers it, "
++                    "applies to 3D views opened afterwards)"
++                ),
++                name="IsChecked",
++            )
++            nvizStereo.SetValue(
++                self.settings.Get(group="display", key="nvizStereo", subkey="enabled")
++            )
++            self.winId["display:nvizStereo:enabled"] = nvizStereo.GetId()
++            gridSizer.Add(nvizStereo, pos=(row, 0), span=(1, 2))
++
++            row += 1
++            gridSizer.Add(
++                StaticText(
++                    parent=panel,
++                    id=wx.ID_ANY,
++                    label=_(
++                        "3D view eye separation in percent of the distance "
++                        "to the focus point:"
++                    ),
++                ),
++                flag=wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL,
++                pos=(row, 0),
++            )
++            value = self.settings.Get(
++                group="display", key="nvizEyeSeparation", subkey="value"
++            )
++            textCtrl = TextCtrl(
++                parent=panel,
++                id=wx.ID_ANY,
++                value=str(value),
++                validator=IntegerValidator(),
++                name="GetValue",
++            )
++            self.winId["display:nvizEyeSeparation:value"] = textCtrl.GetId()
++            gridSizer.Add(
++                textCtrl, flag=wx.ALIGN_RIGHT | wx.ALIGN_CENTER_VERTICAL, pos=(row, 1)
++            )
++
+             gridSizer.AddGrowableCol(0)
+             sizer.Add(gridSizer, proportion=1, flag=wx.ALL | wx.EXPAND, border=5)
+             border.Add(sizer, proportion=0, flag=wx.ALL | wx.EXPAND, border=3)
+diff --git a/gui/wxpython/nviz/mapwindow.py b/gui/wxpython/nviz/mapwindow.py
+index 7e650ae..42eb201 100644
+--- a/gui/wxpython/nviz/mapwindow.py
++++ b/gui/wxpython/nviz/mapwindow.py
+@@ -45,7 +45,12 @@ from nviz import wxnviz
+ from nviz.animation import Animation
+ from nviz.workspace import NvizSettings
+ from wx import glcanvas
+-from wx.glcanvas import WX_GL_DEPTH_SIZE, WX_GL_DOUBLEBUFFER, WX_GL_RGBA
++from wx.glcanvas import (
++    WX_GL_DEPTH_SIZE,
++    WX_GL_DOUBLEBUFFER,
++    WX_GL_RGBA,
++    WX_GL_STEREO,
++)
+ from wx.lib.newevent import NewEvent
+ 
+ if TYPE_CHECKING:
+@@ -119,6 +124,11 @@ class GLWindow(MapWindowBase, glcanvas.GLCanvas):
+                 UserSettings.Get(group="display", key="nvizDepthBuffer", subkey="value")
+             )
+             attribs = [WX_GL_RGBA, WX_GL_DOUBLEBUFFER, WX_GL_DEPTH_SIZE, depthBuffer, 0]
++            # stereo (left and right eye) when asked for and offered, otherwise mono
++            if UserSettings.Get(group="display", key="nvizStereo", subkey="enabled"):
++                stereoAttribs = [*attribs[:-1], WX_GL_STEREO, 0]
++                if glcanvas.GLCanvas.IsDisplaySupported(stereoAttribs):
++                    attribs = stereoAttribs
+             glcanvas.GLCanvas.__init__(self, parent, id, attribList=attribs)
+         else:
+             glcanvas.GLCanvas.__init__(self, parent, id)
+@@ -145,6 +155,7 @@ class GLWindow(MapWindowBase, glcanvas.GLCanvas):
+ 
+         self.init = False
+         self.initView = False
++        self.stereo = False
+         self.context: glcanvas.GLContext | None = None
+         if CheckWxVersion(version=[2, 9]):
+             self.context = glcanvas.GLContext(self)
+@@ -458,6 +469,7 @@ class GLWindow(MapWindowBase, glcanvas.GLCanvas):
+         if not self.initView:
+             self._display.InitView()
+             self.initView = True
++            self.stereo = self._display.IsStereo()
+ 
+         self.LoadDataLayers()
+         self.UnloadDataLayers()
+@@ -1256,39 +1268,49 @@ class GLWindow(MapWindowBase, glcanvas.GLCanvas):
+                 self.parent.GetProgressBar().SetRange(2)
+                 self.parent.GetProgressBar().SetValue(0)
+ 
+-        if self.render["quick"] is False:
+-            if sys.platform != "darwin":
+-                self.parent.GetProgressBar().SetValue(1)
+-            self._display.Draw(False, -1)
+-            if self.saveHistory:
+-                self.ViewHistory(view=self.view, iview=self.iview)
+-                self.saveHistory = False
+-        elif self.render["quick"] is True:
+-            # quick
+-            mode = wxnviz.DRAW_QUICK_SURFACE | wxnviz.DRAW_QUICK_VOLUME
+-            if self.render["vlines"]:
+-                mode |= wxnviz.DRAW_QUICK_VLINES
+-            if self.render["vpoints"]:
+-                mode |= wxnviz.DRAW_QUICK_VPOINTS
+-            self._display.Draw(True, mode)
+-        else:  # None -> reuse last rendered image
+-            pass  # TODO
++        # in stereo each eye is drawn from its camera to its back buffer,
++        # then both are swapped together
++        if self.stereo:
++            self._display.SetEyeSeparation(
++                float(
++                    UserSettings.Get(
++                        group="display", key="nvizEyeSeparation", subkey="value"
++                    )
++                )
++            )
++            eyes = (wxnviz.GSD_EYE_LEFT, wxnviz.GSD_EYE_RIGHT)
++        else:
++            eyes = (wxnviz.GSD_EYE_MONO,)
++        for eye in eyes:
++            self._display.SetEye(eye)
++            if self.render["quick"] is False:
++                if sys.platform != "darwin":
++                    self.parent.GetProgressBar().SetValue(1)
++                self._display.Draw(False, -1)
++                if self.saveHistory:
++                    self.ViewHistory(view=self.view, iview=self.iview)
++                    self.saveHistory = False
++            elif self.render["quick"] is True:
++                # quick
++                mode = wxnviz.DRAW_QUICK_SURFACE | wxnviz.DRAW_QUICK_VOLUME
++                if self.render["vlines"]:
++                    mode |= wxnviz.DRAW_QUICK_VLINES
++                if self.render["vpoints"]:
++                    mode |= wxnviz.DRAW_QUICK_VPOINTS
++                self._display.Draw(True, mode)
++            else:  # None -> reuse last rendered image
++                pass  # TODO
++
++            if self.stereo:
++                # no front buffer in stereo, 2D overlays are drawn the same in each eye
++                self._DrawDecorations()
+ 
+         self.SwapBuffers()
+-        # draw fringe after SwapBuffers, otherwise it don't have to be visible
+-        # on some computers
+-        if self.render["quick"] is False:
+-            self._display.DrawFringe()
+-            if self.decoration["arrow"]["show"]:
+-                self._display.DrawArrow()
+-            if self.decoration["scalebar"]:
+-                self._display.DrawScalebar()
+-        if self.imagelist:
+-            if (self.render["quick"] and self.dragid > -1) or (  # during dragging
+-                not self.render["quick"] and self.dragid < 0
+-            ):  # redraw
+-                self._display.Start2D()
+-                self.DrawImages()
++        self._display.SetEye(wxnviz.GSD_EYE_MONO)
++        if not self.stereo:
++            # draw fringe after SwapBuffers, otherwise it don't have to be visible
++            # on some computers
++            self._DrawDecorations()
+ 
+         stop = gs.clock()
+ 
+@@ -1304,6 +1326,21 @@ class GLWindow(MapWindowBase, glcanvas.GLCanvas):
+             % (int(self.render["quick"]), (stop - start)),
+         )
+ 
++    def _DrawDecorations(self) -> None:
++        """Draw fringe, north arrow, scale bar and the 2D overlay images"""
++        if self.render["quick"] is False:
++            self._display.DrawFringe()
++            if self.decoration["arrow"]["show"]:
++                self._display.DrawArrow()
++            if self.decoration["scalebar"]:
++                self._display.DrawScalebar()
++        if self.imagelist:
++            if (self.render["quick"] and self.dragid > -1) or (  # during dragging
++                not self.render["quick"] and self.dragid < 0
++            ):  # redraw
++                self._display.Start2D()
++                self.DrawImages()
++
+     def EraseMap(self):
+         """Erase the canvas"""
+         self._display.EraseMap()
+diff --git a/gui/wxpython/nviz/wxnviz.py b/gui/wxpython/nviz/wxnviz.py
+index ddad350..259cd4a 100644
+--- a/gui/wxpython/nviz/wxnviz.py
++++ b/gui/wxpython/nviz/wxnviz.py
+@@ -161,6 +161,9 @@ try:
+         DM_POLY,
+         DM_WIRE,
+         DM_WIRE_POLY,
++        GSD_EYE_LEFT,
++        GSD_EYE_MONO,
++        GSD_EYE_RIGHT,
+         MAP_ATT,
+         MAX_ISOSURFS,
+         GP_delete_site,
+@@ -183,11 +186,14 @@ try:
+         GS_get_trans,
+         GS_get_val_at_xy,
+         GS_get_viewdir,
++        GS_is_stereo,
+         GS_libinit,
+         GS_num_surfs,
+         GS_set_att_const,
+         GS_set_drawmode,
+         GS_set_drawres,
++        GS_set_eye,
++        GS_set_eye_separation,
+         GS_set_rotation_matrix,
+         GS_set_trans,
+         GS_set_viewdir,
+@@ -527,6 +533,27 @@ class Nviz:
+         else:
+             Nviz_draw_all(self.data)
+ 
++    def IsStereo(self) -> bool:
++        """Check if the canvas has stereo buffers (left and right eye)"""
++        return bool(GS_is_stereo())
++
++    def SetEye(self, eye: int) -> None:
++        """Set the eye to draw
++
++        The back buffers are swapped by the canvas after both eyes are drawn.
++
++        :param eye: GSD_EYE_MONO, GSD_EYE_LEFT or GSD_EYE_RIGHT
++        """
++        GS_set_eye(eye)
++
++    def SetEyeSeparation(self, sep: float) -> None:
++        """Set the distance between the eyes
++
++        :param sep: distance in percent of the distance to the focus point,
++                    which is shown at the screen's depth
++        """
++        GS_set_eye_separation(sep)
++
+     def EraseMap(self) -> None:
+         """Erase map display (with background color)"""
+         Debug.msg(1, "Nviz::EraseMap()")
+@@ -2825,6 +2852,9 @@ __all__: list[str] = [
+     "DRAW_QUICK_VLINES",
+     "DRAW_QUICK_VOLUME",
+     "DRAW_QUICK_VPOINTS",
++    "GSD_EYE_LEFT",
++    "GSD_EYE_MONO",
++    "GSD_EYE_RIGHT",
+     "MAX_ISOSURFS",
+     "ImageTexture",
+     "Nviz",
+-- 
+2.53.0
+

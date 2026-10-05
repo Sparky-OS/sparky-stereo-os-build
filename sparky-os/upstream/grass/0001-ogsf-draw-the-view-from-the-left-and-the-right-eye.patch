@@ -1,0 +1,300 @@
+From edf0341a01b85ac9f29f15a193c108b286ade896 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 00:15:35 -0300
+Subject: [PATCH 1/2] ogsf: draw the view from the left and the right eye
+
+gsd_set_view() sets the one camera of the view. With an eye set (GS_set_eye())
+it moves that camera half the eye separation to the left or to the right in
+the camera's own axes and shifts the frustum so that both eyes meet at the
+focus distance (parallel cameras, off-axis frustum, no toe-in). The eye
+separation is given in percent of the distance from the camera to the focus
+point (GS_set_eye_separation()), the focus point is at the screen's depth.
+
+An eye draws to GL_BACK_LEFT or GL_BACK_RIGHT, also where the code asks for
+the front buffer, and the buffers are swapped by the caller after both eyes
+are drawn. GS_is_stereo() tells whether the GL context has stereo buffers.
+The mono view (GSD_EYE_MONO, the default) is unchanged.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ include/grass/defs/ogsf.h |  4 +++
+ include/grass/ogsf.h      | 10 +++++++
+ lib/ogsf/gs2.c            | 58 ++++++++++++++++++++++++++++++++++++++-
+ lib/ogsf/gsd_prim.c       | 29 ++++++++++++++++++++
+ lib/ogsf/gsd_views.c      | 49 +++++++++++++++++++++++++++++++--
+ 5 files changed, 146 insertions(+), 4 deletions(-)
+
+diff --git a/include/grass/defs/ogsf.h b/include/grass/defs/ogsf.h
+index f85caf5..97802a0 100644
+--- a/include/grass/defs/ogsf.h
++++ b/include/grass/defs/ogsf.h
+@@ -146,6 +146,10 @@ void GS_set_rotation_matrix(double *);
+ void GS_init_rotation(void);
+ void GS_unset_rotation(void);
+ int GS_get_fov(void);
++int GS_is_stereo(void);
++void GS_set_eye(int);
++int GS_get_eye(void);
++void GS_set_eye_separation(float);
+ int GS_get_twist(void);
+ void GS_set_twist(int);
+ void GS_set_nofocus(void);
+diff --git a/include/grass/ogsf.h b/include/grass/ogsf.h
+index 90e9209..2e84d58 100644
+--- a/include/grass/ogsf.h
++++ b/include/grass/ogsf.h
+@@ -105,6 +105,11 @@
+ #define GSD_BACK           2
+ #define GSD_BOTH           3
+ 
++/* Eyes of a stereo view */
++#define GSD_EYE_MONO       0
++#define GSD_EYE_LEFT       1
++#define GSD_EYE_RIGHT      2
++
+ /* fence colormodes */
+ #define FC_OFF             0
+ #define FC_ABOVE           1
+@@ -573,6 +578,11 @@ typedef struct {
+     float real_to[4], vert_exag;
+     float scale;
+     struct lightdefs lights[MAX_LIGHTS];
++
++    /** @brief stereo view: eye, separation in percent of the focus distance,
++     * and the focus distance */
++    int eye;
++    float eye_sep, focus_dist;
+ } geoview;
+ 
+ typedef struct { /* need to add elements here for off_screen drawing */
+diff --git a/lib/ogsf/gs2.c b/lib/ogsf/gs2.c
+index a0cd217..3831603 100644
+--- a/lib/ogsf/gs2.c
++++ b/lib/ogsf/gs2.c
+@@ -2503,7 +2503,7 @@ void GS_done_draw(void)
+ 
+     G_debug(3, "GS_done_draw");
+ 
+-    if (GSD_BACK == Buffermode) {
++    if (GSD_BACK == Buffermode && GSD_EYE_MONO == Gv.eye) {
+         gsd_swapbuffers();
+     }
+ 
+@@ -2855,6 +2855,62 @@ int GS_get_fov(void)
+     return (Gv.fov);
+ }
+ 
++/*!
++   \brief Check if the GL context has stereo buffers
++
++   \return 1 if GL_BACK_LEFT and GL_BACK_RIGHT can be drawn to
++   \return 0 otherwise
++ */
++int GS_is_stereo(void)
++{
++    GLboolean stereo = GL_FALSE;
++
++    glGetBooleanv(GL_STEREO, &stereo);
++
++    return (stereo == GL_TRUE);
++}
++
++/*!
++   \brief Set the eye to draw
++
++   The view is drawn to the back buffer of the eye, from the eye's camera.
++   Buffers are not swapped until the eye is set back to GSD_EYE_MONO.
++
++   \param eye GSD_EYE_MONO, GSD_EYE_LEFT, GSD_EYE_RIGHT
++ */
++void GS_set_eye(int eye)
++{
++    if (Gv.eye != GSD_EYE_MONO && eye == GSD_EYE_MONO)
++        glDrawBuffer(GL_BACK);
++    Gv.eye = eye;
++    GS_set_draw(Buffermode);
++
++    return;
++}
++
++/*!
++   \brief Get the eye to draw
++
++   \return GSD_EYE_MONO, GSD_EYE_LEFT or GSD_EYE_RIGHT
++ */
++int GS_get_eye(void)
++{
++    return (Gv.eye);
++}
++
++/*!
++   \brief Set the distance between the eyes
++
++   \param sep distance in percent of the distance from the camera to
++   the focus point, which is shown at the screen's depth
++ */
++void GS_set_eye_separation(float sep)
++{
++    Gv.eye_sep = sep;
++
++    return;
++}
++
+ /*!
+    \brief Get twist value
+ 
+diff --git a/lib/ogsf/gsd_prim.c b/lib/ogsf/gsd_prim.c
+index a61c62b..64200b5 100644
+--- a/lib/ogsf/gsd_prim.c
++++ b/lib/ogsf/gsd_prim.c
+@@ -440,11 +440,36 @@ int gsd_getshademodel(void)
+     return (Shade);
+ }
+ 
++/*!
++   \brief Draw to the back buffer of the eye being drawn
++
++   Both eyes are swapped together, so in stereo every draw goes to the back
++   buffer of its eye, also where the front buffer is asked for.
++
++   \return 1 if drawing a stereo eye
++   \return 0 for the mono view
++ */
++static int gsd_eyebuffer(void)
++{
++    switch (GS_get_eye()) {
++    case GSD_EYE_LEFT:
++        glDrawBuffer(GL_BACK_LEFT);
++        return 1;
++    case GSD_EYE_RIGHT:
++        glDrawBuffer(GL_BACK_RIGHT);
++        return 1;
++    default:
++        return 0;
++    }
++}
++
+ /*!
+    \brief Draw to the front and back buffers
+  */
+ void gsd_bothbuffers(void)
+ {
++    if (gsd_eyebuffer())
++        return;
+ #if !defined(OPENGL_FBO)
+     /* OGLXXX bothbuffer: other possibilities include GL_FRONT, GL_BACK */
+     glDrawBuffer(GL_FRONT_AND_BACK);
+@@ -457,6 +482,8 @@ void gsd_bothbuffers(void)
+  */
+ void gsd_frontbuffer(void)
+ {
++    if (gsd_eyebuffer())
++        return;
+ #if !defined(OPENGL_FBO)
+     /* OGLXXX frontbuffer: other possibilities include GL_FRONT_AND_BACK */
+     glDrawBuffer(GL_FRONT);
+@@ -469,6 +496,8 @@ void gsd_frontbuffer(void)
+  */
+ void gsd_backbuffer(void)
+ {
++    if (gsd_eyebuffer())
++        return;
+ #if !defined(OPENGL_FBO)
+     /* OGLXXX backbuffer: other possibilities include GL_FRONT_AND_BACK */
+     glDrawBuffer(GL_BACK);
+diff --git a/lib/ogsf/gsd_views.c b/lib/ogsf/gsd_views.c
+index f391313..4295d19 100644
+--- a/lib/ogsf/gsd_views.c
++++ b/lib/ogsf/gsd_views.c
+@@ -135,6 +135,29 @@ void gsd_set_view(geoview * gv, geodisplay * gd)
+     return;
+ }
+ #endif
++/*!
++   \brief Get distance from the camera to the plane of zero parallax
++
++   The focus point is at the screen's depth; without a focus point it is
++   the center of the data.
++
++   \param gv view (geoview)
++
++   \return distance
++ */
++static double gsd_get_focus_dist(geoview *gv)
++{
++    float pos[3];
++
++    if (!gv->infocus) {
++        gs_get_datacenter(pos);
++        gsd_surf2model(pos);
++        gv->focus_dist = GS_distance(gv->from_to[FROM], pos);
++    }
++
++    return gv->focus_dist > 0. ? gv->focus_dist : 1.;
++}
++
+ /*!
+    \brief Set view
+ 
+@@ -150,6 +173,7 @@ void gsd_set_view(geoview *gv, geodisplay *gd)
+     int i;
+     GLdouble modelMatrix[16];
+     GLint mm;
++    double eye_x = 0., focus_dist, shift, top;
+ 
+     /* will expand when need to check for in focus, ortho, etc. */
+ 
+@@ -161,13 +185,31 @@ void gsd_set_view(geoview *gv, geodisplay *gd)
+     glGetIntegerv(GL_MATRIX_MODE, &mm);
+     glMatrixMode(GL_PROJECTION);
+     glLoadIdentity();
+-    gluPerspective((double).1 * (gv->fov), (double)gd->aspect,
+-                   (double)gd->nearclip, (double)gd->farclip);
++    if (gv->eye == GSD_EYE_MONO) {
++        gluPerspective((double).1 * (gv->fov), (double)gd->aspect,
++                       (double)gd->nearclip, (double)gd->farclip);
++    }
++    else {
++        /* the eye is half the separation to the left or to the right of the
++           camera, looking the same way (no toe-in); the frustum is shifted
++           so that the planes of both eyes meet at the focus distance */
++        focus_dist = gsd_get_focus_dist(gv);
++        eye_x = .005 * gv->eye_sep * focus_dist;
++        if (gv->eye == GSD_EYE_LEFT)
++            eye_x = -eye_x;
++        top = tan((double).05 * (gv->fov) * M_PI / 180.) * gd->nearclip;
++        shift = -eye_x * gd->nearclip / focus_dist;
++        glFrustum(-top * gd->aspect + shift, top * gd->aspect + shift, -top,
++                  top, (double)gd->nearclip, (double)gd->farclip);
++    }
+ 
+     glMatrixMode(mm);
+ 
+     glLoadIdentity();
+ 
++    /* move the eye in the camera's own axes, after the twist */
++    glTranslated(-eye_x, 0., 0.);
++
+     /* update twist parm */
+     glRotatef((float)(gv->twist / 10.), 0.0, 0.0, 1.0);
+ 
+@@ -178,7 +220,7 @@ void gsd_set_view(geoview *gv, geodisplay *gd)
+               (double)up[X], (double)up[Y], (double)up[Z]);
+ 
+     /* rotate to get rotation matrix and then save it */
+-    if (gv->rotate.do_rot) {
++    if (gv->rotate.do_rot && gv->eye != GSD_EYE_RIGHT) {
+ 
+         glPushMatrix();
+         glLoadMatrixd(gv->rotate.rotMatrix);
+@@ -225,6 +267,7 @@ void gsd_check_focus(geoview *gv)
+         GS_v3mult(gv->from_to[TO], gv->scale);
+         gv->from_to[TO][Z] *= gv->vert_exag;
+ 
++        gv->focus_dist = GS_distance(gv->from_to[FROM], gv->from_to[TO]);
+         GS_v3normalize(gv->from_to[FROM], gv->from_to[TO]);
+     }
+ 
+-- 
+2.53.0
+
