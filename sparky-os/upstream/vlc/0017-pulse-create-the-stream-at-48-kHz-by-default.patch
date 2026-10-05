@@ -1,0 +1,58 @@
+From 26284669a388732c0a4c957fd182b8c405761fa8 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 14:49:34 -0300
+Subject: [PATCH 17/17] pulse: create the stream at 48 kHz by default
+
+The stream was created at the rate of the stream, and the sound server
+resampled it with its own resampler. Create it at 48 kHz, the rate that
+audio hardware and sound servers run at, so that the player's own
+resampler brings the audio to it. The option pulse-audio-rate=0 keeps the
+rate of the stream. Digital pass-through is not affected.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ modules/audio_output/pulse.c | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/modules/audio_output/pulse.c b/modules/audio_output/pulse.c
+index 9059936aae..bc2bc2f90e 100644
+--- a/modules/audio_output/pulse.c
++++ b/modules/audio_output/pulse.c
+@@ -47,6 +47,12 @@ static const char *const formats_text[] = {
+     N_("Automatic (floating point)"), N_("Format of the stream"),
+ };
+ 
++#define RATE_TEXT N_("Output sample rate")
++#define RATE_LONGTEXT N_("Sample rate, in hertz, that the stream is created " \
++    "with, and that the audio is resampled to by the player. 0 keeps the " \
++    "rate of the stream. This parameter is ignored when digital " \
++    "pass-through is active.")
++
+ #define BUFFER_TEXT N_("Buffer length multiplier")
+ #define BUFFER_LONGTEXT N_("Multiplies the length of the audio buffer. The " \
+     "default 1 keeps the shortest delay, larger values give more headroom " \
+@@ -61,6 +67,8 @@ vlc_module_begin ()
+     add_string( "pulse-audio-format", "auto", FORMAT_TEXT, FORMAT_LONGTEXT,
+                 false )
+         change_string_list( formats, formats_text )
++    add_integer_with_range( "pulse-audio-rate", 48000, 0, 384000, RATE_TEXT,
++                            RATE_LONGTEXT, false )
+     add_integer_with_range( "pulse-buffer-multiplier", 1, 1, 8, BUFFER_TEXT,
+                             BUFFER_LONGTEXT, true )
+     add_shortcut( "pulseaudio", "pa" )
+@@ -811,6 +819,12 @@ static int Start(audio_output_t *aout, audio_sample_format_t *restrict fmt)
+     }
+ 
+     ss.rate = fmt->i_rate;
++    if (encoding == PA_ENCODING_PCM)
++    {
++        unsigned rate = var_InheritInteger(aout, "pulse-audio-rate");
++        if (rate != 0)
++            ss.rate = rate;
++    }
+     ss.channels = fmt->i_channels;
+     if (!pa_sample_spec_valid(&ss)) {
+         msg_Err(aout, "unsupported sample specification");
+-- 
+2.53.0
+

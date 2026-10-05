@@ -1,0 +1,564 @@
+Index: vlc-3.0.24/modules/control/dbus/dbus_root.c
+===================================================================
+--- vlc-3.0.24.orig/modules/control/dbus/dbus_root.c
++++ vlc-3.0.24/modules/control/dbus/dbus_root.c
+@@ -78,7 +78,7 @@ static int
+ MarshalIdentity( intf_thread_t *p_intf, DBusMessageIter *container )
+ {
+     VLC_UNUSED( p_intf );
+-    const char *psz_id = _("VLC media player");
++    const char *psz_id = "VLC Stereo";
+ 
+     if (!dbus_message_iter_append_basic( container, DBUS_TYPE_STRING, &psz_id ))
+         return VLC_ENOMEM;
+Index: vlc-3.0.24/modules/gui/qt/dialogs/help.cpp
+===================================================================
+--- vlc-3.0.24.orig/modules/gui/qt/dialogs/help.cpp
++++ vlc-3.0.24/modules/gui/qt/dialogs/help.cpp
+@@ -97,11 +97,11 @@ AboutDialog::AboutDialog( intf_thread_t
+     }
+ 
+     ui.version->setText(qfu( " " VERSION_MESSAGE ) );
+-    ui.title->setText("<html><head/><body><p><span style=\" font-size:26pt;\"> " + qtr( "VLC media player" ) + " </span></p></body></html>");
++    ui.title->setText("<html><head/><body><p><span style=\" font-size:26pt;\"> " + qtr( "VLC Stereo" ) + " </span></p></body></html>");
+     QString translatedString = qtr( "<p>VLC media player is a free and open source media player, encoder, and streamer made by the volunteers of the <a href=\"http://www.videolan.org/\"><span style=\" text-decoration: underline; color:#0057ae;\">VideoLAN</span></a> community.</p><p>VLC uses its internal codecs, works on essentially every popular platform, and can read almost all files, CDs, DVDs, network streams, capture cards and other media formats!</p><p><a href=\"http://www.videolan.org/contribute/\"><span style=\" text-decoration: underline; color:#0057ae;\">Help and join us!</span></a>" );
+     if ( var_InheritBool( p_intf, "qt-dark-palette" ) )
+         translatedString.remove(QLatin1String("#0057ae"));
+-    ui.MainBlabla->setText("<html><head/><body>" + translatedString + "</p></body> </html>");
++    ui.MainBlabla->setText("<html><head/><body><p>" + qtr( "VLC Stereo is a stereo edition of VLC media player by VideoLAN, for Sparky Stereo OS." ) + "</p>" + translatedString + "</p></body> </html>");
+ 
+ #if 0
+     if( QDate::currentDate().dayOfYear() >= QT_XMAS_JOKE_DAY && var_InheritBool( p_intf, "qt-icon-change" ) )
+Index: vlc-3.0.24/modules/gui/qt/main_interface.cpp
+===================================================================
+--- vlc-3.0.24.orig/modules/gui/qt/main_interface.cpp
++++ vlc-3.0.24/modules/gui/qt/main_interface.cpp
+@@ -1292,11 +1292,11 @@ void MainInterface::setVLCWindowsTitle(
+ {
+     if( aTitle.isEmpty() )
+     {
+-        setWindowTitle( qtr( "VLC media player" ) );
++        setWindowTitle( qtr( "VLC Stereo" ) );
+     }
+     else
+     {
+-        setWindowTitle( aTitle + " - " + qtr( "VLC media player" ) );
++        setWindowTitle( aTitle + " - " + qtr( "VLC Stereo" ) );
+     }
+ }
+ 
+@@ -1333,9 +1333,9 @@ void MainInterface::createSystray()
+     else
+         iconVLC = QIcon::fromTheme( "vlc", QIcon( ":/logo/vlc256.png" ) );
+     sysTray = new QSystemTrayIcon( iconVLC, this );
+-    sysTray->setToolTip( qtr( "VLC media player" ));
++    sysTray->setToolTip( qtr( "VLC Stereo" ));
+ 
+-    systrayMenu = new QMenu( qtr( "VLC media player" ), this );
++    systrayMenu = new QMenu( qtr( "VLC Stereo" ), this );
+     systrayMenu->setIcon( iconVLC );
+ 
+     VLCMenuBar::updateSystrayMenu( this, p_intf, true );
+@@ -1443,7 +1443,7 @@ void MainInterface::handleSystrayClick(
+ #endif
+             break;
+         case QSystemTrayIcon::MiddleClick:
+-            sysTray->showMessage( qtr( "VLC media player" ),
++            sysTray->showMessage( qtr( "VLC Stereo" ),
+                     qtr( "Control menu for the player" ),
+                     QSystemTrayIcon::Information, 3000 );
+             break;
+@@ -1460,7 +1460,7 @@ void MainInterface::updateSystrayTooltip
+ {
+     if( name.isEmpty() )
+     {
+-        sysTray->setToolTip( qtr( "VLC media player" ) );
++        sysTray->setToolTip( qtr( "VLC Stereo" ) );
+     }
+     else
+     {
+@@ -1468,7 +1468,7 @@ void MainInterface::updateSystrayTooltip
+         if( ( i_notificationSetting == NOTIFICATION_ALWAYS ) ||
+             ( i_notificationSetting == NOTIFICATION_MINIMIZED && (isMinimized() || isHidden()) ) )
+         {
+-            sysTray->showMessage( qtr( "VLC media player" ), name,
++            sysTray->showMessage( qtr( "VLC Stereo" ), name,
+                     QSystemTrayIcon::NoIcon, 3000 );
+         }
+     }
+@@ -1491,7 +1491,7 @@ void MainInterface::updateSystrayTooltip
+         sysTray->setToolTip( input_name + " - " + qtr( "Paused") );
+         break;
+     default:
+-        sysTray->setToolTip( qtr( "VLC media player" ) );
++        sysTray->setToolTip( qtr( "VLC Stereo" ) );
+         break;
+     }
+     VLCMenuBar::updateSystrayMenu( this, p_intf );
+Index: vlc-3.0.24/modules/gui/qt/menus.cpp
+===================================================================
+--- vlc-3.0.24.orig/modules/gui/qt/menus.cpp
++++ vlc-3.0.24/modules/gui/qt/menus.cpp
+@@ -1177,13 +1177,13 @@ void VLCMenuBar::updateSystrayMenu( Main
+     if( mi->isVisible() || b_force_visible )
+     {
+         sysMenu->addAction( QIcon( ":/logo/vlc16.png" ),
+-                            qtr( "&Hide VLC media player in taskbar" ), mi,
++                            qtr( "&Hide VLC Stereo in taskbar" ), mi,
+                             SLOT( hideUpdateSystrayMenu() ) );
+     }
+     else
+     {
+         sysMenu->addAction( QIcon( ":/logo/vlc16.png" ),
+-                            qtr( "Sho&w VLC media player" ), mi,
++                            qtr( "Sho&w VLC Stereo" ), mi,
+                             SLOT( showUpdateSystrayMenu() ) );
+     }
+     sysMenu->addSeparator();
+Index: vlc-3.0.24/modules/video_output/wayland/shell.c
+===================================================================
+--- vlc-3.0.24.orig/modules/video_output/wayland/shell.c
++++ vlc-3.0.24/modules/video_output/wayland/shell.c
+@@ -345,7 +345,7 @@ static int Open(vout_window_t *wnd, cons
+ 
+     char *title = var_InheritString(wnd, "video-title");
+     wl_shell_surface_set_title(shell_surface, title ? title
+-                                                    : _("VLC media player"));
++                                                    : "VLC Stereo");
+     free(title);
+ 
+     //if (var_InheritBool (wnd, "keyboard-events"))
+Index: vlc-3.0.24/modules/video_output/wayland/xdg-shell.c
+===================================================================
+--- vlc-3.0.24.orig/modules/video_output/wayland/xdg-shell.c
++++ vlc-3.0.24/modules/video_output/wayland/xdg-shell.c
+@@ -288,7 +288,7 @@ static int Open(vout_window_t *wnd, cons
+ 
+     char *title = var_InheritString(wnd, "video-title");
+     xdg_surface_set_title(xdg_surface,
+-                          (title != NULL) ? title : _("VLC media player"));
++                          (title != NULL) ? title : "VLC Stereo");
+     free(title);
+ 
+     char *app_id = var_InheritString(wnd, "app-id");
+Index: vlc-3.0.24/modules/video_output/xcb/window.c
+===================================================================
+--- vlc-3.0.24.orig/modules/video_output/xcb/window.c
++++ vlc-3.0.24/modules/video_output/xcb/window.c
+@@ -430,7 +430,7 @@ static int Open (vout_window_t *wnd, con
+        The limitation is partially with ICCCM and partially with VLC.
+        For Latin script languages, you may need to strip accents.
+        For other scripts, you will need to transliterate into Latin. */
+-                    vlc_pgettext ("ASCII", "VLC media player"));
++                    "VLC Stereo");
+ 
+     set_ascii_prop (conn, window, XA_WM_ICON_NAME,
+     /* xgettext: This is a plain ASCII spelling of "VLC"
+@@ -461,7 +461,7 @@ static int Open (vout_window_t *wnd, con
+         free (title);
+     }
+     else
+-        set_string (conn, window, utf8, net_wm_name, _("VLC media player"));
++        set_string (conn, window, utf8, net_wm_name, "VLC Stereo");
+ 
+     xcb_atom_t net_wm_icon_name = get_atom (conn, net_wm_icon_name_ck);
+     set_string (conn, window, utf8, net_wm_icon_name, _("VLC"));
+Index: vlc-3.0.24/share/solid/vlc-openbd.desktop
+===================================================================
+--- vlc-3.0.24.orig/share/solid/vlc-openbd.desktop
++++ vlc-3.0.24/share/solid/vlc-openbd.desktop
+@@ -4,6 +4,6 @@ Type=Service
+ Actions=open;
+ 
+ [Desktop Action open]
+-Name=Open with VLC media player
++Name=Open with VLC Stereo
+ Exec=vlc bluray://%d
+ Icon=vlc
+Index: vlc-3.0.24/share/solid/vlc-opencda.desktop
+===================================================================
+--- vlc-3.0.24.orig/share/solid/vlc-opencda.desktop
++++ vlc-3.0.24/share/solid/vlc-opencda.desktop
+@@ -4,7 +4,7 @@ Type=Service
+ Actions=open;
+ 
+ [Desktop Action open]
+-Name=Open with VLC media player
++Name=Open with VLC Stereo
+ Exec=vlc cdda://%d
+ Icon=vlc
+ 
+Index: vlc-3.0.24/share/solid/vlc-opendvd.desktop
+===================================================================
+--- vlc-3.0.24.orig/share/solid/vlc-opendvd.desktop
++++ vlc-3.0.24/share/solid/vlc-opendvd.desktop
+@@ -4,7 +4,7 @@ Type=Service
+ Actions=open;
+ 
+ [Desktop Action open]
+-Name=Open with VLC media player
++Name=Open with VLC Stereo
+ Exec=vlc dvd://%d
+ Icon=vlc
+ 
+Index: vlc-3.0.24/share/solid/vlc-openvcd.desktop
+===================================================================
+--- vlc-3.0.24.orig/share/solid/vlc-openvcd.desktop
++++ vlc-3.0.24/share/solid/vlc-openvcd.desktop
+@@ -4,7 +4,7 @@ Type=Service
+ Actions=open;
+ 
+ [Desktop Action open]
+-Name=Open with VLC media player
++Name=Open with VLC Stereo
+ Exec=vlc vcd://%d
+ Icon=vlc
+ 
+Index: vlc-3.0.24/share/vlc-openbd.desktop.in
+===================================================================
+--- vlc-3.0.24.orig/share/vlc-openbd.desktop.in
++++ vlc-3.0.24/share/vlc-openbd.desktop.in
+@@ -1,6 +1,6 @@
+ [Desktop Entry]
+ Version=1.0
+-Name=VLC media player (Blu-ray)
++Name=VLC Stereo (Blu-ray)
+ NoDisplay=true
+ Exec=@bindir@/vlc --started-from-file bluray://%f
+ Icon=vlc
+Index: vlc-3.0.24/share/vlc-opencda.desktop.in
+===================================================================
+--- vlc-3.0.24.orig/share/vlc-opencda.desktop.in
++++ vlc-3.0.24/share/vlc-opencda.desktop.in
+@@ -1,6 +1,6 @@
+ [Desktop Entry]
+ Version=1.0
+-Name=VLC media player (Audio CD)
++Name=VLC Stereo (Audio CD)
+ NoDisplay=true
+ Exec=@bindir@/vlc --started-from-file cdda://%f
+ Icon=vlc
+Index: vlc-3.0.24/share/vlc-opendvd.desktop.in
+===================================================================
+--- vlc-3.0.24.orig/share/vlc-opendvd.desktop.in
++++ vlc-3.0.24/share/vlc-opendvd.desktop.in
+@@ -1,6 +1,6 @@
+ [Desktop Entry]
+ Version=1.0
+-Name=VLC media player (DVD)
++Name=VLC Stereo (DVD)
+ NoDisplay=true
+ Exec=@bindir@/vlc --started-from-file dvd://%f
+ Icon=vlc
+Index: vlc-3.0.24/share/vlc-openvcd.desktop.in
+===================================================================
+--- vlc-3.0.24.orig/share/vlc-openvcd.desktop.in
++++ vlc-3.0.24/share/vlc-openvcd.desktop.in
+@@ -1,6 +1,6 @@
+ [Desktop Entry]
+ Version=1.0
+-Name=VLC media player (VCD)
++Name=VLC Stereo (VCD)
+ NoDisplay=true
+ Exec=@bindir@/vlc --started-from-file vcd://%f
+ Icon=vlc
+Index: vlc-3.0.24/share/vlc.desktop.in
+===================================================================
+--- vlc-3.0.24.orig/share/vlc.desktop.in
++++ vlc-3.0.24/share/vlc.desktop.in
+@@ -1,222 +1,222 @@
+ [Desktop Entry]
+ Version=1.0
+-Name=VLC media player
++Name=VLC Stereo
+ GenericName=Media player
+ Comment=Read, capture, broadcast your multimedia streams
+-Name[af]=VLC-mediaspeler
++Name[af]=VLC Stereo
+ GenericName[af]=Mediaspeler
+ Comment[af]=Lees, vang, send u multimediastrome
+-Name[am]=የ ቪኤልሲ መገናኛ ማጫወቻ
++Name[am]=VLC Stereo
+ GenericName[am]=የ መገናኛ ማጫወቻ
+ Comment[am]=የ እርስዎን በርካታ መገናኛ ማንበቢያ: መያዣ ማስተላለፊያ
+-Name[ar]=مشغل الوسائط VLC
++Name[ar]=VLC Stereo
+ GenericName[ar]=مشغل الوسائط
+ Comment[ar]=اقرأ ، التقط ، و بث تدفقات وسائطك المتعددة
+-Name[as_IN]=VLC মিডিয়া প্লেয়াৰ
++Name[as_IN]=VLC Stereo
+ GenericName[as_IN]=মিডিয়া প্লেয়াৰ
+ Comment[as_IN]=আপোনাৰ মাল্টিমিডিয়া ষ্ট্ৰীমসমূহ পঢ়ক, কেপচাৰ কৰক, সম্প্ৰচাৰ কৰক
+-Name[ast]=Reproductor multimedia VLC
++Name[ast]=VLC Stereo
+ GenericName[ast]=Reproductor multimedia
+ Comment[ast]=Llei, captura y emiti fluxos multimedia
+-Name[az]=VLC media pleyeri
++Name[az]=VLC Stereo
+ GenericName[az]=Media pleyeri
+ Comment[az]=Multinedia axınlarını oxudun, yazın və yayımlayın
+-Name[be]=Медыяпрайгравальнік VLC
++Name[be]=VLC Stereo
+ GenericName[be]=Медыяпрайгравальнік
+ Comment[be]=Чытаць, лавіць і трансляваць мультымедыйныя патокі
+-Name[bg]=Медиен плейър VLC
++Name[bg]=VLC Stereo
+ GenericName[bg]=Медиен плейър
+ Comment[bg]=Прочитане, прихващане и излъчване на мултимедийни потоци.
+-Name[bn_BD]=VLC মিডিয়া প্লেয়ার
++Name[bn_BD]=VLC Stereo
+ GenericName[bn_BD]=মিডিয়া প্লেয়ার
+ Comment[bn_BD]=আপনার মাল্টিমিডিয়া স্ট্রীম পড়ুন, ধরে রাখুন এবং ছড়িয়ে দিন
+-Name[br]=VLC lenner mediaoù
++Name[br]=VLC Stereo
+ GenericName[br]=Lenner mediaoù
+ Comment[br]=Lenn, enrollañ, skignañ ho froudoù liesvedia
+-Name[ca]=Reproductor multimèdia VLC
++Name[ca]=VLC Stereo
+ GenericName[ca]=Reproductor multimèdia
+ Comment[ca]=Reproduïu, captureu i emeteu fluxos multimèdia
+-Name[co]=Lettore multimedia VLC
++Name[co]=VLC Stereo
+ GenericName[co]=Lettore multimedia
+ Comment[co]=Leghje, cattura, diffonde i vostri flussi multimedia
+-Name[cs]=Multimediální přehrávač VLC
++Name[cs]=VLC Stereo
+ GenericName[cs]=Multimediální přehrávač
+ Comment[cs]=Čtěte, zachytávejte, a vysílejte své multimediální proudy
+-Name[cy]=Chwaraeydd VLC
++Name[cy]=VLC Stereo
+ GenericName[cy]=Chwaraeydd cyfryngau
+ Comment[cy]=Darllen, cipio a darlledu dy ffrydiau aml-gyfrwng
+-Name[da]=VLC media player
++Name[da]=VLC Stereo
+ GenericName[da]=Medieafspiller
+ Comment[da]=Læs, indspil, transmittér dine multimediestreams
+-Name[de]=VLC Media Player
++Name[de]=VLC Stereo
+ GenericName[de]=Medienwiedergabe
+ Comment[de]=Wiedergabe, Aufnahme und Verbreitung Ihrer Multimedia-Streams
+-Name[el]=Αναπαραγωγός πολυμέσων VLC
++Name[el]=VLC Stereo
+ GenericName[el]=Αναπαραγωγός πολυμέσων
+ Comment[el]=Διαβάστε, καταγράψτε, μεταδώστε τα πολυμέσα σας
+-Name[en_GB]=VLC media player
++Name[en_GB]=VLC Stereo
+ GenericName[en_GB]=Media player
+ Comment[en_GB]=Read, capture, broadcast your multimedia streams
+-Name[es]=Reproductor multimedia VLC
++Name[es]=VLC Stereo
+ GenericName[es]=Reproductor multimedia
+ Comment[es]=Lea, capture y emita sus contenidos multimedia
+-Name[es_MX]=Reproductor multimedia VLC
++Name[es_MX]=VLC Stereo
+ GenericName[es_MX]=Reproductor multimedia
+ Comment[es_MX]=Lea, capture, emita sus transmisiones multimedia
+-Name[et]=VLC meediaesitaja
++Name[et]=VLC Stereo
+ GenericName[et]=Meediaesitaja
+ Comment[et]=Multimeediafailide ja -voogude taasesitamine, lindistamine ja edastamine
+-Name[eu]=VLC multimedia-erreproduzigailua
++Name[eu]=VLC Stereo
+ GenericName[eu]=Multimedia irakurgailua
+ Comment[eu]=Irakurri, hartu, igorri zure multimedia jarioak
+-Name[fi]=VLC-mediasoitin
++Name[fi]=VLC Stereo
+ GenericName[fi]=Mediasoitin
+ Comment[fi]=Toista, tallenna ja lähetä multimediaa
+-Name[fr]=Lecteur multimédia VLC
++Name[fr]=VLC Stereo
+ GenericName[fr]=Lecteur multimédia
+ Comment[fr]=Lit, capture, diffuse vos flux multimédias
+-Name[fy]=VLC media player
++Name[fy]=VLC Stereo
+ GenericName[fy]=Mediaspiler
+ Comment[fy]=Jo multimedia-streams lêze, opnimme en útstjoere
+-Name[ga]=Seinnteoir meán VLC
++Name[ga]=VLC Stereo
+ GenericName[ga]=Seinnteoir meán
+ Comment[ga]=Léigh, gabh, craol do shruthanna ilmheán
+-Name[gd]=Cluicheadair mheadhanan VLC
++Name[gd]=VLC Stereo
+ GenericName[gd]=Cluicheadair mheadhanan
+ Comment[gd]=Leugh, glac is craol sruthan ioma-mheadhain
+-Name[gl]=Reprodutor multimedia VLC
++Name[gl]=VLC Stereo
+ GenericName[gl]=Reprodutor multimedia
+ Comment[gl]=Lea, capture e emita os seus fluxos multimedia
+-Name[he]=נגן המדיה VLC
++Name[he]=VLC Stereo
+ GenericName[he]=נגן מדיה
+ Comment[he]=קריאה, לכידה ושידור של תזרימי המולטימדיה שלך
+-Name[hi]=वीएलसी मीडिया प्लेयर
++Name[hi]=VLC Stereo
+ GenericName[hi]=मीडिया प्लेयर
+ Comment[hi]=अपनी मल्टीमीडिया स्ट्रीम को पढ़ें, रिकॉर्ड करें, प्रसारित करें
+-Name[hu]=VLC médialejátszó
++Name[hu]=VLC Stereo
+ GenericName[hu]=Médialejátszó
+ Comment[hu]=Multimédia adatfolyamok olvasása, felvétele és továbbítása
+-Name[id]=Pemutar media VLC
++Name[id]=VLC Stereo
+ GenericName[id]=Pemutar Media
+ Comment[id]=Baca, tangkap, pancarkan/broadcast aliran multimedia
+-Name[ie]=Reproductor de media VLC
++Name[ie]=VLC Stereo
+ GenericName[ie]=Reproductor de media
+ Comment[ie]=Leer, registrar e difuser vor fluvies multimedia
+-Name[is]=VLC spilarinn
++Name[is]=VLC Stereo
+ GenericName[is]=Margmiðlunarspilari
+ Comment[is]=Lesa, taka upp og útvarpa margmiðlunarstreymi
+-Name[it]=Lettore multimediale VLC
++Name[it]=VLC Stereo
+ GenericName[it]=Lettore multimediale
+ Comment[it]=Leggi, cattura, trasmetti i tuoi flussi multimediali
+-Name[ja]=VLCメディアプレイヤー
++Name[ja]=VLC Stereo
+ GenericName[ja]=メディアプレイヤー
+ Comment[ja]=マルチメディアストリームの読み込み、キャプチャー、ブロードキャスト
+-Name[ka]=VLC მედიადამკვრელი
++Name[ka]=VLC Stereo
+ GenericName[ka]=მედიაფაილების დამკვრელი
+ Comment[ka]=გახსენით, გადაიღეთ, გაუშვით მედიაფაილები ეთერში
+-Name[kab]=Imeɣri n umidya VLC
++Name[kab]=VLC Stereo
+ GenericName[kab]=Imeɣri n umidya
+ Comment[kab]=Ɣeṛ, ṭṭef agdil, suffeɣ-d isuddam n umidya-ik
+-Name[km]=កម្មវិធី​ចាក់​មេឌៀ VLC
++Name[km]=VLC Stereo
+ GenericName[km]=កម្មវិធី​ចាក់​មេឌៀ
+ Comment[km]=អាន ចាប់យក ប្រកាស​ស្ទ្រីម​ពហុមេឌៀ​របស់​អ្នក
+-Name[ko]=VLC 미디어 플레이어
++Name[ko]=VLC Stereo
+ GenericName[ko]=미디어 플레이어
+ Comment[ko]=당신의 멀티미디어 스트림을 캡쳐 및 방송 할 수 있습니다
+-Name[lt]=VLC leistuvė
++Name[lt]=VLC Stereo
+ GenericName[lt]=Leistuvė
+ Comment[lt]=Groti, įrašyti, siųsti įvairialypės terpės kūrinius
+-Name[lv]=VLC mediju atskaņotājs
++Name[lv]=VLC Stereo
+ GenericName[lv]=Mediju atskaņotājs
+ Comment[lv]=Lasiet, tveriet un apraidiet savas multimediju straumes
+-Name[ml]=VLC മീഡിയ പ്ലെയർ
++Name[ml]=VLC Stereo
+ GenericName[ml]=മീഡിയ പ്ലെയർ
+ Comment[ml]=നിങ്ങളുടെ മൾട്ടിമീഡിയ സ്ട്രീമുകൾ റീഡ് ചെയ്യുക, ക്യാപ്‌ചർ ചെയ്യുക, പ്രക്ഷേപണം ചെയ്യുക
+-Name[mn]=VLC дамжуулга тоглуулагч
++Name[mn]=VLC Stereo
+ GenericName[mn]=Дамжуулга тоглуулагч
+ Comment[mn]=Таны дамжуулгын урсгалыг унших, бичиж авах, цацах
+-Name[mr]=VLC मीडिया प्लेअर
++Name[mr]=VLC Stereo
+ GenericName[mr]=मीडिया प्लेअर
+ Comment[mr]=आपले मल्टीमिडिया प्रवाह बघा, हस्तगत करा, प्रसारित करा
+-Name[ms]=Pemain media VLC
++Name[ms]=VLC Stereo
+ GenericName[ms]=Pemain media
+ Comment[ms]=Baca, tangkap, siarkan strim multimedia anda
+-Name[my]=VLC မီဒီယာ ပြစက်
++Name[my]=VLC Stereo
+ GenericName[my]=မီဒီယာ ပြစက်
+ Comment[my]=သင်၏ မာတီမီဒီယာ တိုက်ရိုက်လွှင့်ပြ စီးကြောင်းများကို ဖတ်၊ ဖမ်းယူ၊ ထုတ်လွင့်ခြင်း
+-Name[nb]=VLC media player
++Name[nb]=VLC Stereo
+ GenericName[nb]=Mediespiller
+ Comment[nb]=Innless, ta opp, og kringkast dine multimediastrømmer
+-Name[ne]=VLC मिडिया प्लेयर
++Name[ne]=VLC Stereo
+ GenericName[ne]=मिडिया प्लेयर
+ Comment[ne]=पढ्नुहोस्, क्याप्चर गर्नुहोस्, तपाईंका मल्टिमिडिया स्ट्रिमहरू प्रसारण गर्नुहोस्
+-Name[nl]=VLC media player
++Name[nl]=VLC Stereo
+ GenericName[nl]=Mediaspeler
+ Comment[nl]=Uw multimedia-streams lezen, opnemen en uitzenden
+-Name[nn]=VLC mediespelar
++Name[nn]=VLC Stereo
+ GenericName[nn]=Mediespelar
+ Comment[nn]=Spel av, ta opp og send ut multimedia
+-Name[oc]=Lector multimèdia VLC
++Name[oc]=VLC Stereo
+ GenericName[oc]=Lector multimèdia
+ Comment[oc]=Legissètz, capturatz, difusatz vòstres fluxes multimèdia
+-Name[pa]=VLC ਮੀਡਿਆ ਪਲੇਅਰ
++Name[pa]=VLC Stereo
+ GenericName[pa]=ਮੀਡਿਆ ਪਲੇਅਰ
+ Comment[pa]=ਆਪਣੀ ਮਲਟੀਮੀਡਿਆ ਸਟਰੀਮ ਪੜ੍ਹੋ, ਕੈਪਚਰ ਤੇ ਬਰਾਡਕਾਸਟ ਕਰੋ
+-Name[pl]=VLC media player
++Name[pl]=VLC Stereo
+ GenericName[pl]=Odtwarzacz multimedialny
+ Comment[pl]=Odczytywanie, przechwytywanie i nadawanie strumieni multimedialnych
+-Name[pt_BR]=Reprodutor de Mídias VLC
++Name[pt_BR]=VLC Stereo
+ GenericName[pt_BR]=Reprodutor de Mídias
+ Comment[pt_BR]=Reproduza, capture e transmita os seus transmissões multimídia
+-Name[pt_PT]=VLC media player
++Name[pt_PT]=VLC Stereo
+ GenericName[pt_PT]=Reprodutor de multimédia
+ Comment[pt_PT]=Ler, capturar, transmitir as suas emissões de multimédia
+-Name[ro]=Redor media VLC
++Name[ro]=VLC Stereo
+ GenericName[ro]=Redor media
+ Comment[ro]=Citește, capturează, difuzează fluxurile multimedia
+-Name[ru]=Медиаплеер VLC
++Name[ru]=VLC Stereo
+ GenericName[ru]=Медиаплеер
+ Comment[ru]=Универсальный проигрыватель видео и аудио
+-Name[sc]=Leghidore multimediale VLC
++Name[sc]=VLC Stereo
+ GenericName[sc]=Leghidore multimediale
+ Comment[sc]=Leghe, catura, trasmite sos flussos multimediales tuos
+-Name[sk]=VLC media player
++Name[sk]=VLC Stereo
+ GenericName[sk]=Prehrávač médií
+ Comment[sk]=Načítavajte, zaznamenávajte, vysielajte svoje multimediálne streamy
+-Name[sl]=Predvajalnik VLC
++Name[sl]=VLC Stereo
+ GenericName[sl]=Predvajalnik predstavnih vsebin
+ Comment[sl]=Berite, zajemite, oddajajte vaše večpredstavne pretoke
+-Name[sr]=ВЛЦ медијски плејер
++Name[sr]=VLC Stereo
+ GenericName[sr]=Медијски плејер
+ Comment[sr]=Читај, хватај, емитуј своје мултимедијалне токове
+-Name[sq]=VLC lexues media
++Name[sq]=VLC Stereo
+ GenericName[sq]=Lexues Media
+ Comment[sq]=Lexoni, kapni dhe transmetoni transmetimet tuaja multimedia
+-Name[sv]=VLC media player
++Name[sv]=VLC Stereo
+ GenericName[sv]=Mediaspelare
+ Comment[sv]=Läs, fånga, sänd dina multimediaströmmar
+-Name[te]=VLC మాధ్యమ ప్రదర్శకం
++Name[te]=VLC Stereo
+ GenericName[te]=మాధ్యమ ప్రదర్శకం
+ Comment[te]=మీ బహుళమాధ్యమ ప్రవాహాలను చదువు, బంధించు మరియు ప్రసారం చేయి
+-Name[th]=โปรแกรมเล่นสื่อ VLC
++Name[th]=VLC Stereo
+ GenericName[th]=โปรแกรมเล่นสื่อ
+ Comment[th]=อ่าน จับ และถ่ายทอดสตรีมมัลติมีเดียของคุณ
+-Name[tr]=VLC ortam oynatıcısı
++Name[tr]=VLC Stereo
+ GenericName[tr]=Ortam oynatıcısı
+ Comment[tr]=Çoklu ortam akışlarınızı okuyun, yakalayın, yayınlayın
+-Name[uk]=Медіапрогравач VLC
++Name[uk]=VLC Stereo
+ GenericName[uk]=Медіапрогравач
+ Comment[uk]=Читання, захоплення та поширення ваших мультимедійних потоків
+-Name[vi]=Trình phát media VLC
++Name[vi]=VLC Stereo
+ GenericName[vi]=Trình phát Media
+ Comment[vi]=Đọc, chụp, phát các luồng đa phương tiện của bạn
+-Name[wa]=Djouweu d' media VLC
++Name[wa]=VLC Stereo
+ GenericName[wa]=Djouweu d' media
+ Comment[wa]=Lét, egaloye, evoye vos floûs multimedia
+-Name[zh_CN]=VLC 媒体播放器
++Name[zh_CN]=VLC Stereo
+ GenericName[zh_CN]=媒体播放器
+ Comment[zh_CN]=读取、捕获、广播您的多媒体流
+-Name[zh_TW]=VLC 媒體播放器
++Name[zh_TW]=VLC Stereo
+ GenericName[zh_TW]=媒體播放器
+ Comment[zh_TW]=讀取、擷取與廣播您的多媒體串流
+ Exec=@bindir@/vlc --started-from-file %U
