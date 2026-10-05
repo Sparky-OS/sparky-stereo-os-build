@@ -9,7 +9,7 @@
 # Never listed: hardware-found.list (the hardware setup installs those per machine), aptus.list
 # and base-remove.list (not installed), and emulation-3d.list (emulators install from APTus
 # Stereo AppCenter, never from the ISO; prepack.sh --final purges them).
-# Last update 2026/10/04
+# Last update 2026/10/05
 import os, re, subprocess, sys
 
 REPO = os.environ.get('REPO', '/K3D/temp/sparky-os/repo')
@@ -42,6 +42,11 @@ def lst(name):
 # when make-lists.py ran.
 OURS_HARDWARE = ['pipewire-bluez5-codec-aac']
 
+# The edition's video player, VLC Stereo (installed beside the distribution's VLC; its PipeWire
+# output is a package of its own), and the audio output that goes with it.
+OURS_PLAYER = ['vlc-stereo']
+OURS_PLAYER_OUTPUT = ['vlc-stereo-plugin-pipewire']
+
 # Optional inside an otherwise essential list.
 HARDWARE_OPTIONAL = {'libfdk-aac2', 'displaylink-driver', 'evdi-dkms', 'hw-probe', 'memtest86+', 'inxi'}
 SYSTEM_OPTIONAL = {'distrobox', 'timeshift', 'waydroid'}
@@ -60,9 +65,9 @@ STEREO_STACK = ['linux-image-sparky-stereo', 'linux-headers-sparky-stereo'] + [
 META = {
     'sparky-stereo-desktop': (
         'Sparky Stereo desktop',
-        'This meta package installs the desktop of Sparky Stereo OS: the look, console and system information of the edition, time synchronisation and the applications beyond the KDE edition.',
-        ['sparky-stereo-console', 'sparky-stereo-info', 'sparky-stereo-look', 'sparky-stereo-time'] + lst('look'),
-        lst('apps')),
+        'This meta package installs the desktop of Sparky Stereo OS: the look, console and system information of the edition, time synchronisation, VLC Stereo as the video player, and the applications beyond the KDE edition.',
+        ['sparky-stereo-console', 'sparky-stereo-info', 'sparky-stereo-look', 'sparky-stereo-time'] + lst('look') + OURS_PLAYER,
+        lst('apps') + OURS_PLAYER_OUTPUT),
     'sparky-stereo-gaming': (
         'Sparky Stereo gaming',
         'This meta package installs the gaming tools, the games and the runtimes third-party programs and games expect, for Sparky Stereo OS. The emulators are not included: they install from APTus Stereo AppCenter.',
