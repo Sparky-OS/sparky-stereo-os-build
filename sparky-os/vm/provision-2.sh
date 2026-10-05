@@ -15,7 +15,10 @@ echo "== start $(date -Is)"
 
 # Our repository (unsigned while developing) and the edition's apt pins.
 echo 'deb [trusted=yes] file:/srv/sparky-work/repo ./' >/etc/apt/sources.list.d/sparky-stereo.list
-cp /srv/sparky-os/apt/90sparky-stereo-repo /srv/sparky-os/apt/90sparky-stereo-ffmpeg /etc/apt/preferences.d/
+# The pin for our origin (one owner on an installed system: the sparky-stereo-apt package, same path).
+rm -f /etc/apt/preferences.d/90sparky-stereo-repo
+cp /srv/sparky-os/apt/sparky-stereo /etc/apt/preferences.d/sparky-stereo
+cp /srv/sparky-os/apt/90sparky-stereo-ffmpeg /etc/apt/preferences.d/
 "${APT[@]}" update
 # Our pinned stack (KWin, KScreen, libkscreen) replaces Debian's.
 "${APT[@]}" full-upgrade || echo "!! full-upgrade"

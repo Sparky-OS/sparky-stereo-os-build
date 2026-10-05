@@ -5,8 +5,10 @@
 # Creates the signing key of the Sparky Stereo repository, once, in its own GnuPG home
 # (mode 700, never ~/.gnupg): an Ed25519 key that only signs (no encryption subkey), then
 # prints its fingerprint and exports the public key as
-#   sparky-stereo-archive-keyring.gpg   (binary: goes to /usr/share/keyrings/)
-#   sparky-stereo-archive-keyring.asc   (armoured text, for the web)
+#   sparky-stereo-repo.asc   (ASCII armoured, like SparkyLinux's sparky-repo.asc: the
+#                             sparky-stereo-keyring package installs it as
+#                             /etc/apt/trusted.gpg.d/sparky-stereo-repo.asc and the
+#                             repository serves it at its root)
 # Run it yourself, in a terminal. It asks before overwriting anything.
 #
 # Usage: make-signing-key.sh --name "Sparky Stereo Archive Key" --email ADDRESS \
@@ -22,7 +24,7 @@
 #                    the GnuPG home can sign as the repository: keep it mode 700, off backups
 #                    that leave your machine
 #   --home DIR       GnuPG home (default ~/.sparky-stereo-repo-gnupg)
-#   --out DIR        where the exported public key goes (default the current folder)
+#   --out DIR        where the exported public key (sparky-stereo-repo.asc) goes (default the current folder)
 #   --assume-yes     do not ask before overwriting (for tests only)
 # Last update 2026/10/05
 set -euo pipefail
@@ -53,9 +55,7 @@ if [ -d "$HOME_DIR" ] && "${G[@]}" --list-secret-keys 2>/dev/null | grep -q '^se
 	confirm "$HOME_DIR already holds a secret key. Create another one beside it?" || exit 1
 fi
 mkdir -p "$OUT"
-for f in sparky-stereo-archive-keyring.gpg sparky-stereo-archive-keyring.asc; do
-	if [ -e "$OUT/$f" ]; then confirm "$OUT/$f exists. Overwrite?" || exit 1; fi
-done
+if [ -e "$OUT/sparky-stereo-repo.asc" ]; then confirm "$OUT/sparky-stereo-repo.asc exists. Overwrite?" || exit 1; fi
 mkdir -p "$HOME_DIR"
 chmod 700 "$HOME_DIR"
 GPG_TTY=$(tty 2>/dev/null || true)
@@ -67,10 +67,9 @@ else
 	"${G[@]}" --quick-generate-key "$UID_STR" ed25519 sign "$EXPIRE"
 fi
 FPR=$("${G[@]}" --with-colons --fingerprint "$EMAIL" | awk -F: '/^fpr:/ {print $10; exit}')
-"${G[@]}" --export "$FPR" >"$OUT/sparky-stereo-archive-keyring.gpg"
-"${G[@]}" --armor --export "$FPR" >"$OUT/sparky-stereo-archive-keyring.asc"
-chmod 644 "$OUT"/sparky-stereo-archive-keyring.*
+"${G[@]}" --armor --export "$FPR" >"$OUT/sparky-stereo-repo.asc"
+chmod 644 "$OUT/sparky-stereo-repo.asc"
 echo
 echo "fingerprint: $FPR"
-echo "public key:  $OUT/sparky-stereo-archive-keyring.gpg and .asc"
+echo "public key:  $OUT/sparky-stereo-repo.asc"
 echo "publish with: SPARKY_REPO_GNUPGHOME=$HOME_DIR SPARKY_REPO_KEY=$FPR publish-tree.sh SRC DEST"

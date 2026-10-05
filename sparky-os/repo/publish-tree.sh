@@ -8,11 +8,19 @@
 #   dists/mashtabba/Release, InRelease, Release.gpg
 #   dists/mashtabba/main/binary-amd64/Packages{,.gz,.xz}   (Architecture: amd64)
 #   dists/mashtabba/main/binary-all/Packages{,.gz,.xz}     (Architecture: all, as apt asks for them)
+#   dists/mashtabba/main/source/Sources{,.gz,.xz}          (only when source packages are given)
+# SparkyLinux's shape with our names: Origin and Label are the distribution ("Sparky Stereo
+# OS"), the Codename is the version of the edition (mashtabba, tied to a Debian: a new
+# Debian means a new codename of the same edition) and the Suite is its role (testing; it
+# becomes stable when the next codename starts). The directory is dists/<codename>.
 #   .../by-hash/SHA256/<hash>   (Acquire-By-Hash: yes; the last days' files are kept for
 #                                clients that are in the middle of an update)
-#   index.html, sparky-stereo-archive-keyring.gpg and .asc (the public key, exported here)
+#   index.html, sparky-stereo-repo.asc (the public key, armoured, exported here)
 # Only the newest version of each package (per architecture) goes into the tree; the older
-# ones left out are listed. SRC (also its carried/ folder) is only read, never written.
+# ones left out are listed. Source packages (.dsc and the files it names) are taken from
+# $SPARKY_REPO_SOURCES (default SRC/source, if it exists) when the .dsc version is the version
+# the binary was built from; the sources index exists only if at least one matches, and the
+# source names without a match are listed (publishing sources is then partial). SRC (also its carried/ folder) is only read, never written.
 # Safe to run again: unchanged pool files are kept, files of versions that are no longer the
 # newest are removed from the pool, and when nothing changed the signed Release stays as it was.
 #
@@ -24,10 +32,12 @@
 # Last update 2026/10/05
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-SUITE=mashtabba
+CODENAME=mashtabba
+SUITE=testing
+ORIGIN="Sparky Stereo OS"
 COMPONENT=main
 EDITION_VERSION=9
-DESCRIPTION="Sparky Stereo OS 9 Mashtabba: the stereo stack and the edition's own packages"
+DESCRIPTION="Sparky Stereo OS testing repository"
 KEEP_BYHASH_DAYS=3
 
 [ $# -ge 2 ] || { sed -n '/^# Usage/,/^# Last/p' "$0" | sed 's/^# \?//' >&2; exit 2; }
@@ -56,6 +66,8 @@ W=$(mktemp -d "${TMPDIR:-/K3D/temp}/publish-tree.XXXXXX")
 trap 'rm -rf "${W:?}"' EXIT
 
 # 1. Choose the newest version of each package and where it goes in the pool.
+SOURCES_DIR=${SPARKY_REPO_SOURCES:-$SRC/source}
+export SOURCES_DIR
 python3 - "$SRC" "$W/selection.tsv" "$W/leftout.txt" "${EXTRA[@]}" <<'PY'
 import os, sys, subprocess
 
@@ -124,21 +136,57 @@ for path, nested in debs:
             k, v = line.split(':', 1)
             f[k] = v.strip()
     pkg, ver, arch = f['Package'], f['Version'], f['Architecture']
-    srcname = f.get('Source', pkg).split()[0]
+    sf = f.get('Source', pkg)
+    srcname = sf.split()[0]
+    srcver = sf[sf.index('(') + 1:sf.index(')')] if '(' in sf else ver
     key = (pkg, arch)
     allv.setdefault(key, []).append((ver, os.path.basename(path)))
     cur = best.get(key)
     # newest wins; the same version in the top folder beats the same one in carried/
     if cur is None or vercmp(ver, cur[0]) > 0 or (vercmp(ver, cur[0]) == 0 and cur[3] and not nested):
-        best[key] = (ver, path, srcname, nested)
+        best[key] = (ver, path, srcname, nested, srcver)
 
 def pooldir(name):
     return name[:4] if name.startswith('lib') and len(name) > 3 else name[0]
 
 with open(out_sel, 'w') as o:
-    for (pkg, arch), (ver, path, srcname, _) in sorted(best.items()):
+    for (pkg, arch), (ver, path, srcname, _, _sv) in sorted(best.items()):
         o.write('\t'.join([path, 'pool/main/%s/%s/%s' % (pooldir(srcname), srcname, os.path.basename(path)),
                            pkg, ver, arch]) + '\n')
+# Source packages: a .dsc counts when its version is the one a selected binary was built from.
+srcdir = os.environ.get('SOURCES_DIR', '')
+need = {}
+for (pkg, arch), (ver, path, srcname, _, sv) in best.items():
+    need.setdefault((srcname, sv), []).append(pkg)
+matched = set()
+if srcdir and os.path.isdir(srcdir):
+    for fn in sorted(os.listdir(srcdir)):
+        if not fn.endswith('.dsc'):
+            continue
+        txt = open(os.path.join(srcdir, fn), errors='replace').read()
+        name = version = None
+        files = []
+        infiles = False
+        for line in txt.splitlines():
+            if line.startswith('Source:'): name = line.split(':', 1)[1].strip()
+            elif line.startswith('Version:'): version = line.split(':', 1)[1].strip()
+            elif line.startswith('Files:'): infiles = True; continue
+            elif infiles and line.startswith(' '):
+                p = line.split()
+                if len(p) == 3: files.append(p[2])
+                continue
+            else: infiles = False
+        if (name, version) in need and (name, version) not in matched:
+            names = [fn] + files
+            if all(os.path.isfile(os.path.join(srcdir, x)) for x in names):
+                matched.add((name, version))
+                with open(out_sel, 'a') as o:
+                    for x in names:
+                        o.write('\t'.join([os.path.join(srcdir, x), 'pool/main/%s/%s/%s' % (pooldir(name), name, x), name, version, 'source']) + '\n')
+with open(out_left + '.nosource', 'w') as o:
+    for (name, sv), pk in sorted(need.items()):
+        if (name, sv) not in matched:
+            o.write('%s %s (binaries: %s)\n' % (name, sv, ' '.join(sorted(pk))))
 with open(out_left, 'w') as o:
     for (pkg, arch), vs in sorted(allv.items()):
         keep = best[(pkg, arch)][0]
@@ -167,8 +215,30 @@ done < <(comm -13 "$W/wanted.txt" "$W/present.txt")
 find "$DEST/pool" -mindepth 1 -type d -empty -delete 2>/dev/null || true
 
 # 3. Indexes, compressed, and the by-hash copies.
-D=$DEST/dists/$SUITE
+D=$DEST/dists/$CODENAME
 sums=()
+# index_done DIR REL NAME: compress DIR/NAME (already written), copy all three by hash, list them
+index_done() {
+	local dir=$1 rel=$2 name=$3 f h live=
+	gzip -9n -c "$dir/$name" >"$dir/$name.gz"
+	xz -9e -T1 -c "$dir/$name" >"$dir/$name.xz"
+	chmod 644 "$dir/$name"*
+	mkdir -p "$dir/by-hash/SHA256"
+	for f in "$name" "$name.gz" "$name.xz"; do
+		h=$(sha256sum "$dir/$f" | cut -d' ' -f1)
+		cp -f "$dir/$f" "$dir/by-hash/SHA256/$h"
+		chmod 644 "$dir/by-hash/SHA256/$h"
+		sums+=("$h $(stat -c %s "$dir/$f") $rel/$f")
+		live="$live $h"
+	done
+	# by-hash files of older indexes stay a few days for clients mid-update, then go
+	for f in "$dir"/by-hash/SHA256/*; do
+		case " $live " in *" $(basename "$f") "*) continue ;; esac
+		if [ -n "$(find "$f" -mtime +"$KEEP_BYHASH_DAYS" -print 2>/dev/null)" ]; then
+			rm -f "${f:?}"
+		fi
+	done
+}
 for arch in amd64 all; do
 	dir=$D/$COMPONENT/binary-$arch
 	if [ "$arch" != amd64 ] && ! grep -q $'\tall$' "$W/selection.tsv"; then
@@ -182,33 +252,25 @@ for arch in amd64 all; do
 		sed '$d' >"$dir/Packages.new"
 	grep -v -e '^dpkg-scanpackages: info:' -e '^dpkg-scanpackages: warning:' "$W/scan-$arch.log" >&2 || true
 	mv -f "$dir/Packages.new" "$dir/Packages"
-	gzip -9n -c "$dir/Packages" >"$dir/Packages.gz"
-	xz -9e -T1 -c "$dir/Packages" >"$dir/Packages.xz"
-	chmod 644 "$dir"/Packages*
-	mkdir -p "$dir/by-hash/SHA256"
-	live=
-	for f in Packages Packages.gz Packages.xz; do
-		h=$(sha256sum "$dir/$f" | cut -d' ' -f1)
-		cp -f "$dir/$f" "$dir/by-hash/SHA256/$h"
-		chmod 644 "$dir/by-hash/SHA256/$h"
-		sums+=("$h $(stat -c %s "$dir/$f") $COMPONENT/binary-$arch/$f")
-		live="$live $h"
-	done
-	# by-hash files of older indexes stay a few days for clients mid-update, then go
-	for old in "$dir"/by-hash/SHA256/*; do
-		case " $live " in *" $(basename "$old") "*) continue ;; esac
-		if [ -n "$(find "$old" -mtime +"$KEEP_BYHASH_DAYS" -print 2>/dev/null)" ]; then
-			rm -f "${old:?}"
-		fi
-	done
+	index_done "$dir" "$COMPONENT/binary-$arch" Packages
 done
+dir=$D/$COMPONENT/source
+if grep -q $'\tsource$' "$W/selection.tsv"; then
+	mkdir -p "$dir"
+	(cd "$DEST" && dpkg-scansources pool /dev/null 2>"$W/scan-src.log") >"$dir/Sources.new"
+	grep -v -e '^dpkg-scansources: info:' -e '^dpkg-scansources: warning:' "$W/scan-src.log" >&2 || true
+	mv -f "$dir/Sources.new" "$dir/Sources"
+	index_done "$dir" "$COMPONENT/source" Sources
+else
+	rm -rf "${dir:?}"
+fi
 
 # 4. Release, signed. When nothing but the date would change, the signed files stay.
 {
-	echo "Origin: Sparky Stereo"
-	echo "Label: Sparky Stereo"
+	echo "Origin: $ORIGIN"
+	echo "Label: $ORIGIN"
 	echo "Suite: $SUITE"
-	echo "Codename: $SUITE"
+	echo "Codename: $CODENAME"
 	echo "Version: $EDITION_VERSION"
 	echo "Date: @DATE@"
 	echo "Architectures: amd64 all"
@@ -232,15 +294,19 @@ else
 	signed=signed
 fi
 
-# 5. The public key and the page.
-"${GPG[@]}" --export "$FPR" >"$DEST/sparky-stereo-archive-keyring.gpg"
-"${GPG[@]}" --armor --export "$FPR" >"$DEST/sparky-stereo-archive-keyring.asc"
+# 5. The public key (armoured, as SparkyLinux serves theirs) and the page.
+rm -f "$DEST/sparky-stereo-archive-keyring.gpg" "$DEST/sparky-stereo-archive-keyring.asc"
+"${GPG[@]}" --armor --export "$FPR" >"$DEST/sparky-stereo-repo.asc"
 FPR_SPACED=$(echo "$FPR" | sed 's/.\{4\}/& /g; s/ $//')
 sed "s/@FINGERPRINT@/$FPR_SPACED/" "$HERE/index.html" >"$DEST/index.html"
-chmod 644 "$DEST"/sparky-stereo-archive-keyring.* "$DEST/index.html"
+chmod 644 "$DEST/sparky-stereo-repo.asc" "$DEST/index.html"
 
-echo "tree $DEST: $(wc -l <"$W/selection.tsv") packages, $added copied, $removed removed from the pool, Release $signed"
+echo "tree $DEST: $(grep -vc $'\tsource$' "$W/selection.tsv") packages, $(grep -c $'\tsource$' "$W/selection.tsv") source files, $added copied, $removed removed from the pool, Release $signed"
 echo "key fingerprint: $FPR_SPACED"
+if [ -s "$W/leftout.txt.nosource" ]; then
+	echo "source packages missing ($(wc -l <"$W/leftout.txt.nosource")): $(grep -q $'\tsource$' "$W/selection.tsv" && echo "partial sources index" || echo "no sources index, use Types: deb")"
+	sed 's/^/  /' "$W/leftout.txt.nosource"
+fi
 if [ -s "$W/leftout.txt" ]; then
 	echo "older versions left out ($(wc -l <"$W/leftout.txt")):"
 	sed 's/^/  /' "$W/leftout.txt"

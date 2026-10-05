@@ -1,0 +1,91 @@
+#!/bin/bash
+#
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/05
+# Copyright 2026 under the GNU GPL3 License
+# Builds sparky-stereo-apt: the apt source and the pin of the Sparky Stereo OS repository,
+# the way SparkyLinux's sparky-apt ships its own. It installs
+#   /etc/apt/sources.list.d/sparky-stereo.sources   (deb822, Signed-By the key of sparky-stereo-keyring)
+#   /etc/apt/preferences.d/sparky-stereo             (o=Sparky Stereo OS at 1001; the file is
+#                                                     ../../apt/sparky-stereo, its one source)
+# It depends on sparky-stereo-keyring and on sparky-apt: the edition is built on SparkyLinux
+# testing and uses its repository and key too (sparky-apt brings sparky-keyring); we never copy
+# their key or files. Only one package ships the pin for our origin.
+# DEB_SRC=1 makes the source "Types: deb deb-src" (only once the repository publishes a
+# source index for everything it carries; apt must not be sent to files that do not exist).
+# Needs only dpkg-deb.
+# Usage: build.sh   (output goes to $OUT, default the current folder)
+# Last update 2026/10/05
+set -euo pipefail
+HERE=$(cd "$(dirname "$0")" && pwd)
+OUT=${OUT:-$PWD}
+VERSION=${VERSION:-20261005.1~sparky9~0}
+PKG=sparky-stereo-apt
+TYPES=deb
+[ "${DEB_SRC:-0}" = 1 ] && TYPES="deb deb-src"
+W=$(mktemp -d "${TMPDIR:-/K3D/temp}/apt-build.XXXXXX")
+trap 'rm -rf "${W:?}"' EXIT
+D=$W/$PKG
+mkdir -p "$D/DEBIAN" "$D/etc/apt/sources.list.d" "$D/etc/apt/preferences.d" "$D/usr/share/doc/$PKG"
+
+cat >"$D/etc/apt/sources.list.d/sparky-stereo.sources" <<EOS
+Types: $TYPES
+URIs: https://repo.sparkyos.org/
+Suites: mashtabba
+Components: main
+Signed-By: /etc/apt/trusted.gpg.d/sparky-stereo-repo.asc
+EOS
+cp "$HERE/../../apt/sparky-stereo" "$D/etc/apt/preferences.d/sparky-stereo"
+chmod 644 "$D/etc/apt/sources.list.d/sparky-stereo.sources" "$D/etc/apt/preferences.d/sparky-stereo"
+
+cat >"$D/usr/share/doc/$PKG/copyright" <<'EOS'
+Sparky Stereo OS, an edition of SparkyLinux (https://sparkylinux.org), created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack).
+
+Upstream Author(s): 
+    Paweł "pavroo" Pijanowski
+    Daniel Ramos (Capitain Jack)
+
+Files: * 
+    Copyright (C) 2026 Paweł "pavroo" Pijanowski, Daniel Ramos (Capitain Jack)
+    License: GPL-3
+
+License:
+
+    This package is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 3 of the License, or
+    (at your option) any later version.
+ 
+    This package is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+ 
+    You should have received a copy of the GNU General Public License
+    along with this package; if not, see <http://www.gnu.org/licenses/>.
+
+On Debian systems, the complete text of the GNU General Public License
+version 3 can be found in "/usr/share/common-licenses/GPL-3".
+EOS
+chmod 644 "$D/usr/share/doc/$PKG/copyright"
+find "$D" -type d -exec chmod 755 {} +
+
+SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
+cat >"$D/DEBIAN/control" <<EOS
+Package: $PKG
+Version: $VERSION
+Architecture: all
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Installed-Size: $SIZE
+Depends: apt (>= 2.9.26), sparky-apt, sparky-stereo-keyring (>= $VERSION)
+Section: System
+Priority: optional
+Homepage: https://sparkylinux.org
+Description: Sparky Stereo OS apt source
+  The apt source and pin of the Sparky Stereo OS package repository
+  (https://repo.sparkyos.org/, codename mashtabba). The edition is built on
+  SparkyLinux testing, so SparkyLinux's own repository comes with it.
+EOS
+(cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
+mkdir -p "$OUT"
+dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${PKG}_${VERSION}_all.deb" >/dev/null
+echo "built $OUT/${PKG}_${VERSION}_all.deb"

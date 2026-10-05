@@ -26,8 +26,8 @@ for a in "$@"; do
 done
 [ -n "$DEST" ] && [ -d "$DEST" ] || { sed -n '/^# Usage/,/^# Last/p' "$0" | sed 's/^# \?//' >&2; exit 2; }
 DEST=$(cd "$DEST" && pwd)/
-SUITE=mashtabba
-for need in pool "dists/$SUITE/InRelease" "dists/$SUITE/Release" "dists/$SUITE/Release.gpg"; do
+CODENAME=mashtabba
+for need in pool "dists/$CODENAME/InRelease" "dists/$CODENAME/Release" "dists/$CODENAME/Release.gpg"; do
 	[ -e "$DEST$need" ] || { echo "$DEST is not a finished tree: $need is missing" >&2; exit 1; }
 done
 TARGET=${SPARKY_SYNC_TARGET:?set SPARKY_SYNC_TARGET in the local configuration}
@@ -38,21 +38,21 @@ case $TARGET in
 esac
 if [ "$GO" = 1 ]; then echo "== LIVE run to $TARGET"; else OPTS+=(--dry-run); echo "== dry run to $TARGET (use --go to send)"; fi
 R() { rsync "${OPTS[@]}" "$@"; }
-BH="dists/$SUITE/main/binary-*/by-hash"
+BH="dists/$CODENAME/main/*/by-hash"
 
 echo "-- 1. pool"
 R --exclude='*.tmp' "${DEST}pool/" "${TARGET}pool/"
 echo "-- 2. by-hash files, then the indexes"
-R --relative --include="dists/" --include="dists/$SUITE/" --include="dists/$SUITE/main/" \
-	--include="dists/$SUITE/main/binary-*/" --include="dists/$SUITE/main/binary-*/by-hash/***" \
+R --relative --include="dists/" --include="dists/$CODENAME/" --include="dists/$CODENAME/main/" \
+	--include="dists/$CODENAME/main/*/" --include="dists/$CODENAME/main/*/by-hash/***" \
 	--exclude='*' "$DEST./" "$TARGET"
-R --relative --include="dists/" --include="dists/$SUITE/" --include="dists/$SUITE/main/" \
-	--include="dists/$SUITE/main/binary-*/" --include='Packages*' --exclude='*' "$DEST./" "$TARGET" \
+R --relative --include="dists/" --include="dists/$CODENAME/" --include="dists/$CODENAME/main/" \
+	--include="dists/$CODENAME/main/*/" --include='Packages*' --include='Sources*' --exclude='*' "$DEST./" "$TARGET" \
 	--exclude="$BH"
 echo "-- 3. key, page, then Release, Release.gpg, InRelease"
-R "${DEST}sparky-stereo-archive-keyring.gpg" "${DEST}sparky-stereo-archive-keyring.asc" "${DEST}index.html" "$TARGET"
-R "${DEST}dists/$SUITE/Release" "${DEST}dists/$SUITE/Release.gpg" "${TARGET}dists/$SUITE/"
-R "${DEST}dists/$SUITE/InRelease" "${TARGET}dists/$SUITE/"
+R "${DEST}sparky-stereo-repo.asc" "${DEST}index.html" "$TARGET"
+R "${DEST}dists/$CODENAME/Release" "${DEST}dists/$CODENAME/Release.gpg" "${TARGET}dists/$CODENAME/"
+R "${DEST}dists/$CODENAME/InRelease" "${TARGET}dists/$CODENAME/"
 echo "-- 4. deletions"
 R --delete --delete-after "$DEST" "$TARGET"
 [ "$GO" = 1 ] || echo "== dry run only; nothing was sent"
