@@ -1,4 +1,4 @@
-From fe6d28e49ced110a5e2908334c935a78f69239c9 Mon Sep 17 00:00:00 2001
+From c1362f88f2891ea0190cd7e4fc4a9265a0618391 Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Date: Mon, 5 Oct 2026 13:42:11 -0300
 Subject: [PATCH] Add --frame-packing option to emit the frame packing
@@ -19,19 +19,23 @@ flag is clear).
 
 X265_BUILD is incremented as x265_param gets a new member.
 
+SEIFramePacking::writeSEI() carries an inline cppcheck suppression for
+missingOverride, like the other SEI classes it has no override specifier:
+the default build is -std=gnu++98, where the specifier is not available.
+
 Assisted-by: Claude Sonnet via Claude Code
 ---
  doc/reST/cli.rst                 | 17 +++++++++++++
  source/CMakeLists.txt            |  2 +-
- source/common/param.cpp          |  8 +++++++
+ source/common/param.cpp          |  8 ++++++
  source/encoder/frameencoder.cpp  | 11 +++++++++
- source/encoder/sei.h             | 41 ++++++++++++++++++++++++++++++++
+ source/encoder/sei.h             | 42 ++++++++++++++++++++++++++++++++
  source/test/regression-tests.txt |  5 ++++
  source/test/smoke-tests.txt      |  3 +++
  source/x265.h                    |  7 ++++++
- source/x265cli.cpp               |  4 ++++
+ source/x265cli.cpp               |  4 +++
  source/x265cli.h                 |  1 +
- 10 files changed, 98 insertions(+), 1 deletion(-)
+ 10 files changed, 99 insertions(+), 1 deletion(-)
 
 diff --git a/doc/reST/cli.rst b/doc/reST/cli.rst
 index 82040d1e6..9da09f281 100755
@@ -158,10 +162,10 @@ index a3bf77183..471bbda08 100644
  
      if (isSei && m_param->bSingleSeiNal)
 diff --git a/source/encoder/sei.h b/source/encoder/sei.h
-index b7aaaee20..674861ae7 100644
+index b7aaaee20..9e4b56b7c 100644
 --- a/source/encoder/sei.h
 +++ b/source/encoder/sei.h
-@@ -902,5 +902,46 @@ public:
+@@ -902,5 +902,47 @@ public:
      }
  };
  
@@ -180,6 +184,7 @@ index b7aaaee20..674861ae7 100644
 +        m_persistence = false;
 +    }
 +
++    // cppcheck-suppress missingOverride
 +    void writeSEI(const SPS&)
 +    {
 +        WRITE_UVLC(0, "frame_packing_arrangement_id");
