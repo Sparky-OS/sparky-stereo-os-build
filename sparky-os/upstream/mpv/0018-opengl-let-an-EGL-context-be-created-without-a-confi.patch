@@ -1,0 +1,72 @@
+From 61bf1292cd3daf4618b49a73583064d6ce23f478 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 05:25:47 -0300
+Subject: [PATCH 18/19] opengl: let an EGL context be created without a config
+
+With EGL_KHR_no_config_context a context can be made current on surfaces
+of any config, so a caller that has surfaces of different configs can
+ask for it. The config is still chosen and returned for the surface that
+wants it.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ video/out/opengl/egl_helpers.c | 12 +++++++++---
+ video/out/opengl/egl_helpers.h |  4 ++++
+ 2 files changed, 13 insertions(+), 3 deletions(-)
+
+diff --git a/video/out/opengl/egl_helpers.c b/video/out/opengl/egl_helpers.c
+index 91a6480eb2..d2aa06a832 100644
+--- a/video/out/opengl/egl_helpers.c
++++ b/video/out/opengl/egl_helpers.c
+@@ -242,6 +242,12 @@ static bool create_context(struct ra_ctx *ctx, EGLDisplay display,
+     MP_DBG(ctx, "Chosen EGLConfig:\n");
+     dump_egl_config(ctx->log, MSGL_DEBUG, display, config);
+ 
++    EGLConfig ctx_config = config;
++#ifdef EGL_KHR_no_config_context
++    if (cb.no_config && gl_check_extension(egl_exts, "EGL_KHR_no_config_context"))
++        ctx_config = EGL_NO_CONFIG_KHR;
++#endif
++
+     int ctx_flags = ctx->opts.debug ? EGL_CONTEXT_OPENGL_DEBUG_BIT_KHR : 0;
+     EGLContext *egl_ctx = NULL;
+ 
+@@ -258,7 +264,7 @@ static bool create_context(struct ra_ctx *ctx, EGLDisplay display,
+                 EGL_NONE
+             };
+ 
+-            egl_ctx = eglCreateContext(display, config, EGL_NO_CONTEXT, attrs);
++            egl_ctx = eglCreateContext(display, ctx_config, EGL_NO_CONTEXT, attrs);
+             if (egl_ctx)
+                 break;
+         }
+@@ -271,9 +277,9 @@ static bool create_context(struct ra_ctx *ctx, EGLDisplay display,
+             EGL_NONE
+         };
+ 
+-        egl_ctx = eglCreateContext(display, config, EGL_NO_CONTEXT, attrs);
++        egl_ctx = eglCreateContext(display, ctx_config, EGL_NO_CONTEXT, attrs);
+         if (!egl_ctx)
+-            egl_ctx = eglCreateContext(display, config, EGL_NO_CONTEXT, &attrs[2]);
++            egl_ctx = eglCreateContext(display, ctx_config, EGL_NO_CONTEXT, &attrs[2]);
+     }
+ 
+     if (!egl_ctx) {
+diff --git a/video/out/opengl/egl_helpers.h b/video/out/opengl/egl_helpers.h
+index 32ec5d12e4..c6e9bb4044 100644
+--- a/video/out/opengl/egl_helpers.h
++++ b/video/out/opengl/egl_helpers.h
+@@ -20,6 +20,10 @@ struct mpegl_cb {
+     // be found.
+     int (*refine_config)(void *user_data, EGLConfig *configs, int num_configs);
+     void *user_data;
++    // create the context without a config (EGL_KHR_no_config_context), so that
++    // surfaces of any config can be made current. The config is still chosen
++    // and returned, for the surface that wants it. Ignored if not supported.
++    bool no_config;
+ };
+ 
+ bool mpegl_create_context_cb(struct ra_ctx *ctx, EGLDisplay display,
+-- 
+2.53.0
+
