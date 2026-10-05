@@ -1,0 +1,282 @@
+From fe6d28e49ced110a5e2908334c935a78f69239c9 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 13:42:11 -0300
+Subject: [PATCH] Add --frame-packing option to emit the frame packing
+ arrangement SEI
+
+x265 defined the SEI payload type FRAME_PACKING but had no way to write it,
+so an HEVC encode of side-by-side or top-and-bottom 3D video could not carry
+the in-stream mark that players and 3D televisions read (see #970).
+
+--frame-packing <integer> takes the values H.265 defines in Table D.8:
+3 side by side, 4 top and bottom, 5 temporal interleaving. It is disabled
+by default and the bitstream does not change without it. As x264 does,
+frame 0 is signalled as the left view (content_interpretation_type 1).
+The message follows H.265 D.2.16 and is written as a prefix SEI with each
+IRAP picture (types 3 and 4, persistence flag set) or with every picture
+(type 5, where current_frame_is_frame0_flag alternates and the persistence
+flag is clear).
+
+X265_BUILD is incremented as x265_param gets a new member.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ doc/reST/cli.rst                 | 17 +++++++++++++
+ source/CMakeLists.txt            |  2 +-
+ source/common/param.cpp          |  8 +++++++
+ source/encoder/frameencoder.cpp  | 11 +++++++++
+ source/encoder/sei.h             | 41 ++++++++++++++++++++++++++++++++
+ source/test/regression-tests.txt |  5 ++++
+ source/test/smoke-tests.txt      |  3 +++
+ source/x265.h                    |  7 ++++++
+ source/x265cli.cpp               |  4 ++++
+ source/x265cli.h                 |  1 +
+ 10 files changed, 98 insertions(+), 1 deletion(-)
+
+diff --git a/doc/reST/cli.rst b/doc/reST/cli.rst
+index 82040d1e6..9da09f281 100755
+--- a/doc/reST/cli.rst
++++ b/doc/reST/cli.rst
+@@ -2767,6 +2767,23 @@ Bitstream options
+ 	Emit SEI messages in a single NAL unit instead of multiple NALs. Default disabled.
+ 	When HRD SEI is enabled the HM decoder will throw a warning.
+ 
++.. option:: --frame-packing <integer>
++
++	Emit the frame packing arrangement SEI message (H.265 D.2.16, D.3.16) that
++	tells the decoder how the two views of a stereoscopic video are packed into
++	the coded pictures. Frame 0 is always the left view. The values are those
++	that H.265 defines (Table D.8):
++
++	3. Side by side: the left view is on the left, the right view on the right.
++	4. Top and bottom: the left view is on top, the right view on the bottom.
++	5. Temporal interleaving: alternate pictures in output order are the left
++	   and right views.
++
++	Types 3 and 4 write the message with each IRAP picture, and it persists until
++	the next one or the end of the coded video sequence. Type 5 writes it with every picture, because
++	current_frame_is_frame0_flag alternates with the picture. The source must
++	already be packed this way, x265 only signals it. Default disabled.
++
+ .. option:: --film-grain <filename>
+ 
+     Refers to the film grain model characteristics for signal enhancement information transmission.
+diff --git a/source/CMakeLists.txt b/source/CMakeLists.txt
+index cbda0ca65..e18930d89 100755
+--- a/source/CMakeLists.txt
++++ b/source/CMakeLists.txt
+@@ -32,7 +32,7 @@ option(NATIVE_BUILD "Target the build CPU" OFF)
+ option(STATIC_LINK_CRT "Statically link C and C++ runtimes for release builds" OFF)
+ mark_as_advanced(FPROFILE_USE FPROFILE_GENERATE NATIVE_BUILD)
+ # X265_BUILD must be incremented each time the public API is changed
+-set(X265_BUILD 217)
++set(X265_BUILD 218)
+ configure_file("${PROJECT_SOURCE_DIR}/x265.def.in"
+                "${PROJECT_BINARY_DIR}/x265.def")
+ configure_file("${PROJECT_SOURCE_DIR}/x265_config.h.in"
+diff --git a/source/common/param.cpp b/source/common/param.cpp
+index 3ba88204a..c97a192c3 100755
+--- a/source/common/param.cpp
++++ b/source/common/param.cpp
+@@ -406,6 +406,7 @@ void x265_param_default(x265_param* param)
+ 
+     /* SEI messages */
+     param->preferredTransferCharacteristics = -1;
++    param->framePacking = -1;
+     param->pictureStructure = -1;
+     param->bEmitCLL = 1;
+ 
+@@ -1436,6 +1437,7 @@ int x265_param_parse(x265_param* p, const char* name, const char* value)
+         OPT("dynamic-refine") p->bDynamicRefine = atobool(value);
+         OPT("single-sei") p->bSingleSeiNal = atobool(value);
+         OPT("atc-sei") p->preferredTransferCharacteristics = atoi(value);
++        OPT("frame-packing") p->framePacking = atoi(value);
+         OPT("pic-struct") p->pictureStructure = atoi(value);
+         OPT("chunk-start") p->chunkStart = atoi(value);
+         OPT("chunk-end") p->chunkEnd = atoi(value);
+@@ -2024,6 +2026,7 @@ int x265_check_params(x265_param* param)
+                      || param->bEmitIDRRecoverySEI
+                    || !!param->interlaceMode
+                      || param->preferredTransferCharacteristics > 1
++                     || param->framePacking > -1
+                      || strlen(param->toneMapFile)
+                      || strlen(param->naluFile));
+ 
+@@ -2032,6 +2035,8 @@ int x265_check_params(x265_param* param)
+         param->bSingleSeiNal = 0;
+         x265_log(param, X265_LOG_WARNING, "None of the SEI messages are enabled. Disabling Single SEI NAL\n");
+     }
++    CHECK(param->framePacking != -1 && (param->framePacking < 3 || param->framePacking > 5),
++          "Frame packing arrangement type must be 3 (side by side), 4 (top and bottom) or 5 (temporal interleaving)");
+     CHECK(param->confWinRightOffset < 0, "Conformance Window Right Offset must be 0 or greater");
+     CHECK(param->confWinBottomOffset < 0, "Conformance Window Bottom Offset must be 0 or greater");
+     CHECK(param->decoderVbvMaxRate < 0, "Invalid Decoder Vbv Maxrate. Value can not be less than zero");
+@@ -2508,6 +2513,8 @@ char *x265_param2string(x265_param* p, int padx, int pady)
+     BOOL(p->bHDR10Opt, "hdr10-opt");
+     BOOL(p->bDhdr10opt, "dhdr10-opt");
+     BOOL(p->bEmitIDRRecoverySEI, "idr-recovery-sei");
++    if (p->framePacking > -1)
++        s += snprintf(s, bufSize - (s - buf), " frame-packing=%d", p->framePacking);
+     if (strlen(p->analysisSave))
+         s += snprintf(s, bufSize - (s - buf), " analysis-save");
+     if (strlen(p->analysisLoad))
+@@ -2897,6 +2904,7 @@ void x265_copy_params(x265_param* dst, x265_param* src)
+     dst->cbQpOffset = src->cbQpOffset;
+     dst->crQpOffset = src->crQpOffset;
+     dst->preferredTransferCharacteristics = src->preferredTransferCharacteristics;
++    dst->framePacking = src->framePacking;
+     dst->pictureStructure = src->pictureStructure;
+ 
+     dst->rc.rateControlMode = src->rc.rateControlMode;
+diff --git a/source/encoder/frameencoder.cpp b/source/encoder/frameencoder.cpp
+index a3bf77183..471bbda08 100644
+--- a/source/encoder/frameencoder.cpp
++++ b/source/encoder/frameencoder.cpp
+@@ -850,6 +850,16 @@ void FrameEncoder::compressFrame(int layer)
+         m_seiAlternativeTC.m_preferredTransferCharacteristics = m_param->preferredTransferCharacteristics;
+         m_seiAlternativeTC.writeSEImessages(m_bs, *slice->m_sps, NAL_UNIT_PREFIX_SEI, m_nalList, m_param->bSingleSeiNal, layer);
+     }
++    if (m_param->framePacking > -1 && (slice->isIRAP() || m_param->framePacking == 5))
++    {
++        /* Type 5 alternates the views picture by picture, so every picture carries its own message. The
++         * other types persist until the next IRAP, which repeats the message. */
++        SEIFramePacking m_seiFramePacking;
++        m_seiFramePacking.m_arrangementType = m_param->framePacking;
++        m_seiFramePacking.m_currentFrameIsFrame0 = m_param->framePacking == 5 && !(m_frame[layer]->m_poc & 1);
++        m_seiFramePacking.m_persistence = m_param->framePacking != 5;
++        m_seiFramePacking.writeSEImessages(m_bs, *slice->m_sps, NAL_UNIT_PREFIX_SEI, m_nalList, m_param->bSingleSeiNal, layer);
++    }
+     /* Write Film grain characteristics if present */
+     if (this->m_top->m_filmGrainIn)
+     {
+@@ -894,6 +904,7 @@ void FrameEncoder::compressFrame(int layer)
+ 
+     bool isSei = ((m_frame[layer]->m_lowres.bKeyframe && m_param->bRepeatHeaders) || m_param->bEmitHRDSEI ||
+                  !!m_param->interlaceMode || (m_frame[layer]->m_lowres.sliceType == X265_TYPE_IDR && m_param->bEmitIDRRecoverySEI) ||
++                   (m_param->framePacking > -1 && (slice->isIRAP() || m_param->framePacking == 5)) ||
+                    m_frame[layer]->m_userSEI.numPayloads);
+ 
+     if (isSei && m_param->bSingleSeiNal)
+diff --git a/source/encoder/sei.h b/source/encoder/sei.h
+index b7aaaee20..674861ae7 100644
+--- a/source/encoder/sei.h
++++ b/source/encoder/sei.h
+@@ -902,5 +902,46 @@ public:
+     }
+ };
+ 
++class SEIFramePacking : public SEI
++{
++public:
++    int  m_arrangementType;
++    bool m_currentFrameIsFrame0;
++    bool m_persistence;
++    SEIFramePacking()
++    {
++        m_payloadType = FRAME_PACKING;
++        m_payloadSize = 0;
++        m_arrangementType = -1;
++        m_currentFrameIsFrame0 = false;
++        m_persistence = false;
++    }
++
++    void writeSEI(const SPS&)
++    {
++        WRITE_UVLC(0, "frame_packing_arrangement_id");
++        WRITE_FLAG(0, "frame_packing_arrangement_cancel_flag");
++        WRITE_CODE(m_arrangementType, 7, "frame_packing_arrangement_type");
++        WRITE_FLAG(0, "quincunx_sampling_flag");
++        WRITE_CODE(1, 6, "content_interpretation_type"); /* frame 0 is the left view */
++        WRITE_FLAG(0, "spatial_flipping_flag");
++        WRITE_FLAG(0, "frame0_flipped_flag");
++        WRITE_FLAG(0, "field_views_flag");
++        WRITE_FLAG(m_currentFrameIsFrame0, "current_frame_is_frame0_flag");
++        WRITE_FLAG(0, "frame0_self_contained_flag");
++        WRITE_FLAG(0, "frame1_self_contained_flag");
++        if (m_arrangementType != 5)
++        {
++            WRITE_CODE(0, 4, "frame0_grid_position_x");
++            WRITE_CODE(0, 4, "frame0_grid_position_y");
++            WRITE_CODE(0, 4, "frame1_grid_position_x");
++            WRITE_CODE(0, 4, "frame1_grid_position_y");
++        }
++        WRITE_CODE(0, 8, "frame_packing_arrangement_reserved_byte");
++        WRITE_FLAG(m_persistence, "frame_packing_arrangement_persistence_flag");
++        WRITE_FLAG(0, "upsampled_aspect_ratio_flag");
++    }
++};
++
+ }
+ #endif // ifndef X265_SEI_H
+diff --git a/source/test/regression-tests.txt b/source/test/regression-tests.txt
+index 7e96a2188..4e05ac114 100644
+--- a/source/test/regression-tests.txt
++++ b/source/test/regression-tests.txt
+@@ -215,3 +215,8 @@ crowd_run_1080p50.y4m, --bitrate 5000 --selective-mcstf --preset veryslow
+ #Fovea tests
+ nature_1920x1080_25.yuv,--crf 28 --fovea-gaze 960,540 --fovea-delta 20
+ nature_1920x1080_25.yuv,--qp 28 --fovea-delta 20 --fovea-gaze-file gaze_nature.txt
++
++#Frame packing arrangement SEI tests
++big_buck_bunny_360p24.y4m,--preset ultrafast --frame-packing 3
++big_buck_bunny_360p24.y4m,--preset superfast --bframes 4 --frame-packing 4
++big_buck_bunny_360p24.y4m,--preset veryfast --frame-packing 5
+diff --git a/source/test/smoke-tests.txt b/source/test/smoke-tests.txt
+index 03c40ec1f..c9c4a9f62 100644
+--- a/source/test/smoke-tests.txt
++++ b/source/test/smoke-tests.txt
+@@ -28,3 +28,6 @@ CrowdRun_1920x1080_50_10bit_444.yuv,--preset=superfast --bitrate 7000 --sao --li
+ 
+ #Threaded ME tests
+ BasketballDrive_1920x1080_50.y4m,--preset=superfast --threaded-me --rect --amp --qp 28
++
++#Frame packing arrangement SEI test
++big_buck_bunny_360p24.y4m,--preset ultrafast --frame-packing 3
+diff --git a/source/x265.h b/source/x265.h
+index 54ed2a2fc..4441714c0 100644
+--- a/source/x265.h
++++ b/source/x265.h
+@@ -2403,6 +2403,13 @@ typedef struct x265_param
+      * When set, overrides foveaGazeX/foveaGazeY with per-frame values.
+      * NULL = use static gaze from foveaGazeX/foveaGazeY. */
+     char* foveaGazeFile;
++
++    /* Frame packing arrangement SEI message (H.265 D.2.16): the 3D layout of the
++     * source frames. 3 = side by side, 4 = top and bottom (frame 0 is the left view),
++     * 5 = temporal interleaving (alternate pictures are the left and right views).
++     * Types 3 and 4 write the message with each IRAP picture, type 5 with every
++     * picture. Default -1 (disabled). */
++    int      framePacking;
+ } x265_param;
+ 
+ /* x265_param_alloc:
+diff --git a/source/x265cli.cpp b/source/x265cli.cpp
+index 0b1a2b63c..fb97fdee5 100755
+--- a/source/x265cli.cpp
++++ b/source/x265cli.cpp
+@@ -379,6 +379,10 @@ namespace X265_NS {
+         H0("   --[no-]eos                    Emit end of sequence nal unit at the end of every coded video sequence. Default %s\n", OPT(param->bEnableEndOfSequence));
+         H1("   --hash <integer>              Decoded Picture Hash SEI 0: disabled, 1: MD5, 2: CRC, 3: Checksum. Default %d\n", param->decodedPictureHashSEI);
+         H0("   --atc-sei <integer>           Emit the alternative transfer characteristics SEI message where the integer is the preferred transfer characteristic. Default disabled\n");
++        H0("   --frame-packing <integer>     Emit the frame packing arrangement SEI message for stereoscopic video. Default disabled\n");
++        H0("                                   - 3: side by side - left view on the left, right view on the right\n");
++        H0("                                   - 4: top and bottom - left view on top, right view on the bottom\n");
++        H0("                                   - 5: temporal interleaving - alternate pictures are the left and right views\n");
+         H0("   --pic-struct <integer>        Set the picture structure and emit it in the picture timing SEI message. Values in the range 0..12. See D.3.3 of the HEVC spec. for a detailed explanation.\n");
+         H0("   --log2-max-poc-lsb <integer>  Maximum of the picture order count\n");
+         H0("   --[no-]vui-timing-info        Emit VUI timing information in the bitstream. Default %s\n", OPT(param->bEmitVUITimingInfo));
+diff --git a/source/x265cli.h b/source/x265cli.h
+index 6ac7d2ab1..4b7e59510 100644
+--- a/source/x265cli.h
++++ b/source/x265cli.h
+@@ -345,6 +345,7 @@ static const struct option long_options[] =
+     { "single-sei", no_argument, NULL, 0 },
+     { "no-single-sei", no_argument, NULL, 0 },
+     { "atc-sei", required_argument, NULL, 0 },
++    { "frame-packing", required_argument, NULL, 0 },
+     { "pic-struct", required_argument, NULL, 0 },
+     { "nalu-file", required_argument, NULL, 0 },
+     { "dolby-vision-rpu", required_argument, NULL, 0 },
+-- 
+2.53.0
+
