@@ -1,0 +1,62 @@
+From a8e31b0f4f20252c2fd5eb8b005a9bc45a8c9f51 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 05:47:52 -0300
+Subject: [PATCH 2/3] Apply the stereo shear of each eye in vtkF3DRenderer
+
+VTK shears the projection of each eye from the eye angle of the camera
+(vtkCamera::ComputeProjectionTransform), which keeps the two cameras
+parallel and their frustums meeting at the focal distance. It does so only
+when the Stereo flag of the camera is set, and the flag is only set in
+vtkOpenGLCamera::Render, which the render passes do not call. Both eyes were
+then rendered with the same camera.
+
+Set the same shear through the view shear of the camera, for each eye.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ vtkext/private/module/vtkF3DRenderer.cxx | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/vtkext/private/module/vtkF3DRenderer.cxx b/vtkext/private/module/vtkF3DRenderer.cxx
+index 3753711..58964f8 100644
+--- a/vtkext/private/module/vtkF3DRenderer.cxx
++++ b/vtkext/private/module/vtkF3DRenderer.cxx
+@@ -2183,9 +2183,23 @@ void vtkF3DRenderer::Render()
+     this->UpdateNormalGlyphsScale();
+   }
+ 
++  // VTK only applies the stereo shear of the camera in vtkOpenGLCamera::Render, which the render
++  // passes do not call, so set the shear of each eye here, as vtkCamera does with its eye angle
++  vtkCamera* camera = this->GetActiveCamera();
++  const bool stereo = this->GetRenderWindow()->GetStereoRender();
++  if (stereo)
++  {
++    const double shear = std::tan(vtkMath::RadiansFromDegrees(camera->GetEyeAngle() / 2.0));
++    camera->SetViewShear(camera->GetLeftEye() ? -shear : shear, 0.0, 1.0);
++  }
++
+   if (!this->TimerVisible)
+   {
+     this->Superclass::Render();
++    if (stereo)
++    {
++      camera->SetViewShear(0.0, 0.0, 1.0);
++    }
+     return;
+   }
+ 
+@@ -2201,6 +2215,11 @@ void vtkF3DRenderer::Render()
+ 
+   this->Superclass::Render();
+ 
++  if (stereo)
++  {
++    camera->SetViewShear(0.0, 0.0, 1.0);
++  }
++
+   auto cpuElapsed = std::chrono::high_resolution_clock::now() - cpuStart;
+ 
+   vtkInformation* info = this->GetInformation();
+-- 
+2.53.0
+

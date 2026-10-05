@@ -1,0 +1,157 @@
+From b753f7a5cba7c28b10dd862a857a7957e5f89ab4 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 05:47:52 -0300
+Subject: [PATCH 1/3] Add quad-buffer stereo rendering
+
+Add the render.stereo option, with --stereo, to render the scene through
+OpenGL quad-buffer stereo (GL_BACK_LEFT and GL_BACK_RIGHT), and the
+render.stereo_eye_angle option, with --stereo-eye-angle, for the angle
+between the eyes, which is the eye angle of the camera.
+
+The window is realized when the engine is created, before the options are
+known, so it is recreated once, before the first render, as a stereo
+capable window. Nothing changes with the option off.
+
+Assisted-by: glm-5.3:cloud (Ollama) via Codex
+Assisted-by: Claude Sonnet via Claude Code
+---
+ application/F3DOptionsTools.h |  2 ++
+ doc/libf3d/03-OPTIONS.md      | 14 ++++++++++++++
+ doc/user/03-OPTIONS.md        |  8 ++++++++
+ library/options.json          |  8 ++++++++
+ library/src/window_impl.cxx   | 20 ++++++++++++++++++++
+ resources/cli-options.json    | 11 +++++++++++
+ 6 files changed, 63 insertions(+)
+
+diff --git a/application/F3DOptionsTools.h b/application/F3DOptionsTools.h
+index a24a9b7..2537361 100644
+--- a/application/F3DOptionsTools.h
++++ b/application/F3DOptionsTools.h
+@@ -81,6 +81,8 @@ static inline const std::map<std::string_view, std::string_view> LibOptionsNames
+   { "grid-unit", "render.grid.unit" },
+   { "grid-subdivisions", "render.grid.subdivisions" },
+   { "grid-color", "render.grid.color" },
++  { "stereo", "render.stereo" },
++  { "stereo-eye-angle", "render.stereo_eye_angle" },
+   { "axes-grid", "render.axes_grid.enable" },
+   { "edges", "render.show_edges" },
+   { "armature", "render.armature.enable" },
+diff --git a/doc/libf3d/03-OPTIONS.md b/doc/libf3d/03-OPTIONS.md
+index ce89d42..75a5fed 100644
+--- a/doc/libf3d/03-OPTIONS.md
++++ b/doc/libf3d/03-OPTIONS.md
+@@ -372,6 +372,20 @@ Set the color of grid lines.
+ 
+ CLI: `--grid-color`.
+ 
++### `render.stereo` (_bool_, default: `false`)
++
++Render the scene in quad-buffer stereo, one image for the left eye and one for the right eye.
++It needs a stereo capable display and is read before the first render.
++
++CLI: `--stereo`.
++
++### `render.stereo_eye_angle` (_double_, default: `2.0`)
++
++Set the angle between the two eyes' lines of sight, in degrees.
++The eyes stay parallel and meet at the focal distance, so the separation grows with the distance to the focal point.
++
++CLI: `--stereo-eye-angle`.
++
+ ### `render.axes_grid` (_bool_, default: `false`)
+ 
+ Show _axes grid_ in the scene.
+diff --git a/doc/user/03-OPTIONS.md b/doc/user/03-OPTIONS.md
+index 2b84ab6..fe2298c 100644
+--- a/doc/user/03-OPTIONS.md
++++ b/doc/user/03-OPTIONS.md
+@@ -155,6 +155,14 @@ Set the number of subdivisions for the grid.
+ 
+ Set the color grid lines.
+ 
++### `--stereo` (_bool_, default: `false`)
++
++Render the scene in quad-buffer stereo, one image for the left eye and one for the right eye. It needs a stereo capable display. The setting is read before the first render.
++
++### `--stereo-eye-angle=<degrees>` (_double_, default: `2.0`)
++
++Set the angle between the two eyes' lines of sight, in degrees. The eyes stay parallel and meet at the focal distance, so the separation grows with the distance to the focal point.
++
+ ### `--grid-absolute` (_bool_, default: `false`)
+ 
+ Position the grid at absolute origin instead of below the model.
+diff --git a/library/options.json b/library/options.json
+index 95a6596..a734440 100644
+--- a/library/options.json
++++ b/library/options.json
+@@ -36,6 +36,14 @@
+     }
+   },
+   "render": {
++    "stereo": {
++      "type": "bool",
++      "default_value": "false"
++    },
++    "stereo_eye_angle": {
++      "type": "double",
++      "default_value": "2.0"
++    },
+     "show_edges": {
+       "type": "bool"
+     },
+diff --git a/library/src/window_impl.cxx b/library/src/window_impl.cxx
+index d551daf..7ff2d0e 100644
+--- a/library/src/window_impl.cxx
++++ b/library/src/window_impl.cxx
+@@ -404,6 +404,26 @@ void window_impl::UpdateDynamicOptions()
+ 
+   const options& opt = this->Internals->Options;
+ 
++  // The window is realized when the engine is created, before the options are known, and a stereo
++  // capable window can only be requested before it is realized, so it is recreated once
++  vtkRenderWindow* renWin = this->Internals->RenWin;
++  if (opt.render.stereo && !renWin->GetOffScreenRendering())
++  {
++    if (renWin->GetNeverRendered() && !renWin->GetStereoCapableWindow())
++    {
++      vtkRenderWindowInteractor* iren = renWin->GetInteractor();
++      renWin->Finalize();
++      renWin->SetStereoCapableWindow(1);
++      renWin->SetStereoTypeToCrystalEyes();
++      renWin->SetStereoRender(1);
++      if (iren)
++      {
++        iren->ReInitialize();
++      }
++    }
++    renderer->GetActiveCamera()->SetEyeAngle(opt.render.stereo_eye_angle);
++  }
++
+   // Update pending up direction if changed
+   renderer->SetPendingUpDirection(opt.scene.up_direction);
+ 
+diff --git a/resources/cli-options.json b/resources/cli-options.json
+index 43a377a..92e265d 100644
+--- a/resources/cli-options.json
++++ b/resources/cli-options.json
+@@ -230,6 +230,17 @@
+           "valueHelper": "<bool>",
+           "implicitValue": "1"
+         },
++        {
++          "longName": "stereo",
++          "helpText": "Enable stereo rendering",
++          "valueHelper": "<bool>",
++          "implicitValue": "1"
++        },
++        {
++          "longName": "stereo-eye-angle",
++          "helpText": "Stereo camera eye angle in degrees",
++          "valueHelper": "<value>"
++        },
+         {
+           "longName": "armature",
+           "helpText": "Enable armature visualization",
+-- 
+2.53.0
+

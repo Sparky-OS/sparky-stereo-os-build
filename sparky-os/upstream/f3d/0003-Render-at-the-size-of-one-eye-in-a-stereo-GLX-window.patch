@@ -1,0 +1,64 @@
+From 116c3cd6145082485300c6073d0026ba2be51b90 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 05:47:52 -0300
+Subject: [PATCH 3/3] Render at the size of one eye in a stereo GLX window
+
+The X window of a window that holds a stereo pair is twice as wide as one
+eye, and VTK takes its size from the X window, so the scene was rendered at
+twice the width and cut to one eye. The GLX drawable reports the size of one
+eye: render at it.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ .../private/module/vtkF3DGLXRenderWindow.cxx   | 18 ++++++++++++++++++
+ vtkext/private/module/vtkF3DGLXRenderWindow.h  |  5 +++++
+ 2 files changed, 23 insertions(+)
+
+diff --git a/vtkext/private/module/vtkF3DGLXRenderWindow.cxx b/vtkext/private/module/vtkF3DGLXRenderWindow.cxx
+index 87fdc65..5d208b6 100644
+--- a/vtkext/private/module/vtkF3DGLXRenderWindow.cxx
++++ b/vtkext/private/module/vtkF3DGLXRenderWindow.cxx
+@@ -22,6 +22,24 @@ vtkF3DGLXRenderWindow::vtkF3DGLXRenderWindow() = default;
+ //------------------------------------------------------------------------------
+ vtkF3DGLXRenderWindow::~vtkF3DGLXRenderWindow() = default;
+ 
++//------------------------------------------------------------------------------
++void vtkF3DGLXRenderWindow::Start()
++{
++  // The X window of a declared stereo window holds both eyes side by side, so it is twice as wide
++  // as one eye, and only the GLX drawable reports the size of one eye
++  if (this->StereoRender && this->WindowId)
++  {
++    unsigned int width = 0;
++    glXQueryDrawable(this->DisplayId, this->WindowId, GLX_WIDTH, &width);
++    if (width > 0 && static_cast<int>(width) != this->Size[0])
++    {
++      this->vtkRenderWindow::SetSize(static_cast<int>(width), this->Size[1]);
++    }
++  }
++
++  this->Superclass::Start();
++}
++
+ //------------------------------------------------------------------------------
+ vtkF3DGLXRenderWindow* vtkF3DGLXRenderWindow::New()
+ {
+diff --git a/vtkext/private/module/vtkF3DGLXRenderWindow.h b/vtkext/private/module/vtkF3DGLXRenderWindow.h
+index b08d8cc..ab77370 100644
+--- a/vtkext/private/module/vtkF3DGLXRenderWindow.h
++++ b/vtkext/private/module/vtkF3DGLXRenderWindow.h
+@@ -14,6 +14,11 @@ public:
+   static vtkF3DGLXRenderWindow* New();
+   vtkTypeMacro(vtkF3DGLXRenderWindow, vtkXOpenGLRenderWindow);
+ 
++  /**
++   * Render at the size of one eye when the window holds a stereo pair.
++   */
++  void Start() override;
++
+ protected:
+   vtkF3DGLXRenderWindow();
+   ~vtkF3DGLXRenderWindow() override;
+-- 
+2.53.0
+

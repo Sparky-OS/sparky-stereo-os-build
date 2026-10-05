@@ -1,0 +1,88 @@
+From b578f45a8764256d339a6082f8c80d8599b4ef86 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 06:20:45 -0300
+Subject: [PATCH 1/2] Add a sideways eye offset to the 3D view camera
+
+setupCamera() moves the eye sideways by stereoEyeOffset (0 for a single
+eye) and keeps looking straight ahead, with the frustum shifted back so
+that both eyes meet at the distance of the point looked at. The
+orthographic view has no perspective, so there the eye turns around the
+point looked at instead.
+
+Assisted-by: glm-5.3:cloud (Ollama) via Codex
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/glview/GLView.cc | 20 +++++++++++++-------
+ src/glview/GLView.h  |  1 +
+ 2 files changed, 14 insertions(+), 7 deletions(-)
+
+diff --git a/src/glview/GLView.cc b/src/glview/GLView.cc
+index 5d6866e..68e4509 100644
+--- a/src/glview/GLView.cc
++++ b/src/glview/GLView.cc
+@@ -22,12 +22,13 @@
+ 
+ namespace {
+ 
+-void local_gluPerspective(GLdouble fovy, GLdouble aspect, GLdouble zNear, GLdouble zFar)
++void local_gluPerspective(GLdouble fovy, GLdouble aspect, GLdouble zNear, GLdouble zFar,
++                          GLdouble xShift)
+ {
+   GLdouble ymax = zNear * tan_degrees(fovy / 2.0);
+   GLdouble ymin = -ymax;
+-  GLdouble xmin = ymin * aspect;
+-  GLdouble xmax = ymax * aspect;
++  GLdouble xmin = ymin * aspect + xShift;
++  GLdouble xmax = ymax * aspect + xShift;
+   glFrustum(xmin, xmax, ymin, ymax, zNear, zFar);
+ }
+ 
+@@ -93,6 +94,7 @@ GLView::GLView()
+   colorscheme = &ColorMap::instance().defaultColorScheme();
+   cam = Camera();
+   far_far_away = RenderSettings::inst()->far_gl_clip_limit;
++  stereoEyeOffset = 0.0;
+ #ifdef ENABLE_OPENCSG
+   is_opencsg_capable = false;
+   has_shaders = false;
+@@ -191,7 +193,8 @@ void GLView::setupCamera()
+   auto dist = cam.zoomValue();
+   switch (this->cam.projection) {
+   case Camera::ProjectionType::PERSPECTIVE: {
+-    local_gluPerspective(cam.fov, aspectratio, 0.1 * dist, 100 * dist);
++    // Off-axis frustum: the two eyes meet at the distance of the point looked at
++    local_gluPerspective(cam.fov, aspectratio, 0.1 * dist, 100 * dist, -0.1 * stereoEyeOffset);
+     break;
+   }
+   default:
+@@ -203,9 +206,12 @@ void GLView::setupCamera()
+   }
+   glMatrixMode(GL_MODELVIEW);
+   glLoadIdentity();
+-  local_gluLookAt(0.0, -dist, 0.0,  // eye
+-                  0.0, 0.0, 0.0,    // center
+-                  0.0, 0.0, 1.0);   // up
++  // Perspective: the eye moves sideways and keeps looking straight ahead.
++  // Orthographic: the eye turns around the point looked at.
++  const auto centerX = cam.projection == Camera::ProjectionType::PERSPECTIVE ? stereoEyeOffset : 0.0;
++  local_gluLookAt(stereoEyeOffset, -dist, 0.0,  // eye
++                  centerX, 0.0, 0.0,            // center
++                  0.0, 0.0, 1.0);               // up
+ 
+   glRotated(cam.object_rot.x(), 1.0, 0.0, 0.0);
+   glRotated(cam.object_rot.y(), 0.0, 1.0, 0.0);
+diff --git a/src/glview/GLView.h b/src/glview/GLView.h
+index a358214..e5bea6e 100644
+--- a/src/glview/GLView.h
++++ b/src/glview/GLView.h
+@@ -72,6 +72,7 @@ public:
+   Camera cam;
+   double far_far_away;
+   double aspectratio;
++  double stereoEyeOffset;  // sideways offset of the eye in the camera's view, 0 for a single eye
+   bool showaxes;
+   bool showedges;
+   bool showcrosshairs;
+-- 
+2.53.0
+

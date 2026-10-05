@@ -1,0 +1,243 @@
+From 0d6751277e8d12dc046c4baaab94aa9322e8bebf Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 06:20:45 -0300
+Subject: [PATCH 2/2] Draw the 3D view for each eye with a stereo preference
+
+With "stereo 3D view" in the 3D view preferences, the preview widget asks
+for stereo buffers and QGLView::paintGL() sets the eye offset from
+currentTargetBuffer(), so the view is drawn once into the left buffer and
+once into the right buffer from the same scene data. The eye separation is
+a percentage of the distance to the point looked at and changes at once.
+Picking and centering keep using the camera between the eyes. Qt before
+6.5 has no currentTargetBuffer() and keeps the single view.
+
+Assisted-by: glm-5.3:cloud (Ollama) via Codex
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/core/Settings.cc   |  3 +++
+ src/core/Settings.h    |  2 ++
+ src/gui/MainWindow.cc  |  2 ++
+ src/gui/Preferences.cc | 16 ++++++++++++++++
+ src/gui/Preferences.h  |  3 +++
+ src/gui/Preferences.ui | 34 ++++++++++++++++++++++++++++++++++
+ src/gui/QGLView.cc     | 23 +++++++++++++++++++++++
+ src/gui/QGLView.h      |  7 +++++++
+ 8 files changed, 90 insertions(+)
+
+diff --git a/src/core/Settings.cc b/src/core/Settings.cc
+index 25cff25..e341d0d 100644
+--- a/src/core/Settings.cc
++++ b/src/core/Settings.cc
+@@ -149,6 +149,9 @@ std::istream& operator>>(std::istream& stream, LocalAppParameter& param)
+ 
+ SettingsEntryBool Settings::showWarningsIn3dView("3dview", "showWarningsIn3dView", true);
+ SettingsEntryBool Settings::mouseCentricZoom("3dview", "mouseCentricZoom", true);
++SettingsEntryBool Settings::stereo3dView("3dview", "stereo3dView", false);
++SettingsEntryDouble Settings::stereo3dEyeSeparation("3dview", "stereo3dEyeSeparation", 0.0, 0.5, 20.0,
++                                                    3.0);
+ SettingsEntryInt Settings::indentationWidth("editor", "indentationWidth", 1, 16, 4);
+ SettingsEntryInt Settings::tabWidth("editor", "tabWidth", 1, 16, 4);
+ SettingsEntryEnum<std::string> Settings::lineWrap("editor", "lineWrap",
+diff --git a/src/core/Settings.h b/src/core/Settings.h
+index bcf158d..bc55598 100644
+--- a/src/core/Settings.h
++++ b/src/core/Settings.h
+@@ -385,6 +385,8 @@ class Settings
+ public:
+   static SettingsEntryBool showWarningsIn3dView;
+   static SettingsEntryBool mouseCentricZoom;
++  static SettingsEntryBool stereo3dView;
++  static SettingsEntryDouble stereo3dEyeSeparation;
+   static SettingsEntryInt indentationWidth;
+   static SettingsEntryInt tabWidth;
+   static SettingsEntryEnum<std::string> lineWrap;
+diff --git a/src/gui/MainWindow.cc b/src/gui/MainWindow.cc
+index 16b7f1b..b3bcb09 100644
+--- a/src/gui/MainWindow.cc
++++ b/src/gui/MainWindow.cc
+@@ -3559,6 +3559,8 @@ void MainWindow::setupPreferences()
+           QOverload<>::of(&QGLView::update));
+   connect(GlobalPreferences::inst(), &Preferences::updateMouseCentricZoom, this->qglview,
+           &QGLView::setMouseCentricZoom);
++  connect(GlobalPreferences::inst(), &Preferences::updateStereo3dEyeSeparation, this->qglview,
++          &QGLView::setStereo3dEyeSeparation);
+   connect(GlobalPreferences::inst()->MouseConfig, &MouseConfigWidget::updateMouseActions, this,
+           &MainWindow::setAllMouseViewActions);
+ 
+diff --git a/src/gui/Preferences.cc b/src/gui/Preferences.cc
+index 42536f3..3b1f15b 100644
+--- a/src/gui/Preferences.cc
++++ b/src/gui/Preferences.cc
+@@ -782,6 +782,19 @@ void Preferences::on_checkBoxMouseCentricZoom_toggled(bool val)
+   emit updateMouseCentricZoom(val);
+ }
+ 
++void Preferences::on_checkBoxStereo3dView_toggled(bool val)
++{
++  Settings::Settings::stereo3dView.setValue(val);
++  writeSettings();
++}
++
++void Preferences::on_doubleSpinBoxStereo3dEyeSeparation_valueChanged(double val)
++{
++  Settings::Settings::stereo3dEyeSeparation.setValue(val);
++  writeSettings();
++  emit updateStereo3dEyeSeparation(val);
++}
++
+ void Preferences::on_spinBoxIndentationWidth_valueChanged(int val)
+ {
+   Settings::Settings::indentationWidth.setValue(val);
+@@ -2025,6 +2038,9 @@ void Preferences::updateGUI()
+   initUpdateCheckBox(this->checkBoxEnableNumberScrollWheel, Settings::Settings::enableNumberScrollWheel);
+   initUpdateCheckBox(this->checkBoxShowWarningsIn3dView, Settings::Settings::showWarningsIn3dView);
+   initUpdateCheckBox(this->checkBoxMouseCentricZoom, Settings::Settings::mouseCentricZoom);
++  initUpdateCheckBox(this->checkBoxStereo3dView, Settings::Settings::stereo3dView);
++  initUpdateDoubleSpinBox(this->doubleSpinBoxStereo3dEyeSeparation,
++                          Settings::Settings::stereo3dEyeSeparation);
+   initUpdateCheckBox(this->checkBoxEnableLineNumbers, Settings::Settings::enableLineNumbers);
+ 
+   /* Next Line disables the Indent Spin-Box,for 'Same' and 'Indented' LineWrapStyle selection from
+diff --git a/src/gui/Preferences.h b/src/gui/Preferences.h
+index c6487e1..c71ca54 100644
+--- a/src/gui/Preferences.h
++++ b/src/gui/Preferences.h
+@@ -80,6 +80,8 @@ public slots:
+   void on_enableHidapiTraceCheckBox_toggled(bool);
+   void on_checkBoxShowWarningsIn3dView_toggled(bool);
+   void on_checkBoxMouseCentricZoom_toggled(bool);
++  void on_checkBoxStereo3dView_toggled(bool);
++  void on_doubleSpinBoxStereo3dEyeSeparation_valueChanged(double);
+   void on_timeThresholdOnRenderCompleteSoundEdit_textChanged(const QString&);
+   void on_enableClearConsoleCheckBox_toggled(bool);
+   void on_consoleMaxLinesEdit_textChanged(const QString&);
+@@ -189,6 +191,7 @@ signals:
+   void editorConfigChanged() const;
+   void ExperimentalChanged() const;
+   void updateMouseCentricZoom(bool state) const;
++  void updateStereo3dEyeSeparation(double percent) const;
+   void autocompleteChanged(bool status) const;
+   void characterThresholdChanged(int val) const;
+   void stepSizeChanged(int val) const;
+diff --git a/src/gui/Preferences.ui b/src/gui/Preferences.ui
+index 66a6fa8..2edb878 100644
+--- a/src/gui/Preferences.ui
++++ b/src/gui/Preferences.ui
+@@ -107,6 +107,40 @@
+           </property>
+          </widget>
+         </item>
++        <item>
++         <widget class="QCheckBox" name="checkBoxStereo3dView">
++          <property name="toolTip">
++           <string>Draws the 3D view once for each eye, for a stereo capable display. Takes effect after a restart.</string>
++          </property>
++          <property name="text">
++           <string>stereo 3D view (after restart)</string>
++          </property>
++         </widget>
++        </item>
++        <item>
++         <layout class="QHBoxLayout" name="horizontalLayoutStereo3dEyeSeparation">
++          <item>
++           <widget class="QLabel" name="labelStereo3dEyeSeparation">
++            <property name="text">
++             <string>eye separation</string>
++            </property>
++           </widget>
++          </item>
++          <item>
++           <widget class="QDoubleSpinBox" name="doubleSpinBoxStereo3dEyeSeparation">
++            <property name="toolTip">
++             <string>Distance between the eyes, as a percentage of the distance to the point looked at</string>
++            </property>
++            <property name="suffix">
++             <string> %</string>
++            </property>
++            <property name="decimals">
++             <number>1</number>
++            </property>
++           </widget>
++          </item>
++         </layout>
++        </item>
+        </layout>
+       </widget>
+       <widget class="QWidget" name="pageEditor">
+diff --git a/src/gui/QGLView.cc b/src/gui/QGLView.cc
+index f41d62d..0cf21a6 100644
+--- a/src/gui/QGLView.cc
++++ b/src/gui/QGLView.cc
+@@ -82,6 +82,9 @@ QSurfaceFormat compatibleWidgetFormat()
+   format.setProfile(QSurfaceFormat::CompatibilityProfile);
+   if (format.depthBufferSize() < 24) format.setDepthBufferSize(24);
+   if (format.stencilBufferSize() < 8) format.setStencilBufferSize(8);
++#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
++  if (Settings::Settings::stereo3dView.value()) format.setOption(QSurfaceFormat::StereoBuffers);
++#endif
+   return format;
+ }
+ 
+@@ -105,6 +108,10 @@ void QGLView::init()
+ 
+   this->mouse_drag_active = false;
+   this->statusLabel = nullptr;
++#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
++  this->stereo = Settings::Settings::stereo3dView.value();
++#endif
++  this->stereoEyeSeparation = Settings::Settings::stereo3dEyeSeparation.value();
+ 
+   setMouseTracking(true);
+ }
+@@ -215,7 +222,23 @@ void QGLView::resizeGL(int w, int h)
+ 
+ void QGLView::paintGL()
+ {
++#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
++  // One eye per call: the left buffer first, then the right one
++  const bool eyes = stereo && format().stereo();
++  if (eyes) {
++    const auto halfSeparation = stereoEyeSeparation / 100.0 * cam.zoomValue() / 2.0;
++    stereoEyeOffset = currentTargetBuffer() == QOpenGLWidget::RightBuffer ? halfSeparation
++                                                                           : -halfSeparation;
++  }
++#endif
+   GLView::paintGL();
++#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
++  // Picking and centering use the camera between the eyes
++  if (eyes) {
++    stereoEyeOffset = 0.0;
++    setupCamera();
++  }
++#endif
+ 
+   if (statusLabel) {
+     auto status = QString("%1 (%2x%3)")
+diff --git a/src/gui/QGLView.h b/src/gui/QGLView.h
+index c7e7d44..8099991 100644
+--- a/src/gui/QGLView.h
++++ b/src/gui/QGLView.h
+@@ -59,6 +59,11 @@ public slots:
+   void ZoomIn();
+   void ZoomOut();
+   void setMouseCentricZoom(bool var) { this->mouseCentricZoom = var; }
++  void setStereo3dEyeSeparation(double percent)
++  {
++    this->stereoEyeSeparation = percent;
++    update();
++  }
+   void setMouseActions(int mouseAction, std::array<float, MouseConfig::ACTION_DIMENSION> var)
+   {
+     // Load an array defining the behaviour for a single mouse action.
+@@ -83,6 +88,8 @@ private:
+   bool mouse_drag_active;
+   bool mouse_drag_moved = true;
+   bool mouseCentricZoom = true;
++  bool stereo = false;            // draws the view for each eye, when asked in the preferences
++  double stereoEyeSeparation = 0;  // in percent of the distance to the point looked at
+   // Information held for each mouse action is a 3x2 rotation matrix, a 3x2 translation matrix, and a
+   // zoom 2-vector.
+   float mouseActions[MouseConfig::MouseAction::NUM_MOUSE_ACTIONS * MouseConfig::ACTION_DIMENSION];
+-- 
+2.53.0
+
