@@ -8,7 +8,9 @@
 set -eu
 mode=$1; debs=${2:-}
 here=$(dirname "$(readlink -f "$0")")
-gid=$(stat -c %g /dev/dri/renderD128)
+# SMOKE_RENDER_GID: the device's group, for a caller whose own sandbox does not show /dev/dri
+# (Docker still passes the host's device through)
+gid=${SMOKE_RENDER_GID:-$(stat -c %g /dev/dri/renderD128)}
 exec docker run --rm --cap-add SYS_NICE --device /dev/dri/renderD128 --group-add "$gid" \
 	-e SMOKE_MODE="$mode" -e SMOKE_GID="$gid" ${debs:+-v "$debs":/debs:ro} \
 	-v "$here":/w:ro "${SMOKE_IMAGE:-qt-stereo-run:latest}" /w/outer.sh
