@@ -1,0 +1,93 @@
+From d2f31b2508cfb6cbeba1aa303bb6bf1d3eda003d Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 02:43:50 -0300
+Subject: [PATCH 7/8] avcodec: read the stereoscopic layout of the frames
+
+A stream whose container has no packetizer in front of the decoder (MP4,
+Matroska) never reached the frame packing SEI parser of the packetizers,
+so its layout was lost although FFmpeg exports it with every frame.
+Take the layout from the frames' stereo 3D side data when the container
+does not say it, and keep it across the decoder's format updates.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ modules/codec/avcodec/video.c | 45 ++++++++++++++++++++++++++++++++++-
+ 1 file changed, 44 insertions(+), 1 deletion(-)
+
+diff --git a/modules/codec/avcodec/video.c b/modules/codec/avcodec/video.c
+index 3b3298722d..3c37d16fc8 100644
+--- a/modules/codec/avcodec/video.c
++++ b/modules/codec/avcodec/video.c
+@@ -42,6 +42,7 @@
+ #include "avcommon_compat.h"
+ #if LIBAVUTIL_VERSION_CHECK( 55, 16, 101 )
+ #include <libavutil/mastering_display_metadata.h>
++#include <libavutil/stereo3d.h>
+ #endif
+ 
+ #include "avcodec.h"
+@@ -336,11 +337,17 @@ static int lavc_UpdateVideoFormat(decoder_t *dec, AVCodecContext *ctx,
+     fmt_out.p_palette = dec->fmt_out.video.p_palette;
+     dec->fmt_out.video.p_palette = NULL;
+ 
++    /* what the frames said about it, see DecodeSidedata() */
++    const video_multiview_mode_t multiview_mode =
++        dec->fmt_out.video.multiview_mode;
++
+     es_format_Change(&dec->fmt_out, VIDEO_ES, fmt_out.i_chroma);
+     dec->fmt_out.video = fmt_out;
+     dec->fmt_out.video.orientation = dec->fmt_in.video.orientation;
+     dec->fmt_out.video.projection_mode = dec->fmt_in.video.projection_mode;
+-    dec->fmt_out.video.multiview_mode = dec->fmt_in.video.multiview_mode;
++    dec->fmt_out.video.multiview_mode =
++        dec->fmt_in.video.multiview_mode != MULTIVIEW_2D ?
++        dec->fmt_in.video.multiview_mode : multiview_mode;
+     dec->fmt_out.video.pose = dec->fmt_in.video.pose;
+     if ( dec->fmt_in.video.mastering.max_luminance )
+         dec->fmt_out.video.mastering = dec->fmt_in.video.mastering;
+@@ -1072,6 +1079,42 @@ static int DecodeSidedata( decoder_t *p_dec, const AVFrame *frame, picture_t *p_
+     }
+ #endif
+ 
++#if LIBAVUTIL_VERSION_CHECK( 55, 16, 101 )
++    /* A stream that carries its stereoscopic layout in the video itself (the
++     * frame packing SEI), inside a container that has no packetizer to read
++     * it, only tells it here. */
++    const AVFrameSideData *p_s3d =
++            av_frame_get_side_data( frame, AV_FRAME_DATA_STEREO3D );
++    if( p_s3d && p_dec->fmt_in.video.multiview_mode == MULTIVIEW_2D )
++    {
++        const AVStereo3D *s3d = (const AVStereo3D *) p_s3d->data;
++        const bool right_first = s3d->flags & AV_STEREO3D_FLAG_INVERT;
++        video_multiview_mode_t mode = p_dec->fmt_out.video.multiview_mode;
++
++        switch( s3d->type )
++        {
++            case AV_STEREO3D_SIDEBYSIDE:
++                mode = right_first ? MULTIVIEW_STEREO_SBS_RIGHT_FIRST
++                                   : MULTIVIEW_STEREO_SBS;
++                break;
++            case AV_STEREO3D_TOPBOTTOM:
++                mode = right_first ? MULTIVIEW_STEREO_TB_RIGHT_FIRST
++                                   : MULTIVIEW_STEREO_TB;
++                break;
++            case AV_STEREO3D_2D:
++                mode = MULTIVIEW_2D;
++                break;
++            default:
++                break;
++        }
++        if( mode != p_dec->fmt_out.video.multiview_mode )
++        {
++            p_dec->fmt_out.video.multiview_mode = mode;
++            format_changed = true;
++        }
++    }
++#endif
++
+     if (format_changed && decoder_UpdateVideoFormat( p_dec ))
+         return -1;
+ 
+-- 
+2.53.0
+

@@ -1,0 +1,26 @@
+From 9c4a887ddb08b274be9564de175af4e1af3cb0f9 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 23 Jul 2026 19:54:00 -0300
+Subject: [PATCH 1/8] soxr: default to VHQ
+
+Make SoXR quality 4 (SOXR_VHQ, 28-bit precision) the default.
+---
+ modules/audio_filter/resampler/soxr.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/modules/audio_filter/resampler/soxr.c b/modules/audio_filter/resampler/soxr.c
+index 407c3dbf6b..749d5ae8c9 100644
+--- a/modules/audio_filter/resampler/soxr.c
++++ b/modules/audio_filter/resampler/soxr.c
+@@ -67,7 +67,7 @@ vlc_module_begin ()
+     set_shortname( N_("SoX Resampler") )
+     set_category( CAT_AUDIO )
+     set_subcategory( SUBCAT_AUDIO_RESAMPLER )
+-    add_integer( "soxr-resampler-quality", 2,
++    add_integer( "soxr-resampler-quality", 4,
+                 SOXR_QUALITY_TEXT, NULL, true )
+         change_integer_list( soxr_resampler_quality_vlclist,
+                              soxr_resampler_quality_vlctext )
+-- 
+2.53.0
+

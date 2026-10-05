@@ -1,0 +1,36 @@
+From 05dcc5cad86a449c32c48ccfb1b4ce02c9223439 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 02:10:35 -0300
+Subject: [PATCH 2/8] es: add the right-eye-first side-by-side and top-bottom
+ multiview modes
+
+The multiview mode only told the left-eye-first layouts. A stream that
+signals its right eye first (the frame packing SEI's
+content_interpretation_type 2, Matroska's StereoMode 2 and 11) could not
+be told apart from one that does not, so its eyes came out swapped.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ include/vlc_es.h | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/include/vlc_es.h b/include/vlc_es.h
+index 3c8e04e1b1..ad5d0d70fb 100644
+--- a/include/vlc_es.h
++++ b/include/vlc_es.h
+@@ -231,6 +231,12 @@ typedef enum video_multiview_mode_t
+ 
+     /* Checkerboard pattern with left eye first. */
+     MULTIVIEW_STEREO_CHECKERBOARD,
++
++    /* Side-by-side with right eye first. */
++    MULTIVIEW_STEREO_SBS_RIGHT_FIRST,
++
++    /* Top-bottom with right eye first. */
++    MULTIVIEW_STEREO_TB_RIGHT_FIRST,
+ } video_multiview_mode_t;
+ 
+ /**
+-- 
+2.53.0
+

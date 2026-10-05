@@ -1,0 +1,177 @@
+From dba6cd65c856906f02fbdd7cadaef8993e525882 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 02:43:50 -0300
+Subject: [PATCH 8/8] opengl: declare a stereoscopic video's window to the
+ compositor
+
+While a side-by-side or top-bottom video plays, declare its X11 window
+as full side by side stereo content (libstereo-declare, optional at
+configure time), and remove the declaration with the video output. The
+compositor then holds both views in a window twice as wide as the one the
+video asked for and tells it the size of one view; the output draws the
+second view one view's width to the right of the first. A video that is
+not stereoscopic is not declared.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ configure.ac                          |  5 +++
+ modules/video_output/Makefile.am      |  8 ++--
+ modules/video_output/opengl/display.c | 64 +++++++++++++++++++++++++++
+ 3 files changed, 73 insertions(+), 4 deletions(-)
+
+diff --git a/configure.ac b/configure.ac
+index e0ccacaac0..f37bfb70be 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -3215,6 +3215,11 @@ AS_IF([test "${have_gl}" = "yes"], [
+   AC_DEFINE([HAVE_GL], 1, [Defined if having OpenGL])
+ ])
+ 
++dnl Declaration of the video window as stereo content to the compositor
++PKG_CHECK_MODULES([STEREO_DECLARE], [stereo-declare x11], [
++  AC_DEFINE([HAVE_STEREO_DECLARE], 1, [Defined if having libstereo-declare])
++], [:])
++
+ dnl OpenGL ES 2: depends on EGL 1.1
+ PKG_ENABLE_MODULES_VLC([GLES2], [], [glesv2], [OpenGL ES v2 support], [disabled])
+ 
+diff --git a/modules/video_output/Makefile.am b/modules/video_output/Makefile.am
+index 6d75a1d865..0e3e937877 100644
+--- a/modules/video_output/Makefile.am
++++ b/modules/video_output/Makefile.am
+@@ -68,16 +68,16 @@ endif
+ 
+ ### OpenGL ###
+ libgles2_plugin_la_SOURCES = $(OPENGL_COMMONSOURCES) video_output/opengl/display.c
+-libgles2_plugin_la_CFLAGS = $(AM_CFLAGS) $(GLES2_CFLAGS) -DUSE_OPENGL_ES2 $(OPENGL_COMMONCLFAGS)
+-libgles2_plugin_la_LIBADD = $(GLES2_LIBS) $(LIBM) $(OPENGL_COMMONLIBS)
++libgles2_plugin_la_CFLAGS = $(AM_CFLAGS) $(GLES2_CFLAGS) -DUSE_OPENGL_ES2 $(OPENGL_COMMONCLFAGS) $(STEREO_DECLARE_CFLAGS)
++libgles2_plugin_la_LIBADD = $(GLES2_LIBS) $(LIBM) $(OPENGL_COMMONLIBS) $(STEREO_DECLARE_LIBS)
+ libgles2_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(voutdir)'
+ 
+ EXTRA_LTLIBRARIES += libgles2_plugin.la
+ vout_LTLIBRARIES += $(LTLIBgles2)
+ 
+ libgl_plugin_la_SOURCES = $(OPENGL_COMMONSOURCES) video_output/opengl/display.c
+-libgl_plugin_la_CFLAGS = $(AM_CFLAGS) $(GL_CFLAGS) $(OPENGL_COMMONCLFAGS)
+-libgl_plugin_la_LIBADD = $(LIBM) $(OPENGL_COMMONLIBS)
++libgl_plugin_la_CFLAGS = $(AM_CFLAGS) $(GL_CFLAGS) $(OPENGL_COMMONCLFAGS) $(STEREO_DECLARE_CFLAGS)
++libgl_plugin_la_LIBADD = $(LIBM) $(OPENGL_COMMONLIBS) $(STEREO_DECLARE_LIBS)
+ if HAVE_WIN32
+ libgl_plugin_la_CFLAGS += -DHAVE_GL_CORE_SYMBOLS
+ libgl_plugin_la_LIBADD += $(GL_LIBS)
+diff --git a/modules/video_output/opengl/display.c b/modules/video_output/opengl/display.c
+index ec671109bc..71239b946f 100644
+--- a/modules/video_output/opengl/display.c
++++ b/modules/video_output/opengl/display.c
+@@ -31,6 +31,10 @@
+ #include <vlc_plugin.h>
+ #include <vlc_vout_display.h>
+ #include <vlc_opengl.h>
++#ifdef HAVE_STEREO_DECLARE
++# include <vlc_xlib.h>
++# include <stereo-declare.h>
++#endif
+ #include "vout_helper.h"
+ 
+ /* Plugin callbacks */
+@@ -76,8 +80,49 @@ struct vout_display_sys_t
+     vout_display_opengl_t *vgl;
+     vlc_gl_t *gl;
+     picture_pool_t *pool;
++#ifdef HAVE_STEREO_DECLARE
++    Display *x11; /* connection the video window is declared with, if any */
++#endif
+ };
+ 
++#ifdef HAVE_STEREO_DECLARE
++/**
++ * Declares the video window to the compositor as full side by side stereo
++ * content, left eye first, while a stereoscopic video plays. The compositor
++ * then holds both views in a window twice as wide as the one the video asked
++ * for, and the video output draws one view in each half.
++ */
++static void DeclareStereo (vout_display_t *vd, vout_window_t *surface)
++{
++    vout_display_sys_t *sys = vd->sys;
++
++    switch (vd->fmt.multiview_mode)
++    {
++        case MULTIVIEW_STEREO_SBS:
++        case MULTIVIEW_STEREO_SBS_RIGHT_FIRST:
++        case MULTIVIEW_STEREO_TB:
++        case MULTIVIEW_STEREO_TB_RIGHT_FIRST:
++            break;
++        default:
++            return;
++    }
++
++    if (surface->type != VOUT_WINDOW_TYPE_XID || !vlc_xlib_init (VLC_OBJECT(vd)))
++        return;
++
++    Display *x11 = XOpenDisplay (surface->display.x11);
++    if (x11 == NULL)
++        return;
++
++    if (stereo_supported_x11 (x11) >= 3
++     && stereo_declare_x11 (x11, surface->handle.xid, STEREO_SBS_FULL,
++                            STEREO_CLASS_VIDEO, STEREO_VIDEO_CURRENT) == 0)
++        sys->x11 = x11;
++    else
++        XCloseDisplay (x11);
++}
++#endif
++
+ /* Display callbacks */
+ static picture_pool_t *Pool (vout_display_t *, unsigned);
+ static void PictureRender (vout_display_t *, picture_t *, subpicture_t *);
+@@ -96,6 +141,9 @@ static int Open (vlc_object_t *obj)
+ 
+     sys->gl = NULL;
+     sys->pool = NULL;
++#ifdef HAVE_STEREO_DECLARE
++    sys->x11 = NULL;
++#endif
+ 
+     vout_window_t *surface = vout_display_NewWindow (vd, VOUT_WINDOW_TYPE_INVALID);
+     if (surface == NULL)
+@@ -150,6 +198,9 @@ static int Open (vlc_object_t *obj)
+         goto error;
+ 
+     vd->sys = sys;
++#ifdef HAVE_STEREO_DECLARE
++    DeclareStereo (vd, surface);
++#endif
+     vd->info.has_pictures_invalid = false;
+     vd->info.subpicture_chromas = spu_chromas;
+     vd->pool = Pool;
+@@ -177,6 +228,14 @@ static void Close (vlc_object_t *obj)
+     vlc_gl_t *gl = sys->gl;
+     vout_window_t *surface = gl->surface;
+ 
++#ifdef HAVE_STEREO_DECLARE
++    if (sys->x11 != NULL)
++    {
++        stereo_remove_x11 (sys->x11, surface->handle.xid);
++        XCloseDisplay (sys->x11);
++    }
++#endif
++
+     vlc_gl_MakeCurrent (gl);
+     vout_display_opengl_Delete (sys->vgl);
+     vlc_gl_ReleaseCurrent (gl);
+@@ -258,6 +317,11 @@ static int Control (vout_display_t *vd, int query, va_list ap)
+             return VLC_EGENERIC;
+         vout_display_opengl_SetWindowAspectRatio(sys->vgl, (float)place.width / place.height);
+         vout_display_opengl_Viewport(sys->vgl, place.x, place.y, place.width, place.height);
++#ifdef HAVE_STEREO_DECLARE
++        /* The second view is in the second half of the declared window */
++        vout_display_opengl_SetViewStride(sys->vgl,
++                                          sys->x11 != NULL ? c.display.width : 0);
++#endif
+         vlc_gl_ReleaseCurrent (sys->gl);
+         return VLC_SUCCESS;
+       }
+-- 
+2.53.0
+

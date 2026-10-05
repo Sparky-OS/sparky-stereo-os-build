@@ -1,0 +1,195 @@
+From 9cf510d1ff2e0e32699832f596d227e056996754 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 02:20:40 -0300
+Subject: [PATCH 6/8] opengl: show both views of a stereoscopic video
+
+The output showed the left half or the top half of a side-by-side or
+top-bottom video and dropped the other view, and showed the left view
+even when the stream signals its right eye first. When the surface holds
+both views, draw the left eye in the first view's place and the right
+eye in the second one, a view's width further right, each with its own
+copy of the subpictures, so a subtitle or the OSD is one picture at one
+view's size in each view and never spreads across both.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ modules/video_output/opengl/vout_helper.c | 95 +++++++++++++++++------
+ modules/video_output/opengl/vout_helper.h |  3 +
+ 2 files changed, 76 insertions(+), 22 deletions(-)
+
+diff --git a/modules/video_output/opengl/vout_helper.c b/modules/video_output/opengl/vout_helper.c
+index 13d65e04c8..97f8171a45 100644
+--- a/modules/video_output/opengl/vout_helper.c
++++ b/modules/video_output/opengl/vout_helper.c
+@@ -159,6 +159,11 @@ struct vout_display_opengl_t {
+         unsigned int i_visible_height;
+     } last_source;
+ 
++    /* Viewport of one view, and the offset of the second view from the first
++     * when the surface holds both views of a stereoscopic video */
++    int viewport[4];
++    int view_stride;
++
+     /* Non-power-of-2 texture size support */
+     bool supports_npot;
+ 
+@@ -1110,9 +1115,20 @@ void vout_display_opengl_SetWindowAspectRatio(vout_display_opengl_t *vgl,
+ void vout_display_opengl_Viewport(vout_display_opengl_t *vgl, int x, int y,
+                                   unsigned width, unsigned height)
+ {
++    vgl->viewport[0] = x;
++    vgl->viewport[1] = y;
++    vgl->viewport[2] = width;
++    vgl->viewport[3] = height;
+     vgl->vt.Viewport(x, y, width, height);
+ }
+ 
++void vout_display_opengl_SetViewStride(vout_display_opengl_t *vgl, int stride)
++{
++    vgl->view_stride = stride;
++    /* Force the coordinates to be set up again */
++    vgl->last_source.i_visible_width = 0;
++}
++
+ picture_pool_t *vout_display_opengl_GetPool(vout_display_opengl_t *vgl, unsigned requested_count)
+ {
+     GL_ASSERT_NOERROR();
+@@ -1642,49 +1658,50 @@ static void GetTextureCropParamsForStereo(unsigned i_nbTextures,
+     }
+ }
+ 
+-static void TextureCropForStereo(vout_display_opengl_t *vgl,
++static void TextureCropForStereo(vout_display_opengl_t *vgl, unsigned eye,
+                                  float *left, float *top,
+                                  float *right, float *bottom)
+ {
+     float stereoCoefs[2];
+     float stereoOffsets[2];
++    /* The picture holds the views left eye first, unless it says otherwise */
++    unsigned view = eye;
+ 
+     switch (vgl->fmt.multiview_mode)
+     {
++    case MULTIVIEW_STEREO_TB_RIGHT_FIRST:
++        view = !view;
++        /* fall through */
+     case MULTIVIEW_STEREO_TB:
+-        // Display only the left eye.
+         stereoCoefs[0] = 1; stereoCoefs[1] = 0.5;
+-        stereoOffsets[0] = 0; stereoOffsets[1] = 0;
+-        GetTextureCropParamsForStereo(vgl->prgm->tc->tex_count,
+-                                      stereoCoefs, stereoOffsets,
+-                                      left, top, right, bottom);
++        stereoOffsets[0] = 0; stereoOffsets[1] = 0.5 * view;
+         break;
++    case MULTIVIEW_STEREO_SBS_RIGHT_FIRST:
++        view = !view;
++        /* fall through */
+     case MULTIVIEW_STEREO_SBS:
+-        // Display only the left eye.
+         stereoCoefs[0] = 0.5; stereoCoefs[1] = 1;
+-        stereoOffsets[0] = 0; stereoOffsets[1] = 0;
+-        GetTextureCropParamsForStereo(vgl->prgm->tc->tex_count,
+-                                      stereoCoefs, stereoOffsets,
+-                                      left, top, right, bottom);
++        stereoOffsets[0] = 0.5 * view; stereoOffsets[1] = 0;
+         break;
+     default:
+-        break;
++        return;
+     }
++    GetTextureCropParamsForStereo(vgl->prgm->tc->tex_count,
++                                  stereoCoefs, stereoOffsets,
++                                  left, top, right, bottom);
+ }
+ 
+-int vout_display_opengl_Display(vout_display_opengl_t *vgl,
+-                                const video_format_t *source)
++static int DisplayView(vout_display_opengl_t *vgl,
++                       const video_format_t *source, unsigned eye)
+ {
+-    GL_ASSERT_NOERROR();
+-
+-    /* Why drawing here and not in Render()? Because this way, the
+-       OpenGL providers can call vout_display_opengl_Display to force redraw.
+-       Currently, the OS X provider uses it to get a smooth window resizing */
+-    vgl->vt.Clear(GL_COLOR_BUFFER_BIT);
++    if (vgl->viewport[2] != 0)
++        vgl->vt.Viewport(vgl->viewport[0] + eye * vgl->view_stride,
++                         vgl->viewport[1], vgl->viewport[2], vgl->viewport[3]);
+ 
+     vgl->vt.UseProgram(vgl->prgm->id);
+ 
+-    if (source->i_x_offset != vgl->last_source.i_x_offset
++    if (vgl->view_stride != 0 /* the views differ in the coordinates */
++     || source->i_x_offset != vgl->last_source.i_x_offset
+      || source->i_y_offset != vgl->last_source.i_y_offset
+      || source->i_visible_width != vgl->last_source.i_visible_width
+      || source->i_visible_height != vgl->last_source.i_visible_height)
+@@ -1718,7 +1735,7 @@ int vout_display_opengl_Display(vout_display_opengl_t *vgl,
+             bottom[j] = (source->i_y_offset + source->i_visible_height) * scale_h;
+         }
+ 
+-        TextureCropForStereo(vgl, left, top, right, bottom);
++        TextureCropForStereo(vgl, eye, left, top, right, bottom);
+         int ret = SetupCoords(vgl, left, top, right, bottom);
+         if (ret != VLC_SUCCESS)
+             return ret;
+@@ -1807,6 +1824,40 @@ int vout_display_opengl_Display(vout_display_opengl_t *vgl,
+     }
+     vgl->vt.Disable(GL_BLEND);
+ 
++    return VLC_SUCCESS;
++}
++
++int vout_display_opengl_Display(vout_display_opengl_t *vgl,
++                                const video_format_t *source)
++{
++    GL_ASSERT_NOERROR();
++
++    /* Why drawing here and not in Render()? Because this way, the
++       OpenGL providers can call vout_display_opengl_Display to force redraw.
++       Currently, the OS X provider uses it to get a smooth window resizing */
++    vgl->vt.Clear(GL_COLOR_BUFFER_BIT);
++
++    /* The surface holds both views of a stereoscopic video, the left eye
++     * first, each with its own copy of the subpictures */
++    bool stereo = vgl->view_stride != 0;
++    switch (vgl->fmt.multiview_mode)
++    {
++    case MULTIVIEW_STEREO_SBS:
++    case MULTIVIEW_STEREO_SBS_RIGHT_FIRST:
++    case MULTIVIEW_STEREO_TB:
++    case MULTIVIEW_STEREO_TB_RIGHT_FIRST:
++        break;
++    default:
++        stereo = false;
++    }
++
++    for (unsigned eye = 0; eye < (stereo ? 2 : 1); eye++)
++    {
++        int ret = DisplayView(vgl, source, eye);
++        if (ret != VLC_SUCCESS)
++            return ret;
++    }
++
+     /* Display */
+     vlc_gl_Swap(vgl->gl);
+ 
+diff --git a/modules/video_output/opengl/vout_helper.h b/modules/video_output/opengl/vout_helper.h
+index 48014b454c..2f8af297bd 100644
+--- a/modules/video_output/opengl/vout_helper.h
++++ b/modules/video_output/opengl/vout_helper.h
+@@ -259,6 +259,9 @@ void vout_display_opengl_SetWindowAspectRatio(vout_display_opengl_t *vgl,
+ 
+ void vout_display_opengl_Viewport(vout_display_opengl_t *vgl, int x, int y,
+                                   unsigned width, unsigned height);
++/* Show both views of a stereoscopic video, the second one stride pixels to
++ * the right of the first; zero shows the left eye only */
++void vout_display_opengl_SetViewStride(vout_display_opengl_t *vgl, int stride);
+ 
+ int vout_display_opengl_Prepare(vout_display_opengl_t *vgl,
+                                 picture_t *picture, subpicture_t *subpicture);
+-- 
+2.53.0
+

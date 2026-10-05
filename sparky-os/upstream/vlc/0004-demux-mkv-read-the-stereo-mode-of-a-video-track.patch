@@ -1,0 +1,51 @@
+From 6b909e3185d88908456eb65ff202f94f24d92b67 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 02:10:53 -0300
+Subject: [PATCH 4/8] demux: mkv: read the stereo mode of a video track
+
+The StereoMode element was parsed and ignored, so a Matroska file that
+declares side by side or top-bottom video never reached the video output
+as stereoscopic. Map the left-eye-first and right-eye-first side-by-side
+and top-bottom values.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ modules/demux/mkv/matroska_segment_parse.cpp | 20 +++++++++++++++++++-
+ 1 file changed, 19 insertions(+), 1 deletion(-)
+
+diff --git a/modules/demux/mkv/matroska_segment_parse.cpp b/modules/demux/mkv/matroska_segment_parse.cpp
+index 2ba240f4df..a458bca38f 100644
+--- a/modules/demux/mkv/matroska_segment_parse.cpp
++++ b/modules/demux/mkv/matroska_segment_parse.cpp
+@@ -618,9 +618,27 @@ void matroska_segment_c::ParseTrackEntry( const KaxTrackEntry *m )
+             ONLY_FMT(VIDEO);
+             debug( vars, "Track Video Interlaced=%u", static_cast<uint8>( fint ) ) ;
+         }
+-        E_CASE( KaxVideoStereoMode, stereo ) // UNUSED
++        E_CASE( KaxVideoStereoMode, stereo )
+         {
++            ONLY_FMT(VIDEO);
+             debug( vars, "Track Video Stereo Mode=%u", static_cast<uint8>( stereo ) ) ;
++            switch( static_cast<uint8>( stereo ) )
++            {
++                case 1:
++                    vars.tk->fmt.video.multiview_mode = MULTIVIEW_STEREO_SBS;
++                    break;
++                case 2:
++                    vars.tk->fmt.video.multiview_mode = MULTIVIEW_STEREO_TB_RIGHT_FIRST;
++                    break;
++                case 3:
++                    vars.tk->fmt.video.multiview_mode = MULTIVIEW_STEREO_TB;
++                    break;
++                case 11:
++                    vars.tk->fmt.video.multiview_mode = MULTIVIEW_STEREO_SBS_RIGHT_FIRST;
++                    break;
++                default:
++                    break;
++            }
+         }
+         E_CASE( KaxVideoPixelWidth, vwidth )
+         {
+-- 
+2.53.0
+
