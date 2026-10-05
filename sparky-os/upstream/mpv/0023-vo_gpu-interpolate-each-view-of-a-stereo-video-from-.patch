@@ -1,0 +1,165 @@
+From b72efb23bca1b25e2e497735cc18f3f6d0098582 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 15:24:05 -0300
+Subject: [PATCH] vo_gpu: interpolate each view of a stereo video from its own
+ frames
+
+The renderer keeps one history of past output frames (the surface queue
+with its position and the count of frames drawn) and one pair of source
+and destination rectangles. The video layer of a 3D video is drawn in two
+passes, one per eye, and the previous change had to switch interpolation
+off for them: with one history, the left view's pass would take its
+neighbouring frames from the right view's.
+
+Give each view its own state: the second view's rectangles, surfaces and
+counters sit in a struct and gl_video_set_view() swaps them with the ones
+in use, so that every pass reads and writes the history of its own view.
+Both eyes get the same mix for the same output time, each from its own
+past. A mono video only uses view 0 and behaves as before.
+RENDER_FRAME_VIEW now only keeps the finished picture of the other view
+from being redrawn from the cached output.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ video/out/gpu/video.c | 47 +++++++++++++++++++++++++++++++++++++------
+ video/out/gpu/video.h |  7 ++++---
+ video/out/vo_gpu.c    |  2 ++
+ 3 files changed, 47 insertions(+), 9 deletions(-)
+
+diff --git a/video/out/gpu/video.c b/video/out/gpu/video.c
+index 86bd37d050..52724c77c3 100644
+--- a/video/out/gpu/video.c
++++ b/video/out/gpu/video.c
+@@ -124,6 +124,17 @@ struct surface {
+ 
+ #define SURFACES_MAX 10
+ 
++// What a view of a stereo video needs to interpolate on its own: the video
++// layer holds both views, and each is drawn from its own history of frames.
++struct view_state {
++    struct mp_rect src_rect;
++    struct mp_rect dst_rect;
++    struct surface surfaces[SURFACES_MAX];
++    int surface_idx;
++    int surface_now;
++    int frames_drawn;
++};
++
+ struct cached_file {
+     char *path;
+     struct bstr body;
+@@ -232,6 +243,10 @@ struct gl_video {
+     struct mp_rect dst_rect;    // video rectangle on output window
+     struct mp_osd_res osd_rect; // OSD size/margins
+ 
++    // The fields above are those of the view in use; the other view's are here
++    int view;
++    struct view_state other_view;
++
+     // temporary during rendering
+     struct compute_info pass_compute; // compute shader metadata for this pass
+     struct image *pass_imgs;          // bound images for this pass
+@@ -616,13 +631,32 @@ static void gl_video_reset_surfaces(struct gl_video *p)
+     for (int i = 0; i < SURFACES_MAX; i++) {
+         p->surfaces[i].id = 0;
+         p->surfaces[i].pts = MP_NOPTS_VALUE;
++        p->other_view.surfaces[i].id = 0;
++        p->other_view.surfaces[i].pts = MP_NOPTS_VALUE;
+     }
+-    p->surface_idx = 0;
+-    p->surface_now = 0;
+-    p->frames_drawn = 0;
++    p->surface_idx = p->other_view.surface_idx = 0;
++    p->surface_now = p->other_view.surface_now = 0;
++    p->frames_drawn = p->other_view.frames_drawn = 0;
+     p->output_tex_valid = false;
+ }
+ 
++// Use the rectangles and the interpolation history of a view (0 or 1). A
++// mono video only has view 0.
++void gl_video_set_view(struct gl_video *p, int view)
++{
++    if (view == p->view)
++        return;
++    struct view_state *o = &p->other_view;
++    MPSWAP(struct mp_rect, p->src_rect, o->src_rect);
++    MPSWAP(struct mp_rect, p->dst_rect, o->dst_rect);
++    for (int i = 0; i < SURFACES_MAX; i++)
++        MPSWAP(struct surface, p->surfaces[i], o->surfaces[i]);
++    MPSWAP(int, p->surface_idx, o->surface_idx);
++    MPSWAP(int, p->surface_now, o->surface_now);
++    MPSWAP(int, p->frames_drawn, o->frames_drawn);
++    p->view = view;
++}
++
+ static void gl_video_reset_hooks(struct gl_video *p)
+ {
+     for (int i = 0; i < p->num_tex_hooks; i++)
+@@ -671,8 +705,10 @@ static void uninit_rendering(struct gl_video *p)
+     for (int n = 0; n < 2; n++)
+         ra_tex_free(p->ra, &p->error_diffusion_tex[n]);
+ 
+-    for (int n = 0; n < SURFACES_MAX; n++)
++    for (int n = 0; n < SURFACES_MAX; n++) {
+         ra_tex_free(p->ra, &p->surfaces[n].tex);
++        ra_tex_free(p->ra, &p->other_view.surfaces[n].tex);
++    }
+ 
+     for (int n = 0; n < p->num_hook_textures; n++)
+         ra_tex_free(p->ra, &p->hook_textures[n]);
+@@ -3583,8 +3619,7 @@ void gl_video_render_frame(struct gl_video *p, struct vo_frame *frame,
+ 
+     if (has_frame) {
+         bool interpolate = p->opts.interpolation && frame->display_synced &&
+-                           (p->frames_drawn || !frame->still) &&
+-                           !(flags & RENDER_FRAME_VIEW);
++                           (p->frames_drawn || !frame->still);
+         if (interpolate) {
+             double ratio = frame->ideal_frame_duration / frame->vsync_interval;
+             if (fabs(ratio - 1.0) < p->opts.interpolation_threshold)
+diff --git a/video/out/gpu/video.h b/video/out/gpu/video.h
+index f84dfe9d61..a6757dc85b 100644
+--- a/video/out/gpu/video.h
++++ b/video/out/gpu/video.h
+@@ -194,10 +194,10 @@ enum {
+     // Only the OSD and subtitles, over a transparent target, once each for the
+     // window's surface above the video layer
+     RENDER_FRAME_CONTROLS = 1 << 4,
+-    // One of several views of the same frame, each drawn at its own place of the
+-    // target: no interpolation and no cached output, and for the later views the
+-    // target is left as it is
++    // One of the views of the same frame, each drawn at its own place of the
++    // target: no cached output, which depends on the place
+     RENDER_FRAME_VIEW = 1 << 5,
++    // Leave the target as it is, for the views drawn after the first
+     RENDER_FRAME_KEEP = 1 << 6,
+     RENDER_FRAME_DEF = RENDER_FRAME_SUBS | RENDER_FRAME_OSD | RENDER_SCREEN_COLOR,
+ };
+@@ -213,6 +213,7 @@ bool gl_video_check_format(struct gl_video *p, int mp_format);
+ void gl_video_config(struct gl_video *p, struct mp_image_params *params);
+ void gl_video_render_frame(struct gl_video *p, struct vo_frame *frame,
+                            const struct ra_fbo *fbo, int flags);
++void gl_video_set_view(struct gl_video *p, int view);
+ void gl_video_resize(struct gl_video *p,
+                      struct mp_rect *src, struct mp_rect *dst,
+                      struct mp_osd_res *osd);
+diff --git a/video/out/vo_gpu.c b/video/out/vo_gpu.c
+index 6f9bcece85..a5a80e2e1d 100644
+--- a/video/out/vo_gpu.c
++++ b/video/out/vo_gpu.c
+@@ -124,10 +124,12 @@ static bool draw_frame_layers(struct vo *vo, struct vo_frame *frame)
+             src.x1 = src.x0 + half;
+             dst.x0 += view * vo->dwidth;
+             dst.x1 += view * vo->dwidth;
++            gl_video_set_view(p->renderer, view);
+             gl_video_resize(p->renderer, &src, &dst, &p->osd);
+             gl_video_render_frame(p->renderer, frame, &video_fbo, RENDER_SCREEN_COLOR |
+                                   RENDER_FRAME_VIEW | (view ? RENDER_FRAME_KEEP : 0));
+         }
++        gl_video_set_view(p->renderer, 0);
+     }
+ 
+     sw->fns->start_frame(sw, NULL); // for contexts with a surface each
+-- 
+2.53.0
+
