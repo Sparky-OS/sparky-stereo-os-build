@@ -1,0 +1,102 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
+#
+# What each connected display says about stereo 3D and deep colour, read from its EDID
+# with edid-decode. The HDMI 3D formats a display always has once it announces 3D are
+# the ones the kernel adds for it (drivers/gpu/drm/drm_edid.c, stereo_mandatory_modes).
+
+set -eu
+
+if ! command -v edid-decode > /dev/null 2>&1; then
+    echo "edid-decode is not installed."
+    exit 0
+fi
+
+for connector in /sys/class/drm/card*-*; do
+    [ -e "$connector/edid" ] || continue
+    [ "$(cat "$connector/status" 2> /dev/null)" = connected ] || continue
+
+    name=$(basename "$connector")
+    name=${name#card*-}
+
+    edid-decode "$connector/edid" 2> /dev/null | awk -v connector="$name" '
+        function mode(   hz) {
+            # "VIC  31:  1920x1080   50.000000 Hz ..." gives "1920x1080 50 Hz"
+            hz = $4 + 0
+            return $3 " " (hz == int(hz) ? hz : sprintf("%.2f", hz)) " Hz"
+        }
+        function add(list, item) {
+            return list == "" ? item : list ", " item
+        }
+        function structure_name(text) {
+            # "Side-by-side (half, horizontal)" gives "side by side (half)"
+            text = tolower(text)
+            gsub(/-/, " ", text)
+            sub(/ \(half, horizontal\)/, " (half)", text)
+            return text
+        }
+        /Display Product Name:/ {
+            product = $0
+            sub(/^.*Display Product Name: /, "", product)
+            gsub(/\047/, "", product)
+        }
+        /Bits per primary color channel:/ { panel_bits = $NF }
+        /Vendor-Specific Data Block \(HDMI\), OUI 00-0C-03/ { hdmi = 1; block = "hdmi"; next }
+        /Vendor-Specific Data Block \(HDMI Forum\)/ { block = "forum"; next }
+        /^  [A-Z].*Data Block/ { block = "" }
+        block == "hdmi" && /DC_30bit/ { dc30 = 1 }
+        block == "hdmi" && /DC_36bit/ { dc36 = 1 }
+        block == "hdmi" && /DC_48bit/ { dc48 = 1 }
+        block == "hdmi" && /DC_Y444/ { y444 = 1 }
+        block == "hdmi" && /Maximum TMDS clock:/ { tmds = $(NF - 1) " MHz" }
+        block == "forum" && /Maximum TMDS Character Rate:/ { tmds = $(NF - 1) " MHz" }
+        block == "forum" && /Deep Color 4:2:0/ { sub(/^ */, ""); forum = add(forum, $0) }
+        block == "hdmi" && /3D present/ { stereo = 1 }
+        block == "hdmi" && /^ *3D: / { sub(/^ *3D: /, ""); structures = add(structures, structure_name($0)) }
+        block == "hdmi" && /3D VIC indices that support these capabilities:/ { list = "all"; next }
+        block == "hdmi" && /3D VIC indices with specific capabilities:/ { list = "specific"; next }
+        block == "hdmi" && list == "all" && /^ *VIC +[0-9]+:/ { all = add(all, mode()); next }
+        block == "hdmi" && list == "specific" && /^ *VIC +[0-9]+:/ {
+            structure = $0
+            sub(/^.*Hz[^(]*\(/, "", structure)
+            sub(/\)$/, "", structure)
+            structure = structure_name(structure)
+            if (!(structure in specific))
+                order[++structures_listed] = structure
+            specific[structure] = add(specific[structure], mode())
+            next
+        }
+        list != "" && !/^ *VIC/ { list = "" }
+        END {
+            printf "%s: %s\n", connector, product == "" ? "unnamed display" : product
+            if (stereo) {
+                print "  HDMI 3D: yes"
+                print "    Always available on a 3D display that has the 2D mode:"
+                print "      frame packing: 1920x1080 24 Hz, 1280x720 50 Hz, 1280x720 60 Hz"
+                print "      side by side (half): 1920x1080i 50 Hz, 1920x1080i 60 Hz"
+                print "      top and bottom: 1920x1080 24 Hz, 1280x720 50 Hz, 1280x720 60 Hz"
+                if (structures != "" && all != "")
+                    printf "    Listed by the display, %s:\n      %s\n", structures, all
+                for (i = 1; i <= structures_listed; i++)
+                    printf "    Listed by the display, %s:\n      %s\n", order[i], specific[order[i]]
+            } else {
+                print "  HDMI 3D: not announced"
+                print "    3D is still available through the anaglyph and the other stereo formats in Display settings."
+            }
+            if (dc30) depth = add(depth, "10")
+            if (dc36) depth = add(depth, "12")
+            if (dc48) depth = add(depth, "16")
+            if (depth != "")
+                printf "  Deep colour: %s bits per colour%s\n", depth, y444 ? ", also for YCbCr 4:4:4" : ""
+            else if (hdmi)
+                print "  Deep colour: 8 bits per colour only"
+            else if (panel_bits != "")
+                printf "  Colour depth: %s bits per colour\n", panel_bits
+            if (forum != "")
+                printf "  %s\n", forum
+            if (tmds != "")
+                printf "  Maximum TMDS clock: %s\n", tmds
+            print ""
+        }'
+done
