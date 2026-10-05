@@ -7,11 +7,13 @@
 #   /etc/apt/trusted.gpg.d/sparky-stereo-repo.asc   (ASCII armoured)
 # The repository's sources file and pin come in the sparky-stereo-apt package.
 # Needs only dpkg-deb and gpg.
-# Usage: build.sh PUBLIC-KEY-FILE   (the sparky-stereo-repo.asc that make-signing-key.sh exported)
+# Usage: build.sh [PUBLIC-KEY-FILE]   (default: sparky-stereo-repo.asc beside this script, the
+#   repository's public key, fingerprint 10DF D38D AD1E 4808 BC68 8E5A 945E 5D07 9A2A 0B9C;
+#   tests pass their own throwaway key)
 # Output goes to $OUT (default: the current folder; point it at the repository folder yourself).
 # Last update 2026/10/05
 set -euo pipefail
-KEY=${1:?usage: build.sh PUBLIC-KEY-FILE}
+KEY=${1:-$(cd "$(dirname "$0")" && pwd)/sparky-stereo-repo.asc}
 [ -s "$KEY" ] || { echo "$KEY is empty or missing" >&2; exit 1; }
 OUT=${OUT:-$PWD}
 VERSION=${VERSION:-20261005.1~sparky9~0}
