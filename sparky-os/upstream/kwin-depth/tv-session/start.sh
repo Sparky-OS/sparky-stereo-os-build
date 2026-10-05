@@ -6,9 +6,9 @@
 set -u
 DIR=$(cd "$(dirname "$0")" && pwd)
 BACKEND=${BACKEND:-drm}
-# the newest build by default (levels, real shadows, the pointer); DEPTH_PREFIX=prefix (levels only) or
-# prefix-depth3 (with real shadows) select an earlier one
-P=$DIR/${DEPTH_PREFIX:-prefix-depth4}/usr
+# the newest build by default (levels, real shadows, the pointer, the settings page); DEPTH_PREFIX=prefix
+# (levels only), prefix-depth3 (with real shadows) or prefix-depth4 (with the pointer) select an earlier one
+P=$DIR/${DEPTH_PREFIX:-prefix-depth5}/usr
 L=$P/lib/x86_64-linux-gnu
 
 if [ "$BACKEND" = drm ] && { [ -n "${WAYLAND_DISPLAY:-}" ] || [ -n "${DISPLAY:-}" ]; }; then
