@@ -1,3 +1,4 @@
+diff -urN a/modules/audio_output/pipewire.c b/modules/audio_output/pipewire.c
 --- a/modules/audio_output/pipewire.c
 +++ b/modules/audio_output/pipewire.c
 @@ -2,6 +2,9 @@
@@ -10,7 +11,15 @@
   *
   * This program is free software; you can redistribute it and/or modify it
   * under the terms of the GNU General Public License as published by
-@@ -41,6 +44,7 @@
+@@ -30,6 +33,7 @@
+ #include <search.h>
+ #include <spa/param/audio/format-utils.h>
+ #include <spa/param/props.h>
++#include <pipewire/extensions/metadata.h>
+ #include <pipewire/pipewire.h>
+ #include <vlc_common.h>
+ #include <vlc_plugin.h>
+@@ -41,6 +45,7 @@
      struct pw_stream *stream;
      struct spa_hook listener;
      size_t stride;
@@ -18,7 +27,7 @@
  
      struct {
          block_t *head;
-@@ -252,15 +256,42 @@
+@@ -252,15 +257,42 @@
      vlc_pw_debug(s->context, "stream trigger done");
  }
  
@@ -61,18 +70,35 @@
  static int vlc_pw_stream_get_time(struct vlc_pw_stream *s,
                                    mtime_t *restrict delay)
  {
-@@ -443,16 +474,31 @@
+@@ -436,6 +468,14 @@
+     struct vlc_pw_stream *stream;
+     struct spa_hook listener;
+     void *nodes;
++    struct pw_proxy *settings; /**< the "settings" metadata, where the clock is */
++    struct spa_hook settings_listener;
++    struct {
++        unsigned int force_rate; /**< clock.force-rate, 0 if not forced */
++        unsigned int rate; /**< clock.rate, the default rate of the graph */
++        unsigned int allowed[16]; /**< clock.allowed-rates */
++        size_t n_allowed;
++    } clock;
+     struct {
+         uint32_t device;
+         float volume;
+@@ -443,16 +483,33 @@
      } initial;
  };
  
 +/**
 + * Creates a stream. If the rate is zero, the stream is offered at any rate
-+ * and takes the one that the graph runs at.
++ * and takes the one that the graph negotiates. If switch_rate is set, the
++ * stream asks the graph to run at the rate (the graph does, when the rate is
++ * one of its allowed rates and no other stream holds it).
 + */
  static struct vlc_pw_stream *vlc_pw_stream_create(audio_output_t *aout,
 -                                           audio_sample_format_t *restrict fmt)
 +                                           audio_sample_format_t *restrict fmt,
-+                                           unsigned int rate)
++                                           unsigned int rate, bool switch_rate)
  {
      struct aout_sys_t *sys = aout->sys;
      struct vlc_pw_context *ctx = sys->context;
@@ -95,20 +121,22 @@
      /* Map possible audio output formats */
      switch (fmt->i_format) {
          case VLC_CODEC_FL64:
-@@ -536,6 +582,12 @@
+@@ -536,6 +593,14 @@
                                NULL);
  
      if (likely(props != NULL)) {
 +        long multiplier = var_InheritInteger(aout, "pipewire-buffer-multiplier");
 +
-+        if (multiplier > 1) /* a longer quantum than the graph's default */
-+            pw_properties_setf(props, PW_KEY_NODE_LATENCY, "%ld/48000",
-+                               1024 * multiplier);
++        if (switch_rate) /* the graph's rate is the stream's, not its default */
++            pw_properties_setf(props, PW_KEY_NODE_RATE, "1/%u", rate);
++        if (rate != 0 && (multiplier > 1 || switch_rate)) /* the quantum, in frames of the rate */
++            pw_properties_setf(props, PW_KEY_NODE_LATENCY, "%ld/%u",
++                               1024 * multiplier, rate);
 +
          char *role = var_InheritString(aout, "role");
          if (role != NULL) { /* Capitalise the first character */
              pw_properties_setf(props, PW_KEY_MEDIA_ROLE, "%c%s",
-@@ -562,7 +614,8 @@
+@@ -562,7 +627,8 @@
      s->queue.tailp = &s->queue.head;
      s->queue.depth = 0;
      s->time.pts = VLC_TS_INVALID;
@@ -118,7 +146,7 @@
      s->start = VLC_TS_INVALID;
      s->starting = false;
      s->draining = false;
-@@ -596,6 +649,10 @@
+@@ -596,6 +662,10 @@
              return NULL;
      }
  
@@ -129,27 +157,59 @@
      /* Apply initial controls */
      sys->initial.device = PW_ID_ANY;
  
-@@ -645,9 +702,26 @@
+@@ -642,12 +712,58 @@
+     sys->stream = NULL;
+ }
+ 
++static bool rate_allowed(const struct aout_sys_t *sys, unsigned int rate)
++{
++    for (size_t i = 0; i < sys->clock.n_allowed; i++)
++        if (sys->clock.allowed[i] == rate)
++            return true;
++    return false;
++}
++
  static int Start(audio_output_t *aout, audio_sample_format_t *restrict fmt)
  {
      struct aout_sys_t *sys = aout->sys;
 +    unsigned int minimum = var_InheritInteger(aout, "pipewire-audio-rate");
- 
--    sys->stream = vlc_pw_stream_create(aout, fmt);
--    return (sys->stream != NULL) ? VLC_SUCCESS : -errno;
++
 +    if (minimum == 0) { /* the rate of the stream */
-+        sys->stream = vlc_pw_stream_create(aout, fmt, fmt->i_rate);
++        sys->stream = vlc_pw_stream_create(aout, fmt, fmt->i_rate, false);
 +        return (sys->stream != NULL) ? VLC_SUCCESS : -errno;
 +    }
 +
 +    /* The rate that the graph runs at, if it is not lower than the minimum:
 +     * the player's resampler is then the only one that touches the audio,
-+     * and none when the rates agree. */
-+    sys->stream = vlc_pw_stream_create(aout, fmt, 0);
-+    if (sys->stream != NULL && vlc_pw_stream_get_rate(sys->stream) < minimum) {
-+        vlc_pw_stream_destroy(sys->stream);
-+        sys->stream = vlc_pw_stream_create(aout, fmt, minimum);
-+    }
++     * and none when the rates agree. The rate of the graph is the one that
++     * the server publishes: the forced one, or else its default, or else the
++     * rate of the stream when the graph can switch to it. */
++    unsigned int target = 0;
++    bool switch_rate = false;
+ 
+-    sys->stream = vlc_pw_stream_create(aout, fmt);
+-    return (sys->stream != NULL) ? VLC_SUCCESS : -errno;
++    vlc_pw_lock(sys->context);
++    if (sys->clock.force_rate != 0)
++        target = sys->clock.force_rate;
++    else if (fmt->i_rate >= minimum && rate_allowed(sys, fmt->i_rate)) {
++        target = fmt->i_rate;
++        switch_rate = target != sys->clock.rate;
++    } else
++        target = sys->clock.rate;
++    vlc_pw_unlock(sys->context);
++
++    if (target == 0) { /* no settings: what an unconstrained stream gets */
++        sys->stream = vlc_pw_stream_create(aout, fmt, 0, false);
++        if (sys->stream != NULL
++         && vlc_pw_stream_get_rate(sys->stream) < minimum) {
++            vlc_pw_stream_destroy(sys->stream);
++            sys->stream = vlc_pw_stream_create(aout, fmt, minimum, false);
++        }
++    } else
++        sys->stream = vlc_pw_stream_create(aout, fmt,
++                                           target < minimum ? minimum : target,
++                                           switch_rate);
 +    if (sys->stream == NULL)
 +        return -errno;
 +
@@ -158,7 +218,108 @@
  }
  
  static int VolumeSet(audio_output_t *aout, float volume)
-@@ -840,11 +914,37 @@
+@@ -707,6 +823,47 @@
+     return 0;
+ }
+ 
++/**
++ * The clock of the graph: clock.force-rate when it is not zero, otherwise
++ * clock.rate, and clock.allowed-rates, which says whether the graph can run at
++ * the rate of a stream. The server publishes them in its "settings" metadata.
++ */
++static int settings_property(void *data, uint32_t subject, const char *key,
++                             const char *type, const char *value)
++{
++    struct aout_sys_t *sys = data;
++
++    (void) type;
++    if (subject != PW_ID_CORE || key == NULL)
++        return 0;
++
++    if (!strcmp(key, "clock.force-rate"))
++        sys->clock.force_rate = (value != NULL) ? strtoul(value, NULL, 10) : 0;
++    else if (!strcmp(key, "clock.rate"))
++        sys->clock.rate = (value != NULL) ? strtoul(value, NULL, 10) : 0;
++    else if (!strcmp(key, "clock.allowed-rates")) {
++        sys->clock.n_allowed = 0;
++        while (value != NULL && *value != '\0') {
++            char *end;
++            unsigned long rate = strtoul(value, &end, 10);
++
++            if (end == value) { /* a bracket or a space */
++                value++;
++                continue;
++            }
++            if (sys->clock.n_allowed < ARRAY_SIZE(sys->clock.allowed))
++                sys->clock.allowed[sys->clock.n_allowed++] = rate;
++            value = end;
++        }
++    }
++    return 0;
++}
++
++static const struct pw_metadata_events settings_events = {
++    PW_VERSION_METADATA_EVENTS,
++    .property = settings_property,
++};
++
+ static void registry_node(audio_output_t *aout, uint32_t id, uint32_t perms,
+                           uint32_t version, const struct spa_dict *props)
+ {
+@@ -758,6 +915,20 @@
+ 
+     if (strcmp(name, PW_TYPE_INTERFACE_Node) == 0)
+         registry_node(aout, id, perms, version, props);
++    else if (strcmp(name, PW_TYPE_INTERFACE_Metadata) == 0) {
++        struct aout_sys_t *sys = aout->sys;
++        const char *mdname = spa_dict_lookup(props, PW_KEY_METADATA_NAME);
++
++        if (mdname != NULL && !strcmp(mdname, "settings")
++         && sys->settings == NULL) {
++            sys->settings = vlc_pw_registry_bind(sys->context, id, name,
++                                                 PW_VERSION_METADATA);
++            if (sys->settings != NULL)
++                pw_proxy_add_object_listener(sys->settings,
++                                             &sys->settings_listener,
++                                             &settings_events, sys);
++        }
++    }
+ }
+ 
+ /**
+@@ -795,6 +966,12 @@
+     audio_output_t *aout = (audio_output_t *)obj;
+     struct aout_sys_t *sys = aout->sys;
+ 
++    if (sys->settings != NULL) {
++        vlc_pw_lock(sys->context);
++        spa_hook_remove(&sys->settings_listener);
++        pw_proxy_destroy(sys->settings);
++        vlc_pw_unlock(sys->context);
++    }
+     vlc_pw_disconnect(sys->context);
+     tdestroy(sys->nodes, free);
+     free(sys);
+@@ -818,6 +995,10 @@
+     sys->initial.volume = NAN;
+     sys->initial.mute = -1;
+     sys->nodes = NULL;
++    sys->settings = NULL;
++    sys->clock.force_rate = 0;
++    sys->clock.rate = 0;
++    sys->clock.n_allowed = 0;
+ 
+     aout->sys = sys;
+     aout->start = Start;
+@@ -833,6 +1014,7 @@
+     vlc_pw_lock(sys->context);
+     vlc_pw_registry_listen(sys->context, &sys->listener, &events, aout);
+     vlc_pw_roundtrip_unlocked(sys->context); /* Enumerate device nodes */
++    vlc_pw_roundtrip_unlocked(sys->context); /* and read the settings */
+     vlc_pw_unlock(sys->context);
+     return VLC_SUCCESS;
+ }
+@@ -840,11 +1022,37 @@
  #define VLC_MODULE_LICENSE "GPLv3"
  #define VLC_MODULE_COPYRIGHT "Copyright (c) 2022 Rémi Denis-Courmont"
  
@@ -196,3 +357,43 @@
      add_shortcut("pipewire", "pw")
      set_callbacks(Open, Close)
  vlc_module_end()
+diff -urN a/modules/audio_output/vlc_pipewire.c b/modules/audio_output/vlc_pipewire.c
+--- a/modules/audio_output/vlc_pipewire.c
++++ b/modules/audio_output/vlc_pipewire.c
+@@ -148,6 +148,15 @@
+     return 0;
+ }
+ 
++struct pw_proxy *vlc_pw_registry_bind(struct vlc_pw_context *ctx, uint32_t id,
++                                      const char *type, uint32_t version)
++{
++    if (ctx->registry == NULL)
++        return NULL;
++
++    return pw_registry_bind(ctx->registry, id, type, version, 0);
++}
++
+ void vlc_pw_disconnect(struct vlc_pw_context *ctx)
+ {
+     pw_thread_loop_stop(ctx->loop);
+diff -urN a/modules/audio_output/vlc_pipewire.h b/modules/audio_output/vlc_pipewire.h
+--- a/modules/audio_output/vlc_pipewire.h
++++ b/modules/audio_output/vlc_pipewire.h
+@@ -30,6 +30,7 @@
+ struct spa_hook;
+ struct pw_properties;
+ struct pw_registry_events;
++struct pw_proxy;
+ 
+ void vlc_pw_log(struct vlc_pw_context *ctx, int prio,
+                 const char *file, unsigned int line, const char *func,
+@@ -61,6 +62,9 @@
+ int vlc_pw_registry_listen(struct vlc_pw_context *ctx, struct spa_hook *hook,
+                            const struct pw_registry_events *, void *);
+ 
++struct pw_proxy *vlc_pw_registry_bind(struct vlc_pw_context *ctx, uint32_t id,
++                                      const char *type, uint32_t version);
++
+ void vlc_pw_disconnect(struct vlc_pw_context *ctx);
+ struct vlc_pw_context *vlc_pw_connect(vlc_object_t *obj, const char *name);
+ 

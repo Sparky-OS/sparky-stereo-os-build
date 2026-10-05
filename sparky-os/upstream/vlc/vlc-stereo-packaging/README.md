@@ -42,7 +42,7 @@ docker run --rm --user $(id -u):$(id -g) -e HOME=/work -e VER=3.0.24-1+stereo3d3
   vlc-stereo-build bash /src/vlc-stereo-packaging/build.sh
 ```
 
-`out/` then holds `vlc-stereo_<version>_amd64.deb`, `vlc-stereo-plugin-pipewire_<version>_amd64.deb` (and `-dbgsym`-less: the build strips without dbgsym packages), the `.changes` and `.buildinfo`, and the Debian source package: `vlc_<version>.dsc`, `vlc_<version>.debian.tar.xz`, `vlc_3.0.24.orig.tar.xz` (check it with `dpkg-source -x vlc_<version>.dsc` in an empty folder).
+`out/` then holds the two packages, the `.changes` and `.buildinfo`, and the Debian source package of the build: `vlc_<version>.dsc`, `vlc_<version>.debian.tar.xz`, `vlc_3.0.24.orig.tar.xz` and its `.asc` (check it with `dpkg-source -x vlc_<version>.dsc` in an empty folder). The source package is made before the binary build, so that no build product is in it.
 
 3. The edition's packages carry their provenance: run `sparky-os/repo/provenance.sh` on the two `.deb` files (Maintainer, Homepage and the credit stanza in the copyright files), then copy them, and the source package files into `/K3D/temp/sparky-os/repo/source/`, into the repository.
 

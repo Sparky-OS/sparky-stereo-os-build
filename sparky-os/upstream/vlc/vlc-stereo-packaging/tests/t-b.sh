@@ -28,6 +28,10 @@ run_case() { # tag force allowed file other
   echo "$tag: force=$force allowed=$allowed file=$f(${frate}Hz) other-stream=$other | graph(driver) ${drv:-?} Hz | our stream (server): ${ours:-?}"
   kill $vp 2>/dev/null; [ "$other" = yes ] && { kill $other_pid 2>/dev/null; pkill -f "pw-play" ; }; sleep 3; kill -9 $vp 2>/dev/null
 }
-for forced in 96000 192000; do for f in s16-44k.wav s24-96k.flac; do for other in no yes; do
+if [ -z "$ONLYA" ]; then for forced in 96000 192000; do for f in s16-44k.wav s24-96k.flac; do for other in no yes; do
   run_case F${forced}-${f%%.*}-$other $forced "[ 48000 ]" $f $other
-done; done; done
+done; done; done; fi
+# B3: not forced, the graph may switch: clock.allowed-rates 48000 and 96000, default 48000
+for f in s24-96k.flac s16-44k.wav; do for other in no yes; do
+  run_case A-$f-$other 0 "[ 48000 96000 ]" $f $other
+done; done

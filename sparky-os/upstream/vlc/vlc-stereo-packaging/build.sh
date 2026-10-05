@@ -33,9 +33,11 @@ python3 $PK/gen-debian.py
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL='Capitain_Jack@yahoo.com'
 dch -v "$VER" --distribution testing --force-distribution \
   "${CHANGELOG:-VLC Stereo as packages of its own, installed beside the VLC of the distribution: vlc-stereo (program vlc-stereo, private library and plugin directory, settings in ~/.config/vlc-stereo) and vlc-stereo-plugin-pipewire (the PipeWire output of the Debian vlc-plugin-pipewire, copied, with the HiFi behaviour). See https://github.com/danielcamposramos/vlc}"
-DEB_BUILD_OPTIONS='parallel=5 nocheck' dpkg-buildpackage -b -uc -us
-mkdir -p $OUT && cp ../*.deb ../*.buildinfo ../*.changes $OUT/
-
-# 4. the Debian source package of the build (.dsc, orig tarball, debian.tar.xz)
+# 4. the Debian source package of the build (.dsc, orig tarball, debian.tar.xz), made before the build so that no build product is in the tree
 dpkg-buildpackage -S -uc -us -d
-cp ../*.dsc ../*.debian.tar.xz ../*.orig.tar.xz* $OUT/
+mkdir -p $OUT && cp ../vlc_$VER.dsc ../vlc_$VER.debian.tar.xz ../vlc_*.orig.tar.xz* $OUT/
+[ -n "${SOURCE_ONLY:-}" ] && exit 0
+
+# 5. the binary packages
+DEB_BUILD_OPTIONS='parallel=5 nocheck' dpkg-buildpackage -b -uc -us
+cp ../*.deb ../*.buildinfo ../*.changes $OUT/
