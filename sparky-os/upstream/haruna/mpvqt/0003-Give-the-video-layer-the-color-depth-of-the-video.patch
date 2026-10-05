@@ -1,0 +1,539 @@
+From c47c4a12e63c0da69149f883506e041fd56646a1 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 10:09:17 -0300
+Subject: [PATCH 3/5] Give the video layer the color depth of the video
+
+The layer used the EGL config of the scene graph's context, 8 bits per
+channel, so a 10, 12 or 16 bit video was cut to 8. Choose the config of
+the layer by the depth of the video (the pixel format mpv outputs): the
+deepest the display offers up to it, 10 bits, or half float for more.
+The surface is made again when the depth changes, and mpv is told the
+depth of the framebuffer so that it dithers to it.
+
+Qt creates its context with the config of the window, and Mesa refuses
+to make that context current on a surface of another config
+(EGL_BAD_MATCH for every 10 bit config), which Qt has no way to
+change. With EGL_KHR_no_config_context the layer therefore draws in a
+context of its own, of the same kind of OpenGL, without a config, and
+mpv's render context is made in it. Without the extension the layer
+stays at the 8 bits of the scene graph's context, as before.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/mpvabstractitem.cpp |  30 +++++++
+ src/mpvabstractitem_p.h |   2 +
+ src/mpvrenderer.cpp     |  56 ++++++++++--
+ src/mpvrenderer.h       |   1 +
+ src/mpvvideolayer.cpp   | 183 +++++++++++++++++++++++++++++++++++++---
+ src/mpvvideolayer.h     |  17 ++++
+ 6 files changed, 274 insertions(+), 15 deletions(-)
+
+diff --git a/src/mpvabstractitem.cpp b/src/mpvabstractitem.cpp
+index c4e9207..9de1564 100644
+--- a/src/mpvabstractitem.cpp
++++ b/src/mpvabstractitem.cpp
+@@ -8,6 +8,7 @@
+ #include "mpvabstractitem_p.h"
+ 
+ #include <QLoggingCategory>
++#include <QRegularExpression>
+ #include <QQuickWindow>
+ #include <QThread>
+ 
+@@ -24,6 +25,33 @@ MpvAbstractItemPrivate::MpvAbstractItemPrivate(MpvAbstractItem *q)
+ {
+ }
+ 
++// The bits per channel in the name of a pixel format of mpv: yuv420p10, p010, gbrp16, rgb48, x2rgb10, gbrapf32
++static int pixelFormatDepth(const QString &name)
++{
++    static const QRegularExpression packed(QStringLiteral("^p[024](10|12|16)$"));
++    static const QRegularExpression planar(QStringLiteral("[a-z](9|1[0-6])(?:le|be)?$"));
++    static const QRegularExpression packed2(QStringLiteral("^(?:x2)?(?:rgb|bgr)(10|12)(?:le|be)?$"));
++    static const QRegularExpression wide(QStringLiteral("^(?:rgb|bgr)(?:a)?(48|64)"));
++    static const QRegularExpression floating(QStringLiteral("f(16|32)(?:le|be)?$"));
++    // nv12, nv21 and nv24 have 8 bits, the number is the subsampling
++    if (name.startsWith(QLatin1String("nv"))) {
++        return 8;
++    }
++    if (floating.match(name).hasMatch()) {
++        return 16;
++    }
++    if (wide.match(name).hasMatch()) {
++        return 16;
++    }
++    for (const QRegularExpression *re : {&packed, &packed2, &planar}) {
++        const QRegularExpressionMatch match = re->match(name);
++        if (match.hasMatch()) {
++            return match.captured(1).toInt();
++        }
++    }
++    return 8;
++}
++
+ void MpvAbstractItemPrivate::updateVideoParams()
+ {
+     if (!m_videoLayer) {
+@@ -38,6 +66,8 @@ void MpvAbstractItemPrivate::updateVideoParams()
+         m_stereoVideo = stereo;
+         Q_EMIT q_ptr->stereoVideoChanged();
+     }
++    const QString hwFormat = params.value(QStringLiteral("hw-pixelformat")).toString();
++    m_videoDepth = pixelFormatDepth(hwFormat.isEmpty() ? params.value(QStringLiteral("pixelformat")).toString() : hwFormat);
+     updateVideoRect();
+ }
+ 
+diff --git a/src/mpvabstractitem_p.h b/src/mpvabstractitem_p.h
+index 61b9ae9..45ac78b 100644
+--- a/src/mpvabstractitem_p.h
++++ b/src/mpvabstractitem_p.h
+@@ -24,6 +24,8 @@ public:
+     bool m_videoLayer{false};
+     bool m_videoLayerActive{false};
+     bool m_stereoVideo{false};
++    // bits per channel of the video as mpv outputs it
++    int m_videoDepth{8};
+     // the display size of the video as mpv outputs it
+     QSizeF m_videoSize;
+     QRect m_videoRect;
+diff --git a/src/mpvrenderer.cpp b/src/mpvrenderer.cpp
+index d9e3226..b58392e 100644
+--- a/src/mpvrenderer.cpp
++++ b/src/mpvrenderer.cpp
+@@ -46,12 +46,23 @@ MpvRenderer::MpvRenderer()
+ 
+ MpvRenderer::~MpvRenderer()
+ {
++    if (m_mpvResourceManager) {
+ #ifdef HAVE_VIDEO_LAYER
+-    m_videoLayer.reset();
++        // the render context lives where it was made
++        if (m_videoLayer) {
++            m_videoLayer->makeCurrent();
++        }
+ #endif
+-    if (m_mpvResourceManager) {
+         m_mpvResourceManager->freeContext();
++#ifdef HAVE_VIDEO_LAYER
++        if (m_videoLayer) {
++            m_videoLayer->restore();
++        }
++#endif
+     }
++#ifdef HAVE_VIDEO_LAYER
++    m_videoLayer.reset();
++#endif
+ }
+ 
+ void MpvRenderer::synchronize(QQuickFramebufferObject *item)
+@@ -76,6 +87,7 @@ void MpvRenderer::synchronize(QQuickFramebufferObject *item)
+         const QPoint origin = mpvAItem->mapToScene(QPointF(0, 0)).toPoint() + QPoint(m_window->frameMargins().left(), m_window->frameMargins().top());
+         m_videoRect = mpvAItem->d_ptr->m_videoRect.translated(origin);
+         m_stereoVideo = mpvAItem->d_ptr->m_stereoVideo;
++        m_videoDepth = mpvAItem->d_ptr->m_videoDepth;
+         m_devicePixelRatio = m_window->devicePixelRatio();
+     }
+ }
+@@ -101,6 +113,10 @@ bool MpvRenderer::renderVideoLayer(QOpenGLFramebufferObject *fbo)
+ #ifdef HAVE_VIDEO_LAYER
+     if (!m_videoLayerWanted) {
+         if (m_videoLayer) {
++            // mpv's render context is made again in the scene graph's context
++            m_videoLayer->makeCurrent();
++            m_mpvResourceManager->freeContext();
++            m_videoLayer->restore();
+             m_videoLayer.reset();
+             setVideoLayerActive(false);
+         }
+@@ -110,11 +126,16 @@ bool MpvRenderer::renderVideoLayer(QOpenGLFramebufferObject *fbo)
+         m_videoLayer = MpvVideoLayer::create(m_window);
+         m_videoLayerFailed = !m_videoLayer;
+         setVideoLayerActive(!m_videoLayerFailed);
++        if (m_videoLayer && m_videoLayer->ownsContext()) {
++            // the layer draws in a context of its own, mpv's render context has to be made there
++            m_mpvResourceManager->freeContext();
++        }
+     }
+     if (!m_videoLayer) {
+         return false;
+     }
+ 
++    m_videoLayer->setDepth(m_videoDepth);
+     m_videoLayer->resize(m_videoRect, m_devicePixelRatio, m_stereoVideo);
+ 
+     QOpenGLFunctions *gl = QOpenGLContext::currentContext()->functions();
+@@ -122,15 +143,28 @@ bool MpvRenderer::renderVideoLayer(QOpenGLFramebufferObject *fbo)
+     gl->glClear(GL_COLOR_BUFFER_BIT);
+ 
+     m_videoLayer->makeCurrent();
++    if (!m_mpvResourceManager->mpvRenderContext) {
++        m_mpvResourceManager->mpvRenderContext = createMpvRenderContext();
++        m_isFramebufferReady = true;
++    }
++    if (!m_mpvResourceManager->mpvRenderContext) {
++        m_videoLayer->restore();
++        fbo->bind();
++        return true;
++    }
+     const QSize size = m_videoLayer->bufferSize();
+     mpv_opengl_fbo mpfbo;
+     mpfbo.fbo = 0;
+     mpfbo.w = size.width();
+     mpfbo.h = size.height();
+-    mpfbo.internal_format = 0;
++    mpfbo.internal_format = m_videoLayer->internalFormat();
+     // the default framebuffer of a window surface has its origin at the bottom
+     int flip_y{1};
+-    mpv_render_param params[] = {{MPV_RENDER_PARAM_OPENGL_FBO, &mpfbo}, {MPV_RENDER_PARAM_FLIP_Y, &flip_y}, {MPV_RENDER_PARAM_INVALID, nullptr}};
++    int depth = m_videoLayer->surfaceDepth();
++    mpv_render_param params[] = {{MPV_RENDER_PARAM_OPENGL_FBO, &mpfbo},
++                                 {MPV_RENDER_PARAM_FLIP_Y, &flip_y},
++                                 {MPV_RENDER_PARAM_DEPTH, &depth},
++                                 {MPV_RENDER_PARAM_INVALID, nullptr}};
+     int result = mpv_render_context_render(m_mpvResourceManager->mpvRenderContext, params);
+     if (result < 0) {
+         qCWarning(MpvQt_MpvRenderer) << "mpv_render_context_render failed:" << MpvController::getError(result);
+@@ -150,6 +184,13 @@ void MpvRenderer::render()
+     if (renderVideoLayer(fbo)) {
+         return;
+     }
++    if (!m_mpvResourceManager->mpvRenderContext) {
++        m_mpvResourceManager->mpvRenderContext = createMpvRenderContext();
++        m_isFramebufferReady = true;
++        if (!m_mpvResourceManager->mpvRenderContext) {
++            return;
++        }
++    }
+     mpv_opengl_fbo mpfbo;
+     mpfbo.fbo = static_cast<int>(fbo->handle());
+     mpfbo.w = fbo->width();
+@@ -176,7 +217,12 @@ void MpvRenderer::render()
+ 
+ QOpenGLFramebufferObject *MpvRenderer::createFramebufferObject(const QSize &size)
+ {
+-    if (m_mpvResourceManager && !m_mpvResourceManager->mpvRenderContext) {
++    // With a video layer the render context is made in the context of the layer
++    bool inLayer = false;
++#ifdef HAVE_VIDEO_LAYER
++    inLayer = m_videoLayerWanted && !m_videoLayerFailed && MpvVideoLayer::isSupported();
++#endif
++    if (m_mpvResourceManager && !m_mpvResourceManager->mpvRenderContext && !inLayer) {
+         m_mpvResourceManager->mpvRenderContext = createMpvRenderContext();
+         m_isFramebufferReady = true;
+     }
+diff --git a/src/mpvrenderer.h b/src/mpvrenderer.h
+index 29af85d..dac4393 100644
+--- a/src/mpvrenderer.h
++++ b/src/mpvrenderer.h
+@@ -46,6 +46,7 @@ private:
+     QWindow *m_window{nullptr};
+     QRect m_videoRect;
+     bool m_stereoVideo{false};
++    int m_videoDepth{8};
+     qreal m_devicePixelRatio{1};
+     std::unique_ptr<MpvVideoLayer> m_videoLayer;
+ };
+diff --git a/src/mpvvideolayer.cpp b/src/mpvvideolayer.cpp
+index ce3f477..3f4efb7 100644
+--- a/src/mpvvideolayer.cpp
++++ b/src/mpvvideolayer.cpp
+@@ -6,6 +6,8 @@
+ 
+ #include "mpvvideolayer.h"
+ 
++#include <cstring>
++
+ #include <QGuiApplication>
+ #include <QLoggingCategory>
+ #include <QOpenGLContext>
+@@ -13,6 +15,8 @@
+ #include <QWindow>
+ 
+ #include <EGL/egl.h>
++#include <EGL/eglext.h>
++#include <vector>
+ #include <wayland-client.h>
+ #include <wayland-egl.h>
+ 
+@@ -84,7 +88,14 @@ struct MpvVideoLayer::Private {
+     wl_egl_window *eglWindow{nullptr};
+     EGLDisplay eglDisplay{EGL_NO_DISPLAY};
+     EGLContext eglContext{EGL_NO_CONTEXT};
++    EGLContext previousContext{EGL_NO_CONTEXT};
++    bool ownContext{false};
+     EGLSurface eglSurface{EGL_NO_SURFACE};
++    EGLConfig contextConfig{nullptr};
++    EGLConfig surfaceConfig{nullptr};
++    int depth{8};
++    int internalFormat{0};
++    int surfaceDepth{8};
+     EGLSurface previousDraw{EGL_NO_SURFACE};
+     EGLSurface previousRead{EGL_NO_SURFACE};
+     bool stereoInitialized{false};
+@@ -93,6 +104,64 @@ struct MpvVideoLayer::Private {
+     QSize bufferSize;
+ };
+ 
++namespace
++{
++struct LayerConfig {
++    EGLConfig config;
++    int depth; // bits per channel, 16 for half float
++};
++
++// The configs for the layer of a video of this many bits per channel, the deepest the display offers
++// up to it first, among those the context can draw into. The config of the context itself is the last.
++std::vector<LayerConfig> layerConfigs(EGLDisplay display, EGLConfig contextConfig, int depth)
++{
++    std::vector<LayerConfig> result;
++    if (depth > 8) {
++        EGLint renderable = 0;
++        eglGetConfigAttrib(display, contextConfig, EGL_RENDERABLE_TYPE, &renderable);
++        EGLint count = 0;
++        eglGetConfigs(display, nullptr, 0, &count);
++        std::vector<EGLConfig> configs(count);
++        eglGetConfigs(display, configs.data(), count, &count);
++        const char *extensions = eglQueryString(display, EGL_EXTENSIONS);
++        const bool floatConfigs = extensions && strstr(extensions, "EGL_EXT_pixel_format_float");
++
++        std::vector<LayerConfig> half;
++        std::vector<LayerConfig> ten;
++        for (int i = 0; i < count; ++i) {
++            EGLint surfaceType = 0;
++            EGLint configRenderable = 0;
++            EGLint red = 0;
++            EGLint green = 0;
++            EGLint blue = 0;
++            EGLint type = EGL_COLOR_COMPONENT_TYPE_FIXED_EXT;
++            eglGetConfigAttrib(display, configs[i], EGL_SURFACE_TYPE, &surfaceType);
++            eglGetConfigAttrib(display, configs[i], EGL_RENDERABLE_TYPE, &configRenderable);
++            eglGetConfigAttrib(display, configs[i], EGL_RED_SIZE, &red);
++            eglGetConfigAttrib(display, configs[i], EGL_GREEN_SIZE, &green);
++            eglGetConfigAttrib(display, configs[i], EGL_BLUE_SIZE, &blue);
++            if (floatConfigs) {
++                eglGetConfigAttrib(display, configs[i], EGL_COLOR_COMPONENT_TYPE_EXT, &type);
++            }
++            if (!(surfaceType & EGL_WINDOW_BIT) || (configRenderable & renderable) != renderable || red != green || red != blue) {
++                continue;
++            }
++            if (type == EGL_COLOR_COMPONENT_TYPE_FLOAT_EXT && red == 16) {
++                half.push_back({configs[i], 16});
++            } else if (type == EGL_COLOR_COMPONENT_TYPE_FIXED_EXT && red == 10) {
++                ten.push_back({configs[i], 10});
++            }
++        }
++        if (depth > 10) {
++            result.insert(result.end(), half.begin(), half.end());
++        }
++        result.insert(result.end(), ten.begin(), ten.end());
++    }
++    result.push_back({contextConfig, 8});
++    return result;
++}
++}
++
+ bool MpvVideoLayer::isSupported()
+ {
+     static const bool supported = [] {
+@@ -167,30 +236,110 @@ std::unique_ptr<MpvVideoLayer> MpvVideoLayer::create(QWindow *window)
+     p->eglDisplay = eglInterface->display();
+     p->eglContext = eglInterface->nativeContext();
+     EGLint configId = 0;
+-    EGLConfig config = nullptr;
+     EGLint count = 0;
+     eglQueryContext(p->eglDisplay, p->eglContext, EGL_CONFIG_ID, &configId);
+     const EGLint attributes[] = {EGL_CONFIG_ID, configId, EGL_NONE};
+-    if (!eglChooseConfig(p->eglDisplay, attributes, &config, 1, &count) || count < 1) {
++    if (!eglChooseConfig(p->eglDisplay, attributes, &p->contextConfig, 1, &count) || count < 1) {
+         qCWarning(MpvQt_MpvVideoLayer) << "no EGL config for the video layer";
+         return nullptr;
+     }
+ 
++    // The context of the scene graph is bound to its config, so the layer gets a context of its own
++    // to draw into a surface of any config, of the same kind of OpenGL
++    const char *extensions = eglQueryString(p->eglDisplay, EGL_EXTENSIONS);
++    if (extensions && strstr(extensions, "EGL_KHR_no_config_context")) {
++        const QSurfaceFormat format = context->format();
++        const bool gles = format.renderableType() == QSurfaceFormat::OpenGLES;
++        EGLint attributes[] = {EGL_CONTEXT_MAJOR_VERSION, format.majorVersion(), EGL_CONTEXT_MINOR_VERSION, format.minorVersion(), EGL_NONE, EGL_NONE, EGL_NONE};
++        if (!gles && format.profile() == QSurfaceFormat::CoreProfile) {
++            attributes[4] = EGL_CONTEXT_OPENGL_PROFILE_MASK;
++            attributes[5] = EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT;
++        }
++        const EGLenum api = gles ? EGL_OPENGL_ES_API : EGL_OPENGL_API;
++        if (eglBindAPI(api)) {
++            p->eglContext = eglCreateContext(p->eglDisplay, EGL_NO_CONFIG_KHR, EGL_NO_CONTEXT, attributes);
++            p->ownContext = p->eglContext != EGL_NO_CONTEXT;
++        }
++        if (!p->ownContext) {
++            qCWarning(MpvQt_MpvVideoLayer) << "creating a context for the video layer failed, EGL error" << Qt::hex << eglGetError();
++            p->eglContext = eglInterface->nativeContext();
++        }
++    }
++
+     p->bufferSize = QSize(1, 1);
+     p->eglWindow = wl_egl_window_create(p->surface, 1, 1);
+-    p->eglSurface = eglCreateWindowSurface(p->eglDisplay, config, reinterpret_cast<EGLNativeWindowType>(p->eglWindow), nullptr);
+-    if (p->eglSurface == EGL_NO_SURFACE) {
++    if (!layer->createSurface(p->contextConfig)) {
+         qCWarning(MpvQt_MpvVideoLayer) << "creating the EGL surface of the video layer failed";
+         return nullptr;
+     }
++    return layer;
++}
+ 
+-    // The swap must not wait for a frame callback: the layer is shown with the window's frame
++// The swap must not wait for a frame callback: the layer is shown with the window's frame
++bool MpvVideoLayer::createSurface(EGLConfig config)
++{
++    // A wl_egl_window takes one EGL surface at a time
++    if (d->eglSurface != EGL_NO_SURFACE) {
++        eglDestroySurface(d->eglDisplay, d->eglSurface);
++        d->eglSurface = EGL_NO_SURFACE;
++    }
++    EGLSurface surface = eglCreateWindowSurface(d->eglDisplay, config, reinterpret_cast<EGLNativeWindowType>(d->eglWindow), nullptr);
++    if (surface == EGL_NO_SURFACE) {
++        qCDebug(MpvQt_MpvVideoLayer) << "eglCreateWindowSurface failed, EGL error" << Qt::hex << eglGetError();
++        return false;
++    }
+     const EGLSurface draw = eglGetCurrentSurface(EGL_DRAW);
+     const EGLSurface read = eglGetCurrentSurface(EGL_READ);
+-    eglMakeCurrent(p->eglDisplay, p->eglSurface, p->eglSurface, p->eglContext);
+-    eglSwapInterval(p->eglDisplay, 0);
+-    eglMakeCurrent(p->eglDisplay, draw, read, p->eglContext);
+-    return layer;
++    const EGLContext current = eglGetCurrentContext();
++    // A context of another config may not be able to draw into the surface
++    const bool ok = eglMakeCurrent(d->eglDisplay, surface, surface, d->eglContext);
++    if (ok) {
++        eglSwapInterval(d->eglDisplay, 0);
++    }
++    if (!ok) {
++        qCDebug(MpvQt_MpvVideoLayer) << "eglMakeCurrent failed, EGL error" << Qt::hex << eglGetError();
++    }
++    eglMakeCurrent(d->eglDisplay, draw, read, current);
++    if (!ok) {
++        eglDestroySurface(d->eglDisplay, surface);
++        return false;
++    }
++    d->eglSurface = surface;
++    d->surfaceConfig = config;
++    return true;
++}
++
++void MpvVideoLayer::setDepth(int depth)
++{
++    if (depth == d->depth) {
++        return;
++    }
++    d->depth = depth;
++
++    // The first the context can draw into, the display may not take the format of every config
++    int chosen = 8;
++    for (const LayerConfig &candidate : layerConfigs(d->eglDisplay, d->contextConfig, depth)) {
++        if (createSurface(candidate.config)) {
++            chosen = candidate.depth;
++            break;
++        }
++    }
++    // mpv dithers to the depth of the framebuffer it is told about
++    constexpr int rgb10A2 = 0x8059;
++    constexpr int rgba16F = 0x881A;
++    d->surfaceDepth = chosen;
++    d->internalFormat = chosen == 16 ? rgba16F : chosen == 10 ? rgb10A2 : 0;
++    qCDebug(MpvQt_MpvVideoLayer) << "video layer depth" << chosen << "for a video of" << depth << "bits";
++}
++
++int MpvVideoLayer::surfaceDepth() const
++{
++    return d->surfaceDepth;
++}
++
++int MpvVideoLayer::internalFormat() const
++{
++    return d->internalFormat;
+ }
+ 
+ MpvVideoLayer::~MpvVideoLayer()
+@@ -207,6 +356,9 @@ MpvVideoLayer::~MpvVideoLayer()
+     if (d->eglWindow) {
+         wl_egl_window_destroy(d->eglWindow);
+     }
++    if (d->ownContext) {
++        eglDestroyContext(d->eglDisplay, d->eglContext);
++    }
+     if (d->viewport) {
+         wp_viewport_destroy(d->viewport);
+     }
+@@ -271,15 +423,26 @@ QSize MpvVideoLayer::bufferSize() const
+     return d->bufferSize;
+ }
+ 
++bool MpvVideoLayer::ownsContext() const
++{
++    return d->ownContext;
++}
++
+ void MpvVideoLayer::makeCurrent()
+ {
+     d->previousDraw = eglGetCurrentSurface(EGL_DRAW);
+     d->previousRead = eglGetCurrentSurface(EGL_READ);
++    d->previousContext = eglGetCurrentContext();
+     eglMakeCurrent(d->eglDisplay, d->eglSurface, d->eglSurface, d->eglContext);
+ }
+ 
+ void MpvVideoLayer::swapBuffers()
+ {
+     eglSwapBuffers(d->eglDisplay, d->eglSurface);
+-    eglMakeCurrent(d->eglDisplay, d->previousDraw, d->previousRead, d->eglContext);
++    restore();
++}
++
++void MpvVideoLayer::restore()
++{
++    eglMakeCurrent(d->eglDisplay, d->previousDraw, d->previousRead, d->previousContext);
+ }
+diff --git a/src/mpvvideolayer.h b/src/mpvvideolayer.h
+index d747eb1..03cf2ca 100644
+--- a/src/mpvvideolayer.h
++++ b/src/mpvvideolayer.h
+@@ -12,6 +12,7 @@
+ #include <QRect>
+ #include <QSize>
+ 
++typedef void *EGLConfig;
+ class QWindow;
+ 
+ /**
+@@ -38,12 +39,28 @@ public:
+     void resize(const QRect &rect, qreal devicePixelRatio, bool stereo);
+     QSize bufferSize() const;
+ 
++    // The bits per channel of the video: the layer takes the deepest color depth the display
++    // offers up to it. internalFormat() is the format of its framebuffer for mpv, 0 for 8 bits.
++    void setDepth(int depth);
++    int internalFormat() const;
++    // The bits per channel of the layer's surface, which mpv dithers to
++    int surfaceDepth() const;
++
++    // The layer has an OpenGL context of its own, without a config (EGL_KHR_no_config_context), as the
++    // context of the scene graph is bound to its config and cannot draw into a surface of a deeper
++    // one. Whatever is created for the layer, mpv's render context for one, has to be made current
++    // with makeCurrent() and given back with restore().
++    bool ownsContext() const;
++
+     // Draws into the layer's surface until swapBuffers(), which shows it with the window's next frame
+     void makeCurrent();
+     void swapBuffers();
++    // Makes what was current before makeCurrent() current again
++    void restore();
+ 
+ private:
+     MpvVideoLayer();
++    bool createSurface(EGLConfig config);
+ 
+     struct Private;
+     std::unique_ptr<Private> d;
+-- 
+2.53.0
+

@@ -1,0 +1,306 @@
+From b0af389f20a68ec2aa91b74c538bd40db4346d83 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 10:31:04 -0300
+Subject: [PATCH 4/5] Read the video's parameters when the frame is drawn
+
+The layer took the kind of the video (3D, bits per channel) from the
+item's properties, which the GUI thread updates after the event of mpv
+for the reconfiguration of the video. That event comes after the first
+frame of the new kind of video, so for a 3D video that followed a 2D one
+the first frame was drawn into a layer of the old size.
+
+Keep the state in a structure shared by the item and the renderer, and
+read it from mpv with video-out-params when a frame is drawn, as well as
+when mpv sends its event (on mpv's thread, not through the GUI thread).
+For a change from 2D to 3D no frame of the layer had a size that did
+not fit it in six runs, before three of three had one. The first 2D
+frame after a 3D video can still be drawn into the layer of the 3D
+video: mpv's video-out-params still has the 3D parameters then.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/mpvabstractitem.cpp | 82 +++++++++++++++++++++++++++++++++--------
+ src/mpvabstractitem_p.h | 38 +++++++++++++++++--
+ src/mpvrenderer.cpp     | 29 ++++++++++-----
+ src/mpvrenderer.h       |  7 ++--
+ 4 files changed, 125 insertions(+), 31 deletions(-)
+
+diff --git a/src/mpvabstractitem.cpp b/src/mpvabstractitem.cpp
+index 9de1564..dd85148 100644
+--- a/src/mpvabstractitem.cpp
++++ b/src/mpvabstractitem.cpp
+@@ -52,35 +52,84 @@ static int pixelFormatDepth(const QString &name)
+     return 8;
+ }
+ 
+-void MpvAbstractItemPrivate::updateVideoParams()
++void MpvAbstractItemPrivate::readVideoParams()
+ {
+     if (!m_videoLayer) {
+         return;
+     }
+ 
+-    const QVariantMap params = q_ptr->getProperty(QStringLiteral("video-out-params")).toMap();
+-    m_videoSize = QSizeF(params.value(QStringLiteral("dw")).toDouble(), params.value(QStringLiteral("dh")).toDouble());
+-    // mpv unpacks 3D video to full side by side, left eye first
+-    const bool stereo = params.value(QStringLiteral("stereo-in")).toString() == QLatin1String("sbsl");
++    m_videoState->update(m_mpvController->mpv());
++    QMetaObject::invokeMethod(q_ptr, [this]() {
++        applyVideoState();
++    });
++}
++
++void MpvAbstractItemPrivate::applyVideoState()
++{
++    bool stereo = false;
++    {
++        QMutexLocker locker(&m_videoState->mutex);
++        stereo = m_videoState->stereo;
++        m_videoSize = m_videoState->size;
++    }
+     if (stereo != m_stereoVideo) {
+         m_stereoVideo = stereo;
+         Q_EMIT q_ptr->stereoVideoChanged();
+     }
+-    const QString hwFormat = params.value(QStringLiteral("hw-pixelformat")).toString();
+-    m_videoDepth = pixelFormatDepth(hwFormat.isEmpty() ? params.value(QStringLiteral("pixelformat")).toString() : hwFormat);
+     updateVideoRect();
+ }
+ 
+-void MpvAbstractItemPrivate::updateVideoRect()
++void MpvVideoState::update(mpv_handle *mpv)
+ {
+-    QRect rect(QPoint(0, 0), q_ptr->size().toSize());
+-    if (m_stereoVideo && m_videoSize.width() > 0 && m_videoSize.height() > 0) {
+-        // the window shows one view, fit it into the item
+-        const qreal aspect = m_videoSize.width() / 2 / m_videoSize.height();
++    mpv_node node;
++    if (mpv_get_property(mpv, "video-out-params", MPV_FORMAT_NODE, &node) < 0) {
++        return;
++    }
++    bool isStereo = false;
++    QSizeF videoSize;
++    QString format;
++    QString hwFormat;
++    if (node.format == MPV_FORMAT_NODE_MAP) {
++        for (int i = 0; i < node.u.list->num; ++i) {
++            const QLatin1String key(node.u.list->keys[i]);
++            const mpv_node &value = node.u.list->values[i];
++            if (value.format == MPV_FORMAT_INT64 && key == QLatin1String("dw")) {
++                videoSize.setWidth(value.u.int64);
++            } else if (value.format == MPV_FORMAT_INT64 && key == QLatin1String("dh")) {
++                videoSize.setHeight(value.u.int64);
++            } else if (value.format == MPV_FORMAT_STRING && key == QLatin1String("stereo-in")) {
++                // mpv unpacks 3D video to full side by side, left eye first
++                isStereo = QLatin1String(value.u.string) == QLatin1String("sbsl");
++            } else if (value.format == MPV_FORMAT_STRING && key == QLatin1String("pixelformat")) {
++                format = QString::fromUtf8(value.u.string);
++            } else if (value.format == MPV_FORMAT_STRING && key == QLatin1String("hw-pixelformat")) {
++                hwFormat = QString::fromUtf8(value.u.string);
++            }
++        }
++    }
++    mpv_free_node_contents(&node);
++
++    QMutexLocker locker(&mutex);
++    stereo = isStereo;
++    size = videoSize;
++    depth = pixelFormatDepth(hwFormat.isEmpty() ? format : hwFormat);
++}
++
++QRect MpvVideoState::viewRect(const QSize &item, bool stereo, const QSizeF &videoSize)
++{
++    QRect rect(QPoint(0, 0), item);
++    if (stereo && videoSize.width() > 0 && videoSize.height() > 0) {
++        const qreal aspect = videoSize.width() / 2 / videoSize.height();
+         const qreal width = qMin<qreal>(rect.width(), rect.height() * aspect);
+         const qreal height = width / aspect;
+         rect = QRectF((rect.width() - width) / 2, (rect.height() - height) / 2, width, height).toRect();
+     }
++    return rect;
++}
++
++void MpvAbstractItemPrivate::updateVideoRect()
++{
++    const QRect rect = MpvVideoState::viewRect(q_ptr->size().toSize(), m_stereoVideo, m_videoSize);
+     if (rect != m_videoRect) {
+         m_videoRect = rect;
+         Q_EMIT q_ptr->videoRectChanged();
+@@ -102,8 +151,9 @@ MpvAbstractItem::MpvAbstractItem(QQuickItem *parent)
+     d_ptr->m_workerThread = new QThread(this);
+     d_ptr->m_mpvController = new MpvController;
+ 
+-    connect(d_ptr->m_mpvController, &MpvController::videoReconfig, this, [this]() {
+-        d_ptr->updateVideoParams();
++    // on mpv's thread, so that the layer follows the first frame of a new kind of video
++    connect(d_ptr->m_mpvController, &MpvController::videoReconfig, d_ptr->m_mpvController, [this]() {
++        d_ptr->readVideoParams();
+     });
+     connect(this, &QQuickItem::widthChanged, this, [this]() {
+         d_ptr->updateVideoRect();
+@@ -158,7 +208,9 @@ void MpvAbstractItem::setVideoLayer(bool videoLayer)
+     }
+     d_ptr->m_videoLayer = videoLayer;
+     Q_EMIT videoLayerChanged();
+-    d_ptr->updateVideoParams();
++    QMetaObject::invokeMethod(d_ptr->m_mpvController, [this]() {
++        d_ptr->readVideoParams();
++    });
+     update();
+ }
+ 
+diff --git a/src/mpvabstractitem_p.h b/src/mpvabstractitem_p.h
+index 45ac78b..9a070d6 100644
+--- a/src/mpvabstractitem_p.h
++++ b/src/mpvabstractitem_p.h
+@@ -7,11 +7,39 @@
+ #ifndef MPVABSTRACTITEM_P_H_INCLUDED
+ #define MPVABSTRACTITEM_P_H_INCLUDED
+ 
++#include <atomic>
++#include <memory>
++
++#include <QMutex>
+ #include <QRect>
+ #include <QSizeF>
+ 
++#include <mpv/client.h>
++
+ #include "mpvabstractitem.h"
+ 
++/**
++ * What the video layer needs to know about the video, set on mpv's thread when mpv reconfigures the
++ * video so that the renderer sees it with the first frame of the new kind of video, and read on the
++ * render thread
++ */
++struct MpvVideoState {
++    mutable QMutex mutex;
++    // mpv unpacks 3D video to full side by side, left eye first
++    bool stereo{false};
++    // bits per channel of the video as mpv outputs it
++    int depth{8};
++    // the display size of the video as mpv outputs it, both views of a 3D video
++    QSizeF size;
++
++    // Reads the state from mpv's current parameters of the video, from any thread
++    void update(mpv_handle *mpv);
++
++    // Where the video is in an item of this size: the rectangle of one view for a 3D video, fitted
++    // in as the layer cannot letterbox each view of a doubled frame, the whole item otherwise
++    static QRect viewRect(const QSize &item, bool stereo, const QSizeF &videoSize);
++};
++
+ class MpvAbstractItemPrivate
+ {
+ public:
+@@ -21,16 +49,18 @@ public:
+     QThread *m_workerThread{nullptr};
+     MpvController *m_mpvController{nullptr};
+     bool m_isRendererReady{false};
+-    bool m_videoLayer{false};
++    std::atomic<bool> m_videoLayer{false};
+     bool m_videoLayerActive{false};
+     bool m_stereoVideo{false};
+-    // bits per channel of the video as mpv outputs it
+-    int m_videoDepth{8};
+     // the display size of the video as mpv outputs it
+     QSizeF m_videoSize;
+     QRect m_videoRect;
++    std::shared_ptr<MpvVideoState> m_videoState{std::make_shared<MpvVideoState>()};
+ 
+-    void updateVideoParams();
++    // on mpv's thread: reads what the video layer needs to know about the video, as soon as mpv reconfigures
++    void readVideoParams();
++    // on the thread of the item: the state of the video for the item's properties
++    void applyVideoState();
+     void updateVideoRect();
+     std::shared_ptr<MpvResourceManager> m_mpvResourceManager;
+ };
+diff --git a/src/mpvrenderer.cpp b/src/mpvrenderer.cpp
+index b58392e..63360e4 100644
+--- a/src/mpvrenderer.cpp
++++ b/src/mpvrenderer.cpp
+@@ -84,10 +84,9 @@ void MpvRenderer::synchronize(QQuickFramebufferObject *item)
+     m_window = mpvAItem->window();
+     if (m_videoLayerWanted && m_window) {
+         // The surface of the window holds its frame, if the window has one
+-        const QPoint origin = mpvAItem->mapToScene(QPointF(0, 0)).toPoint() + QPoint(m_window->frameMargins().left(), m_window->frameMargins().top());
+-        m_videoRect = mpvAItem->d_ptr->m_videoRect.translated(origin);
+-        m_stereoVideo = mpvAItem->d_ptr->m_stereoVideo;
+-        m_videoDepth = mpvAItem->d_ptr->m_videoDepth;
++        m_origin = mpvAItem->mapToScene(QPointF(0, 0)).toPoint() + QPoint(m_window->frameMargins().left(), m_window->frameMargins().top());
++        m_itemSize = mpvAItem->size().toSize();
++        m_videoState = mpvAItem->d_ptr->m_videoState;
+         m_devicePixelRatio = m_window->devicePixelRatio();
+     }
+ }
+@@ -135,13 +134,25 @@ bool MpvRenderer::renderVideoLayer(QOpenGLFramebufferObject *fbo)
+         return false;
+     }
+ 
+-    m_videoLayer->setDepth(m_videoDepth);
+-    m_videoLayer->resize(m_videoRect, m_devicePixelRatio, m_stereoVideo);
+-
+     QOpenGLFunctions *gl = QOpenGLContext::currentContext()->functions();
+     gl->glClearColor(0, 0, 0, 0);
+     gl->glClear(GL_COLOR_BUFFER_BIT);
+ 
++    // The layer has the size and the depth of the video mpv outputs. mpv's event for a change of the video
++    // comes after the first frame of it, so the state is read from mpv itself when the frame is drawn.
++    m_videoState->update(m_mpvResourceManager->mpvHandleManager->mpvHandle);
++    bool stereo = false;
++    int depth = 8;
++    QSizeF videoSize;
++    {
++        QMutexLocker locker(&m_videoState->mutex);
++        stereo = m_videoState->stereo;
++        depth = m_videoState->depth;
++        videoSize = m_videoState->size;
++    }
++    m_videoLayer->setDepth(depth);
++    m_videoLayer->resize(MpvVideoState::viewRect(m_itemSize, stereo, videoSize).translated(m_origin), m_devicePixelRatio, stereo);
++
+     m_videoLayer->makeCurrent();
+     if (!m_mpvResourceManager->mpvRenderContext) {
+         m_mpvResourceManager->mpvRenderContext = createMpvRenderContext();
+@@ -160,10 +171,10 @@ bool MpvRenderer::renderVideoLayer(QOpenGLFramebufferObject *fbo)
+     mpfbo.internal_format = m_videoLayer->internalFormat();
+     // the default framebuffer of a window surface has its origin at the bottom
+     int flip_y{1};
+-    int depth = m_videoLayer->surfaceDepth();
++    int surfaceDepth = m_videoLayer->surfaceDepth();
+     mpv_render_param params[] = {{MPV_RENDER_PARAM_OPENGL_FBO, &mpfbo},
+                                  {MPV_RENDER_PARAM_FLIP_Y, &flip_y},
+-                                 {MPV_RENDER_PARAM_DEPTH, &depth},
++                                 {MPV_RENDER_PARAM_DEPTH, &surfaceDepth},
+                                  {MPV_RENDER_PARAM_INVALID, nullptr}};
+     int result = mpv_render_context_render(m_mpvResourceManager->mpvRenderContext, params);
+     if (result < 0) {
+diff --git a/src/mpvrenderer.h b/src/mpvrenderer.h
+index dac4393..26a17d6 100644
+--- a/src/mpvrenderer.h
++++ b/src/mpvrenderer.h
+@@ -16,6 +16,7 @@
+ 
+ class MpvAbstractItem;
+ class MpvVideoLayer;
++struct MpvVideoState;
+ class QWindow;
+ 
+ class MpvRenderer : public QQuickFramebufferObject::Renderer
+@@ -44,9 +45,9 @@ private:
+     bool m_videoLayerWanted{false};
+     bool m_videoLayerFailed{false};
+     QWindow *m_window{nullptr};
+-    QRect m_videoRect;
+-    bool m_stereoVideo{false};
+-    int m_videoDepth{8};
++    QSize m_itemSize;
++    QPoint m_origin;
++    std::shared_ptr<MpvVideoState> m_videoState;
+     qreal m_devicePixelRatio{1};
+     std::unique_ptr<MpvVideoLayer> m_videoLayer;
+ };
+-- 
+2.53.0
+

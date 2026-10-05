@@ -1,0 +1,71 @@
+From 01a61437feecb44148c6fbbab83585a28d761ab0 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 10:42:51 -0300
+Subject: [PATCH 5/5] Place the video layer in the pixels of the surface
+
+The rectangle of the layer was in the pixels of QML and its buffer had
+the window's device pixel ratio per pixel. With QT_SCALE_FACTOR the
+surface is bigger than that, as many times as the factor, so the layer
+was too small and sat too far to the top left. Take the factor from the
+native size of the window, put the layer in the pixels of the surface,
+and take what the compositor's scale adds for the size of the buffer.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/mpvrenderer.cpp | 13 ++++++++++++-
+ src/mpvrenderer.h   |  1 +
+ 2 files changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/src/mpvrenderer.cpp b/src/mpvrenderer.cpp
+index 63360e4..c0cb8e5 100644
+--- a/src/mpvrenderer.cpp
++++ b/src/mpvrenderer.cpp
+@@ -17,6 +17,8 @@
+ #include "mpvabstractitem_p.h"
+ #include "mpvcontroller.h"
+ #ifdef HAVE_VIDEO_LAYER
++#include <QtGui/qpa/qplatformwindow.h>
++
+ #include "mpvvideolayer.h"
+ #endif
+ 
+@@ -88,6 +90,12 @@ void MpvRenderer::synchronize(QQuickFramebufferObject *item)
+         m_itemSize = mpvAItem->size().toSize();
+         m_videoState = mpvAItem->d_ptr->m_videoState;
+         m_devicePixelRatio = m_window->devicePixelRatio();
++#ifdef HAVE_VIDEO_LAYER
++        // The surface has the size of the window in native pixels, which are the pixels of QML times QT_SCALE_FACTOR
++        // and the like; the compositor's scale is what the buffer has more than that
++        const QPlatformWindow *platformWindow = m_window->handle();
++        m_surfaceScale = platformWindow && m_window->width() > 0 ? qreal(platformWindow->geometry().width()) / m_window->width() : 1;
++#endif
+     }
+ }
+ 
+@@ -151,7 +159,10 @@ bool MpvRenderer::renderVideoLayer(QOpenGLFramebufferObject *fbo)
+         videoSize = m_videoState->size;
+     }
+     m_videoLayer->setDepth(depth);
+-    m_videoLayer->resize(MpvVideoState::viewRect(m_itemSize, stereo, videoSize).translated(m_origin), m_devicePixelRatio, stereo);
++    const QRect rect = MpvVideoState::viewRect(m_itemSize, stereo, videoSize).translated(m_origin);
++    m_videoLayer->resize(QRect(qRound(rect.x() * m_surfaceScale), qRound(rect.y() * m_surfaceScale), qRound(rect.width() * m_surfaceScale), qRound(rect.height() * m_surfaceScale)),
++                         m_devicePixelRatio / m_surfaceScale,
++                         stereo);
+ 
+     m_videoLayer->makeCurrent();
+     if (!m_mpvResourceManager->mpvRenderContext) {
+diff --git a/src/mpvrenderer.h b/src/mpvrenderer.h
+index 26a17d6..215bf45 100644
+--- a/src/mpvrenderer.h
++++ b/src/mpvrenderer.h
+@@ -49,6 +49,7 @@ private:
+     QPoint m_origin;
+     std::shared_ptr<MpvVideoState> m_videoState;
+     qreal m_devicePixelRatio{1};
++    qreal m_surfaceScale{1};
+     std::unique_ptr<MpvVideoLayer> m_videoLayer;
+ };
+ 
+-- 
+2.53.0
+
