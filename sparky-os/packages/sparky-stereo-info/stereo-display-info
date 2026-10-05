@@ -5,22 +5,285 @@
 # What each connected display says about stereo 3D and deep colour, read from its EDID
 # with edid-decode. The HDMI 3D formats a display always has once it announces 3D are
 # the ones the kernel adds for it (drivers/gpu/drm/drm_edid.c, stereo_mandatory_modes).
+# When a desktop session is reachable it also says what each display is doing now, read
+# with kscreen-doctor -o (read-only). Nothing here changes a mode or a setting.
 
 set -eu
+
+# stereo-display-info --keys prints one line per display for the KInfoCenter page, separated
+# by tabs: connector, look-up tag, EDID MD5, manufacturer name, colour profile.
+keys=
+[ "${1:-}" = --keys ] && keys=yes
 
 if ! command -v edid-decode > /dev/null 2>&1; then
     echo "edid-decode is not installed."
     exit 0
 fi
 
-for connector in /sys/class/drm/card*-*; do
+pnp_ids=/usr/share/hwdata/pnp.ids
+
+# What the desktop session says, when there is one (not over SSH or on a console).
+state=
+if { [ -n "${WAYLAND_DISPLAY:-}" ] || [ -n "${DISPLAY:-}" ]; } && command -v kscreen-doctor > /dev/null 2>&1; then
+    state=$(timeout 10 kscreen-doctor -o 2> /dev/null | sed 's/\x1b\[[0-9;]*m//g') || state=
+fi
+
+# The stereo and HDR switches of each output, from the same session (kscreen-doctor -j, read-only).
+json=
+if [ -n "$state" ]; then
+    json=$(timeout 10 kscreen-doctor -j 2> /dev/null) || json=
+fi
+
+# The value of key $2 of output $1 in that JSON, empty when the key is not there.
+json_value() {
+    [ -n "$json" ] || return 0
+    printf '%s\n' "$json" | awk -v want="$1" -v key="$2" '
+        /^        \{$/ { values = ""; delete found; inside = 1; next }
+        inside && /^            "[A-Za-z]+": [^\[{]*$/ {
+            k = $1; gsub(/[":]/, "", k)
+            v = $0; sub(/^[^:]*: /, "", v); sub(/,$/, "", v); gsub(/"/, "", v)
+            found[k] = v
+        }
+        /^        \}/ {
+            if (found["name"] == want && (key in found)) { print found[key]; exit }
+            inside = 0
+        }'
+}
+
+# What output $1 is doing now, from the kscreen-doctor text in $state.
+live() {
+    [ -n "$state" ] || return 0
+    printf '%s\n' "$state" | awk -v want="$1" -v only="${2:-}" '
+        /^Output: / { current = $3; next }
+        current != want { next }
+        { found = 1 }
+        $1 == "disabled" { off = 1 }
+        /^\tModes:/ {
+            for (i = 1; i <= NF; i++)
+                if ($i ~ /[0-9]x[0-9]+@[0-9.]+\*/) {
+                    mode = $i
+                    sub(/^[0-9]*:/, "", mode)
+                    hz = mode
+                    sub(/^.*@/, "", hz)
+                    sub(/[*!(].*$/, "", hz)
+                    size = mode
+                    sub(/@.*$/, "", size)
+                    format = "none"
+                    if (mode ~ /\(3D-SBS-full\)/) format = "side by side (full)"
+                    else if (mode ~ /\(3D-SBS\)/) format = "side by side (half)"
+                    else if (mode ~ /\(3D-TaB\)/) format = "top and bottom"
+                    else if (mode ~ /\(3D-FP\)/) format = "frame packing"
+                    else if (mode ~ /\(virtual-3D/) format = "a stereo format made by the system"
+                }
+        }
+        /^\tICC profile: / { icc = $0; sub(/^[^:]*: /, "", icc) }
+        /^\tColor profile source: / { source = $0; sub(/^[^:]*: /, "", source) }
+        /^\tColor resolution: / { colour = $0; sub(/^[^:]*: /, "", colour) }
+        END {
+            if (!found) exit
+            if (source == "EDID")
+                profile = "built-in (from the EDID)"
+            else if (source == "sRGB")
+                profile = "sRGB"
+            else if (source == "ICC" && icc != "" && icc != "none") {
+                profile = icc
+                sub(/^.*\//, "", profile)
+            } else if (source == "ICC")
+                profile = "none"
+            if (only == "profile") {
+                printf "%s", profile
+                exit
+            }
+            if (only == "width") {
+                sub(/x.*$/, "", size)
+                printf "%s", size
+                exit
+            }
+            if (only == "format") {
+                printf "%s", format
+                exit
+            }
+            print "  Now:"
+            if (off)
+                print "    switched off"
+            else if (mode != "")
+                printf "    mode %s at %.2f Hz, 3D: %s\n", size, hz, format == "none" ? "no" : format
+            if (colour ~ /unknown/ || colour == "")
+                print "    colour resolution: not reported"
+            else {
+                range = colour
+                sub(/^.*range: \[/, "", range)
+                sub(/\].*$/, "", range)
+                split(range, bounds, "; ")
+                sub(/, range:.*$/, "", colour)
+                if (colour ~ /^automatic \(/) {
+                    sub(/^automatic \(/, "", colour)
+                    sub(/\)$/, "", colour)
+                    colour = "automatic, " colour " bits per colour at most"
+                } else
+                    sub(/ bits per color/, " bits per colour", colour)
+                printf "    colour resolution: %s (it can go from %s to %s)\n", colour, bounds[1], bounds[2]
+            }
+            if (profile != "")
+                print "    colour profile: " profile
+        }'
+}
+
+# The OpenGL renderer of the EGL device made by the card's maker, and the Vulkan device
+# with the card'"'"'s PCI IDs. Nothing here switches a GPU; both tools list every device.
+egl=
+vulkan=
+if [ -z "$keys" ]; then
+    command -v eglinfo > /dev/null 2>&1 && egl=$(timeout 30 eglinfo -B 2> /dev/null | sed -n '/^Device platform:/,$p') || true
+    command -v vulkaninfo > /dev/null 2>&1 && vulkan=$(timeout 30 vulkaninfo --summary 2> /dev/null) || true
+fi
+
+card_opengl() {
+    # $1 is the PCI vendor ID; two cards of one maker are not told apart, so none is named
+    case "$1" in
+        0x1002) maker=AMD ;;
+        0x10de) maker=NVIDIA ;;
+        0x8086) maker=Intel ;;
+        *) return 0 ;;
+    esac
+    [ -n "$egl" ] || return 0
+    printf '%s\n' "$egl" | awk -v maker="$maker" -v cards="$2" '
+        /^OpenGL core profile vendor:/ { vendor = ($0 ~ maker) }
+        /^OpenGL core profile renderer:/ && vendor { sub(/^[^:]*: /, ""); renderer = $0 }
+        /^OpenGL core profile version:/ && vendor {
+            sub(/^[^:]*: /, "")
+            matches++
+            if (matches == 1) found = renderer ", " $0
+        }
+        END { if (matches >= 1 && cards == 1) print found }'
+}
+
+card_vulkan() {
+    [ -n "$vulkan" ] || return 0
+    printf '%s\n' "$vulkan" | awk -v vendor="$1" -v device="$2" '
+        /^GPU[0-9]+:/ { id = ""; dev = ""; name = ""; drv = ""; info = "" }
+        /vendorID/ { id = $NF }
+        /deviceID/ { dev = $NF }
+        /deviceName/ { sub(/^[^=]*= /, ""); name = $0 }
+        /driverName/ { drv = $NF }
+        /driverInfo/ {
+            sub(/^[^=]*= /, "")
+            if (tolower(id) == tolower(vendor) && tolower(dev) == tolower(device)) {
+                print drv " (" $0 "), " name
+                exit
+            }
+        }'
+}
+
+onoff() {
+    [ "$1" = true ] && echo on || echo off
+}
+
+# The stereo and HDR switches of output $1, one line each, when the session reports them.
+extra() {
+    [ -n "$json" ] || return 0
+    line=
+    value=$(json_value "$1" anaglyph)
+    [ -z "$value" ] || line="anaglyph $(onoff "$value")"
+    value=$(json_value "$1" otherStereoFormats)
+    [ -z "$value" ] || line="${line:+$line, }other stereo formats $(onoff "$value")"
+    value=$(json_value "$1" stereoEyeSwap)
+    [ -z "$value" ] || line="${line:+$line, }eyes swapped $([ "$value" = true ] && echo yes || echo no)"
+    [ -z "$line" ] || echo "    stereo: $line"
+    line=
+    value=$(json_value "$1" hdr)
+    [ -z "$value" ] || line="HDR $(onoff "$value")"
+    value=$(json_value "$1" wcg)
+    [ -z "$value" ] || line="${line:+$line, }wide colour gamut $(onoff "$value")"
+    [ -z "$line" ] || echo "    $line"
+}
+
+# The stereo stack, the first thing a bug report needs.
+stack() {
+    edition=$( . /usr/share/sparky-stereo-info/edition 2> /dev/null && echo "$EDITION_PRETTY") || edition=
+    [ -n "$edition" ] || edition=$( . /usr/lib/os-release 2> /dev/null && echo "$PRETTY_NAME") || edition=
+    [ -z "$edition" ] || echo "$edition"
+    echo "  Kernel: $(uname -r)"
+    if [ -n "${WAYLAND_DISPLAY:-}" ] && command -v wayland-info > /dev/null 2>&1; then
+        version=$(timeout 10 wayland-info 2> /dev/null | sed -n "s/.*interface: 'kde_stereo_content_manager_v1', *version: *\([0-9]*\).*/\1/p" | head -n 1)
+        if [ -n "$version" ]; then
+            echo "  Compositor stereo: announced (kde_stereo_content_manager_v1, version $version)"
+        else
+            echo "  Compositor stereo: not announced"
+        fi
+    elif [ -n "${DISPLAY:-}" ] && command -v xprop > /dev/null 2>&1; then
+        version=$(timeout 10 xprop -root _KDE_NET_WM_STEREO_CONTENT_SUPPORTED 2> /dev/null | sed -n 's/.*= *\([0-9]*\).*/\1/p')
+        if [ -n "$version" ]; then
+            echo "  Compositor stereo: announced (_KDE_NET_WM_STEREO_CONTENT_SUPPORTED, version $version)"
+        else
+            echo "  Compositor stereo: not announced"
+        fi
+    fi
+    if command -v dpkg-query > /dev/null 2>&1; then
+        packages=$(dpkg-query -W -f='${db:Status-Abbrev} ${Package} ${Version}\n' kwin-wayland mesa-libgallium libgl1-mesa-dri mesa-vulkan-layer-stereo libstereo-declare1 libkf6screen8 libkscreen-bin kscreen libnvidia-egl-wayland1 2> /dev/null | sed -n 's/^[a-z]i  *//p' | awk '!listed[$1]++') || packages=
+        if [ -n "$packages" ]; then
+            echo "  Installed:"
+            printf '%s\n' "$packages" | sed 's/^/    /'
+        fi
+    fi
+    echo
+}
+[ -n "$keys" ] || stack
+
+seen=
+for card in /sys/class/drm/card[0-9]*; do
+    case "$card" in *-*) continue ;; esac
+    cardname=$(basename "$card")
+    # the card'"'"'s own driver, not its connectors'"'"'
+    driver=$(basename "$(readlink -f "$card/device/driver")")
+    set -- "$card"-*
+    [ -e "$1" ] || continue
+    if [ -z "$keys" ]; then
+        pci=$(basename "$(readlink -f "$card/device")")
+        vendor_id=$(cat "$card/device/vendor" 2> /dev/null || true)
+        device_id=$(cat "$card/device/device" 2> /dev/null || true)
+        gpu=
+        if command -v lspci > /dev/null 2>&1; then
+            gpu=$(lspci -s "$pci" 2> /dev/null | sed 's/^[^ ]* [^:]*: //; s/ (rev [0-9a-f]*)$//')
+        fi
+        [ -n "$gpu" ] || gpu="PCI device $vendor_id:$device_id"
+        echo "Graphics card $cardname: $gpu"
+        echo "  Driver: $driver"
+        cards_of_maker=$(for other in /sys/class/drm/card[0-9]*; do case "$other" in *-*) continue ;; esac; [ "$(cat "$other/device/vendor" 2> /dev/null)" = "$vendor_id" ] && echo x; done | wc -l)
+        opengl=$(card_opengl "$vendor_id" "$cards_of_maker")
+        [ -z "$opengl" ] || echo "  OpenGL: $opengl"
+        vk=$(card_vulkan "$vendor_id" "$device_id")
+        [ -z "$vk" ] || echo "  Vulkan: $vk"
+    fi
+    shown=
+    for connector in "$@"; do
     [ -e "$connector/edid" ] || continue
     [ "$(cat "$connector/status" 2> /dev/null)" = connected ] || continue
+    shown=yes
 
     name=$(basename "$connector")
     name=${name#card*-}
+    seen="$seen $name "
 
-    edid-decode "$connector/edid" 2> /dev/null | awk -v connector="$name" '
+    md5=$(md5sum "$connector/edid" | cut -d' ' -f1)
+    interlaced=no
+    grep -q 'i$' "$connector/modes" 2> /dev/null && interlaced=yes
+    vendor=$(edid-decode "$connector/edid" 2> /dev/null | sed -n 's/^ *Manufacturer: \([A-Z]*\).*/\1/p' | head -n 1)
+    vendor_name=
+    if [ -n "$vendor" ] && [ -r "$pnp_ids" ]; then
+        vendor_name=$(awk -F'\t' -v id="$vendor" '$1 == id { print $2; exit }' "$pnp_ids")
+    fi
+
+    if [ -n "$keys" ]; then
+        model=$(edid-decode "$connector/edid" 2> /dev/null | sed -n 's/^ *Model: \([0-9]*\).*/\1/p' | head -n 1)
+        [ -n "$vendor" ] && [ -n "$model" ] || continue
+        printf '%s\t%s%04X\t%s\t%s\t%s\n' "$name" "$vendor" "$model" "$md5" "$vendor_name" "$(live "$name" profile)"
+        continue
+    fi
+
+    edid-decode "$connector/edid" 2> /dev/null | awk -v connector="$name" -v driver="$driver" -v md5="$md5" \
+        -v interlaced="$interlaced" -v vendor_name="$vendor_name" \
+        -v now_width="$(live "$name" width)" -v now_format="$(live "$name" format)" '
         function mode(   hz) {
             # "VIC  31:  1920x1080   50.000000 Hz ..." gives "1920x1080 50 Hz"
             hz = $4 + 0
@@ -28,6 +291,16 @@ for connector in /sys/class/drm/card*-*; do
         }
         function add(list, item) {
             return list == "" ? item : list ", " item
+        }
+        function hidden(   m) {
+            # interlaced formats are kept apart when the driver lists no interlaced mode
+            return interlaced == "no" && $3 ~ /i$/
+        }
+        function add_interlaced(structure, item) {
+            if (!(structure in interlaced_list))
+                interlaced_order[++interlaced_count] = structure
+            if (index(", " interlaced_list[structure] ", ", ", " item ", ") == 0)
+                interlaced_list[structure] = add(interlaced_list[structure], item)
         }
         function structure_name(text) {
             # "Side-by-side (half, horizontal)" gives "side by side (half)"
@@ -41,27 +314,59 @@ for connector in /sys/class/drm/card*-*; do
             sub(/^.*Display Product Name: /, "", product)
             gsub(/\047/, "", product)
         }
+        /^ *Manufacturer: / { maker = $2 }
+        /^ *Model: / { model = $2 + 0 }
+        /^ *Made in: / { made = $0; sub(/^ *Made in: /, "", made) }
         /Bits per primary color channel:/ { panel_bits = $NF }
         /Vendor-Specific Data Block \(HDMI\), OUI 00-0C-03/ { hdmi = 1; block = "hdmi"; next }
         /Vendor-Specific Data Block \(HDMI Forum\)/ { block = "forum"; next }
         /^  [A-Z].*Data Block/ { block = "" }
+        /HDR Static Metadata Data Block/ { block = "hdr"; hdr_block = 1; next }
+        /Colorimetry Data Block/ { block = "colorimetry"; next }
+        block == "hdr" && /Traditional gamma - SDR/ { eotf = add(eotf, "SDR") }
+        block == "hdr" && /Traditional gamma - HDR/ { eotf = add(eotf, "HDR gamma") }
+        block == "hdr" && /SMPTE ST2084/ { eotf = add(eotf, "PQ (SMPTE ST 2084)") }
+        block == "hdr" && /Hybrid Log-Gamma/ { eotf = add(eotf, "HLG") }
+        block == "colorimetry" && /BT2020/ { bt2020 = 1 }
+        /Maximum image size:/ { if (match($0, /[0-9]+ cm x [0-9]+ cm/)) { split(substr($0, RSTART, RLENGTH), cm, " "); cm_w = cm[1]; cm_h = cm[4] } }
+        /DTD 1:/ && !dtd_seen {
+            dtd_seen = 1
+            split($3, dtd_size, "x")
+            dtd_width = dtd_size[1]
+            if (match($0, /\([0-9]+ mm x [0-9]+ mm\)/)) {
+                dims = substr($0, RSTART + 1, RLENGTH - 2)
+                split(dims, mm, " ")
+                mm_w = mm[1]; mm_h = mm[4]
+            }
+        }
         block == "hdmi" && /DC_30bit/ { dc30 = 1 }
         block == "hdmi" && /DC_36bit/ { dc36 = 1 }
         block == "hdmi" && /DC_48bit/ { dc48 = 1 }
         block == "hdmi" && /DC_Y444/ { y444 = 1 }
-        block == "hdmi" && /Maximum TMDS clock:/ { tmds = $(NF - 1) " MHz" }
-        block == "forum" && /Maximum TMDS Character Rate:/ { tmds = $(NF - 1) " MHz" }
+        block == "hdmi" && /Maximum TMDS clock:/ { if (match($0, /[0-9]+ MHz/)) tmds = substr($0, RSTART, RLENGTH) }
+        block == "forum" && /Maximum TMDS Character Rate:/ { if (match($0, /[0-9]+ MHz/)) tmds = substr($0, RSTART, RLENGTH) }
         block == "forum" && /Deep Color 4:2:0/ { sub(/^ */, ""); forum = add(forum, $0) }
         block == "hdmi" && /3D present/ { stereo = 1 }
-        block == "hdmi" && /^ *3D: / { sub(/^ *3D: /, ""); structures = add(structures, structure_name($0)) }
+        block == "hdmi" && /^ *3D: / { sub(/^ *3D: /, ""); structures = add(structures, structure_name($0)); named[++named_count] = structure_name($0) }
         block == "hdmi" && /3D VIC indices that support these capabilities:/ { list = "all"; next }
         block == "hdmi" && /3D VIC indices with specific capabilities:/ { list = "specific"; next }
-        block == "hdmi" && list == "all" && /^ *VIC +[0-9]+:/ { all = add(all, mode()); next }
+        block == "hdmi" && list == "all" && /^ *VIC +[0-9]+:/ {
+            if (hidden())
+                for (i = 1; i <= named_count; i++)
+                    add_interlaced(named[i], mode())
+            else
+                all = add(all, mode())
+            next
+        }
         block == "hdmi" && list == "specific" && /^ *VIC +[0-9]+:/ {
             structure = $0
             sub(/^.*Hz[^(]*\(/, "", structure)
             sub(/\)$/, "", structure)
             structure = structure_name(structure)
+            if (hidden()) {
+                add_interlaced(structure, mode())
+                next
+            }
             if (!(structure in specific))
                 order[++structures_listed] = structure
             specific[structure] = add(specific[structure], mode())
@@ -70,16 +375,34 @@ for connector in /sys/class/drm/card*-*; do
         list != "" && !/^ *VIC/ { list = "" }
         END {
             printf "%s: %s\n", connector, product == "" ? "unnamed display" : product
+            if (maker != "") {
+                printf "  Manufacturer: %s%s\n", maker, vendor_name == "" ? "" : " (" vendor_name ")"
+                printf "  Product code: %d (0x%04X)\n", model, model
+                if (made != "")
+                    printf "  Made in: %s\n", made
+                printf "  Look-up keys: %s%04X, EDID MD5 %s\n", maker, model, md5
+            }
+            if (hdmi && connector !~ /^HDMI/)
+                printf "  An HDMI display on a %s connector (%s), through an adapter or a dual-mode port: HDMI 3D signalling and deep colour depend on that adapter.\n", connector ~ /^DP/ ? "DisplayPort" : "different kind of", connector
             if (stereo) {
                 print "  HDMI 3D: yes"
                 print "    Always available on a 3D display that has the 2D mode:"
                 print "      frame packing: 1920x1080 24 Hz, 1280x720 50 Hz, 1280x720 60 Hz"
-                print "      side by side (half): 1920x1080i 50 Hz, 1920x1080i 60 Hz"
+                if (interlaced == "no") {
+                    add_interlaced("side by side (half)", "1920x1080i 50 Hz")
+                    add_interlaced("side by side (half)", "1920x1080i 60 Hz")
+                } else
+                    print "      side by side (half): 1920x1080i 50 Hz, 1920x1080i 60 Hz"
                 print "      top and bottom: 1920x1080 24 Hz, 1280x720 50 Hz, 1280x720 60 Hz"
                 if (structures != "" && all != "")
                     printf "    Listed by the display, %s:\n      %s\n", structures, all
                 for (i = 1; i <= structures_listed; i++)
                     printf "    Listed by the display, %s:\n      %s\n", order[i], specific[order[i]]
+                if (interlaced_count > 0) {
+                    for (i = 1; i <= interlaced_count; i++)
+                        line = (i > 1 ? line "; " : "") interlaced_order[i] " " interlaced_list[interlaced_order[i]]
+                    printf "    Interlaced formats (not offered by the %s driver, and not needed: the progressive formats above do the same better): %s\n", driver, line
+                }
             } else {
                 print "  HDMI 3D: not announced"
                 print "    3D is still available through the anaglyph and the other stereo formats in Display settings."
@@ -97,6 +420,39 @@ for connector in /sys/class/drm/card*-*; do
                 printf "  %s\n", forum
             if (tmds != "")
                 printf "  Maximum TMDS clock: %s\n", tmds
-            print ""
-        }'
+            if (hdr_block)
+                printf "  HDR: announced (%s)%s\n", eotf, bt2020 ? ", BT.2020 colorimetry" : ""
+            else
+                print "  HDR: not announced"
+            if (mm_w == 0 && cm_w > 0) { mm_w = cm_w * 10; mm_h = cm_h * 10 }
+            if (mm_w > 0 && mm_h > 0) {
+                diagonal = sqrt(mm_w * mm_w + mm_h * mm_h) / 25.4
+                printf "  Size: %d mm x %d mm (%.1f inches diagonal), from the EDID\n", mm_w, mm_h, diagonal
+                width = now_width != "" ? now_width : dtd_width
+                if (width > 0) {
+                    pixels = 65 * width / mm_w
+                    printf "  Eye distance, 65 mm (the usual limit for the two views of a far point): %.0f pixels at %d pixels wide%s", pixels, width, now_width != "" ? "" : " (the preferred mode)"
+                    if (now_format ~ /^side by side/)
+                        printf ", %.0f pixels in one view of the picture", pixels / 2
+                    printf "\n"
+                }
+            } else
+                print "  Size: not announced"
+        }' | sed 's/^\(.\)/  \1/'
+    { live "$name"; extra "$name"; } | sed 's/^\(.\)/  \1/'
+    echo
+    done
+    [ -n "$keys" ] || [ -n "$shown" ] || printf '  no display connected\n\n'
 done
+
+# Outputs the session has that are not a connected connector here (a virtual output).
+if [ -n "$state" ] && [ -z "$keys" ]; then
+    for name in $(printf '%s\n' "$state" | sed -n 's/^Output: [0-9]* \([^ ]*\) .*/\1/p'); do
+        case "$seen" in
+            *" $name "*) continue ;;
+        esac
+        echo "Virtual display $name: not a graphics card output"
+        { live "$name"; extra "$name"; } | sed 's/^\(.\)/  \1/'
+        echo
+    done
+fi

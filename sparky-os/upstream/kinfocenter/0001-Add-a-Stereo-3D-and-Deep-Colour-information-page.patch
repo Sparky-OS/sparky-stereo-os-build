@@ -1,0 +1,336 @@
+From a320630f99d988257b6122692c8d3a7d0cc9250b Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 01:21:42 -0300
+Subject: [PATCH] Add a Stereo 3D and Deep Colour information page
+
+Show what each graphics card and each connected display can do in
+stereo 3D and deep colour, and what it is doing now, next to the EDID
+page in the graphical information category.
+
+The page shows the output of stereo-display-info, as the Vulkan page
+shows vulkaninfo, and says so when the command is not installed. Under
+the text, each display has its EDID look-up tag with a copy button and
+two buttons that open the public EDID collections in the browser; its
+colour profile opens Display settings, and DisplayCAL can be started
+when it is installed. Nothing is changed or sent until a button is
+pressed.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ cmake/Findstereo-display-info.cmake     |  10 ++
+ kcms/CMakeLists.txt                     |   1 +
+ kcms/stereo3d/CMakeLists.txt            |  10 ++
+ kcms/stereo3d/kcm_stereo3d.json         |  12 ++
+ kcms/stereo3d/kcm_stereo3d.json.license |   2 +
+ kcms/stereo3d/main.cpp                  |  76 +++++++++++++
+ kcms/stereo3d/ui/main.qml               | 141 ++++++++++++++++++++++++
+ 7 files changed, 252 insertions(+)
+ create mode 100644 cmake/Findstereo-display-info.cmake
+ create mode 100644 kcms/stereo3d/CMakeLists.txt
+ create mode 100644 kcms/stereo3d/kcm_stereo3d.json
+ create mode 100644 kcms/stereo3d/kcm_stereo3d.json.license
+ create mode 100644 kcms/stereo3d/main.cpp
+ create mode 100644 kcms/stereo3d/ui/main.qml
+
+diff --git a/cmake/Findstereo-display-info.cmake b/cmake/Findstereo-display-info.cmake
+new file mode 100644
+index 0000000..1ed6749
+--- /dev/null
++++ b/cmake/Findstereo-display-info.cmake
+@@ -0,0 +1,10 @@
++# This module defines the following variables:
++#
++#  stereo-display-info_FOUND - true if found
++#  stereo-display-info_PATH - path to the bin (only when found)
++#
++# SPDX-License-Identifier: BSD-2-Clause
++# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++
++include(ProgramFinder)
++program_finder(stereo-display-info)
+diff --git a/kcms/CMakeLists.txt b/kcms/CMakeLists.txt
+index d9de060..64ba3ff 100644
+--- a/kcms/CMakeLists.txt
++++ b/kcms/CMakeLists.txt
+@@ -17,6 +17,7 @@ add_subdirectory(network)
+ add_subdirectory(audio_information)
+ add_subdirectory(memory)
+ add_subdirectory(edid)
++add_subdirectory(stereo3d)
+ add_subdirectory(sensors)
+ 
+ add_subdirectory( samba )
+diff --git a/kcms/stereo3d/CMakeLists.txt b/kcms/stereo3d/CMakeLists.txt
+new file mode 100644
+index 0000000..8953d32
+--- /dev/null
++++ b/kcms/stereo3d/CMakeLists.txt
+@@ -0,0 +1,10 @@
++# SPDX-License-Identifier: BSD-3-Clause
++# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++
++find_package(stereo-display-info)
++set_package_properties(stereo-display-info PROPERTIES TYPE RUNTIME)
++
++add_definitions(-DTRANSLATION_DOMAIN=\"kcm_stereo3d\")
++
++kinfocenter_add_kcm(kcm_stereo3d main.cpp)
++target_link_libraries(kcm_stereo3d PRIVATE KF6::CoreAddons KF6::KCMUtilsQuick KF6::I18n KF6::Service KF6::KIOGui KInfoCenterInternal)
+diff --git a/kcms/stereo3d/kcm_stereo3d.json b/kcms/stereo3d/kcm_stereo3d.json
+new file mode 100644
+index 0000000..0ef4025
+--- /dev/null
++++ b/kcms/stereo3d/kcm_stereo3d.json
+@@ -0,0 +1,12 @@
++{
++    "Categories": "Qt;KDE;X-KDE-information;",
++    "KPlugin": {
++        "BugReportUrl": "https://bugs.kde.org/enter_bug.cgi?product=kinfocenter&component=general",
++        "Description": "Stereo 3D and deep colour of each display",
++        "Icon": "video-display",
++        "Name": "Stereo 3D and Deep Colour"
++    },
++    "TryExec": "stereo-display-info",
++    "X-KDE-KInfoCenter-Category": "graphical_information",
++    "X-KDE-Keywords": "Stereo,3D,Deep Colour,Deep Color,HDMI,EDID,Graphics,dxdiag"
++}
+diff --git a/kcms/stereo3d/kcm_stereo3d.json.license b/kcms/stereo3d/kcm_stereo3d.json.license
+new file mode 100644
+index 0000000..2ee9828
+--- /dev/null
++++ b/kcms/stereo3d/kcm_stereo3d.json.license
+@@ -0,0 +1,2 @@
++SPDX-License-Identifier: CC0-1.0
++SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
+diff --git a/kcms/stereo3d/main.cpp b/kcms/stereo3d/main.cpp
+new file mode 100644
+index 0000000..11bff97
+--- /dev/null
++++ b/kcms/stereo3d/main.cpp
+@@ -0,0 +1,76 @@
++// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++
++#include <QProcess>
++#include <QVariantMap>
++
++#include <KIO/ApplicationLauncherJob>
++#include <KPluginFactory>
++#include <KQuickConfigModule>
++#include <KService>
++
++#include "CommandOutputContext.h"
++
++class KCMStereo3D : public KQuickConfigModule
++{
++    Q_OBJECT
++    Q_PROPERTY(CommandOutputContext *infoOutputContext READ outputContext CONSTANT FINAL)
++    Q_PROPERTY(QVariantList displays READ displays CONSTANT FINAL)
++    Q_PROPERTY(bool displayCalInstalled READ displayCalInstalled CONSTANT FINAL)
++public:
++    explicit KCMStereo3D(QObject *parent, const KPluginMetaData &data)
++        : KQuickConfigModule(parent, data)
++    {
++        m_outputContext = new CommandOutputContext(QStringLiteral("stereo-display-info"), {}, parent);
++
++        // One line per display: connector, look-up tag, EDID MD5, manufacturer name, colour profile
++        QProcess keys;
++        keys.start(QStringLiteral("stereo-display-info"), {QStringLiteral("--keys")});
++        keys.waitForFinished(10000);
++        const QStringList lines = QString::fromUtf8(keys.readAllStandardOutput()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
++        for (const QString &line : lines) {
++            const QStringList fields = line.split(QLatin1Char('\t'));
++            if (fields.size() < 5) {
++                continue;
++            }
++            m_displays.append(QVariantMap{{QStringLiteral("connector"), fields[0]},
++                                          {QStringLiteral("tag"), fields[1]},
++                                          {QStringLiteral("md5"), fields[2]},
++                                          {QStringLiteral("manufacturer"), fields[3]},
++                                          {QStringLiteral("profile"), fields[4]}});
++        }
++    }
++    [[nodiscard]] CommandOutputContext *outputContext() const
++    {
++        return m_outputContext;
++    }
++    [[nodiscard]] QVariantList displays() const
++    {
++        return m_displays;
++    }
++    [[nodiscard]] bool displayCalInstalled() const
++    {
++        return KService::serviceByDesktopName(QStringLiteral("displaycal")) != nullptr;
++    }
++
++    // Opens Display settings, with the output's name as the argument
++    Q_INVOKABLE void openDisplaySettings(const QString &connector)
++    {
++        QProcess::startDetached(QStringLiteral("kcmshell6"), {QStringLiteral("kcm_kscreen"), QStringLiteral("--args"), connector});
++    }
++    Q_INVOKABLE void measureDisplay()
++    {
++        if (const KService::Ptr service = KService::serviceByDesktopName(QStringLiteral("displaycal"))) {
++            auto *job = new KIO::ApplicationLauncherJob(service);
++            job->start();
++        }
++    }
++
++private:
++    CommandOutputContext *m_outputContext;
++    QVariantList m_displays;
++};
++
++K_PLUGIN_CLASS_WITH_JSON(KCMStereo3D, "kcm_stereo3d.json")
++
++#include "main.moc"
+diff --git a/kcms/stereo3d/ui/main.qml b/kcms/stereo3d/ui/main.qml
+new file mode 100644
+index 0000000..d5fc1e0
+--- /dev/null
++++ b/kcms/stereo3d/ui/main.qml
+@@ -0,0 +1,141 @@
++// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++
++import QtQuick
++import QtQuick.Controls as QQC2
++import QtQuick.Layouts
++
++import org.kde.kirigami as Kirigami
++import org.kde.kcmutils as KCM
++import org.kde.kquickcontrolsaddons
++import org.kde.ki18n
++
++// The command's text is the page; under it, one row per display with its look-up tag and
++// buttons. Nothing goes online until a button is pressed.
++KCM.SimpleKCM {
++    id: root
++
++    Kirigami.Theme.colorSet: Kirigami.Theme.View
++    Kirigami.Theme.inherit: false
++
++    readonly property var output: kcm.infoOutputContext
++
++    Clipboard { id: clipboard }
++
++    function linuxHardwareUrl(display) {
++        if (display.manufacturer !== "") {
++            return "https://github.com/linuxhw/EDID/tree/master/Digital/" + encodeURIComponent(display.manufacturer) + "/" + display.tag
++        }
++        return "https://github.com/search?q=repo%3Alinuxhw%2FEDID+" + display.tag + "&type=code"
++    }
++
++    actions: [
++        Kirigami.Action {
++            enabled: root.output.error === ""
++            icon.name: "edit-copy-symbolic"
++            text: KI18n.i18ndc("kinfocenter", "@action:button copies all displayed text", "Copy to Clipboard")
++            onTriggered: clipboard.content = root.output.text
++        }
++    ]
++
++    ColumnLayout {
++        spacing: Kirigami.Units.largeSpacing
++
++        Kirigami.PlaceholderMessage {
++            Layout.fillWidth: true
++            visible: root.output.ready && root.output.error !== ""
++            text: root.output.error
++            explanation: root.output.explanation
++            icon.name: "action-unavailable-symbolic"
++        }
++
++        Kirigami.SelectableLabel {
++            Layout.fillWidth: true
++            visible: root.output.error === ""
++            padding: Kirigami.Units.largeSpacing
++            text: root.output.text
++            font.family: "monospace"
++            wrapMode: TextEdit.Wrap
++        }
++
++        ColumnLayout {
++            Layout.fillWidth: true
++            Layout.margins: Kirigami.Units.largeSpacing
++            spacing: Kirigami.Units.smallSpacing
++
++            Repeater {
++                model: kcm.displays
++
++                ColumnLayout {
++                    id: row
++
++                    required property var modelData
++
++                    Layout.fillWidth: true
++                    spacing: 0
++
++                    RowLayout {
++                        Layout.fillWidth: true
++                        spacing: Kirigami.Units.smallSpacing
++
++                        QQC2.Label {
++                            text: KI18n.i18nc("@label %1 is a connector name", "%1:", row.modelData.connector)
++                        }
++                        QQC2.TextField {
++                            readOnly: true
++                            text: row.modelData.tag
++                            font.family: "monospace"
++                            Layout.preferredWidth: Kirigami.Units.gridUnit * 6
++                        }
++                        QQC2.ToolButton {
++                            id: copyButton
++                            icon.name: "edit-copy-symbolic"
++                            display: QQC2.AbstractButton.IconOnly
++                            text: KI18n.i18nc("@action:button", "Copy the look-up tag")
++                            onClicked: clipboard.content = row.modelData.tag
++                            QQC2.ToolTip.visible: hovered
++                            QQC2.ToolTip.text: text
++                        }
++                        QQC2.Label {
++                            text: KI18n.i18nc("@label followed by the names of two websites", "Look up:")
++                        }
++                        QQC2.Button {
++                            text: KI18n.i18nc("@action:button opens a website", "linux-hardware.org")
++                            onClicked: Qt.openUrlExternally(root.linuxHardwareUrl(row.modelData))
++                        }
++                        QQC2.Button {
++                            text: KI18n.i18nc("@action:button opens a website", "EDID.tv")
++                            onClicked: Qt.openUrlExternally("https://edid.tv/")
++                        }
++                    }
++
++                    RowLayout {
++                        Layout.fillWidth: true
++                        visible: row.modelData.profile !== ""
++                        spacing: Kirigami.Units.largeSpacing
++
++                        QQC2.Label {
++                            text: KI18n.i18nc("@label", "Colour profile:")
++                        }
++                        Kirigami.UrlButton {
++                            text: row.modelData.profile
++                            url: ""
++                            onClicked: kcm.openDisplaySettings(row.modelData.connector)
++                        }
++                        Kirigami.UrlButton {
++                            visible: kcm.displayCalInstalled
++                            text: KI18n.i18nc("@action:button opens DisplayCAL", "Measure this display")
++                            url: ""
++                            onClicked: kcm.measureDisplay()
++                        }
++                        QQC2.Label {
++                            visible: !kcm.displayCalInstalled
++                            enabled: false
++                            text: KI18n.i18nc("@info", "DisplayCAL is not installed")
++                        }
++                    }
++                }
++            }
++        }
++    }
++}
+-- 
+2.53.0
+

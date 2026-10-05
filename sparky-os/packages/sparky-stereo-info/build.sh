@@ -8,17 +8,20 @@
 # stay as they are (Sparky's tools and repository read them) and only the names change:
 # PRETTY_NAME, NAME, VERSION, VARIANT, VARIANT_ID, DEBIAN_VERSION_ID, DISTRIB_DESCRIPTION.
 # A dpkg trigger regenerates them whenever Sparky updates its originals.
-# Last update 2026/10/02
+# It also installs stereo-display-info, the command that prints what each display can do in
+# stereo 3D and deep colour (read from its EDID) and what it is doing now.
+# Last update 2026/10/05
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
-VERSION=20261002~sparky9~0
+VERSION=20261005~sparky9~0
 PKG=sparky-stereo-info
 W=$(mktemp -d /K3D/temp/sparky-os/info-build.XXXXXX)
 trap 'rm -rf "$W"' EXIT
 D=$W/$PKG
-mkdir -p "$D/DEBIAN" "$D/usr/share/$PKG" "$D/usr/share/doc/$PKG"
+mkdir -p "$D/DEBIAN" "$D/usr/bin" "$D/usr/share/$PKG" "$D/usr/share/doc/$PKG"
 cp "$HERE/edition" "$D/usr/share/$PKG/edition"
+install -m 755 "$HERE/stereo-display-info" "$D/usr/bin/stereo-display-info"
 
 cat >"$D/DEBIAN/preinst" <<'EOF'
 #!/bin/sh
@@ -125,13 +128,17 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: base-files
+Depends: base-files, edid-decode
+Recommends: hwdata, pciutils, mesa-utils, vulkan-tools
+Suggests: displaycal
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org
 Description: Sparky Stereo OS info
   The system's own name: Sparky Stereo OS 9 (Mashtabba), based on Debian 14
   (Forky), in os-release and lsb-release, keeping Sparky's ID and codename.
+  Also the stereo-display-info command: what each display can do in stereo 3D
+  and deep colour, and what it is doing now.
 EOF
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT"
