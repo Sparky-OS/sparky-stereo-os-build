@@ -1,8 +1,8 @@
 #!/bin/bash
 # Sparky Stereo OS looks (Daniel, 2026-10-02), as three packages:
-#   sparky-stereo-look             the default: Oxygen in dark mode, Daniel's transparency,
-#                                  glide and wobbly windows, the qt6ct (Fusion-like) app
-#                                  style and Plastik window borders
+#   sparky-stereo-look             the default: Oxygen in dark mode, whole (colours, Plasma
+#                                  style, icons, cursor, application style and window
+#                                  decoration), Daniel's transparency, glide and wobbly windows
 #   sparky-stereo-look-sparkyblack Sparky black, fixed (splash set, the real cursor name,
 #                                  no QtCurve): global theme, Plasma style, icons and
 #                                  cursor, Plymouth sparky-lines, SDDM sparky-stereo-black, the
@@ -17,7 +17,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
-VERSION=${VERSION:-20261002~sparky9~0}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
+VERSION=${VERSION:-20261005~sparky9~0}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
 WORK=$(mktemp -d /K3D/temp/sparky-os/look-build.XXXXXX)
 trap 'rm -rf "$WORK"' EXIT
 LNF=usr/share/plasma/look-and-feel
@@ -62,14 +62,13 @@ cp -a "$OXYGEN/contents/splash" "$OXYGEN/contents/previews" "$T/contents/"
 cp "$HERE/default/splash/Splash.qml" "$T/contents/splash/Splash.qml"
 cp "$HERE/default/xdg/kdeglobals" "$HERE/default/xdg/kwinrc" "$D/etc/xdg/"
 control "$D" sparky-stereo-look \
-	"plasma-theme-oxygen, oxygen-icon-theme, oxygencursors, kwin-style-aurorae, qt6ct" \
-	"kde-style-oxygen-qt6, kwin-decoration-oxygen" \
+	"plasma-theme-oxygen, oxygen-icon-theme, oxygencursors, kde-style-oxygen-qt6, kwin-decoration-oxygen" \
+	"kde-style-oxygen-qt5" \
 	"Sparky Stereo OS default look: Oxygen dark" \
-	"The edition's default global theme: Oxygen's dark colours, Plasma style," \
-	"icons, cursor and splash, the qt6ct application style (Qt's Fusion with no" \
-	"qt6ct configuration) and the Plastik window decoration, familiar to people" \
-	"coming from Windows. Also sets the default KWin effects: translucency with" \
-	"Daniel Ramos's values, glide and wobbly windows."
+	"The edition's default global theme: Oxygen, whole, in its dark colours:" \
+	"Plasma style, icons, cursor, splash, the Oxygen application style and the" \
+	"Oxygen window decoration. Also sets the default KWin effects: translucency" \
+	"with Daniel Ramos's values, glide and wobbly windows."
 printf '%s\n' /etc/xdg/kdeglobals /etc/xdg/kwinrc >"$D/DEBIAN/conffiles"
 cat >"$D/usr/share/doc/sparky-stereo-look/copyright" <<'EOF'
 Sparky Stereo OS default look.
@@ -95,7 +94,7 @@ cp -a /usr/share/plymouth/themes/sparky-lines "$D/usr/share/plymouth/themes/"
 # Our own Qt 6 port of Pawel's sparky-black SDDM theme, under our own name (his is never modified)
 cp -a "$HERE/sparkyblack/sddm/sparky-stereo-black" "$D/usr/share/sddm/themes/"
 cp /opt/artwork/sparky-black.png "$D/usr/share/sparky-stereo/grub/"
-control "$D" sparky-stereo-look-sparkyblack "sparky-stereo-look" "plymouth, sddm" \
+control "$D" sparky-stereo-look-sparkyblack "sparky-stereo-look, kwin-style-aurorae, qt6ct" "plymouth, sddm" \
 	"Sparky black look, end to end" \
 	"Daniel Ramos's Sparky black: the global theme (fixed: it sets its" \
 	"splash, names the cursor that exists, and uses the qt6ct style instead of" \
