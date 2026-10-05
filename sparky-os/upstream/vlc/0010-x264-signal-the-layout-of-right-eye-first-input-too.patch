@@ -1,0 +1,37 @@
+From 44610381219f8657d1c874ec9d1d3e59c45de1ea Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 07:42:20 -0300
+Subject: [PATCH 10/11] x264: signal the layout of right-eye-first input too
+
+Streams that signal their right eye first have their own multiview
+modes now, and the encoder only knew the left-eye-first ones, so a
+transcode of such a stream lost its frame packing SEI. x264 writes the
+left view first whatever the input says; signal the layout as before.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ modules/codec/x264.c | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/modules/codec/x264.c b/modules/codec/x264.c
+index 0b1f624398..95ebbbefc8 100644
+--- a/modules/codec/x264.c
++++ b/modules/codec/x264.c
+@@ -789,8 +789,12 @@ static int FramePackingFromMultiview( video_multiview_mode_t mode )
+         case MULTIVIEW_STEREO_CHECKERBOARD: return 0;
+         case MULTIVIEW_STEREO_COL:          return 1;
+         case MULTIVIEW_STEREO_ROW:          return 2;
+-        case MULTIVIEW_STEREO_SBS:          return 3;
+-        case MULTIVIEW_STEREO_TB:           return 4;
++        /* x264 signals the left view first whatever the input says, the
++         * layout is kept */
++        case MULTIVIEW_STEREO_SBS:
++        case MULTIVIEW_STEREO_SBS_RIGHT_FIRST: return 3;
++        case MULTIVIEW_STEREO_TB:
++        case MULTIVIEW_STEREO_TB_RIGHT_FIRST:  return 4;
+         /* Not MULTIVIEW_STEREO_FRAME: x264 derives the view of each frame
+          * from its parity, so a dropped or duplicated frame would swap the
+          * eyes from then on. Frame alternation stays an explicit choice. */
+-- 
+2.53.0
+
