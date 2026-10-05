@@ -3,7 +3,7 @@
 #   UP=/src (this repository folder, read-only)  WORK=/work (writable)  OUT=/out (writable)
 set -eux
 UP=${UP:-/src}; WORK=${WORK:-/work}; OUT=${OUT:-/out}; PK=$UP/vlc-stereo-packaging
-VER=${VER:-3.0.24-1+stereo3d3}
+VER=${VER:-3.0.24-1+stereo3d5}
 export PK
 rm -rf $WORK/src $WORK/pw $WORK/dl && mkdir -p $WORK/src $WORK/pw
 
@@ -31,8 +31,24 @@ export PW=$WORK/pw
 cd $WORK/src/vlc-*/
 python3 $PK/gen-debian.py
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL='Capitain_Jack@yahoo.com'
-dch -v "$VER" --distribution testing --force-distribution \
-  "${CHANGELOG:-VLC Stereo as packages of its own, installed beside the VLC of the distribution: vlc-stereo (program vlc-stereo, private library and plugin directory, settings in ~/.config/vlc-stereo) and vlc-stereo-plugin-pipewire (the PipeWire output of the Debian vlc-plugin-pipewire, copied, with the HiFi behaviour). See https://github.com/danielcamposramos/vlc}"
+# one changelog entry per version of the file "changelog" of the packaging, oldest first (dch reads an environment variable
+# called CHANGELOG as the name of the changelog file, so none is used here)
+python3 - "$PK/changelog" "$VER" <<'PY' > $WORK/entries.sh
+import sys, shlex
+ver = sys.argv[2]; cur = None; ent = []
+for l in open(sys.argv[1]):
+    l = l.rstrip('\n')
+    if l.startswith('== '):
+        cur = [l[3:], []]; ent.append(cur)
+    elif l and cur: cur[1].append(l)
+for v, lines in ent:
+    print('dch -v %s --distribution testing --force-distribution %s' % (shlex.quote(v), shlex.quote(lines[0])))
+    for t in lines[1:]:
+        print('dch -a %s' % shlex.quote(t))
+    if v == ver: break
+PY
+. $WORK/entries.sh
+
 # 4. the Debian source package of the build (.dsc, orig tarball, debian.tar.xz), made before the build so that no build product is in the tree
 dpkg-buildpackage -S -uc -us -d
 mkdir -p $OUT && cp ../vlc_$VER.dsc ../vlc_$VER.debian.tar.xz ../vlc_*.orig.tar.xz* $OUT/

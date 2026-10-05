@@ -1,0 +1,74 @@
+From b924fabfb47e99322b6619ea2a4a71080d655bec Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 20:24:54 -0300
+Subject: [PATCH] vout: make the subpictures of a stereoscopic video for one
+ view
+
+The subpicture sources (marquee, logo) place and size their text from the
+source format, which for a side-by-side or top-bottom frame is the whole
+frame, so in a full frame the text came out at half the size or at the
+wrong place in each view. The output draws every subpicture once per
+view, so make them for the place of one view, the way a two-dimensional
+picture of that size gets them.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/video_output/video_output.c | 23 +++++++++++++++++++++--
+ 1 file changed, 21 insertions(+), 2 deletions(-)
+
+diff --git a/src/video_output/video_output.c b/src/video_output/video_output.c
+index cd06e8023f..8655cec28b 100644
+--- a/src/video_output/video_output.c
++++ b/src/video_output/video_output.c
+@@ -1014,12 +1014,29 @@ static int ThreadDisplayRenderPicture(vout_thread_t *vout, bool is_forced)
+ 
+     const vlc_fourcc_t *subpicture_chromas;
+     video_format_t fmt_spu;
++    video_format_t fmt_src = vd->source;
+     if (do_dr_spu) {
+         vout_display_place_t place;
+         vout_display_PlacePicture(&place, &vd->source, vd->cfg, false);
+ 
++        /* A stereoscopic frame holds two views, each shown in the place of
++         * the picture: the subpictures are made for that place, as for a
++         * two-dimensional picture of the size of one view. */
++        bool views;
++        switch (vd->source.multiview_mode) {
++            case MULTIVIEW_STEREO_SBS:
++            case MULTIVIEW_STEREO_SBS_RIGHT_FIRST:
++            case MULTIVIEW_STEREO_TB:
++            case MULTIVIEW_STEREO_TB_RIGHT_FIRST:
++                views = true;
++                break;
++            default:
++                views = false;
++        }
++
+         fmt_spu = vd->source;
+-        if (fmt_spu.i_width * fmt_spu.i_height < place.width * place.height) {
++        if (views
++         || fmt_spu.i_width * fmt_spu.i_height < place.width * place.height) {
+             fmt_spu.i_sar_num = vd->cfg->display.sar.num;
+             fmt_spu.i_sar_den = vd->cfg->display.sar.den;
+             fmt_spu.i_width          =
+@@ -1027,6 +1044,8 @@ static int ThreadDisplayRenderPicture(vout_thread_t *vout, bool is_forced)
+             fmt_spu.i_height         =
+             fmt_spu.i_visible_height = place.height;
+         }
++        if (views)
++            fmt_src = fmt_spu;
+         subpicture_chromas = vd->info.subpicture_chromas;
+     } else {
+         if (do_early_spu) {
+@@ -1056,7 +1075,7 @@ static int ThreadDisplayRenderPicture(vout_thread_t *vout, bool is_forced)
+     video_format_ApplyRotation(&fmt_spu_rot, &fmt_spu);
+     subpicture_t *subpic = spu_Render(vout->p->spu,
+                                       subpicture_chromas, &fmt_spu_rot,
+-                                      &vd->source,
++                                      &fmt_src,
+                                       render_subtitle_date, render_osd_date,
+                                       do_snapshot);
+     /*
+-- 
+2.53.0
+
