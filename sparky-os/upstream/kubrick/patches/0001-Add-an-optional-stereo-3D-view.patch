@@ -1,0 +1,289 @@
+From d0879328829eccf55f7c78ce2356190aefe2ae96 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 6 Oct 2026 11:24:08 -0300
+Subject: [PATCH] Add an optional stereo 3D view
+
+With --stereo the view asks for left and right buffers
+(QSurfaceFormat::StereoBuffers). QOpenGLWidget then calls paintGL()
+once per eye, and the cubes are drawn by two cameras either side of the
+usual one: parallel, meeting at the distance of the cubes' centres, so
+the cubes' centre has no parallax and parts nearer or further shift
+in opposite directions. The scene is built once, only the projection
+differs; the modelview matrix, the background picture and the labels
+are the same in both eyes. The mouse picking uses the left eye.
+--stereo-separation sets the distance between the eyes, in percent of
+the distance to the cubes.
+
+Without --stereo, or when the platform gives no stereo buffers, the
+view is drawn as before.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/game.cpp       |  7 +++--
+ src/gameglview.cpp | 73 +++++++++++++++++++++++++++++++++++++++++++---
+ src/gameglview.h   | 16 +++++++++-
+ src/kubrick.cpp    |  4 +--
+ src/kubrick.h      |  2 +-
+ src/main.cpp       | 20 ++++++++++++-
+ 6 files changed, 111 insertions(+), 11 deletions(-)
+
+diff --git a/src/game.cpp b/src/game.cpp
+index 4a661c6..61e89c4 100644
+--- a/src/game.cpp
++++ b/src/game.cpp
+@@ -1070,8 +1070,11 @@ int Game::doOptionsDialog (bool changePuzzle) // Private function.
+ 
+ void Game::drawScene ()
+ {
+-    // Save data with QOpenGLWidget only valid during paintGL()
+-    moveTracker->saveSceneInfo();
++    // Save data with QOpenGLWidget only valid during paintGL().  In stereo
++    // they are those of the left eye, which the mouse is matched to.
++    if (! gameGLView->paintsRightEye()) {
++	moveTracker->saveSceneInfo();
++    }
+ 
+     // The size of the cubes on-screen is determined by the height of the
+     // window and the OpenGL perspective projection, in which the window-height
+diff --git a/src/gameglview.cpp b/src/gameglview.cpp
+index c13c19c..a3ab47d 100644
+--- a/src/gameglview.cpp
++++ b/src/gameglview.cpp
+@@ -21,9 +21,10 @@
+ // C++ includes
+ #include <iostream>
+ 
+-GameGLView::GameGLView(Game * g, QWidget * parent)
++GameGLView::GameGLView(Game * g, QWidget * parent, int stereoSeparation)
+             : QOpenGLWidget(parent),
+-              bgColor (QColor (0, 0, 35))
++              bgColor (QColor (0, 0, 35)),
++              stereoSeparation (stereoSeparation)
+ {
+     // Save a pointer to the Game object that controls everything.
+     game = g;
+@@ -205,15 +206,67 @@ void GameGLView::paintGL()
+     }
+     glEnable (GL_LIGHTING);
+ 
++    // The background is a flat picture, drawn above at the same place in both
++    // eyes.  The cubes are seen by the eye's own camera.
++    applyEyeCamera();
++
+     // Draw the cube(s).
+     game->drawScene ();
+ 
++    if (isStereo()) {
++	glMatrixMode (GL_PROJECTION);
++	glPopMatrix();
++	glMatrixMode (GL_MODELVIEW);
++    }
++
+     if (checkGLError()) {
+ 	std::cerr << "OpenGL error detected after drawScene()" << std::endl;
+     }
+ }
+ 
+ 
++bool GameGLView::isStereo() const
++{
++    return stereoSeparation > 0 && format().stereo();
++}
++
++
++bool GameGLView::paintsRightEye() const
++{
++    return isStereo() && currentTargetBuffer() == QOpenGLWidget::RightBuffer;
++}
++
++
++void GameGLView::applyEyeCamera()
++{
++    if (! isStereo()) {
++	return;
++    }
++
++    // Move the camera sideways by half the separation, to the left for the
++    // left eye and to the right for the right eye, and shear the view so that
++    // the two eyes meet at the distance of the cubes' centres: what is there
++    // has no parallax, what is nearer shifts one way and what is further the
++    // other.  The modelview matrix is not touched, so the scene is the same
++    // for both eyes.  A point (x, y, z) in eye co-ordinates is seen at
++    //     x - e - e * z / distance
++    // where e is the camera's x position.
++    const double distance = -cubeCentreZ;
++    const double e = ((currentTargetBuffer() == QOpenGLWidget::RightBuffer) ? 0.5 : -0.5)
++		     * distance * stereoSeparation / 100.0;
++    const GLdouble shear [16] = {
++	1.0,		0.0, 0.0, 0.0,
++	0.0,		1.0, 0.0, 0.0,
++	-e / distance,	0.0, 1.0, 0.0,
++	-e,		0.0, 0.0, 1.0
++    };
++    glMatrixMode (GL_PROJECTION);
++    glPushMatrix();
++    glMultMatrixd (shear);
++    glMatrixMode (GL_MODELVIEW);
++}
++
++
+ void GameGLView::drawPictureBackground()
+ {
+     glEnable (GL_TEXTURE_2D);
+@@ -629,7 +682,13 @@ bool GameGLView::checkGLError()
+ void GameGLView::mousePressEvent(QMouseEvent* e)
+ {
+     // ensure our context outside of paint event when querying scene data
+-    makeCurrent();
++    // (in stereo, the left eye's, which is where the scene data come from)
++    if (isStereo()) {
++	makeCurrent (QOpenGLWidget::LeftBuffer);
++    }
++    else {
++	makeCurrent();
++    }
+     // Convert Y co-ordinate to OpenGL convention (zero at bottom of window).
+     game->handleMouseEvent (ButtonDown, e->button(),
+ 				e->pos().x(), height() - e->pos().y());
+@@ -639,7 +698,13 @@ void GameGLView::mousePressEvent(QMouseEvent* e)
+ void GameGLView::mouseReleaseEvent(QMouseEvent* e)
+ {
+     // ensure our context outside of paint event when querying scene data
+-    makeCurrent();
++    // (in stereo, the left eye's, which is where the scene data come from)
++    if (isStereo()) {
++	makeCurrent (QOpenGLWidget::LeftBuffer);
++    }
++    else {
++	makeCurrent();
++    }
+     // Convert Y co-ordinate to OpenGL convention (zero at bottom of window).
+     game->handleMouseEvent (ButtonUp, e->button(),
+ 				e->pos().x(), height() - e->pos().y());
+diff --git a/src/gameglview.h b/src/gameglview.h
+index 0c5f22d..3ef0a68 100644
+--- a/src/gameglview.h
++++ b/src/gameglview.h
+@@ -31,7 +31,8 @@ public:
+     /**
+     * Create a new GL view for the game
+     **/
+-    explicit GameGLView (Game * g, QWidget * parent = nullptr);
++    explicit GameGLView (Game * g, QWidget * parent = nullptr,
++			 int stereoSeparation = 0);
+ 
+     /**
+     * Dump all OpenGL and GLU extensions to stdout
+@@ -54,6 +55,12 @@ public:
+ 
+     QPoint getMousePosition ();
+ 
++    /**
++    * @return true when the view is drawing the right eye of a stereo pair,
++    * false for the left eye or when the view is not in stereo.
++    **/
++    bool paintsRightEye     () const;
++
+     void setBevelAmount     (int bevelPerCent);
+ 
+ protected:
+@@ -112,6 +119,13 @@ private:
+ 
+     void turnOnLighting     ();
+ 
++    // Stereo 3D: the one scene is drawn once per eye by two cameras, either
++    // side of the usual one, parallel and meeting at the cubes' distance.
++    bool isStereo           () const;
++    void applyEyeCamera     ();
++
++    int    stereoSeparation;	// Percent of the cubes' distance, 0 = off.
++
+     Game * game;
+     float bevelAmount;		// Fraction of bevelling on a cubie (eg. 0.1).
+     QColor bgColor;		// Background color.
+diff --git a/src/kubrick.cpp b/src/kubrick.cpp
+index 395b0a9..6ff1d0c 100644
+--- a/src/kubrick.cpp
++++ b/src/kubrick.cpp
+@@ -26,7 +26,7 @@
+ #include "game.h"
+ #include "gameglview.h"
+ 
+-Kubrick::Kubrick () :
++Kubrick::Kubrick (int stereoSeparation) :
+     singmasterMoves (nullptr)
+ {
+     // Window title.
+@@ -41,7 +41,7 @@ Kubrick::Kubrick () :
+ 
+     game     = new Game     (this);
+ 
+-    gameView = new GameGLView (game, this);
++    gameView = new GameGLView (game, this, stereoSeparation);
+ 
+     // Set the view as the central widget
+     setCentralWidget(gameView);
+diff --git a/src/kubrick.h b/src/kubrick.h
+index aa0ddda..c75b6fe 100644
+--- a/src/kubrick.h
++++ b/src/kubrick.h
+@@ -32,7 +32,7 @@ public:
+     /**
+      * Default Constructor.
+      */
+-    Kubrick ();
++    explicit Kubrick (int stereoSeparation = 0);
+ 
+     /**
+      * Default Destructor.
+diff --git a/src/main.cpp b/src/main.cpp
+index 069c485..fb181db 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -6,6 +6,7 @@
+ 
+ #include <QApplication>
+ #include <QCommandLineParser>
++#include <QSurfaceFormat>
+ 
+ #include <KAboutData>
+ #include <KCrash>
+@@ -38,9 +39,26 @@ int main(int argc, char **argv)
+ 
+     QCommandLineParser parser;
+     about.setupCommandLine(&parser);
++    parser.addOption(QCommandLineOption(QStringLiteral("stereo"),
++        i18n("Show the cubes in stereo 3D (needs a stereo-capable display)")));
++    parser.addOption(QCommandLineOption(QStringLiteral("stereo-separation"),
++        i18n("Distance between the two eyes in stereo 3D, in percent of the distance to the cubes (default 5)"),
++        QStringLiteral("percent"), QStringLiteral("5")));
+     parser.process(app);
+     about.processCommandLine(&parser);
+ 
++    int stereoSeparation = 0;
++    if (parser.isSet(QStringLiteral("stereo"))) {
++        stereoSeparation = qBound(1, parser.value(QStringLiteral("stereo-separation")).toInt(), 20);
++
++        // Ask for left and right buffers, before the window is created.
++        // QOpenGLWidget then calls paintGL() once for each, or only once
++        // when the platform cannot give stereo buffers.
++        QSurfaceFormat format = QSurfaceFormat::defaultFormat();
++        format.setStereo(true);
++        QSurfaceFormat::setDefaultFormat(format);
++    }
++
+     KDBusService service;
+ 
+     Kubrick * mainWindow = nullptr;
+@@ -53,7 +71,7 @@ int main(int argc, char **argv)
+ 
+         /// @todo do something with the command line args here
+ 
+-        mainWindow = new Kubrick ();
++        mainWindow = new Kubrick (stereoSeparation);
+         mainWindow->show ();
+     }
+ 
+-- 
+2.53.0
+
