@@ -1,0 +1,134 @@
+From ec1ee17aa9185e30d82b3d3cf8c5e752034e6f44 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 6 Oct 2026 13:59:40 -0300
+Subject: [PATCH 2/2] Fix the empty molecule viewer with Avogadro 2
+
+With Avogadro 2 the molecule viewer shows nothing: the molecule's data
+appears in the statistics, but the viewer stays black.
+
+Avogadro 2 keeps which scene plugins are enabled for each molecule, and
+it only acts on the molecule registered with its layer manager
+(LayerModel::addMolecule(), as MainWindow::setMolecule() in Avogadro's
+own application does). Kalzium never registered its molecules, so
+enabling Ball and Stick had no effect and no scene plugin was active.
+The check by objectName "BallStick" could not match either, the scene
+plugins' object name being empty.
+
+Register the molecule in KalziumGLWidget::setMolecule() and enable the
+scene plugins that are on by default for it. The enabled plugins belong
+to the molecule, so the dialog applies the chosen style again after it
+loads a molecule.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ compoundviewer/kalziumglwidget.cpp | 24 ++++++++++++++++++------
+ compoundviewer/kalziumglwidget.h   | 12 ++++++++++++
+ src/tools/moleculeview.cpp         |  1 +
+ 3 files changed, 31 insertions(+), 6 deletions(-)
+
+diff --git a/compoundviewer/kalziumglwidget.cpp b/compoundviewer/kalziumglwidget.cpp
+index be3abe02..9d62768f 100644
+--- a/compoundviewer/kalziumglwidget.cpp
++++ b/compoundviewer/kalziumglwidget.cpp
+@@ -8,6 +8,7 @@
+ #include "kalziumglwidget.h"
+ #include "iowrapper.h"
+ 
++#include <avogadro/qtgui/layermodel.h>
+ #include <avogadro/qtgui/molecule.h>
+ #include <avogadro/qtgui/sceneplugin.h>
+ #include <avogadro/qtgui/toolplugin.h>
+@@ -21,6 +22,7 @@
+ 
+ KalziumGLWidget::KalziumGLWidget(QWidget *parent)
+     : Avogadro::QtOpenGL::GLWidget(parent)
++    , m_layerModel(new Avogadro::QtGui::LayerModel(this))
+ {
+     // work around a bug in OpenBabel: the chemical data files parsing
+     // is dependent on the LC_NUMERIC locale.
+@@ -45,12 +47,7 @@ KalziumGLWidget::KalziumGLWidget(QWidget *parent)
+     // load render engines
+     QList<Avogadro::QtGui::ScenePluginFactory *> scenePluginFactories = manager->pluginFactories<Avogadro::QtGui::ScenePluginFactory>();
+     foreach (auto *factory, scenePluginFactories) {
+-        auto *scenePlugin = factory->createInstance();
+-        // enable Ball-and-Sticks
+-        if (scenePlugin->objectName() == QLatin1String("BallStick")) {
+-            scenePlugin->setEnabled(true);
+-        }
+-        sceneModel().addItem(scenePlugin);
++        sceneModel().addItem(factory->createInstance());
+     }
+ 
+     // load tools
+@@ -80,6 +77,21 @@ KalziumGLWidget::~KalziumGLWidget()
+     setlocale(LC_NUMERIC, m_lc_numeric.constData());
+ }
+ 
++void KalziumGLWidget::setMolecule(Avogadro::QtGui::Molecule *mol)
++{
++    // Avogadro keeps which scene plugins are enabled for each molecule, and only for
++    // the molecule registered with its layer manager (as its own application does)
++    m_layerModel->addMolecule(mol);
++    Avogadro::QtOpenGL::GLWidget::setMolecule(mol);
++
++    // enable the default scene plugins (Ball and Stick) for the new molecule
++    foreach (auto *scenePlugin, sceneModel().scenePlugins()) {
++        if (scenePlugin->defaultBehavior() == Avogadro::QtGui::ScenePlugin::True) {
++            scenePlugin->setEnabled(true);
++        }
++    }
++}
++
+ bool KalziumGLWidget::openFile(const QString &file)
+ {
+     // workaround for missing copy-constructor: fixed in Avogadra2 > 0.9
+diff --git a/compoundviewer/kalziumglwidget.h b/compoundviewer/kalziumglwidget.h
+index 522cce8a..326680a4 100644
+--- a/compoundviewer/kalziumglwidget.h
++++ b/compoundviewer/kalziumglwidget.h
+@@ -11,6 +11,14 @@
+ 
+ #include "compoundviewer_export.h"
+ 
++namespace Avogadro
++{
++namespace QtGui
++{
++class LayerModel;
++}
++}
++
+ class COMPOUNDVIEWER_EXPORT KalziumGLWidget : public Avogadro::QtOpenGL::GLWidget
+ {
+     Q_OBJECT
+@@ -18,11 +26,15 @@ public:
+     explicit KalziumGLWidget(QWidget *parent = nullptr);
+     virtual ~KalziumGLWidget();
+ 
++    /** Show @p mol, registered with Avogadro's layer manager and with the default scene plugins enabled */
++    void setMolecule(Avogadro::QtGui::Molecule *mol);
++
+ public slots:
+     bool openFile(const QString &file);
+ 
+ protected:
+     QByteArray m_lc_numeric;
++    Avogadro::QtGui::LayerModel *m_layerModel;
+ };
+ 
+ #endif // KALZIUMGLWIDGET_H
+diff --git a/src/tools/moleculeview.cpp b/src/tools/moleculeview.cpp
+index e3928d97..1888d829 100644
+--- a/src/tools/moleculeview.cpp
++++ b/src/tools/moleculeview.cpp
+@@ -178,6 +178,7 @@ void MoleculeDialog::loadMolecule(const QString &filename)
+     if (m_molecule.atomCount() != 0) {
+         disconnect(ui.glWidget->molecule(), nullptr, this, nullptr);
+         ui.glWidget->setMolecule(&m_molecule);
++        slotUpdateScenePlugin();
+         ui.glWidget->update();
+         slotUpdateStatistics();
+         connect(&m_molecule, &Avogadro::QtGui::Molecule::changed, this, &MoleculeDialog::slotUpdateStatistics);
+-- 
+2.53.0
+
