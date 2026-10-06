@@ -100,6 +100,7 @@ group('runtimes', 'Runtimes', boost + [
     'libqt5widgets5t64', 'libqt6widgets6',
     'gstreamer1.0-plugins-good', 'gstreamer1.0-plugins-bad', 'gstreamer1.0-plugins-ugly',
     'gstreamer1.0-libav', 'ffmpeg',
+    'imagemagick',   # the convert/magick command that scripts and programs look for (ImageMagick 7; Daniel's 6.q16 is gone from forky)
     'libc6:i386', 'libgl1:i386', 'libvulkan1:i386', 'mesa-vulkan-drivers:i386', 'libsdl2-2.0-0:i386',
 ])
 

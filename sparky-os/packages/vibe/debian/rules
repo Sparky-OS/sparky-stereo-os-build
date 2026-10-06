@@ -1,0 +1,18 @@
+#!/usr/bin/make -f
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/05
+# Copyright 2026 under the GNU GPL2 License
+# Installs the signed upstream release build; the signature is checked again here.
+include /usr/share/dpkg/pkg-info.mk
+export DEB_BUILD_MAINT_OPTIONS = hardening=-all
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	minisign -V -p release/vibe.pub -x release/vibe.sig -m release/vibe_$(DEB_VERSION_UPSTREAM)_amd64.deb
+
+override_dh_auto_install:
+	dpkg-deb -x release/vibe_$(DEB_VERSION_UPSTREAM)_amd64.deb debian/vibe
+	chmod 0755 debian/vibe/usr/bin/vibe debian/vibe/usr/bin/vibe-server
+	# upstream's launcher has an empty Categories= line, so menus cannot place it
+	sed -i 's/^Categories=.*/Categories=AudioVideo;Audio;/' debian/vibe/usr/share/applications/vibe.desktop

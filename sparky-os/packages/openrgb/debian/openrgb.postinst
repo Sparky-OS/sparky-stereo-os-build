@@ -1,0 +1,9 @@
+#!/bin/sh
+set -e
+#DEBHELPER#
+if [ "$1" = configure ]; then
+	# apply the new rules to devices already plugged in; a failure here is harmless
+	udevadm control --reload-rules >/dev/null 2>&1 || true
+	udevadm trigger --subsystem-match=usb --subsystem-match=hidraw >/dev/null 2>&1 || true
+fi
+exit 0

@@ -1,0 +1,11 @@
+openrgb (1.0+ds-1+sparky1) unstable; urgency=medium
+
+  * OpenRGB 1.0 from the project's release tag release_1.0 (2026-09-11),
+    repacked as +ds without the Windows binaries of dependencies/
+    (hidapi, libusb, mbedtls, PawnIO) and without upstream's debian/.
+  * Our own debian/: Qt 6, the system hidapi, libusb and mbedtls 3.
+  * The udev rules are generated at build time by the program itself.
+  * The systemd unit is installed but not enabled or started; no kernel
+    module is loaded and no kernel parameter is set.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 05 Oct 2026 20:30:00 +0000

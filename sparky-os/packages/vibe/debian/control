@@ -1,0 +1,30 @@
+Source: vibe
+Section: sound
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: debhelper-compat (= 13), libayatana-appindicator3-1, libgtk-3-0t64, libwebkit2gtk-4.1-0, libxdo3, minisign
+Standards-Version: 4.7.2
+Homepage: https://sparkylinux.org
+Rules-Requires-Root: no
+
+Package: vibe
+Architecture: amd64
+Depends: ${misc:Depends}, ${shlibs:Depends},
+ ffmpeg,
+ libayatana-appindicator3-1
+Recommends: xdg-desktop-portal
+Description: offline speech transcription with Whisper models
+ Vibe transcribes audio and video on your own computer, without sending
+ anything away: subtitles (SRT, VTT), text and JSON, speaker labels, many
+ languages, batch files and a command line.
+ .
+ This is upstream's own build of Vibe 3.2.2 (MIT,
+ https://github.com/thewh1teagle/vibe), repackaged after its signature was
+ checked against the key in the tagged source. The source package carries
+ the tagged source and the signed release.
+ .
+ At run time: the models (Whisper, voice activity detection, speaker
+ separation) are not in the package. Vibe downloads the ones you choose from
+ huggingface.co when you ask, and it can check GitHub for a newer release.
+ Recognition runs on the CPU, and on the GPU through Vulkan when a Vulkan
+ driver is present (vibe-server, the engine, is built on ggml).

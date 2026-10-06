@@ -1,0 +1,45 @@
+Source: openrgb
+Section: utils
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends:
+ debhelper-compat (= 13),
+ libhidapi-dev,
+ libmbedtls-dev,
+ libusb-1.0-0-dev,
+ pkgconf,
+ qmake6,
+ qt6-base-dev,
+ qt6-base-dev-tools,
+ qt6-tools-dev-tools,
+Standards-Version: 4.7.2
+Homepage: https://sparkylinux.org
+Rules-Requires-Root: no
+
+Package: openrgb
+Architecture: any
+Depends:
+ udev,
+ ${misc:Depends},
+ ${shlibs:Depends},
+Description: Open source RGB lighting control
+ OpenRGB controls the RGB lighting of motherboards, memory, graphics cards,
+ coolers, keyboards, mice and other peripherals from many vendors, without
+ each vendor's own software. It has a Qt interface, a command line, and an
+ SDK server for other programs.
+ .
+ This is OpenRGB 1.0 built from the project's own release
+ (https://gitlab.com/CalcProgrammer1/OpenRGB, tag release_1.0).
+ .
+ What this package installs: the program, its desktop entry and icon, a
+ udev rules file (/usr/lib/udev/rules.d/60-openrgb.rules) generated at build
+ time by the program itself from its list of supported USB devices, so that
+ a normal user can reach them, and the project's systemd unit for the SDK
+ server, which is NOT enabled or started. It loads no kernel module and
+ sets no kernel parameter. Devices on the SMBus (RGB memory, some
+ motherboards) need the i2c-dev module and the chipset's i2c driver, which
+ the hardware setup of the system provides when it finds such hardware.
+ .
+ Warning from the project: OpenRGB talks to hardware through reverse
+ engineered protocols; there have been cases of damaged devices. Use is at
+ your own risk.

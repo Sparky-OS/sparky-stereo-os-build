@@ -1,0 +1,25 @@
+#!/usr/bin/make -f
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/05
+# Copyright 2026 under the GNU GPL2 License
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+export QT_QPA_PLATFORM = offscreen
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	qmake6 PREFIX=/usr OpenRGB.pro
+
+override_dh_auto_install:
+	$(MAKE) INSTALL_ROOT=$(CURDIR)/debian/openrgb install
+	# the rules come from the program itself, so they match the devices of this version
+	mkdir -p debian/openrgb/usr/lib/udev/rules.d
+	./openrgb --generate-udev-rules debian/openrgb/usr/lib/udev/rules.d/60-openrgb.rules
+	mkdir -p debian/openrgb/usr/lib/openrgb/plugins
+
+# the unit is installed, never enabled or started by the package
+override_dh_installsystemd:
+	dh_installsystemd --no-enable --no-start
+
+override_dh_auto_test:
+	./openrgb --version
