@@ -1,0 +1,179 @@
+From 96ceab1bc035a5ad2a1bb4b2b5ab7b057d056d3e Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 6 Oct 2026 09:00:10 -0300
+Subject: [PATCH 3/3] Show a stereo figure in the left and the right buffer
+
+A figure created with the stereo property on gets a stereo top-level
+surface format and a stereo canvas, and the canvas selects the eye from
+the target buffer Qt paints.  Printing and pixel capture draw one view.
+
+Assisted-by: Claude Opus 5.5 (Anthropic) and glm-5.3:cloud (Ollama) via Codex
+---
+ libgui/graphics/Figure.cc   | 30 +++++++++++++++++++++++++++++-
+ libgui/graphics/GLCanvas.cc | 32 ++++++++++++++++++++++++++++----
+ libgui/graphics/GLCanvas.h  |  5 ++++-
+ 3 files changed, 61 insertions(+), 6 deletions(-)
+
+diff --git a/libgui/graphics/Figure.cc b/libgui/graphics/Figure.cc
+index 8bda171..7170cc5 100644
+--- a/libgui/graphics/Figure.cc
++++ b/libgui/graphics/Figure.cc
+@@ -45,6 +45,7 @@
+ #include <QToolBar>
+ #include <QWindow>
+ #include <QScreen>
++#include <QSurfaceFormat>
+ 
+ #include "Canvas.h"
+ #include "Container.h"
+@@ -110,7 +111,30 @@ Figure *
+ Figure::create (octave::interpreter& interp,
+                 const graphics_object& go)
+ {
+-  return new Figure (interp, go, new FigureWindow ());
++  const auto *fp
++    = dynamic_cast<const figure::properties *> (&go.get_properties ());
++
++  // The surface format of a top-level window is fixed when its native
++  // window is created, so a stereo figure creates it with stereo.  The
++  // default format is restored for the windows made after it.
++  QSurfaceFormat format = QSurfaceFormat::defaultFormat ();
++
++  if (fp && fp->is_stereo ())
++    {
++      QSurfaceFormat stereo_format = format;
++      stereo_format.setStereo (true);
++      QSurfaceFormat::setDefaultFormat (stereo_format);
++    }
++
++  FigureWindow *win = new FigureWindow ();
++  Figure *fig = new Figure (interp, go, win);
++
++  if (fp && fp->is_stereo ())
++    win->winId ();
++
++  QSurfaceFormat::setDefaultFormat (format);
++
++  return fig;
+ }
+ 
+ Figure::Figure (octave::interpreter& interp,
+@@ -406,6 +430,10 @@ Figure::update (int pId)
+       win->setWindowTitle (Utils::fromStdString (fp.get_title ()));
+       break;
+ 
++    case figure::properties::ID_STEREOEYESEPARATION:
++      redraw ();
++      break;
++
+     case figure::properties::ID_VISIBLE:
+       if (fp.is_visible ())
+         {
+diff --git a/libgui/graphics/GLCanvas.cc b/libgui/graphics/GLCanvas.cc
+index 362ed3d..aed504f 100644
+--- a/libgui/graphics/GLCanvas.cc
++++ b/libgui/graphics/GLCanvas.cc
+@@ -37,10 +37,14 @@
+ 
+ OCTAVE_BEGIN_NAMESPACE(octave)
+ 
+-GLWidget::GLWidget (Canvas& parent_canvas, QWidget *parent)
++GLWidget::GLWidget (Canvas& parent_canvas, QWidget *parent, bool stereo)
+   : QOpenGLWidget (parent), m_parent_canvas (parent_canvas),
+-    m_glfcns (), m_renderer (m_glfcns)
++    m_glfcns (), m_renderer (m_glfcns), m_stereo (stereo), m_stereo_eye (0)
+ {
++  QSurfaceFormat format = QSurfaceFormat::defaultFormat ();
++  format.setStereo (stereo);
++  setFormat (format);
++
+   setFocusPolicy (Qt::ClickFocus);
+   setFocus ();
+   setUpdateBehavior (QOpenGLWidget::PartialUpdate);
+@@ -75,8 +79,10 @@ GLWidget::draw (graphics_object go)
+ 
+       graphics_object fig = go.get_ancestor ("figure");
+       double dpr = fig.get ("__device_pixel_ratio__").double_value ();
++      double separation = fig.get ("stereoeyeseparation").double_value ();
+       m_renderer.set_viewport (dpr * width (), dpr * height ());
+       m_renderer.set_device_pixel_ratio (dpr);
++      m_renderer.set_stereo_eye (m_stereo ? m_stereo_eye : 0, separation);
+ 
+       m_renderer.draw (go);
+     }
+@@ -99,6 +105,8 @@ GLWidget::do_getPixels (graphics_object go)
+ 
+       unwind_action reset_current ([this] () { end_rendering (); });
+ 
++      m_renderer.set_stereo_eye (0, 0.0);
++
+       // When the figure is not visible or its size is frozen for printing,
+       // we use a framebuffer object to make sure we are rendering on a
+       // suitably large frame.
+@@ -143,6 +151,8 @@ GLWidget::do_print (const QString& file_cmd, const QString& term,
+ 
+       unwind_action reset_current ([this] () { end_rendering (); });
+ 
++      m_renderer.set_stereo_eye (0, 0.0);
++
+       graphics_object fig (go.get_ancestor ("figure"));
+ 
+       if (fig.get ("visible").string_value () == "on")
+@@ -218,6 +228,12 @@ GLWidget::drawZoomBox (const QPoint& p1, const QPoint& p2)
+ void
+ GLWidget::paintGL ()
+ {
++  if (m_stereo)
++    m_stereo_eye = (currentTargetBuffer () == QOpenGLWidget::RightBuffer
++                    ? 1 : -1);
++  else
++    m_stereo_eye = 0;
++
+   m_parent_canvas.canvasPaintEvent ();
+ }
+ 
+@@ -305,8 +321,16 @@ GLWidget::end_rendering ()
+ 
+ GLCanvas::GLCanvas (octave::interpreter& interp,
+                     const graphics_handle& gh, QWidget *parent)
+-  : Canvas (interp, gh), m_glwidget (new GLWidget (*this, parent))
+-{ }
++  : Canvas (interp, gh), m_glwidget (nullptr)
++{
++  gh_manager& gh_mgr = interp.get_gh_manager ();
++  octave::autolock guard (gh_mgr.graphics_lock ());
++  graphics_object go = gh_mgr.get_object (gh);
++  const auto *fp
++    = dynamic_cast<const figure::properties *> (&go.get_properties ());
++
++  m_glwidget = new GLWidget (*this, parent, fp && fp->is_stereo ());
++}
+ 
+ GLCanvas::~GLCanvas ()
+ {
+diff --git a/libgui/graphics/GLCanvas.h b/libgui/graphics/GLCanvas.h
+index 9ab896f..07917d4 100644
+--- a/libgui/graphics/GLCanvas.h
++++ b/libgui/graphics/GLCanvas.h
+@@ -44,7 +44,7 @@ class GLWidget : public QOpenGLWidget
+ 
+ public:
+ 
+-  GLWidget (Canvas& parent_canvas, QWidget *parent);
++  GLWidget (Canvas& parent_canvas, QWidget *parent, bool stereo = false);
+ 
+   ~GLWidget ();
+ 
+@@ -83,6 +83,9 @@ private:
+ 
+   QOpenGLContext m_os_context;
+   QOffscreenSurface m_os_surface;
++
++  bool m_stereo;
++  int m_stereo_eye;
+ };
+ 
+ class GLCanvas : public Canvas
+-- 
+2.53.0
+

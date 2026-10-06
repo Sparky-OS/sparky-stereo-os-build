@@ -1,0 +1,141 @@
+From 0cb2ac8538264b554645583103d5528d7d67c5fa Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 6 Oct 2026 09:00:10 -0300
+Subject: [PATCH 2/3] Draw the axes of a 3D view once for each eye
+
+For the eye the canvas selects, shear the camera coordinates of a 3D
+axes sideways in proportion to the depth of each point from the camera
+target, so the target stays at the screen's depth and nearer and farther
+points move in opposite directions.  Markers and text, which are placed
+in window coordinates, get the same shift as the point they belong to.
+2D axes and drawing outside the axes are not sheared.  Without an eye
+the drawing is unchanged.
+
+Assisted-by: Claude Opus 5.5 (Anthropic) and glm-5.3:cloud (Ollama) via Codex
+---
+ libinterp/corefcn/gl-render.cc | 36 ++++++++++++++++++++++++++++++----
+ libinterp/corefcn/gl-render.h  | 19 ++++++++++++++++++
+ 2 files changed, 51 insertions(+), 4 deletions(-)
+
+diff --git a/libinterp/corefcn/gl-render.cc b/libinterp/corefcn/gl-render.cc
+index 0efa468..4df7d34 100644
+--- a/libinterp/corefcn/gl-render.cc
++++ b/libinterp/corefcn/gl-render.cc
+@@ -692,7 +692,9 @@ opengl_renderer::opengl_renderer (opengl_functions& glfcns)
+     m_xZ1 (), m_xZ2 (), m_marker_id (), m_filled_marker_id (),
+     m_camera_pos (), m_camera_dir (), m_view_vector (),
+     m_interpreter ("none"), m_txt_renderer (), m_current_light (0),
+-    m_max_lights (0), m_selecting (false), m_printing (false)
++    m_max_lights (0), m_selecting (false), m_stereo_eye (0),
++    m_stereo_separation (0.0), m_stereo_shear (0.0),
++    m_stereo_depth (0.0), m_stereo_xscale (1.0), m_printing (false)
+ {
+   // This constructor will fail if we don't have OpenGL or if the data
+   // types we assumed in our public interface aren't compatible with the
+@@ -1313,6 +1315,13 @@ opengl_renderer::setup_opengl_transformation (const axes::properties& props)
+ 
+   Matrix x_mat1 = props.get_opengl_matrix_1 ();
+   Matrix x_mat2 = props.get_opengl_matrix_2 ();
++  Matrix camera_target = props.get_cameratarget ().matrix_value ();
++  ColumnVector target_position (4, 1.0);
++  target_position(0) = camera_target(0);
++  target_position(1) = camera_target(1);
++  target_position(2) = camera_target(2);
++  target_position = x_mat2 * x_mat1 * target_position;
++  double target_depth = -target_position(2);
+ 
+   m_glfcns.glMatrixMode (GL_MODELVIEW);
+   m_glfcns.glLoadIdentity ();
+@@ -1324,6 +1333,23 @@ opengl_renderer::setup_opengl_transformation (const axes::properties& props)
+   Matrix vp = get_viewport_scaled ();
+   m_glfcns.glOrtho (0, vp(2), vp(3), 0, m_xZ1, m_xZ2);
+   m_glfcns.glMultMatrixd (x_mat2.data ());
++
++  // The shear of an eye acts on the camera coordinates, before x_mat2
++  m_stereo_shear = 0.0;
++  m_stereo_depth = target_depth;
++  m_stereo_xscale = x_mat2(0, 0);
++  if (m_stereo_eye != 0 && ! props.get_is2D (true))
++    {
++      m_stereo_shear = -m_stereo_eye * m_stereo_separation / 2.0;
++      GLdouble stereo_matrix[16] =
++        {
++          1.0, 0.0, 0.0, 0.0,
++          0.0, 1.0, 0.0, 0.0,
++          m_stereo_shear, 0.0, 1.0, 0.0,
++          -m_stereo_shear * target_depth, 0.0, 0.0, 1.0
++        };
++      m_glfcns.glMultMatrixd (stereo_matrix);
++    }
+   m_glfcns.glMatrixMode (GL_MODELVIEW);
+ 
+   m_glfcns.glClear (GL_DEPTH_BUFFER_BIT);
+@@ -4014,7 +4040,8 @@ opengl_renderer::draw_text_background (const text::properties& props,
+   set_ortho_coordinates ();
+ 
+   // Translate coordinates so that the text anchor is (0,0)
+-  m_glfcns.glTranslated (pixpos(0), pixpos(1), -pixpos(2));
++  m_glfcns.glTranslated (pixpos(0) + stereo_shift (pixpos(2)), pixpos(1),
++                         -pixpos(2));
+ 
+   // FIXME: Only multiples of 90° are handled by the text renderer.
+   //        Handle others here.
+@@ -4562,7 +4589,7 @@ opengl_renderer::draw_marker (double x, double y, double z,
+   ColumnVector tmp = m_xform.transform (x, y, z, false);
+ 
+   m_glfcns.glLoadIdentity ();
+-  m_glfcns.glTranslated (tmp(0), tmp(1), -tmp(2));
++  m_glfcns.glTranslated (tmp(0) + stereo_shift (tmp(2)), tmp(1), -tmp(2));
+ 
+   if (m_filled_marker_id > 0 && fc.numel () > 0)
+     {
+@@ -4983,7 +5010,8 @@ opengl_renderer::render_text (uint8NDArray pixels, Matrix bbox,
+   set_ortho_coordinates ();
+ 
+   // Translate coordinates so that the text anchor is (0,0)
+-  m_glfcns.glTranslated (pixpos(0), pixpos(1), -pixpos(2));
++  m_glfcns.glTranslated (pixpos(0) + stereo_shift (pixpos(2)), pixpos(1),
++                         -pixpos(2));
+ 
+   m_glfcns.glRotated (-rotation, 0.0, 0.0, 1.0);
+ 
+diff --git a/libinterp/corefcn/gl-render.h b/libinterp/corefcn/gl-render.h
+index 05d8a8d..1e98751 100644
+--- a/libinterp/corefcn/gl-render.h
++++ b/libinterp/corefcn/gl-render.h
+@@ -56,6 +56,11 @@ public:
+ 
+   virtual void set_viewport (int w, int h);
+   virtual void set_device_pixel_ratio (double dpr) { m_devpixratio = dpr; }
++  void set_stereo_eye (int eye, double separation)
++  {
++    m_stereo_eye = eye;
++    m_stereo_separation = separation;
++  }
+   virtual Matrix get_viewport_scaled () const;
+   virtual graphics_xform get_transform () const { return m_xform; }
+   virtual uint8NDArray get_pixels (int width, int height);
+@@ -253,6 +258,20 @@ private:
+   // Indicate we are drawing for selection purpose
+   bool m_selecting;
+ 
++  // Stereo eye selection for 3D axes
++  int m_stereo_eye;
++  double m_stereo_separation;
++
++  // Shear of the current axes for this eye and the depth it leaves at rest
++  double m_stereo_shear;
++  double m_stereo_depth;
++  double m_stereo_xscale;
++
++  // Sideways shift in window coordinates of a point drawn there (markers
++  // and text) so it follows the shear of the axes it belongs to
++  double stereo_shift (double z) const
++  { return m_stereo_xscale * m_stereo_shear * (-z - m_stereo_depth); }
++
+   // Indicate we are drawing for printing purpose
+   bool m_printing;
+ };
+-- 
+2.53.0
+
