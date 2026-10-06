@@ -1,30 +1,36 @@
-From 472bc8447c58c0b41d1111af33af634bb6e64503 Mon Sep 17 00:00:00 2001
+From d246c5c77e8c06604dd3dab9228e698bb4c9cbb1 Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
-Date: Mon, 5 Oct 2026 21:48:35 -0300
+Date: Mon, 5 Oct 2026 22:57:24 -0300
 Subject: [PATCH 2/2] Show a 3D video to the compositor as stereo content
 
 Under a compositor that takes stereo content declarations (kde_stereo_content_v1,
 with wl_subcompositor, wp_viewporter and wl_shm), the video of a stereoscopic 3D
-file is drawn into a surface of its own under the window's surface, both views
-side by side at the size of one view, the left eye first, and declared as full
-side by side. The controls stay in the window's surface over it, the same in both
-eyes, and what the layer does not cover is black. Qt creates subsurfaces only
-above their parent, so the layer is a wl_subsurface made here.
+file, whatever its packing, is drawn into a surface of its own under the window's
+surface: both views side by side at the size of one view, the left eye first, and
+declared as full side by side. The controls stay in the window's surface over it,
+the same in both eyes, and what the layer does not cover is black. Qt creates
+subsurfaces only above their parent, so the layer is a wl_subsurface made here.
+The StereoFilter hands the layer the two views of every frame; the frames of a
+frame sequence are shown as a pair when the second one has come.
 
 The 3D Video menu gets a 3D entry (the default where the layer is supported) and
 Display Settings, which opens the screen's settings where its 3D mode is chosen.
-Everywhere else Dragon Player works as before.
+Dragon Player never outputs another packing: that is what the output filters of
+the display part are for. Anaglyph videos are shown as they are. Everywhere else
+Dragon Player works as before.
 
 Assisted-by: Claude Sonnet via Claude Code
 ---
  CMakeLists.txt          |   7 +
  src/CMakeLists.txt      |  16 +-
- src/qml/ControlsBar.qml |  16 ++
+ src/qml/ControlsBar.qml |  14 ++
  src/qml/Main.qml        |   2 +
- src/qml/PlayerPage.qml  |  40 +++-
- src/stereolayer.cpp     | 448 ++++++++++++++++++++++++++++++++++++++++
- src/stereolayer.h       |  66 ++++++
- 7 files changed, 588 insertions(+), 7 deletions(-)
+ src/qml/PlayerPage.qml  |  46 ++++-
+ src/stereofilter.cpp    |  28 +++
+ src/stereofilter.h      |   6 +
+ src/stereolayer.cpp     | 434 ++++++++++++++++++++++++++++++++++++++++
+ src/stereolayer.h       |  67 +++++++
+ 9 files changed, 615 insertions(+), 5 deletions(-)
  create mode 100644 src/stereolayer.cpp
  create mode 100644 src/stereolayer.h
 
@@ -49,7 +55,7 @@ index 9721cf7..f1fd222 100644
  configure_file(config.h.in ${CMAKE_CURRENT_BINARY_DIR}/config.h)
  
 diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
-index c16d27e..b8eb132 100644
+index a25adcf..5ac0f70 100644
 --- a/src/CMakeLists.txt
 +++ b/src/CMakeLists.txt
 @@ -6,6 +6,11 @@ ecm_setup_version(${PROJECT_VERSION}
@@ -64,18 +70,18 @@ index c16d27e..b8eb132 100644
  ecm_add_qml_module(dragonmodule URI org.kde.dragon VERSION 1.0 GENERATE_PLUGIN_SOURCE)
  ecm_target_qml_sources(dragonmodule
      SOURCES
-@@ -25,7 +30,9 @@ target_sources(dragonmodule
-         mpris2/mpris2.cpp
-         backend.cpp
+@@ -27,7 +32,9 @@ target_sources(dragonmodule
          fileopen.cpp
--        sandbox.cpp)
-+        sandbox.cpp
+         sandbox.cpp
+         stereo.cpp
+-        stereofilter.cpp)
++        stereofilter.cpp
 +        stereolayer.cpp
 +        ${DRAGON_WAYLAND_SOURCES})
  target_link_libraries(dragonmodule
      PRIVATE
          Qt6::Core
-@@ -37,9 +44,12 @@ target_link_libraries(dragonmodule
+@@ -39,9 +46,12 @@ target_link_libraries(dragonmodule
          Qt6::Qml
          Qt6::Quick
          Qt6::Multimedia
@@ -91,39 +97,37 @@ index c16d27e..b8eb132 100644
  
  add_executable(dragon main.cpp)
 diff --git a/src/qml/ControlsBar.qml b/src/qml/ControlsBar.qml
-index c7a9015..f625568 100644
+index d113b19..6f7f53f 100644
 --- a/src/qml/ControlsBar.qml
 +++ b/src/qml/ControlsBar.qml
-@@ -226,6 +226,13 @@ OverlayPopup {
+@@ -226,6 +226,14 @@ OverlayPopup {
                      icon.name: "view-3d-symbolic"
                      title: i18nc("@action:button stereoscopic 3D view selector", "3D Video")
-                     enabled: videoPage.stereo
+                     // Stays open to a video that does not say it is 3D, or says it wrong, so that the packing can be chosen
 +                    QQC2.RadioDelegate {
-+                        visible: videoPage.stereoLayer.supported
++                        visible: stereoLayer.supported
 +                        height: visible ? implicitHeight : 0
++                        enabled: stereoFilter.stereo
 +                        text: i18nc("@action:button stereoscopic 3D view selector, shown in 3D by the display", "3D")
-+                        checked: videoPage.stereoView === PlayerPage.Stereo3D
-+                        onToggled: videoPage.stereoView = PlayerPage.Stereo3D
++                        checked: stereoFilter.view === StereoFilter.Stereo3DView
++                        onToggled: stereoFilter.view = StereoFilter.Stereo3DView
 +                    }
                      QQC2.RadioDelegate {
+                         enabled: stereoFilter.stereo
                          text: i18nc("@action:button stereoscopic 3D view selector", "Left View")
-                         checked: videoPage.stereoView === PlayerPage.LeftView
-@@ -241,6 +248,15 @@ OverlayPopup {
-                         checked: videoPage.stereoView === PlayerPage.BothViews
-                         onToggled: videoPage.stereoView = PlayerPage.BothViews
+@@ -270,6 +278,12 @@ OverlayPopup {
+                             }
+                         }
                      }
-+                    QQC2.MenuSeparator {
-+                        visible: videoPage.stereoLayer.supported
-+                    }
 +                    QQC2.MenuItem {
-+                        visible: videoPage.stereoLayer.supported
++                        visible: stereoLayer.supported
 +                        height: visible ? implicitHeight : 0
 +                        text: i18nc("@action:button opens the display settings, where the 3D mode of the screen is chosen", "Display Settings…")
-+                        onTriggered: videoPage.stereoLayer.openDisplaySettings()
++                        onTriggered: stereoLayer.openDisplaySettings()
 +                    }
-                 }
-                 QQC2.Menu {
-                     icon.name: "kdenlive-add-clip-symbolic"
+                     QQC2.CheckDelegate {
+                         text: i18nc("@action:button 3D video, the left and right views are the other way round", "Swap Eyes")
+                         checked: stereoFilter.swapEyes
 diff --git a/src/qml/Main.qml b/src/qml/Main.qml
 index f6299d4..b469ec7 100644
 --- a/src/qml/Main.qml
@@ -138,30 +142,10 @@ index f6299d4..b469ec7 100644
          if (!playerPage.player.source) {
              return ""
 diff --git a/src/qml/PlayerPage.qml b/src/qml/PlayerPage.qml
-index ffb6420..c602aac 100644
+index 386b8c8..3e193ab 100644
 --- a/src/qml/PlayerPage.qml
 +++ b/src/qml/PlayerPage.qml
-@@ -17,14 +17,17 @@ Kirigami.Page {
-     enum StereoView {
-         LeftView,
-         RightView,
--        BothViews
-+        BothViews,
-+        Stereo3D
-     }
- 
-     property var storedVisibility: null
-     property alias player: player
-     property alias videoContainer: videoContainer
-     // Which view of a stereoscopic 3D video is shown, see the 3D Video menu
--    property int stereoView: PlayerPage.LeftView
-+    property int stereoView: stereoLayer.supported ? PlayerPage.Stereo3D : PlayerPage.LeftView
-+    readonly property bool stereoLayerActive: stereoLayer.active
-+    property alias stereoLayer: stereoLayer
-     readonly property bool stereo: video.videoSink.Backend.stereoPacking !== Dragon.Backend.Mono
-     required property QtObject fullscreenAction
- 
-@@ -42,6 +45,11 @@ Kirigami.Page {
+@@ -33,6 +33,13 @@ Kirigami.Page {
          }
      }
  
@@ -169,11 +153,13 @@ index ffb6420..c602aac 100644
 +    background: Rectangle {
 +        color: stereoLayer.active ? "transparent" : Kirigami.Theme.backgroundColor
 +    }
++    readonly property bool stereoLayerActive: stereoLayer.active
++    property alias stereoLayer: stereoLayer
 +
      Kirigami.Action {
          id: togglePauseAction
          text: player.paused || player.stopped ? i18nc("@action:button", "Play") : i18nc("@action:button", "Pause")
-@@ -149,7 +157,9 @@ Please <link url="%1">contact the %2 developers</link> about this issue, or to f
+@@ -140,7 +147,9 @@ Please <link url="%1">contact the %2 developers</link> about this issue, or to f
          player.seek(time, precise)
      }
  
@@ -184,7 +170,7 @@ index ffb6420..c602aac 100644
  
      Rectangle {
          id: videoContainer
-@@ -157,7 +167,7 @@ Please <link url="%1">contact the %2 developers</link> about this issue, or to f
+@@ -148,18 +157,51 @@ Please <link url="%1">contact the %2 developers</link> about this issue, or to f
          anchors.right: parent.right
          anchors.left: parent.left
          anchors.bottom: parent.bottom
@@ -192,25 +178,35 @@ index ffb6420..c602aac 100644
 +        color: stereoLayer.active ? "transparent" : "black"
          visible: (player.source.toString()?.length > 0) ?? false // source should never be nullish so .toString() always works!
  
-         // The part of the video that is shown: all of it, or one view of a stereoscopic 3D video, which
-@@ -188,6 +198,7 @@ Please <link url="%1">contact the %2 developers</link> about this issue, or to f
- 
-             Multimedia.VideoOutput {
-                 id: video
-+                visible: !stereoLayer.active
-                 fillMode: videoView.oneView ? Multimedia.VideoOutput.Stretch : Multimedia.VideoOutput.PreserveAspectFit
-                 width: videoView.oneView && videoView.sideBySide ? videoView.width * 2 : videoView.width
-                 height: videoView.oneView && !videoView.sideBySide ? videoView.height * 2 : videoView.height
-@@ -196,6 +207,27 @@ Please <link url="%1">contact the %2 developers</link> about this issue, or to f
-             }
+         Multimedia.VideoOutput {
+             id: video
+             anchors.fill: parent
++            visible: !stereoLayer.active
          }
  
+         // A stereoscopic 3D video is shown as one of its views, see the 3D Video menu
+         StereoFilter {
+             id: stereoFilter
+             output: video.videoSink
++            view: stereoLayer.supported ? StereoFilter.Stereo3DView : StereoFilter.LeftView
++        }
++
++        // A 3D video goes to the compositor as stereo content, both views in a layer under the window
 +        StereoLayer {
 +            id: stereoLayer
 +            window: appWindow
-+            videoSink: video.videoSink
-+            active: videoPage.stereo && videoPage.stereoView === PlayerPage.Stereo3D
-+            rect: videoView.mapToItem(null, 0, 0, videoView.width, videoView.height)
++            filter: stereoFilter
++            active: stereoFilter.stereo && stereoFilter.view === StereoFilter.Stereo3DView
++            rect: viewRect.mapToItem(null, 0, 0, viewRect.width, viewRect.height)
++        }
++
++        // The rectangle of one view, as large as it can be in the container
++        Item {
++            id: viewRect
++            width: Math.min(videoContainer.width, videoContainer.height * stereoFilter.viewAspect)
++            height: Math.min(videoContainer.height, videoContainer.width / stereoFilter.viewAspect)
++            x: (videoContainer.width - width) / 2
++            y: (videoContainer.height - height) / 2
 +        }
 +
 +        // What the layer does not cover is black
@@ -219,22 +215,102 @@ index ffb6420..c602aac 100644
 +            Rectangle {
 +                required property int index
 +                color: "black"
-+                x: index === 3 ? videoView.x + videoView.width : 0
-+                y: index === 1 ? videoView.y + videoView.height : index === 2 || index === 3 ? videoView.y : 0
-+                width: index === 2 ? videoView.x : index === 3 ? videoContainer.width - x : videoContainer.width
-+                height: index === 0 ? videoView.y : index === 1 ? videoContainer.height - y : videoView.height
++                x: index === 3 ? viewRect.x + viewRect.width : 0
++                y: index === 1 ? viewRect.y + viewRect.height : index === 2 || index === 3 ? viewRect.y : 0
++                width: index === 2 ? viewRect.x : index === 3 ? videoContainer.width - x : videoContainer.width
++                height: index === 0 ? viewRect.y : index === 1 ? videoContainer.height - y : viewRect.height
 +            }
-+        }
-+
+         }
+ 
          Multimedia.AudioOutput {
-             id: audio
-             BoundaryRule on volume {
+diff --git a/src/stereofilter.cpp b/src/stereofilter.cpp
+index 624ce15..ac9cd5e 100644
+--- a/src/stereofilter.cpp
++++ b/src/stereofilter.cpp
+@@ -113,6 +113,7 @@ void StereoFilter::process(const QVideoFrame &frame)
+     }
+     if (!frame.isValid()) {
+         m_sequence = 0;
++        m_left = m_right = QImage();
+         m_output->setVideoFrame(frame);
+         return;
+     }
+@@ -160,6 +161,7 @@ void StereoFilter::process(const QVideoFrame &frame)
+     if (mode != m_mode || aspect != m_viewAspect) {
+         if (mode != m_mode) {
+             m_sequence = 0;
++            m_left = m_right = QImage();
+         }
+         m_mode = mode;
+         m_viewAspect = aspect;
+@@ -174,6 +176,32 @@ void StereoFilter::process(const QVideoFrame &frame)
+     // The eye the frame, or its first or second view, is for: the views come in the order the stream gives, left first unless it says otherwise
+     const bool rightFirst = format.stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::RightEyeFirst) != m_swapEyes;
+     const bool wantRight = m_view == RightView;
++    if (m_view == Stereo3DView) {
++        if (mode == Mode::FrameSequence) {
++            bool isRight = rightFirst != (m_sequence % 2 == 1);
++            if (format.stereoView() != QVideoFrameFormat::StereoView::Packed && m_input == AutoInput) {
++                isRight = (format.stereoView() == QVideoFrameFormat::StereoView::Right) != m_swapEyes;
++            } else if (!repeat) {
++                ++m_sequence;
++            }
++            // Each frame brings its eye; a pair is shown when its second frame has come, so that both eyes are from the same moment
++            const bool first = m_left.isNull() && m_right.isNull();
++            (isRight ? m_right : m_left) = frame.toImage();
++            if (m_left.isNull()) {
++                m_left = m_right;
++            }
++            if (m_right.isNull()) {
++                m_right = m_left;
++            }
++            if (first || isRight != rightFirst) {
++                Q_EMIT eyes(m_left, m_right);
++            }
++        } else {
++            const QImage image = frame.toImage();
++            Q_EMIT eyes(Stereo::slot(image, mode, rightFirst ? 1 : 0, size), Stereo::slot(image, mode, rightFirst ? 0 : 1, size));
++        }
++        return;
++    }
+     if (mode == Mode::FrameSequence) {
+         bool isRight = rightFirst != (m_sequence % 2 == 1);
+         if (format.stereoView() != QVideoFrameFormat::StereoView::Packed && m_input == AutoInput) {
+diff --git a/src/stereofilter.h b/src/stereofilter.h
+index 548113e..83301f6 100644
+--- a/src/stereofilter.h
++++ b/src/stereofilter.h
+@@ -37,6 +37,8 @@ public:
+         LeftView,
+         RightView,
+         BothViews,
++        // Both views, one for each eye, to the stereoLayer
++        Stereo3DView,
+     };
+     Q_ENUM(View)
+ 
+@@ -75,6 +77,8 @@ public:
+     qreal viewAspect() const;
+ 
+ Q_SIGNALS:
++    // The two views of the frame that came in, at the shape of a view, left and right
++    void eyes(const QImage &left, const QImage &right);
+     void outputChanged();
+     void viewChanged();
+     void inputChanged();
+@@ -93,4 +97,6 @@ private:
+     qreal m_viewAspect = 1;
+     // The frames of a frame sequence that do not say which eye they are for come in turns
+     int m_sequence = 0;
++    QImage m_left;
++    QImage m_right;
+ };
 diff --git a/src/stereolayer.cpp b/src/stereolayer.cpp
 new file mode 100644
-index 0000000..441b468
+index 0000000..9bf3c11
 --- /dev/null
 +++ b/src/stereolayer.cpp
-@@ -0,0 +1,448 @@
+@@ -0,0 +1,434 @@
 +// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 +// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 +
@@ -388,11 +464,12 @@ index 0000000..441b468
 +
 +struct StereoLayer::Private {
 +    QPointer<QQuickWindow> window;
-+    QPointer<QVideoSink> videoSink;
-+    QMetaObject::Connection frameConnection;
++    QPointer<StereoFilter> filter;
++    QMetaObject::Connection eyesConnection;
 +    bool active{false};
 +    QRectF rect;
-+    QVideoFrame frame;
++    QImage left;
++    QImage right;
 +
 +    wl_display *display{nullptr};
 +    wl_event_queue *queue{nullptr};
@@ -459,27 +536,26 @@ index 0000000..441b468
 +    create();
 +}
 +
-+QVideoSink *StereoLayer::videoSink() const
++StereoFilter *StereoLayer::filter() const
 +{
-+    return d->videoSink;
++    return d->filter;
 +}
 +
-+void StereoLayer::setVideoSink(QVideoSink *videoSink)
++void StereoLayer::setFilter(StereoFilter *filter)
 +{
-+    if (d->videoSink == videoSink) {
++    if (d->filter == filter) {
 +        return;
 +    }
-+    QObject::disconnect(d->frameConnection);
-+    d->videoSink = videoSink;
-+    if (videoSink) {
-+        d->frameConnection = connect(videoSink, &QVideoSink::videoFrameChanged, this, [this](const QVideoFrame &frame) {
-+            if (frame.isValid()) {
-+                d->frame = frame;
-+                draw();
-+            }
++    QObject::disconnect(d->eyesConnection);
++    d->filter = filter;
++    if (filter) {
++        d->eyesConnection = connect(filter, &StereoFilter::eyes, this, [this](const QImage &left, const QImage &right) {
++            d->left = left;
++            d->right = right;
++            draw();
 +        });
 +    }
-+    Q_EMIT videoSinkChanged();
++    Q_EMIT filterChanged();
 +}
 +
 +bool StereoLayer::isActive() const
@@ -603,20 +679,16 @@ index 0000000..441b468
 +    d->placed = {};
 +}
 +
-+// Puts the views of the frame into the layer, each at the size of the rectangle, side by side with
-+// the left eye first: the full side by side the compositor takes
++// Puts the views into the layer, each at the size of the rectangle, side by side with the left
++// eye first: the full side by side the compositor takes
 +void StereoLayer::draw()
 +{
-+    if (!d->surface || !d->frame.isValid() || d->rect.isEmpty()) {
++    if (!d->surface || d->left.isNull() || d->right.isNull() || d->rect.isEmpty()) {
 +        return;
 +    }
 +    // Nothing is listened to on the queue of the layer but the release of buffers
 +    wl_display_dispatch_queue_pending(d->display, d->queue);
 +
-+    const QVideoFrameFormat::StereoMode mode = d->frame.surfaceFormat().stereoMode();
-+    if (mode == QVideoFrameFormat::StereoMode_None) {
-+        return;
-+    }
 +    const qreal ratio = d->window ? d->window->devicePixelRatio() : 1;
 +    const QSize view(qMax(1, qRound(d->rect.width() * ratio)), qMax(1, qRound(d->rect.height() * ratio)));
 +    const QSize pixels(view.width() * 2, view.height());
@@ -641,22 +713,12 @@ index 0000000..441b468
 +        return;
 +    }
 +
-+    const QImage image = d->frame.toImage();
-+    if (image.isNull()) {
-+        return;
-+    }
-+    const bool sideBySide = mode == QVideoFrameFormat::StereoMode_SideBySide || mode == QVideoFrameFormat::StereoMode_SideBySideRightFirst;
-+    const bool rightFirst = mode == QVideoFrameFormat::StereoMode_SideBySideRightFirst || mode == QVideoFrameFormat::StereoMode_TopBottomRightFirst;
-+    const QSize half = sideBySide ? QSize(image.width() / 2, image.height()) : QSize(image.width(), image.height() / 2);
-+    const QRect first(QPoint(0, 0), half);
-+    const QRect second(sideBySide ? QPoint(half.width(), 0) : QPoint(0, half.height()), half);
-+
 +    QImage target(buffer->data, pixels.width(), pixels.height(), pixels.width() * 4, QImage::Format_RGB32);
 +    QPainter painter(&target);
 +    painter.setRenderHint(QPainter::SmoothPixmapTransform);
 +    painter.setCompositionMode(QPainter::CompositionMode_Source);
-+    painter.drawImage(QRect(QPoint(0, 0), view), image, rightFirst ? second : first);
-+    painter.drawImage(QRect(QPoint(view.width(), 0), view), image, rightFirst ? first : second);
++    painter.drawImage(QRect(QPoint(0, 0), view), d->left);
++    painter.drawImage(QRect(QPoint(view.width(), 0), view), d->right);
 +    painter.end();
 +
 +    const QRectF rect = d->rect;
@@ -685,10 +747,10 @@ index 0000000..441b468
 +}
 diff --git a/src/stereolayer.h b/src/stereolayer.h
 new file mode 100644
-index 0000000..95471de
+index 0000000..fdd722c
 --- /dev/null
 +++ b/src/stereolayer.h
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,67 @@
 +// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 +// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 +
@@ -696,9 +758,9 @@ index 0000000..95471de
 +
 +#include <QQuickWindow>
 +#include <QRectF>
-+#include <QtMultimedia/QVideoFrame>
-+#include <QtMultimedia/QVideoSink>
 +#include <QtQmlIntegration>
++
++#include "stereofilter.h"
 +
 +#include <memory>
 +
@@ -718,7 +780,8 @@ index 0000000..95471de
 +    // True if the compositor offers what the layer needs
 +    Q_PROPERTY(bool supported READ isSupported CONSTANT)
 +    Q_PROPERTY(QQuickWindow *window READ window WRITE setWindow NOTIFY windowChanged)
-+    Q_PROPERTY(QVideoSink *videoSink READ videoSink WRITE setVideoSink NOTIFY videoSinkChanged)
++    // Where the views come from
++    Q_PROPERTY(StereoFilter *filter READ filter WRITE setFilter NOTIFY filterChanged)
 +    // The layer shows the video while it is active
 +    Q_PROPERTY(bool active READ isActive WRITE setActive NOTIFY activeChanged)
 +    // The rectangle of one view in the window, in logical pixels
@@ -731,8 +794,8 @@ index 0000000..95471de
 +
 +    QQuickWindow *window() const;
 +    void setWindow(QQuickWindow *window);
-+    QVideoSink *videoSink() const;
-+    void setVideoSink(QVideoSink *videoSink);
++    StereoFilter *filter() const;
++    void setFilter(StereoFilter *filter);
 +    bool isActive() const;
 +    void setActive(bool active);
 +    QRectF rect() const;
@@ -743,7 +806,7 @@ index 0000000..95471de
 +
 +Q_SIGNALS:
 +    void windowChanged();
-+    void videoSinkChanged();
++    void filterChanged();
 +    void activeChanged();
 +    void rectChanged();
 +

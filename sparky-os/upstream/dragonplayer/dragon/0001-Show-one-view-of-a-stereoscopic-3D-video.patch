@@ -1,277 +1,599 @@
-From 2bd1fa722a8b74793a83ebfe217bce97e0726416 Mon Sep 17 00:00:00 2001
+From 530d76824239ae59e8a7e9097530cf8be7edb834 Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
-Date: Mon, 5 Oct 2026 21:49:08 -0300
+Date: Mon, 5 Oct 2026 22:44:25 -0300
 Subject: [PATCH 1/2] Show one view of a stereoscopic 3D video
 
-A side by side or top and bottom video (the frame packing arrangement SEI of
-H.264 and H.265, Matroska's StereoMode) was shown as it is stored: both views
-squeezed into one picture. QtMultimedia now tells the packing of the frames
-(QVideoFrameFormat::stereoMode), and Backend exposes it.
+A stereoscopic 3D video holds both views in every frame, in one of the
+packings of the frame packing arrangement SEI (H.264 Table D-8, H.265
+Table D.8) or of Matroska's StereoMode (RFC 9559), and was shown as it is
+stored: both views squeezed or mixed into one picture. QtMultimedia now tells
+the packing of the frames (QVideoFrameFormat::stereoMode), and a new
+StereoFilter between the media player and the video output takes one view
+out of every packing there is: side by side and top and bottom, side by side
+with quincunx sampling, row and column interleaved, checkerboard and frame
+sequential. The left view is shown at the shape of a view. Anaglyph videos
+hold both views mixed and are shown as they are.
 
-Show the left view, stretched to the shape of a view, which is what a screen
-shows, and add a 3D Video menu to the application menu with the right view and
-both views as stored. The stream does not say whether its views are half or
-full size, so the shape of the frame decides: a side by side frame at least 2.5
-times as wide as high, or a top and bottom frame at most 1.2 times as wide as
-high, holds full size views.
+The application menu gets a 3D Video menu: the left view (the default), the
+right view, or both views as the video holds them. For a video that says
+nothing, or says it wrong, the Input Format list names every packing, with half
+and full size views of side by side and top and bottom told apart, and Swap
+Eyes turns the eyes round; the choice is for the file it was made for. The
+stream does not say whether its views are half or full size, so the shape of
+the frame decides: a side by side frame at least 2.5 times as wide as high, or
+a top and bottom frame at most 1.2 times as wide as high, holds full size
+views.
 
 Needs QtMultimedia with QVideoFrameFormat::stereoMode (Qt 6.12).
 
 Assisted-by: Claude Sonnet via Claude Code
 ---
- src/backend.cpp         | 34 ++++++++++++++++++++++++++
- src/backend.h           | 40 +++++++++++++++++++++---------
- src/qml/ControlsBar.qml | 20 +++++++++++++++
- src/qml/PlayerPage.qml  | 54 +++++++++++++++++++++++++++++++++++------
- 4 files changed, 130 insertions(+), 18 deletions(-)
+ src/CMakeLists.txt      |   4 +-
+ src/qml/ControlsBar.qml |  54 +++++++++++
+ src/qml/PlayerPage.qml  |  15 +++-
+ src/stereo.cpp          |  80 +++++++++++++++++
+ src/stereo.h            |  38 ++++++++
+ src/stereofilter.cpp    | 195 ++++++++++++++++++++++++++++++++++++++++
+ src/stereofilter.h      |  96 ++++++++++++++++++++
+ 7 files changed, 479 insertions(+), 3 deletions(-)
+ create mode 100644 src/stereo.cpp
+ create mode 100644 src/stereo.h
+ create mode 100644 src/stereofilter.cpp
+ create mode 100644 src/stereofilter.h
 
-diff --git a/src/backend.cpp b/src/backend.cpp
-index bf86e2f..21897aa 100644
---- a/src/backend.cpp
-+++ b/src/backend.cpp
-@@ -3,6 +3,7 @@
- 
- #include "backend.h"
- 
-+#include <QtMultimedia/QVideoFrame>
- #include <QtMultimedia/QVideoSink>
- 
- using namespace Qt::StringLiterals;
-@@ -11,6 +12,19 @@ BackendAttachedType::BackendAttachedType(QVideoSink *videoSink, QObject *parent)
-     : QObject(parent)
-     , m_videoSink(videoSink)
- {
-+    if (!m_videoSink) {
-+        return;
-+    }
-+    // The packing is that of the stream, so it is read from its frames; the frames after a stop are empty and say nothing
-+    connect(m_videoSink, &QVideoSink::videoFrameChanged, this, [this](const QVideoFrame &frame) {
-+        if (!frame.isValid()) {
-+            return;
-+        }
-+        if (const auto stereoMode = frame.surfaceFormat().stereoMode(); stereoMode != m_stereoMode) {
-+            m_stereoMode = stereoMode;
-+            Q_EMIT stereoChanged();
-+        }
-+    });
- }
- 
- bool BackendAttachedType::isFFmpeg() const
-@@ -33,6 +47,26 @@ bool BackendAttachedType::isFFmpeg() const
-     return true;
- }
- 
-+Backend::StereoPacking BackendAttachedType::stereoPacking() const
-+{
-+    switch (m_stereoMode) {
-+    case QVideoFrameFormat::StereoMode_SideBySide:
-+    case QVideoFrameFormat::StereoMode_SideBySideRightFirst:
-+        return Backend::SideBySide;
-+    case QVideoFrameFormat::StereoMode_TopBottom:
-+    case QVideoFrameFormat::StereoMode_TopBottomRightFirst:
-+        return Backend::TopBottom;
-+    case QVideoFrameFormat::StereoMode_None:
-+        break;
-+    }
-+    return Backend::Mono;
-+}
-+
-+bool BackendAttachedType::isStereoRightFirst() const
-+{
-+    return m_stereoMode == QVideoFrameFormat::StereoMode_SideBySideRightFirst || m_stereoMode == QVideoFrameFormat::StereoMode_TopBottomRightFirst;
-+}
-+
- BackendAttachedType *Backend::qmlAttachedProperties(QObject *object)
- {
-     auto videoSink = qobject_cast<QVideoSink *>(object);
-diff --git a/src/backend.h b/src/backend.h
-index 0a19952..731a4cc 100644
---- a/src/backend.h
-+++ b/src/backend.h
-@@ -3,31 +3,49 @@
- 
- #pragma once
- 
-+#include <QtMultimedia/QVideoFrameFormat>
- #include <QtQmlIntegration>
- 
- class QVideoSink;
-+class BackendAttachedType;
-+
-+class Backend : public QObject
-+{
-+    Q_OBJECT
-+    QML_ATTACHED(BackendAttachedType)
-+    QML_ELEMENT
-+public:
-+    // How the frames of a stereoscopic 3D video hold the two views
-+    enum StereoPacking {
-+        Mono,
-+        SideBySide,
-+        TopBottom,
-+    };
-+    Q_ENUM(StereoPacking)
-+
-+    using QObject::QObject;
-+
-+    static BackendAttachedType *qmlAttachedProperties(QObject *object);
-+};
- 
- class BackendAttachedType : public QObject
- {
-     Q_OBJECT
-     QML_ANONYMOUS
-     Q_PROPERTY(bool ffmpeg READ isFFmpeg CONSTANT)
-+    Q_PROPERTY(Backend::StereoPacking stereoPacking READ stereoPacking NOTIFY stereoChanged)
-+    Q_PROPERTY(bool stereoRightFirst READ isStereoRightFirst NOTIFY stereoChanged)
- public:
-     explicit BackendAttachedType(QVideoSink *videoSink, QObject *parent = nullptr);
- 
-     [[nodiscard]] bool isFFmpeg() const;
-+    [[nodiscard]] Backend::StereoPacking stereoPacking() const;
-+    [[nodiscard]] bool isStereoRightFirst() const;
-+
-+Q_SIGNALS:
-+    void stereoChanged();
- 
- private:
-     QVideoSink *m_videoSink;
--};
--
--class Backend : public QObject
--{
--    Q_OBJECT
--    QML_ATTACHED(BackendAttachedType)
--    QML_ELEMENT
--public:
--    using QObject::QObject;
--
--    static BackendAttachedType *qmlAttachedProperties(QObject *object);
-+    QVideoFrameFormat::StereoMode m_stereoMode = QVideoFrameFormat::StereoMode_None;
- };
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index c16d27e..a25adcf 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -25,7 +25,9 @@ target_sources(dragonmodule
+         mpris2/mpris2.cpp
+         backend.cpp
+         fileopen.cpp
+-        sandbox.cpp)
++        sandbox.cpp
++        stereo.cpp
++        stereofilter.cpp)
+ target_link_libraries(dragonmodule
+     PRIVATE
+         Qt6::Core
 diff --git a/src/qml/ControlsBar.qml b/src/qml/ControlsBar.qml
-index f1afbda..c7a9015 100644
+index f1afbda..d113b19 100644
 --- a/src/qml/ControlsBar.qml
 +++ b/src/qml/ControlsBar.qml
-@@ -222,6 +222,26 @@ OverlayPopup {
+@@ -222,6 +222,60 @@ OverlayPopup {
                          }
                      }
                  }
 +                QQC2.Menu {
 +                    icon.name: "view-3d-symbolic"
 +                    title: i18nc("@action:button stereoscopic 3D view selector", "3D Video")
-+                    enabled: videoPage.stereo
++                    // Stays open to a video that does not say it is 3D, or says it wrong, so that the packing can be chosen
 +                    QQC2.RadioDelegate {
++                        enabled: stereoFilter.stereo
 +                        text: i18nc("@action:button stereoscopic 3D view selector", "Left View")
-+                        checked: videoPage.stereoView === PlayerPage.LeftView
-+                        onToggled: videoPage.stereoView = PlayerPage.LeftView
++                        checked: stereoFilter.view === StereoFilter.LeftView
++                        onToggled: stereoFilter.view = StereoFilter.LeftView
 +                    }
 +                    QQC2.RadioDelegate {
++                        enabled: stereoFilter.stereo
 +                        text: i18nc("@action:button stereoscopic 3D view selector", "Right View")
-+                        checked: videoPage.stereoView === PlayerPage.RightView
-+                        onToggled: videoPage.stereoView = PlayerPage.RightView
++                        checked: stereoFilter.view === StereoFilter.RightView
++                        onToggled: stereoFilter.view = StereoFilter.RightView
 +                    }
 +                    QQC2.RadioDelegate {
-+                        text: i18nc("@action:button stereoscopic 3D view selector, both views as the video holds them", "Both Views")
-+                        checked: videoPage.stereoView === PlayerPage.BothViews
-+                        onToggled: videoPage.stereoView = PlayerPage.BothViews
++                        text: stereoFilter.anaglyph ? i18nc("@action:button stereoscopic 3D view selector, an anaglyph video holds both views mixed into one picture", "Anaglyph, Shown as It Is")
++                                                    : i18nc("@action:button stereoscopic 3D view selector, both views as the video holds them", "Both Views")
++                        checked: stereoFilter.view === StereoFilter.BothViews || stereoFilter.anaglyph
++                        onToggled: stereoFilter.view = StereoFilter.BothViews
++                    }
++                    QQC2.MenuSeparator {}
++                    QQC2.Menu {
++                        title: i18nc("@action:button 3D video input format selector", "Input Format")
++                        Repeater {
++                            model: [
++                                { text: i18nc("@action:button 3D video input format, from what the video says", "Automatic"), value: StereoFilter.AutoInput },
++                                { text: i18nc("@action:button 3D video input format", "Side by Side, Half Size Views"), value: StereoFilter.SideBySideHalf },
++                                { text: i18nc("@action:button 3D video input format", "Side by Side, Full Size Views"), value: StereoFilter.SideBySideFull },
++                                { text: i18nc("@action:button 3D video input format", "Top and Bottom, Half Size Views"), value: StereoFilter.TopBottomHalf },
++                                { text: i18nc("@action:button 3D video input format", "Top and Bottom, Full Size Views"), value: StereoFilter.TopBottomFull },
++                                { text: i18nc("@action:button 3D video input format", "Row Interleaved"), value: StereoFilter.RowInterleaved },
++                                { text: i18nc("@action:button 3D video input format", "Column Interleaved"), value: StereoFilter.ColumnInterleaved },
++                                { text: i18nc("@action:button 3D video input format", "Checkerboard"), value: StereoFilter.Checkerboard },
++                                { text: i18nc("@action:button 3D video input format", "Frame Sequential"), value: StereoFilter.FrameSequence },
++                                { text: i18nc("@action:button 3D video input format, red and cyan anaglyph, shown as it is", "Anaglyph, Red and Cyan"), value: StereoFilter.AnaglyphCyanRed },
++                                { text: i18nc("@action:button 3D video input format, green and magenta anaglyph, shown as it is", "Anaglyph, Green and Magenta"), value: StereoFilter.AnaglyphGreenMagenta },
++                                { text: i18nc("@action:button 3D video input format, the video is not 3D", "Not 3D"), value: StereoFilter.NotStereo }
++                            ]
++                            delegate: QQC2.RadioDelegate {
++                                required property var modelData
++                                text: modelData.text
++                                checked: stereoFilter.input === modelData.value
++                                onToggled: stereoFilter.input = modelData.value
++                            }
++                        }
++                    }
++                    QQC2.CheckDelegate {
++                        text: i18nc("@action:button 3D video, the left and right views are the other way round", "Swap Eyes")
++                        checked: stereoFilter.swapEyes
++                        onToggled: stereoFilter.swapEyes = checked
 +                    }
 +                }
                  QQC2.Menu {
                      icon.name: "kdenlive-add-clip-symbolic"
                      title: i18nc("@action:button track selector", "Video Track")
 diff --git a/src/qml/PlayerPage.qml b/src/qml/PlayerPage.qml
-index 4eb9507..ffb6420 100644
+index 4eb9507..386b8c8 100644
 --- a/src/qml/PlayerPage.qml
 +++ b/src/qml/PlayerPage.qml
-@@ -14,9 +14,18 @@ import org.kde.dragon as Dragon
- Kirigami.Page {
-     id: videoPage
+@@ -156,6 +156,12 @@ Please <link url="%1">contact the %2 developers</link> about this issue, or to f
+             anchors.fill: parent
+         }
  
-+    enum StereoView {
-+        LeftView,
-+        RightView,
-+        BothViews
-+    }
++        // A stereoscopic 3D video is shown as one of its views, see the 3D Video menu
++        StereoFilter {
++            id: stereoFilter
++            output: video.videoSink
++        }
 +
-     property var storedVisibility: null
-     property alias player: player
-     property alias videoContainer: videoContainer
-+    // Which view of a stereoscopic 3D video is shown, see the 3D Video menu
-+    property int stereoView: PlayerPage.LeftView
-+    readonly property bool stereo: video.videoSink.Backend.stereoPacking !== Dragon.Backend.Mono
-     required property QtObject fullscreenAction
+         Multimedia.AudioOutput {
+             id: audio
+             BoundaryRule on volume {
+@@ -169,7 +175,7 @@ Please <link url="%1">contact the %2 developers</link> about this issue, or to f
  
-     // Depending on whether the About page is on the stack we'll either want a header (about page) or not (video page)
-@@ -151,9 +160,40 @@ Please <link url="%1">contact the %2 developers</link> about this issue, or to f
-         color: "black"
-         visible: (player.source.toString()?.length > 0) ?? false // source should never be nullish so .toString() always works!
+         Multimedia.MediaPlayer {
+             id: player
+-            videoOutput: video
++            videoOutput: stereoFilter
+             audioOutput: audio
  
--        Multimedia.VideoOutput {
--            id: video
--            anchors.fill: parent
-+        // The part of the video that is shown: all of it, or one view of a stereoscopic 3D video, which
-+        // is half of its frame stretched to the shape of a view. A stream does not say whether its views
-+        // are half or full size, so the shape of the frame decides: a frame at least 2.5 times as wide
-+        // as high holds two full size views side by side, one at most 1.2 times as wide as high holds two
-+        // full size views on top of each other.
-+        Item {
-+            id: videoView
-+
-+            readonly property bool oneView: videoPage.stereo && videoPage.stereoView !== PlayerPage.BothViews
-+            readonly property bool sideBySide: video.videoSink.Backend.stereoPacking === Dragon.Backend.SideBySide
-+            readonly property real frameAspect: video.sourceRect.height > 0 ? video.sourceRect.width / video.sourceRect.height : 1
-+            readonly property bool fullSizeViews: sideBySide ? frameAspect >= 2.5 : frameAspect <= 1.2
-+            readonly property real viewAspect: sideBySide ? (fullSizeViews ? frameAspect / 2 : frameAspect)
-+                                                          : (fullSizeViews ? frameAspect * 2 : frameAspect)
-+            readonly property real viewWidth: Math.min(videoContainer.width, videoContainer.height * viewAspect)
-+            readonly property real viewHeight: Math.min(videoContainer.height, videoContainer.width / viewAspect)
-+            // Which half of the frame holds the view that is shown
-+            readonly property int slot: (videoPage.stereoView === PlayerPage.RightView) !== video.videoSink.Backend.stereoRightFirst ? 1 : 0
-+            readonly property real contentWidth: oneView ? width : video.contentRect.width
-+
-+            clip: oneView
-+            width: oneView ? viewWidth : videoContainer.width
-+            height: oneView ? viewHeight : videoContainer.height
-+            x: (videoContainer.width - width) / 2
-+            y: (videoContainer.height - height) / 2
-+
-+            Multimedia.VideoOutput {
-+                id: video
-+                fillMode: videoView.oneView ? Multimedia.VideoOutput.Stretch : Multimedia.VideoOutput.PreserveAspectFit
-+                width: videoView.oneView && videoView.sideBySide ? videoView.width * 2 : videoView.width
-+                height: videoView.oneView && !videoView.sideBySide ? videoView.height * 2 : videoView.height
-+                x: videoView.oneView && videoView.sideBySide ? -videoView.slot * videoView.width : 0
-+                y: videoView.oneView && !videoView.sideBySide ? -videoView.slot * videoView.height : 0
+             readonly property bool paused: playbackState == Multimedia.MediaPlayer.PausedState
+@@ -193,7 +199,12 @@ Please <link url="%1">contact the %2 developers</link> about this issue, or to f
+                 activeTimer.restart()
+             }
+ 
+-            onSourceChanged: activeTimer.restart()
++            onSourceChanged: {
++                activeTimer.restart()
++                // The choice of the packing is for the file it was made for
++                stereoFilter.input = StereoFilter.AutoInput
++                stereoFilter.swapEyes = false
 +            }
          }
  
-         Multimedia.AudioOutput {
-@@ -280,12 +320,12 @@ Please <link url="%1">contact the %2 developers</link> about this issue, or to f
-             visible: opacity > 0
-             opacity: 0
-             implicitWidth: Kirigami.Units.gridUnit
--            implicitHeight: video.height / 1.5
-+            implicitHeight: videoView.height / 1.5
-             border.color: displayColor
-             border.width: 2
--            anchors.right: video.right
-+            anchors.right: videoView.right
-             anchors.rightMargin: Kirigami.Units.gridUnit * 2
--            y: video.height / 2 - height / 2
-+            y: videoView.y + videoView.height / 2 - height / 2
-             color: "transparent"
- 
-             onVolumeChanged: {
-@@ -326,7 +366,7 @@ Please <link url="%1">contact the %2 developers</link> about this issue, or to f
-                 property Kirigami.Heading fittingHeader: Kirigami.Heading  {
-                     fontSizeMode: Text.Fit
-                     wrapMode: Text.NoWrap
--                    width: video.contentRect.width * 0.5
-+                    width: videoView.contentWidth * 0.5
- 
-                     font.pointSize: Kirigami.Theme.defaultFont.pointSize * 10
-                     minimumPixelSize: 2 // Kirigami.Theme.defaultFont.pointSize * 1.50
+         WheelHandler {
+diff --git a/src/stereo.cpp b/src/stereo.cpp
+new file mode 100644
+index 0000000..422e1e9
+--- /dev/null
++++ b/src/stereo.cpp
+@@ -0,0 +1,80 @@
++// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++#include "stereo.h"
++
++#include <cstring>
++
++namespace Stereo
++{
++using Mode = QVideoFrameFormat::StereoMode;
++
++bool isPacked(Mode mode)
++{
++    return mode != Mode::None && mode != Mode::AnaglyphCyanRed && mode != Mode::AnaglyphGreenMagenta;
++}
++
++QSize viewSize(const QSize &frameSize, Mode mode, ViewSize views)
++{
++    const qreal aspect = frameSize.height() > 0 ? qreal(frameSize.width()) / frameSize.height() : 1;
++    switch (mode) {
++    case Mode::SideBySide:
++    case Mode::SideBySideQuincunx:
++        return views == ViewSize::Full || (views == ViewSize::Auto && aspect >= 2.5) ? QSize(frameSize.width() / 2, frameSize.height()) : frameSize;
++    case Mode::TopBottom:
++        return views == ViewSize::Full || (views == ViewSize::Auto && aspect <= 1.2) ? QSize(frameSize.width(), frameSize.height() / 2) : frameSize;
++    default:
++        return frameSize;
++    }
++}
++
++QImage slot(const QImage &frame, Mode mode, int slot, const QSize &viewSize)
++{
++    const QImage source = frame.format() == QImage::Format_RGB32 ? frame : frame.convertToFormat(QImage::Format_RGB32);
++    const int width = source.width();
++    const int height = source.height();
++    QImage view;
++    switch (mode) {
++    case Mode::SideBySide:
++    case Mode::SideBySideQuincunx:
++        view = source.copy(slot * (width / 2), 0, width / 2, height);
++        break;
++    case Mode::TopBottom:
++        view = source.copy(0, slot * (height / 2), width, height / 2);
++        break;
++    case Mode::RowInterleaved:
++        // The first view is in the first row
++        view = QImage(width, height / 2, QImage::Format_RGB32);
++        for (int y = 0; y < view.height(); ++y) {
++            std::memcpy(view.scanLine(y), source.constScanLine(2 * y + slot), size_t(width) * 4);
++        }
++        break;
++    case Mode::ColumnInterleaved:
++        // The first view is in the first column
++        view = QImage(width / 2, height, QImage::Format_RGB32);
++        for (int y = 0; y < height; ++y) {
++            const auto *in = reinterpret_cast<const quint32 *>(source.constScanLine(y));
++            auto *out = reinterpret_cast<quint32 *>(view.scanLine(y));
++            for (int x = 0; x < view.width(); ++x) {
++                out[x] = in[2 * x + slot];
++            }
++        }
++        break;
++    case Mode::Checkerboard:
++        // The first view is at the top left pixel, the pixels of a view are those where x + y has its parity
++        view = QImage(width / 2, height, QImage::Format_RGB32);
++        for (int y = 0; y < height; ++y) {
++            const auto *in = reinterpret_cast<const quint32 *>(source.constScanLine(y));
++            auto *out = reinterpret_cast<quint32 *>(view.scanLine(y));
++            for (int x = 0; x < view.width(); ++x) {
++                out[x] = in[2 * x + ((slot + y) & 1)];
++            }
++        }
++        break;
++    default:
++        view = source;
++        break;
++    }
++    return view.size() == viewSize ? view : view.scaled(viewSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
++}
++}
+diff --git a/src/stereo.h b/src/stereo.h
+new file mode 100644
+index 0000000..c7038d3
+--- /dev/null
++++ b/src/stereo.h
+@@ -0,0 +1,38 @@
++// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++#pragma once
++
++#include <QImage>
++#include <QSize>
++#include <QtMultimedia/QVideoFrameFormat>
++
++/**
++ * The views of a stereoscopic 3D video, which a frame holds in one of the packings of
++ * QVideoFrameFormat::StereoMode (the frame packing arrangement types of H.264 Table D-8 and
++ * H.265 Table D.8, Matroska's StereoMode).
++ */
++namespace Stereo
++{
++// True for the packings that hold two views to take apart. Anaglyph holds them mixed in one
++// picture, which is shown as it is.
++[[nodiscard]] bool isPacked(QVideoFrameFormat::StereoMode mode);
++
++// Whether the views of a side by side or top and bottom frame are half or full size
++enum class ViewSize {
++    Auto,
++    Half,
++    Full,
++};
++
++// The size one view is shown at, from the size of the frame. The stream does not say whether the
++// views of a side by side or top and bottom frame are half or full size, so the shape of the frame
++// decides: a side by side frame at least 2.5 times as wide as high, or a top and bottom frame at
++// most 1.2 times as wide as high, holds full size views. The views of the other packings are
++// taken from the frame at its own shape.
++[[nodiscard]] QSize viewSize(const QSize &frameSize, QVideoFrameFormat::StereoMode mode, ViewSize views = ViewSize::Auto);
++
++// The first (slot 0) or the second (slot 1) view of a frame, at the given size of a view. For a
++// frame sequence that is the frame itself.
++[[nodiscard]] QImage slot(const QImage &frame, QVideoFrameFormat::StereoMode mode, int slot, const QSize &viewSize);
++}
+diff --git a/src/stereofilter.cpp b/src/stereofilter.cpp
+new file mode 100644
+index 0000000..624ce15
+--- /dev/null
++++ b/src/stereofilter.cpp
+@@ -0,0 +1,195 @@
++// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++#include "stereofilter.h"
++
++#include "stereo.h"
++
++using Mode = QVideoFrameFormat::StereoMode;
++
++StereoFilter::StereoFilter(QObject *parent)
++    : QObject(parent)
++    , m_sink(new QVideoSink(this))
++{
++    // The frames come from the playback thread, and are handled in this one
++    connect(m_sink, &QVideoSink::videoFrameChanged, this, [this](const QVideoFrame &frame) {
++        process(frame);
++    });
++    connect(m_sink, &QVideoSink::subtitleTextChanged, this, [this](const QString &text) {
++        if (m_output) {
++            m_output->setSubtitleText(text);
++        }
++    });
++}
++
++QVideoSink *StereoFilter::videoSink() const
++{
++    return m_sink;
++}
++
++QVideoSink *StereoFilter::output() const
++{
++    return m_output;
++}
++
++void StereoFilter::setOutput(QVideoSink *output)
++{
++    if (m_output == output) {
++        return;
++    }
++    m_output = output;
++    Q_EMIT outputChanged();
++    process(m_frame);
++}
++
++StereoFilter::View StereoFilter::view() const
++{
++    return m_view;
++}
++
++void StereoFilter::setView(View view)
++{
++    if (m_view == view) {
++        return;
++    }
++    m_view = view;
++    Q_EMIT viewChanged();
++    process(m_frame);
++}
++
++StereoFilter::Input StereoFilter::input() const
++{
++    return m_input;
++}
++
++void StereoFilter::setInput(Input input)
++{
++    if (m_input == input) {
++        return;
++    }
++    m_input = input;
++    m_sequence = 0;
++    Q_EMIT inputChanged();
++    process(m_frame);
++}
++
++bool StereoFilter::swapEyes() const
++{
++    return m_swapEyes;
++}
++
++void StereoFilter::setSwapEyes(bool swap)
++{
++    if (m_swapEyes == swap) {
++        return;
++    }
++    m_swapEyes = swap;
++    m_sequence = 0;
++    Q_EMIT inputChanged();
++    process(m_frame);
++}
++
++bool StereoFilter::isStereo() const
++{
++    return Stereo::isPacked(m_mode);
++}
++
++bool StereoFilter::isAnaglyph() const
++{
++    return m_mode == Mode::AnaglyphCyanRed || m_mode == Mode::AnaglyphGreenMagenta;
++}
++
++qreal StereoFilter::viewAspect() const
++{
++    return m_viewAspect;
++}
++
++void StereoFilter::process(const QVideoFrame &frame)
++{
++    const bool repeat = frame.isValid() && frame == m_frame;
++    m_frame = frame;
++    if (!m_output) {
++        return;
++    }
++    if (!frame.isValid()) {
++        m_sequence = 0;
++        m_output->setVideoFrame(frame);
++        return;
++    }
++
++    const QVideoFrameFormat format = frame.surfaceFormat();
++    Mode mode = format.stereoMode();
++    Stereo::ViewSize views = Stereo::ViewSize::Auto;
++    switch (m_input) {
++    case AutoInput:
++        break;
++    case SideBySideHalf:
++    case SideBySideFull:
++        mode = Mode::SideBySide;
++        views = m_input == SideBySideFull ? Stereo::ViewSize::Full : Stereo::ViewSize::Half;
++        break;
++    case TopBottomHalf:
++    case TopBottomFull:
++        mode = Mode::TopBottom;
++        views = m_input == TopBottomFull ? Stereo::ViewSize::Full : Stereo::ViewSize::Half;
++        break;
++    case RowInterleaved:
++        mode = Mode::RowInterleaved;
++        break;
++    case ColumnInterleaved:
++        mode = Mode::ColumnInterleaved;
++        break;
++    case Checkerboard:
++        mode = Mode::Checkerboard;
++        break;
++    case FrameSequence:
++        mode = Mode::FrameSequence;
++        break;
++    case AnaglyphCyanRed:
++        mode = Mode::AnaglyphCyanRed;
++        break;
++    case AnaglyphGreenMagenta:
++        mode = Mode::AnaglyphGreenMagenta;
++        break;
++    case NotStereo:
++        mode = Mode::None;
++        break;
++    }
++    const QSize size = Stereo::viewSize(frame.size(), mode, views);
++    const qreal aspect = size.height() > 0 ? qreal(size.width()) / size.height() : 1;
++    if (mode != m_mode || aspect != m_viewAspect) {
++        if (mode != m_mode) {
++            m_sequence = 0;
++        }
++        m_mode = mode;
++        m_viewAspect = aspect;
++        Q_EMIT stereoChanged();
++    }
++
++    if (!Stereo::isPacked(mode) || m_view == BothViews) {
++        m_output->setVideoFrame(frame);
++        return;
++    }
++
++    // The eye the frame, or its first or second view, is for: the views come in the order the stream gives, left first unless it says otherwise
++    const bool rightFirst = format.stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::RightEyeFirst) != m_swapEyes;
++    const bool wantRight = m_view == RightView;
++    if (mode == Mode::FrameSequence) {
++        bool isRight = rightFirst != (m_sequence % 2 == 1);
++        if (format.stereoView() != QVideoFrameFormat::StereoView::Packed && m_input == AutoInput) {
++            isRight = (format.stereoView() == QVideoFrameFormat::StereoView::Right) != m_swapEyes;
++        } else if (!repeat) {
++            ++m_sequence;
++        }
++        if (isRight == wantRight) {
++            m_output->setVideoFrame(frame);
++        }
++        return;
++    }
++
++    const QImage view = Stereo::slot(frame.toImage(), mode, wantRight != rightFirst ? 1 : 0, size);
++    QVideoFrame result(view);
++    result.setStartTime(frame.startTime());
++    result.setEndTime(frame.endTime());
++    m_output->setVideoFrame(result);
++}
+diff --git a/src/stereofilter.h b/src/stereofilter.h
+new file mode 100644
+index 0000000..548113e
+--- /dev/null
++++ b/src/stereofilter.h
+@@ -0,0 +1,96 @@
++// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++#pragma once
++
++#include <QPointer>
++#include <QtMultimedia/QVideoFrame>
++#include <QtMultimedia/QVideoSink>
++#include <QtQmlIntegration>
++
++/**
++ * Sits between the media player and the video output. A stereoscopic 3D video, whatever its
++ * packing (QVideoFrameFormat::StereoMode), goes to the output as the one view that is chosen, at
++ * the shape of a view, or as it is stored; anything else goes through untouched.
++ */
++class StereoFilter : public QObject
++{
++    Q_OBJECT
++    QML_ELEMENT
++    // What the media player draws into
++    Q_PROPERTY(QVideoSink *videoSink READ videoSink CONSTANT)
++    // What shows the video
++    Q_PROPERTY(QVideoSink *output READ output WRITE setOutput NOTIFY outputChanged)
++    Q_PROPERTY(View view READ view WRITE setView NOTIFY viewChanged)
++    // How the video packs its views, when the stream does not say or says it wrong; Auto takes the stream's word
++    Q_PROPERTY(Input input READ input WRITE setInput NOTIFY inputChanged)
++    // The eyes are the other way round
++    Q_PROPERTY(bool swapEyes READ swapEyes WRITE setSwapEyes NOTIFY inputChanged)
++    // The video holds two views in a packing that can be taken apart
++    Q_PROPERTY(bool stereo READ isStereo NOTIFY stereoChanged)
++    // The video holds two views mixed into one picture, which is shown as it is
++    Q_PROPERTY(bool anaglyph READ isAnaglyph NOTIFY stereoChanged)
++    // The shape of one view
++    Q_PROPERTY(qreal viewAspect READ viewAspect NOTIFY stereoChanged)
++public:
++    enum View {
++        LeftView,
++        RightView,
++        BothViews,
++    };
++    Q_ENUM(View)
++
++    // The packings of H.264 Table D-8 and H.265 Table D.8, the half and full size views of side by side and top and
++    // bottom told apart, the anaglyphs of Matroska's StereoMode, and the video that is not stereoscopic
++    enum Input {
++        AutoInput,
++        SideBySideHalf,
++        SideBySideFull,
++        TopBottomHalf,
++        TopBottomFull,
++        RowInterleaved,
++        ColumnInterleaved,
++        Checkerboard,
++        FrameSequence,
++        AnaglyphCyanRed,
++        AnaglyphGreenMagenta,
++        NotStereo,
++    };
++    Q_ENUM(Input)
++
++    explicit StereoFilter(QObject *parent = nullptr);
++
++    // Invoked by the media player to find what to draw into
++    Q_INVOKABLE QVideoSink *videoSink() const;
++    QVideoSink *output() const;
++    void setOutput(QVideoSink *output);
++    View view() const;
++    void setView(View view);
++    Input input() const;
++    void setInput(Input input);
++    bool swapEyes() const;
++    void setSwapEyes(bool swap);
++    bool isStereo() const;
++    bool isAnaglyph() const;
++    qreal viewAspect() const;
++
++Q_SIGNALS:
++    void outputChanged();
++    void viewChanged();
++    void inputChanged();
++    void stereoChanged();
++
++private:
++    void process(const QVideoFrame &frame);
++
++    QVideoSink *m_sink;
++    QPointer<QVideoSink> m_output;
++    View m_view = LeftView;
++    Input m_input = AutoInput;
++    bool m_swapEyes = false;
++    QVideoFrame m_frame;
++    QVideoFrameFormat::StereoMode m_mode = QVideoFrameFormat::StereoMode::None;
++    qreal m_viewAspect = 1;
++    // The frames of a frame sequence that do not say which eye they are for come in turns
++    int m_sequence = 0;
++};
 -- 
 2.53.0
 
