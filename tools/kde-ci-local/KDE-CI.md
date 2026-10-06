@@ -65,3 +65,8 @@ What cannot run here, and what is done instead:
   Still missing, so these KWin tests fail here with or without our change: `kwin-testGameController` (needs `/dev/uinput`), `kwin-testDrm`, `-testDrmLegacy`, `-testDrmNoModifiers` (need a KMS device; they skip in `initTestCase` and then crash in teardown).
   Compare with a run of the upstream tag before reading these as ours.
 - `--only-build --keep` stops after the build and keeps `_build`/`_install` under `$KDE_CI_LOCAL_WORK/trees` for looking into a failure by hand.
+
+## Known runner problems (not ours)
+
+- **flatpak-amd64: `lsetxattr(security.selinux): Operation not supported`** at "Initializing build dir", before anything is built. Seen on KAlgebra's own master (job 5110331, node3-vmrunner, 2026-10-01) and on our fork (jobs 5137748, 5137761, 5137812, node1-vmrunner, 2026-10-06); Kubrick's flatpak passed on node2-vmrunner. Reported to KDE's sysadmins as [T18903](https://phabricator.kde.org/T18903) (2026-10-06). Retry the job; no commit of ours can fix it.
+- **flatpak-amd64: "Failed to download sources: ... Operation too slow"**: a network timeout fetching a module's sources; a retry passes (Kubrick, 2026-10-06).
