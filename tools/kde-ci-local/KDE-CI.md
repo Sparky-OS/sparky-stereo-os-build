@@ -84,6 +84,7 @@ Python bindings: the image's `pip` installs the newest PyQt6, whose SIP needs AB
 | 2026-10-06 | `sparky/deep-colour-canvas` (a2ed3e8, alone) | RED at the SIP step above, before any of our code is compiled into the bindings |
 | 2026-10-06 | `sparky/pyqt6-sip-abi` (73268e8) | PASS (GREEN), 78 min, 13 of 317 tests fail |
 | 2026-10-06 | `sparky/deep-colour-canvas-ci` (a2ed3e8 + the SIP commit) | PASS (GREEN), 40 min, the same 13 tests fail |
+| 2026-10-06 | `sparky/stereo-painting` (a83d04f, on the SIP and 16-bit commits) | PASS (GREEN), 41 min, 13 of 317 tests fail (one sub-test of `KisShapeLayerTest` differs between runs) |
 
 ## Known runner problems (not ours)
 
