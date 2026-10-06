@@ -231,6 +231,8 @@ def job_mode(job):
     if not rules:
         return "manual" if job.get("when") == "manual" else "always"
     for r in rules:
+        if not isinstance(r, dict):
+            continue  # a !reference to rules defined elsewhere
         cond = str(r.get("if", ""))
         if 'CI_PIPELINE_SOURCE == "schedule"' in cond:
             if r.get("when") == "never":
