@@ -276,7 +276,7 @@ sys.exit(1 if bad else 0)
 
 
 def job_script(job, cfg, env, extra_pre=None):
-    lines = ["set -eo pipefail", "export HOME=${HOME:-/tmp/home}; mkdir -p \"$HOME\""]
+    lines = ["set -e", "export HOME=${HOME:-/tmp/home}; mkdir -p \"$HOME\""]
     for k, v in sorted(env.items()):
         lines.append(f"export {k}={shq(v)}")
     lines.append("main() {")
@@ -285,7 +285,7 @@ def job_script(job, cfg, env, extra_pre=None):
             lines.append(f"echo {shq('$ ' + l.splitlines()[0][:200])}")
             lines.append(l)
     lines.append("}")
-    lines.append("set +e; ( set -eo pipefail; main ); rc=$?")
+    lines.append("set +e; ( set -e; (set -o pipefail) 2>/dev/null && set -o pipefail; main ); rc=$?")
     for l in flat_script(job.get("after_script"), cfg):
         lines.append(f"echo {shq('$ (after_script) ' + l.splitlines()[0][:200])}")
         lines.append(f"( {l} ) || true")
@@ -337,7 +337,8 @@ def run_job(name, job, cfg, args, ctx):
         # FreeBSD: step 1 resolve against the FreeBSD registry, step 2 build with clang
         env["CC"], env["CXX"] = "clang", "clang++"
         sc = flat_script(job.get("script"), cfg)
-        sc = [re.sub(r"--platform FreeBSD/Qt6/Shared", "--platform Linux/Qt6/Shared", l) for l in sc]
+        # no sanitizers: FreeBSD's build has none, and clang cannot link what GCC's ASan runtime built
+        sc = [re.sub(r"--platform FreeBSD/Qt6/Shared", "--platform Linux/Qt6/Shared --extra-cmake-args=-DECM_ENABLE_SANITIZERS=", l) for l in sc]
         script_job["script"] = (
             ["git config --global --add safe.directory $CI_PROJECT_DIR",
              "python3 - \"$CI_COMMIT_REF_NAME\" FreeBSD/Qt6/Shared <<'PY'\n" + RESOLVE_CHECK + "PY"]
@@ -348,6 +349,8 @@ def run_job(name, job, cfg, args, ctx):
         script_job["after_script"] = None
         mount_cache = "/mnt/suse-qt6.11"
         plat = "suse-qt6.11"
+    if args.only_build:
+        script_job["script"] = [l + " --only-build" if "run-ci-build" in l else l for l in flat_script(script_job.get("script"), cfg)]
     script = job_script(script_job, cfg, env)
     os.makedirs(ctx["logs"], exist_ok=True)
     scriptfile = os.path.join(jobdir + ".sh")
@@ -363,12 +366,18 @@ def run_job(name, job, cfg, args, ctx):
            "-v", f"{scriptfile}:/job.sh:ro",
            "-v", f"{sitedir}:/kdecilocal-site:ro",
            "-e", "PYTHONPATH=/kdecilocal-site"]
+    if vm or proxy_mode:
+        # what the VM image gives a job: a user runtime directory (the pipeline's DBUS_SESSION_BUS_ADDRESS
+        # is unix:path=/run/user/1000/bus) and a render node (KWin's integration tests need one)
+        cmd += ["--tmpfs", "/run/user/1000:uid=1000,gid=1000,mode=700", "-e", "XDG_RUNTIME_DIR=/run/user/1000"]
+        if os.path.exists("/dev/dri/renderD128"):
+            cmd += ["--device", "/dev/dri/renderD128", "--group-add", str(os.stat("/dev/dri/renderD128").st_gid)]
     if mount_cache:
         cdir = os.path.join(ctx["work"], "cache", plat.replace("/", "_") if plat else "none")
         os.makedirs(os.path.join(cdir, "artifacts"), exist_ok=True)
         os.makedirs(os.path.join(cdir, "caches"), exist_ok=True)
         cmd += ["-v", f"{cdir}:{mount_cache}"]
-    cmd += ["--entrypoint", "bash", image, "/job.sh"]
+    cmd += ["--entrypoint", "sh", image, "-c", "if command -v bash >/dev/null; then exec bash /job.sh; else exec sh /job.sh; fi"]
     print(f"  running {name} in {image} (log: {log})")
     with open(log, "w") as lf:
         rc = run(cmd, stdout=lf, stderr=subprocess.STDOUT).returncode
@@ -405,6 +414,8 @@ def main():
     ap.add_argument("--jobs", default="all", help="comma list of job names, or all | lint | build")
     ap.add_argument("--list", action="store_true", help="list the jobs and how each is run, then stop")
     ap.add_argument("--keep", action="store_true", help="keep the job trees (_build, _install) after the run")
+    ap.add_argument("--only-build", action="store_true",
+                    help="give run-ci-build.py its own --only-build: build and install, no tests (to look into a failure with --keep)")
     ap.add_argument("--no-refresh", action="store_true", help="do not update the KDE sources (ci-utilities, repo-metadata)")
     ap.add_argument("--build-qt613-image", action="store_true",
                     help="build the Qt 6.13 job image from KDE's ci-images/suse-qt613/build.sh (once, ~12 GB)")
@@ -439,6 +450,8 @@ def main():
         stage = job.get("stage", "test")
         if stage not in STAGES:
             continue
+        if job.get("when") == "manual" and sel in ("all", "lint", "build"):
+            continue    # manual jobs only on request, as in the pipeline
         if sel == "lint" and stage != "validate" and name != "cppcheck":
             continue
         if sel == "build" and stage == "validate":

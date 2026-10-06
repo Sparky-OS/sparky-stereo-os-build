@@ -46,7 +46,7 @@ Only the Qt 6.13 image has no Docker twin.
 
 ## `kde-ci-local`
 
-`tools/kde-ci-local/kde-ci-local [TREE] [--branch B] [--ci-name NAME] [--jobs all|lint|build|a,b] [--list] [--keep]`
+`tools/kde-ci-local/kde-ci-local [TREE] [--branch B] [--ci-name NAME] [--jobs all|lint|build|a,b] [--list] [--keep] [--only-build]`
 
 It reads the tree's `.gitlab-ci.yml`, resolves the templates from a fresh `ci-utilities`, and runs each job's own script lines in the job's image (Docker, `--platform linux/amd64`, your uid, `--cpus 4`, `cpu_count()` capped at 4 for `run-ci-build.py` and ctest), on a clean checkout of the branch's commit with the fork's branches under their pushed names.
 The package cache is kept between runs (`$KDE_CI_LOCAL_WORK/cache`, default `/K3D/temp/kde-ci-local`).
@@ -58,6 +58,10 @@ What cannot run here, and what is done instead:
 
 - `freebsd150_qt611` (FreeBSD VM): the dependency resolution is run against the **FreeBSD** package registry (every package of the pair list must exist: this reproduces the `@same` failures exactly), then the same build with the same flags and clang on the SUSE image.
   Not covered: libc++ headers, FreeBSD's own packages and paths.
-- `suse_tumbleweed_qt613`: needs `kde-ci-local --build-qt613-image` once (KDE's own `suse-qt613/build.sh` on `opensuse/tumbleweed`, about 12 GB); until then it is listed as skipped.
+- `suse_tumbleweed_qt613`: needs `kde-ci-local --build-qt613-image` once (KDE's own `suse-qt613/build.sh` on `opensuse/tumbleweed`, about 12 GB, 15 minutes); until then it is listed as skipped. Manual jobs (`when: manual`, oss-fuzz) run only when named with `--jobs`.
 - `alpine_qt611` (arm64 VM), Windows, Android, macOS, flatpak, snap, craft, oss-fuzz: skipped, listed with the reason.
 - Pipelines on invent also see packages published after a local run; the registry is read live each time, so a local run and the pipeline an hour apart agree (checked on Dragon: the two logs differ only in the order of stdout and stderr lines).
+- What the VM gives a job and Docker does not, added to the SUSE containers: a user runtime directory (`/run/user/1000` as tmpfs, `XDG_RUNTIME_DIR`; the pipeline's `DBUS_SESSION_BUS_ADDRESS` is `unix:path=/run/user/1000/bus`) and the host's render node (KWin's integration tests skip without one).
+  Still missing, so these KWin tests fail here with or without our change: `kwin-testGameController` (needs `/dev/uinput`), `kwin-testDrm`, `-testDrmLegacy`, `-testDrmNoModifiers` (need a KMS device; they skip in `initTestCase` and then crash in teardown).
+  Compare with a run of the upstream tag before reading these as ours.
+- `--only-build --keep` stops after the build and keeps `_build`/`_install` under `$KDE_CI_LOCAL_WORK/trees` for looking into a failure by hand.
