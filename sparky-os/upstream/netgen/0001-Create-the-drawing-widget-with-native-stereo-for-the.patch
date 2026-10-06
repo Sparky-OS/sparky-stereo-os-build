@@ -1,0 +1,66 @@
+From 0a4180b912486c6987e7fd341c632ab200cb4d76 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 6 Oct 2026 09:44:24 -0300
+Subject: [PATCH 1/3] Create the drawing widget with native stereo for the
+ -stereo option
+
+The -stereo command line option was read into viewoptions.stereo but the
+widget was always created with -stereo false.  With the option it now
+asks Togl for a native (quad-buffer) stereo widget.
+
+Assisted-by: Claude Opus 5.5 (Anthropic) and glm-5.3:cloud (Ollama) via Codex
+---
+ ng/drawing.tcl | 7 ++++++-
+ ng/onetcl.cpp  | 8 ++++++--
+ 2 files changed, 12 insertions(+), 3 deletions(-)
+
+diff --git a/ng/drawing.tcl b/ng/drawing.tcl
+index 14d5d33..778e22e 100644
+--- a/ng/drawing.tcl
++++ b/ng/drawing.tcl
+@@ -18,10 +18,15 @@ set oldmousey 0
+ set toglversion [Ng_GetToglVersion]
+ puts "togl-version : $toglversion"
+ 
++set toglstereo false
++if { [Ng_GetCommandLineParameter stereo] == "defined" } {
++    set toglstereo native
++}
++
+ set toglok 0
+ if { [Ng_GetToglVersion] == 2 } {
+     # Togl 2.x
+-    if {[catch {togl .ndraw -width 400 -height 300  -rgba true -double true -depth true -privatecmap false -stereo false -indirect false  -create init  -display draw -reshape reshape }] } {    
++    if {[catch {togl .ndraw -width 400 -height 300  -rgba true -double true -depth true -privatecmap false -stereo $toglstereo -indirect false  -create init  -display draw -reshape reshape }] } {    
+         puts "no OpenGL" 
+     } {
+         # puts "have Togl 2.1"        
+diff --git a/ng/onetcl.cpp b/ng/onetcl.cpp
+index 7e5254c..6aadfe6 100644
+--- a/ng/onetcl.cpp
++++ b/ng/onetcl.cpp
+@@ -3357,15 +3357,19 @@ DLL_HEADER const char * ngscript[] = {""
+ ,"set oldmousey 0\n"
+ ,"set toglversion [Ng_GetToglVersion]\n"
+ ,"puts \"togl-version : $toglversion\"\n"
++,"set toglstereo false\n"
++,"if { [Ng_GetCommandLineParameter stereo] == \"defined\" } {\n"
++,"set toglstereo native\n"
++,"}\n"
+ ,"set toglok 0\n"
+ ,"if { [Ng_GetToglVersion] == 2 } {\n"
+-,"if {[catch {togl .ndraw -width 400 -height 300  -rgba true -double true -depth true -privatecmap false -stereo false -indirect false  -create init  -display draw -reshape reshape }] } {\n"
++,"if {[catch {togl .ndraw -width 400 -height 300  -rgba true -double true -depth true -privatecmap false -stereo $toglstereo -indirect false  -create init  -display draw -reshape reshape }] } {\n"
+ ,"puts \"no OpenGL\"\n"
+ ,"} {\n"
+ ,"set toglok 1\n"
+ ,"}\n"
+ ,"} {\n"
+-,"if {[catch {togl .ndraw -width 400 -height 300  -rgba true -double true -depth true -privatecmap false -stereo false -indirect false  }] } {\n"
++,"if {[catch {togl .ndraw -width 400 -height 300  -rgba true -double true -depth true -privatecmap false -stereo $toglstereo -indirect false  }] } {\n"
+ ,"puts \"no OpenGL\"\n"
+ ,"} {\n"
+ ,"set toglok 1\n"
+-- 
+2.53.0
+

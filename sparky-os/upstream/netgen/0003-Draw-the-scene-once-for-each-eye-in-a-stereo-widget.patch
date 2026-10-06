@@ -1,0 +1,65 @@
+From bc4662f4431569b72b5d42e4f2db6a05f8936b80 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 6 Oct 2026 09:44:46 -0300
+Subject: [PATCH 3/3] Draw the scene once for each eye in a stereo widget
+
+When the widget has native stereo (the -stereo option), the draw
+callback draws the scene into GL_BACK_LEFT and GL_BACK_RIGHT with the
+projection moved half the eye separation to each side and sheared so
+both views meet at the centre of the scene.  The scene classes are
+untouched; the camera is the caller's.
+
+Assisted-by: Claude Opus 5.5 (Anthropic) and glm-5.3:cloud (Ollama) via Codex
+---
+ ng/ngpkg.cpp | 35 ++++++++++++++++++++++++++++++++++-
+ 1 file changed, 34 insertions(+), 1 deletion(-)
+
+diff --git a/ng/ngpkg.cpp b/ng/ngpkg.cpp
+index b9c915e..21ca1b0 100644
+--- a/ng/ngpkg.cpp
++++ b/ng/ngpkg.cpp
+@@ -2031,7 +2031,40 @@ namespace netgen
+     glPushMatrix();
+ 
+     glLoadIdentity();
+-    visual_scene->DrawScene();
++    if (Togl_NumEyes(togl) == 2)
++      {
++        // Stereo: one world, two cameras.  The view of each eye is the
++        // projection moved sideways by half the eye separation and sheared
++        // back so both views meet at the centre of the scene, which sits
++        // at the distance of the camera (see CalcTransformationMatrices).
++        constexpr double distance = 6.0;
++        constexpr double half_separation = 0.03 * distance;
++
++        GLdouble mono[16];
++        glMatrixMode(GL_PROJECTION);
++        glGetDoublev(GL_PROJECTION_MATRIX, mono);
++        VisualScene::mono_projection = mono;
++
++        for (int eye = 0; eye < 2; eye++)
++          {
++            double shift = (eye == 0) ? -half_separation : half_separation;
++            GLdouble view[16] = { 1, 0, 0, 0,  0, 1, 0, 0,
++                                  -shift / distance, 0, 1, 0,  -shift, 0, 0, 1 };
++
++            glDrawBuffer(eye == 0 ? GL_BACK_LEFT : GL_BACK_RIGHT);
++            glLoadMatrixd(mono);
++            glMultMatrixd(view);
++            glMatrixMode(GL_MODELVIEW);
++            visual_scene->DrawScene();
++            glMatrixMode(GL_PROJECTION);
++          }
++
++        glLoadMatrixd(mono);
++        glMatrixMode(GL_MODELVIEW);
++        VisualScene::mono_projection = nullptr;
++      }
++    else
++      visual_scene->DrawScene();
+     Togl_SwapBuffers(togl);
+ 
+     glPopMatrix();
+-- 
+2.53.0
+
