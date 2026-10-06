@@ -54,6 +54,9 @@ VM_TO_DOCKER = {
     # no Docker image of Qt 6.13 is published; "build-qt613" below makes one
     # from KDE's own ci-images/suse-qt613/build.sh
     "suse-qt613": "kde-ci-local/suse-qt613:latest",
+    # Krita's own job image (Ubuntu 22.04); no Docker image is published, "--build-krita-image"
+    # builds one from KDE's ci-images/krita-appimage-2204 (Dockerfile + build.sh)
+    "krita-appimage-2204": "kde-ci-local/krita-appimage-2204:latest",
 }
 NOT_RUNNABLE = {
     "freebsd150-qt610": "FreeBSD VM (no FreeBSD in Docker)",
@@ -222,6 +225,25 @@ def expand(vars_):
     return out
 
 
+def job_mode(job):
+    """-> 'always' | 'manual' | 'scheduled' | 'never', from the job's own `rules:` (Krita's mixins)."""
+    rules = job.get("rules")
+    if not rules:
+        return "manual" if job.get("when") == "manual" else "always"
+    for r in rules:
+        cond = str(r.get("if", ""))
+        if 'CI_PIPELINE_SOURCE == "schedule"' in cond:
+            if r.get("when") == "never":
+                continue
+            return "scheduled"
+        if "CI_COMMIT_BRANCH =~" in cond or "release" in cond:
+            if r.get("when") == "never":
+                continue
+            return "never" if "push" in cond else "manual"
+        return {"never": "never", "manual": "manual"}.get(r.get("when", "on_success"), "always")
+    return "always"
+
+
 def classify(job):
     """-> (kind, detail).  kind: docker | proxy | skip"""
     image = job.get("image")
@@ -312,6 +334,8 @@ def run_job(name, job, cfg, args, ctx):
         image = VM_TO_DOCKER["suse-qt611"]
         entry = None
     elif not image_present(image):
+        if image.startswith("kde-ci-local/krita"):
+            return ("SKIP", "no Docker image of Krita's job image: run 'kde-ci-local --build-krita-image' once", log, 0)
         if image.startswith("kde-ci-local/"):
             return ("SKIP", "no Docker image of Qt 6.13: run 'kde-ci-local --build-qt613-image' once", log, 0)
         print(f"  pulling {image} ...")
@@ -404,6 +428,20 @@ def build_qt613_image(work, ci):
     sys.exit(run(["docker", "build", "--platform", "linux/amd64", "-t", "kde-ci-local/suse-qt613:latest", ctxd]).returncode)
 
 
+def build_krita_image(work):
+    d = os.path.join(work, "kde", "ci-images")
+    if not os.path.isdir(d):
+        run(["git", "clone", "-q", "--depth=1", f"{KDE}/sysadmin/ci-images.git", d], check=True)
+    else:
+        run(["git", "-C", d, "pull", "-q", "--ff-only"], check=False)
+    ctxd = os.path.join(work, "kde", "krita-context")
+    shutil.rmtree(ctxd, ignore_errors=True)
+    os.makedirs(ctxd)
+    for f in ("Dockerfile", "build.sh"):
+        shutil.copy(os.path.join(d, "krita-appimage-2204", f), ctxd)
+    sys.exit(run(["docker", "build", "--platform", "linux/amd64", "-t", "kde-ci-local/krita-appimage-2204:latest", ctxd]).returncode)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0], formatter_class=argparse.RawDescriptionHelpFormatter,
                                  epilog=__doc__)
@@ -420,6 +458,8 @@ def main():
     ap.add_argument("--no-refresh", action="store_true", help="do not update the KDE sources (ci-utilities, repo-metadata)")
     ap.add_argument("--build-qt613-image", action="store_true",
                     help="build the Qt 6.13 job image from KDE's ci-images/suse-qt613/build.sh (once, ~12 GB)")
+    ap.add_argument("--build-krita-image", action="store_true",
+                    help="build Krita's job image from KDE's ci-images/krita-appimage-2204 (once, Ubuntu 22.04)")
     args = ap.parse_args()
 
     work = os.environ.get("KDE_CI_LOCAL_WORK", "/K3D/temp/kde-ci-local")
@@ -427,6 +467,8 @@ def main():
     ci = ensure_kde_sources(work, not args.no_refresh)
     if args.build_qt613_image:
         build_qt613_image(work, ci)
+    if args.build_krita_image:
+        build_krita_image(work)
 
     tree = os.path.abspath(args.tree)
     branch = args.branch or git(tree, "symbolic-ref", "--short", "HEAD")
@@ -442,6 +484,10 @@ def main():
         job = resolve_job(cfg, name)
         if "script" not in job or "image" not in job:
             continue
+        img = job["image"]
+        gv = cfg.get("variables") or {}
+        sub = lambda t: re.sub(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?", lambda m: str((job.get("variables") or {}).get(m.group(1), gv.get(m.group(1), m.group(0)))), t)
+        job["image"] = sub(img) if isinstance(img, str) else {**img, "name": sub(img["name"])}
         jobs.append((name, job))
     jobs.sort(key=lambda nj: STAGES.index(nj[1].get("stage", "test")) if nj[1].get("stage", "test") in STAGES else 9)
 
@@ -451,8 +497,8 @@ def main():
         stage = job.get("stage", "test")
         if stage not in STAGES:
             continue
-        if job.get("when") == "manual" and sel in ("all", "lint", "build"):
-            continue    # manual jobs only on request, as in the pipeline
+        if (job.get("when") == "manual" or job_mode(job) != "always") and sel in ("all", "lint", "build"):
+            continue    # manual, scheduled and release jobs only on request, as in a branch pipeline
         if sel == "lint" and stage != "validate" and name != "cppcheck":
             continue
         if sel == "build" and stage == "validate":
