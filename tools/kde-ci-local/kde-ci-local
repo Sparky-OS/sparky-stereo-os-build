@@ -337,12 +337,13 @@ def run_job(name, job, cfg, args, ctx):
         # FreeBSD: step 1 resolve against the FreeBSD registry, step 2 build with clang
         env["CC"], env["CXX"] = "clang", "clang++"
         sc = flat_script(job.get("script"), cfg)
-        # no sanitizers: FreeBSD's build has none, and clang cannot link what GCC's ASan runtime built
-        sc = [re.sub(r"--platform FreeBSD/Qt6/Shared", "--platform Linux/Qt6/Shared --extra-cmake-args=-DECM_ENABLE_SANITIZERS=", l) for l in sc]
+        # no sanitizers: FreeBSD's build has none, and clang cannot link what GCC's ASan runtime built;
+        # build only: the tests are the SUSE jobs' (a FreeBSD pipeline runs them only where .kde-ci.yml says)
+        sc = [re.sub(r"--platform FreeBSD/Qt6/Shared", "--platform Linux/Qt6/Shared --extra-cmake-args=-DECM_ENABLE_SANITIZERS= --only-build", l) for l in sc]
         script_job["script"] = (
             ["git config --global --add safe.directory $CI_PROJECT_DIR",
              "python3 - \"$CI_COMMIT_REF_NAME\" FreeBSD/Qt6/Shared <<'PY'\n" + RESOLVE_CHECK + "PY"]
-            + ["export KDECI_CACHE_PATH=/mnt/suse-qt6.11/artifacts/ KDECI_PACKAGE_PROJECT=teams/ci-artifacts/suse-qt6.11",
+            + ["export KDECI_CACHE_PATH=/mnt/suse-qt6.11/artifacts/ KDECI_CC_CACHE=/mnt/suse-qt6.11/caches/ KDECI_PACKAGE_PROJECT=teams/ci-artifacts/suse-qt6.11",
                "echo '## FreeBSD proxy: resolved above against the FreeBSD registry; now the same build, same flags, with clang on the SUSE image'"]
             + [l for l in sc if "run-ci-build" in l]
         )

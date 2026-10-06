@@ -56,7 +56,7 @@ Exit status 0 only when every job that can run passed; the last lines say GREEN 
 
 What cannot run here, and what is done instead:
 
-- `freebsd150_qt611` (FreeBSD VM): the dependency resolution is run against the **FreeBSD** package registry (every package of the pair list must exist: this reproduces the `@same` failures exactly), then the same build with the same flags and clang on the SUSE image.
+- `freebsd150_qt611` (FreeBSD VM): the dependency resolution is run against the **FreeBSD** package registry (every package of the pair list must exist: this reproduces the `@same` failures exactly), then the same build with the same flags and clang on the SUSE image, without sanitizers and without the tests (those are the SUSE jobs').
   Not covered: libc++ headers, FreeBSD's own packages and paths.
 - `suse_tumbleweed_qt613`: needs `kde-ci-local --build-qt613-image` once (KDE's own `suse-qt613/build.sh` on `opensuse/tumbleweed`, about 12 GB, 15 minutes); until then it is listed as skipped. Manual jobs (`when: manual`, oss-fuzz) run only when named with `--jobs`.
 - `alpine_qt611` (arm64 VM), Windows, Android, macOS, flatpak, snap, craft, oss-fuzz: skipped, listed with the reason.
