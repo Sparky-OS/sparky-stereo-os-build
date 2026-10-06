@@ -1,0 +1,30 @@
+Source: phoronix-test-suite
+Section: utils
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.7.2
+Homepage: https://sparkylinux.org
+Rules-Requires-Root: no
+
+Package: phoronix-test-suite
+Architecture: all
+Depends: php-cli, php-xml, ${misc:Depends}
+Recommends: build-essential, php-curl, php-gd, php-zip, unzip
+Description: Phoronix Test Suite, an automated open-source benchmarking framework
+ The Phoronix Test Suite runs benchmarks and tests of a computer's hardware
+ and software, from the command line or a local web interface, compares the
+ results. It fetches its list of tests from OpenBenchmarking.org when it runs
+ and uploads results there only when you ask it to.
+ .
+ This is upstream's release v10.8.4 (2022-07-03, GPL-3+;
+ https://github.com/phoronix-test-suite/phoronix-test-suite), packaged from
+ its tag. The tests themselves are downloaded when you install them, from
+ OpenBenchmarking.org and the test authors' sites; the package carries
+ upstream's offline cache of test profiles (ob-cache).
+ .
+ This release is from 2022: on the PHP 8.4 of Debian it prints "deprecated"
+ notices (harmless) while it runs.
+ .
+ The Phoromatic and result-server systemd units are installed but not
+ enabled and not started.

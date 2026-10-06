@@ -1,0 +1,20 @@
+#!/usr/bin/make -f
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/06
+# Copyright 2026 under the GNU GPL3 License
+%:
+	dh $@
+
+# upstream's own installer, into the package tree (it also lays out the systemd units)
+override_dh_auto_install:
+	DESTDIR=$(CURDIR)/debian/phoronix-test-suite ./install-sh /usr
+	# upstream's installer writes to usr/../etc and usr/../usr: already inside the tree
+	rm -f debian/phoronix-test-suite/usr/share/doc/phoronix-test-suite/COPYING
+
+override_dh_auto_build:
+override_dh_auto_test:
+
+# the units are installed, never enabled or started by the package
+override_dh_installsystemd:
+	dh_installsystemd --no-enable --no-start --name=phoromatic-client
+	dh_installsystemd --no-enable --no-start --name=phoromatic-server
+	dh_installsystemd --no-enable --no-start --name=phoronix-result-server

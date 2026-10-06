@@ -1,0 +1,47 @@
+[Desktop Entry]
+Type=Service
+Name=Convert audio
+Name[pl]=Konwersja dźwięku
+Name[pt_BR]=Converter áudio
+ServiceTypes=KonqPopupMenu/Plugin
+MimeType=audio/flac;audio/x-flac;audio/ogg;audio/x-vorbis+ogg;audio/x-opus+ogg;audio/mpeg;audio/x-wav;audio/wav;audio/mp4;audio/x-m4a;audio/aac;audio/x-ms-wma;audio/x-aiff;audio/x-ape;audio/x-wavpack;audio/x-musepack;
+Actions=ConvertFlac;ConvertOgg;ConvertOpus;ConvertMp3;ConvertWav;
+X-KDE-Submenu=Convert audio to
+X-KDE-Submenu[pl]=Konwertuj dźwięk do
+X-KDE-Submenu[pt_BR]=Converter áudio para
+Icon=audio-x-generic
+
+[Desktop Action ConvertFlac]
+Name=FLAC
+Name[pl]=FLAC
+Name[pt_BR]=FLAC
+Icon=audio-x-generic
+Exec=sparky-audio-convert flac %F
+
+[Desktop Action ConvertOgg]
+Name=Ogg Vorbis
+Name[pl]=Ogg Vorbis
+Name[pt_BR]=Ogg Vorbis
+Icon=audio-x-generic
+Exec=sparky-audio-convert ogg %F
+
+[Desktop Action ConvertOpus]
+Name=Opus
+Name[pl]=Opus
+Name[pt_BR]=Opus
+Icon=audio-x-generic
+Exec=sparky-audio-convert opus %F
+
+[Desktop Action ConvertMp3]
+Name=MP3
+Name[pl]=MP3
+Name[pt_BR]=MP3
+Icon=audio-x-generic
+Exec=sparky-audio-convert mp3 %F
+
+[Desktop Action ConvertWav]
+Name=WAV
+Name[pl]=WAV
+Name[pt_BR]=WAV
+Icon=audio-x-generic
+Exec=sparky-audio-convert wav %F
