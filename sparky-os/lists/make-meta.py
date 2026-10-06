@@ -65,8 +65,8 @@ STEREO_STACK = ['linux-image-sparky-stereo', 'linux-headers-sparky-stereo'] + [
 META = {
     'sparky-stereo-desktop': (
         'Sparky Stereo desktop',
-        'This meta package installs the desktop of Sparky Stereo OS: the look, console and system information of the edition, time synchronisation, VLC Stereo as the video player, and the applications beyond the KDE edition.',
-        ['sparky-stereo-console', 'sparky-stereo-info', 'sparky-stereo-look', 'sparky-stereo-time'] + lst('look') + OURS_PLAYER,
+        'This meta package installs the desktop of Sparky Stereo OS: the look, console and system information of the edition, time synchronisation, the Dolphin menu that converts audio files, VLC Stereo as the video player, and the applications beyond the KDE edition.',
+        ['sparky-stereo-audio-convert', 'sparky-stereo-console', 'sparky-stereo-info', 'sparky-stereo-look', 'sparky-stereo-time'] + lst('look') + OURS_PLAYER,
         lst('apps') + OURS_PLAYER_OUTPUT),
     'sparky-stereo-gaming': (
         'Sparky Stereo gaming',
