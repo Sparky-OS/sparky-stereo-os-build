@@ -1,0 +1,130 @@
+From d7c96b9bbb9364ace52d5c727a78dc29fff818d2 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 6 Oct 2026 12:22:57 -0300
+Subject: [PATCH] Add an optional stereo 3D view of the 3D graph
+
+With --stereo the window asks for stereo buffers and the 3D graph is drawn
+in stereo by Analitza's PlotsView3DES; --stereo-separation sets the
+distance between the eyes in percent of the distance to the origin. The
+option exists only when the Analitza KAlgebra is built against has
+PlotsView3DES::setStereoSeparation(), checked at configure time, so
+KAlgebra still builds against an Analitza without it.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/CMakeLists.txt | 12 ++++++++++++
+ src/kalgebra.cpp   |  9 +++++++++
+ src/kalgebra.h     |  3 +++
+ src/main.cpp       | 23 +++++++++++++++++++++++
+ 4 files changed, 47 insertions(+)
+
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index c26107e3..813ebc66 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -30,6 +30,18 @@ target_link_libraries(kalgebra Qt::Widgets Qt::PrintSupport Qt::WebEngineWidgets
+                                KF6::I18n
+                                KF6::Analitza KF6::AnalitzaWidgets KF6::AnalitzaGui KF6::AnalitzaPlot Qt6::OpenGLWidgets)
+ 
++# The stereo 3D view needs an Analitza whose 3D view takes a stereo separation
++include(CheckCXXSourceCompiles)
++set(CMAKE_REQUIRED_LIBRARIES KF6::AnalitzaWidgets KF6::AnalitzaPlot Qt6::OpenGLWidgets)
++check_cxx_source_compiles("
++#include <analitzagui/plotsview3d_es.h>
++int main() { Analitza::PlotsView3DES view; view.setStereoSeparation(5.); return 0; }
++" HAVE_ANALITZA_STEREO)
++unset(CMAKE_REQUIRED_LIBRARIES)
++if(HAVE_ANALITZA_STEREO)
++    target_compile_definitions(kalgebra PRIVATE HAVE_ANALITZA_STEREO)
++endif()
++
+ install(TARGETS kalgebra ${KDE_INSTALL_TARGETS_DEFAULT_ARGS})
+ install(PROGRAMS org.kde.kalgebra.desktop DESTINATION ${KDE_INSTALL_APPDIR} )
+ install(FILES kalgebra.xml DESTINATION ${KDE_INSTALL_DATADIR}/katepart5/syntax )
+diff --git a/src/kalgebra.cpp b/src/kalgebra.cpp
+index f919b0ac..2f05e30f 100644
+--- a/src/kalgebra.cpp
++++ b/src/kalgebra.cpp
+@@ -736,6 +736,15 @@ void KAlgebra::varsContextMenu(const QPoint &p)
+     delete m;
+ }
+ 
++void KAlgebra::setStereoSeparation(double percent)
++{
++#ifdef HAVE_ANALITZA_STEREO
++    m_graph3d->setStereoSeparation(percent);
++#else
++    Q_UNUSED(percent)
++#endif
++}
++
+ void KAlgebra::add3D(const Analitza::Expression &exp)
+ {
+     t_model3d->clear();
+diff --git a/src/kalgebra.h b/src/kalgebra.h
+index 164126bf..d9e7ef89 100644
+--- a/src/kalgebra.h
++++ b/src/kalgebra.h
+@@ -54,6 +54,9 @@ public:
+     void add2D(const Analitza::Expression &exp);
+     void add3D(const Analitza::Expression &exp);
+ 
++    /** Distance between the eyes of the 3D graph in stereo 3D, in percent of the distance to the origin. */
++    void setStereoSeparation(double percent);
++
+ private:
+     QLabel *m_status;
+     QTabWidget *m_tabs;
+diff --git a/src/main.cpp b/src/main.cpp
+index 718eab73..5cffc8c4 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -22,6 +22,7 @@
+ #include <KLocalizedString>
+ #include <QApplication>
+ #include <QCommandLineParser>
++#include <QSurfaceFormat>
+ 
+ int main(int argc, char *argv[])
+ {
+@@ -37,15 +38,37 @@ int main(int argc, char *argv[])
+     about.setTranslator(i18nc("NAME OF TRANSLATORS", "Your names"), i18nc("EMAIL OF TRANSLATORS", "Your emails"));
+     KAboutData::setApplicationData(about);
+ 
++    double stereoSeparation = 0;
+     {
+         QCommandLineParser parser;
+         about.setupCommandLine(&parser);
++#ifdef HAVE_ANALITZA_STEREO
++        parser.addOption(QCommandLineOption(QStringLiteral("stereo"), i18n("Show the 3D graph in stereo 3D (needs a stereo-capable display)")));
++        parser.addOption(QCommandLineOption(QStringLiteral("stereo-separation"),
++                                            i18n("Distance between the two eyes in stereo 3D, in percent of the distance to the origin (default 5)"),
++                                            QStringLiteral("percent"),
++                                            QStringLiteral("5")));
++#endif
+         parser.process(app);
+         about.processCommandLine(&parser);
++#ifdef HAVE_ANALITZA_STEREO
++        if (parser.isSet(QStringLiteral("stereo"))) {
++            stereoSeparation = qBound(1., parser.value(QStringLiteral("stereo-separation")).toDouble(), 20.);
++
++            // Ask for left and right buffers, before the window is created. QOpenGLWidget then
++            // calls paintGL() once for each, or only once when the platform gives no stereo buffers.
++            QSurfaceFormat format = QSurfaceFormat::defaultFormat();
++            format.setStereo(true);
++            QSurfaceFormat::setDefaultFormat(format);
++        }
++#endif
+     }
+     QApplication::setWindowIcon(QIcon::fromTheme(QStringLiteral("kalgebra")));
+ 
+     KAlgebra widget;
++    if (stereoSeparation > 0) {
++        widget.setStereoSeparation(stereoSeparation);
++    }
+     widget.show();
+ 
+     return app.exec();
+-- 
+2.53.0
+

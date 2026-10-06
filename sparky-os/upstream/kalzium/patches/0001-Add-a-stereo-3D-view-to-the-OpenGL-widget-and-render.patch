@@ -1,0 +1,183 @@
+From 8ca0b0ebb0ea1db6cbc23d5253f83d1769c95973 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 6 Oct 2026 12:25:49 -0300
+Subject: [PATCH] Add a stereo 3D view to the OpenGL widget and renderer
+
+When the program asks for stereo buffers (QSurfaceFormat::setStereo(true))
+QOpenGLWidget calls paintGL() once for the left and once for the right
+buffer. GLWidget now tells the renderer which eye it draws, and
+GLRenderer::render() puts the camera half the stereo separation to the left
+or to the right of the usual one, parallel and meeting at the centre of the
+scene (the projection is sheared; the model view and the scene are the same
+for both eyes), so the centre of the scene has no parallax and nearer and
+further parts shift in opposite directions. The 2D overlay is drawn
+identically in both eyes, and the centre camera's projection is put back
+after each render, so picking is unchanged.
+
+GLWidget::setStereoSeparation() sets the distance between the eyes in percent
+of the distance to the centre of the scene (default 5). Without stereo
+buffers the widget draws as before.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ avogadro/qtopengl/glwidget.cpp    | 17 +++++++++++++++++
+ avogadro/qtopengl/glwidget.h      |  8 ++++++++
+ avogadro/rendering/glrenderer.cpp | 22 ++++++++++++++++++++++
+ avogadro/rendering/glrenderer.h   | 30 ++++++++++++++++++++++++++++++
+ 4 files changed, 77 insertions(+)
+
+diff --git a/avogadro/qtopengl/glwidget.cpp b/avogadro/qtopengl/glwidget.cpp
+index c7736db..f9a4712 100644
+--- a/avogadro/qtopengl/glwidget.cpp
++++ b/avogadro/qtopengl/glwidget.cpp
+@@ -19,6 +19,7 @@
+ #include <QtCore/QTimer>
+ #include <QtGui/QKeyEvent>
+ #include <QtGui/QMouseEvent>
++#include <QtGui/QOpenGLContext>
+ #include <QtGui/QWheelEvent>
+ #include <QtGui/QWindow>
+ #include <QtWidgets/QApplication>
+@@ -241,9 +242,25 @@ void GLWidget::resizeGL(int width_, int height_)
+ 
+ void GLWidget::paintGL()
+ {
++  // With stereo buffers (QSurfaceFormat::setStereo(true), asked by the program)
++  // QOpenGLWidget calls paintGL() once for the left and once for the right
++  // buffer.
++  if (context()->format().stereo() && m_renderer.stereoSeparation() > 0.0f) {
++    m_renderer.setStereoEye(currentTargetBuffer() == QOpenGLWidget::RightBuffer
++                              ? Rendering::GLRenderer::RightEye
++                              : Rendering::GLRenderer::LeftEye);
++  } else {
++    m_renderer.setStereoEye(Rendering::GLRenderer::CentreEye);
++  }
+   m_renderer.render();
+ }
+ 
++void GLWidget::setStereoSeparation(float percent)
++{
++  m_renderer.setStereoSeparation(percent);
++  update();
++}
++
+ void GLWidget::mouseDoubleClickEvent(QMouseEvent* e)
+ {
+   e->ignore();
+diff --git a/avogadro/qtopengl/glwidget.h b/avogadro/qtopengl/glwidget.h
+index 17e69bd..99bff9f 100644
+--- a/avogadro/qtopengl/glwidget.h
++++ b/avogadro/qtopengl/glwidget.h
+@@ -100,6 +100,14 @@ public:
+    */
+   bool isValid() const { return m_renderer.isValid(); }
+ 
++  /**
++   * Set the distance between the eyes when the widget is in stereo 3D, in
++   * percent of the distance from the camera to the centre of the scene
++   * (default 5). The widget is in stereo when the program asked for stereo
++   * buffers with QSurfaceFormat::setStereo(true) and the platform gives them.
++   */
++  void setStereoSeparation(float percent);
++
+   /**
+    * Get the error(s), if any, encountered when setting up the GLWidget.
+    * @return A free form string containing errors encountered.
+diff --git a/avogadro/rendering/glrenderer.cpp b/avogadro/rendering/glrenderer.cpp
+index 690bed0..faf7338 100644
+--- a/avogadro/rendering/glrenderer.cpp
++++ b/avogadro/rendering/glrenderer.cpp
+@@ -18,6 +18,7 @@
+ 
+ #include <avogadro/core/matrix.h>
+ 
++#include <cmath>
+ #include <iostream>
+ 
+ namespace Avogadro::Rendering {
+@@ -97,6 +98,25 @@ void GLRenderer::render()
+   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+   applyProjection();
+ 
++  // Stereo 3D: the projection of the eye, the centre camera's is put back
++  // below.
++  const Eigen::Affine3f centreProjection = m_camera.projection();
++  if (m_stereoEye != CentreEye) {
++    // Two parallel cameras, e to the left or to the right of the usual one,
++    // meeting at the depth d of the centre of the scene: a point (x, y, z) in
++    // eye coordinates is seen at x - e - e * z / d. The model view is
++    // untouched.
++    const float d = std::abs((m_camera.modelView() * m_center).z());
++    const float e = (m_stereoEye == RightEye ? 0.5f : -0.5f) * d *
++                    m_stereoSeparation / 100.0f;
++    Eigen::Matrix4f shear = Eigen::Matrix4f::Identity();
++    shear(0, 2) = -e / d;
++    shear(0, 3) = -e;
++    Eigen::Affine3f eyeProjection;
++    eyeProjection.matrix() = centreProjection.matrix() * shear;
++    m_camera.setProjection(eyeProjection);
++  }
++
+   GLRenderVisitor visitor(m_camera, m_textRenderStrategy);
+   // Setup for solid geometry
+   // m_volume.begin()
+@@ -137,6 +157,8 @@ void GLRenderer::render()
+   glDisable(GL_DEPTH_TEST);
+   m_scene.rootNode().accept(visitor);
+ 
++  m_camera.setProjection(centreProjection);
++
+ #ifdef _3DCONNEXION
+   if (m_drawIcon && (m_iconData != nullptr)) {
+     glPushMatrix();
+diff --git a/avogadro/rendering/glrenderer.h b/avogadro/rendering/glrenderer.h
+index 71224d3..4ad5f2a 100644
+--- a/avogadro/rendering/glrenderer.h
++++ b/avogadro/rendering/glrenderer.h
+@@ -52,6 +52,33 @@ public:
+   /** Take care of rendering the scene, requires that the context is current. */
+   void render();
+ 
++  /** The eye render() draws for, in a stereo 3D view. */
++  enum StereoEye
++  {
++    CentreEye, /**< The usual single camera (default). */
++    LeftEye,
++    RightEye
++  };
++
++  /**
++   * Set the eye the next render() draws for. For LeftEye and RightEye the
++   * camera is moved sideways by half the stereo separation (to the left or to
++   * the right) and the projection is sheared so that both eyes meet at the
++   * centre of the scene: what is there has no parallax, nearer parts shift one
++   * way and further parts the other. The scene is the same for both eyes, the
++   * 2D overlay is drawn identically. The camera is the centre camera again
++   * once render() returns, so picking is that of the usual camera.
++   */
++  void setStereoEye(StereoEye eye) { m_stereoEye = eye; }
++  StereoEye stereoEye() const { return m_stereoEye; }
++
++  /**
++   * Set the distance between the eyes in a stereo 3D view, in percent of the
++   * distance from the camera to the centre of the scene (default 5).
++   */
++  void setStereoSeparation(float percent) { m_stereoSeparation = percent; }
++  float stereoSeparation() const { return m_stereoSeparation; }
++
+   /** Reset the view to fit the entire scene. */
+   void resetCamera();
+ 
+@@ -159,6 +186,9 @@ private:
+ 
+   Vector3f m_center;
+   float m_radius;
++
++  StereoEye m_stereoEye = CentreEye;
++  float m_stereoSeparation = 5.0f;
+ };
+ 
+ inline const Camera& GLRenderer::camera() const
+-- 
+2.53.0
+

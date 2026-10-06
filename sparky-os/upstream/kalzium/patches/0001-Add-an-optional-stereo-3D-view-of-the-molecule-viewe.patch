@@ -1,0 +1,83 @@
+From e09eb5a3fb353c5c0eac02d52ded0d723d65c24c Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 6 Oct 2026 12:47:43 -0300
+Subject: [PATCH] Add an optional stereo 3D view of the molecule viewer
+
+With --stereo the windows ask for stereo buffers, and the molecule viewer
+(Avogadro's GLWidget) draws the molecule once for each eye. The option exists
+only when the Avogadro Kalzium is built against has
+GLWidget::setStereoSeparation(), checked at configure time, so Kalzium still
+builds against an Avogadro without it.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/CMakeLists.txt | 14 ++++++++++++++
+ src/main.cpp       | 15 +++++++++++++++
+ 2 files changed, 29 insertions(+)
+
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 5a94c777..9d178fdf 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -218,6 +218,20 @@ if (HAVE_OPENBABEL)
+          Eigen3::Eigen
+        )
+       install(FILES kalzium.knsrc DESTINATION ${KDE_INSTALL_KNSRCDIR})
++
++      # The stereo 3D view needs an Avogadro whose OpenGL widget takes a stereo separation
++      include(CheckCXXSourceCompiles)
++      set(CMAKE_REQUIRED_INCLUDES ${AvogadroLibs_INCLUDE_DIRS})
++      set(CMAKE_REQUIRED_LIBRARIES Avogadro::QtOpenGL Avogadro::QtGui Qt::OpenGL Qt::Widgets)
++      check_cxx_source_compiles("
++      #include <avogadro/qtopengl/glwidget.h>
++      int main() { Avogadro::QtOpenGL::GLWidget *w = nullptr; if (w) w->setStereoSeparation(5.f); return 0; }
++      " HAVE_AVOGADRO_STEREO)
++      unset(CMAKE_REQUIRED_INCLUDES)
++      unset(CMAKE_REQUIRED_LIBRARIES)
++      if (HAVE_AVOGADRO_STEREO)
++         target_compile_definitions(kalzium PRIVATE HAVE_AVOGADRO_STEREO)
++      endif ()
+    endif ()
+ endif ()
+ 
+diff --git a/src/main.cpp b/src/main.cpp
+index 21769ecc..c591121b 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -9,6 +9,7 @@
+ #include <QApplication>
+ #include <QCommandLineOption>
+ #include <QCommandLineParser>
++#include <QSurfaceFormat>
+ 
+ #include <KAboutData>
+ #include <KCrash>
+@@ -97,11 +98,25 @@ int main(int argc, char **argv)
+ #if defined(HAVE_OPENBABEL) && defined(HAVE_EIGEN) && defined(HAVE_AVOGADRO)
+     parser.addOption(
+         QCommandLineOption(QStringList() << QStringLiteral("m") << QStringLiteral("molecule"), i18n("Open the given molecule file"), QStringLiteral("file")));
++#endif
++#ifdef HAVE_AVOGADRO_STEREO
++    parser.addOption(QCommandLineOption(QStringLiteral("stereo"), i18n("Show the molecule viewer in stereo 3D (needs a stereo-capable display)")));
+ #endif
+     about.setupCommandLine(&parser);
+     parser.process(app);
+     about.processCommandLine(&parser);
+ 
++#ifdef HAVE_AVOGADRO_STEREO
++    if (parser.isSet(QStringLiteral("stereo"))) {
++        // Ask for left and right buffers, before the windows are created. The molecule
++        // viewer then draws the molecule once for each eye; without stereo buffers
++        // from the platform it draws as before.
++        QSurfaceFormat format = QSurfaceFormat::defaultFormat();
++        format.setStereo(true);
++        QSurfaceFormat::setDefaultFormat(format);
++    }
++#endif
++
+     Kalzium *mainWin = nullptr;
+ 
+     if (app.isSessionRestored()) {
+-- 
+2.53.0
+

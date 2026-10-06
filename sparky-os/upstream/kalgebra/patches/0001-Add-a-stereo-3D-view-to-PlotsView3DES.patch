@@ -1,0 +1,176 @@
+From 63b978bf4b1045a1d93f77a7de8ddaf721509f0a Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 6 Oct 2026 12:22:57 -0300
+Subject: [PATCH] Add a stereo 3D view to PlotsView3DES
+
+When the program asks for stereo buffers (QSurfaceFormat::setStereo(true)),
+QOpenGLWidget calls paintGL() once for the left and once for the right
+buffer. PlotsView3DES now draws the plots for the buffer's eye:
+Plotter3DES::drawPlots() multiplies the projection by a shear that puts
+the camera half the stereo separation to the left or to the right, parallel
+and meeting at the origin, so the origin has no parallax and nearer and
+further parts shift in opposite directions. The scene and its model view
+matrix are the same for both eyes. The axis arrows are looked for in what
+the left eye sees.
+
+The separation is Plotter3DES::setStereoSeparation(), in percent of the
+distance of the camera to the origin (default 5). Without stereo buffers
+the widget draws as before.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ analitzaplot/plotter3d_es.cpp      | 23 +++++++++++++++++++++--
+ analitzaplot/plotter3d_es.h        | 21 +++++++++++++++++++++
+ analitzawidgets/plotsview3d_es.cpp | 17 +++++++++++++++++
+ analitzawidgets/plotsview3d_es.h   |  1 +
+ 4 files changed, 60 insertions(+), 2 deletions(-)
+
+diff --git a/analitzaplot/plotter3d_es.cpp b/analitzaplot/plotter3d_es.cpp
+index be4f5216..3ac1e47f 100644
+--- a/analitzaplot/plotter3d_es.cpp
++++ b/analitzaplot/plotter3d_es.cpp
+@@ -131,9 +131,11 @@ void Plotter3DES::resetViewport()
+     renderGL();
+ }
+ 
++static const float s_cameraDistance = 20.f;
++
+ void Plotter3DES::resetViewPrivate(const QVector3D& rot)
+ {
+-    m_rot.translate(0,0, -20);
++    m_rot.translate(0,0, -s_cameraDistance);
+     m_rot.rotate(rot.x(), 1, 0, 0);
+     m_rot.rotate(rot.y(), 0, 1, 0);
+     m_rot.rotate(rot.z(), 0, 0, 1);
+@@ -150,6 +152,23 @@ void Plotter3DES::setViewport(const QRectF& vp)
+     renderGL();
+ }
+ 
++QMatrix4x4 Plotter3DES::stereoShear() const
++{
++    QMatrix4x4 shear;
++    if (m_stereoEye == CentreEye) {
++        return shear;
++    }
++
++    // Two parallel cameras, e to the left or to the right of the usual one, meeting at the
++    // distance of the origin: a point (x, y, z) in eye co-ordinates is seen at
++    //     x - e - e * z / distance
++    // (the same as moving the camera by e and shifting the frustum, without touching the scene).
++    const float e = (m_stereoEye == RightEye ? 0.5f : -0.5f) * s_cameraDistance * float(m_stereoSeparation) / 100.f;
++    shear(0, 2) = -e / s_cameraDistance;
++    shear(0, 3) = -e;
++    return shear;
++}
++
+ void Plotter3DES::drawPlots()
+ {
+     glClearColor(0, 0, 0, 1);
+@@ -164,7 +183,7 @@ void Plotter3DES::drawPlots()
+     }
+ 
+     program.bind();
+-    program.setUniformValue("matrix", m_projection * m_rot);
++    program.setUniformValue("matrix", m_projection * stereoShear() * m_rot);
+ 
+     const int vertexLocation = program.attributeLocation("vertex");
+     const int normalLocation = program.attributeLocation("normal");
+diff --git a/analitzaplot/plotter3d_es.h b/analitzaplot/plotter3d_es.h
+index 52b95f34..5070d118 100644
+--- a/analitzaplot/plotter3d_es.h
++++ b/analitzaplot/plotter3d_es.h
+@@ -131,6 +131,24 @@ class ANALITZAPLOT_EXPORT Plotter3DES : private QOpenGLFunctions
+ 
+         void setReferencePlaneColor(const QColor &color) { m_referencePlaneColor = color; }
+ 
++        /** The eye the next drawPlots() draws for, in a stereo 3D view. */
++        enum StereoEye { CentreEye, LeftEye, RightEye };
++
++        /**
++         * Draw for @p eye: the camera is moved sideways by half the stereo separation,
++         * to the left or to the right, and the view is sheared so that both eyes meet
++         * at the origin, which therefore has no parallax. The scene itself is the same
++         * for both eyes. CentreEye (the default) is the usual single camera.
++         *
++         * @see setStereoSeparation()
++         */
++        void setStereoEye(StereoEye eye) { m_stereoEye = eye; }
++        StereoEye stereoEye() const { return m_stereoEye; }
++
++        /** Distance between the two eyes in a stereo 3D view, in percent of the distance of the camera to the origin. */
++        void setStereoSeparation(double percent) { m_stereoSeparation = percent; renderGL(); }
++        double stereoSeparation() const { return m_stereoSeparation; }
++
+     protected:
+         void addPlots(PlotItem* item);
+ 
+@@ -172,6 +190,9 @@ class ANALITZAPLOT_EXPORT Plotter3DES : private QOpenGLFunctions
+ 
+         QOpenGLShaderProgram program;
+         QMatrix4x4 m_projection;
++        QMatrix4x4 stereoShear() const;
++        StereoEye m_stereoEye = CentreEye;
++        double m_stereoSeparation = 5.;
+ };
+ 
+ }
+diff --git a/analitzawidgets/plotsview3d_es.cpp b/analitzawidgets/plotsview3d_es.cpp
+index aea5e2e6..dfcbc3b2 100644
+--- a/analitzawidgets/plotsview3d_es.cpp
++++ b/analitzawidgets/plotsview3d_es.cpp
+@@ -19,6 +19,7 @@
+  *************************************************************************************/
+ 
+ #include "plotsview3d_es.h"
++#include <QOpenGLContext>
+ #include <analitzaplot/plotsmodel.h>
+ #include <analitzaplot/surface.h>
+ #include <analitzaplot/spacecurve.h>
+@@ -68,9 +69,21 @@ void PlotsView3DES::updateFuncs(const QModelIndex& start, const QModelIndex& end
+ 
+ void PlotsView3DES::paintGL()
+ {
++    // With stereo buffers (QSurfaceFormat::setStereo(true), asked by the program) QOpenGLWidget
++    // calls paintGL() once for the left and once for the right buffer.
++    if (isStereo()) {
++        setStereoEye(currentTargetBuffer() == QOpenGLWidget::RightBuffer ? RightEye : LeftEye);
++    } else {
++        setStereoEye(CentreEye);
++    }
+     drawPlots();
+ }
+ 
++bool PlotsView3DES::isStereo() const
++{
++    return context() && context()->format().stereo() && stereoSeparation() > 0.;
++}
++
+ void PlotsView3DES::initializeGL()
+ {
+     initGL();
+@@ -87,6 +100,10 @@ void PlotsView3DES::mousePressEvent(QMouseEvent *e)
+ 
+     old_y = e->y();
+     old_x = e->x();
++    if (isStereo()) {
++        // the axis arrows are looked for in what the left eye sees
++        makeCurrent(QOpenGLWidget::LeftBuffer);
++    }
+     CartesianAxis axis = selectAxisArrow(e->x(), e->y());
+     showAxisArrowHint(axis);
+ 
+diff --git a/analitzawidgets/plotsview3d_es.h b/analitzawidgets/plotsview3d_es.h
+index cd29f5aa..c356e13e 100644
+--- a/analitzawidgets/plotsview3d_es.h
++++ b/analitzawidgets/plotsview3d_es.h
+@@ -60,6 +60,7 @@ private Q_SLOTS:
+     void removeFuncs(const QModelIndex &index,int,int);
+ 
+ private:
++    bool isStereo() const;
+     int currentPlot() const override { return -1 ;}
+     void modelChanged() override;
+     void renderGL() override;
+-- 
+2.53.0
+
