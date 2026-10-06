@@ -1,0 +1,478 @@
+#!/usr/bin/env python3
+"""Run a KDE fork's invent.kde.org pipeline jobs locally, in KDE's own images.
+
+    kde-ci-local [options] [TREE]
+
+TREE is a git clone of the fork (default: the current directory).  The routine
+reads the tree's own .gitlab-ci.yml, resolves the templates it includes from
+KDE's sysadmin/ci-utilities (the same files the pipeline reads), and runs each
+job's script lines unchanged inside the job's image:
+
+  * lint jobs (reuse, clang_format, xml, yaml, json-validation, qml-lint,
+    cppcheck, ...) in the image the template names;
+  * build jobs (suse_tumbleweed_qt611, ...) in
+    invent-registry.kde.org/sysadmin/ci-images/suse-qt611, the Docker twin of
+    the VM image the runners boot (same build.sh), through KDE's own
+    run-ci-build.py, with the dependencies taken from KDE's package registry
+    exactly as the pipeline does.
+
+Jobs that cannot run here are listed with the reason and, where one exists,
+the closest check that is run instead (FreeBSD: the dependency resolution
+against the FreeBSD registry, then the same build with clang).
+
+The commit that is tested is the one the branch points to: uncommitted changes
+are not part of it, just like in a push.  The branch names of the fork are
+reproduced (KDE's '@same' rule reads them), so keep the tree's remotes
+current (git fetch --all) before a run.
+
+Environment:
+  KDE_CI_LOCAL_WORK   work folder (default /K3D/temp/kde-ci-local); holds the
+                      KDE sources, the package cache, the logs and the job trees
+  KDE_CI_LOCAL_THREADS  threads per container (default 4, the house limit)
+"""
+import argparse
+import copy
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+import yaml
+
+KDE = "https://invent.kde.org"
+REGISTRY = "invent-registry.kde.org/sysadmin/ci-images"
+NAMESPACE = "danielcamposramos"
+CPUS = os.environ.get("KDE_CI_LOCAL_THREADS", "4")
+STAGES = ["validate", "build", "test"]
+
+# VM images the pipeline boots -> what we run here.  The VM and the Docker image
+# of KDE are built by the same build.sh, so the Docker one is the same system.
+VM_TO_DOCKER = {
+    "suse-qt611": f"{REGISTRY}/suse-qt611:latest",
+    # no Docker image of Qt 6.13 is published; "build-qt613" below makes one
+    # from KDE's own ci-images/suse-qt613/build.sh
+    "suse-qt613": "kde-ci-local/suse-qt613:latest",
+}
+NOT_RUNNABLE = {
+    "freebsd150-qt610": "FreeBSD VM (no FreeBSD in Docker)",
+    "alpine-qt611-arm64": "arm64 VM (Alpine/musl); no arm64 here",
+    "windows11-base": "Windows VM",
+}
+
+
+class Ref:
+    def __init__(self, path):
+        self.path = path
+
+
+def loader():
+    class L(yaml.SafeLoader):
+        pass
+
+    L.add_constructor("!reference", lambda ld, node: Ref(ld.construct_sequence(node)))
+    return L
+
+
+def load_yaml(path):
+    with open(path) as f:
+        return yaml.load(f, Loader=loader()) or {}
+
+
+def deep_merge(a, b):
+    out = copy.deepcopy(a)
+    for k, v in b.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = deep_merge(out[k], v)
+        else:
+            out[k] = copy.deepcopy(v)
+    return out
+
+
+def load_with_includes(path, ci_utils, seen=None):
+    seen = seen or set()
+    doc = load_yaml(path)
+    merged = {}
+    inc = doc.pop("include", [])
+    if isinstance(inc, (str, dict)):
+        inc = [inc]
+    for item in inc:
+        if isinstance(item, str):
+            item = {"local": item}
+        if "project" in item:
+            if item["project"] != "sysadmin/ci-utilities":
+                print(f"  note: include of project {item['project']} not available, skipped")
+                continue
+            files = item["file"] if isinstance(item["file"], list) else [item["file"]]
+            paths = [os.path.join(ci_utils, f.lstrip("/")) for f in files]
+        elif "local" in item:
+            # a local include inside a template means a file of ci-utilities
+            base = ci_utils if path.startswith(ci_utils) else os.path.dirname(path)
+            paths = [os.path.join(base, item["local"].lstrip("/"))]
+        else:
+            continue
+        for p in paths:
+            if p in seen or not os.path.exists(p):
+                continue
+            seen.add(p)
+            merged = deep_merge(merged, load_with_includes(p, ci_utils, seen))
+    return deep_merge(merged, doc)
+
+
+def resolve_ref(cfg, ref):
+    node = cfg
+    for k in ref.path:
+        node = node[k]
+    return node
+
+
+def resolve_job(cfg, name, stack=()):
+    job = copy.deepcopy(cfg[name])
+    ext = job.pop("extends", [])
+    if isinstance(ext, str):
+        ext = [ext]
+    base = {}
+    for e in ext:
+        base = deep_merge(base, resolve_job(cfg, e, stack + (name,)))
+    return deep_merge(base, job)
+
+
+def flat_script(lines, cfg):
+    out = []
+    for x in lines or []:
+        if isinstance(x, Ref):
+            out += flat_script(resolve_ref(cfg, x), cfg)
+        elif isinstance(x, list):
+            out += flat_script(x, cfg)
+        else:
+            out.append(x)
+    return out
+
+
+def run(cmd, **kw):
+    return subprocess.run(cmd, **kw)
+
+
+def git(tree, *args):
+    return subprocess.check_output(["git", "-C", tree, *args], text=True).strip()
+
+
+def ensure_kde_sources(work, refresh):
+    ci = os.path.join(work, "kde", "ci-utilities")
+    os.makedirs(os.path.dirname(ci), exist_ok=True)
+    if not os.path.isdir(ci):
+        run(["git", "clone", "-q", "--depth=1", f"{KDE}/sysadmin/ci-utilities.git", ci], check=True)
+        run(["git", "clone", "-q", "--depth=1", f"{KDE}/sysadmin/repo-metadata.git",
+             os.path.join(ci, "repo-metadata")], check=True)
+    elif refresh:
+        for d in (ci, os.path.join(ci, "repo-metadata")):
+            run(["git", "-C", d, "pull", "-q", "--ff-only"], check=False)
+    return ci
+
+
+def make_checkout(tree, branch, ci_name, dest, project):
+    """A fresh clone at the branch's commit, holding the fork's branches under
+    their pushed names, as the runner's checkout does."""
+    sha = git(tree, "rev-parse", branch + "^{commit}")
+    refs = {}
+    for prefix in ("refs/remotes/origin/", "refs/remotes/invent/", "refs/heads/"):
+        for line in git(tree, "for-each-ref", "--format=%(refname)", prefix).splitlines():
+            n = line[len(prefix):]
+            if n != "HEAD":
+                refs[n] = line          # later prefixes (invent, local) win
+    refs.pop(ci_name, None)
+    os.makedirs(dest)
+    subprocess.check_call(["git", "init", "-q", "-b", "kde-ci-local-unborn", dest])
+    specs = [f"+{r}:refs/heads/{n}" for n, r in refs.items()]
+    if specs:
+        subprocess.check_call(["git", "-C", dest, "fetch", "-q", "--no-tags", tree, *specs])
+    subprocess.check_call(["git", "-C", dest, "fetch", "-q", "--no-tags", tree, f"+{sha}:refs/heads/{ci_name}"])
+    subprocess.check_call(["git", "-C", dest, "checkout", "-q", "--detach", sha])
+    return sha
+
+
+def predefined(project, ci_name, sha, job_name, job_id):
+    d = f"/builds/{NAMESPACE}/{project}"
+    return {
+        "CI": "true",
+        "CI_BUILDS_DIR": "/builds",
+        "CI_PROJECT_DIR": d,
+        "CI_PROJECT_NAME": project,
+        "CI_PROJECT_NAMESPACE": NAMESPACE,
+        "CI_PROJECT_PATH": f"{NAMESPACE}/{project}",
+        "CI_COMMIT_REF_NAME": ci_name,
+        "CI_COMMIT_BRANCH": ci_name,
+        "CI_COMMIT_SHA": sha,
+        "CI_COMMIT_REF_PROTECTED": "false",
+        "CI_REPOSITORY_URL": d,            # run-ci-build fetches the fork's branches from it
+        "CI_SERVER_URL": KDE,
+        "CI_PIPELINE_SOURCE": "push",
+        "CI_JOB_NAME": job_name,
+        "CI_JOB_ID": str(job_id),
+        "GIT_TERMINAL_PROMPT": "0",
+    }
+
+
+def expand(vars_):
+    out = dict(vars_)
+    for _ in range(5):
+        for k, v in list(out.items()):
+            out[k] = re.sub(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?", lambda m: out.get(m.group(1), m.group(0)), str(v))
+    return out
+
+
+def classify(job):
+    """-> (kind, detail).  kind: docker | proxy | skip"""
+    image = job.get("image")
+    name, entry = (image, None) if isinstance(image, str) else (image.get("name"), image.get("entrypoint"))
+    if name.startswith("storage.kde.org/vm-images/"):
+        vm = name.rsplit("/", 1)[1]
+        if vm in NOT_RUNNABLE:
+            return "skip", NOT_RUNNABLE[vm], None, None
+        if vm in VM_TO_DOCKER:
+            return "docker", VM_TO_DOCKER[vm], entry, vm
+        return "skip", f"VM image {vm} has no Docker twin", None, None
+    return "docker", name, entry, None
+
+
+def image_present(image):
+    return subprocess.run(["docker", "image", "inspect", image], stdout=subprocess.DEVNULL,
+                          stderr=subprocess.DEVNULL).returncode == 0
+
+
+SITECUSTOMIZE = """\
+import multiprocessing, os
+_n = int(os.environ.get('KDE_CI_LOCAL_THREADS', '4'))
+multiprocessing.cpu_count = lambda: _n
+os.cpu_count = lambda: _n
+"""
+
+# FreeBSD proxy: the pipeline's first step is to resolve the project's
+# dependencies and fetch them from the FreeBSD package registry; do the
+# resolution and check that every package exists there.
+RESOLVE_CHECK = r"""
+import os, sys
+sys.path.insert(0, 'ci-utilities')
+import yaml
+from components import CommonUtils, Dependencies, Package, PlatformFlavor
+platform = PlatformFlavor.PlatformFlavor(sys.argv[2])
+cfg = yaml.safe_load(open('ci-utilities/config/global.yml'))
+if os.path.exists('.kde-ci.yml'):
+    CommonUtils.recursiveUpdate(cfg, yaml.safe_load(open('.kde-ci.yml')))
+r = Dependencies.Resolver('ci-utilities/repo-metadata/projects-invent', 'ci-utilities/repo-metadata/branch-rules.yml', platform)
+reg = Package.Registry('/tmp/cache', os.environ['KDECI_GITLAB_SERVER'], None, os.environ['KDECI_PACKAGE_PROJECT'])
+bad = 0
+for kind in ('Dependencies', 'RuntimeDependencies'):
+    for ident, branch in sorted(r.resolve(cfg[kind], sys.argv[1]).items()):
+        nb = branch.replace('/', '-')
+        ok = any(p['identifier'] == ident and p['branch'] == nb for p in reg.remotePackages)
+        print(('ok      ' if ok else 'MISSING ') + f'{kind[:3]} {ident} @ {branch}')
+        bad += not ok
+if bad:
+    print(f'## {bad} dependency package(s) not found: the pipeline stops here (Package <name> was not found in branch <branch>)')
+sys.exit(1 if bad else 0)
+"""
+
+
+def job_script(job, cfg, env, extra_pre=None):
+    lines = ["set -eo pipefail", "export HOME=${HOME:-/tmp/home}; mkdir -p \"$HOME\""]
+    for k, v in sorted(env.items()):
+        lines.append(f"export {k}={shq(v)}")
+    lines.append("main() {")
+    for key in ("before_script", "script"):
+        for l in flat_script(job.get(key), cfg):
+            lines.append(f"echo {shq('$ ' + l.splitlines()[0][:200])}")
+            lines.append(l)
+    lines.append("}")
+    lines.append("set +e; ( set -eo pipefail; main ); rc=$?")
+    for l in flat_script(job.get("after_script"), cfg):
+        lines.append(f"echo {shq('$ (after_script) ' + l.splitlines()[0][:200])}")
+        lines.append(f"( {l} ) || true")
+    lines.append("exit $rc")
+    return "\n".join(lines) + "\n"
+
+
+def shq(s):
+    return "'" + str(s).replace("'", "'\"'\"'") + "'"
+
+
+def run_job(name, job, cfg, args, ctx):
+    kind, image, entry, vm = classify(job)
+    log = os.path.join(ctx["logs"], f"{ctx['project']}-{ctx['ci_name'].replace('/', '-')}-{name}.log")
+    if kind == "skip":
+        proxy = None
+        if name.startswith("freebsd"):
+            proxy = "freebsd"
+        else:
+            return ("SKIP", f"{image}", log, 0)
+    t0 = time.time()
+    proxy_mode = kind == "skip"
+    if proxy_mode:
+        image = VM_TO_DOCKER["suse-qt611"]
+        entry = None
+    elif not image_present(image):
+        if image.startswith("kde-ci-local/"):
+            return ("SKIP", "no Docker image of Qt 6.13: run 'kde-ci-local --build-qt613-image' once", log, 0)
+        print(f"  pulling {image} ...")
+        if run(["docker", "pull", "--platform", "linux/amd64", image], stdout=subprocess.DEVNULL).returncode:
+            return ("ERROR", f"cannot pull {image}", log, 0)
+
+    jobdir = os.path.join(ctx["trees"], f"{ctx['project']}-{name}")
+    shutil.rmtree(jobdir, ignore_errors=True)
+    sha = make_checkout(ctx["tree"], ctx["branch"], ctx["ci_name"], jobdir, ctx["project"])
+    env = {}
+    env.update({k: str(v) for k, v in (cfg.get("variables") or {}).items()})
+    env.update({k: str(v) for k, v in (job.get("variables") or {}).items()})
+    env.update(predefined(ctx["project"], ctx["ci_name"], sha, name, int(t0) % 100000))
+    env["KDE_CI_LOCAL_THREADS"] = CPUS
+    env = expand(env)
+    plat = env.get("KDECI_PLATFORM_PATH", "")
+    mount_cache = None
+    if env.get("KDECI_CACHE_PATH", "").startswith("/mnt/"):
+        mount_cache = "/mnt/" + env["KDECI_CACHE_PATH"].split("/")[2]
+
+    script_job = copy.deepcopy(job)
+    if proxy_mode:
+        # FreeBSD: step 1 resolve against the FreeBSD registry, step 2 build with clang
+        env["CC"], env["CXX"] = "clang", "clang++"
+        sc = flat_script(job.get("script"), cfg)
+        sc = [re.sub(r"--platform FreeBSD/Qt6/Shared", "--platform Linux/Qt6/Shared", l) for l in sc]
+        script_job["script"] = (
+            ["git config --global --add safe.directory $CI_PROJECT_DIR",
+             "python3 - \"$CI_COMMIT_REF_NAME\" FreeBSD/Qt6/Shared <<'PY'\n" + RESOLVE_CHECK + "PY"]
+            + ["export KDECI_CACHE_PATH=/mnt/suse-qt6.11/artifacts/ KDECI_PACKAGE_PROJECT=teams/ci-artifacts/suse-qt6.11",
+               "echo '## FreeBSD proxy: resolved above against the FreeBSD registry; now the same build, same flags, with clang on the SUSE image'"]
+            + [l for l in sc if "run-ci-build" in l]
+        )
+        script_job["after_script"] = None
+        mount_cache = "/mnt/suse-qt6.11"
+        plat = "suse-qt6.11"
+    script = job_script(script_job, cfg, env)
+    os.makedirs(ctx["logs"], exist_ok=True)
+    scriptfile = os.path.join(jobdir + ".sh")
+    open(scriptfile, "w").write(script)
+    sitedir = os.path.join(ctx["work"], "site")
+    os.makedirs(sitedir, exist_ok=True)
+    open(os.path.join(sitedir, "sitecustomize.py"), "w").write(SITECUSTOMIZE)
+
+    d = env["CI_PROJECT_DIR"]
+    cmd = ["docker", "run", "--rm", "--platform", "linux/amd64", "--user", "1000:1000",
+           "--cpus", CPUS, "--shm-size", "1g", "--init",
+           "-v", f"{jobdir}:{d}", "-w", d,
+           "-v", f"{scriptfile}:/job.sh:ro",
+           "-v", f"{sitedir}:/kdecilocal-site:ro",
+           "-e", "PYTHONPATH=/kdecilocal-site"]
+    if mount_cache:
+        cdir = os.path.join(ctx["work"], "cache", plat.replace("/", "_") if plat else "none")
+        os.makedirs(os.path.join(cdir, "artifacts"), exist_ok=True)
+        os.makedirs(os.path.join(cdir, "caches"), exist_ok=True)
+        cmd += ["-v", f"{cdir}:{mount_cache}"]
+    cmd += ["--entrypoint", "bash", image, "/job.sh"]
+    print(f"  running {name} in {image} (log: {log})")
+    with open(log, "w") as lf:
+        rc = run(cmd, stdout=lf, stderr=subprocess.STDOUT).returncode
+    dur = int(time.time() - t0)
+    if not args.keep:
+        # build trees hold root-free files owned by uid 1000; remove them to save space
+        shutil.rmtree(jobdir, ignore_errors=True)
+        os.path.exists(scriptfile) and os.remove(scriptfile)
+    note = "proxy for FreeBSD (clang build on SUSE + FreeBSD registry check)" if proxy_mode else ""
+    return ("PASS" if rc == 0 else "FAIL", note, log, dur)
+
+
+def build_qt613_image(work, ci):
+    d = os.path.join(work, "kde", "ci-images")
+    if not os.path.isdir(d):
+        run(["git", "clone", "-q", "--depth=1", f"{KDE}/sysadmin/ci-images.git", d], check=True)
+    ctxd = os.path.join(work, "kde", "qt613-context")
+    shutil.rmtree(ctxd, ignore_errors=True)
+    os.makedirs(ctxd)
+    shutil.copy(os.path.join(d, "suse-qt613", "build.sh"), ctxd)
+    # the Dockerfile of suse-qt611 is the pattern; the 613 one differs only in build.sh
+    shutil.copy(os.path.join(d, "suse-qt611", "Dockerfile"), ctxd)
+    sys.exit(run(["docker", "build", "--platform", "linux/amd64", "-t", "kde-ci-local/suse-qt613:latest", ctxd]).returncode)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0], formatter_class=argparse.RawDescriptionHelpFormatter,
+                                 epilog=__doc__)
+    ap.add_argument("tree", nargs="?", default=".")
+    ap.add_argument("--branch", help="branch (or commit) to test; default: the tree's current branch")
+    ap.add_argument("--ci-name", help="the branch name as pushed to invent when it differs from the local one "
+                    "(the pipeline's $CI_COMMIT_REF_NAME; KDE's '@same' rule reads it)")
+    ap.add_argument("--project", help="project name (default: the tree's folder name)")
+    ap.add_argument("--jobs", default="all", help="comma list of job names, or all | lint | build")
+    ap.add_argument("--list", action="store_true", help="list the jobs and how each is run, then stop")
+    ap.add_argument("--keep", action="store_true", help="keep the job trees (_build, _install) after the run")
+    ap.add_argument("--no-refresh", action="store_true", help="do not update the KDE sources (ci-utilities, repo-metadata)")
+    ap.add_argument("--build-qt613-image", action="store_true",
+                    help="build the Qt 6.13 job image from KDE's ci-images/suse-qt613/build.sh (once, ~12 GB)")
+    args = ap.parse_args()
+
+    work = os.environ.get("KDE_CI_LOCAL_WORK", "/K3D/temp/kde-ci-local")
+    os.makedirs(work, exist_ok=True)
+    ci = ensure_kde_sources(work, not args.no_refresh)
+    if args.build_qt613_image:
+        build_qt613_image(work, ci)
+
+    tree = os.path.abspath(args.tree)
+    branch = args.branch or git(tree, "symbolic-ref", "--short", "HEAD")
+    ci_name = args.ci_name or branch
+    project = args.project or os.path.basename(tree.rstrip("/"))
+    cfg = load_with_includes(os.path.join(tree, ".gitlab-ci.yml"), ci)
+    jobs = []
+    for name, j in cfg.items():
+        if name.startswith(".") or not isinstance(j, dict) or "stage" not in j and "extends" not in j and "script" not in j:
+            continue
+        if name in ("variables", "stages", "workflow", "default", "include"):
+            continue
+        job = resolve_job(cfg, name)
+        if "script" not in job or "image" not in job:
+            continue
+        jobs.append((name, job))
+    jobs.sort(key=lambda nj: STAGES.index(nj[1].get("stage", "test")) if nj[1].get("stage", "test") in STAGES else 9)
+
+    sel = args.jobs
+    chosen = []
+    for name, job in jobs:
+        stage = job.get("stage", "test")
+        if stage not in STAGES:
+            continue
+        if sel == "lint" and stage != "validate" and name != "cppcheck":
+            continue
+        if sel == "build" and stage == "validate":
+            continue
+        if sel not in ("all", "lint", "build") and name not in sel.split(","):
+            continue
+        chosen.append((name, job))
+
+    print(f"kde-ci-local: {project} @ {branch}" + (f" (pushed as {ci_name})" if ci_name != branch else "")
+          + f", jobs from {os.path.join(tree, '.gitlab-ci.yml')}")
+    if args.list:
+        for name, job in jobs:
+            kind, image, _, _ = classify(job)
+            how = f"docker  {image}" if kind == "docker" else (
+                "proxy   suse-qt611 build with clang + FreeBSD registry check (" + image + ")" if name.startswith("freebsd") else f"SKIP    {image}")
+            print(f"  [{job.get('stage', 'test'):8}] {name:42} {how}")
+        return 0
+
+    ctx = dict(work=work, tree=tree, branch=branch, ci_name=ci_name, project=project,
+               trees=os.path.join(work, "trees"), logs=os.path.join(work, "logs"))
+    os.makedirs(ctx["trees"], exist_ok=True)
+    results = []
+    for name, job in chosen:
+        print(f"[{job.get('stage')}] {name}")
+        results.append((name, job, run_job(name, job, cfg, args, ctx)))
+    print("\nresult:")
+    failed = 0
+    for name, job, (st, note, log, dur) in results:
+        print(f"  {st:5} {name:42} {dur:5}s  {note}" + (f"  {log}" if st in ('FAIL', 'ERROR') else ""))
+        if st in ("FAIL", "ERROR") and not job.get("allow_failure"):
+            failed += 1
+    print("GREEN" if not failed else f"RED ({failed} job(s) failed)")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
