@@ -1,0 +1,277 @@
+From 2bd1fa722a8b74793a83ebfe217bce97e0726416 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 21:49:08 -0300
+Subject: [PATCH 1/2] Show one view of a stereoscopic 3D video
+
+A side by side or top and bottom video (the frame packing arrangement SEI of
+H.264 and H.265, Matroska's StereoMode) was shown as it is stored: both views
+squeezed into one picture. QtMultimedia now tells the packing of the frames
+(QVideoFrameFormat::stereoMode), and Backend exposes it.
+
+Show the left view, stretched to the shape of a view, which is what a screen
+shows, and add a 3D Video menu to the application menu with the right view and
+both views as stored. The stream does not say whether its views are half or
+full size, so the shape of the frame decides: a side by side frame at least 2.5
+times as wide as high, or a top and bottom frame at most 1.2 times as wide as
+high, holds full size views.
+
+Needs QtMultimedia with QVideoFrameFormat::stereoMode (Qt 6.12).
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/backend.cpp         | 34 ++++++++++++++++++++++++++
+ src/backend.h           | 40 +++++++++++++++++++++---------
+ src/qml/ControlsBar.qml | 20 +++++++++++++++
+ src/qml/PlayerPage.qml  | 54 +++++++++++++++++++++++++++++++++++------
+ 4 files changed, 130 insertions(+), 18 deletions(-)
+
+diff --git a/src/backend.cpp b/src/backend.cpp
+index bf86e2f..21897aa 100644
+--- a/src/backend.cpp
++++ b/src/backend.cpp
+@@ -3,6 +3,7 @@
+ 
+ #include "backend.h"
+ 
++#include <QtMultimedia/QVideoFrame>
+ #include <QtMultimedia/QVideoSink>
+ 
+ using namespace Qt::StringLiterals;
+@@ -11,6 +12,19 @@ BackendAttachedType::BackendAttachedType(QVideoSink *videoSink, QObject *parent)
+     : QObject(parent)
+     , m_videoSink(videoSink)
+ {
++    if (!m_videoSink) {
++        return;
++    }
++    // The packing is that of the stream, so it is read from its frames; the frames after a stop are empty and say nothing
++    connect(m_videoSink, &QVideoSink::videoFrameChanged, this, [this](const QVideoFrame &frame) {
++        if (!frame.isValid()) {
++            return;
++        }
++        if (const auto stereoMode = frame.surfaceFormat().stereoMode(); stereoMode != m_stereoMode) {
++            m_stereoMode = stereoMode;
++            Q_EMIT stereoChanged();
++        }
++    });
+ }
+ 
+ bool BackendAttachedType::isFFmpeg() const
+@@ -33,6 +47,26 @@ bool BackendAttachedType::isFFmpeg() const
+     return true;
+ }
+ 
++Backend::StereoPacking BackendAttachedType::stereoPacking() const
++{
++    switch (m_stereoMode) {
++    case QVideoFrameFormat::StereoMode_SideBySide:
++    case QVideoFrameFormat::StereoMode_SideBySideRightFirst:
++        return Backend::SideBySide;
++    case QVideoFrameFormat::StereoMode_TopBottom:
++    case QVideoFrameFormat::StereoMode_TopBottomRightFirst:
++        return Backend::TopBottom;
++    case QVideoFrameFormat::StereoMode_None:
++        break;
++    }
++    return Backend::Mono;
++}
++
++bool BackendAttachedType::isStereoRightFirst() const
++{
++    return m_stereoMode == QVideoFrameFormat::StereoMode_SideBySideRightFirst || m_stereoMode == QVideoFrameFormat::StereoMode_TopBottomRightFirst;
++}
++
+ BackendAttachedType *Backend::qmlAttachedProperties(QObject *object)
+ {
+     auto videoSink = qobject_cast<QVideoSink *>(object);
+diff --git a/src/backend.h b/src/backend.h
+index 0a19952..731a4cc 100644
+--- a/src/backend.h
++++ b/src/backend.h
+@@ -3,31 +3,49 @@
+ 
+ #pragma once
+ 
++#include <QtMultimedia/QVideoFrameFormat>
+ #include <QtQmlIntegration>
+ 
+ class QVideoSink;
++class BackendAttachedType;
++
++class Backend : public QObject
++{
++    Q_OBJECT
++    QML_ATTACHED(BackendAttachedType)
++    QML_ELEMENT
++public:
++    // How the frames of a stereoscopic 3D video hold the two views
++    enum StereoPacking {
++        Mono,
++        SideBySide,
++        TopBottom,
++    };
++    Q_ENUM(StereoPacking)
++
++    using QObject::QObject;
++
++    static BackendAttachedType *qmlAttachedProperties(QObject *object);
++};
+ 
+ class BackendAttachedType : public QObject
+ {
+     Q_OBJECT
+     QML_ANONYMOUS
+     Q_PROPERTY(bool ffmpeg READ isFFmpeg CONSTANT)
++    Q_PROPERTY(Backend::StereoPacking stereoPacking READ stereoPacking NOTIFY stereoChanged)
++    Q_PROPERTY(bool stereoRightFirst READ isStereoRightFirst NOTIFY stereoChanged)
+ public:
+     explicit BackendAttachedType(QVideoSink *videoSink, QObject *parent = nullptr);
+ 
+     [[nodiscard]] bool isFFmpeg() const;
++    [[nodiscard]] Backend::StereoPacking stereoPacking() const;
++    [[nodiscard]] bool isStereoRightFirst() const;
++
++Q_SIGNALS:
++    void stereoChanged();
+ 
+ private:
+     QVideoSink *m_videoSink;
+-};
+-
+-class Backend : public QObject
+-{
+-    Q_OBJECT
+-    QML_ATTACHED(BackendAttachedType)
+-    QML_ELEMENT
+-public:
+-    using QObject::QObject;
+-
+-    static BackendAttachedType *qmlAttachedProperties(QObject *object);
++    QVideoFrameFormat::StereoMode m_stereoMode = QVideoFrameFormat::StereoMode_None;
+ };
+diff --git a/src/qml/ControlsBar.qml b/src/qml/ControlsBar.qml
+index f1afbda..c7a9015 100644
+--- a/src/qml/ControlsBar.qml
++++ b/src/qml/ControlsBar.qml
+@@ -222,6 +222,26 @@ OverlayPopup {
+                         }
+                     }
+                 }
++                QQC2.Menu {
++                    icon.name: "view-3d-symbolic"
++                    title: i18nc("@action:button stereoscopic 3D view selector", "3D Video")
++                    enabled: videoPage.stereo
++                    QQC2.RadioDelegate {
++                        text: i18nc("@action:button stereoscopic 3D view selector", "Left View")
++                        checked: videoPage.stereoView === PlayerPage.LeftView
++                        onToggled: videoPage.stereoView = PlayerPage.LeftView
++                    }
++                    QQC2.RadioDelegate {
++                        text: i18nc("@action:button stereoscopic 3D view selector", "Right View")
++                        checked: videoPage.stereoView === PlayerPage.RightView
++                        onToggled: videoPage.stereoView = PlayerPage.RightView
++                    }
++                    QQC2.RadioDelegate {
++                        text: i18nc("@action:button stereoscopic 3D view selector, both views as the video holds them", "Both Views")
++                        checked: videoPage.stereoView === PlayerPage.BothViews
++                        onToggled: videoPage.stereoView = PlayerPage.BothViews
++                    }
++                }
+                 QQC2.Menu {
+                     icon.name: "kdenlive-add-clip-symbolic"
+                     title: i18nc("@action:button track selector", "Video Track")
+diff --git a/src/qml/PlayerPage.qml b/src/qml/PlayerPage.qml
+index 4eb9507..ffb6420 100644
+--- a/src/qml/PlayerPage.qml
++++ b/src/qml/PlayerPage.qml
+@@ -14,9 +14,18 @@ import org.kde.dragon as Dragon
+ Kirigami.Page {
+     id: videoPage
+ 
++    enum StereoView {
++        LeftView,
++        RightView,
++        BothViews
++    }
++
+     property var storedVisibility: null
+     property alias player: player
+     property alias videoContainer: videoContainer
++    // Which view of a stereoscopic 3D video is shown, see the 3D Video menu
++    property int stereoView: PlayerPage.LeftView
++    readonly property bool stereo: video.videoSink.Backend.stereoPacking !== Dragon.Backend.Mono
+     required property QtObject fullscreenAction
+ 
+     // Depending on whether the About page is on the stack we'll either want a header (about page) or not (video page)
+@@ -151,9 +160,40 @@ Please <link url="%1">contact the %2 developers</link> about this issue, or to f
+         color: "black"
+         visible: (player.source.toString()?.length > 0) ?? false // source should never be nullish so .toString() always works!
+ 
+-        Multimedia.VideoOutput {
+-            id: video
+-            anchors.fill: parent
++        // The part of the video that is shown: all of it, or one view of a stereoscopic 3D video, which
++        // is half of its frame stretched to the shape of a view. A stream does not say whether its views
++        // are half or full size, so the shape of the frame decides: a frame at least 2.5 times as wide
++        // as high holds two full size views side by side, one at most 1.2 times as wide as high holds two
++        // full size views on top of each other.
++        Item {
++            id: videoView
++
++            readonly property bool oneView: videoPage.stereo && videoPage.stereoView !== PlayerPage.BothViews
++            readonly property bool sideBySide: video.videoSink.Backend.stereoPacking === Dragon.Backend.SideBySide
++            readonly property real frameAspect: video.sourceRect.height > 0 ? video.sourceRect.width / video.sourceRect.height : 1
++            readonly property bool fullSizeViews: sideBySide ? frameAspect >= 2.5 : frameAspect <= 1.2
++            readonly property real viewAspect: sideBySide ? (fullSizeViews ? frameAspect / 2 : frameAspect)
++                                                          : (fullSizeViews ? frameAspect * 2 : frameAspect)
++            readonly property real viewWidth: Math.min(videoContainer.width, videoContainer.height * viewAspect)
++            readonly property real viewHeight: Math.min(videoContainer.height, videoContainer.width / viewAspect)
++            // Which half of the frame holds the view that is shown
++            readonly property int slot: (videoPage.stereoView === PlayerPage.RightView) !== video.videoSink.Backend.stereoRightFirst ? 1 : 0
++            readonly property real contentWidth: oneView ? width : video.contentRect.width
++
++            clip: oneView
++            width: oneView ? viewWidth : videoContainer.width
++            height: oneView ? viewHeight : videoContainer.height
++            x: (videoContainer.width - width) / 2
++            y: (videoContainer.height - height) / 2
++
++            Multimedia.VideoOutput {
++                id: video
++                fillMode: videoView.oneView ? Multimedia.VideoOutput.Stretch : Multimedia.VideoOutput.PreserveAspectFit
++                width: videoView.oneView && videoView.sideBySide ? videoView.width * 2 : videoView.width
++                height: videoView.oneView && !videoView.sideBySide ? videoView.height * 2 : videoView.height
++                x: videoView.oneView && videoView.sideBySide ? -videoView.slot * videoView.width : 0
++                y: videoView.oneView && !videoView.sideBySide ? -videoView.slot * videoView.height : 0
++            }
+         }
+ 
+         Multimedia.AudioOutput {
+@@ -280,12 +320,12 @@ Please <link url="%1">contact the %2 developers</link> about this issue, or to f
+             visible: opacity > 0
+             opacity: 0
+             implicitWidth: Kirigami.Units.gridUnit
+-            implicitHeight: video.height / 1.5
++            implicitHeight: videoView.height / 1.5
+             border.color: displayColor
+             border.width: 2
+-            anchors.right: video.right
++            anchors.right: videoView.right
+             anchors.rightMargin: Kirigami.Units.gridUnit * 2
+-            y: video.height / 2 - height / 2
++            y: videoView.y + videoView.height / 2 - height / 2
+             color: "transparent"
+ 
+             onVolumeChanged: {
+@@ -326,7 +366,7 @@ Please <link url="%1">contact the %2 developers</link> about this issue, or to f
+                 property Kirigami.Heading fittingHeader: Kirigami.Heading  {
+                     fontSizeMode: Text.Fit
+                     wrapMode: Text.NoWrap
+-                    width: video.contentRect.width * 0.5
++                    width: videoView.contentWidth * 0.5
+ 
+                     font.pointSize: Kirigami.Theme.defaultFont.pointSize * 10
+                     minimumPixelSize: 2 // Kirigami.Theme.defaultFont.pointSize * 1.50
+-- 
+2.53.0
+

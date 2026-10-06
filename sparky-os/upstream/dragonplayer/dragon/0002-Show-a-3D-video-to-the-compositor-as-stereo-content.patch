@@ -1,0 +1,760 @@
+From 472bc8447c58c0b41d1111af33af634bb6e64503 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 21:48:35 -0300
+Subject: [PATCH 2/2] Show a 3D video to the compositor as stereo content
+
+Under a compositor that takes stereo content declarations (kde_stereo_content_v1,
+with wl_subcompositor, wp_viewporter and wl_shm), the video of a stereoscopic 3D
+file is drawn into a surface of its own under the window's surface, both views
+side by side at the size of one view, the left eye first, and declared as full
+side by side. The controls stay in the window's surface over it, the same in both
+eyes, and what the layer does not cover is black. Qt creates subsurfaces only
+above their parent, so the layer is a wl_subsurface made here.
+
+The 3D Video menu gets a 3D entry (the default where the layer is supported) and
+Display Settings, which opens the screen's settings where its 3D mode is chosen.
+Everywhere else Dragon Player works as before.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ CMakeLists.txt          |   7 +
+ src/CMakeLists.txt      |  16 +-
+ src/qml/ControlsBar.qml |  16 ++
+ src/qml/Main.qml        |   2 +
+ src/qml/PlayerPage.qml  |  40 +++-
+ src/stereolayer.cpp     | 448 ++++++++++++++++++++++++++++++++++++++++
+ src/stereolayer.h       |  66 ++++++
+ 7 files changed, 588 insertions(+), 7 deletions(-)
+ create mode 100644 src/stereolayer.cpp
+ create mode 100644 src/stereolayer.h
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 9721cf7..f1fd222 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -48,8 +48,15 @@ find_package(KF6 ${KF_MIN_VERSION} REQUIRED
+     Config
+ )
+ 
++find_package(Qt6 ${QT_MIN_VERSION} CONFIG REQUIRED COMPONENTS GuiPrivate)
++find_package(WaylandScanner REQUIRED)
++
+ find_package(PkgConfig)
+ pkg_check_modules(libavcodec REQUIRED IMPORTED_TARGET libavcodec)
++pkg_check_modules(WAYLAND_CLIENT REQUIRED IMPORTED_TARGET wayland-client)
++pkg_check_modules(WAYLAND_PROTOCOLS REQUIRED wayland-protocols)
++pkg_check_modules(STEREO_DECLARE REQUIRED IMPORTED_TARGET stereo-declare)
++pkg_get_variable(WAYLAND_PROTOCOLS_DIR wayland-protocols pkgdatadir)
+ 
+ configure_file(config.h.in ${CMAKE_CURRENT_BINARY_DIR}/config.h)
+ 
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index c16d27e..b8eb132 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -6,6 +6,11 @@ ecm_setup_version(${PROJECT_VERSION}
+                   VARIABLE_PREFIX DRAGON
+                   VERSION_HEADER version.h)
+ 
++ecm_add_wayland_client_protocol(DRAGON_WAYLAND_SOURCES
++    PROTOCOL ${WAYLAND_PROTOCOLS_DIR}/stable/viewporter/viewporter.xml
++    BASENAME viewporter
++)
++
+ ecm_add_qml_module(dragonmodule URI org.kde.dragon VERSION 1.0 GENERATE_PLUGIN_SOURCE)
+ ecm_target_qml_sources(dragonmodule
+     SOURCES
+@@ -25,7 +30,9 @@ target_sources(dragonmodule
+         mpris2/mpris2.cpp
+         backend.cpp
+         fileopen.cpp
+-        sandbox.cpp)
++        sandbox.cpp
++        stereolayer.cpp
++        ${DRAGON_WAYLAND_SOURCES})
+ target_link_libraries(dragonmodule
+     PRIVATE
+         Qt6::Core
+@@ -37,9 +44,12 @@ target_link_libraries(dragonmodule
+         Qt6::Qml
+         Qt6::Quick
+         Qt6::Multimedia
+-        PkgConfig::libavcodec)
++        Qt6::GuiPrivate
++        PkgConfig::libavcodec
++        PkgConfig::WAYLAND_CLIENT
++        PkgConfig::STEREO_DECLARE)
+ # Set mpris2 as include dir so the qml plugin source can find it
+-target_include_directories(dragonmodule PRIVATE "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/mpris2>")
++target_include_directories(dragonmodule PRIVATE "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/mpris2>" ${CMAKE_CURRENT_BINARY_DIR})
+ ecm_finalize_qml_module(dragonmodule DESTINATION ${KDE_INSTALL_QMLDIR})
+ 
+ add_executable(dragon main.cpp)
+diff --git a/src/qml/ControlsBar.qml b/src/qml/ControlsBar.qml
+index c7a9015..f625568 100644
+--- a/src/qml/ControlsBar.qml
++++ b/src/qml/ControlsBar.qml
+@@ -226,6 +226,13 @@ OverlayPopup {
+                     icon.name: "view-3d-symbolic"
+                     title: i18nc("@action:button stereoscopic 3D view selector", "3D Video")
+                     enabled: videoPage.stereo
++                    QQC2.RadioDelegate {
++                        visible: videoPage.stereoLayer.supported
++                        height: visible ? implicitHeight : 0
++                        text: i18nc("@action:button stereoscopic 3D view selector, shown in 3D by the display", "3D")
++                        checked: videoPage.stereoView === PlayerPage.Stereo3D
++                        onToggled: videoPage.stereoView = PlayerPage.Stereo3D
++                    }
+                     QQC2.RadioDelegate {
+                         text: i18nc("@action:button stereoscopic 3D view selector", "Left View")
+                         checked: videoPage.stereoView === PlayerPage.LeftView
+@@ -241,6 +248,15 @@ OverlayPopup {
+                         checked: videoPage.stereoView === PlayerPage.BothViews
+                         onToggled: videoPage.stereoView = PlayerPage.BothViews
+                     }
++                    QQC2.MenuSeparator {
++                        visible: videoPage.stereoLayer.supported
++                    }
++                    QQC2.MenuItem {
++                        visible: videoPage.stereoLayer.supported
++                        height: visible ? implicitHeight : 0
++                        text: i18nc("@action:button opens the display settings, where the 3D mode of the screen is chosen", "Display Settings…")
++                        onTriggered: videoPage.stereoLayer.openDisplaySettings()
++                    }
+                 }
+                 QQC2.Menu {
+                     icon.name: "kdenlive-add-clip-symbolic"
+diff --git a/src/qml/Main.qml b/src/qml/Main.qml
+index f6299d4..b469ec7 100644
+--- a/src/qml/Main.qml
++++ b/src/qml/Main.qml
+@@ -56,6 +56,8 @@ Kirigami.ApplicationWindow {
+         tooltip: text
+     }
+ 
++    color: playerPage.stereoLayerActive ? "transparent" : Kirigami.Theme.backgroundColor
++
+     title: {
+         if (!playerPage.player.source) {
+             return ""
+diff --git a/src/qml/PlayerPage.qml b/src/qml/PlayerPage.qml
+index ffb6420..c602aac 100644
+--- a/src/qml/PlayerPage.qml
++++ b/src/qml/PlayerPage.qml
+@@ -17,14 +17,17 @@ Kirigami.Page {
+     enum StereoView {
+         LeftView,
+         RightView,
+-        BothViews
++        BothViews,
++        Stereo3D
+     }
+ 
+     property var storedVisibility: null
+     property alias player: player
+     property alias videoContainer: videoContainer
+     // Which view of a stereoscopic 3D video is shown, see the 3D Video menu
+-    property int stereoView: PlayerPage.LeftView
++    property int stereoView: stereoLayer.supported ? PlayerPage.Stereo3D : PlayerPage.LeftView
++    readonly property bool stereoLayerActive: stereoLayer.active
++    property alias stereoLayer: stereoLayer
+     readonly property bool stereo: video.videoSink.Backend.stereoPacking !== Dragon.Backend.Mono
+     required property QtObject fullscreenAction
+ 
+@@ -42,6 +45,11 @@ Kirigami.Page {
+         }
+     }
+ 
++    // The controls are over the video, which is in a layer under the window while it is in 3D
++    background: Rectangle {
++        color: stereoLayer.active ? "transparent" : Kirigami.Theme.backgroundColor
++    }
++
+     Kirigami.Action {
+         id: togglePauseAction
+         text: player.paused || player.stopped ? i18nc("@action:button", "Play") : i18nc("@action:button", "Pause")
+@@ -149,7 +157,9 @@ Please <link url="%1">contact the %2 developers</link> about this issue, or to f
+         player.seek(time, precise)
+     }
+ 
+-    WelcomeView {}
++    WelcomeView {
++        visible: !videoContainer.visible
++    }
+ 
+     Rectangle {
+         id: videoContainer
+@@ -157,7 +167,7 @@ Please <link url="%1">contact the %2 developers</link> about this issue, or to f
+         anchors.right: parent.right
+         anchors.left: parent.left
+         anchors.bottom: parent.bottom
+-        color: "black"
++        color: stereoLayer.active ? "transparent" : "black"
+         visible: (player.source.toString()?.length > 0) ?? false // source should never be nullish so .toString() always works!
+ 
+         // The part of the video that is shown: all of it, or one view of a stereoscopic 3D video, which
+@@ -188,6 +198,7 @@ Please <link url="%1">contact the %2 developers</link> about this issue, or to f
+ 
+             Multimedia.VideoOutput {
+                 id: video
++                visible: !stereoLayer.active
+                 fillMode: videoView.oneView ? Multimedia.VideoOutput.Stretch : Multimedia.VideoOutput.PreserveAspectFit
+                 width: videoView.oneView && videoView.sideBySide ? videoView.width * 2 : videoView.width
+                 height: videoView.oneView && !videoView.sideBySide ? videoView.height * 2 : videoView.height
+@@ -196,6 +207,27 @@ Please <link url="%1">contact the %2 developers</link> about this issue, or to f
+             }
+         }
+ 
++        StereoLayer {
++            id: stereoLayer
++            window: appWindow
++            videoSink: video.videoSink
++            active: videoPage.stereo && videoPage.stereoView === PlayerPage.Stereo3D
++            rect: videoView.mapToItem(null, 0, 0, videoView.width, videoView.height)
++        }
++
++        // What the layer does not cover is black
++        Repeater {
++            model: stereoLayer.active ? 4 : 0
++            Rectangle {
++                required property int index
++                color: "black"
++                x: index === 3 ? videoView.x + videoView.width : 0
++                y: index === 1 ? videoView.y + videoView.height : index === 2 || index === 3 ? videoView.y : 0
++                width: index === 2 ? videoView.x : index === 3 ? videoContainer.width - x : videoContainer.width
++                height: index === 0 ? videoView.y : index === 1 ? videoContainer.height - y : videoView.height
++            }
++        }
++
+         Multimedia.AudioOutput {
+             id: audio
+             BoundaryRule on volume {
+diff --git a/src/stereolayer.cpp b/src/stereolayer.cpp
+new file mode 100644
+index 0000000..441b468
+--- /dev/null
++++ b/src/stereolayer.cpp
+@@ -0,0 +1,448 @@
++// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++#include "stereolayer.h"
++
++#include <cstring>
++
++#include <QGuiApplication>
++#include <QLoggingCategory>
++#include <QPainter>
++#include <QProcess>
++#include <QtGui/qpa/qplatformwindow_p.h>
++
++#include <sys/mman.h>
++#include <unistd.h>
++#include <wayland-client.h>
++
++#include <stereo-declare.h>
++
++#include "wayland-viewporter-client-protocol.h"
++
++Q_STATIC_LOGGING_CATEGORY(DragonStereoLayer, "dragon.stereolayer")
++
++namespace
++{
++struct Globals {
++    wl_compositor *compositor{nullptr};
++    wl_subcompositor *subcompositor{nullptr};
++    wl_shm *shm{nullptr};
++    wp_viewporter *viewporter{nullptr};
++    bool stereo{false};
++};
++
++void registryGlobal(void *data, wl_registry *registry, uint32_t name, const char *interface, uint32_t version)
++{
++    auto *globals = static_cast<Globals *>(data);
++    if (!strcmp(interface, wl_compositor_interface.name)) {
++        globals->compositor = static_cast<wl_compositor *>(wl_registry_bind(registry, name, &wl_compositor_interface, qMin(version, 4u)));
++    } else if (!strcmp(interface, wl_subcompositor_interface.name)) {
++        globals->subcompositor = static_cast<wl_subcompositor *>(wl_registry_bind(registry, name, &wl_subcompositor_interface, 1));
++    } else if (!strcmp(interface, wl_shm_interface.name)) {
++        globals->shm = static_cast<wl_shm *>(wl_registry_bind(registry, name, &wl_shm_interface, 1));
++    } else if (!strcmp(interface, wp_viewporter_interface.name)) {
++        globals->viewporter = static_cast<wp_viewporter *>(wl_registry_bind(registry, name, &wp_viewporter_interface, 1));
++    } else if (!strcmp(interface, "kde_stereo_content_manager_v1")) {
++        globals->stereo = true;
++    }
++}
++
++void registryGlobalRemove(void *, wl_registry *, uint32_t)
++{
++}
++
++const wl_registry_listener registryListener = {registryGlobal, registryGlobalRemove};
++
++wl_display *waylandDisplay()
++{
++    if (QGuiApplication::platformName() != QLatin1String("wayland")) {
++        return nullptr;
++    }
++    auto *app = qGuiApp->nativeInterface<QNativeInterface::QWaylandApplication>();
++    return app ? app->display() : nullptr;
++}
++
++// Reads the globals on a queue of its own, so that nothing is dispatched on the queue Qt uses
++wl_registry *readGlobals(wl_display *display, wl_event_queue *queue, Globals &globals)
++{
++    auto *wrapper = static_cast<wl_display *>(wl_proxy_create_wrapper(display));
++    wl_proxy_set_queue(reinterpret_cast<wl_proxy *>(wrapper), queue);
++    wl_registry *registry = wl_display_get_registry(wrapper);
++    wl_proxy_wrapper_destroy(wrapper);
++    wl_registry_add_listener(registry, &registryListener, &globals);
++    wl_display_roundtrip_queue(display, queue);
++    return registry;
++}
++
++void destroyGlobals(Globals &globals)
++{
++    if (globals.compositor) {
++        wl_compositor_destroy(globals.compositor);
++    }
++    if (globals.subcompositor) {
++        wl_subcompositor_destroy(globals.subcompositor);
++    }
++    if (globals.shm) {
++        wl_shm_destroy(globals.shm);
++    }
++    if (globals.viewporter) {
++        wp_viewporter_destroy(globals.viewporter);
++    }
++}
++
++// A buffer of the layer in shared memory, which the compositor gives back with release
++struct Buffer {
++    wl_buffer *buffer{nullptr};
++    uchar *data{nullptr};
++    size_t size{0};
++    QSize pixels;
++    bool busy{false};
++};
++
++void bufferRelease(void *data, wl_buffer *)
++{
++    static_cast<Buffer *>(data)->busy = false;
++}
++
++const wl_buffer_listener bufferListener = {bufferRelease};
++
++void destroyBuffer(Buffer &buffer)
++{
++    if (buffer.buffer) {
++        wl_buffer_destroy(buffer.buffer);
++    }
++    if (buffer.data) {
++        munmap(buffer.data, buffer.size);
++    }
++    buffer = {};
++}
++
++bool createBuffer(Buffer &buffer, wl_shm *shm, wl_event_queue *queue, const QSize &pixels)
++{
++    const int stride = pixels.width() * 4;
++    const size_t size = size_t(stride) * pixels.height();
++    const int fd = memfd_create("dragon-stereo-layer", MFD_CLOEXEC);
++    if (fd < 0) {
++        return false;
++    }
++    if (ftruncate(fd, off_t(size)) < 0) {
++        close(fd);
++        return false;
++    }
++    void *data = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
++    if (data == MAP_FAILED) {
++        close(fd);
++        return false;
++    }
++    wl_shm_pool *pool = wl_shm_create_pool(shm, fd, int(size));
++    close(fd);
++    wl_buffer *wlBuffer = wl_shm_pool_create_buffer(pool, 0, pixels.width(), pixels.height(), stride, WL_SHM_FORMAT_XRGB8888);
++    wl_shm_pool_destroy(pool);
++    wl_proxy_set_queue(reinterpret_cast<wl_proxy *>(wlBuffer), queue);
++    buffer.buffer = wlBuffer;
++    buffer.data = static_cast<uchar *>(data);
++    buffer.size = size;
++    buffer.pixels = pixels;
++    buffer.busy = false;
++    wl_buffer_add_listener(wlBuffer, &bufferListener, &buffer);
++    return true;
++}
++}
++
++struct StereoLayer::Private {
++    QPointer<QQuickWindow> window;
++    QPointer<QVideoSink> videoSink;
++    QMetaObject::Connection frameConnection;
++    bool active{false};
++    QRectF rect;
++    QVideoFrame frame;
++
++    wl_display *display{nullptr};
++    wl_event_queue *queue{nullptr};
++    wl_registry *registry{nullptr};
++    Globals globals;
++    wl_surface *surface{nullptr};
++    wl_subsurface *subsurface{nullptr};
++    wp_viewport *viewport{nullptr};
++    Buffer buffers[2];
++    bool declared{false};
++    bool stereoInitialized{false};
++    QRectF placed;
++};
++
++bool StereoLayer::isSupported()
++{
++    static const bool supported = [] {
++        wl_display *display = waylandDisplay();
++        if (!display) {
++            return false;
++        }
++        wl_event_queue *queue = wl_display_create_queue(display);
++        Globals globals;
++        wl_registry *registry = readGlobals(display, queue, globals);
++        const bool ok = globals.compositor && globals.subcompositor && globals.shm && globals.viewporter && globals.stereo;
++        destroyGlobals(globals);
++        wl_registry_destroy(registry);
++        wl_event_queue_destroy(queue);
++        return ok;
++    }();
++    return supported;
++}
++
++StereoLayer::StereoLayer(QObject *parent)
++    : QObject(parent)
++    , d(std::make_unique<Private>())
++{
++}
++
++StereoLayer::~StereoLayer()
++{
++    destroy();
++}
++
++QQuickWindow *StereoLayer::window() const
++{
++    return d->window;
++}
++
++void StereoLayer::setWindow(QQuickWindow *window)
++{
++    if (d->window == window) {
++        return;
++    }
++    destroy();
++    d->window = window;
++    // The window has to be created with an alpha buffer for the controls to be over the layer
++    if (window && isSupported() && !window->handle()) {
++        QSurfaceFormat format = window->format();
++        format.setAlphaBufferSize(8);
++        window->setFormat(format);
++    }
++    Q_EMIT windowChanged();
++    create();
++}
++
++QVideoSink *StereoLayer::videoSink() const
++{
++    return d->videoSink;
++}
++
++void StereoLayer::setVideoSink(QVideoSink *videoSink)
++{
++    if (d->videoSink == videoSink) {
++        return;
++    }
++    QObject::disconnect(d->frameConnection);
++    d->videoSink = videoSink;
++    if (videoSink) {
++        d->frameConnection = connect(videoSink, &QVideoSink::videoFrameChanged, this, [this](const QVideoFrame &frame) {
++            if (frame.isValid()) {
++                d->frame = frame;
++                draw();
++            }
++        });
++    }
++    Q_EMIT videoSinkChanged();
++}
++
++bool StereoLayer::isActive() const
++{
++    return d->active;
++}
++
++void StereoLayer::setActive(bool active)
++{
++    active = active && isSupported();
++    if (d->active == active) {
++        return;
++    }
++    d->active = active;
++    if (active) {
++        create();
++    } else {
++        destroy();
++    }
++    Q_EMIT activeChanged();
++}
++
++QRectF StereoLayer::rect() const
++{
++    return d->rect;
++}
++
++void StereoLayer::setRect(const QRectF &rect)
++{
++    if (d->rect == rect) {
++        return;
++    }
++    d->rect = rect;
++    Q_EMIT rectChanged();
++    draw();
++}
++
++void StereoLayer::openDisplaySettings() const
++{
++    QProcess::startDetached(QStringLiteral("kcmshell6"), {QStringLiteral("kcm_kscreen")});
++}
++
++void StereoLayer::create()
++{
++    if (d->surface || !d->active || !d->window) {
++        return;
++    }
++    auto *windowInterface = d->window->nativeInterface<QNativeInterface::Private::QWaylandWindow>();
++    if (!windowInterface || !windowInterface->surface()) {
++        return;
++    }
++
++    d->display = waylandDisplay();
++    d->queue = wl_display_create_queue(d->display);
++    d->registry = readGlobals(d->display, d->queue, d->globals);
++    if (stereo_declare_wayland_init(d->display, d->queue) != 0) {
++        destroy();
++        return;
++    }
++    d->stereoInitialized = true;
++    wl_display_roundtrip_queue(d->display, d->queue);
++    if (!stereo_supported_wayland()) {
++        destroy();
++        return;
++    }
++
++    d->surface = wl_compositor_create_surface(d->globals.compositor);
++    d->subsurface = wl_subcompositor_get_subsurface(d->globals.subcompositor, d->surface, windowInterface->surface());
++    wl_subsurface_place_below(d->subsurface, windowInterface->surface());
++    // The layer changes with the frames of the video, not with those of the window
++    wl_subsurface_set_desync(d->subsurface);
++    d->viewport = wp_viewporter_get_viewport(d->globals.viewporter, d->surface);
++
++    // The window's surface keeps the pointer: the layer takes no input
++    wl_region *empty = wl_compositor_create_region(d->globals.compositor);
++    wl_surface_set_input_region(d->surface, empty);
++    wl_region_destroy(empty);
++
++    draw();
++}
++
++void StereoLayer::destroy()
++{
++    if (d->declared) {
++        stereo_remove_wayland(d->surface);
++        d->declared = false;
++    }
++    if (d->stereoInitialized) {
++        stereo_declare_wayland_finish();
++        d->stereoInitialized = false;
++    }
++    if (d->viewport) {
++        wp_viewport_destroy(d->viewport);
++        d->viewport = nullptr;
++    }
++    if (d->subsurface) {
++        wl_subsurface_destroy(d->subsurface);
++        d->subsurface = nullptr;
++    }
++    if (d->surface) {
++        wl_surface_destroy(d->surface);
++        d->surface = nullptr;
++    }
++    for (Buffer &buffer : d->buffers) {
++        destroyBuffer(buffer);
++    }
++    destroyGlobals(d->globals);
++    d->globals = {};
++    if (d->registry) {
++        wl_registry_destroy(d->registry);
++        d->registry = nullptr;
++    }
++    if (d->queue) {
++        wl_event_queue_destroy(d->queue);
++        d->queue = nullptr;
++    }
++    if (d->display) {
++        wl_display_flush(d->display);
++        d->display = nullptr;
++    }
++    d->placed = {};
++}
++
++// Puts the views of the frame into the layer, each at the size of the rectangle, side by side with
++// the left eye first: the full side by side the compositor takes
++void StereoLayer::draw()
++{
++    if (!d->surface || !d->frame.isValid() || d->rect.isEmpty()) {
++        return;
++    }
++    // Nothing is listened to on the queue of the layer but the release of buffers
++    wl_display_dispatch_queue_pending(d->display, d->queue);
++
++    const QVideoFrameFormat::StereoMode mode = d->frame.surfaceFormat().stereoMode();
++    if (mode == QVideoFrameFormat::StereoMode_None) {
++        return;
++    }
++    const qreal ratio = d->window ? d->window->devicePixelRatio() : 1;
++    const QSize view(qMax(1, qRound(d->rect.width() * ratio)), qMax(1, qRound(d->rect.height() * ratio)));
++    const QSize pixels(view.width() * 2, view.height());
++
++    Buffer *buffer = nullptr;
++    for (Buffer &candidate : d->buffers) {
++        if (candidate.buffer && candidate.pixels != pixels && !candidate.busy) {
++            destroyBuffer(candidate);
++        }
++        if (candidate.busy) {
++            continue;
++        }
++        if (!candidate.buffer && !createBuffer(candidate, d->globals.shm, d->queue, pixels)) {
++            continue;
++        }
++        if (candidate.pixels == pixels) {
++            buffer = &candidate;
++            break;
++        }
++    }
++    if (!buffer) {
++        return;
++    }
++
++    const QImage image = d->frame.toImage();
++    if (image.isNull()) {
++        return;
++    }
++    const bool sideBySide = mode == QVideoFrameFormat::StereoMode_SideBySide || mode == QVideoFrameFormat::StereoMode_SideBySideRightFirst;
++    const bool rightFirst = mode == QVideoFrameFormat::StereoMode_SideBySideRightFirst || mode == QVideoFrameFormat::StereoMode_TopBottomRightFirst;
++    const QSize half = sideBySide ? QSize(image.width() / 2, image.height()) : QSize(image.width(), image.height() / 2);
++    const QRect first(QPoint(0, 0), half);
++    const QRect second(sideBySide ? QPoint(half.width(), 0) : QPoint(0, half.height()), half);
++
++    QImage target(buffer->data, pixels.width(), pixels.height(), pixels.width() * 4, QImage::Format_RGB32);
++    QPainter painter(&target);
++    painter.setRenderHint(QPainter::SmoothPixmapTransform);
++    painter.setCompositionMode(QPainter::CompositionMode_Source);
++    painter.drawImage(QRect(QPoint(0, 0), view), image, rightFirst ? second : first);
++    painter.drawImage(QRect(QPoint(view.width(), 0), view), image, rightFirst ? first : second);
++    painter.end();
++
++    const QRectF rect = d->rect;
++    if (rect != d->placed) {
++        wl_subsurface_set_position(d->subsurface, qRound(rect.x()), qRound(rect.y()));
++        wp_viewport_set_destination(d->viewport, qRound(rect.width()), qRound(rect.height()));
++        wl_region *opaque = wl_compositor_create_region(d->globals.compositor);
++        wl_region_add(opaque, 0, 0, qRound(rect.width()), qRound(rect.height()));
++        wl_surface_set_opaque_region(d->surface, opaque);
++        wl_region_destroy(opaque);
++        d->placed = rect;
++    }
++    if (!d->declared) {
++        const int result = stereo_declare_wayland(d->surface, STEREO_SBS_FULL, STEREO_CLASS_VIDEO, STEREO_VIDEO_CURRENT);
++        if (result < 0) {
++            qCWarning(DragonStereoLayer) << "declaring the stereo content failed:" << strerror(-result);
++        } else {
++            d->declared = true;
++        }
++    }
++    buffer->busy = true;
++    wl_surface_attach(d->surface, buffer->buffer, 0, 0);
++    wl_surface_damage_buffer(d->surface, 0, 0, pixels.width(), pixels.height());
++    wl_surface_commit(d->surface);
++    wl_display_flush(d->display);
++}
+diff --git a/src/stereolayer.h b/src/stereolayer.h
+new file mode 100644
+index 0000000..95471de
+--- /dev/null
++++ b/src/stereolayer.h
+@@ -0,0 +1,66 @@
++// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++#pragma once
++
++#include <QQuickWindow>
++#include <QRectF>
++#include <QtMultimedia/QVideoFrame>
++#include <QtMultimedia/QVideoSink>
++#include <QtQmlIntegration>
++
++#include <memory>
++
++/**
++ * The video of a stereoscopic 3D file in a surface under the window's, declared to the compositor
++ * as stereo content (full side by side, left eye first) so that it shows each view to its eye,
++ * while the window's own surface keeps the controls over it, the same in both eyes.
++ *
++ * Qt creates subsurfaces only above their parent, so the layer is a wl_subsurface made here and
++ * placed below the window's surface. It is only used on Wayland, when the compositor has
++ * wl_subcompositor, wp_viewporter and the stereo content declaration.
++ */
++class StereoLayer : public QObject
++{
++    Q_OBJECT
++    QML_ELEMENT
++    // True if the compositor offers what the layer needs
++    Q_PROPERTY(bool supported READ isSupported CONSTANT)
++    Q_PROPERTY(QQuickWindow *window READ window WRITE setWindow NOTIFY windowChanged)
++    Q_PROPERTY(QVideoSink *videoSink READ videoSink WRITE setVideoSink NOTIFY videoSinkChanged)
++    // The layer shows the video while it is active
++    Q_PROPERTY(bool active READ isActive WRITE setActive NOTIFY activeChanged)
++    // The rectangle of one view in the window, in logical pixels
++    Q_PROPERTY(QRectF rect READ rect WRITE setRect NOTIFY rectChanged)
++public:
++    explicit StereoLayer(QObject *parent = nullptr);
++    ~StereoLayer() override;
++
++    static bool isSupported();
++
++    QQuickWindow *window() const;
++    void setWindow(QQuickWindow *window);
++    QVideoSink *videoSink() const;
++    void setVideoSink(QVideoSink *videoSink);
++    bool isActive() const;
++    void setActive(bool active);
++    QRectF rect() const;
++    void setRect(const QRectF &rect);
++
++    // Opens the display settings, where the 3D mode of the screen is chosen
++    Q_INVOKABLE void openDisplaySettings() const;
++
++Q_SIGNALS:
++    void windowChanged();
++    void videoSinkChanged();
++    void activeChanged();
++    void rectChanged();
++
++private:
++    void create();
++    void destroy();
++    void draw();
++
++    struct Private;
++    std::unique_ptr<Private> d;
++};
+-- 
+2.53.0
+
