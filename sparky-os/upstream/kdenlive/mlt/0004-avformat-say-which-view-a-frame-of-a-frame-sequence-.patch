@@ -1,0 +1,68 @@
+From 0fd3d68810aaa389738b8dd488283f2341a2b544 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 6 Oct 2026 07:00:15 -0300
+Subject: [PATCH 4/6] avformat: say which view a frame of a frame sequence
+ holds, and read the stereo properties from the picture a frame is made of
+
+In a frame sequence (temporal interleaving, H.264 D.2.26, Matroska StereoMode 13 and 14) each
+frame holds one view, and the frame packing arrangement SEI says which (current_frame_is_frame0_flag,
+which FFmpeg gives as the view of the Stereo 3D side data). The producer sets the frame's
+meta.media.stereo3d.view to left or right when the stream says it.
+
+The stereo properties were read from every picture the decoder produced on its way to the frame asked for,
+and the last of those is not the one the frame is made of; they are now read from the picture the frame is
+made of.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/modules/avformat/producer_avformat.c | 18 ++++++++++++++----
+ 1 file changed, 14 insertions(+), 4 deletions(-)
+
+diff --git a/src/modules/avformat/producer_avformat.c b/src/modules/avformat/producer_avformat.c
+index 789356d..cef813a 100644
+--- a/src/modules/avformat/producer_avformat.c
++++ b/src/modules/avformat/producer_avformat.c
+@@ -208,11 +208,20 @@ static void set_stereo3d_properties(mlt_properties properties, const AVStereo3D
+     }
+ }
+ 
+-static void set_frame_stereo3d_properties(mlt_properties properties, const AVFrame *frame)
++static void set_frame_stereo3d_properties(mlt_properties properties,
++                                          mlt_properties frame_properties,
++                                          const AVFrame *frame)
+ {
+     const AVFrameSideData *sd = av_frame_get_side_data(frame, AV_FRAME_DATA_STEREO3D);
+-    if (sd && sd->size >= sizeof(AVStereo3D))
+-        set_stereo3d_properties(properties, (const AVStereo3D *) sd->data);
++    if (sd && sd->size >= sizeof(AVStereo3D)) {
++        const AVStereo3D *stereo = (const AVStereo3D *) sd->data;
++        set_stereo3d_properties(properties, stereo);
++        // A frame of a frame sequence (temporal interleaving, H.264 D.2.26) holds one view, which the SEI names
++        if (stereo->view == AV_STEREO3D_VIEW_LEFT)
++            mlt_properties_set(frame_properties, "meta.media.stereo3d.view", "left");
++        else if (stereo->view == AV_STEREO3D_VIEW_RIGHT)
++            mlt_properties_set(frame_properties, "meta.media.stereo3d.view", "right");
++    }
+ }
+ 
+ static int producer_get_frame(mlt_producer producer, mlt_frame_ptr frame, int index);
+@@ -3150,7 +3159,6 @@ static int producer_get_image(mlt_frame frame,
+                             }
+                             got_picture = 1;
+                             decode_errors = 0;
+-                            set_frame_stereo3d_properties(properties, self->video_frame);
+                         }
+                     }
+                 }
+@@ -3200,6 +3208,8 @@ static int producer_get_image(mlt_frame frame,
+ 
+             // Now handle the picture if we have one
+             if (got_picture) {
++                // What the picture, the one this frame is made of, says about stereoscopic 3D
++                set_frame_stereo3d_properties(properties, frame_properties, self->video_frame);
+                 // Detect and correct scan type
+                 if (mlt_properties_get(properties, "force_progressive")) {
+                     self->progressive = !!mlt_properties_get_int(properties, "force_progressive");
+-- 
+2.53.0
+

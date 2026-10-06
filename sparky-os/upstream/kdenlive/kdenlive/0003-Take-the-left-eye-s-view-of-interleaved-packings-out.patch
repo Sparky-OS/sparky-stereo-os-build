@@ -1,0 +1,142 @@
+From 1850e5ba176552566833caf447a41ba9a158030c Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 6 Oct 2026 07:31:21 -0300
+Subject: [PATCH 3/5] Take the left eye's view of interleaved packings out of
+ the full colour picture
+
+The shader that shows the left eye only works on the planes of the preview's frames, which
+are 4:2:0 or 4:2:2: the chroma of views that are interleaved at the pixel (row and column
+interleaved, checkerboard) is already mixed in them, so only the luma of the view was right
+(the colour was the mix of both views), and a frame sequence showed the frames of both eyes
+in turn.
+
+For those packings the monitor now puts MLT's stereo3d_unpack filter on its consumer: it asks
+for the RGBA picture, which the producer converts to straight from what it decoded, takes the
+left view out of it, and for a frame sequence keeps the left frames. Side by side and top and
+bottom are still cropped by the shader.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/monitor/monitor.cpp     |  7 ++++++-
+ src/monitor/videowidget.cpp | 36 ++++++++++++++++++++++++++++++++++--
+ src/monitor/videowidget.h   |  7 ++++++-
+ src/utils/stereo3d.h        |  1 +
+ 4 files changed, 47 insertions(+), 4 deletions(-)
+
+diff --git a/src/monitor/monitor.cpp b/src/monitor/monitor.cpp
+index 0d12cca..42b4d60 100644
+--- a/src/monitor/monitor.cpp
++++ b/src/monitor/monitor.cpp
+@@ -2677,7 +2677,12 @@ Stereo3D::Format Monitor::stereoFormat() const
+ void Monitor::updateStereoPreview()
+ {
+     const Stereo3D::Format format = stereoFormat();
+-    m_glMonitor->setStereoPreview(format, stereoPreviewSetting() == 1);
++    // Left Eye Only for the packings that are interleaved at the pixel or in time takes the view out of the full colour picture, which
++    // the shader cannot do (it only has the subsampled chroma of the preview): a filter on the consumer does
++    const bool unpackedByFilter = format.packing == Stereo3D::Packing::Lines || format.packing == Stereo3D::Packing::Columns
++        || format.packing == Stereo3D::Packing::Checkerboard || format.packing == Stereo3D::Packing::FrameSequence;
++    const bool leftOnly = stereoPreviewSetting() == 1;
++    m_glMonitor->setStereoPreview(format, leftOnly && !unpackedByFilter, leftOnly && unpackedByFilter ? QStringLiteral("left") : QString());
+ #ifdef HAVE_STEREO_PREVIEW
+     // The 3D window shows the frames in 3D through the compositor; the monitor keeps the packed frame
+     const bool windowWanted = stereoPreviewSetting() == 2 && StereoPreview::isSupported();
+diff --git a/src/monitor/videowidget.cpp b/src/monitor/videowidget.cpp
+index 864da3b..005fa54 100644
+--- a/src/monitor/videowidget.cpp
++++ b/src/monitor/videowidget.cpp
+@@ -643,13 +643,44 @@ static void onThreadStopped(mlt_properties owner, VideoWidget *self, mlt_event_d
+     self->stopGlsl();
+ }
+ 
+-void VideoWidget::setStereoPreview(const Stereo3D::Format &format, bool leftEyeOnly)
++void VideoWidget::applyStereoFilter()
+ {
+-    if (m_stereoFormat == format && m_stereoLeftEyeOnly == leftEyeOnly) {
++    if (!m_consumer) {
++        return;
++    }
++    if (m_stereoFilter) {
++        m_consumer->detach(*m_stereoFilter);
++        m_stereoFilter.reset();
++    }
++    if (m_stereoUnpack.isEmpty() || !m_stereoFormat.isStereo()) {
+         return;
+     }
++    // The filter asks for the full colour picture and takes the views out of it, before the preview's subsampled formats
++    auto filter = std::make_unique<Mlt::Filter>(pCore->getMonitorProfile(), "stereo3d_unpack");
++    if (!filter->is_valid()) {
++        return;
++    }
++    filter->set("packing", Stereo3D::mltName(m_stereoFormat.packing).toUtf8().constData());
++    filter->set("invert", m_stereoFormat.rightFirst ? 1 : 0);
++    filter->set("output", m_stereoUnpack.toUtf8().constData());
++    if (m_consumer->attach(*filter) == 0) {
++        m_stereoFilter = std::move(filter);
++    }
++}
++
++void VideoWidget::setStereoPreview(const Stereo3D::Format &format, bool leftEyeOnly, const QString &unpack)
++{
++    if (m_stereoFormat == format && m_stereoLeftEyeOnly == leftEyeOnly && m_stereoUnpack == unpack) {
++        return;
++    }
++    const bool filterChanged = m_stereoUnpack != unpack || (!unpack.isEmpty() && m_stereoFormat != format);
+     m_stereoFormat = format;
+     m_stereoLeftEyeOnly = leftEyeOnly;
++    m_stereoUnpack = unpack;
++    if (filterChanged) {
++        QMutexLocker locker(&m_mltMutex);
++        applyStereoFilter();
++    }
+     requestRefresh();
+     if (quickWindow()) {
+         quickWindow()->update();
+@@ -840,6 +871,7 @@ int VideoWidget::reconfigure()
+         // Connect the producer to the consumer - tell it to "run" later
+         if (m_producer) {
+             m_consumer->connect(*m_producer.get());
++            applyStereoFilter();
+         }
+ 
+         int dropFrames = 1;
+diff --git a/src/monitor/videowidget.h b/src/monitor/videowidget.h
+index e3c545b..91cc6ec 100644
+--- a/src/monitor/videowidget.h
++++ b/src/monitor/videowidget.h
+@@ -83,7 +83,9 @@ public:
+     /** @brief How the monitor shows a stereoscopic 3D video: its frames as they are (the packed frame), or the left eye's view only.
+      *  @param format How the frames of what the monitor plays pack the two views
+      *  @param leftEyeOnly Show the left eye's view only */
+-    void setStereoPreview(const Stereo3D::Format &format, bool leftEyeOnly);
++    void setStereoPreview(const Stereo3D::Format &format, bool leftEyeOnly, const QString &unpack = QString());
++    /** @brief Put the stereo3d_unpack filter on the consumer, or take it off, as m_stereoUnpack says; with the consumer's mutex held */
++    void applyStereoFilter();
+     /** @brief set to true if we want to emit a QImage of the frame for analysis */
+     bool sendFrameForAnalysis;
+     /** @brief delete and rebuild consumer, for example when external display is switched */
+@@ -218,6 +220,9 @@ protected:
+     /** @brief The view of a stereoscopic 3D video the monitor shows alone, or none */
+     Stereo3D::Format m_stereoFormat;
+     bool m_stereoLeftEyeOnly{false};
++    /** @brief What the stereo3d_unpack filter on the consumer gives (left, right or side_by_side), empty for none */
++    QString m_stereoUnpack;
++    std::unique_ptr<Mlt::Filter> m_stereoFilter;
+ 
+     /** @brief adjust monitor ruler size (for example if we want to display audio thumbs permanently) */
+     virtual void updateRulerHeight(int addedHeight);
+diff --git a/src/utils/stereo3d.h b/src/utils/stereo3d.h
+index fce6fd4..8047b51 100644
+--- a/src/utils/stereo3d.h
++++ b/src/utils/stereo3d.h
+@@ -36,6 +36,7 @@ struct Format
+ 
+     bool isStereo() const { return packing != Packing::None; }
+     bool operator==(const Format &other) const { return packing == other.packing && rightFirst == other.rightFirst; }
++    bool operator!=(const Format &other) const { return !(*this == other); }
+ };
+ 
+ /** @brief The MLT name of a packing, empty for none */
+-- 
+2.53.0
+

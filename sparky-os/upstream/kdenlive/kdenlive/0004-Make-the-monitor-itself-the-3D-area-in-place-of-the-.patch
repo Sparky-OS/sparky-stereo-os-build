@@ -1,0 +1,761 @@
+From 96ef183e05f35d1a84c2817030c5a158f21a7dfe Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 6 Oct 2026 07:31:30 -0300
+Subject: [PATCH 4/5] Make the monitor itself the 3D area, in place of the
+ separate 3D window
+
+The 3D entry of the monitor menu's Stereoscopic 3D > Preview (offered under a compositor that
+takes stereo content declarations) turns the monitor's video area into a 3D area of Kdenlive's own
+window. StereoLayer, in place of the window of the first version, is a wl_subsurface of the main
+window's surface placed below it, at the rectangle of the monitor widget, holding both views side
+by side with the left eye first (each at the size of the area, black where its shape is not the area's)
+and declared as full side by side. The views come from the stereo3d_unpack filter on the monitor's
+consumer, which takes them out of the full colour picture of every packing, a frame sequence paired
+from consecutive frames, and which is only there while the 3D area is.
+
+The main window then has an alpha buffer (Qt::WA_TranslucentBackground), paints its own background
+except under a 3D area, and the monitor, transparent over its area (the clear colour, and no video drawn),
+keeps drawing its ruler and overlays: they are on the screen plane, the same in both eyes, as is everything
+else in the window. The monitor keeps the layer's rectangle when it moves or is resized.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/CMakeLists.txt                            |   2 +-
+ src/mainwindow.cpp                            |  34 ++++
+ src/mainwindow.h                              |   4 +
+ src/monitor/monitor.cpp                       |  74 ++++----
+ src/monitor/monitor.h                         |   7 +-
+ src/monitor/openglvideowidget.cpp             |   5 +
+ .../{stereopreview.cpp => stereolayer.cpp}    | 168 +++++++++---------
+ src/monitor/stereolayer.h                     |  46 +++++
+ src/monitor/stereopreview.h                   |  45 -----
+ src/monitor/videowidget.cpp                   |  25 +++
+ src/monitor/videowidget.h                     |   4 +
+ 11 files changed, 248 insertions(+), 166 deletions(-)
+ rename src/monitor/{stereopreview.cpp => stereolayer.cpp} (75%)
+ create mode 100644 src/monitor/stereolayer.h
+ delete mode 100644 src/monitor/stereopreview.h
+
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 3bf5e88..636ee2f 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -333,7 +333,7 @@ if(STEREO_PREVIEW AND UNIX AND NOT APPLE)
+             PROTOCOL ${WAYLAND_PROTOCOLS_DIR}/stable/viewporter/viewporter.xml
+             BASENAME viewporter
+         )
+-        target_sources(kdenliveLib PRIVATE monitor/stereopreview.cpp monitor/stereopreview.h ${STEREO_WAYLAND_SOURCES})
++        target_sources(kdenliveLib PRIVATE monitor/stereolayer.cpp monitor/stereolayer.h ${STEREO_WAYLAND_SOURCES})
+         target_compile_definitions(kdenliveLib PUBLIC HAVE_STEREO_PREVIEW)
+         target_include_directories(kdenliveLib PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+         target_link_libraries(kdenliveLib PUBLIC Qt${QT_MAJOR_VERSION}::GuiPrivate PkgConfig::WAYLAND_CLIENT PkgConfig::STEREO_DECLARE)
+diff --git a/src/mainwindow.cpp b/src/mainwindow.cpp
+index 4964533..4d11beb 100644
+--- a/src/mainwindow.cpp
++++ b/src/mainwindow.cpp
+@@ -53,6 +53,11 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+ #include "lib/localeHandling.h"
+ #include "mltcontroller/clipcontroller.h"
+ #include "monitor/monitor.h"
++#ifdef HAVE_STEREO_PREVIEW
++#include "monitor/stereolayer.h"
++#include "monitor/videowidget.h"
++#include <QPainter>
++#endif
+ #include "monitor/monitormanager.h"
+ #include "monitor/scopes/audiographspectrum.h"
+ #include "onlineresources/resourcewidget.hpp"
+@@ -140,6 +145,12 @@ MainWindow::MainWindow(QWidget *parent)
+     , m_mousePosition(0)
+     , m_effectBasket(nullptr)
+ {
++#ifdef HAVE_STEREO_PREVIEW
++    if (StereoLayer::isSupported()) {
++        // A 3D area of the monitors is a layer under the window's surface, which shows through them where they draw nothing
++        setAttribute(Qt::WA_TranslucentBackground);
++    }
++#endif
+     // Init all action categories that are used by other parts of the software
+     // before we call MainWindow::init and therefore can't be initialized there
+     KActionCategory *category = new KActionCategory(i18n("Monitor"), actionCollection());
+@@ -1038,6 +1049,29 @@ void MainWindow::loadContainerActions()
+     connect(addMenu, &QMenu::triggered, this, &MainWindow::buildGenerator);
+ }
+ 
++#ifdef HAVE_STEREO_PREVIEW
++void MainWindow::paintEvent(QPaintEvent *event)
++{
++    if (!testAttribute(Qt::WA_TranslucentBackground)) {
++        KXmlGuiWindow::paintEvent(event);
++        return;
++    }
++    QRegion background(rect());
++    const QList<VideoWidget *> videos = findChildren<VideoWidget *>();
++    for (VideoWidget *video : videos) {
++        if (video->stereoLayerActive() && video->isVisible()) {
++            background -= QRect(video->mapTo(this, QPoint(0, 0)), video->size());
++        }
++    }
++    QPainter painter(this);
++    painter.setCompositionMode(QPainter::CompositionMode_Source);
++    const auto rects = background.rects();
++    for (const QRect &r : rects) {
++        painter.fillRect(r, palette().window());
++    }
++}
++#endif
++
+ MainWindow::~MainWindow()
+ {
+     pCore->prepareShutdown();
+diff --git a/src/mainwindow.h b/src/mainwindow.h
+index 6da9a5a..09f3120 100644
+--- a/src/mainwindow.h
++++ b/src/mainwindow.h
+@@ -220,6 +220,10 @@ protected:
+     bool queryClose() override;
+     bool m_windowClosing{false};
+     void closeEvent(QCloseEvent *) override;
++#ifdef HAVE_STEREO_PREVIEW
++    /** @brief A window with 3D areas has an alpha buffer, so it paints its own background, except where a 3D area is */
++    void paintEvent(QPaintEvent *event) override;
++#endif
+     QSize sizeHint() const override;
+     bool eventFilter(QObject *object, QEvent *event) override;
+ 
+diff --git a/src/monitor/monitor.cpp b/src/monitor/monitor.cpp
+index 42b4d60..fc79109 100644
+--- a/src/monitor/monitor.cpp
++++ b/src/monitor/monitor.cpp
+@@ -479,16 +479,16 @@ Monitor::Monitor(Kdenlive::MonitorId id, MonitorManager *manager, QWidget *paren
+     packedAction->setData(0);
+     QAction *leftAction = m_stereoPreview->addAction(QIcon(), i18n("Left Eye Only"));
+     leftAction->setData(1);
+-    QAction *windowAction = nullptr;
++    QAction *stereoAction = nullptr;
+ #ifdef HAVE_STEREO_PREVIEW
+-    if (StereoPreview::isSupported()) {
+-        windowAction = m_stereoPreview->addAction(QIcon(), i18n("3D Window"));
+-        windowAction->setData(2);
++    if (StereoLayer::isSupported()) {
++        stereoAction = m_stereoPreview->addAction(QIcon(), i18nc("The video shown in 3D by the compositor, in the monitor itself", "3D"));
++        stereoAction->setData(2);
+     }
+ #endif
+     m_stereoPreview->setCurrentAction(stereoPreviewSetting() == 1 ? leftAction
+-                                      : (stereoPreviewSetting() == 2 && windowAction) ? windowAction
+-                                                                                                    : packedAction);
++                                      : (stereoPreviewSetting() == 2 && stereoAction) ? stereoAction
++                                                                                      : packedAction);
+     connect(m_stereoPreview, &KSelectAction::actionTriggered, this, [this](QAction *a) {
+         setStereoPreviewSetting(a->data().toInt());
+         updateStereoPreview();
+@@ -2677,38 +2677,38 @@ Stereo3D::Format Monitor::stereoFormat() const
+ void Monitor::updateStereoPreview()
+ {
+     const Stereo3D::Format format = stereoFormat();
+-    // Left Eye Only for the packings that are interleaved at the pixel or in time takes the view out of the full colour picture, which
+-    // the shader cannot do (it only has the subsampled chroma of the preview): a filter on the consumer does
++    const int mode = stereoPreviewSetting();
++    // The 3D area shows both views, side by side with the left eye first, whatever the packing; Left Eye Only for the packings that
++    // are interleaved at the pixel or in time takes the view out of the full colour picture, which the shader cannot (it only has the
++    // subsampled chroma of the preview)
++    bool layer = false;
++#ifdef HAVE_STEREO_PREVIEW
++    layer = mode == 2 && StereoLayer::isSupported() && format.isStereo();
++#endif
+     const bool unpackedByFilter = format.packing == Stereo3D::Packing::Lines || format.packing == Stereo3D::Packing::Columns
+         || format.packing == Stereo3D::Packing::Checkerboard || format.packing == Stereo3D::Packing::FrameSequence;
+-    const bool leftOnly = stereoPreviewSetting() == 1;
+-    m_glMonitor->setStereoPreview(format, leftOnly && !unpackedByFilter, leftOnly && unpackedByFilter ? QStringLiteral("left") : QString());
+-#ifdef HAVE_STEREO_PREVIEW
+-    // The 3D window shows the frames in 3D through the compositor; the monitor keeps the packed frame
+-    const bool windowWanted = stereoPreviewSetting() == 2 && StereoPreview::isSupported();
+-    if (windowWanted && !m_stereoWindow) {
+-        m_stereoWindow = new StereoPreview(m_id == Kdenlive::ClipMonitor ? i18n("Clip Monitor in 3D") : i18n("Project Monitor in 3D"), this);
+-        connect(m_stereoWindow, &StereoPreview::closed, this, [this]() {
+-            // Back to the packed frame in the monitor
+-            setStereoPreviewSetting(0);
+-            const QList<QAction *> actions = m_stereoPreview->actions();
+-            for (QAction *a : actions) {
+-                if (a->data().toInt() == 0) {
+-                    m_stereoPreview->setCurrentAction(a);
+-                }
+-            }
+-        });
++    QString unpack;
++    if (layer) {
++        unpack = QStringLiteral("side_by_side");
++    } else if (mode == 1 && unpackedByFilter) {
++        unpack = QStringLiteral("left");
+     }
+-    if (m_stereoWindow && m_stereoWindow->isVisible() != windowWanted) {
+-        m_stereoWindow->setVisible(windowWanted);
+-        if (windowWanted) {
+-            // Show what the monitor shows now
+-            const QImage current = m_glMonitor->image();
+-            if (!current.isNull()) {
+-                m_stereoWindow->showFrame(current, format);
+-            }
++    m_glMonitor->setStereoPreview(format, mode == 1 && !unpackedByFilter, unpack);
++#ifdef HAVE_STEREO_PREVIEW
++    if (layer && !m_stereoLayer) {
++        m_stereoLayer = new StereoLayer(m_glMonitor, this);
++        m_stereoLayerTimer.setInterval(100);
++        connect(&m_stereoLayerTimer, &QTimer::timeout, m_stereoLayer, &StereoLayer::update);
++    }
++    if (m_stereoLayer) {
++        m_stereoLayer->setActive(layer);
++        if (layer) {
++            m_stereoLayerTimer.start();
++        } else {
++            m_stereoLayerTimer.stop();
+         }
+     }
++    m_glMonitor->setStereoLayerActive(layer);
+ #endif
+     if (m_stereoProject && pCore->currentDoc()) {
+         // Show what the project says
+@@ -2730,12 +2730,14 @@ void Monitor::updateStereoPreview()
+ void Monitor::onFrameDisplayed(const SharedFrame &frame)
+ {
+ #ifdef HAVE_STEREO_PREVIEW
+-    if (m_stereoWindow && m_stereoWindow->isVisible()) {
++    if (m_stereoLayer && m_stereoLayer->isActive()) {
++        // The filter on the consumer gives both views, side by side with the left eye first
+         const int width = frame.get_image_width();
+         const int height = frame.get_image_height();
+         const uint8_t *data = frame.get_image(mlt_image_rgba);
+-        if (data) {
+-            m_stereoWindow->showFrame(QImage(data, width, height, QImage::Format_RGBA8888).copy(), stereoFormat());
++        if (data && width >= 2 && height > 0) {
++            const QImage views(data, width, height, QImage::Format_RGBA8888);
++            m_stereoLayer->showEyes(views.copy(0, 0, width / 2, height), views.copy(width / 2, 0, width / 2, height));
+         }
+     }
+ #endif
+diff --git a/src/monitor/monitor.h b/src/monitor/monitor.h
+index 165034a..77168fb 100644
+--- a/src/monitor/monitor.h
++++ b/src/monitor/monitor.h
+@@ -8,7 +8,7 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+ 
+ #include "utils/stereo3d.h"
+ #ifdef HAVE_STEREO_PREVIEW
+-#include "stereopreview.h"
++#include "stereolayer.h"
+ #endif
+ #include "abstractmonitor.h"
+ #include "bin/model/markerlistmodel.hpp"
+@@ -256,8 +256,9 @@ private:
+     QAction *m_stereoRightFirst{nullptr};
+     QElapsedTimer m_stereoCheck;
+ #ifdef HAVE_STEREO_PREVIEW
+-    /** @brief The 3D window, where the compositor takes stereo content */
+-    StereoPreview *m_stereoWindow{nullptr};
++    /** @brief The 3D area under the monitor, where the compositor takes stereo content */
++    StereoLayer *m_stereoLayer{nullptr};
++    QTimer m_stereoLayerTimer;
+ #endif
+     KSelectAction *m_background;
+     /** Has to be available so we can enable and disable it. */
+diff --git a/src/monitor/openglvideowidget.cpp b/src/monitor/openglvideowidget.cpp
+index 6db3128..e229e0a 100644
+--- a/src/monitor/openglvideowidget.cpp
++++ b/src/monitor/openglvideowidget.cpp
+@@ -245,6 +245,11 @@ void OpenGLVideoWidget::renderVideo()
+     if (!m_displayTexture[0]) {
+         return;
+     }
++    if (m_stereoLayerActive) {
++        // A layer under the window shows the video in 3D: nothing of it is drawn here
++        VideoWidget::renderVideo();
++        return;
++    }
+     quickWindow()->beginExternalCommands();
+     // Bind textures.
+     for (int i = 0; i < 3; ++i) {
+diff --git a/src/monitor/stereopreview.cpp b/src/monitor/stereolayer.cpp
+similarity index 75%
+rename from src/monitor/stereopreview.cpp
+rename to src/monitor/stereolayer.cpp
+index 01e5fbf..b95fbdb 100644
+--- a/src/monitor/stereopreview.cpp
++++ b/src/monitor/stereolayer.cpp
+@@ -4,13 +4,14 @@
+     SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+ */
+ 
+-#include "stereopreview.h"
++#include "stereolayer.h"
+ 
+ #include <KLocalizedString>
+ #include <QGuiApplication>
+ #include <QLoggingCategory>
+ #include <QPainter>
+-#include <QRasterWindow>
++#include <QPointer>
++#include <QWindow>
+ #include <QtGui/qpa/qplatformwindow_p.h>
+ 
+ #include <cstring>
+@@ -23,7 +24,7 @@
+ 
+ #include "wayland-viewporter-client-protocol.h"
+ 
+-Q_STATIC_LOGGING_CATEGORY(KDENLIVE_STEREOPREVIEW, "kdenlive.stereopreview")
++Q_STATIC_LOGGING_CATEGORY(KDENLIVE_STEREOLAYER, "kdenlive.stereolayer")
+ 
+ namespace {
+ struct Globals
+@@ -125,7 +126,7 @@ bool createBuffer(Buffer &buffer, wl_shm *shm, wl_event_queue *queue, const QSiz
+ {
+     const int stride = pixels.width() * 4;
+     const size_t size = size_t(stride) * pixels.height();
+-    const int fd = memfd_create("kdenlive-stereo-preview", MFD_CLOEXEC);
++    const int fd = memfd_create("kdenlive-stereo-layer", MFD_CLOEXEC);
+     if (fd < 0) {
+         return false;
+     }
+@@ -152,32 +153,11 @@ bool createBuffer(Buffer &buffer, wl_shm *shm, wl_event_queue *queue, const QSiz
+     return true;
+ }
+ 
+-// Transparent over the layer
+-class PreviewWindow : public QRasterWindow
+-{
+-public:
+-    std::function<void()> onClose;
+-
+-protected:
+-    void paintEvent(QPaintEvent *) override
+-    {
+-        QPainter painter(this);
+-        painter.setCompositionMode(QPainter::CompositionMode_Source);
+-        painter.fillRect(QRect(QPoint(0, 0), size()), Qt::transparent);
+-    }
+-    bool event(QEvent *event) override
+-    {
+-        if (event->type() == QEvent::Close && onClose) {
+-            onClose();
+-        }
+-        return QRasterWindow::event(event);
+-    }
+-};
+ }
+ 
+-struct StereoPreview::Private
++struct StereoLayer::Private
+ {
+-    std::unique_ptr<PreviewWindow> window;
++    QPointer<QWidget> area;
+     wl_display *display{nullptr};
+     wl_event_queue *queue{nullptr};
+     wl_registry *registry{nullptr};
+@@ -186,15 +166,20 @@ struct StereoPreview::Private
+     wl_subsurface *subsurface{nullptr};
+     wp_viewport *viewport{nullptr};
+     Buffer buffers[2];
++    bool active{false};
+     bool declared{false};
+     bool stereoInitialized{false};
+-    QSize placed;
++    bool shown{false};
++    QPoint placedPosition{-1, -1};
++    QSize placedSize;
+ 
+     bool createLayer();
+     void destroyLayer();
++    void place();
++    void hide();
+ };
+ 
+-bool StereoPreview::isSupported()
++bool StereoLayer::isSupported()
+ {
+     static const bool supported = [] {
+         wl_display *display = waylandDisplay();
+@@ -213,9 +198,11 @@ bool StereoPreview::isSupported()
+     return supported;
+ }
+ 
+-bool StereoPreview::Private::createLayer()
++bool StereoLayer::Private::createLayer()
+ {
+-    auto *windowInterface = window->nativeInterface<QNativeInterface::Private::QWaylandWindow>();
++    QWidget *top = area ? area->window() : nullptr;
++    QWindow *window = top ? top->windowHandle() : nullptr;
++    auto *windowInterface = window ? window->nativeInterface<QNativeInterface::Private::QWaylandWindow>() : nullptr;
+     if (!windowInterface || !windowInterface->surface()) {
+         return false;
+     }
+@@ -245,7 +232,7 @@ bool StereoPreview::Private::createLayer()
+     return true;
+ }
+ 
+-void StereoPreview::Private::destroyLayer()
++void StereoLayer::Private::destroyLayer()
+ {
+     if (declared) {
+         stereo_remove_wayland(surface);
+@@ -283,61 +270,99 @@ void StereoPreview::Private::destroyLayer()
+         wl_display_flush(display);
+         display = nullptr;
+     }
+-    placed = {};
++    placedPosition = QPoint(-1, -1);
++    placedSize = {};
++    shown = false;
++}
++
++// The layer takes the rectangle of the area in the window; the position takes effect with the window's next commit
++void StereoLayer::Private::place()
++{
++    const QPoint position = area->mapTo(area->window(), QPoint(0, 0));
++    const QSize size = area->size();
++    if (position != placedPosition) {
++        wl_subsurface_set_position(subsurface, position.x(), position.y());
++        placedPosition = position;
++        area->window()->update();
++    }
++    if (size != placedSize) {
++        wp_viewport_set_destination(viewport, size.width(), size.height());
++        wl_region *opaque = wl_compositor_create_region(globals.compositor);
++        wl_region_add(opaque, 0, 0, size.width(), size.height());
++        wl_surface_set_opaque_region(surface, opaque);
++        wl_region_destroy(opaque);
++        placedSize = size;
++    }
++}
++
++// Nothing of the layer is shown while its area is not
++void StereoLayer::Private::hide()
++{
++    if (surface && shown) {
++        wl_surface_attach(surface, nullptr, 0, 0);
++        wl_surface_commit(surface);
++        wl_display_flush(display);
++        shown = false;
++    }
+ }
+ 
+-StereoPreview::StereoPreview(const QString &title, QObject *parent)
++StereoLayer::StereoLayer(QWidget *area, QObject *parent)
+     : QObject(parent)
+     , d(std::make_unique<Private>())
+ {
+-    d->window = std::make_unique<PreviewWindow>();
+-    d->window->setTitle(title);
+-    d->window->resize(960, 540);
+-    // The window needs an alpha buffer for the layer under it to show
+-    QSurfaceFormat format = d->window->format();
+-    format.setAlphaBufferSize(8);
+-    d->window->setFormat(format);
+-    d->window->onClose = [this]() {
+-        d->destroyLayer();
+-        Q_EMIT closed();
+-    };
++    d->area = area;
+ }
+ 
+-StereoPreview::~StereoPreview()
++StereoLayer::~StereoLayer()
+ {
+     d->destroyLayer();
+ }
+ 
+-bool StereoPreview::isVisible() const
++bool StereoLayer::isActive() const
+ {
+-    return d->window->isVisible();
++    return d->active;
+ }
+ 
+-void StereoPreview::setVisible(bool visible)
++void StereoLayer::setActive(bool active)
+ {
+-    if (!visible) {
++    if (d->active == active) {
++        return;
++    }
++    d->active = active;
++    if (!active) {
+         d->destroyLayer();
+     }
+-    d->window->setVisible(visible);
+ }
+ 
+-static QImage eyeImage(const QImage &view, const QSize &pixels)
++void StereoLayer::update()
++{
++    if (!d->active || !d->surface || !d->area) {
++        return;
++    }
++    if (!d->area->isVisible() || d->area->size().isEmpty()) {
++        d->hide();
++        return;
++    }
++    d->place();
++}
++
++static QImage fitted(const QImage &view, const QSize &pixels)
+ {
+     QImage result(pixels, QImage::Format_RGB32);
+     result.fill(Qt::black);
+     if (view.isNull()) {
+         return result;
+     }
+-    QSize size = view.size().scaled(pixels, Qt::KeepAspectRatio);
++    const QSize size = view.size().scaled(pixels, Qt::KeepAspectRatio);
+     QPainter painter(&result);
+     painter.setRenderHint(QPainter::SmoothPixmapTransform);
+     painter.drawImage(QRect(QPoint((pixels.width() - size.width()) / 2, (pixels.height() - size.height()) / 2), size), view);
+     return result;
+ }
+ 
+-void StereoPreview::showFrame(const QImage &frame, const Stereo3D::Format &format)
++void StereoLayer::showEyes(const QImage &left, const QImage &right)
+ {
+-    if (!d->window->isVisible() || frame.isNull()) {
++    if (!d->active || !d->area || !d->area->isVisible() || d->area->size().isEmpty() || left.isNull() || right.isNull()) {
+         return;
+     }
+     if (!d->surface && !d->createLayer()) {
+@@ -346,8 +371,8 @@ void StereoPreview::showFrame(const QImage &frame, const Stereo3D::Format &forma
+     // Nothing is listened to on the queue of the layer but the release of buffers
+     wl_display_dispatch_queue_pending(d->display, d->queue);
+ 
+-    const qreal ratio = d->window->devicePixelRatio();
+-    const QSize view(qMax(1, qRound(d->window->width() * ratio)), qMax(1, qRound(d->window->height() * ratio)));
++    const qreal ratio = d->area->devicePixelRatioF();
++    const QSize view(qMax(1, qRound(d->area->width() * ratio)), qMax(1, qRound(d->area->height() * ratio)));
+     const QSize pixels(view.width() * 2, view.height());
+ 
+     Buffer *buffer = nullptr;
+@@ -370,38 +395,18 @@ void StereoPreview::showFrame(const QImage &frame, const Stereo3D::Format &forma
+         return;
+     }
+ 
+-    // The views, the first of the packing and the second, then the left one first; a frame that is not packed is both
+-    QImage first;
+-    QImage second;
+-    if (format.isStereo() && format.packing != Stereo3D::Packing::FrameSequence) {
+-        first = Stereo3D::view(frame, format.packing, 0);
+-        second = Stereo3D::view(frame, format.packing, 1);
+-    } else {
+-        first = second = frame;
+-    }
+-    if (format.rightFirst) {
+-        std::swap(first, second);
+-    }
+     QImage target(buffer->data, pixels.width(), pixels.height(), pixels.width() * 4, QImage::Format_RGB32);
+     QPainter painter(&target);
+     painter.setCompositionMode(QPainter::CompositionMode_Source);
+-    painter.drawImage(0, 0, eyeImage(first, view));
+-    painter.drawImage(view.width(), 0, eyeImage(second, view));
++    painter.drawImage(0, 0, fitted(left, view));
++    painter.drawImage(view.width(), 0, fitted(right, view));
+     painter.end();
+ 
+-    const QSize size = d->window->size();
+-    if (size != d->placed) {
+-        wp_viewport_set_destination(d->viewport, size.width(), size.height());
+-        wl_region *opaque = wl_compositor_create_region(d->globals.compositor);
+-        wl_region_add(opaque, 0, 0, size.width(), size.height());
+-        wl_surface_set_opaque_region(d->surface, opaque);
+-        wl_region_destroy(opaque);
+-        d->placed = size;
+-    }
++    d->place();
+     if (!d->declared) {
+         const int result = stereo_declare_wayland(d->surface, STEREO_SBS_FULL, STEREO_CLASS_VIDEO, STEREO_VIDEO_CURRENT);
+         if (result < 0) {
+-            qCWarning(KDENLIVE_STEREOPREVIEW) << "declaring the stereo content failed:" << strerror(-result);
++            qCWarning(KDENLIVE_STEREOLAYER) << "declaring the stereo content failed:" << strerror(-result);
+         } else {
+             d->declared = true;
+         }
+@@ -411,4 +416,5 @@ void StereoPreview::showFrame(const QImage &frame, const Stereo3D::Format &forma
+     wl_surface_damage_buffer(d->surface, 0, 0, pixels.width(), pixels.height());
+     wl_surface_commit(d->surface);
+     wl_display_flush(d->display);
++    d->shown = true;
+ }
+diff --git a/src/monitor/stereolayer.h b/src/monitor/stereolayer.h
+new file mode 100644
+index 0000000..d485af9
+--- /dev/null
++++ b/src/monitor/stereolayer.h
+@@ -0,0 +1,46 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++    SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++*/
++
++#pragma once
++
++#include "utils/stereo3d.h"
++
++#include <QImage>
++#include <QObject>
++#include <QWidget>
++#include <memory>
++
++/** @class StereoLayer
++ *  @brief The 3D area of a window: a layer under the window's surface that shows a monitor's frames in 3D through a compositor that takes stereo content.
++ *
++ *  The two views of the frame, side by side with the left eye first and each at the size of the area, are in a surface under
++ *  the window's, a wl_subsurface placed below it (Qt creates subsurfaces only above their parent) at the rectangle of a widget
++ *  of the window, and declared to the compositor as full side by side stereo content. The widget is transparent over it and the rest of the
++ *  window stays as it is, the same in both eyes, so whatever is drawn over the area (the monitor's ruler and overlays) is on the screen plane.
++ *  It is used on Wayland when the compositor has wl_subcompositor, wp_viewporter, wl_shm and the stereo content declaration.
++ */
++class StereoLayer : public QObject
++{
++    Q_OBJECT
++public:
++    /** @param area The widget whose rectangle in its window the layer fills */
++    explicit StereoLayer(QWidget *area, QObject *parent = nullptr);
++    ~StereoLayer() override;
++
++    /** @brief True if the compositor offers what the layer needs */
++    static bool isSupported();
++
++    bool isActive() const;
++    void setActive(bool active);
++    /** @brief Show the two views, each scaled to the size of the area with black bars where its shape is not the area's */
++    void showEyes(const QImage &left, const QImage &right);
++    /** @brief Follow the area when it moves or changes size, and hide the layer while it is not shown */
++    void update();
++
++private:
++    struct Private;
++    std::unique_ptr<Private> d;
++};
+diff --git a/src/monitor/stereopreview.h b/src/monitor/stereopreview.h
+deleted file mode 100644
+index d956968..0000000
+--- a/src/monitor/stereopreview.h
++++ /dev/null
+@@ -1,45 +0,0 @@
+-/*
+-    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+-
+-    SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+-*/
+-
+-#pragma once
+-
+-#include "utils/stereo3d.h"
+-
+-#include <QImage>
+-#include <QObject>
+-#include <memory>
+-
+-/** @class StereoPreview
+- *  @brief A window that shows a monitor's frames in 3D through a compositor that takes stereo content.
+- *
+- *  The two views of the frame, side by side with the left eye first and each at the size of the window, are in a layer under the
+- *  window's surface, a wl_subsurface placed below it (Qt creates subsurfaces only above their parent) and declared to the compositor
+- *  as full side by side stereo content. The window itself is transparent over it. It is used on Wayland when the compositor has
+- *  wl_subcompositor, wp_viewporter, wl_shm and the stereo content declaration.
+- */
+-class StereoPreview : public QObject
+-{
+-    Q_OBJECT
+-public:
+-    explicit StereoPreview(const QString &title, QObject *parent = nullptr);
+-    ~StereoPreview() override;
+-
+-    /** @brief True if the compositor offers what the layer needs */
+-    static bool isSupported();
+-
+-    bool isVisible() const;
+-    void setVisible(bool visible);
+-    /** @brief Show a frame of a video that packs its two views as @p format; the frame is shown as it is when it does not */
+-    void showFrame(const QImage &frame, const Stereo3D::Format &format);
+-
+-Q_SIGNALS:
+-    /** @brief The user closed the window */
+-    void closed();
+-
+-private:
+-    struct Private;
+-    std::unique_ptr<Private> d;
+-};
+diff --git a/src/monitor/videowidget.cpp b/src/monitor/videowidget.cpp
+index 005fa54..101c516 100644
+--- a/src/monitor/videowidget.cpp
++++ b/src/monitor/videowidget.cpp
+@@ -13,6 +13,9 @@
+ */
+ 
+ #include "videowidget.h"
++#ifdef HAVE_STEREO_PREVIEW
++#include "stereolayer.h"
++#endif
+ #include "bin/model/markersortmodel.h"
+ #include "core.h"
+ #include "kdenlivesettings.h"
+@@ -97,6 +100,13 @@ VideoWidget::VideoWidget(int id, QObject *parent)
+     qRegisterMetaType<SharedFrame>("SharedFrame");
+     setAcceptDrops(true);
+     setClearColor(KdenliveSettings::window_background());
++#ifdef HAVE_STEREO_PREVIEW
++    if (StereoLayer::isSupported()) {
++        // A 3D area is a layer under the window's surface, which this widget shows through where it draws nothing
++        setAttribute(Qt::WA_AlwaysStackOnTop);
++        setAttribute(Qt::WA_TranslucentBackground);
++    }
++#endif
+ 
+     if (m_id == Kdenlive::ClipMonitor && !(KdenliveSettings::displayClipMonitorInfo() & Monitor::InfoOverlay)) {
+         m_rulerHeight = 0;
+@@ -668,6 +678,21 @@ void VideoWidget::applyStereoFilter()
+     }
+ }
+ 
++void VideoWidget::setStereoLayerActive(bool active)
++{
++    if (m_stereoLayerActive == active) {
++        return;
++    }
++    m_stereoLayerActive = active;
++    setClearColor(active ? QColor(Qt::transparent) : KdenliveSettings::window_background());
++    if (quickWindow()) {
++        quickWindow()->setColor(active ? QColor(Qt::transparent) : KdenliveSettings::window_background());
++        quickWindow()->update();
++    }
++    // The window paints its background around the 3D area, and not under it
++    window()->update();
++}
++
+ void VideoWidget::setStereoPreview(const Stereo3D::Format &format, bool leftEyeOnly, const QString &unpack)
+ {
+     if (m_stereoFormat == format && m_stereoLeftEyeOnly == leftEyeOnly && m_stereoUnpack == unpack) {
+diff --git a/src/monitor/videowidget.h b/src/monitor/videowidget.h
+index 91cc6ec..48e5fef 100644
+--- a/src/monitor/videowidget.h
++++ b/src/monitor/videowidget.h
+@@ -84,6 +84,9 @@ public:
+      *  @param format How the frames of what the monitor plays pack the two views
+      *  @param leftEyeOnly Show the left eye's view only */
+     void setStereoPreview(const Stereo3D::Format &format, bool leftEyeOnly, const QString &unpack = QString());
++    /** @brief The video is drawn by a layer under the window (a 3D area): this widget draws none of it and is transparent over it */
++    void setStereoLayerActive(bool active);
++    bool stereoLayerActive() const { return m_stereoLayerActive; }
+     /** @brief Put the stereo3d_unpack filter on the consumer, or take it off, as m_stereoUnpack says; with the consumer's mutex held */
+     void applyStereoFilter();
+     /** @brief set to true if we want to emit a QImage of the frame for analysis */
+@@ -223,6 +226,7 @@ protected:
+     /** @brief What the stereo3d_unpack filter on the consumer gives (left, right or side_by_side), empty for none */
+     QString m_stereoUnpack;
+     std::unique_ptr<Mlt::Filter> m_stereoFilter;
++    bool m_stereoLayerActive{false};
+ 
+     /** @brief adjust monitor ruler size (for example if we want to display audio thumbs permanently) */
+     virtual void updateRulerHeight(int addedHeight);
+-- 
+2.53.0
+

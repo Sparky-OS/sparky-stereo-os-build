@@ -1,0 +1,66 @@
+From cc387e071fb3a462a7600ab4b97130b824a0fc2b Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 6 Oct 2026 10:33:22 -0300
+Subject: [PATCH 6/6] core: let stereo3d_unpack be told the file of a frame
+ sequence
+
+The frames of a project are made of many clips, so the producer a frame
+comes from is not the file whose frames make the pairs. A player can now
+say the file (resource) and the position of its first frame (offset).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ src/modules/core/filter_stereo3d_unpack.c   |  8 ++++++--
+ src/modules/core/filter_stereo3d_unpack.yml | 13 +++++++++++++
+ 2 files changed, 19 insertions(+), 2 deletions(-)
+
+diff --git a/src/modules/core/filter_stereo3d_unpack.c b/src/modules/core/filter_stereo3d_unpack.c
+index 2642234..3d81b9d 100644
+--- a/src/modules/core/filter_stereo3d_unpack.c
++++ b/src/modules/core/filter_stereo3d_unpack.c
+@@ -202,7 +202,10 @@ static int filter_get_image(mlt_frame frame,
+         // from a producer of our own.
+         mlt_properties frame_properties = MLT_FRAME_PROPERTIES(frame);
+         const char *view = mlt_properties_get(frame_properties, "meta.media.stereo3d.view");
+-        const mlt_position position = mlt_frame_original_position(frame);
++        // A player that has a project of many clips says which file, and where its first frame is, with resource and offset
++        const char *source = mlt_properties_get(properties, "resource");
++        const int offset = source && *source ? mlt_properties_get_int(properties, "offset") : 0;
++        const mlt_position position = mlt_frame_original_position(frame) - offset;
+         int is_right;
+         if (view)
+             is_right = !strcmp(view, "right");
+@@ -214,7 +217,8 @@ static int filter_get_image(mlt_frame frame,
+         pdata->latest_position[is_right] = position;
+         if (!pdata->latest[!is_right].data || pdata->latest_position[!is_right] != other_position) {
+             mlt_producer original = mlt_frame_get_original_producer(frame);
+-            const char *resource = original ? mlt_properties_get(MLT_PRODUCER_PROPERTIES(original), "resource") : NULL;
++            const char *resource = source && *source ? source
++                : original ? mlt_properties_get(MLT_PRODUCER_PROPERTIES(original), "resource") : NULL;
+             if (resource && other_position >= 0) {
+                 if (!pdata->partner || !pdata->partner_resource || strcmp(pdata->partner_resource, resource)) {
+                     mlt_producer_close(pdata->partner);
+diff --git a/src/modules/core/filter_stereo3d_unpack.yml b/src/modules/core/filter_stereo3d_unpack.yml
+index e0cfde4..df7c5c1 100644
+--- a/src/modules/core/filter_stereo3d_unpack.yml
++++ b/src/modules/core/filter_stereo3d_unpack.yml
+@@ -36,3 +36,16 @@ parameters:
+     description: left, right, or side_by_side (both views, the left eye first)
+     default: side_by_side
+     mutable: yes
++  - identifier: resource
++    title: Frame sequence file
++    type: string
++    description: >
++      For a frame sequence, the file the frames are read from, when the frames the filter gets are made of many clips (a project)
++      and so do not say it. By default it is the resource of the frame's producer.
++    mutable: yes
++  - identifier: offset
++    title: Position of the first frame
++    type: integer
++    description: With resource, the position in the filter's frames of the first frame of the file.
++    default: 0
++    mutable: yes
+-- 
+2.53.0
+

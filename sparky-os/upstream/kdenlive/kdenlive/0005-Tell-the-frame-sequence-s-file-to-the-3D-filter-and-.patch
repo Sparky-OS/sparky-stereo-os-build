@@ -1,0 +1,146 @@
+From 2aa618bf3f430ab115481cb6fd0f188eaa63349e Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 6 Oct 2026 10:33:22 -0300
+Subject: [PATCH 5/5] Tell the frame sequence's file to the 3D filter, and draw
+ the window background in the style's way
+
+The project monitor's frames are made of the clips of the timeline, so the
+filter that pairs the frames of a frame sequence is told the file under the
+playhead and where its first frame is. The window's background around the
+3D area is drawn with the style's own widget primitive.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ src/mainwindow.cpp          | 10 ++++++----
+ src/monitor/monitor.cpp     | 27 +++++++++++++++++++++++++++
+ src/monitor/videowidget.cpp | 17 +++++++++++++++++
+ src/monitor/videowidget.h   |  5 +++++
+ 4 files changed, 55 insertions(+), 4 deletions(-)
+
+diff --git a/src/mainwindow.cpp b/src/mainwindow.cpp
+index 4d11beb..5e609ac 100644
+--- a/src/mainwindow.cpp
++++ b/src/mainwindow.cpp
+@@ -57,6 +57,7 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+ #include "monitor/stereolayer.h"
+ #include "monitor/videowidget.h"
+ #include <QPainter>
++#include <QStyleOption>
+ #endif
+ #include "monitor/monitormanager.h"
+ #include "monitor/scopes/audiographspectrum.h"
+@@ -1063,12 +1064,13 @@ void MainWindow::paintEvent(QPaintEvent *event)
+             background -= QRect(video->mapTo(this, QPoint(0, 0)), video->size());
+         }
+     }
++    // As a window without an alpha buffer paints its background, the style's way, outside the 3D areas
+     QPainter painter(this);
+     painter.setCompositionMode(QPainter::CompositionMode_Source);
+-    const auto rects = background.rects();
+-    for (const QRect &r : rects) {
+-        painter.fillRect(r, palette().window());
+-    }
++    painter.setClipRegion(background);
++    QStyleOption option;
++    option.initFrom(this);
++    style()->drawPrimitive(QStyle::PE_Widget, &option, &painter, this);
+ }
+ #endif
+ 
+diff --git a/src/monitor/monitor.cpp b/src/monitor/monitor.cpp
+index fc79109..a09854b 100644
+--- a/src/monitor/monitor.cpp
++++ b/src/monitor/monitor.cpp
+@@ -2740,6 +2740,33 @@ void Monitor::onFrameDisplayed(const SharedFrame &frame)
+             m_stereoLayer->showEyes(views.copy(0, 0, width / 2, height), views.copy(width / 2, 0, width / 2, height));
+         }
+     }
++#endif
++#ifdef HAVE_STEREO_PREVIEW
++    if (m_id == Kdenlive::ProjectMonitor && stereoFormat().packing == Stereo3D::Packing::FrameSequence) {
++        // The frames of the project are made of its clips: the filter is told which file the frame sequence is read from
++        if (auto timeline = pCore->window()->getCurrentTimeline()) {
++            auto model = timeline->model();
++            const int position = frame.get_position();
++            int best = -1;
++            int bestTrackPosition = -1;
++            for (int trackId : model->getAllTracksIds()) {
++                if (model->isAudioTrack(trackId)) {
++                    continue;
++                }
++                const int clipId = model->getClipByPosition(trackId, position);
++                if (clipId > -1 && model->getTrackPosition(trackId) > bestTrackPosition) {
++                    best = clipId;
++                    bestTrackPosition = model->getTrackPosition(trackId);
++                }
++            }
++            if (best > -1) {
++                if (auto producer = model->getClipProducer(best)) {
++                    m_glMonitor->setStereoSource(QString::fromUtf8(producer->parent().get("resource")),
++                                                 model->getClipPosition(best) - model->getClipIn(best));
++                }
++            }
++        }
++    }
+ #endif
+     // The packing of a clip is known after its first frames are decoded
+     if (!m_stereoCheck.isValid() || m_stereoCheck.elapsed() > 400) {
+diff --git a/src/monitor/videowidget.cpp b/src/monitor/videowidget.cpp
+index 101c516..f264d65 100644
+--- a/src/monitor/videowidget.cpp
++++ b/src/monitor/videowidget.cpp
+@@ -673,11 +673,28 @@ void VideoWidget::applyStereoFilter()
+     filter->set("packing", Stereo3D::mltName(m_stereoFormat.packing).toUtf8().constData());
+     filter->set("invert", m_stereoFormat.rightFirst ? 1 : 0);
+     filter->set("output", m_stereoUnpack.toUtf8().constData());
++    if (!m_stereoResource.isEmpty()) {
++        filter->set("resource", m_stereoResource.toUtf8().constData());
++        filter->set("offset", m_stereoOffset);
++    }
+     if (m_consumer->attach(*filter) == 0) {
+         m_stereoFilter = std::move(filter);
+     }
+ }
+ 
++void VideoWidget::setStereoSource(const QString &resource, int offset)
++{
++    if (resource == m_stereoResource && offset == m_stereoOffset) {
++        return;
++    }
++    m_stereoResource = resource;
++    m_stereoOffset = offset;
++    if (m_stereoFilter) {
++        m_stereoFilter->set("resource", resource.toUtf8().constData());
++        m_stereoFilter->set("offset", offset);
++    }
++}
++
+ void VideoWidget::setStereoLayerActive(bool active)
+ {
+     if (m_stereoLayerActive == active) {
+diff --git a/src/monitor/videowidget.h b/src/monitor/videowidget.h
+index 48e5fef..b19d1a6 100644
+--- a/src/monitor/videowidget.h
++++ b/src/monitor/videowidget.h
+@@ -84,6 +84,9 @@ public:
+      *  @param format How the frames of what the monitor plays pack the two views
+      *  @param leftEyeOnly Show the left eye's view only */
+     void setStereoPreview(const Stereo3D::Format &format, bool leftEyeOnly, const QString &unpack = QString());
++    /** @brief The file the frames of a frame sequence come from, and the position in the monitor of its first frame (the project's
++     *  frames are made of many clips, so the filter cannot tell it from the frames). */
++    void setStereoSource(const QString &resource, int offset);
+     /** @brief The video is drawn by a layer under the window (a 3D area): this widget draws none of it and is transparent over it */
+     void setStereoLayerActive(bool active);
+     bool stereoLayerActive() const { return m_stereoLayerActive; }
+@@ -225,6 +228,8 @@ protected:
+     bool m_stereoLeftEyeOnly{false};
+     /** @brief What the stereo3d_unpack filter on the consumer gives (left, right or side_by_side), empty for none */
+     QString m_stereoUnpack;
++    QString m_stereoResource;
++    int m_stereoOffset{0};
+     std::unique_ptr<Mlt::Filter> m_stereoFilter;
+     bool m_stereoLayerActive{false};
+ 
+-- 
+2.53.0
+
