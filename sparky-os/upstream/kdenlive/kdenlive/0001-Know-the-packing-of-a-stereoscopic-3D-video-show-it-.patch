@@ -1,0 +1,842 @@
+From 9b6cc1f01f92462d45b3b45823d51b96d9e9bb66 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 6 Oct 2026 02:24:39 -0300
+Subject: [PATCH 1/2] Know the packing of a stereoscopic 3D video: show it,
+ preview it, and render it
+
+A stereoscopic 3D video holds both views in every frame, in one of the packings of the
+frame packing arrangement SEI (H.264 Table D-8, H.265 Table D.8) or of Matroska's
+StereoMode (RFC 9559, 5.1.4.1.28.3). MLT's avformat producer now says which
+(meta.media.stereo3d.type and meta.media.stereo3d.invert), and its consumer writes it
+(stereo3d and stereo3d_invert), so Kdenlive can:
+
+- show it in the clip properties, with the size of one view;
+- let each monitor show the packed frame as it is (the default) or the left eye's view
+  only, for side by side and top and bottom, row and column interleaved and
+  checkerboard packings (a frame sequence has one view in each frame, and is shown as
+  it is), from the Stereoscopic 3D entry of the More Options menu;
+- give the project a packing, from its clips unless the project monitor's menu says
+  otherwise (for a video that does not say), and pass it to the render so that the
+  encoder writes the frame packing arrangement SEI and the Matroska file its
+  StereoMode.
+
+Needs the MLT change that adds those properties.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/doc/kdenlivedoc.cpp                       |  39 ++++
+ src/doc/kdenlivedoc.h                         |   7 +
+ src/kdenlivesettings.kcfg                     |  10 +
+ .../clippropertiescontroller.cpp              |  19 ++
+ src/monitor/monitor.cpp                       | 108 ++++++++++
+ src/monitor/monitor.h                         |  15 ++
+ src/monitor/openglvideowidget.cpp             |  68 +++++-
+ src/monitor/openglvideowidget.h               |   5 +
+ src/monitor/videowidget.cpp                   |  13 ++
+ src/monitor/videowidget.h                     |   8 +
+ src/render/renderrequest.cpp                  |   9 +
+ src/utils/CMakeLists.txt                      |   1 +
+ src/utils/stereo3d.cpp                        | 195 ++++++++++++++++++
+ src/utils/stereo3d.h                          |  63 ++++++
+ 14 files changed, 557 insertions(+), 3 deletions(-)
+ create mode 100644 src/utils/stereo3d.cpp
+ create mode 100644 src/utils/stereo3d.h
+
+diff --git a/src/doc/kdenlivedoc.cpp b/src/doc/kdenlivedoc.cpp
+index fa23b10..8f8ad0b 100644
+--- a/src/doc/kdenlivedoc.cpp
++++ b/src/doc/kdenlivedoc.cpp
+@@ -3026,3 +3026,42 @@ const QStringList KdenliveDoc::extractExternalEffectFiles()
+     externalFiles.removeDuplicates();
+     return externalFiles;
+ }
++
++Stereo3D::Format KdenliveDoc::stereo3DFormat() const
++{
++    const QString value = getDocumentProperty(QStringLiteral("stereo3d"));
++    if (value == QLatin1String("none")) {
++        return {};
++    }
++    if (!value.isEmpty()) {
++        return {Stereo3D::fromMltName(value), getDocumentProperty(QStringLiteral("stereo3d_invert")) == QLatin1String("1")};
++    }
++    const std::vector<QString> ids = pCore->projectItemModel()->getAllClipIds();
++    for (const QString &id : ids) {
++        const std::shared_ptr<ProjectClip> clip = pCore->projectItemModel()->getClipByBinID(id);
++        if (!clip) {
++            continue;
++        }
++        const Stereo3D::Packing packing = Stereo3D::fromMltName(clip->getProducerProperty(QStringLiteral("meta.media.stereo3d.type")));
++        if (packing != Stereo3D::Packing::None) {
++            return {packing, clip->getProducerIntProperty(QStringLiteral("meta.media.stereo3d.invert")) == 1};
++        }
++    }
++    return {};
++}
++
++void KdenliveDoc::setStereo3DFormat(const Stereo3D::Format &format, bool automatic)
++{
++    if (automatic) {
++        setDocumentProperty(QStringLiteral("stereo3d"), QString());
++        setDocumentProperty(QStringLiteral("stereo3d_invert"), QString());
++        return;
++    }
++    setDocumentProperty(QStringLiteral("stereo3d"), format.isStereo() ? Stereo3D::mltName(format.packing) : QStringLiteral("none"));
++    setDocumentProperty(QStringLiteral("stereo3d_invert"), format.rightFirst ? QStringLiteral("1") : QStringLiteral("0"));
++}
++
++bool KdenliveDoc::isStereo3DAutomatic() const
++{
++    return getDocumentProperty(QStringLiteral("stereo3d")).isEmpty();
++}
+diff --git a/src/doc/kdenlivedoc.h b/src/doc/kdenlivedoc.h
+index b5a5761..a83373e 100644
+--- a/src/doc/kdenlivedoc.h
++++ b/src/doc/kdenlivedoc.h
+@@ -12,6 +12,7 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+ 
+ #pragma once
+ 
++#include "utils/stereo3d.h"
+ #include <KJob>
+ #include <QAction>
+ #include <QDir>
+@@ -146,6 +147,12 @@ public:
+     void loadSequenceProperties(const QUuid &uuid, Mlt::Properties sequenceProps);
+     /** @brief Set a document property. */
+     void setDocumentProperty(const QString &name, const QString &value);
++    /** @brief How the frames of the project pack the two views of a stereoscopic 3D video: what the user chose, or by default that of
++     *  the first clip of the bin that is stereoscopic 3D. It is what the monitor shows and what rendering writes. */
++    Stereo3D::Format stereo3DFormat() const;
++    /** @brief Choose the packing of the project, none for a project that is not 3D, or let it follow the clips (@c automatic) */
++    void setStereo3DFormat(const Stereo3D::Format &format, bool automatic);
++    bool isStereo3DAutomatic() const;
+     virtual const QString getDocumentProperty(const QString &name, const QString &defaultValue = QString()) const;
+     bool hasDocumentProperty(const QString &name) const;
+     /** @brief Set a timeline sequence property. */
+diff --git a/src/kdenlivesettings.kcfg b/src/kdenlivesettings.kcfg
+index 9c0d61f..9294c24 100644
+--- a/src/kdenlivesettings.kcfg
++++ b/src/kdenlivesettings.kcfg
+@@ -599,6 +599,16 @@
+       <default>100</default>
+     </entry>
+ 
++    <entry name="stereo3d_preview" type="Int">
++      <label>How the project monitor shows a stereoscopic 3D video: 0 the packed frame as it is, 1 the left eye's view only.</label>
++      <default>0</default>
++    </entry>
++
++    <entry name="stereo3d_clip_preview" type="Int">
++      <label>How the clip monitor shows a stereoscopic 3D video: 0 the packed frame as it is, 1 the left eye's view only.</label>
++      <default>0</default>
++    </entry>
++
+     <entry name="monitor_background" type="String">
+       <label>Background color for clip monitor (only visible with transparent clips).</label>
+       <default>black</default>
+diff --git a/src/mltcontroller/clippropertiescontroller.cpp b/src/mltcontroller/clippropertiescontroller.cpp
+index 6bb1ef6..06c243c 100644
+--- a/src/mltcontroller/clippropertiescontroller.cpp
++++ b/src/mltcontroller/clippropertiescontroller.cpp
+@@ -10,6 +10,7 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+ #include "bin/projectclip.h"
+ #include "bin/bin.h"
+ #include "clipcontroller.h"
++#include "utils/stereo3d.h"
+ #include "core.h"
+ #include "dialogs/profilesdialog.h"
+ #include "doc/kdenlivedoc.h"
+@@ -1378,6 +1379,24 @@ QList<QStringList> ClipPropertiesController::getVideoProperties(int streamIndex)
+     int scan = m_sourceProperties->get_int("meta.media.progressive");
+     propertyMap.append({i18n("Scanning:"), (scan == 1 ? i18n("Progressive") : i18n("Interlaced"))});
+ 
++    // Stereoscopic 3D: how the frames pack the two views, and the size of one view
++    const Stereo3D::Packing stereoPacking = Stereo3D::fromMltName(QString::fromUtf8(m_sourceProperties->get("meta.media.stereo3d.type")));
++    if (stereoPacking != Stereo3D::Packing::None) {
++        const Stereo3D::Format stereoFormat{stereoPacking, m_sourceProperties->get_int("meta.media.stereo3d.invert") == 1};
++        propertyMap.append({i18n("Stereoscopic 3D:"), Stereo3D::description(stereoFormat)});
++        if (stereoPacking != Stereo3D::Packing::FrameSequence) {
++            const QSize view = Stereo3D::viewSize(QSize(width, height), stereoPacking);
++            const QSize stored = Stereo3D::storedViewSize(QSize(width, height), stereoPacking);
++            QString viewText = QString::number(view.width()) + QLatin1Char('x') + QString::number(view.height());
++            if (stored != view) {
++                // Half size views are stretched to the shape of a view when shown
++                viewText = i18nc("Size of a view when shown, and of its samples in the frame", "%1 (%2 stored)", viewText,
++                                 QString::number(stored.width()) + QLatin1Char('x') + QString::number(stored.height()));
++            }
++            propertyMap.append({i18n("Size of one view:"), viewText});
++        }
++    }
++
+     // Video bitrate
+     property = codecInfo + QStringLiteral("bit_rate");
+     int bitrate = m_sourceProperties->get_int(property.toUtf8().constData()) / 1000;
+diff --git a/src/monitor/monitor.cpp b/src/monitor/monitor.cpp
+index 9b7d772..ad3281f 100644
+--- a/src/monitor/monitor.cpp
++++ b/src/monitor/monitor.cpp
+@@ -472,6 +472,59 @@ Monitor::Monitor(Kdenlive::MonitorId id, MonitorManager *manager, QWidget *paren
+         });
+     }
+ 
++    // Stereoscopic 3D: how the packed frames of a 3D video are shown, and for the project how they are packed
++    auto *stereoMenu = new KActionMenu(QIcon::fromTheme(QStringLiteral("view-3d")), i18n("Stereoscopic 3D"), this);
++    m_stereoPreview = new KSelectAction(i18n("Preview"), this);
++    QAction *packedAction = m_stereoPreview->addAction(QIcon(), i18n("Packed Frame as It Is"));
++    packedAction->setData(0);
++    QAction *leftAction = m_stereoPreview->addAction(QIcon(), i18n("Left Eye Only"));
++    leftAction->setData(1);
++    m_stereoPreview->setCurrentAction(stereoPreviewSetting() == 1 ? leftAction : packedAction);
++    connect(m_stereoPreview, &KSelectAction::actionTriggered, this, [this](QAction *a) {
++        setStereoPreviewSetting(a->data().toInt());
++        updateStereoPreview();
++    });
++    stereoMenu->addAction(m_stereoPreview);
++    if (m_id == Kdenlive::ProjectMonitor) {
++        m_stereoProject = new KSelectAction(i18n("Packing of the Project"), this);
++        QAction *autoAction = m_stereoProject->addAction(QIcon(), i18n("Automatic (From the Clips)"));
++        autoAction->setData(QStringLiteral("auto"));
++        QAction *noneAction = m_stereoProject->addAction(QIcon(), i18nc("Not stereoscopic 3D", "None"));
++        noneAction->setData(QStringLiteral("none"));
++        for (Stereo3D::Packing packing : Stereo3D::packings()) {
++            QAction *a = m_stereoProject->addAction(QIcon(), Stereo3D::packingText(packing));
++            a->setData(Stereo3D::mltName(packing));
++        }
++        m_stereoProject->setCurrentAction(autoAction);
++        connect(m_stereoProject, &KSelectAction::actionTriggered, this, [this](QAction *a) {
++            const QString value = a->data().toString();
++            if (auto *doc = pCore->currentDoc()) {
++                Stereo3D::Format format{Stereo3D::fromMltName(value), m_stereoRightFirst->isChecked()};
++                doc->setStereo3DFormat(format, value == QLatin1String("auto"));
++                if (value == QLatin1String("none")) {
++                    doc->setDocumentProperty(QStringLiteral("stereo3d"), QStringLiteral("none"));
++                }
++            }
++            updateStereoPreview();
++        });
++        m_stereoRightFirst = new QAction(i18n("Right Eye First"), this);
++        m_stereoRightFirst->setCheckable(true);
++        connect(m_stereoRightFirst, &QAction::triggered, this, [this]() {
++            auto *doc = pCore->currentDoc();
++            QAction *current = m_stereoProject->currentAction();
++            if (doc && current && current->data().toString() != QLatin1String("auto")) {
++                doc->setStereo3DFormat({Stereo3D::fromMltName(current->data().toString()), m_stereoRightFirst->isChecked()}, false);
++                if (current->data().toString() == QLatin1String("none")) {
++                    doc->setDocumentProperty(QStringLiteral("stereo3d"), QStringLiteral("none"));
++                }
++            }
++            updateStereoPreview();
++        });
++        stereoMenu->addAction(m_stereoProject);
++        stereoMenu->addAction(m_stereoRightFirst);
++    }
++    m_configMenuAction->addAction(stereoMenu);
++
+     setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+     setLayout(layout);
+     setMinimumHeight(200);
+@@ -2583,8 +2636,63 @@ void Monitor::updateAudioForAnalysis()
+     m_glMonitor->updateAudioForAnalysis();
+ }
+ 
++int Monitor::stereoPreviewSetting() const
++{
++    return m_id == Kdenlive::ClipMonitor ? KdenliveSettings::stereo3d_clip_preview() : KdenliveSettings::stereo3d_preview();
++}
++
++void Monitor::setStereoPreviewSetting(int mode)
++{
++    if (m_id == Kdenlive::ClipMonitor) {
++        KdenliveSettings::setStereo3d_clip_preview(mode);
++    } else {
++        KdenliveSettings::setStereo3d_preview(mode);
++    }
++}
++
++Stereo3D::Format Monitor::stereoFormat() const
++{
++    if (m_id == Kdenlive::ClipMonitor) {
++        if (!m_controller) {
++            return {};
++        }
++        const Stereo3D::Packing packing = Stereo3D::fromMltName(m_controller->getProducerProperty(QStringLiteral("meta.media.stereo3d.type")));
++        return {packing, m_controller->getProducerIntProperty(QStringLiteral("meta.media.stereo3d.invert")) == 1};
++    }
++    if (m_id == Kdenlive::ProjectMonitor && pCore->currentDoc()) {
++        return pCore->currentDoc()->stereo3DFormat();
++    }
++    return {};
++}
++
++void Monitor::updateStereoPreview()
++{
++    const Stereo3D::Format format = stereoFormat();
++    m_glMonitor->setStereoPreview(format, stereoPreviewSetting() == 1);
++    if (m_stereoProject && pCore->currentDoc()) {
++        // Show what the project says
++        const KdenliveDoc *doc = pCore->currentDoc();
++        QSignalBlocker blocker(m_stereoProject);
++        const QString value = doc->isStereo3DAutomatic() ? QStringLiteral("auto")
++                              : format.isStereo()        ? Stereo3D::mltName(format.packing)
++                                                         : QStringLiteral("none");
++        const QList<QAction *> actions = m_stereoProject->actions();
++        for (QAction *a : actions) {
++            if (a->data().toString() == value) {
++                m_stereoProject->setCurrentAction(a);
++            }
++        }
++        m_stereoRightFirst->setChecked(format.rightFirst);
++    }
++}
++
+ void Monitor::onFrameDisplayed(const SharedFrame &frame)
+ {
++    // The packing of a clip is known after its first frames are decoded
++    if (!m_stereoCheck.isValid() || m_stereoCheck.elapsed() > 400) {
++        m_stereoCheck.start();
++        updateStereoPreview();
++    }
+     Q_EMIT m_monitorManager->frameDisplayed(frame);
+     if (m_id == Kdenlive::ProjectMonitor) {
+         Q_EMIT pCore->updateMixerLevels(frame.get_position());
+diff --git a/src/monitor/monitor.h b/src/monitor/monitor.h
+index 564670b..62646fd 100644
+--- a/src/monitor/monitor.h
++++ b/src/monitor/monitor.h
+@@ -6,6 +6,7 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+ 
+ #pragma once
+ 
++#include "utils/stereo3d.h"
+ #include "abstractmonitor.h"
+ #include "bin/model/markerlistmodel.hpp"
+ #include "definitions.h"
+@@ -14,6 +15,7 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+ #include "widgets/timecodedisplay.h"
+ 
+ #include <QMutex>
++#include <QElapsedTimer>
+ #include <QTimer>
+ #include <QToolBar>
+ #include <QWidgetAction>
+@@ -244,6 +246,12 @@ private:
+     TimecodeDisplay *m_timePos;
+     KDualAction *m_playAction;
+     KSelectAction *m_forceSize;
++    /** @brief How a stereoscopic 3D video is shown: as it is (the packed frame), or the left eye's view only */
++    KSelectAction *m_stereoPreview{nullptr};
++    /** @brief The packing of the project (project monitor): automatic, none or one of the packings */
++    KSelectAction *m_stereoProject{nullptr};
++    QAction *m_stereoRightFirst{nullptr};
++    QElapsedTimer m_stereoCheck;
+     KSelectAction *m_background;
+     /** Has to be available so we can enable and disable it. */
+     QAction *m_loopClipAction;
+@@ -313,6 +321,13 @@ private Q_SLOTS:
+     void slotAdjustEffectCompare();
+     void slotShowMenu(const QPoint pos);
+     void slotForceSize(QAction *a);
++    /** @brief How the frames of what is shown pack the two views of a stereoscopic 3D video */
++    Stereo3D::Format stereoFormat() const;
++    /** @brief Tell the video widget how to show a stereoscopic 3D video */
++    void updateStereoPreview();
++    /** @brief The way this monitor shows a stereoscopic 3D video (each monitor has its own): 0 packed, 1 left eye only */
++    int stereoPreviewSetting() const;
++    void setStereoPreviewSetting(int mode);
+     void buildBackgroundedProducer(int pos);
+     void slotLockMonitor(bool lock);
+     void slotSwitchPlay();
+diff --git a/src/monitor/openglvideowidget.cpp b/src/monitor/openglvideowidget.cpp
+index 2696780..6db3128 100644
+--- a/src/monitor/openglvideowidget.cpp
++++ b/src/monitor/openglvideowidget.cpp
+@@ -94,12 +94,34 @@ void OpenGLVideoWidget::createShader()
+     m_shader->addShaderFromSourceCode(QOpenGLShader::Fragment,
+                                       "uniform sampler2D Ytex, Utex, Vtex;"
+                                       "uniform lowp int colorspace;"
++                                      // One view of a stereoscopic 3D frame: 0 shows the frame as it is, 1 side by side, 2 top and bottom,
++                                      // 3 row interleaved, 4 column interleaved, 5 checkerboard; the slot is the first or second view
++                                      "uniform lowp int stereoMode;"
++                                      "uniform lowp int stereoSlot;"
++                                      "uniform highp vec2 textureSize;"
+                                       "varying highp vec2 coordinates;"
+                                       "void main(void) {"
+                                       "  mediump vec3 texel;"
+-                                      "  texel.r = texture2D(Ytex, coordinates).r -  16.0/255.0;" // Y
+-                                      "  texel.g = texture2D(Utex, coordinates).r - 128.0/255.0;" // U
+-                                      "  texel.b = texture2D(Vtex, coordinates).r - 128.0/255.0;" // V
++                                      "  highp vec2 c = coordinates;"
++                                      "  highp float slot = float(stereoSlot);"
++                                      "  if (stereoMode == 1) {"
++                                      "    c.x = c.x * 0.5 + 0.5 * slot;"
++                                      "  } else if (stereoMode == 2) {"
++                                      "    c.y = c.y * 0.5 + 0.5 * slot;"
++                                      "  } else if (stereoMode >= 3) {"
++                                      "    highp vec2 p = floor(c * textureSize);"
++                                      "    if (stereoMode == 3) {"
++                                      "      p.y = 2.0 * floor(p.y / 2.0) + slot;"
++                                      "    } else if (stereoMode == 4) {"
++                                      "      p.x = 2.0 * floor(p.x / 2.0) + slot;"
++                                      "    } else if (mod(p.x + p.y, 2.0) != slot) {"
++                                      "      p.x += (p.x > 0.5) ? -1.0 : 1.0;"
++                                      "    }"
++                                      "    c = (p + 0.5) / textureSize;"
++                                      "  }"
++                                      "  texel.r = texture2D(Ytex, c).r -  16.0/255.0;" // Y
++                                      "  texel.g = texture2D(Utex, c).r - 128.0/255.0;" // U
++                                      "  texel.b = texture2D(Vtex, c).r - 128.0/255.0;" // V
+                                       "  mediump mat3 coefficients;"
+                                       "  if (colorspace == 601) {"
+                                       "    coefficients = mat3("
+@@ -119,6 +141,9 @@ void OpenGLVideoWidget::createShader()
+     m_textureLocation[1] = m_shader->uniformLocation("Utex");
+     m_textureLocation[2] = m_shader->uniformLocation("Vtex");
+     m_colorspaceLocation = m_shader->uniformLocation("colorspace");
++    m_stereoModeLocation = m_shader->uniformLocation("stereoMode");
++    m_stereoSlotLocation = m_shader->uniformLocation("stereoSlot");
++    m_textureSizeLocation = m_shader->uniformLocation("textureSize");
+     m_projectionLocation = m_shader->uniformLocation("projection");
+     m_modelViewLocation = m_shader->uniformLocation("modelView");
+     m_vertexLocation = m_shader->attributeLocation("vertex");
+@@ -236,6 +261,34 @@ void OpenGLVideoWidget::renderVideo()
+     m_shader->setUniformValue(m_textureLocation[1], 1);
+     m_shader->setUniformValue(m_textureLocation[2], 2);
+     m_shader->setUniformValue(m_colorspaceLocation, pCore->getCurrentProfile()->colorspace());
++    // The left eye's view alone, when the monitor is asked for it and knows how the frames pack the views
++    // (a frame sequence has one view in each frame: it is shown as it is)
++    int stereoMode = 0;
++    if (m_stereoLeftEyeOnly) {
++        switch (m_stereoFormat.packing) {
++        case Stereo3D::Packing::SideBySide:
++        case Stereo3D::Packing::SideBySideQuincunx:
++            stereoMode = 1;
++            break;
++        case Stereo3D::Packing::TopBottom:
++            stereoMode = 2;
++            break;
++        case Stereo3D::Packing::Lines:
++            stereoMode = 3;
++            break;
++        case Stereo3D::Packing::Columns:
++            stereoMode = 4;
++            break;
++        case Stereo3D::Packing::Checkerboard:
++            stereoMode = 5;
++            break;
++        default:
++            break;
++        }
++    }
++    m_shader->setUniformValue(m_stereoModeLocation, stereoMode);
++    m_shader->setUniformValue(m_stereoSlotLocation, m_stereoFormat.rightFirst ? 1 : 0);
++    m_shader->setUniformValue(m_textureSizeLocation, QVector2D(m_frameSize.width(), m_frameSize.height()));
+     check_error(f);
+ 
+     // Setup an orthographic projection.
+@@ -260,6 +313,14 @@ void OpenGLVideoWidget::renderVideo()
+     QVector<QVector2D> vertices;
+     width = m_rect.width() * devicePixelRatioF();
+     height = m_rect.height() * devicePixelRatioF();
++    if (stereoMode != 0 && Stereo3D::fullSizeViews(m_frameSize, m_stereoFormat.packing)) {
++        // One view of full size views is half of the frame
++        if (stereoMode == 1) {
++            width /= 2.0f;
++        } else if (stereoMode == 2) {
++            height /= 2.0f;
++        }
++    }
+     vertices << QVector2D(-width / 2.0f, -height / 2.0f);
+     vertices << QVector2D(-width / 2.0f, height / 2.0f);
+     vertices << QVector2D(width / 2.0f, -height / 2.0f);
+@@ -331,6 +392,7 @@ void OpenGLVideoWidget::renderVideo()
+ 
+ void OpenGLVideoWidget::onFrameDisplayed(const SharedFrame &frame)
+ {
++    m_frameSize = QSize(frame.get_image_width(), frame.get_image_height());
+     if (m_isThreadedOpenGL && !m_context) {
+         m_context.reset(new QOpenGLContext);
+         if (m_context) {
+diff --git a/src/monitor/openglvideowidget.h b/src/monitor/openglvideowidget.h
+index 7d74188..e7c2cef 100644
+--- a/src/monitor/openglvideowidget.h
++++ b/src/monitor/openglvideowidget.h
+@@ -37,6 +37,9 @@ private:
+     GLint m_vertexLocation;
+     GLint m_texCoordLocation;
+     GLint m_colorspaceLocation;
++    GLint m_stereoModeLocation;
++    GLint m_stereoSlotLocation;
++    GLint m_textureSizeLocation;
+     GLint m_textureLocation[3];
+     QOpenGLContext *m_quickContext;
+     std::unique_ptr<QOpenGLContext> m_context;
+@@ -44,4 +47,6 @@ private:
+     GLuint m_renderTexture[3];
+     GLuint m_displayTexture[3];
+     bool m_isThreadedOpenGL;
++    /** @brief The size of the last frame shown, which the shader needs to pick the pixels of a view */
++    QSize m_frameSize;
+ };
+diff --git a/src/monitor/videowidget.cpp b/src/monitor/videowidget.cpp
+index bb0904a..864da3b 100644
+--- a/src/monitor/videowidget.cpp
++++ b/src/monitor/videowidget.cpp
+@@ -643,6 +643,19 @@ static void onThreadStopped(mlt_properties owner, VideoWidget *self, mlt_event_d
+     self->stopGlsl();
+ }
+ 
++void VideoWidget::setStereoPreview(const Stereo3D::Format &format, bool leftEyeOnly)
++{
++    if (m_stereoFormat == format && m_stereoLeftEyeOnly == leftEyeOnly) {
++        return;
++    }
++    m_stereoFormat = format;
++    m_stereoLeftEyeOnly = leftEyeOnly;
++    requestRefresh();
++    if (quickWindow()) {
++        quickWindow()->update();
++    }
++}
++
+ int VideoWidget::setProducer(const QString &file)
+ {
+     if (m_producer) {
+diff --git a/src/monitor/videowidget.h b/src/monitor/videowidget.h
+index ef57af3..e3c545b 100644
+--- a/src/monitor/videowidget.h
++++ b/src/monitor/videowidget.h
+@@ -19,6 +19,7 @@
+ #include <QTimer>
+ 
+ #include "scopes/sharedframe.h"
++#include "utils/stereo3d.h"
+ 
+ #include <mlt++/MltEvent.h>
+ #include <mlt++/MltFilter.h>
+@@ -79,6 +80,10 @@ public:
+     Mlt::Producer *producer();
+     QSize profileSize() const;
+     QRect displayRect() const;
++    /** @brief How the monitor shows a stereoscopic 3D video: its frames as they are (the packed frame), or the left eye's view only.
++     *  @param format How the frames of what the monitor plays pack the two views
++     *  @param leftEyeOnly Show the left eye's view only */
++    void setStereoPreview(const Stereo3D::Format &format, bool leftEyeOnly);
+     /** @brief set to true if we want to emit a QImage of the frame for analysis */
+     bool sendFrameForAnalysis;
+     /** @brief delete and rebuild consumer, for example when external display is switched */
+@@ -210,6 +215,9 @@ protected:
+     bool m_isInitialized{false};
+     int m_maxProducerPosition{0};
+     bool m_nearestNeighborInterpolation{false};
++    /** @brief The view of a stereoscopic 3D video the monitor shows alone, or none */
++    Stereo3D::Format m_stereoFormat;
++    bool m_stereoLeftEyeOnly{false};
+ 
+     /** @brief adjust monitor ruler size (for example if we want to display audio thumbs permanently) */
+     virtual void updateRulerHeight(int addedHeight);
+diff --git a/src/render/renderrequest.cpp b/src/render/renderrequest.cpp
+index 71fb9a0..346a412 100644
+--- a/src/render/renderrequest.cpp
++++ b/src/render/renderrequest.cpp
+@@ -407,6 +407,15 @@ void RenderRequest::setDocGeneralParams(QDomDocument doc, int in, int out)
+         consumer.setAttribute(it.key(), it.value());
+     }
+ 
++    // The packing of a stereoscopic 3D project: the encoder writes it as the frame packing arrangement SEI and the Matroska muxer as StereoMode
++    const Stereo3D::Format stereo = pCore->currentDoc()->stereo3DFormat();
++    if (stereo.isStereo() && !consumer.hasAttribute(QStringLiteral("stereo3d"))) {
++        consumer.setAttribute(QStringLiteral("stereo3d"), Stereo3D::mltName(stereo.packing));
++        if (stereo.rightFirst) {
++            consumer.setAttribute(QStringLiteral("stereo3d_invert"), 1);
++        }
++    }
++
+     // Insert consumer to document, after the profiles (if they exist)
+     QDomNodeList profiles = doc.elementsByTagName(QStringLiteral("profile"));
+     if (profiles.isEmpty()) {
+diff --git a/src/utils/CMakeLists.txt b/src/utils/CMakeLists.txt
+index 7ac3391..aada4ce 100644
+--- a/src/utils/CMakeLists.txt
++++ b/src/utils/CMakeLists.txt
+@@ -13,6 +13,7 @@ set(kdenlive_SRCS
+   utils/timecode.cpp
+   utils/uiutils.cpp
+   utils/qstringutils.cpp
++  utils/stereo3d.cpp
+   utils/styledspinbox.cpp
+   PARENT_SCOPE
+ )
+diff --git a/src/utils/stereo3d.cpp b/src/utils/stereo3d.cpp
+new file mode 100644
+index 0000000..0c43a6c
+--- /dev/null
++++ b/src/utils/stereo3d.cpp
+@@ -0,0 +1,195 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++    SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++*/
++
++#include "stereo3d.h"
++
++#include <KLocalizedString>
++#include <QPainter>
++#include <cstring>
++
++namespace Stereo3D {
++
++QString mltName(Packing packing)
++{
++    switch (packing) {
++    case Packing::SideBySide:
++        return QStringLiteral("side_by_side");
++    case Packing::TopBottom:
++        return QStringLiteral("top_and_bottom");
++    case Packing::FrameSequence:
++        return QStringLiteral("frame_sequence");
++    case Packing::Checkerboard:
++        return QStringLiteral("checkerboard");
++    case Packing::SideBySideQuincunx:
++        return QStringLiteral("side_by_side_quincunx");
++    case Packing::Lines:
++        return QStringLiteral("lines");
++    case Packing::Columns:
++        return QStringLiteral("columns");
++    case Packing::None:
++        break;
++    }
++    return {};
++}
++
++Packing fromMltName(const QString &name)
++{
++    for (Packing packing : packings()) {
++        if (mltName(packing) == name) {
++            return packing;
++        }
++    }
++    return Packing::None;
++}
++
++QList<Packing> packings()
++{
++    return {Packing::SideBySide, Packing::TopBottom,  Packing::SideBySideQuincunx, Packing::Lines,
++            Packing::Columns,    Packing::Checkerboard, Packing::FrameSequence};
++}
++
++QString packingText(Packing packing)
++{
++    switch (packing) {
++    case Packing::SideBySide:
++        return i18nc("Stereoscopic 3D packing", "Side by side");
++    case Packing::TopBottom:
++        return i18nc("Stereoscopic 3D packing", "Top and bottom");
++    case Packing::FrameSequence:
++        return i18nc("Stereoscopic 3D packing, the frames are the views in turn", "Frame sequential");
++    case Packing::Checkerboard:
++        return i18nc("Stereoscopic 3D packing", "Checkerboard");
++    case Packing::SideBySideQuincunx:
++        return i18nc("Stereoscopic 3D packing", "Side by side, quincunx sampling");
++    case Packing::Lines:
++        return i18nc("Stereoscopic 3D packing, the views are in alternate rows", "Row interleaved");
++    case Packing::Columns:
++        return i18nc("Stereoscopic 3D packing, the views are in alternate columns", "Column interleaved");
++    case Packing::None:
++        break;
++    }
++    return i18nc("Not stereoscopic 3D", "None");
++}
++
++QString description(const Format &format)
++{
++    if (!format.isStereo()) {
++        return packingText(Packing::None);
++    }
++    return i18nc("Stereoscopic 3D packing and the eye whose view comes first", "%1, %2", packingText(format.packing),
++                 format.rightFirst ? i18n("right eye first") : i18n("left eye first"));
++}
++
++QSize storedViewSize(const QSize &frame, Packing packing)
++{
++    switch (packing) {
++    case Packing::SideBySide:
++    case Packing::SideBySideQuincunx:
++    case Packing::Columns:
++    case Packing::Checkerboard:
++        return QSize(frame.width() / 2, frame.height());
++    case Packing::TopBottom:
++    case Packing::Lines:
++        return QSize(frame.width(), frame.height() / 2);
++    default:
++        return frame;
++    }
++}
++
++bool fullSizeViews(const QSize &frame, Packing packing)
++{
++    const double aspect = frame.height() > 0 ? double(frame.width()) / frame.height() : 1.;
++    switch (packing) {
++    case Packing::SideBySide:
++    case Packing::SideBySideQuincunx:
++        return aspect >= 2.5;
++    case Packing::TopBottom:
++        return aspect <= 1.2;
++    default:
++        return false;
++    }
++}
++
++QSize viewSize(const QSize &frame, Packing packing)
++{
++    switch (packing) {
++    case Packing::SideBySide:
++    case Packing::SideBySideQuincunx:
++        return fullSizeViews(frame, packing) ? QSize(frame.width() / 2, frame.height()) : frame;
++    case Packing::TopBottom:
++        return fullSizeViews(frame, packing) ? QSize(frame.width(), frame.height() / 2) : frame;
++    default:
++        return frame;
++    }
++}
++
++QImage view(const QImage &frame, Packing packing, int slot)
++{
++    const QImage source = frame.format() == QImage::Format_RGB32 ? frame : frame.convertToFormat(QImage::Format_RGB32);
++    const int width = source.width();
++    const int height = source.height();
++    QImage result;
++    switch (packing) {
++    case Packing::SideBySide:
++    case Packing::SideBySideQuincunx:
++        result = source.copy(slot * (width / 2), 0, width / 2, height);
++        break;
++    case Packing::TopBottom:
++        result = source.copy(0, slot * (height / 2), width, height / 2);
++        break;
++    case Packing::Lines:
++        // The first view is in the first row
++        result = QImage(width, height / 2, QImage::Format_RGB32);
++        for (int y = 0; y < result.height(); ++y) {
++            std::memcpy(result.scanLine(y), source.constScanLine(2 * y + slot), size_t(width) * 4);
++        }
++        break;
++    case Packing::Columns:
++        // The first view is in the first column
++        result = QImage(width / 2, height, QImage::Format_RGB32);
++        for (int y = 0; y < height; ++y) {
++            const auto *in = reinterpret_cast<const quint32 *>(source.constScanLine(y));
++            auto *out = reinterpret_cast<quint32 *>(result.scanLine(y));
++            for (int x = 0; x < result.width(); ++x) {
++                out[x] = in[2 * x + slot];
++            }
++        }
++        break;
++    case Packing::Checkerboard:
++        // The first view is at the top left pixel: its pixels are those where x + y has the parity of the slot
++        result = QImage(width / 2, height, QImage::Format_RGB32);
++        for (int y = 0; y < height; ++y) {
++            const auto *in = reinterpret_cast<const quint32 *>(source.constScanLine(y));
++            auto *out = reinterpret_cast<quint32 *>(result.scanLine(y));
++            for (int x = 0; x < result.width(); ++x) {
++                out[x] = in[2 * x + ((slot + y) & 1)];
++            }
++        }
++        break;
++    default:
++        // A frame sequence has one view in each frame
++        result = source;
++        break;
++    }
++    const QSize size = viewSize(source.size(), packing);
++    return result.size() == size ? result : result.scaled(size, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
++}
++
++QImage fullSideBySide(const QImage &frame, const Format &format)
++{
++    if (!format.isStereo() || format.packing == Packing::FrameSequence) {
++        return {};
++    }
++    const QImage first = view(frame, format.packing, 0);
++    const QImage second = view(frame, format.packing, 1);
++    QImage result(first.width() * 2, first.height(), QImage::Format_RGB32);
++    QPainter painter(&result);
++    painter.setCompositionMode(QPainter::CompositionMode_Source);
++    painter.drawImage(0, 0, format.rightFirst ? second : first);
++    painter.drawImage(first.width(), 0, format.rightFirst ? first : second);
++    return result;
++}
++}
+diff --git a/src/utils/stereo3d.h b/src/utils/stereo3d.h
+new file mode 100644
+index 0000000..fce6fd4
+--- /dev/null
++++ b/src/utils/stereo3d.h
+@@ -0,0 +1,63 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++    SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++*/
++
++#pragma once
++
++#include <QImage>
++#include <QSize>
++#include <QString>
++
++/** @brief The stereoscopic 3D packings of a video: how its frames hold the two views.
++ *  They are the frame packing arrangement types of H.264 (Table D-8) and H.265 (Table D.8), which
++ *  Matroska's StereoMode (RFC 9559, 5.1.4.1.28.3) and FFmpeg's AVStereo3D share. The names are those
++ *  of the "meta.media.stereo3d.type" property of MLT's avformat producer and of the "stereo3d" property
++ *  of its consumer. */
++namespace Stereo3D {
++
++enum class Packing {
++    None,
++    SideBySide,
++    TopBottom,
++    FrameSequence,
++    Checkerboard,
++    SideBySideQuincunx,
++    Lines,
++    Columns,
++};
++
++struct Format
++{
++    Packing packing = Packing::None;
++    /** @brief The right eye's view comes first (content_interpretation_type 2, the "right eye first" StereoMode values) */
++    bool rightFirst = false;
++
++    bool isStereo() const { return packing != Packing::None; }
++    bool operator==(const Format &other) const { return packing == other.packing && rightFirst == other.rightFirst; }
++};
++
++/** @brief The MLT name of a packing, empty for none */
++QString mltName(Packing packing);
++Packing fromMltName(const QString &name);
++/** @brief The packing as the user reads it, for example "Side by side, left eye first" */
++QString description(const Format &format);
++/** @brief The packings a user can choose from, in the order of the tables */
++QList<Packing> packings();
++QString packingText(Packing packing);
++
++/** @brief The size of one view of a frame, from the frame's size. The stream does not say whether the views of a side by side or top
++ *  and bottom frame are half or full size, so the shape of the frame decides: a side by side frame at least 2.5 times as wide as high,
++ *  or a top and bottom frame at most 1.2 times as wide as high, holds full size views. */
++QSize viewSize(const QSize &frame, Packing packing);
++/** @brief The size of the samples one view has in the frame: half the frame in the direction its packing halves it */
++QSize storedViewSize(const QSize &frame, Packing packing);
++/** @brief Whether the views of the frame are full size (not squeezed to fit the frame) */
++bool fullSizeViews(const QSize &frame, Packing packing);
++
++/** @brief One view of a frame, slot 0 is the first view of the packing and 1 the second, at the size of a view */
++QImage view(const QImage &frame, Packing packing, int slot);
++/** @brief The two views of a frame as one image, side by side, the left eye first: the full side by side that our compositor takes */
++QImage fullSideBySide(const QImage &frame, const Format &format);
++}
+-- 
+2.53.0
+
