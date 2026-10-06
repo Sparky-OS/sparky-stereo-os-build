@@ -1,0 +1,76 @@
+From 04c3773dc4cead6c3b4fa0f8c06bdcedd65e4243 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 6 Oct 2026 12:44:13 -0300
+Subject: [PATCH] Use the native Wayland platform for a 10-bit canvas under a
+ Wayland compositor
+
+Krita sets QT_QPA_PLATFORM=xcb whenever it is built with X11 support, so
+under a Wayland session it runs on Xwayland. Xwayland offers only 24 and
+32 bit visuals (no depth 30), so the OpenGL surface of the canvas is
+always 8 bits per channel there, whatever the "Canvas surface bit depth"
+setting says and however the image is stored: a 16-bit gradient shows 256
+levels at most. On the Wayland platform the same build already asks for
+and gets a 10-bit EGL surface (KisOpenGL::selectSurfaceConfig prefers the
+10-bit format when KRITA_USE_SURFACE_COLOR_MANAGEMENT_API is set), the
+canvas being a native surface of its own.
+
+Choose "wayland;xcb" instead of "xcb" when running in a Wayland session
+(WAYLAND_DISPLAY is set), unless QT_QPA_PLATFORM is set by the user or the
+canvas surface bit depth is set to 8-bit, so the setting keeps its meaning
+and xcb stays the fallback when the Wayland connection fails. The choice
+is made after kritadisplayrc is read and before the first QGuiApplication,
+the one of the OpenGL probe.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ krita/main.cc | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/krita/main.cc b/krita/main.cc
+index dd8b580..22b884a 100644
+--- a/krita/main.cc
++++ b/krita/main.cc
+@@ -54,6 +54,7 @@
+ #include "input/KisQtWidgetsTweaker.h"
+ #include "kis_splash_screen.h"
+ #include "config-qt-patches-present.h"
++#include "config-use-surface-color-management-api.h"
+ 
+ #ifdef Q_OS_ANDROID
+ #include <QtAndroid>
+@@ -230,8 +231,10 @@ extern "C" MAIN_EXPORT int MAIN_FN(int argc, char **argv)
+     bool runningInKDE = !qgetenv("KDE_FULL_SESSION").isEmpty();
+ 
+ #if defined HAVE_X11
++    [[maybe_unused]] bool platformIsKritaDefault = false;
+     if (!qEnvironmentVariableIsSet("QT_QPA_PLATFORM")) {
+         qputenv("QT_QPA_PLATFORM", "xcb");
++        platformIsKritaDefault = true;
+     }
+ #elif defined Q_OS_WIN
+     if (!qEnvironmentVariableIsSet("QT_QPA_PLATFORM")) {
+@@ -438,6 +441,21 @@ if (!qEnvironmentVariableIsEmpty("KRITA_OPENGL_DEBUG")) {
+         const KisConfig::CanvasSurfaceBitDepthMode bitDepthMode =
+             KisConfig::canvasSurfaceBitDepthMode(&kritarc);
+ 
++#if defined HAVE_X11 && KRITA_USE_SURFACE_COLOR_MANAGEMENT_API
++        /**
++         * Xwayland offers no 30-bit visuals, so under a Wayland compositor the
++         * canvas surface can reach 10 bits per channel only on the native
++         * Wayland platform. Prefer it, with xcb as the fallback, unless the user
++         * has asked for an 8-bit surface or has chosen the platform explicitly.
++         */
++        if (platformIsKritaDefault &&
++            bitDepthMode != KisConfig::CanvasSurfaceBitDepthMode::Depth8Bit &&
++            qEnvironmentVariableIsSet("WAYLAND_DISPLAY")) {
++
++            qputenv("QT_QPA_PLATFORM", "wayland;xcb");
++        }
++#endif
++
+         const KisOpenGL::RendererConfig config =
+             KisOpenGL::selectSurfaceConfig(preferredRenderer, rootSurfaceFormat, bitDepthMode, enableOpenGLDebug);
+ 
+-- 
+2.53.0
+
