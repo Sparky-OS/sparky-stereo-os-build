@@ -1,0 +1,409 @@
+Description: Paint the perspective view in stereo with off-axis cameras
+ The vertical perspective projection has its camera at a finite distance P: the
+ two eyes' cameras are moved sideways by half of the separation (P sin of half
+ the angle, seen from the globe's centre), their axes stay parallel and the
+ projection is off-axis, with the plane through the globe's centre at zero
+ parallax; the stars take the parallax of infinity.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://github.com/danielcamposramos (branch stereo3d-perspective, Marble v26.04.0)
+Forwarded: no
+---
+ .../marble/GenericScanlineTextureMapper.cpp   | 23 ++++---
+ src/lib/marble/MarbleMap.cpp                  | 29 ++++++++-
+ src/lib/marble/MarbleMap.h                    |  8 ++-
+ src/lib/marble/MarbleWidget.cpp               |  2 +-
+ src/lib/marble/MarbleWidget.h                 |  5 +-
+ src/lib/marble/ViewportParams.cpp             | 12 ++++
+ src/lib/marble/ViewportParams.h               | 12 ++++
+ src/lib/marble/layers/TextureLayer.cpp        |  7 ++-
+ .../VerticalPerspectiveProjection.cpp         | 61 ++++++++++++++++++-
+ .../VerticalPerspectiveProjection.h           |  7 +++
+ 10 files changed, 147 insertions(+), 19 deletions(-)
+
+diff --git a/src/lib/marble/GenericScanlineTextureMapper.cpp b/src/lib/marble/GenericScanlineTextureMapper.cpp
+index 7a7529d10..c14e9ffba 100644
+--- a/src/lib/marble/GenericScanlineTextureMapper.cpp
++++ b/src/lib/marble/GenericScanlineTextureMapper.cpp
+@@ -90,6 +90,10 @@ void GenericScanlineTextureMapper::mapTexture(GeoPainter *painter,
+     }
+ 
+     if (m_repaintNeeded) {
++        if (!viewport->mapCoversViewport()) {
++            // what the last view painted outside of the globe, of another eye's camera, is not to remain
++            m_canvasImage.fill(0);
++        }
+         mapTexture(viewport, tileZoomLevel, painter->mapQuality());
+ 
+         if (texColorizer) {
+@@ -209,20 +213,23 @@ void GenericScanlineTextureMapper::RenderJob::run()
+             } else
+                 interpolate = false;
+ 
+-            qreal lon;
+-            qreal lat;
+-            m_viewport->geoCoordinates(x, y, lon, lat, GeoDataCoordinates::Radian);
++            qreal lon = 0;
++            qreal lat = 0;
++            // The camera of an eye sees the disc of the globe off the circle around the center: nothing to map there
++            const bool onGlobe = m_viewport->geoCoordinates(x, y, lon, lat, GeoDataCoordinates::Radian);
+ 
+             if (interpolate) {
+-                if (highQuality)
+-                    context.pixelValueApproxF(lon, lat, scanLine, n);
+-                else
+-                    context.pixelValueApprox(lon, lat, scanLine, n);
++                if (onGlobe) {
++                    if (highQuality)
++                        context.pixelValueApproxF(lon, lat, scanLine, n);
++                    else
++                        context.pixelValueApprox(lon, lat, scanLine, n);
++                }
+ 
+                 scanLine += (n - 1);
+             }
+ 
+-            if (x < imageWidth) {
++            if (x < imageWidth && onGlobe) {
+                 if (highQuality)
+                     context.pixelValueF(lon, lat, scanLine);
+                 else
+diff --git a/src/lib/marble/MarbleMap.cpp b/src/lib/marble/MarbleMap.cpp
+index da7c4cc07..31c3fd4ec 100644
+--- a/src/lib/marble/MarbleMap.cpp
++++ b/src/lib/marble/MarbleMap.cpp
+@@ -55,6 +55,7 @@
+ #include "TileCreatorDialog.h"
+ #include "TileId.h"
+ #include "TileLoader.h"
++#include "VerticalPerspectiveProjection.h"
+ #include "ViewParams.h"
+ #include "ViewportParams.h"
+ #include "layers/FloatItemsLayer.h"
+@@ -134,6 +135,8 @@ public:
+ 
+     void paintEye(GeoPainter &painter, qreal orbit, qreal skyShift);
+ 
++    void paintPerspectiveEye(GeoPainter &painter, qreal eyeAngle);
++
+     MarbleMap *const q;
+ 
+     // The model we are showing.
+@@ -837,6 +840,23 @@ void MarbleMapPrivate::paintEye(GeoPainter &painter, qreal orbit, qreal skyShift
+     m_viewport.setPlanetAxis(planetAxis);
+ }
+ 
++// The vertical perspective view has a camera at a finite distance: the eye's camera is moved sideways, its axis stays parallel to
++// the view axis, and the projection is off-axis (the angle is the one seen from the globe's center, positive to the right). The globe
++// is moved by the projection, the sky at infinity is moved by the parallax at infinity
++void MarbleMapPrivate::paintPerspectiveEye(GeoPainter &painter, qreal eyeAngle)
++{
++    m_viewport.setEyeAngle(eyeAngle);
++    const auto *projection = static_cast<const VerticalPerspectiveProjection *>(m_viewport.currentProjection());
++
++    painter.save();
++    painter.translate(projection->parallaxAtInfinity(&m_viewport), 0);
++    m_layerManager.renderLayers(&painter, &m_viewport, LayerManager::SkyLayers);
++    painter.restore();
++
++    m_layerManager.renderLayers(&painter, &m_viewport, LayerManager::GlobeLayers);
++    m_viewport.setEyeAngle(0);
++}
++
+ void MarbleMap::paintStereo(GeoPainter &leftEye, GeoPainter &rightEye, GeoPainter &painter, qreal separation)
+ {
+     RenderStatus const oldRenderStatus = d->m_renderState.status();
+@@ -844,8 +864,13 @@ void MarbleMap::paintStereo(GeoPainter &leftEye, GeoPainter &rightEye, GeoPainte
+     const qreal halfSeparation = separation / 2;
+     const qreal skyShift = d->m_viewport.radius() * qSin(halfSeparation);
+     // The left eye last: what the layers keep of their last pass, for the mouse to pick, is the left eye's
+-    d->paintEye(rightEye, -halfSeparation, skyShift);
+-    d->paintEye(leftEye, halfSeparation, -skyShift);
++    if (d->m_viewport.projection() == VerticalPerspective) {
++        d->paintPerspectiveEye(rightEye, halfSeparation);
++        d->paintPerspectiveEye(leftEye, -halfSeparation);
++    } else {
++        d->paintEye(rightEye, -halfSeparation, skyShift);
++        d->paintEye(leftEye, halfSeparation, -skyShift);
++    }
+     d->m_layerManager.renderLayers(&painter, &d->m_viewport, LayerManager::InterfaceLayers);
+     d->updateRenderState(oldRenderStatus);
+ }
+diff --git a/src/lib/marble/MarbleMap.h b/src/lib/marble/MarbleMap.h
+index e3dcae5be..39afde666 100644
+--- a/src/lib/marble/MarbleMap.h
++++ b/src/lib/marble/MarbleMap.h
+@@ -427,10 +427,14 @@ public:
+     /**
+      * @brief Paint the map as a stereo pair: one world seen by two cameras around the point of view.
+      *
+-     * The sky and the globe are painted once for each eye, with that eye's camera: an orthographic globe has no perspective
++     * The sky and the globe are painted once for each eye, with that eye's camera. An orthographic globe has no perspective
+      * to take off-axis cameras from, so each camera orbits the globe's centre by half of the separation (the planet's axis
+      * turned about the vertical axis), the left one so that the near side of the globe moves to the right. The stars are
+-     * at infinity: they do not turn with the globe but take its maximum parallax, that of its far side. The interface
++     * at infinity: they do not turn with the globe but take its maximum parallax, that of its far side.
++     * The vertical perspective view has its camera at a finite distance: each eye's camera is that far from the centre
++     * of the globe at half of the separation, as seen from the centre, to its side; the view axes stay parallel and the projection
++     * is off-axis, with the plane through the globe's centre at the zero parallax, so the globe is in front of it. The stars take the
++     * parallax of infinity. The interface
+      * (popups, float items, tools) is painted once, with the point of view, so it is the same in both eyes.
+      * @param leftEye painter of the left eye's view
+      * @param rightEye painter of the right eye's view, of the same size
+diff --git a/src/lib/marble/MarbleWidget.cpp b/src/lib/marble/MarbleWidget.cpp
+index 06024e96b..592a7dbf1 100644
+--- a/src/lib/marble/MarbleWidget.cpp
++++ b/src/lib/marble/MarbleWidget.cpp
+@@ -761,7 +761,7 @@ void MarbleWidget::paintEvent(QPaintEvent *evt)
+ bool MarbleWidgetPrivate::stereo3DActive() const
+ {
+     return m_stereo3D && m_stereoLayer && m_widget->isEnabled() && m_widget->window()->testAttribute(Qt::WA_TranslucentBackground)
+-        && m_map.projection() == Spherical && m_model.mapTheme();
++        && (m_map.projection() == Spherical || m_map.projection() == VerticalPerspective) && m_model.mapTheme();
+ }
+ 
+ void MarbleWidgetPrivate::setStereo3D(bool enabled)
+diff --git a/src/lib/marble/MarbleWidget.h b/src/lib/marble/MarbleWidget.h
+index a6ecacfae..6967611a9 100644
+--- a/src/lib/marble/MarbleWidget.h
++++ b/src/lib/marble/MarbleWidget.h
+@@ -955,13 +955,16 @@ public Q_SLOTS:
+      *
+      * The globe is drawn once for each eye, one world seen by two cameras, and shown as 3D content by the compositor
+      * in the widget's own rectangle; the float items, popups and tools stay on the screen plane, the same in both eyes.
+-     * It has effect for the globe projection (not for the flat maps and the perspective view), where the compositor takes stereo 3D content.
++     * It has effect for the globe projections (Globe and Perspective, not the flat maps), where the compositor takes stereo 3D content.
+      * @param enabled  whether the globe is in 3D
+      */
+     void setStereo3D(bool enabled);
+ 
+     /**
+      * @brief Set the angle between the two eyes' cameras
++     *
++     * It is the angle at the globe's center in the Globe view. In the Perspective view, whose camera is at a finite distance,
++     * the two cameras are as far apart as that angle seen from the globe's center puts them at the camera's distance.
+      * @param degrees  the angle, in degrees: 0.5 to 10
+      */
+     void setStereo3DSeparation(qreal degrees);
+diff --git a/src/lib/marble/ViewportParams.cpp b/src/lib/marble/ViewportParams.cpp
+index 270876e50..152f9260d 100644
+--- a/src/lib/marble/ViewportParams.cpp
++++ b/src/lib/marble/ViewportParams.cpp
+@@ -44,6 +44,7 @@ public:
+     qreal m_heading;
+     Quaternion m_planetAxis; // Position, coded in a quaternion
+     matrix m_planetAxisMatrix;
++    qreal m_eyeAngle;
+     int m_radius; // Zoom level (pixels / globe radius)
+     qreal m_angularResolution;
+ 
+@@ -81,6 +82,7 @@ ViewportParamsPrivate::ViewportParamsPrivate(Projection projection, qreal center
+     , m_heading(0)
+     , m_planetAxis()
+     , m_planetAxisMatrix()
++    , m_eyeAngle(0)
+     , m_radius(radius)
+     , m_angularResolution(4.0 / abs(m_radius))
+     , m_size(size)
+@@ -283,6 +285,16 @@ Quaternion ViewportParams::planetAxis() const
+     return d->m_planetAxis;
+ }
+ 
++void ViewportParams::setEyeAngle(qreal angle)
++{
++    d->m_eyeAngle = angle;
++}
++
++qreal ViewportParams::eyeAngle() const
++{
++    return d->m_eyeAngle;
++}
++
+ const matrix &ViewportParams::planetAxisMatrix() const
+ {
+     return d->m_planetAxisMatrix;
+diff --git a/src/lib/marble/ViewportParams.h b/src/lib/marble/ViewportParams.h
+index 19fb6be10..3a530e672 100644
+--- a/src/lib/marble/ViewportParams.h
++++ b/src/lib/marble/ViewportParams.h
+@@ -99,6 +99,18 @@ public:
+     void setPlanetAxis(const Quaternion &planetAxis);
+ 
+     Quaternion planetAxis() const;
++
++    /**
++     * @brief Set the camera of the vertical perspective projection off the view axis, for one eye of a stereo pair.
++     *
++     * The camera moves sideways, its axis stays parallel to the view axis, and the projection is off-axis, so that
++     * the plane through the globe's center is at the same place in the view of every eye.
++     * @param angle angle at the globe's center between the view axis and the camera, in radians; positive to the right.
++     *              Zero, the default, is the camera on the view axis.
++     */
++    void setEyeAngle(qreal angle);
++
++    qreal eyeAngle() const;
+     const matrix &planetAxisMatrix() const;
+ 
+     int width() const;
+diff --git a/src/lib/marble/layers/TextureLayer.cpp b/src/lib/marble/layers/TextureLayer.cpp
+index a395e9b46..0018138b0 100644
+--- a/src/lib/marble/layers/TextureLayer.cpp
++++ b/src/lib/marble/layers/TextureLayer.cpp
+@@ -68,6 +68,7 @@ public:
+     StackedTileLoader m_tileLoader;
+     GeoDataCoordinates m_centerCoordinates;
+     Quaternion m_planetAxis;
++    qreal m_eyeAngle;
+     int m_tileZoomLevel;
+     TextureMapperInterface *m_texmapper;
+     TextureColorizer *m_texcolorizer;
+@@ -94,6 +95,7 @@ TextureLayer::Private::Private(HttpDownloadManager *downloadManager,
+     , m_tileLoader(&m_layerDecorator)
+     , m_centerCoordinates()
+     , m_planetAxis()
++    , m_eyeAngle(0)
+     , m_tileZoomLevel(-1)
+     , m_texmapper(nullptr)
+     , m_texcolorizer(nullptr)
+@@ -311,12 +313,13 @@ bool TextureLayer::render(GeoPainter *painter, ViewportParams *viewport, const Q
+     if (!d->m_texmapper)
+         return false;
+ 
+-    // The planet's axis alone changes when a stereo view turns the globe for an eye's camera
++    // The planet's axis or the eye's angle alone change when a stereo view moves the camera of an eye
+     if (d->m_centerCoordinates.longitude() != viewport->centerLongitude() || d->m_centerCoordinates.latitude() != viewport->centerLatitude()
+-        || !(d->m_planetAxis == viewport->planetAxis())) {
++        || !(d->m_planetAxis == viewport->planetAxis()) || d->m_eyeAngle != viewport->eyeAngle()) {
+         d->m_centerCoordinates.setLongitude(viewport->centerLongitude());
+         d->m_centerCoordinates.setLatitude(viewport->centerLatitude());
+         d->m_planetAxis = viewport->planetAxis();
++        d->m_eyeAngle = viewport->eyeAngle();
+         d->m_texmapper->setRepaintNeeded();
+     }
+ 
+diff --git a/src/lib/marble/projections/VerticalPerspectiveProjection.cpp b/src/lib/marble/projections/VerticalPerspectiveProjection.cpp
+index f3b719968..d9cfbb6b2 100644
+--- a/src/lib/marble/projections/VerticalPerspectiveProjection.cpp
++++ b/src/lib/marble/projections/VerticalPerspectiveProjection.cpp
+@@ -28,6 +28,9 @@ public:
+ 
+     void calculateConstants(qreal radius) const;
+ 
++    // The camera's offset from the view axis in globe radii for the viewport's eye angle (0 for the view's own camera)
++    qreal eyeOffset(const ViewportParams *viewport) const;
++
+     mutable qreal m_P; ///< Distance of the point of perspective in earth diameters
+     mutable qreal m_previousRadius;
+     mutable qreal m_altitudeToPixel;
+@@ -91,6 +94,19 @@ void VerticalPerspectiveProjectionPrivate::calculateConstants(qreal radius) cons
+     m_pPfactor = (m_P + 1) / (m_perspectiveRadius * m_perspectiveRadius * (m_P - 1));
+ }
+ 
++qreal VerticalPerspectiveProjectionPrivate::eyeOffset(const ViewportParams *viewport) const
++{
++    return m_P * qSin(viewport->eyeAngle());
++}
++
++// A point at infinity: the camera offset, taken to the plane through the globe's center (the same place in every eye)
++qreal VerticalPerspectiveProjection::parallaxAtInfinity(const ViewportParams *viewport) const
++{
++    Q_D(const VerticalPerspectiveProjection);
++    d->calculateConstants(viewport->radius());
++    return d->eyeOffset(viewport) * (d->m_P - 1) / d->m_P * d->m_perspectiveRadius;
++}
++
+ qreal VerticalPerspectiveProjection::clippingRadius() const
+ {
+     return 1;
+@@ -111,9 +127,14 @@ bool VerticalPerspectiveProjection::screenCoordinates(const GeoDataCoordinates &
+ 
+     qreal cosC = qSin(phi1) * qSin(phi) + qCos(phi1) * qCos(phi) * qCos(deltaLambda);
+ 
++    // The camera of an eye is off the view axis by eyeX, so the horizon (the backside) is where cosC < (1 - eyeX * x) / P
++    const qreal eyeX = d->eyeOffset(viewport);
++    const qreal unitX = qCos(phi) * qSin(deltaLambda);
++    const qreal horizon = (1 - eyeX * unitX) / P;
++
+     // Don't display placemarks that are below 10km altitude and
+     // are on the Earth's backside (where cosC < 1/P)
+-    if (cosC < 1 / P && coordinates.altitude() < 10000) {
++    if (cosC < horizon && coordinates.altitude() < 10000) {
+         globeHidesPoint = true;
+         return false;
+     }
+@@ -121,7 +142,8 @@ bool VerticalPerspectiveProjection::screenCoordinates(const GeoDataCoordinates &
+     // Let (x, y) be the position on the screen of the placemark ..
+     // First determine the position in unit coordinates:
+     qreal k = (P - 1) / (P - cosC); // scale factor
+-    x = (qCos(phi) * qSin(deltaLambda)) * k;
++    // An eye's camera is off-axis: the plane through the globe's center, at the distance P from the camera, stays where it is
++    x = unitX * k + eyeX * ((P - 1) / P - k);
+     y = (qCos(phi1) * qSin(phi) - qSin(phi1) * qCos(phi) * qCos(deltaLambda)) * k;
+ 
+     // Transform to screen coordinates
+@@ -130,7 +152,7 @@ bool VerticalPerspectiveProjection::screenCoordinates(const GeoDataCoordinates &
+     y *= pixelAltitude;
+ 
+     // Don't display satellites that are on the Earth's backside:
+-    if (cosC < 1 / P && x * x + y * y < viewport->radius() * viewport->radius()) {
++    if (cosC < horizon && x * x + y * y < viewport->radius() * viewport->radius()) {
+         globeHidesPoint = true;
+         return false;
+     }
+@@ -183,6 +205,39 @@ bool VerticalPerspectiveProjection::geoCoordinates(const int x,
+     const qreal ry = (viewport->height() / 2 - y);
+     const qreal p2 = rx * rx + ry * ry;
+ 
++    const qreal eyeX = d->eyeOffset(viewport);
++    if (eyeX != 0) {
++        // The ray from the eye's camera through the pixel, with the globe's surface (the unit sphere) in the frame of the view
++        // axis: X to the right, Y up, Z to the camera at (eyeX, 0, P). The depth along the axis is dd, the pixel at (rx, ry) is
++        // at (rx / s, ry / s) in globe radii on the plane through the center of the globe (s = pixels per globe radius).
++        const qreal s = d->m_perspectiveRadius;
++        const qreal a = (rx / s - eyeX * (P - 1) / P) / (P - 1);
++        const qreal b = ry / s / (P - 1);
++        const qreal quadA = a * a + b * b + 1;
++        const qreal quadB = eyeX * a - P;
++        const qreal discriminant = quadB * quadB - quadA * (eyeX * eyeX + P * P - 1);
++        if (discriminant < 0)
++            return false;
++        const qreal dd = (-quadB - qSqrt(discriminant)) / quadA;
++        const qreal X = eyeX + a * dd;
++        const qreal Y = b * dd;
++        const qreal Z = P - dd;
++
++        const qreal centerLon = viewport->centerLongitude();
++        const qreal centerLat = viewport->centerLatitude();
++        lon = centerLon + qAtan2(X, Z * qCos(centerLat) - Y * qSin(centerLat));
++        while (lon < -M_PI)
++            lon += 2 * M_PI;
++        while (lon > M_PI)
++            lon -= 2 * M_PI;
++        lat = qAsin(Y * qCos(centerLat) + Z * qSin(centerLat));
++        if (unit == GeoDataCoordinates::Degree) {
++            lon *= RAD2DEG;
++            lat *= RAD2DEG;
++        }
++        return true;
++    }
++
+     if (p2 == 0) {
+         lon = viewport->centerLongitude();
+         lat = viewport->centerLatitude();
+diff --git a/src/lib/marble/projections/VerticalPerspectiveProjection.h b/src/lib/marble/projections/VerticalPerspectiveProjection.h
+index 9109acfa7..d3d67ebee 100644
+--- a/src/lib/marble/projections/VerticalPerspectiveProjection.h
++++ b/src/lib/marble/projections/VerticalPerspectiveProjection.h
+@@ -47,6 +47,13 @@ public:
+ 
+     qreal clippingRadius() const override;
+ 
++    /**
++     * @brief Get how far a point at infinity (a star) is moved sideways in the view of the viewport's eye angle, in pixels.
++     *
++     * The globe's own points are moved by the projection, the sky is at infinity and takes this instead.
++     */
++    qreal parallaxAtInfinity(const ViewportParams *viewport) const;
++
+     /**
+      * @brief Get the screen coordinates corresponding to geographical coordinates in the map.
+      * @param coordinates  the coordinates of the requested pixel position
