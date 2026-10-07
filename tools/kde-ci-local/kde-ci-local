@@ -328,7 +328,9 @@ def vkms_card():
         if "-" in os.path.basename(c):
             continue
         if os.path.basename(os.path.realpath(os.path.join(c, "device"))) == "vkms":
-            return "/dev/dri/" + os.path.basename(c)
+            node = "/dev/dri/" + os.path.basename(c)
+            # a sandbox can show /sys but hide /dev/dri (Codex lanes): then the job runs without it
+            return node if os.path.exists(node) else None
     return None
 
 
