@@ -1,9 +1,0 @@
-# FFmpeg 8.1's libraries come from Debian (2026-10-02). deb-multimedia moved to FFmpeg 9
-# (libavcodec63 and family) and no longer carries its 8.1 builds, but those builds stay
-# installed with epoch 10 and shadow Debian's epoch-7 ones, so Debian's programs built
-# against 8.1 (Blender among them) could not install: Debian's libavdevice62 needs its own
-# libavformat62 and libavutil60 exactly. deb-multimedia's programs use FFmpeg 9 and are
-# untouched. Revisit when Debian moves to FFmpeg 9.
-Package: libavcodec62 libavcodec-extra62 libavformat62 libavformat-extra62 libavutil60 libavdevice62 libavfilter11 libavfilter-extra11 libswresample6 libswscale9
-Pin: release o=Debian
-Pin-Priority: 1001
