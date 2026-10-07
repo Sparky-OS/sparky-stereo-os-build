@@ -1,0 +1,278 @@
+bino (2.8-1+stereo3d1) unstable; urgency=medium
+
+  * Update to upstream 2.8 (release tarball, signature checked). Fix the
+    eye order of right-first stereo videos (the ffprobe inverted flag is
+    a number). Always use OpenGL stereo output in the GUI (the edition
+    draws every output through KWin), settings in ~/.config/Bino3D-
+    stereo. Desktop entry runs Bino on X11 until its stereo output works
+    on Wayland. Depend on ffmpeg (ffprobe) and libxcb-cursor0.
+
+ -- Daniel Campos Ramos <Capitain_Jack@yahoo.com>  Wed, 07 Oct 2026 01:59:14 +0000
+
+bino (2.7-1) unstable; urgency=medium
+
+  * QA upload.
+  * delete d/patches/, new upstream applied
+  * delete d/README.Debian, outdated,
+    from NEWS.md Version 2.0 changelog, QVR instead of Equalizer
+  * New upstream version
+  * Standards-Version: 4.7.4 (routine-update)
+  * Reorder sequence of d/control fields by cme (routine-update)
+  * Upgrade upstream signing key to new packet format.
+  * debputy lint --auto-fix (routine-update)
+  * d/control:
+      - remove redundant-rules-requires-root-no-field
+      - delete outdated #Vcs-Browser #Vcs-Git lines
+
+ -- xiao sheng wen <atzlinux@debian.org>  Fri, 08 May 2026 11:01:33 +0800
+
+bino (2.5-2) unstable; urgency=medium
+
+  * QA upload.
+  * Set Maintainer to Debian QA Group. (see #1119041)
+  * Backport upstream fix for FTBFS with Qt 6. (Closes: #1117353)
+
+ -- Adrian Bunk <bunk@debian.org>  Tue, 18 Nov 2025 22:56:31 +0200
+
+bino (2.5-1) unstable; urgency=medium
+
+  * Adoption of package. (Closes: #1002720)
+  * New upstream version, 2.5.
+  * 'd/control':
+    - Update 'Standards-Version' to 4.7.2, no changes required.
+    - Add myself as maintainer.
+    - Remove versioned 'Build-Depends'.
+  * Add Salsa CI 'salsa-ci.yml' file.
+
+ -- Phil Wyett <philip.wyett@kathenas.org>  Thu, 20 Mar 2025 03:17:15 +0000
+
+bino (2.3-1) unstable; urgency=medium
+
+  * QA upload.
+
+  * New upstream version 2.3
+  * Adjusted qt6-* build depend to require >= 6.3.0, as the new upstream
+    reduced the requirement.
+  * Updated d/copyright with new upstream Appstream metadata XML location.
+
+ -- Petter Reinholdtsen <pere@debian.org>  Mon, 14 Oct 2024 08:00:50 +0200
+
+bino (2.2-1) unstable; urgency=medium
+
+  * QA upload.
+
+  * New upstream version 2.2.
+  * Corrected d/watch to use working upstream URL.
+  * Adjust qt6-* build depend to require >= 6.6.0, as the requested by
+    cmake in v2.2.
+
+ -- Petter Reinholdtsen <pere@debian.org>  Sun, 13 Oct 2024 11:07:49 +0200
+
+bino (2.1-2) unstable; urgency=medium
+
+  * QA upload.
+
+  * Updated vcs in d/control to Salsa.
+  * Updated d/gbp.conf to enforce the use of pristine-tar.
+  * Updated Standards-Version from 4.6.2 to 4.7.0.
+  * Use wrap-and-sort -at for debian control files.
+  * Replaced obsolete pkg-config build dependency with pkgconf.
+  * Re-export upstream signing key without extra signatures.
+  * Dropped hardcoded xz compression in d/gbp.conf, upstream switched to gz.
+
+ -- Petter Reinholdtsen <pere@debian.org>  Sun, 13 Oct 2024 10:47:12 +0200
+
+bino (2.1-1) unstable; urgency=medium
+
+  * QA upload.
+  * Switch from liblircclient-dev to liblirc-dev (Closes: #1059974)
+  * New upstream releases (Closes: #1035548)
+    - this fixes gcc-11 gcc-12 and newer ffmpeg related build failures
+  * Drop all patches, upstream
+  * Drop hacks in rules file
+  * Switch to qt6
+  * Update docs and doc-base html, updated upstream
+  * Switch to pandoc
+  * Switch to std-version 4.6.2
+  * Switch to cmake
+  * Drop VCS fields
+  * Update upstream key
+
+ -- Gianfranco Costamagna <locutusofborg@debian.org>  Thu, 04 Jan 2024 11:32:05 +0100
+
+bino (1.6.8-1) unstable; urgency=medium
+
+  [ Debian Janitor ]
+  * Drop custom source compression.
+  * Bump debhelper from old 11 to 12.
+  * Set debhelper-compat version in Build-Depends.
+  * Set upstream metadata fields:
+    Bug-Submit (from ./configure), Repository, Repository-Browse.
+
+  [ Daniel Schaal ]
+  * Orphan the package, set maintainer to Debian QA Group
+  * New upstream version 1.6.8 (Closes: #983990)
+  * Remove obsolete patch
+  * Update dh compat to 13
+  * Update Standards-Version to 4.6.0
+  * Update watch file (Closes: #997042)
+
+ -- Daniel Schaal <daniel@schaal.email>  Tue, 28 Dec 2021 07:35:13 +0100
+
+bino (1.6.6-3) unstable; urgency=medium
+
+  * Use https url in watch file
+  * Update Standards-Version to 4.1.4
+  * Remove --parallel argument, enabled by default now
+  * Enable all hardening options
+
+ -- Daniel Schaal <daniel@schaal.email>  Mon, 11 Jun 2018 06:55:20 +0200
+
+bino (1.6.6-2) unstable; urgency=medium
+
+  * Fix FTBFS with FFmpeg 4.0.
+    Thanks to James Cowgill <jcowgill@debian.org> (Closes: #888358)
+
+ -- Daniel Schaal <daniel@schaal.email>  Wed, 30 May 2018 07:29:22 +0200
+
+bino (1.6.6-1) unstable; urgency=medium
+
+  * Build-Depend on libqt5opengl5-desktop-dev to
+    prevent build attempts on architectures
+    without desktop gl support
+  * Change priority from extra to optional
+  * Add travis configuration
+  * Move upstream signing keys to debian/upstream/
+  * Update upstream signing key
+  * New upstream version 1.6.6
+  * Build-depend on plain libglew instead of libglewmx
+  * Use debhelper compat 11
+  * Update copyright
+  * Use https links
+  * Update policy version to 4.1.3
+
+ -- Daniel Schaal <daniel@schaal.email>  Sat, 20 Jan 2018 11:47:49 +0100
+
+bino (1.6.5-1) unstable; urgency=medium
+
+  * New upstream version 1.6.5 (Closes: #847550)
+  * Use dh compat 10
+  * Remove ffmpeg_2.9.patch, fixed upstream
+  * Use https for copyright Format link
+  * Remove versioned dependency to ffmpeg
+  * Update standards-version to 3.9.8
+  * Update copyright
+
+ -- Daniel Schaal <daniel@schaal.email>  Fri, 16 Dec 2016 20:43:03 +0100
+
+bino (1.6.3-1) unstable; urgency=medium
+
+  * Remove bino-dbg package, rely on automatic dbgsym package
+  * Imported Upstream version 1.6.2
+  * Imported Upstream version 1.6.3
+    * fixes compilation with g++-6 (Closes: #811630)
+  * Remove use-fPIC.patch, merged upstream
+  * Always use debian/tmp
+  * Use https url for Vcs-Git
+  * Update standards-version, no changes needed
+
+ -- Daniel Schaal <daniel@schaal.email>  Mon, 15 Feb 2016 05:41:22 +0100
+
+bino (1.6.1-1) unstable; urgency=medium
+
+  * Imported Upstream version 1.6.1
+  * Update gbp.conf to match new gbp config style
+  * Add patch to compile with -fPIC instead of -fPIE when necessary.
+    (Closes: #802374)
+  * Update standards-version to 3.9.6
+  * Update copyright for new upstream version
+  * Update my email address
+  * Don't install bino.info anymore, it prevents reproducible builds.
+  * Add patch to fix compilation with ffmpeg 2.9 (Closes: #803802)
+    Thanks to Andreas Cadhalpun for the patch.
+
+ -- Daniel Schaal <daniel@schaal.email>  Wed, 28 Oct 2015 17:45:23 +0100
+
+bino (1.6.0-1) unstable; urgency=medium
+
+  * Imported Upstream version 1.6.0 (Closes: #757280).
+  * Remove libav10 ftbfs patch, applied upstream
+  * Switch to qt5
+  * Update copyright file for 1.6.0
+
+ -- Daniel Schaal <farbing@web.de>  Sat, 20 Sep 2014 09:42:32 +0200
+
+bino (1.4.4-2) unstable; urgency=medium
+
+  * Add patch to fix FTBFS with libav10 (Closes: #739214).
+
+ -- Daniel Schaal <farbing@web.de>  Fri, 21 Feb 2014 07:31:03 +0100
+
+bino (1.4.4-1) unstable; urgency=low
+
+  * Imported Upstream version 1.4.4
+  * Update to Standards-Version 3.9.5, no changes needed
+  * Add patch to share images between bino.info and html doc
+  * Add patch to include-binaries to avoid "unwanted binaries" error
+  * Add signature check for upstream tarball when using uscan
+
+ -- Daniel Schaal <farbing@web.de>  Thu, 26 Dec 2013 09:52:26 +0100
+
+bino (1.4.2-1) unstable; urgency=low
+
+  * Imported Upstream version 1.4.2
+  * debian/rules:
+    * make build more verbose
+    * deleting usr/share/info/dir no longer necessary
+    * use DEB_LDFLAGS_MAINT_APPEND instead of LDFLAGS directly.
+  * debian/copyright: Update for 1.4.2.
+  * debian/control:
+    * Update to Standards-Version 3.9.4, no changes needed.
+    * Move git repo to github.
+
+ -- Daniel Schaal <farbing@web.de>  Wed, 01 May 2013 08:57:38 +0200
+
+bino (1.4.0-1) unstable; urgency=low
+
+  * Imported Upstream version 1.4.0
+  * Add Build-Depends on debhelper >= 9, remove lintian override
+  * debian/gbp.conf: disable pristine-tar as it doesn't support xz yet.
+  * debian/control:
+    * update Standards-Version to 3.9.3 (no changes needed)
+    * build-Depend on libglewmx-dev instead of libglew-dev
+    * build-Depend on texinfo
+  * debian/copyright:
+    * update Format url to new canonical url
+    * update for new upstream version
+  * debian/watch: only consider versions with even version numbers.
+
+ -- Daniel Schaal <farbing@web.de>  Sun, 24 Jun 2012 11:57:35 +0200
+
+bino (1.2.1-2) unstable; urgency=low
+
+  * explicitly disable Equalizer in configure line
+  * Build-Depend on libass-dev >= 0.10.0-2,
+    earlier versions are missing a dependency on libfribidi-dev.
+    (Closes: #646442)
+
+ -- Daniel Schaal <farbing@web.de>  Fri, 16 Dec 2011 22:45:38 +0100
+
+bino (1.2.1-1) unstable; urgency=low
+
+  * Imported Upstream version 1.2.1
+  * add comment to lintian override
+  * wrap-and-sort control and .install files
+  * build-depend on libglew1.6-dev instead of
+    virtual package libglew-dev
+  * delete usr/share/info/dir from debian/tmp
+  * html docs are installed in htmldir now,
+    adapt configure option
+  * remove fix-hyphen-used-as-minus.patch, applied upstream
+
+ -- Daniel Schaal <farbing@web.de>  Mon, 10 Oct 2011 22:23:34 +0200
+
+bino (1.2.0-1) unstable; urgency=low
+
+  * Initial release (Closes: #610793)
+
+ -- Daniel Schaal <farbing@web.de>  Fri, 09 Sep 2011 14:23:54 +0200

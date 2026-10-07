@@ -1,0 +1,42 @@
+From 9a9e7494c81812f929ad231fdfc7a67d3d26631d Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 6 Oct 2026 22:41:05 -0300
+Subject: [PATCH 1/2] Fixed eye order detection for right-first stereo videos
+
+ffprobe prints the "inverted" flag of the Stereo 3D side data as a JSON
+number, but it was read with toString(), which gives an empty string for a
+number. The flag was therefore never seen, and Matroska StereoMode 11
+(right-left) and 2 (bottom-top) were detected as left-first, which swaps
+the eyes. Read the flag as an integer instead, so a number and the string
+"1" both work.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/metadata.cpp | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/src/metadata.cpp b/src/metadata.cpp
+index a62d1c5..13cca63 100644
+--- a/src/metadata.cpp
++++ b/src/metadata.cpp
+@@ -199,13 +199,13 @@ void MetaData::detectViaFFprobe(const QUrl& url, InputMode& defaultInputMode, Su
+                                         break;
+                                     } else if (type == "Stereo 3D") {
+                                         QString layout = sideDataArray[j]["type"].toString();
+-                                        QString inverted = sideDataArray[j]["inverted"].toString();
++                                        bool inverted = (sideDataArray[j]["inverted"].toVariant().toInt() == 1);
+                                         if (layout == "top and bottom") {
+-                                            inputModes.last() = (inverted == "1" ? Input_Bottom_Top : Input_Top_Bottom);
++                                            inputModes.last() = (inverted ? Input_Bottom_Top : Input_Top_Bottom);
+                                         } else if (layout == "side by side") {
+-                                            inputModes.last() = (inverted == "1" ? Input_Right_Left : Input_Left_Right);
++                                            inputModes.last() = (inverted ? Input_Right_Left : Input_Left_Right);
+                                         } else if (layout == "frame alternate") {
+-                                            inputModes.last() = (inverted == "1" ? Input_Alternating_RL : Input_Alternating_LR);
++                                            inputModes.last() = (inverted ? Input_Alternating_RL : Input_Alternating_LR);
+                                         } else if (layout == "2D") {
+                                             inputModes.last() = Input_Mono;
+                                         }
+-- 
+2.53.0
+

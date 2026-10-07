@@ -7,8 +7,8 @@ case_=$1; shift; [ "$1" = "--" ] && shift
 mkdir -p "$here/../evidence/$case_"
 exec docker run --rm --platform linux/amd64 -u $(id -u):$(id -g) --cpus 4 --cap-add SYS_NICE \
   --device /dev/dri/renderD128 --group-add 125 \
-  -e PLAT -e ACT -e SIZE -e WAIT -e LIBGL_ALWAYS_SOFTWARE -e BINO_ENV -e BINO_LOG -e DX -e DY -e KEEP_CFG \
+  -e PLAT -e ACT -e SIZE -e WAIT -e LIBGL_ALWAYS_SOFTWARE -e BINO_BIN -e BINO_ENV -e BINO_LOG -e DX -e DY -e KEEP_CFG \
   -v /K3D/temp/bino-lane/passwd:/etc/passwd:ro \
   -v /K3D/temp/bino-lane/o:/o -v /K3D/temp/bino-lane/clips:/clips:ro \
   -v "$here":/proof:ro -v "$here/../evidence/$case_":/ev \
-  bino-stereo-proof:4 /proof/run-bino.sh "$case_" "$@"
+  ${IMG:-bino-stereo-proof:4} /proof/run-bino.sh "$case_" "$@"

@@ -1,0 +1,41 @@
+Source: bino
+Standards-Version: 4.7.4
+Maintainer: Debian QA Group <packages@qa.debian.org>
+Section: video
+Build-Depends:
+ cmake,
+ debhelper-compat (= 13),
+ libass-dev,
+ libavcodec-dev,
+ libavdevice-dev,
+ libavformat-dev,
+ libglew-dev,
+ liblirc-dev,
+ libopenal-dev,
+ libswscale-dev,
+ pandoc,
+ pkgconf,
+ qt6-base-dev,
+ qt6-base-dev-tools,
+ qt6-multimedia-dev,
+ qt6-tools-dev,
+Vcs-Browser: https://salsa.debian.org/debian/bino
+Vcs-Git: https://salsa.debian.org/debian/bino.git
+Homepage: https://bino3d.org/
+
+Package: bino
+Architecture: any
+Depends:
+ ${misc:Depends},
+ ${shlibs:Depends},
+ ffmpeg,
+ libxcb-cursor0,
+Description: 3D video player (Sparky Stereo OS build: always OpenGL stereo output)
+ Bino is a video player with support for a wide variety
+ of stereoscopic video layouts and formats.
+ .
+ Bino can display monoscopic videos, as well as
+ videos with the left and right view stored either
+ in separate streams or displayed side by side.
+ It can output these videos for several types
+ of anaglyph glasses or 3D displays.

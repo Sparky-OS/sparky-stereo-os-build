@@ -15,7 +15,7 @@ sleep 1
 if [ "$PLAT" = xcb ]; then export QT_QPA_PLATFORM=xcb; unset WAYLAND_DISPLAY; export DISPLAY=:0
 else export QT_QPA_PLATFORM=wayland; export WAYLAND_DISPLAY=bnwl; fi
 export QT_LOGGING_RULES="qt.qpa.gl=true;qt.qpa.xcb.glx=true"
-env $BINO_ENV bino --log-level ${BINO_LOG:-debug} --log-file '$ev'/bino.log $BINO_ARGS > '$ev'/app.log 2>&1 &
+env $BINO_ENV ${BINO_BIN:-bino} --log-level ${BINO_LOG:-debug} --log-file '$ev'/bino.log $BINO_ARGS > '$ev'/app.log 2>&1 &
 ap=$!
 sleep $WAIT
 if [ "$PLAT" = xcb ]; then

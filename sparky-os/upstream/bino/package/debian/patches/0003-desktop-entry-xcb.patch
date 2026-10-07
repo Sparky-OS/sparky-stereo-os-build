@@ -1,0 +1,16 @@
+Description: Run Bino on X11 (Xwayland) until its stereo output works on Wayland
+ Qt's Wayland plugin gives no stereo buffers yet, and Bino now always needs them.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+
+--- a/res/org.bino3d.bino.desktop	2026-10-06 22:59:06.187106108 -0300
++++ b/res/org.bino3d.bino.desktop	2026-10-06 22:59:06.190476741 -0300
+@@ -8,7 +8,7 @@
+ Icon=org.bino3d.bino
+ Categories=AudioVideo;Video;Player;
+ Type=Application
+-Exec=bino %u
++Exec=env QT_QPA_PLATFORM=xcb bino %u
+ StartupNotify=true
+ Terminal=false
+ MimeType=video/mp4;video/mpeg;video/ogg;video/quicktime;video/webm;video/x-matroska;video/x-mng;video/x-ms-wmv;video/x-msvideo;
