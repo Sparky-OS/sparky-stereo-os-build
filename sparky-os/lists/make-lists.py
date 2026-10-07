@@ -151,6 +151,12 @@ group('hardware', 'Hardware support', [
     'debconf-kde-helper',   # apt and dpkg questions as KDE dialogs
     'libfdk-aac2', 'pipewire-bluez5-codec-aac',   # Bluetooth AAC (ours: sparky-os/packages)
     'xpadneo',   # Xbox controllers over Bluetooth (DKMS; ours to package)
+    # ACPI and DKMS, which most distributions leave out (Daniel, 2026-10-07; on his own lists since 2020).
+    # The kernel's headers come with the stereo stack (linux-headers-sparky-stereo, make-meta.py).
+    'dkms',   # out-of-tree drivers rebuilt for every new kernel (NVIDIA open modules, xpadneo, evdi)
+    'acpi', 'acpid', 'acpitool',   # battery, thermal and ACPI event tools (kacpimon comes with acpid)
+    'acpi-call-dkms',   # ACPI method calls: battery thresholds on older ThinkPads, hybrid-graphics power switching
+    'acpi-support',   # hotkey scripts; check in the VM that the power button acts once (logind and PowerDevil handle it too)
 ])
 
 # 7b. Installed by the hardware setup only when it finds the hardware (not in the base build).
