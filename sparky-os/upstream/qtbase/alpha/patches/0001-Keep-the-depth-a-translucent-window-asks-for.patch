@@ -1,0 +1,201 @@
+From 41361552380825b7282647ccd36aa8cf048e13d3 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 7 Oct 2026 10:20:18 -0300
+Subject: [PATCH] Keep the depth a translucent window asks for
+
+A top-level with Qt::WA_TranslucentBackground was given an alpha buffer
+of 8 bits whatever its requested format said, and the Wayland EGL
+integration added 8 bits of alpha again for client-side decorations. For
+a format asking for more than 8 bits per channel there is no config with
+8 bits of alpha (Mesa offers 10/10/10/2 and 16/16/16/16), so the chooser
+dropped the alpha and the window ended up 8/8/8/8 or without alpha.
+
+For a format that asks for more than 8 bits per channel, keep the alpha
+size it asks for (any alpha when it asks for none), in QWidget and in
+the Wayland EGL window and context. QEglConfigChooser, when no config
+matches the requested alpha exactly, takes the one with the same color
+channel sizes and the nearest deeper alpha. Formats that ask for 8 bits
+or less behave as before.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ .../opengl/platform/egl/qeglconvenience.cpp   | 19 +++++++++
+ .../qwaylandeglclientbufferintegration.cpp    |  9 +++-
+ .../wayland-egl/qwaylandeglwindow.cpp         |  9 +++-
+ src/widgets/kernel/qwidget.cpp                | 15 ++++++-
+ .../widgets/kernel/qwidget/tst_qwidget.cpp    | 42 +++++++++++++++++++
+ 5 files changed, 88 insertions(+), 6 deletions(-)
+
+diff --git a/src/gui/opengl/platform/egl/qeglconvenience.cpp b/src/gui/opengl/platform/egl/qeglconvenience.cpp
+index 4af50d72..fbcd29e9 100644
+--- a/src/gui/opengl/platform/egl/qeglconvenience.cpp
++++ b/src/gui/opengl/platform/egl/qeglconvenience.cpp
+@@ -283,6 +283,25 @@ EGLConfig QEglConfigChooser::chooseConfig()
+             if (filterConfig(configs[i]))
+                 return configs.at(i);
+         }
++
++        // No exact match: when an alpha size was asked for, take the config with the
++        // same colour channel sizes and the nearest deeper alpha.
++        EGLConfig deeper = nullptr;
++        EGLint deeperAlpha = 0;
++        for (int i = 0; m_confAttrAlpha && i < configs.size(); ++i) {
++            EGLint red = 0, green = 0, blue = 0, alpha = 0;
++            eglGetConfigAttrib(display(), configs[i], EGL_RED_SIZE, &red);
++            eglGetConfigAttrib(display(), configs[i], EGL_GREEN_SIZE, &green);
++            eglGetConfigAttrib(display(), configs[i], EGL_BLUE_SIZE, &blue);
++            eglGetConfigAttrib(display(), configs[i], EGL_ALPHA_SIZE, &alpha);
++            if (!m_ignore && red == m_confAttrRed && green == m_confAttrGreen && blue == m_confAttrBlue
++                    && alpha > m_confAttrAlpha && (!deeper || alpha < deeperAlpha)) {
++                deeper = configs.at(i);
++                deeperAlpha = alpha;
++            }
++        }
++        if (deeper)
++            return deeper;
+     } while (q_reduceConfigAttributes(&configureAttributes));
+ 
+     if (!cfg)
+diff --git a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglclientbufferintegration.cpp b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglclientbufferintegration.cpp
+index a6df5a19..cb56446c 100644
+--- a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglclientbufferintegration.cpp
++++ b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglclientbufferintegration.cpp
+@@ -129,8 +129,13 @@ QWaylandWindow *QWaylandEglClientBufferIntegration::createEglWindow(QWindow *win
+ QPlatformOpenGLContext *QWaylandEglClientBufferIntegration::createPlatformOpenGLContext(const QSurfaceFormat &glFormat, QPlatformOpenGLContext *share) const
+ {
+     QSurfaceFormat fmt = glFormat;
+-    if (m_display->supportsWindowDecoration())
+-        fmt.setAlphaBufferSize(8);
++    if (m_display->supportsWindowDecoration()) {
++        // a format asking for more than 8 bits per channel keeps its alpha
++        if (fmt.redBufferSize() > 8)
++            fmt.setAlphaBufferSize(qMax(fmt.alphaBufferSize(), 1));
++        else
++            fmt.setAlphaBufferSize(8);
++    }
+     return new QWaylandGLContext(m_eglDisplay, m_display, fmt, share, supportsStereo(fmt));
+ }
+ 
+diff --git a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
+index d73b8673..c0148b39 100644
+--- a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
++++ b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
+@@ -113,8 +113,13 @@ void QWaylandEglWindow::updateSurface(bool create)
+             }
+ 
+             QSurfaceFormat fmt = window()->requestedFormat();
+-            if (mDisplay->supportsWindowDecoration())
+-                fmt.setAlphaBufferSize(8);
++            if (mDisplay->supportsWindowDecoration()) {
++                // a format asking for more than 8 bits per channel keeps its alpha
++                if (fmt.redBufferSize() > 8)
++                    fmt.setAlphaBufferSize(qMax(fmt.alphaBufferSize(), 1));
++                else
++                    fmt.setAlphaBufferSize(8);
++            }
+             EGLConfig eglConfig = q_configFromGLFormat(m_clientBufferIntegration->eglDisplay(), fmt);
+             QSurfaceFormat eglFormat = q_glFormatFromConfig(m_clientBufferIntegration->eglDisplay(), eglConfig, fmt);
+ 
+diff --git a/src/widgets/kernel/qwidget.cpp b/src/widgets/kernel/qwidget.cpp
+index 062539d4..b2a7ef7b 100644
+--- a/src/widgets/kernel/qwidget.cpp
++++ b/src/widgets/kernel/qwidget.cpp
+@@ -1290,6 +1290,16 @@ void q_createNativeChildrenAndSetParent(const QWidget *parentWidget)
+ 
+ }
+ 
++// The alpha size a translucent top-level asks for: 8 bits by default, and for a
++// format that asks for more than 8 bits per channel the alpha it asks for (any
++// alpha when it asks for none), so that a deep window stays deep.
++static int translucentAlphaBufferSize(const QSurfaceFormat &format)
++{
++    if (format.redBufferSize() > 8)
++        return qMax(format.alphaBufferSize(), 1);
++    return 8;
++}
++
+ void QWidgetPrivate::create()
+ {
+     Q_Q(QWidget);
+@@ -1341,7 +1351,7 @@ void QWidgetPrivate::create()
+     QSurfaceFormat format = win->requestedFormat();
+     if ((flags & Qt::Window) && win->surfaceType() != QSurface::OpenGLSurface
+             && q->testAttribute(Qt::WA_TranslucentBackground)) {
+-        format.setAlphaBufferSize(8);
++        format.setAlphaBufferSize(translucentAlphaBufferSize(format));
+     }
+     win->setFormat(format);
+ 
+@@ -2233,7 +2243,8 @@ void QWidgetPrivate::updateIsTranslucent()
+     if (QWindow *window = q->windowHandle()) {
+         QSurfaceFormat format = window->format();
+         const int oldAlpha = format.alphaBufferSize();
+-        const int newAlpha = q->testAttribute(Qt::WA_TranslucentBackground) ? 8 : -1;
++        const int newAlpha = q->testAttribute(Qt::WA_TranslucentBackground)
++                ? translucentAlphaBufferSize(format) : -1;
+         if (oldAlpha != newAlpha) {
+             // QTBUG-85714: Do this only when the QWindow has not yet been create()'ed yet.
+             //
+diff --git a/tests/auto/widgets/kernel/qwidget/tst_qwidget.cpp b/tests/auto/widgets/kernel/qwidget/tst_qwidget.cpp
+index ef2ecdb7..60ef386f 100644
+--- a/tests/auto/widgets/kernel/qwidget/tst_qwidget.cpp
++++ b/tests/auto/widgets/kernel/qwidget/tst_qwidget.cpp
+@@ -375,6 +375,7 @@ private slots:
+     void QTBUG6883_reparentStaticWidget2();
+ 
+     void translucentWidget();
++    void translucentWidgetDeepFormat();
+ 
+     void setClearAndResizeMask();
+     void maskedUpdate();
+@@ -10413,6 +10414,47 @@ void tst_QWidget::translucentWidget()
+     QVERIFY(translucentFormat == window->format());
+ }
+ 
++void tst_QWidget::translucentWidgetDeepFormat()
++{
++    // A translucent top-level asks for 8 bits of alpha, unless the format asks for more than
++    // 8 bits per channel: then it keeps the alpha that format asks for.
++    const QSurfaceFormat defaultFormat = QSurfaceFormat::defaultFormat();
++    auto alphaOfTranslucentWindow = [](const QSurfaceFormat &format) {
++        QSurfaceFormat::setDefaultFormat(format);
++        QWidget widget;
++        widget.setAttribute(Qt::WA_TranslucentBackground);
++        widget.winId(); // creates the QWindow, and with it the requested format
++        return widget.windowHandle()->requestedFormat().alphaBufferSize();
++    };
++    const auto cleanup = qScopeGuard([&] { QSurfaceFormat::setDefaultFormat(defaultFormat); });
++
++    QSurfaceFormat format;
++    QCOMPARE(alphaOfTranslucentWindow(format), 8);
++
++    format.setRedBufferSize(10);
++    format.setGreenBufferSize(10);
++    format.setBlueBufferSize(10);
++    format.setAlphaBufferSize(2);
++    QCOMPARE(alphaOfTranslucentWindow(format), 2);
++
++    format.setRedBufferSize(16);
++    format.setGreenBufferSize(16);
++    format.setBlueBufferSize(16);
++    format.setAlphaBufferSize(16);
++    QCOMPARE(alphaOfTranslucentWindow(format), 16);
++
++    // no alpha asked for: any alpha
++    format.setAlphaBufferSize(-1);
++    QVERIFY(alphaOfTranslucentWindow(format) > 0);
++
++    // 8 bits per channel and less keep the default of 8
++    format.setRedBufferSize(8);
++    format.setGreenBufferSize(8);
++    format.setBlueBufferSize(8);
++    format.setAlphaBufferSize(2);
++    QCOMPARE(alphaOfTranslucentWindow(format), 8);
++}
++
+ class MaskResizeTestWidget : public QWidget
+ {
+     Q_OBJECT
+-- 
+2.53.0
+
