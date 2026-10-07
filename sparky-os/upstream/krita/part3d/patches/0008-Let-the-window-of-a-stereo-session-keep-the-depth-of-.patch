@@ -1,0 +1,57 @@
+From 61fa865dace6ac4bbee5962423d2fd4c05dc9964 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 7 Oct 2026 10:36:35 -0300
+Subject: [PATCH] Let the window of a stereo session keep the depth of the
+ canvas surface
+
+The main window of a session started with "Stereo 3D" on is translucent
+(the canvas layer shows through it) and asked for 8/8/8/8, because Qt
+Widgets gave a translucent window an alpha buffer of 8 bits whatever
+its format said, and no 16-bit configuration has 8 bits of alpha. With
+a Qt that keeps the alpha of a translucent window that asks for more
+than 8 bits per channel, the window takes the default format, the
+canvas surface's own with its alpha, and its interface is a deep
+surface with alpha too.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ libs/ui/KisMainWindow.cpp | 15 ++++-----------
+ 1 file changed, 4 insertions(+), 11 deletions(-)
+
+diff --git a/libs/ui/KisMainWindow.cpp b/libs/ui/KisMainWindow.cpp
+index a224159..76173cb 100644
+--- a/libs/ui/KisMainWindow.cpp
++++ b/libs/ui/KisMainWindow.cpp
+@@ -372,25 +372,18 @@ KisMainWindow::KisMainWindow(QUuid uuid)
+     if (KisStereoCanvasLayer::isSupported() && KisConfig(true).stereo3DCanvas()) {
+         /**
+          * The stereo canvas is a layer below this window's surface, which shows through where
+-         * the canvas is transparent: the window needs an alpha buffer from the start. Surfaces
+-         * with alpha have 8 bits per channel here (the 16-bit ones have none), so the window
+-         * asks for them, and only the window: the format the canvases take stays what it was.
++         * the canvas is transparent: the window needs an alpha buffer from the start. The
++         * window takes the default format, the format of the canvas surface with its alpha
++         * (16/16/16/16 or 10/10/10/2): Qt keeps the depth and the alpha of a translucent window
++         * that asks for more than 8 bits per channel.
+          *
+          * Qt gives a top-level window the default format when the first OpenGL widget is added to
+          * it, and that is long after this point, so a hidden OpenGL widget makes it happen here.
+          */
+-        const QSurfaceFormat canvasFormat = QSurfaceFormat::defaultFormat();
+-        QSurfaceFormat windowFormat = canvasFormat;
+-        windowFormat.setRedBufferSize(8);
+-        windowFormat.setGreenBufferSize(8);
+-        windowFormat.setBlueBufferSize(8);
+-        windowFormat.setAlphaBufferSize(8);
+-        QSurfaceFormat::setDefaultFormat(windowFormat);
+         setAttribute(Qt::WA_TranslucentBackground);
+         QOpenGLWidget *placeholder = new QOpenGLWidget(this);
+         placeholder->hide();
+         winId();
+-        QSurfaceFormat::setDefaultFormat(canvasFormat);
+         KisStereoCanvasLayer::setLayerStarted(true);
+     }
+ 
+-- 
+2.53.0
+

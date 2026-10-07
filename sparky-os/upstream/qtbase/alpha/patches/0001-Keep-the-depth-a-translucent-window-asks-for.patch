@@ -1,4 +1,4 @@
-From 41361552380825b7282647ccd36aa8cf048e13d3 Mon Sep 17 00:00:00 2001
+From e05baf4233ae383835fc150c8e0e846d4dfeddb8 Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Date: Wed, 7 Oct 2026 10:20:18 -0300
 Subject: [PATCH] Keep the depth a translucent window asks for
@@ -11,8 +11,10 @@ a format asking for more than 8 bits per channel there is no config with
 dropped the alpha and the window ended up 8/8/8/8 or without alpha.
 
 For a format that asks for more than 8 bits per channel, keep the alpha
-size it asks for (any alpha when it asks for none), in QWidget and in
-the Wayland EGL window and context. QEglConfigChooser, when no config
+size it asks for: QWidget gives a translucent top-level that alpha (any
+alpha when it asks for none), and the Wayland EGL window and context add
+none of their own, so a deep window that asks for no alpha stays without
+one as before. QEglConfigChooser, when no config
 matches the requested alpha exactly, takes the one with the same color
 channel sizes and the nearest deeper alpha. Formats that ask for 8 bits
 or less behave as before.
@@ -20,11 +22,11 @@ or less behave as before.
 Assisted-by: Claude Sonnet via Claude Code
 ---
  .../opengl/platform/egl/qeglconvenience.cpp   | 19 +++++++++
- .../qwaylandeglclientbufferintegration.cpp    |  9 +++-
- .../wayland-egl/qwaylandeglwindow.cpp         |  9 +++-
+ .../qwaylandeglclientbufferintegration.cpp    |  3 +-
+ .../wayland-egl/qwaylandeglwindow.cpp         |  3 +-
  src/widgets/kernel/qwidget.cpp                | 15 ++++++-
  .../widgets/kernel/qwidget/tst_qwidget.cpp    | 42 +++++++++++++++++++
- 5 files changed, 88 insertions(+), 6 deletions(-)
+ 5 files changed, 78 insertions(+), 4 deletions(-)
 
 diff --git a/src/gui/opengl/platform/egl/qeglconvenience.cpp b/src/gui/opengl/platform/egl/qeglconvenience.cpp
 index 4af50d72..fbcd29e9 100644
@@ -57,45 +59,33 @@ index 4af50d72..fbcd29e9 100644
  
      if (!cfg)
 diff --git a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglclientbufferintegration.cpp b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglclientbufferintegration.cpp
-index a6df5a19..cb56446c 100644
+index a6df5a19..25638e25 100644
 --- a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglclientbufferintegration.cpp
 +++ b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglclientbufferintegration.cpp
-@@ -129,8 +129,13 @@ QWaylandWindow *QWaylandEglClientBufferIntegration::createEglWindow(QWindow *win
+@@ -129,7 +129,8 @@ QWaylandWindow *QWaylandEglClientBufferIntegration::createEglWindow(QWindow *win
  QPlatformOpenGLContext *QWaylandEglClientBufferIntegration::createPlatformOpenGLContext(const QSurfaceFormat &glFormat, QPlatformOpenGLContext *share) const
  {
      QSurfaceFormat fmt = glFormat;
 -    if (m_display->supportsWindowDecoration())
--        fmt.setAlphaBufferSize(8);
-+    if (m_display->supportsWindowDecoration()) {
-+        // a format asking for more than 8 bits per channel keeps its alpha
-+        if (fmt.redBufferSize() > 8)
-+            fmt.setAlphaBufferSize(qMax(fmt.alphaBufferSize(), 1));
-+        else
-+            fmt.setAlphaBufferSize(8);
-+    }
++    // a format asking for more than 8 bits per channel keeps the alpha it asks for
++    if (m_display->supportsWindowDecoration() && fmt.redBufferSize() <= 8)
+         fmt.setAlphaBufferSize(8);
      return new QWaylandGLContext(m_eglDisplay, m_display, fmt, share, supportsStereo(fmt));
  }
- 
 diff --git a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
-index d73b8673..c0148b39 100644
+index d73b8673..0b1d06d6 100644
 --- a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
 +++ b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
-@@ -113,8 +113,13 @@ void QWaylandEglWindow::updateSurface(bool create)
+@@ -113,7 +113,8 @@ void QWaylandEglWindow::updateSurface(bool create)
              }
  
              QSurfaceFormat fmt = window()->requestedFormat();
 -            if (mDisplay->supportsWindowDecoration())
--                fmt.setAlphaBufferSize(8);
-+            if (mDisplay->supportsWindowDecoration()) {
-+                // a format asking for more than 8 bits per channel keeps its alpha
-+                if (fmt.redBufferSize() > 8)
-+                    fmt.setAlphaBufferSize(qMax(fmt.alphaBufferSize(), 1));
-+                else
-+                    fmt.setAlphaBufferSize(8);
-+            }
++            // a format asking for more than 8 bits per channel keeps the alpha it asks for
++            if (mDisplay->supportsWindowDecoration() && fmt.redBufferSize() <= 8)
+                 fmt.setAlphaBufferSize(8);
              EGLConfig eglConfig = q_configFromGLFormat(m_clientBufferIntegration->eglDisplay(), fmt);
              QSurfaceFormat eglFormat = q_glFormatFromConfig(m_clientBufferIntegration->eglDisplay(), eglConfig, fmt);
- 
 diff --git a/src/widgets/kernel/qwidget.cpp b/src/widgets/kernel/qwidget.cpp
 index 062539d4..b2a7ef7b 100644
 --- a/src/widgets/kernel/qwidget.cpp
