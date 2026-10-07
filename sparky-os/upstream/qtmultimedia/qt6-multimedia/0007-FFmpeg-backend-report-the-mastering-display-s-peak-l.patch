@@ -1,0 +1,166 @@
+From 7faaee5fb202cfbdbc3179f220b423247b1e8f9c Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 7 Oct 2026 19:44:30 -0300
+Subject: [PATCH 4/4] FFmpeg backend: report the mastering display's peak
+ luminance in nits
+
+QVideoFrameFormat::maxLuminance() is the maximum luminance of the mastering display in
+nits, and the shaders divide it by 100 (SDR white) to tone map PQ and HLG video to
+the output. The FFmpeg backend filled it by multiplying AVMasteringDisplayMetadata's
+max_luminance by 10000, which would be right for ST 2086's unit of 0.0001 cd/m2, but
+FFmpeg's field is a rational in cd/m2 already (10000000/10000 for a display of
+1000 cd/m2): a video mastered at 1000 nits reported 10000000, so the tone mapper
+was given a peak 10^4 times too high.
+
+Use the rational as it is, and only when has_luminance says it is set. The test plays
+a HEVC file made with x265's --master-display "...L(10000000,1)" and expects 1000.
+It failed before with 1e+07.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ .../multimedia/ffmpeg/qffmpegvideobuffer.cpp  |   5 +++-
+ .../qvideoframebackend/CMakeLists.txt         |   1 +
+ .../testdata/mastering_1000nits.mp4           | Bin 0 -> 6938 bytes
+ .../tst_qvideoframebackend.cpp                |  25 ++++++++++++++++++
+ 4 files changed, 30 insertions(+), 1 deletion(-)
+ create mode 100644 tests/auto/integration/qvideoframebackend/testdata/mastering_1000nits.mp4
+
+diff --git a/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer.cpp b/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer.cpp
+index 1c7702a84..de4fe3d6a 100644
+--- a/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer.cpp
++++ b/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer.cpp
+@@ -190,7 +190,10 @@ float QFFmpegVideoBuffer::maxNits()
+         // TODO: Longer term we might want to also support HDR10+ dynamic metadata
+         if (sd->type == AV_FRAME_DATA_MASTERING_DISPLAY_METADATA) {
+             auto *data = reinterpret_cast<AVMasteringDisplayMetadata *>(sd->data);
+-            auto maybeLum = QFFmpeg::mul(qreal(10'000.), data->max_luminance);
++            // max_luminance is a rational in cd/m2 (nits) already, valid with has_luminance
++            if (!data->has_luminance)
++                continue;
++            auto maybeLum = QFFmpeg::mul(qreal(1.), data->max_luminance);
+             if (maybeLum)
+                 maxNits = float(maybeLum.value());
+         }
+diff --git a/tests/auto/integration/qvideoframebackend/CMakeLists.txt b/tests/auto/integration/qvideoframebackend/CMakeLists.txt
+index 27f866235..adce20a09 100644
+--- a/tests/auto/integration/qvideoframebackend/CMakeLists.txt
++++ b/tests/auto/integration/qvideoframebackend/CMakeLists.txt
+@@ -16,4 +16,5 @@ qt_internal_add_test(tst_qvideoframebackend
+     TESTDATA
+         testdata/colors.mp4
+         testdata/one_red_frame.mp4
++        testdata/mastering_1000nits.mp4
+ )
+diff --git a/tests/auto/integration/qvideoframebackend/testdata/mastering_1000nits.mp4 b/tests/auto/integration/qvideoframebackend/testdata/mastering_1000nits.mp4
+new file mode 100644
+index 0000000000000000000000000000000000000000..e5c4267770ddce88c5361416da373173c3f16bc8
+GIT binary patch
+literal 6938
+zcmeHMZ)_CD72mTV1;<U0Ld8KK9ViG}^_u%*n?K?z3#Y+RT!fGSwG<_DyK{FN@9wO3
+z=FT>%R4YM5NvoDXgHWVa2(=OYR0%a|)b>L`sDG4JMQst4iYjo`h!6b`DW#}1l>XlA
+z-q~CXX}){p+j)QHy?yiEo4518vaGcgJso*U2A0)f(Traqhz9bOWi6}3LReP!g}~(+
+zcy>6`ow;|fgIQLmb(|jf+xf=n<>1-7GMP5UnXYAzKOx?D^V!1Bm!2D)88u?`=v)th
+zPd%Nv5dXM53~>3L%<(0iH#5g)fIPJ)^J=zu@z|wxV~@Ub^zs*GN>2>$vQD1@uhYul
+zxqNI-X6e1=*xh&bugl+FwfiqW+yDLle*NNyd!`CQgRG}q_k5QX@>_eE%?A2&I}VL`
+zVSVcGq1_`REI-&^?9UxOG&I1<o<7X-IZRkL+7H<+qhCBQ!W`)e2c!`hO~+ofrdc7E
+zFWPu)V?9nU`%>N4o+D#1$z##So(*YnP3vgKmMvsKzl^J($VhuKR6Cdx)jhYA$H*18
+zvr5bZVe48fxT{J<HW@`Mly(&0tqG7!DvSwL$_tn;tF|v1!Y}2>YF9+MR?6p?7e;k$
+zJ1Q#WStU}X!r+#CN{j`R7jjdD0a~U->~lvzTuaS;+ZdsM8m+eHI)H1~tF1i|LtDM(
+z+GQ8SSX5vn4B@^nC+$#%wj;xei~}Az0_;d|ZP&0F5i7>SP)wE0^14ftkOmV{5mt*`
+z7*mm~##N1s5kVwl*yHnQh=U>{5!zK5vA_%MaWM_ku`AYsatut{mvWrbJ0Vd{_kwuZ
+z+~pD01486@;JGQ+E_<A`$Id*_0(RfjV=Lct;ISN2jtGTQ*CqIkEcTSPn=}@4mqGx#
+zib#MUSQv8~Zi2^a%+d7{Qj4s2>bCNZh|)G%6$?kx%mZwVPuV(U77GlZ36PzJH6=i4
+zli+)Sry)W+aOFfR72N3%n{@0Le(297b|GDWGv!sonwMmhR^uLWEKW=%`wfUV8xe$4
+zVGCX;+++m<D#L1m*eZ}x*SxT5><&a+6-bE0B<xxtS+K7JryN!+5TL1g8FK+h%tMF_
+zZk>yE(11BINkZGL8>AKpHYw<|88iWtObWR_eMHy_(ThAsF;|p*>5P|hI}k1|NfjoO
+znkfrzf{jY}@VeK4D3_%HCV1>m+r}Aj;u6@v5nmHRQe!-2XoMkvzEsK=N+F|KizxIu
+zc2h+z5|;aV8orFwG=-u-p-5mk(FzO%;4L_rG`G|`<%vjE;KUqr;uaV?B`2<cQYjU-
+z_2<}xBZCN<h5$xNiwK)hnrmfG#-65AonTZ_fOt{NQF==Ge&ldeZX(4T;}bT82w?$)
+zD2uR4g@g=7%A?@3BQg{?;B_23lN?y&IVdsZm`zlZd`8M*3kXJ)k_HwbpG!mA3Gl*1
+z%A}OtC^rxvswT35)9rBLHjtFkln-4R#DSvRz}uxS<0$rm(sqVi3{{1y&`?4TIE<JA
+z$En3K;D|jWTn};J)Apnnx^fbP0Fe~2ozhFYd-BD?V6Lw?Fqq5r?&{f!sjrv=ysxJ?
+zfVnR}MA*T-J^8_*;vi70>>caLgG!?>-^(1|N0|i-0duDPdce)QrfdV|a|N6QSuNOf
+zs3VE`qRKe&jk<?Q3V+ZkLcJp##V<k9T4T-)J`(msWJi&ykAxvhaGH>nzKKqg70^e=
+zj<`~`Sp|V+SxT#0e{PThLtJF8D}2qNnn)(>^f6*JH^yfJBm>Y|Lfrc>&yA^EQOs~!
+zgomPz1E@R&YF&v|^=Xk6#}Rt~&zGDMf4&?N!527Wj+Rt`l2ZZCAnx~}raq<Ipn)t(
+zVU$>kGNfrs5Wx<T@<YXdxa9JbE+>u4TvXpwyk$1-K1u3D(^OaR0*WE8Q_*gkhofN}
+z)GV~E6RZ$g?1J1w-V_Z7UM5gAj7uw?z#RmUHJ>Cpj-j0-yE$#G&~ds$AWWs)ysv7S
+z)HYQHp%pWi5NxO{wUz+@+)r?fW0Q0^-n0$88s`m;KrH5Rg~)-Ubj6rfjvbnl8%XTX
+zjjPy``O&)dFT6Z_`}cqU)qjrbpWgW$fBSD2I_&G`R-Nh`+q33-mrp)=a@bn>k5|$=
+z-+^I>WjivLd!M_}?Hu*a{rlA&ADmeI?jN7~;FV3+!CTdlx$b^<imzYu;x}tECqIAd
+zYkY~eCP{3SmASt0*7IjCo+$k3wI6(E>u+|7qrbJjJ(IGYz6#b$3$l*=<nA*oUq5xG
+zO==D7*n8s2-AlRbjWsW}Te7+%bE9MP!RIHA!pwGCvascsxAy<@8(pLC?rl>`y!Wou
+z!CSTv@5ToE>h0{lXTCDiCif)FiO%o8dTk{0t=Hc=vyeS6ZQ6JB+Csj;J8x8OUHwB}
+z@8|5{Hoe3<YahIw-MjERPoKYX@WJn#-LQGz!E3ztqwyfU?-?H~xX;-~9_)kJT@UfW
+zFV0_ih!18jZYCcrY|remhuHJhL+qI)dp_!)#|CkKX&}M;piy%%&l{aLk<&M=j75KQ
+z<30rBHhg$)<w8)0WqtYu)Ut6fzpBU0JJBq)Myie8-8S0Zv(S4p!;pF3$ZZs^R)E$D
+zUr~cb0~$#0lGNtzKL@VIL1zI<yjjtD6aW>h{g(^@p94Q`vgixlglRrNU+hsHy1t+_
+z-7g2IuK-py0;6=k*&E%2x7J0qC1DKWch_T|C2;qM(q-SWx?WRSHI2fWt|O?T)OpgF
+zuQMSGW80$u=|>~8a*Q{ep<;i&KcCCvK3b;ME8!*2?7e$v82?pkI3uPzrLGlY=lj-&
+zckkS>tjCuyyyt;^?RqdjS!25a63xzbGaA-;t?kD&wu^1;Vq3e|);9lzW3jDWY-<<W
+z+Qqgu`A56Owsx_t{lsl;7xmxf61f8Xe}rovA@o~W)^U1W7QY5gBdfHzN)t?LR@487
+zV64Oqm9E${n(~{Jt4W{5R;<Wov#m!9$b$EdGpFz~i7@WuMoD)%KSHy4OF}mwUh;AL
+zu2jCMk5Dr1|CN8J{<YY!V>Hff7|t-8p91el%A*PNuE#L1#qY_s-&4TXr99%(@3U>R
+zc6^~VL_-i9iJ1lkp$|V^cQwcS<v^GjptXK}4}-oZ=27GmqdEG#q*2=VLoG?+TKvZr
+ODIuj6nu$uYnfM<-cS*JY
+
+literal 0
+HcmV?d00001
+
+diff --git a/tests/auto/integration/qvideoframebackend/tst_qvideoframebackend.cpp b/tests/auto/integration/qvideoframebackend/tst_qvideoframebackend.cpp
+index 64029a6dd..70fad8873 100644
+--- a/tests/auto/integration/qvideoframebackend/tst_qvideoframebackend.cpp
++++ b/tests/auto/integration/qvideoframebackend/tst_qvideoframebackend.cpp
+@@ -30,6 +30,8 @@ public slots:
+ private slots:
+     void testMediaFilesAreSupported();
+ 
++    void maxLuminance_isTheMasteringDisplaysPeakInNits();
++
+     void toImage_retainsThePreviousMappedState_data();
+     void toImage_retainsThePreviousMappedState();
+ 
+@@ -52,6 +54,7 @@ private:
+ private:
+     MaybeUrl m_oneRedFrameVideo{ q23::unexpect };
+     MaybeUrl m_colorsVideo{ q23::unexpect };
++    MaybeUrl m_masteringVideo{ q23::unexpect };
+     MediaFileSelector m_mediaSelector;
+ };
+ 
+@@ -102,6 +105,7 @@ void tst_QVideoFrameBackend::initTestCase()
+ 
+     m_oneRedFrameVideo = m_mediaSelector.select("qrc:/testdata/one_red_frame.mp4");
+     m_colorsVideo = m_mediaSelector.select("qrc:/testdata/colors.mp4");
++    m_masteringVideo = m_mediaSelector.select("qrc:/testdata/mastering_1000nits.mp4");
+ }
+ 
+ void tst_QVideoFrameBackend::testMediaFilesAreSupported()
+@@ -113,6 +117,27 @@ void tst_QVideoFrameBackend::testMediaFilesAreSupported()
+     QCOMPARE(m_mediaSelector.dumpErrors(), "");
+ }
+ 
++void tst_QVideoFrameBackend::maxLuminance_isTheMasteringDisplaysPeakInNits()
++{
++    // The file is HEVC with the SMPTE ST 2086 mastering display metadata of x265's
++    // --master-display "...L(10000000,1)": a peak of 1000 cd/m2 (the unit of the frame's
++    // AVMasteringDisplayMetadata, a rational that is 10000000/10000 here)
++    if (!m_masteringVideo)
++        QSKIP("The media file cannot be opened, see testMediaFilesAreSupported");
++    if (isGStreamerPlatform())
++        QSKIP("Only the FFmpeg backend reads the mastering display metadata");
++
++    TestVideoSink sink;
++    QMediaPlayer player;
++    player.setVideoOutput(&sink);
++    player.setSource(*m_masteringVideo);
++    player.play();
++
++    const QVideoFrame frame = sink.waitForFrame();
++    QVERIFY(frame.isValid());
++    QCOMPARE(frame.surfaceFormat().maxLuminance(), 1000.f);
++}
++
+ void tst_QVideoFrameBackend::toImage_retainsThePreviousMappedState_data()
+ {
+     QTest::addColumn<FrameCreator>("frameCreator");

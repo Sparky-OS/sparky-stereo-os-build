@@ -1,0 +1,359 @@
+From c1603844b978699f099da6a50d5e71a6b800a6d4 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 7 Oct 2026 19:44:30 -0300
+Subject: [PATCH 1/4] Keep the chroma resolution and the bits of high bit depth
+ video
+
+The FFmpeg backend turned every decoded format that Qt Multimedia has no
+pixel format for into one that it has, and chose the nearest by only the
+bits per sample: 4:4:4 and 4:2:2 video at more than 8 bits became P016, a
+4:2:0 format, and at 8 bits (4:4:4) YUV420P, so the U and V planes lost
+resolution for good (one pixel wide coloured lines came out purple), and
+hardware decoding was taken for a stream whatever the bits of the frames its
+decoder makes.
+
+Add the pixel formats that hold them: Format_YUV444P (8 bits), and
+Format_YUV422P16 and Format_YUV444P16 (16 bit samples, the bits of a video of
+fewer in the upper ones, as P016 holds them), with the texture description,
+a shader that is the one of YUV420P10 without its scale, and the plane
+layout of a frame in memory. The FFmpeg backend maps formats of that chroma
+resolution to them (swscale does the change of the bit count, the chroma is
+not touched), and does not decode in hardware when the frames the hardware
+decoder makes would have fewer bits per sample than the stream, where the
+software decoder keeps them all.
+
+The CPU conversion to an image (QVideoFrame::toImage without rendering by
+the GPU) does not know the new formats.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/multimedia/CMakeLists.txt                 |  1 +
+ src/multimedia/shaders/yuv_triplanar_p16.frag | 33 +++++++++++++++++++
+ src/multimedia/video/qvideoframe.cpp          |  9 ++++-
+ .../video/qvideoframeconversionhelper.cpp     |  6 ++++
+ src/multimedia/video/qvideoframeformat.cpp    | 18 ++++++++++
+ src/multimedia/video/qvideoframeformat.h      |  8 +++--
+ src/multimedia/video/qvideotexturehelper.cpp  | 26 +++++++++++++++
+ .../multimedia/ffmpeg/qffmpeghwaccel.cpp      | 29 +++++++++++++++-
+ .../multimedia/ffmpeg/qffmpegvideobuffer.cpp  | 24 +++++++++++++-
+ 9 files changed, 149 insertions(+), 5 deletions(-)
+ create mode 100644 src/multimedia/shaders/yuv_triplanar_p16.frag
+
+diff --git a/src/multimedia/CMakeLists.txt b/src/multimedia/CMakeLists.txt
+index f21198406..ead953712 100644
+--- a/src/multimedia/CMakeLists.txt
++++ b/src/multimedia/CMakeLists.txt
+@@ -439,6 +439,7 @@ set(VIDEO_SHADERS
+     "shaders/uyvy.frag"
+     "shaders/yuv_triplanar.frag"
+     "shaders/yuv_triplanar_p10.frag"
++    "shaders/yuv_triplanar_p16.frag"
+     "shaders/yvu_triplanar.frag"
+     "shaders/yuyv.frag"
+     "shaders/ayuv.frag"
+diff --git a/src/multimedia/shaders/yuv_triplanar_p16.frag b/src/multimedia/shaders/yuv_triplanar_p16.frag
+new file mode 100644
+index 000000000..8dd4ce573
+--- /dev/null
++++ b/src/multimedia/shaders/yuv_triplanar_p16.frag
+@@ -0,0 +1,33 @@
++// Copyright (C) 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++
++#version 440
++#extension GL_GOOGLE_include_directive : enable
++
++#include "uniformbuffer.glsl"
++#include "colortransfer.glsl"
++#include "texturecomponent.glsl"
++
++layout(location = 0) in vec2 texCoord;
++layout(location = 0) out vec4 fragColor;
++
++layout(binding = 1) uniform sampler2D plane1Texture;
++layout(binding = 2) uniform sampler2D plane2Texture;
++layout(binding = 3) uniform sampler2D plane3Texture;
++
++void main()
++{
++    float Y = getR16(plane1Texture, texCoord, ubuf.plane1Format, 1);
++    float U = getR16(plane2Texture, texCoord, ubuf.plane2Format, 2);
++    float V = getR16(plane3Texture, texCoord, ubuf.plane3Format, 2);
++    vec4 color = vec4(Y, U, V, 1.);
++    fragColor = ubuf.colorMatrix * color * ubuf.opacity;
++
++#ifdef QMM_OUTPUTSURFACE_LINEAR
++    fragColor = convertSRGBToLinear(fragColor);
++#endif
++
++    // Clamp output to valid range to account for out-of-range
++    // input values and numerical inaccuracies in YUV->RGB conversion
++    fragColor = clamp(fragColor, 0.0, 1.0);
++}
+diff --git a/src/multimedia/video/qvideoframe.cpp b/src/multimedia/video/qvideoframe.cpp
+index 85c758b89..92f19f8d5 100644
+--- a/src/multimedia/video/qvideoframe.cpp
++++ b/src/multimedia/video/qvideoframe.cpp
+@@ -502,6 +502,9 @@ bool QVideoFrame::map(QVideoFrame::MapMode mode)
+         case QVideoFrameFormat::Format_YUV420P:
+         case QVideoFrameFormat::Format_YUV420P10:
+         case QVideoFrameFormat::Format_YUV422P:
++        case QVideoFrameFormat::Format_YUV444P:
++        case QVideoFrameFormat::Format_YUV422P16:
++        case QVideoFrameFormat::Format_YUV444P16:
+         case QVideoFrameFormat::Format_YV12: {
+             // The UV stride is usually half the Y stride and is 32-bit aligned.
+             // However it's not always the case, at least on Windows where the
+@@ -510,7 +513,11 @@ bool QVideoFrame::map(QVideoFrame::MapMode mode)
+             // have a correct stride.
+             const int height = this->height();
+             const int yStride = d->mapData.bytesPerLine[0];
+-            const int uvHeight = pixelFmt == QVideoFrameFormat::Format_YUV422P ? height : height / 2;
++            const bool fullHeightUV = pixelFmt == QVideoFrameFormat::Format_YUV422P
++                    || pixelFmt == QVideoFrameFormat::Format_YUV444P
++                    || pixelFmt == QVideoFrameFormat::Format_YUV422P16
++                    || pixelFmt == QVideoFrameFormat::Format_YUV444P16;
++            const int uvHeight = fullHeightUV ? height : height / 2;
+             Q_ASSERT(uvHeight > 0);
+             const int uvSize = d->mapData.dataSize[0] - yStride * height;
+             const int uvStride = uvSize / 2 / uvHeight;
+diff --git a/src/multimedia/video/qvideoframeconversionhelper.cpp b/src/multimedia/video/qvideoframeconversionhelper.cpp
+index d3f2b0403..d531f8523 100644
+--- a/src/multimedia/video/qvideoframeconversionhelper.cpp
++++ b/src/multimedia/video/qvideoframeconversionhelper.cpp
+@@ -496,6 +496,12 @@ static VideoFrameConvertFunc qConvertFuncs[QVideoFrameFormat::NPixelFormats] = {
+     /* Format_P010 */                   qt_convert_P016_to_ARGB32,
+     /* Format_P016 */                   qt_convert_P016_to_ARGB32,
+     /* Format_Jpeg */                   nullptr, // Not needed
++    /* Format_SamplerExternalOES */     nullptr,
++    /* Format_SamplerRect */            nullptr,
++    /* Format_YUV420P10 */              nullptr,
++    /* Format_YUV444P */                nullptr, // by the GPU
++    /* Format_YUV422P16 */              nullptr, // by the GPU
++    /* Format_YUV444P16 */              nullptr, // by the GPU
+ };
+ 
+ static PixelsCopyFunc qPixelsCopyFunc = qt_copy_pixels_with_mask<uint32_t>;
+diff --git a/src/multimedia/video/qvideoframeformat.cpp b/src/multimedia/video/qvideoframeformat.cpp
+index 435fbebdc..86f1ba6ed 100644
+--- a/src/multimedia/video/qvideoframeformat.cpp
++++ b/src/multimedia/video/qvideoframeformat.cpp
+@@ -217,6 +217,18 @@ QT_DEFINE_QESDP_SPECIALIZATION_DTOR(QVideoFrameFormatPrivate);
+ 
+     \value Format_YUV420P10
+     Similar to YUV420, but uses 16bits per component, 10 of those significant.
++
++    \value Format_YUV444P
++    The frame is stored using an 8 bit per component planar YUV format with the U and V planes at
++    the full resolution of the Y plane (4:4:4).
++
++    \value Format_YUV422P16
++    The frame is stored using a 16 bit per component planar YUV format with the U and V planes at
++    half the horizontal resolution of the Y plane (4:2:2). The samples fill the 16 bits: a video of
++    fewer bits has them in the upper bits.
++
++    \value Format_YUV444P16
++    Like Format_YUV422P16, with the U and V planes at the full resolution of the Y plane (4:4:4).
+ */
+ 
+ /*!
+@@ -1007,6 +1019,9 @@ QImage::Format QVideoFrameFormat::imageFormatFromPixelFormat(QVideoFrameFormat::
+     case QVideoFrameFormat::Format_YUV420P:
+     case QVideoFrameFormat::Format_YUV420P10:
+     case QVideoFrameFormat::Format_YUV422P:
++    case QVideoFrameFormat::Format_YUV444P:
++    case QVideoFrameFormat::Format_YUV422P16:
++    case QVideoFrameFormat::Format_YUV444P16:
+     case QVideoFrameFormat::Format_YV12:
+     case QVideoFrameFormat::Format_UYVY:
+     case QVideoFrameFormat::Format_YUYV:
+@@ -1046,6 +1061,9 @@ QT_MM_MAKE_STRING_RESOLVER(QVideoFrameFormat::PixelFormat, QtMultimediaPrivate::
+     (QVideoFrameFormat::Format_YUV420P,                 "YUV420P")
+     (QVideoFrameFormat::Format_YUV420P10,               "YUV420P10")
+     (QVideoFrameFormat::Format_YUV422P,                 "YUV422P")
++    (QVideoFrameFormat::Format_YUV444P,                 "YUV444P")
++    (QVideoFrameFormat::Format_YUV422P16,               "YUV422P16")
++    (QVideoFrameFormat::Format_YUV444P16,               "YUV444P16")
+     (QVideoFrameFormat::Format_YV12,                    "YV12")
+     (QVideoFrameFormat::Format_UYVY,                    "UYVY")
+     (QVideoFrameFormat::Format_YUYV,                    "YUYV")
+diff --git a/src/multimedia/video/qvideoframeformat.h b/src/multimedia/video/qvideoframeformat.h
+index a379ee639..a0fa48c66 100644
+--- a/src/multimedia/video/qvideoframeformat.h
++++ b/src/multimedia/video/qvideoframeformat.h
+@@ -65,11 +65,15 @@ public:
+         Format_Jpeg,
+         Format_SamplerRect,
+ 
+-        Format_YUV420P10
++        Format_YUV420P10,
++
++        Format_YUV444P,
++        Format_YUV422P16,
++        Format_YUV444P16
+     };
+     Q_ENUM(PixelFormat)
+ #ifndef Q_QDOC
+-    static constexpr int NPixelFormats = Format_YUV420P10 + 1;
++    static constexpr int NPixelFormats = Format_YUV444P16 + 1;
+ #endif
+ 
+     enum Direction
+diff --git a/src/multimedia/video/qvideotexturehelper.cpp b/src/multimedia/video/qvideotexturehelper.cpp
+index b276db8ab..853fa5868 100644
+--- a/src/multimedia/video/qvideotexturehelper.cpp
++++ b/src/multimedia/video/qvideotexturehelper.cpp
+@@ -232,6 +232,24 @@ static const TextureDescription descriptions[QVideoFrameFormat::NPixelFormats] =
+         { TextureDescription::Red_16, TextureDescription::Red_16, TextureDescription::Red_16 },
+         { { 1, 1 }, { 2, 2 }, { 2, 2 } }
+     },
++    // Format_YUV444P
++    { 3, 1,
++        [](int stride, int height) { return stride * height * 3; },
++        { TextureDescription::Red_8, TextureDescription::Red_8, TextureDescription::Red_8 },
++        { { 1, 1 }, { 1, 1 }, { 1, 1 } }
++    },
++    // Format_YUV422P16
++    { 3, 2,
++        [](int stride, int height) { return stride * height * 2; },
++        { TextureDescription::Red_16, TextureDescription::Red_16, TextureDescription::Red_16 },
++        { { 1, 1 }, { 2, 1 }, { 2, 1 } }
++    },
++    // Format_YUV444P16
++    { 3, 2,
++        [](int stride, int height) { return stride * height * 3; },
++        { TextureDescription::Red_16, TextureDescription::Red_16, TextureDescription::Red_16 },
++        { { 1, 1 }, { 1, 1 }, { 1, 1 } }
++    },
+ };
+ 
+ Q_GLOBAL_STATIC(QList<QRhiTexture::Format>, g_excludedRhiTextureFormats) // for tests only
+@@ -375,9 +393,14 @@ QString fragmentShaderFileName(const QVideoFrameFormat &format, QRhi *,
+         break;
+     case QVideoFrameFormat::Format_YUV420P:
+     case QVideoFrameFormat::Format_YUV422P:
++    case QVideoFrameFormat::Format_YUV444P:
+     case QVideoFrameFormat::Format_IMC3:
+         shaderFile = QStringLiteral("yuv_triplanar");
+         break;
++    case QVideoFrameFormat::Format_YUV422P16:
++    case QVideoFrameFormat::Format_YUV444P16:
++        shaderFile = QStringLiteral("yuv_triplanar_p16");
++        break;
+     case QVideoFrameFormat::Format_YUV420P10:
+         shaderFile = QStringLiteral("yuv_triplanar_p10");
+         break;
+@@ -635,6 +658,9 @@ void updateUniformData(QByteArray *dst, QRhi *rhi, const QVideoFrameFormat &form
+     case QVideoFrameFormat::Format_YUV420P:
+     case QVideoFrameFormat::Format_YUV420P10:
+     case QVideoFrameFormat::Format_YUV422P:
++    case QVideoFrameFormat::Format_YUV444P:
++    case QVideoFrameFormat::Format_YUV422P16:
++    case QVideoFrameFormat::Format_YUV444P16:
+     case QVideoFrameFormat::Format_YV12:
+     case QVideoFrameFormat::Format_UYVY:
+     case QVideoFrameFormat::Format_YUYV:
+diff --git a/src/plugins/multimedia/ffmpeg/qffmpeghwaccel.cpp b/src/plugins/multimedia/ffmpeg/qffmpeghwaccel.cpp
+index c68fec0c1..4ff194d81 100644
+--- a/src/plugins/multimedia/ffmpeg/qffmpeghwaccel.cpp
++++ b/src/plugins/multimedia/ffmpeg/qffmpeghwaccel.cpp
+@@ -22,6 +22,10 @@
+ #endif
+ 
+ #include <rhi/qrhi.h>
++
++extern "C" {
++#include <libavutil/pixdesc.h>
++}
+ #include <qloggingcategory.h>
+ #include <unordered_set>
+ 
+@@ -237,6 +241,27 @@ static bool isNoConversionFormat(AVPixelFormat f)
+     return !needsConversion;
+ };
+ 
++// Whether the frames of hardware decoding hold as many bits per sample as the stream has. A
++// decoder that makes frames of fewer bits (a 10 bit stream decoded to 8 bit frames) would
++// drop the depth of the video for good, so the software decoder is better for it
++static bool hwFramesKeepDepth(AVCodecContext *codecContext, AVPixelFormat hwFormat)
++{
++    const AVPixFmtDescriptor *wanted = av_pix_fmt_desc_get(codecContext->sw_pix_fmt);
++    if (!wanted)
++        return true;
++    AVBufferRef *frames = nullptr;
++    if (avcodec_get_hw_frames_parameters(codecContext, codecContext->hw_device_ctx, hwFormat,
++                                         &frames) < 0 || !frames)
++        return true; // cannot tell
++    const auto *framesContext = reinterpret_cast<const AVHWFramesContext *>(frames->data);
++    const AVPixFmtDescriptor *got = av_pix_fmt_desc_get(framesContext->sw_format);
++    const bool keeps = !got || got->comp[0].depth >= wanted->comp[0].depth;
++    av_buffer_unref(&frames);
++    if (!keeps)
++        qCWarning(qLHWAccel) << "Not decoding in hardware: its frames have fewer bits per sample than the stream";
++    return keeps;
++}
++
+ // Used for the AVCodecContext::get_format callback
+ AVPixelFormat getFormat(AVCodecContext *codecContext, const AVPixelFormat *fmt)
+ {
+@@ -285,7 +310,9 @@ AVPixelFormat getFormat(AVCodecContext *codecContext, const AVPixelFormat *fmt)
+                 formatAndScore = found;
+         }
+ 
+-        const auto format = formatAndScore.value;
++        auto format = formatAndScore.value;
++        if (format && !hwFramesKeepDepth(codecContext, *format))
++            format = std::nullopt;
+         if (format) {
+             TextureConverter::applyDecoderPreset(*format, *codecContext);
+             qCDebug(qLHWAccel) << "Selected format" << *format << "for hw" << device_ctx->type;
+diff --git a/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer.cpp b/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer.cpp
+index d9c8955b8..1c7702a84 100644
+--- a/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer.cpp
++++ b/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer.cpp
+@@ -339,6 +339,12 @@ QVideoFrameFormat::PixelFormat QFFmpegVideoBuffer::toQtPixelFormat(AVPixelFormat
+ 
+     case AV_PIX_FMT_YUV422P:
+         return QVideoFrameFormat::Format_YUV422P;
++    case AV_PIX_FMT_YUV444P:
++        return QVideoFrameFormat::Format_YUV444P;
++    case AV_PIX_FMT_YUV422P16:
++        return QVideoFrameFormat::Format_YUV422P16;
++    case AV_PIX_FMT_YUV444P16:
++        return QVideoFrameFormat::Format_YUV444P16;
+     case AV_PIX_FMT_YUV420P:
+         return QVideoFrameFormat::Format_YUV420P;
+     case AV_PIX_FMT_YUV420P10:
+@@ -372,8 +378,18 @@ QVideoFrameFormat::PixelFormat QFFmpegVideoBuffer::toQtPixelFormat(AVPixelFormat
+     if (descriptor->flags & AV_PIX_FMT_FLAG_RGB)
+         return QVideoFrameFormat::Format_RGBA8888;
+ 
+-    if (descriptor->comp[0].depth > 8)
++    // the chroma keeps its resolution, and the samples their bits
++    const bool fullChroma = descriptor->log2_chroma_w == 0 && descriptor->log2_chroma_h == 0;
++    const bool halfChroma = descriptor->log2_chroma_w == 1 && descriptor->log2_chroma_h == 0;
++    if (descriptor->comp[0].depth > 8) {
++        if (fullChroma)
++            return QVideoFrameFormat::Format_YUV444P16;
++        if (halfChroma)
++            return QVideoFrameFormat::Format_YUV422P16;
+         return QVideoFrameFormat::Format_P016;
++    }
++    if (fullChroma)
++        return QVideoFrameFormat::Format_YUV444P;
+     return QVideoFrameFormat::Format_YUV420P;
+ }
+ 
+@@ -418,6 +434,12 @@ AVPixelFormat QFFmpegVideoBuffer::toAVPixelFormat(QVideoFrameFormat::PixelFormat
+         return AV_PIX_FMT_YUV422P;
+     case QVideoFrameFormat::Format_YUV420P:
+         return AV_PIX_FMT_YUV420P;
++    case QVideoFrameFormat::Format_YUV444P:
++        return AV_PIX_FMT_YUV444P;
++    case QVideoFrameFormat::Format_YUV422P16:
++        return AV_PIX_FMT_YUV422P16;
++    case QVideoFrameFormat::Format_YUV444P16:
++        return AV_PIX_FMT_YUV444P16;
+     case QVideoFrameFormat::Format_YUV420P10:
+         return AV_PIX_FMT_YUV420P10;
+     case QVideoFrameFormat::Format_UYVY:
