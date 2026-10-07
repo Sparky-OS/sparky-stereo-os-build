@@ -1,0 +1,316 @@
+From 2263155432a28064db1e48540d4cf8ecc4c3a5e6 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 7 Oct 2026 19:55:45 -0300
+Subject: [PATCH 3/3] EDITION ONLY: restore the views of an anamorphic 3D video
+ from the stored samples
+
+When a stereoscopic 3D stream has pixels that are not square (its sample aspect ratio is
+not 1:1: a half side by side video with a doubled ratio, say, as FFmpeg gives it for
+Matroska's StereoMode and for x264's frame packing with a VUI ratio), the FFmpeg backend
+scaled the whole packed frame to the shape of its pixels with swscale's bicubic filter
+before anything else saw it, and the consumer took the views out of that picture. The
+filter chosen for the views (VideoOutput::stereoScaling) never applied to the larger
+part of the restoration.
+
+For a frame with views side by side or on top of each other the backend now leaves the
+frame at the size it is stored in and says the ratio in the new
+QVideoFrameFormat::pixelAspectRatio(); the packing is the one of the frame's own
+side data, or the stream's last (the frame packing SEI comes with keyframes only).
+VideoOutput shows the frame at the shape of its pixels as before (the item's size, the
+shape rule of stereoShapeFallback) and restores each view from the stored samples to the
+size of a view with its stereoScaling filter, in the layer and for a single eye. The
+stereoView Flat picture of such a frame is no longer scaled by swscale but by the scene
+graph's texture sampling. 2D frames, and 3D frames of the other packings, go the path
+Qt has always had.
+
+Edition only: the backend cannot know whether the consumer will take the views apart, so
+for the default stereoView of the offerable part (Flat, Qt's own picture) it changes how
+a 3D video with a sample aspect ratio is scaled, and the new format field is API.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/multimedia/video/qvideoframeformat.cpp    | 35 ++++++++++++++++++-
+ src/multimedia/video/qvideoframeformat.h      |  3 ++
+ src/multimediaquick/qquickvideooutput.cpp     | 16 ++++++---
+ src/multimediaquick/qquickvideostereo.cpp     | 22 ++++++------
+ src/multimediaquick/qquickvideostereo_p.h     |  4 +++
+ .../playbackengine/qffmpegvideorenderer.cpp   |  3 +-
+ .../multimedia/ffmpeg/qffmpegvideobuffer.cpp  | 16 ++++++++-
+ .../multimedia/ffmpeg/qffmpegvideobuffer_p.h  | 10 +++++-
+ 8 files changed, 91 insertions(+), 18 deletions(-)
+
+diff --git a/src/multimedia/video/qvideoframeformat.cpp b/src/multimedia/video/qvideoframeformat.cpp
+index 86f1ba6ed..0577d86b9 100644
+--- a/src/multimedia/video/qvideoframeformat.cpp
++++ b/src/multimedia/video/qvideoframeformat.cpp
+@@ -39,7 +39,8 @@ public:
+             && frameSize == other.frameSize && viewport == other.viewport
+             && frameRatesEqual(frameRate, other.frameRate) && colorSpace == other.colorSpace
+             && transformation == other.transformation && stereoMode == other.stereoMode
+-            && stereoFlags == other.stereoFlags && stereoView == other.stereoView)
++            && stereoFlags == other.stereoFlags && stereoView == other.stereoView
++            && pixelAspectRatio == other.pixelAspectRatio)
+             return true;
+ 
+         return false;
+@@ -63,6 +64,7 @@ public:
+     QVideoFrameFormat::StereoMode stereoMode = QVideoFrameFormat::StereoMode::None;
+     QVideoFrameFormat::StereoFlags stereoFlags;
+     QVideoFrameFormat::StereoView stereoView = QVideoFrameFormat::StereoView::Packed;
++    QSize pixelAspectRatio = QSize(1, 1);
+ };
+ 
+ QT_DEFINE_QESDP_SPECIALIZATION_DTOR(QVideoFrameFormatPrivate);
+@@ -802,6 +804,37 @@ void QVideoFrameFormat::setStereoView(StereoView view)
+     d->stereoView = view;
+ }
+ 
++/*!
++    Returns the pixel aspect ratio that the samples of the frame are to be shown with, as
++    a width (numerator) and a height (denominator), when the backend has left it to the
++    consumer.
++
++    A backend scales a frame to the shape of its pixels (the sample aspect ratio of the stream)
++    before it hands the frame over, and the ratio is then 1:1 as it is by default. Only for a
++    stereoscopic 3D frame whose views the consumer is to take apart (stereoMode() is
++    \l StereoMode::SideBySide, \l StereoMode::SideBySideQuincunx or \l StereoMode::TopBottom)
++    does a backend leave the frame at the size it is stored in and say the ratio here: the
++    consumer then restores each view from the stored samples, with the filter of its choice,
++    instead of taking the views from samples that were scaled as one picture.
++
++    \since 6.12
++*/
++QSize QVideoFrameFormat::pixelAspectRatio() const
++{
++    return d->pixelAspectRatio;
++}
++
++/*!
++    Sets the pixel aspect ratio of the frame to \a ratio, a width and a height.
++
++    \since 6.12
++*/
++void QVideoFrameFormat::setPixelAspectRatio(QSize ratio)
++{
++    detach();
++    d->pixelAspectRatio = ratio;
++}
++
+ /*!
+     Returns \c true if the surface is mirrored around its vertical axis.
+ 
+diff --git a/src/multimedia/video/qvideoframeformat.h b/src/multimedia/video/qvideoframeformat.h
+index a0fa48c66..eccab0f41 100644
+--- a/src/multimedia/video/qvideoframeformat.h
++++ b/src/multimedia/video/qvideoframeformat.h
+@@ -230,6 +230,9 @@ public:
+     StereoView stereoView() const;
+     void setStereoView(StereoView view);
+ 
++    QSize pixelAspectRatio() const;
++    void setPixelAspectRatio(QSize ratio);
++
+     bool isMirrored() const;
+     void setMirrored(bool mirrored);
+ 
+diff --git a/src/multimediaquick/qquickvideooutput.cpp b/src/multimediaquick/qquickvideooutput.cpp
+index abd833b16..54b8de9a9 100644
+--- a/src/multimediaquick/qquickvideooutput.cpp
++++ b/src/multimediaquick/qquickvideooutput.cpp
+@@ -1149,7 +1149,13 @@ void QQuickVideoOutput::setFrame(const QVideoFrame &frame, bool repeated)
+     result.layerWanted = false;
+     if (frame.isValid()) {
+         const QVideoFrameFormat format = frame.surfaceFormat();
+-        const QSize frameSize = frame.size();
++        const QSize storedSize = frame.size();
++        // a stereo frame the backend left at its stored size is shown at the shape of its pixels
++        const QSize par = format.pixelAspectRatio();
++        const QSize frameSize = par.width() > 0 && par.height() > 0 && par.width() != par.height()
++                ? qCalculateFrameSize(storedSize, { par.width(), par.height() })
++                : storedSize;
++        displaySize = frameSize;
+         packing.mode = format.stereoMode();
+         packing.rightEyeFirst = format.stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::RightEyeFirst);
+         if (st.input != StereoAutomatic) {
+@@ -1158,6 +1164,8 @@ void QQuickVideoOutput::setFrame(const QVideoFrame &frame, bool repeated)
+                    && frameSize.width() >= 2.5 * frameSize.height()) {
+             packing = { StereoMode::SideBySide, false, Size::Full };
+         }
++        if (storedSize != frameSize)
++            packing.displaySize = frameSize;
+         twoViews = hasTwoViews(packing.mode) && !frameSize.isEmpty();
+         result.video = twoViews;
+         result.packing = packing.mode == StereoMode::None ? StereoNone
+@@ -1262,9 +1270,9 @@ void QQuickVideoOutput::setFrame(const QVideoFrame &frame, bool repeated)
+                 const int index = rightFirst ? 1 - wanted : wanted;
+                 QRect rect;
+                 displaySize = viewSize(packing, frameSize);
+-                if (viewRect(packing, frameSize, index, &rect)) {
+-                    result.eyeRect = QRectF(qreal(rect.x()) / frameSize.width(), qreal(rect.y()) / frameSize.height(),
+-                                            qreal(rect.width()) / frameSize.width(), qreal(rect.height()) / frameSize.height());
++                if (viewRect(packing, storedSize, index, &rect)) {
++                    result.eyeRect = QRectF(qreal(rect.x()) / storedSize.width(), qreal(rect.y()) / storedSize.height(),
++                                            qreal(rect.width()) / storedSize.width(), qreal(rect.height()) / storedSize.height());
+                 } else {
+                     // the views are interleaved: taken apart on the CPU, into a frame of their own
+                     const int depth = sourceDepth(format.pixelFormat());
+diff --git a/src/multimediaquick/qquickvideostereo.cpp b/src/multimediaquick/qquickvideostereo.cpp
+index 010398cc6..3c586a5de 100644
+--- a/src/multimediaquick/qquickvideostereo.cpp
++++ b/src/multimediaquick/qquickvideostereo.cpp
+@@ -178,11 +178,14 @@ QImage extractView(const QImage &frameImage, const Packing &packing, int index,
+             ? frameImage
+             : frameImage.convertToFormat(QImage::Format_RGBA32FPx4_Premultiplied);
+     const QSize frameSize = src.size();
+-    const QSize target = viewSize(packing, frameSize);
++    // where the views are to end up: the size of a view of the frame as it is shown
++    const QSize shown = packing.displaySize.isValid() ? packing.displaySize : frameSize;
++    const QSize target = viewSize(packing, shown);
+     if (src.isNull() || target.isEmpty())
+         return {};
+ 
+-    const bool full = isFullSize(packing, frameSize);
++    const bool full = isFullSize(packing, shown);
++    Q_UNUSED(full);
+     const int first = index; // 0 or 1: the view that is first or second in the packing
+ 
+     // The samples of the view in the frame, per axis
+@@ -201,10 +204,12 @@ QImage extractView(const QImage &frameImage, const Packing &packing, int index,
+     case Mode::SideBySideQuincunx:
+         sx0 = first * (frameSize.width() / 2);
+         ax.source = frameSize.width() / 2;
++        ay.source = frameSize.height();
+         break;
+     case Mode::TopBottom:
+         sy0 = first * (frameSize.height() / 2);
+         ay.source = frameSize.height() / 2;
++        ax.source = frameSize.width();
+         break;
+     case Mode::RowInterleaved:
+         rowStep = 2;
+@@ -229,16 +234,13 @@ QImage extractView(const QImage &frameImage, const Packing &packing, int index,
+     switch (packing.mode) {
+     case Mode::SideBySide:
+     case Mode::SideBySideQuincunx:
+-        ax.stride = 1;
+-        ax.phase = 0.5;
+-        if (!full)
+-            setSqueezed(ax);
++        // the samples of a view are as far apart as the view is larger than they are many
++        setSqueezed(ax);
++        setSqueezed(ay);
+         break;
+     case Mode::TopBottom:
+-        ay.stride = 1;
+-        ay.phase = 0.5;
+-        if (!full)
+-            setSqueezed(ay);
++        setSqueezed(ax);
++        setSqueezed(ay);
+         break;
+     case Mode::RowInterleaved:
+         ay.stride = 2;
+diff --git a/src/multimediaquick/qquickvideostereo_p.h b/src/multimediaquick/qquickvideostereo_p.h
+index b7ed3f571..a714a26cc 100644
+--- a/src/multimediaquick/qquickvideostereo_p.h
++++ b/src/multimediaquick/qquickvideostereo_p.h
+@@ -36,6 +36,10 @@ struct Packing
+     QVideoFrameFormat::StereoMode mode = QVideoFrameFormat::StereoMode::None;
+     bool rightEyeFirst = false;
+     enum class Size { ByShape, Half, Full } size = Size::ByShape;
++    // The size the frame is shown at, when it is not the size it is stored in (a frame the
++    // backend left unscaled to the shape of its pixels, QVideoFrameFormat::pixelAspectRatio()):
++    // the views are then restored from the stored samples to the size of a view of this
++    QSize displaySize;
+ };
+ 
+ // True for the packings whose views can be taken apart (the anaglyphs hold both in the colors)
+diff --git a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegvideorenderer.cpp b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegvideorenderer.cpp
+index 3ed98ce22..8320569fd 100644
+--- a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegvideorenderer.cpp
++++ b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegvideorenderer.cpp
+@@ -65,7 +65,7 @@ VideoRenderer::RenderingResult VideoRenderer::renderInternal(Frame frame)
+ #endif
+ 
+     const auto pixelAspectRatio = codecContext->pixelAspectRatio(frame.avFrame());
+-    auto buffer = std::make_unique<QFFmpegVideoBuffer>(frame.takeAVFrame(), pixelAspectRatio);
++    auto buffer = std::make_unique<QFFmpegVideoBuffer>(frame.takeAVFrame(), pixelAspectRatio, m_stereoMode);
+     QVideoFrameFormat format(buffer->size(), buffer->pixelFormat());
+     format.setColorSpace(buffer->colorSpace());
+     format.setColorTransfer(buffer->colorTransfer());
+@@ -83,6 +83,7 @@ VideoRenderer::RenderingResult VideoRenderer::renderInternal(Frame frame)
+     format.setStereoMode(m_stereoMode);
+     format.setStereoFlags(m_stereoFlags);
+     format.setStereoView(stereo ? stereo->view : QVideoFrameFormat::StereoView::Packed);
++    format.setPixelAspectRatio(buffer->pixelAspectRatio());
+     QVideoFrame videoFrame = QVideoFramePrivate::createFrame(std::move(buffer), format);
+     videoFrame.setStartTime(frame.startTime().get());
+     videoFrame.setEndTime(frame.endTime().get());
+diff --git a/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer.cpp b/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer.cpp
+index de4fe3d6a..6c436e5f3 100644
+--- a/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer.cpp
++++ b/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer.cpp
+@@ -74,13 +74,27 @@ static std::optional<QFFmpeg::VideoStereo> stereoFromSideData(const AVFrame &fra
+     return result;
+ }
+ 
+-QFFmpegVideoBuffer::QFFmpegVideoBuffer(AVFrameUPtr frame, AVRational pixelAspectRatio)
++QFFmpegVideoBuffer::QFFmpegVideoBuffer(AVFrameUPtr frame, AVRational pixelAspectRatio,
++                                       QVideoFrameFormat::StereoMode stereoMode)
+     : QHwVideoBuffer(QVideoFrame::NoHandle),
+       m_frame(frame.get()),
+       m_size(qCalculateFrameSize({ frame->width, frame->height },
+                                  { pixelAspectRatio.num, pixelAspectRatio.den })),
+       m_stereo(stereoFromSideData(*frame))
+ {
++    // Two views next to each other, or on top of each other, are not scaled to the shape of the
++    // pixels as one picture: the frame stays as it is stored, and the consumer, which takes the views
++    // apart, restores each from the stored samples (QVideoFrameFormat::pixelAspectRatio)
++    const auto mode = m_stereo ? m_stereo->mode : stereoMode;
++    if ((mode == QVideoFrameFormat::StereoMode::SideBySide
++         || mode == QVideoFrameFormat::StereoMode::SideBySideQuincunx
++         || mode == QVideoFrameFormat::StereoMode::TopBottom)
++        && pixelAspectRatio.num > 0 && pixelAspectRatio.den > 0
++        && pixelAspectRatio.num != pixelAspectRatio.den) {
++        m_size = QSize(frame->width, frame->height);
++        m_pixelAspectRatio = QSize(pixelAspectRatio.num, pixelAspectRatio.den);
++    }
++
+     if (frame->hw_frames_ctx) {
+         m_hwFrame = std::move(frame);
+         m_pixelFormat = toQtPixelFormat(HWAccel::format(m_hwFrame.get()));
+diff --git a/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer_p.h b/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer_p.h
+index 587a07424..7992447ff 100644
+--- a/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer_p.h
++++ b/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer_p.h
+@@ -42,7 +42,10 @@ class QFFmpegVideoBuffer : public QHwVideoBuffer
+ public:
+     using AVFrameUPtr = QFFmpeg::AVFrameUPtr;
+ 
+-    QFFmpegVideoBuffer(AVFrameUPtr frame, AVRational pixelAspectRatio = { 1, 1 });
++    // stereoMode is the packing the stream has had until this frame (the frame packing SEI comes
++    // with keyframes only), for a frame that does not carry it
++    QFFmpegVideoBuffer(AVFrameUPtr frame, AVRational pixelAspectRatio = { 1, 1 },
++                       QVideoFrameFormat::StereoMode stereoMode = QVideoFrameFormat::StereoMode::None);
+     ~QFFmpegVideoBuffer() override;
+ 
+     MapData map(QVideoFrame::MapMode mode) override;
+@@ -73,6 +76,10 @@ public:
+     // The frame's own packing of a stereoscopic 3D video, if it carries one
+     std::optional<QFFmpeg::VideoStereo> stereo() const { return m_stereo; }
+ 
++    // The pixel aspect ratio left to the consumer: 1:1, but for a stereoscopic 3D frame with views
++    // side by side or on top of each other, which is kept at the size it is stored in
++    QSize pixelAspectRatio() const { return m_pixelAspectRatio; }
++
+ private:
+     // The result texture converter must be accessed from the rhi's thread
+     QFFmpeg::TextureConverter &ensureTextureConverter(QRhi &rhi);
+@@ -86,6 +93,7 @@ private:
+     AVFrameUPtr m_swFrame;
+     QSize m_size;
+     std::optional<QFFmpeg::VideoStereo> m_stereo;
++    QSize m_pixelAspectRatio = QSize(1, 1);
+     QVideoFrame::MapMode m_mode = QVideoFrame::NotMapped;
+ };
+ 

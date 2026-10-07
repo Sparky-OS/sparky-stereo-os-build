@@ -1,0 +1,167 @@
+From c74b35d16c19e76f85b562f69e473d8bc953310d Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 7 Oct 2026 19:55:45 -0300
+Subject: [PATCH 2/3] EDITION ONLY: the hi-fi values are the defaults
+
+Sparky Stereo OS (not for Qt's own tree). The previous changes only make the
+better paths available and keep Qt's defaults; the edition turns them on:
+ - audio: libswresample's SoX resampler at 28 bits of precision, the sink at
+   float samples for streams of 8 or 16 bits, at 48 kHz or more, wherever the
+   device offers them (QT_FFMPEG_AUDIO_RESAMPLER=swr and the other two
+   variables restore Qt's own);
+ - video: a 3D video is shown to both eyes (the layer where the compositor
+   has one, one view elsewhere), its views restored with Lanczos, in a surface
+   as deep as the video (8, 10 bits, half float or 16 bits above);
+ - detection: a video that says nothing about being 3D and is at least 2.5 times
+   as wide as high is taken for full side by side (stereoShapeFallback), the last
+   resort after the stream's own mark, for every Qt Multimedia program.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/multimediaquick/qquickvideooutput.cpp           |  9 ++++-----
+ src/multimediaquick/qquickvideooutput_p.h           |  8 ++++----
+ src/plugins/multimedia/ffmpeg/qffmpeg.cpp           | 13 ++++++++++---
+ src/plugins/multimedia/ffmpeg/qffmpeg_p.h           |  3 ++-
+ .../qquickvideostereo/tst_qquickvideostereo.cpp     | 12 ++++++++----
+ 5 files changed, 28 insertions(+), 17 deletions(-)
+
+diff --git a/src/multimediaquick/qquickvideooutput.cpp b/src/multimediaquick/qquickvideooutput.cpp
+index 6042a8359..abd833b16 100644
+--- a/src/multimediaquick/qquickvideooutput.cpp
++++ b/src/multimediaquick/qquickvideooutput.cpp
+@@ -573,8 +573,7 @@ void QQuickVideoOutput::setStereoSwapEyes(bool swap)
+     \value StereoRightEye The right eye's view only.
+     \value StereoFlat The frame as it is stored, as if the video were not 3D.
+ 
+-    The default value is \c StereoFlat, the frames as they are stored. A video that is not 3D is
+-    shown as it is.
++    The default value is \c StereoBothEyes. A video that is not 3D is shown as it is.
+ */
+ QQuickVideoOutput::StereoView QQuickVideoOutput::stereoView() const
+ {
+@@ -599,7 +598,7 @@ void QQuickVideoOutput::setStereoView(StereoView view)
+ 
+     Whether a video that says nothing about being 3D is taken for full side by side when it
+     is at least 2.5 times as wide as high (two 16:9 pictures next to each other are 32:9). It is
+-    the last resort, after the stream's own signal. The default value is \c false.
++    the last resort, after the stream's own signal. The default value is \c true.
+ */
+ bool QQuickVideoOutput::stereoShapeFallback() const
+ {
+@@ -629,7 +628,7 @@ void QQuickVideoOutput::setStereoShapeFallback(bool fallback)
+     \value StereoBicubic Bicubic (Catmull-Rom).
+     \value StereoLanczos Lanczos with three lobes.
+ 
+-    The default value is \c StereoBilinear.
++    The default value is \c StereoLanczos.
+ */
+ QQuickVideoOutput::StereoScaling QQuickVideoOutput::stereoScaling() const
+ {
+@@ -660,7 +659,7 @@ void QQuickVideoOutput::setStereoScaling(StereoScaling scaling)
+     \value StereoSurfaceBySource The depth of the video: 8 bits for 8 bit video, 10 bits for
+            10 bit video, half float above.
+ 
+-    The default value is \c StereoSurface8Bit.
++    The default value is \c StereoSurfaceBySource.
+ */
+ QQuickVideoOutput::StereoSurface QQuickVideoOutput::stereoSurface() const
+ {
+diff --git a/src/multimediaquick/qquickvideooutput_p.h b/src/multimediaquick/qquickvideooutput_p.h
+index e420ec430..4cdcc11c5 100644
+--- a/src/multimediaquick/qquickvideooutput_p.h
++++ b/src/multimediaquick/qquickvideooutput_p.h
+@@ -268,10 +268,10 @@ private:
+     {
+         StereoInput input = StereoAutomatic;
+         bool swapEyes = false;
+-        StereoView view = StereoFlat;
+-        bool shapeFallback = false;
+-        StereoScaling scaling = StereoBilinear;
+-        StereoSurface surface = StereoSurface8Bit;
++        StereoView view = StereoBothEyes;
++        bool shapeFallback = true;
++        StereoScaling scaling = StereoLanczos;
++        StereoSurface surface = StereoSurfaceBySource;
+ 
+         // what the video in hand is
+         bool video = false;                // two views in the frames
+diff --git a/src/plugins/multimedia/ffmpeg/qffmpeg.cpp b/src/plugins/multimedia/ffmpeg/qffmpeg.cpp
+index adb9b6d79..47f31dbef 100644
+--- a/src/plugins/multimedia/ffmpeg/qffmpeg.cpp
++++ b/src/plugins/multimedia/ffmpeg/qffmpeg.cpp
+@@ -135,9 +135,14 @@ const AVPacketSideData *streamSideData(const AVStream *stream, AVPacketSideDataT
+ 
+ static AudioQuality readAudioQuality()
+ {
+-    // What Qt does without any of the variables is the default of each; a build for hi-fi
+-    // playback only changes these
++    // The edition's defaults: the best the device offers. The variables ask for another one
++    // (QT_FFMPEG_AUDIO_RESAMPLER=swr, QT_FFMPEG_AUDIO_SINK_SAMPLE_FORMAT=stream and
++    // QT_FFMPEG_AUDIO_SINK_MIN_RATE=0 give Qt's own)
+     AudioQuality q;
++    q.soxr = true;
++    q.soxrPrecision = 28;
++    q.sinkSampleFormat = QAudioFormat::Float;
++    q.sinkMinSampleRate = 48000;
+     const QByteArray resampler = qgetenv("QT_FFMPEG_AUDIO_RESAMPLER");
+     if (!resampler.isEmpty())
+         q.soxr = resampler == "soxr";
+@@ -150,8 +155,10 @@ static AudioQuality readAudioQuality()
+         q.sinkSampleFormat = QAudioFormat::Float;
+     else if (sampleFormat == "int32")
+         q.sinkSampleFormat = QAudioFormat::Int32;
++    else if (sampleFormat == "stream")
++        q.sinkSampleFormat = QAudioFormat::Unknown;
+     const int minRate = qEnvironmentVariableIntValue("QT_FFMPEG_AUDIO_SINK_MIN_RATE", &ok);
+-    if (ok && minRate > 0)
++    if (ok)
+         q.sinkMinSampleRate = minRate;
+     return q;
+ }
+diff --git a/src/plugins/multimedia/ffmpeg/qffmpeg_p.h b/src/plugins/multimedia/ffmpeg/qffmpeg_p.h
+index ae4ebcaa4..44ef78b48 100644
+--- a/src/plugins/multimedia/ffmpeg/qffmpeg_p.h
++++ b/src/plugins/multimedia/ffmpeg/qffmpeg_p.h
+@@ -287,7 +287,8 @@ SwrContextUPtr createResampleContext(const AVAudioFormat &inputFormat,
+ 
+ // How audio is played: the audio sink's format and the resampler. Qt plays the stream's own
+ // format and resamples with libswresample's defaults. These can be asked to be better, from
+-// the environment (the first listed value is what Qt does without it):
++// the environment (the first listed value is what Qt does without it; the edition's defaults are
++// the second values, soxr at 28 bits, float and 48000):
+ //  QT_FFMPEG_AUDIO_RESAMPLER=swr|soxr         the engine of libswresample
+ //  QT_FFMPEG_AUDIO_RESAMPLER_PRECISION=n      bits of soxr's precision, 15 to 33 (28 is very high quality)
+ //  QT_FFMPEG_AUDIO_SINK_SAMPLE_FORMAT=stream|float|int32   for streams of 8 or 16 bits, when the device has it
+diff --git a/tests/auto/integration/qquickvideostereo/tst_qquickvideostereo.cpp b/tests/auto/integration/qquickvideostereo/tst_qquickvideostereo.cpp
+index e351a8af7..0d2a1c617 100644
+--- a/tests/auto/integration/qquickvideostereo/tst_qquickvideostereo.cpp
++++ b/tests/auto/integration/qquickvideostereo/tst_qquickvideostereo.cpp
+@@ -238,10 +238,10 @@ void tst_QQuickVideoStereo::propertiesDefault()
+     QQuickVideoOutput output;
+     QCOMPARE(output.stereoInput(), QQuickVideoOutput::StereoAutomatic);
+     QCOMPARE(output.stereoSwapEyes(), false);
+-    QCOMPARE(output.stereoView(), QQuickVideoOutput::StereoFlat);
+-    QCOMPARE(output.stereoShapeFallback(), false);
+-    QCOMPARE(output.stereoScaling(), QQuickVideoOutput::StereoBilinear);
+-    QCOMPARE(output.stereoSurface(), QQuickVideoOutput::StereoSurface8Bit);
++    QCOMPARE(output.stereoView(), QQuickVideoOutput::StereoBothEyes);
++    QCOMPARE(output.stereoShapeFallback(), true); // the edition takes a wide undeclared video for side by side
++    QCOMPARE(output.stereoScaling(), QQuickVideoOutput::StereoLanczos);
++    QCOMPARE(output.stereoSurface(), QQuickVideoOutput::StereoSurfaceBySource);
+     QCOMPARE(output.stereoVideo(), false);
+     QCOMPARE(output.stereoPacking(), QQuickVideoOutput::StereoNone);
+     QCOMPARE(output.stereoLayerActive(), false);
+@@ -276,9 +276,13 @@ void tst_QQuickVideoStereo::stereoVideoFromFrames()
+ 
+     // a frame that says nothing, as wide as two 16:9: taken for full side by side when asked
+     output.setStereoInput(QQuickVideoOutput::StereoAutomatic);
++    output.setStereoShapeFallback(false);
+     sink->setVideoFrame(QVideoFrame(QVideoFrameFormat(QSize(3840, 1080), QVideoFrameFormat::Format_ARGB8888_Premultiplied)));
+     QTRY_COMPARE(output.stereoVideo(), false);
++    // 2.39:1 is not as wide as two pictures: not 3D with the fallback on either
+     output.setStereoShapeFallback(true);
++    sink->setVideoFrame(QVideoFrame(QVideoFrameFormat(QSize(1912, 800), QVideoFrameFormat::Format_ARGB8888_Premultiplied)));
++    QTRY_COMPARE(output.stereoVideo(), false);
+     sink->setVideoFrame(QVideoFrame(QVideoFrameFormat(QSize(3840, 1080), QVideoFrameFormat::Format_ARGB8888_Premultiplied)));
+     QTRY_COMPARE(output.stereoVideo(), true);
+     QCOMPARE(output.stereoPacking(), QQuickVideoOutput::StereoSideBySideFull);
