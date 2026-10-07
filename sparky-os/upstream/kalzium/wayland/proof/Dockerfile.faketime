@@ -1,0 +1,2 @@
+FROM kdesci-wl:1
+RUN apt-get -y update >/dev/null 2>&1 && apt-get -y install --no-install-recommends faketime 2>&1 | tail -1; ls /usr/lib/x86_64-linux-gnu/faketime/

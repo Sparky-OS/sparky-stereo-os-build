@@ -1,0 +1,5 @@
+FROM debian:testing
+ENV DEBIAN_FRONTEND=noninteractive
+RUN sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources && apt-get -y update >/dev/null 2>&1 \
+ && apt-get -y install --no-install-recommends build-essential devscripts fakeroot dpkg-dev 2>&1 | tail -1 \
+ && apt-get -y build-dep kalzium 2>&1 | tail -2 && dpkg-query -W libavogadro-dev
