@@ -1,0 +1,8 @@
+# Sparky Stereo OS's own packages win over Debian's (the stereo kernel, NVIDIA's open modules
+# with our patches, KWin and KScreen with stereo 3D, the edition's packages), so an update
+# never swaps the stereo stack for stock packages; we rebuild them when Debian moves.
+# Installed by the sparky-stereo-apt package as /etc/apt/preferences.d/sparky-stereo (its one
+# owner on an installed system); the development VM copies this same file there.
+Package: *
+Pin: release o=Sparky Stereo OS
+Pin-Priority: 1001

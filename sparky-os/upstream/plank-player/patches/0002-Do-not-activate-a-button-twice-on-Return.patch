@@ -1,0 +1,45 @@
+From 613143c522f211f6bb0801e21a3c8788d43f058e Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 7 Oct 2026 10:57:53 -0300
+Subject: [PATCH 2/2] Do not activate a button twice on Return
+
+Bigscreen.Button handles Return itself (it calls click()), and MenuButton and
+OSDButton handled it as well, so a press of Return on the OSD or in a menu
+emitted clicked() twice: the play/pause button paused and resumed at once,
+and any toggle in a menu was undone. Leave it to Bigscreen.Button.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ app/qml/MenuButton.qml | 4 ----
+ app/qml/OSDButton.qml  | 4 ----
+ 2 files changed, 8 deletions(-)
+
+diff --git a/app/qml/MenuButton.qml b/app/qml/MenuButton.qml
+index e066b92..1d1ffe8 100644
+--- a/app/qml/MenuButton.qml
++++ b/app/qml/MenuButton.qml
+@@ -22,8 +22,4 @@ Bigscreen.Button {
+         }
+         return null;
+     }
+-
+-    Keys.onReturnPressed: (event)=> {
+-        clicked()
+-    }
+  }
+diff --git a/app/qml/OSDButton.qml b/app/qml/OSDButton.qml
+index 95b4726..9de1e54 100644
+--- a/app/qml/OSDButton.qml
++++ b/app/qml/OSDButton.qml
+@@ -26,8 +26,4 @@ Bigscreen.Button {
+             color: osdBtn.checked ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.textColor
+         }
+     }
+-
+-    Keys.onReturnPressed: (event)=> {
+-        clicked()
+-    }
+  }
+-- 
+2.53.0
+
