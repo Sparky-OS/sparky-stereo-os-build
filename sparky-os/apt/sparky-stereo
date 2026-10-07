@@ -6,3 +6,15 @@
 Package: *
 Pin: release o=Sparky Stereo OS
 Pin-Priority: 1001
+
+# Bino comes only from Sparky Stereo OS (Daniel, 2026-10-06): our build decodes any input
+# but always outputs full side by side, the edition's contract with KWin. Debian's and
+# deb-multimedia's Bino have their own output modes (anaglyph, interleaved, half side by
+# side...), which would hand KWin a picture outside the contract, so they never install.
+Package: bino
+Pin: release o=Debian
+Pin-Priority: -1
+
+Package: bino
+Pin: release o=Unofficial Multimedia Packages
+Pin-Priority: -1
