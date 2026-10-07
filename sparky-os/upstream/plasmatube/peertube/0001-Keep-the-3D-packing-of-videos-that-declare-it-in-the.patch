@@ -1,0 +1,271 @@
+From 00809691b641c3b45ea7c40a2640a4680e2799d9 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 6 Oct 2026 21:49:09 -0300
+Subject: [PATCH] Keep the 3D packing of videos that declare it in their
+ container
+
+A video with the packing declared in its container (Matroska's StereoMode, the st3d box of MP4) lost it in the web video and HLS files: the copy path writes an MP4 without it, and libx264 only writes the frame packing SEI for the left eye first, as FFmpeg tells it "Inverted mode is not supported by x264".
+
+Do not copy such a video, so that libx264 writes the SEI from the packing of the input, and when the right eye comes first put the left eye first with the stereo3d filter and give the packing to libx264 as frame-packing (the frames keep the inverted side data otherwise, and libx264 would drop the packing again).
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ .../src/ffmpeg-default-transcoding-profile.ts |   5 +-
+ packages/ffmpeg/src/ffprobe.ts                |  16 ++
+ packages/ffmpeg/src/shared/presets.ts         |  23 ++-
+ .../src/server-helpers/ffmpeg-stereo3d.ts     | 152 ++++++++++++++++++
+ 4 files changed, 194 insertions(+), 2 deletions(-)
+ create mode 100644 packages/tests/src/server-helpers/ffmpeg-stereo3d.ts
+
+diff --git a/packages/ffmpeg/src/ffmpeg-default-transcoding-profile.ts b/packages/ffmpeg/src/ffmpeg-default-transcoding-profile.ts
+index 9ad32ba..8e86bbb 100644
+--- a/packages/ffmpeg/src/ffmpeg-default-transcoding-profile.ts
++++ b/packages/ffmpeg/src/ffmpeg-default-transcoding-profile.ts
+@@ -7,7 +7,8 @@ import {
+   getVideoStream,
+   getVideoStreamBitrate,
+   getVideoStreamDimensionsInfo,
+-  getVideoStreamFPS
++  getVideoStreamFPS,
++  getVideoStreamStereo3D
+ } from '@peertube/peertube-ffmpeg'
+ import { EncoderOptionsBuilder, EncoderOptionsBuilderParams } from '@peertube/peertube-models'
+ import { FfprobeData } from 'fluent-ffmpeg'
+@@ -149,6 +150,8 @@ export async function canDoQuickVideoTranscode (path: string, maxFPS: number, pr
+   if (bitRate > getMaxTheoreticalBitrate({ ...resolutionData, fps })) return false
+   // Force a re-encode when the input has a Display Matrix rotation to apply into the pixels
+   if (resolutionData.hasRotation) return false
++  // Force a re-encode when the container declares 3D: the MP4 we write does not keep it, the frame packing SEI of libx264 does
++  if (await getVideoStreamStereo3D(path, probe)) return false
+ 
+   return true
+ }
+diff --git a/packages/ffmpeg/src/ffprobe.ts b/packages/ffmpeg/src/ffprobe.ts
+index 3c727ef..ffb80c0 100644
+--- a/packages/ffmpeg/src/ffprobe.ts
++++ b/packages/ffmpeg/src/ffprobe.ts
+@@ -168,6 +168,22 @@ export async function getVideoStreamDimensionsInfo (path: string, existingProbe?
+   }
+ }
+ 
++/**
++ * The 3D packing that the container declares for the video stream (Matroska's StereoMode, the st3d box of MP4),
++ * `inverted` when the right eye comes first. The frame packing SEI of H.264 is in the frames and ffprobe does not tell it here.
++ */
++export async function getVideoStreamStereo3D (path: string, existingProbe?: FfprobeData) {
++  const videoStream = await getVideoStream(path, existingProbe)
++
++  // fluent-ffmpeg puts the side data of the stream into the stream: `type` and `inverted` are those of the "Stereo 3D" one
++  if (videoStream?.inverted === undefined || !videoStream.type || videoStream.type === '2D') return undefined
++
++  return {
++    type: videoStream.type as string,
++    inverted: forceNumber(videoStream.inverted) === 1
++  }
++}
++
+ export async function getVideoStreamFPS (path: string, existingProbe?: FfprobeData) {
+   const videoStream = await getVideoStream(path, existingProbe)
+   if (!videoStream) return 0
+diff --git a/packages/ffmpeg/src/shared/presets.ts b/packages/ffmpeg/src/shared/presets.ts
+index 9735b74..a440f3a 100644
+--- a/packages/ffmpeg/src/shared/presets.ts
++++ b/packages/ffmpeg/src/shared/presets.ts
+@@ -2,7 +2,13 @@ import { pick } from '@peertube/peertube-core-utils'
+ import { FilterSpecification } from 'fluent-ffmpeg'
+ import { FFmpegCommandWrapper } from '../ffmpeg-command-wrapper.js'
+ import { getScaleFilter, StreamType } from '../ffmpeg-utils.js'
+-import { ffprobePromise, getVideoStreamBitrate, getVideoStreamDimensionsInfo, hasAudioStream } from '../ffprobe.js'
++import {
++  ffprobePromise,
++  getVideoStreamBitrate,
++  getVideoStreamDimensionsInfo,
++  getVideoStreamStereo3D,
++  hasAudioStream
++} from '../ffprobe.js'
+ import { addDefaultEncoderGlobalParams, addDefaultEncoderParams, applyEncoderOptions } from './encoder-options.js'
+ 
+ export async function presetVOD (options: {
+@@ -117,6 +123,21 @@ export async function presetVOD (options: {
+         videoFilters.push(builderVideoFilter)
+       }
+ 
++      // libx264 writes the frame packing SEI from the 3D packing of the input, but not when the right eye comes first:
++      // put the left eye first and say the packing to libx264
++      const stereo3D = builderResult.encoder === 'libx264'
++        ? await getVideoStreamStereo3D(videoInputPath, videoProbe)
++        : undefined
++
++      if (stereo3D?.inverted && (stereo3D.type === 'side by side' || stereo3D.type === 'top and bottom')) {
++        const isSideBySide = stereo3D.type === 'side by side'
++
++        videoFilters.push({ name: 'stereo3d', rawOptions: isSideBySide ? 'sbs2r:sbs2l' : 'ab2r:ab2l' })
++        // The frames keep the (inverted) side data of the input, and libx264 would drop the packing again because of it
++        videoFilters.push({ name: 'sidedata', rawOptions: 'mode=delete:type=STEREO3D' })
++        command.outputOption(`-x264-params frame-packing=${isSideBySide ? 3 : 4}`)
++      }
++
+       applyVideoFilters({
+         commandWrapper,
+         videoFilters,
+diff --git a/packages/tests/src/server-helpers/ffmpeg-stereo3d.ts b/packages/tests/src/server-helpers/ffmpeg-stereo3d.ts
+new file mode 100644
+index 0000000..a744d35
+--- /dev/null
++++ b/packages/tests/src/server-helpers/ffmpeg-stereo3d.ts
+@@ -0,0 +1,152 @@
++/* oxlint-disable @typescript-eslint/no-unused-expressions */
++
++import {
++  canDoQuickVideoTranscode,
++  FFmpegVOD,
++  getDefaultAvailableEncoders,
++  getDefaultEncodersToTry,
++  getVideoStreamStereo3D
++} from '@peertube/peertube-ffmpeg'
++import { expect } from 'chai'
++import { Mutex } from 'async-mutex'
++import { execFile } from 'child_process'
++import { remove } from 'fs-extra/esm'
++import { mkdtemp } from 'fs/promises'
++import { tmpdir } from 'os'
++import { join } from 'path'
++import { promisify } from 'util'
++
++const execFilePromise = promisify(execFile)
++
++// The input is 64x64 views side by side or on top of each other: a red one and a blue one. In Matroska's StereoMode of the
++// input the first one is the left eye (`left_right`, `top_bottom`) or the right eye (`right_left`, `bottom_top`)
++describe('Transcoding of 3D videos', function () {
++  let tmpDirectory: string
++
++  before(async function () {
++    tmpDirectory = await mkdtemp(join(tmpdir(), 'peertube-test-stereo3d-'))
++  })
++
++  async function generate (stereoMode: string, stack: 'hstack' | 'vstack') {
++    const output = join(tmpDirectory, `${stereoMode}.mkv`)
++
++    await execFilePromise('ffmpeg', [
++      '-v', 'error', '-y',
++      '-f', 'lavfi', '-i', 'color=c=red:s=64x64:r=25:d=2',
++      '-f', 'lavfi', '-i', 'color=c=blue:s=64x64:r=25:d=2',
++      '-filter_complex', `[0:v][1:v]${stack}`,
++      '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-metadata:s:v:0', `stereo_mode=${stereoMode}`,
++      output
++    ])
++
++    return output
++  }
++
++  async function transcode (input: string) {
++    const output = input.replace(/\.mkv$/, '-transcoded.mp4')
++    const noop = () => {}
++
++    const ffmpeg = new FFmpegVOD({
++      availableEncoders: { available: getDefaultAvailableEncoders(), encodersToTry: getDefaultEncodersToTry() },
++      profile: 'default',
++      niceness: 0,
++      threads: 1,
++      tmpDirectory,
++      logger: { info: noop, debug: noop, warn: noop, error: noop }
++    })
++
++    await ffmpeg.transcode({
++      type: 'video',
++      videoInputPath: input,
++      outputPath: output,
++      inputFileMutexReleaser: await new Mutex().acquire(),
++      resolution: 64,
++      fps: 25
++    })
++
++    return output
++  }
++
++  // The color of the first and of the second view of the first frame, as the two red/blue components of the center of each
++  async function getViews (path: string, stack: 'hstack' | 'vstack') {
++    const crops = stack === 'hstack'
++      ? [ 'crop=iw/2:ih:0:0', 'crop=iw/2:ih:iw/2:0' ]
++      : [ 'crop=iw:ih/2:0:0', 'crop=iw:ih/2:0:ih/2' ]
++
++    const views: string[] = []
++
++    for (const crop of crops) {
++      const { stdout } = await execFilePromise('ffmpeg', [
++        '-v', 'error', '-i', path, '-frames:v', '1', '-vf', `${crop},scale=1:1`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'
++      ], { encoding: 'buffer' }) as unknown as { stdout: Buffer }
++
++      views.push(stdout[0] > stdout[2] ? 'red' : 'blue')
++    }
++
++    return views
++  }
++
++  async function hasFramePacking (path: string) {
++    const { stdout } = await execFilePromise('ffprobe', [
++      '-v', 'error', '-select_streams', 'v:0', '-show_frames', '-read_intervals', '%+#1', '-of', 'json', path
++    ])
++
++    const frame = JSON.parse(stdout).frames[0]
++
++    return (frame.side_data_list || []).some((d: { side_data_type: string }) => d.side_data_type === 'Stereo 3D')
++  }
++
++  const modes = [
++    { stereoMode: 'left_right', stack: 'hstack' as const, type: 'side by side', inverted: false },
++    { stereoMode: 'right_left', stack: 'hstack' as const, type: 'side by side', inverted: true },
++    { stereoMode: 'top_bottom', stack: 'vstack' as const, type: 'top and bottom', inverted: false },
++    { stereoMode: 'bottom_top', stack: 'vstack' as const, type: 'top and bottom', inverted: true }
++  ]
++
++  for (const { stereoMode, stack, type, inverted } of modes) {
++    describe('With the StereoMode ' + stereoMode, function () {
++      let input: string
++
++      before(async function () {
++        this.timeout(30000)
++
++        input = await generate(stereoMode, stack)
++      })
++
++      it('Should get the 3D packing of the input', async function () {
++        expect(await getVideoStreamStereo3D(input)).to.deep.equal({ type, inverted })
++      })
++
++      it('Should not copy the video of the input', async function () {
++        expect(await canDoQuickVideoTranscode(input, 60)).to.be.false
++      })
++
++      it('Should keep the 3D packing in the transcoded video, the left eye first', async function () {
++        this.timeout(60000)
++
++        const output = await transcode(input)
++
++        expect(await hasFramePacking(output)).to.be.true
++
++        // The input has the red view first: the left eye, unless the right eye comes first
++        expect(await getViews(output, stack)).to.deep.equal(inverted ? [ 'blue', 'red' ] : [ 'red', 'blue' ])
++      })
++    })
++  }
++
++  it('Should not report a 3D packing for a 2D video', async function () {
++    this.timeout(30000)
++
++    const output = join(tmpDirectory, '2d.mkv')
++
++    await execFilePromise('ffmpeg', [
++      '-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=red:s=64x64:r=25:d=1', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', output
++    ])
++
++    expect(await getVideoStreamStereo3D(output)).to.be.undefined
++  })
++
++  after(async function () {
++    await remove(tmpDirectory)
++  })
++})
+-- 
+2.53.0
+

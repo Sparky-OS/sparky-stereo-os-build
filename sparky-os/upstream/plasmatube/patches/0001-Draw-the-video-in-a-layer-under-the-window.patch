@@ -1,0 +1,200 @@
+From 60ffe5090664191633e618ed793eb1e6b05ce84e Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 6 Oct 2026 20:49:55 -0300
+Subject: [PATCH 1/2] Draw the video in a layer under the window
+
+MpvQt can draw the video into a surface of its own under the window's
+surface, on Wayland when the compositor accepts stereo declarations,
+and declares it as stereo content while a 3D video plays. The controls
+stay in the window's surface over the video, the same for 2D and 3D.
+
+While the player is open the video item is a hole in the window's
+surface: a ShaderEffect without blending writes transparent pixels over
+everything under it, so the layer shows through, and the item is black
+around a 3D video, which is shown at the size of one view. The window
+gets an alpha buffer when the layer is supported. Everything is used
+only where MpvQt has the layer, so PlasmaTube still builds and runs
+with MpvQt as KDE ships it.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ CMakeLists.txt                     | 14 +++++++++++
+ src/CMakeLists.txt                 |  8 +++++++
+ src/main.cpp                       | 11 +++++++++
+ src/ui/Main.qml                    |  2 ++
+ src/ui/shaders/hole.frag           | 14 +++++++++++
+ src/ui/videoplayer/VideoPlayer.qml | 37 +++++++++++++++++++++++++++++-
+ 6 files changed, 85 insertions(+), 1 deletion(-)
+ create mode 100644 src/ui/shaders/hole.frag
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index c05429b..9fae69d 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -60,6 +60,20 @@ set_package_properties(MpvQt PROPERTIES
+         PURPOSE "Video playback"
+ )
+ 
++# MpvQt as KDE ships it has no video layer: use it where it exists
++include(CheckCXXSourceCompiles)
++if(TARGET MpvQt::MpvQt)
++    set(CMAKE_REQUIRED_LIBRARIES MpvQt::MpvQt)
++    check_cxx_source_compiles("
++        #include <MpvAbstractItem>
++        int main() { return MpvAbstractItem::videoLayerSupported(); }" HAVE_MPVQT_VIDEO_LAYER)
++    unset(CMAKE_REQUIRED_LIBRARIES)
++endif()
++add_feature_info(VideoLayer HAVE_MPVQT_VIDEO_LAYER "Video in a layer under the window, 3D video (needs MpvQt with the video layer)")
++if(HAVE_MPVQT_VIDEO_LAYER)
++    find_package(Qt6 ${QT_MIN_VERSION} REQUIRED NO_MODULE COMPONENTS ShaderTools)
++endif()
++
+ find_package(Qt6Keychain)
+ set_package_properties(Qt6Keychain PROPERTIES
+         TYPE REQUIRED
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 594c25e..0ce361b 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -233,6 +233,14 @@ target_link_libraries(plasmatube PRIVATE
+         KF6::I18n
+         MpvQt::MpvQt)
+ 
++if (HAVE_MPVQT_VIDEO_LAYER)
++    target_compile_definitions(plasmatube PRIVATE HAVE_MPVQT_VIDEO_LAYER)
++    qt_add_shaders(plasmatube "plasmatube_shaders"
++        PREFIX "/org/kde/plasmatube"
++        BASE ui/shaders
++        FILES ui/shaders/hole.frag)
++endif()
++
+ if (NOT ANDROID)
+     target_link_libraries(plasmatube PRIVATE Qt::DBus Qt::Widgets)
+     target_compile_options(plasmatube PUBLIC -DHAS_DBUS)
+diff --git a/src/main.cpp b/src/main.cpp
+index 27eeeb0..de5ed0b 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -19,6 +19,10 @@
+ #include <QQuickStyle>
+ #include <QQuickWindow>
+ 
++#ifdef HAVE_MPVQT_VIDEO_LAYER
++#include <MpvAbstractItem>
++#endif
++
+ #include <KLocalizedContext>
+ #include <KAboutData>
+ #include <KLocalizedString>
+@@ -47,6 +51,13 @@ int main(int argc, char **argv)
+     }
+ #endif
+ 
++#ifdef HAVE_MPVQT_VIDEO_LAYER
++    // the controls are drawn over the video when it is in a layer of its own
++    if (MpvAbstractItem::videoLayerSupported()) {
++        QQuickWindow::setDefaultAlphaBuffer(true);
++    }
++#endif
++
+     KLocalizedString::setApplicationDomain("plasmatube");
+     QCoreApplication::setOrganizationName(QStringLiteral("KDE"));
+ 
+diff --git a/src/ui/Main.qml b/src/ui/Main.qml
+index cd9623e..056011b 100644
+--- a/src/ui/Main.qml
++++ b/src/ui/Main.qml
+@@ -64,6 +64,8 @@ Kirigami.ApplicationWindow {
+     readonly property bool isWidescreen: (root.width >= wideScreenThreshold) && root.wideScreen
+     readonly property bool finishedLoading: PlasmaTube.sourceManager.hasAnySources ? PlasmaTube.sourceManager.finishedLoading : true
+     readonly property bool videoPlayerOpen: videoPlayer.maximized
++    // the player is at rest, in its place over the pages
++    readonly property bool videoPlayerOpened: videoPlayer.contentY === videoPlayer.contentHeight / 2
+ 
+     function closePlayer() {
+         videoPlayer.close();
+diff --git a/src/ui/shaders/hole.frag b/src/ui/shaders/hole.frag
+new file mode 100644
+index 0000000..7b3de75
+--- /dev/null
++++ b/src/ui/shaders/hole.frag
+@@ -0,0 +1,14 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++// SPDX-License-Identifier: GPL-3.0-or-later
++
++#version 440
++
++layout(location = 0) out vec4 fragColor;
++
++// Writes a fully transparent pixel; with blending off in the ShaderEffect this
++// clears what is under it in the window's surface, so that the video layer
++// under the window shows through.
++void main()
++{
++    fragColor = vec4(0.0);
++}
+diff --git a/src/ui/videoplayer/VideoPlayer.qml b/src/ui/videoplayer/VideoPlayer.qml
+index 0ce23c7..cac1804 100644
+--- a/src/ui/videoplayer/VideoPlayer.qml
++++ b/src/ui/videoplayer/VideoPlayer.qml
+@@ -49,6 +49,11 @@ Kirigami.ScrollablePage {
+     readonly property bool isPlaying: !renderer.paused
+ 
+     readonly property bool widescreen: root.width > 1200
++
++    // MpvQt can draw the video into a layer under the window's surface, where the compositor accepts 3D declarations
++    readonly property bool layerSupported: typeof renderer.videoLayer !== "undefined"
++    readonly property bool layerActive: layerSupported && renderer.videoLayerActive && !renderer.stopped
++    readonly property rect layerRect: layerSupported ? renderer.videoRect : Qt.rect(0, 0, renderer.width, renderer.height)
+     property bool inFullScreen: false
+     property int oldVisibility
+ 
+@@ -212,7 +217,7 @@ Kirigami.ScrollablePage {
+                 Layout.fillWidth: true
+                 Layout.preferredHeight: width / 16.0 * 9.0
+                 Layout.maximumHeight: root.height
+-                layer.enabled: root.widescreen
++                layer.enabled: root.widescreen && !root.layerActive
+                 layer.effect: RoundedEffect {}
+ 
+                 Item {
+@@ -238,6 +243,36 @@ Kirigami.ScrollablePage {
+                         visible: !stopped
+                     }
+ 
++                    Binding {
++                        target: renderer
++                        property: "videoLayer"
++                        value: applicationWindow().videoPlayerOpened
++                        when: root.layerSupported
++                    }
++
++                    // While the video is in its layer under the window, the item is a hole in the window's surface
++                    Rectangle {
++                        anchors.fill: renderer
++
++                        color: "black"
++                        visible: root.layerActive
++                    }
++
++                    Loader {
++                        x: root.layerRect.x
++                        y: root.layerRect.y
++                        width: root.layerRect.width
++                        height: root.layerRect.height
++
++                        active: root.layerSupported
++                        visible: root.layerActive
++
++                        sourceComponent: ShaderEffect {
++                            blending: false
++                            fragmentShader: "qrc:/org/kde/plasmatube/hole.frag.qsb"
++                        }
++                    }
++
+                     Kirigami.InlineMessage {
+                         id: sponsorSkipMessage
+ 
+-- 
+2.53.0
+
