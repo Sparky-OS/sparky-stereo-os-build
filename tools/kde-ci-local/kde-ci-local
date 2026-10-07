@@ -32,6 +32,7 @@ Environment:
 """
 import argparse
 import copy
+import glob
 import os
 import re
 import shutil
@@ -321,6 +322,16 @@ def shq(s):
     return "'" + str(s).replace("'", "'\"'\"'") + "'"
 
 
+def vkms_card():
+    """The host's vkms card node (/dev/dri/cardN), or None when vkms is not loaded."""
+    for c in sorted(glob.glob("/sys/class/drm/card[0-9]*")):
+        if "-" in os.path.basename(c):
+            continue
+        if os.path.basename(os.path.realpath(os.path.join(c, "device"))) == "vkms":
+            return "/dev/dri/" + os.path.basename(c)
+    return None
+
+
 def run_job(name, job, cfg, args, ctx):
     kind, image, entry, vm = classify(job)
     log = os.path.join(ctx["logs"], f"{ctx['project']}-{ctx['ci_name'].replace('/', '-')}-{name}.log")
@@ -399,6 +410,11 @@ def run_job(name, job, cfg, args, ctx):
         cmd += ["--tmpfs", "/run/user/1000:uid=1000,gid=1000,mode=700", "-e", "XDG_RUNTIME_DIR=/run/user/1000"]
         if os.path.exists("/dev/dri/renderD128"):
             cmd += ["--device", "/dev/dri/renderD128", "--group-add", str(os.stat("/dev/dri/renderD128").st_gid)]
+        # KWin's DRM tests open /dev/dri/card1 when CI is set: a vkms device on KDE's runners.
+        # When the host has vkms loaded, its card goes in under that name.
+        card = vkms_card()
+        if card:
+            cmd += ["--device", f"{card}:/dev/dri/card1", "--group-add", str(os.stat(card).st_gid)]
     if mount_cache:
         cdir = os.path.join(ctx["work"], "cache", plat.replace("/", "_") if plat else "none")
         os.makedirs(os.path.join(cdir, "artifacts"), exist_ok=True)
