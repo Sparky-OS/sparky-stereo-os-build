@@ -1,0 +1,857 @@
+From 7fba93e692040eeb2ba9150646a77fc4398f057f Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 7 Oct 2026 03:18:54 -0300
+Subject: [PATCH] Show the "Stereo 3D" canvas as a surface of its own on
+ Wayland
+
+Under Qt's Wayland platform the surface of the main window is never
+stereo: a stereo window has its whole interface doubled with the
+picture. The canvas of a side-by-side pair is shown to the two eyes
+through KisStereoCanvasLayer instead, a subsurface placed below the
+window's surface at the rectangle of the canvas widget, with left and
+right buffers (the compositor shows it to each eye, in place, and the
+window stays one picture at one eye's size). It has the canvas's
+surface format, so a stereo canvas keeps the depth of the canvas.
+
+The renderer paints each eye into a texture of its own
+(paintCanvasToEyeTexture), the canvas widget hands the two textures to
+the layer, which copies them into its left and right buffer, and draws
+nothing but the decorations and the brush outline itself, over
+transparency: they are on the screen plane, the same in both eyes.
+The main window has an alpha buffer for the layer to show through
+(8 bits per channel: the 16-bit surfaces have no alpha), paints its own
+background except under the canvas, and takes the format only for
+itself: the format the canvases take is unchanged. A canvas does not
+take a surface of its own for colour management while the layer is in
+use, since that one has no alpha either.
+
+The stereo canvas no longer keeps Krita on xcb under a Wayland
+session: the native Wayland platform is chosen for it whatever the
+depth. On Qt's xcb platform it stays as it was, with left and right
+buffers on the default surface format.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ krita/main.cc                              |  18 +-
+ libs/ui/CMakeLists.txt                     |  19 ++
+ libs/ui/KisMainWindow.cpp                  |  51 +++++
+ libs/ui/KisMainWindow.h                    |   1 +
+ libs/ui/KisViewManager.cpp                 |   7 +-
+ libs/ui/opengl/KisOpenGLCanvasRenderer.cpp |  20 ++
+ libs/ui/opengl/KisOpenGLCanvasRenderer.h   |   7 +
+ libs/ui/opengl/KisStereoCanvasLayer.cpp    | 247 +++++++++++++++++++++
+ libs/ui/opengl/KisStereoCanvasLayer.h      |  76 +++++++
+ libs/ui/opengl/kis_opengl_canvas2.cpp      | 118 +++++++++-
+ libs/ui/opengl/kis_opengl_canvas2.h        |   7 +
+ 11 files changed, 551 insertions(+), 20 deletions(-)
+ create mode 100644 libs/ui/opengl/KisStereoCanvasLayer.cpp
+ create mode 100644 libs/ui/opengl/KisStereoCanvasLayer.h
+
+diff --git a/krita/main.cc b/krita/main.cc
+index 3d6e836..65ff625 100644
+--- a/krita/main.cc
++++ b/krita/main.cc
+@@ -442,10 +442,11 @@ if (!qEnvironmentVariableIsEmpty("KRITA_OPENGL_DEBUG")) {
+             KisConfig::canvasSurfaceBitDepthMode(&kritarc);
+ 
+         /**
+-         * "Stereo 3D": the canvas gets a left and a right buffer to show a side-by-side pair to
+-         * each eye. Stereo surfaces come from GLX on Qt's xcb platform (Qt's Wayland platform has
+-         * none yet), so with the setting on the canvas stays on xcb, and Xwayland's surfaces are
+-         * 8 bits per channel.
++         * "Stereo 3D": the canvas shows a side-by-side pair to each eye. Under Qt's Wayland
++         * platform the canvas has a surface of its own for it, below the window (the surface of
++         * the window is never stereo), and it keeps the depth of the canvas surface. On Qt's xcb
++         * platform the canvas gets left and right buffers from GLX instead, and Xwayland's
++         * surfaces are 8 bits per channel.
+          */
+         const bool stereo3DCanvas = KisConfig::stereo3DCanvas(&kritarc);
+ 
+@@ -455,10 +456,11 @@ if (!qEnvironmentVariableIsEmpty("KRITA_OPENGL_DEBUG")) {
+          * canvas surface can reach 10 bits per channel only on the native
+          * Wayland platform. Prefer it, with xcb as the fallback, unless the user
+          * has asked for an 8-bit surface or has chosen the platform explicitly.
++         * A stereo canvas is on the native Wayland platform too: there it is a
++         * surface of its own, at any depth.
+          */
+         if (platformIsKritaDefault &&
+-            bitDepthMode != KisConfig::CanvasSurfaceBitDepthMode::Depth8Bit &&
+-            !stereo3DCanvas &&
++            (bitDepthMode != KisConfig::CanvasSurfaceBitDepthMode::Depth8Bit || stereo3DCanvas) &&
+             qEnvironmentVariableIsSet("WAYLAND_DISPLAY")) {
+ 
+             qputenv("QT_QPA_PLATFORM", "wayland;xcb");
+@@ -468,7 +470,9 @@ if (!qEnvironmentVariableIsEmpty("KRITA_OPENGL_DEBUG")) {
+         KisOpenGL::RendererConfig config =
+             KisOpenGL::selectSurfaceConfig(preferredRenderer, rootSurfaceFormat, bitDepthMode, enableOpenGLDebug);
+ 
+-        if (stereo3DCanvas) {
++        // the stereo canvas of Qt's Wayland platform is a surface of its own: the default
++        // surface format, which every window of Krita takes, stays mono there
++        if (stereo3DCanvas && !qgetenv("QT_QPA_PLATFORM").startsWith("wayland")) {
+             config.format.setStereo(true);
+         }
+ 
+diff --git a/libs/ui/CMakeLists.txt b/libs/ui/CMakeLists.txt
+index 767bc9b..f29efe3 100644
+--- a/libs/ui/CMakeLists.txt
++++ b/libs/ui/CMakeLists.txt
+@@ -190,6 +190,7 @@ set(kritaui_LIB_SRCS
+     opengl/KisOpenGLSync.cpp
+     opengl/KisOpenGLBufferCreationGuard.cpp
+     opengl/KisOpenGLCanvasRenderer.cpp
++    opengl/KisStereoCanvasLayer.cpp
+     opengl/KisOpenGLContextSwitchLock.cpp
+     kis_fps_decoration.cpp
+ 
+@@ -768,6 +769,24 @@ if (HAVE_X11)
+         )
+ endif()
+ 
++# A stereo canvas under Qt's Wayland platform is a subsurface below the window, which needs
++# the subsurface of the window's surface (Qt's native interface) and libwayland
++if (HAVE_WAYLAND AND UNIX AND NOT APPLE AND NOT ANDROID AND QT_MAJOR_VERSION STREQUAL "6")
++    find_package(PkgConfig QUIET)
++    if (PkgConfig_FOUND)
++        pkg_check_modules(WAYLAND_CLIENT IMPORTED_TARGET wayland-client)
++    endif()
++    if (WAYLAND_CLIENT_FOUND)
++        target_compile_definitions(kritaui PRIVATE KRITA_HAS_STEREO_CANVAS_LAYER)
++        target_link_libraries(kritaui PRIVATE PkgConfig::WAYLAND_CLIENT)
++        set_source_files_properties(
++            opengl/KisStereoCanvasLayer.cpp
++            PROPERTIES
++            INCLUDE_DIRECTORIES "${Qt${QT_MAJOR_VERSION}Gui_PRIVATE_INCLUDE_DIRS}"
++        )
++    endif()
++endif()
++
+ if (QT_MAJOR_VERSION STREQUAL "6")
+     target_link_libraries(kritaui
+         PRIVATE
+diff --git a/libs/ui/KisMainWindow.cpp b/libs/ui/KisMainWindow.cpp
+index d611b3a..a224159 100644
+--- a/libs/ui/KisMainWindow.cpp
++++ b/libs/ui/KisMainWindow.cpp
+@@ -162,6 +162,9 @@
+ #include <config-qt-patches-present.h>
+ 
+ #include <mutex>
++#include <QOpenGLWidget>
++#include "opengl/KisStereoCanvasLayer.h"
++#include "opengl/kis_opengl_canvas2.h"
+ 
+ #if defined(Q_OS_ANDROID) && KRITA_QT_HAS_ANDROID_QPLATFORMSCREEN_DENSITY_ADJUSTMENT
+ #include <KisAndroidScaling.h>
+@@ -366,6 +369,31 @@ KisMainWindow::KisMainWindow(QUuid uuid)
+ {
+     KisScopedPerformanceLogger perfLog(QStringLiteral("KisMainWindow::KisMainWindow"));
+ 
++    if (KisStereoCanvasLayer::isSupported() && KisConfig(true).stereo3DCanvas()) {
++        /**
++         * The stereo canvas is a layer below this window's surface, which shows through where
++         * the canvas is transparent: the window needs an alpha buffer from the start. Surfaces
++         * with alpha have 8 bits per channel here (the 16-bit ones have none), so the window
++         * asks for them, and only the window: the format the canvases take stays what it was.
++         *
++         * Qt gives a top-level window the default format when the first OpenGL widget is added to
++         * it, and that is long after this point, so a hidden OpenGL widget makes it happen here.
++         */
++        const QSurfaceFormat canvasFormat = QSurfaceFormat::defaultFormat();
++        QSurfaceFormat windowFormat = canvasFormat;
++        windowFormat.setRedBufferSize(8);
++        windowFormat.setGreenBufferSize(8);
++        windowFormat.setBlueBufferSize(8);
++        windowFormat.setAlphaBufferSize(8);
++        QSurfaceFormat::setDefaultFormat(windowFormat);
++        setAttribute(Qt::WA_TranslucentBackground);
++        QOpenGLWidget *placeholder = new QOpenGLWidget(this);
++        placeholder->hide();
++        winId();
++        QSurfaceFormat::setDefaultFormat(canvasFormat);
++        KisStereoCanvasLayer::setLayerStarted(true);
++    }
++
+     KAcceleratorManager::setNoAccel(this);
+ 
+     d->workspacemodel = new KisResourceModel(ResourceType::Workspaces, this);
+@@ -1549,6 +1577,29 @@ void KisMainWindow::redo()
+     }
+ }
+ 
++void KisMainWindow::paintEvent(QPaintEvent *e)
++{
++    if (!testAttribute(Qt::WA_TranslucentBackground)) {
++        KXmlGuiWindow::paintEvent(e);
++        return;
++    }
++
++    // A window with an alpha buffer paints its own background, except where a stereo canvas
++    // shows the layer below the window through it
++    QRegion background(rect());
++    const QList<KisOpenGLCanvas2 *> canvases = findChildren<KisOpenGLCanvas2 *>();
++    for (KisOpenGLCanvas2 *canvas : canvases) {
++        if (canvas->showsStereoLayer() && canvas->isVisible()) {
++            background -= QRect(canvas->mapTo(this, QPoint(0, 0)), canvas->size());
++        }
++    }
++    QPainter painter(this);
++    painter.setCompositionMode(QPainter::CompositionMode_Source);
++    for (const QRect &r : background) {
++        painter.fillRect(r, palette().window());
++    }
++}
++
+ void KisMainWindow::closeEvent(QCloseEvent *e)
+ {
+     if (hackIsSaving()) {
+diff --git a/libs/ui/KisMainWindow.h b/libs/ui/KisMainWindow.h
+index d351fa7..3539cbb 100644
+--- a/libs/ui/KisMainWindow.h
++++ b/libs/ui/KisMainWindow.h
+@@ -428,6 +428,7 @@ private Q_SLOTS:
+ protected:
+ 
+     void closeEvent(QCloseEvent * e) override;
++    void paintEvent(QPaintEvent *e) override;
+     void resizeEvent(QResizeEvent * e) override;
+     void showEvent(QShowEvent *event) override;
+ 
+diff --git a/libs/ui/KisViewManager.cpp b/libs/ui/KisViewManager.cpp
+index 7226339..259c353 100644
+--- a/libs/ui/KisViewManager.cpp
++++ b/libs/ui/KisViewManager.cpp
+@@ -126,6 +126,7 @@
+ #include <KisImageBarrierLock.h>
+ #include <KisTextPropertiesManager.h>
+ #include <kis_selection.h>
++#include "opengl/KisStereoCanvasLayer.h"
+ 
+ #ifdef Q_OS_WIN
+ #include "KisWindowsPackageUtils.h"
+@@ -506,7 +507,7 @@ void KisViewManager::setCurrentView(KisView *view)
+             KisCanvas2 *kisCanvas = d->currentImageView->canvasBase();
+             const bool pair = kisCanvas->stereoPairAvailable();
+             if (pair && !kisCanvas->stereoPairEnabled() &&
+-                KisConfig(true).stereo3DCanvas() && QSurfaceFormat::defaultFormat().stereo()) {
++                KisConfig(true).stereo3DCanvas() && KisStereoCanvasLayer::stereoCanvasAvailable()) {
+                 // started with the setting on and a stereo surface: show the pair this way
+                 kisCanvas->setStereoPair(true, false);
+             }
+@@ -1825,10 +1826,10 @@ void KisViewManager::slotStereo3DChanged()
+         cfg.setStereo3DCanvas(enable);
+     }
+ 
+-    if (enable && !QSurfaceFormat::defaultFormat().stereo()) {
++    if (enable && !KisStereoCanvasLayer::stereoCanvasAvailable()) {
+         // the surface is decided when Krita starts: the setting is kept for the next start
+         showFloatingMessage(i18n("Stereo 3D is on from the next start of Krita: the canvas needs a stereo surface, "
+-                                 "and Krita asks for one only when it starts."), QIcon(), 8000);
++                                 "and Krita sets it up only when it starts."), QIcon(), 8000);
+         return;
+     }
+ 
+diff --git a/libs/ui/opengl/KisOpenGLCanvasRenderer.cpp b/libs/ui/opengl/KisOpenGLCanvasRenderer.cpp
+index 04951f8..abfd922 100644
+--- a/libs/ui/opengl/KisOpenGLCanvasRenderer.cpp
++++ b/libs/ui/opengl/KisOpenGLCanvasRenderer.cpp
+@@ -105,6 +105,9 @@ public:
+     QVector3D vertices[6];
+     QVector2D texCoords[6];
+ 
++    // the picture of each eye of a stereo canvas layer
++    QScopedPointer<QOpenGLFramebufferObject> eyeFBO[2];
++
+     qreal pixelGridDrawingThreshold;
+     bool pixelGridEnabled;
+     QColor gridColor;
+@@ -393,6 +396,23 @@ void KisOpenGLCanvasRenderer::paintCanvasOnly(const QRect &canvasImageDirtyRect,
+     }
+ }
+ 
++GLuint KisOpenGLCanvasRenderer::paintCanvasToEyeTexture(int eye)
++{
++    QScopedPointer<QOpenGLFramebufferObject> &fbo = d->eyeFBO[eye];
++    if (!fbo || fbo->size() != d->viewportDevicePixelSize) {
++        QOpenGLFramebufferObjectFormat format;
++        format.setInternalTextureFormat(d->canvasBridge->internalTextureFormat());
++        fbo.reset(new QOpenGLFramebufferObject(d->viewportDevicePixelSize, format));
++    }
++
++    fbo->bind();
++    renderCanvasGL(QRect());
++    fbo->release();
++    QOpenGLFramebufferObject::bindDefault();
++
++    return fbo->texture();
++}
++
+ void KisOpenGLCanvasRenderer::paintToolOutline(const KisOptimizedBrushOutline &path, const QRect &viewportUpdateRect, const int thickness)
+ {
+     if (!d->solidColorShader->bind()) {
+diff --git a/libs/ui/opengl/KisOpenGLCanvasRenderer.h b/libs/ui/opengl/KisOpenGLCanvasRenderer.h
+index caa1079..da5c84e 100644
+--- a/libs/ui/opengl/KisOpenGLCanvasRenderer.h
++++ b/libs/ui/opengl/KisOpenGLCanvasRenderer.h
+@@ -64,6 +64,13 @@ public:
+      */
+     void paintCanvasOnly(const QRect &canvasImageDirtyRect, const QRect &viewportUpdateRect = QRect());
+ 
++    /**
++     * Paint the canvas background and image tiles into a texture of its own, for one eye of a
++     * stereo canvas layer, and return the texture. The texture is the renderer's: it stays valid
++     * until the next call for the same eye or the next resize.
++     */
++    GLuint paintCanvasToEyeTexture(int eye);
++
+ private:
+     void renderCanvasGL(const QRect &updateRect);
+ 
+diff --git a/libs/ui/opengl/KisStereoCanvasLayer.cpp b/libs/ui/opengl/KisStereoCanvasLayer.cpp
+new file mode 100644
+index 0000000..4636ade
+--- /dev/null
++++ b/libs/ui/opengl/KisStereoCanvasLayer.cpp
+@@ -0,0 +1,247 @@
++/*
++ * SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++ *
++ *  SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#include "KisStereoCanvasLayer.h"
++
++#include <QGuiApplication>
++#include <QOpenGLContext>
++#include <QOpenGLExtraFunctions>
++#include <QSurfaceFormat>
++#include <QWidget>
++#include <QWindow>
++
++#include <kis_debug.h>
++
++#ifdef KRITA_HAS_STEREO_CANVAS_LAYER
++#include <QtGui/qpa/qplatformwindow_p.h>
++#include <wayland-client.h>
++#endif
++
++namespace {
++bool g_layerStarted = false;
++}
++
++struct KisStereoCanvasLayer::Private
++{
++    QPointer<QWidget> area;
++    QPointer<QOpenGLContext> shareContext;
++    QPointer<QWindow> window;
++    QOpenGLContext *context {nullptr};
++    QOpenGLExtraFunctions funcs;
++    GLuint framebuffers[2] {0, 0};
++    bool failed {false};
++    bool placedBelow {false};
++    QRect placed;
++
++    bool create();
++    void placeBelowParent();
++};
++
++bool KisStereoCanvasLayer::isSupported()
++{
++#ifdef KRITA_HAS_STEREO_CANVAS_LAYER
++    return QGuiApplication::platformName().startsWith(QLatin1String("wayland"));
++#else
++    return false;
++#endif
++}
++
++bool KisStereoCanvasLayer::stereoCanvasAvailable()
++{
++    return g_layerStarted || QSurfaceFormat::defaultFormat().stereo();
++}
++
++void KisStereoCanvasLayer::setLayerStarted(bool started)
++{
++    g_layerStarted = started;
++}
++
++KisStereoCanvasLayer::KisStereoCanvasLayer(QWidget *area, QOpenGLContext *shareContext)
++    : d(new Private)
++{
++    d->area = area;
++    d->shareContext = shareContext;
++}
++
++KisStereoCanvasLayer::~KisStereoCanvasLayer()
++{
++    if (d->context) {
++        QOpenGLContext *current = QOpenGLContext::currentContext();
++        QSurface *currentSurface = current ? current->surface() : nullptr;
++        if (d->window && d->framebuffers[0] && d->context->makeCurrent(d->window)) {
++            d->funcs.glDeleteFramebuffers(2, d->framebuffers);
++        }
++        if (current && currentSurface && current != d->context) {
++            current->makeCurrent(currentSurface);
++        }
++    }
++    delete d->context;
++    // the window is a child of the main window's, which takes it along when it goes first
++    delete d->window.data();
++    delete d;
++}
++
++bool KisStereoCanvasLayer::Private::create()
++{
++    if (window) {
++        return !failed;
++    }
++    failed = true;
++
++    QWidget *top = area ? area->window() : nullptr;
++    QWindow *parent = top ? top->windowHandle() : nullptr;
++    if (!parent || !shareContext || shareContext->isOpenGLES()) {
++        // stereo buffers are a desktop OpenGL thing
++        return false;
++    }
++
++    // the canvas's own surface format (deep colour included), with left and right buffers
++    QSurfaceFormat format = QSurfaceFormat::defaultFormat();
++    format.setStereo(true);
++    format.setRenderableType(QSurfaceFormat::OpenGL);
++
++    window = new QWindow(parent);
++    window->setSurfaceType(QSurface::OpenGLSurface);
++    window->setFormat(format);
++    window->setFlag(Qt::WindowTransparentForInput);
++
++    context = new QOpenGLContext;
++    context->setFormat(format);
++    context->setShareContext(shareContext);
++    if (!context->create()) {
++        warnOpenGL << "the stereo canvas layer could not create its OpenGL context";
++        return false;
++    }
++
++    window->create();
++    placeBelowParent();
++    failed = !window->format().stereo();
++    if (failed) {
++        warnOpenGL << "the stereo canvas layer got no left and right buffers: Qt's platform has no stereo surfaces";
++    }
++    return !failed;
++}
++
++// Qt puts a subsurface above its parent; the layer goes below it, so that the window's own
++// surface, its interface and the overlays of the canvas, is drawn over the picture
++void KisStereoCanvasLayer::Private::placeBelowParent()
++{
++#ifdef KRITA_HAS_STEREO_CANVAS_LAYER
++    if (!window || !window->parent()) {
++        return;
++    }
++    auto *own = window->nativeInterface<QNativeInterface::Private::QWaylandWindow>();
++    auto *parent = window->parent()->nativeInterface<QNativeInterface::Private::QWaylandWindow>();
++    if (!own || !parent || !parent->surface()) {
++        return;
++    }
++    if (wl_subsurface *role = own->surfaceRole<wl_subsurface>()) {
++        wl_subsurface_place_below(role, parent->surface());
++        placedBelow = true;
++    }
++#endif
++}
++
++bool KisStereoCanvasLayer::isReady()
++{
++    return d->create();
++}
++
++void KisStereoCanvasLayer::follow()
++{
++    if (!d->window || d->failed || !d->area) {
++        return;
++    }
++
++    if (!d->area->isVisible() || d->area->size().isEmpty() || !d->area->window()->isVisible()) {
++        hide();
++        return;
++    }
++
++    if (!d->placedBelow) {
++        d->placeBelowParent();
++    }
++
++    const QRect rect(d->area->mapTo(d->area->window(), QPoint(0, 0)), d->area->size());
++    if (rect != d->placed) {
++        d->window->setGeometry(rect);
++        d->placed = rect;
++        dbgOpenGL << "stereo canvas layer at" << rect << "below the window, format stereo" << d->window->format().stereo()
++                  << "red bits" << d->window->format().redBufferSize();
++        // the position takes effect with the parent's next commit
++        d->area->window()->update();
++    }
++    if (!d->window->isVisible()) {
++        d->window->show();
++    }
++}
++
++void KisStereoCanvasLayer::hide()
++{
++    if (d->window && d->window->isVisible()) {
++        d->window->hide();
++        d->placed = QRect();
++    }
++}
++
++bool KisStereoCanvasLayer::present(GLuint leftTexture, GLuint rightTexture, const QSize &size)
++{
++#ifndef KRITA_HAS_STEREO_CANVAS_LAYER
++    Q_UNUSED(leftTexture);
++    Q_UNUSED(rightTexture);
++    Q_UNUSED(size);
++    return false;
++#else
++    if (!d->create()) {
++        return false;
++    }
++
++    follow();
++    if (!d->window->isExposed()) {
++        return false;
++    }
++
++    QOpenGLContext *current = QOpenGLContext::currentContext();
++    QSurface *currentSurface = current ? current->surface() : nullptr;
++
++    if (!d->context->makeCurrent(d->window)) {
++        return false;
++    }
++
++    if (!d->framebuffers[0]) {
++        d->funcs.initializeOpenGLFunctions();
++        d->funcs.glGenFramebuffers(2, d->framebuffers);
++    }
++
++    const QSize target = d->window->size() * d->window->devicePixelRatio();
++    const GLuint textures[2] = {leftTexture, rightTexture};
++    const GLenum buffers[2] = {GL_BACK_LEFT, GL_BACK_RIGHT};
++
++    for (int eye = 0; eye < 2; eye++) {
++        d->funcs.glBindFramebuffer(GL_READ_FRAMEBUFFER, d->framebuffers[eye]);
++        d->funcs.glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, textures[eye], 0);
++        d->funcs.glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
++        d->funcs.glDrawBuffers(1, &buffers[eye]);
++        d->funcs.glDisable(GL_SCISSOR_TEST);
++        d->funcs.glBlitFramebuffer(0, 0, size.width(), size.height(),
++                                   0, 0, target.width(), target.height(),
++                                   GL_COLOR_BUFFER_BIT, size == target ? GL_NEAREST : GL_LINEAR);
++    }
++    d->funcs.glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
++    d->funcs.glDrawBuffers(1, &buffers[0]);
++
++    // the textures are shared with the canvas's context, which draws into them again at its next frame
++    d->funcs.glFinish();
++    d->context->swapBuffers(d->window);
++
++    if (current && currentSurface) {
++        current->makeCurrent(currentSurface);
++    } else {
++        d->context->doneCurrent();
++    }
++    return true;
++#endif
++}
+diff --git a/libs/ui/opengl/KisStereoCanvasLayer.h b/libs/ui/opengl/KisStereoCanvasLayer.h
+new file mode 100644
+index 0000000..4d5b02a
+--- /dev/null
++++ b/libs/ui/opengl/KisStereoCanvasLayer.h
+@@ -0,0 +1,76 @@
++/*
++ * SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++ *
++ *  SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#ifndef KIS_STEREO_CANVAS_LAYER_H
++#define KIS_STEREO_CANVAS_LAYER_H
++
++#include <QObject>
++#include <QPointer>
++#include <QSize>
++#include <qopengl.h>
++
++#include "kritaui_export.h"
++
++class QOpenGLContext;
++class QWidget;
++
++/**
++ * KisStereoCanvasLayer is the 3D area of a "Stereo 3D" canvas under Qt's Wayland platform.
++ *
++ * The canvas is a widget of the main window, so its surface is the window's own and that
++ * one is never stereo: a window whose surface is stereo has its whole interface doubled with
++ * the picture. The layer is a surface of its own instead, a subsurface placed below the
++ * window's surface at the rectangle of the canvas widget, with left and right buffers. The
++ * compositor shows it to each eye in place, and the window, translucent where the canvas is,
++ * stays one picture at one eye's size, the same in both eyes.
++ *
++ * The canvas renders each eye into a texture of its own context, and present() copies the two
++ * textures into the left and the right buffer of the layer. The layer has the deep surface
++ * format of the canvas, so a stereo canvas is as deep as a mono one.
++ */
++class KRITAUI_EXPORT KisStereoCanvasLayer : public QObject
++{
++    Q_OBJECT
++
++public:
++    /**
++     * @param area the canvas widget: the layer follows its rectangle
++     * @param shareContext the canvas's context: the textures given to present() live in it
++     */
++    KisStereoCanvasLayer(QWidget *area, QOpenGLContext *shareContext);
++    ~KisStereoCanvasLayer() override;
++
++    /// Qt's Wayland platform, and a build that can place a subsurface below its window
++    static bool isSupported();
++
++    /**
++     * True when Krita can show a stereo canvas: the default surface format asks for stereo
++     * buffers (Qt's xcb platform) or the main window was made translucent for a layer.
++     */
++    static bool stereoCanvasAvailable();
++    static void setLayerStarted(bool started);
++
++    /// the layer window exists and has left and right buffers
++    bool isReady();
++
++    /**
++     * Copies the two eyes' textures (of the area's context, @p size pixels each) into the
++     * layer's buffers and swaps them. Returns false while the layer cannot show them yet.
++     */
++    bool present(GLuint leftTexture, GLuint rightTexture, const QSize &size);
++
++    /// Moves and resizes the layer to the rectangle of the area, or hides it with the area
++    void follow();
++
++    /// Takes the layer off the screen
++    void hide();
++
++private:
++    struct Private;
++    Private *const d;
++};
++
++#endif // KIS_STEREO_CANVAS_LAYER_H
+diff --git a/libs/ui/opengl/kis_opengl_canvas2.cpp b/libs/ui/opengl/kis_opengl_canvas2.cpp
+index 51665ee..7eadf45 100644
+--- a/libs/ui/opengl/kis_opengl_canvas2.cpp
++++ b/libs/ui/opengl/kis_opengl_canvas2.cpp
+@@ -8,6 +8,8 @@
+ #define GL_GLEXT_PROTOTYPES
+ 
+ #include <QWindow>
++#include <QOpenGLFunctions>
++#include <QTimer>
+ 
+ #include "opengl/kis_opengl_canvas2.h"
+ #include "opengl/KisOpenGLCanvasRenderer.h"
+@@ -25,6 +27,7 @@
+ #include "KisLongPressEventFilter.h"
+ #include "KisOpenGLModeProber.h"
+ #include "KisOpenGLContextSwitchLock.h"
++#include "KisStereoCanvasLayer.h"
+ #include <KisPlatformPluginInterfaceFactory.h>
+ 
+ #include "config-qt-patches-present.h"
+@@ -75,6 +78,9 @@ public:
+ #endif
+     QRect canvasImageDirtyRect;
+     KisOpenGLCanvasRenderer *renderer;
++    QScopedPointer<KisStereoCanvasLayer> stereoLayer;
++    QTimer stereoLayerTimer;
++    bool stereoLayerShown = false;
+     QScopedPointer<KisOpenGLSync> glSyncObject;
+     KisRepaintDebugger repaintDbg;
+ };
+@@ -117,6 +123,11 @@ KisOpenGLCanvas2::KisOpenGLCanvas2(KisCanvas2 *canvas,
+ 
+     const bool osManagedSurfacePresent = KisPlatformPluginInterfaceFactory::instance()->surfaceColorManagedByOS();
+     bool useNativeSurfaceForCanvas = osManagedSurfacePresent && cfg.enableCanvasSurfaceColorSpaceManagement();
++    if (KisStereoCanvasLayer::isSupported() && KisStereoCanvasLayer::stereoCanvasAvailable()) {
++        // a stereo canvas shows the layer below the window through the canvas: a surface of its
++        // own would have no alpha and cover it
++        useNativeSurfaceForCanvas = false;
++    }
+     if (qEnvironmentVariableIsSet("KRITA_USE_NATIVE_CANVAS_SURFACE")) {
+         useNativeSurfaceForCanvas = qEnvironmentVariableIntValue("KRITA_USE_NATIVE_CANVAS_SURFACE");
+         qDebug() << "FPS-DEBUG: Krita canvas mode is overridden:" << (useNativeSurfaceForCanvas ? "native surface" : "legacy mode") << useNativeSurfaceForCanvas << qEnvironmentVariableIsSet("KRITA_USE_NATIVE_CANVAS_SURFACE");
+@@ -264,6 +275,49 @@ void KisOpenGLCanvas2::paintGL()
+     const bool stereoPair = format().stereo() && canvas()->stereoPairEnabled();
+     const bool rightEye = stereoPair && currentTargetBuffer() == QOpenGLWidget::RightBuffer;
+ 
++    /**
++     * Under Qt's Wayland platform the surface of the window is never stereo (a stereo window has
++     * its whole interface doubled with the picture). The picture of the two eyes goes to a layer
++     * of its own below the window instead, the same way, and the widget is transparent over it:
++     * the decorations and the brush outline are on the screen plane, the same in both eyes.
++     */
++    const bool stereoLayerWanted = !format().stereo() && canvas()->stereoPairEnabled() && KisStereoCanvasLayer::isSupported();
++    if (stereoLayerWanted && !d->stereoLayer) {
++        d->stereoLayer.reset(new KisStereoCanvasLayer(this, context()));
++        d->stereoLayerTimer.setInterval(100);
++        connect(&d->stereoLayerTimer, &QTimer::timeout, this, [this] {
++            if (d->stereoLayer) {
++                d->stereoLayer->follow();
++            }
++        });
++    }
++    if (!stereoLayerWanted && d->stereoLayer) {
++        d->stereoLayerTimer.stop();
++        d->stereoLayer->hide();
++    }
++    if (!stereoLayerWanted && d->stereoLayerShown) {
++        d->stereoLayerShown = false;
++        window()->update();
++    }
++
++    bool stereoLayerShown = false;
++    if (stereoLayerWanted && d->stereoLayer->isReady()) {
++        stereoLayerShown = paintStereoLayer();
++        if (!stereoLayerShown) {
++            // the layer is not on the screen yet: the window shows what is painted on, meanwhile
++            QTimer::singleShot(50, this, qOverload<>(&QWidget::update));
++        }
++    }
++    if (stereoLayerShown != d->stereoLayerShown) {
++        // the window paints its own background except where the layer shows through
++        d->stereoLayerShown = stereoLayerShown;
++        window()->update();
++    }
++    if (stereoLayerShown) {
++        d->updateRect = boost::none;
++        d->canvasImageDirtyRect = QRect();
++    }
++
+     const QRect updateRect = (d->updateRect && !stereoPair) ? *d->updateRect : QRect();
+ 
+     if (!OPENGL_SUCCESS) {
+@@ -275,16 +329,23 @@ void KisOpenGLCanvas2::paintGL()
+     QRect canvasImageDirtyRect = stereoPair ? rect() : (d->canvasImageDirtyRect & rect());
+     d->canvasImageDirtyRect = QRect();
+ 
+-    // the other eye's half of the picture goes to where the shown half is; what is drawn on top
+-    // of the picture below (decorations, the brush outline) is the same in both eyes
+-    const QRect eyeRect = stereoPair ? canvas()->stereoEyeRect(rightEye) : QRect();
+-    const bool eyeViewActive = stereoPair && eyeRect != coordinatesConverter()->stereoView();
+-    if (eyeViewActive) {
+-        coordinatesConverter()->beginStereoEyeView(eyeRect);
+-    }
+-    d->renderer->paintCanvasOnly(canvasImageDirtyRect, updateRect);
+-    if (eyeViewActive) {
+-        coordinatesConverter()->endStereoEyeView();
++    if (stereoLayerShown) {
++        // the picture is the layer's: the widget is transparent over it
++        QOpenGLFunctions *f = context()->functions();
++        f->glClearColor(0, 0, 0, 0);
++        f->glClear(GL_COLOR_BUFFER_BIT);
++    } else {
++        // the other eye's half of the picture goes to where the shown half is; what is drawn on top
++        // of the picture below (decorations, the brush outline) is the same in both eyes
++        const QRect eyeRect = stereoPair ? canvas()->stereoEyeRect(rightEye) : QRect();
++        const bool eyeViewActive = stereoPair && eyeRect != coordinatesConverter()->stereoView();
++        if (eyeViewActive) {
++            coordinatesConverter()->beginStereoEyeView(eyeRect);
++        }
++        d->renderer->paintCanvasOnly(canvasImageDirtyRect, updateRect);
++        if (eyeViewActive) {
++            coordinatesConverter()->endStereoEyeView();
++        }
+     }
+     {
+         QPainter gc(this);
+@@ -317,6 +378,31 @@ void KisOpenGLCanvas2::paintGL()
+     }
+ }
+ 
++bool KisOpenGLCanvas2::paintStereoLayer()
++{
++    // each eye's picture goes to a texture of the renderer, and from there to the layer's buffers
++    GLuint textures[2] = {0, 0};
++    for (int eye = 0; eye < 2; eye++) {
++        const QRect eyeRect = canvas()->stereoEyeRect(eye == 1);
++        const bool eyeViewActive = eyeRect != coordinatesConverter()->stereoView();
++        if (eyeViewActive) {
++            coordinatesConverter()->beginStereoEyeView(eyeRect);
++        }
++        textures[eye] = d->renderer->paintCanvasToEyeTexture(eye);
++        if (eyeViewActive) {
++            coordinatesConverter()->endStereoEyeView();
++        }
++    }
++
++    // the layer works in a context of its own, and the textures are still being drawn
++    context()->functions()->glFinish();
++    const bool shown = d->stereoLayer->present(textures[0], textures[1], coordinatesConverter()->viewportDevicePixelSize());
++    if (shown && !d->stereoLayerTimer.isActive()) {
++        d->stereoLayerTimer.start();
++    }
++    return shown;
++}
++
+ void KisOpenGLCanvas2::paintEvent(QPaintEvent *e)
+ {
+     KIS_SAFE_ASSERT_RECOVER_RETURN(!d->updateRect);
+@@ -377,6 +463,11 @@ void KisOpenGLCanvas2::paintToolOutline(const KisOptimizedBrushOutline &path, in
+     d->renderer->paintToolOutline(path, updateRect, thickness);
+ }
+ 
++bool KisOpenGLCanvas2::showsStereoLayer() const
++{
++    return d->stereoLayerShown;
++}
++
+ bool KisOpenGLCanvas2::isBusy() const
+ {
+     const bool isBusyStatus = d->glSyncObject && !d->glSyncObject->isSignaled();
+@@ -436,6 +527,13 @@ void KisOpenGLCanvas2::focusOutEvent(QFocusEvent *event)
+ void KisOpenGLCanvas2::hideEvent(QHideEvent *e)
+ {
+     QOpenGLWidget::hideEvent(e);
++    if (d->stereoLayer) {
++        d->stereoLayer->hide();
++    }
++    if (d->stereoLayerShown) {
++        d->stereoLayerShown = false;
++        window()->update();
++    }
+     notifyDecorationsWindowMinimized(true);
+ }
+ 
+diff --git a/libs/ui/opengl/kis_opengl_canvas2.h b/libs/ui/opengl/kis_opengl_canvas2.h
+index 2671b14..afdb1d5 100644
+--- a/libs/ui/opengl/kis_opengl_canvas2.h
++++ b/libs/ui/opengl/kis_opengl_canvas2.h
+@@ -92,6 +92,9 @@ public: // Implement kis_abstract_canvas_widget interface
+ 
+     KisOpenGLImageTexturesSP openGLImageTextures() const;
+ 
++    /// True while the layer below the window shows this canvas's picture, in 3D
++    bool showsStereoLayer() const;
++
+     BitDepthMode currentBitDepthMode() const override;
+     QString currentBitDepthUserReport() const override;
+ 
+@@ -106,6 +109,10 @@ private Q_SLOTS:
+ protected: // KisCanvasWidgetBase
+     bool callFocusNextPrevChild(bool next) override;
+ 
++private:
++    /// Shows both eyes of a stereo canvas in the layer below the window; false while it cannot
++    bool paintStereoLayer();
++
+ private:
+     struct Private;
+     Private * const d;
+-- 
+2.53.0
+

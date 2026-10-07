@@ -1,0 +1,21 @@
+# Proof image: a fresh debian:testing, the Sparky Stereo OS development repository (pinned), Krita installed from it,
+# headless KWin + Xwayland, Mesa from the repository; test tools: the KWin ScreenShot2 capture, fakeinput, the readback shim.
+# build: docker build --build-context repo=<repo dir> --build-arg KRITA=<apt version> -t <name> .
+FROM debian:testing
+ARG KRITA
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get -y update >/dev/null && apt-get -y install ca-certificates >/dev/null 2>&1
+RUN --mount=type=bind,from=repo,target=/repo echo 'deb [trusted=yes] file:/repo ./' > /etc/apt/sources.list.d/zrepo.list \
+ && printf 'Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n' > /etc/apt/preferences.d/sparky-stereo \
+ && apt-get -y update 2>&1 | tail -1 \
+ && apt-get -y install --no-install-recommends \
+      kwin-wayland kwin-common kwin-data xwayland libstereo-declare1 \
+      libgl1-mesa-dri libglx-mesa0 libegl-mesa0 libgbm1 mesa-libgallium \
+      libgl1 libglx0 libegl1 libgles2 libopengl0 mesa-utils x11-utils dbus dbus-daemon \
+      libqt6widgets6 libqt6dbus6 libqt6gui6 qt6-wayland qt6-qpa-plugins libxcb-cursor0 \
+      krita=${KRITA} krita-data=${KRITA} \
+      fonts-dejavu-core python3 python3-pil python3-numpy gcc libc6-dev libegl-dev libgl-dev libx11-dev procps 2>&1 | tail -3 \
+ && dpkg-query -W krita kwin-wayland xwayland libgl1-mesa-dri libgbm1 mesa-libgallium libqt6gui6 libqt6waylandclient6 libstereo-declare1 \
+ && rm -f /etc/apt/sources.list.d/zrepo.list
+COPY rbshim2.c /tmp/
+RUN gcc -shared -fPIC -O1 -o /usr/local/lib/rbshim2.so /tmp/rbshim2.c -ldl -lEGL -lGL -lX11
