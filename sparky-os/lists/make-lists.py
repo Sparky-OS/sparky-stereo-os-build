@@ -162,6 +162,10 @@ group('hardware', 'Hardware support', [
 # 7b. Installed by the hardware setup only when it finds the hardware (not in the base build).
 group('hardware-found', 'Hardware support installed when the hardware is found', [
     'nvidia-settings',   # with the NVIDIA driver, when an NVIDIA card is found
+    # VA-API decode on NVIDIA through NVDEC, works with DRM, X11 and Wayland displays. Never
+    # vdpau-va-driver (VDPAU bridge, X11 only): it segfaults any VA-API probe on a DRM display
+    # (Discord's encoder helper, `vainfo --display drm`; measured on Daniel's machine 2026-10-07).
+    'nvidia-vaapi-driver',
 ])
 
 # 8. System: apps from Flathub, containers, Android, snapshots, zram.
