@@ -5,6 +5,8 @@
 # Builds sparky-stereo-apt: the apt source and the pin of the Sparky Stereo OS repository,
 # the way SparkyLinux's sparky-apt ships its own. It installs
 #   /etc/apt/sources.list.d/sparky-stereo.sources   (deb822, Signed-By the key of sparky-stereo-keyring)
+#   /etc/apt/preferences.d/sparky-stereo-only-ours   (Debian's and deb-multimedia's builds of our
+#                                                     packages and Debian's tasks at -1; apt/make-only-ours.py)
 #   /etc/apt/preferences.d/sparky-stereo             (o=Sparky Stereo OS at 1001; the file is
 #                                                     ../../apt/sparky-stereo, its one source)
 # It depends on sparky-stereo-keyring and on sparky-apt: the edition is built on SparkyLinux
@@ -35,7 +37,10 @@ Components: main
 Signed-By: /etc/apt/trusted.gpg.d/sparky-stereo-repo.asc
 EOS
 cp "$HERE/../../apt/sparky-stereo" "$D/etc/apt/preferences.d/sparky-stereo"
-chmod 644 "$D/etc/apt/sources.list.d/sparky-stereo.sources" "$D/etc/apt/preferences.d/sparky-stereo"
+# Debian's and deb-multimedia's builds of our packages, and Debian's tasks, are blocked (generated from the repository index)
+python3 "$HERE/../../apt/make-only-ours.py" "${REPO:-/K3D/temp/sparky-os/repo}" >/dev/null
+cp "$HERE/../../apt/sparky-stereo-only-ours" "$D/etc/apt/preferences.d/sparky-stereo-only-ours"
+chmod 644 "$D/etc/apt/sources.list.d/sparky-stereo.sources" "$D/etc/apt/preferences.d/sparky-stereo" "$D/etc/apt/preferences.d/sparky-stereo-only-ours"
 
 cat >"$D/usr/share/doc/$PKG/copyright" <<'EOS'
 Sparky Stereo OS, an edition of SparkyLinux (https://sparkylinux.org), created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack).

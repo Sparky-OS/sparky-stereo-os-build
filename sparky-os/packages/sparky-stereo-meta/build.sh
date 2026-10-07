@@ -2,9 +2,11 @@
 #
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/02
 # Copyright 2026 under the GNU GPL3 License
-# Builds the edition's meta-packages from sparky-os/lists/*.list (lists/make-meta.py writes
-# the control files): sparky-stereo, sparky-stereo-desktop, sparky-stereo-gaming,
-# sparky-stereo-hardware-support, sparky-stereo-languages and sparky-stereo-system.
+# Builds the edition's meta-packages from sparky-os/lists/*.list and lists/roles.tsv (lists/make-meta.py
+# writes the control files and names the packages): sparky-stereo, sparky-stereo-desktop,
+# sparky-stereo-hardware-support, sparky-stereo-languages, sparky-stereo-system, the role tasks
+# task-sparky-stereo-<role> and task-sparky-<role>, sparky-stereo-tasks (tasksel) and the
+# transitional sparky-stereo-gaming.
 # The kernel pair linux-image-sparky-stereo and linux-headers-sparky-stereo is versioned after
 # the kernel in the repository (rebuild after a kernel bump). Each is a control file and a copyright file. Version: the build date.
 # Last update 2026/10/02
@@ -15,11 +17,7 @@ VERSION=${VERSION:-$(date +%Y%m%d)}   # second build of a day: VERSION=YYYYMMDD.
 W=$(mktemp -d /K3D/temp/sparky-os/meta-build.XXXXXX)
 trap 'rm -rf "$W"' EXIT
 
-PKGS=$(python3 - <<PY
-import re
-print(' '.join(re.findall(r"^    '((?:sparky|linux)-[a-z-]*stereo[a-z-]*|sparky-stereo)': \(", open('$HERE/../../lists/make-meta.py').read(), re.M)))
-PY
-)
+PKGS=$(python3 "$HERE/../../lists/make-meta.py" --list)
 for PKG in $PKGS; do
 	mkdir -p "$W/$PKG/DEBIAN" "$W/$PKG/usr/share/doc/$PKG"
 	cat >"$W/$PKG/usr/share/doc/$PKG/copyright" <<'EOT'
