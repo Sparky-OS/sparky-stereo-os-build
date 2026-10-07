@@ -35,3 +35,18 @@ ffmpeg -v error -y -f lavfi -i "testsrc2=s=1280x720:r=25:d=6" -vf "select=eq(n\,
 ffmpeg -v error -y -f lavfi -i "anoisesrc=d=8:c=pink:r=44100:a=0.2,aformat=sample_fmts=s16:sample_rates=44100:channel_layouts=stereo" -i static2d.mp4 -t 6 -c:v copy -c:a pcm_s16le a44k16.mkv
 ffmpeg -v error -y -f lavfi -i "sine=f=1000:d=8:r=96000,aformat=sample_fmts=s32:sample_rates=96000:channel_layouts=stereo" -i static2d.mp4 -t 6 -c:v copy -c:a flac -sample_fmt s32 a96k24.mkv
 ffmpeg -v error -y -f lavfi -i "sine=f=440:d=8:r=44100" -i static2d.mp4 -t 6 -c:v copy -c:a aac a44kaac.mp4
+# --- follow-up round: anamorphic 3D clips (half side by side with a sample aspect ratio, as FFmpeg gives it), mastering metadata, 2D shapes
+ffmpeg -v error -y -f lavfi -i "testsrc2=s=1280x720:r=1:d=1" -frames:v 1 ../ref/truth.png
+ffmpeg -v error -y -i ../ref/truth.png -vf "scale=640:720:flags=area" ../ref/eye.png
+ffmpeg -v error -y -i ../ref/truth.png -vf "scale=1280:360:flags=area" ../ref/eyeTB.png
+for f in bilinear bicubic lanczos; do ffmpeg -v error -y -i ../ref/eye.png -vf "scale=1280:720:flags=$f" ../ref/ref-$f.png; ffmpeg -v error -y -i ../ref/eyeTB.png -vf "scale=1280:720:flags=$f" ../ref/tb-ref-$f.png; done
+cp ../ref/truth.png ../ref/tb-truth.png
+ffmpeg -v error -y -loop 1 -t 6 -r 25 -i ../ref/eye.png -loop 1 -t 6 -r 25 -i ../ref/eye.png -filter_complex "[0][1]hstack,setsar=2/1,format=yuv444p" -c:v libx264 -qp 0 -pix_fmt yuv444p -colorspace bt709 -color_range pc -x264-params frame-packing=3 sar-sei-sbs-half.mp4
+ffmpeg -v error -y -loop 1 -t 6 -r 25 -i ../ref/eyeTB.png -loop 1 -t 6 -r 25 -i ../ref/eyeTB.png -filter_complex "[0][1]vstack,setsar=1/2,format=yuv444p" -c:v libx264 -qp 0 -pix_fmt yuv444p -colorspace bt709 -color_range pc -x264-params frame-packing=4 sar-sei-tb-half.mp4
+ffmpeg -v error -y -loop 1 -t 6 -r 25 -i ../ref/eye.png -loop 1 -t 6 -r 25 -i ../ref/eye.png -filter_complex "[0][1]hstack,setsar=0,format=yuv444p" -c:v libx264 -qp 0 -pix_fmt yuv444p -colorspace bt709 -color_range pc sar-mkv-sbs-half.mkv
+mkvpropedit -q sar-mkv-sbs-half.mkv --edit track:v1 --set stereo-mode=1 --set display-width=1280 --set display-height=720 --set display-unit=0   # FFmpeg reads the per-eye display width: sample aspect ratio 2:1
+ffmpeg -v error -y -f lavfi -i "color=c=gray:s=320x240:r=25:d=1,format=yuv420p10le" -c:v libx265 -x265-params "log-level=error:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:max-cll=1000,400:master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1)" -pix_fmt yuv420p10le md1000.mp4
+ffmpeg -v error -y -f lavfi -i "color=c=gray:s=2560x720:r=25:d=3,format=yuv420p10le,geq=lum='64+876*mod(X\,1280)/1279':cb=512:cr=512" -c:v libx265 -x265-params "lossless=1:log-level=error:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:max-cll=1000,400:master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1)" -pix_fmt yuv420p10le ramp10-pq-md-sbs.mkv
+mkvpropedit -q ramp10-pq-md-sbs.mkv --edit track:v1 --set stereo-mode=1 --set display-width=1280 --set display-height=720 --set display-unit=0
+ffmpeg -v error -y -f lavfi -i "testsrc2=s=1912x800:r=25:d=6" -c:v libx264 -pix_fmt yuv420p -g 25 2d-239.mp4
+ffmpeg -v error -y -f lavfi -i "testsrc2=s=1920x1080:r=25:d=6" -c:v libx264 -pix_fmt yuv420p 2d-169.mp4
