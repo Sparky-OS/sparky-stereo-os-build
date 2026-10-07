@@ -1,0 +1,581 @@
+From b785a78a5927f5ab3930063982d0de34df7831c4 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 22:57:43 -0300
+Subject: [PATCH] Add the stereoscopic 3D packing to QVideoFrameFormat and fill
+ it in the FFmpeg backend
+
+A stereoscopic 3D video holds both views in every frame, in one of the
+packings the frame packing arrangement SEI of H.264 (Table D-8) and H.265
+(Table D.8) names (checkerboard 0, column interleaving 1, row interleaving 2,
+side by side 3, top and bottom 4, temporal interleaving 5, two-dimensional 6,
+and the quincunx sampling flag of side by side), or Matroska's StereoMode
+(RFC 9559, 5.1.4.1.28.3, values 0 to 14: the same packings with the eye order,
+and the red/cyan and green/magenta anaglyphs). FFmpeg reads the SEI and the
+StereoMode into the Stereo 3D side data of the decoded frames, as an AVStereo3D
+(type, the invert flag for the right eye first, the view for a frame of a
+sequence); only the anaglyphs, which have no AVStereo3D type, stay in the
+stream's stereo_mode tag. Nothing in Qt Multimedia passed any of it on, so a
+player built on it could not tell a 3D video from a wide or a tall one, or
+turn its views into what its display needs.
+
+Add StereoMode (None, SideBySide, TopBottom, SideBySideQuincunx, RowInterleaved,
+ColumnInterleaved, Checkerboard, FrameSequence, AnaglyphCyanRed,
+AnaglyphGreenMagenta), StereoFlag::RightEyeFirst and StereoView (which view a
+frame of a frame sequence holds) to QVideoFrameFormat. The FFmpeg backend sets
+them from the frame's side data, as it already does for the mastering display's
+luminance, and from the stream's tag for the anaglyphs. The SEI is sent with
+keyframes only and holds until another replaces it (H.264 D.2.26,
+frame_packing_arrangement_repetition_period 1), so the video renderer keeps the
+last packing it saw.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/multimedia/video/qvideoframeformat.cpp    | 144 +++++++++++++++++-
+ src/multimedia/video/qvideoframeformat.h      |  41 +++++
+ .../playbackengine/qffmpegmediadataholder.cpp |  19 +++
+ .../playbackengine/qffmpegmediadataholder_p.h |   4 +
+ .../playbackengine/qffmpegvideorenderer.cpp   |  15 +-
+ .../playbackengine/qffmpegvideorenderer_p.h   |   6 +-
+ .../ffmpeg/qffmpegplaybackengine.cpp          |   2 +-
+ .../multimedia/ffmpeg/qffmpegvideobuffer.cpp  |  50 +++++-
+ .../multimedia/ffmpeg/qffmpegvideobuffer_p.h  |  18 +++
+ .../tst_qvideoframeformat.cpp                 |  35 +++++
+ 10 files changed, 327 insertions(+), 7 deletions(-)
+
+diff --git a/src/multimedia/video/qvideoframeformat.cpp b/src/multimedia/video/qvideoframeformat.cpp
+index a4680e4..435fbeb 100644
+--- a/src/multimedia/video/qvideoframeformat.cpp
++++ b/src/multimedia/video/qvideoframeformat.cpp
+@@ -38,7 +38,8 @@ public:
+         if (pixelFormat == other.pixelFormat && scanLineDirection == other.scanLineDirection
+             && frameSize == other.frameSize && viewport == other.viewport
+             && frameRatesEqual(frameRate, other.frameRate) && colorSpace == other.colorSpace
+-            && transformation == other.transformation)
++            && transformation == other.transformation && stereoMode == other.stereoMode
++            && stereoFlags == other.stereoFlags && stereoView == other.stereoView)
+             return true;
+ 
+         return false;
+@@ -59,6 +60,9 @@ public:
+     float frameRate = 0.0;
+     float maxLuminance = -1.;
+     VideoTransformation transformation;
++    QVideoFrameFormat::StereoMode stereoMode = QVideoFrameFormat::StereoMode::None;
++    QVideoFrameFormat::StereoFlags stereoFlags;
++    QVideoFrameFormat::StereoView stereoView = QVideoFrameFormat::StereoView::Packed;
+ };
+ 
+ QT_DEFINE_QESDP_SPECIALIZATION_DTOR(QVideoFrameFormatPrivate);
+@@ -651,6 +655,141 @@ void QVideoFrameFormat::setColorRange(ColorRange range)
+     d->colorRange = range;
+ }
+ 
++/*!
++    \enum QVideoFrameFormat::StereoMode
++
++    Enumerates how the frames of a stereoscopic 3D video hold its two views. The names and
++    numbers of the packings follow the frame packing arrangement types of H.264 (Rec. ITU-T H.264,
++    Table D-8) and H.265 (Rec. ITU-T H.265, Table D.8), which Matroska's StereoMode (RFC 9559,
++    section 5.1.4.1.28.3, values 0 to 14) and FFmpeg's AVStereo3D share. Which eye comes first
++    is given by stereoFlags().
++
++    \value None
++    The video is not stereoscopic (type 6, two-dimensional, and StereoMode 0).
++
++    \value SideBySide
++    The views are next to each other, the first on the left (type 3; StereoMode 1 and 11).
++
++    \value TopBottom
++    The views are on top of each other, the first on top (type 4; StereoMode 3 and 2).
++
++    \value SideBySideQuincunx
++    Side by side with quincunx sampling (type 3 with quincunx_sampling_flag set).
++
++    \value RowInterleaved
++    The views are in alternate rows, the first view in the first row (type 2; StereoMode 7 and 6).
++
++    \value ColumnInterleaved
++    The views are in alternate columns, the first view in the first column (type 1; StereoMode 9 and 8).
++
++    \value Checkerboard
++    The views alternate in a checkerboard pattern, the first view at the top left pixel
++    (type 0; StereoMode 5 and 4).
++
++    \value FrameSequence
++    The frames are the views in turn (temporal interleaving, type 5; StereoMode 13 and 14, both
++    eyes in one block). Which view a frame holds is given by stereoView() when the stream says so;
++    otherwise the first frame holds the first view and the frames alternate.
++
++    \value AnaglyphCyanRed
++    Both views in one picture, as red and cyan anaglyph (StereoMode 10).
++
++    \value AnaglyphGreenMagenta
++    Both views in one picture, as green and magenta anaglyph (StereoMode 12).
++
++    \since 6.12
++*/
++
++/*!
++    \enum QVideoFrameFormat::StereoFlag
++
++    \value RightEyeFirst
++    The first view of the packing is the right eye's (content_interpretation_type 2 of the frame
++    packing arrangement SEI, the "right eye first" StereoMode values, AV_STEREO3D_FLAG_INVERT).
++
++    \since 6.12
++*/
++
++/*!
++    \enum QVideoFrameFormat::StereoView
++
++    \value Packed
++    The frame holds the two views in the packing of stereoMode(), or does not say.
++
++    \value Left
++    The frame holds the left view only (a frame of a FrameSequence).
++
++    \value Right
++    The frame holds the right view only (a frame of a FrameSequence).
++
++    \since 6.12
++*/
++
++/*!
++    Returns how the frames of the stream hold the two views of a stereoscopic 3D video.
++
++    The default value is \l StereoMode::None.
++
++    \since 6.12
++*/
++QVideoFrameFormat::StereoMode QVideoFrameFormat::stereoMode() const
++{
++    return d->stereoMode;
++}
++
++/*!
++    Sets how the frames of the stream hold the two views of a stereoscopic 3D video to \a mode.
++
++    \since 6.12
++*/
++void QVideoFrameFormat::setStereoMode(StereoMode mode)
++{
++    detach();
++    d->stereoMode = mode;
++}
++
++/*!
++    Returns the flags of the stereoscopic 3D packing, which eye comes first.
++
++    \since 6.12
++*/
++QVideoFrameFormat::StereoFlags QVideoFrameFormat::stereoFlags() const
++{
++    return d->stereoFlags;
++}
++
++/*!
++    Sets the flags of the stereoscopic 3D packing to \a flags.
++
++    \since 6.12
++*/
++void QVideoFrameFormat::setStereoFlags(StereoFlags flags)
++{
++    detach();
++    d->stereoFlags = flags;
++}
++
++/*!
++    Returns which view the frame holds when the video is a StereoMode::FrameSequence.
++
++    \since 6.12
++*/
++QVideoFrameFormat::StereoView QVideoFrameFormat::stereoView() const
++{
++    return d->stereoView;
++}
++
++/*!
++    Sets which view the frame holds to \a view.
++
++    \since 6.12
++*/
++void QVideoFrameFormat::setStereoView(StereoView view)
++{
++    detach();
++    d->stereoView = view;
++}
++
+ /*!
+     Returns \c true if the surface is mirrored around its vertical axis.
+ 
+@@ -954,7 +1093,8 @@ QDebug operator<<(QDebug dbg, const QVideoFrameFormat &f)
+         << "\n    frameRate=" << f.streamFrameRate()
+         << "\n    mirrored=" << f.isMirrored()
+         << "\n    range=" << f.colorRange()
+-        << "\n    colorTransfer=" << f.colorTransfer();
++        << "\n    colorTransfer=" << f.colorTransfer()
++        << "\n    stereoMode=" << f.stereoMode() << f.stereoFlags() << f.stereoView();
+ 
+     return dbg;
+ }
+diff --git a/src/multimedia/video/qvideoframeformat.h b/src/multimedia/video/qvideoframeformat.h
+index 258a37e..a379ee6 100644
+--- a/src/multimedia/video/qvideoframeformat.h
++++ b/src/multimedia/video/qvideoframeformat.h
+@@ -125,6 +125,36 @@ public:
+     };
+     Q_ENUM(ColorRange)
+ 
++    enum class StereoMode
++    {
++        None,
++        SideBySide,
++        TopBottom,
++        SideBySideQuincunx,
++        RowInterleaved,
++        ColumnInterleaved,
++        Checkerboard,
++        FrameSequence,
++        AnaglyphCyanRed,
++        AnaglyphGreenMagenta
++    };
++    Q_ENUM(StereoMode)
++
++    enum class StereoFlag
++    {
++        RightEyeFirst = 0x1
++    };
++    Q_DECLARE_FLAGS(StereoFlags, StereoFlag)
++    Q_FLAG(StereoFlags)
++
++    enum class StereoView
++    {
++        Packed,
++        Left,
++        Right
++    };
++    Q_ENUM(StereoView)
++
+     QVideoFrameFormat();
+     QVideoFrameFormat(const QSize &size, PixelFormat pixelFormat);
+     QVideoFrameFormat(const QVideoFrameFormat &format);
+@@ -187,6 +217,15 @@ public:
+     ColorRange colorRange() const;
+     void setColorRange(ColorRange range);
+ 
++    StereoMode stereoMode() const;
++    void setStereoMode(StereoMode mode);
++
++    StereoFlags stereoFlags() const;
++    void setStereoFlags(StereoFlags flags);
++
++    StereoView stereoView() const;
++    void setStereoView(StereoView view);
++
+     bool isMirrored() const;
+     void setMirrored(bool mirrored);
+ 
+@@ -209,6 +248,8 @@ private:
+     QExplicitlySharedDataPointer<QVideoFrameFormatPrivate> d;
+ };
+ 
++Q_DECLARE_OPERATORS_FOR_FLAGS(QVideoFrameFormat::StereoFlags)
++
+ Q_DECLARE_SHARED(QVideoFrameFormat)
+ 
+ #ifndef QT_NO_DEBUG_STREAM
+diff --git a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegmediadataholder.cpp b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegmediadataholder.cpp
+index 3241b40..d13d64e 100644
+--- a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegmediadataholder.cpp
++++ b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegmediadataholder.cpp
+@@ -120,6 +120,25 @@ static bool colorTransferSupportsHdr(const AVStream *stream)
+             || colorTransfer == QVideoFrameFormat::ColorTransfer_STD_B67;
+ }
+ 
++QVideoFrameFormat::StereoMode MediaDataHolder::stereoMode() const
++{
++    const int streamIndex = m_currentAVStreamIndex[QPlatformMediaPlayer::VideoStream];
++    if (streamIndex < 0)
++        return QVideoFrameFormat::StereoMode::None;
++
++    // RFC 9559, 5.1.4.1.28.3: StereoMode 10 and 12; FFmpeg's names for them
++    const AVDictionaryEntry *tag =
++            av_dict_get(m_context->streams[streamIndex]->metadata, "stereo_mode", nullptr, 0);
++    if (!tag)
++        return QVideoFrameFormat::StereoMode::None;
++    const QByteArrayView mode(tag->value);
++    if (mode == "anaglyph_cyan_red")
++        return QVideoFrameFormat::StereoMode::AnaglyphCyanRed;
++    if (mode == "anaglyph_green_magenta")
++        return QVideoFrameFormat::StereoMode::AnaglyphGreenMagenta;
++    return QVideoFrameFormat::StereoMode::None;
++}
++
+ VideoTransformation MediaDataHolder::transformation() const
+ {
+     // TODO: Add QMediaMetaData::Mirrored and take from it and QMediaMetaData::Orientation:
+diff --git a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegmediadataholder_p.h b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegmediadataholder_p.h
+index cf3405c..d7324a2 100644
+--- a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegmediadataholder_p.h
++++ b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegmediadataholder_p.h
+@@ -74,6 +74,10 @@ public:
+ 
+     VideoTransformation transformation() const;
+ 
++    // What the video stream says about stereoscopic 3D without a frame to say it: the anaglyph
++    // values of Matroska's StereoMode, which FFmpeg only gives as the stream's stereo_mode tag
++    QVideoFrameFormat::StereoMode stereoMode() const;
++
+     AVFormatContext *avContext();
+ 
+     int currentStreamIndex(QPlatformMediaPlayer::TrackType trackType) const;
+diff --git a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegvideorenderer.cpp b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegvideorenderer.cpp
+index 83792ce..3ed98ce 100644
+--- a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegvideorenderer.cpp
++++ b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegvideorenderer.cpp
+@@ -11,8 +11,9 @@ QT_BEGIN_NAMESPACE
+ namespace QFFmpeg {
+ 
+ VideoRenderer::VideoRenderer(const PlaybackEngineObjectID &id, const TimeController &tc,
+-                             QVideoSink *sink, const VideoTransformation &transform)
+-    : Renderer(id, tc), m_sink(sink), m_transform(transform)
++                             QVideoSink *sink, const VideoTransformation &transform,
++                             QVideoFrameFormat::StereoMode streamStereoMode)
++    : Renderer(id, tc), m_sink(sink), m_transform(transform), m_stereoMode(streamStereoMode)
+ {
+ }
+ 
+@@ -72,6 +73,16 @@ VideoRenderer::RenderingResult VideoRenderer::renderInternal(Frame frame)
+     format.setMaxLuminance(buffer->maxNits());
+     format.setRotation(m_transform.rotation);
+     format.setMirrored(m_transform.mirroredHorizontallyAfterRotation);
++    // A stream's frame packing arrangement SEI is sent with its keyframes, and holds until another
++    // one replaces it (H.264 D.2.26, frame_packing_arrangement_repetition_period 1)
++    const auto stereo = buffer->stereo();
++    if (stereo) {
++        m_stereoMode = stereo->mode;
++        m_stereoFlags = stereo->flags;
++    }
++    format.setStereoMode(m_stereoMode);
++    format.setStereoFlags(m_stereoFlags);
++    format.setStereoView(stereo ? stereo->view : QVideoFrameFormat::StereoView::Packed);
+     QVideoFrame videoFrame = QVideoFramePrivate::createFrame(std::move(buffer), format);
+     videoFrame.setStartTime(frame.startTime().get());
+     videoFrame.setEndTime(frame.endTime().get());
+diff --git a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegvideorenderer_p.h b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegvideorenderer_p.h
+index e9bbb3f..8f54567 100644
+--- a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegvideorenderer_p.h
++++ b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegvideorenderer_p.h
+@@ -16,6 +16,7 @@
+ 
+ #include <QtFFmpegMediaPluginImpl/private/qffmpegrenderer_p.h>
+ 
++#include <QtMultimedia/qvideoframeformat.h>
+ #include <QtMultimedia/private/qvideotransformation_p.h>
+ #include <QtCore/qpointer.h>
+ 
+@@ -30,7 +31,8 @@ class VideoRenderer : public Renderer
+     Q_OBJECT
+ public:
+     VideoRenderer(const PlaybackEngineObjectID &id, const TimeController &tc, QVideoSink *sink,
+-                  const VideoTransformation &transform);
++                  const VideoTransformation &transform,
++                  QVideoFrameFormat::StereoMode streamStereoMode);
+ 
+     void setOutput(QVideoSink *sink, bool cleanPrevSink = false);
+ 
+@@ -40,6 +42,8 @@ protected:
+ private:
+     QPointer<QVideoSink> m_sink;
+     VideoTransformation m_transform;
++    QVideoFrameFormat::StereoMode m_stereoMode;
++    QVideoFrameFormat::StereoFlags m_stereoFlags;
+ };
+ 
+ } // namespace QFFmpeg
+diff --git a/src/plugins/multimedia/ffmpeg/qffmpegplaybackengine.cpp b/src/plugins/multimedia/ffmpeg/qffmpegplaybackengine.cpp
+index 1520285..bec87ee 100644
+--- a/src/plugins/multimedia/ffmpeg/qffmpegplaybackengine.cpp
++++ b/src/plugins/multimedia/ffmpeg/qffmpegplaybackengine.cpp
+@@ -205,7 +205,7 @@ PlaybackEngine::createRenderer(QPlatformMediaPlayer::TrackType trackType)
+     switch (trackType) {
+     case QPlatformMediaPlayer::VideoStream:
+         return m_videoSink ? createPlaybackEngineObject<VideoRenderer>(
+-                       m_timeController, m_videoSink, m_media.transformation())
++                       m_timeController, m_videoSink, m_media.transformation(), m_media.stereoMode())
+                            : RendererPtr{ {}, {} };
+     case QPlatformMediaPlayer::AudioStream:
+         return m_audioOutput || m_audioBufferOutput
+diff --git a/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer.cpp b/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer.cpp
+index cd89c9b..d9c8955 100644
+--- a/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer.cpp
++++ b/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer.cpp
+@@ -12,6 +12,7 @@ extern "C" {
+ #include <libavutil/pixdesc.h>
+ #include <libavutil/hdr_dynamic_metadata.h>
+ #include <libavutil/mastering_display_metadata.h>
++#include <libavutil/stereo3d.h>
+ }
+ 
+ QT_BEGIN_NAMESPACE
+@@ -27,11 +28,58 @@ static bool isFrameFlipped(const AVFrame& frame) {
+     return false;
+ }
+ 
++// The packing of a stereoscopic 3D frame, from the side data FFmpeg fills with the frame
++// packing arrangement SEI (H.264 D.2.26, H.265 D.2.16) and, for the frames of a stream that
++// carries it, with the StereoMode of the Matroska track (RFC 9559, 5.1.4.1.28.3).
++// Nothing is returned for a frame without it, which says nothing about the stream.
++static std::optional<QFFmpeg::VideoStereo> stereoFromSideData(const AVFrame &frame)
++{
++    const AVFrameSideData *sideData = av_frame_get_side_data(&frame, AV_FRAME_DATA_STEREO3D);
++    if (!sideData || sideData->size < sizeof(AVStereo3D))
++        return std::nullopt;
++
++    const auto *stereo = reinterpret_cast<const AVStereo3D *>(sideData->data);
++    QFFmpeg::VideoStereo result;
++    switch (stereo->type) {
++    case AV_STEREO3D_SIDEBYSIDE:
++        result.mode = QVideoFrameFormat::StereoMode::SideBySide;
++        break;
++    case AV_STEREO3D_TOPBOTTOM:
++        result.mode = QVideoFrameFormat::StereoMode::TopBottom;
++        break;
++    case AV_STEREO3D_SIDEBYSIDE_QUINCUNX:
++        result.mode = QVideoFrameFormat::StereoMode::SideBySideQuincunx;
++        break;
++    case AV_STEREO3D_LINES:
++        result.mode = QVideoFrameFormat::StereoMode::RowInterleaved;
++        break;
++    case AV_STEREO3D_COLUMNS:
++        result.mode = QVideoFrameFormat::StereoMode::ColumnInterleaved;
++        break;
++    case AV_STEREO3D_CHECKERBOARD:
++        result.mode = QVideoFrameFormat::StereoMode::Checkerboard;
++        break;
++    case AV_STEREO3D_FRAMESEQUENCE:
++        result.mode = QVideoFrameFormat::StereoMode::FrameSequence;
++        break;
++    default:
++        break;
++    }
++    if (stereo->flags & AV_STEREO3D_FLAG_INVERT)
++        result.flags |= QVideoFrameFormat::StereoFlag::RightEyeFirst;
++    if (stereo->view == AV_STEREO3D_VIEW_LEFT)
++        result.view = QVideoFrameFormat::StereoView::Left;
++    else if (stereo->view == AV_STEREO3D_VIEW_RIGHT)
++        result.view = QVideoFrameFormat::StereoView::Right;
++    return result;
++}
++
+ QFFmpegVideoBuffer::QFFmpegVideoBuffer(AVFrameUPtr frame, AVRational pixelAspectRatio)
+     : QHwVideoBuffer(QVideoFrame::NoHandle),
+       m_frame(frame.get()),
+       m_size(qCalculateFrameSize({ frame->width, frame->height },
+-                                 { pixelAspectRatio.num, pixelAspectRatio.den }))
++                                 { pixelAspectRatio.num, pixelAspectRatio.den })),
++      m_stereo(stereoFromSideData(*frame))
+ {
+     if (frame->hw_frames_ctx) {
+         m_hwFrame = std::move(frame);
+diff --git a/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer_p.h b/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer_p.h
+index ae866e6..587a074 100644
+--- a/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer_p.h
++++ b/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer_p.h
+@@ -21,8 +21,22 @@
+ #include <QtFFmpegMediaPluginImpl/private/qffmpeg_p.h>
+ #include <QtFFmpegMediaPluginImpl/private/qffmpeghwaccel_p.h>
+ 
++#include <optional>
++
+ QT_BEGIN_NAMESPACE
+ 
++namespace QFFmpeg {
++
++// How a stereoscopic 3D video packs its views, and which view a frame holds
++struct VideoStereo
++{
++    QVideoFrameFormat::StereoMode mode = QVideoFrameFormat::StereoMode::None;
++    QVideoFrameFormat::StereoFlags flags;
++    QVideoFrameFormat::StereoView view = QVideoFrameFormat::StereoView::Packed;
++};
++
++} // namespace QFFmpeg
++
+ class QFFmpegVideoBuffer : public QHwVideoBuffer
+ {
+ public:
+@@ -56,6 +70,9 @@ public:
+ 
+     float maxNits();
+ 
++    // The frame's own packing of a stereoscopic 3D video, if it carries one
++    std::optional<QFFmpeg::VideoStereo> stereo() const { return m_stereo; }
++
+ private:
+     // The result texture converter must be accessed from the rhi's thread
+     QFFmpeg::TextureConverter &ensureTextureConverter(QRhi &rhi);
+@@ -68,6 +85,7 @@ private:
+     AVFrameUPtr m_hwFrame;
+     AVFrameUPtr m_swFrame;
+     QSize m_size;
++    std::optional<QFFmpeg::VideoStereo> m_stereo;
+     QVideoFrame::MapMode m_mode = QVideoFrame::NotMapped;
+ };
+ 
+diff --git a/tests/auto/unit/multimedia/qvideoframeformat/tst_qvideoframeformat.cpp b/tests/auto/unit/multimedia/qvideoframeformat/tst_qvideoframeformat.cpp
+index 7a16987..925a744 100644
+--- a/tests/auto/unit/multimedia/qvideoframeformat/tst_qvideoframeformat.cpp
++++ b/tests/auto/unit/multimedia/qvideoframeformat/tst_qvideoframeformat.cpp
+@@ -40,6 +40,7 @@ private slots:
+     void frameRate();
+     void colorSpaceEnum_data();
+     void colorSpaceEnum ();
++    void stereoMode();
+     void compare();
+     void copy();
+     void assign();
+@@ -340,6 +341,40 @@ void tst_QVideoFrameFormat::frameRate()
+     QCOMPARE(format.streamFrameRate(), frameRate);
+ }
+ 
++void tst_QVideoFrameFormat::stereoMode()
++{
++    using Mode = QVideoFrameFormat::StereoMode;
++    QVideoFrameFormat format(QSize(16, 16), QVideoFrameFormat::Format_XRGB8888);
++    QCOMPARE(format.stereoMode(), Mode::None);
++    QCOMPARE(format.stereoFlags(), QVideoFrameFormat::StereoFlags());
++    QCOMPARE(format.stereoView(), QVideoFrameFormat::StereoView::Packed);
++
++    const QVideoFrameFormat mono = format;
++    const auto modes = { Mode::SideBySide, Mode::TopBottom, Mode::SideBySideQuincunx,
++                         Mode::RowInterleaved, Mode::ColumnInterleaved, Mode::Checkerboard,
++                         Mode::FrameSequence, Mode::AnaglyphCyanRed, Mode::AnaglyphGreenMagenta };
++    for (const auto mode : modes) {
++        format.setStereoMode(mode);
++        QCOMPARE(format.stereoMode(), mode);
++        QVERIFY(format != mono);
++        QCOMPARE(mono.stereoMode(), Mode::None);
++    }
++    format.setStereoMode(Mode::None);
++    QVERIFY(format == mono);
++
++    format.setStereoFlags(QVideoFrameFormat::StereoFlag::RightEyeFirst);
++    QVERIFY(format.stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::RightEyeFirst));
++    QVERIFY(format != mono);
++    format.setStereoFlags({});
++    format.setStereoView(QVideoFrameFormat::StereoView::Right);
++    QCOMPARE(format.stereoView(), QVideoFrameFormat::StereoView::Right);
++    QVERIFY(format != mono);
++    format.setStereoView(QVideoFrameFormat::StereoView::Packed);
++    QVERIFY(format == mono);
++
++    QCOMPARE(int(Mode::None), 0);
++}
++
+ void tst_QVideoFrameFormat::compare()
+ {
+     QVideoFrameFormat format1(
+-- 
+2.53.0
+
