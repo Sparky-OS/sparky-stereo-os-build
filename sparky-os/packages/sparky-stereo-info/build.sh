@@ -93,7 +93,7 @@ printf 'interest-noawait /usr/lib/os-release.sparky\ninterest-noawait /etc/lsb-r
 chmod 755 "$D/DEBIAN/preinst" "$D/DEBIAN/postinst" "$D/DEBIAN/postrm"
 
 cat >"$D/usr/share/doc/$PKG/copyright" <<'EOF'
-Sparky Stereo OS, an edition of SparkyLinux (https://sparkylinux.org), created by Paweł "pavroo" Pijanowski <pavroo@onet.eu> and Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>.
+Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux (https://sparkylinux.org, by Paweł "pavroo" Pijanowski).
 
 Upstream Author(s): 
     Paweł "pavroo" Pijanowski <pavroo@onet.eu>

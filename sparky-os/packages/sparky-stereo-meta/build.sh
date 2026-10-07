@@ -21,7 +21,7 @@ PKGS=$(python3 "$HERE/../../lists/make-meta.py" --list)
 for PKG in $PKGS; do
 	mkdir -p "$W/$PKG/DEBIAN" "$W/$PKG/usr/share/doc/$PKG"
 	cat >"$W/$PKG/usr/share/doc/$PKG/copyright" <<'EOT'
-Sparky Stereo OS, an edition of SparkyLinux (https://sparkylinux.org), created by Paweł "pavroo" Pijanowski <pavroo@onet.eu> and Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>.
+Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux (https://sparkylinux.org, by Paweł "pavroo" Pijanowski).
 
 Upstream Author(s):
     Paweł "pavroo" Pijanowski <pavroo@onet.eu>

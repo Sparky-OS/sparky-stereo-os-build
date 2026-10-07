@@ -76,7 +76,7 @@ EOS
 chmod 755 "$D/DEBIAN/postinst" "$D/DEBIAN/postrm" "$D/DEBIAN/prerm"
 
 cat >"$D/usr/share/doc/$PKG/copyright" <<'EOS'
-Sparky Stereo OS, an edition of SparkyLinux (https://sparkylinux.org), created by Paweł "pavroo" Pijanowski <pavroo@onet.eu> and Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>.
+Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux (https://sparkylinux.org, by Paweł "pavroo" Pijanowski).
 
 Upstream Author(s):
     Paweł "pavroo" Pijanowski <pavroo@onet.eu>

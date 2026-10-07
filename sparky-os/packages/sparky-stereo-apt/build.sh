@@ -43,7 +43,7 @@ cp "$HERE/../../apt/sparky-stereo-only-ours" "$D/etc/apt/preferences.d/sparky-st
 chmod 644 "$D/etc/apt/sources.list.d/sparky-stereo.sources" "$D/etc/apt/preferences.d/sparky-stereo" "$D/etc/apt/preferences.d/sparky-stereo-only-ours"
 
 cat >"$D/usr/share/doc/$PKG/copyright" <<'EOS'
-Sparky Stereo OS, an edition of SparkyLinux (https://sparkylinux.org), created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack).
+Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux (https://sparkylinux.org, by Paweł "pavroo" Pijanowski).
 
 Upstream Author(s): 
     Paweł "pavroo" Pijanowski

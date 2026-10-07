@@ -33,7 +33,7 @@ echo "$info" | grep -q '^pub:' || { echo "$KEY holds no public key" >&2; exit 1;
 if echo "$info" | grep -q '^sec:'; then echo "$KEY holds a secret key, refusing" >&2; exit 1; fi
 
 cat >"$D/usr/share/doc/$PKG/copyright" <<'EOS'
-Sparky Stereo OS, an edition of SparkyLinux (https://sparkylinux.org), created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack).
+Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux (https://sparkylinux.org, by Paweł "pavroo" Pijanowski).
 
 Upstream Author(s): 
     Paweł "pavroo" Pijanowski
