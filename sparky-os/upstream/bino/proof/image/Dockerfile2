@@ -1,0 +1,4 @@
+FROM bino-stereo-proof:1
+ENV DEBIAN_FRONTEND=noninteractive
+COPY capture.cpp /tmp/capture.cpp
+RUN apt-get -y update >/dev/null 2>&1; apt-get -y install qt6-base-dev g++ pkg-config 2>&1 | tail -3; g++ -fPIC -O1 -o /usr/local/bin/capture /tmp/capture.cpp $(pkg-config --cflags --libs Qt6Gui Qt6DBus) 2>&1 | tail -5; ls -la /usr/local/bin/capture; dpkg -l | grep -E "^ii  (libglx-mesa0|libqt6gui6|libqt6opengl6|bino|kwin-wayland) "

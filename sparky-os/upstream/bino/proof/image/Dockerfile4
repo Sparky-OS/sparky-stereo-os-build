@@ -1,0 +1,3 @@
+FROM bino-stereo-proof:3
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get -y update >/dev/null 2>&1; apt-get -y install libxcb-cursor0 2>&1 | tail -2
