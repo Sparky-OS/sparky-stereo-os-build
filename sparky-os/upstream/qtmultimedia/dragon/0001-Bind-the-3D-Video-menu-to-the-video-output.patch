@@ -1,0 +1,136 @@
+From 157bf9a58ca702d14009ecf496766c432701aedd Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 7 Oct 2026 14:55:27 -0300
+Subject: [PATCH] Bind the 3D Video menu to the video output
+
+A stereoscopic 3D video holds both views in every frame, in one of the packings
+of the frame packing arrangement SEI (H.264 Table D-8, H.265 Table D.8) or of
+Matroska's StereoMode (RFC 9559), and was shown as it is stored: both views
+squeezed or mixed into one picture. Qt Multimedia's VideoOutput now takes the
+packing of the stream (QVideoFrameFormat::stereoMode) apart itself, and shows
+the views as its stereoView, stereoInput and stereoSwapEyes say, so that Dragon
+Player only needs a menu.
+
+The application menu gets a 3D Video menu: both views (shown to the two eyes
+where the display takes it), the left view, the right view, or the frame as it
+is stored. For a video that says nothing, or says it wrong, the Input Format
+list names every packing, with half and full size views of side by side and top
+and bottom told apart, and Swap Eyes turns the eyes round; the choice is for
+the file it was made for.
+
+Needs Qt Multimedia with the stereo properties of VideoOutput.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/qml/ControlsBar.qml | 64 +++++++++++++++++++++++++++++++++++++++++
+ src/qml/PlayerPage.qml  |  8 +++++-
+ 2 files changed, 71 insertions(+), 1 deletion(-)
+
+diff --git a/src/qml/ControlsBar.qml b/src/qml/ControlsBar.qml
+index f1afbda..7a3455a 100644
+--- a/src/qml/ControlsBar.qml
++++ b/src/qml/ControlsBar.qml
+@@ -16,6 +16,7 @@ OverlayPopup {
+     property alias volumeButton: volumeButton
+     property alias toolbarHandler: toolbarHandler
+     required property Multimedia.MediaPlayer player
++    required property Multimedia.VideoOutput videoOutput
+     property alias seekSlider: seekSlider
+     property bool stackedMode: false
+ 
+@@ -222,6 +223,69 @@ OverlayPopup {
+                         }
+                     }
+                 }
++                QQC2.Menu {
++                    icon.name: "view-3d-symbolic"
++                    title: i18nc("@action:button stereoscopic 3D view selector", "3D Video")
++                    // Stays open to a video that does not say it is 3D, or says it wrong, so that the packing can be chosen
++                    QQC2.RadioDelegate {
++                        visible: videoOutput.stereoLayerSupported
++                        height: visible ? implicitHeight : 0
++                        enabled: videoOutput.stereoVideo
++                        text: i18nc("@action:button stereoscopic 3D view selector, shown in 3D by the display", "3D")
++                        checked: videoOutput.stereoView === Multimedia.VideoOutput.StereoBothEyes
++                        onToggled: videoOutput.stereoView = Multimedia.VideoOutput.StereoBothEyes
++                    }
++                    QQC2.RadioDelegate {
++                        enabled: videoOutput.stereoVideo
++                        text: i18nc("@action:button stereoscopic 3D view selector", "Left View")
++                        checked: videoOutput.stereoView === Multimedia.VideoOutput.StereoLeftEye
++                                 || (videoOutput.stereoView === Multimedia.VideoOutput.StereoBothEyes && !videoOutput.stereoLayerSupported)
++                        onToggled: videoOutput.stereoView = Multimedia.VideoOutput.StereoLeftEye
++                    }
++                    QQC2.RadioDelegate {
++                        enabled: videoOutput.stereoVideo
++                        text: i18nc("@action:button stereoscopic 3D view selector", "Right View")
++                        checked: videoOutput.stereoView === Multimedia.VideoOutput.StereoRightEye
++                        onToggled: videoOutput.stereoView = Multimedia.VideoOutput.StereoRightEye
++                    }
++                    QQC2.RadioDelegate {
++                        text: i18nc("@action:button stereoscopic 3D view selector, both views as the video holds them", "Both Views, as Stored")
++                        checked: videoOutput.stereoView === Multimedia.VideoOutput.StereoFlat
++                        onToggled: videoOutput.stereoView = Multimedia.VideoOutput.StereoFlat
++                    }
++                    QQC2.MenuSeparator {}
++                    QQC2.Menu {
++                        title: i18nc("@action:button 3D video input format selector", "Input Format")
++                        Repeater {
++                            model: [
++                                { text: i18nc("@action:button 3D video input format, from what the video says", "Automatic"), value: Multimedia.VideoOutput.StereoAutomatic },
++                                { text: i18nc("@action:button 3D video input format", "Side by Side, Half Size Views"), value: Multimedia.VideoOutput.StereoSideBySideHalf },
++                                { text: i18nc("@action:button 3D video input format", "Side by Side, Full Size Views"), value: Multimedia.VideoOutput.StereoSideBySideFull },
++                                { text: i18nc("@action:button 3D video input format", "Side by Side, Quincunx"), value: Multimedia.VideoOutput.StereoSideBySideQuincunx },
++                                { text: i18nc("@action:button 3D video input format", "Top and Bottom, Half Size Views"), value: Multimedia.VideoOutput.StereoTopBottomHalf },
++                                { text: i18nc("@action:button 3D video input format", "Top and Bottom, Full Size Views"), value: Multimedia.VideoOutput.StereoTopBottomFull },
++                                { text: i18nc("@action:button 3D video input format", "Row Interleaved"), value: Multimedia.VideoOutput.StereoRowInterleaved },
++                                { text: i18nc("@action:button 3D video input format", "Column Interleaved"), value: Multimedia.VideoOutput.StereoColumnInterleaved },
++                                { text: i18nc("@action:button 3D video input format", "Checkerboard"), value: Multimedia.VideoOutput.StereoCheckerboard },
++                                { text: i18nc("@action:button 3D video input format", "Frame Sequential"), value: Multimedia.VideoOutput.StereoFrameSequence },
++                                { text: i18nc("@action:button 3D video input format, red and cyan anaglyph, shown as it is", "Anaglyph, Red and Cyan"), value: Multimedia.VideoOutput.StereoAnaglyphCyanRed },
++                                { text: i18nc("@action:button 3D video input format, green and magenta anaglyph, shown as it is", "Anaglyph, Green and Magenta"), value: Multimedia.VideoOutput.StereoAnaglyphGreenMagenta },
++                                { text: i18nc("@action:button 3D video input format, the video is not 3D", "Not 3D"), value: Multimedia.VideoOutput.StereoNone }
++                            ]
++                            delegate: QQC2.RadioDelegate {
++                                required property var modelData
++                                text: modelData.text
++                                checked: videoOutput.stereoInput === modelData.value
++                                onToggled: videoOutput.stereoInput = modelData.value
++                            }
++                        }
++                    }
++                    QQC2.CheckDelegate {
++                        text: i18nc("@action:button 3D video, the left and right views are the other way round", "Swap Eyes")
++                        checked: videoOutput.stereoSwapEyes
++                        onToggled: videoOutput.stereoSwapEyes = checked
++                    }
++                }
+                 QQC2.Menu {
+                     icon.name: "kdenlive-add-clip-symbolic"
+                     title: i18nc("@action:button track selector", "Video Track")
+diff --git a/src/qml/PlayerPage.qml b/src/qml/PlayerPage.qml
+index 4eb9507..60fe334 100644
+--- a/src/qml/PlayerPage.qml
++++ b/src/qml/PlayerPage.qml
+@@ -193,7 +193,12 @@ Please <link url="%1">contact the %2 developers</link> about this issue, or to f
+                 activeTimer.restart()
+             }
+ 
+-            onSourceChanged: activeTimer.restart()
++            onSourceChanged: {
++                activeTimer.restart()
++                // The choice of the packing is for the file it was made for
++                video.stereoInput = Multimedia.VideoOutput.StereoAutomatic
++                video.stereoSwapEyes = false
++            }
+         }
+ 
+         WheelHandler {
+@@ -378,6 +383,7 @@ Please <link url="%1">contact the %2 developers</link> about this issue, or to f
+ 
+         ControlsBar {
+             id: toolbar
++            videoOutput: video
+ 
+             readonly property int switchWidth: Kirigami.Units.gridUnit * 30
+ 

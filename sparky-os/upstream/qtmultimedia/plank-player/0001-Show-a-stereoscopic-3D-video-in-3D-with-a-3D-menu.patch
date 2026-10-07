@@ -1,0 +1,252 @@
+From b267fbab49c30721cbd6ad8f91f8a4b4ad410cab Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 7 Oct 2026 13:57:42 -0300
+Subject: [PATCH 1/2] Show a stereoscopic 3D video in 3D, with a 3D menu
+
+The 3D video's stream says how it is packed and Qt Multimedia's VideoOutput
+shows it as it should be: both views to the compositor where it takes stereo
+content, one view elsewhere. Plank Player only needs a menu to choose what is
+shown, and how the views are packed in a video that does not say, or says it
+wrong, and to read the shape of an unmarked wide video as side by side.
+
+The menu is reached with the remote control's keys, from the 3D button of the
+on-screen display.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ app/qml.qrc            |   1 +
+ app/qml/PlayerOSD.qml  |  17 +++++-
+ app/qml/StereoMenu.qml | 135 +++++++++++++++++++++++++++++++++++++++++
+ app/qml/main.qml       |  17 +++++-
+ 4 files changed, 167 insertions(+), 3 deletions(-)
+ create mode 100644 app/qml/StereoMenu.qml
+
+diff --git a/app/qml.qrc b/app/qml.qrc
+index db76554..bae6b86 100644
+--- a/app/qml.qrc
++++ b/app/qml.qrc
+@@ -7,5 +7,6 @@
+         <file>qml/SeekBar.qml</file>
+         <file>qml/Menu.qml</file>
+         <file>qml/FileItemDelegate.qml</file>
++        <file>qml/StereoMenu.qml</file>
+     </qresource>
+ </RCC>
+diff --git a/app/qml/PlayerOSD.qml b/app/qml/PlayerOSD.qml
+index bfd7ce4..1e6ec1d 100644
+--- a/app/qml/PlayerOSD.qml
++++ b/app/qml/PlayerOSD.qml
+@@ -142,7 +142,7 @@ Item {
+                 Layout.preferredHeight: Kirigami.Units.iconSizes.large
+                 icon.name: "zoom-fit-best"
+                 checkable: true
+-                KeyNavigation.right: exitPlayerButton
++                KeyNavigation.right: stereoOsdButton
+                 KeyNavigation.left: pinOsdButton
+ 
+                 onClicked: (mouse)=> {
+@@ -154,12 +154,25 @@ Item {
+                 }
+             }
+ 
++            OSDButton {
++                id: stereoOsdButton
++                Layout.maximumWidth: Kirigami.Units.iconSizes.large
++                Layout.preferredHeight: Kirigami.Units.iconSizes.large
++                icon.name: "video-television"
++                KeyNavigation.right: exitPlayerButton
++                KeyNavigation.left: fitVidOsdButton
++
++                onClicked: (mouse)=> {
++                    stereoMenu.open()
++                }
++            }
++
+             OSDButton {
+                 id: exitPlayerButton
+                 Layout.maximumWidth: Kirigami.Units.iconSizes.large
+                 Layout.preferredHeight: Kirigami.Units.iconSizes.large
+                 icon.name: "window-close"
+-                KeyNavigation.left: fitVidOsdButton
++                KeyNavigation.left: stereoOsdButton
+ 
+                 onClicked: (mouse)=> {
+                     window.close()
+diff --git a/app/qml/StereoMenu.qml b/app/qml/StereoMenu.qml
+new file mode 100644
+index 0000000..e0e9ba6
+--- /dev/null
++++ b/app/qml/StereoMenu.qml
+@@ -0,0 +1,135 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++//
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++import QtQuick 2.15
++import QtQuick.Layouts 1.15
++import org.kde.kirigami 2.19 as Kirigami
++import QtQuick.Controls 2.15 as Controls
++import QtMultimedia
++
++// How a stereoscopic 3D video is shown, and how its views are packed when the video does not say, or says it wrong
++Controls.Popup {
++    id: stereoMenuArea
++    width: parent.width / 2
++    height: parent.height / 2
++    x: (parent.width - width) / 2
++    y: (parent.height - height) / 2
++    dim: true
++
++    // The Video, whose stereoscopic 3D properties the menu sets
++    property var video
++
++    readonly property var entries: {
++        var list = []
++        if (video.stereoLayerSupported) {
++            list.push({ group: i18nc("@title:group 3D video view selector", "View"), text: i18nc("@action:button stereoscopic 3D view selector, shown in 3D by the display", "3D"), kind: "view", value: VideoOutput.StereoBothEyes, needsStereo: true })
++        }
++        list.push({ group: i18nc("@title:group 3D video view selector", "View"), text: i18nc("@action:button stereoscopic 3D view selector", "Left View"), kind: "view", value: VideoOutput.StereoLeftEye, needsStereo: true })
++        list.push({ group: i18nc("@title:group 3D video view selector", "View"), text: i18nc("@action:button stereoscopic 3D view selector", "Right View"), kind: "view", value: VideoOutput.StereoRightEye, needsStereo: true })
++        list.push({ group: i18nc("@title:group 3D video view selector", "View"), text: i18nc("@action:button stereoscopic 3D view selector, both views as the video holds them", "Both Views, as Stored"), kind: "view", value: VideoOutput.StereoFlat, needsStereo: false })
++        var formats = [
++            { text: i18nc("@action:button 3D video input format, from what the video says", "Automatic"), value: VideoOutput.StereoAutomatic },
++            { text: i18nc("@action:button 3D video input format", "Side by Side, Half Size Views"), value: VideoOutput.StereoSideBySideHalf },
++            { text: i18nc("@action:button 3D video input format", "Side by Side, Full Size Views"), value: VideoOutput.StereoSideBySideFull },
++            { text: i18nc("@action:button 3D video input format", "Top and Bottom, Half Size Views"), value: VideoOutput.StereoTopBottomHalf },
++            { text: i18nc("@action:button 3D video input format", "Top and Bottom, Full Size Views"), value: VideoOutput.StereoTopBottomFull },
++            { text: i18nc("@action:button 3D video input format", "Row Interleaved"), value: VideoOutput.StereoRowInterleaved },
++            { text: i18nc("@action:button 3D video input format", "Column Interleaved"), value: VideoOutput.StereoColumnInterleaved },
++            { text: i18nc("@action:button 3D video input format", "Checkerboard"), value: VideoOutput.StereoCheckerboard },
++            { text: i18nc("@action:button 3D video input format", "Frame Sequential"), value: VideoOutput.StereoFrameSequence },
++            { text: i18nc("@action:button 3D video input format, red and cyan anaglyph, shown as it is", "Anaglyph, Red and Cyan"), value: VideoOutput.StereoAnaglyphCyanRed },
++            { text: i18nc("@action:button 3D video input format, green and magenta anaglyph, shown as it is", "Anaglyph, Green and Magenta"), value: VideoOutput.StereoAnaglyphGreenMagenta },
++            { text: i18nc("@action:button 3D video input format, the video is not 3D", "Not 3D"), value: VideoOutput.StereoNone }
++        ]
++        for (var i = 0; i < formats.length; ++i) {
++            list.push({ group: i18nc("@title:group 3D video input format selector", "Input Format"), text: formats[i].text, kind: "input", value: formats[i].value, needsStereo: false })
++        }
++        list.push({ group: i18nc("@title:group 3D video eye selector", "Eyes"), text: i18nc("@action:button 3D video, the left and right views are the other way round", "Swap Eyes"), kind: "swap", value: 0, needsStereo: false })
++        return list
++    }
++
++    onOpened: {
++        stereoMenuList.currentIndex = 0
++        stereoMenuList.forceActiveFocus()
++    }
++
++    Controls.Overlay.modeless: Rectangle {
++        color: Qt.rgba(Kirigami.Theme.backgroundColor.r, Kirigami.Theme.backgroundColor.g, Kirigami.Theme.backgroundColor.b, 0.77)
++    }
++
++    Item {
++        width: parent.width
++        height: parent.height
++
++        RowLayout {
++            id: headerAreaStereo
++            anchors.top: parent.top
++            anchors.left: parent.left
++            anchors.right: parent.right
++            height: Kirigami.Units.gridUnit * 2
++
++            Controls.Label {
++                Layout.fillWidth: true
++                Layout.leftMargin: Kirigami.Units.largeSpacing
++                elide: Text.ElideRight
++                text: i18nc("@title:window", "3D Video")
++            }
++
++            Controls.Label {
++                text: i18n("Press 'esc' or the [←] Back button to close")
++                Layout.alignment: Qt.AlignRight
++            }
++        }
++
++        Kirigami.Separator {
++            id: headerSeparatorStereo
++            anchors.top: headerAreaStereo.bottom
++            width: parent.width
++            height: 1
++        }
++
++        ListView {
++            id: stereoMenuList
++            anchors.top: headerSeparatorStereo.bottom
++            anchors.left: parent.left
++            anchors.right: parent.right
++            anchors.bottom: parent.bottom
++            anchors.margins: Kirigami.Units.largeSpacing
++            model: stereoMenuArea.entries
++            keyNavigationEnabled: true
++            highlightFollowsCurrentItem: true
++            spacing: Kirigami.Units.smallSpacing
++            clip: true
++
++            section.property: "group"
++            section.delegate: Controls.Label {
++                width: stereoMenuList.width
++                height: Kirigami.Units.gridUnit * 2
++                verticalAlignment: Text.AlignVCenter
++                font.bold: true
++                text: section
++            }
++
++            delegate: MenuButton {
++                required property var modelData
++                readonly property bool selected: modelData.kind === "view" ? stereoMenuArea.video.stereoView === modelData.value
++                                                 : modelData.kind === "input" ? stereoMenuArea.video.stereoInput === modelData.value
++                                                 : stereoMenuArea.video.stereoSwapEyes
++                text: modelData.text
++                enabled: !modelData.needsStereo || stereoMenuArea.video.stereoVideo
++                icon.name: selected ? "dialog-ok-apply" : ""
++
++                onClicked: (mouse)=> {
++                    if (modelData.kind === "view") {
++                        stereoMenuArea.video.stereoView = modelData.value
++                    } else if (modelData.kind === "input") {
++                        stereoMenuArea.video.stereoInput = modelData.value
++                    } else {
++                        stereoMenuArea.video.stereoSwapEyes = !stereoMenuArea.video.stereoSwapEyes
++                    }
++                }
++            }
++        }
++    }
++}
+diff --git a/app/qml/main.qml b/app/qml/main.qml
+index 89bbafc..66cc04b 100644
+--- a/app/qml/main.qml
++++ b/app/qml/main.qml
+@@ -47,8 +47,23 @@ Kirigami.AbstractApplicationWindow {
+             }
+         }
+ 
++        StereoMenu {
++            id: stereoMenu
++            video: video
++            onClosed: {
++                playerOSDItem.opened = true
++            }
++        }
++
+         Video {
+             id: video
++            // A video that says nothing about being 3D, as wide as two 16:9 pictures, is full side by side
++            stereoShapeFallback: true
++            // The choice of the packing is for the file it was made for
++            onSourceChanged: {
++                video.stereoInput = VideoOutput.StereoAutomatic
++                video.stereoSwapEyes = false
++            }
+             anchors.top: parent.top
+             anchors.left: parent.left
+             anchors.right: parent.right
+@@ -80,7 +95,7 @@ Kirigami.AbstractApplicationWindow {
+             anchors.bottom: parent.bottom
+             height: parent.height * 0.10
+             videoItem: video
+-            menuOpened: mainMenu.opened
++            menuOpened: mainMenu.opened || stereoMenu.opened
+         }
+     }
+ }
