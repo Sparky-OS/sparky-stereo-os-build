@@ -1,0 +1,31 @@
+plank-player (5.27.80+git20261005.f87e775-1+stereo3d2) unstable; urgency=medium
+
+  * The 3D menu is bound to the stereo properties of Qt Multimedia's Video
+    (stereoView, stereoInput, stereoSwapEyes, stereoShapeFallback): Plank
+    Player's own stereo filter and stereo layer (about 730 lines of C++) are
+    gone, Qt Multimedia's VideoOutput takes the views of a 3D video apart and
+    shows them to the compositor as stereo content (edition) or shows one
+    view; the on-screen display and the menus stay the window's own surface.
+  * Keep the Return key fix (play/pause paused and resumed at once).
+  * Depend on libqt6multimedia6 and qml6-module-qtmultimedia
+    (>= 6.11.2-3+stereo3d3~); no longer on libstereo-declare1.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Wed, 07 Oct 2026 20:00:00 -0300
+
+plank-player (5.27.80+git20261005.f87e775-1+stereo3d1) unstable; urgency=medium
+
+  * Show a stereoscopic 3D video to both eyes: Qt Multimedia's stereo mode of
+    the frames read by a StereoFilter of Plank Player's own, a layer under the
+    window declared as full side by side, and a 3D menu (superseded by
+    +stereo3d2).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Wed, 07 Oct 2026 14:00:00 -0300
+
+plank-player (5.27.80+git20261005.f87e775-1~sparky1) unstable; urgency=medium
+
+  * Package KDE's Plank Player from the master branch of
+    invent.kde.org/plasma/plank-player at f87e775 (not in Debian; its last
+    tarball is the Plasma 5 5.27.12, and master is the Qt 6 port at version
+    5.27.80), unchanged, built against Qt Multimedia 6.11.2-3+stereo3d2.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Wed, 07 Oct 2026 10:00:00 -0300

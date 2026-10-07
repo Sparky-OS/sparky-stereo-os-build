@@ -1,0 +1,37 @@
+Source: plank-player
+Section: video
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: cmake (>= 3.16~),
+               debhelper-compat (= 14),
+               dh-sequence-kf6,
+               extra-cmake-modules (>= 6.5.0~),
+               gettext,
+               libkf6i18n-dev (>= 6.5.0~),
+               libkirigami-dev (>= 6.5.0~),
+               pkgconf,
+               qt6-base-dev (>= 6.5.0~),
+               qt6-declarative-dev (>= 6.5.0~),
+               qt6-multimedia-dev (>= 6.5.0~)
+Standards-Version: 4.7.4
+Homepage: https://invent.kde.org/plasma/plank-player
+
+Package: plank-player
+Architecture: any
+Depends: libqt6multimedia6 (>= 6.11.2-3+stereo3d3~),
+         qml6-module-org-kde-bigscreen,
+         qml6-module-org-kde-kirigami,
+         qml6-module-qt-labs-folderlistmodel,
+         qml6-module-qt5compat-graphicaleffects,
+         qml6-module-qtmultimedia (>= 6.11.2-3+stereo3d3~),
+         qml6-module-qtquick,
+         qml6-module-qtquick-controls,
+         qml6-module-qtquick-layouts,
+         qml6-module-qtquick-templates,
+         qml6-module-qtquick-window,
+         ${misc:Depends},
+         ${shlibs:Depends}
+Recommends: qml6-module-org-kde-desktop
+Description: Multimedia player for Plasma Bigscreen, driven by a remote control
+ Plank Player plays local video files on Plasma Bigscreen and can be operated
+ with only a remote control or a gamepad. It is a QML application on Qt
+ Multimedia.
