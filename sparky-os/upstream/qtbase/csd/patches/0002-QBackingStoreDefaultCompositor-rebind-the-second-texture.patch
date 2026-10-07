@@ -1,0 +1,37 @@
+From d2f818999f0f248768663ac7510892225e00f724 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 7 Oct 2026 04:07:40 -0300
+Subject: [PATCH 2/2] QBackingStoreDefaultCompositor: rebind the second texture
+ of a stereo quad
+
+updatePerQuadData() returned early when the first texture and the filter
+were unchanged, although the second texture (the right eye of a stereo
+QOpenGLWidget) can be a different QRhiTexture after the widget was
+resized. The shader resource bindings of the right eye then kept
+pointing at the destroyed texture, and the next flush crashed in
+QRhiImplementation::sanityCheckResourceOwnership().
+
+Also compare the second texture before skipping the update.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/gui/painting/qbackingstoredefaultcompositor.cpp | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/gui/painting/qbackingstoredefaultcompositor.cpp b/src/gui/painting/qbackingstoredefaultcompositor.cpp
+index 293cfc6b..9b87782b 100644
+--- a/src/gui/painting/qbackingstoredefaultcompositor.cpp
++++ b/src/gui/painting/qbackingstoredefaultcompositor.cpp
+@@ -375,7 +375,8 @@ void QBackingStoreDefaultCompositor::updatePerQuadData(PerQuadData *d, QRhiTextu
+     // QRhiTexture* from the same index in a subsequent flush.
+ 
+     const QRhiSampler::Filter filter = options.testFlag(NeedsLinearFiltering) ? QRhiSampler::Linear : QRhiSampler::Nearest;
+-    if ((d->lastUsedTexture == texture && d->lastUsedFilter == filter) || !d->srb)
++    if ((d->lastUsedTexture == texture && d->lastUsedTextureExtra == textureExtra && d->lastUsedFilter == filter)
++            || !d->srb)
+         return;
+ 
+     QRhiSampler *sampler = filter == QRhiSampler::Linear ? m_samplerLinear.get() : m_samplerNearest.get();
+-- 
+2.53.0
+

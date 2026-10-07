@@ -1,0 +1,164 @@
+Format: 1.8
+Date: Wed, 07 Oct 2026 05:53:05 +0000
+Source: qt6-base
+Binary: libqt6concurrent6 libqt6core6t64 libqt6dbus6 libqt6gui6 libqt6network6 libqt6opengl6 libqt6openglwidgets6 libqt6printsupport6 libqt6sql6 libqt6sql6-ibase libqt6sql6-mysql libqt6sql6-odbc libqt6sql6-psql libqt6sql6-sqlite libqt6test6 libqt6waylandclient6 libqt6widgets6 libqt6wlshellintegration6 libqt6xml6 qmake6 qmake6-bin qt6-base-dev qt6-base-dev-tools qt6-base-doc qt6-base-doc-dev qt6-base-doc-html qt6-base-examples qt6-base-private-dev qt6-gtk-platformtheme qt6-qpa-plugins qt6-xdgdesktopportal-platformtheme qtpaths6 qtpaths6-bin
+Architecture: amd64 all
+Version: 6.11.2+dfsg-5+stereo3d2
+Distribution: unstable
+Urgency: medium
+Maintainer: Debian Qt/KDE Maintainers <debian-qt-kde@lists.debian.org>
+Changed-By: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Description:
+ libqt6concurrent6 - Qt 6 concurrent module
+ libqt6core6t64 - Qt 6 core module
+ libqt6dbus6 - Qt 6 D-Bus module
+ libqt6gui6 - Qt 6 GUI module
+ libqt6network6 - Qt 6 network module
+ libqt6opengl6 - Qt 6 OpenGL module
+ libqt6openglwidgets6 - Qt 6 OpenGL widgets module
+ libqt6printsupport6 - Qt 6 print support module
+ libqt6sql6 - Qt 6 SQL module
+ libqt6sql6-ibase - Qt 6 Firebird database driver
+ libqt6sql6-mysql - Qt 6 MySQL database driver
+ libqt6sql6-odbc - Qt 6 ODBC database driver
+ libqt6sql6-psql - Qt 6 PostgreSQL database driver
+ libqt6sql6-sqlite - Qt 6 SQLite 3 database driver
+ libqt6test6 - Qt 6 test module
+ libqt6waylandclient6 - Qt 6 Wayland client module
+ libqt6widgets6 - Qt 6 widgets module
+ libqt6wlshellintegration6 - Qt 6 Wayland ShellIntegration library
+ libqt6xml6 - Qt 6 XML module
+ qmake6     - Qt 6 qmake Makefile generator tool
+ qmake6-bin - Qt 6 qmake Makefile generator tool — binary file
+ qt6-base-dev - Qt 6 base development files
+ qt6-base-dev-tools - Qt 6 base development programs
+ qt6-base-doc - Qt 6 base documentation
+ qt6-base-doc-dev - Qt 6 base tags files
+ qt6-base-doc-html - Qt 6 base HTML documentation
+ qt6-base-examples - Qt 6 base examples
+ qt6-base-private-dev - Qt 6 base private development files
+ qt6-gtk-platformtheme - Qt 6 GTK+ 3 platform theme
+ qt6-qpa-plugins - Qt 6 QPA plugins
+ qt6-xdgdesktopportal-platformtheme - Qt 6 XDG Desktop Portal platform theme
+ qtpaths6   - Qt 6 qtpaths quetioning tool
+ qtpaths6-bin - Qt 6 qtpaths quetioning tool — binary file
+Changes:
+ qt6-base (6.11.2+dfsg-5+stereo3d2) unstable; urgency=medium
+ .
+   * Sparky Stereo OS: Qt's own client side decorations around a stereo
+     window keep both eyes. stereo3d-wayland-no-csd-stereo-window is
+     dropped. New patch stereo3d-wayland-egl-eye-slots: the content
+     framebuffer of a decorated stereo window gets a color attachment per
+     eye, QRhiGles2 draws the right eye of the default framebuffer into
+     the second one, and the decorations blit (from a desktop OpenGL
+     context) copies each slot into its own back buffer with the
+     decoration drawn identically in both.
+   * New patch stereo3d-compositor-rebind-second-texture: a stereo QOpenGLWidget
+     resized while its window is shown (as a window decorated by Qt is at
+     start) left the right eye's shader bindings on a destroyed texture,
+     and the next flush crashed.
+Checksums-Sha1:
+ ae354c4fed5aafac4ce22adfab637887449dc7cf 38992 libqt6concurrent6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ e3f40f2ed18ad3477353ad6d935a0291d6f80250 2076228 libqt6core6t64_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 00983dbfcd2d338b783c5a59a7e457e5caeca6c2 294360 libqt6dbus6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ c79fb003c33d5934b22aae6d0bebbf2b32e005cd 3517972 libqt6gui6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 5b0f7abdbfb0a3327df6dfd3262a5a29088824f4 880196 libqt6network6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 4e90e832d6543bb94211833e8bf4efa2a3f3bfe1 462488 libqt6opengl6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ dbbee7e505b8b82c5a60cfd219a0cffccad57ffd 48516 libqt6openglwidgets6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ e03d3f0ec688fb8f6bada094e4f83c8628ff3004 228604 libqt6printsupport6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 027dea30db5b3b5d8319761e1614cc34784a1d8b 79632 libqt6sql6-ibase_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 8548ac437ca98faa4cc0d858715d27e2db11c807 62852 libqt6sql6-mysql_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 70ddd985e74163d7fa1cafa3f706bd6685dee8d0 75940 libqt6sql6-odbc_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 9276879b153ca65992ebd2381f1f87bf4e393dd3 68932 libqt6sql6-psql_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 888ffd1c725b4d5faf61fdc35f091c62cd54deb5 66876 libqt6sql6-sqlite_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ db6a60be803e9a936605e165e5d6190f6390794a 157540 libqt6sql6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 562bb566e3400ddb47c88633d5dd4ef3ecf2786a 201624 libqt6test6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ f27d62b0031d617bc326eb5e071e5fdc7208cffb 388164 libqt6waylandclient6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 5e9371fe6cfaa3b29fdd68d60d3b951a702511b3 2798156 libqt6widgets6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ e9ec3eef89a395e3bf0a259ac09ed38cc86a497f 99808 libqt6wlshellintegration6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ e7f9b297ff5adb28df760a1c597d999501c76054 88876 libqt6xml6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 1dd36946fb1adef0b0c32d8e41b3e7bfd37ba25d 706456 qmake6-bin_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ f95cea0e830668b0536a6e6dfab4793e22ae64d9 146868 qmake6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 4ce442692d3f408758da81350d5b50dd9088b068 1158292 qt6-base-dev-tools_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 8e0358e3ee5a0051adc0abc18a2de9a33e4af3be 2040120 qt6-base-dev_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 860e02d4d726bb234abb6c364cf46a01552ad7db 394132 qt6-base-doc-dev_6.11.2+dfsg-5+stereo3d2_all.deb
+ 0c7550686f19ed82e533c93d9204d4686c0da6a2 16850168 qt6-base-doc-html_6.11.2+dfsg-5+stereo3d2_all.deb
+ d6fe9e1236ec7956293c8844b7b2c76281c928c2 21954880 qt6-base-doc_6.11.2+dfsg-5+stereo3d2_all.deb
+ ac6e0a059baa1026d4fa7ac8b1baab78bd548c24 3062176 qt6-base-examples_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 3b57b70102d7167c8577a49b88f2ccba767edde4 910928 qt6-base-private-dev_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 4a0f8d60342c8c4ba590cd883be3d674a61aaf90 29783 qt6-base_6.11.2+dfsg-5+stereo3d2_amd64.buildinfo
+ ea42b9ea2fed640eba19979acab3563025d5b729 101556 qt6-gtk-platformtheme_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ c6b7b136289d51360c211f3223ae4b0cd4026d25 94860 qt6-qpa-plugins_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ ec565c2e7ec17b8dc205976b0cdd49b9fdccdae2 75320 qt6-xdgdesktopportal-platformtheme_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 98424c36fc27aa3d63507ab8020febc474925549 59608 qtpaths6-bin_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ d82d67957cfb7eea5e5e4b76e39fcb1da12e46b4 32544 qtpaths6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+Checksums-Sha256:
+ 797afa85a7dbccc6650d629ddbb67ce4f115ca7e23a05bfb0d9252b881b7d2f0 38992 libqt6concurrent6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 948c4d334e4ecd35fb7545d8d330c178632d67f4a4b382aefaa00d72fdf8f8c5 2076228 libqt6core6t64_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ f4ef967f20c9acd5e2af07c036d6f91081ea848962e6aa5a64f1137ef7fc9e25 294360 libqt6dbus6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ f1efb3c150015cfb69443bf1405715dc7e35a8aac74c97696011ea0167727c03 3517972 libqt6gui6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ f754b9b78446f1698613a9bf35310a58c99b18dbd5bad311565ec3b2a9ffdc1b 880196 libqt6network6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 13aaccb06c6fc92130ada7350ea1bb11fa45ab819e86b69bbb8a71b9e129d07f 462488 libqt6opengl6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 2f112d485826312f03c45abdd52ef235d771f176e1498b024ec7e6fa0cabd24d 48516 libqt6openglwidgets6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ e57c2db427b526b4b43cefdbd46fd31412753d9e3eb0e2b5fff57467e04160c9 228604 libqt6printsupport6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 3f8e6bc7ef8c5e77abce9f355f68b7098959522575e6aec1ebeb3780603b8945 79632 libqt6sql6-ibase_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ cc8d1719e86c0dcbd92892c162624791e4743657feea5e8cda57c4c00627634f 62852 libqt6sql6-mysql_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ b7452d5cecb3ffd5e14111195042366fce5ddb30d757df9189820121d9cca888 75940 libqt6sql6-odbc_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 0285d50cb5eceb33a5d5dd2982923d6ef4734a637b09cadfc309b7f229b42f87 68932 libqt6sql6-psql_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 075f7bdfb19829b03dfd4547456d7af3ef679d8abb3f33791a839bd4a1d928c7 66876 libqt6sql6-sqlite_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ d372ef4e868174a1e1882c4121ec8ba27ec5b432ec89ae72a37ad8c0a275c623 157540 libqt6sql6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ e1799e12387896330777c54596a4a2629a14c0ae425e193af5f68067ecab4789 201624 libqt6test6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 7dde7768db5e94bc2e76030e97dd7a9812183fe416df387dd6d0a70069adc88f 388164 libqt6waylandclient6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ eb02219d8ac6cbd3fa4c81f8b6d25bafcf3de7988a47ee41eee3babc131c8aae 2798156 libqt6widgets6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 2cb620d6beca5502fbb511912894ee65923512b13a1336f14cbc4b4666afcf47 99808 libqt6wlshellintegration6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ b7becfefcc8bc3a2501e57495cdc39fcf6538bd1d6a99720fc741bd7088edfe3 88876 libqt6xml6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 645b78a6166519802fa9792942ded74073b1bd24b883497e54457a69a480ad6a 706456 qmake6-bin_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 4e98d1dda32356081fd1fae51cdcca16b8807875d34cc4903f1e730d3c134b61 146868 qmake6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ a48ebc68190c653b3b127698a3a004e1902f4eeb8ac62e087040b6a788031250 1158292 qt6-base-dev-tools_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 3e87ea5ef734f9f814cbf6264639300ce383579298346fa3665ec3d639b6ea9f 2040120 qt6-base-dev_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ e3062af2849ed4dd2f7917f0accdbeb4741c96f452059025822a4495c0e1720d 394132 qt6-base-doc-dev_6.11.2+dfsg-5+stereo3d2_all.deb
+ 5900296ab35a62134d766936e0e7557ebd39a2198291c3fa9f568318cacf4ad5 16850168 qt6-base-doc-html_6.11.2+dfsg-5+stereo3d2_all.deb
+ d23ac8f701987f2e69104b40f3f722410ac36dc74ebe17d950793174370628af 21954880 qt6-base-doc_6.11.2+dfsg-5+stereo3d2_all.deb
+ 37d74e3f7efa0ecd06ec54e8cc974b1f702c889655a850eeb69f1227e00385dc 3062176 qt6-base-examples_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 7d5723310c22ff82096de8efdffef2333bad73a056c55829fbfab1f7a09da60a 910928 qt6-base-private-dev_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 96d989f06b2b6015fb7eddf5541333011a395e47fb168e7f027c9aa0a762c8f4 29783 qt6-base_6.11.2+dfsg-5+stereo3d2_amd64.buildinfo
+ 95f1b6e7492cb6e81dc466097ea042f48b3be592d54958672ca1ca83d149f115 101556 qt6-gtk-platformtheme_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 2b090f9d8fa590c211e16207bda05972da89ec8bcd1d793dd01f9d7a6283a844 94860 qt6-qpa-plugins_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 760e62cd1f3596fe0997e7aba7cc6fd2caf3d3db0bd087062891f569a061efe6 75320 qt6-xdgdesktopportal-platformtheme_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 87b586d07bc2aef03e24111268768120f2af601c4362b96d1b27a412c5bcfd07 59608 qtpaths6-bin_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 597ad0642490bf9db6a2f26f7a2ad7979605dd51c5ee17d316042f3af1b57c56 32544 qtpaths6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+Files:
+ 7f30e4aa0475c4bb26a4788bcb985d04 38992 libs optional libqt6concurrent6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 5aa3bc188ef06513efe863d0ea9f6d34 2076228 libs optional libqt6core6t64_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 6aca0140e18bc5b578096f9941c65060 294360 libs optional libqt6dbus6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 07c4dd19503a8d4564926635f2379184 3517972 libs optional libqt6gui6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 85b501d3913a9b8cebe414ef9ce75579 880196 libs optional libqt6network6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 0c3c52e321349290175c1dd0b58cb13a 462488 libs optional libqt6opengl6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 71dbf393654280bbd4796a44771192a2 48516 libs optional libqt6openglwidgets6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 29f107866ea488d7d34358c6662f3ad7 228604 libs optional libqt6printsupport6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 6e11da99fcdfa7d5d34bb1b49217b3b3 79632 libs optional libqt6sql6-ibase_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 98c420d67a8f41cbd4aee8e894017981 62852 libs optional libqt6sql6-mysql_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 4defeeab5233072e136d27463df897d0 75940 libs optional libqt6sql6-odbc_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 46141c09b5e70aee7b423c1a61e10e80 68932 libs optional libqt6sql6-psql_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 04391ea8d9e45f2692888f2422731f26 66876 libs optional libqt6sql6-sqlite_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 0e0d7ae5cd898317d1e542e0c145d9ac 157540 libs optional libqt6sql6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 8a962bb57a7626c6af307db260e02ed9 201624 libs optional libqt6test6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ c5bcb9f793db87a9ce3a93d07c3c73fb 388164 libs optional libqt6waylandclient6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ b132a64d14174edb78ffd5c24e1e419a 2798156 libs optional libqt6widgets6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ a4e36af2dc0c288cc7fc8477442fd941 99808 libs optional libqt6wlshellintegration6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ b21c596573d9fae4e3a34487e11785f1 88876 libs optional libqt6xml6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 11d89b19a0589a1565ab77afaf5534e4 706456 devel optional qmake6-bin_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 49d31762989360a38c7ba9ed829b0bbf 146868 devel optional qmake6_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 0febe93a6b21a601b0c770fe74d026b0 1158292 devel optional qt6-base-dev-tools_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 17185ef3b67cbbe95efd8ce669a1f213 2040120 libdevel optional qt6-base-dev_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 12f84ebc2d284ec2901d75a8e99b63df 394132 libdevel optional qt6-base-doc-dev_6.11.2+dfsg-5+stereo3d2_all.deb
+ a872f232b09aafbcf2984e9eb299d3e1 16850168 doc optional qt6-base-doc-html_6.11.2+dfsg-5+stereo3d2_all.deb
+ 31cdc5d4aa3a614d3ad4aec9e62e3081 21954880 doc optional qt6-base-doc_6.11.2+dfsg-5+stereo3d2_all.deb
+ 6a254ed12a30e0722aff6734095c6932 3062176 misc optional qt6-base-examples_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 20ede30e631fd05389cfcc1ad80d26ab 910928 libdevel optional qt6-base-private-dev_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 7492a78cdf1d590af0d1d994d01b6154 29783 libs optional qt6-base_6.11.2+dfsg-5+stereo3d2_amd64.buildinfo
+ ed1bdd6e55f6086bf4edc4902af4e7ff 101556 libs optional qt6-gtk-platformtheme_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ fc31012758ac49f208a0019c63ca8755 94860 libs optional qt6-qpa-plugins_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ e8f9369eaa16377cc2263aeb7ea941ee 75320 libs optional qt6-xdgdesktopportal-platformtheme_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 4fdf21d7a8890299f95905cd23a15727 59608 devel optional qtpaths6-bin_6.11.2+dfsg-5+stereo3d2_amd64.deb
+ 211701176399e2bd2cdab2c803f60fd3 32544 devel optional qtpaths6_6.11.2+dfsg-5+stereo3d2_amd64.deb

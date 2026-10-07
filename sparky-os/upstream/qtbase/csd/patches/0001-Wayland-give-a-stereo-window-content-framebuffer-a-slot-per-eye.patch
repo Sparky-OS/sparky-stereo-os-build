@@ -1,0 +1,219 @@
+From 330281110edf5bcd8b59dd14fab0046128e11556 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 7 Oct 2026 02:52:43 -0300
+Subject: [PATCH 1/2] Wayland: give a stereo window's content framebuffer a
+ slot per eye
+
+A decorated QWaylandEglWindow renders its content into a framebuffer
+object and blits it, with the decoration, into the window surface from a
+second context. For a stereo window that object had one color
+attachment, so QRhiGles2 bound it for both eyes and the right eye
+overwrote the left, and the blit could not choose an eye: it ran from an
+OpenGL ES 2 context.
+
+Give the content framebuffer object of a stereo window a second color
+attachment. QRhiGles2 draws the right eye of the default framebuffer
+into the second attachment when the default framebuffer object has one.
+The decorations context of a stereo window is a desktop OpenGL context,
+and the blit draws each slot into its own back buffer, left and right,
+with the decoration drawn identically into both.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/gui/rhi/qrhigles2.cpp                     | 14 +++++-
+ .../wayland-egl/qwaylandeglwindow.cpp         | 14 +++++-
+ .../wayland-egl/qwaylandeglwindow_p.h         |  3 +-
+ .../wayland-egl/qwaylandglcontext.cpp         | 45 ++++++++++++++++---
+ 4 files changed, 66 insertions(+), 10 deletions(-)
+
+diff --git a/src/gui/rhi/qrhigles2.cpp b/src/gui/rhi/qrhigles2.cpp
+index 640be922..cdbc4874 100644
+--- a/src/gui/rhi/qrhigles2.cpp
++++ b/src/gui/rhi/qrhigles2.cpp
+@@ -3563,12 +3563,24 @@ void QRhiGles2::executeCommandBuffer(QRhiCommandBuffer *cb)
+         {
+             QVarLengthArray<GLenum, 8> bufs;
+             GLuint fbo = cmd.args.bindFramebuffer.fbo;
++            const bool isDefaultFbo = !fbo;
+             if (!fbo)
+                 fbo = ctx->defaultFramebufferObject();
+             f->glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+             if (fbo) {
+                 const int colorAttCount = cmd.args.bindFramebuffer.colorAttCount;
+-                bufs.append(colorAttCount > 0 ? GL_COLOR_ATTACHMENT0 : GL_NONE);
++                GLenum colorAtt = GL_COLOR_ATTACHMENT0;
++                if (isDefaultFbo && cmd.args.bindFramebuffer.stereo
++                        && cmd.args.bindFramebuffer.stereoTarget == QRhiSwapChain::RightBuffer) {
++                    // The platform's default framebuffer object has a slot per eye when it
++                    // has a second color attachment, as the Wayland one has for a stereo window
++                    GLint type = GL_NONE;
++                    f->glGetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1,
++                                                             GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, &type);
++                    if (type != GL_NONE)
++                        colorAtt = GL_COLOR_ATTACHMENT1;
++                }
++                bufs.append(colorAttCount > 0 ? colorAtt : GL_NONE);
+                 if (caps.maxDrawBuffers > 1) {
+                     for (int i = 1; i < colorAttCount; ++i)
+                         bufs.append(GL_COLOR_ATTACHMENT0 + uint(i));
+diff --git a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
+index ba1f10c7..d73b8673 100644
+--- a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
++++ b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
+@@ -181,6 +181,11 @@ GLuint QWaylandEglWindow::contentFBO() const
+         QOpenGLFramebufferObject *old = m_contentFBO;
+         QSize fboSize = geometry().size() * scale();
+         m_contentFBO = new QOpenGLFramebufferObject(fboSize.width(), fboSize.height(), QOpenGLFramebufferObject::CombinedDepthStencil);
++        // A stereo window has a slot per eye: the right eye is rendered into the second attachment
++        if (m_clientBufferIntegration->supportsStereo(window()->requestedFormat())) {
++            m_contentFBO->bind();
++            m_contentFBO->addColorAttachment(fboSize);
++        }
+ 
+         delete old;
+         m_resize = false;
+@@ -189,9 +194,14 @@ GLuint QWaylandEglWindow::contentFBO() const
+     return m_contentFBO->handle();
+ }
+ 
+-GLuint QWaylandEglWindow::contentTexture() const
++GLuint QWaylandEglWindow::contentTexture(int eye) const
++{
++    return m_contentFBO->textures().value(eye);
++}
++
++int QWaylandEglWindow::contentEyes() const
+ {
+-    return m_contentFBO->texture();
++    return m_contentFBO->textures().size();
+ }
+ 
+ void QWaylandEglWindow::bindContentFBO()
+diff --git a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow_p.h b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow_p.h
+index 2fbe11fb..2de16180 100644
+--- a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow_p.h
++++ b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow_p.h
+@@ -30,7 +30,8 @@ public:
+ 
+     EGLSurface eglSurface() const;
+     GLuint contentFBO() const;
+-    GLuint contentTexture() const;
++    GLuint contentTexture(int eye = 0) const;
++    int contentEyes() const;
+     bool needToUpdateContentFBO() const { return decoration() && (m_resize || !m_contentFBO); }
+ 
+     void bindContentFBO();
+diff --git a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandglcontext.cpp b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandglcontext.cpp
+index 5bbf0889..06e9c3b9 100644
+--- a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandglcontext.cpp
++++ b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandglcontext.cpp
+@@ -92,6 +92,14 @@
+ #define GL_CONTEXT_COMPATIBILITY_PROFILE_BIT 0x00000002
+ #endif
+ 
++// Constants for the left and right back buffers of a stereo window surface (desktop OpenGL).
++#ifndef GL_BACK_LEFT
++#define GL_BACK_LEFT 0x0402
++#endif
++#ifndef GL_BACK_RIGHT
++#define GL_BACK_RIGHT 0x0403
++#endif
++
+ // Constants from EGL_NV_robustness_video_memory_purge
+ #ifndef EGL_GENERATE_RESET_ON_VIDEO_MEMORY_PURGE_NV
+ #define EGL_GENERATE_RESET_ON_VIDEO_MEMORY_PURGE_NV 0x334C
+@@ -104,9 +112,13 @@ namespace QtWaylandClient {
+ class DecorationsBlitter : public QOpenGLFunctions
+ {
+ public:
+-    DecorationsBlitter(QWaylandGLContext *context)
++    DecorationsBlitter(QWaylandGLContext *context, bool stereo)
+         : m_context(context)
+     {
++        // A stereo window surface needs the eye picked for each draw, which only desktop OpenGL can do
++        if (stereo)
++            m_drawBuffer = reinterpret_cast<void (QOPENGLF_APIENTRYP)(GLenum)>(
++                    m_context->context()->getProcAddress("glDrawBuffer"));
+         initializeOpenGLFunctions();
+         m_blitProgram = new QOpenGLShaderProgram();
+         m_blitProgram->addShaderFromSourceCode(QOpenGLShader::Vertex, "attribute vec4 position;\n\
+@@ -183,6 +195,17 @@ public:
+         delete m_blitProgram;
+     }
+     void blit(QWaylandEglWindow *window)
++    {
++        // The decoration is the same in both eyes of a stereo window, and each eye has its own content
++        const int eyes = m_drawBuffer ? window->contentEyes() : 1;
++        for (int eye = 0; eye < eyes; ++eye) {
++            if (m_drawBuffer)
++                m_drawBuffer(eye == 1 ? GL_BACK_RIGHT : GL_BACK_LEFT);
++            blit(window, eye);
++        }
++    }
++
++    void blit(QWaylandEglWindow *window, int eye)
+     {
+         QOpenGLTextureCache *cache = QOpenGLTextureCache::cacheForContext(m_context->context());
+ 
+@@ -204,7 +227,7 @@ public:
+ 
+         //Draw Content
+         m_blitProgram->setAttributeBuffer(0, GL_FLOAT, m_squareVerticesOffset, 2);
+-        glBindTexture(GL_TEXTURE_2D, window->contentTexture());
++        glBindTexture(GL_TEXTURE_2D, window->contentTexture(eye));
+         QRect r = window->contentsRect();
+         glViewport(r.x() * scale, r.y() * scale, r.width() * scale, r.height() * scale);
+         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+@@ -217,6 +240,7 @@ public:
+     int m_inverseSquareVerticesOffset;
+     int m_textureVerticesOffset;
+     int m_textureWrap;
++    void (QOPENGLF_APIENTRYP m_drawBuffer)(GLenum) = nullptr;
+ };
+ 
+ QWaylandGLContext::QWaylandGLContext()
+@@ -375,8 +399,13 @@ void QWaylandGLContext::initialize()
+ 
+         eglDecorationsContextAttrs << EGL_NONE;
+ 
++        // The blitter of a stereo window draws into the left and right back buffers: desktop OpenGL
++        if (m_stereo)
++            eglBindAPI(EGL_OPENGL_API);
+         m_decorationsContext = eglCreateContext(eglDisplay(), eglConfig(), eglContext(),
+                                                 eglDecorationsContextAttrs.constData());
++        if (m_stereo)
++            eglBindAPI(m_api);
+         if (m_decorationsContext == EGL_NO_CONTEXT)
+             qWarning("QWaylandGLContext: Failed to create the decorations EGLContext. Decorations will not be drawn.");
+     }
+@@ -478,8 +507,12 @@ void QWaylandGLContext::swapBuffers(QPlatformSurface *surface)
+     EGLSurface eglSurface = window->eglSurface();
+ 
+     if (window->decoration()) {
+-        if (m_api != EGL_OPENGL_ES_API)
+-            eglBindAPI(EGL_OPENGL_ES_API);
++        const EGLenum decorationsApi = m_stereo ? EGL_OPENGL_API : EGL_OPENGL_ES_API;
++        if (m_api != decorationsApi)
++            eglBindAPI(decorationsApi);
++        // the blitter reads the eyes rendered by this context
++        if (m_stereo)
++            glFlush();
+ 
+         // save the current EGL content and surface to set it again after the blitter is done
+         EGLDisplay currentDisplay = eglGetCurrentDisplay();
+@@ -489,10 +522,10 @@ void QWaylandGLContext::swapBuffers(QPlatformSurface *surface)
+         eglMakeCurrent(eglDisplay(), eglSurface, eglSurface, m_decorationsContext);
+ 
+         if (!m_blitter)
+-            m_blitter = new DecorationsBlitter(this);
++            m_blitter = new DecorationsBlitter(this, m_stereo);
+         m_blitter->blit(window);
+ 
+-        if (m_api != EGL_OPENGL_ES_API)
++        if (m_api != decorationsApi)
+             eglBindAPI(m_api);
+         eglMakeCurrent(currentDisplay, currentSurfaceDraw, currentSurfaceRead, currentContext);
+     }
+-- 
+2.53.0
+

@@ -1,0 +1,39 @@
+Format: 1.8
+Date: Wed, 07 Oct 2026 05:53:05 +0000
+Source: qt6-base
+Architecture: source
+Version: 6.11.2+dfsg-5+stereo3d2
+Distribution: unstable
+Urgency: medium
+Maintainer: Debian Qt/KDE Maintainers <debian-qt-kde@lists.debian.org>
+Changed-By: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Changes:
+ qt6-base (6.11.2+dfsg-5+stereo3d2) unstable; urgency=medium
+ .
+   * Sparky Stereo OS: Qt's own client side decorations around a stereo
+     window keep both eyes. stereo3d-wayland-no-csd-stereo-window is
+     dropped. New patch stereo3d-wayland-egl-eye-slots: the content
+     framebuffer of a decorated stereo window gets a color attachment per
+     eye, QRhiGles2 draws the right eye of the default framebuffer into
+     the second one, and the decorations blit (from a desktop OpenGL
+     context) copies each slot into its own back buffer with the
+     decoration drawn identically in both.
+   * New patch stereo3d-compositor-rebind-second-texture: a stereo QOpenGLWidget
+     resized while its window is shown (as a window decorated by Qt is at
+     start) left the right eye's shader bindings on a destroyed texture,
+     and the next flush crashed.
+Checksums-Sha1:
+ 40997dcf74b799a137a81051830052f9324eb303 5080 qt6-base_6.11.2+dfsg-5+stereo3d2.dsc
+ f5d6634aacb47f8d242259c07e0889fa7f4fd45c 48676784 qt6-base_6.11.2+dfsg.orig.tar.xz
+ a2c7a7771932c4eb1df2da6c6b19bfab1f192cee 211836 qt6-base_6.11.2+dfsg-5+stereo3d2.debian.tar.xz
+ c41d9487d05966d1a4c7f420a396884e39e3bee3 18197 qt6-base_6.11.2+dfsg-5+stereo3d2_source.buildinfo
+Checksums-Sha256:
+ 5847e7c8f88a30c6bd30afabe2ff4e5328c69183e46ba80ce8f8d1e1c1f68408 5080 qt6-base_6.11.2+dfsg-5+stereo3d2.dsc
+ 4f2626c53e325546d3591e57605605c5dbd31b07404de2e4e235e97d2ca9b0dd 48676784 qt6-base_6.11.2+dfsg.orig.tar.xz
+ 9ceb280efe0c699ee5943980f90bf6fc68190c34afdbbdac8610adb0529b3bc9 211836 qt6-base_6.11.2+dfsg-5+stereo3d2.debian.tar.xz
+ e7a216d27bf51ec2231ca677ca4153a60e8b76a77d6ecc6305dc51adecd4095a 18197 qt6-base_6.11.2+dfsg-5+stereo3d2_source.buildinfo
+Files:
+ 5dc54e5a085b4a77574699a502cdde8d 5080 libs optional qt6-base_6.11.2+dfsg-5+stereo3d2.dsc
+ 963b7cfa0fda405ac82a42a3c31424fa 48676784 libs optional qt6-base_6.11.2+dfsg.orig.tar.xz
+ eacfae8c2f2b45331fed25cdc45859ba 211836 libs optional qt6-base_6.11.2+dfsg-5+stereo3d2.debian.tar.xz
+ 3b0cb2ef63f1697232e915af590cf481 18197 libs optional qt6-base_6.11.2+dfsg-5+stereo3d2_source.buildinfo
