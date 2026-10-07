@@ -1,0 +1,205 @@
+From 19d216facb2d4f672f8be63cf5ceeaf000e67e62 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 7 Oct 2026 08:42:59 -0300
+Subject: [PATCH] Give the layer of a canvas its colour description through
+ colour management
+
+A canvas that has a native surface of its own under a compositor with
+colour management gets a KisCanvasSurfaceColorSpaceManager on that
+window, which sets the image description of the surface for the mode
+the user chose (Preferred, Rec. 709 gamma 2.2 or linear, Rec. 2020 PQ)
+and reports back the display config the canvas is rendered for. A
+canvas of a session that started for stereo is shown through a layer,
+whose surface is the canvas's own and had none, so KWin took it to be
+sRGB and Krita took the canvas to be limited to sRGB.
+
+The canvas hands the window of the layer it shows through to
+KisCanvas2::attachSurfaceColorManager, the code that the native
+surface used, as the layer becomes ready, and again when the canvas
+changes between the layer of a stereo pair and the one of a normal
+document. The "limited to sRGB" warning is no longer given for a
+canvas that will be shown through a layer.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ libs/ui/canvas/kis_canvas2.cpp          | 58 ++++++++++++++++---------
+ libs/ui/canvas/kis_canvas2.h            |  8 ++++
+ libs/ui/opengl/KisStereoCanvasLayer.cpp |  5 +++
+ libs/ui/opengl/KisStereoCanvasLayer.h   |  4 ++
+ libs/ui/opengl/kis_opengl_canvas2.cpp   |  6 +++
+ 5 files changed, 61 insertions(+), 20 deletions(-)
+
+diff --git a/libs/ui/canvas/kis_canvas2.cpp b/libs/ui/canvas/kis_canvas2.cpp
+index 007bf18..8ff0d1e 100644
+--- a/libs/ui/canvas/kis_canvas2.cpp
++++ b/libs/ui/canvas/kis_canvas2.cpp
+@@ -29,6 +29,7 @@
+ #include <KoColorProfile.h>
+ #include <KoCanvasControllerWidget.h>
+ #include <KisDocument.h>
++#include "opengl/KisStereoCanvasLayer.h"
+ #include <KoDocumentInfo.h>
+ #include <QRegularExpression>
+ #include <KoSelection.h>
+@@ -492,26 +493,10 @@ void KisCanvas2::setCanvasWidget(KisAbstractCanvasWidget *widget)
+         QWindow *nativeWindow = widget->widget()->windowHandle();
+ 
+         if (nativeWindow && nativeWindow != mainWindowNativeWindow) {
+-            std::unique_ptr<KisSurfaceColorManagerInterface> iface(
+-                KisPlatformPluginInterfaceFactory::instance()->createSurfaceColorManager(nativeWindow));
+-
+-            // if surfaceColorManagedByOS() is true, then interface is guaranteed to
+-            // be present
+-            KIS_SAFE_ASSERT_RECOVER_NOOP(iface);
+-
+-            if (iface) {
+-                m_d->surfaceColorManager.reset(
+-                    new KisCanvasSurfaceColorSpaceManager(iface.release(),
+-                                                          m_d->multiSurfaceState->surfaceMode,
+-                                                          m_d->multiSurfaceState->multiConfig.options(),
+-                                                          this));
+-
+-                connect(m_d->surfaceColorManager.data(),
+-                        &KisCanvasSurfaceColorSpaceManager::sigDisplayConfigChanged,
+-                        this,
+-                        &KisCanvas2::slotSurfaceFormatChanged);
+-            }
+-        } else {
++            attachSurfaceColorManager(nativeWindow);
++        } else if (!(KisStereoCanvasLayer::isSupported() && KisStereoCanvasLayer::stereoCanvasAvailable())) {
++            // a canvas of a session that started for stereo is shown through a layer, which
++            // takes the color management when it is created (attachSurfaceColorManager)
+             qWarning() << "WARNING: created non-native Krita canvas on managed platform,"
+                        << "its color space will be limited to sRGB";
+         }
+@@ -519,6 +504,39 @@ void KisCanvas2::setCanvasWidget(KisAbstractCanvasWidget *widget)
+ #endif
+ }
+ 
++void KisCanvas2::attachSurfaceColorManager(QWindow *surfaceWindow)
++{
++#if KRITA_USE_SURFACE_COLOR_MANAGEMENT_API
++    if (!surfaceWindow || !KisPlatformPluginInterfaceFactory::instance()->surfaceColorManagedByOS()) {
++        return;
++    }
++
++    m_d->surfaceColorManager.reset();
++
++    std::unique_ptr<KisSurfaceColorManagerInterface> iface(
++        KisPlatformPluginInterfaceFactory::instance()->createSurfaceColorManager(surfaceWindow));
++
++    // if surfaceColorManagedByOS() is true, then interface is guaranteed to
++    // be present
++    KIS_SAFE_ASSERT_RECOVER_NOOP(iface);
++
++    if (iface) {
++        m_d->surfaceColorManager.reset(
++            new KisCanvasSurfaceColorSpaceManager(iface.release(),
++                                                  m_d->multiSurfaceState->surfaceMode,
++                                                  m_d->multiSurfaceState->multiConfig.options(),
++                                                  this));
++
++        connect(m_d->surfaceColorManager.data(),
++                &KisCanvasSurfaceColorSpaceManager::sigDisplayConfigChanged,
++                this,
++                &KisCanvas2::slotSurfaceFormatChanged);
++    }
++#else
++    Q_UNUSED(surfaceWindow);
++#endif
++}
++
+ bool KisCanvas2::canvasIsOpenGL() const
+ {
+     return m_d->currentCanvasIsOpenGL;
+diff --git a/libs/ui/canvas/kis_canvas2.h b/libs/ui/canvas/kis_canvas2.h
+index 00a27bb..5d4e43b 100644
+--- a/libs/ui/canvas/kis_canvas2.h
++++ b/libs/ui/canvas/kis_canvas2.h
+@@ -30,6 +30,7 @@
+ #include "KisReferenceImagesDecoration.h"
+ #include "KisWraparoundAxis.h"
+ 
++class QWindow;
+ class KoToolProxy;
+ class KisDisplayConfig;
+ 
+@@ -76,6 +77,13 @@ public:
+ 
+ public: // KoCanvasBase implementation
+ 
++    /**
++     * Gives the surface of @p surfaceWindow the colour description of the canvas through the
++     * compositor's colour management, as a canvas that has a native surface of its own has it:
++     * the layer that shows a canvas of a session that started for stereo is such a surface.
++     */
++    void attachSurfaceColorManager(QWindow *surfaceWindow);
++
+     bool canvasIsOpenGL() const override;
+ 
+     KisOpenGL::FilterMode openGLFilterMode() const;
+diff --git a/libs/ui/opengl/KisStereoCanvasLayer.cpp b/libs/ui/opengl/KisStereoCanvasLayer.cpp
+index 696e63a..f01c7f9 100644
+--- a/libs/ui/opengl/KisStereoCanvasLayer.cpp
++++ b/libs/ui/opengl/KisStereoCanvasLayer.cpp
+@@ -152,6 +152,11 @@ void KisStereoCanvasLayer::Private::placeBelowParent()
+ #endif
+ }
+ 
++QWindow *KisStereoCanvasLayer::window() const
++{
++    return d->window.data();
++}
++
+ bool KisStereoCanvasLayer::isReady()
+ {
+     return d->create();
+diff --git a/libs/ui/opengl/KisStereoCanvasLayer.h b/libs/ui/opengl/KisStereoCanvasLayer.h
+index d13f149..50f04e7 100644
+--- a/libs/ui/opengl/KisStereoCanvasLayer.h
++++ b/libs/ui/opengl/KisStereoCanvasLayer.h
+@@ -16,6 +16,7 @@
+ 
+ class QOpenGLContext;
+ class QWidget;
++class QWindow;
+ 
+ /**
+  * KisStereoCanvasLayer is the 3D area of a "Stereo 3D" canvas under Qt's Wayland platform.
+@@ -61,6 +62,9 @@ public:
+     /// the main window was made for a layer: it has an alpha channel and paints its own background
+     static bool layerStarted();
+ 
++    /// the layer's window, once it is ready
++    QWindow *window() const;
++
+     /// the layer window exists and has left and right buffers
+     bool isReady();
+ 
+diff --git a/libs/ui/opengl/kis_opengl_canvas2.cpp b/libs/ui/opengl/kis_opengl_canvas2.cpp
+index 68d45b2..dd93ce7 100644
+--- a/libs/ui/opengl/kis_opengl_canvas2.cpp
++++ b/libs/ui/opengl/kis_opengl_canvas2.cpp
+@@ -81,6 +81,7 @@ public:
+     QScopedPointer<KisStereoCanvasLayer> stereoLayer;
+     QScopedPointer<KisStereoCanvasLayer> monoLayer;
+     KisStereoCanvasLayer *activeLayer = nullptr;
++    KisStereoCanvasLayer *colourManagedLayer = nullptr;
+     bool stereoLayerTimerConnected = false;
+     QTimer stereoLayerTimer;
+     bool stereoLayerShown = false;
+@@ -331,6 +332,11 @@ void KisOpenGLCanvas2::paintGL()
+ 
+     bool stereoLayerShown = false;
+     if (layer && layer->isReady()) {
++        if (d->colourManagedLayer != layer) {
++            // the layer is the canvas's surface: its colour description goes to the compositor
++            d->colourManagedLayer = layer;
++            canvas()->attachSurfaceColorManager(layer->window());
++        }
+         stereoLayerShown = paintStereoLayer(layer, stereoLayerWanted);
+         if (!stereoLayerShown) {
+             // the layer is not on the screen yet: the window shows what is painted on, meanwhile
+-- 
+2.53.0
+
