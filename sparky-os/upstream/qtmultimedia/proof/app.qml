@@ -27,11 +27,12 @@ Window {
         stereoSwapEyes: win.args.length > 2 && win.args[2] === "1"
         // what the build defaults to is left alone unless an argument is given ("-" is none)
         Component.onCompleted: {
+            console.log("defaults: shapeFallback", stereoShapeFallback, "view", stereoView, "scaling", stereoScaling, "surface", stereoSurface)
             if (win.args.length > 3 && win.args[3] !== "-") stereoView = Number(win.args[3])
             if (win.args.length > 4 && win.args[4] !== "-") stereoScaling = Number(win.args[4])
             if (win.args.length > 5 && win.args[5] !== "-") stereoSurface = Number(win.args[5])
+            if (win.args.length > 6 && win.args[6] !== "-") stereoShapeFallback = win.args[6] === "1"
         }
-        stereoShapeFallback: win.args.length > 6 && win.args[6] === "1"
         onStereoVideoChanged: console.log("stereoVideo", stereoVideo, "packing", stereoPacking)
         onStereoLayerActiveChanged: console.log("stereoLayerActive", stereoLayerActive)
     }
