@@ -1,0 +1,765 @@
+From a83d04f22e9b385dcf4c4d15872fa2f259f3d2d6 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 6 Oct 2026 19:02:09 -0300
+Subject: [PATCH] Show a side-by-side pair to the two eyes with a "Stereo 3D"
+ canvas
+
+A document that is a side-by-side pair (at least twice as wide as high,
+or marked "stereo", "3D" or "side by side" in its title, subject,
+keywords or description, "right eye first" for the other eye order) can
+be shown as one eye's picture: View > Stereo 3D paints the left half in
+the left eye's buffer and the right half in the right eye's buffer, at
+the same place, while the checkers, borders, decorations and the brush
+outline are drawn once and are the same in both eyes. View > Paint on
+the Right View chooses the half the strokes land on (the left one by
+default), the pointer maps to the half that is shown.
+
+Qt takes the left and right buffers when the window is created, so the
+setting ("stereo3DCanvas" in kritadisplayrc) is read at start-up: it asks
+for a stereo surface, keeps the canvas on Qt's xcb platform (Qt's Wayland
+platform has no stereo buffers) and a message says when the change needs
+a restart. A surface without stereo buffers shows the half that is
+painted on. Off by default; with it off nothing is drawn differently.
+
+The converter shows one half of the image (setStereoView) and, for the
+frame of the other eye, maps the other half to the same place
+(beginStereoEyeView). The menu file version goes to 545 for the two new
+actions.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ krita/CMakeLists.txt                         |  6 +-
+ krita/krita5.xmlgui                          |  2 +
+ krita/kritamenu.action                       | 24 ++++++
+ krita/main.cc                                | 15 +++-
+ libs/ui/KisViewManager.cpp                   | 74 ++++++++++++++++++
+ libs/ui/KisViewManager.h                     |  2 +
+ libs/ui/canvas/kis_canvas2.cpp               | 79 +++++++++++++++++++
+ libs/ui/canvas/kis_canvas2.h                 | 16 ++++
+ libs/ui/canvas/kis_canvas_controller.cpp     |  9 +++
+ libs/ui/canvas/kis_canvas_controller.h       |  2 +
+ libs/ui/canvas/kis_coordinates_converter.cpp | 80 ++++++++++++++++++--
+ libs/ui/canvas/kis_coordinates_converter.h   | 19 +++++
+ libs/ui/kis_config.cc                        | 24 ++++++
+ libs/ui/kis_config.h                         | 10 +++
+ libs/ui/opengl/KisOpenGLCanvasRenderer.cpp   | 12 +++
+ libs/ui/opengl/kis_opengl_canvas2.cpp        | 24 +++++-
+ 16 files changed, 384 insertions(+), 14 deletions(-)
+
+diff --git a/krita/CMakeLists.txt b/krita/CMakeLists.txt
+index e47ec92..33fcecb 100644
+--- a/krita/CMakeLists.txt
++++ b/krita/CMakeLists.txt
+@@ -130,13 +130,13 @@ if(ANDROID)
+     # Android had interface scaling and supporter benefit menu options added.
+     set(KRITA5_XMLGUI_VERSION 544)
+ else()
+-    # Other systems aren't affected, they keep using the previous version.
+-    set(KRITA5_XMLGUI_VERSION 543)
++    # Stereo 3D actions in the View menu.
++    set(KRITA5_XMLGUI_VERSION 545)
+ endif()
+ 
+ # After updating the version number properly, put the new hash that the CMake
+ # error lists as the "actual hash" here.
+-set(krita5_xmlgui_hash_expected "b74fdc4f3bafac700be2db906a424542")
++set(krita5_xmlgui_hash_expected "d6766a6f2ab1e832db6db0150a7721f2")
+ 
+ # You can stop reading now, the stuff that follows doesn't need to be modified.
+ # ==============================================================================
+diff --git a/krita/krita5.xmlgui b/krita/krita5.xmlgui
+index a1cd0da..7c40e25 100644
+--- a/krita/krita5.xmlgui
++++ b/krita/krita5.xmlgui
+@@ -95,6 +95,8 @@ xsi:schemaLocation="http://www.kde.org/standards/kxmlgui/1.0  http://www.kde.org
+         <Action name="wrap_around_v_axis"/>
+       </Menu>
+       <Action name="level_of_detail_mode"/>
++      <Action name="stereo_3d_mode"/>
++      <Action name="stereo_3d_paint_right_view"/>
+       <Action name="softProof"/>
+       <Action name="gamutCheck"/>
+       <Separator/>
+diff --git a/krita/kritamenu.action b/krita/kritamenu.action
+index 2629542..0a8fbe3 100644
+--- a/krita/kritamenu.action
++++ b/krita/kritamenu.action
+@@ -659,6 +659,30 @@
+       <isCheckable>true</isCheckable>
+       <statusTip></statusTip>
+     </Action>
++    <Action name="stereo_3d_mode">
++      <icon></icon>
++      <text>Stereo &amp;3D</text>
++      <whatsThis></whatsThis>
++      <toolTip>Show a side-by-side pair as one picture, the left half to the left eye and the right half to the right eye (needs a stereo display or a stereo desktop)</toolTip>
++      <iconText>Stereo 3D</iconText>
++      <activationFlags>1</activationFlags>
++      <activationConditions>0</activationConditions>
++      <shortcut></shortcut>
++      <isCheckable>true</isCheckable>
++      <statusTip></statusTip>
++    </Action>
++    <Action name="stereo_3d_paint_right_view">
++      <icon></icon>
++      <text>Paint on the &amp;Right View</text>
++      <whatsThis></whatsThis>
++      <toolTip>Paint on the right half of the pair; off paints on the left half</toolTip>
++      <iconText>Paint on the Right View</iconText>
++      <activationFlags>1</activationFlags>
++      <activationConditions>0</activationConditions>
++      <shortcut></shortcut>
++      <isCheckable>true</isCheckable>
++      <statusTip></statusTip>
++    </Action>
+     <Action name="wrap_around_hv_axis">
+       <icon>wraparound</icon>
+       <text>Wrap Around Both Directions</text>
+diff --git a/krita/main.cc b/krita/main.cc
+index 22b884a..3d6e836 100644
+--- a/krita/main.cc
++++ b/krita/main.cc
+@@ -441,6 +441,14 @@ if (!qEnvironmentVariableIsEmpty("KRITA_OPENGL_DEBUG")) {
+         const KisConfig::CanvasSurfaceBitDepthMode bitDepthMode =
+             KisConfig::canvasSurfaceBitDepthMode(&kritarc);
+ 
++        /**
++         * "Stereo 3D": the canvas gets a left and a right buffer to show a side-by-side pair to
++         * each eye. Stereo surfaces come from GLX on Qt's xcb platform (Qt's Wayland platform has
++         * none yet), so with the setting on the canvas stays on xcb, and Xwayland's surfaces are
++         * 8 bits per channel.
++         */
++        const bool stereo3DCanvas = KisConfig::stereo3DCanvas(&kritarc);
++
+ #if defined HAVE_X11 && KRITA_USE_SURFACE_COLOR_MANAGEMENT_API
+         /**
+          * Xwayland offers no 30-bit visuals, so under a Wayland compositor the
+@@ -450,15 +458,20 @@ if (!qEnvironmentVariableIsEmpty("KRITA_OPENGL_DEBUG")) {
+          */
+         if (platformIsKritaDefault &&
+             bitDepthMode != KisConfig::CanvasSurfaceBitDepthMode::Depth8Bit &&
++            !stereo3DCanvas &&
+             qEnvironmentVariableIsSet("WAYLAND_DISPLAY")) {
+ 
+             qputenv("QT_QPA_PLATFORM", "wayland;xcb");
+         }
+ #endif
+ 
+-        const KisOpenGL::RendererConfig config =
++        KisOpenGL::RendererConfig config =
+             KisOpenGL::selectSurfaceConfig(preferredRenderer, rootSurfaceFormat, bitDepthMode, enableOpenGLDebug);
+ 
++        if (stereo3DCanvas) {
++            config.format.setStereo(true);
++        }
++
+         KisOpenGL::setDefaultSurfaceConfig(config);
+         KisOpenGL::setDebugSynchronous(openGLDebugSynchronous);
+ 
+diff --git a/libs/ui/KisViewManager.cpp b/libs/ui/KisViewManager.cpp
+index d8ad99a..7226339 100644
+--- a/libs/ui/KisViewManager.cpp
++++ b/libs/ui/KisViewManager.cpp
+@@ -18,6 +18,7 @@
+ #include <QPrinter>
+ 
+ #include <QAction>
++#include <QSurfaceFormat>
+ #include <QApplication>
+ #include <QBuffer>
+ #include <QByteArray>
+@@ -189,6 +190,8 @@ public:
+     KisAction *wrapAroundVAxisAction {nullptr};
+     QActionGroup *wrapAroundAxisActions {nullptr};
+     KisAction *levelOfDetailAction {nullptr};
++    KisAction *stereo3DAction {nullptr};
++    KisAction *stereo3DRightViewAction {nullptr};
+     KisAction *showRulersAction {nullptr};
+     KisAction *rulersTrackMouseAction {nullptr};
+     KisAction *zoomTo100pct {nullptr};
+@@ -498,6 +501,27 @@ void KisViewManager::setCurrentView(KisView *view)
+         d->viewConnections.addUniqueConnection(d->wrapAroundVAxisAction, SIGNAL(triggered()), canvasController, SLOT(slotSetWrapAroundModeAxisV()));
+         d->wrapAroundVAxisAction->setChecked(canvasController->wrapAroundModeAxis() == WRAPAROUND_VERTICAL);
+ 
++        // Stereo 3D: a side-by-side pair shown as one eye's picture to each eye
++        {
++            KisCanvas2 *kisCanvas = d->currentImageView->canvasBase();
++            const bool pair = kisCanvas->stereoPairAvailable();
++            if (pair && !kisCanvas->stereoPairEnabled() &&
++                KisConfig(true).stereo3DCanvas() && QSurfaceFormat::defaultFormat().stereo()) {
++                // started with the setting on and a stereo surface: show the pair this way
++                kisCanvas->setStereoPair(true, false);
++            }
++            QSignalBlocker b1(d->stereo3DAction);
++            QSignalBlocker b2(d->stereo3DRightViewAction);
++            d->stereo3DAction->setEnabled(pair);
++            d->stereo3DRightViewAction->setEnabled(pair);
++            d->stereo3DAction->setChecked(kisCanvas->stereoPairEnabled());
++            d->stereo3DRightViewAction->setChecked(kisCanvas->stereoPaintOnRightView());
++        }
++        d->viewConnections.addUniqueConnection(d->stereo3DAction, SIGNAL(toggled(bool)), this, SLOT(slotStereo3DChanged()));
++        d->viewConnections.addUniqueConnection(d->stereo3DRightViewAction, SIGNAL(toggled(bool)), this, SLOT(slotStereo3DChanged()));
++        d->viewConnections.addUniqueConnection(d->currentImageView->image(), SIGNAL(sigSizeChanged(QPointF,QPointF)), this, SLOT(slotUpdateStereo3DActions()));
++        d->viewConnections.addUniqueConnection(doc->documentInfo(), SIGNAL(infoUpdated(QString,QString)), this, SLOT(slotUpdateStereo3DActions()));
++
+         d->viewConnections.addUniqueConnection(d->levelOfDetailAction, SIGNAL(toggled(bool)), canvasController, SLOT(slotToggleLevelOfDetailMode(bool)));
+         d->levelOfDetailAction->setChecked(canvasController->levelOfDetailMode());
+ 
+@@ -767,6 +791,8 @@ void KisViewManager::createActions()
+     d->wrapAroundAxisActions->addAction(d->wrapAroundHAxisAction);
+     d->wrapAroundAxisActions->addAction(d->wrapAroundVAxisAction);
+     d->levelOfDetailAction = actionManager()->createAction("level_of_detail_mode");
++    d->stereo3DAction      = actionManager()->createAction("stereo_3d_mode");
++    d->stereo3DRightViewAction = actionManager()->createAction("stereo_3d_paint_right_view");
+     d->softProof           = actionManager()->createAction("softProof");
+     d->gamutCheck          = actionManager()->createAction("gamutCheck");
+ 
+@@ -1766,6 +1792,54 @@ void KisViewManager::slotToggleBrushOutline()
+     Q_EMIT brushOutlineToggled();
+ }
+ 
++void KisViewManager::slotUpdateStereo3DActions()
++{
++    KisCanvas2 *kisCanvas = canvasBase();
++    if (!kisCanvas) return;
++
++    const bool pair = kisCanvas->stereoPairAvailable();
++    d->stereo3DAction->setEnabled(pair);
++    d->stereo3DRightViewAction->setEnabled(pair);
++
++    if (!pair && kisCanvas->stereoPairEnabled()) {
++        // the document stopped being a pair (resized, or the mark removed)
++        kisCanvas->setStereoPair(false, kisCanvas->stereoPaintOnRightView());
++        QSignalBlocker b(d->stereo3DAction);
++        d->stereo3DAction->setChecked(false);
++    } else if (kisCanvas->stereoPairEnabled()) {
++        // the eye order may have changed with the document's keywords
++        kisCanvas->setStereoPair(true, kisCanvas->stereoPaintOnRightView());
++    }
++}
++
++void KisViewManager::slotStereo3DChanged()
++{
++    KisCanvas2 *kisCanvas = canvasBase();
++    if (!kisCanvas) return;
++
++    const bool enable = d->stereo3DAction->isChecked();
++    const bool rightView = d->stereo3DRightViewAction->isChecked();
++
++    KisConfig cfg(false);
++    if (cfg.stereo3DCanvas() != enable) {
++        cfg.setStereo3DCanvas(enable);
++    }
++
++    if (enable && !QSurfaceFormat::defaultFormat().stereo()) {
++        // the surface is decided when Krita starts: the setting is kept for the next start
++        showFloatingMessage(i18n("Stereo 3D is on from the next start of Krita: the canvas needs a stereo surface, "
++                                 "and Krita asks for one only when it starts."), QIcon(), 8000);
++        return;
++    }
++
++    kisCanvas->setStereoPair(enable, rightView);
++
++    if (enable) {
++        showFloatingMessage(rightView ? i18n("Stereo 3D: painting on the right view")
++                                      : i18n("Stereo 3D: painting on the left view"), QIcon());
++    }
++}
++
+ void KisViewManager::slotResetRotation()
+ {
+     KisCanvasController *canvasController = d->currentImageView->canvasController();
+diff --git a/libs/ui/KisViewManager.h b/libs/ui/KisViewManager.h
+index 2fddf79..12a4dfc 100644
+--- a/libs/ui/KisViewManager.h
++++ b/libs/ui/KisViewManager.h
+@@ -257,6 +257,8 @@ private Q_SLOTS:
+     void slotSaveShowRulersState(bool value);
+     void slotSaveRulersTrackMouseState(bool value);
+     void slotResetRotation();
++    void slotStereo3DChanged();
++    void slotUpdateStereo3DActions();
+     void slotResetDisplay();
+     void slotCreateOpacityResource(bool isOpacityPresetMode, KoToolBase *tool);
+ private:
+diff --git a/libs/ui/canvas/kis_canvas2.cpp b/libs/ui/canvas/kis_canvas2.cpp
+index 49d83f8..007bf18 100644
+--- a/libs/ui/canvas/kis_canvas2.cpp
++++ b/libs/ui/canvas/kis_canvas2.cpp
+@@ -29,6 +29,8 @@
+ #include <KoColorProfile.h>
+ #include <KoCanvasControllerWidget.h>
+ #include <KisDocument.h>
++#include <KoDocumentInfo.h>
++#include <QRegularExpression>
+ #include <KoSelection.h>
+ #include <KoShapeController.h>
+ #include <KisReferenceImagesLayer.h>
+@@ -258,6 +260,9 @@ public:
+     qreal regionOfInterestMargin = 0.25;
+ 
+     QRect renderingLimit;
++    bool stereoPair {false};
++    bool stereoPaintOnRightView {false};
++    bool stereoRightEyeFirst {false};
+     int isBatchUpdateActive = 0;
+ 
+ 
+@@ -1048,6 +1053,11 @@ void KisCanvas2::startResizingImage()
+ void KisCanvas2::finishResizingImage(qint32 w, qint32 h)
+ {
+     m_d->canvasWidget->finishResizingImage(w, h);
++
++    if (m_d->stereoPair) {
++        // the halves moved with the size
++        setStereoPair(true, m_d->stereoPaintOnRightView);
++    }
+ }
+ 
+ void KisCanvas2::startUpdateCanvasProjection(const QRect & rc)
+@@ -1367,9 +1377,78 @@ void KisCanvas2::setRenderingLimit(const QRect &rc)
+ 
+ QRect KisCanvas2::renderingLimit() const
+ {
++    // a stereo canvas shows one half of its image, to each eye its own: nothing of the other half
++    // is rendered next to it
++    if (m_d->stereoPair) {
++        const QRect shown = m_d->coordinatesConverter->stereoPaintedRect();
++        return m_d->renderingLimit.isEmpty() ? shown : m_d->renderingLimit & shown;
++    }
+     return m_d->renderingLimit;
+ }
+ 
++bool KisCanvas2::imageLooksLikeStereoPair(KisImageSP image, const KisDocument *document, bool *rightEyeFirst)
++{
++    if (rightEyeFirst) {
++        *rightEyeFirst = false;
++    }
++    if (!image || image->width() < 2 || (image->width() & 1)) {
++        return false;
++    }
++
++    // the document says so: "stereo", "3D" or "side by side" among its keywords, subject or title
++    bool marked = false;
++    if (document && document->documentInfo()) {
++        const KoDocumentInfo *info = document->documentInfo();
++        const QString text = (info->aboutInfo("keyword") + " " + info->aboutInfo("subject") + " " +
++                              info->aboutInfo("title") + " " + info->aboutInfo("description")).toLower();
++        static const QRegularExpression mark(QStringLiteral("\\b(stereo|stereoscopic|3d|sbs|side[- ]by[- ]side)\\b"));
++        static const QRegularExpression rightFirst(QStringLiteral("\\b(right[- ]eye[- ]first|right[- ]first|cross[- ]?eyed|rl)\\b"));
++        marked = text.contains(mark);
++        if (marked && rightEyeFirst) {
++            *rightEyeFirst = text.contains(rightFirst);
++        }
++    }
++
++    // or the size does: at least twice as wide as high (two pictures of the shape of a picture side by side)
++    return marked || image->width() >= 2 * image->height();
++}
++
++bool KisCanvas2::stereoPairAvailable() const
++{
++    return imageLooksLikeStereoPair(image(), m_d->view ? m_d->view->document() : nullptr);
++}
++
++bool KisCanvas2::stereoPairEnabled() const
++{
++    return m_d->stereoPair;
++}
++
++bool KisCanvas2::stereoPaintOnRightView() const
++{
++    return m_d->stereoPaintOnRightView;
++}
++
++QRect KisCanvas2::stereoEyeRect(bool rightEye) const
++{
++    const QRect bounds = image()->bounds();
++    const int half = bounds.width() / 2;
++    const bool secondHalf = rightEye != m_d->stereoRightEyeFirst;
++    return QRect(bounds.x() + (secondHalf ? half : 0), bounds.y(), half, bounds.height());
++}
++
++void KisCanvas2::setStereoPair(bool enabled, bool paintOnRightView)
++{
++    bool rightEyeFirst = false;
++    enabled = enabled && m_d->currentCanvasIsOpenGL && imageLooksLikeStereoPair(image(), m_d->view ? m_d->view->document() : nullptr, &rightEyeFirst);
++
++    m_d->stereoRightEyeFirst = rightEyeFirst;
++    m_d->stereoPair = enabled;
++    m_d->stereoPaintOnRightView = paintOnRightView;
++
++    m_d->view->canvasController()->setStereoView(enabled ? stereoEyeRect(paintOnRightView) : QRect());
++    updateCanvas();
++}
++
+ KisPopupPalette *KisCanvas2::popupPalette()
+ {
+     return m_d->popupPalette;
+diff --git a/libs/ui/canvas/kis_canvas2.h b/libs/ui/canvas/kis_canvas2.h
+index f4df18a..00a27bb 100644
+--- a/libs/ui/canvas/kis_canvas2.h
++++ b/libs/ui/canvas/kis_canvas2.h
+@@ -211,6 +211,22 @@ public: // KisCanvas2 methods
+      */
+     QRect renderingLimit() const;
+ 
++    /**
++     * Stereo canvas. A document that is a side-by-side pair (full width, one eye's picture in each
++     * half) can be shown as one eye's picture: with a stereo surface (the "Stereo 3D" setting) the
++     * canvas paints the left half for the left eye and the right half for the right eye, at the same
++     * place, and everything else on the canvas (checkers, borders, decorations, the brush outline)
++     * is the same in both eyes. The strokes land on the half shown at the pointer: the view that is
++     * painted on is chosen with setStereoPaintOnRightView(), the other half is shown to its eye only.
++     */
++    static bool imageLooksLikeStereoPair(KisImageSP image, const KisDocument *document, bool *rightEyeFirst = nullptr);
++    bool stereoPairAvailable() const;
++    bool stereoPairEnabled() const;
++    bool stereoPaintOnRightView() const;
++    void setStereoPair(bool enabled, bool paintOnRightView);
++    /// The half of the image that holds the left or the right eye's picture, in image pixels
++    QRect stereoEyeRect(bool rightEye) const;
++
+     KisPopupPalette* popupPalette();
+ 
+     /**
+diff --git a/libs/ui/canvas/kis_canvas_controller.cpp b/libs/ui/canvas/kis_canvas_controller.cpp
+index 867b1d5..6de7440 100644
+--- a/libs/ui/canvas/kis_canvas_controller.cpp
++++ b/libs/ui/canvas/kis_canvas_controller.cpp
+@@ -498,6 +498,15 @@ void KisCanvasController::syncOnImageResolutionChange()
+     emitSignals(oldCanvasState, newCanvasState);
+ }
+ 
++void KisCanvasController::setStereoView(const QRect &rect)
++{
++    const KisCanvasState oldCanvasState = canvasState();
++    m_d->coordinatesConverter->setStereoView(rect);
++    const KisCanvasState newCanvasState = canvasState();
++
++    emitSignals(oldCanvasState, newCanvasState);
++}
++
+ void KisCanvasController::syncOnImageSizeChange(const QPointF &oldStillPoint, const QPointF &newStillPoint)
+ {
+     const KisCanvasState oldCanvasState = canvasState();
+diff --git a/libs/ui/canvas/kis_canvas_controller.h b/libs/ui/canvas/kis_canvas_controller.h
+index 3f47db9..6bd2e73 100644
+--- a/libs/ui/canvas/kis_canvas_controller.h
++++ b/libs/ui/canvas/kis_canvas_controller.h
+@@ -51,6 +51,8 @@ public:
+     void syncOnReferencesChange(const QRectF &referencesRect);
+     void syncOnImageResolutionChange();
+     void syncOnImageSizeChange(const QPointF &oldStillPoint, const QPointF &newStillPoint);
++    /// the part of the image a stereo canvas shows (see KisCanvas2::setStereoPair()), null for all of it
++    void setStereoView(const QRect &rect);
+ 
+     void rotateCanvas(qreal angle, const std::optional<KoViewTransformStillPoint> &stillPoint, bool isNativeGesture = false);
+ 
+diff --git a/libs/ui/canvas/kis_coordinates_converter.cpp b/libs/ui/canvas/kis_coordinates_converter.cpp
+index a44b531..d94e5c9 100644
+--- a/libs/ui/canvas/kis_coordinates_converter.cpp
++++ b/libs/ui/canvas/kis_coordinates_converter.cpp
+@@ -39,6 +39,11 @@ struct KisCoordinatesConverter::Private {
+     }
+ 
+     QRect imageBounds;
++    // stereo canvas (see setStereoView()): the part of the image the view shows, and, while a
++    // frame of one eye is being painted, that eye's part and the saved transform
++    QRect stereoView;
++    QRect stereoEyeView;
++    QTransform stereoSavedImageToDocument;
+     QRect extraReferencesBounds;
+     qreal imageXRes;
+     qreal imageYRes;
+@@ -68,6 +73,10 @@ struct KisCoordinatesConverter::Private {
+ 
+     KisValueCache<StandardZoomLevelsInitializer> standardZoomLevels;
+ 
++    QRect viewBounds() const {
++        return !stereoEyeView.isNull() ? stereoEyeView : !stereoView.isNull() ? stereoView : imageBounds;
++    }
++
+     QTransform flakeToWidget;
+     QTransform rotationBaseTransform;
+     QTransform imageToDocument;
+@@ -297,6 +306,60 @@ void KisCoordinatesConverter::setImageBounds(const QRect &rect, const QPointF ol
+     resetPreferredTransformationCenter();
+ }
+ 
++void KisCoordinatesConverter::setStereoView(const QRect &rect)
++{
++    if (rect == m_d->stereoView) return;
++
++    const bool wasStereo = !m_d->stereoView.isNull();
++    const QPointF oldWidgetStillPoint = imageToWidget(QRectF(m_d->viewBounds()).center());
++
++    m_d->stereoView = rect;
++    recalculateZoomLevelLimits();
++    recalculateTransformations();
++
++    if (wasStereo && !rect.isNull()) {
++        // the other eye's view of the same picture: keep it where it was on the widget
++        const QPointF newWidgetStillPoint = imageToWidget(QRectF(m_d->viewBounds()).center());
++        m_d->documentOffset = snapToDevicePixel(m_d->documentOffset + newWidgetStillPoint - oldWidgetStillPoint);
++        recalculateTransformations();
++        resetPreferredTransformationCenter();
++    } else if (!m_d->canvasWidgetSize.isEmpty()) {
++        // a pair shown as one eye's picture, or back: fit the page again
++        setZoom(KoZoomMode::ZOOM_PAGE, 777.7, resolutionX(), resolutionY(), std::nullopt);
++    }
++}
++
++QRect KisCoordinatesConverter::stereoView() const
++{
++    return m_d->stereoView;
++}
++
++QRect KisCoordinatesConverter::stereoPaintedRect() const
++{
++    return !m_d->stereoEyeView.isNull() ? m_d->stereoEyeView : m_d->stereoView;
++}
++
++void KisCoordinatesConverter::beginStereoEyeView(const QRect &eyeRect)
++{
++    KIS_SAFE_ASSERT_RECOVER_RETURN(m_d->stereoEyeView.isNull());
++    KIS_SAFE_ASSERT_RECOVER_RETURN(!m_d->stereoView.isNull());
++
++    // the other eye's part of the picture, drawn where the shown part is: the same widget
++    // position, the content of the other half
++    const QPoint shift = eyeRect.topLeft() - m_d->stereoView.topLeft();
++    m_d->stereoSavedImageToDocument = m_d->imageToDocument;
++    m_d->imageToDocument = QTransform::fromTranslate(-shift.x(), -shift.y()) * m_d->imageToDocument;
++    m_d->stereoEyeView = eyeRect;
++}
++
++void KisCoordinatesConverter::endStereoEyeView()
++{
++    if (m_d->stereoEyeView.isNull()) return;
++
++    m_d->imageToDocument = m_d->stereoSavedImageToDocument;
++    m_d->stereoEyeView = QRect();
++}
++
+ void KisCoordinatesConverter::setImageResolution(qreal xRes, qreal yRes)
+ {
+     // we consiter the center of the image to be the still point
+@@ -806,7 +869,7 @@ void KisCoordinatesConverter::getOpenGLCheckersInfo(const QRectF &viewportRect,
+ 
+ QPointF KisCoordinatesConverter::imageCenterInWidgetPixel() const
+ {
+-    QPolygonF poly = imageToWidget(QPolygon(m_d->imageBounds));
++    QPolygonF poly = imageToWidget(QPolygon(m_d->viewBounds()));
+     return (poly[0] + poly[1] + poly[2] + poly[3]) / 4.0;
+ }
+ 
+@@ -815,12 +878,12 @@ QPointF KisCoordinatesConverter::imageCenterInWidgetPixel() const
+ 
+ QRectF KisCoordinatesConverter::imageRectInWidgetPixels() const
+ {
+-    return imageToWidget(m_d->imageBounds);
++    return imageToWidget(m_d->viewBounds());
+ }
+ 
+ QRectF KisCoordinatesConverter::imageRectInViewportPixels() const
+ {
+-    return imageToViewport(m_d->imageBounds);
++    return imageToViewport(m_d->viewBounds());
+ }
+ 
+ QRect KisCoordinatesConverter::imageRectInImagePixels() const
+@@ -830,14 +893,14 @@ QRect KisCoordinatesConverter::imageRectInImagePixels() const
+ 
+ QRectF KisCoordinatesConverter::imageRectInDocumentPixels() const
+ {
+-    return imageToDocument(m_d->imageBounds);
++    return imageToDocument(m_d->viewBounds());
+ }
+ 
+ QSizeF KisCoordinatesConverter::imageSizeInFlakePixels() const
+ {
+     qreal scaleX, scaleY;
+     imageScale(&scaleX, &scaleY);
+-    QSize imageSize = m_d->imageBounds.size();
++    QSize imageSize = m_d->viewBounds().size();
+ 
+     return QSizeF(imageSize.width() * scaleX, imageSize.height() * scaleY);
+ }
+@@ -943,10 +1006,11 @@ void KisCoordinatesConverter::recalculateZoomLevelLimits()
+ {
+     qreal minDimension = 0.0;
+ 
+-    if (m_d->imageBounds.width() < m_d->imageBounds.height()) {
+-        minDimension = m_d->imageBounds.width() * resolutionX() / m_d->imageXRes;
++    const QRect bounds = m_d->viewBounds();
++    if (bounds.width() < bounds.height()) {
++        minDimension = bounds.width() * resolutionX() / m_d->imageXRes;
+     } else {
+-        minDimension = m_d->imageBounds.height() * resolutionY() / m_d->imageYRes;
++        minDimension = bounds.height() * resolutionY() / m_d->imageYRes;
+     }
+ 
+     m_d->minZoom = qMin(100.0 / minDimension, 0.1);
+diff --git a/libs/ui/canvas/kis_coordinates_converter.h b/libs/ui/canvas/kis_coordinates_converter.h
+index ee209a7..47f553f 100644
+--- a/libs/ui/canvas/kis_coordinates_converter.h
++++ b/libs/ui/canvas/kis_coordinates_converter.h
+@@ -62,6 +62,25 @@ public:
+     void setImageResolution(qreal xRes, qreal yRes);
+     void setDocumentOffset(const QPointF &offset);
+ 
++    /**
++     * Stereo canvas: a side-by-side pair is shown as one eye's picture. \p rect is the
++     * part of the image that the view shows (one half of the pair), in image pixels; a
++     * null rectangle shows the whole image, as usual. The view (zoom to fit, scroll range,
++     * borders, checkers) follows that part, while positions stay in image pixels.
++     */
++    void setStereoView(const QRect &rect);
++    QRect stereoView() const;
++    /// what a stereo canvas paints at the moment: the other eye's half between begin and endStereoEyeView(), else stereoView()
++    QRect stereoPaintedRect() const;
++
++    /**
++     * Paint one frame of the other eye: until endStereoEyeView() the transformations map
++     * \p eyeRect (the other half of the pair, in image pixels) to where stereoView() is.
++     * Never call anything that recalculates the transformations in between.
++     */
++    void beginStereoEyeView(const QRect &eyeRect);
++    void endStereoEyeView();
++
+     qreal devicePixelRatio() const;
+     QPoint documentOffset() const;
+     QPointF documentOffsetF() const;
+diff --git a/libs/ui/kis_config.cc b/libs/ui/kis_config.cc
+index 73a3d2f..a62c12d 100644
+--- a/libs/ui/kis_config.cc
++++ b/libs/ui/kis_config.cc
+@@ -715,6 +715,30 @@ void KisConfig::setCanvasSurfaceColorSpaceManagementMode(KisConfig::CanvasSurfac
+ }
+ 
+ 
++bool KisConfig::stereo3DCanvas(QSettings *settings, bool defaultValue)
++{
++    return defaultValue ? false : settings->value("stereo3DCanvas", false).toBool();
++}
++
++void KisConfig::setStereo3DCanvas(QSettings *settings, bool value)
++{
++    settings->setValue("stereo3DCanvas", value);
++}
++
++bool KisConfig::stereo3DCanvas(bool defaultValue) const
++{
++    const QString configPath = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
++    QSettings kritarc(configPath + QStringLiteral("/kritadisplayrc"), QSettings::IniFormat);
++    return stereo3DCanvas(&kritarc, defaultValue);
++}
++
++void KisConfig::setStereo3DCanvas(bool value)
++{
++    const QString configPath = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
++    QSettings kritarc(configPath + QStringLiteral("/kritadisplayrc"), QSettings::IniFormat);
++    setStereo3DCanvas(&kritarc, value);
++}
++
+ KisConfig::CanvasSurfaceBitDepthMode KisConfig::canvasSurfaceBitDepthMode(QSettings *settings, bool defaultValue)
+ {
+     QString modeStr = defaultValue ? "auto" : settings->value("canvasSurfaceBitDepthMode", "auto").toString();
+diff --git a/libs/ui/kis_config.h b/libs/ui/kis_config.h
+index 85484f3..546180e 100644
+--- a/libs/ui/kis_config.h
++++ b/libs/ui/kis_config.h
+@@ -193,6 +193,16 @@ public:
+         Depth16Bit
+     };
+ 
++    /**
++     * "Stereo 3D": the canvas asks for a stereo (left and right buffer) surface, to show a
++     * side-by-side pair as one eye's picture to each eye. It decides the platform and the surface
++     * at start-up, so it is kept in kritadisplayrc and takes effect at the next start. Off by default.
++     */
++    static bool stereo3DCanvas(QSettings *settings, bool defaultValue = false);
++    static void setStereo3DCanvas(QSettings *settings, bool value);
++    bool stereo3DCanvas(bool defaultValue = false) const;
++    void setStereo3DCanvas(bool value);
++
+     static CanvasSurfaceBitDepthMode canvasSurfaceBitDepthMode(QSettings *settings, bool defaultValue = false);
+     static void setCanvasSurfaceBitDepthMode(QSettings *settings, CanvasSurfaceBitDepthMode value);
+ 
+diff --git a/libs/ui/opengl/KisOpenGLCanvasRenderer.cpp b/libs/ui/opengl/KisOpenGLCanvasRenderer.cpp
+index 93bd8b9..04951f8 100644
+--- a/libs/ui/opengl/KisOpenGLCanvasRenderer.cpp
++++ b/libs/ui/opengl/KisOpenGLCanvasRenderer.cpp
+@@ -863,6 +863,14 @@ void KisOpenGLCanvasRenderer::drawImage(const QRect &updateRect)
+     const int firstCloneY = qFloor(qreal(firstRow) / imageRows);
+     const int lastCloneY = qFloor(qreal(lastRow) / imageRows);
+ 
++    // a stereo canvas shows one half of its image: the tiles reach past it, the picture must not
++    const bool clipToShownRect = !canvas()->renderingLimit().isEmpty() && canvas()->stereoPairEnabled();
++    if (clipToShownRect) {
++        const QRect deviceClipRect = widgetToSurface(converter->imageRectInWidgetPixels()).toAlignedRect();
++        glScissor(deviceClipRect.x(), deviceClipRect.y(), deviceClipRect.width(), deviceClipRect.height());
++        glEnable(GL_SCISSOR_TEST);
++    }
++
+     for (int cloneY = firstCloneY; cloneY <= lastCloneY; cloneY++) {
+         for (int cloneX = firstCloneX; cloneX <= lastCloneX; cloneX++) {
+ 
+@@ -878,6 +886,10 @@ void KisOpenGLCanvasRenderer::drawImage(const QRect &updateRect)
+         }
+     }
+ 
++    if (clipToShownRect) {
++        glDisable(GL_SCISSOR_TEST);
++    }
++
+     d->displayShader->release();
+ 
+     glDisable(GL_BLEND);
+diff --git a/libs/ui/opengl/kis_opengl_canvas2.cpp b/libs/ui/opengl/kis_opengl_canvas2.cpp
+index 2959270..51665ee 100644
+--- a/libs/ui/opengl/kis_opengl_canvas2.cpp
++++ b/libs/ui/opengl/kis_opengl_canvas2.cpp
+@@ -255,7 +255,16 @@ void KisOpenGLCanvas2::paintGL()
+     }
+ #endif
+ 
+-    const QRect updateRect = d->updateRect ? *d->updateRect : QRect();
++    /**
++     * A stereo surface (the "Stereo 3D" setting) makes Qt paint the widget twice per frame, the
++     * left buffer first and then the right one. A document that is a side-by-side pair is shown
++     * as one eye's picture: the left half in the left buffer, the right half in the right one, at
++     * the same place. Each pass renders the whole canvas again, since the two buffers differ.
++     */
++    const bool stereoPair = format().stereo() && canvas()->stereoPairEnabled();
++    const bool rightEye = stereoPair && currentTargetBuffer() == QOpenGLWidget::RightBuffer;
++
++    const QRect updateRect = (d->updateRect && !stereoPair) ? *d->updateRect : QRect();
+ 
+     if (!OPENGL_SUCCESS) {
+         KisConfig cfg(false);
+@@ -263,9 +272,20 @@ void KisOpenGLCanvas2::paintGL()
+     }
+ 
+     KisOpenglCanvasDebugger::instance()->notifyPaintRequested();
+-    QRect canvasImageDirtyRect = d->canvasImageDirtyRect & rect();
++    QRect canvasImageDirtyRect = stereoPair ? rect() : (d->canvasImageDirtyRect & rect());
+     d->canvasImageDirtyRect = QRect();
++
++    // the other eye's half of the picture goes to where the shown half is; what is drawn on top
++    // of the picture below (decorations, the brush outline) is the same in both eyes
++    const QRect eyeRect = stereoPair ? canvas()->stereoEyeRect(rightEye) : QRect();
++    const bool eyeViewActive = stereoPair && eyeRect != coordinatesConverter()->stereoView();
++    if (eyeViewActive) {
++        coordinatesConverter()->beginStereoEyeView(eyeRect);
++    }
+     d->renderer->paintCanvasOnly(canvasImageDirtyRect, updateRect);
++    if (eyeViewActive) {
++        coordinatesConverter()->endStereoEyeView();
++    }
+     {
+         QPainter gc(this);
+         if (!updateRect.isEmpty()) {
+-- 
+2.53.0
+

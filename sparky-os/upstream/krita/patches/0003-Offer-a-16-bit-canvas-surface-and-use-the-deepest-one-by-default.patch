@@ -1,0 +1,281 @@
+From a2ed3e8199414f6f6984e02f1c4fbaee60512298 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 6 Oct 2026 16:02:52 -0300
+Subject: [PATCH] Offer a 16-bit canvas surface and use the deepest one by
+ default
+
+The canvas surface was limited to 8 or 10 bits per channel in the
+non-HDR, surface-managed path (KRITA_USE_SURFACE_COLOR_MANAGEMENT_API),
+although Mesa's EGL on Wayland also offers 16-bit window surfaces
+(ABGR16161616 and the half-float formats) and Qt's Wayland platform
+hands them out when asked for 16 bits per channel. A deep-colour
+display chain (HDMI 10, 12 and 16 bits per channel) then gets a canvas
+that is quantized to 10 bits before the compositor sees it.
+
+Add a "16-bit" canvas surface bit depth mode next to "8-bit" and
+"10-bit". "Auto" now requests the deepest surface: the candidates are
+probed 16, 10, 8 bits in turn (the first one the stack creates wins) and
+an explicit setting is honoured first, then the deepest depth below it.
+The canvas widget uses a GL_RGBA16 texture with the 16-bit surface
+(GL_RGBA16F on OpenGL ES, where normalized 16-bit textures are not
+core), the preferences dialog lists the new mode and shows the current
+depth.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ libs/ui/canvas/kis_abstract_canvas_widget.h |  3 ++-
+ libs/ui/canvas/kis_canvas2.cpp              |  7 ++++--
+ libs/ui/dialogs/kis_dlg_preferences.cc      |  9 +++++--
+ libs/ui/kis_config.cc                       | 15 +++++++++++-
+ libs/ui/kis_config.h                        |  3 ++-
+ libs/ui/opengl/KisOpenGLModeProber.cpp      | 14 ++++++++---
+ libs/ui/opengl/kis_opengl.cpp               | 22 ++++++++++++++---
+ libs/ui/opengl/kis_opengl_canvas2.cpp       | 27 ++++++++++++++++++++-
+ 8 files changed, 85 insertions(+), 15 deletions(-)
+
+diff --git a/libs/ui/canvas/kis_abstract_canvas_widget.h b/libs/ui/canvas/kis_abstract_canvas_widget.h
+index 07c9a85..d0a39a0 100644
+--- a/libs/ui/canvas/kis_abstract_canvas_widget.h
++++ b/libs/ui/canvas/kis_abstract_canvas_widget.h
+@@ -30,7 +30,8 @@ class KisAbstractCanvasWidget
+ public:
+     enum class BitDepthMode {
+         Depth8Bit = 0,
+-        Depth10Bit
++        Depth10Bit,
++        Depth16Bit
+     };
+ 
+ public:
+diff --git a/libs/ui/canvas/kis_canvas2.cpp b/libs/ui/canvas/kis_canvas2.cpp
+index 0d108e2..49d83f8 100644
+--- a/libs/ui/canvas/kis_canvas2.cpp
++++ b/libs/ui/canvas/kis_canvas2.cpp
+@@ -748,9 +748,12 @@ void KisCanvas2::createOpenGLCanvas()
+     m_d->multiSurfaceState =
+         m_d->multiSurfaceSetupManager.createInitializingConfig(true, m_d->currentScreenId(), m_d->proofingConfig);
+ 
++    const auto effectiveBitDepthMode =
++        cfg.effectiveCanvasSurfaceBitDepthMode(QSurfaceFormat::defaultFormat());
+     auto bitDepthMode =
+-        cfg.effectiveCanvasSurfaceBitDepthMode(QSurfaceFormat::defaultFormat())
+-            == KisConfig::CanvasSurfaceBitDepthMode::Depth10Bit ?
++        effectiveBitDepthMode == KisConfig::CanvasSurfaceBitDepthMode::Depth16Bit ?
++        KisOpenGLCanvas2::BitDepthMode::Depth16Bit :
++        effectiveBitDepthMode == KisConfig::CanvasSurfaceBitDepthMode::Depth10Bit ?
+         KisOpenGLCanvas2::BitDepthMode::Depth10Bit :
+         KisOpenGLCanvas2::BitDepthMode::Depth8Bit;
+ 
+diff --git a/libs/ui/dialogs/kis_dlg_preferences.cc b/libs/ui/dialogs/kis_dlg_preferences.cc
+index 9d221b8..9967a8e 100644
+--- a/libs/ui/dialogs/kis_dlg_preferences.cc
++++ b/libs/ui/dialogs/kis_dlg_preferences.cc
+@@ -1375,13 +1375,18 @@ ColorSettingsTab::ColorSettingsTab(QWidget *parent, const char *name)
+         m_canvasSurfaceBitDepth->addSqueezedItem(i18n("Auto"), QVariant::fromValue(CanvasSurfaceBitDepthMode::DepthAuto));
+         m_canvasSurfaceBitDepth->addSqueezedItem(i18n("8-bit"), QVariant::fromValue(CanvasSurfaceBitDepthMode::Depth8Bit));
+         m_canvasSurfaceBitDepth->addSqueezedItem(i18n("10-bit"), QVariant::fromValue(CanvasSurfaceBitDepthMode::Depth10Bit));
++        m_canvasSurfaceBitDepth->addSqueezedItem(i18n("16-bit"), QVariant::fromValue(CanvasSurfaceBitDepthMode::Depth16Bit));
+ 
+         m_canvasSurfaceBitDepth->setToolTip(
+             i18n("<p>The bit depth of the color that is passed to the window "
+-                 "compositor. You should switch into 10-bit mode if you want to use "
++                 "compositor. \"Auto\" uses the deepest surface the graphics stack "
++                 "offers. You should use at least 10-bit if you want to use "
+                  "HDR capabilities of your display</p>"));
+ 
+-        const QString currentBitBepthString = QSurfaceFormat::defaultFormat().redBufferSize() == 10 ? i18n("10-bit") : i18n("8-bit");
++        const int currentBitDepth = QSurfaceFormat::defaultFormat().redBufferSize();
++        const QString currentBitBepthString =
++            currentBitDepth == 16 ? i18n("16-bit") :
++            currentBitDepth == 10 ? i18n("10-bit") : i18n("8-bit");
+         QLabel *currentCanvasSurfaceBitDepthLbl = new QLabel(i18n("Current canvas surface bit depth:"), this);
+         QLabel *currentCanvasSurfaceBitDepth = new QLabel(currentBitBepthString, this);
+         monitorProfileGrid->addRow(currentCanvasSurfaceBitDepthLbl, currentCanvasSurfaceBitDepth);
+diff --git a/libs/ui/kis_config.cc b/libs/ui/kis_config.cc
+index 7a7c43b..73a3d2f 100644
+--- a/libs/ui/kis_config.cc
++++ b/libs/ui/kis_config.cc
+@@ -725,6 +725,8 @@ KisConfig::CanvasSurfaceBitDepthMode KisConfig::canvasSurfaceBitDepthMode(QSetti
+         return CanvasSurfaceBitDepthMode::Depth8Bit;
+     } else if (modeStr == "10bit") {
+         return CanvasSurfaceBitDepthMode::Depth10Bit;
++    } else if (modeStr == "16bit") {
++        return CanvasSurfaceBitDepthMode::Depth16Bit;
+     }
+ 
+     return CanvasSurfaceBitDepthMode::DepthAuto;
+@@ -744,6 +746,9 @@ void KisConfig::setCanvasSurfaceBitDepthMode(QSettings *settings, CanvasSurfaceB
+         case CanvasSurfaceBitDepthMode::Depth10Bit:
+             modeStr = "10bit";
+             break;
++        case CanvasSurfaceBitDepthMode::Depth16Bit:
++            modeStr = "16bit";
++            break;
+     }
+ 
+     settings->setValue("canvasSurfaceBitDepthMode", modeStr);
+@@ -768,7 +773,12 @@ KisConfig::CanvasSurfaceBitDepthMode KisConfig::effectiveCanvasSurfaceBitDepthMo
+     auto mode = canvasSurfaceBitDepthMode();
+ 
+     if (mode == CanvasSurfaceBitDepthMode::DepthAuto) {
+-        if (format.redBufferSize() == 10 &&
++        if (format.redBufferSize() == 16 &&
++            format.greenBufferSize() == 16 &&
++            format.blueBufferSize() == 16) {
++
++            mode = CanvasSurfaceBitDepthMode::Depth16Bit;
++        } else if (format.redBufferSize() == 10 &&
+             format.greenBufferSize() == 10 &&
+             format.blueBufferSize() == 10) {
+ 
+@@ -3081,6 +3091,9 @@ QDebug operator<<(QDebug debug, const KisConfig::CanvasSurfaceBitDepthMode &mode
+         case KisConfig::CanvasSurfaceBitDepthMode::Depth10Bit:
+             debug.nospace() << "Depth10Bit";
+             break;
++        case KisConfig::CanvasSurfaceBitDepthMode::Depth16Bit:
++            debug.nospace() << "Depth16Bit";
++            break;
+         default:
+             debug.nospace() << "unknown(" << static_cast<int>(mode) << ")";
+             break;
+diff --git a/libs/ui/kis_config.h b/libs/ui/kis_config.h
+index e4df333..85484f3 100644
+--- a/libs/ui/kis_config.h
++++ b/libs/ui/kis_config.h
+@@ -189,7 +189,8 @@ public:
+     enum class CanvasSurfaceBitDepthMode {
+         DepthAuto = 0,
+         Depth8Bit,
+-        Depth10Bit
++        Depth10Bit,
++        Depth16Bit
+     };
+ 
+     static CanvasSurfaceBitDepthMode canvasSurfaceBitDepthMode(QSettings *settings, bool defaultValue = false);
+diff --git a/libs/ui/opengl/KisOpenGLModeProber.cpp b/libs/ui/opengl/KisOpenGLModeProber.cpp
+index f1a46eb..d450a0d 100644
+--- a/libs/ui/opengl/KisOpenGLModeProber.cpp
++++ b/libs/ui/opengl/KisOpenGLModeProber.cpp
+@@ -288,9 +288,17 @@ void KisOpenGLModeProber::initSurfaceFormatFromConfig(std::pair<KisSurfaceColorS
+         rootSurfaceFormat.first = KisSurfaceColorSpaceWrapper::DefaultColorSpace;
+     } else {
+         KIS_SAFE_ASSERT_RECOVER_NOOP(rootSurfaceFormat.first == KisSurfaceColorSpaceWrapper::DefaultColorSpace);
+-        KIS_SAFE_ASSERT_RECOVER_NOOP(rootSurfaceFormat.second == 8 || rootSurfaceFormat.second == 10);
+-
+-        if (rootSurfaceFormat.second == 10) {
++        KIS_SAFE_ASSERT_RECOVER_NOOP(rootSurfaceFormat.second == 8 || rootSurfaceFormat.second == 10 || rootSurfaceFormat.second == 16);
++
++        if (rootSurfaceFormat.second == 16) {
++            // a 16-bit normalized surface (e.g. Mesa's ABGR16161616 on Wayland)
++            format->setRedBufferSize(16);
++            format->setGreenBufferSize(16);
++            format->setBlueBufferSize(16);
++            format->setAlphaBufferSize(16);
++            // TODO: check if we can use real sRGB space here
++            format->setColorSpace(KisSurfaceColorSpaceWrapper());
++        } else if (rootSurfaceFormat.second == 10) {
+             format->setRedBufferSize(10);
+             format->setGreenBufferSize(10);
+             format->setBlueBufferSize(10);
+diff --git a/libs/ui/opengl/kis_opengl.cpp b/libs/ui/opengl/kis_opengl.cpp
+index 9b1c48a..b7575b9 100644
+--- a/libs/ui/opengl/kis_opengl.cpp
++++ b/libs/ui/opengl/kis_opengl.cpp
+@@ -781,8 +781,15 @@ public:
+         ORDER_BY(lhs.rendererId() == m_preferredRendererByQt,
+                  rhs.rendererId() == m_preferredRendererByQt);
+ 
+-        ORDER_BY(lhs.format.redBufferSize() == m_userPreferredBitDepth,
+-                 rhs.format.redBufferSize() == m_userPreferredBitDepth);
++        /**
++         * Prefer the requested depth, then the deepest one below it, then the
++         * shallowest one above it. "Auto" requests the deepest surface there is.
++         */
++        const int lhsRank = depthRank(lhs.format.redBufferSize());
++        const int rhsRank = depthRank(rhs.format.redBufferSize());
++        if (lhsRank != rhsRank) {
++            return lhsRank > rhsRank;
++        }
+ 
+         return false;
+     }
+@@ -838,6 +845,10 @@ public:
+     }
+ 
+ private:
++    int depthRank(int bits) const {
++        return bits <= m_userPreferredBitDepth ? 1000 + bits : 1000 - bits;
++    }
++
+     bool isHDRFormat(const QSurfaceFormat &f) const {
+ #ifdef HAVE_HDR
+         return f.colorSpace() == KisSurfaceColorSpaceWrapper::makeBt2020PQColorSpace() ||
+@@ -941,6 +952,7 @@ KisOpenGL::RendererConfig KisOpenGL::selectSurfaceConfig(KisOpenGL::OpenGLRender
+         {
+             {KisSurfaceColorSpaceWrapper::DefaultColorSpace, 8},
+             {KisSurfaceColorSpaceWrapper::DefaultColorSpace, 10},
++            {KisSurfaceColorSpaceWrapper::DefaultColorSpace, 16},
+         });
+ #else
+     std::vector<std::pair<KisSurfaceColorSpaceWrapper, int>> formatSymbolPairs(
+@@ -1050,8 +1062,10 @@ KisOpenGL::RendererConfig KisOpenGL::selectSurfaceConfig(KisOpenGL::OpenGLRender
+     compareOp.setOpenGLESBlacklisted(false); // We cannot blacklist ES drivers atm
+ 
+ #if KRITA_USE_SURFACE_COLOR_MANAGEMENT_API
+-    // 10-bit is the default, 8-bit is set explicitly by the user
+-    compareOp.setUserPreferredBitDepth(preferredCanvasSurfaceBitMode == KisConfig::CanvasSurfaceBitDepthMode::Depth8Bit ? 8 : 10);
++    // the deepest surface is the default, a shallower one is set explicitly by the user
++    compareOp.setUserPreferredBitDepth(
++        preferredCanvasSurfaceBitMode == KisConfig::CanvasSurfaceBitDepthMode::Depth8Bit ? 8 :
++        preferredCanvasSurfaceBitMode == KisConfig::CanvasSurfaceBitDepthMode::Depth10Bit ? 10 : 16);
+ #else
+     Q_UNUSED(preferredCanvasSurfaceBitMode)
+ #endif
+diff --git a/libs/ui/opengl/kis_opengl_canvas2.cpp b/libs/ui/opengl/kis_opengl_canvas2.cpp
+index e42bed7..2959270 100644
+--- a/libs/ui/opengl/kis_opengl_canvas2.cpp
++++ b/libs/ui/opengl/kis_opengl_canvas2.cpp
+@@ -133,7 +133,20 @@ KisOpenGLCanvas2::KisOpenGLCanvas2(KisCanvas2 *canvas,
+     if (KisOpenGLModeProber::instance()->useHDRMode()) {
+         setTextureFormat(GL_RGBA16F);
+     } else {
+-        if (bitDepthRequest == BitDepthMode::Depth10Bit) {
++        if (bitDepthRequest == BitDepthMode::Depth16Bit) {
++            if (QSurfaceFormat::defaultFormat().redBufferSize() < 16) {
++                warnOpenGL <<
++                    "WARNING: KisOpenGLCanvas2 was created with a 16-bit surface, "
++                    "while the global surface format is still set to a lower depth. "
++                    "Expect color banding to appear";
++            }
++#ifdef GL_RGBA16
++            // 16-bit normalized textures are not available in OpenGL ES 3.0
++            setTextureFormat(KisOpenGL::hasOpenGLES() ? GL_RGBA16F : GL_RGBA16);
++#else
++            setTextureFormat(GL_RGBA16F);
++#endif
++        } else if (bitDepthRequest == BitDepthMode::Depth10Bit) {
+             if (QSurfaceFormat::defaultFormat().redBufferSize() < 10) {
+                 warnOpenGL <<
+                     "WARNING: KisOpenGLCanvas2 was created with a 10-bit surface, "
+@@ -469,6 +482,18 @@ KisOpenGLImageTexturesSP KisOpenGLCanvas2::openGLImageTextures() const
+ 
+ KisOpenGLCanvas2::BitDepthMode KisOpenGLCanvas2::currentBitDepthMode() const 
+ {
++    if ((textureFormat() == GL_RGBA16F
++#ifdef GL_RGBA16
++         || textureFormat() == GL_RGBA16
++#endif
++         ) &&
++        format().redBufferSize() == 16 &&
++        format().greenBufferSize() == 16 &&
++        format().blueBufferSize() == 16) {
++
++        return BitDepthMode::Depth16Bit;
++    }
++
+     return
+         textureFormat() == GL_RGB10_A2 &&
+         format().redBufferSize() == 10 &&
+-- 
+2.53.0
+

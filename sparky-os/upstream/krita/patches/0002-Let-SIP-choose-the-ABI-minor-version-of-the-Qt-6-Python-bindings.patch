@@ -1,0 +1,37 @@
+From 73268e8b3305a1d790acaaca5c012e00aab5b2e0 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 6 Oct 2026 14:44:46 -0300
+Subject: [PATCH] Let SIP choose the ABI minor version of the Qt 6 Python
+ bindings
+
+The Qt 6 build generated the PyKrita module for SIP ABI 13.0. PyQt6 states
+a minimum ABI in its own .sip files (13.8 for PyQt6 6.11), and SIP refuses
+to generate a module that targets a lower minor version than the PyQt6 it
+imports, so the build fails with a PyQt6 newer than the one in the Krita
+dependency recipes (SIP 6.16 even crashes while printing that error).
+
+Give only the major version, 13, as SIP's pyproject.toml allows: SIP then
+uses the newest minor version both the installed SIP and PyQt6 support, the
+same one the matching PyQt6.sip module provides at run time.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ cmake/modules/SIPMacros.cmake | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/cmake/modules/SIPMacros.cmake b/cmake/modules/SIPMacros.cmake
+index 113a3b3..9478072 100644
+--- a/cmake/modules/SIPMacros.cmake
++++ b/cmake/modules/SIPMacros.cmake
+@@ -152,7 +152,7 @@ else()
+         endif()
+ 
+         if (QT_MAJOR_VERSION STREQUAL "6")
+-            set(abi_version "13.0")
++            set(abi_version "13")
+             set(sip_disabled_features "[\"Krita_Qt5\"]")
+         else()
+             set(abi_version "12.8")
+-- 
+2.53.0
+
