@@ -20,6 +20,10 @@ def video_json(vid, host):
             'recommendedVideos': [], 'videoThumbnails': [], 'adaptiveFormats': [],
             'formatStreams': [{'url': url, 'itag': '18', 'type': 'video/mp4; codecs="avc1.64001F, mp4a.40.2"', 'format': 'video/mp4; codecs="avc1.64001F, mp4a.40.2"',
                                'quality': 'medium', 'qualityLabel': '720p', 'resolution': '720p', 'container': 'mp4', 'fps': 25}]}
+    if v.get('projection'):
+        # an adaptive video format with the projection the way Invidious passes it on
+        base['adaptiveFormats'] = [{'url': url, 'itag': '136', 'type': 'video/mp4; codecs="avc1.64001F"', 'encoding': 'h264', 'container': 'mp4',
+                                    'resolution': '720p', 'qualityLabel': '720p', 'fps': 25, 'bitrate': '1000000', 'clen': '1000', 'projectionType': v['projection']}]
     return base
 
 class H(BaseHTTPRequestHandler):

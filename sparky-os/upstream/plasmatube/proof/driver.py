@@ -31,7 +31,9 @@ for st in steps:
         r = subprocess.run(['/p/qt-capture', '', 'red,blue', 'nolabel'], env=e, capture_output=True, text=True)
         open(f'{out}/{st[1]}.capture.txt', 'w').write(r.stdout + r.stderr)
     elif st[0] == 'fi':
-        subprocess.run(['/w/run/tools/fi', str(st[1]), str(st[2])] + st[3:], env=cenv, stdout=open(f'{out}/sh.log', 'a'), stderr=subprocess.STDOUT)
+        subprocess.run(['/w/run/tools/fi'] + [str(x) for x in st[1:]], env=cenv, stdout=open(f'{out}/sh.log', 'a'), stderr=subprocess.STDOUT)
+    elif st[0] == 'fk':
+        subprocess.run(['/w/run/tools/fk'] + [str(x) for x in st[1:]], env=cenv, stdout=open(f'{out}/sh.log', 'a'), stderr=subprocess.STDOUT)
     elif st[0] == 'sh':
         subprocess.run(st[1], shell=True, env=cenv, stdout=open(f'{out}/sh.log', 'a'), stderr=subprocess.STDOUT)
 pt.terminate(); time.sleep(1)

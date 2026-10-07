@@ -1,0 +1,463 @@
+From 64c4a5dbd24694242411384f221daa70acb55250 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 6 Oct 2026 22:29:45 -0300
+Subject: [PATCH 3/3] Show 360 and VR180 videos as a flat view that the user
+ turns
+
+A 360 video is a sphere in one picture, stereo ones two spheres on top
+of each other, and VR180 two half spheres side by side. mpv now tells
+how the container maps the sphere (track-list demux-projection, from MP4
+sv3d and Matroska's Projection); where it does not, the projectionType
+that Invidious passes on is used (EQUIRECTANGULAR, MESH).
+
+Turn it with FFmpeg's v360 filter into a flat view of the direction the
+user looks in, 100 degrees across one view: both eyes of a stereo video
+to the same direction, handed on as full side by side, a mono video as
+one picture. Dragging on the video and the arrow keys (with Ctrl they
+seek) turn the view through vf-command. The layout is the stream's own
+stereo declaration, else the shape of the frame.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/api/mediaformat.cpp             |   6 ++
+ src/api/mediaformat.h               |   4 +
+ src/controllers/videocontroller.cpp |   2 +
+ src/models/videomodel.cpp           |  10 ++
+ src/models/videomodel.h             |   2 +
+ src/ui/videoplayer/VideoPlayer.qml  |  47 +++++++++-
+ src/utils/mpvobject.cpp             | 139 +++++++++++++++++++++++++---
+ src/utils/mpvobject.h               |  24 +++++
+ 8 files changed, 220 insertions(+), 14 deletions(-)
+
+diff --git a/src/api/mediaformat.cpp b/src/api/mediaformat.cpp
+index faf98f4..a9b747b 100644
+--- a/src/api/mediaformat.cpp
++++ b/src/api/mediaformat.cpp
+@@ -124,6 +124,7 @@ MediaFormat MediaFormat::fromJson(const QJsonObject &obj, MediaFormat &format)
+         sizeValue = obj.value(u"contentLength").toInt();
+     }
+     format.m_size = sizeValue;
++    format.m_projectionType = obj.value(u"projectionType").toString();
+     QString codecValue = obj.value(u"encoding").toString();
+     if (codecValue.isEmpty()) {
+         // Piped:
+@@ -191,6 +192,11 @@ void MediaFormat::setCreatedTimestamp(const QDateTime &createdTimestamp)
+     m_createdTimestamp = createdTimestamp;
+ }
+ 
++QString MediaFormat::projectionType() const
++{
++    return m_projectionType;
++}
++
+ MediaFormatCombined MediaFormatCombined::fromJson(const QJsonObject &obj, MediaFormatCombined &format)
+ {
+     MediaFormatBase::fromJson(obj, format);
+diff --git a/src/api/mediaformat.h b/src/api/mediaformat.h
+index 2b60290..258849d 100644
+--- a/src/api/mediaformat.h
++++ b/src/api/mediaformat.h
+@@ -84,11 +84,15 @@ public:
+     QDateTime createdTimestamp() const;
+     void setCreatedTimestamp(const QDateTime &createdTimestamp);
+ 
++    // How a 360 or VR180 video maps the sphere: EQUIRECTANGULAR or MESH, RECTANGULAR or empty for an ordinary one
++    QString projectionType() const;
++
+ private:
+     uint32_t m_bitrate = 0;
+     uint64_t m_size = 0;
+     Codec m_codec = InvalidCodec;
+     QDateTime m_createdTimestamp;
++    QString m_projectionType;
+ };
+ 
+ class MediaFormatCombined : public MediaFormatBase
+diff --git a/src/controllers/videocontroller.cpp b/src/controllers/videocontroller.cpp
+index c6d2667..d86cc4d 100644
+--- a/src/controllers/videocontroller.cpp
++++ b/src/controllers/videocontroller.cpp
+@@ -31,6 +31,7 @@ VideoController::VideoController(QObject *parent)
+     });
+     connect(m_videoModel, &VideoModel::remoteUrlChanged, this, [this] {
+         m_currentPlayer->setStereoInput(StereoKeywords::stereoInput(m_videoModel->video()->keywords()));
++        m_currentPlayer->setProjectionType(m_videoModel->projectionType());
+         Q_EMIT m_currentPlayer->command(QStringList() << QStringLiteral("loadfile") << m_videoModel->remoteUrl());
+     });
+     connect(m_videoModel, &VideoModel::videoChanged, this, [this] {
+@@ -239,6 +240,7 @@ void VideoController::setCurrentPlayer(MpvObject *mpvObject)
+     }
+ 
+     m_currentPlayer->setStereoInput(StereoKeywords::stereoInput(m_videoModel->video()->keywords()));
++    m_currentPlayer->setProjectionType(m_videoModel->projectionType());
+     Q_EMIT m_currentPlayer->command(QStringList() << QStringLiteral("loadfile") << m_videoModel->remoteUrl());
+     m_currentPlayer->setProperty(QStringLiteral("ytdl-format"), QStringLiteral("best"));
+ 
+diff --git a/src/models/videomodel.cpp b/src/models/videomodel.cpp
+index 345ac56..d08e6c6 100644
+--- a/src/models/videomodel.cpp
++++ b/src/models/videomodel.cpp
+@@ -35,6 +35,7 @@ void VideoModel::fetch(const QString &videoId)
+     }
+ 
+     // clean up
++    m_projectionType.clear();
+     m_video->deleteLater();
+     m_video = new VideoItem(this);
+     Q_EMIT videoChanged();
+@@ -59,6 +60,10 @@ void VideoModel::fetch(const QString &videoId)
+                         Q_EMIT audioUrlChanged();
+                     } else {
+                         m_formatUrl[value.qualityLabel()] = value.url().toString();
++
++                        if (m_projectionType.isEmpty() && value.projectionType() != "RECTANGULAR"_L1) {
++                            m_projectionType = value.projectionType();
++                        }
+                     }
+                 }
+ 
+@@ -169,6 +174,11 @@ QString VideoModel::remoteUrl()
+     return {};
+ }
+ 
++QString VideoModel::projectionType() const
++{
++    return m_projectionType;
++}
++
+ QString VideoModel::audioUrl() const
+ {
+     return m_audioUrl;
+diff --git a/src/models/videomodel.h b/src/models/videomodel.h
+index 65aef09..72020a8 100644
+--- a/src/models/videomodel.h
++++ b/src/models/videomodel.h
+@@ -81,6 +81,7 @@ public:
+     bool isLoading() const;
+     QString remoteUrl();
+     QString audioUrl() const;
++    QString projectionType() const;
+     QStringList formatList() const;
+     QString selectedFormat() const;
+     void setSelectedFormat(const QString &selectedFormat);
+@@ -111,6 +112,7 @@ private:
+     QHash<QString, QString> m_formatUrl;
+     QString m_selectedFormat = QStringLiteral("720p");
+     QString m_audioUrl;
++    QString m_projectionType;
+     VideoItem *m_video = nullptr;
+     QString m_errorString;
+     QFutureWatcher<QInvidious::VideoResult> *m_watcher = nullptr;
+diff --git a/src/ui/videoplayer/VideoPlayer.qml b/src/ui/videoplayer/VideoPlayer.qml
+index cac1804..ee3223c 100644
+--- a/src/ui/videoplayer/VideoPlayer.qml
++++ b/src/ui/videoplayer/VideoPlayer.qml
+@@ -156,16 +156,43 @@ Kirigami.ScrollablePage {
+         }
+     }
+ 
++    // The arrow keys turn the view of a 360 or VR180 video, with Ctrl they seek
+     Keys.onLeftPressed: (event) => {
+-        PlasmaTube.videoController.currentPlayer.seek(-5);
++        if (renderer.panorama && !(event.modifiers & Qt.ControlModifier)) {
++            renderer.pan(-5, 0);
++        } else {
++            PlasmaTube.videoController.currentPlayer.seek(-5);
++        }
+         event.accepted = true;
+     }
+ 
+     Keys.onRightPressed: (event) => {
+-        PlasmaTube.videoController.currentPlayer.seek(5);
++        if (renderer.panorama && !(event.modifiers & Qt.ControlModifier)) {
++            renderer.pan(5, 0);
++        } else {
++            PlasmaTube.videoController.currentPlayer.seek(5);
++        }
+         event.accepted = true;
+     }
+ 
++    Keys.onUpPressed: (event) => {
++        if (renderer.panorama) {
++            renderer.pan(0, 5);
++            event.accepted = true;
++        } else {
++            event.accepted = false;
++        }
++    }
++
++    Keys.onDownPressed: (event) => {
++        if (renderer.panorama) {
++            renderer.pan(0, -5);
++            event.accepted = true;
++        } else {
++            event.accepted = false;
++        }
++    }
++
+     Keys.onEscapePressed: (event) => {
+         if (root.inFullScreen) {
+             root.exitFullScreen();
+@@ -364,6 +391,22 @@ Kirigami.ScrollablePage {
+                         onLongPressed: videoControlsMenu.popup()
+                     }
+ 
++                    // Dragging turns the view of a 360 or VR180 video, which is 100 degrees across the item
++                    DragHandler {
++                        property point previous
++
++                        enabled: renderer.panorama
++                        acceptedButtons: Qt.LeftButton
++                        target: null
++
++                        onActiveChanged: previous = Qt.point(0, 0)
++                        onTranslationChanged: {
++                            const degrees = 100 / renderer.width;
++                            renderer.pan(-(translation.x - previous.x) * degrees, (translation.y - previous.y) * degrees);
++                            previous = Qt.point(translation.x, translation.y);
++                        }
++                    }
++
+                     QQC2.Menu {
+                         id: videoControlsMenu
+ 
+diff --git a/src/utils/mpvobject.cpp b/src/utils/mpvobject.cpp
+index 938a61a..92e3e62 100644
+--- a/src/utils/mpvobject.cpp
++++ b/src/utils/mpvobject.cpp
+@@ -4,9 +4,13 @@
+ 
+ #include "mpvobject.h"
+ 
++#include <algorithm>
++#include <cmath>
++
+ #include <MpvController>
+ 
+ #include <QDir>
++#include <QVariantMap>
+ #include <QOpenGLContext>
+ #include <QOpenGLFramebufferObject>
+ #include <QQuickWindow>
+@@ -49,10 +53,108 @@ void MpvObject::setStereoInput(const QString &stereoInput)
+     m_stereoInput = stereoInput;
+ }
+ 
++void MpvObject::setProjectionType(const QString &projectionType)
++{
++    m_projectionType = projectionType;
++    m_yaw = 0;
++    m_pitch = 0;
++}
++
++bool MpvObject::panorama() const
++{
++    return m_panorama;
++}
++
++void MpvObject::pan(qreal yaw, qreal pitch)
++{
++    if (!m_panorama) {
++        return;
++    }
++
++    m_yaw = std::remainder(m_yaw + yaw, 360.0);
++    m_pitch = std::clamp(m_pitch + pitch, -85.0, 85.0);
++
++    if (paused()) {
++        // a filter command takes effect with the next frame, a new filter shows the picture again
++        setProperty(QStringLiteral("vf"), viewFilter());
++        return;
++    }
++
++    for (const auto &[command, value] : {std::pair{"yaw", m_yaw}, std::pair{"pitch", m_pitch}}) {
++        Q_EMIT this->command(QStringList() << QStringLiteral("vf-command") << QStringLiteral("vr") << QLatin1String(command)
++                                           << QString::number(value, 'f', 2) << QStringLiteral("v360"));
++    }
++}
++
++QString MpvObject::viewFilter() const
++{
++    return m_viewGraph + QStringLiteral(":yaw=%1:pitch=%2]").arg(QString::number(m_yaw, 'f', 2), QString::number(m_pitch, 'f', 2)) + m_viewTail;
++}
++
++// The filter that turns a 360 or VR180 video into a flat view of the direction the user looks in, or nothing. The video
++// says how it maps the sphere (the track's demux-projection, from MP4 sv3d or Matroska's Projection), else the API's
++// projectionType does. Both eyes of a stereo video are turned to the same direction and handed on as full side by side;
++// a mono video stays one picture. The layout is what the stream declares (the stereo-in parameter of video-params), else
++// the shape of the frame: an equirectangular sphere is twice as wide as high, so a square frame holds two on top of each
++// other, and VR180's half sphere is as wide as high, so a frame twice as wide holds two side by side.
++QString MpvObject::panoramaFilter(const QVariantMap &params, QString *key)
++{
++    QString projection;
++    const QVariantList tracks = getProperty(QStringLiteral("track-list")).toList();
++    for (const QVariant &track : tracks) {
++        const QVariantMap map = track.toMap();
++        if (map.value(QStringLiteral("type")).toString() == QStringLiteral("video") && map.value(QStringLiteral("selected")).toBool()) {
++            projection = map.value(QStringLiteral("demux-projection")).toString();
++        }
++    }
++
++    if (projection.isEmpty()) {
++        projection = m_projectionType == QStringLiteral("EQUIRECTANGULAR") ? QStringLiteral("equirectangular")
++            : m_projectionType == QStringLiteral("MESH")                    ? QStringLiteral("half-equirectangular")
++                                                                           : QString();
++    }
++
++    // The half sphere of a mesh is read as an equirectangular one
++    QString input;
++    if (projection == QStringLiteral("equirectangular")) {
++        input = QStringLiteral("e");
++    } else if (projection == QStringLiteral("half-equirectangular") || projection == QStringLiteral("mesh")) {
++        input = QStringLiteral("hequirect");
++    } else {
++        return {};
++    }
++
++    const qreal shape = params.value(QStringLiteral("dw")).toDouble() / std::max(params.value(QStringLiteral("dh")).toDouble(), 1.0);
++    const QString declared = params.value(QStringLiteral("stereo-in")).toString();
++    QString layout = QStringLiteral("2d");
++    QString swap;
++    if (declared.startsWith(QStringLiteral("ab")) || declared.startsWith(QStringLiteral("sbs"))) {
++        layout = declared.startsWith(QStringLiteral("ab")) ? QStringLiteral("tb") : QStringLiteral("sbs");
++        if (declared.endsWith(u'r')) {
++            // the right eye comes first
++            swap = layout == QStringLiteral("tb") ? QStringLiteral("stereo3d=in=abr:out=abl,") : QStringLiteral("stereo3d=in=sbsr:out=sbsl,");
++        }
++    } else if (input == QStringLiteral("e") && shape > 0.9 && shape < 1.15) {
++        layout = QStringLiteral("tb");
++    } else if (input == QStringLiteral("hequirect") && shape > 1.8 && shape < 2.3) {
++        layout = QStringLiteral("sbs");
++    }
++
++    // 100 degrees across one view of 16:9, which is a comfortable view on a television. With reset_rot the yaw and pitch
++    // that a filter command sets are the view's direction, not a turn added to the last one.
++    const QString view = QStringLiteral("v360=input=%1:output=flat:w=1280:h=720:h_fov=100:v_fov=67.7:in_stereo=%2:out_stereo=%3:reset_rot=1")
++                             .arg(input, layout, layout == QStringLiteral("2d") ? QStringLiteral("2d") : QStringLiteral("sbs"));
++    m_viewGraph = QStringLiteral("@vr:lavfi=[%1%2").arg(swap, view);
++    m_viewTail = layout == QStringLiteral("2d") ? QString() : QStringLiteral(",format:stereo-in=sbsl");
++    *key = m_viewGraph + m_viewTail;
++
++    return viewFilter();
++}
++
+ // mpv unpacks 3D video that says it is 3D (the frame packing SEI, Matroska's StereoMode). For a video that does not, say
+ // which packing it has: the one its keywords declare, else side by side when the frame is wider than any single picture
+ // (at least 2.5 times as wide as high, as mpv decides full from half size views). The half size name is given, mpv
+-// takes full size views from the shape of the frame.
++// takes full size views from the shape of the frame. A 360 or VR180 video is turned to a flat view first.
+ void MpvObject::updateStereoFilter()
+ {
+     const QVariantMap params = getProperty(QStringLiteral("video-params")).toMap();
+@@ -60,20 +162,33 @@ void MpvObject::updateStereoFilter()
+         return;
+     }
+ 
+-    QString stereoFilter;
+-    const QString declared = params.value(QStringLiteral("stereo-in")).toString();
+-    if (declared.isEmpty() || declared == QStringLiteral("mono")) {
+-        QString stereoInput = m_stereoInput;
+-        if (stereoInput.isEmpty() && params.value(QStringLiteral("dw")).toDouble() >= 2.5 * params.value(QStringLiteral("dh")).toDouble()) {
+-            stereoInput = QStringLiteral("sbs2l");
+-        }
+-        if (!stereoInput.isEmpty()) {
+-            stereoFilter = QStringLiteral("format:stereo-in=") + stereoInput;
++    QString key;
++    QString stereoFilter = panoramaFilter(params, &key);
++    const bool panorama = !stereoFilter.isEmpty();
++    if (panorama != m_panorama) {
++        m_panorama = panorama;
++        // v360 works on frames in memory: decode on the GPU if there is one, and copy the frames back
++        setProperty(QStringLiteral("hwdec"), panorama ? QStringLiteral("auto-copy-safe") : QStringLiteral("auto-safe"));
++        Q_EMIT panoramaChanged();
++    }
++
++    if (!panorama) {
++        key.clear();
++        const QString declared = params.value(QStringLiteral("stereo-in")).toString();
++        if (declared.isEmpty() || declared == QStringLiteral("mono")) {
++            QString stereoInput = m_stereoInput;
++            if (stereoInput.isEmpty() && params.value(QStringLiteral("dw")).toDouble() >= 2.5 * params.value(QStringLiteral("dh")).toDouble()) {
++                stereoInput = QStringLiteral("sbs2l");
++            }
++            if (!stereoInput.isEmpty()) {
++                stereoFilter = QStringLiteral("format:stereo-in=") + stereoInput;
++            }
+         }
++        key = stereoFilter;
+     }
+ 
+-    if (stereoFilter != m_stereoFilter) {
+-        m_stereoFilter = stereoFilter;
++    if (key != m_stereoFilter) {
++        m_stereoFilter = key;
+         setProperty(QStringLiteral("vf"), stereoFilter);
+     }
+ }
+diff --git a/src/utils/mpvobject.h b/src/utils/mpvobject.h
+index 1e1da52..c8d0e98 100644
+--- a/src/utils/mpvobject.h
++++ b/src/utils/mpvobject.h
+@@ -17,6 +17,7 @@ class MpvObject : public MpvAbstractItem
+     Q_PROPERTY(qreal duration READ duration NOTIFY durationChanged)
+     Q_PROPERTY(bool paused READ paused NOTIFY pausedChanged)
+     Q_PROPERTY(bool stopped READ stopped NOTIFY stoppedChanged)
++    Q_PROPERTY(bool panorama READ panorama NOTIFY panoramaChanged)
+ 
+ public:
+     explicit MpvObject(QQuickItem *parent = nullptr);
+@@ -30,6 +31,17 @@ public:
+      */
+     void setStereoInput(const QString &stereoInput);
+ 
++    /**
++     * The projection the video's API data names (EQUIRECTANGULAR, MESH), empty if none. It is used when the stream
++     * does not say how it maps a sphere. Starts a new view: straight ahead.
++     */
++    void setProjectionType(const QString &projectionType);
++
++    /**
++     * Whether the video is a 360 or VR180 video that is shown as a flat view of the direction set by pan()
++     */
++    bool panorama() const;
++
+     qreal position() const;
+     qreal duration() const;
+     bool paused() const;
+@@ -43,15 +55,21 @@ public Q_SLOTS:
+     void seek(qreal offset);
+     void toggleStats();
+ 
++    // Turn the view of a 360 or VR180 video by these angles in degrees, to the right and upwards
++    void pan(qreal yaw, qreal pitch);
++
+ Q_SIGNALS:
+     void positionChanged();
+     void durationChanged();
+     void pausedChanged();
+     void stoppedChanged();
++    void panoramaChanged();
+ 
+ private:
+     void onPropertyChanged(const QString &property, const QVariant &value);
+     void updateStereoFilter();
++    QString panoramaFilter(const QVariantMap &params, QString *key);
++    QString viewFilter() const;
+ 
+     bool m_paused = true;
+     qreal m_position = 0;
+@@ -60,4 +78,10 @@ private:
+     QString m_audioUrl;
+     QString m_stereoInput;
+     QString m_stereoFilter;
++    QString m_projectionType;
++    bool m_panorama = false;
++    QString m_viewGraph;
++    QString m_viewTail;
++    qreal m_yaw = 0;
++    qreal m_pitch = 0;
+ };
+\ No newline at end of file
+-- 
+2.53.0
+
