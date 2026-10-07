@@ -1,0 +1,226 @@
+From ad9fedcde323d35249590705e4c42759d796f726 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sun, 4 Oct 2026 22:37:40 -0300
+Subject: [PATCH 1/2] Wayland: create stereo EGL window surfaces with two views
+
+QSurfaceFormat::StereoBuffers had no effect on Wayland: EGL configs
+have no stereo flag, so the window and context formats always reported
+stereo as off, and QOpenGLWidget never rendered its right buffer.
+
+When the EGL display offers EGL_EXT_multiview_window and desktop OpenGL
+is in use, create the window surface with EGL_MULTIVIEW_VIEW_COUNT_EXT
+set to 2, so the left and right back buffers exist, and report stereo in
+the window and context formats. The EGL implementation presents the two
+views; Qt's GL_BACK_LEFT and GL_BACK_RIGHT target buffers map onto them
+unchanged.
+
+The EGL implementation gives such a surface its own wp_viewport, and a
+surface can have only one, so QWaylandWindow does not create its
+viewport and fractional scale object for a stereo OpenGL window.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ .../qwaylandclientbufferintegration_p.h             |  1 +
+ .../qwaylandeglclientbufferintegration.cpp          | 13 ++++++++++++-
+ .../qwaylandeglclientbufferintegration_p.h          |  2 ++
+ .../wayland-egl/qwaylandeglwindow.cpp               | 11 +++++++++--
+ .../wayland-egl/qwaylandglcontext.cpp               | 13 ++++++++++++-
+ .../wayland-egl/qwaylandglcontext_p.h               |  5 ++++-
+ src/plugins/platforms/wayland/qwaylandwindow.cpp    |  9 +++++++--
+ 7 files changed, 47 insertions(+), 7 deletions(-)
+
+diff --git a/src/plugins/platforms/wayland/hardwareintegration/qwaylandclientbufferintegration_p.h b/src/plugins/platforms/wayland/hardwareintegration/qwaylandclientbufferintegration_p.h
+index ee922f94..35ac1f0d 100644
+--- a/src/plugins/platforms/wayland/hardwareintegration/qwaylandclientbufferintegration_p.h
++++ b/src/plugins/platforms/wayland/hardwareintegration/qwaylandclientbufferintegration_p.h
+@@ -50,6 +50,7 @@ public:
+ 
+     virtual bool supportsThreadedOpenGL() const { return false; }
+     virtual bool supportsWindowDecoration() const { return false; }
++    virtual bool supportsStereo(const QSurfaceFormat &format) const { Q_UNUSED(format); return false; }
+ 
+     virtual QWaylandWindow *createEglWindow(QWindow *window) = 0;
+     virtual bool canCreatePlatformOffscreenSurface() const { return false; }
+diff --git a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglclientbufferintegration.cpp b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglclientbufferintegration.cpp
+index c7e53751..a6df5a19 100644
+--- a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglclientbufferintegration.cpp
++++ b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglclientbufferintegration.cpp
+@@ -10,6 +10,7 @@
+ #include <wayland-client-core.h>
+ 
+ #include <QtCore/QDebug>
++#include <QtGui/QOpenGLContext>
+ #include <private/qeglconvenience_p.h>
+ #include <private/qeglpbuffer_p.h>
+ 
+@@ -83,6 +84,8 @@ void QWaylandEglClientBufferIntegration::initialize(QWaylandDisplay *display)
+         return;
+     }
+ 
++    m_supportsMultiview = q_hasEglExtension(m_eglDisplay, "EGL_EXT_multiview_window");
++
+     m_supportsThreading = true;
+     if (qEnvironmentVariableIsSet("QT_OPENGL_NO_SANITY_CHECK"))
+         return;
+@@ -128,7 +131,7 @@ QPlatformOpenGLContext *QWaylandEglClientBufferIntegration::createPlatformOpenGL
+     QSurfaceFormat fmt = glFormat;
+     if (m_display->supportsWindowDecoration())
+         fmt.setAlphaBufferSize(8);
+-    return new QWaylandGLContext(m_eglDisplay, m_display, fmt, share);
++    return new QWaylandGLContext(m_eglDisplay, m_display, fmt, share, supportsStereo(fmt));
+ }
+ 
+ QOpenGLContext *QWaylandEglClientBufferIntegration::createOpenGLContext(EGLContext context, EGLDisplay contextDisplay, QOpenGLContext *shareContext) const
+@@ -178,6 +181,14 @@ EGLDisplay QWaylandEglClientBufferIntegration::eglDisplay() const
+     return m_eglDisplay;
+ }
+ 
++bool QWaylandEglClientBufferIntegration::supportsStereo(const QSurfaceFormat &format) const
++{
++    // Two views of the window surface are the left and right back buffers of desktop OpenGL
++    return format.stereo() && m_supportsMultiview
++            && format.renderableType() != QSurfaceFormat::OpenGLES
++            && QOpenGLContext::openGLModuleType() == QOpenGLContext::LibGL;
++}
++
+ }
+ 
+ QT_END_NAMESPACE
+diff --git a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglclientbufferintegration_p.h b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglclientbufferintegration_p.h
+index 5777bc08..065eac1a 100644
+--- a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglclientbufferintegration_p.h
++++ b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglclientbufferintegration_p.h
+@@ -37,12 +37,14 @@ public:
+     void *nativeResourceForContext(NativeResource resource, QPlatformOpenGLContext *context) override;
+ 
+     EGLDisplay eglDisplay() const;
++    bool supportsStereo(const QSurfaceFormat &format) const override;
+ 
+ private:
+     QWaylandDisplay *m_display = nullptr;
+ 
+     EGLDisplay m_eglDisplay = EGL_NO_DISPLAY;
+     bool m_supportsThreading = false;
++    bool m_supportsMultiview = false;
+ };
+ 
+ QT_END_NAMESPACE
+diff --git a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
+index f0ed8a29..ba1f10c7 100644
+--- a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
++++ b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
+@@ -116,9 +116,16 @@ void QWaylandEglWindow::updateSurface(bool create)
+             if (mDisplay->supportsWindowDecoration())
+                 fmt.setAlphaBufferSize(8);
+             EGLConfig eglConfig = q_configFromGLFormat(m_clientBufferIntegration->eglDisplay(), fmt);
+-            setFormat(q_glFormatFromConfig(m_clientBufferIntegration->eglDisplay(), eglConfig, fmt));
++            QSurfaceFormat eglFormat = q_glFormatFromConfig(m_clientBufferIntegration->eglDisplay(), eglConfig, fmt);
+ 
+-            EGLSurface eglSurface = eglCreateWindowSurface(m_clientBufferIntegration->eglDisplay(), eglConfig, (EGLNativeWindowType) eglWindow, 0);
++            // Two views make the surface a stereo one: the left and the right back buffer
++            const bool stereo = m_clientBufferIntegration->supportsStereo(fmt);
++            const EGLint surfaceAttribs[] = { EGL_MULTIVIEW_VIEW_COUNT_EXT, 2, EGL_NONE };
++            if (stereo)
++                eglFormat.setStereo(true);
++            setFormat(eglFormat);
++
++            EGLSurface eglSurface = eglCreateWindowSurface(m_clientBufferIntegration->eglDisplay(), eglConfig, (EGLNativeWindowType) eglWindow, stereo ? surfaceAttribs : nullptr);
+             if (Q_UNLIKELY(eglSurface == EGL_NO_SURFACE)) {
+                 qCWarning(lcQpaWayland, "Could not create EGL surface (EGL error 0x%x)\n", eglGetError());
+                 wl_egl_window_destroy(eglWindow);
+diff --git a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandglcontext.cpp b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandglcontext.cpp
+index 4842d4c5..5bbf0889 100644
+--- a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandglcontext.cpp
++++ b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandglcontext.cpp
+@@ -226,9 +226,11 @@ QWaylandGLContext::QWaylandGLContext()
+ }
+ 
+ QWaylandGLContext::QWaylandGLContext(EGLDisplay eglDisplay, QWaylandDisplay *display,
+-                                     const QSurfaceFormat &fmt, QPlatformOpenGLContext *share)
++                                     const QSurfaceFormat &fmt, QPlatformOpenGLContext *share,
++                                     bool stereo)
+     : QEGLPlatformContext(fmt, share, eglDisplay)
+     , m_display(display)
++    , m_stereo(stereo)
+ {
+     m_reconnectionWatcher = QObject::connect(m_display, &QWaylandDisplay::connected,
+                                              m_display, [this] { invalidateContext(); });
+@@ -313,6 +315,15 @@ void QWaylandGLContext::runGLChecks()
+     QEGLPlatformContext::runGLChecks();
+ }
+ 
++QSurfaceFormat QWaylandGLContext::format() const
++{
++    QSurfaceFormat fmt = QEGLPlatformContext::format();
++    // EGL configs have no stereo flag; the two views of the window surface provide it
++    if (m_stereo)
++        fmt.setStereo(true);
++    return fmt;
++}
++
+ QWaylandGLContext::~QWaylandGLContext()
+ {
+     QObject::disconnect(m_reconnectionWatcher);
+diff --git a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandglcontext_p.h b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandglcontext_p.h
+index aac5d151..1e95243c 100644
+--- a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandglcontext_p.h
++++ b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandglcontext_p.h
+@@ -24,10 +24,12 @@ class Q_WAYLANDCLIENT_EXPORT QWaylandGLContext : public QEGLPlatformContext
+ {
+ public:
+     QWaylandGLContext();
+-    QWaylandGLContext(EGLDisplay eglDisplay, QWaylandDisplay *display, const QSurfaceFormat &format, QPlatformOpenGLContext *share);
++    QWaylandGLContext(EGLDisplay eglDisplay, QWaylandDisplay *display, const QSurfaceFormat &format, QPlatformOpenGLContext *share,
++                      bool stereo = false);
+     ~QWaylandGLContext();
+ 
+     void initialize() override;
++    QSurfaceFormat format() const override;
+     void swapBuffers(QPlatformSurface *surface) override;
+ 
+     bool makeCurrent(QPlatformSurface *surface) override;
+@@ -55,6 +57,7 @@ private:
+     QWaylandEglWindow *m_currentWindow = nullptr;
+     QMetaObject::Connection m_reconnectionWatcher;
+     bool m_doneCurrentWorkAround = false;
++    bool m_stereo = false;
+ };
+ 
+ }
+diff --git a/src/plugins/platforms/wayland/qwaylandwindow.cpp b/src/plugins/platforms/wayland/qwaylandwindow.cpp
+index 7a83eb2d..385af67a 100644
+--- a/src/plugins/platforms/wayland/qwaylandwindow.cpp
++++ b/src/plugins/platforms/wayland/qwaylandwindow.cpp
+@@ -20,6 +20,7 @@
+ #include "qwaylanddecorationfactory_p.h"
+ #include "qwaylandshmbackingstore_p.h"
+ #include "qwaylandshellintegration_p.h"
++#include "qwaylandclientbufferintegration_p.h"
+ #include "qwaylandviewport_p.h"
+ #include "qwaylandcolormanagement_p.h"
+ 
+@@ -236,7 +237,11 @@ void QWaylandWindow::initializeWlSurface(bool colorSpace)
+     }
+     emit wlSurfaceCreated();
+ 
+-    if (mDisplay->fractionalScaleManager() && qApp->highDpiScaleFactorRoundingPolicy() == Qt::HighDpiScaleFactorRoundingPolicy::PassThrough) {
++    // The EGL implementation gives a stereo surface its own viewport, and a surface has only one
++    const QWaylandClientBufferIntegration *bufferIntegration = mDisplay->clientBufferIntegration();
++    const bool stereo = bufferIntegration && window()->surfaceType() == QSurface::OpenGLSurface
++            && bufferIntegration->supportsStereo(window()->requestedFormat());
++    if (!stereo && mDisplay->fractionalScaleManager() && qApp->highDpiScaleFactorRoundingPolicy() == Qt::HighDpiScaleFactorRoundingPolicy::PassThrough) {
+         mFractionalScale.reset(new QWaylandFractionalScale(mDisplay->fractionalScaleManager()->get_fractional_scale(mSurface->object())));
+ 
+         connect(mFractionalScale.data(), &QWaylandFractionalScale::preferredScaleChanged,
+@@ -244,7 +249,7 @@ void QWaylandWindow::initializeWlSurface(bool colorSpace)
+     }
+     // The fractional scale manager check is needed to work around Gnome < 36 where viewports don't work
+     // Right now viewports are only necessary when a fractional scale manager is used
+-    if (display()->viewporter() && display()->fractionalScaleManager()) {
++    if (!stereo && display()->viewporter() && display()->fractionalScaleManager()) {
+         mViewport.reset(new QWaylandViewport(display()->createViewport(this)));
+     }
+ 
+-- 
+2.53.0
+

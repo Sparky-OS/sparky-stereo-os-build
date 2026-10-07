@@ -1,0 +1,78 @@
+From 537caa66f4bce42b46530b2d89426dc2a2b1dfe9 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 7 Oct 2026 01:07:55 -0300
+Subject: [PATCH 2/2] Wayland: do not draw client side decorations around a
+ stereo window
+
+A decorated QWaylandEglWindow renders its content into a mono
+framebuffer object (QWaylandGLContext::defaultFramebufferObject()
+returns contentFBO()) and blits it, with the decoration, into the
+window surface from a second context. The left and right back buffers
+of a stereo window surface are then never rendered into: QRhiGles2 binds
+the content FBO for both eyes, so the right eye overwrites the left.
+
+Do as for Vulkan windows and create no decoration for a stereo OpenGL
+window, which renders straight into the window surface. A compositor
+that draws server side decorations is unaffected.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/plugins/platforms/wayland/qwaylandwindow.cpp | 15 ++++++++++++---
+ src/plugins/platforms/wayland/qwaylandwindow_p.h |  1 +
+ 2 files changed, 13 insertions(+), 3 deletions(-)
+
+diff --git a/src/plugins/platforms/wayland/qwaylandwindow.cpp b/src/plugins/platforms/wayland/qwaylandwindow.cpp
+index 385af67a..d9e17a31 100644
+--- a/src/plugins/platforms/wayland/qwaylandwindow.cpp
++++ b/src/plugins/platforms/wayland/qwaylandwindow.cpp
+@@ -238,9 +238,7 @@ void QWaylandWindow::initializeWlSurface(bool colorSpace)
+     emit wlSurfaceCreated();
+ 
+     // The EGL implementation gives a stereo surface its own viewport, and a surface has only one
+-    const QWaylandClientBufferIntegration *bufferIntegration = mDisplay->clientBufferIntegration();
+-    const bool stereo = bufferIntegration && window()->surfaceType() == QSurface::OpenGLSurface
+-            && bufferIntegration->supportsStereo(window()->requestedFormat());
++    const bool stereo = isStereoOpenGLWindow();
+     if (!stereo && mDisplay->fractionalScaleManager() && qApp->highDpiScaleFactorRoundingPolicy() == Qt::HighDpiScaleFactorRoundingPolicy::PassThrough) {
+         mFractionalScale.reset(new QWaylandFractionalScale(mDisplay->fractionalScaleManager()->get_fractional_scale(mSurface->object())));
+ 
+@@ -1093,6 +1091,13 @@ Qt::WindowFlags QWaylandWindow::windowFlags() const
+     return mFlags;
+ }
+ 
++bool QWaylandWindow::isStereoOpenGLWindow() const
++{
++    const QWaylandClientBufferIntegration *bufferIntegration = mDisplay->clientBufferIntegration();
++    return bufferIntegration && window()->surfaceType() == QSurface::OpenGLSurface
++            && bufferIntegration->supportsStereo(window()->requestedFormat());
++}
++
+ bool QWaylandWindow::createDecoration()
+ {
+     Q_ASSERT_X(QThread::isMainThread(),
+@@ -1100,6 +1105,10 @@ bool QWaylandWindow::createDecoration()
+     // TODO: client side decorations do not work with Vulkan backend.
+     if (window()->surfaceType() == QSurface::VulkanSurface)
+         return false;
++    // Client side decorations render the content into a mono FBO, which would leave one eye of a
++    // stereo window; the left and right back buffers need the window surface itself.
++    if (isStereoOpenGLWindow())
++        return false;
+     if (!mDisplay->supportsWindowDecoration())
+         return false;
+ 
+diff --git a/src/plugins/platforms/wayland/qwaylandwindow_p.h b/src/plugins/platforms/wayland/qwaylandwindow_p.h
+index 670a7cba..90784c41 100644
+--- a/src/plugins/platforms/wayland/qwaylandwindow_p.h
++++ b/src/plugins/platforms/wayland/qwaylandwindow_p.h
+@@ -192,6 +192,7 @@ public:
+                                      Qt::KeyboardModifiers modifiers);
+ 
+     virtual bool createDecoration();
++    bool isStereoOpenGLWindow() const;
+ 
+ #if QT_CONFIG(cursor)
+     void restoreMouseCursor(QWaylandInputDevice *device);
+-- 
+2.53.0
+

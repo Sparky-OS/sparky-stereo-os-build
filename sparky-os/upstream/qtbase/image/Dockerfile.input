@@ -1,0 +1,6 @@
+ARG BASE
+FROM ${BASE}
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get -y update >/dev/null 2>&1 && apt-get -y install --no-install-recommends libwayland-dev 2>&1 | tail -1
+COPY fakeinput.c fake-input-protocol.c fake-input-client-protocol.h /tmp/fi/
+RUN cd /tmp/fi && gcc -O1 -o /usr/local/bin/fakeinput fakeinput.c fake-input-protocol.c -lwayland-client -lm && ls -la /usr/local/bin/fakeinput

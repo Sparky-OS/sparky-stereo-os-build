@@ -1,0 +1,6 @@
+FROM debian:testing
+ENV DEBIAN_FRONTEND=noninteractive
+RUN sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources && cat /etc/apt/sources.list.d/debian.sources && apt-get -y update >/dev/null \
+ && apt-get -y install --no-install-recommends build-essential devscripts equivs fakeroot dpkg-dev lintian ca-certificates git quilt ccache >/dev/null 2>&1 \
+ && apt-get -y build-dep qt6-base 2>&1 | tail -3 \
+ && apt-cache policy qt6-base-dev | head -3 && apt-get source --print-uris qt6-base | head -5
