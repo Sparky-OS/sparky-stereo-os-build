@@ -1,0 +1,249 @@
+From 43d2b67f37b9602abd079e9b730e208f1fedb6f3 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 7 Oct 2026 01:27:24 -0300
+Subject: [PATCH 2/4] Paint the globe once for each eye of a stereo pair
+
+MarbleMap::paintStereo() draws one world seen by two cameras around the
+point of view. The globe is orthographic, so each camera orbits its
+centre by half of the separation (the planet's axis turned about the
+vertical axis), not toe-in. The stars are at infinity and take the
+globe's maximum parallax instead of turning with it. The interface
+layers are painted once, with the point of view, over both views.
+
+LayerManager::renderLayers() takes the group of render positions to
+paint (sky, globe, interface), all of them by default, and
+TextureLayer repaints when only the planet's axis changed.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/lib/marble/LayerManager.cpp        | 21 ++++++----
+ src/lib/marble/LayerManager.h          | 16 +++++++-
+ src/lib/marble/MarbleMap.cpp           | 54 ++++++++++++++++++++++----
+ src/lib/marble/MarbleMap.h             | 15 +++++++
+ src/lib/marble/layers/TextureLayer.cpp |  7 +++-
+ 5 files changed, 96 insertions(+), 17 deletions(-)
+
+diff --git a/src/lib/marble/LayerManager.cpp b/src/lib/marble/LayerManager.cpp
+index 071f7722b..ea0d42b19 100644
+--- a/src/lib/marble/LayerManager.cpp
++++ b/src/lib/marble/LayerManager.cpp
+@@ -108,21 +108,28 @@ QList<AbstractDataPluginItem *> LayerManager::whichItemAt(const QPoint &curpos)
+     return itemList;
+ }
+ 
+-void LayerManager::renderLayers(GeoPainter *painter, ViewportParams *viewport)
++void LayerManager::renderLayers(GeoPainter *painter, ViewportParams *viewport, Layers layers)
+ {
+-    d->m_renderState = RenderState(QStringLiteral("Marble"));
++    if (layers.testFlag(SkyLayers)) {
++        d->m_renderState = RenderState(QStringLiteral("Marble"));
++    }
+     QElapsedTimer totalTime;
+     totalTime.start();
+ 
+     QStringList renderPositions;
+ 
+-    if (d->m_showBackground) {
++    if (layers.testFlag(SkyLayers) && d->m_showBackground) {
+         renderPositions << QStringLiteral("STARS") << QStringLiteral("BEHIND_TARGET");
+     }
+ 
+-    renderPositions << QStringLiteral("SURFACE") << QStringLiteral("HOVERS_ABOVE_SURFACE") << QStringLiteral("GRATICULE") << QStringLiteral("PLACEMARKS")
+-                    << QStringLiteral("ATMOSPHERE") << QStringLiteral("ORBIT") << QStringLiteral("ALWAYS_ON_TOP") << QStringLiteral("FLOAT_ITEM")
+-                    << QStringLiteral("USER_TOOLS");
++    if (layers.testFlag(GlobeLayers)) {
++        renderPositions << QStringLiteral("SURFACE") << QStringLiteral("HOVERS_ABOVE_SURFACE") << QStringLiteral("GRATICULE") << QStringLiteral("PLACEMARKS")
++                        << QStringLiteral("ATMOSPHERE") << QStringLiteral("ORBIT");
++    }
++
++    if (layers.testFlag(InterfaceLayers)) {
++        renderPositions << QStringLiteral("ALWAYS_ON_TOP") << QStringLiteral("FLOAT_ITEM") << QStringLiteral("USER_TOOLS");
++    }
+ 
+     QStringList traceList;
+     for (const auto &renderPosition : renderPositions) {
+@@ -164,7 +171,7 @@ void LayerManager::renderLayers(GeoPainter *painter, ViewportParams *viewport)
+         }
+     }
+ 
+-    if (d->m_showRuntimeTrace) {
++    if (layers.testFlag(InterfaceLayers) && d->m_showRuntimeTrace) {
+         const int totalElapsed = totalTime.elapsed();
+         const int fps = 1000.0 / totalElapsed;
+         traceList.append(QStringLiteral("Total: %1 ms (%2 fps)").arg(totalElapsed, 3).arg(fps));
+diff --git a/src/lib/marble/LayerManager.h b/src/lib/marble/LayerManager.h
+index b5c12a7a5..6395e83b7 100644
+--- a/src/lib/marble/LayerManager.h
++++ b/src/lib/marble/LayerManager.h
+@@ -39,7 +39,19 @@ public:
+     explicit LayerManager(QObject *parent = nullptr);
+     ~LayerManager() override;
+ 
+-    void renderLayers(GeoPainter *painter, ViewportParams *viewport);
++    /**
++     * The render positions in the order they are drawn, in three groups: the sky behind the globe (STARS, BEHIND_TARGET),
++     * the globe itself (SURFACE to ORBIT) and the interface over it (ALWAYS_ON_TOP to USER_TOOLS)
++     */
++    enum Layer {
++        SkyLayers = 0x1,
++        GlobeLayers = 0x2,
++        InterfaceLayers = 0x4,
++        AllLayers = SkyLayers | GlobeLayers | InterfaceLayers
++    };
++    Q_DECLARE_FLAGS(Layers, Layer)
++
++    void renderLayers(GeoPainter *painter, ViewportParams *viewport, Layers layers = AllLayers);
+ 
+     bool showBackground() const;
+ 
+@@ -108,6 +120,8 @@ private:
+     Private *const d;
+ };
+ 
++Q_DECLARE_OPERATORS_FOR_FLAGS(LayerManager::Layers)
++
+ }
+ 
+ #endif
+diff --git a/src/lib/marble/MarbleMap.cpp b/src/lib/marble/MarbleMap.cpp
+index 0a21b4731..da7c4cc07 100644
+--- a/src/lib/marble/MarbleMap.cpp
++++ b/src/lib/marble/MarbleMap.cpp
+@@ -130,6 +130,10 @@ public:
+ 
+     void addPlugins();
+ 
++    void updateRenderState(RenderStatus oldRenderStatus);
++
++    void paintEye(GeoPainter &painter, qreal orbit, qreal skyShift);
++
+     MarbleMap *const q;
+ 
+     // The model we are showing.
+@@ -805,6 +809,47 @@ void MarbleMapPrivate::updateTileLevel()
+ }
+ 
+ // Used to be paintEvent()
++void MarbleMapPrivate::updateRenderState(RenderStatus oldRenderStatus)
++{
++    m_renderState = m_layerManager.renderState();
++    bool const parsing = m_model->fileManager()->pendingFiles() > 0;
++    m_renderState.addChild(RenderState(QStringLiteral("Files"), parsing ? WaitingForData : Complete));
++    RenderStatus const newRenderStatus = m_renderState.status();
++    if (oldRenderStatus != newRenderStatus) {
++        Q_EMIT q->renderStatusChanged(newRenderStatus);
++    }
++    Q_EMIT q->renderStateChanged(m_renderState);
++}
++
++// The sky at infinity keeps the point of view and is moved sideways by the globe's maximum parallax, the globe is seen
++// by the camera orbiting its centre by the angle (positive: the near side of the globe moves to the right): the planet's axis
++// turned about the vertical axis, nothing else changes
++void MarbleMapPrivate::paintEye(GeoPainter &painter, qreal orbit, qreal skyShift)
++{
++    painter.save();
++    painter.translate(skyShift, 0);
++    m_layerManager.renderLayers(&painter, &m_viewport, LayerManager::SkyLayers);
++    painter.restore();
++
++    const Quaternion planetAxis = m_viewport.planetAxis();
++    m_viewport.setPlanetAxis(planetAxis * Quaternion::fromEuler(0, -orbit, 0));
++    m_layerManager.renderLayers(&painter, &m_viewport, LayerManager::GlobeLayers);
++    m_viewport.setPlanetAxis(planetAxis);
++}
++
++void MarbleMap::paintStereo(GeoPainter &leftEye, GeoPainter &rightEye, GeoPainter &painter, qreal separation)
++{
++    RenderStatus const oldRenderStatus = d->m_renderState.status();
++
++    const qreal halfSeparation = separation / 2;
++    const qreal skyShift = d->m_viewport.radius() * qSin(halfSeparation);
++    // The left eye last: what the layers keep of their last pass, for the mouse to pick, is the left eye's
++    d->paintEye(rightEye, -halfSeparation, skyShift);
++    d->paintEye(leftEye, halfSeparation, -skyShift);
++    d->m_layerManager.renderLayers(&painter, &d->m_viewport, LayerManager::InterfaceLayers);
++    d->updateRenderState(oldRenderStatus);
++}
++
+ void MarbleMap::paint(GeoPainter &painter, const QRect &dirtyRect)
+ {
+     Q_UNUSED(dirtyRect);
+@@ -829,14 +874,7 @@ void MarbleMap::paint(GeoPainter &painter, const QRect &dirtyRect)
+ 
+     RenderStatus const oldRenderStatus = d->m_renderState.status();
+     d->m_layerManager.renderLayers(&painter, &d->m_viewport);
+-    d->m_renderState = d->m_layerManager.renderState();
+-    bool const parsing = d->m_model->fileManager()->pendingFiles() > 0;
+-    d->m_renderState.addChild(RenderState(QStringLiteral("Files"), parsing ? WaitingForData : Complete));
+-    RenderStatus const newRenderStatus = d->m_renderState.status();
+-    if (oldRenderStatus != newRenderStatus) {
+-        Q_EMIT renderStatusChanged(newRenderStatus);
+-    }
+-    Q_EMIT renderStateChanged(d->m_renderState);
++    d->updateRenderState(oldRenderStatus);
+ 
+     if (d->m_showFrameRate) {
+         FpsLayer fpsPainter(&t);
+diff --git a/src/lib/marble/MarbleMap.h b/src/lib/marble/MarbleMap.h
+index 772a3476c..e3dcae5be 100644
+--- a/src/lib/marble/MarbleMap.h
++++ b/src/lib/marble/MarbleMap.h
+@@ -424,6 +424,21 @@ public:
+      */
+     const StyleBuilder *styleBuilder() const;
+ 
++    /**
++     * @brief Paint the map as a stereo pair: one world seen by two cameras around the point of view.
++     *
++     * The sky and the globe are painted once for each eye, with that eye's camera: an orthographic globe has no perspective
++     * to take off-axis cameras from, so each camera orbits the globe's centre by half of the separation (the planet's axis
++     * turned about the vertical axis), the left one so that the near side of the globe moves to the right. The stars are
++     * at infinity: they do not turn with the globe but take its maximum parallax, that of its far side. The interface
++     * (popups, float items, tools) is painted once, with the point of view, so it is the same in both eyes.
++     * @param leftEye painter of the left eye's view
++     * @param rightEye painter of the right eye's view, of the same size
++     * @param painter painter of the interface, of the same size, over both views
++     * @param separation angle between the two cameras, in radians
++     */
++    void paintStereo(GeoPainter &leftEye, GeoPainter &rightEye, GeoPainter &painter, qreal separation);
++
+ public Q_SLOTS:
+ 
+     /**
+diff --git a/src/lib/marble/layers/TextureLayer.cpp b/src/lib/marble/layers/TextureLayer.cpp
+index 181589280..a395e9b46 100644
+--- a/src/lib/marble/layers/TextureLayer.cpp
++++ b/src/lib/marble/layers/TextureLayer.cpp
+@@ -67,6 +67,7 @@ public:
+     MergedLayerDecorator m_layerDecorator;
+     StackedTileLoader m_tileLoader;
+     GeoDataCoordinates m_centerCoordinates;
++    Quaternion m_planetAxis;
+     int m_tileZoomLevel;
+     TextureMapperInterface *m_texmapper;
+     TextureColorizer *m_texcolorizer;
+@@ -92,6 +93,7 @@ TextureLayer::Private::Private(HttpDownloadManager *downloadManager,
+     , m_layerDecorator(&m_loader, sunLocator)
+     , m_tileLoader(&m_layerDecorator)
+     , m_centerCoordinates()
++    , m_planetAxis()
+     , m_tileZoomLevel(-1)
+     , m_texmapper(nullptr)
+     , m_texcolorizer(nullptr)
+@@ -309,9 +311,12 @@ bool TextureLayer::render(GeoPainter *painter, ViewportParams *viewport, const Q
+     if (!d->m_texmapper)
+         return false;
+ 
+-    if (d->m_centerCoordinates.longitude() != viewport->centerLongitude() || d->m_centerCoordinates.latitude() != viewport->centerLatitude()) {
++    // The planet's axis alone changes when a stereo view turns the globe for an eye's camera
++    if (d->m_centerCoordinates.longitude() != viewport->centerLongitude() || d->m_centerCoordinates.latitude() != viewport->centerLatitude()
++        || !(d->m_planetAxis == viewport->planetAxis())) {
+         d->m_centerCoordinates.setLongitude(viewport->centerLongitude());
+         d->m_centerCoordinates.setLatitude(viewport->centerLatitude());
++        d->m_planetAxis = viewport->planetAxis();
+         d->m_texmapper->setRepaintNeeded();
+     }
+ 
+-- 
+2.53.0
+

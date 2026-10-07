@@ -1,0 +1,387 @@
+From 2489432ba1974845f399dc30350b6f6d6205684e Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 7 Oct 2026 01:27:24 -0300
+Subject: [PATCH 4/4] Offer the stereo 3D globe in the View menu of both Marble
+ applications
+
+The entry is offered only where the compositor takes stereo content, and
+the view settings get the separation of the two cameras (2 degrees by
+default).
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/apps/marble-kde/KdeMainWindow.cpp      |  3 ++
+ src/apps/marble-kde/marble.kcfg            |  8 ++++
+ src/apps/marble-kde/marble_part.cpp        | 27 +++++++++++++
+ src/apps/marble-kde/marble_part.h          |  2 +
+ src/apps/marble-kde/marble_part.rc         |  3 +-
+ src/apps/marble-qt/QtMainWindow.cpp        | 28 ++++++++++++++
+ src/apps/marble-qt/QtMainWindow.h          |  2 +
+ src/lib/marble/MarbleViewSettingsWidget.ui | 44 ++++++++++++++++++++++
+ src/lib/marble/QtMarbleConfigDialog.cpp    |  8 ++++
+ src/lib/marble/QtMarbleConfigDialog.h      |  1 +
+ 10 files changed, 125 insertions(+), 1 deletion(-)
+
+diff --git a/src/apps/marble-kde/KdeMainWindow.cpp b/src/apps/marble-kde/KdeMainWindow.cpp
+index 4e0ce3f87..915ab8f40 100644
+--- a/src/apps/marble-kde/KdeMainWindow.cpp
++++ b/src/apps/marble-kde/KdeMainWindow.cpp
+@@ -38,6 +38,9 @@ MainWindow::MainWindow(const QString &marbleDataPath, QWidget *parent)
+     : KXmlGuiWindow(parent)
+     , m_savedSize(QSize(-1, -1))
+ {
++    // The globe in stereo 3D is a layer under the window's surface, which shows through the map widget
++    MarbleWidget::prepareStereo3DWindow(this);
++
+     m_part = new MarblePart(this, this, {}, {marbleDataPath});
+ 
+     setCentralWidget(m_part->widget());
+diff --git a/src/apps/marble-kde/marble.kcfg b/src/apps/marble-kde/marble.kcfg
+index 6b04a631d..a076cc66c 100644
+--- a/src/apps/marble-kde/marble.kcfg
++++ b/src/apps/marble-kde/marble.kcfg
+@@ -34,6 +34,14 @@
+   <entry key="showClouds" type="Bool" >
+    <default>true</default>
+   </entry>
++  <entry key="stereo3D" type="Bool" >
++   <default>false</default>
++  </entry>
++  <entry key="stereo3DSeparation" type="Double" >
++   <default>2.0</default>
++   <min>0.5</min>
++   <max>10.0</max>
++  </entry>
+   <entry key="workOffline" type="Bool" >
+    <default>false</default>
+   </entry>
+diff --git a/src/apps/marble-kde/marble_part.cpp b/src/apps/marble-kde/marble_part.cpp
+index 43be2f100..feedd1a69 100644
+--- a/src/apps/marble-kde/marble_part.cpp
++++ b/src/apps/marble-kde/marble_part.cpp
+@@ -295,6 +295,13 @@ void MarblePart::setShowClouds(bool isChecked)
+     m_showCloudsAction->setChecked(isChecked); // Sync state with the GUI
+ }
+ 
++void MarblePart::setStereo3D(bool isChecked)
++{
++    m_controlView->marbleWidget()->setStereo3D(isChecked);
++
++    m_stereo3DAction->setChecked(isChecked); // Sync state with the GUI
++}
++
+ void MarblePart::showPositionLabel(bool isChecked)
+ {
+     m_positionLabel->setVisible(isChecked);
+@@ -423,6 +430,11 @@ void MarblePart::readSettings()
+     m_controlView->marbleWidget()->setShowClouds(MarbleSettings::showClouds());
+     m_showCloudsAction->setChecked(MarbleSettings::showClouds());
+ 
++    m_controlView->marbleWidget()->setStereo3DSeparation(MarbleSettings::stereo3DSeparation());
++    if (m_stereo3DAction) {
++        setStereo3D(MarbleSettings::stereo3D());
++    }
++
+     workOffline(MarbleSettings::workOffline());
+     m_workOfflineAction->setChecked(MarbleSettings::workOffline());
+ 
+@@ -588,6 +600,9 @@ void MarblePart::writeSettings()
+ 
+     MarbleSettings::setShowClouds(m_controlView->marbleWidget()->showClouds());
+ 
++    MarbleSettings::setStereo3D(m_controlView->marbleWidget()->stereo3D());
++    MarbleSettings::setStereo3DSeparation(m_controlView->marbleWidget()->stereo3DSeparation());
++
+     MarbleSettings::setWorkOffline(m_workOfflineAction->isChecked());
+ 
+     MarbleSettings::setStillQuality(m_controlView->marbleWidget()->mapQuality(Still));
+@@ -761,6 +776,15 @@ void MarblePart::setupActions()
+     m_showCloudsAction->setText(i18nc("Action for toggling clouds", "&Clouds"));
+     connect(m_showCloudsAction, &QAction::triggered, this, &MarblePart::setShowClouds);
+ 
++    // Action: Show the globe in stereo 3D, where the compositor takes it
++    if (MarbleWidget::isStereo3DSupported()) {
++        m_stereo3DAction = new QAction(this);
++        actionCollection()->addAction(QStringLiteral("show_stereo3d"), m_stereo3DAction);
++        m_stereo3DAction->setCheckable(true);
++        m_stereo3DAction->setText(i18nc("Action for toggling the globe in stereo 3D", "Stereo &3D"));
++        connect(m_stereo3DAction, &QAction::triggered, this, &MarblePart::setStereo3D);
++    }
++
+     // Action: Show Sunshade options
+     m_controlSunAction = new QAction(this);
+     actionCollection()->addAction(QStringLiteral("control_sun"), m_controlSunAction);
+@@ -1298,6 +1322,7 @@ void MarblePart::editSettings()
+     m_configDialog->addPage(w_viewSettings, i18n("View"), QStringLiteral("configure"));
+ 
+     ui_viewSettings.label_labelLocalization->hide();
++    ui_viewSettings.groupBox_stereo3D->setVisible(MarbleWidget::isStereo3DSupported());
+     ui_viewSettings.kcfg_labelLocalization->hide();
+ 
+     // navigation page
+@@ -1405,6 +1430,8 @@ void MarblePart::updateSettings()
+     m_controlView->marbleWidget()->setMapQualityForViewContext((MapQuality)MarbleSettings::stillQuality(), Still);
+     m_controlView->marbleWidget()->setMapQualityForViewContext((MapQuality)MarbleSettings::animationQuality(), Animation);
+ 
++    m_controlView->marbleWidget()->setStereo3DSeparation(MarbleSettings::stereo3DSeparation());
++
+     m_controlView->marbleWidget()->setDefaultAngleUnit((AngleUnit)MarbleSettings::angleUnit());
+     MarbleGlobal::getInstance()->locale()->setMeasurementSystem((MarbleLocale::MeasurementSystem)MarbleSettings::distanceUnit());
+ 
+diff --git a/src/apps/marble-kde/marble_part.h b/src/apps/marble-kde/marble_part.h
+index ad6f0b6de..8bcc74e32 100644
+--- a/src/apps/marble-kde/marble_part.h
++++ b/src/apps/marble-kde/marble_part.h
+@@ -77,6 +77,7 @@ private Q_SLOTS:
+     void copyMap();
+     void copyCoordinates();
+     void setShowClouds(bool);
++    void setStereo3D(bool);
+     void setShowBookmarks(bool isChecked);
+     void showFullScreen(bool);
+     void showStatusBar(bool);
+@@ -202,6 +203,7 @@ private:
+     QAction *m_copyMapAction = nullptr;
+     QAction *m_copyCoordinatesAction = nullptr;
+     QAction *m_showCloudsAction = nullptr;
++    QAction *m_stereo3DAction = nullptr;
+     QAction *m_fullScreenAct = nullptr;
+     QAction *m_openAct = nullptr;
+     QAction *m_newStuffAction = nullptr;
+diff --git a/src/apps/marble-kde/marble_part.rc b/src/apps/marble-kde/marble_part.rc
+index 72dca7663..0a0025ed2 100644
+--- a/src/apps/marble-kde/marble_part.rc
++++ b/src/apps/marble-kde/marble_part.rc
+@@ -1,5 +1,5 @@
+ <!DOCTYPE kpartgui SYSTEM "kpartgui.dtd">
+-<kpartgui name="marble_part" version="17">
++<kpartgui name="marble_part" version="18">
+ 
+ <MenuBar>
+   <Menu name="file" noMerge="1">
+@@ -44,6 +44,7 @@
+     </Menu>
+     <Separator/>
+     <Action name="show_clouds"/>
++    <Action name="show_stereo3d"/>
+     <ActionList name="themerender_actionlist"/>
+     <Separator/>
+     <Action name="control_sun"/>
+diff --git a/src/apps/marble-qt/QtMainWindow.cpp b/src/apps/marble-qt/QtMainWindow.cpp
+index 0dacb6fc4..f9266a522 100644
+--- a/src/apps/marble-qt/QtMainWindow.cpp
++++ b/src/apps/marble-qt/QtMainWindow.cpp
+@@ -129,6 +129,7 @@ MainWindow::MainWindow(const QString &marbleDataPath, const QVariantMap &cmdLine
+ 
+     // View Menu
+     m_showCloudsAction(nullptr)
++    , m_stereo3DAction(nullptr)
+     , m_controlSunAction(nullptr)
+     , m_controlTimeAction(nullptr)
+     , m_reloadAction(nullptr)
+@@ -169,6 +170,9 @@ MainWindow::MainWindow(const QString &marbleDataPath, const QVariantMap &cmdLine
+     , m_toggleBookmarkDisplayAction(nullptr)
+     , m_manageBookmarksAction(nullptr)
+ {
++    // The globe in stereo 3D is a layer under the window's surface, which shows through the map widget
++    MarbleWidget::prepareStereo3DWindow(this);
++
+     setUpdatesEnabled(false);
+ 
+     QString selectedPath = marbleDataPath.isEmpty() ? readMarbleDataPath() : marbleDataPath;
+@@ -346,6 +350,13 @@ void MainWindow::createActions()
+     m_showCloudsAction->setStatusTip(tr("Show Real Time Cloud Cover"));
+     connect(m_showCloudsAction, SIGNAL(triggered(bool)), this, SLOT(showClouds(bool)));
+ 
++    if (MarbleWidget::isStereo3DSupported()) {
++        m_stereo3DAction = new QAction(tr("Stereo &3D"), this);
++        m_stereo3DAction->setCheckable(true);
++        m_stereo3DAction->setStatusTip(tr("Show the Globe in Stereo 3D"));
++        connect(m_stereo3DAction, SIGNAL(triggered(bool)), this, SLOT(setStereo3D(bool)));
++    }
++
+     m_workOfflineAction = new QAction(QIcon(QStringLiteral(":/icons/user-offline.png")), tr("Work Off&line"), this);
+     m_workOfflineAction->setCheckable(true);
+     connect(m_workOfflineAction, SIGNAL(triggered(bool)), this, SLOT(workOffline(bool)));
+@@ -551,6 +562,9 @@ void MainWindow::createPluginsMenus()
+     m_viewMenu->addMenu(m_onlineServicesMenu);
+     m_viewMenu->addActions(themeActions);
+     m_viewMenu->addAction(m_showCloudsAction);
++    if (m_stereo3DAction) {
++        m_viewMenu->addAction(m_stereo3DAction);
++    }
+     m_viewMenu->addSeparator();
+     m_viewMenu->addAction(m_controlSunAction);
+     m_viewMenu->addAction(m_controlTimeAction);
+@@ -792,6 +806,13 @@ void MainWindow::showStatusBar(bool isChecked)
+     m_statusBarAction->setChecked(isChecked); // Sync state with the GUI
+ }
+ 
++void MainWindow::setStereo3D(bool isChecked)
++{
++    m_controlView->marbleWidget()->setStereo3D(isChecked);
++
++    m_stereo3DAction->setChecked(isChecked); // Sync state with the GUI
++}
++
+ void MainWindow::showClouds(bool isChecked)
+ {
+     m_controlView->marbleWidget()->setShowClouds(isChecked);
+@@ -1104,6 +1125,10 @@ void MainWindow::readSettings(const QVariantMap &overrideSettings)
+     showZoomLevel(settings.value("showZoomLevel", false).toBool());
+     show();
+     showClouds(settings.value("showClouds", true).toBool());
++    m_controlView->marbleWidget()->setStereo3DSeparation(m_configDialog->stereo3DSeparation());
++    if (m_stereo3DAction) {
++        setStereo3D(settings.value("stereo3D", false).toBool());
++    }
+     workOffline(settings.value("workOffline", false).toBool());
+     m_controlView->marbleWidget()->setShowAtmosphere(settings.value("showAtmosphere", true).toBool());
+     m_lastFileOpenPath = settings.value("lastFileOpenDir", QDir::homePath()).toString();
+@@ -1302,6 +1327,7 @@ void MainWindow::writeSettings()
+     settings.setValue("statusBar", m_statusBarAction->isChecked());
+     settings.setValue("showZoomLevel", m_toggleTileLevelAction->isChecked());
+     settings.setValue("showClouds", m_showCloudsAction->isChecked());
++    settings.setValue("stereo3D", m_controlView->marbleWidget()->stereo3D());
+     settings.setValue("workOffline", m_workOfflineAction->isChecked());
+     settings.setValue("showAtmosphere", m_controlView->marbleWidget()->showAtmosphere());
+     settings.setValue("lastFileOpenDir", m_lastFileOpenPath);
+@@ -1441,6 +1467,8 @@ void MainWindow::updateSettings()
+     m_controlView->marbleWidget()->setMapQualityForViewContext(m_configDialog->stillQuality(), Marble::Still);
+     m_controlView->marbleWidget()->setMapQualityForViewContext(m_configDialog->animationQuality(), Marble::Animation);
+ 
++    m_controlView->marbleWidget()->setStereo3DSeparation(m_configDialog->stereo3DSeparation());
++
+     m_controlView->marbleWidget()->setDefaultAngleUnit(m_configDialog->angleUnit());
+     MarbleGlobal::getInstance()->locale()->setMeasurementSystem(m_configDialog->measurementSystem());
+ 
+diff --git a/src/apps/marble-qt/QtMainWindow.h b/src/apps/marble-qt/QtMainWindow.h
+index 11a65caa1..69a4bf2f2 100644
+--- a/src/apps/marble-qt/QtMainWindow.h
++++ b/src/apps/marble-qt/QtMainWindow.h
+@@ -98,6 +98,7 @@ private Q_SLOTS:
+     void createPluginsMenus();
+     void createPluginMenus();
+     void showClouds(bool);
++    void setStereo3D(bool);
+     void controlSun();
+     void controlTime();
+     void showSun(bool);
+@@ -178,6 +179,7 @@ private:
+ 
+     // View Menu
+     QAction *m_showCloudsAction;
++    QAction *m_stereo3DAction;
+     QAction *m_controlSunAction;
+     QAction *m_controlTimeAction;
+     QAction *m_reloadAction;
+diff --git a/src/lib/marble/MarbleViewSettingsWidget.ui b/src/lib/marble/MarbleViewSettingsWidget.ui
+index 716ea2488..b550bee67 100644
+--- a/src/lib/marble/MarbleViewSettingsWidget.ui
++++ b/src/lib/marble/MarbleViewSettingsWidget.ui
+@@ -260,6 +260,50 @@ p, li { white-space: pre-wrap; }
+      </layout>
+     </widget>
+    </item>
++   <item>
++    <widget class="QGroupBox" name="groupBox_stereo3D">
++     <property name="title">
++      <string>Stereo &amp;3D</string>
++     </property>
++     <layout class="QGridLayout">
++      <item row="0" column="0">
++       <widget class="QLabel" name="label_stereo3DSeparation">
++        <property name="text">
++         <string>Separation of the eyes:</string>
++        </property>
++        <property name="buddy">
++         <cstring>kcfg_stereo3DSeparation</cstring>
++        </property>
++       </widget>
++      </item>
++      <item row="0" column="1">
++       <widget class="QDoubleSpinBox" name="kcfg_stereo3DSeparation">
++        <property name="toolTip">
++         <string>The angle between the two cameras around the globe: a larger angle puts the globe deeper in 3D</string>
++        </property>
++        <property name="suffix">
++         <string> degrees</string>
++        </property>
++        <property name="decimals">
++         <number>1</number>
++        </property>
++        <property name="minimum">
++         <double>0.500000000000000</double>
++        </property>
++        <property name="maximum">
++         <double>10.000000000000000</double>
++        </property>
++        <property name="singleStep">
++         <double>0.500000000000000</double>
++        </property>
++        <property name="value">
++         <double>2.000000000000000</double>
++        </property>
++       </widget>
++      </item>
++     </layout>
++    </widget>
++   </item>
+    <item>
+     <widget class="QGroupBox" name="groupBox_textLabels">
+      <property name="title">
+diff --git a/src/lib/marble/QtMarbleConfigDialog.cpp b/src/lib/marble/QtMarbleConfigDialog.cpp
+index b5c611f2d..0511aba56 100644
+--- a/src/lib/marble/QtMarbleConfigDialog.cpp
++++ b/src/lib/marble/QtMarbleConfigDialog.cpp
+@@ -100,6 +100,7 @@ QtMarbleConfigDialog::QtMarbleConfigDialog(MarbleWidget *marbleWidget, CloudSync
+ 
+     d->ui_viewSettings.kcfg_labelLocalization->hide();
+     d->ui_viewSettings.label_labelLocalization->hide();
++    d->ui_viewSettings.groupBox_stereo3D->setVisible(MarbleWidget::isStereo3DSupported());
+ 
+     // navigation page
+     auto w_navigationSettings = new QWidget(this);
+@@ -267,6 +268,7 @@ void QtMarbleConfigDialog::readSettings()
+     d->ui_viewSettings.kcfg_angleUnit->setCurrentIndex(angleUnit());
+     d->ui_viewSettings.kcfg_stillQuality->setCurrentIndex(stillQuality());
+     d->ui_viewSettings.kcfg_animationQuality->setCurrentIndex(animationQuality());
++    d->ui_viewSettings.kcfg_stereo3DSeparation->setValue(stereo3DSeparation());
+     d->ui_viewSettings.kcfg_labelLocalization->setCurrentIndex(Marble::Native);
+     d->ui_viewSettings.kcfg_mapFont->setCurrentFont(mapFont());
+ 
+@@ -356,6 +358,7 @@ void QtMarbleConfigDialog::writeSettings()
+     d->m_settings.setValue("angleUnit", d->ui_viewSettings.kcfg_angleUnit->currentIndex());
+     d->m_settings.setValue("stillQuality", d->ui_viewSettings.kcfg_stillQuality->currentIndex());
+     d->m_settings.setValue("animationQuality", d->ui_viewSettings.kcfg_animationQuality->currentIndex());
++    d->m_settings.setValue("stereo3DSeparation", d->ui_viewSettings.kcfg_stereo3DSeparation->value());
+     d->m_settings.setValue("mapFont", d->ui_viewSettings.kcfg_mapFont->currentFont());
+     d->m_settings.endGroup();
+ 
+@@ -449,6 +452,11 @@ Marble::MapQuality QtMarbleConfigDialog::animationQuality() const
+     return (Marble::MapQuality)d->m_settings.value("View/animationQuality", Marble::LowQuality).toInt();
+ }
+ 
++qreal QtMarbleConfigDialog::stereo3DSeparation() const
++{
++    return d->m_settings.value("View/stereo3DSeparation", 2.0).toReal();
++}
++
+ QFont QtMarbleConfigDialog::mapFont() const
+ {
+     return d->m_settings.value("View/mapFont", QApplication::font()).value<QFont>();
+diff --git a/src/lib/marble/QtMarbleConfigDialog.h b/src/lib/marble/QtMarbleConfigDialog.h
+index f9fdeddf2..e4b84e414 100644
+--- a/src/lib/marble/QtMarbleConfigDialog.h
++++ b/src/lib/marble/QtMarbleConfigDialog.h
+@@ -35,6 +35,7 @@ public:
+     void setAngleUnit(Marble::AngleUnit unit);
+     Marble::MapQuality stillQuality() const;
+     Marble::MapQuality animationQuality() const;
++    qreal stereo3DSeparation() const;
+     QFont mapFont() const;
+ 
+     // Navigation Settings
+-- 
+2.53.0
+

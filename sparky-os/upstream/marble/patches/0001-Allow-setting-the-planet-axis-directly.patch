@@ -1,0 +1,57 @@
+From 5b61c48bb6f6e6e1b0f1208d51535b54019ada90 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 2 Oct 2026 12:20:03 -0300
+Subject: [PATCH 1/4] Allow setting the planet axis directly
+
+The stereo view renders the globe once per eye with the camera yawed
+around the view-vertical axis. That rotation must not change the
+view's center longitude/latitude, which drive labels, the status bar
+and user navigation.
+
+Assisted-by: kimi-k3:cloud (Ollama) via Codex
+---
+ src/lib/marble/ViewportParams.cpp | 9 +++++++++
+ src/lib/marble/ViewportParams.h   | 7 +++++++
+ 2 files changed, 16 insertions(+)
+
+diff --git a/src/lib/marble/ViewportParams.cpp b/src/lib/marble/ViewportParams.cpp
+index 7f527ff24..270876e50 100644
+--- a/src/lib/marble/ViewportParams.cpp
++++ b/src/lib/marble/ViewportParams.cpp
+@@ -269,6 +269,15 @@ qreal ViewportParams::heading() const
+     return d->m_heading;
+ }
+ 
++void ViewportParams::setPlanetAxis(const Quaternion &planetAxis)
++{
++    d->m_planetAxis = planetAxis;
++    d->m_planetAxis.normalize();
++
++    d->m_dirtyBox = true;
++    d->m_planetAxis.inverse().toMatrix(d->m_planetAxisMatrix);
++}
++
+ Quaternion ViewportParams::planetAxis() const
+ {
+     return d->m_planetAxis;
+diff --git a/src/lib/marble/ViewportParams.h b/src/lib/marble/ViewportParams.h
+index 178a73482..19fb6be10 100644
+--- a/src/lib/marble/ViewportParams.h
++++ b/src/lib/marble/ViewportParams.h
+@@ -91,6 +91,13 @@ public:
+     void centerOn(qreal lon, qreal lat);
+     void setHeading(qreal heading);
+ 
++    /**
++     * @brief Set the planet axis directly. Used by the stereo view to show
++     *        the globe seen from a slightly yawed camera without changing
++     *        the view's own center longitude/latitude values.
++     */
++    void setPlanetAxis(const Quaternion &planetAxis);
++
+     Quaternion planetAxis() const;
+     const matrix &planetAxisMatrix() const;
+ 
+-- 
+2.53.0
+

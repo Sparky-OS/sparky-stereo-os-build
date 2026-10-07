@@ -1,0 +1,856 @@
+From 1df996420832a35fbde9c92a80661b44d0380a25 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 7 Oct 2026 01:27:24 -0300
+Subject: [PATCH 3/4] Show the globe of a MarbleWidget in stereo 3D on Wayland
+
+The globe is drawn once for each eye into two views the size of the
+widget, which a wl_subsurface under the window's surface shows side by
+side, left eye first, declared once as full side by side stereo content.
+The widget is a transparent hole over it, where the interface layers are
+painted once, so they stay on the screen plane in both eyes.
+
+setStereo3D() is off by default and has effect where the compositor
+takes stereo content (isStereo3DSupported(), Wayland only: not on xcb)
+and the window was prepared with prepareStereo3DWindow(). Built when
+stereo-declare, Wayland and Qt's private GUI headers are found.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/lib/marble/CMakeLists.txt   |  26 ++
+ src/lib/marble/MarbleWidget.cpp | 157 +++++++++++-
+ src/lib/marble/MarbleWidget.h   |  40 +++
+ src/lib/marble/StereoLayer.cpp  | 434 ++++++++++++++++++++++++++++++++
+ src/lib/marble/StereoLayer.h    |  48 ++++
+ 5 files changed, 703 insertions(+), 2 deletions(-)
+ create mode 100644 src/lib/marble/StereoLayer.cpp
+ create mode 100644 src/lib/marble/StereoLayer.h
+
+diff --git a/src/lib/marble/CMakeLists.txt b/src/lib/marble/CMakeLists.txt
+index 9d1f41422..257b7d9bd 100644
+--- a/src/lib/marble/CMakeLists.txt
++++ b/src/lib/marble/CMakeLists.txt
+@@ -14,6 +14,19 @@ endif()
+ CONFIGURE_FILE(${CMAKE_CURRENT_SOURCE_DIR}/config-phonon.h.cmake
+                ${CMAKE_CURRENT_BINARY_DIR}/config-phonon.h)
+ 
++# The globe in stereo 3D: a layer under the window, declared to a compositor that takes stereo content
++find_package(PkgConfig)
++if(PkgConfig_FOUND)
++    pkg_check_modules(STEREO_DECLARE IMPORTED_TARGET stereo-declare)
++endif()
++find_package(Wayland 1.15 COMPONENTS Client)
++find_package(WaylandProtocols)
++find_package(WaylandScanner)
++find_package(Qt6 OPTIONAL_COMPONENTS GuiPrivate)
++if(STEREO_DECLARE_FOUND AND Wayland_FOUND AND WaylandProtocols_FOUND AND WaylandScanner_FOUND AND TARGET Qt6::GuiPrivate)
++    set(HAVE_STEREO3D TRUE)
++endif()
++
+ if(MARBLE_NO_WEBKITWIDGETS)
+     add_definitions(-DMARBLE_NO_WEBKITWIDGETS)
+ endif()
+@@ -64,6 +77,7 @@ set(marblewidget_SRCS
+     DownloadRegionDialog.cpp
+     LatLonBoxWidget.cpp
+     MarbleWidget.cpp
++    StereoLayer.cpp
+     MarbleAbstractPresenter.cpp
+     MarbleModel.cpp
+     MarbleMap.cpp
+@@ -601,6 +615,13 @@ qt_add_resources(marblewidget_SRCS libmarble.qrc ../../apps/marble-ui/marble.qrc
+ 
+ qt_wrap_ui(marblewidget_SRCS ${marblewidget_UI})
+ 
++if(HAVE_STEREO3D)
++    ecm_add_wayland_client_protocol(marblewidget_SRCS
++        PROTOCOL ${WaylandProtocols_DATADIR}/stable/viewporter/viewporter.xml
++        BASENAME viewporter
++    )
++endif()
++
+ add_library(marblewidget ${marblewidget_SRCS} ${SOURCES_UI_HDRS})
+ 
+ generate_export_header(marblewidget BASE_NAME marble)
+@@ -617,6 +638,11 @@ add_definitions("-DLOGGING_IDENTIFIER=MARBLE_LIB")
+ # link with libastro
+ target_link_libraries(marblewidget PRIVATE astro)
+ 
++if(HAVE_STEREO3D)
++    target_compile_definitions(marblewidget PRIVATE MARBLE_HAVE_STEREO3D)
++    target_link_libraries(marblewidget PRIVATE Qt6::GuiPrivate Wayland::Client PkgConfig::STEREO_DECLARE)
++endif()
++
+ # link against zlib
+ target_link_libraries(marblewidget PRIVATE ${ZLIB_LIBRARIES})
+ 
+diff --git a/src/lib/marble/MarbleWidget.cpp b/src/lib/marble/MarbleWidget.cpp
+index 633165cae..06024e96b 100644
+--- a/src/lib/marble/MarbleWidget.cpp
++++ b/src/lib/marble/MarbleWidget.cpp
+@@ -28,6 +28,7 @@
+ #include "PopupLayer.h"
+ #include "RenderPlugin.h"
+ #include "RenderState.h"
++#include "StereoLayer.h"
+ #include "StyleBuilder.h"
+ #include "SunLocator.h"
+ #include "TileCreatorDialog.h"
+@@ -35,12 +36,15 @@
+ #include "routing/RoutingLayer.h"
+ #include <QElapsedTimer>
+ #include <QHash>
++#include <QImage>
+ #include <QMetaMethod>
+ #include <QNetworkProxy>
+ #include <QPaintEngine>
+ #include <QPaintEvent>
++#include <QPainter>
+ #include <QRegion>
+ #include <QSettings>
++#include <QTimer>
+ #include <qmath.h>
+ 
+ namespace Marble
+@@ -113,6 +117,7 @@ public:
+         m_map.removeLayer(m_mapInfoDialog);
+         delete m_mapInfoDialog;
+         delete m_popupmenu;
++        delete m_stereoLayer;
+     }
+ 
+     void construct();
+@@ -146,6 +151,15 @@ public:
+     MarbleWidgetPopupMenu *m_popupmenu;
+ 
+     bool m_showFrameRate;
++
++    bool stereo3DActive() const;
++    void setStereo3D(bool enabled);
++    void paintStereo3D();
++
++    bool m_stereo3D = false;
++    qreal m_stereo3DSeparation = 2.0;
++    StereoLayer *m_stereoLayer = nullptr;
++    QImage m_eyes[2];
+ };
+ 
+ MarbleWidget::MarbleWidget(QWidget *parent)
+@@ -267,7 +281,7 @@ void MarbleWidgetPrivate::updateSystemBackgroundAttribute()
+ {
+     // We only have to repaint the background every time if the earth
+     // doesn't cover the whole image.
+-    const bool isOn = m_map.viewport()->mapCoversViewport() && !m_model.mapThemeId().isEmpty();
++    const bool isOn = (m_map.viewport()->mapCoversViewport() && !m_model.mapThemeId().isEmpty()) || stereo3DActive();
+     m_widget->setAttribute(Qt::WA_NoSystemBackground, isOn);
+ }
+ 
+@@ -700,7 +714,19 @@ void MarbleWidget::paintEvent(QPaintEvent *evt)
+         paintDevice = &image;
+     }
+ 
+-    {
++    if (d->stereo3DActive()) {
++        d->paintStereo3D();
++    } else {
++        if (d->m_stereoLayer) {
++            d->m_stereoLayer->hide();
++        }
++        if (d->m_stereo3D) {
++            // This widget has no background of its own while it is for the 3D, a map that is not a globe has the black
++            QPainter background(this);
++            background.setCompositionMode(QPainter::CompositionMode_Source);
++            background.fillRect(rect(), Qt::black);
++        }
++
+         // FIXME: Better way to get the GeoPainter
+         // Create a painter that will do the painting.
+         GeoPainter geoPainter(paintDevice, d->m_map.viewport(), d->m_map.mapQuality());
+@@ -730,6 +756,133 @@ void MarbleWidget::paintEvent(QPaintEvent *evt)
+     }
+ }
+ 
++// The globe is shown in 3D where the compositor takes it, the window is translucent for the layer under it to show through
++// and the map is a globe that has a theme
++bool MarbleWidgetPrivate::stereo3DActive() const
++{
++    return m_stereo3D && m_stereoLayer && m_widget->isEnabled() && m_widget->window()->testAttribute(Qt::WA_TranslucentBackground)
++        && m_map.projection() == Spherical && m_model.mapTheme();
++}
++
++void MarbleWidgetPrivate::setStereo3D(bool enabled)
++{
++    if (enabled == m_stereo3D || (enabled && !MarbleWidget::isStereo3DSupported())) {
++        return;
++    }
++    m_stereo3D = enabled;
++    if (enabled) {
++        m_stereoLayer = new StereoLayer(m_widget);
++        // The layer follows the widget when it is moved by its window's layout
++        auto *timer = new QTimer(m_widget);
++        timer->setInterval(100);
++        m_widget->connect(timer, &QTimer::timeout, m_widget, [this]() {
++            m_stereoLayer->update();
++        });
++        timer->start();
++    } else {
++        delete m_stereoLayer;
++        m_stereoLayer = nullptr;
++    }
++    // The widget draws nothing of its own background, the 3D layer shows through it
++    m_widget->setAutoFillBackground(!enabled);
++    updateSystemBackgroundAttribute();
++    m_widget->update();
++}
++
++// The sky and the globe once for each eye into a view the size of the widget, which the layer under the window shows;
++// the interface is painted over a transparent hole in the widget, once, so it is on the screen plane in both eyes
++void MarbleWidgetPrivate::paintStereo3D()
++{
++    const qreal ratio = m_widget->devicePixelRatioF();
++    const QSize size = m_widget->size() * ratio;
++    for (QImage &eye : m_eyes) {
++        if (eye.size() != size) {
++            eye = QImage(size, QImage::Format_RGB32);
++            eye.setDevicePixelRatio(ratio);
++        }
++        eye.fill(Qt::black);
++    }
++
++    {
++        QPainter hole(m_widget);
++        hole.setCompositionMode(QPainter::CompositionMode_Source);
++        hole.fillRect(m_widget->rect(), Qt::transparent);
++    }
++
++    {
++        GeoPainter leftEye(&m_eyes[0], m_map.viewport(), m_map.mapQuality());
++        GeoPainter rightEye(&m_eyes[1], m_map.viewport(), m_map.mapQuality());
++        GeoPainter painter(m_widget, m_map.viewport(), m_map.mapQuality());
++        m_map.paintStereo(leftEye, rightEye, painter, qDegreesToRadians(m_stereo3DSeparation));
++    }
++    m_stereoLayer->showEyes(m_eyes[0], m_eyes[1]);
++}
++
++// A translucent window paints no background of its own: this paints it as an opaque window does,
++// except over the map widgets that show the globe in 3D
++class StereoWindowBackground : public QObject
++{
++public:
++    using QObject::QObject;
++
++    bool eventFilter(QObject *object, QEvent *event) override
++    {
++        if (event->type() != QEvent::Paint) {
++            return false;
++        }
++        auto *window = static_cast<QWidget *>(object);
++        QRegion background = static_cast<QPaintEvent *>(event)->region();
++        const QList<MarbleWidget *> maps = window->findChildren<MarbleWidget *>();
++        for (MarbleWidget *map : maps) {
++            if (map->stereo3D() && map->isVisible()) {
++                background -= QRect(map->mapTo(window, QPoint(0, 0)), map->size());
++            }
++        }
++        QPainter painter(window);
++        painter.setCompositionMode(QPainter::CompositionMode_Source);
++        painter.setClipRegion(background);
++        painter.fillRect(window->rect(), window->palette().brush(window->backgroundRole()));
++        painter.end();
++        // The window goes on to paint what is its own over it, as the separators of a main window
++        return false;
++    }
++};
++
++void MarbleWidget::prepareStereo3DWindow(QWidget *window)
++{
++    if (!isStereo3DSupported()) {
++        return;
++    }
++    window->setAttribute(Qt::WA_TranslucentBackground);
++    window->installEventFilter(new StereoWindowBackground(window));
++}
++
++bool MarbleWidget::stereo3D() const
++{
++    return d->m_stereo3D;
++}
++
++qreal MarbleWidget::stereo3DSeparation() const
++{
++    return d->m_stereo3DSeparation;
++}
++
++bool MarbleWidget::isStereo3DSupported()
++{
++    return StereoLayer::isSupported();
++}
++
++void MarbleWidget::setStereo3D(bool enabled)
++{
++    d->setStereo3D(enabled);
++}
++
++void MarbleWidget::setStereo3DSeparation(qreal degrees)
++{
++    d->m_stereo3DSeparation = qBound(0.5, degrees, 10.0);
++    update();
++}
++
+ void MarbleWidget::customPaint(GeoPainter *painter)
+ {
+     Q_UNUSED(painter);
+diff --git a/src/lib/marble/MarbleWidget.h b/src/lib/marble/MarbleWidget.h
+index 4d02534b3..a6ecacfae 100644
+--- a/src/lib/marble/MarbleWidget.h
++++ b/src/lib/marble/MarbleWidget.h
+@@ -543,6 +543,30 @@ public:
+ 
+     bool showBackground() const;
+ 
++    /**
++     * @brief  Return whether the globe is shown in stereo 3D.
++     */
++    bool stereo3D() const;
++
++    /**
++     * @brief  Return the angle between the two eyes' cameras, in degrees.
++     */
++    qreal stereo3DSeparation() const;
++
++    /**
++     * @brief  Return whether the compositor takes stereo 3D content: only a Wayland compositor that does.
++     */
++    static bool isStereo3DSupported();
++
++    /**
++     * @brief  Prepare the top-level window of a MarbleWidget to show the globe in stereo 3D, before it is shown.
++     *
++     * The globe is a layer under the window's surface and the widget a transparent hole over it, so the window is made translucent
++     * (Qt::WA_TranslucentBackground), and paints the background of its own the way an opaque window does, except over the widget.
++     * It does nothing where the compositor takes no stereo 3D content; without it the globe is shown as usual.
++     */
++    static void prepareStereo3DWindow(QWidget *window);
++
+     /**
+      * @brief Retrieve the map quality depending on the view context
+      */
+@@ -926,6 +950,22 @@ public Q_SLOTS:
+ 
+     void setShowBackground(bool visible);
+ 
++    /**
++     * @brief Set whether the globe is shown in stereo 3D
++     *
++     * The globe is drawn once for each eye, one world seen by two cameras, and shown as 3D content by the compositor
++     * in the widget's own rectangle; the float items, popups and tools stay on the screen plane, the same in both eyes.
++     * It has effect for the globe projection (not for the flat maps and the perspective view), where the compositor takes stereo 3D content.
++     * @param enabled  whether the globe is in 3D
++     */
++    void setStereo3D(bool enabled);
++
++    /**
++     * @brief Set the angle between the two eyes' cameras
++     * @param degrees  the angle, in degrees: 0.5 to 10
++     */
++    void setStereo3DSeparation(qreal degrees);
++
+     /**
+      * @brief Set whether the is tile is visible
+      * NOTE: This is part of the transitional debug API
+diff --git a/src/lib/marble/StereoLayer.cpp b/src/lib/marble/StereoLayer.cpp
+new file mode 100644
+index 000000000..d345e1c7e
+--- /dev/null
++++ b/src/lib/marble/StereoLayer.cpp
+@@ -0,0 +1,434 @@
++// SPDX-License-Identifier: LGPL-2.1-or-later
++//
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++//
++
++#include "StereoLayer.h"
++
++#ifdef MARBLE_HAVE_STEREO3D
++
++#include "MarbleDebug.h"
++
++#include <QGuiApplication>
++#include <QImage>
++#include <QPointer>
++#include <QWidget>
++#include <QWindow>
++#include <QtGui/qpa/qplatformwindow_p.h>
++
++#include <cstring>
++#include <sys/mman.h>
++#include <unistd.h>
++#include <wayland-client.h>
++
++#include <stereo-declare.h>
++
++#include "wayland-viewporter-client-protocol.h"
++
++namespace Marble
++{
++
++namespace
++{
++struct Globals {
++    wl_compositor *compositor = nullptr;
++    wl_subcompositor *subcompositor = nullptr;
++    wl_shm *shm = nullptr;
++    wp_viewporter *viewporter = nullptr;
++    bool stereo = false;
++};
++
++void registryGlobal(void *data, wl_registry *registry, uint32_t name, const char *interface, uint32_t version)
++{
++    auto *globals = static_cast<Globals *>(data);
++    if (!strcmp(interface, wl_compositor_interface.name)) {
++        globals->compositor = static_cast<wl_compositor *>(wl_registry_bind(registry, name, &wl_compositor_interface, qMin(version, 4u)));
++    } else if (!strcmp(interface, wl_subcompositor_interface.name)) {
++        globals->subcompositor = static_cast<wl_subcompositor *>(wl_registry_bind(registry, name, &wl_subcompositor_interface, 1));
++    } else if (!strcmp(interface, wl_shm_interface.name)) {
++        globals->shm = static_cast<wl_shm *>(wl_registry_bind(registry, name, &wl_shm_interface, 1));
++    } else if (!strcmp(interface, wp_viewporter_interface.name)) {
++        globals->viewporter = static_cast<wp_viewporter *>(wl_registry_bind(registry, name, &wp_viewporter_interface, 1));
++    } else if (!strcmp(interface, "kde_stereo_content_manager_v1")) {
++        globals->stereo = true;
++    }
++}
++
++void registryGlobalRemove(void *, wl_registry *, uint32_t)
++{
++}
++
++const wl_registry_listener registryListener = {registryGlobal, registryGlobalRemove};
++
++wl_display *waylandDisplay()
++{
++    if (QGuiApplication::platformName() != QLatin1StringView("wayland")) {
++        return nullptr;
++    }
++    auto *app = qGuiApp->nativeInterface<QNativeInterface::QWaylandApplication>();
++    return app ? app->display() : nullptr;
++}
++
++// Reads the globals on a queue of its own, so that nothing is dispatched on the queue Qt uses
++wl_registry *readGlobals(wl_display *display, wl_event_queue *queue, Globals &globals)
++{
++    auto *wrapper = static_cast<wl_display *>(wl_proxy_create_wrapper(display));
++    wl_proxy_set_queue(reinterpret_cast<wl_proxy *>(wrapper), queue);
++    wl_registry *registry = wl_display_get_registry(wrapper);
++    wl_proxy_wrapper_destroy(wrapper);
++    wl_registry_add_listener(registry, &registryListener, &globals);
++    wl_display_roundtrip_queue(display, queue);
++    return registry;
++}
++
++void destroyGlobals(Globals &globals)
++{
++    if (globals.compositor) {
++        wl_compositor_destroy(globals.compositor);
++    }
++    if (globals.subcompositor) {
++        wl_subcompositor_destroy(globals.subcompositor);
++    }
++    if (globals.shm) {
++        wl_shm_destroy(globals.shm);
++    }
++    if (globals.viewporter) {
++        wp_viewporter_destroy(globals.viewporter);
++    }
++    globals = {};
++}
++
++// A buffer of the layer in shared memory, which the compositor gives back with release
++struct Buffer {
++    wl_buffer *buffer = nullptr;
++    uchar *data = nullptr;
++    size_t size = 0;
++    QSize pixels;
++    bool busy = false;
++};
++
++void bufferRelease(void *data, wl_buffer *)
++{
++    static_cast<Buffer *>(data)->busy = false;
++}
++
++const wl_buffer_listener bufferListener = {bufferRelease};
++
++void destroyBuffer(Buffer &buffer)
++{
++    if (buffer.buffer) {
++        wl_buffer_destroy(buffer.buffer);
++    }
++    if (buffer.data) {
++        munmap(buffer.data, buffer.size);
++    }
++    buffer = {};
++}
++
++bool createBuffer(Buffer &buffer, wl_shm *shm, wl_event_queue *queue, const QSize &pixels)
++{
++    const int stride = pixels.width() * 4;
++    const size_t size = size_t(stride) * pixels.height();
++    const int fd = memfd_create("marble-stereo-layer", MFD_CLOEXEC);
++    if (fd < 0) {
++        return false;
++    }
++    if (ftruncate(fd, off_t(size)) < 0) {
++        close(fd);
++        return false;
++    }
++    void *data = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
++    if (data == MAP_FAILED) {
++        close(fd);
++        return false;
++    }
++    wl_shm_pool *pool = wl_shm_create_pool(shm, fd, int(size));
++    close(fd);
++    wl_buffer *wlBuffer = wl_shm_pool_create_buffer(pool, 0, pixels.width(), pixels.height(), stride, WL_SHM_FORMAT_XRGB8888);
++    wl_shm_pool_destroy(pool);
++    wl_proxy_set_queue(reinterpret_cast<wl_proxy *>(wlBuffer), queue);
++    buffer.buffer = wlBuffer;
++    buffer.data = static_cast<uchar *>(data);
++    buffer.size = size;
++    buffer.pixels = pixels;
++    buffer.busy = false;
++    wl_buffer_add_listener(wlBuffer, &bufferListener, &buffer);
++    return true;
++}
++
++}
++
++class StereoLayer::Private
++{
++public:
++    explicit Private(QWidget *area)
++        : m_area(area)
++    {
++    }
++
++    bool create();
++    void destroy();
++    void place();
++
++    QPointer<QWidget> m_area;
++    wl_display *m_display = nullptr;
++    wl_event_queue *m_queue = nullptr;
++    wl_registry *m_registry = nullptr;
++    Globals m_globals;
++    wl_surface *m_surface = nullptr;
++    wl_subsurface *m_subsurface = nullptr;
++    wp_viewport *m_viewport = nullptr;
++    Buffer m_buffers[2];
++    bool m_declared = false;
++    bool m_initialized = false;
++    bool m_shown = false;
++    QPoint m_placedPosition{-1, -1};
++    QSize m_placedSize;
++};
++
++bool StereoLayer::isSupported()
++{
++    static const bool supported = [] {
++        wl_display *display = waylandDisplay();
++        if (!display) {
++            return false;
++        }
++        wl_event_queue *queue = wl_display_create_queue(display);
++        Globals globals;
++        wl_registry *registry = readGlobals(display, queue, globals);
++        const bool ok = globals.compositor && globals.subcompositor && globals.shm && globals.viewporter && globals.stereo;
++        destroyGlobals(globals);
++        wl_registry_destroy(registry);
++        wl_event_queue_destroy(queue);
++        return ok;
++    }();
++    return supported;
++}
++
++bool StereoLayer::Private::create()
++{
++    QWidget *top = m_area ? m_area->window() : nullptr;
++    QWindow *window = top ? top->windowHandle() : nullptr;
++    auto *windowInterface = window ? window->nativeInterface<QNativeInterface::Private::QWaylandWindow>() : nullptr;
++    if (!windowInterface || !windowInterface->surface()) {
++        return false;
++    }
++    m_display = waylandDisplay();
++    m_queue = wl_display_create_queue(m_display);
++    m_registry = readGlobals(m_display, m_queue, m_globals);
++    if (stereo_declare_wayland_init(m_display, m_queue) != 0) {
++        destroy();
++        return false;
++    }
++    m_initialized = true;
++    wl_display_roundtrip_queue(m_display, m_queue);
++    if (!stereo_supported_wayland()) {
++        destroy();
++        return false;
++    }
++    m_surface = wl_compositor_create_surface(m_globals.compositor);
++    // Qt makes subsurfaces only above their parent, this one is placed below the window's surface
++    m_subsurface = wl_subcompositor_get_subsurface(m_globals.subcompositor, m_surface, windowInterface->surface());
++    wl_subsurface_place_below(m_subsurface, windowInterface->surface());
++    // The layer changes with the frames of the globe, not with those of the window
++    wl_subsurface_set_desync(m_subsurface);
++    m_viewport = wp_viewporter_get_viewport(m_globals.viewporter, m_surface);
++    // The window's surface keeps the pointer: the layer takes no input
++    wl_region *empty = wl_compositor_create_region(m_globals.compositor);
++    wl_surface_set_input_region(m_surface, empty);
++    wl_region_destroy(empty);
++    return true;
++}
++
++void StereoLayer::Private::destroy()
++{
++    if (m_declared) {
++        stereo_remove_wayland(m_surface);
++        m_declared = false;
++    }
++    if (m_initialized) {
++        stereo_declare_wayland_finish();
++        m_initialized = false;
++    }
++    if (m_viewport) {
++        wp_viewport_destroy(m_viewport);
++        m_viewport = nullptr;
++    }
++    if (m_subsurface) {
++        wl_subsurface_destroy(m_subsurface);
++        m_subsurface = nullptr;
++    }
++    if (m_surface) {
++        wl_surface_destroy(m_surface);
++        m_surface = nullptr;
++    }
++    for (Buffer &buffer : m_buffers) {
++        destroyBuffer(buffer);
++    }
++    destroyGlobals(m_globals);
++    if (m_registry) {
++        wl_registry_destroy(m_registry);
++        m_registry = nullptr;
++    }
++    if (m_queue) {
++        wl_event_queue_destroy(m_queue);
++        m_queue = nullptr;
++    }
++    if (m_display) {
++        wl_display_flush(m_display);
++        m_display = nullptr;
++    }
++    m_placedPosition = QPoint(-1, -1);
++    m_placedSize = {};
++    m_shown = false;
++}
++
++// The layer takes the rectangle of the widget in the window; the position takes effect with the window's next commit
++void StereoLayer::Private::place()
++{
++    const QPoint position = m_area->mapTo(m_area->window(), QPoint(0, 0));
++    const QSize size = m_area->size();
++    if (position != m_placedPosition) {
++        wl_subsurface_set_position(m_subsurface, position.x(), position.y());
++        m_placedPosition = position;
++        m_area->window()->update();
++    }
++    if (size != m_placedSize) {
++        wp_viewport_set_destination(m_viewport, size.width(), size.height());
++        wl_region *opaque = wl_compositor_create_region(m_globals.compositor);
++        wl_region_add(opaque, 0, 0, size.width(), size.height());
++        wl_surface_set_opaque_region(m_surface, opaque);
++        wl_region_destroy(opaque);
++        m_placedSize = size;
++    }
++}
++
++StereoLayer::StereoLayer(QWidget *area)
++    : d(new Private(area))
++{
++}
++
++StereoLayer::~StereoLayer()
++{
++    d->destroy();
++    delete d;
++}
++
++void StereoLayer::hide()
++{
++    if (d->m_surface && d->m_shown) {
++        wl_surface_attach(d->m_surface, nullptr, 0, 0);
++        wl_surface_commit(d->m_surface);
++        wl_display_flush(d->m_display);
++        d->m_shown = false;
++    }
++}
++
++void StereoLayer::update()
++{
++    if (!d->m_surface || !d->m_area) {
++        return;
++    }
++    if (!d->m_area->isVisible() || d->m_area->size().isEmpty()) {
++        hide();
++        return;
++    }
++    d->place();
++}
++
++void StereoLayer::showEyes(const QImage &left, const QImage &right)
++{
++    if (!d->m_area || !d->m_area->isVisible() || d->m_area->size().isEmpty() || left.isNull() || right.isNull() || left.size() != right.size()) {
++        return;
++    }
++    if (!d->m_surface && !d->create()) {
++        return;
++    }
++    // Nothing is listened to on the queue of the layer but the release of buffers
++    wl_display_dispatch_queue_pending(d->m_display, d->m_queue);
++
++    const QSize view = left.size();
++    const QSize pixels(view.width() * 2, view.height());
++
++    Buffer *buffer = nullptr;
++    for (Buffer &candidate : d->m_buffers) {
++        if (candidate.buffer && candidate.pixels != pixels && !candidate.busy) {
++            destroyBuffer(candidate);
++        }
++        if (candidate.busy) {
++            continue;
++        }
++        if (!candidate.buffer && !createBuffer(candidate, d->m_globals.shm, d->m_queue, pixels)) {
++            continue;
++        }
++        if (candidate.pixels == pixels) {
++            buffer = &candidate;
++            break;
++        }
++    }
++    if (!buffer) {
++        return;
++    }
++
++    const int stride = pixels.width() * 4;
++    for (int y = 0; y < view.height(); ++y) {
++        uchar *line = buffer->data + size_t(y) * stride;
++        memcpy(line, left.constScanLine(y), view.width() * 4);
++        memcpy(line + view.width() * 4, right.constScanLine(y), view.width() * 4);
++    }
++
++    d->place();
++    if (!d->m_declared) {
++        const int result = stereo_declare_wayland(d->m_surface, STEREO_SBS_FULL, STEREO_CLASS_VIDEO, STEREO_VIDEO_CURRENT);
++        if (result < 0) {
++            mDebug() << "declaring the stereo content failed:" << strerror(-result);
++        } else {
++            d->m_declared = true;
++        }
++    }
++    buffer->busy = true;
++    wl_surface_attach(d->m_surface, buffer->buffer, 0, 0);
++    wl_surface_damage_buffer(d->m_surface, 0, 0, pixels.width(), pixels.height());
++    wl_surface_commit(d->m_surface);
++    wl_display_flush(d->m_display);
++    d->m_shown = true;
++}
++
++}
++
++#else
++
++namespace Marble
++{
++
++class StereoLayer::Private
++{
++};
++
++StereoLayer::StereoLayer(QWidget *)
++    : d(nullptr)
++{
++}
++
++StereoLayer::~StereoLayer() = default;
++
++bool StereoLayer::isSupported()
++{
++    return false;
++}
++
++void StereoLayer::showEyes(const QImage &, const QImage &)
++{
++}
++
++void StereoLayer::update()
++{
++}
++
++void StereoLayer::hide()
++{
++}
++
++}
++
++#endif
+diff --git a/src/lib/marble/StereoLayer.h b/src/lib/marble/StereoLayer.h
+new file mode 100644
+index 000000000..caf8285b3
+--- /dev/null
++++ b/src/lib/marble/StereoLayer.h
+@@ -0,0 +1,48 @@
++// SPDX-License-Identifier: LGPL-2.1-or-later
++//
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++//
++
++#ifndef MARBLE_STEREOLAYER_H
++#define MARBLE_STEREOLAYER_H
++
++class QImage;
++class QWidget;
++
++namespace Marble
++{
++
++/**
++ * @brief The 3D area of a window: a layer under the window's surface that shows both views of a widget through a compositor that takes stereo content.
++ *
++ * The views, side by side with the left eye first and each at the size of the widget, are in a surface under the window's own,
++ * a wl_subsurface placed below it at the rectangle of the widget and declared to the compositor as full side by side stereo content.
++ * The widget is transparent over it and the rest of the window stays as it is, the same in both eyes, so whatever is drawn over the
++ * widget is on the screen plane. It is used on Wayland when the compositor has wl_subcompositor, wp_viewporter, wl_shm and the
++ * stereo content declaration.
++ */
++class StereoLayer
++{
++public:
++    /** @param area The widget whose rectangle in its window the layer fills */
++    explicit StereoLayer(QWidget *area);
++    ~StereoLayer();
++
++    /** @brief True if the compositor offers what the layer needs */
++    static bool isSupported();
++
++    /** @brief Show the two views, both at the size of the widget in device pixels */
++    void showEyes(const QImage &left, const QImage &right);
++    /** @brief Follow the widget when it moves or changes size, and hide the layer while it is not shown */
++    void update();
++    /** @brief Take the views off the screen */
++    void hide();
++
++private:
++    class Private;
++    Private *const d;
++};
++
++}
++
++#endif
+-- 
+2.53.0
+
