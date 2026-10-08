@@ -17,8 +17,8 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
-VERSION=${VERSION:-20261005.1~sparky9~0}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
-WORK=$(mktemp -d /K3D/temp/sparky-os/look-build.XXXXXX)
+VERSION=${VERSION:-20261008~sparky9~0}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
+WORK=$(mktemp -d "${TMPDIR:-/K3D/temp/sparky-os}/look-build.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 LNF=usr/share/plasma/look-and-feel
 OXYGEN=/usr/share/plasma/look-and-feel/org.kde.oxygen
@@ -60,7 +60,7 @@ cp "$HERE/default/org.sparkystereo.desktop/contents/defaults" "$T/contents/"
 cp -a "$OXYGEN/contents/splash" "$OXYGEN/contents/previews" "$T/contents/"
 # Oxygen's Splash.qml animates a bottomRect that does not exist: our fixed copy (see upstream-patches/)
 cp "$HERE/default/splash/Splash.qml" "$T/contents/splash/Splash.qml"
-cp "$HERE/default/xdg/kdeglobals" "$HERE/default/xdg/kwinrc" "$HERE/default/xdg/kde-mimeapps.list" "$D/etc/xdg/"
+cp "$HERE/default/xdg/kdeglobals" "$HERE/default/xdg/kwinrc" "$HERE/default/xdg/kde-mimeapps.list" "$HERE/default/xdg/krunnerrc" "$D/etc/xdg/"
 control "$D" sparky-stereo-look \
 	"plasma-theme-oxygen, oxygen-icon-theme, oxygencursors, kde-style-oxygen-qt6, kwin-decoration-oxygen" \
 	"kde-style-oxygen-qt5" \
@@ -69,8 +69,10 @@ control "$D" sparky-stereo-look \
 	"Plasma style, icons, cursor, splash, the Oxygen application style and the" \
 	"Oxygen window decoration. Also sets the default KWin effects: translucency" \
 	"with Daniel Ramos's values, glide and wobbly windows, and makes VLC Stereo the" \
-	"default video player (/etc/xdg/kde-mimeapps.list; a user's own choice still wins)."
-printf '%s\n' /etc/xdg/kdeglobals /etc/xdg/kwinrc /etc/xdg/kde-mimeapps.list >"$D/DEBIAN/conffiles"
+	"default video player (/etc/xdg/kde-mimeapps.list; a user's own choice still wins)." \
+	"Search lists installed applications first, then settings. The power action," \
+	"web search, online dictionary and currency conversion runners are off by default."
+printf '%s\n' /etc/xdg/kdeglobals /etc/xdg/kwinrc /etc/xdg/kde-mimeapps.list /etc/xdg/krunnerrc >"$D/DEBIAN/conffiles"
 cat >"$D/usr/share/doc/sparky-stereo-look/copyright" <<'EOF'
 Sparky Stereo OS default look.
 Theme definition and defaults: Copyright 2026 Daniel Ramos (Capitain Jack), GPL-2.0-or-later.
