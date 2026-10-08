@@ -1,0 +1,60 @@
+# Candidate patch for the upstream study (media-on-dmo lane, 2026-10-08). Against FFmpeg 9.0.2, libavformat/mov.c (the reader half).
+# STATUS: compiled in a minimal FFmpeg 9.0.2 (demuxers mov and matroska, muxers mp4/matroska/null, ffmpeg, ffprobe; tiny-build/)
+#   and run on the four probe files and on 15 Matroska fixtures remuxed to MP4: tiny-build/test-result.txt. FATE (fate-mov*) was NOT run.
+#   Not submitted anywhere (Daniel, 2026-10-08: new upstream submissions are held). Not in our FFmpeg patch set.
+#
+# Subject: avformat/mov: keep the st3d packing when vexu/eyes is read, in either order
+#
+# FFmpeg's own MP4 muxer writes st3d (side by side or top and bottom, when the stereo flags are 0) and, with -strict unofficial,
+# vexu/eyes/stri beside it. FFmpeg's own MP4 reader then reports "Stereo 3D: unspecified, view: packed", because mov_read_eyes()
+# sets the type to AV_STEREO3D_UNSPEC over the one st3d gave; and a file with vexu BEFORE st3d is refused ("error reading header:
+# Invalid data found when processing input"), because mov_read_st3d() returns AVERROR_INVALIDDATA when sc->stereo3d exists.
+# stri says which views the track holds, st3d says how they are packed: neither may erase the other, in either order.
+#
+# Measured with this patch (tiny-build/test-result.txt): probe-original (st3d + vexu) "side by side, view: packed" (unpatched:
+# "unspecified"); probe-vexu-first readable (unpatched: error); MKV StereoMode side by side LR and top and bottom LR remuxed to MP4
+# read back as such. NOT fixed by it, and not fixable in the reader: right-eye-first packings (Matroska StereoMode 2, 11, ...):
+# the muxer writes no st3d for them (mov_write_st3d_tag() refuses flags != 0, rightly: st3d has no field for the eye order and a
+# st3d-only reader would take the order as left first) and vexu/stri alone says "views: both, reversed" with no packing at all.
+# MP4 has no standard box for "packed side by side, right eye first"; the stream's own frame packing SEI (H.264, HEVC, VVC)
+# does. Checkerboard and interleaved modes have no st3d code either.
+#
+--- a/libavformat/mov.c	2026-10-08 09:11:08.108469413 -0300
++++ b/libavformat/mov.c	2026-10-08 09:11:08.165438197 -0300
+@@ -6840,9 +6840,6 @@
+         return AVERROR_INVALIDDATA;
+     }
+ 
+-    if (sc->stereo3d)
+-        return AVERROR_INVALIDDATA;
+-
+     avio_skip(pb, 4); /* version + flags */
+ 
+     mode = avio_r8(pb);
+@@ -6861,9 +6858,12 @@
+         return 0;
+     }
+ 
+-    sc->stereo3d = av_stereo3d_alloc_size(&sc->stereo3d_size);
+-    if (!sc->stereo3d)
+-        return AVERROR(ENOMEM);
++    /* A vexu/eyes box read before this one has only said which views there are: the packing comes from here. */
++    if (!sc->stereo3d) {
++        sc->stereo3d = av_stereo3d_alloc_size(&sc->stereo3d_size);
++        if (!sc->stereo3d)
++            return AVERROR(ENOMEM);
++    }
+ 
+     sc->stereo3d->type = type;
+     return 0;
+@@ -7328,7 +7328,9 @@
+     }
+ 
+     sc->stereo3d->flags                           = flags;
+-    sc->stereo3d->type                            = type;
++    /* stri names the views, not how they are packed: a packing that st3d gave (side by side, top and bottom) stays. */
++    if (sc->stereo3d->type == AV_STEREO3D_2D)
++        sc->stereo3d->type                        = type;
+     sc->stereo3d->view                            = view;
+     sc->stereo3d->primary_eye                     = primary_eye;
+     sc->stereo3d->baseline                        = baseline;
