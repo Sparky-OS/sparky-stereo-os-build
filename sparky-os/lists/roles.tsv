@@ -3,7 +3,7 @@
 # packages as well - old debian user here"). Columns: package, roles (comma separated).
 # Packages of apps.list not named here stay in sparky-stereo-desktop, the core everyone gets.
 # Packages named here but in no list are role-only: they install with their task.
-# Roles: gamer designer creator musician scientist student simmer
+# Roles: gamer designer creator musician scientist student simmer maker
 # Third column, for scientist and student only (Daniel: "for those edu and science - issue stereo
 # and non-stereo meta and tasks - so people can install the missing non-stereo without conflicting
 # with our stereo ones"): 3d = shows stereo on Sparky Stereo OS today (SOLUTIONS.md), into
@@ -15,7 +15,7 @@ chiaki	gamer
 corectrl	gamer
 dosbox-x	gamer
 # --- designer: 2D, 3D, photo
-blender	designer,creator
+blender	designer,creator,maker
 colord-kde	designer
 ddcui	designer
 digikam	designer
@@ -70,10 +70,10 @@ kubrick	student	3d
 octave	scientist	3d
 netgen	scientist	3d
 paraview	scientist	2d
-freecad	scientist,designer	2d
-kicad	scientist	3d
-openscad	scientist,designer	3d
-f3d	scientist,designer	3d
+freecad	scientist,designer,maker	2d
+kicad	scientist,maker	3d
+openscad	scientist,designer,maker	3d
+f3d	scientist,designer,maker	3d
 grass	scientist	3d
 kstars	scientist,student	2d
 labplot	scientist	2d
@@ -109,3 +109,14 @@ ktuberling	student	2d
 flightgear	simmer,gamer
 torcs	simmer,gamer
 joystick	simmer,gamer
+# --- maker: 3D printing (Daniel, 2026-10-08, after Karan_Luciano's reply on Diolinux: "find the 3d
+# printing software - include'em - kde has something? - open source first always"); blender,
+# freecad, kicad, openscad and f3d carry maker above. Not in Debian testing, ours to package
+# (notes/3d-printing.md): KDE's AtCore and Atelier, OrcaSlicer, Dune 3D, Printrun, UVtools; current
+# Cura (Debian has 5.0.0 of 2022). PrusaSlicer and MeshLab come from Debian once they reach testing.
+cura	maker
+prusa-slicer	maker
+meshlab	maker
+solvespace	maker,designer
+admesh	maker
+colmap	maker,scientist	2d

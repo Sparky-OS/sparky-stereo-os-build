@@ -73,6 +73,7 @@ ROLES = {
     'scientist': ('scientist', 'science and engineering: mathematics, chemistry, maps, CAD, GIS and plotting'),
     'student': ('student', 'education: the KDE Edu programs and GCompris'),
     'simmer': ('simulator pilot and driver', 'flight and racing simulators and the tools for their rigs'),
+    'maker': ('maker', '3D printing: modelling, mesh checking and repair, slicing, printer control, 3D scanning and electronics'),
 }
 SPLIT = {'scientist', 'student'}
 
@@ -165,10 +166,10 @@ META = {
         ['sparky-stereo-tasks']),
 }
 META.update(tasks())
-META['sparky-stereo'] = (META['sparky-stereo'][0], META['sparky-stereo'][1].replace('the desktop, gaming, languages, hardware support and system meta packages', 'the desktop, languages, hardware support and system meta packages, and every role task (gamer, designer, video creator, musician, scientist, student, simulator pilot and driver)'), META['sparky-stereo'][2], META['sparky-stereo'][3] + sorted(k for k in META if k.startswith('task-')))
+META['sparky-stereo'] = (META['sparky-stereo'][0], META['sparky-stereo'][1].replace('the desktop, gaming, languages, hardware support and system meta packages', 'the desktop, languages, hardware support and system meta packages, and every role task (gamer, designer, video creator, musician, scientist, student, simulator pilot and driver, maker)'), META['sparky-stereo'][2], META['sparky-stereo'][3] + sorted(k for k in META if k.startswith('task-')))
 META['sparky-stereo-tasks'] = (
     'Sparky Stereo OS tasks for tasksel',
-    'This package lists the role tasks of Sparky Stereo OS in tasksel, the Debian way: gamer, designer, video creator, musician, scientist, student, simulator pilot and driver, with the 2D programs of science and education as their own tasks.',
+    'This package lists the role tasks of Sparky Stereo OS in tasksel, the Debian way: gamer, designer, video creator, musician, scientist, student, simulator pilot and driver, maker, with the 2D programs of science and education as their own tasks.',
     ['tasksel'], [])
 
 def desc():
