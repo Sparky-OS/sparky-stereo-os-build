@@ -215,9 +215,9 @@ void CecAdapter::finished(int exitCode, QProcess::ExitStatus status)
             send(Operation::Standby);
             return;
         }
-        Q_EMIT skipped(physical < 0 ? QStringLiteral("CEC standby skipped: no valid Active Source reply")
-                                   : physical != m_physical ? QStringLiteral("CEC standby skipped: another input is the active source")
-                                                            : QStringLiteral("CEC standby skipped: the screen is already on"));
+        Q_EMIT skipped(physical < 0                 ? QStringLiteral("CEC standby skipped: no valid Active Source reply")
+                           : physical != m_physical ? QStringLiteral("CEC standby skipped: another input is the active source")
+                                                    : QStringLiteral("CEC standby skipped: the screen is already on"));
     } else if (operation == Operation::Standby) {
         if (acknowledged) {
             m_standbyPhysical = m_physical;

@@ -36,7 +36,13 @@ Q_SIGNALS:
 
 private:
     void next();
-    enum class Operation { Idle, Configure, CheckSource, Standby, ViewOn, AnnounceSource };
+    enum class Operation { Idle,
+                           Configure,
+                           CheckSource,
+                           Standby,
+                           ViewOn,
+                           AnnounceSource,
+    };
     void start(const QStringList &arguments, Operation operation);
     void send(Operation operation);
     void finished(int exitCode, QProcess::ExitStatus status);

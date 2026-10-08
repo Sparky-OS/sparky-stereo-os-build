@@ -39,6 +39,14 @@ int main(int argc, char **argv)
         qWarning().noquote() << message;
         app.exit(1);
     });
+    QObject::connect(&adapter, &CecAdapter::skipped, &app, [&app](const QString &message) {
+        qWarning().noquote() << message;
+        app.exit(1);
+    });
+    QTimer::singleShot(60000, &app, [&app] {
+        qWarning() << "CEC cycle timed out";
+        app.exit(1);
+    });
     QObject::connect(&adapter, &CecAdapter::transmitted, &app, [&](bool requestedOn, bool acknowledged) {
         if (!acknowledged) {
             app.exit(1);
