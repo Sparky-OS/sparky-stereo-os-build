@@ -1,0 +1,125 @@
+diff --git a/logout-greeter/CMakeLists.txt b/logout-greeter/CMakeLists.txt
+index 00ac163295..bce7c425b5 100644
+--- a/logout-greeter/CMakeLists.txt
++++ b/logout-greeter/CMakeLists.txt
+@@ -20,6 +20,8 @@ target_link_libraries(ksmserver-logout-greeter
+     KF6::Package
+     KF6::WindowSystem
+     KF6::ConfigCore
++    KF6::KIOGui
++    KF6::JobWidgets
+     X11::X11
+     LayerShellQt::Interface
+ )
+diff --git a/logout-greeter/shutdowndlg.cpp b/logout-greeter/shutdowndlg.cpp
+index 7b113bbf15..9613312296 100644
+--- a/logout-greeter/shutdowndlg.cpp
++++ b/logout-greeter/shutdowndlg.cpp
+@@ -28,7 +28,10 @@
+ #include <PackageKit/Daemon>
+ #endif
+ 
++#include <KIO/ApplicationLauncherJob>
+ #include <KLocalizedString>
++#include <KNotificationJobUiDelegate>
++#include <KService>
+ #include <KUser>
+ #include <KWindowEffects>
+ #include <KWindowSystem>
+@@ -280,6 +283,8 @@ void KSMShutdownDlg::init(const KPackage::Package &package)
+     connect(rootObject(), SIGNAL(rebootUpdateRequested()), SLOT(slotRebootUpdate()));
+     connect(rootObject(), SIGNAL(cancelRequested()), SLOT(reject()));
+     connect(rootObject(), SIGNAL(lockScreenRequested()), SLOT(slotLockScreen()));
++    connect(rootObject(), SIGNAL(taskManagerRequested()), SLOT(slotTaskManager()));
++    connect(rootObject(), SIGNAL(closeFrozenWindowRequested()), SLOT(slotCloseFrozenWindow()));
+     connect(rootObject(), SIGNAL(cancelSoftwareUpdateRequested()), SLOT(slotCancelSoftwareUpdate()));
+ 
+     connect(screen(), &QScreen::geometryChanged, this, [this] {
+@@ -343,6 +348,25 @@ void KSMShutdownDlg::slotLockScreen()
+     reject();
+ }
+ 
++void KSMShutdownDlg::slotTaskManager()
++{
++    auto *job = new KIO::ApplicationLauncherJob(KService::serviceByDesktopName(u"org.kde.plasma-systemmonitor"_s));
++    job->setUiDelegate(new KNotificationJobUiDelegate(KJobUiDelegate::AutoHandlingEnabled));
++    connect(job, &KJob::result, this, [this, job] {
++        if (!job->error()) {
++            reject();
++        }
++    });
++    job->start();
++}
++
++void KSMShutdownDlg::slotCloseFrozenWindow()
++{
++    const auto message = QDBusMessage::createMethodCall(u"org.kde.KWin"_s, u"/KWin"_s, u"org.kde.KWin"_s, u"killWindow"_s);
++    QDBusConnection::sessionBus().asyncCall(message);
++    reject();
++}
++
+ void KSMShutdownDlg::slotHalt()
+ {
+     m_bootOption.clear();
+diff --git a/logout-greeter/shutdowndlg.h b/logout-greeter/shutdowndlg.h
+index cc481a541e..979bc9de5e 100644
+--- a/logout-greeter/shutdowndlg.h
++++ b/logout-greeter/shutdowndlg.h
+@@ -40,6 +40,8 @@ public Q_SLOTS:
+     void slotRebootUpdate();
+     void slotSuspend(int);
+     void slotLockScreen();
++    void slotTaskManager();
++    void slotCloseFrozenWindow();
+     void slotCancelSoftwareUpdate();
+ 
+ Q_SIGNALS:
+diff --git a/lookandfeel/org.kde.breeze/contents/logout/Logout.qml b/lookandfeel/org.kde.breeze/contents/logout/Logout.qml
+index d3656c7b32..995f131062 100644
+--- a/lookandfeel/org.kde.breeze/contents/logout/Logout.qml
++++ b/lookandfeel/org.kde.breeze/contents/logout/Logout.qml
+@@ -33,6 +33,8 @@ Item {
+     signal rebootUpdateRequested()
+     signal cancelRequested()
+     signal lockScreenRequested()
++    signal taskManagerRequested()
++    signal closeFrozenWindowRequested()
+     signal cancelSoftwareUpdateRequested()
+ 
+     function sleepRequested() {
+@@ -346,6 +348,35 @@ Item {
+                 onClicked: root.cancelRequested()
+                 KeyNavigation.left: logoutButton.visible ? logoutButton : (shutdownWithoutUpdatesButton.visible ? shutdownWithoutUpdatesButton : (shutdownButton.visible ? shutdownButton : (rebootWithoutUpdatesButton.visible ? rebootWithoutUpdatesButton : (rebootButton.visible ? rebootButton : (hibernateButton.visible ? hibernateButton : suspendButton)))))
+                 KeyNavigation.right: suspendButton.visible ? suspendButton : (hibernateButton.visible ? hibernateButton : rebootButton)
++                KeyNavigation.down: recoveryButtonsRow.visible ? taskManagerButton : null
++            }
++        }
++
++        RowLayout {
++            id: recoveryButtonsRow
++            Layout.alignment: Qt.AlignHCenter
++            spacing: Kirigami.Units.largeSpacing
++            visible: root.showAllOptions
++
++            LogoutButton {
++                id: taskManagerButton
++                objectName: "taskManagerButton"
++                icon.name: "utilities-system-monitor"
++                text: i18ndc("plasma_lookandfeel_org.kde.lookandfeel", "@action:button", "&Task manager")
++                onClicked: root.taskManagerRequested()
++                KeyNavigation.up: cancelButton
++                KeyNavigation.left: closeFrozenWindowButton
++                KeyNavigation.right: closeFrozenWindowButton
++            }
++            LogoutButton {
++                id: closeFrozenWindowButton
++                objectName: "closeFrozenWindowButton"
++                icon.name: "window-close"
++                text: i18ndc("plasma_lookandfeel_org.kde.lookandfeel", "@action:button", "Close a &frozen window")
++                onClicked: root.closeFrozenWindowRequested()
++                KeyNavigation.up: cancelButton
++                KeyNavigation.left: taskManagerButton
++                KeyNavigation.right: taskManagerButton
+             }
+         }
+     }
