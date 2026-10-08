@@ -1,5 +1,10 @@
 
 -------------------------------------------------------------------------------
+  Version 20261008.2~sparky9~0 (2026-10-08)
+-------------------------------------------------------------------------------
+  * The build no longer stops at dh_shlibdeps on computers whose /etc/ld.so.conf.d lists another folder before the distribution's (CUDA's OpenCL, PipeWire's JACK): dpkg-shlibdeps now looks in the distribution's own library folders first, as on a clean build machine (found on the first host build, 2026-10-08)
+
+-------------------------------------------------------------------------------
   Version 20261008.1~sparky9~0 (2026-10-08)
 -------------------------------------------------------------------------------
   * First version: sparky-stereo-ffmpeg-fdk rebuilds the edition's FFmpeg (ffmpeg-dmo, build profile pkg.ffmpeg-dmo.fdk) on the user's own computer with Fraunhofer's AAC encoder

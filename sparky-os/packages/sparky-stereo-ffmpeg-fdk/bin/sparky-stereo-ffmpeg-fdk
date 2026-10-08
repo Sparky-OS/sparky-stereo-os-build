@@ -106,7 +106,7 @@ ask() {
 # ---- the root worker ----------------------------------------------------------------------------------------
 
 as_user() {
-	runuser -u "$BUILD_USER" -- env -i HOME="$B/home" PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+	runuser -u "$BUILD_USER" -- env -i HOME="$B/home" PATH="${SHIM:+$SHIM:}/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
 		LC_ALL=C.UTF-8 TMPDIR="$B/tmp" DEB_BUILD_OPTIONS="${DBO:-nocheck}" bash -c "$1"
 }
 
@@ -121,6 +121,7 @@ fail() {
 }
 
 B=
+SHIM=           # a folder put first in the build's PATH (see step 4)
 NEW_BD=         # what the build-dep step installed (names), A0: what apt's autoremove would have taken before it
 A0=
 BD_INSTALLED=0
@@ -315,6 +316,16 @@ PY
 	fi
 
 	# 4. the build, as the user
+	# dpkg-shlibdeps looks a library up like the run-time linker, /etc/ld.so.conf.d included: an entry there that comes before
+	# the distribution's directory (CUDA's OpenCL, PipeWire's JACK) hands it a file no package owns, and the build stops at
+	# dh_shlibdeps. It looks in the distribution's own directories first, as on a clean build machine.
+	ma=$(dpkg-architecture -qDEB_HOST_MULTIARCH 2>/dev/null)
+	if [ -n "$ma" ]; then
+		install -d -m 755 "$B/shim"
+		printf '#!/bin/sh\nexec /usr/bin/dpkg-shlibdeps -l/usr/lib/%s -l/lib/%s "$@"\n' "$ma" "$ma" >"$B/shim/dpkg-shlibdeps"
+		chmod 755 "$B/shim/dpkg-shlibdeps"
+		SHIM="$B/shim"
+	fi
 	cores=$(nproc 2>/dev/null || echo 1)
 	jobs=$cores
 	[ "$AUTO" = 1 ] && [ "$jobs" -gt 1 ] && jobs=$((jobs - 1))
