@@ -17,7 +17,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
-VERSION=${VERSION:-20261008.2~sparky9~0}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
+VERSION=${VERSION:-20261008.3~sparky9~0}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
 WORK=$(mktemp -d "${TMPDIR:-/K3D/temp/sparky-os}/look-build.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 LNF=usr/share/plasma/look-and-feel
@@ -54,7 +54,8 @@ build() { # dir package
 # 1. The default look.
 D=$WORK/sparky-stereo-look
 T=$D/$LNF/org.sparkystereo.desktop
-mkdir -p "$T/contents" "$D/etc/xdg"
+mkdir -p "$T/contents" "$D/etc/xdg" "$D/usr/share/kglobalaccel"
+cp "$HERE/default/kglobalaccel/org.sparkystereo.systemmonitor.desktop" "$D/usr/share/kglobalaccel/"
 cp "$HERE/default/org.sparkystereo.desktop/metadata.json" "$T/"
 cp "$HERE/default/org.sparkystereo.desktop/contents/defaults" "$T/contents/"
 cp -a "$OXYGEN/contents/splash" "$OXYGEN/contents/previews" "$T/contents/"
@@ -62,7 +63,7 @@ cp -a "$OXYGEN/contents/splash" "$OXYGEN/contents/previews" "$T/contents/"
 cp "$HERE/default/splash/Splash.qml" "$T/contents/splash/Splash.qml"
 cp "$HERE/default/xdg/kdeglobals" "$HERE/default/xdg/kwinrc" "$HERE/default/xdg/kde-mimeapps.list" "$HERE/default/xdg/krunnerrc" "$D/etc/xdg/"
 control "$D" sparky-stereo-look \
-	"plasma-theme-oxygen, oxygen-icon-theme, oxygencursors, kde-style-oxygen-qt6, kwin-decoration-oxygen, plasma-runners-addons (>= 4:6.7.4-1+stereo3d1)" \
+	"plasma-theme-oxygen, oxygen-icon-theme, oxygencursors, kde-style-oxygen-qt6, kwin-decoration-oxygen, plasma-runners-addons (>= 4:6.7.4-1+stereo3d1), plasma-systemmonitor" \
 	"kde-style-oxygen-qt5" \
 	"Sparky Stereo OS default look: Oxygen dark" \
 	"The edition's default global theme: Oxygen, whole, in its dark colours:" \
@@ -72,7 +73,8 @@ control "$D" sparky-stereo-look \
 	"default video player (/etc/xdg/kde-mimeapps.list; a user's own choice still wins)." \
 	"Search lists installed applications first, then settings. Power actions and" \
 	"unit conversion remain available. Currency rates refresh only when converting a currency." \
-	"Web search and the online dictionary are off by default."
+	"Web search and the online dictionary are off by default." \
+	"Ctrl+Shift+Esc opens System Monitor; existing shortcuts remain available."
 printf '%s\n' /etc/xdg/kdeglobals /etc/xdg/kwinrc /etc/xdg/kde-mimeapps.list /etc/xdg/krunnerrc >"$D/DEBIAN/conffiles"
 cat >"$D/usr/share/doc/sparky-stereo-look/copyright" <<'EOF'
 Sparky Stereo OS default look.
