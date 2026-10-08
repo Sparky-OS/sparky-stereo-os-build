@@ -1,0 +1,42 @@
+#!/bin/bash
+#
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/08
+# Copyright 2026 under the GNU GPL3 License
+# The apt hook of sparky-stereo-ffmpeg-fdk (APT::Update::Post-Invoke-Success): when the edition's repository has a newer
+# FFmpeg than the one the local build was made from, the local build is made again, in the background, with the
+# consent given on the first run. Nothing happens on a computer that never built one. A rebuild that failed is not tried
+# again by itself for the same version (the user is told, and "sparky-stereo-ffmpeg-fdk --rebuild" tries again), and a
+# computer on battery waits for the mains: the build takes a long time.
+# Last update 2026/10/08
+LIBDIR=${SPARKY_FDK_LIBDIR:-/usr/lib/sparky-stereo-ffmpeg-fdk}
+# shellcheck disable=SC1091
+. "$LIBDIR/common.sh" || exit 0
+read_installed && [ -s "$STATE/consent" ] || exit 0
+load_strings
+info=$(repo_source)
+repo=${info%% *}
+[ -n "$repo" ] && dpkg --compare-versions "$repo" gt "$LOCAL_BASE" || exit 0
+if [ "$(cat "$STATE/last-failure" 2>/dev/null)" = "$repo" ]; then
+	printf "$LOCAL70\n" "$repo" "$STATE/last-build.log"
+	exit 0
+fi
+# a rebuild already running: nothing to start
+( flock -n 9 ) 9>"$LOCK" || exit 0
+if command -v on_ac_power >/dev/null 2>&1; then
+	on_ac_power >/dev/null 2>&1
+	# 0: on the mains, 1: on battery, 255: not known
+	if [ $? -eq 1 ]; then
+		printf '%s\n' "$LOCAL72"
+		exit 0
+	fi
+fi
+printf "$LOCAL71\n" "$repo"
+SELF=${SPARKY_FDK_BIN:-/usr/bin/sparky-stereo-ffmpeg-fdk}
+if [ -d /run/systemd/system ] && command -v systemd-run >/dev/null 2>&1; then
+	systemd-run --quiet --no-block --collect --unit=sparky-stereo-ffmpeg-fdk-rebuild \
+		--description="Sparky Stereo OS: FFmpeg with Fraunhofer's AAC, rebuilt for $repo" \
+		-p Nice=19 -p IOSchedulingClass=idle -p CPUSchedulingPolicy=batch "$SELF" --auto >/dev/null 2>&1
+else
+	setsid -f nice -n 19 "$SELF" --auto </dev/null >/dev/null 2>&1
+fi
+exit 0

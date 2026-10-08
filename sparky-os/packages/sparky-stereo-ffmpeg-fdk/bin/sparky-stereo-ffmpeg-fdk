@@ -1,0 +1,475 @@
+#!/bin/bash
+#
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/08
+# Copyright 2026 under the GNU GPL3 License
+# Builds Sparky Stereo OS's FFmpeg on this computer with Fraunhofer's AAC encoder (libfdk_aac) and installs it.
+# The edition ships FFmpeg without that encoder: FFmpeg's LICENSE.md calls a GPL build that includes it
+# unredistributable. A build made here is for this computer only. What it does, in order:
+#   1. says so plainly, with the time the build takes, and asks (--yes does not skip the text)
+#   2. installs the build dependencies of ffmpeg-dmo (apt asks first), builds our source package as the user, in a
+#      temporary folder, with the build profile pkg.ffmpeg-dmo.fdk, which turns --enable-libfdk-aac and --enable-nonfree on
+#   3. installs the result as VERSION+fdkN, which apt prefers over the edition's VERSION (the pin of this package); the
+#      32-bit libraries (Multi-Arch: same, lock-step versions) are the edition's own, relabelled to the same version
+#   4. takes the build dependencies out again, and rebuilds by itself when the edition updates its FFmpeg (the apt hook)
+# Usage: sparky-stereo-ffmpeg-fdk [--yes] [--keep-build-deps] | --status | --remove | --help
+# Last update 2026/10/08
+
+LIBDIR=${SPARKY_FDK_LIBDIR:-/usr/lib/sparky-stereo-ffmpeg-fdk}
+[ -f "$LIBDIR/common.sh" ] || LIBDIR=$(dirname "$(readlink -f "$0")")/../lib
+# shellcheck disable=SC1091
+. "$LIBDIR/common.sh" || exit 1
+load_strings
+
+TMPBASE=${SPARKY_FDK_TMPBASE:-/var/tmp}
+NEED_GB=${SPARKY_FDK_NEED_GB:-8}
+SELF=$(readlink -f "$0")
+MODE=build        # build, status, remove
+RUN=0             # 1: the root worker (started by the front, or by the apt hook with --auto)
+AUTO=0            # 1: no questions; the consent of the first run is on file
+ACCEPT=0
+ASSUME_YES=0
+KEEP_BD=0
+BUILD_USER=${SUDO_USER:-}
+[ "$BUILD_USER" = root ] && BUILD_USER=
+
+usage() {
+	printf '%s\n' "$LOCAL1" "$LOCAL2" "$LOCAL3" "$LOCAL4" "$LOCAL5" "$LOCAL6"
+	exit "${1:-0}"
+}
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+	--yes | -y) ASSUME_YES=1 ;;
+	--keep-build-deps) KEEP_BD=1 ;;
+	--status) MODE=status ;;
+	--remove | --restore) MODE=remove ;;
+	--rebuild) MODE=build ;;
+	--run) RUN=1 ;;
+	--auto) RUN=1 AUTO=1 ;;
+	--accept-licence) ACCEPT=1 ;;
+	--user)
+		[ -n "${2:-}" ] || usage 2
+		BUILD_USER=$2
+		shift
+		;;
+	-h | --help) usage 0 ;;
+	*) usage 2 ;;
+	esac
+	shift
+done
+
+die() {
+	printf "$1\n" "${@:2}" >&2
+	exit 1
+}
+
+# Only a real person's account builds: a login user, not root.
+check_user() {
+	local uid
+	[ -n "$BUILD_USER" ] && uid=$(id -u "$BUILD_USER" 2>/dev/null) && [ "$uid" -ge 1000 ] || die "$LOCAL25"
+}
+
+# ---- the text before anything is built --------------------------------------------------------------------------
+
+estimate() {
+	local cores low high
+	cores=$(nproc 2>/dev/null || echo 1)
+	low=$(((CPU_MINUTES + cores - 1) / cores + 5))
+	high=$((low * 3 / 2 + 5))
+	printf '%s %s %s' "$low" "$high" "$cores"
+}
+
+show_warning() {
+	local low high cores
+	read -r low high cores < <(estimate)
+	printf '\n%s\n\n' "$LOCAL10"
+	printf '%s\n' "$LOCAL11" "$LOCAL12"
+	printf '\n%s\n' "$LOCAL13"
+	printf '%s\n' "$LOCAL14" "$LOCAL15"
+	printf "$LOCAL16\n" "$low" "$high" "$cores"
+	printf '%s\n' "$LOCAL17" "$LOCAL18"
+	echo
+}
+
+ask() {
+	local answer
+	if [ "$ASSUME_YES" = 1 ]; then
+		return 0
+	fi
+	[ -t 0 ] || die "$LOCAL21"
+	printf '%s ' "$LOCAL20"
+	read -r answer
+	case "$answer" in y | Y | yes | YES | s | S | sim | t | T | tak) return 0 ;; esac
+	return 1
+}
+
+# ---- the root worker ----------------------------------------------------------------------------------------
+
+as_user() {
+	runuser -u "$BUILD_USER" -- env -i HOME="$B/home" PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+		LC_ALL=C.UTF-8 TMPDIR="$B/tmp" DEB_BUILD_OPTIONS="${DBO:-nocheck}" bash -c "$1"
+}
+
+note() { printf '%s %s\n' "$(date '+%F %T')" "$*"; }
+
+FAILED_VERSION=
+fail() {
+	printf "$1\n" "${@:2}" >&2
+	[ -n "$FAILED_VERSION" ] && printf '%s\n' "$FAILED_VERSION" >"$STATE/last-failure"
+	logger -t sparky-stereo-ffmpeg-fdk -- "failed: $(printf "$1" "${@:2}")" 2>/dev/null || true
+	exit 1
+}
+
+B=
+NEW_BD=         # what the build-dep step installed (names), A0: what apt's autoremove would have taken before it
+A0=
+BD_INSTALLED=0
+DBO_APT=
+# a build tool stays only if something installed NEEDS it: that something merely recommending it (libsdl3-0 recommends libgl1) is no reason
+AUTOREMOVE_OPT="-o APT::AutoRemove::RecommendsImportant=false -o APT::AutoRemove::SuggestsImportant=false"
+
+# The build tools go again: what this run installed and nothing else (apt's own autoremove list from before this run is left
+# alone, and so is everything that still needs one of them: the encoder's runtime library stays). Also after a failed run.
+remove_build_tools() {
+	local A1 drop sim
+	[ "$BD_INSTALLED" = 1 ] && [ "$KEEP_BD" != 1 ] && [ -n "$NEW_BD" ] || return 0
+	BD_INSTALLED=0
+	# shellcheck disable=SC2086
+	apt-mark auto $NEW_BD >/dev/null 2>&1
+	A1=$(apt-get -s $AUTOREMOVE_OPT autoremove 2>/dev/null | awk '/^Remv /{print $2}' | sort -u)
+	drop=$(comm -12 <(echo "$NEW_BD") <(comm -13 <(echo "$A0") <(echo "$A1")) | tr '\n' ' ')
+	[ -n "$drop" ] || return 0
+	# shellcheck disable=SC2086
+	sim=$(apt-get -s purge $drop 2>/dev/null | awk '/^Remv /{print $2}' | sort -u)
+	if [ -z "$(comm -13 <(echo "$drop" | tr ' ' '\n' | sort -u) <(echo "$sim"))" ]; then
+		# shellcheck disable=SC2086
+		DEBIAN_FRONTEND=noninteractive apt-get $DBO_APT -y purge $drop >/dev/null 2>&1 && note "build tools removed again: $(echo $drop | wc -w) packages"
+	else
+		note "the build tools stay: removing them would take other packages with them"
+	fi
+}
+
+cleanup() {
+	trap - EXIT
+	remove_build_tools
+	[ -n "$B" ] && [ -d "$B" ] && rm -rf -- "${B:?}"
+	rm -rf -- "${STATE:?}/stage"
+}
+
+# Relabel the edition's own package $1 (a .deb of another architecture) as version $2 of the same source: the version, the
+# strict dependencies on the edition's version $3 of the other packages of the source, and, for a Multi-Arch: same
+# package, the files under /usr/share/doc that the local build of the main architecture $4 (a folder) also has, copied
+# from it byte for byte: dpkg refuses two instances of a package whose shared files differ.
+relabel() {
+	python3 - "$1" "$2" "$3" "$4" "$5" <<'PY'
+import glob, hashlib, os, re, shutil, subprocess, sys, tempfile
+deb, newver, base, localdir, out = sys.argv[1:6]
+w = tempfile.mkdtemp(prefix='relabel.', dir=localdir)
+x = os.path.join(w, 'x')
+subprocess.run(['dpkg-deb', '-R', deb, x], check=True)
+cf = os.path.join(x, 'DEBIAN', 'control')
+c = open(cf, encoding='utf-8').read()
+pkg = re.search(r'^Package: (.*)$', c, re.M).group(1)
+c = re.sub(r'^Version: .*$', 'Version: ' + newver, c, count=1, flags=re.M)
+c = c.replace('(= %s)' % base, '(= %s)' % newver)
+open(cf, 'w', encoding='utf-8').write(c)
+if re.search(r'^Multi-Arch: same$', c, re.M):
+    mine = glob.glob(os.path.join(localdir, pkg + '_*.deb'))
+    if not mine:
+        sys.exit('no local build of %s to take the shared files from' % pkg)
+    y = os.path.join(w, 'y')
+    subprocess.run(['dpkg-deb', '-x', mine[0], y], check=True)
+    docdir = os.path.join('usr', 'share', 'doc', pkg)
+    for root, dirs, files in os.walk(os.path.join(y, docdir)):
+        for f in files:
+            src = os.path.join(root, f)
+            rel = os.path.relpath(src, y)
+            dst = os.path.join(x, rel)
+            if os.path.islink(src) or os.path.islink(dst):
+                continue
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copyfile(src, dst)
+    shutil.rmtree(y)
+# md5sums of everything except DEBIAN, as dpkg wants them
+conff = set()
+cfl = os.path.join(x, 'DEBIAN', 'conffiles')
+if os.path.exists(cfl):
+    conff = set(l.strip().lstrip('/') for l in open(cfl))
+lines = []
+for root, dirs, files in os.walk(x):
+    if root == os.path.join(x, 'DEBIAN'):
+        dirs[:] = []
+        continue
+    for f in files:
+        p = os.path.join(root, f)
+        rel = os.path.relpath(p, x)
+        if os.path.islink(p) or rel in conff:
+            continue
+        lines.append('%s  %s\n' % (hashlib.md5(open(p, 'rb').read()).hexdigest(), rel))
+open(os.path.join(x, 'DEBIAN', 'md5sums'), 'w').write(''.join(sorted(lines, key=lambda s: s.split('  ', 1)[1])))
+subprocess.run(['dpkg-deb', '--root-owner-group', '-Zxz', '-b', x, out], check=True, stdout=subprocess.DEVNULL)
+shutil.rmtree(w)
+PY
+}
+
+worker() {
+	local info VER BINS LOCALVER INSTALLED OTHERS host_arch tree jobs low high cores want f name arch other sim removals h
+	check_user
+	mkdir -p "$STATE" "$(dirname "$LOG")"
+	exec 9>"$LOCK"
+	flock -n 9 || die "$LOCAL30"
+	if [ "$ACCEPT" = 1 ]; then
+		printf 'accepted %s by %s\n' "$(date -R)" "$BUILD_USER" >"$STATE/consent"
+	fi
+	[ -s "$STATE/consent" ] || die "$LOCAL31"
+	if [ "$AUTO" = 1 ]; then
+		exec >>"$LOG" 2>&1
+	else
+		exec > >(tee -a "$LOG") 2>&1
+	fi
+	trap cleanup EXIT
+	trap 'exit 143' TERM INT HUP
+	note "start: build user $BUILD_USER, mode $([ "$AUTO" = 1 ] && echo automatic || echo manual)"
+
+	for f in dpkg-buildpackage fakeroot runuser python3 flock apt-get dpkg-query; do
+		command -v "$f" >/dev/null || fail "$LOCAL32" "$f"
+	done
+	info=$(repo_source)
+	[ -n "$info" ] || fail "$LOCAL33" "$SRCPKG"
+	VER=${info%% *}
+	BINS=${info#* }
+	FAILED_VERSION=$VER
+	for f in libfdk-aac-dev libfdk-aac2; do
+		LC_ALL=C apt-cache policy "$f" 2>/dev/null | awk '/Candidate:/ && $2 != "(none)" {ok=1} END {exit !ok}' || fail "$LOCAL34" "$f"
+	done
+	LOCALVER=$(next_local_version "$VER")
+	host_arch=$(dpkg --print-architecture)
+	INSTALLED=$(installed_of "$BINS")
+	note "edition's source $SRCPKG $VER; local build will be $LOCALVER; installed now: $(echo $INSTALLED)"
+	[ -d "$TMPBASE" ] || fail "$LOCAL35" "$TMPBASE" 0 "$NEED_GB"
+	f=$(df --output=avail -B1G "$TMPBASE" | tail -n1 | tr -d ' ')
+	[ "${f:-0}" -ge "$NEED_GB" ] || fail "$LOCAL35" "$TMPBASE" "${f:-0}" "$NEED_GB"
+
+	B=$(mktemp -d "$TMPBASE/sparky-stereo-ffmpeg-fdk.XXXXXX") || fail "$LOCAL35" "$TMPBASE" 0 "$NEED_GB"
+	install -d -o "$BUILD_USER" -m 700 "$B/home" "$B/tmp" "$B/other"
+	chown "$BUILD_USER" "$B"
+	chmod 700 "$B"
+
+	# 1. the source, from the edition's own repository
+	note "fetching the source"
+	as_user "cd '$B' && apt-get source -qq $SRCPKG=$VER" || fail "$LOCAL36"
+	tree=$(find "$B" -mindepth 1 -maxdepth 1 -type d -name "${SRCPKG}-*" | head -n1)
+	[ -f "$tree/debian/changelog" ] && grep -q -F "$PROFILE" "$tree/debian/rules" || fail "$LOCAL37" "$PROFILE"
+
+	# 1b. the packages of the other architectures that are installed (the 32-bit libraries): their files are the edition's own,
+	#     downloaded now so that a missing one stops everything before the long build, never after it
+	OTHERS=
+	for other in $INSTALLED; do
+		arch=${other#*:}
+		name=${other%%:*}
+		[ "$arch" != "$host_arch" ] && [ "$arch" != all ] || continue
+		as_user "cd '$B/other' && apt-get download -qq $name:$arch=$VER" && [ -n "$(find "$B/other" -maxdepth 1 -name "${name}_*_${arch}.deb")" ] || fail "$LOCAL41" "$name:$arch" "$VER"
+		OTHERS="$OTHERS $name:$arch"
+	done
+
+	# 2. the changelog entry of the local build: its version, and the plain statement that it may not be passed on;
+	#    a problem in a local build goes to the edition's tracker, never to the maintainer of the package we modified
+	{
+		printf '%s (%s) unstable; urgency=medium\n\n' "$SRCPKG" "$LOCALVER"
+		printf '  * Local build for this computer only, with Fraunhofer'"'"'s AAC encoder (libfdk-aac), by\n'
+		printf '    sparky-stereo-ffmpeg-fdk with the build profile %s. FFmpeg'"'"'s LICENSE.md\n' "$PROFILE"
+		printf '    calls such a build unredistributable: it may not be passed on.\n\n'
+		h=$(hostname -f 2>/dev/null)
+		case "$h" in *.*) ;; *) h=localhost.localdomain ;; esac
+		printf ' -- %s <%s@%s>  %s\n\n' "$BUILD_USER" "$BUILD_USER" "$h" "$(date -R)"
+	} >"$B/entry"
+	chown "$BUILD_USER" "$B/entry"
+	as_user "cd '$tree' && cat '$B/entry' debian/changelog > debian/changelog.new && mv debian/changelog.new debian/changelog" || fail "$LOCAL37" "$PROFILE"
+	python3 - "$tree/debian/control" <<'PY' || fail "$LOCAL37" "$PROFILE"
+import re, sys
+p = sys.argv[1]
+c = open(p, encoding='utf-8').read()
+src, _, rest = c.partition('\n\n')       # the Source stanza is the first one
+m = re.search(r'^Maintainer: (.*)$', src, re.M)
+old = m.group(1) if m else ''
+me = 'Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>'
+bugs = 'https://github.com/Sparky-OS/sparky-stereo-os/issues'
+src = re.sub(r'^(Maintainer|Bugs|XSBC-Original-Maintainer): .*\n', '', src, flags=re.M)
+src = src.rstrip('\n') + '\nMaintainer: %s\nBugs: %s\n' % (me, bugs) + ('XSBC-Original-Maintainer: %s\n' % old if old and old != me else '')
+open(p, 'w', encoding='utf-8').write(src.rstrip('\n') + '\n\n' + rest)
+PY
+
+	# 3. the build dependencies (apt asks before it installs them, unless --yes or the automatic rebuild)
+	DBO_APT="-o DPkg::Lock::Timeout=$([ "$AUTO" = 1 ] && echo 3600 || echo 300)"
+	A0=$(apt-get -s $AUTOREMOVE_OPT autoremove 2>/dev/null | awk '/^Remv /{print $2}' | sort -u)
+	# without Recommends and Suggests whatever the computer's policy is: the build tools, not everything that goes with them
+	BDOPT="-o APT::Install-Recommends=false -o APT::Install-Suggests=false"
+	# only the packages that are NEW on this computer ("Inst name (version ...)"); an upgrade has the old version in [] after the name
+	NEW_BD=$(apt-get -s $BDOPT -P "$PROFILE" build-dep "$tree" 2>/dev/null | awk '/^Inst / && $3 !~ /^\[/ {print $2}' | sort -u)
+	note "build dependencies to install: $(echo "$NEW_BD" | grep -c .)"
+	BD_INSTALLED=1
+	if [ "$ASSUME_YES" = 1 ] || [ "$AUTO" = 1 ]; then
+		DEBIAN_FRONTEND=noninteractive apt-get $DBO_APT $BDOPT -y -P "$PROFILE" build-dep "$tree" || fail "$LOCAL38"
+	else
+		apt-get $DBO_APT $BDOPT -P "$PROFILE" build-dep "$tree" || fail "$LOCAL38"
+	fi
+
+	# 4. the build, as the user
+	cores=$(nproc 2>/dev/null || echo 1)
+	jobs=$cores
+	[ "$AUTO" = 1 ] && [ "$jobs" -gt 1 ] && jobs=$((jobs - 1))
+	DBO="nocheck parallel=$jobs"
+	read -r low high cores < <(estimate)
+	note "building with $jobs jobs (expected $low to $high minutes)"
+	as_user "cd '$tree' && nice -n 10 dpkg-buildpackage -B -us -uc -P$PROFILE" >"$B/build.log" 2>&1
+	if [ $? -ne 0 ]; then
+		cp "$B/build.log" "$STATE/last-build.log" 2>/dev/null
+		tail -n 25 "$B/build.log"
+		fail "$LOCAL39" "$STATE/last-build.log"
+	fi
+	note "build finished"
+	find "$B" -maxdepth 1 -name '*.deb' ! -name '*-dbgsym_*' | grep -q . || fail "$LOCAL39" "$STATE/last-build.log"
+	f=$(find "$B" -maxdepth 1 -name 'libavcodec[0-9]*.deb' ! -name '*-dbgsym_*' | head -n1)
+	dpkg-deb -f "$f" Depends | grep -q 'libfdk-aac' || fail "$LOCAL40"
+
+	# 5. what goes in: every package of the source that is installed, ffmpeg and the runtime libraries
+	rm -rf -- "${STATE:?}/stage"
+	mkdir -p "$STATE/stage"
+	chmod 755 "$STATE" "$STATE/stage"
+	want=
+	for f in "$B"/*.deb; do
+		case "$f" in *-dbgsym_*) continue ;; esac
+		name=$(dpkg-deb -f "$f" Package)
+		arch=$(dpkg-deb -f "$f" Architecture)
+		if echo "$INSTALLED" | grep -qx "$name:$arch" || [ "$name" = ffmpeg ] || [[ $name =~ ^lib[a-z]+[0-9]+$ ]]; then
+			cp "$f" "$STATE/stage/"
+			want="$want $name:$arch"
+		fi
+	done
+	# the same packages of the other architectures installed (the 32-bit libraries): the edition's own, relabelled
+	for other in $OTHERS; do
+		arch=${other#*:}
+		name=${other%%:*}
+		note "relabelling the edition's $name:$arch $VER as $LOCALVER (the same version for both architectures)"
+		f=$(find "$B/other" -maxdepth 1 -name "${name}_*_${arch}.deb" | head -n1)
+		relabel "$f" "$LOCALVER" "$VER" "$B" "$STATE/stage/${name}_${LOCALVER//:/%3a}_${arch}.deb" || fail "$LOCAL41" "$name:$arch" "$VER"
+		want="$want $name:$arch"
+	done
+	chmod 644 "$STATE"/stage/*.deb
+	for f in "$STATE"/stage/*.deb; do
+		[ "$(dpkg-deb -f "$f" Version)" = "$LOCALVER" ] || fail "$LOCAL41" "$f" "$LOCALVER"
+	done
+
+	# 6. nothing is installed that would take something away: apt is asked first, and a removal stops it
+	sim=$(apt-get -s $DBO_APT -o APT::Get::Assume-Yes=true install "$STATE"/stage/*.deb 2>&1)
+	removals=$(echo "$sim" | awk '/^Remv /{print $2}' | sort -u | tr '\n' ' ')
+	if [ -n "$removals" ] || echo "$sim" | grep -q '^E: '; then
+		echo "$sim" | grep -E '^(E:|Remv)' | head -n 20
+		fail "$LOCAL42" "${removals:-?}"
+	fi
+	note "installing: $(ls "$STATE/stage" | tr '\n' ' ')"
+	DEBIAN_FRONTEND=noninteractive apt-get $DBO_APT -y -o Dpkg::Options::=--force-confold install "$STATE"/stage/*.deb || fail "$LOCAL43"
+
+	# 7. the state first, then the check that the encoder is there
+	{
+		printf "LOCAL_BASE='%s'\n" "$VER"
+		printf "LOCAL_VERSION='%s'\n" "$LOCALVER"
+		printf "LOCAL_USER='%s'\n" "$BUILD_USER"
+		printf "LOCAL_PACKAGES='%s'\n" "${want# }"
+		printf "BUILT_AT='%s'\n" "$(date -R)"
+	} >"$STATE/installed"
+	rm -f "$STATE/last-failure"
+	if command -v ffmpeg >/dev/null && ! ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libfdk_aac; then
+		fail "$LOCAL44"
+	fi
+
+	# 8. the build tools go again
+	remove_build_tools
+	note "done: $LOCALVER"
+	logger -t sparky-stereo-ffmpeg-fdk -- "FFmpeg $LOCALVER with libfdk_aac installed" 2>/dev/null || true
+	printf "$LOCAL45\n" "$LOCALVER"
+	exit 0
+}
+
+# ---- back to the edition's FFmpeg ---------------------------------------------------------------------------
+
+do_remove() {
+	local tmp f pkgs
+	[ "$(id -u)" -eq 0 ] || exec sudo -- "$SELF" --remove
+	read_installed || die "$LOCAL50"
+	exec 9>"$LOCK"
+	flock -n 9 || die "$LOCAL30"
+	# apt with this package's pin left out: the candidates are the edition's again, and the local versions are downgraded
+	tmp=$(mktemp -d)
+	for f in /etc/apt/preferences.d/*; do
+		[ -e "$f" ] || continue
+		case "$f" in */sparky-stereo-ffmpeg-fdk*) continue ;; esac
+		ln -s "$f" "$tmp/$(basename "$f")"
+	done
+	pkgs=$(dpkg-query -W -f='${Package}:${Architecture} ${Version} ${db:Status-Abbrev}\n' 2>/dev/null | awk '$2 ~ /\+fdk[0-9]+$/ && $3 ~ /^ii/ {print $1}')
+	[ -n "$pkgs" ] || { rm -rf -- "${tmp:?}"; rm -f "$STATE/installed" "$STATE/consent" "$STATE/last-failure"; die "$LOCAL50"; }
+	# shellcheck disable=SC2086
+	DEBIAN_FRONTEND=noninteractive apt-get -y --allow-downgrades -o Dir::Etc::PreferencesParts="$tmp" install $pkgs || {
+		rm -rf -- "${tmp:?}"
+		die "$LOCAL51"
+	}
+	rm -rf -- "${tmp:?}"
+	rm -f "$STATE/installed" "$STATE/consent" "$STATE/last-failure"
+	printf '%s\n' "$LOCAL52"
+}
+
+do_status() {
+	local info repo
+	if read_installed; then
+		printf "$LOCAL60\n" "$LOCAL_VERSION" "$LOCAL_BASE"
+		printf "$LOCAL61\n" "$LOCAL_PACKAGES"
+		printf "$LOCAL62\n" "$LOCAL_USER" "${BUILT_AT:-?}"
+	else
+		printf '%s\n' "$LOCAL63"
+	fi
+	info=$(repo_source)
+	repo=${info%% *}
+	if [ -n "$repo" ]; then
+		printf "$LOCAL64\n" "$repo"
+		if read_installed && dpkg --compare-versions "$repo" gt "$LOCAL_BASE"; then
+			if [ "$(cat "$STATE/last-failure" 2>/dev/null)" = "$repo" ]; then
+				printf "$LOCAL65\n" "$STATE/last-build.log"
+			else
+				printf '%s\n' "$LOCAL66"
+			fi
+		fi
+	fi
+	[ -f "$LOG" ] && printf "$LOCAL67\n" "$LOG"
+}
+
+# ---- what runs -----------------------------------------------------------------------------------------------
+
+case $MODE in
+status) do_status ;;
+remove) do_remove ;;
+build)
+	if [ "$RUN" = 1 ]; then
+		[ "$(id -u)" -eq 0 ] || die "$LOCAL23"
+		if [ "$AUTO" = 1 ]; then
+			read_installed && [ -s "$STATE/consent" ] || die "$LOCAL31"
+			BUILD_USER=$LOCAL_USER
+		fi
+		worker
+	fi
+	[ -n "$BUILD_USER" ] || BUILD_USER=$(id -un)
+	check_user
+	show_warning
+	ask || { printf '%s\n' "$LOCAL22"; exit 0; }
+	args=(--run --user "$BUILD_USER" --accept-licence)
+	[ "$ASSUME_YES" = 1 ] && args+=(--yes)
+	[ "$KEEP_BD" = 1 ] && args+=(--keep-build-deps)
+	if [ "$(id -u)" -eq 0 ]; then
+		exec "$SELF" "${args[@]}"
+	elif command -v sudo >/dev/null; then
+		exec sudo -- "$SELF" "${args[@]}"
+	elif command -v pkexec >/dev/null; then
+		exec pkexec "$SELF" "${args[@]}"
+	fi
+	die "$LOCAL24"
+	;;
+esac
