@@ -17,7 +17,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
-VERSION=${VERSION:-20261008.1~sparky9~0}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
+VERSION=${VERSION:-20261008.2~sparky9~0}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
 WORK=$(mktemp -d "${TMPDIR:-/K3D/temp/sparky-os}/look-build.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 LNF=usr/share/plasma/look-and-feel
@@ -62,7 +62,7 @@ cp -a "$OXYGEN/contents/splash" "$OXYGEN/contents/previews" "$T/contents/"
 cp "$HERE/default/splash/Splash.qml" "$T/contents/splash/Splash.qml"
 cp "$HERE/default/xdg/kdeglobals" "$HERE/default/xdg/kwinrc" "$HERE/default/xdg/kde-mimeapps.list" "$HERE/default/xdg/krunnerrc" "$D/etc/xdg/"
 control "$D" sparky-stereo-look \
-	"plasma-theme-oxygen, oxygen-icon-theme, oxygencursors, kde-style-oxygen-qt6, kwin-decoration-oxygen" \
+	"plasma-theme-oxygen, oxygen-icon-theme, oxygencursors, kde-style-oxygen-qt6, kwin-decoration-oxygen, plasma-runners-addons (>= 4:6.7.4-1+stereo3d1)" \
 	"kde-style-oxygen-qt5" \
 	"Sparky Stereo OS default look: Oxygen dark" \
 	"The edition's default global theme: Oxygen, whole, in its dark colours:" \
@@ -71,7 +71,8 @@ control "$D" sparky-stereo-look \
 	"with Daniel Ramos's values, glide and wobbly windows, and makes VLC Stereo the" \
 	"default video player (/etc/xdg/kde-mimeapps.list; a user's own choice still wins)." \
 	"Search lists installed applications first, then settings. Power actions and" \
-	"unit conversion remain available. Web search and the online dictionary are off by default."
+	"unit conversion remain available. Currency rates refresh only when converting a currency." \
+	"Web search and the online dictionary are off by default."
 printf '%s\n' /etc/xdg/kdeglobals /etc/xdg/kwinrc /etc/xdg/kde-mimeapps.list /etc/xdg/krunnerrc >"$D/DEBIAN/conffiles"
 cat >"$D/usr/share/doc/sparky-stereo-look/copyright" <<'EOF'
 Sparky Stereo OS default look.
