@@ -10,7 +10,7 @@ off=float(offs[0][2])/1000
 expected_off={'desktop':165,'laptop':165,'battery':20,'eco':5}[case]
 assert expected_off-1 <= off-ready <= expected_off+4,(case,'off',off-ready)
 locks=[float(x) for x in re.findall(r'^([\d.]+) SetLockedHint True$',logind,re.M)]
-assert len(locks)==1,locks
+assert len(locks)==1,('lock count',locks)
 assert ready+expected_off-1 <= locks[0] <= off,(case,'lock',locks[0]-ready,off-ready)
 sleeps=[float(x) for x in re.findall(r'^([\d.]+) Suspend True$',logind,re.M)]
 assert not re.search(r'^([\d.]+) (Hibernate|HybridSleep|SuspendThenHibernate) ',logind,re.M)

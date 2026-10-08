@@ -64,7 +64,8 @@ int main(int argc, char **argv)
             check(settings.powerButtonAction() == 8, prefix + QStringLiteral("shutdown button"));
             check(settings.lidAction() == uint(ac ? 0 : 1), prefix + QStringLiteral("lid"));
             if (profiles) {
-                const auto expected = ac ? QStringLiteral("performance") : eco ? QStringLiteral("power-saver") : QStringLiteral("balanced");
+                const auto expected = ac ? QStringLiteral("performance") : eco ? QStringLiteral("power-saver")
+                                                                               : QStringLiteral("balanced");
                 check(settings.powerProfile() == expected, prefix + QStringLiteral("power profile"));
             }
             if (!ac) {
