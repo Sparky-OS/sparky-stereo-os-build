@@ -7,8 +7,8 @@
 #                        the Debian-derivative convention
 # and signs the latest changelog entry with the same identity when a build container left
 # root@<container> there, and credits the edition in each copyright file: Sparky Stereo OS,
-# an edition of SparkyLinux, created by Paweł "pavroo" Pijanowski and Daniel Ramos
-# (Capitain Jack).
+# Daniel Ramos's (Capitain Jack) edition of SparkyLinux (by Paweł "pavroo" Pijanowski), in
+# Daniel's wording of 2026-10-07; the Copyright holders stay as they were.
 # Usage: provenance.sh file.deb...   (rewrites them in place)
 set -euo pipefail
 NAME='Daniel Ramos (Capitain Jack)'
@@ -17,10 +17,11 @@ ME="$NAME <$MAIL>"
 HOME_URL=https://sparkylinux.org
 MARK='Sparky Stereo OS packaging'
 PAWEL='Paweł "pavroo" Pijanowski <pavroo@onet.eu>'
-# The edition is Daniel's, on Paweł's SparkyLinux: created by both (Daniel, 2026-10-02).
+PAWEL_NAME='Paweł "pavroo" Pijanowski'
+# The edition is Daniel's, on Paweł's SparkyLinux (Daniel, 2026-10-07).
 STANZA="Files: debian/*
-Comment: $MARK. Sparky Stereo OS, an edition of SparkyLinux ($HOME_URL),
- created by $PAWEL and $ME.
+Comment: $MARK. Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux
+ ($HOME_URL, by $PAWEL_NAME).
 Copyright: 2026 $PAWEL
            2026 $ME
 License: GPL-2+
@@ -28,7 +29,7 @@ License: GPL-2+
  is in /usr/share/common-licenses/GPL-2."
 for deb in "$@"; do
 	if [ "$(dpkg-deb -f "$deb" Maintainer)" = "$ME" ] && [ "$(dpkg-deb -f "$deb" Homepage)" = "$HOME_URL" ] &&
-		dpkg-deb --fsys-tarfile "$deb" | tar -xO --wildcards './usr/share/doc/*/copyright' 2>/dev/null | grep -q -F "created by $PAWEL and $ME."; then
+		dpkg-deb --fsys-tarfile "$deb" | tar -xO --wildcards './usr/share/doc/*/copyright' 2>/dev/null | grep -q -F "Daniel Ramos's (Capitain Jack) edition of SparkyLinux"; then
 		echo "$(basename "$deb"): already signed"
 		continue
 	fi
