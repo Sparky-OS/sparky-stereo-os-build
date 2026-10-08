@@ -11,6 +11,7 @@ mkdir -p "$BUILD_ROOT" "$OUT/source"
 cd "$BUILD_ROOT"
 DEBIAN_FRONTEND=noninteractive apt-get -y source "plasma-workspace=$BASE_VERSION"
 cd plasma-workspace-6.7.4
+mkdir -p debian/patches
 cp "$HERE/logout-recovery-actions.patch" debian/patches/
 printf '%s\n' logout-recovery-actions.patch >>debian/patches/series
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL='Capitain_Jack@yahoo.com'
