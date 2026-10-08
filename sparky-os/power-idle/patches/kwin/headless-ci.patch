@@ -1,0 +1,45 @@
+From fd15060ab3d3a0d5173d747f88285289cf079dc2 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 8 Oct 2026 18:23:27 -0300
+Subject: [PATCH] Let the four-thread headless CI finish tests and tear down
+ skipped scenes safely
+
+Render-node tests skip before creating a compositor. Guard its teardown rather than crash after the skip. Keep every assertion and a finite 300-second per-test limit for software rendering; the inherited 90-second limit expires on progressing suites in this shared runner.
+
+Assisted-by: gpt-6.1-sol via Codex
+---
+ .kde-ci.yml                                 | 2 +-
+ autotests/integration/kwin_wayland_test.cpp | 4 +++-
+ 2 files changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/.kde-ci.yml b/.kde-ci.yml
+index 7623ec6a18..a39cab29a0 100644
+--- a/.kde-ci.yml
++++ b/.kde-ci.yml
+@@ -48,7 +48,7 @@ RuntimeDependencies:
+ 
+ Options:
+  ctest-arguments: '--repeat until-pass:3'
+- per-test-timeout: 90
++ per-test-timeout: 300
+  require-passing-tests-on: ['Linux/Qt6']
+  run-tests-on: ['Linux']
+  tests-run-in-parallel: True
+diff --git a/autotests/integration/kwin_wayland_test.cpp b/autotests/integration/kwin_wayland_test.cpp
+index db07f3c13c..3ff00f464e 100644
+--- a/autotests/integration/kwin_wayland_test.cpp
++++ b/autotests/integration/kwin_wayland_test.cpp
+@@ -122,7 +122,9 @@ WaylandTestApplication::~WaylandTestApplication()
+     }
+     destroyPlugins();
+ 
+-    Compositor::self()->stop();
++    if (auto compositor = Compositor::self()) {
++        compositor->stop();
++    }
+ 
+ #if KWIN_BUILD_X11
+     m_xwayland.reset();
+-- 
+2.53.0
+
