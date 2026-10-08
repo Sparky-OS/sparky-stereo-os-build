@@ -32,6 +32,7 @@ Environment:
 """
 import argparse
 import copy
+import fcntl
 import glob
 import os
 import re
@@ -334,7 +335,40 @@ def vkms_card():
     return None
 
 
+# Build jobs of every lane on this machine take one shared lock, so their build trees (10 to 20 GB each)
+# never fill the disk at the same time; lint jobs run freely. Opened read-only: flock needs no write access.
+HEAVY_LOCK = os.environ.get("KDE_CI_LOCAL_HEAVY_LOCK", "/K3D/temp/kde-ci-local/heavy-job.lock")
+
+
+def heavy_lock(name):
+    try:
+        fd = os.open(HEAVY_LOCK, os.O_RDONLY | os.O_CREAT, 0o644)
+    except OSError:
+        try:
+            fd = os.open(HEAVY_LOCK, os.O_RDONLY)
+        except OSError as e:
+            print(f"  note: no shared build lock ({e}); {name} runs without waiting for other lanes")
+            return None
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print(f"  {name}: another lane's build job is running; waiting for the shared build lock")
+        fcntl.flock(fd, fcntl.LOCK_EX)
+    return fd
+
+
 def run_job(name, job, cfg, args, ctx):
+    lock = None
+    if any("run-ci-build" in l for l in flat_script(job.get("script"), cfg)):
+        lock = heavy_lock(name)
+    try:
+        return run_job_locked(name, job, cfg, args, ctx)
+    finally:
+        if lock is not None:
+            os.close(lock)
+
+
+def run_job_locked(name, job, cfg, args, ctx):
     kind, image, entry, vm = classify(job)
     log = os.path.join(ctx["logs"], f"{ctx['project']}-{ctx['ci_name'].replace('/', '-')}-{name}.log")
     if kind == "skip":

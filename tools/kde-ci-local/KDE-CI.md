@@ -93,3 +93,8 @@ Python bindings: the image's `pip` installs the newest PyQt6, whose SIP needs AB
 
 - **flatpak-amd64: `lsetxattr(security.selinux): Operation not supported`** at "Initializing build dir", before anything is built. Seen on KAlgebra's own master (job 5110331, node3-vmrunner, 2026-10-01) and on our fork (jobs 5137748, 5137761, 5137812, node1-vmrunner, 2026-10-06); Kubrick's flatpak passed on node2-vmrunner. Reported to KDE's sysadmins as [T18903](https://phabricator.kde.org/T18903) (2026-10-06). Retry the job; no commit of ours can fix it. **Resolved 2026-10-07 by Ben Cooksley (KDE sysadmin):** the image used for building Flatpaks carried a Flatpak version with a severe regression (Red Hat bug 2528386); Fedora shipped a fix and the image was rebuilt.
 - **flatpak-amd64: "Failed to download sources: ... Operation too slow"**: a network timeout fetching a module's sources; a retry passes (Kubrick, 2026-10-06).
+
+## Build jobs take turns (2026-10-08)
+
+Every job whose script runs `run-ci-build` (the build-and-test jobs) takes one shared lock first, `/K3D/temp/kde-ci-local/heavy-job.lock` (`KDE_CI_LOCAL_HEAVY_LOCK` overrides it), and holds it until its tree is removed. Lanes running CI at the same time therefore queue their build jobs instead of filling `/K3D` together: three lanes' KDE CI trees (10 to 20 GB each) took it below its 20 GB floor twice on 2026-10-08 and stopped the Android build and the KWin lane. Lint jobs do not wait. The lock is taken read-only, so sandboxed lanes can wait on it too.
+
