@@ -27,8 +27,25 @@ CecController::CecController(const QString &devices, const QString &drm, const Q
     QTimer::singleShot(0, this, &CecController::rescan);
 }
 
+void CecController::setSessionActive(bool active)
+{
+    if (m_active == active) {
+        return;
+    }
+    m_active = active;
+    if (!active) {
+        qDeleteAll(m_adapters);
+        m_adapters.clear();
+    } else {
+        rescan();
+    }
+}
+
 void CecController::rescan()
 {
+    if (!m_active) {
+        return;
+    }
     QStringList screens;
     for (const auto screen : qGuiApp->screens()) {
         screens.append(screen->name());

@@ -12,18 +12,21 @@
 
 namespace
 {
+
 QString readFile(const QString &path)
 {
     QFile file(path);
     return file.open(QIODevice::ReadOnly) ? QString::fromLatin1(file.readAll()).trimmed() : QString();
 }
 
-struct Connector {
+struct Connector
+{
     QString name;
     QString edid;
     uint card;
     uint id;
 };
+
 }
 
 QList<AdapterConfig> discoverAdapters(const QString &deviceDirectory, const QString &drmDirectory, const QStringList &outputs, const QHash<QString, QString> &bindings)

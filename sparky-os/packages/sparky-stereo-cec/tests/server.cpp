@@ -11,7 +11,8 @@
 #include <unistd.h>
 #include <wayland-server.h>
 
-struct Output {
+struct Output
+{
     QByteArray name;
     QList<wl_resource *> power;
     uint32_t mode = 0;
@@ -84,19 +85,25 @@ static void bindOutput(wl_client *client, void *data, uint32_t version, uint32_t
     wl_resource_set_implementation(resource, &outputImplementation, output, nullptr);
     wl_output_send_geometry(resource, 0, 0, 600, 340, WL_OUTPUT_SUBPIXEL_UNKNOWN, "Test", "Headless", WL_OUTPUT_TRANSFORM_NORMAL);
     wl_output_send_mode(resource, WL_OUTPUT_MODE_CURRENT | WL_OUTPUT_MODE_PREFERRED, 1920, 1080, 60000);
-    if (version >= 2) wl_output_send_scale(resource, 1);
+    if (version >= 2) {
+        wl_output_send_scale(resource, 1);
+    }
     if (version >= 4) {
         wl_output_send_name(resource, output->name.constData());
         wl_output_send_description(resource, output->name.constData());
     }
-    if (version >= 2) wl_output_send_done(resource);
+    if (version >= 2) {
+        wl_output_send_done(resource);
+    }
 }
 
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
     auto display = wl_display_create();
-    if (wl_display_add_socket(display, "cec-test") < 0) return 1;
+    if (wl_display_add_socket(display, "cec-test") < 0) {
+        return 1;
+    }
     wl_display_init_shm(display);
     wl_global_create(display, &wl_compositor_interface, 4, nullptr, bindCompositor);
     wl_global_create(display, &wl_shell_interface, 1, nullptr, bindShell);
@@ -112,23 +119,36 @@ int main(int argc, char **argv)
         wl_display_flush_clients(display);
     });
     const auto fifoPath = QByteArray(argv[1]);
-    if (mkfifo(fifoPath.constData(), 0600) < 0) return 1;
+    if (mkfifo(fifoPath.constData(), 0600) < 0) {
+        return 1;
+    }
     const int fifo = open(fifoPath.constData(), O_RDWR | O_NONBLOCK | O_CLOEXEC);
-    if (fifo < 0) return 1;
+    if (fifo < 0) {
+        return 1;
+    }
     QSocketNotifier control(fifo, QSocketNotifier::Read);
     QByteArray commands;
     QObject::connect(&control, &QSocketNotifier::activated, &app, [&] {
         char buffer[256];
         const auto size = read(fifo, buffer, sizeof(buffer));
-        if (size > 0) commands.append(buffer, size);
+        if (size > 0) {
+            commands.append(buffer, size);
+        }
         while (commands.contains('\n')) {
             const auto line = commands.first(commands.indexOf('\n'));
             commands.remove(0, commands.indexOf('\n') + 1);
             const auto words = line.split(' ');
-            if (words.size() != 2) continue;
-            auto output = words[0] == first.name ? &first : words[0] == second.name ? &second : nullptr;
-            if (!output) continue;
-            output->mode = words[1] == "on" ? 0 : words[1] == "standby" ? 1 : words[1] == "suspend" ? 2 : 3;
+            if (words.size() != 2) {
+                continue;
+            }
+            auto output = words[0] == first.name ? &first : words[0] == second.name ? &second
+                                                                                    : nullptr;
+            if (!output) {
+                continue;
+            }
+            output->mode = words[1] == "on" ? 0 : words[1] == "standby" ? 1
+                : words[1] == "suspend"                                 ? 2
+                                                                        : 3;
             for (auto resource : output->power) {
                 org_kde_kwin_dpms_send_mode(resource, output->mode);
                 org_kde_kwin_dpms_send_done(resource);

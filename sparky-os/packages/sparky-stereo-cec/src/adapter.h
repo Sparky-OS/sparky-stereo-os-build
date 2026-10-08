@@ -9,7 +9,8 @@
 #include <QTimer>
 #include <optional>
 
-struct AdapterConfig {
+struct AdapterConfig
+{
     QString device;
     QString output;
     QString edid;
@@ -21,6 +22,7 @@ QList<AdapterConfig> discoverAdapters(const QString &deviceDirectory, const QStr
 class CecAdapter : public QObject
 {
     Q_OBJECT
+
 public:
     explicit CecAdapter(const AdapterConfig &config, const QString &command = QStringLiteral("/usr/bin/cec-ctl"), QObject *parent = nullptr);
     void setScreenOn(bool on);

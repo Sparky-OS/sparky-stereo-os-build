@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack)
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "controller.h"
+#include "session.h"
 #include <KConfigGroup>
 #include <KSharedConfig>
 #include <QDebug>
@@ -24,6 +25,11 @@ int main(int argc, char **argv)
         bindings.insert(key, group.readEntry(key, QString()));
     }
     CecController controller(QStringLiteral("/dev"), QStringLiteral("/sys/class/drm"), bindings);
-    QObject::connect(&controller, &CecController::failed, &app, [](const QString &message) { qWarning().noquote() << message; });
+    SessionGate session(QDBusConnection::systemBus());
+    QObject::connect(&session, &SessionGate::activeChanged, &controller, &CecController::setSessionActive);
+    controller.setSessionActive(session.isActive());
+    QObject::connect(&controller, &CecController::failed, &app, [](const QString &message) {
+        qWarning().noquote() << message;
+    });
     return app.exec();
 }

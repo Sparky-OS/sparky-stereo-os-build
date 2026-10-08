@@ -40,7 +40,9 @@ int ioctl(int fd, unsigned long request, ...)
     char proc[64], path[4096];
     snprintf(proc, sizeof(proc), "/proc/self/fd/%d", fd);
     const ssize_t size = readlink(proc, path, sizeof(path) - 1);
-    if (size >= 0) path[size] = 0;
+    if (size >= 0) {
+        path[size] = 0;
+    }
     const char *root = getenv("CEC_TEST_DEVICES");
     if (!root || size < 0 || strncmp(path, root, strlen(root)) || !strstr(path, "/cec")) {
         int (*real_ioctl)(int, unsigned long, ...) = dlsym(RTLD_NEXT, "ioctl");
@@ -53,11 +55,17 @@ int ioctl(int fd, unsigned long request, ...)
         memset(caps, 0, sizeof(*caps));
         strcpy(caps->driver, "test-cec");
         strcpy(caps->name, "Synthetic CEC adapter");
-        caps->available_log_addrs = 1;
+        caps->available_log_addrs = value & 256 ? 2 : 1;
         caps->capabilities = CEC_CAP_LOG_ADDRS | CEC_CAP_TRANSMIT | CEC_CAP_PHYS_ADDR | CEC_CAP_CONNECTOR_INFO;
-        if (value & 4) caps->capabilities &= ~CEC_CAP_TRANSMIT;
-        if (value & 8) caps->capabilities &= ~CEC_CAP_LOG_ADDRS;
-        if (value & 32) caps->capabilities &= ~CEC_CAP_CONNECTOR_INFO;
+        if (value & 4) {
+            caps->capabilities &= ~CEC_CAP_TRANSMIT;
+        }
+        if (value & 8) {
+            caps->capabilities &= ~CEC_CAP_LOG_ADDRS;
+        }
+        if (value & 32) {
+            caps->capabilities &= ~CEC_CAP_CONNECTOR_INFO;
+        }
         caps->version = (6 << 16) | (17 << 8);
         return 0;
     }
@@ -83,12 +91,21 @@ int ioctl(int fd, unsigned long request, ...)
             addresses->log_addr[0] = value & 16 ? CEC_LOG_ADDR_TV : CEC_LOG_ADDR_PLAYBACK_1;
             addresses->log_addr_mask = 1U << addresses->log_addr[0];
             addresses->primary_device_type[0] = value & 16 ? CEC_OP_PRIM_DEVTYPE_TV : CEC_OP_PRIM_DEVTYPE_PLAYBACK;
+            if (value & 256) {
+                addresses->num_log_addrs = 2;
+                addresses->log_addr[0] = CEC_LOG_ADDR_TV;
+                addresses->log_addr[1] = CEC_LOG_ADDR_PLAYBACK_1;
+                addresses->log_addr_mask = 0x11;
+            }
         }
         return 0;
     }
     case CEC_ADAP_S_LOG_ADDRS: {
         struct cec_log_addrs *addresses = arg;
-        if (value & 8) { errno = EPERM; return -1; }
+        if (value & 8) {
+            errno = EPERM;
+            return -1;
+        }
         set_flags(addresses->num_log_addrs ? value & ~2U : value | 2);
         addresses->log_addr[0] = CEC_LOG_ADDR_PLAYBACK_1;
         addresses->log_addr_mask = 1U << CEC_LOG_ADDR_PLAYBACK_1;
@@ -98,11 +115,18 @@ int ioctl(int fd, unsigned long request, ...)
         struct cec_msg *message = arg;
         FILE *file = fopen(getenv("CEC_TEST_FRAMES"), "a");
         if (file) {
-            for (unsigned i = 0; i < message->len; i++) fprintf(file, "%02x", message->msg[i]);
+            for (unsigned i = 0; i < message->len; i++) {
+                fprintf(file, "%02x", message->msg[i]);
+            }
             fprintf(file, "\n");
             fclose(file);
         }
-        if (value & 128) usleep(250000);
+        if (value & 128) {
+            usleep(250000);
+        }
+        if (value & 512) {
+            usleep(12000000);
+        }
         message->sequence = 1;
         message->tx_status = value & 64 ? CEC_TX_STATUS_NACK | CEC_TX_STATUS_MAX_RETRIES : CEC_TX_STATUS_OK;
         message->tx_nack_cnt = value & 64 ? 4 : 0;

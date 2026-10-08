@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "adapter.h"
 #include "controller.h"
+#include "session.h"
 #include <KScreenDpms/Dpms>
+#include <QDBusMessage>
+#include <QDBusObjectPath>
 #include <QDir>
 #include <QFile>
 #include <QGuiApplication>
@@ -10,14 +13,51 @@
 #include <QSignalSpy>
 #include <QTest>
 
+class MockManager : public QObject
+{
+    Q_OBJECT
+    Q_CLASSINFO("D-Bus Interface", "org.freedesktop.login1.Manager")
+public Q_SLOTS:
+    QDBusObjectPath GetSession(const QString &)
+    {
+        return QDBusObjectPath(QStringLiteral("/org/freedesktop/login1/session/test"));
+    }
+};
+
+class MockSession : public QObject
+{
+    Q_OBJECT
+    Q_CLASSINFO("D-Bus Interface", "org.freedesktop.login1.Session")
+    Q_PROPERTY(bool Active READ active)
+
+public:
+    bool active() const
+    {
+        return m_active;
+    }
+    void change(bool active)
+    {
+        m_active = active;
+        auto message = QDBusMessage::createSignal(QStringLiteral("/org/freedesktop/login1/session/test"), QStringLiteral("org.freedesktop.DBus.Properties"), QStringLiteral("PropertiesChanged"));
+        message << QStringLiteral("org.freedesktop.login1.Session") << QVariantMap{{QStringLiteral("Active"), active}} << QStringList{};
+        QVERIFY(QDBusConnection::systemBus().send(message));
+    }
+
+private:
+    bool m_active = true;
+};
+
 class Test : public QObject
 {
     Q_OBJECT
+
 private:
     QString root = qEnvironmentVariable("CEC_TEST_ROOT");
     QString command = qEnvironmentVariable("CEC_TEST_COMMAND");
     KScreen::Dpms dpms;
     QList<QPair<QString, bool>> modes;
+    MockManager manager;
+    MockSession session;
 
     void write(const QString &path, const QByteArray &data)
     {
@@ -28,7 +68,9 @@ private:
     QString frames()
     {
         QFile file(qEnvironmentVariable("CEC_TEST_FRAMES"));
-        if (!file.open(QIODevice::ReadOnly)) return {};
+        if (!file.open(QIODevice::ReadOnly)) {
+            return {};
+        }
         return QString::fromLatin1(file.readAll());
     }
     void control(const QString &output, const QString &mode)
@@ -46,6 +88,11 @@ private:
 private Q_SLOTS:
     void initTestCase()
     {
+        auto bus = QDBusConnection::systemBus();
+        QVERIFY(bus.isConnected());
+        QVERIFY(bus.registerService(QStringLiteral("org.freedesktop.login1")));
+        QVERIFY(bus.registerObject(QStringLiteral("/org/freedesktop/login1"), &manager, QDBusConnection::ExportAllSlots));
+        QVERIFY(bus.registerObject(QStringLiteral("/org/freedesktop/login1/session/test"), &session, QDBusConnection::ExportAllProperties));
         QVERIFY(QGuiApplication::platformName().startsWith(QStringLiteral("wayland")));
         connect(&dpms, &KScreen::Dpms::modeChanged, this, [this](KScreen::Dpms::Mode mode, QScreen *screen) {
             modes.append({screen->name(), mode == KScreen::Dpms::On});
@@ -73,19 +120,25 @@ private Q_SLOTS:
         edid[136] = 0x10;
         for (int block = 0; block < 2; ++block) {
             uint sum = 0;
-            for (int i = 0; i < 127; ++i) sum += uchar(edid[block * 128 + i]);
+            for (int i = 0; i < 127; ++i) {
+                sum += uchar(edid[block * 128 + i]);
+            }
             edid[block * 128 + 127] = char(0U - sum);
         }
         write(config().edid, edid);
     }
     void init()
     {
+        session.change(true);
         write(qEnvironmentVariable("CEC_TEST_STATE"), "0\n");
         write(qEnvironmentVariable("CEC_TEST_FRAMES"), {});
     }
     void nativeDpms()
     {
         CecController controller(root + QStringLiteral("/devices"), root + QStringLiteral("/drm"), {}, command);
+        SessionGate gate(QDBusConnection::systemBus());
+        connect(&gate, &SessionGate::activeChanged, &controller, &CecController::setSessionActive);
+        QTRY_VERIFY(gate.isActive());
         QSignalSpy sent(&controller, &CecController::transmitted);
         QSignalSpy failed(&controller, &CecController::failed);
         control(QStringLiteral("HDMI-A-1"), QStringLiteral("on"));
@@ -125,6 +178,7 @@ private Q_SLOTS:
         control(QStringLiteral("HDMI-A-1"), QStringLiteral("on"));
         QTest::qWait(50);
         CecController controller(root + QStringLiteral("/devices"), root + QStringLiteral("/drm"), {}, command);
+        controller.setSessionActive(true);
         QSignalSpy sent(&controller, &CecController::transmitted);
         QTest::qWait(100);
         QCOMPARE(frames(), QString());
@@ -138,6 +192,48 @@ private Q_SLOTS:
         control(QStringLiteral("HDMI-A-1"), QStringLiteral("on"));
         QTRY_COMPARE(sent.size(), 3);
         QCOMPARE(frames(), QStringLiteral("4036\n4036\n4004\n"));
+    }
+    void inactiveSession()
+    {
+        control(QStringLiteral("HDMI-A-1"), QStringLiteral("on"));
+        QTest::qWait(50);
+        session.change(false);
+        CecController controller(root + QStringLiteral("/devices"), root + QStringLiteral("/drm"), {}, command);
+        SessionGate gate(QDBusConnection::systemBus());
+        connect(&gate, &SessionGate::activeChanged, &controller, &CecController::setSessionActive);
+        QSignalSpy sent(&controller, &CecController::transmitted);
+        QTest::qWait(100);
+        QVERIFY(!gate.isActive());
+        control(QStringLiteral("HDMI-A-1"), QStringLiteral("off"));
+        QTest::qWait(100);
+        QCOMPARE(frames(), QString());
+        control(QStringLiteral("HDMI-A-1"), QStringLiteral("on"));
+        QTest::qWait(50);
+        session.change(true);
+        QTRY_VERIFY(gate.isActive());
+        QCOMPARE(frames(), QString());
+        control(QStringLiteral("HDMI-A-1"), QStringLiteral("off"));
+        QTRY_COMPARE(sent.size(), 1);
+        QCOMPARE(frames(), QStringLiteral("4036\n"));
+        session.change(false);
+        QTRY_VERIFY(!gate.isActive());
+        control(QStringLiteral("HDMI-A-1"), QStringLiteral("on"));
+        control(QStringLiteral("HDMI-A-1"), QStringLiteral("off"));
+        QTest::qWait(100);
+        QCOMPARE(frames(), QStringLiteral("4036\n"));
+        control(QStringLiteral("HDMI-A-1"), QStringLiteral("on"));
+        QTest::qWait(50);
+        session.change(true);
+        QTRY_VERIFY(gate.isActive());
+        QVERIFY(QDBusConnection::systemBus().unregisterService(QStringLiteral("org.freedesktop.login1")));
+        QTRY_VERIFY(!gate.isActive());
+        control(QStringLiteral("HDMI-A-1"), QStringLiteral("off"));
+        QTest::qWait(100);
+        QCOMPARE(frames(), QStringLiteral("4036\n"));
+        QVERIFY(QDBusConnection::systemBus().registerService(QStringLiteral("org.freedesktop.login1")));
+        QTRY_VERIFY(gate.isActive());
+        QTRY_COMPARE(sent.size(), 2);
+        QCOMPARE(frames(), QStringLiteral("4036\n4036\n"));
     }
     void configurePlayback()
     {
@@ -179,6 +275,16 @@ private Q_SLOTS:
         QTRY_COMPARE(failed.size(), 1);
         QCOMPARE(frames(), QString());
     }
+    void multipleLogicalAddresses()
+    {
+        write(qEnvironmentVariable("CEC_TEST_STATE"), "256\n");
+        CecAdapter adapter(config(), command);
+        QSignalSpy sent(&adapter, &CecAdapter::transmitted);
+        adapter.setScreenOn(false);
+        QTRY_COMPARE(sent.size(), 1);
+        QCOMPARE(sent[0][1].toBool(), true);
+        QCOMPARE(frames(), QStringLiteral("4036\n"));
+    }
     void nackIsFailure()
     {
         write(qEnvironmentVariable("CEC_TEST_STATE"), "64\n");
@@ -190,6 +296,17 @@ private Q_SLOTS:
         QCOMPARE(sent[0][1].toBool(), false);
         QCOMPARE(failed.size(), 1);
         QCOMPARE(frames(), QStringLiteral("4036\n"));
+    }
+    void timeout()
+    {
+        write(qEnvironmentVariable("CEC_TEST_STATE"), "512\n");
+        CecAdapter adapter(config(), command);
+        QSignalSpy sent(&adapter, &CecAdapter::transmitted);
+        QSignalSpy failed(&adapter, &CecAdapter::failed);
+        adapter.setScreenOn(false);
+        QTRY_COMPARE_WITH_TIMEOUT(sent.size(), 1, 12000);
+        QCOMPARE(sent[0][1].toBool(), false);
+        QCOMPARE(failed.size(), 1);
     }
     void rapidWake()
     {

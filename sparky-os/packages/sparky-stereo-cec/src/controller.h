@@ -8,9 +8,11 @@
 class CecController : public QObject
 {
     Q_OBJECT
+
 public:
     CecController(const QString &devices, const QString &drm, const QHash<QString, QString> &bindings,
                   const QString &command = QStringLiteral("/usr/bin/cec-ctl"), QObject *parent = nullptr);
+    void setSessionActive(bool active);
 
 Q_SIGNALS:
     void transmitted(const QString &output, bool on, bool acknowledged);
@@ -26,4 +28,5 @@ private:
     QFileSystemWatcher m_watcher;
     QHash<QString, CecAdapter *> m_adapters;
     QHash<QString, bool> m_modes;
+    bool m_active = false;
 };

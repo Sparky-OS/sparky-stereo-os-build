@@ -14,6 +14,7 @@ libgcc-s1
 libkf6configcore6
 libkf6screendpms8
 libqt6core6t64
+libqt6dbus6
 libqt6gui6
 libstdc++6
 qt6-wayland
@@ -45,6 +46,10 @@ Use:
 The helper starts through /etc/xdg/autostart only in KDE. Its own guard also
 requires a KDE Wayland session before initializing Qt, then requires the
 Wayland platform. It creates no window and requests no output power change.
+The logind session must also be active. Its GetSession lookup follows KWin's
+XDG_SESSION_ID/auto selection. An inactive or unknown session sends no CEC
+commands; queued work is cancelled when the session loses activity. This
+prevents background Plasma idle events from sending TV commands on a console.
 It observes KScreen's native per-output DPMS notifications, as used by
 PowerDevil. There is no second idle timer, screen locker or console command.
 X11 is outside this helper's scope: KScreen's X11 backend does not expose
@@ -81,6 +86,8 @@ cec-ctl is serialized per adapter, bounded by ten seconds and checked for a
 verbose Tx, OK report. Exit zero alone is insufficient: cec-ctl also returns
 zero for some unconfigured/failed transmissions. A missing adapter, unusable
 address, missing executable, timeout or NACK cannot be reported as success.
+The transmit source is explicitly a claimed playback logical address, even
+when the adapter also has another logical address.
 Failures are logged in English. Device hotplug is monitored, not polled.
 
 Tests:

@@ -12,10 +12,12 @@
 
 namespace
 {
-struct State {
-    bool readable = false;
+
+struct State
+{
     bool ready = false;
     bool configurable = false;
+    int source = -1;
 };
 
 State state(const AdapterConfig &config)
@@ -30,14 +32,19 @@ State state(const AdapterConfig &config)
     const bool readable = ioctl(fd, CEC_ADAP_G_CAPS, &caps) == 0 && (caps.capabilities & CEC_CAP_TRANSMIT)
         && ioctl(fd, CEC_ADAP_G_PHYS_ADDR, &physical) == 0 && ioctl(fd, CEC_ADAP_G_LOG_ADDRS, &addresses) == 0;
     close(fd);
-    bool playback = false;
+    int source = -1;
     for (uint i = 0; i < addresses.num_log_addrs && i < CEC_MAX_LOG_ADDRS; ++i) {
-        playback |= addresses.log_addr[i] == CEC_LOG_ADDR_PLAYBACK_1 || addresses.log_addr[i] == CEC_LOG_ADDR_PLAYBACK_2 || addresses.log_addr[i] == CEC_LOG_ADDR_PLAYBACK_3;
+        if (addresses.log_addr[i] == CEC_LOG_ADDR_PLAYBACK_1 || addresses.log_addr[i] == CEC_LOG_ADDR_PLAYBACK_2 || addresses.log_addr[i] == CEC_LOG_ADDR_PLAYBACK_3) {
+            source = addresses.log_addr[i];
+            break;
+        }
     }
-    return {readable, readable && playback && physical != CEC_PHYS_ADDR_INVALID,
+    return {readable && source >= 0 && physical != CEC_PHYS_ADDR_INVALID,
             readable && addresses.num_log_addrs == 0 && bool(caps.capabilities & CEC_CAP_LOG_ADDRS)
-                && (physical != CEC_PHYS_ADDR_INVALID || (config.setPhysicalAddress && QFile::exists(config.edid)))};
+                && (physical != CEC_PHYS_ADDR_INVALID || (config.setPhysicalAddress && QFile::exists(config.edid))),
+            source};
 }
+
 }
 
 CecAdapter::CecAdapter(const AdapterConfig &config, const QString &command, QObject *parent)
@@ -104,8 +111,9 @@ void CecAdapter::next()
         return;
     }
     m_currentOn = m_pending.dequeue();
-    start({QStringLiteral("--device=") + m_config.device, QStringLiteral("--skip-info"), QStringLiteral("--verbose"), QStringLiteral("--to=0"),
-           m_currentOn ? QStringLiteral("--image-view-on") : QStringLiteral("--standby")}, false);
+    start({QStringLiteral("--device=") + m_config.device, QStringLiteral("--skip-info"), QStringLiteral("--verbose"), QStringLiteral("--from=") + QString::number(current.source), QStringLiteral("--to=0"),
+           m_currentOn ? QStringLiteral("--image-view-on") : QStringLiteral("--standby")},
+          false);
 }
 
 void CecAdapter::start(const QStringList &arguments, bool configuring)
