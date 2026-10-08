@@ -8,8 +8,9 @@
 # by make-repo.sh) and the edition's pins are put in place, and a full-upgrade must hold nothing back and remove nothing
 # of the FFmpeg family. Without the transitional packages apt wants to remove libavcodec-extra63, libavformat-extra63
 # and libavfilter-extra12 (the first test of this folder's lane, 2026-10-08).
-# Usage: docker run --rm --cpus 2 -v OLD:/old:ro -v NEW:/new:ro -v ../../apt:/pins:ro -v THIS:/t:ro mdmo-proofbase:1 /t/test-upgrade.sh [without]
-#   without: the repository /new without the transitional packages (the control that must fail)
+# Usage: docker run --rm --cpus 2 [-e SCENARIO=A] -v OLD:/old:ro -v NEW:/new:ro -v ../../apt:/pins:ro -v THIS:/t:ro mdmo-proofbase:1 /t/test-upgrade.sh
+#   SCENARIO=A: the old computer has the normal libraries of our Debian-based build, not the -extra ones (default B: the -extra ones)
+#   /new without the transitional packages is the control of scenario B that must fail
 # Last update 2026/10/08
 export DEBIAN_FRONTEND=noninteractive
 PASS=0; FAIL=0
@@ -21,13 +22,24 @@ FAM='(ffmpeg|ffplay|libav(codec|device|filter|format|util)[0-9a-z-]*|libsw[a-z]+
 sed -i 's/^Components: main$/Components: main contrib non-free non-free-firmware/' /etc/apt/sources.list.d/debian.sources
 dpkg --add-architecture i386
 apt-get update -qq 2>&1 | tail -1
-echo "=== the old computer: our Debian-based FFmpeg with the -extra libraries"
+echo "=== the old computer: our Debian-based FFmpeg ${SCENARIO:+(scenario $SCENARIO)}"
 cd /old
+if [ "${SCENARIO:-B}" = A ]; then
+	# scenario A: the normal libraries of our Debian-based build, no -extra ones
+	apt-get -y --no-install-recommends install ./ffmpeg_*_amd64.deb ./libavcodec63_*_amd64.deb ./libavcodec63_*_i386.deb ./libavformat63_*_amd64.deb ./libavformat63_*_i386.deb \
+		./libavfilter12_*_amd64.deb ./libavfilter12_*_i386.deb ./libavdevice63_*_amd64.deb ./libavutil61_*_amd64.deb ./libavutil61_*_i386.deb \
+		./libswresample7_*_amd64.deb ./libswresample7_*_i386.deb ./libswscale10_*_amd64.deb ./libswscale10_*_i386.deb >/tmp/old.log 2>&1 || tail -8 /tmp/old.log
+else
 apt-get -y --no-install-recommends install ./ffmpeg_*_amd64.deb ./libavcodec-extra63_*_amd64.deb ./libavcodec-extra63_*_i386.deb ./libavformat-extra63_*_amd64.deb ./libavformat-extra63_*_i386.deb \
 	./libavfilter-extra12_*_amd64.deb ./libavfilter-extra12_*_i386.deb ./libavdevice63_*_amd64.deb ./libavutil61_*_amd64.deb ./libavutil61_*_i386.deb \
 	./libswresample7_*_amd64.deb ./libswresample7_*_i386.deb ./libswscale10_*_amd64.deb ./libswscale10_*_i386.deb ./libavcodec-extra_*_amd64.deb ./libavformat-extra_*_amd64.deb ./libavfilter-extra_*_amd64.deb >/tmp/old.log 2>&1 || tail -8 /tmp/old.log
+fi
 dpkg -l | awk -v re="^$FAM(:.*)?\$" '/^ii/ && $2 ~ re {print $2, $3}' | tee /tmp/before.txt
-eq "the old libavcodec-extra63 is installed" "$(dpkg-query -W -f='${Version}' libavcodec-extra63:amd64)" "7:9.0.2-1+stereo3d2"
+if [ "${SCENARIO:-B}" = A ]; then
+	eq "the old libavcodec63 is installed" "$(dpkg-query -W -f='${Version}' libavcodec63:amd64)" "7:9.0.2-1+stereo3d2"
+else
+	eq "the old libavcodec-extra63 is installed" "$(dpkg-query -W -f='${Version}' libavcodec-extra63:amd64)" "7:9.0.2-1+stereo3d2"
+fi
 cp /pins/sparky-stereo /etc/apt/preferences.d/
 names=$(awk '/^Package: /{print $2}' /new/Packages | sort -u | tr '\n' ' ')
 { for o in Debian 'Unofficial Multimedia Packages'; do printf 'Package: %s\nPin: release o=%s\nPin-Priority: -1\n\n' "$names" "$o"; done; } >/etc/apt/preferences.d/sparky-stereo-only-ours
@@ -46,8 +58,10 @@ dpkg -l | awk -v re="^$FAM(:.*)?\$" '/^ii/ && $2 ~ re {print $2, $3}' | tee /tmp
 eq "ffmpeg is the edition's build" "$(dpkg-query -W -f='${Version}' ffmpeg)" "$V"
 eq "libavcodec63:amd64 is the edition's build" "$(dpkg-query -W -f='${Version}' libavcodec63:amd64)" "$V"
 eq "libavformat63:i386 is the edition's build" "$(dpkg-query -W -f='${Version}' libavformat63:i386 2>/dev/null)" "$V"
-eq "libavcodec-extra63 is the transitional package now" "$(dpkg-query -W -f='${Version}' libavcodec-extra63:amd64)" "$V"
-eq "libavcodec-extra63:i386 too" "$(dpkg-query -W -f='${Version}' libavcodec-extra63:i386)" "$V"
+if [ "${SCENARIO:-B}" != A ]; then
+	eq "libavcodec-extra63 is the transitional package now" "$(dpkg-query -W -f='${Version}' libavcodec-extra63:amd64)" "$V"
+	eq "libavcodec-extra63:i386 too" "$(dpkg-query -W -f='${Version}' libavcodec-extra63:i386)" "$V"
+fi
 eq "apt-get check finds nothing broken" "$(apt-get check 2>&1 | grep -c -E '^E:')" 0
 eq "dpkg --audit finds nothing" "$(dpkg --audit | wc -l)" 0
 eq "ffmpeg runs and has the native aac, no libfdk_aac" "$(ffmpeg -hide_banner -encoders 2>/dev/null | grep -c -E ' (aac|libfdk_aac) ' )" 1
