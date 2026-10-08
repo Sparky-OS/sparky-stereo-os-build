@@ -1,0 +1,280 @@
+From c4f3d72bf90c7639a9603da5927eb73bd84c3feb Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 7 Oct 2026 19:22:30 -0300
+Subject: [PATCH 1/2] QOpenGLWidget: show a stereo widget in a stereo window of
+ its own
+
+On Wayland a QOpenGLWidget that asks for stereo, through the default
+surface format as the widgets programs do, made its whole top-level
+window a stereo surface: the menus, tool bars and everything else were
+declared stereo and drawn twice, although only the OpenGL widget has
+two views. Asking for stereo in the widget's own format alone showed
+the left buffer only, since the top-level window had a mono format.
+
+Add the platform capability StereoNativeWindows, for a platform that
+shows a native child window with a stereo surface format as a stereo
+surface of its own, and report it on Wayland when the EGL
+implementation can create stereo surfaces. Where it is present:
+- QWidget::create() gives a widget that renders stereo a native window
+  of its own, that no ancestor needs a native window for, and making it
+  native does not make its siblings native: they stay in the top-level
+  surface, which the stereo window stacks above;
+- the format of a widget's window is stereo when the widget renders
+  stereo, so a top-level window that only holds the 2D interface is a
+  mono surface, whatever the default format asks;
+- a flush of the stereo window first moves it where its widget is, as
+  the widget follows an ancestor that moved (a scroll area) without an
+  event for the window.
+
+The widget's children are drawn over it by the same compositing as for
+any native child widget, the same in both buffers. A top-level
+QOpenGLWidget, whose whole window is the 3D area, stays a stereo
+window. Other platforms are unchanged.
+
+Co-Authored-By: Claude Sonnet <noreply@anthropic.com>
+---
+ src/gui/kernel/qplatformintegration.cpp       |  4 ++
+ src/gui/kernel/qplatformintegration.h         |  3 +-
+ src/openglwidgets/qopenglwidget.cpp           | 10 +++++
+ .../platforms/wayland/qwaylandintegration.cpp |  6 +++
+ src/widgets/kernel/qwidget.cpp                | 32 +++++++++++++-
+ src/widgets/kernel/qwidget_p.h                |  3 ++
+ src/widgets/kernel/qwidgetrepaintmanager.cpp  |  7 +++
+ .../qopenglwidget/tst_qopenglwidget.cpp       | 44 +++++++++++++++++++
+ 8 files changed, 106 insertions(+), 3 deletions(-)
+
+diff --git a/src/gui/kernel/qplatformintegration.cpp b/src/gui/kernel/qplatformintegration.cpp
+index c6244147..a016795c 100644
+--- a/src/gui/kernel/qplatformintegration.cpp
++++ b/src/gui/kernel/qplatformintegration.cpp
+@@ -239,6 +239,10 @@ QPlatformServices *QPlatformIntegration::services() const
+     without falling back to an implementation utilizing an invisible QWindow. A platform
+     without this capability requires QOffscreenSurface::create to be called from the GUI
+     thread.
++
++    \value StereoNativeWindows The platform shows a native child window with a stereo
++    surface format as a stereo surface of its own, whatever the format of its parent window.
++    The default implementation of hasCapability() returns \c false.
+  */
+ 
+ /*!
+diff --git a/src/gui/kernel/qplatformintegration.h b/src/gui/kernel/qplatformintegration.h
+index daa4bcef..f535d91e 100644
+--- a/src/gui/kernel/qplatformintegration.h
++++ b/src/gui/kernel/qplatformintegration.h
+@@ -103,7 +103,8 @@ public:
+         RhiBasedRendering,
+         ScreenWindowGrabbing, // whether QScreen::grabWindow() is supported
+         BackingStoreStaticContents,
+-        OffscreenSurface
++        OffscreenSurface,
++        StereoNativeWindows // whether a native child window can be a stereo surface of its own
+     };
+ 
+     virtual ~QPlatformIntegration() { }
+diff --git a/src/openglwidgets/qopenglwidget.cpp b/src/openglwidgets/qopenglwidget.cpp
+index cea1498d..23aa7167 100644
+--- a/src/openglwidgets/qopenglwidget.cpp
++++ b/src/openglwidgets/qopenglwidget.cpp
+@@ -431,6 +431,16 @@ QT_BEGIN_NAMESPACE
+   \note Using setFormat() will not necessarily work because of how the flag is
+   handled internally.
+ 
++  On platforms with the QPlatformIntegration::StereoNativeWindows capability (Wayland,
++  when the EGL implementation supports stereo surfaces), a QOpenGLWidget that asks for
++  stereo, in its own format or in the default format, is shown in a native window of
++  its own, a stereo surface placed at the widget's position, while the top-level window
++  and the other widgets stay an ordinary one-eye surface. Child widgets of the
++  QOpenGLWidget are drawn over it, the same in both buffers. As for any native child
++  widget, widgets that overlap it from outside are covered by it, and it is not clipped
++  to the widget's ancestors: where the widget is partly outside its parent, the window
++  extends over that area and shows the top-level window's content there.
++
+   This will trigger paintGL() to be called twice each frame,
+   once for each QOpenGLWidget::TargetBuffer. In paintGL(), call
+   currentTargetBuffer() to query which one is currently being drawn to.
+diff --git a/src/plugins/platforms/wayland/qwaylandintegration.cpp b/src/plugins/platforms/wayland/qwaylandintegration.cpp
+index 0f473245..20ddb52d 100644
+--- a/src/plugins/platforms/wayland/qwaylandintegration.cpp
++++ b/src/plugins/platforms/wayland/qwaylandintegration.cpp
+@@ -137,6 +137,12 @@ bool QWaylandIntegration::hasCapability(QPlatformIntegration::Capability cap) co
+     case OffscreenSurface:
+         return mDisplay->clientBufferIntegration()
+                 && mDisplay->clientBufferIntegration()->canCreatePlatformOffscreenSurface();
++    case StereoNativeWindows: {
++        // Each Wayland window is a surface of its own, so a stereo child is a subsurface
++        QSurfaceFormat format;
++        format.setStereo(true);
++        return mDisplay->clientBufferIntegration() && mDisplay->clientBufferIntegration()->supportsStereo(format);
++    }
+     default: return QPlatformIntegration::hasCapability(cap);
+     }
+ }
+diff --git a/src/widgets/kernel/qwidget.cpp b/src/widgets/kernel/qwidget.cpp
+index b2a7ef7b..c461cd24 100644
+--- a/src/widgets/kernel/qwidget.cpp
++++ b/src/widgets/kernel/qwidget.cpp
+@@ -1031,6 +1031,24 @@ void QWidgetPrivate::createRecursively()
+     }
+ }
+ 
++bool QWidgetPrivate::platformComposesStereoWindows() const
++{
++    return QGuiApplicationPrivate::platformIntegration()->hasCapability(QPlatformIntegration::StereoNativeWindows);
++}
++
++// Whether the widget renders stereo into a native window of its own, a stereo surface
++bool QWidgetPrivate::hasStereoWindow()
++{
++    return isStereoEnabled() && platformComposesStereoWindows();
++}
++
++// Whether making this widget native makes its siblings native too, to keep the stacking order.
++// A stereo window stacks above the widgets that stay in the top level's surface.
++bool QWidgetPrivate::enforcesNativeSiblings()
++{
++    return !QCoreApplication::testAttribute(Qt::AA_DontCreateNativeWidgetSiblings) && !hasStereoWindow();
++}
++
+ QRhi *QWidgetPrivate::rhi() const
+ {
+     Q_Q(const QWidget);
+@@ -1214,6 +1232,12 @@ void QWidget::create(WId window, bool initializeWindow, bool destroyOldWindow)
+     if (QApplicationPrivate::testAttribute(Qt::AA_NativeWindows))
+         setAttribute(Qt::WA_NativeWindow);
+ 
++    // Stereo belongs to the surface that shows the 3D: a widget that renders stereo gets a window of its own
++    if (!isWindow() && d->hasStereoWindow()) {
++        setAttribute(Qt::WA_DontCreateNativeAncestors);
++        setAttribute(Qt::WA_NativeWindow);
++    }
++
+     if (isWindow()
+ #if QT_CONFIG(graphicsview)
+         && !graphicsProxyWidget()
+@@ -1349,6 +1373,10 @@ void QWidgetPrivate::create()
+     }
+ 
+     QSurfaceFormat format = win->requestedFormat();
++    // Where a stereo window is a surface of its own, a window is stereo when its widget renders stereo, and
++    // a top level that only holds the 2D interface (the default format asks for stereo) is not
++    if (platformComposesStereoWindows())
++        format.setStereo(isStereoEnabled());
+     if ((flags & Qt::Window) && win->surfaceType() != QSurface::OpenGLSurface
+             && q->testAttribute(Qt::WA_TranslucentBackground)) {
+         format.setAlphaBufferSize(translucentAlphaBufferSize(format));
+@@ -10811,7 +10839,7 @@ void QWidget::setParent(QWidget *parent, Qt::WindowFlags f)
+     bool newParent = (parent != parentWidget());
+ 
+     if (newParent && parent) {
+-        if (testAttribute(Qt::WA_NativeWindow) && !QCoreApplication::testAttribute(Qt::AA_DontCreateNativeWidgetSiblings))
++        if (testAttribute(Qt::WA_NativeWindow) && d->enforcesNativeSiblings())
+             parent->d_func()->enforceNativeChildren();
+         else if (parent->d_func()->nativeChildrenForced() || parent->testAttribute(Qt::WA_PaintOnScreen))
+             setAttribute(Qt::WA_NativeWindow);
+@@ -11556,7 +11584,7 @@ void QWidget::setAttribute(Qt::WidgetAttribute attribute, bool on)
+             QGuiApplication::inputMethod()->commit();
+             QGuiApplication::inputMethod()->update(Qt::ImEnabled);
+         }
+-        if (!QCoreApplication::testAttribute(Qt::AA_DontCreateNativeWidgetSiblings) && parentWidget())
++        if (d->enforcesNativeSiblings() && parentWidget())
+             parentWidget()->d_func()->enforceNativeChildren();
+         if (on && !internalWinId() && testAttribute(Qt::WA_WState_Created))
+             d->createWinId();
+diff --git a/src/widgets/kernel/qwidget_p.h b/src/widgets/kernel/qwidget_p.h
+index 2d67b9a2..66b14e2f 100644
+--- a/src/widgets/kernel/qwidget_p.h
++++ b/src/widgets/kernel/qwidget_p.h
+@@ -646,6 +646,9 @@ public:
+     // These two are used in QGraphicsView for supporting stereoscopic rendering with a
+     // QOpenGLWidget viewport.
+     virtual bool isStereoEnabled() { return false; } // Called in QGraphicsView::setupViewport
++    bool platformComposesStereoWindows() const;
++    bool hasStereoWindow();
++    bool enforcesNativeSiblings();
+     virtual bool toggleStereoTargetBuffer() { return false; } // Called in QGraphicsView::paintEvent
+ 
+     static void setWidgetParentHelper(QObject *widgetAsObject, QObject *newParent);
+diff --git a/src/widgets/kernel/qwidgetrepaintmanager.cpp b/src/widgets/kernel/qwidgetrepaintmanager.cpp
+index 90df68d4..fa231849 100644
+--- a/src/widgets/kernel/qwidgetrepaintmanager.cpp
++++ b/src/widgets/kernel/qwidgetrepaintmanager.cpp
+@@ -1045,6 +1045,13 @@ void QWidgetRepaintManager::flush(QWidget *widget, const QRegion &region, QPlatf
+     if (widget != tlw)
+         offset += widget->mapTo(tlw, QPoint());
+ 
++    // A native widget under alien ancestors is not moved along when they move (scroll areas)
++    if (widget != tlw && widget->d_func()->hasStereoWindow()) {
++        const QPoint posInNativeParent = widget->mapTo(widget->nativeParentWidget(), QPoint());
++        if (window->position() != posInNativeParent)
++            window->setPosition(posInNativeParent);
++    }
++
+     // A widget uses RHI flush if itself, or one of its non-native children
+     // uses RHI for its drawing. If so, we composite the backing store raster
+     // data along with textures produced by the RHI widgets.
+diff --git a/tests/auto/widgets/widgets/qopenglwidget/tst_qopenglwidget.cpp b/tests/auto/widgets/widgets/qopenglwidget/tst_qopenglwidget.cpp
+index 3dbc25ed..d4639021 100644
+--- a/tests/auto/widgets/widgets/qopenglwidget/tst_qopenglwidget.cpp
++++ b/tests/auto/widgets/widgets/qopenglwidget/tst_qopenglwidget.cpp
+@@ -49,6 +49,7 @@ private slots:
+     void fboRedirect();
+     void showHide();
+     void nativeWindow();
++    void stereoWindow();
+     void stackWidgetOpaqueChildIsVisible();
+     void offscreen();
+     void offscreenThenOnscreen();
+@@ -843,6 +844,49 @@ bool verifyColor(const QWidget *widget, const QRect &clipArea, const QColor &col
+     return true;
+ }
+ 
++void tst_QOpenGLWidget::stereoWindow()
++{
++    if (!QGuiApplicationPrivate::platformIntegration()->hasCapability(QPlatformIntegration::StereoNativeWindows))
++        QSKIP("The platform does not show stereo native windows");
++
++    // A widget that renders stereo is a stereo window of its own, in the stereo and in the mono case of
++    // the top level's format: the top level and the widgets around it are a one-eye surface.
++    for (bool stereoTopLevel : { false, true }) {
++        QSurfaceFormat defaultFormat = QSurfaceFormat::defaultFormat();
++        QSurfaceFormat stereoFormat = defaultFormat;
++        stereoFormat.setStereo(true);
++        if (stereoTopLevel)
++            QSurfaceFormat::setDefaultFormat(stereoFormat);
++
++        QWidget topLevel;
++        topLevel.resize(400, 300);
++        QLabel *label = new QLabel("2D", &topLevel);
++        ClearWidget *w = new ClearWidget(&topLevel, 300, 200);
++        if (!stereoTopLevel)
++            w->setFormat(stereoFormat);
++        w->move(10, 40);
++        topLevel.show();
++        QVERIFY(QTest::qWaitForWindowExposed(&topLevel));
++        QSurfaceFormat::setDefaultFormat(defaultFormat);
++
++        QVERIFY(w->windowHandle());
++        QVERIFY(w->windowHandle()->requestedFormat().stereo());
++        QVERIFY(!topLevel.windowHandle()->requestedFormat().stereo());
++        QVERIFY(!label->windowHandle());
++        QCOMPARE(w->windowHandle()->parent(), topLevel.windowHandle());
++
++        // A mono widget keeps the top level's surface
++        ClearWidget *mono = new ClearWidget(&topLevel, 100, 100);
++        QSurfaceFormat monoFormat = defaultFormat;
++        monoFormat.setStereo(false);
++        mono->setFormat(monoFormat);
++        mono->setGeometry(320, 40, 70, 70);
++        mono->show();
++        QTRY_VERIFY(mono->m_paintCalled);
++        QVERIFY(!mono->windowHandle());
++    }
++}
++
+ void tst_QOpenGLWidget::stackWidgetOpaqueChildIsVisible()
+ {
+ #ifdef Q_OS_MACOS
+-- 
+2.53.0
+

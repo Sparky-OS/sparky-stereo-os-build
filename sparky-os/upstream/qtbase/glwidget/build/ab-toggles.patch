@@ -1,0 +1,22 @@
+--- a/src/widgets/kernel/qwidget.cpp	2026-10-07 17:05:23.183738000 -0300
++++ b/src/widgets/kernel/qwidget.cpp
+@@ -1033,6 +1033,7 @@
+ 
+ bool QWidgetPrivate::platformComposesStereoWindows() const
+ {
++    if (qEnvironmentVariableIsSet("QT_STEREO_OLD")) return false; // TEMP A/B toggle, not committed
+     return QGuiApplicationPrivate::platformIntegration()->hasCapability(QPlatformIntegration::StereoNativeWindows);
+ }
+ 
+--- a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp	2026-10-07 17:05:23.191516496 -0300
++++ b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
+@@ -108,7 +108,8 @@
+         } else if (create && mSurface) {
+             // The EGL implementation sizes a stereo surface itself, from the window it is created with and
+             // not from the size Qt gives the surface later: wait until the window is shown and has its size
+-            if (!window()->isVisible() && m_clientBufferIntegration->supportsStereo(window()->requestedFormat()))
++            if (!window()->isVisible() && m_clientBufferIntegration->supportsStereo(window()->requestedFormat())
++                    && !qEnvironmentVariableIsSet("QT_STEREO_NODEFER")) // TEMP A/B toggle, not committed
+                 return;
+ 
+             wl_egl_window *eglWindow = wl_egl_window_create(mSurface->object(), sizeWithMargins.width(), sizeWithMargins.height());

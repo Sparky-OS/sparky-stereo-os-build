@@ -1,0 +1,9 @@
+# apt-get -s installability of the KDE stack against the real repository (pinned at 1001), fresh debian:testing
+FROM debian:testing
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get -y update >/dev/null && apt-get -y install ca-certificates >/dev/null 2>&1
+RUN --mount=type=bind,from=repo,target=/repo echo 'deb [trusted=yes] file:/repo ./' > /etc/apt/sources.list.d/zrepo.list \
+ && printf 'Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n' > /etc/apt/preferences.d/sparky-stereo \
+ && apt-get -y update 2>&1 | tail -1 \
+ && for set in "kde-plasma-desktop" "krita" "kalgebra" "kubrick bino" "qt6-base-dev qt6-base-private-dev qt6-wayland-dev" "plasma-desktop sddm" "kalzium" "libqt6core6t64 libqt6gui6 libqt6widgets6 libqt6waylandclient6 qt6-qpa-plugins"; do \
+      echo "=== apt-get -s install $set"; apt-get -s install --no-install-recommends $set > /tmp/apt.out 2>&1; echo "rc=$?"; grep -E "^(E:|The following packages have unmet)" /tmp/apt.out | head -5; grep -E "^[0-9]+ upgraded" /tmp/apt.out; grep -E "^Inst (libqt6core6t64|libqt6gui6|libqt6widgets6|libqt6waylandclient6|qt6-qpa-plugins) " /tmp/apt.out | sed 's/ \[.*\]//' | head -5; done

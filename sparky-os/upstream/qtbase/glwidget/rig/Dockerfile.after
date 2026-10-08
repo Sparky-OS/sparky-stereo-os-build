@@ -1,0 +1,3 @@
+FROM qtgl-run:dbg
+COPY adebs /adebs
+RUN dpkg -i /adebs/*.deb 2>&1 | tail -3 && rm -rf /adebs && dpkg-query -W libqt6gui6 libqt6widgets6 qt6-qpa-plugins

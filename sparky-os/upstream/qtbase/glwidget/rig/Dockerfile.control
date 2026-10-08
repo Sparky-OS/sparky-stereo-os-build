@@ -1,0 +1,5 @@
+# Debian's own Qt 6.11.2+dfsg-5 under the same applications, KWin and Mesa
+FROM qtgl-run:dbg
+RUN apt-get -y update >/dev/null 2>&1 && V=6.11.2+dfsg-5 && apt-get -y install --allow-downgrades --no-install-recommends \
+  libqt6concurrent6=$V libqt6core6t64=$V libqt6dbus6=$V libqt6gui6=$V libqt6network6=$V libqt6opengl6=$V libqt6openglwidgets6=$V libqt6printsupport6=$V libqt6sql6=$V libqt6test6=$V libqt6waylandclient6=$V libqt6widgets6=$V libqt6wlshellintegration6=$V libqt6xml6=$V qmake6=$V qmake6-bin=$V qt6-base-dev=$V qt6-base-dev-tools=$V qt6-qpa-plugins=$V qtpaths6=$V qtpaths6-bin=$V 2>&1 | tail -3 \
+ && dpkg-query -W libqt6gui6 libqt6widgets6 libqt6waylandclient6 qt6-qpa-plugins && ls -la /usr/lib/x86_64-linux-gnu/libQt6Gui.so.6.11.2

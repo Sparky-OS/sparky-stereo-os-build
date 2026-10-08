@@ -1,0 +1,25 @@
+Description: Wayland: create a stereo EGL surface only when its window is shown
+ A stereo window's wp_viewport belongs to the EGL implementation and follows the
+ buffers it allocated; creating the wl_egl_window before the window is shown and
+ sized made the first frame, and with it the compositor's window size, the 100x30
+ of a widget with a parent. Create the surface of a stereo window when it is visible.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-10-07
+
+diff --git a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
+index 0b1d06d6..a30d719c 100644
+--- a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
++++ b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
+@@ -106,6 +106,11 @@ void QWaylandEglWindow::updateSurface(bool create)
+                 m_resize = true;
+             }
+         } else if (create && mSurface) {
++            // The EGL implementation sizes a stereo surface itself, from the window it is created with and
++            // not from the size Qt gives the surface later: wait until the window is shown and has its size
++            if (!window()->isVisible() && m_clientBufferIntegration->supportsStereo(window()->requestedFormat()))
++                return;
++
+             wl_egl_window *eglWindow = wl_egl_window_create(mSurface->object(), sizeWithMargins.width(), sizeWithMargins.height());
+             if (Q_UNLIKELY(!eglWindow)) {
+                 qCWarning(lcQpaWayland, "Could not create wl_egl_window with size %dx%d\n", sizeWithMargins.width(), sizeWithMargins.height());
