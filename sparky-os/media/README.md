@@ -24,6 +24,7 @@ mpv/patches/           thirty-two patches: eight upstream commits after 0.41.0 t
                        layer under the window surface on Vulkan and OpenGL, per-eye placement, per-view interpolation,
                        the sphere projection as track-list/N/demux-projection)
 mpv/packaging.diff     debian/control and debian/rules: build with libstereo-declare-dev (-Dstereo-declare=enabled)
+mpv/mpv-dmo-0.41.0-stereo3d1.bundle   the thirty-two patches as a git branch on mpv 0.41.0 (for upstream and for the offer)
 mpv/changelog.in       the changelog entry (placeholders @VERSION@, @DMOVERSION@, @FFMPEG@, @DATE@)
 debdiffs/mpv-dmo.debdiff   deb-multimedia's mpv-dmo to ours, as a debdiff: the material of the offer to deb-multimedia
 scripts/port.sh        step 1 of a new release: deb-multimedia's source package becomes ours (see below)
