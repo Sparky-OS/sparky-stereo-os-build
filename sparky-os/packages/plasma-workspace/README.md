@@ -17,6 +17,11 @@ source archives and all binaries at `4:6.7.4-2+stereo3d1`. Its nocheck profile
 remains separate from kde-ci-local and the frozen-client integration checks.
 Apply the edition's existing provenance helper before staging binaries.
 
+The second patch is Nicolas Fella's exact three-line Qt QML linkage fix from
+Plasma/6.7, upstream aa326ad917ab59a84f47ca60d3a319acb07b0019. The bare tag
+fails to find qqml.h with current KDE CI Frameworks. This fix is identical in
+the CI comparison branch and the recovery-action branch (a2b6d4fc62).
+
 The lane uses an owned Debian filesystem and fakeroot for package-manager
 identity while the kernel UID remains 1000. Services are blocked by
 policy-rc.d. No package is installed on the host.
