@@ -1,8 +1,8 @@
 From fd15060ab3d3a0d5173d747f88285289cf079dc2 Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Date: Thu, 8 Oct 2026 18:23:27 -0300
-Subject: [PATCH] Let the four-thread headless CI finish tests and tear down
- skipped scenes safely
+Subject: [PATCH 1/2] Let the four-thread headless CI finish tests and tear
+ down skipped scenes safely
 
 Render-node tests skip before creating a compositor. Guard its teardown rather than crash after the skip. Keep every assertion and a finite 300-second per-test limit for software rendering; the inherited 90-second limit expires on progressing suites in this shared runner.
 
@@ -40,6 +40,36 @@ index db07f3c13c..3ff00f464e 100644
  
  #if KWIN_BUILD_X11
      m_xwayland.reset();
+-- 
+2.53.0
+
+
+From 2943d1a115220ecb9d2ed986ba08067a90d82bcf Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 8 Oct 2026 18:29:57 -0300
+Subject: [PATCH 2/2] Wait for the server to accept the security-context test
+ client
+
+The client connection signal precedes the server-side accept event. Keep the same required connection and app-id assertions while waiting for that asynchronous event under headless CI load.
+
+Assisted-by: gpt-6.1-sol via Codex
+---
+ autotests/integration/security_context_test.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/autotests/integration/security_context_test.cpp b/autotests/integration/security_context_test.cpp
+index ef1aaf3a78..c500e99fc4 100644
+--- a/autotests/integration/security_context_test.cpp
++++ b/autotests/integration/security_context_test.cpp
+@@ -104,7 +104,7 @@ void SecurityContextTest::testSecurityContext()
+     QVERIFY(connectedSpy.wait());
+ 
+     // verify that our new restricted client is seen by kwin with the right security context
+-    QVERIFY(clientConnectedspy.count());
++    QTRY_VERIFY(clientConnectedspy.count());
+     QCOMPARE(clientConnectedspy.first().first().value<KWin::ClientConnection *>()->securityContextAppId(), "kde.unittest.app_id");
+ 
+     // verify that the globals for the restricted client does not contain the security context
 -- 
 2.53.0
 
