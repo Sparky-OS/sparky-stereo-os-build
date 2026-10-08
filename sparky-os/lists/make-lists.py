@@ -109,7 +109,7 @@ steam = {
     'ar': ['ar'], 'bg': ['bg'], 'zh-CN': ['zh-cn'], 'zh-TW': ['zh-tw'], 'cs': ['cs'],
     'da': ['da'], 'nl': ['nl'], 'en': ['en-gb', 'en-za', 'en-us'], 'fi': ['fi'],
     'fr': ['fr'], 'de': ['de', 'de-de'], 'el': ['el'], 'hu': ['hu'], 'id': ['id'],
-    'it': ['it'], 'ja': ['ja'], 'ko': ['ko'], 'ms': ['ms'], 'no': ['nb', 'nb-no', 'nn', 'nn-no', 'no'],
+    'it': ['it'], 'ja': ['ja'], 'ko': ['ko'], 'ms': ['ms'], 'no': ['nb', 'nb-no', 'nn', 'nn-no', 'no'], 'pl': ['pl'],
     'pt': ['pt', 'pt-pt'], 'pt-BR': ['pt-br'], 'ro': ['ro'], 'ru': ['ru'], 'es': ['es', 'es-es'],
     'es-419': ['es-mx', 'es-ar', 'es-cl', 'es-419'], 'sv': ['sv', 'sv-se'], 'th': ['th'],
     'tr': ['tr'], 'uk': ['uk'], 'vi': ['vi'],
