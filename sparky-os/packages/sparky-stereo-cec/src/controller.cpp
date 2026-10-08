@@ -5,6 +5,7 @@
 #include <QScreen>
 #include <QSet>
 #include <QTimer>
+#include <utility>
 
 CecController::CecController(const QString &devices, const QString &drm, const QHash<QString, QString> &bindings, const QString &command, QObject *parent)
     : QObject(parent)
@@ -33,10 +34,10 @@ void CecController::setSessionActive(bool active)
         return;
     }
     m_active = active;
-    if (!active) {
-        qDeleteAll(m_adapters);
-        m_adapters.clear();
-    } else {
+    for (const auto adapter : std::as_const(m_adapters)) {
+        adapter->setActive(active);
+    }
+    if (active) {
         rescan();
     }
 }
@@ -63,6 +64,7 @@ void CecController::rescan()
             adapter = new CecAdapter(device, m_command, this);
             m_adapters.insert(device.device, adapter);
             connect(adapter, &CecAdapter::failed, this, &CecController::failed);
+            connect(adapter, &CecAdapter::skipped, this, &CecController::skipped);
             connect(adapter, &CecAdapter::transmitted, this, [this, name = device.output](bool on, bool acknowledged) {
                 Q_EMIT transmitted(name, on, acknowledged);
             });

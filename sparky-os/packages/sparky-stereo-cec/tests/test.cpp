@@ -152,7 +152,7 @@ private Q_SLOTS:
         QCOMPARE(sent[0][0].toString(), QStringLiteral("HDMI-A-1"));
         QCOMPARE(sent[0][1].toBool(), false);
         QCOMPARE(sent[0][2].toBool(), true);
-        QCOMPARE(frames(), QStringLiteral("4036\n"));
+        QCOMPARE(frames(), QStringLiteral("4f85\n4036\n"));
         control(QStringLiteral("HDMI-A-1"), QStringLiteral("off"));
         control(QStringLiteral("HDMI-A-1"), QStringLiteral("standby"));
         control(QStringLiteral("HDMI-A-1"), QStringLiteral("suspend"));
@@ -162,7 +162,7 @@ private Q_SLOTS:
         QTRY_COMPARE(sent.size(), 2);
         QCOMPARE(sent[1][1].toBool(), true);
         QCOMPARE(sent[1][2].toBool(), true);
-        QCOMPARE(frames(), QStringLiteral("4036\n4004\n"));
+        QCOMPARE(frames(), QStringLiteral("4f85\n4036\n4004\n4f821000\n"));
         QCOMPARE(failed.size(), 0);
     }
     void initialOff()
@@ -171,7 +171,7 @@ private Q_SLOTS:
         QSignalSpy sent(&adapter, &CecAdapter::transmitted);
         adapter.setScreenOn(false);
         QTRY_COMPARE(sent.size(), 1);
-        QCOMPARE(frames(), QStringLiteral("4036\n"));
+        QCOMPARE(frames(), QStringLiteral("4f85\n4036\n"));
     }
     void hotplug()
     {
@@ -188,10 +188,10 @@ private Q_SLOTS:
         QTest::qWait(100);
         write(config().device, {});
         QTRY_COMPARE(sent.size(), 2);
-        QCOMPARE(frames(), QStringLiteral("4036\n4036\n"));
+        QCOMPARE(frames(), QStringLiteral("4f85\n4036\n4f85\n4036\n"));
         control(QStringLiteral("HDMI-A-1"), QStringLiteral("on"));
         QTRY_COMPARE(sent.size(), 3);
-        QCOMPARE(frames(), QStringLiteral("4036\n4036\n4004\n"));
+        QCOMPARE(frames(), QStringLiteral("4f85\n4036\n4f85\n4036\n4004\n4f821000\n"));
     }
     void inactiveSession()
     {
@@ -214,26 +214,79 @@ private Q_SLOTS:
         QCOMPARE(frames(), QString());
         control(QStringLiteral("HDMI-A-1"), QStringLiteral("off"));
         QTRY_COMPARE(sent.size(), 1);
-        QCOMPARE(frames(), QStringLiteral("4036\n"));
+        QCOMPARE(frames(), QStringLiteral("4f85\n4036\n"));
         session.change(false);
         QTRY_VERIFY(!gate.isActive());
         control(QStringLiteral("HDMI-A-1"), QStringLiteral("on"));
-        control(QStringLiteral("HDMI-A-1"), QStringLiteral("off"));
         QTest::qWait(100);
-        QCOMPARE(frames(), QStringLiteral("4036\n"));
-        control(QStringLiteral("HDMI-A-1"), QStringLiteral("on"));
-        QTest::qWait(50);
+        QCOMPARE(frames(), QStringLiteral("4f85\n4036\n"));
         session.change(true);
         QTRY_VERIFY(gate.isActive());
+        QTRY_COMPARE(sent.size(), 2);
+        QCOMPARE(frames(), QStringLiteral("4f85\n4036\n4004\n4f821000\n"));
         QVERIFY(QDBusConnection::systemBus().unregisterService(QStringLiteral("org.freedesktop.login1")));
         QTRY_VERIFY(!gate.isActive());
         control(QStringLiteral("HDMI-A-1"), QStringLiteral("off"));
         QTest::qWait(100);
-        QCOMPARE(frames(), QStringLiteral("4036\n"));
+        QCOMPARE(frames(), QStringLiteral("4f85\n4036\n4004\n4f821000\n"));
         QVERIFY(QDBusConnection::systemBus().registerService(QStringLiteral("org.freedesktop.login1")));
         QTRY_VERIFY(gate.isActive());
+        QTRY_COMPARE(sent.size(), 3);
+        QCOMPARE(frames(), QStringLiteral("4f85\n4036\n4004\n4f821000\n4f85\n4036\n"));
+    }
+    void otherActiveSource_data()
+    {
+        QTest::addColumn<uint>("flags");
+        QTest::addColumn<QString>("reason");
+        QTest::newRow("another-input") << 1024U << QStringLiteral("another input");
+        QTest::newRow("no-reply") << 2048U << QStringLiteral("no valid Active Source reply");
+        QTest::newRow("feature-abort") << 4096U << QStringLiteral("no valid Active Source reply");
+    }
+    void otherActiveSource()
+    {
+        QFETCH(uint, flags);
+        QFETCH(QString, reason);
+        write(qEnvironmentVariable("CEC_TEST_STATE"), QByteArray::number(flags));
+        CecAdapter adapter(config(), command);
+        QSignalSpy sent(&adapter, &CecAdapter::transmitted);
+        QSignalSpy skipped(&adapter, &CecAdapter::skipped);
+        adapter.setScreenOn(true);
+        QCOMPARE(frames(), QString());
+        adapter.setScreenOn(false);
+        QTRY_VERIFY(sent.size() > 0 || skipped.size() > 0);
+        QCOMPARE(frames(), QStringLiteral("4f85\n"));
+        QCOMPARE(sent.size(), 0);
+        QCOMPARE(skipped.size(), 1);
+        QVERIFY(skipped[0][0].toString().contains(reason));
+        adapter.setScreenOn(true);
+        QTRY_COMPARE(skipped.size(), 2);
+        QCOMPARE(sent.size(), 0);
+        QCOMPARE(frames(), QStringLiteral("4f85\n"));
+    }
+    void standbyNack()
+    {
+        write(qEnvironmentVariable("CEC_TEST_STATE"), "16384\n");
+        CecAdapter adapter(config(), command);
+        QSignalSpy sent(&adapter, &CecAdapter::transmitted);
+        QSignalSpy skipped(&adapter, &CecAdapter::skipped);
+        adapter.setScreenOn(false);
+        QTRY_COMPARE(sent.size(), 1);
+        QCOMPARE(sent[0][1].toBool(), false);
+        adapter.setScreenOn(true);
+        QTRY_COMPARE(skipped.size(), 1);
+        QCOMPARE(frames(), QStringLiteral("4f85\n4036\n"));
+    }
+    void wakeNack()
+    {
+        write(qEnvironmentVariable("CEC_TEST_STATE"), "32768\n");
+        CecAdapter adapter(config(), command);
+        QSignalSpy sent(&adapter, &CecAdapter::transmitted);
+        adapter.setScreenOn(false);
+        QTRY_COMPARE(sent.size(), 1);
+        adapter.setScreenOn(true);
         QTRY_COMPARE(sent.size(), 2);
-        QCOMPARE(frames(), QStringLiteral("4036\n4036\n"));
+        QCOMPARE(sent[1][1].toBool(), false);
+        QCOMPARE(frames(), QStringLiteral("4f85\n4036\n4004\n"));
     }
     void configurePlayback()
     {
@@ -243,7 +296,7 @@ private Q_SLOTS:
         adapter.setScreenOn(false);
         QTRY_COMPARE(sent.size(), 1);
         QCOMPARE(sent[0][1].toBool(), true);
-        QCOMPARE(frames(), QStringLiteral("4036\n"));
+        QCOMPARE(frames(), QStringLiteral("4f85\n4036\n"));
     }
     void usbPhysicalAddress()
     {
@@ -255,7 +308,7 @@ private Q_SLOTS:
         adapter.setScreenOn(false);
         QTRY_COMPARE(sent.size(), 1);
         QCOMPARE(sent[0][1].toBool(), true);
-        QCOMPARE(frames(), QStringLiteral("4036\n"));
+        QCOMPARE(frames(), QStringLiteral("4f85\n4036\n"));
     }
     void unavailable_data()
     {
@@ -283,7 +336,7 @@ private Q_SLOTS:
         adapter.setScreenOn(false);
         QTRY_COMPARE(sent.size(), 1);
         QCOMPARE(sent[0][1].toBool(), true);
-        QCOMPARE(frames(), QStringLiteral("4036\n"));
+        QCOMPARE(frames(), QStringLiteral("4f85\n4036\n"));
     }
     void nackIsFailure()
     {
@@ -291,11 +344,12 @@ private Q_SLOTS:
         CecAdapter adapter(config(), command);
         QSignalSpy sent(&adapter, &CecAdapter::transmitted);
         QSignalSpy failed(&adapter, &CecAdapter::failed);
+        QSignalSpy skipped(&adapter, &CecAdapter::skipped);
         adapter.setScreenOn(false);
-        QTRY_COMPARE(sent.size(), 1);
-        QCOMPARE(sent[0][1].toBool(), false);
+        QTRY_COMPARE(skipped.size(), 1);
+        QCOMPARE(sent.size(), 0);
         QCOMPARE(failed.size(), 1);
-        QCOMPARE(frames(), QStringLiteral("4036\n"));
+        QCOMPARE(frames(), QStringLiteral("4f85\n"));
     }
     void timeout()
     {
@@ -304,19 +358,21 @@ private Q_SLOTS:
         QSignalSpy sent(&adapter, &CecAdapter::transmitted);
         QSignalSpy failed(&adapter, &CecAdapter::failed);
         adapter.setScreenOn(false);
-        QTRY_COMPARE_WITH_TIMEOUT(sent.size(), 1, 12000);
-        QCOMPARE(sent[0][1].toBool(), false);
-        QCOMPARE(failed.size(), 1);
+        QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 12000);
+        QCOMPARE(sent.size(), 0);
+        QCOMPARE(frames(), QStringLiteral("4f85\n"));
     }
     void rapidWake()
     {
         write(qEnvironmentVariable("CEC_TEST_STATE"), "128\n");
         CecAdapter adapter(config(), command);
         QSignalSpy sent(&adapter, &CecAdapter::transmitted);
+        QSignalSpy skipped(&adapter, &CecAdapter::skipped);
         adapter.setScreenOn(false);
         adapter.setScreenOn(true);
-        QTRY_COMPARE(sent.size(), 2);
-        QCOMPARE(frames(), QStringLiteral("4036\n4004\n"));
+        QTRY_COMPARE(skipped.size(), 2);
+        QCOMPARE(sent.size(), 0);
+        QCOMPARE(frames(), QStringLiteral("4f85\n"));
     }
     void missingCommand()
     {

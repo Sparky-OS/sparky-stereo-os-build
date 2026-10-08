@@ -128,8 +128,20 @@ int ioctl(int fd, unsigned long request, ...)
             usleep(12000000);
         }
         message->sequence = 1;
-        message->tx_status = value & 64 ? CEC_TX_STATUS_NACK | CEC_TX_STATUS_MAX_RETRIES : CEC_TX_STATUS_OK;
-        message->tx_nack_cnt = value & 64 ? 4 : 0;
+        const int nack = (value & 64) || ((value & 16384) && message->msg[1] == CEC_MSG_STANDBY)
+            || ((value & 32768) && message->msg[1] == CEC_MSG_IMAGE_VIEW_ON);
+        message->tx_status = nack ? CEC_TX_STATUS_NACK | CEC_TX_STATUS_MAX_RETRIES : CEC_TX_STATUS_OK;
+        message->tx_nack_cnt = nack ? 4 : 0;
+        if (message->msg[1] == CEC_MSG_REQUEST_ACTIVE_SOURCE && message->reply == CEC_MSG_ACTIVE_SOURCE && !(value & 64)) {
+            message->rx_status = value & 2048 ? CEC_RX_STATUS_TIMEOUT : value & 4096 ? CEC_RX_STATUS_FEATURE_ABORT : CEC_RX_STATUS_OK;
+            if (!(value & 2048)) {
+                message->len = 4;
+                message->msg[0] = 0x8f;
+                message->msg[1] = value & 4096 ? CEC_MSG_FEATURE_ABORT : CEC_MSG_ACTIVE_SOURCE;
+                message->msg[2] = value & 1024 ? 0x20 : 0x10;
+                message->msg[3] = 0;
+            }
+        }
         return 0;
     }
     case CEC_S_MODE:

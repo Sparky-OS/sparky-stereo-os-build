@@ -31,5 +31,8 @@ int main(int argc, char **argv)
     QObject::connect(&controller, &CecController::failed, &app, [](const QString &message) {
         qWarning().noquote() << message;
     });
+    QObject::connect(&controller, &CecController::skipped, &app, [](const QString &message) {
+        qInfo().noquote() << message;
+    });
     return app.exec();
 }

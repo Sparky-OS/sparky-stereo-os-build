@@ -26,15 +26,19 @@ class CecAdapter : public QObject
 public:
     explicit CecAdapter(const AdapterConfig &config, const QString &command = QStringLiteral("/usr/bin/cec-ctl"), QObject *parent = nullptr);
     void setScreenOn(bool on);
+    void setActive(bool active);
     QString output() const;
 
 Q_SIGNALS:
     void transmitted(bool on, bool acknowledged);
     void failed(const QString &message);
+    void skipped(const QString &message);
 
 private:
     void next();
-    void start(const QStringList &arguments, bool configuring);
+    enum class Operation { Idle, Configure, CheckSource, Standby, ViewOn, AnnounceSource };
+    void start(const QStringList &arguments, Operation operation);
+    void send(Operation operation);
     void finished(int exitCode, QProcess::ExitStatus status);
 
     AdapterConfig m_config;
@@ -44,7 +48,10 @@ private:
     QQueue<bool> m_pending;
     std::optional<bool> m_screenOn;
     bool m_busy = false;
-    bool m_configuring = false;
+    Operation m_operation = Operation::Idle;
+    bool m_active = true;
+    int m_physical = -1;
+    int m_standbyPhysical = -1;
     bool m_attemptedConfiguration = false;
     bool m_currentOn = false;
 };

@@ -55,10 +55,20 @@ PowerDevil. There is no second idle timer, screen locker or console command.
 X11 is outside this helper's scope: KScreen's X11 backend does not expose
 these mode notifications and its constructor changes X11 DPMS timeouts.
 
-A matched HDMI screen entering Off, Standby or Suspend sends Standby to TV
-logical address 0. Returning On sends Image View On to that TV. Initial On
-sends no wake message. Duplicate off states send nothing. The helper never
-broadcasts Standby and does not change the TV's active input.
+A matched HDMI screen entering Off, Standby or Suspend first broadcasts
+Request Active Source. The kernel waits up to one second for Active Source.
+Only a successful reply carrying our current physical address permits
+Standby to TV logical address 0. Another address, no reply, Feature Abort or
+a screen that has already woken sends no Standby; the reason is logged.
+
+Only an acknowledged Standby records that this helper put this TV to sleep.
+Returning On then sends Image View On to that TV, followed by a broadcast
+Active Source with our physical address. This One Touch Play selects the PC
+again. If we did not put the TV to sleep, wake sends no frames and does not
+take it away from another input. Initial On and duplicate off states are
+silent. Standby is never broadcast. Session inactivity cancels pending work
+but retains acknowledged ownership. Device removal, process restart or an
+address change clears ownership; uncertain history never authorizes wake.
 
 Discovery prefers CEC_ADAP_G_CONNECTOR_INFO's DRM card/connector identity.
 The connected HDMI connector must match exactly one Qt screen name. Without

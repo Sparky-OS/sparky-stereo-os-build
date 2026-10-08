@@ -8,5 +8,5 @@ if [[ ${1:-} == uninstall ]]; then
 	DEBIAN_FRONTEND=noninteractive apt-get -y remove sparky-stereo-cec
 else
 	: "${OUT:?Set OUT to the package directory}"
-	DEBIAN_FRONTEND=noninteractive apt-get -y install "$OUT/sparky-stereo-cec_0.1.0_$(dpkg --print-architecture).deb"
+	DEBIAN_FRONTEND=noninteractive apt-get -y install "$OUT/sparky-stereo-cec_0.1.1_$(dpkg --print-architecture).deb"
 fi

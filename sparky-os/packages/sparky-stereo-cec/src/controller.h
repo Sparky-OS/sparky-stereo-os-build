@@ -17,6 +17,7 @@ public:
 Q_SIGNALS:
     void transmitted(const QString &output, bool on, bool acknowledged);
     void failed(const QString &message);
+    void skipped(const QString &message);
 
 private:
     void rescan();
