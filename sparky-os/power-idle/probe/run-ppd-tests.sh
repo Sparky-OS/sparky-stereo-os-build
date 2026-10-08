@@ -21,6 +21,7 @@ rm -f "$POWER_IDLE_WORK/ppd-evidence/result.txt"
 /usr/bin/python3 "$POWER_IDLE_WORK/power-profiles-daemon-0.30/tests/integration_test.py" \
 	Tests.test_amd_pstate Tests.test_amd_pstate_upower Tests.test_amdgpu_dpm \
 	Tests.test_amdgpu_dpm_manual Tests.test_amdgpu_panel_power Tests.test_hold_release_profile \
+	Tests.test_intel_pstate Tests.test_intel_pstate_upower Tests.test_amd_pstate_passive \
 	>"$POWER_IDLE_WORK/ppd-evidence/upstream.log" 2>&1
 if [[ -n ${POWER_IDLE_PROFILE_DEFAULTS:-} ]]; then
 	/usr/bin/python3 "$HERE/profile-integration.py" EditionProfiles.test_modes \

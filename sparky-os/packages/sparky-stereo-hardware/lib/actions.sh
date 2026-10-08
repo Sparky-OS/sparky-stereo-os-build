@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/03
+# Last update 2026/10/08
 
 log() { printf '%s\n' "$*"; }
 run() { printf 'RUN'; printf ' %q' "$@"; printf '\n'; "$@"; }
@@ -59,6 +59,44 @@ setup_creative() {
 	mkdir -p "$ROOT/etc/modprobe.d" || return 1
 	printf '%s\n' 'options snd_hda_intel enable_msi=1' >"$ROOT/etc/modprobe.d/sparky-stereo-creative.conf" || return 1
 	log 'Creative firmware verified; snd_hda_intel enable_msi=1 applies after reboot'
+}
+
+ppd_action_enabled() {
+	awk -v wanted="$1" 'BEGIN { RS=""; FS="\n" }
+		{ name=0; enabled=0; for (i=1; i<=NF; i++) {
+			if ($i == "Name: " wanted) name=1
+			if ($i == "Enabled: True") enabled=1
+		} if (name && enabled) found=1 }
+		END { exit !found }' "$2"
+}
+
+setup_amdgpu() {
+	local action
+	run powerprofilesctl list-actions >"$WORK/power-actions" || return 1
+	for action in "$@"; do
+		if ! grep -Fxq "Name: $action" "$WORK/power-actions"; then
+			log "UNSUPPORTED PPD action $action is not exposed; no replacement GPU tuning applied"
+			continue
+		fi
+		if ! ppd_action_enabled "$action" "$WORK/power-actions"; then
+			run powerprofilesctl configure-action "$action" --enable || return 1
+		fi
+		run powerprofilesctl list-actions >"$WORK/power-actions" || return 1
+		ppd_action_enabled "$action" "$WORK/power-actions" || { log "ERROR PPD action $action not enabled"; return 1; }
+		log "VERIFIED PPD action $action enabled"
+	done
+}
+
+setup_nvidia_runtime_pm() {
+	mkdir -p "$ROOT/etc/modprobe.d" "$ROOT/etc/udev/rules.d" || return 1
+	printf '%s\n' 'options nvidia NVreg_DynamicPowerManagement=0x02' >"$ROOT/etc/modprobe.d/sparky-stereo-nvidia-runtime-pm.conf" || return 1
+	cat >"$ROOT/etc/udev/rules.d/80-sparky-stereo-nvidia-runtime-pm.rules" <<'EOF' || return 1
+ACTION=="bind", SUBSYSTEM=="pci", DRIVER=="nvidia", ATTR{vendor}=="0x10de", ATTR{class}=="0x030000", TEST=="power/control", ATTR{power/control}="auto"
+ACTION=="bind", SUBSYSTEM=="pci", DRIVER=="nvidia", ATTR{vendor}=="0x10de", ATTR{class}=="0x030200", TEST=="power/control", ATTR{power/control}="auto"
+ACTION=="unbind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030000", TEST=="power/control", ATTR{power/control}="on"
+ACTION=="unbind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030200", TEST=="power/control", ATTR{power/control}="on"
+EOF
+	log 'NVIDIA laptop runtime PM configured for next driver bind/reboot; actual RTD3 support is hardware-dependent'
 }
 
 setup_nvidia() {
@@ -119,6 +157,9 @@ EOF
 	if ! apt_install "$driver" "$module"; then
 		log 'ERROR NVIDIA transaction failed; inspect apt/dpkg state before reboot; nouveau firmware is present'
 		return 1
+	fi
+	if grep -Fxq $'action\tnvidia-runtime-pm' "$WORK/plan"; then
+		setup_nvidia_runtime_pm || return 1
 	fi
 	log 'NVIDIA 615.71.09 userspace and edition open modules installed; reboot required'
 }

@@ -43,6 +43,7 @@ Priority: optional
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Standards-Version: 4.7.3
 Build-Depends: dpkg-dev
+Rules-Requires-Root: no
 Homepage: https://sparkylinux.org
 
 Package: $PACKAGE
@@ -65,6 +66,7 @@ cat >"$S/debian/rules" <<'EOF'
 #!/usr/bin/make -f
 binary:
 	OUT=$(CURDIR)/.. bash ./build.sh
+	dpkg-distaddfile $$(dpkg-parsechangelog -S Source)_$$(dpkg-parsechangelog -S Version)_all.deb System optional
 clean:
 build:
 EOF

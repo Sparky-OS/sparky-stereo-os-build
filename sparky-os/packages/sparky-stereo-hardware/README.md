@@ -23,6 +23,7 @@ laptop-detect
 lm-sensors
 nvidia-detect
 pciutils
+power-profiles-daemon >= 0.30
 python3
 sed
 sparky-remsu
@@ -69,3 +70,20 @@ Purging the setup tool removes its executable and menu files. It deliberately re
 Tests:
 -------------
 In a disposable Debian testing container, install the built packages and run `python3 tests/detection.py` and `bash tests/actions.sh`. The latter uses command doubles and a fake root for module loading and NVIDIA transactions. The test never loads a real module. See REPORT.md for the full build/install/use/purge transcript and limitations.
+
+Since 0.1.3, a successfully installed NVIDIA driver on a matched laptop adds
+NVreg_DynamicPowerManagement=0x02 and GPU bind/unbind rules for runtime PM.
+They apply at the next bind or reboot. Desktops, older/unknown GPUs and failed
+driver transactions receive no new runtime-PM files. Hardware and ACPI must
+support RTD3; configuring it is not a measurement that the GPU powers down.
+The option and rules follow NVIDIA's 615.71.09 runtime-D3 documentation:
+https://download.nvidia.com/XFree86/Linux-x86_64/615.71.09/README/dynamicpowermanagement.html
+
+Matched Radeon systems with AMD CPUs opt into PPD's amdgpu_dpm action; laptops
+also opt into amdgpu_panel_power. Setup queries and verifies the daemon's
+exposed actions using powerprofilesctl. PPD owns the clock and panel changes,
+including changes from a user's profile choice. Missing actions are reported
+as unsupported, and no second controller writes GPU sysfs. PPD 0.30 currently
+probes these actions by CPU vendor, so Radeon on Intel is not covered. Sources:
+https://sources.debian.org/src/power-profiles-daemon/0.30-2/src/ppd-action-amdgpu-dpm.c/
+https://sources.debian.org/src/power-profiles-daemon/0.30-2/src/ppd-action-amdgpu-panel-power.c/

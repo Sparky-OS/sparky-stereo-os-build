@@ -4,12 +4,13 @@
 # Last update 2026/10/03
 set -euo pipefail
 [[ -e /.dockerenv ]] || exit 1
-source /usr/lib/sparky-stereo-hardware/actions.sh
+source "${HARDWARE_ACTIONS:-/usr/lib/sparky-stereo-hardware/actions.sh}"
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
 ROOT=$T/root
 WORK=$T/work
 mkdir -p "$ROOT" "$WORK"
+: >"$WORK/plan"
 calls=$T/calls
 : >"$calls"
 
@@ -105,3 +106,16 @@ fail_preflight=0
 fail_install=1
 if setup_nvidia; then echo 'FAIL NVIDIA transaction failure hidden'; exit 1; fi
 echo 'PASS missing module, network, checksum, preflight rollback and transaction error paths'
+
+printf 'action\tnvidia-runtime-pm\n' >"$WORK/plan"
+if setup_nvidia; then echo 'FAIL NVIDIA failed transaction accepted for laptop'; exit 1; fi
+[[ ! -e "$ROOT/etc/modprobe.d/sparky-stereo-nvidia-runtime-pm.conf" ]]
+fail_install=0
+setup_nvidia
+grep -Fxq 'options nvidia NVreg_DynamicPowerManagement=0x02' "$ROOT/etc/modprobe.d/sparky-stereo-nvidia-runtime-pm.conf"
+cp "$ROOT/etc/udev/rules.d/80-sparky-stereo-nvidia-runtime-pm.rules" "$T/expected-runtime-rules"
+setup_nvidia
+cmp "$T/expected-runtime-rules" "$ROOT/etc/udev/rules.d/80-sparky-stereo-nvidia-runtime-pm.rules"
+[[ $(grep -c '^ACTION=="bind".*DRIVER=="nvidia"' "$T/expected-runtime-rules") == 2 ]]
+[[ $(grep -c '^ACTION=="unbind"' "$T/expected-runtime-rules") == 2 ]]
+echo 'PASS laptop RTD3 requires a successful driver transaction and repeats without duplicating rules'

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/05
+# Last update 2026/10/08
 set -euo pipefail
 if ((EUID != 0)); then echo 'Run as root (use the Hardware Setup menu entry).'; exit 1; fi
 export LC_ALL=C.UTF-8
@@ -121,6 +121,10 @@ for package in "${packages[@]}"; do
 	case "$package" in amd64-microcode|intel-microcode) apt_install "$package" ;; esac
 done
 failed=0
+amdgpu_actions=()
+if grep -Fxq $'action\tamdgpu-dpm' "$WORK/plan"; then amdgpu_actions+=(amdgpu_dpm); fi
+if grep -Fxq $'action\tamdgpu-panel' "$WORK/plan"; then amdgpu_actions+=(amdgpu_panel_power); fi
+if ((${#amdgpu_actions[@]})); then setup_amdgpu "${amdgpu_actions[@]}" || failed=1; fi
 setup_sensors || failed=1
 if printf '%s\n' "${packages[@]}" | grep -Fxq firmware-nvidia-graphics; then
 	apt_install firmware-nvidia-graphics

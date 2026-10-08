@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/05
+# Last update 2026/10/08
 """Turn captured hardware facts into a deterministic installation plan."""
 import pathlib
 import re
@@ -49,6 +49,7 @@ for package in read("firmware-packages").split():
     match(f"isenkram missing firmware: {package}", package)
 
 gpus = []
+amd_display = False
 current_gpu = None
 for line in read("lspci").splitlines():
     subsystem = re.search(r"Subsystem:.*?([0-9a-fA-F]{4}):([0-9a-fA-F]{4})", line)
@@ -61,6 +62,8 @@ for line in read("lspci").splitlines():
     if not pci:
         continue
     cls, vendor, device = (part.lower() for part in pci.groups())
+    if vendor == "1002" and cls.startswith("03"):
+        amd_display = True
     if vendor == "10de" and cls.startswith("03"):
         current_gpu = len(gpus)
         gpus.append([device])
@@ -73,10 +76,19 @@ if gpus:
     supported = {tuple(line.split()) for line in (data / "nvidia-open.ids").read_text().splitlines()}
     if all((gpu[0],) in supported or tuple(gpu) in supported for gpu in gpus) and read("architecture").strip() == "amd64":
         emit("action", "nvidia-open")
+        if laptop == "0":
+            emit("action", "nvidia-runtime-pm")
     else:
         emit("found", "NVIDIA nouveau: older, unknown, mixed or non-amd64 hardware")
 else:
     emit("found", "No NVIDIA display controller")
+
+# PPD 0.30 probes its AMD actions by CPU vendor, not by the Radeon PCI ID alone.
+if amd_display and "AuthenticAMD" in vendors:
+    packages.add("power-profiles-daemon")
+    emit("action", "amdgpu-dpm")
+    if laptop == "0":
+        emit("action", "amdgpu-panel")
 
 xbox_usb = {"028e", "028f", "02d1", "02dd", "02e3", "02ea", "0b00", "0b0a", "0b12"}
 xbox_bt = {"02e0", "02fd", "0b05", "0b13", "0b20", "0b22"}
