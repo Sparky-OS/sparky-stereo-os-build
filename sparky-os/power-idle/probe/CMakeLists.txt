@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_AUTOMOC ON)
 find_package(ECM REQUIRED NO_MODULE)
 list(APPEND CMAKE_MODULE_PATH ${ECM_MODULE_PATH})
-find_package(Qt6 REQUIRED COMPONENTS Core)
+find_package(Qt6 REQUIRED COMPONENTS Core DBus)
 find_package(KF6Config REQUIRED)
 
 if(NOT EXISTS "${POWERDEVIL_SOURCE}/PowerDevilProfileSettings.kcfg")
@@ -32,4 +32,4 @@ target_include_directories(settings-probe PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}"
     "${POWERDEVIL_SOURCE}/daemon"
 )
-target_link_libraries(settings-probe PRIVATE Qt6::Core KF6::ConfigCore KF6::ConfigGui)
+target_link_libraries(settings-probe PRIVATE Qt6::Core Qt6::DBus KF6::ConfigCore KF6::ConfigGui)

@@ -6,6 +6,10 @@
 #include <powerdevilenums.h>
 
 #include <QCoreApplication>
+#include <QDBusConnection>
+#include <QDBusInterface>
+#include <QDBusReply>
+#include <QDBusVariant>
 #include <QTextStream>
 
 int main(int argc, char **argv)
@@ -15,6 +19,35 @@ int main(int argc, char **argv)
     const bool requireTimeline = app.arguments().contains(QStringLiteral("--require-timeline"));
     const bool userOverride = app.arguments().contains(QStringLiteral("--user-override"));
     QTextStream out(stdout);
+    const int applyIndex = app.arguments().indexOf(QStringLiteral("--apply-profile"));
+    if (applyIndex >= 0) {
+        if (applyIndex + 1 >= app.arguments().size()) {
+            return 2;
+        }
+        const QString profile = app.arguments().at(applyIndex + 1);
+        if (profile != QStringLiteral("AC") && profile != QStringLiteral("Battery") && profile != QStringLiteral("LowBattery")) {
+            return 2;
+        }
+        PowerDevil::ProfileSettings settings(profile, false, false, true);
+        settings.load();
+        if (settings.powerProfile().isEmpty()) {
+            out << "FAIL missing configured power profile" << Qt::endl;
+            return 1;
+        }
+        QDBusInterface properties(QStringLiteral("org.freedesktop.UPower.PowerProfiles"),
+                                  QStringLiteral("/org/freedesktop/UPower/PowerProfiles"),
+                                  QStringLiteral("org.freedesktop.DBus.Properties"), QDBusConnection::systemBus());
+        const QDBusReply<void> reply = properties.call(QStringLiteral("Set"),
+                                                      QStringLiteral("org.freedesktop.UPower.PowerProfiles"),
+                                                      QStringLiteral("ActiveProfile"),
+                                                      QVariant::fromValue(QDBusVariant(settings.powerProfile())));
+        if (!reply.isValid()) {
+            out << "FAIL " << reply.error().message() << Qt::endl;
+            return 1;
+        }
+        out << profile << " -> " << settings.powerProfile() << Qt::endl;
+        return 0;
+    }
     int failures = 0;
     const auto check = [&](bool condition, const QString &name) {
         out << (condition ? "PASS " : "FAIL ") << name << Qt::endl;
