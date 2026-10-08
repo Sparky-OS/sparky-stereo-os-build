@@ -1,0 +1,355 @@
+Description: Refresh currency rates only for a currency conversion query
+Author: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-10-08
+
+diff --git a/runners/converter/autotests/CMakeLists.txt b/runners/converter/autotests/CMakeLists.txt
+index 785b45ee6..c16b7a6c3 100644
+--- a/runners/converter/autotests/CMakeLists.txt
++++ b/runners/converter/autotests/CMakeLists.txt
+@@ -4,3 +4,6 @@ include(ECMAddTests)
+ 
+ ecm_add_test(converterrunnertest.cpp TEST_NAME converterrunnertest LINK_LIBRARIES Qt::Gui Qt::Test KF6::Runner KF6::UnitConversion)
+ krunner_configure_test(converterrunnertest unitconverter)
++
++ecm_add_test(currencyupdatetest.cpp TEST_NAME currencyupdatetest LINK_LIBRARIES Qt::Gui Qt::Network Qt::Test KF6::Runner)
++krunner_configure_test(currencyupdatetest unitconverter)
+diff --git a/runners/converter/autotests/currencyupdatetest.cpp b/runners/converter/autotests/currencyupdatetest.cpp
+new file mode 100644
+index 000000000..91d303458
+--- /dev/null
++++ b/runners/converter/autotests/currencyupdatetest.cpp
+@@ -0,0 +1,197 @@
++/*
++ * SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack)
++ *
++ * SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++ */
++
++#include <KRunner/AbstractRunnerTest>
++#include <QDateTime>
++#include <QFile>
++#include <QNetworkInterface>
++#include <QNetworkProxy>
++#include <QProcess>
++#include <QSslCertificate>
++#include <QSslConfiguration>
++#include <QSslKey>
++#include <QSslSocket>
++#include <QTcpServer>
++#include <QTest>
++
++#include <algorithm>
++#include <functional>
++
++class ProxyServer : public QTcpServer
++{
++public:
++    std::function<void(QSslSocket *)> accept;
++
++private:
++    void incomingConnection(qintptr descriptor) override
++    {
++        auto socket = new QSslSocket(this);
++        socket->setSocketDescriptor(descriptor);
++        accept(socket);
++    }
++};
++
++class CurrencyUpdateTest : public KRunner::AbstractRunnerTest
++{
++    Q_OBJECT
++
++private:
++    ProxyServer m_proxy;
++    QList<QSslSocket *> m_requests;
++    QString m_cachePath;
++
++    void reply(QSslSocket *socket, bool success = true)
++    {
++        const QByteArray rates =
++            "<gesmes:Envelope xmlns:gesmes=\"http://www.gesmes.org/xml/2002-08-01\">"
++            "<Cube><Cube time=\"2026-10-08\"><Cube currency=\"USD\" rate=\"2\"/>"
++            "<Cube currency=\"GBP\" rate=\"4\"/></Cube></Cube></gesmes:Envelope>";
++        socket->write(success ? "HTTP/1.1 200 OK\r\n" : "HTTP/1.1 500 Internal Server Error\r\n");
++        socket->write("Content-Type: application/xml\r\nConnection: close\r\nContent-Length: " + QByteArray::number(rates.size()) + "\r\n\r\n" + rates);
++        socket->disconnectFromHost();
++    }
++
++private Q_SLOTS:
++    void initTestCase()
++    {
++        const auto interfaces = QNetworkInterface::allInterfaces();
++        QVERIFY(std::any_of(interfaces.cbegin(), interfaces.cend(), [](const auto &interface) {
++            return interface.flags().testFlag(QNetworkInterface::IsUp) && !interface.flags().testFlag(QNetworkInterface::IsLoopBack);
++        }));
++        qunsetenv("KFUNITCONVERT_NO_DOWNLOAD");
++        QStandardPaths::setTestModeEnabled(true);
++        m_cachePath = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + QStringLiteral("/libkunitconversion/currency.xml");
++        QFile::remove(m_cachePath);
++
++        // Create an ephemeral certificate in memory; no files or external server are used.
++        QProcess openssl;
++        openssl.start(QStringLiteral("openssl"),
++                      {QStringLiteral("req"),
++                       QStringLiteral("-x509"),
++                       QStringLiteral("-newkey"),
++                       QStringLiteral("rsa:2048"),
++                       QStringLiteral("-nodes"),
++                       QStringLiteral("-days"),
++                       QStringLiteral("1"),
++                       QStringLiteral("-subj"),
++                       QStringLiteral("/CN=www.ecb.europa.eu"),
++                       QStringLiteral("-addext"),
++                       QStringLiteral("subjectAltName=DNS:www.ecb.europa.eu"),
++                       QStringLiteral("-keyout"),
++                       QStringLiteral("/dev/stdout"),
++                       QStringLiteral("-out"),
++                       QStringLiteral("/dev/stdout")});
++        QVERIFY(openssl.waitForFinished(30000));
++        QCOMPARE(openssl.exitCode(), 0);
++        const auto pem = openssl.readAllStandardOutput();
++        const auto certificates = QSslCertificate::fromData(pem);
++        QCOMPARE(certificates.size(), 1);
++        const auto certificate = certificates.constFirst();
++        const QSslKey key(pem, QSsl::Rsa);
++        QVERIFY(!key.isNull());
++        auto ssl = QSslConfiguration::defaultConfiguration();
++        ssl.setCaCertificates(certificates);
++        QSslConfiguration::setDefaultConfiguration(ssl);
++
++        m_proxy.accept = [this, certificate, key](QSslSocket *socket) {
++            socket->setLocalCertificate(certificate);
++            socket->setPrivateKey(key);
++            connect(socket, &QSslSocket::readyRead, this, [this, socket, buffer = QByteArray()]() mutable {
++                buffer += socket->readAll();
++                if (!buffer.contains("\r\n\r\n")) {
++                    return;
++                }
++                if (!socket->isEncrypted()) {
++                    QVERIFY(buffer.startsWith("CONNECT www.ecb.europa.eu:443 "));
++                    buffer.clear();
++                    socket->write("HTTP/1.1 200 Connection Established\r\n\r\n");
++                    socket->startServerEncryption();
++                } else {
++                    QVERIFY(buffer.startsWith("GET /stats/eurofxref/eurofxref-daily.xml "));
++                    m_requests.append(socket);
++                    buffer.clear();
++                }
++            });
++        };
++        QVERIFY(m_proxy.listen(QHostAddress::LocalHost));
++        QNetworkProxy::setApplicationProxy(QNetworkProxy(QNetworkProxy::HttpProxy, QStringLiteral("127.0.0.1"), m_proxy.serverPort()));
++
++        initProperties();
++        launchQuery(QStringLiteral("initialization-probe"));
++        QTest::qWait(500);
++    }
++
++    void noRequestAtStartup()
++    {
++        QCOMPARE(m_requests.size(), 0);
++        QVERIFY(!QFile::exists(m_cachePath));
++    }
++
++    void noRequestForLocalConversions()
++    {
++        const auto matches = launchQuery(QStringLiteral("1 m in cm"));
++        QCOMPARE(matches.size(), 1);
++        QCOMPARE(matches.constFirst().text(), QStringLiteral("100 centimeters (cm)"));
++        launchQuery(QStringLiteral("1/0 USD in GBP"));
++        QTest::qWait(100);
++        QCOMPARE(m_requests.size(), 0);
++        QVERIFY(!QFile::exists(m_cachePath));
++    }
++
++    void firstCurrencyQueryFetchesRates()
++    {
++        const auto before = m_requests.size();
++        launchQuery(QStringLiteral("1 USD in GBP"));
++        QTRY_COMPARE(m_requests.size(), before + 1);
++        QVERIFY(manager->matches().isEmpty());
++        reply(m_requests.constLast());
++        QTRY_COMPARE(manager->matches().size(), 1);
++        QVERIFY(manager->matches().constFirst().text().startsWith(QStringLiteral("2.00 ")));
++        QVERIFY(manager->matches().constFirst().text().endsWith(QStringLiteral(" (GBP)")));
++        QVERIFY(QFile::exists(m_cachePath));
++
++        const auto cached = launchQuery(QStringLiteral("2 USD in GBP"));
++        QCOMPARE(cached.size(), 1);
++        QVERIFY(cached.constFirst().text().startsWith(QStringLiteral("4.00 ")));
++        QVERIFY(cached.constFirst().text().endsWith(QStringLiteral(" (GBP)")));
++        QCOMPARE(m_requests.size(), before + 1);
++
++        QFile cache(m_cachePath);
++        QVERIFY(cache.open(QIODevice::ReadWrite));
++        QVERIFY(cache.setFileTime(QDateTime::currentDateTime().addDays(-2), QFileDevice::FileModificationTime));
++        cache.close();
++        launchQuery(QStringLiteral("2 m in cm"));
++        QTest::qWait(100);
++        QCOMPARE(m_requests.size(), before + 1);
++
++        launchQuery(QStringLiteral("3 USD in GBP"));
++        QTRY_COMPARE(m_requests.size(), before + 2);
++        launchQuery(QStringLiteral("3 m in cm"));
++        reply(m_requests.constLast());
++        QTest::qWait(200);
++        QCOMPARE(manager->matches().size(), 1);
++        QCOMPARE(manager->matches().constFirst().text(), QStringLiteral("300 centimeters (cm)"));
++        QCOMPARE(m_requests.size(), before + 2);
++    }
++
++    void cleanupTestCase()
++    {
++        for (auto socket : std::as_const(m_requests)) {
++            if (socket->state() == QAbstractSocket::ConnectedState) {
++                reply(socket, false);
++            }
++        }
++        QTest::qWait(100);
++        manager.reset();
++        QTest::qWait(100);
++        QFile::remove(m_cachePath);
++        QNetworkProxy::setApplicationProxy(QNetworkProxy(QNetworkProxy::NoProxy));
++    }
++};
++
++QTEST_MAIN(CurrencyUpdateTest)
++
++#include "currencyupdatetest.moc"
+diff --git a/runners/converter/converterrunner.cpp b/runners/converter/converterrunner.cpp
+index d24c4365d..ec152a276 100644
+--- a/runners/converter/converterrunner.cpp
++++ b/runners/converter/converterrunner.cpp
+@@ -15,18 +15,14 @@
+ #include <QLocale>
+ #include <QMimeData>
+ 
+-#include <chrono>
+ #include <cmath>
+ 
+-using namespace std::chrono_literals;
+-
+ K_PLUGIN_CLASS_WITH_JSON(ConverterRunner, "plasma-runner-converter.json")
+ 
+ Q_DECLARE_METATYPE(KUnitConversion::Value)
+ 
+ ConverterRunner::ConverterRunner(QObject *parent, const KPluginMetaData &metaData)
+     : AbstractRunner(parent, metaData)
+-    , m_currencyUpdateTimer(new QTimer(this))
+     , actionList({Action(QStringLiteral("copy"), QStringLiteral("edit-copy"), i18n("Copy unit and number"))})
+ {
+     addSyntax(QStringLiteral(":q:"),
+@@ -49,11 +45,7 @@ void ConverterRunner::init()
+     setMatchRegex(valueRegex);
+ 
+     converter = std::make_unique<KUnitConversion::Converter>();
+-    checkCompatibleUnits();
+-
+-    m_currencyUpdateTimer->setInterval(24h);
+-    connect(m_currencyUpdateTimer, &QTimer::timeout, this, &ConverterRunner::checkCompatibleUnits);
+-    m_currencyUpdateTimer->start();
++    updateCompatibleUnits();
+ }
+ 
+ ConverterRunner::~ConverterRunner() = default;
+@@ -98,6 +90,39 @@ void ConverterRunner::match(RunnerContext &context)
+     }
+ 
+     const double numberValue = numberDataPair.second;
++    if (outputUnits.isEmpty()) {
++        return;
++    }
++    if (inputCategory.id() == KUnitConversion::CurrencyCategory) {
++        bool updating = false;
++        QMetaObject::invokeMethod(
++            QCoreApplication::instance(),
++            [this, &updating, context, inputUnit, outputUnits, numberValue] {
++                auto currencyCategory = converter->category(KUnitConversion::CurrencyCategory);
++                if (auto job = currencyCategory.syncConversionTable()) {
++                    updating = true;
++                    connect(job, &KUnitConversion::UpdateJob::finished, this, [this, context, inputUnit, outputUnits, numberValue] {
++                        addConversionMatches(context, inputUnit, outputUnits, numberValue);
++                    });
++                }
++            },
++            Qt::BlockingQueuedConnection);
++        if (updating) {
++            return;
++        }
++    }
++    addConversionMatches(context, inputUnit, outputUnits, numberValue);
++}
++
++void ConverterRunner::addConversionMatches(RunnerContext context,
++                                           const KUnitConversion::Unit &inputUnit,
++                                           const QList<KUnitConversion::Unit> &outputUnits,
++                                           double numberValue)
++{
++    if (!context.isValid()) {
++        return;
++    }
++    const auto inputCategory = converter->category(inputUnit.categoryId());
+     QList<QueryMatch> matches;
+     for (const KUnitConversion::Unit &outputUnit : outputUnits) {
+         KUnitConversion::Value outputValue = inputCategory.convert(KUnitConversion::Value(numberValue, inputUnit), outputUnit);
+@@ -215,25 +240,6 @@ QList<KUnitConversion::Unit> ConverterRunner::createResultUnits(QString &outputU
+     return units;
+ }
+ 
+-void ConverterRunner::checkCompatibleUnits()
+-{
+-    // Add all currency symbols to the map, if their ISO code is supported by backend
+-    QMetaObject::invokeMethod(
+-        QCoreApplication::instance(),
+-        [this] {
+-            KUnitConversion::UnitCategory currencyCategory = converter->category(KUnitConversion::CurrencyCategory);
+-            auto updateJob = currencyCategory.syncConversionTable();
+-            if (!updateJob) [[unlikely]] {
+-                if (compatibleUnits.empty()) {
+-                    QMetaObject::invokeMethod(this, &ConverterRunner::updateCompatibleUnits);
+-                }
+-                return;
+-            }
+-            connect(updateJob, &KUnitConversion::UpdateJob::finished, this, &ConverterRunner::updateCompatibleUnits);
+-        },
+-        Qt::BlockingQueuedConnection);
+-}
+-
+ void ConverterRunner::updateCompatibleUnits()
+ {
+     KUnitConversion::UnitCategory currencyCategory = converter->category(KUnitConversion::CurrencyCategory);
+diff --git a/runners/converter/converterrunner.h b/runners/converter/converterrunner.h
+index 515c5828f..07908237d 100644
+--- a/runners/converter/converterrunner.h
++++ b/runners/converter/converterrunner.h
+@@ -14,7 +14,6 @@
+ #include <KUnitConversion/UnitCategory>
+ #include <QLocale>
+ #include <QRegularExpression>
+-#include <QTimer>
+ 
+ using namespace KRunner;
+ 
+@@ -35,10 +34,11 @@ public:
+     QMimeData *mimeDataForMatch(const QueryMatch &match) override;
+ 
+ private Q_SLOTS:
+-    void checkCompatibleUnits();
+     void updateCompatibleUnits();
+ 
+ private:
++    void
++    addConversionMatches(RunnerContext context, const KUnitConversion::Unit &inputUnit, const QList<KUnitConversion::Unit> &outputUnits, double numberValue);
+     std::unique_ptr<KUnitConversion::Converter> converter;
+     const QLocale locale;
+     QRegularExpression valueRegex;
+@@ -46,8 +46,6 @@ private:
+     /** To convert currency symbols back to ISO string and handle case sensitive units */
+     QMap<QString, QString> compatibleUnits;
+ 
+-    QTimer *m_currencyUpdateTimer;
+-
+     const KRunner::Actions actionList;
+     QPair<bool, double> stringToDouble(const QStringView &value);
+     QPair<bool, double> getValidatedNumberValue(const QString &value);
