@@ -7,6 +7,7 @@
 #   pool/main/<first letter or libX>/<source name>/*.deb
 #   dists/mashtabba/Release, InRelease, Release.gpg
 #   dists/mashtabba/main/binary-amd64/Packages{,.gz,.xz}   (Architecture: amd64)
+#   dists/mashtabba/main/binary-i386/Packages{,.gz,.xz}    (Architecture: i386, when there are i386 packages)
 #   dists/mashtabba/main/binary-all/Packages{,.gz,.xz}     (Architecture: all, as apt asks for them)
 #   dists/mashtabba/main/source/Sources{,.gz,.xz}          (only when source packages are given)
 # SparkyLinux's shape with our names: Origin and Label are the distribution ("Sparky Stereo
@@ -239,12 +240,13 @@ index_done() {
 		fi
 	done
 }
-for arch in amd64 all; do
+# amd64 always; i386 (the 32-bit twins of the libraries Steam and Wine need: FFmpeg, Mesa ...) and all when there are such packages
+ARCHES=amd64
+for a in i386 all; do
+	if grep -q $'\t'"$a"$'$' "$W/selection.tsv"; then ARCHES="$ARCHES $a"; else rm -rf "${D:?}/$COMPONENT/binary-$a"; fi
+done
+for arch in $ARCHES; do
 	dir=$D/$COMPONENT/binary-$arch
-	if [ "$arch" != amd64 ] && ! grep -q $'\tall$' "$W/selection.tsv"; then
-		rm -rf "${dir:?}"
-		continue
-	fi
 	mkdir -p "$dir"
 	# dpkg-scanpackages --arch amd64 also lists Architecture: all; keep each index to its own
 	(cd "$DEST" && dpkg-scanpackages --arch "$arch" pool /dev/null 2>"$W/scan-$arch.log") |
@@ -273,7 +275,7 @@ fi
 	echo "Codename: $CODENAME"
 	echo "Version: $EDITION_VERSION"
 	echo "Date: @DATE@"
-	echo "Architectures: amd64 all"
+	echo "Architectures: $ARCHES"
 	echo "Components: $COMPONENT"
 	echo "Description: $DESCRIPTION"
 	echo "Acquire-By-Hash: yes"
