@@ -13,7 +13,7 @@ and greeter own the interface; no separate helper is added to the desktop.
 Run `build.sh` inside a freshly updated Debian testing container, as the
 invoking user. Set `OUT` to the pending package directory and `BUILD_ROOT` to
 scratch. Debian's control, rules and existing patches are retained. It builds
-source archives and all binaries at `4:6.7.4-2+stereo3d1`. Its nocheck profile
+source archives and all binaries at `4:6.7.4-2+stereo3d2`. Its nocheck profile
 remains separate from kde-ci-local and the frozen-client integration checks.
 Apply the edition's existing provenance helper before staging binaries.
 
@@ -29,3 +29,8 @@ policy-rc.d. No package is installed on the host.
 The edition's look package separately supplies Ctrl+Shift+Esc through a desktop
 entry in KDE's supported global-shortcut directory. It retains the upstream
 shortcut and the daemon's user override. No application menu entry is added.
+
+The third patch is Tobias Fella's exact QFileInfo include from upstream
+08383f4b1df0451480ec68ccf78713bc56507ad4 (bug 526210). The Qt 6.13 control
+fails in unchanged iconsmodel.cpp without this include. It is shared by
+the control and recovery branches.
