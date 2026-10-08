@@ -3,6 +3,8 @@
 # already built (the builders get the same identity for their next builds):
 #   Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 #   Homepage: https://sparkylinux.org
+#   Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues   (the edition's tracker: a problem in our build
+#         never goes to the maintainer of the package we modified; Daniel, 2026-10-08)
 #   Original-Maintainer: whoever maintained the package we modified (Debian Qt/KDE, NVIDIA),
 #                        the Debian-derivative convention
 # and signs the latest changelog entry with the same identity when a build container left
@@ -15,6 +17,7 @@ NAME='Daniel Ramos (Capitain Jack)'
 MAIL='Capitain_Jack@yahoo.com'
 ME="$NAME <$MAIL>"
 HOME_URL=https://sparkylinux.org
+BUGS_URL=https://github.com/Sparky-OS/sparky-stereo-os/issues
 MARK='Sparky Stereo OS packaging'
 PAWEL='Paweł "pavroo" Pijanowski <pavroo@onet.eu>'
 PAWEL_NAME='Paweł "pavroo" Pijanowski'
@@ -29,15 +32,16 @@ License: GPL-2+
  is in /usr/share/common-licenses/GPL-2."
 for deb in "$@"; do
 	if [ "$(dpkg-deb -f "$deb" Maintainer)" = "$ME" ] && [ "$(dpkg-deb -f "$deb" Homepage)" = "$HOME_URL" ] &&
+		[ "$(dpkg-deb -f "$deb" Bugs)" = "$BUGS_URL" ] &&
 		dpkg-deb --fsys-tarfile "$deb" | tar -xO --wildcards './usr/share/doc/*/copyright' 2>/dev/null | grep -q -F "Daniel Ramos's (Capitain Jack) edition of SparkyLinux"; then
 		echo "$(basename "$deb"): already signed"
 		continue
 	fi
 	w=$(mktemp -d /K3D/temp/sparky-os/prov.XXXXXX)
 	dpkg-deb -R "$deb" "$w"
-	python3 - "$w/DEBIAN/control" "$ME" "$HOME_URL" <<'PY'
+	python3 - "$w/DEBIAN/control" "$ME" "$HOME_URL" "$BUGS_URL" <<'PY'
 import sys, re
-path, me, home = sys.argv[1:4]
+path, me, home, bugs = sys.argv[1:5]
 c = open(path).read()
 m = re.search(r'^Maintainer: (.*)$', c, flags=re.M)
 old = m.group(1) if m else ''
@@ -50,6 +54,11 @@ if re.search(r'^Homepage: ', c, flags=re.M):
     c = re.sub(r'^Homepage: .*$', f'Homepage: {home}', c, flags=re.M)
 else:
     c = re.sub(r'^(Description: )', f'Homepage: {home}\n\\1', c, count=1, flags=re.M)
+# the edition's tracker, whatever the package named before (deb-multimedia's source says its maintainer's e-mail)
+if re.search(r'^Bugs: ', c, flags=re.M):
+    c = re.sub(r'^Bugs: .*$', f'Bugs: {bugs}', c, flags=re.M)
+else:
+    c = re.sub(r'^(Homepage: .*)$', f'\\1\nBugs: {bugs}', c, count=1, flags=re.M)
 open(path, 'w').write(c)
 PY
 	for cl in "$w"/usr/share/doc/*/changelog.Debian.gz; do
@@ -77,7 +86,10 @@ PY
 	(cd "$w" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort |
 		grep -v -x -F -f <(sed 's|^/||' DEBIAN/conffiles 2>/dev/null || true) |
 		tr '\n' '\0' | xargs -0 -r md5sum >DEBIAN/md5sums)
-	dpkg-deb --root-owner-group -Zxz -b "$w" "$deb" >/dev/null
+	# written beside and renamed over, so that whoever reads the repository at that moment (another lane's build, apt) never
+	# sees a half-written package
+	dpkg-deb --root-owner-group -Zxz -b "$w" "$deb.stamping" >/dev/null
+	mv -f "$deb.stamping" "$deb"
 	rm -rf "$w"
 	printf '%s: %s | %s\n' "$(basename "$deb")" "$(dpkg-deb -f "$deb" Maintainer)" "$(dpkg-deb -f "$deb" Original-Maintainer)"
 done
