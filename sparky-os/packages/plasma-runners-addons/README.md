@@ -21,6 +21,8 @@ The build produces the source package and all Debian binary packages, including
 Apply the edition's existing `sparky-os/repo/provenance.sh` before staging the
 binary packages to record Daniel and Debian's original maintainer.
 
-The lane's rootless container setup uses PRoot to emulate package-manager root
-inside a disposable filesystem. Its kernel UID remains the invoking user's;
-files are owned by that user and can be cleaned. No host packages are installed.
+The lane exports a clean Debian base filesystem and extracts it as the invoking
+user. Its imported Docker image has files writable by that user. Fakeroot
+supplies the package manager's expected identity while the actual kernel UID
+stays 1000. APT updates testing before installing build dependencies. The
+package build and tests run as that user; no host packages are installed.
