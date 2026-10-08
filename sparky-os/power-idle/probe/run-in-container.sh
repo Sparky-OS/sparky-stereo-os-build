@@ -10,6 +10,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 mkdir -p "$POWER_IDLE_WORK/evidence" "$POWER_IDLE_WORK/config-home" "$POWER_IDLE_WORK/user-config-home" "$POWER_IDLE_WORK/no-defaults"
 EVIDENCE=$POWER_IDLE_WORK/evidence
+rm -f "$EVIDENCE/result.txt"
 
 dpkg-query -W qt6-base-dev libkf6config-dev extra-cmake-modules >"$EVIDENCE/toolchain.txt"
 sha256sum "$POWERDEVIL_SOURCE/PowerDevilProfileSettings.kcfg" \
@@ -44,5 +45,10 @@ if [ "$TIMELINE_STATUS" -ne 1 ]; then
 	echo "Expected the AC timeline check to fail with status 1; got $TIMELINE_STATUS" >"$EVIDENCE/result.txt"
 	exit 1
 fi
+awk '
+    /^FAIL / { failures++ }
+    $0 == "FAIL AC remains awake through requested screen-off" { expected++ }
+    END { exit !(failures == 1 && expected == 1) }
+' "$EVIDENCE/blocked-timeline.log"
 sha256sum --check "$EVIDENCE/source-sha256.txt" >"$EVIDENCE/source-stability.log"
 echo 'PASS: stock settings, candidate settings, user overrides, and expected AC timeline failure (exit 1)' >"$EVIDENCE/result.txt"
