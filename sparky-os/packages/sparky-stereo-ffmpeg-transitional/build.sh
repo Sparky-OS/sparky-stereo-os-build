@@ -49,10 +49,11 @@ EOS
 		gzip -9n -c >"$D/usr/share/doc/$pkg/changelog.Debian.gz" <<EOS
 $pkg ($VERSION) unstable; urgency=medium
 
-  * Transitional package: $pkg is $now now, built on deb-multimedia's packaging,
-    where every codec is in the normal library. This package has the old name and a
-    higher version so that an upgrade replaces the old "extra" library and installs
-    $now. It can be removed.
+  * Transitional package: $pkg is $now now, built on
+    deb-multimedia's packaging, where every codec is in the normal library.
+    This package has the old name and a higher version so that an upgrade
+    replaces the old "extra" library and installs $now.
+    It can be removed.
 
  -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Thu, 08 Oct 2026 12:00:00 +0000
 EOS
@@ -73,10 +74,10 @@ Priority: optional
 Homepage: https://sparkylinux.org
 Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues
 Description: transitional package, $pkg is $now now
- The edition's FFmpeg is built on deb-multimedia's packaging, where every codec
- is in the normal library and there are no separate "extra" libraries. This
- empty package lets an upgrade replace the old $pkg with $now.
- It can be removed.
+ The edition's FFmpeg is built on deb-multimedia's packaging, where every
+ codec is in the normal library and there are no separate "extra" libraries.
+ This empty package lets an upgrade replace the old $pkg
+ with $now. It can be removed.
 EOS
 		(cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 		dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${pkg}_${VERSION#*:}_${arch}.deb" >/dev/null

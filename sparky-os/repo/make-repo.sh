@@ -18,7 +18,15 @@ cd "$R"
 apt-ftparchive packages . >Packages
 gzip -9kf Packages
 if ls source/*.dsc >/dev/null 2>&1; then
-	apt-ftparchive sources source >Sources
+	# only the files of source/ itself (apt-ftparchive would go into source/superseded too): a folder of links
+	L=$(mktemp -d "${TMPDIR:-/tmp}/sources-index.XXXXXX")
+	mkdir "$L/source"
+	for f in source/*; do
+		if [ -f "$f" ]; then ln -s "$PWD/$f" "$L/source/"; fi
+	done
+	(cd "$L" && apt-ftparchive sources source 2>"$L/err") >Sources
+	grep -v -i 'override' "$L/err" >&2 || true
+	rm -rf "${L:?}"
 	gzip -9kf Sources
 else
 	rm -f Sources Sources.gz

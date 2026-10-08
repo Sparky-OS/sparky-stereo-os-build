@@ -18,3 +18,10 @@ Pin-Priority: -1
 Package: bino
 Pin: release o=Unofficial Multimedia Packages
 Pin-Priority: -1
+
+# deb-multimedia's keyring: the repository carries deb-multimedia's own package, unmodified, so that sparky-stereo-apt can
+# depend on it before deb-multimedia is in the sources. Once it is, deb-multimedia's own package, which
+# follows its key, is preferred: this one is only the way in.
+Package: deb-multimedia-keyring
+Pin: release o=Sparky Stereo OS
+Pin-Priority: 400
