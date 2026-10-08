@@ -1,0 +1,4470 @@
+diff -Nru mpv-dmo-0.41.0/debian/changelog mpv-dmo-0.41.0/debian/changelog
+--- mpv-dmo-0.41.0/debian/changelog	2026-08-13 13:21:25.000000000 +0000
++++ mpv-dmo-0.41.0/debian/changelog	2026-10-08 00:32:31.000000000 +0000
+@@ -1,3 +1,26 @@
++mpv-dmo (1:0.41.0-dmo9+stereo3d1) unstable; urgency=medium
++
++  * Sparky Stereo OS build of deb-multimedia's mpv-dmo 1:0.41.0-dmo9 with
++    its packaging otherwise unchanged, plus thirty-two patches for stereo 3D
++    video, built against the ffmpeg-dmo 10:9.0.2-dmo1+stereo3d1 libraries.
++  * Eight patches are upstream commits after 0.41.0 that the others build on:
++    the stereo 3D layout read from the stream's frame side data and the
++    bitstream's layout preferred over the container tag (upstream pull
++    request 18490 and its follow-ups), and the on-screen display drawn once
++    per eye in vo_gpu_next.
++  * Twenty-four patches add 3D video support for the stereo desktop: an
++    automatic filter that unpacks 3D video (frame packing SEI, Matroska
++    StereoMode) to full side by side, the declaration of the video surface
++    to KWin through libstereo-declare, separate layers for the video and the
++    on-screen controls with gpu and gpu-next (Vulkan and OpenGL) on Wayland,
++    each eye's picture in the middle of its own view, interpolation of each
++    view from its own frames, and how a 360 or VR180 video maps its sphere
++    as track-list/N/demux-projection.
++  * debian/control, debian/rules: build with libstereo-declare-dev
++    (-Dstereo-declare=enabled), libmpv-dev depends on it as mpv.pc requires it.
++
++ -- Daniel Campos Ramos <Capitain_Jack@yahoo.com>  Thu, 08 Oct 2026 00:32:31 +0000
++
+ mpv-dmo (1:0.41.0-dmo9) unstable; urgency=medium
+ 
+   * Build with libcdio21
+diff -Nru mpv-dmo-0.41.0/debian/control mpv-dmo-0.41.0/debian/control
+--- mpv-dmo-0.41.0/debian/control	2026-08-04 06:12:03.000000000 +0000
++++ mpv-dmo-0.41.0/debian/control	2026-10-08 00:32:31.000000000 +0000
+@@ -17,6 +17,7 @@
+  meson (>= 1.3.0~), ninja-build, nv-codec-headers (>= 1:9.0~) [amd64 i386],
+  oss4-dev, python3-docutils, python3-minimal, wayland-protocols,
+  libshaderc-dev, libdisplay-info-dev (>= 0.3.0~), libzimg-dev,
++ libstereo-declare-dev,
+ 
+ ## libsdl2-dev,
+ 
+@@ -88,6 +89,7 @@
+  librubberband-dev,
+  libsixel-dev,
+  libsndio-dev,
++ libstereo-declare-dev,
+  libswscale-dev (>= 7:7.0),
+  libuchardet-dev,
+  libva-dev,
+diff -Nru mpv-dmo-0.41.0/debian/patches/0001-vo_gpu_next-add-stereo-osd-support.patch mpv-dmo-0.41.0/debian/patches/0001-vo_gpu_next-add-stereo-osd-support.patch
+--- mpv-dmo-0.41.0/debian/patches/0001-vo_gpu_next-add-stereo-osd-support.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0001-vo_gpu_next-add-stereo-osd-support.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,178 @@
++From cca18212753d7881ac88f0adf09320327fbb3d7f Mon Sep 17 00:00:00 2001
++From: =?UTF-8?q?Kacper=20Michaj=C5=82ow?= <kasper93@gmail.com>
++Date: Mon, 23 Mar 2026 19:05:23 +0100
++Subject: [PATCH] vo_gpu_next: add stereo osd support
++
++Duplicate OSD/Subtitles for left and right eye.
++
++Fixes: #12462
++(cherry picked from commit ed534eb7f5b00b803cc1cace5402720ba0caf68e)
++---
++ video/csputils.c        | 11 +++++++++++
++ video/csputils.h        |  3 +++
++ video/out/gpu/osd.c     | 15 ++-------------
++ video/out/vo_gpu_next.c | 41 ++++++++++++++++++++++++++++++++++++-----
++ 4 files changed, 52 insertions(+), 18 deletions(-)
++
++diff --git a/video/csputils.c b/video/csputils.c
++index a44b22382d..5d8a924b04 100644
++--- a/video/csputils.c
+++++ b/video/csputils.c
++@@ -154,6 +154,17 @@ const struct m_opt_choice_alternatives mp_stereo3d_names[] = {
++     {0}
++ };
++ 
+++void mp_get_3d_side_by_side(int stereo_mode, int div[2])
+++{
+++    div[0] = div[1] = 1;
+++    switch (stereo_mode) {
+++    case MP_STEREO3D_SBS2L:
+++    case MP_STEREO3D_SBS2R: div[0] = 2; break;
+++    case MP_STEREO3D_AB2R:
+++    case MP_STEREO3D_AB2L:  div[1] = 2; break;
+++    }
+++}
+++
++ enum pl_color_system mp_csp_guess_colorspace(int width, int height)
++ {
++     return width >= 1280 || height > 576 ? PL_COLOR_SYSTEM_BT_709 : PL_COLOR_SYSTEM_BT_601;
++diff --git a/video/csputils.h b/video/csputils.h
++index 832c925ba8..40707f0635 100644
++--- a/video/csputils.h
+++++ b/video/csputils.h
++@@ -63,6 +63,9 @@ extern const struct m_opt_choice_alternatives mp_stereo3d_names[];
++ 
++ #define MP_STEREO3D_NAME_DEF(x, def) m_opt_choice_str_def(mp_stereo3d_names, x, def)
++ 
+++// Number of screen divisions per axis (div[0]=x, div[1]=y) for the given 3D mode
+++void mp_get_3d_side_by_side(int stereo_mode, int div[2]);
+++
++ // For many colorspace conversions, in particular those involving HDR, an
++ // implicit reference white level is needed. Since this magic constant shows up
++ // a lot, give it an explicit name. The value of 203 cd/m² comes from ITU-R
++diff --git a/video/out/gpu/osd.c b/video/out/gpu/osd.c
++index 54861efaae..d6788f8c0e 100644
++--- a/video/out/gpu/osd.c
+++++ b/video/out/gpu/osd.c
++@@ -273,17 +273,6 @@ static void generate_verts(struct mpgl_osd_part *part, struct gl_transform t)
++     }
++ }
++ 
++-// number of screen divisions per axis (x=0, y=1) for the current 3D mode
++-static void get_3d_side_by_side(int stereo_mode, int div[2])
++-{
++-    div[0] = div[1] = 1;
++-    switch (stereo_mode) {
++-    case MP_STEREO3D_SBS2L:
++-    case MP_STEREO3D_SBS2R: div[0] = 2; break;
++-    case MP_STEREO3D_AB2R:
++-    case MP_STEREO3D_AB2L:  div[1] = 2; break;
++-    }
++-}
++ 
++ void mpgl_osd_draw_finish(struct mpgl_osd *ctx, int index,
++                           struct gl_shader_cache *sc, const struct ra_fbo *fbo)
++@@ -291,7 +280,7 @@ void mpgl_osd_draw_finish(struct mpgl_osd *ctx, int index,
++     struct mpgl_osd_part *part = ctx->parts[index];
++ 
++     int div[2];
++-    get_3d_side_by_side(ctx->stereo_mode, div);
+++    mp_get_3d_side_by_side(ctx->stereo_mode, div);
++ 
++     part->num_vertices = 0;
++ 
++@@ -319,7 +308,7 @@ void mpgl_osd_draw_finish(struct mpgl_osd *ctx, int index,
++ static void set_res(struct mpgl_osd *ctx, struct mp_osd_res res, int stereo_mode)
++ {
++     int div[2];
++-    get_3d_side_by_side(stereo_mode, div);
+++    mp_get_3d_side_by_side(stereo_mode, div);
++ 
++     res.w /= div[0];
++     res.h /= div[1];
++diff --git a/video/out/vo_gpu_next.c b/video/out/vo_gpu_next.c
++index 2d95eb85b8..638ad8f258 100644
++--- a/video/out/vo_gpu_next.c
+++++ b/video/out/vo_gpu_next.c
++@@ -310,10 +310,14 @@ static struct mp_image *get_image(struct vo *vo, int imgfmt, int w, int h,
++ static void update_overlays(struct vo *vo, struct mp_osd_res res,
++                             int flags, enum pl_overlay_coords coords,
++                             struct osd_state *state, struct pl_frame *frame,
++-                            struct mp_image *src)
+++                            struct mp_image *src, int stereo_mode)
++ {
++     struct priv *p = vo->priv;
++     double pts = src ? src->pts : 0;
+++    int div[2];
+++    mp_get_3d_side_by_side(stereo_mode, div);
+++    res.w /= div[0];
+++    res.h /= div[1];
++     struct sub_bitmap_list *subs = osd_render(vo->osd, res, pts, flags, mp_draw_sub_formats);
++ 
++     frame->overlays = state->overlays;
++@@ -413,6 +417,29 @@ static void update_overlays(struct vo *vo, struct mp_osd_res res,
++             ol->repr.alpha = PL_ALPHA_INDEPENDENT;
++             break;
++         }
+++
+++        // Duplicate overlay parts for each eye in stereo 3D modes
+++        if (div[0] > 1 || div[1] > 1) {
+++            int orig_num = entry->num_parts;
+++            for (int x = 0; x < div[0]; x++) {
+++                for (int y = 0; y < div[1]; y++) {
+++                    if (x == 0 && y == 0)
+++                        continue;
+++                    float off_x = res.w * x;
+++                    float off_y = res.h * y;
+++                    for (int i = 0; i < orig_num; i++) {
+++                        struct pl_overlay_part duped = entry->parts[i];
+++                        duped.dst.x0 += off_x;
+++                        duped.dst.x1 += off_x;
+++                        duped.dst.y0 += off_y;
+++                        duped.dst.y1 += off_y;
+++                        MP_TARRAY_APPEND(p, entry->parts, entry->num_parts, duped);
+++                    }
+++                }
+++            }
+++            ol->parts = entry->parts;
+++            ol->num_parts = entry->num_parts;
+++        }
++     }
++ 
++     talloc_free(subs);
++@@ -1305,7 +1332,8 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
++     }
++     update_overlays(vo, p->osd_res,
++                     (frame->current && opts->blend_subs) ? OSD_DRAW_OSD_ONLY : 0,
++-                    PL_OVERLAY_COORDS_DST_FRAME, &p->osd_state, &target, frame->current);
+++                    PL_OVERLAY_COORDS_DST_FRAME, &p->osd_state, &target, frame->current,
+++                    frame->current ? frame->current->params.stereo3d : 0);
++     apply_crop(&target, p->dst, swframe.fbo->params.w, swframe.fbo->params.h);
++     update_tm_viz(&pars->color_map_params, &target);
++ 
++@@ -1379,7 +1407,8 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
++                     enum pl_overlay_coords rel = opts->blend_subs == BLEND_SUBS_VIDEO
++                         ? PL_OVERLAY_COORDS_SRC_CROP : PL_OVERLAY_COORDS_DST_CROP;
++                     update_overlays(vo, res, OSD_DRAW_SUB_ONLY,
++-                                    rel, &fp->subs, image, mpi);
+++                                    rel, &fp->subs, image, mpi,
+++                                    mpi->params.stereo3d);
++                     fp->osd_sync = p->osd_sync;
++                 }
++             } else {
++@@ -1719,11 +1748,13 @@ static void video_screenshot(struct vo *vo, struct voctrl_screenshot *args)
++         enum pl_overlay_coords rel = opts->blend_subs == BLEND_SUBS_VIDEO
++             ? PL_OVERLAY_COORDS_SRC_CROP : PL_OVERLAY_COORDS_DST_CROP;
++         update_overlays(vo, res, osd_flags,
++-                        rel, &fp->subs, &image, mpi);
+++                        rel, &fp->subs, &image, mpi,
+++                        mpi->params.stereo3d);
++     } else {
++         // Disable overlays when blend_subs is disabled
++         update_overlays(vo, osd, osd_flags, PL_OVERLAY_COORDS_DST_FRAME,
++-                        &p->osd_state, &target, mpi);
+++                        &p->osd_state, &target, mpi,
+++                        mpi->params.stereo3d);
++         image.num_overlays = 0;
++     }
++ 
+diff -Nru mpv-dmo-0.41.0/debian/patches/0002-mp_image-read-stereo-3D-layout-from-AV_FRAME_DATA_ST.patch mpv-dmo-0.41.0/debian/patches/0002-mp_image-read-stereo-3D-layout-from-AV_FRAME_DATA_ST.patch
+--- mpv-dmo-0.41.0/debian/patches/0002-mp_image-read-stereo-3D-layout-from-AV_FRAME_DATA_ST.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0002-mp_image-read-stereo-3D-layout-from-AV_FRAME_DATA_ST.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,106 @@
++From 7ac5871189ba6ea242856c559025ca60c91a0b60 Mon Sep 17 00:00:00 2001
++From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++Date: Mon, 21 Sep 2026 19:28:20 -0300
++Subject: [PATCH] mp_image: read stereo 3D layout from
++ AV_FRAME_DATA_STEREO3D
++MIME-Version: 1.0
++Content-Type: text/plain; charset=UTF-8
++Content-Transfer-Encoding: 8bit
++
++The only source of the stereo 3D layout was the Matroska StereoMode
++element read by demux_mkv. libavcodec attaches the layout signaled in
++the bitstream, such as the H.264 and HEVC frame packing arrangement
++SEI, or by the container, such as the MP4 st3d box, to the decoded
++frame as AV_FRAME_DATA_STEREO3D. Map it onto mp_image_params.stereo3d.
++
++Frames coming back from libavfilter keep mpv's own value restored from
++opaque_ref.
++
++Co-authored-by: Kacper Michajłow <kasper93@gmail.com>
++(cherry picked from commit 6c59f7d761ddf7f58198dbec24f99c02bc66d074)
++---
++ video/csputils.h | 12 ++++++++++--
++ video/mp_image.c | 28 ++++++++++++++++++++++++++++
++ 2 files changed, 38 insertions(+), 2 deletions(-)
++
++diff --git a/video/csputils.h b/video/csputils.h
++index 40707f0635..d53345114a 100644
++--- a/video/csputils.h
+++++ b/video/csputils.h
++@@ -49,13 +49,21 @@ extern const struct m_opt_choice_alternatives mp_csp_light_names[];
++ // The numeric values (except -1) match the Matroska StereoMode element value.
++ enum mp_stereo3d_mode {
++     MP_STEREO3D_INVALID = -1,
++-    /* only modes explicitly referenced in the code are listed */
++     MP_STEREO3D_MONO = 0,
++     MP_STEREO3D_SBS2L = 1,
++     MP_STEREO3D_AB2R = 2,
++     MP_STEREO3D_AB2L = 3,
+++    MP_STEREO3D_CHECKR = 4,
+++    MP_STEREO3D_CHECKL = 5,
+++    MP_STEREO3D_IRR = 6,
+++    MP_STEREO3D_IRL = 7,
+++    MP_STEREO3D_ICR = 8,
+++    MP_STEREO3D_ICL = 9,
+++    MP_STEREO3D_ARCC = 10,
++     MP_STEREO3D_SBS2R = 11,
++-    /* no explicit enum entries for most valid values */
+++    MP_STEREO3D_AGMC = 12,
+++    MP_STEREO3D_AL = 13,
+++    MP_STEREO3D_AR = 14,
++     MP_STEREO3D_COUNT = 15, // 14 is last valid mode
++ };
++ 
++diff --git a/video/mp_image.c b/video/mp_image.c
++index d1a85e71f2..d6f780554c 100644
++--- a/video/mp_image.c
+++++ b/video/mp_image.c
++@@ -26,6 +26,7 @@
++ #include <libavutil/hwcontext.h>
++ #include <libavutil/intreadwrite.h>
++ #include <libavutil/rational.h>
+++#include <libavutil/stereo3d.h>
++ #include <libavcodec/avcodec.h>
++ #include <libavutil/mastering_display_metadata.h>
++ #include <libplacebo/utils/libav.h>
++@@ -1078,6 +1079,29 @@ void mp_image_params_guess_csp(struct mp_image_params *params)
++     }
++ }
++ 
+++static enum mp_stereo3d_mode stereo3d_from_av(const AVStereo3D *s3d)
+++{
+++    bool inv = s3d->flags & AV_STEREO3D_FLAG_INVERT;
+++    switch (s3d->type) {
+++    case AV_STEREO3D_SIDEBYSIDE:
+++    case AV_STEREO3D_SIDEBYSIDE_QUINCUNX:
+++        return inv ? MP_STEREO3D_SBS2R : MP_STEREO3D_SBS2L;
+++    case AV_STEREO3D_TOPBOTTOM:
+++        return inv ? MP_STEREO3D_AB2R : MP_STEREO3D_AB2L;
+++    case AV_STEREO3D_CHECKERBOARD:
+++        return inv ? MP_STEREO3D_CHECKR : MP_STEREO3D_CHECKL;
+++    case AV_STEREO3D_LINES:
+++        return inv ? MP_STEREO3D_IRR : MP_STEREO3D_IRL;
+++    case AV_STEREO3D_COLUMNS:
+++        return inv ? MP_STEREO3D_ICR : MP_STEREO3D_ICL;
+++    case AV_STEREO3D_FRAMESEQUENCE:
+++        return inv ? MP_STEREO3D_AR : MP_STEREO3D_AL;
+++    default:
+++        // AV_STEREO3D_2D and types mpv has no mode for.
+++        return MP_STEREO3D_MONO;
+++    }
+++}
+++
++ // Create a new mp_image reference to av_frame.
++ struct mp_image *mp_image_from_av_frame(struct AVFrame *src)
++ {
++@@ -1130,6 +1154,10 @@ struct mp_image *mp_image_from_av_frame(struct AVFrame *src)
++ 
++     dst->params.chroma_location = pl_chroma_from_av(src->chroma_location);
++ 
+++    sd = av_frame_get_side_data(src, AV_FRAME_DATA_STEREO3D);
+++    if (sd)
+++        dst->params.stereo3d = stereo3d_from_av((const AVStereo3D *)sd->data);
+++
++     if (src->opaque_ref) {
++         struct mp_image_params *p = (void *)src->opaque_ref->data;
++         dst->params.stereo3d = p->stereo3d;
+diff -Nru mpv-dmo-0.41.0/debian/patches/0003-f_decoder_wrapper-prefer-bitstream-stereo-3D-layout-.patch mpv-dmo-0.41.0/debian/patches/0003-f_decoder_wrapper-prefer-bitstream-stereo-3D-layout-.patch
+--- mpv-dmo-0.41.0/debian/patches/0003-f_decoder_wrapper-prefer-bitstream-stereo-3D-layout-.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0003-f_decoder_wrapper-prefer-bitstream-stereo-3D-layout-.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,36 @@
++From 1ae84adb938de476d47aa13f1d1343d300f7fcc9 Mon Sep 17 00:00:00 2001
++From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++Date: Mon, 21 Sep 2026 19:29:06 -0300
++Subject: [PATCH] f_decoder_wrapper: prefer bitstream stereo 3D layout
++ over container tag
++MIME-Version: 1.0
++Content-Type: text/plain; charset=UTF-8
++Content-Transfer-Encoding: 8bit
++
++fix_image_params() unconditionally overwrote the layout with the
++container tag, so the value mp_image_from_av_frame() reads from
++AV_FRAME_DATA_STEREO3D never reached the output. Fall back to the tag
++only when the bitstream signals nothing, the same rule rotation already
++follows.
++
++Fixes: #18489
++Co-authored-by: Kacper Michajłow <kasper93@gmail.com>
++(cherry picked from commit a860bc42bae5b4aa08880dc7efefed955931ae41)
++---
++ filters/f_decoder_wrapper.c | 3 ++-
++ 1 file changed, 2 insertions(+), 1 deletion(-)
++
++diff --git a/filters/f_decoder_wrapper.c b/filters/f_decoder_wrapper.c
++index 5e2e8d74c0..037bdb531e 100644
++--- a/filters/f_decoder_wrapper.c
+++++ b/filters/f_decoder_wrapper.c
++@@ -610,7 +610,8 @@ static void fix_image_params(struct priv *p,
++     if (m.p_w <= 0 || m.p_h <= 0)
++         m.p_w = m.p_h = 1;
++ 
++-    m.stereo3d = p->codec->stereo_mode;
+++    if (!m.stereo3d)
+++        m.stereo3d = p->codec->stereo_mode;
++ 
++     if (!mp_rect_equals(&p->codec->crop, &(struct mp_rect){0})) {
++         struct mp_rect crop = p->codec->crop;
+diff -Nru mpv-dmo-0.41.0/debian/patches/0004-vf_format-make-stereo-in-mono-override-the-source-mo.patch mpv-dmo-0.41.0/debian/patches/0004-vf_format-make-stereo-in-mono-override-the-source-mo.patch
+--- mpv-dmo-0.41.0/debian/patches/0004-vf_format-make-stereo-in-mono-override-the-source-mo.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0004-vf_format-make-stereo-in-mono-override-the-source-mo.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,75 @@
++From c85b63c6fec9c556c001e53ac60c3529e8c385c1 Mon Sep 17 00:00:00 2001
++From: =?UTF-8?q?Kacper=20Michaj=C5=82ow?= <kasper93@gmail.com>
++Date: Wed, 23 Sep 2026 15:33:36 +0200
++Subject: [PATCH] vf_format: make stereo-in=mono override the source mode
++
++set_params() treated 0 as unset, but 0 is mono, so stereo-in=mono was
++a no-op and the only way to drop a stereo 3D mode was stereo-in=no,
++which wrote the invalid value -1 into the image params. Use -1 as the
++unset default like rotate does, so no keeps the source mode and mono
++overrides it.
++
++(cherry picked from commit ac7bceb640fbb2649c72e4998502d3c42a63872d)
++---
++ DOCS/interface-changes/vf-format-stereo-in.txt | 1 +
++ DOCS/man/vf.rst                                | 3 ++-
++ video/csputils.c                               | 2 +-
++ video/filter/vf_format.c                       | 3 ++-
++ 4 files changed, 6 insertions(+), 3 deletions(-)
++ create mode 100644 DOCS/interface-changes/vf-format-stereo-in.txt
++
++diff --git a/DOCS/interface-changes/vf-format-stereo-in.txt b/DOCS/interface-changes/vf-format-stereo-in.txt
++new file mode 100644
++index 0000000000..e1dae20eff
++--- /dev/null
+++++ b/DOCS/interface-changes/vf-format-stereo-in.txt
++@@ -0,0 +1 @@
+++change `--vf=format:stereo-in=no` to keep the source stereo 3D mode, `--vf=format:stereo-in=mono` now overrides it with 2D
++diff --git a/DOCS/man/vf.rst b/DOCS/man/vf.rst
++index 4eb00e3085..ae23bea9a9 100644
++--- a/DOCS/man/vf.rst
+++++ b/DOCS/man/vf.rst
++@@ -355,7 +355,8 @@ Available mpv-only filters are:
++     ``<stereo-in>``
++         Set the stereo mode the video is assumed to be encoded in. Use
++         ``--vf=format:stereo-in=help`` to list all available modes. Check with
++-        the ``stereo3d`` filter documentation to see what the names mean.
+++        the ``stereo3d`` filter documentation to see what the names mean. The
+++        default ``no`` keeps the mode signaled by the source.
++ 
++     ``<rotate>``
++         Set the rotation the video is assumed to be encoded with in degrees.
++diff --git a/video/csputils.c b/video/csputils.c
++index 5d8a924b04..ea5be33dc0 100644
++--- a/video/csputils.c
+++++ b/video/csputils.c
++@@ -135,7 +135,7 @@ const struct m_opt_choice_alternatives pl_alpha_names[] = {
++ // The numeric index matches the Matroska StereoMode value. If you add entries
++ // that don't match Matroska, make sure demux_mkv.c rejects them properly.
++ const struct m_opt_choice_alternatives mp_stereo3d_names[] = {
++-    {"no",     -1}, // disable/invalid
+++    {"no",     -1}, // unset, vf_format keeps the source mode
++     {"mono",    0},
++     {"sbs2l",   1}, // "side_by_side_left"
++     {"ab2r",    2}, // "top_bottom_right"
++diff --git a/video/filter/vf_format.c b/video/filter/vf_format.c
++index 922bd47396..8e3edb20bf 100644
++--- a/video/filter/vf_format.c
+++++ b/video/filter/vf_format.c
++@@ -99,7 +99,7 @@ static void set_params(struct vf_format_opts *p, struct mp_image_params *out,
++         out->light = p->light;
++     if (p->chroma_location)
++         out->chroma_location = p->chroma_location;
++-    if (p->stereo_in)
+++    if (p->stereo_in >= 0)
++         out->stereo3d = p->stereo_in;
++     if (p->rotate >= 0)
++         out->rotate = p->rotate;
++@@ -288,6 +288,7 @@ const struct mp_user_filter_entry vf_format = {
++         .name = "format",
++         .priv_size = sizeof(OPT_BASE_STRUCT),
++         .priv_defaults = &(const OPT_BASE_STRUCT){
+++            .stereo_in = -1,
++             .rotate = -1,
++             .dovi = true,
++             .hdr10plus = true,
+diff -Nru mpv-dmo-0.41.0/debian/patches/0005-csputils-update-stale-stereo3d-name-comments.patch mpv-dmo-0.41.0/debian/patches/0005-csputils-update-stale-stereo3d-name-comments.patch
+--- mpv-dmo-0.41.0/debian/patches/0005-csputils-update-stale-stereo3d-name-comments.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0005-csputils-update-stale-stereo3d-name-comments.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,39 @@
++From 777914d7971966986b3b669d9e9bb8307d42896d Mon Sep 17 00:00:00 2001
++From: =?UTF-8?q?Kacper=20Michaj=C5=82ow?= <kasper93@gmail.com>
++Date: Wed, 23 Sep 2026 15:33:36 +0200
++Subject: [PATCH] csputils: update stale stereo3d name comments
++
++mpv stopped inserting vf_stereo3d itself in a5610b2a0d, the names only
++need to stay recognizable next to the stereo3d filter documentation that
++DOCS/man/vf.rst points to. The filter also accepts icl and icr as input
++formats.
++
++(cherry picked from commit 468bbf60d21494b19b378020908fa0faf8dce510)
++---
++ video/csputils.c | 6 +++---
++ 1 file changed, 3 insertions(+), 3 deletions(-)
++
++diff --git a/video/csputils.c b/video/csputils.c
++index ea5be33dc0..d59e672708 100644
++--- a/video/csputils.c
+++++ b/video/csputils.c
++@@ -130,7 +130,7 @@ const struct m_opt_choice_alternatives pl_alpha_names[] = {
++     {0}
++ };
++ 
++-// The short name _must_ match with what vf_stereo3d accepts (if supported).
+++// The short names follow the input format names of the vf_stereo3d.
++ // The long name in comments is closer to the Matroska spec (StereoMode element).
++ // The numeric index matches the Matroska StereoMode value. If you add entries
++ // that don't match Matroska, make sure demux_mkv.c rejects them properly.
++@@ -144,8 +144,8 @@ const struct m_opt_choice_alternatives mp_stereo3d_names[] = {
++     {"checkl",  5}, // "checkboard_left"  (unsupported by vf_stereo3d)
++     {"irr",     6}, // "row_interleaved_right"
++     {"irl",     7}, // "row_interleaved_left"
++-    {"icr",     8}, // "column_interleaved_right" (unsupported by vf_stereo3d)
++-    {"icl",     9}, // "column_interleaved_left" (unsupported by vf_stereo3d)
+++    {"icr",     8}, // "column_interleaved_right"
+++    {"icl",     9}, // "column_interleaved_left"
++     {"arcc",   10}, // "anaglyph_cyan_red" (Matroska: unclear which mode)
++     {"sbs2r",  11}, // "side_by_side_right"
++     {"agmc",   12}, // "anaglyph_green_magenta" (Matroska: unclear which mode)
+diff -Nru mpv-dmo-0.41.0/debian/patches/0006-vo_gpu-remove-unused-OSD-change-check.patch mpv-dmo-0.41.0/debian/patches/0006-vo_gpu-remove-unused-OSD-change-check.patch
+--- mpv-dmo-0.41.0/debian/patches/0006-vo_gpu-remove-unused-OSD-change-check.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0006-vo_gpu-remove-unused-OSD-change-check.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,124 @@
++From 61162bf73f87574ae85bada2dd933341bcd8a964 Mon Sep 17 00:00:00 2001
++From: =?UTF-8?q?Kacper=20Michaj=C5=82ow?= <kasper93@gmail.com>
++Date: Wed, 23 Sep 2026 15:34:16 +0200
++Subject: [PATCH] vo_gpu: remove unused OSD change check
++
++The last caller went away with the rpi code in 343a5fd345. It also
++regenerated the OSD with stereo mode 0, so any new user would have
++reset the per eye OSD layout on stereo 3D content. Drop the change
++tracking state that only existed for it.
++
++(cherry picked from commit bdefd6cb4284b35d6d902ef82a0322e0b684f21c)
++---
++ video/out/gpu/osd.c   | 21 ---------------------
++ video/out/gpu/osd.h   |  2 --
++ video/out/gpu/video.c |  6 ------
++ video/out/gpu/video.h |  2 --
++ 4 files changed, 31 deletions(-)
++
++diff --git a/video/out/gpu/osd.c b/video/out/gpu/osd.c
++index d6788f8c0e..883dccd7eb 100644
++--- a/video/out/gpu/osd.c
+++++ b/video/out/gpu/osd.c
++@@ -53,7 +53,6 @@ struct mpgl_osd_part {
++     struct ra_tex *texture;
++     int w, h;
++     int num_subparts;
++-    int prev_num_subparts;
++     struct sub_bitmap *subparts;
++     int num_vertices;
++     struct vertex *vertices;
++@@ -66,7 +65,6 @@ struct mpgl_osd {
++     struct mpgl_osd_part *parts[MAX_OSD_PARTS];
++     const struct ra_format *fmt_table[SUBBITMAP_COUNT];
++     bool formats[SUBBITMAP_COUNT];
++-    bool change_flag; // for reporting to API user only
++     // temporary
++     int stereo_mode;
++     struct mp_osd_res osd_res;
++@@ -81,7 +79,6 @@ struct mpgl_osd *mpgl_osd_init(struct ra *ra, struct mp_log *log,
++         .log = log,
++         .osd = osd,
++         .ra = ra,
++-        .change_flag = true,
++         .scratch = talloc_zero_size(ctx, 1),
++     };
++ 
++@@ -194,7 +191,6 @@ static void gen_osd_cb(void *pctx, struct sub_bitmaps *imgs)
++             ok = false;
++ 
++         osd->change_id = imgs->change_id;
++-        ctx->change_flag = true;
++     }
++     osd->num_subparts = ok ? imgs->num_parts : 0;
++ 
++@@ -325,15 +321,6 @@ void mpgl_osd_generate(struct mpgl_osd *ctx, struct mp_osd_res res, double pts,
++ 
++     osd_draw(ctx->osd, ctx->osd_res, pts, draw_flags, ctx->formats, gen_osd_cb, ctx);
++     ctx->stereo_mode = stereo_mode;
++-
++-    // Parts going away does not necessarily result in gen_osd_cb() being called
++-    // (not even with num_parts==0), so check this separately.
++-    for (int n = 0; n < MAX_OSD_PARTS; n++) {
++-        struct mpgl_osd_part *part = ctx->parts[n];
++-        if (part->num_subparts !=  part->prev_num_subparts)
++-            ctx->change_flag = true;
++-        part->prev_num_subparts = part->num_subparts;
++-    }
++ }
++ 
++ // See osd_resize() for remarks. This function is an optional optimization too.
++@@ -342,11 +329,3 @@ void mpgl_osd_resize(struct mpgl_osd *ctx, struct mp_osd_res res, int stereo_mod
++     set_res(ctx, res, stereo_mode);
++     osd_resize(ctx->osd, ctx->osd_res);
++ }
++-
++-bool mpgl_osd_check_change(struct mpgl_osd *ctx, struct mp_osd_res *res,
++-                           double pts)
++-{
++-    ctx->change_flag = false;
++-    mpgl_osd_generate(ctx, *res, pts, 0, 0);
++-    return ctx->change_flag;
++-}
++diff --git a/video/out/gpu/osd.h b/video/out/gpu/osd.h
++index 1b05e254f8..84139ee8c3 100644
++--- a/video/out/gpu/osd.h
+++++ b/video/out/gpu/osd.h
++@@ -19,7 +19,5 @@ bool mpgl_osd_draw_prepare(struct mpgl_osd *ctx, int index,
++                            struct gl_shader_cache *sc);
++ void mpgl_osd_draw_finish(struct mpgl_osd *ctx, int index,
++                           struct gl_shader_cache *sc, const struct ra_fbo *fbo);
++-bool mpgl_osd_check_change(struct mpgl_osd *ctx, struct mp_osd_res *res,
++-                           double pts);
++ 
++ #endif
++diff --git a/video/out/gpu/video.c b/video/out/gpu/video.c
++index c0a1be8d38..ec0e656c5e 100644
++--- a/video/out/gpu/video.c
+++++ b/video/out/gpu/video.c
++@@ -3668,12 +3668,6 @@ void gl_video_set_osd_pts(struct gl_video *p, double pts)
++     p->osd_pts = pts;
++ }
++ 
++-bool gl_video_check_osd_change(struct gl_video *p, struct mp_osd_res *res,
++-                               double pts)
++-{
++-    return p->osd ? mpgl_osd_check_change(p->osd, res, pts) : false;
++-}
++-
++ void gl_video_resize(struct gl_video *p,
++                      struct mp_rect *src, struct mp_rect *dst,
++                      struct mp_osd_res *osd)
++diff --git a/video/out/gpu/video.h b/video/out/gpu/video.h
++index f8e05b1747..996e46e6ac 100644
++--- a/video/out/gpu/video.h
+++++ b/video/out/gpu/video.h
++@@ -209,8 +209,6 @@ void gl_video_set_fb_depth(struct gl_video *p, int fb_depth);
++ void gl_video_perfdata(struct gl_video *p, struct voctrl_performance_data *out);
++ void gl_video_set_clear_color(struct gl_video *p, struct m_color color);
++ void gl_video_set_osd_pts(struct gl_video *p, double pts);
++-bool gl_video_check_osd_change(struct gl_video *p, struct mp_osd_res *osd,
++-                               double pts);
++ 
++ void gl_video_screenshot(struct gl_video *p, struct vo_frame *frame,
++                          struct voctrl_screenshot *args);
+diff -Nru mpv-dmo-0.41.0/debian/patches/0007-csputils-share-the-AVStereo3D-to-mp_stereo3d_mode-ma.patch mpv-dmo-0.41.0/debian/patches/0007-csputils-share-the-AVStereo3D-to-mp_stereo3d_mode-ma.patch
+--- mpv-dmo-0.41.0/debian/patches/0007-csputils-share-the-AVStereo3D-to-mp_stereo3d_mode-ma.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0007-csputils-share-the-AVStereo3D-to-mp_stereo3d_mode-ma.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,115 @@
++From fb62b057a317a46bb6c13fac402c2479c8687bbe Mon Sep 17 00:00:00 2001
++From: =?UTF-8?q?Kacper=20Michaj=C5=82ow?= <kasper93@gmail.com>
++Date: Wed, 23 Sep 2026 16:16:47 +0200
++Subject: [PATCH] csputils: share the AVStereo3D to mp_stereo3d_mode
++ mapping
++
++Move it out of mp_image_from_av_frame() next to mp_stereo3d_names[],
++so demuxers can map stream side data the same way.
++
++(cherry picked from commit 1d36c85a9af23e5469705ee8a6b7e70e18c334cc)
++---
++ video/csputils.c | 24 ++++++++++++++++++++++++
++ video/csputils.h |  3 +++
++ video/mp_image.c | 25 +------------------------
++ 3 files changed, 28 insertions(+), 24 deletions(-)
++
++diff --git a/video/csputils.c b/video/csputils.c
++index d59e672708..4c9b63b729 100644
++--- a/video/csputils.c
+++++ b/video/csputils.c
++@@ -23,6 +23,7 @@
++ #include <math.h>
++ #include <assert.h>
++ #include <libavutil/common.h>
+++#include <libavutil/stereo3d.h>
++ #include <libavcodec/avcodec.h>
++ 
++ #include "mp_image.h"
++@@ -154,6 +155,29 @@ const struct m_opt_choice_alternatives mp_stereo3d_names[] = {
++     {0}
++ };
++ 
+++enum mp_stereo3d_mode mp_stereo3d_from_av(const struct AVStereo3D *s3d)
+++{
+++    bool inv = s3d->flags & AV_STEREO3D_FLAG_INVERT;
+++    switch (s3d->type) {
+++    case AV_STEREO3D_SIDEBYSIDE:
+++    case AV_STEREO3D_SIDEBYSIDE_QUINCUNX:
+++        return inv ? MP_STEREO3D_SBS2R : MP_STEREO3D_SBS2L;
+++    case AV_STEREO3D_TOPBOTTOM:
+++        return inv ? MP_STEREO3D_AB2R : MP_STEREO3D_AB2L;
+++    case AV_STEREO3D_CHECKERBOARD:
+++        return inv ? MP_STEREO3D_CHECKR : MP_STEREO3D_CHECKL;
+++    case AV_STEREO3D_LINES:
+++        return inv ? MP_STEREO3D_IRR : MP_STEREO3D_IRL;
+++    case AV_STEREO3D_COLUMNS:
+++        return inv ? MP_STEREO3D_ICR : MP_STEREO3D_ICL;
+++    case AV_STEREO3D_FRAMESEQUENCE:
+++        return inv ? MP_STEREO3D_AR : MP_STEREO3D_AL;
+++    default:
+++        // AV_STEREO3D_2D and types mpv has no mode for.
+++        return MP_STEREO3D_MONO;
+++    }
+++}
+++
++ void mp_get_3d_side_by_side(int stereo_mode, int div[2])
++ {
++     div[0] = div[1] = 1;
++diff --git a/video/csputils.h b/video/csputils.h
++index d53345114a..83e2618937 100644
++--- a/video/csputils.h
+++++ b/video/csputils.h
++@@ -69,6 +69,9 @@ enum mp_stereo3d_mode {
++ 
++ extern const struct m_opt_choice_alternatives mp_stereo3d_names[];
++ 
+++struct AVStereo3D;
+++enum mp_stereo3d_mode mp_stereo3d_from_av(const struct AVStereo3D *s3d);
+++
++ #define MP_STEREO3D_NAME_DEF(x, def) m_opt_choice_str_def(mp_stereo3d_names, x, def)
++ 
++ // Number of screen divisions per axis (div[0]=x, div[1]=y) for the given 3D mode
++diff --git a/video/mp_image.c b/video/mp_image.c
++index d6f780554c..1f5e336aee 100644
++--- a/video/mp_image.c
+++++ b/video/mp_image.c
++@@ -1079,29 +1079,6 @@ void mp_image_params_guess_csp(struct mp_image_params *params)
++     }
++ }
++ 
++-static enum mp_stereo3d_mode stereo3d_from_av(const AVStereo3D *s3d)
++-{
++-    bool inv = s3d->flags & AV_STEREO3D_FLAG_INVERT;
++-    switch (s3d->type) {
++-    case AV_STEREO3D_SIDEBYSIDE:
++-    case AV_STEREO3D_SIDEBYSIDE_QUINCUNX:
++-        return inv ? MP_STEREO3D_SBS2R : MP_STEREO3D_SBS2L;
++-    case AV_STEREO3D_TOPBOTTOM:
++-        return inv ? MP_STEREO3D_AB2R : MP_STEREO3D_AB2L;
++-    case AV_STEREO3D_CHECKERBOARD:
++-        return inv ? MP_STEREO3D_CHECKR : MP_STEREO3D_CHECKL;
++-    case AV_STEREO3D_LINES:
++-        return inv ? MP_STEREO3D_IRR : MP_STEREO3D_IRL;
++-    case AV_STEREO3D_COLUMNS:
++-        return inv ? MP_STEREO3D_ICR : MP_STEREO3D_ICL;
++-    case AV_STEREO3D_FRAMESEQUENCE:
++-        return inv ? MP_STEREO3D_AR : MP_STEREO3D_AL;
++-    default:
++-        // AV_STEREO3D_2D and types mpv has no mode for.
++-        return MP_STEREO3D_MONO;
++-    }
++-}
++-
++ // Create a new mp_image reference to av_frame.
++ struct mp_image *mp_image_from_av_frame(struct AVFrame *src)
++ {
++@@ -1156,7 +1133,7 @@ struct mp_image *mp_image_from_av_frame(struct AVFrame *src)
++ 
++     sd = av_frame_get_side_data(src, AV_FRAME_DATA_STEREO3D);
++     if (sd)
++-        dst->params.stereo3d = stereo3d_from_av((const AVStereo3D *)sd->data);
+++        dst->params.stereo3d = mp_stereo3d_from_av((const AVStereo3D *)sd->data);
++ 
++     if (src->opaque_ref) {
++         struct mp_image_params *p = (void *)src->opaque_ref->data;
+diff -Nru mpv-dmo-0.41.0/debian/patches/0008-demux_lavf-read-the-stereo-3D-mode-from-the-stream-s.patch mpv-dmo-0.41.0/debian/patches/0008-demux_lavf-read-the-stereo-3D-mode-from-the-stream-s.patch
+--- mpv-dmo-0.41.0/debian/patches/0008-demux_lavf-read-the-stereo-3D-mode-from-the-stream-s.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0008-demux_lavf-read-the-stereo-3D-mode-from-the-stream-s.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,47 @@
++From 73518890286a20e499d21bea4f31c569c3e466fa Mon Sep 17 00:00:00 2001
++From: =?UTF-8?q?Kacper=20Michaj=C5=82ow?= <kasper93@gmail.com>
++Date: Wed, 23 Sep 2026 16:16:48 +0200
++Subject: [PATCH] demux_lavf: read the stereo 3D mode from the stream
++ side data
++
++libavcodec maps the stream side data onto every frame it allocates
++through ff_get_buffer(), so this changes nothing for most decoders.
++Decoders that build their frames by hand, v4l2m2m and rkmpp, never see
++it, and the container fallback in fix_image_params() is all they get.
++This also matches demux_mkv, which fills the field from StereoMode.
++
++(cherry picked from commit 2a4eb8067ca68ec19adf23daf8ccbb1a05afd6ed)
++---
++ demux/demux_lavf.c | 5 +++++
++ 1 file changed, 5 insertions(+)
++
++diff --git a/demux/demux_lavf.c b/demux/demux_lavf.c
++index 7013dbd7dc..4ab2cd2921 100644
++--- a/demux/demux_lavf.c
+++++ b/demux/demux_lavf.c
++@@ -37,6 +37,7 @@
++ #include <libavutil/opt.h>
++ #include <libavutil/pixdesc.h>
++ #include <libavutil/replaygain.h>
+++#include <libavutil/stereo3d.h>
++ 
++ #include "audio/chmap_avchannel.h"
++ 
++@@ -54,6 +55,7 @@
++ #include "options/m_config.h"
++ #include "options/m_option.h"
++ #include "options/path.h"
+++#include "video/csputils.h"
++ 
++ #define INITIAL_PROBE_SIZE STREAM_BUFFER_SIZE
++ #define PROBE_BUF_SIZE (10 * 1024 * 1024)
++@@ -761,6 +763,9 @@ static void handle_new_stream(demuxer_t *demuxer, int i)
++                 sh->codec->rotate = (((int)(-r) % 360) + 360) % 360;
++         }
++ 
+++        if ((sd = mp_av_stream_get_side_data(st, AV_PKT_DATA_STEREO3D)))
+++            sh->codec->stereo_mode = mp_stereo3d_from_av((const AVStereo3D *)sd);
+++
++         if ((sd = mp_av_stream_get_side_data(st, AV_PKT_DATA_DOVI_CONF))) {
++             const AVDOVIDecoderConfigurationRecord *cfg = (void *) sd;
++             MP_VERBOSE(demuxer, "Found Dolby Vision config record: profile "
+diff -Nru mpv-dmo-0.41.0/debian/patches/0009-video-csputils-add-full-side-by-side-and-top-and-bot.patch mpv-dmo-0.41.0/debian/patches/0009-video-csputils-add-full-side-by-side-and-top-and-bot.patch
+--- mpv-dmo-0.41.0/debian/patches/0009-video-csputils-add-full-side-by-side-and-top-and-bot.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0009-video-csputils-add-full-side-by-side-and-top-and-bot.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,67 @@
++From b9a91c88c5938576f7de6a8240c1ca9e3a10e58d Mon Sep 17 00:00:00 2001
++From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++Date: Mon, 5 Oct 2026 01:29:37 -0300
++Subject: [PATCH] video/csputils: add full side by side and top and
++ bottom stereo modes
++
++The stereo3d modes only had the half-resolution packings, so the
++output of the stereo3d filter in full side by side could not be
++described. Add sbsl, sbsr, abl and abr, named after the input names of
++vf_stereo3d, and treat them like the half modes where the packing is
++split for the OSD.
++
++Assisted-by: glm-5.3:cloud (Ollama) via Codex
++Assisted-by: Claude Sonnet via Claude Code
++---
++ video/csputils.c | 12 ++++++++++--
++ video/csputils.h |  6 +++++-
++ 2 files changed, 15 insertions(+), 3 deletions(-)
++
++diff --git a/video/csputils.c b/video/csputils.c
++index 4c9b63b729..39fbd88073 100644
++--- a/video/csputils.c
+++++ b/video/csputils.c
++@@ -152,6 +152,10 @@ const struct m_opt_choice_alternatives mp_stereo3d_names[] = {
++     {"agmc",   12}, // "anaglyph_green_magenta" (Matroska: unclear which mode)
++     {"al",     13}, // "alternating frames left first"
++     {"ar",     14}, // "alternating frames right first"
+++    {"sbsl",   15}, // full "side_by_side_left"
+++    {"sbsr",   16}, // full "side_by_side_right"
+++    {"abl",    17}, // full "top_bottom_left"
+++    {"abr",    18}, // full "top_bottom_right"
++     {0}
++ };
++ 
++@@ -183,9 +187,13 @@ void mp_get_3d_side_by_side(int stereo_mode, int div[2])
++     div[0] = div[1] = 1;
++     switch (stereo_mode) {
++     case MP_STEREO3D_SBS2L:
++-    case MP_STEREO3D_SBS2R: div[0] = 2; break;
+++    case MP_STEREO3D_SBS2R:
+++    case MP_STEREO3D_SBSL:
+++    case MP_STEREO3D_SBSR: div[0] = 2; break;
++     case MP_STEREO3D_AB2R:
++-    case MP_STEREO3D_AB2L:  div[1] = 2; break;
+++    case MP_STEREO3D_AB2L:
+++    case MP_STEREO3D_ABL:
+++    case MP_STEREO3D_ABR: div[1] = 2; break;
++     }
++ }
++ 
++diff --git a/video/csputils.h b/video/csputils.h
++index 83e2618937..b53702e37b 100644
++--- a/video/csputils.h
+++++ b/video/csputils.h
++@@ -64,7 +64,11 @@ enum mp_stereo3d_mode {
++     MP_STEREO3D_AGMC = 12,
++     MP_STEREO3D_AL = 13,
++     MP_STEREO3D_AR = 14,
++-    MP_STEREO3D_COUNT = 15, // 14 is last valid mode
+++    MP_STEREO3D_SBSL = 15,
+++    MP_STEREO3D_SBSR = 16,
+++    MP_STEREO3D_ABL = 17,
+++    MP_STEREO3D_ABR = 18,
+++    MP_STEREO3D_COUNT = 19, // 18 is last valid mode
++ };
++ 
++ extern const struct m_opt_choice_alternatives mp_stereo3d_names[];
+diff -Nru mpv-dmo-0.41.0/debian/patches/0010-filters-add-an-automatic-filter-that-unpacks-3D-vide.patch mpv-dmo-0.41.0/debian/patches/0010-filters-add-an-automatic-filter-that-unpacks-3D-vide.patch
+--- mpv-dmo-0.41.0/debian/patches/0010-filters-add-an-automatic-filter-that-unpacks-3D-vide.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0010-filters-add-an-automatic-filter-that-unpacks-3D-vide.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,395 @@
++From 5bbf0975ea11569994938c1ade9068038358c3fc Mon Sep 17 00:00:00 2001
++From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++Date: Mon, 5 Oct 2026 01:29:37 -0300
++Subject: [PATCH] filters: add an automatic filter that unpacks 3D video
++ to full side by side
++
++A video that signals a stereo packing (frame packing SEI, Matroska
++StereoMode, MP4 stereo metadata) is converted with the stereo3d filter
++to full side by side, left eye first, whatever the packing and the eye
++order of the stream, and nothing is inserted for a 2D video. The
++conversion can be turned off with --video-stereo=no.
++
++The output chain tells the VO with VOCTRL_SET_STEREO_CONTENT whether
++the filter is active, so that a VO can declare its video as stereo
++content to the compositor. A VO that does so with its video on its own
++surface sets VO_CAP_STEREO_VIEW, and the filter then gives the video the
++display aspect of one view, since the window shows one view.
++
++Assisted-by: glm-5.3:cloud (Ollama) via Codex
++Assisted-by: Claude Sonnet via Claude Code
++---
++ DOCS/interface-changes/video-stereo.txt |   1 +
++ DOCS/man/options.rst                    |   9 ++
++ filters/f_auto_filters.c                | 173 ++++++++++++++++++++++++
++ filters/f_auto_filters.h                |   3 +
++ filters/f_output_chain.c                |  25 ++++
++ filters/filter.h                        |   1 +
++ options/options.c                       |   2 +
++ options/options.h                       |   1 +
++ video/out/vo.h                          |   4 +
++ 9 files changed, 219 insertions(+)
++ create mode 100644 DOCS/interface-changes/video-stereo.txt
++
++diff --git a/DOCS/interface-changes/video-stereo.txt b/DOCS/interface-changes/video-stereo.txt
++new file mode 100644
++index 0000000000..4634e81796
++--- /dev/null
+++++ b/DOCS/interface-changes/video-stereo.txt
++@@ -0,0 +1 @@
+++add `--video-stereo` option
++diff --git a/DOCS/man/options.rst b/DOCS/man/options.rst
++index fa71dc0d1e..4fbbc3f5f5 100644
++--- a/DOCS/man/options.rst
+++++ b/DOCS/man/options.rst
++@@ -1794,6 +1794,15 @@ Video
++     ``auto`` will automatically try to detect the field order of the video,
++     ``tff`` forces top field first while ``bff`` forces bottom field first.
++ 
+++``--video-stereo=<yes|no>``
+++    Convert a video that signals 3D packing (H.264/H.265 frame packing SEI,
+++    Matroska StereoMode, MP4 stereo metadata) to full side by side, left eye
+++    first, and declare the video surface as stereo content to the compositor
+++    when the output supports it (default: yes). Whatever the packing and eye
+++    order of the stream, the result is the same. Subtitles and the OSD are
+++    drawn once per eye, at one eye's size. Videos that do not signal 3D are
+++    not touched.
+++
++ ``--frames=<number>``
++     Play/convert only first ``<number>`` video frames, then quit.
++ 
++diff --git a/filters/f_auto_filters.c b/filters/f_auto_filters.c
++index d7ee230d69..ff051c425e 100644
++--- a/filters/f_auto_filters.c
+++++ b/filters/f_auto_filters.c
++@@ -339,6 +339,179 @@ struct vflip_priv {
++     int target_vflip;
++ };
++ 
+++struct stereo_priv {
+++    struct mp_subfilter sub;
+++    int prev_stereo3d;
+++    int prev_imgfmt;
+++    struct m_config_cache *opts;
+++};
+++
+++static const char *stereo_input_name(int mode)
+++{
+++    switch (mode) {
+++    case MP_STEREO3D_SBS2L: return "sbs2l";
+++    case MP_STEREO3D_SBS2R: return "sbs2r";
+++    case MP_STEREO3D_AB2L:  return "ab2l";
+++    case MP_STEREO3D_AB2R:  return "ab2r";
+++    case MP_STEREO3D_SBSL:  return "sbsl";
+++    case MP_STEREO3D_SBSR:  return "sbsr";
+++    case MP_STEREO3D_ABL:   return "abl";
+++    case MP_STEREO3D_ABR:   return "abr";
+++    case MP_STEREO3D_IRL:   return "irl";
+++    case MP_STEREO3D_IRR:   return "irr";
+++    case MP_STEREO3D_ICL:   return "icl";
+++    case MP_STEREO3D_ICR:   return "icr";
+++    case MP_STEREO3D_AL:    return "al";
+++    case MP_STEREO3D_AR:    return "ar";
+++    default: return NULL;
+++    }
+++}
+++
+++static void stereo_process(struct mp_filter *f)
+++{
+++    struct stereo_priv *p = f->priv;
+++
+++    if (!mp_subfilter_read(&p->sub))
+++        return;
+++
+++    struct mp_frame frame = p->sub.frame;
+++
+++    if (mp_frame_is_signaling(frame)) {
+++        mp_subfilter_continue(&p->sub);
+++        return;
+++    }
+++
+++    if (frame.type != MP_FRAME_VIDEO) {
+++        MP_ERR(f, "video input required!\n");
+++        mp_filter_internal_mark_failed(f);
+++        return;
+++    }
+++
+++    struct mp_image *img = frame.data;
+++
+++    m_config_cache_update(p->opts);
+++    const char *input = stereo_input_name(img->params.stereo3d);
+++    struct filter_opts *opts = p->opts->opts;
+++    bool wanted = opts->video_stereo && input;
+++
+++    if (img->imgfmt != p->prev_imgfmt || img->params.stereo3d != p->prev_stereo3d ||
+++        (p->sub.filter && !wanted))
+++    {
+++        p->prev_imgfmt = img->imgfmt;
+++        p->prev_stereo3d = img->params.stereo3d;
+++        if (!mp_subfilter_drain_destroy(&p->sub))
+++            return;
+++    }
+++
+++    if (!wanted) {
+++        mp_subfilter_continue(&p->sub);
+++        return;
+++    }
+++
+++    if (!p->sub.filter) {
+++        struct mp_filter *subf = mp_bidir_dummy_filter_create(f);
+++        struct mp_filter *filters[3] = {0};
+++
+++        struct mp_autoconvert *conv = mp_autoconvert_create(subf);
+++        if (conv) {
+++            filters[0] = conv->f;
+++            mp_autoconvert_add_all_sw_imgfmts(conv);
+++
+++            if (!mp_autoconvert_probe_input_video(conv, img)) {
+++                MP_ERR(f, "no stereo3d filter available for format %s\n",
+++                       mp_imgfmt_to_name(img->imgfmt));
+++                talloc_free(subf);
+++                mp_subfilter_continue(&p->sub);
+++                return;
+++            }
+++        }
+++
+++        char *args[] = {"in", (char *)input, "out", "sbsl", NULL};
+++        filters[1] = mp_create_user_filter(subf, MP_OUTPUT_CHAIN_VIDEO,
+++                                           "stereo3d", args);
+++        // The window shows one view: the display size of one view.
+++        char *format_args[] = {"stereo-in", "sbsl", NULL, NULL, NULL};
+++        struct mp_stream_info *info = mp_filter_find_stream_info(f);
+++        if (info && info->stereo_view) {
+++            int dw, dh;
+++            mp_image_params_get_dsize(&img->params, &dw, &dh);
+++            if (img->params.stereo3d == MP_STEREO3D_SBSL ||
+++                img->params.stereo3d == MP_STEREO3D_SBSR)
+++                dw /= 2;
+++            if (img->params.stereo3d == MP_STEREO3D_ABL ||
+++                img->params.stereo3d == MP_STEREO3D_ABR)
+++                dh /= 2;
+++            format_args[2] = "dar";
+++            format_args[3] = mp_tprintf(32, "%f", (double)dw / MPMAX(dh, 1));
+++        }
+++        filters[2] = mp_create_user_filter(subf, MP_OUTPUT_CHAIN_VIDEO,
+++                                           "format", format_args);
+++
+++        if (filters[1] && filters[2]) {
+++            mp_chain_filters(subf->ppins[0], subf->ppins[1], filters, 3);
+++            p->sub.filter = subf;
+++            MP_INFO(f, "Inserting stereo conversion filter.\n");
+++        } else {
+++            MP_ERR(f, "creating stereo conversion filter failed\n");
+++            talloc_free(subf);
+++        }
+++    }
+++
+++    mp_subfilter_continue(&p->sub);
+++}
+++
+++static void stereo_reset(struct mp_filter *f)
+++{
+++    struct stereo_priv *p = f->priv;
+++
+++    mp_subfilter_reset(&p->sub);
+++}
+++
+++static void stereo_destroy(struct mp_filter *f)
+++{
+++    struct stereo_priv *p = f->priv;
+++
+++    mp_subfilter_reset(&p->sub);
+++    TA_FREEP(&p->sub.filter);
+++}
+++
+++static bool stereo_command(struct mp_filter *f, struct mp_filter_command *cmd)
+++{
+++    struct stereo_priv *p = f->priv;
+++
+++    if (cmd->type == MP_FILTER_COMMAND_IS_ACTIVE) {
+++        cmd->is_active = !!p->sub.filter;
+++        return true;
+++    }
+++    return false;
+++}
+++
+++static const struct mp_filter_info stereo_filter = {
+++    .name = "autostereo",
+++    .priv_size = sizeof(struct stereo_priv),
+++    .command = stereo_command,
+++    .process = stereo_process,
+++    .reset = stereo_reset,
+++    .destroy = stereo_destroy,
+++};
+++
+++struct mp_filter *mp_autostereo_create(struct mp_filter *parent)
+++{
+++    struct mp_filter *f = mp_filter_create(parent, &stereo_filter);
+++    if (!f)
+++        return NULL;
+++
+++    struct stereo_priv *p = f->priv;
+++    p->prev_stereo3d = -1;
+++    p->prev_imgfmt = 0;
+++    p->opts = m_config_cache_alloc(f, f->global, &filter_conf);
+++
+++    p->sub.in = mp_filter_add_pin(f, MP_PIN_IN, "in");
+++    p->sub.out = mp_filter_add_pin(f, MP_PIN_OUT, "out");
+++
+++    return f;
+++}
+++
++ static void vflip_process(struct mp_filter *f)
++ {
++     struct vflip_priv *p = f->priv;
++diff --git a/filters/f_auto_filters.h b/filters/f_auto_filters.h
++index 485cd27302..bfd81fd4bb 100644
++--- a/filters/f_auto_filters.h
+++++ b/filters/f_auto_filters.h
++@@ -9,6 +9,9 @@ struct mp_filter *mp_deint_create(struct mp_filter *parent);
++ // Flip according to mp_image.vflip
++ struct mp_filter *mp_autovflip_create(struct mp_filter *parent);
++ 
+++// Convert the detected stereo input to full side by side, left eye first.
+++struct mp_filter *mp_autostereo_create(struct mp_filter *parent);
+++
++ // Rotate according to mp_image.rotate and VO capabilities.
++ struct mp_filter *mp_autorotate_create(struct mp_filter *parent);
++ 
++diff --git a/filters/f_output_chain.c b/filters/f_output_chain.c
++index 43ec3db15c..0ed15c83af 100644
++--- a/filters/f_output_chain.c
+++++ b/filters/f_output_chain.c
++@@ -40,6 +40,7 @@ struct chain {
++     struct mp_pin *filters_in, *filters_out;
++ 
++     struct mp_user_filter *input, *output, *convert_wrapper;
+++    struct mp_user_filter *stereo;
++     struct mp_autoconvert *convert;
++ 
++     struct vo *vo;
++@@ -145,6 +146,14 @@ static void check_in_format_change(struct mp_user_filter *u,
++     }
++ }
++ 
+++static void set_stereo_active(struct chain *p, bool active)
+++{
+++    if (!p->vo)
+++        return;
+++
+++    vo_control(p->vo, VOCTRL_SET_STEREO_CONTENT, &active);
+++}
+++
++ static void user_wrapper_process(struct mp_filter *f)
++ {
++     struct mp_user_filter *u = f->priv;
++@@ -208,6 +217,8 @@ static void user_wrapper_process(struct mp_filter *f)
++             u->last_is_active = cmd.is_active;
++             MP_VERBOSE(p, "[%s] (%sabled)\n", u->name,
++                        u->last_is_active ? "en" : "dis");
+++            if (u == p->stereo)
+++                set_stereo_active(p, u->last_is_active);
++         }
++     }
++ }
++@@ -343,6 +354,10 @@ void mp_output_chain_reset_harder(struct mp_output_chain *c)
++ 
++ static void output_chain_destroy(struct mp_filter *f)
++ {
+++    struct chain *p = f->priv;
+++
+++    if (p->stereo && p->stereo->last_is_active)
+++        set_stereo_active(p, false);
++     output_chain_reset(f);
++ }
++ 
++@@ -377,6 +392,7 @@ void mp_output_chain_set_vo(struct mp_output_chain *c, struct vo *vo)
++     p->stream_info.hwdec_devs = vo ? vo->hwdec_devs : NULL;
++     p->stream_info.osd = vo ? vo->osd : NULL;
++     p->stream_info.vflip = vo ? vo->driver->caps & VO_CAP_VFLIP : false;
+++    p->stream_info.stereo_view = vo ? vo->driver->caps & VO_CAP_STEREO_VIEW : false;
++     p->stream_info.rotate90 = vo ? vo->driver->caps & VO_CAP_ROTATE90 : false;
++     p->stream_info.dr_vo = vo;
++     p->vo = vo;
++@@ -660,6 +676,15 @@ static void create_video_things(struct chain *p)
++         abort();
++     MP_TARRAY_APPEND(p, p->post_filters, p->num_post_filters, f);
++ 
+++    f = create_wrapper_filter(p);
+++    f->name = "autostereo";
+++    p->stereo = f;
+++    f->last_is_active = false;
+++    f->f = mp_autostereo_create(f->wrapper);
+++    if (!f->f)
+++        abort();
+++    MP_TARRAY_APPEND(p, p->post_filters, p->num_post_filters, f);
+++
++     f = create_wrapper_filter(p);
++     f->name = "autorotate";
++     f->f = mp_autorotate_create(f->wrapper);
++diff --git a/filters/filter.h b/filters/filter.h
++index a86ffc1e35..cb741ecefe 100644
++--- a/filters/filter.h
+++++ b/filters/filter.h
++@@ -406,6 +406,7 @@ struct mp_stream_info {
++     struct mp_hwdec_devices *hwdec_devs;
++     struct osd_state *osd;
++     bool vflip;
+++    bool stereo_view;
++     bool rotate90;
++     struct vo *dr_vo; // for calling vo_get_image()
++ };
++diff --git a/options/options.c b/options/options.c
++index 716c3e6f10..fdee8df132 100644
++--- a/options/options.c
+++++ b/options/options.c
++@@ -458,6 +458,7 @@ const struct m_sub_options cuda_conf = {
++ 
++ const struct m_sub_options filter_conf = {
++     .opts = (const struct m_option[]){
+++        {"video-stereo", OPT_BOOL(video_stereo)},
++         {"deinterlace", OPT_CHOICE(deinterlace,
++             {"no", 0}, {"yes", 1}, {"auto", -1})},
++         {"deinterlace-field-parity", OPT_CHOICE(field_parity,
++@@ -468,6 +469,7 @@ const struct m_sub_options filter_conf = {
++     },
++     .size = sizeof(OPT_BASE_STRUCT),
++     .defaults = &(const struct filter_opts){
+++        .video_stereo = true,
++         .field_parity = MP_FIELD_PARITY_AUTO,
++     },
++     .change_flags = UPDATE_IMGPAR,
++diff --git a/options/options.h b/options/options.h
++index 12dafea1e2..0b09093b60 100644
++--- a/options/options.h
+++++ b/options/options.h
++@@ -422,6 +422,7 @@ struct cuda_opts {
++ };
++ 
++ struct filter_opts {
+++    bool video_stereo;
++     int deinterlace;
++     int field_parity;
++ };
++diff --git a/video/out/vo.h b/video/out/vo.h
++index 160d86042b..e463557525 100644
++--- a/video/out/vo.h
+++++ b/video/out/vo.h
++@@ -88,6 +88,7 @@ enum mp_voctrl {
++     VOCTRL_SET_CURSOR_VISIBILITY,       // bool*
++ 
++     VOCTRL_CONTENT_TYPE,                // enum mp_content_type*
+++    VOCTRL_SET_STEREO_CONTENT,          // bool*
++ 
++     VOCTRL_KILL_SCREENSAVER,
++     VOCTRL_RESTORE_SCREENSAVER,
++@@ -205,6 +206,9 @@ enum {
++     VO_CAP_FRAMEOWNER   = 1 << 5,
++     // VO does handle mp_image_params.vflip
++     VO_CAP_VFLIP        = 1 << 6,
+++    // VO declares its video surface as stereo content, so the window shows
+++    // one view.
+++    VO_CAP_STEREO_VIEW  = 1 << 7,
++ };
++ 
++ enum {
+diff -Nru mpv-dmo-0.41.0/debian/patches/0011-vo_dmabuf_wayland-x11_common-declare-stereo-video-to.patch mpv-dmo-0.41.0/debian/patches/0011-vo_dmabuf_wayland-x11_common-declare-stereo-video-to.patch
+--- mpv-dmo-0.41.0/debian/patches/0011-vo_dmabuf_wayland-x11_common-declare-stereo-video-to.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0011-vo_dmabuf_wayland-x11_common-declare-stereo-video-to.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,178 @@
++From b6a9c3095c1cfbf6aff4e64a0ee52d2773a7f8dc Mon Sep 17 00:00:00 2001
++From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++Date: Mon, 5 Oct 2026 01:29:37 -0300
++Subject: [PATCH] vo_dmabuf_wayland, x11_common: declare stereo video to
++ the compositor
++
++Declare the video as full side by side stereo content through
++libstereo-declare while the autostereo filter is active, and remove the
++declaration when it is not. vo_dmabuf_wayland declares its video surface
++only, so the OSD in its own surface stays 2D and KWin shows it the same
++in both eyes. The X11 code declares the window. The dependency is
++optional (-Dstereo-declare).
++
++Assisted-by: glm-5.3:cloud (Ollama) via Codex
++Assisted-by: Claude Sonnet via Claude Code
++---
++ meson.build                   |  6 +++++
++ meson.options                 |  1 +
++ video/out/vo_dmabuf_wayland.c | 44 +++++++++++++++++++++++++++++++++++
++ video/out/x11_common.c        | 17 ++++++++++++++
++ 4 files changed, 68 insertions(+)
++
++diff --git a/meson.build b/meson.build
++index fb10be5078..89e0458762 100644
++--- a/meson.build
+++++ b/meson.build
++@@ -355,6 +355,12 @@ if features['libdl']
++     dependencies += libdl
++ endif
++ 
+++stereo_declare = dependency('stereo-declare', required: get_option('stereo-declare'))
+++features += {'stereo-declare': stereo_declare.found()}
+++if features['stereo-declare']
+++    dependencies += stereo_declare
+++endif
+++
++ # C11 atomics are mandatory but linking to the library is not always required.
++ dependencies += cc.find_library('atomic', required: false)
++ 
++diff --git a/meson.options b/meson.options
++index 52782f73d6..5389a7a4c8 100644
++--- a/meson.options
+++++ b/meson.options
++@@ -29,6 +29,7 @@ option('lua',
++ option('pthread-debug', type: 'feature', value: 'disabled', description: 'pthread runtime debugging wrappers')
++ option('rubberband', type: 'feature', value: 'auto', description: 'librubberband support')
++ option('sdl2-gamepad', type: 'feature', value: 'disabled', description: 'SDL2 gamepad input')
+++option('stereo-declare', type: 'feature', value: 'auto', description: 'KWin stereo declaration')
++ option('uchardet', type: 'feature', value: 'auto', description: 'uchardet support')
++ option('uwp', type: 'feature', value: 'disabled', description: 'Universal Windows Platform')
++ option('vapoursynth', type: 'feature', value: 'auto', description: 'VapourSynth filter bridge')
++diff --git a/video/out/vo_dmabuf_wayland.c b/video/out/vo_dmabuf_wayland.c
++index 6b7c511d9a..4749a15a4a 100644
++--- a/video/out/vo_dmabuf_wayland.c
+++++ b/video/out/vo_dmabuf_wayland.c
++@@ -34,6 +34,9 @@
++ #include "sub/draw_bmp.h"
++ #include "video/fmt-conversion.h"
++ #include "video/mp_image.h"
+++#if HAVE_STEREO_DECLARE
+++#include "stereo-declare.h"
+++#endif
++ #include "vo.h"
++ #include "wayland_common.h"
++ #include "wldmabuf/ra_wldmabuf.h"
++@@ -108,8 +111,31 @@ struct priv {
++     struct mp_image_params target_params;
++     uint32_t drm_format;
++     uint64_t drm_modifier;
+++
+++    bool stereo_declare_initialized;
++ };
++ 
+++#if HAVE_STEREO_DECLARE
+++static void set_stereo_content(struct vo *vo, bool active)
+++{
+++    struct priv *p = vo->priv;
+++
+++    if (!p->stereo_declare_initialized)
+++        return;
+++
+++    int ret = active ?
+++        stereo_declare_wayland(vo->wl->video_surface, STEREO_SBS_FULL,
+++                               STEREO_CLASS_VIDEO, STEREO_VIDEO_CURRENT) :
+++        stereo_remove_wayland(vo->wl->video_surface);
+++    if (ret < 0) {
+++        MP_WARN(vo, "Updating the stereo declaration failed: %s\n",
+++                mp_strerror(-ret));
+++    } else {
+++        wl_surface_commit(vo->wl->video_surface);
+++    }
+++}
+++#endif
+++
++ static void buffer_handle_release(void *data, struct wl_buffer *wl_buffer)
++ {
++     struct buffer *buf = data;
++@@ -756,6 +782,11 @@ static int control(struct vo *vo, uint32_t request, void *data)
++     int ret;
++ 
++     switch (request) {
+++#if HAVE_STEREO_DECLARE
+++    case VOCTRL_SET_STEREO_CONTENT:
+++        set_stereo_content(vo, *(bool *)data);
+++        return VO_TRUE;
+++#endif
++     case VOCTRL_RESET:
++         p->destroy_buffers = true;
++         return VO_TRUE;
++@@ -780,6 +811,13 @@ static void uninit(struct vo *vo)
++ 
++     destroy_buffers(vo);
++     destroy_osd_buffers(vo);
+++#if HAVE_STEREO_DECLARE
+++    if (p->stereo_declare_initialized) {
+++        stereo_remove_wayland(vo->wl->video_surface);
+++        wl_surface_commit(vo->wl->video_surface);
+++        stereo_declare_wayland_finish();
+++    }
+++#endif
++     if (p->osd_shm_pool)
++         wl_shm_pool_destroy(p->osd_shm_pool);
++     if (p->solid_buffer_pool)
++@@ -810,6 +848,11 @@ static int preinit(struct vo *vo)
++ 
++     mp_assert(p->ctx->ra);
++ 
+++#if HAVE_STEREO_DECLARE
+++    if (stereo_declare_wayland_init(vo->wl->display, NULL) == 0)
+++        p->stereo_declare_initialized = true;
+++#endif
+++
++     if (!vo->wl->dmabuf || !vo->wl->dmabuf_feedback) {
++         MP_FATAL(vo->wl, "Compositor doesn't support the %s (ver. 4) protocol!\n",
++                  zwp_linux_dmabuf_v1_interface.name);
++@@ -875,6 +918,7 @@ const struct vo_driver video_out_dmabuf_wayland = {
++     .caps = VO_CAP_ROTATE90 |
++             VO_CAP_FRAMEOWNER |
++             VO_CAP_VFLIP |
+++            VO_CAP_STEREO_VIEW |
++             0x0,
++     .preinit = preinit,
++     .query_format = query_format,
++diff --git a/video/out/x11_common.c b/video/out/x11_common.c
++index 7099199e3a..16be52287c 100644
++--- a/video/out/x11_common.c
+++++ b/video/out/x11_common.c
++@@ -53,6 +53,9 @@
++ #include "input/event.h"
++ #include "video/image_loader.h"
++ #include "video/mp_image.h"
+++#if HAVE_STEREO_DECLARE
+++#include "stereo-declare.h"
+++#endif
++ #include "present_sync.h"
++ #include "x11_common.h"
++ #include "mpv_talloc.h"
++@@ -2095,6 +2098,20 @@ int vo_x11_control(struct vo *vo, int *events, int request, void *arg)
++     struct vo_x11_state *x11 = vo->x11;
++     struct mp_vo_opts *opts = x11->opts;
++     switch (request) {
+++#if HAVE_STEREO_DECLARE
+++    case VOCTRL_SET_STEREO_CONTENT: {
+++        bool active = *(bool *)arg;
+++        int ret = active ?
+++            stereo_declare_x11(vo->x11->display, vo->x11->window,
+++                               STEREO_SBS_FULL, STEREO_CLASS_VIDEO,
+++                               STEREO_VIDEO_CURRENT) :
+++            stereo_remove_x11(vo->x11->display, vo->x11->window);
+++        if (ret < 0)
+++            MP_WARN(vo, "Updating the stereo declaration failed: %s\n",
+++                    mp_strerror(-ret));
+++        return VO_TRUE;
+++    }
+++#endif
++     case VOCTRL_CHECK_EVENTS:
++         vo_x11_check_events(vo);
++         *events |= x11->pending_vo_events;
+diff -Nru mpv-dmo-0.41.0/debian/patches/0012-sub-osd-draw-the-OSD-once-per-view-into-a-full-side-.patch mpv-dmo-0.41.0/debian/patches/0012-sub-osd-draw-the-OSD-once-per-view-into-a-full-side-.patch
+--- mpv-dmo-0.41.0/debian/patches/0012-sub-osd-draw-the-OSD-once-per-view-into-a-full-side-.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0012-sub-osd-draw-the-OSD-once-per-view-into-a-full-side-.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,73 @@
++From a31af1552217735bf6605fe182ff0a2768e9f307 Mon Sep 17 00:00:00 2001
++From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++Date: Mon, 5 Oct 2026 01:29:37 -0300
++Subject: [PATCH] sub/osd: draw the OSD once per view into a full side by
++ side image
++
++When the image the OSD is drawn on is full side by side, draw the OSD
++at the size of one view into each half, instead of once across both
++views. vo_x11 draws into a window sized image that has no stereo mode of
++its own, so pass on the one of the video frame.
++
++Assisted-by: glm-5.3:cloud (Ollama) via Codex
++Assisted-by: Claude Sonnet via Claude Code
++---
++ sub/osd.c          | 25 +++++++++++++++++++++++--
++ video/out/vo_x11.c |  1 +
++ 2 files changed, 24 insertions(+), 2 deletions(-)
++
++diff --git a/sub/osd.c b/sub/osd.c
++index 2788897396..c8ea6ac35b 100644
++--- a/sub/osd.c
+++++ b/sub/osd.c
++@@ -457,6 +457,17 @@ void osd_draw_on_image_p(struct osd_state *osd, struct mp_osd_res res,
++                          double video_pts, int draw_flags,
++                          struct mp_image_pool *pool, struct mp_image *dest)
++ {
+++    bool doubled_sbs = dest->params.stereo3d == MP_STEREO3D_SBSL;
+++    int eye_w = 0;
+++
+++    if (doubled_sbs) {
+++        eye_w = MP_ALIGN_DOWN(dest->w / 2, dest->fmt.align_x);
+++        if (eye_w > 0)
+++            res.w = MPMIN(res.w, eye_w);
+++        else
+++            doubled_sbs = false;
+++    }
+++
++     struct sub_bitmap_list *list =
++         osd_render(osd, res, video_pts, draw_flags, mp_draw_sub_formats);
++ 
++@@ -476,8 +487,18 @@ void osd_draw_on_image_p(struct osd_state *osd, struct mp_osd_res res,
++ 
++     stats_time_start(osd->stats, "draw-bmp");
++ 
++-    if (!mp_draw_sub_bitmaps(osd->draw_cache, dest, list))
++-        MP_WARN(osd, "Failed rendering OSD.\n");
+++    if (doubled_sbs) {
+++        for (int x = 0; x < 2; x++) {
+++            struct mp_image eye = *dest;
+++            mp_image_crop(&eye, x * eye_w, 0, (x + 1) * eye_w, dest->h);
+++
+++            if (!mp_draw_sub_bitmaps(osd->draw_cache, &eye, list))
+++                MP_WARN(osd, "Failed rendering OSD.\n");
+++        }
+++    } else {
+++        if (!mp_draw_sub_bitmaps(osd->draw_cache, dest, list))
+++            MP_WARN(osd, "Failed rendering OSD.\n");
+++    }
++     talloc_steal(osd, osd->draw_cache);
++ 
++     stats_time_end(osd->stats, "draw-bmp");
++diff --git a/video/out/vo_x11.c b/video/out/vo_x11.c
++index 8391b431f4..b9970e8833 100644
++--- a/video/out/vo_x11.c
+++++ b/video/out/vo_x11.c
++@@ -355,6 +355,7 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
++         mp_image_clear(img, 0, 0, img->w, img->h);
++     }
++ 
+++    img->params.stereo3d = frame->current ? frame->current->params.stereo3d : 0;
++     osd_draw_on_image(vo->osd, p->osd, frame->current ? frame->current->pts : 0, 0, img);
++ 
++     if (frame->current != p->original_image)
+diff -Nru mpv-dmo-0.41.0/debian/patches/0013-filters-tell-full-from-half-stereo-packings-by-the-f.patch mpv-dmo-0.41.0/debian/patches/0013-filters-tell-full-from-half-stereo-packings-by-the-f.patch
+--- mpv-dmo-0.41.0/debian/patches/0013-filters-tell-full-from-half-stereo-packings-by-the-f.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0013-filters-tell-full-from-half-stereo-packings-by-the-f.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,103 @@
++From cdea3c7fcf5fac95b72505bec7c63b7521ac049d Mon Sep 17 00:00:00 2001
++From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++Date: Mon, 5 Oct 2026 01:38:32 -0300
++Subject: [PATCH] filters: tell full from half stereo packings by the
++ frame shape
++
++The frame packing SEI and Matroska's StereoMode name the arrangement,
++not whether the views are half or full size, so a full side by side or
++top and bottom video was unpacked as half and each view was stretched.
++Decide it from the display aspect of the frame: at least 2.5 for side
++by side, at most 1.2 for top and bottom, holds full size views, since no
++normal picture is that wide or that tall.
++
++Assisted-by: Claude Sonnet via Claude Code
++---
++ DOCS/man/options.rst     |  9 ++++++++-
++ filters/f_auto_filters.c | 32 +++++++++++++++++++++++++-------
++ 2 files changed, 33 insertions(+), 8 deletions(-)
++
++diff --git a/DOCS/man/options.rst b/DOCS/man/options.rst
++index 4fbbc3f5f5..93d3b7012e 100644
++--- a/DOCS/man/options.rst
+++++ b/DOCS/man/options.rst
++@@ -1799,7 +1799,14 @@ Video
++     Matroska StereoMode, MP4 stereo metadata) to full side by side, left eye
++     first, and declare the video surface as stereo content to the compositor
++     when the output supports it (default: yes). Whatever the packing and eye
++-    order of the stream, the result is the same. Subtitles and the OSD are
+++    order of the stream, the result is the same. The stream does not say
+++    whether its views are half or full size, so the shape of the frame
+++    decides (using the sample aspect ratio): a side by side frame at least 2.5
+++    times as wide as high, or a top and bottom frame at most 1.2 times as wide
+++    as high, holds full size views, and any other frame holds half size views
+++    that are stretched to the full size. To force a packing, use
+++    ``--vf=format:stereo-in=<mode>`` (``sbsl`` and ``abl`` are the full size
+++    modes; ``--vf=format:stereo-in=help`` lists them). Subtitles and the OSD are
++     drawn once per eye, at one eye's size. Videos that do not signal 3D are
++     not touched.
++ 
++diff --git a/filters/f_auto_filters.c b/filters/f_auto_filters.c
++index ff051c425e..57fc748308 100644
++--- a/filters/f_auto_filters.c
+++++ b/filters/f_auto_filters.c
++@@ -367,6 +367,25 @@ static const char *stereo_input_name(int mode)
++     }
++ }
++ 
+++// The stream's signalling gives the arrangement, not whether the views are
+++// half or full. Tell them apart by the shape: a frame wider than any normal
+++// picture holds two full views side by side, a frame taller than one holds
+++// two full views on top of each other.
+++static int stereo_packing(const struct mp_image_params *p)
+++{
+++    int dw, dh;
+++    mp_image_params_get_dsize(p, &dw, &dh);
+++    double aspect = (double)dw / MPMAX(dh, 1);
+++
+++    switch (p->stereo3d) {
+++    case MP_STEREO3D_SBS2L: return aspect >= 2.5 ? MP_STEREO3D_SBSL : p->stereo3d;
+++    case MP_STEREO3D_SBS2R: return aspect >= 2.5 ? MP_STEREO3D_SBSR : p->stereo3d;
+++    case MP_STEREO3D_AB2L:  return aspect <= 1.2 ? MP_STEREO3D_ABL : p->stereo3d;
+++    case MP_STEREO3D_AB2R:  return aspect <= 1.2 ? MP_STEREO3D_ABR : p->stereo3d;
+++    default: return p->stereo3d;
+++    }
+++}
+++
++ static void stereo_process(struct mp_filter *f)
++ {
++     struct stereo_priv *p = f->priv;
++@@ -390,15 +409,16 @@ static void stereo_process(struct mp_filter *f)
++     struct mp_image *img = frame.data;
++ 
++     m_config_cache_update(p->opts);
++-    const char *input = stereo_input_name(img->params.stereo3d);
+++    int packing = stereo_packing(&img->params);
+++    const char *input = stereo_input_name(packing);
++     struct filter_opts *opts = p->opts->opts;
++     bool wanted = opts->video_stereo && input;
++ 
++-    if (img->imgfmt != p->prev_imgfmt || img->params.stereo3d != p->prev_stereo3d ||
+++    if (img->imgfmt != p->prev_imgfmt || packing != p->prev_stereo3d ||
++         (p->sub.filter && !wanted))
++     {
++         p->prev_imgfmt = img->imgfmt;
++-        p->prev_stereo3d = img->params.stereo3d;
+++        p->prev_stereo3d = packing;
++         if (!mp_subfilter_drain_destroy(&p->sub))
++             return;
++     }
++@@ -435,11 +455,9 @@ static void stereo_process(struct mp_filter *f)
++         if (info && info->stereo_view) {
++             int dw, dh;
++             mp_image_params_get_dsize(&img->params, &dw, &dh);
++-            if (img->params.stereo3d == MP_STEREO3D_SBSL ||
++-                img->params.stereo3d == MP_STEREO3D_SBSR)
+++            if (packing == MP_STEREO3D_SBSL || packing == MP_STEREO3D_SBSR)
++                 dw /= 2;
++-            if (img->params.stereo3d == MP_STEREO3D_ABL ||
++-                img->params.stereo3d == MP_STEREO3D_ABR)
+++            if (packing == MP_STEREO3D_ABL || packing == MP_STEREO3D_ABR)
++                 dh /= 2;
++             format_args[2] = "dar";
++             format_args[3] = mp_tprintf(32, "%f", (double)dw / MPMAX(dh, 1));
+diff -Nru mpv-dmo-0.41.0/debian/patches/0014-vo_x11-size-the-window-of-a-declared-video-at-one-vi.patch mpv-dmo-0.41.0/debian/patches/0014-vo_x11-size-the-window-of-a-declared-video-at-one-vi.patch
+--- mpv-dmo-0.41.0/debian/patches/0014-vo_x11-size-the-window-of-a-declared-video-at-one-vi.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0014-vo_x11-size-the-window-of-a-declared-video-at-one-vi.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,59 @@
++From c7e77633162b65e73d56b1238da3c507328dc10a Mon Sep 17 00:00:00 2001
++From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++Date: Mon, 5 Oct 2026 01:50:49 -0300
++Subject: [PATCH] vo_x11: size the window of a declared video at one view
++
++A compositor that holds both views of a declared X11 window doubles the
++window the program asks for, and tells the program its one view size
++(declaration version 3). The video is full side by side, so the window
++was asked for at twice the size of one view. Ask for one view instead:
++the width of the video's display size, halved, goes into autofit,
++--window-scale and --geometry, so no --geometry is needed.
++
++Assisted-by: Claude Sonnet via Claude Code
++---
++ video/out/vo.h         | 4 ++++
++ video/out/win_state.c  | 2 ++
++ video/out/x11_common.c | 1 +
++ 3 files changed, 7 insertions(+)
++
++diff --git a/video/out/vo.h b/video/out/vo.h
++index e463557525..e8ad8c4092 100644
++--- a/video/out/vo.h
+++++ b/video/out/vo.h
++@@ -519,6 +519,10 @@ struct vo {
++     int dheight;
++     float monitor_par;
++ 
+++    // the video is declared as full side by side stereo content, so the window
+++    // size is that of one view
+++    bool stereo_content;
+++
++     // current GPU context (--vo=gpu and --vo=gpu-next only)
++     const char *context_name;
++ 
++diff --git a/video/out/win_state.c b/video/out/win_state.c
++index 05e5116e7e..466dc7e788 100644
++--- a/video/out/win_state.c
+++++ b/video/out/win_state.c
++@@ -104,6 +104,8 @@ void vo_calc_window_geometry(struct vo *vo, const struct mp_rect *screen,
++     mp_image_params_get_dsize(&params, &d_w, &d_h);
++     if ((vo->driver->caps & VO_CAP_ROTATE90) && params.rotate % 180 == 90)
++         MPSWAP(int, d_w, d_h);
+++    if (vo->stereo_content)
+++        d_w /= 2;
++     d_w = MPCLAMP(d_w * opts->window_scale * dpi_scale, 1, 16000);
++     d_h = MPCLAMP(d_h * opts->window_scale * dpi_scale, 1, 16000);
++ 
++diff --git a/video/out/x11_common.c b/video/out/x11_common.c
++index 16be52287c..38c0ce6c00 100644
++--- a/video/out/x11_common.c
+++++ b/video/out/x11_common.c
++@@ -2101,6 +2101,7 @@ int vo_x11_control(struct vo *vo, int *events, int request, void *arg)
++ #if HAVE_STEREO_DECLARE
++     case VOCTRL_SET_STEREO_CONTENT: {
++         bool active = *(bool *)arg;
+++        vo->stereo_content = active;
++         int ret = active ?
++             stereo_declare_x11(vo->x11->display, vo->x11->window,
++                                STEREO_SBS_FULL, STEREO_CLASS_VIDEO,
+diff -Nru mpv-dmo-0.41.0/debian/patches/0015-wayland_common-declare-stereo-content-from-the-commo.patch mpv-dmo-0.41.0/debian/patches/0015-wayland_common-declare-stereo-content-from-the-commo.patch
+--- mpv-dmo-0.41.0/debian/patches/0015-wayland_common-declare-stereo-content-from-the-commo.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0015-wayland_common-declare-stereo-content-from-the-commo.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,191 @@
++From 5a3f0009f38131de39d5118f91769ef522f39f2b Mon Sep 17 00:00:00 2001
++From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++Date: Mon, 5 Oct 2026 02:42:59 -0300
++Subject: [PATCH] wayland_common: declare stereo content from the common
++ code
++
++Every Wayland output that has a video surface can declare it, so the
++declaration moves out of vo_dmabuf_wayland into wayland_common, which
++sets up and finishes libstereo-declare with the connection. No change
++for vo_dmabuf_wayland: it asks for the declaration through
++VOCTRL_SET_STEREO_CONTENT as before.
++
++Assisted-by: Claude Sonnet via Claude Code
++---
++ video/out/vo_dmabuf_wayland.c | 43 +----------------------------------
++ video/out/wayland_common.c    | 35 ++++++++++++++++++++++++++++
++ video/out/wayland_common.h    |  2 ++
++ 3 files changed, 38 insertions(+), 42 deletions(-)
++
++diff --git a/video/out/vo_dmabuf_wayland.c b/video/out/vo_dmabuf_wayland.c
++index 4749a15a4a..004ad9a62a 100644
++--- a/video/out/vo_dmabuf_wayland.c
+++++ b/video/out/vo_dmabuf_wayland.c
++@@ -34,9 +34,6 @@
++ #include "sub/draw_bmp.h"
++ #include "video/fmt-conversion.h"
++ #include "video/mp_image.h"
++-#if HAVE_STEREO_DECLARE
++-#include "stereo-declare.h"
++-#endif
++ #include "vo.h"
++ #include "wayland_common.h"
++ #include "wldmabuf/ra_wldmabuf.h"
++@@ -111,31 +108,8 @@ struct priv {
++     struct mp_image_params target_params;
++     uint32_t drm_format;
++     uint64_t drm_modifier;
++-
++-    bool stereo_declare_initialized;
++ };
++ 
++-#if HAVE_STEREO_DECLARE
++-static void set_stereo_content(struct vo *vo, bool active)
++-{
++-    struct priv *p = vo->priv;
++-
++-    if (!p->stereo_declare_initialized)
++-        return;
++-
++-    int ret = active ?
++-        stereo_declare_wayland(vo->wl->video_surface, STEREO_SBS_FULL,
++-                               STEREO_CLASS_VIDEO, STEREO_VIDEO_CURRENT) :
++-        stereo_remove_wayland(vo->wl->video_surface);
++-    if (ret < 0) {
++-        MP_WARN(vo, "Updating the stereo declaration failed: %s\n",
++-                mp_strerror(-ret));
++-    } else {
++-        wl_surface_commit(vo->wl->video_surface);
++-    }
++-}
++-#endif
++-
++ static void buffer_handle_release(void *data, struct wl_buffer *wl_buffer)
++ {
++     struct buffer *buf = data;
++@@ -782,11 +756,8 @@ static int control(struct vo *vo, uint32_t request, void *data)
++     int ret;
++ 
++     switch (request) {
++-#if HAVE_STEREO_DECLARE
++     case VOCTRL_SET_STEREO_CONTENT:
++-        set_stereo_content(vo, *(bool *)data);
++-        return VO_TRUE;
++-#endif
+++        return vo_wayland_set_stereo_content(vo->wl, *(bool *)data);
++     case VOCTRL_RESET:
++         p->destroy_buffers = true;
++         return VO_TRUE;
++@@ -811,13 +782,6 @@ static void uninit(struct vo *vo)
++ 
++     destroy_buffers(vo);
++     destroy_osd_buffers(vo);
++-#if HAVE_STEREO_DECLARE
++-    if (p->stereo_declare_initialized) {
++-        stereo_remove_wayland(vo->wl->video_surface);
++-        wl_surface_commit(vo->wl->video_surface);
++-        stereo_declare_wayland_finish();
++-    }
++-#endif
++     if (p->osd_shm_pool)
++         wl_shm_pool_destroy(p->osd_shm_pool);
++     if (p->solid_buffer_pool)
++@@ -848,11 +812,6 @@ static int preinit(struct vo *vo)
++ 
++     mp_assert(p->ctx->ra);
++ 
++-#if HAVE_STEREO_DECLARE
++-    if (stereo_declare_wayland_init(vo->wl->display, NULL) == 0)
++-        p->stereo_declare_initialized = true;
++-#endif
++-
++     if (!vo->wl->dmabuf || !vo->wl->dmabuf_feedback) {
++         MP_FATAL(vo->wl, "Compositor doesn't support the %s (ver. 4) protocol!\n",
++                  zwp_linux_dmabuf_v1_interface.name);
++diff --git a/video/out/wayland_common.c b/video/out/wayland_common.c
++index b5b889b9d1..1959cbe754 100644
++--- a/video/out/wayland_common.c
+++++ b/video/out/wayland_common.c
++@@ -36,6 +36,10 @@
++ #include "wayland_common.h"
++ #include "win_state.h"
++ 
+++#if HAVE_STEREO_DECLARE
+++#include "stereo-declare.h"
+++#endif
+++
++ // Generated from wayland-protocols
++ #include "idle-inhibit-unstable-v1.h"
++ #include "text-input-unstable-v3.h"
++@@ -4289,6 +4293,10 @@ bool vo_wayland_init(struct vo *vo)
++     wl->registry = wl_display_get_registry(wl->display);
++     wl_registry_add_listener(wl->registry, &registry_listener, wl);
++ 
+++#if HAVE_STEREO_DECLARE
+++    wl->stereo_declare = stereo_declare_wayland_init(wl->display, NULL) == 0;
+++#endif
+++
++     /* Do a roundtrip to run the registry */
++     wl_display_roundtrip(wl->display);
++ 
++@@ -4516,6 +4524,28 @@ bool vo_wayland_reconfig(struct vo *vo)
++     return true;
++ }
++ 
+++bool vo_wayland_set_stereo_content(struct vo_wayland_state *wl, bool active)
+++{
+++#if HAVE_STEREO_DECLARE
+++    if (!wl->stereo_declare)
+++        return false;
+++
+++    int ret = active ?
+++        stereo_declare_wayland(wl->video_surface, STEREO_SBS_FULL,
+++                               STEREO_CLASS_VIDEO, STEREO_VIDEO_CURRENT) :
+++        stereo_remove_wayland(wl->video_surface);
+++    if (ret < 0) {
+++        MP_WARN(wl, "Updating the stereo declaration failed: %s\n",
+++                mp_strerror(-ret));
+++        return false;
+++    }
+++    wl_surface_commit(wl->video_surface);
+++    return true;
+++#else
+++    return false;
+++#endif
+++}
+++
++ void vo_wayland_set_opaque_region(struct vo_wayland_state *wl, bool alpha)
++ {
++     const int32_t width = lrint(mp_rect_w(wl->geometry) / wl->scaling_factor);
++@@ -4542,6 +4572,11 @@ void vo_wayland_uninit(struct vo *vo)
++     if (wl->display)
++         wl_display_roundtrip(wl->display);
++ 
+++#if HAVE_STEREO_DECLARE
+++    if (wl->stereo_declare)
+++        stereo_declare_wayland_finish();
+++#endif
+++
++     if (wl->compositor)
++         wl_compositor_destroy(wl->compositor);
++ 
++diff --git a/video/out/wayland_common.h b/video/out/wayland_common.h
++index ed71848d27..54fd0e5525 100644
++--- a/video/out/wayland_common.h
+++++ b/video/out/wayland_common.h
++@@ -76,6 +76,7 @@ struct vo_wayland_state {
++     bool resizing;
++     bool scale_configured;
++     bool state_change;
+++    bool stereo_declare;
++     bool tiled;
++     bool toplevel_configured;
++     int display_fd;
++@@ -202,6 +203,7 @@ int vo_wayland_control(struct vo *vo, int *events, int request, void *arg);
++ 
++ void vo_wayland_handle_color(struct vo_wayland_state *wl);
++ void vo_wayland_handle_scale(struct vo_wayland_state *wl);
+++bool vo_wayland_set_stereo_content(struct vo_wayland_state *wl, bool active);
++ void vo_wayland_set_opaque_region(struct vo_wayland_state *wl, bool alpha);
++ void vo_wayland_sync_swap(struct vo_wayland_state *wl);
++ void vo_wayland_uninit(struct vo *vo);
+diff -Nru mpv-dmo-0.41.0/debian/patches/0016-vo-let-a-VO-say-at-run-time-that-its-window-shows-on.patch mpv-dmo-0.41.0/debian/patches/0016-vo-let-a-VO-say-at-run-time-that-its-window-shows-on.patch
+--- mpv-dmo-0.41.0/debian/patches/0016-vo-let-a-VO-say-at-run-time-that-its-window-shows-on.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0016-vo-let-a-VO-say-at-run-time-that-its-window-shows-on.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,76 @@
++From b8a90d0b959e11c8bf7188c1fda3046f58fad050 Mon Sep 17 00:00:00 2001
++From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++Date: Mon, 5 Oct 2026 02:43:09 -0300
++Subject: [PATCH] vo: let a VO say at run time that its window shows one
++ view
++
++VO_CAP_STEREO_VIEW is a property of the driver, but whether a stereo
++video is shown at one view's size depends on what the output got: only
++the Wayland contexts that give the video its own surface can declare
++it. Replace the capability by a flag the VO sets when it is created.
++
++Assisted-by: Claude Sonnet via Claude Code
++---
++ filters/f_output_chain.c      | 2 +-
++ video/out/vo.h                | 7 ++++---
++ video/out/vo_dmabuf_wayland.c | 2 +-
++ 3 files changed, 6 insertions(+), 5 deletions(-)
++
++diff --git a/filters/f_output_chain.c b/filters/f_output_chain.c
++index 0ed15c83af..b19f4489f1 100644
++--- a/filters/f_output_chain.c
+++++ b/filters/f_output_chain.c
++@@ -392,7 +392,7 @@ void mp_output_chain_set_vo(struct mp_output_chain *c, struct vo *vo)
++     p->stream_info.hwdec_devs = vo ? vo->hwdec_devs : NULL;
++     p->stream_info.osd = vo ? vo->osd : NULL;
++     p->stream_info.vflip = vo ? vo->driver->caps & VO_CAP_VFLIP : false;
++-    p->stream_info.stereo_view = vo ? vo->driver->caps & VO_CAP_STEREO_VIEW : false;
+++    p->stream_info.stereo_view = vo ? vo->stereo_view : false;
++     p->stream_info.rotate90 = vo ? vo->driver->caps & VO_CAP_ROTATE90 : false;
++     p->stream_info.dr_vo = vo;
++     p->vo = vo;
++diff --git a/video/out/vo.h b/video/out/vo.h
++index e8ad8c4092..03546b2191 100644
++--- a/video/out/vo.h
+++++ b/video/out/vo.h
++@@ -206,9 +206,6 @@ enum {
++     VO_CAP_FRAMEOWNER   = 1 << 5,
++     // VO does handle mp_image_params.vflip
++     VO_CAP_VFLIP        = 1 << 6,
++-    // VO declares its video surface as stereo content, so the window shows
++-    // one view.
++-    VO_CAP_STEREO_VIEW  = 1 << 7,
++ };
++ 
++ enum {
++@@ -487,6 +484,10 @@ struct vo {
++ 
++     bool probing;
++ 
+++    // The VO declares its video surface as stereo content, so the window shows
+++    // one view.
+++    bool stereo_view;
+++
++     // --- The following fields are only changed with vo_reconfig(), and can
++     //     be accessed unsynchronized (read-only).
++ 
++diff --git a/video/out/vo_dmabuf_wayland.c b/video/out/vo_dmabuf_wayland.c
++index 004ad9a62a..deaf0640fa 100644
++--- a/video/out/vo_dmabuf_wayland.c
+++++ b/video/out/vo_dmabuf_wayland.c
++@@ -804,6 +804,7 @@ static int preinit(struct vo *vo)
++ 
++     p->log = vo->log;
++     p->global = vo->global;
+++    vo->stereo_view = true;
++     p->ctx = ra_ctx_create_by_name(vo, "wldmabuf");
++     wl_list_init(&p->buffer_list);
++     wl_list_init(&p->osd_buffer_list);
++@@ -877,7 +878,6 @@ const struct vo_driver video_out_dmabuf_wayland = {
++     .caps = VO_CAP_ROTATE90 |
++             VO_CAP_FRAMEOWNER |
++             VO_CAP_VFLIP |
++-            VO_CAP_STEREO_VIEW |
++             0x0,
++     .preinit = preinit,
++     .query_format = query_format,
+diff -Nru mpv-dmo-0.41.0/debian/patches/0017-wayland_common-add-a-video-layer-under-the-window-s-.patch mpv-dmo-0.41.0/debian/patches/0017-wayland_common-add-a-video-layer-under-the-window-s-.patch
+--- mpv-dmo-0.41.0/debian/patches/0017-wayland_common-add-a-video-layer-under-the-window-s-.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0017-wayland_common-add-a-video-layer-under-the-window-s-.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,116 @@
++From 89c5e64455e483f3d1e3169b10fd22a46ba6de56 Mon Sep 17 00:00:00 2001
++From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++Date: Mon, 5 Oct 2026 02:43:12 -0300
++Subject: [PATCH] wayland_common: add a video layer under the window's
++ surface
++
++The window's surface can hold the on-screen controls, subtitles and
++OSD, with alpha, over the video drawn into video_surface beneath it,
++the layout vo_dmabuf_wayland has the other way round. A context that
++draws into both asks for it with vo_wayland_enable_video_layer(), which
++needs a compositor that accepts the stereo declaration, so every other
++window stays as it is. The video surface is a synchronised subsurface,
++so it is shown with the window's surface's commit and the two never
++differ by a frame. It gets the window's size and the video's color
++description, the window's surface no longer claims to be opaque.
++
++Assisted-by: Claude Sonnet via Claude Code
++---
++ video/out/wayland_common.c | 35 ++++++++++++++++++++++++++++++-----
++ video/out/wayland_common.h |  2 ++
++ 2 files changed, 32 insertions(+), 5 deletions(-)
++
++diff --git a/video/out/wayland_common.c b/video/out/wayland_common.c
++index 1959cbe754..c30b9a3d12 100644
++--- a/video/out/wayland_common.c
+++++ b/video/out/wayland_common.c
++@@ -3570,6 +3570,12 @@ static void set_color_management(struct vo_wayland_state *wl)
++ #endif
++ }
++ 
+++// The video's colors belong to the video layer when there is one
+++static struct wl_surface *color_surface_target(struct vo_wayland_state *wl)
+++{
+++    return wl->video_layer ? wl->video_surface : wl->callback_surface;
+++}
+++
++ static void set_color_representation(struct vo_wayland_state *wl)
++ {
++ #if HAVE_WAYLAND_PROTOCOLS_1_44
++@@ -3580,7 +3586,7 @@ static void set_color_representation(struct vo_wayland_state *wl)
++         wp_color_representation_surface_v1_destroy(wl->color_representation_surface);
++ 
++     wl->color_representation_surface =
++-        wp_color_representation_manager_v1_get_surface(wl->color_representation_manager, wl->callback_surface);
+++        wp_color_representation_manager_v1_get_surface(wl->color_representation_manager, color_surface_target(wl));
++ 
++     struct pl_color_repr repr = wl->target_params.repr;
++     int alpha = wl->alpha_map[repr.alpha];
++@@ -4235,8 +4241,11 @@ void vo_wayland_handle_color(struct vo_wayland_state *wl)
++ 
++ void vo_wayland_handle_scale(struct vo_wayland_state *wl)
++ {
++-    wp_viewport_set_destination(wl->viewport, lround(mp_rect_w(wl->geometry) / wl->scaling_factor),
++-                                lround(mp_rect_h(wl->geometry) / wl->scaling_factor));
+++    int width = lround(mp_rect_w(wl->geometry) / wl->scaling_factor);
+++    int height = lround(mp_rect_h(wl->geometry) / wl->scaling_factor);
+++    wp_viewport_set_destination(wl->viewport, width, height);
+++    if (wl->video_layer)
+++        wp_viewport_set_destination(wl->video_viewport, width, height);
++ }
++ 
++ bool vo_wayland_valid_format(struct vo_wayland_state *wl, uint32_t drm_format, uint64_t modifier)
++@@ -4539,7 +4548,23 @@ bool vo_wayland_set_stereo_content(struct vo_wayland_state *wl, bool active)
++                 mp_strerror(-ret));
++         return false;
++     }
++-    wl_surface_commit(wl->video_surface);
+++    // The renderer owning the layer commits the surface with its next frame.
+++    if (!wl->video_layer)
+++        wl_surface_commit(wl->video_surface);
+++    return true;
+++#else
+++    return false;
+++#endif
+++}
+++
+++bool vo_wayland_enable_video_layer(struct vo_wayland_state *wl)
+++{
+++#if HAVE_STEREO_DECLARE
+++    if (!wl->stereo_declare || !stereo_supported_wayland() || !wl->video_subsurface)
+++        return false;
+++
+++    wl_subsurface_place_below(wl->video_subsurface, wl->surface);
+++    wl->video_layer = true;
++     return true;
++ #else
++     return false;
++@@ -4550,7 +4575,7 @@ void vo_wayland_set_opaque_region(struct vo_wayland_state *wl, bool alpha)
++ {
++     const int32_t width = lrint(mp_rect_w(wl->geometry) / wl->scaling_factor);
++     const int32_t height = lrint(mp_rect_h(wl->geometry) / wl->scaling_factor);
++-    if (!alpha) {
+++    if (!alpha && !wl->video_layer) {
++         struct wl_region *region = wl_compositor_create_region(wl->compositor);
++         wl_region_add(region, 0, 0, width, height);
++         wl_surface_set_opaque_region(wl->surface, region);
++diff --git a/video/out/wayland_common.h b/video/out/wayland_common.h
++index 54fd0e5525..0fa1bb377a 100644
++--- a/video/out/wayland_common.h
+++++ b/video/out/wayland_common.h
++@@ -78,6 +78,7 @@ struct vo_wayland_state {
++     bool state_change;
++     bool stereo_declare;
++     bool tiled;
+++    bool video_layer;
++     bool toplevel_configured;
++     int display_fd;
++     int mouse_x;
++@@ -203,6 +204,7 @@ int vo_wayland_control(struct vo *vo, int *events, int request, void *arg);
++ 
++ void vo_wayland_handle_color(struct vo_wayland_state *wl);
++ void vo_wayland_handle_scale(struct vo_wayland_state *wl);
+++bool vo_wayland_enable_video_layer(struct vo_wayland_state *wl);
++ bool vo_wayland_set_stereo_content(struct vo_wayland_state *wl, bool active);
++ void vo_wayland_set_opaque_region(struct vo_wayland_state *wl, bool alpha);
++ void vo_wayland_sync_swap(struct vo_wayland_state *wl);
+diff -Nru mpv-dmo-0.41.0/debian/patches/0018-vulkan-create-a-swapchain-for-the-video-layer-on-Way.patch mpv-dmo-0.41.0/debian/patches/0018-vulkan-create-a-swapchain-for-the-video-layer-on-Way.patch
+--- mpv-dmo-0.41.0/debian/patches/0018-vulkan-create-a-swapchain-for-the-video-layer-on-Way.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0018-vulkan-create-a-swapchain-for-the-video-layer-on-Way.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,156 @@
++From 4c60d9960d934c1148c83299ad152767413283cd Mon Sep 17 00:00:00 2001
++From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++Date: Mon, 5 Oct 2026 02:43:17 -0300
++Subject: [PATCH] vulkan: create a swapchain for the video layer on
++ Wayland
++
++When the context is asked for a video layer and the compositor allows
++one, create a second surface and swapchain for it. The video layer is
++opaque; the window's swapchain gets alpha, with the sRGB color space
++hinted so that it keeps 8-bit non-linear pixels and is not turned into
++the 16-bit linear format libplacebo prefers for an alpha swapchain.
++Color management follows the video, so the PASS_THROUGH request goes to
++the video swapchain.
++
++Assisted-by: Claude Sonnet via Claude Code
++---
++ video/out/gpu/context.h            |  1 +
++ video/out/gpu_next/context.c       |  1 +
++ video/out/gpu_next/context.h       |  1 +
++ video/out/vulkan/common.h          |  3 +++
++ video/out/vulkan/context.c         | 17 +++++++++++++++++
++ video/out/vulkan/context_wayland.c |  9 +++++++++
++ video/out/vulkan/utils.c           | 10 ++++++++++
++ 7 files changed, 42 insertions(+)
++
++diff --git a/video/out/gpu/context.h b/video/out/gpu/context.h
++index dd0f99f83f..080d845e16 100644
++--- a/video/out/gpu/context.h
+++++ b/video/out/gpu/context.h
++@@ -13,6 +13,7 @@ struct ra_ctx_opts {
++     bool debug;           // enable debugging layers/callbacks etc.
++     bool probing;        // the backend was auto-probed
++     bool composition;    // enable swapchain composition
+++    bool video_layer;    // draw the video into its own surface under the window's
++     struct m_obj_settings *context_list; // list of `ra_ctx_fns.name` to probe
++     struct m_obj_settings *context_type_list;  // list of `ra_ctx_fns.type` to probe
++ };
++diff --git a/video/out/gpu_next/context.c b/video/out/gpu_next/context.c
++index 2c7c9fa21e..47e155c9fd 100644
++--- a/video/out/gpu_next/context.c
+++++ b/video/out/gpu_next/context.c
++@@ -121,6 +121,7 @@ struct gpu_ctx *gpu_ctx_create(struct vo *vo, struct ra_ctx_opts *ctx_opts)
++         ctx->pllog = vkctx->pllog;
++         ctx->gpu = vkctx->gpu;
++         ctx->swapchain = vkctx->swapchain;
+++        ctx->video_swapchain = vkctx->video_swapchain;
++         return ctx;
++     }
++ #endif
++diff --git a/video/out/gpu_next/context.h b/video/out/gpu_next/context.h
++index aa441964fb..c2fbaf728a 100644
++--- a/video/out/gpu_next/context.h
+++++ b/video/out/gpu_next/context.h
++@@ -31,6 +31,7 @@ struct gpu_ctx {
++     pl_log pllog;
++     pl_gpu gpu;
++     pl_swapchain swapchain;
+++    pl_swapchain video_swapchain; // under the swapchain's surface, or NULL
++ 
++     void *priv;
++ };
++diff --git a/video/out/vulkan/common.h b/video/out/vulkan/common.h
++index e75cb228f8..09064bc30a 100644
++--- a/video/out/vulkan/common.h
+++++ b/video/out/vulkan/common.h
++@@ -36,4 +36,7 @@ struct mpvk_ctx {
++     pl_gpu gpu; // points to vulkan->gpu for convenience
++     pl_swapchain swapchain;
++     VkSurfaceKHR surface;
+++    // The video layer under the window's surface (Wayland only), if any
+++    pl_swapchain video_swapchain;
+++    VkSurfaceKHR video_surface;
++ };
++diff --git a/video/out/vulkan/context.c b/video/out/vulkan/context.c
++index 7c196eb3fe..fc5eebe484 100644
++--- a/video/out/vulkan/context.c
+++++ b/video/out/vulkan/context.c
++@@ -159,6 +159,7 @@ void ra_vk_ctx_uninit(struct ra_ctx *ctx)
++ 
++     if (ctx->ra) {
++         pl_gpu_finish(vk->gpu);
+++        pl_swapchain_destroy(&vk->video_swapchain);
++         pl_swapchain_destroy(&vk->swapchain);
++         ctx->ra->fns->destroy(ctx->ra);
++         ctx->ra = NULL;
++@@ -420,6 +421,9 @@ bool ra_vk_ctx_init(struct ra_ctx *ctx, struct mpvk_ctx *vk,
++         .surface = vk->surface,
++         .present_mode = preferred_mode,
++         .swapchain_depth = ctx->vo->opts->swapchain_depth,
+++#if PL_API_VER >= 359
+++        .alpha_bits = vk->video_surface ? 8 : 0,
+++#endif
++     };
++ 
++     if (p->opts->swap_mode >= 0) // user override
++@@ -429,6 +433,19 @@ bool ra_vk_ctx_init(struct ra_ctx *ctx, struct mpvk_ctx *vk,
++     if (!vk->swapchain)
++         goto error;
++ 
+++    if (vk->video_surface) {
+++        // The video is opaque, the window's swapchain above it carries the
+++        // alpha and stays SDR whatever the video is.
+++        pl_swapchain_colorspace_hint(vk->swapchain, &pl_color_space_srgb);
+++        pl_params.surface = vk->video_surface;
+++#if PL_API_VER >= 359
+++        pl_params.alpha_bits = 0;
+++#endif
+++        vk->video_swapchain = pl_vulkan_create_swapchain(vk->vulkan, &pl_params);
+++        if (!vk->video_swapchain)
+++            goto error;
+++    }
+++
++     return true;
++ 
++ error:
++diff --git a/video/out/vulkan/context_wayland.c b/video/out/vulkan/context_wayland.c
++index 86e5e78b08..fb130a8b94 100644
++--- a/video/out/vulkan/context_wayland.c
+++++ b/video/out/vulkan/context_wayland.c
++@@ -100,6 +100,15 @@ static bool wayland_vk_init(struct ra_ctx *ctx)
++         goto error;
++     }
++ 
+++    if (ctx->opts.video_layer && vo_wayland_enable_video_layer(ctx->vo->wl)) {
+++        wlinfo.surface = ctx->vo->wl->video_surface;
+++        res = vkCreateWaylandSurfaceKHR(inst, &wlinfo, NULL, &vk->video_surface);
+++        if (res != VK_SUCCESS) {
+++            MP_MSG(ctx, msgl, "Failed creating Wayland video surface\n");
+++            goto error;
+++        }
+++    }
+++
++     /* If the Wayland compositor does not support fifo and presentation time
++      * v2 protocols, the compositor will stop sending callbacks if the surface
++      * is no longer visible. This means using FIFO would block the entire vo
++diff --git a/video/out/vulkan/utils.c b/video/out/vulkan/utils.c
++index d01fc3be0b..6fe226cb6e 100644
++--- a/video/out/vulkan/utils.c
+++++ b/video/out/vulkan/utils.c
++@@ -38,6 +38,16 @@ void mpvk_uninit(struct mpvk_ctx *vk)
++         vk->surface = VK_NULL_HANDLE;
++     }
++ 
+++    if (vk->video_surface) {
+++        mp_assert(vk->vkinst);
+++        mp_assert(vk->vkinst->get_proc_addr);
+++        PFN_vkDestroySurfaceKHR pDestroySurfaceKHR = (PFN_vkDestroySurfaceKHR)
+++            vk->vkinst->get_proc_addr(vk->vkinst->instance, "vkDestroySurfaceKHR");
+++        if (pDestroySurfaceKHR)
+++            pDestroySurfaceKHR(vk->vkinst->instance, vk->video_surface, NULL);
+++        vk->video_surface = VK_NULL_HANDLE;
+++    }
+++
++     pl_vk_inst_destroy(&vk->vkinst);
++     pl_log_destroy(&vk->pllog);
++ }
+diff -Nru mpv-dmo-0.41.0/debian/patches/0019-vo_gpu_next-draw-the-video-and-the-controls-into-sep.patch mpv-dmo-0.41.0/debian/patches/0019-vo_gpu_next-draw-the-video-and-the-controls-into-sep.patch
+--- mpv-dmo-0.41.0/debian/patches/0019-vo_gpu_next-draw-the-video-and-the-controls-into-sep.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0019-vo_gpu_next-draw-the-video-and-the-controls-into-sep.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,267 @@
++From baf67efffd157a8a032d86aec9b533008f6270a1 Mon Sep 17 00:00:00 2001
++From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++Date: Mon, 5 Oct 2026 02:43:20 -0300
++Subject: [PATCH] vo_gpu_next: draw the video and the controls into
++ separate layers
++
++With a video layer, render the video alone into the video swapchain and
++the OSD, subtitles and on-screen controller alone into the window's
++swapchain, cleared to transparent, encoded as the video is. The two are
++presented one after the other and reach the compositor together. The
++video layer is declared as full side by side stereo content for the
++frames the autostereo filter converted, and holds both views at the
++window's size each; the controls stay in the window's layer, which the
++compositor shows the same in both eyes. A 2D video has the same two
++layers, undeclared. The filter sizes the window at one view.
++
++Assisted-by: Claude Sonnet via Claude Code
++---
++ DOCS/man/options.rst    |  10 ++--
++ video/out/vo_gpu_next.c | 113 ++++++++++++++++++++++++++++++++++++----
++ 2 files changed, 111 insertions(+), 12 deletions(-)
++
++diff --git a/DOCS/man/options.rst b/DOCS/man/options.rst
++index 93d3b7012e..6e955fc1ba 100644
++--- a/DOCS/man/options.rst
+++++ b/DOCS/man/options.rst
++@@ -1806,9 +1806,13 @@ Video
++     as high, holds full size views, and any other frame holds half size views
++     that are stretched to the full size. To force a packing, use
++     ``--vf=format:stereo-in=<mode>`` (``sbsl`` and ``abl`` are the full size
++-    modes; ``--vf=format:stereo-in=help`` lists them). Subtitles and the OSD are
++-    drawn once per eye, at one eye's size. Videos that do not signal 3D are
++-    not touched.
+++    modes; ``--vf=format:stereo-in=help`` lists them). Where the video and
+++    the window have their own surfaces (``--vo=dmabuf-wayland``, and
+++    ``--vo=gpu-next`` with Vulkan on a Wayland compositor that accepts the
+++    declaration) only the video surface is declared, and the subtitles, the
+++    OSD and the on-screen controller stay in the window's surface, which the
+++    compositor shows the same in both eyes. Elsewhere they are drawn once per
+++    eye, at one eye's size. Videos that do not signal 3D are not touched.
++ 
++ ``--frames=<number>``
++     Play/convert only first ``<number>`` video frames, then quit.
++diff --git a/video/out/vo_gpu_next.c b/video/out/vo_gpu_next.c
++index 638ad8f258..b8c53f4695 100644
++--- a/video/out/vo_gpu_next.c
+++++ b/video/out/vo_gpu_next.c
++@@ -49,6 +49,10 @@
++ #include "sub/osd.h"
++ #include "gpu_next/context.h"
++ 
+++#if HAVE_WAYLAND
+++#include "wayland_common.h"
+++#endif
+++
++ #if HAVE_GL && defined(PL_HAVE_OPENGL)
++ #include <libplacebo/opengl.h>
++ #include "video/out/opengl/ra_gl.h"
++@@ -120,6 +124,7 @@ struct priv {
++     pl_renderer rr;
++     pl_queue queue;
++     pl_swapchain sw;
+++    pl_swapchain sw_video; // layer under sw's surface, which then holds the controls
++     pl_fmt osd_fmt[SUBBITMAP_COUNT];
++     pl_tex *sub_tex;
++     int num_sub_tex;
++@@ -134,6 +139,9 @@ struct priv {
++     bool is_interpolated;
++     bool want_reset;
++     bool frame_pending;
+++    bool video_pending;
+++    bool stereo_declared;
+++    int video_w, video_h;
++ 
++     pl_options pars;
++     struct m_config_cache *opts_cache;
++@@ -1258,16 +1266,40 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
++         if (p->icc_profile)
++             hint = p->icc_profile->csp;
++         if (!pass_colorspace)
++-            pl_swapchain_colorspace_hint(p->sw, &hint);
+++            pl_swapchain_colorspace_hint(p->sw_video ? p->sw_video : p->sw, &hint);
++     } else if (!target_hint) {
++         if (!hint.hdr.min_luma)
++             hint.hdr.min_luma = target_csp.hdr.min_luma;
++-        pl_swapchain_colorspace_hint(p->sw, NULL);
+++        pl_swapchain_colorspace_hint(p->sw_video ? p->sw_video : p->sw, NULL);
++     }
++ 
++-    struct pl_swapchain_frame swframe;
+++    // With a video layer, swframe is the video and ctlframe the controls over it
+++    bool layered = p->sw_video;
+++    bool stereo = layered && (frame->current ?
+++                  frame->current->params.stereo3d == MP_STEREO3D_SBSL :
+++                  p->stereo_declared);
+++    struct pl_swapchain_frame swframe, ctlframe;
++     bool should_draw = sw->fns->start_frame(sw, NULL); // for wayland logic
++-    if (!should_draw || !pl_swapchain_start_frame(p->sw, &swframe)) {
+++    if (should_draw && !pl_swapchain_start_frame(p->sw, layered ? &ctlframe : &swframe))
+++        should_draw = false;
+++    if (should_draw && layered) {
+++        // The video layer holds both views when it is declared as stereo
+++        int w = ctlframe.fbo->params.w * (stereo ? 2 : 1);
+++        int h = ctlframe.fbo->params.h;
+++        if (w != p->video_w || h != p->video_h) {
+++            p->video_w = w;
+++            p->video_h = h;
+++            pl_swapchain_resize(p->sw_video, &w, &h);
+++        }
+++        if (!pl_swapchain_start_frame(p->sw_video, &swframe)) {
+++            // Show the controls alone, the swapchain is waiting for them
+++            pl_tex_clear(gpu, ctlframe.fbo, (float[4]){0});
+++            pl_gpu_flush(gpu);
+++            p->frame_pending = true;
+++            should_draw = false;
+++        }
+++    }
+++    if (!should_draw) {
++         if (frame->current) {
++             // Advance the queue state to the current PTS to discard unused frames
++             struct pl_queue_params qparams = *pl_queue_params(
++@@ -1330,11 +1362,30 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
++             target.color.transfer = PL_COLOR_TRC_SRGB;
++ #endif
++     }
+++    // The controls go into their own layer, so the video layer carries none
+++    struct pl_frame ctltarget;
+++    if (layered) {
+++        // Encode them as the video is, as they were drawn into it
+++        pl_frame_from_swapchain(&ctltarget, &ctlframe);
+++        if (!pl_color_transfer_is_hdr(target.color.transfer))
+++            ctltarget.color = target.color;
+++        ctltarget.icc = target.icc;
+++        ctltarget.lut = target.lut;
+++        ctltarget.lut_type = target.lut_type;
+++        ctltarget.repr.levels = target.repr.levels;
+++    }
++     update_overlays(vo, p->osd_res,
++-                    (frame->current && opts->blend_subs) ? OSD_DRAW_OSD_ONLY : 0,
++-                    PL_OVERLAY_COORDS_DST_FRAME, &p->osd_state, &target, frame->current,
++-                    frame->current ? frame->current->params.stereo3d : 0);
++-    apply_crop(&target, p->dst, swframe.fbo->params.w, swframe.fbo->params.h);
+++                    (frame->current && opts->blend_subs && !layered) ? OSD_DRAW_OSD_ONLY : 0,
+++                    PL_OVERLAY_COORDS_DST_FRAME, &p->osd_state,
+++                    layered ? &ctltarget : &target, frame->current,
+++                    frame->current && !layered ? frame->current->params.stereo3d : 0);
+++    // Each eye gets the picture at the window's size
+++    struct mp_rect dst = p->dst;
+++    if (stereo) {
+++        dst.x0 *= 2;
+++        dst.x1 *= 2;
+++    }
+++    apply_crop(&target, dst, swframe.fbo->params.w, swframe.fbo->params.h);
++     update_tm_viz(&pars->color_map_params, &target);
++ 
++     struct pl_frame_mix mix = {0};
++@@ -1387,7 +1438,7 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
++             struct mp_image *mpi = image->user_data;
++             struct frame_priv *fp = mpi->priv;
++             apply_crop(image, p->src, vo->params->w, vo->params->h);
++-            if (opts->blend_subs) {
+++            if (opts->blend_subs && !layered) {
++                 if (frame->redraw)
++                     p->osd_sync++;
++                 if (fp->osd_sync < p->osd_sync) {
++@@ -1438,6 +1489,21 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
++         goto done;
++     }
++ 
+++    if (layered) {
+++        // Transparent but for the controls
+++        struct pl_render_params ctlparams = params;
+++        ctlparams.info_callback = NULL;
+++        ctlparams.border = PL_CLEAR_COLOR;
+++        ctlparams.background_color[0] = 0;
+++        ctlparams.background_color[1] = 0;
+++        ctlparams.background_color[2] = 0;
+++        ctlparams.background_transparency = 1;
+++        if (!pl_render_image(p->rr, NULL, &ctltarget, &ctlparams)) {
+++            MP_ERR(vo, "Failed rendering controls!\n");
+++            goto done;
+++        }
+++    }
+++
++     struct pl_frame ref_frame;
++     pl_frames_infer_mix(p->rr, &mix, &target, &ref_frame);
++ 
++@@ -1466,9 +1532,20 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
++ done:
++     if (!valid) // clear with purple to indicate error
++         pl_tex_clear(gpu, swframe.fbo, (float[4]){ 0.5, 0.0, 1.0, 1.0 });
+++    if (layered && !valid)
+++        pl_tex_clear(gpu, ctlframe.fbo, (float[4]){0});
+++
+++    // The declaration changes with the frame that needs it
+++    if (layered && stereo != p->stereo_declared) {
+++#if HAVE_WAYLAND
+++        vo_wayland_set_stereo_content(vo->wl, stereo);
+++#endif
+++        p->stereo_declared = stereo;
+++    }
++ 
++     pl_gpu_flush(gpu);
++     p->frame_pending = true;
+++    p->video_pending = layered;
++     return VO_TRUE;
++ }
++ 
++@@ -1477,12 +1554,21 @@ static void flip_page(struct vo *vo)
++     struct priv *p = vo->priv;
++     struct ra_swapchain *sw = p->ra_ctx->swapchain;
++ 
+++    // The video goes first, both reach the compositor with the controls' commit
+++    if (p->video_pending) {
+++        if (!pl_swapchain_submit_frame(p->sw_video))
+++            MP_ERR(vo, "Failed presenting video layer!\n");
+++        p->video_pending = false;
+++    }
+++
++     if (p->frame_pending) {
++         if (!pl_swapchain_submit_frame(p->sw))
++             MP_ERR(vo, "Failed presenting frame!\n");
++         p->frame_pending = false;
++     }
++ 
+++    if (p->sw_video)
+++        pl_swapchain_swap_buffers(p->sw_video);
++     sw->fns->swap_buffers(sw);
++ }
++ 
++@@ -1833,6 +1919,11 @@ static int control(struct vo *vo, uint32_t request, void *data)
++     case VOCTRL_SET_PANSCAN:
++         resize(vo);
++         return VO_TRUE;
+++    case VOCTRL_SET_STEREO_CONTENT:
+++        // With a video layer the declaration follows the frames
+++        if (p->sw_video)
+++            return true;
+++        break;
++     case VOCTRL_PAUSE:
++         if (p->is_interpolated)
++             vo->want_redraw = true;
++@@ -2150,6 +2241,7 @@ static void uninit(struct vo *vo)
++     p->pllog = NULL;
++     p->gpu = NULL;
++     p->sw = NULL;
+++    p->sw_video = NULL;
++     gpu_ctx_destroy(&p->context);
++ }
++ 
++@@ -2171,6 +2263,7 @@ static int preinit(struct vo *vo)
++     struct gl_video_opts *gl_opts = p->opts_cache->opts;
++     struct ra_ctx_opts *ctx_opts = mp_get_config_group(vo, vo->global, &ra_ctx_conf);
++     update_ra_ctx_options(vo, ctx_opts);
+++    ctx_opts->video_layer = !ctx_opts->want_alpha;
++     p->context = gpu_ctx_create(vo, ctx_opts);
++     talloc_free(ctx_opts);
++     if (!p->context)
++@@ -2180,6 +2273,8 @@ static int preinit(struct vo *vo)
++     p->pllog = p->context->pllog;
++     p->gpu = p->context->gpu;
++     p->sw = p->context->swapchain;
+++    p->sw_video = p->context->video_swapchain;
+++    vo->stereo_view = p->sw_video;
++     p->hwdec_ctx = (struct ra_hwdec_ctx) {
++         .log = p->log,
++         .global = p->global,
+diff -Nru mpv-dmo-0.41.0/debian/patches/0020-opengl-add-the-swapchain-of-a-video-layer.patch mpv-dmo-0.41.0/debian/patches/0020-opengl-add-the-swapchain-of-a-video-layer.patch
+--- mpv-dmo-0.41.0/debian/patches/0020-opengl-add-the-swapchain-of-a-video-layer.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0020-opengl-add-the-swapchain-of-a-video-layer.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,159 @@
++From fa7f57e92c3523260a7a213e5534287984f30f04 Mon Sep 17 00:00:00 2001
++From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++Date: Mon, 5 Oct 2026 03:19:30 -0300
++Subject: [PATCH] opengl: add the swapchain of a video layer
++
++A context can have a second swapchain for the video layer under the
++window's surface, ra_ctx.video_swapchain, with its own size. The
++swapchains of the two surfaces share the one GL context, so when each has
++its own surface, they say which one rendering goes to in make_current,
++which start_frame calls, and the color depth is read from the right one.
++
++Assisted-by: Claude Sonnet via Claude Code
++---
++ video/out/gpu/context.h    | 11 +++++++++++
++ video/out/opengl/context.c | 39 +++++++++++++++++++++++++++++++-------
++ video/out/opengl/context.h |  4 ++++
++ 3 files changed, 47 insertions(+), 7 deletions(-)
++
++diff --git a/video/out/gpu/context.h b/video/out/gpu/context.h
++index 080d845e16..399f1f54f8 100644
++--- a/video/out/gpu/context.h
+++++ b/video/out/gpu/context.h
++@@ -29,6 +29,9 @@ struct ra_ctx {
++     struct ra_ctx_opts opts;
++     const struct ra_ctx_fns *fns;
++     struct ra_swapchain *swapchain;
+++    // The swapchain of the video layer, under the one of the window's surface
+++    // (Wayland, see ra_ctx_opts.video_layer), or NULL.
+++    struct ra_swapchain *video_swapchain;
++     struct spirv_compiler *spirv;
++ 
++     void *priv;
++@@ -58,6 +61,10 @@ struct ra_ctx_fns {
++     void (*wait_events)(struct ra_ctx *ctx, int64_t until_time_ns);
++     void (*update_render_opts)(struct ra_ctx *ctx);
++ 
+++    // Resize the video layer's surface, which has its own size. Required with
+++    // ra_ctx.video_swapchain.
+++    bool (*resize_video)(struct ra_ctx *ctx, int width, int height);
+++
++     // Initialize/destroy the 'struct ra' and possibly the underlying VO backend.
++     // Not normally called by the user of the ra_ctx.
++     bool (*init)(struct ra_ctx *ctx);
++@@ -79,6 +86,10 @@ struct ra_ctx_params {
++     // See ra_swapchain_fns.color_depth.
++     int (*color_depth)(struct ra_ctx *ctx);
++ 
+++    // For contexts with a video layer: make the surface of the swapchain the
+++    // one rendered to. Optional.
+++    void (*make_current)(struct ra_ctx *ctx);
+++
++     // Preferred device color space. Optional.
++     pl_color_space_t (*preferred_csp)(struct ra_ctx *ctx);
++ 
++diff --git a/video/out/opengl/context.c b/video/out/opengl/context.c
++index 86e8d5daac..2ed460d8de 100644
++--- a/video/out/opengl/context.c
+++++ b/video/out/opengl/context.c
++@@ -106,15 +106,21 @@ enum gles_mode ra_gl_ctx_get_glesmode(struct ra_ctx *ctx)
++     return mode;
++ }
++ 
++-void ra_gl_ctx_uninit(struct ra_ctx *ctx)
+++static void swapchain_uninit(struct ra_ctx *ctx, struct ra_swapchain **swapchain)
++ {
++-    if (ctx->swapchain) {
++-        struct priv *p = ctx->swapchain->priv;
+++    if (*swapchain) {
+++        struct priv *p = (*swapchain)->priv;
++         if (ctx->ra && p->wrapped_fb)
++             ra_tex_free(ctx->ra, &p->wrapped_fb);
++-        talloc_free(ctx->swapchain);
++-        ctx->swapchain = NULL;
+++        talloc_free(*swapchain);
+++        *swapchain = NULL;
++     }
+++}
+++
+++void ra_gl_ctx_uninit(struct ra_ctx *ctx)
+++{
+++    swapchain_uninit(ctx, &ctx->video_swapchain);
+++    swapchain_uninit(ctx, &ctx->swapchain);
++ 
++     // Clean up any potentially left-over debug callback
++     if (ctx->ra)
++@@ -125,9 +131,10 @@ void ra_gl_ctx_uninit(struct ra_ctx *ctx)
++ 
++ static const struct ra_swapchain_fns ra_gl_swapchain_fns;
++ 
++-bool ra_gl_ctx_init(struct ra_ctx *ctx, GL *gl, struct ra_ctx_params params)
+++static struct ra_swapchain *swapchain_create(struct ra_ctx *ctx, GL *gl,
+++                                             struct ra_ctx_params params)
++ {
++-    struct ra_swapchain *sw = ctx->swapchain = talloc_ptrtype(NULL, sw);
+++    struct ra_swapchain *sw = talloc_ptrtype(NULL, sw);
++     *sw = (struct ra_swapchain) {
++         .ctx = ctx,
++     };
++@@ -142,6 +149,13 @@ bool ra_gl_ctx_init(struct ra_ctx *ctx, GL *gl, struct ra_ctx_params params)
++     };
++ 
++     sw->fns = &p->fns;
+++    return sw;
+++}
+++
+++bool ra_gl_ctx_init(struct ra_ctx *ctx, GL *gl, struct ra_ctx_params params)
+++{
+++    struct ra_swapchain *sw = ctx->swapchain = swapchain_create(ctx, gl, params);
+++    struct priv *p = sw->priv;
++ 
++     if (!gl->version && !gl->es)
++         return false;
++@@ -164,6 +178,11 @@ bool ra_gl_ctx_init(struct ra_ctx *ctx, GL *gl, struct ra_ctx_params params)
++     return !!ctx->ra;
++ }
++ 
+++void ra_gl_ctx_init_video(struct ra_ctx *ctx, GL *gl, struct ra_ctx_params params)
+++{
+++    ctx->video_swapchain = swapchain_create(ctx, gl, params);
+++}
+++
++ void ra_gl_ctx_resize(struct ra_swapchain *sw, int w, int h, int fbo)
++ {
++     struct priv *p = sw->priv;
++@@ -186,6 +205,9 @@ int ra_gl_ctx_color_depth(struct ra_swapchain *sw)
++     if (!p->wrapped_fb)
++         return 0;
++ 
+++    if (p->params.make_current)
+++        p->params.make_current(sw->ctx);
+++
++     if ((gl->es < 300 && !gl->version) || !(gl->mpgl_caps & MPGL_CAP_FB))
++         return 0;
++ 
++@@ -213,6 +235,9 @@ bool ra_gl_ctx_start_frame(struct ra_swapchain *sw, struct ra_fbo *out_fbo)
++     if (p->params.check_visible)
++         visible = p->params.check_visible(sw->ctx);
++ 
+++    if (visible && p->params.make_current)
+++        p->params.make_current(sw->ctx);
+++
++     // If out_fbo is NULL, this was called from vo_gpu_next. Bail out.
++     if (!out_fbo || !visible)
++         return visible;
++diff --git a/video/out/opengl/context.h b/video/out/opengl/context.h
++index 72f69ee844..efeddd190e 100644
++--- a/video/out/opengl/context.h
+++++ b/video/out/opengl/context.h
++@@ -17,6 +17,10 @@ enum gles_mode ra_gl_ctx_get_glesmode(struct ra_ctx *ctx);
++ void ra_gl_ctx_uninit(struct ra_ctx *ctx);
++ bool ra_gl_ctx_init(struct ra_ctx *ctx, GL *gl, struct ra_ctx_params params);
++ 
+++// Add the swapchain of a video layer, after ra_gl_ctx_init(). Its surface is
+++// resized with ra_gl_ctx_resize(ctx->video_swapchain, ...).
+++void ra_gl_ctx_init_video(struct ra_ctx *ctx, GL *gl, struct ra_ctx_params params);
+++
++ // Call this any time the window size or main framebuffer changes
++ void ra_gl_ctx_resize(struct ra_swapchain *sw, int w, int h, int fbo);
++ 
+diff -Nru mpv-dmo-0.41.0/debian/patches/0021-opengl-draw-into-a-video-layer-under-the-window-s-su.patch mpv-dmo-0.41.0/debian/patches/0021-opengl-draw-into-a-video-layer-under-the-window-s-su.patch
+--- mpv-dmo-0.41.0/debian/patches/0021-opengl-draw-into-a-video-layer-under-the-window-s-su.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0021-opengl-draw-into-a-video-layer-under-the-window-s-su.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,155 @@
++From 72f8c4fd87fda7ea43b1c50aa1cc5c1cf8401873 Mon Sep 17 00:00:00 2001
++From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++Date: Mon, 5 Oct 2026 03:19:30 -0300
++Subject: [PATCH] opengl: draw into a video layer under the window's
++ surface on Wayland
++
++When the context is asked for a video layer and the compositor allows
++one, create a second wl_egl_window and EGL surface for it, resized
++separately and swapped before the window's, so that both arrive in the
++window's commit. Both surfaces use the config with alpha that the
++window's surface needs for the controls over the video, and the context
++is made current on each in turn.
++
++Assisted-by: Claude Sonnet via Claude Code
++---
++ video/out/opengl/context_wayland.c | 70 ++++++++++++++++++++++++++++++
++ 1 file changed, 70 insertions(+)
++
++diff --git a/video/out/opengl/context_wayland.c b/video/out/opengl/context_wayland.c
++index 0ad855dd4a..036f4710c2 100644
++--- a/video/out/opengl/context_wayland.c
+++++ b/video/out/opengl/context_wayland.c
++@@ -35,6 +35,10 @@ struct priv {
++     EGLSurface egl_surface;
++     EGLConfig  egl_config;
++     struct wl_egl_window *egl_window;
+++    // The video layer under the window's surface, if there is one
+++    EGLSurface video_surface;
+++    struct wl_egl_window *video_window;
+++    int video_w, video_h;
++ };
++ 
++ static void resize(struct ra_ctx *ctx)
++@@ -62,6 +66,37 @@ static bool wayland_egl_check_visible(struct ra_ctx *ctx)
++     return vo_wayland_check_visible(ctx->vo);
++ }
++ 
+++static void wayland_egl_make_current(struct ra_ctx *ctx)
+++{
+++    struct priv *p = ctx->priv;
+++    eglMakeCurrent(p->egl_display, p->egl_surface, p->egl_surface, p->egl_context);
+++}
+++
+++static void wayland_egl_make_current_video(struct ra_ctx *ctx)
+++{
+++    struct priv *p = ctx->priv;
+++    eglMakeCurrent(p->egl_display, p->video_surface, p->video_surface, p->egl_context);
+++}
+++
+++static void wayland_egl_swap_video_buffers(struct ra_ctx *ctx)
+++{
+++    struct priv *p = ctx->priv;
+++    wayland_egl_make_current_video(ctx);
+++    eglSwapBuffers(p->egl_display, p->video_surface);
+++}
+++
+++static bool wayland_egl_resize_video(struct ra_ctx *ctx, int width, int height)
+++{
+++    struct priv *p = ctx->priv;
+++    if (width != p->video_w || height != p->video_h) {
+++        p->video_w = width;
+++        p->video_h = height;
+++        wl_egl_window_resize(p->video_window, width, height, 0, 0);
+++    }
+++    ra_gl_ctx_resize(ctx->video_swapchain, width, height, 0);
+++    return true;
+++}
+++
++ static void wayland_egl_swap_buffers(struct ra_ctx *ctx)
++ {
++     struct priv *p = ctx->priv;
++@@ -69,6 +104,8 @@ static void wayland_egl_swap_buffers(struct ra_ctx *ctx)
++ 
++     vo_wayland_handle_color(wl);
++ 
+++    if (p->video_surface)
+++        wayland_egl_make_current(ctx);
++     eglSwapBuffers(p->egl_display, p->egl_surface);
++ 
++     if (wl->opts->wl_internal_vsync)
++@@ -107,6 +144,7 @@ static bool egl_create_context(struct ra_ctx *ctx)
++     mpegl_load_functions(&p->gl, wl->log);
++ 
++     struct ra_ctx_params params = {
+++        .make_current       = wl->video_layer ? wayland_egl_make_current : NULL,
++         .check_visible      = wayland_egl_check_visible,
++         .swap_buffers       = wayland_egl_swap_buffers,
++         .get_vsync          = wayland_egl_get_vsync,
++@@ -115,6 +153,14 @@ static bool egl_create_context(struct ra_ctx *ctx)
++     if (!ra_gl_ctx_init(ctx, &p->gl, params))
++         return false;
++ 
+++    if (wl->video_layer) {
+++        struct ra_ctx_params video_params = {
+++            .make_current       = wayland_egl_make_current_video,
+++            .swap_buffers       = wayland_egl_swap_video_buffers,
+++        };
+++        ra_gl_ctx_init_video(ctx, &p->gl, video_params);
+++    }
+++
++     ra_add_native_resource(ctx->ra, "wl", wl->display);
++ 
++     return true;
++@@ -146,6 +192,22 @@ static void egl_create_window(struct ra_ctx *ctx)
++     }
++ 
++     eglSwapInterval(p->egl_display, 0);
+++
+++    if (wl->video_layer) {
+++        p->video_w = mp_rect_w(wl->geometry);
+++        p->video_h = mp_rect_h(wl->geometry);
+++        p->video_window = wl_egl_window_create(wl->video_surface, p->video_w,
+++                                               p->video_h);
+++        p->video_surface = mpegl_create_window_surface(
+++            p->egl_display, p->egl_config, p->video_window);
+++        if (p->video_surface == EGL_NO_SURFACE) {
+++            p->video_surface = eglCreateWindowSurface(
+++                p->egl_display, p->egl_config, p->video_window, NULL);
+++        }
+++        wayland_egl_make_current_video(ctx);
+++        eglSwapInterval(p->egl_display, 0);
+++        wayland_egl_make_current(ctx);
+++    }
++ }
++ 
++ static bool wayland_egl_reconfig(struct ra_ctx *ctx)
++@@ -171,6 +233,10 @@ static void wayland_egl_uninit(struct ra_ctx *ctx)
++         eglReleaseThread();
++         if (p->egl_window)
++             wl_egl_window_destroy(p->egl_window);
+++        if (p->video_window)
+++            wl_egl_window_destroy(p->video_window);
+++        if (p->video_surface)
+++            eglDestroySurface(p->egl_display, p->video_surface);
++         eglDestroySurface(p->egl_display, p->egl_surface);
++         eglMakeCurrent(p->egl_display, NULL, NULL, EGL_NO_CONTEXT);
++         eglDestroyContext(p->egl_display, p->egl_context);
++@@ -216,6 +282,9 @@ static bool wayland_egl_init(struct ra_ctx *ctx)
++ {
++     if (!vo_wayland_init(ctx->vo))
++         return false;
+++    // The window's surface then holds the controls, with alpha
+++    if (ctx->opts.video_layer && vo_wayland_enable_video_layer(ctx->vo->wl))
+++        ctx->opts.want_alpha = true;
++     return egl_create_context(ctx);
++ }
++ 
++@@ -228,6 +297,7 @@ const struct ra_ctx_fns ra_ctx_wayland_egl = {
++     .wakeup             = wayland_egl_wakeup,
++     .wait_events        = wayland_egl_wait_events,
++     .update_render_opts = wayland_egl_update_render_opts,
+++    .resize_video       = wayland_egl_resize_video,
++     .init               = wayland_egl_init,
++     .uninit             = wayland_egl_uninit,
++ };
+diff -Nru mpv-dmo-0.41.0/debian/patches/0022-vulkan-add-the-video-layer-s-swapchain-to-the-ra_ctx.patch mpv-dmo-0.41.0/debian/patches/0022-vulkan-add-the-video-layer-s-swapchain-to-the-ra_ctx.patch
+--- mpv-dmo-0.41.0/debian/patches/0022-vulkan-add-the-video-layer-s-swapchain-to-the-ra_ctx.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0022-vulkan-add-the-video-layer-s-swapchain-to-the-ra_ctx.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,136 @@
++From 59f48423a4f5dbf93e7f51972716494bcc97bd5a Mon Sep 17 00:00:00 2001
++From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++Date: Mon, 5 Oct 2026 03:19:30 -0300
++Subject: [PATCH] vulkan: add the video layer's swapchain to the ra_ctx
++
++Give the swapchain of the video layer a ra_swapchain of its own, and a
++way to resize it, so that the renderers that go through the ra_ctx can
++draw into it like into the one of the window's surface.
++
++Assisted-by: Claude Sonnet via Claude Code
++---
++ video/out/vulkan/context.c         | 58 ++++++++++++++++++++++++++++++
++ video/out/vulkan/context.h         |  3 ++
++ video/out/vulkan/context_wayland.c |  1 +
++ 3 files changed, 62 insertions(+)
++
++diff --git a/video/out/vulkan/context.c b/video/out/vulkan/context.c
++index fc5eebe484..e8925cd667 100644
++--- a/video/out/vulkan/context.c
+++++ b/video/out/vulkan/context.c
++@@ -139,6 +139,7 @@ struct priv {
++ };
++ 
++ static const struct ra_swapchain_fns vulkan_swapchain;
+++static const struct ra_swapchain_fns vulkan_video_swapchain;
++ 
++ struct mpvk_ctx *ra_vk_ctx_get(struct ra_ctx *ctx)
++ {
++@@ -167,6 +168,7 @@ void ra_vk_ctx_uninit(struct ra_ctx *ctx)
++ 
++     vk->gpu = NULL;
++     pl_vulkan_destroy(&vk->vulkan);
+++    TA_FREEP(&ctx->video_swapchain);
++     TA_FREEP(&ctx->swapchain);
++ }
++ 
++@@ -444,6 +446,14 @@ bool ra_vk_ctx_init(struct ra_ctx *ctx, struct mpvk_ctx *vk,
++         vk->video_swapchain = pl_vulkan_create_swapchain(vk->vulkan, &pl_params);
++         if (!vk->video_swapchain)
++             goto error;
+++
+++        struct ra_swapchain *video_sw = ctx->video_swapchain =
+++            talloc_zero(NULL, struct ra_swapchain);
+++        video_sw->ctx = ctx;
+++        video_sw->fns = &vulkan_video_swapchain;
+++        struct priv *video_p = video_sw->priv = talloc_zero(video_sw, struct priv);
+++        video_p->vk = vk;
+++        video_p->params = params;
++     }
++ 
++     return true;
++@@ -464,6 +474,12 @@ bool ra_vk_ctx_resize(struct ra_ctx *ctx, int width, int height)
++     return ok;
++ }
++ 
+++bool ra_vk_ctx_resize_video(struct ra_ctx *ctx, int width, int height)
+++{
+++    struct priv *p = ctx->swapchain->priv;
+++    return pl_swapchain_resize(p->vk->video_swapchain, &width, &height);
+++}
+++
++ char *ra_vk_ctx_get_device_name(struct ra_ctx *ctx)
++ {
++     /*
++@@ -551,3 +567,45 @@ static const struct ra_swapchain_fns vulkan_swapchain = {
++     .swap_buffers  = swap_buffers,
++     .get_vsync     = get_vsync,
++ };
+++
+++static bool start_video_frame(struct ra_swapchain *sw, struct ra_fbo *out_fbo)
+++{
+++    struct priv *p = sw->priv;
+++    struct pl_swapchain_frame frame;
+++
+++    // If out_fbo is NULL, this was called from vo_gpu_next. Bail out.
+++    if (out_fbo == NULL)
+++        return true;
+++
+++    if (!pl_swapchain_start_frame(p->vk->video_swapchain, &frame))
+++        return false;
+++    if (!mppl_wrap_tex(sw->ctx->ra, frame.fbo, &p->proxy_tex))
+++        return false;
+++
+++    *out_fbo = (struct ra_fbo) {
+++        .tex = &p->proxy_tex,
+++        .flip = frame.flipped,
+++    };
+++
+++    return true;
+++}
+++
+++static bool submit_video_frame(struct ra_swapchain *sw,
+++                               const struct vo_frame *frame)
+++{
+++    struct priv *p = sw->priv;
+++    return pl_swapchain_submit_frame(p->vk->video_swapchain);
+++}
+++
+++static void swap_video_buffers(struct ra_swapchain *sw)
+++{
+++    struct priv *p = sw->priv;
+++    pl_swapchain_swap_buffers(p->vk->video_swapchain);
+++}
+++
+++static const struct ra_swapchain_fns vulkan_video_swapchain = {
+++    .color_depth   = color_depth,
+++    .start_frame   = start_video_frame,
+++    .submit_frame  = submit_video_frame,
+++    .swap_buffers  = swap_video_buffers,
+++};
++diff --git a/video/out/vulkan/context.h b/video/out/vulkan/context.h
++index c3013edbd1..58f316a6b7 100644
++--- a/video/out/vulkan/context.h
+++++ b/video/out/vulkan/context.h
++@@ -19,6 +19,9 @@ pl_vulkan mppl_create_vulkan(struct vulkan_opts *opts,
++ // Handles a resize request, and updates ctx->vo->dwidth/dheight
++ bool ra_vk_ctx_resize(struct ra_ctx *ctx, int width, int height);
++ 
+++// The same for the video layer's swapchain
+++bool ra_vk_ctx_resize_video(struct ra_ctx *ctx, int width, int height);
+++
++ // May be called on a ra_ctx of any type.
++ struct mpvk_ctx *ra_vk_ctx_get(struct ra_ctx *ctx);
++ 
++diff --git a/video/out/vulkan/context_wayland.c b/video/out/vulkan/context_wayland.c
++index fb130a8b94..2256ea1828 100644
++--- a/video/out/vulkan/context_wayland.c
+++++ b/video/out/vulkan/context_wayland.c
++@@ -183,6 +183,7 @@ const struct ra_ctx_fns ra_ctx_vulkan_wayland = {
++     .wakeup             = wayland_vk_wakeup,
++     .wait_events        = wayland_vk_wait_events,
++     .update_render_opts = wayland_vk_update_render_opts,
+++    .resize_video       = ra_vk_ctx_resize_video,
++     .init               = wayland_vk_init,
++     .uninit             = wayland_vk_uninit,
++ };
+diff -Nru mpv-dmo-0.41.0/debian/patches/0023-vo_gpu_next-draw-the-video-and-the-controls-into-sep.patch mpv-dmo-0.41.0/debian/patches/0023-vo_gpu_next-draw-the-video-and-the-controls-into-sep.patch
+--- mpv-dmo-0.41.0/debian/patches/0023-vo_gpu_next-draw-the-video-and-the-controls-into-sep.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0023-vo_gpu_next-draw-the-video-and-the-controls-into-sep.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,172 @@
++From 26a78135025f86dbd261da3c515e74e1658beffc Mon Sep 17 00:00:00 2001
++From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++Date: Mon, 5 Oct 2026 03:19:36 -0300
++Subject: [PATCH] vo_gpu_next: draw the video and the controls into
++ separate layers with OpenGL
++
++The same two layers as with Vulkan, for the contexts that go through
++the OpenGL ra_ctx. libplacebo gets a second swapchain for the video
++layer, and the surface of each is made current before its rendering,
++since both belong to one GL context. The dither depth is that of the
++video layer, which is what is dithered.
++
++Assisted-by: Claude Sonnet via Claude Code
++---
++ DOCS/man/options.rst         |  4 ++--
++ video/out/gpu_next/context.c | 26 ++++++++++++++++++++++++++
++ video/out/gpu_next/context.h |  1 +
++ video/out/vo_gpu_next.c      | 20 +++++++++++++++-----
++ 4 files changed, 44 insertions(+), 7 deletions(-)
++
++diff --git a/DOCS/man/options.rst b/DOCS/man/options.rst
++index 6e955fc1ba..73a3346467 100644
++--- a/DOCS/man/options.rst
+++++ b/DOCS/man/options.rst
++@@ -1808,8 +1808,8 @@ Video
++     ``--vf=format:stereo-in=<mode>`` (``sbsl`` and ``abl`` are the full size
++     modes; ``--vf=format:stereo-in=help`` lists them). Where the video and
++     the window have their own surfaces (``--vo=dmabuf-wayland``, and
++-    ``--vo=gpu-next`` with Vulkan on a Wayland compositor that accepts the
++-    declaration) only the video surface is declared, and the subtitles, the
+++    ``--vo=gpu-next`` with Vulkan or OpenGL on a Wayland compositor that
+++    accepts the declaration) only the video surface is declared, and the subtitles, the
++     OSD and the on-screen controller stay in the window's surface, which the
++     compositor shows the same in both eyes. Elsewhere they are drawn once per
++     eye, at one eye's size. Videos that do not signal 3D are not touched.
++diff --git a/video/out/gpu_next/context.c b/video/out/gpu_next/context.c
++index 47e155c9fd..cc333968f6 100644
++--- a/video/out/gpu_next/context.c
+++++ b/video/out/gpu_next/context.c
++@@ -168,6 +168,15 @@ struct gpu_ctx *gpu_ctx_create(struct vo *vo, struct ra_ctx_opts *ctx_opts)
++         if (!ctx->swapchain)
++             goto err_out;
++ 
+++        if (ctx->ra_ctx->video_swapchain) {
+++            ctx->video_swapchain = pl_opengl_create_swapchain(opengl, pl_opengl_swapchain_params(
+++                .max_swapchain_depth = vo->opts->swapchain_depth,
+++                .framebuffer.flipped = gl->flipped,
+++            ));
+++            if (!ctx->video_swapchain)
+++                goto err_out;
+++        }
+++
++         return ctx;
++     }
++ #elif HAVE_GL
++@@ -193,6 +202,21 @@ bool gpu_ctx_resize(struct gpu_ctx *ctx, int w, int h)
++     return pl_swapchain_resize(ctx->swapchain, &w, &h);
++ }
++ 
+++bool gpu_ctx_resize_video(struct gpu_ctx *ctx, int w, int h)
+++{
+++    struct ra_ctx *ra_ctx = ctx->ra_ctx;
+++    if (!ra_ctx->fns->resize_video(ra_ctx, w, h))
+++        return false;
+++
+++#if HAVE_VULKAN
+++    if (ra_vk_ctx_get(ra_ctx))
+++        // vulkan RA handles this by itself
+++        return true;
+++#endif
+++
+++    return pl_swapchain_resize(ctx->video_swapchain, &w, &h);
+++}
+++
++ void gpu_ctx_destroy(struct gpu_ctx **ctxp)
++ {
++     struct gpu_ctx *ctx = *ctxp;
++@@ -208,6 +232,8 @@ void gpu_ctx_destroy(struct gpu_ctx **ctxp)
++         goto skip_common_pl_cleanup;
++ #endif
++ 
+++    if (ctx->video_swapchain)
+++        pl_swapchain_destroy(&ctx->video_swapchain);
++     if (ctx->swapchain)
++         pl_swapchain_destroy(&ctx->swapchain);
++ 
++diff --git a/video/out/gpu_next/context.h b/video/out/gpu_next/context.h
++index c2fbaf728a..0dec9b6985 100644
++--- a/video/out/gpu_next/context.h
+++++ b/video/out/gpu_next/context.h
++@@ -38,4 +38,5 @@ struct gpu_ctx {
++ 
++ struct gpu_ctx *gpu_ctx_create(struct vo *vo, struct ra_ctx_opts *ctx_opts);
++ bool gpu_ctx_resize(struct gpu_ctx *ctx, int w, int h);
+++bool gpu_ctx_resize_video(struct gpu_ctx *ctx, int w, int h);
++ void gpu_ctx_destroy(struct gpu_ctx **ctxp);
++diff --git a/video/out/vo_gpu_next.c b/video/out/vo_gpu_next.c
++index b8c53f4695..aef822c0ec 100644
++--- a/video/out/vo_gpu_next.c
+++++ b/video/out/vo_gpu_next.c
++@@ -932,7 +932,8 @@ static void apply_target_options(struct priv *p, struct pl_frame *target,
++     }
++     int dither_depth = opts->dither_depth;
++     if (dither_depth == 0) {
++-        struct ra_swapchain *sw = p->ra_ctx->swapchain;
+++        struct ra_swapchain *sw = p->ra_ctx->video_swapchain ? p->ra_ctx->video_swapchain
+++                                                             : p->ra_ctx->swapchain;
++         if (sw->fns->color_depth && sw->fns->color_depth(sw) != -1) {
++             dither_depth = sw->fns->color_depth(sw);
++         } else if (!pl_color_transfer_is_hdr(target->color.transfer)) {
++@@ -1275,6 +1276,7 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
++ 
++     // With a video layer, swframe is the video and ctlframe the controls over it
++     bool layered = p->sw_video;
+++    struct ra_swapchain *vsw = p->ra_ctx->video_swapchain;
++     bool stereo = layered && (frame->current ?
++                   frame->current->params.stereo3d == MP_STEREO3D_SBSL :
++                   p->stereo_declared);
++@@ -1289,7 +1291,7 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
++         if (w != p->video_w || h != p->video_h) {
++             p->video_w = w;
++             p->video_h = h;
++-            pl_swapchain_resize(p->sw_video, &w, &h);
+++            gpu_ctx_resize_video(p->context, w, h);
++         }
++         if (!pl_swapchain_start_frame(p->sw_video, &swframe)) {
++             // Show the controls alone, the swapchain is waiting for them
++@@ -1484,6 +1486,8 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
++     }
++ 
++     // Render frame
+++    if (layered)
+++        vsw->fns->start_frame(vsw, NULL); // for contexts with a surface each
++     if (!pl_render_image_mix(p->rr, &mix, &target, &params)) {
++         MP_ERR(vo, "Failed rendering frame!\n");
++         goto done;
++@@ -1498,6 +1502,7 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
++         ctlparams.background_color[1] = 0;
++         ctlparams.background_color[2] = 0;
++         ctlparams.background_transparency = 1;
+++        sw->fns->start_frame(sw, NULL);
++         if (!pl_render_image(p->rr, NULL, &ctltarget, &ctlparams)) {
++             MP_ERR(vo, "Failed rendering controls!\n");
++             goto done;
++@@ -1530,10 +1535,14 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
++     // fall through
++ 
++ done:
+++    if (layered && !valid)
+++        vsw->fns->start_frame(vsw, NULL);
++     if (!valid) // clear with purple to indicate error
++         pl_tex_clear(gpu, swframe.fbo, (float[4]){ 0.5, 0.0, 1.0, 1.0 });
++-    if (layered && !valid)
+++    if (layered && !valid) {
+++        sw->fns->start_frame(sw, NULL);
++         pl_tex_clear(gpu, ctlframe.fbo, (float[4]){0});
+++    }
++ 
++     // The declaration changes with the frame that needs it
++     if (layered && stereo != p->stereo_declared) {
++@@ -1567,8 +1576,9 @@ static void flip_page(struct vo *vo)
++         p->frame_pending = false;
++     }
++ 
++-    if (p->sw_video)
++-        pl_swapchain_swap_buffers(p->sw_video);
+++    struct ra_swapchain *vsw = p->ra_ctx->video_swapchain;
+++    if (vsw)
+++        vsw->fns->swap_buffers(vsw);
++     sw->fns->swap_buffers(sw);
++ }
++ 
+diff -Nru mpv-dmo-0.41.0/debian/patches/0024-vo_gpu-add-a-way-to-render-only-the-OSD-and-subtitle.patch mpv-dmo-0.41.0/debian/patches/0024-vo_gpu-add-a-way-to-render-only-the-OSD-and-subtitle.patch
+--- mpv-dmo-0.41.0/debian/patches/0024-vo_gpu-add-a-way-to-render-only-the-OSD-and-subtitle.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0024-vo_gpu-add-a-way-to-render-only-the-OSD-and-subtitle.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,88 @@
++From d4eb19a4d59366b6110a007f90ae0a472cb2aa87 Mon Sep 17 00:00:00 2001
++From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++Date: Mon, 5 Oct 2026 04:51:23 -0300
++Subject: [PATCH] vo_gpu: add a way to render only the OSD and subtitles
++
++RENDER_FRAME_CONTROLS renders the OSD and subtitles alone, over a
++transparent target, once and not per view of a 3D video, for a window
++surface that lies above the video's.
++
++Assisted-by: Claude Sonnet via Claude Code
++---
++ video/out/gpu/video.c | 17 +++++++++++------
++ video/out/gpu/video.h |  3 +++
++ 2 files changed, 14 insertions(+), 6 deletions(-)
++
++diff --git a/video/out/gpu/video.c b/video/out/gpu/video.c
++index ec0e656c5e..31637f4505 100644
++--- a/video/out/gpu/video.c
+++++ b/video/out/gpu/video.c
++@@ -2996,7 +2996,8 @@ static void pass_draw_osd(struct gl_video *p, int osd_flags, int frame_flags,
++     if ((osd_flags & OSD_DRAW_SUB_ONLY) && (osd_flags & OSD_DRAW_OSD_ONLY))
++         return;
++ 
++-    mpgl_osd_generate(p->osd, rect, pts, p->image_params.stereo3d, osd_flags);
+++    int stereo3d = frame_flags & RENDER_FRAME_CONTROLS ? 0 : p->image_params.stereo3d;
+++    mpgl_osd_generate(p->osd, rect, pts, stereo3d, osd_flags);
++ 
++     timer_pool_start(p->osd_timer);
++     for (int n = 0; n < MAX_OSD_PARTS; n++) {
++@@ -3418,16 +3419,19 @@ void gl_video_render_frame(struct gl_video *p, struct vo_frame *frame,
++ 
++     p->broken_frame = false;
++ 
++-    bool has_frame = !!frame->current;
+++    bool controls = flags & RENDER_FRAME_CONTROLS;
+++    bool has_frame = !!frame->current && !controls;
++ 
++     struct m_color c = p->clear_color;
+++    if (controls)
+++        c = (struct m_color){0};
++     float clear_color[4] = {c.r / 255.0, c.g / 255.0, c.b / 255.0, c.a / 255.0};
++     clear_color[0] *= clear_color[3];
++     clear_color[1] *= clear_color[3];
++     clear_color[2] *= clear_color[3];
++     p->ra->fns->clear(p->ra, fbo->tex, clear_color, &target_rc);
++ 
++-    if (p->hwdec_overlay) {
+++    if (p->hwdec_overlay && !controls) {
++         if (has_frame) {
++             float *color = p->hwdec_overlay->overlay_colorkey;
++             p->ra->fns->clear(p->ra, fbo->tex, color, &p->dst_rect);
++@@ -3519,10 +3523,10 @@ done:
++         // If we haven't actually drawn anything so far, then we technically
++         // need to consider this the start of a new pass. Let's call it a
++         // redraw just because, since it's basically a blank frame anyway
++-        if (!has_frame)
+++        if (!has_frame && !controls)
++             pass_info_reset(p, true);
++ 
++-        int osd_flags = p->opts.blend_subs ? OSD_DRAW_OSD_ONLY : 0;
+++        int osd_flags = p->opts.blend_subs && !controls ? OSD_DRAW_OSD_ONLY : 0;
++         if (!(flags & RENDER_FRAME_SUBS))
++             osd_flags |= OSD_DRAW_OSD_ONLY;
++         if (!(flags & RENDER_FRAME_OSD))
++@@ -3540,7 +3544,8 @@ done:
++         p->ra->fns->clear(p->ra, fbo->tex, color, &target_rc);
++     }
++ 
++-    p->frames_rendered++;
+++    if (!controls)
+++        p->frames_rendered++;
++     pass_report_performance(p);
++ }
++ 
++diff --git a/video/out/gpu/video.h b/video/out/gpu/video.h
++index 996e46e6ac..1e26726343 100644
++--- a/video/out/gpu/video.h
+++++ b/video/out/gpu/video.h
++@@ -191,6 +191,9 @@ enum {
++     RENDER_FRAME_OSD = 1 << 1,
++     RENDER_FRAME_VF_SUBS = 1 << 2,
++     RENDER_SCREEN_COLOR = 1 << 3, // 3D LUT and dithering
+++    // Only the OSD and subtitles, over a transparent target, once each for the
+++    // window's surface above the video layer
+++    RENDER_FRAME_CONTROLS = 1 << 4,
++     RENDER_FRAME_DEF = RENDER_FRAME_SUBS | RENDER_FRAME_OSD | RENDER_SCREEN_COLOR,
++ };
++ 
+diff -Nru mpv-dmo-0.41.0/debian/patches/0025-vo_gpu-draw-the-video-and-the-controls-into-separate.patch mpv-dmo-0.41.0/debian/patches/0025-vo_gpu-draw-the-video-and-the-controls-into-separate.patch
+--- mpv-dmo-0.41.0/debian/patches/0025-vo_gpu-draw-the-video-and-the-controls-into-separate.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0025-vo_gpu-draw-the-video-and-the-controls-into-separate.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,182 @@
++From 32f2657b330b93a8fea224c25edc19a9e406c1c8 Mon Sep 17 00:00:00 2001
++From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++Date: Mon, 5 Oct 2026 04:51:23 -0300
++Subject: [PATCH] vo_gpu: draw the video and the controls into separate
++ layers
++
++With a video layer, render the video alone into the video layer and the
++OSD, subtitles and on-screen controller alone into the window's
++surface, as vo_gpu_next does. The video layer is declared as full side
++by side stereo content for the frames the autostereo filter converted,
++and holds both views at the window's size each. The contexts are those
++that have a video layer: Vulkan and OpenGL on Wayland.
++
++Assisted-by: Claude Sonnet via Claude Code
++---
++ DOCS/man/options.rst |  4 +--
++ video/out/vo_gpu.c   | 77 ++++++++++++++++++++++++++++++++++++++++++++
++ 2 files changed, 79 insertions(+), 2 deletions(-)
++
++diff --git a/DOCS/man/options.rst b/DOCS/man/options.rst
++index 73a3346467..c358cd3123 100644
++--- a/DOCS/man/options.rst
+++++ b/DOCS/man/options.rst
++@@ -1808,8 +1808,8 @@ Video
++     ``--vf=format:stereo-in=<mode>`` (``sbsl`` and ``abl`` are the full size
++     modes; ``--vf=format:stereo-in=help`` lists them). Where the video and
++     the window have their own surfaces (``--vo=dmabuf-wayland``, and
++-    ``--vo=gpu-next`` with Vulkan or OpenGL on a Wayland compositor that
++-    accepts the declaration) only the video surface is declared, and the subtitles, the
+++    ``--vo=gpu-next`` and ``--vo=gpu`` on a Wayland compositor that accepts the
+++    declaration, with Vulkan or OpenGL) only the video surface is declared, and the subtitles, the
++     OSD and the on-screen controller stay in the window's surface, which the
++     compositor shows the same in both eyes. Elsewhere they are drawn once per
++     eye, at one eye's size. Videos that do not signal 3D are not touched.
++diff --git a/video/out/vo_gpu.c b/video/out/vo_gpu.c
++index 8436833e7a..c6a07670d5 100644
++--- a/video/out/vo_gpu.c
+++++ b/video/out/vo_gpu.c
++@@ -39,6 +39,10 @@
++ #include "gpu/hwdec.h"
++ #include "gpu/video.h"
++ 
+++#if HAVE_WAYLAND
+++#include "wayland_common.h"
+++#endif
+++
++ struct gpu_priv {
++     struct mp_log *log;
++     struct ra_ctx *ctx;
++@@ -48,20 +52,35 @@ struct gpu_priv {
++     struct gl_video *renderer;
++ 
++     int events;
+++
+++    // The video layer, when there is one, holds both views of a 3D video
+++    bool stereo;
++ };
++ static void resize(struct vo *vo)
++ {
++     struct gpu_priv *p = vo->priv;
++     struct ra_swapchain *sw = p->ctx->swapchain;
+++    struct ra_swapchain *video_sw = p->ctx->video_swapchain;
++ 
++     MP_VERBOSE(vo, "Resize: %dx%d\n", vo->dwidth, vo->dheight);
++ 
++     struct mp_rect src, dst;
++     struct mp_osd_res osd;
++     vo_get_src_dst_rects(vo, &src, &dst, &osd);
+++    // Each eye gets the picture at the window's size
+++    if (p->stereo) {
+++        dst.x0 *= 2;
+++        dst.x1 *= 2;
+++    }
++ 
++     gl_video_resize(p->renderer, &src, &dst, &osd);
++ 
+++    if (video_sw) {
+++        // The video layer holds both views of a 3D video, and the video is
+++        // what gets dithered
+++        p->ctx->fns->resize_video(p->ctx, vo->dwidth * (p->stereo ? 2 : 1), vo->dheight);
+++        sw = video_sw;
+++    }
++     int fb_depth = sw->fns->color_depth ? sw->fns->color_depth(sw) : 0;
++     if (fb_depth)
++         MP_VERBOSE(p, "Reported display depth: %d\n", fb_depth);
++@@ -70,11 +89,59 @@ static void resize(struct vo *vo)
++     vo->want_redraw = true;
++ }
++ 
+++// The video goes into its own layer, and the controls into the window's
+++// surface above it, which the compositor shows with the same frame
+++static bool draw_frame_layers(struct vo *vo, struct vo_frame *frame)
+++{
+++    struct gpu_priv *p = vo->priv;
+++    struct ra_swapchain *sw = p->ctx->swapchain;
+++    struct ra_swapchain *video_sw = p->ctx->video_swapchain;
+++
+++    // The declaration changes with the frame that needs it
+++    bool stereo = frame->current ? frame->current->params.stereo3d == MP_STEREO3D_SBSL
+++                                 : p->stereo;
+++    if (stereo != p->stereo) {
+++        p->stereo = stereo;
+++#if HAVE_WAYLAND
+++        vo_wayland_set_stereo_content(vo->wl, stereo);
+++#endif
+++        resize(vo);
+++    }
+++
+++    struct ra_fbo fbo, video_fbo;
+++    if (!sw->fns->start_frame(sw, &fbo))
+++        return VO_FALSE;
+++    bool video_ok = video_sw->fns->start_frame(video_sw, &video_fbo);
+++    if (video_ok)
+++        gl_video_render_frame(p->renderer, frame, &video_fbo, RENDER_SCREEN_COLOR);
+++
+++    sw->fns->start_frame(sw, NULL); // for contexts with a surface each
+++    gl_video_render_frame(p->renderer, frame, &fbo,
+++                          RENDER_FRAME_SUBS | RENDER_FRAME_OSD | RENDER_FRAME_CONTROLS);
+++
+++    if (video_ok && !video_sw->fns->submit_frame(video_sw, frame))
+++        MP_ERR(vo, "Failed presenting video layer!\n");
+++    if (!sw->fns->submit_frame(sw, frame)) {
+++        MP_ERR(vo, "Failed presenting frame!\n");
+++        return VO_FALSE;
+++    }
+++
+++    struct mp_image_params *params = gl_video_get_target_params_ptr(p->renderer);
+++    mp_mutex_lock(&vo->params_mutex);
+++    vo->target_params = params;
+++    mp_mutex_unlock(&vo->params_mutex);
+++
+++    return VO_TRUE;
+++}
+++
++ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
++ {
++     struct gpu_priv *p = vo->priv;
++     struct ra_swapchain *sw = p->ctx->swapchain;
++ 
+++    if (p->ctx->video_swapchain)
+++        return draw_frame_layers(vo, frame);
+++
++     struct ra_fbo fbo;
++     if (!sw->fns->start_frame(sw, &fbo))
++         return VO_FALSE;
++@@ -97,6 +164,9 @@ static void flip_page(struct vo *vo)
++ {
++     struct gpu_priv *p = vo->priv;
++     struct ra_swapchain *sw = p->ctx->swapchain;
+++    struct ra_swapchain *video_sw = p->ctx->video_swapchain;
+++    if (video_sw)
+++        video_sw->fns->swap_buffers(video_sw);
++     sw->fns->swap_buffers(sw);
++ }
++ 
++@@ -193,6 +263,11 @@ static int control(struct vo *vo, uint32_t request, void *data)
++     case VOCTRL_SET_PANSCAN:
++         resize(vo);
++         return VO_TRUE;
+++    case VOCTRL_SET_STEREO_CONTENT:
+++        // With a video layer the declaration follows the frames
+++        if (p->ctx->video_swapchain)
+++            return true;
+++        break;
++     case VOCTRL_SCREENSHOT: {
++         struct vo_frame *frame = vo_get_current_vo_frame(vo);
++         if (frame)
++@@ -299,12 +374,14 @@ static int preinit(struct vo *vo)
++ 
++     struct ra_ctx_opts *ctx_opts = mp_get_config_group(vo, vo->global, &ra_ctx_conf);
++     update_ra_ctx_options(vo, ctx_opts);
+++    ctx_opts->video_layer = !ctx_opts->want_alpha;
++     p->ctx = ra_ctx_create(vo, *ctx_opts);
++     talloc_free(ctx_opts);
++     if (!p->ctx)
++         goto err_out;
++     mp_assert(p->ctx->ra);
++     mp_assert(p->ctx->swapchain);
+++    vo->stereo_view = p->ctx->video_swapchain;
++ 
++     p->renderer = gl_video_init(p->ctx->ra, vo->log, vo->global);
++     gl_video_set_osd_source(p->renderer, vo->osd);
+diff -Nru mpv-dmo-0.41.0/debian/patches/0026-opengl-let-an-EGL-context-be-created-without-a-confi.patch mpv-dmo-0.41.0/debian/patches/0026-opengl-let-an-EGL-context-be-created-without-a-confi.patch
+--- mpv-dmo-0.41.0/debian/patches/0026-opengl-let-an-EGL-context-be-created-without-a-confi.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0026-opengl-let-an-EGL-context-be-created-without-a-confi.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,69 @@
++From 525a78af096b95a6ac0ed1ef0226b9127b9b5257 Mon Sep 17 00:00:00 2001
++From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++Date: Mon, 5 Oct 2026 05:25:47 -0300
++Subject: [PATCH] opengl: let an EGL context be created without a config
++
++With EGL_KHR_no_config_context a context can be made current on surfaces
++of any config, so a caller that has surfaces of different configs can
++ask for it. The config is still chosen and returned for the surface that
++wants it.
++
++Assisted-by: Claude Sonnet via Claude Code
++---
++ video/out/opengl/egl_helpers.c | 12 +++++++++---
++ video/out/opengl/egl_helpers.h |  4 ++++
++ 2 files changed, 13 insertions(+), 3 deletions(-)
++
++diff --git a/video/out/opengl/egl_helpers.c b/video/out/opengl/egl_helpers.c
++index 91a6480eb2..d2aa06a832 100644
++--- a/video/out/opengl/egl_helpers.c
+++++ b/video/out/opengl/egl_helpers.c
++@@ -242,6 +242,12 @@ static bool create_context(struct ra_ctx *ctx, EGLDisplay display,
++     MP_DBG(ctx, "Chosen EGLConfig:\n");
++     dump_egl_config(ctx->log, MSGL_DEBUG, display, config);
++ 
+++    EGLConfig ctx_config = config;
+++#ifdef EGL_KHR_no_config_context
+++    if (cb.no_config && gl_check_extension(egl_exts, "EGL_KHR_no_config_context"))
+++        ctx_config = EGL_NO_CONFIG_KHR;
+++#endif
+++
++     int ctx_flags = ctx->opts.debug ? EGL_CONTEXT_OPENGL_DEBUG_BIT_KHR : 0;
++     EGLContext *egl_ctx = NULL;
++ 
++@@ -258,7 +264,7 @@ static bool create_context(struct ra_ctx *ctx, EGLDisplay display,
++                 EGL_NONE
++             };
++ 
++-            egl_ctx = eglCreateContext(display, config, EGL_NO_CONTEXT, attrs);
+++            egl_ctx = eglCreateContext(display, ctx_config, EGL_NO_CONTEXT, attrs);
++             if (egl_ctx)
++                 break;
++         }
++@@ -271,9 +277,9 @@ static bool create_context(struct ra_ctx *ctx, EGLDisplay display,
++             EGL_NONE
++         };
++ 
++-        egl_ctx = eglCreateContext(display, config, EGL_NO_CONTEXT, attrs);
+++        egl_ctx = eglCreateContext(display, ctx_config, EGL_NO_CONTEXT, attrs);
++         if (!egl_ctx)
++-            egl_ctx = eglCreateContext(display, config, EGL_NO_CONTEXT, &attrs[2]);
+++            egl_ctx = eglCreateContext(display, ctx_config, EGL_NO_CONTEXT, &attrs[2]);
++     }
++ 
++     if (!egl_ctx) {
++diff --git a/video/out/opengl/egl_helpers.h b/video/out/opengl/egl_helpers.h
++index 32ec5d12e4..c6e9bb4044 100644
++--- a/video/out/opengl/egl_helpers.h
+++++ b/video/out/opengl/egl_helpers.h
++@@ -20,6 +20,10 @@ struct mpegl_cb {
++     // be found.
++     int (*refine_config)(void *user_data, EGLConfig *configs, int num_configs);
++     void *user_data;
+++    // create the context without a config (EGL_KHR_no_config_context), so that
+++    // surfaces of any config can be made current. The config is still chosen
+++    // and returned, for the surface that wants it. Ignored if not supported.
+++    bool no_config;
++ };
++ 
++ bool mpegl_create_context_cb(struct ra_ctx *ctx, EGLDisplay display,
+diff -Nru mpv-dmo-0.41.0/debian/patches/0027-opengl-keep-the-video-layer-s-config-on-Wayland.patch mpv-dmo-0.41.0/debian/patches/0027-opengl-keep-the-video-layer-s-config-on-Wayland.patch
+--- mpv-dmo-0.41.0/debian/patches/0027-opengl-keep-the-video-layer-s-config-on-Wayland.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0027-opengl-keep-the-video-layer-s-config-on-Wayland.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,100 @@
++From 67d16df4734a870533dfb8742e2012e96ce81944 Mon Sep 17 00:00:00 2001
++From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++Date: Mon, 5 Oct 2026 05:25:47 -0300
++Subject: [PATCH] opengl: keep the video layer's config on Wayland
++
++The window's surface needs an alpha config for the controls, but the
++video layer should keep the config, and so the color depth, the window
++had before (10 bits where Mesa offers them). Create the context without
++a config and give the window's surface its own alpha config. Without
++EGL_KHR_no_config_context both surfaces use the alpha config as before.
++
++Assisted-by: Claude Sonnet via Claude Code
++---
++ video/out/opengl/context_wayland.c | 42 +++++++++++++++++++++++++-----
++ 1 file changed, 35 insertions(+), 7 deletions(-)
++
++diff --git a/video/out/opengl/context_wayland.c b/video/out/opengl/context_wayland.c
++index 036f4710c2..69dde01269 100644
++--- a/video/out/opengl/context_wayland.c
+++++ b/video/out/opengl/context_wayland.c
++@@ -34,6 +34,7 @@ struct priv {
++     EGLContext egl_context;
++     EGLSurface egl_surface;
++     EGLConfig  egl_config;
+++    EGLConfig  window_config; // the window's surface, if not egl_config
++     struct wl_egl_window *egl_window;
++     // The video layer under the window's surface, if there is one
++     EGLSurface video_surface;
++@@ -122,6 +123,26 @@ static void wayland_egl_get_vsync(struct ra_ctx *ctx, struct vo_vsync_info *info
++         present_sync_get_info(wl->present, info);
++ }
++ 
+++// The window's surface holds the controls over the video layer, with alpha.
+++// The context has no config then, so that the video layer keeps its own.
+++static bool choose_alpha_config(struct ra_ctx *ctx, EGLConfig *config)
+++{
+++    struct priv *p = ctx->priv;
+++    const char *exts = eglQueryString(p->egl_display, EGL_EXTENSIONS);
+++    EGLint num_configs = 0;
+++    EGLint attributes[] = {
+++        EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+++        EGL_RED_SIZE, 8,
+++        EGL_GREEN_SIZE, 8,
+++        EGL_BLUE_SIZE, 8,
+++        EGL_ALPHA_SIZE, 8,
+++        EGL_NONE
+++    };
+++    return gl_check_extension(exts, "EGL_KHR_no_config_context") &&
+++           eglChooseConfig(p->egl_display, attributes, config, 1, &num_configs) &&
+++           num_configs;
+++}
+++
++ static bool egl_create_context(struct ra_ctx *ctx)
++ {
++     struct priv *p = ctx->priv = talloc_zero(ctx, struct priv);
++@@ -135,9 +156,19 @@ static bool egl_create_context(struct ra_ctx *ctx)
++     if (eglInitialize(p->egl_display, NULL, NULL) != EGL_TRUE)
++         return false;
++ 
++-    if (!mpegl_create_context(ctx, p->egl_display, &p->egl_context,
++-                              &p->egl_config))
+++    struct mpegl_cb cb = {0};
+++    if (ctx->opts.video_layer && vo_wayland_enable_video_layer(wl)) {
+++        if (choose_alpha_config(ctx, &p->window_config))
+++            cb.no_config = true;
+++        else
+++            ctx->opts.want_alpha = true;
+++    }
+++
+++    if (!mpegl_create_context_cb(ctx, p->egl_display, cb, &p->egl_context,
+++                                 &p->egl_config))
++         return false;
+++    if (!cb.no_config)
+++        p->window_config = p->egl_config;
++ 
++     eglMakeCurrent(p->egl_display, NULL, NULL, p->egl_context);
++ 
++@@ -176,10 +207,10 @@ static void egl_create_window(struct ra_ctx *ctx)
++                                          mp_rect_h(wl->geometry));
++ 
++     p->egl_surface = mpegl_create_window_surface(
++-        p->egl_display, p->egl_config, p->egl_window);
+++        p->egl_display, p->window_config, p->egl_window);
++     if (p->egl_surface == EGL_NO_SURFACE) {
++         p->egl_surface = eglCreateWindowSurface(
++-            p->egl_display, p->egl_config, p->egl_window, NULL);
+++            p->egl_display, p->window_config, p->egl_window, NULL);
++     }
++ 
++     eglMakeCurrent(p->egl_display, p->egl_surface, p->egl_surface, p->egl_context);
++@@ -282,9 +313,6 @@ static bool wayland_egl_init(struct ra_ctx *ctx)
++ {
++     if (!vo_wayland_init(ctx->vo))
++         return false;
++-    // The window's surface then holds the controls, with alpha
++-    if (ctx->opts.video_layer && vo_wayland_enable_video_layer(ctx->vo->wl))
++-        ctx->opts.want_alpha = true;
++     return egl_create_context(ctx);
++ }
++ 
+diff -Nru mpv-dmo-0.41.0/debian/patches/0028-vo_gpu_next-put-each-eye-s-picture-in-the-middle-of-.patch mpv-dmo-0.41.0/debian/patches/0028-vo_gpu_next-put-each-eye-s-picture-in-the-middle-of-.patch
+--- mpv-dmo-0.41.0/debian/patches/0028-vo_gpu_next-put-each-eye-s-picture-in-the-middle-of-.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0028-vo_gpu_next-put-each-eye-s-picture-in-the-middle-of-.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,77 @@
++From c1dffa3649f0bb551e0e9ead680db31d129c505e Mon Sep 17 00:00:00 2001
++From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++Date: Mon, 5 Oct 2026 13:48:30 -0300
++Subject: [PATCH] vo_gpu_next: put each eye's picture in the middle of
++ its own view
++
++The video layer of a 3D video is twice the window's width, one view per
++eye. The destination rectangle of the picture was the one-view rectangle
++with its x coordinates doubled, which places the whole pair in the middle
++of the layer: each picture came out off the middle of its view by half
++the margin between the picture and the edge of the window (212 pixels for
++an unscaled 600 pixel wide view in a 1024 pixel wide window), the left
++one to the right and the right one to the left.
++
++Draw the two views one after the other instead: the left half of the
++source into the one-view rectangle, the right half of the source into the
++same rectangle moved by the window's width, the second without clearing
++the target again. The cached frames depend on the crop, so the second
++view has its own signatures.
++
++Assisted-by: Claude Sonnet via Claude Code
++---
++ video/out/vo_gpu_next.c | 34 ++++++++++++++++++++++++++--------
++ 1 file changed, 26 insertions(+), 8 deletions(-)
++
++diff --git a/video/out/vo_gpu_next.c b/video/out/vo_gpu_next.c
++index aef822c0ec..0cef915082 100644
++--- a/video/out/vo_gpu_next.c
+++++ b/video/out/vo_gpu_next.c
++@@ -1381,13 +1381,7 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
++                     PL_OVERLAY_COORDS_DST_FRAME, &p->osd_state,
++                     layered ? &ctltarget : &target, frame->current,
++                     frame->current && !layered ? frame->current->params.stereo3d : 0);
++-    // Each eye gets the picture at the window's size
++-    struct mp_rect dst = p->dst;
++-    if (stereo) {
++-        dst.x0 *= 2;
++-        dst.x1 *= 2;
++-    }
++-    apply_crop(&target, dst, swframe.fbo->params.w, swframe.fbo->params.h);
+++    apply_crop(&target, p->dst, swframe.fbo->params.w, swframe.fbo->params.h);
++     update_tm_viz(&pars->color_map_params, &target);
++ 
++     struct pl_frame_mix mix = {0};
++@@ -1488,7 +1482,31 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
++     // Render frame
++     if (layered)
++         vsw->fns->start_frame(vsw, NULL); // for contexts with a surface each
++-    if (!pl_render_image_mix(p->rr, &mix, &target, &params)) {
+++    bool render_ok = true;
+++    // Each eye gets its view at the window's size, centred in its half of the
+++    // video layer, as for a window that shows one view.
+++    for (int view = 0; view < (stereo ? 2 : 1) && render_ok; view++) {
+++        struct pl_render_params view_params = params;
+++        if (stereo) {
+++            struct mp_rect src = p->src, dst = p->dst;
+++            int half = (src.x1 - src.x0) / 2;
+++            src.x0 += view * half;
+++            src.x1 = src.x0 + half;
+++            dst.x0 += view * ctlframe.fbo->params.w;
+++            dst.x1 += view * ctlframe.fbo->params.w;
+++            for (int i = 0; i < mix.num_frames; i++) {
+++                apply_crop((struct pl_frame *) mix.frames[i], src,
+++                           vo->params->w, vo->params->h);
+++                // The cached frames depend on the crop
+++                ((uint64_t *) mix.signatures)[i] ^= (uint64_t) view << 47;
+++            }
+++            apply_crop(&target, dst, swframe.fbo->params.w, swframe.fbo->params.h);
+++            if (view)
+++                view_params.border = PL_CLEAR_SKIP;
+++        }
+++        render_ok = pl_render_image_mix(p->rr, &mix, &target, &view_params);
+++    }
+++    if (!render_ok) {
++         MP_ERR(vo, "Failed rendering frame!\n");
++         goto done;
++     }
+diff -Nru mpv-dmo-0.41.0/debian/patches/0029-vo_gpu-put-each-eye-s-picture-in-the-middle-of-its-o.patch mpv-dmo-0.41.0/debian/patches/0029-vo_gpu-put-each-eye-s-picture-in-the-middle-of-its-o.patch
+--- mpv-dmo-0.41.0/debian/patches/0029-vo_gpu-put-each-eye-s-picture-in-the-middle-of-its-o.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0029-vo_gpu-put-each-eye-s-picture-in-the-middle-of-its-o.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,126 @@
++From 61398246c5626a48530184270db50c7653943fdb Mon Sep 17 00:00:00 2001
++From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++Date: Mon, 5 Oct 2026 13:48:30 -0300
++Subject: [PATCH] vo_gpu: put each eye's picture in the middle of its own
++ view
++
++The video layer of a 3D video is twice the window's width, one view per
++eye. The destination rectangle was the one-view rectangle with its x
++coordinates doubled, which places the pair in the middle of the layer
++and each picture off the middle of its view, as in vo_gpu_next.
++
++Render the two views one after the other, each into its own rectangle
++(the left half of the source into the one-view rectangle, the right half
++into the same one moved by the window's width). For this, add
++RENDER_FRAME_VIEW, which draws the same frame again at another place
++(no interpolation, no cached output, both depend on the place), and
++RENDER_FRAME_KEEP, which leaves the target as the earlier view left it.
++
++Assisted-by: Claude Sonnet via Claude Code
++---
++ video/out/gpu/video.c |  7 +++++--
++ video/out/gpu/video.h |  5 +++++
++ video/out/vo_gpu.c    | 27 +++++++++++++++++++++------
++ 3 files changed, 31 insertions(+), 8 deletions(-)
++
++diff --git a/video/out/gpu/video.c b/video/out/gpu/video.c
++index 31637f4505..21549b0a68 100644
++--- a/video/out/gpu/video.c
+++++ b/video/out/gpu/video.c
++@@ -3429,7 +3429,8 @@ void gl_video_render_frame(struct gl_video *p, struct vo_frame *frame,
++     clear_color[0] *= clear_color[3];
++     clear_color[1] *= clear_color[3];
++     clear_color[2] *= clear_color[3];
++-    p->ra->fns->clear(p->ra, fbo->tex, clear_color, &target_rc);
+++    if (!(flags & RENDER_FRAME_KEEP))
+++        p->ra->fns->clear(p->ra, fbo->tex, clear_color, &target_rc);
++ 
++     if (p->hwdec_overlay && !controls) {
++         if (has_frame) {
++@@ -3450,7 +3451,8 @@ void gl_video_render_frame(struct gl_video *p, struct vo_frame *frame,
++ 
++     if (has_frame) {
++         bool interpolate = p->opts.interpolation && frame->display_synced &&
++-                           (p->frames_drawn || !frame->still);
+++                           (p->frames_drawn || !frame->still) &&
+++                           !(flags & RENDER_FRAME_VIEW);
++         if (interpolate) {
++             double ratio = frame->ideal_frame_duration / frame->vsync_interval;
++             if (fabs(ratio - 1.0) < p->opts.interpolation_threshold)
++@@ -3478,6 +3480,7 @@ void gl_video_render_frame(struct gl_video *p, struct vo_frame *frame,
++                 bool repeats = frame->num_vsyncs > 1 && frame->display_synced;
++                 bool r = false;
++                 if ((repeats || frame->still) && !p->dumb_mode &&
+++                    !(flags & RENDER_FRAME_VIEW) &&
++                     (p->ra->caps & RA_CAP_BLIT) && fbo->tex->params.blit_dst)
++                 {
++                     // Attempt to use the same format as the destination FBO
++diff --git a/video/out/gpu/video.h b/video/out/gpu/video.h
++index 1e26726343..e59cbd216b 100644
++--- a/video/out/gpu/video.h
+++++ b/video/out/gpu/video.h
++@@ -194,6 +194,11 @@ enum {
++     // Only the OSD and subtitles, over a transparent target, once each for the
++     // window's surface above the video layer
++     RENDER_FRAME_CONTROLS = 1 << 4,
+++    // One of several views of the same frame, each drawn at its own place of the
+++    // target: no interpolation and no cached output, and for the later views the
+++    // target is left as it is
+++    RENDER_FRAME_VIEW = 1 << 5,
+++    RENDER_FRAME_KEEP = 1 << 6,
++     RENDER_FRAME_DEF = RENDER_FRAME_SUBS | RENDER_FRAME_OSD | RENDER_SCREEN_COLOR,
++ };
++ 
++diff --git a/video/out/vo_gpu.c b/video/out/vo_gpu.c
++index c6a07670d5..6f9bcece85 100644
++--- a/video/out/vo_gpu.c
+++++ b/video/out/vo_gpu.c
++@@ -55,6 +55,8 @@ struct gpu_priv {
++ 
++     // The video layer, when there is one, holds both views of a 3D video
++     bool stereo;
+++    struct mp_rect src, dst;
+++    struct mp_osd_res osd;
++ };
++ static void resize(struct vo *vo)
++ {
++@@ -67,11 +69,9 @@ static void resize(struct vo *vo)
++     struct mp_rect src, dst;
++     struct mp_osd_res osd;
++     vo_get_src_dst_rects(vo, &src, &dst, &osd);
++-    // Each eye gets the picture at the window's size
++-    if (p->stereo) {
++-        dst.x0 *= 2;
++-        dst.x1 *= 2;
++-    }
+++    p->src = src;
+++    p->dst = dst;
+++    p->osd = osd;
++ 
++     gl_video_resize(p->renderer, &src, &dst, &osd);
++ 
++@@ -112,8 +112,23 @@ static bool draw_frame_layers(struct vo *vo, struct vo_frame *frame)
++     if (!sw->fns->start_frame(sw, &fbo))
++         return VO_FALSE;
++     bool video_ok = video_sw->fns->start_frame(video_sw, &video_fbo);
++-    if (video_ok)
+++    if (video_ok && !p->stereo) {
++         gl_video_render_frame(p->renderer, frame, &video_fbo, RENDER_SCREEN_COLOR);
+++    } else if (video_ok) {
+++        // Each eye gets its view at the window's size, centred in its half of the
+++        // video layer, as for a window that shows one view
+++        int half = (p->src.x1 - p->src.x0) / 2;
+++        for (int view = 0; view < 2; view++) {
+++            struct mp_rect src = p->src, dst = p->dst;
+++            src.x0 += view * half;
+++            src.x1 = src.x0 + half;
+++            dst.x0 += view * vo->dwidth;
+++            dst.x1 += view * vo->dwidth;
+++            gl_video_resize(p->renderer, &src, &dst, &p->osd);
+++            gl_video_render_frame(p->renderer, frame, &video_fbo, RENDER_SCREEN_COLOR |
+++                                  RENDER_FRAME_VIEW | (view ? RENDER_FRAME_KEEP : 0));
+++        }
+++    }
++ 
++     sw->fns->start_frame(sw, NULL); // for contexts with a surface each
++     gl_video_render_frame(p->renderer, frame, &fbo,
+diff -Nru mpv-dmo-0.41.0/debian/patches/0030-vo_dmabuf_wayland-declare-stereo-content-with-the-fr.patch mpv-dmo-0.41.0/debian/patches/0030-vo_dmabuf_wayland-declare-stereo-content-with-the-fr.patch
+--- mpv-dmo-0.41.0/debian/patches/0030-vo_dmabuf_wayland-declare-stereo-content-with-the-fr.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0030-vo_dmabuf_wayland-declare-stereo-content-with-the-fr.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,54 @@
++From 857cc5d43cc627a447c4ef5a27c69c8305435ef0 Mon Sep 17 00:00:00 2001
++From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++Date: Mon, 5 Oct 2026 13:48:30 -0300
++Subject: [PATCH] vo_dmabuf_wayland: declare stereo content with the
++ frame
++
++The declaration followed the filter chain, which runs a frame ahead of
++the one on the screen: at the end of a 3D sequence the last 3D frame was
++shown as a flat picture of its two views, and at the start of one the
++first frame was shown as undeclared. Declare in draw_frame() with the
++frame that is attached, as the gpu VOs do, so that the declaration and
++the buffer reach the compositor in the same commit.
++
++Assisted-by: Claude Sonnet via Claude Code
++---
++ video/out/vo_dmabuf_wayland.c | 11 ++++++++++-
++ 1 file changed, 10 insertions(+), 1 deletion(-)
++
++diff --git a/video/out/vo_dmabuf_wayland.c b/video/out/vo_dmabuf_wayland.c
++index deaf0640fa..bafea35116 100644
++--- a/video/out/vo_dmabuf_wayland.c
+++++ b/video/out/vo_dmabuf_wayland.c
++@@ -102,6 +102,7 @@ struct priv {
++     struct mp_osd_res screen_osd_res;
++ 
++     bool destroy_buffers;
+++    bool stereo_declared;
++     bool force_window;
++     enum hwdec_type hwdec_type;
++ 
++@@ -638,6 +639,13 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
++                                      image->h);
++ 
++         }
+++
+++        // The declaration changes with the frame that needs it
+++        bool stereo = frame->current->params.stereo3d == MP_STEREO3D_SBSL;
+++        if (stereo != p->stereo_declared) {
+++            vo_wayland_set_stereo_content(wl, stereo);
+++            p->stereo_declared = stereo;
+++        }
++     }
++ 
++     osd_buf = osd_buffer_get(vo);
++@@ -757,7 +765,8 @@ static int control(struct vo *vo, uint32_t request, void *data)
++ 
++     switch (request) {
++     case VOCTRL_SET_STEREO_CONTENT:
++-        return vo_wayland_set_stereo_content(vo->wl, *(bool *)data);
+++        // The declaration follows the frames in draw_frame()
+++        return true;
++     case VOCTRL_RESET:
++         p->destroy_buffers = true;
++         return VO_TRUE;
+diff -Nru mpv-dmo-0.41.0/debian/patches/0031-vo_gpu-interpolate-each-view-of-a-stereo-video-from-.patch mpv-dmo-0.41.0/debian/patches/0031-vo_gpu-interpolate-each-view-of-a-stereo-video-from-.patch
+--- mpv-dmo-0.41.0/debian/patches/0031-vo_gpu-interpolate-each-view-of-a-stereo-video-from-.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0031-vo_gpu-interpolate-each-view-of-a-stereo-video-from-.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,162 @@
++From ccfc7b22c8e517d621822ec3d5efcaec69e2593c Mon Sep 17 00:00:00 2001
++From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++Date: Mon, 5 Oct 2026 15:24:05 -0300
++Subject: [PATCH] vo_gpu: interpolate each view of a stereo video from
++ its own frames
++
++The renderer keeps one history of past output frames (the surface queue
++with its position and the count of frames drawn) and one pair of source
++and destination rectangles. The video layer of a 3D video is drawn in two
++passes, one per eye, and the previous change had to switch interpolation
++off for them: with one history, the left view's pass would take its
++neighbouring frames from the right view's.
++
++Give each view its own state: the second view's rectangles, surfaces and
++counters sit in a struct and gl_video_set_view() swaps them with the ones
++in use, so that every pass reads and writes the history of its own view.
++Both eyes get the same mix for the same output time, each from its own
++past. A mono video only uses view 0 and behaves as before.
++RENDER_FRAME_VIEW now only keeps the finished picture of the other view
++from being redrawn from the cached output.
++
++Assisted-by: Claude Sonnet via Claude Code
++---
++ video/out/gpu/video.c | 47 +++++++++++++++++++++++++++++++++++++------
++ video/out/gpu/video.h |  7 ++++---
++ video/out/vo_gpu.c    |  2 ++
++ 3 files changed, 47 insertions(+), 9 deletions(-)
++
++diff --git a/video/out/gpu/video.c b/video/out/gpu/video.c
++index 21549b0a68..a1c0866aa7 100644
++--- a/video/out/gpu/video.c
+++++ b/video/out/gpu/video.c
++@@ -124,6 +124,17 @@ struct surface {
++ 
++ #define SURFACES_MAX 10
++ 
+++// What a view of a stereo video needs to interpolate on its own: the video
+++// layer holds both views, and each is drawn from its own history of frames.
+++struct view_state {
+++    struct mp_rect src_rect;
+++    struct mp_rect dst_rect;
+++    struct surface surfaces[SURFACES_MAX];
+++    int surface_idx;
+++    int surface_now;
+++    int frames_drawn;
+++};
+++
++ struct cached_file {
++     char *path;
++     struct bstr body;
++@@ -232,6 +243,10 @@ struct gl_video {
++     struct mp_rect dst_rect;    // video rectangle on output window
++     struct mp_osd_res osd_rect; // OSD size/margins
++ 
+++    // The fields above are those of the view in use; the other view's are here
+++    int view;
+++    struct view_state other_view;
+++
++     // temporary during rendering
++     struct compute_info pass_compute; // compute shader metadata for this pass
++     struct image *pass_imgs;          // bound images for this pass
++@@ -615,13 +630,32 @@ static void gl_video_reset_surfaces(struct gl_video *p)
++     for (int i = 0; i < SURFACES_MAX; i++) {
++         p->surfaces[i].id = 0;
++         p->surfaces[i].pts = MP_NOPTS_VALUE;
+++        p->other_view.surfaces[i].id = 0;
+++        p->other_view.surfaces[i].pts = MP_NOPTS_VALUE;
++     }
++-    p->surface_idx = 0;
++-    p->surface_now = 0;
++-    p->frames_drawn = 0;
+++    p->surface_idx = p->other_view.surface_idx = 0;
+++    p->surface_now = p->other_view.surface_now = 0;
+++    p->frames_drawn = p->other_view.frames_drawn = 0;
++     p->output_tex_valid = false;
++ }
++ 
+++// Use the rectangles and the interpolation history of a view (0 or 1). A
+++// mono video only has view 0.
+++void gl_video_set_view(struct gl_video *p, int view)
+++{
+++    if (view == p->view)
+++        return;
+++    struct view_state *o = &p->other_view;
+++    MPSWAP(struct mp_rect, p->src_rect, o->src_rect);
+++    MPSWAP(struct mp_rect, p->dst_rect, o->dst_rect);
+++    for (int i = 0; i < SURFACES_MAX; i++)
+++        MPSWAP(struct surface, p->surfaces[i], o->surfaces[i]);
+++    MPSWAP(int, p->surface_idx, o->surface_idx);
+++    MPSWAP(int, p->surface_now, o->surface_now);
+++    MPSWAP(int, p->frames_drawn, o->frames_drawn);
+++    p->view = view;
+++}
+++
++ static void gl_video_reset_hooks(struct gl_video *p)
++ {
++     for (int i = 0; i < p->num_tex_hooks; i++)
++@@ -670,8 +704,10 @@ static void uninit_rendering(struct gl_video *p)
++     for (int n = 0; n < 2; n++)
++         ra_tex_free(p->ra, &p->error_diffusion_tex[n]);
++ 
++-    for (int n = 0; n < SURFACES_MAX; n++)
+++    for (int n = 0; n < SURFACES_MAX; n++) {
++         ra_tex_free(p->ra, &p->surfaces[n].tex);
+++        ra_tex_free(p->ra, &p->other_view.surfaces[n].tex);
+++    }
++ 
++     for (int n = 0; n < p->num_hook_textures; n++)
++         ra_tex_free(p->ra, &p->hook_textures[n]);
++@@ -3451,8 +3487,7 @@ void gl_video_render_frame(struct gl_video *p, struct vo_frame *frame,
++ 
++     if (has_frame) {
++         bool interpolate = p->opts.interpolation && frame->display_synced &&
++-                           (p->frames_drawn || !frame->still) &&
++-                           !(flags & RENDER_FRAME_VIEW);
+++                           (p->frames_drawn || !frame->still);
++         if (interpolate) {
++             double ratio = frame->ideal_frame_duration / frame->vsync_interval;
++             if (fabs(ratio - 1.0) < p->opts.interpolation_threshold)
++diff --git a/video/out/gpu/video.h b/video/out/gpu/video.h
++index e59cbd216b..547e2bea5a 100644
++--- a/video/out/gpu/video.h
+++++ b/video/out/gpu/video.h
++@@ -194,10 +194,10 @@ enum {
++     // Only the OSD and subtitles, over a transparent target, once each for the
++     // window's surface above the video layer
++     RENDER_FRAME_CONTROLS = 1 << 4,
++-    // One of several views of the same frame, each drawn at its own place of the
++-    // target: no interpolation and no cached output, and for the later views the
++-    // target is left as it is
+++    // One of the views of the same frame, each drawn at its own place of the
+++    // target: no cached output, which depends on the place
++     RENDER_FRAME_VIEW = 1 << 5,
+++    // Leave the target as it is, for the views drawn after the first
++     RENDER_FRAME_KEEP = 1 << 6,
++     RENDER_FRAME_DEF = RENDER_FRAME_SUBS | RENDER_FRAME_OSD | RENDER_SCREEN_COLOR,
++ };
++@@ -210,6 +210,7 @@ bool gl_video_check_format(struct gl_video *p, int mp_format);
++ void gl_video_config(struct gl_video *p, struct mp_image_params *params);
++ void gl_video_render_frame(struct gl_video *p, struct vo_frame *frame,
++                            const struct ra_fbo *fbo, int flags);
+++void gl_video_set_view(struct gl_video *p, int view);
++ void gl_video_resize(struct gl_video *p,
++                      struct mp_rect *src, struct mp_rect *dst,
++                      struct mp_osd_res *osd);
++diff --git a/video/out/vo_gpu.c b/video/out/vo_gpu.c
++index 6f9bcece85..a5a80e2e1d 100644
++--- a/video/out/vo_gpu.c
+++++ b/video/out/vo_gpu.c
++@@ -124,10 +124,12 @@ static bool draw_frame_layers(struct vo *vo, struct vo_frame *frame)
++             src.x1 = src.x0 + half;
++             dst.x0 += view * vo->dwidth;
++             dst.x1 += view * vo->dwidth;
+++            gl_video_set_view(p->renderer, view);
++             gl_video_resize(p->renderer, &src, &dst, &p->osd);
++             gl_video_render_frame(p->renderer, frame, &video_fbo, RENDER_SCREEN_COLOR |
++                                   RENDER_FRAME_VIEW | (view ? RENDER_FRAME_KEEP : 0));
++         }
+++        gl_video_set_view(p->renderer, 0);
++     }
++ 
++     sw->fns->start_frame(sw, NULL); // for contexts with a surface each
+diff -Nru mpv-dmo-0.41.0/debian/patches/0032-demux-expose-how-a-video-maps-a-sphere-as-track-list.patch mpv-dmo-0.41.0/debian/patches/0032-demux-expose-how-a-video-maps-a-sphere-as-track-list.patch
+--- mpv-dmo-0.41.0/debian/patches/0032-demux-expose-how-a-video-maps-a-sphere-as-track-list.patch	1970-01-01 00:00:00.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/0032-demux-expose-how-a-video-maps-a-sphere-as-track-list.patch	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,365 @@
++From 50f2a394a98eb2233f9e99a793728ef3b65c7fba Mon Sep 17 00:00:00 2001
++From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++Date: Tue, 6 Oct 2026 22:27:18 -0300
++Subject: [PATCH] demux: expose how a video maps a sphere as
++ track-list/N/demux-projection
++
++A 360 or VR180 video says in its container how the sphere is laid out
++in the frame (MP4 sv3d, Matroska Projection), and FFmpeg exports it as
++spherical side data, but mpv did not pass it on, so a player could not
++tell such a video from an ordinary one without parsing the file itself.
++
++Read the spherical side data of the stream in demux_lavf and
++ProjectionType in demux_mkv, and expose the result in the track list:
++equirectangular, half-equirectangular (the front half, as VR180 writes
++it: an equirectangular picture with half of the width cut off), the
++other equirectangular tiles, cubemap and mesh. Nothing changes for
++playback; a script or a libmpv client can now choose a v360 filter.
++
++Assisted-by: Claude Sonnet via Claude Code
++---
++ DOCS/man/input.rst | 10 +++++++
++ demux/demux_lavf.c |  4 +++
++ demux/demux_mkv.c  |  8 ++++++
++ demux/stheader.h   |  2 ++
++ meson.build        |  1 +
++ player/command.c   |  2 ++
++ test/meson.build   |  6 ++++
++ test/projection.c  | 54 ++++++++++++++++++++++++++++++++++++
++ video/projection.c | 69 ++++++++++++++++++++++++++++++++++++++++++++++
++ video/projection.h | 44 +++++++++++++++++++++++++++++
++ 10 files changed, 200 insertions(+)
++ create mode 100644 test/projection.c
++ create mode 100644 video/projection.c
++ create mode 100644 video/projection.h
++
++diff --git a/DOCS/man/input.rst b/DOCS/man/input.rst
++index 24f9d7a5cf..7548b9a29e 100644
++--- a/DOCS/man/input.rst
+++++ b/DOCS/man/input.rst
++@@ -3456,6 +3456,15 @@ Property list
++     ``track-list/N/demux-par``
++         Pixel aspect ratio.
++ 
+++    ``track-list/N/demux-projection``
+++        How the container says the video maps a sphere onto the frame (MP4
+++        ``sv3d``, Matroska ``Projection``): ``equirectangular`` (the whole
+++        sphere, 360 by 180 degrees), ``half-equirectangular`` (the front half,
+++        180 by 180 degrees, as VR180), ``equirectangular-tile`` (another part
+++        of an equirectangular picture), ``cubemap`` or ``mesh``. The property
+++        is unavailable for an ordinary video. Use ``--vf=lavfi=[v360=...]``
+++        to turn such a video into a flat view.
+++
++     ``track-list/N/format-name``
++         Short name for format from ffmpeg. If the track is audio, this will be
++         the name of the sample format. If the track is video, this will be the
++@@ -3527,6 +3536,7 @@ Property list
++                 "demux-bitrate"     MPV_FORMAT_INT64
++                 "demux-rotation"    MPV_FORMAT_INT64
++                 "demux-par"         MPV_FORMAT_DOUBLE
+++                "demux-projection"  MPV_FORMAT_STRING
++                 "format-name"       MPV_FORMAT_STRING
++                 "audio-channels"    MPV_FORMAT_INT64
++                 "replaygain-track-peak" MPV_FORMAT_DOUBLE
++diff --git a/demux/demux_lavf.c b/demux/demux_lavf.c
++index 4ab2cd2921..c49d0d088e 100644
++--- a/demux/demux_lavf.c
+++++ b/demux/demux_lavf.c
++@@ -37,6 +37,7 @@
++ #include <libavutil/opt.h>
++ #include <libavutil/pixdesc.h>
++ #include <libavutil/replaygain.h>
+++#include <libavutil/spherical.h>
++ #include <libavutil/stereo3d.h>
++ 
++ #include "audio/chmap_avchannel.h"
++@@ -766,6 +767,9 @@ static void handle_new_stream(demuxer_t *demuxer, int i)
++         if ((sd = mp_av_stream_get_side_data(st, AV_PKT_DATA_STEREO3D)))
++             sh->codec->stereo_mode = mp_stereo3d_from_av((const AVStereo3D *)sd);
++ 
+++        if ((sd = mp_av_stream_get_side_data(st, AV_PKT_DATA_SPHERICAL)))
+++            sh->codec->projection = mp_projection_from_av((const AVSphericalMapping *)sd);
+++
++         if ((sd = mp_av_stream_get_side_data(st, AV_PKT_DATA_DOVI_CONF))) {
++             const AVDOVIDecoderConfigurationRecord *cfg = (void *) sd;
++             MP_VERBOSE(demuxer, "Found Dolby Vision config record: profile "
++diff --git a/demux/demux_mkv.c b/demux/demux_mkv.c
++index 501d20e977..4e656cb985 100644
++--- a/demux/demux_mkv.c
+++++ b/demux/demux_mkv.c
++@@ -116,6 +116,7 @@ typedef struct mkv_track {
++     struct pl_color_space color;
++     enum pl_chroma_location chroma_location;
++     uint32_t v_crop_top, v_crop_left, v_crop_right, v_crop_bottom;
+++    int v_projection_type;
++     float v_projection_pose_yaw;
++     float v_projection_pose_pitch;
++     float v_projection_pose_roll;
++@@ -692,6 +693,12 @@ static void parse_trackcolour(struct demuxer *demuxer, struct mkv_track *track,
++ static void parse_trackprojection(struct demuxer *demuxer, struct mkv_track *track,
++                                   struct ebml_projection *projection)
++ {
+++    if (projection->n_projection_type) {
+++        track->v_projection_type = mp_projection_from_mkv(projection->projection_type);
+++        MP_DBG(demuxer, "|   + Projection type: %"PRIu64"\n",
+++               projection->projection_type);
+++    }
+++
++     if (projection->n_projection_pose_yaw) {
++         track->v_projection_pose_yaw = projection->projection_pose_yaw;
++         MP_DBG(demuxer, "|   + Projection pose yaw: %f\n",
++@@ -1746,6 +1753,7 @@ static int demux_mkv_open_video(demuxer_t *demuxer, mkv_track_t *track)
++     sh_v->par_h = p.p_h;
++ 
++     sh_v->stereo_mode = track->stereo_mode;
+++    sh_v->projection = track->v_projection_type;
++     sh_v->repr = track->repr;
++     sh_v->color = track->color;
++     sh_v->chroma_location = track->chroma_location;
++diff --git a/demux/stheader.h b/demux/stheader.h
++index 42046a496b..5d30eb18c5 100644
++--- a/demux/stheader.h
+++++ b/demux/stheader.h
++@@ -24,6 +24,7 @@
++ #include "common/common.h"
++ #include "audio/chmap.h"
++ #include "video/mp_image.h"
+++#include "video/projection.h"
++ 
++ struct MPOpts;
++ struct demuxer;
++@@ -119,6 +120,7 @@ struct mp_codec_params {
++     int disp_w, disp_h;   // display size
++     int rotate;           // intended display rotation, in degrees, [0, 359]
++     int stereo_mode;      // mp_stereo3d_mode (0 if none/unknown)
+++    int projection;       // mp_projection (0 if none/unknown)
++     struct pl_color_space color; // colorspace info where available
++     struct pl_color_repr repr;   // color representation info where available
++     enum pl_chroma_location chroma_location; // chroma location
++diff --git a/meson.build b/meson.build
++index 89e0458762..777e9dac63 100644
++--- a/meson.build
+++++ b/meson.build
++@@ -218,6 +218,7 @@ sources = files(
++     'video/image_writer.c',
++     'video/img_format.c',
++     'video/mp_image.c',
+++    'video/projection.c',
++     'video/mp_image_pool.c',
++     'video/out/aspect.c',
++     'video/out/bitmap_packer.c',
++diff --git a/player/command.c b/player/command.c
++index 96bc06a0b0..e6a6ccd00e 100644
++--- a/player/command.c
+++++ b/player/command.c
++@@ -2092,6 +2092,8 @@ static int get_track_entry(int item, int action, void *arg, void *ctx)
++         {"demux-bitrate",  SUB_PROP_INT(p.bitrate), .unavailable = p.bitrate <= 0},
++         {"demux-rotation", SUB_PROP_INT(p.rotate),  .unavailable = p.rotate <= 0},
++         {"demux-par",      SUB_PROP_DOUBLE(par),    .unavailable = par <= 0},
+++        {"demux-projection", SUB_PROP_STR(mp_projection_name(p.projection)),
+++                        .unavailable = !mp_projection_name(p.projection)},
++         {"format-name", SUB_PROP_STR(p.format_name), .unavailable = !p.format_name},
++         {"replaygain-track-peak", SUB_PROP_FLOAT(rg.track_peak),
++                         .unavailable = !has_rg},
++diff --git a/test/meson.build b/test/meson.build
++index b67074166b..1d6bdfdf67 100644
++--- a/test/meson.build
+++++ b/test/meson.build
++@@ -99,6 +99,12 @@ test('linked-list', linked_list)
++ timer = executable('timer', files('timer.c'), include_directories: incdir, link_with: test_utils)
++ test('timer', timer)
++ 
+++projection = executable('projection', files('projection.c'),
+++                        objects: libmpv.extract_objects('video/projection.c'),
+++                        include_directories: incdir, dependencies: libavutil,
+++                        link_with: test_utils)
+++test('projection', projection)
+++
++ format = executable('format', files('format.c'), include_directories: incdir, link_with: test_utils)
++ test('format', format)
++ 
++diff --git a/test/projection.c b/test/projection.c
++new file mode 100644
++index 0000000000..718d620f75
++--- /dev/null
+++++ b/test/projection.c
++@@ -0,0 +1,54 @@
+++#include <libavutil/spherical.h>
+++
+++#include "test_utils.h"
+++#include "video/projection.h"
+++
+++static void test_from_av(void)
+++{
+++    AVSphericalMapping s = {0};
+++
+++    s.projection = AV_SPHERICAL_EQUIRECTANGULAR;
+++    assert_int_equal(mp_projection_from_av(&s), MP_PROJECTION_EQUIRECTANGULAR);
+++
+++    s.projection = AV_SPHERICAL_CUBEMAP;
+++    assert_int_equal(mp_projection_from_av(&s), MP_PROJECTION_CUBEMAP);
+++
+++    // VR180 as the container writes it: a quarter of the width cut off each side
+++    s.projection = AV_SPHERICAL_EQUIRECTANGULAR_TILE;
+++    s.bound_left = s.bound_right = UINT32_C(1) << 30;
+++    assert_int_equal(mp_projection_from_av(&s), MP_PROJECTION_HALF_EQUIRECTANGULAR);
+++
+++    // any other part of the picture is only told as a tile
+++    s.bound_left = UINT32_C(1) << 29;
+++    assert_int_equal(mp_projection_from_av(&s), MP_PROJECTION_EQUIRECTANGULAR_TILE);
+++    s.bound_left = s.bound_right = UINT32_C(1) << 30;
+++    s.bound_top = 1;
+++    assert_int_equal(mp_projection_from_av(&s), MP_PROJECTION_EQUIRECTANGULAR_TILE);
+++}
+++
+++static void test_from_mkv(void)
+++{
+++    assert_int_equal(mp_projection_from_mkv(0), MP_PROJECTION_NONE);
+++    assert_int_equal(mp_projection_from_mkv(1), MP_PROJECTION_EQUIRECTANGULAR);
+++    assert_int_equal(mp_projection_from_mkv(2), MP_PROJECTION_CUBEMAP);
+++    assert_int_equal(mp_projection_from_mkv(3), MP_PROJECTION_MESH);
+++    assert_int_equal(mp_projection_from_mkv(4), MP_PROJECTION_NONE);
+++}
+++
+++static void test_names(void)
+++{
+++    assert_true(!mp_projection_name(MP_PROJECTION_NONE));
+++    assert_string_equal(mp_projection_name(MP_PROJECTION_EQUIRECTANGULAR), "equirectangular");
+++    assert_string_equal(mp_projection_name(MP_PROJECTION_HALF_EQUIRECTANGULAR), "half-equirectangular");
+++    assert_string_equal(mp_projection_name(MP_PROJECTION_EQUIRECTANGULAR_TILE), "equirectangular-tile");
+++    assert_string_equal(mp_projection_name(MP_PROJECTION_CUBEMAP), "cubemap");
+++    assert_string_equal(mp_projection_name(MP_PROJECTION_MESH), "mesh");
+++}
+++
+++int main(void)
+++{
+++    test_from_av();
+++    test_from_mkv();
+++    test_names();
+++    return 0;
+++}
++diff --git a/video/projection.c b/video/projection.c
++new file mode 100644
++index 0000000000..21273dd28a
++--- /dev/null
+++++ b/video/projection.c
++@@ -0,0 +1,69 @@
+++/*
+++ * This file is part of mpv.
+++ *
+++ * mpv is free software; you can redistribute it and/or
+++ * modify it under the terms of the GNU Lesser General Public
+++ * License as published by the Free Software Foundation; either
+++ * version 2.1 of the License, or (at your option) any later version.
+++ *
+++ * mpv is distributed in the hope that it will be useful,
+++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+++ * GNU Lesser General Public License for more details.
+++ *
+++ * You should have received a copy of the GNU Lesser General Public
+++ * License along with mpv.  If not, see <http://www.gnu.org/licenses/>.
+++ */
+++
+++#include <libavutil/spherical.h>
+++#include <libavutil/version.h>
+++
+++#include "projection.h"
+++
+++const char *mp_projection_name(enum mp_projection projection)
+++{
+++    switch (projection) {
+++    case MP_PROJECTION_EQUIRECTANGULAR: return "equirectangular";
+++    case MP_PROJECTION_HALF_EQUIRECTANGULAR: return "half-equirectangular";
+++    case MP_PROJECTION_EQUIRECTANGULAR_TILE: return "equirectangular-tile";
+++    case MP_PROJECTION_CUBEMAP: return "cubemap";
+++    case MP_PROJECTION_MESH: return "mesh";
+++    default: return NULL;
+++    }
+++}
+++
+++enum mp_projection mp_projection_from_av(const AVSphericalMapping *spherical)
+++{
+++    switch (spherical->projection) {
+++    case AV_SPHERICAL_EQUIRECTANGULAR:
+++        return MP_PROJECTION_EQUIRECTANGULAR;
+++#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(59, 23, 100)
+++    case AV_SPHERICAL_HALF_EQUIRECTANGULAR:
+++        return MP_PROJECTION_HALF_EQUIRECTANGULAR;
+++#endif
+++    case AV_SPHERICAL_EQUIRECTANGULAR_TILE: {
+++        // The bounds are the parts cut off each side, as fractions of the
+++        // whole picture in 0.32 fixed point. Cut half of the width and
+++        // nothing of the height is the front hemisphere of VR180.
+++        const uint32_t half = UINT32_C(1) << 31;
+++        if ((uint64_t)spherical->bound_left + spherical->bound_right == half &&
+++            !spherical->bound_top && !spherical->bound_bottom)
+++            return MP_PROJECTION_HALF_EQUIRECTANGULAR;
+++        return MP_PROJECTION_EQUIRECTANGULAR_TILE;
+++    }
+++    case AV_SPHERICAL_CUBEMAP:
+++        return MP_PROJECTION_CUBEMAP;
+++    default:
+++        return MP_PROJECTION_NONE;
+++    }
+++}
+++
+++enum mp_projection mp_projection_from_mkv(uint64_t projection_type)
+++{
+++    switch (projection_type) {
+++    case 1: return MP_PROJECTION_EQUIRECTANGULAR;
+++    case 2: return MP_PROJECTION_CUBEMAP;
+++    case 3: return MP_PROJECTION_MESH;
+++    default: return MP_PROJECTION_NONE;
+++    }
+++}
++diff --git a/video/projection.h b/video/projection.h
++new file mode 100644
++index 0000000000..0c122b7aae
++--- /dev/null
+++++ b/video/projection.h
++@@ -0,0 +1,44 @@
+++/*
+++ * This file is part of mpv.
+++ *
+++ * mpv is free software; you can redistribute it and/or
+++ * modify it under the terms of the GNU Lesser General Public
+++ * License as published by the Free Software Foundation; either
+++ * version 2.1 of the License, or (at your option) any later version.
+++ *
+++ * mpv is distributed in the hope that it will be useful,
+++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+++ * GNU Lesser General Public License for more details.
+++ *
+++ * You should have received a copy of the GNU Lesser General Public
+++ * License along with mpv.  If not, see <http://www.gnu.org/licenses/>.
+++ */
+++
+++#ifndef MP_VIDEO_PROJECTION_H
+++#define MP_VIDEO_PROJECTION_H
+++
+++#include <stdint.h>
+++
+++struct AVSphericalMapping;
+++
+++// How a video that is a view of a sphere maps the sphere onto the frame,
+++// as the container says it (MP4 sv3d, Matroska Projection).
+++enum mp_projection {
+++    MP_PROJECTION_NONE = 0,             // an ordinary picture, or not told
+++    MP_PROJECTION_EQUIRECTANGULAR,      // the whole sphere, 360 by 180 degrees
+++    MP_PROJECTION_HALF_EQUIRECTANGULAR, // the front half, 180 by 180 degrees (VR180)
+++    MP_PROJECTION_EQUIRECTANGULAR_TILE, // another part of an equirectangular picture
+++    MP_PROJECTION_CUBEMAP,
+++    MP_PROJECTION_MESH,                 // by a mesh in the stream, which is not read
+++};
+++
+++// The name for the track-list property, NULL for none
+++const char *mp_projection_name(enum mp_projection projection);
+++
+++enum mp_projection mp_projection_from_av(const struct AVSphericalMapping *spherical);
+++
+++// Matroska's ProjectionType: 0 rectangular, 1 equirectangular, 2 cubemap, 3 mesh
+++enum mp_projection mp_projection_from_mkv(uint64_t projection_type);
+++
+++#endif
+diff -Nru mpv-dmo-0.41.0/debian/patches/series mpv-dmo-0.41.0/debian/patches/series
+--- mpv-dmo-0.41.0/debian/patches/series	2026-06-27 10:20:52.000000000 +0000
++++ mpv-dmo-0.41.0/debian/patches/series	2026-10-08 00:32:31.000000000 +0000
+@@ -0,0 +1,32 @@
++0001-vo_gpu_next-add-stereo-osd-support.patch
++0002-mp_image-read-stereo-3D-layout-from-AV_FRAME_DATA_ST.patch
++0003-f_decoder_wrapper-prefer-bitstream-stereo-3D-layout-.patch
++0004-vf_format-make-stereo-in-mono-override-the-source-mo.patch
++0005-csputils-update-stale-stereo3d-name-comments.patch
++0006-vo_gpu-remove-unused-OSD-change-check.patch
++0007-csputils-share-the-AVStereo3D-to-mp_stereo3d_mode-ma.patch
++0008-demux_lavf-read-the-stereo-3D-mode-from-the-stream-s.patch
++0009-video-csputils-add-full-side-by-side-and-top-and-bot.patch
++0010-filters-add-an-automatic-filter-that-unpacks-3D-vide.patch
++0011-vo_dmabuf_wayland-x11_common-declare-stereo-video-to.patch
++0012-sub-osd-draw-the-OSD-once-per-view-into-a-full-side-.patch
++0013-filters-tell-full-from-half-stereo-packings-by-the-f.patch
++0014-vo_x11-size-the-window-of-a-declared-video-at-one-vi.patch
++0015-wayland_common-declare-stereo-content-from-the-commo.patch
++0016-vo-let-a-VO-say-at-run-time-that-its-window-shows-on.patch
++0017-wayland_common-add-a-video-layer-under-the-window-s-.patch
++0018-vulkan-create-a-swapchain-for-the-video-layer-on-Way.patch
++0019-vo_gpu_next-draw-the-video-and-the-controls-into-sep.patch
++0020-opengl-add-the-swapchain-of-a-video-layer.patch
++0021-opengl-draw-into-a-video-layer-under-the-window-s-su.patch
++0022-vulkan-add-the-video-layer-s-swapchain-to-the-ra_ctx.patch
++0023-vo_gpu_next-draw-the-video-and-the-controls-into-sep.patch
++0024-vo_gpu-add-a-way-to-render-only-the-OSD-and-subtitle.patch
++0025-vo_gpu-draw-the-video-and-the-controls-into-separate.patch
++0026-opengl-let-an-EGL-context-be-created-without-a-confi.patch
++0027-opengl-keep-the-video-layer-s-config-on-Wayland.patch
++0028-vo_gpu_next-put-each-eye-s-picture-in-the-middle-of-.patch
++0029-vo_gpu-put-each-eye-s-picture-in-the-middle-of-its-o.patch
++0030-vo_dmabuf_wayland-declare-stereo-content-with-the-fr.patch
++0031-vo_gpu-interpolate-each-view-of-a-stereo-video-from-.patch
++0032-demux-expose-how-a-video-maps-a-sphere-as-track-list.patch
+diff -Nru mpv-dmo-0.41.0/debian/rules mpv-dmo-0.41.0/debian/rules
+--- mpv-dmo-0.41.0/debian/rules	2026-06-27 12:28:03.000000000 +0000
++++ mpv-dmo-0.41.0/debian/rules	2026-10-08 00:32:31.000000000 +0000
+@@ -11,6 +11,7 @@
+ 	-Ddvbin=enabled \
+ 	-Ddvdnav=enabled \
+ 	-Dsndio=disabled \
++	-Dstereo-declare=enabled \
+ 	-Dlibmpv=true \
+ 	-Dvapoursynth=disabled
+ 

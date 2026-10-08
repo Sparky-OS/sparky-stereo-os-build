@@ -1,0 +1,486 @@
+From 9a032eb3ce96a567a3947d42e19a9668594b41dc Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 21 Sep 2026 22:23:28 -0300
+Subject: [PATCH] avcodec/h2645_sei: honor frame-packing persistence
+
+H.264 frame-packing state is currently cleared for every access unit even
+when arrangement_repetition_period is non-zero. HEVC parses the same message
+but discards arrangement_persistence_flag, leaving its state sticky.
+
+For HEVC, read the persistence flag and apply it after exporting side data
+for the current frame.
+
+For H.264 an arrangement lasts until the next message or the end of the
+coded video sequence, in output order (H.264 D.2.26). Keep the message
+with its picture and resolve the arrangement when the picture is selected
+for output, so that a message reaches the pictures output after it even if
+they were decoded earlier, a cancellation does not reach the ones output
+before it, and nothing survives an IDR picture or a flush. Temporal
+interleaving alternates the constituent frames in output order. The state
+is copied between frame threads with the other output state.
+
+Export the Stereo 3D side data only there, using ff_decode_stereo3d_new(),
+so that side data supplied by the caller or the container is neither
+removed nor duplicated and -side_data_prefer_packet is honored.
+
+Add H.264 and HEVC FATE samples covering persistent, cancelled and
+current-frame-only arrangements. The H.264 test uses four frame threads to
+exercise context propagation.
+
+Suggested-by: Kacper Michajlow (kasper93)
+Link: https://github.com/mpv-player/mpv/pull/18490#discussion_r4066349407
+Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Assisted-by: Claude Sonnet via Claude Code
+---
+ libavcodec/decode.c                           |  13 ++
+ libavcodec/decode.h                           |  10 ++
+ libavcodec/h2645_sei.c                        | 115 +++++++++++-------
+ libavcodec/h2645_sei.h                        |   6 +
+ libavcodec/h264_picture.c                     |  22 ++++
+ libavcodec/h264_sei.c                         |   1 +
+ libavcodec/h264_slice.c                       |   6 +
+ libavcodec/h264dec.c                          |   6 +
+ libavcodec/h264dec.h                          |  11 ++
+ tests/fate/h264.mak                           |   3 +
+ tests/fate/hevc.mak                           |   3 +
+ tests/ref/fate/h264-frame-packing-persistence |   8 ++
+ tests/ref/fate/hevc-frame-packing-persistence |   8 ++
+ 13 files changed, 168 insertions(+), 44 deletions(-)
+ create mode 100644 tests/ref/fate/h264-frame-packing-persistence
+ create mode 100644 tests/ref/fate/hevc-frame-packing-persistence
+
+diff --git a/libavcodec/decode.c b/libavcodec/decode.c
+index ba6ff8a..3f1dfac 100644
+--- a/libavcodec/decode.c
++++ b/libavcodec/decode.c
+@@ -2318,6 +2318,19 @@ int ff_decode_content_light_new(const AVCodecContext *avctx, AVFrame *frame,
+     return *clm ? 0 : AVERROR(ENOMEM);
+ }
+ 
++int ff_decode_stereo3d_new(const AVCodecContext *avctx, AVFrame *frame,
++                           AVStereo3D **stereo)
++{
++    if (side_data_pref(avctx, &frame->side_data, &frame->nb_side_data,
++                       AV_FRAME_DATA_STEREO3D)) {
++        *stereo = NULL;
++        return 0;
++    }
++
++    *stereo = av_stereo3d_create_side_data(frame);
++    return *stereo ? 0 : AVERROR(ENOMEM);
++}
++
+ int ff_copy_palette(void *dst, const AVPacket *src, void *logctx)
+ {
+     size_t size;
+diff --git a/libavcodec/decode.h b/libavcodec/decode.h
+index 215b862..62f5613 100644
+--- a/libavcodec/decode.h
++++ b/libavcodec/decode.h
+@@ -195,6 +195,7 @@ int ff_frame_new_side_data_from_buf_ext(const AVCodecContext *avctx,
+ 
+ struct AVMasteringDisplayMetadata;
+ struct AVContentLightMetadata;
++struct AVStereo3D;
+ 
+ /**
+  * Wrapper around av_mastering_display_metadata_create_side_data(), which
+@@ -230,4 +231,13 @@ int ff_decode_content_light_new_ext(const AVCodecContext *avctx,
+                                     AVFrameSideData ***sd, int *nb_sd,
+                                     struct AVContentLightMetadata **clm);
+ 
++/**
++ * Wrapper around av_stereo3d_create_side_data(), which rejects side data
++ * overridden by the demuxer. Returns 0 on success, and a negative error code
++ * otherwise. If successful, *stereo may either be a pointer to the new side
++ * data, or NULL in case the side data was already present.
++ */
++int ff_decode_stereo3d_new(const AVCodecContext *avctx, AVFrame *frame,
++                           struct AVStereo3D **stereo);
++
+ #endif /* AVCODEC_DECODE_H */
+diff --git a/libavcodec/h2645_sei.c b/libavcodec/h2645_sei.c
+index 7351997..0d12d1f 100644
+--- a/libavcodec/h2645_sei.c
++++ b/libavcodec/h2645_sei.c
+@@ -127,6 +127,7 @@ static int decode_frame_packing_arrangement(H2645SEIFramePacking *h,
+     h->arrangement_id          = get_ue_golomb_long(gb);
+     h->arrangement_cancel_flag = get_bits1(gb);
+     h->present = !h->arrangement_cancel_flag;
++    h->message_present = 1;
+ 
+     if (h->present) {
+         h->arrangement_type              = get_bits(gb, 7);
+@@ -145,7 +146,7 @@ static int decode_frame_packing_arrangement(H2645SEIFramePacking *h,
+         if (IS_H264(codec_id))
+             h->arrangement_repetition_period = get_ue_golomb_long(gb);
+         else
+-            skip_bits1(gb); // frame_packing_arrangement_persistence_flag
++            h->arrangement_persistence_flag = get_bits1(gb);
+     }
+     // H.264: frame_packing_arrangement_extension_flag,
+     // HEVC:  upsampled_aspect_ratio_flag
+@@ -515,67 +516,93 @@ static int h2645_sei_to_side_data(AVCodecContext *avctx, H2645SEI *sei,
+     return 0;
+ }
+ 
+-int ff_h2645_sei_to_frame(AVFrame *frame, H2645SEI *sei,
+-                          enum AVCodecID codec_id,
+-                          AVCodecContext *avctx, const H2645VUI *vui,
+-                          unsigned bit_depth_luma, unsigned bit_depth_chroma,
+-                          int seed)
++int ff_h2645_sei_frame_packing_to_frame(AVCodecContext *avctx, AVFrame *frame,
++                                        const H2645SEIFramePacking *fp,
++                                        enum AVCodecID codec_id)
+ {
+-    H2645SEIFramePacking *fp = &sei->frame_packing;
+-    FFITUTT35Meta *itut_t35 = &sei->itut_t35;
+     int ret;
+ 
+     if (fp->present &&
+         is_frame_packing_type_valid(fp->arrangement_type, codec_id) &&
+         fp->content_interpretation_type > 0 &&
+         fp->content_interpretation_type < 3) {
+-        AVStereo3D *stereo = av_stereo3d_create_side_data(frame);
++        AVStereo3D *stereo;
+ 
+-        if (!stereo)
+-            return AVERROR(ENOMEM);
++        ret = ff_decode_stereo3d_new(avctx, frame, &stereo);
++        if (ret < 0)
++            return ret;
+ 
+-        switch (fp->arrangement_type) {
++        if (stereo) {
++            switch (fp->arrangement_type) {
+ #if CONFIG_H264_SEI
+-        case SEI_FPA_H264_TYPE_CHECKERBOARD:
+-            stereo->type = AV_STEREO3D_CHECKERBOARD;
+-            break;
+-        case SEI_FPA_H264_TYPE_INTERLEAVE_COLUMN:
+-            stereo->type = AV_STEREO3D_COLUMNS;
+-            break;
+-        case SEI_FPA_H264_TYPE_INTERLEAVE_ROW:
+-            stereo->type = AV_STEREO3D_LINES;
+-            break;
++            case SEI_FPA_H264_TYPE_CHECKERBOARD:
++                stereo->type = AV_STEREO3D_CHECKERBOARD;
++                break;
++            case SEI_FPA_H264_TYPE_INTERLEAVE_COLUMN:
++                stereo->type = AV_STEREO3D_COLUMNS;
++                break;
++            case SEI_FPA_H264_TYPE_INTERLEAVE_ROW:
++                stereo->type = AV_STEREO3D_LINES;
++                break;
+ #endif
+-        case SEI_FPA_TYPE_SIDE_BY_SIDE:
+-            if (fp->quincunx_sampling_flag)
+-                stereo->type = AV_STEREO3D_SIDEBYSIDE_QUINCUNX;
+-            else
+-                stereo->type = AV_STEREO3D_SIDEBYSIDE;
+-            break;
+-        case SEI_FPA_TYPE_TOP_BOTTOM:
+-            stereo->type = AV_STEREO3D_TOPBOTTOM;
+-            break;
+-        case SEI_FPA_TYPE_INTERLEAVE_TEMPORAL:
+-            stereo->type = AV_STEREO3D_FRAMESEQUENCE;
+-            break;
++            case SEI_FPA_TYPE_SIDE_BY_SIDE:
++                if (fp->quincunx_sampling_flag)
++                    stereo->type = AV_STEREO3D_SIDEBYSIDE_QUINCUNX;
++                else
++                    stereo->type = AV_STEREO3D_SIDEBYSIDE;
++                break;
++            case SEI_FPA_TYPE_TOP_BOTTOM:
++                stereo->type = AV_STEREO3D_TOPBOTTOM;
++                break;
++            case SEI_FPA_TYPE_INTERLEAVE_TEMPORAL:
++                stereo->type = AV_STEREO3D_FRAMESEQUENCE;
++                break;
+ #if CONFIG_H264_SEI
+-        case SEI_FPA_H264_TYPE_2D:
+-            stereo->type = AV_STEREO3D_2D;
+-            break;
++            case SEI_FPA_H264_TYPE_2D:
++                stereo->type = AV_STEREO3D_2D;
++                break;
+ #endif
+-        }
++            }
+ 
+-        if (fp->content_interpretation_type == 2)
+-            stereo->flags = AV_STEREO3D_FLAG_INVERT;
++            if (fp->content_interpretation_type == 2)
++                stereo->flags = AV_STEREO3D_FLAG_INVERT;
+ 
+-        if (fp->arrangement_type == SEI_FPA_TYPE_INTERLEAVE_TEMPORAL) {
+-            if (fp->current_frame_is_frame0_flag)
+-                stereo->view = AV_STEREO3D_VIEW_LEFT;
+-            else
+-                stereo->view = AV_STEREO3D_VIEW_RIGHT;
++            if (fp->arrangement_type == SEI_FPA_TYPE_INTERLEAVE_TEMPORAL) {
++                if (fp->current_frame_is_frame0_flag)
++                    stereo->view = AV_STEREO3D_VIEW_LEFT;
++                else
++                    stereo->view = AV_STEREO3D_VIEW_RIGHT;
++            }
+         }
+     }
+ 
++    return 0;
++}
++
++int ff_h2645_sei_to_frame(AVFrame *frame, H2645SEI *sei,
++                          enum AVCodecID codec_id,
++                          AVCodecContext *avctx, const H2645VUI *vui,
++                          unsigned bit_depth_luma, unsigned bit_depth_chroma,
++                          int seed)
++{
++    H2645SEIFramePacking *fp = &sei->frame_packing;
++    FFITUTT35Meta *itut_t35 = &sei->itut_t35;
++    int ret;
++
++    /* H.264 and VVC export the arrangement where the pictures are output,
++     * as its lifetime follows the output order. */
++    if (codec_id == AV_CODEC_ID_HEVC) {
++        ret = ff_h2645_sei_frame_packing_to_frame(avctx, frame, fp, codec_id);
++        if (ret < 0)
++            return ret;
++
++        /* The arrangement outlives the message that carried it: a later
++         * message (or the cancel flag) supersedes the persistence flag.
++         * Mirror the film grain persistence handling below. */
++        if (fp->present)
++            fp->present = fp->arrangement_persistence_flag;
++    }
++
+     if (sei->display_orientation.present &&
+         (sei->display_orientation.anticlockwise_rotation ||
+          sei->display_orientation.hflip ||
+diff --git a/libavcodec/h2645_sei.h b/libavcodec/h2645_sei.h
+index 54288e2..153deae 100644
+--- a/libavcodec/h2645_sei.h
++++ b/libavcodec/h2645_sei.h
+@@ -62,10 +62,12 @@ typedef struct H2645SEIUnregistered {
+ 
+ typedef struct H2645SEIFramePacking {
+     int present;
++    int message_present;
+     int arrangement_id;
+     int arrangement_cancel_flag;  ///< is previous arrangement canceled, -1 if never received (currently H.264 only)
+     SEIFpaType arrangement_type;
+     int arrangement_repetition_period;
++    int arrangement_persistence_flag;  ///< HEVC/VVC only
+     int content_interpretation_type;
+     int quincunx_sampling_flag;
+     int current_frame_is_frame0_flag;
+@@ -170,6 +172,10 @@ int ff_h2645_sei_to_frame(AVFrame *frame, H2645SEI *sei,
+                           unsigned bit_depth_luma, unsigned bit_depth_chroma,
+                           int seed);
+ 
++int ff_h2645_sei_frame_packing_to_frame(AVCodecContext *avctx, AVFrame *frame,
++                                        const H2645SEIFramePacking *fp,
++                                        enum AVCodecID codec_id);
++
+ int ff_h2645_sei_to_context(AVCodecContext *avctx, H2645SEI *sei);
+ 
+ #endif /* AVCODEC_H2645_SEI_H */
+diff --git a/libavcodec/h264_picture.c b/libavcodec/h264_picture.c
+index aa3d262..87740a3 100644
+--- a/libavcodec/h264_picture.c
++++ b/libavcodec/h264_picture.c
+@@ -103,6 +103,28 @@ static void h264_copy_picture_params(H264Picture *dst, const H264Picture *src)
+     dst->mb_height     = src->mb_height;
+     dst->mb_stride     = src->mb_stride;
+     dst->needs_fg      = src->needs_fg;
++    dst->frame_packing = src->frame_packing;
++}
++
++void ff_h264_update_output_frame_packing(H264Context *h, H264Picture *out)
++{
++    H2645SEIFramePacking *fp = &h->output_frame_packing;
++
++    /* An arrangement lasts until the next message or the end of the coded
++     * video sequence (H.264 D.2.26), both in output order. */
++    if (out->f->flags & AV_FRAME_FLAG_KEY)
++        fp->present = 0;
++    if (out->frame_packing.message_present)
++        *fp = out->frame_packing;
++
++    out->frame_packing = *fp;
++
++    if (fp->present) {
++        if (fp->arrangement_type == SEI_FPA_TYPE_INTERLEAVE_TEMPORAL)
++            fp->current_frame_is_frame0_flag = !fp->current_frame_is_frame0_flag;
++        if (!fp->arrangement_repetition_period)
++            fp->present = 0;
++    }
+ }
+ 
+ int ff_h264_ref_picture(H264Picture *dst, const H264Picture *src)
+diff --git a/libavcodec/h264_sei.c b/libavcodec/h264_sei.c
+index 6819fb7..2fa7b60 100644
+--- a/libavcodec/h264_sei.c
++++ b/libavcodec/h264_sei.c
+@@ -55,6 +55,7 @@ void ff_h264_sei_uninit(H264SEIContext *h)
+     h->picture_timing.present      = 0;
+     h->buffering_period.present    = 0;
+     h->common.frame_packing.present       = 0;
++    h->common.frame_packing.message_present = 0;
+     h->common.display_orientation.present = 0;
+ 
+     ff_h2645_sei_reset(&h->common);
+diff --git a/libavcodec/h264_slice.c b/libavcodec/h264_slice.c
+index d6b4424..d1c2c7b 100644
+--- a/libavcodec/h264_slice.c
++++ b/libavcodec/h264_slice.c
+@@ -429,6 +429,7 @@ int ff_h264_update_thread_context(AVCodecContext *dst,
+ 
+     h->next_output_pic   = h1->next_output_pic;
+     h->next_outputed_poc = h1->next_outputed_poc;
++    h->output_frame_packing = h1->output_frame_packing;
+     h->poc_offset        = h1->poc_offset;
+ 
+     memcpy(h->mmco, h1->mmco, sizeof(h->mmco));
+@@ -1255,6 +1256,10 @@ static int h264_export_frame_props(H264Context *h)
+     out->flags |= (AV_FRAME_FLAG_INTERLACED * interlaced_frame) |
+                   (AV_FRAME_FLAG_TOP_FIELD_FIRST * top_field_first);
+ 
++    /* The arrangement is exported when the picture is output, see
++     * ff_h264_update_output_frame_packing(). */
++    cur->frame_packing = h->sei.common.frame_packing;
++    h->sei.common.frame_packing.message_present = 0;
+     ret = ff_h2645_sei_to_frame(out, &h->sei.common, AV_CODEC_ID_H264, h->avctx,
+                                 &sps->vui, sps->bit_depth_luma, sps->bit_depth_chroma,
+                                 cur->poc + (unsigned)(h->poc_offset << 5));
+@@ -1364,6 +1369,7 @@ static int h264_select_output_frame(H264Context *h)
+     }
+     if (!out_of_order && pics > h->avctx->has_b_frames) {
+         h->next_output_pic = out;
++        ff_h264_update_output_frame_packing(h, out);
+         if (out_idx == 0 && h->delayed_pic[0] && ((h->delayed_pic[0]->f->flags & AV_FRAME_FLAG_KEY) || h->delayed_pic[0]->mmco_reset)) {
+             h->next_outputed_poc = INT_MIN;
+         } else
+diff --git a/libavcodec/h264dec.c b/libavcodec/h264dec.c
+index ca65df2..3dae518 100644
+--- a/libavcodec/h264dec.c
++++ b/libavcodec/h264dec.c
+@@ -454,6 +454,7 @@ void ff_h264_flush_change(H264Context *h)
+ 
+     h->next_outputed_poc = INT_MIN;
+     h->prev_interlaced_frame = 1;
++    memset(&h->output_frame_packing, 0, sizeof(h->output_frame_packing));
+     idr(h);
+ 
+     h->poc.prev_frame_num = -1;
+@@ -876,6 +877,10 @@ static int output_frame(H264Context *h, AVFrame *dst, H264Picture *srcp)
+         dst->decode_error_flags |= atomic_load_explicit(decode_error, memory_order_relaxed);
+     }
+ 
++    ret = ff_h2645_sei_frame_packing_to_frame(h->avctx, dst, &srcp->frame_packing,
++                                              AV_CODEC_ID_H264);
++    if (ret < 0)
++        goto fail;
+     av_dict_set(&dst->metadata, "stereo_mode", ff_h264_sei_stereo_mode(&h->sei.common.frame_packing), 0);
+ 
+     if (srcp->sei_recovery_frame_cnt == 0)
+@@ -1004,6 +1009,7 @@ static int send_next_delayed_frame(H264Context *h, AVFrame *dst_frame,
+             h->frame_recovered |= out->recovered;
+             out->recovered |= h->frame_recovered & FRAME_RECOVERED_SEI;
+ 
++            ff_h264_update_output_frame_packing(h, out);
+             out->reference &= ~DELAYED_PIC_REF;
+             ret = finalize_frame(h, dst_frame, out, got_frame);
+             if (ret < 0)
+diff --git a/libavcodec/h264dec.h b/libavcodec/h264dec.h
+index 74fd09d..538ac1e 100644
+--- a/libavcodec/h264dec.h
++++ b/libavcodec/h264dec.h
+@@ -162,6 +162,11 @@ typedef struct H264Picture {
+     atomic_int *decode_error_flags;
+ 
+     int gray;
++    /**
++     * The frame packing arrangement message carried by the picture, replaced
++     * by the arrangement in force once the picture is selected for output.
++     */
++    H2645SEIFramePacking frame_packing;
+ } H264Picture;
+ 
+ typedef struct H264Ref {
+@@ -470,6 +475,7 @@ typedef struct H264Context {
+     int last_pocs[H264_MAX_DPB_FRAMES];
+     H264Picture *next_output_pic;
+     int next_outputed_poc;
++    H2645SEIFramePacking output_frame_packing; ///< arrangement in force in output order
+     int poc_offset;         ///< PicOrderCnt_offset from SMPTE RDD-2006
+ 
+     /**
+@@ -677,6 +683,11 @@ static av_always_inline int get_chroma_qp(const PPS *pps, int t, int qscale)
+ int ff_h264_field_end(H264Context *h, H264SliceContext *sl, int in_setup);
+ 
+ int ff_h264_ref_picture(H264Picture *dst, const H264Picture *src);
++/**
++ * Resolve the frame packing arrangement of a picture selected for output and
++ * advance the arrangement state in output order.
++ */
++void ff_h264_update_output_frame_packing(H264Context *h, H264Picture *out);
+ int ff_h264_replace_picture(H264Picture *dst, const H264Picture *src);
+ void ff_h264_unref_picture(H264Picture *pic);
+ 
+diff --git a/tests/fate/h264.mak b/tests/fate/h264.mak
+index dacaaab..e12f302 100644
+--- a/tests/fate/h264.mak
++++ b/tests/fate/h264.mak
+@@ -249,6 +249,9 @@ FATE_H264-$(call FRAMECRC, MPEGTS, H264, H264_PARSER MP3_DECODER SCALE_FILTER AR
+ FATE_H264_FFPROBE-$(call DEMDEC, MATROSKA, H264) += fate-h264-dts_5frames
+ FATE_H264_FFPROBE-$(call PARSERDEMDEC, H264, H264, H264) += fate-h264-afd
+ 
++fate-h264-frame-packing-persistence: CMD = threads=4 probeframes -show_entries frame=side_data_list:frame_tags= -of compact $(TARGET_SAMPLES)/h264/frame-packing-persistence.h264
++FATE_H264_FFPROBE-$(call PARSERDEMDEC, H264, H264, H264) += fate-h264-frame-packing-persistence
++
+ FATE_SAMPLES_AVCONV += $(FATE_H264-yes)
+ FATE_SAMPLES_FFPROBE += $(FATE_H264_FFPROBE-yes)
+ fate-h264: $(FATE_H264-yes) $(FATE_H264_FFPROBE-yes)
+diff --git a/tests/fate/hevc.mak b/tests/fate/hevc.mak
+index 4fe25aa..5a29eb3 100644
+--- a/tests/fate/hevc.mak
++++ b/tests/fate/hevc.mak
+@@ -275,6 +275,9 @@ FATE_HEVC_FFPROBE-$(call PARSERDEMDEC, HEVC, HEVC, HEVC) += fate-hevc-monochrome
+ fate-hevc-afd-tc-sei: CMD = run ffprobe$(PROGSSUF)$(EXESUF) -bitexact -flags output_corrupt -show_entries frame_side_data_list -select_streams v $(TARGET_SAMPLES)/mpegts/loewe.ts
+ FATE_HEVC_FFPROBE-$(call PARSERDEMDEC, HEVC, HEVC, HEVC, EXTRACT_EXTRADATA_BSF) += fate-hevc-afd-tc-sei
+ 
++fate-hevc-frame-packing-persistence: CMD = threads=4 probeframes -show_entries frame=side_data_list:frame_tags= -of compact $(TARGET_SAMPLES)/hevc/frame-packing-persistence.hevc
++FATE_HEVC_FFPROBE-$(call PARSERDEMDEC, HEVC, HEVC, HEVC) += fate-hevc-frame-packing-persistence
++
+ fate-hevc-hdr10-plus-metadata: CMD = probeframes -show_entries frame=side_data_list $(TARGET_SAMPLES)/hevc/hdr10_plus_h265_sample.hevc
+ FATE_HEVC_FFPROBE-$(call DEMDEC, HEVC, HEVC) += fate-hevc-hdr10-plus-metadata
+ 
+diff --git a/tests/ref/fate/h264-frame-packing-persistence b/tests/ref/fate/h264-frame-packing-persistence
+new file mode 100644
+index 0000000..4a41412
+--- /dev/null
++++ b/tests/ref/fate/h264-frame-packing-persistence
+@@ -0,0 +1,8 @@
++frame|side_datum/stereo_3d:side_data_type=Stereo 3D
++frame|side_datum/stereo_3d:side_data_type=Stereo 3D
++frame|
++frame|
++frame|side_datum/stereo_3d:side_data_type=Stereo 3D
++frame|
++frame|
++frame|
+diff --git a/tests/ref/fate/hevc-frame-packing-persistence b/tests/ref/fate/hevc-frame-packing-persistence
+new file mode 100644
+index 0000000..4a41412
+--- /dev/null
++++ b/tests/ref/fate/hevc-frame-packing-persistence
+@@ -0,0 +1,8 @@
++frame|side_datum/stereo_3d:side_data_type=Stereo 3D
++frame|side_datum/stereo_3d:side_data_type=Stereo 3D
++frame|
++frame|
++frame|side_datum/stereo_3d:side_data_type=Stereo 3D
++frame|
++frame|
++frame|

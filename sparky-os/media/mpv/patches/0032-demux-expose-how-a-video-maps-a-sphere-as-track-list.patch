@@ -1,0 +1,365 @@
+From 50f2a394a98eb2233f9e99a793728ef3b65c7fba Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 6 Oct 2026 22:27:18 -0300
+Subject: [PATCH] demux: expose how a video maps a sphere as
+ track-list/N/demux-projection
+
+A 360 or VR180 video says in its container how the sphere is laid out
+in the frame (MP4 sv3d, Matroska Projection), and FFmpeg exports it as
+spherical side data, but mpv did not pass it on, so a player could not
+tell such a video from an ordinary one without parsing the file itself.
+
+Read the spherical side data of the stream in demux_lavf and
+ProjectionType in demux_mkv, and expose the result in the track list:
+equirectangular, half-equirectangular (the front half, as VR180 writes
+it: an equirectangular picture with half of the width cut off), the
+other equirectangular tiles, cubemap and mesh. Nothing changes for
+playback; a script or a libmpv client can now choose a v360 filter.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ DOCS/man/input.rst | 10 +++++++
+ demux/demux_lavf.c |  4 +++
+ demux/demux_mkv.c  |  8 ++++++
+ demux/stheader.h   |  2 ++
+ meson.build        |  1 +
+ player/command.c   |  2 ++
+ test/meson.build   |  6 ++++
+ test/projection.c  | 54 ++++++++++++++++++++++++++++++++++++
+ video/projection.c | 69 ++++++++++++++++++++++++++++++++++++++++++++++
+ video/projection.h | 44 +++++++++++++++++++++++++++++
+ 10 files changed, 200 insertions(+)
+ create mode 100644 test/projection.c
+ create mode 100644 video/projection.c
+ create mode 100644 video/projection.h
+
+diff --git a/DOCS/man/input.rst b/DOCS/man/input.rst
+index 24f9d7a5cf..7548b9a29e 100644
+--- a/DOCS/man/input.rst
++++ b/DOCS/man/input.rst
+@@ -3456,6 +3456,15 @@ Property list
+     ``track-list/N/demux-par``
+         Pixel aspect ratio.
+ 
++    ``track-list/N/demux-projection``
++        How the container says the video maps a sphere onto the frame (MP4
++        ``sv3d``, Matroska ``Projection``): ``equirectangular`` (the whole
++        sphere, 360 by 180 degrees), ``half-equirectangular`` (the front half,
++        180 by 180 degrees, as VR180), ``equirectangular-tile`` (another part
++        of an equirectangular picture), ``cubemap`` or ``mesh``. The property
++        is unavailable for an ordinary video. Use ``--vf=lavfi=[v360=...]``
++        to turn such a video into a flat view.
++
+     ``track-list/N/format-name``
+         Short name for format from ffmpeg. If the track is audio, this will be
+         the name of the sample format. If the track is video, this will be the
+@@ -3527,6 +3536,7 @@ Property list
+                 "demux-bitrate"     MPV_FORMAT_INT64
+                 "demux-rotation"    MPV_FORMAT_INT64
+                 "demux-par"         MPV_FORMAT_DOUBLE
++                "demux-projection"  MPV_FORMAT_STRING
+                 "format-name"       MPV_FORMAT_STRING
+                 "audio-channels"    MPV_FORMAT_INT64
+                 "replaygain-track-peak" MPV_FORMAT_DOUBLE
+diff --git a/demux/demux_lavf.c b/demux/demux_lavf.c
+index 4ab2cd2921..c49d0d088e 100644
+--- a/demux/demux_lavf.c
++++ b/demux/demux_lavf.c
+@@ -37,6 +37,7 @@
+ #include <libavutil/opt.h>
+ #include <libavutil/pixdesc.h>
+ #include <libavutil/replaygain.h>
++#include <libavutil/spherical.h>
+ #include <libavutil/stereo3d.h>
+ 
+ #include "audio/chmap_avchannel.h"
+@@ -766,6 +767,9 @@ static void handle_new_stream(demuxer_t *demuxer, int i)
+         if ((sd = mp_av_stream_get_side_data(st, AV_PKT_DATA_STEREO3D)))
+             sh->codec->stereo_mode = mp_stereo3d_from_av((const AVStereo3D *)sd);
+ 
++        if ((sd = mp_av_stream_get_side_data(st, AV_PKT_DATA_SPHERICAL)))
++            sh->codec->projection = mp_projection_from_av((const AVSphericalMapping *)sd);
++
+         if ((sd = mp_av_stream_get_side_data(st, AV_PKT_DATA_DOVI_CONF))) {
+             const AVDOVIDecoderConfigurationRecord *cfg = (void *) sd;
+             MP_VERBOSE(demuxer, "Found Dolby Vision config record: profile "
+diff --git a/demux/demux_mkv.c b/demux/demux_mkv.c
+index 501d20e977..4e656cb985 100644
+--- a/demux/demux_mkv.c
++++ b/demux/demux_mkv.c
+@@ -116,6 +116,7 @@ typedef struct mkv_track {
+     struct pl_color_space color;
+     enum pl_chroma_location chroma_location;
+     uint32_t v_crop_top, v_crop_left, v_crop_right, v_crop_bottom;
++    int v_projection_type;
+     float v_projection_pose_yaw;
+     float v_projection_pose_pitch;
+     float v_projection_pose_roll;
+@@ -692,6 +693,12 @@ static void parse_trackcolour(struct demuxer *demuxer, struct mkv_track *track,
+ static void parse_trackprojection(struct demuxer *demuxer, struct mkv_track *track,
+                                   struct ebml_projection *projection)
+ {
++    if (projection->n_projection_type) {
++        track->v_projection_type = mp_projection_from_mkv(projection->projection_type);
++        MP_DBG(demuxer, "|   + Projection type: %"PRIu64"\n",
++               projection->projection_type);
++    }
++
+     if (projection->n_projection_pose_yaw) {
+         track->v_projection_pose_yaw = projection->projection_pose_yaw;
+         MP_DBG(demuxer, "|   + Projection pose yaw: %f\n",
+@@ -1746,6 +1753,7 @@ static int demux_mkv_open_video(demuxer_t *demuxer, mkv_track_t *track)
+     sh_v->par_h = p.p_h;
+ 
+     sh_v->stereo_mode = track->stereo_mode;
++    sh_v->projection = track->v_projection_type;
+     sh_v->repr = track->repr;
+     sh_v->color = track->color;
+     sh_v->chroma_location = track->chroma_location;
+diff --git a/demux/stheader.h b/demux/stheader.h
+index 42046a496b..5d30eb18c5 100644
+--- a/demux/stheader.h
++++ b/demux/stheader.h
+@@ -24,6 +24,7 @@
+ #include "common/common.h"
+ #include "audio/chmap.h"
+ #include "video/mp_image.h"
++#include "video/projection.h"
+ 
+ struct MPOpts;
+ struct demuxer;
+@@ -119,6 +120,7 @@ struct mp_codec_params {
+     int disp_w, disp_h;   // display size
+     int rotate;           // intended display rotation, in degrees, [0, 359]
+     int stereo_mode;      // mp_stereo3d_mode (0 if none/unknown)
++    int projection;       // mp_projection (0 if none/unknown)
+     struct pl_color_space color; // colorspace info where available
+     struct pl_color_repr repr;   // color representation info where available
+     enum pl_chroma_location chroma_location; // chroma location
+diff --git a/meson.build b/meson.build
+index 89e0458762..777e9dac63 100644
+--- a/meson.build
++++ b/meson.build
+@@ -218,6 +218,7 @@ sources = files(
+     'video/image_writer.c',
+     'video/img_format.c',
+     'video/mp_image.c',
++    'video/projection.c',
+     'video/mp_image_pool.c',
+     'video/out/aspect.c',
+     'video/out/bitmap_packer.c',
+diff --git a/player/command.c b/player/command.c
+index 96bc06a0b0..e6a6ccd00e 100644
+--- a/player/command.c
++++ b/player/command.c
+@@ -2092,6 +2092,8 @@ static int get_track_entry(int item, int action, void *arg, void *ctx)
+         {"demux-bitrate",  SUB_PROP_INT(p.bitrate), .unavailable = p.bitrate <= 0},
+         {"demux-rotation", SUB_PROP_INT(p.rotate),  .unavailable = p.rotate <= 0},
+         {"demux-par",      SUB_PROP_DOUBLE(par),    .unavailable = par <= 0},
++        {"demux-projection", SUB_PROP_STR(mp_projection_name(p.projection)),
++                        .unavailable = !mp_projection_name(p.projection)},
+         {"format-name", SUB_PROP_STR(p.format_name), .unavailable = !p.format_name},
+         {"replaygain-track-peak", SUB_PROP_FLOAT(rg.track_peak),
+                         .unavailable = !has_rg},
+diff --git a/test/meson.build b/test/meson.build
+index b67074166b..1d6bdfdf67 100644
+--- a/test/meson.build
++++ b/test/meson.build
+@@ -99,6 +99,12 @@ test('linked-list', linked_list)
+ timer = executable('timer', files('timer.c'), include_directories: incdir, link_with: test_utils)
+ test('timer', timer)
+ 
++projection = executable('projection', files('projection.c'),
++                        objects: libmpv.extract_objects('video/projection.c'),
++                        include_directories: incdir, dependencies: libavutil,
++                        link_with: test_utils)
++test('projection', projection)
++
+ format = executable('format', files('format.c'), include_directories: incdir, link_with: test_utils)
+ test('format', format)
+ 
+diff --git a/test/projection.c b/test/projection.c
+new file mode 100644
+index 0000000000..718d620f75
+--- /dev/null
++++ b/test/projection.c
+@@ -0,0 +1,54 @@
++#include <libavutil/spherical.h>
++
++#include "test_utils.h"
++#include "video/projection.h"
++
++static void test_from_av(void)
++{
++    AVSphericalMapping s = {0};
++
++    s.projection = AV_SPHERICAL_EQUIRECTANGULAR;
++    assert_int_equal(mp_projection_from_av(&s), MP_PROJECTION_EQUIRECTANGULAR);
++
++    s.projection = AV_SPHERICAL_CUBEMAP;
++    assert_int_equal(mp_projection_from_av(&s), MP_PROJECTION_CUBEMAP);
++
++    // VR180 as the container writes it: a quarter of the width cut off each side
++    s.projection = AV_SPHERICAL_EQUIRECTANGULAR_TILE;
++    s.bound_left = s.bound_right = UINT32_C(1) << 30;
++    assert_int_equal(mp_projection_from_av(&s), MP_PROJECTION_HALF_EQUIRECTANGULAR);
++
++    // any other part of the picture is only told as a tile
++    s.bound_left = UINT32_C(1) << 29;
++    assert_int_equal(mp_projection_from_av(&s), MP_PROJECTION_EQUIRECTANGULAR_TILE);
++    s.bound_left = s.bound_right = UINT32_C(1) << 30;
++    s.bound_top = 1;
++    assert_int_equal(mp_projection_from_av(&s), MP_PROJECTION_EQUIRECTANGULAR_TILE);
++}
++
++static void test_from_mkv(void)
++{
++    assert_int_equal(mp_projection_from_mkv(0), MP_PROJECTION_NONE);
++    assert_int_equal(mp_projection_from_mkv(1), MP_PROJECTION_EQUIRECTANGULAR);
++    assert_int_equal(mp_projection_from_mkv(2), MP_PROJECTION_CUBEMAP);
++    assert_int_equal(mp_projection_from_mkv(3), MP_PROJECTION_MESH);
++    assert_int_equal(mp_projection_from_mkv(4), MP_PROJECTION_NONE);
++}
++
++static void test_names(void)
++{
++    assert_true(!mp_projection_name(MP_PROJECTION_NONE));
++    assert_string_equal(mp_projection_name(MP_PROJECTION_EQUIRECTANGULAR), "equirectangular");
++    assert_string_equal(mp_projection_name(MP_PROJECTION_HALF_EQUIRECTANGULAR), "half-equirectangular");
++    assert_string_equal(mp_projection_name(MP_PROJECTION_EQUIRECTANGULAR_TILE), "equirectangular-tile");
++    assert_string_equal(mp_projection_name(MP_PROJECTION_CUBEMAP), "cubemap");
++    assert_string_equal(mp_projection_name(MP_PROJECTION_MESH), "mesh");
++}
++
++int main(void)
++{
++    test_from_av();
++    test_from_mkv();
++    test_names();
++    return 0;
++}
+diff --git a/video/projection.c b/video/projection.c
+new file mode 100644
+index 0000000000..21273dd28a
+--- /dev/null
++++ b/video/projection.c
+@@ -0,0 +1,69 @@
++/*
++ * This file is part of mpv.
++ *
++ * mpv is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * mpv is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with mpv.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#include <libavutil/spherical.h>
++#include <libavutil/version.h>
++
++#include "projection.h"
++
++const char *mp_projection_name(enum mp_projection projection)
++{
++    switch (projection) {
++    case MP_PROJECTION_EQUIRECTANGULAR: return "equirectangular";
++    case MP_PROJECTION_HALF_EQUIRECTANGULAR: return "half-equirectangular";
++    case MP_PROJECTION_EQUIRECTANGULAR_TILE: return "equirectangular-tile";
++    case MP_PROJECTION_CUBEMAP: return "cubemap";
++    case MP_PROJECTION_MESH: return "mesh";
++    default: return NULL;
++    }
++}
++
++enum mp_projection mp_projection_from_av(const AVSphericalMapping *spherical)
++{
++    switch (spherical->projection) {
++    case AV_SPHERICAL_EQUIRECTANGULAR:
++        return MP_PROJECTION_EQUIRECTANGULAR;
++#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(59, 23, 100)
++    case AV_SPHERICAL_HALF_EQUIRECTANGULAR:
++        return MP_PROJECTION_HALF_EQUIRECTANGULAR;
++#endif
++    case AV_SPHERICAL_EQUIRECTANGULAR_TILE: {
++        // The bounds are the parts cut off each side, as fractions of the
++        // whole picture in 0.32 fixed point. Cut half of the width and
++        // nothing of the height is the front hemisphere of VR180.
++        const uint32_t half = UINT32_C(1) << 31;
++        if ((uint64_t)spherical->bound_left + spherical->bound_right == half &&
++            !spherical->bound_top && !spherical->bound_bottom)
++            return MP_PROJECTION_HALF_EQUIRECTANGULAR;
++        return MP_PROJECTION_EQUIRECTANGULAR_TILE;
++    }
++    case AV_SPHERICAL_CUBEMAP:
++        return MP_PROJECTION_CUBEMAP;
++    default:
++        return MP_PROJECTION_NONE;
++    }
++}
++
++enum mp_projection mp_projection_from_mkv(uint64_t projection_type)
++{
++    switch (projection_type) {
++    case 1: return MP_PROJECTION_EQUIRECTANGULAR;
++    case 2: return MP_PROJECTION_CUBEMAP;
++    case 3: return MP_PROJECTION_MESH;
++    default: return MP_PROJECTION_NONE;
++    }
++}
+diff --git a/video/projection.h b/video/projection.h
+new file mode 100644
+index 0000000000..0c122b7aae
+--- /dev/null
++++ b/video/projection.h
+@@ -0,0 +1,44 @@
++/*
++ * This file is part of mpv.
++ *
++ * mpv is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * mpv is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with mpv.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef MP_VIDEO_PROJECTION_H
++#define MP_VIDEO_PROJECTION_H
++
++#include <stdint.h>
++
++struct AVSphericalMapping;
++
++// How a video that is a view of a sphere maps the sphere onto the frame,
++// as the container says it (MP4 sv3d, Matroska Projection).
++enum mp_projection {
++    MP_PROJECTION_NONE = 0,             // an ordinary picture, or not told
++    MP_PROJECTION_EQUIRECTANGULAR,      // the whole sphere, 360 by 180 degrees
++    MP_PROJECTION_HALF_EQUIRECTANGULAR, // the front half, 180 by 180 degrees (VR180)
++    MP_PROJECTION_EQUIRECTANGULAR_TILE, // another part of an equirectangular picture
++    MP_PROJECTION_CUBEMAP,
++    MP_PROJECTION_MESH,                 // by a mesh in the stream, which is not read
++};
++
++// The name for the track-list property, NULL for none
++const char *mp_projection_name(enum mp_projection projection);
++
++enum mp_projection mp_projection_from_av(const struct AVSphericalMapping *spherical);
++
++// Matroska's ProjectionType: 0 rectangular, 1 equirectangular, 2 cubemap, 3 mesh
++enum mp_projection mp_projection_from_mkv(uint64_t projection_type);
++
++#endif

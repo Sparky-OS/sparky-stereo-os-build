@@ -1,0 +1,5 @@
+FROM mdmo-base:1
+ENV DEBIAN_FRONTEND=noninteractive
+RUN sed -i 's/^Components: main$/Components: main contrib non-free non-free-firmware/' /etc/apt/sources.list.d/debian.sources \
+ && apt-get update -qq && apt-get -y dist-upgrade >/dev/null && apt-get -y build-dep mpv-dmo > /build-dep-mpv.log 2>&1; tail -3 /build-dep-mpv.log; \
+    dpkg -l | awk '/^ii/{print $2" "$3}' > /pkgs-mpvbuild.txt; rm -rf /var/lib/apt/lists/*; test -x /usr/bin/meson

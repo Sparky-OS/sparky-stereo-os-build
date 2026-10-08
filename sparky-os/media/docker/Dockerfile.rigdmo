@@ -1,0 +1,6 @@
+# the rig with deb-multimedia's UNPATCHED ffmpeg and mpv, from its repository (no sparky-stereo source, no pins)
+FROM mdmo-rig:base
+ENV DEBIAN_FRONTEND=noninteractive
+RUN --mount=type=cache,target=/var/cache/apt/archives \
+    apt-get update -qq && apt-get -y -o APT::Keep-Downloaded-Packages=true install --no-install-recommends ffmpeg=10:9.0.2-dmo1 mpv=1:0.41.0-dmo9 libmpv2=1:0.41.0-dmo9 > /install-media.log 2>&1; tail -3 /install-media.log; \
+    dpkg -l ffmpeg mpv libmpv2 libavcodec63 libavformat63 libavutil61 libavfilter12 libswscale10 libswresample7 libavdevice63 libplacebo360 libx264-165 | awk '/^ii/{print $2, $3}' | tee /package-versions-media.txt; rm -rf /var/lib/apt/lists/*

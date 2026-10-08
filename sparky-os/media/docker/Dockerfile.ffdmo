@@ -1,0 +1,6 @@
+# proofbase + deb-multimedia's unpatched ffmpeg (10:9.0.2-dmo1), installed from its repository
+FROM mdmo-proofbase:1
+ENV DEBIAN_FRONTEND=noninteractive
+RUN --mount=type=cache,target=/var/cache/apt/archives \
+    apt-get update -qq && apt-get -y -o APT::Keep-Downloaded-Packages=true install --no-install-recommends ffmpeg=10:9.0.2-dmo1 libavcodec63=10:9.0.2-dmo1 > /install-dmo.log 2>&1; tail -3 /install-dmo.log; \
+    dpkg -l ffmpeg libavcodec63 libx264-165 libx265-217 | awk '/^ii/{print $2, $3}' | tee /package-versions-ffdmo.txt; rm -rf /var/lib/apt/lists/*

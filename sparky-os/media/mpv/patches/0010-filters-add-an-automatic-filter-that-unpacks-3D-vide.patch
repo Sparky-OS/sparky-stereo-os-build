@@ -1,0 +1,395 @@
+From 5bbf0975ea11569994938c1ade9068038358c3fc Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 01:29:37 -0300
+Subject: [PATCH] filters: add an automatic filter that unpacks 3D video
+ to full side by side
+
+A video that signals a stereo packing (frame packing SEI, Matroska
+StereoMode, MP4 stereo metadata) is converted with the stereo3d filter
+to full side by side, left eye first, whatever the packing and the eye
+order of the stream, and nothing is inserted for a 2D video. The
+conversion can be turned off with --video-stereo=no.
+
+The output chain tells the VO with VOCTRL_SET_STEREO_CONTENT whether
+the filter is active, so that a VO can declare its video as stereo
+content to the compositor. A VO that does so with its video on its own
+surface sets VO_CAP_STEREO_VIEW, and the filter then gives the video the
+display aspect of one view, since the window shows one view.
+
+Assisted-by: glm-5.3:cloud (Ollama) via Codex
+Assisted-by: Claude Sonnet via Claude Code
+---
+ DOCS/interface-changes/video-stereo.txt |   1 +
+ DOCS/man/options.rst                    |   9 ++
+ filters/f_auto_filters.c                | 173 ++++++++++++++++++++++++
+ filters/f_auto_filters.h                |   3 +
+ filters/f_output_chain.c                |  25 ++++
+ filters/filter.h                        |   1 +
+ options/options.c                       |   2 +
+ options/options.h                       |   1 +
+ video/out/vo.h                          |   4 +
+ 9 files changed, 219 insertions(+)
+ create mode 100644 DOCS/interface-changes/video-stereo.txt
+
+diff --git a/DOCS/interface-changes/video-stereo.txt b/DOCS/interface-changes/video-stereo.txt
+new file mode 100644
+index 0000000000..4634e81796
+--- /dev/null
++++ b/DOCS/interface-changes/video-stereo.txt
+@@ -0,0 +1 @@
++add `--video-stereo` option
+diff --git a/DOCS/man/options.rst b/DOCS/man/options.rst
+index fa71dc0d1e..4fbbc3f5f5 100644
+--- a/DOCS/man/options.rst
++++ b/DOCS/man/options.rst
+@@ -1794,6 +1794,15 @@ Video
+     ``auto`` will automatically try to detect the field order of the video,
+     ``tff`` forces top field first while ``bff`` forces bottom field first.
+ 
++``--video-stereo=<yes|no>``
++    Convert a video that signals 3D packing (H.264/H.265 frame packing SEI,
++    Matroska StereoMode, MP4 stereo metadata) to full side by side, left eye
++    first, and declare the video surface as stereo content to the compositor
++    when the output supports it (default: yes). Whatever the packing and eye
++    order of the stream, the result is the same. Subtitles and the OSD are
++    drawn once per eye, at one eye's size. Videos that do not signal 3D are
++    not touched.
++
+ ``--frames=<number>``
+     Play/convert only first ``<number>`` video frames, then quit.
+ 
+diff --git a/filters/f_auto_filters.c b/filters/f_auto_filters.c
+index d7ee230d69..ff051c425e 100644
+--- a/filters/f_auto_filters.c
++++ b/filters/f_auto_filters.c
+@@ -339,6 +339,179 @@ struct vflip_priv {
+     int target_vflip;
+ };
+ 
++struct stereo_priv {
++    struct mp_subfilter sub;
++    int prev_stereo3d;
++    int prev_imgfmt;
++    struct m_config_cache *opts;
++};
++
++static const char *stereo_input_name(int mode)
++{
++    switch (mode) {
++    case MP_STEREO3D_SBS2L: return "sbs2l";
++    case MP_STEREO3D_SBS2R: return "sbs2r";
++    case MP_STEREO3D_AB2L:  return "ab2l";
++    case MP_STEREO3D_AB2R:  return "ab2r";
++    case MP_STEREO3D_SBSL:  return "sbsl";
++    case MP_STEREO3D_SBSR:  return "sbsr";
++    case MP_STEREO3D_ABL:   return "abl";
++    case MP_STEREO3D_ABR:   return "abr";
++    case MP_STEREO3D_IRL:   return "irl";
++    case MP_STEREO3D_IRR:   return "irr";
++    case MP_STEREO3D_ICL:   return "icl";
++    case MP_STEREO3D_ICR:   return "icr";
++    case MP_STEREO3D_AL:    return "al";
++    case MP_STEREO3D_AR:    return "ar";
++    default: return NULL;
++    }
++}
++
++static void stereo_process(struct mp_filter *f)
++{
++    struct stereo_priv *p = f->priv;
++
++    if (!mp_subfilter_read(&p->sub))
++        return;
++
++    struct mp_frame frame = p->sub.frame;
++
++    if (mp_frame_is_signaling(frame)) {
++        mp_subfilter_continue(&p->sub);
++        return;
++    }
++
++    if (frame.type != MP_FRAME_VIDEO) {
++        MP_ERR(f, "video input required!\n");
++        mp_filter_internal_mark_failed(f);
++        return;
++    }
++
++    struct mp_image *img = frame.data;
++
++    m_config_cache_update(p->opts);
++    const char *input = stereo_input_name(img->params.stereo3d);
++    struct filter_opts *opts = p->opts->opts;
++    bool wanted = opts->video_stereo && input;
++
++    if (img->imgfmt != p->prev_imgfmt || img->params.stereo3d != p->prev_stereo3d ||
++        (p->sub.filter && !wanted))
++    {
++        p->prev_imgfmt = img->imgfmt;
++        p->prev_stereo3d = img->params.stereo3d;
++        if (!mp_subfilter_drain_destroy(&p->sub))
++            return;
++    }
++
++    if (!wanted) {
++        mp_subfilter_continue(&p->sub);
++        return;
++    }
++
++    if (!p->sub.filter) {
++        struct mp_filter *subf = mp_bidir_dummy_filter_create(f);
++        struct mp_filter *filters[3] = {0};
++
++        struct mp_autoconvert *conv = mp_autoconvert_create(subf);
++        if (conv) {
++            filters[0] = conv->f;
++            mp_autoconvert_add_all_sw_imgfmts(conv);
++
++            if (!mp_autoconvert_probe_input_video(conv, img)) {
++                MP_ERR(f, "no stereo3d filter available for format %s\n",
++                       mp_imgfmt_to_name(img->imgfmt));
++                talloc_free(subf);
++                mp_subfilter_continue(&p->sub);
++                return;
++            }
++        }
++
++        char *args[] = {"in", (char *)input, "out", "sbsl", NULL};
++        filters[1] = mp_create_user_filter(subf, MP_OUTPUT_CHAIN_VIDEO,
++                                           "stereo3d", args);
++        // The window shows one view: the display size of one view.
++        char *format_args[] = {"stereo-in", "sbsl", NULL, NULL, NULL};
++        struct mp_stream_info *info = mp_filter_find_stream_info(f);
++        if (info && info->stereo_view) {
++            int dw, dh;
++            mp_image_params_get_dsize(&img->params, &dw, &dh);
++            if (img->params.stereo3d == MP_STEREO3D_SBSL ||
++                img->params.stereo3d == MP_STEREO3D_SBSR)
++                dw /= 2;
++            if (img->params.stereo3d == MP_STEREO3D_ABL ||
++                img->params.stereo3d == MP_STEREO3D_ABR)
++                dh /= 2;
++            format_args[2] = "dar";
++            format_args[3] = mp_tprintf(32, "%f", (double)dw / MPMAX(dh, 1));
++        }
++        filters[2] = mp_create_user_filter(subf, MP_OUTPUT_CHAIN_VIDEO,
++                                           "format", format_args);
++
++        if (filters[1] && filters[2]) {
++            mp_chain_filters(subf->ppins[0], subf->ppins[1], filters, 3);
++            p->sub.filter = subf;
++            MP_INFO(f, "Inserting stereo conversion filter.\n");
++        } else {
++            MP_ERR(f, "creating stereo conversion filter failed\n");
++            talloc_free(subf);
++        }
++    }
++
++    mp_subfilter_continue(&p->sub);
++}
++
++static void stereo_reset(struct mp_filter *f)
++{
++    struct stereo_priv *p = f->priv;
++
++    mp_subfilter_reset(&p->sub);
++}
++
++static void stereo_destroy(struct mp_filter *f)
++{
++    struct stereo_priv *p = f->priv;
++
++    mp_subfilter_reset(&p->sub);
++    TA_FREEP(&p->sub.filter);
++}
++
++static bool stereo_command(struct mp_filter *f, struct mp_filter_command *cmd)
++{
++    struct stereo_priv *p = f->priv;
++
++    if (cmd->type == MP_FILTER_COMMAND_IS_ACTIVE) {
++        cmd->is_active = !!p->sub.filter;
++        return true;
++    }
++    return false;
++}
++
++static const struct mp_filter_info stereo_filter = {
++    .name = "autostereo",
++    .priv_size = sizeof(struct stereo_priv),
++    .command = stereo_command,
++    .process = stereo_process,
++    .reset = stereo_reset,
++    .destroy = stereo_destroy,
++};
++
++struct mp_filter *mp_autostereo_create(struct mp_filter *parent)
++{
++    struct mp_filter *f = mp_filter_create(parent, &stereo_filter);
++    if (!f)
++        return NULL;
++
++    struct stereo_priv *p = f->priv;
++    p->prev_stereo3d = -1;
++    p->prev_imgfmt = 0;
++    p->opts = m_config_cache_alloc(f, f->global, &filter_conf);
++
++    p->sub.in = mp_filter_add_pin(f, MP_PIN_IN, "in");
++    p->sub.out = mp_filter_add_pin(f, MP_PIN_OUT, "out");
++
++    return f;
++}
++
+ static void vflip_process(struct mp_filter *f)
+ {
+     struct vflip_priv *p = f->priv;
+diff --git a/filters/f_auto_filters.h b/filters/f_auto_filters.h
+index 485cd27302..bfd81fd4bb 100644
+--- a/filters/f_auto_filters.h
++++ b/filters/f_auto_filters.h
+@@ -9,6 +9,9 @@ struct mp_filter *mp_deint_create(struct mp_filter *parent);
+ // Flip according to mp_image.vflip
+ struct mp_filter *mp_autovflip_create(struct mp_filter *parent);
+ 
++// Convert the detected stereo input to full side by side, left eye first.
++struct mp_filter *mp_autostereo_create(struct mp_filter *parent);
++
+ // Rotate according to mp_image.rotate and VO capabilities.
+ struct mp_filter *mp_autorotate_create(struct mp_filter *parent);
+ 
+diff --git a/filters/f_output_chain.c b/filters/f_output_chain.c
+index 43ec3db15c..0ed15c83af 100644
+--- a/filters/f_output_chain.c
++++ b/filters/f_output_chain.c
+@@ -40,6 +40,7 @@ struct chain {
+     struct mp_pin *filters_in, *filters_out;
+ 
+     struct mp_user_filter *input, *output, *convert_wrapper;
++    struct mp_user_filter *stereo;
+     struct mp_autoconvert *convert;
+ 
+     struct vo *vo;
+@@ -145,6 +146,14 @@ static void check_in_format_change(struct mp_user_filter *u,
+     }
+ }
+ 
++static void set_stereo_active(struct chain *p, bool active)
++{
++    if (!p->vo)
++        return;
++
++    vo_control(p->vo, VOCTRL_SET_STEREO_CONTENT, &active);
++}
++
+ static void user_wrapper_process(struct mp_filter *f)
+ {
+     struct mp_user_filter *u = f->priv;
+@@ -208,6 +217,8 @@ static void user_wrapper_process(struct mp_filter *f)
+             u->last_is_active = cmd.is_active;
+             MP_VERBOSE(p, "[%s] (%sabled)\n", u->name,
+                        u->last_is_active ? "en" : "dis");
++            if (u == p->stereo)
++                set_stereo_active(p, u->last_is_active);
+         }
+     }
+ }
+@@ -343,6 +354,10 @@ void mp_output_chain_reset_harder(struct mp_output_chain *c)
+ 
+ static void output_chain_destroy(struct mp_filter *f)
+ {
++    struct chain *p = f->priv;
++
++    if (p->stereo && p->stereo->last_is_active)
++        set_stereo_active(p, false);
+     output_chain_reset(f);
+ }
+ 
+@@ -377,6 +392,7 @@ void mp_output_chain_set_vo(struct mp_output_chain *c, struct vo *vo)
+     p->stream_info.hwdec_devs = vo ? vo->hwdec_devs : NULL;
+     p->stream_info.osd = vo ? vo->osd : NULL;
+     p->stream_info.vflip = vo ? vo->driver->caps & VO_CAP_VFLIP : false;
++    p->stream_info.stereo_view = vo ? vo->driver->caps & VO_CAP_STEREO_VIEW : false;
+     p->stream_info.rotate90 = vo ? vo->driver->caps & VO_CAP_ROTATE90 : false;
+     p->stream_info.dr_vo = vo;
+     p->vo = vo;
+@@ -660,6 +676,15 @@ static void create_video_things(struct chain *p)
+         abort();
+     MP_TARRAY_APPEND(p, p->post_filters, p->num_post_filters, f);
+ 
++    f = create_wrapper_filter(p);
++    f->name = "autostereo";
++    p->stereo = f;
++    f->last_is_active = false;
++    f->f = mp_autostereo_create(f->wrapper);
++    if (!f->f)
++        abort();
++    MP_TARRAY_APPEND(p, p->post_filters, p->num_post_filters, f);
++
+     f = create_wrapper_filter(p);
+     f->name = "autorotate";
+     f->f = mp_autorotate_create(f->wrapper);
+diff --git a/filters/filter.h b/filters/filter.h
+index a86ffc1e35..cb741ecefe 100644
+--- a/filters/filter.h
++++ b/filters/filter.h
+@@ -406,6 +406,7 @@ struct mp_stream_info {
+     struct mp_hwdec_devices *hwdec_devs;
+     struct osd_state *osd;
+     bool vflip;
++    bool stereo_view;
+     bool rotate90;
+     struct vo *dr_vo; // for calling vo_get_image()
+ };
+diff --git a/options/options.c b/options/options.c
+index 716c3e6f10..fdee8df132 100644
+--- a/options/options.c
++++ b/options/options.c
+@@ -458,6 +458,7 @@ const struct m_sub_options cuda_conf = {
+ 
+ const struct m_sub_options filter_conf = {
+     .opts = (const struct m_option[]){
++        {"video-stereo", OPT_BOOL(video_stereo)},
+         {"deinterlace", OPT_CHOICE(deinterlace,
+             {"no", 0}, {"yes", 1}, {"auto", -1})},
+         {"deinterlace-field-parity", OPT_CHOICE(field_parity,
+@@ -468,6 +469,7 @@ const struct m_sub_options filter_conf = {
+     },
+     .size = sizeof(OPT_BASE_STRUCT),
+     .defaults = &(const struct filter_opts){
++        .video_stereo = true,
+         .field_parity = MP_FIELD_PARITY_AUTO,
+     },
+     .change_flags = UPDATE_IMGPAR,
+diff --git a/options/options.h b/options/options.h
+index 12dafea1e2..0b09093b60 100644
+--- a/options/options.h
++++ b/options/options.h
+@@ -422,6 +422,7 @@ struct cuda_opts {
+ };
+ 
+ struct filter_opts {
++    bool video_stereo;
+     int deinterlace;
+     int field_parity;
+ };
+diff --git a/video/out/vo.h b/video/out/vo.h
+index 160d86042b..e463557525 100644
+--- a/video/out/vo.h
++++ b/video/out/vo.h
+@@ -88,6 +88,7 @@ enum mp_voctrl {
+     VOCTRL_SET_CURSOR_VISIBILITY,       // bool*
+ 
+     VOCTRL_CONTENT_TYPE,                // enum mp_content_type*
++    VOCTRL_SET_STEREO_CONTENT,          // bool*
+ 
+     VOCTRL_KILL_SCREENSAVER,
+     VOCTRL_RESTORE_SCREENSAVER,
+@@ -205,6 +206,9 @@ enum {
+     VO_CAP_FRAMEOWNER   = 1 << 5,
+     // VO does handle mp_image_params.vflip
+     VO_CAP_VFLIP        = 1 << 6,
++    // VO declares its video surface as stereo content, so the window shows
++    // one view.
++    VO_CAP_STEREO_VIEW  = 1 << 7,
+ };
+ 
+ enum {

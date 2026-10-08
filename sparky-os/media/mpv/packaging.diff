@@ -1,0 +1,28 @@
+--- a/debian/control
++++ b/debian/control
+@@ -17,6 +17,7 @@
+  meson (>= 1.3.0~), ninja-build, nv-codec-headers (>= 1:9.0~) [amd64 i386],
+  oss4-dev, python3-docutils, python3-minimal, wayland-protocols,
+  libshaderc-dev, libdisplay-info-dev (>= 0.3.0~), libzimg-dev,
++ libstereo-declare-dev,
+ 
+ ## libsdl2-dev,
+ 
+@@ -88,6 +89,7 @@
+  librubberband-dev,
+  libsixel-dev,
+  libsndio-dev,
++ libstereo-declare-dev,
+  libswscale-dev (>= 7:7.0),
+  libuchardet-dev,
+  libva-dev,
+--- a/debian/rules
++++ b/debian/rules
+@@ -11,6 +11,7 @@
+ 	-Ddvbin=enabled \
+ 	-Ddvdnav=enabled \
+ 	-Dsndio=disabled \
++	-Dstereo-declare=enabled \
+ 	-Dlibmpv=true \
+ 	-Dvapoursynth=disabled
+ 

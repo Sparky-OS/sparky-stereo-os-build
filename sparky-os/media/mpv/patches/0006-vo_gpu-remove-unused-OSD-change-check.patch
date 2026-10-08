@@ -1,0 +1,124 @@
+From 61162bf73f87574ae85bada2dd933341bcd8a964 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Kacper=20Michaj=C5=82ow?= <kasper93@gmail.com>
+Date: Wed, 23 Sep 2026 15:34:16 +0200
+Subject: [PATCH] vo_gpu: remove unused OSD change check
+
+The last caller went away with the rpi code in 343a5fd345. It also
+regenerated the OSD with stereo mode 0, so any new user would have
+reset the per eye OSD layout on stereo 3D content. Drop the change
+tracking state that only existed for it.
+
+(cherry picked from commit bdefd6cb4284b35d6d902ef82a0322e0b684f21c)
+---
+ video/out/gpu/osd.c   | 21 ---------------------
+ video/out/gpu/osd.h   |  2 --
+ video/out/gpu/video.c |  6 ------
+ video/out/gpu/video.h |  2 --
+ 4 files changed, 31 deletions(-)
+
+diff --git a/video/out/gpu/osd.c b/video/out/gpu/osd.c
+index d6788f8c0e..883dccd7eb 100644
+--- a/video/out/gpu/osd.c
++++ b/video/out/gpu/osd.c
+@@ -53,7 +53,6 @@ struct mpgl_osd_part {
+     struct ra_tex *texture;
+     int w, h;
+     int num_subparts;
+-    int prev_num_subparts;
+     struct sub_bitmap *subparts;
+     int num_vertices;
+     struct vertex *vertices;
+@@ -66,7 +65,6 @@ struct mpgl_osd {
+     struct mpgl_osd_part *parts[MAX_OSD_PARTS];
+     const struct ra_format *fmt_table[SUBBITMAP_COUNT];
+     bool formats[SUBBITMAP_COUNT];
+-    bool change_flag; // for reporting to API user only
+     // temporary
+     int stereo_mode;
+     struct mp_osd_res osd_res;
+@@ -81,7 +79,6 @@ struct mpgl_osd *mpgl_osd_init(struct ra *ra, struct mp_log *log,
+         .log = log,
+         .osd = osd,
+         .ra = ra,
+-        .change_flag = true,
+         .scratch = talloc_zero_size(ctx, 1),
+     };
+ 
+@@ -194,7 +191,6 @@ static void gen_osd_cb(void *pctx, struct sub_bitmaps *imgs)
+             ok = false;
+ 
+         osd->change_id = imgs->change_id;
+-        ctx->change_flag = true;
+     }
+     osd->num_subparts = ok ? imgs->num_parts : 0;
+ 
+@@ -325,15 +321,6 @@ void mpgl_osd_generate(struct mpgl_osd *ctx, struct mp_osd_res res, double pts,
+ 
+     osd_draw(ctx->osd, ctx->osd_res, pts, draw_flags, ctx->formats, gen_osd_cb, ctx);
+     ctx->stereo_mode = stereo_mode;
+-
+-    // Parts going away does not necessarily result in gen_osd_cb() being called
+-    // (not even with num_parts==0), so check this separately.
+-    for (int n = 0; n < MAX_OSD_PARTS; n++) {
+-        struct mpgl_osd_part *part = ctx->parts[n];
+-        if (part->num_subparts !=  part->prev_num_subparts)
+-            ctx->change_flag = true;
+-        part->prev_num_subparts = part->num_subparts;
+-    }
+ }
+ 
+ // See osd_resize() for remarks. This function is an optional optimization too.
+@@ -342,11 +329,3 @@ void mpgl_osd_resize(struct mpgl_osd *ctx, struct mp_osd_res res, int stereo_mod
+     set_res(ctx, res, stereo_mode);
+     osd_resize(ctx->osd, ctx->osd_res);
+ }
+-
+-bool mpgl_osd_check_change(struct mpgl_osd *ctx, struct mp_osd_res *res,
+-                           double pts)
+-{
+-    ctx->change_flag = false;
+-    mpgl_osd_generate(ctx, *res, pts, 0, 0);
+-    return ctx->change_flag;
+-}
+diff --git a/video/out/gpu/osd.h b/video/out/gpu/osd.h
+index 1b05e254f8..84139ee8c3 100644
+--- a/video/out/gpu/osd.h
++++ b/video/out/gpu/osd.h
+@@ -19,7 +19,5 @@ bool mpgl_osd_draw_prepare(struct mpgl_osd *ctx, int index,
+                            struct gl_shader_cache *sc);
+ void mpgl_osd_draw_finish(struct mpgl_osd *ctx, int index,
+                           struct gl_shader_cache *sc, const struct ra_fbo *fbo);
+-bool mpgl_osd_check_change(struct mpgl_osd *ctx, struct mp_osd_res *res,
+-                           double pts);
+ 
+ #endif
+diff --git a/video/out/gpu/video.c b/video/out/gpu/video.c
+index c0a1be8d38..ec0e656c5e 100644
+--- a/video/out/gpu/video.c
++++ b/video/out/gpu/video.c
+@@ -3668,12 +3668,6 @@ void gl_video_set_osd_pts(struct gl_video *p, double pts)
+     p->osd_pts = pts;
+ }
+ 
+-bool gl_video_check_osd_change(struct gl_video *p, struct mp_osd_res *res,
+-                               double pts)
+-{
+-    return p->osd ? mpgl_osd_check_change(p->osd, res, pts) : false;
+-}
+-
+ void gl_video_resize(struct gl_video *p,
+                      struct mp_rect *src, struct mp_rect *dst,
+                      struct mp_osd_res *osd)
+diff --git a/video/out/gpu/video.h b/video/out/gpu/video.h
+index f8e05b1747..996e46e6ac 100644
+--- a/video/out/gpu/video.h
++++ b/video/out/gpu/video.h
+@@ -209,8 +209,6 @@ void gl_video_set_fb_depth(struct gl_video *p, int fb_depth);
+ void gl_video_perfdata(struct gl_video *p, struct voctrl_performance_data *out);
+ void gl_video_set_clear_color(struct gl_video *p, struct m_color color);
+ void gl_video_set_osd_pts(struct gl_video *p, double pts);
+-bool gl_video_check_osd_change(struct gl_video *p, struct mp_osd_res *osd,
+-                               double pts);
+ 
+ void gl_video_screenshot(struct gl_video *p, struct vo_frame *frame,
+                          struct voctrl_screenshot *args);

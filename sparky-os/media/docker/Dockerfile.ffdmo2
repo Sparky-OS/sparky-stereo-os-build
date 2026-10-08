@@ -1,0 +1,3 @@
+FROM mdmo-ff:dmo
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update -qq && apt-get -y --no-install-recommends install python3-minimal >/dev/null && rm -rf /var/lib/apt/lists/* && python3 --version

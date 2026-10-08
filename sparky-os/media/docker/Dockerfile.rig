@@ -1,0 +1,12 @@
+# The proof rig's compositor and tools on top of debian:testing + dmo, installed from our repository with the edition's pins;
+# the repository and the pins are removed again at the end, so the next layers add the media stack either from dmo alone or from ours.
+FROM mdmo-proofbase:1
+ENV DEBIAN_FRONTEND=noninteractive
+COPY --from=apt sparky-stereo sparky-stereo-only-ours /etc/apt/preferences.d/
+RUN --mount=type=bind,from=repo,target=/repo --mount=type=cache,target=/var/cache/apt/archives \
+    echo 'deb [trusted=yes] file:/repo ./' > /etc/apt/sources.list.d/sparky-stereo-stage.list \
+ && apt-get update -qq \
+ && apt-get -y -o APT::Keep-Downloaded-Packages=true install --no-install-recommends kwin-wayland kwin-common kwin-data libkwin6 mesa-libgallium mesa-vulkan-drivers libgl1-mesa-dri libegl-mesa0 libgbm1 \
+      python3-dbus python3-pil python3-numpy dbus dbus-x11 dbus-user-session xwayland ca-certificates mkvtoolnix libstereo-declare1 > /install-rig.log 2>&1; tail -3 /install-rig.log; \
+    dpkg -l kwin-wayland libkwin6 mesa-libgallium mesa-vulkan-drivers libqt6core6t64 libqt6gui6 libstereo-declare1 xwayland libplacebo360 2>/dev/null | awk '/^ii/{print $2, $3}' | tee /package-versions-rig.txt; \
+    rm -f /etc/apt/sources.list.d/sparky-stereo-stage.list /etc/apt/preferences.d/sparky-stereo /etc/apt/preferences.d/sparky-stereo-only-ours; rm -rf /var/lib/apt/lists/*

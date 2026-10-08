@@ -1,0 +1,36 @@
+From 1ae84adb938de476d47aa13f1d1343d300f7fcc9 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 21 Sep 2026 19:29:06 -0300
+Subject: [PATCH] f_decoder_wrapper: prefer bitstream stereo 3D layout
+ over container tag
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+fix_image_params() unconditionally overwrote the layout with the
+container tag, so the value mp_image_from_av_frame() reads from
+AV_FRAME_DATA_STEREO3D never reached the output. Fall back to the tag
+only when the bitstream signals nothing, the same rule rotation already
+follows.
+
+Fixes: #18489
+Co-authored-by: Kacper Michajłow <kasper93@gmail.com>
+(cherry picked from commit a860bc42bae5b4aa08880dc7efefed955931ae41)
+---
+ filters/f_decoder_wrapper.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/filters/f_decoder_wrapper.c b/filters/f_decoder_wrapper.c
+index 5e2e8d74c0..037bdb531e 100644
+--- a/filters/f_decoder_wrapper.c
++++ b/filters/f_decoder_wrapper.c
+@@ -610,7 +610,8 @@ static void fix_image_params(struct priv *p,
+     if (m.p_w <= 0 || m.p_h <= 0)
+         m.p_w = m.p_h = 1;
+ 
+-    m.stereo3d = p->codec->stereo_mode;
++    if (!m.stereo3d)
++        m.stereo3d = p->codec->stereo_mode;
+ 
+     if (!mp_rect_equals(&p->codec->crop, &(struct mp_rect){0})) {
+         struct mp_rect crop = p->codec->crop;

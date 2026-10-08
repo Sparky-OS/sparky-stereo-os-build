@@ -1,0 +1,10 @@
+# the rig with OUR ffmpeg and mpv, installed with apt from the repository with the edition's pins (deb-multimedia's repository is there too)
+FROM mdmo-rig:base
+ENV DEBIAN_FRONTEND=noninteractive
+COPY --from=apt sparky-stereo sparky-stereo-only-ours /etc/apt/preferences.d/
+RUN --mount=type=bind,from=repo,target=/repo --mount=type=cache,target=/var/cache/apt/archives \
+    echo 'deb [trusted=yes] file:/repo ./' > /etc/apt/sources.list.d/sparky-stereo-stage.list \
+ && apt-get update -qq && apt-cache policy mpv ffmpeg libavcodec63 | grep -E "^[a-z]|Candidate|\*\*\*|stereo3d|dmo|Packages" | head -30 > /policy.txt; cat /policy.txt; \
+    apt-get -y -o APT::Keep-Downloaded-Packages=true install --no-install-recommends ffmpeg mpv > /install-media.log 2>&1; tail -3 /install-media.log; \
+    dpkg -l ffmpeg mpv libmpv2 libavcodec63 libavformat63 libavutil61 libavfilter12 libswscale10 libswresample7 libavdevice63 libplacebo360 libx264-165 libstereo-declare1 | awk '/^ii/{print $2, $3}' | tee /package-versions-media.txt; \
+    rm -f /etc/apt/sources.list.d/sparky-stereo-stage.list; rm -rf /var/lib/apt/lists/*

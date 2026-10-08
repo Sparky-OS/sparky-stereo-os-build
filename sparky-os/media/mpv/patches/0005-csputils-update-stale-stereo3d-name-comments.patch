@@ -1,0 +1,39 @@
+From 777914d7971966986b3b669d9e9bb8307d42896d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Kacper=20Michaj=C5=82ow?= <kasper93@gmail.com>
+Date: Wed, 23 Sep 2026 15:33:36 +0200
+Subject: [PATCH] csputils: update stale stereo3d name comments
+
+mpv stopped inserting vf_stereo3d itself in a5610b2a0d, the names only
+need to stay recognizable next to the stereo3d filter documentation that
+DOCS/man/vf.rst points to. The filter also accepts icl and icr as input
+formats.
+
+(cherry picked from commit 468bbf60d21494b19b378020908fa0faf8dce510)
+---
+ video/csputils.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/video/csputils.c b/video/csputils.c
+index ea5be33dc0..d59e672708 100644
+--- a/video/csputils.c
++++ b/video/csputils.c
+@@ -130,7 +130,7 @@ const struct m_opt_choice_alternatives pl_alpha_names[] = {
+     {0}
+ };
+ 
+-// The short name _must_ match with what vf_stereo3d accepts (if supported).
++// The short names follow the input format names of the vf_stereo3d.
+ // The long name in comments is closer to the Matroska spec (StereoMode element).
+ // The numeric index matches the Matroska StereoMode value. If you add entries
+ // that don't match Matroska, make sure demux_mkv.c rejects them properly.
+@@ -144,8 +144,8 @@ const struct m_opt_choice_alternatives mp_stereo3d_names[] = {
+     {"checkl",  5}, // "checkboard_left"  (unsupported by vf_stereo3d)
+     {"irr",     6}, // "row_interleaved_right"
+     {"irl",     7}, // "row_interleaved_left"
+-    {"icr",     8}, // "column_interleaved_right" (unsupported by vf_stereo3d)
+-    {"icl",     9}, // "column_interleaved_left" (unsupported by vf_stereo3d)
++    {"icr",     8}, // "column_interleaved_right"
++    {"icl",     9}, // "column_interleaved_left"
+     {"arcc",   10}, // "anaglyph_cyan_red" (Matroska: unclear which mode)
+     {"sbs2r",  11}, // "side_by_side_right"
+     {"agmc",   12}, // "anaglyph_green_magenta" (Matroska: unclear which mode)

@@ -1,0 +1,7 @@
+# mpv's build environment with OUR FFmpeg development packages and the stereo declaration library
+FROM mdmo-mpvbuild:1
+ENV DEBIAN_FRONTEND=noninteractive
+RUN --mount=type=bind,from=ffdebs,target=/ffdebs --mount=type=bind,from=repo,target=/repo \
+    apt-get update -qq \
+ && apt-get -y install --allow-downgrades /ffdebs/lib*.deb /repo/libstereo-declare1_1.0.0-1_amd64.deb /repo/libstereo-declare-dev_1.0.0-1_amd64.deb > /install-ours.log 2>&1; tail -5 /install-ours.log; \
+    dpkg -l | awk '/^ii/{print $2" "$3}' | grep -E "^(libavcodec63|libavcodec-dev|libstereo-declare-dev|libstereo-declare1)" ; rm -rf /var/lib/apt/lists/*

@@ -1,0 +1,81 @@
+From 7a65fc6722ade40ac71a026acf89af77a8f953c4 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 23 Sep 2026 11:18:05 -0300
+Subject: [PATCH] fate/h264: test a frame packing SEI inside a tagged
+ container
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Remux the frame packing persistence sample to Matroska with
+stereo_mode=top_bottom, conflicting with the first frame's
+side-by-side SEI. Check that decoding succeeds and frames returned
+by an initial four-packet probe have one Stereo 3D entry. Check
+frame 0's layout: side by side by default, and top and bottom with
+-side_data_prefer_packet stereo3d.
+
+Suggested-by: Kacper Michajłow <kasper93@gmail.com>
+Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Assisted-by: Claude Sonnet via Claude Code
+---
+ tests/fate/h264.mak                         | 27 +++++++++++++++++++++
+ tests/ref/fate/h264-frame-packing-container | 12 +++++++++
+ 2 files changed, 39 insertions(+)
+ create mode 100644 tests/ref/fate/h264-frame-packing-container
+
+diff --git a/tests/fate/h264.mak b/tests/fate/h264.mak
+index 2e3f826e57..dbd73e5ec9 100644
+--- a/tests/fate/h264.mak
++++ b/tests/fate/h264.mak
+@@ -518,3 +518,30 @@ fate-h264-bsf-redundant-pps-side-data2: CMD = transcode mov $(TARGET_SAMPLES)/h2
+ 
+ fate-h264-encparams: CMD = venc_data $(TARGET_SAMPLES)/h264-conformance/FRext/FRExt_MMCO4_Sony_B.264 0 1
+ FATE_SAMPLES_DUMP_DATA += fate-h264-encparams
++
++# A frame packing arrangement SEI inside a container that also signals a
++# stereo layout must leave one Stereo 3D entry per frame, whichever source
++# wins, and must not make the ffmpeg CLI fail with EEXIST.
++FATE_H264_FFMPEG_FFPROBE-$(call ALLYES, FILE_PROTOCOL H264_DEMUXER H264_PARSER H264_DECODER \
++                                        MATROSKA_MUXER MATROSKA_DEMUXER NULL_MUXER \
++                                        WRAPPED_AVFRAME_ENCODER EXTRACT_EXTRADATA_BSF \
++                                        TRIM_FILTER SHOWINFO_FILTER) += fate-h264-frame-packing-container
++fate-h264-frame-packing-container: CMD = tmp=$$(target_path tests/data/fate/h264-frame-packing-container.mkv); \
++  tmplog=tests/data/fate/h264-frame-packing-container.log; \
++  ffmpeg -i $(TARGET_SAMPLES)/h264/frame-packing-persistence.h264 -c copy \
++   -metadata:s:v:0 stereo_mode=top_bottom -f matroska -y $$tmp > /dev/null 2>&1 && \
++  ffmpeg -i $$tmp -f null - > /dev/null 2>&1 && \
++  echo "default:" && \
++  probeframes -v error -read_intervals %+\#4 \
++   -show_entries frame=side_data_list:frame_tags= -of compact $$tmp && \
++  ffmpeg -i $$tmp -vf trim=end_frame=1,showinfo -frames:v 1 -f null - > /dev/null 2> $$tmplog && \
++   sed -n "/Stereo 3D:/s/^.*side data - //p" $$tmplog && \
++  echo "side_data_prefer_packet stereo3d:" && \
++  probeframes -v error -side_data_prefer_packet stereo3d -read_intervals %+\#4 \
++   -show_entries frame=side_data_list:frame_tags= -of compact $$tmp && \
++  ffmpeg -side_data_prefer_packet stereo3d -i $$tmp -vf trim=end_frame=1,showinfo -frames:v 1 -f null - > /dev/null 2> $$tmplog && \
++   sed -n "/Stereo 3D:/s/^.*side data - //p" $$tmplog
++fate-h264-frame-packing-container: CLEANFILES = tests/data/fate/h264-frame-packing-container.mkv tests/data/fate/h264-frame-packing-container.log
++
++FATE_SAMPLES_FFMPEG_FFPROBE += $(FATE_H264_FFMPEG_FFPROBE-yes)
++fate-h264: $(FATE_H264_FFMPEG_FFPROBE-yes)
+diff --git a/tests/ref/fate/h264-frame-packing-container b/tests/ref/fate/h264-frame-packing-container
+new file mode 100644
+index 0000000000..b79b21d115
+--- /dev/null
++++ b/tests/ref/fate/h264-frame-packing-container
+@@ -0,0 +1,12 @@
++default:
++frame|side_datum/stereo_3d:side_data_type=Stereo 3D
++frame|side_datum/stereo_3d:side_data_type=Stereo 3D
++frame|side_datum/stereo_3d:side_data_type=Stereo 3D
++frame|side_datum/stereo_3d:side_data_type=Stereo 3D
++Stereo 3D: type - side by side, view - packed, primary_eye - none
++side_data_prefer_packet stereo3d:
++frame|side_datum/stereo_3d:side_data_type=Stereo 3D
++frame|side_datum/stereo_3d:side_data_type=Stereo 3D
++frame|side_datum/stereo_3d:side_data_type=Stereo 3D
++frame|side_datum/stereo_3d:side_data_type=Stereo 3D
++Stereo 3D: type - top and bottom, view - packed, primary_eye - none
+-- 
+2.53.0
+

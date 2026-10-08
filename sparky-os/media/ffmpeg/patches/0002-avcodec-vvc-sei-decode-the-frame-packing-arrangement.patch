@@ -1,0 +1,175 @@
+From 6545153df7bb60b406c6cfe9ea44b06b70088f8d Mon Sep 17 00:00:00 2001
+From: James Almer <jamrial@gmail.com>
+Date: Wed, 23 Sep 2026 00:11:45 -0300
+Subject: [PATCH] avcodec/vvc/sei: decode the frame packing arrangement SEI
+
+The VVC decoder did not decode this message, so no AVStereo3D side data
+was exported for VVC.
+
+Decode it, ignoring the arrangement IDs reserved for future use
+(H.274 8.6.2), and keep the message with its frame. Export the arrangement
+when the frame is output, as its persistence, its cancellation and the
+alternation of temporal views follow the output order and it ends with
+the coded video sequence and on flush. Side data supplied by the caller
+or the container is neither removed nor duplicated.
+
+A single frame context, as selected by AV_CODEC_FLAG_LOW_DELAY, keeps the
+state of the previous frame, so reset message_present before decoding the
+prefix SEI.
+
+Link: https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/24628
+Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Assisted-by: Claude Sonnet via Claude Code
+---
+ libavcodec/vvc/dec.c  |  8 ++++++++
+ libavcodec/vvc/dec.h  |  4 ++++
+ libavcodec/vvc/refs.c | 25 +++++++++++++++++++++++++
+ libavcodec/vvc/sei.c  | 25 +++++++++++++++++++++++++
+ 4 files changed, 62 insertions(+)
+
+diff --git a/libavcodec/vvc/dec.c b/libavcodec/vvc/dec.c
+index f7c51f0..49186af 100644
+--- a/libavcodec/vvc/dec.c
++++ b/libavcodec/vvc/dec.c
+@@ -654,6 +654,7 @@ static int ref_frame(VVCFrame *dst, const VVCFrame *src)
+ 
+     dst->flags = src->flags;
+     dst->sequence = src->sequence;
++    dst->frame_packing = src->frame_packing;
+ 
+     return 0;
+ }
+@@ -810,11 +811,14 @@ static int frame_start(VVCContext *s, VVCFrameContext *fc, SliceContext *sc)
+     if (!s->temporal_id && !ph->r->ph_non_ref_pic_flag && !(IS_RASL(s) || IS_RADL(s)))
+         s->poc_tid0 = ph->poc;
+ 
++    fc->sei.common.frame_packing.message_present = 0;
+     decode_prefix_sei(fc, s);
+ 
+     if ((ret = ff_vvc_set_new_ref(s, fc, &fc->frame)) < 0)
+         goto fail;
+ 
++    fc->ref->frame_packing = fc->sei.common.frame_packing;
++
+     ret = set_side_data(s, fc);
+     if (ret < 0)
+         goto fail;
+@@ -1231,6 +1235,9 @@ static av_cold void vvc_decode_flush(AVCodecContext *avctx)
+         ff_vvc_sei_reset(&last->sei);
+         ff_vvc_flush_dpb(last);
+     }
++    s->output_frame_packing.present = 0;
++    s->output_frame_packing_sequence = -1;
++    s->output_frame_packing_count = 0;
+ 
+     s->ps.sps_id_used = 0;
+ 
+@@ -1302,6 +1309,7 @@ static av_cold int vvc_decode_init(AVCodecContext *avctx)
+         return AVERROR(ENOMEM);
+ 
+     s->eos = 1;
++    s->output_frame_packing_sequence = -1;
+     GDR_SET_RECOVERED(s);
+     ff_thread_once(&init_static_once, init_default_scale_m);
+ 
+diff --git a/libavcodec/vvc/dec.h b/libavcodec/vvc/dec.h
+index bfb8a2e..9298e41 100644
+--- a/libavcodec/vvc/dec.h
++++ b/libavcodec/vvc/dec.h
+@@ -108,6 +108,7 @@ typedef struct VVCFrame {
+     uint8_t flags;
+ 
+     void *hwaccel_picture_private; ///< hardware accelerator private data
++    H2645SEIFramePacking frame_packing;
+ } VVCFrame;
+ 
+ typedef struct SliceContext {
+@@ -250,6 +251,9 @@ typedef struct VVCContext {
+     int nb_delayed;         ///< delayed frames
+ 
+     H274HashContext *hash_ctx;
++    H2645SEIFramePacking output_frame_packing;
++    int output_frame_packing_sequence;
++    int output_frame_packing_count;
+ }  VVCContext ;
+ 
+ #endif /* AVCODEC_VVC_DEC_H */
+diff --git a/libavcodec/vvc/refs.c b/libavcodec/vvc/refs.c
+index 6939a22..75adf19 100644
+--- a/libavcodec/vvc/refs.c
++++ b/libavcodec/vvc/refs.c
+@@ -309,6 +309,31 @@ int ff_vvc_output_frame(VVCContext *s, VVCFrameContext *fc, AVFrame *out, const
+ 
+             ret = av_frame_ref(out, frame->needs_fg ? frame->frame_grain : frame->frame);
+ 
++            if (!ret) {
++                H2645SEIFramePacking fp;
++
++                if (s->output_frame_packing_sequence != frame->sequence) {
++                    s->output_frame_packing.present = 0;
++                    s->output_frame_packing_sequence = frame->sequence;
++                    s->output_frame_packing_count = 0;
++                }
++                if (frame->frame_packing.message_present) {
++                    s->output_frame_packing = frame->frame_packing;
++                    s->output_frame_packing_count = 0;
++                }
++                fp = s->output_frame_packing;
++                if (fp.present && fp.arrangement_type == SEI_FPA_TYPE_INTERLEAVE_TEMPORAL &&
++                    (s->output_frame_packing_count & 1))
++                    fp.current_frame_is_frame0_flag = !fp.current_frame_is_frame0_flag;
++                ret = ff_h2645_sei_frame_packing_to_frame(s->avctx, out, &fp, AV_CODEC_ID_VVC);
++                if (ret >= 0 && s->output_frame_packing.present &&
++                    s->output_frame_packing.arrangement_type == SEI_FPA_TYPE_INTERLEAVE_TEMPORAL)
++                    s->output_frame_packing_count ^= 1;
++                if (ret >= 0 && frame->frame_packing.message_present &&
++                    !frame->frame_packing.arrangement_persistence_flag)
++                    s->output_frame_packing.present = 0;
++            }
++
+             if (!ret && !(s->avctx->export_side_data & AV_CODEC_EXPORT_DATA_FILM_GRAIN))
+                 av_frame_remove_side_data(out, AV_FRAME_DATA_FILM_GRAIN_PARAMS);
+ 
+diff --git a/libavcodec/vvc/sei.c b/libavcodec/vvc/sei.c
+index 241943f..35cb117 100644
+--- a/libavcodec/vvc/sei.c
++++ b/libavcodec/vvc/sei.c
+@@ -177,6 +177,27 @@ static int decode_mastering_display_colour_volume(H2645SEIMasteringDisplay *h, c
+     return 0;
+ }
+ 
++static int decode_frame_packing_arrangement(H2645SEIFramePacking *h, const SEIRawFramePackingArrangement *s)
++{
++    if (s->fp_arrangement_id >= 256 && s->fp_arrangement_id <= 511)
++        return 0;
++
++    h->arrangement_id          = s->fp_arrangement_id;
++    h->arrangement_cancel_flag = s->fp_arrangement_cancel_flag;
++    h->present                 = !h->arrangement_cancel_flag;
++    h->message_present         = 1;
++
++    if (h->present) {
++        h->arrangement_type             = s->fp_arrangement_type;
++        h->quincunx_sampling_flag       = s->fp_quincunx_sampling_flag;
++        h->content_interpretation_type  = s->fp_content_interpretation_type;
++        h->current_frame_is_frame0_flag = s->fp_current_frame_is_frame0_flag;
++        h->arrangement_persistence_flag = s->fp_arrangement_persistence_flag;
++    }
++
++    return 0;
++}
++
+ static int decode_user_data_registered_itu_t_t35(H2645SEI *sei, const SEIRawUserDataRegistered *s,
+                                                  const VVCFrameContext *fc)
+ {
+@@ -243,6 +264,10 @@ int ff_vvc_sei_decode(VVCSEI *s, const H266RawSEI *sei, const struct VVCFrameCon
+             ret = decode_mastering_display_colour_volume(&s->common.mastering_display, payload);
+             break;
+ 
++        case SEI_TYPE_FRAME_PACKING_ARRANGEMENT:
++            ret = decode_frame_packing_arrangement(&s->common.frame_packing, payload);
++            break;
++
+         case SEI_TYPE_USER_DATA_REGISTERED_ITU_T_T35:
+             ret = decode_user_data_registered_itu_t_t35(&s->common, payload, fc);
+             break;

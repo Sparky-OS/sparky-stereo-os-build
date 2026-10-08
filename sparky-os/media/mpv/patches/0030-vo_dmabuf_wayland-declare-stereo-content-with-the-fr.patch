@@ -1,0 +1,54 @@
+From 857cc5d43cc627a447c4ef5a27c69c8305435ef0 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 13:48:30 -0300
+Subject: [PATCH] vo_dmabuf_wayland: declare stereo content with the
+ frame
+
+The declaration followed the filter chain, which runs a frame ahead of
+the one on the screen: at the end of a 3D sequence the last 3D frame was
+shown as a flat picture of its two views, and at the start of one the
+first frame was shown as undeclared. Declare in draw_frame() with the
+frame that is attached, as the gpu VOs do, so that the declaration and
+the buffer reach the compositor in the same commit.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ video/out/vo_dmabuf_wayland.c | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/video/out/vo_dmabuf_wayland.c b/video/out/vo_dmabuf_wayland.c
+index deaf0640fa..bafea35116 100644
+--- a/video/out/vo_dmabuf_wayland.c
++++ b/video/out/vo_dmabuf_wayland.c
+@@ -102,6 +102,7 @@ struct priv {
+     struct mp_osd_res screen_osd_res;
+ 
+     bool destroy_buffers;
++    bool stereo_declared;
+     bool force_window;
+     enum hwdec_type hwdec_type;
+ 
+@@ -638,6 +639,13 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
+                                      image->h);
+ 
+         }
++
++        // The declaration changes with the frame that needs it
++        bool stereo = frame->current->params.stereo3d == MP_STEREO3D_SBSL;
++        if (stereo != p->stereo_declared) {
++            vo_wayland_set_stereo_content(wl, stereo);
++            p->stereo_declared = stereo;
++        }
+     }
+ 
+     osd_buf = osd_buffer_get(vo);
+@@ -757,7 +765,8 @@ static int control(struct vo *vo, uint32_t request, void *data)
+ 
+     switch (request) {
+     case VOCTRL_SET_STEREO_CONTENT:
+-        return vo_wayland_set_stereo_content(vo->wl, *(bool *)data);
++        // The declaration follows the frames in draw_frame()
++        return true;
+     case VOCTRL_RESET:
+         p->destroy_buffers = true;
+         return VO_TRUE;

@@ -1,0 +1,167 @@
+From 450c3f820ff0a4a76cf9c15f769baa856d60060c Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 14:46:37 -0300
+Subject: [PATCH] fate/hevc: test the end of the frame packing arrangement
+
+Check with showinfo, with four frame threads, that the arrangement does
+not survive a new coded layer-wise video sequence, that a message with
+the persistence flag 0 applies to its own picture only, and that a later
+message changes the arrangement at a CRA picture while the pictures
+output before it keep the old one, until a cancellation ends it.
+
+The samples are 64x64 libx265 encodes with B pictures, with prefix SEI
+NAL units inserted before the pictures concerned: a sequence of two
+coded video sequences with a message at each IRAP picture of the first
+and none in the second, one picture with the persistence flag 0, and an
+open GOP stream with a second message and a cancellation at its CRA
+pictures.
+
+Link: https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/24628
+Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Assisted-by: Claude Sonnet via Claude Code
+---
+ tests/fate/hevc.mak                        | 27 +++++-
+ tests/ref/fate/hevc-frame-packing-lifetime | 96 ++++++++++++++++++++++
+ 2 files changed, 122 insertions(+), 1 deletion(-)
+ create mode 100644 tests/ref/fate/hevc-frame-packing-lifetime
+
+diff --git a/tests/fate/hevc.mak b/tests/fate/hevc.mak
+index d470904..8a14ecf 100644
+--- a/tests/fate/hevc.mak
++++ b/tests/fate/hevc.mak
+@@ -345,7 +345,32 @@ FATE_HEVC-$(call FRAMECRC, MOV, HEVC) += fate-hevc-alpha
+ fate-hevc-color-reserved: CMD = framecrc -bsf:v hevc_metadata=colour_primaries=0:transfer_characteristics=0:matrix_coefficients=3 -i $(TARGET_SAMPLES)/hevc-conformance/AMP_A_Samsung_4.bit -vf scale,format=nv12 -frames:v 1
+ FATE_HEVC-$(call FRAMECRC, HEVC, HEVC, HEVC_METADATA_BSF SCALE_FILTER) += fate-hevc-color-reserved
+ 
++# The frame packing arrangement follows the output order and ends with the
++# coded layer-wise video sequence: the second sequence has no message and is
++# not packed; a message with the persistence flag 0 applies to its own picture
++# only; a later message changes the arrangement at a CRA picture, which
++# a cancellation then ends. showinfo prints the Stereo 3D side data of each
++# output frame.
++fate-hevc-frame-packing-lifetime: CMD = tmplog=tests/data/fate/hevc-frame-packing-lifetime.log; \
++  echo "sequence:" && \
++  threads=4 ffmpeg -i $(TARGET_SAMPLES)/hevc/frame-packing-sequence.hevc \
++   -vf showinfo -f null - > /dev/null 2> $$tmplog && \
++  sed -n "s/^.* n: *\([0-9]*\) .*/frame \1/p; s/^.*side data - Stereo 3D: //p" $$tmplog && \
++  echo "current picture only:" && \
++  threads=4 ffmpeg -i $(TARGET_SAMPLES)/hevc/frame-packing-current-only.hevc \
++   -vf showinfo -f null - > /dev/null 2> $$tmplog && \
++  sed -n "s/^.* n: *\([0-9]*\) .*/frame \1/p; s/^.*side data - Stereo 3D: //p" $$tmplog && \
++  echo "changed:" && \
++  threads=4 ffmpeg -i $(TARGET_SAMPLES)/hevc/frame-packing-changed.hevc \
++   -vf showinfo -f null - > /dev/null 2> $$tmplog && \
++  sed -n "s/^.* n: *\([0-9]*\) .*/frame \1/p; s/^.*side data - Stereo 3D: //p" $$tmplog
++fate-hevc-frame-packing-lifetime: CLEANFILES = tests/data/fate/hevc-frame-packing-lifetime.log
++
++FATE_HEVC_FFMPEG-$(call ALLYES, FILE_PROTOCOL HEVC_DEMUXER HEVC_PARSER HEVC_DECODER \
++                                NULL_MUXER WRAPPED_AVFRAME_ENCODER SHOWINFO_FILTER) += fate-hevc-frame-packing-lifetime
++
+ FATE_SAMPLES_AVCONV += $(FATE_HEVC-yes)
++FATE_SAMPLES_FFMPEG += $(FATE_HEVC_FFMPEG-yes)
+ FATE_SAMPLES_FFPROBE += $(FATE_HEVC_FFPROBE-yes)
+ 
+-fate-hevc: $(FATE_HEVC-yes) $(FATE_HEVC_FFPROBE-yes)
++fate-hevc: $(FATE_HEVC-yes) $(FATE_HEVC_FFPROBE-yes) $(FATE_HEVC_FFMPEG-yes)
+diff --git a/tests/ref/fate/hevc-frame-packing-lifetime b/tests/ref/fate/hevc-frame-packing-lifetime
+new file mode 100644
+index 0000000..8cce2bb
+--- /dev/null
++++ b/tests/ref/fate/hevc-frame-packing-lifetime
+@@ -0,0 +1,96 @@
++sequence:
++frame 0
++type - side by side, view - packed, primary_eye - none
++frame 1
++type - side by side, view - packed, primary_eye - none
++frame 2
++type - side by side, view - packed, primary_eye - none
++frame 3
++type - side by side, view - packed, primary_eye - none
++frame 4
++type - side by side, view - packed, primary_eye - none
++frame 5
++type - side by side, view - packed, primary_eye - none
++frame 6
++type - side by side, view - packed, primary_eye - none
++frame 7
++type - side by side, view - packed, primary_eye - none
++frame 8
++type - side by side, view - packed, primary_eye - none
++frame 9
++type - side by side, view - packed, primary_eye - none
++frame 10
++type - side by side, view - packed, primary_eye - none
++frame 11
++type - side by side, view - packed, primary_eye - none
++frame 12
++type - side by side, view - packed, primary_eye - none
++frame 13
++type - side by side, view - packed, primary_eye - none
++frame 14
++type - side by side, view - packed, primary_eye - none
++frame 15
++type - side by side, view - packed, primary_eye - none
++frame 16
++frame 17
++frame 18
++frame 19
++frame 20
++frame 21
++frame 22
++frame 23
++frame 24
++frame 25
++frame 26
++frame 27
++current picture only:
++frame 0
++frame 1
++frame 2
++frame 3
++frame 4
++type - top and bottom, view - packed, primary_eye - none
++frame 5
++frame 6
++frame 7
++frame 8
++frame 9
++frame 10
++frame 11
++changed:
++frame 0
++type - side by side, view - packed, primary_eye - none
++frame 1
++type - side by side, view - packed, primary_eye - none
++frame 2
++type - side by side, view - packed, primary_eye - none
++frame 3
++type - side by side, view - packed, primary_eye - none
++frame 4
++type - side by side, view - packed, primary_eye - none
++frame 5
++type - side by side, view - packed, primary_eye - none
++frame 6
++type - side by side, view - packed, primary_eye - none
++frame 7
++type - side by side, view - packed, primary_eye - none
++frame 8
++type - top and bottom (inverted), view - packed, primary_eye - none
++frame 9
++type - top and bottom (inverted), view - packed, primary_eye - none
++frame 10
++type - top and bottom (inverted), view - packed, primary_eye - none
++frame 11
++type - top and bottom (inverted), view - packed, primary_eye - none
++frame 12
++type - top and bottom (inverted), view - packed, primary_eye - none
++frame 13
++type - top and bottom (inverted), view - packed, primary_eye - none
++frame 14
++type - top and bottom (inverted), view - packed, primary_eye - none
++frame 15
++type - top and bottom (inverted), view - packed, primary_eye - none
++frame 16
++frame 17
++frame 18
++frame 19

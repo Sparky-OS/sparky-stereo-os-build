@@ -1,0 +1,73 @@
+From a31af1552217735bf6605fe182ff0a2768e9f307 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 01:29:37 -0300
+Subject: [PATCH] sub/osd: draw the OSD once per view into a full side by
+ side image
+
+When the image the OSD is drawn on is full side by side, draw the OSD
+at the size of one view into each half, instead of once across both
+views. vo_x11 draws into a window sized image that has no stereo mode of
+its own, so pass on the one of the video frame.
+
+Assisted-by: glm-5.3:cloud (Ollama) via Codex
+Assisted-by: Claude Sonnet via Claude Code
+---
+ sub/osd.c          | 25 +++++++++++++++++++++++--
+ video/out/vo_x11.c |  1 +
+ 2 files changed, 24 insertions(+), 2 deletions(-)
+
+diff --git a/sub/osd.c b/sub/osd.c
+index 2788897396..c8ea6ac35b 100644
+--- a/sub/osd.c
++++ b/sub/osd.c
+@@ -457,6 +457,17 @@ void osd_draw_on_image_p(struct osd_state *osd, struct mp_osd_res res,
+                          double video_pts, int draw_flags,
+                          struct mp_image_pool *pool, struct mp_image *dest)
+ {
++    bool doubled_sbs = dest->params.stereo3d == MP_STEREO3D_SBSL;
++    int eye_w = 0;
++
++    if (doubled_sbs) {
++        eye_w = MP_ALIGN_DOWN(dest->w / 2, dest->fmt.align_x);
++        if (eye_w > 0)
++            res.w = MPMIN(res.w, eye_w);
++        else
++            doubled_sbs = false;
++    }
++
+     struct sub_bitmap_list *list =
+         osd_render(osd, res, video_pts, draw_flags, mp_draw_sub_formats);
+ 
+@@ -476,8 +487,18 @@ void osd_draw_on_image_p(struct osd_state *osd, struct mp_osd_res res,
+ 
+     stats_time_start(osd->stats, "draw-bmp");
+ 
+-    if (!mp_draw_sub_bitmaps(osd->draw_cache, dest, list))
+-        MP_WARN(osd, "Failed rendering OSD.\n");
++    if (doubled_sbs) {
++        for (int x = 0; x < 2; x++) {
++            struct mp_image eye = *dest;
++            mp_image_crop(&eye, x * eye_w, 0, (x + 1) * eye_w, dest->h);
++
++            if (!mp_draw_sub_bitmaps(osd->draw_cache, &eye, list))
++                MP_WARN(osd, "Failed rendering OSD.\n");
++        }
++    } else {
++        if (!mp_draw_sub_bitmaps(osd->draw_cache, dest, list))
++            MP_WARN(osd, "Failed rendering OSD.\n");
++    }
+     talloc_steal(osd, osd->draw_cache);
+ 
+     stats_time_end(osd->stats, "draw-bmp");
+diff --git a/video/out/vo_x11.c b/video/out/vo_x11.c
+index 8391b431f4..b9970e8833 100644
+--- a/video/out/vo_x11.c
++++ b/video/out/vo_x11.c
+@@ -355,6 +355,7 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
+         mp_image_clear(img, 0, 0, img->w, img->h);
+     }
+ 
++    img->params.stereo3d = frame->current ? frame->current->params.stereo3d : 0;
+     osd_draw_on_image(vo->osd, p->osd, frame->current ? frame->current->pts : 0, 0, img);
+ 
+     if (frame->current != p->original_image)

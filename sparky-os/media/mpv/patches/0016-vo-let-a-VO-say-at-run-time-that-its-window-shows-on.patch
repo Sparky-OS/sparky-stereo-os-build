@@ -1,0 +1,76 @@
+From b8a90d0b959e11c8bf7188c1fda3046f58fad050 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 02:43:09 -0300
+Subject: [PATCH] vo: let a VO say at run time that its window shows one
+ view
+
+VO_CAP_STEREO_VIEW is a property of the driver, but whether a stereo
+video is shown at one view's size depends on what the output got: only
+the Wayland contexts that give the video its own surface can declare
+it. Replace the capability by a flag the VO sets when it is created.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ filters/f_output_chain.c      | 2 +-
+ video/out/vo.h                | 7 ++++---
+ video/out/vo_dmabuf_wayland.c | 2 +-
+ 3 files changed, 6 insertions(+), 5 deletions(-)
+
+diff --git a/filters/f_output_chain.c b/filters/f_output_chain.c
+index 0ed15c83af..b19f4489f1 100644
+--- a/filters/f_output_chain.c
++++ b/filters/f_output_chain.c
+@@ -392,7 +392,7 @@ void mp_output_chain_set_vo(struct mp_output_chain *c, struct vo *vo)
+     p->stream_info.hwdec_devs = vo ? vo->hwdec_devs : NULL;
+     p->stream_info.osd = vo ? vo->osd : NULL;
+     p->stream_info.vflip = vo ? vo->driver->caps & VO_CAP_VFLIP : false;
+-    p->stream_info.stereo_view = vo ? vo->driver->caps & VO_CAP_STEREO_VIEW : false;
++    p->stream_info.stereo_view = vo ? vo->stereo_view : false;
+     p->stream_info.rotate90 = vo ? vo->driver->caps & VO_CAP_ROTATE90 : false;
+     p->stream_info.dr_vo = vo;
+     p->vo = vo;
+diff --git a/video/out/vo.h b/video/out/vo.h
+index e8ad8c4092..03546b2191 100644
+--- a/video/out/vo.h
++++ b/video/out/vo.h
+@@ -206,9 +206,6 @@ enum {
+     VO_CAP_FRAMEOWNER   = 1 << 5,
+     // VO does handle mp_image_params.vflip
+     VO_CAP_VFLIP        = 1 << 6,
+-    // VO declares its video surface as stereo content, so the window shows
+-    // one view.
+-    VO_CAP_STEREO_VIEW  = 1 << 7,
+ };
+ 
+ enum {
+@@ -487,6 +484,10 @@ struct vo {
+ 
+     bool probing;
+ 
++    // The VO declares its video surface as stereo content, so the window shows
++    // one view.
++    bool stereo_view;
++
+     // --- The following fields are only changed with vo_reconfig(), and can
+     //     be accessed unsynchronized (read-only).
+ 
+diff --git a/video/out/vo_dmabuf_wayland.c b/video/out/vo_dmabuf_wayland.c
+index 004ad9a62a..deaf0640fa 100644
+--- a/video/out/vo_dmabuf_wayland.c
++++ b/video/out/vo_dmabuf_wayland.c
+@@ -804,6 +804,7 @@ static int preinit(struct vo *vo)
+ 
+     p->log = vo->log;
+     p->global = vo->global;
++    vo->stereo_view = true;
+     p->ctx = ra_ctx_create_by_name(vo, "wldmabuf");
+     wl_list_init(&p->buffer_list);
+     wl_list_init(&p->osd_buffer_list);
+@@ -877,7 +878,6 @@ const struct vo_driver video_out_dmabuf_wayland = {
+     .caps = VO_CAP_ROTATE90 |
+             VO_CAP_FRAMEOWNER |
+             VO_CAP_VFLIP |
+-            VO_CAP_STEREO_VIEW |
+             0x0,
+     .preinit = preinit,
+     .query_format = query_format,

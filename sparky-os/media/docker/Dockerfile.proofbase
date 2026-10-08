@@ -1,0 +1,5 @@
+# A fresh debian:testing with deb-multimedia (forky) configured; nothing else
+FROM debian:testing
+ENV DEBIAN_FRONTEND=noninteractive
+COPY bin/dmo-setup.sh /usr/local/bin/dmo-setup.sh
+RUN /usr/local/bin/dmo-setup.sh && rm -rf /var/lib/apt/lists/*

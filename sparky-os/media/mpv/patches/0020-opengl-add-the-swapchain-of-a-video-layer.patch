@@ -1,0 +1,159 @@
+From fa7f57e92c3523260a7a213e5534287984f30f04 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 03:19:30 -0300
+Subject: [PATCH] opengl: add the swapchain of a video layer
+
+A context can have a second swapchain for the video layer under the
+window's surface, ra_ctx.video_swapchain, with its own size. The
+swapchains of the two surfaces share the one GL context, so when each has
+its own surface, they say which one rendering goes to in make_current,
+which start_frame calls, and the color depth is read from the right one.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ video/out/gpu/context.h    | 11 +++++++++++
+ video/out/opengl/context.c | 39 +++++++++++++++++++++++++++++++-------
+ video/out/opengl/context.h |  4 ++++
+ 3 files changed, 47 insertions(+), 7 deletions(-)
+
+diff --git a/video/out/gpu/context.h b/video/out/gpu/context.h
+index 080d845e16..399f1f54f8 100644
+--- a/video/out/gpu/context.h
++++ b/video/out/gpu/context.h
+@@ -29,6 +29,9 @@ struct ra_ctx {
+     struct ra_ctx_opts opts;
+     const struct ra_ctx_fns *fns;
+     struct ra_swapchain *swapchain;
++    // The swapchain of the video layer, under the one of the window's surface
++    // (Wayland, see ra_ctx_opts.video_layer), or NULL.
++    struct ra_swapchain *video_swapchain;
+     struct spirv_compiler *spirv;
+ 
+     void *priv;
+@@ -58,6 +61,10 @@ struct ra_ctx_fns {
+     void (*wait_events)(struct ra_ctx *ctx, int64_t until_time_ns);
+     void (*update_render_opts)(struct ra_ctx *ctx);
+ 
++    // Resize the video layer's surface, which has its own size. Required with
++    // ra_ctx.video_swapchain.
++    bool (*resize_video)(struct ra_ctx *ctx, int width, int height);
++
+     // Initialize/destroy the 'struct ra' and possibly the underlying VO backend.
+     // Not normally called by the user of the ra_ctx.
+     bool (*init)(struct ra_ctx *ctx);
+@@ -79,6 +86,10 @@ struct ra_ctx_params {
+     // See ra_swapchain_fns.color_depth.
+     int (*color_depth)(struct ra_ctx *ctx);
+ 
++    // For contexts with a video layer: make the surface of the swapchain the
++    // one rendered to. Optional.
++    void (*make_current)(struct ra_ctx *ctx);
++
+     // Preferred device color space. Optional.
+     pl_color_space_t (*preferred_csp)(struct ra_ctx *ctx);
+ 
+diff --git a/video/out/opengl/context.c b/video/out/opengl/context.c
+index 86e8d5daac..2ed460d8de 100644
+--- a/video/out/opengl/context.c
++++ b/video/out/opengl/context.c
+@@ -106,15 +106,21 @@ enum gles_mode ra_gl_ctx_get_glesmode(struct ra_ctx *ctx)
+     return mode;
+ }
+ 
+-void ra_gl_ctx_uninit(struct ra_ctx *ctx)
++static void swapchain_uninit(struct ra_ctx *ctx, struct ra_swapchain **swapchain)
+ {
+-    if (ctx->swapchain) {
+-        struct priv *p = ctx->swapchain->priv;
++    if (*swapchain) {
++        struct priv *p = (*swapchain)->priv;
+         if (ctx->ra && p->wrapped_fb)
+             ra_tex_free(ctx->ra, &p->wrapped_fb);
+-        talloc_free(ctx->swapchain);
+-        ctx->swapchain = NULL;
++        talloc_free(*swapchain);
++        *swapchain = NULL;
+     }
++}
++
++void ra_gl_ctx_uninit(struct ra_ctx *ctx)
++{
++    swapchain_uninit(ctx, &ctx->video_swapchain);
++    swapchain_uninit(ctx, &ctx->swapchain);
+ 
+     // Clean up any potentially left-over debug callback
+     if (ctx->ra)
+@@ -125,9 +131,10 @@ void ra_gl_ctx_uninit(struct ra_ctx *ctx)
+ 
+ static const struct ra_swapchain_fns ra_gl_swapchain_fns;
+ 
+-bool ra_gl_ctx_init(struct ra_ctx *ctx, GL *gl, struct ra_ctx_params params)
++static struct ra_swapchain *swapchain_create(struct ra_ctx *ctx, GL *gl,
++                                             struct ra_ctx_params params)
+ {
+-    struct ra_swapchain *sw = ctx->swapchain = talloc_ptrtype(NULL, sw);
++    struct ra_swapchain *sw = talloc_ptrtype(NULL, sw);
+     *sw = (struct ra_swapchain) {
+         .ctx = ctx,
+     };
+@@ -142,6 +149,13 @@ bool ra_gl_ctx_init(struct ra_ctx *ctx, GL *gl, struct ra_ctx_params params)
+     };
+ 
+     sw->fns = &p->fns;
++    return sw;
++}
++
++bool ra_gl_ctx_init(struct ra_ctx *ctx, GL *gl, struct ra_ctx_params params)
++{
++    struct ra_swapchain *sw = ctx->swapchain = swapchain_create(ctx, gl, params);
++    struct priv *p = sw->priv;
+ 
+     if (!gl->version && !gl->es)
+         return false;
+@@ -164,6 +178,11 @@ bool ra_gl_ctx_init(struct ra_ctx *ctx, GL *gl, struct ra_ctx_params params)
+     return !!ctx->ra;
+ }
+ 
++void ra_gl_ctx_init_video(struct ra_ctx *ctx, GL *gl, struct ra_ctx_params params)
++{
++    ctx->video_swapchain = swapchain_create(ctx, gl, params);
++}
++
+ void ra_gl_ctx_resize(struct ra_swapchain *sw, int w, int h, int fbo)
+ {
+     struct priv *p = sw->priv;
+@@ -186,6 +205,9 @@ int ra_gl_ctx_color_depth(struct ra_swapchain *sw)
+     if (!p->wrapped_fb)
+         return 0;
+ 
++    if (p->params.make_current)
++        p->params.make_current(sw->ctx);
++
+     if ((gl->es < 300 && !gl->version) || !(gl->mpgl_caps & MPGL_CAP_FB))
+         return 0;
+ 
+@@ -213,6 +235,9 @@ bool ra_gl_ctx_start_frame(struct ra_swapchain *sw, struct ra_fbo *out_fbo)
+     if (p->params.check_visible)
+         visible = p->params.check_visible(sw->ctx);
+ 
++    if (visible && p->params.make_current)
++        p->params.make_current(sw->ctx);
++
+     // If out_fbo is NULL, this was called from vo_gpu_next. Bail out.
+     if (!out_fbo || !visible)
+         return visible;
+diff --git a/video/out/opengl/context.h b/video/out/opengl/context.h
+index 72f69ee844..efeddd190e 100644
+--- a/video/out/opengl/context.h
++++ b/video/out/opengl/context.h
+@@ -17,6 +17,10 @@ enum gles_mode ra_gl_ctx_get_glesmode(struct ra_ctx *ctx);
+ void ra_gl_ctx_uninit(struct ra_ctx *ctx);
+ bool ra_gl_ctx_init(struct ra_ctx *ctx, GL *gl, struct ra_ctx_params params);
+ 
++// Add the swapchain of a video layer, after ra_gl_ctx_init(). Its surface is
++// resized with ra_gl_ctx_resize(ctx->video_swapchain, ...).
++void ra_gl_ctx_init_video(struct ra_ctx *ctx, GL *gl, struct ra_ctx_params params);
++
+ // Call this any time the window size or main framebuffer changes
+ void ra_gl_ctx_resize(struct ra_swapchain *sw, int w, int h, int fbo);
+ 

@@ -1,0 +1,67 @@
+From b9a91c88c5938576f7de6a8240c1ca9e3a10e58d Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 01:29:37 -0300
+Subject: [PATCH] video/csputils: add full side by side and top and
+ bottom stereo modes
+
+The stereo3d modes only had the half-resolution packings, so the
+output of the stereo3d filter in full side by side could not be
+described. Add sbsl, sbsr, abl and abr, named after the input names of
+vf_stereo3d, and treat them like the half modes where the packing is
+split for the OSD.
+
+Assisted-by: glm-5.3:cloud (Ollama) via Codex
+Assisted-by: Claude Sonnet via Claude Code
+---
+ video/csputils.c | 12 ++++++++++--
+ video/csputils.h |  6 +++++-
+ 2 files changed, 15 insertions(+), 3 deletions(-)
+
+diff --git a/video/csputils.c b/video/csputils.c
+index 4c9b63b729..39fbd88073 100644
+--- a/video/csputils.c
++++ b/video/csputils.c
+@@ -152,6 +152,10 @@ const struct m_opt_choice_alternatives mp_stereo3d_names[] = {
+     {"agmc",   12}, // "anaglyph_green_magenta" (Matroska: unclear which mode)
+     {"al",     13}, // "alternating frames left first"
+     {"ar",     14}, // "alternating frames right first"
++    {"sbsl",   15}, // full "side_by_side_left"
++    {"sbsr",   16}, // full "side_by_side_right"
++    {"abl",    17}, // full "top_bottom_left"
++    {"abr",    18}, // full "top_bottom_right"
+     {0}
+ };
+ 
+@@ -183,9 +187,13 @@ void mp_get_3d_side_by_side(int stereo_mode, int div[2])
+     div[0] = div[1] = 1;
+     switch (stereo_mode) {
+     case MP_STEREO3D_SBS2L:
+-    case MP_STEREO3D_SBS2R: div[0] = 2; break;
++    case MP_STEREO3D_SBS2R:
++    case MP_STEREO3D_SBSL:
++    case MP_STEREO3D_SBSR: div[0] = 2; break;
+     case MP_STEREO3D_AB2R:
+-    case MP_STEREO3D_AB2L:  div[1] = 2; break;
++    case MP_STEREO3D_AB2L:
++    case MP_STEREO3D_ABL:
++    case MP_STEREO3D_ABR: div[1] = 2; break;
+     }
+ }
+ 
+diff --git a/video/csputils.h b/video/csputils.h
+index 83e2618937..b53702e37b 100644
+--- a/video/csputils.h
++++ b/video/csputils.h
+@@ -64,7 +64,11 @@ enum mp_stereo3d_mode {
+     MP_STEREO3D_AGMC = 12,
+     MP_STEREO3D_AL = 13,
+     MP_STEREO3D_AR = 14,
+-    MP_STEREO3D_COUNT = 15, // 14 is last valid mode
++    MP_STEREO3D_SBSL = 15,
++    MP_STEREO3D_SBSR = 16,
++    MP_STEREO3D_ABL = 17,
++    MP_STEREO3D_ABR = 18,
++    MP_STEREO3D_COUNT = 19, // 18 is last valid mode
+ };
+ 
+ extern const struct m_opt_choice_alternatives mp_stereo3d_names[];

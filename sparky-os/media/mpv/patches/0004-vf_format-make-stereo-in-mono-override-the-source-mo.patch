@@ -1,0 +1,75 @@
+From c85b63c6fec9c556c001e53ac60c3529e8c385c1 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Kacper=20Michaj=C5=82ow?= <kasper93@gmail.com>
+Date: Wed, 23 Sep 2026 15:33:36 +0200
+Subject: [PATCH] vf_format: make stereo-in=mono override the source mode
+
+set_params() treated 0 as unset, but 0 is mono, so stereo-in=mono was
+a no-op and the only way to drop a stereo 3D mode was stereo-in=no,
+which wrote the invalid value -1 into the image params. Use -1 as the
+unset default like rotate does, so no keeps the source mode and mono
+overrides it.
+
+(cherry picked from commit ac7bceb640fbb2649c72e4998502d3c42a63872d)
+---
+ DOCS/interface-changes/vf-format-stereo-in.txt | 1 +
+ DOCS/man/vf.rst                                | 3 ++-
+ video/csputils.c                               | 2 +-
+ video/filter/vf_format.c                       | 3 ++-
+ 4 files changed, 6 insertions(+), 3 deletions(-)
+ create mode 100644 DOCS/interface-changes/vf-format-stereo-in.txt
+
+diff --git a/DOCS/interface-changes/vf-format-stereo-in.txt b/DOCS/interface-changes/vf-format-stereo-in.txt
+new file mode 100644
+index 0000000000..e1dae20eff
+--- /dev/null
++++ b/DOCS/interface-changes/vf-format-stereo-in.txt
+@@ -0,0 +1 @@
++change `--vf=format:stereo-in=no` to keep the source stereo 3D mode, `--vf=format:stereo-in=mono` now overrides it with 2D
+diff --git a/DOCS/man/vf.rst b/DOCS/man/vf.rst
+index 4eb00e3085..ae23bea9a9 100644
+--- a/DOCS/man/vf.rst
++++ b/DOCS/man/vf.rst
+@@ -355,7 +355,8 @@ Available mpv-only filters are:
+     ``<stereo-in>``
+         Set the stereo mode the video is assumed to be encoded in. Use
+         ``--vf=format:stereo-in=help`` to list all available modes. Check with
+-        the ``stereo3d`` filter documentation to see what the names mean.
++        the ``stereo3d`` filter documentation to see what the names mean. The
++        default ``no`` keeps the mode signaled by the source.
+ 
+     ``<rotate>``
+         Set the rotation the video is assumed to be encoded with in degrees.
+diff --git a/video/csputils.c b/video/csputils.c
+index 5d8a924b04..ea5be33dc0 100644
+--- a/video/csputils.c
++++ b/video/csputils.c
+@@ -135,7 +135,7 @@ const struct m_opt_choice_alternatives pl_alpha_names[] = {
+ // The numeric index matches the Matroska StereoMode value. If you add entries
+ // that don't match Matroska, make sure demux_mkv.c rejects them properly.
+ const struct m_opt_choice_alternatives mp_stereo3d_names[] = {
+-    {"no",     -1}, // disable/invalid
++    {"no",     -1}, // unset, vf_format keeps the source mode
+     {"mono",    0},
+     {"sbs2l",   1}, // "side_by_side_left"
+     {"ab2r",    2}, // "top_bottom_right"
+diff --git a/video/filter/vf_format.c b/video/filter/vf_format.c
+index 922bd47396..8e3edb20bf 100644
+--- a/video/filter/vf_format.c
++++ b/video/filter/vf_format.c
+@@ -99,7 +99,7 @@ static void set_params(struct vf_format_opts *p, struct mp_image_params *out,
+         out->light = p->light;
+     if (p->chroma_location)
+         out->chroma_location = p->chroma_location;
+-    if (p->stereo_in)
++    if (p->stereo_in >= 0)
+         out->stereo3d = p->stereo_in;
+     if (p->rotate >= 0)
+         out->rotate = p->rotate;
+@@ -288,6 +288,7 @@ const struct mp_user_filter_entry vf_format = {
+         .name = "format",
+         .priv_size = sizeof(OPT_BASE_STRUCT),
+         .priv_defaults = &(const OPT_BASE_STRUCT){
++            .stereo_in = -1,
+             .rotate = -1,
+             .dovi = true,
+             .hdr10plus = true,

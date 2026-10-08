@@ -1,0 +1,178 @@
+From cca18212753d7881ac88f0adf09320327fbb3d7f Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Kacper=20Michaj=C5=82ow?= <kasper93@gmail.com>
+Date: Mon, 23 Mar 2026 19:05:23 +0100
+Subject: [PATCH] vo_gpu_next: add stereo osd support
+
+Duplicate OSD/Subtitles for left and right eye.
+
+Fixes: #12462
+(cherry picked from commit ed534eb7f5b00b803cc1cace5402720ba0caf68e)
+---
+ video/csputils.c        | 11 +++++++++++
+ video/csputils.h        |  3 +++
+ video/out/gpu/osd.c     | 15 ++-------------
+ video/out/vo_gpu_next.c | 41 ++++++++++++++++++++++++++++++++++++-----
+ 4 files changed, 52 insertions(+), 18 deletions(-)
+
+diff --git a/video/csputils.c b/video/csputils.c
+index a44b22382d..5d8a924b04 100644
+--- a/video/csputils.c
++++ b/video/csputils.c
+@@ -154,6 +154,17 @@ const struct m_opt_choice_alternatives mp_stereo3d_names[] = {
+     {0}
+ };
+ 
++void mp_get_3d_side_by_side(int stereo_mode, int div[2])
++{
++    div[0] = div[1] = 1;
++    switch (stereo_mode) {
++    case MP_STEREO3D_SBS2L:
++    case MP_STEREO3D_SBS2R: div[0] = 2; break;
++    case MP_STEREO3D_AB2R:
++    case MP_STEREO3D_AB2L:  div[1] = 2; break;
++    }
++}
++
+ enum pl_color_system mp_csp_guess_colorspace(int width, int height)
+ {
+     return width >= 1280 || height > 576 ? PL_COLOR_SYSTEM_BT_709 : PL_COLOR_SYSTEM_BT_601;
+diff --git a/video/csputils.h b/video/csputils.h
+index 832c925ba8..40707f0635 100644
+--- a/video/csputils.h
++++ b/video/csputils.h
+@@ -63,6 +63,9 @@ extern const struct m_opt_choice_alternatives mp_stereo3d_names[];
+ 
+ #define MP_STEREO3D_NAME_DEF(x, def) m_opt_choice_str_def(mp_stereo3d_names, x, def)
+ 
++// Number of screen divisions per axis (div[0]=x, div[1]=y) for the given 3D mode
++void mp_get_3d_side_by_side(int stereo_mode, int div[2]);
++
+ // For many colorspace conversions, in particular those involving HDR, an
+ // implicit reference white level is needed. Since this magic constant shows up
+ // a lot, give it an explicit name. The value of 203 cd/m² comes from ITU-R
+diff --git a/video/out/gpu/osd.c b/video/out/gpu/osd.c
+index 54861efaae..d6788f8c0e 100644
+--- a/video/out/gpu/osd.c
++++ b/video/out/gpu/osd.c
+@@ -273,17 +273,6 @@ static void generate_verts(struct mpgl_osd_part *part, struct gl_transform t)
+     }
+ }
+ 
+-// number of screen divisions per axis (x=0, y=1) for the current 3D mode
+-static void get_3d_side_by_side(int stereo_mode, int div[2])
+-{
+-    div[0] = div[1] = 1;
+-    switch (stereo_mode) {
+-    case MP_STEREO3D_SBS2L:
+-    case MP_STEREO3D_SBS2R: div[0] = 2; break;
+-    case MP_STEREO3D_AB2R:
+-    case MP_STEREO3D_AB2L:  div[1] = 2; break;
+-    }
+-}
+ 
+ void mpgl_osd_draw_finish(struct mpgl_osd *ctx, int index,
+                           struct gl_shader_cache *sc, const struct ra_fbo *fbo)
+@@ -291,7 +280,7 @@ void mpgl_osd_draw_finish(struct mpgl_osd *ctx, int index,
+     struct mpgl_osd_part *part = ctx->parts[index];
+ 
+     int div[2];
+-    get_3d_side_by_side(ctx->stereo_mode, div);
++    mp_get_3d_side_by_side(ctx->stereo_mode, div);
+ 
+     part->num_vertices = 0;
+ 
+@@ -319,7 +308,7 @@ void mpgl_osd_draw_finish(struct mpgl_osd *ctx, int index,
+ static void set_res(struct mpgl_osd *ctx, struct mp_osd_res res, int stereo_mode)
+ {
+     int div[2];
+-    get_3d_side_by_side(stereo_mode, div);
++    mp_get_3d_side_by_side(stereo_mode, div);
+ 
+     res.w /= div[0];
+     res.h /= div[1];
+diff --git a/video/out/vo_gpu_next.c b/video/out/vo_gpu_next.c
+index 2d95eb85b8..638ad8f258 100644
+--- a/video/out/vo_gpu_next.c
++++ b/video/out/vo_gpu_next.c
+@@ -310,10 +310,14 @@ static struct mp_image *get_image(struct vo *vo, int imgfmt, int w, int h,
+ static void update_overlays(struct vo *vo, struct mp_osd_res res,
+                             int flags, enum pl_overlay_coords coords,
+                             struct osd_state *state, struct pl_frame *frame,
+-                            struct mp_image *src)
++                            struct mp_image *src, int stereo_mode)
+ {
+     struct priv *p = vo->priv;
+     double pts = src ? src->pts : 0;
++    int div[2];
++    mp_get_3d_side_by_side(stereo_mode, div);
++    res.w /= div[0];
++    res.h /= div[1];
+     struct sub_bitmap_list *subs = osd_render(vo->osd, res, pts, flags, mp_draw_sub_formats);
+ 
+     frame->overlays = state->overlays;
+@@ -413,6 +417,29 @@ static void update_overlays(struct vo *vo, struct mp_osd_res res,
+             ol->repr.alpha = PL_ALPHA_INDEPENDENT;
+             break;
+         }
++
++        // Duplicate overlay parts for each eye in stereo 3D modes
++        if (div[0] > 1 || div[1] > 1) {
++            int orig_num = entry->num_parts;
++            for (int x = 0; x < div[0]; x++) {
++                for (int y = 0; y < div[1]; y++) {
++                    if (x == 0 && y == 0)
++                        continue;
++                    float off_x = res.w * x;
++                    float off_y = res.h * y;
++                    for (int i = 0; i < orig_num; i++) {
++                        struct pl_overlay_part duped = entry->parts[i];
++                        duped.dst.x0 += off_x;
++                        duped.dst.x1 += off_x;
++                        duped.dst.y0 += off_y;
++                        duped.dst.y1 += off_y;
++                        MP_TARRAY_APPEND(p, entry->parts, entry->num_parts, duped);
++                    }
++                }
++            }
++            ol->parts = entry->parts;
++            ol->num_parts = entry->num_parts;
++        }
+     }
+ 
+     talloc_free(subs);
+@@ -1305,7 +1332,8 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
+     }
+     update_overlays(vo, p->osd_res,
+                     (frame->current && opts->blend_subs) ? OSD_DRAW_OSD_ONLY : 0,
+-                    PL_OVERLAY_COORDS_DST_FRAME, &p->osd_state, &target, frame->current);
++                    PL_OVERLAY_COORDS_DST_FRAME, &p->osd_state, &target, frame->current,
++                    frame->current ? frame->current->params.stereo3d : 0);
+     apply_crop(&target, p->dst, swframe.fbo->params.w, swframe.fbo->params.h);
+     update_tm_viz(&pars->color_map_params, &target);
+ 
+@@ -1379,7 +1407,8 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
+                     enum pl_overlay_coords rel = opts->blend_subs == BLEND_SUBS_VIDEO
+                         ? PL_OVERLAY_COORDS_SRC_CROP : PL_OVERLAY_COORDS_DST_CROP;
+                     update_overlays(vo, res, OSD_DRAW_SUB_ONLY,
+-                                    rel, &fp->subs, image, mpi);
++                                    rel, &fp->subs, image, mpi,
++                                    mpi->params.stereo3d);
+                     fp->osd_sync = p->osd_sync;
+                 }
+             } else {
+@@ -1719,11 +1748,13 @@ static void video_screenshot(struct vo *vo, struct voctrl_screenshot *args)
+         enum pl_overlay_coords rel = opts->blend_subs == BLEND_SUBS_VIDEO
+             ? PL_OVERLAY_COORDS_SRC_CROP : PL_OVERLAY_COORDS_DST_CROP;
+         update_overlays(vo, res, osd_flags,
+-                        rel, &fp->subs, &image, mpi);
++                        rel, &fp->subs, &image, mpi,
++                        mpi->params.stereo3d);
+     } else {
+         // Disable overlays when blend_subs is disabled
+         update_overlays(vo, osd, osd_flags, PL_OVERLAY_COORDS_DST_FRAME,
+-                        &p->osd_state, &target, mpi);
++                        &p->osd_state, &target, mpi,
++                        mpi->params.stereo3d);
+         image.num_overlays = 0;
+     }
+ 

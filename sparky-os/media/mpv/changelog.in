@@ -1,0 +1,23 @@
+mpv-dmo (@VERSION@) unstable; urgency=medium
+
+  * Sparky Stereo OS build of deb-multimedia's mpv-dmo @DMOVERSION@ with
+    its packaging otherwise unchanged, plus thirty-two patches for stereo 3D
+    video, built against the ffmpeg-dmo @FFMPEG@ libraries.
+  * Eight patches are upstream commits after 0.41.0 that the others build on:
+    the stereo 3D layout read from the stream's frame side data and the
+    bitstream's layout preferred over the container tag (upstream pull
+    request 18490 and its follow-ups), and the on-screen display drawn once
+    per eye in vo_gpu_next.
+  * Twenty-four patches add 3D video support for the stereo desktop: an
+    automatic filter that unpacks 3D video (frame packing SEI, Matroska
+    StereoMode) to full side by side, the declaration of the video surface
+    to KWin through libstereo-declare, separate layers for the video and the
+    on-screen controls with gpu and gpu-next (Vulkan and OpenGL) on Wayland,
+    each eye's picture in the middle of its own view, interpolation of each
+    view from its own frames, and how a 360 or VR180 video maps its sphere
+    as track-list/N/demux-projection.
+  * debian/control, debian/rules: build with libstereo-declare-dev
+    (-Dstereo-declare=enabled), libmpv-dev depends on it as mpv.pc requires it.
+
+ -- Daniel Campos Ramos <Capitain_Jack@yahoo.com>  @DATE@
+

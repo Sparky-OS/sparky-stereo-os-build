@@ -1,0 +1,129 @@
+From 17d9d7dbac215061f1b14a8c5225769aa52ec6dc Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sun, 4 Oct 2026 20:13:29 -0300
+Subject: [PATCH] fate/vvc: test the frame packing arrangement in output order
+
+Check with showinfo, with four threads, that a cancellation does not
+reach the frames output before it, that the arrangement does not survive
+a new coded video sequence, and that temporal interleaving alternates
+the views in output order, also with AV_CODEC_FLAG_LOW_DELAY. Check that
+Stereo 3D side data from the container is kept when the stream has no
+arrangement.
+
+The samples are built from the vvc/Hierarchical.bit and
+vvc/wpp-single-slice-pic.vvc samples by inserting SEI NAL units.
+
+Link: https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/24628
+Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Assisted-by: Claude Sonnet via Claude Code
+---
+ tests/fate/vvc.mak                            | 38 +++++++++++++++++
+ tests/ref/fate/vvc-frame-packing              | 41 +++++++++++++++++++
+ .../ref/fate/vvc-frame-packing-container-only |  1 +
+ 3 files changed, 80 insertions(+)
+ create mode 100644 tests/ref/fate/vvc-frame-packing
+ create mode 100644 tests/ref/fate/vvc-frame-packing-container-only
+
+diff --git a/tests/fate/vvc.mak b/tests/fate/vvc.mak
+index 6d7873f..8892da2 100644
+--- a/tests/fate/vvc.mak
++++ b/tests/fate/vvc.mak
+@@ -60,6 +60,44 @@ FATE_VVC-$(call FRAMECRC, VVC, VVC, VVC_PARSER SCALE_FILTER) +=
+                                                     fate-vvc-frames-with-ltr      \
+                                                     fate-vvc-wpp-single-slice-pic \
+ 
++# The frame packing arrangement follows the output order and ends with the
++# coded video sequence. showinfo prints the Stereo 3D side data of each output
++# frame. The low delay decoder uses a single frame context.
++fate-vvc-frame-packing: CMD = tmplog=tests/data/fate/vvc-frame-packing.log; \
++  echo "reorder:" && \
++  threads=4 ffmpeg -i $(TARGET_SAMPLES)/vvc/frame-packing-reorder.vvc \
++   -vf showinfo -f null - > /dev/null 2> $$tmplog && \
++  sed -n "s/^.* n: *\([0-9]*\) .*/frame \1/p; s/^.*side data - Stereo 3D: //p" $$tmplog && \
++  echo "sequence:" && \
++  threads=4 ffmpeg -i $(TARGET_SAMPLES)/vvc/frame-packing-sequence.vvc \
++   -vf showinfo -f null - > /dev/null 2> $$tmplog && \
++  sed -n "s/^.* n: *\([0-9]*\) .*/frame \1/p; s/^.*side data - Stereo 3D: //p" $$tmplog && \
++  echo "temporal:" && \
++  threads=4 ffmpeg -i $(TARGET_SAMPLES)/vvc/frame-packing-temporal.vvc \
++   -vf showinfo -f null - > /dev/null 2> $$tmplog && \
++  sed -n "s/^.*side data - Stereo 3D: //p" $$tmplog && \
++  echo "temporal, low delay:" && \
++  threads=4 ffmpeg -flags +low_delay -i $(TARGET_SAMPLES)/vvc/frame-packing-temporal.vvc \
++   -vf showinfo -f null - > /dev/null 2> $$tmplog && \
++  sed -n "s/^.*side data - Stereo 3D: //p" $$tmplog
++fate-vvc-frame-packing: CLEANFILES = tests/data/fate/vvc-frame-packing.log
++
++# Stereo 3D side data from the container must survive when the stream has no
++# frame packing arrangement SEI.
++fate-vvc-frame-packing-container-only: CMD = tmp=$$(target_path tests/data/fate/vvc-frame-packing-container-only.mkv); \
++  tmplog=tests/data/fate/vvc-frame-packing-container-only.log; \
++  ffmpeg -i $(TARGET_SAMPLES)/vvc/wpp-single-slice-pic.vvc -c copy \
++   -metadata:s:v:0 stereo_mode=top_bottom -f matroska -y $$tmp > /dev/null 2>&1 && \
++  ffmpeg -i $$tmp -vf showinfo -f null - > /dev/null 2> $$tmplog && \
++  sed -n "s/^.*side data - Stereo 3D: //p" $$tmplog
++fate-vvc-frame-packing-container-only: CLEANFILES = tests/data/fate/vvc-frame-packing-container-only.mkv tests/data/fate/vvc-frame-packing-container-only.log
++
++FATE_VVC-$(call ALLYES, FILE_PROTOCOL VVC_DEMUXER VVC_PARSER VVC_DECODER \
++                        NULL_MUXER WRAPPED_AVFRAME_ENCODER SHOWINFO_FILTER) += fate-vvc-frame-packing
++FATE_VVC-$(call ALLYES, FILE_PROTOCOL VVC_DEMUXER VVC_PARSER VVC_DECODER \
++                        MATROSKA_MUXER MATROSKA_DEMUXER NULL_MUXER WRAPPED_AVFRAME_ENCODER \
++                        SHOWINFO_FILTER) += fate-vvc-frame-packing-container-only
++
+ FATE_SAMPLES_FFMPEG += $(FATE_VVC-yes)
+ 
+ fate-vvc: $(FATE_VVC-yes)
+diff --git a/tests/ref/fate/vvc-frame-packing b/tests/ref/fate/vvc-frame-packing
+new file mode 100644
+index 0000000..919b515
+--- /dev/null
++++ b/tests/ref/fate/vvc-frame-packing
+@@ -0,0 +1,41 @@
++reorder:
++frame 0
++type - side by side, view - packed, primary_eye - none
++frame 1
++type - side by side, view - packed, primary_eye - none
++frame 2
++type - side by side, view - packed, primary_eye - none
++frame 3
++type - side by side, view - packed, primary_eye - none
++frame 4
++frame 5
++frame 6
++frame 7
++frame 8
++frame 9
++sequence:
++frame 0
++type - side by side, view - packed, primary_eye - none
++frame 1
++temporal:
++type - frame alternate, view - left, primary_eye - none
++type - frame alternate, view - right, primary_eye - none
++type - frame alternate, view - left, primary_eye - none
++type - frame alternate, view - right, primary_eye - none
++type - frame alternate, view - left, primary_eye - none
++type - frame alternate, view - right, primary_eye - none
++type - frame alternate, view - left, primary_eye - none
++type - frame alternate, view - right, primary_eye - none
++type - frame alternate, view - left, primary_eye - none
++type - frame alternate, view - right, primary_eye - none
++temporal, low delay:
++type - frame alternate, view - left, primary_eye - none
++type - frame alternate, view - right, primary_eye - none
++type - frame alternate, view - left, primary_eye - none
++type - frame alternate, view - right, primary_eye - none
++type - frame alternate, view - left, primary_eye - none
++type - frame alternate, view - right, primary_eye - none
++type - frame alternate, view - left, primary_eye - none
++type - frame alternate, view - right, primary_eye - none
++type - frame alternate, view - left, primary_eye - none
++type - frame alternate, view - right, primary_eye - none
+diff --git a/tests/ref/fate/vvc-frame-packing-container-only b/tests/ref/fate/vvc-frame-packing-container-only
+new file mode 100644
+index 0000000..2df871b
+--- /dev/null
++++ b/tests/ref/fate/vvc-frame-packing-container-only
+@@ -0,0 +1 @@
++type - top and bottom, view - packed, primary_eye - none

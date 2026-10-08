@@ -1,0 +1,4 @@
+FROM debian:testing
+ENV DEBIAN_FRONTEND=noninteractive
+COPY bin/dmo-setup.sh /usr/local/bin/dmo-setup.sh
+RUN /usr/local/bin/dmo-setup.sh && apt-get -y install --no-install-recommends build-essential devscripts quilt fakeroot git rsync file pkg-config lintian binutils >/dev/null && rm -rf /var/lib/apt/lists/*

@@ -1,0 +1,156 @@
+From 4c60d9960d934c1148c83299ad152767413283cd Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 02:43:17 -0300
+Subject: [PATCH] vulkan: create a swapchain for the video layer on
+ Wayland
+
+When the context is asked for a video layer and the compositor allows
+one, create a second surface and swapchain for it. The video layer is
+opaque; the window's swapchain gets alpha, with the sRGB color space
+hinted so that it keeps 8-bit non-linear pixels and is not turned into
+the 16-bit linear format libplacebo prefers for an alpha swapchain.
+Color management follows the video, so the PASS_THROUGH request goes to
+the video swapchain.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ video/out/gpu/context.h            |  1 +
+ video/out/gpu_next/context.c       |  1 +
+ video/out/gpu_next/context.h       |  1 +
+ video/out/vulkan/common.h          |  3 +++
+ video/out/vulkan/context.c         | 17 +++++++++++++++++
+ video/out/vulkan/context_wayland.c |  9 +++++++++
+ video/out/vulkan/utils.c           | 10 ++++++++++
+ 7 files changed, 42 insertions(+)
+
+diff --git a/video/out/gpu/context.h b/video/out/gpu/context.h
+index dd0f99f83f..080d845e16 100644
+--- a/video/out/gpu/context.h
++++ b/video/out/gpu/context.h
+@@ -13,6 +13,7 @@ struct ra_ctx_opts {
+     bool debug;           // enable debugging layers/callbacks etc.
+     bool probing;        // the backend was auto-probed
+     bool composition;    // enable swapchain composition
++    bool video_layer;    // draw the video into its own surface under the window's
+     struct m_obj_settings *context_list; // list of `ra_ctx_fns.name` to probe
+     struct m_obj_settings *context_type_list;  // list of `ra_ctx_fns.type` to probe
+ };
+diff --git a/video/out/gpu_next/context.c b/video/out/gpu_next/context.c
+index 2c7c9fa21e..47e155c9fd 100644
+--- a/video/out/gpu_next/context.c
++++ b/video/out/gpu_next/context.c
+@@ -121,6 +121,7 @@ struct gpu_ctx *gpu_ctx_create(struct vo *vo, struct ra_ctx_opts *ctx_opts)
+         ctx->pllog = vkctx->pllog;
+         ctx->gpu = vkctx->gpu;
+         ctx->swapchain = vkctx->swapchain;
++        ctx->video_swapchain = vkctx->video_swapchain;
+         return ctx;
+     }
+ #endif
+diff --git a/video/out/gpu_next/context.h b/video/out/gpu_next/context.h
+index aa441964fb..c2fbaf728a 100644
+--- a/video/out/gpu_next/context.h
++++ b/video/out/gpu_next/context.h
+@@ -31,6 +31,7 @@ struct gpu_ctx {
+     pl_log pllog;
+     pl_gpu gpu;
+     pl_swapchain swapchain;
++    pl_swapchain video_swapchain; // under the swapchain's surface, or NULL
+ 
+     void *priv;
+ };
+diff --git a/video/out/vulkan/common.h b/video/out/vulkan/common.h
+index e75cb228f8..09064bc30a 100644
+--- a/video/out/vulkan/common.h
++++ b/video/out/vulkan/common.h
+@@ -36,4 +36,7 @@ struct mpvk_ctx {
+     pl_gpu gpu; // points to vulkan->gpu for convenience
+     pl_swapchain swapchain;
+     VkSurfaceKHR surface;
++    // The video layer under the window's surface (Wayland only), if any
++    pl_swapchain video_swapchain;
++    VkSurfaceKHR video_surface;
+ };
+diff --git a/video/out/vulkan/context.c b/video/out/vulkan/context.c
+index 7c196eb3fe..fc5eebe484 100644
+--- a/video/out/vulkan/context.c
++++ b/video/out/vulkan/context.c
+@@ -159,6 +159,7 @@ void ra_vk_ctx_uninit(struct ra_ctx *ctx)
+ 
+     if (ctx->ra) {
+         pl_gpu_finish(vk->gpu);
++        pl_swapchain_destroy(&vk->video_swapchain);
+         pl_swapchain_destroy(&vk->swapchain);
+         ctx->ra->fns->destroy(ctx->ra);
+         ctx->ra = NULL;
+@@ -420,6 +421,9 @@ bool ra_vk_ctx_init(struct ra_ctx *ctx, struct mpvk_ctx *vk,
+         .surface = vk->surface,
+         .present_mode = preferred_mode,
+         .swapchain_depth = ctx->vo->opts->swapchain_depth,
++#if PL_API_VER >= 359
++        .alpha_bits = vk->video_surface ? 8 : 0,
++#endif
+     };
+ 
+     if (p->opts->swap_mode >= 0) // user override
+@@ -429,6 +433,19 @@ bool ra_vk_ctx_init(struct ra_ctx *ctx, struct mpvk_ctx *vk,
+     if (!vk->swapchain)
+         goto error;
+ 
++    if (vk->video_surface) {
++        // The video is opaque, the window's swapchain above it carries the
++        // alpha and stays SDR whatever the video is.
++        pl_swapchain_colorspace_hint(vk->swapchain, &pl_color_space_srgb);
++        pl_params.surface = vk->video_surface;
++#if PL_API_VER >= 359
++        pl_params.alpha_bits = 0;
++#endif
++        vk->video_swapchain = pl_vulkan_create_swapchain(vk->vulkan, &pl_params);
++        if (!vk->video_swapchain)
++            goto error;
++    }
++
+     return true;
+ 
+ error:
+diff --git a/video/out/vulkan/context_wayland.c b/video/out/vulkan/context_wayland.c
+index 86e5e78b08..fb130a8b94 100644
+--- a/video/out/vulkan/context_wayland.c
++++ b/video/out/vulkan/context_wayland.c
+@@ -100,6 +100,15 @@ static bool wayland_vk_init(struct ra_ctx *ctx)
+         goto error;
+     }
+ 
++    if (ctx->opts.video_layer && vo_wayland_enable_video_layer(ctx->vo->wl)) {
++        wlinfo.surface = ctx->vo->wl->video_surface;
++        res = vkCreateWaylandSurfaceKHR(inst, &wlinfo, NULL, &vk->video_surface);
++        if (res != VK_SUCCESS) {
++            MP_MSG(ctx, msgl, "Failed creating Wayland video surface\n");
++            goto error;
++        }
++    }
++
+     /* If the Wayland compositor does not support fifo and presentation time
+      * v2 protocols, the compositor will stop sending callbacks if the surface
+      * is no longer visible. This means using FIFO would block the entire vo
+diff --git a/video/out/vulkan/utils.c b/video/out/vulkan/utils.c
+index d01fc3be0b..6fe226cb6e 100644
+--- a/video/out/vulkan/utils.c
++++ b/video/out/vulkan/utils.c
+@@ -38,6 +38,16 @@ void mpvk_uninit(struct mpvk_ctx *vk)
+         vk->surface = VK_NULL_HANDLE;
+     }
+ 
++    if (vk->video_surface) {
++        mp_assert(vk->vkinst);
++        mp_assert(vk->vkinst->get_proc_addr);
++        PFN_vkDestroySurfaceKHR pDestroySurfaceKHR = (PFN_vkDestroySurfaceKHR)
++            vk->vkinst->get_proc_addr(vk->vkinst->instance, "vkDestroySurfaceKHR");
++        if (pDestroySurfaceKHR)
++            pDestroySurfaceKHR(vk->vkinst->instance, vk->video_surface, NULL);
++        vk->video_surface = VK_NULL_HANDLE;
++    }
++
+     pl_vk_inst_destroy(&vk->vkinst);
+     pl_log_destroy(&vk->pllog);
+ }

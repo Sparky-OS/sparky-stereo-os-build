@@ -1,0 +1,238 @@
+From bca00240d35d1aff055dca2e0a543ce6a7032373 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 14:46:37 -0300
+Subject: [PATCH] avcodec/hevc: end the frame packing arrangement with its
+ lifetime
+
+The HEVC decoder exported the arrangement when a frame was decoded, from
+state that stayed set until a later message or a cancellation. The
+persistence flag only cleared it after the frame that carried it, so
+with the flag set the arrangement lasted for the rest of the stream,
+across any new coded layer-wise video sequence, and with the flag clear
+a persistent message before it was lost as well.
+
+H.265 D.3.16 says: "frame_packing_arrangement_persistence_flag equal to
+0 specifies that the frame packing arrangement SEI message applies to
+the current decoded frame only", and "equal to 1 specifies that the
+frame packing arrangement SEI message persists for the current layer in
+output order until any of the following conditions are true: A new CLVS
+of the current layer begins. The bitstream ends. A frame picB in the
+current layer in an access unit containing a frame packing arrangement
+SEI message with the same value of frame_packing_arrangement_id and
+applicable to the current layer is output for which PicOrderCnt( picB )
+is greater than PicOrderCnt( picA )". The cancel flag "cancels the
+persistence of any previous frame packing arrangement SEI message in
+output order".
+
+Do it as the H.264 and VVC decoders do: keep the message with its frame
+and the sequence the frame belongs to, and resolve the arrangement when
+the frame is output, so that it follows the output order. A frame shown
+before the one that carries a message, such as a RASL picture before a
+CRA picture, keeps the old arrangement; a new sequence clears it before
+its first frame; a message with the persistence flag 0 applies to its own
+frame only; temporal interleaving alternates the views. The state is
+copied between frame threads with the other output state. Only the base
+layer is resolved.
+
+Link: https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/24628
+Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Assisted-by: Claude Sonnet via Claude Code
+---
+ libavcodec/h2645_sei.c    | 15 ------------
+ libavcodec/hevc/hevcdec.c | 17 +++++++++++++
+ libavcodec/hevc/hevcdec.h | 14 +++++++++++
+ libavcodec/hevc/refs.c    | 50 ++++++++++++++++++++++++++++++++++++++-
+ 4 files changed, 80 insertions(+), 16 deletions(-)
+
+diff --git a/libavcodec/h2645_sei.c b/libavcodec/h2645_sei.c
+index 0d12d1f..d285aea 100644
+--- a/libavcodec/h2645_sei.c
++++ b/libavcodec/h2645_sei.c
+@@ -585,24 +585,9 @@ int ff_h2645_sei_to_frame(AVFrame *frame, H2645SEI *sei,
+                           unsigned bit_depth_luma, unsigned bit_depth_chroma,
+                           int seed)
+ {
+-    H2645SEIFramePacking *fp = &sei->frame_packing;
+     FFITUTT35Meta *itut_t35 = &sei->itut_t35;
+     int ret;
+ 
+-    /* H.264 and VVC export the arrangement where the pictures are output,
+-     * as its lifetime follows the output order. */
+-    if (codec_id == AV_CODEC_ID_HEVC) {
+-        ret = ff_h2645_sei_frame_packing_to_frame(avctx, frame, fp, codec_id);
+-        if (ret < 0)
+-            return ret;
+-
+-        /* The arrangement outlives the message that carried it: a later
+-         * message (or the cancel flag) supersedes the persistence flag.
+-         * Mirror the film grain persistence handling below. */
+-        if (fp->present)
+-            fp->present = fp->arrangement_persistence_flag;
+-    }
+-
+     if (sei->display_orientation.present &&
+         (sei->display_orientation.anticlockwise_rotation ||
+          sei->display_orientation.hflip ||
+diff --git a/libavcodec/hevc/hevcdec.c b/libavcodec/hevc/hevcdec.c
+index b6234a6..b010978 100644
+--- a/libavcodec/hevc/hevcdec.c
++++ b/libavcodec/hevc/hevcdec.c
+@@ -3128,6 +3128,12 @@ static int set_side_data(HEVCContext *s)
+     if (ret < 0)
+         return ret;
+ 
++    /* The arrangement is exported when the frame is output, as its lifetime
++     * follows the output order, see output_frame_packing(). */
++    s->cur_frame->sequence = s->sequence;
++    s->cur_frame->frame_packing = s->sei.common.frame_packing;
++    s->sei.common.frame_packing.message_present = 0;
++
+     if (s->sei.timecode.present) {
+         uint32_t *tc_sd;
+         char tcbuf[AV_TIMECODE_STR_SIZE];
+@@ -3358,6 +3364,7 @@ static int hevc_frame_start(HEVCContext *s, HEVCLayerContext *l,
+         s->local_ctx[0].end_of_tiles_x = pps->column_width[0] << sps->log2_ctb_size;
+ 
+     if (new_sequence) {
++        s->sequence++;
+         ret = ff_hevc_output_frames(s, prev_layers_active_decode, prev_layers_active_output,
+                                     0, 0, s->sh.no_output_of_prior_pics_flag);
+         if (ret < 0)
+@@ -4025,6 +4032,8 @@ static int hevc_ref_frame(HEVCFrame *dst, const HEVCFrame *src)
+     dst->flags      = src->flags;
+ 
+     dst->base_layer_frame = src->base_layer_frame;
++    dst->sequence         = src->sequence;
++    dst->frame_packing    = src->frame_packing;
+ 
+     av_refstruct_replace(&dst->hwaccel_picture_private,
+                           src->hwaccel_picture_private);
+@@ -4114,6 +4123,7 @@ static av_cold int hevc_init_context(AVCodecContext *avctx)
+ 
+     s->dovi_ctx.logctx = avctx;
+     s->eos = 0;
++    s->output_frame_packing_sequence = -1;
+ 
+     ff_hevc_reset_sei(&s->sei);
+ 
+@@ -4162,6 +4172,10 @@ static int hevc_update_thread_context(AVCodecContext *dst,
+     s->poc_tid0   = s0->poc_tid0;
+     s->eos        = s0->eos;
+     s->no_rasl_output_flag = s0->no_rasl_output_flag;
++    s->sequence   = s0->sequence;
++    s->output_frame_packing          = s0->output_frame_packing;
++    s->output_frame_packing_sequence = s0->output_frame_packing_sequence;
++    s->output_frame_packing_count    = s0->output_frame_packing_count;
+     s->skipping_frame = s0->skipping_frame;
+ 
+     s->is_nalff        = s0->is_nalff;
+@@ -4305,6 +4319,9 @@ static av_cold void hevc_decode_flush(AVCodecContext *avctx)
+     HEVCContext *s = avctx->priv_data;
+     ff_hevc_flush_dpb(s);
+     ff_hevc_reset_sei(&s->sei);
++    s->output_frame_packing.present = 0;
++    s->output_frame_packing_sequence = -1;
++    s->output_frame_packing_count = 0;
+     ff_dovi_ctx_flush(&s->dovi_ctx);
+     av_buffer_unref(&s->rpu_buf);
+     s->eos = 1;
+diff --git a/libavcodec/hevc/hevcdec.h b/libavcodec/hevc/hevcdec.h
+index 9e5acbd..b900e6a 100644
+--- a/libavcodec/hevc/hevcdec.h
++++ b/libavcodec/hevc/hevcdec.h
+@@ -386,6 +386,16 @@ typedef struct HEVCFrame {
+      * A combination of HEVC_FRAME_FLAG_*
+      */
+     uint8_t flags;
++
++    /**
++     * The coded layer-wise video sequence the frame belongs to.
++     */
++    int sequence;
++    /**
++     * The frame packing arrangement message carried by the frame, applied
++     * when the frame is output.
++     */
++    H2645SEIFramePacking frame_packing;
+ } HEVCFrame;
+ 
+ typedef struct HEVCLocalContext {
+@@ -526,6 +536,10 @@ typedef struct HEVCContext {
+     int slice_idx; ///< number of the slice being currently decoded
+     int eos;       ///< current packet contains an EOS/EOB NAL
+     int last_eos;  ///< last packet contains an EOS/EOB NAL
++    int sequence;  ///< counts the coded layer-wise video sequences of the base layer
++    H2645SEIFramePacking output_frame_packing; ///< arrangement in force in output order
++    int output_frame_packing_sequence;
++    int output_frame_packing_count;
+     int recovery_poc;
+ 
+     // NoRaslOutputFlag associated with the last IRAP frame
+diff --git a/libavcodec/hevc/refs.c b/libavcodec/hevc/refs.c
+index 84418d2..1d830a1 100644
+--- a/libavcodec/hevc/refs.c
++++ b/libavcodec/hevc/refs.c
+@@ -264,6 +264,51 @@ static void unref_missing_refs(HEVCLayerContext *l)
+     }
+ }
+ 
++/**
++ * Write a frame to the output, with the frame packing arrangement in force
++ * where it is output.
++ */
++static int output_frame_packing(HEVCContext *s, const HEVCFrame *frame, AVFrame *f)
++{
++    H2645SEIFramePacking fp;
++    AVFrame *out;
++    int ret;
++
++    /* An arrangement lasts until a later message or the end of the coded
++     * layer-wise video sequence, both in output order (H.265 D.3.16); a
++     * message with the persistence flag 0 applies to its own picture only. */
++    if (s->output_frame_packing_sequence != frame->sequence) {
++        s->output_frame_packing.present = 0;
++        s->output_frame_packing_sequence = frame->sequence;
++        s->output_frame_packing_count = 0;
++    }
++    if (frame->frame_packing.message_present) {
++        s->output_frame_packing = frame->frame_packing;
++        s->output_frame_packing_count = 0;
++    }
++    fp = s->output_frame_packing;
++    if (fp.present && fp.arrangement_type == SEI_FPA_TYPE_INTERLEAVE_TEMPORAL &&
++        (s->output_frame_packing_count & 1))
++        fp.current_frame_is_frame0_flag = !fp.current_frame_is_frame0_flag;
++    if (s->output_frame_packing.present &&
++        s->output_frame_packing.arrangement_type == SEI_FPA_TYPE_INTERLEAVE_TEMPORAL)
++        s->output_frame_packing_count ^= 1;
++    if (frame->frame_packing.message_present &&
++        !frame->frame_packing.arrangement_persistence_flag)
++        s->output_frame_packing.present = 0;
++
++    out = av_frame_alloc();
++    if (!out)
++        return AVERROR(ENOMEM);
++    ret = av_frame_ref(out, f);
++    if (ret >= 0)
++        ret = ff_h2645_sei_frame_packing_to_frame(s->avctx, out, &fp, AV_CODEC_ID_HEVC);
++    if (ret >= 0)
++        ret = av_container_fifo_write(s->output_fifo, out, AV_CONTAINER_FIFO_FLAG_REF);
++    av_frame_free(&out);
++    return ret;
++}
++
+ int ff_hevc_output_frames(HEVCContext *s,
+                           unsigned layers_active_decode, unsigned layers_active_output,
+                           unsigned max_output, unsigned max_dpb, int discard)
+@@ -310,7 +355,10 @@ int ff_hevc_output_frames(HEVCContext *s,
+                 if (frame->flags & HEVC_FRAME_FLAG_CORRUPT)
+                     f->flags |= AV_FRAME_FLAG_CORRUPT;
+                 f->pkt_dts = s->pkt_dts;
+-                ret = av_container_fifo_write(s->output_fifo, f, AV_CONTAINER_FIFO_FLAG_REF);
++                if (min_layer == 0)
++                    ret = output_frame_packing(s, frame, f);
++                else
++                    ret = av_container_fifo_write(s->output_fifo, f, AV_CONTAINER_FIFO_FLAG_REF);
+             }
+             ff_hevc_unref_frame(frame, HEVC_FRAME_FLAG_OUTPUT);
+             if (ret < 0)

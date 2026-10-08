@@ -1,0 +1,43 @@
+--- a/debian/control
++++ b/debian/control
+@@ -15,7 +15,7 @@
+  libva-dev [any-amd64 any-i386], libjack-jackd2-dev, libvpx-dev (>= 1.11.0),
+  frei0r-plugins-dev, libvo-amrwbenc-dev, libsctp-dev, libopus-dev, libjxl-dev,
+  gnutls-dev, frei0r-plugins-dev, libsoxr-dev, linux-libc-dev, ladspa-sdk,
+- libaom-dev (>= 1:3.0.0~), libfontconfig-dev, libfdk-aac-dev, libpulse-dev,
++ libaom-dev (>= 1:3.0.0~), libfontconfig-dev, libfdk-aac-dev <pkg.ffmpeg-dmo.fdk>, libpulse-dev,
+  libzvbi-dev, libiec61883-dev, libavc1394-dev, libleptonica-dev, liblzma-dev,
+  libvidstab-dev (>= 2:1.1.1~), libx265-dev (>= 1:3.5), libxext-dev, libcaca-dev,
+  libkvazaar-dev (>= 1:2.2.0), libopenh264-dev (>= 2.6.0~), librubberband-dev,
+--- a/debian/rules
++++ b/debian/rules
+@@ -60,7 +60,6 @@
+ 	--enable-libdrm \
+ 	--enable-libdvdnav \
+ 	--enable-libdvdread \
+-	--enable-libfdk-aac \
+ 	--enable-libflite \
+ 	--enable-libfontconfig \
+ 	--enable-libfreetype \
+@@ -114,7 +113,6 @@
+ 	--enable-libzmq \
+ 	--enable-libzvbi \
+ 	--enable-lv2 \
+-	--enable-nonfree \
+ 	--enable-openal \
+ 	--enable-opencl \
+ 	--enable-opengl \
+@@ -133,6 +131,13 @@
+ 	CONFIG_ALL += --disable-optimizations
+ endif
+ 
++# Fraunhofer's AAC encoder (libfdk-aac) is non-free: FFmpeg's LICENSE.md calls a GPL build
++# that enables it unredistributable. It stays out of the packages that are shipped; the build
++# profile pkg.ffmpeg-dmo.fdk (sparky-stereo-ffmpeg-fdk) turns it on for a build on one machine.
++ifneq (,$(filter pkg.ffmpeg-dmo.fdk,$(DEB_BUILD_PROFILES)))
++	CONFIG_ALL += --enable-libfdk-aac --enable-nonfree
++endif
++
+ ifeq "$(DEB_BUILD_ARCH)" "amd64"
+ 	CONFIG_ALL += --enable-vaapi --enable-libvpl
+ # --enable-libsvtjpegxs

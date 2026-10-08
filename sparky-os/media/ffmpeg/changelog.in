@@ -1,0 +1,29 @@
+ffmpeg-dmo (@VERSION@) unstable; urgency=medium
+
+  * Sparky Stereo OS build of deb-multimedia's ffmpeg-dmo @DMOVERSION@: its
+    packaging with the same binary packages and sonames, plus nine patches
+    for stereo 3D video.
+  * Honor the persistence of the frame packing arrangement SEI in the
+    H.264, HEVC and VVC decoders (upstream pull request 24628): the
+    Stereo 3D side data is exported on every frame the arrangement
+    applies to, not only on the access unit that carries the message.
+    Two patches end a HEVC arrangement with its lifetime (a new coded
+    layer-wise video sequence, the persistence flag) and test it. One
+    patch is by James Almer (VVC frame packing SEI).
+  * Respect the side data preference for the display orientation SEI and
+    test a frame packing SEI inside a tagged container (upstream pull
+    request 24643).
+  * Build without Fraunhofer's AAC encoder: drop --enable-libfdk-aac and
+    --enable-nonfree, and with them the libfdk-aac build dependency and
+    the libfdk-aac2 shlib dependency. deb-multimedia builds a GPL FFmpeg
+    with libfdk-aac, which FFmpeg's LICENSE.md calls unredistributable;
+    ours stays a GPL (version 3) build with every other library as
+    deb-multimedia configures it, and encodes AAC with FFmpeg's own
+    aac encoder.
+  * New build profile pkg.ffmpeg-dmo.fdk, off by default: it turns the
+    two options and the build dependency back on, for the local build of
+    sparky-stereo-ffmpeg-fdk on one machine. A package built with the
+    profile may not be passed on.
+
+ -- Daniel Campos Ramos <Capitain_Jack@yahoo.com>  @DATE@
+
