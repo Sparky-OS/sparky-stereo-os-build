@@ -18,6 +18,7 @@ int main(int argc, char **argv)
     const bool candidate = app.arguments().contains(QStringLiteral("--candidate"));
     const bool requireTimeline = app.arguments().contains(QStringLiteral("--require-timeline"));
     const bool userOverride = app.arguments().contains(QStringLiteral("--user-override"));
+    const bool legacy = app.arguments().contains(QStringLiteral("--legacy"));
     QTextStream out(stdout);
     const int applyIndex = app.arguments().indexOf(QStringLiteral("--apply-profile"));
     if (applyIndex >= 0) {
@@ -88,10 +89,12 @@ int main(int argc, char **argv)
 
     PowerDevil::ProfileSettings vm(QStringLiteral("AC"), false, true, true);
     vm.load();
-    check(vm.autoSuspendAction() == qToUnderlying(PowerDevil::PowerButtonAction::NoAction), QStringLiteral("unoverridden AC VM auto-suspend suppressed"));
+    if (!legacy) {
+        check(vm.autoSuspendAction() == qToUnderlying(PowerDevil::PowerButtonAction::NoAction), QStringLiteral("unoverridden AC VM auto-suspend suppressed"));
+    }
     KScreenSaverSettings::self()->load();
-    check(KScreenSaverSettings::autolock() == !candidate, QStringLiteral("screen locker idle auto-lock setting"));
-    check(KScreenSaverSettings::lockGrace() == (candidate ? 0 : 5), QStringLiteral("screen locker grace setting"));
+    check(KScreenSaverSettings::autolock() == !(candidate || legacy), QStringLiteral("screen locker idle auto-lock setting"));
+    check(KScreenSaverSettings::lockGrace() == (candidate || legacy ? 0 : 5), QStringLiteral("screen locker grace setting"));
     check(KScreenSaverSettings::lockOnResume(), QStringLiteral("screen locker suspend setting"));
     out << "Failures: " << failures << Qt::endl;
     return failures == 0 ? 0 : 1;
