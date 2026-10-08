@@ -3,7 +3,7 @@
 # packages as well - old debian user here"). Columns: package, roles (comma separated).
 # Packages of apps.list not named here stay in sparky-stereo-desktop, the core everyone gets.
 # Packages named here but in no list are role-only: they install with their task.
-# Roles: gamer designer creator musician scientist student simmer maker
+# Roles: gamer designer creator musician scientist student simmer maker engineer
 # Third column, for scientist and student only (Daniel: "for those edu and science - issue stereo
 # and non-stereo meta and tasks - so people can install the missing non-stereo without conflicting
 # with our stereo ones"): 3d = shows stereo on Sparky Stereo OS today (SOLUTIONS.md), into
@@ -70,8 +70,8 @@ kubrick	student	3d
 octave	scientist	3d
 netgen	scientist	3d
 paraview	scientist	2d
-freecad	scientist,designer,maker	2d
-kicad	scientist,maker	3d
+freecad	scientist,designer,maker,engineer	2d
+kicad	scientist,maker,engineer	3d
 openscad	scientist,designer,maker	3d
 f3d	scientist,designer,maker	3d
 grass	scientist	3d
@@ -120,3 +120,25 @@ meshlab	maker
 solvespace	maker,designer
 admesh	maker
 colmap	maker,scientist	2d
+# --- engineer: electrical and automation (Daniel, 2026-10-08: "include any linux opensource - closed as
+# well for us to contact where possible - SCADA software (EE)"); kicad and freecad carry engineer above.
+# Not in Debian testing, ours to package (notes/ee-scada.md): Qucs-S, OpenModelica, the SCADA and HMI
+# programs (FUXA, Scada-LTS, OpenSCADA, Rapid SCADA, Node-RED), the PLC tools (OpenPLC runtime, Beremiz,
+# Eclipse 4diac) and the power-system simulators (GridLAB-D, pandapower, PyPSA, OpenDSS).
+qelectrotech	engineer
+ngspice	engineer
+xschem	engineer
+librepcb	engineer,maker
+horizon-eda	engineer
+pulseview	engineer,maker
+sigrok-cli	engineer
+scilab	engineer
+fritzing	engineer,maker
+gtkwave	engineer
+iverilog	engineer
+yosys	engineer
+nextpnr-ice40	engineer
+openocd	engineer,maker
+cutecom	engineer,maker
+mbpoll	engineer
+mosquitto-clients	engineer
