@@ -33,3 +33,15 @@ target_include_directories(settings-probe PRIVATE
     "${POWERDEVIL_SOURCE}/daemon"
 )
 target_link_libraries(settings-probe PRIVATE Qt6::Core Qt6::DBus KF6::ConfigCore KF6::ConfigGui)
+
+option(BUILD_TIMELINE_PROBE "Build the hardware-specific timeline reader" OFF)
+if(BUILD_TIMELINE_PROBE)
+    add_executable(timeline-hardware hardware.cpp)
+    target_link_libraries(timeline-hardware PRIVATE Qt6::Core Qt6::DBus)
+    find_package(KF6Solid REQUIRED)
+    target_link_libraries(settings-probe PRIVATE KF6::Solid)
+    list(REMOVE_ITEM probe_sources main.cpp)
+    add_executable(timeline-probe timeline.cpp ${probe_sources})
+    target_include_directories(timeline-probe PRIVATE "${CMAKE_CURRENT_BINARY_DIR}" "${POWERDEVIL_SOURCE}/daemon")
+    target_link_libraries(timeline-probe PRIVATE Qt6::Core Qt6::DBus KF6::ConfigCore KF6::ConfigGui KF6::Solid)
+endif()

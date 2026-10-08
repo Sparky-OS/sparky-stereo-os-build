@@ -1,0 +1,514 @@
+From ec6f674dd3036c982b9e06dd715f2c926912f1d0 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 8 Oct 2026 14:17:02 -0300
+Subject: [PATCH 1/3] Keep lid-closed outputs in the layout while turning their
+ power off
+
+Reuse the open layout, preserve global DPMS transitions and route pointer input and new-window placement to visible external outputs. Keep mirrored external views interactive and pause pointer movement when only the closed panel exists.
+
+Assisted-by: gpt-6.1-sol via Codex
+---
+ autotests/integration/outputchanges_test.cpp | 95 +++++++++++++++-----
+ src/outputconfigurationstore.cpp             | 56 +-----------
+ src/pointer_input.cpp                        | 12 ++-
+ src/workspace.cpp                            | 43 ++++++++-
+ src/workspace.h                              |  2 +
+ 5 files changed, 125 insertions(+), 83 deletions(-)
+
+diff --git a/autotests/integration/outputchanges_test.cpp b/autotests/integration/outputchanges_test.cpp
+index c080b26cd8..7c9d522fd6 100644
+--- a/autotests/integration/outputchanges_test.cpp
++++ b/autotests/integration/outputchanges_test.cpp
+@@ -129,6 +129,7 @@ private Q_SLOTS:
+     void testXwaylandScaleChange();
+ 
+     void testWindowNotRestoredAfterMovingWindowAndEnablingOutput();
++    void testLaptopLidClosed_data();
+     void testLaptopLidClosed();
+     void testGenerateConfigs_data();
+     void testGenerateConfigs();
+@@ -1207,43 +1208,86 @@ void OutputChangesTest::testMaximizedWindowDoesntDisappear()
+     QCOMPARE(window->requestedMaximizeMode(), maximizeMode);
+ }
+ 
++void OutputChangesTest::testLaptopLidClosed_data()
++{
++    QTest::addColumn<bool>("externalPresent");
++    QTest::addRow("with external") << true;
++    QTest::addRow("internal only") << false;
++}
++
+ void OutputChangesTest::testLaptopLidClosed()
+ {
+-    Test::setOutputConfig({
+-        Test::OutputInfo{
+-            .geometry = Rect(0, 0, 1280, 1024),
+-            .internal = true,
+-        },
+-        Test::OutputInfo{
+-            .geometry = Rect(1280, 0, 1280, 1024),
+-            .internal = false,
+-        },
+-    });
++    QFETCH(bool, externalPresent);
++    QList<Test::OutputInfo> outputInfo{
++        Test::OutputInfo{.geometry = Rect(0, 0, 1280, 1024), .internal = true},
++    };
++    if (externalPresent) {
++        outputInfo.append(Test::OutputInfo{.geometry = Rect(1280, 0, 1280, 1024), .internal = false});
++    }
++    Test::setOutputConfig(outputInfo);
+     const auto outputs = kwinApp()->outputBackend()->outputs();
+     const auto internal = outputs.front();
+     QVERIFY(internal->isInternal());
+-    const auto external = outputs.back();
+-    QVERIFY(!external->isInternal());
++    const auto originalGeometry = workspace()->geometry();
++    const auto originalInternal = workspace()->findOutput(internal)->geometry();
++    const auto originalExternal = externalPresent ? workspace()->findOutput(outputs.back())->geometry() : Rect();
++
++    workspace()->setActiveOutput(workspace()->findOutput(internal));
++    std::unique_ptr<KWayland::Client::Surface> surface(Test::createSurface());
++    std::unique_ptr<Test::XdgToplevel> shellSurface(Test::createXdgToplevelSurface(surface.get()));
++    auto window = Test::renderAndWaitForShown(surface.get(), QSize(100, 50), Qt::blue);
++    QVERIFY(window);
++    window->move(QPointF(42, 67));
++    const auto originalWindow = window->frameGeometry();
++    input()->pointer()->warp(QPointF(100, 100));
+ 
+     auto lidSwitch = std::make_unique<Test::VirtualInputDevice>();
+     lidSwitch->setLidSwitch(true);
+     lidSwitch->setName("virtual lid switch");
+     input()->addInputDevice(lidSwitch.get());
+-
++    const auto guard = qScopeGuard([&] {
++        input()->removeInputDevice(lidSwitch.get());
++    });
+     auto timestamp = 1ms;
+-    Q_EMIT lidSwitch->switchToggle(SwitchState::Off, timestamp++, lidSwitch.get());
+-    QVERIFY(internal->isEnabled());
+-    QVERIFY(external->isEnabled());
+-
+     Q_EMIT lidSwitch->switchToggle(SwitchState::On, timestamp++, lidSwitch.get());
+-    QVERIFY(!internal->isEnabled());
+-    QVERIFY(external->isEnabled());
++    QVERIFY(internal->isEnabled());
++    QCOMPARE(internal->dpmsMode(), BackendOutput::DpmsMode::Off);
++    QCOMPARE(workspace()->outputs().size(), outputInfo.size());
++    QCOMPARE(workspace()->geometry(), originalGeometry);
++    QCOMPARE(workspace()->findOutput(internal)->geometry(), originalInternal);
++    QCOMPARE(window->frameGeometry(), originalWindow);
++    QCOMPARE(window->output()->backendOutput(), internal);
++    if (externalPresent) {
++        const auto external = outputs.back();
++        QVERIFY(external->isEnabled());
++        QCOMPARE(external->dpmsMode(), BackendOutput::DpmsMode::On);
++        QCOMPARE(workspace()->findOutput(external)->geometry(), originalExternal);
++        QVERIFY(originalExternal.contains(input()->pointer()->pos()));
++        input()->pointer()->warp(QPointF(100, 100));
++        QVERIFY(originalExternal.contains(input()->pointer()->pos()));
++        workspace()->setActiveOutput(workspace()->findOutput(internal));
++        std::unique_ptr<KWayland::Client::Surface> newSurface(Test::createSurface());
++        std::unique_ptr<Test::XdgToplevel> newShellSurface(Test::createXdgToplevelSurface(newSurface.get()));
++        const auto newWindow = Test::renderAndWaitForShown(newSurface.get(), QSize(100, 50), Qt::red);
++        QVERIFY(newWindow);
++        QVERIFY(originalExternal.contains(newWindow->frameGeometry()));
++        QCOMPARE(window->frameGeometry(), originalWindow);
++    } else {
++        input()->pointer()->warp(QPointF(200, 200));
++        QCOMPARE(input()->pointer()->pos(), QPointF(100, 100));
++    }
+ 
++    workspace()->requestDpmsState(Workspace::DpmsState::Off);
++    QTRY_COMPARE(workspace()->dpmsState(), Workspace::DpmsState::Off);
++    workspace()->requestDpmsState(Workspace::DpmsState::On);
++    QCOMPARE(internal->dpmsMode(), BackendOutput::DpmsMode::Off);
+     Q_EMIT lidSwitch->switchToggle(SwitchState::Off, timestamp++, lidSwitch.get());
+     QVERIFY(internal->isEnabled());
+-    QVERIFY(external->isEnabled());
+-
+-    input()->removeInputDevice(lidSwitch.get());
++    QCOMPARE(internal->dpmsMode(), BackendOutput::DpmsMode::On);
++    QCOMPARE(workspace()->geometry(), originalGeometry);
++    QCOMPARE(window->frameGeometry(), originalWindow);
++    input()->pointer()->warp(QPointF(100, 100));
++    QCOMPARE(input()->pointer()->pos(), QPointF(100, 100));
+ }
+ 
+ #if KWIN_BUILD_X11
+@@ -2462,9 +2506,12 @@ void OutputChangesTest::testMirroring()
+ 
+     auto timestamp = 1ms;
+     Q_EMIT lidSwitch.switchToggle(SwitchState::On, timestamp++, &lidSwitch);
+-    QVERIFY(!internal->isEnabled());
++    QVERIFY(internal->isEnabled());
++    QCOMPARE(internal->dpmsMode(), BackendOutput::DpmsMode::Off);
+     QVERIFY(external->isEnabled());
+-    QCOMPARE(external->deviceOffset(), QPoint());
++    QCOMPARE(external->deviceOffset(), deviceOffset);
++    QCOMPARE(workspace()->outputs().size(), 1);
++    QVERIFY(workspace()->isOutputInteractive(workspace()->outputs().front()));
+ 
+     Q_EMIT lidSwitch.switchToggle(SwitchState::Off, timestamp++, &lidSwitch);
+     QVERIFY(internal->isEnabled());
+diff --git a/src/outputconfigurationstore.cpp b/src/outputconfigurationstore.cpp
+index 18f847e4e2..620b2bd0be 100644
+--- a/src/outputconfigurationstore.cpp
++++ b/src/outputconfigurationstore.cpp
+@@ -100,7 +100,7 @@ std::optional<std::pair<OutputConfiguration, OutputConfigurationStore::ConfigTyp
+     }
+     // assigns uuids, if the outputs don't have one yet
+     registerOutputs(outputs);
+-    if (const auto opt = findSetup(relevantOutputs, isLidClosed)) {
++    if (const auto opt = isLidClosed ? std::nullopt : findSetup(relevantOutputs, false)) {
+         const auto &[setup, outputStates] = *opt;
+         auto config = setupToConfig(setup, outputStates);
+         applyOrientationReading(config, relevantOutputs, orientation, isTabletMode);
+@@ -540,58 +540,8 @@ std::optional<OutputConfiguration> OutputConfigurationStore::generateLidClosedCo
+         return std::nullopt;
+     }
+     const auto setup = findSetup(outputs, false);
+-    if (!setup) {
+-        return std::nullopt;
+-    }
+-    BackendOutput *const internalOutput = *internalIt;
+-    auto config = setupToConfig(setup->setup, setup->globalOutputIndices);
+-    auto internalChangeset = config.changeSet(internalOutput);
+-    if (!internalChangeset->enabled.value_or(internalOutput->isEnabled())) {
+-        return config;
+-    }
+-
+-    internalChangeset->enabled = false;
+-
+-    const bool anyEnabled = std::any_of(outputs.begin(), outputs.end(), [&config = config](BackendOutput *output) {
+-        return config.changeSet(output)->enabled.value_or(output->isEnabled());
+-    });
+-    if (!anyEnabled) {
+-        return std::nullopt;
+-    }
+-
+-    const auto getSize = [](OutputChangeSet *changeset, BackendOutput *output) {
+-        const QSize modeSize = changeset->currentMode.transform([](const auto &modeline) {
+-            return modeline.size();
+-        }).value_or(output->modeSize());
+-
+-        const auto scale = changeset->scale.value_or(output->scale());
+-        return QSize(std::ceil(modeSize.width() / scale), std::ceil(modeSize.height() / scale));
+-    };
+-    const QPoint internalPos = internalChangeset->pos.value_or(internalOutput->position());
+-    const QSize internalSize = getSize(internalChangeset.get(), internalOutput);
+-    for (BackendOutput *otherOutput : outputs) {
+-        auto changeset = config.changeSet(otherOutput);
+-        QPoint otherPos = changeset->pos.value_or(otherOutput->position());
+-        if (otherPos.x() >= internalPos.x() + internalSize.width()) {
+-            otherPos.rx() -= std::floor(internalSize.width());
+-        }
+-        if (otherPos.y() >= internalPos.y() + internalSize.height()) {
+-            otherPos.ry() -= std::floor(internalSize.height());
+-        }
+-        // make sure this doesn't make outputs overlap, which is neither supported nor expected by users
+-        const QSize otherSize = getSize(changeset.get(), otherOutput);
+-        const bool overlap = std::any_of(outputs.begin(), outputs.end(), [&, &config = config](BackendOutput *output) {
+-            if (otherOutput == output) {
+-                return false;
+-            }
+-            const auto changeset = config.changeSet(output);
+-            const QPoint pos = changeset->pos.value_or(output->position());
+-            return Rect(pos, otherSize).intersects(Rect(otherPos, getSize(changeset.get(), output)));
+-        });
+-        if (!overlap) {
+-            changeset->pos = otherPos;
+-        }
+-    }
++    auto config = setup ? setupToConfig(setup->setup, setup->globalOutputIndices) : generateConfig(outputs, false);
++    config.changeSet(*internalIt)->dpmsMode = BackendOutput::DpmsMode::Off;
+     return config;
+ }
+ 
+diff --git a/src/pointer_input.cpp b/src/pointer_input.cpp
+index f2aa149e3a..ccd2a644e7 100644
+--- a/src/pointer_input.cpp
++++ b/src/pointer_input.cpp
+@@ -63,7 +63,7 @@ static bool screenContainsPos(const QPointF &pos)
+ {
+     const auto outputs = workspace()->outputs();
+     for (const LogicalOutput *output : outputs) {
+-        if (output->geometry().contains(flooredPoint(pos))) {
++        if (workspace()->isOutputInteractive(output) && output->geometry().contains(flooredPoint(pos))) {
+             return true;
+         }
+     }
+@@ -939,7 +939,10 @@ void PointerInputRedirection::updatePosition(const QPointF &pos, const QPointF &
+         return;
+     }
+     // verify that at least one screen contains the pointer position
+-    const LogicalOutput *currentOutput = workspace()->outputAt(pos);
++    const LogicalOutput *currentOutput = workspace()->interactiveOutputAt(pos);
++    if (!currentOutput) {
++        return;
++    }
+     QPointF p = confineToBoundingBox(pos, currentOutput->geometry());
+     p = applyEdgeBarrier(p, relativeMotion, currentOutput, time);
+     p = applyPointerConfinement(p);
+@@ -1008,9 +1011,12 @@ void PointerInputRedirection::updateAfterScreenChange()
+         }
+ 
+         // pointer no longer on a screen, reposition to closes screen
+-        output = workspace()->outputAt(m_pos);
++        output = workspace()->interactiveOutputAt(m_pos);
+     }
+ 
++    if (!output) {
++        return;
++    }
+     m_lastOutputWasPlaceholder = output->isPlaceholder();
+     warp(output->geometry().center());
+ }
+diff --git a/src/workspace.cpp b/src/workspace.cpp
+index 8206a2186e..060f7c70b8 100644
+--- a/src/workspace.cpp
++++ b/src/workspace.cpp
+@@ -238,6 +238,7 @@ void Workspace::init()
+         }
+         auto &[config, type] = *opt;
+         applyOutputConfiguration(config);
++        input()->pointer()->updateAfterScreenChange();
+     };
+     connect(m_lidSwitchTracker.get(), &LidSwitchTracker::lidStateChanged, this, applySensorChanges);
+     connect(kwinApp()->tabletModeManager(), &TabletModeManager::tabletModeChanged, this, applySensorChanges);
+@@ -579,7 +580,9 @@ OutputConfigurationError Workspace::applyOutputConfiguration(OutputConfiguration
+         if (m_dpms == DpmsState::Off || m_dpms == DpmsState::TurningOff) {
+             config.changeSet(output)->dpmsMode = BackendOutput::DpmsMode::Off;
+         } else {
+-            config.changeSet(output)->dpmsMode = BackendOutput::DpmsMode::On;
++            config.changeSet(output)->dpmsMode = m_lidSwitchTracker->isLidClosed() && output->isInternal()
++                ? BackendOutput::DpmsMode::Off
++                : BackendOutput::DpmsMode::On;
+         }
+     }
+     auto error = kwinApp()->outputBackend()->applyOutputChanges(config);
+@@ -1244,12 +1247,12 @@ void Workspace::updateCurrentActivity(const QString &new_activity)
+ #endif
+ }
+ 
+-LogicalOutput *Workspace::outputAt(const QPointF &pos) const
++static LogicalOutput *nearestOutput(const QPointF &pos, const QList<LogicalOutput *> &outputs)
+ {
+     LogicalOutput *bestOutput = nullptr;
+     qreal minDistance;
+ 
+-    for (LogicalOutput *output : std::as_const(m_outputs)) {
++    for (LogicalOutput *output : outputs) {
+         const RectF geo = output->geometry();
+ 
+         const QPointF closestPoint(std::clamp(pos.x(), geo.x(), geo.x() + geo.width() - 1),
+@@ -1265,6 +1268,30 @@ LogicalOutput *Workspace::outputAt(const QPointF &pos) const
+     return bestOutput;
+ }
+ 
++LogicalOutput *Workspace::outputAt(const QPointF &pos) const
++{
++    return nearestOutput(pos, m_outputs);
++}
++
++bool Workspace::isOutputInteractive(const LogicalOutput *output) const
++{
++    if (!m_lidSwitchTracker->isLidClosed() || !output->isInternal()) {
++        return true;
++    }
++    return std::ranges::any_of(kwinApp()->outputBackend()->outputs(), [output](BackendOutput *backend) {
++        return backend->isEnabled() && !backend->isInternal() && backend->replicationSource() == output->backendOutput()->uuid();
++    });
++}
++
++LogicalOutput *Workspace::interactiveOutputAt(const QPointF &pos) const
++{
++    QList<LogicalOutput *> outputs;
++    std::copy_if(m_outputs.begin(), m_outputs.end(), std::back_inserter(outputs), [this](LogicalOutput *output) {
++        return isOutputInteractive(output);
++    });
++    return nearestOutput(pos, outputs);
++}
++
+ LogicalOutput *Workspace::findOutput(const QString &name) const
+ {
+     for (LogicalOutput *output : std::as_const(m_outputs)) {
+@@ -2558,6 +2585,11 @@ void Workspace::rearrange(const QHash<Window *, LogicalOutput *> &oldOutputs)
+  */
+ RectF Workspace::clientArea(clientAreaOption opt, const LogicalOutput *output) const
+ {
++    if (opt == PlacementArea && !isOutputInteractive(output)) {
++        if (const auto interactive = interactiveOutputAt(output->geometry().center())) {
++            output = interactive;
++        }
++    }
+     switch (opt) {
+     case MaximizeArea:
+     case PlacementArea:
+@@ -2691,6 +2723,11 @@ QList<LogicalOutput *> Workspace::outputOrder() const
+ 
+ LogicalOutput *Workspace::activeOutput() const
+ {
++    if (m_activeOutput && !isOutputInteractive(m_activeOutput)) {
++        if (const auto interactive = interactiveOutputAt(m_activeOutput->geometry().center())) {
++            return interactive;
++        }
++    }
+     return m_activeOutput;
+ }
+ 
+diff --git a/src/workspace.h b/src/workspace.h
+index 7d092498f9..fa93efc8c6 100644
+--- a/src/workspace.h
++++ b/src/workspace.h
+@@ -156,6 +156,8 @@ public:
+     QList<LogicalOutput *> outputOrder() const;
+ 
+     LogicalOutput *activeOutput() const;
++    bool isOutputInteractive(const LogicalOutput *output) const;
++    LogicalOutput *interactiveOutputAt(const QPointF &pos) const;
+     void setActiveOutput(LogicalOutput *output);
+     void setActiveOutput(const QPointF &pos);
+ 
+-- 
+2.53.0
+
+
+From bd855b8dae2ecfea22404dacbc81e2a1de8295ce Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 8 Oct 2026 14:19:23 -0300
+Subject: [PATCH 2/3] Limit lid placement redirection to new placement requests
+
+Preserve existing windows client areas and geometry while directing placement algorithms to an interactive external output. Use floating-point geometry in pointer and window assertions.
+
+Assisted-by: gpt-6.1-sol via Codex
+---
+ autotests/integration/outputchanges_test.cpp |  8 ++++----
+ src/placement.cpp                            | 17 +++++++++++++++--
+ src/workspace.cpp                            |  5 -----
+ 3 files changed, 19 insertions(+), 11 deletions(-)
+
+diff --git a/autotests/integration/outputchanges_test.cpp b/autotests/integration/outputchanges_test.cpp
+index 7c9d522fd6..f9d2cc30fc 100644
+--- a/autotests/integration/outputchanges_test.cpp
++++ b/autotests/integration/outputchanges_test.cpp
+@@ -1229,8 +1229,8 @@ void OutputChangesTest::testLaptopLidClosed()
+     const auto internal = outputs.front();
+     QVERIFY(internal->isInternal());
+     const auto originalGeometry = workspace()->geometry();
+-    const auto originalInternal = workspace()->findOutput(internal)->geometry();
+-    const auto originalExternal = externalPresent ? workspace()->findOutput(outputs.back())->geometry() : Rect();
++    const auto originalInternal = workspace()->findOutput(internal)->geometryF();
++    const auto originalExternal = externalPresent ? workspace()->findOutput(outputs.back())->geometryF() : RectF();
+ 
+     workspace()->setActiveOutput(workspace()->findOutput(internal));
+     std::unique_ptr<KWayland::Client::Surface> surface(Test::createSurface());
+@@ -1254,14 +1254,14 @@ void OutputChangesTest::testLaptopLidClosed()
+     QCOMPARE(internal->dpmsMode(), BackendOutput::DpmsMode::Off);
+     QCOMPARE(workspace()->outputs().size(), outputInfo.size());
+     QCOMPARE(workspace()->geometry(), originalGeometry);
+-    QCOMPARE(workspace()->findOutput(internal)->geometry(), originalInternal);
++    QCOMPARE(workspace()->findOutput(internal)->geometryF(), originalInternal);
+     QCOMPARE(window->frameGeometry(), originalWindow);
+     QCOMPARE(window->output()->backendOutput(), internal);
+     if (externalPresent) {
+         const auto external = outputs.back();
+         QVERIFY(external->isEnabled());
+         QCOMPARE(external->dpmsMode(), BackendOutput::DpmsMode::On);
+-        QCOMPARE(workspace()->findOutput(external)->geometry(), originalExternal);
++        QCOMPARE(workspace()->findOutput(external)->geometryF(), originalExternal);
+         QVERIFY(originalExternal.contains(input()->pointer()->pos()));
+         input()->pointer()->warp(QPointF(100, 100));
+         QVERIFY(originalExternal.contains(input()->pointer()->pos()));
+diff --git a/src/placement.cpp b/src/placement.cpp
+index a1b80eddb5..30c5e7c7f2 100644
+--- a/src/placement.cpp
++++ b/src/placement.cpp
+@@ -24,6 +24,17 @@
+ namespace KWin
+ {
+ 
++static RectF visiblePlacementArea(const RectF &area)
++{
++    const auto output = workspace()->outputAt(area.center());
++    if (output && !workspace()->isOutputInteractive(output)) {
++        if (const auto interactive = workspace()->interactiveOutputAt(area.center())) {
++            return workspace()->clientArea(PlacementArea, interactive);
++        }
++    }
++    return area;
++}
++
+ Placement::Placement()
+ {
+ }
+@@ -31,8 +42,9 @@ Placement::Placement()
+ /**
+  * Places the client \a c according to the workspace's layout policy
+  */
+-std::optional<PlacementCommand> Placement::place(const Window *c, const RectF &area)
++std::optional<PlacementCommand> Placement::place(const Window *c, const RectF &requestedArea)
+ {
++    const auto area = visiblePlacementArea(requestedArea);
+     PlacementPolicy policy = c->rules()->checkPlacement(PlacementDefault);
+     if (policy != PlacementDefault) {
+         return place(c, area, policy);
+@@ -55,8 +67,9 @@ std::optional<PlacementCommand> Placement::place(const Window *c, const RectF &a
+     }
+ }
+ 
+-std::optional<PlacementCommand> Placement::place(const Window *c, const RectF &area, PlacementPolicy policy, PlacementPolicy nextPlacement)
++std::optional<PlacementCommand> Placement::place(const Window *c, const RectF &requestedArea, PlacementPolicy policy, PlacementPolicy nextPlacement)
+ {
++    const auto area = visiblePlacementArea(requestedArea);
+     if (policy == PlacementUnknown || policy == PlacementDefault) {
+         policy = options->placement();
+     }
+diff --git a/src/workspace.cpp b/src/workspace.cpp
+index 060f7c70b8..77396068ba 100644
+--- a/src/workspace.cpp
++++ b/src/workspace.cpp
+@@ -2585,11 +2585,6 @@ void Workspace::rearrange(const QHash<Window *, LogicalOutput *> &oldOutputs)
+  */
+ RectF Workspace::clientArea(clientAreaOption opt, const LogicalOutput *output) const
+ {
+-    if (opt == PlacementArea && !isOutputInteractive(output)) {
+-        if (const auto interactive = interactiveOutputAt(output->geometry().center())) {
+-            output = interactive;
+-        }
+-    }
+     switch (opt) {
+     case MaximizeArea:
+     case PlacementArea:
+-- 
+2.53.0
+
+
+From 6e3729f525e5154df4df0e416c8a40da215f9c5b Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 8 Oct 2026 14:43:33 -0300
+Subject: [PATCH 3/3] Complete global screen-off when the lid already darkened
+ every output
+
+A closed internal-only laptop has no new per-output DPMS signal during global screen-off. Recheck the completed state after applying the configuration so the transition and sleep inhibitor can finish.
+
+Assisted-by: gpt-6.1-sol via Codex
+---
+ src/workspace.cpp | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/src/workspace.cpp b/src/workspace.cpp
+index 77396068ba..d18fc71fb5 100644
+--- a/src/workspace.cpp
++++ b/src/workspace.cpp
+@@ -178,6 +178,7 @@ Workspace::Workspace()
+         // applyOutputConfiguration sets the correct value
+         OutputConfiguration cfg;
+         applyOutputConfiguration(cfg);
++        maybeUpdateDpmsState();
+     });
+ 
+     initShortcuts();
+-- 
+2.53.0
+

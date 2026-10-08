@@ -47,7 +47,7 @@ if [ "$TIMELINE_STATUS" -ne 1 ]; then
 fi
 awk '
     /^FAIL / { failures++ }
-    $0 == "FAIL AC remains awake through requested screen-off" { expected++ }
+    $0 == "FAIL AC desktop never auto-suspends" { expected++ }
     END { exit !(failures == 1 && expected == 1) }
 ' "$EVIDENCE/blocked-timeline.log"
 sha256sum --check "$EVIDENCE/source-sha256.txt" >"$EVIDENCE/source-stability.log"

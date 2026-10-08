@@ -61,7 +61,7 @@ int main(int argc, char **argv)
         const bool battery = profile == QStringLiteral("Battery");
         const int dim = userOverride && ac ? 901 : candidate ? (profile == QStringLiteral("LowBattery") ? 180 : 900) : (ac ? 300 : battery ? 120 : 60);
         const int off = candidate ? (ac ? 9900 : battery ? 1200 : 300) : (ac ? 600 : battery ? 300 : 120);
-        const int sleep = candidate && !ac ? (battery ? 1800 : 600) : (ac ? 900 : battery ? 600 : 300);
+        const int sleep = candidate ? (ac ? 14400 : battery ? 1800 : 600) : (ac ? 900 : battery ? 600 : 300);
         const auto action = PowerDevil::PowerButtonAction::Sleep;
         out << profile << " dim=" << settings.dimDisplayIdleTimeoutSec()
             << " off=" << settings.turnOffDisplayIdleTimeoutSec()
@@ -82,9 +82,7 @@ int main(int argc, char **argv)
             check(!settings.inhibitLidActionWhenExternalMonitorPresent(), profile + QStringLiteral(" battery lid with external display"));
         }
         if (requireTimeline && ac) {
-            check(settings.autoSuspendAction() == qToUnderlying(PowerDevil::PowerButtonAction::NoAction)
-                      || settings.autoSuspendIdleTimeoutSec() > settings.turnOffDisplayIdleTimeoutSec(),
-                  QStringLiteral("AC remains awake through requested screen-off"));
+            check(settings.autoSuspendAction() == qToUnderlying(PowerDevil::PowerButtonAction::NoAction), QStringLiteral("AC desktop never auto-suspends"));
         }
     }
 

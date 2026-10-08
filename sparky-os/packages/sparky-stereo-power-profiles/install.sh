@@ -8,5 +8,5 @@ if [[ ${1:-install} == uninstall ]]; then
 	DEBIAN_FRONTEND=noninteractive apt-get -y purge sparky-stereo-power-profiles
 else
 	: "${OUT:?Set OUT to the directory containing the built package}"
-	DEBIAN_FRONTEND=noninteractive apt-get -y install "$OUT/sparky-stereo-power-profiles_20261008~sparky9~0_all.deb"
+	DEBIAN_FRONTEND=noninteractive apt-get -y install "$OUT/sparky-stereo-power-profiles_20261008.1~sparky9~0_all.deb"
 fi

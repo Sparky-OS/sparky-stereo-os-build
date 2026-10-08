@@ -1,0 +1,86 @@
+diff --git a/PowerDevilProfileSettings.kcfg b/PowerDevilProfileSettings.kcfg
+index 0ad1848c..25cb7102 100644
+--- a/PowerDevilProfileSettings.kcfg
++++ b/PowerDevilProfileSettings.kcfg
+@@ -74,7 +74,7 @@ SPDX-License-Identifier: CC0-1.0
+     <group name="SuspendAndShutdown" parentGroupName="$(ProfileId)">
+         <entry name="AutoSuspendAction" type="UInt">
+             <default type="code">
+-                PowerDevil::ProfileDefaults::defaultAutoSuspendAction(mParamIsVM, mParamCanSuspend)
++                PowerDevil::ProfileDefaults::defaultAutoSuspendAction(mParamProfileId, mParamIsVM, mParamCanSuspend)
+             </default>
+         </entry>
+         <entry name="AutoSuspendIdleTimeoutSec" type="Int">
+diff --git a/daemon/actions/bundled/dpms.cpp b/daemon/actions/bundled/dpms.cpp
+index 1588192c..0afa2a65 100644
+--- a/daemon/actions/bundled/dpms.cpp
++++ b/daemon/actions/bundled/dpms.cpp
+@@ -42,6 +42,7 @@ namespace PowerDevil
+ {
+ namespace BundledActions
+ {
++
+ DPMS::DPMS(QObject *parent)
+     : Action(parent)
+     , m_dpms(new KScreen::Dpms)
+@@ -118,6 +119,9 @@ void DPMS::onIdleTimeout(std::chrono::milliseconds /*timeout*/)
+ {
+     // Do not inhibit anything even if idleTimeout reaches because we are inhibit
+     if (!m_inhibitScreen && isSupported()) {
++        if (m_lockBeforeTurnOff) {
++            lockScreen();
++        }
+         qCDebug(POWERDEVIL) << "DPMS: starting to fade out";
+         Q_EMIT startFade();
+     } else {
+diff --git a/daemon/powerdevilsettingsdefaults.cpp b/daemon/powerdevilsettingsdefaults.cpp
+index 89813812..792248ca 100644
+--- a/daemon/powerdevilsettingsdefaults.cpp
++++ b/daemon/powerdevilsettingsdefaults.cpp
+@@ -9,6 +9,9 @@
+ 
+ #include "powerdevilenums.h"
+ 
++#include <QDBusConnection>
++#include <QDBusInterface>
++
+ namespace PowerDevil
+ {
+ 
+@@ -85,10 +88,24 @@ bool ProfileDefaults::defaultLockBeforeTurnOffDisplay(bool isMobile)
+ }
+ 
+ unsigned int ProfileDefaults::defaultAutoSuspendAction(bool isVM, bool canSuspend)
++{
++    return defaultAutoSuspendAction(QString(), isVM, canSuspend);
++}
++
++unsigned int ProfileDefaults::defaultAutoSuspendAction(const QString &profileGroup, bool isVM, bool canSuspend)
+ {
+     if (!defaultAutoSuspendWhenIdle(isVM, canSuspend)) {
+         return qToUnderlying(PowerButtonAction::NoAction);
+     }
++    if (profileGroup == QStringLiteral("AC")) {
++        const QDBusInterface upower(QStringLiteral("org.freedesktop.UPower"),
++                                    QStringLiteral("/org/freedesktop/UPower"),
++                                    QStringLiteral("org.freedesktop.UPower"),
++                                    QDBusConnection::systemBus());
++        if (!upower.property("LidIsPresent").toBool()) {
++            return qToUnderlying(PowerButtonAction::NoAction);
++        }
++    }
+     return defaultAutoSuspendType();
+ }
+ 
+diff --git a/daemon/powerdevilsettingsdefaults.h b/daemon/powerdevilsettingsdefaults.h
+index 7bde1b13..20d686c8 100644
+--- a/daemon/powerdevilsettingsdefaults.h
++++ b/daemon/powerdevilsettingsdefaults.h
+@@ -34,6 +34,7 @@ public:
+     static bool defaultLockBeforeTurnOffDisplay(bool isMobile);
+ 
+     static unsigned int defaultAutoSuspendAction(bool isVM, bool canSuspend);
++    static unsigned int defaultAutoSuspendAction(const QString &profileGroup, bool isVM, bool canSuspend);
+     static bool defaultAutoSuspendWhenIdle(bool isVM, bool canSuspend);
+     static int defaultAutoSuspendIdleTimeoutSec(const QString &profileGroup, bool isMobile);
+     static unsigned int defaultAutoSuspendType();
