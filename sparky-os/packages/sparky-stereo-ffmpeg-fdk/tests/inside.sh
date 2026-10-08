@@ -10,9 +10,11 @@
 #   1. the edition's FFmpeg has no libfdk_aac; the helper does nothing until asked; declining the question changes nothing
 #   2. without a source index, or with a missing 32-bit package, the helper stops before it changes anything
 #   3. the build: libfdk_aac is listed, an AAC file is encoded (HE-AAC, which the native encoder cannot), apt keeps the build
-#      (full-upgrade does nothing), the build tools are gone again, the 32-bit libraries are in step (I386=1)
-#   4. an update of the edition's FFmpeg: apt update starts the rebuild by itself, and the new local build has the encoder
-#   5. --remove: the edition's FFmpeg is back and the encoder is gone
+#      (the build wrote the pin: exact version, candidate of every package, the 32-bit twin too, is the local build, full-upgrade
+#      does nothing), the build tools are gone again, the 32-bit libraries are in step (I386=1)
+#   4. an update of the edition's FFmpeg: apt update starts the rebuild by itself (and apt keeps the old local build while it
+#      runs), the pin follows the new local build, which has the encoder
+#   5. --remove: the edition's FFmpeg is back, the encoder and the pin are gone
 # Last update 2026/10/08
 export DEBIAN_FRONTEND=noninteractive
 PASS=0
@@ -79,10 +81,11 @@ eq "no libfdk-aac package installed yet" "$(dpkg -l | grep -c -E '^ii +libfdk')"
 echo "=== 2. the helper is installed; nothing is built by installing it"
 apt-get -y install /pkgs/sparky-stereo-apt-standin_*.deb /pkgs/sparky-stereo-ffmpeg-fdk_*.deb >/tmp/i3.log 2>&1 || tail -8 /tmp/i3.log
 check "the helper is installed" dpkg -s $HELPER
-check "the pin file is installed" test -f /etc/apt/preferences.d/sparky-stereo-ffmpeg-fdk
+PIN=/etc/apt/preferences.d/sparky-stereo-ffmpeg-fdk
+check "no pin file before a build exists (each build writes its own)" test ! -e $PIN
 check "the hook file is installed" test -f /etc/apt/apt.conf.d/99sparky-stereo-ffmpeg-fdk
 check "the source line file is installed" test -f /etc/apt/sources.list.d/sparky-stereo-ffmpeg-src.sources
-eq "apt reads the pin file without a warning" "$(apt-cache policy ffmpeg 2>&1 | grep -c -E '^(W|E):')" 0
+eq "apt prints no warning about the package's files" "$(apt-cache policy ffmpeg 2>&1 | grep -c -E '^(W|E):')" 0
 rm -f /etc/apt/sources.list.d/sparky-stereo-ffmpeg-src.sources     # its URL is the real repository; the test has its own deb-src
 hook_out=$(apt-get update 2>&1 | grep -c -i 'Sparky Stereo OS:')
 eq "apt update says nothing about FFmpeg when no local build exists" "$hook_out" 0
@@ -194,8 +197,15 @@ check "libfdk-aac-dev is gone again (a build tool)" bash -c '! dpkg -s libfdk-aa
 check "libx264-dev is gone again (a build tool)" bash -c '! dpkg -s libx264-dev 2>/dev/null | grep -q "Status: install ok installed"'
 eq "the only new package is the encoder's runtime library" "$(( $(installed_count) - before ))" 1
 check "libfdk-aac2 is installed" bash -c "dpkg -s libfdk-aac2 | grep -q 'Status: install ok installed'"
-pol=$(apt-cache policy ffmpeg libavcodec63)
-check "apt's candidate for ffmpeg is the local build" bash -c "apt-cache policy ffmpeg | grep -q 'Candidate: $L2'"
+check "the build wrote the pin file" test -s $PIN
+eq "the pin names the exact local version" "$(grep -c -x "Pin: version $L2" $PIN)" 1
+eq "the pin has no pattern in its version" "$(grep -c -E '^Pin: version .*\*' $PIN)" 0
+eq "apt reads the pin file without a warning" "$(apt-cache policy ffmpeg libavcodec63 2>&1 | grep -c -E '^(W|E|N):')" 0
+eq "the local build has apt priority 1002" "$(apt-cache policy ffmpeg | awk -v v="$L2" '$1=="***" && $2==v {print $3}')" 1002
+eq "the edition's version keeps the repository's priority 1001" "$(apt-cache policy ffmpeg | awk -v v="$V2" '$1==v {print $2}')" 1001
+eq "apt's candidate for ffmpeg is the local build" "$(apt-cache policy ffmpeg | awk '/Candidate:/{print $2}')" "$L2"
+eq "apt's candidate for libavcodec63 is the local build" "$(apt-cache policy libavcodec63 | awk '/Candidate:/{print $2}')" "$L2"
+[ "${I386:-0}" = 1 ] && eq "apt's candidate for libavcodec63:i386 is the local build" "$(apt-cache policy libavcodec63:i386 | awk '/Candidate:/{print $2}')" "$L2"
 eq "full-upgrade changes nothing about FFmpeg (Inst/Remv lines)" "$(apt-get -s full-upgrade 2>&1 | grep -c -E '^(Inst|Remv) (ffmpeg|libav|libsw)')" 0
 check "apt-get check finds nothing broken" apt-get check
 if [ "${I386:-0}" = 1 ]; then
@@ -214,11 +224,18 @@ printf 'deb [trusted=yes] file:/repo3 ./\ndeb-src [trusted=yes] file:/repo3 ./\n
 upd=$(apt-get update 2>&1 | grep 'Sparky Stereo OS:')
 echo "apt update printed: $upd"
 check "apt update announces the rebuild" grep -q "FFmpeg $V3" <<<"$upd"
+eq "while the rebuild runs, apt's candidate is still the old local build" "$(apt-cache policy ffmpeg | awk '/Candidate:/{print $2}')" "$L2"
+eq "... and full-upgrade changes nothing about FFmpeg" "$(apt-get -s full-upgrade 2>&1 | grep -c -E '^(Inst|Remv) (ffmpeg|libav|libsw)')" 0
 check "the rebuild runs by itself and finishes" wait_idle 5400 "$V3"
 tail -n 8 /var/log/sparky-stereo-ffmpeg-fdk.log | cut -c1-200
 L3=$V3+fdk1
 eq "ffmpeg is the new local build" "$(ver ffmpeg)" "$L3"
 eq "libavcodec63 is the new local build" "$(dpkg-query -W -f='${Version}' libavcodec63:amd64)" "$L3"
+eq "the pin follows the new build" "$(grep -c -x "Pin: version $L3" $PIN)" 1
+eq "... and no longer names the old one" "$(grep -c -F "$L2" $PIN)" 0
+eq "apt's candidate for ffmpeg is the new local build" "$(apt-cache policy ffmpeg | awk '/Candidate:/{print $2}')" "$L3"
+[ "${I386:-0}" = 1 ] && eq "apt's candidate for libavcodec63:i386 is the new local build" "$(apt-cache policy libavcodec63:i386 | awk '/Candidate:/{print $2}')" "$L3"
+eq "full-upgrade changes nothing about FFmpeg (new local build)" "$(apt-get -s full-upgrade 2>&1 | grep -c -E '^(Inst|Remv) (ffmpeg|libav|libsw)')" 0
 eq "ffmpeg -encoders still lists libfdk_aac" "$(ffmpeg -hide_banner -encoders 2>/dev/null | grep -c libfdk_aac)" 1
 [ "${I386:-0}" = 1 ] && eq "libavcodec63:i386 followed" "$(dpkg-query -W -f='${Version}' libavcodec63:i386)" "$L3"
 check "the log says it was the automatic mode" grep -q 'mode automatic' /var/log/sparky-stereo-ffmpeg-fdk.log
@@ -235,6 +252,8 @@ eq "libavcodec63 is the edition's build again" "$(dpkg-query -W -f='${Version}' 
 [ "${I386:-0}" = 1 ] && eq "libavcodec63:i386 is the edition's build again" "$(dpkg-query -W -f='${Version}' libavcodec63:i386)" "$V3"
 eq "libfdk_aac is gone" "$(ffmpeg -hide_banner -encoders 2>/dev/null | grep -c libfdk_aac)" 0
 check "the state is cleared" test ! -e $STATE/installed
+check "the pin file is gone" test ! -e $PIN
+eq "apt's candidate for ffmpeg is the edition's build" "$(apt-cache policy ffmpeg | awk '/Candidate:/{print $2}')" "$V3"
 check "the consent is cleared" test ! -e $STATE/consent
 eq "full-upgrade has nothing to do for FFmpeg (Inst/Remv lines)" "$(apt-get -s full-upgrade 2>&1 | grep -c -E '^(Inst|Remv) (ffmpeg|libav|libsw)')" 0
 check "apt-get check finds nothing broken" apt-get check

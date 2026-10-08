@@ -5,6 +5,7 @@
 # Last update 2026/10/08
 
 STATE=${SPARKY_FDK_STATE:-/var/lib/sparky-stereo-ffmpeg-fdk}
+PINFILE=${SPARKY_FDK_PINFILE:-/etc/apt/preferences.d/sparky-stereo-ffmpeg-fdk}
 LOG=${SPARKY_FDK_LOG:-/var/log/sparky-stereo-ffmpeg-fdk.log}
 LOCK=${SPARKY_FDK_LOCK:-/run/sparky-stereo-ffmpeg-fdk.lock}
 LIBDIR=${SPARKY_FDK_LIBDIR:-/usr/lib/sparky-stereo-ffmpeg-fdk}
@@ -90,4 +91,30 @@ installed_of() {
 			case "$list" in *",$name,"*) ;; *) continue ;; esac
 			case "$st" in ii*) echo "$name:$arch" ;; esac
 		done
+}
+
+# The pin that makes apt keep the local build: the exact version just installed, above the edition's repository (1001), for
+# each installed package of the build with its architecture (a name alone covers the native architecture only, so the 32-bit
+# twin would be put back). apt's version pin takes an exact version or a prefix that ends in "*" and nothing else: a "*" at
+# the start is accepted without a warning and matches nothing, which is why the file is written here, for the version of each
+# build, and not shipped with a pattern in it.
+write_pin() {
+	local names tmp rc
+	read_installed || return 1
+	names=$(for tmp in $LOCAL_PACKAGES; do echo "${tmp%:all}"; done | sort -u | tr '\n' ' ')
+	names=${names% }
+	[ -n "$names" ] || return 1
+	tmp=$(mktemp "$STATE/pin.XXXXXX") || return 1
+	{
+		printf '# Written by sparky-stereo-ffmpeg-fdk, which owns this file: the FFmpeg built on this computer, kept by apt.\n'
+		printf '# It goes away with "sparky-stereo-ffmpeg-fdk --remove" and with the removal of the package.\n'
+		printf 'Package: %s\nPin: version %s\nPin-Priority: 1002\n' "$names" "$LOCAL_VERSION"
+	} >"$tmp" && install -m 644 "$tmp" "$PINFILE"
+	rc=$?
+	rm -f -- "$tmp"
+	return $rc
+}
+
+drop_pin() {
+	rm -f -- "$PINFILE"
 }

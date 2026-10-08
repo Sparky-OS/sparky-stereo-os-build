@@ -6,9 +6,11 @@
 # Fraunhofer's AAC encoder (libfdk_aac). The edition's FFmpeg is built without it (FFmpeg's LICENSE.md calls a GPL build that
 # includes it unredistributable); a build made by this helper is for that computer only. It installs
 #   /usr/bin/sparky-stereo-ffmpeg-fdk                              the command
-#   /usr/lib/sparky-stereo-ffmpeg-fdk/{common.sh,check-update}      its functions, and the apt hook that rebuilds on an update
+#   /usr/lib/sparky-stereo-ffmpeg-fdk/{common.sh,check-update,write-pin}   its functions, the apt hook that rebuilds on an update,
+#                                                                   and the writer of the pin (the postinst runs it)
 #   /usr/share/sparky/sparky-stereo-ffmpeg-fdk/{en,pl,pt_BR}        the strings
-#   /etc/apt/preferences.d/sparky-stereo-ffmpeg-fdk                 the pin that keeps the local build (version *+fdk*, 1002)
+#   (not shipped: /etc/apt/preferences.d/sparky-stereo-ffmpeg-fdk is written by each build, exact version at 1002, because apt
+#   takes a version pin only exact or with a trailing * and the local version changes with every build)
 #   /etc/apt/apt.conf.d/99sparky-stereo-ffmpeg-fdk                  the hook (APT::Update::Post-Invoke-Success)
 #   /etc/apt/sources.list.d/sparky-stereo-ffmpeg-src.sources        the edition's source index (deb-src), for the build
 # Nothing is built by installing the package: the first run explains, asks, and only then builds.
@@ -27,31 +29,51 @@ W=$(mktemp -d "${TMPDIR:-/K3D/temp}/fdk-build.XXXXXX")
 trap 'rm -rf "${W:?}"' EXIT
 D=$W/$PKG
 mkdir -p "$D/DEBIAN" "$D/usr/bin" "$D/usr/lib/$PKG" "$D/usr/share/sparky/$PKG" "$D/usr/share/doc/$PKG" \
-	"$D/etc/apt/apt.conf.d" "$D/etc/apt/preferences.d" "$D/etc/apt/sources.list.d"
+	"$D/etc/apt/apt.conf.d" "$D/etc/apt/sources.list.d"
 
 install -m 755 "$HERE/bin/$PKG" "$D/usr/bin/$PKG"
 install -m 644 "$HERE/lib/common.sh" "$D/usr/lib/$PKG/common.sh"
 install -m 755 "$HERE/lib/check-update" "$D/usr/lib/$PKG/check-update"
+install -m 755 "$HERE/lib/write-pin" "$D/usr/lib/$PKG/write-pin"
 sed -i "s/@CPU_MINUTES@/$CPU_MINUTES/" "$D/usr/lib/$PKG/common.sh"
 install -m 644 "$HERE"/lang/* "$D/usr/share/sparky/$PKG/"
 install -m 644 "$HERE/apt/99sparky-stereo-ffmpeg-fdk" "$D/etc/apt/apt.conf.d/99sparky-stereo-ffmpeg-fdk"
-install -m 644 "$HERE/apt/sparky-stereo-ffmpeg-fdk.pref" "$D/etc/apt/preferences.d/sparky-stereo-ffmpeg-fdk"
 install -m 644 "$HERE/apt/sparky-stereo-ffmpeg-src.sources" "$D/etc/apt/sources.list.d/sparky-stereo-ffmpeg-src.sources"
-printf '%s\n' /etc/apt/apt.conf.d/99sparky-stereo-ffmpeg-fdk /etc/apt/preferences.d/sparky-stereo-ffmpeg-fdk \
-	/etc/apt/sources.list.d/sparky-stereo-ffmpeg-src.sources >"$D/DEBIAN/conffiles"
+printf '%s\n' /etc/apt/apt.conf.d/99sparky-stereo-ffmpeg-fdk /etc/apt/sources.list.d/sparky-stereo-ffmpeg-src.sources \
+	>"$D/DEBIAN/conffiles"
+
+cat >"$D/DEBIAN/postinst" <<'EOS'
+#!/bin/sh
+# postinst script
+set -e
+case "$1" in
+configure)
+	# installed again while the FFmpeg built here is still on the computer: apt keeps it again
+	if [ -x /usr/lib/sparky-stereo-ffmpeg-fdk/write-pin ]; then
+		/usr/lib/sparky-stereo-ffmpeg-fdk/write-pin || true
+	fi
+	;;
+esac
+exit 0
+EOS
+chmod 755 "$D/DEBIAN/postinst"
 
 cat >"$D/DEBIAN/postrm" <<'EOS'
 #!/bin/sh
 # postrm script
 set -e
 case "$1" in
-remove)
-	# the local build stays installed; without the pin of this package apt puts the edition's FFmpeg back at the next full-upgrade
-	if [ -s /var/lib/sparky-stereo-ffmpeg-fdk/installed ]; then
+remove | purge)
+	# the pin goes with the package; the local build stays installed and, without the pin, apt puts the edition's FFmpeg back
+	# at the next full-upgrade
+	if [ "$1" = remove ] && [ -s /var/lib/sparky-stereo-ffmpeg-fdk/installed ]; then
 		echo "sparky-stereo-ffmpeg-fdk: the FFmpeg built here is still installed; the next full-upgrade puts the edition's FFmpeg back."
 		echo "To go back right away, install this package again and run: sparky-stereo-ffmpeg-fdk --remove"
 	fi
+	rm -f /etc/apt/preferences.d/sparky-stereo-ffmpeg-fdk
 	;;
+esac
+case "$1" in
 purge)
 	rm -rf /var/lib/sparky-stereo-ffmpeg-fdk /var/log/sparky-stereo-ffmpeg-fdk.log
 	;;
@@ -104,7 +126,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: sparky-stereo-apt, apt, dpkg-dev, build-essential, fakeroot, python3, sudo | policykit-1
+Depends: sparky-stereo-apt, apt, dpkg-dev, build-essential, fakeroot, python3, sudo | pkexec
 Recommends: powermgmt-base
 Section: sound
 Priority: optional

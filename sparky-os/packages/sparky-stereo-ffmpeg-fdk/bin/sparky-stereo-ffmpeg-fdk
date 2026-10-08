@@ -8,7 +8,7 @@
 #   1. says so plainly, with the time the build takes, and asks (--yes does not skip the text)
 #   2. installs the build dependencies of ffmpeg-dmo (apt asks first), builds our source package as the user, in a
 #      temporary folder, with the build profile pkg.ffmpeg-dmo.fdk, which turns --enable-libfdk-aac and --enable-nonfree on
-#   3. installs the result as VERSION+fdkN, which apt prefers over the edition's VERSION (the pin of this package); the
+#   3. installs the result as VERSION+fdkN, which apt prefers over the edition's VERSION (a pin it writes: exact version, 1002); the
 #      32-bit libraries (Multi-Arch: same, lock-step versions) are the edition's own, relabelled to the same version
 #   4. takes the build dependencies out again, and rebuilds by itself when the edition updates its FFmpeg (the apt hook)
 # Usage: sparky-stereo-ffmpeg-fdk [--yes] [--keep-build-deps] | --status | --remove | --help
@@ -379,6 +379,7 @@ PY
 		printf "BUILT_AT='%s'\n" "$(date -R)"
 	} >"$STATE/installed"
 	rm -f "$STATE/last-failure"
+	write_pin || fail "$LOCAL46" "$PINFILE"
 	if command -v ffmpeg >/dev/null && ! ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libfdk_aac; then
 		fail "$LOCAL44"
 	fi
@@ -407,7 +408,7 @@ do_remove() {
 		ln -s "$f" "$tmp/$(basename "$f")"
 	done
 	pkgs=$(dpkg-query -W -f='${Package}:${Architecture} ${Version} ${db:Status-Abbrev}\n' 2>/dev/null | awk '$2 ~ /\+fdk[0-9]+$/ && $3 ~ /^ii/ {print $1}')
-	[ -n "$pkgs" ] || { rm -rf -- "${tmp:?}"; rm -f "$STATE/installed" "$STATE/consent" "$STATE/last-failure"; die "$LOCAL50"; }
+	[ -n "$pkgs" ] || { rm -rf -- "${tmp:?}"; rm -f "$STATE/installed" "$STATE/consent" "$STATE/last-failure"; drop_pin; die "$LOCAL50"; }
 	# shellcheck disable=SC2086
 	DEBIAN_FRONTEND=noninteractive apt-get -y --allow-downgrades -o Dir::Etc::PreferencesParts="$tmp" install $pkgs || {
 		rm -rf -- "${tmp:?}"
@@ -415,6 +416,7 @@ do_remove() {
 	}
 	rm -rf -- "${tmp:?}"
 	rm -f "$STATE/installed" "$STATE/consent" "$STATE/last-failure"
+	drop_pin
 	printf '%s\n' "$LOCAL52"
 }
 

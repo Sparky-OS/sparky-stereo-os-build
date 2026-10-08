@@ -1,0 +1,22 @@
+#!/bin/bash
+#
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/08
+# Copyright 2026 under the GNU GPL3 License
+# Writes the pin that keeps the local FFmpeg build, from the state file the build left. The postinst of
+# sparky-stereo-ffmpeg-fdk runs it: the package was installed again while the FFmpeg built here is still on the computer
+# (removing the package removes the pin, and apt would put the edition's FFmpeg back). Nothing is written when none of
+# the recorded packages is installed at the recorded version.
+# Last update 2026/10/08
+LIBDIR=${SPARKY_FDK_LIBDIR:-/usr/lib/sparky-stereo-ffmpeg-fdk}
+# shellcheck disable=SC1091
+. "$LIBDIR/common.sh" || exit 0
+read_installed || exit 0
+present=0
+for p in $LOCAL_PACKAGES; do
+	if [ "$(dpkg-query -W -f='${Version}' "$p" 2>/dev/null)" = "$LOCAL_VERSION" ]; then
+		present=1
+		break
+	fi
+done
+[ "$present" = 1 ] || exit 0
+write_pin

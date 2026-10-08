@@ -4,5 +4,5 @@
 -------------------------------------------------------------------------------
   * First version: sparky-stereo-ffmpeg-fdk rebuilds the edition's FFmpeg (ffmpeg-dmo, build profile pkg.ffmpeg-dmo.fdk) on the user's own computer with Fraunhofer's AAC encoder
   * Says plainly before anything is built that the result is for that computer only (FFmpeg's LICENSE.md), and how long the build takes
-  * Installs the result as VERSION+fdkN, kept by apt through a pin (version *+fdk*, 1002); the 32-bit libraries are the edition's own, relabelled to the same version (Multi-Arch: same)
+  * Installs the result as VERSION+fdkN, kept by apt through a pin the build writes (the exact version of each installed package, with its architecture, at 1002); the 32-bit libraries are the edition's own, relabelled to the same version (Multi-Arch: same)
   * An apt hook rebuilds by itself, in the background, when the edition updates FFmpeg; --status, --remove (back to the edition's FFmpeg)

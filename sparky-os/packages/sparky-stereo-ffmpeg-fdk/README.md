@@ -18,25 +18,25 @@ What it does (`sparky-stereo-ffmpeg-fdk`, run as your own user):
 1. Prints the warning (the result may not be passed on; how long the build takes on this computer) and asks. `--yes` does not skip the text.
 2. Asks for your password once (sudo, or pkexec), then, as root: installs the build dependencies of `ffmpeg-dmo` (apt shows the list and asks, unless `--yes`).
 3. As you, in a temporary folder under `/var/tmp`: fetches the edition's source package with `apt-get source` (from the repository's own source index), adds a changelog entry `VERSION+fdkN` that says the build is for this computer only, and builds with `dpkg-buildpackage -B -Ppkg.ffmpeg-dmo.fdk`. The profile is off by default in the source package; it turns `--enable-libfdk-aac --enable-nonfree` and the build dependency `libfdk-aac-dev` on.
-4. Installs `ffmpeg` and the libraries as `VERSION+fdkN`. apt prefers them: `/etc/apt/preferences.d/sparky-stereo-ffmpeg-fdk` pins versions `*+fdk*` at 1002, above the repository's 1001, so an upgrade does not swap them for the build without the encoder.
+4. Installs `ffmpeg` and the libraries as `VERSION+fdkN`. apt prefers them: after each build the helper writes `/etc/apt/preferences.d/sparky-stereo-ffmpeg-fdk`, a pin at 1002 (the repository's is 1001) for exactly that version of every package it installed, the 32-bit twins included, so an upgrade does not swap them for the build without the encoder. (apt takes a version pin only exact or as a prefix ending in `*`, and a package name alone covers only the native architecture: the file is therefore written for each build, with `name:arch` entries, and not shipped with a pattern.) The pin goes with `--remove` and with the removal of the package.
 5. The 32-bit libraries (Steam and Wine need them) are `Multi-Arch: same`: apt and dpkg want one version for both architectures and identical files under `/usr/share/doc`. The helper takes the edition's own 32-bit packages of the same version, changes only their version (and the strict dependencies between them) and copies the four shared documentation files from the 64-bit build. They keep the edition's code; they are not rebuilt with the encoder.
 6. Checks that `ffmpeg -encoders` lists `libfdk_aac`, then takes the build dependencies out again (only what this run installed, and only if nothing else needs them).
 
 Updates:
 -------------
-`/etc/apt/apt.conf.d/99sparky-stereo-ffmpeg-fdk` runs `/usr/lib/sparky-stereo-ffmpeg-fdk/check-update` after every successful `apt update`. If the edition's repository has a newer FFmpeg than the one the local build was made from, the build runs again in the background (a transient systemd service at the lowest priority, or a detached process), with the consent given at the first run. Nothing happens on a computer that never built one; a rebuild that failed is not tried again by itself for the same version; a computer on battery waits for the mains. Until the rebuild is done the old local build stays (the pin), so FFmpeg is never half upgraded.
+`/etc/apt/apt.conf.d/99sparky-stereo-ffmpeg-fdk` runs `/usr/lib/sparky-stereo-ffmpeg-fdk/check-update` after every successful `apt update`. If the edition's repository has a newer FFmpeg than the one the local build was made from, the build runs again in the background (a transient systemd service at the lowest priority, or a detached process), with the consent given at the first run. Nothing happens on a computer that never built one; a rebuild that failed is not tried again by itself for the same version; a computer on battery waits for the mains. Until the rebuild is done the old local build stays (the pin names its exact version), so FFmpeg is never half upgraded.
 
 Other commands:
 -------------
 - `sparky-stereo-ffmpeg-fdk --status`: what is installed, what the repository has, whether a rebuild is due.
-- `sparky-stereo-ffmpeg-fdk --remove`: back to the edition's FFmpeg (apt downgrades the local packages to the repository's, with this package's pin left out).
+- `sparky-stereo-ffmpeg-fdk --remove`: back to the edition's FFmpeg (apt puts the repository's packages in place of the local ones, with this package's pin left out; the pin file is then deleted).
 - `sparky-stereo-ffmpeg-fdk --rebuild`: build again now (also after a failed automatic rebuild).
 - `--keep-build-deps`: leave the build tools installed (a later rebuild is quicker).
 - Log: `/var/log/sparky-stereo-ffmpeg-fdk.log`; the log of a failed build: `/var/lib/sparky-stereo-ffmpeg-fdk/last-build.log`.
 
 Dependencies:
 -------------
-sparky-stereo-apt, apt, dpkg-dev, build-essential, fakeroot, util-linux, python3, sudo | policykit-1 (recommended: powermgmt-base). `libfdk-aac-dev` and `libfdk-aac2` come from the user's own apt sources (deb-multimedia, which the edition adds, or Debian non-free).
+sparky-stereo-apt, apt, dpkg-dev, build-essential, fakeroot, util-linux, python3, sudo | pkexec (recommended: powermgmt-base). `libfdk-aac-dev` and `libfdk-aac2` come from the user's own apt sources (deb-multimedia, which the edition adds, or Debian non-free).
 
 Build:
 -------------
