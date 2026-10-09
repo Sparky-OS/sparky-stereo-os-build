@@ -34,6 +34,7 @@ import argparse
 import copy
 import fcntl
 import glob
+import grp
 import os
 import re
 import shutil
@@ -329,10 +330,19 @@ def vkms_card():
         if "-" in os.path.basename(c):
             continue
         if os.path.basename(os.path.realpath(os.path.join(c, "device"))) == "vkms":
-            node = "/dev/dri/" + os.path.basename(c)
-            # a sandbox can show /sys but hide /dev/dri (Codex lanes): then the job runs without it
-            return node if os.path.exists(node) else None
+            return "/dev/dri/" + os.path.basename(c)
     return None
+
+
+def dri_gid(node):
+    """The group of a /dev/dri node on the host. A sandbox can show /sys but hide /dev/dri
+    (Codex lanes); Docker opens the node on the host, so the group comes from /etc/group then."""
+    if os.path.exists(node):
+        return str(os.stat(node).st_gid)
+    try:
+        return str(grp.getgrnam("render" if "renderD" in node else "video").gr_gid)
+    except KeyError:
+        return None
 
 
 # Build jobs of every lane on this machine take one shared lock, so their build trees (10 to 20 GB each)
@@ -445,13 +455,13 @@ def run_job_locked(name, job, cfg, args, ctx):
         # what the VM image gives a job: a user runtime directory (the pipeline's DBUS_SESSION_BUS_ADDRESS
         # is unix:path=/run/user/1000/bus) and a render node (KWin's integration tests need one)
         cmd += ["--tmpfs", "/run/user/1000:uid=1000,gid=1000,mode=700", "-e", "XDG_RUNTIME_DIR=/run/user/1000"]
-        if os.path.exists("/dev/dri/renderD128"):
-            cmd += ["--device", "/dev/dri/renderD128", "--group-add", str(os.stat("/dev/dri/renderD128").st_gid)]
+        if os.path.exists("/sys/class/drm/renderD128") and dri_gid("/dev/dri/renderD128"):
+            cmd += ["--device", "/dev/dri/renderD128", "--group-add", dri_gid("/dev/dri/renderD128")]
         # KWin's DRM tests open /dev/dri/card1 when CI is set: a vkms device on KDE's runners.
         # When the host has vkms loaded, its card goes in under that name.
         card = vkms_card()
-        if card:
-            cmd += ["--device", f"{card}:/dev/dri/card1", "--group-add", str(os.stat(card).st_gid)]
+        if card and dri_gid(card):
+            cmd += ["--device", f"{card}:/dev/dri/card1", "--group-add", dri_gid(card)]
     if mount_cache:
         # one dependency cache for every lane on this machine (KDE's artifacts, downloadable again);
         # build jobs take turns through the shared lock, so they never write it at the same time
