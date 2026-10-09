@@ -28,3 +28,8 @@ The final `.config` holds every option of the fragments (`configure.sh` stops ot
 - `hibernate-bench` (`/K3D/temp/partners/queue/kernel-soul/work/hibernate-bench`) with the image and the module signing key of the build: Secure Boot on, unsigned module refused, enrolled-key module loads, `/sys/power/disk` offers hibernation, a full hibernate and resume passes, `lockdown=integrity` refuses it.
 - DKMS rebuild of the NVIDIA open modules and xpadneo against the new headers package (for the rt flavour: `IGNORE_PREEMPT_RT_PRESENCE=1`). `CONFIG_CGROUP_DMEM` stays off (Debian's value): Linux 7.3 changed `dmem_cgroup_register_region()` and NVIDIA's open modules 615.71.09 do not compile against the new signature; switch it on only when NVIDIA's release handles it (the kernel-soul lane keeps a compat patch, `work/nvidia-dmem/`).
 - `mount -t binder binder /dev/binderfs` after `modprobe binder_linux`; the four Realtek modules and `vkms` load.
+
+## Build 9 (queued 2026-10-09)
+
+- rt gets the guest virtio-gpu stereo patches (series group 33), as base and v3 already have them.
+- EV_BTN (queue item 15): Tomasz Pakuła's "Input: New EV_BTN event" series, so joysticks keep more than 80 buttons, with its SDL and Wine parts in our packages; and `HID_WINWING` on.
