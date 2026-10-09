@@ -1,0 +1,5 @@
+# Sparky Stereo OS: low-latency audio. The audio group may set the CPU DMA latency, read the RTC and use the HPET (JACK, PipeWire, Reaper, Ardour).
+# Source: CachyOS-Settings usr/lib/udev/rules.d/99-cpu-dma-latency.rules and 40-hpet-permissions.rules (GPL-3.0).
+DEVPATH=="/devices/virtual/misc/cpu_dma_latency", OWNER="root", GROUP="audio", MODE="0660"
+KERNEL=="rtc0", GROUP="audio"
+KERNEL=="hpet", GROUP="audio"

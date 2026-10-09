@@ -1,0 +1,54 @@
+Upstream Author(s):
+  Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+
+Files: *
+  Copyright 2026 Daniel Ramos (Capitain Jack)
+  License: GPL-3+
+
+Files: etc/security/limits.d/20-sparky-audio.conf
+       usr/lib/modules-load.d/sparky-stereo.conf
+       usr/lib/sysctl.d/70-sparky-stereo.conf
+       usr/lib/systemd/zram-generator.conf.d/sparky-stereo.conf
+       usr/lib/tmpfiles.d/sparky-thp.conf
+       usr/lib/udev/rules.d/30-sparky-zram.rules
+       usr/lib/udev/rules.d/60-sparky-block.rules
+       usr/lib/udev/rules.d/99-sparky-audio.rules
+  Derived from CachyOS-Settings, https://github.com/CachyOS/CachyOS-Settings
+  (GPL-3.0, LICENSE.md in that repository; the files carry no copyright lines,
+  the authors below are the git authors of the corresponding files, read from
+  the repository on 2026-10-09, commit e27ea45cc5af):
+    Vasiliy Stelmachenok (limits.d/20-audio.conf, sysctl.d/70-cachyos-settings.conf,
+      zram-generator.conf, tmpfiles.d/thp.conf, udev 30-zram.rules,
+      60-ioschedulers.rules, 40-hpet-permissions.rules, 99-cpu-dma-latency.rules)
+    Peter Jung (modules-load.d/ntsync.conf, tmpfiles.d/thp-shrinker.conf,
+      60-ioschedulers.rules)
+    Pete Viri (limits.d/20-audio.conf)
+    Matias (tmpfiles.d/thp-shrinker.conf)
+    phoropter (sysctl.d/70-cachyos-settings.conf)
+  License: GPL-3+
+
+Files: usr/lib/sysctl.d/70-sparky-stereo.conf, usr/lib/udev/rules.d/60-sparky-block.rules
+  The values for vm.watermark_boost_factor, vm.compaction_proactiveness,
+  kernel.split_lock_mitigate, vm.page-cluster and the 256 KiB read-ahead
+  reproduce, as settings, what the CachyOS kernel changes by patch. The authors
+  are those of the commits in the CachyOS Linux tree (read on 2026-10-08 from
+  its topic branches): Sultan Alsawaf ("Disable watermark boosting by default",
+  "Disable proactive compaction by default"), Eric Naim ("Disable split lock
+  mitigation by default", "Disable swap-in readahead", "Increase
+  VM_READAHEAD_PAGES to 256K"). No code of those patches is included.
+  The value vm.max_map_count = 2147483642 is the one SteamOS (Valve Corporation)
+  sets, as reported in the Fedora FESCo discussion
+  https://pagure.io/fesco/issue/2993 ; SteamOS's own repository is not
+  publicly readable, so its authors could not be verified and are not named.
+  License: GPL-3+
+
+Sparky Stereo OS, an edition of SparkyLinux, created by Paweł "pavroo"
+Pijanowski <pavroo@onet.eu> and Daniel Ramos (Capitain Jack)
+<Capitain_Jack@yahoo.com>.
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later version.
+
+On Debian systems the complete GPL version 3 is in
+/usr/share/common-licenses/GPL-3.
