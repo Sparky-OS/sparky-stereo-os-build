@@ -101,4 +101,7 @@ Every job whose script runs `run-ci-build` (the build-and-test jobs) takes one s
 ## One dependency cache for all lanes (2026-10-09)
 
 KDE's dependency artifacts go to one cache, `/K3D/temp/kde-ci-local/cache` (`KDE_CI_LOCAL_CACHE` overrides it), whatever work folder a lane uses; before this every lane kept its own copy (6.8, 4.7 and 1.6 GB next to the shared 20 GB). Build jobs take turns through the shared lock, so the cache is never written by two jobs at once. Lanes that run CI get the cache as an extra writable root (`.writable-roots`).
+The cache itself lives on the build disk, `/mnt/build/kde-ci-local/cache`, and the old path is a link to it (moved 2026-10-09, when it reached 20 GB and pushed /K3D under its floor); lanes get both paths as writable roots.
+
+A lane's sandbox can show `/sys` but hide `/dev/dri`. The tool still passes the render node (and a vkms card) to the container, because Docker opens the device on the host; the group comes from `/etc/group` then.
 
