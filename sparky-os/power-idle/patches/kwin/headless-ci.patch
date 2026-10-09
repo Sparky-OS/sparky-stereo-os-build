@@ -1,7 +1,7 @@
 From fd15060ab3d3a0d5173d747f88285289cf079dc2 Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Date: Thu, 8 Oct 2026 18:23:27 -0300
-Subject: [PATCH 1/6] Let the four-thread headless CI finish tests and tear
+Subject: [PATCH 1/7] Let the four-thread headless CI finish tests and tear
  down skipped scenes safely
 
 Render-node tests skip before creating a compositor. Guard its teardown rather than crash after the skip. Keep every assertion and a finite 300-second per-test limit for software rendering; the inherited 90-second limit expires on progressing suites in this shared runner.
@@ -47,7 +47,7 @@ index db07f3c13c..3ff00f464e 100644
 From 2943d1a115220ecb9d2ed986ba08067a90d82bcf Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Date: Thu, 8 Oct 2026 18:29:57 -0300
-Subject: [PATCH 2/6] Wait for the server to accept the security-context test
+Subject: [PATCH 2/7] Wait for the server to accept the security-context test
  client
 
 The client connection signal precedes the server-side accept event. Keep the same required connection and app-id assertions while waiting for that asynchronous event under headless CI load.
@@ -77,7 +77,7 @@ index ef1aaf3a78..c500e99fc4 100644
 From 9e169aebb5a2c1a129b5950702a7ab08d8b0eb79 Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Date: Thu, 8 Oct 2026 18:42:02 -0300
-Subject: [PATCH 3/6] Accept an already observed greeter window in the native
+Subject: [PATCH 3/7] Accept an already observed greeter window in the native
  lock-screen test
 
 LOCK waits until the greeter is locked, which can already have emitted windowAdded. Wait for a nonempty spy without requiring a second window; retain the greeter role and stacking assertions.
@@ -107,7 +107,7 @@ index cf099fd3ff..ffe4b57371 100644
 From e9ed770c5b65daf689e58291c79f3083e19bfa8c Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Date: Fri, 9 Oct 2026 07:56:42 -0300
-Subject: [PATCH 4/6] Isolate stereo screenshot comparisons from animated and
+Subject: [PATCH 4/7] Isolate stereo screenshot comparisons from animated and
  closing windows
 
 Use the existing OpenGL image-test fixture configuration to disable effects before startup, and wait for client windows to leave at cleanup. Keep every exact image size, stereo eye and color assertion.
@@ -168,7 +168,7 @@ index 2bafc57855..894368644b 100644
 From d24538d20758be0ba7c359dc2e511df5d3428c69 Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Date: Fri, 9 Oct 2026 08:05:27 -0300
-Subject: [PATCH 5/6] Give the native greeter a bounded first-use startup
+Subject: [PATCH 5/7] Give the native greeter a bounded first-use startup
  deadline
 
 Locked state can precede a mapped greeter. The SUSE fixture reaches its QML fallback after the default wait has already failed. Allow 30 seconds for the first window and retain the exact lock-screen role and layer assertions.
@@ -198,7 +198,7 @@ index ffe4b57371..8b15cef0de 100644
 From e92d70eab561c75b43ed44b58e2dad3448ea4ded Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Date: Fri, 9 Oct 2026 08:13:51 -0300
-Subject: [PATCH 6/6] Keep Wayland clients flushed while waiting for the native
+Subject: [PATCH 6/7] Keep Wayland clients flushed while waiting for the native
  greeter
 
 Display flushes clients on aboutToBlock, which the polling QTRY wait never reaches. Use QSignalSpy event-loop waiting when no window has arrived, accept an already observed signal, and bound first-use portal/theme startup at 30 seconds. Preserve lock-screen role and layer checks.
@@ -223,6 +223,34 @@ index 8b15cef0de..5febc214e2 100644
  
      Window *window = windowAddedSpy.first().first().value<Window *>();
      QVERIFY(window);
+-- 
+2.53.0
+
+
+From bf4c1139ba722022bca188013040498f36e1eac2 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 9 Oct 2026 08:23:17 -0300
+Subject: [PATCH 7/7] Match KDE brace style in the repaired screenshot fixture
+
+Assisted-by: gpt-6.1-sol via Codex
+---
+ autotests/integration/screenshot_stereo_test.cpp | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/autotests/integration/screenshot_stereo_test.cpp b/autotests/integration/screenshot_stereo_test.cpp
+index 894368644b..475b0c7736 100644
+--- a/autotests/integration/screenshot_stereo_test.cpp
++++ b/autotests/integration/screenshot_stereo_test.cpp
+@@ -349,7 +349,8 @@ static void configureTwoOutputs(bool leftStereo)
+     QVERIFY(stereoOutput->hasStereoEyes());
+ }
+ 
+-struct TestWindow {
++struct TestWindow
++{
+     std::unique_ptr<KWayland::Client::Surface> surface;
+     std::unique_ptr<Test::XdgToplevel> shellSurface;
+     Window *window;
 -- 
 2.53.0
 
