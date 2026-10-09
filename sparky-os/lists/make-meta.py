@@ -148,8 +148,8 @@ META = {
         sorted(HARDWARE_OPTIONAL & set(lst('hardware')))),
     'sparky-stereo-system': (
         'Sparky Stereo system',
-        'This meta package installs the system tools of Sparky Stereo OS: Flatpak, snapshots, containers, Android support and zram.',
-        sorted(set(lst('system')) - SYSTEM_OPTIONAL) + STEREO_STACK,
+        'This meta package installs the system tools of Sparky Stereo OS: Flatpak, snapshots, containers, Android support, zram and the kernel settings.',
+        sorted(set(lst('system')) - SYSTEM_OPTIONAL) + STEREO_STACK + ['sparky-stereo-kernel-settings'],
         sorted(SYSTEM_OPTIONAL & set(lst('system')))),
     'linux-image-sparky-stereo': (
         'Sparky Stereo kernel',
