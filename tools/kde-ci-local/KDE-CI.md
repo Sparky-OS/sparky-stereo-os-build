@@ -98,3 +98,7 @@ Python bindings: the image's `pip` installs the newest PyQt6, whose SIP needs AB
 
 Every job whose script runs `run-ci-build` (the build-and-test jobs) takes one shared lock first, `/K3D/temp/kde-ci-local/heavy-job.lock` (`KDE_CI_LOCAL_HEAVY_LOCK` overrides it), and holds it until its tree is removed. Lanes running CI at the same time therefore queue their build jobs instead of filling `/K3D` together: three lanes' KDE CI trees (10 to 20 GB each) took it below its 20 GB floor twice on 2026-10-08 and stopped the Android build and the KWin lane. Lint jobs do not wait. The lock is taken read-only, so sandboxed lanes can wait on it too.
 
+## One dependency cache for all lanes (2026-10-09)
+
+KDE's dependency artifacts go to one cache, `/K3D/temp/kde-ci-local/cache` (`KDE_CI_LOCAL_CACHE` overrides it), whatever work folder a lane uses; before this every lane kept its own copy (6.8, 4.7 and 1.6 GB next to the shared 20 GB). Build jobs take turns through the shared lock, so the cache is never written by two jobs at once. Lanes that run CI get the cache as an extra writable root (`.writable-roots`).
+

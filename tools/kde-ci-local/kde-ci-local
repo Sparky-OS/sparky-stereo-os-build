@@ -338,6 +338,7 @@ def vkms_card():
 # Build jobs of every lane on this machine take one shared lock, so their build trees (10 to 20 GB each)
 # never fill the disk at the same time; lint jobs run freely. Opened read-only: flock needs no write access.
 HEAVY_LOCK = os.environ.get("KDE_CI_LOCAL_HEAVY_LOCK", "/K3D/temp/kde-ci-local/heavy-job.lock")
+SHARED_CACHE = os.environ.get("KDE_CI_LOCAL_CACHE", "/K3D/temp/kde-ci-local/cache")
 
 
 def heavy_lock(name):
@@ -452,7 +453,9 @@ def run_job_locked(name, job, cfg, args, ctx):
         if card:
             cmd += ["--device", f"{card}:/dev/dri/card1", "--group-add", str(os.stat(card).st_gid)]
     if mount_cache:
-        cdir = os.path.join(ctx["work"], "cache", plat.replace("/", "_") if plat else "none")
+        # one dependency cache for every lane on this machine (KDE's artifacts, downloadable again);
+        # build jobs take turns through the shared lock, so they never write it at the same time
+        cdir = os.path.join(SHARED_CACHE, plat.replace("/", "_") if plat else "none")
         os.makedirs(os.path.join(cdir, "artifacts"), exist_ok=True)
         os.makedirs(os.path.join(cdir, "caches"), exist_ok=True)
         cmd += ["-v", f"{cdir}:{mount_cache}"]
