@@ -94,7 +94,8 @@ execute_after_dh_auto_install:
 	mkdir -p $(D)/usr/share/applications
 	for f in $(D)/usr/share/vlc-stereo/applications/*.desktop; do \\
 	  n=$$(basename $$f | sed 's/^vlc/vlc-stereo/'); \\
-	  sed -e 's/^Exec=vlc /Exec=vlc-stereo /' -e 's/^TryExec=vlc$$/TryExec=vlc-stereo/' -e 's/^Icon=vlc$$/Icon=vlc-stereo/' \\
+	  sed -e 's|^Exec=/usr/bin/vlc |Exec=/usr/bin/vlc-stereo |' -e 's/^Exec=vlc /Exec=vlc-stereo /' \\
+	      -e 's|^TryExec=/usr/bin/vlc$$|TryExec=/usr/bin/vlc-stereo|' -e 's/^TryExec=vlc$$/TryExec=vlc-stereo/' -e 's/^Icon=vlc$$/Icon=vlc-stereo/' \\
 	      -e '/^X-KDE-Protocols/d' $$f > $(D)/usr/share/applications/$$n; \\
 	done
 	rm -rf $(D)/usr/share/vlc-stereo/applications
