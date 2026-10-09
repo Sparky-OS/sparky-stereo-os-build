@@ -1,35 +1,48 @@
 #!/bin/sh
-# Proves the kernel configuration without building a kernel: runs configure.sh (the
-# configuration part of build-deb.sh) in a debian:testing container, on a read-only mount of
-# the kernel tree with O= pointing at a scratch folder, and checks the six options the
-# configuration must carry in the resulting .config. The base is the running kernel's config.
+# SPDX-License-Identifier: GPL-2.0-only
+# Proves the kernel configuration of the flavours without building a kernel: in the build image, on a scratch copy of the
+# pinned upstream tag with the patch series applied, runs kernel/configure.sh in O= mode and prints, per flavour, the table of
+# the fragment's options (wanted, Debian's value, value after Debian + olddefconfig on the patched tree, final value, the reason),
+# the options that changed without being named, and Debian options that are gone from the tree. Exit status 1 if an option of
+# the fragments does not hold.
 #
-#   kernel/tests/config-proof.sh [configure-script] [out-dir]
+#   kernel/tests/config-proof.sh [out-dir] [flavour...]     (default /K3D/temp/linux-stereo3d-config-proof, base v3 rt)
 #
-# The configure script defaults to ../configure.sh; give an older one to see the test fail on
-# it. out-dir (default /K3D/temp/partners/queue/gaming-rig-steps/work/config-proof) keeps the
-# resulting .config as out-dir/kbuild/.config and the base as out-dir/base.config.
-# Uses 2 threads; no kernel is built.
+# Uses the same environment as build-deb.sh (TAG, TAG_COMMIT, KERNEL_GIT, SERIES, CPUS, MEM). One CPU is enough; nothing is built.
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
-SRC=${SRC:-$HERE/../linux}
-CFGSH=$(cd "$(dirname "${1:-$HERE/configure.sh}")" && pwd)/$(basename "${1:-$HERE/configure.sh}")
-OUT=${2:-/K3D/temp/partners/queue/gaming-rig-steps/work/config-proof}
-CONFIG=${CONFIG:-/boot/config-$(uname -r)}
+OUT=${1:-/K3D/temp/linux-stereo3d-config-proof}
+[ $# -gt 0 ] && shift
+FLAVOURS=${*:-base v3 rt}
+TAG=${TAG:-v7.3-rc6}
+TAG_COMMIT=${TAG_COMMIT:-a90ee4305c4a5df72c11b31dacfdc76e00fcf78a}
+SERIES=${SERIES:-$HERE/series}
+IMAGE=${IMAGE:-sparky-kernel-build:1}
+docker image inspect "$IMAGE" >/dev/null 2>&1 || docker build --platform linux/amd64 -t "$IMAGE" "$HERE/docker"
 mkdir -p "$OUT"
-rm -rf "$OUT/kbuild"
-cp "$CONFIG" "$OUT/base.config"
-docker run --rm -e OWNER="$(id -u):$(id -g)" -v "$SRC":/src:ro -v "$OUT":/out -v "$CFGSH":/configure.sh:ro debian:testing sh -euc '
-export DEBIAN_FRONTEND=noninteractive LC_ALL=C
-trap "chown -R $OWNER /out" EXIT   # the scratch folder stays the caller-owned
-apt-get update -qq
-apt-get install -y -qq --no-install-recommends build-essential bc bison flex libssl-dev libelf-dev dwarves >/dev/null
-cd /src
-sh /configure.sh /out/base.config /out/kbuild
-' >"$OUT/configure.log" 2>&1 || { tail -20 "$OUT/configure.log"; echo "FAIL: configure.sh did not run"; exit 2; }
+GITMOUNT=; [ -n "${KERNEL_GIT:-}" ] && GITMOUNT="-v $KERNEL_GIT:/kernel-git:ro"
+# shellcheck disable=SC2086
+docker run --rm --platform linux/amd64 --cpus "${CPUS:-2}" --memory "${MEM:-8g}" --user "$(id -u):$(id -g)" \
+    -v "$OUT":/out -v "$HERE":/kernel:ro -v "$SERIES":/series:ro $GITMOUNT \
+    -e TAG="$TAG" -e TAG_COMMIT="$TAG_COMMIT" -e FLAVOURS="$FLAVOURS" -e HAVE_KERNEL_GIT="${KERNEL_GIT:+1}" \
+    "$IMAGE" sh -eu -c '
+G=/kernel-git
+if [ -z "${HAVE_KERNEL_GIT:-}" ]; then git clone --quiet --depth 1 --branch "$TAG" https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git /tmp/linux-git; G=/tmp/linux-git; fi
+[ "$(git -C "$G" rev-parse "$TAG^{commit}")" = "$TAG_COMMIT" ] || { echo "tag $TAG is not $TAG_COMMIT"; exit 2; }
+mkdir -p /tmp/src && git -C "$G" archive --format=tar "$TAG" | tar -x -C /tmp/src
+cd /tmp/src
 rc=0
-for o in SCHED_CLASS_EXT=y DEBUG_INFO_BTF=y RTW89_8852AU=m RTW89_8852CU=m RTW89_8922AU=m RTW89_8922DE=m; do
-	if grep -q "^CONFIG_$o\$" "$OUT/kbuild/.config"; then echo "ok   CONFIG_$o"
-	else echo "FAIL CONFIG_$o: $(grep -E "^(# )?CONFIG_${o%=*}[= ]" "$OUT/kbuild/.config")"; rc=1; fi
+for f in $FLAVOURS; do
+    rm -rf /out/$f; mkdir -p /out/$f
+    sh /series/apply-series.sh /tmp/src $( [ "$f" = base ] || echo "$f" ) >/out/$f/series.log
+    case "$f" in rt) B=/kernel/config/debian-7.2.9-rt-amd64.config;; *) B=/kernel/config/debian-7.2.9-amd64.config;; esac
+    mkdir -p /out/$f/deb-only && cp "$B" /out/$f/deb-only/.config && make -s O=/out/$f/deb-only olddefconfig
+    sh /kernel/configure.sh "$f" /out/$f >/out/$f/configure.log 2>&1 || rc=1
+    FR="/kernel/config/sparky-stereo.config"; [ -f /kernel/config/flavour-$f.config ] && FR="$FR /kernel/config/flavour-$f.config"
+    python3 /kernel/tests/config-table.py "$f" /out/$f "$B" $FR > /out/$f/table.txt || rc=1
+    tail -n 4 /out/$f/table.txt | head -n 1
+    git -C /tmp/src status >/dev/null 2>&1 || true
+    # the next flavour starts from a clean tree
+    rm -rf /tmp/src && mkdir -p /tmp/src && git -C "$G" archive --format=tar "$TAG" | tar -x -C /tmp/src && cd /tmp/src
 done
-exit $rc
+exit $rc'
