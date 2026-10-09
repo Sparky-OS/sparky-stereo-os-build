@@ -46,6 +46,16 @@ for n in RV:
 KREL = KERNEL[len('linux-image-'):]
 KVERSION = kernel_version(KERNEL)
 
+def flavour_image(flavour):
+    # the image of the same build in another flavour, when the repository has it: v3 is
+    # linux-image-7.3.0-rc6-stereo3d8-v3, rt is linux-image-7.3.0-rc6-rt-stereo3d8
+    m = re.fullmatch(r'linux-image-([0-9.]+(?:-rc[0-9]+)?)-stereo3d([0-9]*)', KERNEL)
+    if not m:
+        return None
+    n = (f'linux-image-{m.group(1)}-stereo3d{m.group(2)}-v3' if flavour == 'v3'
+         else f'linux-image-{m.group(1)}-rt-stereo3d{m.group(2)}')
+    return n if n in RV and 'linux-headers-' + n[len('linux-image-'):] in RV else None
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 MAINT = 'Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>'
 
@@ -173,6 +183,17 @@ META = {
         'Sparky Stereo kernel headers',
         'This meta package installs the headers of the current stereo 3D kernel of Sparky Stereo OS, for DKMS modules.',
         ['linux-headers-' + KREL + f' (>= {RV["linux-headers-" + KREL]})', 'linux-image-sparky-stereo'], []),
+    **{f'linux-{kind}-sparky-stereo-{fl}': (
+        f'Sparky Stereo kernel{" headers" if kind == "headers" else ""}, {title}',
+        f'This meta package installs the {"headers of the " if kind == "headers" else ""}current stereo 3D kernel of Sparky Stereo OS {what}'
+        + (', for DKMS modules.' if kind == 'headers' else '.'),
+        ([f'{flavour_image(fl)} (>= {RV[flavour_image(fl)]})'] if kind == 'image' else
+         ['linux-headers-' + flavour_image(fl)[len('linux-image-'):]
+          + f' (>= {RV["linux-headers-" + flavour_image(fl)[len("linux-image-"):]]})',
+          f'linux-image-sparky-stereo-{fl}']), [])
+       for fl, title, what in (('v3', 'x86-64-v3', 'built for x86-64-v3 processors (Intel Haswell, AMD Excavator and newer)'),
+                               ('rt', 'real-time', 'with real-time preemption (PREEMPT_RT), an option for audio and low-latency work'))
+       for kind in ('image', 'headers') if flavour_image(fl)},
     'sparky-stereo': (
         'Sparky Stereo OS',
         'This meta package installs Sparky Stereo OS, the stereo 3D edition of SparkyLinux: the desktop, gaming, languages, hardware support and system meta packages.',
