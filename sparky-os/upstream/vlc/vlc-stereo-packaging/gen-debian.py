@@ -20,7 +20,7 @@ Homepage: https://sparkylinux.org
 
 Package: vlc-stereo
 Architecture: any
-Depends: ${{shlibs:Depends}}, ${{misc:Depends}}
+Depends: ${{shlibs:Depends}}, ${{misc:Depends}}, qtwayland5
 Recommends: vlc-stereo-plugin-pipewire (= ${{binary:Version}}), fonts-freefont-ttf
 Description: stereo edition of the VLC multimedia player and streamer
  VLC Stereo is a stereo edition of VLC media player by VideoLAN, for Sparky

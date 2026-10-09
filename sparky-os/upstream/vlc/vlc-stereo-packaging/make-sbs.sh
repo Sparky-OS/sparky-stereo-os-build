@@ -19,6 +19,7 @@ edit('modules/gui/qt/components/sout/profile_selector.cpp', lambda s: s.replace(
 edit('modules/video_output/xcb/window.c', lambda s: s.replace('XA_STRING, 8, 8, "vlc\\0Vlc");', 'XA_STRING, 8, 22, "vlc-stereo\\0Vlc-stereo");'))
 # the session bus: MPRIS name and desktop entry
 edit('modules/control/dbus/dbus.c', lambda s: s.replace('"org.mpris.MediaPlayer2.vlc"', '"org.mpris.MediaPlayer2.vlc-stereo"'))
+edit('src/posix/specific.c', lambda s: s.replace('"org.mpris.MediaPlayer2.vlc"', '"org.mpris.MediaPlayer2.vlc-stereo"'))
 edit('modules/control/dbus/dbus_root.c', lambda s: s.replace('const char* psz_ret = PACKAGE;', 'const char* psz_ret = "vlc-stereo";'))
 # application id (Wayland app_id, PipeWire application id)
 edit('src/libvlc.c', lambda s: s.replace('"app-id", "org.VideoLAN.VLC"', '"app-id", "vlc-stereo"'))

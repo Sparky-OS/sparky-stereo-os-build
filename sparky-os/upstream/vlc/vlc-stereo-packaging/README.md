@@ -9,7 +9,7 @@ Two Debian packages, built from Debian testing's `vlc` source package plus our p
 
 | Path | What |
 |---|---|
-| `../0001-*.patch` to `../0019-*.patch` | the changes to VLC 3.0.24 (`git format-patch`, branch `3.0.24-3d-stereo` of `github.com/danielcamposramos/vlc`), applied in this order |
+| `../0001-*.patch` to `../0021-*.patch` | the changes to VLC 3.0.24, applied in order; 0020 fixes stereo overlay sizing and 0021 adds native Wayland video inside the main Qt window |
 | `patches/base/` | the three changes of the released VLC HiFi 3D (3d1) that the series builds on |
 | `../debian-branding/vlc-stereo-name.patch` | the name "VLC Stereo" (menu entries, window titles, About, MPRIS identity); a Debian patch, not a commit for upstream |
 | `patches/vlc-stereo-side-by-side.patch` | what lets it run beside the original: user directories `~/.config/vlc-stereo`, Qt settings, MPRIS bus name, window class, application id |
@@ -37,7 +37,7 @@ The image is a freshly updated `debian:testing` (record its Qt, FFmpeg and PipeW
 
 ```
 mkdir -p work out
-docker run --rm --user $(id -u):$(id -g) -e HOME=/work -e VER=3.0.24-1+stereo3d3 \
+docker run --rm --user $(id -u):$(id -g) -e VER=3.0.24-1+stereo3d6 \
   -v $PWD/sparky-os/upstream/vlc:/src:ro -v $PWD/work:/work -v $PWD/out:/out \
   vlc-stereo-build bash /src/vlc-stereo-packaging/build.sh
 ```
@@ -48,6 +48,8 @@ docker run --rm --user $(id -u):$(id -g) -e HOME=/work -e VER=3.0.24-1+stereo3d3
 
 ## Notes
 
+- Since +stereo3d6, Wayland sessions use an integrated native video child and require `qtwayland5`. Keep `embedded-video=1` for the self-contained player. X11 remains available when explicitly selected, with its earlier embedded-child stereo limitation.
+- `tests/t-startup.py`, run under `dbus-run-session`, checks menu startup, coexistence and file forwarding in separate configuration directories. `tests/check-embedded.py` checks the private KWin fixture captures for complete eye views, ordinary controls and mono restoration.
 - `build.sh` needs the network: it runs `apt-get source` for `vlc` and `vlc-plugin-pipewire`.
 - The version is the Debian version of the source with our suffix: `3.0.24-1+stereo3dN`. A new Debian `vlc` source may need the patches refreshed (`quilt push -a` in `build.sh` stops at the first patch that does not apply).
 - No `-dev` package, no `Conflicts`, `Replaces` or `Provides`: the packages must never replace anything of Debian's VLC.

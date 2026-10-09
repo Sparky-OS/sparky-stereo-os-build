@@ -3,7 +3,7 @@
 #   UP=/src (this repository folder, read-only)  WORK=/work (writable)  OUT=/out (writable)
 set -eux
 UP=${UP:-/src}; WORK=${WORK:-/work}; OUT=${OUT:-/out}; PK=$UP/vlc-stereo-packaging
-VER=${VER:-3.0.24-1+stereo3d5}
+VER=${VER:-3.0.24-1+stereo3d6}
 export PK
 rm -rf $WORK/src $WORK/pw $WORK/dl && mkdir -p $WORK/src $WORK/pw
 

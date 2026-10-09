@@ -5,3 +5,11 @@ The build makes the Debian source package before the binary build.
 == 3.0.24-1+stereo3d5
 Subtitles and the marquee are made for the place of one view of a side-by-side or top-bottom video, so they have the size and the place they have in a two-dimensional player in both views, whatever the packing of the frame (full or half).
 The changelog entries of the package come from a file of the packaging, one per version.
+== 3.0.24-1+stereo3d5.1
+Use VLC Stereo's MPRIS name in the single-instance startup check and file forwarding; menu launches no longer exit before opening a window or send files to ordinary VLC.
+Point all installed desktop launchers, including absolute Exec and TryExec paths, at vlc-stereo.
+== 3.0.24-1+stereo3d6
+Embed stereo video in the main Qt window on Wayland, with a native video child and ordinary 2D menus and playback controls.
+Declare the video through libstereo-declare on the video thread's own Wayland event queue; deliver two full-resolution views with a one-view logical viewport, including Qt display scaling.
+Keep both views through window resizing and fullscreen; remove stereo state on stop and when switching to a 2D video. Preserve explicit X11 platform selection.
+Install the Qt 5 Wayland platform plugin as a dependency.
