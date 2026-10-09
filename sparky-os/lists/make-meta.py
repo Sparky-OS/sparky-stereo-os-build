@@ -27,10 +27,24 @@ def repo_versions():
 
 RV = repo_versions()
 
-KERNEL = next(n for n in RV if re.fullmatch(r'linux-image-[0-9.]+-rc[0-9]+-stereo3d|linux-image-[0-9.]+-stereo3d', n))
+def kernel_version(n):
+    # the kernel meta-packages' version for a base-flavour image: build 6 was named
+    # linux-image-7.3.0-rc1-stereo3d (version 6); from build 7 the build is in the name,
+    # linux-image-7.3.0-rc6-stereo3d8 (version 7.3.0~rc6-8). Both give 7.3.0~rc6+stereo3d8.
+    m = re.fullmatch(r'linux-image-([0-9.]+)(?:-(rc[0-9]+))?-stereo3d([0-9]*)', n)
+    if not m:
+        return None
+    return m.group(1) + ('~' + m.group(2) if m.group(2) else '') + '+stereo3d' + (m.group(3) or RV[n])
+
+def newer(a, b):
+    return subprocess.run(['dpkg', '--compare-versions', a, 'gt', b]).returncode == 0
+
+KERNEL = None
+for n in RV:
+    if kernel_version(n) and (KERNEL is None or newer(kernel_version(n), kernel_version(KERNEL))):
+        KERNEL = n
 KREL = KERNEL[len('linux-image-'):]
-# kernel meta-packages: versioned after the kernel package (7.3.0-rc1-stereo3d, build 3)
-KVERSION = KREL.replace('-rc', '~rc').replace('-stereo3d', '') + '+stereo3d' + RV[KERNEL]
+KVERSION = kernel_version(KERNEL)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MAINT = 'Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>'
