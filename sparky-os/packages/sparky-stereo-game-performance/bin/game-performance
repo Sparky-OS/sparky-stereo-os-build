@@ -1,0 +1,15 @@
+#!/bin/bash
+# Created by Daniel Ramos (Capitain Jack) 2026/10/10
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/10
+set -euo pipefail
+if (($# == 0)); then
+	printf 'Usage: game-performance COMMAND [ARGUMENT...]\n' >&2
+	exit 2
+fi
+if powerprofilesctl list | grep -q '^[[:space:]*]*performance:'; then
+	exec powerprofilesctl launch --profile performance \
+		--reason 'Game running through Sparky Stereo OS' \
+		--appid org.sparkylinux.SparkyStereo.GamePerformance -- "$@"
+fi
+exec "$@"
