@@ -1,0 +1,13 @@
+[Unit]
+Description=Cushion Swap File on for hibernation
+Documentation=file:///usr/share/doc/sparky-stereo-cushion-swap/README.md
+DefaultDependencies=no
+Before=systemd-hibernate.service systemd-hybrid-sleep.service systemd-suspend-then-hibernate.service
+ConditionPathExists=!/etc/systemd/system/cgm-swap-parachute.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/cushion-swap --hibernate-deploy
+
+[Install]
+WantedBy=systemd-hibernate.service systemd-hybrid-sleep.service systemd-suspend-then-hibernate.service

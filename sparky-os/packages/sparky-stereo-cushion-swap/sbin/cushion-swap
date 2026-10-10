@@ -1,0 +1,611 @@
+#!/bin/bash
+# Created by Daniel Ramos (Capitain Jack) 2026/08/01
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/10
+#
+# Cushion Swap File: the swap area stays off, is deployed under memory
+# pressure and retracted only when that is safe. Daniel Ramos's design, his
+# "Dynamic Swap Parachute" (cgm_swap_parachute.sh, 2026-08-01): "swap is a
+# rescue parachute, never a floor". His decision rules and arithmetic are
+# kept as he wrote them; README.md lists what the edition added around them.
+#
+#   cushion-swap [--dry-run] [--once] [--interval N]   the daemon (his options)
+#   cushion-swap --thresholds        the values for this machine and why
+#   cushion-swap --status            the state file the System Settings page reads
+#   cushion-swap --hibernate-deploy  switch the area on before hibernation
+#   cushion-swap --hibernate-resume  switch it off again after resume if unused
+#
+# Settings: /etc/default/cushion-swap (every value can be set there).
+# Test hooks (production never sets them): MEMINFO_PATH SWAPS_PATH FSTAB_PATH
+# STATE_DIR NOW_EPOCH NOW_EPOCH_MS PSI_PATH PSI_WAKE RUN_USER_DIR PROC_DIR
+# CUSHION_SWAP_CONFIG CUSHION_SWAP_AREA SWAPON_BIN SWAPOFF_BIN.
+set -u
+# Not set -e: a long-running daemon must survive one failed command
+# (Daniel's rule); every command whose failure matters is checked.
+
+readonly KIB_PER_MIB=1024
+readonly KIB_PER_GIB=1048576
+# MemTotal from which Daniel's values apply exactly as he set them: his
+# machine has 96 GB (MemTotal 93.42 GiB); every 96 GB machine reports
+# 92 to 95 GiB, so 90 GiB keeps all of them on his exact values.
+readonly REFERENCE_KIB=$((90 * KIB_PER_GIB))
+
+CONFIG=${CUSHION_SWAP_CONFIG:-/etc/default/cushion-swap}
+if [[ -r $CONFIG ]]; then
+	while IFS= read -r line || [[ -n $line ]]; do
+		[[ $line =~ ^[[:space:]]*([A-Z_][A-Z0-9_]*)=(.*)$ ]] || continue
+		key=${BASH_REMATCH[1]} value=${BASH_REMATCH[2]}
+		value=${value%%[[:space:]]#*}
+		value=${value#\"} value=${value%\"} value=${value#\'} value=${value%\'}
+		[[ -z ${!key+set} ]] && printf -v "$key" '%s' "$value"
+	done <"$CONFIG"
+fi
+unset line key value
+
+CUSHION_SWAP=${CUSHION_SWAP:-on}
+AREA=${CUSHION_SWAP_AREA:-${AREA:-}}
+RATE_WINDOW_SEC=${RATE_WINDOW_SEC:-10}
+QUIET_SECONDS=${QUIET_SECONDS:-600}
+POLL_INTERVAL_SEC=${POLL_INTERVAL_SEC:-3}
+FAST_INTERVAL_SEC=${FAST_INTERVAL_SEC:-0.5}
+FAIL_LOG_THROTTLE_SEC=${FAIL_LOG_THROTTLE_SEC:-60}
+PSI=${PSI:-auto}
+PSI_TRIGGER=${PSI_TRIGGER:-some 150000 1000000}
+SAFETY_TICK_SEC=${SAFETY_TICK_SEC:-10}
+GAME_OPENING_MAX_SEC=${GAME_OPENING_MAX_SEC:-180}
+STEADY_SEC=${STEADY_SEC:-10}
+LAUNCHERS=${LAUNCHERS:-reaper steam-launch-wr pressure-vessel pv-bwrap umu-run proton wine-preloader wine64-preloade lutris-wrapper gamemoderun legendary gogdl}
+LOG_EVERY_CYCLE=${LOG_EVERY_CYCLE:-no}
+# fixed: Daniel's settled pacing (PSI wake-up and a 10 s tick, or his 3 s
+# poller and 0.5 s while a game opens). headroom (proposed, see README):
+# the next sample comes before memory could fall to the early-warning floor
+# at MAX_ALLOC_MIB_S, between MIN_INTERVAL_SEC and POLL_INTERVAL_SEC.
+PACING=${PACING:-fixed}
+MAX_ALLOC_MIB_S=${MAX_ALLOC_MIB_S:-8192}
+MIN_INTERVAL_SEC=${MIN_INTERVAL_SEC:-0.25}
+
+MEMINFO_PATH=${MEMINFO_PATH:-/proc/meminfo}
+SWAPS_PATH=${SWAPS_PATH:-/proc/swaps}
+FSTAB_PATH=${FSTAB_PATH:-/etc/fstab}
+STATE_DIR=${STATE_DIR:-/run/cushion-swap}
+STATE_FILE=$STATE_DIR/state
+STATUS_FILE=$STATE_DIR/status
+PSI_PATH=${PSI_PATH:-/proc/pressure/memory}
+PSI_WAKE=${PSI_WAKE:-/usr/libexec/cushion-swap/psi-wake}
+RUN_USER_DIR=${RUN_USER_DIR:-/run/user}
+PROC_DIR=${PROC_DIR:-/proc}
+GAME_SIGNAL=cushion-swap-game-opening
+
+DRY_RUN=0
+RUN_ONCE=0
+MODE=compatibility
+FAST_SINCE_MS=0
+
+_find_bin() {
+	local name=$1 c
+	for c in "/sbin/$name" "/usr/sbin/$name" "/bin/$name" "/usr/bin/$name"; do
+		[[ -x $c ]] && { printf '%s\n' "$c"; return 0; }
+	done
+	printf '%s\n' "$name"
+}
+SWAPON_BIN=${SWAPON_BIN:-$(_find_bin swapon)}
+SWAPOFF_BIN=${SWAPOFF_BIN:-$(_find_bin swapoff)}
+
+log() {
+	printf '[%(%Y-%m-%d %H:%M:%S%z)T] %s\n' -1 "$*"
+}
+
+log_err() {
+	printf '[%(%Y-%m-%d %H:%M:%S%z)T] ERROR: %s\n' -1 "$*" >&2
+}
+
+# Sets NOW_MS (milliseconds) without a subshell: this runs every cycle.
+now_ms() {
+	if [[ -n ${NOW_EPOCH_MS:-} ]]; then
+		NOW_MS=$NOW_EPOCH_MS
+	elif [[ -n ${NOW_EPOCH:-} ]]; then
+		NOW_MS=$((NOW_EPOCH * 1000))
+	else
+		local t=${EPOCHREALTIME/[.,]/}
+		NOW_MS=$((10#${t:0:${#t}-3}))
+	fi
+}
+
+gib_str() {
+	local kib=$1
+	printf '%d.%02dGiB' "$((kib / KIB_PER_GIB))" "$(((kib % KIB_PER_GIB) * 100 / KIB_PER_GIB))"
+}
+
+# Whole GiB as Daniel wrote them ("20GiB"), other values with two decimals.
+gib_label() {
+	if (($1 % KIB_PER_GIB == 0)); then
+		printf '%dGiB' "$(($1 / KIB_PER_GIB))"
+	else
+		gib_str "$1"
+	fi
+}
+
+read_meminfo() {
+	if [[ ! -r $MEMINFO_PATH ]]; then
+		log_err "cannot read $MEMINFO_PATH (fail-safe: skipping this cycle, no action taken)"
+		return 1
+	fi
+	local key number total="" avail="" stotal="" sfree=""
+	while read -r key number _; do
+		case $key in
+		MemTotal:) total=$number ;;
+		MemAvailable:) avail=$number ;;
+		SwapTotal:) stotal=$number ;;
+		SwapFree:) sfree=$number ;;
+		esac
+	done <"$MEMINFO_PATH"
+	if [[ -z $avail || -z $stotal || -z $sfree ]]; then
+		log_err "malformed $MEMINFO_PATH: MemAvailable='${avail}' SwapTotal='${stotal}' SwapFree='${sfree}' (fail-safe: skipping this cycle)"
+		return 1
+	fi
+	if ! [[ $avail =~ ^[0-9]+$ && $stotal =~ ^[0-9]+$ && $sfree =~ ^[0-9]+$ ]]; then
+		log_err "non-numeric field in $MEMINFO_PATH (fail-safe: skipping this cycle)"
+		return 1
+	fi
+	[[ $total =~ ^[0-9]+$ ]] || total=$REFERENCE_KIB
+	MEM_TOTAL_KIB=$total
+	MEM_AVAILABLE_KIB=$avail
+	SWAP_TOTAL_KIB=$stotal
+	SWAP_FREE_KIB=$sfree
+	return 0
+}
+
+# Daniel's thresholds below the reference scale with MemTotal: each one is
+# the same share of RAM as on his machine. A value in the settings file wins;
+# his own GiB names are accepted too.
+setting_kib() {
+	local out=$1 mib_name=$2 gib_name=$3 base_gib=$4 floor_mib=$5 value total=$MEM_TOTAL_KIB
+	if [[ -n ${!mib_name:-} ]]; then
+		value=$((${!mib_name} * KIB_PER_MIB))
+	elif [[ -n ${!gib_name:-} ]]; then
+		value=$((${!gib_name} * KIB_PER_GIB))
+	else
+		((total > REFERENCE_KIB)) && total=$REFERENCE_KIB
+		value=$((base_gib * KIB_PER_GIB * total / REFERENCE_KIB))
+		((value < floor_mib * KIB_PER_MIB)) && value=$((floor_mib * KIB_PER_MIB))
+	fi
+	printf -v "$out" '%s' "$value"
+}
+
+compute_thresholds() {
+	setting_kib DEPLOY_HARD_KIB DEPLOY_HARD_MIB DEPLOY_HARD_GIB 6 256
+	setting_kib DEPLOY_SOFT_KIB DEPLOY_SOFT_MIB DEPLOY_SOFT_GIB 12 512
+	setting_kib RATE_KIB RATE_MIB RATE_GIB 1 16
+	setting_kib RETRACT_MARGIN_KIB RETRACT_MARGIN_MIB RETRACT_MARGIN_GIB 20 512
+	if [[ -n ${DEPLOY_HARD_MIB:-}${DEPLOY_HARD_GIB:-}${DEPLOY_SOFT_MIB:-}${DEPLOY_SOFT_GIB:-}${RATE_MIB:-}${RATE_GIB:-}${RETRACT_MARGIN_MIB:-}${RETRACT_MARGIN_GIB:-} ]]; then
+		THRESHOLD_SOURCE=settings
+	elif ((MEM_TOTAL_KIB >= REFERENCE_KIB)); then
+		THRESHOLD_SOURCE=reference
+	else
+		THRESHOLD_SOURCE=scaled
+	fi
+}
+
+resolve_area() {
+	local spec file type options rest
+	if [[ -z $AREA && -r $FSTAB_PATH ]]; then
+		while read -r spec file type options rest; do
+			[[ $spec == \#* || $type != swap ]] && continue
+			[[ ,$options, == *,noauto,* ]] || continue
+			AREA=$spec
+			break
+		done <"$FSTAB_PATH"
+	fi
+	case $AREA in
+	UUID=*) AREA=/dev/disk/by-uuid/${AREA#UUID=} ;;
+	PARTUUID=*) AREA=/dev/disk/by-partuuid/${AREA#PARTUUID=} ;;
+	LABEL=*) AREA=/dev/disk/by-label/${AREA#LABEL=} ;;
+	PARTLABEL=*) AREA=/dev/disk/by-partlabel/${AREA#PARTLABEL=} ;;
+	esac
+	[[ -L $AREA ]] && AREA=$(readlink -f -- "$AREA")
+}
+
+# Is the Cushion Swap File's own area active? 0 yes, 1 no, 2 unknown. Only
+# this area is ever switched on or off; zram and other swap areas are not ours.
+# Sets AREA_USED_KIB from the area's own line.
+area_state() {
+	AREA_USED_KIB=0
+	[[ -r $SWAPS_PATH ]] || return 2
+	local name type size used rest wanted=${AREA// /\\040}
+	while read -r name type size used rest; do
+		if [[ $name == "$wanted" ]]; then
+			[[ $used =~ ^[0-9]+$ ]] && AREA_USED_KIB=$used
+			return 0
+		fi
+	done <"$SWAPS_PATH"
+	return 1
+}
+
+load_state() {
+	PREV_EPOCH="" PREV_AVAIL_KIB="" LAST_DANGER_EPOCH="" LAST_FAIL_LOG_EPOCH="" PREV_MS=""
+	if [[ -r $STATE_FILE ]]; then
+		read -r PREV_EPOCH PREV_AVAIL_KIB LAST_DANGER_EPOCH LAST_FAIL_LOG_EPOCH PREV_MS <"$STATE_FILE" 2>/dev/null || true
+	fi
+}
+
+# One short line, written every cycle without starting a process; a torn
+# file only resets the quiet timer, the conservative direction.
+save_state() {
+	[[ -d $STATE_DIR ]] || mkdir -p "$STATE_DIR" 2>/dev/null
+	printf '%s %s %s %s %s\n' "${PREV_EPOCH:-0}" "${PREV_AVAIL_KIB:-0}" \
+		"${LAST_DANGER_EPOCH:-0}" "${LAST_FAIL_LOG_EPOCH:-0}" "${PREV_MS:-0}" \
+		>"$STATE_FILE" 2>/dev/null || true
+}
+
+STATUS_TEXT=""
+write_status() {
+	local state=$1 text fast=no
+	((FAST_SINCE_MS)) && fast=yes
+	text="STATE=$state
+MODE=$MODE
+FAST=$fast
+AREA=$AREA
+AREA_USED_KIB=${AREA_USED_KIB:-0}
+MEM_TOTAL_KIB=${MEM_TOTAL_KIB:-0}
+THRESHOLDS=${THRESHOLD_SOURCE:-}
+DEPLOY_HARD_KIB=${DEPLOY_HARD_KIB:-0}
+DEPLOY_SOFT_KIB=${DEPLOY_SOFT_KIB:-0}
+RATE_KIB=${RATE_KIB:-0}
+RATE_WINDOW_SEC=$RATE_WINDOW_SEC
+RETRACT_MARGIN_KIB=${RETRACT_MARGIN_KIB:-0}
+QUIET_SECONDS=$QUIET_SECONDS"
+	[[ $text == "$STATUS_TEXT" ]] && return
+	STATUS_TEXT=$text
+	[[ -d $STATE_DIR ]] || mkdir -p "$STATE_DIR" 2>/dev/null
+	printf '%s\n' "$text" >"$STATUS_FILE.tmp" 2>/dev/null && mv -f "$STATUS_FILE.tmp" "$STATUS_FILE" 2>/dev/null || true
+}
+
+run_cycle() {
+	local now now_millis
+	now_ms
+	now_millis=$NOW_MS
+	now=$((now_millis / 1000))
+
+	if ! read_meminfo; then
+		return 0
+	fi
+	compute_thresholds
+
+	local swap_used_kib=$((SWAP_TOTAL_KIB - SWAP_FREE_KIB))
+	((swap_used_kib < 0)) && swap_used_kib=0
+
+	load_state
+	[[ -z $LAST_DANGER_EPOCH || $LAST_DANGER_EPOCH == 0 ]] && LAST_DANGER_EPOCH=$now
+	[[ -z $LAST_FAIL_LOG_EPOCH ]] && LAST_FAIL_LOG_EPOCH=0
+
+	# --- DEPLOY evaluation (Daniel's) ---------------------------------------
+	local hard_trigger=0 rate_trigger=0 rate_reason=""
+	((MEM_AVAILABLE_KIB < DEPLOY_HARD_KIB)) && hard_trigger=1
+
+	if [[ -n $PREV_EPOCH && $PREV_EPOCH != 0 && -n $PREV_AVAIL_KIB ]]; then
+		local prev_ms=$PREV_MS
+		[[ -z $prev_ms || $prev_ms == 0 ]] && prev_ms=$((PREV_EPOCH * 1000))
+		local dt_ms=$((now_millis - prev_ms))
+		if ((dt_ms > 0)); then
+			local drop_kib=$((PREV_AVAIL_KIB - MEM_AVAILABLE_KIB))
+			if ((MEM_AVAILABLE_KIB < DEPLOY_SOFT_KIB && drop_kib > 0)); then
+				# drop / dt >= RATE / RATE_WINDOW, cross-multiplied in integers
+				if ((drop_kib * RATE_WINDOW_SEC * 1000 >= RATE_KIB * dt_ms)); then
+					rate_trigger=1
+					rate_reason="dropped $(gib_str "$drop_kib") over $((dt_ms / 1000)).$(printf '%03d' $((dt_ms % 1000)))s (>= $(gib_label "$RATE_KIB")/${RATE_WINDOW_SEC}s projected-exhaustion rate)"
+				fi
+			fi
+		fi
+	fi
+
+	local deploy_trigger=0 deploy_reason=""
+	if ((hard_trigger)); then
+		deploy_trigger=1
+		deploy_reason="MemAvailable $(gib_str "$MEM_AVAILABLE_KIB") < hard floor $(gib_label "$DEPLOY_HARD_KIB")"
+	elif ((rate_trigger)); then
+		deploy_trigger=1
+		deploy_reason="MemAvailable $(gib_str "$MEM_AVAILABLE_KIB") < soft floor $(gib_label "$DEPLOY_SOFT_KIB") AND ${rate_reason}"
+	fi
+	((deploy_trigger)) && LAST_DANGER_EPOCH=$now
+
+	# --- RETRACT evaluation (Daniel's) --------------------------------------
+	local quiet_elapsed=$((now - LAST_DANGER_EPOCH))
+	local margin_kib=$((swap_used_kib + RETRACT_MARGIN_KIB))
+	local retract_ok=0
+	if ((swap_used_kib > 0 && MEM_AVAILABLE_KIB > margin_kib && quiet_elapsed >= QUIET_SECONDS)); then
+		retract_ok=1
+	fi
+
+	local swap_active_rc=0
+	area_state
+	swap_active_rc=$?
+
+	if ((DRY_RUN || RUN_ONCE || deploy_trigger || retract_ok)) || [[ $LOG_EVERY_CYCLE == yes ]]; then
+		log "sample: MemAvailable=$(gib_str "$MEM_AVAILABLE_KIB") SwapTotal=$(gib_str "$SWAP_TOTAL_KIB") SwapUsed=$(gib_str "$swap_used_kib") swap_active=$(case $swap_active_rc in 0) echo yes ;; 1) echo no ;; *) echo unknown ;; esac) area=${AREA:-none} mode=$MODE"
+		log "deploy-check: hard_trigger=${hard_trigger} (avail < $(gib_label "$DEPLOY_HARD_KIB")) rate_trigger=${rate_trigger} (avail < $(gib_label "$DEPLOY_SOFT_KIB") AND falling >= $(gib_label "$RATE_KIB")/${RATE_WINDOW_SEC}s) => deploy_trigger=${deploy_trigger}${deploy_reason:+ [$deploy_reason]}"
+		log "retract-check: swap_used=$(gib_str "$swap_used_kib") required_avail(>swap_used+$(gib_label "$RETRACT_MARGIN_KIB"))=$(gib_str "$margin_kib") actual_avail=$(gib_str "$MEM_AVAILABLE_KIB") margin_pass=$( ((MEM_AVAILABLE_KIB > margin_kib && swap_used_kib > 0)) && echo yes || echo no) quiet_elapsed=${quiet_elapsed}s/required=${QUIET_SECONDS}s quiet_pass=$( ((quiet_elapsed >= QUIET_SECONDS)) && echo yes || echo no) => retract_ok=${retract_ok}"
+	fi
+
+	local state=off
+	((swap_active_rc == 0)) && state=deployed
+	[[ -z $AREA ]] && state=no-area
+
+	if ((deploy_trigger)); then
+		if [[ -z $AREA ]]; then
+			log_err "deploy wanted but no Cushion Swap File area is configured (AREA= or a noauto swap line in $FSTAB_PATH)"
+		elif ((swap_active_rc == 1)); then
+			log "DEPLOY triggered: ${deploy_reason} -- swap currently OFF -> $( ((DRY_RUN)) && echo '[dry-run] would run' || echo 'running') '${SWAPON_BIN} ${AREA}'"
+			if ((!DRY_RUN)); then
+				if "$SWAPON_BIN" -- "$AREA"; then
+					log "DEPLOY succeeded."
+					state=deployed
+				else
+					log_err "DEPLOY command failed (swapon ${AREA} returned non-zero). Will re-evaluate next cycle."
+				fi
+			fi
+		elif ((swap_active_rc == 2)); then
+			log_err "swap state unknown (cannot read ${SWAPS_PATH}); fail-safe: not attempting deploy this cycle"
+		fi
+	fi
+
+	if ((retract_ok)); then
+		if ((swap_active_rc == 0)); then
+			log "RETRACT triggered: swap_used=$(gib_str "$swap_used_kib") avail=$(gib_str "$MEM_AVAILABLE_KIB") quiet_elapsed=${quiet_elapsed}s -- swap currently ON -> $( ((DRY_RUN)) && echo '[dry-run] would run' || echo 'running') '${SWAPOFF_BIN} ${AREA}'"
+			if ((!DRY_RUN)); then
+				write_status retracting
+				if "$SWAPOFF_BIN" -- "$AREA"; then
+					log "RETRACT succeeded."
+					state=off
+				else
+					local since_fail=$((now - LAST_FAIL_LOG_EPOCH))
+					if ((since_fail >= FAIL_LOG_THROTTLE_SEC)); then
+						log_err "RETRACT command failed (swapoff ${AREA} returned non-zero). Will retry next cycle (throttled logging: next failure log in >=${FAIL_LOG_THROTTLE_SEC}s)."
+						LAST_FAIL_LOG_EPOCH=$now
+					fi
+				fi
+			fi
+		elif ((swap_active_rc == 2)); then
+			log_err "swap state unknown (cannot read ${SWAPS_PATH}); fail-safe: not attempting retract this cycle"
+		fi
+	fi
+
+	PREV_EPOCH=$now
+	PREV_MS=$now_millis
+	PREV_AVAIL_KIB=$MEM_AVAILABLE_KIB
+	save_state
+	((DRY_RUN)) || write_status "$state"
+	CYCLE_AVAIL_KIB=$MEM_AVAILABLE_KIB
+}
+
+start_psi() {
+	MODE=compatibility
+	[[ $PSI == off ]] && { log "PSI switched off in settings: compatibility mode"; return; }
+	if [[ ! -x $PSI_WAKE ]]; then
+		log "no PSI helper at $PSI_WAKE: compatibility mode"
+		return
+	fi
+	coproc PSIWAKE { exec "$PSI_WAKE" "$PSI_PATH" "$PSI_TRIGGER"; }
+	PSI_FD=${PSIWAKE[0]}
+	local line=""
+	if read -r -t 5 -u "$PSI_FD" line && [[ $line == ready ]]; then
+		MODE=psi
+		log "PSI mode: woken by the kernel when memory stalls ($PSI_PATH, trigger '$PSI_TRIGGER'), safety tick ${SAFETY_TICK_SEC}s"
+	else
+		log "PSI not available here: compatibility mode (poll ${POLL_INTERVAL_SEC}s, ${FAST_INTERVAL_SEC}s while a game is opening)"
+	fi
+}
+
+# Compatibility mode: the edition's game launcher signal, or a launcher process
+# that was not there before, starts the fast rate; steady memory ends it.
+# Only processes started since the last look are read: the PIDs after the
+# last one the kernel handed out then (/proc/sys/kernel/ns_last_pid). The
+# first look, a wrap of the counter or a burst of new processes reads all.
+LAUNCHER_PIDS=" "
+LAST_PID=0
+scan_launchers() {
+	local last=0 pid entry found=" " new=0
+	read -r last 2>/dev/null <"$PROC_DIR/sys/kernel/ns_last_pid"
+	for pid in $LAUNCHER_PIDS; do
+		[[ -e $PROC_DIR/$pid ]] && found+="$pid "
+	done
+	if ((last == 0 || LAST_PID == 0 || last < LAST_PID || last - LAST_PID > 4096)); then
+		for entry in "$PROC_DIR"/[0-9]*; do
+			launcher_check "${entry##*/}"
+		done
+	else
+		for ((pid = LAST_PID + 1; pid <= last; pid++)); do
+			[[ -e $PROC_DIR/$pid ]] && launcher_check "$pid"
+		done
+	fi
+	LAST_PID=$last
+	LAUNCHER_PIDS=$found
+	return $((!new))
+}
+
+launcher_check() {
+	local comm
+	[[ $found == *" $1 "* ]] && return
+	read -r comm 2>/dev/null <"$PROC_DIR/$1/comm" || return
+	case " $LAUNCHERS " in *" $comm "*) found+="$1 " new=1 ;; esac
+}
+
+update_game_opening() {
+	local now_millis=$1 started="" signal
+	[[ -e $STATE_DIR/game-seen ]] || : >"$STATE_DIR/game-seen"
+	for signal in "$RUN_USER_DIR"/*/"$GAME_SIGNAL"; do
+		if [[ -e $signal && $signal -nt $STATE_DIR/game-seen ]]; then
+			started="signal from ${signal%/*}"
+			: >"$STATE_DIR/game-seen"
+		fi
+	done
+	if scan_launchers && [[ -n ${LAUNCHERS_SCANNED:-} ]]; then
+		started=${started:-"launcher process started"}
+	fi
+	LAUNCHERS_SCANNED=1
+	if [[ -n $started ]]; then
+		((FAST_SINCE_MS)) || log "game opening ($started): sampling every ${FAST_INTERVAL_SEC}s"
+		FAST_SINCE_MS=$now_millis
+		STEADY_REF_KIB=${CYCLE_AVAIL_KIB:-0}
+		STEADY_REF_MS=$now_millis
+		return
+	fi
+	((FAST_SINCE_MS)) || return
+	local avail=${CYCLE_AVAIL_KIB:-0} moved
+	moved=$((avail - STEADY_REF_KIB))
+	((moved < 0)) && moved=$((-moved))
+	# Steady: moving slower than Daniel's rate threshold for STEADY_SEC.
+	if ((moved * RATE_WINDOW_SEC >= RATE_KIB * STEADY_SEC)); then
+		STEADY_REF_KIB=$avail
+		STEADY_REF_MS=$now_millis
+	elif ((now_millis - STEADY_REF_MS >= STEADY_SEC * 1000)); then
+		log "game loaded (memory steady for ${STEADY_SEC}s): back to every ${POLL_INTERVAL_SEC}s"
+		FAST_SINCE_MS=0
+	fi
+	if ((FAST_SINCE_MS && now_millis - FAST_SINCE_MS >= GAME_OPENING_MAX_SEC * 1000)); then
+		log "game opening longer than ${GAME_OPENING_MAX_SEC}s: back to every ${POLL_INTERVAL_SEC}s"
+		FAST_SINCE_MS=0
+	fi
+}
+
+# Seconds until memory could reach the early-warning floor at MAX_ALLOC_MIB_S.
+headroom_interval() {
+	local head=$((${CYCLE_AVAIL_KIB:-0} - ${DEPLOY_SOFT_KIB:-0})) max_ms=$1 ms
+	((head < 0)) && head=0
+	ms=$((head * 1000 / (MAX_ALLOC_MIB_S * KIB_PER_MIB)))
+	((ms < MIN_MS)) && ms=$MIN_MS
+	((ms > max_ms)) && ms=$max_ms
+	printf -v INTERVAL '%d.%03d' $((ms / 1000)) $((ms % 1000))
+}
+
+to_ms() {
+	local whole=${1%%.*} fraction=000
+	[[ $1 == *.* ]] && fraction=${1#*.}000
+	echo $((10#${whole:-0} * 1000 + 10#${fraction:0:3}))
+}
+
+wait_next() {
+	local line rc
+	INTERVAL=$SAFETY_TICK_SEC
+	[[ $PACING == headroom ]] && headroom_interval "$TICK_MS"
+	if [[ $MODE == psi ]]; then
+		read -r -t "$INTERVAL" -u "$PSI_FD" line
+		rc=$?
+		if ((rc == 0)); then
+			while read -r -t 0 -u "$PSI_FD" && read -r -u "$PSI_FD" line; do :; done
+		elif ((rc <= 128)); then
+			log "PSI helper ended: compatibility mode"
+			MODE=compatibility
+		fi
+		return
+	fi
+	if [[ $PACING == headroom ]]; then
+		headroom_interval "$POLL_MS"
+		read -r -t "$INTERVAL" -u "$SLEEP_FD"
+		return
+	fi
+	now_ms
+	update_game_opening "$NOW_MS"
+	if ((FAST_SINCE_MS)); then
+		read -r -t "$FAST_INTERVAL_SEC" -u "$SLEEP_FD"
+	else
+		read -r -t "$POLL_INTERVAL_SEC" -u "$SLEEP_FD"
+	fi
+}
+
+print_help() {
+	sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+print_thresholds() {
+	read_meminfo || exit 1
+	compute_thresholds
+	resolve_area
+	printf 'MemTotal=%s\nsource=%s\nreference=MemTotal >= %s gets Daniel'"'"'s values unchanged; below it each value is the same share of RAM\n' \
+		"$(gib_str "$MEM_TOTAL_KIB")" "$THRESHOLD_SOURCE" "$(gib_label "$REFERENCE_KIB")"
+	printf 'deploy_hard=%s deploy_soft=%s rate=%s/%ss retract_margin=%s quiet=%ss\n' \
+		"$(gib_str "$DEPLOY_HARD_KIB")" "$(gib_str "$DEPLOY_SOFT_KIB")" "$(gib_str "$RATE_KIB")" "$RATE_WINDOW_SEC" \
+		"$(gib_str "$RETRACT_MARGIN_KIB")" "$QUIET_SECONDS"
+	printf 'DEPLOY_HARD_KIB=%s DEPLOY_SOFT_KIB=%s RATE_KIB=%s RETRACT_MARGIN_KIB=%s\narea=%s\n' \
+		"$DEPLOY_HARD_KIB" "$DEPLOY_SOFT_KIB" "$RATE_KIB" "$RETRACT_MARGIN_KIB" "${AREA:-none}"
+}
+
+# Hibernation needs the area on before systemd-sleep looks for it
+# (systemd src/sleep/sleep.c: find_suitable_hibernation_device() runs
+# before the system-sleep hooks), so a unit ordered before
+# systemd-hibernate.service calls this.
+hibernate_deploy() {
+	resolve_area
+	[[ -n $AREA ]] || { log_err "hibernation: no Cushion Swap File area configured"; exit 1; }
+	area_state
+	case $? in
+	0) log "hibernation: $AREA is already on" ;;
+	1)
+		"$SWAPON_BIN" -- "$AREA" || { log_err "hibernation: swapon $AREA failed"; exit 1; }
+		mkdir -p "$STATE_DIR" && : >"$STATE_DIR/hibernate-deployed"
+		log "hibernation: $AREA switched on for the image"
+		;;
+	*) log_err "hibernation: cannot read $SWAPS_PATH"; exit 1 ;;
+	esac
+}
+
+# After resume: an area switched on only for the image goes off again when
+# nothing stayed in it. Pages left in it are retracted by Daniel's rules.
+hibernate_resume() {
+	[[ -e $STATE_DIR/hibernate-deployed ]] || exit 0
+	rm -f "$STATE_DIR/hibernate-deployed"
+	resolve_area
+	area_state
+	if (($? == 0)) && ((AREA_USED_KIB == 0)); then
+		"$SWAPOFF_BIN" -- "$AREA" && log "after resume: $AREA was empty, switched off again"
+	else
+		log "after resume: $AREA holds $(gib_str "$AREA_USED_KIB"); the daemon retracts it when it is safe"
+	fi
+}
+
+while [[ $# -gt 0 ]]; do
+	case $1 in
+	--dry-run) DRY_RUN=1; shift ;;
+	--once) RUN_ONCE=1; shift ;;
+	--interval) POLL_INTERVAL_SEC=$2; shift 2 ;;
+	--thresholds) print_thresholds; exit 0 ;;
+	--status) cat "$STATUS_FILE" 2>/dev/null || echo "STATE=stopped"; exit 0 ;;
+	--hibernate-deploy) hibernate_deploy; exit 0 ;;
+	--hibernate-resume) hibernate_resume; exit 0 ;;
+	--help | -h) print_help; exit 0 ;;
+	*)
+		log_err "unknown argument: $1"
+		exit 2
+		;;
+	esac
+done
+
+resolve_area
+
+if [[ $CUSHION_SWAP == off ]]; then
+	log "Cushion Swap File is off ($CONFIG: CUSHION_SWAP=off); the swap state is left as it is"
+	((DRY_RUN)) || write_status disabled
+	exit 0
+fi
+
+if ((DRY_RUN)); then
+	log "cushion-swap: starting in --dry-run mode (no swapon/swapoff will be executed; MEMINFO_PATH=${MEMINFO_PATH} SWAPS_PATH=${SWAPS_PATH} STATE_DIR=${STATE_DIR} area=${AREA:-none})"
+else
+	log "cushion-swap: starting (area=${AREA:-none} pacing=${PACING} poll=${POLL_INTERVAL_SEC}s rate_window=${RATE_WINDOW_SEC}s quiet=${QUIET_SECONDS}s)"
+fi
+
+if ((RUN_ONCE)); then
+	run_cycle
+	exit 0
+fi
+
+mkdir -p "$STATE_DIR"
+[[ -p $STATE_DIR/tick ]] || mkfifo -m 600 "$STATE_DIR/tick"
+exec {SLEEP_FD}<>"$STATE_DIR/tick"
+MIN_MS=$(to_ms "$MIN_INTERVAL_SEC") POLL_MS=$(to_ms "$POLL_INTERVAL_SEC") TICK_MS=$(to_ms "$SAFETY_TICK_SEC")
+start_psi
+run_cycle
+log "thresholds ($THRESHOLD_SOURCE, MemTotal $(gib_str "$MEM_TOTAL_KIB")): hard $(gib_str "$DEPLOY_HARD_KIB") soft $(gib_str "$DEPLOY_SOFT_KIB") rate $(gib_str "$RATE_KIB")/${RATE_WINDOW_SEC}s margin $(gib_str "$RETRACT_MARGIN_KIB") quiet ${QUIET_SECONDS}s"
+while true; do
+	wait_next
+	run_cycle
+done

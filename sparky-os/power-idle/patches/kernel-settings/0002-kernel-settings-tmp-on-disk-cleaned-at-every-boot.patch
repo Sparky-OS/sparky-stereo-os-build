@@ -1,0 +1,178 @@
+From deef9d034fc29202c1ba5d7c06aa04d7f7019b8b Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 10 Oct 2026 19:18:46 -0300
+Subject: [PATCH] kernel-settings: /tmp on disk, cleaned at every boot
+
+Daniel: /tmp in RAM leaves no RAM. The first install of this version masks
+tmp.mount, the way Debian's trixie release notes describe it (5.1.6), once:
+an administrator's own tmp.mount is left alone, an unmask is kept on
+upgrades, and a purge removes the mask it created. sparky-tmp.conf sorts
+before systemd's tmp.conf, so its "D /tmp 1777 root root 10d" is the line
+applied: /tmp is emptied at every boot (Debian's pre-trixie default) and
+of files unused for 10 days (5.2.1). Container: 9 checks, including
+systemd's Q line alone keeping the file across the boot run (the control).
+VM: /tmp on ext4 after the reboot, a file from before the next boot gone.
+
+Assisted-by: Claude Opus via Claude Code
+---
+ .../sparky-stereo-kernel-settings/CHANGELOG   |  2 +
+ .../sparky-stereo-kernel-settings/README.md   |  8 ++-
+ .../sparky-stereo-kernel-settings/build.sh    | 24 +++++++-
+ .../tests/tmp-on-disk-test.sh                 | 58 +++++++++++++++++++
+ .../usr/lib/tmpfiles.d/sparky-tmp.conf        |  5 ++
+ 5 files changed, 95 insertions(+), 2 deletions(-)
+ create mode 100755 sparky-os/packages/sparky-stereo-kernel-settings/tests/tmp-on-disk-test.sh
+ create mode 100644 sparky-os/packages/sparky-stereo-kernel-settings/usr/lib/tmpfiles.d/sparky-tmp.conf
+
+diff --git a/sparky-os/packages/sparky-stereo-kernel-settings/CHANGELOG b/sparky-os/packages/sparky-stereo-kernel-settings/CHANGELOG
+index 3a264e7..0e1f0cf 100644
+--- a/sparky-os/packages/sparky-stereo-kernel-settings/CHANGELOG
++++ b/sparky-os/packages/sparky-stereo-kernel-settings/CHANGELOG
+@@ -5,6 +5,8 @@
+     rotating disk or removable storage; decided by zram-auto through zram-generator's set! directive, lz4, priority 100;
+     ZRAM=auto|on|off in /etc/default/sparky-stereo-zram overrides it
+   * README: how your own sysctl value wins over 70-sparky-stereo.conf
++  * /tmp on disk (Daniel): tmp.mount masked once at install as Debian's trixie release notes describe; /tmp cleaned at
++    every boot and of files unused for 10 days
+ 
+ -------------------------------------------------------------------------------
+   Version 20261010.1~sparky9~0 (2026-10-10)
+diff --git a/sparky-os/packages/sparky-stereo-kernel-settings/README.md b/sparky-os/packages/sparky-stereo-kernel-settings/README.md
+index e396a7b..4a8fe29 100644
+--- a/sparky-os/packages/sparky-stereo-kernel-settings/README.md
++++ b/sparky-os/packages/sparky-stereo-kernel-settings/README.md
+@@ -45,7 +45,13 @@ usr/lib/systemd/zram-generator.conf.d/50-sparky-stereo.conf
+ usr/libexec/sparky-stereo/zram-auto         the decision (see below); --explain prints it with the reason
+ etc/security/limits.d/20-sparky-audio.conf  rtprio 99 and nice -11 for @audio (a conffile)
+ 
+-No maintainer scripts: the settings apply at the next boot (or: sysctl --system, systemd-tmpfiles --create, udevadm control --reload).
++/tmp on disk (Daniel: "the dumb /tmp mounted at a ram fs - final result? no ram"): the first install of 20261010.2
++masks tmp.mount, the way Debian's trixie release notes describe it (5.1.6), and usr/lib/tmpfiles.d/sparky-tmp.conf cleans
++/tmp at every boot and of files unused for 10 days (5.2.1 and Debian's pre-trixie default). An administrator's own
++/etc/systemd/system/tmp.mount is left alone; "systemctl unmask tmp.mount" brings /tmp in RAM back and is kept on upgrades.
++Purging the package removes the mask it created. The change applies at the next boot.
++
++Otherwise no maintainer scripts: the settings apply at the next boot (or: sysctl --system, systemd-tmpfiles --create, udevadm control --reload).
+ Not taken from CachyOS, on purpose: SATA link power max_performance (costs laptop battery), journald and systemd timeouts (distribution policy),
+ kernel.printk and kernel.sysrq (Debian's defaults stay), the NVMe kyber scheduler (no measurement favours it), the HDA power-save script.
+ 
+diff --git a/sparky-os/packages/sparky-stereo-kernel-settings/build.sh b/sparky-os/packages/sparky-stereo-kernel-settings/build.sh
+index fb0d1a1..2f0dddb 100755
+--- a/sparky-os/packages/sparky-stereo-kernel-settings/build.sh
++++ b/sparky-os/packages/sparky-stereo-kernel-settings/build.sh
+@@ -8,7 +8,7 @@ OUT=${OUT:?Set OUT to the workspace output directory}
+ VERSION=20261010.2~sparky9~0
+ PACKAGE=sparky-stereo-kernel-settings
+ DEPENDS='libpam-modules, systemd, systemd-zram-generator, udev'
+-FILES='etc/security/limits.d/20-sparky-audio.conf usr/lib/modules-load.d/sparky-stereo.conf usr/lib/sysctl.d/70-sparky-stereo.conf usr/lib/systemd/zram-generator.conf.d/50-sparky-stereo.conf usr/lib/tmpfiles.d/sparky-thp.conf usr/lib/udev/rules.d/60-sparky-block.rules usr/lib/udev/rules.d/70-sparky-ntsync.rules usr/lib/udev/rules.d/99-sparky-audio.rules'
++FILES='etc/security/limits.d/20-sparky-audio.conf usr/lib/modules-load.d/sparky-stereo.conf usr/lib/sysctl.d/70-sparky-stereo.conf usr/lib/systemd/zram-generator.conf.d/50-sparky-stereo.conf usr/lib/tmpfiles.d/sparky-thp.conf usr/lib/tmpfiles.d/sparky-tmp.conf usr/lib/udev/rules.d/60-sparky-block.rules usr/lib/udev/rules.d/70-sparky-ntsync.rules usr/lib/udev/rules.d/99-sparky-audio.rules'
+ mkdir -p "$OUT"
+ WORK=$(mktemp -d "$OUT/.kernel-settings.XXXXXX")
+ trap 'rm -rf "$WORK"' EXIT
+@@ -34,6 +34,28 @@ Description: Kernel tunables for Sparky Stereo OS
+   where the hardware needs it.
+ EOT
+ printf '%s\n' /etc/security/limits.d/20-sparky-audio.conf >"$D/DEBIAN/conffiles"
++cat >"$D/DEBIAN/postinst" <<'EOT'
++#!/bin/sh
++set -e
++# /tmp on disk (Daniel), the way Debian's trixie release notes describe it (5.1.6: systemctl mask tmp.mount, then reboot).
++# Once, when this version first arrives; an administrator's own tmp.mount is left alone, and unmasking it is respected.
++if [ "$1" = configure ] && dpkg --compare-versions "${2:-0}" lt 20261010.2~sparky9~0 && [ ! -e /etc/systemd/system/tmp.mount ]; then
++	systemctl mask tmp.mount >/dev/null 2>&1 || ln -s /dev/null /etc/systemd/system/tmp.mount
++	mkdir -p /var/lib/sparky-stereo-kernel-settings
++	: >/var/lib/sparky-stereo-kernel-settings/tmp-mount-masked
++fi
++EOT
++cat >"$D/DEBIAN/postrm" <<'EOT'
++#!/bin/sh
++set -e
++if [ "$1" = purge ] && [ -e /var/lib/sparky-stereo-kernel-settings/tmp-mount-masked ]; then
++	if [ "$(readlink /etc/systemd/system/tmp.mount 2>/dev/null)" = /dev/null ]; then
++		rm -f /etc/systemd/system/tmp.mount
++	fi
++	rm -rf /var/lib/sparky-stereo-kernel-settings
++fi
++EOT
++chmod 755 "$D/DEBIAN/postinst" "$D/DEBIAN/postrm"
+ (cd "$D" && find etc usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
+ dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${PACKAGE}_${VERSION}_all.deb"
+ 
+diff --git a/sparky-os/packages/sparky-stereo-kernel-settings/tests/tmp-on-disk-test.sh b/sparky-os/packages/sparky-stereo-kernel-settings/tests/tmp-on-disk-test.sh
+new file mode 100755
+index 0000000..2c7aab1
+--- /dev/null
++++ b/sparky-os/packages/sparky-stereo-kernel-settings/tests/tmp-on-disk-test.sh
+@@ -0,0 +1,58 @@
++#!/bin/bash
++# Created by Daniel Ramos (Capitain Jack) 2026/10/10
++# Copyright 2026 under the GNU GPL3 License
++# Last update 2026/10/10
++#
++# /tmp on disk, as root in a disposable container: the package's maintainer
++# scripts (DEB = the built package) mask tmp.mount once and leave an
++# administrator's choice alone; systemd-tmpfiles applies the package's
++# D line before systemd's own tmp.conf and so empties /tmp at boot.
++set -u
++DEB=${DEB:?built package}
++OUT=${OUT:?results folder}
++mkdir -p "$OUT"
++W=$(mktemp -d)
++PASS=0 FAIL=0
++check() {
++	if [[ $2 == "$3" ]]; then echo "PASS $1"; PASS=$((PASS + 1)); else echo "FAIL $1: got '$2', expected '$3'"; FAIL=$((FAIL + 1)); fi
++}
++dpkg-deb -e "$DEB" "$W/control"
++dpkg-deb -x "$DEB" "$W/data"
++unit=/etc/systemd/system/tmp.mount
++mark=/var/lib/sparky-stereo-kernel-settings/tmp-mount-masked
++rm -f "$unit" "$mark"
++
++sh "$W/control/postinst" configure ""
++check fresh-install-masks "$(readlink "$unit")" /dev/null
++check fresh-install-marks "$([ -e $mark ] && echo yes)" yes
++systemctl unmask tmp.mount >/dev/null 2>&1 || rm -f "$unit"
++sh "$W/control/postinst" configure 20261010.2~sparky9~0
++check upgrade-keeps-unmask "$(readlink "$unit" || echo none)" none
++rm -f "$unit" "$mark"
++printf '[Mount]\nWhat=tmpfs\n' >"$unit"
++sh "$W/control/postinst" configure 20261010.1~sparky9~0
++check admin-unit-untouched "$(head -1 "$unit")" "[Mount]"
++check admin-unit-no-mark "$([ -e $mark ] && echo yes || echo no)" no
++rm -f "$unit"
++sh "$W/control/postinst" configure 20261010.1~sparky9~0
++check upgrade-from-older-masks "$(readlink "$unit")" /dev/null
++sh "$W/control/postrm" purge
++check purge-removes-own-mask "$(readlink "$unit" || echo none)" none
++
++# systemd-tmpfiles at boot on a fixture root: Debian's tmp.conf (systemd 262: "Q /tmp 1777 root root 10d") alone keeps
++# /tmp's files; with the package's sparky-tmp.conf, the boot run empties /tmp.
++boot() {
++	local root=$W/root-$1
++	mkdir -p "$root/usr/lib/tmpfiles.d" "$root/tmp"
++	cp /usr/lib/tmpfiles.d/tmp.conf "$root/usr/lib/tmpfiles.d/tmp.conf"
++	[[ $1 == package ]] && cp "$W/data/usr/lib/tmpfiles.d/sparky-tmp.conf" "$root/usr/lib/tmpfiles.d/"
++	echo left >"$root/tmp/from-last-boot"
++	systemd-tmpfiles --root="$root" --create --remove --boot >"$OUT/tmpfiles-$1.log" 2>&1
++	[[ -e $root/tmp/from-last-boot ]] && echo kept || echo removed
++}
++check control-debian-tmp-conf-keeps-files "$(boot debian)" kept
++check package-empties-tmp-at-boot "$(boot package)" removed
++grep -h "^[^#]" /usr/lib/tmpfiles.d/tmp.conf "$W/data/usr/lib/tmpfiles.d/sparky-tmp.conf" >"$OUT/tmpfiles-lines.txt"
++echo "SUMMARY: $PASS passed, $FAIL failed" | tee "$OUT/summary.txt"
++chown -R "${OWNER:-1000:1000}" "$OUT"
++((FAIL == 0))
+diff --git a/sparky-os/packages/sparky-stereo-kernel-settings/usr/lib/tmpfiles.d/sparky-tmp.conf b/sparky-os/packages/sparky-stereo-kernel-settings/usr/lib/tmpfiles.d/sparky-tmp.conf
+new file mode 100644
+index 0000000..f61c8af
+--- /dev/null
++++ b/sparky-os/packages/sparky-stereo-kernel-settings/usr/lib/tmpfiles.d/sparky-tmp.conf
+@@ -0,0 +1,5 @@
++# Sparky Stereo OS: /tmp on disk (Daniel), cleaned at every boot as Debian's default was before trixie and of files
++# unused for 10 days as it is now (Debian trixie release notes 5.1.6 and 5.2.1). The package masks tmp.mount once.
++# This file sorts before systemd's tmp.conf, so its line is the one applied (tmpfiles.d(5)); override it with
++# /etc/tmpfiles.d/sparky-tmp.conf.
++D /tmp 1777 root root 10d
+-- 
+2.53.0
+

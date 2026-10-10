@@ -133,7 +133,7 @@ def tasks():
         rec = available(stereo)
         if r == 'gamer':
             dep += ['ffmpeg', 'libvulkan1', 'python3']
-            rec = sorted(set(rec) | set(GAMING_LISTS))
+            rec = sorted(set(rec) | set(GAMING_LISTS) | {'sparky-stereo-game-performance'})
         t['task-sparky-stereo-' + r] = (
             'Sparky Stereo OS: ' + who,
             f'This task package installs the {who} programs of Sparky Stereo OS: {what}.'
