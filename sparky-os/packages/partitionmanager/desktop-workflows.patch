@@ -387,10 +387,10 @@ index 52dda055..b2e4d52c 100644
      return app.exec();
 diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
 new file mode 100644
-index 00000000..7a86c1f7
+index 00000000..26919e7a
 --- /dev/null
 +++ b/tests/CMakeLists.txt
-@@ -0,0 +1,25 @@
+@@ -0,0 +1,28 @@
 +# SPDX-FileCopyrightText: 2026 Daniel Ramos
 +# SPDX-License-Identifier: GPL-3.0-or-later
 +
@@ -404,7 +404,9 @@ index 00000000..7a86c1f7
 +    if(source STREQUAL "main.cpp")
 +        continue()
 +    endif()
-+    if(NOT IS_ABSOLUTE "${source}")
++    if(IS_ABSOLUTE "${source}")
++        set_source_files_properties("${source}" PROPERTIES GENERATED TRUE)
++    else()
 +        set(source "${CMAKE_CURRENT_SOURCE_DIR}/../src/${source}")
 +    endif()
 +    list(APPEND format_action_sources "${source}")
@@ -413,6 +415,7 @@ index 00000000..7a86c1f7
 +ecm_add_test(formatactiontest.cpp ${format_action_sources}
 +    TEST_NAME formatactiontest
 +    LINK_LIBRARIES ${partitionmanager_libraries} Qt6::Test)
++add_dependencies(formatactiontest partitionmanager)
 +target_include_directories(formatactiontest PRIVATE ../src "${CMAKE_CURRENT_BINARY_DIR}/..")
 +get_target_property(partitionmanager_definitions partitionmanager COMPILE_DEFINITIONS)
 +target_compile_definitions(formatactiontest PRIVATE ${partitionmanager_definitions})
