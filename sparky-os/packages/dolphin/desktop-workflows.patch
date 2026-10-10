@@ -253,10 +253,10 @@ index 48be0461b..c0e7f5fd8 100644
                          <property key="size">731047936</property>
 diff --git a/src/tests/dolphinrecoveryactionstest.cpp b/src/tests/dolphinrecoveryactionstest.cpp
 new file mode 100644
-index 000000000..b055662cc
+index 000000000..1ceeaed7e
 --- /dev/null
 +++ b/src/tests/dolphinrecoveryactionstest.cpp
-@@ -0,0 +1,311 @@
+@@ -0,0 +1,312 @@
 +/*
 + * SPDX-FileCopyrightText: 2026 Daniel Ramos
 + * SPDX-License-Identifier: GPL-2.0-or-later
@@ -351,7 +351,7 @@ index 000000000..b055662cc
 +    window.resize(1280, 800);
 +    window.show();
 +    QVERIFY(QTest::qWaitForWindowExposed(&window));
-+    const QAction *reload = window.actionCollection()->action(KStandardAction::name(KStandardAction::Redisplay));
++    QAction *reload = window.actionCollection()->action(KStandardAction::name(KStandardAction::Redisplay));
 +    QVERIFY(reload);
 +    auto toolbar = window.findChild<QToolBar *>(QStringLiteral("mainToolBar"));
 +    QVERIFY(toolbar);
@@ -516,7 +516,8 @@ index 000000000..b055662cc
 +    QFETCH(bool, formatAvailable);
 +    const QByteArray previousPath = qgetenv("PATH");
 +    const auto restorePath = qScopeGuard([previousPath] { qputenv("PATH", previousPath); });
-+    qputenv("PATH", QFile::encodeName(m_directory.path()) + ':' + previousPath);
++    const QByteArray path = QFile::encodeName(m_directory.path()) + ':' + previousPath;
++    qputenv("PATH", path);
 +    const QString marker = m_directory.filePath(QStringLiteral("format-arguments"));
 +    QFile::remove(marker);
 +    QFile executable(m_directory.filePath(QStringLiteral("partitionmanager")));
