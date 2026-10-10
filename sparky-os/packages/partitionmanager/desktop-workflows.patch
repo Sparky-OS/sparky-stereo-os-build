@@ -418,10 +418,10 @@ index 00000000..7a86c1f7
 +target_compile_definitions(formatactiontest PRIVATE ${partitionmanager_definitions})
 diff --git a/tests/formatactiontest.cpp b/tests/formatactiontest.cpp
 new file mode 100644
-index 00000000..d561381f
+index 00000000..d7981955
 --- /dev/null
 +++ b/tests/formatactiontest.cpp
-@@ -0,0 +1,157 @@
+@@ -0,0 +1,159 @@
 +/*
 +    SPDX-FileCopyrightText: 2026 Daniel Ramos
 +    SPDX-License-Identifier: GPL-3.0-or-later
@@ -548,19 +548,21 @@ index 00000000..d561381f
 +void FormatActionTest::selectDeviceNode_data()
 +{
 +    QTest::addColumn<QString>("node");
-+    QTest::newRow("USB partition") << QStringLiteral("/dev/sda1");
-+    QTest::newRow("multi-digit partition") << QStringLiteral("/dev/sda10");
-+    QTest::newRow("SD card partition") << QStringLiteral("/dev/mmcblk0p1");
-+    QTest::newRow("whole disk filesystem") << QStringLiteral("/dev/mmcblk0");
++    QTest::addColumn<int>("tableType");
++    QTest::newRow("USB partition") << QStringLiteral("/dev/sda1") << static_cast<int>(PartitionTable::gpt);
++    QTest::newRow("multi-digit partition") << QStringLiteral("/dev/sda10") << static_cast<int>(PartitionTable::gpt);
++    QTest::newRow("SD card partition") << QStringLiteral("/dev/mmcblk0p1") << static_cast<int>(PartitionTable::gpt);
++    QTest::newRow("whole disk filesystem") << QStringLiteral("/dev/mmcblk0") << static_cast<int>(PartitionTable::none);
 +}
 +
 +void FormatActionTest::selectDeviceNode()
 +{
 +    QFETCH(QString, node);
++    QFETCH(int, tableType);
 +    constexpr qint64 sectors = 128 * 1024;
 +    OperationStack stack;
 +    auto device = new DiskDevice(QStringLiteral("USB"), QStringLiteral("/dev/test"), 512, sectors);
-+    auto table = new PartitionTable(PartitionTable::gpt, 0, sectors - 1);
++    auto table = new PartitionTable(static_cast<PartitionTable::TableType>(tableType), 0, sectors - 1);
 +    device->setPartitionTable(table);
 +    auto partition = new Partition(table, *device, PartitionRole(PartitionRole::Primary),
 +        FileSystemFactory::create(FileSystem::Type::Ntfs, 0, sectors - 1, 512, -1, QStringLiteral("MEDIA")),
