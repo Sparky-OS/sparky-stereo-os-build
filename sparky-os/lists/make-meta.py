@@ -153,8 +153,8 @@ def tasks():
 META = {
     'sparky-stereo-desktop': (
         'Sparky Stereo desktop',
-        'This meta package installs the desktop of Sparky Stereo OS: the look, console and system information of the edition, time synchronisation, the Dolphin menu that converts audio files, VLC Stereo as the video player, and the applications beyond the KDE edition.',
-        ['sparky-stereo-audio-convert', 'sparky-stereo-cec', 'sparky-stereo-console', 'sparky-stereo-info', 'sparky-stereo-look', 'sparky-stereo-power-profiles', 'sparky-stereo-time'] + lst('look') + OURS_PLAYER,
+        'This meta package installs the desktop of Sparky Stereo OS: the look, console and system information of the edition, the Memory page in System Settings, time synchronisation, the Dolphin menu that converts audio files, VLC Stereo as the video player, and the applications beyond the KDE edition.',
+        ['sparky-stereo-audio-convert', 'sparky-stereo-cec', 'sparky-stereo-console', 'sparky-stereo-info', 'sparky-stereo-look', 'sparky-stereo-memory-kcm', 'sparky-stereo-power-profiles', 'sparky-stereo-time'] + lst('look') + OURS_PLAYER,
         [p for p in lst('apps') if p not in ROLED] + OURS_PLAYER_OUTPUT),
     'sparky-stereo-gaming': (
         'Sparky Stereo gaming (transitional package)',
@@ -172,8 +172,8 @@ META = {
         sorted(HARDWARE_OPTIONAL & set(lst('hardware')))),
     'sparky-stereo-system': (
         'Sparky Stereo system',
-        'This meta package installs the system tools of Sparky Stereo OS: Flatpak, snapshots, containers, Android support, zram and the kernel settings.',
-        sorted(set(lst('system')) - SYSTEM_OPTIONAL) + STEREO_STACK + ['sparky-stereo-kernel-settings'],
+        'This meta package installs the system tools of Sparky Stereo OS: Flatpak, snapshots, containers, Android support, the kernel settings (zram only where the hardware needs it) and the Cushion Swap File.',
+        sorted(set(lst('system')) - SYSTEM_OPTIONAL) + STEREO_STACK + ['sparky-stereo-cushion-swap', 'sparky-stereo-kernel-settings'],
         sorted(SYSTEM_OPTIONAL & set(lst('system')))),
     'linux-image-sparky-stereo': (
         'Sparky Stereo kernel',
