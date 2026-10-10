@@ -1,0 +1,610 @@
+From 94779181b31284c6f8fa0841df43b1fd6cc89545 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 10 Oct 2026 19:03:30 -0300
+Subject: [PATCH] kernel-settings: zram by hardware, through zram-generator's
+ own directive
+
+Daniel's design: zram off on capable machines, on where it pays. zram-auto
+answers 1 or 0 for zram-generator's set! directive and the zram size is
+multiplied by it, so a capable machine gets no zram unit at all, even with
+Debian's default [zram0] present. Automatic: on with 8 GB of RAM or less,
+or a swap area on eMMC, an SD card, a rotating disk or removable storage
+(through LUKS or LVM, the disks underneath decide). ZRAM=auto|on|off in
+/etc/default/sparky-stereo-zram overrides it. lz4: on real desktop memory
+zstd stored a third less but cost about twice the CPU to compress and to
+read back. Swappiness stays 1; in a 4 GB VM zram took 2.1 GiB of pressure
+with no OOM kill, and the same run with zram off was OOM-killed.
+README: a user's own sysctl file must sort after 70-sparky-stereo.conf
+(measured: 00-mine.conf loses, 99-mine.conf wins).
+
+Assisted-by: Claude Opus via Claude Code
+---
+ .../sparky-stereo-kernel-settings/CHANGELOG   |   8 +
+ .../sparky-stereo-kernel-settings/README.md   |  32 +++-
+ .../sparky-stereo-kernel-settings/build.sh    |  18 ++-
+ .../sparky-stereo-kernel-settings/copyright   |   6 +
+ .../tests/guest/anon-dump.py                  |  44 ++++++
+ .../tests/guest/zram-algorithms.sh            |  51 ++++++
+ .../tests/guest/zram-pressure.sh              |  45 ++++++
+ .../tests/zram-auto-test.sh                   | 149 ++++++++++++++++++
+ .../50-sparky-stereo.conf                     |   9 ++
+ .../usr/libexec/sparky-stereo/zram-auto       |  99 ++++++++++++
+ 10 files changed, 452 insertions(+), 9 deletions(-)
+ create mode 100755 sparky-os/packages/sparky-stereo-kernel-settings/tests/guest/anon-dump.py
+ create mode 100755 sparky-os/packages/sparky-stereo-kernel-settings/tests/guest/zram-algorithms.sh
+ create mode 100755 sparky-os/packages/sparky-stereo-kernel-settings/tests/guest/zram-pressure.sh
+ create mode 100755 sparky-os/packages/sparky-stereo-kernel-settings/tests/zram-auto-test.sh
+ create mode 100644 sparky-os/packages/sparky-stereo-kernel-settings/usr/lib/systemd/zram-generator.conf.d/50-sparky-stereo.conf
+ create mode 100755 sparky-os/packages/sparky-stereo-kernel-settings/usr/libexec/sparky-stereo/zram-auto
+
+diff --git a/sparky-os/packages/sparky-stereo-kernel-settings/CHANGELOG b/sparky-os/packages/sparky-stereo-kernel-settings/CHANGELOG
+index 490148a..3a264e7 100644
+--- a/sparky-os/packages/sparky-stereo-kernel-settings/CHANGELOG
++++ b/sparky-os/packages/sparky-stereo-kernel-settings/CHANGELOG
+@@ -1,3 +1,11 @@
++-------------------------------------------------------------------------------
++  Version 20261010.2~sparky9~0 (2026-10-10)
++-------------------------------------------------------------------------------
++  * zram by hardware (Daniel): off on capable machines, on with 8 GB of RAM or less or a swap area on eMMC, an SD card, a
++    rotating disk or removable storage; decided by zram-auto through zram-generator's set! directive, lz4, priority 100;
++    ZRAM=auto|on|off in /etc/default/sparky-stereo-zram overrides it
++  * README: how your own sysctl value wins over 70-sparky-stereo.conf
++
+ -------------------------------------------------------------------------------
+   Version 20261010.1~sparky9~0 (2026-10-10)
+ -------------------------------------------------------------------------------
+diff --git a/sparky-os/packages/sparky-stereo-kernel-settings/README.md b/sparky-os/packages/sparky-stereo-kernel-settings/README.md
+index b49a02b..e396a7b 100644
+--- a/sparky-os/packages/sparky-stereo-kernel-settings/README.md
++++ b/sparky-os/packages/sparky-stereo-kernel-settings/README.md
+@@ -1,6 +1,6 @@
+ sparky-stereo-kernel-settings
+ Kernel tunables for Sparky Stereo OS as user-space files: sysctl, udev, tmpfiles, modules-load and audio limits.
+-No zram (Daniel, 2026-10-10): it holds part of the user's RAM captive; the edition's swap is an emergency swap file, on only under memory pressure.
++zram by hardware (Daniel, 2026-10-10: "auto by hardware is the design"): off on capable machines, where it would hold part of the RAM captive; on only where it pays. The swap is the Cushion Swap File, on only under memory pressure.
+ 
+ Copyright (C) 2026 Daniel Ramos (Capitain Jack), see copyright file.
+ Derived from CachyOS-Settings (GPL-3.0) and the CachyOS kernel patches, and from the value SteamOS uses for vm.max_map_count; authors in the copyright file.
+@@ -39,8 +39,38 @@ usr/lib/udev/rules.d/70-sparky-ntsync.rules /dev/ntsync for the logged-in user
+ usr/lib/udev/rules.d/60-sparky-block.rules  BFQ on rotating disks, 256 KiB read-ahead
+ usr/lib/udev/rules.d/99-sparky-audio.rules  audio group: cpu_dma_latency, rtc0, hpet
+ usr/lib/tmpfiles.d/sparky-thp.conf          THP defrag defer+madvise, THP shrinker threshold
++usr/lib/systemd/zram-generator.conf.d/50-sparky-stereo.conf
++                                            zram0 sized min(RAM, 8 GiB), lz4, priority 100, created only
++                                            when usr/libexec/sparky-stereo/zram-auto prints 1
++usr/libexec/sparky-stereo/zram-auto         the decision (see below); --explain prints it with the reason
+ etc/security/limits.d/20-sparky-audio.conf  rtprio 99 and nice -11 for @audio (a conffile)
+ 
+ No maintainer scripts: the settings apply at the next boot (or: sysctl --system, systemd-tmpfiles --create, udevadm control --reload).
+ Not taken from CachyOS, on purpose: SATA link power max_performance (costs laptop battery), journald and systemd timeouts (distribution policy),
+ kernel.printk and kernel.sysrq (Debian's defaults stay), the NVMe kyber scheduler (no measurement favours it), the HDA power-save script.
++
++zram by hardware:
++-------------
++zram-generator runs zram-auto through its own set! directive and multiplies the zram size by what it prints (1 or 0); a
++device of size 0 is not created, so a capable machine gets no zram unit at all. Its own host-memory-limit option can say
++"not above this much RAM" but not "or when the swap area is on slow storage", hence the directive.
++Automatic: on with 8 GB of RAM or less (MemTotal up to 9 GiB: 8 GB machines report 7.6 to 7.8 GiB, 12 GB machines 11.6),
++or when the swap area (the Cushion Swap File's, else the root file system's disk) is eMMC, an SD card, a rotating disk
++or removable storage; off on NVMe and SATA SSDs with more RAM. Through LUKS or LVM, the disks underneath decide.
++Override: ZRAM=on, ZRAM=off or ZRAM=auto in /etc/default/sparky-stereo-zram (System Settings, Memory, writes it).
++Sources: the kernel's Documentation/admin-guide/blockdev/zram.rst (compressed RAM block devices, swap among the uses);
++Fedora's Changes/SwapOnZRAM (Fedora 33, owner Chris Murphy: zram for every machine at 50 % of RAM up to 4 GiB);
++Android's memory management guide (developer.android.com/topic/performance/memory-management: zram instead of swap on
++storage, because frequent writing wears that storage). The edition differs from Fedora: no zram where RAM is plenty.
++Swappiness stays 1 with zram too (Daniel: "ram is fast, while it has it, leverage it"); zram is the last cushion before the
++Cushion Swap File. lz4, not zstd: on the same real desktop memory zstd stored a third less but cost about twice the CPU
++time to compress and to read back (measured, see the edition's power-idle evidence); the machines that get zram are the
++ones with the least CPU to spare.
++
++Your own sysctl values:
++-------------
++systemd-sysctl reads every *.conf in /etc/sysctl.d, /run/sysctl.d and /usr/lib/sysctl.d sorted by file name, whatever the
++folder, and the last one wins (sysctl.d(5)). So a file of yours named 00-*.conf to 6*.conf loses to this package's
++70-sparky-stereo.conf (measured: vm.swappiness = 10 in /etc/sysctl.d/00-mine.conf gives 1, in 99-mine.conf gives 10).
++Put your value in a file that sorts after it (99-local.conf), or in /etc/sysctl.d/70-sparky-stereo.conf, which replaces
++this package's file whole. Debian's procps 4.0.7 no longer ships /etc/sysctl.conf.
+diff --git a/sparky-os/packages/sparky-stereo-kernel-settings/build.sh b/sparky-os/packages/sparky-stereo-kernel-settings/build.sh
+index aa2a1ec..fb0d1a1 100755
+--- a/sparky-os/packages/sparky-stereo-kernel-settings/build.sh
++++ b/sparky-os/packages/sparky-stereo-kernel-settings/build.sh
+@@ -5,16 +5,17 @@
+ set -euo pipefail
+ HERE=$(cd "$(dirname "$0")" && pwd)
+ OUT=${OUT:?Set OUT to the workspace output directory}
+-VERSION=20261010.1~sparky9~0
++VERSION=20261010.2~sparky9~0
+ PACKAGE=sparky-stereo-kernel-settings
+-DEPENDS='libpam-modules, systemd, udev'
+-FILES='etc/security/limits.d/20-sparky-audio.conf usr/lib/modules-load.d/sparky-stereo.conf usr/lib/sysctl.d/70-sparky-stereo.conf usr/lib/tmpfiles.d/sparky-thp.conf usr/lib/udev/rules.d/60-sparky-block.rules usr/lib/udev/rules.d/70-sparky-ntsync.rules usr/lib/udev/rules.d/99-sparky-audio.rules'
++DEPENDS='libpam-modules, systemd, systemd-zram-generator, udev'
++FILES='etc/security/limits.d/20-sparky-audio.conf usr/lib/modules-load.d/sparky-stereo.conf usr/lib/sysctl.d/70-sparky-stereo.conf usr/lib/systemd/zram-generator.conf.d/50-sparky-stereo.conf usr/lib/tmpfiles.d/sparky-thp.conf usr/lib/udev/rules.d/60-sparky-block.rules usr/lib/udev/rules.d/70-sparky-ntsync.rules usr/lib/udev/rules.d/99-sparky-audio.rules'
+ mkdir -p "$OUT"
+ WORK=$(mktemp -d "$OUT/.kernel-settings.XXXXXX")
+ trap 'rm -rf "$WORK"' EXIT
+ D=$WORK/$PACKAGE
+ mkdir -p "$D/DEBIAN" "$D/usr/share/doc/$PACKAGE"
+ for f in $FILES; do install -Dm644 "$HERE/$f" "$D/$f"; done
++install -Dm755 "$HERE/usr/libexec/sparky-stereo/zram-auto" "$D/usr/libexec/sparky-stereo/zram-auto"
+ install -m644 "$HERE/copyright" "$D/usr/share/doc/$PACKAGE/copyright"
+ SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
+ cat >"$D/DEBIAN/control" <<EOT
+@@ -29,7 +30,8 @@ Priority: optional
+ Homepage: https://sparkylinux.org
+ Description: Kernel tunables for Sparky Stereo OS
+   Sysctl, udev, tmpfiles, modules-load and audio-limit settings that replace
+-  kernel patches of performance kernels. Closes kexec after boot.
++  kernel patches of performance kernels. Closes kexec after boot. zram only
++  where the hardware needs it.
+ EOT
+ printf '%s\n' /etc/security/limits.d/20-sparky-audio.conf >"$D/DEBIAN/conffiles"
+ (cd "$D" && find etc usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
+@@ -57,11 +59,11 @@ EOT
+ cat >"$S/debian/changelog" <<EOT
+ $PACKAGE ($VERSION) unstable; urgency=medium
+ 
+-  * No zram: memory is never held captive; swap is the emergency swap
+-    area, off at boot, deployed only under memory pressure. Swappiness 1
+-    (Daniel's setting); swap read-ahead at the kernel default.
++  * zram by hardware: on with 8 GB of RAM or less or a swap area on slow or
++    fragile storage, off otherwise, through zram-generator's own set!
++    directive; ZRAM=auto|on|off in /etc/default/sparky-stereo-zram.
+ 
+- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Fri, 09 Oct 2026 12:00:00 -0300
++ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 10 Oct 2026 19:00:00 -0300
+ EOT
+ cp "$HERE/copyright" "$S/debian/copyright"
+ mkdir -p "$S/debian/source"
+diff --git a/sparky-os/packages/sparky-stereo-kernel-settings/copyright b/sparky-os/packages/sparky-stereo-kernel-settings/copyright
+index e71de07..790debc 100644
+--- a/sparky-os/packages/sparky-stereo-kernel-settings/copyright
++++ b/sparky-os/packages/sparky-stereo-kernel-settings/copyright
+@@ -42,6 +42,12 @@ Files: usr/lib/sysctl.d/70-sparky-stereo.conf, usr/lib/udev/rules.d/60-sparky-bl
+   publicly readable, so its authors could not be verified and are not named.
+   License: GPL-3+
+ 
++Files: usr/libexec/sparky-stereo/zram-auto usr/lib/systemd/zram-generator.conf.d/50-sparky-stereo.conf
++  Copyright 2026 Daniel Ramos (Capitain Jack)
++  A configuration of zram-generator (the systemd project's zram-generator,
++  https://github.com/systemd/zram-generator); no code from it is included.
++  License: GPL-3+
++
+ Sparky Stereo OS, an edition of SparkyLinux, created by Paweł "pavroo"
+ Pijanowski <pavroo@onet.eu> and Daniel Ramos (Capitain Jack)
+ <Capitain_Jack@yahoo.com>.
+diff --git a/sparky-os/packages/sparky-stereo-kernel-settings/tests/guest/anon-dump.py b/sparky-os/packages/sparky-stereo-kernel-settings/tests/guest/anon-dump.py
+new file mode 100755
+index 0000000..e291790
+--- /dev/null
++++ b/sparky-os/packages/sparky-stereo-kernel-settings/tests/guest/anon-dump.py
+@@ -0,0 +1,44 @@
++#!/usr/bin/env python3
++# SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack)
++# SPDX-License-Identifier: GPL-3.0-or-later
++"""Guest only, root: copy the resident anonymous memory of one user's
++processes (the pages zram would hold) into OUT, up to LIMIT MiB.
++
++anon-dump.py UID OUT LIMIT_MIB
++"""
++import os
++import sys
++
++uid, out, limit = int(sys.argv[1]), sys.argv[2], int(sys.argv[3]) << 20
++page = os.sysconf("SC_PAGE_SIZE")
++written = 0
++with open(out, "wb") as target:
++    for pid in sorted(int(name) for name in os.listdir("/proc") if name.isdigit()):
++        try:
++            if os.stat(f"/proc/{pid}").st_uid != uid:
++                continue
++            maps = open(f"/proc/{pid}/maps").read().splitlines()
++            memory = os.open(f"/proc/{pid}/mem", os.O_RDONLY)
++            pagemap = os.open(f"/proc/{pid}/pagemap", os.O_RDONLY)
++        except OSError:
++            continue
++        for line in maps:
++            fields = line.split()
++            if "w" not in fields[1] or (len(fields) > 5 and not fields[5].startswith("[heap")):
++                continue
++            start, end = (int(value, 16) for value in fields[0].split("-"))
++            for address in range(start, end, page):
++                if written >= limit:
++                    break
++                entry = int.from_bytes(os.pread(pagemap, 8, address // page * 8), "little")
++                if not entry & (1 << 63):
++                    continue
++                try:
++                    data = os.pread(memory, page, address)
++                except OSError:
++                    continue
++                target.write(data)
++                written += len(data)
++        os.close(memory)
++        os.close(pagemap)
++print(written)
+diff --git a/sparky-os/packages/sparky-stereo-kernel-settings/tests/guest/zram-algorithms.sh b/sparky-os/packages/sparky-stereo-kernel-settings/tests/guest/zram-algorithms.sh
+new file mode 100755
+index 0000000..c3ba617
+--- /dev/null
++++ b/sparky-os/packages/sparky-stereo-kernel-settings/tests/guest/zram-algorithms.sh
+@@ -0,0 +1,51 @@
++#!/bin/bash
++# Created by Daniel Ramos (Capitain Jack) 2026/10/10
++# Copyright 2026 under the GNU GPL3 License
++# Last update 2026/10/10
++#
++# Guest only, root: compress the same real anonymous memory with each zram
++# algorithm (a fresh zram device each, written and read back with direct
++# I/O, so the kernel compresses in dd's own context) and report CPU time per
++# page and the compression ratio from mm_stat.
++#   zram-algorithms.sh UID LIMIT_MIB [algorithms...]
++set -u
++export LC_ALL=C
++uid=$1 limit=$2
++shift 2
++algorithms=${*:-lz4 zstd}
++here=$(cd "$(dirname "$0")" && pwd)
++data=/dev/shm/anon.img
++bytes=$(python3 "$here/anon-dump.py" "$uid" "$data" "$limit")
++pages=$((bytes / 4096))
++mhz=$(awk -F: '/^cpu MHz/ { print int($2); exit }' /proc/cpuinfo)
++model=$(awk -F': ' '/^model name/ { print $2; exit }' /proc/cpuinfo)
++echo "{\"pages\": $pages, \"cpu\": \"$model\", \"cpu_mhz\": $mhz, \"results\": ["
++first=1
++TIMEFORMAT='%3R %3U %3S'
++for algorithm in $algorithms; do
++	for run in 1 2 3; do
++		id=$(cat /sys/class/zram-control/hot_add)
++		dev=/sys/block/zram$id
++		if ! echo "$algorithm" >$dev/comp_algorithm; then
++			echo "$id" >/sys/class/zram-control/hot_remove
++			echo "no $algorithm in this kernel" >&2
++			continue
++		fi
++		echo $((bytes + (64 << 20))) >$dev/disksize
++		write=$( { time dd if=$data of=/dev/zram$id bs=1M oflag=direct status=none; } 2>&1)
++		read -r orig compr used _ _ same _ <$dev/mm_stat
++		read_back=$( { time dd if=/dev/zram$id of=/dev/null bs=1M iflag=direct status=none; } 2>&1)
++		echo 1 >$dev/reset
++		echo "$id" >/sys/class/zram-control/hot_remove
++		set -- $write
++		wsys=$3 wreal=$1
++		set -- $read_back
++		rsys=$3 rreal=$1
++		((first)) || echo ","
++		first=0
++		printf '{"algorithm": "%s", "run": %d, "write_real_s": %s, "write_sys_s": %s, "read_real_s": %s, "read_sys_s": %s, "orig_bytes": %s, "compr_bytes": %s, "mem_used_bytes": %s, "same_pages": %s}' \
++			"$algorithm" "$run" "$wreal" "$wsys" "$rreal" "$rsys" "$orig" "$compr" "$used" "$same"
++	done
++done
++echo "]}"
++rm -f $data
+diff --git a/sparky-os/packages/sparky-stereo-kernel-settings/tests/guest/zram-pressure.sh b/sparky-os/packages/sparky-stereo-kernel-settings/tests/guest/zram-pressure.sh
+new file mode 100755
+index 0000000..5e94ff0
+--- /dev/null
++++ b/sparky-os/packages/sparky-stereo-kernel-settings/tests/guest/zram-pressure.sh
+@@ -0,0 +1,45 @@
++#!/bin/bash
++# Created by Daniel Ramos (Capitain Jack) 2026/10/10
++# Copyright 2026 under the GNU GPL3 License
++# Last update 2026/10/10
++#
++# Guest only, as root, on a 4 GB machine where Automatic switched zram on,
++# swappiness 1, no other swap: grow compressible memory 1.5 GiB past what is
++# available. With zram the allocation completes and zram holds the excess;
++# the control (zram switched off) reaches the OOM killer.
++#   zram-pressure.sh MEMGROW OUT
++set -u
++memgrow=$1 out=$2
++shift 2
++mkdir -p "$out"
++run() {
++	local name=$1 since avail status
++	since=$(date '+%F %T')
++	avail=$(awk '$1 == "MemAvailable:" { print int($2 / 1024) }' /proc/meminfo)
++	systemd-run --scope -q --slice=system.slice python3 "$memgrow" 256 $((avail + 1536)) 5 mixed >"$out/$name.grow" 2>&1 &
++	local pid=$! peak=0
++	while kill -0 $pid 2>/dev/null; do
++		read -r orig compr used _ </sys/block/zram0/mm_stat 2>/dev/null || orig=0
++		((orig > peak)) && peak=$orig
++		sleep 0.5
++	done
++	wait $pid
++	status=$?
++	printf '{"run": "%s", "swappiness": %s, "start_avail_mib": %s, "target_mib": %s, "allocator_status": %s, "reached": %s, "zram_peak_orig_bytes": %s, "oom_kills": %s}\n' \
++		"$name" "$(cat /proc/sys/vm/swappiness)" "$avail" $((avail + 1536)) "$status" \
++		"$(grep -q reached "$out/$name.grow" && echo true || echo false)" "$peak" \
++		"$(journalctl -q -k --since "$since" --no-pager | grep -c 'Killed process')"
++}
++sync; sleep 3
++[[ ${1:-} == --control-only ]] || run zram-on
++for try in 1 2 3 4 5 6; do
++	sleep 5
++	swapoff /dev/zram0 && break
++done
++if grep -q /dev/zram0 /proc/swaps; then
++	echo '{"run": "control-zram-off", "error": "zram could not be switched off"}'
++	exit 1
++fi
++sync; sleep 3
++run control-zram-off
++swapon -p 100 /dev/zram0
+diff --git a/sparky-os/packages/sparky-stereo-kernel-settings/tests/zram-auto-test.sh b/sparky-os/packages/sparky-stereo-kernel-settings/tests/zram-auto-test.sh
+new file mode 100755
+index 0000000..833b8d9
+--- /dev/null
++++ b/sparky-os/packages/sparky-stereo-kernel-settings/tests/zram-auto-test.sh
+@@ -0,0 +1,149 @@
++#!/bin/bash
++# Created by Daniel Ramos (Capitain Jack) 2026/10/10
++# Copyright 2026 under the GNU GPL3 License
++# Last update 2026/10/10
++#
++# zram by hardware, in a container as an ordinary user: zram-auto against
++# sysfs fixtures, then the real zram-generator (ZRAM_GENERATOR = its binary,
++# zram-auto bind-mounted at /usr/libexec/sparky-stereo/zram-auto) on the
++# packaged configuration. The 96 GB NVMe machine must get no zram unit (the
++# control); the 4 GB eMMC machine must get one.
++set -u
++HERE=$(cd "$(dirname "$0")" && pwd)
++PKG=$(dirname "$HERE")
++AUTO=$PKG/usr/libexec/sparky-stereo/zram-auto
++OUT=${OUT:-$(mktemp -d "${TMPDIR:-/tmp}/zram-auto-results.XXXXXX")}
++W=$(mktemp -d "${TMPDIR:-/tmp}/zram-auto.XXXXXX")
++trap 'rm -rf "$W"' EXIT
++mkdir -p "$OUT"
++PASS=0 FAIL=0
++check() {
++	if [[ $2 == "$3" ]]; then
++		echo "PASS $1"
++		PASS=$((PASS + 1))
++	else
++		echo "FAIL $1: got '$2', expected '$3'"
++		FAIL=$((FAIL + 1))
++	fi
++}
++
++# sysfs fixture: /sys/dev/block/MAJ:MIN -> a disk or partition node
++S=$W/sys
++disk() {
++	local devno=$1 path=$2 rotational=$3 removable=$4 type=${5:-}
++	mkdir -p "$S/$path/queue" "$S/dev/block"
++	echo "$rotational" >"$S/$path/queue/rotational"
++	echo "$removable" >"$S/$path/removable"
++	echo "$devno" >"$S/$path/dev"
++	if [[ -n $type ]]; then
++		mkdir -p "$S/$path/device"
++		echo "$type" >"$S/$path/device/type"
++	fi
++	ln -s "$S/$path" "$S/dev/block/$devno"
++}
++part() {
++	local devno=$1 path=$2
++	mkdir -p "$S/$path"
++	echo 1 >"$S/$path/partition"
++	echo "$devno" >"$S/$path/dev"
++	ln -s "$S/$path" "$S/dev/block/$devno"
++}
++disk 259:0 devices/pci0000:00/nvme/nvme0/nvme0n1 0 0
++part 259:2 devices/pci0000:00/nvme/nvme0/nvme0n1/nvme0n1p2
++disk 179:0 devices/platform/mmc_host/mmc0/mmc0:0001/block/mmcblk0 0 0 MMC
++part 179:2 devices/platform/mmc_host/mmc0/mmc0:0001/block/mmcblk0/mmcblk0p2
++disk 179:32 devices/platform/mmc_host/mmc1/mmc1:aaaa/block/mmcblk1 0 1 SD
++disk 8:0 devices/pci0000:00/ata1/host0/target0:0:0/0:0:0:0/block/sda 1 0
++disk 8:16 devices/pci0000:00/usb1/1-1/1-1:1.0/host2/target2:0:0/2:0:0:0/block/sdb 0 1
++disk 8:32 devices/pci0000:00/ata2/host1/target1:0:0/1:0:0:0/block/sdc 0 0
++disk 253:0 devices/virtual/block/dm-0 0 0
++mkdir -p "$S/devices/virtual/block/dm-0/slaves"
++ln -s "$S/devices/platform/mmc_host/mmc0/mmc0:0001/block/mmcblk0/mmcblk0p2" "$S/devices/virtual/block/dm-0/slaves/mmcblk0p2"
++
++ram() { printf 'MemTotal: %s kB\nMemAvailable: 1000 kB\n' "$1" >"$W/meminfo"; }
++auto() {
++	env SYSFS_PATH="$S" MEMINFO_PATH="$W/meminfo" SPARKY_ZRAM_CONFIG="${CONF:-/nonexistent}" \
++		CUSHION_SWAP_CONFIG=/nonexistent FSTAB_PATH=/nonexistent ZRAM_AUTO_DEVNO="$1" sh "$AUTO" ${2:-}
++}
++
++# RAM: 4, 8, 16 and 96 GB (MemTotal at Daniel's MemTotal/nominal ratio)
++while read -r gb kib devno kind expected; do
++	ram "$kib"
++	check "auto-${gb}GB-$kind" "$(auto "$devno")" "$expected"
++done <<'CASES'
++4 4073000 259:2 nvme 1
++8 8159000 259:2 nvme 1
++16 16326000 259:2 nvme 0
++96 97957892 259:2 nvme 0
++96 97957892 179:2 emmc 1
++16 16326000 179:2 emmc 1
++4 4073000 179:2 emmc 1
++16 16326000 179:32 sd-card 1
++16 16326000 8:0 rotating 1
++16 16326000 8:16 usb-removable 1
++16 16326000 8:32 sata-ssd 0
++16 16326000 253:0 luks-on-emmc 1
++CASES
++ram 97957892
++check explain-96GB-nvme "$(auto 259:2 --explain | tr '\n' ' ')" "DECISION=off MODE=auto REASON=95662 MiB of RAM and the swap area on fast storage RAM_KIB=97957892 STORAGE=fast "
++ram 4073000
++check explain-4GB-emmc "$(auto 179:2 --explain | sed -n 's/^REASON=//p')" "3977 MiB of RAM: 8 GB or less"
++printf 'ZRAM=on\n' >"$W/on"
++printf 'ZRAM="off" # the user\n' >"$W/off"
++ram 97957892
++check override-on-96GB "$(CONF=$W/on auto 259:2)" 1
++ram 4073000
++check override-off-4GB "$(CONF=$W/off auto 179:2)" 0
++check override-off-reason "$(CONF=$W/off auto 179:2 --explain | sed -n 's/^REASON=//p')" "switched off in $W/off"
++
++# The real zram-generator on the packaged configuration.
++if [[ -n ${ZRAM_GENERATOR:-} ]]; then
++	gen() {
++		local kib=$1 devno=$2 root=$W/root
++		rm -rf "$root" "$W/units"
++		mkdir -p "$root/proc" "$root/usr/lib/systemd/zram-generator.conf.d" "$W/units"
++		cp "$PKG/usr/lib/systemd/zram-generator.conf.d/50-sparky-stereo.conf" "$root/usr/lib/systemd/zram-generator.conf.d/"
++		# Debian's systemd-zram-generator turns zram0 on by default with this file
++		printf '[zram0]\n' >"$root/usr/lib/systemd/zram-generator.conf"
++		printf 'MemTotal: %s kB\nMemAvailable: 1000 kB\n' "$kib" >"$root/proc/meminfo"
++		echo 'BOOT_IMAGE=/vmlinuz root=UUID=1 ro quiet' >"$root/proc/cmdline"
++		env ZRAM_GENERATOR_ROOT="$root" SYSFS_PATH="$S" MEMINFO_PATH="$root/proc/meminfo" SPARKY_ZRAM_CONFIG="${CONF:-/nonexistent}" \
++			CUSHION_SWAP_CONFIG=/nonexistent FSTAB_PATH=/nonexistent ZRAM_AUTO_DEVNO="$devno" \
++			"$ZRAM_GENERATOR" "$W/units" >"$W/gen.log" 2>&1
++		find "$W/units" -type f -name '*.swap' -printf '%f\n' | sort | tr '\n' ' '
++		grep -h -o 'with [0-9]*MB' "$W/gen.log" | tr '\n' ' '
++	}
++	check generator-96GB-nvme-no-unit "$(gen 97957892 259:2)" ""
++	rm -f "$W/root/usr/lib/systemd/zram-generator.conf.d/50-sparky-stereo.conf"
++	env ZRAM_GENERATOR_ROOT="$W/root" "$ZRAM_GENERATOR" "$W/units" >/dev/null 2>&1
++	check control-debian-default-alone-makes-zram "$(find "$W/units" -type f -name '*.swap' -printf '%f\n')" dev-zram0.swap
++	check generator-4GB-emmc-unit "$(gen 4073000 179:2)" "dev-zram0.swap with 3977MB "
++	check generator-16GB-rotating-unit "$(gen 16326000 8:0)" "dev-zram0.swap with 8192MB "
++	check generator-16GB-nvme-no-unit "$(gen 16326000 259:2)" ""
++	check generator-96GB-switched-on "$(CONF=$W/on gen 97957892 259:2)" "dev-zram0.swap with 8192MB "
++	check generator-4GB-switched-off "$(CONF=$W/off gen 4073000 179:2)" ""
++	gen 4073000 179:2 >/dev/null
++	check generator-algorithm "$(sed -n 's/.*compression-algorithm.*/&/p' "$PKG/usr/lib/systemd/zram-generator.conf.d/50-sparky-stereo.conf")" "compression-algorithm = lz4"
++	check generator-priority-100 "$(grep -c '^swap-priority = 100$' "$PKG/usr/lib/systemd/zram-generator.conf.d/50-sparky-stereo.conf")" 1
++	cp "$W/gen.log" "$OUT/zram-generator-4GB-emmc.log"
++fi
++# Planted faults: zram on capable machines, or the storage rule lost.
++mutant() {
++	local name=$1 expr=$2 devno=$3 kib=$4 expected=$5 m=$W/zram-auto-$1
++	sed "$expr" "$AUTO" >"$m"
++	ram "$kib"
++	local got
++	got=$(env SYSFS_PATH="$S" MEMINFO_PATH="$W/meminfo" SPARKY_ZRAM_CONFIG=/nonexistent CUSHION_SWAP_CONFIG=/nonexistent \
++		FSTAB_PATH=/nonexistent ZRAM_AUTO_DEVNO="$devno" sh "$m")
++	if ! cmp -s "$m" "$AUTO" && [[ $got != "$expected" ]]; then
++		echo "PASS mutant-$name (the control catches it: got $got, the right answer is $expected)"
++		PASS=$((PASS + 1))
++	else
++		echo "FAIL mutant-$name"
++		FAIL=$((FAIL + 1))
++	fi
++}
++mutant always-on 's/decision=0 reason=/decision=1 reason=/' 259:2 97957892 0
++mutant no-storage-rule 's/emmc | sd-card | rotating | removable | usb)/no-such-kind)/' 179:2 97957892 1
++echo "SUMMARY: $PASS passed, $FAIL failed" | tee "$OUT/summary.txt"
++((FAIL == 0))
+diff --git a/sparky-os/packages/sparky-stereo-kernel-settings/usr/lib/systemd/zram-generator.conf.d/50-sparky-stereo.conf b/sparky-os/packages/sparky-stereo-kernel-settings/usr/lib/systemd/zram-generator.conf.d/50-sparky-stereo.conf
+new file mode 100644
+index 0000000..94bbd56
+--- /dev/null
++++ b/sparky-os/packages/sparky-stereo-kernel-settings/usr/lib/systemd/zram-generator.conf.d/50-sparky-stereo.conf
+@@ -0,0 +1,9 @@
++# Sparky Stereo OS: zram only where it pays (/usr/libexec/sparky-stereo/zram-auto
++# prints 1 or 0; a device of size 0 is not created). Override in
++# /etc/default/sparky-stereo-zram (ZRAM=auto|on|off).
++set!sparky_zram=/usr/libexec/sparky-stereo/zram-auto
++
++[zram0]
++zram-size = sparky_zram * min(ram, 8192)
++compression-algorithm = lz4
++swap-priority = 100
+diff --git a/sparky-os/packages/sparky-stereo-kernel-settings/usr/libexec/sparky-stereo/zram-auto b/sparky-os/packages/sparky-stereo-kernel-settings/usr/libexec/sparky-stereo/zram-auto
+new file mode 100755
+index 0000000..6ad3a44
+--- /dev/null
++++ b/sparky-os/packages/sparky-stereo-kernel-settings/usr/libexec/sparky-stereo/zram-auto
+@@ -0,0 +1,99 @@
++#!/bin/sh
++# Created by Daniel Ramos (Capitain Jack) 2026/10/10
++# Copyright 2026 under the GNU GPL3 License
++# Last update 2026/10/10
++#
++# zram by hardware (Daniel, 2026-10-10: "auto by hardware is the design").
++# zram-generator runs this through its own set! directive and multiplies the
++# zram size by what it prints: 1 for a zram device, 0 for none (a device of
++# size 0 is discarded, so a capable machine gets no zram unit at all).
++# Auto: on with 8 GB of RAM or less (MemTotal up to 9 GiB), or when the swap
++# area sits on eMMC, an SD card, a rotating disk or removable storage; off
++# otherwise. ZRAM=on|off|auto in /etc/default/sparky-stereo-zram decides first.
++#   zram-auto            1 or 0
++#   zram-auto --explain  DECISION=, MODE=, REASON=, RAM_KIB=, STORAGE=
++set -u
++config=${SPARKY_ZRAM_CONFIG:-/etc/default/sparky-stereo-zram}
++cushion=${CUSHION_SWAP_CONFIG:-/etc/default/cushion-swap}
++fstab=${FSTAB_PATH:-/etc/fstab}
++meminfo=${MEMINFO_PATH:-/proc/meminfo}
++sysfs=${SYSFS_PATH:-/sys}
++limit_kib=${ZRAM_RAM_LIMIT_KIB:-9437184}
++
++setting() {
++	[ -r "$1" ] || return 0
++	sed -n "s/^[[:space:]]*$2=[\"']\{0,1\}\([^\"'#[:space:]]*\).*/\1/p" "$1" | tail -n 1
++}
++
++# MAJOR:MINOR of the device holding the swap area (or the root file system).
++area_devno() {
++	if [ -n "${ZRAM_AUTO_DEVNO:-}" ]; then
++		echo "$ZRAM_AUTO_DEVNO"
++		return
++	fi
++	area=$(setting "$cushion" AREA)
++	[ -n "$area" ] || area=$(awk '$1 !~ /^#/ && $3 == "swap" && ("," $4 ",") ~ /,noauto,/ { print $1; exit }' "$fstab" 2>/dev/null)
++	[ -n "$area" ] || area=/
++	case $area in
++	UUID=* | PARTUUID=* | LABEL=* | PARTLABEL=*) area=$(blkid -l -o device -t "$area" 2>/dev/null) ;;
++	esac
++	if [ -b "$area" ]; then
++		stat -L -c '%Hr:%Lr' "$area"
++	elif [ -e "$area" ]; then
++		source=$(findmnt -n -o SOURCE -T "$area" 2>/dev/null | sed 's/\[.*//')
++		[ -b "$source" ] && stat -L -c '%Hr:%Lr' "$source"
++	fi
++}
++
++# eMMC, SD card, rotating or removable: slow or fragile for swap. Follows a
++# partition to its disk and a device-mapper device to the disks under it.
++storage_kind() {
++	node=$(readlink -f "$sysfs/dev/block/$1" 2>/dev/null) || return
++	[ -d "$node" ] || return
++	[ -e "$node/partition" ] && node=$(dirname "$node")
++	for slave in "$node"/slaves/*; do
++		[ -e "$slave" ] || continue
++		kind=$(storage_kind "$(cat "$slave/dev")")
++		[ "$kind" = fast ] || { echo "$kind"; return; }
++	done
++	name=$(basename "$node")
++	case $name in
++	mmcblk*)
++		case $(cat "$node/device/type" 2>/dev/null) in
++		SD) echo sd-card; return ;;
++		*) echo emmc; return ;;
++		esac
++		;;
++	esac
++	[ "$(cat "$node/queue/rotational" 2>/dev/null)" = 1 ] && { echo rotating; return; }
++	[ "$(cat "$node/removable" 2>/dev/null)" = 1 ] && { echo removable; return; }
++	case $node in */usb*) echo usb; return ;; esac
++	echo fast
++}
++
++mode=$(setting "$config" ZRAM)
++ram=$(awk '$1 == "MemTotal:" { print $2 }' "$meminfo")
++devno=$(area_devno)
++storage=$( [ -n "$devno" ] && storage_kind "$devno")
++storage=${storage:-unknown}
++case $mode in
++on) decision=1 reason="switched on in $config" ;;
++off) decision=0 reason="switched off in $config" ;;
++*)
++	mode=auto
++	if [ "$ram" -le "$limit_kib" ]; then
++		decision=1 reason="$((ram / 1024)) MiB of RAM: 8 GB or less"
++	else
++		case $storage in
++		emmc | sd-card | rotating | removable | usb) decision=1 reason="swap area on $storage storage" ;;
++		*) decision=0 reason="$((ram / 1024)) MiB of RAM and the swap area on $storage storage" ;;
++		esac
++	fi
++	;;
++esac
++if [ "${1:-}" = --explain ]; then
++	printf 'DECISION=%s\nMODE=%s\nREASON=%s\nRAM_KIB=%s\nSTORAGE=%s\n' \
++		"$( [ "$decision" = 1 ] && echo on || echo off)" "$mode" "$reason" "$ram" "$storage"
++else
++	echo "$decision"
++fi
+-- 
+2.53.0
+
