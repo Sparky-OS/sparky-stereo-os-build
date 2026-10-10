@@ -151,6 +151,16 @@ def power_state():
     return {path: Path(path).read_text().strip() for path in sorted(files)}
 
 
+def text_display_on(power):
+    # DRM's fbdev emulation leaves fb*/blank at 4 while the text console is
+    # visible (measured in the guest: tty1 foreground, connector On, no blanked
+    # VT); where a DRM connector exists, its DPMS state is the display's state.
+    connectors = [value for path, value in power.items() if path.endswith("/dpms")]
+    if connectors:
+        return all(value == "On" for value in connectors)
+    return all(value == "0" for path, value in power.items() if path.endswith("/blank"))
+
+
 def snapshot(fds):
     consoles = {}
     for number, fd in fds.items():
@@ -175,9 +185,12 @@ def snapshot(fds):
 def check_snapshot(baseline, current, text_foreground):
     if current["blanked_vt"] in (1, 2):
         raise Mismatch(f"tty{current['blanked_vt']} was blanked")
-    for key in ("consoles", "consoleblank"):
-        if current[key] != baseline[key]:
-            raise Mismatch(f"{key} changed")
+    for number, console in baseline["consoles"].items():
+        for field, value in console.items():
+            if current["consoles"][number][field] != value:
+                raise Mismatch(f"tty{number} {field} changed")
+    if current["consoleblank"] != baseline["consoleblank"]:
+        raise Mismatch("consoleblank changed")
     if current["screensaver_processes"]:
         raise Mismatch("A screensaver or console-blanking process is running")
     if text_foreground and current["power"] != baseline["power"]:
@@ -302,7 +315,7 @@ def run_probe(args, result):
             configured = True
             config.write_text(text.getvalue())
             os.chown(config, user.pw_uid, user.pw_gid)
-            powerdevil("reparseConfiguration")
+            powerdevil("refreshStatus")
             trace = Trace()
 
         phases = (2,) if args.negative else (plasma_vt, 1, 2)
@@ -326,8 +339,8 @@ def run_probe(args, result):
             if text_foreground:
                 if not baseline["power"]:
                     raise RuntimeError("No console DPMS/framebuffer power state is readable")
-                if any(value != "0" for path, value in baseline["power"].items() if path.endswith("/blank")):
-                    raise RuntimeError("The foreground text framebuffer is already blank")
+                if not text_display_on(baseline["power"]):
+                    raise RuntimeError("The foreground text console's display is not on")
             result["samples"].append({"vt": vt, "point": "baseline", "state": baseline})
             if args.negative:
                 fcntl.ioctl(fds[2], TIOCLINUX, bytes([14]))
@@ -344,7 +357,11 @@ def run_probe(args, result):
             while True:
                 elapsed = time.monotonic() - start
                 current = snapshot(fds)
-                check_snapshot(baseline, current, text_foreground)
+                try:
+                    check_snapshot(baseline, current, text_foreground)
+                except Mismatch:
+                    result["samples"].append({"vt": vt, "point": "mismatch", "elapsed": elapsed, "state": current})
+                    raise
                 trace.check()
                 active = command("loginctl", "show-session", session, "-p", "Active", "--value")
                 if (active == "yes") != (vt == plasma_vt):
@@ -381,7 +398,7 @@ def run_probe(args, result):
                     config.write_bytes(original)
                     os.chown(config, original_stat.st_uid, original_stat.st_gid)
                     os.chmod(config, original_stat.st_mode & 0o777)
-                powerdevil("reparseConfiguration")
+                powerdevil("refreshStatus")
 
         if args.negative:
             cleanup(lambda: fcntl.ioctl(fds[2], TIOCLINUX, bytes([4])))

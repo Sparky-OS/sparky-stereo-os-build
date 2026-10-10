@@ -38,7 +38,11 @@ then tty2. Every second it checks both consoles' KD_TEXT mode and VCSA
 screen/cursor hashes, the kernel consoleblank value and blanked-VT query,
 readable framebuffer blank/power and connected DRM DPMS state, and running
 screensaver/blanking programs. Foreground text-console power must stay at
-its baseline. The initial text framebuffer must be unblanked. The JSON
+its baseline. The text console's display must be on at its baseline: its DRM
+connector's DPMS state is On (where no DRM connector exists, fb*/blank is 0).
+DRM's fbdev emulation leaves fb0/blank at 4 while tty1 is visible (measured
+in the guest on 2026-10-10: tty1 foreground, connector On, no blanked VT), so
+that file is recorded and compared but does not decide. The JSON
 retains the baseline and dim/show/off/sleep-boundary samples for each phase.
 The Plasma phase must show native KWin DPMS Off and native ScreenSaver
 locked after the short screen-off deadline. A windowless Wayland reader
@@ -65,11 +69,14 @@ not an accepted negative result. The script unblanks tty2 in its cleanup.
 A positive pass is exit **0**, `verified=true`, all three `completed_vts`,
 and `native_kde_screen_off_and_locked=true`, with no mismatch. The original
 foreground VT and exact user config bytes, owner and mode are restored in
-cleanup; PowerDevil reparses the restored config. It does not unlock the
+cleanup; PowerDevil reloads the restored config with refreshStatus, as its
+System Settings page does. It does not unlock the
 session afterward. Main copies both JSON files back to `../evidence/tty/`.
-Do not call milestone 5 proved until those real guest results are inspected.
+The 2026-10-10 run in the development VM passed and its negative control
+failed as required (../evidence/tty/tty-positive.json, tty-negative.json; the
+earlier failed runs and what each one taught are kept beside them).
 
-`guest-tty-test.py` supplies nine container logic/wire checks, including
+`guest-tty-test.py` supplies ten container logic/wire checks, including
 the two blanked-console cases, mode/content changes, blanking interval,
 power, daemon detection, ioctl return handling, container refusal and
 read-only DPMS decoding.
@@ -80,3 +87,14 @@ from Plasma Wayland Protocols `src/protocols/dpms.xml` (Martin Gräßlin).
 The execution event's filename field is defined in Linux
 `include/trace/events/sched.h`. Syscall filename pointers are not used as
 string filters.
+
+## The KIdleTime check
+
+`guest-idle-ab.sh LABEL` restarts PowerDevil, sets a 10 s dim and 30 s screen
+off with lock, and reports after 45 s whether KWin's DPMS turned off and the
+screen locked. With libkf6idletime6 6.28.0-1 (built against Qt 6.10.2, the
+version on Daniel's workstation) nothing fires on Qt 6.11 and PowerDevil logs
+Qt's "Native interface revision mismatch (requested 1 / available 2)"; with
+6.30.0-2 (rebuilt against Qt 6.11.2) everything does, before and after
+(../evidence/tty/kidletime-ab.json). The guest's earlier 6.30.0-1 (also built
+against 6.10.2) logged the same mismatch; it was not run through this check.

@@ -54,7 +54,7 @@ class Detection(unittest.TestCase):
         for key, value in (("screen_sha256", "changed"), ("kd_mode", 1)):
             state = copy.deepcopy(self.baseline)
             state["consoles"]["2"][key] = value
-            with self.assertRaisesRegex(probe.Mismatch, "consoles changed"):
+            with self.assertRaisesRegex(probe.Mismatch, f"tty2 {key} changed"):
                 probe.check_snapshot(self.baseline, state, True)
 
     def test_blanking_interval(self):
@@ -69,6 +69,14 @@ class Detection(unittest.TestCase):
         with self.assertRaisesRegex(probe.Mismatch, "power state changed"):
             probe.check_snapshot(self.baseline, state, True)
         probe.check_snapshot(self.baseline, state, False)
+
+    def test_text_display_on(self):
+        drm = "/sys/class/drm/card0-Virtual-1/dpms"
+        fb = "/sys/class/graphics/fb0/blank"
+        self.assertTrue(probe.text_display_on({drm: "On", fb: "4"}))
+        self.assertFalse(probe.text_display_on({drm: "Off", fb: "4"}))
+        self.assertTrue(probe.text_display_on({fb: "0"}))
+        self.assertFalse(probe.text_display_on({fb: "4"}))
 
     def test_screensaver(self):
         state = copy.deepcopy(self.baseline)
