@@ -57,7 +57,7 @@ apps = [l.split('\t')[0] for l in open(os.path.join(DATA, 'daniel_only_apps.orig
         if l.rstrip('\n').split('\t')[1] in ('debian', 'sparky')]
 apps = [p for p in apps if p not in dedup]
 group('apps', "Applications beyond the KDE edition (Daniel's, deduplicated)", apps + [
-    'kdenlive', 'skanpage', 'subtitlecomposer', 'neochat', 'qpwgraph',
+    'dolphin', 'konsole', 'kdenlive', 'skanpage', 'subtitlecomposer', 'neochat', 'qpwgraph',
     'libreoffice-kf6', 'libreoffice-draw', 'kdenetwork-filesharing', 'kio-fuse',
     'coolercontrol',   # fans and pumps (GPL-3; its repository is the vendor's: to package)
     # stereo editing and 3D work (Daniel, 2026-10-02): ours to package first, then Debian's
@@ -171,6 +171,7 @@ group('hardware-found', 'Hardware support installed when the hardware is found',
 # 8. System: apps from Flathub, containers, Android, snapshots. No zram (Daniel, 2026-10-10): the swap is an emergency swap
 # file, on only under memory pressure.
 group('system', 'System', [
+    'dosfstools', 'exfatprogs', 'ntfs-3g',
     'flatpak', 'plasma-discover-backend-flatpak', 'distrobox', 'waydroid', 'btrfs-progs',
     'timeshift', 'synaptic',   # snapshots: Timeshift (with grub-btrfs)
     'grub-btrfs', 'scx-scheds', 'ananicy-cpp', 'sunshine', 'protonup-qt', 'hhd', 'decky-loader',

@@ -1,0 +1,706 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 9d015a46..55f6357f 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -65,6 +65,10 @@ ecm_set_disabled_deprecation_versions(QT 6.5
+ 
+ find_package(KPMcore ${KPMCORE_MIN_VERSION} REQUIRED)
+ 
++if(BUILD_TESTING)
++    find_package(Qt6 ${QT_MIN_VERSION} CONFIG REQUIRED COMPONENTS Test)
++    include(ECMAddTests)
++endif()
+ add_subdirectory(src)
+ add_subdirectory(icons)
+ if (KF6DocTools_FOUND)
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index ced1d812..9a2109de 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -46,6 +46,10 @@ target_link_libraries(partitionmanager
+ 
+ target_compile_definitions(partitionmanager PRIVATE -DCMAKE_INSTALL_FULL_LIBEXECDIR_KF6=\"${CMAKE_INSTALL_FULL_LIBEXECDIR_KF6}\")
+ 
++if(BUILD_TESTING)
++    add_subdirectory(../tests tests)
++endif()
++
+ install(TARGETS partitionmanager ${KDE_INSTALL_TARGETS_DEFAULT_ARGS})
+ install(FILES org.kde.partitionmanager.appdata.xml DESTINATION ${KDE_INSTALL_METAINFODIR})
+ install(PROGRAMS org.kde.partitionmanager.desktop DESTINATION ${KDE_INSTALL_APPDIR})
+diff --git a/src/gui/CMakeLists.txt b/src/gui/CMakeLists.txt
+index 2b6d72a9..9cf04bf5 100644
+--- a/src/gui/CMakeLists.txt
++++ b/src/gui/CMakeLists.txt
+@@ -21,6 +21,7 @@ set(GUI_SRC
+     gui/filesystemsupportdialog.cpp gui/filesystemsupportdialog.h
+     gui/filesystemsupportdialogwidget.cpp gui/filesystemsupportdialogwidget.h
+     gui/formattedspinbox.cpp gui/formattedspinbox.h
++    gui/formatdialog.cpp gui/formatdialog.h
+     gui/infopane.cpp gui/infopane.h
+     gui/insertdialog.cpp gui/insertdialog.h
+     gui/listdevices.cpp gui/listdevices.h
+diff --git a/src/gui/formatdialog.cpp b/src/gui/formatdialog.cpp
+new file mode 100644
+index 00000000..7b543360
+--- /dev/null
++++ b/src/gui/formatdialog.cpp
+@@ -0,0 +1,114 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Ramos
++    SPDX-License-Identifier: GPL-3.0-or-later
++*/
++
++#include "gui/formatdialog.h"
++
++#include <core/partition.h>
++#include <fs/filesystemfactory.h>
++
++#include <KLocalizedString>
++#include <KMessageBox>
++
++#include <QComboBox>
++#include <QDialogButtonBox>
++#include <QFormLayout>
++#include <QLabel>
++#include <QLineEdit>
++#include <QPushButton>
++#include <QValidator>
++#include <QVBoxLayout>
++
++#include <memory>
++
++FormatDialog::FormatDialog(QWidget* parent, const Partition& partition) :
++    QDialog(parent),
++    m_DeviceNode(partition.deviceNode()),
++    m_FileSystem(new QComboBox(this)),
++    m_Label(new QLineEdit(partition.fileSystem().label(), this)),
++    m_LabelError(new QLabel(this))
++{
++    setWindowTitle(i18nc("@title:window", "Format"));
++    setObjectName(QStringLiteral("formatDialog"));
++    m_FileSystem->setObjectName(QStringLiteral("fileSystem"));
++    m_Label->setObjectName(QStringLiteral("volumeLabel"));
++    m_LabelError->setWordWrap(true);
++
++    const QList<QPair<FileSystem::Type, QString>> types = {
++        {FileSystem::Type::Fat32, QStringLiteral("FAT32")},
++        {FileSystem::Type::Exfat, QStringLiteral("exFAT")},
++        {FileSystem::Type::Ntfs, QStringLiteral("NTFS")}
++    };
++    for (const auto& [type, name] : types) {
++        const auto fs = FileSystemFactory::map().value(type);
++        if (fs && fs->supportCreate() != FileSystem::cmdSupportNone &&
++            fs->supportSetLabel() != FileSystem::cmdSupportNone &&
++            partition.capacity() >= fs->minCapacity() && partition.capacity() <= fs->maxCapacity())
++            m_FileSystem->addItem(name, static_cast<int>(type));
++    }
++    const int current = m_FileSystem->findData(static_cast<int>(partition.fileSystem().type()));
++    if (current >= 0)
++        m_FileSystem->setCurrentIndex(current);
++
++    auto layout = new QVBoxLayout(this);
++    auto form = new QFormLayout;
++    auto deviceLabel = new QLabel(m_DeviceNode, this);
++    deviceLabel->setTextFormat(Qt::PlainText);
++    form->addRow(i18nc("@label", "Device:"), deviceLabel);
++    form->addRow(i18nc("@label", "File system:"), m_FileSystem);
++    form->addRow(i18nc("@label", "Label:"), m_Label);
++    layout->addLayout(form);
++    layout->addWidget(m_LabelError);
++
++    auto buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, this);
++    m_FormatButton = buttons->addButton(i18nc("@action:button", "Format"), QDialogButtonBox::AcceptRole);
++    m_FormatButton->setObjectName(QStringLiteral("formatButton"));
++    auto cancel = buttons->button(QDialogButtonBox::Cancel);
++    cancel->setDefault(true);
++    cancel->setFocus();
++    layout->addWidget(buttons);
++    connect(buttons, &QDialogButtonBox::accepted, this, &FormatDialog::accept);
++    connect(buttons, &QDialogButtonBox::rejected, this, &FormatDialog::reject);
++    connect(m_FileSystem, &QComboBox::currentIndexChanged, this, [this] { validateLabel(); });
++    connect(m_Label, &QLineEdit::textChanged, this, [this] { validateLabel(); });
++    validateLabel();
++}
++
++FileSystem::Type FormatDialog::fileSystemType() const
++{
++    return static_cast<FileSystem::Type>(m_FileSystem->currentData().toInt());
++}
++
++QString FormatDialog::label() const
++{
++    return m_Label->text();
++}
++
++void FormatDialog::validateLabel()
++{
++    const auto fs = FileSystemFactory::map().value(fileSystemType());
++    bool valid = m_FileSystem->currentIndex() >= 0 && fs;
++    if (valid) {
++        QString text = label();
++        int position = 0;
++        std::unique_ptr<QValidator> validator(fs->labelValidator(nullptr));
++        valid = text.size() <= fs->maxLabelLength() &&
++            (text.isEmpty() || !validator || validator->validate(text, position) == QValidator::Acceptable);
++    }
++    m_FormatButton->setEnabled(valid);
++    if (m_FileSystem->currentIndex() < 0)
++        m_LabelError->setText(i18nc("@info", "No supported format is available for this drive."));
++    else
++        m_LabelError->setText(valid ? QString() : i18nc("@info", "This label cannot be used with %1. Change the label or choose another file system.", m_FileSystem->currentText()));
++}
++
++void FormatDialog::accept()
++{
++    if (!m_FormatButton->isEnabled())
++        return;
++    if (KMessageBox::warningContinueCancel(this,
++            xi18nc("@info", "Formatting <filename>%1</filename> will erase all its files.", m_DeviceNode),
++            i18nc("@title:window", "Format"), KGuiItem(i18nc("@action:button", "Format"))) == KMessageBox::Continue)
++        QDialog::accept();
++}
+diff --git a/src/gui/formatdialog.h b/src/gui/formatdialog.h
+new file mode 100644
+index 00000000..b9fa1f35
+--- /dev/null
++++ b/src/gui/formatdialog.h
+@@ -0,0 +1,36 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Ramos
++    SPDX-License-Identifier: GPL-3.0-or-later
++*/
++
++#ifndef FORMATDIALOG_H
++#define FORMATDIALOG_H
++
++#include <fs/filesystem.h>
++#include <QDialog>
++
++class Partition;
++class QComboBox;
++class QLabel;
++class QLineEdit;
++class QPushButton;
++
++class FormatDialog : public QDialog
++{
++public:
++    explicit FormatDialog(QWidget* parent, const Partition& partition);
++    FileSystem::Type fileSystemType() const;
++    QString label() const;
++    void accept() override;
++
++private:
++    void validateLabel();
++
++    QString m_DeviceNode;
++    QComboBox* m_FileSystem;
++    QLineEdit* m_Label;
++    QLabel* m_LabelError;
++    QPushButton* m_FormatButton;
++};
++
++#endif
+diff --git a/src/gui/mainwindow.cpp b/src/gui/mainwindow.cpp
+index 89b524cb..61e55430 100644
+--- a/src/gui/mainwindow.cpp
++++ b/src/gui/mainwindow.cpp
+@@ -1284,6 +1284,21 @@ void MainWindow::onDeactivateVolumeGroup()
+     }
+ }
+ 
++void MainWindow::formatCurrentPartition(const QString& deviceNode)
++{
++    if (!pmWidget().setCurrentPartitionByDeviceNode(deviceNode)) {
++        KMessageBox::error(this, i18nc("@info", "Could not find the selected partition."));
++        return;
++    }
++    if (operationStack().size() != 0) {
++        KMessageBox::information(this, i18nc("@info", "Apply or clear pending changes before formatting."));
++        return;
++    }
++    setDisallowOtherDevices();
++    if (pmWidget().onFormatPartition())
++        onApplyAllOperations();
++}
++
+ void MainWindow::onFileSystemSupport()
+ {
+     FileSystemSupportDialog dlg(this);
+diff --git a/src/gui/mainwindow.h b/src/gui/mainwindow.h
+index 35eb806c..2cc9ff1b 100644
+--- a/src/gui/mainwindow.h
++++ b/src/gui/mainwindow.h
+@@ -49,6 +49,7 @@ public:
+     void setCurrentDeviceByName(const QString& name);
+ 
+     void setCurrentPartitionByName(const QString& partitionNumber);
++    void formatCurrentPartition(const QString& deviceNode);
+ 
+     // forbids the user to select another device.
+     // this is used in conjunction with --device
+diff --git a/src/gui/partitionmanagerwidget.cpp b/src/gui/partitionmanagerwidget.cpp
+index a50a644c..68d510a2 100644
+--- a/src/gui/partitionmanagerwidget.cpp
++++ b/src/gui/partitionmanagerwidget.cpp
+@@ -10,6 +10,7 @@
+ 
+ #include "gui/partitionmanagerwidget.h"
+ #include "gui/partpropsdialog.h"
++#include "gui/formatdialog.h"
+ #include "gui/resizedialog.h"
+ #include "gui/newdialog.h"
+ #include "gui/applyprogressdialog.h"
+@@ -303,6 +304,25 @@ bool PartitionManagerWidget::setCurrentPartitionByName(const QString& name)
+     return false;
+ }
+ 
++bool PartitionManagerWidget::setCurrentPartitionByDeviceNode(const QString& deviceNode)
++{
++    for (auto device : operationStack().previewDevices()) {
++        if (!device->partitionTable())
++            continue;
++        auto candidates = device->partitionTable()->children();
++        while (!candidates.isEmpty()) {
++            auto candidate = candidates.takeFirst();
++            if (candidate->deviceNode() == deviceNode) {
++                setSelectedDevice(device);
++                setSelectedPartition(candidate);
++                return selectedPartition() == candidate;
++            }
++            candidates.append(candidate->children());
++        }
++    }
++    return false;
++}
++
+ void PartitionManagerWidget::on_m_TreePartitions_itemDoubleClicked(QTreeWidgetItem* item, int)
+ {
+     if (item == treePartitions().topLevelItem(0)) {
+@@ -363,6 +383,32 @@ void PartitionManagerWidget::on_m_TreePartitions_customContextMenuRequested(cons
+     Q_EMIT contextMenuRequested(treePartitions().viewport()->mapToGlobal(pos));
+ }
+ 
++bool PartitionManagerWidget::onFormatPartition()
++{
++    Partition* partition = selectedPartition();
++    Device* device = selectedDevice();
++    if (!partition || !device || !device->partitionTable() || device->partitionTable()->isReadOnly() ||
++        partition->roles().has(PartitionRole::Extended) || partition->roles().has(PartitionRole::Luks))
++        return false;
++
++    FormatDialog dialog(this, *partition);
++    if (dialog.exec() != QDialog::Accepted)
++        return false;
++
++    if (partition->isMounted()) {
++        Report report(nullptr);
++        if (!partition->unmount(report)) {
++            KMessageBox::detailedError(this,
++                xi18nc("@info", "Could not unmount <filename>%1</filename>.", partition->deviceNode()), report.toText());
++            return false;
++        }
++    }
++
++    operationStack().push(new CreateFileSystemOperation(*device, *partition, dialog.fileSystemType()));
++    operationStack().push(new SetFileSystemLabelOperation(*partition, dialog.label()));
++    return true;
++}
++
+ void PartitionManagerWidget::onPropertiesPartition()
+ {
+     if (selectedPartition()) {
+diff --git a/src/gui/partitionmanagerwidget.h b/src/gui/partitionmanagerwidget.h
+index fc94a71b..7c43de6e 100644
+--- a/src/gui/partitionmanagerwidget.h
++++ b/src/gui/partitionmanagerwidget.h
+@@ -67,6 +67,7 @@ public:
+     void onRestorePartition();
+ 
+     void onPropertiesPartition();
++    bool onFormatPartition();
+ 
+     void init(OperationStack* ostack);
+ 
+@@ -96,6 +97,7 @@ public:
+ 
+     // here we expect the full "sda1" or "nvme1n1p1"
+     bool setCurrentPartitionByName(const QString& partitionName);
++    bool setCurrentPartitionByDeviceNode(const QString& deviceNode);
+ 
+ protected:
+     OperationStack& operationStack() {
+diff --git a/src/main.cpp b/src/main.cpp
+index 52dda055..b2e4d52c 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -100,9 +100,13 @@ int Q_DECL_IMPORT main(int argc, char* argv[])
+ 
+     QCommandLineOption deviceOption({QStringLiteral("device")}, xi18nc("@info:shell", "Device to manage"), QStringLiteral("device"));
+     parser.addOption(deviceOption);
++    QCommandLineOption formatOption(QStringLiteral("format"), i18nc("@info:shell", "Format the selected partition"));
++    parser.addOption(formatOption);
+ 
+     parser.process(app);
+     aboutData.processCommandLine(&parser);
++    if (parser.isSet(formatOption) && !parser.isSet(deviceOption))
++        parser.showHelp(1);
+ 
+     KDBusService service(KDBusService::Unique);
+ 
+@@ -123,7 +127,14 @@ int Q_DECL_IMPORT main(int argc, char* argv[])
+     auto [device, partitionNr] = parseDevice(selectedDevice);
+ 
+     MainWindow* mainWindow = new MainWindow();
+-    QObject::connect(mainWindow, &MainWindow::scanFinished, mainWindow, [mainWindow, device = device, selectedDevice, partitionNr = partitionNr] {
++    QObject::connect(mainWindow, &MainWindow::scanFinished, mainWindow, [mainWindow, device = device, selectedDevice, partitionNr = partitionNr, format = parser.isSet(formatOption), handled = false]() mutable {
++        if (format) {
++            if (!handled) {
++                handled = true;
++                mainWindow->formatCurrentPartition(QStringLiteral("/dev/") + selectedDevice);
++            }
++            return;
++        }
+         if (device.length()) {
+             mainWindow->setCurrentDeviceByName(device);
+             if (partitionNr.length()) {
+@@ -135,9 +146,18 @@ int Q_DECL_IMPORT main(int argc, char* argv[])
+         }
+     });
+ 
+-    QObject::connect(&service, &KDBusService::activateRequested, mainWindow, [mainWindow](const QStringList &/*args*/, const QString &/*workingDir*/) {
++    QObject::connect(&service, &KDBusService::activateRequested, mainWindow, [mainWindow](const QStringList &args, const QString &/*workingDir*/) {
+         KWindowSystem::updateStartupId(mainWindow->windowHandle());
+         KWindowSystem::activateWindow(mainWindow->windowHandle());
++        QCommandLineParser request;
++        request.addOption(QCommandLineOption(QStringLiteral("device"), QString(), QStringLiteral("device")));
++        request.addOption(QCommandLineOption(QStringLiteral("format")));
++        if (request.parse(args) && request.isSet(QStringLiteral("format")) && request.isSet(QStringLiteral("device"))) {
++            QString selected = request.value(QStringLiteral("device"));
++            if (selected.startsWith(QStringLiteral("/dev/")))
++                selected.remove(0, 5);
++            mainWindow->formatCurrentPartition(QStringLiteral("/dev/") + selected);
++        }
+     });
+ 
+     return app.exec();
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+new file mode 100644
+index 00000000..7a86c1f7
+--- /dev/null
++++ b/tests/CMakeLists.txt
+@@ -0,0 +1,25 @@
++# SPDX-FileCopyrightText: 2026 Daniel Ramos
++# SPDX-License-Identifier: GPL-3.0-or-later
++
++ecm_add_test(formatdialogtest.cpp ../src/gui/formatdialog.cpp
++    TEST_NAME formatdialogtest
++    LINK_LIBRARIES kpmcore Qt6::Test KF6::I18n KF6::WidgetsAddons)
++target_include_directories(formatdialogtest PRIVATE ../src)
++
++set(format_action_sources)
++foreach(source IN LISTS partitionmanager_SRCS)
++    if(source STREQUAL "main.cpp")
++        continue()
++    endif()
++    if(NOT IS_ABSOLUTE "${source}")
++        set(source "${CMAKE_CURRENT_SOURCE_DIR}/../src/${source}")
++    endif()
++    list(APPEND format_action_sources "${source}")
++endforeach()
++get_target_property(partitionmanager_libraries partitionmanager LINK_LIBRARIES)
++ecm_add_test(formatactiontest.cpp ${format_action_sources}
++    TEST_NAME formatactiontest
++    LINK_LIBRARIES ${partitionmanager_libraries} Qt6::Test)
++target_include_directories(formatactiontest PRIVATE ../src "${CMAKE_CURRENT_BINARY_DIR}/..")
++get_target_property(partitionmanager_definitions partitionmanager COMPILE_DEFINITIONS)
++target_compile_definitions(formatactiontest PRIVATE ${partitionmanager_definitions})
+diff --git a/tests/formatactiontest.cpp b/tests/formatactiontest.cpp
+new file mode 100644
+index 00000000..d561381f
+--- /dev/null
++++ b/tests/formatactiontest.cpp
+@@ -0,0 +1,157 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Ramos
++    SPDX-License-Identifier: GPL-3.0-or-later
++*/
++
++#include "gui/partitionmanagerwidget.h"
++
++#include <core/diskdevice.h>
++#include <core/partition.h>
++#include <core/partitiontable.h>
++#include <fs/filesystemfactory.h>
++#include <ops/createfilesystemoperation.h>
++#include <ops/setfilesystemlabeloperation.h>
++
++#include <QApplication>
++#include <QComboBox>
++#include <QDialog>
++#include <QLineEdit>
++#include <QPushButton>
++#include <QStandardPaths>
++#include <QTest>
++#include <QTimer>
++
++class FormatActionTest : public QObject
++{
++    Q_OBJECT
++
++private Q_SLOTS:
++    void initTestCase();
++    void format_data();
++    void format();
++    void selectDeviceNode_data();
++    void selectDeviceNode();
++};
++
++void FormatActionTest::initTestCase()
++{
++    QStandardPaths::setTestModeEnabled(true);
++    FileSystemFactory::init();
++}
++
++void FormatActionTest::format_data()
++{
++    QTest::addColumn<FileSystem::Type>("type");
++    QTest::addColumn<bool>("consent");
++    QTest::newRow("cancel") << FileSystem::Type::Fat32 << false;
++    QTest::newRow("FAT32") << FileSystem::Type::Fat32 << true;
++    QTest::newRow("exFAT") << FileSystem::Type::Exfat << true;
++    QTest::newRow("NTFS") << FileSystem::Type::Ntfs << true;
++}
++
++void FormatActionTest::format()
++{
++    QFETCH(FileSystem::Type, type);
++    QFETCH(bool, consent);
++    const auto fs = FileSystemFactory::map().value(type);
++    const bool supported = fs->supportCreate() != FileSystem::cmdSupportNone && fs->supportSetLabel() != FileSystem::cmdSupportNone;
++    if (consent && !supported) {
++        QVERIFY2(!qEnvironmentVariableIsSet("REQUIRE_ALL_FORMATS"), "Required filesystem tools are unavailable");
++        QSKIP("Filesystem tools or the private KPMcore helper are unavailable");
++    }
++
++    constexpr qint64 sectors = 128 * 1024;
++    OperationStack stack;
++    auto device = new DiskDevice(QStringLiteral("USB"), QStringLiteral("/dev/test"), 512, sectors);
++    auto table = new PartitionTable(PartitionTable::gpt, 0, sectors - 1);
++    device->setPartitionTable(table);
++    auto partition = new Partition(table, *device, PartitionRole(PartitionRole::Primary),
++        FileSystemFactory::create(FileSystem::Type::Ntfs, 0, sectors - 1, 512, -1, QStringLiteral("MEDIA")),
++        0, sectors - 1, QStringLiteral("/dev/test1"));
++    table->append(partition);
++    stack.previewDevices().append(device);
++    PartitionManagerWidget widget;
++    widget.init(&stack);
++    widget.setSelectedDevice(device);
++    widget.setSelectedPartition(partition);
++    QCOMPARE(widget.selectedPartition(), partition);
++    bool labelPreserved = false;
++    bool emptyBeforeConsent = false;
++    QTimer::singleShot(0, &widget, [&] {
++        auto dialog = widget.findChild<QDialog*>(QStringLiteral("formatDialog"));
++        if (!dialog) {
++            if (auto unexpected = qobject_cast<QDialog*>(QApplication::activeModalWidget()))
++                unexpected->reject();
++            return;
++        }
++        auto label = dialog->findChild<QLineEdit*>(QStringLiteral("volumeLabel"));
++        labelPreserved = label && label->text() == QStringLiteral("MEDIA");
++        emptyBeforeConsent = stack.size() == 0;
++        if (!consent) {
++            dialog->reject();
++            return;
++        }
++        auto combo = dialog->findChild<QComboBox*>(QStringLiteral("fileSystem"));
++        combo->setCurrentIndex(combo->findData(static_cast<int>(type)));
++        QTimer::singleShot(0, dialog, [&] {
++            auto confirmation = qobject_cast<QDialog*>(QApplication::activeModalWidget());
++            if (!confirmation)
++                return;
++            for (auto button : confirmation->findChildren<QPushButton*>()) {
++                QString text = button->text();
++                text.remove(QLatin1Char('&'));
++                if (text == QStringLiteral("Format")) {
++                    button->click();
++                    return;
++                }
++            }
++            confirmation->reject();
++        });
++        dialog->findChild<QPushButton*>(QStringLiteral("formatButton"))->click();
++    });
++    QCOMPARE(widget.onFormatPartition(), consent);
++    QVERIFY(labelPreserved);
++    QVERIFY(emptyBeforeConsent);
++    QCOMPARE(stack.size(), consent ? 2 : 0);
++    QCOMPARE(partition->fileSystem().label(), QStringLiteral("MEDIA"));
++    if (consent) {
++        QCOMPARE(partition->fileSystem().type(), type);
++        QVERIFY(dynamic_cast<CreateFileSystemOperation*>(stack.operations().at(0)));
++        QVERIFY(dynamic_cast<SetFileSystemLabelOperation*>(stack.operations().at(1)));
++    }
++}
++
++void FormatActionTest::selectDeviceNode_data()
++{
++    QTest::addColumn<QString>("node");
++    QTest::newRow("USB partition") << QStringLiteral("/dev/sda1");
++    QTest::newRow("multi-digit partition") << QStringLiteral("/dev/sda10");
++    QTest::newRow("SD card partition") << QStringLiteral("/dev/mmcblk0p1");
++    QTest::newRow("whole disk filesystem") << QStringLiteral("/dev/mmcblk0");
++}
++
++void FormatActionTest::selectDeviceNode()
++{
++    QFETCH(QString, node);
++    constexpr qint64 sectors = 128 * 1024;
++    OperationStack stack;
++    auto device = new DiskDevice(QStringLiteral("USB"), QStringLiteral("/dev/test"), 512, sectors);
++    auto table = new PartitionTable(PartitionTable::gpt, 0, sectors - 1);
++    device->setPartitionTable(table);
++    auto partition = new Partition(table, *device, PartitionRole(PartitionRole::Primary),
++        FileSystemFactory::create(FileSystem::Type::Ntfs, 0, sectors - 1, 512, -1, QStringLiteral("MEDIA")),
++        0, sectors - 1, node);
++    table->append(partition);
++    stack.previewDevices().append(device);
++    PartitionManagerWidget widget;
++    widget.init(&stack);
++    QVERIFY(widget.setCurrentPartitionByDeviceNode(node));
++    QCOMPARE(widget.selectedDevice(), device);
++    QCOMPARE(widget.selectedPartition(), partition);
++    QVERIFY(!widget.setCurrentPartitionByDeviceNode(node + QLatin1Char('1')));
++    QCOMPARE(widget.selectedPartition(), partition);
++    QCOMPARE(stack.size(), 0);
++}
++
++QTEST_MAIN(FormatActionTest)
++#include "formatactiontest.moc"
+diff --git a/tests/formatdialogtest.cpp b/tests/formatdialogtest.cpp
+new file mode 100644
+index 00000000..03c2ad99
+--- /dev/null
++++ b/tests/formatdialogtest.cpp
+@@ -0,0 +1,119 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Ramos
++    SPDX-License-Identifier: GPL-3.0-or-later
++*/
++
++#include "gui/formatdialog.h"
++
++#include <core/diskdevice.h>
++#include <core/partition.h>
++#include <core/partitiontable.h>
++#include <fs/filesystemfactory.h>
++
++#include <QComboBox>
++#include <QDialogButtonBox>
++#include <QDir>
++#include <QGuiApplication>
++#include <QLineEdit>
++#include <QPushButton>
++#include <QPixmap>
++#include <QTest>
++
++class FormatDialogTest : public QObject
++{
++    Q_OBJECT
++
++private Q_SLOTS:
++    void initTestCase();
++    void preservesLabel_data();
++    void preservesLabel();
++    void doesNotTruncateLabel();
++};
++
++void FormatDialogTest::initTestCase()
++{
++    FileSystemFactory::init();
++}
++
++void FormatDialogTest::preservesLabel_data()
++{
++    QTest::addColumn<FileSystem::Type>("type");
++    QTest::newRow("fat32") << FileSystem::Type::Fat32;
++    QTest::newRow("exfat") << FileSystem::Type::Exfat;
++    QTest::newRow("ntfs") << FileSystem::Type::Ntfs;
++}
++
++void FormatDialogTest::preservesLabel()
++{
++    QFETCH(FileSystem::Type, type);
++    constexpr qint64 sectors = 128 * 1024;
++    DiskDevice device(QStringLiteral("USB"), QStringLiteral("/dev/test"), 512, sectors);
++    PartitionTable table(PartitionTable::gpt, 0, sectors - 1);
++    Partition partition(&table, device, PartitionRole(PartitionRole::Primary),
++        FileSystemFactory::create(type, 0, sectors - 1, 512, -1, QStringLiteral("MEDIA")),
++        0, sectors - 1, QStringLiteral("/dev/test1"));
++    FormatDialog dialog(nullptr, partition);
++    auto label = dialog.findChild<QLineEdit*>(QStringLiteral("volumeLabel"));
++    QVERIFY(label);
++    QCOMPARE(label->text(), QStringLiteral("MEDIA"));
++    auto combo = dialog.findChild<QComboBox*>(QStringLiteral("fileSystem"));
++    QVERIFY(combo);
++    const QMap<FileSystem::Type, QString> names = {
++        {FileSystem::Type::Fat32, QStringLiteral("FAT32")},
++        {FileSystem::Type::Exfat, QStringLiteral("exFAT")},
++        {FileSystem::Type::Ntfs, QStringLiteral("NTFS")}
++    };
++    int expectedCount = 0;
++    for (auto it = names.cbegin(); it != names.cend(); ++it) {
++        const auto fs = FileSystemFactory::map().value(it.key());
++        const bool supported = fs->supportCreate() != FileSystem::cmdSupportNone && fs->supportSetLabel() != FileSystem::cmdSupportNone;
++        const int index = combo->findData(static_cast<int>(it.key()));
++        QCOMPARE(index >= 0, supported);
++        if (supported) {
++            ++expectedCount;
++            QCOMPARE(combo->itemText(index), it.value());
++        }
++    }
++    QCOMPARE(combo->count(), expectedCount);
++    if (qEnvironmentVariableIsSet("REQUIRE_ALL_FORMATS"))
++        QCOMPARE(combo->count(), 3);
++    auto format = dialog.findChild<QPushButton*>(QStringLiteral("formatButton"));
++    QVERIFY(format);
++    QCOMPARE(format->isEnabled(), expectedCount > 0);
++    const QString images = qEnvironmentVariable("DOLPHIN_PROOF_IMAGES");
++    if (!images.isEmpty()) {
++        QVERIFY(QDir().mkpath(images));
++        QVERIFY(dialog.grab().save(images + QStringLiteral("/format-") + QString::fromLatin1(QTest::currentDataTag()) +
++            QLatin1Char('-') + QGuiApplication::platformName() + QStringLiteral(".png")));
++    }
++    if (combo->findData(static_cast<int>(type)) >= 0)
++        QCOMPARE(dialog.fileSystemType(), type);
++    auto buttons = dialog.findChild<QDialogButtonBox*>();
++    QVERIFY(buttons);
++    QVERIFY(buttons->button(QDialogButtonBox::Cancel)->isDefault());
++    buttons->button(QDialogButtonBox::Cancel)->click();
++    QCOMPARE(dialog.result(), static_cast<int>(QDialog::Rejected));
++    QCOMPARE(partition.fileSystem().label(), QStringLiteral("MEDIA"));
++}
++
++void FormatDialogTest::doesNotTruncateLabel()
++{
++    constexpr qint64 sectors = 128 * 1024;
++    const QString originalLabel(129, QLatin1Char('A'));
++    DiskDevice device(QStringLiteral("USB"), QStringLiteral("/dev/test"), 512, sectors);
++    PartitionTable table(PartitionTable::gpt, 0, sectors - 1);
++    Partition partition(&table, device, PartitionRole(PartitionRole::Primary),
++        FileSystemFactory::create(FileSystem::Type::Ntfs, 0, sectors - 1, 512, -1, originalLabel),
++        0, sectors - 1, QStringLiteral("/dev/test1"));
++    FormatDialog dialog(nullptr, partition);
++    auto button = dialog.findChild<QPushButton*>(QStringLiteral("formatButton"));
++    QVERIFY(button);
++    QCOMPARE(dialog.label(), originalLabel);
++    QVERIFY(!button->isEnabled());
++    dialog.accept();
++    QCOMPARE(dialog.result(), static_cast<int>(QDialog::Rejected));
++    QCOMPARE(dialog.label(), originalLabel);
++}
++
++QTEST_MAIN(FormatDialogTest)
++#include "formatdialogtest.moc"

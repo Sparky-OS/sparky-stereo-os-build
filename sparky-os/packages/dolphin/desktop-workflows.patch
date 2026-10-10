@@ -1,0 +1,570 @@
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 319c5512b..cf0204c40 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -294,6 +294,7 @@ target_sources(dolphinstatic PRIVATE
+     dolphinmainwindow.cpp
+     dolphinviewcontainer.cpp
+     dolphincontextmenu.cpp
++    runscriptdialog.cpp
+     dolphinnavigatorswidgetaction.cpp
+     dolphintabbar.cpp
+     dolphinpackageinstaller.cpp
+diff --git a/src/dolphincontextmenu.cpp b/src/dolphincontextmenu.cpp
+index b9b6edd8d..8066a0acc 100644
+--- a/src/dolphincontextmenu.cpp
++++ b/src/dolphincontextmenu.cpp
+@@ -14,11 +14,13 @@
+ #include "dolphinremoveaction.h"
+ #include "dolphinviewcontainer.h"
+ #include "global.h"
++#include "runscriptdialog.h"
+ #include "settings/dolphinsettingsdialog.h"
+ #include "trash/dolphintrash.h"
+ #include "views/dolphinview.h"
+ 
+ #include <KActionCollection>
++#include <KAuthorized>
+ #include <KFileItemListProperties>
+ #include <KHamburgerMenu>
+ #include <KIO/EmptyTrashJob>
+@@ -27,11 +29,14 @@
+ #include <KIO/RestoreJob>
+ #include <KJobWidgets>
+ #include <KLocalizedString>
++#include <KMessageBox>
+ #include <KNewFileMenu>
+ #include <KStandardAction>
+ 
+ #include <QApplication>
+ #include <QClipboard>
++#include <QFile>
++#include <QMimeDatabase>
+ #include <QKeyEvent>
+ #include <QAction>
+ 
+@@ -286,6 +291,21 @@ void DolphinContextMenu::addItemContextMenu()
+             // Insert 'Open With" entries
+             addOpenWithActions();
+         }
++        if (m_fileInfo.isFile() && m_fileInfo.isLocalFile() && !m_fileInfo.isExecutable() &&
++            QMimeDatabase().mimeTypeForName(m_fileInfo.mimetype()).inherits(QStringLiteral("application/x-shellscript")) &&
++            KAuthorized::authorize(KAuthorized::SHELL_ACCESS)) {
++            auto run = addAction(QIcon::fromTheme(QStringLiteral("utilities-terminal")), i18nc("@action:inmenu", "Run in a terminal…"));
++            run->setObjectName(QStringLiteral("run_in_terminal"));
++            connect(run, &QAction::triggered, this, [this] {
++                QFile file(m_fileInfo.localPath());
++                if (!file.open(QIODevice::ReadOnly)) {
++                    KMessageBox::error(m_mainWindow, file.errorString());
++                    return;
++                }
++                RunScriptDialog dialog(file.fileName(), QString::fromUtf8(file.readAll()), m_mainWindow);
++                dialog.exec();
++            });
++        }
+         if (m_fileInfo.isLink()) {
+             addAction(m_mainWindow->actionCollection()->action(QStringLiteral("show_target")));
+             addSeparator();
+diff --git a/src/dolphinui.rc b/src/dolphinui.rc
+index 395436d74..7aff1e218 100644
+--- a/src/dolphinui.rc
++++ b/src/dolphinui.rc
+@@ -111,6 +111,7 @@
+         <Action name="go_back" />
+         <Action name="go_forward" />
+         <Action name="view_settings" />
++        <Action name="redisplay" />
+         <Action name="url_navigators" />
+         <Action name="split_view" />
+         <Action name="split_stash" />
+diff --git a/src/panels/places/placespanel.cpp b/src/panels/places/placespanel.cpp
+index ed2341872..0d20aea52 100644
+--- a/src/panels/places/placespanel.cpp
++++ b/src/panels/places/placespanel.cpp
+@@ -18,6 +18,7 @@
+ #include "views/draganddrophelper.h"
+ 
+ #include <KFilePlacesModel>
++#include <KIO/CommandLauncherJob>
+ #include <KIO/DropJob>
+ #include <KIO/Job>
+ #include <KLocalizedString>
+@@ -27,8 +28,12 @@
+ #include <QMenu>
+ #include <QMimeData>
+ #include <QShowEvent>
++#include <QStandardPaths>
+ 
++#include <Solid/Block>
+ #include <Solid/StorageAccess>
++#include <Solid/StorageDrive>
++#include <Solid/StorageVolume>
+ 
+ PlacesPanel::PlacesPanel(QWidget *parent)
+     : KFilePlacesView(parent)
+@@ -182,12 +187,31 @@ void PlacesPanel::slotUrlsDropped(const QUrl &dest, QDropEvent *event, QWidget *
+ 
+ void PlacesPanel::slotContextMenuAboutToShow(const QModelIndex &index, QMenu *menu)
+ {
+-    Q_UNUSED(menu);
+-
+     auto *placesModel = static_cast<KFilePlacesModel *>(model());
+     const QUrl url = placesModel->url(index);
+     const Solid::Device device = placesModel->deviceForIndex(index);
+ 
++    const auto volume = device.as<Solid::StorageVolume>();
++    const auto block = device.as<Solid::Block>();
++    Solid::Device driveDevice = device;
++    while (driveDevice.isValid() && !driveDevice.is<Solid::StorageDrive>()) {
++        driveDevice = driveDevice.parent();
++    }
++    const auto drive = driveDevice.as<Solid::StorageDrive>();
++    const QString partitionManager = QStandardPaths::findExecutable(QStringLiteral("partitionmanager"));
++    if (volume && block && drive && volume->usage() == Solid::StorageVolume::FileSystem &&
++        drive->driveType() != Solid::StorageDrive::CdromDrive &&
++        (drive->isRemovable() || drive->isHotpluggable()) && !partitionManager.isEmpty()) {
++        auto format = new QAction(QIcon::fromTheme(QStringLiteral("drive-removable-media")), i18nc("@action:inmenu", "Format…"), menu);
++        format->setObjectName(QStringLiteral("format_removable_drive"));
++        menu->addAction(format);
++        connect(format, &QAction::triggered, menu, [partitionManager, deviceNode = block->device()] {
++            auto job = new KIO::CommandLauncherJob(partitionManager, {QStringLiteral("--device"), deviceNode, QStringLiteral("--format")});
++            job->setDesktopName(QStringLiteral("org.kde.partitionmanager"));
++            job->start();
++        });
++    }
++
+     m_configureTrashAction->setVisible(url.scheme() == QLatin1String("trash"));
+     m_openInSplitView->setVisible(url.isValid());
+ 
+diff --git a/src/runscriptdialog.cpp b/src/runscriptdialog.cpp
+new file mode 100644
+index 000000000..f432bb192
+--- /dev/null
++++ b/src/runscriptdialog.cpp
+@@ -0,0 +1,57 @@
++/*
++ * SPDX-FileCopyrightText: 2026 Daniel Ramos
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#include "runscriptdialog.h"
++
++#include <KLocalizedString>
++#include <KShell>
++#include <KTerminalLauncherJob>
++
++#include <QDialogButtonBox>
++#include <QFileInfo>
++#include <QLabel>
++#include <QPlainTextEdit>
++#include <QPushButton>
++#include <QVBoxLayout>
++
++RunScriptDialog::RunScriptDialog(const QString &filePath, const QString &script, QWidget *parent)
++    : QDialog(parent)
++{
++    setWindowTitle(i18nc("@title:window", "Run in a terminal"));
++    setObjectName(QStringLiteral("runScriptDialog"));
++    auto layout = new QVBoxLayout(this);
++    auto path = new QLabel(filePath, this);
++    path->setTextFormat(Qt::PlainText);
++    path->setWordWrap(true);
++    layout->addWidget(path);
++    auto preview = new QPlainTextEdit(script, this);
++    preview->setObjectName(QStringLiteral("scriptPreview"));
++    preview->setReadOnly(true);
++    layout->addWidget(preview);
++    auto buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, this);
++    auto run = buttons->addButton(i18nc("@action:button", "Run in a terminal"), QDialogButtonBox::AcceptRole);
++    run->setObjectName(QStringLiteral("runScriptButton"));
++    auto cancel = buttons->button(QDialogButtonBox::Cancel);
++    cancel->setDefault(true);
++    cancel->setFocus();
++    layout->addWidget(buttons);
++    resize(640, 480);
++
++    QStringList command;
++    if (script.startsWith(QLatin1String("#!"))) {
++        command = KShell::splitArgs(script.section(QLatin1Char('\n'), 0, 0).mid(2));
++    }
++    if (command.isEmpty()) {
++        command.append(QStringLiteral("/bin/sh"));
++    }
++    command.append(filePath);
++    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
++    connect(buttons, &QDialogButtonBox::accepted, this, [this, command, filePath] {
++        auto job = new KTerminalLauncherJob(KShell::joinArgs(command));
++        job->setWorkingDirectory(QFileInfo(filePath).absolutePath());
++        job->start();
++        accept();
++    });
++}
+diff --git a/src/runscriptdialog.h b/src/runscriptdialog.h
+new file mode 100644
+index 000000000..e2ba1e5a3
+--- /dev/null
++++ b/src/runscriptdialog.h
+@@ -0,0 +1,17 @@
++/*
++ * SPDX-FileCopyrightText: 2026 Daniel Ramos
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#ifndef RUNSCRIPTDIALOG_H
++#define RUNSCRIPTDIALOG_H
++
++#include <QDialog>
++
++class RunScriptDialog : public QDialog
++{
++public:
++    explicit RunScriptDialog(const QString &filePath, const QString &script, QWidget *parent);
++};
++
++#endif
+diff --git a/src/tests/CMakeLists.txt b/src/tests/CMakeLists.txt
+index 919769a67..1cb8cfde1 100644
+--- a/src/tests/CMakeLists.txt
++++ b/src/tests/CMakeLists.txt
+@@ -70,6 +70,9 @@ LINK_LIBRARIES dolphinprivate dolphinstatic Qt6::Test KF6::FileMetaData)
+ 
+ # DolphinMainWindowTest (requires a real window desktop; not reliable on Windows CI)
+ if(NOT WIN32)
++    ecm_add_test(dolphinrecoveryactionstest.cpp ${CMAKE_SOURCE_DIR}/src/dolphin.qrc
++    TEST_NAME dolphinrecoveryactionstest
++    LINK_LIBRARIES dolphinprivate dolphinstatic Qt6::Test)
+     ecm_add_test(dolphinmainwindowtest.cpp testdir.cpp ${CMAKE_SOURCE_DIR}/src/dolphin.qrc
+     TEST_NAME dolphinmainwindowtest
+     LINK_LIBRARIES dolphinprivate dolphinstatic Qt6::Test)
+diff --git a/src/tests/data/fakecomputer.xml b/src/tests/data/fakecomputer.xml
+index 48be0461b..c0e7f5fd8 100644
+--- a/src/tests/data/fakecomputer.xml
++++ b/src/tests/data/fakecomputer.xml
+@@ -240,6 +240,10 @@
+                         <property key="isBlank">false</property>
+                         <property key="availableContent">data</property>
+                         <property key="mountPoint">/media/cdrom</property>
++                        <property key="device">/dev/sr0</property>
++                        <property key="usage">filesystem</property>
++                        <property key="isMounted">true</property>
++                        <property key="isIgnored">false</property>
+ 
+                         <property key="uuid">5011</property>
+                         <property key="size">731047936</property>
+diff --git a/src/tests/dolphinrecoveryactionstest.cpp b/src/tests/dolphinrecoveryactionstest.cpp
+new file mode 100644
+index 000000000..b055662cc
+--- /dev/null
++++ b/src/tests/dolphinrecoveryactionstest.cpp
+@@ -0,0 +1,311 @@
++/*
++ * SPDX-FileCopyrightText: 2026 Daniel Ramos
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#include "dolphincontextmenu.h"
++#include "dolphinmainwindow.h"
++#include "panels/places/placespanel.h"
++
++#include <KActionCollection>
++#include <KConfigGroup>
++#include <KFileItemActions>
++#include <KFilePlacesModel>
++#include <KSharedConfig>
++#include <KShell>
++#include <KStandardAction>
++#include <KXMLGUIFactory>
++
++#include <QDialog>
++#include <QDir>
++#include <QApplication>
++#include <QContextMenuEvent>
++#include <QDialogButtonBox>
++#include <QDomDocument>
++#include <QFile>
++#include <QItemSelectionModel>
++#include <QMenu>
++#include <QPlainTextEdit>
++#include <QPixmap>
++#include <QPushButton>
++#include <QScopeGuard>
++#include <QStandardPaths>
++#include <QTemporaryDir>
++#include <QTest>
++#include <QTimer>
++#include <QToolBar>
++#include <Solid/Block>
++#include <Solid/Device>
++
++static bool recordWindow(QWidget *widget, const QString &name)
++{
++    const QString directory = qEnvironmentVariable("DOLPHIN_PROOF_IMAGES");
++    if (directory.isEmpty()) {
++        return true;
++    }
++    return QDir().mkpath(directory) && widget->grab().save(directory + QLatin1Char('/') + name + QLatin1Char('-') + QGuiApplication::platformName() + QStringLiteral(".png"));
++}
++
++class DolphinRecoveryActionsTest : public QObject
++{
++    Q_OBJECT
++
++private Q_SLOTS:
++    void initTestCase();
++    void reloadInToolbar();
++    void customizedToolbar();
++    void reviewScript_data();
++    void reviewScript();
++    void executableScript();
++    void formatDrive_data();
++    void formatDrive();
++
++private:
++    QTemporaryDir m_directory;
++};
++
++void DolphinRecoveryActionsTest::initTestCase()
++{
++    QVERIFY(m_directory.isValid());
++    QStandardPaths::setTestModeEnabled(true);
++    const QString fakeHw = QFINDTESTDATA("data/fakecomputer.xml");
++    QVERIFY(!fakeHw.isEmpty());
++    qputenv("SOLID_FAKEHW", QFile::encodeName(fakeHw));
++    const QString terminal = m_directory.filePath(QStringLiteral("terminal"));
++    QFile file(terminal);
++    QVERIFY(file.open(QIODevice::WriteOnly));
++    const QByteArray wrapper("#!/bin/sh\nwhile [ \"$1\" != '-e' ]; do shift; done\nshift\nexec \"$@\"\n");
++    QCOMPARE(file.write(wrapper), wrapper.size());
++    file.close();
++    QVERIFY(file.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
++    auto config = KSharedConfig::openConfig();
++    KConfigGroup general(config, QStringLiteral("General"));
++    general.writeEntry("TerminalApplication", qEnvironmentVariableIsSet("DOLPHIN_TEST_REAL_TERMINAL") ? QStringLiteral("konsole") : KShell::quoteArg(terminal));
++    general.writeEntry("TerminalService", QString());
++    config->sync();
++}
++
++void DolphinRecoveryActionsTest::reloadInToolbar()
++{
++    DolphinMainWindow window;
++    window.openDirectories({QUrl::fromLocalFile(m_directory.path())}, false);
++    window.resize(1280, 800);
++    window.show();
++    QVERIFY(QTest::qWaitForWindowExposed(&window));
++    const QAction *reload = window.actionCollection()->action(KStandardAction::name(KStandardAction::Redisplay));
++    QVERIFY(reload);
++    auto toolbar = window.findChild<QToolBar *>(QStringLiteral("mainToolBar"));
++    QVERIFY(toolbar);
++    QVERIFY(recordWindow(&window, QStringLiteral("toolbar")));
++    QVERIFY(toolbar->actions().contains(reload));
++    QVERIFY(toolbar->widgetForAction(reload)->isVisible());
++}
++
++void DolphinRecoveryActionsTest::customizedToolbar()
++{
++    QString path;
++    QDomDocument document;
++    {
++        DolphinMainWindow window;
++        path = window.localXMLFile();
++        document = window.domDocument();
++    }
++    QVERIFY(!path.isEmpty());
++    QVERIFY(!QFile::exists(path));
++    const auto cleanup = qScopeGuard([path] { QFile::remove(path); });
++    QDomElement toolbar;
++    const auto toolbars = document.elementsByTagName(QStringLiteral("ToolBar"));
++    for (int index = 0; index < toolbars.size(); ++index) {
++        const auto element = toolbars.at(index).toElement();
++        if (element.attribute(QStringLiteral("name")) == QLatin1String("mainToolBar")) {
++            toolbar = element;
++            break;
++        }
++    }
++    QVERIFY(!toolbar.isNull());
++    while (!toolbar.firstChild().isNull()) {
++        toolbar.removeChild(toolbar.firstChild());
++    }
++    toolbar.setAttribute(QStringLiteral("noMerge"), QStringLiteral("1"));
++    for (const auto &name : {QStringLiteral("go_home"), QStringLiteral("hamburger_menu")}) {
++        auto action = document.createElement(QStringLiteral("Action"));
++        action.setAttribute(QStringLiteral("name"), name);
++        toolbar.appendChild(action);
++    }
++    QVERIFY(KXMLGUIFactory::saveConfigFile(document, path));
++    DolphinMainWindow window;
++    window.openDirectories({QUrl::fromLocalFile(m_directory.path())}, false);
++    window.resize(1280, 800);
++    window.show();
++    QVERIFY(QTest::qWaitForWindowExposed(&window));
++    auto liveToolbar = window.findChild<QToolBar *>(QStringLiteral("mainToolBar"));
++    QVERIFY(liveToolbar);
++    const QAction *home = window.actionCollection()->action(QStringLiteral("go_home"));
++    QVERIFY(home);
++    QVERIFY(liveToolbar->actions().contains(home));
++    const QAction *reload = window.actionCollection()->action(KStandardAction::name(KStandardAction::Redisplay));
++    QVERIFY(reload);
++    QVERIFY(!liveToolbar->actions().contains(reload));
++    QVERIFY(recordWindow(&window, QStringLiteral("customized-toolbar")));
++}
++
++void DolphinRecoveryActionsTest::reviewScript_data()
++{
++    QTest::addColumn<QString>("shebang");
++    QTest::addColumn<bool>("run");
++    QTest::newRow("cancel-sh") << QStringLiteral("#!/bin/sh\n") << false;
++    QTest::newRow("run-sh") << QStringLiteral("#!/bin/sh\n") << true;
++    QTest::newRow("run-bash") << QStringLiteral("#!/bin/bash -e\n") << true;
++    QTest::newRow("run-env") << QStringLiteral("#!/usr/bin/env bash\n") << true;
++    QTest::newRow("run-without-shebang") << QString() << true;
++}
++
++void DolphinRecoveryActionsTest::reviewScript()
++{
++    QFETCH(QString, shebang);
++    QFETCH(bool, run);
++    const QString marker = m_directory.filePath(QStringLiteral("marker"));
++    QFile::remove(marker);
++    const QString path = m_directory.filePath(QStringLiteral("script '$()\n.sh"));
++    const QString script = shebang + QStringLiteral("printf verified > %1\n").arg(KShell::quoteArg(marker));
++    QFile file(path);
++    QVERIFY(file.open(QIODevice::WriteOnly));
++    const QByteArray contents = script.toUtf8();
++    QCOMPARE(file.write(contents), contents.size());
++    file.close();
++    QVERIFY(file.setPermissions(QFile::ReadOwner | QFile::WriteOwner));
++    const auto permissions = file.permissions();
++    const KFileItem item(QUrl::fromLocalFile(path));
++    QVERIFY(!item.isExecutable());
++    DolphinMainWindow window;
++    window.openDirectories({QUrl::fromLocalFile(m_directory.path())}, false);
++    KFileItemActions actions;
++    DolphinContextMenu menu(&window, item, {item}, QUrl::fromLocalFile(m_directory.path()), &actions);
++    auto action = menu.findChild<QAction *>(QStringLiteral("run_in_terminal"));
++    QVERIFY(action);
++    bool previewMatches = false;
++    bool ranBeforeConsent = true;
++    bool previewRecorded = true;
++    QTimer::singleShot(0, &menu, [&] {
++        auto dialog = window.findChild<QDialog *>(QStringLiteral("runScriptDialog"));
++        if (!dialog) {
++            if (auto unexpected = qobject_cast<QDialog *>(QApplication::activeModalWidget())) {
++                unexpected->reject();
++            }
++            return;
++        }
++        auto preview = dialog->findChild<QPlainTextEdit *>(QStringLiteral("scriptPreview"));
++        previewMatches = preview && preview->isReadOnly() && preview->toPlainText() == script;
++        previewRecorded = recordWindow(dialog, QStringLiteral("script-") + QString::fromLatin1(QTest::currentDataTag()));
++        QTest::qWait(300); // UNAVOIDABLE: No signal reports the absence of execution while the user reviews the script.
++        ranBeforeConsent = QFile::exists(marker);
++        if (run) {
++            auto button = dialog->findChild<QPushButton *>(QStringLiteral("runScriptButton"));
++            if (button) {
++                button->click();
++            } else {
++                dialog->reject();
++            }
++        } else {
++            dialog->reject();
++        }
++    });
++    action->trigger();
++    QVERIFY(previewMatches);
++    QVERIFY(previewRecorded);
++    QVERIFY(!ranBeforeConsent);
++    QCOMPARE(file.permissions(), permissions);
++    if (run) {
++        QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(marker), 30000);
++        QFile result(marker);
++        QVERIFY(result.open(QIODevice::ReadOnly));
++        QCOMPARE(result.readAll(), QByteArray("verified"));
++    } else {
++        QTest::qWait(300); // UNAVOIDABLE: No signal reports the absence of execution after cancellation.
++        QVERIFY(!QFile::exists(marker));
++    }
++}
++
++void DolphinRecoveryActionsTest::executableScript()
++{
++    const QString path = m_directory.filePath(QStringLiteral("executable.sh"));
++    QFile file(path);
++    QVERIFY(file.open(QIODevice::WriteOnly));
++    QVERIFY(file.write("#!/bin/sh\nexit 0\n") > 0);
++    file.close();
++    QVERIFY(file.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
++    const KFileItem item(QUrl::fromLocalFile(path));
++    DolphinMainWindow window;
++    window.openDirectories({QUrl::fromLocalFile(m_directory.path())}, false);
++    KFileItemActions actions;
++    DolphinContextMenu menu(&window, item, {item}, QUrl::fromLocalFile(m_directory.path()), &actions);
++    QVERIFY(!menu.findChild<QAction *>(QStringLiteral("run_in_terminal")));
++}
++
++void DolphinRecoveryActionsTest::formatDrive_data()
++{
++    QTest::addColumn<QString>("udi");
++    QTest::addColumn<bool>("formatAvailable");
++    QTest::newRow("removable") << QStringLiteral("/org/kde/solid/fakehw/volume_part1_size_993284096") << true;
++    QTest::newRow("internal") << QStringLiteral("/org/kde/solid/fakehw/volume_uuid_f00ba7") << false;
++    QTest::newRow("optical") << QStringLiteral("/org/kde/solid/fakehw/volume_uuid_5011") << false;
++}
++
++void DolphinRecoveryActionsTest::formatDrive()
++{
++    QFETCH(QString, udi);
++    QFETCH(bool, formatAvailable);
++    const QByteArray previousPath = qgetenv("PATH");
++    const auto restorePath = qScopeGuard([previousPath] { qputenv("PATH", previousPath); });
++    qputenv("PATH", QFile::encodeName(m_directory.path()) + ':' + previousPath);
++    const QString marker = m_directory.filePath(QStringLiteral("format-arguments"));
++    QFile::remove(marker);
++    QFile executable(m_directory.filePath(QStringLiteral("partitionmanager")));
++    QVERIFY(executable.open(QIODevice::WriteOnly));
++    const QByteArray script = QStringLiteral("#!/bin/sh\nprintf '%s\\n' \"$@\" > %1\n").arg(KShell::quoteArg(marker)).toUtf8();
++    QCOMPARE(executable.write(script), script.size());
++    executable.close();
++    QVERIFY(executable.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
++    PlacesPanel panel(nullptr);
++    auto model = qobject_cast<KFilePlacesModel *>(panel.model());
++    QVERIFY(model);
++    auto deviceIndex = [&] {
++        for (int row = 0; row < model->rowCount(); ++row) {
++            const auto index = model->index(row, 0);
++            if (model->deviceForIndex(index).udi() == udi) {
++                return index;
++            }
++        }
++        return QModelIndex();
++    };
++    QTRY_VERIFY_WITH_TIMEOUT(deviceIndex().isValid(), 30000);
++    const auto index = deviceIndex();
++    bool found = false;
++    connect(&panel, &KFilePlacesView::contextMenuAboutToShow, &panel, [&](const QModelIndex &, QMenu *menu) {
++        QTimer::singleShot(0, menu, [&, menu] {
++            auto action = menu->findChild<QAction *>(QStringLiteral("format_removable_drive"));
++            found = action && action->isVisible();
++            if (action) {
++                action->trigger();
++            }
++            menu->close();
++        });
++    });
++    panel.selectionModel()->setCurrentIndex(index, QItemSelectionModel::ClearAndSelect);
++    QContextMenuEvent event(QContextMenuEvent::Keyboard, QPoint(), QPoint());
++    QApplication::sendEvent(&panel, &event);
++    QCOMPARE(found, formatAvailable);
++    if (formatAvailable) {
++        QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(marker), 30000);
++        QFile arguments(marker);
++        QVERIFY(arguments.open(QIODevice::ReadOnly));
++        const auto block = model->deviceForIndex(index).as<Solid::Block>();
++        QVERIFY(block);
++        QCOMPARE(arguments.readAll(), QStringLiteral("--device\n%1\n--format\n").arg(block->device()).toUtf8());
++    } else {
++        QVERIFY(!QFile::exists(marker));
++    }
++}
++
++QTEST_MAIN(DolphinRecoveryActionsTest)
++#include "dolphinrecoveryactionstest.moc"
