@@ -8,7 +8,7 @@ OUT=${OUT:?Set OUT to the workspace output directory}
 VERSION=20261010.2~sparky9~0
 PACKAGE=sparky-stereo-kernel-settings
 DEPENDS='libpam-modules, systemd, systemd-zram-generator, udev'
-FILES='etc/security/limits.d/20-sparky-audio.conf usr/lib/modules-load.d/sparky-stereo.conf usr/lib/sysctl.d/70-sparky-stereo.conf usr/lib/systemd/zram-generator.conf.d/50-sparky-stereo.conf usr/lib/tmpfiles.d/sparky-thp.conf usr/lib/udev/rules.d/60-sparky-block.rules usr/lib/udev/rules.d/70-sparky-ntsync.rules usr/lib/udev/rules.d/99-sparky-audio.rules'
+FILES='etc/security/limits.d/20-sparky-audio.conf usr/lib/modules-load.d/sparky-stereo.conf usr/lib/sysctl.d/70-sparky-stereo.conf usr/lib/systemd/zram-generator.conf.d/50-sparky-stereo.conf usr/lib/tmpfiles.d/sparky-thp.conf usr/lib/tmpfiles.d/sparky-tmp.conf usr/lib/udev/rules.d/60-sparky-block.rules usr/lib/udev/rules.d/70-sparky-ntsync.rules usr/lib/udev/rules.d/99-sparky-audio.rules'
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.kernel-settings.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
@@ -34,6 +34,28 @@ Description: Kernel tunables for Sparky Stereo OS
   where the hardware needs it.
 EOT
 printf '%s\n' /etc/security/limits.d/20-sparky-audio.conf >"$D/DEBIAN/conffiles"
+cat >"$D/DEBIAN/postinst" <<'EOT'
+#!/bin/sh
+set -e
+# /tmp on disk (Daniel), the way Debian's trixie release notes describe it (5.1.6: systemctl mask tmp.mount, then reboot).
+# Once, when this version first arrives; an administrator's own tmp.mount is left alone, and unmasking it is respected.
+if [ "$1" = configure ] && dpkg --compare-versions "${2:-0}" lt 20261010.2~sparky9~0 && [ ! -e /etc/systemd/system/tmp.mount ]; then
+	systemctl mask tmp.mount >/dev/null 2>&1 || ln -s /dev/null /etc/systemd/system/tmp.mount
+	mkdir -p /var/lib/sparky-stereo-kernel-settings
+	: >/var/lib/sparky-stereo-kernel-settings/tmp-mount-masked
+fi
+EOT
+cat >"$D/DEBIAN/postrm" <<'EOT'
+#!/bin/sh
+set -e
+if [ "$1" = purge ] && [ -e /var/lib/sparky-stereo-kernel-settings/tmp-mount-masked ]; then
+	if [ "$(readlink /etc/systemd/system/tmp.mount 2>/dev/null)" = /dev/null ]; then
+		rm -f /etc/systemd/system/tmp.mount
+	fi
+	rm -rf /var/lib/sparky-stereo-kernel-settings
+fi
+EOT
+chmod 755 "$D/DEBIAN/postinst" "$D/DEBIAN/postrm"
 (cd "$D" && find etc usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
 dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${PACKAGE}_${VERSION}_all.deb"
 
