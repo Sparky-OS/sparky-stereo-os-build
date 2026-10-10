@@ -5,16 +5,17 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=20261010.1~sparky9~0
+VERSION=20261010.2~sparky9~0
 PACKAGE=sparky-stereo-kernel-settings
-DEPENDS='libpam-modules, systemd, udev'
-FILES='etc/security/limits.d/20-sparky-audio.conf usr/lib/modules-load.d/sparky-stereo.conf usr/lib/sysctl.d/70-sparky-stereo.conf usr/lib/tmpfiles.d/sparky-thp.conf usr/lib/udev/rules.d/60-sparky-block.rules usr/lib/udev/rules.d/70-sparky-ntsync.rules usr/lib/udev/rules.d/99-sparky-audio.rules'
+DEPENDS='libpam-modules, systemd, systemd-zram-generator, udev'
+FILES='etc/security/limits.d/20-sparky-audio.conf usr/lib/modules-load.d/sparky-stereo.conf usr/lib/sysctl.d/70-sparky-stereo.conf usr/lib/systemd/zram-generator.conf.d/50-sparky-stereo.conf usr/lib/tmpfiles.d/sparky-thp.conf usr/lib/udev/rules.d/60-sparky-block.rules usr/lib/udev/rules.d/70-sparky-ntsync.rules usr/lib/udev/rules.d/99-sparky-audio.rules'
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.kernel-settings.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 D=$WORK/$PACKAGE
 mkdir -p "$D/DEBIAN" "$D/usr/share/doc/$PACKAGE"
 for f in $FILES; do install -Dm644 "$HERE/$f" "$D/$f"; done
+install -Dm755 "$HERE/usr/libexec/sparky-stereo/zram-auto" "$D/usr/libexec/sparky-stereo/zram-auto"
 install -m644 "$HERE/copyright" "$D/usr/share/doc/$PACKAGE/copyright"
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
 cat >"$D/DEBIAN/control" <<EOT
@@ -29,7 +30,8 @@ Priority: optional
 Homepage: https://sparkylinux.org
 Description: Kernel tunables for Sparky Stereo OS
   Sysctl, udev, tmpfiles, modules-load and audio-limit settings that replace
-  kernel patches of performance kernels. Closes kexec after boot.
+  kernel patches of performance kernels. Closes kexec after boot. zram only
+  where the hardware needs it.
 EOT
 printf '%s\n' /etc/security/limits.d/20-sparky-audio.conf >"$D/DEBIAN/conffiles"
 (cd "$D" && find etc usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
@@ -57,11 +59,11 @@ EOT
 cat >"$S/debian/changelog" <<EOT
 $PACKAGE ($VERSION) unstable; urgency=medium
 
-  * No zram: memory is never held captive; swap is the emergency swap
-    area, off at boot, deployed only under memory pressure. Swappiness 1
-    (Daniel's setting); swap read-ahead at the kernel default.
+  * zram by hardware: on with 8 GB of RAM or less or a swap area on slow or
+    fragile storage, off otherwise, through zram-generator's own set!
+    directive; ZRAM=auto|on|off in /etc/default/sparky-stereo-zram.
 
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Fri, 09 Oct 2026 12:00:00 -0300
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 10 Oct 2026 19:00:00 -0300
 EOT
 cp "$HERE/copyright" "$S/debian/copyright"
 mkdir -p "$S/debian/source"

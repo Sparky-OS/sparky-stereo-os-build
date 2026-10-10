@@ -1,0 +1,99 @@
+#!/bin/sh
+# Created by Daniel Ramos (Capitain Jack) 2026/10/10
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/10
+#
+# zram by hardware (Daniel, 2026-10-10: "auto by hardware is the design").
+# zram-generator runs this through its own set! directive and multiplies the
+# zram size by what it prints: 1 for a zram device, 0 for none (a device of
+# size 0 is discarded, so a capable machine gets no zram unit at all).
+# Auto: on with 8 GB of RAM or less (MemTotal up to 9 GiB), or when the swap
+# area sits on eMMC, an SD card, a rotating disk or removable storage; off
+# otherwise. ZRAM=on|off|auto in /etc/default/sparky-stereo-zram decides first.
+#   zram-auto            1 or 0
+#   zram-auto --explain  DECISION=, MODE=, REASON=, RAM_KIB=, STORAGE=
+set -u
+config=${SPARKY_ZRAM_CONFIG:-/etc/default/sparky-stereo-zram}
+cushion=${CUSHION_SWAP_CONFIG:-/etc/default/cushion-swap}
+fstab=${FSTAB_PATH:-/etc/fstab}
+meminfo=${MEMINFO_PATH:-/proc/meminfo}
+sysfs=${SYSFS_PATH:-/sys}
+limit_kib=${ZRAM_RAM_LIMIT_KIB:-9437184}
+
+setting() {
+	[ -r "$1" ] || return 0
+	sed -n "s/^[[:space:]]*$2=[\"']\{0,1\}\([^\"'#[:space:]]*\).*/\1/p" "$1" | tail -n 1
+}
+
+# MAJOR:MINOR of the device holding the swap area (or the root file system).
+area_devno() {
+	if [ -n "${ZRAM_AUTO_DEVNO:-}" ]; then
+		echo "$ZRAM_AUTO_DEVNO"
+		return
+	fi
+	area=$(setting "$cushion" AREA)
+	[ -n "$area" ] || area=$(awk '$1 !~ /^#/ && $3 == "swap" && ("," $4 ",") ~ /,noauto,/ { print $1; exit }' "$fstab" 2>/dev/null)
+	[ -n "$area" ] || area=/
+	case $area in
+	UUID=* | PARTUUID=* | LABEL=* | PARTLABEL=*) area=$(blkid -l -o device -t "$area" 2>/dev/null) ;;
+	esac
+	if [ -b "$area" ]; then
+		stat -L -c '%Hr:%Lr' "$area"
+	elif [ -e "$area" ]; then
+		source=$(findmnt -n -o SOURCE -T "$area" 2>/dev/null | sed 's/\[.*//')
+		[ -b "$source" ] && stat -L -c '%Hr:%Lr' "$source"
+	fi
+}
+
+# eMMC, SD card, rotating or removable: slow or fragile for swap. Follows a
+# partition to its disk and a device-mapper device to the disks under it.
+storage_kind() {
+	node=$(readlink -f "$sysfs/dev/block/$1" 2>/dev/null) || return
+	[ -d "$node" ] || return
+	[ -e "$node/partition" ] && node=$(dirname "$node")
+	for slave in "$node"/slaves/*; do
+		[ -e "$slave" ] || continue
+		kind=$(storage_kind "$(cat "$slave/dev")")
+		[ "$kind" = fast ] || { echo "$kind"; return; }
+	done
+	name=$(basename "$node")
+	case $name in
+	mmcblk*)
+		case $(cat "$node/device/type" 2>/dev/null) in
+		SD) echo sd-card; return ;;
+		*) echo emmc; return ;;
+		esac
+		;;
+	esac
+	[ "$(cat "$node/queue/rotational" 2>/dev/null)" = 1 ] && { echo rotating; return; }
+	[ "$(cat "$node/removable" 2>/dev/null)" = 1 ] && { echo removable; return; }
+	case $node in */usb*) echo usb; return ;; esac
+	echo fast
+}
+
+mode=$(setting "$config" ZRAM)
+ram=$(awk '$1 == "MemTotal:" { print $2 }' "$meminfo")
+devno=$(area_devno)
+storage=$( [ -n "$devno" ] && storage_kind "$devno")
+storage=${storage:-unknown}
+case $mode in
+on) decision=1 reason="switched on in $config" ;;
+off) decision=0 reason="switched off in $config" ;;
+*)
+	mode=auto
+	if [ "$ram" -le "$limit_kib" ]; then
+		decision=1 reason="$((ram / 1024)) MiB of RAM: 8 GB or less"
+	else
+		case $storage in
+		emmc | sd-card | rotating | removable | usb) decision=1 reason="swap area on $storage storage" ;;
+		*) decision=0 reason="$((ram / 1024)) MiB of RAM and the swap area on $storage storage" ;;
+		esac
+	fi
+	;;
+esac
+if [ "${1:-}" = --explain ]; then
+	printf 'DECISION=%s\nMODE=%s\nREASON=%s\nRAM_KIB=%s\nSTORAGE=%s\n' \
+		"$( [ "$decision" = 1 ] && echo on || echo off)" "$mode" "$reason" "$ram" "$storage"
+else
+	echo "$decision"
+fi
