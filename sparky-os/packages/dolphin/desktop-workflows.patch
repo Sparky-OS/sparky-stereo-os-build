@@ -66,19 +66,19 @@ index b9b6edd8d..8066a0acc 100644
              addAction(m_mainWindow->actionCollection()->action(QStringLiteral("show_target")));
              addSeparator();
 diff --git a/src/dolphinui.rc b/src/dolphinui.rc
-index 395436d74..7aff1e218 100644
+index 395436d74..172d8a332 100644
 --- a/src/dolphinui.rc
 +++ b/src/dolphinui.rc
 @@ -111,6 +111,7 @@
          <Action name="go_back" />
          <Action name="go_forward" />
          <Action name="view_settings" />
-+        <Action name="redisplay" />
++        <Action name="view_redisplay" />
          <Action name="url_navigators" />
          <Action name="split_view" />
          <Action name="split_stash" />
 diff --git a/src/panels/places/placespanel.cpp b/src/panels/places/placespanel.cpp
-index ed2341872..0d20aea52 100644
+index ed2341872..3ee6a97d6 100644
 --- a/src/panels/places/placespanel.cpp
 +++ b/src/panels/places/placespanel.cpp
 @@ -18,6 +18,7 @@
@@ -89,20 +89,21 @@ index ed2341872..0d20aea52 100644
  #include <KIO/DropJob>
  #include <KIO/Job>
  #include <KLocalizedString>
-@@ -27,8 +28,12 @@
+@@ -27,8 +28,13 @@
  #include <QMenu>
  #include <QMimeData>
  #include <QShowEvent>
 +#include <QStandardPaths>
  
 +#include <Solid/Block>
++#include <Solid/OpticalDrive>
  #include <Solid/StorageAccess>
 +#include <Solid/StorageDrive>
 +#include <Solid/StorageVolume>
  
  PlacesPanel::PlacesPanel(QWidget *parent)
      : KFilePlacesView(parent)
-@@ -182,12 +187,31 @@ void PlacesPanel::slotUrlsDropped(const QUrl &dest, QDropEvent *event, QWidget *
+@@ -182,12 +188,31 @@ void PlacesPanel::slotUrlsDropped(const QUrl &dest, QDropEvent *event, QWidget *
  
  void PlacesPanel::slotContextMenuAboutToShow(const QModelIndex &index, QMenu *menu)
  {
@@ -121,7 +122,7 @@ index ed2341872..0d20aea52 100644
 +    const auto drive = driveDevice.as<Solid::StorageDrive>();
 +    const QString partitionManager = QStandardPaths::findExecutable(QStringLiteral("partitionmanager"));
 +    if (volume && block && drive && volume->usage() == Solid::StorageVolume::FileSystem &&
-+        drive->driveType() != Solid::StorageDrive::CdromDrive &&
++        drive->driveType() != Solid::StorageDrive::CdromDrive && !driveDevice.is<Solid::OpticalDrive>() &&
 +        (drive->isRemovable() || drive->isHotpluggable()) && !partitionManager.isEmpty()) {
 +        auto format = new QAction(QIcon::fromTheme(QStringLiteral("drive-removable-media")), i18nc("@action:inmenu", "Format…"), menu);
 +        format->setObjectName(QStringLiteral("format_removable_drive"));
@@ -138,10 +139,10 @@ index ed2341872..0d20aea52 100644
  
 diff --git a/src/runscriptdialog.cpp b/src/runscriptdialog.cpp
 new file mode 100644
-index 000000000..f432bb192
+index 000000000..ea209b187
 --- /dev/null
 +++ b/src/runscriptdialog.cpp
-@@ -0,0 +1,57 @@
+@@ -0,0 +1,58 @@
 +/*
 + * SPDX-FileCopyrightText: 2026 Daniel Ramos
 + * SPDX-License-Identifier: GPL-2.0-or-later
@@ -190,10 +191,11 @@ index 000000000..f432bb192
 +    if (command.isEmpty()) {
 +        command.append(QStringLiteral("/bin/sh"));
 +    }
-+    command.append(filePath);
++    // KShell::quoteArg() drops a newline in a file name; single quotes keep it.
++    const QString quotedPath = QLatin1Char('\'') + QString(filePath).replace(QLatin1Char('\''), QLatin1String("'\\''")) + QLatin1Char('\'');
 +    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
-+    connect(buttons, &QDialogButtonBox::accepted, this, [this, command, filePath] {
-+        auto job = new KTerminalLauncherJob(KShell::joinArgs(command));
++    connect(buttons, &QDialogButtonBox::accepted, this, [this, command, quotedPath, filePath] {
++        auto job = new KTerminalLauncherJob(KShell::joinArgs(command) + QLatin1Char(' ') + quotedPath);
 +        job->setWorkingDirectory(QFileInfo(filePath).absolutePath());
 +        job->start();
 +        accept();

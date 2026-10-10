@@ -421,10 +421,10 @@ index 00000000..26919e7a
 +target_compile_definitions(formatactiontest PRIVATE ${partitionmanager_definitions})
 diff --git a/tests/formatactiontest.cpp b/tests/formatactiontest.cpp
 new file mode 100644
-index 00000000..d7981955
+index 00000000..df48b6e3
 --- /dev/null
 +++ b/tests/formatactiontest.cpp
-@@ -0,0 +1,159 @@
+@@ -0,0 +1,168 @@
 +/*
 +    SPDX-FileCopyrightText: 2026 Daniel Ramos
 +    SPDX-License-Identifier: GPL-3.0-or-later
@@ -432,6 +432,9 @@ index 00000000..d7981955
 +
 +#include "gui/partitionmanagerwidget.h"
 +
++#include <config.h>
++
++#include <backend/corebackendmanager.h>
 +#include <core/diskdevice.h>
 +#include <core/partition.h>
 +#include <core/partitiontable.h>
@@ -463,6 +466,8 @@ index 00000000..d7981955
 +void FormatActionTest::initTestCase()
 +{
 +    QStandardPaths::setTestModeEnabled(true);
++    Config::instance(QStringLiteral("partitionmanagerrc"));
++    QVERIFY(CoreBackendManager::self()->load(CoreBackendManager::defaultBackendName()));
 +    FileSystemFactory::init();
 +}
 +
@@ -520,10 +525,13 @@ index 00000000..d7981955
 +        }
 +        auto combo = dialog->findChild<QComboBox*>(QStringLiteral("fileSystem"));
 +        combo->setCurrentIndex(combo->findData(static_cast<int>(type)));
-+        QTimer::singleShot(0, dialog, [&] {
++        auto poll = new QTimer(dialog);
++        poll->setInterval(10);
++        connect(poll, &QTimer::timeout, dialog, [dialog, poll] {
 +            auto confirmation = qobject_cast<QDialog*>(QApplication::activeModalWidget());
-+            if (!confirmation)
++            if (!confirmation || confirmation == dialog)
 +                return;
++            poll->stop();
 +            for (auto button : confirmation->findChildren<QPushButton*>()) {
 +                QString text = button->text();
 +                text.remove(QLatin1Char('&'));
@@ -534,6 +542,7 @@ index 00000000..d7981955
 +            }
 +            confirmation->reject();
 +        });
++        poll->start();
 +        dialog->findChild<QPushButton*>(QStringLiteral("formatButton"))->click();
 +    });
 +    QCOMPARE(widget.onFormatPartition(), consent);
@@ -586,10 +595,10 @@ index 00000000..d7981955
 +#include "formatactiontest.moc"
 diff --git a/tests/formatdialogtest.cpp b/tests/formatdialogtest.cpp
 new file mode 100644
-index 00000000..03c2ad99
+index 00000000..76786020
 --- /dev/null
 +++ b/tests/formatdialogtest.cpp
-@@ -0,0 +1,119 @@
+@@ -0,0 +1,121 @@
 +/*
 +    SPDX-FileCopyrightText: 2026 Daniel Ramos
 +    SPDX-License-Identifier: GPL-3.0-or-later
@@ -597,6 +606,7 @@ index 00000000..03c2ad99
 +
 +#include "gui/formatdialog.h"
 +
++#include <backend/corebackendmanager.h>
 +#include <core/diskdevice.h>
 +#include <core/partition.h>
 +#include <core/partitiontable.h>
@@ -624,6 +634,7 @@ index 00000000..03c2ad99
 +
 +void FormatDialogTest::initTestCase()
 +{
++    QVERIFY(CoreBackendManager::self()->load(CoreBackendManager::defaultBackendName()));
 +    FileSystemFactory::init();
 +}
 +
