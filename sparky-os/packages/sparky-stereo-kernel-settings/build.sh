@@ -5,7 +5,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=20261010~sparky9~0
+VERSION=20261010.1~sparky9~0
 PACKAGE=sparky-stereo-kernel-settings
 DEPENDS='libpam-modules, systemd, udev'
 FILES='etc/security/limits.d/20-sparky-audio.conf usr/lib/modules-load.d/sparky-stereo.conf usr/lib/sysctl.d/70-sparky-stereo.conf usr/lib/tmpfiles.d/sparky-thp.conf usr/lib/udev/rules.d/60-sparky-block.rules usr/lib/udev/rules.d/70-sparky-ntsync.rules usr/lib/udev/rules.d/99-sparky-audio.rules'
@@ -58,8 +58,8 @@ cat >"$S/debian/changelog" <<EOT
 $PACKAGE ($VERSION) unstable; urgency=medium
 
   * No zram: memory is never held captive; swap is the emergency swap
-    file, on only under memory pressure. Swappiness and page-cluster
-    back to the kernel defaults.
+    area, off at boot, deployed only under memory pressure. Swappiness 1
+    (Daniel's setting); swap read-ahead at the kernel default.
 
  -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Fri, 09 Oct 2026 12:00:00 -0300
 EOT
