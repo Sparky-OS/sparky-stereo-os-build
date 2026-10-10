@@ -168,10 +168,11 @@ group('hardware-found', 'Hardware support installed when the hardware is found',
     'nvidia-vaapi-driver',
 ])
 
-# 8. System: apps from Flathub, containers, Android, snapshots, zram.
+# 8. System: apps from Flathub, containers, Android, snapshots. No zram (Daniel, 2026-10-10): the swap is an emergency swap
+# file, on only under memory pressure.
 group('system', 'System', [
     'flatpak', 'plasma-discover-backend-flatpak', 'distrobox', 'waydroid', 'btrfs-progs',
-    'timeshift', 'systemd-zram-generator', 'synaptic',   # snapshots: Timeshift (with grub-btrfs)
+    'timeshift', 'synaptic',   # snapshots: Timeshift (with grub-btrfs)
     'grub-btrfs', 'scx-scheds', 'ananicy-cpp', 'sunshine', 'protonup-qt', 'hhd', 'decky-loader',
 ])
 
