@@ -5,7 +5,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.1.0
+VERSION=0.2.0
 PACKAGE=sparky-stereo-game-performance
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.game-performance.XXXXXX")
@@ -54,6 +54,12 @@ Description: Hold the performance profile while a game runs
 EOF
 cat >"$S/debian/changelog" <<EOF
 $PACKAGE ($VERSION) unstable; urgency=medium
+
+  * Tell the Cushion Swap File that a game is opening.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 10 Oct 2026 18:00:00 -0300
+
+$PACKAGE (0.1.0) unstable; urgency=medium
 
   * Hold performance while a command runs, with native profile restoration.
 

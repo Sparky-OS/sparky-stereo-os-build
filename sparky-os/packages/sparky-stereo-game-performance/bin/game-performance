@@ -7,6 +7,11 @@ if (($# == 0)); then
 	printf 'Usage: game-performance COMMAND [ARGUMENT...]\n' >&2
 	exit 2
 fi
+# Tell the Cushion Swap File a game is opening (it samples memory faster
+# while the game loads, where the kernel has no PSI).
+if [[ -n ${XDG_RUNTIME_DIR:-} && -d $XDG_RUNTIME_DIR ]]; then
+	: >"$XDG_RUNTIME_DIR/cushion-swap-game-opening" 2>/dev/null || true
+fi
 if powerprofilesctl list | grep -q '^[[:space:]*]*performance:'; then
 	exec powerprofilesctl launch --profile performance \
 		--reason 'Game running through Sparky Stereo OS' \

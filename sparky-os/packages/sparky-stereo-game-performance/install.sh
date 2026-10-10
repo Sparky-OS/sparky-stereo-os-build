@@ -8,5 +8,5 @@ if [[ ${1:-install} == uninstall ]]; then
 	DEBIAN_FRONTEND=noninteractive apt-get -y purge sparky-stereo-game-performance
 else
 	: "${OUT:?Set OUT to the directory containing the built package}"
-	DEBIAN_FRONTEND=noninteractive apt-get -y install "$OUT/sparky-stereo-game-performance_0.1.0_all.deb"
+	DEBIAN_FRONTEND=noninteractive apt-get -y install "$OUT/sparky-stereo-game-performance_0.2.0_all.deb"
 fi

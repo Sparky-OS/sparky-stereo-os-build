@@ -1,0 +1,21 @@
+[Unit]
+Description=Cushion Swap File (swap deployed under memory pressure)
+Documentation=file:///usr/share/doc/sparky-stereo-cushion-swap/README.md
+After=local-fs.target swap.target
+Before=systemd-oomd.service
+# Daniel's own host version stays in charge where it is installed.
+ConditionPathExists=!/etc/systemd/system/cgm-swap-parachute.service
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/cushion-swap
+Restart=on-failure
+RestartSec=3
+OOMScoreAdjust=-1000
+RuntimeDirectory=cushion-swap
+RuntimeDirectoryMode=0755
+# No ProtectSystem=, PrivateTmp= or other namespace option, on purpose:
+# swapon/swapoff must act on the real system, not a private mount namespace.
+
+[Install]
+WantedBy=multi-user.target

@@ -38,5 +38,8 @@ while listing profiles also falls back to the command, with the client's error
 on stderr. A failure acquiring an available profile is returned by the client.
 The command's arguments, exit code and termination signal pass through.
 The helper adds no idle inhibitor and runs no screensaver or GPU command.
+Before the game starts it touches $XDG_RUNTIME_DIR/cushion-swap-game-opening:
+on a kernel without PSI, the Cushion Swap File samples memory faster while
+the game loads (sparky-stereo-cushion-swap README).
 
 Sources and measured tests: ../../power-idle/POWER-DEFAULTS.md
