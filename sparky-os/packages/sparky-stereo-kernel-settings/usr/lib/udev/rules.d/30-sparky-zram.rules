@@ -1,3 +1,0 @@
-# Sparky Stereo OS: with zram swap, prefer paging out anonymous pages: decompressing from zram is cheap, re-reading file pages from disk is not.
-# Source: CachyOS-Settings usr/lib/udev/rules.d/30-zram.rules (GPL-3.0). Zswap is off in this kernel (as in Debian), so only the swappiness part is kept.
-ACTION=="change", KERNEL=="zram0", ATTR{initstate}=="1", SYSCTL{vm.swappiness}="150"

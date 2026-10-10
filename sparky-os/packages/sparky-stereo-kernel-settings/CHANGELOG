@@ -1,4 +1,11 @@
 -------------------------------------------------------------------------------
+  Version 20261010~sparky9~0 (2026-10-10)
+-------------------------------------------------------------------------------
+  * No zram (Daniel): it keeps part of the user's RAM captive and does not help a machine with plenty of RAM; the edition's
+    swap is an emergency swap file, switched on only under memory pressure. Removed the zram-generator configuration, the zram
+    udev rule and the systemd-zram-generator dependency; vm.swappiness and vm.page-cluster are back to the kernel defaults
+
+-------------------------------------------------------------------------------
   Version 20261009.1~sparky9~0 (2026-10-09)
 -------------------------------------------------------------------------------
   * vm.max_map_count keeps SteamOS's value, with the reason for stereo: a game keeps the second eye's buffers and can map more regions than in 2D
