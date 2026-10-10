@@ -106,6 +106,13 @@ class Protocol(unittest.TestCase):
                         manager = None
                         registry = None
                         binds = 0
+                        next_id = [2]
+
+                        def new_id(value):
+                            # libwayland's wl_map_insert_at refuses a client id that skips the next free one
+                            self.assertEqual(value, next_id[0])
+                            next_id[0] += 1
+                            return value
 
                         def send(target, opcode, payload):
                             connection.sendall(struct.pack("=II", target, ((len(payload) + 8) << 16) | opcode) + payload)
@@ -123,17 +130,18 @@ class Protocol(unittest.TestCase):
                                 buffer += connection.recv(4096)
                             payload, buffer = buffer[8:size], buffer[size:]
                             if target == 1 and opcode == 1:
-                                registry = struct.unpack("=I", payload)[0]
+                                registry = new_id(struct.unpack("=I", payload)[0])
                                 for name, interface in ((10, "org_kde_kwin_dpms_manager"), (11, "wl_output")):
                                     send(registry, 0, struct.pack("=I", name) + probe.DpmsReader.string(interface) + struct.pack("=I", 1))
                             elif target == 1 and opcode == 0:
-                                callback = struct.unpack("=I", payload)[0]
+                                callback = new_id(struct.unpack("=I", payload)[0])
                                 send(callback, 0, struct.pack("=I", 0))
                             elif target == registry:
                                 self.assertEqual(opcode, 0)
                                 name, length = struct.unpack_from("=II", payload)
                                 version, identifier = struct.unpack_from("=II", payload, 8 + ((length + 3) & ~3))
                                 self.assertEqual(version, 1)
+                                new_id(identifier)
                                 if name == 10:
                                     manager = identifier
                                 else:
@@ -141,6 +149,7 @@ class Protocol(unittest.TestCase):
                             elif target == manager:
                                 self.assertEqual(opcode, 0)
                                 identifier, output = struct.unpack("=II", payload)
+                                new_id(identifier)
                                 send(identifier, 0, struct.pack("=I", 1))
                                 send(identifier, 1, struct.pack("=I", 3))
                                 send(identifier, 2, b"")

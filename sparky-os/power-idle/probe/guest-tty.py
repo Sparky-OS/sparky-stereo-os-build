@@ -43,7 +43,7 @@ class DpmsReader:
         self.connection.settimeout(5)
         self.connection.connect(path)
         self.buffer = b""
-        self.next_id = 3
+        self.next_id = 2
         self.globals = []
         self.states = {}
 
@@ -79,7 +79,9 @@ class DpmsReader:
                 self.buffer += data
             payload, self.buffer = self.buffer[8:size], self.buffer[size:]
             if target == 1 and opcode == 0:
-                raise RuntimeError("Wayland protocol error")
+                source, code, length = struct.unpack_from("=III", payload)
+                message = payload[12:12 + length - 1].decode(errors="replace")
+                raise RuntimeError(f"Wayland protocol error on object {source}, code {code}: {message}")
             if target == callback:
                 return
             if target == 2 and opcode == 0:
