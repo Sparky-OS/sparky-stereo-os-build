@@ -14,7 +14,9 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
 VERSION=${VERSION:-$(date +%Y%m%d)}   # second build of a day: VERSION=YYYYMMDD.1
-W=$(mktemp -d /K3D/temp/sparky-os/meta-build.XXXXXX)
+BUILD_ROOT=${BUILD_ROOT:-/K3D/temp/sparky-os}
+mkdir -p "$BUILD_ROOT"
+W=$(mktemp -d "$BUILD_ROOT/meta-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 
 PKGS=$(python3 "$HERE/../../lists/make-meta.py" --list)
