@@ -357,7 +357,7 @@ generator_cases() {
 	run_gen() {
 		rm -rf "$W/gen"
 		env CUSHION_SWAP_CONFIG="${CONF:-/nonexistent}" FSTAB_PATH="$W/fstab" CMDLINE_PATH="$1" MEMINFO_PATH="$W/m" \
-			CUSHION_SWAP_AREA="${GAREA:-}" sh "$g" "$W/gen" 2>/dev/null
+			CUSHION_SWAP_AREA="${GAREA:-}" CGM_PARACHUTE_UNIT="${PUNIT:-/nonexistent}" sh "$g" "$W/gen" 2>/dev/null
 		[[ -e $W/gen/systemd-logind.service.d/50-cushion-swap.conf ]]
 	}
 	run_gen "$W/cmdline" && grep -qx 'Environment=SYSTEMD_BYPASS_HIBERNATION_MEMORY_CHECK=1' "$W/gen/systemd-logind.service.d/50-cushion-swap.conf" ||
@@ -373,7 +373,10 @@ generator_cases() {
 	CONF=$W/conf-off GAREA=$W/big-area run_gen "$W/cmdline" && { echo "  switched off: no drop-in expected"; ok=1; }
 	printf 'HIBERNATE="off"\n' >"$W/conf-hib"
 	CONF=$W/conf-hib GAREA=$W/big-area run_gen "$W/cmdline" && { echo "  HIBERNATE=off: no drop-in expected"; ok=1; }
-	rm -f "$W/small-area" "$W/big-area"
+	: >"$W/cgm-swap-parachute.service"
+	PUNIT=$W/cgm-swap-parachute.service GAREA=$W/big-area run_gen "$W/cmdline" &&
+		{ echo "  Daniel's own parachute installed: no drop-in expected"; ok=1; }
+	rm -f "$W/small-area" "$W/big-area" "$W/cgm-swap-parachute.service"
 	return $ok
 }
 

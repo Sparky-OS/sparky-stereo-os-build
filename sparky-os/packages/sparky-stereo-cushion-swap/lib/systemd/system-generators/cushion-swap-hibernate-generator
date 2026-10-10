@@ -27,6 +27,8 @@ say() {
 	echo "cushion-swap-hibernate-generator: $*" >&2
 }
 
+# Daniel's own host version stays in charge where it is installed (as in the units).
+[ -e "${CGM_PARACHUTE_UNIT:-/etc/systemd/system/cgm-swap-parachute.service}" ] && exit 0
 [ "$(setting CUSHION_SWAP)" = off ] && exit 0
 [ "$(setting HIBERNATE)" = off ] && exit 0
 
