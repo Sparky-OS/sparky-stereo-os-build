@@ -149,6 +149,13 @@ def tasks():
                 ['sparky-stereo-desktop'], available(sorted(RB[r]['2d'])))
     return t
 
+# Breaks per meta-package: older builds that do not work with the stack we ship.
+# libkf6idletime6 built against Qt 6.10 gets no Wayland interface from Qt 6.11 (QWaylandApplication
+# revision 2), so no dim, screen-off or lock happens (Daniel, 2026-10-10: until our qt6-base carries it, ORDER item 31).
+BREAKS = {
+    'sparky-stereo-desktop': ['libkf6idletime6 (<< 6.30.0-2)'],
+}
+
 # name: (title line, body, depends, recommends)
 META = {
     'sparky-stereo-desktop': (
@@ -258,6 +265,8 @@ def main():
             f.append(('Depends', ', '.join(dep)))
         if rec:
             f.append(('Recommends', ', '.join(rec)))
+        if pkg in BREAKS:
+            f.append(('Breaks', ', '.join(BREAKS[pkg])))
         f += [('Section', 'System'), ('Priority', 'optional'), ('Homepage', 'https://sparkylinux.org'),
               ('Description', title + '\n  ' + body)]
         with open(os.path.join(d, 'DEBIAN', 'control'), 'w') as c:
