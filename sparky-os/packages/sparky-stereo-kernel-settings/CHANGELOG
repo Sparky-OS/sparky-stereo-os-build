@@ -1,4 +1,12 @@
 -------------------------------------------------------------------------------
+  Version 20261010.3~sparky9~0 (2026-10-10)
+-------------------------------------------------------------------------------
+  * The rule for your own sysctl values, in the README and at the top of 70-sparky-stereo.conf (Daniel): name your file
+    71-*.conf to 99-*.conf (99-mine.conf), or put a file of the same name in /etc/sysctl.d to replace ours; ours stays 70,
+    after linux-sysctl-defaults' 50-default.conf
+  * tests/sysctl-order-test.sh checks the rule with systemd's own file ordering
+
+-------------------------------------------------------------------------------
   Version 20261010.2~sparky9~0 (2026-10-10)
 -------------------------------------------------------------------------------
   * zram by hardware (Daniel): off on capable machines, on with 8 GB of RAM or less or a swap area on eMMC, an SD card, a
