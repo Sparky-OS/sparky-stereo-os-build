@@ -65,7 +65,9 @@ def lst(name):
 
 # Packages of ours (sparky-os/repo) the lists do not carry, because apt did not offer them
 # when make-lists.py ran.
-OURS_HARDWARE = ['pipewire-bluez5-codec-aac']
+# sparky-stereo-hardware is the hardware setup itself and ships the GPU vendors' APT preferences
+# (NVIDIA and AMD repositories); in Depends so every install, the ISO included, has the guards.
+OURS_HARDWARE = ['pipewire-bluez5-codec-aac', 'sparky-stereo-hardware']
 
 # The edition's video player, VLC Stereo (installed beside the distribution's VLC; its PipeWire
 # output is a package of its own), and the audio output that goes with it.
