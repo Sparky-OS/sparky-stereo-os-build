@@ -37,6 +37,17 @@ Build:
 -------------
 OUT=/path/to/workspace/out ./build.sh (inside debian:testing)
 
+Rig drivers:
+-------------
+Flight and racing access is selected from exact USB pairs in
+share/rig-devices.json, with a source for every pair. Stable T300/T248 and
+Fanatec models select their DKMS package and the running kernel's exact headers.
+Experimental models, an unidentified Thrustmaster initialization device and
+the optional Logitech replacement remain candidates. Select one explicitly
+with --rig-driver PACKAGE; the helper rejects a package without a detected match.
+Use --dry-run first to inspect the plan. The setup does not load a wheel driver
+into a running kernel. Reconnect or reboot after installation.
+
 Install:
 -------------
 su

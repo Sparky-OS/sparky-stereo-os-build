@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/08
+# Last update 2026/10/10
 set -euo pipefail
 if ((EUID != 0)); then echo 'Run as root (use the Hardware Setup menu entry).'; exit 1; fi
 export LC_ALL=C.UTF-8
@@ -13,16 +13,19 @@ ROOT=
 fixture=
 dry=false
 auto=false
+rig_driver=
 while (($#)); do
 	case "$1" in
 		--auto) auto=true ;;
 		--dry-run) dry=true ;;
 		--fixture) shift; fixture=${1:?Missing fixture directory} ;;
-		--help) echo 'sparky-stereo-hardware [--auto] [--dry-run] [--fixture DIRECTORY]'; exit 0 ;;
+		--rig-driver) shift; rig_driver=${1:?Missing rig driver package} ;;
+		--help) echo 'sparky-stereo-hardware [--auto] [--dry-run] [--fixture DIRECTORY] [--rig-driver PACKAGE]'; exit 0 ;;
 		*) echo "Unknown option: $1" >&2; exit 2 ;;
 	esac
 	shift
 done
+case "$rig_driver" in ''|hid-tmff2-dkms|hid-fanatecff-dkms|new-lg4ff-dkms) ;; *) echo 'Unknown rig driver' >&2; exit 2 ;; esac
 if [[ -n "$fixture" ]] && ! $dry; then echo 'Fixtures require --dry-run' >&2; exit 2; fi
 if [[ -e /.dockerenv && -z "$fixture" ]]; then
 	echo 'In a container use --fixture DIRECTORY --dry-run; hardware probing is disabled.' >&2
@@ -77,6 +80,12 @@ else
 	nvidia-detect >"$FACTS/nvidia-detect" 2>&1 || log 'nvidia-detect could not recommend a driver; use the edition compatibility table'
 fi
 python3 "$LIB/detect.py" "$FACTS" "$SHARE" >"$WORK/plan"
+if [[ -n "$rig_driver" ]]; then
+	if ! awk -F '\t' -v package="$rig_driver" '($1 == "candidate" || $1 == "package") && $2 == package {found=1} END {exit !found}' "$WORK/plan"; then
+		log "No detected rig matches $rig_driver"; exit 2
+	fi
+	printf 'package\t%s\n' "$rig_driver" >>"$WORK/plan"
+fi
 cat "$WORK/plan"
 log 'nvidia-detect report:'
 cat "$FACTS/nvidia-detect"
@@ -103,7 +112,7 @@ if ! $auto; then
 	yad --text-info --title="$LOCAL1" --filename="$WORK/plan" --width=760 --height=500 --button="$LOCAL2:1" --button="$LOCAL3:0" || exit 0
 	# The child owns the execution lock; release it before launching the visible terminal.
 	flock -u 9
-	exec env SHELL=/bin/bash sparky-xterm "/usr/bin/sparky-stereo-hardware --auto"
+	exec env SHELL=/bin/bash sparky-xterm "/usr/bin/sparky-stereo-hardware --auto ${rig_driver:+--rig-driver $rig_driver}"
 fi
 mapfile -t packages < <(awk -F '\t' '$1 == "package" {print $2}' "$WORK/plan")
 for package in "${packages[@]}"; do
@@ -135,7 +144,10 @@ if grep -Fxq $'action\tcreative-msi' "$WORK/plan"; then
 	setup_creative || failed=1
 fi
 for package in "${packages[@]}"; do
-	case "$package" in evdi-dkms|xpadneo-dkms|steam-devices) apt_install "$package" ;; esac
+	case "$package" in
+		evdi-dkms|xpadneo-dkms|steam-devices|sparky-sim-hidraw) apt_install "$package" ;;
+		hid-tmff2-dkms|hid-fanatecff-dkms|new-lg4ff-dkms) setup_rig_driver "$package" || failed=1 ;;
+	esac
 done
 log "Hardware setup finished, errors=$failed. Firmware and driver changes may need a reboot."
 exit "$failed"

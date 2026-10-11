@@ -1,9 +1,10 @@
 #!/usr/bin/python3
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/08
+# Last update 2026/10/10
 """Turn captured hardware facts into a deterministic installation plan."""
 import pathlib
+import json
 import re
 import sys
 
@@ -92,9 +93,19 @@ if amd_display and "AuthenticAMD" in vendors:
 
 xbox_usb = {"028e", "028f", "02d1", "02dd", "02e3", "02ea", "0b00", "0b0a", "0b12"}
 xbox_bt = {"02e0", "02fd", "0b05", "0b13", "0b20", "0b22"}
+rigs = json.loads((data / "rig-devices.json").read_text())
+rig_ids = {(row["vendor"], row["product"]): row for row in rigs}
 pad = "ID_INPUT_JOYSTICK=1" in read("input-properties")
 for vendor, product in re.findall(r"\bID ([0-9a-fA-F]{4}):([0-9a-fA-F]{4})\b", read("lsusb")):
     vendor, product = vendor.lower(), product.lower()
+    if (vendor, product) in rig_ids:
+        rig = rig_ids[vendor, product]
+        match(f"{rig['name']} {vendor}:{product}", "sparky-sim-hidraw")
+        if rig.get("driver"):
+            if rig["policy"] == "stable":
+                packages.add(rig["driver"])
+            else:
+                emit("candidate", f"{rig['driver']}\t{vendor}:{product}: {rig['policy']}; keep the current driver until selected")
     if vendor == "17e9":
         match(f"DisplayLink USB {vendor}:{product}", "evdi-dkms")
     if vendor == "045e" and product in xbox_usb:

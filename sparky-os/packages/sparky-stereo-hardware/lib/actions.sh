@@ -1,11 +1,21 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/08
+# Last update 2026/10/10
 
 log() { printf '%s\n' "$*"; }
 run() { printf 'RUN'; printf ' %q' "$@"; printf '\n'; "$@"; }
 apt_install() { run env DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install "$@"; }
+
+setup_rig_driver() {
+	local package=$1 kernel headers
+	case "$package" in hid-tmff2-dkms|hid-fanatecff-dkms|new-lg4ff-dkms) ;; *) return 1 ;; esac
+	kernel=$(uname -r)
+	[[ $kernel =~ ^[a-zA-Z0-9][a-zA-Z0-9.+_-]*$ ]] || return 1
+	headers="linux-headers-$kernel"
+	apt_install --simulate "$headers" "$package" || return 1
+	apt_install "$headers" "$package"
+}
 
 sensor_modules() {
 	awk '/add this to \/etc\/modules:/ {wanted=1; next}
