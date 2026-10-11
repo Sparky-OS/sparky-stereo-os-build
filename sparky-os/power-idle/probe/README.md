@@ -5,6 +5,10 @@ modes as described in [GUEST-TTY.md](GUEST-TTY.md). It takes the output JSON
 path as its first argument and returns nonzero on a mismatch. No extra
 packages are required in the development guest.
 
+Hibernate with the Cushion Swap File: `guest-hibernate.py`,
+`guest-hibernate-setup.sh` and the Cushion Swap File's log on a real system,
+`guest-log.py`, are described in [GUEST-HIBERNATE.md](GUEST-HIBERNATE.md).
+
 Milestone 6's container runner is `run-power-defaults.sh`. Supply freshly
 extracted Debian packages `power-profiles-daemon`, `systemd-zram-generator`,
 `systemd`, `udev` and their libraries under `POWER_DEFAULTS_NATIVE_ROOT`.

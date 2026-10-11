@@ -5,23 +5,36 @@
 #
 # Guest only, as root, in a disposable VM: create what the installer must
 # create for Hibernate with the Cushion Swap File, or remove it again.
-#   guest-hibernate-setup.sh [AREA]     a swap file at least the size of RAM,
-#       its noauto line in /etc/fstab (off at boot), resume= and
-#       resume_offset= on the kernel command line, RESUME= in the initramfs
+#   guest-hibernate-setup.sh [AREA]
+#       a swap file at least the size of RAM as the Cushion area, its noauto
+#       line in /etc/fstab (off at boot), and /etc/initramfs-tools/conf.d/resume
+#       with RESUME=UUID=<its file system> and RESUME_OFFSET=<its first page>;
+#       nothing on the kernel command line (Sparky's layout)
+#   guest-hibernate-setup.sh --cmdline [AREA]
+#       the same, plus resume= and resume_offset= on the kernel command line
+#   guest-hibernate-setup.sh --partition DEVICE [AREA]
+#       Daniel's layout: the Cushion area stays a swap file, the image goes to
+#       the swap partition DEVICE (mkswap, no line in /etc/fstab), named in
+#       the file by RESUME=UUID=<its UUID>
 #   guest-hibernate-setup.sh --undo [AREA]
 # On Btrfs the file comes from "btrfs filesystem mkswapfile" (no copy on
 # write) and the offset from "btrfs inspect-internal map-swapfile -r".
 set -eu
-undo=0
-[[ ${1:-} == --undo ]] && { undo=1; shift; }
+mode=file
+partition=""
+case ${1:-} in
+--undo) mode=undo; shift ;;
+--cmdline) mode=cmdline; shift ;;
+--partition) mode=partition; partition=${2:?the swap partition}; shift 2 ;;
+esac
 area=${1:-/swapfile}
 grub=/etc/default/grub.d/sparky-stereo-resume.cfg
 initramfs=/etc/initramfs-tools/conf.d/resume
-if ((undo)); then
+if [[ $mode == undo ]]; then
 	swapoff "$area" 2>/dev/null || true
 	sed -i "\|^$area none swap noauto|d" /etc/fstab
 	rm -f "$area" "$grub" "$initramfs"
-	update-initramfs -u >/dev/null
+	update-initramfs -u >/dev/null 2>&1
 	update-grub >/dev/null 2>&1
 	echo "removed"
 	exit 0
@@ -45,9 +58,26 @@ if [[ $filesystem == btrfs ]]; then
 else
 	offset=$(filefrag -v -b4096 "$area" | awk '$1 == "0:" { sub(/\.\..*/, "", $4); print $4; exit }')
 fi
-echo "RESUME=UUID=$uuid" >"$initramfs"
-mkdir -p "$(dirname "$grub")"
-printf 'GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT resume=UUID=%s resume_offset=%s"\n' "$uuid" "$offset" >"$grub"
-update-initramfs -u >/dev/null
+rm -f "$grub"
+case $mode in
+file | cmdline)
+	printf 'RESUME=UUID=%s\nRESUME_OFFSET=%s\n' "$uuid" "$offset" >"$initramfs"
+	if [[ $mode == cmdline ]]; then
+		mkdir -p "$(dirname "$grub")"
+		printf 'GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT resume=UUID=%s resume_offset=%s"\n' "$uuid" "$offset" >"$grub"
+	fi
+	;;
+partition)
+	[[ $(lsblk -n -d -o TYPE "$partition") == part ]] || { echo "$partition is not a partition"; exit 1; }
+	findmnt -n -S "$partition" >/dev/null && { echo "$partition is mounted"; exit 1; }
+	type=$(blkid -o value -s TYPE "$partition" || true)
+	[[ -z $type || $type == swap ]] || { echo "$partition holds $type"; exit 1; }
+	swapoff "$partition" 2>/dev/null || true
+	[[ $type == swap ]] || mkswap -q "$partition"
+	grep -q "^[^#]*$(blkid -o value -s UUID "$partition")" /etc/fstab && { echo "$partition is in /etc/fstab"; exit 1; }
+	printf 'RESUME=UUID=%s\n' "$(blkid -o value -s UUID "$partition")" >"$initramfs"
+	;;
+esac
+update-initramfs -u 2>&1 | grep -v '^$' || true
 update-grub >/dev/null 2>&1
-echo "area=$area size_mib=$size_mib file_system=$filesystem resume=UUID=$uuid resume_offset=$offset"
+echo "mode=$mode area=$area size_mib=$size_mib file_system=$filesystem resume_file=$(tr '\n' ' ' <"$initramfs")"
