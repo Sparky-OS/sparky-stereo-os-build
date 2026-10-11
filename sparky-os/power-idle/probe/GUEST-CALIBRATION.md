@@ -16,10 +16,11 @@ stopped during measurement and restored afterwards; no swap is changed.
 
 `guest-calibrated-race.py OUT.json` needs the package's `tests/guest/memgrow.py`
 in the adjacent `guest/` directory. It uses the cached measured MiB/s as the
-allocator's target rate, with the cached safety rate as the daemon's assumed
+allocator's aggregate target rate across the same number of workers as the
+benchmark, with huge pages disabled, and the cached safety rate as the daemon's assumed
 rate. Actual allocation can slow under reclaim and swap I/O. Six deterministic
 random-phase starts must all complete and deploy. Two starts assume only
-1 MiB/s; at least one must lose to the OOM killer. The allocation target is
+1 MiB/s; at least one must lose to the OOM killer, matched by PID in dmesg. The allocation target is
 MemAvailable plus 512 MiB, ensuring the control actually exceeds available RAM.
 Only its own preallocated 2 GiB scratch disk swap is managed. Zram is temporarily
 stopped and runtime-masked so it cannot conceal the negative control; other

@@ -26,6 +26,8 @@ start = time.monotonic()
 done = 0
 while done < total:
     area = mmap.mmap(-1, chunk << 20, flags=mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS)
+    if os.environ.get("CUSHION_BASE_PAGES") == "yes":
+        area.madvise(mmap.MADV_NOHUGEPAGE)
     if mixed:
         for offset in range(0, chunk << 20, mmap.PAGESIZE):
             area[offset:offset + 1024] = os.urandom(1024)

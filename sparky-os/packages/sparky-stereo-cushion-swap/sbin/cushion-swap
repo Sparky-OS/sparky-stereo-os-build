@@ -65,7 +65,8 @@ LAUNCHERS=${LAUNCHERS:-reaper steam-launch-wr pressure-vessel pv-bwrap umu-run p
 LOG_EVERY_CYCLE=${LOG_EVERY_CYCLE:-no}
 # headroom (the default, Daniel 2026-10-10): the next sample comes before
 # memory could fall to the early-warning floor at MAX_ALLOC_MIB_S, never
-# sooner than MIN_INTERVAL_SEC and never later than the normal interval (his
+# sooner than MIN_INTERVAL_SEC unless the hard floor requires it, and
+# never later than the normal interval (his
 # 3 s poller, or the 10 s tick beside the PSI wake-up) or, while a game
 # opens, his 0.5 s. fixed: those intervals as they are.
 PACING=${PACING:-headroom}
@@ -125,7 +126,7 @@ BTRFS_BIN=${BTRFS_BIN:-btrfs}
 
 # Every cycle's arithmetic goes to standard output, which the unit appends
 # to /var/log/cushion-swap/cushion-swap.log (rotated by logrotate). Actions,
-# failures and the startup lines go to standard error as well, which the
+# failures go to standard error as well, which the
 # unit sends to the journal; once only where both are the same place.
 JOURNAL_TOO=0
 [[ /proc/self/fd/1 -ef /proc/self/fd/2 ]] || JOURNAL_TOO=1

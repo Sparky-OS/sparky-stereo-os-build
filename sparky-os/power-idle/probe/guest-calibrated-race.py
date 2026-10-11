@@ -42,6 +42,8 @@ try:
     root.mkdir(parents=True, exist_ok=True)
     cache = Path('/var/lib/cushion-swap/allocation-rate').read_text().split()
     measured, safe = int(cache[2]), int(cache[1])
+    workers = min(int(cache[4]), 4)
+    result['workers'] = workers
     result['rate_mib_s'] = measured
     result['safe_rate_mib_s'] = safe
     result['seed'] = 300
@@ -75,29 +77,41 @@ try:
             time.sleep(jitter)
             fields = dict(line.split(':',1) for line in Path('/proc/meminfo').read_text().splitlines())
             available = int(fields['MemAvailable'].split()[0]) // 1024
-            grow_log = (directory / 'grow.log').open('w')
-            child = subprocess.Popen(['python3', str(Path(__file__).parent / 'guest/memgrow.py'),
-                str(measured), str(available + 512), '2'], stdout=grow_log, stderr=grow_log)
-            children.append(child)
+            grow_logs, growers = [], []
             started = time.monotonic()
-            rc = child.wait(timeout=90)
+            for worker in range(workers):
+                handle = (directory / f'grow-{worker}.log').open('w')
+                grow_logs.append(handle)
+                child = subprocess.Popen(['python3', str(Path(__file__).parent / 'guest/memgrow.py'),
+                    str(measured / workers), str((available + 512 + workers - 1) // workers), '2'],
+                    stdout=handle, stderr=handle, env=os.environ | {"CUSHION_BASE_PAGES": "yes"})
+                children.append(child)
+                growers.append(child)
+            codes = [child.wait(timeout=max(1, 90 - (time.monotonic()-started))) for child in growers]
             elapsed = time.monotonic() - started
-            grow_log.close()
+            for handle in grow_logs:
+                handle.close()
             time.sleep(0.1)
             daemon.terminate()
             daemon.wait(timeout=5)
             log.close()
             deploy = 'DEPLOY succeeded' in (directory / 'daemon.log').read_text()
+            kernel = command('dmesg')
+            oom = any(code == -9 and f'Killed process {child.pid} ' in kernel
+                for code, child in zip(codes, growers))
             entry = {'case': label, 'run': i, 'jitter_s': jitter, 'rate_mib_s': measured,
                 'assumed_rate_mib_s': assumption, 'target_mib': available+512,
-                'grow_status': rc, 'deployed': deploy, 'seconds': elapsed,
-                'completed': rc == 0 and 'released' in (directory / 'grow.log').read_text()}
+                'grow_status': codes, 'grow_pids': [child.pid for child in growers],
+                'oom_kill_confirmed': oom, 'deployed': deploy, 'seconds': elapsed,
+                'grow_output': [(directory / f'grow-{worker}.log').read_text() for worker in range(workers)],
+                'completed': all(code == 0 for code in codes) and all('released' in
+                    (directory / f'grow-{worker}.log').read_text() for worker in range(workers))}
             result['runs'].append(entry)
             command('swapoff', str(area), check=False)
             if label == 'calibrated' and not (entry['completed'] and deploy):
                 raise AssertionError(f'calibrated race lost: {entry}')
     bad = [row for row in result['runs'] if row['case'] == 'underestimated']
-    assert any(not row['completed'] for row in bad), 'underestimated-rate control did not lose'
+    assert any(row['oom_kill_confirmed'] for row in bad), 'underestimated-rate control did not lose'
     result['verified'] = True
 except Exception as error:
     result['failure'] = str(error)
