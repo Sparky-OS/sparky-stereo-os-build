@@ -1,124 +1,88 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack)
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Guest-only check of the Cushion Swap File's log on a real system.
+"""Guest-only weekly rotation proof, temporarily enabling cycle logging.
 
-guest-log.py OUT.json [--seconds N]
-    The log file and its folder belong to root:adm with 0640 and 0750; the
-    file grows by one cycle at a time while the daemon runs; logrotate with
-    the shipped /etc/logrotate.d/sparky-stereo-cushion-swap, forced twice as
-    the daily timer would run it, rotates it (the second time compressing the
-    first copy), and the daemon goes on writing to the same path; the journal
-    holds the start and the thresholds but none of the per-cycle lines.
-Exit 0 when everything matches, 1 on a mismatch, 2 when the probe cannot run.
-Run as root in a disposable VM with sparky-stereo-cushion-swap installed.
+JSON is the first argument. Restores the settings file and service on exit.
+Forced rotations exercise copytruncate; an unforced repeat must not rotate.
+rotate 1 with delaycompress retains .1 uncompressed, never a .2.gz.
 """
-
 import argparse
-import gzip
 import json
 import os
 import re
 import stat
 import subprocess
-import sys
 import time
 from pathlib import Path
 
-LOG = Path("/var/log/cushion-swap/cushion-swap.log")
-CONF = Path("/etc/logrotate.d/sparky-stereo-cushion-swap")
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('output', type=Path)
+args = parser.parse_args()
+result = {'verified': False, 'failure': None}
+settings = Path('/etc/default/cushion-swap')
+log = Path('/var/log/cushion-swap/cushion-swap.log')
+conf = Path('/etc/logrotate.d/sparky-stereo-cushion-swap')
+original = None
+status = 0
 
-
-class Mismatch(Exception):
-    pass
-
-
-def command(*arguments, check=True):
-    result = subprocess.run(arguments, capture_output=True, text=True)
-    if check and result.returncode != 0:
-        raise RuntimeError(f"{' '.join(arguments)}: {result.stderr.strip()}")
-    return result.stdout.strip()
-
-
-def owner(path):
-    info = path.stat()
-    return {"mode": oct(stat.S_IMODE(info.st_mode)), "owner": command("stat", "-c", "%U:%G", str(path))}
-
+def command(*words):
+    return subprocess.run(words, capture_output=True, text=True, check=True).stdout.strip()
 
 def cycles(text):
-    return [int(number) for number in re.findall(r"sample: .* cycle=(\d+)", text)]
+    return [int(n) for n in re.findall(r'sample: .*cycle=(\d+)', text)]
 
-
-def run(args, result):
-    if command("systemctl", "is-active", "cushion-swap.service", check=False) != "active":
-        raise Mismatch("cushion-swap.service is not running")
-    unit = command("systemctl", "cat", "cushion-swap.service")
-    result["unit"] = [line for line in unit.splitlines() if line.startswith(("StandardOutput", "StandardError", "LogNamespace", "Protect", "Private"))]
-    result["folder"] = owner(LOG.parent)
-    result["file"] = owner(LOG)
-    if result["folder"] != {"mode": "0o750", "owner": "root:adm"} or result["file"] != {"mode": "0o640", "owner": "root:adm"}:
-        raise Mismatch(f"Ownership: folder {result['folder']}, file {result['file']}")
-    size0, cycles0 = LOG.stat().st_size, cycles(LOG.read_text(errors="replace"))
-    time.sleep(args.seconds)
-    size1, cycles1 = LOG.stat().st_size, cycles(LOG.read_text(errors="replace"))
-    result["growing"] = {"bytes": [size0, size1], "last_cycle": [cycles0[-1] if cycles0 else None, cycles1[-1] if cycles1 else None],
-                         "seconds": args.seconds}
-    if not (size1 > size0 and cycles1 and cycles0 and cycles1[-1] > cycles0[-1]):
-        raise Mismatch(f"The log file does not grow: {result['growing']}")
+try:
+    assert os.geteuid() == 0 and not Path('/.dockerenv').exists()
+    command('systemd-detect-virt', '--vm')
+    policy = conf.read_text().split()
+    assert 'weekly' in policy and policy[policy.index('rotate')+1] == '1'
+    assert not any(word in policy for word in ('daily','hourly','maxsize','size'))
+    original = settings.read_bytes()
+    text = original.decode()
+    settings.write_text('\n'.join(line for line in text.splitlines()
+        if not line.startswith(('LOG_EVERY_CYCLE=', 'PSI=', 'PACING=', 'POLL_INTERVAL_SEC='))) +
+        '\nLOG_EVERY_CYCLE=yes\nPSI=off\nPACING=fixed\nPOLL_INTERVAL_SEC=0.05\n')
+    command('systemctl', 'restart', 'cushion-swap')
+    time.sleep(1)
+    sizes = [log.stat().st_size]
+    time.sleep(2)
+    sizes.append(log.stat().st_size)
+    assert sizes[1] > sizes[0], 'opt-in log did not grow'
+    result['growing_bytes'] = sizes
+    every = []
     rotations = []
-    for run_number in (1, 2):
-        before = cycles(LOG.read_text(errors="replace"))
-        command("logrotate", "-f", str(CONF))
-        time.sleep(args.seconds)
-        after = cycles(LOG.read_text(errors="replace"))
-        files = sorted(path.name for path in LOG.parent.iterdir())
-        rotations.append({"run": run_number, "files": files, "last_cycle_before": before[-1] if before else None,
-                          "first_cycle_after": after[0] if after else None, "last_cycle_after": after[-1] if after else None})
-        if not after or not before or after[0] <= before[-1]:
-            raise Mismatch(f"The daemon did not go on writing after rotation {run_number}: {rotations[-1]}")
-    result["rotations"] = rotations
-    one = LOG.with_name(LOG.name + ".1")
-    two = LOG.with_name(LOG.name + ".2.gz")
-    if not one.exists() or not two.exists():
-        raise Mismatch(f"Rotated files missing: {rotations[-1]['files']}")
-    rotated = cycles(gzip.decompress(two.read_bytes()).decode(errors="replace")) + cycles(one.read_text(errors="replace"))
-    current = cycles(LOG.read_text(errors="replace"))
-    every = rotated + current
-    gaps = [(a, b) for a, b in zip(every, every[1:]) if b != a + 1]
-    result["continuity"] = {"cycles": len(every), "gaps": gaps, "rotated_files": [owner(one), owner(two)]}
-    if any(b <= a for a, b in gaps):
-        raise Mismatch(f"Cycles out of order across the rotations: {gaps}")
-    journal = command("journalctl", "-b", "-u", "cushion-swap.service", "-q", "--no-pager", "-o", "cat", check=False).splitlines()
-    result["journal"] = {"lines": len(journal), "per_cycle": sum(1 for line in journal if re.search(r"sample:|deploy-check:|retract-check:", line)),
-                         "start": [line for line in journal if "starting" in line or "thresholds (" in line][-2:],
-                         "actions": [line for line in journal if re.search(r"DEPLOY|RETRACT|ERROR", line)][-6:]}
-    if result["journal"]["per_cycle"] or not result["journal"]["start"]:
-        raise Mismatch(f"The journal holds per-cycle lines or lacks the start: {result['journal']}")
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("output", type=Path)
-    parser.add_argument("--seconds", type=int, default=15)
-    args = parser.parse_args()
-    result = {"failure": None, "verified": False}
-    status = 0
-    try:
-        if os.geteuid() != 0 or Path("/.dockerenv").exists():
-            raise RuntimeError("Run as root in the disposable guest")
-        command("systemd-detect-virt", "--vm")
-        run(args, result)
-        result["verified"] = True
-    except Mismatch as error:
-        result["failure"] = str(error)
-        status = 1
-    except Exception as error:
-        result["failure"] = str(error)
-        status = 2
-    args.output.write_text(json.dumps(result, indent=2) + "\n")
-    os.sync()
-    return status
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+    state = args.output.with_suffix('.logrotate-state')
+    for number in range(3):
+        started = time.monotonic()
+        command('logrotate','-f','-s',str(state),str(conf))
+        duration = time.monotonic()-started
+        archive = log.with_name(log.name+'.1')
+        every.extend(cycles(archive.read_text()))
+        rotations.append({'seconds':duration,'archive_bytes':archive.stat().st_size})
+        assert not log.with_name(log.name+'.2.gz').exists(), 'extra archive retained'
+        time.sleep(1)
+    every.extend(cycles(log.read_text()))
+    gaps = [(a,b) for a,b in zip(every,every[1:]) if b != a+1]
+    assert all(b>a for a,b in gaps), 'cycle numbering reversed'
+    result['continuity'] = {'cycles':len(every),'gaps':gaps,
+        'lost_cycles':sum(b-a-1 for a,b in gaps)}
+    before = log.with_name(log.name+'.1').read_bytes()
+    command('logrotate','-s',str(state),str(conf))
+    assert before == log.with_name(log.name+'.1').read_bytes(), 'early unforced rotation'
+    result['rotations'] = rotations
+    result['unforced_repeat_rotated'] = False
+    for path, mode in [(log.parent,0o750),(log,0o640)]:
+        assert stat.S_IMODE(path.stat().st_mode) == mode
+        assert command('stat','-c','%U:%G',str(path)) == 'root:adm'
+    result['verified'] = True
+except Exception as error:
+    result['failure'] = str(error)
+    status = 1
+finally:
+    if original is not None:
+        settings.write_bytes(original)
+        command('systemctl','restart','cushion-swap')
+args.output.write_text(json.dumps(result, indent=2)+'\n')
+os.sync()
+raise SystemExit(status)

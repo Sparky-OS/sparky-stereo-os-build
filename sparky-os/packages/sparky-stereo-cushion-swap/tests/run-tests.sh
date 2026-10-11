@@ -11,6 +11,7 @@
 # profile denies writing /proc/pressure/memory): guest/psi-wake-check.sh
 # proves the helper in a VM. Writes results to $OUT.
 set -u
+command -v logrotate >/dev/null 2>&1 || { echo 'ERROR: tests require logrotate; install logrotate in the test container' >&2; exit 2; }
 HERE=$(cd "$(dirname "$0")" && pwd)
 PKG=$(dirname "$HERE")
 OUT=${OUT:-$(mktemp -d "${TMPDIR:-/tmp}/cushion-swap-results.XXXXXX")}
@@ -107,7 +108,7 @@ build_helper() {
 # that its PID is the one the test stops.
 ENV_COMMON=()
 set_env() {
-	ENV_COMMON=(CUSHION_SWAP_CONFIG=/nonexistent STATE_DIR="$W/state" SWAPON_BIN="$W/bin/swapon" SWAPOFF_BIN="$W/bin/swapoff"
+	ENV_COMMON=(LOG_EVERY_CYCLE=yes CALIBRATION_DIR="$W/calibration" CUSHION_SWAP_CONFIG=/nonexistent STATE_DIR="$W/state" SWAPON_BIN="$W/bin/swapon" SWAPOFF_BIN="$W/bin/swapoff"
 		PSI_WAKE="$W/psi-wake" INITRAMFS_RESUME_PATH=/nonexistent CMDLINE_PATH="$W/cmdline-plain" DEV_DISK_DIR="$W/disk"
 		SYS_POWER_DIR="$W/sys/power" SYS_BLOCK_DIR="$W/empty" FINDMNT_BIN="$W/bin/findmnt" FILEFRAG_BIN="$W/bin/filefrag")
 }
@@ -304,14 +305,28 @@ switched_off() {
 	swaps "$W/s"
 	env CUSHION_SWAP_CONFIG="$W/conf" MEMINFO_PATH="$W/m" SWAPS_PATH="$W/s" CUSHION_SWAP_AREA=/swapfile STATE_DIR="$W/state" \
 		SWAPON_BIN="$W/bin/swapon" SWAPOFF_BIN="$W/bin/swapoff" "$d" --once >"$W/log" 2>&1
-	[[ $? == 0 && ! -e $W/actions ]] && grep -q 'Cushion Swap File is off' "$W/log"
+	[[ $? == 0 && ! -e $W/actions ]] && grep -qx 'STATE=disabled' "$W/state/status"
 }
 
 # --- Logging (Daniel, 2026-10-10) -----------------------------------------
 # The unit appends standard output to the log file and sends standard error
 # to the journal; here two files stand for them.
 
-every_cycle_by_default() {
+problems_only_default() {
+	local d=$1 ok=0
+	rm -rf "$W/state" "$W/quiet"
+	mkdir -p "$W/quiet"
+	meminfo "$W/m" 97957892 $((40 * G))
+	swaps "$W/s"
+	daemon_bg "$W/quiet/file" "$W/quiet/journal" MEMINFO_PATH="$W/m" SWAPS_PATH="$W/s" \
+		CUSHION_SWAP_AREA=/swapfile PSI=off PACING=fixed POLL_INTERVAL_SEC=0.1 LOG_EVERY_CYCLE= "$d"
+	sleep 0.6
+	stop_bg || ok=1
+	[[ ! -s $W/quiet/file && ! -s $W/quiet/journal ]] || { echo '  routine output with problem-only default'; ok=1; }
+	return $ok
+}
+
+every_cycle_opt_in() {
 	local d=$1 ok=0 cycles
 	rm -rf "$W/state" "$W/lg"
 	mkdir -p "$W/lg"
@@ -324,8 +339,8 @@ every_cycle_by_default() {
 	((cycles >= 8)) || { echo "  $cycles cycles in the file in 1.5 s"; ok=1; }
 	grep -q 'retract-check: .* => retract_ok=0' "$W/lg/file" || { echo "  no arithmetic in the file"; ok=1; }
 	grep -qE 'sample:|deploy-check:|retract-check:' "$W/lg/journal" && { echo "  per-cycle lines reached the journal"; ok=1; }
-	grep -q 'cushion-swap: starting' "$W/lg/journal" && grep -q 'thresholds (reference' "$W/lg/journal" ||
-		{ echo "  the startup lines are not in the journal"; ok=1; }
+	grep -qE 'cushion-swap: starting|thresholds \(' "$W/lg/journal" &&
+		{ echo "  routine startup chatter reached the journal"; ok=1; }
 	# cycle numbers: consecutive in the file
 	grep -o 'cycle=[0-9]*' "$W/lg/file" | cut -d= -f2 | awk 'NR > 1 && $1 != prev + 1 { bad = 1 } { prev = $1 } END { exit bad }' ||
 		{ echo "  cycle numbers not consecutive"; ok=1; }
@@ -369,9 +384,10 @@ log_wiring() {
 	[[ -r $LOGROTATE ]] || { echo "  no logrotate file"; return 1; }
 	[[ $(sed -n 's/^\(\/[^ {]*\)[[:space:]]*{.*/\1/p' "$LOGROTATE") == "$LOG_PATH" ]] || { echo "  the logrotate file does not name $LOG_PATH"; ok=1; }
 	local directive
-	for directive in daily 'rotate 7' compress delaycompress missingok notifempty 'maxsize 50M' copytruncate; do
+	for directive in weekly 'rotate 1' compress delaycompress missingok notifempty copytruncate; do
 		grep -qx "[[:space:]]*$directive" "$LOGROTATE" || { echo "  logrotate: '$directive' missing"; ok=1; }
 	done
+	grep -qE '^[[:space:]]*(daily|hourly|maxsize|size|minsize)([[:space:]]|$)' "$LOGROTATE" && { echo '  rotation sooner than weekly'; ok=1; }
 	grep -qx 'd /var/log/cushion-swap 0750 root adm -' "$TMPFILES" || { echo "  tmpfiles: the folder line"; ok=1; }
 	grep -qx "f $LOG_PATH 0640 root adm -" "$TMPFILES" || { echo "  tmpfiles: the file line"; ok=1; }
 	return $ok
@@ -395,20 +411,25 @@ logrotate_while_writing() {
 	for r in 1 2 3; do
 		sleep 1
 		logrotate -f -s "$lr/state" "$lr/conf" 2>>"$lr/logrotate.err" || { echo "  logrotate run $r failed"; ok=1; }
+		cp "$lr/cushion-swap.log.1" "$lr/record-$r"
 		echo "after rotation $r: $(ls "$lr" | tr '\n' ' ')" >>"$OUT/logrotate-files.txt"
 	done
 	sleep 1
 	stop_bg || ok=1
-	[[ -s $lr/cushion-swap.log.1 && -s $lr/cushion-swap.log.2.gz && -s $lr/cushion-swap.log.3.gz ]] ||
-		{ echo "  rotated files missing: $(ls "$lr" | tr '\n' ' ')"; ok=1; }
-	gzip -t "$lr/cushion-swap.log.2.gz" "$lr/cushion-swap.log.3.gz" 2>/dev/null || { echo "  not gzip"; ok=1; }
+	[[ -s $lr/cushion-swap.log.1 && ! -e $lr/cushion-swap.log.2 ]] ||
+		{ echo "  expected exactly one previous week's file"; ok=1; }
+	# delaycompress with rotate 1 leaves the only archive uncompressed.
+	cp "$lr/cushion-swap.log.1" "$lr/before-no-force"
+	logrotate -s "$lr/state" "$lr/conf" 2>>"$lr/logrotate.err" || ok=1
+	cmp -s "$lr/before-no-force" "$lr/cushion-swap.log.1" ||
+		{ echo '  rotation repeated before the weekly deadline'; ok=1; }
 	# O_APPEND: after each truncate the daemon writes at the new end, never
 	# leaving a hole of NUL bytes where the old file was.
 	tr -d '\000' <"$lr/cushion-swap.log" | cmp -s - "$lr/cushion-swap.log" || { echo "  NUL bytes in the log file"; ok=1; }
 	{
-		zcat "$lr/cushion-swap.log.3.gz" | grep -o 'cycle=[0-9]*' | sed 's/^/3 /'
-		zcat "$lr/cushion-swap.log.2.gz" | grep -o 'cycle=[0-9]*' | sed 's/^/2 /'
-		grep -o 'cycle=[0-9]*' "$lr/cushion-swap.log.1" | sed 's/^/1 /'
+		cat "$lr/record-1" | grep -o 'cycle=[0-9]*' | sed 's/^/3 /'
+		cat "$lr/record-2" | grep -o 'cycle=[0-9]*' | sed 's/^/2 /'
+		grep -o 'cycle=[0-9]*' "$lr/record-3" | sed 's/^/1 /'
 		grep -o 'cycle=[0-9]*' "$lr/cushion-swap.log" | sed 's/^/0 /'
 	} | sed 's/cycle=//' >"$lr/cycles"
 	# gaps inside one file are failures; gaps between files are the window
@@ -697,6 +718,46 @@ headroom_pacing() {
 	return $ok
 }
 
+calibration_cache() {
+	local d=$1 ok=0 cache=$W/calib-test
+	rm -rf "$W/state" "$cache"
+	mkdir -p "$cache"
+	printf '#!/bin/bash\nif [[ ${1:-} == --fingerprint ]]; then cat "%s/id"; else echo measured >>"%s/calls"; echo "512 1 1 0.020"; fi\n' "$cache" "$cache" >"$cache/helper"
+	chmod +x "$cache/helper"
+	echo kernel-a >"$cache/id"
+	echo 'cpu 100 0 0 100 0 0 0 0' >"$cache/stat"
+	meminfo "$W/m" 4194304 $((3 * G))
+	swaps "$W/s"
+	daemon_bg "$cache/log" "$cache/log" MEMINFO_PATH="$W/m" SWAPS_PATH="$W/s" PSI=off PSI_PATH=/nonexistent \
+		PACING=fixed POLL_INTERVAL_SEC=0.05 RUN_USER_DIR="$W/empty" PROC_DIR="$W/empty" \
+		CPU_STAT_PATH="$cache/stat" CALIBRATION_CHECK_SEC=0.1 CALIBRATION_DIR="$cache/state" ALLOC_RATE_HELPER="$cache/helper" "$d"
+	sleep 0.2
+	echo 'cpu 500 0 0 100 0 0 0 0' >"$cache/stat"
+	sleep 0.2
+	[[ ! -e $cache/calls ]] || { echo '  measured on a busy CPU'; ok=1; }
+	echo 'cpu 500 0 0 1000 0 0 0 0' >"$cache/stat"
+	sleep 0.3
+	stop_bg || ok=1
+	[[ $(cat "$cache/state/allocation-rate" 2>/dev/null) == 'kernel-a 1024 512 1 1 0.020' ]] || { echo '  missing rate or safety factor'; ok=1; }
+	[[ $(wc -l <"$cache/calls" 2>/dev/null) == 1 ]] || ok=1
+	for id in kernel-a kernel-b; do
+		echo "$id" >"$cache/id"
+		echo 'cpu 500 0 0 1000 0 0 0 0' >"$cache/stat"
+		daemon_bg "$cache/log" "$cache/log" MEMINFO_PATH="$W/m" SWAPS_PATH="$W/s" PSI=off PSI_PATH=/nonexistent \
+			PACING=fixed POLL_INTERVAL_SEC=0.05 RUN_USER_DIR="$W/empty" PROC_DIR="$W/empty" \
+			CPU_STAT_PATH="$cache/stat" CALIBRATION_CHECK_SEC=0.1 CALIBRATION_DIR="$cache/state" ALLOC_RATE_HELPER="$cache/helper" "$d"
+		sleep 0.2
+		echo 'cpu 500 0 0 2000 0 0 0 0' >"$cache/stat"
+		sleep 0.3
+		stop_bg || ok=1
+		local expected=1
+		[[ $id == kernel-b ]] && expected=2
+		[[ $(wc -l <"$cache/calls") == "$expected" ]] || { echo "  wrong cache invalidation for $id"; ok=1; }
+	done
+	grep -qx 'MAX_ALLOC_MIB_S=1024' "$W/state/status" || ok=1
+	return $ok
+}
+
 psi_fallback() {
 	local d=$1 log=$W/fallback.log
 	rm -rf "$W/state"
@@ -746,7 +807,8 @@ suite() {
 	check fstab-noauto-area-only fstab_noauto_only "$d"
 	check no-area-no-action no_area_no_action "$d"
 	check switched-off switched_off "$d"
-	check every-cycle-by-default every_cycle_by_default "$d"
+	check problems-only-default problems_only_default "$d"
+	check every-cycle-opt-in every_cycle_opt_in "$d"
 	check actions-in-file-and-journal actions_in_both "$d"
 	check log-wiring log_wiring
 	check logrotate-while-writing logrotate_while_writing "$d"
@@ -762,6 +824,7 @@ suite() {
 	check compat-game-opening-headroom compat_game_opening "$d" default
 	check compat-game-opening-fixed compat_game_opening "$d" fixed
 	check headroom-pacing-default headroom_pacing "$d"
+	check calibration-idle-cache-invalidation calibration_cache "$d"
 	check psi-fallback psi_fallback "$d"
 	check daniel-harness-39 daniel_harness "$d"
 }
@@ -829,7 +892,7 @@ mutant every-swap-area "deploy-at-floor-own-area-only retract-own-area-only" 's/
 mutant stuck-fast-rate "compat-game-opening-headroom compat-game-opening-fixed" 's/^\t\tFAST_SINCE_MS=0$/\t\t:/'
 # 1. pacing
 mutant pacing-default-fixed "headroom-pacing-default compat-game-opening-headroom" 's/^PACING=\${PACING:-headroom}$/PACING=${PACING:-fixed}/'
-mutant headroom-ignored "headroom-pacing-default" 's/^\t((ms < MIN_MS)) \&\& ms=\$MIN_MS$/\tms=$max_ms/'
+mutant headroom-ignored "headroom-pacing-default" 's/^\t((ms < floor_ms)) \&\& ms=\$floor_ms$/\tms=$max_ms/'
 mutant headroom-ignores-game "compat-game-opening-headroom" 's/^\t((FAST_SINCE_MS)) \&\& cap_ms=\$FAST_MS$/\t:/'
 # 3. an unused area, and Hibernate kept
 mutant unused-area-kept "retract-unused-area hibernate-offered-after-retract" 's/ || area_empty) \&\& quiet_elapsed/) \&\& quiet_elapsed/'
@@ -837,8 +900,8 @@ mutant retract-during-hibernation "no-retract-while-hibernating" 's/ \&\& !hold)
 mutant offered-only-while-on "hibernate-offered-after-retract" 's|^target=\$(value TARGET)$|target=$(value TARGET); grep -q "^$target[[:space:]]" "${SWAPS_PATH:-/proc/swaps}" \|\| exit 0|' generator
 mutant skip-switch-on "hibernate-partition-not-in-fstab hibernate-swap-file-from-offset" 's/^\t\tif ! "\$SWAPON_BIN" -- "\$TARGET"; then$/\t\tif false; then/'
 # 4. logging
-mutant actions-not-in-journal "actions-in-file-and-journal every-cycle-by-default" 's/^\t((JOURNAL_TOO)) \&\& printf .%s\\n. "\$line" >\&2$/\t:/'
-mutant decisions-only-default "every-cycle-by-default" 's/^LOG_EVERY_CYCLE=\${LOG_EVERY_CYCLE:-yes}$/LOG_EVERY_CYCLE=${LOG_EVERY_CYCLE:-no}/'
+mutant actions-not-in-journal "actions-in-file-and-journal" 's/^\t((JOURNAL_TOO)) \&\& printf .%s\\n. "\$line" >\&2$/\t:/'
+mutant noisy-default "problems-only-default" 's/^LOG_EVERY_CYCLE=\${LOG_EVERY_CYCLE:-no}$/LOG_EVERY_CYCLE=${LOG_EVERY_CYCLE:-yes}/'
 mutant logrotate-absent "log-wiring logrotate-while-writing" absent logrotate
 mutant logrotate-other-path "log-wiring logrotate-while-writing" 's|^/var/log/cushion-swap/cushion-swap.log {|/var/log/cushion-swap.log {|' logrotate
 mutant unit-log-elsewhere "log-wiring" 's|^StandardOutput=append:.*|StandardOutput=journal|' unit
