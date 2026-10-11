@@ -1,0 +1,67 @@
+sparky-stereo-nvidia-driver-lock
+================================
+
+Sparky Stereo OS drives NVIDIA cards with its own build of NVIDIA's open
+kernel modules, nvidia-kernel-open-dkms-stereo3d, which adds HDMI 3D modes
+and HDMI deep colour. NVIDIA's own driver packages do not have them. NVIDIA's
+CUDA repository publishes every new driver next to the CUDA toolkit, and the
+edition's hardware setup adds that repository at priority 1002, above the
+edition's own 1001. Without this package, the next driver NVIDIA publishes
+would replace the stereo module with NVIDIA's at the first upgrade.
+
+/etc/apt/preferences.d/10sparky-stereo-nvidia-driver-lock is generated from
+this package's version when it is built. Its four records, in order:
+
+1. NVIDIA's and Debian's own NVIDIA kernel module packages
+   (nvidia-kernel-open-dkms, nvidia-kernel-dkms, nvidia-open-kernel-dkms):
+   priority -1, never installed. The stereo module provides
+   nvidia-kernel-open-dkms at NVIDIA's version, so NVIDIA's userspace is
+   satisfied by it.
+2. Every NVIDIA driver package at the version the stereo module is built
+   for: priority 1005. The set is the one NVIDIA's own
+   nvidia-driver-pinning-<version> package pins (the source packages
+   nvidia-graphics-drivers, nvidia-open, nvidia-modprobe,
+   nvidia-persistenced, nvidia-settings, nvidia-xconfig, libnvidia-nscq,
+   libnvsdm, nvidia-fabricmanager, nvidia-imex, and cuda-drivers*), plus the
+   stereo module itself. NVIDIA's own source nvidia-kmod-open is not named,
+   because this lock package is built from a source of that name.
+3. The same packages at any other version: priority 100, so they are never
+   preferred while the locked version is available, whatever priority a
+   repository is given.
+4. This package itself: priority 1001 from the edition's repository (origin
+   Sparky Stereo OS), so another preferences file that matches its name,
+   for example a hand-made "*nvidia*" pin at an old version, can neither
+   hold it back nor downgrade it and take the stereo module with it.
+
+The version includes NVIDIA's Debian revision (for example 615.71.09-2), not
+only the driver version: the stereo module provides nvidia-kernel-open-dkms
+at exactly that revision, and NVIDIA's nvidia-driver depends on exactly that
+revision. A rebuilt 615.71.09-3 from NVIDIA would otherwise be preferred.
+
+The file name starts with "10" so that APT reads it before NVIDIA's own
+pinning file (/etc/apt/preferences.d/nvidia-driver-pin): the first
+version-specific record that matches decides a version's priority
+(apt_preferences(5), "How APT Interprets Priorities").
+
+CUDA toolkit packages (cuda-toolkit-*, cuda-cudart-* and the rest) are not
+named here and keep updating. A CUDA release that needs a newer driver waits
+until the stereo module moves to that driver.
+
+Moving the driver to a new version
+----------------------------------
+
+1. Rebuild the stereo module from NVIDIA's DKMS tree of the new version with
+   the patches rebased (the changelog version carries NVIDIA's version, for
+   example 620.10.01-1+stereo3d1), and publish both binary packages.
+2. The first upgrade installs the new lock only: the old lock still holds the
+   driver, so nothing else moves.
+3. The next upgrade moves the stereo module and NVIDIA's userspace together
+   to the new version.
+
+A lock inside the module package itself could never move: the old lock would
+keep the old firmware-nvidia-gsp, which the new module depends on at exactly
+the new version, so the new module would be held back for ever.
+
+To leave the stereo module for NVIDIA's own driver, purge it and this package
+("apt purge nvidia-kernel-open-dkms-stereo3d sparky-stereo-nvidia-driver-lock");
+removing without purging keeps the configuration file, and with it the lock.

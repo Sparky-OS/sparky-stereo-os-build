@@ -1,0 +1,48 @@
+Source: nvidia-kmod-open
+Section: NVIDIA
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+XSBC-Original-Maintainer: NVIDIA <cudatools@nvidia.com>
+Build-Depends: debhelper-compat (= 14), dh-dkms
+Standards-Version: 4.7.3
+Rules-Requires-Root: no
+Homepage: https://sparkylinux.org
+
+Package: nvidia-kernel-open-dkms-stereo3d
+Architecture: amd64
+Multi-Arch: foreign
+Pre-Depends: nvidia-installer-cleanup
+Depends: dkms (>= 3.1.8), firmware-nvidia-gsp (= ${nvidia:Version}), g++, sparky-stereo-nvidia-driver-lock (>= ${source:Version}), ${misc:Depends}
+Recommends: nvidia-driver (= ${nvidia:Version}) | nvidia-driver-cuda (= ${nvidia:Version}), nvidia-kernel-support
+Breaks: nvidia-kernel-dkms (<< ${nvidia:Version})
+Conflicts: nvidia-kernel-open-dkms
+Replaces: nvidia-kernel-open-dkms, nvidia-kernel-dkms (<< ${nvidia:Version})
+Provides: nvidia-kernel-open-dkms (= ${nvidia:Version}), nvidia-kernel-${nvidia:Upstream}
+XB-Original-Maintainer: NVIDIA <cudatools@nvidia.com>
+XB-Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues
+Description: NVIDIA open kernel modules (DKMS) with the stereo 3D and deep colour patches
+ This package builds the NVIDIA Xorg binary kernel module needed by
+ nvidia-driver, using DKMS.
+ Provided that you have the kernel header packages installed, the kernel
+ module will be built for your running kernel and automatically rebuilt for
+ any new kernel headers that are installed.
+ .
+ The NVIDIA open driver for graphics cards chip sets Turing and newer.
+ Sparky Stereo OS: NVIDIA's nvidia-kernel-open-dkms ${nvidia:Version} with our patches
+ (HDMI 1.4 3D modes, HDMI deep colour at the depth the sink declares by default,
+ integer-rate twins of the 1000/1001-rate CTA video formats), from the branch
+ stereo3d of github.com/danielcamposramos/open-gpu-kernel-modules.
+
+Package: sparky-stereo-nvidia-driver-lock
+Architecture: all
+Multi-Arch: foreign
+Depends: ${misc:Depends}
+XB-Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues
+Description: Keep NVIDIA's driver at the version of the stereo 3D module
+ An APT preferences file, generated from this package's version, that keeps
+ every NVIDIA driver package at ${nvidia:Version}, the version
+ nvidia-kernel-open-dkms-stereo3d is built for, and never installs another
+ NVIDIA kernel module package. A newer driver in NVIDIA's CUDA repository
+ then cannot replace the HDMI 3D module or leave its userspace mismatched.
+ CUDA toolkit packages keep updating. The driver moves when the stereo
+ module is rebuilt for a new version; see README.Debian.

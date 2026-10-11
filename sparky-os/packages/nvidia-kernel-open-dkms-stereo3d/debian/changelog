@@ -1,0 +1,23 @@
+nvidia-kmod-open (615.71.09-2+stereo3d4) unstable; urgency=medium
+
+  * Build from a source package: NVIDIA's DKMS tree of 615.71.09-2 as the
+    upstream tarball and our eight patches as the quilt series, the same
+    tree +stereo3d3 shipped (+stereo3d1 to +stereo3d3 repacked NVIDIA's
+    binary package with the patches applied).
+  * New binary package sparky-stereo-nvidia-driver-lock, required by
+    nvidia-kernel-open-dkms-stereo3d: an APT preferences file generated from
+    this version that keeps every NVIDIA driver package at 615.71.09-2
+    (priority 1005, any other version 100) and never installs NVIDIA's or
+    Debian's own NVIDIA kernel module packages (-1). A newer driver in
+    NVIDIA's CUDA repository can no longer replace the HDMI 3D module or
+    mismatch its userspace; CUDA toolkit packages keep updating. The lock
+    package itself always follows the edition's repository (1001).
+  * The NVIDIA versions in the control fields come from this changelog.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 11 Oct 2026 12:40:00 -0300
+
+nvidia-kmod-open (615.71.09-2) trixie; urgency=medium
+
+  * Build for 615.71.09.
+
+ -- cudatools <cudatools@nvidia.com>  Wed, 09 Sep 2026 23:11:07 +0000

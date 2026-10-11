@@ -1,7 +1,7 @@
 #!/bin/bash
 # NVIDIA's open kernel modules with our patches, for Sparky Stereo OS (Daniel, 2026-10-02:
-# NVIDIA has not answered, so we fork and ship). The patches are the commits of our fork's
-# branch stereo3d (github.com/danielcamposramos/open-gpu-kernel-modules) over 615.71.09:
+# NVIDIA has not answered, so we fork and ship). debian/patches holds the commits of our fork's
+# branch stereo3d (github.com/danielcamposramos/open-gpu-kernel-modules) over the NVIDIA version:
 #   0001 nvidia-modeset: raise default max_output_color_depth to 12   (deep colour, PR #1386)
 #   0002 nvidia-drm: admit and synthesize HDMI VSDB stereo modes        (HDMI 3D, issue #1382)
 #   0003 nvtiming: add the integer-rate twin of 1000/1001-rate CTA VICs
@@ -12,48 +12,38 @@
 #   0007 nvidia-drm: send the HDMI 3D InfoFrame (VSIF) built from the mode, so the TV
 #        switches itself into 3D when KWin sets a 3D mode
 #   0008 nvidia-drm: "max bpc", "Broadcast RGB" and "color format" connector properties
-# 0005-0008 are recovered from the module source installed on 2026-10-01, never committed.
-# The package is NVIDIA's own nvidia-kernel-open-dkms 615.71.09-2 with the patches applied
-# to its DKMS source. It takes its own name and provides nvidia-kernel-open-dkms
-# (= 615.71.09-2), because NVIDIA's nvidia-driver depends on exactly that version.
-# Usage: build.sh   (the package lands in $OUT, default /K3D/temp/sparky-os/repo)
+# Since +stereo3d4 this builds a Debian source package, nvidia-kmod-open: the upstream tarball
+# is the DKMS tree of NVIDIA's own nvidia-kernel-open-dkms at the version in debian/changelog
+# (615.71.09-2 for 615.71.09-2+stereo3d4), debian/ is ours. Two binary packages come out:
+# nvidia-kernel-open-dkms-stereo3d (provides nvidia-kernel-open-dkms at NVIDIA's exact version,
+# because NVIDIA's nvidia-driver depends on exactly that version) and sparky-stereo-nvidia-driver-lock
+# (the APT lock generated from the same version, see debian/sparky-stereo-nvidia-driver-lock.README.Debian).
+# To move to a new NVIDIA version: rebase the patches, add a changelog entry with the new version
+# (for example 620.10.01-1+stereo3d1), run this; the control fields and the lock follow the changelog.
+# Usage: build.sh   (OUT, default /K3D/temp/sparky-os/pending-pack/nvidia-kmod-open;
+#                    SRCDEB, default: apt-get download of NVIDIA's package, signature checked by apt)
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-OUT=${OUT:-/K3D/temp/sparky-os/repo}
-UPV=615.71.09
-DEBV=$UPV-2
-REV=${REV:-3}
-SRCDEB=${SRCDEB:-/var/cache/apt/archives/nvidia-kernel-open-dkms_${DEBV}_amd64.deb}
-WORK=$(mktemp -d /K3D/temp/sparky-os/nvidia-pkg.XXXXXX)
-trap 'rm -rf "$WORK"' EXIT
-mkdir -p "$OUT"
-if [ ! -f "$SRCDEB" ]; then
-	(cd "$WORK" && apt-get download "nvidia-kernel-open-dkms=$DEBV")
-	SRCDEB=$(ls "$WORK"/nvidia-kernel-open-dkms_${DEBV}_*.deb)
+OUT=${OUT:-/K3D/temp/sparky-os/pending-pack/nvidia-kmod-open}
+DEBV=$(dpkg-parsechangelog -l "$HERE/debian/changelog" -S Version)
+NV=${DEBV%%+stereo3d*}
+UPV=${NV%-*}
+WORK=$(mktemp -d /K3D/temp/sparky-os/nvidia-kmod-open.XXXXXX)
+trap 'docker run --rm -v "$WORK":/w debian:testing chown -R "$(id -u):$(id -g)" /w >/dev/null 2>&1; rm -rf "$WORK"' EXIT
+SRCDEB=${SRCDEB:-}
+if [ -z "$SRCDEB" ]; then
+	(cd "$WORK" && apt-get download "nvidia-kernel-open-dkms=$NV")
+	SRCDEB=$(ls "$WORK"/nvidia-kernel-open-dkms_"$NV"_*.deb)
 fi
-D=$WORK/pkg
-dpkg-deb -R "$SRCDEB" "$D"
-for p in "$HERE"/patches/*.patch; do
-	patch -s -p1 -d "$D/usr/src/nvidia-$UPV" <"$p"
-	echo "applied $(basename "$p")"
-done
-find "$D/usr/src/nvidia-$UPV" -name '*.orig' -delete
-# The control file: our name and version, providing the stock package at its version.
-python3 - "$D/DEBIAN/control" "$DEBV" "$REV" <<'PY'
-import sys, re
-path, debv, rev = sys.argv[1], sys.argv[2], sys.argv[3]
-c = open(path).read()
-c = re.sub(r'^Package: .*$', 'Package: nvidia-kernel-open-dkms-stereo3d', c, flags=re.M)
-c = re.sub(r'^Version: .*$', f'Version: {debv}+stereo3d{rev}', c, flags=re.M)
-c = re.sub(r'^Maintainer: (.*)$', lambda m: 'Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>\nOriginal-Maintainer: ' + m.group(1), c, flags=re.M)
-c = re.sub(r'^Homepage: .*$', 'Homepage: https://sparkylinux.org', c, flags=re.M)
-c = re.sub(r'^Provides: (.*)$', lambda m: f'Provides: nvidia-kernel-open-dkms (= {debv}), {m.group(1)}', c, flags=re.M)
-c = re.sub(r'^Replaces: (.*)$', lambda m: f'Conflicts: nvidia-kernel-open-dkms\nReplaces: nvidia-kernel-open-dkms, {m.group(1)}', c, flags=re.M)
-c = re.sub(r'^Description: .*$', 'Description: NVIDIA open kernel modules (DKMS) with the stereo 3D and deep colour patches', c, flags=re.M)
-c = c.rstrip('\n') + '\n Sparky Stereo OS: NVIDIA\'s nvidia-kernel-open-dkms ' + debv + ' with our patches\n (HDMI 1.4 3D modes, HDMI deep colour at the depth the sink declares by default,\n integer-rate twins of the 1000/1001-rate CTA video formats), from the branch\n stereo3d of github.com/danielcamposramos/open-gpu-kernel-modules.\n'
-open(path, 'w').write(c)
-PY
-(cd "$D" && find . -path ./DEBIAN -prune -o -type f -print0 | sort -z | xargs -0 md5sum | sed 's| \./| |' >DEBIAN/md5sums)
-deb=$OUT/nvidia-kernel-open-dkms-stereo3d_${DEBV}+stereo3d${REV}_amd64.deb
-dpkg-deb --root-owner-group -Zxz -b "$D" "$deb" >/dev/null
-echo "built $deb"
+dpkg-deb -x "$SRCDEB" "$WORK/x"
+mv "$WORK/x/usr/src/nvidia-$UPV" "$WORK/nvidia-kmod-open-$UPV"
+tar --sort=name --owner=0 --group=0 --numeric-owner --format=gnu -C "$WORK" -cf - "nvidia-kmod-open-$UPV" |
+	xz -T4 -6 >"$WORK/nvidia-kmod-open_$UPV.orig.tar.xz"
+cp -a "$HERE/debian" "$WORK/nvidia-kmod-open-$UPV/"
+docker run --rm -v "$WORK":/w debian:testing bash -c "export DEBIAN_FRONTEND=noninteractive
+	apt-get update -qq && apt-get install -y -qq --no-install-recommends build-essential debhelper dh-dkms >/dev/null
+	cd /w/nvidia-kmod-open-$UPV && dpkg-buildpackage -us -uc"
+mkdir -p "$OUT"
+cp "$WORK"/*.deb "$WORK"/*.dsc "$WORK"/*.debian.tar.xz "$WORK"/*.orig.tar.xz "$WORK"/*.buildinfo "$WORK"/*.changes "$OUT"/
+sync
+echo "built $(cd "$OUT" && ls *.deb *.dsc)"
