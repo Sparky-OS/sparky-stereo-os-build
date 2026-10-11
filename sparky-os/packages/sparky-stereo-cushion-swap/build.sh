@@ -5,7 +5,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.2.0
+VERSION=0.3.0
 PACKAGE=sparky-stereo-cushion-swap
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.cushion-swap.XXXXXX")
@@ -14,6 +14,9 @@ D=$WORK/$PACKAGE
 mkdir -p "$D/DEBIAN" "$D/usr/share/doc/$PACKAGE" "$D/usr/libexec/cushion-swap"
 gcc ${CFLAGS:--O2 -Wall -Wextra -Werror} -o "$D/usr/libexec/cushion-swap/psi-wake" "$HERE/src/psi-wake.c"
 strip --strip-unneeded "$D/usr/libexec/cushion-swap/psi-wake"
+gcc ${CFLAGS:--O2 -Wall -Wextra -Werror} -pthread -o "$D/usr/libexec/cushion-swap/alloc-rate" "$HERE/src/alloc-rate.c"
+strip --strip-unneeded "$D/usr/libexec/cushion-swap/alloc-rate"
+install -Dm644 "$HERE/etc/default/cushion-swap" "$D/etc/default/cushion-swap"
 install -Dm755 "$HERE/sbin/cushion-swap" "$D/usr/sbin/cushion-swap"
 install -Dm644 -t "$D/usr/lib/systemd/system" "$HERE/lib/systemd/system/cushion-swap.service" \
 	"$HERE/lib/systemd/system/cushion-swap-hibernate.service"
@@ -40,11 +43,12 @@ Description: Cushion Swap File: swap only under memory pressure
   Daniel Ramos's swap parachute. The swap area stays off and is switched on
   when available memory runs low or falls fast, then switched off again only
   when that cannot itself run out of memory. The kernel wakes it through PSI
-  where present. Every cycle is logged with its arithmetic, rotated daily.
+  where present. Pacing uses the idle-measured allocation rate. Problems
+  are logged by default, with weekly rotation; cycle logging is optional.
   Hibernate stays offered with the area off, to the device named in
   /etc/initramfs-tools/conf.d/resume.
 EOF
-echo /etc/logrotate.d/sparky-stereo-cushion-swap >"$D/DEBIAN/conffiles"
+printf '%s\n' /etc/default/cushion-swap /etc/logrotate.d/sparky-stereo-cushion-swap >"$D/DEBIAN/conffiles"
 echo 'activate-noawait update-initramfs' >"$D/DEBIAN/triggers"
 cat >"$D/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
@@ -119,12 +123,11 @@ EOF
 cat >"$S/debian/changelog" <<EOF
 $PACKAGE ($VERSION) unstable; urgency=medium
 
-  * Daniel's decisions of 2026-10-10: headroom pacing by default, every
-    cycle logged to /var/log/cushion-swap with daily rotation, an unused area
-    retracted after the quiet window, Hibernate to the device named in
-    /etc/initramfs-tools/conf.d/resume (a swap partition or file).
+  * Measure the machine's allocation rate while idle for headroom pacing.
+  * Problems only by default; optional cycle logging and weekly rotation.
+  * Fail clearly when the test runner has no logrotate.
 
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 10 Oct 2026 21:06:21 -0300
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 11 Oct 2026 21:00:00 -0300
 
 $PACKAGE (0.1.0) unstable; urgency=medium
 

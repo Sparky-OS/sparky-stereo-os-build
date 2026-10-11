@@ -1,0 +1,11 @@
+# Cushion Swap File: /usr/share/doc/sparky-stereo-cushion-swap/README.md
+# Defaults log only problems (DEPLOY, RETRACT, failures) to the file and journal.
+# Set yes for every cycle's arithmetic in /var/log/cushion-swap/cushion-swap.log.
+# Rotation is weekly, one prior week retained; cycle logging can be large.
+LOG_EVERY_CYCLE=no
+# Headroom uses an allocation rate measured once while idle, cached across boots.
+PACING=headroom
+# MAX_ALLOC_MIB_S=8192   # explicit override skips automatic calibration
+# ALLOC_SAFETY_FACTOR=2 # transient rate margin, plus scaling for online CPUs
+# CUSHION_SWAP=off      # stop automatic deployment/retraction
+# AREA=/swapfile        # otherwise the first noauto swap in /etc/fstab

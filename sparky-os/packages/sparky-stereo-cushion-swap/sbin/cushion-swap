@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Daniel Ramos (Capitain Jack) 2026/08/01
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/10
+# Last update 2026/10/11
 #
 # Cushion Swap File: the swap area stays off, is deployed under memory
 # pressure and retracted only when that is safe. Daniel Ramos's design, his
@@ -60,16 +60,27 @@ SAFETY_TICK_SEC=${SAFETY_TICK_SEC:-10}
 GAME_OPENING_MAX_SEC=${GAME_OPENING_MAX_SEC:-180}
 STEADY_SEC=${STEADY_SEC:-10}
 LAUNCHERS=${LAUNCHERS:-reaper steam-launch-wr pressure-vessel pv-bwrap umu-run proton wine-preloader wine64-preloade lutris-wrapper gamemoderun legendary gogdl}
-# Every cycle with its arithmetic, as on Daniel's host (Daniel, 2026-10-10);
-# no: only cycles that decide something.
-LOG_EVERY_CYCLE=${LOG_EVERY_CYCLE:-yes}
+# Problems only by default (Daniel, 2026-10-10 22:47). yes records every
+# cycle's arithmetic in the file; actions and failures also reach the journal.
+LOG_EVERY_CYCLE=${LOG_EVERY_CYCLE:-no}
 # headroom (the default, Daniel 2026-10-10): the next sample comes before
 # memory could fall to the early-warning floor at MAX_ALLOC_MIB_S, never
 # sooner than MIN_INTERVAL_SEC and never later than the normal interval (his
 # 3 s poller, or the 10 s tick beside the PSI wake-up) or, while a game
 # opens, his 0.5 s. fixed: those intervals as they are.
 PACING=${PACING:-headroom}
+ALLOC_RATE_OVERRIDE=${MAX_ALLOC_MIB_S:+yes}
 MAX_ALLOC_MIB_S=${MAX_ALLOC_MIB_S:-8192}
+ALLOC_RATE_HELPER=${ALLOC_RATE_HELPER:-/usr/libexec/cushion-swap/alloc-rate}
+CALIBRATION_DIR=${CALIBRATION_DIR:-/var/lib/cushion-swap}
+CPU_STAT_PATH=${CPU_STAT_PATH:-/proc/stat}
+CALIBRATION_FINGERPRINT=""
+CALIBRATED=${ALLOC_RATE_OVERRIDE:-no}
+CALIBRATION_AFTER_MS=0
+IDLE_PREVIOUS_TOTAL=0
+IDLE_PREVIOUS_IDLE=0
+ALLOC_SAFETY_FACTOR=${ALLOC_SAFETY_FACTOR:-2}
+CALIBRATION_CHECK_SEC=${CALIBRATION_CHECK_SEC:-10}
 MIN_INTERVAL_SEC=${MIN_INTERVAL_SEC:-0.25}
 # The hibernate unit switched the area on for the image: no retraction for
 # this long, or until the sleep hook ends the hold after resume.
@@ -310,6 +321,8 @@ write_status() {
 MODE=$MODE
 FAST=$fast
 PACING=$PACING
+MAX_ALLOC_MIB_S=$MAX_ALLOC_MIB_S
+CALIBRATED=$CALIBRATED
 AREA=$AREA
 AREA_USED_KIB=${AREA_USED_KIB:-0}
 MEM_TOTAL_KIB=${MEM_TOTAL_KIB:-0}
@@ -417,8 +430,10 @@ run_cycle() {
 		retract_ok=1
 	fi
 
-	if ((DRY_RUN || RUN_ONCE || deploy_trigger || retract_ok)) || [[ $LOG_EVERY_CYCLE == yes ]]; then
-		local active_s margin_s area_used_s margin_pass=no quiet_pass=no empty_s=no hold_s=no
+	local margin_s
+	gib_into margin_s "$margin_kib"
+	if ((DRY_RUN)) || [[ $LOG_EVERY_CYCLE == yes ]]; then
+		local active_s area_used_s margin_pass=no quiet_pass=no empty_s=no hold_s=no
 		case $swap_active_rc in 0) active_s=yes ;; 1) active_s=no ;; *) active_s=unknown ;; esac
 		gib_into margin_s "$margin_kib"
 		gib_into area_used_s "$AREA_USED_KIB"
@@ -455,7 +470,7 @@ run_cycle() {
 
 	if ((retract_ok)); then
 		if ((swap_active_rc == 0)); then
-			log "RETRACT triggered: swap_used=$used_s avail=$avail_s quiet_elapsed=${quiet_elapsed}s$( ((area_empty)) && echo ' area unused') -- swap currently ON -> $( ((DRY_RUN)) && echo '[dry-run] would run' || echo 'running') '${SWAPOFF_BIN} ${AREA}'"
+			log "RETRACT triggered: swap_used=$used_s avail=$avail_s quiet_elapsed=${quiet_elapsed}s required_avail=$margin_s margin=$margin_l hard=$hard_l soft=$soft_l$( ((area_empty)) && echo ' area unused') -- swap currently ON -> $( ((DRY_RUN)) && echo '[dry-run] would run' || echo 'running') '${SWAPOFF_BIN} ${AREA}'"
 			if ((!DRY_RUN)); then
 				write_status retracting
 				if "$SWAPOFF_BIN" -- "$AREA"; then
@@ -484,9 +499,9 @@ run_cycle() {
 
 start_psi() {
 	MODE=compatibility
-	[[ $PSI == off ]] && { log "PSI switched off in settings: compatibility mode"; return; }
+	[[ $PSI == off ]] && { [[ $LOG_EVERY_CYCLE == yes ]] && log_cycle "PSI switched off in settings: compatibility mode"; return; }
 	if [[ ! -x $PSI_WAKE ]]; then
-		log "no PSI helper at $PSI_WAKE: compatibility mode"
+		[[ $LOG_EVERY_CYCLE == yes ]] && log_cycle "no PSI helper at $PSI_WAKE: compatibility mode"
 		return
 	fi
 	coproc PSIWAKE { exec "$PSI_WAKE" "$PSI_PATH" "$PSI_TRIGGER"; }
@@ -494,9 +509,9 @@ start_psi() {
 	local line=""
 	if read -r -t 5 -u "$PSI_FD" line && [[ $line == ready ]]; then
 		MODE=psi
-		log "PSI mode: woken by the kernel when memory stalls ($PSI_PATH, trigger '$PSI_TRIGGER'), safety tick ${SAFETY_TICK_SEC}s"
+		[[ $LOG_EVERY_CYCLE == yes ]] && log_cycle "PSI mode: woken by the kernel when memory stalls ($PSI_PATH, trigger '$PSI_TRIGGER'), safety tick ${SAFETY_TICK_SEC}s"
 	else
-		log "PSI not available here: compatibility mode (poll ${POLL_INTERVAL_SEC}s, ${FAST_INTERVAL_SEC}s while a game is opening)"
+		[[ $LOG_EVERY_CYCLE == yes ]] && log_cycle "PSI not available here: compatibility mode (poll ${POLL_INTERVAL_SEC}s, ${FAST_INTERVAL_SEC}s while a game is opening)"
 	fi
 }
 
@@ -548,7 +563,7 @@ update_game_opening() {
 	fi
 	LAUNCHERS_SCANNED=1
 	if [[ -n $started ]]; then
-		((FAST_SINCE_MS)) || log_cycle "game opening ($started): sampling every ${FAST_INTERVAL_SEC}s at most"
+		((FAST_SINCE_MS)) || [[ $LOG_EVERY_CYCLE == yes ]] && log_cycle "game opening ($started): sampling every ${FAST_INTERVAL_SEC}s at most"
 		FAST_SINCE_MS=$now_millis
 		STEADY_REF_KIB=${CYCLE_AVAIL_KIB:-0}
 		STEADY_REF_MS=$now_millis
@@ -563,11 +578,11 @@ update_game_opening() {
 		STEADY_REF_KIB=$avail
 		STEADY_REF_MS=$now_millis
 	elif ((now_millis - STEADY_REF_MS >= STEADY_SEC * 1000)); then
-		log_cycle "game loaded (memory steady for ${STEADY_SEC}s): back to every ${POLL_INTERVAL_SEC}s at most"
+		[[ $LOG_EVERY_CYCLE == yes ]] && log_cycle "game loaded (memory steady for ${STEADY_SEC}s): back to every ${POLL_INTERVAL_SEC}s at most"
 		FAST_SINCE_MS=0
 	fi
 	if ((FAST_SINCE_MS && now_millis - FAST_SINCE_MS >= GAME_OPENING_MAX_SEC * 1000)); then
-		log_cycle "game opening longer than ${GAME_OPENING_MAX_SEC}s: back to every ${POLL_INTERVAL_SEC}s at most"
+		[[ $LOG_EVERY_CYCLE == yes ]] && log_cycle "game opening longer than ${GAME_OPENING_MAX_SEC}s: back to every ${POLL_INTERVAL_SEC}s at most"
 		FAST_SINCE_MS=0
 	fi
 }
@@ -575,10 +590,13 @@ update_game_opening() {
 # Seconds until memory could reach the early-warning floor at MAX_ALLOC_MIB_S,
 # at most $1 milliseconds.
 headroom_interval() {
+	local floor_ms=$((DEPLOY_HARD_KIB * 1000 / (MAX_ALLOC_MIB_S * KIB_PER_MIB * 2)))
+	((floor_ms < 1)) && floor_ms=1
+	((floor_ms > MIN_MS)) && floor_ms=$MIN_MS
 	local head=$((${CYCLE_AVAIL_KIB:-0} - ${DEPLOY_SOFT_KIB:-0})) max_ms=$1 ms
 	((head < 0)) && head=0
 	ms=$((head * 1000 / (MAX_ALLOC_MIB_S * KIB_PER_MIB)))
-	((ms < MIN_MS)) && ms=$MIN_MS
+	((ms < floor_ms)) && ms=$floor_ms
 	((ms > max_ms)) && ms=$max_ms
 	printf -v INTERVAL '%d.%03d' $((ms / 1000)) $((ms % 1000))
 }
@@ -599,7 +617,7 @@ wait_next() {
 		if ((rc == 0)); then
 			while read -r -t 0 -u "$PSI_FD" && read -r -u "$PSI_FD" line; do :; done
 		elif ((rc <= 128)); then
-			log "PSI helper ended: compatibility mode"
+			[[ $LOG_EVERY_CYCLE == yes ]] && log_cycle "PSI helper ended: compatibility mode"
 			MODE=compatibility
 		fi
 		return
@@ -614,6 +632,72 @@ wait_next() {
 		printf -v INTERVAL '%d.%03d' $((cap_ms / 1000)) $((cap_ms % 1000))
 	fi
 	read -r -t "$INTERVAL" -u "$SLEEP_FD"
+}
+
+# The persistent rate is invalidated only by a kernel/CPU/RAM change.
+load_calibration() {
+	[[ $CALIBRATED == yes || ! -x $ALLOC_RATE_HELPER ]] && return
+	CALIBRATION_FINGERPRINT=$("$ALLOC_RATE_HELPER" --fingerprint) || return
+	local fingerprint rate rest
+	if read -r fingerprint rate rest 2>/dev/null <"$CALIBRATION_DIR/allocation-rate"; then
+		if [[ $fingerprint == "$CALIBRATION_FINGERPRINT" && $rate =~ ^[1-9][0-9]*$ ]]; then
+			MAX_ALLOC_MIB_S=$rate
+			CALIBRATED=yes
+		fi
+	fi
+}
+
+# Require two CPU snapshots separated by the normal loop, at least 90% idle,
+# no game-opening signal/launcher, ample RAM, and no recent memory stalls.
+calibrate_when_idle() {
+	[[ $CALIBRATED == yes || -z $CALIBRATION_FINGERPRINT ]] && return
+	now_ms
+	((NOW_MS < CALIBRATION_AFTER_MS)) && return
+	CALIBRATION_AFTER_MS=$((NOW_MS + $(to_ms "$CALIBRATION_CHECK_SEC")))
+	local name user nice system idle iowait irq softirq steal rest total delta line
+	read -r name user nice system idle iowait irq softirq steal rest <"$CPU_STAT_PATH" || return
+	[[ $name == cpu ]] || return
+	total=$((user + nice + system + idle + iowait + irq + softirq + steal))
+	delta=$((total - IDLE_PREVIOUS_TOTAL))
+	local previous=$IDLE_PREVIOUS_IDLE old_total=$IDLE_PREVIOUS_TOTAL
+	IDLE_PREVIOUS_TOTAL=$total IDLE_PREVIOUS_IDLE=$idle
+	((old_total && delta > 0 && (idle - previous) * 100 >= delta * 90)) || return
+	((MEM_AVAILABLE_KIB > DEPLOY_SOFT_KIB + 256 * KIB_PER_MIB)) || return
+	((FAST_SINCE_MS)) && return
+	scan_launchers
+	[[ $LAUNCHER_PIDS == " " ]] || return
+	for line in "$RUN_USER_DIR"/*/"$GAME_SIGNAL"; do
+		if [[ -e $line && $line -nt $STATE_DIR/game-seen ]]; then
+			: >"$STATE_DIR/game-seen"
+			CALIBRATION_AFTER_MS=$((NOW_MS + GAME_OPENING_MAX_SEC * 1000))
+			return
+		fi
+	done
+	if [[ -r $PSI_PATH ]]; then
+		while read -r name line rest; do
+			[[ $line == avg10=0.00 ]] || return
+		done <"$PSI_PATH"
+	fi
+	local rate cpus workers duration
+	local observation
+	if ! observation=$("$ALLOC_RATE_HELPER"); then
+		log_err "allocation-rate measurement failed; conservative pacing retained"
+		CALIBRATION_AFTER_MS=$((NOW_MS + 60000))
+		return
+	fi
+	read -r rate cpus workers duration <<<"$observation"
+	if ! [[ $rate =~ ^[1-9][0-9]*$ && $cpus =~ ^[1-9][0-9]*$ && $workers =~ ^[1-9][0-9]*$ ]]; then
+		log_err "invalid allocation-rate measurement; conservative pacing retained"
+		return
+	fi
+	MAX_ALLOC_MIB_S=$((rate * cpus * ALLOC_SAFETY_FACTOR / workers))
+	if mkdir -p "$CALIBRATION_DIR" && printf '%s %s %s %s %s %s\n' "$CALIBRATION_FINGERPRINT" \
+		"$MAX_ALLOC_MIB_S" "$rate" "$cpus" "$workers" "$duration" >"$CALIBRATION_DIR/allocation-rate.tmp" \
+		&& mv -f "$CALIBRATION_DIR/allocation-rate.tmp" "$CALIBRATION_DIR/allocation-rate"; then
+		CALIBRATED=yes
+	else
+		log_err "cannot save allocation-rate measurement in $CALIBRATION_DIR"
+	fi
 }
 
 print_help() {
@@ -901,15 +985,15 @@ done
 resolve_area
 
 if [[ $CUSHION_SWAP == off ]]; then
-	log "Cushion Swap File is off ($CONFIG: CUSHION_SWAP=off); the swap state is left as it is"
+	[[ $LOG_EVERY_CYCLE == yes ]] && log_cycle "Cushion Swap File is off ($CONFIG: CUSHION_SWAP=off); the swap state is left as it is"
 	((DRY_RUN)) || write_status disabled
 	exit 0
 fi
 
 if ((DRY_RUN)); then
 	log "cushion-swap: starting in --dry-run mode (no swapon/swapoff will be executed; MEMINFO_PATH=${MEMINFO_PATH} SWAPS_PATH=${SWAPS_PATH} STATE_DIR=${STATE_DIR} area=${AREA:-none})"
-else
-	log "cushion-swap: starting (area=${AREA:-none} pacing=${PACING} poll=${POLL_INTERVAL_SEC}s rate_window=${RATE_WINDOW_SEC}s quiet=${QUIET_SECONDS}s every_cycle=${LOG_EVERY_CYCLE})"
+elif [[ $LOG_EVERY_CYCLE == yes ]]; then
+	log_cycle "cushion-swap: starting (area=${AREA:-none} pacing=${PACING} poll=${POLL_INTERVAL_SEC}s rate_window=${RATE_WINDOW_SEC}s quiet=${QUIET_SECONDS}s every_cycle=${LOG_EVERY_CYCLE})"
 fi
 
 if ((RUN_ONCE)); then
@@ -921,10 +1005,12 @@ mkdir -p "$STATE_DIR"
 [[ -p $STATE_DIR/tick ]] || mkfifo -m 600 "$STATE_DIR/tick"
 exec {SLEEP_FD}<>"$STATE_DIR/tick"
 MIN_MS=$(to_ms "$MIN_INTERVAL_SEC") POLL_MS=$(to_ms "$POLL_INTERVAL_SEC") TICK_MS=$(to_ms "$SAFETY_TICK_SEC") FAST_MS=$(to_ms "$FAST_INTERVAL_SEC")
+load_calibration
 start_psi
 run_cycle
-log "thresholds ($THRESHOLD_SOURCE, MemTotal $(gib_str "$MEM_TOTAL_KIB")): hard $(gib_str "$DEPLOY_HARD_KIB") soft $(gib_str "$DEPLOY_SOFT_KIB") rate $(gib_str "$RATE_KIB")/${RATE_WINDOW_SEC}s margin $(gib_str "$RETRACT_MARGIN_KIB") quiet ${QUIET_SECONDS}s"
+[[ $LOG_EVERY_CYCLE == yes ]] && log_cycle "thresholds ($THRESHOLD_SOURCE, MemTotal $(gib_str "$MEM_TOTAL_KIB")): hard $(gib_str "$DEPLOY_HARD_KIB") soft $(gib_str "$DEPLOY_SOFT_KIB") rate $(gib_str "$RATE_KIB")/${RATE_WINDOW_SEC}s margin $(gib_str "$RETRACT_MARGIN_KIB") quiet ${QUIET_SECONDS}s"
 while true; do
+	calibrate_when_idle
 	wait_next
 	run_cycle
 done
