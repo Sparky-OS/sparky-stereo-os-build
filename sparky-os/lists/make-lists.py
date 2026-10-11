@@ -63,6 +63,7 @@ group('apps', "Applications beyond the KDE edition (Daniel's, deduplicated)", ap
     # stereo editing and 3D work (Daniel, 2026-10-02): ours to package first, then Debian's
     'stereophotoview', 'sview', 'blender', 'freecad', 'paraview', 'hugin-tools', 'libimage-exiftool-perl',
     'showfoto',   # digiKam's photo editor, stereo (2026-10-10); the digikam package does not pull it in
+    'handbrake',   # the video transcoder (Daniel, 2026-10-11: "it will be included, of course"); deb-multimedia's, stereo version planned
 ])
 
 # 2. Games: SteamOS-like, the chosen GameOver games, KDE's games, three well-known additions.
