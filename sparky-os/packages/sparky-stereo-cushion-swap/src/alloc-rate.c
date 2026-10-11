@@ -74,6 +74,16 @@ static int fingerprint(void)
         }
         fclose(f);
     }
+    // Firmware memory records also distinguish equal-capacity replacements.
+    FILE *dmi = fopen("/sys/firmware/dmi/tables/DMI", "rb");
+    if (dmi) {
+        int c;
+        while ((c = fgetc(dmi)) != EOF) {
+            h ^= (unsigned char)c;
+            h *= UINT64_C(1099511628211);
+        }
+        fclose(dmi);
+    }
     printf("%016" PRIx64 "\n", h);
     return 0;
 }
