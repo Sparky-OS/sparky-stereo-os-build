@@ -5,7 +5,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.1.5
+VERSION=0.1.6
 PACKAGE=sparky-stereo-hardware
 mkdir -p "$OUT"
 W=$(mktemp -d "$OUT/.sparky-stereo-hardware.XXXXXX")
@@ -57,6 +57,16 @@ Description: Detect and configure matched hardware for Sparky Stereo OS
 EOF
 cat >"$S/debian/changelog" <<EOF
 $PACKAGE ($VERSION) unstable; urgency=medium
+
+  * Install the NVIDIA userspace driver at the version of the edition's
+    module (nvidia-kernel-open-dkms-stereo3d without its +stereo3d suffix,
+    read from apt) instead of a version fixed in lib/actions.sh, so the
+    driver and the module cannot drift apart when the module moves to a new
+    NVIDIA version.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 11 Oct 2026 18:30:00 -0300
+
+$PACKAGE (0.1.5) unstable; urgency=medium
 
   * Ship APT preferences for the GPU vendors' repositories: NVIDIA's container
     toolkit at equal priority from both NVIDIA repositories (no downgrade

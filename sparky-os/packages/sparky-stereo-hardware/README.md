@@ -72,7 +72,7 @@ The GUI previews the plan and runs installation visibly in sparky-xterm. GUI lab
 
 NVIDIA open support follows NVIDIA's 615.71.09 PCI table, including subsystem restrictions. Unknown cards and mixed supported/unsupported NVIDIA systems keep nouveau. Before the optional CUDA transaction, firmware-nvidia-graphics is installed for nouveau. A missing edition module, unavailable key, checksum mismatch or failed apt preflight leaves the previous repository policy in place. A failed actual apt transaction is an error requiring inspection; the tool does not pretend it rolled back partially installed drivers. Existing NVIDIA installations are not removed automatically.
 
-The CUDA keyring archive is pinned by SHA-256 and only its public key is extracted. The repository has Signed-By and priority 1002. The install names both nvidia-driver=615.71.09-2 and nvidia-kernel-open-dkms-stereo3d. A changed upstream archive requires reviewing its key and updating the checksum in a new package release.
+The CUDA keyring archive is pinned by SHA-256 and only its public key is extracted. The repository has Signed-By and priority 1002. The install names both nvidia-driver at the module's NVIDIA version (the version of nvidia-kernel-open-dkms-stereo3d without its +stereo3d suffix, read from apt) and nvidia-kernel-open-dkms-stereo3d. A changed upstream archive requires reviewing its key and updating the checksum in a new package release.
 
 Creative support preserves the four original blobs in `/usr/lib/firmware/updates/` and uses `snd_hda_intel enable_msi=1`. It does not unload active audio. Reboot after driver/firmware changes. Xbox USB matches preinstall xpadneo for later Bluetooth pairing; xpadneo itself handles Bluetooth, not the USB transport. DisplayLink installs evdi-dkms; a working dock also needs its userspace DisplayLink component supplied by the edition.
 
@@ -88,7 +88,7 @@ sparky-stereo-gpu-amd: AMD's out-of-tree kernel driver (amdgpu-dkms, amdgpu-dkms
 
 Intel is not guarded: i915 has carried HDMI stereo modes upstream since 2013, and Intel's repositories do not replace the kernel driver.
 
-The NVIDIA driver itself is locked by sparky-stereo-nvidia-driver-lock, built with the edition's NVIDIA module (nvidia-kernel-open-dkms-stereo3d) from the same version, see its README.Debian. When the module moves to a new NVIDIA version, the driver=nvidia-driver=615.71.09-2 line in lib/actions.sh has to follow it.
+The NVIDIA driver itself is locked by sparky-stereo-nvidia-driver-lock, built with the edition's NVIDIA module (nvidia-kernel-open-dkms-stereo3d) from the same version, see its README.Debian. The tool reads the module's version from apt, so the driver version follows the module with no edit in lib/actions.sh. What does not follow by itself is share/nvidia-open.ids, the PCI table of the version it was taken from (see its source file): update it when the module moves.
 
 Tests:
 -------------

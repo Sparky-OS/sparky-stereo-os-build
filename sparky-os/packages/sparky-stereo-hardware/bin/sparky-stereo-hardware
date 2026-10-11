@@ -98,7 +98,8 @@ if $dry; then
 	fi
 	if grep -Fxq $'action\tnvidia-open' "$WORK/plan"; then
 		log 'Would configure CUDA debian13/x86_64 Signed-By key and origin pin 1002'
-		log 'Would install nvidia-driver=615.71.09-2 nvidia-kernel-open-dkms-stereo3d by name'
+		nvidia_version=$(apt-cache show --no-all-versions nvidia-kernel-open-dkms-stereo3d 2>/dev/null | sed -n 's/^Version: \(.*\)+stereo3d[0-9]*$/\1/p' | head -n1)
+		log "Would install nvidia-driver=${nvidia_version:-<module version>} nvidia-kernel-open-dkms-stereo3d by name"
 	fi
 	exit 0
 fi

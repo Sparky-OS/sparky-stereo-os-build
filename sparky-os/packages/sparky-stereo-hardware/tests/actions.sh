@@ -63,7 +63,7 @@ printf 'Package: test-cuda-key\nVersion: 1\nArchitecture: all\nMaintainer: Test 
 printf 'fixture public key\n' >"$T/key/usr/share/keyrings/cuda-archive-keyring.gpg"
 dpkg-deb --root-owner-group -b "$T/key" "$T/key.deb" >/dev/null
 CUDA_KEY_SHA256=$(sha256sum "$T/key.deb" | cut -d' ' -f1)
-apt-cache() { [[ ${missing_module:-0} == 0 ]] || return 1; echo 'Package: nvidia-kernel-open-dkms-stereo3d'; }
+apt-cache() { [[ ${missing_module:-0} == 0 ]] || return 1; printf '%s\n' 'Package: nvidia-kernel-open-dkms-stereo3d' "Version: ${module_version:-615.71.09-2+stereo3d4}"; }
 curl() {
 	[[ ${bad_download:-0} == 0 ]] || return 22
 	[[ $* == *cuda-keyring_1.1-1_all.deb* ]] || return 1
@@ -98,6 +98,17 @@ grep -Fxq 'Signed-By: /etc/apt/keyrings/sparky-stereo-cuda.gpg' "$ROOT/etc/apt/s
 cmp "$T/key/usr/share/keyrings/cuda-archive-keyring.gpg" "$ROOT/etc/apt/keyrings/sparky-stereo-cuda.gpg"
 grep -Fxq 'DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install nvidia-driver=615.71.09-2 nvidia-kernel-open-dkms-stereo3d' "$calls"
 echo 'PASS NVIDIA exact userspace, explicit edition module, key archive verification, Signed-By and origin pin'
+# The userspace driver follows the module's version, whatever NVIDIA version that is.
+: >"$calls"
+module_version=620.10.01-1+stereo3d1
+setup_nvidia
+grep -Fxq 'DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install nvidia-driver=620.10.01-1 nvidia-kernel-open-dkms-stereo3d' "$calls"
+module_version=615.71.09-2
+: >"$calls"
+setup_nvidia
+! grep -q 'install nvidia-driver' "$calls"
+module_version=615.71.09-2+stereo3d4
+echo 'PASS NVIDIA driver version follows the module (a new version, and a module without the suffix is refused)'
 printf 'previous policy\n' >"$ROOT/etc/apt/preferences.d/91sparky-stereo-cuda"
 fail_preflight=1
 setup_nvidia

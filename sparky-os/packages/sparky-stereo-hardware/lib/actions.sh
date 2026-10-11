@@ -114,14 +114,22 @@ setup_nvidia() {
 	local key="$ROOT/etc/apt/keyrings/sparky-stereo-cuda.gpg"
 	local source="$ROOT/etc/apt/sources.list.d/sparky-stereo-cuda.sources"
 	local pin="$ROOT/etc/apt/preferences.d/91sparky-stereo-cuda"
-	local driver=nvidia-driver=615.71.09-2
+	local driver nvidia_version
 	local module=nvidia-kernel-open-dkms-stereo3d
 	local file
 	# Do not start a repository change if the edition's module is unavailable.
-	if ! apt-cache show "$module" >"$WORK/nvidia-module" 2>&1 || ! grep -q '^Package:' "$WORK/nvidia-module"; then
+	if ! apt-cache show --no-all-versions "$module" >"$WORK/nvidia-module" 2>&1 || ! grep -q '^Package:' "$WORK/nvidia-module"; then
 		log 'FALLBACK edition NVIDIA module unavailable; nouveau firmware installed'
 		return 0
 	fi
+	# The userspace driver is NVIDIA's version the module is built for: the module's version
+	# without our +stereo3d suffix (615.71.09-2+stereo3d4 -> 615.71.09-2), so the two cannot drift.
+	nvidia_version=$(sed -n 's/^Version: \(.*\)+stereo3d[0-9]*$/\1/p' "$WORK/nvidia-module" | head -n1)
+	if [[ -z $nvidia_version ]]; then
+		log 'FALLBACK edition NVIDIA module has no NVIDIA version; nouveau firmware installed'
+		return 0
+	fi
+	driver=nvidia-driver=$nvidia_version
 	if ! run curl --fail --location --max-time 60 "$base/cuda-keyring_1.1-1_all.deb" -o "$WORK/cuda-keyring.deb"; then
 		log 'FALLBACK CUDA key download failed; nouveau firmware installed'
 		return 0
@@ -171,5 +179,5 @@ EOF
 	if grep -Fxq $'action\tnvidia-runtime-pm' "$WORK/plan"; then
 		setup_nvidia_runtime_pm || return 1
 	fi
-	log 'NVIDIA 615.71.09 userspace and edition open modules installed; reboot required'
+	log "NVIDIA $nvidia_version userspace and edition open modules installed; reboot required"
 }
