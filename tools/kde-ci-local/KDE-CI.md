@@ -105,3 +105,24 @@ The cache itself lives on the build disk, `/mnt/build/kde-ci-local/cache`, and t
 
 A lane's sandbox can show `/sys` but hide `/dev/dri`. The tool still passes the render node (and a vkms card) to the container, because Docker opens the device on the host; the group comes from `/etc/group` then.
 
+
+## Our stack: one set of patched libraries for every job (2026-10-11)
+
+KDE's `run-ci-build.py` can only take a dependency from KDE's package registry, so a fork that needs our libkscreen or our plasma-wayland-protocols cannot even build there (measured below).
+`stacks/*.yml` defines the stack: the forks other projects build against, their branches and what each needs.
+`kde-ci-local --stack stacks/plasma-6.7.yml` builds them once and lays them over KDE's packages in every build job; KDE's scripts stay unmodified.
+
+```
+kde-ci-local --stack stacks/plasma-6.7.yml --stack-status   # members, commits, keys, built or not
+kde-ci-local --stack stacks/plasma-6.7.yml --stack-build    # build what is missing, then stop
+kde-ci-local --stack stacks/plasma-6.7.yml --stack-prune    # remove prefixes of superseded keys
+kde-ci-local TREE --branch B --project P --stack stacks/plasma-6.7.yml --jobs suse_tumbleweed_qt611
+```
+
+- **Members** (plasma-6.7): `plasma-wayland-protocols`, then `libkscreen` (needs it), `kimageformats`. A member is a fork that another job builds against. KWin and KScreen are consumers: they get the stack, nothing builds against them.
+- **Key** of a member: first 12 hex digits of sha1 over its name, its commit, the Docker image id of the job, and the keys of the members it needs. Moving a commit changes its key and the keys of what needs it, and nothing else. KDE's own packages are not in the key (the registry moves under us), so a prefix can be older than KDE's current packages; `--stack-prune` plus a rebuild refreshes it.
+- **Build** of a member: its own `.gitlab-ci.yml` job (`suse_tumbleweed_qt611`) with `--only-build` (no tests), with the members it needs laid over KDE's packages. The staged install (`_staging/.../_install`) is kept in `$KDE_CI_LOCAL_WORK/stack/NAME/members/MEMBER-KEY/prefix`. Build jobs take the shared lock as every build job does.
+- **Overlay**: the composed prefix (`stack/NAME/compose/CKEY`, the members' files hard-linked into one folder, mounted read-only) is laid over `_install` by `stack-run-ci-build`, which runs KDE's `run-ci-build.py` in the same process with two wrapped calls: the registry's packages of the stack's projects are dropped before they are unpacked (so nothing of KDE's version stays, directly or through another package's recorded dependencies), and the overlay is copied in before the environment is made from `_install` (again after the runtime dependencies are unpacked). In a stack job the script line `python3 ci-utilities/run-ci-build.py ...` becomes `python3 /kdecilocal-tools/stack-run-ci-build ci-utilities/run-ci-build.py ...`; everything else is the job's own.
+- A job of a member leaves out that member and the members that need it; other jobs get all members. A job on another platform than the stack's (`suse-qt6.11`) is skipped with a note.
+- **Moving to Plasma 6.8**: copy the file, change `branch` and `ci-name` of each member. Nothing else is branch-specific.
+- Disk: a member build is checked for 6 GB (a consumer job for 8 GB) before it starts; below the floors of /K3D (20 GB) and / (12 GB) it stops with `STATUS: blocked`.

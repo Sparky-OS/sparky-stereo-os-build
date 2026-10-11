@@ -29,12 +29,20 @@ Environment:
   KDE_CI_LOCAL_WORK   work folder (default /K3D/temp/kde-ci-local); holds the
                       KDE sources, the package cache, the logs and the job trees
   KDE_CI_LOCAL_THREADS  threads per container (default 4, the house limit)
+
+Our stack (see stacks/ and kdecistack.py): the forks other projects build against are built
+once into one prefix, keyed by their commits, and a build job lays it over KDE's packages.
+
+  kde-ci-local --stack stacks/plasma-6.7.yml --stack-status
+  kde-ci-local --stack stacks/plasma-6.7.yml --stack-build
+  kde-ci-local TREE --branch B --project P --stack stacks/plasma-6.7.yml --jobs suse_tumbleweed_qt611
 """
 import argparse
 import copy
 import fcntl
 import glob
 import grp
+import json
 import os
 import re
 import shutil
@@ -43,6 +51,8 @@ import sys
 import time
 
 import yaml
+
+import kdecistack
 
 KDE = "https://invent.kde.org"
 REGISTRY = "invent-registry.kde.org/sysadmin/ci-images"
@@ -434,8 +444,15 @@ def run_job_locked(name, job, cfg, args, ctx):
         script_job["after_script"] = None
         mount_cache = "/mnt/suse-qt6.11"
         plat = "suse-qt6.11"
-    if args.only_build:
+    if args.only_build or ctx.get("only_build"):
         script_job["script"] = [l + " --only-build" if "run-ci-build" in l else l for l in flat_script(script_job.get("script"), cfg)]
+    stack_dir = ctx.get("stack_dir") if any("run-ci-build" in l for l in flat_script(script_job.get("script"), cfg)) else None
+    if stack_dir:
+        # KDE's script runs unchanged; the wrapper lays our stack over what it unpacked from KDE's registry
+        if plat != ctx["stack"]["platform"]:
+            return ("SKIP", f"the stack {ctx['stack']['name']} is built for {ctx['stack']['platform']}, this job is {plat or 'not a build job'}", log, 0)
+        script_job["script"] = [l.replace("ci-utilities/run-ci-build.py", "/kdecilocal-tools/stack-run-ci-build ci-utilities/run-ci-build.py")
+                                for l in flat_script(script_job.get("script"), cfg)]
     script = job_script(script_job, cfg, env)
     os.makedirs(ctx["logs"], exist_ok=True)
     scriptfile = os.path.join(jobdir + ".sh")
@@ -462,6 +479,9 @@ def run_job_locked(name, job, cfg, args, ctx):
         card = vkms_card()
         if card and dri_gid(card):
             cmd += ["--device", f"{card}:/dev/dri/card1", "--group-add", dri_gid(card)]
+    if stack_dir:
+        cmd += ["-v", f"{stack_dir}:/kdecilocal-stack:ro", "-v", f"{os.path.dirname(os.path.abspath(__file__))}:/kdecilocal-tools:ro",
+                "-e", "KDE_CI_STACK_PREFIX=/kdecilocal-stack"]
     if mount_cache:
         # one dependency cache for every lane on this machine (KDE's artifacts, downloadable again);
         # build jobs take turns through the shared lock, so they never write it at the same time
@@ -474,12 +494,33 @@ def run_job_locked(name, job, cfg, args, ctx):
     with open(log, "w") as lf:
         rc = run(cmd, stdout=lf, stderr=subprocess.STDOUT).returncode
     dur = int(time.time() - t0)
+    if rc == 0 and ctx.get("harvest"):
+        ctx["harvest"](jobdir, env, dur)
     if not args.keep:
         # build trees hold root-free files owned by uid 1000; remove them to save space
         shutil.rmtree(jobdir, ignore_errors=True)
         os.path.exists(scriptfile) and os.remove(scriptfile)
     note = "proxy for FreeBSD (clang build on SUSE + FreeBSD registry check)" if proxy_mode else ""
     return ("PASS" if rc == 0 else "FAIL", note, log, dur)
+
+
+def collect_jobs(cfg):
+    """The jobs of a pipeline configuration, resolved (extends, !reference) and with their images filled in."""
+    jobs = []
+    for name, j in cfg.items():
+        if name.startswith(".") or not isinstance(j, dict) or "stage" not in j and "extends" not in j and "script" not in j:
+            continue
+        if name in ("variables", "stages", "workflow", "default", "include"):
+            continue
+        job = resolve_job(cfg, name)
+        if "script" not in job or "image" not in job:
+            continue
+        img = job["image"]
+        gv = cfg.get("variables") or {}
+        sub = lambda t: re.sub(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?", lambda m: str((job.get("variables") or {}).get(m.group(1), gv.get(m.group(1), m.group(0)))), t)
+        job["image"] = sub(img) if isinstance(img, str) else {**img, "name": sub(img["name"])}
+        jobs.append((name, job))
+    return jobs
 
 
 def build_qt613_image(work, ci):
@@ -509,6 +550,98 @@ def build_krita_image(work):
     sys.exit(run(["docker", "build", "--platform", "linux/amd64", "-t", "kde-ci-local/krita-appimage-2204:latest", ctxd]).returncode)
 
 
+def docker_image_id(image):
+    if not image_present(image):
+        print(f"  pulling {image} ...")
+        run(["docker", "pull", "--platform", "linux/amd64", image], stdout=subprocess.DEVNULL, check=True)
+    return subprocess.check_output(["docker", "image", "inspect", "--format", "{{.Id}}", image], text=True).strip()
+
+
+def stack_state(stack, work):
+    image = VM_TO_DOCKER[stack.get("image", "suse-qt611")]
+    return kdecistack.resolve(stack, docker_image_id(image))
+
+
+def stack_status(stack, members, work):
+    print(f"stack {stack['name']} ({stack['platform']}, job {stack['job']}), prefixes in {kdecistack.home(work, stack)}")
+    for name in stack["order"]:
+        m = members[name]
+        built = kdecistack.is_built(work, stack, m)
+        info = ""
+        if built:
+            with open(os.path.join(kdecistack.member_dir(work, stack, m), "build.json")) as f:
+                b = json.load(f)
+            info = f"{b['seconds']}s, {b['files']} files, {b['bytes'] / 2**20:.0f} MiB"
+        print(f"  {name:26} {m['branch']:14} {m['commit'][:10]}  key {m['key']}  {'built ' + info if built else 'NOT BUILT'}")
+
+
+def build_member(stack, members, m, ci, args, work):
+    """Build one member into the stack with its own pipeline job; -> (state, seconds)."""
+    name = m["name"]
+    if kdecistack.is_built(work, stack, m):
+        return ("cached", 0)
+    blocked = kdecistack.disk_blocked(6)
+    if blocked:
+        raise SystemExit(f"STATUS: blocked - {blocked}")
+    needs = kdecistack.closure(members, name) - {name}
+    stack_dir = kdecistack.compose(work, stack, members, needs)[0] if needs else None
+    ciroot = os.path.join(kdecistack.home(work, stack), "ci", name)
+    os.makedirs(ciroot, exist_ok=True)
+    with open(os.path.join(ciroot, ".gitlab-ci.yml"), "w") as f:
+        f.write(git(m["path"], "show", m["commit"] + ":.gitlab-ci.yml") + "\n")
+    jobs = dict(collect_jobs(load_with_includes(os.path.join(ciroot, ".gitlab-ci.yml"), ci)))
+    job = jobs[stack["job"]]
+    cfg = load_with_includes(os.path.join(ciroot, ".gitlab-ci.yml"), ci)
+
+    def harvest(jobdir, env, seconds):
+        staged = os.path.join(jobdir, "_staging", env["CI_PROJECT_DIR"].lstrip("/"), "_install")
+        files, size = kdecistack.harvest(work, stack, m, staged, seconds)
+        print(f"  kept {files} files, {size / 2**20:.0f} MiB as {os.path.basename(kdecistack.member_dir(work, stack, m))}")
+
+    ctx = dict(work=work, tree=m["path"], branch=m["commit"], ci_name=m["ci-name"], project=name,
+               trees=os.path.join(work, "trees"), logs=os.path.join(work, "logs"),
+               only_build=True, stack=stack, stack_dir=stack_dir, harvest=harvest)
+    os.makedirs(ctx["trees"], exist_ok=True)
+    lock = heavy_lock(f"stack {name}")
+    try:
+        if kdecistack.is_built(work, stack, m):         # another lane built it while we waited
+            return ("cached", 0)
+        print(f"[stack] {name} {m['commit'][:10]} key {m['key']}" + (f", over {', '.join(sorted(needs))}" if needs else ""))
+        st, note, log, dur = run_job_locked(stack["job"], job, cfg, args, ctx)
+    finally:
+        if lock is not None:
+            os.close(lock)
+    if st != "PASS":
+        raise SystemExit(f"stack member {name}: {st} {note} (log: {log})")
+    return ("built", dur)
+
+
+def stack_build(stack, members, ci, args, work):
+    t0 = time.time()
+    done = []
+    for name in stack["order"]:
+        state, dur = build_member(stack, members, members[name], ci, args, work)
+        done.append((name, state, dur))
+    print("stack:")
+    for name, state, dur in done:
+        print(f"  {name:26} {state:7} {dur:5}s")
+    print(f"  total {int(time.time() - t0)}s")
+
+
+def stack_prune(stack, members, work):
+    keep = {os.path.basename(kdecistack.member_dir(work, stack, m)) for m in members.values()}
+    freed = 0
+    for sub, wanted in (("members", keep), ("compose", set())):
+        d = os.path.join(kdecistack.home(work, stack), sub)
+        for e in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+            if e not in wanted:
+                p = os.path.join(d, e)
+                print(f"  removing {sub}/{e}")
+                shutil.rmtree(p, ignore_errors=True)
+                freed += 1
+    print(f"stack {stack['name']}: {freed} folder(s) removed")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0], formatter_class=argparse.RawDescriptionHelpFormatter,
                                  epilog=__doc__)
@@ -527,6 +660,11 @@ def main():
                     help="build the Qt 6.13 job image from KDE's ci-images/suse-qt613/build.sh (once, ~12 GB)")
     ap.add_argument("--build-krita-image", action="store_true",
                     help="build Krita's job image from KDE's ci-images/krita-appimage-2204 (once, Ubuntu 22.04)")
+    ap.add_argument("--stack", metavar="FILE", help="a stack file (stacks/*.yml): lay the stack over KDE's packages in build jobs; "
+                    "members that are not built yet are built first")
+    ap.add_argument("--stack-status", action="store_true", help="with --stack: list the members, their keys and whether each is built, then stop")
+    ap.add_argument("--stack-build", action="store_true", help="with --stack: build the members that are not built yet (new commit or new key), then stop")
+    ap.add_argument("--stack-prune", action="store_true", help="with --stack: remove the prefixes of superseded keys, then stop")
     args = ap.parse_args()
 
     work = os.environ.get("KDE_CI_LOCAL_WORK", "/K3D/temp/kde-ci-local")
@@ -537,25 +675,28 @@ def main():
     if args.build_krita_image:
         build_krita_image(work)
 
+    stack = stack_members = None
+    if args.stack:
+        stack = kdecistack.load(args.stack)
+        stack_members = stack_state(stack, work)
+        if args.stack_status:
+            stack_status(stack, stack_members, work)
+            return 0
+        if args.stack_prune:
+            stack_prune(stack, stack_members, work)
+            return 0
+        if args.stack_build:
+            stack_build(stack, stack_members, ci, args, work)
+            return 0
+    elif args.stack_status or args.stack_build or args.stack_prune:
+        ap.error("--stack-status, --stack-build and --stack-prune need --stack FILE")
+
     tree = os.path.abspath(args.tree)
     branch = args.branch or git(tree, "symbolic-ref", "--short", "HEAD")
     ci_name = args.ci_name or branch
     project = args.project or os.path.basename(tree.rstrip("/"))
     cfg = load_with_includes(os.path.join(tree, ".gitlab-ci.yml"), ci)
-    jobs = []
-    for name, j in cfg.items():
-        if name.startswith(".") or not isinstance(j, dict) or "stage" not in j and "extends" not in j and "script" not in j:
-            continue
-        if name in ("variables", "stages", "workflow", "default", "include"):
-            continue
-        job = resolve_job(cfg, name)
-        if "script" not in job or "image" not in job:
-            continue
-        img = job["image"]
-        gv = cfg.get("variables") or {}
-        sub = lambda t: re.sub(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?", lambda m: str((job.get("variables") or {}).get(m.group(1), gv.get(m.group(1), m.group(0)))), t)
-        job["image"] = sub(img) if isinstance(img, str) else {**img, "name": sub(img["name"])}
-        jobs.append((name, job))
+    jobs = collect_jobs(cfg)
     jobs.sort(key=lambda nj: STAGES.index(nj[1].get("stage", "test")) if nj[1].get("stage", "test") in STAGES else 9)
 
     sel = args.jobs
@@ -587,6 +728,17 @@ def main():
     ctx = dict(work=work, tree=tree, branch=branch, ci_name=ci_name, project=project,
                trees=os.path.join(work, "trees"), logs=os.path.join(work, "logs"))
     os.makedirs(ctx["trees"], exist_ok=True)
+    if stack and any("run-ci-build" in l for _, j in chosen for l in flat_script(j.get("script"), cfg)):
+        blocked = kdecistack.disk_blocked(8)
+        if blocked:
+            raise SystemExit(f"STATUS: blocked - {blocked}")
+        stack_build(stack, stack_members, ci, args, work)
+        out = {project} | kdecistack.dependents(stack_members, project) if project in stack_members else set()
+        names = [n for n in stack["order"] if n not in out]
+        ctx["stack_dir"], manifest = kdecistack.compose(work, stack, stack_members, names)
+        ctx["stack"] = stack
+        print(f"stack {stack['name']} {manifest['key']}: " + ", ".join(f"{n} {m['commit'][:10]}" for n, m in manifest["members"].items())
+              + (f" (left out: {', '.join(sorted(out))}, built here from the tree)" if out else ""))
     results = []
     for name, job in chosen:
         print(f"[{job.get('stage')}] {name}")
