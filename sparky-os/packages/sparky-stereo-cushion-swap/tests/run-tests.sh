@@ -721,21 +721,29 @@ headroom_pacing() {
 calibration_cache() {
 	local d=$1 ok=0 cache=$W/calib-test
 	rm -rf "$W/state" "$cache"
-	mkdir -p "$cache"
+	mkdir -p "$cache/proc"
 	printf '#!/bin/bash\nif [[ ${1:-} == --fingerprint ]]; then cat "%s/id"; else echo measured >>"%s/calls"; echo "512 1 1 0.020"; fi\n' "$cache" "$cache" >"$cache/helper"
 	chmod +x "$cache/helper"
+	printf '#!/bin/sh\nprintf "ready\\n"\nexec sleep 60\n' >"$cache/psi-helper"
+	chmod +x "$cache/psi-helper"
 	echo kernel-a >"$cache/id"
 	echo 'cpu 100 0 0 100 0 0 0 0' >"$cache/stat"
 	meminfo "$W/m" 4194304 $((3 * G))
 	swaps "$W/s"
-	daemon_bg "$cache/log" "$cache/log" MEMINFO_PATH="$W/m" SWAPS_PATH="$W/s" PSI=off PSI_PATH=/nonexistent \
-		PACING=fixed POLL_INTERVAL_SEC=0.05 RUN_USER_DIR="$W/empty" PROC_DIR="$W/empty" \
+	daemon_bg "$cache/log" "$cache/log" MEMINFO_PATH="$W/m" SWAPS_PATH="$W/s" PSI=auto PSI_PATH=/nonexistent PSI_WAKE="$cache/psi-helper" SAFETY_TICK_SEC=0.05 \
+		PACING=fixed POLL_INTERVAL_SEC=0.05 RUN_USER_DIR="$W/empty" PROC_DIR="$cache/proc" \
 		CPU_STAT_PATH="$cache/stat" CALIBRATION_CHECK_SEC=0.1 CALIBRATION_DIR="$cache/state" ALLOC_RATE_HELPER="$cache/helper" "$d"
 	sleep 0.2
 	echo 'cpu 500 0 0 100 0 0 0 0' >"$cache/stat"
 	sleep 0.2
 	[[ ! -e $cache/calls ]] || { echo '  measured on a busy CPU'; ok=1; }
+	mkdir -p "$cache/proc/1"
+	echo powerprofilesct >"$cache/proc/1/comm"
 	echo 'cpu 500 0 0 1000 0 0 0 0' >"$cache/stat"
+	sleep 0.2
+	[[ ! -e $cache/calls ]] || { echo '  measured while the game profile wrapper was running'; ok=1; }
+	rm -rf "$cache/proc/1"
+	echo 'cpu 500 0 0 2000 0 0 0 0' >"$cache/stat"
 	sleep 0.3
 	stop_bg || ok=1
 	[[ $(cat "$cache/state/allocation-rate" 2>/dev/null) == 'kernel-a 1024 512 1 1 0.020' ]] || { echo '  missing rate or safety factor'; ok=1; }
@@ -877,6 +885,12 @@ mutant() {
 
 make_fakes
 set_env
+if [[ ${CALIBRATION_ONLY:-} == 1 ]]; then
+	check calibration-idle-cache-invalidation calibration_cache "${DAEMON_UNDER_TEST:-$PKG/sbin/cushion-swap}"
+	echo "SUMMARY: $PASS passed, $FAIL failed (calibration only)"
+	((FAIL == 0))
+	exit
+fi
 check psi-helper-builds build_helper
 [[ -x $W/psi-wake ]] || exit 1
 check psi-helper-refuses-without-psi psi_helper_refuses

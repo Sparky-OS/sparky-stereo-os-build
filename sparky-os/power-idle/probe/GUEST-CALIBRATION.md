@@ -39,3 +39,9 @@ archive is .1, uncompressed.
 The 96 GiB log-volume case is a container RAM fixture, not a claim about
 Daniel's workstation. Its available-memory value and assumed-rate override
 must be recorded beside the projected bytes.
+
+`guest-default-log.py OUT.json --seconds 20` checks the actual idle production
+service after the other probes restore it. It checks that its log size stays
+unchanged and that the daemon's PID writes nothing to the journal, and records
+CPU and runtime state. A memory-pressure action during this window is a
+mismatch; run it while idle with no pressure workload.
