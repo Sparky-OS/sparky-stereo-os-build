@@ -38,7 +38,8 @@ parachute, never a floor". On 2026-10-10 he made it the edition's swap:
 hibernation options won't even enable ... and the retraction is kept",
 and named it the Cushion Swap File. The same evening he decided the nine
 proposals of version 0.1.0 ("agreed on proposals"); version 0.2.0 carries
-them out.
+them out. Version 0.3.0 follows his 22:47 answers: idle calibration,
+problems-only logging and enforced weekly rotation.
 
 His rules, kept as he wrote them (usr/sbin/cushion-swap, run_cycle):
 - Deploy when MemAvailable is below 6 GiB, or below 12 GiB and falling at
@@ -49,7 +50,8 @@ His rules, kept as he wrote them (usr/sbin/cushion-swap, run_cycle):
   not cause the next emergency), and no deploy condition has been true for
   10 minutes.
 - Fail safe: an unreadable /proc/meminfo or /proc/swaps means no action.
-- Every cycle is logged with its arithmetic (below).
+- Version 0.3.0 logs failures and DEPLOY/RETRACT arithmetic by default.
+  LOG_EVERY_CYCLE=yes enables his original cycle arithmetic.
 - OOMScoreAdjust=-1000, restarted if it dies, never sandboxed (swapon in a
   private mount namespace would do nothing to the real system).
 His test harness (tests/test_swap_parachute.sh, 12 scenarios, 39 assertions)
@@ -113,13 +115,32 @@ What the edition adds around his rules
   started since the last look are read. The fast rate ends when available
   memory has moved less than his rate threshold for 10 seconds, or after
   3 minutes.
-- The pacing (decided 2026-10-10: headroom by default, PACING=headroom).
-  The next sample comes before memory could fall to the early-warning floor
-  at 8 GiB/s (MAX_ALLOC_MIB_S), never sooner than 0.25 s and never later than
-  the interval above: 3 s, the 10 s tick in PSI mode, or 0.5 s while a game
-  is opening. PSI still wakes it at once. Far from the floor it samples as
-  rarely as before; near it, often. PACING=fixed keeps those intervals as
-  they are. Measured below.
+- Pacing (PACING=headroom). At the first idle opportunity, the native
+  alloc-rate helper measures fresh base-page faults: up to four workers,
+  16 MiB each, up to three rounds. Memory is released each round; data peaks
+  at 64 MiB plus thread stacks. It stops taking further rounds after 0.2 s;
+  a slow first round can take longer. Calibration waits for two CPU samples
+  ten seconds apart with at least 90% idle CPU, no memory PSI stalls, no
+  game-opening signal or running known launcher, and available memory above the soft
+  floor plus 256 MiB. It therefore waits through a game instead of measuring
+  at startup regardless of load.
+  /var/lib/cushion-swap/allocation-rate keeps the fastest measured rate,
+  CPU count, workers and duration with the kernel/CPU/RAM fingerprint.
+  Restarts reuse it; a changed kernel release, CPU identity, microcode,
+  online CPU map or MemTotal invalidates it. Where firmware exposes DMI
+  records, their opaque hash also catches equal-capacity RAM replacements.
+  Hardware changes not exposed in these records require deleting the cache
+  and restarting the service while idle.
+  The assumed maximum is measured MiB/s x available CPUs / workers x 2.
+  CPU scaling allows concurrent allocation on all CPUs; the 2x margin
+  covers transient speedups beyond the short benchmark. Until idle
+  calibration succeeds, the conservative 8192 MiB/s fallback applies.
+  MAX_ALLOC_MIB_S in /etc/default/cushion-swap overrides calibration.
+  The next sample uses (MemAvailable - soft floor) / assumed rate, capped
+  by the normal 3 s, PSI safety tick 10 s or game-opening 0.5 s interval.
+  The usual minimum of 0.25 s is shortened when half the hard-floor
+  headroom would run out faster. PSI can still wake it earlier.
+  PACING=fixed retains the original intervals.
 - CUSHION_SWAP=off in /etc/default/cushion-swap stops it; like his
   uninstall.sh, stopping never switches the swap off ("removing the watcher
   is not the same decision as forcing swap off").
@@ -128,44 +149,32 @@ What the edition adds around his rules
 
 The log
 -------------
-Daniel's design logs every cycle: "sample /proc/meminfo and /proc/swaps
-every 3s, decide, act (or don't), log the arithmetic, sleep, repeat". So by
-default (LOG_EVERY_CYCLE=yes) each cycle writes three lines, its sample, its
-deploy check and its retract check, with every number they use and the
-cycle's number. LOG_EVERY_CYCLE=no keeps only the cycles that decide
-something.
-- Where each kind of line goes:
-  - /var/log/cushion-swap/cushion-swap.log: every line (the unit's
-    StandardOutput=append:). Read it with
-    "tail -f /var/log/cushion-swap/cushion-swap.log" as root or a member of
-    the adm group (the folder is root:adm 0750, the file root:adm 0640,
-    Debian's /var/log convention).
-  - The journal: the start, the thresholds in use, every DEPLOY and RETRACT,
-    and every failure (StandardError=journal):
-    "journalctl -u cushion-swap". Hibernation's switch-on and switch-off are
-    in "journalctl -u cushion-swap-hibernate" and in systemd-sleep's lines.
-- Size: 543 bytes per cycle (measured in the container tests and in the
-  development VM). How many cycles a day depends on the pacing: headroom
-  samples sooner the less memory stands between MemAvailable and the
-  early-warning floor at 8 GiB/s. Measured over 120 s in the development VM
-  (2026-10-10, PSI mode, idle Plasma session): with 16 GB of RAM, a cycle
-  every 1.48 s, 31 MB of log a day and 0.4 % of one core; with 4 GB, a
-  cycle every 0.25 s (the minimum, all the time), 184 MB a day and 1.5 % of
-  one core. Daniel's 96 GB machine with 60 GiB available would sample every
-  6 s (8 MB a day); PACING=fixed with his 3 s poller gives 15.6 MB a day.
-- Rotation: /etc/logrotate.d/sparky-stereo-cushion-swap, daily (Debian's
-  logrotate.timer), 7 rotations kept, compressed from the second day
-  (delaycompress), maxsize 50M, copytruncate because the unit keeps the file
-  open. At the 3 s rate that keeps about 35 MB: today's file, yesterday's,
-  and six compressed days (the lines compress about 30 to 1); on the 4 GB
-  machine above, about 400 MB. maxsize acts only when logrotate runs, which
-  the timer does once a day. copytruncate
-  can lose the lines written between logrotate's copy and its truncation
-  ("a very small time slice", logrotate(8)): measured, 1 line in 3 forced
-  rotations while the daemon wrote 50 cycles a second; at 3 s, almost always
-  none. The unit opens the file for appending, so after a truncation the
-  daemon writes at the new end and leaves no hole.
-- No LogNamespace= and no other sandboxing: the unit stays as it was.
+LOG_EVERY_CYCLE=no is the default. Startup failures, other failures, DEPLOY
+and the RETRACT ending it carry their arithmetic to both
+/var/log/cushion-swap/cushion-swap.log and the journal. Successful startup,
+idle samples and routine decisions are quiet. Read problems with
+"journalctl -u cushion-swap" or "tail -f /var/log/cushion-swap/cushion-swap.log".
+The directory is root:adm 0750 and the file root:adm 0640.
+
+Set LOG_EVERY_CYCLE=yes in /etc/default/cushion-swap and restart the service
+when investigating a load. Sample, deploy-check and retract-check lines
+then go to the file only; problem lines still go to both destinations.
+Restore LOG_EVERY_CYCLE=no afterwards. The config file documents this.
+Opt-in weekly volumes are measured below; these are projections from short
+idle runs, not a week's collected logs, and change with available memory,
+CPU speed, PSI/game signals and workload.
+
+/etc/logrotate.d/sparky-stereo-cushion-swap uses weekly, rotate 1, compress,
+delaycompress, missingok, notifempty, copytruncate. There is no maxsize,
+hourly timer or earlier size trigger. Debian's daily logrotate invocation
+checks whether a week elapsed. A forced run is used only by the probe.
+With rotate 1 plus delaycompress the sole retained .1 stays uncompressed:
+it is deleted at the next rotation before it could become .2.gz. This is
+the specified policy. Disk budgeting must allow the current week and one
+uncompressed previous week. copytruncate can lose writes between copying
+and truncating (logrotate(8)); test measurements report that window's loss,
+not a guarantee of lossless rotation. The unit appends after truncation.
+No LogNamespace or mount namespace is introduced.
 
 Hibernate with the swap off
 -------------
@@ -255,16 +264,55 @@ Measured (development VM, 16 GB, 4 vCPUs, 2026-10-10)
   before systemd-oomd.service.
 - CPU while idle (120 s): see ../../power-idle/evidence/cushion-swap/.
 
+0.3.0 measurements (2026-10-11)
+-------------
+Headless development VM, four vCPUs, guest display manager stopped. Each
+before/after sample lasts 40 s, comparing accepted 0.2.0 to 0.3.0 with
+compatibility mode and opt-in cycle logs. CPU is percent of one core.
+The two 4 GiB samples are both retained: calibration and cost vary on this
+shared host. The final faster calibration did not lower measured CPU.
+
+| RAM case | measured / assumed MiB/s | interval before / after | CPU before / after | cycle log MB per week after |
+| --- | --- | --- | --- | --- |
+| 4 GiB VM, first idle sample | 2504 / 5008 | 0.336 / 0.548 s | 1.25 / 0.725% | 603 |
+| 4 GiB VM, final build | 3879 / 7758 | 0.303 / 0.325 s | 2.95 / 4.00% | 1015 |
+| 16 GiB VM, final build | 2048 / 4096 | 1.538 / about 3 s | 0.525 / 0.175% | 108 |
+| 96 GiB container fixture | explicit assumed 5008 | 3 s after | 0.167% after | 108 |
+
+The 96 GiB case has 60 GiB MemAvailable and a recorded rate override; it
+measures the compatibility loop, not Daniel's machine or a 96 GiB VM.
+Weekly bytes = bytes written / sample seconds x 604800. MB here means
+1,000,000 bytes. Retaining the previous uncompressed week can approximately
+double these file sizes. Low headroom can shorten intervals further and
+increase volume; these are observed idle projections, not maximum sizes.
+Default logging has no cycle-volume cost.
+
+The final four-worker base-page race uses the cached 3879 MiB/s as the
+aggregate allocator target and 7758 MiB/s for pacing. All six random-phase
+runs completed and deployed the own 2 GiB disk swap. Both controls assuming
+only 1 MiB/s lost a worker to the kernel OOM killer (PID checked in dmesg).
+Allocation can slow under reclaim and disk I/O, so the JSON includes each
+worker's actual reached-MiB/time output rather than claiming a sustained
+rate throughout swapping. Zram was runtime-masked for this test and restored.
+The 2x factor is a safety allowance, not a universal throughput guarantee.
+
+Three forced copytruncate rotations lost zero cycles in the container and
+one in the VM; unforced repeats did not rotate. The requested rotate 1 plus
+delaycompress kept only the uncompressed .1. See the versioned JSON and
+logs in ../../power-idle/evidence/cushion-swap/0.3.0/ and
+../../power-idle/probe/GUEST-CALIBRATION.md for reproduction.
+
 Status
 -------------
 /run/cushion-swap/status (read by the System Settings page and by
 "cushion-swap --status"): STATE (off, deployed, retracting, disabled,
-no-area), MODE (psi, compatibility), FAST, PACING, AREA and the thresholds in
+no-area), MODE (psi, compatibility), FAST, PACING, MAX_ALLOC_MIB_S, CALIBRATED, AREA and the thresholds in
 use.
 
 Tests
 -------------
-tests/run-tests.sh runs in a container as an ordinary user: the thresholds
+tests/run-tests.sh requires logrotate up front (exit 2 if absent) and runs
+in a container as an ordinary user: the thresholds
 for 4, 8, 16, 32, 64 and 96 GB, settings, deploy and retract on the own area
 only, an unused area retracted after the quiet window and never during a
 hibernation, fstab detection, the off switch, every cycle in the log file and
@@ -281,7 +329,7 @@ too late, no rate trigger, retracting under pressure, without the margin, or
 during a hibernation, every swap area, a stuck fast rate, fixed pacing by
 default, headroom ignored or blind to a game, an unused area kept, Hibernate
 offered only while the area is on, the switch-on skipped, actions missing
-from the journal, decisions-only logging by default, the logrotate file
+from the journal, routine logging by default, the logrotate file
 absent or for another path, the unit logging elsewhere or in a log
 namespace, the installer's file ignored, the hook dropping the offset) must
 each fail their check. QUICK=1 skips the planted faults.
@@ -299,7 +347,8 @@ settings or the TV's mode.
    in compatibility mode; on a kernel with PSI, start the daemon for this
    test with PSI=off in /etc/default/cushion-swap and restart it
    ("systemctl restart cushion-swap"); put the line back afterwards.
-2. Follow the log: "tail -f /var/log/cushion-swap/cushion-swap.log | grep -E
+2. Temporarily set LOG_EVERY_CYCLE=yes and restart; restore it afterwards.
+   Follow the log: "tail -f /var/log/cushion-swap/cushion-swap.log | grep -E
    'game opening|game loaded|longer than|sample:'".
 3. Start each game the usual way: from Steam (native and Proton), from
    Lutris, from Heroic, and through game-performance. For each, note
