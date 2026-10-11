@@ -75,8 +75,12 @@ ones with the least CPU to spare.
 
 Your own sysctl values:
 -------------
-systemd-sysctl reads every *.conf in /etc/sysctl.d, /run/sysctl.d and /usr/lib/sysctl.d sorted by file name, whatever the
-folder, and the last one wins (sysctl.d(5)). So a file of yours named 00-*.conf to 6*.conf loses to this package's
-70-sparky-stereo.conf (measured: vm.swappiness = 10 in /etc/sysctl.d/00-mine.conf gives 1, in 99-mine.conf gives 10).
-Put your value in a file that sorts after it (99-local.conf), or in /etc/sysctl.d/70-sparky-stereo.conf, which replaces
-this package's file whole. Debian's procps 4.0.7 no longer ships /etc/sysctl.conf.
+systemd-sysctl reads every *.conf in /etc/sysctl.d, /run/sysctl.d and /usr/lib/sysctl.d together, sorted by file name whatever the
+folder, and the last value wins (sysctl.d(5)). The rule, also written at the top of 70-sparky-stereo.conf:
+- name your own file 71-*.conf to 99-*.conf in /etc/sysctl.d (for example 99-mine.conf): its values win over this package's;
+- or put a file named 70-sparky-stereo.conf in /etc/sysctl.d: it replaces this package's file completely.
+A file numbered 00 to 69 loses to this package (measured: vm.swappiness = 10 in /etc/sysctl.d/00-mine.conf gives 1, in 99-mine.conf
+gives 10). The package's file is 70, not lower, because 50-default.conf (package linux-sysctl-defaults, priority important: systemd's
+upstream defaults) sets vm.max_map_count = 1048576, and the edition's value must come after it.
+tests/sysctl-order-test.sh checks the rule with systemd's own file ordering (systemd-analyze cat-config sysctl.d).
+Debian's procps 4.0.7 no longer ships /etc/sysctl.conf.

@@ -1,4 +1,19 @@
 -------------------------------------------------------------------------------
+  Version 0.2.0 (2026-10-10)
+-------------------------------------------------------------------------------
+
+  * Daniel's nine decisions of 2026-10-10
+  * Headroom pacing by default; the fixed rate stays as PACING=fixed; a game opening still caps the interval
+  * Thresholds by RAM below 90 GiB of MemTotal, decided; his values from 90 GiB up
+  * An area that is on and holds nothing is retracted after the quiet window; never while a hibernation uses it
+  * Every cycle logged with its arithmetic to /var/log/cushion-swap/cushion-swap.log, rotated daily by logrotate
+  * DEPLOY, RETRACT, failures and the startup lines in the journal as well
+  * Hibernate to the device named in /etc/initramfs-tools/conf.d/resume (RESUME=, RESUME_OFFSET=), else resume= on the
+    kernel command line; a swap partition outside fstab works; the generator logs which source decided
+  * An initramfs hook carries RESUME_OFFSET into the image (initramfs-tools reads only RESUME)
+  * cushion-swap --resume-target says where the image goes and why
+
+-------------------------------------------------------------------------------
   Version 0.1.0 (2026-10-10)
 -------------------------------------------------------------------------------
 

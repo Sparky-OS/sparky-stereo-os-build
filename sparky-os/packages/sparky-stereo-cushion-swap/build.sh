@@ -5,7 +5,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.1.0
+VERSION=0.2.0
 PACKAGE=sparky-stereo-cushion-swap
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.cushion-swap.XXXXXX")
@@ -19,9 +19,12 @@ install -Dm644 -t "$D/usr/lib/systemd/system" "$HERE/lib/systemd/system/cushion-
 	"$HERE/lib/systemd/system/cushion-swap-hibernate.service"
 install -Dm755 -t "$D/usr/lib/systemd/system-generators" "$HERE/lib/systemd/system-generators/cushion-swap-hibernate-generator"
 install -Dm755 -t "$D/usr/lib/systemd/system-sleep" "$HERE/lib/systemd/system-sleep/cushion-swap"
+install -Dm644 -t "$D/usr/lib/tmpfiles.d" "$HERE/lib/tmpfiles.d/cushion-swap.conf"
+install -Dm755 -t "$D/usr/share/initramfs-tools/hooks" "$HERE/share/initramfs-tools/hooks/cushion-swap-resume-offset"
+install -Dm644 -t "$D/etc/logrotate.d" "$HERE/etc/logrotate.d/sparky-stereo-cushion-swap"
 install -m644 "$HERE/copyright" "$HERE/README.md" "$D/usr/share/doc/$PACKAGE/"
 GLIBC=$(objdump -T "$D/usr/libexec/cushion-swap/psi-wake" | sed -n 's/.*GLIBC_\([0-9.]*\).*/\1/p' | sort -V | tail -n 1)
-DEPENDS="bash, libc6 (>= $GLIBC), systemd, util-linux"
+DEPENDS="bash, libc6 (>= $GLIBC), logrotate, systemd, util-linux"
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
 cat >"$D/DEBIAN/control" <<EOF
 Package: $PACKAGE
@@ -37,12 +40,20 @@ Description: Cushion Swap File: swap only under memory pressure
   Daniel Ramos's swap parachute. The swap area stays off and is switched on
   when available memory runs low or falls fast, then switched off again only
   when that cannot itself run out of memory. The kernel wakes it through PSI
-  where present. Hibernate stays offered with the area off at boot.
+  where present. Every cycle is logged with its arithmetic, rotated daily.
+  Hibernate stays offered with the area off, to the device named in
+  /etc/initramfs-tools/conf.d/resume.
 EOF
+echo /etc/logrotate.d/sparky-stereo-cushion-swap >"$D/DEBIAN/conffiles"
+echo 'activate-noawait update-initramfs' >"$D/DEBIAN/triggers"
 cat >"$D/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
 set -e
 if [ "$1" = configure ] || [ "$1" = abort-upgrade ] || [ "$1" = abort-deconfigure ] || [ "$1" = abort-remove ]; then
+	# The log folder and file (root:adm, 0750 and 0640) before the unit opens the file.
+	if [ -x /usr/bin/systemd-tmpfiles ]; then
+		systemd-tmpfiles --create cushion-swap.conf >/dev/null || true
+	fi
 	for unit in cushion-swap.service cushion-swap-hibernate.service; do
 		deb-systemd-helper unmask "$unit" >/dev/null || true
 		if deb-systemd-helper --quiet was-enabled "$unit"; then
@@ -78,9 +89,12 @@ if [ "$1" = purge ] && [ -x /usr/bin/deb-systemd-helper ]; then
 	deb-systemd-helper purge cushion-swap.service cushion-swap-hibernate.service >/dev/null || true
 	deb-systemd-helper unmask cushion-swap.service cushion-swap-hibernate.service >/dev/null || true
 fi
+if [ "$1" = purge ]; then
+	rm -rf /var/log/cushion-swap
+fi
 EOF
 chmod 755 "$D/DEBIAN/postinst" "$D/DEBIAN/prerm" "$D/DEBIAN/postrm"
-(cd "$D" && find usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
+(cd "$D" && find etc usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
 dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${PACKAGE}_${VERSION}_amd64.deb"
 
 S=$WORK/$PACKAGE-$VERSION
@@ -104,6 +118,15 @@ Description: Cushion Swap File: swap only under memory pressure
 EOF
 cat >"$S/debian/changelog" <<EOF
 $PACKAGE ($VERSION) unstable; urgency=medium
+
+  * Daniel's decisions of 2026-10-10: headroom pacing by default, every
+    cycle logged to /var/log/cushion-swap with daily rotation, an unused area
+    retracted after the quiet window, Hibernate to the device named in
+    /etc/initramfs-tools/conf.d/resume (a swap partition or file).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 10 Oct 2026 21:06:21 -0300
+
+$PACKAGE (0.1.0) unstable; urgency=medium
 
   * First release: Daniel Ramos's swap parachute as the Cushion Swap File.
 

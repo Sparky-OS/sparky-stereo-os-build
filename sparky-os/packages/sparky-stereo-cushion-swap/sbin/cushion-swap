@@ -12,13 +12,18 @@
 #   cushion-swap [--dry-run] [--once] [--interval N]   the daemon (his options)
 #   cushion-swap --thresholds        the values for this machine and why
 #   cushion-swap --status            the state file the System Settings page reads
-#   cushion-swap --hibernate-deploy  switch the area on before hibernation
+#   cushion-swap --resume-target     where the hibernation image goes, and which setting says so
+#   cushion-swap --hibernate-deploy  switch that area on before hibernation
 #   cushion-swap --hibernate-resume  switch it off again after resume if unused
 #
 # Settings: /etc/default/cushion-swap (every value can be set there).
+# Hibernation: /etc/initramfs-tools/conf.d/resume (RESUME=, RESUME_OFFSET=),
+# else resume= and resume_offset= on the kernel command line.
 # Test hooks (production never sets them): MEMINFO_PATH SWAPS_PATH FSTAB_PATH
 # STATE_DIR NOW_EPOCH NOW_EPOCH_MS PSI_PATH PSI_WAKE RUN_USER_DIR PROC_DIR
-# CUSHION_SWAP_CONFIG CUSHION_SWAP_AREA SWAPON_BIN SWAPOFF_BIN.
+# CUSHION_SWAP_CONFIG CUSHION_SWAP_AREA SWAPON_BIN SWAPOFF_BIN
+# INITRAMFS_RESUME_PATH CMDLINE_PATH DEV_DISK_DIR SYS_BLOCK_DIR SYS_POWER_DIR
+# FINDMNT_BIN FILEFRAG_BIN BTRFS_BIN.
 set -u
 # Not set -e: a long-running daemon must survive one failed command
 # (Daniel's rule); every command whose failure matters is checked.
@@ -55,14 +60,20 @@ SAFETY_TICK_SEC=${SAFETY_TICK_SEC:-10}
 GAME_OPENING_MAX_SEC=${GAME_OPENING_MAX_SEC:-180}
 STEADY_SEC=${STEADY_SEC:-10}
 LAUNCHERS=${LAUNCHERS:-reaper steam-launch-wr pressure-vessel pv-bwrap umu-run proton wine-preloader wine64-preloade lutris-wrapper gamemoderun legendary gogdl}
-LOG_EVERY_CYCLE=${LOG_EVERY_CYCLE:-no}
-# fixed: Daniel's settled pacing (PSI wake-up and a 10 s tick, or his 3 s
-# poller and 0.5 s while a game opens). headroom (proposed, see README):
-# the next sample comes before memory could fall to the early-warning floor
-# at MAX_ALLOC_MIB_S, between MIN_INTERVAL_SEC and POLL_INTERVAL_SEC.
-PACING=${PACING:-fixed}
+# Every cycle with its arithmetic, as on Daniel's host (Daniel, 2026-10-10);
+# no: only cycles that decide something.
+LOG_EVERY_CYCLE=${LOG_EVERY_CYCLE:-yes}
+# headroom (the default, Daniel 2026-10-10): the next sample comes before
+# memory could fall to the early-warning floor at MAX_ALLOC_MIB_S, never
+# sooner than MIN_INTERVAL_SEC and never later than the normal interval (his
+# 3 s poller, or the 10 s tick beside the PSI wake-up) or, while a game
+# opens, his 0.5 s. fixed: those intervals as they are.
+PACING=${PACING:-headroom}
 MAX_ALLOC_MIB_S=${MAX_ALLOC_MIB_S:-8192}
 MIN_INTERVAL_SEC=${MIN_INTERVAL_SEC:-0.25}
+# The hibernate unit switched the area on for the image: no retraction for
+# this long, or until the sleep hook ends the hold after resume.
+HIBERNATE_HOLD_SEC=${HIBERNATE_HOLD_SEC:-300}
 
 MEMINFO_PATH=${MEMINFO_PATH:-/proc/meminfo}
 SWAPS_PATH=${SWAPS_PATH:-/proc/swaps}
@@ -70,16 +81,23 @@ FSTAB_PATH=${FSTAB_PATH:-/etc/fstab}
 STATE_DIR=${STATE_DIR:-/run/cushion-swap}
 STATE_FILE=$STATE_DIR/state
 STATUS_FILE=$STATE_DIR/status
+HIBERNATE_MARK=$STATE_DIR/hibernate-deployed
 PSI_PATH=${PSI_PATH:-/proc/pressure/memory}
 PSI_WAKE=${PSI_WAKE:-/usr/libexec/cushion-swap/psi-wake}
 RUN_USER_DIR=${RUN_USER_DIR:-/run/user}
 PROC_DIR=${PROC_DIR:-/proc}
+INITRAMFS_RESUME_PATH=${INITRAMFS_RESUME_PATH:-/etc/initramfs-tools/conf.d/resume}
+CMDLINE_PATH=${CMDLINE_PATH:-/proc/cmdline}
+DEV_DISK_DIR=${DEV_DISK_DIR:-/dev/disk}
+SYS_BLOCK_DIR=${SYS_BLOCK_DIR:-/sys/class/block}
+SYS_POWER_DIR=${SYS_POWER_DIR:-/sys/power}
 GAME_SIGNAL=cushion-swap-game-opening
 
 DRY_RUN=0
 RUN_ONCE=0
 MODE=compatibility
 FAST_SINCE_MS=0
+CYCLE=0
 
 _find_bin() {
 	local name=$1 c
@@ -90,13 +108,35 @@ _find_bin() {
 }
 SWAPON_BIN=${SWAPON_BIN:-$(_find_bin swapon)}
 SWAPOFF_BIN=${SWAPOFF_BIN:-$(_find_bin swapoff)}
+FINDMNT_BIN=${FINDMNT_BIN:-findmnt}
+FILEFRAG_BIN=${FILEFRAG_BIN:-filefrag}
+BTRFS_BIN=${BTRFS_BIN:-btrfs}
 
-log() {
+# Every cycle's arithmetic goes to standard output, which the unit appends
+# to /var/log/cushion-swap/cushion-swap.log (rotated by logrotate). Actions,
+# failures and the startup lines go to standard error as well, which the
+# unit sends to the journal; once only where both are the same place.
+JOURNAL_TOO=0
+[[ /proc/self/fd/1 -ef /proc/self/fd/2 ]] || JOURNAL_TOO=1
+
+log_cycle() {
 	printf '[%(%Y-%m-%d %H:%M:%S%z)T] %s\n' -1 "$*"
 }
 
+log() {
+	local line
+	printf -v line '[%(%Y-%m-%d %H:%M:%S%z)T] %s' -1 "$*"
+	printf '%s\n' "$line"
+	((JOURNAL_TOO)) && printf '%s\n' "$line" >&2
+	return 0
+}
+
 log_err() {
-	printf '[%(%Y-%m-%d %H:%M:%S%z)T] ERROR: %s\n' -1 "$*" >&2
+	local line
+	printf -v line '[%(%Y-%m-%d %H:%M:%S%z)T] ERROR: %s' -1 "$*"
+	((JOURNAL_TOO)) && printf '%s\n' "$line"
+	printf '%s\n' "$line" >&2
+	return 0
 }
 
 # Sets NOW_MS (milliseconds) without a subshell: this runs every cycle.
@@ -111,18 +151,24 @@ now_ms() {
 	fi
 }
 
-gib_str() {
-	local kib=$1
-	printf '%d.%02dGiB' "$((kib / KIB_PER_GIB))" "$(((kib % KIB_PER_GIB) * 100 / KIB_PER_GIB))"
+# KiB as "N.NNGiB" into the variable named $1, without a subshell.
+gib_into() {
+	printf -v "$1" '%d.%02dGiB' "$(($2 / KIB_PER_GIB))" "$((($2 % KIB_PER_GIB) * 100 / KIB_PER_GIB))"
 }
 
 # Whole GiB as Daniel wrote them ("20GiB"), other values with two decimals.
-gib_label() {
-	if (($1 % KIB_PER_GIB == 0)); then
-		printf '%dGiB' "$(($1 / KIB_PER_GIB))"
+label_into() {
+	if (($2 % KIB_PER_GIB == 0)); then
+		printf -v "$1" '%dGiB' "$(($2 / KIB_PER_GIB))"
 	else
-		gib_str "$1"
+		gib_into "$1" "$2"
 	fi
+}
+
+gib_str() {
+	local text
+	gib_into text "$1"
+	printf '%s' "$text"
 }
 
 read_meminfo() {
@@ -186,39 +232,58 @@ compute_thresholds() {
 	fi
 }
 
+# A device name as fstab and initramfs-tools write it (UUID=, LABEL= or a
+# path) to the path it stands for, into SPEC_PATH.
+spec_path() {
+	case $1 in
+	UUID=*) SPEC_PATH=$DEV_DISK_DIR/by-uuid/${1#UUID=} ;;
+	PARTUUID=*) SPEC_PATH=$DEV_DISK_DIR/by-partuuid/${1#PARTUUID=} ;;
+	LABEL=*) SPEC_PATH=$DEV_DISK_DIR/by-label/${1#LABEL=} ;;
+	PARTLABEL=*) SPEC_PATH=$DEV_DISK_DIR/by-partlabel/${1#PARTLABEL=} ;;
+	*) SPEC_PATH=$1 ;;
+	esac
+	[[ -L $SPEC_PATH ]] && SPEC_PATH=$(readlink -f -- "$SPEC_PATH")
+}
+
 resolve_area() {
-	local spec file type options rest
+	local spec _ type options rest
 	if [[ -z $AREA && -r $FSTAB_PATH ]]; then
-		while read -r spec file type options rest; do
+		while read -r spec _ type options rest; do
 			[[ $spec == \#* || $type != swap ]] && continue
 			[[ ,$options, == *,noauto,* ]] || continue
 			AREA=$spec
 			break
 		done <"$FSTAB_PATH"
 	fi
-	case $AREA in
-	UUID=*) AREA=/dev/disk/by-uuid/${AREA#UUID=} ;;
-	PARTUUID=*) AREA=/dev/disk/by-partuuid/${AREA#PARTUUID=} ;;
-	LABEL=*) AREA=/dev/disk/by-label/${AREA#LABEL=} ;;
-	PARTLABEL=*) AREA=/dev/disk/by-partlabel/${AREA#PARTLABEL=} ;;
-	esac
-	[[ -L $AREA ]] && AREA=$(readlink -f -- "$AREA")
+	[[ -n $AREA ]] || return 0
+	spec_path "$AREA"
+	AREA=$SPEC_PATH
 }
 
-# Is the Cushion Swap File's own area active? 0 yes, 1 no, 2 unknown. Only
-# this area is ever switched on or off; zram and other swap areas are not ours.
-# Sets AREA_USED_KIB from the area's own line.
-area_state() {
-	AREA_USED_KIB=0
+# Is this swap area active? 0 yes, 1 no, 2 unknown; SWAP_USED_KIB from its
+# own line in /proc/swaps.
+swap_state() {
+	SWAP_USED_KIB=0
 	[[ -r $SWAPS_PATH ]] || return 2
-	local name type size used rest wanted=${AREA// /\\040}
-	while read -r name type size used rest; do
+	[[ -n $1 ]] || return 1
+	local name type _ used rest wanted=${1// /\\040}
+	while read -r name type _ used rest; do
 		if [[ $name == "$wanted" ]]; then
-			[[ $used =~ ^[0-9]+$ ]] && AREA_USED_KIB=$used
+			[[ $used =~ ^[0-9]+$ ]] && SWAP_USED_KIB=$used
 			return 0
 		fi
 	done <"$SWAPS_PATH"
 	return 1
+}
+
+# The Cushion Swap File's own area. Only this area is ever switched on or off
+# by the daemon; zram and other swap areas are not ours.
+area_state() {
+	local rc
+	swap_state "$AREA"
+	rc=$?
+	AREA_USED_KIB=$SWAP_USED_KIB
+	return $rc
 }
 
 load_state() {
@@ -244,6 +309,7 @@ write_status() {
 	text="STATE=$state
 MODE=$MODE
 FAST=$fast
+PACING=$PACING
 AREA=$AREA
 AREA_USED_KIB=${AREA_USED_KIB:-0}
 MEM_TOTAL_KIB=${MEM_TOTAL_KIB:-0}
@@ -260,11 +326,24 @@ QUIET_SECONDS=$QUIET_SECONDS"
 	printf '%s\n' "$text" >"$STATUS_FILE.tmp" 2>/dev/null && mv -f "$STATUS_FILE.tmp" "$STATUS_FILE" 2>/dev/null || true
 }
 
+# A hibernation is using the area: the hibernate unit switched it on and
+# systemd-sleep has yet to write the image (or the sleep hook has yet to run
+# after resume). Retracting it now would make the hibernation fail. A mark
+# older than HIBERNATE_HOLD_SEC is a hibernation that never started.
+hibernation_hold() {
+	local since="" rest
+	[[ -r $HIBERNATE_MARK ]] || return 1
+	read -r since rest <"$HIBERNATE_MARK" 2>/dev/null
+	[[ $since =~ ^[0-9]+$ ]] || return 1
+	(($1 - since < HIBERNATE_HOLD_SEC))
+}
+
 run_cycle() {
 	local now now_millis
 	now_ms
 	now_millis=$NOW_MS
 	now=$((now_millis / 1000))
+	CYCLE=$((CYCLE + 1))
 
 	if ! read_meminfo; then
 		return 0
@@ -277,6 +356,15 @@ run_cycle() {
 	load_state
 	[[ -z $LAST_DANGER_EPOCH || $LAST_DANGER_EPOCH == 0 ]] && LAST_DANGER_EPOCH=$now
 	[[ -z $LAST_FAIL_LOG_EPOCH ]] && LAST_FAIL_LOG_EPOCH=0
+
+	local avail_s stotal_s used_s hard_l soft_l rate_l margin_l drop_s
+	gib_into avail_s "$MEM_AVAILABLE_KIB"
+	gib_into stotal_s "$SWAP_TOTAL_KIB"
+	gib_into used_s "$swap_used_kib"
+	label_into hard_l "$DEPLOY_HARD_KIB"
+	label_into soft_l "$DEPLOY_SOFT_KIB"
+	label_into rate_l "$RATE_KIB"
+	label_into margin_l "$RETRACT_MARGIN_KIB"
 
 	# --- DEPLOY evaluation (Daniel's) ---------------------------------------
 	local hard_trigger=0 rate_trigger=0 rate_reason=""
@@ -292,7 +380,9 @@ run_cycle() {
 				# drop / dt >= RATE / RATE_WINDOW, cross-multiplied in integers
 				if ((drop_kib * RATE_WINDOW_SEC * 1000 >= RATE_KIB * dt_ms)); then
 					rate_trigger=1
-					rate_reason="dropped $(gib_str "$drop_kib") over $((dt_ms / 1000)).$(printf '%03d' $((dt_ms % 1000)))s (>= $(gib_label "$RATE_KIB")/${RATE_WINDOW_SEC}s projected-exhaustion rate)"
+					gib_into drop_s "$drop_kib"
+					printf -v rate_reason 'dropped %s over %d.%03ds (>= %s/%ss projected-exhaustion rate)' \
+						"$drop_s" $((dt_ms / 1000)) $((dt_ms % 1000)) "$rate_l" "$RATE_WINDOW_SEC"
 				fi
 			fi
 		fi
@@ -301,29 +391,44 @@ run_cycle() {
 	local deploy_trigger=0 deploy_reason=""
 	if ((hard_trigger)); then
 		deploy_trigger=1
-		deploy_reason="MemAvailable $(gib_str "$MEM_AVAILABLE_KIB") < hard floor $(gib_label "$DEPLOY_HARD_KIB")"
+		deploy_reason="MemAvailable $avail_s < hard floor $hard_l"
 	elif ((rate_trigger)); then
 		deploy_trigger=1
-		deploy_reason="MemAvailable $(gib_str "$MEM_AVAILABLE_KIB") < soft floor $(gib_label "$DEPLOY_SOFT_KIB") AND ${rate_reason}"
+		deploy_reason="MemAvailable $avail_s < soft floor $soft_l AND ${rate_reason}"
 	fi
 	((deploy_trigger)) && LAST_DANGER_EPOCH=$now
 
-	# --- RETRACT evaluation (Daniel's) --------------------------------------
-	local quiet_elapsed=$((now - LAST_DANGER_EPOCH))
-	local margin_kib=$((swap_used_kib + RETRACT_MARGIN_KIB))
-	local retract_ok=0
-	if ((swap_used_kib > 0 && MEM_AVAILABLE_KIB > margin_kib && quiet_elapsed >= QUIET_SECONDS)); then
-		retract_ok=1
-	fi
-
+	# --- RETRACT evaluation (Daniel's, plus an unused area) ------------------
 	local swap_active_rc=0
 	area_state
 	swap_active_rc=$?
 
+	local quiet_elapsed=$((now - LAST_DANGER_EPOCH))
+	local margin_kib=$((swap_used_kib + RETRACT_MARGIN_KIB))
+	local retract_ok=0 area_empty=0 hold=0
+	((swap_active_rc == 0 && AREA_USED_KIB == 0)) && area_empty=1
+	hibernation_hold "$now" && hold=1
+	# His rule: something in swap, MemAvailable above it plus the margin
+	# (swapoff reads every swapped page back), quiet for the window. Daniel,
+	# 2026-10-10: an area that is on and holds nothing goes off after the
+	# quiet window too; swapoff then reads nothing back. Never while a
+	# hibernation is using the area.
+	if ((((swap_used_kib > 0 && MEM_AVAILABLE_KIB > margin_kib) || area_empty) && quiet_elapsed >= QUIET_SECONDS && !hold)); then
+		retract_ok=1
+	fi
+
 	if ((DRY_RUN || RUN_ONCE || deploy_trigger || retract_ok)) || [[ $LOG_EVERY_CYCLE == yes ]]; then
-		log "sample: MemAvailable=$(gib_str "$MEM_AVAILABLE_KIB") SwapTotal=$(gib_str "$SWAP_TOTAL_KIB") SwapUsed=$(gib_str "$swap_used_kib") swap_active=$(case $swap_active_rc in 0) echo yes ;; 1) echo no ;; *) echo unknown ;; esac) area=${AREA:-none} mode=$MODE"
-		log "deploy-check: hard_trigger=${hard_trigger} (avail < $(gib_label "$DEPLOY_HARD_KIB")) rate_trigger=${rate_trigger} (avail < $(gib_label "$DEPLOY_SOFT_KIB") AND falling >= $(gib_label "$RATE_KIB")/${RATE_WINDOW_SEC}s) => deploy_trigger=${deploy_trigger}${deploy_reason:+ [$deploy_reason]}"
-		log "retract-check: swap_used=$(gib_str "$swap_used_kib") required_avail(>swap_used+$(gib_label "$RETRACT_MARGIN_KIB"))=$(gib_str "$margin_kib") actual_avail=$(gib_str "$MEM_AVAILABLE_KIB") margin_pass=$( ((MEM_AVAILABLE_KIB > margin_kib && swap_used_kib > 0)) && echo yes || echo no) quiet_elapsed=${quiet_elapsed}s/required=${QUIET_SECONDS}s quiet_pass=$( ((quiet_elapsed >= QUIET_SECONDS)) && echo yes || echo no) => retract_ok=${retract_ok}"
+		local active_s margin_s area_used_s margin_pass=no quiet_pass=no empty_s=no hold_s=no
+		case $swap_active_rc in 0) active_s=yes ;; 1) active_s=no ;; *) active_s=unknown ;; esac
+		gib_into margin_s "$margin_kib"
+		gib_into area_used_s "$AREA_USED_KIB"
+		((MEM_AVAILABLE_KIB > margin_kib && swap_used_kib > 0)) && margin_pass=yes
+		((quiet_elapsed >= QUIET_SECONDS)) && quiet_pass=yes
+		((area_empty)) && empty_s=yes
+		((hold)) && hold_s=yes
+		log_cycle "sample: MemAvailable=$avail_s SwapTotal=$stotal_s SwapUsed=$used_s swap_active=$active_s area=${AREA:-none} mode=$MODE cycle=$CYCLE"
+		log_cycle "deploy-check: hard_trigger=${hard_trigger} (avail < $hard_l) rate_trigger=${rate_trigger} (avail < $soft_l AND falling >= $rate_l/${RATE_WINDOW_SEC}s) => deploy_trigger=${deploy_trigger}${deploy_reason:+ [$deploy_reason]}"
+		log_cycle "retract-check: swap_used=$used_s required_avail(>swap_used+$margin_l)=$margin_s actual_avail=$avail_s margin_pass=$margin_pass quiet_elapsed=${quiet_elapsed}s/required=${QUIET_SECONDS}s quiet_pass=$quiet_pass area_used=$area_used_s area_empty=$empty_s hibernating=$hold_s => retract_ok=${retract_ok}"
 	fi
 
 	local state=off
@@ -350,7 +455,7 @@ run_cycle() {
 
 	if ((retract_ok)); then
 		if ((swap_active_rc == 0)); then
-			log "RETRACT triggered: swap_used=$(gib_str "$swap_used_kib") avail=$(gib_str "$MEM_AVAILABLE_KIB") quiet_elapsed=${quiet_elapsed}s -- swap currently ON -> $( ((DRY_RUN)) && echo '[dry-run] would run' || echo 'running') '${SWAPOFF_BIN} ${AREA}'"
+			log "RETRACT triggered: swap_used=$used_s avail=$avail_s quiet_elapsed=${quiet_elapsed}s$( ((area_empty)) && echo ' area unused') -- swap currently ON -> $( ((DRY_RUN)) && echo '[dry-run] would run' || echo 'running') '${SWAPOFF_BIN} ${AREA}'"
 			if ((!DRY_RUN)); then
 				write_status retracting
 				if "$SWAPOFF_BIN" -- "$AREA"; then
@@ -443,7 +548,7 @@ update_game_opening() {
 	fi
 	LAUNCHERS_SCANNED=1
 	if [[ -n $started ]]; then
-		((FAST_SINCE_MS)) || log "game opening ($started): sampling every ${FAST_INTERVAL_SEC}s"
+		((FAST_SINCE_MS)) || log_cycle "game opening ($started): sampling every ${FAST_INTERVAL_SEC}s at most"
 		FAST_SINCE_MS=$now_millis
 		STEADY_REF_KIB=${CYCLE_AVAIL_KIB:-0}
 		STEADY_REF_MS=$now_millis
@@ -458,16 +563,17 @@ update_game_opening() {
 		STEADY_REF_KIB=$avail
 		STEADY_REF_MS=$now_millis
 	elif ((now_millis - STEADY_REF_MS >= STEADY_SEC * 1000)); then
-		log "game loaded (memory steady for ${STEADY_SEC}s): back to every ${POLL_INTERVAL_SEC}s"
+		log_cycle "game loaded (memory steady for ${STEADY_SEC}s): back to every ${POLL_INTERVAL_SEC}s at most"
 		FAST_SINCE_MS=0
 	fi
 	if ((FAST_SINCE_MS && now_millis - FAST_SINCE_MS >= GAME_OPENING_MAX_SEC * 1000)); then
-		log "game opening longer than ${GAME_OPENING_MAX_SEC}s: back to every ${POLL_INTERVAL_SEC}s"
+		log_cycle "game opening longer than ${GAME_OPENING_MAX_SEC}s: back to every ${POLL_INTERVAL_SEC}s at most"
 		FAST_SINCE_MS=0
 	fi
 }
 
-# Seconds until memory could reach the early-warning floor at MAX_ALLOC_MIB_S.
+# Seconds until memory could reach the early-warning floor at MAX_ALLOC_MIB_S,
+# at most $1 milliseconds.
 headroom_interval() {
 	local head=$((${CYCLE_AVAIL_KIB:-0} - ${DEPLOY_SOFT_KIB:-0})) max_ms=$1 ms
 	((head < 0)) && head=0
@@ -484,10 +590,10 @@ to_ms() {
 }
 
 wait_next() {
-	local line rc
-	INTERVAL=$SAFETY_TICK_SEC
-	[[ $PACING == headroom ]] && headroom_interval "$TICK_MS"
+	local line rc cap_ms
 	if [[ $MODE == psi ]]; then
+		INTERVAL=$SAFETY_TICK_SEC
+		[[ $PACING == headroom ]] && headroom_interval "$TICK_MS"
 		read -r -t "$INTERVAL" -u "$PSI_FD" line
 		rc=$?
 		if ((rc == 0)); then
@@ -498,30 +604,30 @@ wait_next() {
 		fi
 		return
 	fi
-	if [[ $PACING == headroom ]]; then
-		headroom_interval "$POLL_MS"
-		read -r -t "$INTERVAL" -u "$SLEEP_FD"
-		return
-	fi
 	now_ms
 	update_game_opening "$NOW_MS"
-	if ((FAST_SINCE_MS)); then
-		read -r -t "$FAST_INTERVAL_SEC" -u "$SLEEP_FD"
+	cap_ms=$POLL_MS
+	((FAST_SINCE_MS)) && cap_ms=$FAST_MS
+	if [[ $PACING == headroom ]]; then
+		headroom_interval "$cap_ms"
 	else
-		read -r -t "$POLL_INTERVAL_SEC" -u "$SLEEP_FD"
+		printf -v INTERVAL '%d.%03d' $((cap_ms / 1000)) $((cap_ms % 1000))
 	fi
+	read -r -t "$INTERVAL" -u "$SLEEP_FD"
 }
 
 print_help() {
-	sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '2,/^set -u$/p' "$0" | sed '$d; s/^# \{0,1\}//'
 }
 
 print_thresholds() {
 	read_meminfo || exit 1
 	compute_thresholds
 	resolve_area
+	local reference
+	label_into reference "$REFERENCE_KIB"
 	printf 'MemTotal=%s\nsource=%s\nreference=MemTotal >= %s gets Daniel'"'"'s values unchanged; below it each value is the same share of RAM\n' \
-		"$(gib_str "$MEM_TOTAL_KIB")" "$THRESHOLD_SOURCE" "$(gib_label "$REFERENCE_KIB")"
+		"$(gib_str "$MEM_TOTAL_KIB")" "$THRESHOLD_SOURCE" "$reference"
 	printf 'deploy_hard=%s deploy_soft=%s rate=%s/%ss retract_margin=%s quiet=%ss\n' \
 		"$(gib_str "$DEPLOY_HARD_KIB")" "$(gib_str "$DEPLOY_SOFT_KIB")" "$(gib_str "$RATE_KIB")" "$RATE_WINDOW_SEC" \
 		"$(gib_str "$RETRACT_MARGIN_KIB")" "$QUIET_SECONDS"
@@ -529,37 +635,249 @@ print_thresholds() {
 		"$DEPLOY_HARD_KIB" "$DEPLOY_SOFT_KIB" "$RATE_KIB" "$RETRACT_MARGIN_KIB" "${AREA:-none}"
 }
 
+# Where the hibernation image goes (Daniel, 2026-10-10: "pointing to the
+# file"). First the installer's /etc/initramfs-tools/conf.d/resume:
+# RESUME= names the device (initramfs.conf(5)), RESUME_OFFSET= the swap
+# file's first page on it; RESUME=none means no hibernation. Without a
+# RESUME= line there, resume= and resume_offset= on the kernel command line
+# (initramfs-tools(7)). The initramfs takes the command line's resume_offset=
+# over the file's, so that one wins for the offset too. Returns 1 when no
+# device is named; RESUME_NOTE says why.
+resume_config() {
+	local line word words=() from_file=0 cmd_resume="" cmd_offset="" file_offset="" noresume=0
+	RESUME_SOURCE="" RESUME_SPEC="" RESUME_OFFSET_VALUE="" RESUME_NOTE=""
+	if [[ -r $CMDLINE_PATH ]]; then
+		read -r -a words <"$CMDLINE_PATH"
+		for word in "${words[@]}"; do
+			case $word in
+			resume=*) cmd_resume=${word#resume=} ;;
+			resume_offset=*) cmd_offset=${word#resume_offset=} ;;
+			noresume) noresume=1 ;;
+			esac
+		done
+	fi
+	if [[ -r $INITRAMFS_RESUME_PATH ]]; then
+		while IFS= read -r line || [[ -n $line ]]; do
+			if [[ $line =~ ^[[:space:]]*RESUME=[\"\']?([^\"\'[:space:]#]*) ]]; then
+				RESUME_SPEC=${BASH_REMATCH[1]} from_file=1
+			elif [[ $line =~ ^[[:space:]]*RESUME_OFFSET=[\"\']?([0-9]*) ]]; then
+				file_offset=${BASH_REMATCH[1]}
+			fi
+		done <"$INITRAMFS_RESUME_PATH"
+	fi
+	if ((from_file)); then
+		RESUME_SOURCE=$INITRAMFS_RESUME_PATH
+		RESUME_OFFSET_VALUE=${cmd_offset:-$file_offset}
+		if [[ -n $cmd_resume && $cmd_resume != "$RESUME_SPEC" ]]; then
+			RESUME_NOTE="the kernel command line's resume=$cmd_resume differs, and the initramfs takes that one"
+		fi
+	elif [[ -n $cmd_resume ]]; then
+		RESUME_SOURCE="kernel command line"
+		RESUME_SPEC=$cmd_resume RESUME_OFFSET_VALUE=$cmd_offset
+	else
+		RESUME_SOURCE=none
+		RESUME_NOTE="no RESUME= in $INITRAMFS_RESUME_PATH and no resume= on the kernel command line"
+		return 1
+	fi
+	if ((noresume)); then
+		RESUME_NOTE="noresume on the kernel command line"
+		return 1
+	fi
+	case $RESUME_SPEC in
+	"" | none) RESUME_NOTE="RESUME=${RESUME_SPEC:-(empty)} in $RESUME_SOURCE: no hibernation"; return 1 ;;
+	auto) RESUME_NOTE="RESUME=auto names no device here (mkinitramfs picks one when it builds the image)"; return 1 ;;
+	esac
+	return 0
+}
+
+# Is the swap file on this device (its file system's source, Btrfs
+# subvolume brackets removed)?
+on_device() {
+	local source
+	source=$("$FINDMNT_BIN" -n -o SOURCE -T "$1" 2>/dev/null) || return 1
+	source=${source%%\[*}
+	[[ -n $source && $(readlink -f -- "$source") == "$(readlink -f -- "$2")" ]]
+}
+
+# A swap file's first page on its device, the value resume_offset takes:
+# filefrag's first physical extent in pages, or Btrfs's own answer.
+file_offset() {
+	local line page
+	if [[ $(stat -f -c %T -- "$1" 2>/dev/null) == btrfs ]]; then
+		"$BTRFS_BIN" inspect-internal map-swapfile -r "$1" 2>/dev/null
+		return
+	fi
+	page=$(getconf PAGESIZE 2>/dev/null) || page=4096
+	while read -r line; do
+		if [[ $line =~ ^0:[[:space:]]+0\.\.[[:space:]]*[0-9]+:[[:space:]]+([0-9]+)\.\. ]]; then
+			echo "${BASH_REMATCH[1]}"
+			return
+		fi
+	done < <("$FILEFRAG_BIN" -v -b"$page" "$1" 2>/dev/null)
+}
+
+size_kib() {
+	local sectors
+	TARGET_SIZE_KIB=""
+	if [[ -b $1 ]]; then
+		read -r sectors 2>/dev/null <"$SYS_BLOCK_DIR/${1##*/}/size" && TARGET_SIZE_KIB=$((sectors / 2))
+	elif [[ -f $1 ]]; then
+		TARGET_SIZE_KIB=$(($(stat -c %s -- "$1") / 1024))
+	fi
+}
+
+# The swap area resume_config names: the device itself (a swap partition or
+# volume, which need not be in fstab), or with an offset the swap file on
+# that device whose first page is there, among the Cushion Swap File's area
+# and fstab's swap lines. TARGET_STATE: found; absent (nothing to look at
+# now, for example not mounted yet); mismatch (swap files on that device,
+# none at that offset: the initramfs would look in the wrong place).
+resume_target() {
+	TARGET="" TARGET_KIND="" TARGET_SIZE_KIB="" TARGET_NOTE="" TARGET_STATE=""
+	resume_config || return 1
+	spec_path "$RESUME_SPEC"
+	local device=$SPEC_PATH
+	if [[ -z $RESUME_OFFSET_VALUE || $RESUME_OFFSET_VALUE == 0 ]]; then
+		TARGET_KIND='device'
+		if [[ -e $device ]]; then
+			TARGET=$device TARGET_STATE=found
+			size_kib "$TARGET"
+		else
+			TARGET_STATE=absent TARGET_NOTE="$device is not present now"
+		fi
+		return 0
+	fi
+	TARGET_KIND='file'
+	resolve_area
+	local candidates=() spec _ type options rest candidate offset on=() unchecked=()
+	[[ -f $AREA ]] && candidates+=("$AREA")
+	if [[ -r $FSTAB_PATH ]]; then
+		while read -r spec _ type options rest; do
+			[[ $spec == /* && $type == swap && -f $spec && $spec != "$AREA" ]] && candidates+=("$spec")
+		done <"$FSTAB_PATH"
+	fi
+	for candidate in "${candidates[@]}"; do
+		on_device "$candidate" "$device" || continue
+		on+=("$candidate")
+		offset=$(file_offset "$candidate")
+		if [[ $offset == "$RESUME_OFFSET_VALUE" ]]; then
+			TARGET=$candidate
+			break
+		fi
+		[[ -z $offset ]] && unchecked+=("$candidate")
+	done
+	if [[ -z $TARGET && ${#on[@]} == 1 && ${#unchecked[@]} == 1 ]]; then
+		TARGET=${on[0]}
+		TARGET_NOTE="its offset could not be read here (no filefrag), the only swap file on $device"
+	fi
+	if [[ -n $TARGET ]]; then
+		TARGET_STATE=found
+		size_kib "$TARGET"
+	elif ((${#on[@]})); then
+		TARGET_STATE=mismatch TARGET_NOTE="no swap file on $device starts at page $RESUME_OFFSET_VALUE (${on[*]} do not)"
+	else
+		TARGET_STATE=absent TARGET_NOTE="no swap file on $device was found now (the Cushion Swap File's area and $FSTAB_PATH were searched)"
+	fi
+	return 0
+}
+
+print_resume_target() {
+	local rc=0
+	resume_target || rc=1
+	printf 'SOURCE=%s\nRESUME=%s\nRESUME_OFFSET=%s\nKIND=%s\nTARGET=%s\nSTATE=%s\nSIZE_KIB=%s\nNOTE=%s\n' \
+		"$RESUME_SOURCE" "$RESUME_SPEC" "$RESUME_OFFSET_VALUE" "${TARGET_KIND:-}" "${TARGET:-}" "${TARGET_STATE:-}" \
+		"${TARGET_SIZE_KIB:-}" "${TARGET_NOTE:-$RESUME_NOTE}"
+	exit $rc
+}
+
+# The block device behind a swap area, as major:minor.
+device_number() {
+	local device=$1
+	if [[ -f $device ]]; then
+		device=$("$FINDMNT_BIN" -n -o SOURCE -T "$1" 2>/dev/null)
+		device=${device%%\[*}
+	fi
+	stat -L -c '%Hr:%Lr' -- "$device" 2>/dev/null
+}
+
+# systemd-sleep hibernates only to the active swap area that matches the
+# kernel's resume device, which the initramfs set at boot (systemd
+# src/shared/hibernate-util.c, find_suitable_hibernation_device_full()).
+kernel_resume_check() {
+	local kernel="" offset=0 wanted
+	read -r kernel 2>/dev/null <"$SYS_POWER_DIR/resume" || return 0
+	read -r offset 2>/dev/null <"$SYS_POWER_DIR/resume_offset"
+	if [[ -z $kernel || $kernel == 0:0 ]]; then
+		log "hibernation: the kernel has no resume device yet; systemd-sleep sets it from the active swap area"
+		return 0
+	fi
+	wanted=$(device_number "$TARGET")
+	if [[ $kernel != "$wanted" ]] || [[ $TARGET_KIND == file && $offset != "$RESUME_OFFSET_VALUE" ]]; then
+		log_err "hibernation: the kernel resumes from $kernel offset ${offset:-0} (set by the initramfs at boot), but $RESUME_SOURCE names $TARGET ($wanted offset ${RESUME_OFFSET_VALUE:-0}); systemd-sleep will refuse until the initramfs is rebuilt (update-initramfs -u) and the system restarted"
+	fi
+}
+
 # Hibernation needs the area on before systemd-sleep looks for it
 # (systemd src/sleep/sleep.c: find_suitable_hibernation_device() runs
 # before the system-sleep hooks), so a unit ordered before
-# systemd-hibernate.service calls this.
+# systemd-hibernate.service calls this. The mark holds the daemon's
+# retraction until the sleep hook runs after resume.
 hibernate_deploy() {
-	resolve_area
-	[[ -n $AREA ]] || { log_err "hibernation: no Cushion Swap File area configured"; exit 1; }
-	area_state
+	local now
+	if ! resume_target; then
+		log "hibernation: $RESUME_NOTE; nothing to switch on"
+		exit 0
+	fi
+	if [[ -z $TARGET ]]; then
+		log_err "hibernation: $RESUME_SOURCE names RESUME=$RESUME_SPEC${RESUME_OFFSET_VALUE:+ RESUME_OFFSET=$RESUME_OFFSET_VALUE}, but $TARGET_NOTE"
+		exit 1
+	fi
+	now_ms
+	now=$((NOW_MS / 1000))
+	mkdir -p "$STATE_DIR"
+	swap_state "$TARGET"
 	case $? in
-	0) log "hibernation: $AREA is already on" ;;
-	1)
-		"$SWAPON_BIN" -- "$AREA" || { log_err "hibernation: swapon $AREA failed"; exit 1; }
-		mkdir -p "$STATE_DIR" && : >"$STATE_DIR/hibernate-deployed"
-		log "hibernation: $AREA switched on for the image"
+	0)
+		printf '%s %s 0\n' "$now" "$TARGET" >"$HIBERNATE_MARK"
+		log "hibernation: $TARGET is already on (from $RESUME_SOURCE)"
 		;;
-	*) log_err "hibernation: cannot read $SWAPS_PATH"; exit 1 ;;
+	1)
+		printf '%s %s 1\n' "$now" "$TARGET" >"$HIBERNATE_MARK"
+		if ! "$SWAPON_BIN" -- "$TARGET"; then
+			rm -f "$HIBERNATE_MARK"
+			log_err "hibernation: swapon $TARGET failed"
+			exit 1
+		fi
+		log "hibernation: $TARGET switched on for the image (from $RESUME_SOURCE)"
+		;;
+	*)
+		log_err "hibernation: cannot read $SWAPS_PATH"
+		exit 1
+		;;
 	esac
+	[[ -n $RESUME_NOTE ]] && log "hibernation: note: $RESUME_NOTE"
+	kernel_resume_check
 }
 
 # After resume: an area switched on only for the image goes off again when
 # nothing stayed in it. Pages left in it are retracted by Daniel's rules.
 hibernate_resume() {
-	[[ -e $STATE_DIR/hibernate-deployed ]] || exit 0
-	rm -f "$STATE_DIR/hibernate-deployed"
-	resolve_area
-	area_state
-	if (($? == 0)) && ((AREA_USED_KIB == 0)); then
-		"$SWAPOFF_BIN" -- "$AREA" && log "after resume: $AREA was empty, switched off again"
-	else
-		log "after resume: $AREA holds $(gib_str "$AREA_USED_KIB"); the daemon retracts it when it is safe"
-	fi
+	local since="" target="" switched=""
+	[[ -e $HIBERNATE_MARK ]] || exit 0
+	read -r since target switched <"$HIBERNATE_MARK" 2>/dev/null
+	rm -f "$HIBERNATE_MARK"
+	[[ $switched == 1 && -n $target ]] || exit 0
+	swap_state "$target"
+	case $? in
+	0)
+		if ((SWAP_USED_KIB == 0)); then
+			"$SWAPOFF_BIN" -- "$target" && log "after resume: $target was empty, switched off again"
+		else
+			log "after resume: $target holds $(gib_str "$SWAP_USED_KIB"); the daemon retracts it when it is safe"
+		fi
+		;;
+	1) log "after resume: $target is already off" ;;
+	esac
 }
 
 while [[ $# -gt 0 ]]; do
@@ -569,6 +887,7 @@ while [[ $# -gt 0 ]]; do
 	--interval) POLL_INTERVAL_SEC=$2; shift 2 ;;
 	--thresholds) print_thresholds; exit 0 ;;
 	--status) cat "$STATUS_FILE" 2>/dev/null || echo "STATE=stopped"; exit 0 ;;
+	--resume-target) print_resume_target ;;
 	--hibernate-deploy) hibernate_deploy; exit 0 ;;
 	--hibernate-resume) hibernate_resume; exit 0 ;;
 	--help | -h) print_help; exit 0 ;;
@@ -590,7 +909,7 @@ fi
 if ((DRY_RUN)); then
 	log "cushion-swap: starting in --dry-run mode (no swapon/swapoff will be executed; MEMINFO_PATH=${MEMINFO_PATH} SWAPS_PATH=${SWAPS_PATH} STATE_DIR=${STATE_DIR} area=${AREA:-none})"
 else
-	log "cushion-swap: starting (area=${AREA:-none} pacing=${PACING} poll=${POLL_INTERVAL_SEC}s rate_window=${RATE_WINDOW_SEC}s quiet=${QUIET_SECONDS}s)"
+	log "cushion-swap: starting (area=${AREA:-none} pacing=${PACING} poll=${POLL_INTERVAL_SEC}s rate_window=${RATE_WINDOW_SEC}s quiet=${QUIET_SECONDS}s every_cycle=${LOG_EVERY_CYCLE})"
 fi
 
 if ((RUN_ONCE)); then
@@ -601,7 +920,7 @@ fi
 mkdir -p "$STATE_DIR"
 [[ -p $STATE_DIR/tick ]] || mkfifo -m 600 "$STATE_DIR/tick"
 exec {SLEEP_FD}<>"$STATE_DIR/tick"
-MIN_MS=$(to_ms "$MIN_INTERVAL_SEC") POLL_MS=$(to_ms "$POLL_INTERVAL_SEC") TICK_MS=$(to_ms "$SAFETY_TICK_SEC")
+MIN_MS=$(to_ms "$MIN_INTERVAL_SEC") POLL_MS=$(to_ms "$POLL_INTERVAL_SEC") TICK_MS=$(to_ms "$SAFETY_TICK_SEC") FAST_MS=$(to_ms "$FAST_INTERVAL_SEC")
 start_psi
 run_cycle
 log "thresholds ($THRESHOLD_SOURCE, MemTotal $(gib_str "$MEM_TOTAL_KIB")): hard $(gib_str "$DEPLOY_HARD_KIB") soft $(gib_str "$DEPLOY_SOFT_KIB") rate $(gib_str "$RATE_KIB")/${RATE_WINDOW_SEC}s margin $(gib_str "$RETRACT_MARGIN_KIB") quiet ${QUIET_SECONDS}s"

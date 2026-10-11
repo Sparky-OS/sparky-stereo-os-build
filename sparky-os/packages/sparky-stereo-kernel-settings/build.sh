@@ -5,7 +5,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=20261010.2~sparky9~0
+VERSION=20261010.3~sparky9~0
 PACKAGE=sparky-stereo-kernel-settings
 DEPENDS='libpam-modules, systemd, systemd-zram-generator, udev'
 FILES='etc/security/limits.d/20-sparky-audio.conf usr/lib/modules-load.d/sparky-stereo.conf usr/lib/sysctl.d/70-sparky-stereo.conf usr/lib/systemd/zram-generator.conf.d/50-sparky-stereo.conf usr/lib/tmpfiles.d/sparky-thp.conf usr/lib/tmpfiles.d/sparky-tmp.conf usr/lib/udev/rules.d/60-sparky-block.rules usr/lib/udev/rules.d/70-sparky-ntsync.rules usr/lib/udev/rules.d/99-sparky-audio.rules'
@@ -81,11 +81,11 @@ EOT
 cat >"$S/debian/changelog" <<EOT
 $PACKAGE ($VERSION) unstable; urgency=medium
 
-  * zram by hardware: on with 8 GB of RAM or less or a swap area on slow or
-    fragile storage, off otherwise, through zram-generator's own set!
-    directive; ZRAM=auto|on|off in /etc/default/sparky-stereo-zram.
+  * The rule for your own sysctl values in the README and in the header of
+    70-sparky-stereo.conf: a file of yours named 71-*.conf to 99-*.conf wins,
+    one of the same name in /etc/sysctl.d replaces ours.
 
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 10 Oct 2026 19:00:00 -0300
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 10 Oct 2026 21:06:21 -0300
 EOT
 cp "$HERE/copyright" "$S/debian/copyright"
 mkdir -p "$S/debian/source"

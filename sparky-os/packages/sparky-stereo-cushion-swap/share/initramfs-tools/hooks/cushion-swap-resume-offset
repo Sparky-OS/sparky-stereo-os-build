@@ -1,0 +1,29 @@
+#!/bin/sh
+# Created by Daniel Ramos (Capitain Jack) 2026/10/10
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/10
+#
+# Resume from a swap file set up in /etc/initramfs-tools/conf.d/resume alone.
+# initramfs-tools reads RESUME= there (initramfs.conf(5)) but has no
+# RESUME_OFFSET: its init takes resume_offset only from the kernel command
+# line or from a conf.d snippet, which it sources before it reads the command
+# line (initramfs-tools 0.151, init). This hook writes the installer's
+# RESUME_OFFSET into the image as that snippet; resume_offset= on the
+# command line still wins.
+PREREQ=""
+prereqs() {
+	echo "$PREREQ"
+}
+case ${1:-} in
+prereqs)
+	prereqs
+	exit 0
+	;;
+esac
+
+case ${RESUME:-} in
+"" | none | auto) exit 0 ;;
+esac
+offset=$(sed -n "s/^[[:space:]]*RESUME_OFFSET=[\"']\{0,1\}\([0-9][0-9]*\).*/\1/p" "${CONFDIR:-/etc/initramfs-tools}"/conf.d/* 2>/dev/null | tail -n 1)
+[ -n "$offset" ] || exit 0
+echo "resume_offset=$offset" >"${DESTDIR}/conf/conf.d/zz-cushion-swap-resume-offset"
