@@ -78,6 +78,18 @@ Creative support preserves the four original blobs in `/usr/lib/firmware/updates
 
 Purging the setup tool removes its executable and menu files. It deliberately retains hardware packages, logs and generated sensor/audio/APT configuration so removing the UI does not disable installed hardware. Purge the individual firmware/DKMS package to remove its payload. Driver readiness, sensor readings and audio output on real hardware remain separate from container fixture proof.
 
+APT preferences for the GPU vendors' repositories (since 0.1.5):
+-------------
+Two files in /etc/apt/preferences.d, read by apt whether or not the vendor's repository is configured (a pin for an absent repository does nothing):
+
+sparky-stereo-gpu-nvidia: NVIDIA publishes its container toolkit (libnvidia-container1, libnvidia-container-tools, nvidia-container-toolkit, nvidia-container-toolkit-base) twice, in nvidia.github.io and in the CUDA repository, as different builds of the same versions; with the two repositories at different priorities apt "downgrades" between the copies at every upgrade (NVIDIA/nvidia-container-toolkit#2137). Both origins get 990 for those four packages, so the newer version wins from either and an equal version never flips; release candidates (any version containing ~rc, matched as the regular expression /~rc/, because apt drops a trailing * from a version pattern before glob matching, so *~rc* never matches) get 100. The edition's libnvidia-egl-wayland1 and libnvidia-egl-wayland-dev win over the copies in NVIDIA's CUDA repository (500), which the NVIDIA setup above adds at 1002.
+
+sparky-stereo-gpu-amd: AMD's out-of-tree kernel driver (amdgpu-dkms, amdgpu-dkms-firmware and their former names rock-dkms, rock-dkms-firmware) is never installed, from any source: the edition's kernel carries amdgpu with the HDMI 3D changes. Every package whose name contains amdgpu (and AMDVLK) from AMD's repositories (Release origin repo.radeon.com) is never installed either: they all depend on amdgpu-core, whose postinst writes /etc/ld.so.conf.d/20-amdgpu.conf and puts /opt/amdgpu/lib ahead of the system's libraries for every program (libdrm, libgbm, libEGL_mesa, libGLX_mesa), and mesa-amdgpu-vulkan-drivers sets VK_LOADER_DRIVERS_DISABLE=radeon_icd.* in /etc/environment.d, which turns off the distribution's Vulkan driver. amdgpu-install and amdgpu-insecure-instinct-udev-rules stay available (500). ROCm is not touched and updates normally: AMD's current ROCm for Debian 13 (stable.repo.amd.com) depends on none of these packages, and in the older repo.radeon.com ROCm only rocdecode and rocjpeg need AMD's graphics Mesa.
+
+Intel is not guarded: i915 has carried HDMI stereo modes upstream since 2013, and Intel's repositories do not replace the kernel driver.
+
+The NVIDIA driver itself is locked by sparky-stereo-nvidia-driver-lock, built with the edition's NVIDIA module (nvidia-kernel-open-dkms-stereo3d) from the same version, see its README.Debian. When the module moves to a new NVIDIA version, the driver=nvidia-driver=615.71.09-2 line in lib/actions.sh has to follow it.
+
 Tests:
 -------------
 In a disposable Debian testing container, install the built packages and run `python3 tests/detection.py` and `bash tests/actions.sh`. The latter uses command doubles and a fake root for module loading and NVIDIA transactions. The test never loads a real module. See REPORT.md for the full build/install/use/purge transcript and limitations.
