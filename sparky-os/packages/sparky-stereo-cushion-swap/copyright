@@ -10,8 +10,10 @@ The Cushion Swap File is Daniel Ramos's design, his "Dynamic Swap Parachute"
 usr/sbin/cushion-swap and the test harness tests/test_swap_parachute.sh are
 his. The wake-up helper uses the kernel's pressure stall information (PSI),
 by Johannes Weiner, with the trigger interface by Suren Baghdasaryan
-(Linux kernel/sched/psi.c). No code from swapspace or systemd-oomd is
-included; README.md compares them.
+(Linux kernel/sched/psi.c). The initramfs hook uses Debian initramfs-tools'
+hook interface and its conf.d snippets; the log is rotated by logrotate. No
+code from swapspace, systemd-oomd, initramfs-tools or logrotate is included;
+README.md compares and cites them.
 
 Sparky Stereo OS, an edition of SparkyLinux, created by Paweł "pavroo"
 Pijanowski and Daniel Ramos (Capitain Jack).

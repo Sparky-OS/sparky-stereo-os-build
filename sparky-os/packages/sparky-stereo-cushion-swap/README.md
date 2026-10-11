@@ -10,6 +10,7 @@ Dependencies:
 -------------
 bash
 libc6
+logrotate
 systemd
 util-linux
 
@@ -35,7 +36,9 @@ asked for on 2026-08-01 and has run on his own workstation (96 GB of RAM, a
 parachute, never a floor". On 2026-10-10 he made it the edition's swap:
 "swapp off on boot ... swapp is on in the sense is available, otherwise
 hibernation options won't even enable ... and the retraction is kept",
-and named it the Cushion Swap File.
+and named it the Cushion Swap File. The same evening he decided the nine
+proposals of version 0.1.0 ("agreed on proposals"); version 0.2.0 carries
+them out.
 
 His rules, kept as he wrote them (usr/sbin/cushion-swap, run_cycle):
 - Deploy when MemAvailable is below 6 GiB, or below 12 GiB and falling at
@@ -46,6 +49,7 @@ His rules, kept as he wrote them (usr/sbin/cushion-swap, run_cycle):
   not cause the next emergency), and no deploy condition has been true for
   10 minutes.
 - Fail safe: an unreadable /proc/meminfo or /proc/swaps means no action.
+- Every cycle is logged with its arithmetic (below).
 - OOMScoreAdjust=-1000, restarted if it dies, never sandboxed (swapon in a
   private mount namespace would do nothing to the real system).
 His test harness (tests/test_swap_parachute.sh, 12 scenarios, 39 assertions)
@@ -54,16 +58,27 @@ the fixture area name differ.
 
 What the edition adds around his rules
 -------------
-- The area. Only one swap area is ever switched: AREA= in
+- The area. Only one swap area is ever switched by the daemon: AREA= in
   /etc/default/cushion-swap, or the first swap line in /etc/fstab marked
   noauto (the installer writes it so; swapon -a skips noauto lines, so the
   area stays off at boot). zram and every other swap area are left alone.
   His host version ran "swapon -a && mount -a"; the edition runs
   "swapon AREA" and "swapoff AREA" only, and no mount -a.
-- Thresholds for every machine. At or above 90 GiB of MemTotal, his values
-  apply exactly as written (his machine reports 93.42 GiB; every 96 GB
-  machine reports 92 to 95 GiB). Below that, each memory value is the same
-  share of RAM as on his machine:
+- An area that holds nothing (Daniel, 2026-10-10: "switch it off after the
+  quiet window only if you make hibernation ignore this and keep enabled").
+  An area that is on and was never used, or holds nothing any more, is
+  switched off once no deploy condition has been true for the quiet window;
+  swapoff then reads nothing back, so his margin has nothing to protect.
+  Hibernate stays offered and working with the area off (below). While a
+  hibernation is using the area (the hibernate unit switched it on and the
+  sleep hook has not yet run after resume), nothing is retracted: the hold
+  ends with the sleep hook, or after HIBERNATE_HOLD_SEC (300 s) for a
+  hibernation that never started (systemd-sleep runs no hook when it cannot
+  find its area).
+- Thresholds for every machine (decided 2026-10-10). At or above 90 GiB of
+  MemTotal, his values apply exactly as written (his machine reports
+  93.42 GiB; every 96 GB machine reports 92 to 95 GiB). Below that, each
+  memory value is the same share of RAM as on his machine:
   value = his value x MemTotal / 90 GiB, with a floor of 256 MiB (hard),
   512 MiB (soft and margin) and 16 MiB per 10 s (rate). The time values (rate
   window 10 s, quiet window 10 min) do not change. Why scale: a 6 GiB floor
@@ -83,38 +98,102 @@ What the edition adds around his rules
   DEPLOY_SOFT_MIB, RATE_MIB, RETRACT_MARGIN_MIB; his GiB names
   DEPLOY_HARD_GIB and the others are accepted too), and
   "cushion-swap --thresholds" prints what this machine uses and why.
-- The wake-up, as Daniel settled it (PACING=fixed, the default). Where the
-  kernel has pressure stall information (PSI), /usr/libexec/cushion-swap/psi-wake
-  holds a trigger on /proc/pressure/memory ("some 150000 1000000": 150 ms of
-  stall in one second, the example of the kernel's
-  Documentation/accounting/psi.rst) and the kernel wakes the daemon when
-  memory stalls; his rules still make every decision. A 10-second safety
-  tick (his rate window) keeps the retract timer and slow drifts covered.
-  Without PSI (older kernels, psi=0, containers: Docker's AppArmor profile
-  refuses the trigger), his 3-second poller runs, at 0.5 seconds only while a
-  game is opening: sparky-stereo-game-performance touches
-  $XDG_RUNTIME_DIR/cushion-swap-game-opening, and a new launcher process
-  (Steam's reaper and launch wrapper, pressure-vessel, umu, Proton, Wine,
-  Lutris, gamemoderun, Legendary, gogdl) counts too; only processes started
-  since the last look are read. The fast rate ends when available memory has
-  moved less than his rate threshold for 10 seconds, or after 3 minutes.
-- The proposed pacing (PACING=headroom, not the default; Daniel decides):
-  the next sample comes before memory could fall to the early-warning floor
+- The wake-up, as Daniel settled it. Where the kernel has pressure stall
+  information (PSI), /usr/libexec/cushion-swap/psi-wake holds a trigger on
+  /proc/pressure/memory ("some 150000 1000000": 150 ms of stall in one
+  second, the example of the kernel's Documentation/accounting/psi.rst) and
+  the kernel wakes the daemon when memory stalls; his rules still make every
+  decision. A 10-second safety tick (his rate window) keeps the retract timer
+  and slow drifts covered. Without PSI (older kernels, psi=0, containers:
+  Docker's AppArmor profile refuses the trigger), his 3-second poller runs,
+  and 0.5 seconds while a game is opening: sparky-stereo-game-performance
+  touches $XDG_RUNTIME_DIR/cushion-swap-game-opening, and a new launcher
+  process (Steam's reaper and launch wrapper, pressure-vessel, umu, Proton,
+  Wine, Lutris, gamemoderun, Legendary, gogdl) counts too; only processes
+  started since the last look are read. The fast rate ends when available
+  memory has moved less than his rate threshold for 10 seconds, or after
+  3 minutes.
+- The pacing (decided 2026-10-10: headroom by default, PACING=headroom).
+  The next sample comes before memory could fall to the early-warning floor
   at 8 GiB/s (MAX_ALLOC_MIB_S), never sooner than 0.25 s and never later than
-  the normal interval; PSI still wakes it at once. Far from the floor it
-  samples as rarely as the settled design; near it, often. Measured below.
-- Hibernation with the area off at boot (below).
-- Logging: an action, a failure or a deploy/retract condition is logged with
-  its arithmetic; LOG_EVERY_CYCLE=yes logs every cycle as his host version
-  does.
+  the interval above: 3 s, the 10 s tick in PSI mode, or 0.5 s while a game
+  is opening. PSI still wakes it at once. Far from the floor it samples as
+  rarely as before; near it, often. PACING=fixed keeps those intervals as
+  they are. Measured below.
 - CUSHION_SWAP=off in /etc/default/cushion-swap stops it; like his
   uninstall.sh, stopping never switches the swap off ("removing the watcher
   is not the same decision as forcing swap off").
 - Where his own /etc/systemd/system/cgm-swap-parachute.service exists, the
-  packaged units do not start.
+  packaged units and the generator do nothing.
+
+The log
+-------------
+Daniel's design logs every cycle: "sample /proc/meminfo and /proc/swaps
+every 3s, decide, act (or don't), log the arithmetic, sleep, repeat". So by
+default (LOG_EVERY_CYCLE=yes) each cycle writes three lines, its sample, its
+deploy check and its retract check, with every number they use and the
+cycle's number. LOG_EVERY_CYCLE=no keeps only the cycles that decide
+something.
+- Where each kind of line goes:
+  - /var/log/cushion-swap/cushion-swap.log: every line (the unit's
+    StandardOutput=append:). Read it with
+    "tail -f /var/log/cushion-swap/cushion-swap.log" as root or a member of
+    the adm group (the folder is root:adm 0750, the file root:adm 0640,
+    Debian's /var/log convention).
+  - The journal: the start, the thresholds in use, every DEPLOY and RETRACT,
+    and every failure (StandardError=journal):
+    "journalctl -u cushion-swap". Hibernation's switch-on and switch-off are
+    in "journalctl -u cushion-swap-hibernate" and in systemd-sleep's lines.
+- Size: 543 bytes per cycle (measured in the container tests and in the
+  development VM). How many cycles a day depends on the pacing: headroom
+  samples sooner the less memory stands between MemAvailable and the
+  early-warning floor at 8 GiB/s. Measured over 120 s in the development VM
+  (2026-10-10, PSI mode, idle Plasma session): with 16 GB of RAM, a cycle
+  every 1.48 s, 31 MB of log a day and 0.4 % of one core; with 4 GB, a
+  cycle every 0.25 s (the minimum, all the time), 184 MB a day and 1.5 % of
+  one core. Daniel's 96 GB machine with 60 GiB available would sample every
+  6 s (8 MB a day); PACING=fixed with his 3 s poller gives 15.6 MB a day.
+- Rotation: /etc/logrotate.d/sparky-stereo-cushion-swap, daily (Debian's
+  logrotate.timer), 7 rotations kept, compressed from the second day
+  (delaycompress), maxsize 50M, copytruncate because the unit keeps the file
+  open. At the 3 s rate that keeps about 35 MB: today's file, yesterday's,
+  and six compressed days (the lines compress about 30 to 1); on the 4 GB
+  machine above, about 400 MB. maxsize acts only when logrotate runs, which
+  the timer does once a day. copytruncate
+  can lose the lines written between logrotate's copy and its truncation
+  ("a very small time slice", logrotate(8)): measured, 1 line in 3 forced
+  rotations while the daemon wrote 50 cycles a second; at 3 s, almost always
+  none. The unit opens the file for appending, so after a truncation the
+  daemon writes at the new end and leaves no hole.
+- No LogNamespace= and no other sandboxing: the unit stays as it was.
 
 Hibernate with the swap off
 -------------
+Where the image goes is set by the installer in
+/etc/initramfs-tools/conf.d/resume (Daniel, 2026-10-10: "pointing to the
+file"):
+- RESUME=UUID=... names the device: a swap partition (it does not need a line
+  in /etc/fstab), or, for a swap file, the file system the file is on;
+- RESUME_OFFSET= the swap file's first page on that file system;
+- RESUME=none (or an empty RESUME=) means no hibernation.
+The variables are Debian's initramfs-tools ones (initramfs.conf(5) for
+RESUME; initramfs-tools(7) for the resume and resume_offset boot
+parameters). Without a RESUME= line in that file, resume= and
+resume_offset= on the kernel command line are the second source.
+"cushion-swap --resume-target" prints which source decided, the area it
+names and its size.
+
+One gap in initramfs-tools 0.151 (Debian forky, read in its own scripts): it
+reads RESUME from conf.d, but RESUME_OFFSET nowhere. Its init takes
+resume_offset only from the kernel command line, or from a conf.d snippet,
+which it sources before reading the command line. So a swap file set up in
+the file alone would not resume. The package's initramfs hook
+(/usr/share/initramfs-tools/hooks/cushion-swap-resume-offset) writes the
+file's RESUME_OFFSET into the image as that snippet; a resume_offset= on the
+command line still wins. The package triggers update-initramfs. initramfs-tools
+warns "no matching swap device is available" for a swap file (it checks the
+file system, which is not a swap device); that warning is expected.
+
 KDE offers Hibernate when logind's CanHibernate answers yes
 (plasma-workspace libkworkspace/sessionmanagementbackend.cpp). logind answers
 yes only with an active swap area that can hold the image
@@ -122,17 +201,23 @@ yes only with an active swap area that can hold the image
 find_suitable_hibernation_device_full(): "No swap space available for
 hibernation"), unless SYSTEMD_BYPASS_HIBERNATION_MEMORY_CHECK=1 is set for
 it (systemd docs/ENVIRONMENT.md). And systemd-sleep looks for the area before
-it runs the system-sleep hooks (src/sleep/sleep.c), so a hook is too late.
-So the package:
+it runs the system-sleep hooks (src/sleep/sleep.c); with a resume device set
+by the initramfs, it accepts only the active swap that matches it. So the
+package:
 - cushion-swap-hibernate-generator sets that variable for systemd-logind
-  only where hibernation can work: an area is configured, the kernel command
-  line has resume=, and the area is at least the size of RAM when it can be
-  checked at boot. HIBERNATE=off in /etc/default/cushion-swap turns it off.
+  where the file (or the command line) names a device, unless what can be
+  checked at boot says otherwise: the area is smaller than RAM, or the swap
+  files on that file system are all at other offsets. It logs which source
+  decided. HIBERNATE=off in /etc/default/cushion-swap turns it off.
 - cushion-swap-hibernate.service, ordered before systemd-hibernate.service
-  (and hybrid-sleep, suspend-then-hibernate), switches the area on.
+  (and hybrid-sleep, suspend-then-hibernate), switches that area on, whether
+  or not it is the Cushion Swap File's area, and says in the journal when the
+  kernel's resume device disagrees with the file.
 - After resume, the system-sleep hook switches it off again if it was
   switched on only for the image and nothing stayed in it; pages that did
   stay are left to his retract rules.
+- Retracting an unused area changes none of this: the generator does not look
+  at whether the area is on.
 
 Prior art
 -------------
@@ -158,11 +243,12 @@ Measured (development VM, 16 GB, 4 vCPUs, 2026-10-10)
   at 377 MiB available, after the kill, and at 66 MiB: memory stalls show up
   only at the very end, when swap is off and the page cache is gone.
 - swapon of a 2 GiB swap file: 4 to 7 ms.
-- The packaged daemon with a 2 GiB area, allocating 1 GiB beyond what is
-  available at full speed, the start at a random moment (8 runs each):
-  his 3 s poller completed 3, PSI with the 10 s tick 6, the proposed headroom
+- The packaged daemon (0.1.0) with a 2 GiB area, allocating 1 GiB beyond
+  what is available at full speed, the start at a random moment (8 runs
+  each): his 3 s poller completed 3, PSI with the 10 s tick 6, headroom
   pacing 8. (With the start always 13 s after the daemon, all 6 runs of each
-  completed: the sampling phase decides it.)
+  completed: the sampling phase decides it.) That result made headroom the
+  default.
 - systemd-oomd (Debian's default: user@.service at 50 % pressure for 20 s):
   in four runs inside user@1000.service it never acted; the kernel's OOM
   killer or the Cushion Swap File always came first. The unit is ordered
@@ -173,17 +259,61 @@ Status
 -------------
 /run/cushion-swap/status (read by the System Settings page and by
 "cushion-swap --status"): STATE (off, deployed, retracting, disabled,
-no-area), MODE (psi, compatibility), FAST, AREA and the thresholds in use.
+no-area), MODE (psi, compatibility), FAST, PACING, AREA and the thresholds in
+use.
 
 Tests
 -------------
 tests/run-tests.sh runs in a container as an ordinary user: the thresholds
 for 4, 8, 16, 32, 64 and 96 GB, settings, deploy and retract on the own area
-only, fstab detection, the off switch, the hibernation units' commands, the
-compatibility loop's game-opening rate, the PSI fallback, the generator and
-Daniel's harness; then six planted faults (deploying too late, no rate
-trigger, retracting under pressure, retracting without the margin, every swap
-area, a stuck fast rate) must each fail their check. tests/run-tests.sh
---psi-pressure, in a container started with --memory, proves a real PSI
-trigger fires under pressure and stays quiet without it. tests/guest/ holds
-the guest-only race measurements (README in the edition's power-idle notes).
+only, an unused area retracted after the quiet window and never during a
+hibernation, fstab detection, the off switch, every cycle in the log file and
+the actions in the journal too, the unit, tmpfiles and logrotate wiring, the
+real logrotate rotating while the daemon writes, the generator's resume
+sources (the file with a partition, the file with a swap file and its
+offset, RESUME=none, the command line alone, neither, noresume, a wrong
+offset, too small, switched off), Hibernate still offered after a retraction,
+the hibernation units' switch-on and switch-off for a partition outside
+fstab and for a swap file, the initramfs hook read back the way init reads
+it, the compatibility loop's game-opening rate under both pacings, headroom
+pacing, the PSI fallback and Daniel's harness. Then planted faults (deploying
+too late, no rate trigger, retracting under pressure, without the margin, or
+during a hibernation, every swap area, a stuck fast rate, fixed pacing by
+default, headroom ignored or blind to a game, an unused area kept, Hibernate
+offered only while the area is on, the switch-on skipped, actions missing
+from the journal, decisions-only logging by default, the logrotate file
+absent or for another path, the unit logging elsewhere or in a log
+namespace, the installer's file ignored, the hook dropping the offset) must
+each fail their check. QUICK=1 skips the planted faults.
+A real PSI trigger cannot be armed in a Docker container (its AppArmor
+profile refuses the write to /proc/pressure/memory); tests/guest/psi-wake-check.sh
+proves it in a VM: armed, quiet without pressure, firing under it.
+(The 0.1.0 README named a "run-tests.sh --psi-pressure" mode that never
+existed; corrected here.) tests/guest/ also holds the guest-only race
+measurements (README in the edition's power-idle notes).
+
+In Daniel's TV testing window (decided 2026-10-10): the launcher list and
+the 0.5 s rate, measured on real game loads. Nothing here changes a game's
+settings or the TV's mode.
+1. Before: "cushion-swap --status" shows MODE. The game rate applies only
+   in compatibility mode; on a kernel with PSI, start the daemon for this
+   test with PSI=off in /etc/default/cushion-swap and restart it
+   ("systemctl restart cushion-swap"); put the line back afterwards.
+2. Follow the log: "tail -f /var/log/cushion-swap/cushion-swap.log | grep -E
+   'game opening|game loaded|longer than|sample:'".
+3. Start each game the usual way: from Steam (native and Proton), from
+   Lutris, from Heroic, and through game-performance. For each, note
+   whether "game opening (signal from ...)" or "game opening (launcher
+   process started)" appears within one cycle of the click, and the comm
+   name of every process the launch starts ("ps -eo pid,comm,args
+   --sort=start_time | tail -40" while it loads). A launcher whose processes
+   are not in LAUNCHERS is a gap: write its comm name down.
+4. During the load, the sample lines' timestamps show the rate: 0.5 s apart
+   or less while the game loads, and back to the normal interval within
+   10 s after its memory settles ("game loaded (memory steady for 10s)"), or
+   after 3 minutes at most.
+5. Record the lowest MemAvailable in the sample lines during each load, and
+   whether a DEPLOY happened. The 0.5 s rate is right when no load fell from
+   above the early-warning floor to below the hard floor between two
+   samples; with a load that did, the next step is a faster rate or PSI.
+6. Afterwards: "journalctl -u cushion-swap --since today" shows each action.

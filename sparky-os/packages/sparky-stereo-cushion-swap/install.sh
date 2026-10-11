@@ -8,5 +8,5 @@ if [[ ${1:-install} == uninstall ]]; then
 	DEBIAN_FRONTEND=noninteractive apt-get -y purge sparky-stereo-cushion-swap
 else
 	: "${OUT:?Set OUT to the directory containing the built package}"
-	DEBIAN_FRONTEND=noninteractive apt-get -y install "$OUT/sparky-stereo-cushion-swap_0.1.0_amd64.deb"
+	DEBIAN_FRONTEND=noninteractive apt-get -y install "$OUT/sparky-stereo-cushion-swap_0.2.0_amd64.deb"
 fi
