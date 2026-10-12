@@ -2,7 +2,7 @@
 #
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/02
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/02
+# Last update 2026/10/12
 
 SHARE=/usr/share/sparky-stereo-locales
 LANGDIR=/usr/share/sparky/sparky-stereo-locales
@@ -20,9 +20,12 @@ if [ -r /etc/default/locale ]; then
 	locale_name=$(sed -n 's/^LANG=//p' /etc/default/locale | tail -n 1 | tr -d '"')
 fi
 [ -n "$locale_name" ] || locale_name="${LANG:-}"
-case "$locale_name" in
+case "${locale_name,,}" in
 	pl | pl_* | pl.*) lang_file=pl ;;
-	pt_BR | pt_BR.* | pt_BR@*) lang_file=pt_BR ;;
+	pt_br | pt_br.* | pt_br@*) lang_file=pt_BR ;;
+	fr | fr_* | fr.*) lang_file=fr ;;
+	zh_cn | zh_cn.* | zh_cn@*) lang_file=zh_CN ;;
+	zh_tw | zh_tw.* | zh_tw@*) lang_file=zh_TW ;;
 	*) lang_file=en ;;
 esac
 . "$LANGDIR/en"

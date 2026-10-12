@@ -8,7 +8,7 @@ set -u
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-"$HERE/../../../../out"}
-VERSION=0.2.0
+VERSION=0.2.1
 PKG=sparky-stereo-locales
 SHARE=/usr/share/$PKG
 mkdir -p "$OUT"
