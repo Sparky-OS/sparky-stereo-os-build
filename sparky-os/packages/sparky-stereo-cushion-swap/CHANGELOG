@@ -1,7 +1,12 @@
-0.3.0 (2026-10-11)
-  Idle-only page-fault calibration, cached by kernel/CPU/RAM identity.
-  Problems logged by default, every-cycle logging optional, weekly rotation.
-  Test runner checks logrotate before starting.
+-------------------------------------------------------------------------------
+  Version 0.3.0 (2026-10-11)
+-------------------------------------------------------------------------------
+
+  * Daniel's refinements of 2026-10-10
+  * Headroom pacing scales to the machine's own allocation rate, measured once while idle and cached by kernel, CPU, RAM and firmware identity
+  * The default log has only real problems: failures, and DEPLOY with its RETRACT and their arithmetic; every-cycle logging is LOG_EVERY_CYCLE=yes in /etc/default/cushion-swap
+  * Rotation weekly, one week kept, no size limit and no hourly timer
+  * The test runner checks for logrotate before it starts
 
 -------------------------------------------------------------------------------
   Version 0.2.0 (2026-10-10)
