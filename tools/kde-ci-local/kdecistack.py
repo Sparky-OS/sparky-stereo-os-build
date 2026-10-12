@@ -50,6 +50,14 @@ def git(repo, *args):
     return subprocess.check_output(["git", "-C", repo, *args], text=True).strip()
 
 
+def key_of(name, commit, image_id, dep_keys):
+    h = hashlib.sha1()
+    h.update(f"{name}\n{commit}\n{image_id}\n".encode())
+    for dep in sorted(dep_keys):
+        h.update(f"{dep} {dep_keys[dep]}\n".encode())
+    return h.hexdigest()[:12]
+
+
 def resolve(stack, image_id):
     """Add commit, key and directory to every member."""
     out = {}
@@ -59,11 +67,7 @@ def resolve(stack, image_id):
         m["package"] = name
         m["path"] = m["repo"] if os.path.isabs(m["repo"]) else os.path.join(stack["root"], m["repo"])
         m["commit"] = git(m["path"], "rev-parse", m["branch"] + "^{commit}")
-        h = hashlib.sha1()
-        h.update(f"{name}\n{m['commit']}\n{image_id}\n".encode())
-        for dep in sorted(m.get("needs", [])):
-            h.update(f"{dep} {out[dep]['key']}\n".encode())
-        m["key"] = h.hexdigest()[:12]
+        m["key"] = key_of(name, m["commit"], image_id, {d: out[d]["key"] for d in m.get("needs", [])})
         out[name] = m
     return out
 

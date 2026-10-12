@@ -380,7 +380,7 @@ def heavy_lock(name):
 
 def run_job(name, job, cfg, args, ctx):
     lock = None
-    if any("run-ci-build" in l for l in flat_script(job.get("script"), cfg)):
+    if any(("run-ci-build" in l or "stack-ci" in l) for l in flat_script(job.get("script"), cfg)):
         lock = heavy_lock(name)
     try:
         return run_job_locked(name, job, cfg, args, ctx)
@@ -479,6 +479,10 @@ def run_job_locked(name, job, cfg, args, ctx):
         card = vkms_card()
         if card and dri_gid(card):
             cmd += ["--device", f"{card}:/dev/dri/card1", "--group-add", dri_gid(card)]
+    for e in args.job_env:
+        cmd += ["-e", e]
+    for mnt in args.job_mount:
+        cmd += ["-v", mnt]
     if stack_dir:
         cmd += ["-v", f"{stack_dir}:/kdecilocal-stack:ro", "-v", f"{os.path.dirname(os.path.abspath(__file__))}:/kdecilocal-tools:ro",
                 "-e", "KDE_CI_STACK_PREFIX=/kdecilocal-stack"]
@@ -660,6 +664,8 @@ def main():
                     help="build the Qt 6.13 job image from KDE's ci-images/suse-qt613/build.sh (once, ~12 GB)")
     ap.add_argument("--build-krita-image", action="store_true",
                     help="build Krita's job image from KDE's ci-images/krita-appimage-2204 (once, Ubuntu 22.04)")
+    ap.add_argument("--job-env", action="append", default=[], metavar="NAME=VALUE", help="an extra environment variable for the job container (repeatable)")
+    ap.add_argument("--job-mount", action="append", default=[], metavar="SRC:DST[:ro]", help="an extra bind mount for the job container (repeatable)")
     ap.add_argument("--stack", metavar="FILE", help="a stack file (stacks/*.yml): lay the stack over KDE's packages in build jobs; "
                     "members that are not built yet are built first")
     ap.add_argument("--stack-status", action="store_true", help="with --stack: list the members, their keys and whether each is built, then stop")

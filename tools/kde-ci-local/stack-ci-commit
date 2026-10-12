@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+"""Write the fork-only CI change that puts a fork's build job on our stack.
+
+    stack-ci-commit TREE --stack stacks/plasma-6.7.yml --use libkscreen,kimageformats [--exclude PROJECT] [--publish-job]
+
+Adds TREE/.stack-ci/ (stack-ci, stack-run-ci-build, kdecistack.py, stack.yml) and a `suse_tumbleweed_qt611:`
+block at the end of TREE/.gitlab-ci.yml that replaces the script of KDE's template job by the same lines
+with two changes: `stack-ci prepare` before the build, and KDE's run-ci-build.py run through
+stack-run-ci-build.  TREE is left uncommitted.  --publish-job also adds the manual job `stack_publish`.
+"""
+import argparse
+import importlib.machinery
+import importlib.util
+import os
+import shutil
+import sys
+
+import yaml
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+loader = importlib.machinery.SourceFileLoader("kdecilocal", os.path.join(HERE, "kde-ci-local"))
+spec = importlib.util.spec_from_loader("kdecilocal", loader)
+kcl = importlib.util.module_from_spec(spec)
+sys.path.insert(0, HERE)
+loader.exec_module(kcl)
+
+
+class Block(str):
+    pass
+
+
+yaml.add_representer(Block, lambda d, v: d.represent_scalar("tag:yaml.org,2002:str", v, style="|"), Dumper=yaml.SafeDumper)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("tree")
+    ap.add_argument("--stack", required=True)
+    ap.add_argument("--use", default="")
+    ap.add_argument("--exclude")
+    ap.add_argument("--publish-job", action="store_true")
+    ap.add_argument("--publish-only", action="store_true", help="only the publish job; the fork's own build job stays as it is (the host of the registry)")
+    ap.add_argument("--work", default=os.environ.get("KDE_CI_LOCAL_WORK", "/K3D/temp/kde-ci-local"))
+    a = ap.parse_args()
+    stack = kcl.kdecistack.load(a.stack)
+    ci = kcl.ensure_kde_sources(a.work, False)
+    ciyml = os.path.join(a.tree, ".gitlab-ci.yml")
+    cfg = kcl.load_with_includes(ciyml, ci)
+    job = kcl.resolve_job(cfg, stack["job"])
+    lines = kcl.flat_script(job["script"], cfg)
+    prep = f"python3 -u .stack-ci/stack-ci prepare --use {a.use}" + (f" --exclude {a.exclude}" if a.exclude else "")
+    out, done = [], False
+    for l in lines:
+        if "ci-utilities/run-ci-build.py" in l and not done:
+            out += [prep, "export KDE_CI_STACK_PREFIX=${STACK_CI_OUT:-${STACK_CI_WORK:-/tmp/stack-ci}/prefix}",
+                    l.replace("ci-utilities/run-ci-build.py", ".stack-ci/stack-run-ci-build ci-utilities/run-ci-build.py")]
+            done = True
+        else:
+            out.append(l)
+    if not done and not a.publish_only:
+        sys.exit(f"{stack['job']} of {a.tree} does not run run-ci-build.py")
+    d = os.path.join(a.tree, ".stack-ci")
+    os.makedirs(d, exist_ok=True)
+    for f in ("stack-ci", "stack-run-ci-build", "kdecistack.py"):
+        shutil.copy2(os.path.join(HERE, f), d)
+    shutil.copy2(a.stack, os.path.join(d, "stack.yml"))
+    doc = {} if a.publish_only else {stack["job"]: {"script": [Block(l.strip("\n")) if "\n" in l.strip() else l for l in out]}}
+    if a.publish_job or a.publish_only:
+        doc["stack_publish"] = {
+            "extends": [".ci_linux_base", ".suse_tumbleweed_qt6stable"], "stage": "build", "when": "manual",
+            "script": ["python3 -u .stack-ci/stack-ci prepare --use all --mode build --ci-utilities ci-utilities",
+                       "python3 -u .stack-ci/stack-ci publish"]}
+    with open(ciyml, "a") as f:
+        f.write("\n# CI only, not for upstream: build against our stack (.stack-ci/), not only KDE's packages.\n")
+        f.write(yaml.dump(doc, Dumper=yaml.SafeDumper, sort_keys=False, width=1000))
+
+
+if __name__ == "__main__":
+    main()

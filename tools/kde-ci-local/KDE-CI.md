@@ -126,3 +126,10 @@ kde-ci-local TREE --branch B --project P --stack stacks/plasma-6.7.yml --jobs su
 - A job of a member leaves out that member and the members that need it; other jobs get all members. A job on another platform than the stack's (`suse-qt6.11`) is skipped with a note.
 - **Moving to Plasma 6.8**: copy the file, change `branch` and `ci-name` of each member. Nothing else is branch-specific.
 - Disk: a member build is checked for 6 GB (a consumer job for 8 GB) before it starts; below the floors of /K3D (20 GB) and / (12 GB) it stops with `STATUS: blocked`.
+
+### The same stack on invent (2026-10-11)
+
+A fork-only CI commit puts a fork's `suse_tumbleweed_qt611` job on the stack with the steps `kde-ci-local --stack` runs: `stack-ci-commit TREE --stack stacks/plasma-6.7.yml --use libkscreen,kimageformats [--exclude PROJECT]` adds `.stack-ci/` (`stack-ci`, `stack-run-ci-build`, `kdecistack.py`, `stack.yml`) and replaces the job's script by KDE's own lines with two changes: `stack-ci prepare` before the build, and `run-ci-build.py` run through `stack-run-ci-build`.
+`stack-ci prepare` resolves the members' branches with `git ls-remote`, computes the same keys, and takes each prefix from the generic package registry of `registry-project` when a package `NAME-KEY/prefix.tar.xz` exists, else builds it with KDE's script.
+`--publish-job` adds a manual job `stack_publish` that builds all members and uploads them (`CI_JOB_TOKEN`).
+`--job-env` and `--job-mount` let kde-ci-local give a job container the variables and mounts of a test: `STACK_CI_GIT_BASE`, `STACK_CI_REGISTRY`, `STACK_CI_WORK`, `CI_JOB_TOKEN`.
