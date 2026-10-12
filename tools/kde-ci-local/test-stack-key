@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""The key of a stack member ignores CI-only commits and follows source commits.
+
+    test-stack-key
+
+Builds a throwaway repository, resolves a one-member stack the way kde-ci-local does (local
+repository) and the way a pipeline does (stack-ci, over file://), and checks that:
+  - a fork-only CI commit (.stack-ci/, .gitlab-ci.yml) keeps the key,
+  - a source commit changes it,
+  - a change to a file inside .kde-ci.yml (read by KDE's build) changes it.
+"""
+import importlib.machinery
+import importlib.util
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import kdecistack  # noqa: E402
+
+
+def load_stack_ci(base):
+    os.environ["STACK_CI_GIT_BASE"] = base
+    os.environ["STACK_CI_WORK"] = os.path.join(base.removeprefix("file://"), "work")
+    loader = importlib.machinery.SourceFileLoader("stackci", os.path.join(HERE, "stack-ci"))
+    spec = importlib.util.spec_from_loader("stackci", loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+class StackKey(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.base = self.tmp.name
+        self.repo = os.path.join(self.base, "lib")
+        os.makedirs(self.repo)
+        os.symlink(self.repo, os.path.join(self.base, "lib.git"))
+        self.git("init", "-q", "-b", "main")
+        self.git("config", "uploadpack.allowFilter", "true")
+        self.git("config", "user.name", "t")
+        self.git("config", "user.email", "t@example.org")
+        self.write("CMakeLists.txt", "project(lib)\n")
+        self.write("src/a.cpp", "int a;\n")
+        self.write(".gitlab-ci.yml", "include: []\n")
+        self.commit("source")
+        self.stack = {"members": {"lib": {"repo": "lib", "branch": "main", "ci-name": "main"}}, "order": ["lib"]}
+        self.sci = load_stack_ci("file://" + self.base)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def git(self, *a):
+        return subprocess.check_output(["git", "-C", self.repo, *a], text=True).strip()
+
+    def write(self, path, text):
+        p = os.path.join(self.repo, path)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "a" if path == ".gitlab-ci.yml" and os.path.exists(p) else "w") as f:
+            f.write(text)
+
+    def commit(self, msg):
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", msg)
+
+    def keys(self):
+        local = kdecistack.resolve(dict(self.stack, root=self.base), "img")["lib"]["key"]
+        remote = self.sci.resolve(self.stack, "img")["lib"]["key"]
+        return local, remote
+
+    def test_local_and_pipeline_agree(self):
+        local, remote = self.keys()
+        self.assertEqual(local, remote)
+
+    def test_ci_only_commit_keeps_the_key(self):
+        before, head = self.keys(), self.git("rev-parse", "HEAD")
+        self.write(".stack-ci/stack-ci", "#!/bin/sh\n")
+        self.write(".stack-ci/stack.yml", "name: x\n")
+        self.write(".gitlab-ci.yml", "\n# CI only, not for upstream\nsuse_tumbleweed_qt611: {}\n")
+        self.commit("CI only, not for upstream")
+        self.assertNotEqual(head, self.git("rev-parse", "HEAD"))
+        self.assertEqual(before, self.keys())
+        self.write(".stack-ci/stack-ci", "#!/bin/sh\necho changed\n")
+        self.commit("CI only again")
+        self.assertEqual(before, self.keys())
+
+    def test_source_commit_changes_the_key(self):
+        before = self.keys()
+        self.write("src/a.cpp", "int a, b;\n")
+        self.commit("source change")
+        after = self.keys()
+        self.assertNotEqual(before[0], after[0])
+        self.assertNotEqual(before[1], after[1])
+
+    def test_new_top_level_file_and_kde_ci_yml_change_the_key(self):
+        before = self.keys()
+        self.write(".kde-ci.yml", "Dependencies: []\n")
+        self.commit("kde-ci")
+        mid = self.keys()
+        self.assertNotEqual(before, mid)
+        self.write(".kde-ci.yml", "Dependencies: [x]\n")
+        self.commit("kde-ci 2")
+        self.assertNotEqual(mid, self.keys())
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

@@ -29,7 +29,37 @@ class Block(str):
     pass
 
 
-yaml.add_representer(Block, lambda d, v: d.represent_scalar("tag:yaml.org,2002:str", v, style="|"), Dumper=yaml.SafeDumper)
+class Dumper(yaml.SafeDumper):
+    def increase_indent(self, flow=False, indentless=False):
+        return super().increase_indent(flow, False)
+
+
+yaml.add_representer(Block, lambda d, v: d.represent_scalar("tag:yaml.org,2002:str", v, style="|"), Dumper=Dumper)
+
+
+REUSE_HOLDER = "2026 Daniel Campos Ramos"
+REUSE_LICENSE = "CC0-1.0"
+
+
+def reuse_cover(tree):
+    """Give .stack-ci/ a copyright and license where the tree is linted by `reuse`, as KDE's own .gitlab-ci.yml has."""
+    with open(os.path.join(tree, ".gitlab-ci.yml")) as f:
+        if "reuse-lint" not in f.read():
+            return
+    dep5, toml = os.path.join(tree, ".reuse", "dep5"), os.path.join(tree, "REUSE.toml")
+    if os.path.exists(dep5):
+        with open(dep5) as f:
+            text = f.read().rstrip("\n")
+        with open(dep5, "w") as f:
+            f.write(f"{text}\n\nFiles: .stack-ci/*\nCopyright: {REUSE_HOLDER}\nLicense: {REUSE_LICENSE}\n")
+    else:
+        with open(toml, "a") as f:
+            f.write(f'\n[[annotations]]\npath = ".stack-ci/**"\nprecedence = "aggregate"\n'
+                    f'SPDX-FileCopyrightText = "{REUSE_HOLDER}"\nSPDX-License-Identifier = "{REUSE_LICENSE}"\n')
+    lic = os.path.join(tree, "LICENSES", REUSE_LICENSE + ".txt")
+    if not os.path.exists(lic):
+        os.makedirs(os.path.dirname(lic), exist_ok=True)
+        shutil.copy2(os.path.join(HERE, "LICENSES", REUSE_LICENSE + ".txt"), lic)
 
 
 def main():
@@ -64,6 +94,7 @@ def main():
     for f in ("stack-ci", "stack-run-ci-build", "kdecistack.py"):
         shutil.copy2(os.path.join(HERE, f), d)
     shutil.copy2(a.stack, os.path.join(d, "stack.yml"))
+    reuse_cover(a.tree)
     doc = {} if a.publish_only else {stack["job"]: {"script": [Block(l.strip("\n")) if "\n" in l.strip() else l for l in out]}}
     if a.publish_job or a.publish_only:
         doc["stack_publish"] = {
@@ -72,7 +103,7 @@ def main():
                        "python3 -u .stack-ci/stack-ci publish"]}
     with open(ciyml, "a") as f:
         f.write("\n# CI only, not for upstream: build against our stack (.stack-ci/), not only KDE's packages.\n")
-        f.write(yaml.dump(doc, Dumper=yaml.SafeDumper, sort_keys=False, width=1000))
+        f.write(yaml.dump(doc, Dumper=Dumper, sort_keys=False, width=1000))
 
 
 if __name__ == "__main__":
