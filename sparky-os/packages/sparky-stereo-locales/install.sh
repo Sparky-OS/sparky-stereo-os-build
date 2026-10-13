@@ -2,7 +2,7 @@
 #
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/02
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/02
+# Last update 2026/10/13
 
 if [ "$1" = "uninstall" ]; then
 	rm -f /usr/bin/sparky-stereo-locales
