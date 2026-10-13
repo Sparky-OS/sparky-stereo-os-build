@@ -7,6 +7,7 @@ horizontal texture/edges whose best correspondence agrees with the projection.
 This is diagnostic capture code; it is not used by the production draw path.
 """
 import sys
+import json
 from pathlib import Path
 import numpy as np
 from PIL import Image
@@ -61,6 +62,14 @@ def check(path):
           f'10/50/90%={np.percentile(dx,[10,50,90]).round(2).tolist()} px; '
           f'measured residual={best:+.1f}px; colour error={zero:.2f}/255')
     Image.fromarray(im.astype(np.uint8)).save(path.parent/'verified.png')
+    foreground = (depth > 0) & (depth < .9999) & (left.max(axis=2) > 32)
+    bounds = [float(predicted[foreground].min()), float(predicted[foreground].max())]
+    if '--comfort' in sys.argv:
+        assert bounds[0] >= 0 and bounds[1] <= .02*w, f'outside behind-screen comfort bounds: {bounds}'
+    result = dict(passed=True, oracle='depth-v1', residual_px=best,
+                  disparity_bounds_px=bounds, eye_width=w, convergence=float(conv), separation=float(sep))
+    (path.parent/'result.json').write_text(json.dumps(result, indent=2))
+    return result
 
 
 def main():

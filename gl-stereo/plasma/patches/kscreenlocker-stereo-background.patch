@@ -1,0 +1,250 @@
+diff --git a/autotests/pamtest.cpp b/autotests/pamtest.cpp
+index eb84df6..48792aa 100644
+--- a/autotests/pamtest.cpp
++++ b/autotests/pamtest.cpp
+@@ -51,7 +51,7 @@ void PamTest::testLogin()
+ 
+     QVERIFY(promptSpy.count() == 0);
+     QVERIFY(succeededSpy.count() == 0);
+-    QVERIFY(busyChangedSpy.count() == 2); // changed to busy and back again.
++    QTRY_COMPARE(busyChangedSpy.count(), 2); // changed to busy and back again.
+ 
+     // try again, with the right password
+     auth.tryUnlock();
+@@ -59,7 +59,7 @@ void PamTest::testLogin()
+     auth.respond("my_password");
+     QVERIFY(succeededSpy.wait());
+ 
+-    QVERIFY(busyChangedSpy.count() == 4);
++    QTRY_COMPARE(busyChangedSpy.count(), 4);
+ }
+ 
+ QTEST_MAIN(PamTest)
+diff --git a/greeter/CMakeLists.txt b/greeter/CMakeLists.txt
+index 550ebe2..f234430 100644
+--- a/greeter/CMakeLists.txt
++++ b/greeter/CMakeLists.txt
+@@ -53,6 +53,11 @@ ecm_add_wayland_client_protocol(kscreenlocker_greet_SRCS
+ )
+ 
+ add_executable(kscreenlocker_greet ${kscreenlocker_greet_SRCS})
++find_package(StereoShow QUIET CONFIG)
++if (StereoShow_FOUND)
++    target_link_libraries(kscreenlocker_greet StereoShow::stereoshow)
++    target_compile_definitions(kscreenlocker_greet PRIVATE HAVE_STEREO_SHOW)
++endif()
+ 
+ target_link_libraries(kscreenlocker_greet
+     settings
+diff --git a/greeter/fallbacktheme/LockScreen.qml b/greeter/fallbacktheme/LockScreen.qml
+index cc37b93..f8bd6cc 100644
+--- a/greeter/fallbacktheme/LockScreen.qml
++++ b/greeter/fallbacktheme/LockScreen.qml
+@@ -25,6 +25,7 @@ Item {
+         width: parent.width
+         height: parent.height
+         color: "#1d99f3"
++        visible: typeof stereoBackground === "undefined" || !stereoBackground.active
+     }
+ 
+     SessionManagement {
+diff --git a/greeter/greeterapp.cpp b/greeter/greeterapp.cpp
+index 5322831..fb7e4ba 100644
+--- a/greeter/greeterapp.cpp
++++ b/greeter/greeterapp.cpp
+@@ -5,6 +5,10 @@ SPDX-FileCopyrightText: 2011 Martin Gräßlin <mgraesslin@kde.org>
+ SPDX-License-Identifier: GPL-2.0-or-later
+ */
+ #include "greeterapp.h"
++#ifdef HAVE_STEREO_SHOW
++#include <showsession.h>
++#include <stereobackground.h>
++#endif
+ #include "kscreensaversettingsbase.h"
+ #include "noaccessnetworkaccessmanagerfactory.h"
+ #include "shell_integration.h"
+@@ -296,6 +300,9 @@ PlasmaQuick::QuickViewSharedEngine *UnlockApp::createViewForScreen(QScreen *scre
+     // create the view
+     auto *view = new PlasmaQuick::QuickViewSharedEngine();
+ 
++    auto format = view->format();
++    format.setAlphaBufferSize(8);
++    view->setFormat(format);
+     view->setColor(Qt::black);
+     view->setScreen(screen);
+     view->setGeometry(screen->geometry());
+@@ -385,6 +392,23 @@ PlasmaQuick::QuickViewSharedEngine *UnlockApp::createViewForScreen(QScreen *scre
+         });
+     }
+ 
++#ifdef HAVE_STEREO_SHOW
++    auto *session = findChild<ShowSession *>(QStringLiteral("stereoShowSession"), Qt::FindDirectChildrenOnly);
++    if (!session) {
++        session = new ShowSession(true, this);
++        session->setObjectName(QStringLiteral("stereoShowSession"));
++    }
++    auto *stereoBackground = new StereoBackground(view, session->client());
++    view->rootContext()->setContextProperty(QStringLiteral("stereoBackground"), stereoBackground);
++    if (wallpaperObj) {
++        auto *item = qobject_cast<QQuickItem *>(wallpaperObj->rootObject());
++        if (item) {
++            connect(stereoBackground, &StereoBackground::activeChanged, item, [item, stereoBackground] {
++                item->setVisible(!stereoBackground->active());
++            });
++        }
++    }
++#endif
+     view->setSource(m_mainQmlPath);
+     // on error, load the fallback lockscreen to not lock the user out of the system
+     if (view->status() != QQmlComponent::Ready) {
+diff --git a/kcm/kcm.cpp b/kcm/kcm.cpp
+index 6a14dbc..b2ddee5 100644
+--- a/kcm/kcm.cpp
++++ b/kcm/kcm.cpp
+@@ -23,12 +23,15 @@ K_PLUGIN_FACTORY_WITH_JSON(ScreenLockerKcmFactory, "kcm_screenlocker.json", regi
+ 
+ ScreenLockerKcm::ScreenLockerKcm(QObject *parent, const KPluginMetaData &data)
+     : KQuickManagedConfigModule(parent, data)
++    , m_stereoShowSettings(new StereoShowSettings(this))
+     , m_appearanceSettings(new AppearanceSettings(this))
+ {
+     registerSettings(&KScreenSaverSettings::getInstance());
++    registerSettings(m_stereoShowSettings);
+ 
+     constexpr const char *url = "org.kde.private.kcms.screenlocker";
+     qRegisterMetaType<QList<WallpaperInfo>>("QList<WallpaperInfo>");
++    qmlRegisterAnonymousType<StereoShowSettings>(url, 1);
+     qmlRegisterAnonymousType<KScreenSaverSettings>(url, 1);
+     qmlRegisterAnonymousType<WallpaperInfo>(url, 1);
+     qmlRegisterAnonymousType<ScreenLocker::WallpaperIntegration>(url, 1);
+diff --git a/kcm/kcm.h b/kcm/kcm.h
+index aa2a91b..810c03e 100644
+--- a/kcm/kcm.h
++++ b/kcm/kcm.h
+@@ -12,6 +12,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
+ #include <KQuickManagedConfigModule>
+ 
+ #include "kscreensaversettings.h"
++#include "stereoshowsettings.h"
+ #include "wallpaper_integration.h"
+ 
+ class ScreenLockerKcmForm;
+@@ -27,6 +28,7 @@ class ScreenLockerKcm : public KQuickManagedConfigModule
+ public:
+     explicit ScreenLockerKcm(QObject *parent, const KPluginMetaData &data);
+ 
++    Q_PROPERTY(StereoShowSettings *stereoShowSettings MEMBER m_stereoShowSettings CONSTANT)
+     Q_PROPERTY(KScreenSaverSettings *settings READ settings CONSTANT)
+     Q_PROPERTY(KConfigPropertyMap *wallpaperConfiguration READ wallpaperConfiguration NOTIFY currentWallpaperChanged)
+     Q_PROPERTY(KConfigPropertyMap *shellConfiguration READ shellConfiguration CONSTANT)
+@@ -77,6 +79,7 @@ private:
+     KConfigPropertyMap *wallpaperConfiguration() const;
+     KConfigPropertyMap *shellConfiguration() const;
+ 
++    StereoShowSettings *m_stereoShowSettings;
+     AppearanceSettings *m_appearanceSettings;
+     QString m_currentWallpaper;
+     bool m_forceUpdateState = false;
+diff --git a/kcm/ui/main.qml b/kcm/ui/main.qml
+index 05024e0..aafd9a5 100644
+--- a/kcm/ui/main.qml
++++ b/kcm/ui/main.qml
+@@ -31,6 +31,48 @@ KCM.SimpleKCM {
+         spacing: 0
+ 
+         Kirigami.FormLayout {
++            QQC2.CheckBox {
++                text: i18nc("@option:check", "Stereo GL show on AC power")
++                checked: kcm.stereoShowSettings.enabled
++                onToggled: kcm.stereoShowSettings.enabled = checked
++                KCM.SettingStateBinding {
++                    configObject: kcm.stereoShowSettings
++                    settingName: "Enabled"
++                }
++            }
++            QQC2.SpinBox {
++                Kirigami.FormData.label: i18nc("@label:spinbox", "Start after idle (minutes):")
++                from: 1
++                to: 1440
++                editable: true
++                enabled: kcm.stereoShowSettings.enabled
++                value: kcm.stereoShowSettings.idleSeconds / 60
++                onValueModified: kcm.stereoShowSettings.idleSeconds = value * 60
++                KCM.SettingStateBinding {
++                    configObject: kcm.stereoShowSettings
++                    settingName: "IdleSeconds"
++                }
++            }
++            QQC2.SpinBox {
++                Kirigami.FormData.label: i18nc("@label:spinbox", "Change saver every (minutes):")
++                from: 1
++                to: 1440
++                editable: true
++                enabled: kcm.stereoShowSettings.enabled
++                value: kcm.stereoShowSettings.cycleSeconds / 60
++                onValueModified: kcm.stereoShowSettings.cycleSeconds = value * 60
++                KCM.SettingStateBinding {
++                    configObject: kcm.stereoShowSettings
++                    settingName: "CycleSeconds"
++                }
++            }
++            QQC2.Label {
++                Layout.fillWidth: true
++                wrapMode: Text.WordWrap
++                text: i18n("Also plays after a manual lock while the screen is on. Screen-off and sleep follow Power Management settings.")
++            }
++            Item { Kirigami.FormData.isSection: true }
++
+             ComboBoxWithCustomValue {
+                 id: timeoutComboBox
+                 Layout.fillWidth: true
+@@ -50,7 +92,7 @@ KCM.SimpleKCM {
+                     ...customOptions
+                 ]
+                 customRequesterValue: -1
+-                configuredValue: kcm.settings.timeout
++                configuredValue: kcm.settings.autolock ? kcm.settings.timeout : 0
+ 
+                 onRegularValueActivated: {
+                     kcm.settings.autolock = currentValue !== 0;
+diff --git a/settings/CMakeLists.txt b/settings/CMakeLists.txt
+index 68ec87a..156ebf7 100644
+--- a/settings/CMakeLists.txt
++++ b/settings/CMakeLists.txt
+@@ -8,7 +8,7 @@ add_library(settings STATIC
+ )
+ set_property(TARGET settings PROPERTY POSITION_INDEPENDENT_CODE ON)
+ 
+-kconfig_add_kcfg_files(settings GENERATE_MOC kscreensaversettingsbase.kcfgc)
++kconfig_add_kcfg_files(settings GENERATE_MOC kscreensaversettingsbase.kcfgc stereoshowsettings.kcfgc)
+ target_link_libraries(settings
+     Qt6::Quick
+     KF6::ConfigQml
+diff --git a/settings/stereoshow.kcfg b/settings/stereoshow.kcfg
+new file mode 100644
+index 0000000..62c0cc8
+--- /dev/null
++++ b/settings/stereoshow.kcfg
+@@ -0,0 +1,9 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<kcfg xmlns="http://www.kde.org/standards/kcfg/1.0">
++  <kcfgfile name="stereoshowrc"/>
++  <group name="General">
++    <entry name="Enabled" type="Bool"><default>true</default></entry>
++    <entry name="IdleSeconds" type="Int"><default>8100</default><min>60</min><max>86400</max></entry>
++    <entry name="CycleSeconds" type="Int"><default>600</default><min>60</min><max>86400</max></entry>
++  </group>
++</kcfg>
+diff --git a/settings/stereoshowsettings.kcfgc b/settings/stereoshowsettings.kcfgc
+new file mode 100644
+index 0000000..257f738
+--- /dev/null
++++ b/settings/stereoshowsettings.kcfgc
+@@ -0,0 +1,7 @@
++File=stereoshow.kcfg
++ClassName=StereoShowSettings
++Mutators=true
++DefaultValueGetters=true
++GenerateProperties=true
++Notifiers=true
++ParentInConstructor=true

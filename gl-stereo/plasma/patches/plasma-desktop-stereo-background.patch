@@ -1,0 +1,10 @@
+--- a/desktoppackage/contents/lockscreen/LockScreenUi.qml
++++ b/desktoppackage/contents/lockscreen/LockScreenUi.qml
+@@ -197,6 +197,7 @@
+         Component.onCompleted: launchAnimation.start();
+ 
+         WallpaperFader {
++            visible: typeof stereoBackground === "undefined" || !stereoBackground.active
+             anchors.fill: parent
+             state: lockScreenRoot.uiVisible ? "on" : "off"
+             source: wallpaper

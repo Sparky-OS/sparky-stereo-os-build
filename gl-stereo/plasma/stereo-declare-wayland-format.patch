@@ -1,0 +1,40 @@
+--- a/stereo-declare.h
++++ b/stereo-declare.h
+@@ -61,6 +61,7 @@
+ /* Optional: supply a toolkit-owned content-type object before first declaration.
+  * The helper sets it but never destroys it. It must outlive the declaration. */
+ int stereo_declare_wayland_use_content_type(struct wl_surface *surface, struct wp_content_type_v1 *content_type);
++int stereo_declare_wayland_format(struct wl_surface *surface, enum stereo_layout layout);
+ int stereo_declare_wayland(struct wl_surface *surface, enum stereo_layout layout,
+                            enum stereo_class content_class, unsigned subclass);
+ /* Remove before destroying the wl_surface. Effective on its next commit. */
+--- a/stereo-declare.c
++++ b/stereo-declare.c
+@@ -170,6 +170,27 @@
+     return 0;
+ }
+ 
++int stereo_declare_wayland_format(struct wl_surface *surface, enum stereo_layout layout)
++{
++    if (!surface || (layout != STEREO_NONE && layout != STEREO_SBS_FULL)) return -EINVAL;
++    if (!state.manager) return -ENOTSUP;
++    struct declaration *entry = state.declarations;
++    while (entry && entry->surface != surface) entry = entry->next;
++    if (!entry) {
++        entry = calloc(1, sizeof(*entry));
++        if (!entry) return -ENOMEM;
++        entry->surface = surface;
++        entry->next = state.declarations;
++        state.declarations = entry;
++    }
++    if (!entry->stereo) {
++        entry->stereo = kde_stereo_content_manager_v1_create(state.manager, surface);
++        if (!entry->stereo) return -ENOMEM;
++    }
++    kde_stereo_content_v1_set_content(entry->stereo, layout);
++    return 0;
++}
++
+ int stereo_declare_wayland(struct wl_surface *surface, enum stereo_layout layout,
+                            enum stereo_class content_class, unsigned subclass)
+ {

@@ -81,7 +81,6 @@ static void init_api(void)
 static struct {
     int enabled, swap, dump;
     unsigned render_width, render_height;
-    enum stereo_class content_class;
     double percent, convergence;
     const char *dump_dir, *stats_path;
 } config;
@@ -118,9 +117,6 @@ __attribute__((constructor)) static void configure(void)
             config.render_width = width; config.render_height = height;
         } else fputs("gl-stereo: invalid render resolution; using window size\n", stderr);
     }
-    const char *kind = getenv("GL_STEREO_CLASS");
-    config.content_class = kind && !strcmp(kind,"scientific") ? STEREO_CLASS_SCIENTIFIC :
-                           kind && !strcmp(kind,"game") ? STEREO_CLASS_GAME : STEREO_CLASS_NONE;
 }
 
 static unsigned warnings;
@@ -148,7 +144,7 @@ typedef struct window_state {
     Window window;
     GLXDrawable drawable;
     EGLSurface egl_surface;
-    int active, width, height;
+    int active, width, height, compositor_sizes;
     unsigned long resize_serial;
     unsigned frame;
     double last_projection[16], last_convergence;
@@ -207,17 +203,13 @@ static void bind_context(Display *d, GLXDrawable draw, GLXContext context)
         if (r_XGetWindowAttributes(d, w->window, &a)) {
             w->width = config.render_width ? (int)config.render_width : a.width;
             w->height = config.render_height ? (int)config.render_height : a.height; w->active = 1;
+            int support = stereo_supported_x11(d);
+            w->compositor_sizes = support >= 3;
             w->resize_serial = NextRequest(d);
-            r_XResizeWindow(d, w->window, 2 * w->width, w->height);
+            r_XResizeWindow(d, w->window, (w->compositor_sizes ? 1 : 2) * w->width, w->height);
             XSync(d, False);
-            if (stereo_supported_x11(d) >= 2) {
-                enum stereo_subclass subclass = STEREO_SUBCLASS_UNSPECIFIED;
-                if (config.content_class == STEREO_CLASS_GAME)
-                    subclass = p->quad ? STEREO_GAME_STEREOGL : STEREO_GAME_GL;
-                else if (config.content_class == STEREO_CLASS_SCIENTIFIC && p->quad)
-                    subclass = STEREO_SCIENTIFIC_STEREOGL;
-                int result = stereo_declare_x11(d, w->window, STEREO_SBS_FULL,
-                                                config.content_class, subclass);
+            if (support >= 1) {
+                int result = stereo_declare_x11_format(d, w->window, STEREO_SBS_FULL);
                 if (result) fprintf(stderr, "gl-stereo: declaration failed: %d\n", result);
             }
         }
@@ -327,8 +319,11 @@ static void finish_left(void)
     if (selected_eye(1)) { set_eye(&saved, 1); COUNT(issued); call; } restore_draw(&saved); native_query--; \
 } while (0)
 
+#include "frame-stream.inc"
+
 static void dump(WindowState *w)
 {
+    stream_frame(w);
     if (!config.dump_dir || !config.dump || w->frame++ != (unsigned)config.dump - 1) return;
     int width = w->width * (w->active ? 2 : 1), height = w->height;
     if (getenv("GL_STEREO_DEBUG")) {
@@ -560,7 +555,7 @@ static unsigned native_width(Display *d, Window win, unsigned width, unsigned he
 {
     pthread_mutex_lock(&state_lock);
     WindowState *w = find_window(d, win);
-    if (w && w->active) { w->width = width; w->height = height; width *= 2; }
+    if (w && w->active) { w->width = width; w->height = height; if (!w->compositor_sizes) width *= 2; }
     pthread_mutex_unlock(&state_lock);
     return width;
 }
@@ -574,7 +569,7 @@ int XConfigureWindow(Display *d, Window win, unsigned mask, XWindowChanges *chan
     pthread_mutex_lock(&state_lock);
     WindowState *w = find_window(d, win);
     if (w && w->active) {
-        if (mask & CWWidth) { w->width = c.width; c.width *= 2; }
+        if (mask & CWWidth) { w->width = c.width; if (!w->compositor_sizes) c.width *= 2; }
         if (mask & CWHeight) w->height = c.height;
     }
     pthread_mutex_unlock(&state_lock);
@@ -620,7 +615,7 @@ static void filter_event(Display *d, XEvent *event)
     WindowState *w = find_window(d, event->xconfigure.window);
     if (w && w->active && event->xconfigure.serial >= w->resize_serial) {
         if (getenv("GL_STEREO_DEBUG")) fprintf(stderr,"configure width=%d serial=%lu resize=%lu\n",event->xconfigure.width,event->xconfigure.serial,w->resize_serial);
-        event->xconfigure.width /= 2;
+        if (!w->compositor_sizes || !event->xconfigure.send_event) event->xconfigure.width /= 2;
         w->width = event->xconfigure.width; w->height = event->xconfigure.height;
     }
     pthread_mutex_unlock(&state_lock);

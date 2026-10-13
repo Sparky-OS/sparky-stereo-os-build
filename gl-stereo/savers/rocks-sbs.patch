@@ -1,0 +1,149 @@
+--- a/hacks/rocks.c
++++ b/hacks/rocks.c
+@@ -19,6 +19,8 @@
+ #include <stdio.h>
+ #include <math.h>
+ #include "screenhack.h"
++#include <stereo-declare.h>
++#include "saver-x11-frame.h"
+ 
+ #define MIN_ROCKS 1
+ #define MIN_DEPTH 2		/* rocks disappear when they get this close */
+@@ -59,6 +61,8 @@
+   Bool move_p;
+   int speed;
+   Bool threed;
++  Bool sbs;
++  int reference;
+   GC threed_left_gc, threed_right_gc;
+   double threed_delta;
+ 
+@@ -122,7 +126,7 @@
+         }
+       while (rock->theta < 0)
+ 	rock->theta += SIN_RESOLUTION;
+-      if (rock->depth < (MIN_DEPTH * DEPTH_SCALE))
++      if (rock->depth < ((st->sbs ? 10 : MIN_DEPTH) * DEPTH_SCALE))
+ 	rock->depth = 0;
+       else
+ 	{
+@@ -160,6 +164,29 @@
+ static void
+ rock_draw (struct state *st, struct rock *rock, Bool draw_p)
+ {
++  if (st->sbs)
++    {
++      int eye;
++      for (eye = 0; eye < 2; eye++)
++        {
++          int origin = st->reference ? 0 : eye * st->width;
++          int x = rock->x + (eye ? rock->diff : -rock->diff) + origin;
++          GC gc = draw_p ? st->draw_gcs[rock->color] : st->erase_gc;
++          XRectangle clip = {origin, 0, st->width, st->height};
++          if (st->reference && eye != st->reference - 1) continue;
++          XSetClipRectangles(st->dpy, gc, 0, 0, &clip, 1, Unsorted);
++          if (rock->size <= 1)
++            XDrawPoint(st->dpy, st->window, gc, x, rock->y);
++          else if (rock->size <= MIN_SIZE || !draw_p)
++            XFillRectangle(st->dpy, st->window, gc, x - rock->size/2,
++                           rock->y - rock->size/2, rock->size, rock->size);
++          else if (rock->size < MAX_SIZE)
++            XCopyPlane(st->dpy, st->pixmaps[rock->size], st->window, gc,
++                       0, 0, rock->size, rock->size, x - rock->size/2,
++                       rock->y - rock->size/2, 1L);
++        }
++      return;
++    }
+   GC gc = (draw_p 
+ 	   ? (st->threed ? st->erase_gc : st->draw_gcs[rock->color])
+ 	   : st->erase_gc);
+@@ -365,7 +392,27 @@
+ 	    st->new_delta *= 5;
+ 	}
+     }
+-  tick_rocks (st, st->current_delta);
++  if (getenv("GL_STEREO_ROCKS_ORACLE"))
++    {
++      int i;
++      const int depths[] = {10, 20, 60};
++      XClearWindow(dpy, window);
++      for (i = 0; i < 3; i++)
++        {
++          struct rock rock = {0};
++          rock.real_size = MAX_SIZE;
++          rock.depth = depths[i] * DEPTH_SCALE;
++          rock.color = 1;
++          rock_compute(st, &rock);
++          rock.x = st->width/2;
++          rock.y = st->height * (i+1)/4;
++          rock_draw(st, &rock, True);
++        }
++    }
++  else
++    tick_rocks (st, st->current_delta);
++  XSync(dpy, False);
++  saver_x11_frame(dpy, window, st->width * (st->sbs && !st->reference ? 2 : 1), st->height);
+ 
+   return st->delay;
+ }
+@@ -383,6 +430,15 @@
+   st->window = w;
+   XGetWindowAttributes (st->dpy, st->window, &xgwa);
+ 
++  st->sbs = get_boolean_resource(d, "sbs", "Boolean");
++  st->reference = getenv("GL_STEREO_ROCKS_REFERENCE") ? atoi(getenv("GL_STEREO_ROCKS_REFERENCE")) : 0;
++  if (st->reference < 0 || st->reference > 2) st->reference = 0;
++  if (st->sbs && !st->reference)
++    {
++      if (stereo_supported_x11(d) < 3) XResizeWindow(d, w, xgwa.width * 2, xgwa.height);
++      if (stereo_declare_x11_format(d, w, STEREO_SBS_FULL))
++        fprintf(stderr, "rocks: stereo declaration unavailable\n");
++    }
+   st->width = xgwa.width;
+   st->height = xgwa.height;
+   st->midx = st->width/2;
+@@ -461,7 +517,7 @@
+     st->depths [i] = atan (((double) 0.5) / (((double) i) / DEPTH_SCALE));
+   st->depths [0] = M_PI/2; /* avoid division by 0 */
+ 
+-  st->threed = get_boolean_resource(st->dpy, "use3d", "Boolean");
++  st->threed = st->sbs || get_boolean_resource(st->dpy, "use3d", "Boolean");
+   if (st->threed)
+     {
+       gcv.background = bg;
+@@ -469,7 +525,7 @@
+       st->threed_left_gc = XCreateGC (st->dpy, st->window, GCForeground|GCBackground,&gcv);
+       gcv.foreground = get_pixel_resource (st->dpy, cmap, "right3d", "Foreground");
+       st->threed_right_gc = XCreateGC (st->dpy, st->window,GCForeground|GCBackground,&gcv);
+-      st->threed_delta = get_float_resource(st->dpy, "delta3d", "Integer");
++      st->threed_delta = get_float_resource(st->dpy, st->sbs ? "sbsDelta" : "delta3d", "Float");
+     }
+ 
+   /* don't want any exposure events from XCopyPlane */
+@@ -490,7 +546,7 @@
+                  unsigned int w, unsigned int h)
+ {
+   struct state *st = (struct state *) closure;
+-  st->width = w;
++  st->width = st->sbs && !st->reference ? w/2 : w;
+   st->height = h;
+   st->midx = st->width/2;
+   st->midy = st->height/2;
+@@ -532,6 +588,8 @@
+   "*rotate:     true",
+   "*move:       true",
+   "*use3d:      False",
++  "*sbs:        False",
++  "*sbsDelta:   0.12",
+   "*left3d:	Blue",
+   "*right3d:	Red",
+   "*delta3d:	1.5",
+@@ -549,6 +607,8 @@
+   { "-no-move",          ".move",        XrmoptionNoArg,  "false" },
+   { "-delay",		".delay",	XrmoptionSepArg, 0 },
+   { "-speed",		".speed",	XrmoptionSepArg, 0 },
++  {"-sbs", ".sbs", XrmoptionNoArg, "True"},
++  {"-sbs-delta", ".sbsDelta", XrmoptionSepArg, 0},
+   {"-3d",		".use3d",	XrmoptionNoArg, "True"},
+   {"-no-3d",		".use3d",	XrmoptionNoArg, "False"},
+   {"-left3d",		".left3d",	XrmoptionSepArg, 0 },

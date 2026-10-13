@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+cmake_minimum_required(VERSION 3.25)
+project(StereoShowSettingsTest LANGUAGES CXX)
+set(CMAKE_AUTOMOC ON)
+find_package(Qt6 REQUIRED COMPONENTS Core Test)
+find_package(KF6Config REQUIRED)
+add_executable(settings-test main.cpp ${SETTINGS_DIR}/stereoshowsettings.cpp ${SETTINGS_DIR}/stereoshowsettings.h)
+target_include_directories(settings-test PRIVATE ${SETTINGS_DIR})
+target_link_libraries(settings-test PRIVATE Qt6::Test KF6::ConfigGui)
+target_compile_options(settings-test PRIVATE -UNDEBUG)

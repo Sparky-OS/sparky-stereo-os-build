@@ -8,13 +8,13 @@ rm -f out/quad/frame-* out/quad-gears/frame-* out/paraview/frame-*
 env LD_PRELOAD="$SO" GL_STEREO=1 ./tests/quad unsupported
 env LD_PRELOAD="$SO" GL_STEREO=1 GL_STEREO_DUMP=1 GL_STEREO_DUMP_DIR="$PWD/out/quad" ./tests/quad
 env LD_PRELOAD="$SO" GL_STEREO=1 ./tests/quad fbconfig
-env LD_PRELOAD="$SO" GL_STEREO=1 GL_STEREO_CLASS=scientific GL_STEREO_RENDER_RESOLUTION=400x240 ./tests/quad visual 4 2
-env LD_PRELOAD="$SO" GL_STEREO=1 GL_STEREO_CLASS=game ./tests/quad fbconfig 3 4
-env LD_PRELOAD="$SO" GL_STEREO=1 GL_STEREO_CLASS=game ./tests/quad auto 3 3
-env LD_PRELOAD="$SO" GL_STEREO=1 ./tests/quad auto 0 0
-env LD_PRELOAD="$SO" GL_STEREO=1 GL_STEREO_CLASS=unknown ./tests/quad visual 0 0
-env LD_PRELOAD="$SO" GL_STEREO=1 GL_STEREO_CLASS=unknown ./tests/quad auto 0 0
-env LD_PRELOAD="$SO" GL_STEREO=1 GL_STEREO_CLASS=scientific ./tests/quad auto 4 0
+env LD_PRELOAD="$SO" GL_STEREO=1 GL_STEREO_CLASS=scientific GL_STEREO_RENDER_RESOLUTION=400x240 ./tests/quad visual
+env LD_PRELOAD="$SO" GL_STEREO=1 GL_STEREO_CLASS=game ./tests/quad fbconfig
+env LD_PRELOAD="$SO" GL_STEREO=1 GL_STEREO_CLASS=game ./tests/quad auto
+env LD_PRELOAD="$SO" GL_STEREO=1 ./tests/quad auto
+env LD_PRELOAD="$SO" GL_STEREO=1 GL_STEREO_CLASS=unknown ./tests/quad visual
+env LD_PRELOAD="$SO" GL_STEREO=1 GL_STEREO_CLASS=unknown ./tests/quad auto
+env LD_PRELOAD="$SO" GL_STEREO=1 GL_STEREO_CLASS=scientific ./tests/quad auto
 rc=0
 ./tests/announce timeout --foreground 4 env LD_PRELOAD="$SO" GL_STEREO=1 \
     GL_STEREO_DUMP=30 GL_STEREO_DUMP_DIR="$PWD/out/quad-gears" glxgears -stereo -geometry 640x360 \

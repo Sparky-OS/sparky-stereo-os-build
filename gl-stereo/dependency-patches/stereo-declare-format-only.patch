@@ -1,0 +1,32 @@
+--- a/stereo-declare.h
++++ b/stereo-declare.h
+@@ -46,6 +46,9 @@
+ };
+ 
+ /* Support version, or zero when absent. Xlib errors use the caller's handler. */
+ unsigned stereo_supported_x11(Display *display);
++/* Layout only: preserves program-owned class metadata. Accepts none or full SBS. */
++int stereo_declare_x11_format(Display *display, Window window, enum stereo_layout layout);
++
+ /* Returns 0 on success or a negative errno value. Requests are flushed. */
+ int stereo_declare_x11(Display *display, Window window, enum stereo_layout layout,
+--- a/stereo-declare.c
++++ b/stereo-declare.c
+@@ -39,2 +39,17 @@
+ 
++int stereo_declare_x11_format(Display *display, Window window, enum stereo_layout layout)
++{
++    if (!display || !window || (layout != STEREO_NONE && layout != STEREO_SBS_FULL)) {
++        return -EINVAL;
++    }
++    if (stereo_supported_x11(display) < 1) {
++        return -ENOTSUP;
++    }
++    const unsigned long packing = layout;
++    XChangeProperty(display, window, XInternAtom(display, "_KDE_NET_WM_STEREO_CONTENT", False),
++                    XA_CARDINAL, 32, PropModeReplace, (const unsigned char *)&packing, 1);
++    XFlush(display);
++    return 0;
++}
++
+ int stereo_declare_x11(Display *display, Window window, enum stereo_layout layout,

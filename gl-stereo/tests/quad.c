@@ -19,12 +19,12 @@ int main(int argc, char **argv)
 {
     Display *d = XOpenDisplay(NULL); assert(d);
     int screen = DefaultScreen(d);
-    unsigned long version = 2;
+    unsigned long version = 1;
+    if (getenv("TEST_SUPPORT_VERSION")) version = strtoul(getenv("TEST_SUPPORT_VERSION"),NULL,10);
     Atom supported = XInternAtom(d,"_KDE_NET_WM_STEREO_CONTENT_SUPPORTED",False);
     int absent = argc > 1 && !strcmp(argv[1],"unsupported");
     int automatic = argc > 1 && !strcmp(argv[1],"auto");
-    unsigned long expected_class = argc > 2 ? strtoul(argv[2],NULL,10) : 0;
-    unsigned long expected_subclass = argc > 3 ? strtoul(argv[3],NULL,10) : 0;
+    int preset_class = getenv("TEST_PRESET_CLASS") != NULL;
     if (absent) XDeleteProperty(d,DefaultRootWindow(d),supported);
     else XChangeProperty(d,DefaultRootWindow(d),supported,XA_CARDINAL,32,PropModeReplace,(unsigned char *)&version,1);
     XSync(d,False);
@@ -54,7 +54,13 @@ int main(int argc, char **argv)
     XSetWindowAttributes a = {0};
     a.colormap = XCreateColormap(d,DefaultRootWindow(d),v->visual,AllocNone);
     Window w = XCreateWindow(d,DefaultRootWindow(d),0,0,320,200,0,v->depth,InputOutput,v->visual,CWColormap,&a);
+    Atom class_atom = XInternAtom(d,"_KDE_NET_WM_STEREO_CONTENT_CLASS",False);
+    if (preset_class) {
+        unsigned long kind[] = {4,2};
+        XChangeProperty(d,w,class_atom,XA_CARDINAL,32,PropModeReplace,(unsigned char *)kind,2);
+    }
     XMapWindow(d,w);
+    XSelectInput(d,w,PropertyChangeMask);
     GLXContext c = configs ? glXCreateNewContext(d,configs[0],GLX_RGBA_TYPE,NULL,True) : glXCreateContext(d,v,NULL,True);
     assert(c && glXMakeCurrent(d,w,c));
     XFree(v); if (configs) XFree(configs);
@@ -66,7 +72,23 @@ int main(int argc, char **argv)
     Display *observer = XOpenDisplay(NULL); assert(observer);
     XGetWindowAttributes(observer,w,&geometry); assert(geometry.width == 2*expected_width && geometry.height == expected_height);
     property(observer,w,"_KDE_NET_WM_STEREO_CONTENT",3,0,1);
-    property(observer,w,"_KDE_NET_WM_STEREO_CONTENT_CLASS",expected_class,expected_subclass,2);
+    if (preset_class) property(observer,w,"_KDE_NET_WM_STEREO_CONTENT_CLASS",4,2,2);
+    else {
+        Atom type; int format; unsigned long count, remaining; unsigned char *data = NULL;
+        assert(XGetWindowProperty(observer,w,class_atom,0,2,False,AnyPropertyType,
+                                  &type,&format,&count,&remaining,&data) == Success);
+        assert(type == None && count == 0);
+        if (data) XFree(data);
+    }
+    assert(glXMakeCurrent(d,w,c));
+    XSync(d,False);
+    XEvent event; unsigned declarations = 0;
+    Atom layout_atom = XInternAtom(d,"_KDE_NET_WM_STEREO_CONTENT",False);
+    while (XCheckWindowEvent(d,w,PropertyChangeMask,&event)) {
+        assert(event.xproperty.atom != class_atom);
+        if (event.xproperty.atom == layout_atom) ++declarations;
+    }
+    assert(declarations == 1);
     Window menu = XCreateSimpleWindow(d,DefaultRootWindow(d),0,0,64,48,0,0,0);
     XSync(d,False); XGetWindowAttributes(observer,menu,&geometry);
     assert(geometry.width == 64 && geometry.height == 48);
@@ -95,8 +117,8 @@ int main(int argc, char **argv)
     glXSwapBuffers(d,w);
     glXMakeCurrent(d,None,NULL); glXDestroyContext(d,c);
     XDestroyWindow(d,w); XCloseDisplay(observer); XCloseDisplay(d);
-    printf("PASS: %s selection, queries, geometry and declaration (%lu,%lu)%s\n",
-           automatic ? "automatic" : "native stereo", expected_class, expected_subclass,
+    printf("PASS: %s selection, queries, geometry and full-SBS-only declaration%s\n",
+           automatic ? "automatic" : "native stereo",
            automatic ? "" : ", independent buffers");
     return 0;
 }

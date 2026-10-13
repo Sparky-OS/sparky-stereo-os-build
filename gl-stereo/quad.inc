@@ -11,7 +11,7 @@ static VirtualConfig *virtual_configs;
 static StereoVisual *stereo_visuals;
 static int quad_available(Display *d)
 {
-    return config.enabled && stereo_supported_x11(d) >= 2;
+    return config.enabled && stereo_supported_x11(d) >= 1;
 }
 static GLXFBConfig native_config(GLXFBConfig config, int *stereo)
 {
@@ -121,7 +121,18 @@ XVisualInfo *glXGetVisualFromFBConfig(Display *d, GLXFBConfig fb)
 }
 GLXContext glXCreateContext(Display *d, XVisualInfo *v, GLXContext share, Bool direct)
 {
-    API(); GLXContext result = r_glXCreateContext(d,v,share,direct);
+    API(); GLXContext result = NULL;
+    int driver_stereo = 0;
+    if (config.enabled && v && !r_glXGetConfig(d,v,GLX_STEREO,&driver_stereo) && driver_stereo) {
+        /* Native stereo twins can share a visual ID. Packing belongs to us. */
+        int count = 0;
+        int attrs[] = {GLX_VISUAL_ID, (int)v->visualid, GLX_STEREO, False,
+                       GLX_RENDER_TYPE, GLX_RGBA_BIT, None};
+        GLXFBConfig *mono = r_glXChooseFBConfig(d,v->screen,attrs,&count);
+        if (mono && count) result = r_glXCreateNewContext(d,mono[0],GLX_RGBA_TYPE,share,direct);
+        if (mono) r_XFree(mono);
+    }
+    if (!result) result = r_glXCreateContext(d,v,share,direct);
     remember_quad(result,stereo_visual(v)); return result;
 }
 GLXContext glXCreateNewContext(Display *d, GLXFBConfig fb, int type, GLXContext share, Bool direct)

@@ -4,12 +4,15 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <stdio.h>
+#ifndef GL_STEREO_SUPPORT_VERSION
+#define GL_STEREO_SUPPORT_VERSION 2
+#endif
 int main(int argc, char **argv)
 {
     if (argc < 2) return 2;
     Display *d = XOpenDisplay(NULL);
     if (!d) return 2;
-    unsigned long version = 2;
+    unsigned long version = GL_STEREO_SUPPORT_VERSION;
     Atom a = XInternAtom(d,"_KDE_NET_WM_STEREO_CONTENT_SUPPORTED",False);
     XChangeProperty(d,DefaultRootWindow(d),a,XA_CARDINAL,32,PropModeReplace,(unsigned char *)&version,1);
     XSync(d,False);
