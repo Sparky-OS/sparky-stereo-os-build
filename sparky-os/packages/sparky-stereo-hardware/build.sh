@@ -5,7 +5,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.1.6
+VERSION=0.1.7
 PACKAGE=sparky-stereo-hardware
 mkdir -p "$OUT"
 W=$(mktemp -d "$OUT/.sparky-stereo-hardware.XXXXXX")
@@ -57,6 +57,13 @@ Description: Detect and configure matched hardware for Sparky Stereo OS
 EOF
 cat >"$S/debian/changelog" <<EOF
 $PACKAGE ($VERSION) unstable; urgency=medium
+
+  * French strings for the plan dialog, the menu entry and the policy
+    message.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 12 Oct 2026 20:00:00 -0300
+
+$PACKAGE (0.1.6) unstable; urgency=medium
 
   * Install the NVIDIA userspace driver at the version of the edition's
     module (nvidia-kernel-open-dkms-stereo3d without its +stereo3d suffix,

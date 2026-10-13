@@ -109,6 +109,7 @@ if ! $auto; then
 	case "$locale_code" in
 		pl_PL) source "$SHARE/pl" ;;
 		pt_BR) source "$SHARE/pt_BR" ;;
+		fr_*) source "$SHARE/fr" ;;
 	esac
 	yad --text-info --title="$LOCAL1" --filename="$WORK/plan" --width=760 --height=500 --button="$LOCAL2:1" --button="$LOCAL3:0" || exit 0
 	# The child owns the execution lock; release it before launching the visible terminal.
