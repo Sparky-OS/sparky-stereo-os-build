@@ -1,11 +1,11 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/08
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/08
+# Last update 2026/10/13
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.1.2
+VERSION=0.1.3
 PACKAGE=sparky-stereo-cec
 ARCH=$(dpkg --print-architecture)
 mkdir -p "$OUT"
