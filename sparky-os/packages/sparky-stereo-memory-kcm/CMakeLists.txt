@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack)
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.22)
-project(sparky-stereo-memory-kcm VERSION 0.1.0)
+project(sparky-stereo-memory-kcm VERSION 0.1.1)
 
 set(QT_MIN_VERSION "6.8.0")
 set(KF_MIN_VERSION "6.10.0")
@@ -13,6 +13,7 @@ include(KDEInstallDirs)
 include(KDECMakeSettings)
 include(KDECompilerSettings NO_POLICY_SCOPE)
 include(ECMQmlModule)
+include(KDEI18nInstallMacros)
 
 find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Core DBus Quick)
 find_package(KF6 ${KF_MIN_VERSION} REQUIRED COMPONENTS Auth CoreAddons I18n KCMUtils)
@@ -26,3 +27,5 @@ if(BUILD_TESTING)
     find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Test)
     add_subdirectory(autotests)
 endif()
+
+ki18n_install(po)

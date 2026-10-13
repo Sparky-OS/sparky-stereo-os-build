@@ -19,7 +19,7 @@ OUT=/path/in/workspace/pending-pack bash ./build.sh (inside a Debian container w
 Install:
 -------------
 su
-apt-get install ./sparky-stereo-memory-kcm_0.1.0_amd64.deb
+apt-get install ./sparky-stereo-memory-kcm_0.1.1_amd64.deb
 
 Uninstall:
 -------------
