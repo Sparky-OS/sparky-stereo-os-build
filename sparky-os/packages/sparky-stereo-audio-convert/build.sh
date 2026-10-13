@@ -2,11 +2,11 @@
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/06
 # Copyright 2026 under the GNU GPL3 License
 # Builds sparky-stereo-audio-convert (hand-assembled .deb, Paweł's formula).
-# Last update 2026/10/12
+# Last update 2026/10/13
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the output directory}
-VERSION=0.1.1
+VERSION=0.1.2
 PKG=sparky-stereo-audio-convert
 mkdir -p "$OUT"
 W=$(mktemp -d "$OUT/.$PKG.XXXXXX")
