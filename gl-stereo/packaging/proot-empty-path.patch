@@ -1,0 +1,99 @@
+--- a/src/syscall/exit.c
++++ b/src/syscall/exit.c
+@@ -361,6 +361,14 @@
+ 			break;
+ 		}
+ 
++		/* An empty readlinkat path names the symlink held by the fd. */
++		if (syscall_number == PR_readlinkat && referer[0] == '\0') {
++			status = readlink_proc_pid_fd(tracee->pid,
++				peek_reg(tracee, ORIGINAL, SYSARG_1), referer);
++			if (status < 0)
++				break;
++		}
++
+ 		status = detranslate_path(tracee, referee, referer);
+ 		if (status < 0)
+ 			break;
+--- a/src/syscall/sysnums.list
++++ b/src/syscall/sysnums.list
+@@ -68,6 +68,7 @@
+ SYSNUM(fchdir)
+ SYSNUM(fchmod)
+ SYSNUM(fchmodat)
++SYSNUM(fchmodat2)
+ SYSNUM(fchown)
+ SYSNUM(fchown32)
+ SYSNUM(fchownat)
+--- a/src/syscall/enter.c
++++ b/src/syscall/enter.c
+@@ -391,6 +391,7 @@
+ 			status = translate_sysarg(tracee, SYSARG_1, REGULAR);
+ 		break;
+ 
++	case PR_fchmodat2:
+ 	case PR_fchownat:
+ 	case PR_fstatat64:
+ 	case PR_newfstatat:
+--- a/src/syscall/seccomp.c
++++ b/src/syscall/seccomp.c
+@@ -346,6 +346,7 @@
+ 	{ PR_faccessat,		0 },
+ 	{ PR_fchdir,		FILTER_SYSEXIT },
+ 	{ PR_fchmodat,		0 },
++	{ PR_fchmodat2,		0 },
+ 	{ PR_fchownat,		0 },
+ 	{ PR_fstatat64,		0 },
+ 	{ PR_futimesat,		0 },
+--- a/src/extension/fake_id0/fake_id0.c
++++ b/src/extension/fake_id0/fake_id0.c
+@@ -71,6 +71,7 @@
+ 	{ PR_execve,		FILTER_SYSEXIT },
+ 	{ PR_fchmod,		FILTER_SYSEXIT },
+ 	{ PR_fchmodat,		FILTER_SYSEXIT },
++	{ PR_fchmodat2,		FILTER_SYSEXIT },
+ 	{ PR_fchown,		FILTER_SYSEXIT },
+ 	{ PR_fchown32,		FILTER_SYSEXIT },
+ 	{ PR_fchownat,		FILTER_SYSEXIT },
+@@ -190,7 +191,8 @@
+ 			node->mode = peek_reg(tracee, ORIGINAL, SYSARG_2);
+ 			break;
+ 
+-		case PR_fchmodat:
++		case PR_fchmodat2:
++	case PR_fchmodat:
+ 			node->mode = peek_reg(tracee, ORIGINAL, SYSARG_3);
+ 			break;
+ 
+@@ -597,6 +599,7 @@
+ 	case PR_chown32:
+ 	case PR_fchown32:
+ 	case PR_lchown32:
++	case PR_fchmodat2:
+ 	case PR_fchmodat:
+ 	case PR_fchownat: {
+ 		word_t result;
+--- a/src/syscall/sysnums-x86_64.h
++++ b/src/syscall/sysnums-x86_64.h
+@@ -320,4 +320,5 @@
+ 	[ 316 ] = PR_renameat2,
+ 	[ 332 ] = PR_statx,
+ 	[ 439 ] = PR_faccessat2,
++	[ 452 ] = PR_fchmodat2,
+ };
+--- a/src/syscall/sysnums-i386.h
++++ b/src/syscall/sysnums-i386.h
+@@ -353,4 +353,5 @@
+ 	[ 353 ] = PR_renameat2,
+ 	[ 383 ] = PR_statx,
+ 	[ 412 ] = PR_utimensat_time64,
++	[ 452 ] = PR_fchmodat2,
+ };
+--- a/src/syscall/sysnums-x32.h
++++ b/src/syscall/sysnums-x32.h
+@@ -309,4 +309,5 @@
+ 	[ 540 ] = PR_process_vm_writev,
+ 	[ 541 ] = PR_setsockopt,
+ 	[ 542 ] = PR_getsockopt,
++	[ 452 ] = PR_fchmodat2,
+ };

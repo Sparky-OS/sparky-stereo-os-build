@@ -55,18 +55,35 @@ int main(int argc, char **argv)
     Display *d = XOpenDisplay(NULL);
     if (!d) return 3;
     int attrs[] = {GLX_RGBA, GLX_DOUBLEBUFFER, GLX_DEPTH_SIZE, 24, GLX_STEREO, None};
-    if (reference) attrs[4] = None;
-    XVisualInfo *v = glXChooseVisual(d, DefaultScreen(d), attrs);
+    GLXFBConfig mono = NULL;
+    XVisualInfo *v;
+    if (reference) {
+        int mono_attrs[] = {GLX_X_RENDERABLE, True, GLX_DRAWABLE_TYPE, GLX_WINDOW_BIT,
+                            GLX_RENDER_TYPE, GLX_RGBA_BIT, GLX_DOUBLEBUFFER, True,
+                            GLX_DEPTH_SIZE, 24, GLX_STEREO, False, None};
+        int count = 0;
+        GLXFBConfig *configs = glXChooseFBConfig(d, DefaultScreen(d), mono_attrs, &count);
+        if (!configs || !count) { XFree(configs); return 4; }
+        mono = configs[0];
+        v = glXGetVisualFromFBConfig(d, mono);
+        XFree(configs);
+    } else {
+        v = glXChooseVisual(d, DefaultScreen(d), attrs);
+    }
     if (!v) { fputs("starfield requires stereo GLX support\n", stderr); return 4; }
     XSetWindowAttributes a = {0};
     a.colormap = XCreateColormap(d, DefaultRootWindow(d), v->visual, AllocNone);
     Window w = XCreateWindow(d, DefaultRootWindow(d), 0, 0, WIDTH, HEIGHT,
                             0, v->depth, InputOutput, v->visual, CWColormap, &a);
     XStoreName(d, w, "Stereo starfield"); XMapWindow(d, w);
-    GLXContext c = glXCreateContext(d, v, NULL, True);
+    GLXContext c = reference ? glXCreateNewContext(d, mono, GLX_RGBA_TYPE, NULL, True)
+                             : glXCreateContext(d, v, NULL, True);
     XFree(v);
     if (!c || !glXMakeCurrent(d, w, c)) return 5;
     glXWaitX();
+    GLboolean native_stereo = GL_FALSE;
+    glGetBooleanv(GL_STEREO, &native_stereo);
+    if (reference && native_stereo) return 6;
     for (int i = 0; i < COUNT; ++i) spawn(&stars[i], 7 + random_unit() * 73);
     const double r = WIDTH / (double)HEIGHT * .5;
     const double convergence = 5, separation = 2 * .01 * convergence * r;

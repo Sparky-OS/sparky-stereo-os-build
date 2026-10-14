@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+cmake_minimum_required(VERSION 3.25)
+project(InstalledStereoShowTests LANGUAGES C CXX)
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_AUTOMOC ON)
+find_package(StereoShow REQUIRED)
+find_package(Qt6 REQUIRED COMPONENTS Gui DBus Test)
+find_package(Qt6GuiPrivate REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(Wayland REQUIRED IMPORTED_TARGET wayland-client)
+enable_testing()
+foreach(name policytest frameclienttest nativeframetest)
+    add_executable(${name} ${FIXTURES}/${name}.cpp)
+    target_link_libraries(${name} PRIVATE StereoShow::stereoshow Qt6::Test)
+    target_compile_options(${name} PRIVATE -UNDEBUG)
+    add_test(NAME ${name} COMMAND ${name})
+endforeach()
+set_tests_properties(frameclienttest PROPERTIES TIMEOUT 15)
+add_executable(capture ${FIXTURES}/capture.cpp)
+target_link_libraries(capture PRIVATE Qt6::Gui Qt6::DBus)
+add_custom_command(OUTPUT fake-input-client-protocol.h fake-input-protocol.c
+    COMMAND wayland-scanner client-header /usr/share/plasma-wayland-protocols/fake-input.xml fake-input-client-protocol.h
+    COMMAND wayland-scanner private-code /usr/share/plasma-wayland-protocols/fake-input.xml fake-input-protocol.c)
+add_executable(rig-input ${FIXTURES}/rig-input.c fake-input-protocol.c)
+target_include_directories(rig-input PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_link_libraries(rig-input PRIVATE PkgConfig::Wayland)
+add_custom_command(OUTPUT idle-inhibit-client-protocol.h idle-inhibit-protocol.c
+    COMMAND wayland-scanner client-header /usr/share/wayland-protocols/unstable/idle-inhibit/idle-inhibit-unstable-v1.xml idle-inhibit-client-protocol.h
+    COMMAND wayland-scanner private-code /usr/share/wayland-protocols/unstable/idle-inhibit/idle-inhibit-unstable-v1.xml idle-inhibit-protocol.c)
+add_executable(rig-inhibit ${FIXTURES}/rig-inhibit.cpp idle-inhibit-protocol.c)
+target_include_directories(rig-inhibit PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_link_libraries(rig-inhibit PRIVATE Qt6::Quick Qt6::GuiPrivate PkgConfig::Wayland)

@@ -4,6 +4,7 @@ set -euo pipefail
 mkdir -p out/synthetic out/hacks
 make -j4
 ./run-synthetic-tests.sh | tee out/synthetic/results.txt
+./run-shader-tests.sh | tee out/shader-results.txt
 env LD_PRELOAD="$PWD/libgl-stereo.so" GL_STEREO=1 ./tests/state | tee out/state.txt
 mkdir -p out/egl-damage
 rm -f out/egl-damage/frame-*

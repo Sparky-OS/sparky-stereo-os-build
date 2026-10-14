@@ -65,9 +65,15 @@ def main():
     parser.add_argument('--enable-3d', choices=['on', 'off'], default='on', help='Enable 3D (default: on)')
     parser.add_argument('--render-resolution', type=resolution, default='auto', metavar='WIDTHxHEIGHT', help='render resolution per eye (default: window size)')
     parser.add_argument('--display-settings', action='store_true', help='open KDE Display settings')
+    parser.add_argument('--saver-settings', action='store_true', help='choose the screensavers in the Plasma stereo rotation')
     parser.add_argument('--settings', action='store_true', help='show settings before launching')
     parser.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args()
+    if args.saver_settings:
+        settings_file = Path(__file__).resolve().parent/'savers/settings.py'
+        if not settings_file.is_file(): settings_file = Path('/usr/lib/gl-stereo/savers/settings.py')
+        if not settings_file.is_file(): parser.error('the gl-stereo-savers package is required for saver settings')
+        return subprocess.call([sys.executable,str(settings_file)])
     if args.display_settings:
         display_settings()
         if not args.command:

@@ -8,6 +8,7 @@ rm -f out/quad/frame-* out/quad-gears/frame-* out/paraview/frame-*
 env LD_PRELOAD="$SO" GL_STEREO=1 ./tests/quad unsupported
 env LD_PRELOAD="$SO" GL_STEREO=1 GL_STEREO_DUMP=1 GL_STEREO_DUMP_DIR="$PWD/out/quad" ./tests/quad
 env LD_PRELOAD="$SO" GL_STEREO=1 ./tests/quad fbconfig
+env LD_PRELOAD="$SO" GL_STEREO=1 ./tests/quad minimum-depth
 env LD_PRELOAD="$SO" GL_STEREO=1 GL_STEREO_CLASS=scientific GL_STEREO_RENDER_RESOLUTION=400x240 ./tests/quad visual
 env LD_PRELOAD="$SO" GL_STEREO=1 GL_STEREO_CLASS=game ./tests/quad fbconfig
 env LD_PRELOAD="$SO" GL_STEREO=1 GL_STEREO_CLASS=game ./tests/quad auto

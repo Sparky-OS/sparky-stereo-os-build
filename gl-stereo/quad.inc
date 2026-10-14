@@ -126,8 +126,24 @@ GLXContext glXCreateContext(Display *d, XVisualInfo *v, GLXContext share, Bool d
     if (config.enabled && v && !r_glXGetConfig(d,v,GLX_STEREO,&driver_stereo) && driver_stereo) {
         /* Native stereo twins can share a visual ID. Packing belongs to us. */
         int count = 0;
-        int attrs[] = {GLX_VISUAL_ID, (int)v->visualid, GLX_STEREO, False,
-                       GLX_RENDER_TYPE, GLX_RGBA_BIT, None};
+        const int keys[] = {GLX_DOUBLEBUFFER, GLX_LEVEL, GLX_RED_SIZE,
+                           GLX_GREEN_SIZE, GLX_BLUE_SIZE, GLX_ALPHA_SIZE,
+                           GLX_DEPTH_SIZE, GLX_STENCIL_SIZE, GLX_ACCUM_RED_SIZE,
+                           GLX_ACCUM_GREEN_SIZE, GLX_ACCUM_BLUE_SIZE,
+                           GLX_ACCUM_ALPHA_SIZE, GLX_AUX_BUFFERS,
+                           GLX_SAMPLE_BUFFERS, GLX_SAMPLES};
+        int attrs[7 + 2 * (sizeof(keys) / sizeof(keys[0]))];
+        int n = 0;
+        attrs[n++] = GLX_VISUAL_ID; attrs[n++] = (int)v->visualid;
+        attrs[n++] = GLX_STEREO; attrs[n++] = False;
+        attrs[n++] = GLX_RENDER_TYPE; attrs[n++] = GLX_RGBA_BIT;
+        for (unsigned i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i) {
+            int value;
+            if (!r_glXGetConfig(d,v,keys[i],&value)) {
+                attrs[n++] = keys[i]; attrs[n++] = value;
+            }
+        }
+        attrs[n] = None;
         GLXFBConfig *mono = r_glXChooseFBConfig(d,v->screen,attrs,&count);
         if (mono && count) result = r_glXCreateNewContext(d,mono[0],GLX_RGBA_TYPE,share,direct);
         if (mono) r_XFree(mono);

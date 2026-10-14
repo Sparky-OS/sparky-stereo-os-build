@@ -42,7 +42,7 @@ static void stream_frame(WindowState *w)
     GLboolean double_buffer;
     r_glGetBooleanv(GL_DOUBLEBUFFER, &double_buffer);
     r_glReadBuffer(double_buffer ? GL_BACK : GL_FRONT);
-    r_glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    read_window_color(width, height, GL_RGBA, pixels);
     r_glReadBuffer(read);
     r_glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
     for (int i = 0; i < 6; ++i) r_glPixelStorei(names[i], pack[i]);

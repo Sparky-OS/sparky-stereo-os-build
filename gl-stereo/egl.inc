@@ -97,7 +97,7 @@ EGLBoolean eglDestroyContext(EGLDisplay display, EGLContext context)
         pthread_mutex_lock(&state_lock);
         ContextState **p = &contexts;
         while (*p && !((*p)->egl && (*p)->context == (GLXContext)context)) p = &(*p)->next;
-        if (*p) { ContextState *old = *p; *p = old->next; if (current == old) current = NULL; free(old); }
+        if (*p) { ContextState *old = *p; *p = old->next; if (current == old) current = NULL; free_texture_records(old); free(old); }
         pthread_mutex_unlock(&state_lock);
     }
     return result;

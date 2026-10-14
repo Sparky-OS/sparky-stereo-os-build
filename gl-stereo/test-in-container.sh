@@ -49,6 +49,7 @@ if [ "${GL_STEREO_TEST_SCOPE:-full}" = savers ]; then
     python3 tests/rocks.py
     python3 tests/qualify-savers.py
     python3 tests/rotation.py
+    python3 tests/display-pipe.py
     make install-savers DESTDIR="$PWD/out/install"
     exit
 fi

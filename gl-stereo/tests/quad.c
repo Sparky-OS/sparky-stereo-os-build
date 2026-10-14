@@ -29,6 +29,7 @@ int main(int argc, char **argv)
     else XChangeProperty(d,DefaultRootWindow(d),supported,XA_CARDINAL,32,PropModeReplace,(unsigned char *)&version,1);
     XSync(d,False);
     int attrs[] = {GLX_RGBA,GLX_DOUBLEBUFFER,GLX_DEPTH_SIZE,24,GLX_STEREO,None};
+    if (argc > 1 && !strcmp(argv[1],"minimum-depth")) attrs[3] = 1;
     if (automatic) attrs[4] = None;
     XVisualInfo *v = glXChooseVisual(d,screen,attrs);
     if (absent) { assert(!v); puts("PASS: no stereo visual without compositor support"); return 0; }
@@ -38,7 +39,7 @@ int main(int argc, char **argv)
     if (argc > 1 && !strcmp(argv[1],"fbconfig")) {
         XFree(v);
         int count;
-        int fbattrs[] = {GLX_RENDER_TYPE,GLX_RGBA_BIT,GLX_DRAWABLE_TYPE,GLX_WINDOW_BIT,GLX_DOUBLEBUFFER,True,GLX_STEREO,True,None};
+        int fbattrs[] = {GLX_RENDER_TYPE,GLX_RGBA_BIT,GLX_DRAWABLE_TYPE,GLX_WINDOW_BIT,GLX_DOUBLEBUFFER,True,GLX_DEPTH_SIZE,24,GLX_STEREO,True,None};
         configs = glXChooseFBConfig(d,screen,fbattrs,&count);
         assert(configs && count);
         assert(!glXGetFBConfigAttrib(d,configs[0],GLX_STEREO,&stereo) && stereo);
@@ -63,6 +64,8 @@ int main(int argc, char **argv)
     XSelectInput(d,w,PropertyChangeMask);
     GLXContext c = configs ? glXCreateNewContext(d,configs[0],GLX_RGBA_TYPE,NULL,True) : glXCreateContext(d,v,NULL,True);
     assert(c && glXMakeCurrent(d,w,c));
+    GLint depth_bits; glGetIntegerv(GL_DEPTH_BITS,&depth_bits); assert(depth_bits >= attrs[3]);
+    GLboolean double_buffer; glGetBooleanv(GL_DOUBLEBUFFER,&double_buffer); assert(double_buffer);
     XFree(v); if (configs) XFree(configs);
     GLboolean enabled; glGetBooleanv(GL_STEREO,&enabled); assert(enabled == !automatic);
     int expected_width = 320, expected_height = 200;

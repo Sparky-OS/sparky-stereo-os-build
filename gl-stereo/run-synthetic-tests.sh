@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-or-later
 set -euo pipefail
-SO=$PWD/libgl-stereo.so
+SO=${GL_STEREO_TEST_LIBRARY:-$PWD/libgl-stereo.so}
 D=$PWD/out/synthetic
 mkdir -p "$D"
 for t in quads quads-dlist quads-xform; do
@@ -18,7 +18,7 @@ for c in 5 10; do
         GL_STEREO_DUMP=1 GL_STEREO_DUMP_DIR="$D/conv$c" ./tests/quads
     python3 measure-quads.py "$D/conv$c/"*.ppm 2 "$c" 2.5,5,10
 done
-for mode in matrix texture zero ortho; do
+for mode in matrix texture zero ortho projection-view projection-rotate modelview-camera camera-texture; do
     dir="$D/$mode"
     mkdir -p "$dir"
     rm -f "$dir"/frame-*.ppm
@@ -26,6 +26,10 @@ for mode in matrix texture zero ortho; do
     sep=2
     case "$mode" in
         matrix) extra=(TEST_MATRIX=1);;
+        projection-view) extra=(TEST_PROJECTION_VIEW=1);;
+        projection-rotate) extra=(TEST_PROJECTION_ROTATE=1);;
+        modelview-camera) extra=(TEST_MODELVIEW_CAMERA=1);;
+        camera-texture) extra=(TEST_CAMERA_TEXTURE=1);;
         texture) extra=(TEST_TEXTURE=1);;
         zero) sep=0;;
         ortho) extra=(TEST_ORTHO=1); sep=0;;

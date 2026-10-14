@@ -1,0 +1,92 @@
+Description: Expose Flurry's existing perspective camera and trail depths to OpenGL
+ Flurry projects its 3D particles on the CPU. Preserve the original disabled
+ path and supply an ordinary perspective camera when Enable 3D is active.
+ The layer renders the two views; no eye offsets or duplicate simulation live
+ in the saver. Original settings and the BSD licence remain unchanged.
+Author: Daniel Ramos
+Forwarded: no
+Last-Update: 2026-10-14
+
+--- a/hacks/glx/flurry.h
++++ b/hacks/glx/flurry.h
+@@ -106,6 +106,7 @@
+         floatToVector seraphimVertices[NUMSMOKEPARTICLES*2+1];
+         floatToVector seraphimColors[NUMSMOKEPARTICLES*4+1];
+ 	float seraphimTextures[NUMSMOKEPARTICLES*2*4];
++        float cameraVertices[NUMSMOKEPARTICLES*4][3];
+ } SmokeV;
+ 
+ void InitSmoke(SmokeV *s);
+--- a/hacks/glx/flurry-smoke.c
++++ b/hacks/glx/flurry-smoke.c
+@@ -947,6 +947,8 @@
+ 	float hslash2 = global->sys_glHeight * 0.5f;
+ 	float wslash2 = global->sys_glWidth * 0.5f;
+ 	int i,k;
++        const char *stereo = getenv("GL_STEREO");
++        int camera_p = stereo && !strcmp(stereo, "1");
+ 
+ 	width = (streamSize+2.5f*flurry->streamExpansion) * screenRatio;
+ 
+@@ -1078,14 +1080,59 @@
+                                 s->seraphimVertices[svi].f[2] = oldscreenx-dxm-dyos;
+                                 s->seraphimVertices[svi].f[3] = oldscreeny-dym+dxos;
+                                 svi++;
++
++                                /* The trail already has a world-space depth.
++                                   Retain it for OpenGL camera rendering instead
++                                   of handing the wrapper a flattened picture. */
++                                if (camera_p)
++                                  {
++                                    int vertex;
++                                    for (vertex = 0; vertex < 4; vertex++)
++                                      {
++                                        int index = (si - 1) * 4 + vertex;
++                                        float depth = vertex < 2 ? z : oldz;
++                                        float *screen = s->seraphimVertices[
++                                          (si - 1) * 2 + vertex / 2].f +
++                                          (vertex % 2) * 2;
++                                        s->cameraVertices[index][0] =
++                                          (screen[0] - wslash2) * depth /
++                                          global->sys_glWidth;
++                                        s->cameraVertices[index][1] =
++                                          (screen[1] - hslash2) * depth /
++                                          global->sys_glWidth;
++                                        s->cameraVertices[index][2] = -depth;
++                                      }
++                                  }
+ 			}
+ 		}
+             }
+ 	}
+ 	glColorPointer(4,GL_FLOAT,0,s->seraphimColors);
+-	glVertexPointer(2,GL_FLOAT,0,s->seraphimVertices);
+ 	glTexCoordPointer(2,GL_FLOAT,0,s->seraphimTextures);
+-	glDrawArrays(GL_QUADS,0,si*4);
++        if (camera_p)
++          {
++            GLint mode;
++            double aspect = global->sys_glHeight / global->sys_glWidth;
++            glGetIntegerv (GL_MATRIX_MODE, &mode);
++            glMatrixMode (GL_PROJECTION);
++            glPushMatrix ();
++            glLoadIdentity ();
++            /* Match sx = x * width / z + width/2 and the existing z>=25
++               visibility cutoff. The stereo layer supplies both eyes. */
++            glFrustum (-12.5, 12.5, -12.5 * aspect, 12.5 * aspect,
++                       25, 1000000);
++            glMatrixMode (mode);
++            glVertexPointer (3, GL_FLOAT, 0, s->cameraVertices);
++            glDrawArrays (GL_QUADS, 0, si * 4);
++            glMatrixMode (GL_PROJECTION);
++            glPopMatrix ();
++            glMatrixMode (mode);
++          }
++        else
++          {
++            glVertexPointer (2, GL_FLOAT, 0, s->seraphimVertices);
++            glDrawArrays (GL_QUADS, 0, si * 4);
++          }
+ }
+ 
+ #if 0

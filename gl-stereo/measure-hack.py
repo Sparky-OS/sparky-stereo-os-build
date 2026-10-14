@@ -20,8 +20,10 @@ def check(path):
     w = width // 2
     left, right = im[:, :w], im[:, w:]
     for eye in (left, right):
-        assert eye.std() > 10, 'uniform eye'
-        assert (eye.max(axis=2) > 32).mean() > .01, 'empty eye'
+        # Spatial variation, not variation between R/G/B channels: a uniform
+        # coloured eye must fail, while dim wireframes are still real scenes.
+        assert eye.std(axis=(0, 1)).max() > 1, 'uniform eye'
+        assert (eye.max(axis=2) > 8).mean() > .001, 'empty eye'
     all_depth = np.fromfile(path.with_suffix('.depth'), dtype=np.float32).reshape(h, width)
     depth = all_depth[:, :w]
     a, b, conv, sep = np.loadtxt(path.with_suffix('.txt'))

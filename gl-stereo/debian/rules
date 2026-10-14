@@ -1,0 +1,35 @@
+#!/usr/bin/make -f
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+include /usr/share/dpkg/buildflags.mk
+export CPPFLAGS CFLAGS CXXFLAGS LDFLAGS
+
+%:
+	dh $@ --buildsystem=cmake --sourcedirectory=plasma --builddirectory=debian/build
+
+override_dh_auto_configure:
+	dh_auto_configure -- -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_SYSCONFDIR=/etc
+
+override_dh_auto_build:
+	$(MAKE) -j4 libgl-stereo.so savers/starfield savers/announce tests/announce
+	dh_auto_build
+
+override_dh_auto_test:
+	debian/build/policytest
+
+override_dh_auto_install:
+	dh_auto_install
+	$(MAKE) install DESTDIR=$(CURDIR)/debian/tmp
+	install -Dm755 savers/starfield debian/tmp/usr/lib/gl-stereo/savers/starfield
+	install -Dm755 savers/announce debian/tmp/usr/lib/gl-stereo/savers/announce
+	install -m644 savers/controller.py savers/frames.py savers/catalogue.py savers/preferences.py savers/settings.py savers/strings.json debian/tmp/usr/lib/gl-stereo/savers/
+	python3 savers/make-index.py debian/tmp/usr/share/gl-stereo/savers.json
+	install -Dm644 savers/org.sparky.stereo-savers.desktop debian/tmp/usr/share/applications/org.sparky.stereo-savers.desktop
+
+override_dh_auto_clean:
+	dh_auto_clean
+	$(MAKE) clean
+	rm -rf debian/qualification
+
+# Receipts bind the final stripped ELF files, not the build-tree objects.
+execute_after_dh_strip:
+	bash packaging/qualify-package.sh

@@ -17,9 +17,9 @@ for name in ('after', 'quad', 'future', 'gears'):
         assert 'PASS: initial size' in (root/name/'client.log').read_text(), name
     for capture in ('c00', 'c01'):
         image = Image.open(root/name/(capture+'.png')).convert('RGB')
-        assert image.size == (2560,800), (name, image.size)
+        assert image.size == (800,300), (name, image.size)
         a = np.array(image)
-        left, right = a[:,:1280], a[:,1280:]
+        left, right = a[:,:400], a[:,400:]
         for channel in (0,2):
             masks = [(eye[:,:,channel] > (80 if name == 'gears' else 200)) & (eye[:,:,1] < 50) &
                      (eye[:,:,2-channel] < 50) for eye in (left,right)]

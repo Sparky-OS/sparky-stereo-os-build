@@ -22,10 +22,15 @@ for mutation in ('failed','missing','stale','negative','excess','residual'):
     if mutation=='failed': bad['proof']['passed']=False
     elif mutation=='missing': del bad['proof']
     elif mutation=='stale': bad['executable_sha256']='0'*64
-    elif mutation=='negative': bad['proof']['disparity_bounds_px'][0]=-1
+    elif mutation=='negative': bad['proof']['disparity_bounds_px'][0]=-1000
     elif mutation=='excess': bad['proof']['disparity_bounds_px'][1]=1000
     elif mutation=='residual': bad['proof']['residual_px']=2
     assert not eligible(bad)
+screen_level=copy.deepcopy(entries[0])
+screen_level['proof'].update(placement='screen-level',disparity_bounds_px=[-.01*screen_level['proof']['eye_width'],.005*screen_level['proof']['eye_width']])
+assert eligible(screen_level)
+screen_level['proof']['disparity_bounds_px'][0]=-.021*screen_level['proof']['eye_width']
+assert not eligible(screen_level)
 rotation=Rotation(entries,random.Random(3))
 last=None
 for _ in range(5):

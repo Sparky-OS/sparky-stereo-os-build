@@ -1,0 +1,65 @@
+Source: gl-stereo
+Section: graphics
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: debhelper-compat (= 13), cmake, ninja-build, pkgconf,
+ libgl-dev, libegl-dev, libx11-dev, libstereo-declare-dev (>= 1.1.0),
+ qt6-base-private-dev, qt6-declarative-dev, libkf6config-dev,
+ libkf6idletime-dev, libkscreen-dev, libwayland-dev, wayland-protocols,
+ plasma-wayland-protocols, python3:any, python3-numpy, python3-pil, xvfb, xauth,
+ x11-utils, xscreensaver-data-extra (>= 6.09+dfsg1-2+stereo3d1), xscreensaver-gl (>= 6.09+dfsg1-2+stereo3d2), xscreensaver-gl-extra (>= 6.09+dfsg1-2+stereo3d2)
+Standards-Version: 4.7.4
+Rules-Requires-Root: no
+Homepage: https://sparkylinux.org
+XSBC-Comment: Sparky Stereo OS, Daniel Ramos's edition of SparkyLinux (by Paweł "pavroo" Pijanowski)
+
+Package: gl-stereo
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, python3, python3-tk, libegl1, libgl1,
+ libkf6kcmutils-bin, kscreen
+Recommends: gl-stereo-show
+Description: camera stereo layer and OpenGL launcher
+ Renders a program's camera for both eyes and presents full side by side
+ through Stereo KWin. Includes the Enable 3D and render resolution settings.
+ .
+ Sparky Stereo OS, Daniel Ramos's edition of SparkyLinux (by Paweł "pavroo" Pijanowski).
+
+Package: gl-stereo-savers
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, gl-stereo (= ${binary:Version}),
+ python3, xvfb, x11-utils, xscreensaver-data-extra (>= 6.09+dfsg1-2+stereo3d1), xscreensaver-gl (>= 6.09+dfsg1-2+stereo3d2), xscreensaver-gl-extra (>= 6.09+dfsg1-2+stereo3d2)
+Description: qualified stereo savers and classic starfield
+ Provides the separate saver processes, bounded frame broker and a random
+ rotation catalogue qualified against the packaged binaries.
+ .
+ Sparky Stereo OS, Daniel Ramos's edition of SparkyLinux (by Paweł "pavroo" Pijanowski).
+
+Package: gl-stereo-show
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, gl-stereo-savers (= ${binary:Version})
+Description: Plasma idle stereo show
+ Starts the stereo background on AC after 135 idle minutes, using Plasma's
+ session state and a ten-minute saver rotation. Settings live in Plasma.
+ .
+ Sparky Stereo OS, Daniel Ramos's edition of SparkyLinux (by Paweł "pavroo" Pijanowski).
+
+Package: libstereoshow1
+Section: libs
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Recommends: gl-stereo-savers (= ${binary:Version})
+Description: isolated stereo background support for Plasma
+ Receives validated saver frames outside the security-critical greeter and
+ presents them behind its screen-depth prompt.
+ .
+ Sparky Stereo OS, Daniel Ramos's edition of SparkyLinux (by Paweł "pavroo" Pijanowski).
+
+Package: libstereoshow-dev
+Section: libdevel
+Architecture: any
+Depends: ${misc:Depends}, libstereoshow1 (= ${binary:Version}),
+ qt6-declarative-dev, libkf6config-dev, libkscreen-dev
+Description: development files for Plasma stereo backgrounds
+ Headers and CMake targets for the isolated stereo background integration.
+ .
+ Sparky Stereo OS, Daniel Ramos's edition of SparkyLinux (by Paweł "pavroo" Pijanowski).

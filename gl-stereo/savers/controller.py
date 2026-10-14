@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import selectors
+import select
 import signal
 import socket
 import struct
@@ -12,6 +13,22 @@ import sys
 import time
 from catalogue import Rotation, active, load
 from frames import receive, send
+from preferences import disabled_savers
+
+def read_display(fd, timeout=5):
+    deadline = time.monotonic() + timeout
+    data = b''
+    while len(data) < 16:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not select.select([fd], [], [], remaining)[0]:
+            raise RuntimeError('private display did not start')
+        byte = os.read(fd, 1)
+        if byte == b'\n':
+            if data and data.isdigit(): return ':' + data.decode('ascii')
+            break
+        if not byte: break
+        data += byte
+    raise RuntimeError('invalid private display')
 
 class Controller:
     def __init__(self, catalogue, control, consumer):
@@ -30,11 +47,8 @@ class Controller:
         self.xvfb = subprocess.Popen(['Xvfb','-displayfd',str(write),'-screen','0','2560x1440x24','-ac','-nolisten','tcp'],
                                      pass_fds=(write,), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         os.close(write)
-        import select
         try:
-            if not select.select([read],[],[],5)[0]: raise RuntimeError('private display did not start')
-            self.display = ':' + os.read(read,32).decode().strip()
-            if not self.display[1:].isdigit(): raise RuntimeError('invalid private display')
+            self.display = read_display(read)
         except Exception:
             self.xvfb.terminate(); self.xvfb.wait(timeout=3)
             raise
@@ -61,7 +75,7 @@ class Controller:
 
     def start(self):
         if not active(self.state): return
-        self.entry = self.rotation.next()
+        self.entry = self.rotation.next(disabled_savers())
         if not self.entry: return
         self.source, writer = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
         env = os.environ.copy()
@@ -69,6 +83,7 @@ class Controller:
             if key.startswith('GL_STEREO') or key in ('LD_PRELOAD','DISPLAY','WAYLAND_DISPLAY','XAUTHORITY'):
                 env.pop(key)
         env.update(self.entry['environment'])
+        env['PATH'] = '/usr/libexec/xscreensaver:' + env.get('PATH', os.defpath)
         env.update(DISPLAY=self.display, GL_STEREO_FRAME_FD=str(writer.fileno()))
         try:
             announce = Path(__file__).resolve().with_name('announce')

@@ -17,8 +17,9 @@ def eligible(entry):
     try:
         proof = entry['proof']
         low, high = proof['disparity_bounds_px']
+        minimum = -.02*proof['eye_width'] if proof.get('placement') == 'screen-level' else 0
         if (not all(math.isfinite(value) for value in (low,high,proof['eye_width'],proof['residual_px'])) or
-                proof['passed'] is not True or not 0 <= low <= high <= .02*proof['eye_width'] or
+                proof['passed'] is not True or not minimum <= low <= high <= .02*proof['eye_width'] or
                 abs(proof['residual_px']) > 1 or not proof['oracle']):
             return False
         return (digest(entry['command'][0]) == entry['executable_sha256'] and
@@ -42,14 +43,16 @@ class Rotation:
         self.entries.pop(name, None)
         self.bag = [item for item in self.bag if item != name]
 
-    def next(self):
+    def next(self, disabled=()):
         for name, entry in list(self.entries.items()):
             if not eligible(entry):
                 self.exclude(name)
-        if not self.entries:
+        available = {name for name in self.entries if name not in disabled}
+        self.bag = [name for name in self.bag if name in available]
+        if not available:
             return None
         if not self.bag:
-            self.bag = list(self.entries)
+            self.bag = list(available)
             self.rng.shuffle(self.bag)
             if len(self.bag) > 1 and self.bag[-1] == self.last:
                 self.bag[-1], self.bag[0] = self.bag[0], self.bag[-1]

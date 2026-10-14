@@ -21,6 +21,9 @@
 /* Only pixel-producing calls are interposed. Matrix and attribute operations
  * remain the driver's state, including its stacks and display-list semantics. */
 #define GL_API(X) \
+ X(glGenTextures) X(glDeleteTextures) X(glBindTexture) X(glActiveTexture) X(glGetTexParameteriv) X(glGetTexParameterfv) \
+ X(glTexParameteri) X(glTexParameterf) X(glTexParameteriv) X(glTexParameterfv) X(glTexImage2D) X(glTexSubImage2D) \
+ X(glGetProgramiv) X(glGetActiveUniform) X(glGetUniformLocation) X(glGetUniformfv) X(glUniformMatrix4fv) \
  X(glGetFloatv) X(glDrawBuffer) X(glDrawBuffers) X(glGetIntegerv) X(glGetDoublev) X(glGetBooleanv) X(glIsEnabled) \
  X(glAccum) X(glCopyPixels) X(glCopyTexImage2D) X(glCopyTexSubImage2D) X(glMatrixMode) X(glLoadMatrixd) X(glPushMatrix) X(glPopMatrix) \
  X(glPushAttrib) X(glPopAttrib) X(glViewport) X(glScissor) X(glEnable) X(glDisable) \
@@ -28,7 +31,8 @@
  X(glCallList) X(glCallLists) X(glClear) X(glDrawArrays) X(glDrawElements) \
  X(glDrawRangeElements) X(glMultiDrawArrays) X(glMultiDrawElements) \
  X(glDrawPixels) X(glBitmap) X(glWindowPos3dv) X(glEvalMesh1) X(glEvalMesh2) \
- X(glBindFramebuffer) X(glBlitFramebuffer) X(glRectd) X(glReadPixels) X(glReadBuffer) X(glPixelStorei) X(glBindBuffer) \
+ X(glBindFramebuffer) X(glBlitFramebuffer) X(glGenFramebuffers) X(glDeleteFramebuffers) \
+ X(glGenRenderbuffers) X(glDeleteRenderbuffers) X(glBindRenderbuffer) X(glRenderbufferStorage) X(glFramebufferRenderbuffer) X(glRectd) X(glReadPixels) X(glReadBuffer) X(glPixelStorei) X(glBindBuffer) \
  X(glXMakeCurrent) X(glXMakeContextCurrent) X(glXDestroyContext) \
  X(glXSwapBuffers) X(glXGetProcAddressARB) X(glXQueryDrawable) \
  X(glXCreateWindow) X(glXDestroyWindow) \
@@ -40,7 +44,7 @@
  X(eglCreatePlatformWindowSurface) X(eglMakeCurrent) X(eglSwapBuffers) \
  X(eglDestroyContext) X(eglDestroySurface) X(eglQuerySurface) X(eglQueryContext) X(eglGetProcAddress)
 #define X_API(X) \
- X(XFree) X(XCreateWindow) X(XCreateSimpleWindow) X(XDestroyWindow) X(XResizeWindow) \
+ X(XMapWindow) X(XMapRaised) X(XUnmapWindow) X(XFree) X(XCreateWindow) X(XCreateSimpleWindow) X(XDestroyWindow) X(XResizeWindow) \
  X(XMoveResizeWindow) X(XConfigureWindow) X(XGetWindowAttributes) X(XGetGeometry) \
  X(XNextEvent) X(XWindowEvent) X(XMaskEvent) X(XCheckWindowEvent) \
  X(XCheckMaskEvent) X(XCheckTypedEvent) X(XCheckTypedWindowEvent) X(XPeekEvent) \
@@ -144,12 +148,13 @@ typedef struct window_state {
     Window window;
     GLXDrawable drawable;
     EGLSurface egl_surface;
-    int active, width, height, compositor_sizes;
+    int active, width, height, compositor_sizes, mapped;
     unsigned long resize_serial;
     unsigned frame;
     double last_projection[16], last_convergence;
     struct window_state *next;
 } WindowState;
+typedef struct texture_twin { GLuint left,right; struct texture_twin *next; } TextureTwin;
 typedef struct context_state {
     GLXContext context;
     int egl, quad;
@@ -157,6 +162,7 @@ typedef struct context_state {
     GLuint primitive;
     int compiling, immediate;
     WindowState *window;
+    TextureTwin *textures;
     struct context_state *next;
 } ContextState;
 static pthread_mutex_t state_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -205,6 +211,7 @@ static void bind_context(Display *d, GLXDrawable draw, GLXContext context)
             w->height = config.render_height ? (int)config.render_height : a.height; w->active = 1;
             int support = stereo_supported_x11(d);
             w->compositor_sizes = support >= 3;
+            w->mapped = a.map_state != IsUnmapped;
             w->resize_serial = NextRequest(d);
             r_XResizeWindow(d, w->window, (w->compositor_sizes ? 1 : 2) * w->width, w->height);
             XSync(d, False);
@@ -221,10 +228,18 @@ static void bind_context(Display *d, GLXDrawable draw, GLXContext context)
 
 typedef struct {
     double projection[16];
+    GLint program, projection_uniform;
     GLint viewport[4], scissor[4], mode;
     GLboolean scissor_on;
-    double convergence;
+    double convergence, camera_a, camera_b, constant[4];
+    int perspective;
+    unsigned texture_count,texture_unit[256];
+    GLuint texture_left[256],texture_right[256];
+    GLint active_texture;
 } DrawState;
+#include "camera-uniform.inc"
+#include "camera-matrix.inc"
+#include "texture-camera.inc"
 static int stereo_target(void)
 {
     if (!current || !current->window || !current->window->active || current->compiling) return 0;
@@ -235,33 +250,43 @@ static int stereo_target(void)
 }
 static void save_draw(DrawState *s)
 {
-    if (!current->quad) {
+    r_glGetIntegerv(GL_CURRENT_PROGRAM, &s->program);
+    s->projection_uniform = -1;
+    if (!current->quad && !s->program) {
         r_glGetDoublev(GL_PROJECTION_MATRIX, s->projection);
         r_glGetIntegerv(GL_MATRIX_MODE, &s->mode);
     } else { memset(s->projection,0,sizeof(s->projection)); s->mode = 0; }
+    if (!current->quad && s->program) save_camera_uniform(s);
     r_glGetIntegerv(GL_VIEWPORT, s->viewport);
     r_glGetIntegerv(GL_SCISSOR_BOX, s->scissor);
     s->scissor_on = r_glIsEnabled(GL_SCISSOR_TEST);
-    double near = s->projection[14] / (s->projection[10] - 1);
+    select_fixed_camera(s);
+    save_view_textures(s);
+    double near = s->camera_b / (s->camera_a - 1);
     s->convergence = config.convergence ? config.convergence :
                      (isfinite(near) && near > 0 ? 5 * near : 5);
 }
 static void set_eye(const DrawState *s, int eye)
 {
     WindowState *w = current->window;
+    select_view_textures(s,eye);
     double p[16];
-    if (fabs(s->projection[11]+1) < 1e-6) {
+    if (s->perspective) {
         memcpy(w->last_projection, s->projection, sizeof(w->last_projection));
+        w->last_projection[10] = s->camera_a;
+        w->last_projection[14] = s->camera_b;
         w->last_convergence = s->convergence;
     }
     memcpy(p, s->projection, sizeof(p));
-    if (!current->quad && fabs(p[11] + 1) < 1e-6 && fabs(p[15]) < 1e-6) {
+    if (!current->quad && s->perspective) {
         double shift = (eye ? 1 : -1) * config.percent / 100;
         if (config.swap) shift = -shift;
-        for (int col = 0; col < 4; ++col) p[4*col] += shift * s->projection[4*col+3];
-        p[12] -= shift * s->convergence;
+        for (int col = 0; col < 4; ++col)
+            p[4*col] += shift * (s->projection[4*col+3] - s->convergence*s->constant[col]);
     }
-    if (!current->quad) {
+    if (s->projection_uniform >= 0) {
+        load_camera_uniform(s, p);
+    } else if (!current->quad && !s->program) {
         r_glMatrixMode(GL_PROJECTION); r_glLoadMatrixd(p); r_glMatrixMode(s->mode);
     }
     r_glViewport(eye*w->width+s->viewport[0], s->viewport[1], s->viewport[2], s->viewport[3]);
@@ -277,7 +302,9 @@ static void set_eye(const DrawState *s, int eye)
 }
 static void restore_draw(const DrawState *s)
 {
-    if (!current->quad) { r_glMatrixMode(GL_PROJECTION); r_glLoadMatrixd(s->projection); r_glMatrixMode(s->mode); }
+    restore_view_textures(s);
+    if (s->projection_uniform >= 0) load_camera_uniform(s, s->projection);
+    else if (!current->quad && !s->program) { r_glMatrixMode(GL_PROJECTION); r_glLoadMatrixd(s->projection); r_glMatrixMode(s->mode); }
     r_glViewport(s->viewport[0], s->viewport[1], s->viewport[2], s->viewport[3]);
     r_glScissor(s->scissor[0], s->scissor[1], s->scissor[2], s->scissor[3]);
     if (!s->scissor_on) r_glDisable(GL_SCISSOR_TEST);
@@ -312,13 +339,14 @@ static void finish_left(void)
     if (!stereo_target()) { call; native_query--; return; } \
     COUNT(logical); DrawState saved; save_draw(&saved); \
     if (selected_eye(0)) { \
-        if (!current->quad && selected_eye(1)) isolate_left(); \
+        if (!current->quad && !saved.program && selected_eye(1)) isolate_left(); \
         set_eye(&saved, 0); COUNT(issued); call; \
-        if (!current->quad && selected_eye(1)) finish_left(); \
+        if (!current->quad && !saved.program && selected_eye(1)) finish_left(); \
     } \
     if (selected_eye(1)) { set_eye(&saved, 1); COUNT(issued); call; } restore_draw(&saved); native_query--; \
 } while (0)
 
+#include "readback.inc"
 #include "frame-stream.inc"
 
 static void dump(WindowState *w)
@@ -347,7 +375,7 @@ static void dump(WindowState *w)
     GLboolean double_buffer;
     r_glGetBooleanv(GL_DOUBLEBUFFER, &double_buffer);
     r_glReadBuffer(double_buffer ? GL_BACK : GL_FRONT);
-    r_glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, pixels);
+    read_window_color(width, height, GL_RGB, pixels);
     float *depth = malloc((size_t)width*height*sizeof(float));
     if (depth) r_glReadPixels(0, 0, width, height, GL_DEPTH_COMPONENT, GL_FLOAT, depth);
     r_glReadBuffer(read);
@@ -392,10 +420,6 @@ void glMatrixMode(GLenum mode)
 }
 void glAccum(GLenum op, GLfloat value) { API(); warn_once(4,"glAccum passes through once over the native framebuffer"); r_glAccum(op,value); }
 void glCopyPixels(GLint x, GLint y, GLsizei w, GLsizei h, GLenum type) { API(); warn_once(8,"glCopyPixels is mono-sourced and passes through once"); r_glCopyPixels(x,y,w,h,type); }
-void glCopyTexImage2D(GLenum target, GLint level, GLenum format, GLint x, GLint y, GLsizei w, GLsizei h, GLint border)
-{ API(); warn_once(16,"glCopyTexImage2D is mono-sourced and passes through once"); r_glCopyTexImage2D(target,level,format,x,y,w,h,border); }
-void glCopyTexSubImage2D(GLenum target, GLint level, GLint dx, GLint dy, GLint x, GLint y, GLsizei w, GLsizei h)
-{ API(); warn_once(32,"glCopyTexSubImage2D is mono-sourced and passes through once"); r_glCopyTexSubImage2D(target,level,dx,dy,x,y,w,h); }
 void glBegin(GLenum mode)
 {
     API();
@@ -492,7 +516,7 @@ void glXDestroyContext(Display *d, GLXContext context)
     pthread_mutex_lock(&state_lock);
     ContextState **p = &contexts;
     while (*p && (*p)->context != context) p = &(*p)->next;
-    if (*p) { ContextState *old = *p; *p = old->next; if (current == old) current = NULL; free(old); }
+    if (*p) { ContextState *old = *p; *p = old->next; if (current == old) current = NULL; free_texture_records(old); free(old); }
     pthread_mutex_unlock(&state_lock);
 }
 void glXSwapBuffers(Display *d, GLXDrawable draw)
@@ -527,13 +551,14 @@ void glXDestroyWindow(Display *d, GLXWindow draw)
     WindowState *w = find_window(d, draw); if (w) w->drawable = w->window;
     pthread_mutex_unlock(&state_lock);
 }
+static int window_is_packed(const WindowState *w);
 void glXQueryDrawable(Display *d, GLXDrawable draw, int attribute, unsigned *value)
 {
     API(); r_glXQueryDrawable(d, draw, attribute, value);
     if (getenv("GL_STEREO_DEBUG")) fprintf(stderr,"query drawable native=%d attr=%x value=%u\n",native_query,attribute,*value);
     pthread_mutex_lock(&state_lock);
     WindowState *w = find_window(d, draw);
-    if (!native_query && w && w->active && attribute == GLX_WIDTH) *value /= 2;
+    if (!native_query && w && window_is_packed(w) && attribute == GLX_WIDTH) *value /= 2;
     pthread_mutex_unlock(&state_lock);
 }
 Window XCreateWindow(Display *d, Window parent, int x, int y, unsigned width, unsigned height,
@@ -551,6 +576,19 @@ Window XCreateSimpleWindow(Display *d, Window parent, int x, int y, unsigned wid
     if (getenv("GL_STEREO_DEBUG")) fprintf(stderr,"create window=%lu size=%ux%u\n",w,width,height);
     remember_window(d, w, width, height); return w;
 }
+static int window_is_packed(const WindowState *w)
+{
+    return w->active && (!w->compositor_sizes || w->mapped);
+}
+static void remember_mapping(Display *d,Window win,int mapped)
+{
+    pthread_mutex_lock(&state_lock);
+    WindowState *w=find_window(d,win);if (w) w->mapped=mapped;
+    pthread_mutex_unlock(&state_lock);
+}
+int XMapWindow(Display *d,Window win) { API(); remember_mapping(d,win,1); return r_XMapWindow(d,win); }
+int XMapRaised(Display *d,Window win) { API(); remember_mapping(d,win,1); return r_XMapRaised(d,win); }
+int XUnmapWindow(Display *d,Window win) { API(); int result=r_XUnmapWindow(d,win); remember_mapping(d,win,0); return result; }
 static unsigned native_width(Display *d, Window win, unsigned width, unsigned height)
 {
     pthread_mutex_lock(&state_lock);
@@ -581,7 +619,7 @@ Status XGetWindowAttributes(Display *d, Window win, XWindowAttributes *attrs)
     pthread_mutex_lock(&state_lock);
     WindowState *w = find_window(d, win);
     if (getenv("GL_STEREO_DEBUG")) fprintf(stderr,"attributes native_query=%d width=%d window=%lu\n",native_query,attrs->width,win);
-    if (!native_query && ok && w && w->active) { attrs->width /= 2; w->width = attrs->width; w->height = attrs->height; }
+    if (!native_query && ok && w && window_is_packed(w)) { attrs->width /= 2; w->width = attrs->width; w->height = attrs->height; }
     pthread_mutex_unlock(&state_lock);
     return ok;
 }
@@ -590,7 +628,7 @@ Status XGetGeometry(Display *d, Drawable win, Window *root, int *x, int *y,
 {
     API(); Status ok = r_XGetGeometry(d, win, root, x, y, width, height, border, depth);
     pthread_mutex_lock(&state_lock);
-    WindowState *w = find_window(d, win); if (!native_query && ok && w && w->active) *width /= 2;
+    WindowState *w = find_window(d, win); if (!native_query && ok && w && window_is_packed(w)) *width /= 2;
     pthread_mutex_unlock(&state_lock);
     return ok;
 }
@@ -608,18 +646,19 @@ int XDestroyWindow(Display *d, Window win)
     pthread_mutex_unlock(&state_lock);
     return r_XDestroyWindow(d, win);
 }
-static void filter_event(Display *d, XEvent *event)
+static void logical_event(Display *d, XEvent *event, int consumed)
 {
     if (event->type != ConfigureNotify) return;
     pthread_mutex_lock(&state_lock);
     WindowState *w = find_window(d, event->xconfigure.window);
     if (w && w->active && event->xconfigure.serial >= w->resize_serial) {
         if (getenv("GL_STEREO_DEBUG")) fprintf(stderr,"configure width=%d serial=%lu resize=%lu\n",event->xconfigure.width,event->xconfigure.serial,w->resize_serial);
-        if (!w->compositor_sizes || !event->xconfigure.send_event) event->xconfigure.width /= 2;
-        w->width = event->xconfigure.width; w->height = event->xconfigure.height;
+        if (window_is_packed(w) && (!w->compositor_sizes || !event->xconfigure.send_event)) event->xconfigure.width /= 2;
+        if (consumed) { w->width = event->xconfigure.width; w->height = event->xconfigure.height; }
     }
     pthread_mutex_unlock(&state_lock);
 }
+static void filter_event(Display *d, XEvent *event) { logical_event(d,event,1); }
 int XNextEvent(Display *d, XEvent *e) { API(); int r = r_XNextEvent(d,e); filter_event(d,e); return r; }
 int XPeekEvent(Display *d, XEvent *e) { API(); int r = r_XPeekEvent(d,e); filter_event(d,e); return r; }
 int XWindowEvent(Display *d, Window w, long m, XEvent *e) { API(); int r = r_XWindowEvent(d,w,m,e); filter_event(d,e); return r; }
@@ -629,18 +668,29 @@ Bool XCheckMaskEvent(Display *d, long m, XEvent *e) { API(); Bool r = r_XCheckMa
 Bool XCheckTypedEvent(Display *d, int t, XEvent *e) { API(); Bool r = r_XCheckTypedEvent(d,t,e); if(r) filter_event(d,e); return r; }
 Bool XCheckTypedWindowEvent(Display *d, Window w, int t, XEvent *e) { API(); Bool r = r_XCheckTypedWindowEvent(d,w,t,e); if(r) filter_event(d,e); return r; }
 
+/* Xlib invokes the predicate before returning an event. Present logical
+ * coordinates there too, without changing an event left in Xlib's queue. */
+typedef struct { Bool (*function)(Display *,XEvent *,XPointer); XPointer argument; } EventPredicate;
+static Bool logical_predicate(Display *display,XEvent *event,XPointer data)
+{
+    EventPredicate *predicate=(EventPredicate *)data;
+    XEvent logical=*event;
+    logical_event(display,&logical,0);
+    return predicate->function(display,&logical,predicate->argument);
+}
 int XIfEvent(Display *d, XEvent *e, Bool (*predicate)(Display *,XEvent *,XPointer), XPointer arg)
-{ API(); int r = r_XIfEvent(d,e,predicate,arg); filter_event(d,e); return r; }
+{ API(); EventPredicate p={predicate,arg}; int r = r_XIfEvent(d,e,logical_predicate,(XPointer)&p); filter_event(d,e); return r; }
 int XPeekIfEvent(Display *d, XEvent *e, Bool (*predicate)(Display *,XEvent *,XPointer), XPointer arg)
-{ API(); int r = r_XPeekIfEvent(d,e,predicate,arg); filter_event(d,e); return r; }
+{ API(); EventPredicate p={predicate,arg}; int r = r_XPeekIfEvent(d,e,logical_predicate,(XPointer)&p); filter_event(d,e); return r; }
 Bool XCheckIfEvent(Display *d, XEvent *e, Bool (*predicate)(Display *,XEvent *,XPointer), XPointer arg)
-{ API(); Bool r = r_XCheckIfEvent(d,e,predicate,arg); if (r) filter_event(d,e); return r; }
+{ API(); EventPredicate p={predicate,arg}; Bool r = r_XCheckIfEvent(d,e,logical_predicate,(XPointer)&p); if (r) filter_event(d,e); return r; }
 
 #include "egl.inc"
 #include "quad.inc"
 
 #define WRAPPERS(X) X_API(X) \
  X(glXSwapBuffersMscOML) X(eglSwapBuffersWithDamageKHR) X(eglSwapBuffersWithDamageEXT) \
+ X(glDeleteTextures) X(glTexParameteri) X(glTexParameterf) X(glTexParameteriv) X(glTexParameterfv) X(glTexImage2D) X(glTexSubImage2D) \
  X(glMatrixMode) X(glAccum) X(glCopyPixels) X(glCopyTexImage2D) X(glCopyTexSubImage2D) \
  X(glXGetProcAddress) X(glXGetProcAddressARB) X(eglGetProcAddress) X(glXChooseVisual) X(glXGetConfig) \
  X(glXGetFBConfigs) X(glXChooseFBConfig) X(glXGetFBConfigAttrib) X(glXGetVisualFromFBConfig) X(glXCreateContext) \
