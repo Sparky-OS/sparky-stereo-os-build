@@ -25,6 +25,25 @@ Selecting the option at remaster time does not retroactively strip comments from
 
 This requirement does not impose a new coding convention or mandatory build step on upstream developers, other Sparky editions, or software a user subsequently builds independently. The release manifest distinguishes our rebuilt packages, transformed text payloads and unchanged third-party binaries; an unchanged artifact is never counted as transformed.
 
+## Provenance and layers
+
+**Where MR/HR comes from.** The policy applies Daniel's dual-code paradigm, published in Knowledge3D before this edition existed:
+- [Dual Code Paradigm: Human-Readable (HR) and Machine-Runtime (MR)](https://github.com/danielcamposramos/Knowledge3D/blob/main/docs/DUAL_CODE.md), first committed 28 August 2025 (7cde1d05);
+- [HR/MR Standard for Knowledge3D](https://github.com/danielcamposramos/Knowledge3D/blob/main/docs/HR_MR_STANDARD.md), 29 August 2025 (09e12ccf);
+- [PM-KR: Machine-Readable (MR) vs. Human-Readable (HR) Dual Versioning Paradigm](https://github.com/danielcamposramos/Knowledge3D/blob/main/docs/W3C/PM_KR_MR_HR_PARADIGM.md), 15 March 2026 (aa3d9c48), written for the W3C PM-KR Community Group; its section "The Problem: Comments as Runtime Waste" is the reason this policy exists.
+
+CGM contributes only its file convention, as a concept: one authored source; the build regenerates an MR file for the machine and an HR companion for people; the documentation comments move from MR into HR; nobody edits MR or HR by hand, every change goes to the source, and errors are traced back to the source through the same renderer. Nothing else of CGM belongs in this policy.
+
+**The layers (Daniel, 2026-10-14: "this apply to our vm code, partner - think about the layers").** Each layer gets its MR at its own stage, once, in the package that owns it; images are assembled from those packages and never swept again:
+1. Kernel and drivers (C): MR before compilation; run-time code is unchanged, so the gains are build time and source size.
+2. System runtime: init units, shell, Python, configuration; parsed at every start, so MR saves reading and parsing there.
+3. Desktop: QML/JS, desktop files, KConfig defaults; parsed at every login and program start.
+4. Programs and their data.
+5. The procedural VM: the RPN execution engine of the Knowledge3D specifications ([Three Brain System](https://github.com/danielcamposramos/Knowledge3D/blob/main/docs/vocabulary/THREE_BRAIN_SYSTEM_SPECIFICATION.md), "RPN Execution Engine (15-stack VM)") runs procedures as MR and renders HR for people; the same rule holds, and the VM never reads commentary.
+6. Images built from the packages: the ISO, VM images and bench roots inherit MR from their packages.
+
+**Measured per layer (Daniel, 2026-10-14: "I see imense potential on the lean code policy to make us the fastest OS - to measure").** Baseline before any change and the same measurements after, on the same machine: boot to desktop, cold start of QML-heavy programs, tool start-up, settings parse, package install time, session memory, ISO and installed size, build time per package. What moves and what does not are both reported.
+
 ## Representations
 
 | Representation | Purpose | Distribution |
