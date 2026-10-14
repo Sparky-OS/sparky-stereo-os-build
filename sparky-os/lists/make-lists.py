@@ -66,6 +66,16 @@ group('apps', "Applications beyond the KDE edition (Daniel's, deduplicated)", ap
     'handbrake',   # the video transcoder (Daniel, 2026-10-11: "it will be included, of course"); deb-multimedia's, stereo version planned
 ])
 
+# 1b. Film and visual effects: the studios' own open projects (Daniel, 2026-10-14: "follow those that have repos, orgs
+# and star the open initiatives - map and add to our to include in the distro"). Disney Animation (Ptex, Partio, SeExpr via
+# Krita's KSeExpr), Pixar (OpenUSD, OpenSubdiv) and the Academy Software Foundation (OpenEXR, OpenColorIO, OpenImageIO,
+# OpenVDB, OpenShadingLanguage, MaterialX, OpenTimelineIO, OpenRV, xSTUDIO). OpenRV first: RV, the industry's review
+# player, shows stereo (anaglyph, side by side, scanline, checker, quad-buffered).
+group('film', 'Film and visual-effects open stack', [
+    'openexr', 'openimageio-tools', 'opencolorio-tools', 'opensubdiv-tools', 'libopenvdb-tools',
+    'openrv', 'xstudio', 'openusd', 'materialx', 'opentimelineio', 'openshadinglanguage', 'ptex', 'partio',
+])
+
 # 2. Games: SteamOS-like, the chosen GameOver games, KDE's games, three well-known additions.
 group('games', 'Games', [
     'extremetuxracer', 'warzone2100', 'widelands', 'luanti', 'openarena', 'ioquake3',
