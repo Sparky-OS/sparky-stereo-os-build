@@ -30,7 +30,7 @@ Priority: optional
 Homepage: https://sparkylinux.org
 Description: Groups every desktop user needs, by default
   New users get games, dialout, plugdev, audio, video, bluetooth, netdev,
-  lpadmin, scanner, kvm, libvirt, render and sambashare, whether the installer,
+  lpadmin, scanner, kvm, render and sambashare, whether the installer,
   adduser or System Settings creates them. Groups that equal root or read every
   keystroke are refused.
 EOT

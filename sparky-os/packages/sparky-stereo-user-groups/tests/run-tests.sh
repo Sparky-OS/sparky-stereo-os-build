@@ -12,7 +12,7 @@ bad() { echo "FAIL  $*"; FAIL=$((FAIL + 1)); }
 eq() { if [[ $2 == "$3" ]]; then ok "$1"; else bad "$1: got [$2] want [$3]"; fi; }
 
 FORBIDDEN='root adm admin disk docker input kmem lxd operator podman shadow staff sys systemd-journal tty'
-WANTED='games dialout plugdev audio video bluetooth netdev lpadmin scanner kvm libvirt render sambashare'
+WANTED='games dialout plugdev audio video bluetooth netdev lpadmin scanner kvm render sambashare'
 admin_groups() { echo 'sudo'; }
 
 groups_of() { id -nG "$1" | tr ' ' '\n' | sort | paste -sd' '; }

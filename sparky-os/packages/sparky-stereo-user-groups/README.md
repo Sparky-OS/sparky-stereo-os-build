@@ -1,5 +1,5 @@
 sparky-stereo-user-groups
-Every desktop user gets the groups a desktop needs, without asking: games, dialout, plugdev, audio, video, bluetooth, netdev, lpadmin, scanner, kvm, libvirt, render and sambashare.
+Every desktop user gets the groups a desktop needs, without asking: games, dialout, plugdev, audio, video, bluetooth, netdev, lpadmin, scanner, kvm, render and sambashare.
 Daniel, 2026-10-10: "this is a pain all the time for users coming from windows, where they don't even know this type of thing exists".
 
 Copyright (C) 2026 Daniel Ramos (Capitain Jack), see copyright file.
@@ -47,7 +47,7 @@ Plain `useradd` (a root shell) is not covered: it is the low-level tool and the 
 The groups, and why
 -------------
 Each group is in the list only because a package the edition installs or recommends needs it.
-Where a group exists only when its package is installed (libvirt, sambashare, scanner, bluetooth, lpadmin), a new user is added when the group is there; adduser prints a warning for a group that does not exist yet and goes on.
+Where a group exists only when its package is installed (sambashare, scanner, bluetooth, lpadmin), a new user is added when the group is there; adduser prints a warning for a group that does not exist yet and goes on.
 
 | Group | What it grants | Needed by |
 |---|---|---|
@@ -60,13 +60,13 @@ Where a group exists only when its package is installed (libvirt, sambashare, sc
 | netdev | network settings without a password (NetworkManager's polkit rule `isInGroup("netdev")`) | NetworkManager |
 | lpadmin | adding and changing printers (CUPS `SystemGroup root lpadmin`) | cups, print-manager |
 | scanner | scanners (SANE's 60-libsane1.rules) | sane-utils, Skanpage |
-| kvm | /dev/kvm (udev's 50-udev-default.rules) | the stereo VM, Karton, virt-manager |
-| libvirt | the system libvirt (libvirt's polkit rule `isInGroup("libvirt")`) | virt-manager, the stereo VM |
+| kvm | /dev/kvm (udev's 50-udev-default.rules) | the stereo VM, Karton |
 | render | GPU render nodes /dev/dri/renderD* (udev's 50-udev-default.rules) | GPU compute (ROCm, OpenCL), Vulkan without a seat |
 | sambashare | the usershares directory of Samba (`install -d -m 1770 -g sambashare`, samba.postinst) | kdenetwork-filesharing: sharing a folder from Dolphin |
 
 Debian's meaning of each group is in base-passwd's users-and-groups document (/usr/share/doc/base-passwd/users-and-groups.html).
-libvirt and kvm let a person start virtual machines with the host's devices; Daniel listed them, they stay on the list and are flagged for his decision.
+libvirt is left out on purpose: its members can act as root through system VMs.
+kvm is kept for user-session VMs.
 
 Never added
 -------------
@@ -83,7 +83,7 @@ Nothing changes for them, on install or ever.
 Why membership and not pam_group
 -------------
 pam_group (/etc/security/group.conf) would give the groups only to logins on the seat.
-It was left out: polkit's `isInGroup`, CUPS's `SystemGroup` and Samba's directory modes read the account's membership in /etc/group, not the groups of a login process, so lpadmin, netdev, libvirt and sambashare would still say "permission denied" on a seat login.
+It was left out: polkit's `isInGroup`, CUPS's `SystemGroup` and Samba's directory modes read the account's membership in /etc/group, not the groups of a login process, so lpadmin, netdev and sambashare would still say "permission denied" on a seat login.
 The cost is that an SSH login of the same account has the same groups (tested), which is what a Debian installer does for its first user too.
 
 Tests
