@@ -17,7 +17,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
-VERSION=${VERSION:-20261013.1~sparky9~0}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
+VERSION=${VERSION:-20261014.5~sparky9~0}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
 WORK=$(mktemp -d "${TMPDIR:-/K3D/temp/sparky-os}/look-build.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 LNF=usr/share/plasma/look-and-feel
@@ -54,19 +54,23 @@ build() { # dir package
 # 1. The default look.
 D=$WORK/sparky-stereo-look
 T=$D/$LNF/org.sparkystereo.desktop
-mkdir -p "$T/contents" "$D/etc/xdg" "$D/usr/share/kglobalaccel"
+mkdir -p "$T/contents" "$D/etc/xdg" "$D/usr/share/kglobalaccel" "$D/usr/share/plasma/desktoptheme"
+# Sparky Stereo Oxygen: Oxygen's Plasma style with every background at 91 % alpha, foreground inherited from Oxygen
+cp -a "$HERE/default/desktoptheme/sparky-stereo-oxygen" "$D/usr/share/plasma/desktoptheme/"
 cp "$HERE/default/kglobalaccel/org.sparkystereo.systemmonitor.desktop" "$D/usr/share/kglobalaccel/"
 cp "$HERE/default/org.sparkystereo.desktop/metadata.json" "$T/"
 cp "$HERE/default/org.sparkystereo.desktop/contents/defaults" "$T/contents/"
 cp -a "$OXYGEN/contents/splash" "$OXYGEN/contents/previews" "$T/contents/"
 # Oxygen's Splash.qml animates a bottomRect that does not exist: our fixed copy (see upstream-patches/)
 cp "$HERE/default/splash/Splash.qml" "$T/contents/splash/Splash.qml"
-cp "$HERE/default/xdg/kdeglobals" "$HERE/default/xdg/kwinrc" "$HERE/default/xdg/kde-mimeapps.list" "$HERE/default/xdg/krunnerrc" "$D/etc/xdg/"
+cp "$HERE/default/xdg/kdeglobals" "$HERE/default/xdg/kwinrc" "$HERE/default/xdg/kde-mimeapps.list" "$HERE/default/xdg/krunnerrc" "$HERE/default/xdg/konsolerc" "$D/etc/xdg/"
 control "$D" sparky-stereo-look \
 	"plasma-theme-oxygen, oxygen-icon-theme, oxygencursors, kde-style-oxygen-qt6, kwin-decoration-oxygen, plasma-runners-addons (>= 4:6.7.4-1+stereo3d1), plasma-systemmonitor" \
 	"kde-style-oxygen-qt5" \
 	"Sparky Stereo OS default look: Oxygen dark" \
 	"The edition's default global theme: Oxygen, whole, in its dark colours:" \
+	"Plasma style (Sparky Stereo Oxygen: Oxygen's, with widget, panel, tooltip and" \
+	"dialog backgrounds at 91 % alpha, the background only, blur and contrast off)," \
 	"Plasma style, icons, cursor, splash, the Oxygen application style and the" \
 	"Oxygen window decoration. Also sets the default KWin effects: translucency" \
 	"with Daniel Ramos's values, glide and wobbly windows, and makes VLC Stereo the" \
@@ -75,12 +79,15 @@ control "$D" sparky-stereo-look \
 	"unit conversion remain available. Currency rates refresh only when converting a currency." \
 	"Web search and the online dictionary are off by default." \
 	"Ctrl+Shift+Esc opens System Monitor; existing shortcuts remain available."
-printf '%s\n' /etc/xdg/kdeglobals /etc/xdg/kwinrc /etc/xdg/kde-mimeapps.list /etc/xdg/krunnerrc >"$D/DEBIAN/conffiles"
+printf '%s\n' /etc/xdg/kdeglobals /etc/xdg/kwinrc /etc/xdg/kde-mimeapps.list /etc/xdg/krunnerrc /etc/xdg/konsolerc >"$D/DEBIAN/conffiles"
 cat >"$D/usr/share/doc/sparky-stereo-look/copyright" <<'EOF'
 Sparky Stereo OS default look.
 Theme definition and defaults: Copyright 2026 Daniel Ramos (Capitain Jack), GPL-2.0-or-later.
 Splash screen and previews: copied from KDE's Oxygen global theme (plasma-theme-oxygen),
 Copyright the Oxygen team, under its own licence (see /usr/share/doc/plasma-theme-oxygen/copyright).
+Sparky Stereo Oxygen Plasma style: derived from KDE's Oxygen Plasma style (plasma-theme-oxygen),
+Copyright The Oxygen Project, GPL; only its background SVGs are changed (91 % alpha), its
+foreground artwork is inherited; licence texts in /usr/share/plasma/desktoptheme/sparky-stereo-oxygen/.
 On Debian systems the GPL is in /usr/share/common-licenses/GPL-2.
 EOF
 build "$D" sparky-stereo-look
@@ -146,3 +153,22 @@ QPlatinum22p window decoration: Niels / Zinjanthr0pus, GPL-3.0
 Global theme definition: Copyright 2026 Daniel Ramos (Capitain Jack), GPL-3.0-or-later.
 EOF
 build "$D" sparky-stereo-look-qplatinum
+
+# 4. Kubabbar Glass, the classic look (Daniel's own; milestone 1 drawings, milestone 2 in progress).
+D=$WORK/sparky-stereo-look-kubabbar-glass
+mkdir -p "$D/usr/share" "$D/usr/share/doc/sparky-stereo-look-kubabbar-glass"
+cp -a "$HERE/kubabbar-glass/share/." "$D/usr/share/"
+cp "$HERE/kubabbar-glass/README.md" "$HERE/kubabbar-glass/ABOUT.md" "$D/usr/share/doc/sparky-stereo-look-kubabbar-glass/"
+control "$D" sparky-stereo-look-kubabbar-glass \
+	"sparky-stereo-look, kwin-style-aurorae" "" \
+	"Kubabbar Glass: the classic look, in silver and glass" \
+	"Kubabbar Glass is our own name: ku-babbar is the Sumerian word for silver, a nod" \
+	"to SparkyLinux's Mesopotamian release names and to the silver grey of the" \
+	"classic Mac OS 8 look, without using Apple's name. Glass is the edition's" \
+	"translucency: inactive windows, dialogs and widget backgrounds at 91 % alpha." \
+	"Original artwork: colour scheme, Plasma style, window decoration, wallpaper" \
+	"and global theme. Inspired by Niels van Mourik's Platinum and Zinjanthr0pus's" \
+	"QPlatinum, reusing none of their files."
+cp "$HERE/kubabbar-glass/copyright" "$D/usr/share/doc/sparky-stereo-look-kubabbar-glass/copyright"
+build "$D" sparky-stereo-look-kubabbar-glass
+

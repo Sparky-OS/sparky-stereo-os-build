@@ -69,7 +69,8 @@ Preserve the content of manuals, translations and normal program help. Configura
 
 **Where the HR copy of settings lives** (Daniel, 2026-10-14: "keep the config options at a HR copy that's not installed or is shipped at the official documentation place - alongside the debug/decompiler tool and how to use this").
 - The installed setting is the lean MR file. Its full HR copy carries every option, every explanation and the disabled examples.
-- The HR copy is not installed by default. It ships in the package's documentation package at `/usr/share/doc/<package>/hr/<the file's installed path>`, following Debian's place for documentation and examples.
+- The HR copy is not on the install ISO. It ships in the package's documentation package at `/usr/share/doc/<package>/hr/<the file's installed path>`, following Debian's place for documentation and examples, and it installs with the system's first update over the internet (Daniel: "the install iso don't ship them, but installs on first internet update", "(the docs)").
+  The mechanism is to be chosen and tested: for example, the installed meta-package gains the documentation packages as dependencies in its first online version, or a one-time update step pulls them. Either way the ISO stays lean and an online system gets the full documentation without a manual step.
 - It is also published at the edition's official documentation place, beside the source-location resolver (the "decompiler" that maps an MR line back to its HR source) and the resolver's manual: how to look up a line, how to regenerate the HR view of an installed file, and how to report a local edit.
 - Proposed for Daniel's confirmation: each lean file keeps exactly one comment line at its top that points to its HR copy and the online page. That is a retained comment whose recorded reason is that a person editing `/etc` can find the explanations.
 

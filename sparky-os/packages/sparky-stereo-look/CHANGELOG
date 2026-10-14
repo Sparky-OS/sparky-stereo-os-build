@@ -1,4 +1,36 @@
 -------------------------------------------------------------------------------
+  Version 20261014.5~sparky9~0 (2026-10-14)
+-------------------------------------------------------------------------------
+  * Widget backgrounds at 91 % alpha, the background only (Daniel: "apply the same opacit to widgets backgrounds, partner - only the background", "same as sunk windows"): the default Plasma style is now Sparky Stereo Oxygen, Oxygen's own with every widget, panel, tooltip and dialog background at 91 %, measured 232/255 in the compositor; Oxygen stays installable
+  * Blur and contrast are off by default ("it's not blurred - it's alpha channel")
+  * New: sparky-stereo-look-kubabbar-glass, Daniel's classic look, milestone 1 (colour scheme, Plasma style, window decoration, wallpaper, global theme); his preferred look as the default, GTK coverage and the 3D icons follow in milestone 2
+
+-------------------------------------------------------------------------------
+  Version 20261014.4~sparky9~0 (2026-10-14)
+-------------------------------------------------------------------------------
+  * The mouse wheel on a title bar rolls the window up and down (Daniel, 2026-10-14: "roll the mouse up on the bar - roll the window, roll it down on the same place - unroll it"): KWin's Shade/Unshade wheel action, the Mac OS 8 window shade; X11 windows roll today, Wayland windows when the edition's KWin gains Wayland shading (KDE bug 377162)
+
+-------------------------------------------------------------------------------
+  Version 20261014.3~sparky9~0 (2026-10-14)
+-------------------------------------------------------------------------------
+  * Konsole as Daniel sets it (2026-10-14: "take all my defaults"): the tab bar always shown at the top with its quick buttons, new tabs next to the current one, no status bar, closing all empty tabs without asking, and no warning when pasting a long text; window sizes stay each user's own
+
+-------------------------------------------------------------------------------
+  Version 20261014.2~sparky9~0 (2026-10-14)
+-------------------------------------------------------------------------------
+  * Konsole's split terminals follow the mouse too (/etc/xdg/konsolerc, KonsoleWindow FocusFollowsMouse): the terminal under the pointer takes the keyboard, no click needed
+  * Why focus follows the mouse, in windows since 20261013.1 and now inside programs (Daniel, 2026-10-14): fewer clicks and less mouse travel, so less repetitive strain injury (RSI, "LER" in Portuguese), and mice whose buttons last longer, so less e-waste
+  * Daniel expects it to help in VR and headset views too, where a click is harder than a look or a point; that is his theory, not yet tested
+  * Click to focus stays one setting away in System Settings, Window Management, Window Behaviour, and in Konsole's settings
+
+-------------------------------------------------------------------------------
+  Version 20261014.1~sparky9~0 (2026-10-14)
+-------------------------------------------------------------------------------
+  * Translucency on again: KWin 6 names the effect "translucency"; the old kwin4_effect_translucency keys left it off
+  * Inactive windows and dialogs at 91 % opacity, plain alpha with no blur, as on Daniel's own laptop: sunk windows and floating dialogs see the desktop through them
+  * Full-screen windows stay opaque, so a film or a game on one screen does not fade when the mouse moves to the other
+
+-------------------------------------------------------------------------------
   Version 20261013.1~sparky9~0 (2026-10-13)
 -------------------------------------------------------------------------------
   * Focus follows the mouse, raised automatically after 750 ms, with a 300 ms focus delay: Daniel's own settings as the edition's default
