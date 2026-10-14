@@ -1,0 +1,32 @@
+# Groups every new desktop user gets, however the account is made:
+# the installer's first user, adduser, and System Settings' Users page.
+# One group per line. Run sparky-stereo-user-groups apply after editing.
+# Groups that equal root or read every keystroke (docker, disk, input, shadow,
+# sudo and a few more) are refused.
+#
+# games       wheel and pedal tuning knobs of sim rigs (hid-fanatecff and friends), game score files
+# dialout     serial boards: Arduino, ESP32, USB serial adapters
+# plugdev     removable devices and cameras (gphoto2, usbmuxd)
+# audio       real-time audio devices (cpu_dma_latency, rtc0, hpet, see 99-sparky-audio.rules)
+# video       cameras, capture cards, TV tuners, framebuffers
+# bluetooth   the Bluetooth service on D-Bus
+# netdev      Wi-Fi and network settings without a password (NetworkManager rule)
+# lpadmin     add and change printers in CUPS
+# scanner     scanners (SANE)
+# kvm         /dev/kvm, for virtual machines
+# libvirt     system virtual machines in virt-manager and the stereo VM
+# render      GPU compute and render nodes (ROCm, OpenCL, Vulkan without a seat)
+# sambashare  share a folder from Dolphin
+games
+dialout
+plugdev
+audio
+video
+bluetooth
+netdev
+lpadmin
+scanner
+kvm
+libvirt
+render
+sambashare

@@ -1,0 +1,174 @@
+#!/bin/bash
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/14
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/14
+set -euo pipefail
+
+LIST=${SPARKY_USER_GROUPS_LIST:-/etc/sparky-stereo/user-groups}
+ADDUSER_CONF=${SPARKY_ADDUSER_CONF:-/etc/adduser.conf}
+CALAMARES_SHIPPED=${SPARKY_CALAMARES_SHIPPED:-/usr/share/calamares/modules/users.conf}
+CALAMARES_LOCAL=${SPARKY_CALAMARES_LOCAL:-/etc/calamares/modules/users.conf}
+BEGIN='# BEGIN sparky-stereo-user-groups (managed; edit /etc/sparky-stereo/user-groups)'
+END='# END sparky-stereo-user-groups'
+MARK='# Managed by sparky-stereo-user-groups from /usr/share/calamares/modules/users.conf; edit /etc/sparky-stereo/user-groups'
+
+# Groups equal to root, or able to read every keystroke or every file.
+FORBIDDEN='root adm admin disk docker input kmem lxd operator podman shadow staff sudo sys systemd-journal tty wheel'
+
+usage() {
+	cat <<TXT
+Usage: sparky-stereo-user-groups COMMAND
+  apply    write the group list into adduser's configuration and the installer's
+  remove   take it out again
+  check    refuse the list when it names a root-equivalent group
+  status   show the groups and what each way of creating a user will add
+  propose  show what existing users lack; changes nothing
+TXT
+}
+
+die() { echo "sparky-stereo-user-groups: $*" >&2; exit 1; }
+
+groups_wanted() {
+	[[ -r $LIST ]] || die "cannot read $LIST"
+	local line g
+	while read -r line; do
+		line=${line%%#*}
+		for g in $line; do
+			[[ $g =~ ^[a-z_][a-z0-9_-]*$ ]] || die "not a group name: $g"
+			echo "$g"
+		done
+	done <"$LIST" | awk '!seen[$0]++'
+}
+
+check_list() {
+	local g f bad=()
+	while read -r g; do
+		for f in $FORBIDDEN; do
+			[[ $g == "$f" ]] && bad+=("$g")
+		done
+		if [[ $(getent group "$g" | cut -d: -f3) == 0 ]]; then
+			bad+=("$g")
+		fi
+	done < <(groups_wanted)
+	if ((${#bad[@]})); then
+		echo "sparky-stereo-user-groups: refused, these groups equal root or read every keystroke: ${bad[*]}" >&2
+		return 2
+	fi
+}
+
+strip_block() {
+	awk -v b="$BEGIN" -v e="$END" '$0 == b {skip = 1; next} $0 == e {skip = 0; next} !skip' "$1"
+}
+
+adduser_base() {
+	local base="" v
+	while IFS= read -r v; do base=$v; done < <(strip_block "$ADDUSER_CONF" | sed -n 's/^[[:space:]]*EXTRA_GROUPS=["'\'']\{0,1\}\([^"'\'']*\)["'\'']\{0,1\}[[:space:]]*$/\1/p')
+	echo "$base"
+}
+
+write_atomic() {
+	local target=$1 tmp
+	tmp=$(mktemp "$target.XXXXXX")
+	cat >"$tmp"
+	chmod --reference="$target" "$tmp" 2>/dev/null || chmod 644 "$tmp"
+	mv "$tmp" "$target"
+}
+
+apply_adduser() {
+	[[ -f $ADDUSER_CONF ]] || { echo "sparky-stereo-user-groups: $ADDUSER_CONF is missing, adduser is not set up" >&2; return 0; }
+	local merged
+	merged=$( { adduser_base | tr ' ' '\n'; groups_wanted; } | awk 'NF && !seen[$0]++' | paste -sd' ')
+	{
+		strip_block "$ADDUSER_CONF"
+		echo "$BEGIN"
+		echo "EXTRA_GROUPS=\"$merged\""
+		echo "ADD_EXTRA_GROUPS=1"
+		echo "$END"
+	} | write_atomic "$ADDUSER_CONF"
+}
+
+remove_adduser() {
+	[[ -f $ADDUSER_CONF ]] || return 0
+	strip_block "$ADDUSER_CONF" | write_atomic "$ADDUSER_CONF"
+}
+
+calamares_entries() {
+	local g
+	while read -r g; do
+		grep -Eq "^[[:space:]]*-[[:space:]]+(name:[[:space:]]*)?$g[[:space:]]*$" "$CALAMARES_SHIPPED" && continue
+		printf '    - name: %s\n      must_exist: false\n      system: true\n' "$g"
+	done < <(groups_wanted)
+}
+
+apply_calamares() {
+	[[ -f $CALAMARES_SHIPPED ]] || { remove_calamares; return 0; }
+	if [[ -f $CALAMARES_LOCAL ]] && ! grep -qxF "$MARK" "$CALAMARES_LOCAL"; then
+		echo "sparky-stereo-user-groups: $CALAMARES_LOCAL is yours, the installer's groups are left alone" >&2
+		return 0
+	fi
+	grep -q '^defaultGroups:' "$CALAMARES_SHIPPED" || die "no defaultGroups in $CALAMARES_SHIPPED"
+	local entries
+	entries=$(calamares_entries)
+	mkdir -p "$(dirname "$CALAMARES_LOCAL")"
+	{
+		echo "$MARK"
+		ADD=$entries awk '
+			BEGIN {add = ENVIRON["ADD"]}
+			/^defaultGroups:/ {inlist = 1; print; next}
+			inlist && /^[^[:space:]#]/ {if (add != "") print add; inlist = 0}
+			{print}
+			END {if (inlist && add != "") print add}
+		' "$CALAMARES_SHIPPED"
+	} >"$CALAMARES_LOCAL.new"
+	chmod 644 "$CALAMARES_LOCAL.new"
+	mv "$CALAMARES_LOCAL.new" "$CALAMARES_LOCAL"
+}
+
+remove_calamares() {
+	if [[ -f $CALAMARES_LOCAL ]] && grep -qxF "$MARK" "$CALAMARES_LOCAL"; then
+		rm -f "$CALAMARES_LOCAL"
+	fi
+}
+
+local_users() {
+	getent passwd | awk -F: '$3 >= 1000 && $3 < 60000 && $7 !~ /(nologin|false)$/ {print $1}'
+}
+
+propose() {
+	local u g missing any=0
+	while read -r u; do
+		missing=()
+		while read -r g; do
+			getent group "$g" >/dev/null || continue
+			id -nG "$u" | tr ' ' '\n' | grep -qx "$g" || missing+=("$g")
+		done < <(groups_wanted)
+		if ((${#missing[@]})); then
+			any=1
+			echo "usermod -aG $(IFS=,; echo "${missing[*]}") $u"
+		fi
+	done < <(local_users)
+	((any)) || echo "Every local user already has the groups."
+}
+
+status() {
+	echo "Groups (from $LIST):"
+	local g
+	while read -r g; do
+		if getent group "$g" >/dev/null; then echo "  $g"; else echo "  $g (not on this system yet; joins when its package arrives)"; fi
+	done < <(groups_wanted)
+	echo "adduser and System Settings: $(sed -n 's/^EXTRA_GROUPS=/EXTRA_GROUPS=/p;s/^ADD_EXTRA_GROUPS=/ADD_EXTRA_GROUPS=/p' "$ADDUSER_CONF" | tail -2 | paste -sd' ')"
+	if [[ -f $CALAMARES_LOCAL ]] && grep -qxF "$MARK" "$CALAMARES_LOCAL"; then
+		echo "installer: $CALAMARES_LOCAL"
+	else
+		echo "installer: not set"
+	fi
+}
+
+case ${1:-} in
+	apply) check_list; apply_adduser; apply_calamares ;;
+	remove) remove_adduser; remove_calamares ;;
+	check) check_list ;;
+	status) status ;;
+	propose) propose ;;
+	*) usage; exit 1 ;;
+esac
