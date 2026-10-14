@@ -67,6 +67,12 @@ Retain copyright, attribution and licence material in the forms required by each
 
 Preserve the content of manuals, translations and normal program help. Configuration explanations can move out of the active settings into that documentation; their usefulness is not a reason to exempt configuration comments from projection. Ordinary documentation is distinct from syntactic comments embedded in its source or shipped assets. [Debian documentation and copyright policy](https://www.debian.org/doc/debian-policy/ch-docs.html).
 
+**Where the HR copy of settings lives** (Daniel, 2026-10-14: "keep the config options at a HR copy that's not installed or is shipped at the official documentation place - alongside the debug/decompiler tool and how to use this").
+- The installed setting is the lean MR file. Its full HR copy carries every option, every explanation and the disabled examples.
+- The HR copy is not installed by default. It ships in the package's documentation package at `/usr/share/doc/<package>/hr/<the file's installed path>`, following Debian's place for documentation and examples.
+- It is also published at the edition's official documentation place, beside the source-location resolver (the "decompiler" that maps an MR line back to its HR source) and the resolver's manual: how to look up a line, how to regenerate the HR view of an installed file, and how to report a local edit.
+- Proposed for Daniel's confirmation: each lean file keeps exactly one comment line at its top that points to its HR copy and the online page. That is a retained comment whose recorded reason is that a person editing `/etc` can find the explanations.
+
 There is no general Linux rule requiring explanatory comments in installed settings. Debian's configuration rules address location, ownership and preservation of local changes, and do not impose blanket comment retention. Our edition can choose lean defaults while keeping those update semantics. Every retained comment must have a specific semantic or licence reason in the coverage manifest; an unqualified adapter is recorded as unfinished work, not a permanent exemption. [Debian configuration-file policy](https://www.debian.org/doc/debian-policy/ch-files.html#configuration-files).
 
 ## Cover the whole stack through the appropriate build stage
