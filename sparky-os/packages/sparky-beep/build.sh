@@ -3,26 +3,73 @@
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/14
 # Copyright 2026 under the GNU GPL3 License
 # Builds sparky-beep, Daniel's and Paweł's PC speaker notifier for the Server Edition
-# (github.com/Sparky-OS/sparky-beep), as a Debian source and binary package in a fresh
-# debian:testing container, from a clone given as SRC (default: the Sparky-OS clone in
-# /K3D/GitHub). The package keeps the program's own debian/ (dh 13, 3.0 (native)); this
-# script only provides the Forky build room, 4 threads, and copies the results to OUT.
-# Last update 2026/10/14
+# (github.com/Sparky-OS/sparky-beep), the way SparkyLinux packages its own tools: the
+# install.sh layout laid into a DEBIAN tree (control in deb-package-builder's field order,
+# md5sums, copyright only under /usr/share/doc), dpkg-deb -b, root owner, and beside it
+# the source stub of the repository's deb-src (3.0 (quilt): the git tree as .orig.tar.xz,
+# debian/ as .debian.tar.xz). Units go to /usr/lib/systemd/system (Forky's merged /usr).
+# Run it inside a debian:testing container with dpkg-dev (dpkg-deb, dpkg-source, xz).
+# Last update 2026/10/15
 set -euo pipefail
 SRC=${SRC:-/K3D/GitHub/sparky-beep}
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
-IMAGE=${IMAGE:-debian:testing}
-VERSION=$(sed -n '1s/^sparky-beep (\([^)]*\)).*/\1/p' "$SRC/debian/changelog")
-W=$(mktemp -d /K3D/temp/sparky-os/beep-build.XXXXXX)
-trap 'chmod -R u+w "$W"; rm -rf "$W"' EXIT
-mkdir -p "$W/sparky-beep-$VERSION"
-tar -C "$SRC" --exclude=.git --exclude=bin/tbeep -cf - . | tar -C "$W/sparky-beep-$VERSION" -xf -
-docker run --rm --platform linux/amd64 --cpus 4 --user "$(id -u):$(id -g)" -e HOME="$W" -e DEBIAN_FRONTEND=noninteractive \
-	-e DEB_BUILD_OPTIONS=parallel=4 -v "$W:$W" -w "$W/sparky-beep-$VERSION" "$IMAGE" bash -c '
-	apt-get update -qq >/dev/null 2>&1 || true
-	# a user cannot apt-get install; the image must carry debhelper, dpkg-dev and gcc (see README.md)
-	dpkg-buildpackage -us -uc --no-sign -j4'
+PKG=sparky-beep
+VERSION=$(sed -n '2s/^  Version \([^ ]*\) .*/\1/p' "$SRC/CHANGELOG")
+[ -n "$VERSION" ] || { echo "no version in $SRC/CHANGELOG"; exit 1; }
+W=$(mktemp -d "${TMPDIR:-/K3D/temp/sparky-os}/beep-build.XXXXXX")
+trap 'rm -rf "$W"' EXIT
+D=$W/$PKG
+S=$D/usr/share/$PKG
+mkdir -p "$D/DEBIAN" "$D/usr/bin" "$D/etc/init.d" "$D/etc/$PKG" "$D/usr/lib/systemd/system" \
+	"$S/lib" "$S/locale" "$S/compositions" "$D/usr/share/doc/$PKG"
+
+# the install.sh layout
+install -m 755 "$SRC"/bin/sparky-beep-* "$D/usr/bin/"
+# init.d/beep_example_composer is an example for the docs, not a service of the package
+for f in "$SRC"/init.d/*; do
+	case "$f" in *beep_example_composer) ;; *) install -m 755 "$f" "$D/etc/init.d/" ;; esac
+done
+install -m 644 "$SRC"/system/*.service "$D/usr/lib/systemd/system/"
+install -m 644 "$SRC"/lib/*.sh "$S/lib/"
+install -m 644 "$SRC"/locale/*.lang "$SRC"/locale/i18n.sh "$S/locale/"
+install -m 644 "$SRC"/compositions/*.beepmusic "$S/compositions/"
+install -m 644 "$SRC/config/beep.conf" "$D/etc/$PKG/beep.conf"
+install -m 644 "$SRC/copyright" "$D/usr/share/doc/$PKG/copyright"
+for s in preinst postinst prerm postrm; do
+	[ -f "$SRC/debian/$s" ] && install -m 755 "$SRC/debian/$s" "$D/DEBIAN/$s"
+done
+echo "/etc/$PKG/beep.conf" >"$D/DEBIAN/conffiles"
+
+SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
+cat >"$D/DEBIAN/control" <<EOC
+Package: $PKG
+Version: $VERSION
+Architecture: all
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Installed-Size: $SIZE
+Depends: apt, bash, bc, beep, coreutils, grep, sed, systemd
+Recommends: whiptail | dialog, yad | zenity
+Suggests: netdata, openssh-server, samba, webmin
+Section: System
+Priority: optional
+Homepage: https://sparkylinux.org
+Description: Sparky Beep
+  Provides beep support for a few services of server edition: the PC speaker
+  plays a tune when ssh, samba, netdata or webmin start, stop or restart.
+  With a musical composer (sparky-beep-compose), a player and configuration
+  tools in text and graphical mode, in 26 languages.
+EOC
+(cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort |
+	grep -v -x -F -f <(sed 's|^/||' DEBIAN/conffiles) | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT" "$OUT/source"
-cp "$W"/sparky-beep_"$VERSION"_amd64.deb "$OUT/"
-cp "$W"/sparky-beep_"$VERSION".dsc "$W"/sparky-beep_"$VERSION".tar.xz "$OUT/source/"
-echo "built $OUT/sparky-beep_${VERSION}_amd64.deb (source in $OUT/source)"
+dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${PKG}_${VERSION}_all.deb" >/dev/null
+echo "built $OUT/${PKG}_${VERSION}_all.deb"
+
+# the source stub: the git tree without debian/ as orig, debian/ from the tree
+mkdir -p "$W/src/$PKG-$VERSION"
+tar -C "$SRC" --exclude=.git --exclude=debian -cf - . | tar -C "$W/src/$PKG-$VERSION" -xf -
+tar -C "$W/src" -cJf "$W/src/${PKG}_${VERSION}.orig.tar.xz" "$PKG-$VERSION"
+cp -a "$SRC/debian" "$W/src/$PKG-$VERSION/debian"
+(cd "$W/src" && dpkg-source -b "$PKG-$VERSION" >/dev/null)
+cp "$W/src/${PKG}_${VERSION}-1.dsc" "$W/src/${PKG}_${VERSION}.orig.tar.xz" "$W/src/${PKG}_${VERSION}-1.debian.tar.xz" "$OUT/source/"
+echo "source $OUT/source/${PKG}_${VERSION}-1.dsc"

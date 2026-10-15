@@ -11,16 +11,20 @@ You should have received a copy of the GNU General Public License along with thi
 
 Source:
 -------------
-https://github.com/Sparky-OS/sparky-beep (the program, its debian/ and its tests)
+https://github.com/Sparky-OS/sparky-beep (the program, its install.sh layout, its debian/ stub and its tests)
 
 Dependencies:
 -------------
+apt
 bash
 bc
 beep
+coreutils
+grep
+sed
 systemd
 
 Build:
 -------------
-IMAGE=<debian:testing image with debhelper, dpkg-dev, gcc> SRC=<clone> ./build.sh   (the package lands in /K3D/temp/sparky-os/repo, the source package in repo/source)
-Tests: bats tests/ in the clone (237 tests, debian:testing, 2026-10-14)
+SRC=<clone> OUT=<folder> ./build.sh   inside a debian:testing container with dpkg-dev (the .deb lands in OUT, the source stub in OUT/source)
+Tests: bats tests/ in the clone (210 tests, debian:testing, 2026-10-15)
