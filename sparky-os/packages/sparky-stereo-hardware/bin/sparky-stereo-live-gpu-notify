@@ -1,0 +1,29 @@
+#!/bin/bash
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/15
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/15
+# Live sessions only: tells the person which driver runs their NVIDIA graphics, and why.
+SHARE=/usr/share/sparky/sparky-stereo-hardware
+[ -f /run/sparky-stereo-live-gpu/choice ] || exit 0
+read -r driver reason _ < /run/sparky-stereo-live-gpu/choice
+[ "$driver" = none ] && exit 0
+source "$SHARE/en"
+locale_code=$(sed -nE 's/^LANG=["\x27]?([a-z]{2}_[A-Z]{2})(\.[^"\x27]*)?["\x27]?$/\1/p' /etc/default/locale 2>/dev/null || true)
+case "$locale_code" in
+	pl_PL) source "$SHARE/pl" ;;
+	pt_BR) source "$SHARE/pt_BR" ;;
+	zh_CN) source "$SHARE/zh_CN" ;;
+	zh_TW) source "$SHARE/zh_TW" ;;
+	fr_*) source "$SHARE/fr" ;;
+	de_*) source "$SHARE/de" ;;
+	ja_*) source "$SHARE/ja" ;;
+	ko_*) source "$SHARE/ko" ;;
+esac
+case "$driver $reason" in
+	"nvidia supported") text=$LOCAL21 ;;
+	"nouveau older") text=$LOCAL22 ;;
+	"nouveau unsigned") text=$LOCAL23 ;;
+	"nouveau kernel") text=$LOCAL24 ;;
+	*) text=$LOCAL25 ;;
+esac
+exec notify-send --app-name="$LOCAL1" --icon=video-display --expire-time=30000 "$LOCAL20" "$text"

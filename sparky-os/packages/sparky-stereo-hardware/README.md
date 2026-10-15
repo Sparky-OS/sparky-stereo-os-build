@@ -20,6 +20,7 @@ grep
 isenkram-cli
 kmod
 laptop-detect
+libnotify-bin
 lm-sensors
 nvidia-detect
 pciutils

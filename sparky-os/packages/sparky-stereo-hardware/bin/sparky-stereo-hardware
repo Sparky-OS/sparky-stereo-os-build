@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/10
+# Last update 2026/10/15
 set -euo pipefail
 if ((EUID != 0)); then echo 'Run as root (use the Hardware Setup menu entry).'; exit 1; fi
 export LC_ALL=C.UTF-8
@@ -109,7 +109,12 @@ if ! $auto; then
 	case "$locale_code" in
 		pl_PL) source "$SHARE/pl" ;;
 		pt_BR) source "$SHARE/pt_BR" ;;
+		zh_CN) source "$SHARE/zh_CN" ;;
+		zh_TW) source "$SHARE/zh_TW" ;;
 		fr_*) source "$SHARE/fr" ;;
+		de_*) source "$SHARE/de" ;;
+		ja_*) source "$SHARE/ja" ;;
+		ko_*) source "$SHARE/ko" ;;
 	esac
 	yad --text-info --title="$LOCAL1" --filename="$WORK/plan" --width=760 --height=500 --button="$LOCAL2:1" --button="$LOCAL3:0" || exit 0
 	# The child owns the execution lock; release it before launching the visible terminal.

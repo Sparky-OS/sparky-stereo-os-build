@@ -1,0 +1,21 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/15
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/15
+# Live sessions only: chooses the edition's NVIDIA driver or nouveau before udev loads either.
+# The boot option sparky.gpu=nouveau or sparky.gpu=nvidia overrides the choice.
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case $1 in prereqs) prereqs; exit 0 ;; esac
+C=/conf/sparky-stereo-live-gpu
+grep -qw 'boot=live' /proc/cmdline || exit 0
+[ -f $C/live-gpu.sh ] || exit 0
+. $C/live-gpu.sh
+[ -d /sys/firmware/efi/efivars ] && ! [ -e /sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c ] &&
+	mount -t efivarfs efivarfs /sys/firmware/efi/efivars 2>/dev/null
+sb=$(live_gpu_secureboot /sys)
+choice=$(live_gpu_decide /sys $C "$sb" "$(cat /proc/cmdline)")
+mkdir -p /run/sparky-stereo-live-gpu
+echo "$choice $sb" > /run/sparky-stereo-live-gpu/choice
+live_gpu_apply "${choice%% *}" ""
+exit 0

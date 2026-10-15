@@ -1,0 +1,14 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/15
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/15
+# Live sessions only: the choice made in init-top goes into the live root.
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case $1 in prereqs) prereqs; exit 0 ;; esac
+C=/conf/sparky-stereo-live-gpu
+[ -f /run/sparky-stereo-live-gpu/choice ] && [ -f $C/live-gpu.sh ] || exit 0
+. $C/live-gpu.sh
+choice=$(cat /run/sparky-stereo-live-gpu/choice)
+live_gpu_apply "${choice%% *}" "${rootmnt}"
+exit 0
