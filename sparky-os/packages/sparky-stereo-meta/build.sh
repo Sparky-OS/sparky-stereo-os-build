@@ -20,38 +20,6 @@ W=$(mktemp -d "$BUILD_ROOT/meta-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 
 PKGS=$(python3 "$HERE/../../lists/make-meta.py" --list)
-for PKG in $PKGS; do
-	mkdir -p "$W/$PKG/DEBIAN" "$W/$PKG/usr/share/doc/$PKG"
-	cat >"$W/$PKG/usr/share/doc/$PKG/copyright" <<'EOT'
-Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux (https://sparkylinux.org, by Paweł "pavroo" Pijanowski).
-
-Upstream Author(s):
-    Paweł "pavroo" Pijanowski <pavroo@onet.eu>
-    Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
-
-Files: *
-    Copyright (C) 2026 Paweł "pavroo" Pijanowski, Daniel Ramos (Capitain Jack)
-    License: GPL-3
-
-License:
-
-    This package is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 3 of the License, or
-    (at your option) any later version.
-
-    This package is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this package; if not, see <http://www.gnu.org/licenses/>.
-
-On Debian systems, the complete text of the GNU General
-Public License can be found in `/usr/share/common-licenses/GPL-3'.
-EOT
-done
 python3 "$HERE/../../lists/make-meta.py" "$VERSION" "$W"
 mkdir -p "$OUT"
 for PKG in $PKGS; do

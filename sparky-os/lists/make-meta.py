@@ -9,7 +9,8 @@
 # Never listed: hardware-found.list (the hardware setup installs those per machine), aptus.list
 # and base-remove.list (not installed), and emulation-3d.list (emulators install from APTus
 # Stereo AppCenter, never from the ISO; prepack.sh --final purges them).
-# Last update 2026/10/07: role tasks task-sparky-stereo-<role> (and task-sparky-<role> for the
+# Last update 2026/10/14: each package gets its copyright file here (build.sh no longer writes it).
+# Earlier update 2026/10/07: role tasks task-sparky-stereo-<role> (and task-sparky-<role> for the
 # 2D programs of science and education), sparky-stereo-gaming transitional, sparky-stereo-tasks for tasksel
 import os, re, subprocess, sys
 
@@ -57,6 +58,36 @@ def flavour_image(flavour):
     return n if n in RV and 'linux-headers-' + n[len('linux-image-'):] in RV else None
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# Every meta-package carries this copyright file, so a package is never empty and the
+# md5sums of provenance.sh have files to sum.
+COPYRIGHT = '''Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux (https://sparkylinux.org, by Paweł "pavroo" Pijanowski).
+
+Upstream Author(s):
+    Paweł "pavroo" Pijanowski <pavroo@onet.eu>
+    Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+
+Files: *
+    Copyright (C) 2026 Paweł "pavroo" Pijanowski, Daniel Ramos (Capitain Jack)
+    License: GPL-3
+
+License:
+
+    This package is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 3 of the License, or
+    (at your option) any later version.
+
+    This package is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this package; if not, see <http://www.gnu.org/licenses/>.
+
+On Debian systems, the complete text of the GNU General
+Public License can be found in `/usr/share/common-licenses/GPL-3'.
+'''
 MAINT = 'Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>'
 
 def lst(name):
@@ -260,6 +291,9 @@ def main():
         rec = sorted(set(rec) - set(dep))
         d = os.path.join(out, pkg)
         os.makedirs(os.path.join(d, 'DEBIAN'), exist_ok=True)
+        doc = os.path.join(d, 'usr', 'share', 'doc', pkg)
+        os.makedirs(doc, exist_ok=True)
+        open(os.path.join(doc, 'copyright'), 'w').write(COPYRIGHT)
         size = subprocess.run(['du', '-sk', '--exclude=DEBIAN', d], capture_output=True, text=True).stdout.split()[0]
         f = [('Package', pkg), ('Version', v), ('Architecture', 'all'), ('Maintainer', MAINT),
              ('Installed-Size', size)]
