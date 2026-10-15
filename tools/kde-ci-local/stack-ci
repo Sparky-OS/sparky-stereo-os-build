@@ -9,7 +9,8 @@ prepare resolves the members' commits on the remote (git ls-remote), computes th
 member that is needed gets its prefix: downloaded from the registry when a package of that key
 exists, else built from source with KDE's own run-ci-build.py through stack-run-ci-build.  The
 members are then composed into one folder (STACK_CI_OUT), the KDE_CI_STACK_PREFIX of the job.
-publish uploads the prefixes built in this job to the registry.
+publish uploads the prefixes built in this job to the registry; when the registry answers 403 (invent did for every
+project on 2026-10-13) it says so and ends without an error, as prepare already treats a 403 as a missing package.
 
 Environment:
   STACK_CI_GIT_BASE   where the members' repositories are (default https://invent.kde.org/danielcamposramos)
@@ -246,7 +247,14 @@ def publish(args):
         req = urllib.request.Request(f"{registry(stack)}/{e}/prefix.tar.xz", data=open(tar, "rb").read(), method="PUT",
                                      headers={"JOB-TOKEN": token})
         t = time.time()
-        urllib.request.urlopen(req, timeout=600).read()
+        try:
+            urllib.request.urlopen(req, timeout=600).read()
+        except urllib.error.HTTPError as err:
+            if err.code != 403:
+                raise
+            say(f"registry answered 403 for {e}; publish skipped (later jobs build the members from source)")
+            os.remove(tar)
+            return
         say(f"published {e}: {os.path.getsize(tar) / 2**20:.1f} MiB (packed {packed:.0f}s, uploaded {time.time() - t:.0f}s)")
         os.remove(tar)
 
