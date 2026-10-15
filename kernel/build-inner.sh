@@ -67,7 +67,7 @@ df -Pk /work | awk 'NR==2{printf "   free after:  %d GB\n", $4/1048576}'
 REL=$(cat include/config/kernel.release)
 [ "$REL" = "$RELEASE" ] || fail "kernel release is $REL, expected $RELEASE"
 
-echo "== headers package: add the BTF-only vmlinux and .config (as Debian's linux-headers do)"
+echo "== headers package: add the BTF-only vmlinux, .config and the header_postinst.d hooks (as Debian's linux-headers do)"
 H=$(ls /work/linux-headers-"${RELEASE}"_*_amd64.deb)
 rm -rf /work/hdr; dpkg-deb -R "$H" /work/hdr
 D=/work/hdr/usr/src/linux-headers-$RELEASE
@@ -75,6 +75,8 @@ cp .config "$D/.config"
 objcopy -j .BTF -j .BTF_ids vmlinux "$D/vmlinux"
 chmod 644 "$D/vmlinux" "$D/.config"
 readelf -S -W "$D/vmlinux" | grep -q ' \.BTF ' || fail "no .BTF in the headers' vmlinux"
+sh /kernel/headers-postinst.sh "$RELEASE" > /work/hdr/DEBIAN/postinst
+chmod 755 /work/hdr/DEBIAN/postinst
 (cd /work/hdr && find . -type f ! -path './DEBIAN/*' -exec md5sum {} + | sed 's| \./| |' > DEBIAN/md5sums)
 sz=$(du -sk /work/hdr --exclude=DEBIAN | cut -f1)
 sed -i "s/^Installed-Size:.*/Installed-Size: $sz/" /work/hdr/DEBIAN/control
@@ -92,6 +94,7 @@ m=$(dpkg-deb -c "$I" | awk '{print $6}' | grep '\.ko\.xz$' | head -1)
 dpkg-deb --fsys-tarfile "$I" | tar -xO "$m" | xz -dc | tail -c 28 | grep -q '~Module signature appended~' || fail "module $m is not signed"
 dpkg-deb -c "$H" | grep -q "usr/src/linux-headers-$RELEASE/Module.symvers" || fail "no Module.symvers in the headers"
 dpkg-deb -c "$H" | grep -q "usr/src/linux-headers-$RELEASE/vmlinux" || fail "no vmlinux in the headers"
+dpkg-deb --ctrl-tarfile "$H" | tar -xO ./postinst | grep -q 'header_postinst.d' || fail "the headers package does not run the header_postinst.d hooks"
 
 # the key that signed the modules must not outlive the build
 for k in certs/signing_key.pem certs/signing_key.x509 certs/x509.genkey; do [ -f "$k" ] && shred -u "$k" 2>/dev/null || true; done
