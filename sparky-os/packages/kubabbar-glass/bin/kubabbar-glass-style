@@ -1,0 +1,56 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-only
+# Created by Daniel Ramos (Capitain Jack) 2026/10/14
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/14
+# Choose the application style of Kubabbar Glass: Breeze (default), Fusion, Kvantum or Oxygen, all in the look's palette.
+set -eu
+
+dir=/usr/share/sparky/kubabbar-glass-style
+[ -d "$dir" ] || dir=$(dirname "$0")/../lang
+code=${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}
+[ -n "$code" ] || code=$(sed -n 's/^LANG=//p' /etc/default/locale 2>/dev/null | head -n 1 | tr -d '"')
+code=${code%%.*}
+case "$code" in
+	zh_HK|zh_MO) code=zh_TW ;;
+	zh_SG) code=zh_CN ;;
+esac
+for try in "$code" "${code%%_*}" en; do
+	if [ -f "$dir/$try" ]; then . "$dir/$try"; break; fi
+done
+
+msg() {
+	case "$1" in
+		head) echo "$LOCAL1" ;;
+		breeze) echo "$LOCAL2" ;;
+		fusion) echo "$LOCAL3" ;;
+		kvantum) echo "$LOCAL4" ;;
+		oxygen) echo "$LOCAL5" ;;
+		done) echo "$LOCAL6" ;;
+		unknown) echo "$LOCAL7" ;;
+	esac
+}
+
+usage() {
+	msg head
+	for style in breeze fusion kvantum oxygen; do
+		printf '  %-8s %s\n' "$style" "$(msg "$style")"
+	done
+}
+
+[ $# -eq 1 ] || { usage; exit 0; }
+case "$1" in
+	breeze) value=Breeze ;;
+	fusion) value=Fusion ;;
+	kvantum) value=kvantum ;;
+	oxygen) value=Oxygen ;;
+	*) printf "$(msg unknown)\n" "$1" >&2; usage >&2; exit 2 ;;
+esac
+config=${XDG_CONFIG_HOME:-$HOME/.config}
+if [ "$value" = kvantum ]; then
+	mkdir -p "$config/Kvantum"
+	kwriteconfig6 --file "$config/Kvantum/kvantum.kvconfig" --group General --key theme KubabbarGlass
+fi
+kwriteconfig6 --file kdeglobals --group KDE --key widgetStyle "$value"
+dbus-send --session --type=signal /KGlobalSettings org.kde.KGlobalSettings.notifyChange int32:2 int32:0 2>/dev/null || true
+printf "$(msg done)\n" "$1"

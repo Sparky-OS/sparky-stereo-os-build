@@ -1,0 +1,30 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-only
+# Make GTK 3 and GTK 4 programs follow the active KDE look.
+# The KDE colour scheme names the GTK theme; kde-gtk-config keeps its colours in step, this script picks the theme.
+set -eu
+scheme=$(kreadconfig6 --file kdeglobals --group General --key ColorScheme 2>/dev/null || true)
+dark=false
+case "$scheme" in
+	kubabbar-glass) theme=Kubabbar-Glass ;;
+	OxygenDark) theme=Sparky-Stereo-Oxygen; dark=true ;;
+	*Dark*) theme=Breeze-Dark; dark=true ;;
+	*) theme=Breeze ;;
+esac
+config=${XDG_CONFIG_HOME:-$HOME/.config}
+for version in 3.0 4.0; do
+	mkdir -p "$config/gtk-$version"
+	file=$config/gtk-$version/settings.ini
+	kwriteconfig6 --file "$file" --group Settings --key gtk-theme-name "$theme"
+	kwriteconfig6 --file "$file" --group Settings --key gtk-application-prefer-dark-theme "$dark"
+done
+if command -v gsettings >/dev/null 2>&1; then
+	gsettings set org.gnome.desktop.interface gtk-theme "$theme" 2>/dev/null || true
+	if [ "$dark" = true ]; then colour=prefer-dark; else colour=default; fi
+	gsettings set org.gnome.desktop.interface color-scheme "$colour" 2>/dev/null || true
+fi
+if [ -f "$config/xsettingsd/xsettingsd.conf" ]; then
+	sed -i "s|^Net/ThemeName .*|Net/ThemeName \"$theme\"|" "$config/xsettingsd/xsettingsd.conf"
+	pkill -HUP -x xsettingsd 2>/dev/null || true
+fi
+echo "sparky-stereo-gtk-sync: scheme=$scheme gtk-theme=$theme dark=$dark"

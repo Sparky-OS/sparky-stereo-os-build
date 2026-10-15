@@ -17,7 +17,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
-VERSION=${VERSION:-20261014.5~sparky9~0}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
+VERSION=${VERSION:-20261014.6~sparky9~0}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
 WORK=$(mktemp -d "${TMPDIR:-/K3D/temp/sparky-os}/look-build.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 LNF=usr/share/plasma/look-and-feel
@@ -65,7 +65,7 @@ cp -a "$OXYGEN/contents/splash" "$OXYGEN/contents/previews" "$T/contents/"
 cp "$HERE/default/splash/Splash.qml" "$T/contents/splash/Splash.qml"
 cp "$HERE/default/xdg/kdeglobals" "$HERE/default/xdg/kwinrc" "$HERE/default/xdg/kde-mimeapps.list" "$HERE/default/xdg/krunnerrc" "$HERE/default/xdg/konsolerc" "$D/etc/xdg/"
 control "$D" sparky-stereo-look \
-	"plasma-theme-oxygen, oxygen-icon-theme, oxygencursors, kde-style-oxygen-qt6, kwin-decoration-oxygen, plasma-runners-addons (>= 4:6.7.4-1+stereo3d1), plasma-systemmonitor" \
+	"plasma-theme-oxygen, oxygen-icon-theme, oxygencursors, kde-style-oxygen-qt6, kwin-decoration-oxygen, plasma-runners-addons (>= 4:6.7.4-1+stereo3d1), plasma-systemmonitor, sparky-stereo-gtk" \
 	"kde-style-oxygen-qt5" \
 	"Sparky Stereo OS default look: Oxygen dark" \
 	"The edition's default global theme: Oxygen, whole, in its dark colours:" \
@@ -154,21 +154,6 @@ Global theme definition: Copyright 2026 Daniel Ramos (Capitain Jack), GPL-3.0-or
 EOF
 build "$D" sparky-stereo-look-qplatinum
 
-# 4. Kubabbar Glass, the classic look (Daniel's own; milestone 1 drawings, milestone 2 in progress).
-D=$WORK/sparky-stereo-look-kubabbar-glass
-mkdir -p "$D/usr/share" "$D/usr/share/doc/sparky-stereo-look-kubabbar-glass"
-cp -a "$HERE/kubabbar-glass/share/." "$D/usr/share/"
-cp "$HERE/kubabbar-glass/README.md" "$HERE/kubabbar-glass/ABOUT.md" "$D/usr/share/doc/sparky-stereo-look-kubabbar-glass/"
-control "$D" sparky-stereo-look-kubabbar-glass \
-	"sparky-stereo-look, kwin-style-aurorae" "" \
-	"Kubabbar Glass: the classic look, in silver and glass" \
-	"Kubabbar Glass is our own name: ku-babbar is the Sumerian word for silver, a nod" \
-	"to SparkyLinux's Mesopotamian release names and to the silver grey of the" \
-	"classic Mac OS 8 look, without using Apple's name. Glass is the edition's" \
-	"translucency: inactive windows, dialogs and widget backgrounds at 91 % alpha." \
-	"Original artwork: colour scheme, Plasma style, window decoration, wallpaper" \
-	"and global theme. Inspired by Niels van Mourik's Platinum and Zinjanthr0pus's" \
-	"QPlatinum, reusing none of their files."
-cp "$HERE/kubabbar-glass/copyright" "$D/usr/share/doc/sparky-stereo-look-kubabbar-glass/copyright"
-build "$D" sparky-stereo-look-kubabbar-glass
+# 4. Kubabbar Glass is built from its own source since milestone 2: ../kubabbar-glass/tools/build_packages.sh
+#    (sparky-stereo-look-kubabbar-glass and sparky-stereo-gtk).
 
