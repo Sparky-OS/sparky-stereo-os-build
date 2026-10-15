@@ -16,7 +16,7 @@ D=$W/$PKG
 mkdir -p "$D/DEBIAN" "$D/etc/calamares/modules" "$D/usr/lib/$PKG" "$D/usr/share/doc/$PKG"
 install -m 644 "$HERE/etc/settings.conf" "$D/etc/calamares/settings.conf"
 install -m 644 "$HERE"/etc/modules/*.conf "$D/etc/calamares/modules/"
-install -m 755 "$HERE/lib/dual-boot-clock" "$D/usr/lib/$PKG/dual-boot-clock"
+install -m 755 "$HERE/lib/dual-boot" "$D/usr/lib/$PKG/dual-boot"
 (cd "$D" && find etc -type f | sed 's|^|/|' | sort) >"$D/DEBIAN/conffiles"
 cat >"$D/usr/share/doc/$PKG/copyright" <<'EOS'
 Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux (https://sparkylinux.org, by Paweł "pavroo" Pijanowski).
@@ -27,7 +27,7 @@ Upstream Author(s):
 
 Files: etc/calamares/settings.conf
     Calamares' settings as SparkyLinux ships them (SPDX-License-Identifier: CC0-1.0),
-    with the edition's branding and the dual-boot clock step
+    with the edition's branding and the dual-boot step
 
 Files: *
     Copyright (C) 2026 Paweł "pavroo" Pijanowski, Daniel Ramos (Capitain Jack)
@@ -64,8 +64,8 @@ Priority: optional
 Homepage: https://sparkylinux.org
 Description: Sparky Stereo installer settings
   SparkyLinux's Calamares settings with the edition's branding (the stereo
-  slideshow) and, beside Windows, the hardware clock kept in local time so
-  both systems show the right time.
+  slideshow) and, installed beside Windows, the hardware clock kept in local
+  time so both systems show the right time, and Windows in the boot menu.
 EOS
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT"

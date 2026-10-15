@@ -1,0 +1,2 @@
+FROM debian:testing@sha256:9e1caa3238f2e4eee5b28c781ec712798d5d1192a6206d9e0bc7ee2861717a00
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openssl kmod xz-utils python3-minimal && rm -rf /var/lib/apt/lists/*
