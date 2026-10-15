@@ -1,11 +1,11 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/11
+# Last update 2026/10/15
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.1.7
+VERSION=0.1.8
 PACKAGE=sparky-stereo-hardware
 mkdir -p "$OUT"
 W=$(mktemp -d "$OUT/.sparky-stereo-hardware.XXXXXX")
@@ -21,7 +21,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: apt, bash, ca-certificates, coreutils, curl, grep, isenkram-cli, kmod, laptop-detect, lm-sensors, nvidia-detect, pciutils, power-profiles-daemon (>= 0.30), python3, sed, sparky-remsu, sparky-xterm, udev, usbutils, util-linux, yad
+Depends: apt, bash, ca-certificates, coreutils, curl, grep, isenkram-cli, kmod, laptop-detect, libnotify-bin, lm-sensors, nvidia-detect, pciutils, power-profiles-daemon (>= 0.30), python3, sed, sparky-remsu, sparky-xterm, udev, usbutils, util-linux, yad
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org
@@ -31,7 +31,10 @@ Description: Detect and configure matched hardware for Sparky Stereo OS
   APT preferences for the GPU vendors' repositories: their compute stacks
   (CUDA, ROCm) update, the display driver and graphics stay the edition's.
 EOF
-printf '%s\n' /etc/apt/preferences.d/sparky-stereo-gpu-nvidia /etc/apt/preferences.d/sparky-stereo-gpu-amd >"$D/DEBIAN/conffiles"
+printf '%s\n' /etc/apt/preferences.d/sparky-stereo-gpu-nvidia /etc/apt/preferences.d/sparky-stereo-gpu-amd \
+	/etc/xdg/autostart/sparky-stereo-live-gpu.desktop /etc/xdg/plasma-workspace/env/sparky-stereo-primary-gpu.sh >"$D/DEBIAN/conffiles"
+# the initramfs carries the live session's NVIDIA choice
+echo 'activate-noawait update-initramfs' >"$D/DEBIAN/triggers"
 (cd "$D" && find usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
 dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${PACKAGE}_${VERSION}_all.deb"
 S=$W/$PACKAGE-$VERSION
@@ -49,7 +52,7 @@ Homepage: https://sparkylinux.org
 
 Package: $PACKAGE
 Architecture: all
-Depends: apt, bash, ca-certificates, coreutils, curl, grep, isenkram-cli, kmod, laptop-detect, lm-sensors, nvidia-detect, pciutils, power-profiles-daemon (>= 0.30), python3, sed, sparky-remsu, sparky-xterm, udev, usbutils, util-linux, yad
+Depends: apt, bash, ca-certificates, coreutils, curl, grep, isenkram-cli, kmod, laptop-detect, libnotify-bin, lm-sensors, nvidia-detect, pciutils, power-profiles-daemon (>= 0.30), python3, sed, sparky-remsu, sparky-xterm, udev, usbutils, util-linux, yad
 Description: Detect and configure matched hardware for Sparky Stereo OS
  Hardware support selected after detection.
  APT preferences for the GPU vendors' repositories: their compute stacks

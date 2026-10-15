@@ -1,0 +1,19 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/15
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/15
+# The live session's NVIDIA choice: the decision script, the open modules' device list and, for the
+# kernel this initramfs is made for, whether it has the NVIDIA modules and who signed them.
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case $1 in prereqs) prereqs; exit 0 ;; esac
+. /usr/share/initramfs-tools/hook-functions
+D=$DESTDIR/conf/sparky-stereo-live-gpu
+mkdir -p "$D"
+cp /usr/lib/sparky-stereo-hardware/live-gpu.sh /usr/share/sparky/sparky-stereo-hardware/nvidia-open.ids "$D/"
+m=$(find "/lib/modules/$version" -name 'nvidia.ko*' 2>/dev/null | head -n1)
+if [ -n "$m" ]; then
+	echo "$m" > "$D/nvidia-modules"
+	modinfo -F signer "$m" > "$D/nvidia-signer" 2>/dev/null || true
+fi
+exit 0
