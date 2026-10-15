@@ -1,0 +1,269 @@
+From 6c879f8a8aa2ff4501414bc8b2880e1c573578ce Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 14 Oct 2026 19:19:27 -0300
+Subject: [PATCH] Slideshow: let a branding run its QML in a window of its own
+
+A QML slideshow runs in a QQuickWidget, which is drawn into the page and
+has no surface of the windowing system to itself. A slideshow item that
+needs one cannot work there: a stereo picture is handed to the compositor
+on a surface of its own, below the window that shows it.
+
+The new branding setting slideshowWindow runs the same QML in a
+QQuickView embedded in the page with QWidget::createWindowContainer().
+It is off by default, so no existing branding changes.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/branding/default/branding.desc         |  7 ++
+ src/libcalamaresui/Branding.cpp            |  4 ++
+ src/libcalamaresui/Branding.h              | 10 +++
+ src/libcalamaresui/viewpages/Slideshow.cpp | 79 ++++++++++++++++++----
+ src/libcalamaresui/viewpages/Slideshow.h   | 11 +++
+ 5 files changed, 98 insertions(+), 13 deletions(-)
+
+diff --git a/src/branding/default/branding.desc b/src/branding/default/branding.desc
+index eed9802..169d189 100644
+--- a/src/branding/default/branding.desc
++++ b/src/branding/default/branding.desc
+@@ -218,6 +218,13 @@ slideshow:               "show.qml"
+ # An image slideshow does not need to have the API defined.
+ slideshowAPI: 2
+ 
++# By default the QML slideshow is drawn into the installer's window by a
++# QQuickWidget. Set this to true to run it in a window of its own, embedded
++# in the page, for slideshow items that need a surface of the windowing
++# system to themselves (for instance, a stereo picture handed to the
++# compositor). Only for QML slideshows; the default is false.
++# slideshowWindow: true
++
+ 
+ # These options are to customize online uploading of logs to pastebins:
+ #  - type      : Defines the kind of pastebin service to be used. Currently
+diff --git a/src/libcalamaresui/Branding.cpp b/src/libcalamaresui/Branding.cpp
+index 684a304..35c9223 100644
+--- a/src/libcalamaresui/Branding.cpp
++++ b/src/libcalamaresui/Branding.cpp
+@@ -203,6 +203,7 @@ Branding::Branding( const QString& brandingFilePath, QObject* parent, qreal devi
+     : QObject( parent )
+     , m_descriptorPath( brandingFilePath )
+     , m_slideshowAPI( 1 )
++    , m_slideshowWindow( false )
+     , m_welcomeStyleCalamares( false )
+     , m_welcomeExpandingLogo( true )
+     , m_devicePixelRatio( devicePixelRatio )
+@@ -644,6 +645,9 @@ Branding::initSlideshowSettings( const ::YAML::Node& doc )
+             api = 1;
+         }
+         m_slideshowAPI = api;
++        m_slideshowWindow = ( doc[ "slideshowWindow" ] && doc[ "slideshowWindow" ].IsScalar() )
++            ? doc[ "slideshowWindow" ].as< bool >()
++            : false;
+     }
+ #else
+     else if ( slideshow.IsScalar() )
+diff --git a/src/libcalamaresui/Branding.h b/src/libcalamaresui/Branding.h
+index 3fffa02..dec3822 100644
+--- a/src/libcalamaresui/Branding.h
++++ b/src/libcalamaresui/Branding.h
+@@ -190,6 +190,15 @@ public:
+      *  - -1    For oldschool image-slideshows.
+      */
+     int slideshowAPI() const { return m_slideshowAPI; }
++    /** @brief Run the QML slideshow in a window of its own?
++     *
++     * A QML slideshow normally runs inside a QQuickWidget, which has no
++     * window of the windowing system to itself. A slideshow whose items
++     * need one (a stereo picture handed to the compositor on its own
++     * surface, say) sets *slideshowWindow* in the branding, and runs in a
++     * QQuickView embedded in the page instead. (API == 1 or 2)
++     */
++    bool slideshowWindow() const { return m_slideshowWindow; }
+ 
+     QPixmap image( Branding::ImageEntry imageEntry, const QSize& size ) const;
+ 
+@@ -299,6 +308,7 @@ private:
+     QStringList m_slideshowFilenames;
+     QString m_slideshowPath;
+     int m_slideshowAPI;
++    bool m_slideshowWindow;
+     QString m_translationsPathPrefix;
+ 
+     /** @brief Initialize the simple settings below */
+diff --git a/src/libcalamaresui/viewpages/Slideshow.cpp b/src/libcalamaresui/viewpages/Slideshow.cpp
+index f20ef63..e2d01ce 100644
+--- a/src/libcalamaresui/viewpages/Slideshow.cpp
++++ b/src/libcalamaresui/viewpages/Slideshow.cpp
+@@ -27,6 +27,7 @@
+ #include <QQmlComponent>
+ #include <QQmlEngine>
+ #include <QQuickItem>
++#include <QQuickView>
+ #include <QQuickWidget>
+ #endif
+ #include <QTimer>
+@@ -41,20 +42,33 @@ Slideshow::~Slideshow() {}
+ #ifdef WITH_QML
+ SlideshowQML::SlideshowQML( QWidget* parent )
+     : Slideshow( parent )
+-    , m_qmlShow( new QQuickWidget )
++    , m_qmlShow( nullptr )
++    , m_qmlWindow( nullptr )
++    , m_qmlContainer( nullptr )
+     , m_qmlComponent( nullptr )
+     , m_qmlObject( nullptr )
+ {
+-    m_qmlShow->setObjectName( "qml" );
+-
+     Calamares::registerQmlModels();
+ 
+-    m_qmlShow->setSizePolicy( QSizePolicy::Expanding, QSizePolicy::Expanding );
+-    m_qmlShow->setResizeMode( QQuickWidget::SizeRootObjectToView );
+-    m_qmlShow->engine()->addImportPath( Calamares::qmlModulesDir().absolutePath() );
++    if ( Branding::instance()->slideshowWindow() )
++    {
++        m_qmlWindow = new QQuickView;
++        m_qmlWindow->setResizeMode( QQuickView::SizeRootObjectToView );
++        m_qmlContainer = QWidget::createWindowContainer( m_qmlWindow );
++        m_qmlContainer->setObjectName( "qml" );
++        m_qmlContainer->setSizePolicy( QSizePolicy::Expanding, QSizePolicy::Expanding );
++    }
++    else
++    {
++        m_qmlShow = new QQuickWidget;
++        m_qmlShow->setObjectName( "qml" );
++        m_qmlShow->setSizePolicy( QSizePolicy::Expanding, QSizePolicy::Expanding );
++        m_qmlShow->setResizeMode( QQuickWidget::SizeRootObjectToView );
++    }
++    showEngine()->addImportPath( Calamares::qmlModulesDir().absolutePath() );
+ 
+-    cDebug() << "QML import paths:" << Logger::DebugList( m_qmlShow->engine()->importPathList() );
+-    CALAMARES_RETRANSLATE( if ( m_qmlShow ) { m_qmlShow->engine()->retranslate(); } );
++    cDebug() << "QML import paths:" << Logger::DebugList( showEngine()->importPathList() );
++    CALAMARES_RETRANSLATE( if ( m_qmlShow || m_qmlWindow ) { showEngine()->retranslate(); } );
+ 
+     if ( Branding::instance()->slideshowAPI() == 2 )
+     {
+@@ -68,12 +82,51 @@ SlideshowQML::~SlideshowQML()
+     delete m_qmlObject;
+     delete m_qmlComponent;
+     delete m_qmlShow;
++    delete m_qmlContainer;
+ }
+ 
+ QWidget*
+ SlideshowQML::widget()
+ {
+-    return m_qmlShow;
++    return m_qmlContainer ? m_qmlContainer : static_cast< QWidget* >( m_qmlShow );
++}
++
++QQmlEngine*
++SlideshowQML::showEngine() const
++{
++    return m_qmlWindow ? m_qmlWindow->engine() : m_qmlShow->engine();
++}
++
++QQuickItem*
++SlideshowQML::showRootObject() const
++{
++    return m_qmlWindow ? m_qmlWindow->rootObject() : m_qmlShow->rootObject();
++}
++
++void
++SlideshowQML::setShowSource( const QUrl& url )
++{
++    if ( m_qmlWindow )
++    {
++        m_qmlWindow->setSource( url );
++    }
++    else
++    {
++        m_qmlShow->setSource( url );
++    }
++}
++
++void
++SlideshowQML::setShowContent( const QUrl& url, QQmlComponent* component, QQuickItem* item )
++{
++    if ( m_qmlWindow )
++    {
++        m_qmlWindow->setContent( url, component, item );
++    }
++    else
++    {
++        m_qmlShow->setContent( url, component, item );
++    }
+ }
+ 
+ void
+@@ -82,7 +135,7 @@ SlideshowQML::loadQmlV2()
+     Calamares::MutexLocker l( &m_mutex );
+     if ( !m_qmlComponent && !Calamares::Branding::instance()->slideshowPath().isEmpty() )
+     {
+-        m_qmlComponent = new QQmlComponent( m_qmlShow->engine(),
++        m_qmlComponent = new QQmlComponent( showEngine(),
+                                             QUrl::fromLocalFile( Calamares::Branding::instance()->slideshowPath() ),
+                                             QQmlComponent::CompilationMode::Asynchronous );
+         connect( m_qmlComponent, &QQmlComponent::statusChanged, this, &SlideshowQML::loadQmlV2Complete );
+@@ -113,7 +166,7 @@ SlideshowQML::loadQmlV2Complete()
+             // It is marked \internal in the Qt sources, but does exactly
+             // what is needed: sets up visual parent by replacing the root
+             // item, and handling resizes.
+-            m_qmlShow->setContent(
++            setShowContent(
+                 QUrl::fromLocalFile( Calamares::Branding::instance()->slideshowPath() ), m_qmlComponent, m_qmlObject );
+             if ( isActive() )
+             {
+@@ -170,10 +223,10 @@ SlideshowQML::changeSlideShowState( Action state )
+         // API version 1 assumes onCompleted is the trigger
+         if ( activate )
+         {
+-            m_qmlShow->setSource( QUrl::fromLocalFile( Calamares::Branding::instance()->slideshowPath() ) );
++            setShowSource( QUrl::fromLocalFile( Calamares::Branding::instance()->slideshowPath() ) );
+         }
+         // needs the root object for property setting, below
+-        m_qmlObject = m_qmlShow->rootObject();
++        m_qmlObject = showRootObject();
+     }
+ 
+     // V1 API has picked up the root object for use, V2 passed it in.
+diff --git a/src/libcalamaresui/viewpages/Slideshow.h b/src/libcalamaresui/viewpages/Slideshow.h
+index 41dacd4..f1d0f10 100644
+--- a/src/libcalamaresui/viewpages/Slideshow.h
++++ b/src/libcalamaresui/viewpages/Slideshow.h
+@@ -16,13 +16,16 @@
+ 
+ #include <QMutex>
+ #include <QStringList>
++#include <QUrl>
+ #include <QWidget>
+ 
+ class QLabel;
+ class QTimer;
+ #ifdef WITH_QML
+ class QQmlComponent;
++class QQmlEngine;
+ class QQuickItem;
++class QQuickView;
+ class QQuickWidget;
+ #endif
+ 
+@@ -104,7 +107,15 @@ public slots:
+     void startSlideShow();
+ 
+ private:
++    /// @brief The engine of the widget or the window running the show
++    QQmlEngine* showEngine() const;
++    QQuickItem* showRootObject() const;
++    void setShowSource( const QUrl& url );
++    void setShowContent( const QUrl& url, QQmlComponent* component, QQuickItem* item );
++
+     QQuickWidget* m_qmlShow;
++    QQuickView* m_qmlWindow;  ///< Instead of m_qmlShow, if Branding::slideshowWindow()
++    QWidget* m_qmlContainer;  ///< Embeds m_qmlWindow in the page
+     QQmlComponent* m_qmlComponent;
+     QQuickItem* m_qmlObject;  ///< The actual show
+ };
+-- 
+2.53.0
+
