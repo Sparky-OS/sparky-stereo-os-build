@@ -1,0 +1,57 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-only
+# Created by Daniel Ramos (Capitain Jack) 2026/10/14
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/14
+# Choose the minimise effect of Kubabbar Glass: Magic Lamp (default of the menu bar and dock layout) or Squash, both built into KWin.
+set -eu
+
+dir=/usr/share/sparky/kubabbar-glass-minimize
+[ -d "$dir" ] || dir=$(dirname "$0")/../lang/minimize
+code=${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}
+[ -n "$code" ] || code=$(sed -n 's/^LANG=//p' /etc/default/locale 2>/dev/null | head -n 1 | tr -d '"')
+code=${code%%.*}
+case "$code" in
+	zh_HK|zh_MO) code=zh_TW ;;
+	zh_SG) code=zh_CN ;;
+esac
+for try in "$code" "${code%%_*}" en; do
+	if [ -f "$dir/$try" ]; then . "$dir/$try"; break; fi
+done
+
+msg() {
+	case "$1" in
+		head) echo "$LOCAL1" ;;
+		magiclamp) echo "$LOCAL2" ;;
+		squash) echo "$LOCAL3" ;;
+		done) echo "$LOCAL4" ;;
+		unknown) echo "$LOCAL5" ;;
+	esac
+}
+
+usage() {
+	msg head
+	for effect in magiclamp squash; do
+		printf '  %-10s %s\n' "$effect" "$(msg "$effect")"
+	done
+}
+
+[ $# -eq 1 ] || { usage; exit 0; }
+case "$1" in
+	magiclamp) lamp=true; squash=false ;;
+	squash) lamp=false; squash=true ;;
+	*) printf "$(msg unknown)\n" "$1" >&2; usage >&2; exit 2 ;;
+esac
+kwriteconfig6 --file kwinrc --group Plugins --key magiclampEnabled "$lamp"
+kwriteconfig6 --file kwinrc --group Plugins --key squashEnabled "$squash"
+effect_call() {
+	dbus-send --session --type=method_call --dest=org.kde.KWin /Effects "org.kde.kwin.Effects.$1" "string:$2" 2>/dev/null || true
+}
+if [ "$lamp" = true ]; then
+	effect_call unloadEffect squash
+	effect_call loadEffect magiclamp
+else
+	effect_call unloadEffect magiclamp
+	effect_call loadEffect squash
+fi
+printf "$(msg done)\n" "$1"

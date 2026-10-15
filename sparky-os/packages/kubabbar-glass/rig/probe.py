@@ -18,7 +18,8 @@ import window_probe
 
 ROOT = Path(__file__).resolve().parents[1]
 CASE = os.environ.get("CLASSIC_CASE", "2d")
-M2 = CASE.startswith("m2-")
+M2 = CASE.startswith(("m2-", "m3-"))
+M3 = CASE.startswith("m3-")
 M2_STYLE, M2_LOOK, M2_MODE = CASE.split("-")[1:4] if M2 else (None, None, None)
 SCENE = os.environ.get("CLASSIC_SCENE", "")
 HOME_DIR = ROOT / "rig/home" / (CASE + ("-" + SCENE if SCENE else ""))
@@ -103,6 +104,8 @@ def main():
         if directory.name == "plasma":
             (HOME_DIR / ".local/share/plasma").mkdir()
             (HOME_DIR / ".local/share/plasma/desktoptheme").symlink_to(directory / "desktoptheme", target_is_directory=True)
+            if M3:
+                (HOME_DIR / ".local/share/plasma/look-and-feel").symlink_to(directory / "look-and-feel", target_is_directory=True)
         elif directory.name == "kwin":
             decorations = HOME_DIR / ".local/share/kwin/decorations"
             decorations.mkdir(parents=True)
@@ -145,7 +148,18 @@ def main():
     if "KDE" not in config:
         config["KDE"] = {}
     config["KDE"]["widgetStyle"] = {"breeze": "Breeze", "fusion": "Fusion", "kvantum": "kvantum", "oxygenqt": "Oxygen"}[M2_STYLE] if M2 else "Fusion"
-    config["Icons"] = {"Theme": "kubabbar-glass-stereo" if SCENE.startswith("trash") else "oxygen"}
+    config["Icons"] = {"Theme": "kubabbar-glass-stereo" if SCENE.startswith("trash") or M3 else "oxygen"}
+    if M3:
+        config["KDE"]["LookAndFeelPackage"] = "kubabbar-glass-menubar"
+        config["KDE"]["AnimationDurationFactor"] = os.environ.get("CLASSIC_ANIM", "1")
+        kwin_config = configparser.ConfigParser()
+        kwin_config.optionxform = str
+        kwin_config.read(HOME_DIR / ".config/kwinrc")
+        effect = os.environ.get("CLASSIC_EFFECT", "magiclamp")
+        kwin_config["Plugins"]["magiclampEnabled"] = str(effect == "magiclamp").lower()
+        kwin_config["Plugins"]["squashEnabled"] = str(effect == "squash").lower()
+        with (HOME_DIR / ".config/kwinrc").open("w") as stream:
+            kwin_config.write(stream)
     with (HOME_DIR / ".config/kdeglobals").open("w") as f:
         config.write(f)
     style = "sparky-stereo-oxygen" if ("oxygen" in CASE and not M2) or M2_LOOK == "oxygen" else "kubabbar-glass"
@@ -156,7 +170,7 @@ def main():
     env = dict(os.environ, HOME=str(HOME_DIR), XDG_CONFIG_HOME=str(HOME_DIR / ".config"),
                XDG_DATA_HOME=str(HOME_DIR / ".local/share"), XDG_CACHE_HOME=str(HOME_DIR / ".cache"),
                XDG_RUNTIME_DIR=str(RUNTIME), TMPDIR=str(RUNTIME), QT_QPA_PLATFORM="wayland", WAYLAND_DISPLAY="kubabbar-glass",
-               XDG_SESSION_TYPE="wayland", XDG_CURRENT_DESKTOP="KDE", LANG="C.UTF-8",
+               XDG_SESSION_TYPE="wayland", XDG_CURRENT_DESKTOP="KDE", LANG="C.UTF-8", PATH=str(ROOT / "bin") + os.pathsep + os.environ["PATH"],
                KWIN_COMPOSE="O2", QT_LOGGING_RULES="kwin_scripting*=true", KWIN_SCREENSHOT_NO_PERMISSION_CHECKS="1", QT_QUICK_BACKEND="software")
     env.pop("DISPLAY", None)
     env.pop("LIBGL_ALWAYS_SOFTWARE", None)
@@ -195,6 +209,10 @@ def main():
             alpha_scene.show(plasma, ROOT, HOME_DIR, OUT, env, CASE)
             gate(bus, OUT)
             capture(bus, OUT / "desktop.png")
+            return
+        if M3:
+            import m3_scene
+            m3_scene.show(bus, plasma, ROOT, HOME_DIR, OUT, env, SCENE, launch, gate, capture, CASE, [p for p in processes if p is kwin][0].pid)
             return
         wallpaper = (ROOT / "share/wallpapers/kubabbar-glass/contents/images/pattern.svg").as_uri()
         plasma.evaluateScript('desktops().forEach(function(d) { d.wallpaperPlugin = "org.kde.image"; d.currentConfigGroup = ["Wallpaper", "org.kde.image", "General"]; d.writeConfig("Image", ' + json.dumps(wallpaper) + '); });')

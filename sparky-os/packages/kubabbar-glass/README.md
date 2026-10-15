@@ -1,7 +1,12 @@
 # Kubabbar Glass
 
 Daniel’s second Sparky Stereo desktop look, with the identifier `kubabbar-glass`.
-Everything is in `share/`, `bin/` and `lang/`; the design notes are in [the design study](study/design.md), [icon provenance](study/icons.md), [the milestone 2 notes](study/m2.md) and [verification](study/progress.md).
+Everything is in `share/`, `bin/` and `lang/`; the design notes are in [the design study](study/design.md), [icon provenance](study/icons.md), [the milestone 2 notes](study/m2.md), [the milestone 3 notes](study/m3.md) and [verification](study/progress.md).
+
+## The menu bar and dock variant
+
+A third Look and Feel, `kubabbar-glass-menubar` (Kubabbar Glass, menu bar and dock), puts the application menu (Plasma's Global Menu) in a bar at the top after our own launcher star and the icons-only task manager in a floating centred dock; minimised windows fly into their icon with KWin's Magic Lamp (`kubabbar-glass-minimize squash` chooses Squash).
+See [the milestone 3 notes](study/m3.md).
 
 ## What it is
 
