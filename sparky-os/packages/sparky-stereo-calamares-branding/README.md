@@ -54,7 +54,7 @@ show.qml is written by tools/make-slideshow.py from the approved texts (the artw
 Translations
 -------------
 Calamares loads the branding's lang/calamares-sparky_<locale>.qm for the installer's language and falls back to the English source.
-translations/ holds one source per language (en, pl, pt_BR, fr, ja, ko, zh_CN, zh_TW), made by tools/make-slideshow.py: English is the source language, the others are unfinished until translated.
+translations/ holds one source per language (en, de, pl, pt_BR, fr, ja, ko, zh_CN, zh_TW), made by tools/make-slideshow.py: English is the source language. The translations of 2026-10-16 are in translations/slides-20261016.json, one list per language in the source's order; tools/fill-ts.py writes them into the .ts files.
 build.sh compiles a .qm (lrelease) only from a source that has finished translations, so a language with none shows English.
 To add a language: translate the 69 strings in its .ts (Qt Linguist, or by hand, one <translation> per <source>), remove type="unfinished", and build.
 A longer translation shrinks to fit the block; the block is laid out in the artwork's 1280 x 720 units and scaled with the picture.

@@ -5,7 +5,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION='20261016~sparky9~0'
+VERSION='20261016.1~sparky9~0'
 PACKAGE=sparky-stereo-calamares-branding
 DEPENDS='calamares, libstereo-layer1 (>= 1.4.1), qml6-module-qtquick-window'
 RECOMMENDS='calamares (>= 3.4.3~sparky9~4-1+stereo3d1)'
