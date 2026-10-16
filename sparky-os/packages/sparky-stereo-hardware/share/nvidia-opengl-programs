@@ -1,0 +1,15 @@
+# Programs that keep NVIDIA's own OpenGL when the session runs OpenGL on zink
+# (sparky-stereo-opengl.sh): one program per line, the name of the executable its menu entry
+# starts. CUDA and OpenGL sharing needs NVIDIA's own OpenGL: under zink CUDA finds no device
+# behind the OpenGL context (cuGLGetDevices and cuGraphicsGLRegisterBuffer return
+# CUDA_ERROR_INVALID_GRAPHICS_CONTEXT, measured on an RTX 3060 with driver 615.71.09; CUDA
+# driver API, "OpenGL Interoperability": the CUDA devices are those of the current OpenGL
+# context). /etc/sparky-stereo/opengl-programs and ~/.config/sparky-stereo/opengl-programs
+# add a program ("NAME nvidia") or give one back to zink ("NAME zink").
+#
+# DaVinci Resolve (Blackmagic Design) shares its CUDA images with OpenGL for its viewers: when
+# its OpenGL is not NVIDIA's, its log says "Failed to register OpenGL object for CUDA interop"
+# and the viewer stays black (Resolve 20.3.2, github.com/niri-wm/niri/issues/3511, 2026-02-25).
+resolve
+# NVIDIA's own control panel: its OpenGL and GLX pages describe NVIDIA's GLX.
+nvidia-settings

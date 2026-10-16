@@ -1,3 +1,41 @@
+gl-stereo (0.4.1-1) testing; urgency=medium
+
+  * The build's screensaver checks wait for what they test, a saver's
+    selected frame, a frame from its stream or its exit, up to
+    GL_STEREO_TEST_SECONDS (60 by default), instead of fixed waits of three
+    to eight seconds that a loaded build machine could miss. The layer and
+    the savers are unchanged.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Fri, 16 Oct 2026 19:00:00 -0300
+
+gl-stereo (0.4.0-1) testing; urgency=medium
+
+  * Provide two views where the driver has none: on native Wayland,
+    EGL_EXT_multiview_window with a buffer twice the window's width,
+    declared full side by side (kde_stereo_content_v1 version 2), beside
+    the GLX quad-buffer configs on X11. OpenGL ES contexts name the views
+    through GL_EXT_multiview_draw_buffers.
+  * X11: wait for the compositor to double a declared window before the
+    driver sizes its buffers; NVIDIA's OpenGL intermittently left the
+    second view black.
+  * Leave a program's own two views to a driver that has them: Mesa's EGL
+    on Wayland, and on X11 with GL_STEREO_DRIVER_VIEWS=1, which
+    gl-stereo-run sets; the layer alone keeps the X11 packing, which its
+    frame stream needs.
+  * X11: tell a doubled window by its observed size, set a context's first
+    viewport to the window's logical size, recognise stereo visuals by ID.
+  * Leave the fixed-function state alone in core profile, forward-compatible
+    and OpenGL ES contexts (Magnum gave up at start), and follow the eye a
+    program chooses through direct state access on the window's
+    framebuffer.
+  * Receipts for all 130 savers with this layer, from fresh installed-file
+    sweeps; the requalification tools ship in the source.
+  * gl-stereo-run: on NVIDIA, choose Mesa on NVIDIA's Vulkan (zink, the
+    default) or NVIDIA's own OpenGL; the dialog in nine languages. The
+    choice applies when NVIDIA's OpenGL serves the display.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Fri, 16 Oct 2026 00:40:01 -0300
+
 gl-stereo (0.3.0-1) testing; urgency=medium
 
   * Extend camera recognition to shader uniforms and combined matrix forms.

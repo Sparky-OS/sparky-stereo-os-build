@@ -1,11 +1,11 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/15
+# Last update 2026/10/16
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.1.8
+VERSION=0.1.10
 PACKAGE=sparky-stereo-hardware
 mkdir -p "$OUT"
 W=$(mktemp -d "$OUT/.sparky-stereo-hardware.XXXXXX")
@@ -30,9 +30,13 @@ Description: Detect and configure matched hardware for Sparky Stereo OS
   Hardware support selected by sparky-stereo-hardware after detection.
   APT preferences for the GPU vendors' repositories: their compute stacks
   (CUDA, ROCm) update, the display driver and graphics stay the edition's.
+  The system default for OpenGL stereo, from the card the desktop runs on.
 EOF
 printf '%s\n' /etc/apt/preferences.d/sparky-stereo-gpu-nvidia /etc/apt/preferences.d/sparky-stereo-gpu-amd \
-	/etc/xdg/autostart/sparky-stereo-live-gpu.desktop /etc/xdg/plasma-workspace/env/sparky-stereo-primary-gpu.sh >"$D/DEBIAN/conffiles"
+	/etc/xdg/autostart/sparky-stereo-live-gpu.desktop /etc/xdg/plasma-workspace/env/sparky-stereo-primary-gpu.sh \
+	/etc/xdg/plasma-workspace/env/sparky-stereo-opengl.sh >"$D/DEBIAN/conffiles"
+# the OpenGL stereo default: written at install, at boot (the service) and by udev on GPU changes
+install -m755 "$HERE/debian-scripts/postinst" "$HERE/debian-scripts/postrm" "$D/DEBIAN/"
 # the initramfs carries the live session's NVIDIA choice
 echo 'activate-noawait update-initramfs' >"$D/DEBIAN/triggers"
 (cd "$D" && find usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
@@ -57,35 +61,9 @@ Description: Detect and configure matched hardware for Sparky Stereo OS
  Hardware support selected after detection.
  APT preferences for the GPU vendors' repositories: their compute stacks
  (CUDA, ROCm) update, the display driver and graphics stay the edition's.
+ The system default for OpenGL stereo, from the card the desktop runs on.
 EOF
-cat >"$S/debian/changelog" <<EOF
-$PACKAGE ($VERSION) unstable; urgency=medium
-
-  * French strings for the plan dialog, the menu entry and the policy
-    message.
-
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 12 Oct 2026 20:00:00 -0300
-
-$PACKAGE (0.1.6) unstable; urgency=medium
-
-  * Install the NVIDIA userspace driver at the version of the edition's
-    module (nvidia-kernel-open-dkms-stereo3d without its +stereo3d suffix,
-    read from apt) instead of a version fixed in lib/actions.sh, so the
-    driver and the module cannot drift apart when the module moves to a new
-    NVIDIA version.
-
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 11 Oct 2026 18:30:00 -0300
-
-$PACKAGE (0.1.5) unstable; urgency=medium
-
-  * Ship APT preferences for the GPU vendors' repositories: NVIDIA's container
-    toolkit at equal priority from both NVIDIA repositories (no downgrade
-    loop), release candidates never by default, the edition's egl-wayland
-    over NVIDIA's copy, and AMD's out-of-tree kernel driver and graphics
-    userspace never installed while ROCm updates normally.
-
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 11 Oct 2026 12:40:00 -0300
-EOF
+cp "$HERE/debian/changelog" "$S/debian/changelog"
 cp "$HERE/copyright" "$S/debian/copyright"
 echo '3.0 (native)' >"$S/debian/source/format"
 cat >"$S/debian/rules" <<'EOF'

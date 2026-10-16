@@ -1,4 +1,15 @@
 -------------------------------------------------------------------------------
+  Version 0.1.10 (2026-10-16)
+-------------------------------------------------------------------------------
+  * Programs that share CUDA with OpenGL, and NVIDIA's control panel, keep NVIDIA's own OpenGL when the session runs OpenGL on zink: their menu entries and their names in a terminal start through sparky-stereo-nvidia-opengl; the list starts with DaVinci Resolve and nvidia-settings, /etc/sparky-stereo/opengl-programs and ~/.config/sparky-stereo/opengl-programs add a program ("NAME nvidia") or give one back to zink ("NAME zink"), and the person's choice wins
+
+-------------------------------------------------------------------------------
+  Version 0.1.9 (2026-10-16)
+-------------------------------------------------------------------------------
+  * The system default for OpenGL stereo, from the graphics card the desktop runs on, written at install, at boot and when a card is added, removed or changes driver: when NVIDIA's driver runs the desktop, the session's programs run their OpenGL on Mesa over NVIDIA's Vulkan driver (zink) and get their two views with no launcher; KWin and Xwayland keep NVIDIA's driver; a desktop on Mesa keeps Mesa
+  * sparky-stereo-opengl-default --opengl zink|nvidia sets the system choice; gl-stereo-run chooses per program
+
+-------------------------------------------------------------------------------
   Version 0.1.8 (2026-10-15)
 -------------------------------------------------------------------------------
   * Live sessions choose the NVIDIA driver at boot: the edition's open modules for Turing and newer, nouveau for older, mixed or unknown cards, for a kernel without the modules and for unsigned modules under Secure Boot; sparky.gpu=nvidia or sparky.gpu=nouveau overrides it

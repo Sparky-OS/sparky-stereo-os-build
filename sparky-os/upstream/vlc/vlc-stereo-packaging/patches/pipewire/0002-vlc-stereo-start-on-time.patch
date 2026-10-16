@@ -1,0 +1,73 @@
+Start the stream on time, with no silence of the core before it
+
+The stream waits for the date of its first block before it plays it,
+filling buffers with silence until then. Three things went wrong:
+
+- The delay reported to the core left out that wait. The core then took
+  the stream for early and inserted silence of its own, dated at the start
+  date, which the stream played after its own wait: the audio came late,
+  the core flushed it, and the same happened again, for ever. A file whose
+  audio starts after its video (an empty edit in MP4, such as the
+  LG Optimus 3D's MOV004.mp4, 0.666 s) played no sound until a seek.
+  No delay is reported until the stream has started.
+- The silence before the first samples was not counted in the size of the
+  buffer: the buffers of the wait were empty, and the first one lost as
+  many samples at its end as it had silence at its beginning.
+- The start was computed from timing data taken at the beginning of a
+  cycle for a buffer the graph asked for in the middle of one. Until the
+  start, a buffer holds only what the graph asks for in its cycle.
+
+The original is Debian's vlc-plugin-pipewire 3-4; VLC's own module
+(master) reports no timing while starting either.
+---
+diff -urN a/modules/audio_output/pipewire.c b/modules/audio_output/pipewire.c
+index fc366b5..affd28e 100644
+--- a/modules/audio_output/pipewire.c
++++ b/modules/audio_output/pipewire.c
+@@ -158,9 +158,18 @@ static void stream_process(void *data)
+         struct spa_chunk *chunk = d->chunk;
+         unsigned char *dst = d->data;
+         size_t frame_room = d->maxsize / s->stride;
+-        size_t room = frame_room * s->stride;
++        size_t room;
+         block_t *block;
+ 
++        /*
++         * Until the start, fill only what the graph asks for in this cycle, so
++         * that the start falls at the beginning of a cycle, which is when the
++         * timing data was taken.
++         */
++        if (s->starting && b->requested != 0 && b->requested < frame_room)
++            frame_room = b->requested;
++        room = frame_room * s->stride;
++
+         chunk->offset = 0;
+         chunk->stride = s->stride;
+         chunk->size = 0;
+@@ -197,6 +206,9 @@ static void stream_process(void *data)
+             memset(dst, 0, skip);
+             dst += skip;
+             room -= skip;
++            chunk->size += skip;
++            /* The silence plays before the queued samples, it adds to the delay */
++            s->time.frames += skip / s->stride;
+         }
+ 
+         while ((block = s->queue.head) != NULL) {
+@@ -299,8 +311,15 @@ static int vlc_pw_stream_get_time(struct vlc_pw_stream *s,
+     int ret = -1;
+ 
+     vlc_pw_lock(s->context);
++    /*
++     * Until the first sample is played, the delay is that of the start date,
++     * which the stream waits for (see stream_process()), not that of the
++     * stream. Report none, so that the core does not insert silence of its own
++     * before the stream starts.
++     */
+     if (pw_stream_get_state(s->stream, NULL) == PW_STREAM_STATE_STREAMING
+-     && s->time.pts != VLC_TS_INVALID) {
++     && s->time.pts != VLC_TS_INVALID
++     && s->start != VLC_TS_INVALID && !s->starting) {
+         mtime_t elapsed = mdate() - s->time.pts;
+         *delay = ((s->time.frames * CLOCK_FREQ) / s->time.rate) - elapsed;
+         ret = 0;

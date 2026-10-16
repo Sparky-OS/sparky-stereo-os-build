@@ -11,6 +11,8 @@ sys.path.insert(0, str(Path('savers').resolve()))
 from frames import receive, acknowledge
 
 out = Path('out/rocks'); out.mkdir(exist_ok=True)
+# every wait on the saver: a frame, its exit (GL_STEREO_TEST_SECONDS, 60 by default)
+budget = float(os.environ.get('GL_STEREO_TEST_SECONDS', '60'))
 def capture(options, reference=0, oracle=True):
     reader, writer = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
     env = os.environ.copy()
@@ -21,7 +23,7 @@ def capture(options, reference=0, oracle=True):
     process = subprocess.Popen(['./tests/announce','./out/bin/rocks','-window','-geometry','640x360','-mono',*options],
                                env=env, pass_fds=(writer.fileno(),), start_new_session=True,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    writer.close(); reader.settimeout(8)
+    writer.close(); reader.settimeout(budget)
     try:
         last = 0
         for i in range(3 if oracle else 50):
@@ -44,7 +46,7 @@ def capture(options, reference=0, oracle=True):
     finally:
         reader.close()
         os.killpg(process.pid,signal.SIGTERM)
-        _, error = process.communicate(timeout=3)
+        _, error = process.communicate(timeout=budget)
     assert not error, error
     return picture
 

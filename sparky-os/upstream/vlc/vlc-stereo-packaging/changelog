@@ -13,3 +13,7 @@ Embed stereo video in the main Qt window on Wayland, with a native video child a
 Declare the video through libstereo-declare on the video thread's own Wayland event queue; deliver two full-resolution views with a one-view logical viewport, including Qt display scaling.
 Keep both views through window resizing and fullscreen; remove stereo state on stop and when switching to a 2D video. Preserve explicit X11 platform selection.
 Install the Qt 5 Wayland platform plugin as a dependency.
+== 3.0.24-1+stereo3d9
+The PipeWire output starts the stream on time: it reports no delay to the core until the stream has started (the core inserted silence of its own, which played after the stream's own wait, so the audio came late, was flushed, and the same happened again for ever: a file whose audio starts after its video, such as an MP4 with an empty edit, played no sound until a seek, then dropped), counts the silence before the first samples in the buffer and in the delay, and starts at the beginning of a cycle.
+The menu entry lists the current names of AVI and WAVE (video/vnd.avi, audio/vnd.wave) and MPEG-TS files named .ts (text/vnd.trolltech.linguist).
+vlc-stereo provides vlc, so that a program that depends on the player by name stays installed when the distribution's player is removed.

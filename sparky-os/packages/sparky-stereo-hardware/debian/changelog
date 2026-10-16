@@ -1,0 +1,67 @@
+sparky-stereo-hardware (0.1.10) unstable; urgency=medium
+
+  * Programs that share CUDA with OpenGL, and NVIDIA's control panel, keep
+    NVIDIA's own OpenGL when the session runs OpenGL on zink: their menu
+    entries and their names in a terminal start through
+    sparky-stereo-nvidia-opengl. The list starts with DaVinci Resolve and
+    nvidia-settings; /etc/sparky-stereo/opengl-programs and the person's
+    ~/.config/sparky-stereo/opengl-programs add a program ("NAME nvidia")
+    or give one back to zink ("NAME zink"), and the person's choice wins.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Fri, 16 Oct 2026 18:00:00 -0300
+
+sparky-stereo-hardware (0.1.9) unstable; urgency=medium
+
+  * Write the system default for OpenGL stereo from the graphics card the
+    desktop runs on, at install, at boot and when a card is added, removed
+    or changes driver. When NVIDIA's driver runs the desktop, the session's
+    programs run their OpenGL on Mesa over NVIDIA's Vulkan driver (zink),
+    where a program that draws its own two views gets them, started from
+    the menu, the panel or a terminal; KWin and Xwayland keep NVIDIA's
+    driver. A desktop on Mesa keeps Mesa. sparky-stereo-opengl-default
+    --opengl nvidia keeps NVIDIA's own OpenGL instead.
+  * Complete this changelog with versions 0.1.7 and 0.1.8.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Fri, 16 Oct 2026 12:00:00 -0300
+
+sparky-stereo-hardware (0.1.8) unstable; urgency=medium
+
+  * Live sessions choose the NVIDIA driver at boot: the edition's open
+    modules for Turing and newer, nouveau for older, mixed or unknown
+    cards, for a kernel without the modules and for unsigned modules under
+    Secure Boot; sparky.gpu=nvidia or sparky.gpu=nouveau overrides it.
+  * A notification says which driver runs the NVIDIA graphics in a live
+    session, and why.
+  * KWin renders on a card that can render, with a screen connected, when
+    the boot VGA device is a BMC's VGA chip.
+  * German, Japanese, Korean and Chinese (simplified and traditional)
+    strings.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Thu, 15 Oct 2026 20:00:00 -0300
+
+sparky-stereo-hardware (0.1.7) unstable; urgency=medium
+
+  * French strings for the plan dialog, the menu entry and the policy
+    message.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 12 Oct 2026 20:00:00 -0300
+
+sparky-stereo-hardware (0.1.6) unstable; urgency=medium
+
+  * Install the NVIDIA userspace driver at the version of the edition's
+    module (nvidia-kernel-open-dkms-stereo3d without its +stereo3d suffix,
+    read from apt) instead of a version fixed in lib/actions.sh, so the
+    driver and the module cannot drift apart when the module moves to a new
+    NVIDIA version.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 11 Oct 2026 18:30:00 -0300
+
+sparky-stereo-hardware (0.1.5) unstable; urgency=medium
+
+  * Ship APT preferences for the GPU vendors' repositories: NVIDIA's container
+    toolkit at equal priority from both NVIDIA repositories (no downgrade
+    loop), release candidates never by default, the edition's egl-wayland
+    over NVIDIA's copy, and AMD's out-of-tree kernel driver and graphics
+    userspace never installed while ROCm updates normally.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 11 Oct 2026 12:40:00 -0300

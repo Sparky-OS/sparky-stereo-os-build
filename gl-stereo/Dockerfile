@@ -14,7 +14,7 @@ RUN apt-get update \
         xauth \
         python3-pil \
         python3-numpy python3-tk \
-        cmake ninja-build pkg-config libx11-dev libwayland-dev wayland-protocols libegl-dev x11-utils \
+        cmake ninja-build pkg-config libx11-dev libwayland-dev libwayland-egl-backend-dev wayland-protocols libegl-dev x11-utils \
         libxmu-dev libxt-dev libxext-dev libglu1-mesa-dev \
         curl ca-certificates patch intltool libjpeg-dev libpng-dev libxft-dev libxi-dev \
     && rm -rf /var/lib/apt/lists/*

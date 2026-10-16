@@ -5,8 +5,9 @@ files that still carry that alternative; it does not relicense the new core.
 The shared stereo-declare library is MIT and remains a separate dependency.
 
 Build in a Debian testing container with at most four CPUs. Build dependencies:
-`build-essential`, `pkg-config`, `libgl-dev`, `libegl-dev`, `libx11-dev`, and
-the installed `stereo-declare` development package. For the test image also
+`build-essential`, `pkg-config`, `libgl-dev`, `libegl-dev`, `libx11-dev`,
+`libwayland-dev`, `libwayland-egl-backend-dev`, and the installed
+`stereo-declare` development package. For the test image also
 install Xvfb, mesa-utils, the XScreenSaver GL packages, Python Pillow/NumPy,
 CMake, Ninja, Wayland development files/protocols, and ParaView/Python bindings.
 The Debian package builds link against libstereo-declare-dev (>= 1.1.0)
@@ -50,6 +51,7 @@ Examples:
 gl-stereo-run -- glxgears
 gl-stereo-run --settings -- glxgears
 gl-stereo-run --render-resolution 1920x1080 -- glxgears
+gl-stereo-run --nvidia-opengl nvidia -- glxgears -stereo
 gl-stereo-run --enable-3d off -- glxgears
 gl-stereo-run --display-settings
 gl-stereo-run -- pvpython scientific-scene.py

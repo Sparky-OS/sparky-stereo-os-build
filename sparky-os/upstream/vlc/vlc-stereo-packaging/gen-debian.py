@@ -22,6 +22,7 @@ Package: vlc-stereo
 Architecture: any
 Depends: ${{shlibs:Depends}}, ${{misc:Depends}}, qtwayland5
 Recommends: vlc-stereo-plugin-pipewire (= ${{binary:Version}}), fonts-freefont-ttf
+Provides: vlc
 Description: stereo edition of the VLC multimedia player and streamer
  VLC Stereo is a stereo edition of VLC media player by VideoLAN, for Sparky
  Stereo OS. It shows 3D videos in both eyes and declares them to the
@@ -100,6 +101,9 @@ execute_after_dh_auto_install:
 	done
 	rm -rf $(D)/usr/share/vlc-stereo/applications
 	echo 'StartupWMClass=vlc-stereo' >> $(D)/usr/share/applications/vlc-stereo.desktop
+	# the current names of AVI and WAVE (shared-mime-info), and MPEG-TS files named .ts, which the glob gives the type of
+	# Qt Linguist files, as other players list them
+	sed -i '/^MimeType=/s|$$|video/vnd.avi;audio/vnd.wave;text/vnd.trolltech.linguist;|' $(D)/usr/share/applications/vlc-stereo.desktop
 	for f in $$(cd $(D)/usr/share/vlc-stereo/icons && find . -name 'vlc*.*' -type f); do \\
 	  d=$$(dirname $$f); mkdir -p $(D)/usr/share/icons/$$d; \\
 	  cp $(D)/usr/share/vlc-stereo/icons/$$f $(D)/usr/share/icons/$$d/$$(basename $$f | sed 's/^vlc/vlc-stereo/'); \\

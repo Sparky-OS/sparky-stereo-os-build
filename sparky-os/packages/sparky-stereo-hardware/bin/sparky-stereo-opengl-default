@@ -1,0 +1,29 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/16
+# Writes the system default for OpenGL stereo from the graphics card the desktop runs on
+# (lib/opengl-default.sh). Run at install, by sparky-stereo-opengl-default.service at boot and
+# by udev when a graphics card is added, removed or changes driver.
+# sparky-stereo-opengl-default [--opengl zink|nvidia]
+# SPARKY_STEREO_SYSFS, SPARKY_STEREO_DEV and SPARKY_STEREO_OPENGL_CONF point it at fixtures.
+set -eu
+LIB=${SPARKY_STEREO_HARDWARE_LIB:-/usr/lib/sparky-stereo-hardware}
+. "$LIB/opengl-default.sh"
+choice=
+while [ $# -gt 0 ]; do
+	case $1 in
+		--opengl) shift; choice=${1:-} ;;
+		--help) echo 'sparky-stereo-opengl-default [--opengl zink|nvidia]'; exit 0 ;;
+		*) echo "Unknown option: $1" >&2; exit 2 ;;
+	esac
+	shift
+done
+case $choice in ''|zink|nvidia) ;; *) echo 'The OpenGL choice is zink or nvidia' >&2; exit 2 ;; esac
+conf=${SPARKY_STEREO_OPENGL_CONF:-/etc/sparky-stereo/opengl-stereo.conf}
+sys=${SPARKY_STEREO_SYSFS:-/sys}
+dev=${SPARKY_STEREO_DEV:-/dev/dri}
+card=$(opengl_desktop_card "$sys" "$dev")
+desktop=$(opengl_desktop "$sys" "$dev")
+opengl_default_write "$conf" "$desktop" "${card%% *}" "$choice"
+echo "OpenGL stereo default: desktop=$desktop card=${card:-none} $(grep '^opengl=' "$conf")"

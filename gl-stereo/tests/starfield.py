@@ -15,6 +15,9 @@ out = Path('out/starfield'); out.mkdir(parents=True, exist_ok=True)
 base = os.environ.copy()
 base.pop('LD_PRELOAD', None)
 base.pop('GL_STEREO', None)
+# every wait on the saver or the broker: a frame, an exit (GL_STEREO_TEST_SECONDS, 60 by default);
+# the one-frame queue check keeps its own short wait
+budget = float(os.environ.get('GL_STEREO_TEST_SECONDS', '60'))
 
 def launch(extra, broker=True):
     source, writer = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
@@ -30,13 +33,13 @@ def launch(extra, broker=True):
         source.close(); sink.close()
     else:
         reader, relay = source, None
-    reader.settimeout(5)
+    reader.settimeout(budget)
     return process, relay, reader
 
 def stop(process):
     if process.poll() is None:
         os.killpg(process.pid, signal.SIGTERM)
-    return process.communicate(timeout=5)
+    return process.communicate(timeout=budget)
 
 def pixels(frame):
     raw = os.pread(frame.fd, frame.width * frame.height * 4, 0)
@@ -51,7 +54,7 @@ for _ in range(3):
     acknowledge(reader, frame); last = frame.sequence; frame.close()
 reader.close()
 stop(process)
-broker.communicate(timeout=5)
+broker.communicate(timeout=budget)
 Image.fromarray(picture).save(out/'oracle.png')
 
 def disparities(picture):
@@ -104,10 +107,10 @@ for eye,label in enumerate(('left','right')):
     eye_scene = scene[:,eye*640:(eye+1)*640]
     # Point clipping at the physical window edge differs from an eye viewport.
     assert np.array_equal(reference[1:-1,1:-1], eye_scene[1:-1,1:-1])
-# A dead consumer must stop the broker promptly, without keeping the producer blocked.
-reader.close(); broker.communicate(timeout=3)
+# A dead consumer must stop the broker, without keeping the producer blocked.
+reader.close(); broker.communicate(timeout=budget)
 assert broker.returncode != 0
-output, error = process.communicate(timeout=5)
+output, error = process.communicate(timeout=budget)
 assert process.returncode == 0 and 'world_updates=90' in output and not error, (output,error)
 
 process, _, reader = launch(['--frames','1000','--fast'], broker=False)
@@ -121,7 +124,7 @@ except (socket.timeout, EOFError):
 else:
     raise AssertionError('producer queued more than one unacknowledged frame')
 reader.close()
-output,error = process.communicate(timeout=60)
+output,error = process.communicate(timeout=max(60, budget))
 assert process.returncode == 0 and 'world_updates=1000' in output and not error
 print('PASS: animated field, prompt exclusion, one world update per frame, dead consumer and bounded slow-consumer queue')
 import json

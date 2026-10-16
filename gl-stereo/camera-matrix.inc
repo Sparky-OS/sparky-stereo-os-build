@@ -37,7 +37,7 @@ static void select_fixed_camera(DrawState *s)
     s->camera_a=s->camera_b=0;
     s->perspective=camera_depth(s->projection,&s->camera_a,&s->camera_b);
     s->constant[0]=s->constant[1]=s->constant[2]=0; s->constant[3]=1;
-    if (s->perspective || s->program || current->quad) return;
+    if (s->perspective || s->program || current->quad || current->core) return;
     double modelview[16], combined[16]={0}, inverse[16];
     r_glGetDoublev(GL_MODELVIEW_MATRIX,modelview);
     for (int c=0;c<4;c++) for (int r=0;r<4;r++) for (int k=0;k<4;k++)

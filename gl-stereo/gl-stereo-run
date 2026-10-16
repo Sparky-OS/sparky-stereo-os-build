@@ -2,11 +2,106 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Launch one program with full side-by-side stereo for KWin."""
 import argparse
+import json
 import os
 from pathlib import Path
 import re
 import subprocess
 import sys
+
+# OpenGL on NVIDIA: NVIDIA's EGL gives a window no second view, so a program
+# that draws its own two views gets them either from Mesa running on NVIDIA's
+# Vulkan driver (zink), where the views are Mesa's, or from this layer over
+# NVIDIA's own OpenGL. zink is the default: measured, it covers more programs.
+NVIDIA_CHOICES = ('zink', 'nvidia')
+EGL_VENDORS = Path('/usr/share/glvnd/egl_vendor.d')
+
+
+def strings():
+    try:
+        path = Path(__file__).resolve().with_name('launcher-strings.json')
+        if not path.is_file():
+            path = Path('/usr/share/gl-stereo/launcher-strings.json')
+        languages = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    locale = os.environ.get('LC_ALL') or os.environ.get('LC_MESSAGES') or os.environ.get('LANG', 'en')
+    locale = locale.split('.')[0].split('@')[0]
+    return languages.get(locale, languages.get(locale.split('_')[0], languages['en']))
+
+
+# Asks the OpenGL library which vendor serves a program on this display: EGL
+# on the Wayland display, else GLX on the X11 one. It runs in a child process
+# with the program's environment, so a PRIME offload setting counts too.
+VENDOR_PROBE = r'''
+import ctypes, sys
+if sys.argv[1] == 'wayland':
+    wl = ctypes.CDLL('libwayland-client.so.0')
+    wl.wl_display_connect.restype = ctypes.c_void_p
+    wl.wl_display_connect.argtypes = [ctypes.c_char_p]
+    egl = ctypes.CDLL('libEGL.so.1')
+    egl.eglGetPlatformDisplay.restype = ctypes.c_void_p
+    egl.eglGetPlatformDisplay.argtypes = [ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p]
+    egl.eglInitialize.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+    egl.eglQueryString.restype = ctypes.c_char_p
+    egl.eglQueryString.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    native = wl.wl_display_connect(None)
+    display = egl.eglGetPlatformDisplay(0x31D8, native, None) if native else None
+    if display and egl.eglInitialize(display, None, None):
+        print((egl.eglQueryString(display, 0x3053) or b'').decode(errors='replace'))
+else:
+    x11 = ctypes.CDLL('libX11.so.6')
+    x11.XOpenDisplay.restype = ctypes.c_void_p
+    x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+    gl = ctypes.CDLL('libGL.so.1')
+    gl.glXGetClientString.restype = ctypes.c_char_p
+    gl.glXGetClientString.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    display = x11.XOpenDisplay(None)
+    if display:
+        print((gl.glXGetClientString(display, 1) or b'').decode(errors='replace'))
+'''
+
+
+# The session's zink default (sparky-stereo-hardware's sparky-stereo-opengl.sh marks it with
+# SPARKY_STEREO_OPENGL=zink): Mesa's OpenGL for every program of a desktop on NVIDIA's driver.
+SESSION_ZINK = ('SPARKY_STEREO_OPENGL', '__EGL_VENDOR_LIBRARY_FILENAMES', '__GLX_VENDOR_LIBRARY_NAME',
+                'MESA_LOADER_DRIVER_OVERRIDE', 'LIBGL_KOPPER_DISABLE')
+
+
+def without_session_zink(env):
+    if env.get('SPARKY_STEREO_OPENGL') != 'zink':
+        return dict(env)
+    return {k: v for k, v in env.items() if k not in SESSION_ZINK}
+
+
+def nvidia_opengl_serves(env):
+    platform = 'wayland' if env.get('WAYLAND_DISPLAY') else 'x11' if env.get('DISPLAY') else None
+    if platform is None or not Path('/proc/driver/nvidia/version').exists():
+        return False
+    probe_env = {k: v for k, v in without_session_zink(env).items() if k not in ('LD_PRELOAD', 'GL_STEREO')}
+    try:
+        result = subprocess.run([sys.executable, '-c', VENDOR_PROBE, platform], env=probe_env,
+                                capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return 'NVIDIA' in result.stdout
+
+
+def zink_environment(env):
+    """Mesa's OpenGL on NVIDIA's Vulkan. NVIDIA's Vulkan driver refuses to start
+    when its own EGL vendor is left out, so Mesa's is listed first, beside it."""
+    mesa, nvidia = EGL_VENDORS / '50_mesa.json', EGL_VENDORS / '10_nvidia.json'
+    if not (mesa.is_file() and nvidia.is_file()):
+        return False
+    env['__EGL_VENDOR_LIBRARY_FILENAMES'] = f'{mesa}:{nvidia}'
+    env['__GLX_VENDOR_LIBRARY_NAME'] = 'mesa'
+    env['MESA_LOADER_DRIVER_OVERRIDE'] = 'zink'
+    # Mesa's two views are in its own presentation path, not in zink's Vulkan
+    # swapchain one.
+    env['LIBGL_KOPPER_DISABLE'] = '1'
+    # Mesa gives a program that asks for stereo its own two views.
+    env['GL_STEREO_DRIVER_VIEWS'] = '1'
+    return True
 
 
 def resolution(value):
@@ -26,36 +121,47 @@ def display_settings():
     subprocess.Popen(['kcmshell6', 'kcm_kscreen'], close_fds=True, env=env)
 
 
-def settings(enabled, size):
+def settings(enabled, size, nvidia_opengl, on_nvidia):
     import tkinter as tk
     from tkinter import ttk, messagebox
+    text = strings() or ['OpenGL stereo', 'Enable 3D', 'Render resolution per eye',
+                         'Auto follows the window; in fullscreen, the screen.', 'Display settings', 'Launch',
+                         'OpenGL on NVIDIA', "Mesa on NVIDIA's Vulkan (zink)", "NVIDIA's own OpenGL"]
     root = tk.Tk()
-    root.title('OpenGL stereo')
+    root.title(text[0])
     root.resizable(False, False)
     on = tk.BooleanVar(value=enabled)
     render_size = tk.StringVar(value=size)
+    paths = dict(zip(NVIDIA_CHOICES, text[7:9]))
+    path = tk.StringVar(value=paths[nvidia_opengl])
     result = []
     frame = ttk.Frame(root, padding=16)
     frame.pack(fill='both', expand=True)
-    ttk.Checkbutton(frame, text='Enable 3D', variable=on).grid(row=0, column=0, columnspan=2, sticky='w', pady=6)
-    ttk.Label(frame, text='Render resolution per eye').grid(row=1, column=0, sticky='w', padx=(0, 12))
+    ttk.Checkbutton(frame, text=text[1], variable=on).grid(row=0, column=0, columnspan=2, sticky='w', pady=6)
+    ttk.Label(frame, text=text[2]).grid(row=1, column=0, sticky='w', padx=(0, 12))
     ttk.Combobox(frame, textvariable=render_size, values=['auto', '640x360', '1280x720', '1920x1080', '2560x1440', '3840x2160']).grid(row=1, column=1)
-    ttk.Label(frame, text='Auto follows the window; in fullscreen, the screen.').grid(row=2, column=0, columnspan=2, pady=8)
+    ttk.Label(frame, text=text[3]).grid(row=2, column=0, columnspan=2, pady=8)
+    row = 3
+    if on_nvidia:
+        ttk.Label(frame, text=text[6]).grid(row=row, column=0, sticky='w', padx=(0, 12))
+        ttk.Combobox(frame, textvariable=path, values=list(paths.values()), state='readonly').grid(row=row, column=1)
+        row += 1
     def displays():
         try:
             display_settings()
         except OSError as error:
-            messagebox.showerror('Display settings', str(error), parent=root)
+            messagebox.showerror(text[4], str(error), parent=root)
     def launch():
         try:
             value = resolution(render_size.get())
         except argparse.ArgumentTypeError as error:
-            messagebox.showerror('Render resolution', str(error), parent=root)
+            messagebox.showerror(text[2], str(error), parent=root)
             return
-        result.append((on.get(), value))
+        chosen = next(key for key, label in paths.items() if label == path.get())
+        result.append((on.get(), value, chosen))
         root.destroy()
-    ttk.Button(frame, text='Display settings', command=displays).grid(row=3, column=0, pady=(8,0), sticky='w')
-    ttk.Button(frame, text='Launch', command=launch).grid(row=3, column=1, pady=(8,0), sticky='e')
+    ttk.Button(frame, text=text[4], command=displays).grid(row=row, column=0, pady=(8,0), sticky='w')
+    ttk.Button(frame, text=text[5], command=launch).grid(row=row, column=1, pady=(8,0), sticky='e')
     root.mainloop()
     return result[0] if result else None
 
@@ -67,6 +173,9 @@ def main():
     parser.add_argument('--display-settings', action='store_true', help='open KDE Display settings')
     parser.add_argument('--saver-settings', action='store_true', help='choose the screensavers in the Plasma stereo rotation')
     parser.add_argument('--settings', action='store_true', help='show settings before launching')
+    parser.add_argument('--nvidia-opengl', choices=NVIDIA_CHOICES,
+                        default=os.environ.get('GL_STEREO_NVIDIA_OPENGL') if os.environ.get('GL_STEREO_NVIDIA_OPENGL') in NVIDIA_CHOICES else 'zink',
+                        help="on NVIDIA: Mesa on NVIDIA's Vulkan (zink, the default) or NVIDIA's own OpenGL")
     parser.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if args.saver_settings:
@@ -83,13 +192,17 @@ def main():
         command = command[1:]
     if not command:
         parser.error('supply a program after --')
-    enabled, size = args.enable_3d == 'on', args.render_resolution
+    enabled, size, nvidia_opengl = args.enable_3d == 'on', args.render_resolution, args.nvidia_opengl
+    on_nvidia = nvidia_opengl_serves(os.environ)
     if args.settings:
-        choice = settings(enabled, size)
+        choice = settings(enabled, size, nvidia_opengl, on_nvidia)
         if choice is None:
             return 0
-        enabled, size = choice
+        enabled, size, nvidia_opengl = choice
     env = os.environ.copy()
+    if on_nvidia and (not enabled or nvidia_opengl == 'nvidia'):
+        # NVIDIA's own OpenGL, also for 3D off: leave the session's zink default
+        env = without_session_zink(env)
     library = Path(__file__).resolve().with_name('libgl-stereo.so')
     if not library.is_file():
         library = Path('/usr/lib/gl-stereo/libgl-stereo.so')
@@ -100,6 +213,11 @@ def main():
         env['LD_PRELOAD'] = ' '.join([str(library)] + [p for p in preloads if p != str(library)])
         env['GL_STEREO'] = '1'
         env.pop('GL_STEREO_PASSTHROUGH', None)
+        # A program that draws its own two views keeps the driver's where it has
+        # them (Mesa's, also through zink); the layer gives them where it has none.
+        env.setdefault('GL_STEREO_DRIVER_VIEWS', '1')
+        if on_nvidia and nvidia_opengl == 'zink' and not zink_environment(env):
+            print("gl-stereo-run: Mesa or NVIDIA's EGL vendor file is missing; using NVIDIA's own OpenGL", file=sys.stderr)
         if size != 'auto':
             env['GL_STEREO_RENDER_RESOLUTION'] = size
         else:

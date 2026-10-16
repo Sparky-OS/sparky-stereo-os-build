@@ -16,11 +16,18 @@ def root():
         walk(widget)
         for title in ('Enable 3D', 'Render resolution per eye', 'Display settings', 'Launch'):
             assert title in seen
-        ImageGrab.grab(xdisplay=os.environ['DISPLAY']).save('out/launcher/dialog.png')
+        ImageGrab.grab(xdisplay=os.environ['DISPLAY']).save('out/launcher/dialog-%d.png' % len(shots))
+        shots.append(widget)
         widget.destroy()
     widget.after(500,verify)
     return widget
+shots = []
 tk.Tk = root
-assert module['settings'](True,'auto') is None
-assert seen
-print('PASS: settings dialog controls rendered under private Xvfb')
+# Where Mesa serves the display the dialog has no OpenGL row; where NVIDIA's OpenGL does,
+# the row offers zink and NVIDIA's own OpenGL, per program.
+assert module['settings'](True,'auto','zink',False) is None
+assert seen and 'OpenGL on NVIDIA' not in seen
+seen.clear()
+assert module['settings'](True,'auto','nvidia',True) is None
+assert 'OpenGL on NVIDIA' in seen
+print('PASS: settings dialog controls rendered under private Xvfb, the OpenGL row only on NVIDIA')

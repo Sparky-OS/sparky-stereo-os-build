@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/15
+# Last update 2026/10/16
 set -euo pipefail
 install -Dm755 "$HERE/bin/sparky-stereo-hardware" "$D/usr/bin/sparky-stereo-hardware"
 mkdir -p "$D/usr/lib/sparky-stereo-hardware" "$D/usr/share/sparky/sparky-stereo-hardware"
@@ -17,3 +17,10 @@ install -Dm755 "$HERE/share/initramfs/scripts/init-top/sparky-stereo-live-gpu" "
 install -Dm755 "$HERE/share/initramfs/scripts/init-bottom/sparky-stereo-live-gpu" "$D/usr/share/initramfs-tools/scripts/init-bottom/sparky-stereo-live-gpu"
 install -Dm644 "$HERE/share/autostart/sparky-stereo-live-gpu.desktop" "$D/etc/xdg/autostart/sparky-stereo-live-gpu.desktop"
 install -Dm644 "$HERE/share/plasma-env/sparky-stereo-primary-gpu.sh" "$D/etc/xdg/plasma-workspace/env/sparky-stereo-primary-gpu.sh"
+install -Dm755 "$HERE/bin/sparky-stereo-opengl-default" "$D/usr/bin/sparky-stereo-opengl-default"
+install -Dm755 "$HERE/bin/sparky-stereo-nvidia-opengl" "$D/usr/bin/sparky-stereo-nvidia-opengl"
+install -m644 "$HERE/share/nvidia-opengl-programs" "$D/usr/share/sparky/sparky-stereo-hardware/"
+install -Dm644 "$HERE/share/plasma-env/sparky-stereo-opengl.sh" "$D/etc/xdg/plasma-workspace/env/sparky-stereo-opengl.sh"
+install -Dm644 "$HERE/share/systemd/sparky-stereo-opengl-default.service" "$D/usr/lib/systemd/system/sparky-stereo-opengl-default.service"
+install -Dm644 "$HERE/share/systemd-user/sparky-stereo-opengl.conf" "$D/usr/lib/systemd/user/plasma-kwin_wayland.service.d/sparky-stereo-opengl.conf"
+install -Dm644 "$HERE/share/udev/71-sparky-stereo-opengl-default.rules" "$D/usr/lib/udev/rules.d/71-sparky-stereo-opengl-default.rules"

@@ -1,5 +1,5 @@
 Sparky Stereo meta packages
-Meta packages of Sparky Stereo OS, generated from the edition's package lists: sparky-stereo, sparky-stereo-desktop, sparky-stereo-gaming, sparky-stereo-hardware-support, sparky-stereo-languages and sparky-stereo-system.
+Meta packages of Sparky Stereo OS, generated from the edition's package lists: sparky-stereo, sparky-stereo-desktop, sparky-stereo-gaming, sparky-stereo-hardware-support, sparky-stereo-languages, sparky-stereo-system, the role tasks task-sparky-stereo-<role> (with the developer tasks task-sparky-stereo-developer and task-sparky-stereo-os-developer, installed on request) and sparky-stereo-tasks for tasksel.
 
 Copyright (C) 2026 Paweł Pijanowski, Daniel Ramos (Capitain Jack) and others, see copyright file.
 

@@ -73,6 +73,11 @@ The generated catalogue is a trusted packaging artifact, not a file to accept
 from a saver process. Regenerate it for installed paths and binaries during
 package validation. Development receipts contain workspace paths.
 
+The package build runs these checks (`packaging/qualify-package.sh`). Each
+wait on a saver, for its captured frame, a frame from its stream or its exit,
+ends when that arrives, up to `GL_STEREO_TEST_SECONDS` (60 by default), so a
+loaded build machine waits longer instead of failing.
+
 The controller shuffles bags of all eligible entries and avoids immediate
 repeats. A failed/stalled producer is excluded for the session. No eligible
 entries means no frames, so the consumer uses its static background. The

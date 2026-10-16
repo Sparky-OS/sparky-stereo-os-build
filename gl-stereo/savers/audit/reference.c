@@ -17,7 +17,58 @@ static void *next(const char *name)
     return lookup(RTLD_NEXT,name);
 }
 static _Thread_local int compiling, nested;
-typedef struct { GLdouble projection[16]; GLint mode, program, location; int changed; } Camera;
+typedef struct { GLdouble projection[16], inverse[16]; GLint mode, program, location; int changed, through_modelview; } Camera;
+/* M = P A with P a canonical perspective and A a rotation, uniform scale and
+ * translation: P from M (column-major), 0 when M is not of that form. Row r of
+ * M is (m[r], m[4+r], m[8+r], m[12+r]); row 3 of M is minus row 2 of A. */
+static int modelview_perspective(const GLdouble *m, GLdouble *p)
+{
+    double a2[4], r0[4], r1[4], r2[4];
+    for (int c=0;c<4;c++) { a2[c]=-m[4*c+3]; r0[c]=m[4*c]; r1[c]=m[4*c+1]; r2[c]=m[4*c+2]; }
+    double s2=a2[0]*a2[0]+a2[1]*a2[1]+a2[2]*a2[2];
+    if (!(s2>1e-12)) return 0;
+    double p10=(r2[0]*a2[0]+r2[1]*a2[1]+r2[2]*a2[2])/s2;
+    double p8=(r0[0]*a2[0]+r0[1]*a2[1]+r0[2]*a2[2])/s2, p9=(r1[0]*a2[0]+r1[1]*a2[1]+r1[2]*a2[2])/s2;
+    double a0[3], a1[3], n0=0, n1=0;
+    for (int c=0;c<3;c++) { a0[c]=r0[c]-p8*a2[c]; a1[c]=r1[c]-p9*a2[c]; n0+=a0[c]*a0[c]; n1+=a1[c]*a1[c]; }
+    double p0=sqrt(n0/s2), p5=sqrt(n1/s2);
+    if (!(p0>0 && p5>0)) return 0;
+    /* A's rows: orthogonal, of one length, or this is not a view */
+    double d01=0,d02=0,d12=0, rz=0;
+    for (int c=0;c<3;c++) { d01+=a0[c]*a1[c]; d02+=a0[c]*a2[c]; d12+=a1[c]*a2[c]; rz+=(r2[c]-p10*a2[c])*(r2[c]-p10*a2[c]); }
+    double tolerance=1e-6*s2*(1+p0*p0+p5*p5);
+    if (fabs(d01)>tolerance*p0*p5 || fabs(d02)>tolerance*p0 || fabs(d12)>tolerance*p5 || rz>tolerance*(1+p10*p10)) return 0;
+    if (fabs(n0/(p0*p0)-s2)>1e-6*s2 || fabs(n1/(p5*p5)-s2)>1e-6*s2) return 0;
+    double p14=r2[3]-p10*a2[3];
+    memset(p,0,16*sizeof(*p));
+    p[0]=p0; p[5]=p5; p[8]=p8; p[9]=p9; p[10]=p10; p[11]=-1; p[14]=p14;
+    return 1;
+}
+/* A general 4x4 inverse (column-major), by cofactors; 0 when singular. */
+static int invert(const GLdouble *m, GLdouble *out)
+{
+    GLdouble inv[16];
+    inv[0]=m[5]*m[10]*m[15]-m[5]*m[11]*m[14]-m[9]*m[6]*m[15]+m[9]*m[7]*m[14]+m[13]*m[6]*m[11]-m[13]*m[7]*m[10];
+    inv[4]=-m[4]*m[10]*m[15]+m[4]*m[11]*m[14]+m[8]*m[6]*m[15]-m[8]*m[7]*m[14]-m[12]*m[6]*m[11]+m[12]*m[7]*m[10];
+    inv[8]=m[4]*m[9]*m[15]-m[4]*m[11]*m[13]-m[8]*m[5]*m[15]+m[8]*m[7]*m[13]+m[12]*m[5]*m[11]-m[12]*m[7]*m[9];
+    inv[12]=-m[4]*m[9]*m[14]+m[4]*m[10]*m[13]+m[8]*m[5]*m[14]-m[8]*m[6]*m[13]-m[12]*m[5]*m[10]+m[12]*m[6]*m[9];
+    inv[1]=-m[1]*m[10]*m[15]+m[1]*m[11]*m[14]+m[9]*m[2]*m[15]-m[9]*m[3]*m[14]-m[13]*m[2]*m[11]+m[13]*m[3]*m[10];
+    inv[5]=m[0]*m[10]*m[15]-m[0]*m[11]*m[14]-m[8]*m[2]*m[15]+m[8]*m[3]*m[14]+m[12]*m[2]*m[11]-m[12]*m[3]*m[10];
+    inv[9]=-m[0]*m[9]*m[15]+m[0]*m[11]*m[13]+m[8]*m[1]*m[15]-m[8]*m[3]*m[13]-m[12]*m[1]*m[11]+m[12]*m[3]*m[9];
+    inv[13]=m[0]*m[9]*m[14]-m[0]*m[10]*m[13]-m[8]*m[1]*m[14]+m[8]*m[2]*m[13]+m[12]*m[1]*m[10]-m[12]*m[2]*m[9];
+    inv[2]=m[1]*m[6]*m[15]-m[1]*m[7]*m[14]-m[5]*m[2]*m[15]+m[5]*m[3]*m[14]+m[13]*m[2]*m[7]-m[13]*m[3]*m[6];
+    inv[6]=-m[0]*m[6]*m[15]+m[0]*m[7]*m[14]+m[4]*m[2]*m[15]-m[4]*m[3]*m[14]-m[12]*m[2]*m[7]+m[12]*m[3]*m[6];
+    inv[10]=m[0]*m[5]*m[15]-m[0]*m[7]*m[13]-m[4]*m[1]*m[15]+m[4]*m[3]*m[13]+m[12]*m[1]*m[7]-m[12]*m[3]*m[5];
+    inv[14]=-m[0]*m[5]*m[14]+m[0]*m[6]*m[13]+m[4]*m[1]*m[14]-m[4]*m[2]*m[13]-m[12]*m[1]*m[6]+m[12]*m[2]*m[5];
+    inv[3]=-m[1]*m[6]*m[11]+m[1]*m[7]*m[10]+m[5]*m[2]*m[11]-m[5]*m[3]*m[10]-m[9]*m[2]*m[7]+m[9]*m[3]*m[6];
+    inv[7]=m[0]*m[6]*m[11]-m[0]*m[7]*m[10]-m[4]*m[2]*m[11]+m[4]*m[3]*m[10]+m[8]*m[2]*m[7]-m[8]*m[3]*m[6];
+    inv[11]=-m[0]*m[5]*m[11]+m[0]*m[7]*m[9]+m[4]*m[1]*m[11]-m[4]*m[3]*m[9]-m[8]*m[1]*m[7]+m[8]*m[3]*m[5];
+    inv[15]=m[0]*m[5]*m[10]-m[0]*m[6]*m[9]-m[4]*m[1]*m[10]+m[4]*m[2]*m[9]+m[8]*m[1]*m[6]-m[8]*m[2]*m[5];
+    GLdouble det=m[0]*inv[0]+m[1]*inv[4]+m[2]*inv[8]+m[3]*inv[12];
+    if (!isfinite(det) || fabs(det)<1e-300) return 0;
+    for (int i=0;i<16;i++) out[i]=inv[i]/det;
+    return 1;
+}
 static int canonical(const GLfloat *p)
 {
     const int zero[]={1,2,3,4,6,7};
@@ -52,7 +103,22 @@ static void begin_camera(Camera *camera)
     } else {
         glGetDoublev(GL_PROJECTION_MATRIX,camera->projection);
         GLfloat value[16]; for (int i=0;i<16;i++) value[i]=camera->projection[i];
-        if (!canonical(value)) return;
+        if (!canonical(value)) {
+            /* Perspective placed in GL_MODELVIEW under an identity projection
+             * (Star Wars): the modelview M is a canonical perspective P times
+             * a view A that rotates, translates and scales uniformly. P is
+             * recovered from M (its last row is minus A's third row), the
+             * eye's camera E is built from P as below, and the projection
+             * becomes E times P's inverse, so that with M it gives E times A
+             * and the program's modelview stays untouched. */
+            for (int i=0;i<16;i++) if (fabs(camera->projection[i]-(i%5==0))>1e-9) return;
+            GLdouble m[16];
+            glGetDoublev(GL_MODELVIEW_MATRIX,m);
+            if (!modelview_perspective(m,camera->projection)) return;
+            for (int i=0;i<16;i++) value[i]=camera->projection[i];
+            if (!canonical(value) || !invert(camera->projection,camera->inverse)) return;
+            camera->through_modelview=1;
+        }
     }
     const GLdouble *p=camera->projection;
     double b=p[14]+p[10]*p[15];
@@ -69,6 +135,7 @@ static void begin_camera(Camera *camera)
               near*(p[9]-1)/p[5],near*(p[9]+1)/p[5],near,far);
     glTranslated(half_eye,0,0);
     glTranslated((p[12]+p[8]*p[15])/p[0],(p[13]+p[9]*p[15])/p[5],-p[15]);
+    if (camera->through_modelview) glMultMatrixd(camera->inverse);
     if (camera->program) {
         GLfloat value[16]; glGetFloatv(GL_PROJECTION_MATRIX,value);
         glUniformMatrix4fv(camera->location,1,GL_FALSE,value);

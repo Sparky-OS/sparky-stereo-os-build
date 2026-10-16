@@ -7,7 +7,7 @@ mkdir -p out/window-sizing
 sed 's/w->compositor_sizes = support >= 3;/w->compositor_sizes = 0;/' gl-stereo.c >out/window-sizing/legacy-sizing.c
 gcc -fPIC -O2 -fvisibility=hidden -pthread -shared -Wl,--no-undefined -I. \
     $(pkg-config --cflags stereo-declare) out/window-sizing/legacy-sizing.c \
-    -o out/window-sizing/before.so -ldl -lGL -lX11 -lm -pthread $(pkg-config --libs stereo-declare)
+    -o out/window-sizing/before.so -ldl -lGL -lX11 -lwayland-client -lm -pthread $(pkg-config --libs stereo-declare)
 rm out/window-sizing/legacy-sizing.c
 gcc -O2 -Wall -Wextra tests/window-sizing.c -o out/window-sizing-client -lGL -lX11 -ldl
 for version in 0 1 2; do

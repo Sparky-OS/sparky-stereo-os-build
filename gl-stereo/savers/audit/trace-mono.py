@@ -23,7 +23,10 @@ for name in sys.argv[3:]:
         if os.environ.get('AUDIT_RECORD_FIXTURE'):
             record_env.update(LD_PRELOAD=os.environ['AUDIT_RECORD_FIXTURE'],AUDIT_FRAME='1000000000',AUDIT_TEXT=os.environ['AUDIT_RECORD_TEXT'])
         with (case/'record.log').open('w') as log:
-            run=subprocess.run(['xvfb-run','-a','timeout','--signal=TERM','--kill-after=3','12','apitrace','trace','--api=egl','-o',str(trace),'/usr/libexec/xscreensaver/'+name,'-window','-geometry','640x360'],env=record_env,stdout=log,stderr=log,timeout=30)
+            # The recording's length decides how far the scene gets; on a loaded machine
+            # AUDIT_RECORD_SECONDS gives it more time (the input stays deterministic).
+            seconds=os.environ.get('AUDIT_RECORD_SECONDS','12')
+            run=subprocess.run(['xvfb-run','-a','timeout','--signal=TERM','--kill-after=3',seconds,'apitrace','trace','--api=egl','-o',str(trace),'/usr/libexec/xscreensaver/'+name,'-window','-geometry','640x360'],env=record_env,stdout=log,stderr=log,timeout=float(seconds)+18)
         assert run.returncode in (0,124),run.returncode
         calls=subprocess.check_output(['apitrace','dump','--calls=frame',str(trace)],text=True)
         numbers=re.findall(r'^(\d+) ',calls,re.M)

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/15
+# Last update 2026/10/16
 set -euo pipefail
 if ((EUID != 0)); then echo 'Run as root (use the Hardware Setup menu entry).'; exit 1; fi
 export LC_ALL=C.UTF-8
@@ -156,5 +156,8 @@ for package in "${packages[@]}"; do
 		hid-tmff2-dkms|hid-fanatecff-dkms|new-lg4ff-dkms) setup_rig_driver "$package" || failed=1 ;;
 	esac
 done
+# The OpenGL stereo default follows the card the desktop runs on; a driver installed now
+# binds at the next boot, when sparky-stereo-opengl-default.service writes it again.
+run /usr/bin/sparky-stereo-opengl-default || failed=1
 log "Hardware setup finished, errors=$failed. Firmware and driver changes may need a reboot."
 exit "$failed"
