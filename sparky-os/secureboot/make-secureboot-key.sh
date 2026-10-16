@@ -26,8 +26,10 @@ basicConstraints = critical,CA:FALSE
 keyUsage = digitalSignature
 subjectKeyIdentifier = hash
 authorityKeyIdentifier = keyid
-# code signing, and the Linux kernel module signing purpose
-extendedKeyUsage = codeSigning,1.3.6.1.4.1.2312.16.1.2
+# code signing only: shim refuses a db or MOK certificate whose extended key usage includes the
+# Linux module signing purpose (1.3.6.1.4.1.2312.16.1.2, verify_eku in shim's verify.c), so such a
+# key could not boot a kernel; the kernel itself checks no key usage for modules
+extendedKeyUsage = codeSigning
 CNF
 "$OPENSSL" req -new -x509 -nodes -utf8 -sha256 -days 3650 -config "$OUT/openssl.cnf" \
 	-newkey rsa:2048 -keyout "$OUT/key.pem" -out "$OUT/cert.pem" 2>/dev/null

@@ -9,6 +9,7 @@
 #   REPO     the edition's development repository            CACHE   apt's downloads, outside the tree
 #   WORK     the packer's work tree                          OUT     the ISO, its sums, package list, Lean Code manifest
 #   SIGNED_MODULES  optional: the DKMS modules signed with the edition's key (sign-modules.sh output); pack only
+#   SIGNED_KERNEL   optional: the linux-image package signed with the edition's key (sign-kernel-deb.sh output); pack only
 #   LABEL, ISONAME  the menu label and the file name
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -21,6 +22,7 @@ IMAGE=beta-iso-lutz-build:1
 docker image inspect $IMAGE >/dev/null 2>&1 || docker build --platform linux/amd64 -t $IMAGE "$HERE"
 mkdir -p "$TREE" "$CACHE" "$WORK" "$OUT" "$LOGS"
 sm=; [ -n "${SIGNED_MODULES:-}" ] && sm="-v $SIGNED_MODULES:/signed:ro -e SIGNED_MODULES=/signed"
+[ -n "${SIGNED_KERNEL:-}" ] && sm="$sm -v $SIGNED_KERNEL:/signed-kernel.deb:ro -e SIGNED_KERNEL=/signed-kernel.deb"
 run() {
 	# shellcheck disable=SC2086
 	docker run --rm --name "beta-iso-lutz-$1" --privileged --cpus 4 --memory 16g \

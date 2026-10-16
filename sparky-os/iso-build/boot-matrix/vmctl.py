@@ -11,7 +11,7 @@
 
 Nothing is shown on any display: QEMU runs with -display none; this only talks to its QMP socket.
 """
-import json, socket, sys, time
+import json, os, socket, sys, time
 
 SHIFTED = {'!': '1', '@': '2', '#': '3', '$': '4', '%': '5', '^': '6', '&': '7', '*': '8', '(': '9', ')': '0',
            '_': 'minus', '+': 'equal', '{': 'bracket_left', '}': 'bracket_right', ':': 'semicolon', '"': 'apostrophe',
@@ -58,7 +58,7 @@ def main():
     sock, action, *rest = sys.argv[1:]
     q = Qmp(sock)
     if action == "shot":
-        r = q.cmd("screendump", filename=rest[0], format="png")
+        r = q.cmd("screendump", filename=os.path.abspath(rest[0]), format="png")
     elif action == "key":
         r = q.cmd("send-key", keys=[{"type": "qcode", "data": k} for k in rest[0].split("+")])
     elif action == "type":

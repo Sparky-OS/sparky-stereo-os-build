@@ -136,7 +136,7 @@ def main():
     if a.disk:
         cmd += ["-drive", f"file={os.path.abspath(a.disk)},if=none,id=d0,format=raw", "-device", "virtio-blk-pci,drive=d0,bootindex=1"]
     if a.fat:
-        cmd += ["-drive", f"file={os.path.abspath(a.fat)},if=none,id=f0,format=raw", "-device", "virtio-blk-pci,drive=f0"]
+        cmd += ["-drive", f"file={os.path.abspath(a.fat)},if=none,id=f0,format=raw", "-device", "virtio-blk-pci,drive=f0,bootindex=5"]
     if a.detach:
         cmd += ["-device", "usb-tablet,bus=xin.0"]
     with open(os.path.join(a.out, "cmdline.txt"), "w") as f:

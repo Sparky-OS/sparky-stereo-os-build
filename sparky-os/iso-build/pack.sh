@@ -5,7 +5,8 @@
 # Runs as root inside beta-iso-lutz-build:1 (privileged). Mounts as rootfs.sh, plus /work (the packer's
 # work tree) and /out (the ISO and its files), both outside the root file system.
 # Environment: LABEL (menu label), ISONAME (file name), SIGNED_MODULES (optional: a folder whose
-# lib/modules/... files replace the DKMS modules, signed with the edition's key by the main session).
+# lib/modules/... files replace the DKMS modules, signed with the edition's key by the main session),
+# SIGNED_KERNEL (optional: the linux-image package signed with the edition's key, installed over the tree's).
 # Usage: pack.sh configure|iso|all
 set -eu
 R=/rootfs
@@ -56,6 +57,12 @@ if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
 		if inr dpkg-divert --list "$f" | grep -q local; then rm -f "$R$f"; inr dpkg-divert --local --rename --remove "$f"; fi
 	done
 	rm -f $R/boot/grub/grub.cfg
+	if [ -n "${SIGNED_KERNEL:-}" ] && [ -f "$SIGNED_KERNEL" ]; then
+		echo "== $(date -u +%T) the stereo kernel signed with the edition's key: $(basename "$SIGNED_KERNEL")"
+		cp "$SIGNED_KERNEL" $R/tmp/signed-kernel.deb
+		inr dpkg -i /tmp/signed-kernel.deb
+		rm -f $R/tmp/signed-kernel.deb
+	fi
 	if [ -n "${SIGNED_MODULES:-}" ] && [ -d "$SIGNED_MODULES/lib/modules" ]; then
 		echo "== $(date -u +%T) DKMS modules signed with the edition's key"
 		cp -a "$SIGNED_MODULES/lib/modules/." $R/lib/modules/

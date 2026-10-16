@@ -23,6 +23,27 @@ The key is RSA 2048 with SHA-256, the size every shim and MokManager accepts, ma
 **Keep `key.pem` private**: never in a repository, an ISO or a package; back it up offline.
 Only `cert.der` and `cert.pem` are shared.
 
+## The certificate names code signing only
+
+shim refuses a certificate in db or in the MOK list whose extended key usage includes the Linux module signing purpose (1.3.6.1.4.1.2312.16.1.2): `verify_eku()` in shim's `verify.c` (16.1) skips it for boot images.
+Certificates made by `make-secureboot-key.sh` before 2026-10-15 named both purposes, so a kernel signed with such a key does not boot through shim even when the certificate is enrolled; GRUB says "bad shim loader signature".
+The kernel itself checks no key usage for modules: an enrolled code-signing certificate goes to its machine keyring and verifies modules.
+
+Measured on 2026-10-15 in QEMU (OVMF with Secure Boot and Microsoft's keys, shim 16.1 and GRUB 2.14 from Debian, our build 8 kernel), beta-iso-lutz lane:
+- with the edition's 2026-10-07 certificate enrolled through MokManager, GRUB still refused our kernel ("bad shim loader signature");
+- with a test key whose certificate was re-issued by `reissue-cert.sh` (code signing only) and enrolled with `mokutil --import`, the kernel signed with it booted under Secure Boot, the kernel loaded the certificate into its machine keyring, a module signed with it loaded, and the unsigned module was refused ("Key was rejected by service");
+- a module signed by the same key under the old certificate was refused ("Loading of module with unavailable key is rejected"): modules name the certificate that signed them, so they are signed again after a re-issue.
+
+To correct an existing key, keep the key and issue a new certificate, then sign everything again:
+
+```sh
+./reissue-cert.sh ~/.sparky-stereo-secureboot "Sparky Stereo OS Secure Boot 2026" "Sparky Stereo OS (Daniel Ramos)"
+./sign-kernel-deb.sh ~/.sparky-stereo-secureboot <unsigned linux-image.deb> signed/<linux-image.deb>
+./sign-modules.sh ~/.sparky-stereo-secureboot <linux-headers.deb> <module tree> <signed module tree>
+```
+
+The certificate's fingerprint changes; publish the new `cert.der` and `cert.pem` here and in the ISO packer's profile.
+
 ## 2. Sign each kernel before it is published
 
 The scripts run the signing tools (`sbsigntool`) in a throwaway Debian container, so nothing is installed on the build machine; they need Docker.
@@ -64,6 +85,8 @@ An installer can run the import for the user and tell them what MokManager will 
 - `make-secureboot-key.sh`: makes the key.
 - `sign-kernel.sh`: signs one kernel image.
 - `sign-kernel-deb.sh`: signs the kernel inside a `linux-image` package.
+- `sign-modules.sh`: signs the out-of-tree modules of a module tree (a live image's DKMS modules), replacing DKMS's own signature.
+- `reissue-cert.sh`: a new certificate for an existing key, code signing only.
 - `Dockerfile.sbtools`: the container with `sbsigntool`.
 
 Tested 2026-10-07 on Sparky Stereo OS's kernel package `linux-image-7.3.0-rc1-stereo3d` (version 6): unsigned before, signed after (1,752 bytes of signature), verified against the certificate.
