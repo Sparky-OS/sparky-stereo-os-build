@@ -17,7 +17,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
-VERSION=${VERSION:-20261014.6~sparky9~0}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
+VERSION=${VERSION:-20261016~sparky9~0}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
 WORK=$(mktemp -d "${TMPDIR:-/K3D/temp/sparky-os}/look-build.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 LNF=usr/share/plasma/look-and-feel
@@ -66,7 +66,7 @@ cp "$HERE/default/splash/Splash.qml" "$T/contents/splash/Splash.qml"
 cp "$HERE/default/xdg/kdeglobals" "$HERE/default/xdg/kwinrc" "$HERE/default/xdg/kde-mimeapps.list" "$HERE/default/xdg/krunnerrc" "$HERE/default/xdg/konsolerc" "$D/etc/xdg/"
 control "$D" sparky-stereo-look \
 	"plasma-theme-oxygen, oxygen-icon-theme, oxygencursors, kde-style-oxygen-qt6, kwin-decoration-oxygen, plasma-runners-addons (>= 4:6.7.4-1+stereo3d1), plasma-systemmonitor, sparky-stereo-gtk" \
-	"kde-style-oxygen-qt5" \
+	"kde-style-oxygen-qt5, sparkyos-artwork" \
 	"Sparky Stereo OS default look: Oxygen dark" \
 	"The edition's default global theme: Oxygen, whole, in its dark colours:" \
 	"Plasma style (Sparky Stereo Oxygen: Oxygen's, with widget, panel, tooltip and" \
