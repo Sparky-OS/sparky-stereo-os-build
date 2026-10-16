@@ -31,4 +31,28 @@ module['display_settings']()
 os.wait()
 os.environ['PATH'] = original
 assert (p/'display-args').read_text() == 'kcm_kscreen\n'
-print('PASS: Enable 3D, per-eye resolution validation and exact Display settings command')
+# OpenGL on NVIDIA: zink's environment lists Mesa's EGL vendor first and
+# NVIDIA's second, which NVIDIA's Vulkan driver needs, and is never set by hand.
+import tempfile
+with tempfile.TemporaryDirectory() as vendors:
+    globals_ = module['zink_environment'].__globals__
+    globals_['EGL_VENDORS'] = Path(vendors)
+    (Path(vendors)/'50_mesa.json').write_text('{}')
+    zink = {}
+    assert not module['zink_environment'](zink) and zink == {}
+    (Path(vendors)/'10_nvidia.json').write_text('{}')
+    assert module['zink_environment'](zink)
+    assert zink['__EGL_VENDOR_LIBRARY_FILENAMES'] == f'{vendors}/50_mesa.json:{vendors}/10_nvidia.json'
+    assert zink['__GLX_VENDOR_LIBRARY_NAME'] == 'mesa' and zink['MESA_LOADER_DRIVER_OVERRIDE'] == 'zink'
+    assert zink['LIBGL_KOPPER_DISABLE'] == '1' and zink['GL_STEREO_DRIVER_VIEWS'] == '1'
+session = dict(os.environ, SPARKY_STEREO_OPENGL='zink', MESA_LOADER_DRIVER_OVERRIDE='zink', LIBGL_KOPPER_DISABLE='1', OTHER='kept')
+assert module['without_session_zink'](session) == dict(os.environ, OTHER='kept')
+own = dict(os.environ, MESA_LOADER_DRIVER_OVERRIDE='radeonsi')
+assert module['without_session_zink'](own) == own
+# Here Mesa serves the display, so neither choice changes the program's OpenGL.
+assert not module['nvidia_opengl_serves'](dict(os.environ))
+script = "import os,json;print(json.dumps({k:v for k,v in os.environ.items() if k in ('MESA_LOADER_DRIVER_OVERRIDE','__EGL_VENDOR_LIBRARY_FILENAMES','GL_STEREO_DRIVER_VIEWS')}))"
+for choice in ('zink', 'nvidia'):
+    value = json.loads(subprocess.check_output(['./gl-stereo-run','--nvidia-opengl',choice,'--',sys.executable,'-c',script]))
+    assert value == {'GL_STEREO_DRIVER_VIEWS': '1'}, (choice, value)
+print('PASS: Enable 3D, per-eye resolution validation, exact Display settings command and the OpenGL choice on NVIDIA')

@@ -53,16 +53,61 @@ Developer overrides:
 | `GL_STEREO_DUMP=N`, `GL_STEREO_DUMP_DIR=...` | Capture selected frame N, once per window |
 | `GL_STEREO_STATS=path` | Exclusive-create a dispatch-count JSON file on clean exit |
 | `GL_STEREO_FRAME_FD=N` | Optional sealed full-SBS pixel stream to an inherited broker socket |
+| `GL_STEREO_DRIVER_VIEWS=1` | Leave a program's own two views to a driver with stereo configs (X11); gl-stereo-run sets it |
+| `GL_STEREO_NO_DOUBLING_WAIT=1` | Do not wait for the compositor to double a declared X11 window (diagnostic) |
+| `GL_STEREO_NVIDIA_OPENGL=zink\|nvidia` | gl-stereo-run's default OpenGL on a desktop that runs on NVIDIA's driver |
 | `GL_STEREO_LOG=1` | Log observed unsupported/mono-sourced operations once to stderr |
 | `GL_STEREO_DEBUG=1` | Geometry and binding diagnostics |
 
 Validated scope and limits are in [REPORT.md](REPORT.md). The prototype is
 not a universal GL implementation: automatic shader stereo, projection-changing
 lists, automatic stereo during `GL_COMPILE_AND_EXECUTE`, per-eye post effects,
-native Wayland and GLES are not supported. GLX quad-buffer mode works with the
-program's shader rendering and framebuffer blits, as exercised by ParaView.
-The loader interposition currently targets glibc on amd64. No GPU/TV/KWin
-presentation was tested. No low-overhead performance claim is made.
+and automatic stereo on native Wayland and in OpenGL ES are not supported (a
+program's own two views are, in both APIs). GLX quad-buffer
+mode works with the program's shader rendering and framebuffer blits, as
+exercised by ParaView. The loader interposition currently targets glibc on amd64.
+The NVIDIA paths were measured under a headless KWin on an RTX 3060; no
+television presentation was tested. No low-overhead performance claim is made.
+
+On native Wayland, programs that draw their own two views get them from the EGL
+where it has them (Mesa's EGL_EXT_multiview_window). On X11, with
+`GL_STEREO_DRIVER_VIEWS=1`, which gl-stereo-run sets, the layer leaves such
+programs to a driver with stereo configs of its own (Mesa's, also through zink);
+preloaded without it, the layer keeps the packing, which its frame stream needs. Where the driver has none, as NVIDIA's OpenGL, the
+layer provides the views: GLX quad-buffer configs on X11, and on native Wayland
+EGL_EXT_multiview_window when the compositor offers version 2 of
+`kde_stereo_content_v1` (the window's buffer is twice its width, each view
+drawn into its half, the surface declared full side by side; the program keeps
+its own viewport and fractional scale). Desktop OpenGL names the views
+GL_BACK_LEFT and GL_BACK_RIGHT; OpenGL ES names them through
+GL_EXT_multiview_draw_buffers, which the layer offers on such contexts (Qt picks
+OpenGL ES on NVIDIA's EGL).
+
+On X11 the layer declares a window when its context is first made current and
+then waits, up to a second, for the compositor to double the window before the
+driver sizes its buffers: NVIDIA's OpenGL missed a doubling that came later and
+left the second view black. `GL_STEREO_NO_DOUBLING_WAIT=1` skips the wait (a
+diagnostic control).
+
+On NVIDIA, `gl-stereo-run --nvidia-opengl` chooses how such programs get their
+views: `zink` (the default) runs them on Mesa's OpenGL over NVIDIA's Vulkan
+driver, where the views are Mesa's own; `nvidia` keeps NVIDIA's OpenGL with the
+layer's views. NVIDIA's EGL gives a window no second view itself (its window
+surfaces take only one colour buffer). The launcher asks the OpenGL library
+which vendor serves the display (EGL on Wayland, GLX on X11, with the program's
+environment, so PRIME offload counts), so a machine whose desktop runs on Mesa
+keeps Mesa. For zink it lists Mesa's EGL vendor before NVIDIA's, which NVIDIA's
+Vulkan driver needs to start, and keeps Mesa's own presentation path, which
+carries the two views (zink's Vulkan swapchain path, kopper, has none yet). The
+settings dialog offers the same choice on NVIDIA machines;
+`GL_STEREO_NVIDIA_OPENGL` sets the default.
+
+No launcher is needed for that on Sparky Stereo OS: when NVIDIA's driver runs
+the desktop, sparky-stereo-hardware makes zink the session's OpenGL for every
+program (menu, panel, terminal), while KWin keeps NVIDIA's driver, and exports
+the system choice as `GL_STEREO_NVIDIA_OPENGL`. With that default in place
+(`SPARKY_STEREO_OPENGL=zink`), `--nvidia-opengl nvidia` and `--enable-3d off`
+run the program on NVIDIA's own OpenGL.
 
 The tested saver prototype includes starfield, rocks, automatic eligibility,
 random rotation and a separate frame broker/controller. See
