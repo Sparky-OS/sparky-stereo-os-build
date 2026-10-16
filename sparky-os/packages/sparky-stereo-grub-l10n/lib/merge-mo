@@ -1,0 +1,74 @@
+#!/usr/bin/python3
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/16
+# merge-mo BASE ADDON OUT: writes OUT, a GNU gettext catalogue with every message of BASE and the
+# messages of ADDON that BASE lacks (BASE wins where both have one; BASE's header is kept).
+# Used by sparky-stereo-grub-l10n: BASE is Debian's grub.mo, ADDON the upstream translations of
+# GRUB's shell scripts (grub-mkconfig and /etc/grub.d), which Debian's catalogues leave out.
+import os
+import struct
+import sys
+import tempfile
+
+
+def read_mo(path):
+    data = open(path, 'rb').read()
+    magic = struct.unpack('<I', data[:4])[0]
+    if magic == 0x950412de:
+        end = '<'
+    elif magic == 0xde120495:
+        end = '>'
+    else:
+        raise SystemExit(path + ': not a gettext catalogue')
+    _rev, count, ooff, toff = struct.unpack(end + '4I', data[4:20])
+    messages = {}
+    for i in range(count):
+        olen, opos = struct.unpack(end + '2I', data[ooff + 8 * i:ooff + 8 * i + 8])
+        tlen, tpos = struct.unpack(end + '2I', data[toff + 8 * i:toff + 8 * i + 8])
+        messages[data[opos:opos + olen]] = data[tpos:tpos + tlen]
+    return messages
+
+
+def write_mo(path, messages):
+    keys = sorted(messages)
+    count = len(keys)
+    ooff = 28
+    toff = ooff + 8 * count
+    pos = toff + 8 * count
+    otable, ttable, blob = [], [], b''
+    for k in keys:
+        otable.append((len(k), pos + len(blob)))
+        blob += k + b'\0'
+    for k in keys:
+        v = messages[k]
+        ttable.append((len(v), pos + len(blob)))
+        blob += v + b'\0'
+    out = struct.pack('<7I', 0x950412de, 0, count, ooff, toff, 0, pos)
+    for n, p in otable + ttable:
+        out += struct.pack('<2I', n, p)
+    out += blob
+    d = os.path.dirname(path) or '.'
+    fd, tmp = tempfile.mkstemp(dir=d, prefix='.grub-l10n.')
+    with os.fdopen(fd, 'wb') as f:
+        f.write(out)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, path)
+
+
+def main():
+    if len(sys.argv) != 4:
+        raise SystemExit('usage: merge-mo BASE ADDON OUT')
+    base = read_mo(sys.argv[1])
+    addon = read_mo(sys.argv[2])
+    merged = dict(base)
+    added = 0
+    for k, v in addon.items():
+        if k and k not in merged:
+            merged[k] = v
+            added += 1
+    write_mo(sys.argv[3], merged)
+    print('%s: %d messages, %d added' % (sys.argv[3], len(merged), added))
+
+
+main()
