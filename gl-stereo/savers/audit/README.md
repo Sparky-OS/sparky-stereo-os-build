@@ -72,6 +72,8 @@ The fixed clock does not yet make all text/image helper inputs reproducible; mis
 The independent reference renders one ordinary window and one eye using Mesa's glFrustum plus glTranslated, without the production layer.
 Its synthetic three-depth pair passes the analytic centroid check.
 It supports canonical projection matrices and camera translation in the projection.
+It also takes the camera from GL_MODELVIEW under an identity projection, as Star Wars draws: the modelview is a canonical perspective times a view that rotates, translates and scales uniformly; the perspective is recovered from it and the eye's camera reaches the projection as that camera times the perspective's inverse, leaving the modelview untouched.
+`test-reference-modelview.sh` checks that form on the analytic three-quad scene (`tests/quads` with `TEST_MODELVIEW_CAMERA`), and checks that the same measurement fails without separation.
 It is not a general reference for arbitrary offscreen effect chains or rotated combined projection/view matrices.
 REFERENCE_LIST_PRIMITIVES=1 uses Mesa's display-list primitive rasterization in the oracle, while keeping the independently constructed single-eye frustum.
 GLBlur needs that control to eliminate accumulated immediate/display-list raster differences.
@@ -105,9 +107,11 @@ The camera references are ordinary one-eye Mesa frusta; production shaders remai
 The flat list is source-reviewed and tested for zero alignment rather than given artificial depth.
 
 Most inputs use a deterministic seed and clock at frame 120; startup scenes use frame 600.
+References are rendered in the same KWin and Xwayland session type as the captures (`AUDIT_REFERENCE_EYE`): a reference made on Xvfb drew text with that server's fonts and differed from the composed capture (unicrud's labels).
+FlipText's replay repeats its final frame, and the first rendering of that frame differs from its repeats; its capture and both references are frozen on the same repeat (`AUDIT_TARGET` five swaps past the trace's last frame), where the layer also dumps the frame the composition check compares.
 Asynchronous helper inputs use identical recorded GL calls for the 2D control.
 FlipText's stereo reference uses recorded input too, because text arrival changes its animation's random choices.
-`AUDIT_RECORD_FIXTURE` and `AUDIT_RECORD_TEXT` supply synchronous neutral text when recording that fixture.
+`AUDIT_RECORD_FIXTURE` and `AUDIT_RECORD_TEXT` supply synchronous neutral text when recording that fixture; `AUDIT_RECORD_SECONDS` (default 12) gives the recording more time on a loaded machine, so that the text has appeared by the trace's last frame.
 The replay snapshot set includes a later sentinel call, preventing retrace's early exit after its last requested snapshot; each case still owns a fresh KWin session.
 This is a test fixture only: the production layer dispatches camera draws directly and records no frame.
 
@@ -130,3 +134,13 @@ File length, ELF headers, all section/program headers, executable bytes and ever
 The gate rejects executable-byte and ELF-header mutations and rejects Flurry's actual camera-code change.
 When this narrow equivalence applies, the receipt records both the captured executable hash and the installed executable hash; the compiler rechecks the original file and the byte comparison itself.
 The installed catalogue remains bound to the final full-file hash.
+
+## Requalifying after a layer change
+
+The receipts bind the stripped layer, so any change to `libgl-stereo.so` needs all 130 again.
+Build the package once with `savers/qualification-6.09.json` removed from the unpacked tree (the bootstrap keeps the accepted five receipts) in the directory the final build will use, so that both builds make the same stripped layer.
+Then run `requalify-root.sh` as root in the audit image, with the checkout at `/workspace/gl-stereo`, scratch at `/build`, the bootstrap debs at `/debs`, XScreenSaver's original tarball at `/orig`, `xscreensaver-gl-extra 6.09+dfsg1-2+stereo3d1` at `/old` (Flurry before its camera fix, for the negative control), the edition's repository at `/var/local/sparky-stereo-repo`, `/dev/dri/renderD128` with group 125 and `SYS_NICE` for KWin.
+It installs the bootstrap in every container it starts and runs `requalify-steps.sh` as UID 1000, one step at a time; `STEPS` names the steps to run again.
+Every input is made here: the KWin sweep (a case that misses its frame under load runs again with a longer budget, its first attempt kept), the warmup, Star Wars and Flurry cases, the references, FlipText's recorded input, the 2D controls, the debug-link equivalence (empty when every capture used the installed executables), the collector and the Flurry check.
+The functional suite needs the 132-entry catalogue, so the manifest is compiled once without that gate, installed the way the package build installs it, the suite runs, and `compile-qualification.py` then compiles it with every gate and must give the same file.
+Copy `/build/qualification-6.09.json` into `savers/` and build the final package in the bootstrap's directory; its stripped layer must have the hash the receipts name.
