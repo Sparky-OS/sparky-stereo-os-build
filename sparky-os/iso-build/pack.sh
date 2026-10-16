@@ -36,7 +36,7 @@ trap umounts EXIT
 mounts
 
 if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
-	echo "== $(date -u +%T) staged packages: the packer fork, hardware 0.1.8, service defaults, installer settings, headers 8.1"
+	echo "== $(date -u +%T) staged packages: the packer fork, hardware 0.1.8, service defaults, installer settings, calamares, headers 8.1"
 	# the build's sources and stubs (rootfs.sh) again, so the step can be repeated
 	printf 'Types: deb\nURIs: file:/stage\nSuites: ./\nTrusted: yes\n' > $R/etc/apt/sources.list.d/beta-build-stage.sources
 	printf 'Types: deb\nURIs: file:/repo\nSuites: ./\nTrusted: yes\n' > $R/etc/apt/sources.list.d/sparky-stereo-build.sources
@@ -47,7 +47,7 @@ if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
 	done
 	inr apt-get update
 	apt_in install --reinstall sparky-backup-core-stereo sparky-stereo-hardware sparky-stereo-service-defaults calamares-settings-sparky-stereo \
-		linux-headers-7.3.0-rc6-stereo3d8
+		calamares linux-headers-7.3.0-rc6-stereo3d8
 	apt_in clean
 	echo "== $(date -u +%T) the image's apt sources: the build's own sources go; Debian, SparkyLinux (sparky-apt), deb-multimedia and NVIDIA's CUDA repository stay"
 	rm -f $R/etc/apt/sources.list.d/beta-build-*.sources $R/etc/apt/sources.list.d/sparky-stereo-build.sources $R/etc/apt/preferences.d/beta-build-*
