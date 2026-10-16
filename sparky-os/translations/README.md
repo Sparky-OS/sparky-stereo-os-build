@@ -7,6 +7,7 @@ KDE takes translations only through its translation teams, never as commits to a
 - `kwin-virtual-3d-modes.po.patch`: KWin's virtual 3D mode strings.
 - `kscreen-virtual-3d-modes.po.patch`: the display settings' toggles and labels.
 - `kscreen-stereo-pairs.po.patch`: the display settings' stereo pairs.
+- `kdeconnect-kde-throw.po.patch`: KDE Connect's virtual monitor plugin, the two Throw errors (identity, start), in all eight translated languages (pl, pt_BR, fr, de, ja, ko, zh_CN, zh_TW); from the phone lane's commit af53494, whose source half is invent danielcamposramos/kdeconnect-kde stereo3d-phone e1b0792b5.
 
 Today these patches carry pl, pt_BR, fr and ja; ko, zh_CN and zh_TW are still being added.
 
