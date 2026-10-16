@@ -14,7 +14,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 LEAN=$(cd "$HERE/../../lean" && pwd)
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
-VERSION=0.1.0
+VERSION=0.1.1
 PKG=dpkg-stereo
 W=$(mktemp -d "${TMPDIR:-/K3D/temp}/dpkg-stereo-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT

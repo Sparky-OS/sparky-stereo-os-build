@@ -23,3 +23,7 @@ dpkg-stereo $maps --image --jobs "${LEANCODE_JOBS:-4}" --project
 dpkg-stereo $maps --manifest "${work:-/tmp}/lean-code-projection.tsv"
 # shellcheck disable=SC2086
 dpkg-stereo $maps --status
+# the reasons for files left alone belong to the build record (the manifest), not to the installed system
+state=/var/lib/dpkg-stereo
+for d in "$@"; do case "$d" in */dummysys/var) state=$d/lib/dpkg-stereo ;; esac; done
+mv "$state/left.tsv" "${work:-/tmp}/lean-code-left.tsv" 2>/dev/null || true
