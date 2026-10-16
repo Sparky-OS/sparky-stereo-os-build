@@ -27,6 +27,30 @@ if [ -r "$_sp_conf" ] && [ "$(sed -n 's/^desktop=//p' "$_sp_conf" | tail -n1)" =
 		export __GLX_VENDOR_LIBRARY_NAME=mesa
 		export MESA_LOADER_DRIVER_OVERRIDE=zink
 		export LIBGL_KOPPER_DISABLE=1
+		# Programs that need NVIDIA's own OpenGL (CUDA and OpenGL sharing) start through
+		# sparky-stereo-nvidia-opengl: their menu entries, copied for this session ahead of the
+		# system's, and their names in PATH, for a terminal.
+		# The list: nvidia-opengl-programs, then /etc/sparky-stereo/opengl-programs, then the
+		# person's ~/.config/sparky-stereo/opengl-programs ("NAME nvidia" or "NAME zink").
+		_sp_lib=${SPARKY_STEREO_HARDWARE_LIB:-/usr/lib/sparky-stereo-hardware}
+		_sp_share=${SPARKY_STEREO_HARDWARE_SHARE:-/usr/share/sparky/sparky-stereo-hardware}
+		if [ -r "$_sp_lib/opengl-default.sh" ] && [ -n "${XDG_RUNTIME_DIR:-}" ]; then
+			. "$_sp_lib/opengl-default.sh"
+			_sp_programs=$(opengl_nvidia_programs "$_sp_share/nvidia-opengl-programs" \
+				"${SPARKY_STEREO_OPENGL_PROGRAMS:-/etc/sparky-stereo/opengl-programs}" \
+				"${XDG_CONFIG_HOME:-$HOME/.config}/sparky-stereo/opengl-programs")
+			_sp_out=$XDG_RUNTIME_DIR/sparky-stereo-opengl
+			[ -d "$_sp_out" ] && find "$_sp_out" -mindepth 1 -delete
+			if [ -n "$_sp_programs" ]; then
+				# shellcheck disable=SC2086
+				_sp_n=$(opengl_program_overrides "$_sp_out" "${XDG_DATA_DIRS:-/usr/local/share:/usr/share}" $_sp_programs)
+				[ "$_sp_n" -gt 0 ] && export XDG_DATA_DIRS="$_sp_out:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+				# shellcheck disable=SC2086
+				_sp_n=$(opengl_program_shims "$_sp_out" $_sp_programs)
+				[ "$_sp_n" -gt 0 ] && export PATH="$_sp_out/bin:$PATH"
+			fi
+		fi
+		unset _sp_lib _sp_share _sp_programs _sp_out _sp_n
 	fi
 	unset _sp_gl _sp_vendors _sp_systemd
 fi

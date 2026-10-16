@@ -18,6 +18,8 @@ install -Dm755 "$HERE/share/initramfs/scripts/init-bottom/sparky-stereo-live-gpu
 install -Dm644 "$HERE/share/autostart/sparky-stereo-live-gpu.desktop" "$D/etc/xdg/autostart/sparky-stereo-live-gpu.desktop"
 install -Dm644 "$HERE/share/plasma-env/sparky-stereo-primary-gpu.sh" "$D/etc/xdg/plasma-workspace/env/sparky-stereo-primary-gpu.sh"
 install -Dm755 "$HERE/bin/sparky-stereo-opengl-default" "$D/usr/bin/sparky-stereo-opengl-default"
+install -Dm755 "$HERE/bin/sparky-stereo-nvidia-opengl" "$D/usr/bin/sparky-stereo-nvidia-opengl"
+install -m644 "$HERE/share/nvidia-opengl-programs" "$D/usr/share/sparky/sparky-stereo-hardware/"
 install -Dm644 "$HERE/share/plasma-env/sparky-stereo-opengl.sh" "$D/etc/xdg/plasma-workspace/env/sparky-stereo-opengl.sh"
 install -Dm644 "$HERE/share/systemd/sparky-stereo-opengl-default.service" "$D/usr/lib/systemd/system/sparky-stereo-opengl-default.service"
 install -Dm644 "$HERE/share/systemd-user/sparky-stereo-opengl.conf" "$D/usr/lib/systemd/user/plasma-kwin_wayland.service.d/sparky-stereo-opengl.conf"

@@ -70,3 +70,59 @@ opengl=${_og_choice:-zink}
 EOF
 	mv "$1.new" "$1"
 }
+
+# opengl_nvidia_programs SYSTEM-LIST ETC-LIST USER-LIST: prints the programs that keep NVIDIA's
+# own OpenGL: the system list, then "NAME nvidia" adds and "NAME zink" removes, the person's
+# list last, so the person's choice wins
+opengl_nvidia_programs() {
+	{
+		[ -r "$1" ] && sed -n 's/#.*//; s/^[[:space:]]*\([^[:space:]]\+\)[[:space:]]*$/\1 nvidia/p' "$1"
+		for _og_f in "$2" "$3"; do
+			[ -r "$_og_f" ] && sed -n 's/#.*//; s/^[[:space:]]*\([^[:space:]]\+\)[[:space:]]\+\(nvidia\|zink\)[[:space:]]*$/\1 \2/p' "$_og_f"
+		done
+	} | awk '{ choice[$1] = $2; if (!($1 in seen)) { seen[$1] = 1; order[++n] = $1 } }
+		END { for (i = 1; i <= n; i++) if (choice[order[i]] == "nvidia") print order[i] }'
+}
+
+# opengl_program_overrides OUT DATA-DIRS PROGRAM...: for every menu entry in the applications
+# directories of DATA-DIRS (colon separated, first wins, as XDG_DATA_DIRS) whose Exec starts one
+# of the programs, writes a copy under OUT/applications whose Exec lines start through
+# sparky-stereo-nvidia-opengl; prints how many it wrote
+opengl_program_overrides() {
+	_og_out=$1/applications _og_dirs=$2; shift 2
+	mkdir -p "$_og_out"
+	_og_programs=" $* "
+	echo "$_og_dirs" | tr ':' '\n' | while IFS= read -r _og_d; do
+		[ -n "$_og_d" ] && [ -d "$_og_d/applications" ] || continue
+		(cd "$_og_d/applications" && find . -name '*.desktop') | sed 's|^\./||' | while IFS= read -r _og_file; do
+			[ -e "$_og_out/$_og_file" ] && continue
+			_og_prog=$(awk '/^Exec=/ { sub(/^Exec=/, ""); n = split($0, t, " "); i = 1
+				if (t[i] == "env") { i++; while (i <= n && t[i] ~ /=/) i++ }
+				p = t[i]; gsub(/"/, "", p); sub(/.*\//, "", p); print p; exit }' "$_og_d/applications/$_og_file")
+			case $_og_programs in
+				*" $_og_prog "*)
+					[ -n "$_og_prog" ] || continue
+					mkdir -p "$(dirname "$_og_out/$_og_file")"
+					sed 's|^Exec=|Exec=sparky-stereo-nvidia-opengl |' "$_og_d/applications/$_og_file" > "$_og_out/$_og_file" ;;
+			esac
+		done
+	done
+	find "$_og_out" -name '*.desktop' | wc -l
+}
+
+# opengl_program_shims OUT PROGRAM...: for every program found in PATH, writes OUT/bin/PROGRAM,
+# which starts it through sparky-stereo-nvidia-opengl, for a terminal or a script that starts
+# it by name; prints how many it wrote
+opengl_program_shims() {
+	_og_bin=$1/bin; shift
+	mkdir -p "$_og_bin"
+	for _og_p in "$@"; do
+		case $_og_p in */*) continue ;; esac
+		_og_path=$(command -v "$_og_p" 2>/dev/null) || continue
+		case $_og_path in /*) ;; *) continue ;; esac
+		[ "${_og_path%/*}" = "$_og_bin" ] && continue
+		printf '#!/bin/sh\n# written at session start by sparky-stereo-opengl.sh\nexec sparky-stereo-nvidia-opengl %s "$@"\n' "'$_og_path'" > "$_og_bin/$_og_p"
+		chmod 755 "$_og_bin/$_og_p"
+	done
+	find "$_og_bin" -type f | wc -l
+}

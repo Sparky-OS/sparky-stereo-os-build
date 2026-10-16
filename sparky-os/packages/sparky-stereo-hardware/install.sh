@@ -10,5 +10,5 @@ if [[ ${1:-install} == uninstall ]]; then
 else
 	HERE=$(cd "$(dirname "$0")" && pwd)
 	OUT=${OUT:?Set OUT to the directory containing the built packages}
-	apt-get -y install "$OUT/sparky-stereo-hardware_0.1.9_all.deb"
+	apt-get -y install "$OUT/sparky-stereo-hardware_0.1.10_all.deb"
 fi

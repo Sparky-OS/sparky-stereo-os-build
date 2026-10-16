@@ -1,0 +1,14 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/16
+# Starts a program on NVIDIA's own OpenGL when the session runs OpenGL on zink
+# (sparky-stereo-opengl.sh): for programs that share CUDA with OpenGL, or need NVIDIA's OpenGL
+# for another reason. The menu entries of the programs in nvidia-opengl-programs start
+# through it; from a terminal: sparky-stereo-nvidia-opengl PROGRAM [ARGUMENT...]
+if [ "${SPARKY_STEREO_OPENGL:-}" = zink ]; then
+	unset SPARKY_STEREO_OPENGL __EGL_VENDOR_LIBRARY_FILENAMES __GLX_VENDOR_LIBRARY_NAME \
+		MESA_LOADER_DRIVER_OVERRIDE LIBGL_KOPPER_DISABLE
+fi
+[ $# -gt 0 ] || { echo 'usage: sparky-stereo-nvidia-opengl PROGRAM [ARGUMENT...]' >&2; exit 2; }
+exec "$@"
