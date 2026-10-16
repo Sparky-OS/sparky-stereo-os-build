@@ -5,7 +5,7 @@ It boots kernels signed by Debian, and kernels signed by a key the machine's own
 SparkyLinux's own kernels and Sparky Stereo OS's kernel are not Debian's, so each distribution signs its own kernels with its own key.
 
 Two keys, because the kernels differ (Daniel, 2026-10-07):
-- **Sparky Stereo OS**: made 2026-10-07, "Sparky Stereo OS Secure Boot 2026", organisation "Sparky Stereo OS (Daniel Ramos)", valid to October 2036, SHA-256 fingerprint `6F:78:C9:36:7E:31:33:1F:3B:AA:74:D0:2F:05:B1:B2:DF:36:D8:B8:5A:C6:88:94:EB:0B:4C:53:15:60:AA:A6`. The private key stays in its private folder on the build machine; only its certificate ships.
+- **Sparky Stereo OS**: the key made 2026-10-07, "Sparky Stereo OS Secure Boot 2026", organisation "Sparky Stereo OS (Daniel Ramos)". Its certificate was re-issued on 2026-10-16 for the same key with code signing only (see below), valid to October 2036, SHA-256 fingerprint `D9:87:08:1B:FE:6F:F0:BF:BC:03:5C:AC:B2:25:9F:60:7E:E4:6B:0B:AD:1C:44:AB:34:99:55:5D:5F:27:D9:77`; the first certificate (`6F:78:C9:36:7E:31:33:1F:3B:AA:74:D0:2F:05:B1:B2:DF:36:D8:B8:5A:C6:88:94:EB:0B:4C:53:15:60:AA:A6`) is retired, and a machine that enrolled it enrols the new one. The private key stays in its private folder on the build machine; only its certificate ships.
 - **SparkyLinux**: Paweł makes his own with the same script, if he wants it.
 
 Checked on 2026-10-07: SparkyLinux's ISO boots under Secure Boot with Debian's shim 15.7 and Debian-signed GRUB, and its `linux-image-7.2.8-sparky-amd64` kernel carries no Secure Boot signature, so today it boots under Secure Boot only if the owner turns Secure Boot off.
