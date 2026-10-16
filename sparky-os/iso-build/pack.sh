@@ -6,13 +6,18 @@
 # work tree) and /out (the ISO and its files), both outside the root file system.
 # Environment: LABEL (menu label), ISONAME (file name), SIGNED_MODULES (optional: a folder whose
 # lib/modules/... files replace the DKMS modules, signed with the edition's key by the main session),
-# SIGNED_KERNEL (optional: the linux-image package signed with the edition's key, installed over the tree's).
+# SIGNED_KERNEL (optional: the linux-image package signed with the edition's key, installed over the tree's),
+# LEAN (1: the packer runs LEAN_HOOK, the Lean Code projection, on the folders it squashes; 0 or unset: not),
+# LEAN_HOOK (the hook, a program in the build tree; mounted read-only into the image's overlay).
+# The iso step packs from an overlay of the root file system (upper layer in /work), so the root file system is
+# the same for every pack: two packs with LEAN=0 and LEAN=1 differ only in the hook.
 # Usage: pack.sh configure|iso|all
 set -eu
 R=/rootfs
 STEP=${1:-all}
-LABEL=${LABEL:-Sparky Stereo OS 9 Mashtabba beta 1}
-ISONAME=${ISONAME:-sparky-stereo-os-9-mashtabba-beta1-x86_64.iso}
+LABEL=${LABEL:-Sparky Stereo OS 9 Mashtabba beta 2}
+ISONAME=${ISONAME:-sparky-stereo-os-9-mashtabba-beta2-x86_64.iso}
+LEAN=${LEAN:-0}
 export DEBIAN_FRONTEND=noninteractive LC_ALL=C.UTF-8
 inr() { chroot $R "$@"; }
 apt_in() { chroot $R apt-get -y -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "$@"; }
@@ -36,7 +41,7 @@ trap umounts EXIT
 mounts
 
 if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
-	echo "== $(date -u +%T) staged packages: the packer fork, hardware, service defaults, installer settings and branding, calamares, info, look, artwork, splash, headers 8.1"
+	echo "== $(date -u +%T) staged packages: the packer fork, hardware, service defaults, installer settings and branding, calamares, info, look, artwork, splash, boot, GRUB translations, headers 8.1"
 	# the build's sources and stubs (rootfs.sh) again, so the step can be repeated
 	printf 'Types: deb\nURIs: file:/stage\nSuites: ./\nTrusted: yes\n' > $R/etc/apt/sources.list.d/beta-build-stage.sources
 	printf 'Types: deb\nURIs: file:/repo\nSuites: ./\nTrusted: yes\n' > $R/etc/apt/sources.list.d/sparky-stereo-build.sources
@@ -69,6 +74,23 @@ if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
 	apt_in install --reinstall sparky-backup-core-stereo sparky-stereo-hardware sparky-stereo-service-defaults calamares-settings-sparky-stereo \
 		calamares sparky-stereo-calamares-branding sparky-stereo-info sparky-stereo-look sparkyos-artwork sparkyos-plymouth \
 		linux-headers-7.3.0-rc6-stereo3d8
+	echo "== $(date -u +%T) the boot chain in 3D (ORDER 138): the stereo Plymouth, sparky-stereo-boot, the stereo splash themes; GRUB's menu translated; Kubabbar Glass for Quick Settings"
+	apt_in install plymouth libplymouth5 plymouth-themes plymouth-label sparky-stereo-boot sparky-stereo-plymouth sparky-stereo-grub-l10n \
+		sparky-stereo-look-kubabbar-glass sparky-stereo-look-kubabbar-glass-menubar
+	echo "== $(date -u +%T) Plasma Login Manager as the display manager (Daniel's preference); SDDM stays installed, not started"
+	echo "plasma-login-manager shared/default-x-display-manager select plasma-login-manager" | inr debconf-set-selections
+	echo "sddm shared/default-x-display-manager select plasma-login-manager" | inr debconf-set-selections
+	apt_in install plasma-login-manager
+	echo /usr/bin/plasmalogin > $R/etc/X11/default-display-manager
+	ln -sf /usr/lib/systemd/system/plasmalogin.service $R/etc/systemd/system/display-manager.service
+	ls -l $R/etc/systemd/system/display-manager.service; cat $R/etc/X11/default-display-manager
+	echo "== $(date -u +%T) the edition's removals (lists/base-remove.list) that the image still has"
+	rm_list=$(grep -v '^#' /edition-lists/base-remove.list | while read -r p; do
+		[ -n "$p" ] && inr dpkg-query -W -f '${Status}' "$p" 2>/dev/null | grep -q 'ok installed' && echo "$p"; done)
+	[ -z "$rm_list" ] || apt_in remove $rm_list
+	# usbguard blocks USB keyboards and pointers present at boot (the boot lane's dev VM); it never goes in
+	if inr dpkg-query -W -f '${Status}' usbguard 2>/dev/null | grep -q 'ok installed'; then apt_in purge usbguard; fi
+	echo "== $(date -u +%T) the default boot splash: $(inr plymouth-set-default-theme)"
 	# the packages SparkyLinux's securebootinstall asks apt for that the image lacks (an offline install finds the rest)
 	for p in libjcat1 grub-efi-amd64-signed-template shim-helpers-amd64-signed-template; do
 		apt_in install --no-install-recommends "$p" || echo "!! $p: not installed"
@@ -120,11 +142,29 @@ fi
 if [ "$STEP" = iso ] || [ "$STEP" = all ]; then
 	# the packer squashes every top folder of / but a fixed list: the build's own mount points go first
 	for m in var/cache/apt/archives stage repo; do mountpoint -q $R/$m && umount $R/$m || true; done
-	rmdir $R/stage $R/repo
-	echo "== $(date -u +%T) top folders of the image: $(ls $R | tr '\n' ' ')"
+	rmdir $R/stage $R/repo 2>/dev/null || true
+	umounts
+	# an overlay of the root file system: what the packer and the hook change stays in the upper layer, so every
+	# pack starts from the same root file system
+	O=/lean-merged U=/overlay
+	rm -rf $U; mkdir -p $U/upper $U/work $O
+	mount -t overlay overlay -o lowerdir=$R,upperdir=$U/upper,workdir=$U/work $O
+	R=$O
+	trap 'umounts; umount $O 2>/dev/null || true' EXIT
+	mounts
+	for m in var/cache/apt/archives stage repo; do mountpoint -q $R/$m && umount $R/$m || true; done
+	rmdir $R/stage $R/repo 2>/dev/null || true
+	hook=
+	if [ "$LEAN" = 1 ]; then
+		[ -n "${LEAN_HOOK:-}" ] && [ -f "$LEAN_HOOK" ] || { echo "!! LEAN=1 needs LEAN_HOOK"; exit 1; }
+		mkdir -p $R/usr/local/lib/sparky-stereo-lean
+		cp "$LEAN_HOOK" $R/usr/local/lib/sparky-stereo-lean/hook; chmod 755 $R/usr/local/lib/sparky-stereo-lean/hook
+		hook=/usr/local/lib/sparky-stereo-lean/hook
+	fi
+	echo "== $(date -u +%T) LEAN=$LEAN hook=${hook:-none}; top folders of the image: $(ls $R | tr '\n' ' ')"
 	echo "== $(date -u +%T) sparkybackup-stereo dist"
 	t0=$(date +%s)
-	inr sparkybackup-stereo dist
-	echo "== $(date -u +%T) packed in $(( $(date +%s) - t0 )) s"
+	inr env PRESQUASHFS_HOOK="$hook" sparkybackup-stereo dist
+	echo "== $(date -u +%T) packed in $(( $(date +%s) - t0 )) s (LEAN=$LEAN)"
 	ls -la /out
 fi

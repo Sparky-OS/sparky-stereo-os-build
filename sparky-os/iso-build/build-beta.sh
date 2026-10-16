@@ -11,24 +11,28 @@
 #   SIGNED_MODULES  optional: the DKMS modules signed with the edition's key (sign-modules.sh output); pack only
 #   SIGNED_KERNEL   optional: the linux-image package signed with the edition's key (sign-kernel-deb.sh output); pack only
 #   LABEL, ISONAME  the menu label and the file name
+#   LEAN            1: the packer runs LEAN_HOOK (the Lean Code projection, a file) on the folders it squashes; pack only
+#   OVL             the overlay's upper layer for the iso step (the root file system itself is not changed)
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 ED=$(cd "$HERE/../.." && pwd)
 L=/K3D/temp/partners/queue/beta-iso-lutz
 TREE=${TREE:-/mnt/build/beta-iso-lutz/rootfs}; STAGE=${STAGE:-/mnt/build/beta-iso-lutz/stage}
 REPO=${REPO:-/K3D/temp/sparky-os/repo}; CACHE=${CACHE:-$L/cache}; WORK=${WORK:-$L/pack/work}; OUT=${OUT:-$L/pack/out}
-LOGS=${LOGS:-$OUT}
+LOGS=${LOGS:-$OUT}; OVL=${OVL:-$L/pack/overlay}
 IMAGE=beta-iso-lutz-build:1
 docker image inspect $IMAGE >/dev/null 2>&1 || docker build --platform linux/amd64 -t $IMAGE "$HERE"
-mkdir -p "$TREE" "$CACHE" "$WORK" "$OUT" "$LOGS"
+mkdir -p "$TREE" "$CACHE" "$WORK" "$OUT" "$LOGS" "$OVL"
 sm=; [ -n "${SIGNED_MODULES:-}" ] && sm="-v $SIGNED_MODULES:/signed:ro -e SIGNED_MODULES=/signed"
 [ -n "${SIGNED_KERNEL:-}" ] && sm="$sm -v $SIGNED_KERNEL:/signed-kernel.deb:ro -e SIGNED_KERNEL=/signed-kernel.deb"
+sm="$sm -e LEAN=${LEAN:-0}"
+[ -n "${LEAN_HOOK:-}" ] && sm="$sm -v $LEAN_HOOK:/lean-hook:ro -e LEAN_HOOK=/lean-hook"
 run() {
 	# shellcheck disable=SC2086
 	docker run --rm --name "beta-iso-lutz-$1" --privileged --cpus 4 --memory 16g \
 		-v "$TREE:/rootfs" -v "$CACHE:/cache" -v "$REPO:/repo:ro" -v "$STAGE:/stage" -v "$HERE:/build:ro" \
-		-v "$ED/sparky-os/apt:/edition-apt:ro" -v "$ED/sparky-os/lists:/edition-lists:ro" -v "$WORK:/work" -v "$OUT:/out" \
-		-e LABEL="${LABEL:-Sparky Stereo OS 9 Mashtabba beta 1}" -e ISONAME="${ISONAME:-sparky-stereo-os-9-mashtabba-beta1-x86_64.iso}" \
+		-v "$ED/sparky-os/apt:/edition-apt:ro" -v "$ED/sparky-os/lists:/edition-lists:ro" -v "$WORK:/work" -v "$OUT:/out" -v "$OVL:/overlay" \
+		-e LABEL="${LABEL:-Sparky Stereo OS 9 Mashtabba beta 2}" -e ISONAME="${ISONAME:-sparky-stereo-os-9-mashtabba-beta2-x86_64.iso}" \
 		$sm $IMAGE sh -c "$2"
 }
 case ${1:-all} in
