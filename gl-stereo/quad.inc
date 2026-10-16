@@ -347,6 +347,91 @@ const GLubyte *glGetStringi(GLenum name, GLuint index)
     }
     return r_glGetStringi(name,index);
 }
+/* Direct state access (OpenGL 4.5, ARB_direct_state_access, and EXT_direct_state_access) names
+ * the window's framebuffer as 0 whatever is bound; its draw and read buffers are the views. */
+static int quad_window_framebuffer(GLuint framebuffer)
+{
+    return !framebuffer && current && current->quad && !current->gles;
+}
+static GLenum native_attachment(GLenum attachment)
+{
+    return attachment == GL_BACK_RIGHT ? GL_BACK_LEFT : attachment == GL_FRONT_RIGHT ? GL_FRONT_LEFT : attachment;
+}
+void glNamedFramebufferDrawBuffer(GLuint framebuffer, GLenum buffer)
+{
+    API();
+    if (quad_window_framebuffer(framebuffer)) { current->draw_buffer = buffer; r_glNamedFramebufferDrawBuffer(0, mono_buffer(buffer)); }
+    else r_glNamedFramebufferDrawBuffer(framebuffer, buffer);
+}
+void glNamedFramebufferDrawBuffers(GLuint framebuffer, GLsizei count, const GLenum *buffers)
+{
+    API();
+    if (quad_window_framebuffer(framebuffer) && count == 1) glNamedFramebufferDrawBuffer(0, buffers[0]);
+    else r_glNamedFramebufferDrawBuffers(framebuffer, count, buffers);
+}
+void glNamedFramebufferReadBuffer(GLuint framebuffer, GLenum buffer)
+{
+    API();
+    if (quad_window_framebuffer(framebuffer)) { current->read_buffer = buffer; r_glNamedFramebufferReadBuffer(0, mono_buffer(buffer)); }
+    else r_glNamedFramebufferReadBuffer(framebuffer, buffer);
+}
+void glFramebufferDrawBufferEXT(GLuint framebuffer, GLenum buffer)
+{
+    API();
+    if (quad_window_framebuffer(framebuffer)) { current->draw_buffer = buffer; r_glFramebufferDrawBufferEXT(0, mono_buffer(buffer)); }
+    else r_glFramebufferDrawBufferEXT(framebuffer, buffer);
+}
+void glFramebufferDrawBuffersEXT(GLuint framebuffer, GLsizei count, const GLenum *buffers)
+{
+    API();
+    if (quad_window_framebuffer(framebuffer) && count == 1) glFramebufferDrawBufferEXT(0, buffers[0]);
+    else r_glFramebufferDrawBuffersEXT(framebuffer, count, buffers);
+}
+void glFramebufferReadBufferEXT(GLuint framebuffer, GLenum buffer)
+{
+    API();
+    if (quad_window_framebuffer(framebuffer)) { current->read_buffer = buffer; r_glFramebufferReadBufferEXT(0, mono_buffer(buffer)); }
+    else r_glFramebufferReadBufferEXT(framebuffer, buffer);
+}
+void glBlitNamedFramebuffer(GLuint read, GLuint draw, GLint sx0, GLint sy0, GLint sx1, GLint sy1,
+                            GLint dx0, GLint dy0, GLint dx1, GLint dy1, GLbitfield mask, GLenum filter)
+{
+    API(); native_query++;
+    if (quad_window_framebuffer(draw) && current->window) {
+        DrawState saved; save_draw(&saved);
+        for (int eye = 0; eye < 2; ++eye) if (selected_eye(eye)) {
+            set_eye(&saved,eye);
+            int offset = eye*current->window->width;
+            r_glBlitNamedFramebuffer(read,0,sx0,sy0,sx1,sy1,dx0+offset,dy0,dx1+offset,dy1,mask,filter);
+        }
+        restore_draw(&saved);
+    } else r_glBlitNamedFramebuffer(read,draw,sx0,sy0,sx1,sy1,dx0,dy0,dx1,dy1,mask,filter);
+    native_query--;
+}
+void glGetNamedFramebufferParameteriv(GLuint framebuffer, GLenum name, GLint *value)
+{
+    API();
+    if (quad_window_framebuffer(framebuffer) && name == GL_STEREO) *value = GL_TRUE;
+    else r_glGetNamedFramebufferParameteriv(framebuffer, name, value);
+}
+void glGetFramebufferParameteriv(GLenum target, GLenum name, GLint *value)
+{
+    API(); GLint fb = 0;
+    r_glGetIntegerv(target == GL_READ_FRAMEBUFFER ? GL_READ_FRAMEBUFFER_BINDING : GL_DRAW_FRAMEBUFFER_BINDING, &fb);
+    if (quad_window_framebuffer((GLuint)fb) && name == GL_STEREO) *value = GL_TRUE;
+    else r_glGetFramebufferParameteriv(target, name, value);
+}
+void glGetNamedFramebufferAttachmentParameteriv(GLuint framebuffer, GLenum attachment, GLenum name, GLint *value)
+{
+    API();
+    r_glGetNamedFramebufferAttachmentParameteriv(framebuffer, quad_window_framebuffer(framebuffer) ? native_attachment(attachment) : attachment, name, value);
+}
+void glGetFramebufferAttachmentParameteriv(GLenum target, GLenum attachment, GLenum name, GLint *value)
+{
+    API(); GLint fb = 0;
+    r_glGetIntegerv(target == GL_READ_FRAMEBUFFER ? GL_READ_FRAMEBUFFER_BINDING : GL_DRAW_FRAMEBUFFER_BINDING, &fb);
+    r_glGetFramebufferAttachmentParameteriv(target, quad_window_framebuffer((GLuint)fb) ? native_attachment(attachment) : attachment, name, value);
+}
 void glReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, void *pixels)
 {
     API(); GLint fb; r_glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&fb);

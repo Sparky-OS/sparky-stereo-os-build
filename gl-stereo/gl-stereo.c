@@ -34,6 +34,11 @@
  X(glDrawElementsInstancedBaseVertex) X(glDrawArraysIndirect) X(glDrawElementsIndirect) \
  X(glMultiDrawArraysIndirect) X(glMultiDrawElementsIndirect) \
  X(glClearBufferfv) X(glClearBufferiv) X(glClearBufferuiv) X(glClearBufferfi) X(glGetString) X(glGetStringi) \
+ X(glNamedFramebufferDrawBuffer) X(glNamedFramebufferDrawBuffers) X(glNamedFramebufferReadBuffer) \
+ X(glFramebufferDrawBufferEXT) X(glFramebufferDrawBuffersEXT) X(glFramebufferReadBufferEXT) \
+ X(glClearNamedFramebufferfv) X(glClearNamedFramebufferiv) X(glClearNamedFramebufferuiv) X(glClearNamedFramebufferfi) \
+ X(glBlitNamedFramebuffer) X(glGetNamedFramebufferParameteriv) X(glGetFramebufferParameteriv) \
+ X(glGetNamedFramebufferAttachmentParameteriv) X(glGetFramebufferAttachmentParameteriv) \
  X(glDrawPixels) X(glBitmap) X(glWindowPos3dv) X(glEvalMesh1) X(glEvalMesh2) \
  X(glBindFramebuffer) X(glBlitFramebuffer) X(glGenFramebuffers) X(glDeleteFramebuffers) \
  X(glGenRenderbuffers) X(glDeleteRenderbuffers) X(glBindRenderbuffer) X(glRenderbufferStorage) X(glFramebufferRenderbuffer) X(glRectd) X(glReadPixels) X(glReadBuffer) X(glPixelStorei) X(glBindBuffer) \
@@ -169,7 +174,8 @@ typedef struct window_state {
 typedef struct texture_twin { GLuint left,right; struct texture_twin *next; } TextureTwin;
 typedef struct context_state {
     GLXContext context;
-    int egl, gles, quad, viewport_ready, driver_views;
+    /* core: no fixed-function state (an OpenGL ES, core profile or forward-compatible context) */
+    int egl, gles, core, profile_known, quad, viewport_ready, driver_views;
     GLenum draw_buffer, read_buffer;
     GLuint primitive;
     int compiling, immediate;
@@ -282,14 +288,14 @@ static int stereo_target(void)
     if (!current || !current->window || !current->window->active || current->compiling) return 0;
     GLint fbo, mode = GL_RENDER;
     r_glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fbo);
-    if (!current->gles) r_glGetIntegerv(GL_RENDER_MODE, &mode);
+    if (!current->core) r_glGetIntegerv(GL_RENDER_MODE, &mode);
     return !fbo && mode == GL_RENDER;
 }
 static void save_draw(DrawState *s)
 {
     r_glGetIntegerv(GL_CURRENT_PROGRAM, &s->program);
     s->projection_uniform = -1;
-    if (!current->quad && !s->program) {
+    if (!current->quad && !s->program && !current->core) {
         r_glGetDoublev(GL_PROJECTION_MATRIX, s->projection);
         r_glGetIntegerv(GL_MATRIX_MODE, &s->mode);
     } else { memset(s->projection,0,sizeof(s->projection)); s->mode = 0; }
@@ -323,7 +329,7 @@ static void set_eye(const DrawState *s, int eye)
     }
     if (s->projection_uniform >= 0) {
         load_camera_uniform(s, p);
-    } else if (!current->quad && !s->program) {
+    } else if (!current->quad && !s->program && !current->core) {
         r_glMatrixMode(GL_PROJECTION); r_glLoadMatrixd(p); r_glMatrixMode(s->mode);
     }
     r_glViewport(eye*w->width+s->viewport[0], s->viewport[1], s->viewport[2], s->viewport[3]);
@@ -341,7 +347,7 @@ static void restore_draw(const DrawState *s)
 {
     restore_view_textures(s);
     if (s->projection_uniform >= 0) load_camera_uniform(s, s->projection);
-    else if (!current->quad && !s->program) { r_glMatrixMode(GL_PROJECTION); r_glLoadMatrixd(s->projection); r_glMatrixMode(s->mode); }
+    else if (!current->quad && !s->program && !current->core) { r_glMatrixMode(GL_PROJECTION); r_glLoadMatrixd(s->projection); r_glMatrixMode(s->mode); }
     r_glViewport(s->viewport[0], s->viewport[1], s->viewport[2], s->viewport[3]);
     r_glScissor(s->scissor[0], s->scissor[1], s->scissor[2], s->scissor[3]);
     if (!s->scissor_on) r_glDisable(GL_SCISSOR_TEST);
@@ -377,9 +383,9 @@ static void finish_left(void)
     if (!stereo_target()) { call; native_query--; return; } \
     COUNT(logical); DrawState saved; save_draw(&saved); \
     if (selected_eye(0)) { \
-        if (!current->quad && !saved.program && selected_eye(1)) isolate_left(); \
+        if (!current->quad && !saved.program && !current->core && selected_eye(1)) isolate_left(); \
         set_eye(&saved, 0); COUNT(issued); call; \
-        if (!current->quad && !saved.program && selected_eye(1)) finish_left(); \
+        if (!current->quad && !saved.program && !current->core && selected_eye(1)) finish_left(); \
     } \
     if (selected_eye(1)) { set_eye(&saved, 1); COUNT(issued); call; } restore_draw(&saved); native_query--; \
 } while (0)
@@ -516,6 +522,11 @@ void glClearBufferfv(GLenum buffer, GLint index, const GLfloat *value) { DRAW(r_
 void glClearBufferiv(GLenum buffer, GLint index, const GLint *value) { DRAW(r_glClearBufferiv(buffer, index, value)); }
 void glClearBufferuiv(GLenum buffer, GLint index, const GLuint *value) { DRAW(r_glClearBufferuiv(buffer, index, value)); }
 void glClearBufferfi(GLenum buffer, GLint index, GLfloat depth, GLint stencil) { DRAW(r_glClearBufferfi(buffer, index, depth, stencil)); }
+/* The same clears through direct state access (OpenGL 4.5), framebuffer 0 being the window's. */
+void glClearNamedFramebufferfv(GLuint fb, GLenum buffer, GLint index, const GLfloat *value) { if (fb) { API(); r_glClearNamedFramebufferfv(fb, buffer, index, value); return; } DRAW(r_glClearNamedFramebufferfv(fb, buffer, index, value)); }
+void glClearNamedFramebufferiv(GLuint fb, GLenum buffer, GLint index, const GLint *value) { if (fb) { API(); r_glClearNamedFramebufferiv(fb, buffer, index, value); return; } DRAW(r_glClearNamedFramebufferiv(fb, buffer, index, value)); }
+void glClearNamedFramebufferuiv(GLuint fb, GLenum buffer, GLint index, const GLuint *value) { if (fb) { API(); r_glClearNamedFramebufferuiv(fb, buffer, index, value); return; } DRAW(r_glClearNamedFramebufferuiv(fb, buffer, index, value)); }
+void glClearNamedFramebufferfi(GLuint fb, GLenum buffer, GLint index, GLfloat depth, GLint stencil) { if (fb) { API(); r_glClearNamedFramebufferfi(fb, buffer, index, depth, stencil); return; } DRAW(r_glClearNamedFramebufferfi(fb, buffer, index, depth, stencil)); }
 void glEvalMesh1(GLenum mode, GLint i1, GLint i2) { DRAW(r_glEvalMesh1(mode, i1, i2)); }
 void glEvalMesh2(GLenum mode, GLint i1, GLint i2, GLint j1, GLint j2) { DRAW(r_glEvalMesh2(mode, i1, i2, j1, j2)); }
 void glRectd(GLdouble x1, GLdouble y1, GLdouble x2, GLdouble y2) { DRAW(r_glRectd(x1, y1, x2, y2)); }
@@ -544,8 +555,32 @@ void glDrawPixels(GLsizei w, GLsizei h, GLenum format, GLenum type, const void *
 
 /* GL sets a context's viewport to its window's size when it is first made
  * current; the window's size the program sees is one view's. */
+/* Learns, once per context and with it current, whether it has the fixed-function state
+ * (matrix stacks, attribute stacks, render mode) that the layer otherwise saves and
+ * restores around each eye: a core profile or forward-compatible context (OpenGL 3.2 and
+ * 3.0, glGetIntegerv GL_CONTEXT_PROFILE_MASK and GL_CONTEXT_FLAGS) and OpenGL ES have none,
+ * and touching it raises an error the program then reads as its own. */
+static void learn_profile(void)
+{
+    if (!current || current->profile_known) return;
+    current->profile_known = 1;
+    if (current->gles) { current->core = 1; return; }
+    const char *version = (const char *)r_glGetString(GL_VERSION);
+    int major = 0, minor = 0;
+    if (!version || sscanf(version, "%d.%d", &major, &minor) != 2) return;
+    GLint value = 0;
+    if (major > 3 || (major == 3 && minor >= 2)) {
+        r_glGetIntegerv(GL_CONTEXT_PROFILE_MASK, &value);
+        if (value & GL_CONTEXT_CORE_PROFILE_BIT) current->core = 1;
+    }
+    if (major >= 3) {
+        value = 0; r_glGetIntegerv(GL_CONTEXT_FLAGS, &value);
+        if (value & GL_CONTEXT_FLAG_FORWARD_COMPATIBLE_BIT) current->core = 1;
+    }
+}
 static void initial_viewport(void)
 {
+    learn_profile();
     if (current && !current->viewport_ready && current->window && current->window->active) {
         r_glViewport(0, 0, current->window->width, current->window->height);
         current->viewport_ready = 1;
@@ -788,6 +823,11 @@ Bool XCheckIfEvent(Display *d, XEvent *e, Bool (*predicate)(Display *,XEvent *,X
  X(glDrawElementsInstancedBaseVertex) X(glDrawArraysIndirect) X(glDrawElementsIndirect) X(glMultiDrawArraysIndirect) \
  X(glMultiDrawElementsIndirect) X(glClearBufferfv) X(glClearBufferiv) X(glClearBufferuiv) X(glClearBufferfi) \
  X(glDrawBuffersIndexedEXT) X(glReadBufferIndexedEXT) X(glGetIntegeri_vEXT) X(glGetString) X(glGetStringi) \
+ X(glNamedFramebufferDrawBuffer) X(glNamedFramebufferDrawBuffers) X(glNamedFramebufferReadBuffer) \
+ X(glFramebufferDrawBufferEXT) X(glFramebufferDrawBuffersEXT) X(glFramebufferReadBufferEXT) \
+ X(glClearNamedFramebufferfv) X(glClearNamedFramebufferiv) X(glClearNamedFramebufferuiv) X(glClearNamedFramebufferfi) \
+ X(glBlitNamedFramebuffer) X(glGetNamedFramebufferParameteriv) X(glGetFramebufferParameteriv) \
+ X(glGetNamedFramebufferAttachmentParameteriv) X(glGetFramebufferAttachmentParameteriv) \
  X(glEvalMesh2) X(glRectd) X(glRectf) X(glRecti) X(glRects) \
  X(glRectdv) X(glRectfv) X(glRectiv) X(glRectsv) X(glBitmap) \
  X(glDrawPixels) X(glXMakeCurrent) X(glXMakeContextCurrent) X(glXDestroyContext) X(glXSwapBuffers) \
