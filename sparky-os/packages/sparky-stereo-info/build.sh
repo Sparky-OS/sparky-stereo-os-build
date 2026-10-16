@@ -11,13 +11,19 @@
 # Sparky Welcome's page (/usr/lib/sparky-welcome/index.html, sparky-welcome) is diverted the same way
 # and regenerated with the edition's heading and credit line (welcome-header.html) in place of
 # SparkyLinux's release name; the rest of the page is Sparky's own.
+# Sparky Welcome is the welcome at the first login: KDE's Welcome Center (plasma-welcome) stays installed
+# and in the menu, and its first-run window waits. /etc/xdg/plasma-welcomerc gives new accounts the
+# installed Welcome Center's version as LastSeenVersion (kded_plasma_welcome opens the first-run window
+# only when it is empty, and writes the person's own value at their first login); a trigger follows
+# plasma-welcome's upgrades, so a new account never sees the update page either, while an existing account
+# still gets it after an upgrade of Plasma, as KDE does.
 # It also installs stereo-display-info, the command that prints what each display can do in
 # stereo 3D and deep colour (read from its EDID) and what it is doing now.
 # Last update 2026/10/16
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
-VERSION=20261016~sparky9~0
+VERSION=20261016.1~sparky9~0
 PKG=sparky-stereo-info
 W=$(mktemp -d /K3D/temp/sparky-os/info-build.XXXXXX)
 trap 'rm -rf "$W"' EXIT
@@ -80,11 +86,26 @@ welcome() {
 	chmod 644 /usr/lib/sparky-welcome/index.html.new
 	mv /usr/lib/sparky-welcome/index.html.new /usr/lib/sparky-welcome/index.html
 }
+welcomecenter() {
+	f=/etc/xdg/plasma-welcomerc
+	# a file the administrator wrote is left alone
+	[ -f "$f" ] && ! grep -q '^# sparky-stereo-info' "$f" && return 0
+	v=$(dpkg-query -W -f '${Status} ${Version}' plasma-welcome 2>/dev/null | sed -n 's/^install ok installed \([0-9]*:\)\{0,1\}\([0-9][0-9.]*\).*/\2/p')
+	if [ -z "$v" ]; then
+		rm -f "$f"
+		return 0
+	fi
+	mkdir -p /etc/xdg
+	printf '# sparky-stereo-info: Sparky Welcome is the first-login welcome; the Welcome Center stays in the menu\n[General]\nLastSeenVersion=%s\n' "$v" >"$f.new"
+	chmod 644 "$f.new"
+	mv "$f.new" "$f"
+}
 case "$1" in
 	configure|triggered)
 		osrelease
 		lsbrelease
 		welcome
+		welcomecenter
 	;;
 esac
 exit 0
@@ -93,6 +114,9 @@ cat >"$D/DEBIAN/postrm" <<'EOF'
 #!/bin/sh
 # postrm script
 set -e
+if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
+	if grep -q '^# sparky-stereo-info' /etc/xdg/plasma-welcomerc 2>/dev/null; then rm -f /etc/xdg/plasma-welcomerc; fi
+fi
 if [ "$1" = "remove" ] || [ "$1" = "purge" ] || [ "$1" = "abort-install" ]; then
 	for f in /usr/lib/os-release /etc/lsb-release /usr/lib/sparky-welcome/index.html; do
 		if dpkg-divert --listpackage "$f" | grep -q sparky-stereo-info; then
@@ -103,7 +127,7 @@ if [ "$1" = "remove" ] || [ "$1" = "purge" ] || [ "$1" = "abort-install" ]; then
 fi
 exit 0
 EOF
-printf 'interest-noawait /usr/lib/os-release.sparky\ninterest-noawait /etc/lsb-release.sparky\ninterest-noawait /usr/lib/sparky-welcome/index.html.sparky\n' >"$D/DEBIAN/triggers"
+printf 'interest-noawait /usr/lib/os-release.sparky\ninterest-noawait /etc/lsb-release.sparky\ninterest-noawait /usr/lib/sparky-welcome/index.html.sparky\ninterest-noawait /usr/lib/x86_64-linux-gnu/qt6/plugins/kf6/kded/kded_plasma_welcome.so\n' >"$D/DEBIAN/triggers"
 chmod 755 "$D/DEBIAN/preinst" "$D/DEBIAN/postinst" "$D/DEBIAN/postrm"
 
 cat >"$D/usr/share/doc/$PKG/copyright" <<'EOF'
@@ -151,7 +175,9 @@ Homepage: https://sparkylinux.org
 Description: Sparky Stereo OS info
   The system's own name: Sparky Stereo OS 9 (Mashtabba), based on Debian 14
   (Forky), in os-release and lsb-release, keeping Sparky's ID and codename,
-  and in Sparky Welcome's heading with the edition's credit line.
+  and in Sparky Welcome's heading with the edition's credit line. Sparky
+  Welcome is the welcome at the first login; KDE's Welcome Center stays in
+  the menu.
   Also the stereo-display-info command: what each display can do in stereo 3D
   and deep colour, and what it is doing now.
 EOF
