@@ -1,11 +1,11 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/14
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/14
+# Last update 2026/10/16
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION='20261014~sparky9~1'
+VERSION='20261016~sparky9~0'
 PACKAGE=sparky-stereo-calamares-branding
 DEPENDS='calamares, libstereo-layer1 (>= 1.4.1), qml6-module-qtquick-window'
 RECOMMENDS='calamares (>= 3.4.3~sparky9~4-1+stereo3d1)'
@@ -73,6 +73,17 @@ Description: Stereo 3D slideshow for the installer
 EOT
 cat >"$S/debian/changelog" <<EOT
 $PACKAGE ($VERSION) unstable; urgency=medium
+
+  * The slides advance: the slideshow's timer runs while Calamares shows it
+    (running: presentation.activatedInCalamares; QML's Timer is stopped by
+    default, so the first slide stayed for the whole installation).
+  * The boot menu names the system Sparky Stereo OS (bootloaderEntryName);
+    the EFI folder keeps its name (efiBootloaderId in the edition's
+    installer settings).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Fri, 16 Oct 2026 02:30:00 -0300
+
+$PACKAGE (20261014~sparky9~1) unstable; urgency=medium
 
   * All twenty-three slides, as stereo pictures without text.
   * The words are QML text (qsTr) set at the screen plane, translated through

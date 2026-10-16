@@ -29,6 +29,7 @@ Presentation
     Timer {
         interval: 20000
         repeat: true
+        running: presentation.activatedInCalamares
         onTriggered: presentation.goToNextSlide()
     }
 
