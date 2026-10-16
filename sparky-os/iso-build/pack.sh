@@ -46,16 +46,10 @@ if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
 		printf '#!/bin/sh\nexit 0\n' > "$R$f"; chmod 755 "$R$f"
 	done
 	inr apt-get update
-	apt_in install --reinstall sparky-backup-core-stereo sparky-stereo-hardware sparky-stereo-service-defaults calamares-settings-sparky-stereo \
-		calamares sparky-stereo-calamares-branding sparky-stereo-info sparky-stereo-look sparkyos-artwork sparkyos-plymouth \
-		linux-headers-7.3.0-rc6-stereo3d8
-	# the packages SparkyLinux's securebootinstall asks apt for that the image lacks (an offline install finds the rest)
-	for p in libjcat1 grub-efi-amd64-signed-template shim-helpers-amd64-signed-template; do
-		apt_in install --no-install-recommends "$p" || echo "!! $p: not installed"
-	done
 	echo "== $(date -u +%T) the edition's repository (Daniel, 2026-10-16): sparky-stereo-apt with its keyring, deb-multimedia's keyring package"
-	# the recipe's own copies of the files sparky-stereo-apt ships go first, so the package owns them; on a
-	# second pack the package is there already, and its files are put back if anything removed them
+	# first, so its pin (o=Sparky Stereo OS at 1001) ranks the staged packages above SparkyLinux's for what follows.
+	# The recipe's own copies of the files it ships go before its first install, so the package owns them; on a
+	# second pack the package is there already, and its files are put back if anything removed them.
 	apt_in install deb-multimedia-keyring
 	if ! inr dpkg-query -W -f '${Status}' sparky-stereo-apt 2>/dev/null | grep -q 'ok installed'; then
 		rm -f $R/etc/apt/sources.list.d/sparky-stereo-deb-multimedia.sources $R/etc/apt/keyrings/deb-multimedia-keyring.pgp \
@@ -65,6 +59,14 @@ if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
 	apt_in -o Dpkg::Options::=--force-confmiss install --reinstall sparky-stereo-apt
 	for f in sources.list.d/sparky-stereo.sources sources.list.d/sparky-stereo-deb-multimedia.sources preferences.d/sparky-stereo preferences.d/sparky-stereo-only-ours; do
 		[ -s $R/etc/apt/$f ] || { echo "!! /etc/apt/$f is missing"; exit 1; }
+	done
+	inr apt-get update
+	apt_in install --reinstall sparky-backup-core-stereo sparky-stereo-hardware sparky-stereo-service-defaults calamares-settings-sparky-stereo \
+		calamares sparky-stereo-calamares-branding sparky-stereo-info sparky-stereo-look sparkyos-artwork sparkyos-plymouth \
+		linux-headers-7.3.0-rc6-stereo3d8
+	# the packages SparkyLinux's securebootinstall asks apt for that the image lacks (an offline install finds the rest)
+	for p in libjcat1 grub-efi-amd64-signed-template shim-helpers-amd64-signed-template; do
+		apt_in install --no-install-recommends "$p" || echo "!! $p: not installed"
 	done
 	echo "== $(date -u +%T) GRUB's EFI packages for an offline UEFI install (calamares-settings-sparky-stereo's offline step)"
 	O=/usr/share/sparky-stereo/offline-debs
