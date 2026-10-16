@@ -46,13 +46,31 @@ import time
 from concurrent.futures import ProcessPoolExecutor
 
 sys.path.insert(0, os.environ.get('DPKG_STEREO_LIB', '/usr/lib/dpkg-stereo'))
-from lean import VERSION, consumers, project  # noqa: E402
+
+
+class _Lazy:
+    """The lean package, imported the first time it is needed (dpkg's hooks usually need none of it)."""
+    def __init__(self, name):
+        self.name = name
+        self.mod = None
+
+    def __getattr__(self, attr):
+        if self.mod is None:
+            import importlib
+            self.mod = importlib.import_module('lean.' + self.name if self.name else 'lean')
+        return getattr(self.mod, attr)
+
+
+project = _Lazy('project')
+consumers = _Lazy('consumers')
+lean_pkg = _Lazy('')
 
 STATE = '/var/lib/dpkg-stereo'
 FILES = 'files.tsv'
 LEFT = 'left.tsv'
 HOLD = 'hold'
 PKGS = 'packages.tsv'
+CONFFILES = 'conffiles.tsv'
 PRISTINE = 'pristine'
 FILE_COLS = ('path', 'package', 'version', 'conffile', 'sha_orig', 'md5_orig', 'sha_lean', 'handler', 'variant',
              'bytes_orig', 'bytes_lean')
@@ -97,6 +115,11 @@ def read_table(path, cols):
     return rows
 
 
+def write_files(P, files):
+    write_table(P.state(FILES), FILE_COLS, files)
+    write_table(P.state(CONFFILES), FILE_COLS, {k: v for k, v in files.items() if str(v.get('conffile')) == '1'})
+
+
 def write_table(path, cols, rows):
     tmp = path + '.new'
     with open(tmp, 'w', encoding='utf-8', errors='surrogateescape') as f:
@@ -109,6 +132,10 @@ def write_table(path, cols, rows):
 def dpkg_packages(P):
     """{package: (version, arch-qualified info name)} from dpkg's status file."""
     out = {}
+    try:
+        lists = set(os.listdir(P.real('/var/lib/dpkg/info')))
+    except FileNotFoundError:
+        lists = set()
     pkg = ver = arch = status = None
     multi = None
     with open(P.real('/var/lib/dpkg/status'), encoding='utf-8', errors='surrogateescape') as f:
@@ -116,7 +143,7 @@ def dpkg_packages(P):
             if not line:
                 if pkg and status and status.endswith(' installed'):
                     name = pkg
-                    if multi == 'same' or os.path.exists(P.real(f'/var/lib/dpkg/info/{pkg}:{arch}.list')):
+                    if multi == 'same' or f'{pkg}:{arch}.list' in lists:
                         name = f'{pkg}:{arch}'
                     out[pkg if name == pkg else name] = (ver, name)
                 pkg = ver = arch = status = multi = None
@@ -330,6 +357,7 @@ def project_packages(P, names, jobs, image=False, log=print):
             st = os.lstat(real)
             if is_conf:
                 store_pristine(P, data)
+                store_pristine(P, r.lean)
             write_lean(real, data, r.lean, st)
             if path.endswith('.py'):
                 pys.append(real)
@@ -339,7 +367,7 @@ def project_packages(P, names, jobs, image=False, log=print):
             left.pop(path, None)
             done += 1
     recompile_pyc(pys)
-    write_table(P.state(FILES), FILE_COLS, files)
+    write_files(P, files)
     write_table(P.state(LEFT), ('path', 'package', 'handler', 'reason'), left)
     write_packages(P)
     with open(P.state('identity'), 'w') as f:
@@ -356,9 +384,10 @@ def list_mtime(P, info):
         return ''
 
 
-def write_packages(P):
+def write_packages(P, pkgs=None):
+    pkgs = pkgs if pkgs is not None else dpkg_packages(P)
     write_table(P.state(PKGS), PKG_COLS, {k: {'package': k, 'version': v[0], 'list_mtime': list_mtime(P, v[1])}
-                                          for k, v in dpkg_packages(P).items()})
+                                          for k, v in pkgs.items()})
 
 
 def md5sums(P, info):
@@ -384,7 +413,9 @@ def read_hold(P):
 def pre_invoke(P):
     """Projected conffiles still in their lean form go back to their pristine bytes, so dpkg finds them
     unmodified; a conffile the person edited (its bytes are no longer the lean ones) is left alone."""
-    files = read_table(P.state(FILES), FILE_COLS)
+    files = read_table(P.state(CONFFILES), FILE_COLS)
+    if not files and not os.path.exists(P.state(CONFFILES)):
+        files = read_table(P.state(FILES), FILE_COLS)
     n = 0
     restored = []
     for path, rec in files.items():
@@ -426,8 +457,10 @@ def post_invoke(P, jobs):
             restored = [l.rstrip('\n') for l in f if l.strip()]
     except FileNotFoundError:
         restored = []
+    dirty = False
     for path in [p for p, r in files.items() if r['package'] in gone or r['package'] in ch]:
         del files[path]
+        dirty = True
     for path in restored:
         rec = files.get(path)
         if not rec:
@@ -438,22 +471,29 @@ def post_invoke(P, jobs):
                 data = f.read()
         except FileNotFoundError:
             del files[path]
+            dirty = True
             continue
         if sha256(data) != rec['sha_orig']:
             del files[path]          # not the bytes restored: dpkg or the person changed it
+            dirty = True
             continue
-        r = project.project(path, data, rec['package'].split(':')[0], check=False)
-        if r.status == 'projected' and r.sha_out == rec['sha_lean']:
-            write_lean(real, data, r.lean, os.lstat(real))
+        lean = load_pristine(P, rec['sha_lean'])
+        if lean is None or sha256(lean) != rec['sha_lean']:
+            r = project.project(path, data, rec['package'].split(':')[0], check=False)
+            lean = r.lean if r.status == 'projected' and r.sha_out == rec['sha_lean'] else None
+        if lean is not None:
+            write_lean(real, data, lean, os.lstat(real))
         else:
             del files[path]
+            dirty = True
             ch.add(rec['package'])
     os.unlink(P.state('restored-for-dpkg')) if os.path.exists(P.state('restored-for-dpkg')) else None
-    write_table(P.state(FILES), FILE_COLS, files)
+    if dirty:
+        write_files(P, files)
     if ch:
         project_packages(P, sorted(ch), jobs, log=lambda m: None)
-    else:
-        write_packages(P)
+    elif gone:
+        write_packages(P, pkgs)
 
 
 def deb_member(P, package, version, path):
@@ -589,7 +629,7 @@ def restore(P, names, drop_hold=False):
             recompile_pyc([real])
         del files[path]
         ok += 1
-    write_table(P.state(FILES), FILE_COLS, files)
+    write_files(P, files)
     print(f'dpkg-stereo: {ok} files restored, {fail} need their package reinstalled')
     return 1 if fail else 0
 
@@ -613,7 +653,9 @@ def hr_copy(P, path):
 
 
 def fetch_hr(P):
-    files = read_table(P.state(FILES), FILE_COLS)
+    files = read_table(P.state(CONFFILES), FILE_COLS)
+    if not files and not os.path.exists(P.state(CONFFILES)):
+        files = read_table(P.state(FILES), FILE_COLS)
     n = 0
     restored = []
     for path, rec in files.items():
@@ -719,7 +761,7 @@ def status(P):
         t[0] += 1
         t[1] += int(rec['bytes_orig'])
         t[2] += int(rec['bytes_lean'])
-    print(f'dpkg-stereo {VERSION}: {len(files)} files projected, {len(left)} left alone, {len(read_hold(P))} held')
+    print(f'dpkg-stereo {lean_pkg.VERSION}: {len(files)} files projected, {len(left)} left alone, {len(read_hold(P))} held')
     for k, (n, a, b) in sorted(by.items(), key=lambda x: -(x[1][1] - x[1][2])):
         print(f'  {k:<20} {n:>7} files {a:>12} -> {b:>12} bytes ({a - b} fewer)')
     reasons = {}
@@ -762,11 +804,24 @@ def main():
         if a.project is not None:
             project_packages(P, a.project, a.jobs, a.image)
             return 0
-        if a.pre_invoke:
-            pre_invoke(P)
-            return 0
-        if a.post_invoke:
-            post_invoke(P, a.jobs)
+        if a.pre_invoke or a.post_invoke:
+            # a hook never stops dpkg: whatever goes wrong is logged and dpkg goes on with the files as they are
+            try:
+                if a.pre_invoke:
+                    if os.environ.get('DPKG_HOOK_ACTION', '') not in ('triggers-only', 'remove', 'add-architecture',
+                                                                      'remove-architecture'):
+                        pre_invoke(P)
+                else:
+                    post_invoke(P, a.jobs)
+            except Exception:
+                import traceback
+                msg = traceback.format_exc()
+                try:
+                    with open(P.state('error.log'), 'a', encoding='utf-8') as f:
+                        f.write(time.strftime('%Y-%m-%d %H:%M:%S ') + ('pre' if a.pre_invoke else 'post') + '-invoke\n' + msg)
+                except OSError:
+                    pass
+                print('dpkg-stereo: the hook failed (dpkg goes on); see /var/lib/dpkg-stereo/error.log', file=sys.stderr)
             return 0
         if a.verify is not None:
             return verify(P, a.verify, a.deep)
