@@ -61,7 +61,7 @@ su
 
 Use:
 -------------
-Start Hardware Setup from the menu, or run `sparky-stereo-hardware --auto` as root from the installer/first-boot workflow. No boot service or desktop autostart is enabled by this package. Repeat the command when hardware changes.
+Start Hardware Setup from the menu, or run `sparky-stereo-hardware --auto` as root from the installer/first-boot workflow. Repeat the command when hardware changes. The package enables one boot service, the OpenGL stereo default below, and a live-session notification (since 0.1.8); hardware setup itself runs only when asked.
 
 `--dry-run` prints matched packages and actions without installing, editing configuration, or probing sensors. To reproduce the supplied example inside a container: `sparky-stereo-hardware --auto --dry-run --fixture tests/fixtures/creative-nvidia-laptop`. Fixtures are plain text and require every fact file; `laptop` contains laptop-detect's exit code, 0 for laptop or 1 for desktop. Fixture mode cannot apply changes. Container execution without fixtures is rejected.
 
@@ -111,3 +111,11 @@ as unsupported, and no second controller writes GPU sysfs. PPD 0.30 currently
 probes these actions by CPU vendor, so Radeon on Intel is not covered. Sources:
 https://sources.debian.org/src/power-profiles-daemon/0.30-2/src/ppd-action-amdgpu-dpm.c/
 https://sources.debian.org/src/power-profiles-daemon/0.30-2/src/ppd-action-amdgpu-panel-power.c/
+
+OpenGL stereo default (since 0.1.9):
+-------------
+NVIDIA's OpenGL gives a window no second view (its window surfaces take one colour buffer), so a program that draws its own two views gets none on NVIDIA's own OpenGL. Mesa's OpenGL running on NVIDIA's Vulkan driver (zink) has them. `sparky-stereo-opengl-default` finds the card the desktop runs on (the card KWin renders on: the boot VGA card when it can render, else the first card with a screen and a render node, the order of `sparky-stereo-primary-gpu.sh`) and writes `/etc/sparky-stereo/opengl-stereo.conf`: `desktop=nvidia` when NVIDIA's driver runs it, `mesa` for AMD, Intel, nouveau or a hybrid laptop whose desktop runs on the integrated card, `none` without a card that renders, and `opengl=zink` (the default) or `nvidia`, the person's choice, kept across rewrites. It runs at install (postinst; in the installer that is the machine being installed), at every boot (`sparky-stereo-opengl-default.service`, before the display manager) and when udev sees a card added or removed or a display device bound to or unbound from its driver.
+
+At login, `/etc/xdg/plasma-workspace/env/sparky-stereo-opengl.sh` reads it. With `desktop=nvidia` and `opengl=zink` it exports, for the session's programs (menu, panel, terminal alike): Mesa's EGL vendor first and NVIDIA's second (`__EGL_VENDOR_LIBRARY_FILENAMES`; NVIDIA's Vulkan driver does not start without its own EGL vendor), `__GLX_VENDOR_LIBRARY_NAME=mesa`, `MESA_LOADER_DRIVER_OVERRIDE=zink` and `LIBGL_KOPPER_DISABLE=1` (Mesa's own presentation path carries the two views; zink's Vulkan swapchain path, kopper, has none yet). A systemd drop-in for `plasma-kwin_wayland.service` removes these variables from KWin, so KWin and its Xwayland keep NVIDIA's driver. Nothing is exported when the session starts KWin without systemd (`systemdBoot=false` in startkderc) or when the person set an EGL vendor list or a Mesa driver of their own. Vulkan programs are not affected. It also exports `GL_STEREO_NVIDIA_OPENGL`, the system choice, which gl-stereo-run uses as its default.
+
+`sparky-stereo-opengl-default --opengl nvidia` (as root) keeps NVIDIA's own OpenGL for every program instead; `--opengl zink` returns to the default. Either applies from the next login. Per program, `gl-stereo-run --nvidia-opengl zink|nvidia` and its settings dialog choose: `nvidia` and 3D off run the program on NVIDIA's own OpenGL. A program that needs NVIDIA's OpenGL itself (CUDA and OpenGL sharing, NVIDIA-only extensions) can be started that way. The test is `tests/opengl-default.sh` (fixture sysfs trees).

@@ -1,0 +1,14 @@
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
+# Copyright 2026 under the GNU GPL3 License
+[Unit]
+Description=OpenGL stereo default for the graphics card the desktop runs on
+Documentation=file:/usr/share/doc/sparky-stereo-hardware/README.md
+After=systemd-udevd.service systemd-modules-load.service
+Before=display-manager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/sparky-stereo-opengl-default
+
+[Install]
+WantedBy=graphical.target

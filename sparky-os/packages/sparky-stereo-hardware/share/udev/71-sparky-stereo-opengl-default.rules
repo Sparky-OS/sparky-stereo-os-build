@@ -1,0 +1,5 @@
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
+# Copyright 2026 under the GNU GPL3 License
+# A graphics card is added, removed or changes driver: rewrite the OpenGL stereo default.
+SUBSYSTEM=="drm", KERNEL=="card[0-9]*", ACTION=="add|remove", RUN+="/usr/bin/systemctl --no-block start sparky-stereo-opengl-default.service"
+SUBSYSTEM=="pci", ATTR{class}=="0x03*", ACTION=="bind|unbind", RUN+="/usr/bin/systemctl --no-block start sparky-stereo-opengl-default.service"

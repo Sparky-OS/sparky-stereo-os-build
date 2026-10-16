@@ -1,0 +1,12 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
+# Copyright 2026 under the GNU GPL3 License
+# The OpenGL stereo default: enabled for every boot and written now, for the machine it is
+# installed on (in the installer, the machine being installed).
+set -e
+if [ "$1" = configure ]; then
+	deb-systemd-helper unmask sparky-stereo-opengl-default.service >/dev/null || true
+	deb-systemd-helper enable sparky-stereo-opengl-default.service >/dev/null || true
+	if [ -d /run/udev ]; then udevadm control --reload-rules || true; fi
+	sparky-stereo-opengl-default || true
+fi

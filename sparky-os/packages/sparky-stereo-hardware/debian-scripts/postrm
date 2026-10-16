@@ -1,0 +1,15 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
+# Copyright 2026 under the GNU GPL3 License
+set -e
+if [ "$1" = remove ] && command -v deb-systemd-helper > /dev/null; then
+	deb-systemd-helper mask sparky-stereo-opengl-default.service >/dev/null || true
+fi
+if [ "$1" = purge ]; then
+	if command -v deb-systemd-helper > /dev/null; then
+		deb-systemd-helper purge sparky-stereo-opengl-default.service >/dev/null || true
+		deb-systemd-helper unmask sparky-stereo-opengl-default.service >/dev/null || true
+	fi
+	rm -f /etc/sparky-stereo/opengl-stereo.conf
+	rmdir /etc/sparky-stereo 2>/dev/null || true
+fi
