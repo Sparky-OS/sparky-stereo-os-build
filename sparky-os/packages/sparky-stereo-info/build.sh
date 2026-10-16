@@ -8,19 +8,23 @@
 # stay as they are (Sparky's tools and repository read them) and only the names change:
 # PRETTY_NAME, NAME, VERSION, VARIANT, VARIANT_ID, DEBIAN_VERSION_ID, DISTRIB_DESCRIPTION.
 # A dpkg trigger regenerates them whenever Sparky updates its originals.
+# Sparky Welcome's page (/usr/lib/sparky-welcome/index.html, sparky-welcome) is diverted the same way
+# and regenerated with the edition's heading and credit line (welcome-header.html) in place of
+# SparkyLinux's release name; the rest of the page is Sparky's own.
 # It also installs stereo-display-info, the command that prints what each display can do in
 # stereo 3D and deep colour (read from its EDID) and what it is doing now.
-# Last update 2026/10/05
+# Last update 2026/10/16
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
-VERSION=20261005~sparky9~0
+VERSION=20261016~sparky9~0
 PKG=sparky-stereo-info
 W=$(mktemp -d /K3D/temp/sparky-os/info-build.XXXXXX)
 trap 'rm -rf "$W"' EXIT
 D=$W/$PKG
 mkdir -p "$D/DEBIAN" "$D/usr/bin" "$D/usr/share/$PKG" "$D/usr/share/doc/$PKG"
 cp "$HERE/edition" "$D/usr/share/$PKG/edition"
+cp "$HERE/welcome-header.html" "$D/usr/share/$PKG/welcome-header.html"
 install -m 755 "$HERE/stereo-display-info" "$D/usr/bin/stereo-display-info"
 
 cat >"$D/DEBIAN/preinst" <<'EOF'
@@ -28,7 +32,7 @@ cat >"$D/DEBIAN/preinst" <<'EOF'
 # preinst script
 set -e
 if [ "$1" = "install" ] || [ "$1" = "upgrade" ]; then
-	for f in /usr/lib/os-release /etc/lsb-release; do
+	for f in /usr/lib/os-release /etc/lsb-release /usr/lib/sparky-welcome/index.html; do
 		if ! dpkg-divert --listpackage "$f" | grep -q sparky-stereo-info; then
 			dpkg-divert --quiet --package sparky-stereo-info --add --rename --divert "$f.sparky" "$f"
 			# keep the system named until postinst writes the edition's version
@@ -67,10 +71,20 @@ lsbrelease() {
 	chmod 644 /etc/lsb-release.new
 	mv /etc/lsb-release.new /etc/lsb-release
 }
+welcome() {
+	src=/usr/lib/sparky-welcome/index.html.sparky
+	[ -f "$src" ] || return 0
+	sed -e '/<h1>.*<\/h1>/{r /usr/share/sparky-stereo-info/welcome-header.html' -e 'd}' \
+		-e 's|<div id="header" style="text-align: center;">|<div id="header" style="text-align: center; height: auto;">|' \
+		"$src" >/usr/lib/sparky-welcome/index.html.new
+	chmod 644 /usr/lib/sparky-welcome/index.html.new
+	mv /usr/lib/sparky-welcome/index.html.new /usr/lib/sparky-welcome/index.html
+}
 case "$1" in
 	configure|triggered)
 		osrelease
 		lsbrelease
+		welcome
 	;;
 esac
 exit 0
@@ -80,7 +94,7 @@ cat >"$D/DEBIAN/postrm" <<'EOF'
 # postrm script
 set -e
 if [ "$1" = "remove" ] || [ "$1" = "purge" ] || [ "$1" = "abort-install" ]; then
-	for f in /usr/lib/os-release /etc/lsb-release; do
+	for f in /usr/lib/os-release /etc/lsb-release /usr/lib/sparky-welcome/index.html; do
 		if dpkg-divert --listpackage "$f" | grep -q sparky-stereo-info; then
 			rm -f "$f"
 			dpkg-divert --quiet --package sparky-stereo-info --remove --rename --divert "$f.sparky" "$f"
@@ -89,7 +103,7 @@ if [ "$1" = "remove" ] || [ "$1" = "purge" ] || [ "$1" = "abort-install" ]; then
 fi
 exit 0
 EOF
-printf 'interest-noawait /usr/lib/os-release.sparky\ninterest-noawait /etc/lsb-release.sparky\n' >"$D/DEBIAN/triggers"
+printf 'interest-noawait /usr/lib/os-release.sparky\ninterest-noawait /etc/lsb-release.sparky\ninterest-noawait /usr/lib/sparky-welcome/index.html.sparky\n' >"$D/DEBIAN/triggers"
 chmod 755 "$D/DEBIAN/preinst" "$D/DEBIAN/postinst" "$D/DEBIAN/postrm"
 
 cat >"$D/usr/share/doc/$PKG/copyright" <<'EOF'
@@ -136,7 +150,8 @@ Priority: optional
 Homepage: https://sparkylinux.org
 Description: Sparky Stereo OS info
   The system's own name: Sparky Stereo OS 9 (Mashtabba), based on Debian 14
-  (Forky), in os-release and lsb-release, keeping Sparky's ID and codename.
+  (Forky), in os-release and lsb-release, keeping Sparky's ID and codename,
+  and in Sparky Welcome's heading with the edition's credit line.
   Also the stereo-display-info command: what each display can do in stereo 3D
   and deep colour, and what it is doing now.
 EOF
