@@ -14,6 +14,7 @@ import ast
 import io
 import re
 import tokenize
+import warnings
 
 from .core import COMMENT, KEEP, LITERAL, Span, is_notice, is_pointer
 
@@ -96,6 +97,12 @@ def refuse(src: str) -> str | None:
 
 
 def verify(original: str, lean: str, interpreter: str = '') -> tuple:
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        return _verify(original, lean)
+
+
+def _verify(original, lean):
     try:
         a = ast.dump(ast.parse(original))
     except (SyntaxError, ValueError) as e:

@@ -121,8 +121,8 @@ def project(path: str, data: bytes, package: str | None = None, *, pointer=True,
         return res
     try:
         lean, rendered, spans = render_text(text, key, variant, package, path, pointer)
-    except (ValueError, IndexError) as e:
-        res.reason = f'the {key} reader could not read it: {e}'
+    except Exception as e:      # a lexer's refusal, or the language's own tokenizer error (TabError, TokenError)
+        res.reason = f'the {key} reader could not read it: {type(e).__name__}: {e}'.split('\n')[0]
         return res
     res.kept = rendered.kept
     if rendered.removed == 0:

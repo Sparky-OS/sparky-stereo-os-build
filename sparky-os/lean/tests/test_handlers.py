@@ -57,6 +57,8 @@ EOT
 echo cont \
   # a comment after a continuation
 echo next
+while read -r w; do echo "got $w"; done <<<"$(echo here-string # a comment
+)"
 printf '%s|%s|%s|%s|%s|%s\n' "$n" "$v" "$p" "$b" "${arr[*]}" "$long"
 '''
 

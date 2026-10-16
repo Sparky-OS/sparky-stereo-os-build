@@ -135,7 +135,10 @@ class _Lexer:
             if c == '(' and s.startswith('((', i) and self.word_start(i):
                 i = self.arith(i + 2)
                 continue
-            if c == '<' and s.startswith('<<', i) and not s.startswith('<<<', i):
+            if c == '<' and s.startswith('<<<', i):
+                i += 3          # a here-string, not a heredoc
+                continue
+            if c == '<' and s.startswith('<<', i):
                 i = self.heredoc_op(i + 2)
                 continue
             if stop is not None:
