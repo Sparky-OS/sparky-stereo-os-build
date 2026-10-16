@@ -1,8 +1,9 @@
 -------------------------------------------------------------------------------
-  Version 20261016.1~sparky9~0 (2026-10-16)
+  Version 20261016.2~sparky9~0 (2026-10-16)
 -------------------------------------------------------------------------------
   * EFI fallback path: Calamares' own copy (GRUB alone) is off; a new step after the bootloader writes shim as BOOTX64.EFI with GRUB and MokManager beside it on a machine with no other system, and leaves Windows' fallback loader as it is
   * The EFI folder stays Sparky (efiBootloaderId) while the branding names the system Sparky Stereo OS
+  * The fallback step finds the installed system's root device itself (ROOT); Calamares quotes $( ) in a command, so the device cannot come from the command line
   * Offline installs: the image's local repository of GRUB's EFI packages is an apt source while SparkyLinux's grubefiinstall and securebootinstall run, and leaves the installed system after them
   * The steps after the packages step (offlineoff, efifallback) run from the live system on the installed system's files: the packages step removes the installer, and this package with it, from the installed system
 

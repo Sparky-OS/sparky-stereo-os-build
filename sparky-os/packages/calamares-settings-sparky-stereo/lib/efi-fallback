@@ -16,7 +16,7 @@
 #    small configuration beside it; never GRUB alone, which the firmware refuses under Secure Boot.
 # TARGET is the installed system's root device: os-prober run from the live system lists it too, and it
 # is not "another system".
-# ESP, OS_PROBER, EFI_FIRMWARE and TARGET can be set (the installer sets ESP and TARGET).
+# ESP, OS_PROBER, EFI_FIRMWARE, TARGET and ROOT can be set (the installer sets ESP and ROOT).
 ESP=${ESP:-/boot/efi}
 OS_PROBER=${OS_PROBER:-os-prober}
 EFI_FIRMWARE=${EFI_FIRMWARE:-/sys/firmware/efi}
@@ -33,6 +33,10 @@ for f in shimx64.efi grubx64.efi mmx64.efi; do
 	fi
 done
 TARGET=${TARGET:-}
+# from the installer: the installed system's root device, from its mount point (ROOT)
+if [ -z "$TARGET" ] && [ -n "${ROOT:-}" ]; then
+	TARGET=$(findmnt -n -o SOURCE "$ROOT" 2>/dev/null)
+fi
 OTHERS=$($OS_PROBER 2>/dev/null | grep -v -e "^${TARGET:-//none//}[:@]")
 if [ -n "$(efi_file "$(efi_dir Microsoft)/Boot" bootmgfw.efi 2>/dev/null)" ] || echo "$OTHERS" | grep -qi ':windows:'; then
 	echo "efi-fallback: Windows is on this machine, its fallback loader stays as it is"
