@@ -12,7 +12,10 @@ for name in ('after', 'quad', 'future', 'gears'):
     assert run['client_alive_at_end'], name
     assert '_KDE_NET_WM_STEREO_CONTENT(CARDINAL) = 3' in run['x11']['window']
     assert '_KDE_NET_WM_STEREO_CONTENT_CLASS:  not found' in run['x11']['window']
-    assert '= '+('4' if name == 'future' else '3') in run['x11']['root']
+    # KWin announces version 3, or 4 from 4:6.7.4-2+stereo3d24 (an X11 window that stays one
+    # eye wide); the layer declares as version 3 either way. The future run simulates 4.
+    announced = int(run['x11']['root'].split('=')[-1])
+    assert announced >= (4 if name == 'future' else 3), (name, run['x11']['root'])
     if name != 'gears':
         assert 'PASS: initial size' in (root/name/'client.log').read_text(), name
     for capture in ('c00', 'c01'):
