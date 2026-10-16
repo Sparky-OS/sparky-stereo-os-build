@@ -1,7 +1,9 @@
 #!/usr/bin/python3
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
-# Copyright 2026 under the GNU GPL3 License
+# Copyright 2026 under the MIT License
 # Last update 2026/10/16
+# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
+# SPDX-License-Identifier: MIT
 """dpkg-stereo: Lean Code for installed packages (Sparky Stereo OS Lean Code policy, "Install-time
 projection: dpkg-stereo", Daniel 2026-10-09).
 
@@ -185,7 +187,11 @@ def _work(args):
         data = f.read()
     if b'\0' in data[:8192]:
         return path, None, 'binary', None
-    r = project.project(path, data, package.split(':')[0])
+    try:
+        r = project.project(path, data, package.split(':')[0])
+    except Exception as e:      # never let one file stop the whole run: it is left alone, with the reason
+        r = project.Result(path=path, status='left', reason=f'adapter error: {type(e).__name__}: {e}'.split('\n')[0],
+                           bytes_in=len(data), sha_in=project.sha256(data))
     return path, r, r.reason, data
 
 

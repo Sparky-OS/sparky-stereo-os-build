@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
+# SPDX-License-Identifier: MIT
 """The renderer every handler shares: authored text (HR) in, machine text (MR) and its line map out.
 
 Ported from CGM Forge's hr_mr_compiler (Daniel Ramos): the C-like handler's render with an origin per

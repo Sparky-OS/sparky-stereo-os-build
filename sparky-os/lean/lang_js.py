@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
+# SPDX-License-Identifier: MIT
 """QML and JavaScript: `//` and `/* */` comments, found outside strings, template literals and regular
 expression literals.
 

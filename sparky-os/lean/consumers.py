@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
+# SPDX-License-Identifier: MIT
 """Which handler reads a file: chosen by its real consumer (where it is installed, its name, its
 interpreter line), never by a file name alone (LEAN-CODE-POLICY.md: "`.conf` is not a grammar").
 

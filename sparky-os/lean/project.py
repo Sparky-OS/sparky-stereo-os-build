@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
+# SPDX-License-Identifier: MIT
 """Project one file: choose its handler, render its MR, add the pointer line, check it with the
 consumer, and return the result with the reason for every file left as it is.
 

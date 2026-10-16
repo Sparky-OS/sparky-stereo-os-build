@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
+# SPDX-License-Identifier: MIT
 """TOML: `#` comments outside strings; multi-line strings are data (TOML 1.0.0, "Comment", "String").
 
 Ported from CGM's _lang_toml (its multi-line string tracking), with comment detection done by one

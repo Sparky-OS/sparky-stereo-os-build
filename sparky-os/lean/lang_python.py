@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
+# SPDX-License-Identifier: MIT
 """Python: comments are the tokenizer's COMMENT tokens; docstrings stay.
 
 Ported from CGM's _lang_python, with the policy's correction: CGM's MR dropped docstrings and re-printed

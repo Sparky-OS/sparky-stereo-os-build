@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
+# SPDX-License-Identifier: MIT
 """JSON has no comment syntax (RFC 8259): its MR is its HR, byte for byte.
 
 Ported from CGM's _lang_json in name only: CGM re-printed JSON with sorted keys, which is a

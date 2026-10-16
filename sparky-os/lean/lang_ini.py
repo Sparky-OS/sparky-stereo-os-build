@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
+# SPDX-License-Identifier: MIT
 """Line-oriented settings: KConfig files, desktop entries, systemd units and the systemd family of
 configuration directories, udev rules, kmod configuration, environment files.
 

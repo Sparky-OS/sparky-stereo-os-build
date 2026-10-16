@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
+# SPDX-License-Identifier: MIT
 """Shell (bash and POSIX sh/dash): comments are found the way the shell's own reader finds them.
 
 Ported from CGM's _lang_shell (shebang kept, `#` comments to MR-absent), with its two counterexamples

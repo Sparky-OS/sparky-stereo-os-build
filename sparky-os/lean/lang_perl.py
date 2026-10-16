@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
+# SPDX-License-Identifier: MIT
 """Perl: whole comment lines only, outside POD, heredoc bodies and the __END__/__DATA__ section.
 
 Perl is the hardest language here to read without perl itself (quote-like operators with any

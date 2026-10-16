@@ -1,4 +1,6 @@
 #!/usr/bin/python3
+# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
+# SPDX-License-Identifier: MIT
 """Qualification survey: project every file every installed package owns, with the consumer checks,
 writing nothing, and report what each handler does (projected, unchanged, left alone and why).
 Run inside the system to survey (a chroot of an image), where its own consumers do the checks.

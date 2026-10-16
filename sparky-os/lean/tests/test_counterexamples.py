@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
+# SPDX-License-Identifier: MIT
 """The counterexamples found on 2026-10-09 against CGM's and K3D's handlers
 (sparky-stereo-os.private research/lean-code-2026-10-09/handler-probes.json), as tests written before
 the fixes: each projects the probe and checks that its consumer gets exactly what it got before."""

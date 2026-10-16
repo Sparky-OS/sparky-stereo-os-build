@@ -1,7 +1,9 @@
 #!/bin/bash
 #
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
-# Copyright 2026 under the GNU GPL3 License
+# Copyright 2026 under the MIT License
+# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
+# SPDX-License-Identifier: MIT
 # Builds dpkg-stereo: Lean Code for installed packages (sparky-os/LEAN-CODE-POLICY.md, "Install-time
 # projection: dpkg-stereo"). It carries the lean package (sparky-os/lean, the MR/HR compiler ported from
 # CGM) in /usr/lib/dpkg-stereo, dpkg's pre-invoke and post-invoke hooks, the first-update hook that writes

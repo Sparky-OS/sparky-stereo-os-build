@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
+# SPDX-License-Identifier: MIT
 """C, C++ and GLSL: `//` and `/* */` comments, outside string, character and raw string literals.
 
 Ported from CGM's _lang_c_like (its literal scan, raw strings and LineMap), with the 2026-10-09

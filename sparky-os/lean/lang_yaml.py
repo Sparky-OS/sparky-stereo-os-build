@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
+# SPDX-License-Identifier: MIT
 """YAML: `#` comments (a `#` at the start of a line or after a blank), outside quoted scalars and outside
 block scalars, whose lines are data even when they begin with `#` (YAML 1.2.2, 6.6 "Comments", 8.1
 "Block Scalar Styles").
