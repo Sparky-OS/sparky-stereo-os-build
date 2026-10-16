@@ -8,6 +8,7 @@ KDE takes translations only through its translation teams, never as commits to a
 - `kscreen-virtual-3d-modes.po.patch`: the display settings' toggles and labels.
 - `kscreen-stereo-pairs.po.patch`: the display settings' stereo pairs.
 - `krdp-throw.po.patch`: KRdp's headset discovery and approval named Throw: its strings in eight languages (po/, with a new Japanese catalog) and the discovery entry's and notification's translated names; from the phone lane's commits 24465ba and 646fb0b, whose code half is invent danielcamposramos/krdp phone-throw 8a3a79dbfc.
+- `kwin-stereo-depth.po.patch`: KWin's 3D Depth page in System Settings (the eased level changes and the linked focus and raise delays, ORDER 145), in all eight translated languages; from the kwin-stereo-effects lane (KWin +stereo3d26).
 - `kwin-throw-view.po.patch`: KWin's headset view helper renamed Throw view: its 19 strings in eight languages (po/) and its launcher's translated Name and Comment; from the phone lane's commit 3de53c9, whose code half is invent danielcamposramos/kwin phone-throw c97fc23e3f.
 - `kdeconnect-kde-throw.po.patch`: KDE Connect's virtual monitor plugin, the two Throw errors (identity, start), in all eight translated languages (pl, pt_BR, fr, de, ja, ko, zh_CN, zh_TW); from the phone lane's commit af53494, whose source half is invent danielcamposramos/kdeconnect-kde stereo3d-phone e1b0792b5.
 
