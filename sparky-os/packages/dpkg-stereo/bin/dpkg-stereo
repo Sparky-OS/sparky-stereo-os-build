@@ -301,7 +301,7 @@ class Lock:
         fcntl.flock(self.f, fcntl.LOCK_UN)
 
 
-def project_packages(P, names, jobs, image=False, log=print):
+def project_packages(P, names, jobs, image=False, log=print, only=None):
     pkgs = dpkg_packages(P)
     if names:
         sel = {}
@@ -322,7 +322,7 @@ def project_packages(P, names, jobs, image=False, log=print):
             continue
         sums.update(md5sums(P, info))
         for path in package_files(P, info):
-            if path in held or path in div:
+            if path in held or path in div or (only is not None and path not in only):
                 continue
             rec = files.get(path)
             if rec and rec['version'] == ver and rec['package'] == name:
@@ -379,7 +379,7 @@ def project_packages(P, names, jobs, image=False, log=print):
 
 def list_mtime(P, info):
     try:
-        return str(os.stat(P.real(f'/var/lib/dpkg/info/{info}.list')).st_mtime_ns)
+        return str(int(os.stat(P.real(f'/var/lib/dpkg/info/{info}.list')).st_mtime))
     except FileNotFoundError:
         return ''
 
@@ -458,7 +458,25 @@ def post_invoke(P, jobs):
     except FileNotFoundError:
         restored = []
     dirty = False
-    for path in [p for p, r in files.items() if r['package'] in gone or r['package'] in ch]:
+    again = set()          # paths dpkg wrote back with the package's bytes: project them again
+    for path in [p for p, r in files.items() if r['package'] in gone]:
+        del files[path]
+        dirty = True
+    same_version = {k for k in ch if recorded.get(k, {}).get('version') == pkgs[k][0]}
+    for path in [p for p, r in files.items() if r['package'] in ch]:
+        rec = files[path]
+        if rec['package'] in same_version:
+            # dpkg rewrote the package's file list (a reinstall), or the list only looks different (an
+            # image unpacked elsewhere): the files themselves say which of them dpkg replaced
+            try:
+                with open(P.real(path), 'rb') as f:
+                    cur = sha256(f.read())
+            except FileNotFoundError:
+                cur = None
+            if cur == rec['sha_lean']:
+                continue
+            if cur == rec['sha_orig']:
+                again.add(path)
         del files[path]
         dirty = True
     for path in restored:
@@ -490,9 +508,12 @@ def post_invoke(P, jobs):
     os.unlink(P.state('restored-for-dpkg')) if os.path.exists(P.state('restored-for-dpkg')) else None
     if dirty:
         write_files(P, files)
-    if ch:
-        project_packages(P, sorted(ch), jobs, log=lambda m: None)
-    elif gone:
+    full = sorted(ch - same_version)
+    if full:
+        project_packages(P, full, jobs, log=lambda m: None)
+    if again:
+        project_packages(P, sorted(same_version), jobs, log=lambda m: None, only=again)
+    if not full and not again and (gone or ch):
         write_packages(P, pkgs)
 
 
