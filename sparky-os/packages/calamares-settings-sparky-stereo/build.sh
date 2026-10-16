@@ -27,7 +27,7 @@ Upstream Author(s):
 
 Files: etc/calamares/settings.conf
     Calamares' settings as SparkyLinux ships them (SPDX-License-Identifier: CC0-1.0),
-    with the edition's branding and the dual-boot step
+    with the dual-boot step
 
 Files: *
     Copyright (C) 2026 Paweł "pavroo" Pijanowski, Daniel Ramos (Capitain Jack)
@@ -58,14 +58,14 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: calamares, os-prober, sparky-stereo-calamares-branding, util-linux
+Depends: calamares, os-prober, util-linux
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org
 Description: Sparky Stereo installer settings
-  SparkyLinux's Calamares settings with the edition's branding (the stereo
-  slideshow) and, installed beside Windows, the hardware clock kept in local
-  time so both systems show the right time, and Windows in the boot menu.
+  SparkyLinux's Calamares settings with one step added: installed beside
+  Windows, the hardware clock is kept in local time so both systems show the
+  right time, and Windows is listed in the boot menu.
 EOS
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT"
