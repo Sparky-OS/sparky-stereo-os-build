@@ -149,44 +149,81 @@ def refuse(src: str):
     return None
 
 
+GUARD_IF = re.compile(r'^[ \t]*#[ \t]*(ifndef[ \t]+(\w+)|if[ \t]+![ \t]*defined[ \t]*\(?[ \t]*(\w+))')
+GUARD_DEFINE = re.compile(r'^[ \t]*#[ \t]*define[ \t]+(\w+)')
+ENDIF = re.compile(r'^[ \t]*#[ \t]*endif\b')
+
+
+def _guard(lines):
+    """(index of the guard's #define line, index of its closing #endif) when the file is wrapped in an
+    include guard, else None. GCC reads a guarded header once per translation unit only when the #ifndef is
+    the first directive and the #endif the last (its multiple-include optimisation), so no #line may go
+    before the #define or after the #endif."""
+    def code(i):
+        t = lines[i].strip()
+        return t and not t.startswith('//') and not t.startswith('/*') and not t.startswith('*')
+    first = next((i for i in range(len(lines)) if code(i)), None)
+    if first is None:
+        return None
+    m = GUARD_IF.match(lines[first])
+    if not m:
+        return None
+    name = m.group(2) or m.group(3)
+    second = next((i for i in range(first + 1, len(lines)) if code(i)), None)
+    if second is None:
+        return None
+    d = GUARD_DEFINE.match(lines[second])
+    if not d or d.group(1) != name:
+        return None
+    last = next((i for i in range(len(lines) - 1, second, -1) if code(i)), None)
+    if last is None or not ENDIF.match(lines[last]):
+        return None
+    return second, last
+
+
 def line_directives(text: str, origin: list, src: str):
     """Add `#line N` so every MR line keeps its authored number for the compiler; returns new
-    (text, origin). A directive goes before the first line after any shift, and again after every
-    conditional directive while lines are shifted (a skipped group would ignore one inside it). Never
-    after a line ending in a backslash (a directive cannot start inside a continued line)."""
+    (text, origin). A directive goes before the first non-blank line after a shift, and again after a
+    conditional directive when one went inside the group it closes (a skipped group ignores it). Never
+    after a line ending in a backslash (a directive cannot start inside a continued line), and never
+    outside an include guard (before its #define or after its #endif)."""
+    import bisect
     starts = [0]
     for k, ch in enumerate(src):
         if ch == '\n':
             starts.append(k + 1)
-    import bisect
 
     def src_line(off):
         return bisect.bisect_right(starts, off)
 
     lines = text.split('\n')
+    guard = _guard(lines)
     out, out_origin = [], []
     pos = 0
     believed = 1           # the line number the compiler believes the next MR line has
     prev = ''
-    prev_conditional = False
+    emitted_in_group = False   # a #line went into the conditional group now open
+    resync = False             # a group that may have been skipped held a #line: say the number again
     for idx, line in enumerate(lines):
         o = origin[pos] if pos < len(origin) else -1
-        if line == '' and pos < len(origin):
-            o = origin[pos]  # the newline's origin
         real = src_line(o) if o >= 0 else None
-        natural = len(out) + 1
-        need = real is not None and (real != believed or (prev_conditional and real != natural))
-        if need and not keep_empty_after(prev):
+        allowed = (line.strip() != '' and not keep_empty_after(prev)
+                   and (guard is None or guard[0] < idx <= guard[1]))
+        if real is not None and allowed and (real != believed or resync):
             d = f'#line {real}'
             out.append(d)
             out_origin.extend([-1] * (len(d) + 1))
             believed = real
+            emitted_in_group = True
+            resync = False
         out.append(line)
         seg = origin[pos:pos + len(line) + 1]
         out_origin.extend(seg if len(seg) == len(line) + 1 else seg + [-1] * (len(line) + 1 - len(seg)))
         pos += len(line) + 1
         believed += 1
-        prev_conditional = bool(CONDITIONAL.match(line))
+        if CONDITIONAL.match(line):
+            resync = resync or emitted_in_group
+            emitted_in_group = False
         prev = line
     new = '\n'.join(out)
     return new, out_origin[:len(new)]

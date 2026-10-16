@@ -301,6 +301,31 @@ int big = 1'000'000; // digit separators
             self.assertIn('line_here = 12', outs[0].replace(' ', ' '))
             self.assertEqual(' '.join(outs[0].split()), ' '.join(outs[1].split()))
 
+    def test_include_guard_still_read_once(self):
+        """GCC reads a guarded header once per translation unit only while #ifndef is its first
+        directive and #endif its last; a #line outside the guard would make it read the header again."""
+        src = ('// Copyright 2026 Someone, MIT licence\n// a long explanation of this header, which goes on\n'
+               '// and on, line after line, so the projection shifts the lines below it\n\n#ifndef G_H\n#define G_H\n'
+               '// another long explanation inside the guard, also removed from the lean form\n'
+               'static const int g_line = __LINE__;\n#endif\n// trailing commentary after the guard\n')
+        r, mr = P('/usr/include/g.h', src, pointer=True)
+        self.assertEqual(r.status, 'projected', r.reason)
+        lines = [l for l in mr.split('\n') if l.strip() and not l.lstrip().startswith('//')]
+        self.assertTrue(lines[0].startswith('#ifndef G_H'), mr)
+        self.assertTrue(lines[1].startswith('#define G_H'), mr)
+        self.assertTrue(lines[-1].startswith('#endif'), mr)
+        with tempfile.TemporaryDirectory() as d:
+            outs = []
+            for name, text in (('a', src), ('b', mr)):
+                os.makedirs(os.path.join(d, name))
+                open(os.path.join(d, name, 'g.h'), 'w').write(text)
+                open(os.path.join(d, name, 't.c'), 'w').write('#include "g.h"\n#include "g.h"\nint main(void) { return g_line; }\n')
+                h = subprocess.run(['gcc', '-H', '-fsyntax-only', 't.c'], cwd=os.path.join(d, name), capture_output=True, text=True)
+                pp = subprocess.run(['gcc', '-E', '-P', 't.c'], cwd=os.path.join(d, name), capture_output=True, text=True).stdout
+                outs.append((h.stderr.count('g.h'), ' '.join(pp.split())))
+            self.assertEqual(outs[0], outs[1])
+            self.assertIn('g_line = 8', outs[1][1])
+
     def test_objects_identical_with_debug_info(self):
         src = 'int f(int x) {\n  // why\n  // and why again, at length, so the line moves\n  return x + __LINE__;\n}\n'
         r, mr = P('/usr/src/x/f.c', src)
