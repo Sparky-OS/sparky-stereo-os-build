@@ -6,7 +6,9 @@
 # the swirl pixmaps, /opt/artwork (the Oxygen wallpaper flat and as a stereo pair, the GRUB background),
 # the eighteen stereo wallpapers in /usr/share/wallpapers. Also the Oxygen wallpaper as a Plasma
 # wallpaper package, SparkyOSOxygen (its pictures link to /opt/artwork), which the Sparky Stereo
-# Oxygen Plasma style names as its default wallpaper. Needs dpkg-deb and python3-pil.
+# Oxygen Plasma style names as its default wallpaper. GRUB's background is the SparkyOS one
+# (/etc/default/grub.d/20-sparkyos-artwork.cfg; a background the person chose is kept). Needs dpkg-deb and
+# python3-pil.
 # Last update 2026/10/16
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -46,6 +48,7 @@ cat >"$O/metadata.json" <<'EOS'
     }
 }
 EOS
+install -D -m 644 "$HERE/grub-background.cfg" "$D/etc/default/grub.d/20-sparkyos-artwork.cfg"
 cp "$ART/copyright" "$D/usr/share/doc/$PKG/copyright"
 cat >>"$D/usr/share/doc/$PKG/copyright" <<'EOS'
 
@@ -66,6 +69,10 @@ fi
 if [ ! -e /usr/share/backgrounds/default.png ]; then
 	ln -s /opt/artwork/sparkyos-oxygen.png /usr/share/backgrounds/default.png
 fi
+# GRUB's background (/etc/default/grub.d/20-sparkyos-artwork.cfg) on a system that boots with GRUB
+if [ "$1" = configure ] && [ -x /usr/sbin/update-grub ] && [ -e /boot/grub/grub.cfg ]; then
+	update-grub || true
+fi
 exit 0
 EOS
 cat >"$D/DEBIAN/postrm" <<'EOS'
@@ -77,10 +84,14 @@ if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
 		rm -f /usr/share/backgrounds/default.png
 	fi
 fi
+if [ "$1" = "purge" ] && [ -x /usr/sbin/update-grub ] && [ -e /boot/grub/grub.cfg ]; then
+	update-grub || true
+fi
 exit 0
 EOS
 chmod 755 "$D/DEBIAN/postinst" "$D/DEBIAN/postrm"
 find "$D" -path "$D/DEBIAN" -prune -o -type d -exec chmod 755 {} + ; find "$D" -path "$D/DEBIAN" -prune -o -type f -exec chmod 644 {} +
+echo /etc/default/grub.d/20-sparkyos-artwork.cfg >"$D/DEBIAN/conffiles"
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
 cat >"$D/DEBIAN/control" <<EOS
 Package: $PKG
