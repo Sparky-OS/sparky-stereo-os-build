@@ -6,13 +6,13 @@ override CFLAGS += -fPIC -Wall -Wextra -Werror=implicit -fvisibility=hidden -pth
 LDFLAGS ?=
 STEREO_CFLAGS = $(shell pkg-config --cflags stereo-declare)
 STEREO_LIBS = $(shell pkg-config --libs stereo-declare)
-LIBS = -ldl -lGL -lX11 -lm -pthread $(STEREO_LIBS)
+LIBS = -ldl -lGL -lX11 -lwayland-client -lm -pthread $(STEREO_LIBS)
 
 SO = libgl-stereo.so
 
 all: $(SO) tests
 
-$(SO): gl-stereo.c egl.inc quad.inc frame-stream.inc camera-uniform.inc camera-matrix.inc readback.inc texture-camera.inc
+$(SO): gl-stereo.c egl.inc wayland.inc quad.inc frame-stream.inc camera-uniform.inc camera-matrix.inc readback.inc texture-camera.inc
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(STEREO_CFLAGS) $(LDFLAGS) -shared -Wl,--no-undefined -o $@ gl-stereo.c $(LIBS)
 
 tests: tests/egl-damage tests/state tests/announce tests/quad tests/quads tests/quads-dlist tests/quads-xform tests/shader-quads savers/starfield savers/announce
@@ -58,6 +58,7 @@ PREFIX ?= /usr
 install: $(SO)
 	install -Dm755 $(SO) $(DESTDIR)$(PREFIX)/lib/gl-stereo/$(SO)
 	install -Dm755 gl-stereo-run $(DESTDIR)$(PREFIX)/bin/gl-stereo-run
+	install -Dm644 launcher-strings.json $(DESTDIR)$(PREFIX)/share/gl-stereo/launcher-strings.json
 	install -Dm644 LICENSE $(DESTDIR)$(PREFIX)/share/doc/gl-stereo/LICENSE
 	install -Dm644 PACKAGING.md $(DESTDIR)$(PREFIX)/share/doc/gl-stereo/PACKAGING.md
 

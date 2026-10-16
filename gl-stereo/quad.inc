@@ -5,6 +5,8 @@ typedef struct virtual_config {
 } VirtualConfig;
 typedef struct stereo_visual {
     XVisualInfo *visual;
+    VisualID id;
+    int screen;
     struct stereo_visual *next;
 } StereoVisual;
 static VirtualConfig *virtual_configs;
@@ -12,6 +14,29 @@ static StereoVisual *stereo_visuals;
 static int quad_available(Display *d)
 {
     return config.enabled && stereo_supported_x11(d) >= 1;
+}
+/* With GL_STEREO_DRIVER_VIEWS=1 a driver with stereo configs of its own
+ * (Mesa's, also on NVIDIA's Vulkan through zink) gives a program its two views
+ * and presents them itself, and the layer provides them only where the driver
+ * has none, such as NVIDIA's OpenGL. By default the layer keeps the packing,
+ * which its frame stream needs. */
+static int driver_views(Display *d, GLXFBConfig *configs, int count)
+{
+    for (int i = 0; i < count; ++i) {
+        int stereo = 0;
+        if (!r_glXGetFBConfigAttrib(d,configs[i],GLX_STEREO,&stereo) && stereo) return 1;
+    }
+    return 0;
+}
+static void remember_driver_views(GLXContext context)
+{
+    if (!context) return;
+    pthread_mutex_lock(&state_lock);
+    ContextState *p = calloc(1,sizeof(*p));
+    if (!p) abort();
+    p->context = context; p->driver_views = 1;
+    p->next = contexts; contexts = p;
+    pthread_mutex_unlock(&state_lock);
 }
 static GLXFBConfig native_config(GLXFBConfig config, int *stereo)
 {
@@ -34,11 +59,13 @@ static void remember_visual(XVisualInfo *v)
     if (!v) return;
     StereoVisual *p = calloc(1,sizeof(*p));
     if (!p) abort();
-    p->visual = v; p->next = stereo_visuals; stereo_visuals = p;
+    p->visual = v; p->id = v->visualid; p->screen = v->screen; p->next = stereo_visuals; stereo_visuals = p;
 }
 static int stereo_visual(XVisualInfo *v)
 {
-    for (StereoVisual *p = stereo_visuals; p; p = p->next) if (p->visual == v) return 1;
+    if (!v) return 0;
+    for (StereoVisual *p = stereo_visuals; p; p = p->next)
+        if (p->visual == v || (p->id == v->visualid && p->screen == v->screen)) return 1;
     return 0;
 }
 static void remember_quad(GLXContext context, int stereo)
@@ -62,6 +89,8 @@ XVisualInfo *glXChooseVisual(Display *d, int screen, int *attrs)
         if (key != GLX_RGBA && key != GLX_DOUBLEBUFFER && key != GLX_STEREO && key != GLX_USE_GL) count++;
     }
     if (!wanted) return r_glXChooseVisual(d,screen,attrs);
+    XVisualInfo *native = config.driver_views ? r_glXChooseVisual(d,screen,attrs) : NULL;
+    if (native) return native;
     int *mono = malloc((count+1)*sizeof(int));
     if (!mono) return NULL;
     int n = 0;
@@ -87,6 +116,11 @@ GLXFBConfig *glXChooseFBConfig(Display *d, int screen, const int *attrs, int *co
     int size = 0, wanted = 0;
     if (attrs) while (attrs[size]) { if (attrs[size] == GLX_STEREO && attrs[size+1] == True) wanted = 1; size += 2; }
     if (!wanted || !quad_available(d)) return r_glXChooseFBConfig(d,screen,attrs,count);
+    if (config.driver_views) {
+        GLXFBConfig *native = r_glXChooseFBConfig(d,screen,attrs,count);
+        if (native && *count > 0) return native;
+        if (native) r_XFree(native);
+    }
     int *mono = malloc((size+1)*sizeof(int));
     if (!mono) { *count = 0; return NULL; }
     memcpy(mono,attrs,(size+1)*sizeof(int));
@@ -99,7 +133,7 @@ GLXFBConfig *glXChooseFBConfig(Display *d, int screen, const int *attrs, int *co
 GLXFBConfig *glXGetFBConfigs(Display *d, int screen, int *count)
 {
     API(); GLXFBConfig *native = r_glXGetFBConfigs(d,screen,count);
-    if (!native || !quad_available(d)) return native;
+    if (!native || !quad_available(d) || (config.driver_views && driver_views(d,native,*count))) return native;
     GLXFBConfig *result = malloc(2*(*count)*sizeof(*result));
     if (!result) return native;
     for (int i = 0; i < *count; ++i) { result[i] = native[i]; result[i+*count] = virtual_config(native[i]); }
@@ -123,7 +157,12 @@ GLXContext glXCreateContext(Display *d, XVisualInfo *v, GLXContext share, Bool d
 {
     API(); GLXContext result = NULL;
     int driver_stereo = 0;
-    if (config.enabled && v && !r_glXGetConfig(d,v,GLX_STEREO,&driver_stereo) && driver_stereo) {
+    if (config.enabled && v && !r_glXGetConfig(d,v,GLX_STEREO,&driver_stereo) && driver_stereo && config.driver_views) {
+        result = r_glXCreateContext(d,v,share,direct);
+        remember_driver_views(result);
+        return result;
+    }
+    if (config.enabled && v && driver_stereo) {
         /* Native stereo twins can share a visual ID. Packing belongs to us. */
         int count = 0;
         const int keys[] = {GLX_DOUBLEBUFFER, GLX_LEVEL, GLX_RED_SIZE,
@@ -151,18 +190,27 @@ GLXContext glXCreateContext(Display *d, XVisualInfo *v, GLXContext share, Bool d
     if (!result) result = r_glXCreateContext(d,v,share,direct);
     remember_quad(result,stereo_visual(v)); return result;
 }
+static int driver_stereo_config(Display *d, GLXFBConfig fb)
+{
+    int stereo = 0;
+    return config.enabled && config.driver_views && !r_glXGetFBConfigAttrib(d,fb,GLX_STEREO,&stereo) && stereo;
+}
 GLXContext glXCreateNewContext(Display *d, GLXFBConfig fb, int type, GLXContext share, Bool direct)
 {
     API(); int stereo; fb = native_config(fb,&stereo);
     GLXContext result = r_glXCreateNewContext(d,fb,type,share,direct);
-    remember_quad(result,stereo); return result;
+    if (!stereo && driver_stereo_config(d,fb)) remember_driver_views(result);
+    else remember_quad(result,stereo);
+    return result;
 }
 GLXContext glXCreateContextAttribsARB(Display *d, GLXFBConfig fb, GLXContext share, Bool direct, const int *attrs)
 {
     API(); int stereo; fb = native_config(fb,&stereo);
     PFNGLXCREATECONTEXTATTRIBSARBPROC create = (PFNGLXCREATECONTEXTATTRIBSARBPROC)r_glXGetProcAddressARB((const GLubyte *)"glXCreateContextAttribsARB");
     GLXContext result = create(d,fb,share,direct,attrs);
-    remember_quad(result,stereo); return result;
+    if (!stereo && driver_stereo_config(d,fb)) remember_driver_views(result);
+    else remember_quad(result,stereo);
+    return result;
 }
 GLXPbuffer glXCreatePbuffer(Display *d, GLXFBConfig fb, const int *attrs)
 {
@@ -172,11 +220,12 @@ GLXPixmap glXCreatePixmap(Display *d, GLXFBConfig fb, Pixmap pixmap, const int *
 {
     API(); int stereo; return r_glXCreatePixmap(d,native_config(fb,&stereo),pixmap,attrs);
 }
+/* A freed XVisualInfo keeps its visual ID: toolkits free theirs once the
+ * window exists and create the context from a copy of the window's visual. */
 int XFree(void *ptr)
 {
-    API(); StereoVisual **p = &stereo_visuals;
-    while (*p && (*p)->visual != ptr) p = &(*p)->next;
-    if (*p) { StereoVisual *old = *p; *p = old->next; free(old); }
+    API();
+    for (StereoVisual *p = stereo_visuals; p; p = p->next) if (p->visual == ptr) p->visual = NULL;
     return r_XFree(ptr);
 }
 static int quad_default(void)
@@ -191,10 +240,16 @@ static GLenum mono_buffer(GLenum buffer)
     if (buffer == GL_RIGHT || buffer == GL_LEFT) return GL_FRONT_AND_BACK;
     return buffer;
 }
+/* OpenGL ES has one back buffer name for the default framebuffer. */
+static void native_draw_buffer(GLenum buffer)
+{
+    if (current && current->gles) { const GLenum back = buffer == GL_NONE ? GL_NONE : GL_BACK; r_glDrawBuffers(1,&back); }
+    else r_glDrawBuffer(mono_buffer(buffer));
+}
 void glDrawBuffer(GLenum buffer)
 {
     API();
-    if (quad_default()) { current->draw_buffer = buffer; r_glDrawBuffer(mono_buffer(buffer)); }
+    if (quad_default()) { current->draw_buffer = buffer; native_draw_buffer(buffer); }
     else r_glDrawBuffer(buffer);
 }
 void glDrawBuffers(GLsizei count, const GLenum *buffers)
@@ -206,8 +261,91 @@ void glDrawBuffers(GLsizei count, const GLenum *buffers)
 void glReadBuffer(GLenum buffer)
 {
     API(); GLint fb; r_glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&fb);
-    if (current && current->quad && !fb) { current->read_buffer = buffer; r_glReadBuffer(mono_buffer(buffer)); }
-    else r_glReadBuffer(buffer);
+    if (current && current->quad && !fb) {
+        current->read_buffer = buffer;
+        r_glReadBuffer(current->gles ? (buffer == GL_NONE ? GL_NONE : GL_BACK) : mono_buffer(buffer));
+    } else r_glReadBuffer(buffer);
+}
+/* GL_EXT_multiview_draw_buffers, the OpenGL ES way to name the views of an
+ * EGL_EXT_multiview_window surface: on the default framebuffer a location is
+ * MULTIVIEW_EXT with the view's index, 0 or 1, or NONE; on a framebuffer
+ * object COLOR_ATTACHMENT_EXT with the attachment's index, or NONE. The
+ * initial state is view 0, as GL_BACK. Fragment colour zero picks the view,
+ * as the layer draws one view at a time. */
+#define GL_COLOR_ATTACHMENT_EXT 0x90F0
+#define GL_MULTIVIEW_EXT 0x90F1
+#define GL_DRAW_BUFFER_EXT 0x0C01
+#define GL_READ_BUFFER_EXT 0x0C02
+#define GL_MAX_MULTIVIEW_BUFFERS_EXT 0x90F2
+static const char multiview_draw_buffers[] = "GL_EXT_multiview_draw_buffers";
+static GLenum view_buffer(GLenum location, GLint index)
+{
+    if (location != GL_MULTIVIEW_EXT || index < 0 || index > 1) return GL_NONE;
+    return index ? GL_BACK_RIGHT : GL_BACK_LEFT;
+}
+void glDrawBuffersIndexedEXT(GLint n, const GLenum *location, const GLint *indices)
+{
+    API();
+    if (n < 1 || !current || !current->quad) return;
+    if (quad_default()) { glDrawBuffer(view_buffer(location[0], indices[0])); return; }
+    GLenum buffers[16];
+    if (n > 16) n = 16;
+    for (GLint i = 0; i < n; ++i)
+        buffers[i] = location[i] == GL_COLOR_ATTACHMENT_EXT && indices[i] >= 0 ? GL_COLOR_ATTACHMENT0 + (GLenum)indices[i] : GL_NONE;
+    r_glDrawBuffers(n, buffers);
+}
+void glReadBufferIndexedEXT(GLenum location, GLint index)
+{
+    API();
+    if (!current || !current->quad) return;
+    GLint fb; r_glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&fb);
+    if (!fb) glReadBuffer(view_buffer(location, index));
+    else r_glReadBuffer(location == GL_COLOR_ATTACHMENT_EXT && index >= 0 ? GL_COLOR_ATTACHMENT0 + (GLenum)index : GL_NONE);
+}
+/* A pair: the buffer's location and its index. */
+static void indexed_buffer(GLenum buffer, GLint fb, GLint *data)
+{
+    if (!fb && buffer != GL_NONE) { data[0] = GL_MULTIVIEW_EXT; data[1] = buffer == GL_BACK_RIGHT || buffer == GL_FRONT_RIGHT || buffer == GL_RIGHT; }
+    else if (fb && buffer >= GL_COLOR_ATTACHMENT0 && buffer < GL_COLOR_ATTACHMENT0 + 32) { data[0] = GL_COLOR_ATTACHMENT_EXT; data[1] = (GLint)(buffer - GL_COLOR_ATTACHMENT0); }
+    else { data[0] = GL_NONE; data[1] = 0; }
+}
+void glGetIntegeri_vEXT(GLenum target, GLuint index, GLint *data)
+{
+    API();
+    if (!current || !current->quad) return;
+    if (target == GL_DRAW_BUFFER_EXT) {
+        GLint fb, buffer = GL_NONE; r_glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&fb);
+        if (!fb) buffer = index ? GL_NONE : (GLint)current->draw_buffer;
+        else r_glGetIntegerv(GL_DRAW_BUFFER0 + index,&buffer);
+        indexed_buffer((GLenum)buffer, fb, data);
+    } else if (target == GL_READ_BUFFER_EXT && index == 0) {
+        GLint fb, buffer; r_glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&fb);
+        if (!fb) buffer = (GLint)current->read_buffer; else r_glGetIntegerv(GL_READ_BUFFER,&buffer);
+        indexed_buffer((GLenum)buffer, fb, data);
+    }
+}
+const GLubyte *glGetString(GLenum name)
+{
+    API(); const GLubyte *native = r_glGetString(name);
+    if (name != GL_EXTENSIONS || !native || !current || !current->quad || !current->gles || strstr((const char *)native, multiview_draw_buffers)) return native;
+    if (!current->extensions) {
+        size_t len = strlen((const char *)native);
+        current->extensions = malloc(len + sizeof(multiview_draw_buffers) + 1);
+        if (!current->extensions) return native;
+        memcpy(current->extensions, native, len);
+        current->extensions[len] = ' ';
+        memcpy(current->extensions + len + 1, multiview_draw_buffers, sizeof(multiview_draw_buffers));
+    }
+    return (const GLubyte *)current->extensions;
+}
+const GLubyte *glGetStringi(GLenum name, GLuint index)
+{
+    API();
+    if (name == GL_EXTENSIONS && current && current->quad && current->gles) {
+        GLint count = 0; r_glGetIntegerv(GL_NUM_EXTENSIONS,&count);
+        if (index == (GLuint)count) return (const GLubyte *)multiview_draw_buffers;
+    }
+    return r_glGetStringi(name,index);
 }
 void glReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, void *pixels)
 {
@@ -221,6 +359,8 @@ static int virtual_query(GLenum name, GLint *value)
 {
     if (!current || !current->quad) return 0;
     if (name == GL_STEREO) { *value = GL_TRUE; return 1; }
+    if (current->gles && name == GL_NUM_EXTENSIONS) { r_glGetIntegerv(name,value); ++*value; return 1; }
+    if (current->gles && name == GL_MAX_MULTIVIEW_BUFFERS_EXT) { *value = 2; return 1; }
     if (name == GL_DRAW_BUFFER && quad_default()) { *value = current->draw_buffer; return 1; }
     GLint fb; r_glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&fb);
     if (name == GL_READ_BUFFER && !fb) { *value = current->read_buffer; return 1; }
