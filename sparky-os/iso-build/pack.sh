@@ -36,7 +36,7 @@ trap umounts EXIT
 mounts
 
 if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
-	echo "== $(date -u +%T) staged packages: the packer fork, hardware 0.1.8, service defaults, installer settings, calamares, headers 8.1"
+	echo "== $(date -u +%T) staged packages: the packer fork, hardware, service defaults, installer settings and branding, calamares, info, look, artwork, splash, headers 8.1"
 	# the build's sources and stubs (rootfs.sh) again, so the step can be repeated
 	printf 'Types: deb\nURIs: file:/stage\nSuites: ./\nTrusted: yes\n' > $R/etc/apt/sources.list.d/beta-build-stage.sources
 	printf 'Types: deb\nURIs: file:/repo\nSuites: ./\nTrusted: yes\n' > $R/etc/apt/sources.list.d/sparky-stereo-build.sources
@@ -47,7 +47,27 @@ if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
 	done
 	inr apt-get update
 	apt_in install --reinstall sparky-backup-core-stereo sparky-stereo-hardware sparky-stereo-service-defaults calamares-settings-sparky-stereo \
-		calamares linux-headers-7.3.0-rc6-stereo3d8
+		calamares sparky-stereo-calamares-branding sparky-stereo-info sparky-stereo-look sparkyos-artwork sparkyos-plymouth \
+		linux-headers-7.3.0-rc6-stereo3d8
+	# the packages SparkyLinux's securebootinstall asks apt for that the image lacks (an offline install finds the rest)
+	for p in libjcat1 grub-efi-amd64-signed-template shim-helpers-amd64-signed-template; do
+		apt_in install --no-install-recommends "$p" || echo "!! $p: not installed"
+	done
+	echo "== $(date -u +%T) the edition's repository (Daniel, 2026-10-16): sparky-stereo-apt with its keyring, deb-multimedia's keyring package"
+	# the recipe's own copies of the files sparky-stereo-apt and deb-multimedia-keyring ship go first, so the packages own them
+	apt_in install deb-multimedia-keyring
+	rm -f $R/etc/apt/sources.list.d/sparky-stereo-deb-multimedia.sources $R/etc/apt/keyrings/deb-multimedia-keyring.pgp \
+		$R/etc/apt/preferences.d/sparky-stereo $R/etc/apt/preferences.d/sparky-stereo-only-ours
+	apt_in install sparky-stereo-keyring sparky-stereo-apt
+	echo "== $(date -u +%T) GRUB's EFI packages for an offline UEFI install (calamares-settings-sparky-stereo's offline step)"
+	O=/usr/share/sparky-stereo/offline-debs
+	rm -rf $R$O; mkdir -p $R$O
+	GV=$(inr dpkg-query -W -f '${Version}' grub-efi-amd64-bin)
+	inr sh -c "cd $O && apt-get download grub-efi=$GV grub-efi-amd64=$GV"
+	for p in libjcat1 grub-efi-amd64-signed-template shim-helpers-amd64-signed-template; do
+		inr dpkg-query -W -f '${Status}' "$p" 2>/dev/null | grep -q installed || inr sh -c "cd $O && apt-get download $p" || true
+	done
+	(cd $R$O && dpkg-scanpackages -m . 2>/dev/null > Packages && ls)
 	apt_in clean
 	echo "== $(date -u +%T) the image's apt sources: the build's own sources go; Debian, SparkyLinux (sparky-apt), deb-multimedia and NVIDIA's CUDA repository stay"
 	rm -f $R/etc/apt/sources.list.d/beta-build-*.sources $R/etc/apt/sources.list.d/sparky-stereo-build.sources $R/etc/apt/preferences.d/beta-build-*
