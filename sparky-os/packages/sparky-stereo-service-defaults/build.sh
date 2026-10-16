@@ -3,7 +3,7 @@
 # Copyright 2026 under the GNU GPL3 License
 # Builds sparky-stereo-service-defaults: systemd drop-ins that give services of other packages a
 # working default where they failed at every boot (queue item 140). Needs only dpkg-deb.
-# Last update 2026/10/15
+# Last update 2026/10/16
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
@@ -15,6 +15,8 @@ D=$W/$PKG
 mkdir -p "$D/DEBIAN" "$D/usr/lib/systemd" "$D/usr/share/doc/$PKG"
 cp -r "$HERE/system" "$HERE/user" "$D/usr/lib/systemd/"
 find "$D/usr/lib/systemd" -type d -exec chmod 755 {} + && find "$D/usr/lib/systemd" -type f -exec chmod 644 {} +
+install -D -m 755 "$HERE/NetworkManager/dispatcher.d/90-sparky-stereo-ipwatchd" \
+	"$D/usr/lib/NetworkManager/dispatcher.d/90-sparky-stereo-ipwatchd"
 cat >"$D/usr/share/doc/$PKG/copyright" <<'EOS'
 Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux (https://sparkylinux.org, by Paweł "pavroo" Pijanowski).
 
@@ -44,6 +46,7 @@ License:
 On Debian systems, the complete text of the GNU General
 Public License can be found in `/usr/share/common-licenses/GPL-3'.
 EOS
+chmod 644 "$D/usr/share/doc/$PKG/copyright"
 cat >"$D/DEBIAN/postinst" <<'EOS'
 #!/bin/sh
 # postinst script

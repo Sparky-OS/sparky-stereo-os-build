@@ -1,0 +1,7 @@
+#!/bin/sh
+# Sparky Stereo OS: ipwatchd watches the interfaces that have an address when it starts, and at boot
+# it is skipped while none has one (sparky-stereo-service-defaults). When an interface comes up it
+# is started, or restarted so it watches that interface too. Only when ipwatchd is enabled.
+[ "$2" = up ] || exit 0
+systemctl is-enabled --quiet ipwatchd.service 2>/dev/null || exit 0
+exec systemctl --no-block restart ipwatchd.service
