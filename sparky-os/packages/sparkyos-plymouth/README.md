@@ -14,5 +14,6 @@ Build:
 -------------
 ART=/path/to/artwork-repo/plymouth OUT=/path/to/output ./build.sh
 
-The other theme, for a 3D display in side-by-side mode:
-plymouth-set-default-theme -R sparkyos-stereo
+The default theme is sparkyos-stereo: both eyes on a stereo output, one picture on a 2D screen.
+The 2D theme:
+plymouth-set-default-theme -R sparkyos

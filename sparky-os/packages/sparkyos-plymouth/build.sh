@@ -2,10 +2,11 @@
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL3 License
 # Builds sparkyos-plymouth, the SparkyOS boot splash, from the artwork repository's plymouth/ folder
-# (ART): the themes sparkyos (every screen) and sparkyos-stereo (a 3D display in side-by-side mode),
-# installed where its install.sh puts them. sparkyos becomes the default theme, as sparky-plymouth makes
-# sparky-blue SparkyLinux's. sparky-plymouth sets sparky-blue again at every upgrade, whatever theme
-# was chosen; a trigger on its theme then sets sparkyos back, when this package had made it the default.
+# (ART): the themes sparkyos-stereo (every screen: both eyes on a stereo output, which the edition's
+# Plymouth gives a theme declaring Stereo=full-side-by-side, one picture elsewhere) and sparkyos (2D),
+# installed where its install.sh puts them. sparkyos-stereo becomes the default theme, as sparky-plymouth
+# makes sparky-blue SparkyLinux's. sparky-plymouth sets sparky-blue again at every upgrade, whatever theme
+# was chosen; a trigger on its theme then sets this package's default back, when this package had set it.
 # Removing this package gives sparky-blue back.
 # Last update 2026/10/16
 set -euo pipefail
@@ -28,20 +29,27 @@ cat >"$D/DEBIAN/postinst" <<'EOS'
 # postinst script
 set -e
 STATE=/var/lib/sparkyos-plymouth/theme
+DEFAULT=sparkyos-stereo
 current() { plymouth-set-default-theme 2>/dev/null || true; }
 case "$1" in
 	configure)
-		# a first install makes sparkyos the default; an upgrade keeps the owner's choice
-		if [ -z "$2" ] || [ "$(current)" = sparky-blue ]; then
-			plymouth-set-default-theme sparkyos
+		# a first install makes sparkyos-stereo the default; an upgrade keeps the owner's choice, and moves
+		# the default this package set before 9~20261016.1 (sparkyos) to sparkyos-stereo
+		cur=$(current)
+		if [ -z "$2" ] || [ "$cur" = sparky-blue ] || { dpkg --compare-versions "$2" lt 9~20261016.1 && [ "$cur" = sparkyos ] && [ "$(cat "$STATE" 2>/dev/null)" = sparkyos ]; }; then
+			plymouth-set-default-theme "$DEFAULT"
 			mkdir -p /var/lib/sparkyos-plymouth
-			echo sparkyos >"$STATE"
+			echo "$DEFAULT" >"$STATE"
+		elif [ "$cur" != "$(cat "$STATE" 2>/dev/null || true)" ]; then
+			# the owner chose another theme: the trigger below leaves it alone from now on
+			rm -f "$STATE"
 		fi
 	;;
 	triggered)
-		# sparky-plymouth's upgrade sets sparky-blue: sparkyos again, if it was ours before
-		if [ "$(current)" = sparky-blue ] && [ "$(cat "$STATE" 2>/dev/null)" = sparkyos ]; then
-			plymouth-set-default-theme sparkyos
+		# sparky-plymouth's upgrade sets sparky-blue: this package's default again, if it had set it
+		s=$(cat "$STATE" 2>/dev/null || true)
+		if [ "$(current)" = sparky-blue ] && [ -n "$s" ] && [ -e "/usr/share/plymouth/themes/$s/$s.plymouth" ]; then
+			plymouth-set-default-theme "$s"
 		fi
 	;;
 esac
@@ -52,7 +60,10 @@ cat >"$D/DEBIAN/postrm" <<'EOS'
 # postrm script
 set -e
 if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
-	if [ "$(cat /var/lib/sparkyos-plymouth/theme 2>/dev/null)" = sparkyos ] && [ -e /usr/share/plymouth/themes/sparky-blue/sparky-blue.plymouth ]; then
+	# the configured theme, read from the file: the theme's own files are gone by now
+	s=$(cat /var/lib/sparkyos-plymouth/theme 2>/dev/null || true)
+	t=$(sed -n 's/^[[:space:]]*Theme[[:space:]]*=[[:space:]]*//p' /etc/plymouth/plymouthd.conf 2>/dev/null | tail -n1)
+	if [ -n "$s" ] && [ "$t" = "$s" ] && [ -e /usr/share/plymouth/themes/sparky-blue/sparky-blue.plymouth ]; then
 		plymouth-set-default-theme sparky-blue || true
 	fi
 	rm -rf /var/lib/sparkyos-plymouth
@@ -76,8 +87,8 @@ Homepage: https://sparkylinux.org
 Description: SparkyOS Plymouth Themes
   The SparkyOS boot splash: the Debian swirl with its orbits and electrons
   on the Sparky background, and the SPARKYOS / POWERED BY DEBIAN / STEREO 3D
-  EDITION wordmark. Two themes: sparkyos for every screen, the default, and
-  sparkyos-stereo for a 3D display in side-by-side mode.
+  EDITION wordmark. Two themes: sparkyos-stereo, the default, in stereo 3D
+  on a stereo output and in 2D elsewhere, and sparkyos, in 2D.
 EOS
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT"
