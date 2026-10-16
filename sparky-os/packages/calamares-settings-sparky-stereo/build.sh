@@ -4,7 +4,7 @@
 # Builds calamares-settings-sparky-stereo: the edition's Calamares settings in /etc/calamares, which
 # Calamares reads before SparkyLinux's in /usr/share/calamares (the way Debian ships
 # calamares-settings-debian). Needs only dpkg-deb.
-# Last update 2026/10/15
+# Last update 2026/10/16
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
@@ -16,7 +16,7 @@ D=$W/$PKG
 mkdir -p "$D/DEBIAN" "$D/etc/calamares/modules" "$D/usr/lib/$PKG" "$D/usr/share/doc/$PKG"
 install -m 644 "$HERE/etc/settings.conf" "$D/etc/calamares/settings.conf"
 install -m 644 "$HERE"/etc/modules/*.conf "$D/etc/calamares/modules/"
-install -m 755 "$HERE/lib/dual-boot" "$D/usr/lib/$PKG/dual-boot"
+install -m 755 "$HERE/lib/dual-boot" "$HERE/lib/efi-fallback" "$D/usr/lib/$PKG/"
 (cd "$D" && find etc -type f | sed 's|^|/|' | sort) >"$D/DEBIAN/conffiles"
 cat >"$D/usr/share/doc/$PKG/copyright" <<'EOS'
 Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux (https://sparkylinux.org, by Paweł "pavroo" Pijanowski).
@@ -27,7 +27,11 @@ Upstream Author(s):
 
 Files: etc/calamares/settings.conf
     Calamares' settings as SparkyLinux ships them (SPDX-License-Identifier: CC0-1.0),
-    with the dual-boot step
+    with the dual-boot and EFI fallback steps
+
+Files: etc/calamares/modules/bootloader.conf
+    Calamares' bootloader settings as SparkyLinux ships them (SPDX-License-Identifier: CC0-1.0),
+    with the EFI folder named and Calamares' own fallback copy off
 
 Files: *
     Copyright (C) 2026 Paweł "pavroo" Pijanowski, Daniel Ramos (Capitain Jack)
@@ -51,6 +55,7 @@ License:
 On Debian systems, the complete text of the GNU General
 Public License can be found in `/usr/share/common-licenses/GPL-3'.
 EOS
+chmod 644 "$D/usr/share/doc/$PKG/copyright"
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
 cat >"$D/DEBIAN/control" <<EOS
 Package: $PKG
@@ -63,9 +68,11 @@ Section: System
 Priority: optional
 Homepage: https://sparkylinux.org
 Description: Sparky Stereo installer settings
-  SparkyLinux's Calamares settings with one step added: installed beside
+  SparkyLinux's Calamares settings with two steps added. Installed beside
   Windows, the hardware clock is kept in local time so both systems show the
-  right time, and Windows is listed in the boot menu.
+  right time, and Windows is listed in the boot menu. The EFI fallback path
+  gets the signed chain (shim, GRUB, MokManager) on a machine with no other
+  system, and Windows' own fallback loader is left as it is.
 EOS
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT"
