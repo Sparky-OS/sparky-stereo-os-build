@@ -61,6 +61,11 @@ if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
 		[ -s $R/etc/apt/$f ] || { echo "!! /etc/apt/$f is missing"; exit 1; }
 	done
 	inr apt-get update
+	echo "== $(date -u +%T) the development repository's current versions of every installed package it carries"
+	# only packages already in the image, and only upgrades: the edition's pin makes the repository's builds the candidates
+	inr sh -c "awk '/^Package: /{print \$2}' /repo/Packages | sort -u | xargs dpkg-query -W -f '\${Package} \${Status}\n' 2>/dev/null | awk '/ ok installed\$/{print \$1}'" > /tmp/beta-repo-installed.list
+	apt_in install --only-upgrade $(cat /tmp/beta-repo-installed.list)
+	rm -f /tmp/beta-repo-installed.list
 	apt_in install --reinstall sparky-backup-core-stereo sparky-stereo-hardware sparky-stereo-service-defaults calamares-settings-sparky-stereo \
 		calamares sparky-stereo-calamares-branding sparky-stereo-info sparky-stereo-look sparkyos-artwork sparkyos-plymouth \
 		linux-headers-7.3.0-rc6-stereo3d8
