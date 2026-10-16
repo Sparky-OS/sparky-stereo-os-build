@@ -3,7 +3,7 @@
 #   1 EFI system partition, 100 MiB, FAT32 "SYSTEM", with EFI/Microsoft/Boot/bootmgfw.efi and BCD and the
 #     fallback EFI/Boot/bootx64.efi
 #   2 Microsoft reserved partition, 16 MiB
-#   3 "Windows" (C:), NTFS, 20 GiB, with Windows/System32 and Users/Lutz/Documents/Hallo Welt.txt
+#   3 "Windows" (C:), NTFS, 20 GiB, with Windows/System32 and Users/Benutzer/Documents/Hallo Welt.txt
 #   - free space, where Windows was shrunk
 #   4 Windows recovery, NTFS, 600 MiB, at the end of the disk
 # The Windows boot manager is a stand-in: a small EFI program (GRUB, standalone) that prints that it is the
@@ -45,7 +45,7 @@ cp $W/bootmgfw.efi /mnt/w/EFI/Boot/bootx64.efi
 : > /mnt/w/EFI/Microsoft/Boot/BCD
 umount /mnt/w
 mount -t ntfs3 $P3 /mnt/w 2>/dev/null || mount -t ntfs-3g $P3 /mnt/w
-mkdir -p "/mnt/w/Windows/System32" "/mnt/w/Users/Lutz/Documents" "/mnt/w/Program Files"
-printf 'Hallo Welt, von Windows aus geschrieben (Testdatei).\r\n' > "/mnt/w/Users/Lutz/Documents/Hallo Welt.txt"
+mkdir -p "/mnt/w/Windows/System32" "/mnt/w/Users/Benutzer/Documents" "/mnt/w/Program Files"
+printf 'Hallo Welt, von Windows aus geschrieben (Testdatei).\r\n' > "/mnt/w/Users/Benutzer/Documents/Hallo Welt.txt"
 umount /mnt/w
 sfdisk -l "$F"

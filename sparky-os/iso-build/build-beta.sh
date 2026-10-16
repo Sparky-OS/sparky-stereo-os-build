@@ -11,6 +11,7 @@
 #   SIGNED_MODULES  optional: the DKMS modules signed with the edition's key (sign-modules.sh output); pack only
 #   SIGNED_KERNEL   optional: the linux-image package signed with the edition's key (sign-kernel-deb.sh output); pack only
 #   LABEL, ISONAME  the menu label and the file name
+#   PACKSTEP        configure, iso or all (the default); pack only
 #   LEAN            1: the packer runs LEAN_HOOK (the Lean Code projection, a file) on the folders it squashes; pack only
 #   OVL             the overlay's upper layer for the iso step (the root file system itself is not changed)
 set -eu
@@ -37,7 +38,7 @@ run() {
 }
 case ${1:-all} in
 rootfs) run rootfs "/build/stage-index.sh >/dev/null; /build/rootfs.sh all" ;;
-pack) run pack "mkdir -p /rootfs/repo /rootfs/stage; /build/pack.sh all" ;;
+pack) run pack "mkdir -p /rootfs/repo /rootfs/stage; /build/pack.sh ${PACKSTEP:-all}" ;;
 all) "$0" rootfs && "$0" pack ;;
 *) sed -n '2,15p' "$0"; exit 2 ;;
 esac

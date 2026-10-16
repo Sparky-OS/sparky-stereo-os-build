@@ -144,10 +144,13 @@ if [ "$STEP" = iso ] || [ "$STEP" = all ]; then
 	for m in var/cache/apt/archives stage repo; do mountpoint -q $R/$m && umount $R/$m || true; done
 	rmdir $R/stage $R/repo 2>/dev/null || true
 	umounts
+	# the packer's work folder from the last pack goes first: it would otherwise carry that pack's files (its package
+	# list) into this image
+	rm -rf /work/sparkybackup-sys
 	# an overlay of the root file system: what the packer and the hook change stays in the upper layer, so every
 	# pack starts from the same root file system
 	O=/lean-merged U=/overlay
-	rm -rf $U; mkdir -p $U/upper $U/work $O
+	rm -rf $U/upper $U/work; mkdir -p $U/upper $U/work $O
 	mount -t overlay overlay -o lowerdir=$R,upperdir=$U/upper,workdir=$U/work $O
 	R=$O
 	trap 'umounts; umount $O 2>/dev/null || true' EXIT
