@@ -12,7 +12,8 @@
 #   SIGNED_KERNEL   optional: the linux-image package signed with the edition's key (sign-kernel-deb.sh output); pack only
 #   LABEL, ISONAME  the menu label and the file name
 #   PACKSTEP        configure, iso or all (the default); pack only
-#   LEAN            1: the packer runs LEAN_HOOK (the Lean Code projection, a file) on the folders it squashes; pack only
+#   LEAN            1: the packer runs dpkg-stereo's pre-squashfs hook (the Lean Code projection) on the folders it
+#                   squashes; 0: not (dpkg-stereo is in the image either way); pack only
 #   OVL             the overlay's upper layer for the iso step (the root file system itself is not changed)
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -27,7 +28,6 @@ mkdir -p "$TREE" "$CACHE" "$WORK" "$OUT" "$LOGS" "$OVL"
 sm=; [ -n "${SIGNED_MODULES:-}" ] && sm="-v $SIGNED_MODULES:/signed:ro -e SIGNED_MODULES=/signed"
 [ -n "${SIGNED_KERNEL:-}" ] && sm="$sm -v $SIGNED_KERNEL:/signed-kernel.deb:ro -e SIGNED_KERNEL=/signed-kernel.deb"
 sm="$sm -e LEAN=${LEAN:-0}"
-[ -n "${LEAN_HOOK:-}" ] && sm="$sm -v $LEAN_HOOK:/lean-hook:ro -e LEAN_HOOK=/lean-hook"
 run() {
 	# shellcheck disable=SC2086
 	docker run --rm --name "beta-iso-lutz-$1" --privileged --cpus 4 --memory 16g \

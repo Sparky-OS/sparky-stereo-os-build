@@ -7,8 +7,8 @@
 # Environment: LABEL (menu label), ISONAME (file name), SIGNED_MODULES (optional: a folder whose
 # lib/modules/... files replace the DKMS modules, signed with the edition's key by the main session),
 # SIGNED_KERNEL (optional: the linux-image package signed with the edition's key, installed over the tree's),
-# LEAN (1: the packer runs LEAN_HOOK, the Lean Code projection, on the folders it squashes; 0 or unset: not),
-# LEAN_HOOK (the hook, a program in the build tree; mounted read-only into the image's overlay).
+# LEAN (1: the packer runs dpkg-stereo's pre-squashfs hook, the Lean Code projection, on the folders it squashes;
+# 0 or unset: not; dpkg-stereo is installed either way).
 # The iso step packs from an overlay of the root file system (upper layer in /work), so the root file system is
 # the same for every pack: two packs with LEAN=0 and LEAN=1 differ only in the hook.
 # Usage: pack.sh configure|iso|all
@@ -19,6 +19,9 @@ LABEL=${LABEL:-Sparky Stereo OS 9 Mashtabba beta 2}
 ISONAME=${ISONAME:-sparky-stereo-os-9-mashtabba-beta2-x86_64.iso}
 LEAN=${LEAN:-0}
 export DEBIAN_FRONTEND=noninteractive LC_ALL=C.UTF-8
+# dpkg-stereo's hooks stay quiet for every dpkg run of the build (the signed kernel's included): the image is
+# projected once, in the iso step, when LEAN=1
+export DPKG_STEREO_DISABLE=1 DPKG_STEREO_NO_PROJECT=1
 inr() { chroot $R "$@"; }
 apt_in() { chroot $R apt-get -y -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "$@"; }
 mounts() {
@@ -72,11 +75,15 @@ if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
 	apt_in install --only-upgrade $(cat /tmp/beta-repo-installed.list)
 	rm -f /tmp/beta-repo-installed.list
 	apt_in install --reinstall sparky-backup-core-stereo sparky-stereo-hardware sparky-stereo-service-defaults calamares-settings-sparky-stereo \
-		calamares sparky-stereo-calamares-branding sparky-stereo-info sparky-stereo-look sparkyos-artwork sparkyos-plymouth \
+		calamares sparky-stereo-calamares-branding sparky-stereo-info sparky-stereo-look sparkyos-artwork sparkyos-plymouth sparky-stereo-boot \
 		linux-headers-7.3.0-rc6-stereo3d8
 	echo "== $(date -u +%T) the boot chain in 3D (ORDER 138): the stereo Plymouth, sparky-stereo-boot, the stereo splash themes; GRUB's menu translated; Kubabbar Glass for Quick Settings"
 	apt_in install plymouth libplymouth5 plymouth-themes plymouth-label sparky-stereo-boot sparky-stereo-plymouth sparky-stereo-grub-l10n \
 		sparky-stereo-look-kubabbar-glass sparky-stereo-look-kubabbar-glass-menubar
+	# Create Stereo in the file menus, which the installer's slides show (stereo-create, in no list yet)
+	apt_in install stereo-create
+	# Lean Code (ORDER 14): dpkg-stereo in both packs of a pair, so they differ only by the projection
+	apt_in install dpkg-stereo
 	echo "== $(date -u +%T) Plasma Login Manager as the display manager (Daniel's preference); SDDM stays installed, not started"
 	echo "plasma-login-manager shared/default-x-display-manager select plasma-login-manager" | inr debconf-set-selections
 	echo "sddm shared/default-x-display-manager select plasma-login-manager" | inr debconf-set-selections
@@ -86,7 +93,7 @@ if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
 	ls -l $R/etc/systemd/system/display-manager.service; cat $R/etc/X11/default-display-manager
 	echo "== $(date -u +%T) the edition's removals (lists/base-remove.list) that the image still has"
 	rm_list=$(grep -v '^#' /edition-lists/base-remove.list | while read -r p; do
-		[ -n "$p" ] && inr dpkg-query -W -f '${Status}' "$p" 2>/dev/null | grep -q 'ok installed' && echo "$p"; done)
+		if [ -n "$p" ] && inr dpkg-query -W -f '${Status}' "$p" 2>/dev/null | grep -q 'ok installed'; then echo "$p"; fi; done)
 	[ -z "$rm_list" ] || apt_in remove $rm_list
 	# usbguard blocks USB keyboards and pointers present at boot (the boot lane's dev VM); it never goes in
 	if inr dpkg-query -W -f '${Status}' usbguard 2>/dev/null | grep -q 'ok installed'; then apt_in purge usbguard; fi
@@ -159,15 +166,17 @@ if [ "$STEP" = iso ] || [ "$STEP" = all ]; then
 	rmdir $R/stage $R/repo 2>/dev/null || true
 	hook=
 	if [ "$LEAN" = 1 ]; then
-		[ -n "${LEAN_HOOK:-}" ] && [ -f "$LEAN_HOOK" ] || { echo "!! LEAN=1 needs LEAN_HOOK"; exit 1; }
-		mkdir -p $R/usr/local/lib/sparky-stereo-lean
-		cp "$LEAN_HOOK" $R/usr/local/lib/sparky-stereo-lean/hook; chmod 755 $R/usr/local/lib/sparky-stereo-lean/hook
-		hook=/usr/local/lib/sparky-stereo-lean/hook
+		hook=/usr/lib/dpkg-stereo/presquashfs-hook
+		[ -x $R$hook ] || { echo "!! LEAN=1 needs dpkg-stereo's $hook in the image"; exit 1; }
 	fi
 	echo "== $(date -u +%T) LEAN=$LEAN hook=${hook:-none}; top folders of the image: $(ls $R | tr '\n' ' ')"
 	echo "== $(date -u +%T) sparkybackup-stereo dist"
 	t0=$(date +%s)
-	inr env PRESQUASHFS_HOOK="$hook" sparkybackup-stereo dist
+	inr env PRESQUASHFS_HOOK="$hook" LEANCODE_JOBS=4 sparkybackup-stereo dist
 	echo "== $(date -u +%T) packed in $(( $(date +%s) - t0 )) s (LEAN=$LEAN)"
+	# the projection's build record beside the ISO
+	for f in lean-code-projection.tsv lean-code-left.tsv; do
+		[ -f /work/sparkybackup-sys/$f ] && xz -T1 -c /work/sparkybackup-sys/$f > /out/$ISONAME.${f%.tsv}.tsv.xz
+	done
 	ls -la /out
 fi
