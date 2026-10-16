@@ -1,0 +1,240 @@
+#!/bin/bash
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/16
+# Gives the person's AI assistants the public skills of Sparky Stereo OS: links each skill in
+# /usr/share/sparky-stereo-os/skills into the folders where the assistants read skills. Run by the person
+# (the package never writes into home directories); offered once at login by its autostart entry.
+# Where each assistant reads skills, from its own documentation (read 2026-10-16):
+#   Claude Code  ~/.claude/skills         https://code.claude.com/docs/en/skills
+#   Codex        ~/.agents/skills         https://learn.chatgpt.com/docs/build-skills
+#   Gemini CLI   ~/.gemini/skills, ~/.agents/skills   https://geminicli.com/docs/cli/skills/
+#   OpenCode     ~/.config/opencode/skills, ~/.claude/skills, ~/.agents/skills   https://opencode.ai/docs/skills/
+#   Copilot      ~/.copilot/skills, ~/.claude/skills, ~/.agents/skills   https://code.visualstudio.com/docs/copilot/customization/agent-skills
+#   Cursor       ~/.cursor/skills, ~/.agents/skills   https://cursor.com/docs/skills
+#   goose        ~/.agents/skills, ~/.claude/skills   https://goose-docs.ai/docs/guides/context-engineering/using-skills
+#   Cline        ~/.cline/skills          https://docs.cline.bot/customization/skills
+#   Open WebUI   Workspace, Skills, Import (a ZIP of skill folders)   https://docs.openwebui.com/features/workspace/skills
+# The translated strings carry their own %s, and a home folder is shown as ~, not expanded
+# shellcheck disable=SC2059,SC2088
+set -euo pipefail
+SKILLS=${SPARKY_STEREO_SKILLS:-/usr/share/sparky-stereo-os/skills}
+SHARE=${SPARKY_STEREO_SKILLS_STRINGS:-/usr/share/sparky/sparky-stereo-skills}
+STATE_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/sparky-stereo-skills
+STATE=$STATE_DIR/state
+
+# Strings: the whole locale first (pt_BR, zh_CN, zh_TW), then the bare language (fr serves fr_FR, fr_CA and fr_BE), then English
+source "$SHARE/en"
+lang=${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}
+case "${lang%%.*}" in ''|C|POSIX) lang=$(sed -nE 's/^LANG=["\x27]?([^"\x27]*)["\x27]?$/\1/p' /etc/default/locale 2>/dev/null || true) ;; esac
+lang=${lang%%.*}; lang=${lang%%@*}
+if [ -n "$lang" ] && [ -f "$SHARE/$lang" ]; then source "$SHARE/$lang"
+elif [ -n "$lang" ] && [ -f "$SHARE/${lang%%_*}" ]; then source "$SHARE/${lang%%_*}"
+fi
+
+# name, folder under the home directory, the assistants that read it
+TOOLS="agents	.agents/skills	Codex, Gemini CLI, OpenCode, GitHub Copilot, Cursor, goose
+claude	.claude/skills	Claude Code, OpenCode, GitHub Copilot, goose
+cline	.cline/skills	Cline
+gemini	.gemini/skills	Gemini CLI
+opencode	.config/opencode/skills	OpenCode
+copilot	.copilot/skills	GitHub Copilot
+cursor	.cursor/skills	Cursor"
+
+folder() { printf '%s\n' "$TOOLS" | awk -F'\t' -v n="$1" '$1 == n {print $2}'; }
+readers() { printf '%s\n' "$TOOLS" | awk -F'\t' -v n="$1" '$1 == n {print $3}'; }
+
+# The assistants found for this account: the shared folder serves most of them, Claude Code and Cline have their own
+found() {
+	local c
+	for c in codex gemini opencode copilot cursor-agent goose; do
+		command -v "$c" >/dev/null 2>&1 && { echo agents; break; }
+	done
+	for c in .codex .gemini .config/opencode .copilot .cursor .config/goose .agents; do
+		[ -d "$HOME/$c" ] && { echo agents; break; }
+	done
+	{ command -v claude >/dev/null 2>&1 || [ -d "$HOME/.claude" ]; } && echo claude
+	compgen -G "$HOME/.cline" >/dev/null || compgen -G "$HOME/.vscode/extensions/saoudrizwan.claude-dev-*" >/dev/null ||
+		compgen -G "$HOME/.vscode-oss/extensions/saoudrizwan.claude-dev-*" >/dev/null ||
+		compgen -G "${XDG_CONFIG_HOME:-$HOME/.config}/Code/User/globalStorage/saoudrizwan.claude-dev" >/dev/null && echo cline
+	return 0
+}
+
+# A skill is linked only when SKILL.md starts with a YAML header that names its folder and has a description
+# (Cline and goose require the name to match the folder)
+valid() {
+	local f=$1/SKILL.md
+	[ -f "$f" ] && [ "$(head -n 1 "$f")" = --- ] || return 1
+	awk -v n="${1##*/}" 'NR == 1 {next}
+		/^---[ \t]*$/ {closed = 1; exit}
+		/^name:/ {v = $0; sub(/^name:[ \t]*/, "", v); sub(/[ \t]+$/, "", v); gsub(/^["\047]|["\047]$/, "", v); if (v == n) name = 1}
+		/^description:/ {desc = 1}
+		END {exit !(closed && name && desc)}' "$f"
+}
+
+ours() { [ -L "$1" ] && case $(readlink "$1") in "$SKILLS"/*) return 0 ;; esac; return 1; }
+
+link_into() {
+	local dir=$1 s n l count=0
+	mkdir -p "$dir"
+	for s in "$SKILLS"/*/; do
+		s=${s%/}; n=${s##*/}
+		if ! valid "$s"; then printf "$LOCAL12\n" "$n" >&2; continue; fi
+		if ours "$dir/$n"; then ln -sfn "$s" "$dir/$n"
+		elif [ -e "$dir/$n" ] || [ -L "$dir/$n" ]; then printf "$LOCAL11\n" "$dir/$n" >&2; continue
+		else ln -s "$s" "$dir/$n"
+		fi
+		count=$((count + 1))
+	done
+	# links of ours to skills that are gone or no longer valid
+	for l in "$dir"/*; do
+		if ours "$l" && ! { [ -d "$l" ] && valid "$(readlink "$l")"; }; then rm -f "$l"; fi
+	done
+	printf "$LOCAL10\n" "$count" "$dir"
+}
+
+unlink_from() {
+	local dir=$1 l count=0
+	[ -d "$dir" ] || return 0
+	for l in "$dir"/*; do
+		ours "$l" && { rm -f "$l"; count=$((count + 1)); }
+	done
+	printf "$LOCAL13\n" "$count" "$dir"
+}
+
+state_get() { [ -f "$STATE" ] && sed -n "s/^$1=//p" "$STATE" || true; }
+state_set() {
+	mkdir -p "$STATE_DIR"
+	{ [ -f "$STATE" ] && grep -v "^$1=" "$STATE" || true; echo "$1=$2"; } >"$STATE.new"
+	mv "$STATE.new" "$STATE"
+}
+
+check_names() {
+	local t
+	for t in "$@"; do
+		[ -n "$(folder "$t")" ] || { printf "$LOCAL16\n" "$t" >&2; exit 2; }
+	done
+}
+
+do_link() {
+	local t list=("$@") before=()
+	if ((${#list[@]})); then check_names "${list[@]}"
+	else
+		mapfile -t list < <(found | sort -u)
+		((${#list[@]})) || { list=(agents); printf "$LOCAL19\n" '~/.agents/skills'; }
+	fi
+	for t in "${list[@]}"; do link_into "$BASE/$(folder "$t")"; done
+	if [ "$BASE" = "$HOME" ]; then
+		read -ra before <<<"$(state_get LINKED)"
+		state_set LINKED "$(printf '%s\n' "${before[@]}" "${list[@]}" | grep . | sort -u | tr '\n' ' ' | sed 's/ $//')"
+		state_set OFFER 'done'
+	fi
+}
+
+do_unlink() {
+	local t list=("$@") before=()
+	if ((${#list[@]})); then check_names "${list[@]}"
+	else mapfile -t list < <(printf '%s\n' "$TOOLS" | cut -f1)
+	fi
+	for t in "${list[@]}"; do unlink_from "$BASE/$(folder "$t")"; done
+	if [ "$BASE" = "$HOME" ]; then
+		read -ra before <<<"$(state_get LINKED)"
+		state_set LINKED "$( (printf '%s\n' "${before[@]}" | grep . | grep -vxF -f <(printf '%s\n' "${list[@]}") || true) | tr '\n' ' ' | sed 's/ $//')"
+	fi
+}
+
+do_status() {
+	local t f n s l total=0 linked mark where here
+	for s in "$SKILLS"/*/; do valid "${s%/}" && total=$((total + 1)); done
+	here=$(found)
+	while IFS=$'\t' read -r t f n; do
+		linked=0
+		for l in "$BASE/$f"/*; do ours "$l" && linked=$((linked + 1)); done
+		if grep -qx "$t" <<<"$here"; then mark=$LOCAL14; else mark=$LOCAL15; fi
+		if [ "$BASE" = "$HOME" ]; then where='~/'"$f"; else where="$BASE/$f"; fi
+		printf '%-9s %-30s %-24s %-12s %s\n' "$t" "$where" "$(printf "$LOCAL22" "$linked" "$total")" "$mark" "$n"
+	done <<<"$TOOLS"
+}
+
+do_list() {
+	local s
+	for s in "$SKILLS"/*/; do
+		s=${s%/}
+		valid "$s" || continue
+		printf '%s: %s\n' "${s##*/}" "$(awk 'NR > 1 && /^---/ {exit}
+			/^description:/ {sub(/^description:[ \t]*/, ""); if ($0 ~ /^[>|][-+]?$/) $0 = ""; d = $0; f = 1; next}
+			f && /^[ \t]/ {sub(/^[ \t]+/, ""); d = (d == "" ? $0 : d " " $0); next}
+			{f = 0}
+			END {print d}' "$s/SKILL.md")"
+	done
+}
+
+do_export() {
+	local out=${1:?$LOCAL20} names=() s
+	case $out in /*) ;; *) out=$PWD/$out ;; esac
+	for s in "$SKILLS"/*/; do s=${s%/}; valid "$s" && names+=("${s##*/}"); done
+	(cd "$SKILLS" && python3 -m zipfile -c "$out" "${names[@]}")
+	printf "$LOCAL18\n" "$out"
+}
+
+gui() {
+	local args=() t f n sel=() rc here
+	command -v yad >/dev/null 2>&1 && { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; } || return 0
+	here=$(found)
+	for t in $(printf '%s\n' "$TOOLS" | cut -f1); do
+		f=$(folder "$t"); n=$(readers "$t")
+		if grep -qx "$t" <<<"$here"; then args+=(TRUE); else args+=(FALSE); fi
+		args+=("$t" '~/'"$f" "$n")
+	done
+	set +e
+	mapfile -t sel < <(yad --list --checklist --width=760 --height=380 --center --window-icon=applications-development \
+		--title="$LOCAL1" --text="$LOCAL3\n\n$LOCAL4" \
+		--column=" " --column="$LOCAL5" --column="$LOCAL6" --column="$LOCAL23" --print-column=2 --separator="" \
+		--button="$LOCAL7:0" --button="$LOCAL8:1" --button="$LOCAL9:2" "${args[@]}"; echo "rc=$?")
+	rc=${sel[-1]#rc=}; unset 'sel[-1]'
+	set -e
+	case $rc in
+		0) ((${#sel[@]})) && do_link "${sel[@]}" >/dev/null ;;
+		2) state_set OFFER never ;;
+		*) yad --info --center --title="$LOCAL1" --text="$LOCAL21" --button="OK:0" --timeout=20 || true ;;
+	esac
+}
+
+# At login: keep the person's links current after an upgrade (new skills linked, removed ones unlinked), and offer
+# once when an assistant is found and nothing was decided yet
+first_login() {
+	local linked=()
+	read -ra linked <<<"$(state_get LINKED)"
+	((${#linked[@]})) && do_link "${linked[@]}" >/dev/null 2>&1
+	[ -z "$(state_get OFFER)" ] && [ -n "$(found)" ] && gui
+	return 0
+}
+
+usage() { printf '%s\n' "$LOCAL20"; }
+
+BASE=$HOME
+cmd=status
+while (($#)); do
+	case $1 in
+		--project) shift; BASE=$(cd "${1:?$LOCAL20}" && pwd) ;;
+		--first-login) cmd=first-login ;;
+		--gui) cmd=gui ;;
+		-h|--help) usage; exit 0 ;;
+		status|link|unlink|list|tools|export) cmd=$1; shift; break ;;
+		*) usage >&2; exit 2 ;;
+	esac
+	shift
+done
+if ((EUID == 0)) && [ "$BASE" = "$HOME" ] && [ "$cmd" != list ] && [ "$cmd" != tools ]; then echo "$LOCAL17" >&2; exit 1; fi
+# a project gets the repository folders the assistants read: .agents/skills and .claude/skills
+if [ "$BASE" != "$HOME" ] && [ "$cmd" = link ] && (($# == 0)); then set -- agents claude; fi
+case $cmd in
+	status) do_status ;;
+	link) do_link "$@" ;;
+	unlink) do_unlink "$@" ;;
+	list) do_list ;;
+	tools) printf '%s\n' "$TOOLS" | awk -F'\t' '{printf "%-9s ~/%-26s %s\n", $1, $2, $3}' ;;
+	export) do_export "$@" ;;
+	gui) gui ;;
+	first-login) first_login ;;
+esac

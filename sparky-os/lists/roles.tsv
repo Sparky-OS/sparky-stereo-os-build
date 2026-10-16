@@ -3,7 +3,7 @@
 # packages as well - old debian user here"). Columns: package, roles (comma separated).
 # Packages of apps.list not named here stay in sparky-stereo-desktop, the core everyone gets.
 # Packages named here but in no list are role-only: they install with their task.
-# Roles: gamer designer creator musician scientist student simmer maker engineer
+# Roles: gamer designer creator musician scientist student simmer maker engineer developer os-developer
 # Third column, for scientist and student only (Daniel: "for those edu and science - issue stereo
 # and non-stereo meta and tasks - so people can install the missing non-stereo without conflicting
 # with our stereo ones"): 3d = shows stereo on Sparky Stereo OS today (SOLUTIONS.md), into
@@ -160,3 +160,45 @@ openocd	engineer,maker
 cutecom	engineer,maker
 mbpoll	engineer
 mosquitto-clients	engineer
+# --- developer: code and game engines (Daniel, 2026-10-16); developer.list goes here whole (make-meta.py), plus our builds
+# that Debian does not carry. Karton is KDE's virtual machine manager (a pre-alpha; virt-manager stays in the list).
+karton	developer
+# --- os-developer: build, test and package the edition (Daniel, 2026-10-16); os-developer.list goes here whole, and
+# make-meta.py puts the development files of our stereo stack in Depends at our versions; these are the other development
+# packages and test programs of our builds.
+python3-stereo-declare	os-developer
+libstereoshow-dev	os-developer
+gl-stereo	os-developer
+gl-stereo-show	os-developer
+gl-stereo-savers	os-developer
+libegl1-mesa-dev	os-developer
+mesa-drm-shim	os-developer
+qt6-base-dev-tools	os-developer
+qt6-multimedia-private-dev	os-developer
+libmpvqt-dev	os-developer
+libmpv-dev	os-developer
+libsdl3-tests	os-developer
+libdxvk-native-dev	os-developer
+libwine-dev	os-developer
+kscreenlocker-dev	os-developer
+powerdevil-dev	os-developer
+dolphin-dev	os-developer
+libmarble-dev	os-developer
+libmlt-dev	os-developer
+libmlt++-dev	os-developer
+libavcodec-dev	os-developer
+libavformat-dev	os-developer
+libavfilter-dev	os-developer
+libavdevice-dev	os-developer
+libavutil-dev	os-developer
+libswscale-dev	os-developer
+libswresample-dev	os-developer
+libanalitza-dev	os-developer
+libavogadro-dev	os-developer
+libnglib-dev	os-developer
+octave-dev	os-developer
+libastro-dev	os-developer
+libspice-server-dev	os-developer
+libspice-client-gtk-3.0-dev	os-developer
+libspice-protocol-dev	os-developer
+xwayland	os-developer

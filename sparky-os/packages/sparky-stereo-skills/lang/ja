@@ -1,0 +1,35 @@
+#!/bin/bash
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/16
+LOCAL1="AI アシスタント用スキル"
+LOCAL3="Sparky Stereo OS のスキルを AI アシスタントで使えるようにしますか？"
+LOCAL4="スキルは /usr/share/sparky-stereo-os/skills に置かれたままです。選んだフォルダーごとに、各スキルへのリンクを作成します。あなた自身のスキルはそのまま残ります。"
+LOCAL5="名前"
+LOCAL6="フォルダー"
+LOCAL7="リンクする"
+LOCAL8="今はしない"
+LOCAL9="今後は確認しない"
+LOCAL10="%s 個のスキルを %s にリンクしました"
+LOCAL11="このツールが作成したリンクではないため、そのままにしました: %s"
+LOCAL12="SKILL.md に有効なヘッダーがないため、スキップしました: %s"
+LOCAL13="%s 個のリンクを %s から削除しました"
+LOCAL14="検出"
+LOCAL15="未検出"
+LOCAL16="不明なアシスタントのフォルダー名です: %s（sparky-stereo-skills tools で一覧を表示できます）"
+LOCAL17="root ではなく、自分のユーザーで実行してください。スキルはあなたのホームフォルダーにリンクされます。"
+LOCAL18="Open WebUI 用のスキルのアーカイブ（Workspace、Skills、Import）: %s"
+LOCAL19="このアカウントでは AI アシスタントが見つかりませんでした。多くのアシスタントが読み込むフォルダー %s にリンクします。"
+LOCAL20="使い方: sparky-stereo-skills [--project フォルダー] [status | link [名前...] | unlink [名前...] | list | tools | export ファイル.zip]
+  status    各アシスタントのフォルダー、そのアシスタントが見つかったかどうか、リンク済みのスキルの数
+  link      見つかったアシスタントのフォルダー（または指定したフォルダー）にすべてのスキルをリンクします
+  unlink    このツールが作成したリンクだけを削除します（すべてのフォルダー、または指定したフォルダーから）
+  list      スキルの一覧と、それぞれの用途
+  tools     フォルダー名: agents, claude, cline, gemini, opencode, copilot, cursor
+  export    Open WebUI でインポートするための、スキルをまとめた ZIP アーカイブを 1 つ作成します
+  --project フォルダー   ホームフォルダーの代わりに、プロジェクトの .agents/skills と .claude/skills にリンクします
+  --gui     同じ選択をダイアログで行います"
+LOCAL21="後でメニューの「開発」→「AI アシスタント用スキル」から行えます。"
+LOCAL22="%s / %s 個のスキルをリンク済み"
+LOCAL23="読み込むアシスタント"
+LOCAL24="AI アシスタント向けの Sparky Stereo OS のスキル"

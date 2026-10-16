@@ -201,6 +201,124 @@ group('look', 'Look', [
     'oxygen-gtk3',
 ])
 
+# 10. Developer: code and game engines (Daniel, 2026-10-16: "we must start collecting two extra meta packages - dev, for
+# code and game engines, and Stereo OS dev - to ease pople that use it and want to migrate, just install the meta and start
+# developing"). The whole list goes into task-sparky-stereo-developer (make-meta.py), with our builds from roles.tsv.
+# KDE's own tools first; one tool per task where KDE's covers it (Kompare and KDiff3 instead of Meld, KInfoCenter instead
+# of GPU Viewer); Karton, KDE's virtual machine manager, is our build and still a pre-alpha, so virt-manager stays beside
+# it until Karton covers the task; both container engines, since Docker and Podman give different
+# results (a daemon or rootless). Game engines: every general engine and framework Debian testing carries, and the
+# moddable engines with a community of standalone games; engines that only run one commercial game's data are the
+# gamer's (notes/developer-tasks.md has the survey and each one's stereo state).
+kf6_dev = sorted(p for p in available if p.startswith('libkf6') and p.endswith(('-dev', '-dev-bin', '-dev-tools')))
+qt6_dev = sorted(p for p in available if p.startswith('qt6-') and p.endswith(('-dev', '-dev-tools', '-private-dev', '-doc'))
+                 and ':i386' not in p)
+pyside6 = sorted(p for p in available if p.startswith('python3-pyside6.') and ':i386' not in p)
+group('developer', 'Developer: code and game engines', kf6_dev + qt6_dev + pyside6 + [
+    # KDE's development tools (kdesdk: Kate, Kompare, KCachegrind, Lokalize, Okteta, Umbrello, KAppTemplate and the rest)
+    'kdevelop', 'kdevelop-dev', 'kdevelop-php', 'kdevelop-python', 'kdevelop-pg-qt', 'kate', 'kdesdk',
+    'kcachegrind-converters', 'massif-visualizer', 'heaptrack', 'heaptrack-gui', 'kdiff3', 'kdesvn', 'kdesvn-kio-plugins',
+    'cervisia', 'clazy', 'plasma-sdk', 'kirigami-gallery', 'kapidox6', 'extra-cmake-modules', 'extra-cmake-modules-doc',
+    'gammaray', 'gammaray-plugin-quickinspector', 'gammaray-plugin-waylandinspector', 'kdebugsettings',
+    'hotspot',   # KDAB's perf front end: in unstable only (2026-10-16)
+    'kommit',    # KDE's Git client: not in Debian (2026-10-16)
+    # KDE Frameworks and Plasma development files (the KF6 -dev packages come from the pattern above)
+    'kpackagetool6', 'kirigami-addons-dev', 'libkirigami-dev', 'libplasma-dev', 'libplasma5support-dev',
+    'libplasmaactivities-dev', 'libplasmaactivitiesstats-dev', 'libkdecorations3-dev', 'liblayershellqtinterface-dev',
+    'kwayland-dev', 'libkpipewire-dev', 'libkscreen-dev', 'libksysguard-dev', 'plasma-workspace-dev', 'plasma-desktop-dev',
+    'plasma-widgets-addons-dev', 'kwin-dev', 'libkdegames6-dev', 'libqaccessibilityclient-qt6-dev',
+    'libpolkit-qt6-1-dev', 'libqca-qt6-dev', 'qcoro-qt6-dev', 'qtkeychain-qt6-dev', 'libkf6pulseaudioqt-dev',
+    'libkdsoap-dev', 'libkgapi-dev', 'plasma-wayland-protocols',
+    # Qt 6 (the -dev, -private-dev, -dev-tools and documentation packages come from the pattern above)
+    'qtcreator', 'qtcreator-doc', 'designer-qt6', 'linguist-qt6', 'assistant-qt6', 'qt6-l10n-tools',
+    'qt6-documentation-tools', 'qdbus-qt6', 'qmlscene-qt6', 'qt6-qmltooling-plugins', 'python3-pyqt6', 'pyqt6-dev-tools',
+    'pyside6-tools',
+    # C and C++: compilers, debuggers, build systems, analysers, profilers
+    'build-essential', 'gcc', 'g++', 'clang', 'clangd', 'clang-format', 'clang-tidy', 'clang-tools', 'lld', 'lldb',
+    'llvm', 'llvm-dev', 'libclang-dev', 'gdb', 'gdb-multiarch', 'gdbserver', 'valgrind', 'cmake', 'cmake-curses-gui',
+    'cmake-qt-gui', 'ninja-build', 'meson', 'make', 'autoconf', 'automake', 'libtool', 'pkgconf', 'ccache', 'sccache',
+    'mold', 'bear', 'cppcheck', 'iwyu', 'strace', 'ltrace', 'rr', 'linux-perf', 'uftrace', 'doxygen', 'graphviz',
+    'cscope', 'universal-ctags', 'global', 'gcovr', 'lcov', 'libgtest-dev', 'libgmock-dev', 'catch2',
+    'libbenchmark-dev', 'libboost-all-dev',
+    # Rust, Go, Zig
+    'rustc', 'cargo', 'rust-src', 'rust-clippy', 'rustfmt', 'rust-gdb', 'rust-lldb', 'rust-analyzer', 'cargo-c',
+    'golang', 'gopls', 'delve',
+    'zig',   # not in Debian (2026-10-16): ours to package (Daniel's cgm-zig, Zig 0.16.0 with its frontend fix)
+    # Python
+    'python3-dev', 'python3-venv', 'python3-pip', 'pipx', 'python3-pytest', 'ipython3', 'python3-debugpy', 'black',
+    'flake8', 'mypy', 'pylint', 'ruff', 'python3-poetry', 'python3-build', 'python3-setuptools', 'python3-wheel',
+    'jupyter-notebook',
+    # Java and the JVM languages, JavaScript and TypeScript, .NET (Mono; Microsoft's .NET SDK is not in Debian)
+    'default-jdk', 'maven', 'gradle', 'ant', 'kotlin', 'scala', 'groovy', 'clojure', 'leiningen', 'visualvm',
+    'nodejs', 'npm', 'node-typescript', 'yarnpkg', 'mono-devel',
+    # The other languages Debian carries, with their build tools
+    'gfortran', 'gnat', 'gprbuild', 'gdc', 'ldc', 'nim', 'ghc', 'cabal-install', 'haskell-stack', 'ocaml', 'opam',
+    'ocaml-dune', 'erlang', 'elixir', 'rebar3', 'ruby', 'ruby-dev', 'bundler', 'php-cli', 'composer', 'lua5.4',
+    'liblua5.4-dev', 'luajit', 'luarocks', 'r-base', 'r-base-dev', 'racket', 'sbcl', 'guile-3.0', 'fpc', 'lazarus',
+    'tcl', 'tk', 'valac', 'swi-prolog', 'nasm', 'yasm', 'wabt', 'binaryen', 'emscripten', 'haxe', 'crystal',
+    'chicken-bin', 'gforth', 'gnucobol', 'gambas3', 'perl-doc', 'cpanminus',
+    # Version control and forges
+    'git', 'git-lfs', 'gitk', 'git-gui', 'tig', 'git-filter-repo', 'git-crypt', 'git-review', 'mercurial', 'subversion',
+    'fossil', 'glab', 'tea', 'pre-commit',
+    'gh',   # GitHub's CLI: in unstable only (2026-10-16)
+    # Containers and virtual machines (libguestfs-tools: Daniel, 2026-10-16, "you can include that package")
+    'docker.io', 'docker-compose', 'docker-buildx', 'podman', 'podman-compose', 'buildah', 'skopeo', 'incus', 'lxc',
+    'systemd-container', 'qemu-system', 'qemu-utils', 'libvirt-daemon-system', 'libvirt-clients', 'virt-manager', 'virt-viewer',
+    'libguestfs-tools', 'guestfs-tools', 'debootstrap', 'mmdebstrap', 'cloud-image-utils', 'ovmf', 'swtpm',
+    'swtpm-tools', 'virtiofsd', 'spice-client-gtk',
+    # Graphics and GPU debugging
+    'apitrace', 'apitrace-gui', 'vulkan-tools', 'vulkan-validationlayers', 'vulkan-utility-libraries-dev',
+    'libvulkan-dev', 'spirv-tools', 'spirv-cross', 'glslang-tools', 'glslc', 'mesa-utils', 'nvtop', 'radeontop',
+    'intel-gpu-tools', 'drm-info', 'libdrm-tests', 'wayland-utils', 'clinfo', 'vainfo', 'vdpauinfo', 'mangohud',
+    'edid-decode', 'read-edid', 'libegl-dev', 'libgles-dev', 'libgl-dev', 'libglx-dev', 'libwayland-dev',
+    'wayland-protocols', 'libdecor-0-dev', 'libxkbcommon-dev',
+    'renderdoc',   # not in Debian (2026-10-16): ours to package (MIT)
+    'gfxreconstruct',   # LunarG's Vulkan capture and replay: not in Debian (2026-10-16)
+    # Window, input and audio libraries (SDL 3, SDL 2 through sdl2-compat, GLFW, freeglut and FLTK are our stereo builds)
+    'libsdl3-dev', 'libsdl3-image-dev', 'libsdl3-ttf-dev', 'libsdl3-mixer-dev', 'libsdl3-net-dev', 'libsdl2-dev',
+    'libsdl2-image-dev', 'libsdl2-mixer-dev', 'libsdl2-ttf-dev', 'libsdl2-net-dev', 'libsdl2-gfx-dev', 'libsdl1.2-dev',
+    'libglfw3-dev', 'libglut-dev', 'libfltk1.4-dev', 'libglew-dev', 'libepoxy-dev', 'libglm-dev', 'python3-glad',
+    'libopenal-dev', 'libalure-dev', 'libvorbis-dev', 'libogg-dev', 'libopus-dev', 'libflac-dev', 'libsndfile1-dev',
+    # Game libraries: rendering, physics, assets, networking, scripting
+    'libraylib-dev', 'liballegro5-dev', 'libsfml-dev', 'libirrlicht-dev', 'libogre-14-dev', 'ogre-14-tools',
+    'libopenscenegraph-dev', 'openscenegraph', 'libplib-dev', 'libclanlib-dev', 'libflatzebra-dev', 'libbox2d-dev',
+    'libbullet-dev', 'libode-dev', 'libchipmunk-dev', 'libassimp-dev', 'assimp-utils', 'libimgui-dev', 'libcglm-dev',
+    'libtcod-dev', 'libenet-dev', 'libgamenetworkingsockets-dev', 'libphysfs-dev', 'libfreetype-dev',
+    'libharfbuzz-dev', 'libpng-dev', 'libjpeg-dev', 'libwebp-dev', 'libtinyxml2-dev', 'libyaml-cpp-dev',
+    'nlohmann-json3-dev', 'libmeshoptimizer-dev', 'angelscript-dev', 'libsurgescript-dev',
+    # OpenXR (Monado is our build: its peek window declares full side by side to Stereo KWin)
+    'libopenxr-dev', 'openxr-layer-corevalidation', 'monado-service', 'monado-cli',
+    # Game engines and frameworks, with their editors
+    'godot', 'godot3', 'godot3-runner', 'godot3-server', 'love', 'renpy', 'renpy-doc', 'renpy-demo', 'luanti',
+    'python3-pygame', 'python3-pgzero', 'python3-pyglet', 'python3-moderngl', 'python3-opengl', 'python3-fife',
+    'spring', 'flare-engine', 'cube2', 'ioquake3', 'darkplaces', 'dhewm3', 'rbdoom3bfg', 'freespace2', 'openmw',
+    'openmw-cs', 'netradiant', 'eureka', 'zdbsp', 'glbsp',
+    'tiled',   # the map editor: in unstable only (2026-10-16)
+])
+
+# 11. Stereo OS developer: build, test and package the edition's own stack (task-sparky-stereo-os-developer; it depends on
+# the developer task, and our development packages come from roles.tsv). Builds run in throwaway containers, so the
+# build dependencies of each source are not listed: Docker comes with the developer task.
+group('os-developer', 'Stereo OS developer: build, test and package the edition', [
+    # Debian packaging (make-repo.sh runs apt-ftparchive; publish-tree.sh dpkg-scanpackages and gpg)
+    'devscripts', 'debhelper', 'dh-make', 'dh-python', 'dpkg-dev', 'fakeroot', 'lintian', 'quilt', 'git-buildpackage',
+    'sbuild', 'schroot', 'equivs', 'dput', 'apt-utils', 'dctrl-tools', 'apt-file', 'autopkgtest', 'piuparts',
+    'diffoscope', 'strip-nondeterminism', 'licensecheck', 'gnupg', 'rsync', 'curl', 'wget', 'jq',
+    # KDE's CI and translations (kde-ci-local: Python with YAML, git and Docker; KDE's lint jobs: reuse, yamllint,
+    # xmllint, appstream; the edition's strings: gettext and Lokalize, which kdesdk brings)
+    'python3-yaml', 'reuse', 'yamllint', 'libxml2-utils', 'appstream', 'desktop-file-utils', 'gettext',
+    'translate-toolkit', 'python3-polib', 'shellcheck', 'bats',
+    # The proof rig (headless Stereo KWin, captures, test clips and pictures, analysers, a PipeWire of its own)
+    'xvfb', 'xauth', 'dbus-x11', 'libfaketime', 'faketime', 'imagemagick', 'ffmpeg', 'python3-pil', 'python3-numpy',
+    'python3-scipy', 'python3-opencv', 'x264', 'mkvtoolnix', 'libimage-exiftool-perl', 'pipewire', 'pipewire-bin',
+    'wireplumber', 'socat',
+    # The VKMS stereo bench and the hibernation bench (QEMU comes with the developer task), kernel builds, Secure Boot
+    'busybox-static', 'edid-decode', 'cpio', 'bc', 'bison', 'flex', 'libelf-dev', 'libssl-dev', 'dwarves', 'kmod',
+    'igt-gpu-tools', 'sbsigntool', 'python3-virt-firmware', 'openssl',
+    # Mesa's own test suite (the Mesa acceptance in the packaging skill)
+    'piglit',
+])
+
 # Coherence: every tool the dedup kept a task for is shipped (in the base or in a list).
 shipped = (base - set(base_remove)) | {p for _, pkgs in groups.values() for p in pkgs}
 unshipped = sorted({i for a, i, _ in dedup.values() if a in ('drop', 'aptus') and i != '-'} - shipped)

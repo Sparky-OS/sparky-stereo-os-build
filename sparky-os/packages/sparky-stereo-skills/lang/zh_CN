@@ -1,0 +1,35 @@
+#!/bin/bash
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/16
+LOCAL1="AI 助手技能"
+LOCAL3="要让你的 AI 助手使用 Sparky Stereo OS 的技能吗？"
+LOCAL4="技能保留在 /usr/share/sparky-stereo-os/skills 中。所选的每个文件夹都会获得指向每个技能的链接；你自己的技能保持不变。"
+LOCAL5="名称"
+LOCAL6="文件夹"
+LOCAL7="创建链接"
+LOCAL8="以后再说"
+LOCAL9="不再询问"
+LOCAL10="已将 %s 个技能链接到 %s"
+LOCAL11="保持原样，这不是本工具创建的链接：%s"
+LOCAL12="已跳过，其 SKILL.md 没有有效的文件头：%s"
+LOCAL13="已移除 %s 个链接（位于 %s）"
+LOCAL14="已找到"
+LOCAL15="未找到"
+LOCAL16="未知的助手文件夹：%s（sparky-stereo-skills tools 会列出它们）"
+LOCAL17="请以你自己的用户身份运行，而不是 root：技能会链接到你自己的主文件夹中。"
+LOCAL18="供 Open WebUI 使用的技能压缩包（Workspace、Skills、Import）：%s"
+LOCAL19="此账户中未找到 AI 助手；将链接到 %s，这是大多数助手读取的文件夹。"
+LOCAL20="用法: sparky-stereo-skills [--project 文件夹] [status | link [名称...] | unlink [名称...] | list | tools | export 文件.zip]
+  status    每个助手文件夹、是否找到了对应的助手，以及其中已链接的技能数量
+  link      把每个技能链接到已找到的助手的文件夹（或指定的文件夹）中
+  unlink    只移除本工具创建的链接（从所有文件夹或指定的文件夹中）
+  list      技能列表，以及每个技能的用途
+  tools     文件夹名称：agents、claude、cline、gemini、opencode、copilot、cursor
+  export    把技能打包成一个 ZIP 压缩包，供 Open WebUI 导入
+  --project 文件夹   链接到项目的 .agents/skills 和 .claude/skills，而不是你的主文件夹
+  --gui     在对话框中进行同样的选择"
+LOCAL21="你可以稍后从菜单中操作：开发，AI 助手技能。"
+LOCAL22="已链接 %s/%s 个技能"
+LOCAL23="读取它的助手"
+LOCAL24="供你的 AI 助手使用的 Sparky Stereo OS 技能"
