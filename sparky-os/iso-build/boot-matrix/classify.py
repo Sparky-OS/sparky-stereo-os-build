@@ -40,9 +40,10 @@ def label(path):
         return "text" if wf > 0 else "black"
     if 0.04 <= wf <= 0.60 and blue > 0.05 and rows.min() < h * 0.45 and not (top and bottom and wf < 0.04):
         return "desktop"
-    # Sparky Stereo OS's live session: the panel along the bottom (icons on a dark strip) on a bright frame,
-    # whichever welcome window is open (measured: desktop 62 to 64, menus and splash 41 to 42, bare wallpaper 32)
-    if mean > 60 and im[int(h * 0.95):].std() > 55:
+    # Sparky Stereo OS's live session: the panel along the bottom (icons on a dark strip) under the welcome
+    # windows (measured: bottom strip 56 to 64 on the desktop, 41 to 42 on menus and splash; whole frame 50 on
+    # the dark SparkyOS Oxygen wallpaper, 83 on KDE's Next, 38 to 40 on menus)
+    if mean > 45 and im[int(h * 0.95):].std() > 55:
         return "desktop"
     if blue > 0.35 and top and bottom and wf < 0.04:
         return "menu"

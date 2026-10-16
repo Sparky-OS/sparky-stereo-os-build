@@ -2,8 +2,9 @@
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL3 License
 # Last update 2026/10/16
-# Runs in the installed system during installation (Calamares, shellprocess@offlineon before
-# grubefiinstall, shellprocess@offlineoff after securebootinstall).
+# Runs during installation (Calamares): "on" in the installed system before grubefiinstall
+# (shellprocess@offlineon), "off" from the live system on the installed system's files after
+# securebootinstall (shellprocess@offlineoff, with OFFLINE, APT_DIR and LISTS under ${ROOT}).
 # SparkyLinux's grubefiinstall and securebootinstall steps install packages with apt: on a UEFI
 # machine GRUB's EFI packages take grub-pc's place (they conflict, so the image cannot carry both).
 # The image carries those packages in a small local repository (OFFLINE, made when the ISO is packed),

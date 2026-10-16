@@ -108,6 +108,7 @@ def main():
     ap.add_argument("--disk", help="a second drive (raw), as virtio disk: an install target")
     ap.add_argument("--fat", help="a small FAT image as a further virtio disk (MokManager lists it)")
     ap.add_argument("--serial-sock", action="store_true", help="serial port on DIR/serial.sock instead of a log file (with --detach)")
+    ap.add_argument("--offline", action="store_true", help="no network outside the VM (user networking with restrict=on)")
     a = ap.parse_args()
 
     os.makedirs(a.out, exist_ok=True)
@@ -131,7 +132,7 @@ def main():
            "-serial", (f"unix:{os.path.join(a.out, 'serial.sock')},server=on,wait=off" if a.serial_sock else f"file:{serial}"), "-monitor", "none",
            "-qmp", f"unix:{qmp_path},server=on,wait=off", *([] if a.reboot else ["-no-reboot"]), "-nodefaults",
            "-device", "qemu-xhci,id=xin", "-device", "usb-kbd,bus=xin.0",
-           "-netdev", "user,id=n0", "-device", "virtio-net-pci,netdev=n0",
+           "-netdev", "user,id=n0" + (",restrict=on" if a.offline else ""), "-device", "virtio-net-pci,netdev=n0",
            *fwargs, *media]
     if a.disk:
         cmd += ["-drive", f"file={os.path.abspath(a.disk)},if=none,id=d0,format=raw", "-device", "virtio-blk-pci,drive=d0,bootindex=1"]

@@ -2,8 +2,10 @@
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL3 License
 # Last update 2026/10/16
-# Runs in the installed system during installation (Calamares, shellprocess@efifallback), after the
-# bootloader step, which no longer writes the EFI fallback path itself (installEFIFallback: false).
+# Runs during installation (Calamares, shellprocess@efifallback) in the live system, with ESP set to the
+# installed system's EFI partition (${ROOT}/boot/efi), after the bootloader step, which no longer writes
+# the EFI fallback path itself (installEFIFallback: false). It runs outside the installed system because
+# the installer's packages step has removed Calamares and this package from it by then.
 # The fallback path, EFI/BOOT/BOOTX64.EFI on the EFI system partition, is what the firmware starts
 # when it has no boot entry of its own (entries lost after a firmware reset, a disk in another machine).
 #  - Windows on the machine (its boot manager on the partition, or os-prober finds it): the fallback
@@ -12,7 +14,9 @@
 #  - Otherwise: the fallback path gets the same signed chain as the system's own folder: shim as
 #    BOOTX64.EFI (signed by Microsoft's UEFI CA), GRUB (signed by Debian), MokManager and GRUB's
 #    small configuration beside it; never GRUB alone, which the firmware refuses under Secure Boot.
-# ESP, OS_PROBER and EFI_FIRMWARE can be set for tests.
+# TARGET is the installed system's root device: os-prober run from the live system lists it too, and it
+# is not "another system".
+# ESP, OS_PROBER, EFI_FIRMWARE and TARGET can be set (the installer sets ESP and TARGET).
 ESP=${ESP:-/boot/efi}
 OS_PROBER=${OS_PROBER:-os-prober}
 EFI_FIRMWARE=${EFI_FIRMWARE:-/sys/firmware/efi}
@@ -28,7 +32,8 @@ for f in shimx64.efi grubx64.efi mmx64.efi; do
 		exit 0
 	fi
 done
-OTHERS=$($OS_PROBER 2>/dev/null)
+TARGET=${TARGET:-}
+OTHERS=$($OS_PROBER 2>/dev/null | grep -v -e "^${TARGET:-//none//}[:@]")
 if [ -n "$(efi_file "$(efi_dir Microsoft)/Boot" bootmgfw.efi 2>/dev/null)" ] || echo "$OTHERS" | grep -qi ':windows:'; then
 	echo "efi-fallback: Windows is on this machine, its fallback loader stays as it is"
 	exit 0
