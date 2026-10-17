@@ -10,7 +10,7 @@ cd "$work"
 cp "$source"/{Makefile,run-synthetic-tests.sh,run-shader-tests.sh,run-hack-tests.sh,run-native-tests.sh,measure-hack.py,measure-quads.py} .
 cp "$source"/tests/*.{c,py} tests/
 # Build only test programs. Every production executable is an installed file.
-for name in egl-damage state announce quad quads quads-dlist quads-xform shader-quads; do
+for name in egl-damage state announce quad quads quads-dlist quads-xform shader-quads draw-commands; do
     make "tests/$name"
 done
 ln -sf /usr/lib/gl-stereo/libgl-stereo.so libgl-stereo.so
