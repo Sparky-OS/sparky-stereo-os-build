@@ -26,10 +26,11 @@ def main():
                 pass
 
     def wait_for(token, sec):
+        tokens = token if isinstance(token, tuple) else (token,)
         t = time.time()
         while time.time() - t < sec:
             read(0.5)
-            if buf.rstrip().endswith(token):
+            if buf.rstrip().endswith(tokens):
                 # quiet for a second: the prompt is the last thing written
                 n = len(buf)
                 read(1.0)
@@ -41,7 +42,8 @@ def main():
     if not wait_for(b"login:", 60):
         sys.exit("no login prompt")
     s.sendall(user.encode() + b"\n")
-    if not wait_for(b"Password:", 20):
+    # the prompt is in the system's language (German: Passwort)
+    if not wait_for((b"Password:", b"Passwort:", b"Senha:", "Hasło:".encode(), b"Mot de passe :"), 20):
         sys.exit("no password prompt")
     s.sendall(pw.encode() + b"\n")
     read(4)
