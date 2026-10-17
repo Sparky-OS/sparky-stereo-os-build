@@ -17,13 +17,16 @@
 # only when it is empty, and writes the person's own value at their first login); a trigger follows
 # plasma-welcome's upgrades, so a new account never sees the update page either, while an existing account
 # still gets it after an upgrade of Plasma, as KDE does.
+# KInfoCenter's About page reads /etc/xdg/kcm-about-distrorc, which Debian's desktop-base sets to Debian's
+# emblem and "forky/sid": it is diverted the same way and replaced by the edition's logo, name and website,
+# with the version taken from os-release (kcm-about-distrorc).
 # It also installs stereo-display-info, the command that prints what each display can do in
 # stereo 3D and deep colour (read from its EDID) and what it is doing now.
-# Last update 2026/10/16
+# Last update 2026/10/17
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
-VERSION=20261016.1~sparky9~0
+VERSION=20261017~sparky9~0
 PKG=sparky-stereo-info
 W=$(mktemp -d /K3D/temp/sparky-os/info-build.XXXXXX)
 trap 'rm -rf "$W"' EXIT
@@ -31,6 +34,7 @@ D=$W/$PKG
 mkdir -p "$D/DEBIAN" "$D/usr/bin" "$D/usr/share/$PKG" "$D/usr/share/doc/$PKG"
 cp "$HERE/edition" "$D/usr/share/$PKG/edition"
 cp "$HERE/welcome-header.html" "$D/usr/share/$PKG/welcome-header.html"
+install -m 644 "$HERE/kcm-about-distrorc" "$D/usr/share/$PKG/kcm-about-distrorc"
 install -m 755 "$HERE/stereo-display-info" "$D/usr/bin/stereo-display-info"
 
 cat >"$D/DEBIAN/preinst" <<'EOF'
@@ -38,7 +42,7 @@ cat >"$D/DEBIAN/preinst" <<'EOF'
 # preinst script
 set -e
 if [ "$1" = "install" ] || [ "$1" = "upgrade" ]; then
-	for f in /usr/lib/os-release /etc/lsb-release /usr/lib/sparky-welcome/index.html; do
+	for f in /usr/lib/os-release /etc/lsb-release /usr/lib/sparky-welcome/index.html /etc/xdg/kcm-about-distrorc; do
 		if ! dpkg-divert --listpackage "$f" | grep -q sparky-stereo-info; then
 			dpkg-divert --quiet --package sparky-stereo-info --add --rename --divert "$f.sparky" "$f"
 			# keep the system named until postinst writes the edition's version
@@ -86,6 +90,12 @@ welcome() {
 	chmod 644 /usr/lib/sparky-welcome/index.html.new
 	mv /usr/lib/sparky-welcome/index.html.new /usr/lib/sparky-welcome/index.html
 }
+aboutdistro() {
+	mkdir -p /etc/xdg
+	cp /usr/share/sparky-stereo-info/kcm-about-distrorc /etc/xdg/kcm-about-distrorc.new
+	chmod 644 /etc/xdg/kcm-about-distrorc.new
+	mv /etc/xdg/kcm-about-distrorc.new /etc/xdg/kcm-about-distrorc
+}
 welcomecenter() {
 	f=/etc/xdg/plasma-welcomerc
 	# a file the administrator wrote is left alone
@@ -105,6 +115,7 @@ case "$1" in
 		osrelease
 		lsbrelease
 		welcome
+		aboutdistro
 		welcomecenter
 	;;
 esac
@@ -118,7 +129,7 @@ if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
 	if grep -q '^# sparky-stereo-info' /etc/xdg/plasma-welcomerc 2>/dev/null; then rm -f /etc/xdg/plasma-welcomerc; fi
 fi
 if [ "$1" = "remove" ] || [ "$1" = "purge" ] || [ "$1" = "abort-install" ]; then
-	for f in /usr/lib/os-release /etc/lsb-release /usr/lib/sparky-welcome/index.html; do
+	for f in /usr/lib/os-release /etc/lsb-release /usr/lib/sparky-welcome/index.html /etc/xdg/kcm-about-distrorc; do
 		if dpkg-divert --listpackage "$f" | grep -q sparky-stereo-info; then
 			rm -f "$f"
 			dpkg-divert --quiet --package sparky-stereo-info --remove --rename --divert "$f.sparky" "$f"
@@ -177,7 +188,8 @@ Description: Sparky Stereo OS info
   (Forky), in os-release and lsb-release, keeping Sparky's ID and codename,
   and in Sparky Welcome's heading with the edition's credit line. Sparky
   Welcome is the welcome at the first login; KDE's Welcome Center stays in
-  the menu.
+  the menu. KInfoCenter's About page shows the edition's logo, name and
+  website, with the version from os-release.
   Also the stereo-display-info command: what each display can do in stereo 3D
   and deep colour, and what it is doing now.
 EOF
