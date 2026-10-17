@@ -223,50 +223,75 @@ def refuse(src: str) -> str | None:
     return None
 
 
+# acorn runs in one Node process per projecting process, kept open: a line with two file names in, a line
+# with both token lists out (starting Node for every file cost more than the projection itself)
 _ACORN = r'''
 const fs = require('fs');
+const readline = require('readline');
 let acorn;
 try { acorn = require('acorn'); } catch (e) { process.exit(4); }
-const out = [];
-for (const f of process.argv.slice(1)) {
+function toks(f) {
   const src = fs.readFileSync(f, 'utf8');
-  const toks = [];
+  const out = [];
   let prevEnd = 0;
   try {
     for (const t of acorn.tokenizer(src, {ecmaVersion: 'latest', allowHashBang: true, locations: true,
                                           allowReturnOutsideFunction: true, allowImportExportEverywhere: true,
                                           allowAwaitOutsideFunction: true, sourceType: 'script'})) {
       const nl = t.loc.start.line > prevEnd ? 1 : 0;
-      toks.push([t.type.label, t.value === undefined ? null : String(t.value), nl]);
+      out.push([t.type.label, t.value === undefined ? null : String(t.value), nl]);
       prevEnd = t.loc.end.line;
     }
-  } catch (e) { out.push(null); continue; }
-  out.push(toks);
+  } catch (e) { return null; }
+  return out;
 }
-process.stdout.write(JSON.stringify(out));
+readline.createInterface({input: process.stdin}).on('line', (line) => {
+  const files = JSON.parse(line);
+  process.stdout.write(JSON.stringify(files.map(toks)) + '\n');
+});
 '''
 
+_node = None
 
-def tokens(*texts) -> list | None:
+
+def _server():
+    global _node
+    if _node is not None and _node.poll() is None:
+        return _node
     node = shutil.which('node') or shutil.which('nodejs')
     if not node:
         return None
+    env = dict(os.environ, NODE_PATH='/usr/share/nodejs:/usr/lib/nodejs:' + os.environ.get('NODE_PATH', ''))
+    _node = subprocess.Popen([node, '-e', _ACORN], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, env=env, text=True, bufsize=1)
+    return _node
+
+
+def tokens(*texts) -> list | None:
     paths = []
     try:
         for t in texts:
             with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False, encoding='utf-8', errors='surrogateescape') as f:
                 f.write(t)
                 paths.append(f.name)
-        env = dict(os.environ, NODE_PATH='/usr/share/nodejs:/usr/lib/nodejs:' + os.environ.get('NODE_PATH', ''))
-        r = subprocess.run([node, '-e', _ACORN, *paths], capture_output=True, timeout=120, env=env)
-    except subprocess.TimeoutExpired:
+        for attempt in (1, 2):
+            srv = _server()
+            if srv is None:
+                return None
+            try:
+                srv.stdin.write(json.dumps(paths) + '\n')
+                srv.stdin.flush()
+                line = srv.stdout.readline()
+            except (BrokenPipeError, OSError):
+                line = ''
+            if line:
+                return json.loads(line)
+            global _node
+            _node = None          # the server died (acorn missing or a crash): start it once more, then give up
         return None
     finally:
         for p in paths:
             os.unlink(p)
-    if r.returncode != 0:
-        return None
-    return json.loads(r.stdout)
 
 
 def verify(original: str, lean: str, interpreter: str = '') -> tuple:
