@@ -226,7 +226,7 @@ candidate)
 	# the manifest before the functional suite: compile-qualification without that one gate, so the
 	# installed catalogue can hold the 132 receipts the functional suite checks
 	grep -v "installed-functional.status" compile-qualification.py > $B/compile-candidate.py
-	ln -sf $A/debug-equivalence.py $A/owning-fixes.json $B/
+	ln -sf $A/debug-equivalence.py $A/owning-fixes.json $A/owning-settings.json $B/
 	python3 $B/compile-candidate.py $B $B/qualification-candidate.json > $B/qualification-candidate.log 2>&1
 	status qualification-candidate $? ;;
 functional)
