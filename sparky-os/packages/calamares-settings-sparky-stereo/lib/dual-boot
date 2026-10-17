@@ -1,0 +1,23 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/15
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/15
+# Runs in the installed system during installation (Calamares, shellprocess@dualboot), before the
+# bootloader step. When os-prober finds Windows:
+#  - the hardware clock stays in local time, as Windows keeps it, so both show the right time;
+#  - GRUB runs os-prober, so Windows is in the boot menu. Debian turns os-prober off by default
+#    (GRUB_DISABLE_OS_PROBER) because it mounts other partitions; systems without Windows keep that.
+# ADJTIME, GRUBD and OS_PROBER can be set for tests.
+ADJTIME=${ADJTIME:-/etc/adjtime}
+GRUBD=${GRUBD:-/etc/default/grub.d}
+OS_PROBER=${OS_PROBER:-os-prober}
+$OS_PROBER 2>/dev/null | grep -qi ':windows:' || exit 0
+printf '0.0 0 0.0\n0\nLOCAL\n' > "$ADJTIME"
+[ "$ADJTIME" = /etc/adjtime ] && hwclock --systohc --localtime
+mkdir -p "$GRUBD"
+cat > "$GRUBD/sparky-stereo-dual-boot.cfg" <<'EOS'
+# Sparky Stereo OS: written by the installer because Windows was found beside this system.
+# os-prober adds Windows to the boot menu at every update-grub.
+GRUB_DISABLE_OS_PROBER=false
+EOS
+exit 0

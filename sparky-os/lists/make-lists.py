@@ -48,7 +48,11 @@ for l in open(os.path.join(DATA, 'dedup.tsv')):
     dedup[p] = (action, instead, why)
 
 # Packages of the KDE edition replaced by the dedup.
-base_remove = ['thunderbird', 'skanlite', 'blueman'] + sorted(p for p in base if p.startswith('thunderbird-l10n-'))
+# systemd-timesyncd: the edition keeps time with chrony (sparky-stereo-time)
+# vlc, vlc-bin, vlc-plugin-qt, vlc-plugin-skins2: the regular player; VLC Stereo (Provides: vlc) is the edition's VLC
+#   (Daniel, 2026-10-16: "swap current vlc for the stereo version"); libvlc5, libvlccore9 and the plugins stay for
+#   the programs that use them (Phonon's VLC backends, kalarm, freetuxtv)
+base_remove = ['thunderbird', 'skanlite', 'blueman', 'systemd-timesyncd', 'vlc', 'vlc-bin', 'vlc-plugin-qt', 'vlc-plugin-skins2'] + sorted(p for p in base if p.startswith('thunderbird-l10n-'))
 
 # 1. Applications from Daniel's system beyond the KDE edition, from Debian or Sparky
 # (vendor and local ones go through APTus), deduplicated, plus the KDE tools the dedup
@@ -332,7 +336,8 @@ with open(os.path.join(HERE, 'MISSING.md'), 'w') as f:
     for name, pkgs in missing.items():
         f.write('- **' + name + ':** ' + ', '.join(pkgs) + '\n')
 with open(os.path.join(HERE, 'base-remove.list'), 'w') as f:
-    f.write('# Packages of the KDE edition the dedup replaced (Thunderbird by Kontact, Skanlite by Skanpage, Blueman by Bluedevil)\n')
+    f.write('# Packages of the KDE edition the dedup replaced (Thunderbird by Kontact, Skanlite by Skanpage, Blueman by Bluedevil),\n'
+            '# systemd-timesyncd (the edition keeps time with chrony) and the regular VLC player (VLC Stereo is the edition\'s VLC)\n')
     f.write('\n'.join(base_remove) + '\n')
 with open(os.path.join(HERE, 'aptus.list'), 'w') as f:
     f.write('# Closed programs from Daniel\'s system: offered in APTus, not installed\n')

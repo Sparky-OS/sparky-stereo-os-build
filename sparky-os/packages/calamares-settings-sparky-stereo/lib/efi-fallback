@@ -1,0 +1,68 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/16
+# Runs during installation (Calamares, shellprocess@efifallback) in the live system, with ESP set to the
+# installed system's EFI partition (${ROOT}/boot/efi), after the bootloader step, which no longer writes
+# the EFI fallback path itself (installEFIFallback: false). It runs outside the installed system because
+# the installer's packages step has removed Calamares and this package from it by then.
+# The fallback path, EFI/BOOT/BOOTX64.EFI on the EFI system partition, is what the firmware starts
+# when it has no boot entry of its own (entries lost after a firmware reset, a disk in another machine).
+#  - Windows on the machine (its boot manager on the partition, or os-prober finds it): the fallback
+#    path stays as it is; it is Windows' own.
+#  - Another system found by os-prober, and a fallback loader already there: it stays as it is.
+#  - Otherwise: the fallback path gets the same signed chain as the system's own folder: shim as
+#    BOOTX64.EFI (signed by Microsoft's UEFI CA), GRUB (signed by Debian), MokManager and GRUB's
+#    small configuration beside it; never GRUB alone, which the firmware refuses under Secure Boot.
+# TARGET is the installed system's root device: os-prober run from the live system lists it too, and it
+# is not "another system".
+# ESP, OS_PROBER, EFI_FIRMWARE, TARGET and ROOT can be set (the installer sets ESP and ROOT).
+ESP=${ESP:-/boot/efi}
+OS_PROBER=${OS_PROBER:-os-prober}
+EFI_FIRMWARE=${EFI_FIRMWARE:-/sys/firmware/efi}
+[ -d "$EFI_FIRMWARE" ] || exit 0
+[ -d "$ESP/EFI" ] || exit 0
+# names on the EFI partition (FAT) are found whatever their case
+efi_dir() { find "$ESP/EFI" -mindepth 1 -maxdepth 1 -type d -iname "$1" 2>/dev/null | head -n 1; }
+efi_file() { [ -n "$1" ] && find "$1" -mindepth 1 -maxdepth 1 -type f -iname "$2" 2>/dev/null | head -n 1; }
+SRC=$(efi_dir sparky)
+for f in shimx64.efi grubx64.efi mmx64.efi; do
+	if [ -z "$(efi_file "$SRC" "$f")" ]; then
+		echo "efi-fallback: no $f in $ESP/EFI/sparky, the fallback path is left as it is"
+		exit 0
+	fi
+done
+TARGET=${TARGET:-}
+# from the installer: the installed system's root device, from its mount point (ROOT)
+if [ -z "$TARGET" ] && [ -n "${ROOT:-}" ]; then
+	TARGET=$(findmnt -n -o SOURCE "$ROOT" 2>/dev/null)
+fi
+OTHERS=$($OS_PROBER 2>/dev/null | grep -v -e "^${TARGET:-//none//}[:@]")
+if [ -n "$(efi_file "$(efi_dir Microsoft)/Boot" bootmgfw.efi 2>/dev/null)" ] || echo "$OTHERS" | grep -qi ':windows:'; then
+	echo "efi-fallback: Windows is on this machine, its fallback loader stays as it is"
+	exit 0
+fi
+DST=$(efi_dir boot)
+if [ -n "$OTHERS" ] && [ -n "$(efi_file "$DST" bootx64.efi)" ]; then
+	echo "efi-fallback: another system is on this machine, its fallback loader stays as it is"
+	exit 0
+fi
+[ -n "$DST" ] || DST=$ESP/EFI/BOOT
+mkdir -p "$DST"
+# replace an existing BOOTX64.EFI whatever the case of its name
+old=$(efi_file "$DST" bootx64.efi)
+[ -n "$old" ] && rm -f "$old"
+cp "$(efi_file "$SRC" shimx64.efi)" "$DST/BOOTX64.EFI"
+for f in grubx64.efi mmx64.efi; do
+	old=$(efi_file "$DST" $f)
+	[ -n "$old" ] && rm -f "$old"
+	cp "$(efi_file "$SRC" $f)" "$DST/$f"
+done
+cfg=$(efi_file "$SRC" grub.cfg)
+if [ -n "$cfg" ]; then
+	old=$(efi_file "$DST" grub.cfg)
+	[ -n "$old" ] && rm -f "$old"
+	cp "$cfg" "$DST/grub.cfg"
+fi
+echo "efi-fallback: $DST holds shim, GRUB and MokManager from $SRC"
+exit 0

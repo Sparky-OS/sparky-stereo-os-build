@@ -11,12 +11,12 @@
 #   repository's public key, fingerprint 10DF D38D AD1E 4808 BC68 8E5A 945E 5D07 9A2A 0B9C;
 #   tests pass their own throwaway key)
 # Output goes to $OUT (default: the current folder; point it at the repository folder yourself).
-# Last update 2026/10/05
+# Last update 2026/10/16
 set -euo pipefail
 KEY=${1:-$(cd "$(dirname "$0")" && pwd)/sparky-stereo-repo.asc}
 [ -s "$KEY" ] || { echo "$KEY is empty or missing" >&2; exit 1; }
 OUT=${OUT:-$PWD}
-VERSION=${VERSION:-20261005.1~sparky9~0}
+VERSION=${VERSION:-20261016~sparky9~0}
 PKG=sparky-stereo-keyring
 W=$(mktemp -d "${TMPDIR:-/K3D/temp}/keyring-build.XXXXXX")
 trap 'rm -rf "${W:?}"' EXIT

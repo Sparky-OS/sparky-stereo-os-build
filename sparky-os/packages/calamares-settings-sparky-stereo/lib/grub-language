@@ -1,0 +1,17 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/16
+# Runs from the live system on the installed system during installation (Calamares,
+# shellprocess@grublanguage, after the bootloader step): GRUB's menu in the installed system's
+# language. The installer's steps run grub-mkconfig with the live session's environment, where the
+# session's own language variables (LANGUAGE, LC_MESSAGES, LC_ALL) can name another language than the
+# one chosen for the system; this writes the menu again in the language of /etc/default/locale.
+# The translations of the menu entries themselves come from sparky-stereo-grub-l10n.
+# ROOT is the installed system's root (Calamares' ${ROOT}).
+ROOT=${ROOT:-}
+[ -n "$ROOT" ] && [ -d "$ROOT" ] || exit 0
+[ -x "$ROOT/usr/sbin/update-grub" ] && [ -e "$ROOT/boot/grub/grub.cfg" ] || exit 0
+lang=$(sed -n 's/^[[:space:]]*LANG=//p' "$ROOT/etc/default/locale" 2>/dev/null | tr -d '"'"'" | tail -n1)
+[ -n "$lang" ] || exit 0
+exec chroot "$ROOT" env -u LANGUAGE -u LC_ALL -u LC_MESSAGES LANG="$lang" /usr/sbin/update-grub

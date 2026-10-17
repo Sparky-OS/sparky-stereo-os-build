@@ -1,0 +1,43 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/16
+# Runs during installation (Calamares): "on" in the installed system before grubefiinstall
+# (shellprocess@offlineon), "off" from the live system on the installed system's files after
+# securebootinstall (shellprocess@offlineoff, with OFFLINE, APT_DIR and LISTS under ${ROOT}).
+# SparkyLinux's grubefiinstall and securebootinstall steps install packages with apt: on a UEFI
+# machine GRUB's EFI packages take grub-pc's place (they conflict, so the image cannot carry both).
+# The image carries those packages in a small local repository (OFFLINE, made when the ISO is packed),
+# so the same apt commands work without a network connection; online, apt finds the same versions.
+#   offline-packages on    the local repository becomes an apt source of the installed system
+#   offline-packages off   the source, its index and the packages leave the installed system
+# OFFLINE, APT_DIR and LISTS can be set for tests.
+OFFLINE=${OFFLINE:-/usr/share/sparky-stereo/offline-debs}
+APT_DIR=${APT_DIR:-/etc/apt}
+LISTS=${LISTS:-/var/lib/apt/lists}
+SOURCE=$APT_DIR/sources.list.d/sparky-stereo-offline.sources
+case "$1" in
+on)
+	[ -f "$OFFLINE/Packages" ] || exit 0
+	mkdir -p "$APT_DIR/sources.list.d"
+	cat > "$SOURCE" <<EOS
+# Sparky Stereo OS: the installer's local packages, removed once the installation's apt steps are done
+Types: deb
+URIs: file:$OFFLINE
+Suites: ./
+Trusted: yes
+EOS
+	;;
+off)
+	rm -f "$SOURCE"
+	for f in "$LISTS"/*sparky-stereo_offline-debs*; do
+		[ -e "$f" ] && rm -f "$f"
+	done
+	rm -rf "$OFFLINE"
+	;;
+*)
+	echo "usage: offline-packages on|off" >&2
+	exit 2
+	;;
+esac
+exit 0
