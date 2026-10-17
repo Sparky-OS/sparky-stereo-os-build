@@ -1,0 +1,352 @@
+Description: glsnake: three places for the second light, taking turns
+ Before glsnake-light-position.patch, the second light's place came from
+ uninitialised memory, so users saw three different pictures from launch to
+ launch: the light at the viewer (most launches), the sun shining from the
+ authors' direction, or a lamp. That patch keeps the light at the viewer;
+ this one lets the user have all three.
+ .
+ Light 1 can be at the viewer (0, 0, 0, 1), the lamp where the authors placed
+ it (0, 20, -1, 1), or the sun from that direction (0, 20, -1, 0). Each has a
+ switch (--viewer-light, --lamp-light, --sun-light and their --no- forms), an
+ X resource (viewerLight, lampLight, sunLight, all True) and a checkbox in
+ the settings (hacks/config/glsnake.xml, labels translated in de, fr, ja, ko,
+ pl, pt_BR, zh_CN and zh_TW). The lights switched on take turns, the next one
+ whenever start_morph() begins a new shape, starting with the viewer; one
+ switched on stays; with none on, all three take turns. Light 0 is unchanged.
+ The position is set in gl_init(), which the draw path calls every frame with
+ the identity modelview, as before.
+ .
+ This is a Sparky Stereo OS choice made by Daniel Ramos, not a request to
+ upstream.
+Author: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-10-17
+
+--- a/hacks/config/glsnake.xml
++++ b/hacks/config/glsnake.xml
+@@ -44,6 +44,12 @@
+    <boolean id="showfps" _label="Show frame rate" arg-set="--fps"/>
+   </hgroup>
+ 
++  <hgroup>
++   <boolean id="viewerlight" _label="Light at the viewer" arg-unset="--no-viewer-light"/>
++   <boolean id="lamplight"   _label="Lamp"                arg-unset="--no-lamp-light"/>
++   <boolean id="sunlight"    _label="Sunlight"            arg-unset="--no-sun-light"/>
++  </hgroup>
++
+   <xscreensaver-updater />
+ 
+   <_description>
+--- a/hacks/glx/glsnake.c
++++ b/hacks/glx/glsnake.c
+@@ -91,6 +91,9 @@
+ #define DEF_ZOOM        25.0
+ #define DEF_WIREFRAME   0
+ #define DEF_TRANSPARENT 1
++#define DEF_SUNLIGHT    1
++#define DEF_VIEWERLIGHT 1
++#define DEF_LAMPLIGHT   1
+ #else
+ /* xscreensaver options doobies prefer strings */
+ #define DEF_YANGVEL     "0.10"
+@@ -104,6 +107,9 @@
+ #define DEF_ZOOM        "25.0"
+ #define DEF_WIREFRAME   "False"
+ #define DEF_TRANSPARENT "True"
++#define DEF_SUNLIGHT    "True"
++#define DEF_VIEWERLIGHT "True"
++#define DEF_LAMPLIGHT   "True"
+ #endif
+ 
+ /* static variables */
+@@ -119,6 +125,9 @@ static Bool titles;
+ static Bool interactive;
+ static Bool wireframe;
+ static Bool transparent;
++static Bool sunlight;
++static Bool viewerlight;
++static Bool lamplight;
+ static GLfloat zoom;
+ static GLfloat angvel;
+ 
+@@ -156,6 +165,12 @@ static XrmOptionDescRec opts[] = {
+     { "-no-wireframe", ".wireframe", XrmoptionNoArg, "false" },
+     { "-transparent", ".transparent", XrmoptionNoArg, "true" },
+     { "-no-transparent", ".transparent", XrmoptionNoArg, "false" },
++    { "-sun-light", ".sunLight", XrmoptionNoArg, "True" },
++    { "-no-sun-light", ".sunLight", XrmoptionNoArg, "False" },
++    { "-viewer-light", ".viewerLight", XrmoptionNoArg, "True" },
++    { "-no-viewer-light", ".viewerLight", XrmoptionNoArg, "False" },
++    { "-lamp-light", ".lampLight", XrmoptionNoArg, "True" },
++    { "-no-lamp-light", ".lampLight", XrmoptionNoArg, "False" },
+ };
+ 
+ static argtype vars[] = {
+@@ -170,6 +185,9 @@ static argtype vars[] = {
+     {&zoom, "zoom", "Zoom", DEF_ZOOM, t_Float},
+     {&wireframe, "wireframe", "Wireframe", DEF_WIREFRAME, t_Bool},
+     {&transparent, "transparent", "Transparent!", DEF_TRANSPARENT, t_Bool},
++    {&sunlight, "sunLight", "SunLight", DEF_SUNLIGHT, t_Bool},
++    {&viewerlight, "viewerLight", "ViewerLight", DEF_VIEWERLIGHT, t_Bool},
++    {&lamplight, "lampLight", "LampLight", DEF_LAMPLIGHT, t_Bool},
+ };
+ 
+ ENTRYPOINT ModeSpecOpt glsnake_opts = {countof(opts), opts, countof(vars), vars, NULL};
+@@ -217,6 +235,9 @@ struct glsnake_cfg {
+     /* model morphing */
+     int new_morph;
+ 
++    /* the second light: at the viewer, the lamp or the sun (next_light()) */
++    int light;
++
+     /* colours */
+     float colour[2][4];
+     int next_colour;
+@@ -1368,7 +1389,12 @@ static void gl_init(
+ #endif
+ 	     ) 
+ {
+-    float light_pos[][4] = {{0.0, 10.0, 20.0, 0.0}, {0.0, 0.0, 0.0, 1.0}};
++#ifndef HAVE_GLUT
++    struct glsnake_cfg * bp = &glc[MI_SCREEN(mi)];
++#endif
++    static const float light0_pos[] = {0.0, 10.0, 20.0, 0.0};
++    /* light 1: at the viewer, the lamp where the authors placed it, the sun in its direction */
++    static const float light1_pos[][4] = {{0.0, 0.0, 0.0, 1.0}, {0.0, 20.0, -1.0, 1.0}, {0.0, 20.0, -1.0, 0.0}};
+     float light_dir[][3] = {{0.0, -10.0,-20.0}, {0.0,-20.0, 1.0}};
+ 
+     glEnable(GL_DEPTH_TEST);
+@@ -1383,12 +1409,12 @@ static void gl_init(
+ 
+     if (!wireframe) {
+ 	/*glColor4f(1.0, 1.0, 1.0, 1.0);*/
+-	glLightfv(GL_LIGHT0, GL_POSITION, light_pos[0]);
++	glLightfv(GL_LIGHT0, GL_POSITION, light0_pos);
+ 	glLightfv(GL_LIGHT0, GL_SPOT_DIRECTION, light_dir[0]);
+ 	glLightfv(GL_LIGHT0, GL_DIFFUSE, white_light);
+ 	/*glLightfv(GL_LIGHT0, GL_SPECULAR, white_light);*/
+ #if 1
+-	glLightfv(GL_LIGHT1, GL_POSITION, light_pos[1]);
++	glLightfv(GL_LIGHT1, GL_POSITION, light1_pos[bp->light]);
+ 	glLightfv(GL_LIGHT1, GL_SPOT_DIRECTION, light_dir[1]);
+ 	glLightfv(GL_LIGHT1, GL_DIFFUSE, white_light);
+ 	glLightfv(GL_LIGHT1, GL_SPECULAR, white_light);
+@@ -1426,6 +1452,7 @@ ENTRYPOINT void glsnake_reshape(
+ #endif
+ 		     int w, int h);
+ 
++static int next_light(int);
+ static void start_morph(struct glsnake_cfg *,
+                         unsigned int model_index, int immediate);
+ 
+@@ -1468,6 +1495,7 @@ ModeInfo * mi
+     bp->prev_colour = bp->next_colour = COLOUR_ACYCLIC;
+     bp->next_model = RAND(models);
+     bp->prev_model = START_MODEL;
++    bp->light = next_light(2);
+     start_morph(bp, bp->prev_model, 1);
+ 
+     /* set up a font for the labels */
+@@ -1925,10 +1953,31 @@ static void morph_colour(struct glsnake_
+     bp->colour[1][3] = colour[bp->prev_colour][1][3] * compct + colour[bp->next_colour][1][3] * percent;
+ }
+ 
++/* The second light after this one, from those switched on: at the viewer,
++ * the lamp, the sun. With none switched on, all three take turns. */
++static int next_light(int light)
++{
++    int on[3], i;
++
++    on[0] = viewerlight;
++    on[1] = lamplight;
++    on[2] = sunlight;
++    if (!on[0] && !on[1] && !on[2])
++	on[0] = on[1] = on[2] = 1;
++    for (i = 1; i <= 3; i++)
++	if (on[(light + i) % 3])
++	    return (light + i) % 3;
++    return light;
++}
++
+ /* Start morph process to this model */
+ static void start_morph(struct glsnake_cfg *bp, 
+                         unsigned int model_index, int immediate)
+ {
++    /* each new shape gets the next light */
++    if (!immediate)
++	bp->light = next_light(bp->light);
++
+     /* if immediate, don't bother morphing, go straight to the next model */
+     if (immediate) {
+ 	int i;
+--- a/hacks/glx/glsnake.man
++++ b/hacks/glx/glsnake.man
+@@ -7,6 +7,7 @@ glsnake \- OpenGL enhanced Rubik's Snake
+ [\-\-window\-id \fInumber\fP]
+ [\-\-visual \fIvisual\fP] [\-\-delay \fImicroseconds\fP] [\-\-fps]
+ [\-\-wireframe] [\-\-altcolour]
++[\-\-no\-viewer\-light] [\-\-no\-lamp\-light] [\-\-no\-sun\-light]
+ [\-\-angvel \fIangular\fP]
+ [\-\-explode \fIdistance\fP]
+ [\-\-statictime \fImilliseconds\fP]
+@@ -46,6 +47,16 @@ Display the snake in wireframe mode, rat
+ Use the alternate colour scheme for the snake.  Shape identification using
+ colour will be disabled.
+ .TP 8
++.B \-\-viewer\-light | \-\-no\-viewer\-light
++.TP 8
++.B \-\-lamp\-light | \-\-no\-lamp\-light
++.TP 8
++.B \-\-sun\-light | \-\-no\-sun\-light
++The second light can be at the viewer, a lamp above the snake, or the sun
++shining from the same direction.  Those switched on take turns, the next one
++with each new shape; one switched on stays.  All three are on by default, and
++with none on all three take turns.
++.TP 8
+ .B -angvel \fIangular\fP
+ Change the speed at which the snake morphs to a new shape.
+ .TP 8
+--- a/po/de.po
++++ b/po/de.po
+@@ -14430,3 +14430,15 @@ msgstr ""
+ #~ msgstr ""
+ #~ "Eine Nachbildung des im Film »Matrix« zu sehenden Scrolltextes. "
+ #~ "Geschrieben von Jamie Zawinski."
++
++#: hacks/config/glsnake.xml.h
++msgid "Light at the viewer"
++msgstr "Licht beim Betrachter"
++
++#: hacks/config/glsnake.xml.h
++msgid "Lamp"
++msgstr "Lampe"
++
++#: hacks/config/glsnake.xml.h
++msgid "Sunlight"
++msgstr "Sonnenlicht"
+--- a/po/fr.po
++++ b/po/fr.po
+@@ -13679,3 +13679,15 @@ msgstr ""
+ 
+ #~ msgid "Lens Offset"
+ #~ msgstr "Décalage lentille"
++
++#: hacks/config/glsnake.xml.h
++msgid "Light at the viewer"
++msgstr "Lumière côté spectateur"
++
++#: hacks/config/glsnake.xml.h
++msgid "Lamp"
++msgstr "Lampe"
++
++#: hacks/config/glsnake.xml.h
++msgid "Sunlight"
++msgstr "Lumière du soleil"
+--- a/po/ja.po
++++ b/po/ja.po
+@@ -11538,3 +11538,15 @@ msgstr ""
+ 
+ #~ msgid "Copyright 息 1991-2002 %s"
+ #~ msgstr "Copyright  1991-2002 %s"
++
++#: hacks/config/glsnake.xml.h
++msgid "Light at the viewer"
++msgstr "視点の光"
++
++#: hacks/config/glsnake.xml.h
++msgid "Lamp"
++msgstr "ランプ"
++
++#: hacks/config/glsnake.xml.h
++msgid "Sunlight"
++msgstr "太陽光"
+--- a/po/ko.po
++++ b/po/ko.po
+@@ -12355,3 +12355,15 @@ msgstr ""
+ 
+ #~ msgid "PDB File"
+ #~ msgstr "PDB 파일"
++
++#: hacks/config/glsnake.xml.h
++msgid "Light at the viewer"
++msgstr "보는 사람 쪽 조명"
++
++#: hacks/config/glsnake.xml.h
++msgid "Lamp"
++msgstr "램프"
++
++#: hacks/config/glsnake.xml.h
++msgid "Sunlight"
++msgstr "햇빛"
+--- a/po/pl.po
++++ b/po/pl.po
+@@ -12392,3 +12392,15 @@ msgstr ""
+ #, fuzzy
+ #~ msgid "Sandpaper"
+ #~ msgstr "_Tapeta"
++
++#: hacks/config/glsnake.xml.h
++msgid "Light at the viewer"
++msgstr "Światło przy widzu"
++
++#: hacks/config/glsnake.xml.h
++msgid "Lamp"
++msgstr "Lampa"
++
++#: hacks/config/glsnake.xml.h
++msgid "Sunlight"
++msgstr "Światło słoneczne"
+--- a/po/pt_BR.po
++++ b/po/pt_BR.po
+@@ -11836,3 +11836,15 @@ msgstr ""
+ 
+ #~ msgid "Preview of screen saver"
+ #~ msgstr "Demonstração da proteção de tela"
++
++#: hacks/config/glsnake.xml.h
++msgid "Light at the viewer"
++msgstr "Luz junto ao observador"
++
++#: hacks/config/glsnake.xml.h
++msgid "Lamp"
++msgstr "Lâmpada"
++
++#: hacks/config/glsnake.xml.h
++msgid "Sunlight"
++msgstr "Luz do sol"
+--- a/po/zh_CN.po
++++ b/po/zh_CN.po
+@@ -12718,3 +12718,15 @@ msgstr ""
+ 
+ #~ msgid "90"
+ #~ msgstr "90"
++
++#: hacks/config/glsnake.xml.h
++msgid "Light at the viewer"
++msgstr "观察者处的光"
++
++#: hacks/config/glsnake.xml.h
++msgid "Lamp"
++msgstr "灯"
++
++#: hacks/config/glsnake.xml.h
++msgid "Sunlight"
++msgstr "阳光"
+--- a/po/zh_TW.po
++++ b/po/zh_TW.po
+@@ -12433,3 +12433,15 @@ msgstr ""
+ 
+ #~ msgid "_Standard &lt;&lt;"
+ #~ msgstr "標準(_S) &lt;&lt;"
++
++#: hacks/config/glsnake.xml.h
++msgid "Light at the viewer"
++msgstr "觀察者處的光"
++
++#: hacks/config/glsnake.xml.h
++msgid "Lamp"
++msgstr "燈"
++
++#: hacks/config/glsnake.xml.h
++msgid "Sunlight"
++msgstr "陽光"

@@ -58,6 +58,8 @@ for name, version, patch, dependency in (
             '  * Expose Flurry particle depths through its existing OpenGL camera.\n'
             '  * Give glsnake\'s light positions their w component, so its lighting no\n'
             '    longer depends on uninitialised stack memory.\n'
+            '  * glsnake: the second light at the viewer, a lamp or the sun, as the user\n'
+            '    chooses; those switched on take turns with each new shape.\n'
             '  * Clean regenerated driver files and use the images double-colon rule.')
     (debian/'changelog').write_text(changelog+(debian/'changelog').read_text())
     patchtext = (repo/patch).read_text()
@@ -91,5 +93,7 @@ rocks:\t\trocks.o x11-frame.o $(HACK_OBJS) $(COL)
         with (patches/'series').open('a') as out: out.write('flurry-gl-camera.patch\n')
         (patches/'glsnake-light-position.patch').write_text((repo/'savers/glsnake-light-position.patch').read_text())
         with (patches/'series').open('a') as out: out.write('glsnake-light-position.patch\n')
+        (patches/'glsnake-light-choice.patch').write_bytes((repo/'savers/glsnake-light-choice.patch').read_bytes())
+        with (patches/'series').open('a') as out: out.write('glsnake-light-choice.patch\n')
         with copyright_file.open('a') as out: out.write('\n'+(repo/'packaging/xscreensaver-flurry.copyright').read_text())
     subprocess.run(['dpkg-source','--before-build',str(tree)], check=True)
