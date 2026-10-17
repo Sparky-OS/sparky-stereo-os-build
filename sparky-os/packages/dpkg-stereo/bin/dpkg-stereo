@@ -1,0 +1,1040 @@
+#!/usr/bin/python3
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
+# Copyright 2026 under the MIT License
+# Last update 2026/10/16
+# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
+# SPDX-License-Identifier: MIT
+"""dpkg-stereo: Lean Code for installed packages (Sparky Stereo OS Lean Code policy, "Install-time
+projection: dpkg-stereo", Daniel 2026-10-09).
+
+The .deb files stay as their distributions built them. After dpkg has installed or upgraded packages,
+dpkg-stereo projects the text files they installed into their machine form (MR, the removable comments
+absent) through the qualified adapters of the lean package, checks every projection with the file's
+consumer, and records it. Before dpkg runs, every projected conffile whose bytes still equal its lean
+form is put back to its pristine bytes, so dpkg sees an unmodified conffile and never asks; a conffile
+the person edited is left alone and dpkg's usual rules apply. Everything is recorded and reversible.
+
+usage: dpkg-stereo [--root DIR] [--map /etc=DIR ...] COMMAND
+  --project [PACKAGE...]   project these packages' files (all installed packages without a name)
+  --pre-invoke             before dpkg (dpkg's pre-invoke hook): projected conffiles back to pristine
+  --post-invoke            after dpkg (dpkg's post-invoke hook): project what changed, reproject conffiles
+  --verify [PACKAGE...]    projected files against their lean hashes, pristine records against dpkg's
+  --restore [PACKAGE...]   the original files back (all packages without a name), records dropped
+  --hold PACKAGE|PATH      never project it again (restores it first); --unhold undoes that
+  --hr PATH                write the full HR copy of an installed file to /usr/share/doc/PKG/hr/PATH
+  --fetch-hr               write the HR copies of every projected setting (after the first online update)
+  --resolve PATH:LINE[:COL]  an error location in a lean file -> the authored line
+  --manifest FILE          the coverage manifest of every comment-bearing text file, with reasons
+  --status                 what is projected, held, and left alone
+Options: --jobs N (parallel checks, default 4), --image (building an image).
+Environment: DPKG_STEREO_DISABLE=1 makes the dpkg hooks do nothing (an image build that projects in its
+own step); DPKG_STEREO_NO_PROJECT=1 skips the first projection when the package is installed.
+"""
+
+import argparse
+import fcntl
+import hashlib
+import io
+import lzma
+import os
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import time
+from concurrent.futures import ProcessPoolExecutor
+
+sys.path.insert(0, os.environ.get('DPKG_STEREO_LIB', '/usr/lib/dpkg-stereo'))
+
+
+class _Lazy:
+    """The lean package, imported the first time it is needed (dpkg's hooks usually need none of it)."""
+    def __init__(self, name):
+        self.name = name
+        self.mod = None
+
+    def __getattr__(self, attr):
+        if self.mod is None:
+            import importlib
+            self.mod = importlib.import_module('lean.' + self.name if self.name else 'lean')
+        return getattr(self.mod, attr)
+
+
+project = _Lazy('project')
+consumers = _Lazy('consumers')
+lean_pkg = _Lazy('')
+
+STATE = '/var/lib/dpkg-stereo'
+FILES = 'files.tsv'
+LEFT = 'left.tsv'
+HOLD = 'hold'
+PKGS = 'packages.tsv'
+CONFFILES = 'conffiles.tsv'
+PRISTINE = 'pristine'
+FILE_COLS = ('path', 'package', 'version', 'conffile', 'sha_orig', 'md5_orig', 'sha_lean', 'handler', 'variant',
+             'bytes_orig', 'bytes_lean')
+PKG_COLS = ('package', 'version', 'list_mtime', 'written')
+TEXT_SIZE_MAX = 4 << 20
+
+
+class Paths:
+    def __init__(self, root='/', maps=()):
+        self.root = root.rstrip('/') or ''
+        self.maps = sorted(((p.rstrip('/'), d.rstrip('/')) for p, d in maps), key=lambda x: -len(x[0]))
+
+    def real(self, path):
+        for prefix, d in self.maps:
+            if path == prefix or path.startswith(prefix + '/'):
+                return d + path[len(prefix):]
+        return self.root + path
+
+    def state(self, *parts):
+        return os.path.join(self.real(STATE), *parts)
+
+
+def sha256(b):
+    return hashlib.sha256(b).hexdigest()
+
+
+def md5(b):
+    return hashlib.md5(b).hexdigest()
+
+
+def read_table(path, cols):
+    rows = {}
+    try:
+        with open(path, encoding='utf-8', errors='surrogateescape') as f:
+            for line in f:
+                if line.startswith('#') or not line.strip():
+                    continue
+                v = line.rstrip('\n').split('\t')
+                rows[v[0]] = dict(zip(cols, v))
+    except FileNotFoundError:
+        pass
+    return rows
+
+
+LEFT_COLS = ('path', 'package', 'handler', 'reason')
+
+
+class Records(dict):
+    """path -> record, kept per package (records/<package>.tsv, left/<package>.tsv), so a dpkg run reads and
+    writes only the packages it touched. Loads every package, or only `pkgs`; `save()` writes the packages
+    whose rows changed, and for projections the small conffile index pre-invoke reads."""
+
+    def __init__(self, P, kind='records', pkgs=None):
+        super().__init__()
+        self.P, self.kind = P, kind
+        self.cols = FILE_COLS if kind == 'records' else LEFT_COLS
+        self.dir = P.state(kind)
+        self.dirty = set()
+        self.loaded = set()
+        _migrate(P)
+        if pkgs is None:
+            try:
+                names = [f[:-4] for f in os.listdir(self.dir) if f.endswith('.tsv')]
+            except FileNotFoundError:
+                names = []
+        else:
+            names = list(pkgs)
+        for n in names:
+            self.load(n)
+
+    def load(self, pkg):
+        if pkg in self.loaded:
+            return
+        self.loaded.add(pkg)
+        dict.update(self, read_table(os.path.join(self.dir, pkg + '.tsv'), self.cols))
+
+    def __setitem__(self, path, rec):
+        self.load(rec['package'])
+        old = self.get(path)
+        if old and old['package'] != rec['package']:
+            self.dirty.add(old['package'])
+        self.dirty.add(rec['package'])
+        dict.__setitem__(self, path, rec)
+
+    def __delitem__(self, path):
+        self.dirty.add(self[path]['package'])
+        dict.__delitem__(self, path)
+
+    def pop(self, path, *default):
+        if path in self:
+            self.dirty.add(self[path]['package'])
+        return dict.pop(self, path, *default)
+
+    def save(self):
+        if not self.dirty:
+            return
+        os.makedirs(self.dir, exist_ok=True)
+        by = {}
+        for path, rec in self.items():
+            if rec['package'] in self.dirty:
+                by.setdefault(rec['package'], {})[path] = rec
+        for pkg in self.dirty:
+            f = os.path.join(self.dir, pkg + '.tsv')
+            if by.get(pkg):
+                write_table(f, self.cols, by[pkg])
+            elif os.path.exists(f):
+                os.unlink(f)
+        if self.kind == 'records':
+            idx = read_table(self.P.state(CONFFILES), FILE_COLS)
+            idx = {k: v for k, v in idx.items() if v['package'] not in self.dirty}
+            for pkg in self.dirty:
+                idx.update({k: v for k, v in by.get(pkg, {}).items() if str(v.get('conffile')) == '1'})
+            write_table(self.P.state(CONFFILES), FILE_COLS, idx)
+        self.dirty = set()
+
+
+def _migrate(P):
+    """0.1.1 and 0.1.2 kept every record in one files.tsv and left.tsv: split them per package, once."""
+    for old, kind, cols in ((FILES, 'records', FILE_COLS), (LEFT, 'left', LEFT_COLS)):
+        f = P.state(old)
+        if not os.path.exists(f):
+            continue
+        rows = read_table(f, cols)
+        os.makedirs(P.state(kind), exist_ok=True)
+        by = {}
+        for path, rec in rows.items():
+            by.setdefault(rec['package'], {})[path] = rec
+        for pkg, r in by.items():
+            write_table(os.path.join(P.state(kind), pkg + '.tsv'), cols, r)
+        if kind == 'records':
+            write_table(P.state(CONFFILES), FILE_COLS, {k: v for k, v in rows.items() if str(v.get('conffile')) == '1'})
+        os.unlink(f)
+
+
+def write_table(path, cols, rows):
+    tmp = path + '.new'
+    with open(tmp, 'w', encoding='utf-8', errors='surrogateescape') as f:
+        f.write('#' + '\t'.join(cols) + '\n')
+        for k in sorted(rows):
+            f.write('\t'.join(str(rows[k].get(c, '')) for c in cols) + '\n')
+    os.replace(tmp, path)
+
+
+def dpkg_packages(P):
+    """{package: (version, arch-qualified info name)} from dpkg's status file."""
+    out = {}
+    try:
+        lists = set(os.listdir(P.real('/var/lib/dpkg/info')))
+    except FileNotFoundError:
+        lists = set()
+    pkg = ver = arch = status = None
+    multi = None
+    with open(P.real('/var/lib/dpkg/status'), encoding='utf-8', errors='surrogateescape') as f:
+        for line in f.read().split('\n') + ['']:
+            if not line:
+                if pkg and status and status.endswith(' installed'):
+                    name = pkg
+                    if multi == 'same' or f'{pkg}:{arch}.list' in lists:
+                        name = f'{pkg}:{arch}'
+                    out[pkg if name == pkg else name] = (ver, name)
+                pkg = ver = arch = status = multi = None
+                continue
+            if line.startswith('Package: '):
+                pkg = line[9:]
+            elif line.startswith('Version: '):
+                ver = line[9:]
+            elif line.startswith('Architecture: '):
+                arch = line[14:]
+            elif line.startswith('Status: '):
+                status = line[8:]
+            elif line.startswith('Multi-Arch: '):
+                multi = line[12:]
+    return out
+
+
+def conffiles(P):
+    """{path: md5} of every installed conffile (dpkg's status, Conffiles field)."""
+    out = {}
+    cur = False
+    with open(P.real('/var/lib/dpkg/status'), encoding='utf-8', errors='surrogateescape') as f:
+        for line in f:
+            if line.startswith('Conffiles:'):
+                cur = True
+                continue
+            if cur and line.startswith(' '):
+                parts = line.split()
+                if len(parts) >= 2:
+                    out[parts[0]] = parts[1]
+                continue
+            cur = False
+    return out
+
+
+def package_files(P, info):
+    try:
+        with open(P.real(f'/var/lib/dpkg/info/{info}.list'), encoding='utf-8', errors='surrogateescape') as f:
+            return [l.rstrip('\n') for l in f if l.strip()]
+    except FileNotFoundError:
+        return []
+
+
+def diversions(P):
+    """dpkg diversions: a diverted path holds another package's file; such paths are left alone."""
+    out = set()
+    try:
+        with open(P.real('/var/lib/dpkg/diversions'), encoding='utf-8', errors='surrogateescape') as f:
+            lines = f.read().split('\n')
+        for k in range(0, len(lines) - 2, 3):
+            out.add(lines[k])
+            out.add(lines[k + 1])
+    except FileNotFoundError:
+        pass
+    return out
+
+
+def _work(args):
+    path, real, package, seen = args
+    try:
+        st = os.lstat(real)
+    except OSError:
+        return path, None, 'missing', None
+    if not os.path.isfile(real) or os.path.islink(real):
+        return path, None, 'not a regular file', None
+    if st.st_size == 0 or st.st_size > TEXT_SIZE_MAX:
+        return path, None, 'empty' if st.st_size == 0 else 'larger than 4 MiB', None
+    with open(real, 'rb') as f:
+        data = f.read()
+    if b'\0' in data[:8192]:
+        return path, None, 'binary', None
+    if seen and sha256(data) == seen[0]:
+        # these bytes were projected and checked before (the version dpkg replaced, or the same version
+        # reinstalled): the same render gives the same lean bytes, and that pair needs no second check
+        r = project.project(path, data, package.split(':')[0], check=False)
+        if r.status == 'projected' and r.sha_out == seen[1]:
+            r.check = 'the same bytes as a checked projection'
+            return path, r, r.reason, data
+    try:
+        r = project.project(path, data, package.split(':')[0])
+    except Exception as e:      # never let one file stop the whole run: it is left alone, with the reason
+        r = project.Result(path=path, status='left', reason=f'adapter error: {type(e).__name__}: {e}'.split('\n')[0],
+                           bytes_in=len(data), sha_in=project.sha256(data))
+    return path, r, r.reason, data
+
+
+def recompile_pyc(reals):
+    """A projected .py keeps its mtime but not its size, so its byte-compiled files are stale: compile the
+    ones that exist again, in place, with the same optimisation level, by the interpreter that made them."""
+    import py_compile
+    import importlib.util
+    own = importlib.util.cache_from_source('x.py').rsplit('.', 2)[-2]      # e.g. cpython-314
+    other = {}
+    for real in reals:
+        d, base = os.path.split(real)
+        stem = base[:-3]
+        cache = os.path.join(d, '__pycache__')
+        if not os.path.isdir(cache):
+            continue
+        for name in os.listdir(cache):
+            if not name.startswith(stem + '.') or not name.endswith('.pyc'):
+                continue
+            tag = name[len(stem) + 1:-4]
+            opt = 2 if tag.endswith('.opt-2') else 1 if tag.endswith('.opt-1') else 0
+            impl = tag.split('.')[0]
+            if impl == own:
+                try:
+                    py_compile.compile(real, cfile=os.path.join(cache, name), doraise=True, optimize=opt)
+                except py_compile.PyCompileError:
+                    pass
+            else:
+                other.setdefault(impl, []).append((real, os.path.join(cache, name), opt))
+    for impl, items in other.items():
+        exe = shutil.which('python' + impl.replace('cpython-', '')[0] + '.' + impl.replace('cpython-', '')[1:])
+        if not exe:
+            continue
+        code = ('import py_compile,sys\nfor a,c,o in zip(*[iter(sys.argv[1:])]*3):\n'
+                '    try: py_compile.compile(a,cfile=c,doraise=True,optimize=int(o))\n    except Exception: pass\n')
+        args = [x for it in items for x in (it[0], it[1], str(it[2]))]
+        subprocess.run([exe, '-c', code, *args], check=False)
+
+
+def write_lean(real, data, lean, st):
+    tmp = real + '.dpkg-stereo-new'
+    with open(tmp, 'wb') as f:
+        f.write(lean)
+    os.chown(tmp, st.st_uid, st.st_gid)
+    os.chmod(tmp, st.st_mode & 0o7777)
+    os.utime(tmp, ns=(st.st_atime_ns, st.st_mtime_ns))
+    os.replace(tmp, real)
+
+
+def store_pristine(P, data):
+    d = P.state(PRISTINE)
+    os.makedirs(d, exist_ok=True)
+    p = os.path.join(d, sha256(data) + '.xz')
+    if not os.path.exists(p):
+        with lzma.open(p + '.new', 'wb', preset=9) as f:
+            f.write(data)
+        os.replace(p + '.new', p)
+
+
+def load_pristine(P, sha):
+    p = os.path.join(P.state(PRISTINE), sha + '.xz')
+    try:
+        with lzma.open(p) as f:
+            return f.read()
+    except FileNotFoundError:
+        return None
+
+
+class Lock:
+    def __init__(self, P):
+        os.makedirs(P.state(), exist_ok=True)
+        self.f = open(P.state('lock'), 'w')
+
+    def __enter__(self):
+        fcntl.flock(self.f, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *a):
+        fcntl.flock(self.f, fcntl.LOCK_UN)
+
+
+class _NoPool:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def project_packages(P, names, jobs, image=False, log=print, only=None, known=None):
+    pkgs = dpkg_packages(P)
+    if names:
+        sel = {}
+        for n in names:
+            for k, v in pkgs.items():
+                if k == n or k.split(':')[0] == n:
+                    sel[k] = v
+        pkgs = sel
+    held = set(read_hold(P))
+    conf = conffiles(P)
+    div = diversions(P)
+    files = Records(P, 'records', pkgs.keys() if names else None)
+    left = Records(P, 'left', pkgs.keys() if names else None)
+    tasks = []
+    sums = {}
+    for name, (ver, info) in sorted(pkgs.items()):
+        if name in held or name.split(':')[0] in held:
+            continue
+        sums.update(md5sums(P, info))
+        for path in package_files(P, info):
+            if path in held or path in div or (only is not None and path not in only):
+                continue
+            rec = files.get(path)
+            if rec and rec['version'] == ver and rec['package'] == name:
+                continue      # already projected for this version
+            tasks.append((path, P.real(path), name, (known or {}).get(path)))
+    t0 = time.time()
+    done = skipped = same = 0
+    pys = []
+    # a handful of files (a package or two after an upgrade) is quicker in this process than in a pool
+    pool = ProcessPoolExecutor(max_workers=jobs) if len(tasks) > 200 and jobs > 1 else None
+    results = pool.map(_work, tasks, chunksize=16) if pool else map(_work, tasks)
+    with (pool or _NoPool()):
+        for (path, r, reason, data), (_, real, name, _seen) in zip(results, tasks):
+            if r is None:
+                continue
+            ver = pkgs[name][0]
+            if path not in conf and path in sums and md5(data) != sums[path]:
+                left[path] = {'path': path, 'package': name, 'handler': r.handler,
+                              'reason': 'changed since its package installed it (not the package\'s bytes)'}
+                continue
+            if path in conf and md5(data) != conf[path]:
+                left[path] = {'path': path, 'package': name, 'handler': r.handler,
+                              'reason': 'conffile changed by the person (dpkg rules apply, never projected)'}
+                continue
+            if r.status != 'projected':
+                if r.handler or r.reason not in ('no qualified adapter for this consumer',):
+                    left[path] = {'path': path, 'package': name, 'handler': r.handler, 'reason': r.reason}
+                skipped += 1
+                continue
+            is_conf = path in conf
+            if is_conf and md5(data) != conf[path]:
+                left[path] = {'path': path, 'package': name, 'handler': r.handler,
+                              'reason': 'conffile changed by the person (dpkg rules apply, never projected)'}
+                continue
+            st = os.lstat(real)
+            if is_conf:
+                store_pristine(P, data)
+                store_pristine(P, r.lean)
+            write_lean(real, data, r.lean, st)
+            if path.endswith('.py'):
+                pys.append(real)
+            files[path] = {'path': path, 'package': name, 'version': ver, 'conffile': int(is_conf),
+                           'sha_orig': r.sha_in, 'md5_orig': md5(data) if is_conf else '', 'sha_lean': r.sha_out,
+                           'handler': r.handler, 'variant': r.variant, 'bytes_orig': r.bytes_in, 'bytes_lean': r.bytes_out}
+            left.pop(path, None)
+            done += 1
+            same += r.check == 'the same bytes as a checked projection'
+    recompile_pyc(pys)
+    files.save()
+    left.save()
+    write_packages(P)
+    with open(P.state('identity'), 'w') as f:
+        f.write(project.IDENTITY + '\n')
+    log(f'dpkg-stereo: {done} files projected ({same} of them already checked in these bytes), {skipped} left '
+        f'alone with their reason, {len(tasks)} examined, {time.time() - t0:.1f} s')
+    return done
+
+
+def list_mtime(P, info):
+    try:
+        return str(int(os.stat(P.real(f'/var/lib/dpkg/info/{info}.list')).st_mtime))
+    except FileNotFoundError:
+        return ''
+
+
+def write_packages(P, pkgs=None):
+    pkgs = pkgs if pkgs is not None else dpkg_packages(P)
+    rows = {k: {'package': k, 'version': v[0], 'list_mtime': list_mtime(P, v[1])} for k, v in pkgs.items()}
+    written = str(int(time.time()))
+    for row in rows.values():
+        row['written'] = written
+    write_table(P.state(PKGS), PKG_COLS, rows)
+
+
+def racy(row):
+    """A file list dpkg wrote in the same second as the table that records it: a second rewrite in that
+    second leaves the same time, so the package is looked at again (the rule git uses for its index)."""
+    try:
+        return int(row.get('written') or 0) > 0 and int(row.get('list_mtime') or 0) >= int(row['written'])
+    except ValueError:
+        return False
+
+
+def md5sums(P, info):
+    out = {}
+    try:
+        with open(P.real(f'/var/lib/dpkg/info/{info}.md5sums'), encoding='utf-8', errors='surrogateescape') as f:
+            for line in f:
+                h, _, rel = line.rstrip('\n').partition('  ')
+                out['/' + rel] = h
+    except FileNotFoundError:
+        pass
+    return out
+
+
+def read_hold(P):
+    try:
+        with open(P.state(HOLD), encoding='utf-8') as f:
+            return [l.strip() for l in f if l.strip() and not l.startswith('#')]
+    except FileNotFoundError:
+        return []
+
+
+def pre_invoke(P):
+    """Projected conffiles still in their lean form go back to their pristine bytes, so dpkg finds them
+    unmodified; a conffile the person edited (its bytes are no longer the lean ones) is left alone."""
+    _migrate(P)
+    files = read_table(P.state(CONFFILES), FILE_COLS)
+    n = 0
+    restored = []
+    for path, rec in files.items():
+        if rec.get('conffile') != '1':
+            continue
+        real = P.real(path)
+        try:
+            with open(real, 'rb') as f:
+                data = f.read()
+        except FileNotFoundError:
+            continue
+        if sha256(data) != rec['sha_lean']:
+            continue
+        orig = load_pristine(P, rec['sha_orig'])
+        if orig is None or sha256(orig) != rec['sha_orig']:
+            continue
+        write_lean(real, data, orig, os.lstat(real))
+        restored.append(path)
+        n += 1
+    with open(P.state('restored-for-dpkg'), 'w', encoding='utf-8', errors='surrogateescape') as f:
+        f.write(''.join(p + '\n' for p in restored))
+    return n
+
+
+def post_invoke(P, jobs):
+    """After dpkg: the packages it installed, upgraded or reinstalled (their version or their file list
+    changed) are projected again; the conffiles pre-invoke restored for it are projected again (the same
+    render as before, so no new check); records of removed packages go. Nothing else is read."""
+    _migrate(P)
+    pkgs = dpkg_packages(P)
+    recorded = read_table(P.state(PKGS), PKG_COLS)
+    changed = sorted(k for k, v in pkgs.items()
+                     if recorded.get(k, {}).get('version') != v[0]
+                     or recorded.get(k, {}).get('list_mtime') != list_mtime(P, v[1])
+                     or racy(recorded.get(k, {})))
+    gone = {k for k in recorded if k not in pkgs}
+    ch = set(changed)
+    try:
+        with open(P.state('restored-for-dpkg'), encoding='utf-8', errors='surrogateescape') as f:
+            restored = [l.rstrip('\n') for l in f if l.strip()]
+    except FileNotFoundError:
+        restored = []
+    conf_idx = read_table(P.state(CONFFILES), FILE_COLS)
+    files = Records(P, 'records', set(ch) | gone | {conf_idx[p]['package'] for p in restored if p in conf_idx})
+    dirty = False
+    again = set()          # paths dpkg wrote back with the package's bytes: project them again
+    for path in [p for p, r in files.items() if r['package'] in gone]:
+        del files[path]
+        dirty = True
+    same_version = {k for k in ch if recorded.get(k, {}).get('version') == pkgs[k][0]}
+    known = {}             # what was projected and checked before, for files that come back in the same bytes
+    for path in [p for p, r in files.items() if r['package'] in ch]:
+        rec = files[path]
+        known[path] = (rec['sha_orig'], rec['sha_lean'])
+        if rec['package'] in same_version:
+            # dpkg rewrote the package's file list (a reinstall), or the list only looks different (an
+            # image unpacked elsewhere): the files themselves say which of them dpkg replaced
+            try:
+                with open(P.real(path), 'rb') as f:
+                    cur = sha256(f.read())
+            except FileNotFoundError:
+                cur = None
+            if cur == rec['sha_lean']:
+                continue
+            if cur == rec['sha_orig']:
+                again.add(path)
+        del files[path]
+        dirty = True
+    for path in restored:
+        rec = files.get(path)
+        if not rec:
+            continue
+        real = P.real(path)
+        try:
+            with open(real, 'rb') as f:
+                data = f.read()
+        except FileNotFoundError:
+            del files[path]
+            dirty = True
+            continue
+        if sha256(data) != rec['sha_orig']:
+            del files[path]          # not the bytes restored: dpkg or the person changed it
+            dirty = True
+            continue
+        lean = load_pristine(P, rec['sha_lean'])
+        if lean is None or sha256(lean) != rec['sha_lean']:
+            r = project.project(path, data, rec['package'].split(':')[0], check=False)
+            lean = r.lean if r.status == 'projected' and r.sha_out == rec['sha_lean'] else None
+        if lean is not None:
+            write_lean(real, data, lean, os.lstat(real))
+        else:
+            del files[path]
+            dirty = True
+            ch.add(rec['package'])
+    os.unlink(P.state('restored-for-dpkg')) if os.path.exists(P.state('restored-for-dpkg')) else None
+    files.save()
+    full = sorted(ch - same_version)
+    if full:
+        project_packages(P, full, jobs, log=lambda m: None, known=known)
+    if again:
+        project_packages(P, sorted(same_version), jobs, log=lambda m: None, only=again, known=known)
+    if not full and not again and (gone or ch):
+        write_packages(P, pkgs)
+
+
+def deb_members(P, package, version, wanted):
+    """The pristine bytes of these files from the package's .deb, read in one pass of its archive: APT's
+    cache first, then one download. Files the archive does not hold are missing from the answer."""
+    name = package.split(':')[0]
+    arch_q = package.split(':')[1] if ':' in package else None
+    cands = []
+    cache = P.real('/var/cache/apt/archives')
+    if os.path.isdir(cache):
+        ev = version.replace(':', '%3a')
+        cands = [os.path.join(cache, f) for f in os.listdir(cache) if f.startswith(f'{name}_{ev}_')]
+    tmp = None
+    if not cands and P.root == '':
+        tmp = tempfile.mkdtemp(prefix='dpkg-stereo-')
+        spec = f'{name}:{arch_q}={version}' if arch_q else f'{name}={version}'
+        subprocess.run(['apt-get', 'download', spec], cwd=tmp, capture_output=True)
+        cands = [os.path.join(tmp, f) for f in os.listdir(tmp) if f.endswith('.deb')]
+    found = {}
+    try:
+        for deb in cands:
+            proc = subprocess.Popen(['dpkg-deb', '--fsys-tarfile', deb], stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL)
+            try:
+                with tarfile.open(fileobj=proc.stdout, mode='r|') as t:
+                    for m in t:
+                        path = m.name.lstrip('.')
+                        if path in wanted and path not in found and m.isfile():
+                            found[path] = t.extractfile(m).read()
+                            if len(found) == len(wanted):
+                                break
+            except tarfile.TarError:
+                pass
+            finally:
+                proc.stdout.close()
+                proc.wait()
+            if len(found) == len(wanted):
+                break
+        return found
+    finally:
+        if tmp:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+def deb_member(P, package, version, path):
+    return deb_members(P, package, version, {path}).get(path)
+
+
+def has_pristine(P, sha):
+    return os.path.exists(os.path.join(P.state(PRISTINE), sha + '.xz'))
+
+
+def original_bytes(P, rec, from_deb=None):
+    data = load_pristine(P, rec['sha_orig'])
+    if data is None:
+        data = from_deb.get(rec['path']) if from_deb is not None else \
+            deb_member(P, rec['package'], rec['version'], rec['path'])
+    if data is not None and sha256(data) == rec['sha_orig']:
+        return data
+    return None
+
+
+def verify(P, names, deep=False):
+    """Each projected file against its lean hash; its record against dpkg (the same package version, and
+    for conffiles dpkg's own conffile hash and the pristine copy rendering to the installed lean bytes).
+    With --deep, every other file's original is taken from its .deb (APT's cache) and checked against
+    dpkg's md5sums and rendered again."""
+    files = Records(P, 'records')
+    conf = conffiles(P)
+    pkgs = dpkg_packages(P)
+    bad = 0
+    sums_cache = {}
+    # --deep reads each .deb once: the records go package by package, and one package's originals at a time
+    items = sorted(files.items(), key=(lambda kv: (kv[1]['package'], kv[1]['version'], kv[0])) if deep else None)
+    group, from_deb, wanted = None, {}, {}
+    if deep:
+        for p, r in files.items():
+            if r.get('conffile') != '1':
+                wanted.setdefault((r['package'], r['version']), set()).add(p)
+    for path, rec in items:
+        if names and rec['package'].split(':')[0] not in names and rec['package'] not in names:
+            continue
+        try:
+            with open(P.real(path), 'rb') as f:
+                data = f.read()
+        except FileNotFoundError:
+            print(f'MISSING   {path}')
+            bad += 1
+            continue
+        if sha256(data) != rec['sha_lean']:
+            what = 'changed by the person' if rec.get('conffile') == '1' else 'changed since projection'
+            print(f'CHANGED   {path} ({what})')
+            bad += 1
+            continue
+        if pkgs.get(rec['package'], ('',))[0] != rec['version']:
+            print(f'STALE     {path} ({rec["package"]} is no longer {rec["version"]})')
+            bad += 1
+            continue
+        orig = None
+        if rec.get('conffile') == '1':
+            if conf.get(path) != rec['md5_orig']:
+                print(f'STALE     {path} (dpkg records another conffile version)')
+                bad += 1
+                continue
+            orig = load_pristine(P, rec['sha_orig'])
+            if orig is None or md5(orig) != rec['md5_orig']:
+                print(f'PRISTINE  {path} (its pristine copy is missing or damaged)')
+                bad += 1
+                continue
+        elif deep:
+            info = pkgs[rec['package']][1]
+            if info not in sums_cache:
+                sums_cache[info] = md5sums(P, info)
+            if group != (rec['package'], rec['version']):
+                group = (rec['package'], rec['version'])
+                from_deb = deb_members(P, rec['package'], rec['version'], wanted.get(group, set()))
+            orig = from_deb.get(path)
+            if orig is None:
+                print(f'NODEB     {path} (no .deb of {rec["package"]} {rec["version"]} to check against)')
+                continue
+            if md5(orig) != sums_cache[info].get(path) or sha256(orig) != rec['sha_orig']:
+                print(f'DPKG      {path} (the package\'s bytes differ from the record or from dpkg\'s md5sums)')
+                bad += 1
+                continue
+        if orig is not None:
+            r = project.project(path, orig, rec['package'].split(':')[0], check=False)
+            if r.sha_out != rec['sha_lean']:
+                print(f'MISMATCH  {path} (the original does not render to the installed lean file)')
+                bad += 1
+                continue
+    left = Records(P, 'left')
+    for path, rec in sorted(left.items()):
+        if names and rec['package'].split(':')[0] not in names and rec['package'] not in names:
+            continue
+        if 'changed by the person' in rec['reason']:
+            print(f'EDITED    {path} (changed by the person: left as they made it)')
+    print(f'dpkg-stereo: {len(files)} projected files checked, {bad} problems')
+    return 1 if bad else 0
+
+
+def restore(P, names, drop_hold=False):
+    files = Records(P, 'records')
+    ok = fail = 0
+    todo = {}
+    for path, rec in sorted(files.items()):
+        if names and rec['package'].split(':')[0] not in names and rec['package'] not in names and path not in names:
+            continue
+        todo.setdefault((rec['package'], rec['version']), []).append(path)
+    pys = []
+    missing = {}
+    # package by package: the originals without a pristine copy come from one pass of the package's .deb
+    for (package, version), paths in sorted(todo.items()):
+        from_deb = None
+        for path in paths:
+            rec = files[path]
+            real = P.real(path)
+            try:
+                with open(real, 'rb') as f:
+                    data = f.read()
+            except FileNotFoundError:
+                del files[path]
+                continue
+            if sha256(data) != rec['sha_lean']:
+                del files[path]     # the person's own file now; nothing of ours to undo
+                continue
+            if from_deb is None and not has_pristine(P, rec['sha_orig']):
+                from_deb = deb_members(P, package, version,
+                                       {p for p in paths if p in files and not has_pristine(P, files[p]['sha_orig'])})
+            orig = original_bytes(P, rec, from_deb if from_deb is not None else {})
+            if orig is None:
+                missing[(package, version)] = missing.get((package, version), 0) + 1
+                fail += 1
+                continue
+            write_lean(real, data, orig, os.lstat(real))
+            if path.endswith('.py'):
+                pys.append(real)
+            del files[path]
+            ok += 1
+    recompile_pyc(pys)
+    files.save()
+    for (package, version), n in sorted(missing.items()):
+        # the .deb of that version is neither in APT's cache nor in the archive any more: the files stay
+        # lean (and recorded) until the package is reinstalled or upgraded
+        print(f'dpkg-stereo: {package} {version}: {n} files stay lean, its .deb is neither in APT\'s cache nor '
+              f'in the archive; apt-get install --reinstall {package.split(":")[0]} brings them back')
+    print(f'dpkg-stereo: {ok} files restored, {fail} need their package reinstalled')
+    return 1 if fail else 0
+
+
+def hr_copy(P, path):
+    files = Records(P, 'records')
+    rec = files.get(path)
+    if not rec:
+        print(f'dpkg-stereo: {path} is not projected; it is its own full text')
+        return 1
+    orig = original_bytes(P, rec)
+    if orig is None:
+        print(f'dpkg-stereo: no pristine copy of {path}')
+        return 1
+    dest = P.real(f'/usr/share/doc/{rec["package"].split(":")[0]}/hr{path}')
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    with open(dest, 'wb') as f:
+        f.write(orig)
+    print(dest)
+    return 0
+
+
+def fetch_hr(P):
+    _migrate(P)
+    files = read_table(P.state(CONFFILES), FILE_COLS)
+    n = 0
+    restored = []
+    for path, rec in files.items():
+        if rec.get('conffile') != '1':
+            continue
+        dest = P.real(f'/usr/share/doc/{rec["package"].split(":")[0]}/hr{path}')
+        if os.path.exists(dest):
+            continue
+        orig = load_pristine(P, rec['sha_orig'])
+        if orig is None:
+            continue
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with open(dest, 'wb') as f:
+            f.write(orig)
+        n += 1
+    open(P.state('hr-fetched'), 'w').close()
+    print(f'dpkg-stereo: {n} HR copies of settings written under /usr/share/doc/*/hr/')
+    return 0
+
+
+def resolve(P, spec):
+    path, _, rest = spec.partition(':')
+    line, _, col = rest.partition(':')
+    files = Records(P, 'records')
+    rec = files.get(path)
+    if not rec:
+        print(f'{path}:{line}' + (f':{col}' if col else '') + ' (not projected: the location is already the authored one)')
+        return 0
+    if rec['handler'] == 'c' and rec['variant'] in ('c', 'c++'):
+        print(f'{path}:{line}' + (f':{col}' if col else '') + ' (C and C++ keep authored line numbers through #line)')
+        return 0
+    orig = original_bytes(P, rec)
+    if orig is None:
+        print('dpkg-stereo: unresolved: no pristine copy of the authored file')
+        return 1
+    with open(P.real(path), 'rb') as f:
+        mr = f.read()
+    try:
+        sl, sc = project.resolve(orig, mr, path, rec['package'].split(':')[0], int(line), int(col) if col else None)
+    except Exception as e:
+        print(f'dpkg-stereo: unresolved: {e}')
+        return 1
+    hr = f'/usr/share/doc/{rec["package"].split(":")[0]}/hr{path}'
+    print(f'{hr}:{sl}' + (f':{sc}' if sc else '') + f' [lean {path}:{line}' + (f':{col}' if col else '') + ']')
+    return 0
+
+
+def manifest(P, out, roots):
+    """Every comment-bearing text file in the image, projected or not, with the reason."""
+    files = Records(P, 'records')
+    left = Records(P, 'left')
+    owner = {}
+    for name, (ver, info) in dpkg_packages(P).items():
+        for p in package_files(P, info):
+            owner.setdefault(p, name)
+    rows = 0
+    with open(out, 'w', encoding='utf-8', errors='surrogateescape') as f:
+        f.write('path\tpackage\tformat\tbytes\tlean_bytes\tprojected\treason\n')
+        for image_prefix in roots:
+            base = P.real(image_prefix)
+            for d, dirs, names in os.walk(base):
+                dirs[:] = [x for x in dirs if not (image_prefix == '/' and d == base and x in ('proc', 'sys', 'dev', 'run', 'tmp'))]
+                for n in names:
+                    real = os.path.join(d, n)
+                    path = image_prefix.rstrip('/') + real[len(base):]
+                    if path in files:
+                        rec = files[path]
+                        f.write(f'{path}\t{rec["package"]}\t{rec["handler"]}/{rec["variant"]}\t{rec["bytes_orig"]}\t'
+                                f'{rec["bytes_lean"]}\tyes\tprojected\n')
+                        rows += 1
+                        continue
+                    if path in left:
+                        rec = left[path]
+                        f.write(f'{path}\t{rec["package"]}\t{rec["handler"]}\t{os.path.getsize(real)}\t\tno\t{rec["reason"]}\n')
+                        rows += 1
+                        continue
+                    try:
+                        st = os.lstat(real)
+                    except OSError:
+                        continue
+                    if not os.path.isfile(real) or os.path.islink(real) or st.st_size == 0 or st.st_size > TEXT_SIZE_MAX:
+                        continue
+                    with open(real, 'rb') as g:
+                        head = g.read(8192)
+                    if b'\0' in head:
+                        continue
+                    key, variant, why = consumers.choose(path, head)
+                    if key is None and why == 'no qualified adapter for this consumer':
+                        continue      # not a known comment-bearing format
+                    reason = why or ('not owned by a package (made in the image)' if path not in owner else 'not examined')
+                    f.write(f'{path}\t{owner.get(path, "")}\t{key or ""}\t{st.st_size}\t\tno\t{reason}\n')
+                    rows += 1
+    return rows
+
+
+def status(P):
+    files = Records(P, 'records')
+    left = Records(P, 'left')
+    by = {}
+    for rec in files.values():
+        k = rec['handler'] + ('/' + rec['variant'] if rec['variant'] else '')
+        t = by.setdefault(k, [0, 0, 0])
+        t[0] += 1
+        t[1] += int(rec['bytes_orig'])
+        t[2] += int(rec['bytes_lean'])
+    print(f'dpkg-stereo {lean_pkg.VERSION}: {len(files)} files projected, {len(left)} left alone, {len(read_hold(P))} held')
+    for k, (n, a, b) in sorted(by.items(), key=lambda x: -(x[1][1] - x[1][2])):
+        print(f'  {k:<20} {n:>7} files {a:>12} -> {b:>12} bytes ({a - b} fewer)')
+    reasons = {}
+    for rec in left.values():
+        reasons[rec['reason']] = reasons.get(rec['reason'], 0) + 1
+    for r, n in sorted(reasons.items(), key=lambda x: -x[1])[:20]:
+        print(f'  left: {n:>7}  {r}')
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser(prog='dpkg-stereo', description=__doc__.split('\n\n')[0])
+    ap.add_argument('--root', default='/')
+    ap.add_argument('--map', action='append', default=[], help='/etc=DIR: where an image folder really is')
+    ap.add_argument('--jobs', type=int, default=4)
+    ap.add_argument('--image', action='store_true')
+    g = ap.add_mutually_exclusive_group(required=True)
+    g.add_argument('--project', nargs='*')
+    g.add_argument('--pre-invoke', action='store_true')
+    g.add_argument('--post-invoke', action='store_true')
+    g.add_argument('--verify', nargs='*')
+    ap.add_argument('--deep', action='store_true', help='with --verify: check every original against its .deb')
+    g.add_argument('--restore', nargs='*')
+    g.add_argument('--hold')
+    g.add_argument('--unhold')
+    g.add_argument('--hr')
+    g.add_argument('--fetch-hr', action='store_true')
+    g.add_argument('--resolve')
+    g.add_argument('--manifest')
+    g.add_argument('--status', action='store_true')
+    a = ap.parse_args()
+    P = Paths(a.root, [m.split('=', 1) for m in a.map])
+    if (a.pre_invoke or a.post_invoke) and os.environ.get('DPKG_STEREO_DISABLE'):
+        return 0      # an image build turns the hooks off until its own Lean Code step
+    if a.status:
+        return status(P)
+    if a.resolve:
+        return resolve(P, a.resolve)
+    with Lock(P):
+        if a.project is not None:
+            project_packages(P, a.project, a.jobs, a.image)
+            return 0
+        if a.pre_invoke or a.post_invoke:
+            # a hook never stops dpkg: whatever goes wrong is logged and dpkg goes on with the files as they are
+            try:
+                if a.pre_invoke:
+                    if os.environ.get('DPKG_HOOK_ACTION', '') not in ('triggers-only', 'remove', 'add-architecture',
+                                                                      'remove-architecture'):
+                        pre_invoke(P)
+                else:
+                    post_invoke(P, a.jobs)
+            except Exception:
+                import traceback
+                msg = traceback.format_exc()
+                try:
+                    with open(P.state('error.log'), 'a', encoding='utf-8') as f:
+                        f.write(time.strftime('%Y-%m-%d %H:%M:%S ') + ('pre' if a.pre_invoke else 'post') + '-invoke\n' + msg)
+                except OSError:
+                    pass
+                print('dpkg-stereo: the hook failed (dpkg goes on); see /var/lib/dpkg-stereo/error.log', file=sys.stderr)
+            return 0
+        if a.verify is not None:
+            return verify(P, a.verify, a.deep)
+        if a.restore is not None:
+            return restore(P, a.restore)
+        if a.hold:
+            restore(P, [a.hold])
+            with open(P.state(HOLD), 'a', encoding='utf-8') as f:
+                f.write(a.hold + '\n')
+            return 0
+        if a.unhold:
+            keep = [h for h in read_hold(P) if h != a.unhold]
+            with open(P.state(HOLD), 'w', encoding='utf-8') as f:
+                f.write(''.join(h + '\n' for h in keep))
+            return 0
+        if a.hr:
+            return hr_copy(P, a.hr)
+        if a.fetch_hr:
+            return fetch_hr(P)
+        if a.manifest:
+            n = manifest(P, a.manifest, ['/'] if not P.maps else ['/usr', '/etc', '/var', '/opt', '/srv', '/root'])
+            print(f'dpkg-stereo: manifest of {n} files written to {a.manifest}')
+            return 0
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

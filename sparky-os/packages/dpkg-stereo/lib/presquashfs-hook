@@ -1,0 +1,29 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
+# Copyright 2026 under the MIT License
+# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
+# SPDX-License-Identifier: MIT
+# Last update 2026/10/16
+# The Lean Code step of Sparky Backup Core Stereo (PRESQUASHFS_HOOK): sparkybackup calls it with the
+# folders it is about to squash. The packer's copies of /etc and /var (dummysys) are mapped to their image
+# paths, so the image's records land in its own /var/lib/dpkg-stereo and the running /etc is never
+# touched; /usr and the other top folders are projected where they are, so the packer runs on an overlay
+# or a copy of the system (never on a running host whose files should stay as they are).
+set -eu
+maps=
+work=
+for d in "$@"; do
+	case "$d" in
+	*/dummysys/*) maps="$maps --map /$(basename "$d")=$d"; work=$(dirname "$(dirname "$d")") ;;
+	esac
+done
+# shellcheck disable=SC2086
+dpkg-stereo $maps --image --jobs "${LEANCODE_JOBS:-4}" --project
+# shellcheck disable=SC2086
+dpkg-stereo $maps --manifest "${work:-/tmp}/lean-code-projection.tsv"
+# shellcheck disable=SC2086
+dpkg-stereo $maps --status
+# the reasons for files left alone belong to the build record (the manifest), not to the installed system
+state=/var/lib/dpkg-stereo
+for d in "$@"; do case "$d" in */dummysys/var) state=$d/lib/dpkg-stereo ;; esac; done
+mv "$state/left.tsv" "${work:-/tmp}/lean-code-left.tsv" 2>/dev/null || true
