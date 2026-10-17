@@ -109,6 +109,8 @@ def main():
     ap.add_argument("--fat", help="a small FAT image as a further virtio disk (MokManager lists it)")
     ap.add_argument("--serial-sock", action="store_true", help="serial port on DIR/serial.sock instead of a log file (with --detach)")
     ap.add_argument("--offline", action="store_true", help="no network outside the VM (user networking with restrict=on)")
+    ap.add_argument("--gpu", help="a display device instead of -vga (e.g. virtio-vga,xres=1920,yres=1080,stereo=on)")
+    ap.add_argument("--trace", help="QEMU trace option (events=FILE,file=LOG): the host-side record of every mode set")
     a = ap.parse_args()
 
     os.makedirs(a.out, exist_ok=True)
@@ -128,7 +130,8 @@ def main():
         media = ["-drive", f"file={iso},if=none,id=m0,readonly=on,format=raw",
                  "-device", "qemu-xhci,id=xhci", "-device", "usb-storage,bus=xhci.0,drive=m0,bootindex=0"]
     cmd = [binary, "-name", f"beta-iso-lutz-{a.fw}-{a.media}", *machine, "-cpu", "host", "-smp", a.cpus, "-m", a.ram,
-           "-display", "none", "-vga", a.vga,
+           "-display", "none", *(["-vga", "none", "-device", a.gpu] if a.gpu else ["-vga", a.vga]),
+           *(["-trace", a.trace, "-msg", "timestamp=on"] if a.trace else []),
            "-serial", (f"unix:{os.path.join(a.out, 'serial.sock')},server=on,wait=off" if a.serial_sock else f"file:{serial}"), "-monitor", "none",
            "-qmp", f"unix:{qmp_path},server=on,wait=off", *([] if a.reboot else ["-no-reboot"]), "-nodefaults",
            "-device", "qemu-xhci,id=xin", "-device", "usb-kbd,bus=xin.0",
