@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Bind complete installed-file evidence to the exact rotation binaries."""
 import argparse
+from collections import Counter
 import hashlib
 import json
 import runpy
@@ -19,13 +20,13 @@ inventory=json.loads((base/'installed-inventory.json').read_text())
 layer_hash=hashlib.sha256(args.library.read_bytes()).hexdigest()
 assert (base/'installed-inventory-check.status').read_text().strip()=='0'
 assert (base/'installed-functional.status').read_text().strip()=='0'
-for name in ('installed-sweep','installed-mono','installed-collect','installed-controlled-mono','installed-fliptext-final2','installed-flurry','installed-flurry-check','installed-debug-equivalence'):
+for name in ('installed-late-compositor','installed-tiles','installed-sweep','installed-mono','installed-collect','installed-controlled-mono','installed-fliptext-final2','installed-flurry','installed-flurry-check','installed-debug-equivalence'):
     assert (base/(name+'.status')).read_text().strip()=='0',name
 
 def read(name):return json.loads((base/name).read_text())
 def digest(path):return hashlib.sha256(path.read_bytes()).hexdigest()
 mono={}
-for name in ('installed-mono/results.json','installed-mono-warmup/results.json','installed-trace-mono/results.json','installed-controlled-mono/results.json','installed-flurry-mono/results.json'):
+for name in ('installed-mono/results.json','installed-mono-warmup/results.json','installed-trace-mono/results.json','installed-trace-mono-fixed/results.json','installed-controlled-mono/results.json','installed-flurry-mono/results.json'):
     for record in read(name):
         if record.get('equal') and record.get('stddev',0)>1:
             assert record['library_sha256']==layer_hash,('stale 2D layer',record['id'])
@@ -93,6 +94,13 @@ for item in inventory:
         entries[-1]['verification']['trace_sha256']=digest(Path(execution['command'][-1]))
         entries[-1]['verification']['trace_snapshot_calls']=execution['command'][execution['command'].index('-S')+1]
 assert len(entries)==130
+# Each depth receipt may be off by up to one pixel (a single scene's correspondence noise), but a
+# layer that moves one eye moves them all: their mean must stay within a quarter pixel.
+residuals=[e['proof']['residual_px'] for e in entries if e['proof'].get('oracle')=='depth-v1']
+mean_residual=sum(residuals)/len(residuals)
+print('depth residual mean %+.3f px over %d savers; histogram %s'%(mean_residual,len(residuals),dict(sorted(Counter(residuals).items()))))
+assert abs(mean_residual)<=.25,('depth residual mean',mean_residual)
+for entry in entries:
+    entry['verification']['depth_residual_mean_px']=round(mean_residual,4)
 args.output.write_text(json.dumps(entries,ensure_ascii=False,indent=2)+'\n')
-from collections import Counter
 print('PASS:',len(entries),'complete installed qualifications',dict(Counter(e['qualification']['group'] for e in entries)))

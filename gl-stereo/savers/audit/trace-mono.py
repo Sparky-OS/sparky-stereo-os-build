@@ -16,7 +16,7 @@ results=[]
 for name in sys.argv[3:]:
     case=root/name; case.mkdir(); result={'id':name,'executable_sha256':hashlib.sha256(Path('/usr/libexec/xscreensaver/'+name).read_bytes()).hexdigest(),'library_sha256':hashlib.sha256(Path(library).read_bytes()).hexdigest()}
     env={k:v for k,v in os.environ.items() if not k.startswith(('GL_STEREO','AUDIT_')) and k not in ('LD_PRELOAD','DISPLAY','WAYLAND_DISPLAY','XAUTHORITY')}
-    env.update(PATH='/usr/libexec/xscreensaver:'+os.environ.get('PATH',os.defpath),LIBGL_ALWAYS_SOFTWARE='1',LP_NUM_THREADS='4')
+    env.update(PATH=str(Path(__file__).resolve().parent/'helpers')+':/usr/libexec/xscreensaver:'+os.environ.get('PATH',os.defpath),LIBGL_ALWAYS_SOFTWARE='1',LP_NUM_THREADS='4')
     trace=case/'input.trace'
     try:
         record_env=dict(env)
@@ -26,12 +26,17 @@ for name in sys.argv[3:]:
             # The recording's length decides how far the scene gets; on a loaded machine
             # AUDIT_RECORD_SECONDS gives it more time (the input stays deterministic).
             seconds=os.environ.get('AUDIT_RECORD_SECONDS','12')
-            run=subprocess.run(['xvfb-run','-a','timeout','--signal=TERM','--kill-after=3',seconds,'apitrace','trace','--api=egl','-o',str(trace),'/usr/libexec/xscreensaver/'+name,'-window','-geometry','640x360'],env=record_env,stdout=log,stderr=log,timeout=float(seconds)+18)
+            run=subprocess.run(['xvfb-run','-a','timeout','--signal=TERM','--kill-after=3',seconds,'setarch','x86_64','-R','apitrace','trace','--api=egl','-o',str(trace),'/usr/libexec/xscreensaver/'+name,'-window','-geometry','640x360'],env=record_env,stdout=log,stderr=log,timeout=float(seconds)+18)
         assert run.returncode in (0,124),run.returncode
         calls=subprocess.check_output(['apitrace','dump','--calls=frame',str(trace)],text=True)
         numbers=re.findall(r'^(\d+) ',calls,re.M)
         assert len(numbers)>2,'no completed frames'
-        frame=numbers[-2]  # Ignore any final call interrupted during shutdown.
+        # AUDIT_SNAPSHOT_FRAMES ("name=index ...") fixes the snapshot frame: under the fixture's
+        # clock a frame's picture depends only on its index, while the last frame recorded in the
+        # recording's time depends on the machine's speed (FlipText's can be a blank page).
+        index=dict(item.split('=') for item in os.environ.get('AUDIT_SNAPSHOT_FRAMES','').split()).get(name)
+        if index: assert len(numbers)>int(index)+1,'recording shorter than its snapshot frame'
+        frame=numbers[int(index)] if index else numbers[-2]  # Otherwise ignore any final call interrupted during shutdown.
         result.update(completed_frames=len(numbers),call=int(frame),trace_sha256=hashlib.sha256(trace.read_bytes()).hexdigest())
         pictures=[]
         for mode in ('stock','disabled'):

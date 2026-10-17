@@ -33,14 +33,16 @@ for name in sys.argv[4:]:
                 display=read_display(read)
                 env={k:v for k,v in os.environ.items() if not k.startswith(('GL_STEREO','AUDIT_')) and k not in ('LD_PRELOAD','DISPLAY','WAYLAND_DISPLAY','XAUTHORITY')}
                 env.update(DISPLAY=display,LIBGL_ALWAYS_SOFTWARE='1',LP_NUM_THREADS='4',
-                           PATH='/usr/libexec/xscreensaver:'+os.environ.get('PATH',os.defpath),
+                           PATH=str(Path(__file__).resolve().parent/'helpers')+':/usr/libexec/xscreensaver:'+os.environ.get('PATH',os.defpath),
                            LD_PRELOAD=fixture+(':'+library if mode=='disabled' else ''),
                            GL_STEREO='0',AUDIT_FRAME=os.environ.get('AUDIT_TARGET','120'),AUDIT_CAPTURE=str(case/'frame.ppm'),AUDIT_READY=str(case/'ready'))
                 if os.environ.get('AUDIT_STOCK_REPEAT'): env['LD_PRELOAD']=fixture
                 if os.environ.get('AUDIT_REFERENCE'):
                     env.update(LD_PRELOAD=fixture+':'+library, REFERENCE_EYE=mode)
                 with (case/'producer.log').open('w') as log:
-                    process=subprocess.Popen(['/usr/libexec/xscreensaver/'+name,'-window','-geometry','640x360'],env=env,stdout=log,stderr=log,start_new_session=True)
+                    # A fixed address layout: some hacks (glsnake) draw from memory whose
+                    # contents depend on where the process is loaded.
+                    process=subprocess.Popen(['setarch','x86_64','-R','/usr/libexec/xscreensaver/'+name,'-window','-geometry','640x360'],env=env,stdout=log,stderr=log,start_new_session=True)
                 deadline=time.monotonic()+float(os.environ.get('AUDIT_TIMEOUT','30'))
                 while not (case/'ready').exists() and process.poll() is None and time.monotonic()<deadline: time.sleep(.05)
                 assert (case/'ready').exists(), f'{mode}: no requested frame'

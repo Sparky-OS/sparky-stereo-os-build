@@ -30,7 +30,7 @@ if [ ! -f $B/installed.done ]; then
 	chown -R 1000:1000 $B
 	touch $B/installed.done; log "bootstrap installed: $(tail -1 $B/installed-packages.txt)"
 fi
-steps=${STEPS:-"setup inventory sweep oldflurry merge warmup starwars flurry energy references fliptext mono monomore monostatus equivalence collect flurrycheck candidate install-candidate functional compile"}
+steps=${STEPS:-"setup late inventory sweep oldflurry merge warmup starwars flurry energy references fliptext mono monomore monostatus tiles equivalence collect flurrycheck candidate install-candidate functional compile"}
 started=${1:-}
 for step in $steps; do
 	if [ -n "$started" ] && [ "$step" != "$started" ]; then continue; fi

@@ -16,6 +16,9 @@ assert len(proofs)==130 and len({item['id'] for item in proofs})==130
 inventory={item['id']:item for item in json.loads((Path(__file__).parent/'audit/inventory-6.09.json').read_text()) if item['kind']=='hack'}
 assert {item['id'] for item in proofs}==set(inventory)
 layer_hash=hashlib.sha256(library.read_bytes()).hexdigest()
+# one eye moved by a pixel moves every depth receipt: their mean stays within a quarter pixel
+residuals=[item['proof']['residual_px'] for item in proofs if item['proof'].get('oracle')=='depth-v1']
+assert residuals and abs(sum(residuals)/len(residuals))<=.25,('depth residual mean',sum(residuals)/max(len(residuals),1))
 for item in proofs:
     assert item['command'][0]=='/usr/libexec/xscreensaver/'+item['id']
     assert item['proof']['passed'] is True and item['proof']['placement']=='screen-level'

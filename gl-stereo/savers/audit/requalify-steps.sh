@@ -8,6 +8,9 @@ set -u
 B=/build; W=/workspace/gl-stereo; A=$W/savers/audit
 LIB=/usr/lib/gl-stereo/libgl-stereo.so
 export LANG=C.UTF-8 LP_NUM_THREADS=4
+# FlipText's 2D control and KWin capture take this frame of its recording: it shows text, and it is
+# the same picture in every recording (savers/audit/README.md).
+FLIPTEXT_FRAME=1000
 cd "$A"
 names() { python3 -c "import json;print(' '.join(e['id'] for e in json.load(open('$A/inventory-6.09.json')) if e['kind']=='hack'))"; }
 status() { echo "$2" > "$B/$1.status"; echo "$(date +%T) $1 status $2" >> "$B/requalify.log"; }
@@ -43,6 +46,7 @@ setup)
 	g++ ../../plasma/capture.cpp -o $B/capture $(pkg-config --cflags --libs Qt6Gui Qt6DBus) &&
 	mkdir -p $B/source && tar -xf /orig/xscreensaver_6.09+dfsg1.orig.tar.xz -C $B/source &&
 	ls -d $B/source/xscreensaver-6.09* > $B/source-dir.txt &&
+	python3 mapscroller-tiles.py $B/home > $B/mapscroller-tiles.log &&
 	printf '%s\n' 'Sparky Stereo OS' 'Two eyes, one world.' 'Every program in stereo, the desktop too.' \
 		'Full side by side, left eye first.' 'Made for the people who still own a 3D TV.' > $B/audit-text.txt
 	status setup $? ;;
@@ -134,13 +138,13 @@ PY
 	status reference-final $? ;;
 fliptext)
 	# recorded GL input with neutral text at the text-generator boundary: the 2D control
-	AUDIT_RECORD_SECONDS=40 AUDIT_RECORD_FIXTURE=$B/fixture-egl.so AUDIT_RECORD_TEXT=$B/audit-text.txt python3 trace-mono.py $B/installed-controlled-mono $LIB fliptext > $B/installed-controlled-mono.log 2>&1
+	AUDIT_SNAPSHOT_FRAMES=fliptext=$FLIPTEXT_FRAME AUDIT_RECORD_SECONDS=40 AUDIT_RECORD_FIXTURE=$B/fixture-egl.so AUDIT_RECORD_TEXT=$B/audit-text.txt python3 trace-mono.py $B/installed-controlled-mono $LIB fliptext > $B/installed-controlled-mono.log 2>&1
 	python3 -c "import json,sys;r=json.load(open('$B/installed-controlled-mono/results.json'));sys.exit(0 if all(x.get('passed') for x in r) else 1)"
 	status installed-controlled-mono $?
 	# the same input trimmed to complete frames for the KWin capture and both camera references
 	trace=$B/installed-controlled-mono/fliptext/input.trace
 	frames=$(apitrace dump --calls=frame $trace | grep -cE '^[0-9]+ ')
-	last=$((frames - 2))
+	last=$FLIPTEXT_FRAME
 	apitrace trim --frames=0-$last --output=$B/installed-fliptext-complete.trace $trace > $B/installed-fliptext-final2.log 2>&1
 	call=$(apitrace dump --calls=frame $B/installed-fliptext-complete.trace | grep -oE '^[0-9]+' | tail -n1)
 	echo "trace frames $frames, trimmed to 0-$last, snapshot call $call" >> $B/installed-fliptext-final2.log
@@ -156,12 +160,37 @@ fliptext)
 	done
 	sessions_ok $B/installed-fliptext-final2 1 >> $B/installed-fliptext-final2.log 2>&1
 	status installed-fliptext-final2 $? ;;
+tiles)
+	# Mapscroller drew only synthetic tiles from its cache: its helper logged "cached:" and
+	# never "downloading" (the audit runs with the network off)
+	python3 - > $B/installed-tiles.log 2>&1 <<'PY'
+import sys
+from pathlib import Path
+B = Path('/build'); bad = []
+for log in ('installed-kwin/mapscroller/client.log', 'installed-mono/mapscroller/stock/producer.log',
+            'installed-mono/mapscroller/disabled/producer.log', 'installed-trace-mono-fixed/mapscroller/record.log'):
+    text = (B/log).read_text(errors='replace') if (B/log).exists() else ''
+    cached, downloading = text.count('cached:'), text.count('downloading')
+    print(log, 'cached', cached, 'downloading', downloading)
+    if not cached or downloading: bad.append(log)
+print('PASS' if not bad else f'FAIL: {bad}')
+sys.exit(1 if bad else 0)
+PY
+	status installed-tiles $? ;;
+late)
+	# a compositor that reads the declaration late: the capture waits for the sized window
+	mkdir -p $B/installed-late-compositor
+	bash late-compositor.sh $B/installed-late-compositor > $B/installed-late-compositor.log 2>&1
+	status installed-late-compositor $? ;;
 mono)
 	AUDIT_TIMEOUT=90 python3 mono.py $B/installed-mono $B/fixture-egl.so $LIB $(names | tr ' ' '\n' | grep -vx flurry) > $B/installed-mono.log 2>&1
 	status installed-mono-129 $? ;;
 monomore)
 	AUDIT_TARGET=600 AUDIT_TIMEOUT=240 python3 mono.py $B/installed-mono-warmup $B/fixture-egl.so $LIB chompytower energystream companioncube > $B/installed-mono-warmup.log 2>&1
-	python3 trace-mono.py $B/installed-trace-mono $LIB splitflap mapscroller carousel winduprobot starwars fliptext > $B/installed-trace-mono.log 2>&1
+	python3 trace-mono.py $B/installed-trace-mono $LIB splitflap carousel winduprobot starwars fliptext > $B/installed-trace-mono.log 2>&1
+	# Mapscroller's recording runs on the fixture's clock, so it visits the same places and asks for
+	# the same tiles as every other run (mapscroller-tiles.json)
+	AUDIT_RECORD_FIXTURE=$B/fixture-egl.so AUDIT_RECORD_TEXT=$B/audit-text.txt python3 trace-mono.py $B/installed-trace-mono-fixed $LIB mapscroller > $B/installed-trace-mono-fixed.log 2>&1
 	status installed-mono-more $? ;;
 monostatus)
 	merge_flurry installed-mono installed-mono-oldflurry
@@ -169,7 +198,7 @@ monostatus)
 import json, sys
 from pathlib import Path
 B = Path('/build'); good = {}
-for name in ('installed-mono', 'installed-mono-warmup', 'installed-trace-mono', 'installed-controlled-mono', 'installed-flurry-mono'):
+for name in ('installed-mono', 'installed-mono-warmup', 'installed-trace-mono', 'installed-trace-mono-fixed', 'installed-controlled-mono', 'installed-flurry-mono'):
     for r in json.loads((B/name/'results.json').read_text()):
         if r.get('equal') and r.get('stddev', 0) > 1: good.setdefault(r['id'], name)
 hacks = [e['id'] for e in json.loads(Path('/workspace/gl-stereo/savers/audit/inventory-6.09.json').read_text()) if e['kind'] == 'hack']
