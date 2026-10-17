@@ -52,7 +52,7 @@ setup)
 	status setup $? ;;
 inventory)
 	python3 inventory.py "$(cat $B/source-dir.txt)" $B/installed-inventory.json > $B/installed-inventory-check.log 2>&1 &&
-	python3 check-inventory.py inventory-6.09.json $B/installed-inventory.json >> $B/installed-inventory-check.log 2>&1
+	python3 check-inventory.py inventory-6.09.json $B/installed-inventory.json "$(cat $B/source-dir.txt)" >> $B/installed-inventory-check.log 2>&1
 	status installed-inventory-check $? ;;
 sweep)
 	kwin $B/installed-kwin $(names | tr ' ' '\n' | grep -vx flurry) > $B/installed-sweep.log 2>&1
@@ -177,6 +177,10 @@ print('PASS' if not bad else f'FAIL: {bad}')
 sys.exit(1 if bad else 0)
 PY
 	status installed-tiles $? ;;
+lights)
+	# glsnake's second light: the default capture is one single-light picture (owning-settings.json)
+	python3 glsnake-lights.py $B/installed-glsnake-lights.json $B/fixture-egl.so > $B/installed-glsnake-lights.log 2>&1
+	status installed-glsnake-lights $? ;;
 late)
 	# a compositor that reads the declaration late: the capture waits for the sized window
 	mkdir -p $B/installed-late-compositor
