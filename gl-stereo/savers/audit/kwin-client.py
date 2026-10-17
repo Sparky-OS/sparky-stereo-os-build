@@ -17,17 +17,23 @@ library=os.environ.get('AUDIT_LIBRARY','/workspace/gl-stereo/libgl-stereo.so')
 assert Path(library).is_file(), 'missing test library'
 env=dict(os.environ,LD_PRELOAD=os.environ.get('AUDIT_FIXTURE','/build/fixture-egl.so')+':'+library,
          LIBGL_ALWAYS_SOFTWARE='1',LP_NUM_THREADS='4',GL_STEREO='1',GL_STEREO_DEBUG='1',GL_STEREO_DUMP=target,GL_STEREO_DUMP_DIR=str(root),
-         PATH='/usr/libexec/xscreensaver:'+os.environ.get('PATH',os.defpath),
+         PATH=str(Path(__file__).resolve().parent/'helpers')+':/usr/libexec/xscreensaver:'+os.environ.get('PATH',os.defpath),
          AUDIT_FRAME=target,AUDIT_READY=str(root/'ready'))
+if not reference_eye:
+    # the fixture lets the saver draw once the compositor has sized its window for both views
+    env.update(AUDIT_STEREO_WIDTH='1280')
 if reference_eye:
     # Only the independent library is loaded. Keep Enable 3D set so owning
     # patches also expose their ordinary camera to this single-eye oracle.
     env.update(REFERENCE_EYE=reference_eye)
 if os.environ.get('AUDIT_NO_FIXTURE'): env['LD_PRELOAD']='/workspace/gl-stereo/libgl-stereo.so'
+if name=='mapscroller' and not os.environ.get('AUDIT_TRACE'):
+    # each session's home is new: give it the synthetic tiles (mapscroller-tiles.py)
+    subprocess.run([sys.executable,str(Path(__file__).with_name('mapscroller-tiles.py')),os.environ['HOME']],check=True,stdout=subprocess.DEVNULL)
 with (root/'client.log').open('w') as log:
     # An open snapshot range keeps retrace from exiting at the selected call
     # before the parent can freeze its window for the KWin capture.
-    command=['glretrace','--loop=-1','--min-frame-duration=10000','-w','-s',str(root/'trace-snapshot-'),'-S',os.environ['AUDIT_TRACE_CALL']+',999999999',os.environ['AUDIT_TRACE']] if os.environ.get('AUDIT_TRACE') else ['/usr/libexec/xscreensaver/'+name,'-window','-geometry','640x360']
+    command=['glretrace','--loop=-1','--min-frame-duration=10000','-w','-s',str(root/'trace-snapshot-'),'-S',os.environ['AUDIT_TRACE_CALL']+',999999999',os.environ['AUDIT_TRACE']] if os.environ.get('AUDIT_TRACE') else ['setarch','x86_64','-R','/usr/libexec/xscreensaver/'+name,'-window','-geometry','640x360']
     process=subprocess.Popen(command,env=env,stdout=log,stderr=log,start_new_session=True)
 (root/'pid').write_text(str(process.pid))
 try:

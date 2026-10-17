@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Bind complete installed-file evidence to the exact rotation binaries."""
 import argparse
+from collections import Counter
 import hashlib
 import json
 import runpy
@@ -19,13 +20,13 @@ inventory=json.loads((base/'installed-inventory.json').read_text())
 layer_hash=hashlib.sha256(args.library.read_bytes()).hexdigest()
 assert (base/'installed-inventory-check.status').read_text().strip()=='0'
 assert (base/'installed-functional.status').read_text().strip()=='0'
-for name in ('installed-sweep','installed-mono','installed-collect','installed-controlled-mono','installed-fliptext-final2','installed-flurry','installed-flurry-check','installed-debug-equivalence'):
+for name in ('installed-late-compositor','installed-glsnake-lights','installed-tiles','installed-sweep','installed-mono','installed-collect','installed-controlled-mono','installed-fliptext-final2','installed-flurry','installed-flurry-check','installed-debug-equivalence'):
     assert (base/(name+'.status')).read_text().strip()=='0',name
 
 def read(name):return json.loads((base/name).read_text())
 def digest(path):return hashlib.sha256(path.read_bytes()).hexdigest()
 mono={}
-for name in ('installed-mono/results.json','installed-mono-warmup/results.json','installed-trace-mono/results.json','installed-controlled-mono/results.json','installed-flurry-mono/results.json'):
+for name in ('installed-mono/results.json','installed-mono-warmup/results.json','installed-trace-mono/results.json','installed-trace-mono-fixed/results.json','installed-controlled-mono/results.json','installed-flurry-mono/results.json'):
     for record in read(name):
         if record.get('equal') and record.get('stddev',0)>1:
             assert record['library_sha256']==layer_hash,('stale 2D layer',record['id'])
@@ -37,6 +38,7 @@ selected=read('installed-selected-cases.json')
 equivalence=read('installed-debug-equivalence.json')
 equivalent=runpy.run_path(str(Path(__file__).with_name('debug-equivalence.py')))['equivalent']
 owning=json.loads(Path(__file__).with_name('owning-fixes.json').read_text())
+owning_settings=json.loads(Path(__file__).with_name('owning-settings.json').read_text())
 entries=[]
 for item in inventory:
     if item['kind']!='hack':continue
@@ -62,6 +64,10 @@ for item in inventory:
     assert composition[name]['passed'],(name,'compositor mismatch')
     assert (case/'declaration.txt').read_text().strip().endswith('= 3'),(name,'declaration')
     group='flat' if name in flats else 'owning-fix' if name in owning else 'layer'
+    # the installed settings: unchanged, or extended only as owning-settings.json lists
+    # (check-inventory.py proved the additions against the original)
+    settings_hash=owning_settings[name]['settings_sha256'] if name in owning_settings else item['settings_sha256']
+    assert digest(Path('/usr/share/xscreensaver/config')/(name+'.xml'))==settings_hash,(name,'installed settings')
     if group=='flat':
         check=flats[name];assert check['passed'],(name,'flat check')
         proof=dict(oracle='screen-plane-alignment',residual_px=0,disparity_bounds_px=[0,0],eye_width=640)
@@ -84,15 +90,24 @@ for item in inventory:
                         library=str(args.library),library_sha256=layer_hash,executable_sha256=binary_hash,
                         proof=proof,qualification=dict(state='qualified',group=group),
                         verification=dict(stock_2d_exact=True,settings_unchanged=True,kwin_composition=True,camera_or_flat=True,
-                                          settings_sha256=item['settings_sha256'],capture_sha256=evidence,
+                                          settings_sha256=settings_hash,capture_sha256=evidence,
                                           stock_2d_sha256=digest(stock),disabled_2d_sha256=digest(disabled),
                                           input='recorded GL' if execution['command'][0]=='glretrace' else 'seeded live saver')))
     if name in equivalence:
         entries[-1]['verification']['binary_debug_equivalence']=equivalence[name]
+    if name in owning_settings:
+        entries[-1]['verification']['settings_added']=[added['id'] for added in owning_settings[name]['added']]
     if execution['command'][0]=='glretrace':
         entries[-1]['verification']['trace_sha256']=digest(Path(execution['command'][-1]))
         entries[-1]['verification']['trace_snapshot_calls']=execution['command'][execution['command'].index('-S')+1]
 assert len(entries)==130
+# Each depth receipt may be off by up to one pixel (a single scene's correspondence noise), but a
+# layer that moves one eye moves them all: their mean must stay within a quarter pixel.
+residuals=[e['proof']['residual_px'] for e in entries if e['proof'].get('oracle')=='depth-v1']
+mean_residual=sum(residuals)/len(residuals)
+print('depth residual mean %+.3f px over %d savers; histogram %s'%(mean_residual,len(residuals),dict(sorted(Counter(residuals).items()))))
+assert abs(mean_residual)<=.25,('depth residual mean',mean_residual)
+for entry in entries:
+    entry['verification']['depth_residual_mean_px']=round(mean_residual,4)
 args.output.write_text(json.dumps(entries,ensure_ascii=False,indent=2)+'\n')
-from collections import Counter
 print('PASS:',len(entries),'complete installed qualifications',dict(Counter(e['qualification']['group'] for e in entries)))

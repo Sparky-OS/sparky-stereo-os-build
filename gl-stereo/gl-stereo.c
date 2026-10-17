@@ -33,6 +33,11 @@
  X(glDrawArraysInstanced) X(glDrawElementsInstanced) X(glDrawElementsBaseVertex) X(glDrawRangeElementsBaseVertex) \
  X(glDrawElementsInstancedBaseVertex) X(glDrawArraysIndirect) X(glDrawElementsIndirect) \
  X(glMultiDrawArraysIndirect) X(glMultiDrawElementsIndirect) \
+ X(glDrawArraysInstancedBaseInstance) X(glDrawElementsInstancedBaseInstance) \
+ X(glDrawElementsInstancedBaseVertexBaseInstance) X(glMultiDrawElementsBaseVertex) \
+ X(glMultiDrawArraysIndirectCount) X(glMultiDrawElementsIndirectCount) \
+ X(glDrawTransformFeedback) X(glDrawTransformFeedbackInstanced) \
+ X(glDrawTransformFeedbackStream) X(glDrawTransformFeedbackStreamInstanced) \
  X(glClearBufferfv) X(glClearBufferiv) X(glClearBufferuiv) X(glClearBufferfi) X(glGetString) X(glGetStringi) \
  X(glNamedFramebufferDrawBuffer) X(glNamedFramebufferDrawBuffers) X(glNamedFramebufferReadBuffer) \
  X(glFramebufferDrawBufferEXT) X(glFramebufferDrawBuffersEXT) X(glFramebufferReadBufferEXT) \
@@ -517,6 +522,17 @@ void glDrawArraysIndirect(GLenum mode, const void *indirect) { DRAW(r_glDrawArra
 void glDrawElementsIndirect(GLenum mode, GLenum type, const void *indirect) { DRAW(r_glDrawElementsIndirect(mode, type, indirect)); }
 void glMultiDrawArraysIndirect(GLenum mode, const void *indirect, GLsizei n, GLsizei stride) { DRAW(r_glMultiDrawArraysIndirect(mode, indirect, n, stride)); }
 void glMultiDrawElementsIndirect(GLenum mode, GLenum type, const void *indirect, GLsizei n, GLsizei stride) { DRAW(r_glMultiDrawElementsIndirect(mode, type, indirect, n, stride)); }
+/* The rest of OpenGL 4.6's drawing commands (sections 10.4 and 13.2.3). */
+void glDrawArraysInstancedBaseInstance(GLenum mode, GLint first, GLsizei count, GLsizei instances, GLuint base_instance) { DRAW(r_glDrawArraysInstancedBaseInstance(mode, first, count, instances, base_instance)); }
+void glDrawElementsInstancedBaseInstance(GLenum mode, GLsizei count, GLenum type, const void *indices, GLsizei instances, GLuint base_instance) { DRAW(r_glDrawElementsInstancedBaseInstance(mode, count, type, indices, instances, base_instance)); }
+void glDrawElementsInstancedBaseVertexBaseInstance(GLenum mode, GLsizei count, GLenum type, const void *indices, GLsizei instances, GLint base, GLuint base_instance) { DRAW(r_glDrawElementsInstancedBaseVertexBaseInstance(mode, count, type, indices, instances, base, base_instance)); }
+void glMultiDrawElementsBaseVertex(GLenum mode, const GLsizei *count, GLenum type, const void *const *indices, GLsizei n, const GLint *base) { DRAW(r_glMultiDrawElementsBaseVertex(mode, count, type, indices, n, base)); }
+void glMultiDrawArraysIndirectCount(GLenum mode, const void *indirect, GLintptr drawcount, GLsizei max, GLsizei stride) { DRAW(r_glMultiDrawArraysIndirectCount(mode, indirect, drawcount, max, stride)); }
+void glMultiDrawElementsIndirectCount(GLenum mode, GLenum type, const void *indirect, GLintptr drawcount, GLsizei max, GLsizei stride) { DRAW(r_glMultiDrawElementsIndirectCount(mode, type, indirect, drawcount, max, stride)); }
+void glDrawTransformFeedback(GLenum mode, GLuint id) { DRAW(r_glDrawTransformFeedback(mode, id)); }
+void glDrawTransformFeedbackInstanced(GLenum mode, GLuint id, GLsizei instances) { DRAW(r_glDrawTransformFeedbackInstanced(mode, id, instances)); }
+void glDrawTransformFeedbackStream(GLenum mode, GLuint id, GLuint stream) { DRAW(r_glDrawTransformFeedbackStream(mode, id, stream)); }
+void glDrawTransformFeedbackStreamInstanced(GLenum mode, GLuint id, GLuint stream, GLsizei instances) { DRAW(r_glDrawTransformFeedbackStreamInstanced(mode, id, stream, instances)); }
 /* Clearing the colour buffer of the default framebuffer clears the selected views. */
 void glClearBufferfv(GLenum buffer, GLint index, const GLfloat *value) { DRAW(r_glClearBufferfv(buffer, index, value)); }
 void glClearBufferiv(GLenum buffer, GLint index, const GLint *value) { DRAW(r_glClearBufferiv(buffer, index, value)); }
@@ -822,6 +838,11 @@ Bool XCheckIfEvent(Display *d, XEvent *e, Bool (*predicate)(Display *,XEvent *,X
  X(glDrawArraysInstanced) X(glDrawElementsInstanced) X(glDrawElementsBaseVertex) X(glDrawRangeElementsBaseVertex) \
  X(glDrawElementsInstancedBaseVertex) X(glDrawArraysIndirect) X(glDrawElementsIndirect) X(glMultiDrawArraysIndirect) \
  X(glMultiDrawElementsIndirect) X(glClearBufferfv) X(glClearBufferiv) X(glClearBufferuiv) X(glClearBufferfi) \
+ X(glDrawArraysInstancedBaseInstance) X(glDrawElementsInstancedBaseInstance) \
+ X(glDrawElementsInstancedBaseVertexBaseInstance) X(glMultiDrawElementsBaseVertex) \
+ X(glMultiDrawArraysIndirectCount) X(glMultiDrawElementsIndirectCount) \
+ X(glDrawTransformFeedback) X(glDrawTransformFeedbackInstanced) \
+ X(glDrawTransformFeedbackStream) X(glDrawTransformFeedbackStreamInstanced) \
  X(glDrawBuffersIndexedEXT) X(glReadBufferIndexedEXT) X(glGetIntegeri_vEXT) X(glGetString) X(glGetStringi) \
  X(glNamedFramebufferDrawBuffer) X(glNamedFramebufferDrawBuffers) X(glNamedFramebufferReadBuffer) \
  X(glFramebufferDrawBufferEXT) X(glFramebufferDrawBuffersEXT) X(glFramebufferReadBufferEXT) \

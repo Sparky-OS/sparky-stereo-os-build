@@ -1,0 +1,39 @@
+Description: glsnake: give both light positions a w component
+ glLightfv(GL_POSITION) reads four floats, but light_pos held three per
+ light. Light 0's w was light_pos[1][0], which is 0.0. Light 1's w came from
+ past the array, from stack memory that gl_init() never sets: valgrind's
+ memcheck reports "Conditional jump or move depends on uninitialised
+ value(s)" in the OpenGL driver, with the value "created by a stack
+ allocation" in gl_init().
+ .
+ That stray w is the low half of a pointer, so light 1 moved from run to run.
+ With address randomisation on, 25 frames of earlier runs showed 9 different
+ pictures. With it off (setarch -R), 6 of 6 stock runs drew the same picture,
+ but preloading a library that draws nothing (an OpenGL layer with its output
+ disabled) still changed 5.07% of the pixels, because it changes what was on
+ the stack before gl_init().
+ .
+ A large |w| puts light 1 at the viewer. That is the picture in 17 of the 25
+ frames and in all 6 runs with setarch -R. The authors' (0, 20, -1) only takes
+ effect when w is small, and w = 0 would make light 1 a directional light
+ that 1 of the 25 frames came near. Write light 0 out as it reads today, with
+ w = 0, and put light 1 at the viewer, (0, 0, 0, 1): it draws that usual
+ picture pixel for pixel, in every run.
+ .
+ XScreenSaver 6.17 has the same arrays, and memcheck reports the same read
+ there (glsnake.c:1414).
+Author: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-10-17
+
+--- a/hacks/glx/glsnake.c
++++ b/hacks/glx/glsnake.c
+@@ -1368,7 +1368,7 @@ static void gl_init(
+ #endif
+ 	     ) 
+ {
+-    float light_pos[][3] = {{0.0, 10.0, 20.0}, {0.0, 20.0, -1.0}};
++    float light_pos[][4] = {{0.0, 10.0, 20.0, 0.0}, {0.0, 0.0, 0.0, 1.0}};
+     float light_dir[][3] = {{0.0, -10.0,-20.0}, {0.0,-20.0, 1.0}};
+ 
+     glEnable(GL_DEPTH_TEST);

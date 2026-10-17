@@ -133,6 +133,101 @@ EGLBoolean eglSwapBuffers(EGLDisplay display, EGLSurface surface)
     stopped_frame(selected);
     return result;
 }
+/* A stereo capture is of frames drawn after the compositor sized the window for both
+ * views. With AUDIT_STEREO_WIDTH set (the window's width once the compositor has sized it),
+ * the first make-current of each window waits, after the layer has declared the window, until
+ * the X server reports that width. The saver draws nothing before, so its frame count and
+ * clock start at the same point however late the compositor answers. */
+static struct { EGLSurface surface; Window window; } surfaces[16];
+static Window waited[16];
+static void remember_surface(EGLSurface surface, Window window)
+{
+    for (unsigned i = 0; i < sizeof(surfaces)/sizeof(*surfaces); ++i)
+        if (!surfaces[i].surface || surfaces[i].surface == surface) { surfaces[i].surface = surface; surfaces[i].window = window; return; }
+}
+static void wait_for_stereo_width(Window window)
+{
+    const char *target = getenv("AUDIT_STEREO_WIDTH");
+    if (!target || !window) return;
+    unsigned slot = 0;
+    for (; slot < sizeof(waited)/sizeof(*waited) && waited[slot]; ++slot)
+        if (waited[slot] == window) return;
+    if (slot < sizeof(waited)/sizeof(*waited)) waited[slot] = window;
+    /* the X server's own answer, not the layer's per-view size */
+    static Display *display;
+    static Status (*attributes)(Display *, Window, XWindowAttributes *);
+    if (!display) {
+        void *x11 = dlopen("libX11.so.6", RTLD_NOW);
+        Display *(*open)(const char *) = x11 ? (Display *(*)(const char *))dlsym(x11, "XOpenDisplay") : NULL;
+        attributes = x11 ? (Status (*)(Display *, Window, XWindowAttributes *))dlsym(x11, "XGetWindowAttributes") : NULL;
+        display = open && attributes ? open(NULL) : NULL;
+        if (!display) abort();
+    }
+    int width = atoi(target), seconds = getenv("AUDIT_STEREO_WAIT") ? atoi(getenv("AUDIT_STEREO_WAIT")) : 120;
+    struct timespec start, now; clock_gettime(CLOCK_MONOTONIC, &start);
+    XWindowAttributes a = {0};
+    for (;;) {
+        if (!attributes(display, window, &a)) return;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        double elapsed = (now.tv_sec - start.tv_sec) + (now.tv_nsec - start.tv_nsec) / 1e9;
+        if (a.width == width || elapsed > seconds) {
+            fprintf(stderr, "fixture: window %lu %d wide after %.3f s (stereo width %d)\n", window, a.width, elapsed, width);
+            return;
+        }
+        usleep(10000);
+    }
+}
+EGLSurface eglCreateWindowSurface(EGLDisplay display, EGLConfig config, EGLNativeWindowType window, const EGLint *attributes)
+{
+    static EGLSurface (*next)(EGLDisplay, EGLConfig, EGLNativeWindowType, const EGLint *);
+    if (!next) next = lookup_next("eglCreateWindowSurface");
+    EGLSurface surface = next(display, config, window, attributes);
+    if (surface != EGL_NO_SURFACE) remember_surface(surface, (Window)window);
+    return surface;
+}
+EGLSurface eglCreatePlatformWindowSurface(EGLDisplay display, EGLConfig config, void *window, const EGLAttrib *attributes)
+{
+    static EGLSurface (*next)(EGLDisplay, EGLConfig, void *, const EGLAttrib *);
+    if (!next) next = lookup_next("eglCreatePlatformWindowSurface");
+    EGLSurface surface = next(display, config, window, attributes);
+    if (surface != EGL_NO_SURFACE && window) remember_surface(surface, *(Window *)window);
+    return surface;
+}
+EGLSurface eglCreatePlatformWindowSurfaceEXT(EGLDisplay display, EGLConfig config, void *window, const EGLint *attributes)
+{
+    static EGLSurface (*next)(EGLDisplay, EGLConfig, void *, const EGLint *);
+    if (!next) next = lookup_next("eglCreatePlatformWindowSurfaceEXT");
+    EGLSurface surface = next(display, config, window, attributes);
+    if (surface != EGL_NO_SURFACE && window) remember_surface(surface, *(Window *)window);
+    return surface;
+}
+EGLBoolean eglMakeCurrent(EGLDisplay display, EGLSurface draw, EGLSurface read, EGLContext context)
+{
+    static EGLBoolean (*next)(EGLDisplay, EGLSurface, EGLSurface, EGLContext);
+    if (!next) next = lookup_next("eglMakeCurrent");
+    EGLBoolean result = next(display, draw, read, context);
+    if (result && draw != EGL_NO_SURFACE)
+        for (unsigned i = 0; i < sizeof(surfaces)/sizeof(*surfaces); ++i)
+            if (surfaces[i].surface == draw) { wait_for_stereo_width(surfaces[i].window); break; }
+    return result;
+}
+Bool glXMakeCurrent(Display *display, GLXDrawable drawable, GLXContext context)
+{
+    static Bool (*next)(Display *, GLXDrawable, GLXContext);
+    if (!next) next = lookup_next("glXMakeCurrent");
+    Bool result = next(display, drawable, context);
+    if (result && drawable) wait_for_stereo_width(drawable);
+    return result;
+}
+Bool glXMakeContextCurrent(Display *display, GLXDrawable draw, GLXDrawable read, GLXContext context)
+{
+    static Bool (*next)(Display *, GLXDrawable, GLXDrawable, GLXContext);
+    if (!next) next = lookup_next("glXMakeContextCurrent");
+    Bool result = next(display, draw, read, context);
+    if (result && draw) wait_for_stereo_width(draw);
+    return result;
+}
+
 /* Optional inspection of the application's camera texture before postprocessing. */
 void glCopyTexImage2D(GLenum target,GLint level,GLenum format,GLint x,GLint y,GLsizei width,GLsizei height,GLint border)
 {

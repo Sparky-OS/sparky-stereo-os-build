@@ -14,8 +14,12 @@ entries=json.loads(catalogue.read_text())
 proofs=json.loads(manifest.read_text())
 assert len(proofs)==130 and len({item['id'] for item in proofs})==130
 inventory={item['id']:item for item in json.loads((Path(__file__).parent/'audit/inventory-6.09.json').read_text()) if item['kind']=='hack'}
+owning_settings=json.loads((Path(__file__).parent/'audit/owning-settings.json').read_text())
 assert {item['id'] for item in proofs}==set(inventory)
 layer_hash=hashlib.sha256(library.read_bytes()).hexdigest()
+# one eye moved by a pixel moves every depth receipt: their mean stays within a quarter pixel
+residuals=[item['proof']['residual_px'] for item in proofs if item['proof'].get('oracle')=='depth-v1']
+assert residuals and abs(sum(residuals)/len(residuals))<=.25,('depth residual mean',sum(residuals)/max(len(residuals),1))
 for item in proofs:
     assert item['command'][0]=='/usr/libexec/xscreensaver/'+item['id']
     assert item['proof']['passed'] is True and item['proof']['placement']=='screen-level'
@@ -28,7 +32,12 @@ for item in proofs:
     assert item['verification']['camera_or_flat'] is True
     assert eligible(dict(item,library=str(library))),(item['id'],'ineligible camera proof')
     settings=Path('/usr/share/xscreensaver/config')/(item['id']+'.xml')
-    assert hashlib.sha256(settings.read_bytes()).hexdigest()==item['verification']['settings_sha256']==inventory[item['id']]['settings_sha256']
+    expected=inventory[item['id']]['settings_sha256']
+    if item['id'] in owning_settings:
+        # extended by an owning patch (audit/owning-settings.json, proved by audit/owning_settings.py)
+        assert owning_settings[item['id']]['original_sha256']==expected,(item['id'],'original settings')
+        expected=owning_settings[item['id']]['settings_sha256']
+    assert hashlib.sha256(settings.read_bytes()).hexdigest()==item['verification']['settings_sha256']==expected
     item['library']='/usr/lib/gl-stereo/libgl-stereo.so'
     item['environment']['LD_PRELOAD']=item['library']
 entries=[item for item in entries if item['id'] in ('rocks','starfield')]

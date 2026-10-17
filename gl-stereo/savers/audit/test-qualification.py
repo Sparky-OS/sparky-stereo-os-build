@@ -14,7 +14,7 @@ proofs=json.loads(manifest.read_text())
 bootstrap=json.loads(Path('/usr/share/gl-stereo/catalogue.json').read_text())
 with tempfile.TemporaryDirectory(prefix='qualification-mutations-',dir=parent) as temporary:
     root=Path(temporary);candidate=root/'manifest.json';catalogue=root/'catalogue.json'
-    for mutation in ('valid','missing','duplicate','unknown','stale-layer','stale-saver','settings','false-proof','false-2d','false-composition','excess-depth','excess-residual'):
+    for mutation in ('valid','missing','duplicate','unknown','stale-layer','stale-saver','settings','false-proof','false-2d','false-composition','excess-depth','excess-residual','shifted-residuals'):
         changed=copy.deepcopy(proofs)
         if mutation=='missing':changed.pop()
         elif mutation=='duplicate':changed[-1]=changed[0]
@@ -27,6 +27,9 @@ with tempfile.TemporaryDirectory(prefix='qualification-mutations-',dir=parent) a
         elif mutation=='false-composition':changed[0]['verification']['kwin_composition']=False
         elif mutation=='excess-depth':changed[0]['proof']['disparity_bounds_px'][1]=1000
         elif mutation=='excess-residual':changed[0]['proof']['residual_px']=2
+        elif mutation=='shifted-residuals':
+            for item in changed:
+                if item['proof'].get('oracle')=='depth-v1':item['proof']['residual_px']=1.0
         candidate.write_text(json.dumps(changed));catalogue.write_text(json.dumps(bootstrap))
         result=subprocess.run([sys.executable,str(base/'install-qualified.py'),str(candidate),str(catalogue),str(library)],capture_output=True,text=True)
         assert (result.returncode==0)==(mutation=='valid'),(mutation,result.stdout,result.stderr)
