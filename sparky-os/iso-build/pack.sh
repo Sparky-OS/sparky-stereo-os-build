@@ -169,6 +169,8 @@ if [ "$STEP" = iso ] || [ "$STEP" = all ]; then
 		hook=/usr/lib/dpkg-stereo/presquashfs-hook
 		[ -x $R$hook ] || { echo "!! LEAN=1 needs dpkg-stereo's $hook in the image"; exit 1; }
 	fi
+	# the image's name and label for this pack (a pair of packs from one configured tree differs in name)
+	sed -i -e "s|^ISOLABELFULL=.*|ISOLABELFULL=\"$LABEL\"|" -e "s|^CUSTOMISO=.*|CUSTOMISO=\"$ISONAME\"|" $R/etc/sparkybackup/sparkybackup-stereo.conf
 	echo "== $(date -u +%T) LEAN=$LEAN hook=${hook:-none}; top folders of the image: $(ls $R | tr '\n' ' ')"
 	echo "== $(date -u +%T) sparkybackup-stereo dist"
 	t0=$(date +%s)
