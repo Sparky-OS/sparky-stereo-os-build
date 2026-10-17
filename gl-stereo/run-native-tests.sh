@@ -16,6 +16,7 @@ env LD_PRELOAD="$SO" GL_STEREO=1 ./tests/quad auto
 env LD_PRELOAD="$SO" GL_STEREO=1 GL_STEREO_CLASS=unknown ./tests/quad visual
 env LD_PRELOAD="$SO" GL_STEREO=1 GL_STEREO_CLASS=unknown ./tests/quad auto
 env LD_PRELOAD="$SO" GL_STEREO=1 GL_STEREO_CLASS=scientific ./tests/quad auto
+env LD_PRELOAD="$SO" GL_STEREO=1 ./tests/draw-commands
 rc=0
 ./tests/announce timeout --foreground 4 env LD_PRELOAD="$SO" GL_STEREO=1 \
     GL_STEREO_DUMP=30 GL_STEREO_DUMP_DIR="$PWD/out/quad-gears" glxgears -stereo -geometry 640x360 \

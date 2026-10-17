@@ -15,7 +15,7 @@ all: $(SO) tests
 $(SO): gl-stereo.c egl.inc wayland.inc quad.inc frame-stream.inc camera-uniform.inc camera-matrix.inc readback.inc texture-camera.inc
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(STEREO_CFLAGS) $(LDFLAGS) -shared -Wl,--no-undefined -o $@ gl-stereo.c $(LIBS)
 
-tests: tests/egl-damage tests/state tests/announce tests/quad tests/quads tests/quads-dlist tests/quads-xform tests/shader-quads savers/starfield savers/announce
+tests: tests/egl-damage tests/state tests/announce tests/quad tests/quads tests/quads-dlist tests/quads-xform tests/shader-quads tests/draw-commands savers/starfield savers/announce
 
 savers/announce: tests/announce.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -DGL_STEREO_SUPPORT_VERSION=1 -o $@ $< -lX11
@@ -35,6 +35,9 @@ tests/announce: tests/announce.c
 tests/quad: tests/quad.c
 	$(CC) -O2 -Wall -Wextra -g -o $@ $< -lGL -lX11
 
+tests/draw-commands: tests/draw-commands.c
+	$(CC) -O2 -Wall -Wextra -g -o $@ $< -lGL -lX11
+
 tests/quads: tests/quads.c
 	$(CC) -O2 -Wall -Wextra -g -o $@ $< -lGL -lX11
 
@@ -49,7 +52,7 @@ tests/quads-xform: tests/quads-xform.c
 
 
 clean:
-	rm -f $(SO) tests/egl-damage tests/state tests/announce tests/quad tests/quads tests/quads-dlist tests/quads-xform
+	rm -f $(SO) tests/egl-damage tests/state tests/announce tests/quad tests/quads tests/quads-dlist tests/quads-xform tests/draw-commands
 	rm -f savers/starfield savers/announce
 
 .PHONY: all clean tests install
