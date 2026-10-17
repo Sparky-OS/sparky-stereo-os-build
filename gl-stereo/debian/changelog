@@ -1,3 +1,21 @@
+gl-stereo (0.4.2-1) testing; urgency=medium
+
+  * Every OpenGL 4.6 drawing command reaches the view it names: the
+    instanced draws with a base instance, multi-draw with a base vertex,
+    the indirect draws with a count from a buffer and the transform
+    feedback draws were drawn once into the left view, so Blender's right
+    eye on NVIDIA's own OpenGL showed only its menus and panels. New test
+    tests/draw-commands, also in the installed tests.
+  * gl-stereo-savers depends on xscreensaver 6.09+dfsg1-2+stereo3d3, whose
+    glsnake no longer lights its scene from uninitialised memory.
+  * The 130 screensaver receipts are requalified for the new layer by an
+    audit whose checks give the same answer on any machine (fixed address
+    layout, FlipText's frame 1000, captures after KWin sizes the window,
+    synthetic Mapscroller tiles with the network off) and a new gate on
+    the mean depth residual of all depth receipts.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 17 Oct 2026 11:53:11 -0300
+
 gl-stereo (0.4.1-1) testing; urgency=medium
 
   * The build's screensaver checks wait for what they test, a saver's
