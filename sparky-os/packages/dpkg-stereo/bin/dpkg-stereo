@@ -300,6 +300,8 @@ def _work(args):
         data = f.read()
     if b'\0' in data[:8192]:
         return path, None, 'binary', None
+    if seen and sha256(data) == seen[1]:
+        return path, None, 'already projected', None
     if seen and sha256(data) == seen[0]:
         # these bytes were projected and checked before (the version dpkg replaced, or the same version
         # reinstalled): the same render gives the same lean bytes, and that pair needs no second check
@@ -426,7 +428,10 @@ def project_packages(P, names, jobs, image=False, log=print, only=None, known=No
                 continue
             rec = files.get(path)
             if rec and rec['version'] == ver and rec['package'] == name:
-                continue      # already projected for this version
+                # projected for this version: the worker only looks whether it is still lean (a file back in
+                # its package's bytes is projected again, a changed one is left alone)
+                tasks.append((path, P.real(path), name, (rec['sha_orig'], rec['sha_lean'])))
+                continue
             tasks.append((path, P.real(path), name, (known or {}).get(path)))
     t0 = time.time()
     done = skipped = same = 0
@@ -528,11 +533,18 @@ def read_hold(P):
 
 def pre_invoke(P):
     """Projected conffiles still in their lean form go back to their pristine bytes, so dpkg finds them
-    unmodified; a conffile the person edited (its bytes are no longer the lean ones) is left alone."""
+    unmodified; a conffile the person edited (its bytes are no longer the lean ones) is left alone.
+    dpkg runs this hook before it takes its lock, so a dpkg started while another one runs gets here, then
+    stops at the lock and never runs post-invoke: the list for post-invoke is added to, never replaced,
+    and what a stopped run restored is projected again by the next post-invoke."""
     _migrate(P)
     files = read_table(P.state(CONFFILES), FILE_COLS)
     n = 0
-    restored = []
+    try:
+        with open(P.state('restored-for-dpkg'), encoding='utf-8', errors='surrogateescape') as f:
+            restored = [l.rstrip('\n') for l in f if l.strip()]
+    except FileNotFoundError:
+        restored = []
     for path, rec in files.items():
         if rec.get('conffile') != '1':
             continue
@@ -548,17 +560,21 @@ def pre_invoke(P):
         if orig is None or sha256(orig) != rec['sha_orig']:
             continue
         write_lean(real, data, orig, os.lstat(real))
-        restored.append(path)
+        if path not in restored:
+            restored.append(path)
         n += 1
-    with open(P.state('restored-for-dpkg'), 'w', encoding='utf-8', errors='surrogateescape') as f:
+    tmp = P.state('restored-for-dpkg.new')
+    with open(tmp, 'w', encoding='utf-8', errors='surrogateescape') as f:
         f.write(''.join(p + '\n' for p in restored))
+    os.replace(tmp, P.state('restored-for-dpkg'))
     return n
 
 
 def post_invoke(P, jobs):
     """After dpkg: the packages it installed, upgraded or reinstalled (their version or their file list
-    changed) are projected again; the conffiles pre-invoke restored for it are projected again (the same
-    render as before, so no new check); records of removed packages go. Nothing else is read."""
+    changed) are projected again; the conffiles pre-invoke restored for it, and any recorded conffile found
+    in its package's bytes, are projected again (the same render as before, so no new check); records of
+    removed packages go. Beyond the conffiles, nothing else is read."""
     _migrate(P)
     pkgs = dpkg_packages(P)
     recorded = read_table(P.state(PKGS), PKG_COLS)
@@ -574,6 +590,18 @@ def post_invoke(P, jobs):
     except FileNotFoundError:
         restored = []
     conf_idx = read_table(P.state(CONFFILES), FILE_COLS)
+    # a recorded conffile in its package's bytes was restored for some dpkg run and never projected again
+    # (that run stopped before its post-invoke, or its list was lost): it is projected now, like the list
+    listed = set(restored)
+    for path, rec in conf_idx.items():
+        if rec.get('conffile') != '1' or rec['package'] in ch or path in listed:
+            continue
+        try:
+            with open(P.real(path), 'rb') as f:
+                if sha256(f.read()) == rec['sha_orig']:
+                    restored.append(path)
+        except OSError:
+            pass
     files = Records(P, 'records', set(ch) | gone | {conf_idx[p]['package'] for p in restored if p in conf_idx})
     dirty = False
     again = set()          # paths dpkg wrote back with the package's bytes: project them again
@@ -611,7 +639,10 @@ def post_invoke(P, jobs):
             del files[path]
             dirty = True
             continue
-        if sha256(data) != rec['sha_orig']:
+        h = sha256(data)
+        if h == rec['sha_lean']:
+            continue                 # lean already (an older list named it again)
+        if h != rec['sha_orig']:
             del files[path]          # not the bytes restored: dpkg or the person changed it
             dirty = True
             continue
@@ -704,7 +735,7 @@ def verify(P, names, deep=False):
     files = Records(P, 'records')
     conf = conffiles(P)
     pkgs = dpkg_packages(P)
-    bad = 0
+    bad = back = 0
     sums_cache = {}
     # --deep reads each .deb once: the records go package by package, and one package's originals at a time
     items = sorted(files.items(), key=(lambda kv: (kv[1]['package'], kv[1]['version'], kv[0])) if deep else None)
@@ -723,7 +754,13 @@ def verify(P, names, deep=False):
             print(f'MISSING   {path}')
             bad += 1
             continue
-        if sha256(data) != rec['sha_lean']:
+        h = sha256(data)
+        if h != rec['sha_lean'] and h == rec['sha_orig']:
+            print(f'RESTORED  {path} (its package\'s own bytes, not projected: the next dpkg run or '
+                  f'dpkg-stereo --project projects it again)')
+            back += 1
+            continue
+        if h != rec['sha_lean']:
             what = 'changed by the person' if rec.get('conffile') == '1' else 'changed since projection'
             print(f'CHANGED   {path} ({what})')
             bad += 1
@@ -770,7 +807,8 @@ def verify(P, names, deep=False):
             continue
         if 'changed by the person' in rec['reason']:
             print(f'EDITED    {path} (changed by the person: left as they made it)')
-    print(f'dpkg-stereo: {len(files)} projected files checked, {bad} problems')
+    print(f'dpkg-stereo: {len(files)} projected files checked, {bad} problems'
+          + (f', {back} in their package\'s own bytes (restored, not projected)' if back else ''))
     return 1 if bad else 0
 
 

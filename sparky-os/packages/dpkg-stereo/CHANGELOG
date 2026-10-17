@@ -1,4 +1,15 @@
 -------------------------------------------------------------------------------
+  Version 0.1.5 (2026-10-17)
+-------------------------------------------------------------------------------
+  * A dpkg started while another one runs calls pre-invoke, stops at dpkg's
+    lock and never calls post-invoke; its pre-invoke replaced the list of
+    restored conffiles with an empty one, so the running dpkg's post-invoke
+    left them in their package's bytes: the list is now added to, never replaced
+  * Every dpkg run projects again any recorded conffile found in its package's
+    bytes, whatever list it is on; --project does the same for any file
+  * verify says RESTORED for a file in its package's own bytes (not projected,
+    not a problem), never "changed by the person"
+-------------------------------------------------------------------------------
   Version 0.1.4 (2026-10-17)
 -------------------------------------------------------------------------------
   * An upgrade of dpkg-stereo no longer projects every installed package again:
