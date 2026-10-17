@@ -1,4 +1,14 @@
 -------------------------------------------------------------------------------
+  Version 0.1.4 (2026-10-17)
+-------------------------------------------------------------------------------
+  * An upgrade of dpkg-stereo no longer projects every installed package again:
+    the first projection runs on a first install, or after a removal
+  * A file that comes back in bytes already projected and checked (a reinstall,
+    or a file an upgrade did not change) is rendered again without a second check
+  * A package dpkg rewrote in the same second its record was written is looked
+    at again by the next dpkg run
+  * --restore and --verify --deep read each package's .deb once, not once per file
+-------------------------------------------------------------------------------
   Version 0.1.3 (2026-10-17)
 -------------------------------------------------------------------------------
   * Records kept per package: a dpkg run reads and writes only what it touched

@@ -80,8 +80,27 @@ dpkg --verify lean-demo > "$W/dpkgverify.log" 2>&1; cat "$W/dpkgverify.log"
 echo "== reinstall through dpkg again (same version): no prompt, still lean"
 dpkg -i "$W/lean-demo_2.0_all.deb" < /dev/null > "$W/v2b.log" 2>&1 && ok "reinstall exit 0" || bad "reinstall"
 grep -q 'Explanations' /etc/sysctl.d/90-lean-demo.conf && bad "reinstalled conffile not projected" || ok "reinstalled conffile projected"
+grep -q 'commentary' /usr/bin/lean-demo && bad "reinstalled script not projected" || ok "reinstalled script projected (its bytes were checked before)"
+echo "== dpkg rewrote the package in the same second its table was written (a racy file list)"
+T=/var/lib/dpkg-stereo/packages.tsv
+lm=$(( $(date +%s) - 2 ))
+awk -F'\t' -v lm="$lm" 'BEGIN { OFS = "\t" } $1 == "lean-demo" { $3 = lm; $4 = lm } { print }' "$T" > "$T.t" && mv "$T.t" "$T"
+dpkg-deb --fsys-tarfile "$W/lean-demo_2.0_all.deb" | tar -xO ./usr/bin/lean-demo > /usr/bin/lean-demo
+touch -d "@$lm" /var/lib/dpkg/info/lean-demo.list
+dpkg --configure -a < /dev/null > "$W/racy.log" 2>&1 && ok "a dpkg run that touches no package: exit 0" || bad "dpkg --configure -a: $(tail -3 "$W/racy.log")"
+grep -q 'commentary' /usr/bin/lean-demo && bad "the racy package was not looked at again" || ok "the racy package looked at again: its script projected"
+awk -F'\t' '$1 == "lean-demo" { exit !($3 < $4) }' "$T" && ok "the table is no longer racy for it" || bad "still racy: $(grep '^lean-demo' "$T")"
+echo "== a record that no longer matches its render: the file is checked again in full"
+R=/var/lib/dpkg-stereo/records/lean-demo.tsv
+awk -F'\t' 'BEGIN { OFS = "\t" } $1 == "/usr/bin/lean-demo" { $7 = "0000000000000000000000000000000000000000000000000000000000000000" } { print }' "$R" > "$R.t" && mv "$R.t" "$R"
+dpkg -i "$W/lean-demo_2.0_all.deb" < /dev/null > "$W/v2c.log" 2>&1 && ok "reinstall exit 0" || bad "reinstall"
+grep -q 'commentary' /usr/bin/lean-demo && bad "script not projected after the full check" || ok "script projected after the full check"
+grep -q '^/usr/bin/lean-demo.*0000000000000000000000000000000000000000000000000000000000000000' "$R" && bad "the record kept the wrong hash" || ok "the record holds the checked hash again"
+[ "$(/usr/bin/lean-demo)" = "$(printf '# this line is data inside a heredoc and stays\nlean-demo Mode=slow')" ] || [ "$(/usr/bin/lean-demo)" = "$(printf '# this line is data inside a heredoc and stays\nlean-demo Mode=fast\nMode=slow')" ] && ok "script output unchanged" || bad "script output: $(/usr/bin/lean-demo)"
+dpkg-stereo --verify lean-demo > "$W/verify3.log" 2>&1; grep -q ' 0 problems' "$W/verify3.log" && ok "verify: $(tail -1 "$W/verify3.log")" || bad "verify: $(cat "$W/verify3.log")"
 echo "== the way back"
 cp "$W/lean-demo_2.0_all.deb" /var/cache/apt/archives/
+dpkg-stereo --verify lean-demo --deep > "$W/deep.log" 2>&1; grep -q ' 0 problems' "$W/deep.log" && ! grep -q '^NODEB' "$W/deep.log" && ok "verify --deep against the .deb: $(tail -1 "$W/deep.log")" || bad "verify --deep: $(cat "$W/deep.log")"
 dpkg-stereo --restore lean-demo > "$W/restore.log" 2>&1; cat "$W/restore.log"
 grep -q 'Explanations' /etc/sysctl.d/90-lean-demo.conf && ok "conffile restored" || bad "conffile not restored"
 grep -q 'commentary' /usr/bin/lean-demo && ok "script restored" || bad "script not restored"

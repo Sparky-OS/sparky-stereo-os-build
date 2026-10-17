@@ -9,12 +9,12 @@
 # CGM) in /usr/lib/dpkg-stereo, dpkg's pre-invoke and post-invoke hooks, the first-update hook that writes
 # the HR copies of settings, and the pre-squashfs hook Sparky Backup Core Stereo runs for the ISO.
 # Needs only dpkg-deb; run it in a throwaway container or on any Debian.
-# Last update 2026/10/16
+# Last update 2026/10/17
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 LEAN=$(cd "$HERE/../../lean" && pwd)
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
-VERSION=0.1.3
+VERSION=0.1.4
 PKG=dpkg-stereo
 W=$(mktemp -d "${TMPDIR:-/K3D/temp}/dpkg-stereo-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
@@ -33,8 +33,11 @@ cat >"$D/DEBIAN/postinst" <<'EOS'
 # postinst script
 set -e
 if [ "$1" = "configure" ] && [ -z "${DPKG_STEREO_NO_PROJECT:-}" ]; then
-	# dpkg read its hooks before this run, so the first projection of the installed packages is made here
-	/usr/sbin/dpkg-stereo --project || true
+	# dpkg read its hooks before this run, so the first projection of the installed packages is made here;
+	# an upgrade finds them recorded already, and its own post-invoke run takes only what it changed
+	if [ -z "${2:-}" ] || [ ! -e /var/lib/dpkg-stereo/packages.tsv ]; then
+		/usr/sbin/dpkg-stereo --project || true
+	fi
 fi
 exit 0
 EOS
@@ -45,6 +48,8 @@ set -e
 if [ "$1" = "remove" ]; then
 	# the way back: the original files return (conffiles from the record, other files from their packages)
 	/usr/sbin/dpkg-stereo --restore || true
+	# without the package table a later install projects everything again
+	rm -f /var/lib/dpkg-stereo/packages.tsv
 fi
 exit 0
 EOS

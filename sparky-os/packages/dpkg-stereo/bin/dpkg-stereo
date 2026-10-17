@@ -74,7 +74,7 @@ CONFFILES = 'conffiles.tsv'
 PRISTINE = 'pristine'
 FILE_COLS = ('path', 'package', 'version', 'conffile', 'sha_orig', 'md5_orig', 'sha_lean', 'handler', 'variant',
              'bytes_orig', 'bytes_lean')
-PKG_COLS = ('package', 'version', 'list_mtime')
+PKG_COLS = ('package', 'version', 'list_mtime', 'written')
 TEXT_SIZE_MAX = 4 << 20
 
 
@@ -287,7 +287,7 @@ def diversions(P):
 
 
 def _work(args):
-    path, real, package = args
+    path, real, package, seen = args
     try:
         st = os.lstat(real)
     except OSError:
@@ -300,6 +300,13 @@ def _work(args):
         data = f.read()
     if b'\0' in data[:8192]:
         return path, None, 'binary', None
+    if seen and sha256(data) == seen[0]:
+        # these bytes were projected and checked before (the version dpkg replaced, or the same version
+        # reinstalled): the same render gives the same lean bytes, and that pair needs no second check
+        r = project.project(path, data, package.split(':')[0], check=False)
+        if r.status == 'projected' and r.sha_out == seen[1]:
+            r.check = 'the same bytes as a checked projection'
+            return path, r, r.reason, data
     try:
         r = project.project(path, data, package.split(':')[0])
     except Exception as e:      # never let one file stop the whole run: it is left alone, with the reason
@@ -394,7 +401,7 @@ class _NoPool:
         return False
 
 
-def project_packages(P, names, jobs, image=False, log=print, only=None):
+def project_packages(P, names, jobs, image=False, log=print, only=None, known=None):
     pkgs = dpkg_packages(P)
     if names:
         sel = {}
@@ -420,15 +427,15 @@ def project_packages(P, names, jobs, image=False, log=print, only=None):
             rec = files.get(path)
             if rec and rec['version'] == ver and rec['package'] == name:
                 continue      # already projected for this version
-            tasks.append((path, P.real(path), name))
+            tasks.append((path, P.real(path), name, (known or {}).get(path)))
     t0 = time.time()
-    done = skipped = 0
+    done = skipped = same = 0
     pys = []
     # a handful of files (a package or two after an upgrade) is quicker in this process than in a pool
     pool = ProcessPoolExecutor(max_workers=jobs) if len(tasks) > 200 and jobs > 1 else None
     results = pool.map(_work, tasks, chunksize=16) if pool else map(_work, tasks)
     with (pool or _NoPool()):
-        for (path, r, reason, data), (_, real, name) in zip(results, tasks):
+        for (path, r, reason, data), (_, real, name, _seen) in zip(results, tasks):
             if r is None:
                 continue
             ver = pkgs[name][0]
@@ -462,14 +469,15 @@ def project_packages(P, names, jobs, image=False, log=print, only=None):
                            'handler': r.handler, 'variant': r.variant, 'bytes_orig': r.bytes_in, 'bytes_lean': r.bytes_out}
             left.pop(path, None)
             done += 1
+            same += r.check == 'the same bytes as a checked projection'
     recompile_pyc(pys)
     files.save()
     left.save()
     write_packages(P)
     with open(P.state('identity'), 'w') as f:
         f.write(project.IDENTITY + '\n')
-    log(f'dpkg-stereo: {done} files projected, {skipped} left alone with their reason, {len(tasks)} examined, '
-        f'{time.time() - t0:.1f} s')
+    log(f'dpkg-stereo: {done} files projected ({same} of them already checked in these bytes), {skipped} left '
+        f'alone with their reason, {len(tasks)} examined, {time.time() - t0:.1f} s')
     return done
 
 
@@ -482,8 +490,20 @@ def list_mtime(P, info):
 
 def write_packages(P, pkgs=None):
     pkgs = pkgs if pkgs is not None else dpkg_packages(P)
-    write_table(P.state(PKGS), PKG_COLS, {k: {'package': k, 'version': v[0], 'list_mtime': list_mtime(P, v[1])}
-                                          for k, v in pkgs.items()})
+    rows = {k: {'package': k, 'version': v[0], 'list_mtime': list_mtime(P, v[1])} for k, v in pkgs.items()}
+    written = str(int(time.time()))
+    for row in rows.values():
+        row['written'] = written
+    write_table(P.state(PKGS), PKG_COLS, rows)
+
+
+def racy(row):
+    """A file list dpkg wrote in the same second as the table that records it: a second rewrite in that
+    second leaves the same time, so the package is looked at again (the rule git uses for its index)."""
+    try:
+        return int(row.get('written') or 0) > 0 and int(row.get('list_mtime') or 0) >= int(row['written'])
+    except ValueError:
+        return False
 
 
 def md5sums(P, info):
@@ -544,7 +564,8 @@ def post_invoke(P, jobs):
     recorded = read_table(P.state(PKGS), PKG_COLS)
     changed = sorted(k for k, v in pkgs.items()
                      if recorded.get(k, {}).get('version') != v[0]
-                     or recorded.get(k, {}).get('list_mtime') != list_mtime(P, v[1]))
+                     or recorded.get(k, {}).get('list_mtime') != list_mtime(P, v[1])
+                     or racy(recorded.get(k, {})))
     gone = {k for k in recorded if k not in pkgs}
     ch = set(changed)
     try:
@@ -560,8 +581,10 @@ def post_invoke(P, jobs):
         del files[path]
         dirty = True
     same_version = {k for k in ch if recorded.get(k, {}).get('version') == pkgs[k][0]}
+    known = {}             # what was projected and checked before, for files that come back in the same bytes
     for path in [p for p, r in files.items() if r['package'] in ch]:
         rec = files[path]
+        known[path] = (rec['sha_orig'], rec['sha_lean'])
         if rec['package'] in same_version:
             # dpkg rewrote the package's file list (a reinstall), or the list only looks different (an
             # image unpacked elsewhere): the files themselves say which of them dpkg replaced
@@ -606,15 +629,16 @@ def post_invoke(P, jobs):
     files.save()
     full = sorted(ch - same_version)
     if full:
-        project_packages(P, full, jobs, log=lambda m: None)
+        project_packages(P, full, jobs, log=lambda m: None, known=known)
     if again:
-        project_packages(P, sorted(same_version), jobs, log=lambda m: None, only=again)
+        project_packages(P, sorted(same_version), jobs, log=lambda m: None, only=again, known=known)
     if not full and not again and (gone or ch):
         write_packages(P, pkgs)
 
 
-def deb_member(P, package, version, path):
-    """The pristine bytes of one file from the package's .deb: APT's cache first, then a download."""
+def deb_members(P, package, version, wanted):
+    """The pristine bytes of these files from the package's .deb, read in one pass of its archive: APT's
+    cache first, then one download. Files the archive does not hold are missing from the answer."""
     name = package.split(':')[0]
     arch_q = package.split(':')[1] if ':' in package else None
     cands = []
@@ -628,25 +652,45 @@ def deb_member(P, package, version, path):
         spec = f'{name}:{arch_q}={version}' if arch_q else f'{name}={version}'
         subprocess.run(['apt-get', 'download', spec], cwd=tmp, capture_output=True)
         cands = [os.path.join(tmp, f) for f in os.listdir(tmp) if f.endswith('.deb')]
+    found = {}
     try:
         for deb in cands:
-            r = subprocess.run(['dpkg-deb', '--fsys-tarfile', deb], capture_output=True)
-            if r.returncode != 0:
-                continue
-            with tarfile.open(fileobj=io.BytesIO(r.stdout)) as t:
-                for m in t.getmembers():
-                    if m.name.lstrip('.') == path and m.isfile():
-                        return t.extractfile(m).read()
-        return None
+            proc = subprocess.Popen(['dpkg-deb', '--fsys-tarfile', deb], stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL)
+            try:
+                with tarfile.open(fileobj=proc.stdout, mode='r|') as t:
+                    for m in t:
+                        path = m.name.lstrip('.')
+                        if path in wanted and path not in found and m.isfile():
+                            found[path] = t.extractfile(m).read()
+                            if len(found) == len(wanted):
+                                break
+            except tarfile.TarError:
+                pass
+            finally:
+                proc.stdout.close()
+                proc.wait()
+            if len(found) == len(wanted):
+                break
+        return found
     finally:
         if tmp:
             shutil.rmtree(tmp, ignore_errors=True)
 
 
-def original_bytes(P, rec):
+def deb_member(P, package, version, path):
+    return deb_members(P, package, version, {path}).get(path)
+
+
+def has_pristine(P, sha):
+    return os.path.exists(os.path.join(P.state(PRISTINE), sha + '.xz'))
+
+
+def original_bytes(P, rec, from_deb=None):
     data = load_pristine(P, rec['sha_orig'])
     if data is None:
-        data = deb_member(P, rec['package'], rec['version'], rec['path'])
+        data = from_deb.get(rec['path']) if from_deb is not None else \
+            deb_member(P, rec['package'], rec['version'], rec['path'])
     if data is not None and sha256(data) == rec['sha_orig']:
         return data
     return None
@@ -662,7 +706,14 @@ def verify(P, names, deep=False):
     pkgs = dpkg_packages(P)
     bad = 0
     sums_cache = {}
-    for path, rec in sorted(files.items()):
+    # --deep reads each .deb once: the records go package by package, and one package's originals at a time
+    items = sorted(files.items(), key=(lambda kv: (kv[1]['package'], kv[1]['version'], kv[0])) if deep else None)
+    group, from_deb, wanted = None, {}, {}
+    if deep:
+        for p, r in files.items():
+            if r.get('conffile') != '1':
+                wanted.setdefault((r['package'], r['version']), set()).add(p)
+    for path, rec in items:
         if names and rec['package'].split(':')[0] not in names and rec['package'] not in names:
             continue
         try:
@@ -696,7 +747,10 @@ def verify(P, names, deep=False):
             info = pkgs[rec['package']][1]
             if info not in sums_cache:
                 sums_cache[info] = md5sums(P, info)
-            orig = deb_member(P, rec['package'], rec['version'], path)
+            if group != (rec['package'], rec['version']):
+                group = (rec['package'], rec['version'])
+                from_deb = deb_members(P, rec['package'], rec['version'], wanted.get(group, set()))
+            orig = from_deb.get(path)
             if orig is None:
                 print(f'NODEB     {path} (no .deb of {rec["package"]} {rec["version"]} to check against)')
                 continue
@@ -723,30 +777,48 @@ def verify(P, names, deep=False):
 def restore(P, names, drop_hold=False):
     files = Records(P, 'records')
     ok = fail = 0
+    todo = {}
     for path, rec in sorted(files.items()):
         if names and rec['package'].split(':')[0] not in names and rec['package'] not in names and path not in names:
             continue
-        real = P.real(path)
-        try:
-            with open(real, 'rb') as f:
-                data = f.read()
-        except FileNotFoundError:
+        todo.setdefault((rec['package'], rec['version']), []).append(path)
+    pys = []
+    missing = {}
+    # package by package: the originals without a pristine copy come from one pass of the package's .deb
+    for (package, version), paths in sorted(todo.items()):
+        from_deb = None
+        for path in paths:
+            rec = files[path]
+            real = P.real(path)
+            try:
+                with open(real, 'rb') as f:
+                    data = f.read()
+            except FileNotFoundError:
+                del files[path]
+                continue
+            if sha256(data) != rec['sha_lean']:
+                del files[path]     # the person's own file now; nothing of ours to undo
+                continue
+            if from_deb is None and not has_pristine(P, rec['sha_orig']):
+                from_deb = deb_members(P, package, version,
+                                       {p for p in paths if p in files and not has_pristine(P, files[p]['sha_orig'])})
+            orig = original_bytes(P, rec, from_deb if from_deb is not None else {})
+            if orig is None:
+                missing[(package, version)] = missing.get((package, version), 0) + 1
+                fail += 1
+                continue
+            write_lean(real, data, orig, os.lstat(real))
+            if path.endswith('.py'):
+                pys.append(real)
             del files[path]
-            continue
-        if sha256(data) != rec['sha_lean']:
-            del files[path]     # the person's own file now; nothing of ours to undo
-            continue
-        orig = original_bytes(P, rec)
-        if orig is None:
-            print(f'dpkg-stereo: no pristine copy of {path} ({rec["package"]} {rec["version"]}): reinstall the package')
-            fail += 1
-            continue
-        write_lean(real, data, orig, os.lstat(real))
-        if path.endswith('.py'):
-            recompile_pyc([real])
-        del files[path]
-        ok += 1
+            ok += 1
+    recompile_pyc(pys)
     files.save()
+    for (package, version), n in sorted(missing.items()):
+        # the .deb of that version is neither in APT's cache nor in the archive any more: the files stay
+        # lean (and recorded) until the package is reinstalled or upgraded
+        print(f'dpkg-stereo: {package} {version}: {n} files stay lean, its .deb is neither in APT\'s cache nor '
+              f'in the archive; apt-get install --reinstall {package.split(":")[0]} brings them back')
     print(f'dpkg-stereo: {ok} files restored, {fail} need their package reinstalled')
     return 1 if fail else 0
 

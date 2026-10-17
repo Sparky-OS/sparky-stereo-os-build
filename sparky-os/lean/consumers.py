@@ -30,6 +30,8 @@ EXCLUDE = [
     ('*/LICENSE*', 'licence text'), ('*/COPYING*', 'licence text'),
     ('/var/lib/dpkg/*', "dpkg's own database and maintainer scripts"),
     ('/var/lib/dpkg-stereo/*', "dpkg-stereo's own records"),
+    ('/usr/lib/dpkg-stereo/*', 'dpkg-stereo itself: the tool that undoes projections stays as it was built'),
+    ('/usr/sbin/dpkg-stereo', 'dpkg-stereo itself: the tool that undoes projections stays as it was built'),
     ('/var/cache/*', 'caches'), ('/var/log/*', 'logs'), ('/tmp/*', 'temporary files'),
     ('/boot/*', 'boot files'),
     ('/etc/sudoers*', 'sudoers: `#` starts directives (#include) and user IDs'),

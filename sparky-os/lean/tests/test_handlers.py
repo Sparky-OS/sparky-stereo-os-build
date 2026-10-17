@@ -261,6 +261,13 @@ class Data(unittest.TestCase):
         r, _ = P('/usr/share/x/c.json', '{"a": 1}\n')
         self.assertEqual(r.status, 'left')
 
+    def test_dpkg_stereo_itself_left(self):
+        src = '# the projector\nimport os  # used below\nprint(os.sep)\n'
+        for path in ('/usr/lib/dpkg-stereo/lean/core.py', '/usr/sbin/dpkg-stereo'):
+            r, _ = P(path, src if path.endswith('.py') else '#!/usr/bin/python3\n' + src)
+            self.assertEqual(r.status, 'left', path)
+            self.assertIn('dpkg-stereo itself', r.reason)
+
 
 @unittest.skipUnless(shutil.which('gcc'), 'needs gcc')
 class C(unittest.TestCase):
