@@ -115,9 +115,94 @@ def read_table(path, cols):
     return rows
 
 
-def write_files(P, files):
-    write_table(P.state(FILES), FILE_COLS, files)
-    write_table(P.state(CONFFILES), FILE_COLS, {k: v for k, v in files.items() if str(v.get('conffile')) == '1'})
+LEFT_COLS = ('path', 'package', 'handler', 'reason')
+
+
+class Records(dict):
+    """path -> record, kept per package (records/<package>.tsv, left/<package>.tsv), so a dpkg run reads and
+    writes only the packages it touched. Loads every package, or only `pkgs`; `save()` writes the packages
+    whose rows changed, and for projections the small conffile index pre-invoke reads."""
+
+    def __init__(self, P, kind='records', pkgs=None):
+        super().__init__()
+        self.P, self.kind = P, kind
+        self.cols = FILE_COLS if kind == 'records' else LEFT_COLS
+        self.dir = P.state(kind)
+        self.dirty = set()
+        self.loaded = set()
+        _migrate(P)
+        if pkgs is None:
+            try:
+                names = [f[:-4] for f in os.listdir(self.dir) if f.endswith('.tsv')]
+            except FileNotFoundError:
+                names = []
+        else:
+            names = list(pkgs)
+        for n in names:
+            self.load(n)
+
+    def load(self, pkg):
+        if pkg in self.loaded:
+            return
+        self.loaded.add(pkg)
+        dict.update(self, read_table(os.path.join(self.dir, pkg + '.tsv'), self.cols))
+
+    def __setitem__(self, path, rec):
+        self.load(rec['package'])
+        old = self.get(path)
+        if old and old['package'] != rec['package']:
+            self.dirty.add(old['package'])
+        self.dirty.add(rec['package'])
+        dict.__setitem__(self, path, rec)
+
+    def __delitem__(self, path):
+        self.dirty.add(self[path]['package'])
+        dict.__delitem__(self, path)
+
+    def pop(self, path, *default):
+        if path in self:
+            self.dirty.add(self[path]['package'])
+        return dict.pop(self, path, *default)
+
+    def save(self):
+        if not self.dirty:
+            return
+        os.makedirs(self.dir, exist_ok=True)
+        by = {}
+        for path, rec in self.items():
+            if rec['package'] in self.dirty:
+                by.setdefault(rec['package'], {})[path] = rec
+        for pkg in self.dirty:
+            f = os.path.join(self.dir, pkg + '.tsv')
+            if by.get(pkg):
+                write_table(f, self.cols, by[pkg])
+            elif os.path.exists(f):
+                os.unlink(f)
+        if self.kind == 'records':
+            idx = read_table(self.P.state(CONFFILES), FILE_COLS)
+            idx = {k: v for k, v in idx.items() if v['package'] not in self.dirty}
+            for pkg in self.dirty:
+                idx.update({k: v for k, v in by.get(pkg, {}).items() if str(v.get('conffile')) == '1'})
+            write_table(self.P.state(CONFFILES), FILE_COLS, idx)
+        self.dirty = set()
+
+
+def _migrate(P):
+    """0.1.1 and 0.1.2 kept every record in one files.tsv and left.tsv: split them per package, once."""
+    for old, kind, cols in ((FILES, 'records', FILE_COLS), (LEFT, 'left', LEFT_COLS)):
+        f = P.state(old)
+        if not os.path.exists(f):
+            continue
+        rows = read_table(f, cols)
+        os.makedirs(P.state(kind), exist_ok=True)
+        by = {}
+        for path, rec in rows.items():
+            by.setdefault(rec['package'], {})[path] = rec
+        for pkg, r in by.items():
+            write_table(os.path.join(P.state(kind), pkg + '.tsv'), cols, r)
+        if kind == 'records':
+            write_table(P.state(CONFFILES), FILE_COLS, {k: v for k, v in rows.items() if str(v.get('conffile')) == '1'})
+        os.unlink(f)
 
 
 def write_table(path, cols, rows):
@@ -301,6 +386,14 @@ class Lock:
         fcntl.flock(self.f, fcntl.LOCK_UN)
 
 
+class _NoPool:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
 def project_packages(P, names, jobs, image=False, log=print, only=None):
     pkgs = dpkg_packages(P)
     if names:
@@ -313,8 +406,8 @@ def project_packages(P, names, jobs, image=False, log=print, only=None):
     held = set(read_hold(P))
     conf = conffiles(P)
     div = diversions(P)
-    files = read_table(P.state(FILES), FILE_COLS)
-    left = read_table(P.state(LEFT), ('path', 'package', 'handler', 'reason'))
+    files = Records(P, 'records', pkgs.keys() if names else None)
+    left = Records(P, 'left', pkgs.keys() if names else None)
     tasks = []
     sums = {}
     for name, (ver, info) in sorted(pkgs.items()):
@@ -331,8 +424,11 @@ def project_packages(P, names, jobs, image=False, log=print, only=None):
     t0 = time.time()
     done = skipped = 0
     pys = []
-    with ProcessPoolExecutor(max_workers=jobs) as ex:
-        for (path, r, reason, data), (_, real, name) in zip(ex.map(_work, tasks, chunksize=16), tasks):
+    # a handful of files (a package or two after an upgrade) is quicker in this process than in a pool
+    pool = ProcessPoolExecutor(max_workers=jobs) if len(tasks) > 200 and jobs > 1 else None
+    results = pool.map(_work, tasks, chunksize=16) if pool else map(_work, tasks)
+    with (pool or _NoPool()):
+        for (path, r, reason, data), (_, real, name) in zip(results, tasks):
             if r is None:
                 continue
             ver = pkgs[name][0]
@@ -367,8 +463,8 @@ def project_packages(P, names, jobs, image=False, log=print, only=None):
             left.pop(path, None)
             done += 1
     recompile_pyc(pys)
-    write_files(P, files)
-    write_table(P.state(LEFT), ('path', 'package', 'handler', 'reason'), left)
+    files.save()
+    left.save()
     write_packages(P)
     with open(P.state('identity'), 'w') as f:
         f.write(project.IDENTITY + '\n')
@@ -413,9 +509,8 @@ def read_hold(P):
 def pre_invoke(P):
     """Projected conffiles still in their lean form go back to their pristine bytes, so dpkg finds them
     unmodified; a conffile the person edited (its bytes are no longer the lean ones) is left alone."""
+    _migrate(P)
     files = read_table(P.state(CONFFILES), FILE_COLS)
-    if not files and not os.path.exists(P.state(CONFFILES)):
-        files = read_table(P.state(FILES), FILE_COLS)
     n = 0
     restored = []
     for path, rec in files.items():
@@ -444,7 +539,7 @@ def post_invoke(P, jobs):
     """After dpkg: the packages it installed, upgraded or reinstalled (their version or their file list
     changed) are projected again; the conffiles pre-invoke restored for it are projected again (the same
     render as before, so no new check); records of removed packages go. Nothing else is read."""
-    files = read_table(P.state(FILES), FILE_COLS)
+    _migrate(P)
     pkgs = dpkg_packages(P)
     recorded = read_table(P.state(PKGS), PKG_COLS)
     changed = sorted(k for k, v in pkgs.items()
@@ -457,6 +552,8 @@ def post_invoke(P, jobs):
             restored = [l.rstrip('\n') for l in f if l.strip()]
     except FileNotFoundError:
         restored = []
+    conf_idx = read_table(P.state(CONFFILES), FILE_COLS)
+    files = Records(P, 'records', set(ch) | gone | {conf_idx[p]['package'] for p in restored if p in conf_idx})
     dirty = False
     again = set()          # paths dpkg wrote back with the package's bytes: project them again
     for path in [p for p, r in files.items() if r['package'] in gone]:
@@ -506,8 +603,7 @@ def post_invoke(P, jobs):
             dirty = True
             ch.add(rec['package'])
     os.unlink(P.state('restored-for-dpkg')) if os.path.exists(P.state('restored-for-dpkg')) else None
-    if dirty:
-        write_files(P, files)
+    files.save()
     full = sorted(ch - same_version)
     if full:
         project_packages(P, full, jobs, log=lambda m: None)
@@ -561,7 +657,7 @@ def verify(P, names, deep=False):
     for conffiles dpkg's own conffile hash and the pristine copy rendering to the installed lean bytes).
     With --deep, every other file's original is taken from its .deb (APT's cache) and checked against
     dpkg's md5sums and rendered again."""
-    files = read_table(P.state(FILES), FILE_COLS)
+    files = Records(P, 'records')
     conf = conffiles(P)
     pkgs = dpkg_packages(P)
     bad = 0
@@ -614,7 +710,7 @@ def verify(P, names, deep=False):
                 print(f'MISMATCH  {path} (the original does not render to the installed lean file)')
                 bad += 1
                 continue
-    left = read_table(P.state(LEFT), ('path', 'package', 'handler', 'reason'))
+    left = Records(P, 'left')
     for path, rec in sorted(left.items()):
         if names and rec['package'].split(':')[0] not in names and rec['package'] not in names:
             continue
@@ -625,7 +721,7 @@ def verify(P, names, deep=False):
 
 
 def restore(P, names, drop_hold=False):
-    files = read_table(P.state(FILES), FILE_COLS)
+    files = Records(P, 'records')
     ok = fail = 0
     for path, rec in sorted(files.items()):
         if names and rec['package'].split(':')[0] not in names and rec['package'] not in names and path not in names:
@@ -650,13 +746,13 @@ def restore(P, names, drop_hold=False):
             recompile_pyc([real])
         del files[path]
         ok += 1
-    write_files(P, files)
+    files.save()
     print(f'dpkg-stereo: {ok} files restored, {fail} need their package reinstalled')
     return 1 if fail else 0
 
 
 def hr_copy(P, path):
-    files = read_table(P.state(FILES), FILE_COLS)
+    files = Records(P, 'records')
     rec = files.get(path)
     if not rec:
         print(f'dpkg-stereo: {path} is not projected; it is its own full text')
@@ -674,9 +770,8 @@ def hr_copy(P, path):
 
 
 def fetch_hr(P):
+    _migrate(P)
     files = read_table(P.state(CONFFILES), FILE_COLS)
-    if not files and not os.path.exists(P.state(CONFFILES)):
-        files = read_table(P.state(FILES), FILE_COLS)
     n = 0
     restored = []
     for path, rec in files.items():
@@ -700,7 +795,7 @@ def fetch_hr(P):
 def resolve(P, spec):
     path, _, rest = spec.partition(':')
     line, _, col = rest.partition(':')
-    files = read_table(P.state(FILES), FILE_COLS)
+    files = Records(P, 'records')
     rec = files.get(path)
     if not rec:
         print(f'{path}:{line}' + (f':{col}' if col else '') + ' (not projected: the location is already the authored one)')
@@ -726,8 +821,8 @@ def resolve(P, spec):
 
 def manifest(P, out, roots):
     """Every comment-bearing text file in the image, projected or not, with the reason."""
-    files = read_table(P.state(FILES), FILE_COLS)
-    left = read_table(P.state(LEFT), ('path', 'package', 'handler', 'reason'))
+    files = Records(P, 'records')
+    left = Records(P, 'left')
     owner = {}
     for name, (ver, info) in dpkg_packages(P).items():
         for p in package_files(P, info):
@@ -773,8 +868,8 @@ def manifest(P, out, roots):
 
 
 def status(P):
-    files = read_table(P.state(FILES), FILE_COLS)
-    left = read_table(P.state(LEFT), ('path', 'package', 'handler', 'reason'))
+    files = Records(P, 'records')
+    left = Records(P, 'left')
     by = {}
     for rec in files.values():
         k = rec['handler'] + ('/' + rec['variant'] if rec['variant'] else '')

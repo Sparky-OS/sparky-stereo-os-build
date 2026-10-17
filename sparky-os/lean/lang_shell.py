@@ -368,35 +368,80 @@ def refuse(src: str) -> str | None:
 
 
 # The consumer's own parser decides: bash parses the script as one function body and prints it back
-# with `declare -f`, which drops comments and nothing else; equal prints mean equal programs.
-_BASH_PRINT = r'''
+# with `declare -f`, which drops comments and nothing else; equal prints mean equal programs. One bash
+# stays open per projecting process (starting bash per file was most of a projection's cost). It runs
+# with every builtin but the few the loop needs switched off and an empty PATH, as nobody when the
+# projection runs as root, so a broken script whose stray `}` ends the function early cannot run anything.
+_BASH_SERVER = r"""
 shopt -s extglob
-src=$(cat -- "$1"; printf x)
-src=${src%x}
-eval "__lean_check() {
+tok=$1
+for b in $(compgen -b); do
+	case $b in eval|declare|printf|read|unset|shopt|builtin|enable|return|true|false|local) ;;
+	*) enable -n "$b" 2>/dev/null ;;
+	esac
+done
+PATH=/nonexistent
+while IFS= read -r f; do
+	unset -f __lean_check
+	src=$(<"$f")
+	if eval "__lean_check() {
 $src
-}" || exit 3
-declare -f __lean_check
-'''
+}" 2>/dev/null; then declare -f __lean_check; s=0; else s=1; fi
+	printf '\n%s %s\n' "$tok" "$s"
+done
+"""
+
+_bash = None
+_bash_tok = None
 
 
-def bash_print(text: str) -> str | None:
+def _bash_server():
+    global _bash, _bash_tok
+    if _bash is not None and _bash.poll() is None:
+        return _bash
     bash = shutil.which('bash')
     if not bash:
         return None
+    _bash_tok = '__LEAN_END_' + os.urandom(8).hex() + '__'
+    cmd = [bash, '--norc', '--noprofile', '-c', _BASH_SERVER, 'lean-check', _bash_tok]
+    if os.geteuid() == 0 and shutil.which('setpriv'):
+        cmd = ['setpriv', '--reuid=nobody', '--regid=nogroup', '--clear-groups', *cmd]
+    _bash = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                             cwd='/', bufsize=0)
+    return _bash
+
+
+def bash_print(text: str) -> str | None:
+    global _bash
     with tempfile.NamedTemporaryFile('w', suffix='.sh', delete=False, encoding='utf-8', errors='surrogateescape') as f:
         f.write(text)
         p = f.name
+    os.chmod(p, 0o644)
     try:
-        r = subprocess.run([bash, '--norc', '--noprofile', '-c', _BASH_PRINT, 'lean-check', p],
-                           capture_output=True, timeout=60)
-    except subprocess.TimeoutExpired:
+        for attempt in (1, 2):
+            srv = _bash_server()
+            if srv is None:
+                return None
+            try:
+                srv.stdin.write(p.encode() + b'\n')
+                out = []
+                end = (_bash_tok + ' ').encode()
+                while True:
+                    line = srv.stdout.readline()
+                    if not line:
+                        raise BrokenPipeError
+                    if line.startswith(end):
+                        status = line[len(end):].strip()
+                        break
+                    out.append(line)
+                if status != b'0':
+                    return None
+                return b''.join(out).decode('utf-8', 'surrogateescape')
+            except (BrokenPipeError, OSError):
+                _bash = None     # it died (a script that broke the loop): start it once more, then give up
         return None
     finally:
         os.unlink(p)
-    if r.returncode != 0:
-        return None
-    return r.stdout.decode('utf-8', 'surrogateescape')
 
 
 def verify(original: str, lean: str, interpreter: str = 'bash') -> tuple:
