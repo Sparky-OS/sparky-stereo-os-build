@@ -13,7 +13,8 @@
 # source the binaries were built from.
 set -eu
 R=${1:-/K3D/temp/sparky-os/repo}
-"$(dirname "$0")/provenance.sh" "$R"/*.deb
+# Builders finish provenance before Lean Code and archive checksums. Indexing
+# must not rewrite existing archives, including old unmarked development builds.
 cd "$R"
 apt-ftparchive packages . >Packages
 gzip -9kf Packages
