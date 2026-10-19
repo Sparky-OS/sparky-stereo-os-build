@@ -150,14 +150,14 @@ def project(path: str, data: bytes, package: str | None = None, *, pointer=True,
     return res
 
 
-def resolve(hr: bytes, mr: bytes, path: str, package: str | None, line: int, col: int | None = None):
+def resolve(hr: bytes, mr: bytes, path: str, package: str | None, line: int, col: int | None = None, *, pointer=True):
     """An MR location -> the authored (HR) location, rendering the HR again and refusing a stale MR.
     C and C++ need no map: their `#line` directives already make the compiler report authored lines."""
     key, variant, why = consumers.choose(path, hr)
     if key is None:
         raise StaleMr(f'{path}: no handler ({why})')
     text = hr.decode('utf-8')
-    lean, rendered, _ = render_text(text, key, variant, package, path)
+    lean, rendered, _ = render_text(text, key, variant, package, path, pointer=pointer)
     if lean.encode('utf-8') != mr:
         raise StaleMr(f'{path}: the installed file is not the render of its authored text; '
                       f'regenerate it (dpkg-stereo --project) before resolving')

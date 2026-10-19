@@ -21,9 +21,23 @@ done
 dpkg-stereo $maps --image --jobs "${LEANCODE_JOBS:-4}" --project
 # shellcheck disable=SC2086
 dpkg-stereo $maps --manifest "${work:-/tmp}/lean-code-projection.tsv"
+# A shipping image must be verified after the pass, before squashfs is made.
+# shellcheck disable=SC2086
+dpkg-stereo $maps --verify
 # shellcheck disable=SC2086
 dpkg-stereo $maps --status
 # the reasons for files left alone belong to the build record (the manifest), not to the installed system
 state=/var/lib/dpkg-stereo
 for d in "$@"; do case "$d" in */dummysys/var) state=$d/lib/dpkg-stereo ;; esac; done
+PYTHONPATH=/usr/lib/dpkg-stereo python3 - "$state" "${work:-/tmp}" <<'PY'
+import json, pathlib, sys
+from lean import package
+state, work = map(pathlib.Path, sys.argv[1:])
+proof = {'format': 'lc1', 'scope': 'iso-qualified-payload', 'renderer': package.renderer(),
+         'projection_sha256': package.file_hash(work / 'lean-code-projection.tsv'),
+         'packages_sha256': package.file_hash(state / 'packages.tsv')}
+raw = package.encode(proof)
+(state / 'lc-image.json').write_bytes(raw)
+(work / 'lc-image.json').write_bytes(raw)
+PY
 mv "$state/left.tsv" "${work:-/tmp}/lean-code-left.tsv" 2>/dev/null || true

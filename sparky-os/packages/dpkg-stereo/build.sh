@@ -14,7 +14,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 LEAN=$(cd "$HERE/../../lean" && pwd)
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
-VERSION=0.1.5
+VERSION=0.1.7
 PKG=dpkg-stereo
 W=$(mktemp -d "${TMPDIR:-/K3D/temp}/dpkg-stereo-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
@@ -23,7 +23,7 @@ mkdir -p "$D/DEBIAN" "$D/usr/sbin" "$D/usr/lib/dpkg-stereo/lean" "$D/etc/dpkg/dp
 	"$D/usr/share/doc/$PKG"
 install -m 755 "$HERE/bin/dpkg-stereo" "$D/usr/sbin/dpkg-stereo"
 install -m 755 "$HERE/lib/presquashfs-hook" "$D/usr/lib/dpkg-stereo/presquashfs-hook"
-install -m 644 "$LEAN"/*.py "$D/usr/lib/dpkg-stereo/lean/"
+install -m 644 "$LEAN"/*.py "$LEAN/JvmLexer.java" "$D/usr/lib/dpkg-stereo/lean/"
 install -m 644 "$HERE/etc/dpkg-stereo.cfg" "$D/etc/dpkg/dpkg.cfg.d/dpkg-stereo"
 install -m 644 "$HERE/etc/99dpkg-stereo-hr" "$D/etc/apt/apt.conf.d/99dpkg-stereo-hr"
 install -m 644 "$HERE/copyright" "$D/usr/share/doc/$PKG/copyright"
@@ -85,4 +85,5 @@ Description: Lean Code for installed packages
 EOS
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | grep -v '^etc/' | sort | xargs md5sum) >"$D/DEBIAN/md5sums"
 mkdir -p "$OUT"
-dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${PKG}_${VERSION}_all.deb"
+"$HERE/../../repo/provenance.sh" --tree "$D"
+PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release build-tree "$D" "$OUT"

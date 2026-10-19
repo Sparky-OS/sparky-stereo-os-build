@@ -7,7 +7,8 @@
 """dpkg-stereo: Lean Code for installed packages (Sparky Stereo OS Lean Code policy, "Install-time
 projection: dpkg-stereo", Daniel 2026-10-09).
 
-The .deb files stay as their distributions built them. After dpkg has installed or upgraded packages,
+Third-party .deb files stay as their distributions built them. Our lc1-marked builds arrive already
+projected and are skipped after their manifests are checked. After dpkg installs unmarked packages,
 dpkg-stereo projects the text files they installed into their machine form (MR, the removable comments
 absent) through the qualified adapters of the lean package, checks every projection with the file's
 consumer, and records it. Before dpkg runs, every projected conffile whose bytes still equal its lean
@@ -64,6 +65,7 @@ class _Lazy:
 project = _Lazy('project')
 consumers = _Lazy('consumers')
 lean_pkg = _Lazy('')
+lc_package = _Lazy('package')
 
 STATE = '/var/lib/dpkg-stereo'
 FILES = 'files.tsv'
@@ -393,6 +395,7 @@ class Lock:
 
     def __exit__(self, *a):
         fcntl.flock(self.f, fcntl.LOCK_UN)
+        self.f.close()
 
 
 class _NoPool:
@@ -419,9 +422,22 @@ def project_packages(P, names, jobs, image=False, log=print, only=None, known=No
     left = Records(P, 'left', pkgs.keys() if names else None)
     tasks = []
     sums = {}
+    built = lc_package.installed(P, pkgs)
+    prebuilt = 0
     for name, (ver, info) in sorted(pkgs.items()):
         if name in held or name.split(':')[0] in held:
             continue
+        proof = built.get(name)
+        if isinstance(proof, dict):
+            # These MR bytes ARE dpkg's baseline. Importing them into local records
+            # would wrongly restore HR before an upgrade and provoke conffile prompts.
+            for table in (files, left):
+                for path in [p for p, row in table.items() if row['package'] == name]:
+                    del table[path]
+            prebuilt += 1
+            continue
+        if proof is not None:
+            log(f'dpkg-stereo: {name}: lc marker rejected ({proof}); using local qualification')
         sums.update(md5sums(P, info))
         for path in package_files(P, info):
             if path in held or path in div or (only is not None and path not in only):
@@ -478,11 +494,19 @@ def project_packages(P, names, jobs, image=False, log=print, only=None, known=No
     recompile_pyc(pys)
     files.save()
     left.save()
+    if done or prebuilt:
+        # An upgrade may introduce new settings or new authored text. The next
+        # successful online update must refresh HR even on an existing system.
+        try:
+            os.unlink(P.state('hr-fetched'))
+        except FileNotFoundError:
+            pass
     write_packages(P)
     with open(P.state('identity'), 'w') as f:
         f.write(project.IDENTITY + '\n')
     log(f'dpkg-stereo: {done} files projected ({same} of them already checked in these bytes), {skipped} left '
-        f'alone with their reason, {len(tasks)} examined, {time.time() - t0:.1f} s')
+        f'alone with their reason, {len(tasks)} examined, {prebuilt} lc1 packages already processed at build, '
+        f'{time.time() - t0:.1f} s')
     return done
 
 
@@ -727,6 +751,38 @@ def original_bytes(P, rec, from_deb=None):
     return None
 
 
+def build_record(P, path):
+    """The build's proof is separate from local records; it never changes dpkg baselines."""
+    for info, obj in lc_package.installed(P).items():
+        if not isinstance(obj, dict) or path not in package_files(P, info):
+            continue
+        for row in obj['files']:
+            if row['path'] == path and row['status'] == 'projected':
+                return obj, row
+    return None, None
+
+
+def build_original(P, obj, row, blobs=None):
+    path = lc_package.hr_path(obj['package'], obj['architecture'], row['sha_hr'])
+    try:
+        with lzma.open(P.real(path)) as stream:
+            data = stream.read(TEXT_SIZE_MAX + 1)
+    except (OSError, lzma.LZMAError):
+        data = None
+    if data is None:
+        name = obj['hr_package']
+        if obj['architecture'] != 'all':
+            name += ':' + obj['architecture']
+        blob = blobs.get(path) if blobs is not None else deb_member(P, name, obj['version'], path)
+        if blob is not None:
+            try:
+                with lzma.open(io.BytesIO(blob)) as stream:
+                    data = stream.read(TEXT_SIZE_MAX + 1)
+            except (OSError, lzma.LZMAError):
+                pass
+    return data if data is not None and sha256(data) == row['sha_hr'] else None
+
+
 def verify(P, names, deep=False):
     """Each projected file against its lean hash; its record against dpkg (the same package version, and
     for conffiles dpkg's own conffile hash and the pristine copy rendering to the installed lean bytes).
@@ -736,6 +792,29 @@ def verify(P, names, deep=False):
     conf = conffiles(P)
     pkgs = dpkg_packages(P)
     bad = back = 0
+    built_count = 0
+    for name, obj in lc_package.installed(P, names or None).items():
+        if names and name not in names and name.split(':')[0] not in names:
+            continue
+        if not isinstance(obj, dict):
+            print(f'LCMARKER  {name} ({obj})')
+            bad += 1
+            continue
+        built_count += 1
+        for row in obj['files']:
+            if not deep and row['status'] != 'projected':
+                continue
+            path = row['path']
+            try:
+                if row['kind'] == 'file':
+                    good = not os.path.islink(P.real(path)) and lc_package.file_hash(P.real(path)) == row['sha256']
+                else:
+                    good = os.path.islink(P.real(path)) and os.readlink(P.real(path)) == row['target']
+            except OSError:
+                good = False
+            if not good:
+                print(f'LCCHANGED {path} (differs from its build-time payload; user edits remain untouched)')
+                bad += 1
     sums_cache = {}
     # --deep reads each .deb once: the records go package by package, and one package's originals at a time
     items = sorted(files.items(), key=(lambda kv: (kv[1]['package'], kv[1]['version'], kv[0])) if deep else None)
@@ -808,7 +887,8 @@ def verify(P, names, deep=False):
         if 'changed by the person' in rec['reason']:
             print(f'EDITED    {path} (changed by the person: left as they made it)')
     print(f'dpkg-stereo: {len(files)} projected files checked, {bad} problems'
-          + (f', {back} in their package\'s own bytes (restored, not projected)' if back else ''))
+          + (f', {back} in their package\'s own bytes (restored, not projected)' if back else '')
+          + f', {built_count} lc1 package manifests checked')
     return 1 if bad else 0
 
 
@@ -858,6 +938,9 @@ def restore(P, names, drop_hold=False):
         print(f'dpkg-stereo: {package} {version}: {n} files stay lean, its .deb is neither in APT\'s cache nor '
               f'in the archive; apt-get install --reinstall {package.split(":")[0]} brings them back')
     print(f'dpkg-stereo: {ok} files restored, {fail} need their package reinstalled')
+    if any(isinstance(obj, dict) and (not names or name in names or name.split(':')[0] in names)
+           for name, obj in lc_package.installed(P).items()):
+        print('dpkg-stereo: lc1 build-time files remain at their distribution baseline; --hr retrieves their authored text')
     return 1 if fail else 0
 
 
@@ -865,13 +948,19 @@ def hr_copy(P, path):
     files = Records(P, 'records')
     rec = files.get(path)
     if not rec:
-        print(f'dpkg-stereo: {path} is not projected; it is its own full text')
-        return 1
-    orig = original_bytes(P, rec)
+        obj, row = build_record(P, path)
+        if row is None:
+            print(f'dpkg-stereo: {path} has no valid local or build-time projection record')
+            return 1
+        orig = build_original(P, obj, row)
+        name = obj['package']
+    else:
+        orig = original_bytes(P, rec)
+        name = rec['package'].split(':')[0]
     if orig is None:
         print(f'dpkg-stereo: no pristine copy of {path}')
         return 1
-    dest = P.real(f'/usr/share/doc/{rec["package"].split(":")[0]}/hr{path}')
+    dest = P.real(f'/usr/share/doc/{name}/hr{path}')
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     with open(dest, 'wb') as f:
         f.write(orig)
@@ -883,6 +972,7 @@ def fetch_hr(P):
     _migrate(P)
     files = read_table(P.state(CONFFILES), FILE_COLS)
     n = 0
+    missing = 0
     restored = []
     for path, rec in files.items():
         if rec.get('conffile') != '1':
@@ -892,14 +982,44 @@ def fetch_hr(P):
             continue
         orig = load_pristine(P, rec['sha_orig'])
         if orig is None:
+            missing += 1
             continue
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         with open(dest, 'wb') as f:
             f.write(orig)
         n += 1
-    open(P.state('hr-fetched'), 'w').close()
+    conf = conffiles(P)
+    for obj in lc_package.installed(P).values():
+        if not isinstance(obj, dict) or not obj['hr_package']:
+            continue
+        rows = [row for row in obj['files'] if row['status'] == 'projected' and row['path'] in conf]
+        pending = []
+        for row in rows:
+            dest = P.real(f'/usr/share/doc/{obj["package"]}/hr{row["path"]}')
+            if not os.path.exists(dest) or lc_package.file_hash(dest) != row['sha_hr']:
+                pending.append((row, dest))
+        if not pending:
+            continue
+        name = obj['hr_package'] + (':' + obj['architecture'] if obj['architecture'] != 'all' else '')
+        blobs = deb_members(P, name, obj['version'], {
+            lc_package.hr_path(obj['package'], obj['architecture'], row['sha_hr']) for row, _ in pending})
+        for row, dest in pending:
+            orig = build_original(P, obj, row, blobs)
+            if orig is None:
+                missing += 1
+                continue
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, 'wb') as stream:
+                stream.write(orig)
+            n += 1
+    if not missing:
+        open(P.state('hr-fetched'), 'w').close()
+    elif os.path.exists(P.state('hr-fetched')):
+        os.unlink(P.state('hr-fetched'))
     print(f'dpkg-stereo: {n} HR copies of settings written under /usr/share/doc/*/hr/')
-    return 0
+    if missing:
+        print(f'dpkg-stereo: {missing} HR copies unavailable; the next online update will retry')
+    return 1 if missing else 0
 
 
 def resolve(P, spec):
@@ -907,13 +1027,25 @@ def resolve(P, spec):
     line, _, col = rest.partition(':')
     files = Records(P, 'records')
     rec = files.get(path)
+    obj = row = None
     if not rec:
-        print(f'{path}:{line}' + (f':{col}' if col else '') + ' (not projected: the location is already the authored one)')
-        return 0
+        obj, row = build_record(P, path)
+        if row is None:
+            try:
+                with open(P.real(path), 'rb') as stream:
+                    marked = b'Lean Code:' in stream.read(8192)
+            except OSError:
+                marked = True
+            if marked:
+                print(f'{path}:{line} (unresolved: no valid projection record)')
+                return 1
+            print(f'{path}:{line}' + (f':{col}' if col else '') + ' (not projected: the location is already the authored one)')
+            return 0
+        rec = dict(row, package=obj['package'])
     if rec['handler'] == 'c' and rec['variant'] in ('c', 'c++'):
         print(f'{path}:{line}' + (f':{col}' if col else '') + ' (C and C++ keep authored line numbers through #line)')
         return 0
-    orig = original_bytes(P, rec)
+    orig = build_original(P, obj, row) if obj is not None else original_bytes(P, rec)
     if orig is None:
         print('dpkg-stereo: unresolved: no pristine copy of the authored file')
         return 1
@@ -934,6 +1066,8 @@ def manifest(P, out, roots):
     files = Records(P, 'records')
     left = Records(P, 'left')
     owner = {}
+    built = {row['path']: (obj, row) for obj in lc_package.installed(P).values() if isinstance(obj, dict)
+             for row in obj['files'] if row['status'] == 'projected'}
     for name, (ver, info) in dpkg_packages(P).items():
         for p in package_files(P, info):
             owner.setdefault(p, name)
@@ -947,6 +1081,12 @@ def manifest(P, out, roots):
                 for n in names:
                     real = os.path.join(d, n)
                     path = image_prefix.rstrip('/') + real[len(base):]
+                    if path in built:
+                        obj, row = built[path]
+                        f.write(f'{path}\t{obj["package"]}\t{row["handler"]}/{row["variant"]}\t{row["bytes_hr"]}\t'
+                                f'{row["bytes"]}\tyes\tlc1: projected at build\n')
+                        rows += 1
+                        continue
                     if path in files:
                         rec = files[path]
                         f.write(f'{path}\t{rec["package"]}\t{rec["handler"]}/{rec["variant"]}\t{rec["bytes_orig"]}\t'
@@ -995,6 +1135,12 @@ def status(P):
         reasons[rec['reason']] = reasons.get(rec['reason'], 0) + 1
     for r, n in sorted(reasons.items(), key=lambda x: -x[1])[:20]:
         print(f'  left: {n:>7}  {r}')
+    built = lc_package.installed(P)
+    valid = [obj for obj in built.values() if isinstance(obj, dict)]
+    projected = [row for obj in valid for row in obj['files'] if row['status'] == 'projected']
+    print(f'  lc1: {len(valid)} packages processed at build, {len(projected)} projected files, '
+          f'{sum(row["bytes_hr"] - row["bytes"] for row in projected)} gross payload bytes removed; '
+          f'{len(built) - len(valid)} invalid markers')
     return 0
 
 

@@ -1,5 +1,7 @@
 # Sparky Stereo OS Lean Code policy
 
+**Release clarification, Daniel, 2026-10-18:** all packages and ISOs we put live must pass Lean Code in our pipeline. Our preprocessed packages carry the versioned **lc** marker so clients skip completed work. The staged `lc1` implementation, its configuration baseline, separate HR documentation and publication gate are described in [LC-PACKAGES.md](lean/LC-PACKAGES.md). This supersedes install-time-only processing for packages we build and publish; third-party packages installed directly keep their own update sources and the local projection path.
+
 Adopted 9 October 2026. This policy governs the build and packaging pipeline for Sparky Stereo OS distribution ISOs. It specifies release requirements; implementation coverage must be recorded before an image is described as compliant.
 
 Keep the complete, documented source as the authority. Generate the machine representation needed for execution, and make every transformed error location traceable to that exact source. Apply this through the existing build and packaging processes, without refactoring applications, reorganizing repositories, renaming their source files, or changing their upstream development conventions.

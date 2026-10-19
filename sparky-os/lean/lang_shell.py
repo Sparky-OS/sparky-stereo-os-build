@@ -3,7 +3,7 @@
 """Shell (bash and POSIX sh/dash): comments are found the way the shell's own reader finds them.
 
 Ported from CGM's _lang_shell (shebang kept, `#` comments to MR-absent), with its two counterexamples
-of 2026-10-09 fixed (sparky-stereo-os.private research/lean-code-2026-10-09/handler-probes.json):
+of 2026-10-09 fixed using the edition's qualified regression fixtures:
   - a `#` inside double quotes is data ("value # keep" stayed broken shell);
   - a heredoc's body is data (`cat <<'EOF'` / `# literal data` / `EOF` lost its line).
 The rule is the shell's: a `#` starts a comment only at the start of a word, outside quotes, outside

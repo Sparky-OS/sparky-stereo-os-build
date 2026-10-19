@@ -30,15 +30,9 @@ Copyright: 2026 $PAWEL
 License: GPL-2+
  On Debian systems the full text of the GNU General Public License version 2
  is in /usr/share/common-licenses/GPL-2."
-for deb in "$@"; do
-	if [ "$(dpkg-deb -f "$deb" Maintainer)" = "$ME" ] && [ "$(dpkg-deb -f "$deb" Homepage)" = "$HOME_URL" ] &&
-		[ "$(dpkg-deb -f "$deb" Bugs)" = "$BUGS_URL" ] &&
-		dpkg-deb --fsys-tarfile "$deb" | tar -xO --wildcards './usr/share/doc/*/copyright' 2>/dev/null | grep -q -F "Daniel Ramos's (Capitain Jack) edition of SparkyLinux"; then
-		echo "$(basename "$deb"): already signed"
-		continue
-	fi
-	w=$(mktemp -d /K3D/temp/sparky-os/prov.XXXXXX)
-	dpkg-deb -R "$deb" "$w"
+# Staging mode runs before LC checksums and the marker are finalized.
+stamp_tree() {
+	local w=$1
 	python3 - "$w/DEBIAN/control" "$ME" "$HOME_URL" "$BUGS_URL" <<'PY'
 import sys, re
 path, me, home, bugs = sys.argv[1:5]
@@ -86,6 +80,29 @@ PY
 	(cd "$w" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort |
 		grep -v -x -F -f <(sed 's|^/||' DEBIAN/conffiles 2>/dev/null || true) |
 		tr '\n' '\0' | xargs -0 -r md5sum >DEBIAN/md5sums)
+}
+if [ "${1:-}" = --tree ]; then
+	[ $# = 2 ] && [ -f "$2/DEBIAN/control" ] || { echo "usage: provenance.sh --tree STAGING" >&2; exit 2; }
+	if grep -qi '^Sparky-Lean-Code:' "$2/DEBIAN/control"; then
+		echo "provenance must precede the lc marker; rebuild a fresh staging tree" >&2; exit 1
+	fi
+	stamp_tree "$2"
+	exit 0
+fi
+for deb in "$@"; do
+	if [ "$(dpkg-deb -f "$deb" Maintainer)" = "$ME" ] && [ "$(dpkg-deb -f "$deb" Homepage)" = "$HOME_URL" ] &&
+		[ "$(dpkg-deb -f "$deb" Bugs)" = "$BUGS_URL" ] &&
+		dpkg-deb --fsys-tarfile "$deb" | tar -xO --wildcards './usr/share/doc/*/copyright' 2>/dev/null | grep -q -F "Daniel Ramos's (Capitain Jack) edition of SparkyLinux"; then
+		echo "$(basename "$deb"): already signed"
+		continue
+	fi
+	if [ -n "$(dpkg-deb -f "$deb" Sparky-Lean-Code)" ]; then
+		echo "$deb: lc-sealed package needs provenance fixed in a fresh build, before Lean Code" >&2
+		exit 1
+	fi
+	w=$(mktemp -d /K3D/temp/sparky-os/prov.XXXXXX)
+	dpkg-deb -R "$deb" "$w"
+	stamp_tree "$w"
 	# written beside and renamed over, so that whoever reads the repository at that moment (another lane's build, apt) never
 	# sees a half-written package
 	dpkg-deb --root-owner-group -Zxz -b "$w" "$deb.stamping" >/dev/null

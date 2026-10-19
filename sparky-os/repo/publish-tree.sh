@@ -197,6 +197,11 @@ with open(out_left, 'w') as o:
 PY
 [ -s "$W/selection.tsv" ] || { echo "no .deb files found in $SRC" >&2; exit 1; }
 
+# Every binary we publish, including carried packages, must have an lc1 proof.
+# This runs before copying or signing anything. Rebuild unmarked packages at a
+# new version; never stamp or alter a previously published .deb in place.
+PYTHONPATH="$HERE/..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release check-selection "$W/selection.tsv"
+
 # 2. Pool: copy what is new or changed, then drop what is no longer selected.
 mkdir -p "$DEST/pool/$COMPONENT"
 cut -f2 "$W/selection.tsv" | sort >"$W/wanted.txt"

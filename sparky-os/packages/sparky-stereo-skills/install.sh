@@ -9,5 +9,7 @@ if [[ ${1:-install} == uninstall ]]; then
 	apt-get -y purge sparky-stereo-skills
 else
 	OUT=${OUT:?Set OUT to the directory containing the built packages}
-	apt-get -y install "$OUT/sparky-stereo-skills_0.1.0_all.deb"
+	HERE=$(cd "$(dirname "$0")" && pwd)
+	VERSION=$(dpkg-parsechangelog -l "$HERE/debian/changelog" -S Version)
+	apt-get -y install "$OUT/sparky-stereo-skills_${VERSION}_all.deb"
 fi

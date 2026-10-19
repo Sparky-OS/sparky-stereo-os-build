@@ -19,6 +19,7 @@
 # shellcheck disable=SC2059,SC2088
 set -euo pipefail
 SKILLS=${SPARKY_STEREO_SKILLS:-/usr/share/sparky-stereo-os/skills}
+REFERENCE=${SPARKY_STEREO_REFERENCE:-$(dirname "$SKILLS")}
 SHARE=${SPARKY_STEREO_SKILLS_STRINGS:-/usr/share/sparky/sparky-stereo-skills}
 STATE_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/sparky-stereo-skills
 STATE=$STATE_DIR/state
@@ -210,7 +211,7 @@ first_login() {
 	return 0
 }
 
-usage() { printf '%s\n' "$LOCAL20"; }
+usage() { printf '%s\n\n%s\n' "$LOCAL20" "$LOCAL25"; }
 
 BASE=$HOME
 cmd=status
@@ -220,7 +221,7 @@ while (($#)); do
 		--first-login) cmd=first-login ;;
 		--gui) cmd=gui ;;
 		-h|--help) usage; exit 0 ;;
-		status|link|unlink|list|tools|export) cmd=$1; shift; break ;;
+		status|link|unlink|list|tools|export|context|bundle) cmd=$1; shift; break ;;
 		*) usage >&2; exit 2 ;;
 	esac
 	shift
@@ -235,6 +236,9 @@ case $cmd in
 	list) do_list ;;
 	tools) printf '%s\n' "$TOOLS" | awk -F'\t' '{printf "%-9s ~/%-26s %s\n", $1, $2, $3}' ;;
 	export) do_export "$@" ;;
+	context) python3 "$REFERENCE/tools/skills-context.py" "$@" ;;
+	bundle) [ "$#" -eq 1 ] || { usage >&2; exit 2; }
+		python3 "$REFERENCE/tools/skills-context.py" --bundle "$1" ;;
 	gui) gui ;;
 	first-login) first_login ;;
 esac

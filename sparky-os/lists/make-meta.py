@@ -9,8 +9,8 @@
 # Never listed: hardware-found.list (the hardware setup installs those per machine), aptus.list
 # and base-remove.list (not installed), and emulation-3d.list (emulators install from APTus
 # Stereo AppCenter, never from the ISO; prepack.sh --final purges them).
-# Last update 2026/10/16: the developer tasks task-sparky-stereo-developer and task-sparky-stereo-os-developer (opt-in, with
-# sparky-stereo-skills in their Depends).
+# Last update 2026/10/19: both developer tasks remain opt-in; only the OS-developer task depends on
+# sparky-stereo-skills, for distribution maintainers and their human/local/hosted partners.
 # Earlier update 2026/10/14: each package gets its copyright file here (build.sh no longer writes it).
 # Earlier update 2026/10/07: role tasks task-sparky-stereo-<role> (and task-sparky-<role> for the
 # 2D programs of science and education), sparky-stereo-gaming transitional, sparky-stereo-tasks for tasksel
@@ -134,8 +134,8 @@ ROLES = {
     'simmer': ('simulator pilot and driver', 'flight and racing simulators and the tools for their rigs'),
     'maker': ('maker', '3D printing: modelling, mesh checking and repair, slicing, printer control, 3D scanning and electronics'),
     'engineer': ('electrical and automation engineer', 'circuits and PCBs, electrical diagrams, circuit simulation, logic analysers and serial tools, FPGAs, PLC programming, SCADA and HMI, industrial protocols and power systems'),
-    'developer': ('developer', "KDE's development tools first (KDevelop, Kate and the KDE SDK, the Qt 6 and KDE Frameworks development files, Qt Creator), compilers, debuggers and build systems for C, C++, Rust, Go, Python, Java and the other languages Debian carries, version control, containers and virtual machines, graphics and GPU debugging, the game engines and game libraries, and the edition's skills for AI assistants"),
-    'os-developer': ('Stereo OS developer', "the development files of the edition's stereo stack at the edition's versions (stereo-declare, stereo-layer, gl-stereo, Mesa, KWin, Qt and the Wayland protocols), Debian packaging tools, the stereo proof rig and the virtual display benches, the tools KDE's CI needs locally, and the edition's skills for AI assistants; it brings the developer task"),
+    'developer': ('developer', "KDE's development tools first (KDevelop, Kate and the KDE SDK, the Qt 6 and KDE Frameworks development files, Qt Creator), compilers, debuggers and build systems for C, C++, Rust, Go, Python, Java and the other languages Debian carries, version control, containers and virtual machines, graphics and GPU debugging, the game engines and game libraries"),
+    'os-developer': ('Stereo OS developer', "the development files of the edition's stereo stack at the edition's versions (stereo-declare, stereo-layer, gl-stereo, Mesa, KWin, Qt and the Wayland protocols), Debian packaging tools, the stereo proof rig and the virtual display benches, the tools KDE's CI needs locally, and the edition's maintainer skills for humans and local or hosted AI partners; it brings the developer task"),
 }
 # The developer tasks are opt-in (Daniel, 2026-10-16: "just install the meta and start developing"): tasksel lists them,
 # and sparky-stereo does not pull them in.
@@ -181,12 +181,11 @@ def tasks():
             dep += ['ffmpeg', 'libvulkan1', 'python3']
             rec = sorted(set(rec) | set(GAMING_LISTS) | {'sparky-stereo-game-performance'})
         if r in OPT_IN:
-            # the public skills for AI assistants come with both developer tasks (Daniel, 2026-10-16: "include the
-            # skills in this meta package, so local or cloud AI partners on devs machines have access to it")
-            dep += ['sparky-stereo-skills']
             rec = sorted(set(rec) | set(lst(r)))
         if r == 'os-developer':
-            dep += ['task-sparky-stereo-developer'] + OS_DEV_STACK
+            # Daniel, 2026-10-19: these instructions belong to distro developers, not regular developers.
+            dep += ['task-sparky-stereo-developer', 'sparky-stereo-skills (>= 0.2.0~dev20261019)',
+                    'dpkg-stereo (>= 0.1.7)'] + OS_DEV_STACK
         t['task-sparky-stereo-' + r] = (
             'Sparky Stereo OS: ' + who,
             f'This task package installs the {who} programs of Sparky Stereo OS: {what}.'

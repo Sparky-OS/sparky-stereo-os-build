@@ -3,7 +3,7 @@
 """C, C++ and GLSL: `//` and `/* */` comments, outside string, character and raw string literals.
 
 Ported from CGM's _lang_c_like (its literal scan, raw strings and LineMap), with the 2026-10-09
-counterexamples fixed (sparky-stereo-os.private research/lean-code-2026-10-09/handler-probes.json):
+counterexamples fixed using the edition's qualified regression fixtures:
   - `int/**/value` became `intvalue`: a removed comment with code after it is one space, as in
     translation phase 3 (C23 5.1.1.2; GCC "Initial processing");
   - a raw string lost one of its blank lines: literals are never compacted;
@@ -237,7 +237,13 @@ def _cpp(args, text, lang):
         p = os.path.join(d, 'f.' + ('cc' if lang == 'c++' else 'c'))
         with open(p, 'w', encoding='utf-8', errors='surrogateescape') as f:
             f.write(text)
-        r = subprocess.run([gcc, '-E', '-x', lang, *args, p], capture_output=True, timeout=120)
+        # Both sides must have the same logical filename and clock. Otherwise
+        # __FILE__ (including uses hidden in system-header macros), __BASE_FILE__
+        # and time macros produce differences caused only by our test fixtures.
+        os.utime(p, (0, 0))
+        env = dict(os.environ, SOURCE_DATE_EPOCH='0')
+        r = subprocess.run([gcc, '-E', '-x', lang, *args, os.path.basename(p)],
+                           cwd=d, env=env, capture_output=True, timeout=120)
         if r.returncode != 0:
             return None
         return r.stdout.decode('utf-8', 'surrogateescape')

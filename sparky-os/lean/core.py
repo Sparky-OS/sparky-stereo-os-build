@@ -161,7 +161,7 @@ def render(src: str, spans: list, joiner, *, keep_empty_after=None, collapse_bla
     collapse_blank: runs of more than one empty line outside literals become one (CGM's MR shape).
     """
     n = len(src)
-    lit = [(sp.start, sp.end) for sp in spans if sp.kind == LITERAL]
+    lit = [(sp.start, sp.end) for sp in spans if sp.kind in (LITERAL, KEEP)]
     lit_starts = [a for a, _ in lit]
 
     def src_in_literal(o):

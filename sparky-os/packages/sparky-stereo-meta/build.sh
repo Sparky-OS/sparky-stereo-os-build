@@ -20,11 +20,22 @@ W=$(mktemp -d "$BUILD_ROOT/meta-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 
 PKGS=$(python3 "$HERE/../../lists/make-meta.py" --list)
+if [ -n "${PACKAGES:-}" ]; then
+	for PKG in $PACKAGES; do
+		case " $PKGS " in *" $PKG "*) ;; *) echo "Unknown task package: $PKG" >&2; exit 2 ;; esac
+	done
+	PKGS=$PACKAGES
+fi
 python3 "$HERE/../../lists/make-meta.py" "$VERSION" "$W"
 mkdir -p "$OUT"
 for PKG in $PKGS; do
 	(cd "$W/$PKG" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 	V=$(sed -n 's/^Version: //p' "$W/$PKG/DEBIAN/control")
-	dpkg-deb --root-owner-group -Zxz -b "$W/$PKG" "$OUT/${PKG}_${V}_all.deb" >/dev/null
+	printf 'Source: sparky-stereo-meta (%s)\n' "$VERSION" >> "$W/$PKG/DEBIAN/control"
+	bash "$HERE/../../repo/provenance.sh" --tree "$W/$PKG"
+	mkdir -p "$W/source-trees"
+	cp -a "$W/$PKG" "$W/source-trees/"
+	PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release build-tree "$W/$PKG" "$OUT"
 	echo "built $OUT/${PKG}_${V}_all.deb"
 done
+python3 "$HERE/build-source.py" "$W/source-trees" "$VERSION" "$OUT"

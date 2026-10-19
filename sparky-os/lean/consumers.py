@@ -14,10 +14,10 @@ import fnmatch
 import os
 import re
 
-from . import lang_c, lang_ini, lang_js, lang_json, lang_perl, lang_python, lang_shell, lang_toml, lang_yaml
+from . import lang_c, lang_ini, lang_js, lang_json, lang_perl, lang_python, lang_shell, lang_toml, lang_yaml, lang_java, lang_kotlin
 
 HANDLERS = {m.KEY: m for m in (lang_shell, lang_python, lang_js, lang_ini, lang_yaml, lang_toml, lang_json,
-                               lang_c, lang_perl)}
+                               lang_c, lang_perl, lang_java, lang_kotlin)}
 
 # never projected, with the reason recorded in the manifest
 EXCLUDE = [
@@ -105,6 +105,10 @@ def choose(path: str, data: bytes):
         return 'shell', 'bash' if path.startswith('/etc/grub.d/') else 'dash', None
     if ext == '.py':
         return 'python', None, None
+    if ext == '.java':
+        return 'java', None, None
+    if ext in ('.kt', '.kts'):
+        return 'kotlin', None, None
     if ext in ('.pl', '.pm'):
         return 'perl', None, None
     if ext in ('.qml', '.js', '.mjs'):

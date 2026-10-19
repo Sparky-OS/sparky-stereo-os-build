@@ -1,5 +1,5 @@
 sparky-stereo-skills
-The public skills of Sparky Stereo OS for AI assistants, and a helper that links them where each person's assistants read skills.
+The public skills of Sparky Stereo OS for distribution maintainers, usable directly by humans and with local or hosted AI partners. Optional links retain integration with existing assistants.
 
 Copyright (C) 2026 Paweł Pijanowski, Daniel Ramos (Capitain Jack) and others, see copyright file.
 
@@ -18,6 +18,10 @@ sparky-stereo-skills link [NAME...]  link every skill into the folders of the as
 sparky-stereo-skills unlink [NAME...] remove only the links this tool made
 sparky-stereo-skills list            the skills and what each is for
 sparky-stereo-skills tools           the folder names: agents, claude, cline, gemini, opencode, copilot, cursor
+sparky-stereo-skills context native-linux --output /tmp/native-linux-context.txt
+                                    selected instructions, identity and file hashes, with a character budget
+sparky-stereo-skills context --help  section/reference selection and context limits
+sparky-stereo-skills bundle FILE.zip complete public reference tree for offline extraction
 sparky-stereo-skills export FILE.zip one archive for Open WebUI (Workspace, Skills, Import)
 sparky-stereo-skills --project DIR link   link into a project's .agents/skills and .claude/skills
 sparky-stereo-skills --gui           the same choice in a dialog (also in the menu: Development, AI assistant skills)
@@ -37,15 +41,22 @@ Dependencies:
 -------------
 gawk | mawk
 python3
+python3-yaml
 yad
 
 Build:
 -------------
-OUT=dir ./build.sh   (SKILLS_SRC: a checkout of Sparky-OS/sparky-stereo-os; SKILLS_COMMIT: the commit to take)
+OUT=dir SKILLS_COMMIT=<reviewed-commit> ./build.sh
+SKILLS_SRC names the public checkout. The build resolves the commit, validates the instructions, and records SOURCE plus MANIFEST.sha256. The source package includes the snapshot and rebuilds without the checkout.
+A local working-tree candidate must instead provide a bundled public/ snapshot with an honest SOURCE (candidate status, base commit, date) and MANIFEST.sha256; it is not a release pin.
+The candidate version is UNRELEASED until integration and publication. The task recipe includes this package only in task-sparky-stereo-os-developer; ordinary developers can install it explicitly.
 
 Test:
 -------------
 tests/helper.sh   (as an ordinary user, with the package installed, in a container)
+python3 /usr/share/sparky-stereo-os/tools/check-skills.py
+python3 /usr/share/sparky-stereo-os/tools/tests/test-skills-context.py
+The context and complete reference bundle require no model, account or network. Skill-import ZIPs may not carry references outside each skill folder; use bundle for the whole tree.
 
 Install:
 -------------
