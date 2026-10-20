@@ -36,6 +36,7 @@ EXCLUDE = [
     ('/boot/*', 'boot files'),
     ('/etc/sudoers*', 'sudoers: `#` starts directives (#include) and user IDs'),
     ('/usr/src/*/.config', 'kernel configuration: "# CONFIG_X is not set" lines are read by Kconfig'),
+    ('/usr/include/wine/*', 'Wine headers are also input to WIDL and WRC; their preprocessor needs separate qualification'),
     ('*/Kconfig*', 'Kconfig language: no qualified adapter'),
     ('/etc/apt/*', 'APT configuration: its own grammar, no qualified adapter yet'),
     ('/usr/lib/python3*/test/*', 'Python test data (some read their own comments)'),

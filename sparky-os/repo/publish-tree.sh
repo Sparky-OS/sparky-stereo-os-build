@@ -8,6 +8,7 @@
 #   dists/mashtabba/Release, InRelease, Release.gpg
 #   dists/mashtabba/main/binary-amd64/Packages{,.gz,.xz}   (Architecture: amd64)
 #   dists/mashtabba/main/binary-i386/Packages{,.gz,.xz}    (Architecture: i386, when there are i386 packages)
+#   dists/mashtabba/main/binary-arm64/Packages{,.gz,.xz}   (Architecture: arm64, when there are arm64 packages)
 #   dists/mashtabba/main/binary-all/Packages{,.gz,.xz}     (Architecture: all, as apt asks for them)
 #   dists/mashtabba/main/source/Sources{,.gz,.xz}          (only when source packages are given)
 # SparkyLinux's shape with our names: Origin and Label are the distribution ("Sparky Stereo
@@ -70,7 +71,7 @@ trap 'rm -rf "${W:?}"' EXIT
 SOURCES_DIR=${SPARKY_REPO_SOURCES:-$SRC/source}
 export SOURCES_DIR
 python3 - "$SRC" "$W/selection.tsv" "$W/leftout.txt" "${EXTRA[@]}" <<'PY'
-import os, sys, subprocess
+import hashlib, os, sys, subprocess
 
 src, out_sel, out_left = sys.argv[1:4]
 extra = sys.argv[4:]
@@ -128,6 +129,7 @@ for e in extra:
 
 best = {}
 allv = {}
+identities = {}
 for path, nested in debs:
     r = subprocess.run(['dpkg-deb', '-f', path, 'Package', 'Version', 'Architecture', 'Source'],
                        capture_output=True, text=True, check=True).stdout
@@ -137,6 +139,15 @@ for path, nested in debs:
             k, v = line.split(':', 1)
             f[k] = v.strip()
     pkg, ver, arch = f['Package'], f['Version'], f['Architecture']
+    if arch not in ('amd64', 'i386', 'arm64', 'all'):
+        raise SystemExit('unsupported repository architecture: ' + arch)
+    identity = (pkg, ver, arch)
+    with open(path, 'rb') as stream:
+        digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+    previous = identities.setdefault(identity, (digest, path))
+    if previous[0] != digest:
+        raise SystemExit('conflicting archives for %s %s %s: %s and %s' %
+                         (*identity, previous[1], path))
     sf = f.get('Source', pkg)
     srcname = sf.split()[0]
     srcver = sf[sf.index('(') + 1:sf.index(')')] if '(' in sf else ver
@@ -202,7 +213,32 @@ PY
 # new version; never stamp or alter a previously published .deb in place.
 PYTHONPATH="$HERE/..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release check-selection "$W/selection.tsv"
 
-# 2. Pool: copy what is new or changed, then drop what is no longer selected.
+# Reject all conflicting destinations before changing any pool file. A package or
+# retained source archive is immutable once published; changed bytes need a new
+# version/name, even when both copies have valid Lean Code proofs.
+python3 - "$W/selection.tsv" "$DEST" <<'PY'
+import hashlib
+from pathlib import Path
+import sys
+
+selection, destination = sys.argv[1:]
+selected = {}
+for line in Path(selection).read_text().splitlines():
+    source, relative, *_ = line.split('\t')
+    with open(source, 'rb') as stream:
+        digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+    previous = selected.setdefault(relative, digest)
+    if previous != digest:
+        raise SystemExit('conflicting selected pool path: ' + relative)
+    target = Path(destination) / relative
+    if target.exists():
+        with target.open('rb') as stream:
+            existing = hashlib.file_digest(stream, 'sha256').hexdigest()
+        if existing != digest:
+            raise SystemExit('published archive is immutable: ' + relative)
+PY
+
+# 2. Pool: copy new archives, then drop what is no longer selected.
 mkdir -p "$DEST/pool/$COMPONENT"
 cut -f2 "$W/selection.tsv" | sort >"$W/wanted.txt"
 added=0
@@ -245,16 +281,18 @@ index_done() {
 		fi
 	done
 }
-# amd64 always; i386 (the 32-bit twins of the libraries Steam and Wine need: FFmpeg, Mesa ...) and all when there are such packages
+# amd64 always; other supported architectures only when selected packages exist.
 ARCHES=amd64
-for a in i386 all; do
+for a in i386 arm64 all; do
 	if grep -q $'\t'"$a"$'$' "$W/selection.tsv"; then ARCHES="$ARCHES $a"; else rm -rf "${D:?}/$COMPONENT/binary-$a"; fi
 done
 for arch in $ARCHES; do
 	dir=$D/$COMPONENT/binary-$arch
 	mkdir -p "$dir"
 	# dpkg-scanpackages --arch amd64 also lists Architecture: all; keep each index to its own
-	(cd "$DEST" && dpkg-scanpackages --arch "$arch" pool /dev/null 2>"$W/scan-$arch.log") |
+	# Selection already chose one version per architecture. Keep architecture
+	# siblings until the filter; scanpackages otherwise collapses by name alone.
+	(cd "$DEST" && dpkg-scanpackages --multiversion --arch "$arch" pool /dev/null 2>"$W/scan-$arch.log") |
 		awk -v RS= -v ORS='\n\n' -v a="Architecture: $arch" 'index($0, "\n" a "\n") || $0 ~ ("\n" a "$")' |
 		sed '$d' >"$dir/Packages.new"
 	grep -v -e '^dpkg-scanpackages: info:' -e '^dpkg-scanpackages: warning:' "$W/scan-$arch.log" >&2 || true

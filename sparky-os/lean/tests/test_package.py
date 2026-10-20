@@ -77,6 +77,24 @@ class Packages(unittest.TestCase):
             client.project_packages(P, [], 1)
         return output.getvalue()
 
+    def test_provenance_accepts_a_symlink_only_package(self):
+        root = self.base / 'binfmt'
+        (root / 'DEBIAN').mkdir(parents=True)
+        (root / 'DEBIAN/control').write_text(
+            'Package: lc-links\nVersion: 1\nArchitecture: all\n'
+            'Maintainer: Example <dev@example.org>\nDescription: Link-only fixture\n')
+        link = root / 'usr/lib/binfmt.d/example.conf'
+        link.parent.mkdir(parents=True)
+        link.symlink_to('../example/binfmt.conf')
+        provenance = Path(__file__).resolve().parents[2] / 'repo/provenance.sh'
+        subprocess.run(['bash', str(provenance), '--tree', str(root)], check=True)
+        self.assertEqual((root / 'DEBIAN/md5sums').read_bytes(), b'')
+        self.assertEqual(os.readlink(link), '../example/binfmt.conf')
+        self.assertEqual(package.control(root)['original-maintainer'], 'Example <dev@example.org>')
+        out = self.base / 'links-out'
+        release.build_tree(root, out)
+        release.check_debs([out / 'lc-links_1_all.deb'])
+
     def test_build_runtime_and_hr_are_exact_and_separate(self):
         tree, out, deb = self.build()
         obj = package.check_tree(tree)
@@ -391,6 +409,8 @@ class Packages(unittest.TestCase):
     @unittest.skipUnless(shutil.which('gpg') and shutil.which('dpkg-scanpackages'), 'repository signing tools required')
     def test_publisher_checks_before_changing_signed_tree(self):
         _, out, _ = self.build()
+        arm = self.stage(arch='arm64')
+        release.build_tree(arm, out)
         home = self.base / 'test-gnupg'
         home.mkdir(mode=0o700)
         env = {**os.environ, 'SPARKY_REPO_GNUPGHOME': str(home), 'TMPDIR': str(self.base)}
@@ -405,6 +425,14 @@ class Packages(unittest.TestCase):
             publisher = BIN.parents[3] / 'repo/publish-tree.sh'
             proc = subprocess.run(['bash', str(publisher), str(out), str(dest)], env=env, capture_output=True, text=True)
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            index = dest / 'dists/mashtabba/main/binary-arm64/Packages'
+            self.assertIn('Architecture: arm64', index.read_text())
+            signed = subprocess.run(['gpg', '--homedir', str(home), '--batch', '--decrypt',
+                                     str(dest / 'dists/mashtabba/InRelease')],
+                                    capture_output=True, text=True)
+            self.assertEqual(signed.returncode, 0, signed.stderr)
+            self.assertIn('Architectures: amd64 arm64 all', signed.stdout)
+            self.assertIn(package.file_hash(index), signed.stdout)
             before = {str(p.relative_to(dest)): package.file_hash(p) for p in dest.rglob('*') if p.is_file()}
             # A newer unmarked archive must fail before any existing pool/index/signature changes.
             raw = self.stage('9')
@@ -415,6 +443,32 @@ class Packages(unittest.TestCase):
             self.assertIn('release blocked', proc.stderr)
             after = {str(p.relative_to(dest)): package.file_hash(p) for p in dest.rglob('*') if p.is_file()}
             self.assertEqual(before, after)
+            (out / 'lc-demo_9_all.deb').unlink()
+
+            # A valid but different archive must not replace a published version.
+            altered = self.base / 'altered'
+            altered_root = self.stage(package_name='temporary-name')
+            control = altered_root / 'DEBIAN/control'
+            control.write_text(control.read_text().replace('temporary-name', 'lc-demo'))
+            script = altered_root / 'usr/bin/lc-demo'
+            script.write_text(SCRIPT.replace('hello', 'changed'))
+            release.build_tree(altered_root, altered)
+            proc = subprocess.run(['bash', str(publisher), str(altered), str(dest)],
+                                  env=env, capture_output=True, text=True)
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn('published archive is immutable', proc.stderr)
+            self.assertEqual(before, {str(p.relative_to(dest)): package.file_hash(p)
+                                      for p in dest.rglob('*') if p.is_file()})
+
+            # Duplicate identities in one input set must also fail, even if the
+            # old top-folder preference would silently pick just one of them.
+            shutil.copytree(altered, out / 'carried')
+            proc = subprocess.run(['bash', str(publisher), str(out), str(dest)],
+                                  env=env, capture_output=True, text=True)
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn('conflicting archives', proc.stderr)
+            self.assertEqual(before, {str(p.relative_to(dest)): package.file_hash(p)
+                                      for p in dest.rglob('*') if p.is_file()})
         finally:
             subprocess.run(['gpgconf', '--homedir', str(home), '--kill', 'gpg-agent'], capture_output=True)
 

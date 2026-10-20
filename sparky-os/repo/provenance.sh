@@ -78,7 +78,7 @@ PY
 	done
 	# Checksums of every file except the configuration files, as Debian's tools do.
 	(cd "$w" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort |
-		grep -v -x -F -f <(sed 's|^/||' DEBIAN/conffiles 2>/dev/null || true) |
+		{ grep -v -x -F -f <(sed 's|^/||' DEBIAN/conffiles 2>/dev/null || true) || [ "$?" = 1 ]; } |
 		tr '\n' '\0' | xargs -0 -r md5sum >DEBIAN/md5sums)
 }
 if [ "${1:-}" = --tree ]; then

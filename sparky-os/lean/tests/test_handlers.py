@@ -292,6 +292,16 @@ class Data(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which('gcc'), 'needs gcc')
 class C(unittest.TestCase):
+    def test_wine_headers_keep_their_additional_preprocessor_input(self):
+        source = '// Header explanation\n' * 8 + 'typedef unsigned long WORD;\n'
+        result, output = P('/usr/include/wine/wine/windows/basetsd.h', source)
+        self.assertEqual(result.status, 'left')
+        self.assertIn('WIDL', result.reason)
+        self.assertIsNone(output)
+        result, output = P('/usr/include/example/basetsd.h', source)
+        self.assertEqual(result.status, 'projected', result.reason)
+        self.assertIsNotNone(output)
+
     def test_embedded_generator_is_preserved(self):
         source = (
             '// A C file can retain its generator in a disabled branch.\n'

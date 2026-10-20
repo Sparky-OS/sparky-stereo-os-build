@@ -42,6 +42,7 @@ dpkg-stereo ($VERSION) unstable; urgency=medium
     projections. Retain GLSL recovery and dependency parser safeguards.
     Preserve shell inputs rejected by their declared interpreter before any
     transformation; a newly introduced parse failure still rejects the build.
+    Preserve Wine headers shared by its C and IDL/resource preprocessors.
 
  -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 20 Oct 2026 12:00:00 -0300
 EOF
