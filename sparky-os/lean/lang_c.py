@@ -142,6 +142,8 @@ def _comment(spans, s, i, j):
 
 
 def refuse(src: str):
+    if src.startswith('\ufeff'):
+        return 'UTF-8 byte-order mark requires qualified pointer placement'
     if '\0' in src:
         return 'carries binary data'
     if '??/' in src:

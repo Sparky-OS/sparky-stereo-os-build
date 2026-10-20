@@ -39,6 +39,13 @@ def cpp(text, *args):
 
 @unittest.skipUnless(shutil.which('g++'), 'needs g++')
 class C(unittest.TestCase):
+    def test_byte_order_mark_stays_at_the_start(self):
+        src = '\ufeff// Ordinary commentary long enough to project.\nint value;\n'
+        result = project.project('/usr/include/probe.h', src.encode(), 'probe')
+        self.assertEqual(result.status, 'left')
+        self.assertIn('byte-order mark', result.reason)
+        self.assertIsNone(result.lean)
+
     def test_header_templates_are_left_for_the_build_generator(self):
         for directive in ('#cmakedefine ENABLED 1', '#cmakedefine01 ENABLED',
                           '#mesondefine ENABLED'):

@@ -24,7 +24,7 @@ def prepare(root, version, toolkit, build_dependencies=(), preserve_sources=()):
     root, toolkit = Path(root).resolve(), Path(toolkit).resolve()
     rules_path = root / "debian/rules"
     rules = rules_path.read_text()
-    if not re.search(r"^\s*dh\s+[\"']?\$@", rules, re.M):
+    if not re.search(r"^\s*dh\s+[\"']?\$(?:@|\{@\}|\(@\))(?=[\"'\s]|$)", rules, re.M):
         raise ValueError("Not a conventional dh rules file; integrate its builder explicitly")
     for target in TARGETS:
         if re.search(r"^" + re.escape(target) + r"(?:-arch|-indep)?\s*:", rules, re.M):
