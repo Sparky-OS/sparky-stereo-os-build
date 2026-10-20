@@ -39,6 +39,40 @@ def cpp(text, *args):
 
 @unittest.skipUnless(shutil.which('g++'), 'needs g++')
 class C(unittest.TestCase):
+    def test_header_templates_are_left_for_the_build_generator(self):
+        for directive in ('#cmakedefine ENABLED 1', '#cmakedefine01 ENABLED',
+                          '#mesondefine ENABLED'):
+            with self.subTest(directive=directive):
+                src = '// Configuration template consumed by the build system.\n' + directive + '\n'
+                result, mr = lean('/config.h', src)
+                self.assertEqual(result.status, 'left')
+                self.assertIn('template requires generation', result.reason)
+                self.assertEqual(mr, src)
+
+    def test_documentation_and_translation_consumers_keep_exact_input(self):
+        for annotation in (
+                '/** Function documentation with binding annotations. */',
+                '/*! Documentation consumed by a generator. */',
+                '/// Function documentation for generated reference.',
+                '//! Function documentation for generated reference.',
+                '//: Translation context that must stay with the next expression.',
+                '//= translation-id',
+                '//~ translator metadata',
+                '/*< private >*/'):
+            with self.subTest(annotation=annotation):
+                src = '// Ordinary explanatory text, otherwise removable.\n' + annotation + '\nint value;\n'
+                result, mr = lean('/usr/include/probe.h', src)
+                self.assertEqual(result.status, 'left')
+                self.assertIn('consumer qualification', result.reason)
+                self.assertEqual(mr, src)
+
+    def test_annotation_text_in_a_string_is_not_a_comment(self):
+        src = ('// A long ordinary explanation that can safely be removed.\n'
+               'const char *text = "/** literal text */ //: not an annotation";\n')
+        result, mr = lean('/probe.c', src)
+        self.assertEqual(result.status, 'projected', result.reason)
+        self.assertEqual(cpp(src).split(), cpp(mr).split())
+
     def test_token_boundary(self):
         src = 'int/**/value = 1;\nint other = 2; // a comment\n'
         r, mr = lean('/usr/include/probe.h', src)

@@ -37,8 +37,8 @@ EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
 
-  * Development release: reproducible standalone/native source adapters,
-    epoch-correct archive names, and comment-only shell qualification.
+  * Development release: preserve structured C/C++ documentation and translation
+    consumers, with reviewed preservation plans in reproducible native sources.
 
  -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 20 Oct 2026 12:00:00 -0300
 EOF

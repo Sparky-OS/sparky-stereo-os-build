@@ -3,6 +3,7 @@
 """Native source projection for disposable Debian builds, with exact authored recovery."""
 import argparse
 from dataclasses import asdict
+import fnmatch
 import hashlib
 import json
 import os
@@ -11,33 +12,67 @@ from pathlib import Path
 from . import VERSION, lang_c, project
 
 EXCLUDED = {'.git', '.pc', 'debian', '.sparky-lc', 'build'}
+PRESERVE_PLAN = 'debian/sparky-lean-preserve.json'
 
 
 def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def preservation_plan(root):
+    path = root / PRESERVE_PLAN
+    if not path.exists():
+        return {}
+    plan = json.loads(path.read_text())
+    if not isinstance(plan, dict):
+        raise ValueError('Source preservation plan must map relative patterns to reasons')
+    for pattern, reason in plan.items():
+        if (not isinstance(pattern, str) or not pattern or pattern.startswith('/')
+                or '..' in pattern.split('/') or '\\' in pattern
+                or not isinstance(reason, str) or not reason.strip()):
+            raise ValueError('Source preservation needs a safe relative pattern and a reason')
+    return plan
+
+
 def project_tree(root):
     evidence = root / '.sparky-lc'
     report = evidence / 'source.json'
+    plan = preservation_plan(root)
     if report.exists():
         obj = json.loads(report.read_text())
         if obj['engine'] != VERSION or not obj.get('qualified'):
             raise ValueError('Engine changed or incomplete projection; restore and start a fresh build')
+        if obj.get('preserve', {}) != plan:
+            raise ValueError('Source preservation plan changed; restore and start a fresh build')
         for name, row in obj['files'].items():
             if sha((root / name).read_bytes()) != row['final_sha256']:
                 raise ValueError(f'Source changed after projection: {name}')
         return
-    evidence.mkdir(exist_ok=True)
-    records = {}
+    paths = []
     for path in sorted(root.rglob('*')):
         rel = path.relative_to(root)
         if (path.is_symlink() or not path.is_file() or path.suffix.lower() not in lang_c.EXTS
                 or any(p in EXCLUDED or p.startswith('obj-') for p in rel.parts)):
             continue
+        paths.append(path)
+    names = [p.relative_to(root).as_posix() for p in paths]
+    for pattern in plan:
+        if not any(fnmatch.fnmatchcase(name, pattern) for name in names):
+            raise ValueError(f'Source preservation pattern matches no eligible file: {pattern}')
+    evidence.mkdir(exist_ok=True)
+    records = {}
+    for path, name in zip(paths, names):
+        rel = path.relative_to(root)
         raw = path.read_bytes()
         metadata = path.stat()
-        result = project.project('/' + rel.as_posix(), raw, package='native-build', pointer=False)
+        reasons = [reason for pattern, reason in plan.items()
+                   if fnmatch.fnmatchcase(name, pattern)]
+        if reasons:
+            result = project.Result(path='/' + name, status='left',
+                                    reason='additional source consumer: ' + '; '.join(reasons),
+                                    bytes_in=len(raw), bytes_out=len(raw), sha_in=sha(raw))
+        else:
+            result = project.project('/' + name, raw, package='native-build', pointer=False)
         row = asdict(result)
         row.pop('lean')
         row['final_sha256'] = sha(result.lean if result.lean is not None else raw)
@@ -54,6 +89,7 @@ def project_tree(root):
             report.write_text(json.dumps({'engine': VERSION, 'files': records}, indent=2) + '\n')
             raise ValueError(f'{rel}: {result.reason}')
     report.write_text(json.dumps({'engine': VERSION, 'qualified': True,
+                                 'preserve': plan,
                                  'options': 'collapse-blank,no-pointer,C/C++ line directives',
                                  'stage': 'before compilation', 'files': records}, indent=2) + '\n')
     print(f'Native Lean Code: {sum(r["status"] == "projected" for r in records.values())}/{len(records)} files projected')

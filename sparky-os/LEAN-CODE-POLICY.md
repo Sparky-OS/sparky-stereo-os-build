@@ -63,6 +63,13 @@ Remove explanatory comments and the empty lines created by their removal when th
 
 Comments that participate in a tool or runtime contract are not removable prose. This includes interpreter and encoding directives, compiler/build directives, translation annotations until consumed, required notices, and comments read by generators. Preserve strings and embedded languages, including heredocs, regular expressions and raw strings. Preserve the semantics of line-sensitive constructs.
 
+Native build qualification includes every source consumer, not only the C/C++ compiler.
+Engine 0.1.9 leaves a C/C++ file unchanged when it carries structured documentation or translation annotations; inserting `#line` between a preserved comment and its declaration can itself break a textual generator.
+For other known consumers, retain relative source patterns and their reasons in `debian/sparky-lean-preserve.json`; `lean.debian_prepare --preserve-source PATTERN REASON` creates this plan.
+The native source report records each retained file and fails on stale patterns or a changed plan.
+XScreenSaver's resource checker and SDL's generated manuals exposed these boundaries during the full repository migration.
+Do not disable a checker or drop generated documentation merely to make a projected build pass.
+
 Python docstrings are observable through `__doc__`, and software can use them for help or other behavior. Retain them by default; a package can opt into their removal only after establishing that its supported behavior does not depend on them. Perl POD and other material providing normal program documentation also remain. This is separate from stripping ordinary comment tokens. [Python data model](https://docs.python.org/3.14/reference/datamodel.html), [Python lexical analysis](https://docs.python.org/3.14/reference/lexical_analysis.html).
 
 Retain copyright, attribution and licence material in the forms required by each package. Where the applicable terms allow it, accompanying licence/notice files can carry this material without inline commentary. A generic stripper must not assume relocation is always sufficient: for example, Apache 2.0 has specific requirements for modified files, distributed source notices and NOTICE material. Calling an artifact MR does not by itself settle its legal classification or remove these obligations. Record the applicable requirement and location for each retained notice; do not use a blanket legal exemption for all comments. [Apache License 2.0, section 4](https://www.apache.org/licenses/LICENSE-2.0), [MIT licence](https://opensource.org/license/mit).

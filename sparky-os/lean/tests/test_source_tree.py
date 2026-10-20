@@ -12,6 +12,47 @@ from lean import project, source_tree
 
 @unittest.skipUnless(shutil.which('gcc'), 'GCC required')
 class SourceBuildTests(unittest.TestCase):
+    def test_source_consumer_plan_preserves_input_and_survives_restore(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'debian').mkdir()
+            (root / 'hacks').mkdir()
+            raw = b'// Resource parser depends on the original textual layout.\nint value;\n'
+            source = root / 'hacks/source.c'
+            source.write_bytes(raw)
+            ordinary = root / 'ordinary.c'
+            ordinary.write_bytes(raw)
+            plan = {'hacks/*.c': 'resource validation parses C text before preprocessing'}
+            (root / source_tree.PRESERVE_PLAN).write_text(json.dumps(plan))
+            source_tree.project_tree(root)
+            self.assertEqual(source.read_bytes(), raw)
+            self.assertNotEqual(ordinary.read_bytes(), raw)
+            report = json.loads((root / '.sparky-lc/source.json').read_text())
+            self.assertEqual(report['preserve'], plan)
+            self.assertEqual(report['files']['hacks/source.c']['status'], 'left')
+            source_tree.project_tree(root)  # unchanged plan is idempotent
+            (root / source_tree.PRESERVE_PLAN).write_text(json.dumps({'hacks/*.c': 'changed reason'}))
+            with self.assertRaisesRegex(ValueError, 'plan changed'):
+                source_tree.project_tree(root)
+            source_tree.restore_tree(root)
+            self.assertEqual(ordinary.read_bytes(), raw)
+            self.assertEqual(source.read_bytes(), raw)
+
+    def test_bad_or_stale_preservation_plan_fails_before_writing(self):
+        for plan in ({'../outside.c': 'escape'}, {'missing/*.c': 'stale pattern'},
+                     {'source.c': ''}, ['source.c']):
+            with self.subTest(plan=plan), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                (root / 'debian').mkdir()
+                source = root / 'source.c'
+                raw = b'// Ordinary explanatory text, otherwise removable.\nint value;\n'
+                source.write_bytes(raw)
+                (root / source_tree.PRESERVE_PLAN).write_text(json.dumps(plan))
+                with self.assertRaises(ValueError):
+                    source_tree.project_tree(root)
+                self.assertEqual(source.read_bytes(), raw)
+                self.assertFalse((root / '.sparky-lc/source.json').exists())
+
     def test_preprocessor_uses_one_logical_source_identity(self):
         raw = (b'// A long ordinary comment removed before compilation of this fixture.\n'
                b'const char *file = __FILE__, *base = __BASE_FILE__;\n'

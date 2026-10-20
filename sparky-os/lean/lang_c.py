@@ -146,10 +146,23 @@ def refuse(src: str):
         return 'carries binary data'
     if '??/' in src:
         return 'uses trigraphs'
+    if re.search(r'^[ \t]*#[ \t]*(?:cmakedefine(?:01)?|mesondefine)\b', src, re.M):
+        return 'build-system template requires generation before C qualification'
     if re.search(r'^[ \t]*#!', src, re.M):
         # Some sources retain a generator in a disabled #if branch. Its shell
         # quoting/comment rules are not C rules; preserve the entire mixed file.
         return 'contains an embedded interpreter script'
+    for span in lex(src):
+        if span.kind not in (COMMENT, KEEP):
+            continue
+        text = src[span.start:span.end]
+        if ((text.startswith(('/**', '/*!')) and len(text) > 4)
+                or text.startswith(('///', '//!', '//:', '//=', '//~', '/*<'))):
+            # These comments feed documentation, bindings or translations.
+            # Even retaining the comment while inserting #line between it and
+            # its declaration can break a textual consumer. Leave the entire
+            # file unchanged until that consumer has a qualified adapter.
+            return 'structured documentation or annotations require consumer qualification'
     return None
 
 
