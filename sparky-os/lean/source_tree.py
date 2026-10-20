@@ -18,6 +18,7 @@ from . import VERSION, lang_c, project
 EXCLUDED = {'.git', '.pc', 'debian', '.sparky-lc', 'build'}
 PRESERVE_PLAN = 'debian/sparky-lean-preserve.json'
 LANGUAGE_PLAN = 'debian/sparky-lean-languages.json'
+PAYLOAD_SOURCE_PLAN = 'debian/sparky-lean-payload-sources.json'
 EXTENSIONS = {'c': lang_c.EXTS, 'java': {'.java'}}
 
 
@@ -143,13 +144,47 @@ def restore_payload(root, staging):
     invokes make/ninja install and may rebuild it. Refuse ambiguous HR mappings.
     """
     by_hash = {}
+    by_name = {}
     for name, row, raw in authored(root):
         by_hash.setdefault(row['final_sha256'], []).append((name, raw))
+        by_name[name] = raw
+    mappings = {}
+    plan = root / PAYLOAD_SOURCE_PLAN
+    if plan.exists():
+        mappings = json.loads(plan.read_text())
+        if not isinstance(mappings, dict):
+            raise ValueError('Payload source plan must map installed prefixes to source directories')
+        for prefix, directory in mappings.items():
+            if (not isinstance(prefix, str) or not prefix.startswith('/') or '\\' in prefix
+                    or '..' in Path(prefix).parts or Path(prefix).as_posix() != prefix
+                    or not isinstance(directory, str) or not directory or directory.startswith('/')
+                    or '..' in Path(directory).parts or '\\' in directory):
+                raise ValueError('Unsafe payload source mapping')
+    source_report = root / '.sparky-lc/source.json'
+    records = json.loads(source_report.read_text())['files'] if mappings else {}
+    ordered = sorted(mappings, key=len, reverse=True)
     restored = 0
     for path in staging.rglob('*'):
         if path.is_symlink() or not path.is_file() or 'DEBIAN' in path.relative_to(staging).parts:
             continue
-        candidates = by_hash.get(sha(path.read_bytes()), [])
+        digest = sha(path.read_bytes())
+        installed = '/' + path.relative_to(staging).as_posix()
+        prefix = next((p for p in ordered if installed.startswith(p.rstrip('/') + '/')), None)
+        if prefix is not None:
+            relative = installed[len(prefix.rstrip('/')) + 1:]
+            name = (Path(mappings[prefix]) / relative).as_posix()
+            row = records.get(name)
+            if row is not None:
+                if digest == row['sha_in']:
+                    continue  # includes genuine empty headers, never projected
+                if digest != row['final_sha256'] or name not in by_name:
+                    raise ValueError(f'Mapped source copy changed during staging: {path}')
+                path.write_bytes(by_name[name])
+                restored += 1
+            # Unknown paths under an explicit copy layout are generated files;
+            # do not infer their origin from a coincidental content hash.
+            continue
+        candidates = by_hash.get(digest, [])
         if not candidates:
             continue
         named = [(n, raw) for n, raw in candidates if Path(n).name == path.name]

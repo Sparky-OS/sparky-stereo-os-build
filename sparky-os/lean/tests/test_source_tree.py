@@ -144,6 +144,51 @@ class SourceBuildTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 source_tree.project_tree(root)
 
+    def test_explicit_payload_layout_distinguishes_empty_headers(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'debian').mkdir()
+            originals = {'include/empty.h': b'',
+                         'arch/x86/include/asm/exec.h': b'// Architecture explanation for humans.\n',
+                         'scripts/empty.c': b'// Different commentary for the build tools.\n'}
+            for name, raw in originals.items():
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(raw)
+            source_tree.project_tree(root)
+            staging = root / 'debian/headers'
+            for name in originals:
+                path = staging / 'usr/src/linux-headers-example' / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes((root / name).read_bytes())
+            generated = staging / 'usr/src/linux-headers-example/include/generated.h'
+            generated.write_bytes(b'')
+            with self.assertRaisesRegex(ValueError, 'Ambiguous authored mapping'):
+                source_tree.restore_payload(root, staging)
+            (root / source_tree.PAYLOAD_SOURCE_PLAN).write_text(
+                json.dumps({'/usr/src/linux-headers-example': '.'}))
+            source_tree.restore_payload(root, staging)
+            for name, raw in originals.items():
+                self.assertEqual((staging / 'usr/src/linux-headers-example' / name).read_bytes(), raw)
+            self.assertEqual(generated.read_bytes(), b'')
+            source_tree.restore_payload(root, staging)  # exact authored bytes stay idempotent
+            target = staging / 'usr/src/linux-headers-example/arch/x86/include/asm/exec.h'
+            target.write_bytes(b'int changed;\n')
+            with self.assertRaisesRegex(ValueError, 'Mapped source copy changed'):
+                source_tree.restore_payload(root, staging)
+
+    def test_payload_layout_rejects_escaping_paths(self):
+        for plan in ({'/usr/include': '../outside'}, {'relative': '.'},
+                     {'/usr/../include': '.'}, ['/usr/include']):
+            with self.subTest(plan=plan), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                (root / 'debian').mkdir()
+                (root / 'header.h').write_bytes(b'// Human explanation\nint value;\n')
+                source_tree.project_tree(root)
+                (root / source_tree.PAYLOAD_SOURCE_PLAN).write_text(json.dumps(plan))
+                with self.assertRaises(ValueError):
+                    source_tree.restore_payload(root, root / 'debian/staging')
+
 
 if __name__ == '__main__':
     unittest.main()

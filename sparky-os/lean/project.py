@@ -121,6 +121,11 @@ def project(path: str, data: bytes, package: str | None = None, *, pointer=True,
     if why:
         res.reason = why
         return res
+    if key == 'shell' and check:
+        why = mod.authored_refusal(text, 'dash' if variant in ('dash', 'env') else 'bash')
+        if why:
+            res.reason = why
+            return res
     try:
         lean, rendered, spans = render_text(text, key, variant, package, path, pointer)
     except Exception as e:      # a lexer's refusal, or the language's own tokenizer error (TabError, TokenError)

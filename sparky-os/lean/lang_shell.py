@@ -447,6 +447,25 @@ def bash_print(text: str) -> str | None:
         os.unlink(p)
 
 
+def syntax_valid(text: str, interpreter: str) -> bool:
+    """Parse without executing; do not guess another interpreter for invalid input."""
+    with tempfile.NamedTemporaryFile('w', suffix='.sh', encoding='utf-8',
+                                     errors='surrogateescape') as stream:
+        stream.write(text)
+        stream.flush()
+        result = subprocess.run([interpreter, '-n', stream.name],
+                                capture_output=True, timeout=60)
+    return result.returncode == 0
+
+
+def authored_refusal(text: str, interpreter: str) -> str | None:
+    if not shutil.which(interpreter):
+        return f'{interpreter} parser unavailable; authored script retained'
+    if not syntax_valid(text, interpreter):
+        return f'authored script is not accepted by {interpreter}; consumer qualification unavailable'
+    return None
+
+
 def verify(original: str, lean: str, interpreter: str = 'bash') -> tuple:
     a = bash_print(original)
     if a is None:
@@ -455,13 +474,6 @@ def verify(original: str, lean: str, interpreter: str = 'bash') -> tuple:
     if b != a:
         return False, 'bash parses the lean script differently'
     if interpreter == 'dash' and shutil.which('dash'):
-        with tempfile.NamedTemporaryFile('w', suffix='.sh', delete=False, encoding='utf-8', errors='surrogateescape') as f:
-            f.write(lean)
-            p = f.name
-        try:
-            r = subprocess.run(['dash', '-n', p], capture_output=True, timeout=60)
-        finally:
-            os.unlink(p)
-        if r.returncode != 0:
+        if not syntax_valid(lean, 'dash'):
             return False, 'dash -n rejects the lean script'
     return True, 'bash declare -f prints the same program'

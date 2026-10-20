@@ -37,9 +37,11 @@ EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
 
-  * Development release: restore earlier local GLSL projections on upgrade.
-    Preserve user edits and retry missing exact originals; retain the current
-    native-source plans and Debian build-dependency parser safeguards.
+  * Development release: explicit source layouts for copied package headers.
+    Distinguish unchanged/generated files from coincidentally identical native
+    projections. Retain GLSL recovery and dependency parser safeguards.
+    Preserve shell inputs rejected by their declared interpreter before any
+    transformation; a newly introduced parse failure still rejects the build.
 
  -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 20 Oct 2026 12:00:00 -0300
 EOF

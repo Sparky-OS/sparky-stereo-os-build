@@ -98,6 +98,17 @@ printf '%s|%s|%s|%s|%s|%s\n' "$n" "$v" "$p" "$b" "${arr[*]}" "$long"
         r, _ = P('/usr/bin/tool', '#!/bin/bash\n# x\necho $LINENO\n')
         self.assertEqual(r.status, 'left')
 
+    def test_mismatched_shell_interpreter_is_preserved(self):
+        from lean import lang_shell
+        source = '#!/bin/sh\n# removable explanation\nfunction help() { echo ready; }\nhelp\n'
+        self.assertTrue(lang_shell.syntax_valid(source, 'bash'))
+        self.assertFalse(lang_shell.syntax_valid(source, 'dash'))
+        result, output = P('/usr/src/example/scripts/helper.sh', source)
+        self.assertEqual(result.status, 'left')
+        self.assertIn('authored script is not accepted by dash', result.reason)
+        self.assertIsNone(output)
+        self.assertFalse(lang_shell.verify('#!/bin/sh\necho ready\n', source, 'dash')[0])
+
     def test_pointer_after_shebang_and_idempotent(self):
         r, mr = P('/usr/bin/tool', '#!/bin/sh\n# prose prose prose prose prose prose prose prose prose prose prose prose\necho hi\n',
                   pointer=True)
