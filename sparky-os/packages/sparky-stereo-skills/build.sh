@@ -27,8 +27,9 @@ OUT=$(cd "$OUT" && pwd)
 W=$(mktemp -d "$OUT/.$PACKAGE.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 
-# The snapshot: skills and tools whole, the documents' Markdown (the skills link to them; their pictures stay online),
-# the front page, the credits, the citation and both licences
+# The snapshot: skills and tools whole, the documents' Markdown and architecture
+# overview image (large screenshot galleries stay online), the front page,
+# the credits, the citation and both licences.
 P=$W/public
 if [ -d "$HERE/public" ]; then
 	cp -a "$HERE/public" "$P"
@@ -64,7 +65,8 @@ else
 	mkdir -p "$P"
 	git -C "$SKILLS_SRC" archive --format=tar "$SKILLS_COMMIT" skills tools docs AGENTS.md README.md ATTRIBUTIONS.md CITATION.cff \
 		LICENSE LICENSE-GPL-2.0 | tar -x -C "$P"
-	find "$P/docs" -type f ! -name '*.md' -delete
+	find "$P/docs" -type f ! -name '*.md' \
+		! -path "$P/docs/images/spatial-computing-architecture.png" -delete
 	find "$P/docs" -type d -empty -delete
 	find "$P" -name .gitignore -delete
 	# the guest init scripts and the CI scripts are run as programs: they get the executable bit their #! asks for
