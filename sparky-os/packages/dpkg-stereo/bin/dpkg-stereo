@@ -21,6 +21,7 @@ usage: dpkg-stereo [--root DIR] [--map /etc=DIR ...] COMMAND
   --post-invoke            after dpkg (dpkg's post-invoke hook): project what changed, reproject conffiles
   --verify [PACKAGE...]    projected files against their lean hashes, pristine records against dpkg's
   --restore [PACKAGE...]   the original files back (all packages without a name), records dropped
+  --repair-consumers       restore projections whose old consumer check was withdrawn
   --hold PACKAGE|PATH      never project it again (restores it first); --unhold undoes that
   --hr PATH                write the full HR copy of an installed file to /usr/share/doc/PKG/hr/PATH
   --fetch-hr               write the HR copies of every projected setting (after the first online update)
@@ -407,6 +408,7 @@ class _NoPool:
 
 
 def project_packages(P, names, jobs, image=False, log=print, only=None, known=None):
+    repair_consumers(P)
     pkgs = dpkg_packages(P)
     if names:
         sel = {}
@@ -600,6 +602,7 @@ def post_invoke(P, jobs):
     in its package's bytes, are projected again (the same render as before, so no new check); records of
     removed packages go. Beyond the conffiles, nothing else is read."""
     _migrate(P)
+    repair_consumers(P)
     pkgs = dpkg_packages(P)
     recorded = read_table(P.state(PKGS), PKG_COLS)
     changed = sorted(k for k, v in pkgs.items()
@@ -944,6 +947,32 @@ def restore(P, names, drop_hold=False):
     return 1 if fail else 0
 
 
+def repair_consumers(P):
+    """Undo the old C-checker projections of GLSL, once their originals are available.
+
+    This migration reads the small record index, not every installed payload. A
+    successful marker makes later hooks a single existence check. Missing exact
+    originals keep their records and retry next time; edited or upgraded files
+    are handled by restore's byte checks and are never overwritten.
+    """
+    marker = P.state('consumer-migration-glsl-v1')
+    if os.path.exists(marker):
+        return 0
+    from lean.lang_c import GLSL_EXTS
+    files = Records(P, 'records')
+    paths = [path for path, rec in files.items()
+             if rec['handler'] == 'c' and os.path.splitext(path)[1].lower() in GLSL_EXTS]
+    if paths:
+        print(f'dpkg-stereo: restoring {len(paths)} old GLSL projections; shaders need their own checker')
+        if restore(P, paths):
+            return 1
+    os.makedirs(P.state(), exist_ok=True)
+    with open(marker + '.new', 'w', encoding='utf-8') as stream:
+        stream.write('Old C-checker shader projections restored or superseded.\n')
+    os.replace(marker + '.new', marker)
+    return 0
+
+
 def hr_copy(P, path):
     files = Records(P, 'records')
     rec = files.get(path)
@@ -1157,6 +1186,7 @@ def main():
     g.add_argument('--verify', nargs='*')
     ap.add_argument('--deep', action='store_true', help='with --verify: check every original against its .deb')
     g.add_argument('--restore', nargs='*')
+    g.add_argument('--repair-consumers', action='store_true')
     g.add_argument('--hold')
     g.add_argument('--unhold')
     g.add_argument('--hr')
@@ -1199,6 +1229,8 @@ def main():
             return verify(P, a.verify, a.deep)
         if a.restore is not None:
             return restore(P, a.restore)
+        if a.repair_consumers:
+            return repair_consumers(P)
         if a.hold:
             restore(P, [a.hold])
             with open(P.state(HOLD), 'a', encoding='utf-8') as f:

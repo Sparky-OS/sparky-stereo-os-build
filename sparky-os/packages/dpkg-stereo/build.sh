@@ -15,7 +15,7 @@ umask 022
 HERE=$(cd "$(dirname "$0")" && pwd)
 LEAN=$(cd "$HERE/../../lean" && pwd)
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
-VERSION=0.1.11
+VERSION=0.1.12
 PKG=dpkg-stereo
 W=$(mktemp -d "${TMPDIR:-/tmp}/dpkg-stereo-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
@@ -34,6 +34,7 @@ cat >"$D/DEBIAN/postinst" <<'EOS'
 # postinst script
 set -e
 if [ "$1" = "configure" ] && [ -z "${DPKG_STEREO_NO_PROJECT:-}" ]; then
+	/usr/sbin/dpkg-stereo --repair-consumers || true
 	# dpkg read its hooks before this run, so the first projection of the installed packages is made here;
 	# an upgrade finds them recorded already, and its own post-invoke run takes only what it changed
 	if [ -z "${2:-}" ] || [ ! -e /var/lib/dpkg-stereo/packages.tsv ]; then

@@ -37,8 +37,9 @@ EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
 
-  * Development release: preserve commented Debian build-dependency fields.
-    Retain C/Java source plans and preserve unqualified GLSL inputs.
+  * Development release: restore earlier local GLSL projections on upgrade.
+    Preserve user edits and retry missing exact originals; retain the current
+    native-source plans and Debian build-dependency parser safeguards.
 
  -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 20 Oct 2026 12:00:00 -0300
 EOF

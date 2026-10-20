@@ -250,6 +250,61 @@ class Packages(unittest.TestCase):
         client.post_invoke(P, 1)
         self.assertTrue(client.Records(P))
 
+    def old_shader(self):
+        """Install a real unmarked archive and emulate the pre-0.1.10 record."""
+        original = self.stage('0')
+        path = '/usr/share/lc-demo/example.frag'
+        shader = original / path[1:]
+        shader.parent.mkdir(parents=True)
+        authored = b'#version 330\n// Shader explanation\nvoid main() {}\n'
+        lean = b'// HR pointer\n#version 330\n#line 3\nvoid main() {}\n'
+        shader.write_bytes(authored)
+        raw = self.base / 'lc-demo_0_all.deb'
+        subprocess.run(['dpkg-deb', '--root-owner-group', '-b', str(original), str(raw)],
+                       check=True, stdout=subprocess.DEVNULL)
+        root, P = self.system()
+        self.dpkg(root, '-i', str(raw))
+        (root / path[1:]).write_bytes(lean)
+        files = client.Records(P)
+        files[path] = dict(path=path, package='lc-demo', version='0', conffile='0',
+                          sha_orig=client.sha256(authored), md5_orig='', sha_lean=client.sha256(lean),
+                          handler='c', variant='c', bytes_orig=len(authored), bytes_lean=len(lean))
+        files.save()
+        return root, P, path, raw, authored, lean
+
+    def test_shader_migration_restores_cached_original_then_stays_idle(self):
+        root, P, path, raw, authored, _ = self.old_shader()
+        cache = root / 'var/cache/apt/archives'
+        cache.mkdir(parents=True)
+        shutil.copy2(raw, cache)
+        with contextlib.redirect_stdout(io.StringIO()):
+            client.post_invoke(P, 1)
+        self.assertEqual((root / path[1:]).read_bytes(), authored)
+        self.assertNotIn(path, client.Records(P))
+        with patch.object(client, 'Records', side_effect=AssertionError('migration rescanned records')):
+            self.assertEqual(client.repair_consumers(P), 0)
+
+    def test_shader_migration_retries_missing_original(self):
+        root, P, path, _, authored, lean = self.old_shader()
+        with patch.object(client, 'deb_members', return_value={}), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(client.repair_consumers(P), 1)
+        self.assertEqual((root / path[1:]).read_bytes(), lean)
+        self.assertIn(path, client.Records(P))
+        self.assertFalse(Path(P.state('consumer-migration-glsl-v1')).exists())
+        with patch.object(client, 'deb_members', return_value={path: authored}), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(client.repair_consumers(P), 0)
+        self.assertEqual((root / path[1:]).read_bytes(), authored)
+
+    def test_shader_migration_preserves_user_edits(self):
+        root, P, path, _, _, _ = self.old_shader()
+        edited = b'#version 330\n// My replacement shader\nvoid main() {}\n'
+        (root / path[1:]).write_bytes(edited)
+        with patch.object(client, 'deb_members', side_effect=AssertionError('downloaded for edited file')):
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(client.repair_consumers(P), 0)
+        self.assertEqual((root / path[1:]).read_bytes(), edited)
+        self.assertNotIn(path, client.Records(P))
+
     def test_architecture_specific_manifests(self):
         a = package.prepare(self.stage('1', 'amd64'), self.base / 'hr-a')
         b = package.prepare(self.stage('1', 'i386'), self.base / 'hr-b')
