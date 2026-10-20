@@ -37,8 +37,8 @@ EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
 
-  * Development release: retain explicit C/Java source-language plans and preserve
-    GLSL until a shader-specific consumer is qualified.
+  * Development release: preserve commented Debian build-dependency fields.
+    Retain C/Java source plans and preserve unqualified GLSL inputs.
 
  -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 20 Oct 2026 12:00:00 -0300
 EOF

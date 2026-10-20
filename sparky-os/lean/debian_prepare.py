@@ -20,6 +20,18 @@ TARGETS = (
 )
 
 
+def add_build_dependencies(control, dependencies):
+    """Prepend required relations without splitting commented continuation lines."""
+    first, separator, rest = control.partition('\n\n')
+    match = re.search(r'^Build-Depends:', first, re.M)
+    addition = ', '.join(dependencies)
+    if match:
+        first = first[:match.end()] + ' ' + addition + ',' + first[match.end():]
+    else:
+        first += '\nBuild-Depends: ' + addition
+    return first + separator + rest
+
+
 def prepare(root, version, toolkit, build_dependencies=(), preserve_sources=()):
     root, toolkit = Path(root).resolve(), Path(toolkit).resolve()
     rules_path = root / "debian/rules"
@@ -56,22 +68,12 @@ def prepare(root, version, toolkit, build_dependencies=(), preserve_sources=()):
             raise ValueError(f"Missing toolkit input: {required}")
     control_path = root / "debian/control"
     control = control_path.read_text()
-    first, separator, rest = control.partition("\n\n")
     dependencies = ["gcc", "node-acorn", "nodejs", "perl", "python3", "python3-yaml"]
     for dependency in build_dependencies:
         if not re.fullmatch(r"[a-z0-9][a-z0-9+.-]+(?: <!nocheck>)?", dependency):
             raise ValueError(f"Unsupported additional build dependency: {dependency!r}")
         dependencies.append(dependency)
-    match = re.search(r"^Build-Depends:\s*(.*(?:\n[ \t].*)*)", first, re.M)
-    if match:
-        existing = match.group(1)
-        additions = [dep for dep in dependencies
-                     if not re.search(r"(?:^|[,\s])" + re.escape(dep) + r"(?:[,\s(]|$)", existing)]
-        if additions:
-            joining = " " if existing.rstrip().endswith(",") else ", "
-            first = first[:match.end()] + joining + ", ".join(additions) + first[match.end():]
-    else:
-        first += "\nBuild-Depends: " + ", ".join(dependencies)
+    control = add_build_dependencies(control, dependencies)
 
     (destination / "lean").mkdir(parents=True)
     for path in (toolkit / "lean").glob("*.py"):
@@ -79,7 +81,7 @@ def prepare(root, version, toolkit, build_dependencies=(), preserve_sources=()):
     shutil.copy2(toolkit / "lean/JvmLexer.java", destination / "lean/JvmLexer.java")
     shutil.copy2(toolkit / "repo/provenance.sh", destination / "provenance.sh")
     shutil.copy2(toolkit / "packages/dpkg-stereo/LICENSE", destination / "LICENSE")
-    control_path.write_text(first + separator + rest)
+    control_path.write_text(control)
     if preserve:
         preserve_path.write_text(json.dumps(preserve, indent=2) + '\n')
     subprocess.run([
