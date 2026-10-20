@@ -1,5 +1,7 @@
 # lc1 implementation and migration
 
+**Main principle: [prepare ahead of consumption](../LEAN-CODE-POLICY.md#main-principle-prepare-ahead-of-consumption).** Keep the complete source for people and prepare the verified machine form upstream, reducing repeated reading, scanning and parsing in the consuming build or runtime path.
+
 Daniel authorized build-time Lean Code for all packages and ISOs we publish, with an **lc** marker for clients, on 2026-10-18. The public contract is in the edition documentation, `docs/lean-code-packages.md`.
 
 ## Commands

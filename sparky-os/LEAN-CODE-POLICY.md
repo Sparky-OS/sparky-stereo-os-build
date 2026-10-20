@@ -1,12 +1,24 @@
 # Sparky Stereo OS Lean Code policy
 
+## Main principle: prepare ahead of consumption
+
+> Lean Code moves preparation upstream. Like pre-rendering or pre-staging, it prepares what the machine needs before consumption, avoiding repeated work while preserving the original material for people.
+
+**Optimize the path of consumption.** Pre-processing transforms inputs before the main processing step; pre-staging puts data where it will be needed; pre-rendering prepares a visual result before it is requested. Lean Code applies the same principle to code and configuration: retain the complete human-authored source and prepare a verified machine representation before its consumer needs it.
+
+The primary objective is fewer bytes read and scanned, less parsing work and less working space where the consumer benefits. This includes compiler inputs as well as runtime scripts, QML and settings. Removing C/C++ comments reduces text for the compiler to read, scan and discard even when the executable is unchanged. Cached or compiled forms need their own accounting; a source file is not necessarily read on every use.
+
+Measure the files and bytes actually consumed by each operation, then its CPU time, elapsed time and memory. Verification records and human documentation outside that path do not cancel avoided reads there. Account for their storage and for transformation/verification costs separately, including total build or update costs. The analogy explains where work moves; measurements establish how much is saved.
+
+## Release requirement
+
 **Release clarification, Daniel, 2026-10-18:** all packages and ISOs we put live must pass Lean Code in our pipeline. Our preprocessed packages carry the versioned **lc** marker so clients skip completed work. The staged `lc1` implementation, its configuration baseline, separate HR documentation and publication gate are described in [LC-PACKAGES.md](lean/LC-PACKAGES.md). This supersedes install-time-only processing for packages we build and publish; third-party packages installed directly keep their own update sources and the local projection path.
 
 Adopted 9 October 2026. This policy governs the build and packaging pipeline for Sparky Stereo OS distribution ISOs. It specifies release requirements; implementation coverage must be recorded before an image is described as compliant.
 
 Keep the complete, documented source as the authority. Generate the machine representation needed for execution, and make every transformed error location traceable to that exact source. Apply this through the existing build and packaging processes, without refactoring applications, reorganizing repositories, renaming their source files, or changing their upstream development conventions.
 
-The default Stereo ISO contains runtime code and ordinary program documentation. Complete developer source and additional HR documentation remain available as matching source/documentation packages. A compact diagnostic resolver and package identity manifest can ship with the system; their compressed size counts against any savings.
+The default Stereo ISO contains runtime code and ordinary program documentation. Complete developer source and additional HR documentation remain available as matching source/documentation packages. A compact diagnostic resolver and package identity manifest can ship with the system; their compressed size counts in the net storage comparison.
 
 ## Scope and the remaster option
 
