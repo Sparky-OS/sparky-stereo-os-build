@@ -14,7 +14,7 @@ WORK=${1:-/K3D/temp/partners/queue/hand-installed-apps/vibe/build}
 VER=3.2.2
 mkdir -p "$WORK"
 docker run --rm --platform linux/amd64 -e HOST_UID=$(id -u) -e VER=$VER -v "$WORK":/out -v "$HERE/debian":/debian-ours:ro -v "$HERE/../..":/toolkit:ro sparky-pkg-base:amd64 bash -c '
-set -e
+set -euo pipefail
 sed -i "s/^Suites: unstable/Suites: testing testing-updates/" /etc/apt/sources.list.d/debian.sources
 export DEBIAN_FRONTEND=noninteractive LC_ALL=C
 apt-get update -qq >/dev/null; apt-get install -y -qq ca-certificates curl git dpkg-dev devscripts build-essential fakeroot lintian xz-utils minisign node-acorn nodejs perl python3-yaml libayatana-appindicator3-1 libgtk-3-0t64 libwebkit2gtk-4.1-0 libxdo3 >/dev/null
@@ -42,7 +42,14 @@ mkdir -p vibe-$VER/release && cp release/* vibe-$VER/release/
 cp -a /debian-ours vibe-$VER/debian
 python3 /toolkit/packages/vibe/prepare-lean.py vibe-$VER "$VER-1+lc1"
 cd vibe-$VER
-dpkg-buildpackage -us -uc -sa 2>&1 | tail -15
-cd .. && lintian -I --pedantic vibe_*.deb vibe_*.dsc 2>&1 | head -60 > lintian.txt; echo "== lintian"; cat lintian.txt
+if ! dpkg-buildpackage -us -uc -sa > ../build.log 2>&1; then
+    tail -60 ../build.log
+    exit 1
+fi
+tail -15 ../build.log
+cd ..
+PYTHONPATH=/toolkit python3 -m lean.release check-debs ./*+lc1_*.deb
+lintian -I --pedantic vibe_*.deb vibe_*.dsc > lintian.txt 2>&1 || true
+head -60 lintian.txt
 chown -R $HOST_UID:$HOST_UID /out; ls /out/work
 '
