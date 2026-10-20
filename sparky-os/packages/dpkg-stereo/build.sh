@@ -11,12 +11,13 @@
 # Needs only dpkg-deb; run it in a throwaway container or on any Debian.
 # Last update 2026/10/17
 set -euo pipefail
+umask 022
 HERE=$(cd "$(dirname "$0")" && pwd)
 LEAN=$(cd "$HERE/../../lean" && pwd)
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
-VERSION=0.1.7
+VERSION=0.1.8
 PKG=dpkg-stereo
-W=$(mktemp -d "${TMPDIR:-/K3D/temp}/dpkg-stereo-build.XXXXXX")
+W=$(mktemp -d "${TMPDIR:-/tmp}/dpkg-stereo-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 D=$W/$PKG
 mkdir -p "$D/DEBIAN" "$D/usr/sbin" "$D/usr/lib/dpkg-stereo/lean" "$D/etc/dpkg/dpkg.cfg.d" "$D/etc/apt/apt.conf.d" \

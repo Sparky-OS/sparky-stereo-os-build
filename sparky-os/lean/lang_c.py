@@ -146,6 +146,10 @@ def refuse(src: str):
         return 'carries binary data'
     if '??/' in src:
         return 'uses trigraphs'
+    if re.search(r'^[ \t]*#!', src, re.M):
+        # Some sources retain a generator in a disabled #if branch. Its shell
+        # quoting/comment rules are not C rules; preserve the entire mixed file.
+        return 'contains an embedded interpreter script'
     return None
 
 

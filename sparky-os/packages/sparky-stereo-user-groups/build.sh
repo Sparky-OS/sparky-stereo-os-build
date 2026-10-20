@@ -5,7 +5,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.1.0
+VERSION=0.1.0+lc1
 PACKAGE=sparky-stereo-user-groups
 DEPENDS='adduser, coreutils, gawk | mawk, grep, libc-bin, sed'
 mkdir -p "$OUT"
@@ -56,48 +56,6 @@ esac
 EOT
 chmod 755 "$D/DEBIAN/postinst" "$D/DEBIAN/prerm"
 (cd "$D" && find etc usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
-dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${PACKAGE}_${VERSION}_all.deb"
+PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$HERE"
 
-S=$WORK/$PACKAGE-$VERSION
-mkdir -p "$S/debian"
-cp -a "$HERE/." "$S/"
-cat >"$S/debian/control" <<EOT
-Source: $PACKAGE
-Section: System
-Priority: optional
-Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
-Standards-Version: 4.7.3
-Build-Depends: dpkg-dev
-Rules-Requires-Root: no
-Homepage: https://sparkylinux.org
-
-Package: $PACKAGE
-Architecture: all
-Depends: $DEPENDS
-Description: Groups every desktop user needs, by default
- New users get the desktop groups, whichever way they are created.
-EOT
-cat >"$S/debian/changelog" <<EOT
-$PACKAGE ($VERSION) unstable; urgency=medium
-
-  * First version: the groups of a desktop in adduser.conf (adduser and
-    System Settings) and in the installer's users.conf, root-equivalent
-    groups refused.
-
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Wed, 14 Oct 2026 18:00:00 -0300
-EOT
-cp "$HERE/copyright" "$S/debian/copyright"
-mkdir -p "$S/debian/source"
-echo '3.0 (native)' >"$S/debian/source/format"
-cat >"$S/debian/rules" <<'EOT'
-#!/usr/bin/make -f
-binary:
-	OUT=$(CURDIR)/.. bash ./build.sh
-	dpkg-distaddfile $$(dpkg-parsechangelog -S Source)_$$(dpkg-parsechangelog -S Version)_all.deb System optional
-clean:
-build:
-EOT
-chmod +x "$S/debian/rules"
-(cd "$WORK" && dpkg-source -b "$S")
-cp "$WORK/${PACKAGE}_${VERSION}.dsc" "$WORK/${PACKAGE}_${VERSION}.tar.xz" "$OUT/"
 sync

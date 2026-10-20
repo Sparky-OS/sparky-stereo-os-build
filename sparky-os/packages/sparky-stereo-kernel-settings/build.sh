@@ -5,7 +5,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=20261010.3~sparky9~0
+VERSION=20261010.3~sparky9~0+lc1
 PACKAGE=sparky-stereo-kernel-settings
 DEPENDS='libpam-modules, systemd, systemd-zram-generator, udev'
 FILES='etc/security/limits.d/20-sparky-audio.conf usr/lib/modules-load.d/sparky-stereo.conf usr/lib/sysctl.d/70-sparky-stereo.conf usr/lib/systemd/zram-generator.conf.d/50-sparky-stereo.conf usr/lib/tmpfiles.d/sparky-thp.conf usr/lib/tmpfiles.d/sparky-tmp.conf usr/lib/udev/rules.d/60-sparky-block.rules usr/lib/udev/rules.d/70-sparky-ntsync.rules usr/lib/udev/rules.d/99-sparky-audio.rules'
@@ -57,48 +57,4 @@ fi
 EOT
 chmod 755 "$D/DEBIAN/postinst" "$D/DEBIAN/postrm"
 (cd "$D" && find etc usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
-dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${PACKAGE}_${VERSION}_all.deb"
-
-S=$WORK/$PACKAGE-$VERSION
-mkdir -p "$S/debian"
-cp -a "$HERE/." "$S/"
-cat >"$S/debian/control" <<EOT
-Source: $PACKAGE
-Section: System
-Priority: optional
-Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
-Standards-Version: 4.7.3
-Build-Depends: dpkg-dev
-Rules-Requires-Root: no
-Homepage: https://sparkylinux.org
-
-Package: $PACKAGE
-Architecture: all
-Depends: $DEPENDS
-Description: Kernel tunables for Sparky Stereo OS
- Sysctl, udev, tmpfiles, modules-load and audio-limit settings.
-EOT
-cat >"$S/debian/changelog" <<EOT
-$PACKAGE ($VERSION) unstable; urgency=medium
-
-  * The rule for your own sysctl values in the README and in the header of
-    70-sparky-stereo.conf: a file of yours named 71-*.conf to 99-*.conf wins,
-    one of the same name in /etc/sysctl.d replaces ours.
-
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 10 Oct 2026 21:06:21 -0300
-EOT
-cp "$HERE/copyright" "$S/debian/copyright"
-mkdir -p "$S/debian/source"
-echo '3.0 (native)' >"$S/debian/source/format"
-cat >"$S/debian/rules" <<'EOT'
-#!/usr/bin/make -f
-binary:
-	OUT=$(CURDIR)/.. bash ./build.sh
-	dpkg-distaddfile $$(dpkg-parsechangelog -S Source)_$$(dpkg-parsechangelog -S Version)_all.deb System optional
-clean:
-build:
-EOT
-chmod +x "$S/debian/rules"
-(cd "$WORK" && dpkg-source -b "$S")
-cp "$WORK/${PACKAGE}_${VERSION}.dsc" "$WORK/${PACKAGE}_${VERSION}.tar.xz" "$OUT/"
-sync
+PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$HERE"

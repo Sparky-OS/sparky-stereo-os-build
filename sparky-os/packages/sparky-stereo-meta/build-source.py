@@ -60,14 +60,17 @@ Homepage: https://sparkylinux.org
     shutil.copy2(copyright_file, source / 'debian/copyright')
     (source / 'build.py').write_text('''#!/usr/bin/env python3
 from pathlib import Path
-import shutil, subprocess, sys, tempfile
+import os, shutil, subprocess, sys, tempfile
+os.umask(0o022)
 root = Path(__file__).resolve().parent
 sys.path.insert(0, str(root / 'release-toolkit'))
 from lean import release, package
+from lean.standalone import normalize_modes
 with tempfile.TemporaryDirectory(dir=root, prefix='.build-') as work:
     for tree in sorted((root / 'trees').iterdir()):
         staging = Path(work) / tree.name
         shutil.copytree(tree, staging)
+        normalize_modes(staging)
         fields = package.control(staging)
         name, version, arch = package.identity(fields)
         release.build_tree(staging, root.parent)

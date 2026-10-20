@@ -4,15 +4,16 @@
 # Copyright 2026 under the GNU GPL3 License
 # Last update 2026/10/13
 
-set -u
+set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-"$HERE/../../../../out"}
-VERSION=0.2.2
+VERSION=0.2.2+lc1
 PKG=sparky-stereo-locales
 SHARE=/usr/share/$PKG
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/build.XXXXXX")
+trap 'rm -rf "$WORK"' EXIT
 
 D=$WORK/$PKG
 rm -rf "$D"
@@ -59,5 +60,4 @@ EOF
 	find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort |
 		tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums
 )
-dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${PKG}_${VERSION}_all.deb"
-rm -rf "$WORK"
+PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$HERE"

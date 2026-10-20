@@ -9,7 +9,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
 PKG=sparky-stereo-marble-planets
-VERSION=20261010~sparky9~0
+VERSION=20261010~sparky9~0+lc1
 mkdir -p "$OUT"
 CACHE=${CACHE:-$OUT/.cache-$PKG}
 mkdir -p "$CACHE"
@@ -50,5 +50,6 @@ Description: Marble maps of the Moon and the planets for Sparky Stereo OS
   the public domain. Marble shows them in the Map View under each body.
 EOC
 (cd "$D" && find usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
-dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${PKG}_${VERSION}_all.deb"
+PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone \
+    "$D" "$OUT" --authoring "$HERE"
 sync

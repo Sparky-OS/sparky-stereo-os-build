@@ -15,7 +15,7 @@ source "$HERE/payload.sh"
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
 cat >"$D/DEBIAN/control" <<EOF
 Package: firmware-creative-stereo
-Version: 20261003~sparky9~0
+Version: 20261003~sparky9~0+lc1
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
@@ -26,5 +26,6 @@ Description: Creative CA0132 DSP firmware for Sparky Stereo OS
   Hardware support selected by sparky-stereo-hardware after detection.
 EOF
 (cd "$D" && find usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
-dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/firmware-creative-stereo_20261003~sparky9~0_all.deb"
+PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone \
+    "$D" "$OUT" --authoring "$HERE"
 sync

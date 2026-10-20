@@ -11,6 +11,7 @@
 # the kernel in the repository (rebuild after a kernel bump). Each is a control file and a copyright file. Version: the build date.
 # Last update 2026/10/02
 set -euo pipefail
+umask 022
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
 VERSION=${VERSION:-$(date +%Y%m%d)}   # second build of a day: VERSION=YYYYMMDD.1
@@ -33,6 +34,7 @@ for PKG in $PKGS; do
 	V=$(sed -n 's/^Version: //p' "$W/$PKG/DEBIAN/control")
 	printf 'Source: sparky-stereo-meta (%s)\n' "$VERSION" >> "$W/$PKG/DEBIAN/control"
 	bash "$HERE/../../repo/provenance.sh" --tree "$W/$PKG"
+	chmod -R go-w "$W/$PKG"
 	mkdir -p "$W/source-trees"
 	cp -a "$W/$PKG" "$W/source-trees/"
 	PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release build-tree "$W/$PKG" "$OUT"

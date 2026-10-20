@@ -117,6 +117,16 @@ printf '%s|%s|%s|%s|%s|%s\n' "$n" "$v" "$p" "$b" "${arr[*]}" "$long"
         self.assertIn('SPDX-License-Identifier', mr)
         self.assertNotIn('# prose', mr)
 
+    def test_comment_only_script_remains_a_valid_noop(self):
+        from lean import lang_shell
+        source = '#!/bin/sh\n' + '# Optional cleanup is intentionally disabled.\n' * 10
+        result, projected = P('/usr/share/bench/post.sh', source)
+        self.assertEqual(result.status, 'projected', result.reason)
+        self.assertEqual(run(['dash'], source), run(['dash'], projected))
+        self.assertEqual(run(['dash'], projected), (0, '', ''))
+        self.assertTrue(lang_shell.verify('', '', 'dash')[0])
+        self.assertFalse(lang_shell.verify(source, '#!/bin/sh\nprintf changed\n', 'dash')[0])
+
 
 class Python(unittest.TestCase):
     SRC = '''#!/usr/bin/python3
@@ -271,6 +281,18 @@ class Data(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which('gcc'), 'needs gcc')
 class C(unittest.TestCase):
+    def test_embedded_generator_is_preserved(self):
+        source = (
+            '// A C file can retain its generator in a disabled branch.\n'
+            '#if 0\n#!/bin/sh\n'
+            'printf "%s\\n" "/* generator data */"\n'
+            '#endif\nint value = 1;\n'
+        )
+        result, projected = P('/usr/include/generated.h', source)
+        self.assertEqual(result.status, 'left')
+        self.assertEqual(result.reason, 'contains an embedded interpreter script')
+        self.assertIsNone(projected)
+
     SRC = '''/* Copyright 2026 Someone. Licensed under the MIT licence. */
 #ifndef X_H
 #define X_H

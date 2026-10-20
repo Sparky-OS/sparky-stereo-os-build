@@ -10,6 +10,7 @@
 # Usage: OUT=dir SKILLS_COMMIT=<reviewed-commit> ./build.sh
 # Also writes a self-contained source package (.dsc and .tar.xz) into OUT.
 set -euo pipefail
+umask 022
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the output directory}
 VERSION=$(dpkg-parsechangelog -l "$HERE/debian/changelog" -S Version)

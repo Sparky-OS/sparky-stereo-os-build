@@ -306,7 +306,9 @@ def main():
             b = n.split(' ')[0].split(':')[0]
             if re.match(r'lib.*(\d|t64)', b) and b not in ('libvulkan1', 'libkscreen-bin'):
                 sys.exit(f'{pkg}: versioned library {n} in Depends')
-        v = KVERSION if pkg.startswith('linux-') else version
+        # A packaging-only rebuild must advance the meta version without
+        # inventing a new kernel ABI or changing the image/header dependency.
+        v = KVERSION + os.environ.get('KERNEL_META_VERSION_SUFFIX', '') if pkg.startswith('linux-') else version
         rec = sorted(set(rec) - set(dep))
         d = os.path.join(out, pkg)
         os.makedirs(os.path.join(d, 'DEBIAN'), exist_ok=True)

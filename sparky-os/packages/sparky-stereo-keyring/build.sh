@@ -13,10 +13,11 @@
 # Output goes to $OUT (default: the current folder; point it at the repository folder yourself).
 # Last update 2026/10/16
 set -euo pipefail
+HERE=$(cd "$(dirname "$0")" && pwd)
 KEY=${1:-$(cd "$(dirname "$0")" && pwd)/sparky-stereo-repo.asc}
 [ -s "$KEY" ] || { echo "$KEY is empty or missing" >&2; exit 1; }
 OUT=${OUT:-$PWD}
-VERSION=${VERSION:-20261016~sparky9~0}
+VERSION=${VERSION:-20261016~sparky9~0+lc1}
 PKG=sparky-stereo-keyring
 W=$(mktemp -d "${TMPDIR:-/K3D/temp}/keyring-build.XXXXXX")
 trap 'rm -rf "${W:?}"' EXIT
@@ -81,5 +82,5 @@ Description: Sparky Stereo OS repository key
 EOS
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT"
-dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${PKG}_${VERSION}_all.deb" >/dev/null
+PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$HERE"
 echo "built $OUT/${PKG}_${VERSION}_all.deb"

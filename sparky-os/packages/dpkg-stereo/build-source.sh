@@ -37,9 +37,10 @@ EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
 
-  * Development release: lc1 packages, Java/Kotlin adapters and source recovery.
+  * Development release: reproducible standalone/native source adapters,
+    epoch-correct archive names, and comment-only shell qualification.
 
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 19 Oct 2026 18:00:00 -0300
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 20 Oct 2026 12:00:00 -0300
 EOF
 cat > "$S/debian/rules" <<'EOF'
 #!/usr/bin/make -f

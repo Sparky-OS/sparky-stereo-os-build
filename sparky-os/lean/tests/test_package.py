@@ -89,6 +89,17 @@ class Packages(unittest.TestCase):
         with self.assertRaises(package.Invalid):
             release.check_debs([deb])
 
+    def test_epoch_stays_in_control_but_not_archive_filename(self):
+        tree = self.stage('2:1.0+lc1')
+        out = self.base / 'epoch-output'
+        release.build_tree(tree, out)
+        self.assertEqual(sorted(p.name for p in out.glob('*.deb')),
+                         ['lc-demo-lc-hr_1.0+lc1_all.deb', 'lc-demo_1.0+lc1_all.deb'])
+        for archive in out.glob('*.deb'):
+            self.assertEqual(subprocess.check_output(
+                ['dpkg-deb', '-f', str(archive), 'Version'], text=True).strip(), '2:1.0+lc1')
+        self.assertEqual(len(release.check_debs(sorted(out.glob('*.deb')))), 2)
+
     def test_tamper_missing_unknown_marker_and_coverage(self):
         root = self.stage()
         obj = package.prepare(root, self.base / 'hr')

@@ -10,6 +10,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
 PKG=calamares-settings-sparky-stereo
 VERSION=$(sed -n '2s/^  Version \([^ ]*\) .*/\1/p' "$HERE/CHANGELOG")
+VERSION=${VERSION}+lc1
 W=$(mktemp -d "${TMPDIR:-/tmp}/cal-settings.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 D=$W/$PKG
@@ -77,5 +78,6 @@ Description: Sparky Stereo installer settings
 EOS
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT"
-dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${PKG}_${VERSION}_all.deb" >/dev/null
+PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone \
+    "$D" "$OUT" --authoring "$HERE"
 echo "built $OUT/${PKG}_${VERSION}_all.deb"

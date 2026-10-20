@@ -22,7 +22,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
-VERSION=${VERSION:-20261008.2~sparky9~0}
+VERSION=${VERSION:-20261008.2~sparky9~0+lc1}
 CPU_MINUTES=${CPU_MINUTES:-35}
 PKG=sparky-stereo-ffmpeg-fdk
 W=$(mktemp -d "${TMPDIR:-/K3D/temp}/fdk-build.XXXXXX")
@@ -143,5 +143,6 @@ EOS
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort |
 	grep -v -x -F -f <(sed 's|^/||' DEBIAN/conffiles) | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT"
-dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${PKG}_${VERSION}_all.deb" >/dev/null
+PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone \
+    "$D" "$OUT" --authoring "$HERE"
 echo "built $OUT/${PKG}_${VERSION}_all.deb"

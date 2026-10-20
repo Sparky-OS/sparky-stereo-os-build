@@ -70,7 +70,9 @@ def build_tree(root, out):
         for tree in trees:
             package.check_tree(tree)
             p, v, a = package.identity(package.control(tree))
-            dest = out / f'{p}_{v.replace(":", "%3a")}_{a}.deb'
+            # Debian archive filenames omit the epoch; the control retains it.
+            # dh_gencontrol registers this spelling in debian/files.
+            dest = out / f'{p}_{v.split(":", 1)[-1]}_{a}.deb'
             if dest.exists():
                 raise package.Invalid(f'{dest}: already exists; never replace a published version')
             temporary = Path(work) / dest.name

@@ -6,7 +6,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the output directory}
-VERSION=0.1.2
+VERSION=0.1.2+lc1
 PKG=sparky-stereo-audio-convert
 mkdir -p "$OUT"
 W=$(mktemp -d "$OUT/.$PKG.XXXXXX")
@@ -35,5 +35,5 @@ Description: Dolphin menu to convert audio files, tags kept
   The edition's answer to the dropped soundKonverter.
 X
 (cd "$D" && find usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
-dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${PKG}_${VERSION}_all.deb"
+PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$HERE"
 sync

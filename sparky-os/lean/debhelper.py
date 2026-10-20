@@ -29,7 +29,7 @@ def build(root, provenance):
         outputs = sorted(set(root.parent.glob('*.deb')) - before)
         files = root / 'debian/files'
         entries = files.read_text().splitlines() if files.exists() else []
-        prefix = f'{name}_{version.replace(":", "%3a")}_{arch}.'
+        prefix = f'{name}_{version.split(":", 1)[-1]}_{arch}.'
         old_auto = any(line.split()[0].startswith(prefix) and 'automatic=yes' in line for line in entries)
         entries = [line for line in entries if not line.split()[0].startswith(prefix)]
         files.write_text(''.join(line + '\n' for line in entries))
