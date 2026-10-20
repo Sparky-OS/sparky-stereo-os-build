@@ -1,0 +1,11 @@
+[Unit]
+Description=Sparky Stereo OS: follow the display settings for the boot
+# people's sessions only: the login screen's accounts hold copies, not choices
+ConditionUser=!@system
+
+[Path]
+PathChanged=%h/.config/kwinoutputconfig.json
+Unit=sparky-stereo-boot-export.service
+
+[Install]
+WantedBy=default.target

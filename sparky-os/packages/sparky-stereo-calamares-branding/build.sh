@@ -5,7 +5,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION='20261016.1~sparky9~0'
+VERSION='20261016.1~sparky9~0+lc1'
 PACKAGE=sparky-stereo-calamares-branding
 DEPENDS='calamares, libstereo-layer1 (>= 1.4.1), qml6-module-qtquick-window'
 RECOMMENDS='calamares (>= 3.4.3~sparky9~4-1+stereo3d1)'
@@ -49,70 +49,5 @@ Description: Stereo 3D slideshow for the installer
   the reader's language, set at the screen plane.
 EOT
 (cd "$D" && find usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
-dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${PACKAGE}_${VERSION}_all.deb"
-
-S=$WORK/$PACKAGE-$VERSION
-mkdir -p "$S/debian"
-cp -a "$HERE/." "$S/"
-cat >"$S/debian/control" <<EOT
-Source: $PACKAGE
-Section: System
-Priority: optional
-Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
-Standards-Version: 4.7.3
-Build-Depends: dpkg-dev, qt6-l10n-tools
-Rules-Requires-Root: no
-Homepage: https://sparkylinux.org
-
-Package: $PACKAGE
-Architecture: all
-Depends: $DEPENDS
-Recommends: $RECOMMENDS
-Description: Stereo 3D slideshow for the installer
- Twenty-three slides of Sparky Stereo OS in stereo 3D for Calamares' install progress page.
-EOT
-cat >"$S/debian/changelog" <<EOT
-$PACKAGE ($VERSION) unstable; urgency=medium
-
-  * The slides advance: the slideshow's timer runs while Calamares shows it
-    (running: presentation.activatedInCalamares; QML's Timer is stopped by
-    default, so the first slide stayed for the whole installation).
-  * The boot menu names the system Sparky Stereo OS (bootloaderEntryName);
-    the EFI folder keeps its name (efiBootloaderId in the edition's
-    installer settings).
-
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Fri, 16 Oct 2026 02:30:00 -0300
-
-$PACKAGE (20261014~sparky9~1) unstable; urgency=medium
-
-  * All twenty-three slides, as stereo pictures without text.
-  * The words are QML text (qsTr) set at the screen plane, translated through
-    lang/calamares-sparky_<locale>.qm, English the source: the pictures carry
-    no word, so one picture serves every language.
-
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Wed, 14 Oct 2026 23:30:00 -0300
-
-$PACKAGE (20261014~sparky9~0) unstable; urgency=medium
-
-  * First version: the installer's slideshow as six stereo slides through
-    stereo-layer's QML item, run in a window of its own (slideshowWindow, in
-    the patched calamares package); the branding is found first in
-    /etc/calamares/branding, so SparkyLinux's own files stay as they are.
-
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Wed, 14 Oct 2026 22:40:00 -0300
-EOT
-cp "$HERE/copyright" "$S/debian/copyright"
-mkdir -p "$S/debian/source"
-echo '3.0 (native)' >"$S/debian/source/format"
-cat >"$S/debian/rules" <<'EOT'
-#!/usr/bin/make -f
-binary:
-	OUT=$(CURDIR)/.. bash ./build.sh
-	dpkg-distaddfile $$(dpkg-parsechangelog -S Source)_$$(dpkg-parsechangelog -S Version)_all.deb System optional
-clean:
-build:
-EOT
-chmod +x "$S/debian/rules"
-(cd "$WORK" && dpkg-source -b "$S")
-cp "$WORK/${PACKAGE}_${VERSION}.dsc" "$WORK/${PACKAGE}_${VERSION}.tar.xz" "$OUT/"
+PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$HERE"
 sync

@@ -16,6 +16,7 @@ ART=${ART:-/K3D/temp/sparky-os/artwork-repo/9}
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
 PKG=sparkyos-artwork
 VERSION=$(sed -n '2s/^  Version \([^ ]*\) .*/\1/p' "$HERE/CHANGELOG")
+VERSION=$VERSION+lc1
 W=$(mktemp -d "${TMPDIR:-/tmp}/sparkyos-artwork.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 D=$W/$PKG
@@ -110,5 +111,7 @@ Description: SparkyOS Artwork
 EOS
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT"
-dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${PKG}_${VERSION}_all.deb" >/dev/null
-echo "built $OUT/${PKG}_${VERSION}_all.deb"
+mkdir -p "$W/authoring"
+cp -a "$HERE/." "$W/authoring/"
+cp -a "$ART" "$W/authoring/artwork"
+PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$W/authoring"

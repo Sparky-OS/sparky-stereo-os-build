@@ -6,11 +6,14 @@
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 dest=${DEST:-/K3D/temp/sparky-os/pending-pack/classic-look/m2}
-version=${VERSION:-20261014.6~sparky9~0}
-work=$(mktemp -d "$repo/../scratch/pkg.XXXXXX")
+version=${VERSION:-20261014.6~sparky9~0+lc1}
+work=$(mktemp -d "${TMPDIR:-/K3D/temp}/kubabbar-pkg.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$dest"
-rm -f "$dest"/*.deb "$dest"/SHA256SUMS
+if compgen -G "$dest/*.deb" >/dev/null; then
+	echo "Use an empty candidate output directory; existing archives are retained." >&2
+	exit 1
+fi
 credit='Sparky Stereo OS, an edition of SparkyLinux, created by Paweł "pavroo" Pijanowski <pavroo@onet.eu> and Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>'
 
 control() { # dir package depends recommends suggests description-lines...
@@ -37,8 +40,7 @@ control() { # dir package depends recommends suggests description-lines...
 build() { # dir package
 	find "$1" -name '*.qmlc' -delete
 	chmod -R go-w "$1"
-	dpkg-deb --root-owner-group -Zxz -b "$1" "$dest/${2}_${version}_all.deb" > /dev/null
-	echo "built $dest/${2}_${version}_all.deb"
+	PYTHONPATH="$repo/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$1" "$dest" --authoring "$repo"
 }
 doc() { # dir package copyright-body-file
 	mkdir -p "$1/usr/share/doc/$2"
@@ -84,7 +86,10 @@ k=$work/sparky-stereo-look-kubabbar-glass
 mkdir -p "$k/usr/share" "$k/usr/bin" "$k/usr/share/sparky/kubabbar-glass-style"
 (cd "$repo/share" && tar cf - --exclude='./plasma/desktoptheme/sparky-stereo-oxygen' --exclude='./themes' .) | tar xf - -C "$k/usr/share"
 install -m 755 "$repo/bin/kubabbar-glass-style" "$k/usr/bin/"
-install -m 644 "$repo/lang/"* "$k/usr/share/sparky/kubabbar-glass-style/"
+for language in "$repo/lang/"*; do
+	[ -f "$language" ] || continue
+	install -m 644 "$language" "$k/usr/share/sparky/kubabbar-glass-style/"
+done
 cp "$repo/README.md" "$repo/ABOUT.md" "$work/" 2>/dev/null || true
 cat > "$work/look-copyright" <<COPYRIGHT
 Upstream Author(s):

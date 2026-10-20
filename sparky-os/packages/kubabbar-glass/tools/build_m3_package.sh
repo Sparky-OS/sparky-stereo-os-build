@@ -5,12 +5,15 @@
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 dest=${DEST:-/K3D/temp/sparky-os/pending-pack/classic-look/m3}
-version=${VERSION:-20261014.7~sparky9~0}
+version=${VERSION:-20261014.7~sparky9~0+lc1}
 base=${BASE_VERSION:-20261014.6~sparky9~0}
-work=$(mktemp -d "$repo/../scratch/pkg.XXXXXX")
+work=$(mktemp -d "${TMPDIR:-/K3D/temp}/kubabbar-m3-pkg.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$dest"
-rm -f "$dest"/*.deb "$dest"/SHA256SUMS
+if compgen -G "$dest/*.deb" >/dev/null; then
+	echo "Use an empty candidate output directory; existing archives are retained." >&2
+	exit 1
+fi
 credit='Sparky Stereo OS, an edition of SparkyLinux, created by Paweł "pavroo" Pijanowski <pavroo@onet.eu> and Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>'
 p=sparky-stereo-look-kubabbar-glass-menubar
 k=$work/$p
@@ -59,7 +62,7 @@ mkdir -p "$k/DEBIAN"
 } > "$k/DEBIAN/control"
 (cd "$k" && find . -type f ! -path './DEBIAN/*' -printf '%P\n' | LC_ALL=C sort | xargs -d '\n' md5sum > DEBIAN/md5sums)
 chmod -R go-w "$k"
-dpkg-deb --root-owner-group -Zxz -b "$k" "$dest/${p}_${version}_all.deb" > /dev/null
+PYTHONPATH="$repo/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$k" "$dest" --authoring "$repo"
 (cd "$dest" && sha256sum ./*.deb | sed 's|\./||' > SHA256SUMS)
 printf "%s\n" "${SOURCE_COMMIT:-unknown}" > "$dest/SOURCE-COMMIT"
 cat "$dest/SHA256SUMS"

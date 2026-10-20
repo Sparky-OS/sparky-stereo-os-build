@@ -18,6 +18,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
 PKG=sparky-stereo-grub-l10n
 VERSION=$(sed -n '2s/^  Version \([^ ]*\) .*/\1/p' "$HERE/CHANGELOG")
+VERSION=$VERSION+lc1
 GRUB_VERSION=2.14
 GRUB_SHA256=bc8d3c73535b8838d8c8e2654d73edc4e6ae8c8acdb45d5df5dc9a1547446d43
 W=$(mktemp -d "${TMPDIR:-/K3D/temp}/grub-l10n-build.XXXXXX")
@@ -132,5 +133,9 @@ Description: GRUB's menu in the system's language
 EOS
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT"
-dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${PKG}_${VERSION}_all.deb" >/dev/null
-echo "built $OUT/${PKG}_${VERSION}_all.deb ($(echo $langs | wc -w) languages)"
+mkdir -p "$W/authoring"
+cp -a "$HERE/." "$W/authoring/"
+cp -a "$P" "$W/authoring/upstream-po"
+cp "$W/grub-$GRUB_VERSION/COPYING" "$W/authoring/COPYING.grub"
+PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$W/authoring"
+echo "built $PKG with $(echo $langs | wc -w) languages"

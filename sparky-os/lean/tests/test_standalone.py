@@ -17,7 +17,23 @@ class StandaloneSource(unittest.TestCase):
     stage = test_package.Packages.stage
 
     def test_source_roundtrip_preserves_payload_links_modes_and_bytes(self):
-        tree = self.stage('1+lc1')
+        self.source_roundtrip('all')
+
+    def test_architecture_constrained_scripts_rebuild_with_same_architecture(self):
+        arch = subprocess.check_output(['dpkg-architecture', '-qDEB_HOST_ARCH'],
+                                       text=True).strip()
+        self.source_roundtrip(arch)
+
+    def test_architecture_opt_in_does_not_allow_compiled_payload(self):
+        arch = subprocess.check_output(['dpkg-architecture', '-qDEB_HOST_ARCH'],
+                                       text=True).strip()
+        tree = self.stage('1+lc1', arch=arch)
+        (tree / 'usr/bin/native-demo').write_bytes(b'\x7fELFfixture')
+        with self.assertRaisesRegex(ValueError, 'compiled payload'):
+            standalone.build(tree, self.base / 'out', self.base, arch)
+
+    def source_roundtrip(self, arch):
+        tree = self.stage('1+lc1', arch=arch)
         docs = tree / 'usr/share/doc/lc-demo'
         docs.mkdir(parents=True)
         (docs / 'copyright').write_text('Copyright 2026 Example\nLicense: MIT\n')
@@ -32,10 +48,16 @@ class StandaloneSource(unittest.TestCase):
         for path in tree.rglob('*'):
             if not path.is_symlink():
                 path.chmod(path.stat().st_mode | 0o020)
+        # dpkg-source normalizes owner-only executable files to mode 0755.
+        # The installed payload must retain its original execution permissions.
+        private_executable = docs / 'owner-executable'
+        private_executable.write_text('fixture data\n')
+        private_executable.chmod(0o744)
+        (docs / 'shipped-config~').write_text('Authored payload with a backup-like name.\n')
         initial = self.base / 'initial'
         caller_umask = os.umask(0o002)
         try:
-            standalone.build(tree, initial, authoring)
+            standalone.build(tree, initial, authoring, arch)
         finally:
             os.umask(caller_umask)
         rebuild = self.base / 'rebuild'

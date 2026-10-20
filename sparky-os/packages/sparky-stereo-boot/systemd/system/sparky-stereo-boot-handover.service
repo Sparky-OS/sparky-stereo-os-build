@@ -1,0 +1,8 @@
+[Unit]
+Description=Sparky Stereo OS: hand the stereo boot splash over to the login screen
+DefaultDependencies=no
+After=plymouth-start.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/sparky-stereo-boot plymouth-handover

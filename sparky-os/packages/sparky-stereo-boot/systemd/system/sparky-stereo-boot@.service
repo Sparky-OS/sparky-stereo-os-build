@@ -1,0 +1,9 @@
+[Unit]
+Description=Sparky Stereo OS: write the boot files from a session's display settings
+CollectMode=inactive-or-failed
+
+[Service]
+ExecStart=/usr/bin/sparky-stereo-boot export-socket
+StandardInput=socket
+StandardOutput=journal
+StandardError=journal

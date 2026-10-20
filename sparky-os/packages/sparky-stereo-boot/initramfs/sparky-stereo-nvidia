@@ -1,0 +1,32 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/16
+# NVIDIA's display driver in the boot image, so the boot splash runs on an NVIDIA screen: nvidia-drm
+# with nvidia-modeset, nvidia and their firmware. udev in the initramfs loads nvidia-drm for an NVIDIA
+# display device, as it does later in the system; modeset and fbdev are on
+# (/usr/lib/modprobe.d/sparky-stereo-nvidia-kms.conf, copied into the image with the other modprobe.d files).
+# SPARKY_STEREO_NVIDIA_EARLY in /etc/default/sparky-stereo-boot: auto (this machine has an NVIDIA
+# display device, or this is a live system, which boots on any machine), yes, or no.
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case $1 in prereqs) prereqs; exit 0 ;; esac
+. /usr/share/initramfs-tools/hook-functions
+SPARKY_STEREO_NVIDIA_EARLY=auto
+[ -r /etc/default/sparky-stereo-boot ] && . /etc/default/sparky-stereo-boot
+[ "$SPARKY_STEREO_NVIDIA_EARLY" = no ] && exit 0
+# a kernel with the modules (the edition's kernel has the DKMS build; Debian's has none)
+find "/lib/modules/${version}" -name 'nvidia-drm.ko*' 2>/dev/null | grep -q . || exit 0
+# a system that turned NVIDIA's driver off (nouveau for an older card) keeps it out of the boot too
+modprobe -c 2>/dev/null | grep -Eq '^(blacklist[[:space:]]+nvidia[-_]drm|install[[:space:]]+nvidia([-_]drm)?[[:space:]]+/bin/(false|true))([[:space:]]|$)' && exit 0
+if [ "$SPARKY_STEREO_NVIDIA_EARLY" = auto ]; then
+	want=
+	dpkg-query -W -f '${Status}' live-boot 2>/dev/null | grep -q ' installed$' && want=live
+	for d in /sys/bus/pci/devices/*; do
+		[ "$(cat "$d/vendor" 2>/dev/null)" = 0x10de ] || continue
+		case $(cat "$d/class" 2>/dev/null) in 0x03*) want=device ;; esac
+	done
+	[ -n "$want" ] || exit 0
+fi
+manual_add_modules nvidia-drm
+exit 0

@@ -1,0 +1,11 @@
+[Unit]
+Description=Sparky Stereo OS: the boot follows the main screen's saved display settings
+
+[Socket]
+ListenStream=/run/sparky-stereo-boot.socket
+SocketMode=0666
+Accept=yes
+MaxConnections=4
+
+[Install]
+WantedBy=sockets.target

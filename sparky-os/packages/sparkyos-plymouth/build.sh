@@ -15,6 +15,7 @@ ART=${ART:-/K3D/temp/sparky-os/artwork-repo/plymouth}
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
 PKG=sparkyos-plymouth
 VERSION=$(sed -n '2s/^  Version \([^ ]*\) .*/\1/p' "$HERE/CHANGELOG")
+VERSION=$VERSION+lc1
 W=$(mktemp -d "${TMPDIR:-/tmp}/sparkyos-plymouth.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 D=$W/$PKG
@@ -92,5 +93,7 @@ Description: SparkyOS Plymouth Themes
 EOS
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT"
-dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${PKG}_${VERSION}_all.deb" >/dev/null
-echo "built $OUT/${PKG}_${VERSION}_all.deb"
+mkdir -p "$W/authoring"
+cp -a "$HERE/." "$W/authoring/"
+cp -a "$ART" "$W/authoring/artwork"
+PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$W/authoring"

@@ -1,0 +1,26 @@
+# Sparky Stereo OS: how the boot follows the main screen's saved display settings.
+# After a change: sudo sparky-stereo-boot reapply
+
+# yes: GRUB, the boot splash and the login screen follow the main screen as set in the
+# display settings. no: the boot stays as the system left it.
+SPARKY_STEREO_BOOT=yes
+
+# Where 3D switches on. 3d: from the boot splash on (one switch, at the splash). 2d: the
+# splash in 2D at the same resolution, 3D from the login screen on.
+SPARKY_STEREO_SPLASH=3d
+
+# native: GRUB at the main screen's resolution (the 2D base of a 3D mode), kept through the
+# kernel. auto: the firmware's choice.
+SPARKY_STEREO_GRUB=native
+
+# yes: the login screen gets the display settings (Plasma Login Manager and SDDM accounts).
+SPARKY_STEREO_GREETER=yes
+
+# SDDM's X11 login screen cannot keep a 3D mode. auto: SDDM runs its login screen on KWin
+# Wayland while the main screen is in 3D. yes: always. no: never.
+SPARKY_STEREO_SDDM_WAYLAND=auto
+
+# NVIDIA's display driver in the boot image, so the boot splash runs on an NVIDIA screen.
+# auto: when this machine has an NVIDIA display device, and in a live system. yes: always.
+# no: never. Then: sudo update-initramfs -u
+SPARKY_STEREO_NVIDIA_EARLY=auto

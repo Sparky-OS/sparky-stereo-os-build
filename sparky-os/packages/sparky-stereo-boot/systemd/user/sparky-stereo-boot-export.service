@@ -1,0 +1,11 @@
+[Unit]
+Description=Sparky Stereo OS: send the display settings to the boot
+# people's sessions only: the login screen's accounts hold copies, not choices
+ConditionUser=!@system
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/sparky-stereo-boot client
+
+[Install]
+WantedBy=default.target

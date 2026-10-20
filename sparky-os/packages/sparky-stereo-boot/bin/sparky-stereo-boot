@@ -1,0 +1,876 @@
+#!/usr/bin/python3
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/16
+#
+# sparky-stereo-boot: the boot follows the saved choice of the main screen.
+#
+# Stereo KWin keeps each person's display settings in ~/.config/kwinoutputconfig.json: per
+# output the mode (its flags carry the 3D layout), the anaglyph and other stereo format
+# switches, swap eyes and stereo pairs, and per set of screens which output is the main one.
+# When that file changes, the person's session sends it here (a socket the system runs as
+# root) and this program writes what the boot reads:
+#   - GRUB: the main screen's resolution (the base 2D mode of a 3D mode), kept through the
+#     kernel (gfxpayload=keep), from /var/lib/sparky-stereo-boot/grub.cfg at update-grub;
+#   - the kernel line, through GRUB's environment block (no update-grub needed):
+#     plymouth.stereo= for the boot splash in the same 3D mode or stereo layout, and video=
+#     when the base mode is not the screen's preferred one, so the console keeps it too;
+#   - the login screen: the settings copied to the greeter accounts of Plasma Login Manager
+#     and SDDM, whose KWin then shows the same output in 3D;
+#   - /var/lib/sparky-stereo-boot/main-output.json, the record of all of it.
+# Options in /etc/default/sparky-stereo-boot.
+#
+# Commands:
+#   sparky-stereo-boot status              what the next boot shows
+#   sparky-stereo-boot export-user USER    root: take USER's saved settings now
+#   sparky-stereo-boot reapply             root: write the boot files again (after an option change)
+#   sparky-stereo-boot client              the session's side: send the saved settings
+#   sparky-stereo-boot export-socket       the socket service (stdin is the connection)
+#   sparky-stereo-boot plymouth-quit       plymouth-quit.service: hand the splash over
+#   sparky-stereo-boot plymouth-handover   wait for the compositor's first frame, then quit
+import ctypes
+import ctypes.util
+import hashlib
+import json
+import os
+import pwd
+import shlex
+import socket
+import struct
+import subprocess
+import sys
+import tempfile
+import time
+
+ROOT = os.environ.get('SPARKY_STEREO_ROOT', '')
+CONFIG = ROOT + '/etc/default/sparky-stereo-boot'
+STATE_DIR = ROOT + '/var/lib/sparky-stereo-boot'
+STATE = STATE_DIR + '/main-output.json'
+LAST_INPUT = STATE_DIR + '/kwinoutputconfig.json'
+GRUB_VARS = STATE_DIR + '/grub.cfg'
+GRUBENV = ROOT + '/boot/grub/grubenv'
+DRM_SYSFS = ROOT + '/sys/class/drm'
+SOCKET = '/run/sparky-stereo-boot.socket'
+RUN_DIR = ROOT + '/run/sparky-stereo-boot'
+LANG_DIR = '/usr/share/sparky/sparky-stereo-boot'
+MAX_INPUT = 1024 * 1024
+GREETERS = (('plasmalogin', 'plasma-login-manager'), ('sddm', 'sddm'))
+SDDM_WAYLAND = ROOT + '/etc/sddm.conf.d/50-sparky-stereo-boot.conf'
+
+DEFAULTS = {
+    'SPARKY_STEREO_BOOT': 'yes',        # the boot follows the saved choice of the main screen
+    'SPARKY_STEREO_SPLASH': '3d',       # 3d: 3D from the boot splash on; 2d: the splash in 2D, 3D from the login screen
+    'SPARKY_STEREO_GRUB': 'native',     # native: GRUB at the main screen's resolution; auto: the firmware's choice
+    'SPARKY_STEREO_GREETER': 'yes',     # the login screen shows the main screen as the person set it
+    'SPARKY_STEREO_SDDM_WAYLAND': 'auto',  # auto: SDDM's greeter on KWin Wayland while the main screen is in 3D
+}
+
+# KWin's mode flags (src/core/output.h, OutputModeline::Flag)
+PREFERRED = 0x1
+SBS_HALF, TAB, FRAME_PACKING, SBS_FULL = 0x20, 0x40, 0x80, 0x100
+ANAGLYPH_MODERN, ANAGLYPH_CRT = 0x200, 0x400
+ROWS_L, ROWS_R, COLUMNS_L, COLUMNS_R, CHECKER_L, CHECKER_R = 0x800, 0x1000, 0x2000, 0x4000, 0x8000, 0x10000
+VIRTUAL = 0x20000
+SEQUENTIAL_L, SEQUENTIAL_R = 0x40000, 0x80000
+
+# the layouts the boot splash knows (plymouth.stereo=), with the eye that comes first
+VIRTUAL_LAYOUTS = (
+    (SBS_HALF, 'sbs-half-2d', False), (TAB, 'tab-2d', False),
+    (ANAGLYPH_MODERN, 'anaglyph-modern', False), (ANAGLYPH_CRT, 'anaglyph-crt', False),
+    (ROWS_L, 'rows', False), (ROWS_R, 'rows', True),
+    (COLUMNS_L, 'columns', False), (COLUMNS_R, 'columns', True),
+    (CHECKER_L, 'checkerboard', False), (CHECKER_R, 'checkerboard', True),
+    (SEQUENTIAL_L, 'sequential', False), (SEQUENTIAL_R, 'sequential', True),
+)
+HDMI_LAYOUTS = ((FRAME_PACKING, 'frame-packing'), (SBS_FULL, 'sbs-full'), (SBS_HALF, 'sbs-half'), (TAB, 'tab'))
+
+
+def log(message):
+    print('sparky-stereo-boot: ' + message, file=sys.stderr, flush=True)
+
+
+# ------------------------------------------------------------------ strings (Paweł's LOCAL files)
+def strings():
+    lang = os.environ.get('LANG', '')
+    if not lang:
+        try:
+            for line in open(ROOT + '/etc/default/locale'):
+                if line.startswith('LANG='):
+                    lang = line.split('=', 1)[1].strip().strip('"')
+        except OSError:
+            pass
+    lang = lang.split('.')[0]
+    candidates = [lang, lang.split('_')[0], 'en']
+    if lang.startswith('zh'):
+        candidates = [lang, 'zh_CN', 'en']
+    for code in candidates:
+        path = os.path.join(LANG_DIR, code)
+        if code and os.path.isfile(path):
+            values = {}
+            for line in open(path, encoding='utf-8'):
+                line = line.strip()
+                if '=' in line and not line.startswith('#'):
+                    key, value = line.split('=', 1)
+                    values[key.strip()] = value.strip().strip('"')
+            return values
+    return {}
+
+
+def text(values, key, fallback):
+    return values.get(key, fallback)
+
+
+# ------------------------------------------------------------------ options
+def read_options():
+    options = dict(DEFAULTS)
+    try:
+        for line in open(CONFIG, encoding='utf-8'):
+            line = line.strip()
+            if not line or line.startswith('#') or '=' not in line:
+                continue
+            key, value = line.split('=', 1)
+            key = key.strip()
+            if key in options:
+                options[key] = value.strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return options
+
+
+# ------------------------------------------------------------------ the screens connected now
+def edid_identity(edid):
+    """KWin's EDID identifier (src/utils/edid.cpp) from libdisplay-info's vendor and product block"""
+    if len(edid) < 128:
+        return '', ''
+    md5 = hashlib.md5(edid).hexdigest()
+    man = (edid[8] << 8) | edid[9]
+    manufacturer = ''.join(chr(((man >> shift) & 0x1f) + ord('@')) for shift in (10, 5, 0))
+    product = edid[10] | (edid[11] << 8)
+    serial = edid[12] | (edid[13] << 8) | (edid[14] << 16) | (edid[15] << 24)
+    raw_week, raw_year, revision = edid[16], edid[17], edid[19]
+    year = raw_year + 1990 if (raw_year >= 0x10 or revision < 4) else 0
+    week = manufacture_year = model_year = 0
+    if raw_week == 0xff:
+        model_year = year
+    else:
+        manufacture_year = year
+        if 0 < raw_week <= 54:
+            week = raw_week
+    identifier = '%s %d %d %d %d %d' % (manufacturer, product, serial, week, manufacture_year, model_year)
+    return identifier, md5
+
+
+def preferred_timing(edid):
+    """The first detailed timing of the EDID: the screen's preferred mode (EDID 1.4, 3.10.2)"""
+    if len(edid) < 72 or (edid[54] == 0 and edid[55] == 0):
+        return None
+    clock = (edid[54] | (edid[55] << 8)) * 10000
+    hactive = edid[56] | ((edid[58] & 0xf0) << 4)
+    hblank = edid[57] | ((edid[58] & 0x0f) << 8)
+    vactive = edid[59] | ((edid[61] & 0xf0) << 4)
+    vblank = edid[60] | ((edid[61] & 0x0f) << 8)
+    htotal, vtotal = hactive + hblank, vactive + vblank
+    if not htotal or not vtotal:
+        return None
+    refresh = (clock * 1000 // htotal + vtotal // 2) // vtotal
+    if edid[71] & 0x80:
+        vactive *= 2
+        refresh *= 2
+    return hactive, vactive, refresh
+
+
+def connected_outputs():
+    outputs = []
+    try:
+        names = sorted(os.listdir(DRM_SYSFS))
+    except OSError:
+        return outputs
+    for name in names:
+        if not name.startswith('card') or '-' not in name:
+            continue
+        path = os.path.join(DRM_SYSFS, name)
+        try:
+            status = open(os.path.join(path, 'status')).read().strip()
+        except OSError:
+            continue
+        if status != 'connected':
+            continue
+        connector = name.split('-', 1)[1]
+        if connector.startswith('Writeback'):
+            continue
+        try:
+            edid = open(os.path.join(path, 'edid'), 'rb').read()
+        except OSError:
+            edid = b''
+        identifier, md5 = edid_identity(edid)
+        outputs.append({'card': name.split('-', 1)[0], 'connector': connector, 'identifier': identifier,
+                        'hash': md5, 'edid': edid})
+    return outputs
+
+
+# ------------------------------------------------------------------ reading KWin's settings
+def parse_kwin_config(data):
+    doc = json.loads(data)
+    outputs, setups = [], []
+    if not isinstance(doc, list):
+        raise ValueError('not KWin output settings')
+    for entry in doc:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get('name') == 'outputs' and isinstance(entry.get('data'), list):
+            outputs = [o if isinstance(o, dict) else {} for o in entry['data']]
+        elif entry.get('name') == 'setups' and isinstance(entry.get('data'), list):
+            setups = [s for s in entry['data'] if isinstance(s, dict)]
+    return outputs, setups
+
+
+def match_outputs(saved, connected):
+    """Each connected screen's entry in the saved outputs, by the rules of KWin's
+    OutputConfigurationStore::findOutputIndex: the EDID identifier when it is unique, else the
+    identifier and the EDID's hash, then the connector name; never the connector name alone"""
+    def count(key, value):
+        return sum(1 for o in connected if o[key] == value)
+
+    def filtered(identifier, md5=None, connector=None):
+        return [j for j, s in enumerate(saved)
+                if s.get('edidIdentifier', '') == identifier
+                and (md5 is None or s.get('edidHash', '') == md5)
+                and (connector is None or (s.get('mstPath', '') == '' and s.get('connectorName', '') == connector))]
+
+    matches = {}
+    for i, out in enumerate(connected):
+        identifier = out['identifier']
+        found = filtered(identifier)
+        if len(found) == 1 and identifier and count('identifier', identifier) == 1:
+            matches[i] = found[0]
+            continue
+        if not found:
+            identifier = ''
+        if count('hash', out['hash']) == 1:
+            found = filtered(identifier, out['hash'])
+            if len(found) == 1:
+                matches[i] = found[0]
+                continue
+            if not found:
+                continue
+        found = filtered(identifier, out['hash'], out['connector'])
+        if found:
+            matches[i] = found[0]
+    return matches
+
+
+def find_setup(setups, indices):
+    wanted = set(indices)
+    for lid_closed in (False, True):
+        for setup in setups:
+            if bool(setup.get('lidClosed', False)) != lid_closed:
+                continue
+            outs = setup.get('outputs', [])
+            if isinstance(outs, list) and {o.get('outputIndex') for o in outs if isinstance(o, dict)} == wanted:
+                return setup
+    return None
+
+
+def describe_layout(flags):
+    """KWin's mode flags to the splash's layout: (layout, right eye first, is an HDMI 3D mode)"""
+    if flags & VIRTUAL:
+        for bit, name, right_first in VIRTUAL_LAYOUTS:
+            if flags & bit:
+                return name, right_first, False
+        return None, False, False
+    for bit, name in HDMI_LAYOUTS:
+        if flags & bit:
+            return name, False, True
+    return None, False, False
+
+
+def compute(saved, setups, connected, options):
+    """What the boot shows, from the saved settings and the screens connected now"""
+    result = {'main': None, 'outputs': [], 'kernel': [], 'gfxmode': '', 'connector': '', 'stereo': False}
+    matches = match_outputs(saved, connected)
+    if not matches:
+        return result
+    setup = find_setup(setups, matches.values())
+    enabled = []
+    if setup is not None:
+        for state in setup.get('outputs', []):
+            if not isinstance(state, dict) or not state.get('enabled'):
+                continue
+            index = state.get('outputIndex')
+            screen = next((i for i, j in matches.items() if j == index), None)
+            if screen is not None:
+                enabled.append((state.get('priority', 1 << 30), screen, index))
+    if not enabled:
+        return result
+    enabled.sort()
+    _, screen, index = enabled[0]
+    main = saved[index]
+    out = connected[screen]
+    mode = main.get('mode') if isinstance(main.get('mode'), dict) else {}
+    width, height = int(mode.get('width', 0)), int(mode.get('height', 0))
+    refresh, flags = int(mode.get('refreshRate', 0)), int(mode.get('flags', 0))
+    layout, right_first, hdmi = describe_layout(flags)
+    swap = bool(main.get('stereoSwapEyes', False)) != right_first
+    result['main'] = {'connector': out['connector'], 'card': out['card'], 'edidIdentifier': out['identifier'],
+                      'edidHash': out['hash'], 'width': width, 'height': height, 'refreshRate': refresh,
+                      'flags': flags, 'layout': layout or '2d', 'hdmi3d': hdmi, 'swapEyes': swap}
+    result['connector'] = out['connector']
+    if width > 0 and height > 0:
+        result['gfxmode'] = '%dx%d' % (width, height)
+
+    entries = []
+    def entry(screen_out, name, mode_part, options_list):
+        fields = [screen_out['connector'], name]
+        if mode_part:
+            fields.append(mode_part)
+        fields += options_list
+        # two GPUs can both have a connector of that name: then the entry names its card
+        if sum(1 for o in connected if o['connector'] == screen_out['connector']) > 1:
+            fields.append('card=' + screen_out['card'])
+        entries.append(':'.join(fields))
+
+    mode_part = 'mode=%dx%d@%d' % (width, height, refresh) if width and height and refresh else ''
+    pair_mode = main.get('stereoPairMode', '')
+    partner_uuid = main.get('stereoPartner', '')
+    if pair_mode in ('DualProjection', 'MirrorRig', 'Ized3d') and partner_uuid:
+        # a stereo pair: each panel shows its eye (mirrored as set), or iZ3D's back and front pictures
+        pair = []
+        for i, j in matches.items():
+            state = saved[j]
+            if j == index or state.get('uuid') == partner_uuid:
+                pair.append((connected[i], state))
+        if len(pair) == 2:
+            for screen_out, state in pair:
+                role = state.get('stereoPairRole', '')
+                m = state.get('mode') if isinstance(state.get('mode'), dict) else {}
+                mp = 'mode=%dx%d@%d' % (int(m.get('width', 0)), int(m.get('height', 0)), int(m.get('refreshRate', 0))) if m else ''
+                opts = []
+                if state.get('stereoSwapEyes'):
+                    opts.append('swap')
+                if pair_mode == 'Ized3d':
+                    name = 'iz3d-front' if role == 'Front' else 'iz3d-back'
+                    opts.append('formula=%d' % int(state.get('ized3dMode', 0)))
+                    if int(state.get('ized3dTransfer', 0)) == 1:
+                        opts.append('encoded')
+                else:
+                    name = 'right' if role == 'Right' else 'left'
+                    reflection = state.get('stereoPairReflection', 'None')
+                    if pair_mode == 'MirrorRig' and reflection == 'Horizontal':
+                        opts.append('hflip')
+                    elif pair_mode == 'MirrorRig' and reflection == 'Vertical':
+                        opts.append('vflip')
+                entry(screen_out, name, mp, opts)
+            result['outputs'] = entries
+            result['main']['layout'] = 'pair-' + pair_mode
+    elif layout:
+        opts = ['swap'] if swap else []
+        if hdmi and flags & PREFERRED:
+            opts.append('preferred')
+        entry(out, layout, mode_part, opts)
+        result['outputs'] = entries
+
+    result['stereo'] = bool(result['outputs'])
+    if options['SPARKY_STEREO_SPLASH'] != '2d' and result['outputs']:
+        result['kernel'].append('plymouth.stereo=' + ','.join(result['outputs']))
+
+    # the console keeps the base mode when it is not the screen's preferred one
+    preferred = preferred_timing(out['edid'])
+    if width and height and refresh and preferred is not None:
+        pw, ph, pr = preferred
+        if (pw, ph) != (width, height) or abs(pr - refresh) > 500:
+            result['kernel'].append('video=%s:%dx%d@%d' % (out['connector'], width, height, round(refresh / 1000)))
+    return result
+
+
+# ------------------------------------------------------------------ writing what the boot reads
+def atomic_write(path, data, mode=0o644, uid=None, gid=None):
+    directory = os.path.dirname(path)
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix='.sparky-stereo-boot-', dir=directory)
+    try:
+        with os.fdopen(fd, 'wb') as f:
+            f.write(data if isinstance(data, bytes) else data.encode('utf-8'))
+        os.chmod(tmp, mode)
+        if uid is not None:
+            os.chown(tmp, uid, gid)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def safe_kernel_args(args):
+    allowed = set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.:,=@_-')
+    return [a for a in args if a and set(a) <= allowed]
+
+
+def write_grubenv(args):
+    if not os.path.exists(GRUBENV):
+        log('no GRUB environment block at %s, the kernel line is not written' % GRUBENV)
+        return False
+    editenv = 'grub-editenv'
+    value = ' '.join(safe_kernel_args(args))
+    if value:
+        cmd = [editenv, GRUBENV, 'set', 'sparky_stereo_boot=' + value]
+    else:
+        cmd = [editenv, GRUBENV, 'unset', 'sparky_stereo_boot']
+    try:
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        return True
+    except (OSError, subprocess.CalledProcessError) as error:
+        log('grub-editenv failed: %s' % error)
+        return False
+
+
+def write_grub_vars(result, options):
+    lines = ['# Written by sparky-stereo-boot from the saved choice of the main screen; read by',
+             '# /etc/default/grub.d/30-sparky-stereo-boot.cfg at update-grub.']
+    if options['SPARKY_STEREO_BOOT'] != 'no' and options['SPARKY_STEREO_GRUB'] != 'auto' and result['gfxmode']:
+        lines.append('SPARKY_STEREO_GFXMODE=%s' % shlex.quote(result['gfxmode']))
+        lines.append('SPARKY_STEREO_CONNECTOR=%s' % shlex.quote(result['connector']))
+    content = '\n'.join(lines) + '\n'
+    try:
+        old = open(GRUB_VARS).read()
+    except OSError:
+        old = None
+    if old == content:
+        return False
+    atomic_write(GRUB_VARS, content)
+    return True
+
+
+def run_update_grub():
+    if os.environ.get('SPARKY_STEREO_NO_UPDATE_GRUB'):
+        log('update-grub skipped (test run)')
+        return
+    try:
+        subprocess.run(['update-grub'], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=300)
+        log('GRUB menu regenerated for the new resolution')
+    except (OSError, subprocess.SubprocessError) as error:
+        log('update-grub failed: %s' % error)
+
+
+def write_greeters(data, options, stereo):
+    written = []
+    for account, package in GREETERS:
+        try:
+            entry = pwd.getpwnam(account)
+        except KeyError:
+            continue
+        home = ROOT + entry.pw_dir
+        if not os.path.isdir(home):
+            continue
+        if options['SPARKY_STEREO_GREETER'] == 'no':
+            continue
+        path = os.path.join(home, '.config', 'kwinoutputconfig.json')
+        config_dir = os.path.dirname(path)
+        if not os.path.isdir(config_dir):
+            os.makedirs(config_dir, exist_ok=True)
+            if not ROOT:
+                os.chown(config_dir, entry.pw_uid, entry.pw_gid)
+        uid, gid = (entry.pw_uid, entry.pw_gid) if not ROOT else (None, None)
+        atomic_write(path, data, 0o644, uid, gid)
+        written.append(account)
+    return written
+
+
+def sddm_is_display_manager():
+    try:
+        target = os.readlink(ROOT + '/etc/systemd/system/display-manager.service')
+    except OSError:
+        return False
+    return os.path.basename(target) == 'sddm.service'
+
+
+def write_sddm_wayland(options, stereo):
+    """SDDM's X11 greeter cannot keep a 3D mode: its greeter runs on KWin Wayland while the main
+    screen is in 3D (auto), always (yes), or never (no)"""
+    want = options['SPARKY_STEREO_SDDM_WAYLAND'] == 'yes' or (
+        options['SPARKY_STEREO_SDDM_WAYLAND'] == 'auto' and stereo and sddm_is_display_manager())
+    if want:
+        content = ('# Written by sparky-stereo-boot: the login screen runs on KWin Wayland, which keeps\n'
+                   '# the main screen in its 3D mode. SPARKY_STEREO_SDDM_WAYLAND in /etc/default/sparky-stereo-boot.\n'
+                   '[General]\nDisplayServer=wayland\nGreeterEnvironment=QT_WAYLAND_SHELL_INTEGRATION=layer-shell\n\n'
+                   '[Wayland]\nCompositorCommand=kwin_wayland --drm --no-lockscreen --no-global-shortcuts --locale1\n')
+        try:
+            if open(SDDM_WAYLAND).read() == content:
+                return True
+        except OSError:
+            pass
+        atomic_write(SDDM_WAYLAND, content)
+        return True
+    if os.path.exists(SDDM_WAYLAND):
+        os.unlink(SDDM_WAYLAND)
+    return False
+
+
+def apply(data, source):
+    """Takes KWin's saved settings (bytes) and writes everything the boot reads"""
+    options = read_options()
+    saved, setups = parse_kwin_config(data)
+    connected = connected_outputs()
+    result = compute(saved, setups, connected, options)
+    if options['SPARKY_STEREO_BOOT'] == 'no':
+        result['kernel'] = []
+        result['outputs'] = []
+        result['stereo'] = False
+    atomic_write(LAST_INPUT, data, 0o600)
+    grub_changed = write_grub_vars(result, options)
+    write_grubenv(result['kernel'])
+    greeters = write_greeters(data, options, result['stereo'])
+    sddm_wayland = write_sddm_wayland(options, result['stereo'])
+    record = {
+        'source': source,
+        'time': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
+        'main': result['main'],
+        'stereoOutputs': result['outputs'],
+        'kernelArguments': result['kernel'],
+        'grubGfxmode': result['gfxmode'] if options['SPARKY_STEREO_GRUB'] != 'auto' and options['SPARKY_STEREO_BOOT'] != 'no' else '',
+        'greeters': greeters,
+        'sddmWayland': sddm_wayland,
+        'options': options,
+    }
+    atomic_write(STATE, json.dumps(record, indent=2) + '\n')
+    if grub_changed:
+        run_update_grub()
+    return record
+
+
+# ------------------------------------------------------------------ who may change the boot
+def local_seat_user(uid):
+    """True when uid has a session on this machine's own seat (not a remote login)"""
+    if uid == 0:
+        return True
+    try:
+        sessions = subprocess.run(['loginctl', 'list-sessions', '--no-legend'], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    for line in sessions.splitlines():
+        fields = line.split()
+        if len(fields) < 2 or fields[1] != str(uid):
+            continue
+        try:
+            props = subprocess.run(['loginctl', 'show-session', fields[0], '-p', 'Seat', '-p', 'Remote', '-p', 'Class'],
+                                   capture_output=True, text=True, timeout=10).stdout
+        except (OSError, subprocess.SubprocessError):
+            continue
+        values = dict(l.split('=', 1) for l in props.splitlines() if '=' in l)
+        if values.get('Seat') == 'seat0' and values.get('Remote') == 'no' and values.get('Class') == 'user':
+            return True
+    return False
+
+
+def autologin_user():
+    """The person the display manager logs in automatically, if any: the session that follows
+    the boot is theirs, so the boot follows their choice"""
+    try:
+        dm = os.path.basename(os.readlink(ROOT + '/etc/systemd/system/display-manager.service'))
+    except OSError:
+        return None
+    if dm == 'plasmalogin.service':
+        files = [ROOT + '/etc/plasmalogin.conf']
+    elif dm == 'sddm.service':
+        files = []
+        for d in (ROOT + '/usr/lib/sddm/sddm.conf.d', ROOT + '/etc/sddm.conf.d'):
+            try:
+                files += [os.path.join(d, f) for f in sorted(os.listdir(d)) if f.endswith('.conf')]
+            except OSError:
+                pass
+        files.append(ROOT + '/etc/sddm.conf')
+    else:
+        return None
+    user = None
+    for path in files:
+        try:
+            group = None
+            for line in open(path, encoding='utf-8', errors='replace'):
+                line = line.strip()
+                if line.startswith('[') and line.endswith(']'):
+                    group = line[1:-1]
+                elif group == 'Autologin' and line.startswith('User='):
+                    user = line.split('=', 1)[1].strip()
+        except OSError:
+            pass
+    return user or None
+
+
+def export_socket():
+    conn = socket.socket(fileno=os.dup(0))
+    creds = conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize('3i'))
+    pid, uid, gid = struct.unpack('3i', creds)
+    try:
+        name = pwd.getpwuid(uid).pw_name
+    except KeyError:
+        name = str(uid)
+    if not local_seat_user(uid):
+        conn.sendall(b'refused: not a session on this seat\n')
+        log('refused the settings of %s: no local session on seat0' % name)
+        return 1
+    automatic = autologin_user()
+    if automatic and uid != 0 and automatic != name:
+        conn.sendall(('ok: the boot follows %s, who logs in automatically\n' % automatic).encode())
+        log('kept the boot as it is: %s logs in automatically, %s does not' % (automatic, name))
+        return 0
+    chunks, size = [], 0
+    conn.settimeout(10)
+    while True:
+        chunk = conn.recv(65536)
+        if not chunk:
+            break
+        size += len(chunk)
+        if size > MAX_INPUT:
+            conn.sendall(b'refused: too large\n')
+            return 1
+        chunks.append(chunk)
+    try:
+        record = apply(b''.join(chunks), name)
+    except (ValueError, json.JSONDecodeError) as error:
+        conn.sendall(('refused: %s\n' % error).encode())
+        log('the settings of %s were not read: %s' % (name, error))
+        return 1
+    main = record['main'] or {}
+    log('boot follows %s: %s %s, %s' % (name, main.get('connector', '-'), main.get('layout', '-'),
+                                        ' '.join(record['kernelArguments']) or 'no kernel arguments'))
+    conn.sendall(b'ok\n')
+    return 0
+
+
+def client():
+    path = os.path.expanduser('~/.config/kwinoutputconfig.json')
+    try:
+        data = open(path, 'rb').read(MAX_INPUT + 1)
+    except OSError:
+        return 0
+    conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    conn.settimeout(330)
+    try:
+        conn.connect(SOCKET)
+        conn.sendall(data)
+        conn.shutdown(socket.SHUT_WR)
+        reply = conn.recv(256).decode(errors='replace').strip()
+    except OSError as error:
+        log('could not reach the boot settings service: %s' % error)
+        return 1
+    if not reply.startswith('ok'):
+        log(reply)
+        return 1
+    if reply != 'ok':
+        log(reply[3:].strip())
+    return 0
+
+
+def export_user(user):
+    entry = pwd.getpwnam(user)
+    path = os.path.join(ROOT + entry.pw_dir, '.config', 'kwinoutputconfig.json')
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    st = os.fstat(fd)
+    if not ROOT and st.st_uid != entry.pw_uid:
+        os.close(fd)
+        raise SystemExit('%s is not owned by %s' % (path, user))
+    with os.fdopen(fd, 'rb') as f:
+        data = f.read(MAX_INPUT + 1)
+    if len(data) > MAX_INPUT:
+        raise SystemExit('%s is too large' % path)
+    record = apply(data, user)
+    print(json.dumps(record, indent=2))
+    return 0
+
+
+def reapply():
+    try:
+        data = open(LAST_INPUT, 'rb').read()
+        source = json.load(open(STATE)).get('source', 'root')
+    except (OSError, ValueError):
+        log('no saved settings yet')
+        return 0
+    apply(data, source)
+    return 0
+
+
+def status():
+    s = strings()
+    try:
+        record = json.load(open(STATE))
+    except (OSError, ValueError):
+        print(text(s, 'LOCAL10', 'No saved choice yet: the boot uses the screen\'s own mode.'))
+        return 0
+    main = record.get('main') or {}
+    options = record.get('options', DEFAULTS)
+    layout = main.get('layout', '2d')
+    print('%s: %s' % (text(s, 'LOCAL1', 'Main screen'), main.get('connector', '-')))
+    print('%s: %sx%s @ %.3f Hz' % (text(s, 'LOCAL2', 'Mode'), main.get('width', 0), main.get('height', 0),
+                                   main.get('refreshRate', 0) / 1000.0))
+    print('%s: %s' % (text(s, 'LOCAL3', '3D layout'), layout if layout != '2d' else text(s, 'LOCAL4', 'None (2D)')))
+    if record.get('stereoOutputs'):
+        where = text(s, 'LOCAL6', 'the boot splash') if options.get('SPARKY_STEREO_SPLASH') != '2d' else text(s, 'LOCAL7', 'the login screen')
+        print('%s: %s' % (text(s, 'LOCAL5', '3D switches on at'), where))
+    print('%s: %s' % (text(s, 'LOCAL8', 'GRUB resolution'), record.get('grubGfxmode') or 'auto'))
+    print('%s: %s' % (text(s, 'LOCAL9', 'Login screens with these settings'), ', '.join(record.get('greeters', [])) or '-'))
+    print('%s: %s (%s)' % (text(s, 'LOCAL11', 'Saved from the settings of'), record.get('source', '-'), record.get('time', '-')))
+    return 0
+
+
+# ------------------------------------------------------------------ the splash's hand-over
+class _Res(ctypes.Structure):
+    _fields_ = [('count_fbs', ctypes.c_int), ('fbs', ctypes.POINTER(ctypes.c_uint32)),
+                ('count_crtcs', ctypes.c_int), ('crtcs', ctypes.POINTER(ctypes.c_uint32)),
+                ('count_connectors', ctypes.c_int), ('connectors', ctypes.POINTER(ctypes.c_uint32)),
+                ('count_encoders', ctypes.c_int), ('encoders', ctypes.POINTER(ctypes.c_uint32)),
+                ('min_width', ctypes.c_uint32), ('max_width', ctypes.c_uint32),
+                ('min_height', ctypes.c_uint32), ('max_height', ctypes.c_uint32)]
+
+
+class _ModeInfo(ctypes.Structure):
+    _fields_ = [('clock', ctypes.c_uint32), ('hdisplay', ctypes.c_uint16), ('hsync_start', ctypes.c_uint16),
+                ('hsync_end', ctypes.c_uint16), ('htotal', ctypes.c_uint16), ('hskew', ctypes.c_uint16),
+                ('vdisplay', ctypes.c_uint16), ('vsync_start', ctypes.c_uint16), ('vsync_end', ctypes.c_uint16),
+                ('vtotal', ctypes.c_uint16), ('vscan', ctypes.c_uint16), ('vrefresh', ctypes.c_uint32),
+                ('flags', ctypes.c_uint32), ('type', ctypes.c_uint32), ('name', ctypes.c_char * 32)]
+
+
+class _Crtc(ctypes.Structure):
+    _fields_ = [('crtc_id', ctypes.c_uint32), ('buffer_id', ctypes.c_uint32), ('x', ctypes.c_uint32),
+                ('y', ctypes.c_uint32), ('width', ctypes.c_uint32), ('height', ctypes.c_uint32),
+                ('mode_valid', ctypes.c_int), ('mode', _ModeInfo), ('gamma_size', ctypes.c_int)]
+
+
+def crtc_buffers():
+    """The framebuffer each CRTC of each DRM device scans out now: {(card, crtc): fb}"""
+    name = ctypes.util.find_library('drm') or 'libdrm.so.2'
+    drm = ctypes.CDLL(name)
+    drm.drmModeGetResources.restype = ctypes.POINTER(_Res)
+    drm.drmModeGetCrtc.restype = ctypes.POINTER(_Crtc)
+    drm.drmModeGetCrtc.argtypes = [ctypes.c_int, ctypes.c_uint32]
+    state = {}
+    for card in sorted(os.listdir('/dev/dri')):
+        if not card.startswith('card'):
+            continue
+        try:
+            fd = os.open('/dev/dri/' + card, os.O_RDWR | os.O_CLOEXEC)
+        except OSError:
+            continue
+        try:
+            res = drm.drmModeGetResources(fd)
+            if not res:
+                continue
+            for i in range(res.contents.count_crtcs):
+                crtc_id = res.contents.crtcs[i]
+                crtc = drm.drmModeGetCrtc(fd, crtc_id)
+                if crtc:
+                    state['%s:%d' % (card, crtc_id)] = crtc.contents.buffer_id
+                    drm.drmModeFreeCrtc(crtc)
+            drm.drmModeFreeResources(res)
+        finally:
+            os.close(fd)
+    return state
+
+
+def stereo_splash_running():
+    try:
+        cmdline = open('/proc/cmdline').read().split()
+    except OSError:
+        return False
+    if not any(a.startswith('plymouth.stereo=') for a in cmdline):
+        return False
+    return subprocess.run(['plymouth', '--ping'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+
+
+def plymouth_quit():
+    """plymouth-quit.service. A stereo splash is not quit here: it is deactivated (it drops the
+    DRM master and keeps showing its picture in the 3D mode), the display manager's KWin takes
+    the same mode with no new mode set, and plymouth-handover quits it with --retain-splash after
+    KWin's first frame (the boot-chain study, A.4). Any other boot quits as before."""
+    if not stereo_splash_running():
+        os.execvp('plymouth', ['plymouth', 'quit'])
+    os.makedirs(RUN_DIR, exist_ok=True)
+    try:
+        before = crtc_buffers()
+    except OSError as error:
+        log('cannot read the outputs (%s), quitting the splash as usual' % error)
+        os.execvp('plymouth', ['plymouth', 'quit'])
+    atomic_write(RUN_DIR + '/splash-buffers.json', json.dumps(before))
+    subprocess.run(['plymouth', 'deactivate'], check=False)
+    subprocess.run(['systemctl', 'start', '--no-block', 'sparky-stereo-boot-handover.service'], check=False)
+    log('splash deactivated, buffers %s; the login screen takes the 3D mode' % before)
+    return 0
+
+
+def display_manager_state():
+    try:
+        out = subprocess.run(['systemctl', 'show', '-p', 'ActiveState', '--value', 'display-manager.service'],
+                             capture_output=True, text=True, timeout=10).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return 'unknown'
+    return out or 'unknown'
+
+
+def plymouth_handover(limit=600.0):
+    """Waits until every output that showed the splash shows a frame of the compositor, then
+    quits the splash keeping its picture. While the display manager is starting or running
+    there is no hurry (on a loaded machine its KWin can take long to start); when it fails or
+    stops, or after the limit, the splash quits as usual and the console comes back"""
+    try:
+        before = json.load(open(RUN_DIR + '/splash-buffers.json'))
+    except (OSError, ValueError):
+        before = {}
+    shown = {k: v for k, v in before.items() if v}
+    start = time.monotonic()
+    down_since = None
+    checked = 0.0
+    while time.monotonic() - start < limit:
+        now = crtc_buffers()
+        if shown and all(now.get(k, 0) != v for k, v in shown.items()):
+            subprocess.run(['plymouth', 'quit', '--retain-splash'], check=False)
+            log('compositor took over after %.2f s (%s), splash quit keeping its picture' % (
+                time.monotonic() - start, now))
+            return 0
+        if time.monotonic() - checked > 1.0:
+            checked = time.monotonic()
+            state = display_manager_state()
+            if state in ('failed', 'inactive', 'deactivating'):
+                down_since = down_since or checked
+                if checked - down_since > 3.0:
+                    subprocess.run(['plymouth', 'quit'], check=False)
+                    log('the display manager is %s, splash quit as usual' % state)
+                    return 0
+            else:
+                down_since = None
+        time.sleep(0.02)
+    subprocess.run(['plymouth', 'quit'], check=False)
+    log('no compositor frame in %d s, splash quit as usual' % limit)
+    return 0
+
+
+def main(argv):
+    command = argv[1] if len(argv) > 1 else 'status'
+    if command == 'status':
+        return status()
+    if command == 'client':
+        return client()
+    if command == 'export-socket':
+        return export_socket()
+    if command == 'export-user' and len(argv) == 3:
+        return export_user(argv[2])
+    if command == 'export-file' and len(argv) == 4:
+        try:
+            apply(open(argv[2], 'rb').read(), argv[3])
+        except (ValueError, json.JSONDecodeError) as error:
+            log('the settings were not read: %s' % error)
+            return 1
+        print(open(STATE).read(), end='')
+        return 0
+    if command == 'reapply':
+        return reapply()
+    if command == 'plymouth-quit':
+        return plymouth_quit()
+    if command == 'plymouth-handover':
+        return plymouth_handover()
+    print(__doc__ if __doc__ else 'usage: sparky-stereo-boot status|export-user USER|reapply|client', file=sys.stderr)
+    return 2
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv))

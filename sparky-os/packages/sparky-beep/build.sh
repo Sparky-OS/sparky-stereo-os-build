@@ -11,11 +11,13 @@
 # Run it inside a debian:testing container with dpkg-dev (dpkg-deb, dpkg-source, xz).
 # Last update 2026/10/15
 set -euo pipefail
+HERE=$(cd "$(dirname "$0")" && pwd)
 SRC=${SRC:-/K3D/GitHub/sparky-beep}
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
 PKG=sparky-beep
 VERSION=$(sed -n '2s/^  Version \([^ ]*\) .*/\1/p' "$SRC/CHANGELOG")
 [ -n "$VERSION" ] || { echo "no version in $SRC/CHANGELOG"; exit 1; }
+VERSION=$VERSION+lc1
 W=$(mktemp -d "${TMPDIR:-/K3D/temp/sparky-os}/beep-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 D=$W/$PKG
@@ -61,15 +63,7 @@ Description: Sparky Beep
 EOC
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort |
 	grep -v -x -F -f <(sed 's|^/||' DEBIAN/conffiles) | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
-mkdir -p "$OUT" "$OUT/source"
-dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${PKG}_${VERSION}_all.deb" >/dev/null
-echo "built $OUT/${PKG}_${VERSION}_all.deb"
-
-# the source stub: the git tree without debian/ as orig, debian/ from the tree
-mkdir -p "$W/src/$PKG-$VERSION"
-tar -C "$SRC" --exclude=.git --exclude=debian -cf - . | tar -C "$W/src/$PKG-$VERSION" -xf -
-tar -C "$W/src" -cJf "$W/src/${PKG}_${VERSION}.orig.tar.xz" "$PKG-$VERSION"
-cp -a "$SRC/debian" "$W/src/$PKG-$VERSION/debian"
-(cd "$W/src" && dpkg-source -b "$PKG-$VERSION" >/dev/null)
-cp "$W/src/${PKG}_${VERSION}-1.dsc" "$W/src/${PKG}_${VERSION}.orig.tar.xz" "$W/src/${PKG}_${VERSION}-1.debian.tar.xz" "$OUT/source/"
-echo "source $OUT/source/${PKG}_${VERSION}-1.dsc"
+mkdir -p "$OUT" "$W/authoring"
+cp "$HERE/build.sh" "$W/authoring/build.sh"
+cp -a "$SRC" "$W/authoring/source"
+PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$W/authoring"
