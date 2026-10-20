@@ -123,7 +123,7 @@ def choose(path: str, data: bytes):
         return 'c', 'c++' if ext in ('.hh', '.hpp', '.hxx', '.cc', '.cpp', '.cxx', '.inl') or '/c++/' in path \
             or '/qt6/' in path or '/KF6/' in path else 'c', None
     if ext in lang_c.GLSL_EXTS:
-        return 'c', 'glsl', None
+        return None, None, 'GLSL needs a qualified shader preprocessor; preserve the authored shader'
     if ext in SYSTEMD_UNIT or (ext == '.conf' and any(path.startswith(d) for d in SYSTEMD_DIRS)):
         return 'ini', 'systemd', None
     for pat, variant in SDLINE:

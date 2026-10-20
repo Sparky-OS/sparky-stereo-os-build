@@ -6,12 +6,58 @@ from pathlib import Path
 import shutil
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from lean import project, source_tree
 
 
 @unittest.skipUnless(shutil.which('gcc'), 'GCC required')
 class SourceBuildTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('javac'), 'JDK required')
+    def test_java_opt_in_compiles_recovers_and_resolves(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'debian').mkdir()
+            source = root / 'Demo.java'
+            raw = (b'// Explanation removed before compilation, retained for humans.\n'
+                   b'class Demo {\n /** @deprecated use another method */\n'
+                   b' static int old() { return 7; }\n}\n')
+            source.write_bytes(raw)
+            (root / source_tree.LANGUAGE_PLAN).write_text('["java"]')
+            source_tree.project_tree(root)
+            mr = source.read_bytes()
+            self.assertNotEqual(mr, raw)
+            line = next(i for i, text in enumerate(mr.decode().splitlines(), 1)
+                        if 'return 7' in text)
+            self.assertEqual(project.resolve(raw, mr, '/Demo.java', None,
+                                            line, pointer=False)[0], 4)
+            subprocess.run(['javac', '-g:none', str(source)], check=True, capture_output=True)
+            compiled = (root / 'Demo.class').read_bytes()
+            source_tree.restore_tree(root)
+            self.assertEqual(source.read_bytes(), raw)
+            subprocess.run(['javac', '-g:none', str(source)], check=True, capture_output=True)
+            self.assertEqual((root / 'Demo.class').read_bytes(), compiled)
+
+    def test_language_plan_is_explicit_and_lexer_failure_is_not_qualified(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'debian').mkdir()
+            (root / 'Demo.java').write_text('// an explanation\nclass Demo {}\n')
+            source_tree.project_tree(root)
+            report = root / '.sparky-lc/source.json'
+            self.assertEqual(json.loads(report.read_text())['files'], {})
+            (root / source_tree.LANGUAGE_PLAN).write_text('["java"]')
+            with self.assertRaisesRegex(ValueError, 'language plan changed'):
+                source_tree.project_tree(root)
+            report.unlink()
+            failure = project.Result(path='/Demo.java', status='left',
+                                     reason='the java reader could not read it: no JDK')
+            with patch.object(project, 'project', return_value=failure):
+                with self.assertRaisesRegex(ValueError, 'no JDK'):
+                    source_tree.project_tree(root)
+            self.assertFalse(json.loads(report.read_text()).get('qualified', False))
+
     def test_source_consumer_plan_preserves_input_and_survives_restore(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

@@ -37,6 +37,17 @@ def cpp(text, *args):
         return subprocess.run(['g++', '-E', '-P', *args, p], capture_output=True, text=True).stdout
 
 
+class Shaders(unittest.TestCase):
+    def test_glsl_is_not_sent_to_the_c_checker(self):
+        for extension in ('.vert', '.frag', '.comp', '.glsl'):
+            for prefix in ('#version 440\n', ''):
+                src = prefix + '// An explanation long enough to trigger projection.\nint line = __LINE__;\n'
+                result, mr = lean('/usr/lib/example/shader' + extension, src)
+                self.assertEqual(result.status, 'left')
+                self.assertIn('qualified shader preprocessor', result.reason)
+                self.assertEqual(mr, src)
+
+
 @unittest.skipUnless(shutil.which('g++'), 'needs g++')
 class C(unittest.TestCase):
     def test_byte_order_mark_stays_at_the_start(self):

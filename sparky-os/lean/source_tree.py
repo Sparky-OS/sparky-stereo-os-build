@@ -1,6 +1,10 @@
 # SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 # SPDX-License-Identifier: MIT
-"""Native source projection for disposable Debian builds, with exact authored recovery."""
+"""Source projection for disposable builds, with exact authored recovery.
+
+C/C++ is the default. A retained language plan explicitly opts a Java build in;
+its JDK must be installed before this stage, as for the actual compiler.
+"""
 import argparse
 from dataclasses import asdict
 import fnmatch
@@ -13,6 +17,8 @@ from . import VERSION, lang_c, project
 
 EXCLUDED = {'.git', '.pc', 'debian', '.sparky-lc', 'build'}
 PRESERVE_PLAN = 'debian/sparky-lean-preserve.json'
+LANGUAGE_PLAN = 'debian/sparky-lean-languages.json'
+EXTENSIONS = {'c': lang_c.EXTS, 'java': {'.java'}}
 
 
 def sha(data):
@@ -38,12 +44,22 @@ def project_tree(root):
     evidence = root / '.sparky-lc'
     report = evidence / 'source.json'
     plan = preservation_plan(root)
+    language_path = root / LANGUAGE_PLAN
+    languages = json.loads(language_path.read_text()) if language_path.exists() else ['c']
+    if (not isinstance(languages, list) or not languages
+            or any(not isinstance(name, str) or name not in EXTENSIONS for name in languages)
+            or len(languages) != len(set(languages))):
+        raise ValueError('Source language plan must name supported, unique languages: c, java')
+    languages = sorted(languages)
+    extensions = set().union(*(EXTENSIONS[name] for name in languages))
     if report.exists():
         obj = json.loads(report.read_text())
         if obj['engine'] != VERSION or not obj.get('qualified'):
             raise ValueError('Engine changed or incomplete projection; restore and start a fresh build')
         if obj.get('preserve', {}) != plan:
             raise ValueError('Source preservation plan changed; restore and start a fresh build')
+        if obj.get('languages', ['c']) != languages:
+            raise ValueError('Source language plan changed; restore and start a fresh build')
         for name, row in obj['files'].items():
             if sha((root / name).read_bytes()) != row['final_sha256']:
                 raise ValueError(f'Source changed after projection: {name}')
@@ -51,7 +67,7 @@ def project_tree(root):
     paths = []
     for path in sorted(root.rglob('*')):
         rel = path.relative_to(root)
-        if (path.is_symlink() or not path.is_file() or path.suffix.lower() not in lang_c.EXTS
+        if (path.is_symlink() or not path.is_file() or path.suffix.lower() not in extensions
                 or any(p in EXCLUDED or p.startswith('obj-') for p in rel.parts)):
             continue
         paths.append(path)
@@ -84,15 +100,15 @@ def project_tree(root):
             original.write_bytes(raw)
             path.write_bytes(result.lean)
             os.utime(path, ns=(metadata.st_atime_ns, metadata.st_mtime_ns))
-        if result.reason.startswith(('check failed:', 'the c reader', 'not stable')):
+        if result.reason.startswith(('check failed:', 'the c reader', 'the java reader', 'not stable')):
             # Retain recovery records even when qualification fails.
             report.write_text(json.dumps({'engine': VERSION, 'files': records}, indent=2) + '\n')
             raise ValueError(f'{rel}: {result.reason}')
     report.write_text(json.dumps({'engine': VERSION, 'qualified': True,
-                                 'preserve': plan,
+                                 'preserve': plan, 'languages': languages,
                                  'options': 'collapse-blank,no-pointer,C/C++ line directives',
                                  'stage': 'before compilation', 'files': records}, indent=2) + '\n')
-    print(f'Native Lean Code: {sum(r["status"] == "projected" for r in records.values())}/{len(records)} files projected')
+    print(f'Build-input Lean Code: {sum(r["status"] == "projected" for r in records.values())}/{len(records)} files projected')
 
 
 def authored(root):
