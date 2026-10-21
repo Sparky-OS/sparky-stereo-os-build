@@ -41,8 +41,7 @@ def main(root, version):
     saved.write_text(original)
     path.write_text('#!/usr/bin/make -f\n%:\n\tdh $@\n')
     try:
-        prepare(root, version, HERE.parents[1],
-                build_dependencies=['libstereo-declare-dev (>= 1.3.0)'], preserve_sources=[
+        prepare(root, version, HERE.parents[1], preserve_sources=[
             ('roms/*', 'Cross-built firmware and its header generators need target-specific qualification'),
             ('tests/tcg/*', 'Target-specific compiler and assembly fixtures must remain exact test inputs'),
         ])
@@ -50,15 +49,24 @@ def main(root, version):
         path.write_text(original)
         raise
     path.write_text(updated)
+    edition_dependencies = (
+        'libstereo-declare-dev (>= 1.3.0) [amd64]',
+        'libspice-server-dev (>= 0.16.0+git20261010.acb8500-1+stereo3d2~) [amd64]',
+    )
+    control = root / 'debian/control'
+    text = control.read_text()
+    missing = tuple(item for item in edition_dependencies if item not in text)
+    if missing:
+        control.write_text(add_build_dependencies(text, missing))
     # control.mk regenerates debian/control during clean. Retain the checker
     # dependencies in its actual input too, so later source rebuilds keep them.
     template = root / 'debian/control-in'
     text = template.read_text()
     if not re.search(r'^Build-Depends:', text, re.M):
         raise ValueError('Review QEMU control template')
-    template.write_text(add_build_dependencies(text,
-        ('gcc', 'node-acorn', 'nodejs', 'perl', 'python3', 'python3-yaml',
-         'libstereo-declare-dev (>= 1.3.0)')))
+    dependencies = ('gcc', 'node-acorn', 'nodejs', 'perl', 'python3', 'python3-yaml')
+    dependencies += tuple(item for item in edition_dependencies if item not in text)
+    template.write_text(add_build_dependencies(text, dependencies))
 
 
 if __name__ == '__main__':
