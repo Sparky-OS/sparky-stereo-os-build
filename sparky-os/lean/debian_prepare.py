@@ -21,15 +21,22 @@ TARGETS = (
 
 
 def add_build_dependencies(control, dependencies):
-    """Prepend required relations without splitting commented continuation lines."""
-    first, separator, rest = control.partition('\n\n')
-    match = re.search(r'^Build-Depends:', first, re.M)
+    """Find the source stanza, preserving licence preambles and continuations."""
+    paragraphs = re.split(r'(\n[ \t]*\n)', control)
+    sources = [index for index, paragraph in enumerate(paragraphs)
+               if re.search(r'^Source:', paragraph, re.M)]
+    if len(sources) != 1:
+        raise ValueError('Expected exactly one Source stanza in debian/control')
+    index = sources[0]
+    source = paragraphs[index]
+    match = re.search(r'^Build-Depends:', source, re.M)
     addition = ', '.join(dependencies)
     if match:
-        first = first[:match.end()] + ' ' + addition + ',' + first[match.end():]
+        source = source[:match.end()] + ' ' + addition + ',' + source[match.end():]
     else:
-        first += '\nBuild-Depends: ' + addition
-    return first + separator + rest
+        source += '\nBuild-Depends: ' + addition
+    paragraphs[index] = source
+    return ''.join(paragraphs)
 
 
 def prepare(root, version, toolkit, build_dependencies=(), preserve_sources=()):
