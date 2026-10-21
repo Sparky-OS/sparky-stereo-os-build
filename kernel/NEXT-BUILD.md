@@ -33,3 +33,17 @@ The final `.config` holds every option of the fragments (`configure.sh` stops ot
 
 - rt gets the guest virtio-gpu stereo patches (series group 33), as base and v3 already have them.
 - EV_BTN (queue item 15): Tomasz Pakuła's "Input: New EV_BTN event" series, so joysticks keep more than 80 buttons, with its SDL and Wine parts in our packages; and `HID_WINWING` on.
+
+## Flavour parity (Daniel, 2026-10-21)
+
+All kernel flavours carry the same accepted edition optimizations and fixes.
+The RT option serves time-sensitive audio/video, robotics and other workloads;
+it must retain the stereo desktop and virtual-display features of base. Compare
+the retained patch identities before building, then qualify each configuration.
+Document actual RT incompatibilities (for example this tree's i915 Kconfig
+excludes PREEMPT_RT); do not silently omit fixes to make a build pass.
+
+The Lean Code build-9 migration now takes RT from the same accepted common
+source tree as base, closing build 8's two-patch virtio-gpu omission. Its native
+build, VM and DKMS results remain pending. This parity correction does not mark
+the separately queued EV_BTN work or the depth/group-34 work complete.
