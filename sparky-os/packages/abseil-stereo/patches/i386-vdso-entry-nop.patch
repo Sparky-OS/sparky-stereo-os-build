@@ -1,0 +1,42 @@
+Description: Handle the Linux fast-syscall entry NOP in the i386 stack unwinder
+ Linux may replace its initial int $0x80/ret alternative with a three-byte
+ NOP. Decode the actual stack prologue and use the same adjusted address for
+ the interrupted-PC window. The legacy syscall, sysenter and int80 handling
+ and unexpected-instruction checks remain intact.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: vendor, Sparky Stereo OS
+Forwarded: no
+Last-Update: 2026-10-20
+
+--- a/absl/debugging/internal/stacktrace_x86-inl.inc
++++ b/absl/debugging/internal/stacktrace_x86-inl.inc
+@@ -73,6 +73,17 @@
+ //  0xffffe401 <__kernel_vsyscall+1>:       ret
+ //
+ static const int kMaxBytes = 10;
++
++// New Linux vDSOs reserve a three-byte int $0x80/ret alternative at entry.
++// With fast 32-bit system calls enabled it becomes nopl (%eax). Start both
++// instruction decoding and the signal-context PC window at the first stack
++// instruction, retaining the existing window for older vDSOs.
++static const unsigned char *SkipVsyscallEntryPadding(const unsigned char *addr) {
++  if (addr[0] == 0x0F && addr[1] == 0x1F && addr[2] == 0x00) {
++    return addr + 3;
++  }
++  return addr;
++}
+ 
+ // We use assert()s instead of DCHECK()s -- this is too low level
+ // for DCHECK().
+@@ -200,9 +211,9 @@
+           kernel_rt_sigreturn_address =
+               reinterpret_cast<const unsigned char *>(
+                   rt_sigreturn_symbol_info.address);
+-          kernel_vsyscall_address =
++          kernel_vsyscall_address = SkipVsyscallEntryPadding(
+               reinterpret_cast<const unsigned char *>(
+-                  vsyscall_symbol_info.address);
++                  vsyscall_symbol_info.address));
+           num_push_instructions =
+               CountPushInstructions(kernel_vsyscall_address);
+         }
