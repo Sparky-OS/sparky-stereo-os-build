@@ -61,3 +61,34 @@ needs its native build, package/HR validation, signature and private-key absence
 checks, an isolated boot, and external-module builds against its installed
 headers. Physical stereo outputs require their own test. Record those results
 against the exact package hashes before publication or installation.
+
+
+## Installed kernel hooks and packaging revisions
+
+The nested Kbuild packages contain the kernel install/remove hooks. Staging must
+copy those scripts to `debian/<package>.<script>` templates and put `#DEBHELPER#`
+after `set -e`. Leaving scripts only in `debian/<package>/DEBIAN` is insufficient:
+`dh_installdeb` replaces them when `dh_installmodules` supplies fragments. The
+result can pass an isolated direct boot while failing to generate an initramfs
+when installed through APT.
+
+`--packaging-revision 1` produces version `7.3.0~rc6-9.1+lc1` with `--counter 9`,
+while retaining kernel release `7.3.0-rc6-stereo3d9`. This option prepares a source
+recipe; it does not itself authorize reusing binaries. A packaging-only release
+must prove that every compiled payload is unchanged, retain its source package,
+and update and verify the Lean Code version bindings and HR companion. Never
+remove the marker and project an already projected payload again.
+
+Run `check-install-hooks.py --help` for the archive regression test. Give it a
+directory containing one image and its non-HR headers per flavour, a known broken
+image for the negative control, a prepared amd64 Debian container image, and a new
+output directory. It executes the actual control scripts against recording hooks
+in both kernel hook directories and checks arguments, `INITRD`, and the ordering
+of depmod. The 2026-10-21 revision passed all 15 cases across base, v3 and RT plus
+the negative control. These recording consumers do not create real boot files.
+
+A release therefore also needs an installed upgrade check: the package transaction
+must generate a readable initramfs, register the expected boot entries, retain a
+fallback, and finish all required DKMS builds. An empty `dpkg --audit` alone does
+not prove that the next boot is prepared. Keep physical reboot/display testing
+separate from these pre-reboot checks.

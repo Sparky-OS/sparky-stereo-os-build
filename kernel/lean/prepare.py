@@ -20,7 +20,7 @@ sys.path.insert(0, str(HERE.parents[1] / 'sparky-os'))
 from lean.debian_prepare import prepare
 
 
-def main(root, recipe, counter, smoke):
+def main(root, recipe, counter, smoke, packaging_revision=None):
     root, recipe = root.resolve(), recipe.resolve()
     source = json.loads((root / 'SOURCE.edition.json').read_text())
     flavour = source['flavour']
@@ -34,6 +34,10 @@ def main(root, recipe, counter, smoke):
         suffix += '-v3'
     release = '7.3.0-rc6' + suffix
     version = '7.3.0~rc6-' + counter
+    if packaging_revision is not None:
+        if not re.fullmatch(r'[1-9][0-9]*', packaging_revision):
+            raise ValueError('Expected a positive packaging revision')
+        version += '.' + packaging_revision
     name = 'linux-stereo-' + flavour
     maintainer = 'Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>'
     debian = root / 'debian'
@@ -138,5 +142,6 @@ if __name__ == '__main__':
     parser.add_argument('recipe', type=Path)
     parser.add_argument('--counter', required=True)
     parser.add_argument('--smoke', action='store_true')
+    parser.add_argument('--packaging-revision', help='Revise packaging without changing the kernel release/ABI')
     args = parser.parse_args()
-    main(args.source, args.recipe, args.counter, args.smoke)
+    main(args.source, args.recipe, args.counter, args.smoke, args.packaging_revision)
