@@ -3,9 +3,10 @@
 # patch "Increase VM_READAHEAD_PAGES to 256K" done as a rule instead of a patch.
 
 # Rotating disks: BFQ keeps the desktop responsive while something big is copied.
-ACTION=="add|change", KERNEL=="sd[a-z]*", ATTR{queue/rotational}=="1", ATTR{queue/scheduler}="bfq"
+ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", KERNEL=="sd[a-z]*", ATTR{queue/rotational}=="1", TEST=="queue/scheduler", ATTR{queue/scheduler}="bfq"
 # SSDs and NVMe keep the kernel defaults (mq-deadline / none): CachyOS sets mq-deadline / kyber; no measurement here favours changing them.
 # To try the ADIOS scheduler of this kernel on an SSD:  modprobe adios  and then  ATTR{queue/scheduler}="adios".
 
 # Read-ahead 256 KiB instead of 128 KiB (fewer, larger requests for game assets and media files).
-ACTION=="add|change", KERNEL=="sd[a-z]*|nvme[0-9]*n[0-9]*|mmcblk[0-9]*", SUBSYSTEM=="block", ATTR{queue/read_ahead_kb}="256"
+# Queue attributes belong to whole disks; partitions can match these name globs.
+ACTION=="add|change", KERNEL=="sd[a-z]*|nvme[0-9]*n[0-9]*|mmcblk[0-9]*", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", TEST=="queue/read_ahead_kb", ATTR{queue/read_ahead_kb}="256"
