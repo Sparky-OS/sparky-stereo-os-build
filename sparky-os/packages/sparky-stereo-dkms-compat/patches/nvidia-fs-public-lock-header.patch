@@ -1,0 +1,22 @@
+--- a/nvfs-core.c
++++ b/nvfs-core.c
+@@ -46,7 +46,7 @@
+ #include <linux/mmu_notifier.h>
+ #include <linux/radix-tree.h>
+ #include <linux/pci.h>
+-#include <linux/rwlock.h>
++#include <linux/spinlock.h>
+ #include <linux/uio.h>
+ #include <linux/wait_bit.h>
+ #include <linux/security.h>
+--- a/nvfs-batch.c
++++ b/nvfs-batch.c
+@@ -45,7 +45,7 @@
+ #include <linux/mmu_notifier.h>
+ #include <linux/radix-tree.h>
+ #include <linux/pci.h>
+-#include <linux/rwlock.h>
++#include <linux/spinlock.h>
+ #include <linux/uio.h>
+ #include <linux/wait_bit.h>
+ #include <linux/security.h>

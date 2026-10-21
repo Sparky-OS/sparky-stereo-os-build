@@ -228,7 +228,9 @@ META = {
         'Sparky Stereo hardware support',
         'This meta package installs the firmware, microcode, video acceleration and the tools the hardware setup of Sparky Stereo OS uses. The NVIDIA driver is not included: the hardware setup installs it when it finds the card.',
         sorted(set(lst('hardware')) - HARDWARE_OPTIONAL - {'libfdk-aac2'}) + OURS_HARDWARE,
-        sorted(HARDWARE_OPTIONAL & set(lst('hardware')))),
+        # NVIDIA's optional GDS module needs newer DKMS from its vendor repo.
+        # Do not require that repository or DKMS version on other hardware.
+        sorted(HARDWARE_OPTIONAL & set(lst('hardware'))) + ['sparky-stereo-dkms-compat']),
     'sparky-stereo-system': (
         'Sparky Stereo system',
         'This meta package installs the system tools of Sparky Stereo OS: Flatpak, snapshots, containers, Android support, the kernel settings (zram only where the hardware needs it), the Cushion Swap File and the groups every desktop user needs.',
