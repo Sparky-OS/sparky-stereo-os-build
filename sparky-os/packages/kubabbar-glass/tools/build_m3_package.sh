@@ -5,8 +5,8 @@
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 dest=${DEST:-/K3D/temp/sparky-os/pending-pack/classic-look/m3}
-version=${VERSION:-20261014.7~sparky9~0+lc1}
-base=${BASE_VERSION:-20261014.6~sparky9~0}
+version=${VERSION:-20261014.7~sparky9~1+lc1}
+base=${BASE_VERSION:-20261014.6~sparky9~1+lc1}
 work=$(mktemp -d "${TMPDIR:-/K3D/temp}/kubabbar-m3-pkg.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$dest"
@@ -51,6 +51,10 @@ mkdir -p "$k/DEBIAN"
 	echo "Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>"
 	echo "Installed-Size: $(du -sk "$k" | cut -f1)"
 	echo "Depends: sparky-stereo-look-kubabbar-glass (>= $base), plasma-workspace, plasma-desktop, kwin-wayland, libkf6config-bin, dbus-bin"
+	# Earlier base packages accidentally included this optional variant's files.
+	# Allow their ownership to move here in either unpack order.
+	echo "Breaks: sparky-stereo-look-kubabbar-glass (<< 20261014.6~sparky9~1+lc1)"
+	echo "Replaces: sparky-stereo-look-kubabbar-glass (<< 20261014.6~sparky9~1+lc1)"
 	echo "Section: Themes"
 	echo "Priority: optional"
 	echo "Homepage: https://sparkylinux.org"

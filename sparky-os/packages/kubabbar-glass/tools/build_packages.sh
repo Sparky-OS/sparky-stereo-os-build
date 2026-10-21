@@ -7,6 +7,7 @@ set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 dest=${DEST:-/K3D/temp/sparky-os/pending-pack/classic-look/m2}
 version=${VERSION:-20261014.6~sparky9~0+lc1}
+look_version=${LOOK_VERSION:-20261014.6~sparky9~1+lc1}
 work=$(mktemp -d "${TMPDIR:-/K3D/temp}/kubabbar-pkg.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$dest"
@@ -21,7 +22,11 @@ control() { # dir package depends recommends suggests description-lines...
 	mkdir -p "$d/DEBIAN"
 	{
 		echo "Package: $p"
-		echo "Version: $version"
+		if [ "$p" = sparky-stereo-look-kubabbar-glass ]; then
+			echo "Version: $look_version"
+		else
+			echo "Version: $version"
+		fi
 		echo "Architecture: all"
 		echo "Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>"
 		echo "Installed-Size: $(du -sk "$d" | cut -f1)"
@@ -84,7 +89,11 @@ build "$g" sparky-stereo-gtk
 # 2. sparky-stereo-look-kubabbar-glass
 k=$work/sparky-stereo-look-kubabbar-glass
 mkdir -p "$k/usr/share" "$k/usr/bin" "$k/usr/share/sparky/kubabbar-glass-style"
-(cd "$repo/share" && tar cf - --exclude='./plasma/desktoptheme/sparky-stereo-oxygen' --exclude='./themes' .) | tar xf - -C "$k/usr/share"
+# The optional menubar package owns its layout and launcher. Copying all of share/
+# also picked up milestone 3's files and made the two packages conflict on upgrade.
+(cd "$repo/share" && tar cf - --exclude='./plasma/desktoptheme/sparky-stereo-oxygen' --exclude='./themes' \
+	--exclude='./plasma/look-and-feel/kubabbar-glass-menubar' \
+	--exclude='./icons/hicolor/scalable/apps/kubabbar-glass-launcher.svg' .) | tar xf - -C "$k/usr/share"
 install -m 755 "$repo/bin/kubabbar-glass-style" "$k/usr/bin/"
 for language in "$repo/lang/"*; do
 	[ -f "$language" ] || continue
