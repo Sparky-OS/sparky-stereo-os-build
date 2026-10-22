@@ -1,0 +1,61 @@
+Description: opengl: Keep a magnified stereo eye's samples within the eye
+ A stereo eye drawn larger than its resolution was sampled bilinearly from
+ the texture as it is, so the pixels at the eye's inner edge took a share of
+ the other eye's first column: at 2x, a quarter of it. The bilinear sample
+ is now clamped to the eye, as the area integration already is, so each eye
+ is drawn from its own samples only.
+ .
+ The downscale test gains a 2x magnification of the address fixture, which
+ failed at the edge column before.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://invent.kde.org/danielcamposramos/kwin/-/commit/7ff1455145ea93f07082df4ba010c7e860eccf4c
+Forwarded: no
+Last-Update: 2026-10-22
+Assisted-by: Claude Opus 5.5
+---
+ autotests/test_stereo_downscale.cpp | 2 ++
+ src/opengl/base.frag                | 9 +++++----
+ 2 files changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/autotests/test_stereo_downscale.cpp b/autotests/test_stereo_downscale.cpp
+index 61f85055c9..cf703587b3 100644
+--- a/autotests/test_stereo_downscale.cpp
++++ b/autotests/test_stereo_downscale.cpp
+@@ -48,6 +48,8 @@ private Q_SLOTS:
+         QTest::addRow("address 1.5x") << QSizeF(1.5, 1.5) << int(StereoContentSideBySideFull) << true;
+         // a shrink in one axis is integrated while the other one is magnified
+         QTest::addRow("address 1.5x by 0.75x") << QSizeF(1.5, 0.75) << int(StereoContentSideBySideFull) << true;
++        // a magnified eye takes no sample of the other eye at its edge
++        QTest::addRow("address 0.5x") << QSizeF(0.5, 0.5) << int(StereoContentSideBySideFull) << true;
+     }
+ 
+     void downscale()
+diff --git a/src/opengl/base.frag b/src/opengl/base.frag
+index 4bf5b2f622..90451b8997 100644
+--- a/src/opengl/base.frag
++++ b/src/opengl/base.frag
+@@ -71,16 +71,17 @@ vec4 sampleStereo(vec2 uv)
+ vec4 stereoAreaSample()
+ {
+     vec2 footprint = max(fwidth(texcoord0) * stereoTextureSize, vec2(1.0));
++    vec2 center = texcoord0 * stereoTextureSize;
++    vec2 eyeLow = stereoEyeBounds.xy * stereoTextureSize + vec2(0.5);
++    vec2 eyeHigh = max(eyeLow, stereoEyeBounds.zw * stereoTextureSize - vec2(0.5));
+     if (max(footprint.x, footprint.y) <= 1.0) {
+-        return sampleStereo(texcoord0);
++        // Bilinear, without reaching into the other eye at its edge.
++        return sampleStereo(clamp(center, eyeLow, eyeHigh) / stereoTextureSize);
+     }
+     // Any shrink integrates the covered texel areas, clamping within this eye only;
+     // an axis that is not shrunk covers one texel, which is bilinear.
+-    vec2 center = texcoord0 * stereoTextureSize;
+     vec2 low = center - footprint * 0.5;
+     vec2 high = center + footprint * 0.5;
+-    vec2 eyeLow = stereoEyeBounds.xy * stereoTextureSize + vec2(0.5);
+-    vec2 eyeHigh = max(eyeLow, stereoEyeBounds.zw * stereoTextureSize - vec2(0.5));
+     vec4 sum = vec4(0.0);
+     // Subsampled chroma can change slope inside a luma texel pair.
+ #if TRAIT_MAP_MULTI_PLANE_TEXTURE
+-- 
+2.53.0
+

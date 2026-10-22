@@ -1,0 +1,63 @@
+Description: autotests: Lay out the DMA-BUF format switch buffers with 256-byte rows
+ The NV12 buffer had 64-byte rows. On AMD's driver, which needs linear
+ buffers to have rows 256 bytes apart, KWin could not import it ("importing
+ the supplied dmabufs failed") and the test failed wherever a real AMD render
+ node is given to it. Both formats now use the 256-byte rows of the ARGB
+ buffer.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://invent.kde.org/danielcamposramos/kwin/-/commit/4946a82b123c3ae2d37669547c61b2e4c74a9cd4
+Forwarded: no
+Last-Update: 2026-10-22
+Assisted-by: Claude Opus 5.5
+---
+ .../integration/dmabuf_formatswitch_test.cpp      | 15 +++++++++------
+ 1 file changed, 9 insertions(+), 6 deletions(-)
+
+diff --git a/autotests/integration/dmabuf_formatswitch_test.cpp b/autotests/integration/dmabuf_formatswitch_test.cpp
+index bd621d5be4..28313eb892 100644
+--- a/autotests/integration/dmabuf_formatswitch_test.cpp
++++ b/autotests/integration/dmabuf_formatswitch_test.cpp
+@@ -57,7 +57,10 @@ static FormatSwitchBufferPtr createBuffer(int device, bool nv12)
+ {
+     constexpr int width = 64;
+     constexpr int height = 64;
+-    constexpr int bytes = width * height * 4;
++    // the rows of both formats 256 bytes apart: linear buffers on some GPUs, AMD's among them,
++    // need that pitch to be imported
++    constexpr int pitch = width * 4;
++    constexpr int bytes = pitch * height * 3 / 2;
+     FileDescriptor memory(memfd_create("kwin-dmabuf-format-test", MFD_CLOEXEC | MFD_ALLOW_SEALING));
+     if (!memory.isValid() || ftruncate(memory.get(), bytes) != 0) {
+         return nullptr;
+@@ -73,10 +76,10 @@ static FormatSwitchBufferPtr createBuffer(int device, bool nv12)
+         const uint8_t levels[] = {16, 89, 162, 235};
+         for (int y = 0; y < height; ++y) {
+             for (int x = 0; x < width; ++x) {
+-                data[y * width + x] = levels[(y >= height / 2) * 2 + (x >= width / 2)];
++                data[y * pitch + x] = levels[(y >= height / 2) * 2 + (x >= width / 2)];
+             }
+         }
+-        std::fill(data + width * height, data + width * height * 3 / 2, 128);
++        std::fill(data + pitch * height, data + pitch * height * 3 / 2, 128);
+     } else {
+         const QRgb colors[] = {qRgb(255, 0, 0), qRgb(0, 255, 0), qRgb(0, 0, 255), qRgb(255, 255, 255)};
+         auto pixels = reinterpret_cast<QRgb *>(data);
+@@ -105,12 +108,12 @@ static FormatSwitchBufferPtr createBuffer(int device, bool nv12)
+     attributes.modifier = DRM_FORMAT_MOD_LINEAR;
+     attributes.planeCount = nv12 ? 2 : 1;
+     attributes.device = 0;
+-    attributes.pitch[0] = nv12 ? width : width * 4;
++    attributes.pitch[0] = pitch;
+     attributes.fd[0] = std::move(dma);
+     if (nv12) {
+         attributes.fd[1] = attributes.fd[0].duplicate();
+-        attributes.offset[1] = width * height;
+-        attributes.pitch[1] = width;
++        attributes.offset[1] = pitch * height;
++        attributes.pitch[1] = pitch;
+     }
+     return buffer;
+ }
+-- 
+2.53.0
+
