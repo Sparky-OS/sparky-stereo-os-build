@@ -30,6 +30,7 @@ throwaway container), never on the host. Python 3 only, standard library only.
 
 from __future__ import annotations
 
+import contextlib
 import os
 from pathlib import Path
 import re
@@ -71,6 +72,8 @@ def needed(path):
     return sorted(line.split('[', 1)[1].rstrip(']') for line in out.splitlines() if '(NEEDED)' in line)
 
 
+MULTIARCH = {'amd64': 'x86_64-linux-gnu', 'i386': 'i386-linux-gnu', 'arm64': 'aarch64-linux-gnu'}
+
 STEREO = re.compile(r'stereo', re.I)
 
 
@@ -105,10 +108,25 @@ def private_dirs(root):
     return sorted(dirs)
 
 
-def resolve(root, timeout=20):
+@contextlib.contextmanager
+def sibling_dirs(debs):
+    """Library directories of other packages built from the same source, extracted for the run.
+
+    A plugin links the library its sibling package ships; the build container has not installed it."""
+    with tempfile.TemporaryDirectory(prefix='lc-link-sib-') as base:
+        dirs = set()
+        for index, deb in enumerate(debs):
+            root = Path(base) / str(index)
+            root.mkdir()
+            extract(deb, root)
+            dirs.update(str(p.parent) for p in elf_files(root) if '.so' in p.name)
+        yield sorted(dirs)
+
+
+def resolve(root, timeout=20, extra_dirs=()):
     """{(relative file, kind, item): True} for every unresolved library or symbol of the tree."""
     root = Path(root)
-    env = dict(os.environ, LD_LIBRARY_PATH=':'.join(private_dirs(root)))
+    env = dict(os.environ, LD_LIBRARY_PATH=':'.join(private_dirs(root) + list(extra_dirs)))
     result = {}
     for path in elf_files(root):
         rel = '/' + str(path.relative_to(root))
@@ -130,12 +148,12 @@ def resolve(root, timeout=20):
     return result
 
 
-def compare(new_deb, previous_deb=None):
+def compare(new_deb, previous_deb=None, extra_dirs=()):
     """Return (findings, notes). A finding blocks the release, a note is informational."""
     findings, notes = [], []
     with tempfile.TemporaryDirectory(prefix='lc-link-new-') as new_root:
         extract(new_deb, new_root)
-        now = resolve(new_root)
+        now = resolve(new_root, extra_dirs=extra_dirs)
         new_needed = {str(p.relative_to(new_root)): needed(p) for p in elf_files(new_root)}
         new_stereo = {str(p.relative_to(new_root)): stereo_imports(p) for p in elf_files(new_root)}
         if previous_deb:
@@ -186,12 +204,13 @@ def _depends(deb):
     return {re.split(r'[ (:]', alt.strip())[0] for part in fields.split(',') for alt in part.split('|') if alt.strip()}
 
 
-def smoke(deb, table, timeout=10):
+def smoke(deb, table, timeout=10, extra_dirs=()):
     """Start every program named for this package in `table` (package TAB path TAB args).
+    `{multiarch}` in a path stands for the package architecture's library triplet.
 
     LD_BIND_NOW=1 binds every symbol at load; DISPLAY and WAYLAND_DISPLAY are removed, so no
     program can reach a desktop. Returns findings."""
-    name = control_field(deb, 'Package')
+    name, arch = control_field(deb, 'Package'), control_field(deb, 'Architecture')
     findings = []
     rows = [line.split('\t') for line in Path(table).read_text().splitlines()
             if line.strip() and not line.startswith('#')]
@@ -199,11 +218,11 @@ def smoke(deb, table, timeout=10):
         extract(deb, root)
         env = {k: v for k, v in os.environ.items() if k not in ('DISPLAY', 'WAYLAND_DISPLAY', 'XAUTHORITY')}
         env['LD_BIND_NOW'] = '1'
-        env['LD_LIBRARY_PATH'] = ':'.join(private_dirs(root))
+        env['LD_LIBRARY_PATH'] = ':'.join(private_dirs(root) + list(extra_dirs))
         for row in rows:
             if row[0] != name:
                 continue
-            exe = Path(root) / row[1].lstrip('/')
+            exe = Path(root) / row[1].replace('{multiarch}', MULTIARCH.get(arch, arch)).lstrip('/')
             if not exe.is_file():
                 findings.append(f'{row[1]}: listed in the smoke table, missing from the package')
                 continue
@@ -219,10 +238,11 @@ def smoke(deb, table, timeout=10):
     return findings
 
 
-def check(new_deb, previous_deb=None, smoke_table=None):
-    findings, notes = compare(new_deb, previous_deb)
+def check(new_deb, previous_deb=None, smoke_table=None, extra_dirs=()):
+    """`extra_dirs`: library directories of the other packages built from the same source."""
+    findings, notes = compare(new_deb, previous_deb, extra_dirs)
     if smoke_table:
-        findings += smoke(new_deb, smoke_table)
+        findings += smoke(new_deb, smoke_table, extra_dirs=extra_dirs)
     for note in notes:
         print(f'lc1 link note: {Path(new_deb).name}: {note}')
     if findings:

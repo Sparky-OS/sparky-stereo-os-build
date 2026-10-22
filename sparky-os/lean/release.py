@@ -132,17 +132,35 @@ def check_debs(paths):
     return verified
 
 
+def previous_build(deb, previous_dir):
+    """The newest build of the same package and architecture below `deb`'s version in previous_dir."""
+    def field(path, name):
+        return subprocess.run(['dpkg-deb', '-f', str(path), name], capture_output=True, text=True,
+                              check=True).stdout.strip()
+
+    def less(a, b):
+        return subprocess.run(['dpkg', '--compare-versions', a, 'lt', b]).returncode == 0
+
+    name, version, arch = (field(deb, key) for key in ('Package', 'Version', 'Architecture'))
+    best = None
+    for candidate in sorted(Path(previous_dir).glob(f'{name}_*_{arch}.deb')):
+        if field(candidate, 'Package') != name:
+            continue
+        found = field(candidate, 'Version')
+        if less(found, version) and (best is None or less(best[0], found)):
+            best = (found, candidate)
+    return best[1] if best else None
+
+
 def check_link(debs, previous_dir=None, smoke_table=None):
     """Link and start gate (ORDER 198): every ELF of a rebuilt package must resolve like its predecessor.
 
     Run it where the runtime dependencies are installed (a build or throwaway container). The
-    predecessor of NAME_VERSION+lc1_ARCH.deb is NAME_VERSION_ARCH.deb in previous_dir."""
-    for deb in map(Path, debs):
-        previous = None
-        if previous_dir:
-            candidate = Path(previous_dir) / deb.name.replace('+lc1_', '_')
-            previous = candidate if candidate.is_file() else None
-        linkcheck.check(deb, previous_deb=previous, smoke_table=smoke_table)
+    predecessor is the newest build of the package below its version in previous_dir."""
+    with linkcheck.sibling_dirs(debs) as extra:
+        for deb in map(Path, debs):
+            previous = previous_build(deb, previous_dir) if previous_dir else None
+            linkcheck.check(deb, previous_deb=previous, smoke_table=smoke_table, extra_dirs=extra)
     print(f'lc1: link check passed for {len(debs)} packages')
 
 

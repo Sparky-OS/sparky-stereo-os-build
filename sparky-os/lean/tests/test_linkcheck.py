@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from lean import linkcheck, package
+from lean import linkcheck, package, release
 
 LIBDIR = 'usr/lib/x86_64-linux-gnu/demo/lib'
 
@@ -111,6 +111,30 @@ class LinkGate(unittest.TestCase):
         table = self.base / 'smoke.tsv'
         table.write_text('demo\t/usr/games/demo\t--version\n')
         self.assertEqual(linkcheck.check(after, previous_deb=before, smoke_table=table), [])
+
+    def test_sibling_library_is_found_and_previous_build_is_chosen(self):
+        """A plugin links the library a sibling package ships; the newest older build is the baseline."""
+        client = self.deb('demo', '4+lc1', as_needed=False)
+        sibling = self.base / 'libb-pkg'
+        (sibling / 'usr/lib/x86_64-linux-gnu').mkdir(parents=True)
+        (sibling / 'DEBIAN').mkdir()
+        shutil.copy(self.src / 'libb.so.1', sibling / 'usr/lib/x86_64-linux-gnu/libb.so.1')
+        (sibling / 'DEBIAN/control').write_text('Package: libb\nVersion: 4\nArchitecture: amd64\n'
+                                                'Maintainer: t <t@example.org>\nDescription: t\n')
+        libb = self.base / 'libb_4_amd64.deb'
+        subprocess.run(['dpkg-deb', '--build', str(sibling), str(libb)], check=True, stdout=subprocess.DEVNULL)
+        (self.base / 'pkg-4+lc1' / LIBDIR / 'libb.so.1').unlink()
+        subprocess.run(['dpkg-deb', '--build', str(self.base / 'pkg-4+lc1'), str(client)], check=True, stdout=subprocess.DEVNULL)
+        with self.assertRaises(package.Invalid):
+            linkcheck.check(client)
+        with linkcheck.sibling_dirs([libb]) as extra:
+            linkcheck.check(client, extra_dirs=extra)
+        older, newer = self.deb('demo', '3', as_needed=False), self.deb('demo', '3.5', as_needed=False)
+        previous = self.base / 'previous'
+        previous.mkdir()
+        for deb in (older, newer, self.deb('demo', '9', as_needed=False)):
+            shutil.copy(deb, previous)
+        self.assertEqual(release.previous_build(client, previous).name, newer.name)
 
 
 if __name__ == '__main__':
