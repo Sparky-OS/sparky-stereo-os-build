@@ -12,12 +12,15 @@
 # a full-upgrade replaces the old ones and installs libavcodec63 and the other libraries. They carry no files but the
 # documentation, and can be removed once nobody has the old ones. Dependencies are ">= 10:9.0.2" (the upstream version),
 # so they stay right when the edition's FFmpeg moves on and when sparky-stereo-ffmpeg-fdk relabels the versions.
-# Needs only dpkg-deb.
+# Needs the edition's Lean Code release toolkit and its parser dependencies.
 # Usage: build.sh   (output goes to $OUT, default /K3D/temp/sparky-os/repo)
 # Last update 2026/10/08
 set -euo pipefail
+umask 022
+HERE=$(cd "$(dirname "$0")" && pwd)
+KIT=${LEAN_TOOLKIT:-$HERE/../..}
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
-VERSION=${VERSION:-10:9.0.2-dmo1+stereo3d2}
+VERSION=${VERSION:-10:9.0.2-dmo1+stereo3d3+lc1}
 ARCHES=${ARCHES:-"amd64 i386"}
 MIN=10:9.0.2
 W=$(mktemp -d "${TMPDIR:-/K3D/temp}/transitional-build.XXXXXX")
@@ -63,6 +66,7 @@ EOS
 		SECTION=oldlibs
 		cat >"$D/DEBIAN/control" <<EOS
 Package: $pkg
+Source: sparky-stereo-ffmpeg-transitional
 Version: $VERSION
 Architecture: $arch
 Multi-Arch: same
@@ -80,7 +84,8 @@ Description: transitional package, $pkg is $now now
  with $now. It can be removed.
 EOS
 		(cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
-		dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${pkg}_${VERSION#*:}_${arch}.deb" >/dev/null
+		bash "$KIT/repo/provenance.sh" --tree "$D"
+		PYTHONPATH="$KIT${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release build-tree "$D" "$OUT"
 		echo "built $OUT/${pkg}_${VERSION#*:}_${arch}.deb"
 	done <<<"$LIST"
 done
