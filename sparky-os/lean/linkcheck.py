@@ -222,9 +222,10 @@ def smoke(deb, table, timeout=10, extra_dirs=()):
         for row in rows:
             if row[0] != name:
                 continue
-            exe = Path(root) / row[1].replace('{multiarch}', MULTIARCH.get(arch, arch)).lstrip('/')
+            program = row[1].replace('{multiarch}', MULTIARCH.get(arch, arch))
+            exe = Path(root) / program.lstrip('/')
             if not exe.is_file():
-                findings.append(f'{row[1]}: listed in the smoke table, missing from the package')
+                findings.append(f'{program}: listed in the smoke table, missing from the package')
                 continue
             args = row[2].split() if len(row) > 2 else ['--version']
             try:
@@ -234,7 +235,7 @@ def smoke(deb, table, timeout=10, extra_dirs=()):
             except subprocess.TimeoutExpired as exc:
                 text = (exc.stdout or b'').decode(errors='replace') + (exc.stderr or b'').decode(errors='replace')
             if LOADER_ERRORS.search(text):
-                findings.append(f'{row[1]}: loader error at start: {text.replace(root, "").strip()[:300]}')
+                findings.append(f'{program}: loader error at start: {text.replace(root, "").strip()[:300]}')
     return findings
 
 
