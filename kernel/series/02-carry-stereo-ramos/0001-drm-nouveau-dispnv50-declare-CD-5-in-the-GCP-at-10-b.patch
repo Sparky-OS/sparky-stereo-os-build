@@ -1,0 +1,65 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 23 Sep 2026 17:35:31 -0300
+Subject: drm/nouveau/dispnv50: declare CD=5 in the GCP at 10 bpc
+
+At 10 bpc the GCP goes out with CD=0 (colour depth not indicated) on a
+30-bpp link. HDMI 1.4b section 6.5.3 specifies CD=5 for 30 bpp, with the
+packing phase of the four-pixel group. This adds the 10 bpc case with
+the same phase rule the 12 bpc case uses.
+
+Tested on this branch with an RTX 3060 (GA106) and two Sony 3D TVs,
+KDL-46HX855 and KDL-46EX725 (over a 10 m cable): 12, 10 and 8 bpc and
+3D at 12 bpc, including 1080p24 frame packing, all display. With and
+without this change 10 bpc displays and the TVs report 10-bit, so on
+these sinks it is for compliance with the specification and for sinks
+that rely on CD, not a visible fix.
+
+It comes from our withdrawn series:
+https://lore.kernel.org/all/20260923201930.1836730-1-Capitain_Jack@yahoo.com/
+
+Assisted-by: Claude-Opus-5.5
+Assisted-by: GPT-5.6-Sol
+Assisted-by: Kimi-K3
+Assisted-by: GLM-5.3
+Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+(cherry picked from commit c4c27ea220184e51f2dc134ecccf4e6eafb4381b)
+---
+ drivers/gpu/drm/nouveau/dispnv50/disp.c       | 6 +++++-
+ drivers/gpu/drm/nouveau/include/nvif/if0012.h | 2 +-
+ 2 files changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/disp.c b/drivers/gpu/drm/nouveau/dispnv50/disp.c
+index c47b4d19e3a453a61d75ed3e89ea39e9e1085ca2..c45456eef645d26fba94eb37f9ea1123c8964cfc 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/disp.c
++++ b/drivers/gpu/drm/nouveau/dispnv50/disp.c
+@@ -1019,11 +1019,15 @@ nv50_hdmi_enable(struct drm_encoder *encoder, struct nouveau_crtc *nv_crtc,
+ 	tmds_clock = hw.crtc_clock * asyh->or.bpc / 8;
+ 
+ 	/* At 12 bpc, GCP SB1 carries CD=6 and a packing phase selected by the
+-	 * parity of the back porch plus active width.
++	 * parity of the back porch plus active width. At 10 bpc it carries
++	 * CD=5 and the phase within the four-pixel group (HDMI 1.4b 6.5.3).
+ 	 */
+ 	if (asyh->or.bpc == 12)
+ 		gcp_sb1 = 0x06 | ((hw.crtc_htotal - hw.crtc_hsync_end +
+ 				   hw.crtc_hdisplay) & 1 ? 0x10 : 0x20);
++	else if (asyh->or.bpc == 10)
++		gcp_sb1 = 0x05 | (((hw.crtc_htotal - hw.crtc_hsync_end +
++				    hw.crtc_hdisplay) & 3) << 4);
+ 
+ 	max_ac_packet  = mode->htotal - mode->hdisplay;
+ 	max_ac_packet -= rekey;
+diff --git a/drivers/gpu/drm/nouveau/include/nvif/if0012.h b/drivers/gpu/drm/nouveau/include/nvif/if0012.h
+index 022df916af49b68cdc279d591178e4f222b8fc47..9e0dafe3889399a2c7667c7a5b7154d2f3f10c58 100644
+--- a/drivers/gpu/drm/nouveau/include/nvif/if0012.h
++++ b/drivers/gpu/drm/nouveau/include/nvif/if0012.h
+@@ -176,7 +176,7 @@ union nvif_outp_hdmi_args {
+ 		__u8 scdc_scrambling;
+ 		__u8 scdc_low_rates;
+ 		__u32 khz;
+-		/* GCP SB1: CD[3:0], PP[7:4], zero below 12 bpc. */
++		/* GCP SB1: CD[3:0], PP[7:4], zero below 10 bpc. */
+ 		__u8 gcp_sb1;
+ 		__u8 pad0d[3];
+ 	} v0;

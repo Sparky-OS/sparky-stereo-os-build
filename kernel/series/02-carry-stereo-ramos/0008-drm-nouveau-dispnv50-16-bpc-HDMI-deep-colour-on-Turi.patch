@@ -1,0 +1,96 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 1 Oct 2026 02:00:26 -0300
+Subject: drm/nouveau/dispnv50: 16 bpc HDMI deep colour on Turing and newer
+
+HDMI defines 48-bit deep colour (16 bpc, DC_48) besides 30 and 36 bit.
+Select it on Turing and newer when the sink declares DC_48 and the mode
+fits the TMDS link, as 12 bpc is selected: the SOR's 48 bpp depth
+(0x9, as NV887D's class header defines it; 837d's predates it), the
+head's BPP_48_444, and the GCP with CD=7 and packing phase 0 (a 48-bpp
+group holds one pixel).
+
+Untested: no 48-bit sink at hand. The same mechanism carries 10 and 12
+bpc, which are verified on a Sony KDL-46EX725.
+
+Assisted-by: Claude-Opus-5.5
+(cherry picked from commit 26ea652ab63b99f848b40314fdd372ad559cd18a)
+---
+ drivers/gpu/drm/nouveau/dispnv50/disp.c     | 15 +++++++++++++--
+ drivers/gpu/drm/nouveau/dispnv50/headc57d.c |  1 +
+ drivers/gpu/drm/nouveau/dispnv50/headca7d.c |  3 +++
+ 3 files changed, 17 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/disp.c b/drivers/gpu/drm/nouveau/dispnv50/disp.c
+index 4036bf04eec96a1df9b599aaf05f9ccac74766f4..1cad80c7df7022ed0a20dfd40fcdd333b36da587 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/disp.c
++++ b/drivers/gpu/drm/nouveau/dispnv50/disp.c
+@@ -423,7 +423,8 @@ nv50_hdmi_hw_mode(const struct drm_display_mode *mode,
+ }
+ 
+ /* Choose the highest depth up to bpc supported by both ends. Enable
+- * 12 bpc on Turing+ and 10 bpc on Ampere+. DVI remains at 8 bpc.
++ * 16 and 12 bpc on Turing+ and 10 bpc on Ampere+. DVI remains at 8 bpc.
++ * 16 bpc (48 bpp, HDMI DC_48) is untested: no 48-bit sink at hand.
+  */
+ static u8
+ nv50_hdmi_fix_bpc(struct nv50_disp *disp, const struct drm_display_info *info,
+@@ -433,6 +434,9 @@ nv50_hdmi_fix_bpc(struct nv50_disp *disp, const struct drm_display_info *info,
+ 
+ 	if (!info->is_hdmi)
+ 		return 8;
++	if (bpc >= 16 && oclass >= TU102_DISP &&
++	    (info->edid_hdmi_rgb444_dc_modes & DRM_EDID_HDMI_DC_48))
++		return 16;
+ 	if (bpc >= 12 && oclass >= TU102_DISP &&
+ 	    (info->edid_hdmi_rgb444_dc_modes & DRM_EDID_HDMI_DC_36))
+ 		return 12;
+@@ -1023,7 +1027,12 @@ nv50_hdmi_enable(struct drm_encoder *encoder, struct nouveau_crtc *nv_crtc,
+ 	 * parity of the back porch plus active width. At 10 bpc it carries
+ 	 * CD=5 and the phase within the four-pixel group (HDMI 1.4b 6.5.3).
+ 	 */
+-	if (asyh->or.bpc == 12)
++	/* At 16 bpc, CD=7; a 48-bpp group holds one pixel, so the packing
++	 * phase stays 0.
++	 */
++	if (asyh->or.bpc == 16)
++		gcp_sb1 = 0x07;
++	else if (asyh->or.bpc == 12)
+ 		gcp_sb1 = 0x06 | ((hw.crtc_htotal - hw.crtc_hsync_end +
+ 				   hw.crtc_hdisplay) & 1 ? 0x10 : 0x20);
+ 	else if (asyh->or.bpc == 10)
+@@ -1273,6 +1282,8 @@ nv50_dp_bpc_to_depth(unsigned int bpc)
+ 	case  6: return NV837D_SOR_SET_CONTROL_PIXEL_DEPTH_BPP_18_444;
+ 	case  8: return NV837D_SOR_SET_CONTROL_PIXEL_DEPTH_BPP_24_444;
+ 	case 12: return NV837D_SOR_SET_CONTROL_PIXEL_DEPTH_BPP_36_444;
++	/* 837d's class header predates 48 bpp; the SOR encoding is shared */
++	case 16: return NV887D_SOR_SET_CONTROL_PIXEL_DEPTH_BPP_48_444;
+ 	case 10:
+ 	default: return NV837D_SOR_SET_CONTROL_PIXEL_DEPTH_BPP_30_444;
+ 	}
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/headc57d.c b/drivers/gpu/drm/nouveau/dispnv50/headc57d.c
+index 3b5224e1babb05f47a2eb7ed57cd2b1e713f970c..fca68872654234375b497d330a704b662bf66971 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/headc57d.c
++++ b/drivers/gpu/drm/nouveau/dispnv50/headc57d.c
+@@ -50,6 +50,7 @@ headc57d_or(struct nv50_head *head, struct nv50_head_atom *asyh)
+ 
+ 	/* The head uses different pixel depth encodings from the SOR. */
+ 	switch (asyh->or.depth) {
++	case 9: depth = 8; break;
+ 	case 8: depth = 7; break;
+ 	case 6: depth = 5; break;
+ 	case 5: depth = 4; break;
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/headca7d.c b/drivers/gpu/drm/nouveau/dispnv50/headca7d.c
+index decdf31913ed20bcdc87362d8fdaee263114dc20..f7fa4bfcbcc7526f827da2f8dbb5d895f4b005ad 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/headca7d.c
++++ b/drivers/gpu/drm/nouveau/dispnv50/headca7d.c
+@@ -35,6 +35,9 @@ headca7d_or(struct nv50_head *head, struct nv50_head_atom *asyh)
+ 	int ret;
+ 
+ 	switch (asyh->or.depth) {
++	case 9:
++		depth = NVCA7D_HEAD_SET_CONTROL_OUTPUT_RESOURCE_PIXEL_DEPTH_BPP_48_444;
++		break;
+ 	case 8:
+ 		depth = NVCA7D_HEAD_SET_CONTROL_OUTPUT_RESOURCE_PIXEL_DEPTH_BPP_36_444;
+ 		break;

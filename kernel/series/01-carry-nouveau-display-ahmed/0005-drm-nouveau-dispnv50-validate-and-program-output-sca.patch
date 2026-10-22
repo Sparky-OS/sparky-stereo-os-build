@@ -1,0 +1,655 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mohamed Ahmed <mohamedahmedegypt2001@gmail.com>
+Date: Fri, 21 Aug 2026 19:44:08 +0400
+Subject: drm/nouveau/dispnv50: validate and program output scaling
+
+Nouveau programs viewport sizes without checking whether the output
+scaler can support the resulting ratio. On Turing and later, reject modes
+beyond the postcomp viewport limit at probe and unsupported scaling
+ratios at atomic check. The dimension limit is 16384 on GB20x and 8192 on
+earlier classes.
+
+Select taps from the scaler capabilities, then program the taps and usage
+bounds with the validated viewport. Load the five-tap coefficients at
+core init so they are available when a modeset needs them. Reset viewport
+offsets on modesets because firmware may have left them nonzero.
+
+On GB20x, enable the RGB2ITP and ITP2RGB FVLUTs while scaling. The
+postcomp scaler requires fixed-point samples between these blocks and
+otherwise misinterprets FP16 data.
+
+Scaling and underscan changes alter the viewport used for mode
+validation, so require a full modeset to validate the new configuration.
+
+Signed-off-by: Mohamed Ahmed <mohamedahmedegypt2001@gmail.com>
+(cherry picked from commit 2b552e42560f80f81695b4d7cd9348c9998a476c)
+---
+ drivers/gpu/drm/nouveau/dispnv50/atom.h       |  8 ++
+ drivers/gpu/drm/nouveau/dispnv50/core.h       |  1 +
+ drivers/gpu/drm/nouveau/dispnv50/corec57d.c   | 51 ++++++++++++
+ drivers/gpu/drm/nouveau/dispnv50/coreca7d.c   | 20 +++++
+ drivers/gpu/drm/nouveau/dispnv50/disp.c       | 12 +++
+ drivers/gpu/drm/nouveau/dispnv50/head.c       | 82 ++++++++++++++++++-
+ drivers/gpu/drm/nouveau/dispnv50/headc57d.c   | 56 +++++++++++--
+ drivers/gpu/drm/nouveau/dispnv50/headca7d.c   | 45 +++++++++-
+ .../drm/nouveau/include/nvhw/class/clc57d.h   | 25 ++++++
+ .../drm/nouveau/include/nvhw/class/clca7d.h   | 33 ++++++++
+ drivers/gpu/drm/nouveau/nouveau_connector.c   | 30 +++++++
+ drivers/gpu/drm/nouveau/nouveau_display.h     |  5 ++
+ 12 files changed, 359 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/atom.h b/drivers/gpu/drm/nouveau/dispnv50/atom.h
+index c34a42ea9ac470badd03421c6fa08a221883916f..d44720ba47261ba7fdc8a1dd955da8ae38c730dd 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/atom.h
++++ b/drivers/gpu/drm/nouveau/dispnv50/atom.h
+@@ -30,6 +30,14 @@ struct nv50_head_atom {
+ 		u16 iH;
+ 		u16 oW;
+ 		u16 oH;
++		/* Taps selected from the Turing+ scaler caps, with downscale factors
++		 * scaled by 0x400 for the hardware usage bounds.
++		 */
++		u8 htaps;
++		u8 vtaps;
++		u16 max_h;
++		u16 max_v;
++		bool upscale_v;
+ 	} view;
+ 
+ 	struct nv50_head_mode {
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/core.h b/drivers/gpu/drm/nouveau/dispnv50/core.h
+index 61a61b9e5ebfbda93d6efa5ad6e962b7338996d1..becca9d2df46e777ee345b5c6b34afae9fba1ac8 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/core.h
++++ b/drivers/gpu/drm/nouveau/dispnv50/core.h
+@@ -74,6 +74,7 @@ int corec37d_wndw_owner(struct nv50_core *);
+ extern const struct nv50_outp_func sorc37d;
+ 
+ int corec57d_caps_init(struct nouveau_drm *, struct nv50_disp *);
++extern const s16 corec57d_taps5_coeff[3][16][4];
+ int corec57d_new(struct nouveau_drm *, s32, struct nv50_core **);
+ 
+ int coreca7d_new(struct nouveau_drm *, s32, struct nv50_core **);
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/corec57d.c b/drivers/gpu/drm/nouveau/dispnv50/corec57d.c
+index 52bb325de6054aa3930b96531aa306316d179721..10848d4917f9ae1919ca9831c63c85f8539d51cf 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/corec57d.c
++++ b/drivers/gpu/drm/nouveau/dispnv50/corec57d.c
+@@ -82,13 +82,45 @@ corec57d_caps_init(struct nouveau_drm *drm, struct nv50_disp *disp)
+ 			 scaler->taps2.max_pixels);
+ 	}
+ 
++	nouveau_display(drm->dev)->scaler_limits = true;
++	nouveau_display(drm->dev)->max_viewport =
++		disp->disp->object.oclass >= GB202_DISP ? 16384 : 8192;
++
+ 	return 0;
+ }
+ 
++/* Five-tap coefficients from OpenRM's scalerTaps5Coeff, with 16 phases per
++ * ratio (1x, 2x, 4x) and four weights per phase. Hardware derives the center
++ * weight so all five taps sum to one. Phases 0 and +/-16 are symmetric, so row
++ * 0 packs phase 0's (c0, c1) followed by phase +/-16's (c0, c1). Hardware
++ * selects the phase sign.
++ */
++const s16 corec57d_taps5_coeff[3][16][4] = {
++	{ {   0,   0, -16, 144 }, {  0,  -5,   5,   0 }, {  0,  -9,  11,   0 },
++	  {  -1, -12,  18,  -1 }, { -1, -15,  25,  -1 }, { -1, -18,  33,  -2 },
++	  {  -2, -20,  42,  -3 }, { -2, -21,  51,  -3 }, { -3, -22,  60,  -5 },
++	  {  -3, -22,  70,  -6 }, { -4, -22,  81,  -7 }, { -4, -22,  91,  -9 },
++	  {  -5, -21, 102, -10 }, { -5, -20, 113, -12 }, { -5, -19, 125, -13 },
++	  {  -6, -18, 136, -15 } },
++	{ {   3,  60,  20, 108 }, {  3,  57,  63,   4 }, {  2,  54,  66,   4 },
++	  {   2,  51,  69,   5 }, {  2,  48,  72,   6 }, {  1,  45,  75,   7 },
++	  {   1,  43,  78,   7 }, {  1,  40,  81,   8 }, {  1,  37,  84,   9 },
++	  {   0,  35,  88,  10 }, {  0,  33,  91,  12 }, {  0,  30,  94,  13 },
++	  {   0,  28,  97,  14 }, {  0,  26,  99,  16 }, {  0,  24, 102,  17 },
++	  {   0,  22, 105,  19 } },
++	{ {   4,  62,  23, 105 }, {  4,  59,  64,   5 }, {  3,  56,  67,   6 },
++	  {   3,  53,  70,   7 }, {  2,  51,  73,   8 }, {  2,  48,  76,   8 },
++	  {   2,  45,  79,   9 }, {  1,  43,  81,  10 }, {  1,  40,  84,  12 },
++	  {   1,  38,  87,  13 }, {  1,  36,  90,  14 }, {  0,  34,  92,  15 },
++	  {   0,  31,  95,  17 }, {  0,  29,  97,  18 }, {  0,  27, 100,  20 },
++	  {   0,  25, 102,  22 } },
++};
++
+ static int
+ corec57d_init(struct nv50_core *core)
+ {
+ 	struct nvif_push *push = &core->chan.push;
++	unsigned long head_mask = core->disp->disp->head_mask;
+ 	const u32 windows = 8; /*XXX*/
+ 	int ret, i;
+ 
+@@ -113,6 +145,25 @@ corec57d_init(struct nv50_core *core)
+ 			  NVDEF(NVC57D, WINDOW_SET_WINDOW_USAGE_BOUNDS, UPSCALING_ALLOWED, FALSE));
+ 	}
+ 
++	/* Initialize each head's coefficients before a modeset can select five taps. */
++	for_each_set_bit(i, &head_mask, 8) {
++		int idx;
++
++		ret = PUSH_WAIT(push, 3 * 16 * 4 * 2);
++		if (ret)
++			return ret;
++
++		/* The index encodes ratio << 6 | phase << 2 | coefficient. */
++		for (idx = 0; idx < 3 * 16 * 4; idx++) {
++			const s16 coeff =
++				corec57d_taps5_coeff[idx >> 6][(idx >> 2) & 15][idx & 3];
++
++			PUSH_MTHD(push, NVC57D, HEAD_SET_OUTPUT_SCALER_COEFF_VALUE(i),
++				  NVVAL(NVC57D, HEAD_SET_OUTPUT_SCALER_COEFF_VALUE, DATA, coeff) |
++				  NVVAL(NVC57D, HEAD_SET_OUTPUT_SCALER_COEFF_VALUE, INDEX, idx));
++		}
++	}
++
+ 	core->assign_windows = true;
+ 	return PUSH_KICK(push);
+ }
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/coreca7d.c b/drivers/gpu/drm/nouveau/dispnv50/coreca7d.c
+index 1d589e2e826d0b2b814c0a9955baea6b54142b85..85872fec69794d31f3d6923286b5fb53a84d9a29 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/coreca7d.c
++++ b/drivers/gpu/drm/nouveau/dispnv50/coreca7d.c
+@@ -58,6 +58,7 @@ static int
+ coreca7d_init(struct nv50_core *core)
+ {
+ 	struct nvif_push *push = &core->chan.push;
++	unsigned long head_mask = core->disp->disp->head_mask;
+ 	const u32 windows = 8, heads = 4;
+ 	int ret, i;
+ 
+@@ -95,6 +96,25 @@ coreca7d_init(struct nv50_core *core)
+ 		PUSH_MTHD(push, NVCA7D, TILE_SET_TILE_SIZE(i), 0);
+ 	}
+ 
++	/* CA7D uses the same five-tap coefficient table as C57D. */
++	for_each_set_bit(i, &head_mask, 8) {
++		int idx;
++
++		ret = PUSH_WAIT(push, 3 * 16 * 4 * 2);
++		if (ret)
++			return ret;
++
++		/* The index encodes ratio << 6 | phase << 2 | coefficient. */
++		for (idx = 0; idx < 3 * 16 * 4; idx++) {
++			const s16 coeff =
++				corec57d_taps5_coeff[idx >> 6][(idx >> 2) & 15][idx & 3];
++
++			PUSH_MTHD(push, NVCA7D, HEAD_SET_OUTPUT_SCALER_COEFF_VALUE(i),
++				  NVVAL(NVCA7D, HEAD_SET_OUTPUT_SCALER_COEFF_VALUE, DATA, coeff) |
++				  NVVAL(NVCA7D, HEAD_SET_OUTPUT_SCALER_COEFF_VALUE, INDEX, idx));
++		}
++	}
++
+ 	core->assign_windows = true;
+ 	return PUSH_KICK(push);
+ }
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/disp.c b/drivers/gpu/drm/nouveau/dispnv50/disp.c
+index 2c66e480b511608e3808a8f9de0e54200c4713e6..e3bca7531fc08073c5bf3bbf99a5260fc26870d3 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/disp.c
++++ b/drivers/gpu/drm/nouveau/dispnv50/disp.c
+@@ -1154,6 +1154,18 @@ nv50_mstc_mode_valid(struct drm_connector *connector,
+ 	struct nv50_mstc *mstc = nv50_mstc(connector);
+ 	struct nouveau_encoder *outp = mstc->mstm->outp;
+ 
++	/* Reject modes exceeding the postcomp viewport limit where scaler
++	 * limits are enforced. Atomic check applies the same limit.
++	 */
++	if (nouveau_display(connector->dev)->scaler_limits) {
++		const u16 max = nouveau_display(connector->dev)->max_viewport;
++
++		if (mode->hdisplay > max)
++			return MODE_BAD_HVALUE;
++		if (mode->vdisplay > max)
++			return MODE_BAD_VVALUE;
++	}
++
+ 	/* TODO: calculate the PBN from the dotclock and validate against the
+ 	 * MSTB's max possible PBN
+ 	 */
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/head.c b/drivers/gpu/drm/nouveau/dispnv50/head.c
+index 1affa0378bd0292e080365eb24133dc140962dcf..b10ab96574c8094e232b9d3eee77af2633940992 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/head.c
++++ b/drivers/gpu/drm/nouveau/dispnv50/head.c
+@@ -123,7 +123,7 @@ nv50_head_atomic_check_dither(struct nv50_head_atom *armh,
+ 	asyh->set.dither = true;
+ }
+ 
+-static void
++static int
+ nv50_head_atomic_check_view(struct nv50_head_atom *armh,
+ 			    struct nv50_head_atom *asyh,
+ 			    struct nouveau_conn_atom *asyc)
+@@ -218,7 +218,80 @@ nv50_head_atomic_check_view(struct nv50_head_atom *armh,
+ 		break;
+ 	}
+ 
++	/* Match OpenRM's two-tap horizontal default, increasing to five only
++	 * for ratios two taps cannot support. Prefer five vertical taps where
++	 * the line store allows, except for doublescan, which uses two to avoid
++	 * blurring duplicated lines. GV100 keeps its existing two-tap setup
++	 * without scaler limit enforcement.
++	 */
++	asyh->view.htaps = 2;
++	asyh->view.vtaps = 2;
++	asyh->view.max_h = 0x400;
++	asyh->view.max_v = 0x400;
++	asyh->view.upscale_v = asyh->view.oH > asyh->view.iH;
++
++	if (nouveau_display(connector->dev)->scaler_limits) {
++		const struct nv50_scaler_caps *scaler =
++			&nv50_disp(connector->dev)->scaler[nv50_head(asyh->state.crtc)->base.index];
++		const u16 iW = asyh->view.iW, iH = asyh->view.iH;
++		const u16 oW = asyh->view.oW, oH = asyh->view.oH;
++		const u16 line = min(iW, oW);
++		const u16 max = nouveau_display(connector->dev)->max_viewport;
++		u32 factor;
++
++		/* Reject empty viewports and dimensions beyond the postcomp limit. */
++		if (!iW || !iH || !oW || !oH ||
++		    iW > max || iH > max || oW > max || oH > max) {
++			drm_dbg_kms(connector->dev,
++				    "viewport %dx%d -> %dx%d beyond hardware limits\n",
++				    iW, iH, oW, oH);
++			return -EINVAL;
++		}
++
++		if (oW != iW) {
++			factor = DIV_ROUND_UP(iW * 0x400, oW);
++			if (factor <= scaler->taps2.max_h) {
++				asyh->view.htaps = 2;
++			} else if (factor <= scaler->taps5.max_h) {
++				asyh->view.htaps = 5;
++			} else {
++				drm_dbg_kms(connector->dev,
++					    "horizontal scale %d/%d beyond filter limits\n",
++					    iW, oW);
++				return -EINVAL;
++			}
++			if (oW < iW)
++				asyh->view.max_h = factor;
++		}
++
++		if (oH != iH) {
++			if (line <= scaler->taps5.max_pixels &&
++			    !(omode->flags & DRM_MODE_FLAG_DBLSCAN))
++				asyh->view.vtaps = 5;
++			else if (line <= scaler->taps2.max_pixels)
++				asyh->view.vtaps = 2;
++			else
++				goto no_vfilter;
++
++			if (oH < iH) {
++				factor = DIV_ROUND_UP(iH * 0x400, oH);
++				if (factor > (asyh->view.vtaps == 5 ?
++					      scaler->taps5.max_v :
++					      scaler->taps2.max_v))
++					goto no_vfilter;
++				asyh->view.max_v = factor;
++			}
++		}
++	}
++
+ 	asyh->set.view = true;
++	return 0;
++
++no_vfilter:
++	drm_dbg_kms(connector->dev,
++		    "vertical scale %dx%d -> %dx%d beyond filter limits\n",
++		    asyh->view.iW, asyh->view.iH, asyh->view.oW, asyh->view.oH);
++	return -EINVAL;
+ }
+ 
+ static int
+@@ -384,8 +457,11 @@ nv50_head_atomic_check(struct drm_crtc *crtc, struct drm_atomic_commit *state)
+ 			asyh->olut.visible = asyh->olut.handle != 0;
+ 
+ 		if (asyc) {
+-			if (asyc->set.scaler)
+-				nv50_head_atomic_check_view(armh, asyh, asyc);
++			if (asyc->set.scaler) {
++				ret = nv50_head_atomic_check_view(armh, asyh, asyc);
++				if (ret)
++					return ret;
++			}
+ 			if (asyc->set.dither)
+ 				nv50_head_atomic_check_dither(armh, asyh, asyc);
+ 			if (asyc->set.procamp)
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/headc57d.c b/drivers/gpu/drm/nouveau/dispnv50/headc57d.c
+index 3f8ba495de8fb335edb6e50f84ca4f976956a604..246657e65588e0d7b2de83f23d8343b0678eb354 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/headc57d.c
++++ b/drivers/gpu/drm/nouveau/dispnv50/headc57d.c
+@@ -206,7 +206,8 @@ headc57d_mode(struct nv50_head *head, struct nv50_head_atom *asyh)
+ 	const int i = head->base.index;
+ 	int ret;
+ 
+-	if ((ret = PUSH_WAIT(push, 15)))
++	ret = PUSH_WAIT(push, 13);
++	if (ret)
+ 		return ret;
+ 
+ 	PUSH_MTHD(push, NVC57D, HEAD_SET_RASTER_SIZE(i),
+@@ -235,18 +236,63 @@ headc57d_mode(struct nv50_head *head, struct nv50_head_atom *asyh)
+ 	PUSH_MTHD(push, NVC57D, HEAD_SET_PIXEL_CLOCK_FREQUENCY_MAX(i),
+ 		  NVVAL(NVC57D, HEAD_SET_PIXEL_CLOCK_FREQUENCY_MAX, HERTZ, m->clock * 1000));
+ 
+-	/*XXX: HEAD_USAGE_BOUNDS, doesn't belong here. */
++	return 0;
++}
++
++static int
++headc57d_view(struct nv50_head *head, struct nv50_head_atom *asyh)
++{
++	struct nvif_push *push = &nv50_disp(head->base.base.dev)->core->chan.push;
++	const int i = head->base.index;
++	int ret;
++
++	ret = PUSH_WAIT(push, 14);
++	if (ret)
++		return ret;
++
++	PUSH_MTHD(push, NVC57D, HEAD_SET_VIEWPORT_SIZE_IN(i),
++		  NVVAL(NVC57D, HEAD_SET_VIEWPORT_SIZE_IN, WIDTH, asyh->view.iW) |
++		  NVVAL(NVC57D, HEAD_SET_VIEWPORT_SIZE_IN, HEIGHT, asyh->view.iH));
++
++	PUSH_MTHD(push, NVC57D, HEAD_SET_VIEWPORT_SIZE_OUT(i),
++		  NVVAL(NVC57D, HEAD_SET_VIEWPORT_SIZE_OUT, WIDTH, asyh->view.oW) |
++		  NVVAL(NVC57D, HEAD_SET_VIEWPORT_SIZE_OUT, HEIGHT, asyh->view.oH));
++	/* Firmware may leave nonzero viewport offsets. Clear them to match
++	 * the centered viewport used by validation.
++	 */
++	PUSH_MTHD(push, NVC57D, HEAD_SET_VIEWPORT_POINT_IN(i), 0x00000000);
++	PUSH_MTHD(push, NVC57D, HEAD_SET_VIEWPORT_POINT_OUT_ADJUST(i), 0x00000000);
++
++	/* Program the taps and bounds with the viewport so hardware uses
++	 * the configuration that passed validation.
++	 */
++	PUSH_MTHD(push, NVC57D, HEAD_SET_CONTROL_OUTPUT_SCALER(i),
++		  (asyh->view.vtaps == 5 ?
++		   NVDEF(NVC57D, HEAD_SET_CONTROL_OUTPUT_SCALER, VERTICAL_TAPS, TAPS_5) :
++		   NVDEF(NVC57D, HEAD_SET_CONTROL_OUTPUT_SCALER, VERTICAL_TAPS, TAPS_2)) |
++		  (asyh->view.htaps == 5 ?
++		   NVDEF(NVC57D, HEAD_SET_CONTROL_OUTPUT_SCALER, HORIZONTAL_TAPS, TAPS_5) :
++		   NVDEF(NVC57D, HEAD_SET_CONTROL_OUTPUT_SCALER, HORIZONTAL_TAPS, TAPS_2)));
++
++	PUSH_MTHD(push, NVC57D, HEAD_SET_MAX_OUTPUT_SCALE_FACTOR(i),
++		  NVVAL(NVC57D, HEAD_SET_MAX_OUTPUT_SCALE_FACTOR, HORIZONTAL, asyh->view.max_h) |
++		  NVVAL(NVC57D, HEAD_SET_MAX_OUTPUT_SCALE_FACTOR, VERTICAL, asyh->view.max_v));
++
+ 	PUSH_MTHD(push, NVC57D, HEAD_SET_HEAD_USAGE_BOUNDS(i),
+ 		  NVDEF(NVC57D, HEAD_SET_HEAD_USAGE_BOUNDS, CURSOR, USAGE_W256_H256) |
+ 		  NVDEF(NVC57D, HEAD_SET_HEAD_USAGE_BOUNDS, OLUT_ALLOWED, TRUE) |
+-		  NVDEF(NVC57D, HEAD_SET_HEAD_USAGE_BOUNDS, OUTPUT_SCALER_TAPS, TAPS_2) |
+-		  NVDEF(NVC57D, HEAD_SET_HEAD_USAGE_BOUNDS, UPSCALING_ALLOWED, TRUE));
++		  (asyh->view.vtaps == 5 ?
++		   NVDEF(NVC57D, HEAD_SET_HEAD_USAGE_BOUNDS, OUTPUT_SCALER_TAPS, TAPS_5) :
++		   NVDEF(NVC57D, HEAD_SET_HEAD_USAGE_BOUNDS, OUTPUT_SCALER_TAPS, TAPS_2)) |
++		  (asyh->view.upscale_v ?
++		   NVDEF(NVC57D, HEAD_SET_HEAD_USAGE_BOUNDS, UPSCALING_ALLOWED, TRUE) :
++		   NVDEF(NVC57D, HEAD_SET_HEAD_USAGE_BOUNDS, UPSCALING_ALLOWED, FALSE)));
+ 	return 0;
+ }
+ 
+ const struct nv50_head_func
+ headc57d = {
+-	.view = headc37d_view,
++	.view = headc57d_view,
+ 	.mode = headc57d_mode,
+ 	.olut = headc57d_olut,
+ 	.ilut_check = head907d_ilut_check,
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/headca7d.c b/drivers/gpu/drm/nouveau/dispnv50/headca7d.c
+index eeaeb15aa664699b24d322cf15f20c9cb619d187..9be3ca95333b628ec191d05e8ff05184d97c57c4 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/headca7d.c
++++ b/drivers/gpu/drm/nouveau/dispnv50/headca7d.c
+@@ -259,9 +259,11 @@ headca7d_view(struct nv50_head *head, struct nv50_head_atom *asyh)
+ {
+ 	struct nvif_push *push = &head->disp->core->chan.push;
+ 	const int i = head->base.index;
++	const bool scale = asyh->view.iW != asyh->view.oW ||
++			   asyh->view.iH != asyh->view.oH;
+ 	int ret;
+ 
+-	ret = PUSH_WAIT(push, 4);
++	ret = PUSH_WAIT(push, 18);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -272,6 +274,47 @@ headca7d_view(struct nv50_head *head, struct nv50_head_atom *asyh)
+ 	PUSH_MTHD(push, NVCA7D, HEAD_SET_VIEWPORT_SIZE_OUT(i),
+ 		  NVVAL(NVCA7D, HEAD_SET_VIEWPORT_SIZE_OUT, WIDTH, asyh->view.oW) |
+ 		  NVVAL(NVCA7D, HEAD_SET_VIEWPORT_SIZE_OUT, HEIGHT, asyh->view.oH));
++	/* Firmware may leave nonzero viewport offsets. Clear them to match
++	 * the centered viewport used by validation.
++	 */
++	PUSH_MTHD(push, NVCA7D, HEAD_SET_VIEWPORT_POINT_IN(i), 0x00000000);
++	PUSH_MTHD(push, NVCA7D, HEAD_SET_VIEWPORT_POINT_OUT_ADJUST(i), 0x00000000);
++
++	/* Program the taps and bounds with the viewport so hardware uses
++	 * the configuration that passed validation.
++	 */
++	PUSH_MTHD(push, NVCA7D, HEAD_SET_CONTROL_OUTPUT_SCALER(i),
++		  (asyh->view.vtaps == 5 ?
++		   NVDEF(NVCA7D, HEAD_SET_CONTROL_OUTPUT_SCALER, VERTICAL_TAPS, TAPS_5) :
++		   NVDEF(NVCA7D, HEAD_SET_CONTROL_OUTPUT_SCALER, VERTICAL_TAPS, TAPS_2)) |
++		  (asyh->view.htaps == 5 ?
++		   NVDEF(NVCA7D, HEAD_SET_CONTROL_OUTPUT_SCALER, HORIZONTAL_TAPS, TAPS_5) :
++		   NVDEF(NVCA7D, HEAD_SET_CONTROL_OUTPUT_SCALER, HORIZONTAL_TAPS, TAPS_2)));
++
++	PUSH_MTHD(push, NVCA7D, HEAD_SET_MAX_OUTPUT_SCALE_FACTOR(i),
++		  NVVAL(NVCA7D, HEAD_SET_MAX_OUTPUT_SCALE_FACTOR, HORIZONTAL, asyh->view.max_h) |
++		  NVVAL(NVCA7D, HEAD_SET_MAX_OUTPUT_SCALE_FACTOR, VERTICAL, asyh->view.max_v));
++
++	PUSH_MTHD(push, NVCA7D, HEAD_SET_HEAD_USAGE_BOUNDS(i),
++		  NVDEF(NVCA7D, HEAD_SET_HEAD_USAGE_BOUNDS, CURSOR, USAGE_W256_H256) |
++		  NVDEF(NVCA7D, HEAD_SET_HEAD_USAGE_BOUNDS, OLUT_ALLOWED, TRUE) |
++		  (asyh->view.vtaps == 5 ?
++		   NVDEF(NVCA7D, HEAD_SET_HEAD_USAGE_BOUNDS, OUTPUT_SCALER_TAPS, TAPS_5) :
++		   NVDEF(NVCA7D, HEAD_SET_HEAD_USAGE_BOUNDS, OUTPUT_SCALER_TAPS, TAPS_2)) |
++		  (asyh->view.upscale_v ?
++		   NVDEF(NVCA7D, HEAD_SET_HEAD_USAGE_BOUNDS, UPSCALING_ALLOWED, TRUE) :
++		   NVDEF(NVCA7D, HEAD_SET_HEAD_USAGE_BOUNDS, UPSCALING_ALLOWED, FALSE)));
++
++	/* The postcomp scaler needs fixed-point samples between RGB2ITP and
++	 * ITP2RGB. Enable their FVLUTs while scaling, otherwise FP16 bit patterns
++	 * are interpreted as fixed point and corrupt the output.
++	 */
++	PUSH_MTHD(push, NVCA7D, HEAD_SET_RGB2ITP_CONTROL(i), scale ?
++		  NVDEF(NVCA7D, HEAD_SET_RGB2ITP_CONTROL, ENABLE_FVLUT, ENABLE) |
++		  NVDEF(NVCA7D, HEAD_SET_RGB2ITP_CONTROL, FVLUT_INTERPOLATE, ENABLE) : 0);
++	PUSH_MTHD(push, NVCA7D, HEAD_SET_ITP2RGB_CONTROL(i), scale ?
++		  NVDEF(NVCA7D, HEAD_SET_ITP2RGB_CONTROL, ENABLE_FVLUT, ENABLE) |
++		  NVDEF(NVCA7D, HEAD_SET_ITP2RGB_CONTROL, FVLUT_INTERPOLATE, ENABLE) : 0);
+ 	return 0;
+ }
+ 
+diff --git a/drivers/gpu/drm/nouveau/include/nvhw/class/clc57d.h b/drivers/gpu/drm/nouveau/include/nvhw/class/clc57d.h
+index d4bad2da3e562a34b0bb0ebee369eadb58b0c13d..16a4a3036d43628b88380a7c7fea5d3e239b0ba4 100644
+--- a/drivers/gpu/drm/nouveau/include/nvhw/class/clc57d.h
++++ b/drivers/gpu/drm/nouveau/include/nvhw/class/clc57d.h
+@@ -237,6 +237,16 @@
+ #define NVC57D_HEAD_SET_PIXEL_CLOCK_FREQUENCY_MAX_ADJ1000DIV1001                31:31
+ #define NVC57D_HEAD_SET_PIXEL_CLOCK_FREQUENCY_MAX_ADJ1000DIV1001_FALSE          (0x00000000)
+ #define NVC57D_HEAD_SET_PIXEL_CLOCK_FREQUENCY_MAX_ADJ1000DIV1001_TRUE           (0x00000001)
++#define NVC57D_HEAD_SET_CONTROL_OUTPUT_SCALER(a)                                (0x00002014 + (a)*0x00000400)
++#define NVC57D_HEAD_SET_CONTROL_OUTPUT_SCALER_VERTICAL_TAPS                     2:0
++#define NVC57D_HEAD_SET_CONTROL_OUTPUT_SCALER_VERTICAL_TAPS_TAPS_2              (0x00000001)
++#define NVC57D_HEAD_SET_CONTROL_OUTPUT_SCALER_VERTICAL_TAPS_TAPS_5              (0x00000004)
++#define NVC57D_HEAD_SET_CONTROL_OUTPUT_SCALER_HORIZONTAL_TAPS                   6:4
++#define NVC57D_HEAD_SET_CONTROL_OUTPUT_SCALER_HORIZONTAL_TAPS_TAPS_2            (0x00000001)
++#define NVC57D_HEAD_SET_CONTROL_OUTPUT_SCALER_HORIZONTAL_TAPS_TAPS_5            (0x00000004)
++#define NVC57D_HEAD_SET_MAX_OUTPUT_SCALE_FACTOR(a)                              (0x0000202C + (a)*0x00000400)
++#define NVC57D_HEAD_SET_MAX_OUTPUT_SCALE_FACTOR_HORIZONTAL                      15:0
++#define NVC57D_HEAD_SET_MAX_OUTPUT_SCALE_FACTOR_VERTICAL                        31:16
+ #define NVC57D_HEAD_SET_HEAD_USAGE_BOUNDS(a)                                    (0x00002030 + (a)*0x00000400)
+ #define NVC57D_HEAD_SET_HEAD_USAGE_BOUNDS_CURSOR                                2:0
+ #define NVC57D_HEAD_SET_HEAD_USAGE_BOUNDS_CURSOR_USAGE_NONE                     (0x00000000)
+@@ -253,6 +263,18 @@
+ #define NVC57D_HEAD_SET_HEAD_USAGE_BOUNDS_UPSCALING_ALLOWED                     8:8
+ #define NVC57D_HEAD_SET_HEAD_USAGE_BOUNDS_UPSCALING_ALLOWED_FALSE               (0x00000000)
+ #define NVC57D_HEAD_SET_HEAD_USAGE_BOUNDS_UPSCALING_ALLOWED_TRUE                (0x00000001)
++#define NVC57D_HEAD_SET_VIEWPORT_POINT_IN(a)                                    (0x00002048 + (a)*0x00000400)
++#define NVC57D_HEAD_SET_VIEWPORT_POINT_IN_X                                     14:0
++#define NVC57D_HEAD_SET_VIEWPORT_POINT_IN_Y                                     30:16
++#define NVC57D_HEAD_SET_VIEWPORT_SIZE_IN(a)                                     (0x0000204C + (a)*0x00000400)
++#define NVC57D_HEAD_SET_VIEWPORT_SIZE_IN_WIDTH                                  14:0
++#define NVC57D_HEAD_SET_VIEWPORT_SIZE_IN_HEIGHT                                 30:16
++#define NVC57D_HEAD_SET_VIEWPORT_SIZE_OUT(a)                                    (0x00002058 + (a)*0x00000400)
++#define NVC57D_HEAD_SET_VIEWPORT_SIZE_OUT_WIDTH                                 14:0
++#define NVC57D_HEAD_SET_VIEWPORT_SIZE_OUT_HEIGHT                                30:16
++#define NVC57D_HEAD_SET_VIEWPORT_POINT_OUT_ADJUST(a)                            (0x0000205C + (a)*0x00000400)
++#define NVC57D_HEAD_SET_VIEWPORT_POINT_OUT_ADJUST_X                             15:0
++#define NVC57D_HEAD_SET_VIEWPORT_POINT_OUT_ADJUST_Y                             31:16
+ #define NVC57D_HEAD_SET_RASTER_SIZE(a)                                          (0x00002064 + (a)*0x00000400)
+ #define NVC57D_HEAD_SET_RASTER_SIZE_WIDTH                                       14:0
+ #define NVC57D_HEAD_SET_RASTER_SIZE_HEIGHT                                      30:16
+@@ -334,6 +356,9 @@
+ #define NVC57D_HEAD_SET_CRC_CONTROL_CRC_DURING_SNOOZE                           9:9
+ #define NVC57D_HEAD_SET_CRC_CONTROL_CRC_DURING_SNOOZE_DISABLE                   (0x00000000)
+ #define NVC57D_HEAD_SET_CRC_CONTROL_CRC_DURING_SNOOZE_ENABLE                    (0x00000001)
++#define NVC57D_HEAD_SET_OUTPUT_SCALER_COEFF_VALUE(a)                            (0x00002214 + (a)*0x00000400)
++#define NVC57D_HEAD_SET_OUTPUT_SCALER_COEFF_VALUE_DATA                          9:0
++#define NVC57D_HEAD_SET_OUTPUT_SCALER_COEFF_VALUE_INDEX                         19:12
+ #define NVC57D_HEAD_SET_OLUT_CONTROL(a)                                         (0x00002280 + (a)*0x00000400)
+ #define NVC57D_HEAD_SET_OLUT_CONTROL_INTERPOLATE                                0:0
+ #define NVC57D_HEAD_SET_OLUT_CONTROL_INTERPOLATE_DISABLE                        (0x00000000)
+diff --git a/drivers/gpu/drm/nouveau/include/nvhw/class/clca7d.h b/drivers/gpu/drm/nouveau/include/nvhw/class/clca7d.h
+index 0fec6fc21d445bf1f0ff347b73a4e343407d9cbf..338900c00cc83ff5d7f0947a0dbd86905a471b4c 100644
+--- a/drivers/gpu/drm/nouveau/include/nvhw/class/clca7d.h
++++ b/drivers/gpu/drm/nouveau/include/nvhw/class/clca7d.h
+@@ -626,6 +626,13 @@
+ #define NVCA7D_HEAD_SET_PIXEL_CLOCK_FREQUENCY_ADJ1000DIV1001                    31:31
+ #define NVCA7D_HEAD_SET_PIXEL_CLOCK_FREQUENCY_ADJ1000DIV1001_FALSE              (0x00000000)
+ #define NVCA7D_HEAD_SET_PIXEL_CLOCK_FREQUENCY_ADJ1000DIV1001_TRUE               (0x00000001)
++#define NVCA7D_HEAD_SET_CONTROL_OUTPUT_SCALER(a)                                (0x00002014 + (a)*0x00000800)
++#define NVCA7D_HEAD_SET_CONTROL_OUTPUT_SCALER_VERTICAL_TAPS                     2:0
++#define NVCA7D_HEAD_SET_CONTROL_OUTPUT_SCALER_VERTICAL_TAPS_TAPS_2              (0x00000001)
++#define NVCA7D_HEAD_SET_CONTROL_OUTPUT_SCALER_VERTICAL_TAPS_TAPS_5              (0x00000004)
++#define NVCA7D_HEAD_SET_CONTROL_OUTPUT_SCALER_HORIZONTAL_TAPS                   6:4
++#define NVCA7D_HEAD_SET_CONTROL_OUTPUT_SCALER_HORIZONTAL_TAPS_TAPS_2            (0x00000001)
++#define NVCA7D_HEAD_SET_CONTROL_OUTPUT_SCALER_HORIZONTAL_TAPS_TAPS_5            (0x00000004)
+ #define NVCA7D_HEAD_SET_DITHER_CONTROL(a)                                       (0x00002018 + (a)*0x00000800)
+ #define NVCA7D_HEAD_SET_DITHER_CONTROL_ENABLE                                   0:0
+ #define NVCA7D_HEAD_SET_DITHER_CONTROL_ENABLE_DISABLE                           (0x00000000)
+@@ -653,6 +660,9 @@
+ #define NVCA7D_HEAD_SET_PIXEL_CLOCK_FREQUENCY_MAX_ADJ1000DIV1001                31:31
+ #define NVCA7D_HEAD_SET_PIXEL_CLOCK_FREQUENCY_MAX_ADJ1000DIV1001_FALSE          (0x00000000)
+ #define NVCA7D_HEAD_SET_PIXEL_CLOCK_FREQUENCY_MAX_ADJ1000DIV1001_TRUE           (0x00000001)
++#define NVCA7D_HEAD_SET_MAX_OUTPUT_SCALE_FACTOR(a)                              (0x0000202C + (a)*0x00000800)
++#define NVCA7D_HEAD_SET_MAX_OUTPUT_SCALE_FACTOR_HORIZONTAL                      15:0
++#define NVCA7D_HEAD_SET_MAX_OUTPUT_SCALE_FACTOR_VERTICAL                        31:16
+ #define NVCA7D_HEAD_SET_HEAD_USAGE_BOUNDS(a)                                    (0x00002030 + (a)*0x00000800)
+ #define NVCA7D_HEAD_SET_HEAD_USAGE_BOUNDS_CURSOR                                2:0
+ #define NVCA7D_HEAD_SET_HEAD_USAGE_BOUNDS_CURSOR_USAGE_NONE                     (0x00000000)
+@@ -676,12 +686,18 @@
+ #define NVCA7D_HEAD_SET_HEAD_USAGE_BOUNDS_OVERFETCH_ENABLED_FALSE               (0x00000000)
+ #define NVCA7D_HEAD_SET_HEAD_USAGE_BOUNDS_OVERFETCH_ENABLED_TRUE                (0x00000001)
+ #define NVCA7D_HEAD_SET_HEAD_USAGE_BOUNDS_ELV_START                             31:17
++#define NVCA7D_HEAD_SET_VIEWPORT_POINT_IN(a)                                    (0x00002048 + (a)*0x00000800)
++#define NVCA7D_HEAD_SET_VIEWPORT_POINT_IN_X                                     14:0
++#define NVCA7D_HEAD_SET_VIEWPORT_POINT_IN_Y                                     30:16
+ #define NVCA7D_HEAD_SET_VIEWPORT_SIZE_IN(a)                                     (0x0000204C + (a)*0x00000800)
+ #define NVCA7D_HEAD_SET_VIEWPORT_SIZE_IN_WIDTH                                  14:0
+ #define NVCA7D_HEAD_SET_VIEWPORT_SIZE_IN_HEIGHT                                 30:16
+ #define NVCA7D_HEAD_SET_VIEWPORT_SIZE_OUT(a)                                    (0x00002058 + (a)*0x00000800)
+ #define NVCA7D_HEAD_SET_VIEWPORT_SIZE_OUT_WIDTH                                 14:0
+ #define NVCA7D_HEAD_SET_VIEWPORT_SIZE_OUT_HEIGHT                                30:16
++#define NVCA7D_HEAD_SET_VIEWPORT_POINT_OUT_ADJUST(a)                            (0x0000205C + (a)*0x00000800)
++#define NVCA7D_HEAD_SET_VIEWPORT_POINT_OUT_ADJUST_X                             15:0
++#define NVCA7D_HEAD_SET_VIEWPORT_POINT_OUT_ADJUST_Y                             31:16
+ #define NVCA7D_HEAD_SET_TILE_MASK(a)                                            (0x00002060 + (a)*0x00000800)
+ #define NVCA7D_HEAD_SET_TILE_MASK_TILE                                          7:0
+ #define NVCA7D_HEAD_SET_TILE_MASK_TILE_NONE                                     (0x00000000)
+@@ -839,6 +855,9 @@
+ #define NVCA7D_HEAD_SET_CRC_CONTROL_SECONDARY_CRC_SOR7                          (0x00000057)
+ #define NVCA7D_HEAD_SET_CRC_CONTROL_CRC_DURING_SNOOZE                           9:9
+ #define NVCA7D_HEAD_SET_CRC_CONTROL_CRC_DURING_SNOOZE_DISABLE                   (0x00000000)
++#define NVCA7D_HEAD_SET_OUTPUT_SCALER_COEFF_VALUE(a)                            (0x00002214 + (a)*0x00000800)
++#define NVCA7D_HEAD_SET_OUTPUT_SCALER_COEFF_VALUE_DATA                          9:0
++#define NVCA7D_HEAD_SET_OUTPUT_SCALER_COEFF_VALUE_INDEX                         19:12
+ #define NVCA7D_HEAD_SET_OLUT_CONTROL(a)                                         (0x00002280 + (a)*0x00000800)
+ #define NVCA7D_HEAD_SET_OLUT_CONTROL_INTERPOLATE                                0:0
+ #define NVCA7D_HEAD_SET_OLUT_CONTROL_INTERPOLATE_DISABLE                        (0x00000000)
+@@ -860,6 +879,20 @@
+ #define NVCA7D_HEAD_SET_OLUT_CONTROL_SEGMENT_SIZE_BITS_SIZE_4BITS               (0x00000001)
+ #define NVCA7D_HEAD_SET_OLUT_FP_NORM_SCALE(a)                                   (0x00002284 + (a)*0x00000800)
+ #define NVCA7D_HEAD_SET_OLUT_FP_NORM_SCALE_VALUE                                31:0
++#define NVCA7D_HEAD_SET_RGB2ITP_CONTROL(a)                                      (0x00002470 + (a)*0x00000800)
++#define NVCA7D_HEAD_SET_RGB2ITP_CONTROL_ENABLE_FVLUT                            1:1
++#define NVCA7D_HEAD_SET_RGB2ITP_CONTROL_ENABLE_FVLUT_DISABLE                    (0x00000000)
++#define NVCA7D_HEAD_SET_RGB2ITP_CONTROL_ENABLE_FVLUT_ENABLE                     (0x00000001)
++#define NVCA7D_HEAD_SET_RGB2ITP_CONTROL_FVLUT_INTERPOLATE                       4:4
++#define NVCA7D_HEAD_SET_RGB2ITP_CONTROL_FVLUT_INTERPOLATE_DISABLE               (0x00000000)
++#define NVCA7D_HEAD_SET_RGB2ITP_CONTROL_FVLUT_INTERPOLATE_ENABLE                (0x00000001)
++#define NVCA7D_HEAD_SET_ITP2RGB_CONTROL(a)                                      (0x00002478 + (a)*0x00000800)
++#define NVCA7D_HEAD_SET_ITP2RGB_CONTROL_ENABLE_FVLUT                            1:1
++#define NVCA7D_HEAD_SET_ITP2RGB_CONTROL_ENABLE_FVLUT_DISABLE                    (0x00000000)
++#define NVCA7D_HEAD_SET_ITP2RGB_CONTROL_ENABLE_FVLUT_ENABLE                     (0x00000001)
++#define NVCA7D_HEAD_SET_ITP2RGB_CONTROL_FVLUT_INTERPOLATE                       4:4
++#define NVCA7D_HEAD_SET_ITP2RGB_CONTROL_FVLUT_INTERPOLATE_DISABLE               (0x00000000)
++#define NVCA7D_HEAD_SET_ITP2RGB_CONTROL_FVLUT_INTERPOLATE_ENABLE                (0x00000001)
+ 
+ #define NVCA7D_TILE_SET_TILE_SIZE(a)                                            (0x00006000 + (a)*0x00000200)
+ #define NVCA7D_TILE_SET_TILE_SIZE_START                                         14:0
+diff --git a/drivers/gpu/drm/nouveau/nouveau_connector.c b/drivers/gpu/drm/nouveau/nouveau_connector.c
+index 4cfc9c7c2ae0c77c64e7efe27d7927999e2a36dd..60d7334ed3e52126c9ae04f9920fc882d8fcf535 100644
+--- a/drivers/gpu/drm/nouveau/nouveau_connector.c
++++ b/drivers/gpu/drm/nouveau/nouveau_connector.c
+@@ -1085,6 +1085,18 @@ nouveau_connector_mode_valid(struct drm_connector *connector,
+ 	struct drm_encoder *encoder = to_drm_encoder(nv_encoder);
+ 	unsigned int min_clock = 25000, max_clock = min_clock, clock = mode->clock;
+ 
++	/* Reject modes exceeding the postcomp viewport limit where scaler
++	 * limits are enforced. Atomic check applies the same limit.
++	 */
++	if (nouveau_display(connector->dev)->scaler_limits) {
++		const u16 max = nouveau_display(connector->dev)->max_viewport;
++
++		if (mode->hdisplay > max)
++			return MODE_BAD_HVALUE;
++		if (mode->vdisplay > max)
++			return MODE_BAD_VVALUE;
++	}
++
+ 	switch (nv_encoder->dcb->type) {
+ 	case DCB_OUTPUT_LVDS:
+ 		if (nv_connector->native_mode &&
+@@ -1140,6 +1152,24 @@ nouveau_connector_atomic_check(struct drm_connector *connector, struct drm_atomi
+ 	struct nouveau_connector *nv_conn = nouveau_connector(connector);
+ 	struct drm_connector_state *conn_state =
+ 		drm_atomic_get_new_connector_state(state, connector);
++	struct nouveau_conn_atom *armc =
++		nouveau_conn_atom(drm_atomic_get_old_connector_state(state, connector));
++	struct nouveau_conn_atom *asyc = nouveau_conn_atom(conn_state);
++	struct drm_crtc_state *crtc_state;
++
++	/* Scaling and underscan changes alter the viewport used for mode
++	 * validation, so require a modeset to revalidate the configuration.
++	 */
++	if (conn_state->crtc && nouveau_display(connector->dev)->scaler_limits &&
++	    (armc->scaler.mode != asyc->scaler.mode ||
++	     armc->scaler.underscan.mode != asyc->scaler.underscan.mode ||
++	     armc->scaler.underscan.hborder != asyc->scaler.underscan.hborder ||
++	     armc->scaler.underscan.vborder != asyc->scaler.underscan.vborder)) {
++		crtc_state = drm_atomic_get_crtc_state(state, conn_state->crtc);
++		if (IS_ERR(crtc_state))
++			return PTR_ERR(crtc_state);
++		crtc_state->connectors_changed = true;
++	}
+ 
+ 	if (!nv_conn->dp_encoder || !nv_conn->dp_encoder->dp.mstm)
+ 		return 0;
+diff --git a/drivers/gpu/drm/nouveau/nouveau_display.h b/drivers/gpu/drm/nouveau/nouveau_display.h
+index e711c89723e80129f3c7b94f05a9fcf3a892597b..bbd7c3beb596dbf24dc9d3762c127faa9ebebb26 100644
+--- a/drivers/gpu/drm/nouveau/nouveau_display.h
++++ b/drivers/gpu/drm/nouveau/nouveau_display.h
+@@ -25,6 +25,11 @@ struct nouveau_display {
+ 
+ 	struct nvif_disp disp;
+ 
++	/* Output scaler capabilities are known and enforced (Turing+). */
++	bool scaler_limits;
++	/* Maximum postcomp viewport dimension: 16384 on GB20x, 8192 on older. */
++	u16 max_viewport;
++
+ 	struct drm_property *dithering_mode;
+ 	struct drm_property *dithering_depth;
+ 	struct drm_property *underscan_property;

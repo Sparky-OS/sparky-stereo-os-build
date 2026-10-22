@@ -1,0 +1,129 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 16 Oct 2026 08:13:31 -0300
+Subject: [PATCH] media: vivid: capture depth like a RealSense camera: Z16,
+ INZI and CNF4
+
+uvcvideo gives depth cameras' frames as V4L2_PIX_FMT_Z16 (16-bit depth),
+V4L2_PIX_FMT_INZI (10-bit infrared followed by 16-bit depth) and
+V4L2_PIX_FMT_CNF4 (4-bit depth confidence, two pixels a byte), but no
+virtual driver produced them, so programs that read depth could not be
+tested without the hardware.
+
+Teach the test pattern generator INZI and CNF4 (it already wrote Z16):
+INZI's infrared plane as Y10 and its depth plane as Z16, CNF4 as the top
+four bits of the luma, the first pixel of a pair in bits 3-0 as the
+format's documentation orders them. vivid then offers all three.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ drivers/media/common/v4l2-tpg/v4l2-tpg-core.c | 30 +++++++++++++++++++
+ .../test-drivers/vivid/vivid-vid-common.c     | 24 +++++++++++++++
+ 2 files changed, 54 insertions(+)
+
+diff --git a/drivers/media/common/v4l2-tpg/v4l2-tpg-core.c b/drivers/media/common/v4l2-tpg/v4l2-tpg-core.c
+index e1d5c220f7..6713d466e4 100644
+--- a/drivers/media/common/v4l2-tpg/v4l2-tpg-core.c
++++ b/drivers/media/common/v4l2-tpg/v4l2-tpg-core.c
+@@ -282,12 +282,19 @@ bool tpg_s_fourcc(struct tpg_data *tpg, u32 fourcc)
+ 	case V4L2_PIX_FMT_BGRA32:
+ 		tpg->color_enc = TGP_COLOR_ENC_RGB;
+ 		break;
++	case V4L2_PIX_FMT_INZI:
++		/* infrared (Y10) and depth (Z16), one plane after the other */
++		tpg->vdownsampling[1] = 1;
++		tpg->hdownsampling[1] = 1;
++		tpg->planes = 2;
++		fallthrough;
+ 	case V4L2_PIX_FMT_GREY:
+ 	case V4L2_PIX_FMT_Y10:
+ 	case V4L2_PIX_FMT_Y12:
+ 	case V4L2_PIX_FMT_Y16:
+ 	case V4L2_PIX_FMT_Y16_BE:
+ 	case V4L2_PIX_FMT_Z16:
++	case V4L2_PIX_FMT_CNF4:
+ 		tpg->color_enc = TGP_COLOR_ENC_LUMA;
+ 		break;
+ 	case V4L2_PIX_FMT_YUV444:
+@@ -384,6 +391,11 @@ bool tpg_s_fourcc(struct tpg_data *tpg, u32 fourcc)
+ 	}
+ 
+ 	switch (fourcc) {
++	case V4L2_PIX_FMT_CNF4:
++		/* two pixels per byte: keep x even */
++		tpg->twopixelsize[0] = 1;
++		tpg->hmask[0] = ~1;
++		break;
+ 	case V4L2_PIX_FMT_GREY:
+ 	case V4L2_PIX_FMT_RGB332:
+ 		tpg->twopixelsize[0] = 2;
+@@ -425,6 +437,10 @@ bool tpg_s_fourcc(struct tpg_data *tpg, u32 fourcc)
+ 	case V4L2_PIX_FMT_Z16:
+ 		tpg->twopixelsize[0] = 2 * 2;
+ 		break;
++	case V4L2_PIX_FMT_INZI:
++		tpg->twopixelsize[0] = 2 * 2;
++		tpg->twopixelsize[1] = 2 * 2;
++		break;
+ 	case V4L2_PIX_FMT_RGB24:
+ 	case V4L2_PIX_FMT_BGR24:
+ 	case V4L2_PIX_FMT_HSV24:
+@@ -1175,6 +1191,20 @@ static void gen_twopix(struct tpg_data *tpg,
+ 		buf[0][offset] = r_y_h;
+ 		buf[0][offset+1] = r_y_h == 0xff ? r_y_h : 0;
+ 		break;
++	case V4L2_PIX_FMT_INZI:
++		/* infrared as V4L2_PIX_FMT_Y10, depth as V4L2_PIX_FMT_Z16 */
++		buf[0][offset] = (r_y_h << 2) & 0xff;
++		buf[0][offset+1] = r_y_h >> 6;
++		buf[1][offset] = r_y_h == 0xff ? r_y_h : 0;
++		buf[1][offset+1] = r_y_h;
++		break;
++	case V4L2_PIX_FMT_CNF4:
++		/* two pixels per byte, the first in bits 3-0 */
++		if (odd)
++			buf[0][0] |= (r_y_h >> 4) << 4;
++		else
++			buf[0][0] = r_y_h >> 4;
++		break;
+ 	case V4L2_PIX_FMT_YUV422M:
+ 	case V4L2_PIX_FMT_YUV422P:
+ 	case V4L2_PIX_FMT_YUV420:
+diff --git a/drivers/media/test-drivers/vivid/vivid-vid-common.c b/drivers/media/test-drivers/vivid/vivid-vid-common.c
+index 786a1aa3b2..48491e9ca3 100644
+--- a/drivers/media/test-drivers/vivid/vivid-vid-common.c
++++ b/drivers/media/test-drivers/vivid/vivid-vid-common.c
+@@ -245,6 +245,30 @@ struct vivid_fmt vivid_formats[] = {
+ 		.planes   = 1,
+ 		.buffers = 1,
+ 	},
++	{
++		.fourcc   = V4L2_PIX_FMT_Z16,
++		.vdownsampling = { 1 },
++		.bit_depth = { 16 },
++		.color_enc = TGP_COLOR_ENC_LUMA,
++		.planes   = 1,
++		.buffers = 1,
++	},
++	{
++		.fourcc   = V4L2_PIX_FMT_INZI,
++		.vdownsampling = { 1, 1 },
++		.bit_depth = { 16, 16 },
++		.color_enc = TGP_COLOR_ENC_LUMA,
++		.planes   = 2,
++		.buffers = 1,
++	},
++	{
++		.fourcc   = V4L2_PIX_FMT_CNF4,
++		.vdownsampling = { 1 },
++		.bit_depth = { 4 },
++		.color_enc = TGP_COLOR_ENC_LUMA,
++		.planes   = 1,
++		.buffers = 1,
++	},
+ 	{
+ 		.fourcc   = V4L2_PIX_FMT_Y16_BE,
+ 		.vdownsampling = { 1 },
+-- 
+2.53.0
+

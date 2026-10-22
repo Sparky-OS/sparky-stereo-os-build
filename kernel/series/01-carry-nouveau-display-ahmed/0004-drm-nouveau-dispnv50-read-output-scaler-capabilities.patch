@@ -1,0 +1,185 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mohamed Ahmed <mohamedahmedegypt2001@gmail.com>
+Date: Fri, 21 Aug 2026 19:31:52 +0400
+Subject: drm/nouveau/dispnv50: read output scaler capabilities
+
+Output scaler tap selection depends on both the downscale ratio and the
+line-store capacity. Read the per-head limits from the capabilities
+notifier on Turing and later so viewport validation can reject ratios and
+widths the filters cannot support. Leave GV100's existing two-tap setup
+without scaler limit enforcement.
+
+GB20x uses the same offsets for per-tile postcomp capabilities, so read
+each head's identity tile through the shared parser.
+
+Signed-off-by: Mohamed Ahmed <mohamedahmedegypt2001@gmail.com>
+(cherry picked from commit c20ea9d16a8535b418d263cdca76570fa02eaa5c)
+---
+ drivers/gpu/drm/nouveau/dispnv50/core.h       |  1 +
+ drivers/gpu/drm/nouveau/dispnv50/corec57d.c   | 60 ++++++++++++++++++-
+ drivers/gpu/drm/nouveau/dispnv50/coreca7d.c   |  2 +-
+ drivers/gpu/drm/nouveau/dispnv50/disp.h       | 12 ++++
+ .../drm/nouveau/include/nvhw/class/clc573.h   | 28 +++++++++
+ 5 files changed, 101 insertions(+), 2 deletions(-)
+ create mode 100644 drivers/gpu/drm/nouveau/include/nvhw/class/clc573.h
+
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/core.h b/drivers/gpu/drm/nouveau/dispnv50/core.h
+index aa07a3ad5dfdfc504a15dc6884d3047bd1f906e6..61a61b9e5ebfbda93d6efa5ad6e962b7338996d1 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/core.h
++++ b/drivers/gpu/drm/nouveau/dispnv50/core.h
+@@ -73,6 +73,7 @@ int corec37d_update(struct nv50_core *, u32 *, bool);
+ int corec37d_wndw_owner(struct nv50_core *);
+ extern const struct nv50_outp_func sorc37d;
+ 
++int corec57d_caps_init(struct nouveau_drm *, struct nv50_disp *);
+ int corec57d_new(struct nouveau_drm *, s32, struct nv50_core **);
+ 
+ int coreca7d_new(struct nouveau_drm *, s32, struct nv50_core **);
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/corec57d.c b/drivers/gpu/drm/nouveau/dispnv50/corec57d.c
+index 39be576eadcb7930aefbdbcdda6a00b9b99611b8..52bb325de6054aa3930b96531aa306316d179721 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/corec57d.c
++++ b/drivers/gpu/drm/nouveau/dispnv50/corec57d.c
+@@ -26,6 +26,64 @@
+ #include <nvif/pushc37b.h>
+ 
+ #include <nvhw/class/clc57d.h>
++#include <nvhw/class/clc573.h>
++
++int
++corec57d_caps_init(struct nouveau_drm *drm, struct nv50_disp *disp)
++{
++	u32 syscap;
++	int i, ret;
++
++	ret = corec37d_caps_init(drm, disp);
++	if (ret)
++		return ret;
++
++	/* Two taps support up to 2x downscaling, while the five-tap limit is
++	 * either 2x or 4x. Read the per-tap line-store widths as well, since
++	 * they bound vertical filtering independently of the scale ratio. On
++	 * GB20x these offsets belong to tiles, so head i uses tile i's caps.
++	 */
++	syscap = nvif_rd32(&disp->caps, NVC573_SYS_CAP);
++	for (i = 0; i < NVC573_SYS_CAP_HEAD_EXISTS__SIZE_1; i++) {
++		struct nv50_scaler_caps *scaler;
++		u32 capa, capc, capd;
++
++		if (!NVDEF_TEST(syscap, NVC573, SYS_CAP, HEAD_EXISTS, i, ==, YES))
++			continue;
++
++		capa = nvif_rd32(&disp->caps, NVC573_POSTCOMP_HEAD_HDR_CAPA(i));
++		if (!NVDEF_TEST(capa, NVC573, POSTCOMP_HEAD_HDR_CAPA,
++				SCLR_PRESENT, ==, TRUE))
++			continue;
++
++		capc = nvif_rd32(&disp->caps, NVC573_POSTCOMP_HEAD_HDR_CAPC(i));
++		capd = nvif_rd32(&disp->caps, NVC573_POSTCOMP_HEAD_HDR_CAPD(i));
++
++		scaler = &disp->scaler[i];
++		scaler->taps2.max_h = 0x800;
++		scaler->taps2.max_v = 0x800;
++		scaler->taps2.max_pixels =
++			NVVAL_GET(capd, NVC573, POSTCOMP_HEAD_HDR_CAPD,
++				  VSCLR_MAX_PIXELS_2TAP);
++		scaler->taps5.max_h =
++			NVDEF_TEST(capc, NVC573, POSTCOMP_HEAD_HDR_CAPC,
++				   SCLR_HS_MAX_SCALE_FACTOR, ==, 4X) ?
++				0x1000 : 0x800;
++		scaler->taps5.max_v =
++			NVDEF_TEST(capc, NVC573, POSTCOMP_HEAD_HDR_CAPC,
++				   SCLR_VS_MAX_SCALE_FACTOR, ==, 4X) ?
++				0x1000 : 0x800;
++		scaler->taps5.max_pixels =
++			NVVAL_GET(capd, NVC573, POSTCOMP_HEAD_HDR_CAPD,
++				  VSCLR_MAX_PIXELS_5TAP);
++
++		NV_DEBUG(drm, "disp: head-%d scaler: 5-tap %ux max %u px, 2-tap %u px\n",
++			 i, scaler->taps5.max_v >> 10, scaler->taps5.max_pixels,
++			 scaler->taps2.max_pixels);
++	}
++
++	return 0;
++}
+ 
+ static int
+ corec57d_init(struct nv50_core *core)
+@@ -63,7 +121,7 @@ static const struct nv50_core_func
+ corec57d = {
+ 	.init = corec57d_init,
+ 	.ntfy_init = corec37d_ntfy_init,
+-	.caps_init = corec37d_caps_init,
++	.caps_init = corec57d_caps_init,
+ 	.caps_class = GV100_DISP_CAPS,
+ 	.ntfy_wait_done = corec37d_ntfy_wait_done,
+ 	.update = corec37d_update,
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/coreca7d.c b/drivers/gpu/drm/nouveau/dispnv50/coreca7d.c
+index 171727be400e45252d42a4c0f0e2f8b7cd5a3575..1d589e2e826d0b2b814c0a9955baea6b54142b85 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/coreca7d.c
++++ b/drivers/gpu/drm/nouveau/dispnv50/coreca7d.c
+@@ -103,7 +103,7 @@ static const struct nv50_core_func
+ coreca7d = {
+ 	.init = coreca7d_init,
+ 	.ntfy_init = corec37d_ntfy_init,
+-	.caps_init = corec37d_caps_init,
++	.caps_init = corec57d_caps_init,
+ 	.caps_class = GB202_DISP_CAPS,
+ 	.ntfy_wait_done = corec37d_ntfy_wait_done,
+ 	.update = coreca7d_update,
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/disp.h b/drivers/gpu/drm/nouveau/dispnv50/disp.h
+index 5d998f0319dcc2ffe33f58a7613c88650e3235b6..3787cb0557f5db5f8c983fb51dea9d6ad2818df7 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/disp.h
++++ b/drivers/gpu/drm/nouveau/dispnv50/disp.h
+@@ -14,6 +14,18 @@ struct nv50_disp {
+ 	struct nv50_core *core;
+ 	struct nvif_object caps;
+ 
++	/* Turing+ output scaler limits, zero for heads without a scaler.
++	 * Downscale factors are input/output * 0x400, while max_pixels limits
++	 * the width of vertical filtering at each tap count.
++	 */
++	struct nv50_scaler_caps {
++		struct nv50_scaler_taps_caps {
++			u16 max_pixels;
++			u16 max_h;
++			u16 max_v;
++		} taps2, taps5;
++	} scaler[8];
++
+ #define NV50_DISP_SYNC(c, o)                                ((c) * 0x040 + (o))
+ #define NV50_DISP_CORE_NTFY                       NV50_DISP_SYNC(0      , 0x00)
+ #define NV50_DISP_WNDW_SEM0(c)                    NV50_DISP_SYNC(1 + (c), 0x00)
+diff --git a/drivers/gpu/drm/nouveau/include/nvhw/class/clc573.h b/drivers/gpu/drm/nouveau/include/nvhw/class/clc573.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..e0b9aa512da7741baa5831492d40d88975fa5a96
+--- /dev/null
++++ b/drivers/gpu/drm/nouveau/include/nvhw/class/clc573.h
+@@ -0,0 +1,28 @@
++/* SPDX-License-Identifier: MIT
++ *
++ * Copyright (c) 2003-2021, NVIDIA CORPORATION. All rights reserved.
++ */
++#ifndef _clc573_h_
++#define _clc573_h_
++
++#define NVC573_SYS_CAP                                                       0x0
++#define NVC573_SYS_CAP_HEAD_EXISTS(i)                            (0+(i)):(0+(i))
++#define NVC573_SYS_CAP_HEAD_EXISTS__SIZE_1                                     8
++#define NVC573_SYS_CAP_HEAD_EXISTS_NO                                 0x00000000
++#define NVC573_SYS_CAP_HEAD_EXISTS_YES                                0x00000001
++
++#define NVC573_POSTCOMP_HEAD_HDR_CAPA(i)                          (0x680+(i)*32)
++#define NVC573_POSTCOMP_HEAD_HDR_CAPA_SCLR_PRESENT                         18:18
++#define NVC573_POSTCOMP_HEAD_HDR_CAPA_SCLR_PRESENT_FALSE              0x00000000
++#define NVC573_POSTCOMP_HEAD_HDR_CAPA_SCLR_PRESENT_TRUE               0x00000001
++#define NVC573_POSTCOMP_HEAD_HDR_CAPC(i)                          (0x688+(i)*32)
++#define NVC573_POSTCOMP_HEAD_HDR_CAPC_SCLR_VS_MAX_SCALE_FACTOR             28:28
++#define NVC573_POSTCOMP_HEAD_HDR_CAPC_SCLR_VS_MAX_SCALE_FACTOR_2X     0x00000000
++#define NVC573_POSTCOMP_HEAD_HDR_CAPC_SCLR_VS_MAX_SCALE_FACTOR_4X     0x00000001
++#define NVC573_POSTCOMP_HEAD_HDR_CAPC_SCLR_HS_MAX_SCALE_FACTOR             30:30
++#define NVC573_POSTCOMP_HEAD_HDR_CAPC_SCLR_HS_MAX_SCALE_FACTOR_2X     0x00000000
++#define NVC573_POSTCOMP_HEAD_HDR_CAPC_SCLR_HS_MAX_SCALE_FACTOR_4X     0x00000001
++#define NVC573_POSTCOMP_HEAD_HDR_CAPD(i)                          (0x68c+(i)*32)
++#define NVC573_POSTCOMP_HEAD_HDR_CAPD_VSCLR_MAX_PIXELS_2TAP                 15:0
++#define NVC573_POSTCOMP_HEAD_HDR_CAPD_VSCLR_MAX_PIXELS_5TAP                31:16
++#endif // _clc573_h_

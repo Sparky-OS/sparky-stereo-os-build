@@ -1,0 +1,138 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 1 Oct 2026 01:30:19 -0300
+Subject: drm: list and time HDMI 3D side by side (full)
+
+drm_mode_set_crtcinfo() documents CRTC_STEREO_DOUBLE as computing the
+timings for buffers holding both eyes, "eg. for frame packing or side by
+side full", but only frame packing was implemented, and the EDID parser
+never listed side by side (full) modes, so no driver could offer them.
+
+- drm_edid: list side by side (full) from the HDMI VSDB, from
+  3D_Structure_ALL bit 3 and from a 3D_Structure_X of 3.
+- drm_modes: CRTC_STEREO_DOUBLE times side by side (full) as both eyes
+  at full width: the active width doubles, the horizontal blanking is
+  kept and the pixel clock grows with the total width, so the refresh
+  rate is unchanged (the derivation NVIDIA's open timing library uses,
+  NvTiming_GetHDMIStereoTimingFrom2DTiming). drm_mode_get_hv_timing()
+  then reports the doubled width, the size of the client's buffer.
+- drm_mode_stereo_clock(): the pixel clock a mode goes out at with its
+  stereo layout, for drivers' clock checks.
+
+Compile-tested; no side by side (full) sink at hand, so not run.
+
+Assisted-by: Claude-Opus-5.5
+(cherry picked from commit f293d7579e972261280552298b25ac21a0c4bb62)
+---
+ drivers/gpu/drm/drm_edid.c  | 11 ++++++++++
+ drivers/gpu/drm/drm_modes.c | 41 +++++++++++++++++++++++++++++++++++--
+ include/drm/drm_modes.h     |  1 +
+ 3 files changed, 51 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/drm_edid.c b/drivers/gpu/drm/drm_edid.c
+index 07970e5b5f65e552e220c7dc101eb336e957a18c..5f84171dbe91cecd23f56f04b51c0ca6ceec361d 100644
+--- a/drivers/gpu/drm/drm_edid.c
++++ b/drivers/gpu/drm/drm_edid.c
+@@ -4799,6 +4799,14 @@ static int add_3d_struct_modes(struct drm_connector *connector, u16 structure,
+ 			modes++;
+ 		}
+ 	}
++	if (structure & (1 << 3)) {
++		newmode = drm_display_mode_from_vic_index(connector, vic_index);
++		if (newmode) {
++			newmode->flags |= DRM_MODE_FLAG_3D_SIDE_BY_SIDE_FULL;
++			drm_mode_probed_add(connector, newmode);
++			modes++;
++		}
++	}
+ 	if (structure & (1 << 6)) {
+ 		newmode = drm_display_mode_from_vic_index(connector, vic_index);
+ 		if (newmode) {
+@@ -4942,6 +4950,9 @@ do_hdmi_vsdb_modes(struct drm_connector *connector, const u8 *db, u8 len)
+ 		case 0:
+ 			newflag = DRM_MODE_FLAG_3D_FRAME_PACKING;
+ 			break;
++		case 3:
++			newflag = DRM_MODE_FLAG_3D_SIDE_BY_SIDE_FULL;
++			break;
+ 		case 6:
+ 			newflag = DRM_MODE_FLAG_3D_TOP_AND_BOTTOM;
+ 			break;
+diff --git a/drivers/gpu/drm/drm_modes.c b/drivers/gpu/drm/drm_modes.c
+index e1eed13a8e94f57666037189c39b9423dd057a2d..9cb8f28370c36a54cb99bd5e96be6537a448693d 100644
+--- a/drivers/gpu/drm/drm_modes.c
++++ b/drivers/gpu/drm/drm_modes.c
+@@ -1314,8 +1314,9 @@ EXPORT_SYMBOL(drm_mode_vrefresh);
+  * @hdisplay: hdisplay value to fill in
+  * @vdisplay: vdisplay value to fill in
+  *
+- * The vdisplay value will be doubled if the specified mode is a stereo mode of
+- * the appropriate layout.
++ * The vdisplay value will be doubled for a frame packing stereo mode, and the
++ * hdisplay value for a side by side (full) stereo mode: the size of a buffer
++ * holding both eyes.
+  */
+ void drm_mode_get_hv_timing(const struct drm_display_mode *mode,
+ 			    int *hdisplay, int *vdisplay)
+@@ -1399,6 +1400,20 @@ void drm_mode_set_crtcinfo(struct drm_display_mode *p, int adjust_flags)
+ 			p->crtc_vsync_end += p->crtc_vtotal;
+ 			p->crtc_vtotal += p->crtc_vtotal;
+ 			break;
++		case DRM_MODE_FLAG_3D_SIDE_BY_SIDE_FULL:
++			/*
++			 * Both eyes at full width: the active width doubles, the
++			 * horizontal blanking is kept, and the pixel clock grows
++			 * with the total width so the refresh rate is unchanged.
++			 */
++			p->crtc_clock = DIV_ROUND_CLOSEST_ULL(mul_u32_u32(p->crtc_clock,
++									  p->crtc_htotal + p->crtc_hdisplay),
++							      p->crtc_htotal);
++			p->crtc_hsync_start += p->crtc_hdisplay;
++			p->crtc_hsync_end += p->crtc_hdisplay;
++			p->crtc_htotal += p->crtc_hdisplay;
++			p->crtc_hdisplay += p->crtc_hdisplay;
++			break;
+ 		}
+ 	}
+ 
+@@ -1409,6 +1424,28 @@ void drm_mode_set_crtcinfo(struct drm_display_mode *p, int adjust_flags)
+ }
+ EXPORT_SYMBOL(drm_mode_set_crtcinfo);
+ 
++/**
++ * drm_mode_stereo_clock - pixel clock a mode is sent at
++ * @mode: mode to query
++ *
++ * The pixel clock in kHz of @mode as it goes out on the link, with its stereo
++ * layout: doubled for frame packing, grown with the doubled active width for
++ * side by side (full), unchanged for the other layouts and for 2D modes.
++ * Drivers use it to check a stereo mode against their clock limits.
++ */
++int drm_mode_stereo_clock(const struct drm_display_mode *mode)
++{
++	struct drm_display_mode adjusted;
++
++	if (!(mode->flags & DRM_MODE_FLAG_3D_MASK))
++		return mode->clock;
++
++	drm_mode_init(&adjusted, mode);
++	drm_mode_set_crtcinfo(&adjusted, CRTC_STEREO_DOUBLE_ONLY);
++	return adjusted.crtc_clock;
++}
++EXPORT_SYMBOL(drm_mode_stereo_clock);
++
+ /**
+  * drm_mode_copy - copy the mode
+  * @dst: mode to overwrite
+diff --git a/include/drm/drm_modes.h b/include/drm/drm_modes.h
+index 6e3eccc3c349c721b190ac92e8a99e8a06a96abd..809597258695127b7e9c3b638cda1f6f662da1a4 100644
+--- a/include/drm/drm_modes.h
++++ b/include/drm/drm_modes.h
+@@ -533,6 +533,7 @@ int drm_mode_vrefresh(const struct drm_display_mode *mode);
+ void drm_mode_get_hv_timing(const struct drm_display_mode *mode,
+ 			    int *hdisplay, int *vdisplay);
+ 
++int drm_mode_stereo_clock(const struct drm_display_mode *mode);
+ void drm_mode_set_crtcinfo(struct drm_display_mode *p,
+ 			   int adjust_flags);
+ void drm_mode_copy(struct drm_display_mode *dst,

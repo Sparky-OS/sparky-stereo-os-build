@@ -1,0 +1,75 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 16 Oct 2026 08:08:59 -0300
+Subject: [PATCH] drm/i915/hdmi: take the side by side (full) timing and 3D
+ metadata properties
+
+Attach the "side by side full timing" and "HDMI 3D metadata" properties
+to HDMI connectors that allow stereo modes, time the pipe with the
+connector's side by side (full) timing, put the metadata into the vendor
+InfoFrame, and treat a change of either like the other InfoFrame
+properties, with a mode change.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ drivers/gpu/drm/i915/display/intel_atomic.c  | 2 ++
+ drivers/gpu/drm/i915/display/intel_display.c | 3 ++-
+ drivers/gpu/drm/i915/display/intel_hdmi.c    | 8 ++++++++
+ 3 files changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/display/intel_atomic.c b/drivers/gpu/drm/i915/display/intel_atomic.c
+index 9d0d47c79d..b8c5223fc5 100644
+--- a/drivers/gpu/drm/i915/display/intel_atomic.c
++++ b/drivers/gpu/drm/i915/display/intel_atomic.c
+@@ -142,6 +142,8 @@ int intel_digital_connector_atomic_check(struct drm_connector *conn,
+ 	    new_conn_state->base.content_type != old_conn_state->base.content_type ||
+ 	    new_conn_state->base.scaling_mode != old_conn_state->base.scaling_mode ||
+ 	    new_conn_state->base.privacy_screen_sw_state != old_conn_state->base.privacy_screen_sw_state ||
++	    new_conn_state->base.hdmi.sbs_full_timing != old_conn_state->base.hdmi.sbs_full_timing ||
++	    new_conn_state->base.hdmi.s3d_metadata != old_conn_state->base.hdmi.s3d_metadata ||
+ 	    !drm_connector_atomic_hdr_metadata_equal(old_state, new_state))
+ 		crtc_state->mode_changed = true;
+ 
+diff --git a/drivers/gpu/drm/i915/display/intel_display.c b/drivers/gpu/drm/i915/display/intel_display.c
+index 9dfd095f32..09780b4cbd 100644
+--- a/drivers/gpu/drm/i915/display/intel_display.c
++++ b/drivers/gpu/drm/i915/display/intel_display.c
+@@ -4817,7 +4817,8 @@ intel_modeset_pipe_config(struct intel_atomic_state *state,
+ 
+ 	/* Fill in default crtc timings, allow encoders to overwrite them. */
+ 	drm_mode_set_crtcinfo(&crtc_state->hw.adjusted_mode,
+-			      CRTC_STEREO_DOUBLE);
++			      CRTC_STEREO_DOUBLE |
++			      drm_atomic_crtc_stereo_flags(&crtc_state->uapi));
+ 
+ 	/* Pass our mode to the connectors and the CRTC to give them a chance to
+ 	 * adjust it according to limitations or connector properties, and also
+diff --git a/drivers/gpu/drm/i915/display/intel_hdmi.c b/drivers/gpu/drm/i915/display/intel_hdmi.c
+index 93be8a891a..f8e69d49cb 100644
+--- a/drivers/gpu/drm/i915/display/intel_hdmi.c
++++ b/drivers/gpu/drm/i915/display/intel_hdmi.c
+@@ -834,6 +834,9 @@ intel_hdmi_compute_hdmi_infoframe(struct intel_encoder *encoder,
+ 	if (drm_WARN_ON(encoder->base.dev, ret))
+ 		return false;
+ 
++	if (drm_hdmi_vendor_infoframe_set_3d_metadata(frame, conn_state))
++		return false;
++
+ 	ret = hdmi_vendor_infoframe_check(frame);
+ 	if (drm_WARN_ON(encoder->base.dev, ret))
+ 		return false;
+@@ -2726,6 +2729,11 @@ intel_hdmi_add_properties(struct intel_hdmi *intel_hdmi, struct drm_connector *_
+ 
+ 	if (!HAS_GMCH(display))
+ 		drm_connector_attach_max_bpc_property(&connector->base, 8, 12);
++
++	if (connector->base.stereo_allowed) {
++		drm_connector_attach_sbs_full_timing_property(&connector->base);
++		drm_connector_attach_hdmi_3d_metadata_property(&connector->base);
++	}
+ }
+ 
+ /*
+-- 
+2.53.0
+

@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Eric Naim <dnaim@cachyos.org>
+Date: Tue, 2 Jun 2026 10:27:28 +0700
+Subject: i2c: Force ASUE140D touchpad i2c freq to 100khz
+
+A user reported random 300-500ms input delays for this touchpad on a
+ASUS ZenBook UX3404 / Q410VA. Force it to run on 100khz instead to get
+rid of those random delays.
+
+Signed-off-by: Eric Naim <dnaim@cachyos.org>
+(cherry picked from commit 99d4f73dbc9c8c9c3f34e6c4450b2c87682e300b)
+---
+ drivers/i2c/i2c-core-acpi.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/i2c/i2c-core-acpi.c b/drivers/i2c/i2c-core-acpi.c
+index 8f3bdd50186e39346fadbafa4b49314eaa4c4d50..e5b27375af3171ad8591a545e08f529cb218b8d1 100644
+--- a/drivers/i2c/i2c-core-acpi.c
++++ b/drivers/i2c/i2c-core-acpi.c
+@@ -371,6 +371,7 @@ static const struct acpi_device_id i2c_acpi_force_100khz_device_ids[] = {
+ 	 * the device works without issues on Windows at what is expected to be
+ 	 * a 400KHz frequency. The root cause of the issue is not known.
+ 	 */
++	{ "ASUE140D", 0 },
+ 	{ "DLL0945", 0 },
+ 	{ "ELAN0678", 0 },
+ 	{ "ELAN06FA", 0 },

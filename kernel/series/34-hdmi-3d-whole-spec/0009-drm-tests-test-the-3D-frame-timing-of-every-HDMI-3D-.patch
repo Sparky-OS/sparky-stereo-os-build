@@ -1,0 +1,138 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 16 Oct 2026 08:09:15 -0300
+Subject: [PATCH] drm/tests: test the 3D frame timing of every HDMI 3D
+ structure
+
+For each 3D structure, the CTA-861 timing of a format HDMI 1.4a gives as
+an example (Table H-5, or a mandatory frame packing format of section
+8.2.3.2), timed with CRTC_STEREO_DOUBLE: the pixel clock, every
+horizontal and vertical value, the buffer drm_mode_get_hv_timing()
+gives and the clock drm_mode_stereo_clock() gives. Side by side (full)
+both ways: the whole line doubled (297 MHz for 1080p60, Table H-5) and
+the blanking kept (278.1 MHz). Top and bottom and side by side (half)
+keep their 2D timing.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ drivers/gpu/drm/tests/drm_modes_test.c | 97 ++++++++++++++++++++++++++
+ 1 file changed, 97 insertions(+)
+
+diff --git a/drivers/gpu/drm/tests/drm_modes_test.c b/drivers/gpu/drm/tests/drm_modes_test.c
+index f5b20f92df..22407e0bfd 100644
+--- a/drivers/gpu/drm/tests/drm_modes_test.c
++++ b/drivers/gpu/drm/tests/drm_modes_test.c
+@@ -4,6 +4,7 @@
+  */
+ 
+ #include <drm/drm_drv.h>
++#include <drm/drm_edid.h>
+ #include <drm/drm_kunit_helpers.h>
+ #include <drm/drm_modes.h>
+ 
+@@ -203,6 +204,102 @@ static struct kunit_suite drm_modes_analog_tv_test_suite = {
+ 
+ kunit_test_suite(drm_modes_analog_tv_test_suite);
+ 
++struct drm_modes_stereo_test {
++	const char *name;
++	u8 vic;
++	u32 layout;
++	int adjust;
++	int clock;
++	int hdisplay, hsync_start, hsync_end, htotal;
++	int vdisplay, vsync_start, vsync_end, vtotal;
++};
++
++/*
++ * The 3D frame of each HDMI 1.4a 3D structure, from the CTA-861 timing of
++ * one of the formats Table H-5 gives as an example (or, for frame packing,
++ * a mandatory format of section 8.2.3.2): Figures 8-3 and H-2 to H-6.
++ */
++static const struct drm_modes_stereo_test drm_modes_stereo_tests[] = {
++	{ "frame-packing-1080p24", 32, DRM_MODE_FLAG_3D_FRAME_PACKING, 0,
++	  148500, 1920, 2558, 2602, 2750, 2205, 2209, 2214, 2250 },
++	{ "field-alternative-1080i60", 5, DRM_MODE_FLAG_3D_FIELD_ALTERNATIVE, 0,
++	  148500, 1920, 2008, 2052, 2200, 2205, 2209, 2219, 2250 },
++	{ "line-alternative-1080p60", 16, DRM_MODE_FLAG_3D_LINE_ALTERNATIVE, 0,
++	  297000, 1920, 2008, 2052, 2200, 2160, 2168, 2178, 2250 },
++	{ "side-by-side-full-1080p60", 16, DRM_MODE_FLAG_3D_SIDE_BY_SIDE_FULL, 0,
++	  297000, 3840, 4016, 4104, 4400, 1080, 1084, 1089, 1125 },
++	{ "side-by-side-full-keep-hblank-1080p60", 16,
++	  DRM_MODE_FLAG_3D_SIDE_BY_SIDE_FULL, CRTC_STEREO_KEEP_HBLANK,
++	  278100, 3840, 3928, 3972, 4120, 1080, 1084, 1089, 1125 },
++	{ "l-depth-720p50", 19, DRM_MODE_FLAG_3D_L_DEPTH, 0,
++	  148500, 1280, 1720, 1760, 1980, 1470, 1475, 1480, 1500 },
++	{ "l-depth-gfx-gfx-depth-720p50", 19,
++	  DRM_MODE_FLAG_3D_L_DEPTH_GFX_GFX_DEPTH, 0,
++	  297000, 1280, 1720, 1760, 1980, 2970, 2975, 2980, 3000 },
++	{ "top-and-bottom-1080p60", 16, DRM_MODE_FLAG_3D_TOP_AND_BOTTOM, 0,
++	  148500, 1920, 2008, 2052, 2200, 1080, 1084, 1089, 1125 },
++	{ "side-by-side-half-1080p60", 16, DRM_MODE_FLAG_3D_SIDE_BY_SIDE_HALF, 0,
++	  148500, 1920, 2008, 2052, 2200, 1080, 1084, 1089, 1125 },
++};
++
++static void drm_test_modes_stereo_desc(const struct drm_modes_stereo_test *t,
++				       char *desc)
++{
++	strscpy(desc, t->name, KUNIT_PARAM_DESC_SIZE);
++}
++
++KUNIT_ARRAY_PARAM(drm_modes_stereo, drm_modes_stereo_tests,
++		  drm_test_modes_stereo_desc);
++
++static void drm_test_modes_stereo_crtcinfo(struct kunit *test)
++{
++	struct drm_test_modes_priv *priv = test->priv;
++	const struct drm_modes_stereo_test *t = test->param_value;
++	struct drm_display_mode *mode;
++	int hdisplay, vdisplay;
++
++	mode = drm_display_mode_from_cea_vic(priv->drm, t->vic);
++	KUNIT_ASSERT_NOT_NULL(test, mode);
++	mode->flags |= t->layout;
++
++	drm_mode_set_crtcinfo(mode, CRTC_STEREO_DOUBLE_ONLY | t->adjust);
++
++	KUNIT_EXPECT_EQ(test, mode->crtc_clock, t->clock);
++	KUNIT_EXPECT_EQ(test, mode->crtc_hdisplay, t->hdisplay);
++	KUNIT_EXPECT_EQ(test, mode->crtc_hsync_start, t->hsync_start);
++	KUNIT_EXPECT_EQ(test, mode->crtc_hsync_end, t->hsync_end);
++	KUNIT_EXPECT_EQ(test, mode->crtc_htotal, t->htotal);
++	KUNIT_EXPECT_EQ(test, mode->crtc_vdisplay, t->vdisplay);
++	KUNIT_EXPECT_EQ(test, mode->crtc_vsync_start, t->vsync_start);
++	KUNIT_EXPECT_EQ(test, mode->crtc_vsync_end, t->vsync_end);
++	KUNIT_EXPECT_EQ(test, mode->crtc_vtotal, t->vtotal);
++
++	/* the buffer holds the whole 3D frame, whatever the blanking */
++	drm_mode_get_hv_timing(mode, &hdisplay, &vdisplay);
++	KUNIT_EXPECT_EQ(test, hdisplay, t->hdisplay);
++	KUNIT_EXPECT_EQ(test, vdisplay, t->vdisplay);
++
++	/* mode validation uses the specification's timing */
++	if (!t->adjust)
++		KUNIT_EXPECT_EQ(test, drm_mode_stereo_clock(mode), t->clock);
++	else
++		KUNIT_EXPECT_GT(test, drm_mode_stereo_clock(mode), t->clock);
++}
++
++static struct kunit_case drm_modes_stereo_cases[] = {
++	KUNIT_CASE_PARAM(drm_test_modes_stereo_crtcinfo,
++			 drm_modes_stereo_gen_params),
++	{ }
++};
++
++static struct kunit_suite drm_modes_stereo_test_suite = {
++	.name = "drm_modes_stereo",
++	.init = drm_test_modes_init,
++	.test_cases = drm_modes_stereo_cases,
++};
++
++kunit_test_suite(drm_modes_stereo_test_suite);
++
+ MODULE_AUTHOR("Maxime Ripard <maxime@cerno.tech>");
+ MODULE_DESCRIPTION("Kunit test for drm_modes functions");
+ MODULE_LICENSE("GPL");
+-- 
+2.53.0
+

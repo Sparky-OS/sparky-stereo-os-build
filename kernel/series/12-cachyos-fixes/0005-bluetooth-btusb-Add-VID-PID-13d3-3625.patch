@@ -1,0 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Eric Naim <dnaim@cachyos.org>
+Date: Sun, 8 Feb 2026 23:03:53 +0800
+Subject: bluetooth: btusb: Add VID/PID 13d3:3625
+
+Signed-off-by: Eric Naim <dnaim@cachyos.org>
+(cherry picked from commit a82b45662d416814e30c761f60afb5ece44f971c)
+---
+ drivers/bluetooth/btusb.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/bluetooth/btusb.c b/drivers/bluetooth/btusb.c
+index d2d2b2a9ad934d0c416f2f6e99fa45b0e5b7bdb6..2154ad8ce77732c0581289cabaa964c8ddf4a129 100644
+--- a/drivers/bluetooth/btusb.c
++++ b/drivers/bluetooth/btusb.c
+@@ -719,6 +719,8 @@ static const struct usb_device_id quirks_table[] = {
+ 	{ USB_DEVICE(0x13d3, 0x3596), .driver_info = BTUSB_MEDIATEK |
+ 						     BTUSB_WIDEBAND_SPEECH },
+ 	/* MediaTek MT7922 Bluetooth devices */
++	{ USB_DEVICE(0x13d3, 0x3625), .driver_info = BTUSB_MEDIATEK |
++						     BTUSB_WIDEBAND_SPEECH },
+ 	{ USB_DEVICE(0x13d3, 0x3585), .driver_info = BTUSB_MEDIATEK |
+ 						     BTUSB_WIDEBAND_SPEECH },
+ 	{ USB_DEVICE(0x13d3, 0x3610), .driver_info = BTUSB_MEDIATEK |

@@ -1,0 +1,188 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mohamed Ahmed <mohamedahmedegypt2001@gmail.com>
+Date: Tue, 25 Aug 2026 22:16:22 +0400
+Subject: drm/nouveau/disp: fix armed pixel clock readback
+
+Later commits are about to use nvkm_head_state.hz but the value is wrong.
+gf119 and gv100 head state functions store SET_PIXEL_CLOCK_FREQUENCY as
+is while bit 31 is ADJ1000DIV1001 (a flag that scales the rate by
+1000/1001) and nv50_head_state() ignores the same flag at bit 24.
+gb202_head_state() never reads SET_PIXEL_CLOCK_FREQUENCY_HI, so clocks
+above 2.147 GHz are truncated and the 35-bit value does not fit in a u32.
+
+Mask and apply the flag on every class, read the high method on GB20x,
+and widen hz to u64.
+
+Signed-off-by: Mohamed Ahmed <mohamedahmedegypt2001@gmail.com>
+(cherry picked from commit 285c22e0c2dacce8d222b96f86c8b5013dc0f7e9)
+---
+ drivers/gpu/drm/nouveau/nvkm/engine/disp/gb202.c | 15 +++++++++++----
+ drivers/gpu/drm/nouveau/nvkm/engine/disp/gf119.c |  9 ++++++++-
+ drivers/gpu/drm/nouveau/nvkm/engine/disp/gv100.c |  9 ++++++++-
+ drivers/gpu/drm/nouveau/nvkm/engine/disp/head.h  |  2 +-
+ drivers/gpu/drm/nouveau/nvkm/engine/disp/nv50.c  | 16 +++++++++++-----
+ 5 files changed, 39 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/gpu/drm/nouveau/nvkm/engine/disp/gb202.c b/drivers/gpu/drm/nouveau/nvkm/engine/disp/gb202.c
+index d0360610f9fad3f2ae841e4bffc22f3e669cbdd6..594fb6027bd77657b1e11f58534f425b7e8306f7 100644
+--- a/drivers/gpu/drm/nouveau/nvkm/engine/disp/gb202.c
++++ b/drivers/gpu/drm/nouveau/nvkm/engine/disp/gb202.c
+@@ -6,6 +6,8 @@
+ #include "head.h"
+ #include "ior.h"
+ 
++#include <linux/math64.h>
++
+ #include <subdev/timer.h>
+ 
+ /* GB20x (NVD5.0) reorganised the SF HDMI packet units. The AVI unit is
+@@ -106,11 +108,16 @@ gb202_head_state(struct nvkm_head *head, struct nvkm_head_state *state)
+ 	data = nvkm_rd32(device, 0x682070 + hoff);
+ 	state->vblanks = (data & 0xffff0000) >> 16;
+ 	state->hblanks = (data & 0x0000ffff);
+-	/* Bit 31 is ADJ1000DIV1001, not a HERTZ bit. We don't have enough bits
+-	 * to add the full clock in hz on Blackwell (35 bits), but state->hz
+-	 * is unused and obsolete under GSP so this is fine.
++	/* The low method holds clock bits 30:0 and ADJ1000DIV1001 at bit 31.
++	 * Read the four bits in SET_PIXEL_CLOCK_FREQUENCY_HI as well to recover
++	 * the full 35 bit value from headca7d_mode().
+ 	 */
+-	state->hz = nvkm_rd32(device, 0x68200c + hoff) & 0x7fffffff;
++	data = nvkm_rd32(device, 0x68200c + hoff);
++	state->hz = data & 0x7fffffff;
++	state->hz |= (u64)(nvkm_rd32(device, 0x6820c0 + hoff) & 0x0000000f) << 31;
++	/* ADJ1000DIV1001 scales the programmed rate by 1000/1001. */
++	if (data & 0x80000000)
++		state->hz = div_u64(state->hz * 1000, 1001);
+ 
+ 	data = nvkm_rd32(device, 0x682004 + hoff);
+ 	switch ((data & 0x000000f0) >> 4) {
+diff --git a/drivers/gpu/drm/nouveau/nvkm/engine/disp/gf119.c b/drivers/gpu/drm/nouveau/nvkm/engine/disp/gf119.c
+index 83a1323600ae788dd917e5e38d8701aeb4150d00..8a2be4a87e5cb1e670f62cc1dd468ac47dd9bbde 100644
+--- a/drivers/gpu/drm/nouveau/nvkm/engine/disp/gf119.c
++++ b/drivers/gpu/drm/nouveau/nvkm/engine/disp/gf119.c
+@@ -28,6 +28,8 @@
+ #include "ior.h"
+ #include "outp.h"
+ 
++#include <linux/math64.h>
++
+ #include <core/ramht.h>
+ #include <subdev/timer.h>
+ 
+@@ -438,7 +440,12 @@ gf119_head_state(struct nvkm_head *head, struct nvkm_head_state *state)
+ 	data = nvkm_rd32(device, 0x640420 + hoff);
+ 	state->vblanks = (data & 0xffff0000) >> 16;
+ 	state->hblanks = (data & 0x0000ffff);
+-	state->hz = nvkm_rd32(device, 0x640450 + hoff);
++	/* Bits 30:0 hold HERTZ and bit 31 is ADJ1000DIV1001. */
++	data = nvkm_rd32(device, 0x640450 + hoff);
++	state->hz = data & 0x7fffffff;
++	/* ADJ1000DIV1001 scales the programmed rate by 1000/1001. */
++	if (data & 0x80000000)
++		state->hz = div_u64(state->hz * 1000, 1001);
+ 
+ 	data = nvkm_rd32(device, 0x640404 + hoff);
+ 	switch ((data & 0x000003c0) >> 6) {
+diff --git a/drivers/gpu/drm/nouveau/nvkm/engine/disp/gv100.c b/drivers/gpu/drm/nouveau/nvkm/engine/disp/gv100.c
+index 0608266188d3ea13b7d954a2ee34c5c1424ae797..9240760ceb6daa12261d0ce816b91e65c83a5223 100644
+--- a/drivers/gpu/drm/nouveau/nvkm/engine/disp/gv100.c
++++ b/drivers/gpu/drm/nouveau/nvkm/engine/disp/gv100.c
+@@ -26,6 +26,8 @@
+ #include "ior.h"
+ #include "outp.h"
+ 
++#include <linux/math64.h>
++
+ #include <core/client.h>
+ #include <core/gpuobj.h>
+ #include <core/ramht.h>
+@@ -282,7 +284,12 @@ gv100_head_state(struct nvkm_head *head, struct nvkm_head_state *state)
+ 	data = nvkm_rd32(device, 0x682070 + hoff);
+ 	state->vblanks = (data & 0xffff0000) >> 16;
+ 	state->hblanks = (data & 0x0000ffff);
+-	state->hz = nvkm_rd32(device, 0x68200c + hoff);
++	/* Bits 30:0 hold HERTZ and bit 31 is ADJ1000DIV1001. */
++	data = nvkm_rd32(device, 0x68200c + hoff);
++	state->hz = data & 0x7fffffff;
++	/* ADJ1000DIV1001 scales the programmed rate by 1000/1001. */
++	if (data & 0x80000000)
++		state->hz = div_u64(state->hz * 1000, 1001);
+ 
+ 	data = nvkm_rd32(device, 0x682004 + hoff);
+ 	switch ((data & 0x000000f0) >> 4) {
+diff --git a/drivers/gpu/drm/nouveau/nvkm/engine/disp/head.h b/drivers/gpu/drm/nouveau/nvkm/engine/disp/head.h
+index 5976498da90947690e8571d76ed6248903dc30a0..bc244b56bf9d68b4699b8b7cfe20e57816895ffa 100644
+--- a/drivers/gpu/drm/nouveau/nvkm/engine/disp/head.h
++++ b/drivers/gpu/drm/nouveau/nvkm/engine/disp/head.h
+@@ -20,7 +20,7 @@ struct nvkm_head {
+ 		u16 vsynce;
+ 		u16 vblanke;
+ 		u16 vblanks;
+-		u32 hz;
++		u64 hz;
+ 
+ 		/* Prior to GF119, these are set by the OR. */
+ 		struct {
+diff --git a/drivers/gpu/drm/nouveau/nvkm/engine/disp/nv50.c b/drivers/gpu/drm/nouveau/nvkm/engine/disp/nv50.c
+index 03a5f88a4b993c45b02de1df3eaea10515ee21d6..59fdc668fd6b2976a71c91678ee3ddb13466dfbd 100644
+--- a/drivers/gpu/drm/nouveau/nvkm/engine/disp/nv50.c
++++ b/drivers/gpu/drm/nouveau/nvkm/engine/disp/nv50.c
+@@ -29,6 +29,8 @@
+ #include "ior.h"
+ #include "outp.h"
+ 
++#include <linux/math64.h>
++
+ #include <core/client.h>
+ #include <core/ramht.h>
+ #include <subdev/bios.h>
+@@ -421,7 +423,11 @@ nv50_head_state(struct nvkm_head *head, struct nvkm_head_state *state)
+ 	data = nvkm_rd32(device, 0x610b00 + hoff);
+ 	state->vsynce = (data & 0xffff0000) >> 16;
+ 	state->hsynce = (data & 0x0000ffff);
+-	state->hz = (nvkm_rd32(device, 0x610ad0 + hoff) & 0x003fffff) * 1000;
++	/* Bits 21:0 hold the clock in kHz and bit 24 is ADJ1000DIV1001. */
++	data = nvkm_rd32(device, 0x610ad0 + hoff);
++	state->hz = (data & 0x003fffff) * 1000;
++	if (data & 0x01000000)
++		state->hz = div_u64(state->hz * 1000, 1001);
+ }
+ 
+ static const struct nvkm_head_func
+@@ -1146,7 +1152,7 @@ nv50_disp_super_3_0(struct nvkm_disp *disp, struct nvkm_head *head)
+ 		return;
+ 
+ 	/* Execute OnInt3 IED script. */
+-	nv50_disp_super_ied_on(head, ior, 1, head->asy.hz / 1000);
++	nv50_disp_super_ied_on(head, ior, 1, div_u64(head->asy.hz, 1000));
+ 
+ 	/* OR-specific handling. */
+ 	if (ior->func->war_3)
+@@ -1157,7 +1163,7 @@ static void
+ nv50_disp_super_2_2_dp(struct nvkm_head *head, struct nvkm_ior *ior)
+ {
+ 	struct nvkm_subdev *subdev = &head->disp->engine.subdev;
+-	const u32      khz = head->asy.hz / 1000;
++	const u32      khz = div_u64(head->asy.hz, 1000);
+ 	const u32 linkKBps = ior->dp.bw * 27000;
+ 	const u32   symbol = 100000;
+ 	int bestTU = 0, bestVTUi = 0, bestVTUf = 0, bestVTUa = 0;
+@@ -1262,7 +1268,7 @@ nv50_disp_super_2_2_dp(struct nvkm_head *head, struct nvkm_ior *ior)
+ void
+ nv50_disp_super_2_2(struct nvkm_disp *disp, struct nvkm_head *head)
+ {
+-	const u32 khz = head->asy.hz / 1000;
++	const u32 khz = div_u64(head->asy.hz, 1000);
+ 	struct nvkm_outp *outp;
+ 	struct nvkm_ior *ior;
+ 
+@@ -1308,7 +1314,7 @@ void
+ nv50_disp_super_2_1(struct nvkm_disp *disp, struct nvkm_head *head)
+ {
+ 	struct nvkm_devinit *devinit = disp->engine.subdev.device->devinit;
+-	const u32 khz = head->asy.hz / 1000;
++	const u32 khz = div_u64(head->asy.hz, 1000);
+ 	HEAD_DBG(head, "supervisor 2.1 - %d khz", khz);
+ 	if (khz)
+ 		nvkm_devinit_pll_set(devinit, PLL_VPLL0 + head->id, khz);

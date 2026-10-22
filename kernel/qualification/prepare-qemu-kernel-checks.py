@@ -79,7 +79,7 @@ rm -rf /var/lib/apt/lists/*
 name = 'sparky-lc-qemu-installed-check'
 command = ['docker','run','--name',name,'--cpus','4','--device','/dev/kvm',
     '-v',str(job)+':/packages:ro','-v',str(out)+':/evidence',
-    '-v',str(cfg.path('SPARKY_INPUTS_DIR') / 'kernel-soul/work/hibernate-bench') + ':/bench:ro',
+    '-v',str(cfg.TREE / 'kernel/qualification/hibernate-bench') + ':/bench:ro',
     original['image'],'bash','-c',recipe]
 with (out / 'check.log').open('w') as log:
     process = start_build(command,name,log)

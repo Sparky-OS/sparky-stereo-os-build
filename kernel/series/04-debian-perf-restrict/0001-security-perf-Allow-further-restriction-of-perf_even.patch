@@ -1,0 +1,90 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ben Hutchings <ben@decadent.org.uk>
+Date: Mon, 11 Jan 2016 15:23:55 +0000
+Subject: security,perf: Allow further restriction of perf_event_open
+
+When kernel.perf_event_open is set to 3 (or greater), disallow all
+access to performance events by users without CAP_SYS_ADMIN.
+Add a Kconfig symbol CONFIG_SECURITY_PERF_EVENTS_RESTRICT that
+makes this value the default.
+
+This is based on a similar feature in grsecurity
+(CONFIG_GRKERNSEC_PERF_HARDEN).  This version doesn't include making
+the variable read-only.  It also allows enabling further restriction
+at run-time regardless of whether the default is changed.
+
+Signed-off-by: Ben Hutchings <ben@decadent.org.uk>
+
+Forwarded: https://lore.kernel.org/all/20160111152355.GS28542@decadent.org.uk/
+
+Debian-patch: debian/patches/features/all/security-perf-allow-further-restriction-of-perf_event_open.patch (Debian linux 7.2.9-1, salsa.debian.org/kernel-team/linux tag debian/7.2.9-1)
+---
+ include/linux/perf_event.h | 5 +++++
+ kernel/events/core.c       | 8 ++++++++
+ security/Kconfig           | 9 +++++++++
+ 3 files changed, 22 insertions(+)
+
+diff --git a/include/linux/perf_event.h b/include/linux/perf_event.h
+index 2d5e7687875b0cdd50e3e00532689d9f6292b551..da135257efccf590adfccb4347d25dca950abbdb 100644
+--- a/include/linux/perf_event.h
++++ b/include/linux/perf_event.h
+@@ -1761,6 +1761,11 @@ extern int sysctl_perf_event_sample_rate;
+ 
+ extern void perf_sample_event_took(u64 sample_len_ns);
+ 
++static inline bool perf_paranoid_any(void)
++{
++	return sysctl_perf_event_paranoid > 2;
++}
++
+ /* Access to perf_event_open(2) syscall. */
+ #define PERF_SECURITY_OPEN		0
+ 
+diff --git a/kernel/events/core.c b/kernel/events/core.c
+index 7846d70be57f6c3d2b7c34d5ae6dd7be36bf3c10..3a7d1fcfdf30da65651a2b77ecd306ceca1f574f 100644
+--- a/kernel/events/core.c
++++ b/kernel/events/core.c
+@@ -492,8 +492,13 @@ static __always_inline bool is_guest_mediated_pmu_loaded(void)
+  *   0 - disallow raw tracepoint access for unpriv
+  *   1 - disallow cpu events for unpriv
+  *   2 - disallow kernel profiling for unpriv
++ *   3 - disallow all unpriv perf event use
+  */
++#ifdef CONFIG_SECURITY_PERF_EVENTS_RESTRICT
++int sysctl_perf_event_paranoid __read_mostly = 3;
++#else
+ int sysctl_perf_event_paranoid __read_mostly = 2;
++#endif
+ 
+ /* Minimum for 512 kiB + 1 user control page. 'free' kiB per user. */
+ static int sysctl_perf_event_mlock __read_mostly = 512 + (PAGE_SIZE / 1024);
+@@ -13901,6 +13906,9 @@ SYSCALL_DEFINE5(perf_event_open,
+ 	if (err)
+ 		return err;
+ 
++	if (perf_paranoid_any() && !capable(CAP_SYS_ADMIN))
++		return -EACCES;
++
+ 	/* Do we allow access to perf_event_open(2) ? */
+ 	err = security_perf_event_open(PERF_SECURITY_OPEN);
+ 	if (err)
+diff --git a/security/Kconfig b/security/Kconfig
+index f7bf6cdc6229ebaf41fc72dcad22487ee626a513..229c38cb74387e5c5c5a466d61c36d0ff764ec4f 100644
+--- a/security/Kconfig
++++ b/security/Kconfig
+@@ -70,6 +70,15 @@ config MSEAL_SYSTEM_MAPPINGS
+ 	  For complete descriptions of memory sealing, please see
+ 	  Documentation/userspace-api/mseal.rst
+ 
++config SECURITY_PERF_EVENTS_RESTRICT
++	bool "Restrict unprivileged use of performance events"
++	depends on PERF_EVENTS
++	help
++	  If you say Y here, the kernel.perf_event_paranoid sysctl
++	  will be set to 3 by default, and no unprivileged use of the
++	  perf_event_open syscall will be permitted unless it is
++	  changed.
++
+ config SECURITY
+ 	bool "Enable different security models"
+ 	depends on SYSFS

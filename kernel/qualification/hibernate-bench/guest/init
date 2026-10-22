@@ -1,0 +1,53 @@
+#!/bin/busybox sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# PID 1 of the bench guest. Mounts the pseudo file systems, reads bench.* options from the kernel command line
+# and runs /bench/phase-<phase>.sh. Everything the guest reports goes to the serial console as BENCH| lines.
+export PATH=/bin:/sbin
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev 2>/dev/null
+mount -t tmpfs tmpfs /run
+mount -t tmpfs tmpfs /tmp
+mount -t securityfs securityfs /sys/kernel/security 2>/dev/null
+mount -t efivarfs efivarfs /sys/firmware/efi/efivars 2>/dev/null
+mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null
+# Keep machine-readable results separate from asynchronous kernel printk.
+# In particular, PREEMPT_RT can interleave printk in the middle of a BENCH line.
+exec 0</dev/console 1>/dev/ttyS1 2>&1
+# Firmware may leave escape sequences without a trailing newline on this UART.
+printf '\n'
+# modules for a modular distribution kernel (virtio-blk is one there): decompressed and ordered by the host, loaded before any disk is used
+if [ -f /mods/order ]; then
+    for m in $(cat /mods/order); do
+        if insmod "/mods/$m" 2>/run/insmod.err; then echo "BENCH|info|insmod|$m"; else echo "BENCH|check|insmod_$m|FAIL|$(cat /run/insmod.err)"; fi
+    done
+    # file systems that are modules in a distribution kernel (efivarfs) could not be mounted above
+    mount -t efivarfs efivarfs /sys/firmware/efi/efivars 2>/dev/null
+fi
+. /bench/lib.sh
+load_ctl
+PHASE=$(cmdline_opt bench.phase)
+bench_info phase "${PHASE:-none}"
+# --guest-sysctl FILE: apply the distribution's sysctl file, as systemd-sysctl does at boot (the kexec phase applies it itself, half way through)
+if [ -f /bench/sysctl.conf ] && [ "$PHASE" != kexec ]; then
+    apply_sysctl_file /bench/sysctl.conf
+    bench_info sysctl_file "applied $SYSCTL_N lines, $SYSCTL_BAD not accepted by the kernel"
+fi
+if [ -f "/bench/phase-$PHASE.sh" ]; then
+    . "/bench/phase-$PHASE.sh"
+else
+    bench_check phase_script FAIL "no such phase: $PHASE"
+fi
+bench_info done "$PHASE"
+sync
+# sync drains filesystems, not the serial transmitter. Wait for all result
+# bytes before poweroff; failure removes the completion guarantee.
+if ! /bench/serial-drain /dev/ttyS1; then
+    echo "BENCH|check|protocol_drain|FAIL|serial output did not drain"
+    # Leave the guest alive for the host timeout rather than imply successful
+    # completion when the output path cannot establish delivery.
+    while :; do sleep 60; done
+fi
+poweroff -f
+sleep 5
+echo b > /proc/sysrq-trigger 2>/dev/null

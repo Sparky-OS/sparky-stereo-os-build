@@ -1,0 +1,145 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 1 Oct 2026 01:30:19 -0300
+Subject: drm/i915, drm/nouveau, drm/amdgpu: side by side (full) like frame
+ packing
+
+Where a driver special-cased frame packing as the stereo layout with
+both eyes in one frame, cover side by side (full) as well:
+
+- i915 HDMI and nouveau (connector and DP) mode checks use
+  drm_mode_stereo_clock() instead of doubling the clock for frame
+  packing only.
+- nouveau sizes the head's input viewport, and its viewport limit check,
+  with drm_mode_get_hv_timing(), which holds both eyes for either layout.
+- amdgpu expands the DC stream timing for side by side (full) as for
+  frame packing, and tests the layout with the 3D mask: the bitwise test
+  for frame packing also matched top and bottom (harmless, since
+  drm_mode_set_crtcinfo() leaves that layout unchanged).
+
+Compile-tested; no side by side (full) sink at hand, so not run.
+
+Assisted-by: Claude-Opus-5.5
+(cherry picked from commit 49a82fff368484c0b25c0236f9c2981b367a8905)
+---
+ .../drm/amd/display/amdgpu_dm/amdgpu_dm_connector.c   | 10 ++++++----
+ drivers/gpu/drm/i915/display/intel_hdmi.c             |  4 ++--
+ drivers/gpu/drm/nouveau/dispnv50/head.c               | 11 +++++------
+ drivers/gpu/drm/nouveau/nouveau_connector.c           | 11 +++++++----
+ drivers/gpu/drm/nouveau/nouveau_dp.c                  |  4 ++--
+ 5 files changed, 22 insertions(+), 18 deletions(-)
+
+diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.c b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.c
+index 0f819418f4dc62de9111c23b18f166a3957e9b21..767a081214f5a86675c182ca1573493d4a10034e 100644
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.c
+@@ -1571,12 +1571,14 @@ create_stream_for_sink(struct drm_connector *connector,
+ 	}
+ 
+ 	/*
+-	 * DRM frame-packing modes describe one eye. Userspace presents both
+-	 * eyes in one buffer, so DC must see the expanded link timing too.
++	 * DRM frame packing and side by side (full) modes describe one eye.
++	 * Userspace presents both eyes in one buffer, so DC must see the
++	 * expanded link timing too.
+ 	 */
+-	if (mode.flags & DRM_MODE_FLAG_3D_FRAME_PACKING) {
++	if ((mode.flags & DRM_MODE_FLAG_3D_MASK) == DRM_MODE_FLAG_3D_FRAME_PACKING ||
++	    (mode.flags & DRM_MODE_FLAG_3D_MASK) == DRM_MODE_FLAG_3D_SIDE_BY_SIDE_FULL) {
+ 		drm_mode_set_crtcinfo(&mode, CRTC_STEREO_DOUBLE);
+-		drm_dbg_kms(dev, "expanded HDMI frame-packing timing to %dx%d total %dx%d clock %d kHz\n",
++		drm_dbg_kms(dev, "expanded HDMI stereo timing to %dx%d total %dx%d clock %d kHz\n",
+ 			    mode.crtc_hdisplay, mode.crtc_vdisplay,
+ 			    mode.crtc_htotal, mode.crtc_vtotal, mode.crtc_clock);
+ 	}
+diff --git a/drivers/gpu/drm/i915/display/intel_hdmi.c b/drivers/gpu/drm/i915/display/intel_hdmi.c
+index 8a019d3574df22b6c24bedb9dbca94a347d0cafe..93be8a891ad01536a44d0751049245934122c288 100644
+--- a/drivers/gpu/drm/i915/display/intel_hdmi.c
++++ b/drivers/gpu/drm/i915/display/intel_hdmi.c
+@@ -2083,8 +2083,8 @@ intel_hdmi_mode_valid(struct drm_connector *_connector,
+ 	if (status != MODE_OK)
+ 		return status;
+ 
+-	if ((mode->flags & DRM_MODE_FLAG_3D_MASK) == DRM_MODE_FLAG_3D_FRAME_PACKING)
+-		clock *= 2;
++	/* stereo layouts holding both eyes in one frame need a faster clock */
++	clock = drm_mode_stereo_clock(mode);
+ 
+ 	if (clock > max_dotclk)
+ 		return MODE_CLOCK_HIGH;
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/head.c b/drivers/gpu/drm/nouveau/dispnv50/head.c
+index 31d09560507c6a475c103d886cb2336bf0f17f63..e0f1a7861433e8a1a16f86ad30e69cccb643d2dd 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/head.c
++++ b/drivers/gpu/drm/nouveau/dispnv50/head.c
+@@ -156,7 +156,7 @@ nv50_head_atomic_check_view(struct nv50_head_atom *armh,
+ 	struct drm_display_mode *omode = &asyh->state.adjusted_mode;
+ 	struct drm_display_mode *umode = &asyh->state.mode;
+ 	int mode = asyc->scaler.mode;
+-	int umode_vdisplay, omode_hdisplay, omode_vdisplay;
++	int umode_hdisplay, umode_vdisplay, omode_hdisplay, omode_vdisplay;
+ 
+ 	if (!asyc->scaler.full) {
+ 		if (mode == DRM_MODE_SCALE_NONE)
+@@ -167,12 +167,11 @@ nv50_head_atomic_check_view(struct nv50_head_atom *armh,
+ 	}
+ 
+ 	/* For the user-specified mode, we must ignore doublescan and
+-	 * the like, but honor frame packing.
++	 * the like, but honor stereo layouts holding both eyes (frame
++	 * packing, side by side full).
+ 	 */
+-	umode_vdisplay = umode->vdisplay;
+-	if ((umode->flags & DRM_MODE_FLAG_3D_MASK) == DRM_MODE_FLAG_3D_FRAME_PACKING)
+-		umode_vdisplay += umode->vtotal;
+-	asyh->view.iW = umode->hdisplay;
++	drm_mode_get_hv_timing(umode, &umode_hdisplay, &umode_vdisplay);
++	asyh->view.iW = umode_hdisplay;
+ 	asyh->view.iH = umode_vdisplay;
+ 	/* For the output mode, we can just use the stock helper. */
+ 	drm_mode_get_hv_timing(omode, &omode_hdisplay, &omode_vdisplay);
+diff --git a/drivers/gpu/drm/nouveau/nouveau_connector.c b/drivers/gpu/drm/nouveau/nouveau_connector.c
+index de1301767e3a62591913282efd544da37c52c3b9..6010b496bfc16fe3d4bd934111b733740d33bc94 100644
+--- a/drivers/gpu/drm/nouveau/nouveau_connector.c
++++ b/drivers/gpu/drm/nouveau/nouveau_connector.c
+@@ -1119,10 +1119,13 @@ nouveau_connector_mode_valid(struct drm_connector *connector,
+ 	 */
+ 	if (nouveau_display(connector->dev)->scaler_limits) {
+ 		const u16 max = nouveau_display(connector->dev)->max_viewport;
++		int hdisplay, vdisplay;
+ 
+-		if (mode->hdisplay > max)
++		/* the viewport holds both eyes of a stereo layout */
++		drm_mode_get_hv_timing(mode, &hdisplay, &vdisplay);
++		if (hdisplay > max)
+ 			return MODE_BAD_HVALUE;
+-		if (mode->vdisplay > max)
++		if (vdisplay > max)
+ 			return MODE_BAD_VVALUE;
+ 	}
+ 
+@@ -1163,8 +1166,8 @@ nouveau_connector_mode_valid(struct drm_connector *connector,
+ 		return MODE_BAD;
+ 	}
+ 
+-	if ((mode->flags & DRM_MODE_FLAG_3D_MASK) == DRM_MODE_FLAG_3D_FRAME_PACKING)
+-		clock *= 2;
++	/* stereo layouts holding both eyes in one frame need a faster clock */
++	clock = drm_mode_stereo_clock(mode);
+ 
+ 	if (clock < min_clock)
+ 		return MODE_CLOCK_LOW;
+diff --git a/drivers/gpu/drm/nouveau/nouveau_dp.c b/drivers/gpu/drm/nouveau/nouveau_dp.c
+index 00bbf7a9273bb691beba989f0204c363977adc1c..d130b1e8ff0011b2198a4f9fe3fc65e90ddcb99a 100644
+--- a/drivers/gpu/drm/nouveau/nouveau_dp.c
++++ b/drivers/gpu/drm/nouveau/nouveau_dp.c
+@@ -550,8 +550,8 @@ nv50_dp_mode_valid(struct nouveau_encoder *outp,
+ 	if (mode->flags & DRM_MODE_FLAG_INTERLACE && !outp->caps.dp_interlace)
+ 		return MODE_NO_INTERLACE;
+ 
+-	if ((mode->flags & DRM_MODE_FLAG_3D_MASK) == DRM_MODE_FLAG_3D_FRAME_PACKING)
+-		clock *= 2;
++	/* stereo layouts holding both eyes in one frame need a faster clock */
++	clock = drm_mode_stereo_clock(mode);
+ 
+ 	max_rate = outp->dp.link_nr * outp->dp.link_bw;
+ 	mode_rate = DIV_ROUND_UP(clock * bpp, 8);

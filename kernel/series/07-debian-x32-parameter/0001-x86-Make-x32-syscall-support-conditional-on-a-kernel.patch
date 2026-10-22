@@ -1,0 +1,196 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ben Hutchings <ben@decadent.org.uk>
+Date: Mon, 12 Feb 2018 23:59:26 +0000
+Subject: x86: Make x32 syscall support conditional on a kernel parameter
+
+Enabling x32 in the standard amd64 kernel would increase its attack
+surface while provide no benefit to the vast majority of its users.
+No-one seems interested in regularly checking for vulnerabilities
+specific to x32 (at least no-one with a white hat).
+
+Still, adding another flavour just to turn on x32 seems wasteful.  And
+the only differences on syscall entry are a few instructions that mask
+out the x32 flag and compare the syscall number.
+
+Use a static key to control whether x32 syscalls are really enabled, a
+Kconfig parameter to set its default value and a kernel parameter
+"syscall.x32" to change it at boot time.
+
+Signed-off-by: Ben Hutchings <ben@decadent.org.uk>
+
+Bug-Debian: https://bugs.debian.org/708070
+Forwarded: https://lore.kernel.org/lkml/1415245982.3398.53.camel@decadent.org.uk/T/#u
+
+Debian-patch: debian/patches/features/x86/x86-make-x32-syscall-support-conditional.patch (Debian linux 7.2.9-1, salsa.debian.org/kernel-team/linux tag debian/7.2.9-1)
+[kernel-soul: rebased on v7.3-rc6. do_syscall_x32() in syscall_64.c and the declarations in
+ asm/syscall.h moved since the patch was written, so those two hunks were placed by hand
+ (same code, new place); "paramter" corrected to "parameter" in the Kconfig help.]
+---
+ .../admin-guide/kernel-parameters.txt         |  4 ++
+ arch/x86/Kconfig                              |  8 +++
+ arch/x86/entry/syscall_64.c                   | 50 ++++++++++++++++++-
+ arch/x86/include/asm/elf.h                    |  6 ++-
+ arch/x86/include/asm/syscall.h                | 13 +++++
+ 5 files changed, 79 insertions(+), 2 deletions(-)
+
+diff --git a/Documentation/admin-guide/kernel-parameters.txt b/Documentation/admin-guide/kernel-parameters.txt
+index e3334ab7db42fead84b540726311784ad1338645..85903ba90ba6c06ea40e472b19b5e3070e962263 100644
+--- a/Documentation/admin-guide/kernel-parameters.txt
++++ b/Documentation/admin-guide/kernel-parameters.txt
+@@ -7533,6 +7533,10 @@ Kernel parameters
+ 			later by a loaded module cannot be set this way.
+ 			Example: sysctl.vm.swappiness=40
+ 
++	syscall.x32=	[KNL,x86_64] Enable/disable use of x32 syscalls on
++			an x86_64 kernel where CONFIG_X86_X32 is enabled.
++			Default depends on CONFIG_X86_X32_DISABLED.
++
+ 	sysrq_always_enabled
+ 			[KNL]
+ 			Ignore sysrq setting - this boot parameter will
+diff --git a/arch/x86/Kconfig b/arch/x86/Kconfig
+index 15fd9ec5ecacb76a6dce6a99aaf0808c2e23ff63..b3006116bcc4e3218cfca14f7c2e4594242a4260 100644
+--- a/arch/x86/Kconfig
++++ b/arch/x86/Kconfig
+@@ -3122,6 +3122,14 @@ config COMPAT_32
+ 	select HAVE_UID16
+ 	select OLD_SIGSUSPEND3
+ 
++config X86_X32_DISABLED
++	bool "x32 ABI disabled by default"
++	depends on X86_X32_ABI
++	default n
++	help
++	  Disable the x32 ABI unless explicitly enabled using the
++	  kernel parameter "syscall.x32=y".
++
+ config COMPAT
+ 	def_bool y
+ 	depends on IA32_EMULATION || X86_X32_ABI
+diff --git a/arch/x86/entry/syscall_64.c b/arch/x86/entry/syscall_64.c
+index 966d3d1b75868d5bcf513883bf48e1265d88c2c5..7770bac25deaa8b75d511f5f8a6d2b7aded5f405 100644
+--- a/arch/x86/entry/syscall_64.c
++++ b/arch/x86/entry/syscall_64.c
+@@ -7,6 +7,9 @@
+ #include <linux/syscalls.h>
+ #include <linux/entry-common.h>
+ #include <linux/nospec.h>
++#include <linux/moduleparam.h>
++#undef MODULE_PARAM_PREFIX
++#define MODULE_PARAM_PREFIX "syscall."
+ #include <asm/syscall.h>
+ 
+ #define __SYSCALL(nr, sym) extern long __x64_##sym(const struct pt_regs *);
+@@ -69,7 +72,7 @@ static __always_inline void do_syscall_x32(struct pt_regs *regs, unsigned long n
+ 	/* Adjust the starting offset of the table */
+ 	nr -= __X32_SYSCALL_BIT;
+ 
+-	if (IS_ENABLED(CONFIG_X86_X32_ABI) && likely(nr < X32_NR_syscalls)) {
++	if (IS_ENABLED(CONFIG_X86_X32_ABI) && unlikely(x32_enabled) && likely(nr < X32_NR_syscalls)) {
+ 		nr = array_index_nospec(nr, X32_NR_syscalls);
+ 		regs->ax = x32_sys_call(regs, (unsigned int)nr);
+ 	}
+@@ -128,3 +131,48 @@ __visible noinstr bool do_syscall_64(struct pt_regs *regs, long nr)
+ 	/* Use SYSRET to exit to userspace */
+ 	return true;
+ }
++
++#ifdef CONFIG_X86_X32_ABI
++/* Maybe enable x32 syscalls */
++
++#if defined(CONFIG_X86_X32_DISABLED)
++DEFINE_STATIC_KEY_FALSE(x32_enabled_skey);
++#else
++DEFINE_STATIC_KEY_TRUE(x32_enabled_skey);
++#endif
++
++static int __init x32_param_set(const char *val, const struct kernel_param *p)
++{
++	bool enabled;
++	int ret;
++
++	ret = kstrtobool(val, &enabled);
++	if (ret)
++		return ret;
++	if (IS_ENABLED(CONFIG_X86_X32_DISABLED)) {
++		if (enabled) {
++			static_key_enable(&x32_enabled_skey.key);
++			pr_info("Enabled x32 syscalls\n");
++		}
++	} else {
++		if (!enabled) {
++			static_key_disable(&x32_enabled_skey.key);
++			pr_info("Disabled x32 syscalls\n");
++		}
++	}
++	return 0;
++}
++
++static int x32_param_get(char *buffer, const struct kernel_param *p)
++{
++	return sprintf(buffer, "%c\n",
++		       static_key_enabled(&x32_enabled_skey) ? 'Y' : 'N');
++}
++
++static const struct kernel_param_ops x32_param_ops = {
++	.set = x32_param_set,
++	.get = x32_param_get,
++};
++
++arch_param_cb(x32, &x32_param_ops, NULL, 0444);
++#endif
+diff --git a/arch/x86/include/asm/elf.h b/arch/x86/include/asm/elf.h
+index 4133c790e71a9bff619a7f635b862022a8163832..fa190597c70d9d6e05c6d4f1c61dd5ddc06c30a5 100644
+--- a/arch/x86/include/asm/elf.h
++++ b/arch/x86/include/asm/elf.h
+@@ -12,6 +12,9 @@
+ #include <asm/user.h>
+ #include <asm/auxvec.h>
+ #include <asm/fsgsbase.h>
++#ifndef COMPILE_OFFSETS /* avoid a circular dependency on asm-offsets.h */
++#include <asm/syscall.h>
++#endif
+ 
+ typedef unsigned long elf_greg_t;
+ 
+@@ -147,7 +150,8 @@ do {						\
+ 
+ #define compat_elf_check_arch(x)					\
+ 	((elf_check_arch_ia32(x) && ia32_enabled_verbose()) ||		\
+-	 (IS_ENABLED(CONFIG_X86_X32_ABI) && (x)->e_machine == EM_X86_64))
++	 (IS_ENABLED(CONFIG_X86_X32_ABI) && x32_enabled &&		\
++	  (x)->e_machine == EM_X86_64))
+ 
+ static inline void elf_common_init(struct thread_struct *t,
+ 				   struct pt_regs *regs, const u16 ds)
+diff --git a/arch/x86/include/asm/syscall.h b/arch/x86/include/asm/syscall.h
+index cfe4251fc1fe365d38f8b97bb6449face6e5d831..0f72af1d11bc7fd435e37759c57f8d80d45357bd 100644
+--- a/arch/x86/include/asm/syscall.h
++++ b/arch/x86/include/asm/syscall.h
+@@ -13,6 +13,7 @@
+ #include <uapi/linux/audit.h>
+ #include <linux/sched.h>
+ #include <linux/err.h>
++#include <linux/jump_label.h>
+ #include <asm/thread_info.h>	/* for TS_COMPAT */
+ #include <asm/unistd.h>
+ 
+@@ -20,6 +21,18 @@
+ typedef long (*sys_call_ptr_t)(const struct pt_regs *);
+ extern const sys_call_ptr_t sys_call_table[];
+ 
++#if defined(CONFIG_X86_X32_ABI)
++#if defined(CONFIG_X86_X32_DISABLED)
++DECLARE_STATIC_KEY_FALSE(x32_enabled_skey);
++#define x32_enabled static_branch_unlikely(&x32_enabled_skey)
++#else
++DECLARE_STATIC_KEY_TRUE(x32_enabled_skey);
++#define x32_enabled static_branch_likely(&x32_enabled_skey)
++#endif
++#else
++#define x32_enabled 0
++#endif
++
+ /*
+  * Only the low 32 bits of orig_ax are meaningful, so we return int.
+  * This importantly ignores the high bits on 64-bit, so comparisons

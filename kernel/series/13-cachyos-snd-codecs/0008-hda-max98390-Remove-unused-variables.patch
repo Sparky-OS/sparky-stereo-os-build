@@ -1,0 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Eric Naim <dnaim@cachyos.org>
+Date: Sun, 29 Mar 2026 23:43:25 +0800
+Subject: hda/max98390: Remove unused variables
+
+Signed-off-by: Eric Naim <dnaim@cachyos.org>
+(cherry picked from commit eec9fb473ef79f2d71ef47bd08840a9e421fe592)
+---
+ sound/hda/codecs/side-codecs/max98390_hda.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/sound/hda/codecs/side-codecs/max98390_hda.c b/sound/hda/codecs/side-codecs/max98390_hda.c
+index 869169b3915ba30cf7ff642c9db6ef8a7fa0af13..9503ab9a91945cfd6d21383d5e229791a0419090 100644
+--- a/sound/hda/codecs/side-codecs/max98390_hda.c
++++ b/sound/hda/codecs/side-codecs/max98390_hda.c
+@@ -87,7 +87,7 @@ static const struct component_ops max98390_hda_comp_ops = {
+ static int max98390_hda_init(struct max98390_hda_priv *priv)
+ {
+ 	int ret;
+-	unsigned int reg, global_en, amp_en, pcm_rx;
++	unsigned int reg;
+ 
+ 	/* Check device ID */
+ 	ret = regmap_read(priv->regmap, MAX98390_R24FF_REV_ID, &reg);

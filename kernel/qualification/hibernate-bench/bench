@@ -1,0 +1,593 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# hibernate-bench: boot a Linux kernel in QEMU with OVMF Secure Boot and a software TPM 2.0, hibernate it to a
+# virtio disk, resume it, and try to tamper with the image, the kernel and the TPM in between.
+# Everything uses throw-away keys generated on the first run. See README.md.
+#
+set -u
+BENCH_DIR=$(cd "$(dirname "$0")" && pwd)
+
+# ---------------------------------------------------------------- options and defaults
+WORK=${BENCH_WORK:-$PWD/bench-work}
+KERNEL=""            # unsigned bzImage with CONFIG_EFI_STUB
+KSRC=""              # kernel build tree (O= directory) to build and sign the test module with
+OTHER_KERNEL=""      # a second bzImage for the tamper-kernel-* scenarios
+MODDIR=""            # a distribution kernel's modules (lib/modules/<release>, or a tree that contains it) whose modules the guest loads (virtio-blk is a module there)
+LOAD_MODULES=""      # module names to load in the guest (default with --modules-dir: virtio_blk)
+KERNEL_SIGNED=0      # 1: --kernel and --other-kernel are already signed for Secure Boot (do not sign them)
+DB_CERT=""           # an extra certificate (PEM or DER) to enroll in db, for kernels signed with a key of yours
+GUEST_SCRIPT=""      # a shell script the "custom" scenario runs in the guest (it reports with bench_info / bench_check, see guest/lib.sh)
+GUEST_DIR=""         # files copied to /guest in the initramfs for that script (static tools, or a dynamic one with its libraries)
+GUEST_SYSCTL=""      # a sysctl file (key = value lines) the guest applies at boot, as systemd-sysctl would; the kexec scenario applies it half way through
+EXPECT_KEXEC_FILE=refuse  # kexec scenario: what a signed kexec_file_load does after kernel.kexec_load_disabled=1: refuse (documented) | allow
+INITRD=""            # initramfs of the current scenario (default: the common one)
+MEM=1024
+CPUS=1
+TIMEOUT=420
+ACCEL=auto
+TPM=1
+MODULE_TRUST=db      # db | mok | none
+EXPECT_HIBERNATE=refuse   # lockdown-* scenarios: refuse | allow
+EXPECT_TAMPER=refuse      # tamper-* scenarios: refuse | accept
+EXPECT_UNSIGNED=refuse    # policy scenario: refuse | load (kernel without module signature enforcement)
+EXPECT_TRUSTED=load       # policy scenario: load | refuse (module signed with the enrolled key)
+EXTRA_CMDLINE=""
+PCR=23
+HMODE=shutdown       # shutdown | reboot | platform | suspend (what /sys/power/disk gets)
+COMPRESS=default     # default | none (hibernate=nocompress)
+KEEP=0
+SECURE_BOOT=1
+BIOS=0               # 1: legacy BIOS (QEMU's SeaBIOS) instead of OVMF: no Secure Boot, no EFI variables
+SET_EXPECT_UNSIGNED=0
+
+usage() {
+    cat <<'USAGE'
+usage: bench [options] COMMAND [SCENARIO...]
+
+commands:
+  doctor                 check that the tools, the firmware files and KVM are there
+  run SCENARIO...        run scenarios (names below, or "all")
+  list                   list scenarios
+  clean                  delete the work directory's runs (keys and the initramfs are kept)
+
+options:
+  --kernel FILE          bzImage to test (unsigned; the bench signs it with its own key)           [required for run]
+  --ksrc DIR             build tree of that kernel (the O= directory); used to build benchmod.ko      [required once]
+  --other-kernel FILE    a second bzImage, for tamper-kernel-version / tamper-kernel-code
+  --modules-dir DIR      modules of a distribution kernel (lib/modules/<release>, or a tree that contains it, e.g. an unpacked linux-image package):
+                         the guest loads them from its initramfs (virtio-blk is a module there). --load-modules "A B" names them (default: virtio_blk efivarfs)
+  --kernel-signed        --kernel (and --other-kernel) are already signed for Secure Boot: the bench does not sign them
+  --db-cert FILE         enroll this certificate (PEM or DER) in db too: for a kernel signed with a key of yours; the bench never sees the private key
+  --guest-script FILE    for the "custom" scenario: a shell script that runs in the guest after the boot (BusyBox sh) and reports with bench_info / bench_check
+  --guest-dir DIR        copied to /guest in the guest's initramfs (tools and libraries for that script)
+  --guest-sysctl FILE    a sysctl file (plain "key = value" lines) that the guest applies at boot, like systemd-sysctl; the file's keys that the kernel does not accept are reported
+  --expect-kexec-file allow|refuse   kexec scenario: does a signed kexec_file_load still load after kernel.kexec_load_disabled=1 (default refuse: the documented behaviour)
+  --work DIR             work directory (default ./bench-work, or $BENCH_WORK)
+  --mem MB               guest memory (default 1024)       --cpus N   guest CPUs (default 1)
+  --timeout SEC          per boot (default 420)            --accel kvm|tcg|auto (default auto)
+  --no-tpm               do not attach swtpm
+  --no-secure-boot       leave the firmware in setup mode (Secure Boot off): the control that shows what enforces module signatures
+  --bios                 boot with legacy BIOS (SeaBIOS) instead of UEFI: no Secure Boot, no EFI variables; shows that the kernel also boots there
+  --module-trust MODE    how the module-signing certificate reaches the kernel: db (OVMF db entry, the default),
+                         mok (an emulated shim MokListRT variable) or none (the kernel trusts it by itself)
+  --cmdline "WORDS"      extra kernel command line words for every boot (e.g. "lockdown=integrity")
+  --expect-hibernate allow|refuse   what lockdown-* scenarios expect (default refuse)
+  --expect-tamper refuse|accept     what tamper-* scenarios expect (default refuse)
+  --expect-unsigned refuse|load     policy scenario: unsigned module (default refuse)
+  --expect-trusted load|refuse      policy scenario: module signed by the enrolled key (default load)
+  --pcr N                PCR the tamper-pcr scenario extends before resuming (default 23)
+  --hmode MODE           hibernation mode written to /sys/power/disk (default shutdown)
+  --compress default|none   "none" boots with hibernate=nocompress (no CRC32 in the image)
+  --keep                 keep the per-run work files (disk image, vars) after a scenario passes
+
+scenarios:
+USAGE
+    list_scenarios | sed 's/^/  /'
+}
+
+list_scenarios() {
+    cat <<'EOS'
+policy                    one boot: Secure Boot state, lockdown state, keyrings, unsigned / trusted / rogue module, /sys/power
+tpm                       one boot: is there a TPM 2.0, can PCR 16 and 23 be extended and reset from user space
+hibernate                 hibernate and resume with Secure Boot on, lockdown off; checks continuity, reports canary exposure
+lockdown-integrity        boot with lockdown=integrity and try to hibernate (default expectation: refused)
+lockdown-confidentiality  boot with lockdown=confidentiality and try to hibernate (default expectation: refused)
+tamper-flip               hibernate, flip one bit inside the image, try to resume
+tamper-kernel-version     hibernate, resume with --other-kernel (a different build: different uname -v)
+tamper-kernel-code        hibernate, resume with --other-kernel (same uname -v, different code)
+tamper-pcr                hibernate, extend a PCR before resuming, try to resume
+kexec                     one boot: kexec_load and kexec_file_load (signed and unsigned image) before and after kernel.kexec_load_disabled=1
+custom                    one boot that runs --guest-script in the guest; every bench_check line it prints becomes a result
+EOS
+}
+
+die() { echo "bench: $*" >&2; exit 1; }
+say() { echo "[bench] $*"; }
+
+# ---------------------------------------------------------------- argument parsing
+CMD=""; SCENARIOS=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --kernel) KERNEL=$2; shift 2;;
+        --ksrc) KSRC=$2; shift 2;;
+        --other-kernel) OTHER_KERNEL=$2; shift 2;;
+        --modules-dir) MODDIR=$2; shift 2;;
+        --load-modules) LOAD_MODULES=$2; shift 2;;
+        --kernel-signed) KERNEL_SIGNED=1; shift;;
+        --db-cert) DB_CERT=$2; shift 2;;
+        --guest-script) GUEST_SCRIPT=$2; shift 2;;
+        --guest-dir) GUEST_DIR=$2; shift 2;;
+        --guest-sysctl) GUEST_SYSCTL=$2; shift 2;;
+        --expect-kexec-file) EXPECT_KEXEC_FILE=$2; shift 2;;
+        --work) WORK=$2; shift 2;;
+        --mem) MEM=$2; shift 2;;
+        --cpus) CPUS=$2; shift 2;;
+        --timeout) TIMEOUT=$2; shift 2;;
+        --accel) ACCEL=$2; shift 2;;
+        --no-tpm) TPM=0; shift;;
+        --no-secure-boot) SECURE_BOOT=0; shift;;
+        --bios) BIOS=1; SECURE_BOOT=0; shift;;
+        --module-trust) MODULE_TRUST=$2; shift 2;;
+        --cmdline) EXTRA_CMDLINE=$2; shift 2;;
+        --expect-hibernate) EXPECT_HIBERNATE=$2; shift 2;;
+        --expect-tamper) EXPECT_TAMPER=$2; shift 2;;
+        --expect-unsigned) EXPECT_UNSIGNED=$2; SET_EXPECT_UNSIGNED=1; shift 2;;
+        --expect-trusted) EXPECT_TRUSTED=$2; shift 2;;
+        --pcr) PCR=$2; shift 2;;
+        --hmode) HMODE=$2; shift 2;;
+        --compress) COMPRESS=$2; shift 2;;
+        --keep) KEEP=1; shift;;
+        -h|--help) usage; exit 0;;
+        doctor|run|list|clean) CMD=$1; shift;;
+        -*) die "unknown option $1";;
+        *) SCENARIOS+=("$1"); shift;;
+    esac
+done
+[ -n "$CMD" ] || { usage; exit 2; }
+mkdir -p "$WORK"
+WORK=$(cd "$WORK" && pwd)
+
+# ---------------------------------------------------------------- tools and firmware
+find_first() { for f in "$@"; do [ -e "$f" ] && { echo "$f"; return 0; }; done; return 1; }
+OVMF_CODE=$(find_first /usr/share/OVMF/OVMF_CODE_4M.secboot.fd /usr/share/OVMF/OVMF_CODE.secboot.fd /usr/share/edk2/ovmf/OVMF_CODE.secboot.fd /usr/share/edk2/x64/OVMF_CODE.secboot.4m.fd || true)
+OVMF_VARS=$(find_first /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/OVMF/OVMF_VARS.fd /usr/share/edk2/ovmf/OVMF_VARS.fd /usr/share/edk2/x64/OVMF_VARS.4m.fd || true)
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+doctor() {
+    local bad=0
+    for t in qemu-system-x86_64 swtpm swtpm_ioctl virt-fw-vars sbsign openssl gcc make python3 cpio gzip; do
+        if have "$t"; then printf '  ok       %s\n' "$t"; else printf '  MISSING  %s\n' "$t"; bad=1; fi
+    done
+    local bb; bb=$(find_first /usr/bin/busybox /bin/busybox || true)
+    if [ -n "$bb" ] && "$bb" --list >/dev/null 2>&1; then printf '  ok       busybox (%s)\n' "$bb"; else printf '  MISSING  busybox (static build: Debian busybox-static)\n'; bad=1; fi
+    [ -n "$OVMF_CODE" ] && printf '  ok       OVMF code with Secure Boot: %s\n' "$OVMF_CODE" || { printf '  MISSING  OVMF_CODE*.secboot.fd (Debian: ovmf)\n'; bad=1; }
+    [ -n "$OVMF_VARS" ] && printf '  ok       OVMF vars template: %s\n' "$OVMF_VARS" || { printf '  MISSING  OVMF_VARS*.fd\n'; bad=1; }
+    if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then printf '  ok       /dev/kvm (hardware acceleration)\n'; else printf '  note     no access to /dev/kvm: QEMU will use TCG (slow, but it works)\n'; fi
+    return $bad
+}
+
+# ---------------------------------------------------------------- throw-away keys
+GUID=11111111-2222-3333-4444-555555555555   # owner GUID of every enrolled certificate (not a secret, not meaningful)
+
+mkkey() {   # mkkey NAME CN EXTENSIONS
+    local n=$1 cn=$2 ext=$3
+    [ -s "$WORK/keys/$n.crt" ] && return 0
+    mkdir -p "$WORK/keys"
+    openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -sha256 -subj "/CN=$cn/" \
+        -keyout "$WORK/keys/$n.key" -out "$WORK/keys/$n.crt" -addext "$ext" 2>/dev/null || die "openssl failed for $n"
+    chmod 600 "$WORK/keys/$n.key"
+    openssl x509 -in "$WORK/keys/$n.crt" -outform DER -out "$WORK/keys/$n.der"
+}
+
+make_keys() {
+    mkkey pk "hibernate-bench PK (throw-away)" "basicConstraints=critical,CA:TRUE"
+    mkkey kek "hibernate-bench KEK (throw-away)" "basicConstraints=critical,CA:TRUE"
+    mkkey db "hibernate-bench db, signs kernels (throw-away)" "extendedKeyUsage=codeSigning"
+    mkkey modtrusted "hibernate-bench module key, enrolled (throw-away)" "keyUsage=digitalSignature"
+    mkkey modrogue "hibernate-bench module key, NOT enrolled (throw-away)" "keyUsage=digitalSignature"
+}
+
+# ---------------------------------------------------------------- test module
+build_modules() {
+    local out="$WORK/module"
+    [ -s "$out/benchmod-unsigned.ko" ] && [ "${REBUILD_MODULE:-0}" != 1 ] && return 0
+    [ -n "$KSRC" ] || die "--ksrc DIR is needed once to build the test module (the kernel's build tree, with scripts/sign-file)"
+    [ -x "$KSRC/scripts/sign-file" ] || die "$KSRC/scripts/sign-file not found: build the kernel tree with module signing enabled (make modules_prepare)"
+    rm -rf "$out"; mkdir -p "$out"
+    cp "$BENCH_DIR/module/benchmod.c" "$BENCH_DIR/module/Makefile" "$out/"
+    say "building benchmod.ko against $KSRC"
+    make -C "$KSRC" M="$out" modules >"$out/build.log" 2>&1 || { tail -20 "$out/build.log"; die "module build failed"; }
+    cp "$out/benchmod.ko" "$out/benchmod-unsigned.ko"
+    "$KSRC/scripts/sign-file" sha256 "$WORK/keys/modtrusted.key" "$WORK/keys/modtrusted.der" "$out/benchmod.ko" 2>/dev/null || \
+        "$KSRC/scripts/sign-file" sha256 "$WORK/keys/modtrusted.key" "$WORK/keys/modtrusted.crt" "$out/benchmod.ko"
+    # sign-file signs in place: keep copies
+    cp "$out/benchmod.ko" "$out/benchmod-signed-trusted.ko"
+    cp "$out/benchmod-unsigned.ko" "$out/benchmod.ko"
+    "$KSRC/scripts/sign-file" sha256 "$WORK/keys/modrogue.key" "$WORK/keys/modrogue.crt" "$out/benchmod.ko"
+    cp "$out/benchmod.ko" "$out/benchmod-signed-rogue.ko"
+    rm -f "$out/benchmod.ko"
+}
+
+# ---------------------------------------------------------------- initramfs
+build_initramfs() {
+    local t="$WORK/initrd-tree" bb
+    bb=$(find_first /usr/bin/busybox /bin/busybox) || die "busybox not found"
+    rm -rf "$t"; mkdir -p "$t"/{bin,sbin,proc,sys,dev,run,tmp,etc,bench}
+    cp "$bb" "$t/bin/busybox"
+    for a in $("$t/bin/busybox" --list); do [ "$a" = busybox ] || ln -sf busybox "$t/bin/$a"; done
+    cp "$BENCH_DIR/guest/init" "$t/init"; chmod 755 "$t/init"
+    cp "$BENCH_DIR"/guest/lib.sh "$BENCH_DIR"/guest/phase-*.sh "$t/bench/"
+    cp "$WORK"/module/benchmod-*.ko "$t/bench/" 2>/dev/null || true
+    gcc -static -O2 -o "$t/bench/tpmcli" "$BENCH_DIR/tools/tpmcli.c" || die "cannot build tpmcli"
+    gcc -static -O2 -o "$t/bench/kexectest" "$BENCH_DIR/tools/kexectest.c" || die "cannot build kexectest"
+    gcc -static -O2 -Wall -Wextra -Werror -o "$t/bench/serial-drain" "$BENCH_DIR/tools/serial-drain.c" || die "cannot build serial-drain"
+    if [ -n "$GUEST_SYSCTL" ]; then [ -r "$GUEST_SYSCTL" ] || die "cannot read --guest-sysctl $GUEST_SYSCTL"; cp "$GUEST_SYSCTL" "$t/bench/sysctl.conf"; fi
+    if [ -n "$GUEST_SCRIPT" ]; then [ -r "$GUEST_SCRIPT" ] || die "cannot read --guest-script $GUEST_SCRIPT"; cp "$GUEST_SCRIPT" "$t/bench/phase-custom.sh"; fi
+    if [ -n "$GUEST_DIR" ]; then [ -d "$GUEST_DIR" ] || die "no such directory: --guest-dir $GUEST_DIR"; mkdir -p "$t/guest"; cp -a "$GUEST_DIR"/. "$t/guest/"; fi
+    if [ -n "$MODDIR" ]; then
+        local kd
+        if [ -f "$MODDIR/modules.dep" ]; then kd=$MODDIR; else kd=$(ls -d "$MODDIR"/lib/modules/*/ 2>/dev/null | head -n 1); kd=${kd%/}; fi
+        [ -f "$kd/modules.dep" ] || die "no modules.dep under --modules-dir $MODDIR"
+        python3 "$BENCH_DIR/tools/modload.py" "$kd" "$t/mods" ${LOAD_MODULES:-virtio_blk efivarfs} || die "modload failed"
+    fi
+    python3 "$BENCH_DIR/tools/mkcpio.py" "$t" "$WORK/initramfs.cpio.gz" || die "cpio failed"
+}
+
+# ---------------------------------------------------------------- one VM boot
+SWTPM_PID=""
+start_swtpm() {   # start_swtpm DIR
+    local d=$1
+    mkdir -p "$d"
+    rm -f "$d/swtpm.sock"
+    swtpm socket --tpm2 --tpmstate "dir=$d" --ctrl "type=unixio,path=$d/swtpm.sock" \
+        --log "file=$d/swtpm.log,level=5" --flags not-need-init,startup-clear >/dev/null 2>&1 &
+    SWTPM_PID=$!
+    for _ in $(seq 1 50); do [ -S "$d/swtpm.sock" ] && return 0; sleep 0.1; done
+    die "swtpm did not create its socket"
+}
+stop_swtpm() {   # swtpm can spin after QEMU was killed in the middle of a command: ask politely, then force
+    [ -n "$SWTPM_PID" ] || return 0
+    kill "$SWTPM_PID" 2>/dev/null
+    for _ in $(seq 1 30); do kill -0 "$SWTPM_PID" 2>/dev/null || break; sleep 0.1; done
+    kill -KILL "$SWTPM_PID" 2>/dev/null
+    wait "$SWTPM_PID" 2>/dev/null
+    SWTPM_PID=""
+}
+
+accel_args() {
+    local a=$ACCEL
+    if [ "$a" = auto ]; then if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then a=kvm; else a=tcg; fi; fi
+    if [ "$a" = kvm ]; then echo "-accel kvm -cpu host"; else echo "-accel tcg,thread=multi -cpu max"; fi
+}
+
+# run_boot RUNDIR NAME KERNEL_SIGNED CMDLINE   -> console log in RUNDIR/NAME.log, qemu exit status in RUNDIR/NAME.status
+run_boot() {
+    local run=$1 name=$2 kern=$3 cmdline=$4
+    local log="$run/$name.log"
+    local kernel_log="$run/$name.kernel.log" protocol_log="$run/$name.protocol.log"
+    : > "$log"
+    : > "$kernel_log"; : > "$protocol_log"
+    local tpmargs=()
+    if [ "$TPM" = 1 ]; then
+        start_swtpm "$run/tpm"
+        tpmargs=(-chardev "socket,id=chrtpm,path=$run/tpm/swtpm.sock" -tpmdev emulator,id=tpm0,chardev=chrtpm -device tpm-crb,tpmdev=tpm0)
+    fi
+    local fw=(-global driver=cfi.pflash01,property=secure,value=on -drive "if=pflash,format=raw,unit=0,file=$OVMF_CODE,readonly=on" -drive "if=pflash,format=raw,unit=1,file=$run/vars.fd")
+    [ "$BIOS" = 1 ] && fw=()
+    # shellcheck disable=SC2046
+    timeout --signal=KILL "$TIMEOUT" qemu-system-x86_64 -name "bench-$name" -machine q35,smm=on $(accel_args) -smp "$CPUS" -m "$MEM" \
+        -display none -monitor none -serial "file:$kernel_log" -serial "file:$protocol_log" -no-reboot \
+        "${fw[@]}" \
+        -drive "file=$run/swap.img,format=raw,if=none,id=swap0" -device virtio-blk-pci,drive=swap0,serial=benchswap \
+        -drive "file=$run/ctl.img,format=raw,if=none,id=ctl0" -device virtio-blk-pci,drive=ctl0,serial=benchctl \
+        "${tpmargs[@]}" \
+        -kernel "$kern" -initrd "${INITRD:-$WORK/initramfs.cpio.gz}" -append "$cmdline" \
+        >"$run/$name.qemu.out" 2>&1
+    local rc=$?
+    echo "$rc" > "$run/$name.status"
+    stop_swtpm
+    # Preserve both original streams. The compatibility log is concatenated,
+    # not chronological: each structured BENCH record stays intact.
+    cat "$kernel_log" > "$log"
+    printf '\n' >> "$log"
+    cat "$protocol_log" >> "$log"
+    return 0
+}
+
+sign_kernel() {   # sign_kernel IN OUT
+    if [ "$KERNEL_SIGNED" = 1 ]; then cp "$1" "$2"; return 0; fi
+    sbsign --key "$WORK/keys/db.key" --cert "$WORK/keys/db.crt" --output "$2" "$1" >/dev/null 2>&1 || die "sbsign failed for $1"
+}
+
+# The command line is the same for every boot of a scenario (and the two boots of a hibernation scenario must not differ at all: x86
+# hibernation refuses an image when the memory map differs). Per-boot settings go to the control disk instead.
+base_cmdline() {
+    local c="console=ttyS0,115200 loglevel=7 panic=-1 no_timer_check"
+    [ "$COMPRESS" = none ] && c="$c hibernate=nocompress"
+    echo "$c $EXTRA_CMDLINE"
+}
+
+set_ctl() {   # set_ctl PHASE [key=value ...] : write the control disk read by the next boot
+    local phase=$1; shift
+    { printf 'bench.phase=%s\nbench.hmode=%s\nbench.expect_unsigned=%s\nbench.expect_trusted=%s\nbench.expect_sb=%s\n' "$phase" "$HMODE" "$EXPECT_UNSIGNED" "$EXPECT_TRUSTED" "$SECURE_BOOT"
+      for kv in "$@"; do printf '%s\n' "$kv"; done
+      head -c 512 /dev/zero; } | head -c 512 | dd of="$RUN/ctl.img" conv=notrunc bs=512 count=1 2>/dev/null
+}
+
+# ---------------------------------------------------------------- run directory
+new_run() {   # new_run SCENARIO -> sets RUN, prepares vars.fd, swap.img
+    local ts; ts=$(date +%Y%m%d-%H%M%S)
+    RUN="$WORK/runs/$ts-$1"
+    mkdir -p "$RUN"
+    local args=(--input "$OVMF_VARS" --output "$RUN/vars.fd" --set-pk "$GUID" "$WORK/keys/pk.crt" --add-kek "$GUID" "$WORK/keys/kek.crt" --add-db "$GUID" "$WORK/keys/db.crt" --no-microsoft --sb)
+    [ "$MODULE_TRUST" = db ] && args+=(--add-db "$GUID" "$WORK/keys/modtrusted.crt")
+    if [ -n "$DB_CERT" ]; then
+        # a certificate of yours for a kernel you signed yourself: PEM or DER in, PEM for virt-fw-vars
+        openssl x509 -in "$DB_CERT" -out "$WORK/keys/extra-db.crt" 2>/dev/null || openssl x509 -inform DER -in "$DB_CERT" -out "$WORK/keys/extra-db.crt" || die "cannot read $DB_CERT as a certificate"
+        args+=(--add-db "$GUID" "$WORK/keys/extra-db.crt")
+    fi
+    [ "$MODULE_TRUST" = mok ] && args+=(--add-mok "$GUID" "$WORK/keys/modtrusted.crt")
+    if [ "$SECURE_BOOT" = 1 ]; then
+        virt-fw-vars "${args[@]}" >"$RUN/vars.log" 2>&1 || { cat "$RUN/vars.log"; die "virt-fw-vars failed"; }
+    else
+        if [ "$BIOS" = 1 ]; then echo "legacy BIOS (SeaBIOS): no variable store" > "$RUN/vars.log"; else cp "$OVMF_VARS" "$RUN/vars.fd"; echo "Secure Boot off: variable store without keys (setup mode)" > "$RUN/vars.log"; fi
+        [ "$SET_EXPECT_UNSIGNED" = 1 ] || EXPECT_UNSIGNED=load; EXPECT_TRUSTED=load
+    fi
+    if [ "$MODULE_TRUST" = mok ] && [ "$SECURE_BOOT" = 1 ]; then
+        python3 "$BENCH_DIR/tools/mokrt.py" "$RUN/vars.fd" || die "could not add MokListRT"
+    fi
+    truncate -s 1G "$RUN/swap.img"
+    truncate -s 1M "$RUN/ctl.img"
+    : > "$RUN/events.txt"
+}
+
+# ---------------------------------------------------------------- result helpers
+RESULTS=()
+record() {   # record PASS|FAIL|INFO name detail
+    printf '%-5s %-34s %s\n' "$1" "$2" "$3" | tee -a "$RUN/events.txt"
+    [ "$1" = FAIL ] && SCENARIO_FAIL=1
+    RESULTS+=("$1 $2")
+}
+
+has() { grep -q -F -- "$2" "$1" 2>/dev/null; }                # has LOGFILE FIXED-STRING
+line() { grep -F -- "$2" "$1" 2>/dev/null | head -n 1; }       # line LOGFILE FIXED-STRING
+show() {                                                       # show LOGFILE pattern : print guest results (check lines)
+    grep -E '^BENCH\|(check|info|log)\|'"$2" "$1" 2>/dev/null | sed 's/^BENCH|//' | sed 's/^/        /'
+}
+boot_done() {
+    [ "$(cat "${1%.log}.status" 2>/dev/null)" = 0 ] &&
+        has "$1" 'BENCH|info|done|' && ! has "$1" 'BENCH|check|protocol_drain|FAIL|'
+}
+
+dump_guest() {   # dump all guest BENCH lines of a log, indented
+    grep -E '^BENCH\|' "$1" | sed 's/^BENCH|//; s/^/        /'
+}
+
+# ---------------------------------------------------------------- scenarios
+sc_prepare() {   # sc_prepare SCENARIO
+    new_run "$1"
+    SCENARIO_FAIL=0
+    SIGNED="$WORK/kernel.signed"
+    sign_kernel "$KERNEL" "$SIGNED"
+    say "run directory: $RUN"
+}
+
+sc_policy() {
+    sc_prepare policy
+    set_ctl probe
+    run_boot "$RUN" boot1 "$SIGNED" "$(base_cmdline)"
+    if ! boot_done "$RUN/boot1.log"; then record FAIL boot "the guest did not finish (see $RUN/boot1.log)"; tail -n 20 "$RUN/boot1.log" | sed 's/^/        /'; return; fi
+    dump_guest "$RUN/boot1.log"
+    for c in firmware_secure_boot module_unsigned_refused module_signed_trusted_loads module_signed_rogue_refused; do
+        l=$(grep -F "BENCH|check|$c|" "$RUN/boot1.log" | head -n 1)
+        if [ -z "$l" ]; then record FAIL "$c" "no result in the log"; else record "$(echo "$l" | cut -d'|' -f4)" "$c" "$(echo "$l" | cut -d'|' -f5-)"; fi
+    done
+}
+
+sc_hibernate_boots() {   # sc_hibernate_boots EXTRA1 EXTRA2 [KERNEL2 [TAMPER_CMD]]: boot 1 hibernates, optional tamper, boot 2 resumes
+    local x2=$2 kern2=${3:-$SIGNED} tamper=${4:-}   # $1 (extra command line words) is part of EXTRA_CMDLINE now
+    # boot 0: lets the firmware's variable store settle so that boots 1 and 2 see the same memory map
+    set_ctl warmup
+    run_boot "$RUN" boot0 "$SIGNED" "$(base_cmdline)"
+    set_ctl hibernate
+    run_boot "$RUN" boot1 "$SIGNED" "$(base_cmdline)"
+    if ! boot_done "$RUN/boot1.log"; then
+        if has "$RUN/boot1.log" 'BENCH|info|hibernating|'; then :   # the VM powered off while hibernating: no "done" line is expected
+        else record FAIL boot1 "the guest did not finish (see $RUN/boot1.log)"; tail -n 20 "$RUN/boot1.log" | sed 's/^/        /'; return 1; fi
+    fi
+    if has "$RUN/boot1.log" 'BENCH|check|hibernate_entered|FAIL'; then
+        HIB=refused
+        return 0
+    fi
+    if ! has "$RUN/boot1.log" 'BENCH|info|hibernating|'; then record FAIL boot1 "the guest never reached the hibernation step"; dump_guest "$RUN/boot1.log"; return 1; fi
+    HIB=written
+    python3 "$BENCH_DIR/tools/swsusp.py" info "$RUN/swap.img" > "$RUN/image-info.txt" 2>&1
+    # the swap header is marked only when the whole image was written: a guest that started to hibernate and died (oops, panic, hang) leaves none
+    if ! grep -q 'present=True' "$RUN/image-info.txt"; then HIB=failed; return 0; fi
+    [ -n "$tamper" ] && { eval "$tamper"; }
+    set_ctl resume $x2
+    run_boot "$RUN" boot2 "$kern2" "$(base_cmdline)"
+    return 0
+}
+
+hib_failed() {   # hib_failed NAME : the guest started to hibernate but no image was completed (kernel oops, panic or hang while writing)
+    local why
+    why=$(grep -E 'Oops|BUG:|Kernel panic|general protection|Call Trace' "$RUN/boot1.log" | head -n 2 | cut -c1-150 | tr '\n' ';')
+    record FAIL "$1" "hibernation started but no image was completed (the swap header is not marked): ${why:-no kernel message found, see boot1.log}"
+}
+
+canary_report() {   # canary_report : search the image for the planted canary (plaintext exposure)
+    local h t x
+    h=$(sed -n 's/^BENCH|info|canary_head|//p' "$RUN/boot1.log" | head -n 1)
+    t=$(sed -n 's/^BENCH|info|canary_tail|//p' "$RUN/boot1.log" | head -n 1)
+    x=$(sed -n 's/^BENCH|info|canary_text|//p' "$RUN/boot1.log" | head -n 1)
+    [ -n "$h" ] || return 0
+    local out
+    out=$(python3 "$BENCH_DIR/tools/swsusp.py" scan "$RUN/swap.img" "hex:$h" "hex:$t" "txt:$x" 2>&1); local rc=$?
+    echo "$out" | sed 's/^/        scan: /'
+    if [ $rc -eq 0 ]; then record INFO canary_in_image "PLAINTEXT: the random canary / text marker is readable in the image on disk"; CANARY=plaintext
+    else record INFO canary_in_image "not found: the image is not readable as plaintext (compressed, encrypted or not written)"; CANARY=hidden; fi
+}
+
+sc_tpm() {
+    sc_prepare tpm
+    [ "$TPM" = 1 ] || die "the tpm scenario needs the TPM"
+    set_ctl tpm
+    run_boot "$RUN" boot1 "$SIGNED" "$(base_cmdline)"
+    if ! boot_done "$RUN/boot1.log"; then record FAIL boot "the guest did not finish (see $RUN/boot1.log)"; tail -n 20 "$RUN/boot1.log" | sed 's/^/        /'; return; fi
+    dump_guest "$RUN/boot1.log"
+    for c in tpm_device pcr16_extend_reset pcr23_extend_reset; do
+        l=$(grep -F "BENCH|check|$c|" "$RUN/boot1.log" | head -n 1)
+        if [ -z "$l" ]; then record FAIL "$c" "no result in the log"; else record "$(echo "$l" | cut -d'|' -f4)" "$c" "$(echo "$l" | cut -d'|' -f5-)"; fi
+    done
+}
+
+sc_kexec() {
+    sc_prepare kexec
+    # the guest needs the kernel as a file: the signed image (the one that boots) and, when there is one, the unsigned image: both go into this scenario's own initramfs
+    local t="$WORK/initrd-tree"
+    cp "$SIGNED" "$t/bench/kernel.signed"
+    [ "$KERNEL_SIGNED" = 1 ] || cp "$KERNEL" "$t/bench/kernel.unsigned"
+    # with --kernel-signed the unsigned twin of the image (same build) can be given in KEXEC_UNSIGNED, for the unsigned kexec_file_load case
+    [ -n "${KEXEC_UNSIGNED:-}" ] && cp "$KEXEC_UNSIGNED" "$t/bench/kernel.unsigned"
+    python3 "$BENCH_DIR/tools/mkcpio.py" "$t" "$WORK/initramfs-kexec.cpio.gz" || die "cpio failed"
+    rm -f "$t/bench/kernel.signed" "$t/bench/kernel.unsigned"
+    set_ctl kexec "bench.expect_kexec_file=$EXPECT_KEXEC_FILE"
+    INITRD="$WORK/initramfs-kexec.cpio.gz" run_boot "$RUN" boot1 "$SIGNED" "$(base_cmdline)"
+    if ! boot_done "$RUN/boot1.log"; then record FAIL boot "the guest did not finish (see $RUN/boot1.log)"; tail -n 20 "$RUN/boot1.log" | sed 's/^/        /'; return; fi
+    dump_guest "$RUN/boot1.log"
+    local n res detail
+    while IFS='|' read -r _ _ n res detail; do record "$res" "$n" "$detail"; done < <(grep -E '^BENCH\|check\|' "$RUN/boot1.log")
+}
+
+sc_custom() {
+    sc_prepare custom
+    [ -n "$GUEST_SCRIPT" ] || die "the custom scenario needs --guest-script FILE"
+    set_ctl custom
+    run_boot "$RUN" boot1 "$SIGNED" "$(base_cmdline)"
+    if ! boot_done "$RUN/boot1.log"; then record FAIL boot "the guest did not finish (see $RUN/boot1.log)"; tail -n 20 "$RUN/boot1.log" | sed 's/^/        /'; return; fi
+    dump_guest "$RUN/boot1.log"
+    local n res detail
+    while IFS='|' read -r _ _ n res detail; do record "$res" "$n" "$detail"; done < <(grep -E '^BENCH\|check\|' "$RUN/boot1.log")
+}
+
+sc_hibernate() {
+    sc_prepare hibernate
+    sc_hibernate_boots "" "" || return
+    if [ "$HIB" = failed ]; then hib_failed hibernate_entered; return; fi
+    if [ "$HIB" = refused ]; then record FAIL hibernate_entered "hibernation was refused with lockdown off"; dump_guest "$RUN/boot1.log"; return; fi
+    record PASS hibernate_entered "the image was written and the VM powered off"
+    canary_report
+    if has "$RUN/boot2.log" 'BENCH|check|hibernate_resumed|PASS'; then record PASS hibernate_resumed "$(line "$RUN/boot2.log" 'BENCH|check|hibernate_resumed|PASS' | cut -d'|' -f5-)"
+    else record FAIL hibernate_resumed "the image was not resumed"; dump_guest "$RUN/boot2.log"; fi
+}
+
+sc_lockdown() {   # sc_lockdown MODE
+    local mode=$1
+    sc_prepare "lockdown-$mode"
+    local saved_cmdline=$EXTRA_CMDLINE
+    EXTRA_CMDLINE="$EXTRA_CMDLINE lockdown=$mode"      # the same command line for both boots
+    sc_hibernate_boots "" "" || { EXTRA_CMDLINE=$saved_cmdline; return; }
+    EXTRA_CMDLINE=$saved_cmdline
+    if [ "$HIB" = failed ]; then hib_failed "hibernation_$mode"; return; fi
+    if [ "$EXPECT_HIBERNATE" = refuse ]; then
+        if [ "$HIB" = refused ]; then
+            record PASS "hibernation_refused_$mode" "$(grep -F 'BENCH|log|refusal|' "$RUN/boot1.log" | grep -i -m1 lockdown | cut -d'|' -f4- || true)"
+            dump_guest "$RUN/boot1.log" | grep -i 'lockdown\|refus' | head -n 6
+        else
+            record FAIL "hibernation_refused_$mode" "hibernation was allowed under lockdown=$mode"
+            canary_report
+        fi
+    else   # allow: the kernel is expected to hibernate and resume under lockdown, and the image must not be plaintext
+        if [ "$HIB" = refused ]; then record FAIL "hibernation_allowed_$mode" "hibernation was refused under lockdown=$mode"; dump_guest "$RUN/boot1.log" | tail -n 12; return; fi
+        record PASS "hibernation_allowed_$mode" "the image was written"
+        canary_report
+        [ "${CANARY:-}" = plaintext ] && record FAIL "image_confidential_$mode" "hibernation was allowed under lockdown=$mode but the image is readable" || record PASS "image_confidential_$mode" "canary not readable in the image"
+        if has "$RUN/boot2.log" 'BENCH|check|hibernate_resumed|PASS'; then record PASS "resumed_$mode" "$(line "$RUN/boot2.log" 'BENCH|check|hibernate_resumed|PASS' | cut -d'|' -f5-)"
+        else record FAIL "resumed_$mode" "the image was not resumed"; dump_guest "$RUN/boot2.log" | tail -n 14; fi
+    fi
+}
+
+tamper_verdict() {   # tamper_verdict NAME
+    local n=$1
+    if has "$RUN/boot2.log" 'BENCH|check|hibernate_resumed|PASS'; then outcome=accepted; else
+    if has "$RUN/boot2.log" 'BENCH|check|resume_returned|'; then outcome=refused; else outcome=unknown; fi; fi
+    if [ "$outcome" = unknown ]; then record FAIL "$n" "boot 2 neither resumed nor reported a refusal (hang or crash?), see $RUN/boot2.log"; tail -n 15 "$RUN/boot2.log" | sed 's/^/        /'; return; fi
+    local why; why=$(grep -F 'BENCH|log|resume|' "$RUN/boot2.log" | grep -E 'PM:|snapenc|ockdown' | tail -n 4 | cut -d'|' -f4- | tr '\n' ';')
+    if [ "$outcome" = "${EXPECT_TAMPER/refuse/refused}" ] || [ "$outcome" = "${EXPECT_TAMPER/accept/accepted}" ]; then record PASS "$n" "resume $outcome (expected: $EXPECT_TAMPER) $why"
+    else record FAIL "$n" "resume $outcome but the scenario expects: $EXPECT_TAMPER. $why"; fi
+}
+
+sc_tamper_flip() {
+    sc_prepare tamper-flip
+    sc_hibernate_boots "" "" "$SIGNED" 'python3 "$BENCH_DIR/tools/swsusp.py" flip "$RUN/swap.img" | sed "s/^/        /" | tee -a "$RUN/events.txt"' || return
+    [ "$HIB" = failed ] && { hib_failed hibernate_entered; return; }
+    [ "$HIB" = refused ] && { record FAIL hibernate_entered "hibernation was refused, nothing to tamper with"; return; }
+    canary_report
+    tamper_verdict tamper_flip_bit
+}
+
+sc_tamper_kernel() {   # sc_tamper_kernel NAME
+    local n=$1
+    [ -n "$OTHER_KERNEL" ] || die "--other-kernel is needed for $n"
+    sc_prepare "$n"
+    local other="$WORK/kernel.other.signed"
+    sign_kernel "$OTHER_KERNEL" "$other"
+    sc_hibernate_boots "" "" "$other" || return
+    [ "$HIB" = failed ] && { hib_failed hibernate_entered; return; }
+    [ "$HIB" = refused ] && { record FAIL hibernate_entered "hibernation was refused, nothing to tamper with"; return; }
+    tamper_verdict "$n"
+}
+
+sc_tamper_pcr() {
+    sc_prepare tamper-pcr
+    [ "$TPM" = 1 ] || die "tamper-pcr needs the TPM"
+    sc_hibernate_boots "" "bench.tamper_pcr=$PCR" || return
+    [ "$HIB" = failed ] && { hib_failed hibernate_entered; return; }
+    [ "$HIB" = refused ] && { record FAIL hibernate_entered "hibernation was refused, nothing to tamper with"; return; }
+    tamper_verdict "tamper_pcr$PCR"
+}
+
+run_scenarios() {
+    [ -n "$KERNEL" ] || die "--kernel FILE is required"
+    [ -r "$KERNEL" ] || die "cannot read $KERNEL"
+    [ "$BIOS" = 1 ] || { [ -n "$OVMF_CODE" ] && [ -n "$OVMF_VARS" ]; } || die "OVMF firmware with Secure Boot not found (run: bench doctor)"
+    make_keys
+    build_modules
+    build_initramfs
+    local list=("${SCENARIOS[@]}")
+    [ "${#list[@]}" -eq 0 ] && die "no scenario given (bench list)"
+    if [ "${list[0]}" = all ]; then list=(policy tpm hibernate lockdown-integrity lockdown-confidentiality tamper-flip tamper-pcr); [ -n "$OTHER_KERNEL" ] && list+=(tamper-kernel-version tamper-kernel-code); fi
+    local failed=0 summary=()
+    for s in "${list[@]}"; do
+        say "scenario $s"
+        SCENARIO_FAIL=0
+        case "$s" in
+            policy) sc_policy;;
+            tpm) sc_tpm;;
+            kexec) sc_kexec;;
+            custom) sc_custom;;
+            hibernate) sc_hibernate;;
+            lockdown-integrity) sc_lockdown integrity;;
+            lockdown-confidentiality) sc_lockdown confidentiality;;
+            tamper-flip) sc_tamper_flip;;
+            tamper-kernel-version) sc_tamper_kernel tamper-kernel-version;;
+            tamper-kernel-code) sc_tamper_kernel tamper-kernel-code;;
+            tamper-pcr) sc_tamper_pcr;;
+            *) die "unknown scenario $s (bench list)";;
+        esac
+        if [ "$SCENARIO_FAIL" = 0 ]; then summary+=("PASS  $s   ($RUN)"); [ "$KEEP" = 1 ] || rm -f "$RUN/swap.img"; else summary+=("FAIL  $s   ($RUN)"); failed=1; fi
+    done
+    echo; echo "== summary"; printf '%s\n' "${summary[@]}"
+    return $failed
+}
+
+# ---------------------------------------------------------------- main
+case "$CMD" in
+    doctor) doctor; exit $?;;
+    list) list_scenarios; exit 0;;
+    clean) rm -rf "$WORK/runs"; say "removed $WORK/runs"; exit 0;;
+    run) run_scenarios; exit $?;;
+esac

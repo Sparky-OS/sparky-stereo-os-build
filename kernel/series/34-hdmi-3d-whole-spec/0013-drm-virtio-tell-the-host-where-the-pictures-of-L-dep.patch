@@ -1,0 +1,102 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 16 Oct 2026 08:11:39 -0300
+Subject: [PATCH] drm/virtio: tell the host where the pictures of L + depth
+ modes are
+
+VIRTIO_GPU_CMD_SET_SCANOUT_STEREO gave the host a rectangle for each
+eye, and none for the picture plus depth structures, which the DRM core
+now lists and times. L + depth carries its depth picture where frame
+packing carries the right eye (HDMI 1.4a, Appendix H, Figure H-5); L +
+depth + graphics + graphics-depth carries four pictures, one vertical
+total apart (Figure H-6).
+
+Send the depth picture as @right, and add @graphics and @graphics_depth
+at the end of the command. A device that knows only the two eyes reads
+the command up to them, as QEMU's handler does (it fills its own struct
+from the request and ignores the rest), so the command stays compatible.
+Field and line alternative still send zero rectangles: their eyes are
+not rectangles of the frame.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ drivers/gpu/drm/virtio/virtgpu_vq.c | 18 +++++++++++++++---
+ include/uapi/linux/virtio_gpu.h     | 10 +++++++++-
+ 2 files changed, 24 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/virtio/virtgpu_vq.c b/drivers/gpu/drm/virtio/virtgpu_vq.c
+index edcc2082cb..2f59b90552 100644
+--- a/drivers/gpu/drm/virtio/virtgpu_vq.c
++++ b/drivers/gpu/drm/virtio/virtgpu_vq.c
+@@ -766,18 +766,28 @@ void virtio_gpu_cmd_set_scanout_stereo(struct virtio_gpu_device *vgdev,
+ {
+ 	struct virtio_gpu_set_scanout_stereo *cmd_p;
+ 	struct virtio_gpu_vbuffer *vbuf;
+-	struct drm_rect left, right;
++	struct drm_rect left, right, graphics, graphics_depth;
+ 
+ 	/*
+-	 * Where each view sits in the frame of a stereo mode, as
+-	 * drm_mode_set_crtcinfo() times it (the HDMI 1.4b 3D structures).
++	 * Where each picture sits in the frame of a stereo mode, as
++	 * drm_mode_set_crtcinfo() times it (the HDMI 1.4a 3D structures).
+ 	 */
+ 	left = DRM_RECT_INIT(0, 0, mode->hdisplay, mode->vdisplay);
+ 	right = left;
++	graphics = DRM_RECT_INIT(0, 0, 0, 0);
++	graphics_depth = graphics;
+ 	switch (mode->flags & DRM_MODE_FLAG_3D_MASK) {
+ 	case DRM_MODE_FLAG_3D_FRAME_PACKING:
++	case DRM_MODE_FLAG_3D_L_DEPTH:
+ 		drm_rect_translate(&right, 0, mode->vtotal);
+ 		break;
++	case DRM_MODE_FLAG_3D_L_DEPTH_GFX_GFX_DEPTH:
++		drm_rect_translate(&right, 0, mode->vtotal);
++		graphics = left;
++		drm_rect_translate(&graphics, 0, 2 * mode->vtotal);
++		graphics_depth = left;
++		drm_rect_translate(&graphics_depth, 0, 3 * mode->vtotal);
++		break;
+ 	case DRM_MODE_FLAG_3D_SIDE_BY_SIDE_FULL:
+ 		drm_rect_translate(&right, mode->hdisplay, 0);
+ 		break;
+@@ -806,6 +816,8 @@ void virtio_gpu_cmd_set_scanout_stereo(struct virtio_gpu_device *vgdev,
+ 	cmd_p->view_height = cpu_to_le32(mode->vdisplay);
+ 	convert_to_hw_rect(&cmd_p->left, &left);
+ 	convert_to_hw_rect(&cmd_p->right, &right);
++	convert_to_hw_rect(&cmd_p->graphics, &graphics);
++	convert_to_hw_rect(&cmd_p->graphics_depth, &graphics_depth);
+ 
+ 	virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
+ }
+diff --git a/include/uapi/linux/virtio_gpu.h b/include/uapi/linux/virtio_gpu.h
+index b5ca39f09d..3ecd41ff10 100644
+--- a/include/uapi/linux/virtio_gpu.h
++++ b/include/uapi/linux/virtio_gpu.h
+@@ -460,7 +460,13 @@ struct virtio_gpu_set_scanout_blob {
+ 
+ /*
+  * VIRTIO_GPU_CMD_SET_SCANOUT_STEREO: the layout of the following scanouts,
+- * with each view's place in the scanout rectangle and the size it is shown at.
++ * with each picture's place in the scanout rectangle and the size it is
++ * shown at. @left and @right are the eyes; for L + depth and L + depth +
++ * graphics + graphics-depth they are the 2D picture and its depth, and
++ * @graphics and @graphics_depth the other two pictures of the second (HDMI
++ * 1.4a, Appendix H, Figures H-5 and H-6). Pictures that are not rectangles
++ * of the frame (field and line alternative) are all zero. A device that
++ * knows only @left and @right reads the command up to them.
+  */
+ struct virtio_gpu_set_scanout_stereo {
+ 	struct virtio_gpu_ctrl_hdr hdr;
+@@ -470,6 +476,8 @@ struct virtio_gpu_set_scanout_stereo {
+ 	__le32 view_height;
+ 	struct virtio_gpu_rect left;
+ 	struct virtio_gpu_rect right;
++	struct virtio_gpu_rect graphics;
++	struct virtio_gpu_rect graphics_depth;
+ };
+ 
+ /* VIRTIO_GPU_CMD_RESOURCE_MAP_BLOB */
+-- 
+2.53.0
+

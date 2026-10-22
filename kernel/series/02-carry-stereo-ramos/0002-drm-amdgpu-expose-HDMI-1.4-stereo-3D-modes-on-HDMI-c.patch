@@ -1,0 +1,80 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 29 Sep 2026 19:02:33 -0300
+Subject: drm/amdgpu: expose HDMI 1.4 stereo 3D modes on HDMI connectors and
+ emit the vendor infoframe
+
+amdgpu_dm_connector_init_helper() sets connector->stereo_allowed = false,
+so every 3D-flagged mode a sink declares in EDID is pruned at probe time
+with MODE_NO_STEREO and never reaches userspace. i915, vc4 and nouveau all
+allow stereo; amdgpu DC is the outlier among the major drivers, and DC's
+HDMI VSIF packet machinery exists but is never populated for these modes.
+
+Allow stereo modes on HDMI connectors and, when a mode carries
+DRM_MODE_FLAG_3D_*, attach the vendor-specific infoframe that
+drm_hdmi_vendor_infoframe_from_display_mode() already computes to the
+stream's hfvsif packet so DC emits it. timing_3d_format stays NONE on
+purpose: it drives DC's stereo plane-address flipping (kernel-composed
+stereo), while compositors, players and games present one already-packed
+surface, the same model i915 has used for years. The wire behavior is the
+HDMI 1.4a/1.4b stereoscopic framework: the CTA-861 VSIF 3D_Structure codes
+(frame packing 0, top-and-bottom 6, side-by-side half 8).
+
+Tested on a Renoir APU (DCN 2.1, Display Core v3.2.369) driving a Sony
+KDL-46HX855 (2012) on Linux 7.0: probe goes from 22 modes / 0 stereo to
+51 modes / 29 stereo, and modesetting SBS-half 1920x1080@60 makes the set
+switch itself into 3D with a visible software-rendered disparity pattern.
+Ported to 7.3, where this code moved from amdgpu_dm.c to
+amdgpu_dm_connector.c; the change itself is unchanged.
+
+Link: https://github.com/danielcamposramos/sony-bravia-linux (tools, run logs and evidence)
+Assisted-by: LLM Kimi K3 (Codex CLI)
+Assisted-by: LLM GPT 5.6 Sol (Codex CLI)
+Assisted-by: LLM Claude Opus 5 (Claude Code CLI)
+(cherry picked from commit c7a8fe0965671ad404f2e8f07888787dfeeb347b)
+---
+ .../display/amdgpu_dm/amdgpu_dm_connector.c   | 24 ++++++++++++++++++-
+ 1 file changed, 23 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.c b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.c
+index d386bb1475bb83cf4a16bd5a0ddbb527aa123bfb..587813dc04198e46b1ed8d0f2116151bad26d1d1 100644
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.c
+@@ -943,6 +943,28 @@ STATIC_IFN_KUNIT void fill_stream_properties_from_drm_display_mode(
+ 			drm_warn_once(connector->dev, "Failed to setup vendor infoframe on connector %s: %zd\n",
+ 				      connector->name, err);
+ 		timing_out->hdmi_vic = hv_frame.vic;
++
++		/* when the mode carries 3D flags, pack and
++		 * attach the vendor-specific infoframe so a 3D-capable sink
++		 * can switch itself on. Buffer content is composed by
++		 * userspace; timing_3d_format stays NONE on purpose because
++		 * it drives DC's stereo plane-address flip, not the link.
++		 */
++		if (mode_in->flags & DRM_MODE_FLAG_3D_MASK) {
++			u8 vsif_raw[32] = { 0 };
++			ssize_t vsif_len;
++
++			vsif_len = hdmi_vendor_infoframe_pack(&hv_frame, vsif_raw,
++							      sizeof(vsif_raw));
++			if (vsif_len >= (ssize_t)(4 + hv_frame.length)) {
++				stream->hfvsif_infopacket.hb0 = vsif_raw[0];
++				stream->hfvsif_infopacket.hb1 = vsif_raw[1];
++				stream->hfvsif_infopacket.hb2 = vsif_raw[2];
++				memcpy(&stream->hfvsif_infopacket.sb[0],
++				       &vsif_raw[3], 1 + hv_frame.length);
++				stream->hfvsif_infopacket.valid = true;
++			}
++		}
+ 	}
+ 
+ 	if (aconnector && amdgpu_dm_is_freesync_video_mode(mode_in, aconnector)) {
+@@ -3211,7 +3233,7 @@ void amdgpu_dm_connector_init_helper(struct amdgpu_display_manager *dm,
+ 	aconnector->dc_link = link;
+ 	aconnector->base.interlace_allowed = false;
+ 	aconnector->base.doublescan_allowed = false;
+-	aconnector->base.stereo_allowed = false;
++	aconnector->base.stereo_allowed = true;
+ 	aconnector->base.dpms = DRM_MODE_DPMS_OFF;
+ 	aconnector->hpd.hpd = AMDGPU_HPD_NONE; /* not used */
+ 	aconnector->audio_inst = -1;

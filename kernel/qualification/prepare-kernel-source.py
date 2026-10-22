@@ -17,7 +17,7 @@ manifest_path = base / 'kernel-inputs/accepted-source-manifests.json'
 subprocess.run([sys.executable, str(kit / 'lean/check-flavours.py'), str(manifest_path)], check=True)
 manifest = json.loads(manifest_path.read_text())[flavour]
 repo = (cfg.path('SPARKY_INPUTS_DIR') / 'kernel-soul/work/kt')
-series = (cfg.path('SPARKY_INPUTS_DIR') / 'kernel-soul/work/series')
+series = cfg.TREE / 'kernel/series'
 if shutil.disk_usage(base).free < 26 * 1024**3:
     raise SystemExit('Kernel source preparation waits for 26 GiB root free')
 for row in manifest['patches']:

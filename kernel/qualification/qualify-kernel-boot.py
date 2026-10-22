@@ -33,9 +33,9 @@ out.mkdir(parents=True, exist_ok=False)
 inputs = out / 'inputs'
 inputs.mkdir()
 old = (cfg.path('SPARKY_INPUTS_DIR') / 'kernel-soul/work')
-shutil.copytree(old / 'hibernate-bench', inputs / 'bench')
+shutil.copytree(cfg.TREE / 'kernel/qualification/hibernate-bench', inputs / 'bench')
 shutil.copytree(old / 'bench-run/r2/initrd-tree/guest', inputs / 'guest')
-shutil.copy2(old / 's2/guest/features.sh', inputs / 'features.sh')
+shutil.copy2(cfg.TREE / 'kernel/qualification/guest/features.sh', inputs / 'features.sh')
 certificate = (base / 'kernel-signature-investigation/embedded-cert.pem' if rehearsal
                else (cfg.path('SPARKY_SECUREBOOT_DIR') / 'cert.pem'))
 fingerprint = subprocess.check_output(['openssl', 'x509', '-in', str(certificate),

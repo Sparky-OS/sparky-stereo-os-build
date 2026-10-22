@@ -1,0 +1,13 @@
+# Extra options for kernels with the "[RFC] power/hibernate: TPM2 image encryption" patch (see README): TPM 2.0 with HMAC sessions, trusted keys,
+# AES-GCM and SHA-256 in the crypto API, and the RFC's own option.
+CONFIG_TCG_TPM2_HMAC=y
+CONFIG_KEYS=y
+CONFIG_TRUSTED_KEYS=y
+CONFIG_CRYPTO_AES=y
+CONFIG_CRYPTO_GCM=y
+CONFIG_CRYPTO_GHASH=y
+CONFIG_CRYPTO_CTR=y
+CONFIG_CRYPTO_AEAD=y
+CONFIG_CRYPTO_SHA256=y
+CONFIG_CRYPTO_HMAC=y
+CONFIG_HIBERNATION_ENCRYPTION=y

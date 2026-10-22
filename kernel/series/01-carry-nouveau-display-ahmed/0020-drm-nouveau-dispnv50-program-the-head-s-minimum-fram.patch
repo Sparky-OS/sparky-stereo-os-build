@@ -1,0 +1,213 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mohamed Ahmed <mohamedahmedegypt2001@gmail.com>
+Date: Thu, 10 Sep 2026 04:30:21 +0400
+Subject: drm/nouveau/dispnv50: program the head's minimum frame idle
+
+The IMP request includes minimum idle line counts, but nouveau does not
+program them into the head. Program HEAD_SET_MIN_FRAME_IDLE on GV100+
+with the same counts so the hardware matches the configuration checked by
+IMP.
+
+The counts depend on both the raster and output viewport, so update them
+from the viewport hook. For interlaced rasters or invalid counts, use the
+2/1 fallback to replace the previous mode's values.
+
+Signed-off-by: Mohamed Ahmed <mohamedahmedegypt2001@gmail.com>
+(cherry picked from commit 7fda95fd7ce45a758cc6e11257012147787d754d)
+---
+ drivers/gpu/drm/nouveau/dispnv50/head.h       | 31 +++++++++++++++++++
+ drivers/gpu/drm/nouveau/dispnv50/headc37d.c   | 13 +++++++-
+ drivers/gpu/drm/nouveau/dispnv50/headc57d.c   | 13 +++++++-
+ drivers/gpu/drm/nouveau/dispnv50/headca7d.c   | 13 +++++++-
+ .../drm/nouveau/include/nvhw/class/clc37d.h   |  3 ++
+ .../drm/nouveau/include/nvhw/class/clc57d.h   |  3 ++
+ .../drm/nouveau/include/nvhw/class/clca7d.h   |  3 ++
+ 7 files changed, 76 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/head.h b/drivers/gpu/drm/nouveau/dispnv50/head.h
+index 8effe4c0807dc8fa5b9f3802680c2f727a60dcf3..ccaf1794c9eee8d38fa22fa22123ad845999cc4d 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/head.h
++++ b/drivers/gpu/drm/nouveau/dispnv50/head.h
+@@ -28,6 +28,37 @@ void nv50_head_flush_set_wndw(struct nv50_head *head, struct nv50_head_atom *asy
+ void nv50_head_flush_clr(struct nv50_head *head,
+ 			 struct nv50_head_atom *asyh, bool flush);
+ 
++/* Compute idle lines around the output viewport. Interlaced vblank uses
++ * field coordinates while the viewport height covers a frame, so these
++ * timings need the caller's fallback rather than this calculation.
++ */
++static inline bool
++nv50_head_min_frame_idle(const struct nv50_head_atom *asyh, u16 *leading, u16 *trailing)
++{
++	const u16 active = asyh->mode.v.blanks - asyh->mode.v.blanke;
++	/* Aspect ratio rounding can exceed the active raster by a line, so
++	 * use the IMP request's clamp to program the same idle counts.
++	 */
++	const u16 idle_h = min_t(u16, asyh->view.oH, active);
++	int overscan, lead;
++
++	if (asyh->mode.interlace)
++		return false;
++
++	overscan = active / 2 - idle_h / 2;
++	lead = asyh->mode.v.blanke + overscan + 1;
++
++	/* Vsync and the back porch each need a line. The viewport must end
++	 * within the frame to keep the trailing count from underflowing.
++	 */
++	if (lead < 2 || lead + idle_h > asyh->mode.v.active)
++		return false;
++
++	*leading = lead;
++	*trailing = asyh->mode.v.active - (lead + idle_h);
++	return true;
++}
++
+ struct nv50_head_func {
+ 	int (*view)(struct nv50_head *, struct nv50_head_atom *);
+ 	int (*mode)(struct nv50_head *, struct nv50_head_atom *);
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/headc37d.c b/drivers/gpu/drm/nouveau/dispnv50/headc37d.c
+index 05cf3164d1ddf6e5d393f2220172a3fa4558b3ba..e80c4f3fee93193e3eff48efd58b37b2e8351174 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/headc37d.c
++++ b/drivers/gpu/drm/nouveau/dispnv50/headc37d.c
+@@ -255,9 +255,10 @@ headc37d_view(struct nv50_head *head, struct nv50_head_atom *asyh)
+ {
+ 	struct nvif_push *push = &nv50_disp(head->base.base.dev)->core->chan.push;
+ 	const int i = head->base.index;
++	u16 leading, trailing;
+ 	int ret;
+ 
+-	if ((ret = PUSH_WAIT(push, 4)))
++	if ((ret = PUSH_WAIT(push, 6)))
+ 		return ret;
+ 
+ 	PUSH_MTHD(push, NVC37D, HEAD_SET_VIEWPORT_SIZE_IN(i),
+@@ -267,6 +268,16 @@ headc37d_view(struct nv50_head *head, struct nv50_head_atom *asyh)
+ 	PUSH_MTHD(push, NVC37D, HEAD_SET_VIEWPORT_SIZE_OUT(i),
+ 		  NVVAL(NVC37D, HEAD_SET_VIEWPORT_SIZE_OUT, WIDTH, asyh->view.oW) |
+ 		  NVVAL(NVC37D, HEAD_SET_VIEWPORT_SIZE_OUT, HEIGHT, asyh->view.oH));
++
++	/* Replace the previous mode's counts with RM's fallback. */
++	if (!nv50_head_min_frame_idle(asyh, &leading, &trailing)) {
++		leading = 2;
++		trailing = 1;
++	}
++
++	PUSH_MTHD(push, NVC37D, HEAD_SET_MIN_FRAME_IDLE(i),
++		  NVVAL(NVC37D, HEAD_SET_MIN_FRAME_IDLE, LEADING_RASTER_LINES, leading) |
++		  NVVAL(NVC37D, HEAD_SET_MIN_FRAME_IDLE, TRAILING_RASTER_LINES, trailing));
+ 	return 0;
+ }
+ 
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/headc57d.c b/drivers/gpu/drm/nouveau/dispnv50/headc57d.c
+index 6e3fe7fafa40af75f86873073897bde9ae8837b9..8c67600079224a9ee31655aa78d4a2ad967cc336 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/headc57d.c
++++ b/drivers/gpu/drm/nouveau/dispnv50/headc57d.c
+@@ -241,11 +241,12 @@ headc57d_mode(struct nv50_head *head, struct nv50_head_atom *asyh)
+ static int
+ headc57d_view(struct nv50_head *head, struct nv50_head_atom *asyh)
+ {
++	u16 leading, trailing;
+ 	struct nvif_push *push = &nv50_disp(head->base.base.dev)->core->chan.push;
+ 	const int i = head->base.index;
+ 	int ret;
+ 
+-	ret = PUSH_WAIT(push, 14);
++	ret = PUSH_WAIT(push, 16);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -286,6 +287,16 @@ headc57d_view(struct nv50_head *head, struct nv50_head_atom *asyh)
+ 		  (asyh->view.upscale_v ?
+ 		   NVDEF(NVC57D, HEAD_SET_HEAD_USAGE_BOUNDS, UPSCALING_ALLOWED, TRUE) :
+ 		   NVDEF(NVC57D, HEAD_SET_HEAD_USAGE_BOUNDS, UPSCALING_ALLOWED, FALSE)));
++
++	if (!nv50_head_min_frame_idle(asyh, &leading, &trailing)) {
++		/* Replace the previous mode's counts with RM's fallback. */
++		leading = 2;
++		trailing = 1;
++	}
++
++	PUSH_MTHD(push, NVC57D, HEAD_SET_MIN_FRAME_IDLE(i),
++		  NVVAL(NVC57D, HEAD_SET_MIN_FRAME_IDLE, LEADING_RASTER_LINES, leading) |
++		  NVVAL(NVC57D, HEAD_SET_MIN_FRAME_IDLE, TRAILING_RASTER_LINES, trailing));
+ 	return 0;
+ }
+ 
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/headca7d.c b/drivers/gpu/drm/nouveau/dispnv50/headca7d.c
+index e877f7932f678eda3106cc6848b37f9577e67607..c00d0459016640126a5fd29b90fbed83027444b8 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/headca7d.c
++++ b/drivers/gpu/drm/nouveau/dispnv50/headca7d.c
+@@ -260,13 +260,14 @@ headca7d_mode(struct nv50_head *head, struct nv50_head_atom *asyh)
+ static int
+ headca7d_view(struct nv50_head *head, struct nv50_head_atom *asyh)
+ {
++	u16 leading, trailing;
+ 	struct nvif_push *push = &head->disp->core->chan.push;
+ 	const int i = head->base.index;
+ 	const bool scale = asyh->view.iW != asyh->view.oW ||
+ 			   asyh->view.iH != asyh->view.oH;
+ 	int ret;
+ 
+-	ret = PUSH_WAIT(push, 18);
++	ret = PUSH_WAIT(push, 20);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -318,6 +319,16 @@ headca7d_view(struct nv50_head *head, struct nv50_head_atom *asyh)
+ 	PUSH_MTHD(push, NVCA7D, HEAD_SET_ITP2RGB_CONTROL(i), scale ?
+ 		  NVDEF(NVCA7D, HEAD_SET_ITP2RGB_CONTROL, ENABLE_FVLUT, ENABLE) |
+ 		  NVDEF(NVCA7D, HEAD_SET_ITP2RGB_CONTROL, FVLUT_INTERPOLATE, ENABLE) : 0);
++
++	if (!nv50_head_min_frame_idle(asyh, &leading, &trailing)) {
++		/* Replace the previous mode's counts with RM's fallback. */
++		leading = 2;
++		trailing = 1;
++	}
++
++	PUSH_MTHD(push, NVCA7D, HEAD_SET_MIN_FRAME_IDLE(i),
++		  NVVAL(NVCA7D, HEAD_SET_MIN_FRAME_IDLE, LEADING_RASTER_LINES, leading) |
++		  NVVAL(NVCA7D, HEAD_SET_MIN_FRAME_IDLE, TRAILING_RASTER_LINES, trailing));
+ 	return 0;
+ }
+ 
+diff --git a/drivers/gpu/drm/nouveau/include/nvhw/class/clc37d.h b/drivers/gpu/drm/nouveau/include/nvhw/class/clc37d.h
+index 2b8c314c9ed983789d240b1e9c4184569b1c9aa0..2431b01a663eab935b549faea4c2b51d04140d0d 100644
+--- a/drivers/gpu/drm/nouveau/include/nvhw/class/clc37d.h
++++ b/drivers/gpu/drm/nouveau/include/nvhw/class/clc37d.h
+@@ -564,4 +564,7 @@
+ #define NVC37D_HEAD_SET_CRC_CONTROL_CRC_DURING_SNOOZE                           9:9
+ #define NVC37D_HEAD_SET_CRC_CONTROL_CRC_DURING_SNOOZE_DISABLE                   (0x00000000)
+ #define NVC37D_HEAD_SET_CRC_CONTROL_CRC_DURING_SNOOZE_ENABLE                    (0x00000001)
++#define NVC37D_HEAD_SET_MIN_FRAME_IDLE(a)                                       (0x00002218 + (a)*0x00000400)
++#define NVC37D_HEAD_SET_MIN_FRAME_IDLE_LEADING_RASTER_LINES                     14:0
++#define NVC37D_HEAD_SET_MIN_FRAME_IDLE_TRAILING_RASTER_LINES                    30:16
+ #endif // _clC37d_h
+diff --git a/drivers/gpu/drm/nouveau/include/nvhw/class/clc57d.h b/drivers/gpu/drm/nouveau/include/nvhw/class/clc57d.h
+index df3d72941276c5037dfa57fc8069559f8fe890b4..a1d04303d8f6c21f3901883be8c7f528cfe759e2 100644
+--- a/drivers/gpu/drm/nouveau/include/nvhw/class/clc57d.h
++++ b/drivers/gpu/drm/nouveau/include/nvhw/class/clc57d.h
+@@ -364,6 +364,9 @@
+ #define NVC57D_HEAD_SET_OUTPUT_SCALER_COEFF_VALUE(a)                            (0x00002214 + (a)*0x00000400)
+ #define NVC57D_HEAD_SET_OUTPUT_SCALER_COEFF_VALUE_DATA                          9:0
+ #define NVC57D_HEAD_SET_OUTPUT_SCALER_COEFF_VALUE_INDEX                         19:12
++#define NVC57D_HEAD_SET_MIN_FRAME_IDLE(a)                                       (0x00002218 + (a)*0x00000400)
++#define NVC57D_HEAD_SET_MIN_FRAME_IDLE_LEADING_RASTER_LINES                     14:0
++#define NVC57D_HEAD_SET_MIN_FRAME_IDLE_TRAILING_RASTER_LINES                    30:16
+ #define NVC57D_HEAD_SET_OLUT_CONTROL(a)                                         (0x00002280 + (a)*0x00000400)
+ #define NVC57D_HEAD_SET_OLUT_CONTROL_INTERPOLATE                                0:0
+ #define NVC57D_HEAD_SET_OLUT_CONTROL_INTERPOLATE_DISABLE                        (0x00000000)
+diff --git a/drivers/gpu/drm/nouveau/include/nvhw/class/clca7d.h b/drivers/gpu/drm/nouveau/include/nvhw/class/clca7d.h
+index 9481a27c097916314f8c4bc1d96a2ed9205216a4..e0540ff4a53b38bcc57f9d4960b3e43c499ee527 100644
+--- a/drivers/gpu/drm/nouveau/include/nvhw/class/clca7d.h
++++ b/drivers/gpu/drm/nouveau/include/nvhw/class/clca7d.h
+@@ -861,6 +861,9 @@
+ #define NVCA7D_HEAD_SET_OUTPUT_SCALER_COEFF_VALUE(a)                            (0x00002214 + (a)*0x00000800)
+ #define NVCA7D_HEAD_SET_OUTPUT_SCALER_COEFF_VALUE_DATA                          9:0
+ #define NVCA7D_HEAD_SET_OUTPUT_SCALER_COEFF_VALUE_INDEX                         19:12
++#define NVCA7D_HEAD_SET_MIN_FRAME_IDLE(a)                                       (0x00002218 + (a)*0x00000800)
++#define NVCA7D_HEAD_SET_MIN_FRAME_IDLE_LEADING_RASTER_LINES                     14:0
++#define NVCA7D_HEAD_SET_MIN_FRAME_IDLE_TRAILING_RASTER_LINES                    30:16
+ #define NVCA7D_HEAD_SET_OLUT_CONTROL(a)                                         (0x00002280 + (a)*0x00000800)
+ #define NVCA7D_HEAD_SET_OLUT_CONTROL_INTERPOLATE                                0:0
+ #define NVCA7D_HEAD_SET_OLUT_CONTROL_INTERPOLATE_DISABLE                        (0x00000000)

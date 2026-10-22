@@ -1,0 +1,300 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mohamed Ahmed <mohamedahmedegypt2001@gmail.com>
+Date: Tue, 8 Sep 2026 17:15:20 +0400
+Subject: drm/nouveau/disp: read back additional armed head state
+
+Recovering firmware scanout needs scan structure and sync polarities as
+well as the raster. Add these to head readback, together with viewport
+and scaler taps on GV100+ and tile/physical window ownership on GB20x.
+
+Takeover will also probe unused heads, so remove the depth warning for
+unset rasters. Handle CA7D's BPP_16_444 and BPP_18_444NP encodings to
+avoid warnings for valid armed state.
+
+Signed-off-by: Mohamed Ahmed <mohamedahmedegypt2001@gmail.com>
+(cherry picked from commit 899b246831d392c8e366a3b154111dae5ada006d)
+---
+ .../gpu/drm/nouveau/nvkm/engine/disp/g94.c    |  3 ++
+ .../gpu/drm/nouveau/nvkm/engine/disp/gb202.c  | 30 ++++++++++++-
+ .../gpu/drm/nouveau/nvkm/engine/disp/gf119.c  |  8 ++++
+ .../gpu/drm/nouveau/nvkm/engine/disp/gv100.c  | 21 ++++++++-
+ .../gpu/drm/nouveau/nvkm/engine/disp/head.h   | 28 +++++++++++-
+ .../gpu/drm/nouveau/nvkm/engine/disp/ior.h    |  3 ++
+ .../gpu/drm/nouveau/nvkm/engine/disp/nv50.c   | 43 +++++++++++++++++++
+ 7 files changed, 133 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/nouveau/nvkm/engine/disp/g94.c b/drivers/gpu/drm/nouveau/nvkm/engine/disp/g94.c
+index 843a2661ce9d8ee5826e6c8b8cb65e3268619b16..0dceb81b4057e5b1204b7104455d1928bb1f6c25 100644
+--- a/drivers/gpu/drm/nouveau/nvkm/engine/disp/g94.c
++++ b/drivers/gpu/drm/nouveau/nvkm/engine/disp/g94.c
+@@ -285,6 +285,9 @@ g94_sor_state(struct nvkm_ior *sor, struct nvkm_ior_state *state)
+ 	}
+ 
+ 	state->head = ctrl & 0x00000003;
++	/* HSYNC_POLARITY is 12:12, VSYNC_POLARITY 13:13. */
++	state->nhsync = (ctrl & 0x00001000) != 0;
++	state->nvsync = (ctrl & 0x00002000) != 0;
+ 	nv50_pior_depth(sor, state, ctrl);
+ }
+ 
+diff --git a/drivers/gpu/drm/nouveau/nvkm/engine/disp/gb202.c b/drivers/gpu/drm/nouveau/nvkm/engine/disp/gb202.c
+index 594fb6027bd77657b1e11f58534f425b7e8306f7..59694ff7ed539cce198308ec5c02715a8ff8bb3e 100644
+--- a/drivers/gpu/drm/nouveau/nvkm/engine/disp/gb202.c
++++ b/drivers/gpu/drm/nouveau/nvkm/engine/disp/gb202.c
+@@ -94,6 +94,7 @@ gb202_head_state(struct nvkm_head *head, struct nvkm_head_state *state)
+ {
+ 	struct nvkm_device *device = head->disp->engine.subdev.device;
+ 	const u32 hoff = (state == &head->arm) * 0x8000 + head->id * 0x800;
++	const u32 aoff = hoff - head->id * 0x800;
+ 	u32 data;
+ 
+ 	data = nvkm_rd32(device, 0x682064 + hoff);
+@@ -119,16 +120,43 @@ gb202_head_state(struct nvkm_head *head, struct nvkm_head_state *state)
+ 	if (data & 0x80000000)
+ 		state->hz = div_u64(state->hz * 1000, 1001);
+ 
++	/* STRUCTURE is 1:0, PROGRESSIVE is zero. */
++	state->interlace = (nvkm_rd32(device, 0x682008 + hoff) & 0x00000003) != 0;
++
++	/* Both scaler tap fields encode TAPS_2 as 1 and TAPS_5 as 4. */
++	data = nvkm_rd32(device, 0x68204c + hoff);
++	state->view.iW = (data & 0x00007fff);
++	state->view.iH = (data & 0x7fff0000) >> 16;
++	data = nvkm_rd32(device, 0x682058 + hoff);
++	state->view.oW = (data & 0x00007fff);
++	state->view.oH = (data & 0x7fff0000) >> 16;
++	data = nvkm_rd32(device, 0x682014 + hoff);
++	state->view.vtaps = (data & 0x00000007) >= 4 ? 5 : 2;
++	state->view.htaps = ((data & 0x00000070) >> 4) >= 4 ? 5 : 2;
++
+ 	data = nvkm_rd32(device, 0x682004 + hoff);
++	state->or.nhsync = (data & 0x00000004) != 0;
++	state->or.nvsync = (data & 0x00000008) != 0;
+ 	switch ((data & 0x000000f0) >> 4) {
++	case 10: state->or.depth = 18; break; /* BPP_18_444NP */
++	case 9: state->or.depth = 16; break;
+ 	case 5: state->or.depth = 30; break;
+ 	case 4: state->or.depth = 24; break;
+ 	case 1: state->or.depth = 18; break;
+ 	default:
+ 		state->or.depth = 18;
+-		WARN_ON(1);
++		/* Takeover may query unused heads, which have no valid depth when
++		 * the raster is unset.
++		 */
++		WARN_ON(state->htotal && state->vtotal);
+ 		break;
+ 	}
++	/* Use the matching mirror for ownership too, so tile and window
++	 * assignments describe the same armed or assembly state as the raster.
++	 */
++	state->mtc.tiles = nvkm_rd32(device, 0x682060 + hoff) & 0x000000ff;
++	state->mtc.phywins[0] = nvkm_rd32(device, 0x681014 + (head->id * 2) * 0x80 + aoff);
++	state->mtc.phywins[1] = nvkm_rd32(device, 0x681014 + (head->id * 2 + 1) * 0x80 + aoff);
+ }
+ 
+ /* NVD5.0 (GB20x and later) moved the RM head-timing interrupt enable to
+diff --git a/drivers/gpu/drm/nouveau/nvkm/engine/disp/gf119.c b/drivers/gpu/drm/nouveau/nvkm/engine/disp/gf119.c
+index 8a2be4a87e5cb1e670f62cc1dd468ac47dd9bbde..8e1bced33811397e453c78a5b17b9ba15dbd0298 100644
+--- a/drivers/gpu/drm/nouveau/nvkm/engine/disp/gf119.c
++++ b/drivers/gpu/drm/nouveau/nvkm/engine/disp/gf119.c
+@@ -447,7 +447,15 @@ gf119_head_state(struct nvkm_head *head, struct nvkm_head_state *state)
+ 	if (data & 0x80000000)
+ 		state->hz = div_u64(state->hz * 1000, 1001);
+ 
++	/* HEAD_SET_CONTROL: STRUCTURE is 0:0, PROGRESSIVE is zero. */
++	state->interlace = (nvkm_rd32(device, 0x640408 + hoff) & 0x00000001) != 0;
++
++	/* HEAD_SET_CONTROL_OUTPUT_RESOURCE has HSYNC at bit 3 and VSYNC at bit
++	 * 4. C37D moves them to bits 2 and 3.
++	 */
+ 	data = nvkm_rd32(device, 0x640404 + hoff);
++	state->or.nhsync = (data & 0x00000008) != 0;
++	state->or.nvsync = (data & 0x00000010) != 0;
+ 	switch ((data & 0x000003c0) >> 6) {
+ 	case 6: state->or.depth = 30; break;
+ 	case 5: state->or.depth = 24; break;
+diff --git a/drivers/gpu/drm/nouveau/nvkm/engine/disp/gv100.c b/drivers/gpu/drm/nouveau/nvkm/engine/disp/gv100.c
+index 9240760ceb6daa12261d0ce816b91e65c83a5223..a18547fdd2e0cb47b50ece3f1aee98cfe9118fd3 100644
+--- a/drivers/gpu/drm/nouveau/nvkm/engine/disp/gv100.c
++++ b/drivers/gpu/drm/nouveau/nvkm/engine/disp/gv100.c
+@@ -291,14 +291,33 @@ gv100_head_state(struct nvkm_head *head, struct nvkm_head_state *state)
+ 	if (data & 0x80000000)
+ 		state->hz = div_u64(state->hz * 1000, 1001);
+ 
++	/* STRUCTURE is 1:0, PROGRESSIVE is zero. */
++	state->interlace = (nvkm_rd32(device, 0x682008 + hoff) & 0x00000003) != 0;
++
++	/* Both scaler tap fields encode TAPS_2 as 1 and TAPS_5 as 4. */
++	data = nvkm_rd32(device, 0x68204c + hoff);
++	state->view.iW = (data & 0x00007fff);
++	state->view.iH = (data & 0x7fff0000) >> 16;
++	data = nvkm_rd32(device, 0x682058 + hoff);
++	state->view.oW = (data & 0x00007fff);
++	state->view.oH = (data & 0x7fff0000) >> 16;
++	data = nvkm_rd32(device, 0x682014 + hoff);
++	state->view.vtaps = (data & 0x00000007) >= 4 ? 5 : 2;
++	state->view.htaps = ((data & 0x00000070) >> 4) >= 4 ? 5 : 2;
++
+ 	data = nvkm_rd32(device, 0x682004 + hoff);
++	state->or.nhsync = (data & 0x00000004) != 0;
++	state->or.nvsync = (data & 0x00000008) != 0;
+ 	switch ((data & 0x000000f0) >> 4) {
+ 	case 5: state->or.depth = 30; break;
+ 	case 4: state->or.depth = 24; break;
+ 	case 1: state->or.depth = 18; break;
+ 	default:
+ 		state->or.depth = 18;
+-		WARN_ON(1);
++		/* Takeover may query unused heads, which have no valid depth when
++		 * the raster is unset.
++		 */
++		WARN_ON(state->htotal && state->vtotal);
+ 		break;
+ 	}
+ }
+diff --git a/drivers/gpu/drm/nouveau/nvkm/engine/disp/head.h b/drivers/gpu/drm/nouveau/nvkm/engine/disp/head.h
+index bc244b56bf9d68b4699b8b7cfe20e57816895ffa..ddbcae214ac31d3f5be2aed955b903e5bff559c4 100644
+--- a/drivers/gpu/drm/nouveau/nvkm/engine/disp/head.h
++++ b/drivers/gpu/drm/nouveau/nvkm/engine/disp/head.h
+@@ -22,10 +22,36 @@ struct nvkm_head {
+ 		u16 vblanks;
+ 		u64 hz;
+ 
+-		/* Prior to GF119, these are set by the OR. */
++		/* Viewport and scaler taps on GV100+. Zero vtaps marks missing
++		 * readback, so callers must ignore the viewport fields in that case.
++		 */
++		struct {
++			u16 iW;
++			u16 iH;
++			u16 oW;
++			u16 oH;
++			u8 vtaps;
++			u8 htaps;
++		} view;
++
++		bool interlace;
++
++		/* GF119+ reads depth and sync polarities from per-head methods.
++		 * Older classes get polarities from the owning OR, but
++		 * nv50_pior_depth() only supplies assembly depth. Armed depth
++		 * is not read back there.
++		 */
+ 		struct {
+ 			u8 depth;
++			bool nhsync;
++			bool nvsync;
+ 		} or;
++
++		/* GB20x tile and physical window ownership, zero on older classes. */
++		struct {
++			u8 tiles;
++			u32 phywins[2];
++		} mtc;
+ 	} arm, asy;
+ 
+ 	struct nvkm_object object;
+diff --git a/drivers/gpu/drm/nouveau/nvkm/engine/disp/ior.h b/drivers/gpu/drm/nouveau/nvkm/engine/disp/ior.h
+index 5d682a774f2dd3c6c609a1f57a75816126f0e65b..55ccdbd6776a70f4ec2f27d6db708226b7d5774c 100644
+--- a/drivers/gpu/drm/nouveau/nvkm/engine/disp/ior.h
++++ b/drivers/gpu/drm/nouveau/nvkm/engine/disp/ior.h
+@@ -33,6 +33,9 @@ struct nvkm_ior {
+ 		} proto:3;
+ 		unsigned link:2;
+ 		unsigned head:8;
++		/* Prior to GF119 the sync polarities are OR methods. */
++		unsigned nhsync:1;
++		unsigned nvsync:1;
+ 	} arm, asy;
+ 
+ 	/* Armed DP state. */
+diff --git a/drivers/gpu/drm/nouveau/nvkm/engine/disp/nv50.c b/drivers/gpu/drm/nouveau/nvkm/engine/disp/nv50.c
+index 59fdc668fd6b2976a71c91678ee3ddb13466dfbd..a63b1c90b0d1f3ab9a293f4a66fc53ac010f146c 100644
+--- a/drivers/gpu/drm/nouveau/nvkm/engine/disp/nv50.c
++++ b/drivers/gpu/drm/nouveau/nvkm/engine/disp/nv50.c
+@@ -134,6 +134,9 @@ nv50_pior_state(struct nvkm_ior *pior, struct nvkm_ior_state *state)
+ 	}
+ 
+ 	state->head = ctrl & 0x00000003;
++	/* HSYNC_POLARITY is 12:12, VSYNC_POLARITY 13:13. */
++	state->nhsync = (ctrl & 0x00001000) != 0;
++	state->nvsync = (ctrl & 0x00002000) != 0;
+ 	nv50_pior_depth(pior, state, ctrl);
+ }
+ 
+@@ -248,6 +251,9 @@ nv50_sor_state(struct nvkm_ior *sor, struct nvkm_ior_state *state)
+ 	}
+ 
+ 	state->head = ctrl & 0x00000003;
++	/* HSYNC_POLARITY is 12:12, VSYNC_POLARITY 13:13. */
++	state->nhsync = (ctrl & 0x00001000) != 0;
++	state->nvsync = (ctrl & 0x00002000) != 0;
+ }
+ 
+ static const struct nvkm_ior_func
+@@ -334,6 +340,7 @@ nv50_dac_state(struct nvkm_ior *dac, struct nvkm_ior_state *state)
+ 	struct nvkm_device *device = dac->disp->engine.subdev.device;
+ 	const u32 coff = dac->id * 8 + (state == &dac->arm) * 4;
+ 	u32 ctrl = nvkm_rd32(device, 0x610b58 + coff);
++	u32 data;
+ 
+ 	state->proto_evo = (ctrl & 0x00000f00) >> 8;
+ 	switch (state->proto_evo) {
+@@ -344,6 +351,10 @@ nv50_dac_state(struct nvkm_ior *dac, struct nvkm_ior_state *state)
+ 	}
+ 
+ 	state->head = ctrl & 0x00000003;
++	/* DAC_SET_POLARITY: HSYNC is 0:0, VSYNC 1:1. */
++	data = nvkm_rd32(device, 0x610bdc + coff);
++	state->nhsync = (data & 0x00000001) != 0;
++	state->nvsync = (data & 0x00000002) != 0;
+ }
+ 
+ static const struct nvkm_ior_func
+@@ -404,6 +415,33 @@ nv50_head_rgpos(struct nvkm_head *head, u16 *hline, u16 *vline)
+ 	*hline = nvkm_rd32(device, 0x616344 + hoff) & 0x0000ffff;
+ }
+ 
++/* Before GF119, sync polarities belong to the OR. Its state hook selects
++ * the matching armed or assembly mirror, including the SOR mirror change
++ * at G94. Armed reads leave output associations and assembly depth
++ * unchanged, so vblank timestamp queries can share the path.
++ */
++static void
++nv50_head_state_or(struct nvkm_head *head, struct nvkm_head_state *state)
++{
++	const bool arm = state == &head->arm;
++	struct nvkm_ior *ior;
++
++	state->or.nhsync = false;
++	state->or.nvsync = false;
++
++	list_for_each_entry(ior, &head->disp->iors, head) {
++		struct nvkm_ior_state *ios = arm ? &ior->arm : &ior->asy;
++
++		ior->func->state(ior, ios);
++		if (!(ios->head & BIT(head->id)))
++			continue;
++
++		state->or.nhsync = ios->nhsync;
++		state->or.nvsync = ios->nvsync;
++		return;
++	}
++}
++
+ static void
+ nv50_head_state(struct nvkm_head *head, struct nvkm_head_state *state)
+ {
+@@ -428,6 +466,11 @@ nv50_head_state(struct nvkm_head *head, struct nvkm_head_state *state)
+ 	state->hz = (data & 0x003fffff) * 1000;
+ 	if (data & 0x01000000)
+ 		state->hz = div_u64(state->hz * 1000, 1001);
++
++	/* HEAD_SET_CONTROL: STRUCTURE is 2:1, PROGRESSIVE is zero. */
++	state->interlace = (nvkm_rd32(device, 0x610a48 + hoff) & 0x00000006) != 0;
++
++	nv50_head_state_or(head, state);
+ }
+ 
+ static const struct nvkm_head_func

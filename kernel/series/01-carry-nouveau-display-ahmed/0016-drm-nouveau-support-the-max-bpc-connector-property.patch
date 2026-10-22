@@ -1,0 +1,241 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mohamed Ahmed <mohamedahmedegypt2001@gmail.com>
+Date: Fri, 4 Sep 2026 22:01:33 +0400
+Subject: drm/nouveau: support the max bpc connector property
+
+Add the standard max bpc property to atomic digital connectors so
+userspace can limit output depth. Its 16 bpc reset value leaves the
+default depth unchanged. Since the property also accepts odd values,
+round the cap down before bandwidth validation to prevent the wire
+encoding from selecting a higher depth than the one checked.
+
+For DP, use a 6 bpc minimum with digital EDID 1.4 or newer and 8 bpc
+otherwise, while retaining the PIOR's fixed 6 bpc training depth. Probe
+at this minimum so modes that need reduced depth remain available, then
+reject SST modes at atomic check if they still exceed the link budget.
+
+Signed-off-by: Mohamed Ahmed <mohamedahmedegypt2001@gmail.com>
+(cherry picked from commit df66aafcc9430eb5fbd68320885a91910bfc7016)
+
+[kernel-soul: rebased on v7.3-rc6 (compile fix found by building the carry). The commit was written against nouveau from drm-misc-next,
+ where struct nouveau_connector has a "struct drm_edid *drm_edid"; in v7.3-rc6 the member is "struct edid *edid", so nouveau_dp_min_bpc()
+ now gets nv_connector->edid / nouveau_connector(connector)->edid directly (two places: nouveau_connector.c and dispnv50/disp.c).]
+---
+ drivers/gpu/drm/nouveau/dispnv50/disp.c     | 50 ++++++++++++++++-----
+ drivers/gpu/drm/nouveau/nouveau_connector.c | 18 +++++++-
+ drivers/gpu/drm/nouveau/nouveau_dp.c        | 21 ++++++---
+ drivers/gpu/drm/nouveau/nouveau_encoder.h   |  4 +-
+ 4 files changed, 76 insertions(+), 17 deletions(-)
+
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/disp.c b/drivers/gpu/drm/nouveau/dispnv50/disp.c
+index 2a37709bc84af7973d1db6704be97ebdb6d67d1c..ac8d9fb3e5f2236a05c5fbeda61965834d43ff26 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/disp.c
++++ b/drivers/gpu/drm/nouveau/dispnv50/disp.c
+@@ -407,33 +407,48 @@ nv50_outp_atomic_check_view(struct drm_encoder *encoder,
+ 	return 0;
+ }
+ 
+-static void
+-nv50_outp_atomic_fix_depth(struct drm_encoder *encoder, struct drm_crtc_state *crtc_state)
++static int
++nv50_outp_atomic_fix_depth(struct drm_encoder *encoder, struct drm_crtc_state *crtc_state,
++			   struct drm_connector *connector)
+ {
+ 	struct nv50_head_atom *asyh = nv50_head_atom(crtc_state);
+ 	struct nouveau_encoder *nv_encoder = nouveau_encoder(encoder);
+ 	struct drm_display_mode *mode = &asyh->state.adjusted_mode;
+ 	unsigned int max_rate, mode_rate;
++	u8 min_bpc;
++	const struct edid *edid = nouveau_connector(connector)->edid;
+ 
+ 	switch (nv_encoder->dcb->type) {
+ 	case DCB_OUTPUT_DP:
+ 		max_rate = nv_encoder->dp.link_nr * nv_encoder->dp.link_bw;
++		/* PIOR training uses 6 bpc regardless of output depth. */
++		if (nv_encoder->dcb->location != DCB_LOC_ON_CHIP)
++			min_bpc = 6;
++		else
++			min_bpc = nouveau_dp_min_bpc(edid);
+ 
+-		/* we don't support more than 10 anyway */
+-		asyh->or.bpc = min_t(u8, asyh->or.bpc, 10);
++		/* DP depth selection is limited to 10 bpc. */
++		asyh->or.bpc = clamp_t(u8, asyh->or.bpc, min_bpc, 10);
+ 
+-		/* reduce the bpc until it works out */
+-		while (asyh->or.bpc > 6) {
++		/* Try lower depths to fit the link bandwidth. */
++		while (asyh->or.bpc > min_bpc) {
+ 			mode_rate = DIV_ROUND_UP(mode->clock * asyh->or.bpc * 3, 8);
+ 			if (mode_rate <= max_rate)
+ 				break;
+ 
+ 			asyh->or.bpc -= 2;
+ 		}
++
++		/* Even minimum bpc may exceed the link budget. */
++		mode_rate = DIV_ROUND_UP(mode->clock * asyh->or.bpc * 3, 8);
++		if (mode_rate > max_rate)
++			return -EINVAL;
+ 		break;
+ 	default:
+ 		break;
+ 	}
++
++	return 0;
+ }
+ 
+ static int
+@@ -451,11 +466,21 @@ nv50_outp_atomic_check(struct drm_encoder *encoder,
+ 	if (ret)
+ 		return ret;
+ 
+-	if (crtc_state->mode_changed || crtc_state->connectors_changed)
++	if (crtc_state->mode_changed || crtc_state->connectors_changed) {
+ 		asyh->or.bpc = connector->display_info.bpc;
++		/* The property accepts odd values, but wire depths are even.
++		 * Round the cap down so the fallback encoding cannot exceed
++		 * the depth used for bandwidth validation.
++		 */
++		if (conn_state->max_requested_bpc)
++			asyh->or.bpc = min_t(u8, asyh->or.bpc,
++					     conn_state->max_requested_bpc & ~1);
++	}
+ 
+-	/* We might have to reduce the bpc */
+-	nv50_outp_atomic_fix_depth(encoder, crtc_state);
++	/* Check the selected depth against the link limits. */
++	ret = nv50_outp_atomic_fix_depth(encoder, crtc_state, connector);
++	if (ret)
++		return ret;
+ 
+ 	return 0;
+ }
+@@ -1122,6 +1147,11 @@ nv50_msto_atomic_check(struct drm_encoder *encoder,
+ 		const int clock = crtc_state->adjusted_mode.clock;
+ 
+ 		asyh->or.bpc = connector->display_info.bpc;
++		/* Round down so PBN uses an encodable depth. */
++		if (conn_state->max_requested_bpc)
++			asyh->or.bpc = min_t(u8, asyh->or.bpc,
++					     conn_state->max_requested_bpc & ~1);
++		asyh->or.bpc = max(asyh->or.bpc, nouveau_dp_min_bpc(mstc->edid));
+ 		asyh->dp.pbn = drm_dp_calc_pbn_mode(clock, asyh->or.bpc * 3 << 4);
+ 	}
+ 
+@@ -1303,7 +1333,7 @@ nv50_mstc_mode_valid(struct drm_connector *connector,
+ 	 * MSTB's max possible PBN
+ 	 */
+ 
+-	status = nv50_dp_mode_valid(outp, mode, NULL);
++	status = nv50_dp_mode_valid(outp, mode, nouveau_dp_min_bpc(mstc->edid), NULL);
+ 	if (status != MODE_OK ||
+ 	    !nouveau_display(connector->dev)->disp_imp)
+ 		return status;
+diff --git a/drivers/gpu/drm/nouveau/nouveau_connector.c b/drivers/gpu/drm/nouveau/nouveau_connector.c
+index 9a62bb3d75e9b1b2eb43d86b5b3ef2a8ee32cf14..58875f2e731b6d01a4ce36b4f6b38c710ab0d5d7 100644
+--- a/drivers/gpu/drm/nouveau/nouveau_connector.c
++++ b/drivers/gpu/drm/nouveau/nouveau_connector.c
+@@ -267,6 +267,8 @@ nouveau_conn_reset(struct drm_connector *connector)
+ 	asyc->scaler.underscan.mode = UNDERSCAN_OFF;
+ 	asyc->procamp.color_vibrance = 150;
+ 	asyc->procamp.vibrant_hue = 90;
++	/* Restore the property's maximum after reset clears the state. */
++	asyc->state.max_requested_bpc = 16;
+ 
+ 	if (nouveau_display(connector->dev)->disp.object.oclass < NV50_DISP) {
+ 		switch (connector->connector_type) {
+@@ -313,6 +315,17 @@ nouveau_conn_attach_properties(struct drm_connector *connector)
+ 					   disp->underscan_vborder_property, 0);
+ 	}
+ 
++	/* DP can use 6 bpc, whereas TMDS needs at least 8 bpc. */
++	if (drm_drv_uses_atomic_modeset(dev)) {
++		if (connector->connector_type == DRM_MODE_CONNECTOR_DisplayPort ||
++		    connector->connector_type == DRM_MODE_CONNECTOR_eDP)
++			drm_connector_attach_max_bpc_property(connector, 6, 16);
++		else if (connector->connector_type == DRM_MODE_CONNECTOR_DVID ||
++			 connector->connector_type == DRM_MODE_CONNECTOR_DVII ||
++			 connector->connector_type == DRM_MODE_CONNECTOR_HDMIA)
++			drm_connector_attach_max_bpc_property(connector, 8, 16);
++	}
++
+ 	/* Add hue and saturation options. */
+ 	if (disp->vibrant_hue_property)
+ 		drm_object_attach_property(&connector->base,
+@@ -1118,8 +1131,11 @@ nouveau_connector_mode_valid(struct drm_connector *connector,
+ 	case DCB_OUTPUT_TV:
+ 		return get_encoder_i2c_funcs(encoder)->mode_valid(encoder, mode);
+ 	case DCB_OUTPUT_DP: {
++		/* PIOR training always uses 6 bpc. */
++		const u8 min_bpc = nv_encoder->dcb->location == DCB_LOC_ON_CHIP ?
++			nouveau_dp_min_bpc(nv_connector->edid) : 6;
+ 		enum drm_mode_status status =
+-			nv50_dp_mode_valid(nv_encoder, mode, NULL);
++			nv50_dp_mode_valid(nv_encoder, mode, min_bpc, NULL);
+ 
+ 		if (status != MODE_OK ||
+ 		    !nouveau_display(connector->dev)->disp_imp)
+diff --git a/drivers/gpu/drm/nouveau/nouveau_dp.c b/drivers/gpu/drm/nouveau/nouveau_dp.c
+index 55691ec44abaa53c84e73358e33df1949bb1e35c..00bbf7a9273bb691beba989f0204c363977adc1c 100644
+--- a/drivers/gpu/drm/nouveau/nouveau_dp.c
++++ b/drivers/gpu/drm/nouveau/nouveau_dp.c
+@@ -23,6 +23,7 @@
+  */
+ 
+ #include <drm/display/drm_dp_helper.h>
++#include <drm/drm_edid.h>
+ 
+ #include "nouveau_drv.h"
+ #include "nouveau_connector.h"
+@@ -523,18 +524,28 @@ nouveau_dp_irq(struct work_struct *work)
+  * - Validate against the DP caps advertised by the GPU (we don't check these
+  *   yet)
+  */
++/* Match OpenRM's minimum depth policy: allow 6 bpc with digital EDID 1.4 or
++ * newer, otherwise assume 8 bpc.
++ */
++u8
++nouveau_dp_min_bpc(const struct edid *edid)
++{
++	if (edid && edid->revision >= 4 && (edid->input & DRM_EDID_INPUT_DIGITAL))
++		return 6;
++	return 8;
++}
++
+ enum drm_mode_status
+ nv50_dp_mode_valid(struct nouveau_encoder *outp,
+ 		   const struct drm_display_mode *mode,
+-		   unsigned *out_clock)
++		   u8 min_bpc, unsigned *out_clock)
+ {
+ 	const unsigned int min_clock = 25000;
+ 	unsigned int max_rate, mode_rate, ds_max_dotclock, clock = mode->clock;
+-	/* Check with the minmum bpc always, so we can advertise better modes.
+-	 * In particlar not doing this causes modes to be dropped on HDR
+-	 * displays as we might check with a bpc of 16 even.
++	/* Probe at minimum bpc because atomic check can lower the depth to
++	 * fit the link. Using the sink's maximum would hide usable modes.
+ 	 */
+-	const u8 bpp = 6 * 3;
++	const u8 bpp = min_bpc * 3;
+ 
+ 	if (mode->flags & DRM_MODE_FLAG_INTERLACE && !outp->caps.dp_interlace)
+ 		return MODE_NO_INTERLACE;
+diff --git a/drivers/gpu/drm/nouveau/nouveau_encoder.h b/drivers/gpu/drm/nouveau/nouveau_encoder.h
+index 6041a127d0cec039c116eecd94891e758d5d3588..8fc03997a043366a4dc5ddac86f10b9d39e3fe60 100644
+--- a/drivers/gpu/drm/nouveau/nouveau_encoder.h
++++ b/drivers/gpu/drm/nouveau/nouveau_encoder.h
+@@ -160,9 +160,11 @@ bool nouveau_dp_train(struct nouveau_encoder *, bool mst, u32 khz, u8 bpc);
+ void nouveau_dp_power_down(struct nouveau_encoder *);
+ bool nouveau_dp_link_check(struct nouveau_connector *);
+ void nouveau_dp_irq(struct work_struct *);
++struct edid;
++u8 nouveau_dp_min_bpc(const struct edid *);
+ enum drm_mode_status nv50_dp_mode_valid(struct nouveau_encoder *,
+ 					const struct drm_display_mode *,
+-					unsigned *clock);
++					u8 min_bpc, unsigned *clock);
+ 
+ enum drm_mode_status nv50_imp_mode_valid(struct drm_connector *,
+ 					 const struct drm_display_mode *);

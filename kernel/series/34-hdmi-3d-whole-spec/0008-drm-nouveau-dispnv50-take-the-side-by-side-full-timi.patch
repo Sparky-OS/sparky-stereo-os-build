@@ -1,0 +1,140 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 16 Oct 2026 08:08:59 -0300
+Subject: [PATCH] drm/nouveau/dispnv50: take the side by side (full) timing
+ property
+
+Time the head and the TMDS clock with the connector's side by side
+(full) timing, and attach the property to HDMI connectors.
+
+The vendor InfoFrame registers this driver programs take PB0 to PB6, the
+first subpacket, so the 3D metadata (from PB6 or PB7 on) cannot be sent
+and the "HDMI 3D metadata" property is not attached.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ drivers/gpu/drm/nouveau/dispnv50/disp.c     | 14 +++++++++-----
+ drivers/gpu/drm/nouveau/dispnv50/head.c     |  9 ++++++---
+ drivers/gpu/drm/nouveau/dispnv50/head.h     |  2 +-
+ drivers/gpu/drm/nouveau/nouveau_connector.c |  7 +++++++
+ 4 files changed, 23 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/disp.c b/drivers/gpu/drm/nouveau/dispnv50/disp.c
+index 1cad80c7df..1771a08aab 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/disp.c
++++ b/drivers/gpu/drm/nouveau/dispnv50/disp.c
+@@ -416,10 +416,11 @@ nv50_outp_atomic_check_view(struct drm_encoder *encoder,
+  */
+ static void
+ nv50_hdmi_hw_mode(const struct drm_display_mode *mode,
+-		  struct drm_display_mode *hw)
++		  struct drm_display_mode *hw, u32 stereo_flags)
+ {
+ 	*hw = *mode;
+-	drm_mode_set_crtcinfo(hw, CRTC_INTERLACE_HALVE_V | CRTC_STEREO_DOUBLE);
++	drm_mode_set_crtcinfo(hw, CRTC_INTERLACE_HALVE_V | CRTC_STEREO_DOUBLE |
++			      stereo_flags);
+ }
+ 
+ /* Choose the highest depth up to bpc supported by both ends. Enable
+@@ -503,7 +504,8 @@ nv50_outp_atomic_fix_depth(struct drm_encoder *encoder, struct drm_crtc_state *c
+ 				nouveau_connector_tmds_link_bandwidth(connector);
+ 			struct drm_display_mode hw;
+ 
+-			nv50_hdmi_hw_mode(mode, &hw);
++			nv50_hdmi_hw_mode(mode, &hw,
++					  drm_atomic_crtc_stereo_flags(crtc_state));
+ 			while (asyh->or.bpc > 8 &&
+ 			       !nouveau_hdmi_tmds_possible(tmds_max, hw.crtc_clock,
+ 							   asyh->or.bpc))
+@@ -937,7 +939,7 @@ nv50_imp_mode_valid(struct drm_connector *connector,
+ 
+ 	/* Convert the mode to the raster atomic check would program. */
+ 	adjusted = *mode;
+-	nv50_head_mode_from_drm(&adjusted, &m);
++	nv50_head_mode_from_drm(&adjusted, &m, 0);
+ 
+ 	/* Use the first present head rather than assuming head 0 exists. */
+ 	probe_head = disp->disp->head_mask ? ffs(disp->disp->head_mask) - 1 : 0;
+@@ -1008,6 +1010,7 @@ nv50_hdmi_enable(struct drm_encoder *encoder, struct nouveau_crtc *nv_crtc,
+ 	struct drm_hdmi_info *hdmi = &nv_connector->base.display_info.hdmi;
+ 	const struct nv50_head_atom *asyh =
+ 		nv50_head_atom(drm_atomic_get_new_crtc_state(state, &nv_crtc->base));
++	const struct drm_connector_state *conn_state;
+ 	union hdmi_infoframe infoframe = { 0 };
+ 	const u8 rekey = 56; /* binary driver, and tegra, constant */
+ 	struct drm_display_mode hw;
+@@ -1020,7 +1023,8 @@ nv50_hdmi_enable(struct drm_encoder *encoder, struct nouveau_crtc *nv_crtc,
+ 	/* The TMDS character rate is pixel clock * bpc / 8. Use that rate
+ 	 * for SCDC clock-ratio/scrambling setup and the firmware clock.
+ 	 */
+-	nv50_hdmi_hw_mode(mode, &hw);
++	conn_state = drm_atomic_get_new_connector_state(state, &nv_connector->base);
++	nv50_hdmi_hw_mode(mode, &hw, drm_connector_stereo_crtc_flags(conn_state));
+ 	tmds_clock = hw.crtc_clock * asyh->or.bpc / 8;
+ 
+ 	/* At 12 bpc, GCP SB1 carries CD=6 and a packing phase selected by the
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/head.c b/drivers/gpu/drm/nouveau/dispnv50/head.c
+index e0f1a78614..2c0c7817fe 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/head.c
++++ b/drivers/gpu/drm/nouveau/dispnv50/head.c
+@@ -376,11 +376,13 @@ nv50_head_atomic_check_lut(struct nv50_head *head,
+ }
+ 
+ void
+-nv50_head_mode_from_drm(struct drm_display_mode *mode, struct nv50_head_mode *m)
++nv50_head_mode_from_drm(struct drm_display_mode *mode, struct nv50_head_mode *m,
++			u32 stereo_flags)
+ {
+ 	u32 blankus;
+ 
+-	drm_mode_set_crtcinfo(mode, CRTC_INTERLACE_HALVE_V | CRTC_STEREO_DOUBLE);
++	drm_mode_set_crtcinfo(mode, CRTC_INTERLACE_HALVE_V | CRTC_STEREO_DOUBLE |
++			      stereo_flags);
+ 
+ 	/*
+ 	 * DRM modes are defined in terms of a repeating interval
+@@ -423,7 +425,8 @@ nv50_head_atomic_check_mode(struct nv50_head *head, struct nv50_head_atom *asyh)
+ {
+ 	struct drm_display_mode *mode = &asyh->state.adjusted_mode;
+ 
+-	nv50_head_mode_from_drm(mode, &asyh->mode);
++	nv50_head_mode_from_drm(mode, &asyh->mode,
++				drm_atomic_crtc_stereo_flags(&asyh->state));
+ 
+ 	asyh->or.nhsync = !!(mode->flags & DRM_MODE_FLAG_NHSYNC);
+ 	asyh->or.nvsync = !!(mode->flags & DRM_MODE_FLAG_NVSYNC);
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/head.h b/drivers/gpu/drm/nouveau/dispnv50/head.h
+index ccaf1794c9..2c1d1bfdda 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/head.h
++++ b/drivers/gpu/drm/nouveau/dispnv50/head.h
+@@ -22,7 +22,7 @@ struct nv50_head {
+ };
+ 
+ struct nv50_head *nv50_head_create(struct drm_device *, int index);
+-void nv50_head_mode_from_drm(struct drm_display_mode *, struct nv50_head_mode *);
++void nv50_head_mode_from_drm(struct drm_display_mode *, struct nv50_head_mode *, u32);
+ void nv50_head_flush_set(struct nv50_head *head, struct nv50_head_atom *asyh);
+ void nv50_head_flush_set_wndw(struct nv50_head *head, struct nv50_head_atom *asyh);
+ void nv50_head_flush_clr(struct nv50_head *head,
+diff --git a/drivers/gpu/drm/nouveau/nouveau_connector.c b/drivers/gpu/drm/nouveau/nouveau_connector.c
+index 6010b496bf..5128a6a698 100644
+--- a/drivers/gpu/drm/nouveau/nouveau_connector.c
++++ b/drivers/gpu/drm/nouveau/nouveau_connector.c
+@@ -1514,6 +1514,13 @@ nouveau_connector_create(struct drm_device *dev, int index)
+ 		|| (type == DRM_MODE_CONNECTOR_HDMIA)))
+ 		connector->stereo_allowed = true;
+ 
++	/*
++	 * The vendor InfoFrame registers take PB0 to PB6 only, so the 3D
++	 * metadata, which starts at PB6 or PB7, cannot be sent.
++	 */
++	if (connector->stereo_allowed && type == DRM_MODE_CONNECTOR_HDMIA)
++		drm_connector_attach_sbs_full_timing_property(connector);
++
+ 	/* defaults, will get overridden in detect() */
+ 	connector->interlace_allowed = false;
+ 	connector->doublescan_allowed = false;
+-- 
+2.53.0
+

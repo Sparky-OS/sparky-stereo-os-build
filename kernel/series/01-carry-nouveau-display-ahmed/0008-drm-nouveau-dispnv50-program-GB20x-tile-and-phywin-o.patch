@@ -1,0 +1,213 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mohamed Ahmed <mohamedahmedegypt2001@gmail.com>
+Date: Sat, 22 Aug 2026 00:05:31 +0400
+Subject: drm/nouveau/dispnv50: program GB20x tile and phywin ownership
+
+Add per-head tile and phywin masks with modeset hooks so an allocator can
+replace core init's fixed identity mapping. Until masks are assigned, use
+the same mapping and program the tile width from the active raster.
+
+The hardware requires separate detach and attach updates to transfer
+ownership between heads. Release the masks with the head state so a
+flush_disable commit clears them in the early update that detaches the
+OR. Resizing a head's own assignment can then update its masks in place.
+
+Signed-off-by: Mohamed Ahmed <mohamedahmedegypt2001@gmail.com>
+(cherry picked from commit 09efc7f6065d249117e54dee1961f0238057785d)
+---
+ drivers/gpu/drm/nouveau/dispnv50/atom.h     | 10 +++
+ drivers/gpu/drm/nouveau/dispnv50/head.c     | 17 +++++
+ drivers/gpu/drm/nouveau/dispnv50/head.h     |  2 +
+ drivers/gpu/drm/nouveau/dispnv50/headca7d.c | 70 +++++++++++++++++++++
+ 4 files changed, 99 insertions(+)
+
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/atom.h b/drivers/gpu/drm/nouveau/dispnv50/atom.h
+index d44720ba47261ba7fdc8a1dd955da8ae38c730dd..a049e86293ff389e7a6ea467cbffbc12790b3508 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/atom.h
++++ b/drivers/gpu/drm/nouveau/dispnv50/atom.h
+@@ -138,6 +138,15 @@ struct nv50_head_atom {
+ 		u8 tu:6;
+ 	} dp;
+ 
++	/* GB20x tile/phywin ownership. An empty tile mask preserves the identity
++	 * mapping until allocation assigns masks: tile n to head n and phywin n
++	 * to window n.
++	 */
++	struct {
++		u8 tiles_mask;
++		u32 phywins_mask[2];	/* windows head * 2 + n */
++	} mtc;
++
+ 	union nv50_head_atom_mask {
+ 		struct {
+ 			bool olut:1;
+@@ -151,6 +160,7 @@ struct nv50_head_atom {
+ 			bool procamp:1;
+ 			bool crc:1;
+ 			bool or:1;
++			bool mtc:1;
+ 		};
+ 		u16 mask;
+ 	} set, clr;
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/head.c b/drivers/gpu/drm/nouveau/dispnv50/head.c
+index b10ab96574c8094e232b9d3eee77af2633940992..474a232c66a4567d320572dbf0faa364133a6257 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/head.c
++++ b/drivers/gpu/drm/nouveau/dispnv50/head.c
+@@ -50,6 +50,12 @@ nv50_head_flush_clr(struct nv50_head *head,
+ 	if (clr.olut) head->func->olut_clr(head);
+ 	if (clr.core) head->func->core_clr(head);
+ 	if (clr.curs) head->func->curs_clr(head);
++	/* The hardware requires separate detach and attach updates when ownership
++	 * moves between heads. With flush_disable, clear the masks in the early
++	 * update that also detaches the OR, before another head can acquire them.
++	 */
++	if (clr.mtc && head->func->mtc_clr)
++		head->func->mtc_clr(head);
+ }
+ 
+ void
+@@ -72,6 +78,8 @@ nv50_head_flush_set(struct nv50_head *head, struct nv50_head_atom *asyh)
+ 
+ 	if (asyh->set.view   ) head->func->view    (head, asyh);
+ 	if (asyh->set.mode   ) head->func->mode    (head, asyh);
++	if (asyh->set.mtc && head->func->mtc_set)
++		head->func->mtc_set(head, asyh);
+ 	if (asyh->set.core   ) head->func->core_set(head, asyh);
+ 	if (asyh->set.base   ) head->func->base    (head, asyh);
+ 	if (asyh->set.ovly   ) head->func->ovly    (head, asyh);
+@@ -399,6 +407,9 @@ nv50_head_atomic_check_mode(struct nv50_head *head, struct nv50_head_atom *asyh)
+ 	asyh->or.nhsync = !!(mode->flags & DRM_MODE_FLAG_NHSYNC);
+ 	asyh->or.nvsync = !!(mode->flags & DRM_MODE_FLAG_NVSYNC);
+ 	asyh->set.or = head->func->or != NULL;
++	/* Tile sizes depend on the timings, so program them with every modeset.
++	 */
++	asyh->set.mtc = head->func->mtc_set != NULL;
+ 	asyh->set.mode = true;
+ }
+ 
+@@ -482,6 +493,10 @@ nv50_head_atomic_check(struct drm_crtc *crtc, struct drm_atomic_commit *state)
+ 		asyh->curs.visible = false;
+ 		asyh->base.cpp = 0;
+ 		asyh->ovly.cpp = 0;
++		/* Discard the masks on disable because another head may acquire these
++		 * resources before this head is enabled again.
++		 */
++		memset(&asyh->mtc, 0, sizeof(asyh->mtc));
+ 	}
+ 
+ 	if (!drm_atomic_crtc_needs_modeset(&asyh->state)) {
+@@ -512,6 +527,7 @@ nv50_head_atomic_check(struct drm_crtc *crtc, struct drm_atomic_commit *state)
+ 		asyh->clr.olut = armh->olut.visible;
+ 		asyh->clr.core = armh->core.visible;
+ 		asyh->clr.curs = armh->curs.visible;
++		asyh->clr.mtc  = armh->mtc.tiles_mask != 0;
+ 		asyh->set.olut = asyh->olut.visible;
+ 		asyh->set.core = asyh->core.visible;
+ 		asyh->set.curs = asyh->curs.visible;
+@@ -562,6 +578,7 @@ nv50_head_atomic_duplicate_state(struct drm_crtc *crtc)
+ 	asyh->crc = armh->crc;
+ 	asyh->or = armh->or;
+ 	asyh->dp = armh->dp;
++	asyh->mtc = armh->mtc;
+ 	asyh->clr.mask = 0;
+ 	asyh->set.mask = 0;
+ 	return &asyh->state;
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/head.h b/drivers/gpu/drm/nouveau/dispnv50/head.h
+index 8bd2fcb1eff5eb6bb983e606ec03349cded60c19..c9ea51c378028d6954582cf12727708883744cb6 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/head.h
++++ b/drivers/gpu/drm/nouveau/dispnv50/head.h
+@@ -52,6 +52,8 @@ struct nv50_head_func {
+ 	int (*or)(struct nv50_head *, struct nv50_head_atom *);
+ 	void (*static_wndw_map)(struct nv50_head *, struct nv50_head_atom *);
+ 	int (*display_id)(struct nv50_head *, u32 display_id);
++	int (*mtc_set)(struct nv50_head *, struct nv50_head_atom *);
++	int (*mtc_clr)(struct nv50_head *);
+ };
+ 
+ extern const struct nv50_head_func head507d;
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/headca7d.c b/drivers/gpu/drm/nouveau/dispnv50/headca7d.c
+index 9be3ca95333b628ec191d05e8ff05184d97c57c4..dd9a0c64d12d5e22193e2c17a36d9007ca7bafd5 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/headca7d.c
++++ b/drivers/gpu/drm/nouveau/dispnv50/headca7d.c
+@@ -318,6 +318,74 @@ headca7d_view(struct nv50_head *head, struct nv50_head_atom *asyh)
+ 	return 0;
+ }
+ 
++static int
++headca7d_mtc_clr(struct nv50_head *head)
++{
++	struct nvif_push *push = &head->disp->core->chan.push;
++	const int i = head->base.index;
++	int ret;
++
++	ret = PUSH_WAIT(push, 6);
++	if (ret)
++		return ret;
++
++	PUSH_MTHD(push, NVCA7D, HEAD_SET_TILE_MASK(i), 0x00000000);
++	PUSH_MTHD(push, NVCA7D, WINDOW_SET_PHYSICAL(i * 2), 0x00000000);
++	PUSH_MTHD(push, NVCA7D, WINDOW_SET_PHYSICAL(i * 2 + 1), 0x00000000);
++
++	return 0;
++}
++
++/* Use NVKMS's non-DSC tile split: round up the width of each tile except
++ * the last, which takes the remainder so the slices cover hactive exactly.
++ */
++static int
++headca7d_mtc_set(struct nv50_head *head, struct nv50_head_atom *asyh)
++{
++	struct nvif_push *push = &head->disp->core->chan.push;
++	const u32 hactive = asyh->mode.h.blanks - asyh->mode.h.blanke;
++	const int i = head->base.index;
++	unsigned long tiles_mask;
++	u32 start = 0, idx = 0, tiles, tile;
++	int ret;
++
++	/* Keep the hardware's identity mapping while no allocator supplies masks:
++	 * tile n to head n and phywin n to window n.
++	 */
++	if (!asyh->mtc.tiles_mask) {
++		asyh->mtc.tiles_mask = BIT(i);
++		asyh->mtc.phywins_mask[0] = BIT(i * 2);
++		asyh->mtc.phywins_mask[1] = BIT(i * 2 + 1);
++	}
++
++	tiles_mask = asyh->mtc.tiles_mask;
++	tiles = hweight8(asyh->mtc.tiles_mask);
++
++	ret = PUSH_WAIT(push, 6 + tiles * 2);
++	if (ret)
++		return ret;
++
++	PUSH_MTHD(push, NVCA7D, HEAD_SET_TILE_MASK(i), asyh->mtc.tiles_mask);
++	PUSH_MTHD(push, NVCA7D, WINDOW_SET_PHYSICAL(i * 2),
++		  asyh->mtc.phywins_mask[0]);
++	PUSH_MTHD(push, NVCA7D, WINDOW_SET_PHYSICAL(i * 2 + 1),
++		  asyh->mtc.phywins_mask[1]);
++
++	for_each_set_bit(tile, &tiles_mask, 8) {
++		const u32 width = (idx < tiles - 1) ?
++			DIV_ROUND_UP(hactive, tiles) : hactive - start;
++
++		PUSH_MTHD(push, NVCA7D, TILE_SET_TILE_SIZE(tile),
++			  NVVAL(NVCA7D, TILE_SET_TILE_SIZE, START, start) |
++			  NVVAL(NVCA7D, TILE_SET_TILE_SIZE, WIDTH, width));
++
++		start += width;
++		idx++;
++	}
++
++	return 0;
++}
++
+ const struct nv50_head_func
+ headca7d = {
+ 	.view = headca7d_view,
+@@ -337,4 +405,6 @@ headca7d = {
+ 	.or = headca7d_or,
+ 	.static_wndw_map = headc37d_static_wndw_map,
+ 	.display_id = headca7d_display_id,
++	.mtc_set = headca7d_mtc_set,
++	.mtc_clr = headca7d_mtc_clr,
+ };

@@ -1,0 +1,254 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 16 Oct 2026 07:49:57 -0300
+Subject: [PATCH] video/hdmi: carry the 3D metadata of the vendor InfoFrame
+
+HDMI 1.4a, Appendix H, extends the HDMI vendor InfoFrame with
+3D_Meta_present (PB5 bit 3) and, after PB5 or after 3D_Ext_Data when the
+3D structure has one, a byte with 3D_Metadata_type and
+3D_Metadata_Length followed by the metadata (Table H-1). Type 000 is the
+parallax information of ISO/IEC 23002-3 (sections 6.1.2.2 and 6.2.2.2):
+parallax_zero, parallax_scale, dref and wref, 16 bits each, most
+significant byte first, so its length is 8 (Table H-4). A sink that
+receives picture plus depth (3D structures L + depth and L + depth +
+graphics + graphics-depth) uses it to turn depth into parallax.
+
+struct hdmi_vendor_infoframe had no place for it, so a source could not
+send it and the unpacker dropped it. Add the fields, and pack, check,
+unpack and log them. A top-and-bottom frame with metadata carries the
+metadata right after PB5 instead of the reserved zero byte, so its body
+is still longer than 5 bytes. Frames without metadata are packed and
+unpacked as before.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ drivers/video/hdmi.c | 116 ++++++++++++++++++++++++++++++++++++-------
+ include/linux/hdmi.h |  23 +++++++++
+ 2 files changed, 122 insertions(+), 17 deletions(-)
+
+diff --git a/drivers/video/hdmi.c b/drivers/video/hdmi.c
+index 443de11f56..4179250421 100644
+--- a/drivers/video/hdmi.c
++++ b/drivers/video/hdmi.c
+@@ -549,21 +549,40 @@ int hdmi_vendor_infoframe_init(struct hdmi_vendor_infoframe *frame)
+ }
+ EXPORT_SYMBOL(hdmi_vendor_infoframe_init);
+ 
++static bool hdmi_3d_ext_data_present(enum hdmi_3d_structure s3d_struct)
++{
++	/* HDMI 1.4a, 8.2.3: only 3D_Structure 1000 to 1111 carry 3D_Ext_Data */
++	return s3d_struct >= HDMI_3D_STRUCTURE_SIDE_BY_SIDE_HALF;
++}
++
+ static int hdmi_vendor_infoframe_length(const struct hdmi_vendor_infoframe *frame)
+ {
++	int length;
++
++	if (frame->s3d_struct == HDMI_3D_STRUCTURE_INVALID)
++		return frame->vic != 0 ? 5 : 4;
++
++	length = 5;
++	if (hdmi_3d_ext_data_present(frame->s3d_struct))
++		length++;
++
+ 	/*
+-	 * Side by side (half) carries 3D_Ext_Data. Top and bottom has none
+-	 * (HDMI 1.4a, 8.2.3), but gets a reserved zero byte after PB5, which
+-	 * Table 8-11 allows (reserved bytes up to PB(Nv)): sinks that only
+-	 * engage 3D on a 6-byte body exist (a Sony KDL-46HX855; JVC projectors).
++	 * HDMI 1.4a, Appendix H, Table H-1: the 3D metadata follows PB5, or
++	 * 3D_Ext_Data when there is one, with its type and length byte first.
+ 	 */
+-	if (frame->s3d_struct >= HDMI_3D_STRUCTURE_SIDE_BY_SIDE_HALF ||
+-	    frame->s3d_struct == HDMI_3D_STRUCTURE_TOP_AND_BOTTOM)
+-		return 6;
+-	else if (frame->vic != 0 || frame->s3d_struct != HDMI_3D_STRUCTURE_INVALID)
+-		return 5;
+-	else
+-		return 4;
++	if (frame->s3d_meta_present)
++		return length + 1 + frame->s3d_meta_length;
++
++	/*
++	 * Top and bottom has no 3D_Ext_Data (HDMI 1.4a, 8.2.3), but gets a
++	 * reserved zero byte after PB5, which Table 8-11 allows (reserved bytes
++	 * up to PB(Nv)): sinks that only engage 3D on a 6-byte body exist (a
++	 * Sony KDL-46HX855; JVC projectors).
++	 */
++	if (frame->s3d_struct == HDMI_3D_STRUCTURE_TOP_AND_BOTTOM)
++		length++;
++
++	return length;
+ }
+ 
+ static int hdmi_vendor_infoframe_check_only(const struct hdmi_vendor_infoframe *frame)
+@@ -577,9 +596,24 @@ static int hdmi_vendor_infoframe_check_only(const struct hdmi_vendor_infoframe *
+ 	if (frame->vic != 0 && frame->s3d_struct != HDMI_3D_STRUCTURE_INVALID)
+ 		return -EINVAL;
+ 
++	if (frame->s3d_meta_present) {
++		if (frame->s3d_struct == HDMI_3D_STRUCTURE_INVALID ||
++		    frame->s3d_meta_length > HDMI_3D_METADATA_MAX_SIZE ||
++		    frame->s3d_meta_type > 0x7)
++			return -EINVAL;
++
++		/* HDMI 1.4a, Appendix H, Table H-4 */
++		if (frame->s3d_meta_type == HDMI_3D_METADATA_PARALLAX &&
++		    frame->s3d_meta_length != HDMI_3D_METADATA_PARALLAX_SIZE)
++			return -EINVAL;
++	}
++
+ 	if (frame->length != hdmi_vendor_infoframe_length(frame))
+ 		return -EINVAL;
+ 
++	if (frame->length > HDMI_MAX_INFOFRAME_SIZE)
++		return -EINVAL;
++
+ 	return 0;
+ }
+ 
+@@ -643,10 +677,21 @@ ssize_t hdmi_vendor_infoframe_pack_only(const struct hdmi_vendor_infoframe *fram
+ 	ptr[6] = 0x00;
+ 
+ 	if (frame->s3d_struct != HDMI_3D_STRUCTURE_INVALID) {
++		u8 *meta = &ptr[9];
++
+ 		ptr[7] = 0x2 << 5;	/* video format */
+ 		ptr[8] = (frame->s3d_struct & 0xf) << 4;
+-		if (frame->s3d_struct >= HDMI_3D_STRUCTURE_SIDE_BY_SIDE_HALF)
++		if (hdmi_3d_ext_data_present(frame->s3d_struct)) {
+ 			ptr[9] = (frame->s3d_ext_data & 0xf) << 4;
++			meta++;
++		}
++		if (frame->s3d_meta_present) {
++			ptr[8] |= BIT(3);	/* 3D_Meta_present */
++			meta[0] = (frame->s3d_meta_type & 0x7) << 5 |
++				  (frame->s3d_meta_length & 0x1f);
++			memcpy(&meta[1], frame->s3d_meta,
++			       frame->s3d_meta_length);
++		}
+ 	} else if (frame->vic) {
+ 		ptr[7] = 0x1 << 5;	/* video format */
+ 		ptr[8] = frame->vic;
+@@ -1492,6 +1537,23 @@ hdmi_3d_structure_get_name(enum hdmi_3d_structure s3d_struct)
+ 	return "Reserved";
+ }
+ 
++static void hdmi_3d_metadata_log(const char *level, struct device *dev,
++				 const struct hdmi_vendor_infoframe *hvf)
++{
++	const u8 *m = hvf->s3d_meta;
++
++	if (hvf->s3d_meta_type == HDMI_3D_METADATA_PARALLAX &&
++	    hvf->s3d_meta_length == HDMI_3D_METADATA_PARALLAX_SIZE) {
++		hdmi_log("    3D metadata: parallax zero %u scale %u dref %u wref %u\n",
++			 m[0] << 8 | m[1], m[2] << 8 | m[3],
++			 m[4] << 8 | m[5], m[6] << 8 | m[7]);
++		return;
++	}
++
++	hdmi_log("    3D metadata: type %u, %u bytes\n",
++		 hvf->s3d_meta_type, hvf->s3d_meta_length);
++}
++
+ static void
+ hdmi_vendor_any_infoframe_log(const char *level,
+ 			      struct device *dev,
+@@ -1519,6 +1581,8 @@ hdmi_vendor_any_infoframe_log(const char *level,
+ 		if (hvf->s3d_struct >= HDMI_3D_STRUCTURE_SIDE_BY_SIDE_HALF)
+ 			hdmi_log("    3D extension data: %d\n",
+ 					hvf->s3d_ext_data);
++		if (hvf->s3d_meta_present)
++			hdmi_3d_metadata_log(level, dev, hvf);
+ 	}
+ }
+ 
+@@ -1736,7 +1800,7 @@ hdmi_vendor_any_infoframe_unpack(union hdmi_vendor_any_infoframe *frame,
+ 
+ 	if (ptr[0] != HDMI_INFOFRAME_TYPE_VENDOR ||
+ 	    ptr[1] != 1 ||
+-	    (ptr[2] != 4 && ptr[2] != 5 && ptr[2] != 6))
++	    ptr[2] < 4 || ptr[2] > HDMI_MAX_INFOFRAME_SIZE)
+ 		return -EINVAL;
+ 
+ 	length = ptr[2];
+@@ -1768,13 +1832,31 @@ hdmi_vendor_any_infoframe_unpack(union hdmi_vendor_any_infoframe *frame,
+ 	hvf->length = length;
+ 
+ 	if (hdmi_video_format == 0x2) {
+-		if (length != 5 && length != 6)
+-			return -EINVAL;
++		u8 meta = 5;
++
+ 		hvf->s3d_struct = ptr[4] >> 4;
+-		if (hvf->s3d_struct >= HDMI_3D_STRUCTURE_SIDE_BY_SIDE_HALF) {
+-			if (length != 6)
++		hvf->s3d_meta_present = ptr[4] & BIT(3);
++		if (hdmi_3d_ext_data_present(hvf->s3d_struct)) {
++			if (length < 6)
+ 				return -EINVAL;
+ 			hvf->s3d_ext_data = ptr[5] >> 4;
++			meta++;
++		}
++		if (hvf->s3d_meta_present) {
++			if (length < meta + 1)
++				return -EINVAL;
++			hvf->s3d_meta_type = ptr[meta] >> 5;
++			hvf->s3d_meta_length = ptr[meta] & 0x1f;
++			if (hvf->s3d_meta_length > HDMI_3D_METADATA_MAX_SIZE ||
++			    length < meta + 1 + hvf->s3d_meta_length)
++				return -EINVAL;
++			memcpy(hvf->s3d_meta, &ptr[meta + 1],
++			       hvf->s3d_meta_length);
++		} else if (length != 5 && length != 6) {
++			return -EINVAL;
++		} else if (hdmi_3d_ext_data_present(hvf->s3d_struct) &&
++			   length != 6) {
++			return -EINVAL;
+ 		}
+ 	} else if (hdmi_video_format == 0x1) {
+ 		if (length != 5)
+diff --git a/include/linux/hdmi.h b/include/linux/hdmi.h
+index 8dab78e1f6..8b6e14d0e0 100644
+--- a/include/linux/hdmi.h
++++ b/include/linux/hdmi.h
+@@ -371,6 +371,25 @@ enum hdmi_3d_structure {
+ };
+ 
+ 
++/*
++ * 3D_Metadata_type of the HDMI Vendor Specific InfoFrame (HDMI 1.4a,
++ * Appendix H, Table H-4). Parallax information is the one defined type: the
++ * parallax_zero, parallax_scale, dref and wref parameters of ISO/IEC 23002-3
++ * (sections 6.1.2.2 and 6.2.2.2), each 16 bits, most significant byte first.
++ */
++enum hdmi_3d_metadata_type {
++	HDMI_3D_METADATA_PARALLAX = 0,
++};
++
++#define HDMI_3D_METADATA_PARALLAX_SIZE	8
++
++/*
++ * The 3D metadata follows the OUI, PB4, PB5 and, for side by side (half),
++ * 3D_Ext_Data, after its own type and length byte, inside the largest
++ * InfoFrame body (HDMI_MAX_INFOFRAME_SIZE).
++ */
++#define HDMI_3D_METADATA_MAX_SIZE	20
++
+ struct hdmi_vendor_infoframe {
+ 	enum hdmi_infoframe_type type;
+ 	unsigned char version;
+@@ -379,6 +398,10 @@ struct hdmi_vendor_infoframe {
+ 	u8 vic;
+ 	enum hdmi_3d_structure s3d_struct;
+ 	unsigned int s3d_ext_data;
++	bool s3d_meta_present;
++	enum hdmi_3d_metadata_type s3d_meta_type;
++	u8 s3d_meta_length;
++	u8 s3d_meta[HDMI_3D_METADATA_MAX_SIZE];
+ };
+ 
+ /* HDR Metadata as per 861.G spec */
+-- 
+2.53.0
+

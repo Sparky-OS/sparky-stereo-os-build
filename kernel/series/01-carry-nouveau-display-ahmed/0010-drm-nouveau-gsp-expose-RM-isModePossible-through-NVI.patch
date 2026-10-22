@@ -1,0 +1,785 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mohamed Ahmed <mohamedahmedegypt2001@gmail.com>
+Date: Sun, 5 Jul 2026 18:38:37 +0400
+Subject: drm/nouveau/gsp: expose RM isModePossible through NVIF
+
+RM's isModePossible validates display configurations using chip-specific
+resource limits. Expose it through NVIF so nouveau can check head
+timings, scaler and DSC parameters, and window format bounds together. On
+GB20x, it returns the required tile counts and recommended DSC slice
+counts as well. The interface describes progressive modes (interlaced is
+not supported on modern cards) and uses the r570 control layout. The
+different r535 layout is not supported.
+
+Create the NVC372_DISPLAY_SW object during display initialization to avoid
+creating it in the normal check path. Since fini frees it, recreate it on
+demand and serialize queries with object teardown.
+
+Compute frame-idle inputs for nouveau's centered viewport. Supply the DSC
+slice mask on all GPUs, and on tiled GPUs include the target bpp and slice
+width required by the control definition.
+
+Signed-off-by: Mohamed Ahmed <mohamedahmedegypt2001@gmail.com>
+(cherry picked from commit 518b44785aa2d0da91619f5a19c4bf61d4e19df2)
+---
+ drivers/gpu/drm/nouveau/include/nvif/disp.h   |   3 +
+ drivers/gpu/drm/nouveau/include/nvif/if0010.h |  46 ++++
+ .../drm/nouveau/include/nvkm/engine/disp.h    |  46 ++++
+ drivers/gpu/drm/nouveau/nvif/disp.c           |  15 ++
+ .../gpu/drm/nouveau/nvkm/engine/disp/udisp.c  |  78 ++++++
+ .../drm/nouveau/nvkm/subdev/gsp/rm/handles.h  |   1 +
+ .../nouveau/nvkm/subdev/gsp/rm/r535/disp.c    |   6 +
+ .../nouveau/nvkm/subdev/gsp/rm/r570/disp.c    | 234 ++++++++++++++++++
+ .../nvkm/subdev/gsp/rm/r570/nvrm/disp.h       | 169 +++++++++++++
+ .../gpu/drm/nouveau/nvkm/subdev/gsp/rm/rm.h   |   5 +
+ 10 files changed, 603 insertions(+)
+
+diff --git a/drivers/gpu/drm/nouveau/include/nvif/disp.h b/drivers/gpu/drm/nouveau/include/nvif/disp.h
+index 56eb7293e01cd4702d7d3ee8ae559748fc17912b..2098581c6a23ca0d8a8eebbec89de78264ee2964 100644
+--- a/drivers/gpu/drm/nouveau/include/nvif/disp.h
++++ b/drivers/gpu/drm/nouveau/include/nvif/disp.h
+@@ -12,5 +12,8 @@ struct nvif_disp {
+ 
+ int nvif_disp_ctor(struct nvif_device *, const char *name, s32 oclass,
+ 		   struct nvif_disp *);
++
++struct nvif_disp_imp_check_v0;
++int nvif_disp_imp_check(struct nvif_disp *, struct nvif_disp_imp_check_v0 *);
+ void nvif_disp_dtor(struct nvif_disp *);
+ #endif
+diff --git a/drivers/gpu/drm/nouveau/include/nvif/if0010.h b/drivers/gpu/drm/nouveau/include/nvif/if0010.h
+index 4c835bbe6fe3f4f9d062f76a1de1a8f76d1e7225..325d7a5f8b39d21306bdcaa4c5859ed8771bae65 100644
+--- a/drivers/gpu/drm/nouveau/include/nvif/if0010.h
++++ b/drivers/gpu/drm/nouveau/include/nvif/if0010.h
+@@ -11,4 +11,50 @@ union nvif_disp_args {
+ 		__u32 head_mask;
+ 	} v0;
+ };
++
++#define NVIF_DISP_V0_IMP_CHECK 0x00
++
++/* Window format classes, using NVC372_CTRL_FORMAT_* values. */
++#define NVIF_DISP_IMP_FORMAT_RGB_PACKED_1_BPP                               0x01
++#define NVIF_DISP_IMP_FORMAT_RGB_PACKED_2_BPP                               0x02
++#define NVIF_DISP_IMP_FORMAT_RGB_PACKED_4_BPP                               0x04
++#define NVIF_DISP_IMP_FORMAT_RGB_PACKED_8_BPP                               0x08
++#define NVIF_DISP_IMP_FORMAT_YUV_PACKED_422                                 0x10
++#define NVIF_DISP_IMP_FORMAT_ALL                                            0x1f
++
++union nvif_disp_imp_check_args {
++	struct nvif_disp_imp_check_v0 {
++		__u8  version;
++		__u8  num_heads;
++		__u8  possible;		/* out */
++		__u8  tiled;		/* in: tiled GPU requiring an assignment */
++		__u8  pad04[4];
++		struct nvif_disp_imp_check_head_v0 {
++			__u8  index;
++			__u8  vtaps;		/* in: assigned output scaler vertical taps */
++			__u8  tile_mask;	/* in: forced tiles, 0 lets IMP choose */
++			__u8  dsc_enable;
++			__u8  required_tiles;	/* out */
++			__u8  dsc_slices;	/* out */
++			__u16 dsc_bpp_x16;
++			__u32 dsc_slice_mask;
++			__u32 pclk_khz;
++			__u16 htotal;
++			__u16 vtotal;
++			__u16 hblanks;		/* raster blank start/end */
++			__u16 hblanke;
++			__u16 vblanks;
++			__u16 vblanke;
++			__u16 in_w;		/* viewport */
++			__u16 in_h;
++			__u16 out_w;
++			__u16 out_h;
++			/* NVIF_DISP_IMP_FORMAT_* mask per window. Zero excludes
++			 * it from IMP.
++			 */
++			__u8  wndw_formats[2];
++			__u8  pad26[2];
++		} head[8];
++	} v0;
++};
+ #endif
+diff --git a/drivers/gpu/drm/nouveau/include/nvkm/engine/disp.h b/drivers/gpu/drm/nouveau/include/nvkm/engine/disp.h
+index 01145db32c53463049b63492bd4d9695a3da453b..f8211d323438bb93070eb0e542ff11edae9ef784 100644
+--- a/drivers/gpu/drm/nouveau/include/nvkm/engine/disp.h
++++ b/drivers/gpu/drm/nouveau/include/nvkm/engine/disp.h
+@@ -7,16 +7,62 @@
+ #include <core/event.h>
+ #include <subdev/gsp.h>
+ 
++/* Per-head RM IMP inputs for progressive rasters. The interface has no fields
++ * to describe the second blanking region of an interlaced mode.
++ */
++struct nvkm_disp_imp_head {
++	u8 index;
++	u8 vtaps;	/* assigned output scaler vertical taps */
++	u8 tile_mask;	/* forced tiles, 0 lets IMP choose */
++	u32 pclk_khz;
++	u16 htotal;
++	u16 vtotal;
++	u16 hblanks;	/* raster blank start/end */
++	u16 hblanke;
++	u16 vblanks;
++	u16 vblanke;
++	u16 in_w;	/* viewport */
++	u16 in_h;
++	u16 out_w;
++	u16 out_h;
++	bool dsc_enable;
++	u16 dsc_bpp_x16;
++	u32 dsc_slice_mask;
++	/* NVC372_CTRL_FORMAT_* mask per window. 0 = window absent. */
++	u8 wndw_formats[2];
++};
++
++struct nvkm_disp_imp_result {
++	bool possible;
++	struct {
++		u8 required_tiles;
++		u8 dsc_slices;
++	} head[8];
++};
++
+ struct nvkm_disp {
+ 	const struct nvkm_disp_func *func;
+ 	struct nvkm_engine engine;
+ 
++	/* IMP validation, or NULL for firmware without this control. Set tiled
++	 * on GPUs that need a tiling assignment for the configuration to be valid.
++	 */
++	int (*imp_check)(struct nvkm_disp *, u8 num_heads, bool tiled,
++			 const struct nvkm_disp_imp_head *,
++			 struct nvkm_disp_imp_result *);
++
+ 	struct {
+ 		struct nvkm_gsp_client client;
+ 		struct nvkm_gsp_device device;
+ 
+ 		struct nvkm_gsp_object objcom;
+ 		struct nvkm_gsp_object object;
++		/* Create the IMP object at init and recreate it on demand after fini.
++		 * imp_mutex serializes queries with fini so the object stays valid during
++		 * a query.
++		 */
++		struct nvkm_gsp_object c372;
++		struct mutex imp_mutex;
+ 
+ #define NVKM_DPYID_PLUG   BIT(0)
+ #define NVKM_DPYID_UNPLUG BIT(1)
+diff --git a/drivers/gpu/drm/nouveau/nvif/disp.c b/drivers/gpu/drm/nouveau/nvif/disp.c
+index fa42146252daee4e97c21bee307d947df6e909f5..8238051a09a45337f270106b6cd5eaa8302034fd 100644
+--- a/drivers/gpu/drm/nouveau/nvif/disp.c
++++ b/drivers/gpu/drm/nouveau/nvif/disp.c
+@@ -81,3 +81,18 @@ nvif_disp_ctor(struct nvif_device *device, const char *name, s32 oclass, struct
+ 	disp->head_mask = args.head_mask;
+ 	return 0;
+ }
++
++int
++nvif_disp_imp_check(struct nvif_disp *disp, struct nvif_disp_imp_check_v0 *args)
++{
++	int ret;
++
++	args->version = 0;
++
++	ret = nvif_mthd(&disp->object, NVIF_DISP_V0_IMP_CHECK, args, sizeof(*args));
++	/* -ENODEV is the expected result on firmware without the API. */
++	NVIF_ERRON(ret && ret != -ENODEV, &disp->object,
++		   "[IMP_CHECK heads:%d] possible:%d ret:%d",
++		   args->num_heads, args->possible, ret);
++	return ret;
++}
+diff --git a/drivers/gpu/drm/nouveau/nvkm/engine/disp/udisp.c b/drivers/gpu/drm/nouveau/nvkm/engine/disp/udisp.c
+index 0268d1d75805bc188a532bc23941584929d66690..c212ce350a40d04946d2bb508dd62a0a5936bba5 100644
+--- a/drivers/gpu/drm/nouveau/nvkm/engine/disp/udisp.c
++++ b/drivers/gpu/drm/nouveau/nvkm/engine/disp/udisp.c
+@@ -27,6 +27,83 @@
+ #include <nvif/class.h>
+ #include <nvif/if0010.h>
+ 
++static int
++nvkm_udisp_mthd_imp_check(struct nvkm_disp *disp, void *argv, u32 argc)
++{
++	union nvif_disp_imp_check_args *args = argv;
++	struct nvkm_disp_imp_head heads[8];
++	struct nvkm_disp_imp_result result;
++	u32 seen = 0;
++	int ret, i;
++
++	if (argc != sizeof(args->v0) || args->v0.version != 0)
++		return -ENOSYS;
++	if (!disp->imp_check)
++		return -ENODEV;
++	if (args->v0.num_heads > ARRAY_SIZE(heads))
++		return -EINVAL;
++
++	for (i = 0; i < args->v0.num_heads; i++) {
++		if (args->v0.head[i].index >= ARRAY_SIZE(result.head) ||
++		    seen & BIT(args->v0.head[i].index))
++			return -EINVAL;
++		seen |= BIT(args->v0.head[i].index);
++
++		heads[i].index = args->v0.head[i].index;
++		heads[i].vtaps = args->v0.head[i].vtaps;
++		heads[i].tile_mask = args->v0.head[i].tile_mask;
++		heads[i].pclk_khz = args->v0.head[i].pclk_khz;
++		heads[i].htotal = args->v0.head[i].htotal;
++		heads[i].vtotal = args->v0.head[i].vtotal;
++		heads[i].hblanks = args->v0.head[i].hblanks;
++		heads[i].hblanke = args->v0.head[i].hblanke;
++		heads[i].vblanks = args->v0.head[i].vblanks;
++		heads[i].vblanke = args->v0.head[i].vblanke;
++		heads[i].in_w = args->v0.head[i].in_w;
++		heads[i].in_h = args->v0.head[i].in_h;
++		heads[i].out_w = args->v0.head[i].out_w;
++		heads[i].out_h = args->v0.head[i].out_h;
++		heads[i].dsc_enable = args->v0.head[i].dsc_enable;
++		heads[i].dsc_bpp_x16 = args->v0.head[i].dsc_bpp_x16;
++		heads[i].dsc_slice_mask = args->v0.head[i].dsc_slice_mask;
++		heads[i].wndw_formats[0] = args->v0.head[i].wndw_formats[0] &
++					   NVIF_DISP_IMP_FORMAT_ALL;
++		heads[i].wndw_formats[1] = args->v0.head[i].wndw_formats[1] &
++					   NVIF_DISP_IMP_FORMAT_ALL;
++	}
++
++	ret = disp->imp_check(disp, args->v0.num_heads, args->v0.tiled, heads,
++			      &result);
++	if (ret)
++		return ret;
++
++	args->v0.possible = result.possible;
++	for (i = 0; i < args->v0.num_heads; i++) {
++		const u8 index = args->v0.head[i].index;
++
++		args->v0.head[i].required_tiles =
++			result.head[index].required_tiles;
++		args->v0.head[i].dsc_slices = result.head[index].dsc_slices;
++	}
++
++	return 0;
++}
++
++static int
++nvkm_udisp_mthd(struct nvkm_object *object, u32 mthd, void *argv, u32 argc)
++{
++	struct nvkm_disp *disp = nvkm_udisp(object);
++
++	switch (mthd) {
++	case NVIF_DISP_V0_IMP_CHECK:
++		return nvkm_udisp_mthd_imp_check(disp, argv, argc);
++	default:
++		break;
++	}
++
++	return -EINVAL;
++}
++
+ static int
+ nvkm_udisp_sclass(struct nvkm_object *object, int index, struct nvkm_oclass *sclass)
+ {
+@@ -74,6 +151,7 @@ nvkm_udisp_dtor(struct nvkm_object *object)
+ static const struct nvkm_object_func
+ nvkm_udisp = {
+ 	.dtor = nvkm_udisp_dtor,
++	.mthd = nvkm_udisp_mthd,
+ 	.sclass = nvkm_udisp_sclass,
+ };
+ 
+diff --git a/drivers/gpu/drm/nouveau/nvkm/subdev/gsp/rm/handles.h b/drivers/gpu/drm/nouveau/nvkm/subdev/gsp/rm/handles.h
+index 3bdb5ad320d787d29971e39aff00cd3bf4344e9a..03fd717d1334f06f51861e4925caf598c201717a 100644
+--- a/drivers/gpu/drm/nouveau/nvkm/subdev/gsp/rm/handles.h
++++ b/drivers/gpu/drm/nouveau/nvkm/subdev/gsp/rm/handles.h
+@@ -12,6 +12,7 @@
+ #define NVKM_RM_DEVICE              0xde1d0000
+ #define NVKM_RM_SUBDEVICE           0x5d1d0000
+ #define NVKM_RM_DISP                0x00730000
++#define NVKM_RM_DISP_SW             0xc3720000
+ #define NVKM_RM_VASPACE             0x90f10000
+ #define NVKM_RM_CHAN(chid)         (0xf1f00000 | (chid))
+ #define NVKM_RM_THREED              0x97000000
+diff --git a/drivers/gpu/drm/nouveau/nvkm/subdev/gsp/rm/r535/disp.c b/drivers/gpu/drm/nouveau/nvkm/subdev/gsp/rm/r535/disp.c
+index 91006f1ef84df37f6c165155db3c6dac2e9b45a8..3ac5456f6485655112d9c9c555103d4d166d08e4 100644
+--- a/drivers/gpu/drm/nouveau/nvkm/subdev/gsp/rm/r535/disp.c
++++ b/drivers/gpu/drm/nouveau/nvkm/subdev/gsp/rm/r535/disp.c
+@@ -1406,6 +1406,9 @@ r535_disp_fini(struct nvkm_disp *disp, bool suspend)
+ 	if (!disp->engine.subdev.use.enabled)
+ 		return;
+ 
++	mutex_lock(&disp->rm.imp_mutex);
++	nvkm_gsp_rm_free(&disp->rm.c372);
++	mutex_unlock(&disp->rm.imp_mutex);
+ 	nvkm_gsp_rm_free(&disp->rm.object);
+ 
+ 	if (!suspend) {
+@@ -1509,6 +1512,9 @@ r535_disp_oneinit(struct nvkm_disp *disp)
+ 	if (ret)
+ 		return ret;
+ 
++	disp->imp_check = rmapi->disp->imp_check;
++	mutex_init(&disp->rm.imp_mutex);
++
+ 	ret = rmapi->disp->get_static_info(disp);
+ 	if (ret)
+ 		return ret;
+diff --git a/drivers/gpu/drm/nouveau/nvkm/subdev/gsp/rm/r570/disp.c b/drivers/gpu/drm/nouveau/nvkm/subdev/gsp/rm/r570/disp.c
+index 8a23837f356e9e0e61c1bd91916bfd0485249189..7589bbe60e194964ae45d237849a1527eee14f65 100644
+--- a/drivers/gpu/drm/nouveau/nvkm/subdev/gsp/rm/r570/disp.c
++++ b/drivers/gpu/drm/nouveau/nvkm/subdev/gsp/rm/r570/disp.c
+@@ -200,6 +200,230 @@ r570_dp_get_caps(struct nvkm_disp *disp, int *plink_bw, bool *pmst, bool *pwm)
+ 	return 0;
+ }
+ 
++/* Validate the supplied head configuration with RM and extract per-head
++ * tile requirements. Windows follow nouveau's fixed two-per-head assignment
++ * with format bounds supplied by the caller.
++ */
++static int
++r570_disp_imp_check_locked(struct nvkm_disp *disp, u8 num_heads, bool tiled,
++			   const struct nvkm_disp_imp_head *heads,
++			   struct nvkm_disp_imp_result *result)
++{
++	NVC372_CTRL_IS_MODE_POSSIBLE_PARAMS *ctrl;
++	int ret = 0, i, w;
++
++	memset(result, 0, sizeof(*result));
++
++	if (num_heads > ARRAY_SIZE(result->head))
++		return -EINVAL;
++
++	/* An empty configuration does not need resources or tiling assignment, so
++	 * return possible without an RM query like NVKMS does.
++	 */
++	if (!num_heads) {
++		result->possible = true;
++		return 0;
++	}
++
++	for (i = 0; i < num_heads; i++) {
++		if (heads[i].index >= ARRAY_SIZE(result->head))
++			return -EINVAL;
++	}
++
++	if (!disp->rm.c372.client) {
++		ret = nvkm_gsp_rm_alloc(&disp->rm.device.object, NVKM_RM_DISP_SW,
++					NVC372_DISPLAY_SW, 0, &disp->rm.c372);
++		if (ret) {
++			memset(&disp->rm.c372, 0, sizeof(disp->rm.c372));
++			return ret;
++		}
++	}
++
++	ctrl = nvkm_gsp_rm_ctrl_get(&disp->rm.c372,
++				    NVC372_CTRL_CMD_IS_MODE_POSSIBLE, sizeof(*ctrl));
++	if (IS_ERR(ctrl))
++		return PTR_ERR(ctrl);
++
++	memset(ctrl, 0, sizeof(*ctrl));
++
++	for (i = 0; i < num_heads; i++) {
++		const struct nvkm_disp_imp_head *head = &heads[i];
++		NVC372_CTRL_IMP_HEAD *imph = &ctrl->head[ctrl->numHeads++];
++		const u16 hactive = head->hblanks - head->hblanke;
++		const u16 vactive = head->vblanks - head->vblanke;
++		/* Aspect scaling can round the output height above the active raster,
++		 * so clamp it here to keep the overscan subtraction from underflowing.
++		 */
++		const u16 idle_h = min_t(u16, head->out_h, vactive);
++		u32 leading, overscan;
++
++		imph->headIndex = head->index;
++		imph->maxPixelClkKHz = head->pclk_khz;
++		imph->rasterSize.width = head->htotal;
++		imph->rasterSize.height = head->vtotal;
++		imph->rasterBlankStart.X = head->hblanks;
++		imph->rasterBlankStart.Y = head->vblanks;
++		imph->rasterBlankEnd.X = head->hblanke;
++		imph->rasterBlankEnd.Y = head->vblanke;
++
++		imph->control.masterLockMode = NV_DISP_LOCK_MODE_NO_LOCK;
++		imph->control.masterLockPin = NV_DISP_LOCK_PIN_UNSPECIFIED;
++		imph->control.slaveLockMode = NV_DISP_LOCK_MODE_NO_LOCK;
++		imph->control.slaveLockPin = NV_DISP_LOCK_PIN_UNSPECIFIED;
++
++		/* Use the caller's validated ratios and assigned taps so IMP models the
++		 * scaler configuration that will be programmed. Downscale factors are
++		 * input/output ratios multiplied by 0x400.
++		 */
++		imph->maxDownscaleFactorH = head->out_w && head->in_w > head->out_w ?
++			DIV_ROUND_UP(head->in_w * 0x400, head->out_w) : 0x400;
++		imph->maxDownscaleFactorV = head->out_h && head->in_h > head->out_h ?
++			DIV_ROUND_UP(head->in_h * 0x400, head->out_h) : 0x400;
++		imph->outputScalerVerticalTaps = head->vtaps ? head->vtaps : 2;
++		imph->bUpscalingAllowedV = head->out_h > head->in_h;
++
++		/* Include the overscan borders in the frame-idle counts, matching
++		 * nvComputeMinFrameIdle(). nouveau centers the output viewport, so its
++		 * yAdjust term is zero.
++		 */
++		overscan = vactive / 2 - idle_h / 2;
++		leading = head->vblanke + overscan + 1;
++		if (leading < 2 || leading + idle_h > head->vtotal) {
++			/* Vsync and back porch each need a line, and the trailing count must
++			 * not underflow. Invalid timings make the mode impossible without
++			 * constituting an RM control error.
++			 */
++			nvkm_gsp_rm_ctrl_done(&disp->rm.c372, ctrl);
++			return 0;
++		}
++		imph->minFrameIdle.leadingRasterLines = leading;
++		imph->minFrameIdle.trailingRasterLines = head->vtotal -
++			(leading + idle_h);
++
++		imph->lut = NVC372_CTRL_IMP_LUT_USAGE_1025;
++		imph->cursorSize32p = 256 / 32;
++
++		imph->bEnableDsc = head->dsc_enable;
++		/* Pass the slice mask on all GPUs, as NVKMS does. On tiled GPUs the
++		 * control definition also requires target bpp and slice width, so fill
++		 * both even though NVKMS leaves target bpp unset.
++		 */
++		if (head->dsc_enable) {
++			u32 min_slices = ffs(head->dsc_slice_mask);
++
++			if (tiled && !min_slices) {
++				/* Tiled DSC requires at least one allowed slice count. */
++				nvkm_gsp_rm_ctrl_done(&disp->rm.c372, ctrl);
++				return 0;
++			}
++			imph->possibleDscSliceCountMask = head->dsc_slice_mask;
++			if (tiled) {
++				imph->dscTargetBppX16 = head->dsc_bpp_x16;
++				imph->maxDscSliceWidth = min_slices < hactive ?
++					DIV_ROUND_UP(hactive, min_slices) : hactive;
++			}
++		}
++
++		/* A nonzero mask constrains IMP to the caller's assignment, so
++		 * IMP must fail if those tiles are insufficient. Zero lets IMP
++		 * choose the tile count.
++		 */
++		imph->tileMask = head->tile_mask;
++
++		for (w = 0; w < 2; w++) {
++			NVC372_CTRL_IMP_WINDOW *impw;
++
++			/* Omit windows with no allowed formats. */
++			if (!head->wndw_formats[w])
++				continue;
++
++			impw = &ctrl->window[ctrl->numWindows++];
++			impw->windowIndex = head->index * 2 + w;
++			impw->owningHead = head->index;
++			/* Window scaling is fixed at 1:1 with two taps, so only
++			 * the format bound comes from the caller. The fetch
++			 * bound follows the input width.
++			 */
++			impw->formatUsageBound = head->wndw_formats[w];
++			impw->maxPixelsFetchedPerLine =
++				(((head->in_w + 14) * 0x400 + 1023) >> 10) + 8;
++			impw->maxDownscaleFactorH = 0x400;
++			impw->maxDownscaleFactorV = 0x400;
++			impw->inputScalerVerticalTaps = 2;
++			impw->bUpscalingAllowedV = false;
++			impw->lut = NVC372_CTRL_IMP_LUT_USAGE_1025;
++			impw->tmoLut = NVC372_CTRL_IMP_LUT_USAGE_1025;
++		}
++	}
++
++	ret = nvkm_gsp_rm_ctrl_push(&disp->rm.c372, &ctrl, sizeof(*ctrl));
++	if (ret) {
++		nvkm_gsp_rm_ctrl_done(&disp->rm.c372, ctrl);
++		return ret;
++	}
++
++	/* Tiled GPUs need an assignment to implement a possible mode, while
++	 * earlier GPUs report feasibility through bIsPossible alone.
++	 */
++	result->possible = ctrl->bIsPossible && (!tiled || ctrl->numTilingAssignments);
++
++	/* The first assignment gives the required tiles. Later assignments only
++	 * reduce dispclk, so use the first like NVKMS. Each tileList entry
++	 * indexes ctrl->head and supplies that head's DSC slice count.
++	 */
++	if (result->possible) {
++		const u32 tiles = min_t(u32, ctrl->tilingAssignments[0].numTiles,
++					ARRAY_SIZE(ctrl->tileList));
++
++		for (i = 0; i < tiles; i++) {
++			const NVC372_TILE_ENTRY *entry = &ctrl->tileList[i];
++			u8 head;
++
++			if (entry->head >= ctrl->numHeads) {
++				result->possible = false;
++				break;
++			}
++
++			head = ctrl->head[entry->head].headIndex;
++			if (head >= ARRAY_SIZE(result->head)) {
++				result->possible = false;
++				break;
++			}
++
++			/* Entries for a head should agree on the DSC slice count, so keep the
++			 * first entry's value like NVKMS.
++			 */
++			if (!result->head[head].required_tiles) {
++				result->head[head].dsc_slices =
++					entry->headDscSlices;
++			}
++			result->head[head].required_tiles++;
++		}
++
++		/* Each active head requires at least one tile. */
++		for (i = 0; i < num_heads && tiled; i++) {
++			if (!result->head[heads[i].index].required_tiles)
++				result->possible = false;
++		}
++	}
++
++	nvkm_gsp_rm_ctrl_done(&disp->rm.c372, ctrl);
++	return 0;
++}
++
++static int
++r570_disp_imp_check(struct nvkm_disp *disp, u8 num_heads, bool tiled,
++		    const struct nvkm_disp_imp_head *heads,
++		    struct nvkm_disp_imp_result *result)
++{
++	int ret;
++
++	mutex_lock(&disp->rm.imp_mutex);
++	ret = r570_disp_imp_check_locked(disp, num_heads, tiled, heads, result);
++	mutex_unlock(&disp->rm.imp_mutex);
++	return ret;
++}
++
+ static int
+ r570_bl_ctrl(struct nvkm_disp *disp, unsigned display_id, bool set, int *pval)
+ {
+@@ -304,12 +528,22 @@ r570_disp_get_static_info(struct nvkm_disp *disp)
+ 	disp->wndw.nr = fls(disp->wndw.mask);
+ 
+ 	nvkm_gsp_rm_ctrl_done(&gsp->internal.device.subdevice, ctrl);
++
++	/* Create the IMP object here to avoid RM object allocation during normal
++	 * atomic checks. The query path retries if allocation fails or fini frees
++	 * the object, as happens across suspend/resume.
++	 */
++	if (nvkm_gsp_rm_alloc(&disp->rm.device.object, NVKM_RM_DISP_SW,
++			      NVC372_DISPLAY_SW, 0, &disp->rm.c372))
++		memset(&disp->rm.c372, 0, sizeof(disp->rm.c372));
++
+ 	return 0;
+ }
+ 
+ const struct nvkm_rm_api_disp
+ r570_disp = {
+ 	.get_static_info = r570_disp_get_static_info,
++	.imp_check = r570_disp_imp_check,
+ 	.get_supported = r570_disp_get_supported,
+ 	.get_connect_state = r570_disp_get_connect_state,
+ 	.get_active = r570_disp_get_active,
+diff --git a/drivers/gpu/drm/nouveau/nvkm/subdev/gsp/rm/r570/nvrm/disp.h b/drivers/gpu/drm/nouveau/nvkm/subdev/gsp/rm/r570/nvrm/disp.h
+index 742b25a2a12df7ecc62f621e59d325787a6a5cf7..f31ede7164b9051ae2cdc11839afef28ca13883e 100644
+--- a/drivers/gpu/drm/nouveau/nvkm/subdev/gsp/rm/r570/nvrm/disp.h
++++ b/drivers/gpu/drm/nouveau/nvkm/subdev/gsp/rm/r570/nvrm/disp.h
+@@ -354,4 +354,173 @@ typedef enum
+     PHYS_PCI,
+     PHYS_PCI_COHERENT
+ } PBTARGETAPERTURE;
++
++#define NVC372_DISPLAY_SW                                           (0x0000C372)
++
++#define NVC372_CTRL_MAX_POSSIBLE_HEADS   8
++#define NVC372_CTRL_MAX_POSSIBLE_WINDOWS 32
++#define NVC372_CTRL_MAX_POSSIBLE_TILES   8
++
++#define NVC372_CTRL_CMD_IS_MODE_POSSIBLE (0xc3720101)
++
++typedef NvU32 NV_DISP_LOCK_MODE;
++#define NV_DISP_LOCK_MODE_NO_LOCK     0x0
++
++typedef NvU32 NV_DISP_LOCK_PIN;
++#define NV_DISP_LOCK_PIN_UNSPECIFIED 0x10
++
++#define NVC372_CTRL_IMP_LUT_USAGE_NONE   0
++#define NVC372_CTRL_IMP_LUT_USAGE_257    1
++#define NVC372_CTRL_IMP_LUT_USAGE_1025   2
++
++#define NVC372_CTRL_FORMAT_RGB_PACKED_1_BPP                           (0x00000001)
++#define NVC372_CTRL_FORMAT_RGB_PACKED_2_BPP                           (0x00000002)
++#define NVC372_CTRL_FORMAT_RGB_PACKED_4_BPP                           (0x00000004)
++#define NVC372_CTRL_FORMAT_RGB_PACKED_8_BPP                           (0x00000008)
++#define NVC372_CTRL_FORMAT_YUV_PACKED_422                             (0x00000010)
++
++typedef struct NVC372_CTRL_CMD_BASE_PARAMS {
++    NvU32 subdeviceIndex;
++} NVC372_CTRL_CMD_BASE_PARAMS;
++
++typedef struct NVC372_CTRL_IMP_HEAD {
++    NvU8  headIndex;
++
++    NvU32 maxPixelClkKHz;
++
++    struct {
++        NvU32 width;
++        NvU32 height;
++    } rasterSize;
++
++    struct {
++        NvU32 X;
++        NvU32 Y;
++    } rasterBlankStart;
++
++    struct {
++        NvU32 X;
++        NvU32 Y;
++    } rasterBlankEnd;
++
++    struct {
++        NvU32 yStart;
++        NvU32 yEnd;
++    } rasterVertBlank2;
++
++    struct {
++        NV_DISP_LOCK_MODE masterLockMode;
++        NV_DISP_LOCK_PIN  masterLockPin;
++        NV_DISP_LOCK_MODE slaveLockMode;
++        NV_DISP_LOCK_PIN  slaveLockPin;
++    } control;
++
++    NvU32  maxDownscaleFactorH;
++    NvU32  maxDownscaleFactorV;
++    NvU8   outputScalerVerticalTaps;
++    NvBool bUpscalingAllowedV;
++    NvBool bOverfetchEnabled;
++    NvBool bLtmAllowed;
++
++    struct {
++        NvU16 leadingRasterLines;
++        NvU16 trailingRasterLines;
++    } minFrameIdle;
++
++    NvU8   lut;
++    NvU8   cursorSize32p;
++
++    NvU8   tileMask;
++
++    NvBool bEnableDsc;
++
++    NvU16  dscTargetBppX16;
++
++    NvU32  possibleDscSliceCountMask;
++
++    NvU32  maxDscSliceWidth;
++
++    NvBool bYUV420Format;
++
++    NvBool bIs2Head1Or;
++
++    NvBool bGetOSLDOutput;
++
++    NvBool bDisableMidFrameAndDWCFWatermark;
++} NVC372_CTRL_IMP_HEAD;
++
++typedef struct NVC372_CTRL_IMP_WINDOW {
++    NvU32  windowIndex;
++    NvU32  owningHead;
++    NvU32  formatUsageBound;
++    NvU32  rotatedFormatUsageBound;
++    NvU32  maxPixelsFetchedPerLine;
++    NvU32  maxDownscaleFactorH;
++    NvU32  maxDownscaleFactorV;
++    NvU8   inputScalerVerticalTaps;
++    NvBool bUpscalingAllowedV;
++    NvBool bOverfetchEnabled;
++    NvU8   lut;
++    NvU8   tmoLut;
++    NvU8   surfaceLayout;
++} NVC372_CTRL_IMP_WINDOW;
++
++typedef struct NVC372_TILING_ASSIGNMENT {
++    NvU8 numTiles;
++} NVC372_TILING_ASSIGNMENT;
++
++typedef struct NVC372_TILE_ENTRY {
++    NvU8 head;
++    NvU8 headDscSlices;
++} NVC372_TILE_ENTRY;
++
++#define NVC372_CTRL_IS_MODE_POSSIBLE_OPTIONS_GET_MARGIN       (0x00000001)
++#define NVC372_CTRL_IS_MODE_POSSIBLE_OPTIONS_NEED_MIN_VPSTATE (0x00000002)
++
++typedef struct NVC372_CTRL_IS_MODE_POSSIBLE_PARAMS {
++    NVC372_CTRL_CMD_BASE_PARAMS base;
++
++    NvU8                        numHeads;
++    NvU8                        numWindows;
++
++    NVC372_CTRL_IMP_HEAD        head[NVC372_CTRL_MAX_POSSIBLE_HEADS];
++
++    NVC372_CTRL_IMP_WINDOW      window[NVC372_CTRL_MAX_POSSIBLE_WINDOWS];
++
++    NvU32                       options;
++
++    NvU32                       testMclkFreqKHz;
++
++    NvBool                      bIsPossible;
++
++    NvBool                      bIsOSLDPossible[NVC372_CTRL_MAX_POSSIBLE_HEADS];
++
++    NvU32                       minImpVPState;
++
++    NvU32                       minPState;
++
++    NvU32                       minRequiredBandwidthKBPS;
++
++    NvU32                       floorBandwidthKBPS;
++
++    NvU32                       minRequiredHubclkKHz;
++
++    NvU32                       vblankIncreaseInLinesForOSLDMode[NVC372_CTRL_MAX_POSSIBLE_HEADS];
++
++    NvU32                       wakeUpRgLineForOSLDMode[NVC372_CTRL_MAX_POSSIBLE_HEADS];
++
++    NvU32                       worstCaseMargin;
++
++    NvU32                       dispClkKHz;
++
++    NvU32                       numTilingAssignments;
++
++    NVC372_TILING_ASSIGNMENT    tilingAssignments[NVC372_CTRL_MAX_POSSIBLE_TILES];
++
++    NVC372_TILE_ENTRY           tileList[NVC372_CTRL_MAX_POSSIBLE_TILES];
++
++    char                        worstCaseDomain[8];
++
++    NvBool                      bUseCachedPerfState;
++} NVC372_CTRL_IS_MODE_POSSIBLE_PARAMS;
+ #endif
+diff --git a/drivers/gpu/drm/nouveau/nvkm/subdev/gsp/rm/rm.h b/drivers/gpu/drm/nouveau/nvkm/subdev/gsp/rm/rm.h
+index 17480d4e527ac0c60f79a252ad3d5b91a934dca1..4e842aaa3813b656f9df863abe4ed5f4222a25de 100644
+--- a/drivers/gpu/drm/nouveau/nvkm/subdev/gsp/rm/rm.h
++++ b/drivers/gpu/drm/nouveau/nvkm/subdev/gsp/rm/rm.h
+@@ -8,6 +8,8 @@
+ #include "handles.h"
+ struct nvkm_ior;
+ struct nvkm_outp;
++struct nvkm_disp_imp_head;
++struct nvkm_disp_imp_result;
+ struct r535_gr;
+ 
+ struct nvkm_rm_impl {
+@@ -86,6 +88,9 @@ struct nvkm_rm_api {
+ 
+ 	const struct nvkm_rm_api_disp {
+ 		int (*get_static_info)(struct nvkm_disp *);
++		int (*imp_check)(struct nvkm_disp *, u8 num_heads, bool tiled,
++				 const struct nvkm_disp_imp_head *,
++				 struct nvkm_disp_imp_result *);
+ 		int (*get_supported)(struct nvkm_disp *, unsigned long *display_mask);
+ 		int (*get_connect_state)(struct nvkm_disp *, unsigned display_id);
+ 		int (*get_active)(struct nvkm_disp *, unsigned head, u32 *display_id);

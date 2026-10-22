@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yaroslav Bolyukin <iam@lach.pw>
+Date: Tue, 2 Dec 2025 12:02:16 +0100
+Subject: drm/edid: for consistency, use mask everywhere for block rev parsing
+
+Other usages of block.rev bitfields were refactored to use FIELD_GET
+instead of bitwise ops.
+
+Signed-off-by: Yaroslav Bolyukin <iam@lach.pw>
+Reviewed-by: Jani Nikula <jani.nikula@intel.com>
+(cherry picked from commit 4feb8846971a8899efdda0451e54e51f254c6eea)
+---
+ drivers/gpu/drm/drm_displayid_internal.h | 1 +
+ drivers/gpu/drm/drm_edid.c               | 3 ++-
+ 2 files changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/drm_displayid_internal.h b/drivers/gpu/drm/drm_displayid_internal.h
+index 78655e236d392e1413d03e8c34d291230fde2ebb..c1acd0660dc6059adbaaa917c42b7897a9fe2cf8 100644
+--- a/drivers/gpu/drm/drm_displayid_internal.h
++++ b/drivers/gpu/drm/drm_displayid_internal.h
+@@ -139,6 +139,7 @@ struct displayid_formula_timings_9 {
+ 	u8 vrefresh;
+ } __packed;
+ 
++#define DISPLAYID_BLOCK_DESCRIPTOR_PAYLOAD_BYTES	GENMASK(6, 4)
+ struct displayid_formula_timing_block {
+ 	struct displayid_block base;
+ 	struct displayid_formula_timings_9 timings[];
+diff --git a/drivers/gpu/drm/drm_edid.c b/drivers/gpu/drm/drm_edid.c
+index b75660dbc4785d82071e096f87626fc82674ee4f..b80aa1a52010fc4c88f1c2c1257382722f6934fc 100644
+--- a/drivers/gpu/drm/drm_edid.c
++++ b/drivers/gpu/drm/drm_edid.c
+@@ -7083,7 +7083,8 @@ static int add_displayid_formula_modes(struct drm_connector *connector,
+ 	struct drm_display_mode *newmode;
+ 	int num_modes = 0;
+ 	bool type_10 = block->tag == DATA_BLOCK_2_TYPE_10_FORMULA_TIMING;
+-	int timing_size = 6 + ((formula_block->base.rev & 0x70) >> 4);
++	int timing_size = 6 +
++		FIELD_GET(DISPLAYID_BLOCK_DESCRIPTOR_PAYLOAD_BYTES, formula_block->base.rev);
+ 
+ 	/* extended blocks are not supported yet */
+ 	if (timing_size != 6)

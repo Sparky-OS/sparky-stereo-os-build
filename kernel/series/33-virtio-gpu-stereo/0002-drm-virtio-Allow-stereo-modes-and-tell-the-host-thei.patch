@@ -1,0 +1,206 @@
+From 7517001d0265d05547935a5e526d4df7e243dc97 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 9 Oct 2026 06:46:12 -0300
+Subject: [PATCH 2/2] drm/virtio: Allow stereo modes and tell the host their
+ layout
+
+When the device offers VIRTIO_GPU_F_STEREO, set stereo_allowed on the
+connectors, so the HDMI 3D modes of the device's EDID are listed, and send
+VIRTIO_GPU_CMD_SET_SCANOUT_STEREO on every mode set, before the plane
+update sets the scanout.
+
+The frame of a stereo mode is the one the DRM core already sizes with
+drm_mode_get_hv_timing(): the primary plane covers both views, so the
+scanout rectangle is the whole frame. The command adds where each view
+sits in it: frame packing puts the right view vtotal lines below the left
+one, side by side (full) hdisplay pixels to the right, and top-and-bottom
+and side by side (half) split the 2D frame in two.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/virtio/virtgpu_debugfs.c |  1 +
+ drivers/gpu/drm/virtio/virtgpu_display.c |  4 ++
+ drivers/gpu/drm/virtio/virtgpu_drv.c     |  1 +
+ drivers/gpu/drm/virtio/virtgpu_drv.h     |  4 ++
+ drivers/gpu/drm/virtio/virtgpu_kms.c     |  8 +++-
+ drivers/gpu/drm/virtio/virtgpu_vq.c      | 61 ++++++++++++++++++++++++
+ 6 files changed, 77 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/virtio/virtgpu_debugfs.c b/drivers/gpu/drm/virtio/virtgpu_debugfs.c
+index 3a68a16b58..83f76fd2ac 100644
+--- a/drivers/gpu/drm/virtio/virtgpu_debugfs.c
++++ b/drivers/gpu/drm/virtio/virtgpu_debugfs.c
+@@ -56,6 +56,7 @@ static int virtio_gpu_features(struct seq_file *m, void *data)
+ 
+ 	virtio_gpu_add_bool(m, "blob resources", vgdev->has_resource_blob);
+ 	virtio_gpu_add_bool(m, "context init", vgdev->has_context_init);
++	virtio_gpu_add_bool(m, "stereo", vgdev->has_stereo);
+ 	virtio_gpu_add_int(m, "cap sets", vgdev->num_capsets);
+ 	virtio_gpu_add_int(m, "scanouts", vgdev->num_scanouts);
+ 	if (vgdev->host_visible_region.len) {
+diff --git a/drivers/gpu/drm/virtio/virtgpu_display.c b/drivers/gpu/drm/virtio/virtgpu_display.c
+index 532fac96b1..9163dea86b 100644
+--- a/drivers/gpu/drm/virtio/virtgpu_display.c
++++ b/drivers/gpu/drm/virtio/virtgpu_display.c
+@@ -97,6 +97,9 @@ static void virtio_gpu_crtc_mode_set_nofb(struct drm_crtc *crtc)
+ 	virtio_gpu_cmd_set_scanout(vgdev, output->index, 0,
+ 				   crtc->mode.hdisplay,
+ 				   crtc->mode.vdisplay, 0, 0);
++	if (vgdev->has_stereo)
++		virtio_gpu_cmd_set_scanout_stereo(vgdev, output->index,
++						  &crtc->state->mode);
+ 	virtio_gpu_notify(vgdev);
+ }
+ 
+@@ -307,6 +310,7 @@ static int vgdev_output_init(struct virtio_gpu_device *vgdev, int index)
+ 	drm_connector_init(dev, connector, &virtio_gpu_connector_funcs,
+ 			   DRM_MODE_CONNECTOR_VIRTUAL);
+ 	drm_connector_helper_add(connector, &virtio_gpu_conn_helper_funcs);
++	connector->stereo_allowed = vgdev->has_stereo;
+ 	if (vgdev->has_edid)
+ 		drm_connector_attach_edid_property(connector);
+ 
+diff --git a/drivers/gpu/drm/virtio/virtgpu_drv.c b/drivers/gpu/drm/virtio/virtgpu_drv.c
+index 2aaa7cb080..0524b463d7 100644
+--- a/drivers/gpu/drm/virtio/virtgpu_drv.c
++++ b/drivers/gpu/drm/virtio/virtgpu_drv.c
+@@ -182,6 +182,7 @@ static unsigned int features[] = {
+ 	VIRTIO_GPU_F_RESOURCE_BLOB,
+ 	VIRTIO_GPU_F_CONTEXT_INIT,
+ 	VIRTIO_GPU_F_BLOB_ALIGNMENT,
++	VIRTIO_GPU_F_STEREO,
+ };
+ 
+ #ifdef CONFIG_PM_SLEEP
+diff --git a/drivers/gpu/drm/virtio/virtgpu_drv.h b/drivers/gpu/drm/virtio/virtgpu_drv.h
+index 17a6a4d265..b1dcadbca9 100644
+--- a/drivers/gpu/drm/virtio/virtgpu_drv.h
++++ b/drivers/gpu/drm/virtio/virtgpu_drv.h
+@@ -264,6 +264,7 @@ struct virtio_gpu_device {
+ 	bool has_host_visible;
+ 	bool has_context_init;
+ 	bool has_blob_alignment;
++	bool has_stereo;
+ 	bool hibernated;
+ 	struct virtio_shm_region host_visible_region;
+ 	struct drm_mm host_visible_mm;
+@@ -376,6 +377,9 @@ void virtio_gpu_cmd_set_scanout(struct virtio_gpu_device *vgdev,
+ 				uint32_t scanout_id, uint32_t resource_id,
+ 				uint32_t width, uint32_t height,
+ 				uint32_t x, uint32_t y);
++void virtio_gpu_cmd_set_scanout_stereo(struct virtio_gpu_device *vgdev,
++				       uint32_t scanout_id,
++				       const struct drm_display_mode *mode);
+ void virtio_gpu_object_attach(struct virtio_gpu_device *vgdev,
+ 			      struct virtio_gpu_object *obj,
+ 			      struct virtio_gpu_mem_entry *ents,
+diff --git a/drivers/gpu/drm/virtio/virtgpu_kms.c b/drivers/gpu/drm/virtio/virtgpu_kms.c
+index 1ffe1e431f..c614b44d51 100644
+--- a/drivers/gpu/drm/virtio/virtgpu_kms.c
++++ b/drivers/gpu/drm/virtio/virtgpu_kms.c
+@@ -255,9 +255,13 @@ int virtio_gpu_init(struct virtio_device *vdev, struct drm_device *dev)
+ 		 vgdev->has_resource_blob ? '+' : '-',
+ 		 vgdev->has_host_visible ? '+' : '-');
+ 
+-	DRM_INFO("features: %ccontext_init %cblob_alignment\n",
++	if (virtio_has_feature(vgdev->vdev, VIRTIO_GPU_F_STEREO))
++		vgdev->has_stereo = true;
++
++	DRM_INFO("features: %ccontext_init %cblob_alignment %cstereo\n",
+ 		 vgdev->has_context_init ? '+' : '-',
+-		 vgdev->has_blob_alignment ? '+' : '-');
++		 vgdev->has_blob_alignment ? '+' : '-',
++		 vgdev->has_stereo ? '+' : '-');
+ 
+ 	ret = virtio_gpu_find_vqs(vgdev);
+ 	if (ret) {
+diff --git a/drivers/gpu/drm/virtio/virtgpu_vq.c b/drivers/gpu/drm/virtio/virtgpu_vq.c
+index f2b0ab0f61..d7c185298e 100644
+--- a/drivers/gpu/drm/virtio/virtgpu_vq.c
++++ b/drivers/gpu/drm/virtio/virtgpu_vq.c
+@@ -32,7 +32,9 @@
+ #include <linux/virtio_ring.h>
+ 
+ #include <drm/drm_edid.h>
++#include <drm/drm_modes.h>
+ #include <drm/drm_print.h>
++#include <drm/drm_rect.h>
+ 
+ #include "virtgpu_drv.h"
+ #include "virtgpu_trace.h"
+@@ -54,6 +56,15 @@ static void convert_to_hw_box(struct virtio_gpu_box *dst,
+ 	dst->d = cpu_to_le32(src->d);
+ }
+ 
++static void convert_to_hw_rect(struct virtio_gpu_rect *dst,
++			       const struct drm_rect *src)
++{
++	dst->x = cpu_to_le32(src->x1);
++	dst->y = cpu_to_le32(src->y1);
++	dst->width = cpu_to_le32(drm_rect_width(src));
++	dst->height = cpu_to_le32(drm_rect_height(src));
++}
++
+ void virtio_gpu_ctrl_ack(struct virtqueue *vq)
+ {
+ 	struct drm_device *dev = vq->vdev->priv;
+@@ -707,6 +718,56 @@ void virtio_gpu_cmd_set_scanout(struct virtio_gpu_device *vgdev,
+ 	virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
+ }
+ 
++void virtio_gpu_cmd_set_scanout_stereo(struct virtio_gpu_device *vgdev,
++				       uint32_t scanout_id,
++				       const struct drm_display_mode *mode)
++{
++	struct virtio_gpu_set_scanout_stereo *cmd_p;
++	struct virtio_gpu_vbuffer *vbuf;
++	struct drm_rect left, right;
++
++	/*
++	 * Where each view sits in the frame of a stereo mode, as
++	 * drm_mode_set_crtcinfo() times it (the HDMI 1.4b 3D structures).
++	 */
++	left = DRM_RECT_INIT(0, 0, mode->hdisplay, mode->vdisplay);
++	right = left;
++	switch (mode->flags & DRM_MODE_FLAG_3D_MASK) {
++	case DRM_MODE_FLAG_3D_FRAME_PACKING:
++		drm_rect_translate(&right, 0, mode->vtotal);
++		break;
++	case DRM_MODE_FLAG_3D_SIDE_BY_SIDE_FULL:
++		drm_rect_translate(&right, mode->hdisplay, 0);
++		break;
++	case DRM_MODE_FLAG_3D_TOP_AND_BOTTOM:
++		left.y2 = mode->vdisplay / 2;
++		right.y1 = left.y2;
++		break;
++	case DRM_MODE_FLAG_3D_SIDE_BY_SIDE_HALF:
++		left.x2 = mode->hdisplay / 2;
++		right.x1 = left.x2;
++		break;
++	default:
++		/* 2D, or views that are not rectangles of the frame */
++		left = DRM_RECT_INIT(0, 0, 0, 0);
++		right = left;
++		break;
++	}
++
++	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
++	memset(cmd_p, 0, sizeof(*cmd_p));
++
++	cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_SET_SCANOUT_STEREO);
++	cmd_p->scanout_id = cpu_to_le32(scanout_id);
++	cmd_p->layout = cpu_to_le32((mode->flags & DRM_MODE_FLAG_3D_MASK) >> 14);
++	cmd_p->view_width = cpu_to_le32(mode->hdisplay);
++	cmd_p->view_height = cpu_to_le32(mode->vdisplay);
++	convert_to_hw_rect(&cmd_p->left, &left);
++	convert_to_hw_rect(&cmd_p->right, &right);
++
++	virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
++}
++
+ /* For drm_panic */
+ void virtio_gpu_panic_cmd_resource_flush(struct virtio_gpu_device *vgdev,
+ 					  uint32_t resource_id,
+-- 
+2.53.0
+

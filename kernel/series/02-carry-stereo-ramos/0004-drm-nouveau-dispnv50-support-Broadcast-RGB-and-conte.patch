@@ -1,0 +1,344 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 30 Sep 2026 01:03:41 -0300
+Subject: drm/nouveau/dispnv50: support Broadcast RGB and content type on HDMI
+
+Desktop compositors offer a display's output range and content type
+through the generic "Broadcast RGB" and "content type" connector
+properties, which nouveau didn't attach: its heads always sent full
+range RGB with a full-range AVI InfoFrame.
+
+On Turing and newer (C57D and CA7D heads), limited range is what the
+hardware has for it, programmed as OpenRM does in its PROCAMP setup:
+PROCAMP's dynamic range set to CEA, OCSC1 compressing RGB to 16-235
+(OpenRM's RGBToLimitedRangeRGB coefficients) and the output clamped to
+16-235. The AVI InfoFrame carries the range the head sends and the
+content type. "Broadcast RGB" is attached on HDMI from Turing on, where
+it is implemented; "Automatic" keeps nouveau's full range, as before.
+A change to either property goes out with a modeset.
+
+The clamp and OCSC1 methods are added to the C57D and CA7D class
+headers as NVIDIA's open class headers define them.
+
+Compile-tested against 7.3.0-rc1; not yet run on hardware.
+
+Assisted-by: Claude-Opus-5.5
+(cherry picked from commit 102ea42fefbcc29a8e2376b2b7008a34bf439818)
+---
+ drivers/gpu/drm/nouveau/dispnv50/atom.h       |  1 +
+ drivers/gpu/drm/nouveau/dispnv50/disp.c       |  9 +++++
+ drivers/gpu/drm/nouveau/dispnv50/head.c       | 12 +++++++
+ drivers/gpu/drm/nouveau/dispnv50/headc57d.c   | 33 ++++++++++++++++--
+ drivers/gpu/drm/nouveau/dispnv50/headca7d.c   | 32 +++++++++++++++--
+ .../drm/nouveau/include/nvhw/class/clc57d.h   | 34 +++++++++++++++++++
+ .../drm/nouveau/include/nvhw/class/clca7d.h   | 34 +++++++++++++++++++
+ drivers/gpu/drm/nouveau/nouveau_connector.c   | 20 +++++++++++
+ 8 files changed, 169 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/atom.h b/drivers/gpu/drm/nouveau/dispnv50/atom.h
+index c766f694ebbf73cf752851e42184c242c83b8a80..350b2a5899b6cf0e31fdda2f2260660bdba70cdd 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/atom.h
++++ b/drivers/gpu/drm/nouveau/dispnv50/atom.h
+@@ -121,6 +121,7 @@ struct nv50_head_atom {
+ 			u16 cos:12;
+ 			u16 sin:12;
+ 		} sat;
++		bool limited; /* "Broadcast RGB" Limited: 16-235 on the wire */
+ 	} procamp;
+ 
+ 	struct {
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/disp.c b/drivers/gpu/drm/nouveau/dispnv50/disp.c
+index c45456eef645d26fba94eb37f9ea1123c8964cfc..4036bf04eec96a1df9b599aaf05f9ccac74766f4 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/disp.c
++++ b/drivers/gpu/drm/nouveau/dispnv50/disp.c
+@@ -39,6 +39,7 @@
+ #include <linux/math64.h>
+ 
+ #include <drm/display/drm_dp_helper.h>
++#include <drm/display/drm_hdmi_helper.h>
+ #include <drm/display/drm_scdc_helper.h>
+ #include <drm/drm_atomic.h>
+ #include <drm/drm_atomic_helper.h>
+@@ -1067,8 +1068,16 @@ nv50_hdmi_enable(struct drm_encoder *encoder, struct nouveau_crtc *nv_crtc,
+ 	args->head = nv_crtc->index;
+ 
+ 	if (!drm_hdmi_avi_infoframe_from_display_mode(&infoframe.avi, &nv_connector->base, mode)) {
++		const struct drm_connector_state *conn_state =
++			drm_atomic_get_new_connector_state(state, &nv_connector->base);
++
++		/* the range the head sends ("Broadcast RGB") */
+ 		drm_hdmi_avi_infoframe_quant_range(&infoframe.avi, &nv_connector->base, mode,
++						   asyh->procamp.limited ?
++						   HDMI_QUANTIZATION_RANGE_LIMITED :
+ 						   HDMI_QUANTIZATION_RANGE_FULL);
++		if (conn_state)
++			drm_hdmi_avi_infoframe_content_type(&infoframe.avi, conn_state);
+ 
+ 		size = hdmi_infoframe_pack(&infoframe, args->data, data_len);
+ 	} else {
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/head.c b/drivers/gpu/drm/nouveau/dispnv50/head.c
+index 3e90043b04a9c07ac615eaf39f8117be9b219431..31d09560507c6a475c103d886cb2336bf0f17f63 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/head.c
++++ b/drivers/gpu/drm/nouveau/dispnv50/head.c
+@@ -89,6 +89,17 @@ nv50_head_flush_set(struct nv50_head *head, struct nv50_head_atom *asyh)
+ 	if (asyh->set.or     ) head->func->or      (head, asyh);
+ }
+ 
++static void
++nv50_head_atomic_check_range(struct nv50_head_atom *armh,
++			     struct nv50_head_atom *asyh,
++			     struct nouveau_conn_atom *asyc)
++{
++	asyh->procamp.limited = asyc->state.connector->broadcast_rgb_property &&
++		asyc->state.hdmi.broadcast_rgb == DRM_HDMI_BROADCAST_RGB_LIMITED;
++	if (asyh->procamp.limited != armh->procamp.limited)
++		asyh->set.procamp = true;
++}
++
+ static void
+ nv50_head_atomic_check_procamp(struct nv50_head_atom *armh,
+ 			       struct nv50_head_atom *asyh,
+@@ -489,6 +500,7 @@ nv50_head_atomic_check(struct drm_crtc *crtc, struct drm_atomic_commit *state)
+ 				nv50_head_atomic_check_dither(armh, asyh, asyc);
+ 			if (asyc->set.procamp)
+ 				nv50_head_atomic_check_procamp(armh, asyh, asyc);
++			nv50_head_atomic_check_range(armh, asyh, asyc);
+ 		}
+ 
+ 		if (head->func->core_calc) {
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/headc57d.c b/drivers/gpu/drm/nouveau/dispnv50/headc57d.c
+index 8c67600079224a9ee31655aa78d4a2ad967cc336..3b5224e1babb05f47a2eb7ed57cd2b1e713f970c 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/headc57d.c
++++ b/drivers/gpu/drm/nouveau/dispnv50/headc57d.c
+@@ -74,21 +74,48 @@ headc57d_or(struct nv50_head *head, struct nv50_head_atom *asyh)
+ 	return 0;
+ }
+ 
++/* RGB compressed to 16-235 (S3.16), as OpenRM's RGBToLimitedRangeRGB */
++static const u32
++headc57d_limited_rgb[12] = {
++	0xdb04, 0x0000, 0x0000, 0x1000,
++	0x0000, 0xdb04, 0x0000, 0x1000,
++	0x0000, 0x0000, 0xdb04, 0x1000,
++};
++
+ static int
+ headc57d_procamp(struct nv50_head *head, struct nv50_head_atom *asyh)
+ {
+ 	struct nvif_push *push = &nv50_disp(head->base.base.dev)->core->chan.push;
+ 	const int i = head->base.index;
++	const bool limited = asyh->procamp.limited;
+ 	int ret;
+ 
+-	if ((ret = PUSH_WAIT(push, 2)))
++	ret = PUSH_WAIT(push, 20);
++	if (ret)
+ 		return ret;
+ 
+-	//TODO:
++	/* "Broadcast RGB" Limited: CEA range, with OCSC1 compressing RGB to 16-235 and
++	 * the output clamped to it, as OpenRM programs it.
++	 */
+ 	PUSH_MTHD(push, NVC57D, HEAD_SET_PROCAMP(i),
+ 		  NVDEF(NVC57D, HEAD_SET_PROCAMP, COLOR_SPACE, RGB) |
+ 		  NVDEF(NVC57D, HEAD_SET_PROCAMP, CHROMA_LPF, DISABLE) |
+-		  NVDEF(NVC57D, HEAD_SET_PROCAMP, DYNAMIC_RANGE, VESA));
++		  (limited ? NVDEF(NVC57D, HEAD_SET_PROCAMP, DYNAMIC_RANGE, CEA) :
++			     NVDEF(NVC57D, HEAD_SET_PROCAMP, DYNAMIC_RANGE, VESA)));
++
++	PUSH_MTHD(push, NVC57D, HEAD_SET_CLAMP_RANGE_GREEN(i),
++		  NVVAL(NVC57D, HEAD_SET_CLAMP_RANGE_GREEN, LOW, limited ? 0x100 : 0x000) |
++		  NVVAL(NVC57D, HEAD_SET_CLAMP_RANGE_GREEN, HIGH, limited ? 0xeb0 : 0xfff),
++
++				HEAD_SET_CLAMP_RANGE_RED_BLUE(i),
++		  NVVAL(NVC57D, HEAD_SET_CLAMP_RANGE_RED_BLUE, LOW, limited ? 0x100 : 0x000) |
++		  NVVAL(NVC57D, HEAD_SET_CLAMP_RANGE_RED_BLUE, HIGH, limited ? 0xeb0 : 0xfff));
++
++	PUSH_MTHD(push, NVC57D, HEAD_SET_OCSC1CONTROL(i),
++		  limited ? NVDEF(NVC57D, HEAD_SET_OCSC1CONTROL, ENABLE, ENABLE) :
++			    NVDEF(NVC57D, HEAD_SET_OCSC1CONTROL, ENABLE, DISABLE));
++	if (limited)
++		PUSH_MTHD(push, NVC57D, HEAD_SET_OCSC1COEFFICIENT_C00(i), headc57d_limited_rgb, 12);
+ 	return 0;
+ }
+ 
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/headca7d.c b/drivers/gpu/drm/nouveau/dispnv50/headca7d.c
+index c00d0459016640126a5fd29b90fbed83027444b8..decdf31913ed20bcdc87362d8fdaee263114dc20 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/headca7d.c
++++ b/drivers/gpu/drm/nouveau/dispnv50/headca7d.c
+@@ -70,22 +70,48 @@ headca7d_or(struct nv50_head *head, struct nv50_head_atom *asyh)
+ 	return 0;
+ }
+ 
++/* RGB compressed to 16-235 (S3.16), as OpenRM's RGBToLimitedRangeRGB */
++static const u32
++headca7d_limited_rgb[12] = {
++	0xdb04, 0x0000, 0x0000, 0x1000,
++	0x0000, 0xdb04, 0x0000, 0x1000,
++	0x0000, 0x0000, 0xdb04, 0x1000,
++};
++
+ static int
+ headca7d_procamp(struct nv50_head *head, struct nv50_head_atom *asyh)
+ {
+ 	struct nvif_push *push = &head->disp->core->chan.push;
+ 	const int i = head->base.index;
++	const bool limited = asyh->procamp.limited;
+ 	int ret;
+ 
+-	ret = PUSH_WAIT(push, 2);
++	ret = PUSH_WAIT(push, 20);
+ 	if (ret)
+ 		return ret;
+ 
++	/* "Broadcast RGB" Limited: CEA range, with OCSC1 compressing RGB to 16-235 and
++	 * the output clamped to it, as OpenRM programs it.
++	 */
+ 	PUSH_MTHD(push, NVCA7D, HEAD_SET_PROCAMP(i),
+ 		  NVDEF(NVCA7D, HEAD_SET_PROCAMP, COLOR_SPACE, RGB) |
+ 		  NVDEF(NVCA7D, HEAD_SET_PROCAMP, CHROMA_LPF, DISABLE) |
+-		  NVDEF(NVCA7D, HEAD_SET_PROCAMP, DYNAMIC_RANGE, VESA));
+-
++		  (limited ? NVDEF(NVCA7D, HEAD_SET_PROCAMP, DYNAMIC_RANGE, CEA) :
++			     NVDEF(NVCA7D, HEAD_SET_PROCAMP, DYNAMIC_RANGE, VESA)));
++
++	PUSH_MTHD(push, NVCA7D, HEAD_SET_CLAMP_RANGE_GREEN(i),
++		  NVVAL(NVCA7D, HEAD_SET_CLAMP_RANGE_GREEN, LOW, limited ? 0x100 : 0x000) |
++		  NVVAL(NVCA7D, HEAD_SET_CLAMP_RANGE_GREEN, HIGH, limited ? 0xeb0 : 0xfff),
++
++				HEAD_SET_CLAMP_RANGE_RED_BLUE(i),
++		  NVVAL(NVCA7D, HEAD_SET_CLAMP_RANGE_RED_BLUE, LOW, limited ? 0x100 : 0x000) |
++		  NVVAL(NVCA7D, HEAD_SET_CLAMP_RANGE_RED_BLUE, HIGH, limited ? 0xeb0 : 0xfff));
++
++	PUSH_MTHD(push, NVCA7D, HEAD_SET_OCSC1CONTROL(i),
++		  limited ? NVDEF(NVCA7D, HEAD_SET_OCSC1CONTROL, ENABLE, ENABLE) :
++			    NVDEF(NVCA7D, HEAD_SET_OCSC1CONTROL, ENABLE, DISABLE));
++	if (limited)
++		PUSH_MTHD(push, NVCA7D, HEAD_SET_OCSC1COEFFICIENT_C00(i), headca7d_limited_rgb, 12);
+ 	return 0;
+ }
+ 
+diff --git a/drivers/gpu/drm/nouveau/include/nvhw/class/clc57d.h b/drivers/gpu/drm/nouveau/include/nvhw/class/clc57d.h
+index a1d04303d8f6c21f3901883be8c7f528cfe759e2..53e2497bb35a8862b6c38bc09abd65df20c4a3c3 100644
+--- a/drivers/gpu/drm/nouveau/include/nvhw/class/clc57d.h
++++ b/drivers/gpu/drm/nouveau/include/nvhw/class/clc57d.h
+@@ -385,4 +385,38 @@
+ #define NVC57D_HEAD_SET_CONTEXT_DMA_OLUT_HANDLE                                 31:0
+ #define NVC57D_HEAD_SET_OFFSET_OLUT(a)                                          (0x0000228C + (a)*0x00000400)
+ #define NVC57D_HEAD_SET_OFFSET_OLUT_ORIGIN                                      31:0
++#define NVC57D_HEAD_SET_CLAMP_RANGE_GREEN(a)                                    (0x00002238 + (a)*0x00000400)
++#define NVC57D_HEAD_SET_CLAMP_RANGE_GREEN_LOW                                   11:0
++#define NVC57D_HEAD_SET_CLAMP_RANGE_GREEN_HIGH                                  27:16
++#define NVC57D_HEAD_SET_CLAMP_RANGE_RED_BLUE(a)                                 (0x0000223C + (a)*0x00000400)
++#define NVC57D_HEAD_SET_CLAMP_RANGE_RED_BLUE_LOW                                11:0
++#define NVC57D_HEAD_SET_CLAMP_RANGE_RED_BLUE_HIGH                               27:16
++#define NVC57D_HEAD_SET_OCSC1CONTROL(a)                                         (0x0000229C + (a)*0x00000400)
++#define NVC57D_HEAD_SET_OCSC1CONTROL_ENABLE                                     0:0
++#define NVC57D_HEAD_SET_OCSC1CONTROL_ENABLE_DISABLE                             (0x00000000)
++#define NVC57D_HEAD_SET_OCSC1CONTROL_ENABLE_ENABLE                              (0x00000001)
++#define NVC57D_HEAD_SET_OCSC1COEFFICIENT_C00(a)                                 (0x000022A0 + (a)*0x00000400)
++#define NVC57D_HEAD_SET_OCSC1COEFFICIENT_C00_VALUE                              20:0
++#define NVC57D_HEAD_SET_OCSC1COEFFICIENT_C01(a)                                 (0x000022A4 + (a)*0x00000400)
++#define NVC57D_HEAD_SET_OCSC1COEFFICIENT_C01_VALUE                              20:0
++#define NVC57D_HEAD_SET_OCSC1COEFFICIENT_C02(a)                                 (0x000022A8 + (a)*0x00000400)
++#define NVC57D_HEAD_SET_OCSC1COEFFICIENT_C02_VALUE                              20:0
++#define NVC57D_HEAD_SET_OCSC1COEFFICIENT_C03(a)                                 (0x000022AC + (a)*0x00000400)
++#define NVC57D_HEAD_SET_OCSC1COEFFICIENT_C03_VALUE                              20:0
++#define NVC57D_HEAD_SET_OCSC1COEFFICIENT_C10(a)                                 (0x000022B0 + (a)*0x00000400)
++#define NVC57D_HEAD_SET_OCSC1COEFFICIENT_C10_VALUE                              20:0
++#define NVC57D_HEAD_SET_OCSC1COEFFICIENT_C11(a)                                 (0x000022B4 + (a)*0x00000400)
++#define NVC57D_HEAD_SET_OCSC1COEFFICIENT_C11_VALUE                              20:0
++#define NVC57D_HEAD_SET_OCSC1COEFFICIENT_C12(a)                                 (0x000022B8 + (a)*0x00000400)
++#define NVC57D_HEAD_SET_OCSC1COEFFICIENT_C12_VALUE                              20:0
++#define NVC57D_HEAD_SET_OCSC1COEFFICIENT_C13(a)                                 (0x000022BC + (a)*0x00000400)
++#define NVC57D_HEAD_SET_OCSC1COEFFICIENT_C13_VALUE                              20:0
++#define NVC57D_HEAD_SET_OCSC1COEFFICIENT_C20(a)                                 (0x000022C0 + (a)*0x00000400)
++#define NVC57D_HEAD_SET_OCSC1COEFFICIENT_C20_VALUE                              20:0
++#define NVC57D_HEAD_SET_OCSC1COEFFICIENT_C21(a)                                 (0x000022C4 + (a)*0x00000400)
++#define NVC57D_HEAD_SET_OCSC1COEFFICIENT_C21_VALUE                              20:0
++#define NVC57D_HEAD_SET_OCSC1COEFFICIENT_C22(a)                                 (0x000022C8 + (a)*0x00000400)
++#define NVC57D_HEAD_SET_OCSC1COEFFICIENT_C22_VALUE                              20:0
++#define NVC57D_HEAD_SET_OCSC1COEFFICIENT_C23(a)                                 (0x000022CC + (a)*0x00000400)
++#define NVC57D_HEAD_SET_OCSC1COEFFICIENT_C23_VALUE                              20:0
+ #endif // _clC57d_h
+diff --git a/drivers/gpu/drm/nouveau/include/nvhw/class/clca7d.h b/drivers/gpu/drm/nouveau/include/nvhw/class/clca7d.h
+index e0540ff4a53b38bcc57f9d4960b3e43c499ee527..57b96d1ec61dcad3bd4077a4f45cc01d39cb43d6 100644
+--- a/drivers/gpu/drm/nouveau/include/nvhw/class/clca7d.h
++++ b/drivers/gpu/drm/nouveau/include/nvhw/class/clca7d.h
+@@ -904,4 +904,38 @@
+ #define NVCA7D_TILE_SET_TILE_SIZE_START                                         14:0
+ #define NVCA7D_TILE_SET_TILE_SIZE_WIDTH                                         30:16
+ 
++#define NVCA7D_HEAD_SET_CLAMP_RANGE_GREEN(a)                                    (0x00002238 + (a)*0x00000800)
++#define NVCA7D_HEAD_SET_CLAMP_RANGE_GREEN_LOW                                   11:0
++#define NVCA7D_HEAD_SET_CLAMP_RANGE_GREEN_HIGH                                  27:16
++#define NVCA7D_HEAD_SET_CLAMP_RANGE_RED_BLUE(a)                                 (0x0000223C + (a)*0x00000800)
++#define NVCA7D_HEAD_SET_CLAMP_RANGE_RED_BLUE_LOW                                11:0
++#define NVCA7D_HEAD_SET_CLAMP_RANGE_RED_BLUE_HIGH                               27:16
++#define NVCA7D_HEAD_SET_OCSC1CONTROL(a)                                         (0x0000229C + (a)*0x00000800)
++#define NVCA7D_HEAD_SET_OCSC1CONTROL_ENABLE                                     0:0
++#define NVCA7D_HEAD_SET_OCSC1CONTROL_ENABLE_DISABLE                             (0x00000000)
++#define NVCA7D_HEAD_SET_OCSC1CONTROL_ENABLE_ENABLE                              (0x00000001)
++#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C00(a)                                 (0x000022A0 + (a)*0x00000800)
++#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C00_VALUE                              20:0
++#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C01(a)                                 (0x000022A4 + (a)*0x00000800)
++#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C01_VALUE                              20:0
++#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C02(a)                                 (0x000022A8 + (a)*0x00000800)
++#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C02_VALUE                              20:0
++#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C03(a)                                 (0x000022AC + (a)*0x00000800)
++#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C03_VALUE                              20:0
++#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C10(a)                                 (0x000022B0 + (a)*0x00000800)
++#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C10_VALUE                              20:0
++#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C11(a)                                 (0x000022B4 + (a)*0x00000800)
++#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C11_VALUE                              20:0
++#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C12(a)                                 (0x000022B8 + (a)*0x00000800)
++#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C12_VALUE                              20:0
++#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C13(a)                                 (0x000022BC + (a)*0x00000800)
++#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C13_VALUE                              20:0
++#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C20(a)                                 (0x000022C0 + (a)*0x00000800)
++#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C20_VALUE                              20:0
++#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C21(a)                                 (0x000022C4 + (a)*0x00000800)
++#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C21_VALUE                              20:0
++#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C22(a)                                 (0x000022C8 + (a)*0x00000800)
++#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C22_VALUE                              20:0
++#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C23(a)                                 (0x000022CC + (a)*0x00000800)
++#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C23_VALUE                              20:0
+ #endif // _clca7d_h
+diff --git a/drivers/gpu/drm/nouveau/nouveau_connector.c b/drivers/gpu/drm/nouveau/nouveau_connector.c
+index 2dc6238788f64ce55285d93b5ed979cfa92b0d0f..de1301767e3a62591913282efd544da37c52c3b9 100644
+--- a/drivers/gpu/drm/nouveau/nouveau_connector.c
++++ b/drivers/gpu/drm/nouveau/nouveau_connector.c
+@@ -326,6 +326,16 @@ nouveau_conn_attach_properties(struct drm_connector *connector)
+ 			drm_connector_attach_max_bpc_property(connector, 8, 16);
+ 	}
+ 
++	/* Output range and content type, sent in HDMI's AVI InfoFrame; the heads
++	 * compress to limited range from Turing on.
++	 */
++	if (drm_drv_uses_atomic_modeset(dev) &&
++	    connector->connector_type == DRM_MODE_CONNECTOR_HDMIA) {
++		if (disp->disp.object.oclass >= TU102_DISP)
++			drm_connector_attach_broadcast_rgb_property(connector);
++		drm_connector_attach_content_type_property(connector);
++	}
++
+ 	/* Add hue and saturation options. */
+ 	if (disp->vibrant_hue_property)
+ 		drm_object_attach_property(&connector->base,
+@@ -1208,6 +1218,16 @@ nouveau_connector_atomic_check(struct drm_connector *connector, struct drm_atomi
+ 		crtc_state->connectors_changed = true;
+ 	}
+ 
++	/* The output range and content type go out with the modeset (AVI InfoFrame). */
++	if (conn_state->crtc &&
++	    (armc->state.hdmi.broadcast_rgb != asyc->state.hdmi.broadcast_rgb ||
++	     armc->state.content_type != asyc->state.content_type)) {
++		crtc_state = drm_atomic_get_crtc_state(state, conn_state->crtc);
++		if (IS_ERR(crtc_state))
++			return PTR_ERR(crtc_state);
++		crtc_state->connectors_changed = true;
++	}
++
+ 	if (!nv_conn->dp_encoder || !nv_conn->dp_encoder->dp.mstm)
+ 		return 0;
+ 

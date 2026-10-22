@@ -1,0 +1,68 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 29 Sep 2026 19:02:33 -0300
+Subject: drm/amdgpu: expand DC stream timing for frame-packing stereo modes
+
+A DRM frame-packing mode is expressed per-eye (1920x1080@24), but its
+framebuffer carries both views: 1080 left-eye lines, the 45-line vertical
+gap, then 1080 right-eye lines, 2205 lines in total. amdgpu's legacy
+SetCrtc path sizes the primary plane via drm_mode_get_hv_timing(), while
+the DC stream is created from the unadjusted per-eye mode and DC's CRTC
+mode_fixup() is a no-op, so DC scanned a 1080-line 74.25 MHz timing against
+a 2205-line plane: the sink entered 3D on a valid FP VSIF and showed black
+(recorded on the same hardware as patch 1).
+
+When the mode carries DRM_MODE_FLAG_3D_FRAME_PACKING, apply
+drm_mode_set_crtcinfo(..., CRTC_STEREO_DOUBLE) to the stream mode and size
+the stream rectangle with drm_mode_get_hv_timing(), as nouveau has done
+since its 2017 HDMI stereoscopy series and i915 does today. DC then
+receives 1920/2750 horizontal and 2205/2250 vertical at 148.5 MHz for
+1080p24 FP, and the packed surface scans out as intended. DC's dormant
+stereo view formats stay disabled: this is one userspace-packed surface,
+with the FP VSIF from patch 1 identifying it to the sink.
+
+Ported to 7.3 (amdgpu_dm_connector.c); the change itself is unchanged.
+
+Link: https://github.com/danielcamposramos/sony-bravia-linux (tools, run logs and evidence)
+Assisted-by: LLM Kimi K3 (Codex CLI)
+Assisted-by: LLM GPT 5.6 Sol (Codex CLI)
+Assisted-by: LLM Claude Opus 5 (Claude Code CLI)
+(cherry picked from commit 8ebc9d5e768e1b0df96f25a74653a340a923ad3e)
+---
+ .../amd/display/amdgpu_dm/amdgpu_dm_connector.c  | 16 +++++++++++++---
+ 1 file changed, 13 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.c b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.c
+index 587813dc04198e46b1ed8d0f2116151bad26d1d1..0f819418f4dc62de9111c23b18f166a3957e9b21 100644
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.c
+@@ -1420,9 +1420,8 @@ void amdgpu_dm_update_stream_scaling_settings(struct drm_device *dev,
+ 	if (!mode)
+ 		return;
+ 
+-	/* Full screen scaling by default */
+-	src.width = mode->hdisplay;
+-	src.height = mode->vdisplay;
++	/* Include the second eye in frame-packing scanout geometry. */
++	drm_mode_get_hv_timing(mode, &src.width, &src.height);
+ 	dst.width = stream->timing.h_addressable;
+ 	dst.height = stream->timing.v_addressable;
+ 
+@@ -1571,6 +1570,17 @@ create_stream_for_sink(struct drm_connector *connector,
+ 		}
+ 	}
+ 
++	/*
++	 * DRM frame-packing modes describe one eye. Userspace presents both
++	 * eyes in one buffer, so DC must see the expanded link timing too.
++	 */
++	if (mode.flags & DRM_MODE_FLAG_3D_FRAME_PACKING) {
++		drm_mode_set_crtcinfo(&mode, CRTC_STEREO_DOUBLE);
++		drm_dbg_kms(dev, "expanded HDMI frame-packing timing to %dx%d total %dx%d clock %d kHz\n",
++			    mode.crtc_hdisplay, mode.crtc_vdisplay,
++			    mode.crtc_htotal, mode.crtc_vtotal, mode.crtc_clock);
++	}
++
+ 	if (recalculate_timing)
+ 		drm_mode_set_crtcinfo(&saved_mode, 0);
+ 
