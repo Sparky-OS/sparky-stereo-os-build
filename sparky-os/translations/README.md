@@ -17,3 +17,4 @@ KDE takes translations only through its translation teams, never as commits to a
 Today these patches carry pl, pt_BR, fr and ja; ko, zh_CN and zh_TW are still being added.
 
 Upstream, the same strings go to each language's KDE translation team once the features are merged and their strings are in KDE's translation system (Daniel's step). English stays in the code, as KDE expects.
+- `kf6-kfilemetadata-stereo3d.po.patch`: KFileMetaData's added stereo property label ("Stereo 3D Layout"), currently in French; from `kf6-kfilemetadata 6.30.0-1+stereo3d2`, source `src/propertyinfo.cpp:92`.
