@@ -1,0 +1,32 @@
+From 7f210ce11be90226b90b046ab713b9180e1c4a9e Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 14 Oct 2026 23:33:03 -0300
+Subject: [PATCH 2/3] qt: keep the video window within the screen's width too
+
+MainInterface::setVideoSize() fitted the window to the screen only when the
+video was too high. A video wider than the screen but not too high, such as a
+3840x1080 side by side video on a 1920 wide output, opened a window twice as
+wide as the screen, so only its left half was visible.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ modules/gui/qt/main_interface.cpp | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/modules/gui/qt/main_interface.cpp b/modules/gui/qt/main_interface.cpp
+index b90122f..26f7330 100644
+--- a/modules/gui/qt/main_interface.cpp
++++ b/modules/gui/qt/main_interface.cpp
+@@ -840,7 +840,8 @@ void MainInterface::setVideoSize( unsigned int w, unsigned int h )
+ #else
+             float factor = 1.0f;
+ #endif
+-            if( (float)h / factor > screen.height() )
++            if( (float)h / factor > screen.height()
++             || (float)w / factor > screen.width() )
+             {
+                 w = screen.width();
+                 h = screen.height();
+-- 
+2.53.0
+

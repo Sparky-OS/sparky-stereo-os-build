@@ -8,6 +8,7 @@ m = re.search(r'^Build-Depends:\n((?: .*\n)+)', ctl, re.M)
 bd = m.group(1)
 if 'libpipewire-0.3-dev' not in bd: bd += ' libpipewire-0.3-dev (>= 0.3.50),\n pkgconf,\n'
 if 'libstereo-declare-dev' not in bd: bd += ' libstereo-declare-dev,\n'
+if 'libstereo-policy-dev' not in bd: bd += ' libstereo-policy-dev (>= 1.5.0),\n'
 new = f'''Source: vlc
 Section: video
 Priority: optional

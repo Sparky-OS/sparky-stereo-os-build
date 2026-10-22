@@ -1,0 +1,386 @@
+From e4b2b39996e195a9e3c96939a6eded3cbcc0d4dd Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 14 Oct 2026 23:33:03 -0300
+Subject: [PATCH 3/3] decoder: decide stereo 3D video with the shared stereo
+ policy
+
+Whether a frame was 3D came from the stream's mark alone, and the halving of
+a full side by side frame's display aspect ratio from two private numbers
+(2.5 and 1.2). A video with no mark, such as a 3840x1080 MPEG-4 Part 2 AVI,
+was never treated as 3D ("multiview 0"), so its pair was shown flat.
+
+Ask libstereo-policy once per format change, in this order: the user's choice
+(video-stereo-input, video-stereo-swap and the swap stored with the file), the
+stream's own mark, the 3D tag of the file name, the frame's shape (side by
+side from three times as wide as high, never top and bottom). Full or half
+views come from the stream first (the Matroska plane size, kept by the
+demuxer), then from the shape. The private numbers are gone. Without the
+library the stream's mark is taken as it is.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ configure.ac        |   6 ++
+ src/Makefile.am     |   5 +-
+ src/input/decoder.c | 231 +++++++++++++++++++++++++++++++++++++++-----
+ src/libvlc-module.c |  28 ++++++
+ 4 files changed, 244 insertions(+), 26 deletions(-)
+
+diff --git a/configure.ac b/configure.ac
+index ae82a8e..aa52754 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -3208,6 +3208,12 @@ PKG_CHECK_MODULES([STEREO_DECLARE], [stereo-declare x11], [
+   AC_DEFINE([HAVE_STEREO_DECLARE], 1, [Defined if having libstereo-declare])
+ ], [:])
+ 
++dnl The stereo policy the players of the edition share, for the decision whether
++dnl a video is 3D and how it is packed
++PKG_CHECK_MODULES([STEREO_POLICY], [stereo-policy >= 1.5.0], [
++  AC_DEFINE([HAVE_STEREO_POLICY], 1, [Defined if having libstereo-policy])
++], [:])
++
+ dnl OpenGL ES 2: depends on EGL 1.1
+ PKG_ENABLE_MODULES_VLC([GLES2], [], [glesv2], [OpenGL ES v2 support], [disabled])
+ 
+diff --git a/src/Makefile.am b/src/Makefile.am
+index 869a5eb..acea915 100644
+--- a/src/Makefile.am
++++ b/src/Makefile.am
+@@ -174,7 +174,7 @@ AM_CPPFLAGS = $(INCICONV) $(IDN_CFLAGS) \
+ 	-DLOCALEDIR=\"$(localedir)\" \
+ 	-DPKGDATADIR=\"$(vlcdatadir)\" \
+ 	-DPKGLIBDIR=\"$(vlclibdir)\"
+-AM_CFLAGS = $(CFLAGS_libvlccore)
++AM_CFLAGS = $(CFLAGS_libvlccore) $(STEREO_POLICY_CFLAGS)
+ if HAVE_DYNAMIC_PLUGINS
+ AM_CPPFLAGS += -DHAVE_DYNAMIC_PLUGINS
+ endif
+@@ -356,7 +356,8 @@ libvlccore_la_SOURCES = \
+ libvlccore_la_LIBADD = $(LIBS_libvlccore) \
+ 	../compat/libcompat.la \
+ 	$(LTLIBINTL) $(LTLIBICONV) \
+-	$(IDN_LIBS) $(LIBPTHREAD) $(SOCKET_LIBS) $(LIBRT) $(LIBDL) $(LIBM)
++	$(IDN_LIBS) $(LIBPTHREAD) $(SOCKET_LIBS) $(LIBRT) $(LIBDL) $(LIBM) \
++	$(STEREO_POLICY_LIBS)
+ 
+ if HAVE_WIN32
+ libvlccore_la_SOURCES += \
+diff --git a/src/input/decoder.c b/src/input/decoder.c
+index fa20d7e..dd8bcc4 100644
+--- a/src/input/decoder.c
++++ b/src/input/decoder.c
+@@ -30,6 +30,7 @@
+ # include "config.h"
+ #endif
+ #include <assert.h>
++#include <limits.h>
+ 
+ #include <vlc_common.h>
+ 
+@@ -43,6 +44,11 @@
+ #include <vlc_meta.h>
+ #include <vlc_dialog.h>
+ #include <vlc_modules.h>
++#include <vlc_input_item.h>
++#include <vlc_url.h>
++#ifdef HAVE_STEREO_POLICY
++# include <stereo-policy.h>
++#endif
+ 
+ #include "audio_output/aout_internal.h"
+ #include "stream_output/stream_output.h"
+@@ -413,36 +419,213 @@ static int aout_update_format( decoder_t *p_dec )
+     return 0;
+ }
+ 
++#ifdef HAVE_STEREO_POLICY
++/* The words of the stereo policy's marks for a multiview mode the stream or
++ * the container declared. */
++static const char *StereoMarkName( video_multiview_mode_t mode )
++{
++    switch( mode )
++    {
++        case MULTIVIEW_STEREO_SBS:               return "sideBySideLeftFirst";
++        case MULTIVIEW_STEREO_SBS_RIGHT_FIRST:   return "sideBySideRightFirst";
++        case MULTIVIEW_STEREO_TB:                return "topBottomLeftFirst";
++        case MULTIVIEW_STEREO_TB_RIGHT_FIRST:    return "topBottomRightFirst";
++        case MULTIVIEW_STEREO_ROW:               return "rowInterleavedLeftFirst";
++        case MULTIVIEW_STEREO_COL:               return "columnInterleavedLeftFirst";
++        case MULTIVIEW_STEREO_FRAME:             return "frameSequentialLeftFirst";
++        case MULTIVIEW_STEREO_CHECKERBOARD:      return "checkerboardLeftFirst";
++        default:                                 return NULL;
++    }
++}
++
++static video_multiview_mode_t StereoMode( int layout, int order )
++{
++    const bool right = order == STEREO_POLICY_RIGHT_FIRST;
++
++    switch( layout )
++    {
++        case STEREO_POLICY_LAYOUT_SIDE_BY_SIDE:
++            return right ? MULTIVIEW_STEREO_SBS_RIGHT_FIRST : MULTIVIEW_STEREO_SBS;
++        case STEREO_POLICY_LAYOUT_TOP_AND_BOTTOM:
++            return right ? MULTIVIEW_STEREO_TB_RIGHT_FIRST : MULTIVIEW_STEREO_TB;
++        case STEREO_POLICY_LAYOUT_ROWS:
++            return MULTIVIEW_STEREO_ROW;
++        case STEREO_POLICY_LAYOUT_COLUMNS:
++            return MULTIVIEW_STEREO_COL;
++        case STEREO_POLICY_LAYOUT_FRAME_SEQUENTIAL:
++            return MULTIVIEW_STEREO_FRAME;
++        case STEREO_POLICY_LAYOUT_CHECKERBOARD:
++            return MULTIVIEW_STEREO_CHECKERBOARD;
++        default:
++            return MULTIVIEW_2D;
++    }
++}
++
++/* The size of the frame as shown, with the sample aspect ratio applied, in
++ * the integers the stereo policy takes. */
++static void StereoShownSize( const video_format_t *fmt, int *w, int *h )
++{
++    uint64_t sw = (uint64_t)fmt->i_visible_width  * fmt->i_sar_num;
++    uint64_t sh = (uint64_t)fmt->i_visible_height * fmt->i_sar_den;
++
++    while( sw > INT_MAX || sh > INT_MAX )
++    {
++        sw = ( sw + 1 ) / 2;
++        sh = ( sh + 1 ) / 2;
++    }
++    *w = sw;
++    *h = sh;
++}
++
++/* The name of the played file without its folder or query, for the tag
++ * reader; NULL for an input without a name. */
++static char *StereoFileName( decoder_t *p_dec )
++{
++    input_thread_t *p_input = p_dec->p_owner->p_input;
++    input_item_t *p_item = p_input != NULL ? input_GetItem( p_input ) : NULL;
++
++    if( p_item == NULL || p_item->psz_uri == NULL )
++        return NULL;
++
++    char *psz = strdup( p_item->psz_uri );
++    if( psz == NULL )
++        return NULL;
++
++    char *psz_cut = strpbrk( psz, "?#" );
++    if( psz_cut != NULL )
++        *psz_cut = '\0';
++
++    const char *psz_base = strrchr( psz, '/' );
++    psz_base = psz_base != NULL ? psz_base + 1 : psz;
++    char *psz_name = strdup( psz_base );
++    free( psz );
++    if( psz_name != NULL )
++        vlc_uri_decode( psz_name );
++    return psz_name;
++}
++
++/* The correction the user stored with a local file whose eyes are the wrong
++ * way round. */
++static bool StereoFileSwap( decoder_t *p_dec )
++{
++    input_thread_t *p_input = p_dec->p_owner->p_input;
++    input_item_t *p_item = p_input != NULL ? input_GetItem( p_input ) : NULL;
++
++    if( p_item == NULL || p_item->psz_uri == NULL )
++        return false;
++
++    char *psz_path = vlc_uri2path( p_item->psz_uri );
++    if( psz_path == NULL )
++        return false;
++
++    bool b_swap = stereo_policy_file_swap_eyes( psz_path ) == 1;
++    free( psz_path );
++    return b_swap;
++}
++
+ /**
+- * The stream's signalling says side by side or top and bottom, not whether
+- * each view is squeezed into half the frame or has the frame's full size.
+- * The frame's shape tells: a side by side frame whose display aspect ratio is
+- * at least 2.5, or a top and bottom frame whose is at most 1.2, holds full
+- * views (a normal view is between 1.25 and 2.39), so each view keeps the
+- * frame's size. Halve the display aspect ratio of such a frame in the
+- * direction of the packing, so that the display shows one view's shape.
++ * Decides, with the stereo policy the players of the edition share, whether
++ * the frame is 3D, how it is packed and whether its views are full or half:
++ * the user's choice (video-stereo-input, video-stereo-swap and the correction
++ * stored with the file), then the stream's own mark, then the 3D tag of the
++ * file name, then the frame's shape (two pictures side by side, at least
++ * three times as wide as high). A frame of full views gets the display aspect
++ * ratio of one view, so that the picture, the window and the declaration to
++ * the compositor all show one view's shape.
+  */
+-static void StereoFullViewAspect( video_format_t *fmt )
++static void StereoJudge( decoder_t *p_dec, video_format_t *fmt )
+ {
+-    const int64_t w = (int64_t)fmt->i_visible_width  * fmt->i_sar_num;
+-    const int64_t h = (int64_t)fmt->i_visible_height * fmt->i_sar_den;
++    int user_layout = STEREO_POLICY_LAYOUT_NONE, user_order = STEREO_POLICY_LEFT_FIRST;
++    char *psz_input = var_InheritString( p_dec, "video-stereo-input" );
+ 
+-    switch( fmt->multiview_mode )
++    if( psz_input != NULL )
+     {
+-        case MULTIVIEW_STEREO_SBS:
+-        case MULTIVIEW_STEREO_SBS_RIGHT_FIRST:
+-            if( 2 * w >= 5 * h )
+-                fmt->i_sar_den *= 2;
+-            break;
+-        case MULTIVIEW_STEREO_TB:
+-        case MULTIVIEW_STEREO_TB_RIGHT_FIRST:
+-            if( 5 * w <= 6 * h )
+-                fmt->i_sar_num *= 2;
+-            break;
+-        default:
+-            break;
++        if( !strcmp( psz_input, "none" ) )
++            user_layout = STEREO_POLICY_USER_FORCE_2D;
++        else if( !strcmp( psz_input, "side-by-side" ) )
++            user_layout = STEREO_POLICY_LAYOUT_SIDE_BY_SIDE;
++        else if( !strcmp( psz_input, "side-by-side-right-first" ) )
++        {
++            user_layout = STEREO_POLICY_LAYOUT_SIDE_BY_SIDE;
++            user_order = STEREO_POLICY_RIGHT_FIRST;
++        }
++        else if( !strcmp( psz_input, "top-bottom" ) )
++            user_layout = STEREO_POLICY_LAYOUT_TOP_AND_BOTTOM;
++        else if( !strcmp( psz_input, "top-bottom-right-first" ) )
++        {
++            user_layout = STEREO_POLICY_LAYOUT_TOP_AND_BOTTOM;
++            user_order = STEREO_POLICY_RIGHT_FIRST;
++        }
++        free( psz_input );
++    }
++
++    /* The two swaps combine, so that a file stored as swapped can be put
++     * right again for one session. */
++    const int swap = var_InheritBool( p_dec, "video-stereo-swap" )
++                   != StereoFileSwap( p_dec );
++
++    int width, height;
++    StereoShownSize( fmt, &width, &height );
++
++    char *psz_name = StereoFileName( p_dec );
++    int layout = STEREO_POLICY_LAYOUT_NONE, order = STEREO_POLICY_LEFT_FIRST;
++    int source = STEREO_POLICY_SOURCE_NONE, views = -1;
++
++    if( stereo_policy_video_layout_named( width, height,
++                                          StereoMarkName( fmt->multiview_mode ),
++                                          psz_name, STEREO_POLICY_HALVES_UNKNOWN,
++                                          user_layout, user_order, swap,
++                                          &layout, &order, &source, &views ) != 0 )
++    {
++        free( psz_name );
++        return;
+     }
++    free( psz_name );
++
++    if( layout == STEREO_POLICY_LAYOUT_NONE )
++    {
++        fmt->multiview_mode = MULTIVIEW_2D;
++        return;
++    }
++
++    const video_multiview_mode_t mode = StereoMode( layout, order );
++    if( mode == MULTIVIEW_2D )
++        return; /* a packing this player does not unpack */
++    fmt->multiview_mode = mode;
++
++    if( layout != STEREO_POLICY_LAYOUT_SIDE_BY_SIDE
++     && layout != STEREO_POLICY_LAYOUT_TOP_AND_BOTTOM )
++        return;
++
++    if( views < 0 )
++        views = stereo_policy_video_views( fmt->i_visible_width, fmt->i_visible_height,
++                                           fmt->i_sar_num, fmt->i_sar_den,
++                                           p_dec->fmt_in.video.i_stereo_plane_width,
++                                           p_dec->fmt_in.video.i_stereo_plane_height,
++                                           STEREO_POLICY_UPSAMPLED_UNKNOWN, layout, NULL );
++    if( views != 1 )
++        return;
++
++    /* A container that states the size of one view (Matroska's display
++     * size) has already folded it into the sample aspect ratio: the frame as
++     * shown then has one view's shape and needs no halving. */
++    if( layout == STEREO_POLICY_LAYOUT_SIDE_BY_SIDE )
++    {
++        if( (int64_t)width * STEREO_POLICY_SINGLE_PICTURE_WIDEST_DEN
++          > (int64_t)height * STEREO_POLICY_SINGLE_PICTURE_WIDEST_NUM )
++            fmt->i_sar_den *= 2;
++    }
++    else if( (int64_t)width * STEREO_POLICY_SINGLE_PICTURE_NARROWEST_DEN
++           < (int64_t)height * STEREO_POLICY_SINGLE_PICTURE_NARROWEST_NUM )
++        fmt->i_sar_num *= 2;
++}
++#else
++static void StereoJudge( decoder_t *p_dec, video_format_t *fmt )
++{
++    VLC_UNUSED( p_dec );
++    VLC_UNUSED( fmt );
+ }
++#endif
+ 
+ static int vout_update_format( decoder_t *p_dec )
+ {
+@@ -527,7 +710,7 @@ static int vout_update_format( decoder_t *p_dec )
+         vlc_ureduce( &fmt.i_sar_num, &fmt.i_sar_den,
+                      fmt.i_sar_num, fmt.i_sar_den, 50000 );
+ 
+-        StereoFullViewAspect( &fmt );
++        StereoJudge( p_dec, &fmt );
+ 
+         video_format_AdjustColorSpace( &fmt );
+ 
+diff --git a/src/libvlc-module.c b/src/libvlc-module.c
+index 5634252..5f58632 100644
+--- a/src/libvlc-module.c
++++ b/src/libvlc-module.c
+@@ -321,6 +321,28 @@ static const char *const ppsz_align_descriptions[] =
+     "The wallpaper mode allows you to display the video as the desktop " \
+     "background." )
+ 
++static const char *const ppsz_video_stereo_input[] = {
++    "auto", "none", "side-by-side", "side-by-side-right-first",
++    "top-bottom", "top-bottom-right-first",
++};
++
++static const char *const ppsz_video_stereo_input_text[] = {
++    N_("Automatic"), N_("Not 3D"), N_("Side by side"),
++    N_("Side by side, right eye first"), N_("Top and bottom"),
++    N_("Top and bottom, right eye first"),
++};
++
++#define VIDEO_STEREO_INPUT_TEXT N_("3D packing of the video")
++#define VIDEO_STEREO_INPUT_LONGTEXT N_( \
++    "How the video holds its two views. Automatic takes the stream's own " \
++    "mark, then the 3D tag of the file name, then the frame's shape; the " \
++    "other choices override them, and Not 3D shows the video as it is." )
++
++#define VIDEO_STEREO_SWAP_TEXT N_("Swap the eyes of a 3D video")
++#define VIDEO_STEREO_SWAP_LONGTEXT N_( \
++    "Show the left view to the right eye and the right view to the left " \
++    "eye, for a video whose mark has them the wrong way round." )
++
+ #define VIDEO_TITLE_SHOW_TEXT N_("Show media title on video")
+ #define VIDEO_TITLE_SHOW_LONGTEXT N_( \
+     "Display the title of the video on top of the movie.")
+@@ -1582,6 +1604,12 @@ vlc_module_begin ()
+     add_bool( "disable-screensaver", true, SS_TEXT, SS_LONGTEXT,
+               true )
+ 
++    add_string( "video-stereo-input", "auto", VIDEO_STEREO_INPUT_TEXT,
++                VIDEO_STEREO_INPUT_LONGTEXT, false )
++        change_string_list( ppsz_video_stereo_input, ppsz_video_stereo_input_text )
++    add_bool( "video-stereo-swap", false, VIDEO_STEREO_SWAP_TEXT,
++              VIDEO_STEREO_SWAP_LONGTEXT, false )
++
+     add_bool( "video-title-show", 1, VIDEO_TITLE_SHOW_TEXT,
+               VIDEO_TITLE_SHOW_LONGTEXT, false )
+         change_safe()
+-- 
+2.53.0
+

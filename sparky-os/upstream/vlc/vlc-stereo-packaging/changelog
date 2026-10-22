@@ -13,6 +13,14 @@ Embed stereo video in the main Qt window on Wayland, with a native video child a
 Declare the video through libstereo-declare on the video thread's own Wayland event queue; deliver two full-resolution views with a one-view logical viewport, including Qt display scaling.
 Keep both views through window resizing and fullscreen; remove stereo state on stop and when switching to a 2D video. Preserve explicit X11 platform selection.
 Install the Qt 5 Wayland platform plugin as a dependency.
+== 3.0.24-1+stereo3d7
+Decide stereo 3D video with the shared stereo policy library (libstereo-policy 1.5.0): the user's choice (video-stereo-input, video-stereo-swap and the swap stored with the file), the stream's mark, the 3D tag of the file name, then the shape of the frame (side by side from three times as wide as high), so a video with no mark, such as a 3840x1080 MPEG-4 Part 2 AVI, is judged, declared and shown at one view's size. The private 2.5 and 1.2 limits are gone. The Matroska display size of one plane is kept for the full or half views decision.
+The video window never opens wider than the screen.
+debian/control: Build-Depends: libstereo-policy-dev (>= 1.5.0).
+debian/rules: build with -fpermissive, as libupnp 1.18's header gives the event pointer const and the callback type not, so the UPnP discovery module no longer compiled.
+== 3.0.24-1+stereo3d8
+Closing VLC no longer hangs when its window is minimized, on another desktop or closing: on Wayland the OpenGL output asks EGL for a swap interval of 0, so eglSwapBuffers() does not wait for a frame callback the compositor never sends (the picture pool stayed empty, the decoder and the input waited for it, and the interface waited for the playlist).
+The UPnP module takes the event pointer's type from libupnp's Upnp_FunPtr (libupnp 1.18 in deb-multimedia's libupnp22 has a non-const pointer): the -fpermissive flag is gone.
 == 3.0.24-1+stereo3d9
 The PipeWire output starts the stream on time: it reports no delay to the core until the stream has started (the core inserted silence of its own, which played after the stream's own wait, so the audio came late, was flushed, and the same happened again for ever: a file whose audio starts after its video, such as an MP4 with an empty edit, played no sound until a seek, then dropped), counts the silence before the first samples in the buffer and in the delay, and starts at the beginning of a cycle.
 The menu entry lists the current names of AVI and WAVE (video/vnd.avi, audio/vnd.wave) and MPEG-TS files named .ts (text/vnd.trolltech.linguist).
