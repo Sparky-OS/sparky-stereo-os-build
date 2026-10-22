@@ -9,18 +9,23 @@ Two Debian packages, built from Debian testing's `vlc` source package plus our p
 
 | Path | What |
 |---|---|
-| `../0001-*.patch` to `../0021-*.patch` | the changes to VLC 3.0.24, applied in order; 0020 fixes stereo overlay sizing and 0021 adds native Wayland video inside the main Qt window |
+| `../0001-*.patch` to `../0038-*.patch` | the changes to VLC 3.0.24, applied in order; 0020 fixes stereo overlay sizing, 0021 adds native Wayland video inside the main Qt window, 0022 to 0026 are the stereo policy, the window width and the closing fixes of +stereo3d7 and +stereo3d8, 0027 to 0038 those of +stereo3d10 (each view at its own resolution, every packing with both eye orders, frame sequential pairs, the minimal view, the first picture, the 3D options' translations) |
 | `patches/base/` | the three changes of the released VLC HiFi 3D (3d1) that the series builds on |
 | `../debian-branding/vlc-stereo-name.patch` | the name "VLC Stereo" (menu entries, window titles, About, MPRIS identity); a Debian patch, not a commit for upstream |
 | `patches/vlc-stereo-side-by-side.patch` | what lets it run beside the original: user directories `~/.config/vlc-stereo`, Qt settings, MPRIS bus name, window class, application id |
 | `patches/pipewire/` | our change to the source of Debian's `vlc-plugin-pipewire` 3-4 (the upstream tarball) |
 | `gen-debian.py`, `files/` | turn Debian's `debian/control` and `debian/rules` into the packaging of the two packages (private directories, RPATH, desktop and icon names, the plugin built from the copied source, maintainer scripts for the plugin cache) |
-| `build.sh`, `Dockerfile` | the build |
+| `build-lc.sh`, `build-lc-in-container.sh` | the build since +stereo3d10: the published source package of the version before, the new patches after the last stereo patch, the changelog entry of the version from `changelog`, then Lean Code and the link and start gate |
+| `build.sh`, `Dockerfile` | the build up to +stereo3d6, from Debian's `vlc` source (Debian testing has since moved to 3.0.24-3 with a Qt 6 interface, which 0021 does not support yet) |
 | `make-branding.sh`, `make-sbs.sh` | how the two Debian patches were generated (kept for regeneration; they expect the paths of the author's workspace) |
 
 Debian's `debian/patches`, copyright and changelog stay; only the packages, control fields (Maintainer, Original-Maintainer, Homepage as in `sparky-os/repo/provenance.sh`), the changelog entry and the build dependencies our change needs (`libstereo-declare-dev`, `libpipewire-0.3-dev`) differ.
 
-## Rebuild from a clean container
+## Build a new version
+
+`build-lc.sh WORK PREVIOUS_DIR` builds `VERSION+lc1` (default `3.0.24-1+stereo3d10`) from the published `BASE` source package (default `3.0.24-1+stereo3d9`, in `$SPARKY_REPO_DIR/source`) and the patches `../0NNN-*.patch` from `FIRST` on (default 27), in the Lean Code migration image `sparky-lc-migration:20261020`, with the edition's repository pinned at 1001 and deb-multimedia's `forky` source, so the build depends on the libraries the edition installs. `PREVIOUS_DIR` holds the `BASE+lc1` debs for the link and start gate. `WORK` then holds the source package (`s/`), the Lean Code source and the debs (`lc/`), and the logs.
+
+## Rebuild from a clean container (up to +stereo3d6)
 
 1. A build context with the Dockerfile and the two `libstereo-declare` packages of the Sparky Stereo repository:
 
