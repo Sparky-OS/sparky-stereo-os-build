@@ -31,7 +31,7 @@ DISK_SIZE=${DISK_SIZE:-240G}
 # Shared into the VM (tag:host path); mount in the VM with
 #   mount -t virtiofs <tag> <dir>
 SHARES=(
-	"sparky-os:/K3D/GitHub/sparky-stereo-os-build/sparky-os"
+	"sparky-os:$(cd "$(dirname "$0")/.." && pwd)"
 	"sparky-work:/K3D/temp/sparky-os"
 )
 
