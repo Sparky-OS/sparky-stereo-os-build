@@ -8,8 +8,10 @@ in libtgfclient.so"). The lc1 link dropped libXrandr from NEEDED and libxrandr2 
 because nothing checked that the rebuilt ELF files still resolve every symbol. The payload
 hashes of `check-debs` prove the archive bytes, not that the programs run.
 
-Three checks, none installs anything and none needs a display:
+Four checks, none installs anything and none needs a display:
 
+  stereo   a symbol with "stereo" in its name that an ELF file imported in the previous build
+           and no longer imports: the stereo feature was compiled out (blocks).
   needed   NEEDED libraries and shlib Depends lost against the previous build of the same
            package. Reported; blocks only together with an unresolved symbol (a library
            that is no longer needed because nothing uses it is a legitimate --as-needed result).
@@ -69,6 +71,20 @@ def needed(path):
     return sorted(line.split('[', 1)[1].rstrip(']') for line in out.splitlines() if '(NEEDED)' in line)
 
 
+STEREO = re.compile(r'stereo', re.I)
+
+
+def stereo_imports(path):
+    """Dynamic symbols a file imports whose names mention stereo (stereo_declare_*, libstereo-layer, ...)."""
+    out = subprocess.run(['nm', '-D', '--undefined-only', str(path)], capture_output=True, text=True, timeout=60).stdout
+    found = set()
+    for line in out.splitlines():
+        part = line.split()
+        if len(part) >= 2 and part[0] == 'U' and STEREO.search(part[-1]):
+            found.add(part[-1].split('@')[0])
+    return found
+
+
 def extract(deb, dest):
     subprocess.run(['dpkg-deb', '-x', str(deb), str(dest)], check=True, stdout=subprocess.DEVNULL)
 
@@ -121,11 +137,13 @@ def compare(new_deb, previous_deb=None):
         extract(new_deb, new_root)
         now = resolve(new_root)
         new_needed = {str(p.relative_to(new_root)): needed(p) for p in elf_files(new_root)}
+        new_stereo = {str(p.relative_to(new_root)): stereo_imports(p) for p in elf_files(new_root)}
         if previous_deb:
             with tempfile.TemporaryDirectory(prefix='lc-link-old-') as old_root:
                 extract(previous_deb, old_root)
                 before = resolve(old_root)
                 old_needed = {str(p.relative_to(old_root)): needed(p) for p in elf_files(old_root)}
+                old_stereo = {str(p.relative_to(old_root)): stereo_imports(p) for p in elf_files(old_root)}
             grouped = {}
             for key in sorted(now):
                 if key not in before:
@@ -133,6 +151,13 @@ def compare(new_deb, previous_deb=None):
             for (name, kind), items in sorted(grouped.items()):
                 shown = ', '.join(items[:3]) + (f' and {len(items) - 3} more' if len(items) > 3 else '')
                 findings.append(f'{name}: {len(items)} new {kind}: {shown} (the previous build resolved them)')
+            # A stereo feature that an optional build dependency switched off compiles and links
+            # cleanly (analitza 4:26.04.0-1+stereo3d2+lc1 lost stereo_declare_wayland this way).
+            for rel in sorted(set(old_stereo) & set(new_stereo)):
+                gone = sorted(old_stereo[rel] - new_stereo[rel])
+                if gone:
+                    findings.append(f'/{rel}: stereo imports lost: {", ".join(gone[:4])}'
+                                    f'{" and more" if len(gone) > 4 else ""} (the previous build called them)')
             for rel in sorted(set(old_needed) & set(new_needed)):
                 lost = sorted(set(old_needed[rel]) - set(new_needed[rel]))
                 if lost:

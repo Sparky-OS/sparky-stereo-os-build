@@ -76,6 +76,35 @@ class LinkGate(unittest.TestCase):
         findings = linkcheck.smoke(after, table)
         self.assertTrue(findings and 'xrr_current' in findings[0], findings)
 
+    def test_lost_stereo_feature_is_rejected(self):
+        (self.src / 'a.c').write_text('int xrr_current(void);\nint stereo_declare_x11(void) { return 0; }\n'
+                                      'int client_size(void) { return xrr_current(); }\n')
+        (self.src / 'sd.c').write_text('int stereo_declare_x11(void) { return 1; }\n')
+        self.run_cc(['-shared', '-fPIC', '-o', 'libstereo-declare.so.1', '-Wl,-soname,libstereo-declare.so.1', 'sd.c'])
+        # previous: the program calls into libstereo-declare; rebuilt: the call was compiled out
+        (self.src / 'm1.c').write_text('int client_size(void);\nint stereo_declare_x11(void);\n'
+                                       'int main(void) { return stereo_declare_x11() + client_size() == 7 ? 0 : 1; }\n')
+        (self.src / 'm2.c').write_text('int client_size(void);\nint main(void) { return client_size() == 7 ? 0 : 1; }\n')
+        def pack(version, main_c):
+            root = self.base / f'pkg-s{version}'
+            (root / LIBDIR).mkdir(parents=True)
+            (root / 'usr/games').mkdir()
+            (root / 'DEBIAN').mkdir()
+            for lib in ('libb.so.1', 'liba.so', 'libstereo-declare.so.1'):
+                shutil.copy(self.src / lib, root / LIBDIR / lib)
+            self.run_cc(['-o', str(root / 'usr/games/demo'), main_c, f'-L{root / LIBDIR}', '-la', '-l:libb.so.1',
+                         '-l:libstereo-declare.so.1', f'-Wl,-rpath-link,{root / LIBDIR}'])
+            (root / 'DEBIAN/control').write_text(f'Package: sdemo\nVersion: {version}\nArchitecture: amd64\n'
+                                                 'Maintainer: t <t@example.org>\nDescription: t\nDepends: libc6\n')
+            out = self.base / f'sdemo_{version}_amd64.deb'
+            subprocess.run(['dpkg-deb', '--build', str(root), str(out)], check=True, stdout=subprocess.DEVNULL)
+            return out
+        before, after = pack('1', 'm1.c'), pack('1+lc1', 'm2.c')
+        self.assertEqual(linkcheck.check(before, previous_deb=before), [])
+        with self.assertRaises(package.Invalid) as raised:
+            linkcheck.check(after, previous_deb=before)
+        self.assertIn('stereo imports lost', str(raised.exception))
+
     def test_same_link_passes(self):
         before = self.deb('demo', '3', as_needed=False)
         after = self.deb('demo', '3+lc1', as_needed=False)
