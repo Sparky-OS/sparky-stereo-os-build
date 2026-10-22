@@ -1,0 +1,68 @@
+From ec1ff7e7806e69127462b28e224bd02e73fbbbef Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 22 Oct 2026 14:30:54 -0300
+Subject: [PATCH 31/38] es: name the right eye first rows, columns, frames and
+ checkerboard
+
+The multiview modes named the eye order of side by side and top and
+bottom only, while the frame packing arrangement SEI (H.264 D.2.26,
+H.265 D.3.16: content_interpretation_type) and Matroska's StereoMode
+(RFC 9559 5.1.4.1.28.3: values 4, 6, 8 and 14) give it for every
+packing. Add the right eye first row interleaved, column interleaved,
+frame sequential and checkerboard modes; x264 keeps their packing as it
+keeps the right eye first side by side.
+
+Assisted-by: Claude Opus 5.5
+---
+ include/vlc_es.h     | 12 ++++++++++++
+ modules/codec/x264.c |  9 ++++++---
+ 2 files changed, 18 insertions(+), 3 deletions(-)
+
+diff --git a/include/vlc_es.h b/include/vlc_es.h
+index 933139e..545f698 100644
+--- a/include/vlc_es.h
++++ b/include/vlc_es.h
+@@ -237,6 +237,18 @@ typedef enum video_multiview_mode_t
+ 
+     /* Top-bottom with right eye first. */
+     MULTIVIEW_STEREO_TB_RIGHT_FIRST,
++
++    /* Row sequential with right eye first. */
++    MULTIVIEW_STEREO_ROW_RIGHT_FIRST,
++
++    /* Column sequential with right eye first. */
++    MULTIVIEW_STEREO_COL_RIGHT_FIRST,
++
++    /* Frame sequential with right eye first. */
++    MULTIVIEW_STEREO_FRAME_RIGHT_FIRST,
++
++    /* Checkerboard pattern with right eye first. */
++    MULTIVIEW_STEREO_CHECKERBOARD_RIGHT_FIRST,
+ } video_multiview_mode_t;
+ 
+ /**
+diff --git a/modules/codec/x264.c b/modules/codec/x264.c
+index 95ebbbe..fcd7661 100644
+--- a/modules/codec/x264.c
++++ b/modules/codec/x264.c
+@@ -786,11 +786,14 @@ static int FramePackingFromMultiview( video_multiview_mode_t mode )
+ {
+     switch( mode )
+     {
+-        case MULTIVIEW_STEREO_CHECKERBOARD: return 0;
+-        case MULTIVIEW_STEREO_COL:          return 1;
+-        case MULTIVIEW_STEREO_ROW:          return 2;
+         /* x264 signals the left view first whatever the input says, the
+          * layout is kept */
++        case MULTIVIEW_STEREO_CHECKERBOARD:
++        case MULTIVIEW_STEREO_CHECKERBOARD_RIGHT_FIRST: return 0;
++        case MULTIVIEW_STEREO_COL:
++        case MULTIVIEW_STEREO_COL_RIGHT_FIRST: return 1;
++        case MULTIVIEW_STEREO_ROW:
++        case MULTIVIEW_STEREO_ROW_RIGHT_FIRST: return 2;
+         case MULTIVIEW_STEREO_SBS:
+         case MULTIVIEW_STEREO_SBS_RIGHT_FIRST: return 3;
+         case MULTIVIEW_STEREO_TB:
+-- 
+2.53.0
+

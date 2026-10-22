@@ -1,0 +1,57 @@
+From d5ee8720043fe33c2149259ae0714543079b5d26 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 22 Oct 2026 14:30:54 -0300
+Subject: [PATCH 32/38] picture: carry the constituent frame of a frame
+ sequential video
+
+The frames of a temporally interleaved stereoscopic stream are its two
+views in turn, and the frame packing arrangement SEI marks each one as
+constituent frame 0 or 1 (current_frame_is_frame0_flag, H.264 D.2.26,
+H.265 D.3.16), in output order. Keep that mark with the picture, so
+that the frames can be paired as the stream marks them.
+
+Assisted-by: Claude Opus 5.5
+---
+ include/vlc_picture.h | 5 +++++
+ src/misc/picture.c    | 2 ++
+ 2 files changed, 7 insertions(+)
+
+diff --git a/include/vlc_picture.h b/include/vlc_picture.h
+index d6bd9dd..a434ab7 100644
+--- a/include/vlc_picture.h
++++ b/include/vlc_picture.h
+@@ -90,6 +90,11 @@ struct picture_t
+     bool            b_progressive;          /**< is it a progressive frame ? */
+     bool            b_top_field_first;             /**< which field is first */
+     unsigned int    i_nb_fields;                  /**< # of displayed fields */
++    /** Which constituent frame of a frame sequential stereoscopic stream the
++     * picture is, as the stream marks it (current_frame_is_frame0_flag of
++     * the frame packing arrangement SEI, H.264 D.2.26, H.265 D.3.16):
++     * 0 when nothing says, 1 for frame 0, 2 for frame 1 */
++    uint8_t         i_stereo_frame;
+     picture_context_t *context;      /**< video format-specific data pointer */
+     /**@}*/
+ 
+diff --git a/src/misc/picture.c b/src/misc/picture.c
+index 62ada88..e0fbf13 100644
+--- a/src/misc/picture.c
++++ b/src/misc/picture.c
+@@ -79,6 +79,7 @@ void picture_Reset( picture_t *p_picture )
+     p_picture->b_progressive = false;
+     p_picture->i_nb_fields = 2;
+     p_picture->b_top_field_first = false;
++    p_picture->i_stereo_frame = 0;
+     PictureDestroyContext( p_picture );
+ }
+ 
+@@ -377,6 +378,7 @@ void picture_CopyProperties( picture_t *p_dst, const picture_t *p_src )
+     p_dst->b_progressive = p_src->b_progressive;
+     p_dst->i_nb_fields = p_src->i_nb_fields;
+     p_dst->b_top_field_first = p_src->b_top_field_first;
++    p_dst->i_stereo_frame = p_src->i_stereo_frame;
+ }
+ 
+ void picture_CopyPixels( picture_t *p_dst, const picture_t *p_src )
+-- 
+2.53.0
+

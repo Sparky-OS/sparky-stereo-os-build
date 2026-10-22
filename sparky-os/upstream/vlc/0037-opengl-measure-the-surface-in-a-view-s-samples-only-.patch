@@ -1,0 +1,41 @@
+From c95a2fb5b7a48e7471165756c44a5da33952fcb2 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 22 Oct 2026 15:01:03 -0300
+Subject: [PATCH 37/38] opengl: measure the surface in a view's samples only
+ behind a viewport
+
+The surface of a stereoscopic video is sized in a view's own samples
+because the viewport gives the compositor the size it is shown at. An
+X11 window has no viewport: it is its own buffer, at the window's size,
+and a picture placed in samples there was drawn at the wrong scale (with
+an embedded X11 video window, which the compositor does not take as
+stereoscopic, the left view went beyond the window). Keep the display's
+size where there is no viewport, as before.
+
+Assisted-by: Claude Opus 5.5
+---
+ modules/video_output/opengl/display.c | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/modules/video_output/opengl/display.c b/modules/video_output/opengl/display.c
+index 4f823e5..9d8b944 100644
+--- a/modules/video_output/opengl/display.c
++++ b/modules/video_output/opengl/display.c
+@@ -460,7 +460,13 @@ static void PlaceOnSurface(vout_display_t *vd, const vout_display_cfg_t *cfg,
+     *width = cfg->display.width * (sys->stereo ? 2 : 1);
+     *height = cfg->display.height;
+     *stride = sys->stereo ? cfg->display.width : 0;
+-    if (!sys->stereo)
++    /* Only a viewport tells the compositor the size the views are shown at:
++     * an X11 window is its own buffer, at the window's size */
++    bool viewport = false;
++# ifdef VLC_GL_WAYLAND
++    viewport = sys->viewport != NULL;
++# endif
++    if (!sys->stereo || !viewport)
+         return;
+     switch (src->multiview_mode)
+     {
+-- 
+2.53.0
+

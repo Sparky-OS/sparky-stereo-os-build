@@ -1,0 +1,151 @@
+From 4174a2d56677b4de8fb05248906c484863592632 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 22 Oct 2026 14:31:25 -0300
+Subject: [PATCH 36/38] decoder: take every packing from the stereo policy and
+ from the user
+
+The stereo policy names every packing of the frame packing arrangement
+SEI and of Matroska's StereoMode with its eye order, but the decoder
+asked it about the eye order of side by side and top and bottom only,
+and the user could choose only those two.
+
+Pass every mark with its eye order, take every packing back with its
+order (quincunx side by side as side by side, block laced as frame
+sequential), and offer rows, columns, checkerboard and frame sequence,
+each eye order, in the 3D packing of the video (video-stereo-input).
+
+Assisted-by: Claude Opus 5.5
+---
+ src/input/decoder.c | 62 +++++++++++++++++++++++++++++++--------------
+ src/libvlc-module.c | 11 ++++++--
+ 2 files changed, 52 insertions(+), 21 deletions(-)
+
+diff --git a/src/input/decoder.c b/src/input/decoder.c
+index 2d3b0dd..91af4ad 100644
+--- a/src/input/decoder.c
++++ b/src/input/decoder.c
+@@ -444,9 +444,14 @@ static const char *StereoMarkName( video_multiview_mode_t mode )
+         case MULTIVIEW_STEREO_TB:                return "topBottomLeftFirst";
+         case MULTIVIEW_STEREO_TB_RIGHT_FIRST:    return "topBottomRightFirst";
+         case MULTIVIEW_STEREO_ROW:               return "rowInterleavedLeftFirst";
++        case MULTIVIEW_STEREO_ROW_RIGHT_FIRST:   return "rowInterleavedRightFirst";
+         case MULTIVIEW_STEREO_COL:               return "columnInterleavedLeftFirst";
++        case MULTIVIEW_STEREO_COL_RIGHT_FIRST:   return "columnInterleavedRightFirst";
+         case MULTIVIEW_STEREO_FRAME:             return "frameSequentialLeftFirst";
++        case MULTIVIEW_STEREO_FRAME_RIGHT_FIRST: return "frameSequentialRightFirst";
+         case MULTIVIEW_STEREO_CHECKERBOARD:      return "checkerboardLeftFirst";
++        case MULTIVIEW_STEREO_CHECKERBOARD_RIGHT_FIRST:
++                                                 return "checkerboardRightFirst";
+         default:                                 return NULL;
+     }
+ }
+@@ -457,18 +462,25 @@ static video_multiview_mode_t StereoMode( int layout, int order )
+ 
+     switch( layout )
+     {
++        /* the views of a quincunx side by side frame are side by side, each
++         * of its own samples */
+         case STEREO_POLICY_LAYOUT_SIDE_BY_SIDE:
++        case STEREO_POLICY_LAYOUT_SIDE_BY_SIDE_QUINCUNX:
+             return right ? MULTIVIEW_STEREO_SBS_RIGHT_FIRST : MULTIVIEW_STEREO_SBS;
+         case STEREO_POLICY_LAYOUT_TOP_AND_BOTTOM:
+             return right ? MULTIVIEW_STEREO_TB_RIGHT_FIRST : MULTIVIEW_STEREO_TB;
+         case STEREO_POLICY_LAYOUT_ROWS:
+-            return MULTIVIEW_STEREO_ROW;
++            return right ? MULTIVIEW_STEREO_ROW_RIGHT_FIRST : MULTIVIEW_STEREO_ROW;
+         case STEREO_POLICY_LAYOUT_COLUMNS:
+-            return MULTIVIEW_STEREO_COL;
++            return right ? MULTIVIEW_STEREO_COL_RIGHT_FIRST : MULTIVIEW_STEREO_COL;
++        /* both eyes laced in one Matroska block: one frame of each view in
++         * turn */
+         case STEREO_POLICY_LAYOUT_FRAME_SEQUENTIAL:
+-            return MULTIVIEW_STEREO_FRAME;
++        case STEREO_POLICY_LAYOUT_BLOCK_LACED:
++            return right ? MULTIVIEW_STEREO_FRAME_RIGHT_FIRST : MULTIVIEW_STEREO_FRAME;
+         case STEREO_POLICY_LAYOUT_CHECKERBOARD:
+-            return MULTIVIEW_STEREO_CHECKERBOARD;
++            return right ? MULTIVIEW_STEREO_CHECKERBOARD_RIGHT_FIRST
++                         : MULTIVIEW_STEREO_CHECKERBOARD;
+         default:
+             return MULTIVIEW_2D;
+     }
+@@ -553,22 +565,34 @@ static void StereoJudge( decoder_t *p_dec, video_format_t *fmt )
+ 
+     if( psz_input != NULL )
+     {
+-        if( !strcmp( psz_input, "none" ) )
+-            user_layout = STEREO_POLICY_USER_FORCE_2D;
+-        else if( !strcmp( psz_input, "side-by-side" ) )
+-            user_layout = STEREO_POLICY_LAYOUT_SIDE_BY_SIDE;
+-        else if( !strcmp( psz_input, "side-by-side-right-first" ) )
++        static const struct
+         {
+-            user_layout = STEREO_POLICY_LAYOUT_SIDE_BY_SIDE;
+-            user_order = STEREO_POLICY_RIGHT_FIRST;
+-        }
+-        else if( !strcmp( psz_input, "top-bottom" ) )
+-            user_layout = STEREO_POLICY_LAYOUT_TOP_AND_BOTTOM;
+-        else if( !strcmp( psz_input, "top-bottom-right-first" ) )
+-        {
+-            user_layout = STEREO_POLICY_LAYOUT_TOP_AND_BOTTOM;
+-            user_order = STEREO_POLICY_RIGHT_FIRST;
+-        }
++            const char *psz_name;
++            int layout;
++            int order;
++        } inputs[] = {
++            { "none", STEREO_POLICY_USER_FORCE_2D, STEREO_POLICY_LEFT_FIRST },
++            { "side-by-side", STEREO_POLICY_LAYOUT_SIDE_BY_SIDE, STEREO_POLICY_LEFT_FIRST },
++            { "side-by-side-right-first", STEREO_POLICY_LAYOUT_SIDE_BY_SIDE, STEREO_POLICY_RIGHT_FIRST },
++            { "top-bottom", STEREO_POLICY_LAYOUT_TOP_AND_BOTTOM, STEREO_POLICY_LEFT_FIRST },
++            { "top-bottom-right-first", STEREO_POLICY_LAYOUT_TOP_AND_BOTTOM, STEREO_POLICY_RIGHT_FIRST },
++            { "rows", STEREO_POLICY_LAYOUT_ROWS, STEREO_POLICY_LEFT_FIRST },
++            { "rows-right-first", STEREO_POLICY_LAYOUT_ROWS, STEREO_POLICY_RIGHT_FIRST },
++            { "columns", STEREO_POLICY_LAYOUT_COLUMNS, STEREO_POLICY_LEFT_FIRST },
++            { "columns-right-first", STEREO_POLICY_LAYOUT_COLUMNS, STEREO_POLICY_RIGHT_FIRST },
++            { "checkerboard", STEREO_POLICY_LAYOUT_CHECKERBOARD, STEREO_POLICY_LEFT_FIRST },
++            { "checkerboard-right-first", STEREO_POLICY_LAYOUT_CHECKERBOARD, STEREO_POLICY_RIGHT_FIRST },
++            { "frame-sequential", STEREO_POLICY_LAYOUT_FRAME_SEQUENTIAL, STEREO_POLICY_LEFT_FIRST },
++            { "frame-sequential-right-first", STEREO_POLICY_LAYOUT_FRAME_SEQUENTIAL, STEREO_POLICY_RIGHT_FIRST },
++        };
++
++        for( size_t i = 0; i < ARRAY_SIZE( inputs ); i++ )
++            if( !strcmp( psz_input, inputs[i].psz_name ) )
++            {
++                user_layout = inputs[i].layout;
++                user_order = inputs[i].order;
++                break;
++            }
+         free( psz_input );
+     }
+ 
+diff --git a/src/libvlc-module.c b/src/libvlc-module.c
+index 5f58632..7551a4d 100644
+--- a/src/libvlc-module.c
++++ b/src/libvlc-module.c
+@@ -323,13 +323,20 @@ static const char *const ppsz_align_descriptions[] =
+ 
+ static const char *const ppsz_video_stereo_input[] = {
+     "auto", "none", "side-by-side", "side-by-side-right-first",
+-    "top-bottom", "top-bottom-right-first",
++    "top-bottom", "top-bottom-right-first", "rows", "rows-right-first",
++    "columns", "columns-right-first", "checkerboard",
++    "checkerboard-right-first", "frame-sequential",
++    "frame-sequential-right-first",
+ };
+ 
+ static const char *const ppsz_video_stereo_input_text[] = {
+     N_("Automatic"), N_("Not 3D"), N_("Side by side"),
+     N_("Side by side, right eye first"), N_("Top and bottom"),
+-    N_("Top and bottom, right eye first"),
++    N_("Top and bottom, right eye first"), N_("Row interleaved"),
++    N_("Row interleaved, right eye first"), N_("Column interleaved"),
++    N_("Column interleaved, right eye first"), N_("Checkerboard"),
++    N_("Checkerboard, right eye first"), N_("Frame sequential"),
++    N_("Frame sequential, right eye first"),
+ };
+ 
+ #define VIDEO_STEREO_INPUT_TEXT N_("3D packing of the video")
+-- 
+2.53.0
+

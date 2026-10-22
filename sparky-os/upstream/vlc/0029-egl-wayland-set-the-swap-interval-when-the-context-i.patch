@@ -1,0 +1,73 @@
+From 76cd6f21c93ba8777d7c272ff1417c17416942a7 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 22 Oct 2026 14:30:44 -0300
+Subject: [PATCH 29/38] egl: wayland: set the swap interval when the context is
+ first made current
+
+The swap interval was set by making the context current in Open(),
+while the window was still 1x1: the first buffer took that size, and
+the first picture went to the compositor as one pixel, whatever size
+the video output had given the window before drawing it.
+
+Set it at the first MakeCurrent() instead, after the window has its
+size.
+
+Assisted-by: Claude Opus 5.5
+---
+ modules/video_output/opengl/egl.c | 26 ++++++++++++++++----------
+ 1 file changed, 16 insertions(+), 10 deletions(-)
+
+diff --git a/modules/video_output/opengl/egl.c b/modules/video_output/opengl/egl.c
+index d06193a..da8a725 100644
+--- a/modules/video_output/opengl/egl.c
++++ b/modules/video_output/opengl/egl.c
+@@ -55,6 +55,7 @@ typedef struct vlc_gl_sys_t
+ #if defined (USE_PLATFORM_WAYLAND)
+     struct wl_egl_window *window;
+     unsigned width, height;
++    bool swap_interval_set;
+ #endif
+     PFNEGLCREATEIMAGEKHRPROC    eglCreateImageKHR;
+     PFNEGLDESTROYIMAGEKHRPROC   eglDestroyImageKHR;
+@@ -67,6 +68,20 @@ static int MakeCurrent (vlc_gl_t *gl)
+     if (eglMakeCurrent (sys->display, sys->surface, sys->surface,
+                         sys->context) != EGL_TRUE)
+         return VLC_EGENERIC;
++#ifdef USE_PLATFORM_WAYLAND
++    /* With a swap interval of 1, eglSwapBuffers() waits for the compositor's
++     * frame callback, and a window that is minimized, on another desktop or
++     * closing gets none: the swap never returns, the picture pool runs dry and
++     * the player cannot stop. The video output paces the pictures itself.
++     * Set at the first use, not when the surface is made: being current at
++     * 1x1 then gave the first buffer that size, and the first picture with it,
++     * whatever size the window took before it was drawn. */
++    if (!sys->swap_interval_set)
++    {
++        eglSwapInterval (sys->display, 0);
++        sys->swap_interval_set = true;
++    }
++#endif
+     return VLC_SUCCESS;
+ }
+ 
+@@ -412,16 +427,7 @@ static int Open (vlc_object_t *obj, const struct gl_api *api)
+     sys->context = ctx;
+ 
+ #ifdef USE_PLATFORM_WAYLAND
+-    /* With a swap interval of 1, eglSwapBuffers() waits for the compositor's
+-     * frame callback, and a window that is minimized, on another desktop or
+-     * closing gets none: the swap never returns, the picture pool runs dry and
+-     * the player cannot stop. The video output paces the pictures itself. */
+-    if (eglMakeCurrent(sys->display, sys->surface, sys->surface, ctx) == EGL_TRUE)
+-    {
+-        eglSwapInterval(sys->display, 0);
+-        eglMakeCurrent(sys->display, EGL_NO_SURFACE, EGL_NO_SURFACE,
+-                       EGL_NO_CONTEXT);
+-    }
++    sys->swap_interval_set = false;
+ #endif
+ 
+     /* Initialize OpenGL callbacks */
+-- 
+2.53.0
+

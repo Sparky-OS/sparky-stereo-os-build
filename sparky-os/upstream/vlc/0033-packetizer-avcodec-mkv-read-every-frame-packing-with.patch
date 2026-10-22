@@ -1,0 +1,231 @@
+From 8e02c1c7c268f86609c20ab3c23064237a98fe6c Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 22 Oct 2026 14:30:54 -0300
+Subject: [PATCH 33/38] packetizer, avcodec, mkv: read every frame packing with
+ its eye order
+
+The packetizers gave rows, columns, checkerboard and frame sequence the
+left eye first whatever the SEI said; the decoder's own reading of the
+SEI and of FFmpeg's stereoscopic side data, and Matroska's StereoMode,
+knew side by side and top and bottom only, so the other packings played
+as two dimensional pictures.
+
+Read them all, each with its eye order: the frame packing arrangement
+SEI (H.264 D.2.26, H.265 D.3.16; quincunx side by side is side by side,
+each view of its own samples), FFmpeg's AVStereo3D, and StereoMode 4 to
+9, 13 and 14 (RFC 9559 5.1.4.1.28.3; both eyes laced in one block are
+one frame of each view in turn). avcodec also marks each picture of a
+frame sequential stream with its constituent frame.
+
+Assisted-by: Claude Opus 5.5
+---
+ modules/codec/avcodec/video.c                | 49 ++++++++++++++++++++
+ modules/demux/mkv/matroska_segment_parse.cpp | 26 +++++++++++
+ modules/packetizer/h264.c                    | 16 +++++--
+ modules/packetizer/hevc.c                    | 16 +++++--
+ 4 files changed, 99 insertions(+), 8 deletions(-)
+
+diff --git a/modules/codec/avcodec/video.c b/modules/codec/avcodec/video.c
+index 93de132..177f8d8 100644
+--- a/modules/codec/avcodec/video.c
++++ b/modules/codec/avcodec/video.c
+@@ -1091,6 +1091,20 @@ static int DecodeSidedata( decoder_t *p_dec, const AVFrame *frame, picture_t *p_
+      * it, only tells it here. */
+     const AVFrameSideData *p_s3d =
+             av_frame_get_side_data( frame, AV_FRAME_DATA_STEREO3D );
++    /* Which constituent frame of a temporal interleaving this one is: the
++     * pairs are made from it, whatever gives the packing */
++    p_pic->i_stereo_frame = 0;
++    if( p_s3d )
++    {
++        const AVStereo3D *s3d = (const AVStereo3D *) p_s3d->data;
++        if( s3d->type == AV_STEREO3D_FRAMESEQUENCE )
++        {
++            if( s3d->view == AV_STEREO3D_VIEW_LEFT )
++                p_pic->i_stereo_frame = 1;
++            else if( s3d->view == AV_STEREO3D_VIEW_RIGHT )
++                p_pic->i_stereo_frame = 2;
++        }
++    }
+     if( p_s3d && p_dec->fmt_in.video.multiview_mode == MULTIVIEW_2D )
+     {
+         const AVStereo3D *s3d = (const AVStereo3D *) p_s3d->data;
+@@ -1099,7 +1113,10 @@ static int DecodeSidedata( decoder_t *p_dec, const AVFrame *frame, picture_t *p_
+ 
+         switch( s3d->type )
+         {
++            /* the views of a quincunx side by side frame are packed side by
++             * side, each of its own samples */
+             case AV_STEREO3D_SIDEBYSIDE:
++            case AV_STEREO3D_SIDEBYSIDE_QUINCUNX:
+                 mode = right_first ? MULTIVIEW_STEREO_SBS_RIGHT_FIRST
+                                    : MULTIVIEW_STEREO_SBS;
+                 break;
+@@ -1107,6 +1124,22 @@ static int DecodeSidedata( decoder_t *p_dec, const AVFrame *frame, picture_t *p_
+                 mode = right_first ? MULTIVIEW_STEREO_TB_RIGHT_FIRST
+                                    : MULTIVIEW_STEREO_TB;
+                 break;
++            case AV_STEREO3D_LINES:
++                mode = right_first ? MULTIVIEW_STEREO_ROW_RIGHT_FIRST
++                                   : MULTIVIEW_STEREO_ROW;
++                break;
++            case AV_STEREO3D_COLUMNS:
++                mode = right_first ? MULTIVIEW_STEREO_COL_RIGHT_FIRST
++                                   : MULTIVIEW_STEREO_COL;
++                break;
++            case AV_STEREO3D_CHECKERBOARD:
++                mode = right_first ? MULTIVIEW_STEREO_CHECKERBOARD_RIGHT_FIRST
++                                   : MULTIVIEW_STEREO_CHECKERBOARD;
++                break;
++            case AV_STEREO3D_FRAMESEQUENCE:
++                mode = right_first ? MULTIVIEW_STEREO_FRAME_RIGHT_FIRST
++                                   : MULTIVIEW_STEREO_FRAME;
++                break;
+             case AV_STEREO3D_2D:
+                 mode = MULTIVIEW_2D;
+                 break;
+@@ -1167,6 +1200,18 @@ static bool StereoSEICallback( const hxxx_sei_data_t *p_sei, void *priv )
+     const bool left_first = p_sei->frame_packing.b_left_first;
+     switch( p_sei->frame_packing.type )
+     {
++        case FRAME_PACKING_INTERLEAVED_CHECKERBOARD:
++            *p_mode = left_first ? MULTIVIEW_STEREO_CHECKERBOARD
++                                 : MULTIVIEW_STEREO_CHECKERBOARD_RIGHT_FIRST;
++            break;
++        case FRAME_PACKING_INTERLEAVED_COLUMN:
++            *p_mode = left_first ? MULTIVIEW_STEREO_COL
++                                 : MULTIVIEW_STEREO_COL_RIGHT_FIRST;
++            break;
++        case FRAME_PACKING_INTERLEAVED_ROW:
++            *p_mode = left_first ? MULTIVIEW_STEREO_ROW
++                                 : MULTIVIEW_STEREO_ROW_RIGHT_FIRST;
++            break;
+         case FRAME_PACKING_SIDE_BY_SIDE:
+             *p_mode = left_first ? MULTIVIEW_STEREO_SBS
+                                  : MULTIVIEW_STEREO_SBS_RIGHT_FIRST;
+@@ -1175,6 +1220,10 @@ static bool StereoSEICallback( const hxxx_sei_data_t *p_sei, void *priv )
+             *p_mode = left_first ? MULTIVIEW_STEREO_TB
+                                  : MULTIVIEW_STEREO_TB_RIGHT_FIRST;
+             break;
++        case FRAME_PACKING_TEMPORAL:
++            *p_mode = left_first ? MULTIVIEW_STEREO_FRAME
++                                 : MULTIVIEW_STEREO_FRAME_RIGHT_FIRST;
++            break;
+         default:
+             break;
+     }
+diff --git a/modules/demux/mkv/matroska_segment_parse.cpp b/modules/demux/mkv/matroska_segment_parse.cpp
+index 1f6d417..0952eef 100644
+--- a/modules/demux/mkv/matroska_segment_parse.cpp
++++ b/modules/demux/mkv/matroska_segment_parse.cpp
+@@ -640,9 +640,35 @@ void matroska_segment_c::ParseTrackEntry( const KaxTrackEntry *m )
+                 case 3:
+                     vars.tk->fmt.video.multiview_mode = MULTIVIEW_STEREO_TB;
+                     break;
++                case 4:
++                    vars.tk->fmt.video.multiview_mode = MULTIVIEW_STEREO_CHECKERBOARD_RIGHT_FIRST;
++                    break;
++                case 5:
++                    vars.tk->fmt.video.multiview_mode = MULTIVIEW_STEREO_CHECKERBOARD;
++                    break;
++                case 6:
++                    vars.tk->fmt.video.multiview_mode = MULTIVIEW_STEREO_ROW_RIGHT_FIRST;
++                    break;
++                case 7:
++                    vars.tk->fmt.video.multiview_mode = MULTIVIEW_STEREO_ROW;
++                    break;
++                case 8:
++                    vars.tk->fmt.video.multiview_mode = MULTIVIEW_STEREO_COL_RIGHT_FIRST;
++                    break;
++                case 9:
++                    vars.tk->fmt.video.multiview_mode = MULTIVIEW_STEREO_COL;
++                    break;
+                 case 11:
+                     vars.tk->fmt.video.multiview_mode = MULTIVIEW_STEREO_SBS_RIGHT_FIRST;
+                     break;
++                /* both eyes laced in one Block: one frame of each view in
++                 * turn, as a temporal interleaving */
++                case 13:
++                    vars.tk->fmt.video.multiview_mode = MULTIVIEW_STEREO_FRAME;
++                    break;
++                case 14:
++                    vars.tk->fmt.video.multiview_mode = MULTIVIEW_STEREO_FRAME_RIGHT_FIRST;
++                    break;
+                 default:
+                     break;
+             }
+diff --git a/modules/packetizer/h264.c b/modules/packetizer/h264.c
+index bd402c3..9b7a3f5 100644
+--- a/modules/packetizer/h264.c
++++ b/modules/packetizer/h264.c
+@@ -1262,11 +1262,17 @@ static bool ParseSeiCallback( const hxxx_sei_data_t *p_sei_data, void *cbdata )
+                 switch( p_sei_data->frame_packing.type )
+                 {
+                     case FRAME_PACKING_INTERLEAVED_CHECKERBOARD:
+-                        mode = MULTIVIEW_STEREO_CHECKERBOARD; break;
++                        mode = p_sei_data->frame_packing.b_left_first ?
++                               MULTIVIEW_STEREO_CHECKERBOARD :
++                               MULTIVIEW_STEREO_CHECKERBOARD_RIGHT_FIRST; break;
+                     case FRAME_PACKING_INTERLEAVED_COLUMN:
+-                        mode = MULTIVIEW_STEREO_COL; break;
++                        mode = p_sei_data->frame_packing.b_left_first ?
++                               MULTIVIEW_STEREO_COL :
++                               MULTIVIEW_STEREO_COL_RIGHT_FIRST; break;
+                     case FRAME_PACKING_INTERLEAVED_ROW:
+-                        mode = MULTIVIEW_STEREO_ROW; break;
++                        mode = p_sei_data->frame_packing.b_left_first ?
++                               MULTIVIEW_STEREO_ROW :
++                               MULTIVIEW_STEREO_ROW_RIGHT_FIRST; break;
+                     case FRAME_PACKING_SIDE_BY_SIDE:
+                         mode = p_sei_data->frame_packing.b_left_first ?
+                                MULTIVIEW_STEREO_SBS :
+@@ -1276,7 +1282,9 @@ static bool ParseSeiCallback( const hxxx_sei_data_t *p_sei_data, void *cbdata )
+                                MULTIVIEW_STEREO_TB :
+                                MULTIVIEW_STEREO_TB_RIGHT_FIRST; break;
+                     case FRAME_PACKING_TEMPORAL:
+-                        mode = MULTIVIEW_STEREO_FRAME; break;
++                        mode = p_sei_data->frame_packing.b_left_first ?
++                               MULTIVIEW_STEREO_FRAME :
++                               MULTIVIEW_STEREO_FRAME_RIGHT_FIRST; break;
+                     case FRAME_PACKING_TILED:
+                     default:
+                         mode = MULTIVIEW_2D; break;
+diff --git a/modules/packetizer/hevc.c b/modules/packetizer/hevc.c
+index 88cd0f5..e353d86 100644
+--- a/modules/packetizer/hevc.c
++++ b/modules/packetizer/hevc.c
+@@ -999,11 +999,17 @@ static bool ParseSEICallback( const hxxx_sei_data_t *p_sei_data, void *cbdata )
+                 switch( p_sei_data->frame_packing.type )
+                 {
+                     case FRAME_PACKING_INTERLEAVED_CHECKERBOARD:
+-                        mode = MULTIVIEW_STEREO_CHECKERBOARD; break;
++                        mode = p_sei_data->frame_packing.b_left_first ?
++                               MULTIVIEW_STEREO_CHECKERBOARD :
++                               MULTIVIEW_STEREO_CHECKERBOARD_RIGHT_FIRST; break;
+                     case FRAME_PACKING_INTERLEAVED_COLUMN:
+-                        mode = MULTIVIEW_STEREO_COL; break;
++                        mode = p_sei_data->frame_packing.b_left_first ?
++                               MULTIVIEW_STEREO_COL :
++                               MULTIVIEW_STEREO_COL_RIGHT_FIRST; break;
+                     case FRAME_PACKING_INTERLEAVED_ROW:
+-                        mode = MULTIVIEW_STEREO_ROW; break;
++                        mode = p_sei_data->frame_packing.b_left_first ?
++                               MULTIVIEW_STEREO_ROW :
++                               MULTIVIEW_STEREO_ROW_RIGHT_FIRST; break;
+                     case FRAME_PACKING_SIDE_BY_SIDE:
+                         mode = p_sei_data->frame_packing.b_left_first ?
+                                MULTIVIEW_STEREO_SBS :
+@@ -1013,7 +1019,9 @@ static bool ParseSEICallback( const hxxx_sei_data_t *p_sei_data, void *cbdata )
+                                MULTIVIEW_STEREO_TB :
+                                MULTIVIEW_STEREO_TB_RIGHT_FIRST; break;
+                     case FRAME_PACKING_TEMPORAL:
+-                        mode = MULTIVIEW_STEREO_FRAME; break;
++                        mode = p_sei_data->frame_packing.b_left_first ?
++                               MULTIVIEW_STEREO_FRAME :
++                               MULTIVIEW_STEREO_FRAME_RIGHT_FIRST; break;
+                     case FRAME_PACKING_TILED:
+                     default:
+                         mode = MULTIVIEW_2D; break;
+-- 
+2.53.0
+

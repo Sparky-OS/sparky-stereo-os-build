@@ -1,0 +1,49 @@
+From 496ec989efd266deff2003afbc30790086679294 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 22 Oct 2026 13:08:40 -0300
+Subject: [PATCH 28/38] qt: do not empty the window for a widget that has no
+ size yet
+
+Showing a widget of the central stack restored the size remembered for
+it, and the video widget shown for the first time has none: the map
+gave an invalid size of -1x-1. In normal view that only took one pixel
+off the window's frame, but in minimal view the stack is the whole
+window, which was resized to nothing. Qt hides a window that has no
+size, and on Wayland hiding a window destroys its surface: the video's
+native child (the stereo video layer) was a subsurface of that surface,
+Qt kept moving it after the window got a new one, and the compositor
+ended the connection ("wl_subsurface: error 0: no parent"). VLC Stereo
+died at the start of every video in minimal view, 2D ones too.
+
+Restore only a size the widget had; the video widget sets its own size
+right after.
+
+Assisted-by: Claude Opus 5.5
+---
+ modules/gui/qt/main_interface.cpp | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/modules/gui/qt/main_interface.cpp b/modules/gui/qt/main_interface.cpp
+index 729e47e..680c3fc 100644
+--- a/modules/gui/qt/main_interface.cpp
++++ b/modules/gui/qt/main_interface.cpp
+@@ -702,8 +702,14 @@ inline void MainInterface::showTab( QWidget *widget, bool video_closing )
+     }
+ 
+     stackCentralW->setCurrentWidget( widget );
+-    if( b_autoresize )
+-        resizeStack( stackWidgetsSizes[widget].width(), stackWidgetsSizes[widget].height() );
++    /* A widget shown for the first time has no size to restore (the video
++     * widget asks for its own right after). In minimal view the stack is the
++     * whole window, and an empty size would make the window empty: Qt then
++     * hides it, and on Wayland hiding a window destroys its surface, with the
++     * video's native child still attached to it. */
++    const QSize size = stackWidgetsSizes.value( widget );
++    if( b_autoresize && !size.isEmpty() )
++        resizeStack( size.width(), size.height() );
+ 
+ #ifdef DEBUG_INTF
+     msg_Dbg( p_intf, "Stack state changed to %s, index %i",
+-- 
+2.53.0
+
