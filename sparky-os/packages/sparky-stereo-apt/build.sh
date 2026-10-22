@@ -25,7 +25,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-$PWD}
-VERSION=${VERSION:-20261008.1~sparky9~0}
+VERSION=${VERSION:-20261008.1~sparky9~0+lc1}
 PKG=sparky-stereo-apt
 TYPES=deb
 [ "${DEB_SRC:-0}" = 1 ] && TYPES="deb deb-src"
@@ -109,5 +109,7 @@ Description: Sparky Stereo OS apt source
 EOS
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT"
-dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${PKG}_${VERSION}_all.deb" >/dev/null
-echo "built $OUT/${PKG}_${VERSION}_all.deb"
+mkdir -p "$W/authoring"
+cp -a "$HERE/." "$W/authoring/"
+cp -a "$HERE/../../apt" "$W/authoring/apt-generator"
+PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$W/authoring"
