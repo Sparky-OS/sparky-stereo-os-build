@@ -7,6 +7,8 @@ import glob, os, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, '..', 'data')
+sys.path.insert(0, os.path.join(HERE, '..', 'config'))
+import local_config
 
 # Every package the edition's sources offer (Debian testing, Sparky, deb-multimedia; not the
 # vendor repositories of this system), by architecture (amd64, all, i386 when multiarch is on).
@@ -54,11 +56,24 @@ for l in open(os.path.join(DATA, 'dedup.tsv')):
 #   the programs that use them (Phonon's VLC backends, kalarm, freetuxtv)
 base_remove = ['thunderbird', 'skanlite', 'blueman', 'systemd-timesyncd', 'vlc', 'vlc-bin', 'vlc-plugin-qt', 'vlc-plugin-skins2'] + sorted(p for p in base if p.startswith('thunderbird-l10n-'))
 
-# 1. Applications from Daniel's system beyond the KDE edition, from Debian or Sparky
-# (vendor and local ones go through APTus), deduplicated, plus the KDE tools the dedup
-# chose that neither has.
-apps = [l.split('\t')[0] for l in open(os.path.join(DATA, 'daniel_only_apps.origin.tsv'))
-        if l.rstrip('\n').split('\t')[1] in ('debian', 'sparky')]
+# 1. Applications beyond the KDE edition, chosen from Daniel's system: those from Debian or
+# Sparky (vendor and local ones go through APTus), deduplicated, plus the KDE tools the dedup
+# chose that neither has. The edition's selection is data/apps-selection.list. The system's own
+# application list (package<TAB>origin) stays private: when SPARKY_PERSONAL_APPS in the local
+# configuration names it, the selection is made from it again and data/apps-selection.list is
+# rewritten.
+SELECTION = os.path.join(DATA, 'apps-selection.list')
+personal = local_config.VALUES.get('SPARKY_PERSONAL_APPS')
+if personal:
+    apps = [l.split('\t')[0] for l in open(personal)
+            if l.rstrip('\n').split('\t')[1] in ('debian', 'sparky')]
+    apps = [p for p in apps if p not in dedup]
+    with open(SELECTION, 'w') as f:
+        f.write('# Applications the edition adds beyond the KDE edition, chosen from Daniel\'s system and\n'
+                '# deduplicated (' + str(len(set(apps))) + ' packages; written by lists/make-lists.py)\n')
+        f.write('\n'.join(sorted(set(apps))) + '\n')
+else:
+    apps = [l.strip() for l in open(SELECTION) if l.strip() and not l.startswith('#')]
 apps = [p for p in apps if p not in dedup]
 group('apps', "Applications beyond the KDE edition (Daniel's, deduplicated)", apps + [
     'dolphin', 'konsole', 'kdenlive', 'skanpage', 'subtitlecomposer', 'neochat', 'qpwgraph',
