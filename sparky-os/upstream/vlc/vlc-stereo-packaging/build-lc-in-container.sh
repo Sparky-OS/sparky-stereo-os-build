@@ -53,6 +53,11 @@ for t in lines[1:]:
     print('dch -a %s' % shlex.quote(t))
 ENTRY
 . /work/entry.sh
+# the translation catalogues the patches change are made again after the build: the release tarball's are newer than
+# its template (po/stamp-po), so the build would install the old ones
+if ! grep -q '^execute_after_dh_auto_build:' debian/rules; then
+	printf '\n# the catalogues of the translations our patches change, made again (the release tarball has older ones)\nexecute_after_dh_auto_build:\n\t$(MAKE) -C po update-gmo\n' >> debian/rules
+fi
 head -40 debian/changelog
 cd ..
 dpkg-source -b t > /work/source-build.log 2>&1 || { cat /work/source-build.log; exit 1; }

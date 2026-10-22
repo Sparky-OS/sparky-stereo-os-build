@@ -80,6 +80,10 @@ override_dh_auto_configure:
 
 override_dh_auto_test:
 
+# the catalogues of the translations our patches change, made again (the release tarball has older ones)
+execute_after_dh_auto_build:
+	$(MAKE) -C po update-gmo
+
 override_dh_auto_install:
 	dh_auto_install --destdir=$(D)
 	# the PipeWire output: the plugin of Debian's vlc-plugin-pipewire, copied and built against this VLC
