@@ -11,9 +11,10 @@
 # It is a DRY RUN unless --go is given: it lists what each step would do.
 #
 # Usage: sync-to-server.sh DEST [--go]
-# SPARKY_SYNC_TARGET overrides the target (a local folder, for tests); the default is
-# the server named in the local configuration (SPARKY_SYNC_TARGET), over ssh.
-# Last update 2026/10/05
+# The target is the server in the local configuration (SPARKY_SYNC_HOST and SPARKY_SYNC_PATH,
+# reached over ssh with SPARKY_SYNC_SSH_KEY; sparky-os/config/build.conf.example), or
+# SPARKY_SYNC_TARGET when set (a local folder, for tests).
+# Last update 2026/10/22
 set -euo pipefail
 GO=0
 DEST=
@@ -27,6 +28,7 @@ done
 [ -n "$DEST" ] && [ -d "$DEST" ] || { sed -n '/^# Usage/,/^# Last/p' "$0" | sed 's/^# \?//' >&2; exit 2; }
 DEST=$(cd "$DEST" && pwd)/
 HERE=$(cd "$(dirname "$0")" && pwd)
+. "$HERE/../config/local-config.sh"
 CODENAME=mashtabba
 for need in pool "dists/$CODENAME/InRelease" "dists/$CODENAME/Release" "dists/$CODENAME/Release.gpg"; do
 	[ -e "$DEST$need" ] || { echo "$DEST is not a finished tree: $need is missing" >&2; exit 1; }

@@ -1,0 +1,57 @@
+# Local settings for the Sparky Stereo OS build, repository and qualification tools.
+#
+# Copy this file to ~/.config/sparky-stereo/build.conf (or point SPARKY_STEREO_CONFIG at
+# another copy) and fill in your own values. Keep your copy out of every repository: it
+# names your machines, your servers and where your keys live.
+#
+# The format is one KEY=value per line, readable by bash (local-config.sh sources it) and
+# by Python (local_config.py parses it). $HOME, ~ and ${KEY} of keys set earlier in the
+# file are expanded. A variable already set in the environment wins over the file.
+# Tools ask only for the keys they use and stop with the key's name when one is missing.
+
+# Local development repository: the flat apt tree that sparky-os/repo/make-repo.sh indexes.
+SPARKY_REPO_DIR=$HOME/sparky-os/repo
+# Where sparky-os/repo/update-repo.sh moves the versions a new upload replaces.
+SPARKY_REPO_SUPERSEDED=$HOME/sparky-os/repo-superseded
+# Staged packages waiting for sparky-os/repo/update-repo.sh, one folder per upload,
+# each with its SHA256SUMS.
+SPARKY_STAGING_DIR=$HOME/sparky-os/pending-pack
+# Large throwaway build trees (an SSD with room for a kernel or a browser build).
+SPARKY_BUILD_SCRATCH=/var/tmp/sparky-build
+
+# Work area of a Lean Code migration or release qualification run (sparky-os/release).
+SPARKY_MIGRATION_WORK=/var/tmp/sparky-lc-migration
+# The run's own record: its inventories (source-migration-inventory.json and the
+# overrides), checkpoints and captured evidence. Keep it outside the machinery tree.
+SPARKY_RUN_RECORD=$HOME/sparky-os/release-record
+# Outputs of earlier work that a run consumes as inputs (for example a kernel patch
+# series or a test bench prepared elsewhere), as subfolders named in the tools.
+SPARKY_INPUTS_DIR=$HOME/sparky-os/inputs
+# Work area of the browser package qualification (Waterfox Stereo).
+SPARKY_BROWSER_WORK=/var/tmp/waterfox-stereo
+
+# Checkout of the public edition repository (github.com/Sparky-OS/sparky-stereo-os).
+SPARKY_PUBLIC_EDITION=$HOME/src/sparky-stereo-os
+# The public repository the edition's apt source points at.
+SPARKY_PUBLIC_REPO_URL=https://repo.sparkyos.org/
+
+# GNUPGHOME that holds the repository signing key (sparky-os/repo/make-signing-key.sh).
+SPARKY_REPO_GNUPG=$HOME/.sparky-stereo-repo-gnupg
+# Folder with the Secure Boot key and certificate (sparky-os/secureboot/make-secureboot-key.sh).
+SPARKY_SECUREBOOT_DIR=$HOME/.sparky-stereo-secureboot
+
+# The server that serves the published repository, as ssh user@host, the path of the
+# repository on it, and the ssh key used to reach it (sparky-os/repo/sync-to-server.sh,
+# sparky-os/release/verify-online-repository.py).
+SPARKY_SYNC_HOST=user@repo-server
+SPARKY_SYNC_PATH=/srv/sparkyos-repo/
+SPARKY_SYNC_SSH_KEY=$HOME/.ssh/id_ed25519
+# rsync target; built from the two above unless set (a local folder works for tests).
+#SPARKY_SYNC_TARGET=${SPARKY_SYNC_HOST}:${SPARKY_SYNC_PATH}
+
+# Host name of the build workstation, and the second test machine (a laptop) reached
+# over ssh, with its host name and key (sparky-os/release machine uplift tools).
+SPARKY_WORKSTATION_HOSTNAME=my-workstation
+SPARKY_A10_HOST=user@test-laptop
+SPARKY_A10_HOSTNAME=test-laptop
+SPARKY_A10_SSH_KEY=$HOME/.ssh/id_ed25519
