@@ -1,0 +1,165 @@
+From 0515a7722f48c0453e7f90f327a28f2687b2e305 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 22 Oct 2026 18:40:06 -0300
+Subject: [PATCH 41/43] vout: keep the eye correction when the video output is
+ made again
+
+The video output took the eye correction the file had when it opened,
+so when it was made again while the same input played (the video track
+disabled and enabled again, a free video output reused), the user's
+correction was lost and the eyes went back.
+
+Keep the user's current correction in the input, and give it to every
+video output that shows it. Bind the input only once a callback of the
+previous one has ended, and unbind a closing video output before its
+thread and subpictures go: a menu can still hold it after its input has
+gone.
+
+First written by Daniel Ramos as patch 3d-0028 of the A10 field build
+(vlc-stereo 3.0.24-1+stereo3d11~a10.1, 19 October 2026), after an
+independent review found both faults.
+
+Assisted-by: GPT-6 Astra via Codex
+Assisted-by: Claude Opus 5.5
+---
+ src/input/input.c                |  9 +++++++--
+ src/video_output/video_output.c  |  5 ++---
+ src/video_output/vout_internal.h |  1 +
+ src/video_output/vout_intf.c     | 32 +++++++++++++++++++++++++-------
+ 4 files changed, 35 insertions(+), 12 deletions(-)
+
+diff --git a/src/input/input.c b/src/input/input.c
+index 33c313e..a4ffc35 100644
+--- a/src/input/input.c
++++ b/src/input/input.c
+@@ -412,8 +412,10 @@ static input_thread_t *Create( vlc_object_t *p_parent, input_item_t *p_item,
+     input_ConfigVarInit( p_input );
+ 
+     /* The eye correction stored with the file, read once: the decoder takes
+-     * it as it was when the input opened, and the video output saves a new
+-     * one and shows the difference at once. */
++     * it as it was when the input opened (stereo-file-swap), and the video
++     * output saves a new one and shows the difference at once. The input
++     * keeps the user's current one (stereo-file-swap-current), for a video
++     * output made again while it plays. */
+     char *psz_uri = input_item_GetURI( p_item );
+     char *psz_path = psz_uri != NULL ? vlc_uri2path( psz_uri ) : NULL;
+     var_Create( p_input, "stereo-file-path", VLC_VAR_STRING );
+@@ -423,6 +425,9 @@ static input_thread_t *Create( vlc_object_t *p_parent, input_item_t *p_item,
+     var_SetBool( p_input, "stereo-file-swap",
+                  psz_path != NULL && stereo_policy_file_swap_eyes( psz_path ) == 1 );
+ #endif
++    var_Create( p_input, "stereo-file-swap-current", VLC_VAR_BOOL );
++    var_SetBool( p_input, "stereo-file-swap-current",
++                 var_GetBool( p_input, "stereo-file-swap" ) );
+     free( psz_path );
+     free( psz_uri );
+ 
+diff --git a/src/video_output/video_output.c b/src/video_output/video_output.c
+index f30f2af..663eabe 100644
+--- a/src/video_output/video_output.c
++++ b/src/video_output/video_output.c
+@@ -210,7 +210,6 @@ static vout_thread_t *VoutCreate(vlc_object_t *object,
+         return NULL;
+     }
+ 
+-    vout->p->input = cfg->input;
+     vout_IntfBindInput(vout, cfg->input);
+     if (vout->p->input)
+         spu_Attach(vout->p->spu, vout->p->input, true);
+@@ -232,10 +231,9 @@ vout_thread_t *vout_Request(vlc_object_t *object,
+     /* If a vout is provided, try reusing it */
+     if (vout) {
+         if (vout->p->input != cfg->input) {
+-            vout_IntfBindInput(vout, cfg->input);
+             if (vout->p->input)
+                 spu_Attach(vout->p->spu, vout->p->input, false);
+-            vout->p->input = cfg->input;
++            vout_IntfBindInput(vout, cfg->input);
+             if (vout->p->input)
+                 spu_Attach(vout->p->spu, vout->p->input, true);
+         }
+@@ -267,6 +265,7 @@ void vout_Close(vout_thread_t *vout)
+ 
+     if (vout->p->input)
+         spu_Attach(vout->p->spu, vout->p->input, false);
++    vout_IntfClose(vout);
+ 
+     vout_snapshot_End(&vout->p->snapshot);
+ 
+diff --git a/src/video_output/vout_internal.h b/src/video_output/vout_internal.h
+index 88655d9..2890810 100644
+--- a/src/video_output/vout_internal.h
++++ b/src/video_output/vout_internal.h
+@@ -156,6 +156,7 @@ void vout_ControlChangeViewpoint( vout_thread_t *, const vlc_viewpoint_t *);
+ /* */
+ void vout_IntfInit( vout_thread_t * );
+ void vout_IntfBindInput( vout_thread_t *, vlc_object_t * );
++void vout_IntfClose( vout_thread_t * );
+ void vout_IntfReinit( vout_thread_t * );
+ 
+ /* */
+diff --git a/src/video_output/vout_intf.c b/src/video_output/vout_intf.c
+index 4b0e428..0b82f63 100644
+--- a/src/video_output/vout_intf.c
++++ b/src/video_output/vout_intf.c
+@@ -328,24 +328,39 @@ void vout_IntfInit( vout_thread_t *p_vout )
+ }
+ 
+ /**
+- * Gives the video output the eye correction of the input it now shows: the
+- * one stored with its file, as the decoder applied it, never the previous
+- * input's.
++ * Binds the video output to the input it now shows, and gives it that
++ * input's eye correction: the one the decoder applied when the input opened,
++ * and the user's current one, which a video output made again while the
++ * input plays keeps. Never the previous input's.
+  */
+ void vout_IntfBindInput( vout_thread_t *p_vout, vlc_object_t *p_input )
+ {
++    /* Wait for a callback of the previous input to end before changing it,
++     * and never store this input's correction with the old file */
++    var_DelCallback( p_vout, "stereo-swap-eyes", StereoSwapCallback, NULL );
++    p_vout->p->input = p_input;
++
+     char *psz_path = p_input != NULL ? var_GetString( p_input, "stereo-file-path" ) : NULL;
+-    bool b_swap = p_input != NULL && var_GetBool( p_input, "stereo-file-swap" );
++    bool b_base = p_input != NULL && var_GetBool( p_input, "stereo-file-swap" );
++    bool b_swap = p_input != NULL && var_GetBool( p_input, "stereo-file-swap-current" );
+ 
+-    /* Binding another input must never store its correction with the old file */
+-    var_DelCallback( p_vout, "stereo-swap-eyes", StereoSwapCallback, NULL );
+     var_SetString( p_vout, "stereo-file-path", psz_path != NULL ? psz_path : "" );
+-    var_SetBool( p_vout, "stereo-swap-eyes-base", b_swap );
++    var_SetBool( p_vout, "stereo-swap-eyes-base", b_base );
+     var_SetBool( p_vout, "stereo-swap-eyes", b_swap );
+     var_AddCallback( p_vout, "stereo-swap-eyes", StereoSwapCallback, NULL );
+     free( psz_path );
+ }
+ 
++/**
++ * Unbinds a video output that closes: a menu can still hold it after its
++ * input has gone.
++ */
++void vout_IntfClose( vout_thread_t *p_vout )
++{
++    var_DelCallback( p_vout, "stereo-swap-eyes", StereoSwapCallback, NULL );
++    p_vout->p->input = NULL;
++}
++
+ /* Stores the user's eye correction with the file, as the shared stereo policy
+  * does (the extended attribute user.stereo-policy.swap-eyes), without
+  * rewriting the file. A file that cannot keep it (read-only, remote, or on a
+@@ -359,6 +374,9 @@ static int StereoSwapCallback( vlc_object_t *p_this, char const *psz_name,
+         return VLC_SUCCESS;
+ 
+     vout_thread_t *p_vout = (vout_thread_t *)p_this;
++    if( p_vout->p->input != NULL )
++        var_SetBool( p_vout->p->input, "stereo-file-swap-current", newval.b_bool );
++
+     char *psz_path = var_GetString( p_vout, "stereo-file-path" );
+     int i_ret = -1;
+ #ifdef HAVE_STEREO_POLICY
+-- 
+2.53.0
+

@@ -1,0 +1,43 @@
+From d0582fa1c90cde49d53b70a2cb2549f9be3d00ce Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 22 Oct 2026 18:40:06 -0300
+Subject: [PATCH 42/43] qt: track the mouse over the native Wayland video
+ window
+
+On Wayland the video is a native child window, whose mouse events reach
+the video widget through its event filter. The widget did not track the
+mouse, so Qt dropped every move without a button: the controls of the
+full screen never came back when the mouse moved, as they do on X11,
+where the video widget already tracks it.
+
+Track the mouse on the window container and on the video widget. Double
+clicks already reached the video output, which enters and leaves the
+full screen.
+
+First written by Daniel Ramos as patch 3d-0027 of the A10 field build
+(vlc-stereo 3.0.24-1+stereo3d11~a10.1, 19 October 2026).
+
+Assisted-by: GPT-6 Astra via Codex
+Assisted-by: Claude Opus 5.5
+---
+ modules/gui/qt/components/interface_widgets.cpp | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/modules/gui/qt/components/interface_widgets.cpp b/modules/gui/qt/components/interface_widgets.cpp
+index c9b6100..cda76ee 100644
+--- a/modules/gui/qt/components/interface_widgets.cpp
++++ b/modules/gui/qt/components/interface_widgets.cpp
+@@ -134,6 +134,10 @@ bool VideoWidget::request( struct vout_window_t *p_wnd )
+         video->installEventFilter(this);
+         stable = QWidget::createWindowContainer(video, this);
+         stable->setFocusPolicy(Qt::StrongFocus);
++        /* The native child's mouse moves reach this widget through the
++         * event filter: without tracking, Qt drops those with no button */
++        stable->setMouseTracking(true);
++        setMouseTracking(true);
+         layout->addWidget(stable);
+         stable->show();
+         video->create();
+-- 
+2.53.0
+

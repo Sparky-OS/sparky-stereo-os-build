@@ -1,0 +1,125 @@
+From 7b746c256b48990c3f4718929cfe7c8f3d5a5d08 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 22 Oct 2026 18:38:27 -0300
+Subject: [PATCH 39/43] vout, qt: swap the eyes of a 3D video from both Video
+ menus
+
+A 3D video whose mark has its eyes the wrong way round could only be
+put right with a preference (video-stereo-swap, every video) or an input
+option before it opened.
+
+Add "Swap left and right eyes" to the Video menu, which the menu bar and
+the right-click menu both build. It is a variable of the video output,
+read once for each picture by the OpenGL output, which then gives each
+eye the other view: every packing, as the views are taken apart for
+each eye, frame sequential pairs included. The format the compositor
+shows on each screen is not changed. A video output reused for another
+input starts unswapped.
+
+First written by Daniel Ramos as patch 3d-0025 of the A10 field build
+(vlc-stereo 3.0.24-1+stereo3d11~a10.1, 19 October 2026), and moved onto
+the new eye selection of each packing.
+
+Assisted-by: GPT-6 Astra via Codex
+Assisted-by: Claude Opus 5.5
+---
+ modules/gui/qt/menus.cpp                  |  2 ++
+ modules/video_output/opengl/vout_helper.c | 14 ++++++++++----
+ src/video_output/video_output.c           |  2 ++
+ src/video_output/vout_intf.c              |  6 ++++++
+ 4 files changed, 20 insertions(+), 4 deletions(-)
+
+diff --git a/modules/gui/qt/menus.cpp b/modules/gui/qt/menus.cpp
+index 881c7b8..cbc5295 100644
+--- a/modules/gui/qt/menus.cpp
++++ b/modules/gui/qt/menus.cpp
+@@ -249,6 +249,7 @@ static int VideoAutoMenuBuilder( playlist_t *pl, input_thread_t *p_input,
+     PUSH_VAR( "crop" );
+     PUSH_VAR( "deinterlace" );
+     PUSH_VAR( "deinterlace-mode" );
++    PUSH_VAR( "stereo-swap-eyes" );
+ 
+     if( p_object )
+         vlc_object_release( p_object );
+@@ -698,6 +699,7 @@ QMenu *VLCMenuBar::VideoMenu( intf_thread_t *p_intf, QMenu *current )
+         /* Rendering modifiers */
+         addActionWithSubmenu( current, "deinterlace", qtr( "&Deinterlace" ) );
+         addActionWithSubmenu( current, "deinterlace-mode", qtr( "&Deinterlace mode" ) );
++        addActionWithCheckbox( current, "stereo-swap-eyes", qtr( "Swap left and right eyes" ) );
+ 
+         current->addSeparator();
+         /* Other actions */
+diff --git a/modules/video_output/opengl/vout_helper.c b/modules/video_output/opengl/vout_helper.c
+index 2e3021e..95e1de5 100644
+--- a/modules/video_output/opengl/vout_helper.c
++++ b/modules/video_output/opengl/vout_helper.c
+@@ -1825,7 +1825,8 @@ static unsigned TextureCropForStereo(vout_display_opengl_t *vgl,
+ }
+ 
+ static int DisplayView(vout_display_opengl_t *vgl,
+-                       const video_format_t *source, unsigned eye)
++                       const video_format_t *source, unsigned eye,
++                       bool swap_eyes)
+ {
+     if (vgl->viewport[2] != 0)
+         vgl->vt.Viewport(vgl->viewport[0] + eye * vgl->view_stride,
+@@ -1869,8 +1870,9 @@ static int DisplayView(vout_display_opengl_t *vgl,
+         }
+ 
+         float checkerboard[PICTURE_PLANE_MAX] = { 0 };
+-        unsigned view = TextureCropForStereo(vgl, source, eye, left, top,
+-                                             right, bottom, checkerboard);
++        unsigned view = TextureCropForStereo(vgl, source, eye ^ swap_eyes,
++                                             left, top, right, bottom,
++                                             checkerboard);
+         int ret = SetupCoords(vgl, left, top, right, bottom,
+                               checkerboard[0] != 0 ? checkerboard : NULL,
+                               source->i_visible_height, view);
+@@ -1994,9 +1996,13 @@ int vout_display_opengl_Display(vout_display_opengl_t *vgl,
+         stereo = false;
+     }
+ 
++    /* Read once for both views, so that a change cannot give both eyes the
++     * same view */
++    const bool swap_eyes = stereo
++                        && var_InheritBool(vgl->gl, "stereo-swap-eyes");
+     for (unsigned eye = 0; eye < (stereo ? 2 : 1); eye++)
+     {
+-        int ret = DisplayView(vgl, source, eye);
++        int ret = DisplayView(vgl, source, eye, swap_eyes);
+         if (ret != VLC_SUCCESS)
+             return ret;
+     }
+diff --git a/src/video_output/video_output.c b/src/video_output/video_output.c
+index 04642a5..834e9f7 100644
+--- a/src/video_output/video_output.c
++++ b/src/video_output/video_output.c
+@@ -231,6 +231,8 @@ vout_thread_t *vout_Request(vlc_object_t *object,
+     /* If a vout is provided, try reusing it */
+     if (vout) {
+         if (vout->p->input != cfg->input) {
++            /* A correction of one video is not carried to the next */
++            var_SetBool(vout, "stereo-swap-eyes", false);
+             if (vout->p->input)
+                 spu_Attach(vout->p->spu, vout->p->input, false);
+             vout->p->input = cfg->input;
+diff --git a/src/video_output/vout_intf.c b/src/video_output/vout_intf.c
+index 14d0c03..14b5ec0 100644
+--- a/src/video_output/vout_intf.c
++++ b/src/video_output/vout_intf.c
+@@ -163,6 +163,12 @@ void vout_IntfInit( vout_thread_t *p_vout )
+     var_Create( p_vout, "mouse-hide-timeout",
+                 VLC_VAR_INTEGER | VLC_VAR_DOINHERIT );
+ 
++    /* The eye order of a 3D video, corrected for this video. The format
++     * of the compositor's output is not changed. */
++    var_Create( p_vout, "stereo-swap-eyes", VLC_VAR_BOOL | VLC_VAR_ISCOMMAND );
++    text.psz_string = _("Swap left and right eyes");
++    var_Change( p_vout, "stereo-swap-eyes", VLC_VAR_SETTEXT, &text, NULL );
++
+     /* Add variables to manage scaling video */
+     var_Create( p_vout, "autoscale", VLC_VAR_BOOL | VLC_VAR_DOINHERIT
+                 | VLC_VAR_ISCOMMAND );
+-- 
+2.53.0
+
