@@ -1,0 +1,130 @@
+Description: Serialize recipient publication while retaining reentrant notifications
+ Guard receive-depth entry and pending-recipient publication with the same mutex,
+ preventing another notifier from reading a vector while it is being modified.
+ Use a recursive mutex because a registration callback can synchronously notify
+ this transmitter. Receive callbacks still execute outside the mutex.
+Author: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-10-20
+---
+--- a/simgear/emesary/Transmitter.hxx
++++ b/simgear/emesary/Transmitter.hxx
+@@ -44,7 +44,7 @@
+ 			RecipientList new_recipient_list;
+ 			RecipientList deleted_recipient_list;
+ 
+-			std::mutex _lock;
++			std::recursive_mutex _lock;
+ 			std::atomic<size_t> receiveDepth;
+ 			std::atomic<size_t> sentMessageCount;
+ 			std::atomic<size_t> recipientCount;
+@@ -72,7 +72,7 @@
+ 			// most recently registered recipients should process the messages/events first.
+ 			virtual void Register(IReceiverPtr r)
+ 			{
+-				std::lock_guard<std::mutex> scopeLock(_lock);
++				std::lock_guard<std::recursive_mutex> scopeLock(_lock);
+ 
+ 				RecipientList::iterator deleted_location = std::find(deleted_recipient_list.begin(), deleted_recipient_list.end(), r);
+ 				if (deleted_location != deleted_recipient_list.end())
+@@ -94,7 +94,7 @@
+ 			///        If recipient is in the list of new recipients it will be removed from that list
+ 			virtual void DeRegister(IReceiverPtr r)
+ 			{
+-				std::lock_guard<std::mutex> scopeLock(_lock);
++				std::lock_guard<std::recursive_mutex> scopeLock(_lock);
+ 
+ 				if (new_recipient_list.size())
+ 				{
+@@ -116,8 +116,14 @@
+ 			// also we can quickly check to see if we have any pending deletions before doing anything.
+ 			void AddRemoveIFAppropriate()
+ 			{
+-				std::lock_guard<std::mutex> scopeLock(_lock);
+-
++				std::lock_guard<std::recursive_mutex> scopeLock(_lock);
++				if (receiveDepth == 0)
++					addRemoveLocked();
++			}
++
++		private:
++			void addRemoveLocked()
++			{
+ 				/// handle pending deletions first.
+ 				if (pendingDeletions > 0) {
+ 
+@@ -163,6 +169,7 @@
+ 
+ 				}
+ 			}
++		public:
+ 			// Notify all registered recipients. Stop when receipt status of abort or finished are received.
+ 			// The receipt status from this method will be
+ 			//  - OK > message handled
+@@ -173,9 +180,14 @@
+ 			{
+ 				ReceiptStatus return_status = ReceiptStatus::NotProcessed;
+ 
+-				auto v = receiveDepth.fetch_add(1, std::memory_order_relaxed);
+-				if (v == 0)
+-					AddRemoveIFAppropriate();
++				{
++					// Publish pending recipient changes before another notifier can
++					// begin reading the shared list. Receive runs without this lock.
++					// Registration callbacks may synchronously notify this transmitter.
++					std::lock_guard<std::recursive_mutex> scopeLock(_lock);
++					if (receiveDepth.fetch_add(1) == 0)
++						addRemoveLocked();
++				}
+ 
+ 				sentMessageCount++;
+ 
+--- a/simgear/emesary/test_emesary.cxx
++++ b/simgear/emesary/test_emesary.cxx
+@@ -325,6 +325,37 @@
+ 
+     summary(timeStamp, globalTransmitter, "base");
+ }
++// Registration callbacks may synchronously notify the transmitter. The pending
++// receiver is added after its registration callback, preserving that ordering.
++class RegistrationNotifier : public simgear::Emesary::IReceiver
++{
++public:
++    int registrations = 0;
++    int deliveries = 0;
++
++    simgear::Emesary::ReceiptStatus Receive(simgear::Emesary::INotificationPtr) override
++    {
++        ++deliveries;
++        return simgear::Emesary::ReceiptStatus::OK;
++    }
++
++    void OnRegisteredAtTransmitter(simgear::Emesary::Transmitter* transmitter) override
++    {
++        ++registrations;
++        transmitter->NotifyAll(new TestThreadNotification("registration"));
++    }
++};
++
++void testRegistrationNotification()
++{
++    simgear::Emesary::Transmitter transmitter;
++    RegistrationNotifier receiver;
++    transmitter.Register(&receiver);
++    transmitter.NotifyAll(new TestThreadNotification("initial"));
++    SG_CHECK_EQUAL(receiver.registrations, 1);
++    SG_CHECK_EQUAL(receiver.deliveries, 1);
++}
++
+ int main(int ac, char ** av)
+ {
+     {
+@@ -339,6 +370,8 @@
+     }
+     SG_CHECK_EQUAL(TestDerefNotification_destructor_count, 2);
+ 
++    testRegistrationNotification();
++
+     testEmesaryBase();
+ 
+     testEmesaryMultipleRecipients();
