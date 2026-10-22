@@ -108,6 +108,7 @@ def _build(tree, out, authoring, architecture):
         for path in (toolkit / "lean").glob("*.py"):
             shutil.copy2(path, kit / "lean" / path.name)
         shutil.copy2(toolkit / "lean/JvmLexer.java", kit / "lean/JvmLexer.java")
+        shutil.copy2(toolkit / "lean/smoke.tsv", kit / "lean/smoke.tsv")
         licence = toolkit / "packages/dpkg-stereo/LICENSE"
         if not licence.exists():
             licence = toolkit / "LICENSE"

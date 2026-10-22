@@ -69,7 +69,7 @@ def prepare(root, version, toolkit, build_dependencies=(), preserve_sources=()):
         raise ValueError("Preserve the existing source-consumer plan; do not replace it")
 
     # Check all inputs before modifying the disposable source.
-    for required in ("lean/source_tree.py", "lean/debhelper.py", "repo/provenance.sh",
+    for required in ("lean/source_tree.py", "lean/debhelper.py", "lean/smoke.tsv", "repo/provenance.sh",
                      "packages/dpkg-stereo/LICENSE"):
         if not (toolkit / required).is_file():
             raise ValueError(f"Missing toolkit input: {required}")
@@ -86,6 +86,7 @@ def prepare(root, version, toolkit, build_dependencies=(), preserve_sources=()):
     for path in (toolkit / "lean").glob("*.py"):
         shutil.copy2(path, destination / "lean" / path.name)
     shutil.copy2(toolkit / "lean/JvmLexer.java", destination / "lean/JvmLexer.java")
+    shutil.copy2(toolkit / "lean/smoke.tsv", destination / "lean/smoke.tsv")
     shutil.copy2(toolkit / "repo/provenance.sh", destination / "provenance.sh")
     shutil.copy2(toolkit / "packages/dpkg-stereo/LICENSE", destination / "LICENSE")
     control_path.write_text(control)

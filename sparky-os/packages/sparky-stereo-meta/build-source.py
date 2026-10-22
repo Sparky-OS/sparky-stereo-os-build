@@ -23,6 +23,7 @@ with tempfile.TemporaryDirectory(dir=out, prefix='.meta-source-') as temp:
     for p in (root / 'lean').glob('*.py'):
         shutil.copy2(p, kit / 'lean' / p.name)
     shutil.copy2(root / 'lean/JvmLexer.java', kit / 'lean/JvmLexer.java')
+    shutil.copy2(root / 'lean/smoke.tsv', kit / 'lean/smoke.tsv')
     shutil.copy2(root / 'packages/dpkg-stereo/LICENSE', kit / 'LICENSE')
     shutil.copy2(Path(__file__).parent / 'build.sh', source / 'generator-inputs/build.sh')
     shutil.copy2(__file__, source / 'generator-inputs/build-source.py')

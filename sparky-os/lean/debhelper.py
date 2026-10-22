@@ -19,9 +19,11 @@ def link_gate(built):
     rebuilt ELF resolves like its predecessor in SPARKY_LC_PREVIOUS_DIR (when set) and the programs
     of lean/smoke.tsv start. The runtime dependencies are installed in the build environment."""
     gated = [deb for deb in built if not deb.name.split('_')[0].endswith(('-dbgsym', '-lc-hr'))]
+    table = Path(release.__file__).with_name('smoke.tsv')
     try:
-        release.check_link(gated, os.environ.get('SPARKY_LC_PREVIOUS_DIR') or None,
-                           str(Path(release.__file__).with_name('smoke.tsv')))
+        if not table.is_file():
+            raise ValueError(f'{table}: the toolkit lacks the smoke table')
+        release.check_link(gated, os.environ.get('SPARKY_LC_PREVIOUS_DIR') or None, str(table))
     except (ValueError, OSError, subprocess.CalledProcessError):
         for deb in built:
             deb.unlink(missing_ok=True)
