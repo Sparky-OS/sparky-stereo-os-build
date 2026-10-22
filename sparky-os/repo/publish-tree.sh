@@ -214,6 +214,23 @@ PY
 # new version; never stamp or alter a previously published .deb in place.
 PYTHONPATH="$HERE/..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release check-selection "$W/selection.tsv"
 
+# Link and start gate (ORDER 198): what check-selection proves is the archive bytes, not that
+# the programs run. Every package that is new to DEST and runs on this machine must resolve like
+# its predecessor and start (lean/smoke.tsv). SPARKY_LC_PREVIOUS_DIR holds the known-good
+# earlier builds to compare with; run where the runtime dependencies are installed.
+HOST_ARCH=$(dpkg --print-architecture)
+: >"$W/link-debs.txt"
+while IFS=$'\t' read -r from to _ _ arch; do
+	[ "$arch" = "$HOST_ARCH" ] || continue
+	case $from in *-dbgsym_*|*-lc-hr_*) continue ;; esac
+	[ -f "$DEST/$to" ] || echo "$from" >>"$W/link-debs.txt"
+done <"$W/selection.tsv"
+if [ -s "$W/link-debs.txt" ]; then
+	mapfile -t LINK_DEBS <"$W/link-debs.txt"
+	PYTHONPATH="$HERE/..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release check-link "${LINK_DEBS[@]}" \
+		${SPARKY_LC_PREVIOUS_DIR:+--previous-dir "$SPARKY_LC_PREVIOUS_DIR"}
+fi
+
 # Reject all conflicting destinations before changing any pool file. A package or
 # retained source archive is immutable once published; changed bytes need a new
 # version/name, even when both copies have valid Lean Code proofs.

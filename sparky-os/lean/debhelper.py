@@ -7,10 +7,25 @@ Runtime, automatic dbgsym and generated HR archives all enter debian/files befor
 dpkg-genbuildinfo and dpkg-genchanges calculate their final checksums.
 """
 import argparse
+import os
 from pathlib import Path
 import subprocess
 
 from . import package, release, source_tree
+
+
+def link_gate(built):
+    """Link and start gate (ORDER 198): the build fails, and its archives are removed, unless every
+    rebuilt ELF resolves like its predecessor in SPARKY_LC_PREVIOUS_DIR (when set) and the programs
+    of lean/smoke.tsv start. The runtime dependencies are installed in the build environment."""
+    gated = [deb for deb in built if not deb.name.split('_')[0].endswith(('-dbgsym', '-lc-hr'))]
+    try:
+        release.check_link(gated, os.environ.get('SPARKY_LC_PREVIOUS_DIR') or None,
+                           str(Path(release.__file__).with_name('smoke.tsv')))
+    except (ValueError, OSError, subprocess.CalledProcessError):
+        for deb in built:
+            deb.unlink(missing_ok=True)
+        raise
 
 
 def build(root, provenance):
@@ -18,6 +33,7 @@ def build(root, provenance):
                       list((root / 'debian/.debhelper').glob('*/dbgsym-root/DEBIAN/control')))
     if not controls:
         raise ValueError('No staged binary controls; run after dh_gencontrol')
+    built = []
     for control in controls:
         staging = control.parent.parent
         fields = package.control(staging)
@@ -27,6 +43,7 @@ def build(root, provenance):
         before = set(root.parent.glob('*.deb'))
         release.build_tree(staging, root.parent)
         outputs = sorted(set(root.parent.glob('*.deb')) - before)
+        built += outputs
         files = root / 'debian/files'
         entries = files.read_text().splitlines() if files.exists() else []
         prefix = f'{name}_{version.split(":", 1)[-1]}_{arch}.'
@@ -40,6 +57,7 @@ def build(root, provenance):
             if is_hr or old_auto or name.endswith('-dbgsym'):
                 entries = files.read_text().splitlines()
                 files.write_text(''.join(line + (' automatic=yes' if line.split()[0] == deb.name and 'automatic=yes' not in line else '') + '\n' for line in entries))
+    link_gate(built)
 
 
 if __name__ == '__main__':
