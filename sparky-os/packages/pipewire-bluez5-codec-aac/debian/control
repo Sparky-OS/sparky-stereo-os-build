@@ -1,0 +1,16 @@
+Source: pipewire-bluez5-codec-aac
+Section: non-free/sound
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: debhelper-compat (= 13), meson, pkgconf, libbluetooth-dev, libdbus-1-dev, libfdk-aac-dev, libglib2.0-dev, libsbc-dev
+Standards-Version: 4.7.4
+Rules-Requires-Root: no
+Homepage: https://pipewire.org/
+
+Package: pipewire-bluez5-codec-aac
+Architecture: amd64
+Depends: libspa-0.2-bluetooth (= 1.6.9-2), ${shlibs:Depends}, ${misc:Depends}
+Description: PipeWire Bluetooth AAC codec (A2DP)
+ AAC codec plugin for PipeWire 1.6.9, built separately because Debian's
+ PipeWire package does not include the non-free FDK AAC dependency.
+ Rebuild this plugin when upgrading the matching PipeWire package.

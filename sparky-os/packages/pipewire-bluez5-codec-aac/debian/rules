@@ -1,0 +1,13 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@ --buildsystem=meson
+
+override_dh_auto_configure:
+	dh_auto_configure -- -Dauto_features=disabled -Dbluez5=enabled \
+		-Dbluez5-codec-aac=enabled -Dsession-managers=[] \
+		-Dexamples=disabled -Dtests=enabled -Ddbus=enabled
+
+override_dh_auto_install:
+	install -D -m 644 obj-x86_64-linux-gnu/spa/plugins/bluez5/libspa-codec-bluez5-aac.so \
+		debian/pipewire-bluez5-codec-aac/usr/lib/x86_64-linux-gnu/spa-0.2/bluez5/libspa-codec-bluez5-aac.so
