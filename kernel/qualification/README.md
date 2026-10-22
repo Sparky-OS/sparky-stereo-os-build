@@ -1,0 +1,18 @@
+# Kernel build and qualification
+
+These tools build the edition's kernel flavours as Lean Code source packages (`kernel/lean`) and qualify each one in isolation: a boot in a QEMU guest with its feature probes, and the DKMS module matrix, before anything reaches a machine.
+They built and qualified kernel build 9 (`7.3.0~rc6-9+lc1`) on 20 October 2026; the version is written in the tools, so the next build updates it there.
+
+Settings come from the local configuration (`sparky-os/config/build.conf.example`); the shared helpers are in `sparky-os/release`.
+
+| Tool | What it does |
+|---|---|
+| `kernel-source-preflight.py` | Collects the native-consumer failures of the base kernel source, read-only. |
+| `prepare-kernel-source.py` | Exports the accepted feature set and patch series into a source package for one flavour. |
+| `run-kernel-smoke.py` | Builds the source package once as a disposable smoke test. |
+| `run-kernel-migration.py` | Builds the three flavours one after another, signing with the Secure Boot key. |
+| `prepare-kernel-validation-tools.py` | Prepares the container with QEMU, OVMF, swtpm and the DKMS tools. |
+| `prepare-qemu-kernel-checks.py` | Qualifies the installed QEMU candidate as the guest's virtual machine. |
+| `qualify-kernel-boot.py`, `kernel-qualification-inner.py` | Boot one kernel in the guest and run its feature probes. |
+| `qualify-kernel-dkms.py`, `kernel-dkms-inner.py` | Build the edition's and the host's DKMS modules against one kernel. |
+| `run-kernel-qualification-queue.py` | Runs both checks after each kernel finishes; never publishes or installs. |
