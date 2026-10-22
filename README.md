@@ -35,6 +35,11 @@ Nothing here carries a private key.
 `sparky-os/secureboot/make-secureboot-key.sh` makes your own Secure Boot key and `sparky-os/repo/make-signing-key.sh` your own repository key; the signing scripts take the key folder as an argument (`sign-kernel.sh`, `sign-modules.sh`, `sign-kernel-deb.sh`) or from `SPARKY_REPO_GNUPGHOME` (`publish-tree.sh`).
 Our public certificate, `sparky-os/secureboot/sparky-stereo-secureboot-2026.pem`, verifies the kernels and modules we publish.
 
+## Licence
+
+The repository is under the GNU General Public License, version 3 or (at your option) any later version: [LICENSE](LICENSE), as the file headers say.
+Packages, libraries and patches that carry their own licence keep it: their `LICENSE` or `copyright` file, and the upstream projects' own terms for patches to them.
+
 ## Credits
 
 The packages, patches and translations credit their authors in their own copyright files and headers.
