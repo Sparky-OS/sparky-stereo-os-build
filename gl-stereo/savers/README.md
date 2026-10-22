@@ -1,8 +1,8 @@
 # Stereo saver prototype
 
-Run `./test.sh` in the repository. It uses the lane-owned `gl-stereo-test:3`
-image, private Xvfb/llvmpipe and uid/gid 1000 in this workspace. See the root
-REPORT.md for the tested image digest and current evidence. No host display,
+Run `./test.sh` in the repository. It uses the `gl-stereo-test:3` image,
+a private Xvfb with llvmpipe and uid/gid 1000. The tested image digest and
+the current evidence are in the test record, not public yet. No host display,
 authentication program or power configuration is used.
 
 `starfield` owns one star array and advances it once per frame. Its two

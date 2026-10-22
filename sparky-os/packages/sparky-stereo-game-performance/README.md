@@ -42,4 +42,4 @@ Before the game starts it touches $XDG_RUNTIME_DIR/cushion-swap-game-opening:
 on a kernel without PSI, the Cushion Swap File samples memory faster while
 the game loads (sparky-stereo-cushion-swap README).
 
-Sources and measured tests: ../../power-idle/POWER-DEFAULTS.md
+Its sources and measured tests are in the edition's power-defaults notes, which are not public yet.

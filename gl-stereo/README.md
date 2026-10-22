@@ -59,7 +59,7 @@ Developer overrides:
 | `GL_STEREO_LOG=1` | Log observed unsupported/mono-sourced operations once to stderr |
 | `GL_STEREO_DEBUG=1` | Geometry and binding diagnostics |
 
-Validated scope and limits are in [REPORT.md](REPORT.md). The prototype is
+Validated scope and limits are in the test record, not public yet. The prototype is
 not a universal GL implementation: automatic shader stereo, projection-changing
 lists, automatic stereo during `GL_COMPILE_AND_EXECUTE`, per-eye post effects,
 and automatic stereo on native Wayland and in OpenGL ES are not supported (a

@@ -114,8 +114,8 @@ The real source package uses debhelper and 3.0 (quilt). Binary packages are
 rocks, gears, molecule and rubik come from the rebuilt XScreenSaver packages.
 Qualification runs after stripping and binds the final binaries by SHA-256.
 The native library's development package is a build dependency of the
-patched KScreenLocker. See packaging/README.md and workspace REPORT.md for
-build commands, measured versions and the current verification state.
+patched KScreenLocker. See packaging/README.md for the build commands; the
+measured versions and verification state are in the test record, not public yet.
 
 ### Complete OpenGL saver catalogue
 

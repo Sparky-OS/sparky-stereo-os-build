@@ -102,8 +102,8 @@ Failures are logged in English. Device hotplug is monitored, not polled.
 
 Tests:
 -------------
-See ../../power-idle/CEC.md for the container commands, native protocol and
-wire-byte assertions, and the written vivid kernel-framework procedure.
+The tests in tests/ run in a container: the native protocol and its wire-byte
+assertions, with the vivid kernel framework. Their design notes are not public yet.
 Tests do not access any real CEC adapter, display, TV or host session.
 Actual TV firmware, cable association, driver HPD behavior and physical
 standby/wake still require hardware verification. If the TV drops HDMI/CEC

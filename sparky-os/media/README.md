@@ -2,7 +2,7 @@
 
 Sparky Stereo OS builds its FFmpeg and mpv on **deb-multimedia's source packages** (`ffmpeg-dmo`, `mpv-dmo`), with our stereo 3D patches on top, as `+stereo3dN` versions (Daniel: "we should patch multimedia-deb ffmpeg, not debian's"). Package names, sonames and the epoch are deb-multimedia's, so what installs against deb-multimedia's FFmpeg installs against ours. This folder holds everything needed to **redo the port for each deb-multimedia release**: the patches, the packaging changes, the build and proof scripts, the proof rig and the Dockerfiles. The development repository (`/K3D/temp/sparky-os/repo`, made by `repo/make-repo.sh`) holds the packages and, in `source/`, the source packages.
 
-Built 2026-10-07/08 (media-on-dmo lane):
+Built 2026-10-07/08:
 
 | source package | deb-multimedia | ours |
 |---|---|---|
@@ -51,7 +51,7 @@ Everything runs in containers as the user (`--cpus 4` at most, never sudo, never
 
    mpv: `scripts/run-mpv-proofs.sh IMAGE PREFIX [mepi]` runs the rig (m: the matrix of the three outputs `dmabuf-wayland`, `gpu-next`, `gpu`; e: OpenGL/EGL contexts; p: per-eye placement; i: interpolation) against the mpv of a rig image (`Dockerfile.rig` with `rigours` for our packages and `rigdmo` for the baseline); `scripts/ctl2d.sh` is the 2D control (a 2D clip must give the same pixels as the baseline: 0 differing pixels); `scripts/rig-summary.py` counts. Each run is judged from the pixels and the Wayland log, never from the words in a picture.
 5. **Into the repository.** Debs and sources into `repo/` and `repo/source/`, the previous `+stereo3d` files to `repo-superseded/`, then `repo/make-repo.sh` (it stamps the provenance, indexes `Packages` and `Sources`, writes the `Release`). `scripts/promote.sh` is the script of the first promotion (its file lists are specific to that day).
-6. **What apt does with it.** `scripts/fresh-check.sh` (a fresh container with the edition's pins and the repository: the candidates and the simulations for Blender, OBS, VLC, HandBrake, Kdenlive, the `-dev` packages and the i386 libraries), `scripts/vm-step1.sh` to `vm-step6.sh` (the same in the development VM; `vmssh.sh` and `sparky-vm-noaudio.sh` run the VM without touching the desktop's audio or display). After a release, rerun `apt/make-only-ours.py` and rebuild `sparky-stereo-apt`: its pins block deb-multimedia's and Debian's builds of every package the repository ships.
+6. **What apt does with it.** `scripts/fresh-check.sh` (a fresh container with the edition's pins and the repository: the candidates and the simulations for Blender, OBS, VLC, HandBrake, Kdenlive, the `-dev` packages and the i386 libraries), the same checks in the development VM, through `vmssh.sh` and `sparky-vm-noaudio.sh`, which run the VM without touching the desktop's audio or display. After a release, rerun `apt/make-only-ours.py` and rebuild `sparky-stereo-apt`: its pins block deb-multimedia's and Debian's builds of every package the repository ships.
 
 ## Why FFmpeg has no Fraunhofer AAC
 
@@ -59,4 +59,4 @@ deb-multimedia's rules configure `--enable-nonfree --enable-libfdk-aac` on a GPL
 
 ## Offering it to deb-multimedia
 
-The mpv debdiff (`debdiffs/mpv-dmo.debdiff`) is the offer to Christian Marillat; the draft e-mail is in the media-on-dmo lane's folder and goes out when Daniel has read it. The FFmpeg offer waits for the upstream merges (pull requests 24628 and 24643), so that deb-multimedia ships patches FFmpeg already has; until then the nine patches stay ours.
+The mpv debdiff (`debdiffs/mpv-dmo.debdiff`) is the offer to Christian Marillat. The FFmpeg offer waits for the upstream merges (pull requests 24628 and 24643), so that deb-multimedia ships patches FFmpeg already has; until then the nine patches stay ours.

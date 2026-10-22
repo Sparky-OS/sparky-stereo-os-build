@@ -53,5 +53,5 @@ the CPU and GPU behavior; this package writes no governor or GPU sysfs file.
 PPD may omit performance on unsupported hardware. Plasma keeps that native
 limitation, and this package does not substitute a second power controller.
 
-The real PPD and settings tests, sources and limits are in
-../../power-idle/REPORT.md and ../../power-idle/probe/.
+The real PPD and settings tests are in ../../power-idle/probe/; their measured
+results and limits are not public yet.

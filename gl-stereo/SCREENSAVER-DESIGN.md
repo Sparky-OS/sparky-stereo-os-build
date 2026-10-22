@@ -67,7 +67,7 @@ of all FBO work: shadow maps should be shared, while camera-dependent bloom,
 AO and depth-of-field passes must have per-eye targets and camera values.
 Camera constants, products, inverses and temporal history need explicit
 tracking for shader applications; shaders themselves must remain unchanged.
-The older REPORT.md shader-rewriting proposal is superseded by Daniel's guard.
+An older shader-rewriting proposal is superseded by Daniel's guard.
 Per-draw fallback must be identified as such, never reported as camera-pass
 support. No claim of that future support is made by the output-only change.
 

@@ -46,7 +46,7 @@ index via its existing `REPO` setting, defaulting to the development repo;
 mount that repository read-only. The runner leaves native outputs and JSON
 for review. It asserts the three negative controls fail for the expected
 reason. It does not apply sysctls, initialize zram or invoke swapon.
-Sources, current values and limits are in [POWER-DEFAULTS.md](../POWER-DEFAULTS.md).
+The sources, current values and limits are in the power-defaults notes, which are not public yet.
 
 Existing native Plasma readers are `run-timeline-in-container.sh` and
 `run-migration-in-container.sh`; the headless timeline is documented in

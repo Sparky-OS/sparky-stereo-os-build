@@ -3,7 +3,7 @@
 Credit: Sparky Stereo OS, Daniel Ramos's edition of SparkyLinux (by Paweł "pavroo" Pijanowski).
 
 This directory contains the source packaging, build bootstrap and installed-file
-regression harnesses. The workspace-root REPORT.md records measured results.
+regression harnesses. Measured results are kept with the test record.
 Build trees and dependency environments belong on /mnt/build/gl-stereo.
 
 `Dockerfile.base` selects amd64 explicitly: the shared cached debian:testing
@@ -42,7 +42,7 @@ build must use the packaged libstereo-declare-dev >= 1.1.0 and generated
 shlibs dependencies, with no helper dependency patch. Qualify the actual
 stripped/installed saver binaries and bind receipts to those hashes. Build
 and test every installed package, run lintian, and create SHA256SUMS before
-handoff. Final verification results belong in the workspace-root REPORT.md.
+handoff, and keep the final verification results with the test record.
 
 The dependency root filesystem and build trees live on /mnt/build/gl-stereo.
 bootstrap.sh extracts the digest-pinned amd64 base there and downloads PRoot

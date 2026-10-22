@@ -38,7 +38,7 @@ The 68 passing probes do not prove the requested stock-2D identity, all overlays
 No entry is promoted by this script, and both generated JSON files are rejected by the existing trusted-catalogue loader.
 The three final classification groups are therefore unassigned, with 130 qualifications pending.
 The prior five-saver catalogue remains unchanged.
-Full diagnostic evidence is in `out/all-savers/sweep-fixed/`; REPORT.md at the workspace root records the milestone status.
+Full diagnostic evidence is written to `out/all-savers/sweep-fixed/`.
 
 ## Stereo KWin and deterministic input fixtures
 
