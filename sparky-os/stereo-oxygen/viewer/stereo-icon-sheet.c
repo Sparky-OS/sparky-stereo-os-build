@@ -537,7 +537,6 @@ int main(int argc, char **argv)
       wp_viewport_set_destination(viewport, win_w, win_h);
       declaration = kde_stereo_content_manager_v1_create(st.stereo, surface);
       kde_stereo_content_v1_set_content(declaration, KDE_STEREO_CONTENT_V1_CONTENT_SIDE_BY_SIDE_FULL);
-      kde_stereo_content_v1_set_content_class(declaration, KDE_STEREO_CONTENT_V1_CONTENT_CLASS_NONE, 0);
    }
    struct wl_egl_window *window = wl_egl_window_create(surface, multiview ? win_w : 2 * win_w, win_h);
    const EGLint cfg_attrs[] = { EGL_SURFACE_TYPE, EGL_WINDOW_BIT, EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
