@@ -25,7 +25,7 @@ The final `.config` holds every option of the fragments (`configure.sh` stops ot
 ## After the build, on the development VM first
 
 - `uname -r` is the release name; `ls /sys/kernel/btf/vmlinux`; `cat /sys/kernel/sched_ext/state` (it is `disabled` until an scx scheduler is loaded).
-- `hibernate-bench` (`/K3D/temp/partners/queue/kernel-soul/work/hibernate-bench`) with the image and the module signing key of the build: Secure Boot on, unsigned module refused, enrolled-key module loads, `/sys/power/disk` offers hibernation, a full hibernate and resume passes, `lockdown=integrity` refuses it.
+- `hibernate-bench` (`$SPARKY_WORKSPACES/kernel-soul/work/hibernate-bench`) with the image and the module signing key of the build: Secure Boot on, unsigned module refused, enrolled-key module loads, `/sys/power/disk` offers hibernation, a full hibernate and resume passes, `lockdown=integrity` refuses it.
 - DKMS rebuild of the NVIDIA open modules and xpadneo against the new headers package (for the rt flavour: `IGNORE_PREEMPT_RT_PRESENCE=1`). `CONFIG_CGROUP_DMEM` stays off (Debian's value): Linux 7.3 changed `dmem_cgroup_register_region()` and NVIDIA's open modules 615.71.09 do not compile against the new signature; switch it on only when NVIDIA's release handles it (the kernel-soul lane keeps a compat patch, `work/nvidia-dmem/`).
 - `mount -t binder binder /dev/binderfs` after `modprobe binder_linux`; the four Realtek modules and `vkms` load.
 

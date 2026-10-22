@@ -10,15 +10,16 @@
 # debian/ as .debian.tar.xz). Units go to /usr/lib/systemd/system (Forky's merged /usr).
 # Run it inside a debian:testing container with dpkg-dev (dpkg-deb, dpkg-source, xz).
 # Last update 2026/10/15
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-SRC=${SRC:-/K3D/GitHub/sparky-beep}
-OUT=${OUT:-/K3D/temp/sparky-os/repo}
+SRC=${SRC:-${SPARKY_SOURCES:?}/sparky-beep}
+OUT=${OUT:-${SPARKY_REPO_DIR:?}}
 PKG=sparky-beep
 VERSION=$(sed -n '2s/^  Version \([^ ]*\) .*/\1/p' "$SRC/CHANGELOG")
 [ -n "$VERSION" ] || { echo "no version in $SRC/CHANGELOG"; exit 1; }
 VERSION=$VERSION+lc1
-W=$(mktemp -d "${TMPDIR:-/K3D/temp/sparky-os}/beep-build.XXXXXX")
+W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}/sparky-os}/beep-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 D=$W/$PKG
 S=$D/usr/share/$PKG

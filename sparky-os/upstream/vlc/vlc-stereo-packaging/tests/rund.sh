@@ -1,5 +1,6 @@
 #!/bin/bash
-cd /K3D/temp/partners/queue/vlc-stereo
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+cd ${SPARKY_WORKSPACES:?}/vlc-stereo
 export INST=1 IMG=${DIMG:-vlc-both:4} VBIN=/usr/bin/vlc-stereo HW=--avcodec-hw=any SW=0 PRE=8
 for c in ${CLIPS:-x264-2d.mp4 x264-sbs.mp4 x264-sbs.mkv x264-tb.mp4 x264-tb.mkv}; do
   n=${TAG:-d1}-${c%%.*}-${c##*.}

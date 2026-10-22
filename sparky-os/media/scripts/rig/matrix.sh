@@ -1,6 +1,7 @@
 #!/bin/bash
 # usage: matrix.sh <prefix> <image> <vo> [MPVBIN]   -> runs/<prefix>-*, results in results-<prefix>.txt
-cd /K3D/temp/partners/queue/media-on-dmo/work/rig
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+cd ${SPARKY_WORKSPACES:?}/media-on-dmo/work/rig
 pre=$1; img=$2; vo=$3
 dense='[0.8,1.2,1.6,2.0,2.4,2.8,3.2,3.6,4.0,4.4,4.8,5.2,5.6,6.0,6.5,7.5]'
 slow='[1.2,2.0,2.8,3.6,4.4,5.2,6.0,7.0]'

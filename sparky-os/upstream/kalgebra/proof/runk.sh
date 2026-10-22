@@ -1,5 +1,6 @@
 #!/bin/bash
-cd /K3D/temp/partners/queue/kde-science-camera/work
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+cd ${SPARKY_WORKSPACES:?}/kde-science-camera/work
 export INPUT=/o/input-3d.sh IMG=kdesci-kalg:3 GEOM_EVERY=1 START_WAIT=14
 run() { n=$1; xd=$2; shift 2; ./drun-app.sh $n $xd usr/bin/kalgebra 1280x800 -- "$@" > /dev/null 2>&1; echo done $n; }
 export GPU=1

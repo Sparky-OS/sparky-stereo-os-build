@@ -3,7 +3,7 @@
 set -euo pipefail
 test -e /.dockerenv
 test "$(id -u)" != 0
-helper=/K3D/GitHub/sparky-stereo-os-build/plasma-wayland-protocols/stereo-declare
+helper=${STEREO_DECLARE_SOURCE:?set by test-plasma.sh: the stereo-declare folder of plasma-wayland-protocols}
 mkdir -p out/plasma/helper-source/stereo-declare out/plasma/helper-source/src/protocols
 cp "$helper"/*.c "$helper"/*.h "$helper"/CMakeLists.txt "$helper"/*.in out/plasma/helper-source/stereo-declare/
 cp "$helper/../src/protocols/kde-stereo-content-v1.xml" out/plasma/helper-source/src/protocols/

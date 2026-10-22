@@ -1,9 +1,10 @@
 #!/bin/bash
-# Builds the test clips (host ffmpeg + mkvpropedit) into $1 (default /K3D/temp/bino-lane/clips).
+# Builds the test clips (host ffmpeg + mkvpropedit) into $1 (default ${SPARKY_SCRATCH}/bino-lane/clips).
 # Left eye: red with LEFT, right eye: blue with RIGHT, plus a white frame and a yellow bar at the
 # left edge of each eye so a crop or a mirror shows.
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -e
-out=${1:-/K3D/temp/bino-lane/clips}; mkdir -p $out; cd $out
+out=${1:-${SPARKY_SCRATCH:?}/bino-lane/clips}; mkdir -p $out; cd $out
 F=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf
 W=960; H=540
 eye() { # name colour text

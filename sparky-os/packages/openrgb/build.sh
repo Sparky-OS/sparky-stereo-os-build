@@ -3,10 +3,11 @@
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/05
 # Copyright 2026 under the GNU GPL3 License
 # The orig tarball is git archive of tag release_1.0 minus the paths of Files-Excluded in debian/copyright.
-# Usage: build.sh [workdir]   (default /K3D/temp/partners/queue/hand-installed-apps/orgb/build; 4 threads)
+# Usage: build.sh [workdir]   (default ${SPARKY_WORKSPACES}/hand-installed-apps/orgb/build; 4 threads)
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
-WORK=${1:-/K3D/temp/partners/queue/hand-installed-apps/orgb/build}
+WORK=${1:-${SPARKY_WORKSPACES:?}/hand-installed-apps/orgb/build}
 mkdir -p "$WORK"
 docker run --rm -e HOST_UID=$(id -u) -v "$WORK":/out -v "$HERE/debian":/debian-ours:ro sparky-pkg-base:amd64 bash -c '
 set -e

@@ -1,5 +1,6 @@
 #!/bin/bash
-cd /K3D/temp/qtmm-lane/run
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+cd ${SPARKY_SCRATCH:?}/qtmm-lane/run
 export DEV=1
 ./pk.sh plain pm1 sei-sbs-L.mp4 sei-sbs-R.mp4 sei-tb-L.mp4 sei-tb-R.mp4 mkv-sbs-L.mkv mkv-sbs-R.mkv mkv-tb-L.mkv mkv-tb-R.mkv kf-sei-sbs-L.mp4 2d.mp4 plain-sbs-32x9.mp4 plain-sbs-full.mp4 plain-sbs-half.mp4 plain-tb-half.mp4 > ../pm1-plain.txt 2>&1
 ./pk.sh osd pm1 sei-sbs-L.mp4 sei-tb-R.mp4 mkv-sbs-R.mkv kf-sei-sbs-L.mp4 2d.mp4 plain-sbs-32x9.mp4 > ../pm1-osd.txt 2>&1

@@ -2,8 +2,9 @@
 # ia32 (32-bit UEFI) boot of the stick, with GRUB 2.14 from a FAT disk that the firmware starts first (FAT) or with
 # the stick's own GRUB (FAT=); the stick is the CD. APPEND: options added to the first entry's linux line. Menu entry: Enter at 15 s and 25 s. Screenshots every 45 s, serial to OUT/serial.log.
 #   run.sh OUT [ISO]
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -eu
-L=/K3D/temp/partners/queue/beta-iso-lutz
+L=${SPARKY_WORKSPACES:?}/beta-iso-lutz
 OUT=$1; ISO=${2:-/mnt/build/beta-iso-lutz/out/sparky-stereo-os-9-mashtabba-beta2-x86_64.iso}
 # FAT: the GRUB 2.14 test disk (default); FAT= (empty) boots the stick's own GRUB
 FAT=${FAT-$L/ia32-grub/ia32-grub214.img}

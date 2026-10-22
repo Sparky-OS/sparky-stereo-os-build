@@ -1,6 +1,7 @@
 #!/bin/bash
 # dev builds of Dragon Player and Plank Player (QML changes only) into /w/dragon-prefix and /w/plank-prefix
-docker run --rm --platform linux/amd64 --user $(id -u):$(id -g) --cpus 4 -e HOME=/w/home -v /K3D/temp/qtmm-lane:/w -v /K3D/temp/partners/queue/plank-player/tree/plank-player:/src-plank:ro qtmm-build:2 bash -c '
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+docker run --rm --platform linux/amd64 --user $(id -u):$(id -g) --cpus 4 -e HOME=/w/home -v ${SPARKY_SCRATCH:?}/qtmm-lane:/w -v ${SPARKY_WORKSPACES:?}/plank-player/tree/plank-player:/src-plank:ro qtmm-build:2 bash -c '
 set -e
 mkdir -p /w/dragon-build && cd /w/dragon-build && cmake -S /w/dragon/dragon-26.04.0 -B . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/w/dragon-prefix -DBUILD_TESTING=OFF > cmake.log 2>&1 || { tail -20 cmake.log; exit 1; }
 make -j4 > make.log 2>&1 || { tail -30 make.log; exit 1; }

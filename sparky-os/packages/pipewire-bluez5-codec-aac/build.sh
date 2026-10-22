@@ -1,11 +1,12 @@
 #!/bin/bash
 # Build the AAC plugin from verified upstream source with native Lean Code.
 # Usage: build.sh [PipeWire upstream version] [matching Debian version]
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 PWV=${1:-1.6.9}
 DEBV=${2:-1.6.9-2}
-OUT=${OUT:-/K3D/temp/bt-aac}
+OUT=${OUT:-${SPARKY_SCRATCH:?}/bt-aac}
 [[ $PWV =~ ^[0-9][0-9.]+$ && $DEBV == "$PWV"-* && $DEBV =~ ^[0-9A-Za-z.+~:-]+$ ]] ||
     { echo "Expected matching upstream and Debian versions" >&2; exit 2; }
 mkdir -p "$OUT"

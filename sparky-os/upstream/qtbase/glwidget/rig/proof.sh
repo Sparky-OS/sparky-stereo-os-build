@@ -1,8 +1,9 @@
 #!/bin/bash
 # usage: proof.sh <prefix> <image> [apps|tests|mono]...   the proof matrix on one image (native Wayland, headless KWin, Qt's own decorations)
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 p=$1; img=$2; shift 2
-cd /K3D/temp/qtgl/rig
-export IMG=$img QTBUILD=${QTBUILD:-/K3D/temp/qtgl/build-deb}
+cd ${SPARKY_SCRATCH:?}/qtgl/rig
+export IMG=$img QTBUILD=${QTBUILD:-${SPARKY_SCRATCH:?}/qtgl/build-deb}
 [ -n "$MYQT" ] && export MYQT=1
 export NODECO='mkdir -p $XDG_CONFIG_HOME; printf "[org.kde.kdecoration2]\nNoPlugin=true\n" > $XDG_CONFIG_HOME/kwinrc'
 FT=/usr/lib/x86_64-linux-gnu/faketime/libfaketime.so.1

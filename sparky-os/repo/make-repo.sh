@@ -1,7 +1,7 @@
 #!/bin/sh
 # Indexes our packages as a flat apt repository with its own origin, "Sparky Stereo OS",
 # which the edition pins above Debian (../apt/sparky-stereo, shipped by the sparky-stereo-apt package) so updates keep the
-# stereo stack. While developing it lives in /K3D/temp/sparky-os/repo, which the VM sees
+# stereo stack. While developing it lives in ${SPARKY_REPO_DIR}, which the VM sees
 # as /srv/sparky-work/repo:
 #   deb [trusted=yes] file:/srv/sparky-work/repo ./
 # (unsigned while developing; the published repository will be signed).
@@ -11,8 +11,9 @@
 # ("Directory: source"), so that "deb-src [trusted=yes] file:... ./" gives apt-get source and
 # sparky-stereo-ffmpeg-fdk (which builds the edition's FFmpeg on the user's computer) the same
 # source the binaries were built from.
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -eu
-R=${1:-/K3D/temp/sparky-os/repo}
+R=${1:-${SPARKY_REPO_DIR:?}}
 # Builders finish provenance before Lean Code and archive checksums. Indexing
 # must not rewrite existing archives, including old unmarked development builds.
 cd "$R"

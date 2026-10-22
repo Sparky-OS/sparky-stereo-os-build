@@ -1,10 +1,11 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-or-later
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
-export DOCKER_HOST=unix:///K3D/temp/partners/gl-stereo/docker.sock
+export DOCKER_HOST=unix://${SPARKY_SCRATCH:?}/partners/gl-stereo/docker.sock
 workspace=$(cd .. && pwd)
 repo=$PWD
-rig=/K3D/temp/partners/queue/kwin-package-17/m2/rig
+rig=${SPARKY_WORKSPACES:?}/kwin-package-17/m2/rig
 ./test.sh >out/window-sizing-savers.log 2>&1
 name="gl-stereo-sizing-$(date +%s)-$$"
 printf '%s\n' "$name" >> "$workspace/.artifacts"

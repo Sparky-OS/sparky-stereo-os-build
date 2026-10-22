@@ -2,10 +2,11 @@
 # Builds nvkms-query (static) in a debian:testing container, against the
 # headers of the open GPU kernel modules tree.
 # Usage: build.sh [open-gpu-kernel-modules-dir] [output]
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
-TREE=${1:-/K3D/temp/partners/queue/nvidia-16bpc/open-gpu-kernel-modules}
-OUT=${2:-/K3D/temp/sparky-os/nvkms-query}
+TREE=${1:-${SPARKY_WORKSPACES:?}/nvidia-16bpc/open-gpu-kernel-modules}
+OUT=${2:-${SPARKY_SCRATCH:?}/sparky-os/nvkms-query}
 VER=$(sed -n 's/^NVIDIA_VERSION *= *//p' "$TREE/version.mk")
 mkdir -p "$(dirname "$OUT")"
 docker run --rm --cpus 4 -e DEBIAN_FRONTEND=noninteractive \

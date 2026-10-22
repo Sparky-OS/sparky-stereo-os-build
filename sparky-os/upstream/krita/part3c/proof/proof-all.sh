@@ -1,9 +1,10 @@
 #!/bin/bash
 # usage: proof-all.sh <image> <old-image> <evidence-dir>
 # image: Krita +stereo3d4 installed from the repository; old-image: Krita +stereo3d1 (Part 1) for the stereo-off comparisons.
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 img=$1; old=$2; ev=$3; mkdir -p $ev
 here=$(cd "$(dirname "$0")" && pwd)
-run() { local n=$1; shift; rm -rf /K3D/temp/krita-p3c/ev/$n; IMG=${RIMG:-$img} $here/kdrun.sh $n "$@" > /K3D/temp/krita-p3c/ev/$n.drun.log 2>&1; }
+run() { local n=$1; shift; rm -rf ${SPARKY_SCRATCH:?}/krita-p3c/ev/$n; IMG=${RIMG:-$img} $here/kdrun.sh $n "$@" > ${SPARKY_SCRATCH:?}/krita-p3c/ev/$n.drun.log 2>&1; }
 STEREO="KRC=stereo3DCanvas=true"
 # 1. a side-by-side pair, GPU, no shim, WAYLAND_DEBUG for the declarations
 run s-pair -e FILE=/k/t/pair-sbs.png -e "$STEREO" -e WAIT=60 -e KENV=WAYLAND_DEBUG=1
@@ -26,4 +27,4 @@ for m in rec709g22 rec709g10 rec2020pq; do
 done
 # 5. Qt's xcb platform, stereo on, software GL (as Part 2)
 run s-xcb -e FILE=/k/t/pair-sbs.png -e "$STEREO" -e WAIT=60 -e XCB=1 -e KENV=LIBGL_ALWAYS_SOFTWARE=1
-for n in c-on-rec709g22 c-on-rec709g10 c-on-rec2020pq c-mono-rec709g22 c-mono-rec709g10 c-mono-rec2020pq c-off-rec709g22 c-off-rec709g10 c-off-rec2020pq s-pair s-palette s-ramp m-ramp off-ramp off-new off-ramp-old off-old s-switch s-xcb; do rm -rf $ev/$n; cp -r /K3D/temp/krita-p3c/ev/$n $ev/$n; done
+for n in c-on-rec709g22 c-on-rec709g10 c-on-rec2020pq c-mono-rec709g22 c-mono-rec709g10 c-mono-rec2020pq c-off-rec709g22 c-off-rec709g10 c-off-rec2020pq s-pair s-palette s-ramp m-ramp off-ramp off-new off-ramp-old off-old s-switch s-xcb; do rm -rf $ev/$n; cp -r ${SPARKY_SCRATCH:?}/krita-p3c/ev/$n $ev/$n; done

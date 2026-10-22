@@ -1,9 +1,10 @@
 #!/bin/bash
 # the measurements from the packages installed from the repository in a fresh container (qtmm-fresh:1)
-cd /K3D/temp/qtmm-lane/run
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+cd ${SPARKY_SCRATCH:?}/qtmm-lane/run
 export IMG=qtmm-fresh:1
 unset DEV DEVDIR
-Q="docker run --rm --platform linux/amd64 --user $(id -u):$(id -g) -v /K3D/temp/qtmm-lane:/w qtmm-run:3"
+Q="docker run --rm --platform linux/amd64 --user $(id -u):$(id -g) -v ${SPARKY_SCRATCH:?}/qtmm-lane:/w qtmm-run:3"
 LOG='{"QT_LOGGING_RULES":"qt.multimedia.video.stereopresenter.debug=true;qt.multimedia.video.stereolayer.debug=true"}'
 {
 echo "== depth: the layer's buffer under the edition's defaults (stereoSurface BySource); levels of red per view, counted in the buffer before it is committed (KWin's capture is 8 bit)"

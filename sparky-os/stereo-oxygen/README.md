@@ -5,7 +5,7 @@ Eight Oxygen icons, drawn in two views from Oxygen's own source drawings, shown 
 ## Show the sheet
 
 ```
-/K3D/temp/partners/queue/stereo-oxygen/step1/viewer/stereo-icon-sheet
+$SPARKY_WORKSPACES/stereo-oxygen/step1/viewer/stereo-icon-sheet
 ```
 
 Run it in your test session, under our KWin. It picks its way to the compositor by itself (see "Which path runs where"). It opens one window at the sheet's size on a mid-grey background, one row per icon: trash, hard disk, desktop, printer, dictionary, settings, USB stick, system tools.

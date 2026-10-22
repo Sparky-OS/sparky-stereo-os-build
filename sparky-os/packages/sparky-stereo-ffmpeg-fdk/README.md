@@ -40,7 +40,7 @@ sparky-stereo-apt, apt, dpkg-dev, build-essential, fakeroot, util-linux, python3
 
 Build:
 -------------
-./build.sh   (the package lands in /K3D/temp/sparky-os/repo, or in $OUT)
+./build.sh   (the package lands in $SPARKY_REPO_DIR, or in $OUT)
 
 Test:
 -------------

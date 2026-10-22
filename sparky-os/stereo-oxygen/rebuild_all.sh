@@ -1,13 +1,14 @@
 #!/bin/bash
 # the whole chain: generate, assemble, loaders, centre check, generator check, KWin proofs
-cd /K3D/temp/partners/queue/stereo-oxygen/step1
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+cd ${SPARKY_WORKSPACES:?}/stereo-oxygen/step1
 rm -rf out-all
 TMO=3000 ./run-gen.sh python3 make_stereo_icon.py --oxygen-icons /q/oxygen-icons --icons $(cat icons.txt) --out /q/step1/out-all --probe --depthmaps /q/step1/depthmaps > gen-all.log 2>&1
 python3 assemble.py > assemble.log 2>&1
-timeout 600 docker run --rm --name stereo-oxygen-loaders -u $(id -u):$(id -g) -v /K3D/temp/partners/queue/stereo-oxygen:/q stereo-oxygen-loader-test:1 /q/step1/loader/run_loaders.sh > loader/run.log 2>&1
+timeout 600 docker run --rm --name stereo-oxygen-loaders -u $(id -u):$(id -g) -v ${SPARKY_WORKSPACES:?}/stereo-oxygen:/q stereo-oxygen-loader-test:1 /q/step1/loader/run_loaders.sh > loader/run.log 2>&1
 TMO=300 ./run-gen.sh python3 /q/step1/loader/check_loaders.py > loader/check.log 2>&1
 TMO=300 ./run-gen.sh python3 /q/step1/centre_vs_plain.py $(cat icons.txt) > centre_vs_plain.log 2>&1
-timeout 300 docker run --rm --name stereo-oxygen-build -u $(id -u):$(id -g) -v /K3D/temp/partners/queue/stereo-oxygen:/q kwin-forky-builddeps:6.7.4 /q/step1/viewer/build.sh > viewer/build.log 2>&1
+timeout 300 docker run --rm --name stereo-oxygen-build -u $(id -u):$(id -g) -v ${SPARKY_WORKSPACES:?}/stereo-oxygen:/q kwin-forky-builddeps:6.7.4 /q/step1/viewer/build.sh > viewer/build.log 2>&1
 cd proofs; rm -rf out/p? out/h? out-*.log
 # path 1: our Mesa (EGL_EXT_multiview_window), KWin +stereo3d13+depth3
 ./run.sh pa 1700x1300 1 2 > out-pa.log 2>&1; ./run.sh pb 2800x2300 3 > out-pb.log 2>&1; ./run.sh pc 2100x1700 4:32 4:48 4:128 > out-pc.log 2>&1; ./run.sh pd 2100x6000 4:256 > out-pd.log 2>&1

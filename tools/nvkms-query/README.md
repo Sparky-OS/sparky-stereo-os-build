@@ -19,7 +19,7 @@ It opens `/dev/nvidia-modeset` (root needed) and talks to NVKMS the way nvidia-d
 
 ## Build
 
-`./build.sh [tree] [output]` builds a static binary in a `debian:testing` container (`--cpus 4`, non-interactive apt) against the open-gpu-kernel-modules tree's headers (default `/K3D/temp/partners/queue/nvidia-16bpc/open-gpu-kernel-modules`). The default output is `/K3D/temp/sparky-os/nvkms-query`.
+`./build.sh [tree] [output]` builds a static binary in a `debian:testing` container (`--cpus 4`, non-interactive apt) against the open-gpu-kernel-modules tree's headers (default `$SPARKY_WORKSPACES/nvidia-16bpc/open-gpu-kernel-modules`). The default output is `$SPARKY_SCRATCH/sparky-os/nvkms-query`.
 
 ## Licence
 

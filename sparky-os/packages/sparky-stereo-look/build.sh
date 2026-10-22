@@ -12,13 +12,14 @@
 #                                  cursor and splash
 # The art comes from where it is installed on Daniel's system (the edition's build host);
 # the theme definitions and fixes are in this folder.
-# Usage: build.sh   (packages land in $OUT, default /K3D/temp/sparky-os/repo)
+# Usage: build.sh   (packages land in $OUT, default ${SPARKY_REPO_DIR})
 # Version history in CHANGELOG; fixes offered to Pawel in upstream-patches/.
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-OUT=${OUT:-/K3D/temp/sparky-os/repo}
+OUT=${OUT:-${SPARKY_REPO_DIR:?}}
 VERSION=${VERSION:-20261016.2~sparky9~0+lc1}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
-WORK=$(mktemp -d "${TMPDIR:-/K3D/temp/sparky-os}/look-build.XXXXXX")
+WORK=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}/sparky-os}/look-build.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 LNF=usr/share/plasma/look-and-feel
 OXYGEN=/usr/share/plasma/look-and-feel/org.kde.oxygen

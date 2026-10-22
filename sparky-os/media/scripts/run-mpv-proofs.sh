@@ -1,7 +1,8 @@
 #!/bin/bash
 # usage: run-mpv-proofs.sh <image> <prefix> [parts]   parts: any of  m (matrix on three outputs), e (EGL contexts), p (placement), i (interpolation)
 # Runs the proof rig of the players-stereo lane (rounds 2 and 3) against the mpv in <image>. Two runs at a time, two CPUs each.
-cd /K3D/temp/partners/queue/media-on-dmo/work/rig
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+cd ${SPARKY_WORKSPACES:?}/media-on-dmo/work/rig
 img=$1; pre=$2; parts=${3:-mepi}
 export JOBS=${JOBS:-2} CPUS=${CPUS:-2}
 if [[ $parts == *m* ]]; then

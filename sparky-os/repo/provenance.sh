@@ -12,6 +12,7 @@
 # Daniel Ramos's (Capitain Jack) edition of SparkyLinux (by Paweł "pavroo" Pijanowski), in
 # Daniel's wording of 2026-10-07; the Copyright holders stay as they were.
 # Usage: provenance.sh file.deb...   (rewrites them in place)
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 NAME='Daniel Ramos (Capitain Jack)'
 MAIL='Capitain_Jack@yahoo.com'
@@ -100,7 +101,7 @@ for deb in "$@"; do
 		echo "$deb: lc-sealed package needs provenance fixed in a fresh build, before Lean Code" >&2
 		exit 1
 	fi
-	w=$(mktemp -d /K3D/temp/sparky-os/prov.XXXXXX)
+	w=$(mktemp -d ${SPARKY_SCRATCH:?}/sparky-os/prov.XXXXXX)
 	dpkg-deb -R "$deb" "$w"
 	stamp_tree "$w"
 	# written beside and renamed over, so that whoever reads the repository at that moment (another lane's build, apt) never

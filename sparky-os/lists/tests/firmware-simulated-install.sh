@@ -8,13 +8,14 @@
 # simulates (apt-get -s) installing it. Every firmware package the plan adds must appear as
 # "Inst". Usage: firmware-simulated-install.sh [lists-dir] (default: the lists beside this
 # test). The lists of an older commit can be given to see the test fail on them.
-# Needs docker as the user, the edition's repository at /K3D/temp/sparky-os/repo, no network
+# Needs docker as the user, the edition's repository at ${SPARKY_REPO_DIR}, no network
 # beyond the Debian mirror. Last update 2026/10/05
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 LISTS=$(cd "${1:-$HERE/..}" && pwd)
-WORK=${WORK:-/K3D/temp/partners/queue/gaming-rig-steps/work}
-REPO=${REPO:-/K3D/temp/sparky-os/repo}
+WORK=${WORK:-${SPARKY_WORKSPACES:?}/gaming-rig-steps/work}
+REPO=${REPO:-${SPARKY_REPO_DIR:?}}
 # Added by plan step 1 (2026-10-05): the Wi-Fi, Bluetooth, Intel and sound-amplifier firmware
 # Debian's live task and forky's non-free-firmware hold, which the lists lacked.
 WANT="firmware-mediatek bluez-firmware firmware-ipw2x00 firmware-intel-graphics firmware-intel-misc firmware-cirrus"

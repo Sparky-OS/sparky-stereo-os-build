@@ -12,6 +12,7 @@
 #   tests pass their own throwaway key)
 # Output goes to $OUT (default: the current folder; point it at the repository folder yourself).
 # Last update 2026/10/16
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 KEY=${1:-$(cd "$(dirname "$0")" && pwd)/sparky-stereo-repo.asc}
@@ -19,7 +20,7 @@ KEY=${1:-$(cd "$(dirname "$0")" && pwd)/sparky-stereo-repo.asc}
 OUT=${OUT:-$PWD}
 VERSION=${VERSION:-20261016~sparky9~0+lc1}
 PKG=sparky-stereo-keyring
-W=$(mktemp -d "${TMPDIR:-/K3D/temp}/keyring-build.XXXXXX")
+W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/keyring-build.XXXXXX")
 trap 'rm -rf "${W:?}"' EXIT
 D=$W/$PKG
 mkdir -p "$D/DEBIAN" "$D/etc/apt/trusted.gpg.d" "$D/usr/share/doc/$PKG"

@@ -4,7 +4,8 @@
 # n: Down x n, Return (entry 5 = Side by Side Half, 6 = Full, 7 = Top and Bottom Half, 8 = Full, 15 = Not 3D, 16 = Swap Eyes; the list
 # starts at 3D = 0, the focus keeps its place, so n is the distance from the previous choice); Escape closes the menu; 6 captures after the
 # on-screen display has gone, the capture m1 with the menu open
-W=/K3D/temp/partners/queue/plank-player
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+W=${SPARKY_WORKSPACES:?}/plank-player
 p=$1; name=$2; clip=$3; shift 3
 steps='[["wait",2],["fk",106,7,350],["fk",28,1],["wait",0.8]'
 for n in "$@"; do steps="$steps"',["fk",108,'$n',350],["fk",28,1],["wait",0.8]'; done

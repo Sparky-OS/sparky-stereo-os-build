@@ -1,5 +1,6 @@
 #!/bin/bash
-docker run --rm --platform linux/amd64 --user $(id -u):$(id -g) -v /K3D/temp/marble-lane/work:/w -v /K3D/temp/marble-lane/inst:/inst -v /K3D/temp/marble-lane:/w0 marble-build:1 bash -c '
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+docker run --rm --platform linux/amd64 --user $(id -u):$(id -g) -v ${SPARKY_SCRATCH:?}/marble-lane/work:/w -v ${SPARKY_SCRATCH:?}/marble-lane/inst:/inst -v ${SPARKY_SCRATCH:?}/marble-lane:/w0 marble-build:1 bash -c '
 set -e; cd /w/test
 LIBD=$(dirname $(find /inst/stereo -name "libmarblewidget-qt6.so*" | head -1))
 S=/w0/marble/src/lib; B=/w0/build-stereo/src/lib/marble

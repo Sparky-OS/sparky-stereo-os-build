@@ -2,12 +2,13 @@
 # Build the milestone 3 package and stage it with SHA256SUMS. Run inside the fixture image (it has dpkg-deb), as the lane user.
 #   sparky-stereo-look-kubabbar-glass-menubar   the menu bar and dock layout variant: Look and Feel with its layout, splash and strings,
 #                                               the launcher logo, and kubabbar-glass-minimize (Magic Lamp or Squash)
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
-dest=${DEST:-/K3D/temp/sparky-os/pending-pack/classic-look/m3}
+dest=${DEST:-${SPARKY_STAGING_DIR:?}/classic-look/m3}
 version=${VERSION:-20261014.7~sparky9~1+lc1}
 base=${BASE_VERSION:-20261014.6~sparky9~1+lc1}
-work=$(mktemp -d "${TMPDIR:-/K3D/temp}/kubabbar-m3-pkg.XXXXXX")
+work=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/kubabbar-m3-pkg.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$dest"
 if compgen -G "$dest/*.deb" >/dev/null; then
@@ -33,7 +34,7 @@ Files: *
 
 The launcher logo and the splash are original drawings (an eight-pointed star, an ancient Mesopotamian sign, in a silver glass disc).
 The layout (a menu bar on top and a dock) is an idea, not artwork.
-The KDE Store was searched for a Mac OS 8 style splash and icon pack; none was clean (see the source archive, study/m3.md), so none is used.
+The KDE Store was searched for a Mac OS 8 style splash and icon pack; none was clean, so none is used.
 No Apple artwork, font, logo or name is used.
 
 $credit

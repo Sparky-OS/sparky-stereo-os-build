@@ -1,6 +1,7 @@
 #!/bin/bash
 # usage: f2matrix.sh <prefix> <image> [MPVBIN]  -> results-<prefix>.txt : the placement of each eye's picture in its view
-cd /K3D/temp/partners/queue/media-on-dmo/work/rig
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+cd ${SPARKY_WORKSPACES:?}/media-on-dmo/work/rig
 pre=$1; img=$2; export MPVBIN=${3:-mpv}
 : > results-$pre.txt
 # case: name|screen|fullscreen(1/0)|geometry|clip|extra args

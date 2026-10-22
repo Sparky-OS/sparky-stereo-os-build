@@ -1,7 +1,8 @@
 #!/bin/bash
 # run image: plank-run:R (headless KWin from our repo etc.) + the QML runtime tools for a test app
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 docker rm -f qtmm-runimg >/dev/null 2>&1
-docker run --name qtmm-runimg --platform linux/amd64 --cpus 4 -v /K3D/temp/sparky-os/repo:/repo:ro -v /K3D/temp/qtmm-lane/run/pin:/pin:ro -e DEBIAN_FRONTEND=noninteractive qtmm-run:2 bash -c '
+docker run --name qtmm-runimg --platform linux/amd64 --cpus 4 -v ${SPARKY_REPO_DIR:?}:/repo:ro -v ${SPARKY_SCRATCH:?}/qtmm-lane/run/pin:/pin:ro -e DEBIAN_FRONTEND=noninteractive qtmm-run:2 bash -c '
 echo "deb [trusted=yes] file:/repo ./" > /etc/apt/sources.list.d/zrepo.list
 cp /pin /etc/apt/preferences.d/sparky-stereo
 apt-get -y update >/dev/null 2>&1

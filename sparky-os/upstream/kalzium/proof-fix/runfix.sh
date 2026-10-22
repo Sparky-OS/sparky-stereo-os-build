@@ -1,6 +1,7 @@
 #!/bin/bash
 # Kalzium molecule viewer, without the avogadro-aid: Debian's build, Debian's build + the fix, the stereo build + the fix.
-cd /K3D/temp/kalz-fix/o
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+cd ${SPARKY_SCRATCH:?}/kalz-fix/o
 export IMG=kdesci-kalz:2 GEOM_EVERY=1 START_WAIT=14 GPU=1
 unset INPUT
 MOL=/o/tests/chain.xyz

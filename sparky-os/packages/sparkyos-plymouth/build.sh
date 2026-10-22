@@ -9,10 +9,11 @@
 # was chosen; a trigger on its theme then sets this package's default back, when this package had set it.
 # Removing this package gives sparky-blue back.
 # Last update 2026/10/16
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-ART=${ART:-/K3D/temp/sparky-os/artwork-repo/plymouth}
-OUT=${OUT:-/K3D/temp/sparky-os/repo}
+ART=${ART:-${SPARKY_SCRATCH:?}/sparky-os/artwork-repo/plymouth}
+OUT=${OUT:-${SPARKY_REPO_DIR:?}}
 PKG=sparkyos-plymouth
 VERSION=$(sed -n '2s/^  Version \([^ ]*\) .*/\1/p' "$HERE/CHANGELOG")
 VERSION=$VERSION+lc1

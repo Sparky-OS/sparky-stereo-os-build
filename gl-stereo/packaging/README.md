@@ -56,7 +56,7 @@ Debian PRoot 5.4.0-3 needs proot-empty-path.patch for systemd 262:
 readlinkat(fd, "", ...) must resolve fd before detranslating its result.
 The original aborts while configuring systemd; the patched tool completes
 `dpkg --configure -a` with status 0. build-proot.sh compiles this bootstrap
-tool in the lane's compiler container (gl-stereo-test:3), with four jobs.
+tool in the compiler container (gl-stereo-test:3), with four jobs.
 The target package environment remains freshly updated Debian testing.
 
 prepare-upstream.py adds the accepted patches to the unmodified testing

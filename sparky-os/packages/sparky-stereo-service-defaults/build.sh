@@ -4,9 +4,10 @@
 # Builds sparky-stereo-service-defaults: systemd drop-ins that give services of other packages a
 # working default where they failed at every boot (queue item 140). Needs only dpkg-deb.
 # Last update 2026/10/16
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-OUT=${OUT:-/K3D/temp/sparky-os/repo}
+OUT=${OUT:-${SPARKY_REPO_DIR:?}}
 PKG=sparky-stereo-service-defaults
 VERSION=$(sed -n '2s/^  Version \([^ ]*\) .*/\1/p' "$HERE/CHANGELOG")
 VERSION=${VERSION}+lc1

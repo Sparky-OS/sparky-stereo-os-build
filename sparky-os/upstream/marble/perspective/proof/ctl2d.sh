@@ -1,6 +1,7 @@
 #!/bin/bash
 # (f) stereo off: Debian's marble against the patched marble, whole-screen pixel difference; flavour of the patched one: $1 (patched|pkg)
-cd /K3D/temp/marble-lane/work; F=${1:-patched}; T=${2:-ctl}
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+cd ${SPARKY_SCRATCH:?}/marble-lane/work; F=${1:-patched}; T=${2:-ctl}
 for proj in 0 7; do
   ./app-run.sh $T-stock-$proj stock marble PROJ=$proj >/dev/null 2>&1
   ./app-run.sh $T-$F-$proj $F marble PROJ=$proj >/dev/null 2>&1

@@ -9,13 +9,14 @@
 # A source package carries that snapshot in public/, so it rebuilds without the checkout.
 # Usage: OUT=dir SKILLS_COMMIT=<reviewed-commit> ./build.sh
 # Also writes a self-contained source package (.dsc and .tar.xz) into OUT.
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 umask 022
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the output directory}
 VERSION=$(dpkg-parsechangelog -l "$HERE/debian/changelog" -S Version)
 PACKAGE=sparky-stereo-skills
-SKILLS_SRC=${SKILLS_SRC:-/K3D/GitHub/sparky-stereo-os}
+SKILLS_SRC=${SKILLS_SRC:-${SPARKY_PUBLIC_EDITION:?}}
 SKILLS_COMMIT=${SKILLS_COMMIT:-}
 SOURCE_PACKAGE=${SOURCE_PACKAGE:-yes}
 TOOLKIT=${SPARKY_LEAN_TOOLKIT:-$HERE/release-toolkit}

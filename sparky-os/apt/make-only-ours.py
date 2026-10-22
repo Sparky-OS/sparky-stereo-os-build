@@ -10,10 +10,15 @@
 # FFmpeg and mpv are in it since our builds on deb-multimedia's source packages replaced the
 # Debian-based ones (Daniel: "we should patch multimedia-deb ffmpeg, not debian's"), so
 # deb-multimedia's own ffmpeg and mpv never install on the edition: the stereo patches are in ours.
-# Usage: make-only-ours.py [repository]   (default /K3D/temp/sparky-os/repo); rerun when the
+# Usage: make-only-ours.py [repository]   (default SPARKY_REPO_DIR of the local configuration); rerun when the
 # repository gains packages, then rebuild sparky-stereo-apt.
 import os, sys
-repo = sys.argv[1] if len(sys.argv) > 1 else '/K3D/temp/sparky-os/repo'
+if len(sys.argv) > 1:
+    repo = sys.argv[1]
+else:
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'config'))
+    import local_config
+    repo = local_config.get('SPARKY_REPO_DIR')
 PENDING_DMO = set()          # source packages still on their way to dmo's packaging (none: ffmpeg and mpv are on it now)
 names = set()
 for st in open(os.path.join(repo, 'Packages'), errors='replace').read().split('\n\n'):

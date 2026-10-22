@@ -13,17 +13,18 @@
 # documentation, and can be removed once nobody has the old ones. Dependencies are ">= 10:9.0.2" (the upstream version),
 # so they stay right when the edition's FFmpeg moves on and when sparky-stereo-ffmpeg-fdk relabels the versions.
 # Needs the edition's Lean Code release toolkit and its parser dependencies.
-# Usage: build.sh   (output goes to $OUT, default /K3D/temp/sparky-os/repo)
+# Usage: build.sh   (output goes to $OUT, default ${SPARKY_REPO_DIR})
 # Last update 2026/10/08
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 umask 022
 HERE=$(cd "$(dirname "$0")" && pwd)
 KIT=${LEAN_TOOLKIT:-$HERE/../..}
-OUT=${OUT:-/K3D/temp/sparky-os/repo}
+OUT=${OUT:-${SPARKY_REPO_DIR:?}}
 VERSION=${VERSION:-10:9.0.2-dmo1+stereo3d3+lc1}
 ARCHES=${ARCHES:-"amd64 i386"}
 MIN=10:9.0.2
-W=$(mktemp -d "${TMPDIR:-/K3D/temp}/transitional-build.XXXXXX")
+W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/transitional-build.XXXXXX")
 trap 'rm -rf "${W:?}"' EXIT
 mkdir -p "$OUT"
 

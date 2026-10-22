@@ -4,7 +4,7 @@
 #           the edition's metas with their Recommends, our kernel and Debian's signed one, NVIDIA 615
 #   pack    sparkybackup-stereo in a chroot of it (pack.sh): the staged packages, the image's apt sources, the ISO
 # Usage: build-beta.sh rootfs|pack|all
-# Environment (defaults are the lane's folders):
+# Environment (defaults are the beta 2 work folders):
 #   TREE     the root file system (on the build disk)        STAGE   the staged packages, a flat repository
 #   REPO     the edition's development repository            CACHE   apt's downloads, outside the tree
 #   WORK     the packer's work tree                          OUT     the ISO, its sums, package list, Lean Code manifest
@@ -15,12 +15,13 @@
 #   LEAN            1: the packer runs dpkg-stereo's pre-squashfs hook (the Lean Code projection) on the folders it
 #                   squashes (default); 0 only for ISO_PURPOSE=benchmark and a -nolean- name
 #   OVL             the overlay's upper layer for the iso step (the root file system itself is not changed)
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 ED=$(cd "$HERE/../.." && pwd)
-L=/K3D/temp/partners/queue/beta-iso-lutz
+L=${SPARKY_WORKSPACES:?}/beta-iso-lutz
 TREE=${TREE:-/mnt/build/beta-iso-lutz/rootfs}; STAGE=${STAGE:-/mnt/build/beta-iso-lutz/stage}
-REPO=${REPO:-/K3D/temp/sparky-os/repo}; CACHE=${CACHE:-$L/cache}; WORK=${WORK:-$L/pack/work}; OUT=${OUT:-$L/pack/out}
+REPO=${REPO:-${SPARKY_REPO_DIR:?}}; CACHE=${CACHE:-$L/cache}; WORK=${WORK:-$L/pack/work}; OUT=${OUT:-$L/pack/out}
 LOGS=${LOGS:-$OUT}; OVL=${OVL:-$L/pack/overlay}
 IMAGE=beta-iso-lutz-build:1
 docker image inspect $IMAGE >/dev/null 2>&1 || docker build --platform linux/amd64 -t $IMAGE "$HERE"

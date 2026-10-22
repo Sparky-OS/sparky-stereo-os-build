@@ -1,7 +1,8 @@
 #!/bin/bash
 # usage: matrix.sh <prefix> <mode: osd|plain> <clips...>: each clip (the looped L- copies) played in Plank Player under headless KWin,
 # 6 captures with the on-screen display open (osd: the first 5 seconds) or closed (plain), analysis per capture
-W=/K3D/temp/partners/queue/plank-player
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+W=${SPARKY_WORKSPACES:?}/plank-player
 p=$1; mode=$2; shift 2
 if [ $mode = osd ]; then steps='[["wait",2.2],["cap","c1"],["wait",0.2],["cap","c2"],["wait",0.3],["cap","c3"],["wait",0.2],["cap","c4"],["wait",0.1],["cap","c5"],["wait",0.1],["cap","c6"]]'
 else steps='[["wait",7],["cap","c1"],["wait",0.4],["cap","c2"],["wait",0.7],["cap","c3"],["wait",0.5],["cap","c4"],["wait",0.9],["cap","c5"],["wait",0.6],["cap","c6"]]'; fi

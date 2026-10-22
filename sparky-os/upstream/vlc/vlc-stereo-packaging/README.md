@@ -27,7 +27,7 @@ Debian's `debian/patches`, copyright and changelog stay; only the packages, cont
 ```
 mkdir -p ctx/repo
 cp vlc-stereo-packaging/Dockerfile ctx/
-cp /K3D/temp/sparky-os/repo/libstereo-declare1_*.deb /K3D/temp/sparky-os/repo/libstereo-declare-dev_*.deb ctx/repo/
+cp $SPARKY_REPO_DIR/libstereo-declare1_*.deb $SPARKY_REPO_DIR/libstereo-declare-dev_*.deb ctx/repo/
 docker build -t vlc-stereo-build ctx
 ```
 
@@ -44,7 +44,7 @@ docker run --rm --user $(id -u):$(id -g) -e VER=3.0.24-1+stereo3d6 \
 
 `out/` then holds the two packages, the `.changes` and `.buildinfo`, and the Debian source package of the build: `vlc_<version>.dsc`, `vlc_<version>.debian.tar.xz`, `vlc_3.0.24.orig.tar.xz` and its `.asc` (check it with `dpkg-source -x vlc_<version>.dsc` in an empty folder). The source package is made before the binary build, so that no build product is in it.
 
-3. The edition's packages carry their provenance: run `sparky-os/repo/provenance.sh` on the two `.deb` files (Maintainer, Homepage and the credit stanza in the copyright files), then copy them, and the source package files into `/K3D/temp/sparky-os/repo/source/`, into the repository.
+3. The edition's packages carry their provenance: run `sparky-os/repo/provenance.sh` on the two `.deb` files (Maintainer, Homepage and the credit stanza in the copyright files), then copy them, and the source package files into `$SPARKY_REPO_DIR/source/`, into the repository.
 
 ## Notes
 

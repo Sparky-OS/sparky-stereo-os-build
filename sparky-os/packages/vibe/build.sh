@@ -7,10 +7,11 @@
 # source (desktop/src-tauri/tauri.conf.json, plugins.updater.pubkey), and the source package carries both
 # the tagged source (main orig tarball) and the verified release .deb (component "release"), so what we
 # ship can be unpacked and compared with `dpkg-source -x`.
-# Usage: build.sh [workdir]   (default /K3D/temp/partners/queue/hand-installed-apps/vibe/build)
+# Usage: build.sh [workdir]   (default ${SPARKY_WORKSPACES}/hand-installed-apps/vibe/build)
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
-WORK=${1:-/K3D/temp/partners/queue/hand-installed-apps/vibe/build}
+WORK=${1:-${SPARKY_WORKSPACES:?}/hand-installed-apps/vibe/build}
 VER=3.2.2
 mkdir -p "$WORK"
 docker run --rm --platform linux/amd64 -e HOST_UID=$(id -u) -e VER=$VER -v "$WORK":/out -v "$HERE/debian":/debian-ours:ro -v "$HERE/../..":/toolkit:ro sparky-pkg-base:amd64 bash -c '

@@ -1,6 +1,7 @@
 #!/bin/bash
 # usage: run.sh <name> <image> <vo> <clip (under clips/)> <times json> [extra mpv args...]   env: SCREEN (1280x800), GEOM, SW (1 = llvmpipe)
-cd /K3D/temp/partners/queue/media-on-dmo/work/rig
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+cd ${SPARKY_WORKSPACES:?}/media-on-dmo/work/rig
 name=$1; img=$2; vo=$3; clip=$4; times=$5; shift 5
 out=runs/$name; rm -rf $out; mkdir -p $out
 SCREEN=${SCREEN:-1280x800}

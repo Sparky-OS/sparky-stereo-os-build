@@ -1,7 +1,8 @@
 #!/bin/bash
 # the proofs that need the built trees: upscale, 2D control, depth, audio. usage: proofs-final.sh (after trees-done2)
-cd /K3D/temp/qtmm-lane/run
-Q="docker run --rm --platform linux/amd64 --user $(id -u):$(id -g) -v /K3D/temp/qtmm-lane:/w qtmm-run:3"
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+cd ${SPARKY_SCRATCH:?}/qtmm-lane/run
+Q="docker run --rm --platform linux/amd64 --user $(id -u):$(id -g) -v ${SPARKY_SCRATCH:?}/qtmm-lane:/w qtmm-run:3"
 {
 echo "== upscale (half side by side, SEI, 1280x720: each eye 640x720 restored to 1280x720; capture at 1:1; the eye of the capture against references)"
 for S in 0 1 2; do

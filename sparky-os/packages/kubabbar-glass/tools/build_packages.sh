@@ -3,12 +3,13 @@
 #   sparky-stereo-gtk                      GTK 3 and 4 themes for both looks and the script that picks the theme from the KDE colour scheme
 #   sparky-stereo-look-kubabbar-glass      the classic look: Look and Feel, colours, window decoration, Plasma style, application style
 #                                          options, cursors, splash, SDDM theme, 3D icon pilot, wallpaper
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
-dest=${DEST:-/K3D/temp/sparky-os/pending-pack/classic-look/m2}
+dest=${DEST:-${SPARKY_STAGING_DIR:?}/classic-look/m2}
 version=${VERSION:-20261014.6~sparky9~0+lc1}
 look_version=${LOOK_VERSION:-20261014.6~sparky9~1+lc1}
-work=$(mktemp -d "${TMPDIR:-/K3D/temp}/kubabbar-pkg.XXXXXX")
+work=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/kubabbar-pkg.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$dest"
 if compgen -G "$dest/*.deb" >/dev/null; then

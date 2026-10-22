@@ -1,6 +1,7 @@
 #!/bin/bash
 # Kubrick proof on the installed packages: native Wayland, headless KWin; usage: kub-proof.sh <prefix>
-cd /K3D/temp/kdesci-wl
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+cd ${SPARKY_SCRATCH:?}/kdesci-wl
 p=${1:-kp}
 export IMG=${IMG:-kdesci-wl:2} FREEZE_AT=60 FREEZE_SECONDS=14 WAIT=5
 SHK=/w/tests/kubrick-shim.so

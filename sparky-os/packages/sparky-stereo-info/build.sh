@@ -23,12 +23,13 @@
 # It also installs stereo-display-info, the command that prints what each display can do in
 # stereo 3D and deep colour (read from its EDID) and what it is doing now.
 # Last update 2026/10/17
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-OUT=${OUT:-/K3D/temp/sparky-os/repo}
+OUT=${OUT:-${SPARKY_REPO_DIR:?}}
 VERSION=20261017~sparky9~0+lc1
 PKG=sparky-stereo-info
-W=$(mktemp -d "${TMPDIR:-/K3D/temp/sparky-os}/info-build.XXXXXX")
+W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}/sparky-os}/info-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 D=$W/$PKG
 mkdir -p "$D/DEBIAN" "$D/usr/bin" "$D/usr/share/$PKG" "$D/usr/share/doc/$PKG"

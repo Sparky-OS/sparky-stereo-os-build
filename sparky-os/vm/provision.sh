@@ -1,7 +1,7 @@
 #!/bin/bash
 # Installs the edition's package lists in the development VM. Run as root in the VM:
 #   sparky-vm.sh ssh 'sudo systemd-run --unit=sparky-provision --collect bash /srv/sparky-os/vm/provision.sh'
-# The log lands on the host in /K3D/temp/sparky-os/logs/.
+# The log lands on the host in ${SPARKY_SCRATCH}/sparky-os/logs/.
 set -uo pipefail
 LISTS=/srv/sparky-os/lists
 mkdir -p /srv/sparky-work/logs

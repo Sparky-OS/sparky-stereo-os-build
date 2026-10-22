@@ -1,8 +1,9 @@
 #!/bin/bash
 # the test clips of this round that the earlier rounds did not have (the others: kde-sei-wave's mkclips.sh and plank-player's clips),
 # in clips/ of the lane's work dir. Frame numbers and LEFT/RIGHT colours come from the earlier clips; these are for depth, chroma and scaling.
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -e
-cd /K3D/temp/qtmm-lane/clips
+cd ${SPARKY_SCRATCH:?}/qtmm-lane/clips
 # looped copies of the earlier non-looped clips (Dragon Player does not loop), SEI NAL units removed for the Matroska sequences
 for f in sei-*.mp4 mkv-*.mkv hevc-sbs-L.mp4 2d.mp4 plain-*.mp4 plain-*.mkv; do [ -f "$f" ] && [ ! -f "Z-$f" ] && ffmpeg -v error -y -stream_loop 5 -i $f -c copy "Z-$f"; done
 for c in L R; do ffmpeg -v error -y -i Z-mkv-seq-$c.mkv -c copy -bsf:v filter_units=remove_types=6 Zn-mkv-seq-$c.mkv; mkvpropedit -q Zn-mkv-seq-$c.mkv --edit track:v1 --set stereo-mode=$([ $c = L ] && echo 13 || echo 14); done

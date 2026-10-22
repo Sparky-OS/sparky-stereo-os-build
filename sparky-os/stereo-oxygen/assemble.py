@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Builds stereo-oxygen/ (the theme, rule B at 4 %) and viewer/assets/ (every variant, plain Oxygen pictures,
 probes) from out-all/ (the generator's output) and the oxygen-icons checkout."""
-import os, shutil, json
-Q = '/K3D/temp/partners/queue/stereo-oxygen'; S = Q + '/step1'; OXY = Q + '/oxygen-icons'
+import os, shutil, json, sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'config'))
+import local_config
+# the stereo-oxygen work area of SPARKY_WORKSPACES: step1/ (the generator's output) and oxygen-icons/ (the checkout)
+Q = os.path.join(local_config.get('SPARKY_WORKSPACES'), 'stereo-oxygen'); S = Q + '/step1'; OXY = Q + '/oxygen-icons'
 ICONS = [l.strip() for l in open(S + '/icons.txt') if l.strip()]
 SIZES = [32, 48, 128, 256]
 CONTEXT = {'places': 'Places', 'devices': 'Devices', 'apps': 'Applications', 'categories': 'Categories'}

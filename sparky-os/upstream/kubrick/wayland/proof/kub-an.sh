@@ -1,6 +1,7 @@
 #!/bin/bash
 # analysis of a kub-proof run set: kub-an.sh <prefix>
-cd /K3D/temp/kdesci-wl; p=$1
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+cd ${SPARKY_SCRATCH:?}/kdesci-wl; p=$1
 for c in sw-s5-1:5 sw-s5-2:5 sw-s5-3:5 sw-s10:10 sw-s2:2 gpu-s5-1:5 gpu-s5-2:5; do n=${c%%:*}; s=${c##*:}
   echo "== $n ($(sed -n 1,2p ev/$p-$n/capture.txt | tr '\n' ' '))"
   # widget origin: first GL row / col from the window picture

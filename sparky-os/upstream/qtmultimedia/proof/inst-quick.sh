@@ -1,9 +1,10 @@
 #!/bin/bash
 # the follow-up proofs from the packages installed from the repository (fresh container, no development build)
-cd /K3D/temp/qtmm-lane/run
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+cd ${SPARKY_SCRATCH:?}/qtmm-lane/run
 export IMG=qtmm-fresh:1
 unset DEV DEVDIR
-Q="docker run --rm --platform linux/amd64 --user $(id -u):$(id -g) -v /K3D/temp/qtmm-lane:/w qtmm-run:3"
+Q="docker run --rm --platform linux/amd64 --user $(id -u):$(id -g) -v ${SPARKY_SCRATCH:?}/qtmm-lane:/w qtmm-run:3"
 {
 echo "== shape fallback (edition defaults, installed packages): capture width 2560 = stereo"
 for c in L-plain-sbs-32x9.mp4 L-plain-sbs-full.mp4 2d-239.mp4 2d-169.mp4 L-2d.mp4; do

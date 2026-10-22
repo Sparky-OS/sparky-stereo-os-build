@@ -22,6 +22,7 @@
 # Needs only dpkg-deb.
 # Usage: build.sh   (output goes to $OUT, default the current folder)
 # Last update 2026/10/08
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-$PWD}
@@ -29,7 +30,7 @@ VERSION=${VERSION:-20261008.1~sparky9~0+lc1}
 PKG=sparky-stereo-apt
 TYPES=deb
 [ "${DEB_SRC:-0}" = 1 ] && TYPES="deb deb-src"
-W=$(mktemp -d "${TMPDIR:-/K3D/temp}/apt-build.XXXXXX")
+W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/apt-build.XXXXXX")
 trap 'rm -rf "${W:?}"' EXIT
 D=$W/$PKG
 mkdir -p "$D/DEBIAN" "$D/etc/apt/sources.list.d" "$D/etc/apt/preferences.d" "$D/usr/share/doc/$PKG"
@@ -53,7 +54,7 @@ Signed-By: /usr/share/keyrings/deb-multimedia-keyring.pgp
 EOS
 cp "$HERE/../../apt/sparky-stereo" "$D/etc/apt/preferences.d/sparky-stereo"
 # Debian's and deb-multimedia's builds of our packages, and Debian's tasks, are blocked (generated from the repository index)
-python3 "$HERE/../../apt/make-only-ours.py" "${REPO:-/K3D/temp/sparky-os/repo}" >/dev/null
+python3 "$HERE/../../apt/make-only-ours.py" "${REPO:-${SPARKY_REPO_DIR:?}}" >/dev/null
 cp "$HERE/../../apt/sparky-stereo-only-ours" "$D/etc/apt/preferences.d/sparky-stereo-only-ours"
 chmod 644 "$D/etc/apt/sources.list.d/sparky-stereo.sources" "$D/etc/apt/sources.list.d/sparky-stereo-deb-multimedia.sources" \
 	"$D/etc/apt/preferences.d/sparky-stereo" "$D/etc/apt/preferences.d/sparky-stereo-only-ours"

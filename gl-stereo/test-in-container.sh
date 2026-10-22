@@ -4,7 +4,7 @@ set -euo pipefail
 test "$(id -u)" != 0
 mkdir -p out/home
 trap 'if [ -n "${xpid:-}" ]; then kill "$xpid" 2>/dev/null || true; fi; rm -rf out/helper-source out/container-helper out/helper-install' EXIT
-helper=${STEREO_DECLARE_SOURCE:-/K3D/GitHub/sparky-stereo-os-build/plasma-wayland-protocols/stereo-declare}
+helper=${STEREO_DECLARE_SOURCE:?set by test.sh: the stereo-declare folder of plasma-wayland-protocols}
 mkdir -p out/helper-source/stereo-declare out/helper-source/src/protocols
 cp "$helper"/*.c "$helper"/*.h "$helper"/CMakeLists.txt "$helper"/*.in out/helper-source/stereo-declare/
 cp "$helper/../src/protocols/kde-stereo-content-v1.xml" out/helper-source/src/protocols/

@@ -8,7 +8,11 @@ import glob, os, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, '..', 'data')
 sys.path.insert(0, os.path.join(HERE, '..', 'config'))
-import local_config
+try:
+    import local_config
+    CONFIG = local_config.VALUES
+except ImportError:
+    CONFIG = {}
 
 # Every package the edition's sources offer (Debian testing, Sparky, deb-multimedia; not the
 # vendor repositories of this system), by architecture (amd64, all, i386 when multiarch is on).
@@ -63,7 +67,7 @@ base_remove = ['thunderbird', 'skanlite', 'blueman', 'systemd-timesyncd', 'vlc',
 # configuration names it, the selection is made from it again and data/apps-selection.list is
 # rewritten.
 SELECTION = os.path.join(DATA, 'apps-selection.list')
-personal = local_config.VALUES.get('SPARKY_PERSONAL_APPS')
+personal = CONFIG.get('SPARKY_PERSONAL_APPS')
 if personal:
     apps = [l.split('\t')[0] for l in open(personal)
             if l.rstrip('\n').split('\t')[1] in ('debian', 'sparky')]
@@ -228,7 +232,7 @@ group('look', 'Look', [
 # it until Karton covers the task; both container engines, since Docker and Podman give different
 # results (a daemon or rootless). Game engines: every general engine and framework Debian testing carries, and the
 # moddable engines with a community of standalone games; engines that only run one commercial game's data are the
-# gamer's (notes/developer-tasks.md has the survey and each one's stereo state).
+# gamer's.
 kf6_dev = sorted(p for p in available if p.startswith('libkf6') and p.endswith(('-dev', '-dev-bin', '-dev-tools')))
 qt6_dev = sorted(p for p in available if p.startswith('qt6-') and p.endswith(('-dev', '-dev-tools', '-private-dev', '-doc'))
                  and ':i386' not in p)

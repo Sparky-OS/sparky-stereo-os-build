@@ -1,5 +1,6 @@
 #!/bin/bash
-cd /K3D/temp/partners/queue/kde-science-camera/work
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+cd ${SPARKY_WORKSPACES:?}/kde-science-camera/work
 export PLAT=xcb GPU=1 FREEZE_SECONDS=14 FREEZE_AT=${FA:-150}
 run() { n=$1; fl=$2; shift 2; ./drun.sh $n $fl 1280x800 -- "$@" > /dev/null 2>&1; echo done $n; }
 unset CLIENT_SOFT

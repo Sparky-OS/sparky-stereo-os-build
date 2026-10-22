@@ -1,9 +1,10 @@
 #!/bin/bash
 # Stage a reviewable payload; the main session integrates the look package.
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 lane=$(dirname "$repo")
-dest=/K3D/temp/sparky-os/pending-pack/classic-look/background-alpha
+dest=${SPARKY_STAGING_DIR:?}/classic-look/background-alpha
 printf '%s\n' "$dest" >> "$lane/.artifacts"
 mkdir -p "$dest/usr/share/plasma/desktoptheme" "$dest/integration"
 for theme in kubabbar-glass sparky-stereo-oxygen; do

@@ -19,12 +19,13 @@
 # GPU drawn by the host (virgl).
 # HEADLESS=1 opens no window on the host's desktop (virtual GPU, no display): for test
 # sessions driven over ssh while nobody is at the screens.
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 
 VMDIR=${VMDIR:-/srv/sparky-vm}
 DISK=${DISK:-$VMDIR/sparky-dev.qcow2}
 VARS=${VARS:-$VMDIR/OVMF_VARS_4M.fd}
-ISO_DEFAULT=/K3D/temp/sparky-os/iso/sparkylinux-2026.09-x86_64-kde.iso
+ISO_DEFAULT=${SPARKY_SCRATCH:?}/sparky-os/iso/sparkylinux-2026.09-x86_64-kde.iso
 CPUS=${CPUS:-10}
 MEM=${MEM:-64G}
 DISK_SIZE=${DISK_SIZE:-240G}
@@ -32,7 +33,7 @@ DISK_SIZE=${DISK_SIZE:-240G}
 #   mount -t virtiofs <tag> <dir>
 SHARES=(
 	"sparky-os:$(cd "$(dirname "$0")/../.." && pwd)"
-	"sparky-work:/K3D/temp/sparky-os"
+	"sparky-work:${SPARKY_SCRATCH:?}/sparky-os"
 )
 
 # The desktop session's display, not this shell's (which may point elsewhere).
@@ -45,7 +46,7 @@ create() {
 	cp /usr/share/OVMF/OVMF_VARS_4M.fd "$VARS"
 	# The key this host uses to work in the VM; vm-setup.sh (run once in the VM) trusts it.
 	ssh-keygen -q -t ed25519 -N '' -C sparky-dev-vm -f "$VMDIR/id_ed25519"
-	cp "$VMDIR/id_ed25519.pub" /K3D/temp/sparky-os/vm-ssh.pub
+	cp "$VMDIR/id_ed25519.pub" ${SPARKY_SCRATCH:?}/sparky-os/vm-ssh.pub
 }
 
 start_shares() {

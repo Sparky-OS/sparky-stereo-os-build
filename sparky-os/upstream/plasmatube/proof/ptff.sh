@@ -1,7 +1,8 @@
 #!/bin/bash
 # usage: ptff.sh <ffmpeg-image> <clip> <outname> : PeerTube's re-encode arguments (packages/ffmpeg: presetVOD, default libx264 profile) and the check of the result
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 img=$1; clip=$2; out=$3
-docker run --rm --platform linux/amd64 --user $(id -u):$(id -g) -v /K3D/temp/partners/queue/plasmatube:/w $img bash -c "
+docker run --rm --platform linux/amd64 --user $(id -u):$(id -g) -v ${SPARKY_WORKSPACES:?}/plasmatube:/w $img bash -c "
 cd /w/pt-ff
 echo '--- input $clip: stereo3d side data on the first frames and the keyframes'
 ffprobe -v error -select_streams v -show_entries frame=pict_type,side_data_list -of compact=p=0 -read_intervals %+#60 /w/clips/$clip | grep -c 'Stereo 3D'

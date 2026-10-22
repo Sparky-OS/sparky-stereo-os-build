@@ -16,4 +16,4 @@ fastfetch
 
 Build:
 -------------
-./build.sh   (the package lands in /K3D/temp/sparky-os/repo)
+./build.sh   (the package lands in $SPARKY_REPO_DIR)

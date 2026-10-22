@@ -13,15 +13,16 @@
 # Needs dpkg-deb, gettext (msggrep, msgattrib, msgfmt) and xz; the GRUB release tarball is GRUB_TARBALL
 # (downloaded from ftp.gnu.org when absent, checked against its SHA-256).
 # Last update 2026/10/16
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-OUT=${OUT:-/K3D/temp/sparky-os/repo}
+OUT=${OUT:-${SPARKY_REPO_DIR:?}}
 PKG=sparky-stereo-grub-l10n
 VERSION=$(sed -n '2s/^  Version \([^ ]*\) .*/\1/p' "$HERE/CHANGELOG")
 VERSION=$VERSION+lc1
 GRUB_VERSION=2.14
 GRUB_SHA256=bc8d3c73535b8838d8c8e2654d73edc4e6ae8c8acdb45d5df5dc9a1547446d43
-W=$(mktemp -d "${TMPDIR:-/K3D/temp}/grub-l10n-build.XXXXXX")
+W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/grub-l10n-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 T=${GRUB_TARBALL:-$W/grub-$GRUB_VERSION.tar.xz}
 [ -f "$T" ] || curl -sSfL -o "$T" "https://ftp.gnu.org/gnu/grub/grub-$GRUB_VERSION.tar.xz"

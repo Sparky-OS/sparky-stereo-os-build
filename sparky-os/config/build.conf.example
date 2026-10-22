@@ -35,6 +35,19 @@ SPARKY_BROWSER_WORK=/var/tmp/waterfox-stereo
 # use sparky-os/data/apps-selection.list. Keep the list itself outside every repository.
 #SPARKY_PERSONAL_APPS=$HOME/sparky-os/personal/apps.origin.tsv
 
+# Scratch root for work folders that are rebuilt when needed (test rigs, caches, staged
+# builds; never /tmp, which may be wiped at boot).
+SPARKY_SCRATCH=/var/tmp/sparky-scratch
+# Folder that holds the work areas the test rigs run in, one subfolder per area (the
+# proof and rig scripts of sparky-os/upstream name theirs).
+SPARKY_WORKSPACES=$HOME/sparky-os/workspaces
+# Folder with the source checkouts some package recipes read (sparky-backup-core-stereo,
+# sparky-beep).
+SPARKY_SOURCES=$HOME/src
+# This checkout. local-config.sh sets it; set it yourself when you export the
+# configuration into the environment instead (set -a; . build.conf; set +a).
+#SPARKY_TREE=$HOME/src/sparky-stereo-os-build
+
 # Checkout of the public edition repository (github.com/Sparky-OS/sparky-stereo-os).
 SPARKY_PUBLIC_EDITION=$HOME/src/sparky-stereo-os
 # The public repository the edition's apt source points at.

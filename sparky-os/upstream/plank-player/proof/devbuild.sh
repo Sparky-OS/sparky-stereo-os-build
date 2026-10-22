@@ -1,6 +1,7 @@
 #!/bin/bash
 # dev build of the working tree in plank-build:1 into /w/dev-build, installed into /w/dev-prefix
-docker run --rm --platform linux/amd64 --user $(id -u):$(id -g) --cpus 4 -e HOME=/tmp/h -v /K3D/temp/partners/queue/plank-player:/w plank-build:1 bash -c '
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+docker run --rm --platform linux/amd64 --user $(id -u):$(id -g) --cpus 4 -e HOME=/tmp/h -v ${SPARKY_WORKSPACES:?}/plank-player:/w plank-build:1 bash -c '
 set -e
 mkdir -p /w/dev-build && cd /w/dev-build
 cmake -S /w/tree/plank-player -B . -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=/w/dev-prefix -DCMAKE_CXX_FLAGS="-Wall -Wextra" > cmake.log 2>&1 || { tail -30 cmake.log; exit 1; }

@@ -2,10 +2,11 @@
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/06
 # Copyright 2026 under the GNU GPL3 License
 # Sparky Stereo OS: phoronix-test-suite from upstream's tag v10.8.4, in a throwaway container of Debian testing (amd64; image sparky-pkg-base:amd64 = docker tag of debian:unstable, its suite switched to testing in the script).
-# Usage: build.sh [workdir]   (default /K3D/temp/partners/queue/hand-installed-apps/pts/build)
+# Usage: build.sh [workdir]   (default ${SPARKY_WORKSPACES}/hand-installed-apps/pts/build)
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
-WORK=${1:-/K3D/temp/partners/queue/hand-installed-apps/pts/build}
+WORK=${1:-${SPARKY_WORKSPACES:?}/hand-installed-apps/pts/build}
 mkdir -p "$WORK"
 docker run --rm -e HOST_UID=$(id -u) -v "$WORK":/out -v "$HERE/debian":/debian-ours:ro sparky-pkg-base:amd64 bash -c '
 set -e

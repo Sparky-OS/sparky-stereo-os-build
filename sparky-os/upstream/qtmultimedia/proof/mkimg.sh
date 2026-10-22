@@ -1,6 +1,7 @@
 #!/bin/bash
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 docker rm -f qtmm-img >/dev/null 2>&1
-docker run --name qtmm-img --platform linux/amd64 --cpus 4 -v /K3D/temp/sparky-os/repo:/repo:ro -v /K3D/temp/partners/queue/plank-player/run/pin:/pin:ro -e DEBIAN_FRONTEND=noninteractive debian:testing-slim bash -c '
+docker run --name qtmm-img --platform linux/amd64 --cpus 4 -v ${SPARKY_REPO_DIR:?}:/repo:ro -v ${SPARKY_WORKSPACES:?}/plank-player/run/pin:/pin:ro -e DEBIAN_FRONTEND=noninteractive debian:testing-slim bash -c '
 set -e
 apt-get -y update >/dev/null 2>&1; apt-get -y dist-upgrade 2>&1 | tail -1
 apt-get -y install ca-certificates >/dev/null 2>&1

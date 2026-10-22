@@ -1,5 +1,6 @@
 #!/bin/bash
-cd /K3D/temp/partners/queue/media-on-dmo/work/rig
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+cd ${SPARKY_WORKSPACES:?}/media-on-dmo/work/rig
 for vo in gpu-next gpu; do for b in old1 old2 new1 new2; do
   mb=mpv; case $b in new*) mb=/mpvb2/mpv;; esac
   nm=k2d-$vo-$b

@@ -1,6 +1,7 @@
 #!/bin/bash
 # usage: matrix360.sh <prefix>: every 360/VR180 clip played in PlasmaTube, three captures (straight ahead, then the view dragged on twice)
-W=/K3D/temp/partners/queue/plasmatube
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+W=${SPARKY_WORKSPACES:?}/plasmatube
 p=$1
 while read id kind clip dx; do
   $W/run/pan.sh $p-$id $id $dx

@@ -7,12 +7,13 @@
 # service runs at boot before chrony; a watcher runs it again when timedated reports a new timezone.
 # Needs only dpkg-deb; run it in a throwaway container or on any Debian.
 # Last update 2026/10/02
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-OUT=${OUT:-/K3D/temp/sparky-os/repo}
+OUT=${OUT:-${SPARKY_REPO_DIR:?}}
 VERSION=20261002.5~sparky9~0+lc1
 PKG=sparky-stereo-time
-W=$(mktemp -d "${TMPDIR:-/K3D/temp}/time-build.XXXXXX")
+W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/time-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 D=$W/$PKG
 S=$D/usr/share/$PKG

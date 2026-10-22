@@ -10,10 +10,11 @@
 # (/etc/default/grub.d/20-sparkyos-artwork.cfg; a background the person chose is kept). Needs dpkg-deb and
 # python3-pil.
 # Last update 2026/10/16
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-ART=${ART:-/K3D/temp/sparky-os/artwork-repo/9}
-OUT=${OUT:-/K3D/temp/sparky-os/repo}
+ART=${ART:-${SPARKY_SCRATCH:?}/sparky-os/artwork-repo/9}
+OUT=${OUT:-${SPARKY_REPO_DIR:?}}
 PKG=sparkyos-artwork
 VERSION=$(sed -n '2s/^  Version \([^ ]*\) .*/\1/p' "$HERE/CHANGELOG")
 VERSION=$VERSION+lc1

@@ -1,6 +1,7 @@
 #!/bin/bash
 # usage: [DEV=1] [APPCMD=...] [CROP_TOP=n NO_BAR=1] mx.sh <prefix> "<clip> [app args...]" ... : each entry plays one clip (3 captures), then declarations/subsurfaces and the analysis
-W=/K3D/temp/qtmm-lane
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+W=${SPARKY_SCRATCH:?}/qtmm-lane
 p=$1; shift
 for e in "$@"; do
   set -- $e; c=$1; shift

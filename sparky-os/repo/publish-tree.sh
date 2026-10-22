@@ -32,6 +32,7 @@
 # With a key that has a passphrase, gpg-agent asks for it once (run from a terminal); it
 # stays cached for the run. A key without a passphrase signs without asking.
 # Last update 2026/10/05
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 CODENAME=mashtabba
@@ -64,7 +65,7 @@ FPR=$(gpg --homedir "$SPARKY_REPO_GNUPGHOME" --with-colons --fingerprint "$SPARK
 	awk -F: '/^fpr:/ {print $10; exit}')
 umask 022
 
-W=$(mktemp -d "${TMPDIR:-/K3D/temp}/publish-tree.XXXXXX")
+W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/publish-tree.XXXXXX")
 trap 'rm -rf "${W:?}"' EXIT
 
 # 1. Choose the newest version of each package and where it goes in the pool.

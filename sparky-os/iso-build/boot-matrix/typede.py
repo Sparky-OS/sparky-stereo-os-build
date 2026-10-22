@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """typede.py SOCK TEXT : types TEXT into a guest whose keyboard layout is German (pc105 de), by QEMU qcodes."""
-import sys, time
-sys.path.insert(0, "/K3D/temp/partners/queue/beta-iso-lutz/boot-matrix")
+import os, sys, time
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from vmctl import Qmp
 DE = {'y': ['z'], 'z': ['y'], 'Y': ['shift', 'z'], 'Z': ['shift', 'y'], '-': ['slash'], '_': ['shift', 'slash'],
       '/': ['shift', '7'], '.': ['dot'], ',': ['comma'], ':': ['shift', 'dot'], ';': ['shift', 'comma'],

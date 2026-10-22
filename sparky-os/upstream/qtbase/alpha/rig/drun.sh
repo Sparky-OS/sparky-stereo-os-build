@@ -4,9 +4,10 @@
 #   SOFT=1  software GL for the client (KWin stays on the GPU); CSD=1 leaves Qt's client decorations enabled;
 #   NODECO=1 KWin loads no decoration plugin (the compositor draws none, so Qt falls back to its own with CSD=1).
 # Evidence lands in $EVROOT/<case>.
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 here=$(cd "$(dirname "$0")" && pwd)
 case_=$1; shift
-EVROOT=${EVROOT:-/K3D/temp/qtbase-pkg/evidence}
+EVROOT=${EVROOT:-${SPARKY_SCRATCH:?}/qtbase-pkg/evidence}
 ev=$EVROOT/$case_
 rm -rf "$ev"; mkdir -p "$ev"
 uid=$(id -u); gid=$(id -g)

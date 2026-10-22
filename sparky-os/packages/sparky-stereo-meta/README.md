@@ -15,4 +15,4 @@ the packages in sparky-os/lists/*.list (system essentials and the edition's own 
 
 Build:
 -------------
-./build.sh   (the packages land in /K3D/temp/sparky-os/repo; OUT=dir changes it)
+./build.sh   (the packages land in $SPARKY_REPO_DIR; OUT=dir changes it)

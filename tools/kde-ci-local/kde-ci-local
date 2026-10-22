@@ -26,7 +26,7 @@ reproduced (KDE's '@same' rule reads them), so keep the tree's remotes
 current (git fetch --all) before a run.
 
 Environment:
-  KDE_CI_LOCAL_WORK   work folder (default /K3D/temp/kde-ci-local); holds the
+  KDE_CI_LOCAL_WORK   work folder (default $SPARKY_SCRATCH/kde-ci-local); holds the
                       KDE sources, the package cache, the logs and the job trees
   KDE_CI_LOCAL_THREADS  threads per container (default 4, the house limit)
 
@@ -357,16 +357,35 @@ def dri_gid(node):
 
 # Build jobs of every lane on this machine take one shared lock, so their build trees (10 to 20 GB each)
 # never fill the disk at the same time; lint jobs run freely. Opened read-only: flock needs no write access.
-HEAVY_LOCK = os.environ.get("KDE_CI_LOCAL_HEAVY_LOCK", "/K3D/temp/kde-ci-local/heavy-job.lock")
-SHARED_CACHE = os.environ.get("KDE_CI_LOCAL_CACHE", "/K3D/temp/kde-ci-local/cache")
+def default_work():
+    """$SPARKY_SCRATCH/kde-ci-local, from the environment or the local configuration."""
+    scratch = os.environ.get("SPARKY_SCRATCH")
+    if not scratch:
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "..", "sparky-os", "config"))
+        try:
+            import local_config
+            scratch = local_config.VALUES.get("SPARKY_SCRATCH")
+        except ImportError:
+            scratch = None
+    if not scratch:
+        raise SystemExit("set KDE_CI_LOCAL_WORK, or SPARKY_SCRATCH in the local configuration (sparky-os/config/build.conf.example)")
+    return os.path.join(scratch, "kde-ci-local")
+
+
+def heavy_lock_path():
+    return os.environ.get("KDE_CI_LOCAL_HEAVY_LOCK") or os.path.join(default_work(), "heavy-job.lock")
+
+
+def shared_cache_dir():
+    return os.environ.get("KDE_CI_LOCAL_CACHE") or os.path.join(default_work(), "cache")
 
 
 def heavy_lock(name):
     try:
-        fd = os.open(HEAVY_LOCK, os.O_RDONLY | os.O_CREAT, 0o644)
+        fd = os.open(heavy_lock_path(), os.O_RDONLY | os.O_CREAT, 0o644)
     except OSError:
         try:
-            fd = os.open(HEAVY_LOCK, os.O_RDONLY)
+            fd = os.open(heavy_lock_path(), os.O_RDONLY)
         except OSError as e:
             print(f"  note: no shared build lock ({e}); {name} runs without waiting for other lanes")
             return None
@@ -489,7 +508,7 @@ def run_job_locked(name, job, cfg, args, ctx):
     if mount_cache:
         # one dependency cache for every lane on this machine (KDE's artifacts, downloadable again);
         # build jobs take turns through the shared lock, so they never write it at the same time
-        cdir = os.path.join(SHARED_CACHE, plat.replace("/", "_") if plat else "none")
+        cdir = os.path.join(shared_cache_dir(), plat.replace("/", "_") if plat else "none")
         os.makedirs(os.path.join(cdir, "artifacts"), exist_ok=True)
         os.makedirs(os.path.join(cdir, "caches"), exist_ok=True)
         cmd += ["-v", f"{cdir}:{mount_cache}"]
@@ -673,7 +692,7 @@ def main():
     ap.add_argument("--stack-prune", action="store_true", help="with --stack: remove the prefixes of superseded keys, then stop")
     args = ap.parse_args()
 
-    work = os.environ.get("KDE_CI_LOCAL_WORK", "/K3D/temp/kde-ci-local")
+    work = os.environ.get("KDE_CI_LOCAL_WORK") or default_work()
     os.makedirs(work, exist_ok=True)
     ci = ensure_kde_sources(work, not args.no_refresh)
     if args.build_qt613_image:

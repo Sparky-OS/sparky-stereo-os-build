@@ -11,8 +11,8 @@ ROOTS = {
     "gnome": Path("/usr/share/icons/gnome"),
     "Adwaita": Path("/usr/share/icons/Adwaita"),
     "sparkyblack": Path("/usr/share/icons/sparkyblack"),
-    "NineIcons48x": Path("/home/daniel/.local/share/icons/NineIcons48x"),
-    "Glass": Path("/home/daniel/.local/share/icons/Glass"),
+    "NineIcons48x": Path.home() / ".local/share/icons/NineIcons48x",
+    "Glass": Path.home() / ".local/share/icons/Glass",
 }
 LICENSES = {
     "oxygen": "LGPL-3.0-or-later",

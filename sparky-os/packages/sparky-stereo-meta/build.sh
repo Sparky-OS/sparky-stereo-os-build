@@ -10,12 +10,13 @@
 # The kernel pair linux-image-sparky-stereo and linux-headers-sparky-stereo is versioned after
 # the kernel in the repository (rebuild after a kernel bump). Each is a control file and a copyright file. Version: the build date.
 # Last update 2026/10/02
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 umask 022
 HERE=$(cd "$(dirname "$0")" && pwd)
-OUT=${OUT:-/K3D/temp/sparky-os/repo}
+OUT=${OUT:-${SPARKY_REPO_DIR:?}}
 VERSION=${VERSION:-$(date +%Y%m%d)}   # second build of a day: VERSION=YYYYMMDD.1
-BUILD_ROOT=${BUILD_ROOT:-/K3D/temp/sparky-os}
+BUILD_ROOT=${BUILD_ROOT:-${SPARKY_SCRATCH:?}/sparky-os}
 mkdir -p "$BUILD_ROOT"
 W=$(mktemp -d "$BUILD_ROOT/meta-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT

@@ -1,10 +1,11 @@
 #!/bin/bash
-# usage: build-qt6-multimedia.sh [work dir, default /K3D/temp/qtmm-lane/pkg]
+# usage: build-qt6-multimedia.sh [work dir, default ${SPARKY_SCRATCH}/qtmm-lane/pkg]
 # qt6-multimedia 6.11.2-3+stereo3d4: Debian's source with our eight patches (qt6-multimedia/*.patch: 0001 the packing in
 # QVideoFrameFormat from the previous round, 0002-0004 and 0007 offerable, 0005, 0006 and 0008 edition only), in a throwaway debian:testing
 # container (as the user, 4 threads) with the dependencies of the source and our development repository
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -e
-W=${1:-/K3D/temp/qtmm-lane/pkg}
+W=${1:-${SPARKY_SCRATCH:?}/qtmm-lane/pkg}
 H=$(cd "$(dirname "$0")/.." && pwd)
 mkdir -p $W/patches $W/home
 cp $H/qt6-multimedia/*.patch $W/patches/
@@ -19,7 +20,7 @@ for f in glob.glob(sys.argv[1] + '/*.patch'):
         open(f, 'w').write(u)
 PY
 docker run --rm --platform linux/amd64 --user $(id -u):$(id -g) --cpus 4 -e HOME=/w/home -e DEBIAN_FRONTEND=noninteractive \
-  -v $W:/w -v /K3D/temp/sparky-os/repo:/repo:ro qtmm-build:1 bash -c '
+  -v $W:/w -v ${SPARKY_REPO_DIR:?}:/repo:ro qtmm-build:1 bash -c '
 set -e
 cd /w
 rm -rf tree; mkdir tree; cd tree

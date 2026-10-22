@@ -1,9 +1,10 @@
 #!/bin/bash
 # Stage the first drawings for review, without installing into a session.
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 lane=$(dirname "$repo")
-dest=/K3D/temp/sparky-os/pending-pack/classic-look/kubabbar-glass
+dest=${SPARKY_STAGING_DIR:?}/classic-look/kubabbar-glass
 printf '%s\n' "$dest" >> "$lane/.artifacts"
 mkdir -p "$dest/usr/share" "$dest/integration"
 cp -a "$repo/share/." "$dest/usr/share/"

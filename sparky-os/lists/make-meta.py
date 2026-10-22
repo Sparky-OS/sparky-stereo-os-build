@@ -16,7 +16,11 @@
 # 2D programs of science and education), sparky-stereo-gaming transitional, sparky-stereo-tasks for tasksel
 import os, re, subprocess, sys
 
-REPO = os.environ.get('REPO', '/K3D/temp/sparky-os/repo')
+REPO = os.environ.get('REPO')
+if not REPO:
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'config'))
+    import local_config
+    REPO = local_config.get('SPARKY_REPO_DIR')
 
 def repo_versions():
     # highest version of every package in the repository's Packages index

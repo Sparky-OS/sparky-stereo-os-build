@@ -8,7 +8,7 @@
 #
 #   -b BUILD     build counter, part of the release name; a release name is never reused (the script stops if it exists)
 #   -f FLAVOUR   base (default): generic x86-64; v3: x86-64-v3 (AVX2 and newer CPUs); rt: PREEMPT_RT (audio production)
-#   -o OUT       output directory (default /K3D/temp/linux-stereo3d-out); packages land in OUT/<release>/
+#   -o OUT       output directory (default ${SPARKY_SCRATCH}/linux-stereo3d-out); packages land in OUT/<release>/
 #   -k           keep the work directory (default: removed after a successful build)
 #   -t           smoke test: a tiny kernel through the same packaging steps (see tests/package-smoke.sh), no series, no Debian configuration
 #
@@ -20,13 +20,14 @@
 #   KERNEL_GIT        a git directory that has TAG (otherwise the tag is cloned from git.kernel.org, depth 1)
 #   SERIES            patch series directory (default kernel/series); SKIP: regular expression of series lines to leave out
 #   CPUS, MEM, JOBS   container limits (default 4, 16g) and make -j (default 4)
-#   WORK              work directory (default /K3D/temp/linux-stereo3d-build)
+#   WORK              work directory (default ${SPARKY_SCRATCH}/linux-stereo3d-build)
 #
 # The packages are NOT signed. The kernel image is signed by whoever holds the Secure Boot key; the modules are already
 # signed with a key that exists only during the build and is deleted before the script ends.
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
-FLAVOUR=base; OUT=/K3D/temp/linux-stereo3d-out; BUILD=; KEEP=0; SMOKE=0
+FLAVOUR=base; OUT=${SPARKY_SCRATCH:?}/linux-stereo3d-out; BUILD=; KEEP=0; SMOKE=0
 while getopts b:f:o:kth opt; do
     case "$opt" in
         b) BUILD=$OPTARG;; f) FLAVOUR=$OPTARG;; o) OUT=$OPTARG;; k) KEEP=1;; t) SMOKE=1;;
@@ -39,7 +40,7 @@ TAG=${TAG:-v7.3-rc6}
 TAG_COMMIT=${TAG_COMMIT:-a90ee4305c4a5df72c11b31dacfdc76e00fcf78a}
 SERIES=${SERIES:-$HERE/series}
 CPUS=${CPUS:-4}; MEM=${MEM:-16g}; JOBS=${JOBS:-4}
-WORK=${WORK:-/K3D/temp/linux-stereo3d-build}
+WORK=${WORK:-${SPARKY_SCRATCH:?}/linux-stereo3d-build}
 IMAGE=${IMAGE:-sparky-kernel-build:1}
 
 # version strings from the tag: v7.3-rc6 -> 7.3.0-rc6 (kernel) / 7.3.0~rc6 (Debian); v7.3 -> 7.3.0; v7.3.1 -> 7.3.1

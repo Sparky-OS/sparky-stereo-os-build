@@ -1,5 +1,6 @@
 #!/bin/bash
-cd /K3D/temp/qtmm-lane/run
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+cd ${SPARKY_SCRATCH:?}/qtmm-lane/run
 LOG='{"QT_LOGGING_RULES":"qt.multimedia.video.stereopresenter.debug=true;qt.multimedia.video.stereolayer.debug=true"}'
 {
 echo "== depth: the buffer of the layer under the edition's defaults (stereoSurface BySource), levels of red per view, measured in the buffer before it is committed (KWin's capture is 8 bit)"

@@ -1,6 +1,7 @@
 #!/bin/bash
 # one view only (no layer: the offerable build): the colour of the one view per clip and view
-W=/K3D/temp/qtmm-lane
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+W=${SPARKY_SCRATCH:?}/qtmm-lane
 for spec in "Z-sei-sbs-L.mp4 0" "Z-sei-sbs-R.mp4 0" "Z-sei-tb-L.mp4 0" "Z-mkv-tb-R.mkv 0" "Z-sei-rows.mp4 0" "Z-sei-cols.mp4 0" "Z-sei-checker.mp4 0" "Zn-mkv-seq-L.mkv 0" "Zn-mkv-seq-R.mkv 0" "Z-sei-seq.mp4 0" "Z-plain-seq.mp4 11"; do
   set -- $spec
   for v in 0 1 2; do

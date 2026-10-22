@@ -7,7 +7,7 @@
 set -u
 U="runuser -u daniel -- env XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus WAYLAND_DISPLAY=wayland-0"
 label=$1
-cfg=/home/daniel/.config/powerdevilrc
+cfg=${HOME}/.config/powerdevilrc
 cp -p $cfg /var/tmp/powerdevilrc.ab
 loginctl unlock-session 1; $U kscreen-doctor --dpms on >/dev/null 2>&1; sleep 1
 $U systemctl --user restart plasma-powerdevil; sleep 4

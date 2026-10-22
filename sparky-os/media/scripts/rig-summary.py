@@ -2,7 +2,10 @@
 # Summarises the rig results of one prefix family (e.g. o3): per output, the number of clips that passed, counting a clip as passed
 # when its first run passed or its serial rerun passed; lists every run that needed a rerun, with the reason.
 import re, sys, os, glob
-R = '/K3D/temp/partners/queue/media-on-dmo/work/rig'
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'config'))
+import local_config
+# the rig's results, in the media-on-dmo work area of SPARKY_WORKSPACES
+R = os.path.join(local_config.get('SPARKY_WORKSPACES'), 'media-on-dmo/work/rig')
 pre = sys.argv[1]
 def lines(p):
     return [l.rstrip('\n') for l in open(p)] if os.path.exists(p) else []

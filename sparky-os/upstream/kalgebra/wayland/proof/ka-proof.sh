@@ -1,5 +1,6 @@
 #!/bin/bash
-cd /K3D/temp/kdesci-wl
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+cd ${SPARKY_SCRATCH:?}/kdesci-wl
 p=${1:-ka}
 export IMG=${IMG:-kdesci-wl:1} WAIT=14 SHIM=/w/tests/gl-shim.so GEOM_EVERY=1
 unset FREEZE_AT FREEZE_SECONDS STATIC_ONLY DETERMINISTIC FAKETIME

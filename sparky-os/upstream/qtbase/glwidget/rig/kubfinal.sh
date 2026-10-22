@@ -1,4 +1,5 @@
-cd /K3D/temp/qtgl/rig
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+cd ${SPARKY_SCRATCH:?}/qtgl/rig
 export NODECO='mkdir -p $XDG_CONFIG_HOME; printf "[org.kde.kdecoration2]\nNoPlugin=true\n" > $XDG_CONFIG_HOME/kwinrc'
 for i in 1 2; do env IMG=qtgl-run:final NAME=g-kub-gpu-$i PRE="$NODECO" FREEZE_AT=40 FREEZE_SECONDS=14 WAIT=5 STATIC_ONLY=1 SHIM=/w/kubrick-shim2.so CMD="/usr/games/kubrick --stereo" ./drun.sh >/dev/null 2>&1; done
 for i in 1 2; do env IMG=qtgl-run:dbg NAME=h-kub-sw-$i SOFT=1 PRE="$NODECO" FREEZE_AT=40 FREEZE_SECONDS=14 WAIT=5 STATIC_ONLY=1 SHIM=/w/kubrick-shim2.so CMD="/usr/games/kubrick --stereo" ./drun.sh >/dev/null 2>&1; done

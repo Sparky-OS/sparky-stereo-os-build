@@ -1,6 +1,7 @@
 #!/bin/bash
 # usage: imatrix.sh <prefix> <image> <mpvbin|mpv> -> results-<prefix>.txt   (both outputs x tscale default/linear x cases)
-cd /K3D/temp/partners/queue/media-on-dmo/work/rig
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+cd ${SPARKY_WORKSPACES:?}/media-on-dmo/work/rig
 pre=$1; img=$2; export MPVBIN=${3:-mpv}; : > results-$pre.txt
 C=/w/clips
 for vo in gpu-next gpu; do for ts in default linear; do

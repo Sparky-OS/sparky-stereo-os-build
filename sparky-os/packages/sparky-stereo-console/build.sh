@@ -15,13 +15,14 @@
 # Debian's /etc/issue, /etc/issue.net, 10-uname and skel .bashrc are diverted to *.debian
 # and given back when the package is removed.
 # Last update 2026/10/02
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-OUT=${OUT:-/K3D/temp/sparky-os/repo}
+OUT=${OUT:-${SPARKY_REPO_DIR:?}}
 VERSION=20261014.1~sparky9~0+lc1
 PKG=sparky-stereo-console
 B=$HERE/base
-W=$(mktemp -d "${TMPDIR:-/K3D/temp/sparky-os}/console-build.XXXXXX")
+W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}/sparky-os}/console-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 D=$W/$PKG
 S=$D/usr/share/$PKG

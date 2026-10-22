@@ -1,6 +1,7 @@
 #!/bin/bash
 # the proofs from the packages installed from the repository in a fresh container (qtmm-fresh:1), no development build
-cd /K3D/temp/qtmm-lane/run
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+cd ${SPARKY_SCRATCH:?}/qtmm-lane/run
 export IMG=qtmm-fresh:1
 unset DEV DEVDIR
 P=fp

@@ -164,15 +164,14 @@ if new_facts:
         emit("fact", f"cpu-level-disagreement\tloader v{loader_level}, cpuinfo flags v{flag_level}; the loader's answer is used")
 
 # Board: DMI vendor and name (/sys/class/dmi/id/board_vendor and board_name; the keys the
-# OpenRGB project's documentation and the study use to recognise boards, e.g. Gigabyte).
+# OpenRGB project's documentation uses to recognise boards, e.g. Gigabyte).
 board_vendor = read_optional("dmi-board-vendor")
 board_name = read_optional("dmi-board-name")
 if board_vendor is not None or board_name is not None:
     emit("fact", "board\t" + " / ".join(x.strip() for x in (board_vendor or "?", board_name or "?")))
 
-# USB vendor IDs present. Names only for the vendors the gaming-rig study lists as RGB or
-# peripheral makers (sparky-os/notes/gaming-rig-map-and-plan.md section 4.1, which took them from
-# the OpenRGB project's udev rules documentation, read 2026-10-05). Nothing is installed for them.
+# USB vendor IDs present. Names only for RGB and peripheral makers, taken from the OpenRGB
+# project's udev rules documentation (read 2026-10-05). Nothing is installed for them.
 USB_VENDOR_NAMES = {"1b1c": "Corsair", "1532": "Razer", "046d": "Logitech", "0b05": "ASUS",
                     "1038": "SteelSeries", "1e71": "NZXT", "1462": "MSI", "1044": "Gigabyte"}
 usb_vendors = sorted({vendor.lower() for vendor, _ in re.findall(r"\bID ([0-9a-fA-F]{4}):([0-9a-fA-F]{4})\b", read("lsusb"))})

@@ -5,9 +5,10 @@
 # Calamares reads before SparkyLinux's in /usr/share/calamares (the way Debian ships
 # calamares-settings-debian). Needs only dpkg-deb.
 # Last update 2026/10/16
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-OUT=${OUT:-/K3D/temp/sparky-os/repo}
+OUT=${OUT:-${SPARKY_REPO_DIR:?}}
 PKG=calamares-settings-sparky-stereo
 VERSION=$(sed -n '2s/^  Version \([^ ]*\) .*/\1/p' "$HERE/CHANGELOG")
 VERSION=${VERSION}+lc1

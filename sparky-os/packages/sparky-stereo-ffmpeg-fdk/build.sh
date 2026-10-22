@@ -17,15 +17,16 @@
 # CPU_MINUTES is the build's CPU time (user plus system, minutes), measured on the container build of ffmpeg-dmo
 # 10:9.0.2-dmo1+stereo3d2 (media-on-dmo, 2026-10-08): the time the command tells the user is this divided by the cores.
 # Needs only dpkg-deb.
-# Usage: build.sh   (output goes to $OUT, default /K3D/temp/sparky-os/repo)
+# Usage: build.sh   (output goes to $OUT, default ${SPARKY_REPO_DIR})
 # Last update 2026/10/08
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-OUT=${OUT:-/K3D/temp/sparky-os/repo}
+OUT=${OUT:-${SPARKY_REPO_DIR:?}}
 VERSION=${VERSION:-20261008.2~sparky9~0+lc1}
 CPU_MINUTES=${CPU_MINUTES:-35}
 PKG=sparky-stereo-ffmpeg-fdk
-W=$(mktemp -d "${TMPDIR:-/K3D/temp}/fdk-build.XXXXXX")
+W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/fdk-build.XXXXXX")
 trap 'rm -rf "${W:?}"' EXIT
 D=$W/$PKG
 mkdir -p "$D/DEBIAN" "$D/usr/bin" "$D/usr/lib/$PKG" "$D/usr/share/sparky/$PKG" "$D/usr/share/doc/$PKG" \

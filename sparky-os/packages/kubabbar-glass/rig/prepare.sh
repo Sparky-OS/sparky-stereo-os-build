@@ -1,5 +1,6 @@
 #!/bin/bash
 # Rebuild the headless fixture from the pinned, already available Stereo KWin image.
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 lane=$(cd "$(dirname "$0")/../.." && pwd)
 [ -S "$lane/docker.sock" ] && export DOCKER_HOST="unix://$lane/docker.sock" || true
@@ -10,7 +11,7 @@ printf '%s\n' classic-look-prepare classic-look-rig:m1-oxygen >> "$lane/.artifac
 trap 'docker rm -f classic-look-prepare >/dev/null 2>&1 || true' EXIT
 docker run --name classic-look-prepare --platform linux/amd64 --cpus 4 --user 0:0 \
 	--entrypoint /bin/sh \
-	-v /K3D/temp/sparky-os/repo:/var/local/sparky-stereo-repo:ro \
+	-v ${SPARKY_REPO_DIR:?}:/var/local/sparky-stereo-repo:ro \
 	-e CLASSIC_UID="$task_uid" -e CLASSIC_GID="$task_gid" "$base" -c '
 	set -e
 	apt-get update

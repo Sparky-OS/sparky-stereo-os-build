@@ -1,6 +1,7 @@
 #!/bin/bash
 # 2D paused still after an exact seek, repeated, old build (mpv in the image) and new (/mpvb2/mpv), with and without --dither=no
-cd /K3D/temp/partners/queue/media-on-dmo/work/rig
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+cd ${SPARKY_WORKSPACES:?}/media-on-dmo/work/rig
 for vo in gpu-next gpu; do for dv in dither dithno; do for b in old new; do for rep in 1 2; do
   mb=mpv; [ $b = new ] && mb=/mpvb2/mpv; da=""; [ $dv = dithno ] && da="--dither=no"
   nm=j2d-$vo-$dv-$b-$rep

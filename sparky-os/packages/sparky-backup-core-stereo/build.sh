@@ -9,10 +9,11 @@
 # that depend on the packer keep working; plain sparkybackup behaves as SparkyLinux's.
 # Run it inside a debian:testing container with dpkg-dev.
 # Last update 2026/10/15
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-SRC=${SRC:-/K3D/GitHub/sparky-backup-core-stereo}/9
-OUT=${OUT:-/K3D/temp/sparky-os/repo}
+SRC=${SRC:-${SPARKY_SOURCES:?}/sparky-backup-core-stereo}/9
+OUT=${OUT:-${SPARKY_REPO_DIR:?}}
 PKG=sparky-backup-core-stereo
 VERSION=$(sed -n '2s/^  Version \([^ ]*\) .*/\1/p' "$SRC/CHANGELOG")
 [ -n "$VERSION" ] || { echo "no version in $SRC/CHANGELOG"; exit 1; }

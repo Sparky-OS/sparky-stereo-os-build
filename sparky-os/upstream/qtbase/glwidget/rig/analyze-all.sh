@@ -1,6 +1,7 @@
 #!/bin/bash
 # usage: analyze-all.sh <prefix>   writes analysis.txt and surfaces.txt into every ev/<prefix>-* case and prints a one-line summary
-cd /K3D/temp/qtgl/ev
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+cd ${SPARKY_SCRATCH:?}/qtgl/ev
 for d in $1-*; do
   [ -f $d/app.raw ] || continue
   python3 ../rig/wlsurf.py $d/app.raw > $d/surfaces.txt 2>&1

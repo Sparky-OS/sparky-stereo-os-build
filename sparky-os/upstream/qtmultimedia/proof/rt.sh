@@ -1,7 +1,8 @@
 #!/bin/bash
 # usage: [DEV=1] [IMG=qtmm-run:1] rt.sh <name> <steps-json> <qml args...>  : DEV=1 runs with the dev build of Qt Multimedia
-W=/K3D/temp/qtmm-lane
-P=/K3D/temp/partners/queue/players-stereo/.scratch/run
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+W=${SPARKY_SCRATCH:?}/qtmm-lane
+P=${SPARKY_WORKSPACES:?}/players-stereo/.scratch/run
 name=$1; steps=$2; shift 2
 rm -rf $W/out/$name
 DEVENV=""

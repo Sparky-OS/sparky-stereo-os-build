@@ -1,6 +1,7 @@
 #!/bin/bash
-cd /K3D/temp/qtmm-lane/run
-Q="docker run --rm --platform linux/amd64 --user $(id -u):$(id -g) -v /K3D/temp/qtmm-lane:/w qtmm-run:3"
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+cd ${SPARKY_SCRATCH:?}/qtmm-lane/run
+Q="docker run --rm --platform linux/amd64 --user $(id -u):$(id -g) -v ${SPARKY_SCRATCH:?}/qtmm-lane:/w qtmm-run:3"
 for build in edition offerable; do
   [ $build = edition ] && D=/w/b-final || D=/w/b-luma
   for c in L-plain-sbs-32x9.mp4 L-plain-sbs-full.mp4 2d-239.mp4 2d-169.mp4 L-2d.mp4; do

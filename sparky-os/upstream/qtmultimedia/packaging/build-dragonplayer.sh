@@ -1,14 +1,15 @@
 #!/bin/bash
-# usage: build-dragonplayer.sh [work dir, default /K3D/temp/qtmm-lane/pkg-dragon]
+# usage: build-dragonplayer.sh [work dir, default ${SPARKY_SCRATCH}/qtmm-lane/pkg-dragon]
 # dragonplayer 4:26.04.0-1+stereo3d4: Debian's source with our one patch (dragon/0001-*.patch, QML only: the 3D Video menu bound to
 # Qt Multimedia's VideoOutput), built in a throwaway debian:testing container (as the user, 4 threads)
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -e
-W=${1:-/K3D/temp/qtmm-lane/pkg-dragon}
+W=${1:-${SPARKY_SCRATCH:?}/qtmm-lane/pkg-dragon}
 H=$(cd "$(dirname "$0")/.." && pwd)
 mkdir -p $W/patches $W/home
 cp $H/dragon/*.patch $W/patches/
 docker run --rm --platform linux/amd64 --user $(id -u):$(id -g) --cpus 4 -e HOME=/w/home -e DEBIAN_FRONTEND=noninteractive \
-  -v $W:/w -v /K3D/temp/sparky-os/repo:/repo:ro qtmm-build:2 bash -c '
+  -v $W:/w -v ${SPARKY_REPO_DIR:?}:/repo:ro qtmm-build:2 bash -c '
 set -e
 cd /w; rm -rf tree; mkdir tree; cd tree
 apt-get source dragon >/dev/null 2>&1

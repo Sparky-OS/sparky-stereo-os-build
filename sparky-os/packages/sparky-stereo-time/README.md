@@ -26,7 +26,7 @@ At boot `sparky-stereo-time.service` runs before chrony.service and writes the s
 
 Build:
 -------------
-./build.sh   (the package lands in /K3D/temp/sparky-os/repo, or in $OUT)
+./build.sh   (the package lands in $SPARKY_REPO_DIR, or in $OUT)
 
 Use:
 -------------

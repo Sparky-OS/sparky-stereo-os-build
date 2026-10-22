@@ -6,9 +6,10 @@
 # (source libcapi20-3 1:3.27-3.2 is in unstable and stable; tracker bug #1143331).
 # Changes: the changelog entry, the maintainer fields, and the two kernel CAPI headers (compat-include) that
 # linux-libc-dev in testing no longer ships, without which configure fails.
-# Usage: build.sh [workdir]   (default /K3D/temp/partners/queue/hand-installed-apps/capi/build)
+# Usage: build.sh [workdir]   (default ${SPARKY_WORKSPACES}/hand-installed-apps/capi/build)
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
-WORK=${1:-/K3D/temp/partners/queue/hand-installed-apps/capi/build}
+WORK=${1:-${SPARKY_WORKSPACES:?}/hand-installed-apps/capi/build}
 mkdir -p "$WORK"
 HERE=$(dirname "$(readlink -f "$0")")
 docker run --rm -e HOST_UID=$(id -u) -v "$WORK":/out -v "$HERE/compat-include":/compat:ro sparky-pkg-base:amd64 bash -c '

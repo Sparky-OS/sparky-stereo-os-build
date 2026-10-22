@@ -9,7 +9,7 @@ seen further right by the left eye, as in any stereo pair). Nothing is warped, n
 wrapped in a <g transform="translate(...)"> and the shifted drawing is rendered by librsvg (sub-pixel shifts
 come out of the vector drawing).
 
-Source rule (the study's rule 1.2, without hidef): scalable/<context>/small/<N>x<N>/<name> when it exists,
+Source rule (without hidef): scalable/<context>/small/<N>x<N>/<name> when it exists,
 else scalable/<context>/<name>.
 
 UNITS (the "parts"), in paint order. Starting at the document root:

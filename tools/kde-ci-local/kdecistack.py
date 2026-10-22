@@ -27,7 +27,9 @@ import yaml
 def load(path):
     with open(path) as f:
         stack = yaml.safe_load(f)
-    root = os.environ.get("KDE_CI_STACK_REPOS", stack.get("repos", "."))
+    # A relative "repos" is relative to the stack file; without one, the current folder.
+    root = os.environ.get("KDE_CI_STACK_REPOS") or (
+        os.path.join(os.path.dirname(os.path.abspath(path)), stack["repos"]) if "repos" in stack else ".")
     stack["root"] = root
     stack["order"] = []
     seen = set()

@@ -3,7 +3,7 @@
 set -euo pipefail
 test -e /.dockerenv
 test "$(id -u)" = 1000
-repo=${GL_STEREO_SOURCE:-/K3D/temp/partners/gl-stereo/gl-stereo}
+repo=${GL_STEREO_SOURCE:-$(cd "$(dirname "$0")/.." && pwd)}
 build=${GL_STEREO_BUILD:-/mnt/build/gl-stereo}
 cd "$repo"
 version=$(dpkg-parsechangelog -SVersion)

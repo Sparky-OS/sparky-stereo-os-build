@@ -1,6 +1,7 @@
 #!/bin/bash
 # Plank Player (dev build) proofs. usage: [DEV=1] pk.sh plain|osd|manual <prefix> ...
-W=/K3D/temp/qtmm-lane
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+W=${SPARKY_SCRATCH:?}/qtmm-lane
 export APPCMD=${PLANKBIN:-/w/plank-prefix/bin/plank-player} NO_BAR=1
 mode=$1; p=$2; shift 2
 case $mode in

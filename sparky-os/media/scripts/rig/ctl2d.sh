@@ -2,7 +2,8 @@
 # The 2D control (round 3's j2d procedure): a 2D clip, paused first, then an exact seek, one capture, with
 # interpolation and a linear tscale and one decoder thread, so that the frame on the screen is the same every run.
 # usage: ctl2d.sh <prefix> <image-dmo> <image-ours> [reps]   -> runs/<prefix>-<vo>-<dither>-<dmo|ours>-<rep>, then ctl2d_cmp.py
-cd /K3D/temp/partners/queue/media-on-dmo/work/rig
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+cd ${SPARKY_WORKSPACES:?}/media-on-dmo/work/rig
 pre=$1; imgd=$2; imgo=$3; reps=${4:-2}
 for vo in gpu-next gpu; do for dv in dither dithno; do for b in dmo ours; do for rep in $(seq $reps); do
   img=$imgd; [ $b = ours ] && img=$imgo; da=""; [ $dv = dithno ] && da="--dither=no"

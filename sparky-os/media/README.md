@@ -1,6 +1,6 @@
 # The edition's media stack on deb-multimedia: FFmpeg and mpv
 
-Sparky Stereo OS builds its FFmpeg and mpv on **deb-multimedia's source packages** (`ffmpeg-dmo`, `mpv-dmo`), with our stereo 3D patches on top, as `+stereo3dN` versions (Daniel: "we should patch multimedia-deb ffmpeg, not debian's"). Package names, sonames and the epoch are deb-multimedia's, so what installs against deb-multimedia's FFmpeg installs against ours. This folder holds everything needed to **redo the port for each deb-multimedia release**: the patches, the packaging changes, the build and proof scripts, the proof rig and the Dockerfiles. The development repository (`/K3D/temp/sparky-os/repo`, made by `repo/make-repo.sh`) holds the packages and, in `source/`, the source packages.
+Sparky Stereo OS builds its FFmpeg and mpv on **deb-multimedia's source packages** (`ffmpeg-dmo`, `mpv-dmo`), with our stereo 3D patches on top, as `+stereo3dN` versions (Daniel: "we should patch multimedia-deb ffmpeg, not debian's"). Package names, sonames and the epoch are deb-multimedia's, so what installs against deb-multimedia's FFmpeg installs against ours. This folder holds everything needed to **redo the port for each deb-multimedia release**: the patches, the packaging changes, the build and proof scripts, the proof rig and the Dockerfiles. The development repository (`$SPARKY_REPO_DIR`, made by `repo/make-repo.sh`) holds the packages and, in `source/`, the source packages.
 
 Built 2026-10-07/08:
 

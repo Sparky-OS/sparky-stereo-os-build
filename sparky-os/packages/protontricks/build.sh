@@ -5,9 +5,10 @@
 # Imports upstream's release the way Debian's own packaging does (uscan + the +ds repack of
 # debian/copyright's Files-Excluded), keeps debian/ as Debian has it, adds our changelog entry.
 # Runs in a throwaway sparky-pkg-base:amd64 container; output in $OUT (source package and .deb).
-# Usage: build.sh [workdir]     (default /K3D/temp/partners/queue/hand-installed-apps/ptx/build)
+# Usage: build.sh [workdir]     (default ${SPARKY_WORKSPACES}/hand-installed-apps/ptx/build)
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
-WORK=${1:-/K3D/temp/partners/queue/hand-installed-apps/ptx/build}
+WORK=${1:-${SPARKY_WORKSPACES:?}/hand-installed-apps/ptx/build}
 NEW=1.15.0
 OUR=$NEW+ds-1+sparky1
 mkdir -p "$WORK"

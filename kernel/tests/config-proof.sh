@@ -6,12 +6,13 @@
 # the options that changed without being named, and Debian options that are gone from the tree. Exit status 1 if an option of
 # the fragments does not hold.
 #
-#   kernel/tests/config-proof.sh [out-dir] [flavour...]     (default /K3D/temp/linux-stereo3d-config-proof, base v3 rt)
+#   kernel/tests/config-proof.sh [out-dir] [flavour...]     (default ${SPARKY_SCRATCH}/linux-stereo3d-config-proof, base v3 rt)
 #
 # Uses the same environment as build-deb.sh (TAG, TAG_COMMIT, KERNEL_GIT, SERIES, CPUS, MEM). One CPU is enough; nothing is built.
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
-OUT=${1:-/K3D/temp/linux-stereo3d-config-proof}
+OUT=${1:-${SPARKY_SCRATCH:?}/linux-stereo3d-config-proof}
 [ $# -gt 0 ] && shift
 FLAVOURS=${*:-base v3 rt}
 TAG=${TAG:-v7.3-rc6}

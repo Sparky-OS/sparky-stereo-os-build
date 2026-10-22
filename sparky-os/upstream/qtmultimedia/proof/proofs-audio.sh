@@ -1,5 +1,6 @@
 #!/bin/bash
-cd /K3D/temp/qtmm-lane/run
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+cd ${SPARKY_SCRATCH:?}/qtmm-lane/run
 {
 echo "== audio: the sink format Qt chose and what PipeWire negotiated for the stream; offerable build (Qt's defaults) and the edition build (hi-fi defaults); a null sink of 48 kHz S32 (SINKRATE/SINKFMT) in a PipeWire of its own"
 for t in offer final; do
