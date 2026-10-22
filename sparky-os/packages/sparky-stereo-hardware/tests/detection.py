@@ -58,11 +58,11 @@ here = pathlib.Path(__file__).resolve().parent / 'fixtures'
 fixture_cases = {
     'gigabyte-corsair-v3': ({'amd64-microcode'}, [
         'fact\tcpu-level\tv3', 'fact\tx86-64-v3\tyes',
-        'fact\tboard\tGigabyte Technology Co., Ltd. / B550 AORUS ELITE V2',
+        'fact\tboard\tGigabyte Technology Co., Ltd. / B550 TEST BOARD',
         'fact\tusb-vendors\t1b1c (Corsair) 1d6b'], []),
     'razer-mt7922-v3': ({'intel-microcode', 'firmware-mediatek'}, [
         'fact\tcpu-level\tv3', 'fact\tx86-64-v3\tyes',
-        'fact\tboard\tASUSTeK COMPUTER INC. / ROG STRIX Z370-F GAMING',
+        'fact\tboard\tASUSTeK COMPUTER INC. / Z370 TEST BOARD',
         'fact\tusb-vendors\t1532 (Razer)',
         'fact\tnetwork-driver\t14c3:0616 mt7921e (in our kernel) MediaTek Wi-Fi 6/7 (MT7921, MT7922, MT7902, MT7925)',
         'fact\tnetwork-pci\t14c3:0616'], []),
