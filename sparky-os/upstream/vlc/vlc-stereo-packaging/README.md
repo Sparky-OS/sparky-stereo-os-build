@@ -9,7 +9,7 @@ Two Debian packages, built from Debian testing's `vlc` source package plus our p
 
 | Path | What |
 |---|---|
-| `../0001-*.patch` to `../0038-*.patch` | the changes to VLC 3.0.24, applied in order; 0020 fixes stereo overlay sizing, 0021 adds native Wayland video inside the main Qt window, 0022 to 0026 are the stereo policy, the window width and the closing fixes of +stereo3d7 and +stereo3d8, 0027 to 0038 those of +stereo3d10 (each view at its own resolution, every packing with both eye orders, frame sequential pairs, the minimal view, the first picture, the 3D options' translations) |
+| `../0001-*.patch` to `../0043-*.patch` | the changes to VLC 3.0.24, applied in order; 0020 fixes stereo overlay sizing, 0021 adds native Wayland video inside the main Qt window, 0022 to 0026 are the stereo policy, the window width and the closing fixes of +stereo3d7 and +stereo3d8, 0027 to 0038 those of +stereo3d10 (each view at its own resolution, every packing with both eye orders, frame sequential pairs, the minimal view, the first picture, the 3D options' translations), 0039 to 0043 those of +stereo3d12 (Swap left and right eyes in both Video menus, kept with the file, through a new video output; the mouse over the Wayland video; their translations), from the A10 field build |
 | `patches/base/` | the three changes of the released VLC HiFi 3D (3d1) that the series builds on |
 | `../debian-branding/vlc-stereo-name.patch` | the name "VLC Stereo" (menu entries, window titles, About, MPRIS identity); a Debian patch, not a commit for upstream |
 | `patches/vlc-stereo-side-by-side.patch` | what lets it run beside the original: user directories `~/.config/vlc-stereo`, Qt settings, MPRIS bus name, window class, application id |
@@ -23,7 +23,7 @@ Debian's `debian/patches`, copyright and changelog stay; only the packages, cont
 
 ## Build a new version
 
-`build-lc.sh WORK PREVIOUS_DIR` builds `VERSION+lc1` (default `3.0.24-1+stereo3d10`) from the published `BASE` source package (default `3.0.24-1+stereo3d9`, in `$SPARKY_REPO_DIR/source`) and the patches `../0NNN-*.patch` from `FIRST` on (default 27), in the Lean Code migration image `sparky-lc-migration:20261020`, with the edition's repository pinned at 1001 and deb-multimedia's `forky` source, so the build depends on the libraries the edition installs. `PREVIOUS_DIR` holds the `BASE+lc1` debs for the link and start gate. `WORK` then holds the source package (`s/`), the Lean Code source and the debs (`lc/`), and the logs.
+`build-lc.sh WORK PREVIOUS_DIR` builds `VERSION+lc1` (default `3.0.24-1+stereo3d12`) from the published `BASE` source package (default `3.0.24-1+stereo3d10`, in `SOURCES`, by default `$SPARKY_REPO_DIR/source`) and the patches `../0NNN-*.patch` from `FIRST` on (default 39), in the Lean Code migration image `sparky-lc-migration:20261020`, with the edition's repository pinned at 1001 and deb-multimedia's `forky` source, so the build depends on the libraries the edition installs. `PREVIOUS_DIR` holds the `BASE+lc1` debs for the link and start gate. `WORK` then holds the source package (`s/`), the Lean Code source and the debs (`lc/`), and the logs.
 
 ## Rebuild from a clean container (up to +stereo3d6)
 
