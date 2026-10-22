@@ -8,7 +8,7 @@
 # lib/modules/... files replace the DKMS modules, signed with the edition's key by the main session),
 # SIGNED_KERNEL (optional: the linux-image package signed with the edition's key, installed over the tree's),
 # LEAN (1: the packer runs dpkg-stereo's pre-squashfs hook, the Lean Code projection, on the folders it squashes;
-# 0 or unset: not; dpkg-stereo is installed either way).
+# 1 is mandatory for release builds; 0 requires ISO_PURPOSE=benchmark and a -nolean- name).
 # The iso step packs from an overlay of the root file system (upper layer in /work), so the root file system is
 # the same for every pack: two packs with LEAN=0 and LEAN=1 differ only in the hook.
 # Usage: pack.sh configure|iso|all
@@ -17,7 +17,14 @@ R=/rootfs
 STEP=${1:-all}
 LABEL=${LABEL:-Sparky Stereo OS 9 Mashtabba beta 2}
 ISONAME=${ISONAME:-sparky-stereo-os-9-mashtabba-beta2-x86_64.iso}
-LEAN=${LEAN:-0}
+LEAN=${LEAN:-1}
+case "$LEAN" in
+1) ;;
+0)
+	[ "${ISO_PURPOSE:-release}" = benchmark ] || { echo "!! release images require LEAN=1"; exit 1; }
+	case "$ISONAME" in *-nolean-*.iso) ;; *) echo "!! benchmark control needs a -nolean- ISO name"; exit 1 ;; esac ;;
+*) echo "!! LEAN must be 0 or 1"; exit 1 ;;
+esac
 export DEBIAN_FRONTEND=noninteractive LC_ALL=C.UTF-8
 # dpkg-stereo's hooks stay quiet for every dpkg run of the build (the signed kernel's included): the image is
 # projected once, in the iso step, when LEAN=1
@@ -180,5 +187,11 @@ if [ "$STEP" = iso ] || [ "$STEP" = all ]; then
 	for f in lean-code-projection.tsv lean-code-left.tsv; do
 		[ -f /work/sparkybackup-sys/$f ] && xz -T1 -c /work/sparkybackup-sys/$f > /out/$ISONAME.${f%.tsv}.tsv.xz
 	done
+	if [ "$LEAN" = 1 ]; then
+		# Bind the successful pre-squashfs pass to the final ISO, not just its name.
+		cp /work/sparkybackup-sys/lc-image.json /out/$ISONAME.lc-image.json
+		PYTHONPATH="$R/usr/lib/dpkg-stereo" python3 -m lean.release seal-iso \
+			"/out/$ISONAME" "/out/$ISONAME.lean-code-projection.tsv.xz" "/out/$ISONAME.lc-image.json"
+	fi
 	ls -la /out
 fi
