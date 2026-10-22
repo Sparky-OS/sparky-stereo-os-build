@@ -10,11 +10,13 @@
 # Run it inside a debian:testing container with dpkg-dev.
 # Last update 2026/10/15
 set -euo pipefail
+HERE=$(cd "$(dirname "$0")" && pwd)
 SRC=${SRC:-/K3D/GitHub/sparky-backup-core-stereo}/9
 OUT=${OUT:-/K3D/temp/sparky-os/repo}
 PKG=sparky-backup-core-stereo
 VERSION=$(sed -n '2s/^  Version \([^ ]*\) .*/\1/p' "$SRC/CHANGELOG")
 [ -n "$VERSION" ] || { echo "no version in $SRC/CHANGELOG"; exit 1; }
+VERSION=${VERSION%+lc1}+lc1
 W=$(mktemp -d "${TMPDIR:-/tmp}/backup-stereo-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 D=$W/$PKG
@@ -25,6 +27,21 @@ mkdir -p "$D/DEBIAN" "$D/usr/bin" "$D/etc/sparkybackup" "$D/etc/xdg/autostart" "
 for f in "$SRC"/bin/*; do [ -f "$f" ] && install -m 755 "$f" "$D/usr/bin/"; done
 install -m 644 "$SRC"/etc/* "$D/etc/sparkybackup/"
 cp -a "$SRC"/lib/. "$D/usr/lib/sparkybackup/"
+# The packer stages current Debian programs when it creates an ISO. Historical
+# bundled programs are neither our source builds nor independent update roots.
+# Keep the menus and graphics, and use the same explicit list as the packer.
+python3 - "$SRC/lib/stage-boot-files.py" "$D/usr/lib/sparkybackup" <<'BOOT_INPUTS'
+from pathlib import Path
+import runpy, shutil, sys
+files = runpy.run_path(sys.argv[1])["FILES"]
+tree = Path(sys.argv[2])
+for relative in files:
+    (tree / relative).unlink(missing_ok=True)
+shutil.rmtree(tree / "boot/grub/i386-efi")
+for cache in tree.rglob('__pycache__'):
+    if cache.is_dir() and not cache.is_symlink():
+        shutil.rmtree(cache)
+BOOT_INPUTS
 install -m 644 "$SRC"/share/*.desktop "$D/usr/share/applications/"
 install -m 755 "$SRC"/live/* "$D/lib/live/config/"
 install -m 644 "$SRC"/idesk/* "$D/usr/share/sparkybackup/idesk/"
@@ -43,7 +60,7 @@ Architecture: amd64
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Original-Maintainer: pavroo <pavroo@onet.eu>
 Installed-Size: $SIZE
-Depends: apt, bash, btrfs-progs, console-data, coreutils, dialog, dosfstools, dpkg, findutils, gawk, grep, grub-efi-amd64-signed, hwdata, iputils-ping, isolinux, keyboard-configuration, laptop-detect, live-boot, live-config, live-config-systemd, live-boot-initramfs-tools, locales, mount, mtools, nano, os-prober, parted, passwd, python3, rsync, sed, shim-signed, sparky-backup-desktop (>= 20180729) | sparky-server, sparky-info, squashfs-tools, syslinux-utils, systemd, systemd-sysv, util-linux, x11-utils, xfsprogs, xorriso | genisoimage, xz-utils
+Depends: apt, bash, btrfs-progs, console-data, coreutils, dialog, dosfstools, dpkg, findutils, gawk, grep, grub-efi-amd64-signed, grub-efi-ia32-unsigned, hwdata, iputils-ping, isolinux, keyboard-configuration, laptop-detect, live-boot, live-config, live-config-systemd, live-boot-initramfs-tools, locales, memtest86+ (>= 8.10), mount, mtools, nano, os-prober, parted, passwd, python3, rsync, sed, shim-signed, sparky-backup-desktop (>= 20180729) | sparky-server, sparky-info, squashfs-tools, syslinux-common, syslinux-utils, systemd, systemd-sysv, util-linux, x11-utils, xfsprogs, xorriso | genisoimage, xz-utils
 Recommends: lvm2, cryptsetup, cryptsetup-initramfs, systemd-cryptsetup
 Conflicts: sparky-backup-core, sparky-remastersys, sparky-backup-sys (<= 20180606)
 Replaces: sparky-backup-core, sparky-backup-sys (<= 20180606)
@@ -60,5 +77,8 @@ Description: Sparky Backup Core Stereo
 EOS
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT"
-dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${PKG}_${VERSION}_amd64.deb" >/dev/null
-echo "built $OUT/${PKG}_${VERSION}_amd64.deb"
+mkdir -p "$W/authoring"
+cp -a "$HERE/." "$W/authoring/builder"
+cp -a "$SRC" "$W/authoring/upstream"
+PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone \
+    "$D" "$OUT" --authoring "$W/authoring" --architecture amd64
