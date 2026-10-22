@@ -294,13 +294,14 @@
 33-virtio-gpu-stereo/0001-virtio_gpu-Add-VIRTIO_GPU_F_STEREO-and-VIRTIO_GPU_CM.patch
 33-virtio-gpu-stereo/0002-drm-virtio-Allow-stereo-modes-and-tell-the-host-thei.patch
 
-# ==== 34-hdmi-3d-whole-spec: every HDMI 1.4a 3D structure listed and timed, the 3D metadata of the vendor InfoFrame, the side by side (full) timing as a connector option, a virtual depth camera, the TMDS rate of a stereo mode (ORDER 151 steps K and K2, 15 commits)
+# ==== 34-hdmi-3d-whole-spec: every HDMI 1.4a 3D structure listed and timed, the 3D metadata of the vendor InfoFrame, the side by side (full) timing as a connector option, a virtual depth camera, the TMDS rate of a stereo mode, vc4 timing its stereo rasters (ORDER 151 steps K and K2, ORDER 155; 16 commits)
 #      status: next build. Source: lane depth-as-3d-source, branch k-work of its build tree (on v7.3-rc6 + groups 01-33, with 02/0006's citation corrected and its subject renamed).
 #      needs 02 (0005 and 0006: side by side (full) in the core, the top-and-bottom InfoFrame byte) and 33 (the virtio-gpu stereo command 0013 extends).
 #      0004 changes how side by side (full) is timed by default: the whole line doubled (HDMI 1.4a Figure H-4, 297 MHz at 1080p60) instead of NVIDIA's kept blanking (278.1 MHz), which stays as the connector property's other value.
 #      0005 is new uAPI (two connector properties, struct drm_hdmi_3d_metadata): RFC, Stereo KWin is its userspace (step W).
 #      0012 was replaced in step K2: its 3D metadata test now uses 640x480, because 0015 rightly refuses L + depth 1080p60 (297 MHz) on the test's 200 MHz sink.
 #      0015 (step K2) computes the HDMI state helper's TMDS character rate from the doubled stereo timing (HDMI 1.4a Appendix H); it changes behaviour only for vc4, the one HDMI state helper driver that allows stereo.
+#      0016 (ORDER 155, 2026-10-22) makes vc4 time the doubled stereo raster in its pixel valve, HDMI registers and HVS, uses the negotiated stereo TMDS rate for scrambling and audio CTS, keeps the logical mode for AVI/VSIF, and rejects field alternative and interlaced frame packing until their sync sequences exist; 77 vc4 KUnit cases pass on ARM64 QEMU (44 new; the original 22 failed 18 before), no Pi hardware run yet.
 34-hdmi-3d-whole-spec/0001-video-hdmi-carry-the-3D-metadata-of-the-vendor-InfoF.patch
 34-hdmi-3d-whole-spec/0002-drm-edid-list-every-HDMI-1.4a-3D-structure-a-sink-de.patch
 34-hdmi-3d-whole-spec/0003-drm-modes-time-every-HDMI-1.4a-3D-structure.patch
@@ -316,3 +317,4 @@
 34-hdmi-3d-whole-spec/0013-drm-virtio-tell-the-host-where-the-pictures-of-L-dep.patch
 34-hdmi-3d-whole-spec/0014-media-vivid-capture-depth-like-a-RealSense-camera-Z1.patch
 34-hdmi-3d-whole-spec/0015-drm-display-hdmi-compute-the-TMDS-rate-of-a-stereo-m.patch
+34-hdmi-3d-whole-spec/0016-drm-vc4-time-HDMI-stereo-rasters-throughout-the-disp.patch

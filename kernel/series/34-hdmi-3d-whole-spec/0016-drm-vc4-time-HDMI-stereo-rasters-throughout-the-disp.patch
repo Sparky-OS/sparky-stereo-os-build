@@ -1,0 +1,1018 @@
+From d4f15199b89aae84a4d1dad34aa1820b84b9e156 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 22 Oct 2026 20:34:37 -0300
+Subject: [PATCH] drm/vc4: time HDMI stereo rasters throughout the display
+ pipeline
+
+vc4 advertises HDMI stereo modes but still programs a one-view raster.
+After group34 selects the whole-frame TMDS rate this also disagrees with
+the clock programmed by the common HDMI state helper.
+
+Expand CRTC timing with the common helper and connector SBS-full flags,
+then use it for PV and HDMI registers, whole-frame HVS dimensions and
+load. Preserve the logical mode for AVI/VSIF. Use negotiated stereo TMDS
+for scrambling and audio CTS. Keep ordinary 2D timing behavior.
+
+Validate layout, interlace, overflow and generation register bounds before
+common HDMI math. Reject packed-raster overscan, field alternative and
+interlaced frame packing until their DE/sync sequences are implemented.
+
+Add KUnit coverage invoking the actual encoder check, with fixed CEA/spec
+expectations, both SBS-full choices, repeated checks, VIC preservation,
+RGB8/RGB12 rate agreement, DBLCLK and invalid-mode negative controls.
+The original 22 rows fail 18 times before the fix. The extended 44 rows
+and all 33 existing vc4 rows pass under ARM64 QEMU. This is no physical
+Pi or HDMI link qualification.
+
+Assisted-by: gpt-6-astra via Codex
+---
+ drivers/gpu/drm/vc4/Makefile                  |   1 +
+ .../gpu/drm/vc4/tests/vc4_test_hdmi_stereo.c  | 343 ++++++++++++++++++
+ drivers/gpu/drm/vc4/vc4_crtc.c                |  30 +-
+ drivers/gpu/drm/vc4/vc4_hdmi.c                | 248 ++++++++++---
+ drivers/gpu/drm/vc4/vc4_hdmi.h                |   7 +
+ drivers/gpu/drm/vc4/vc4_hvs.c                 |  20 +-
+ drivers/gpu/drm/vc4/vc4_plane.c               |  14 +-
+ 7 files changed, 600 insertions(+), 63 deletions(-)
+ create mode 100644 drivers/gpu/drm/vc4/tests/vc4_test_hdmi_stereo.c
+
+diff --git a/drivers/gpu/drm/vc4/Makefile b/drivers/gpu/drm/vc4/Makefile
+index c41f89a..efd172a 100644
+--- a/drivers/gpu/drm/vc4/Makefile
++++ b/drivers/gpu/drm/vc4/Makefile
+@@ -30,6 +30,7 @@ vc4-$(CONFIG_DRM_VC4_KUNIT_TEST) += \
+ 	tests/vc4_mock_crtc.o \
+ 	tests/vc4_mock_output.o \
+ 	tests/vc4_mock_plane.o \
++	tests/vc4_test_hdmi_stereo.o \
+ 	tests/vc4_test_pv_muxing.o
+ 
+ vc4-$(CONFIG_DEBUG_FS) += vc4_debugfs.o
+diff --git a/drivers/gpu/drm/vc4/tests/vc4_test_hdmi_stereo.c b/drivers/gpu/drm/vc4/tests/vc4_test_hdmi_stereo.c
+new file mode 100644
+index 0000000..3ec499d
+--- /dev/null
++++ b/drivers/gpu/drm/vc4/tests/vc4_test_hdmi_stereo.c
+@@ -0,0 +1,343 @@
++// SPDX-License-Identifier: GPL-2.0
++
++#include <drm/drm_edid.h>
++#include <drm/drm_kunit_helpers.h>
++#include <drm/display/drm_hdmi_helper.h>
++#include <kunit/test.h>
++
++#include "../vc4_hdmi.h"
++
++struct vc4_stereo_case {
++	const char *name;
++	unsigned int vic;
++	u32 layout;
++	enum vc4_gen gen;
++	bool keep_blanking;
++	int error;
++	int clock;
++	int h[4];
++	int v[4];
++};
++
++/* CTA timings and HDMI 1.4b 8.2.3.2 / Appendix H, not helper-derived values. */
++static const struct vc4_stereo_case vc4_stereo_cases[] = {
++	{ "2d-1080p60", 16, 0, VC4_GEN_5, false, 0,
++	  148500, { 1920, 2008, 2052, 2200 }, { 1080, 1084, 1089, 1125 } },
++	{ "2d-1080i60", 5, 0, VC4_GEN_5, false, 0,
++	  74250, { 1920, 2008, 2052, 2200 }, { 540, 542, 547, 562 } },
++	{ "frame-packing-1080p24-vc4", 32, DRM_MODE_FLAG_3D_FRAME_PACKING,
++	  VC4_GEN_4, false, 0,
++	  148500, { 1920, 2558, 2602, 2750 }, { 2205, 2209, 2214, 2250 } },
++	{ "frame-packing-720p60", 4, DRM_MODE_FLAG_3D_FRAME_PACKING,
++	  VC4_GEN_5, false, 0,
++	  148500, { 1280, 1390, 1430, 1650 }, { 1470, 1475, 1480, 1500 } },
++	{ "frame-packing-720p50", 19, DRM_MODE_FLAG_3D_FRAME_PACKING,
++	  VC4_GEN_5, false, 0,
++	  148500, { 1280, 1720, 1760, 1980 }, { 1470, 1475, 1480, 1500 } },
++	{ "line-alternative", 16, DRM_MODE_FLAG_3D_LINE_ALTERNATIVE,
++	  VC4_GEN_5, false, 0,
++	  297000, { 1920, 2008, 2052, 2200 }, { 2160, 2168, 2178, 2250 } },
++	{ "sbs-full", 16, DRM_MODE_FLAG_3D_SIDE_BY_SIDE_FULL,
++	  VC4_GEN_5, false, 0,
++	  297000, { 3840, 4016, 4104, 4400 }, { 1080, 1084, 1089, 1125 } },
++	{ "sbs-full-keep-blanking", 16, DRM_MODE_FLAG_3D_SIDE_BY_SIDE_FULL,
++	  VC4_GEN_5, true, 0,
++	  278100, { 3840, 3928, 3972, 4120 }, { 1080, 1084, 1089, 1125 } },
++	{ "sbs-full-interlace", 5, DRM_MODE_FLAG_3D_SIDE_BY_SIDE_FULL,
++	  VC4_GEN_5, false, 0,
++	  148500, { 3840, 4016, 4104, 4400 }, { 540, 542, 547, 562 } },
++	{ "l-depth", 19, DRM_MODE_FLAG_3D_L_DEPTH,
++	  VC4_GEN_5, false, 0,
++	  148500, { 1280, 1720, 1760, 1980 }, { 1470, 1475, 1480, 1500 } },
++	{ "l-depth-gfx", 19, DRM_MODE_FLAG_3D_L_DEPTH_GFX_GFX_DEPTH,
++	  VC4_GEN_5, false, 0,
++	  297000, { 1280, 1720, 1760, 1980 }, { 2970, 2975, 2980, 3000 } },
++	{ "top-bottom", 16, DRM_MODE_FLAG_3D_TOP_AND_BOTTOM,
++	  VC4_GEN_5, false, 0,
++	  148500, { 1920, 2008, 2052, 2200 }, { 1080, 1084, 1089, 1125 } },
++	{ "sbs-half-interlace", 5, DRM_MODE_FLAG_3D_SIDE_BY_SIDE_HALF,
++	  VC4_GEN_5, false, 0,
++	  74250, { 1920, 2008, 2052, 2200 }, { 540, 542, 547, 562 } },
++	{ "vc6-frame-packing", 32, DRM_MODE_FLAG_3D_FRAME_PACKING,
++	  VC4_GEN_6_C, false, 0,
++	  148500, { 1920, 2558, 2602, 2750 }, { 2205, 2209, 2214, 2250 } },
++	{ "vc6d-sbs", 16, DRM_MODE_FLAG_3D_SIDE_BY_SIDE_FULL,
++	  VC4_GEN_6_D, true, 0,
++	  278100, { 3840, 3928, 3972, 4120 }, { 1080, 1084, 1089, 1125 } },
++	{ "field-alternative-needs-blanking", 5, DRM_MODE_FLAG_3D_FIELD_ALTERNATIVE,
++	  VC4_GEN_5, false, -EINVAL },
++	{ "interlaced-frame-packing-needs-frame-sync", 5, DRM_MODE_FLAG_3D_FRAME_PACKING,
++	  VC4_GEN_5, false, -EINVAL },
++	{ "invalid-progressive-field-alternative", 16, DRM_MODE_FLAG_3D_FIELD_ALTERNATIVE,
++	  VC4_GEN_5, false, -EINVAL },
++	{ "invalid-interlaced-line-alternative", 5, DRM_MODE_FLAG_3D_LINE_ALTERNATIVE,
++	  VC4_GEN_5, false, -EINVAL },
++	{ "invalid-interlaced-depth", 5, DRM_MODE_FLAG_3D_L_DEPTH,
++	  VC4_GEN_5, false, -EINVAL },
++	{ "invalid-interlaced-gfx", 5, DRM_MODE_FLAG_3D_L_DEPTH_GFX_GFX_DEPTH,
++	  VC4_GEN_5, false, -EINVAL },
++	{ "vc4-hvs-height-overflow", 32, DRM_MODE_FLAG_3D_L_DEPTH_GFX_GFX_DEPTH,
++	  VC4_GEN_4, false, -EINVAL },
++};
++
++static void vc4_stereo_desc(const struct vc4_stereo_case *t, char *desc)
++{
++	strscpy(desc, t->name, KUNIT_PARAM_DESC_SIZE);
++}
++
++KUNIT_ARRAY_PARAM(vc4_stereo, vc4_stereo_cases, vc4_stereo_desc);
++
++struct vc4_stereo_priv {
++	struct vc4_dev *vc4;
++	struct vc4_hdmi *hdmi;
++	struct vc4_hdmi_variant variant;
++	struct drm_crtc_state crtc;
++	struct drm_connector_state conn;
++};
++
++static int vc4_stereo_init(struct kunit *test)
++{
++	struct vc4_stereo_priv *priv;
++	struct device *dev;
++
++	priv = kunit_kzalloc(test, sizeof(*priv), GFP_KERNEL);
++	KUNIT_ASSERT_NOT_NULL(test, priv);
++	dev = drm_kunit_helper_alloc_device(test);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, dev);
++	priv->vc4 = drm_kunit_helper_alloc_drm_device(test, dev,
++						      struct vc4_dev, base, DRIVER_MODESET);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, priv->vc4);
++	priv->hdmi = kunit_kzalloc(test, sizeof(*priv->hdmi), GFP_KERNEL);
++	KUNIT_ASSERT_NOT_NULL(test, priv->hdmi);
++	priv->hdmi->variant = &priv->variant;
++	priv->hdmi->encoder.base.dev = &priv->vc4->base;
++	test->priv = priv;
++	return 0;
++}
++
++static void vc4_test_hdmi_stereo(struct kunit *test)
++{
++	struct vc4_stereo_priv *priv = test->priv;
++	const struct vc4_stereo_case *t = test->param_value;
++	struct drm_display_mode *mode, *adjusted = &priv->crtc.adjusted_mode;
++	unsigned long long rate;
++	int ret, i, adjust_flags;
++
++	priv->vc4->gen = t->gen;
++	priv->variant.unsupported_odd_h_timings = t->gen == VC4_GEN_5;
++	priv->conn.hdmi.sbs_full_timing = t->keep_blanking ?
++		DRM_HDMI_SBS_FULL_TIMING_KEEP_BLANKING : DRM_HDMI_SBS_FULL_TIMING_WHOLE_LINE;
++	adjust_flags = drm_connector_stereo_crtc_flags(&priv->conn);
++	mode = drm_display_mode_from_cea_vic(&priv->vc4->base, t->vic);
++	KUNIT_ASSERT_NOT_NULL(test, mode);
++	KUNIT_ASSERT_EQ(test, drm_kunit_add_mode_destroy_action(test, mode), 0);
++	mode->flags |= t->layout;
++	drm_mode_set_crtcinfo(mode, CRTC_INTERLACE_HALVE_V);
++	drm_mode_copy(adjusted, mode);
++
++	/* The real encoder check must also be safe when atomic checks repeat. */
++	for (i = 0; i < 2; i++) {
++		ret = vc4_hdmi_encoder_atomic_check(&priv->hdmi->encoder.base,
++						    &priv->crtc, &priv->conn);
++		KUNIT_ASSERT_EQ(test, ret, t->error);
++		if (ret)
++			return;
++		KUNIT_EXPECT_EQ(test, adjusted->crtc_clock, t->clock);
++		rate = drm_hdmi_compute_stereo_mode_clock(adjusted, 8,
++							  DRM_OUTPUT_COLOR_FORMAT_RGB444,
++							  adjust_flags);
++		KUNIT_EXPECT_EQ(test, rate, t->clock * 1000ULL);
++		rate = drm_hdmi_compute_stereo_mode_clock(adjusted, 12,
++							  DRM_OUTPUT_COLOR_FORMAT_RGB444,
++							  adjust_flags);
++		KUNIT_EXPECT_EQ(test, rate, t->clock * 1500ULL);
++		KUNIT_EXPECT_EQ(test, adjusted->crtc_hdisplay, t->h[0]);
++		KUNIT_EXPECT_EQ(test, adjusted->crtc_hsync_start, t->h[1]);
++		KUNIT_EXPECT_EQ(test, adjusted->crtc_hsync_end, t->h[2]);
++		KUNIT_EXPECT_EQ(test, adjusted->crtc_htotal, t->h[3]);
++		KUNIT_EXPECT_EQ(test, adjusted->crtc_vdisplay, t->v[0]);
++		KUNIT_EXPECT_EQ(test, adjusted->crtc_vsync_start, t->v[1]);
++		KUNIT_EXPECT_EQ(test, adjusted->crtc_vsync_end, t->v[2]);
++		KUNIT_EXPECT_EQ(test, adjusted->crtc_vtotal, t->v[3]);
++		/* AVI/VSIF must still identify the original VIC and structure. */
++		KUNIT_EXPECT_EQ(test, drm_match_cea_mode(adjusted), t->vic);
++		KUNIT_EXPECT_EQ(test, adjusted->flags, mode->flags);
++		KUNIT_EXPECT_EQ(test, adjusted->clock, mode->clock);
++		KUNIT_EXPECT_EQ(test, adjusted->hdisplay, mode->hdisplay);
++		KUNIT_EXPECT_EQ(test, adjusted->vdisplay, mode->vdisplay);
++	}
++}
++
++enum vc4_stereo_mutation {
++	CLOCK_OVERFLOW, HTOTAL_OVERFLOW, VTOTAL_OVERFLOW, HVS_WIDTH,
++	HFRONT, HSYNC, HBACK, VFRONT, VSYNC, VBACK, ODD_HSYNC,
++	DOUBLESCAN, VSCAN, RESERVED, MARGINS, EMPTY_ACTIVE, REVERSED_SYNC,
++};
++
++struct vc4_stereo_limit {
++	const char *name;
++	enum vc4_stereo_mutation mutation;
++	enum vc4_gen gen;
++	bool keep_blanking;
++	int error;
++};
++
++static const struct vc4_stereo_limit vc4_stereo_limits[] = {
++	{ "clock-overflow", CLOCK_OVERFLOW, VC4_GEN_5, false, -EINVAL },
++	{ "htotal-overflow", HTOTAL_OVERFLOW, VC4_GEN_5, false, -EINVAL },
++	{ "vtotal-overflow", VTOTAL_OVERFLOW, VC4_GEN_5, false, -EINVAL },
++	{ "hvs5-width-limit", HVS_WIDTH, VC4_GEN_5, false, -EINVAL },
++	{ "hvs6-width-limit", HVS_WIDTH, VC4_GEN_6_C, false, 0 },
++	{ "hdmi4-front-limit", HFRONT, VC4_GEN_4, false, -EINVAL },
++	{ "hdmi5-front-fits", HFRONT, VC4_GEN_5, false, 0 },
++	{ "hdmi5-sync-limit", HSYNC, VC4_GEN_5, false, -EINVAL },
++	{ "hdmi4-back-limit", HBACK, VC4_GEN_4, false, -EINVAL },
++	{ "hdmi5-back-fits", HBACK, VC4_GEN_5, false, 0 },
++	{ "vertical-front-limit", VFRONT, VC4_GEN_5, false, -EINVAL },
++	{ "vertical-sync-limit", VSYNC, VC4_GEN_5, false, -EINVAL },
++	{ "vertical-back-limit", VBACK, VC4_GEN_5, false, -EINVAL },
++	{ "odd-sync-doubled-fits", ODD_HSYNC, VC4_GEN_5, false, 0 },
++	{ "odd-sync-kept-rejected", ODD_HSYNC, VC4_GEN_5, true, -EINVAL },
++	{ "doublescan-rejected", DOUBLESCAN, VC4_GEN_5, false, -EINVAL },
++	{ "vscan-rejected", VSCAN, VC4_GEN_5, false, -EINVAL },
++	{ "reserved-layout", RESERVED, VC4_GEN_5, false, -EINVAL },
++	{ "packed-frame-margins", MARGINS, VC4_GEN_5, false, -EINVAL },
++	{ "empty-active", EMPTY_ACTIVE, VC4_GEN_5, false, -EINVAL },
++	{ "reversed-sync", REVERSED_SYNC, VC4_GEN_5, false, -EINVAL },
++};
++
++static void vc4_stereo_limit_desc(const struct vc4_stereo_limit *t, char *desc)
++{
++	strscpy(desc, t->name, KUNIT_PARAM_DESC_SIZE);
++}
++
++KUNIT_ARRAY_PARAM(vc4_stereo_limit, vc4_stereo_limits, vc4_stereo_limit_desc);
++
++static void vc4_test_hdmi_stereo_limits(struct kunit *test)
++{
++	struct vc4_stereo_priv *priv = test->priv;
++	const struct vc4_stereo_limit *t = test->param_value;
++	struct drm_display_mode *mode;
++
++	priv->vc4->gen = t->gen;
++	priv->variant.unsupported_odd_h_timings = t->gen == VC4_GEN_5;
++	priv->conn.hdmi.sbs_full_timing = t->keep_blanking ?
++		DRM_HDMI_SBS_FULL_TIMING_KEEP_BLANKING : DRM_HDMI_SBS_FULL_TIMING_WHOLE_LINE;
++	mode = drm_display_mode_from_cea_vic(&priv->vc4->base, 16);
++	KUNIT_ASSERT_NOT_NULL(test, mode);
++	KUNIT_ASSERT_EQ(test, drm_kunit_add_mode_destroy_action(test, mode), 0);
++	mode->flags |= DRM_MODE_FLAG_3D_SIDE_BY_SIDE_FULL;
++	switch (t->mutation) {
++	case CLOCK_OVERFLOW:
++		mode->clock = INT_MAX / 2 + 1;
++		break;
++	case HTOTAL_OVERFLOW:
++		mode->htotal = 40000;
++		break;
++	case VTOTAL_OVERFLOW:
++		mode->vtotal = 20000;
++		break;
++	case HVS_WIDTH:
++		mode->hdisplay = 4096;
++		mode->hsync_start = 4104;
++		mode->hsync_end = 4120;
++		mode->htotal = 4140;
++		break;
++	case HFRONT:
++		mode->hsync_start = 2520;
++		mode->hsync_end = 2564;
++		mode->htotal = 2712;
++		break;
++	case HSYNC:
++		mode->hsync_end = 3108;
++		mode->htotal = 3256;
++		break;
++	case HBACK:
++		mode->htotal = 2652;
++		break;
++	case VFRONT:
++		mode->vsync_start = 1210;
++		mode->vsync_end = 1215;
++		mode->vtotal = 1250;
++		break;
++	case VSYNC:
++		mode->vsync_end = 1120;
++		mode->vtotal = 1150;
++		break;
++	case VBACK:
++		mode->vtotal = 1601;
++		break;
++	case ODD_HSYNC:
++		mode->hsync_end++;
++		break;
++	case DOUBLESCAN:
++		mode->flags |= DRM_MODE_FLAG_DBLSCAN;
++		break;
++	case VSCAN:
++		mode->vscan = 2;
++		break;
++	case RESERVED:
++		mode->flags |= DRM_MODE_FLAG_3D_MASK;
++		break;
++	case MARGINS:
++		priv->conn.tv.margins.left = 1;
++		break;
++	case EMPTY_ACTIVE:
++		mode->hdisplay = 0;
++		break;
++	case REVERSED_SYNC:
++		mode->hsync_end = mode->hsync_start - 1;
++		break;
++	}
++	drm_mode_copy(&priv->crtc.adjusted_mode, mode);
++	KUNIT_EXPECT_EQ(test, vc4_hdmi_encoder_atomic_check(&priv->hdmi->encoder.base,
++							    &priv->crtc, &priv->conn), t->error);
++}
++
++static void vc4_test_hdmi_stereo_dblclk(struct kunit *test)
++{
++	struct vc4_stereo_priv *priv = test->priv;
++	struct drm_display_mode *mode, *adjusted = &priv->crtc.adjusted_mode;
++	unsigned long long rate;
++
++	priv->vc4->gen = VC4_GEN_5;
++	priv->variant.unsupported_odd_h_timings = true;
++	mode = drm_display_mode_from_cea_vic(&priv->vc4->base, 6);
++	KUNIT_ASSERT_NOT_NULL(test, mode);
++	KUNIT_ASSERT_EQ(test, drm_kunit_add_mode_destroy_action(test, mode), 0);
++	drm_mode_set_crtcinfo(mode, CRTC_INTERLACE_HALVE_V);
++	drm_mode_copy(adjusted, mode);
++	KUNIT_ASSERT_EQ(test, vc4_hdmi_encoder_atomic_check(&priv->hdmi->encoder.base,
++							    &priv->crtc, &priv->conn), 0);
++	/* Keep the existing 2D DBLCLK porch correction. */
++	KUNIT_EXPECT_EQ(test, adjusted->hsync_start, 738);
++	KUNIT_EXPECT_EQ(test, adjusted->hsync_end, 800);
++	KUNIT_EXPECT_EQ(test, adjusted->crtc_hsync_start, mode->crtc_hsync_start);
++
++	drm_mode_copy(adjusted, mode);
++	adjusted->flags |= DRM_MODE_FLAG_3D_SIDE_BY_SIDE_HALF;
++	KUNIT_ASSERT_EQ(test, vc4_hdmi_encoder_atomic_check(&priv->hdmi->encoder.base,
++							    &priv->crtc, &priv->conn), 0);
++	KUNIT_EXPECT_EQ(test, adjusted->crtc_hsync_start, 738);
++	KUNIT_EXPECT_EQ(test, adjusted->crtc_hsync_end, 800);
++	KUNIT_EXPECT_EQ(test, adjusted->crtc_vdisplay, 240);
++	KUNIT_EXPECT_EQ(test, adjusted->crtc_clock, 13500);
++	rate = drm_hdmi_compute_stereo_mode_clock(adjusted, 8,
++						  DRM_OUTPUT_COLOR_FORMAT_RGB444, 0);
++	KUNIT_EXPECT_EQ(test, rate, 27000000ULL);
++}
++
++static struct kunit_case vc4_hdmi_stereo_tests[] = {
++	KUNIT_CASE_PARAM(vc4_test_hdmi_stereo, vc4_stereo_gen_params),
++	KUNIT_CASE_PARAM(vc4_test_hdmi_stereo_limits, vc4_stereo_limit_gen_params),
++	KUNIT_CASE(vc4_test_hdmi_stereo_dblclk),
++	{}
++};
++
++static struct kunit_suite vc4_hdmi_stereo_suite = {
++	.name = "vc4-hdmi-stereo",
++	.init = vc4_stereo_init,
++	.test_cases = vc4_hdmi_stereo_tests,
++};
++
++kunit_test_suite(vc4_hdmi_stereo_suite);
+diff --git a/drivers/gpu/drm/vc4/vc4_crtc.c b/drivers/gpu/drm/vc4/vc4_crtc.c
+index 4572b0b..cfa8290 100644
+--- a/drivers/gpu/drm/vc4/vc4_crtc.c
++++ b/drivers/gpu/drm/vc4/vc4_crtc.c
+@@ -194,7 +194,8 @@ static bool vc4_crtc_get_scanout_position(struct drm_crtc *crtc,
+ 	 * We can't get meaningful readings wrt. scanline position of the PV
+ 	 * and need to make things up in a approximative but consistent way.
+ 	 */
+-	vblank_lines = mode->vtotal - mode->vdisplay;
++	vblank_lines = drm_mode_is_stereo(mode) ?
++		mode->crtc_vtotal - mode->crtc_vdisplay : mode->vtotal - mode->vdisplay;
+ 
+ 	if (in_vblank_irq) {
+ 		/*
+@@ -352,6 +353,10 @@ static void vc4_crtc_config_pv(struct drm_crtc *crtc, struct drm_encoder *encode
+ 	const struct vc4_pv_data *pv_data = vc4_crtc_to_vc4_pv_data(vc4_crtc);
+ 	struct drm_crtc_state *crtc_state = crtc->state;
+ 	struct drm_display_mode *mode = &crtc_state->adjusted_mode;
++	u32 hdisplay = drm_mode_is_stereo(mode) ? mode->crtc_hdisplay : mode->hdisplay;
++	u32 hsync_start = drm_mode_is_stereo(mode) ? mode->crtc_hsync_start : mode->hsync_start;
++	u32 hsync_end = drm_mode_is_stereo(mode) ? mode->crtc_hsync_end : mode->hsync_end;
++	u32 htotal = drm_mode_is_stereo(mode) ? mode->crtc_htotal : mode->htotal;
+ 	bool interlace = mode->flags & DRM_MODE_FLAG_INTERLACE;
+ 	bool is_hdmi = vc4_encoder->type == VC4_ENCODER_TYPE_HDMI0 ||
+ 		       vc4_encoder->type == VC4_ENCODER_TYPE_HDMI1;
+@@ -383,27 +388,27 @@ static void vc4_crtc_config_pv(struct drm_crtc *crtc, struct drm_encoder *encode
+ 	vc4_crtc_pixelvalve_reset(crtc);
+ 
+ 	CRTC_WRITE(PV_HORZA,
+-		   VC4_SET_FIELD((mode->htotal - mode->hsync_end) * pixel_rep / ppc,
++		   VC4_SET_FIELD((htotal - hsync_end) * pixel_rep / ppc,
+ 				 PV_HORZA_HBP) |
+-		   VC4_SET_FIELD((mode->hsync_end - mode->hsync_start) * pixel_rep / ppc,
++		   VC4_SET_FIELD((hsync_end - hsync_start) * pixel_rep / ppc,
+ 				 PV_HORZA_HSYNC));
+ 
+ 	CRTC_WRITE(PV_HORZB,
+-		   VC4_SET_FIELD((mode->hsync_start - mode->hdisplay) * pixel_rep / ppc,
++		   VC4_SET_FIELD((hsync_start - hdisplay) * pixel_rep / ppc,
+ 				 PV_HORZB_HFP) |
+-		   VC4_SET_FIELD(mode->hdisplay * pixel_rep / ppc,
++		   VC4_SET_FIELD(hdisplay * pixel_rep / ppc,
+ 				 PV_HORZB_HACTIVE));
+ 
+ 	if (interlace) {
+ 		bool odd_field_first = false;
+-		u32 field_delay = mode->htotal * pixel_rep / (2 * ppc);
++		u32 field_delay = htotal * pixel_rep / (2 * ppc);
+ 		u16 vert_bp_even = vert_bp;
+ 		u16 vert_fp_even = vert_fp;
+ 
+ 		if (is_vec) {
+ 			/* VEC (composite output) */
+ 			++field_delay;
+-			if (mode->htotal == 858) {
++			if (htotal == 858) {
+ 				/* 525-line mode (NTSC or PAL-M) */
+ 				odd_field_first = true;
+ 			}
+@@ -451,7 +456,7 @@ static void vc4_crtc_config_pv(struct drm_crtc *crtc, struct drm_encoder *encode
+ 		   VC4_SET_FIELD(mode->crtc_vdisplay, PV_VERTB_VACTIVE));
+ 
+ 	if (is_dsi)
+-		CRTC_WRITE(PV_HACT_ACT, mode->hdisplay * pixel_rep);
++		CRTC_WRITE(PV_HACT_ACT, hdisplay * pixel_rep);
+ 
+ 	if (vc4->gen >= VC4_GEN_5)
+ 		CRTC_WRITE(PV_MUX_CFG,
+@@ -758,12 +763,15 @@ int vc4_crtc_atomic_check(struct drm_crtc *crtc,
+ 	if (encoder) {
+ 		const struct drm_display_mode *mode = &crtc_state->adjusted_mode;
+ 		struct vc4_encoder *vc4_encoder = to_vc4_encoder(encoder);
++		u32 clock = drm_mode_is_stereo(mode) ? mode->crtc_clock : mode->clock;
++		u32 hdisplay = drm_mode_is_stereo(mode) ? mode->crtc_hdisplay : mode->hdisplay;
++		u32 htotal = drm_mode_is_stereo(mode) ? mode->crtc_htotal : mode->htotal;
+ 
+ 		if (vc4_encoder->type == VC4_ENCODER_TYPE_HDMI0) {
+-			vc4_state->hvs_load = max(mode->clock * mode->hdisplay / mode->htotal + 8000,
+-						  mode->clock * 9 / 10) * 1000;
++			vc4_state->hvs_load = max(div_u64((u64)clock * hdisplay, htotal) + 8000,
++						  clock * 9 / 10) * 1000;
+ 		} else {
+-			vc4_state->hvs_load = mode->clock * 1000;
++			vc4_state->hvs_load = clock * 1000;
+ 		}
+ 	}
+ 
+diff --git a/drivers/gpu/drm/vc4/vc4_hdmi.c b/drivers/gpu/drm/vc4/vc4_hdmi.c
+index 17c8635..81a1cab 100644
+--- a/drivers/gpu/drm/vc4/vc4_hdmi.c
++++ b/drivers/gpu/drm/vc4/vc4_hdmi.c
+@@ -42,6 +42,7 @@
+ #include <drm/drm_print.h>
+ #include <drm/drm_probe_helper.h>
+ #include <drm/drm_simple_kms_helper.h>
++#include <linux/bitfield.h>
+ #include <linux/clk.h>
+ #include <linux/component.h>
+ #include <linux/gpio/consumer.h>
+@@ -140,6 +141,16 @@ static bool vc4_hdmi_mode_needs_scrambling(const struct drm_display_mode *mode,
+ 	return clock > HDMI_14_MAX_TMDS_CLK;
+ }
+ 
++static bool vc4_hdmi_saved_mode_needs_scrambling(struct vc4_hdmi *vc4_hdmi)
++{
++	if (drm_mode_is_stereo(&vc4_hdmi->saved_adjusted_mode))
++		return vc4_hdmi->tmds_char_rate > HDMI_14_MAX_TMDS_CLK;
++
++	return vc4_hdmi_mode_needs_scrambling(&vc4_hdmi->saved_adjusted_mode,
++					    vc4_hdmi->output_bpc,
++					    vc4_hdmi->output_format);
++}
++
+ static int vc4_hdmi_debugfs_regs(struct seq_file *m, void *unused)
+ {
+ 	struct drm_debugfs_entry *entry = m->private;
+@@ -314,9 +325,7 @@ static int vc4_hdmi_reset_link(struct drm_connector *connector,
+ 		return 0;
+ 	}
+ 
+-	scrambling_needed = vc4_hdmi_mode_needs_scrambling(&vc4_hdmi->saved_adjusted_mode,
+-							   vc4_hdmi->output_bpc,
+-							   vc4_hdmi->output_format);
++	scrambling_needed = vc4_hdmi_saved_mode_needs_scrambling(vc4_hdmi);
+ 	if (!scrambling_needed) {
+ 		mutex_unlock(&vc4_hdmi->mutex);
+ 		return 0;
+@@ -454,6 +463,133 @@ static int vc4_hdmi_connector_get_modes(struct drm_connector *connector)
+ 	return ret;
+ }
+ 
++static void vc4_hdmi_fixup_dblclk(const struct vc4_hdmi *vc4_hdmi,
++				  struct drm_display_mode *mode)
++{
++	if (!vc4_hdmi->variant->unsupported_odd_h_timings ||
++	    !(mode->flags & DRM_MODE_FLAG_DBLCLK))
++		return;
++
++	if ((mode->hsync_start - mode->hdisplay) & 1)
++		mode->hsync_start--;
++	if ((mode->hsync_end - mode->hsync_start) & 1)
++		mode->hsync_end--;
++}
++
++/*
++ * Keep the logical mode for AVI/VSIF. Only the CRTC timing is expanded.
++ * HDMI 1.4b 8.2.3.2 and Appendix H describe the transmitted raster.
++ */
++static int vc4_hdmi_stereo_mode_fixup(struct vc4_hdmi *vc4_hdmi,
++				      struct drm_display_mode *mode,
++				      int adjust_flags)
++{
++	struct vc4_dev *vc4 = to_vc4_dev(vc4_hdmi->encoder.base.dev);
++	u32 layout = mode->flags & DRM_MODE_FLAG_3D_MASK;
++	bool interlace = mode->flags & DRM_MODE_FLAG_INTERLACE;
++	unsigned int pixel_rep = mode->flags & DRM_MODE_FLAG_DBLCLK ? 2 : 1;
++	unsigned int hvs_max = vc4->gen == VC4_GEN_4 ?
++		FIELD_MAX(SCALER_DISPCTRLX_WIDTH_MASK) : vc4->gen == VC4_GEN_5 ?
++		FIELD_MAX(SCALER5_DISPCTRLX_WIDTH_MASK) :
++		FIELD_MAX(SCALER6_DISPX_CTRL0_FWIDTH_MASK) + 1;
++	unsigned int hfp, hsp, hbp;
++	int width, height;
++
++	if (!layout)
++		return 0;
++
++	switch (layout) {
++	case DRM_MODE_FLAG_3D_FRAME_PACKING:
++		/* Figure 8-4 needs a frame sync, not the normal field syncs. */
++		if (interlace)
++			return -EINVAL;
++		break;
++	case DRM_MODE_FLAG_3D_FIELD_ALTERNATIVE:
++		/* Figure H-2 needs additional DE blanking within a field. */
++		return -EINVAL;
++	case DRM_MODE_FLAG_3D_LINE_ALTERNATIVE:
++	case DRM_MODE_FLAG_3D_L_DEPTH:
++	case DRM_MODE_FLAG_3D_L_DEPTH_GFX_GFX_DEPTH:
++		/* Figures H-3, H-5 and H-6 are progressive formats only. */
++		if (interlace)
++			return -EINVAL;
++		break;
++	case DRM_MODE_FLAG_3D_SIDE_BY_SIDE_FULL:
++	case DRM_MODE_FLAG_3D_TOP_AND_BOTTOM:
++	case DRM_MODE_FLAG_3D_SIDE_BY_SIDE_HALF:
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	vc4_hdmi_fixup_dblclk(vc4_hdmi, mode);
++
++	/* Bound the common helper's u16 timing fields and signed clock first. */
++	if (!mode->hdisplay || !mode->vdisplay || mode->clock <= 0 ||
++	    mode->hdisplay > mode->hsync_start ||
++	    mode->hsync_start >= mode->hsync_end ||
++	    mode->hsync_end > mode->htotal ||
++	    mode->vdisplay > mode->vsync_start ||
++	    mode->vsync_start >= mode->vsync_end ||
++	    mode->vsync_end > mode->vtotal ||
++	    mode->htotal > U16_MAX / 2 || mode->vtotal > U16_MAX / 4 ||
++	    mode->clock > INT_MAX / 4 ||
++	    mode->flags & DRM_MODE_FLAG_DBLSCAN || mode->vscan > 1)
++		return -EINVAL;
++
++	drm_mode_set_crtcinfo(mode, CRTC_INTERLACE_HALVE_V |
++			     CRTC_STEREO_DOUBLE_ONLY | adjust_flags);
++	drm_mode_get_hv_timing(mode, &width, &height);
++	if (width > hvs_max || height > hvs_max)
++		return -EINVAL;
++
++	if (vc4_hdmi->variant->unsupported_odd_h_timings &&
++	    ((mode->crtc_hdisplay | mode->crtc_hsync_start |
++	      mode->crtc_hsync_end | mode->crtc_htotal) & 1))
++		return -EINVAL;
++
++	hfp = (mode->crtc_hsync_start - mode->crtc_hdisplay) * pixel_rep;
++	hsp = (mode->crtc_hsync_end - mode->crtc_hsync_start) * pixel_rep;
++	hbp = (mode->crtc_htotal - mode->crtc_hsync_end) * pixel_rep;
++	if (vc4->gen == VC4_GEN_4) {
++		if (width * pixel_rep > FIELD_MAX(VC4_HDMI_HORZA_HAP_MASK) ||
++		    hfp > FIELD_MAX(VC4_HDMI_HORZB_HFP_MASK) ||
++		    hsp > FIELD_MAX(VC4_HDMI_HORZB_HSP_MASK) ||
++		    hbp > FIELD_MAX(VC4_HDMI_HORZB_HBP_MASK))
++			return -EINVAL;
++	} else {
++		if (width * pixel_rep > FIELD_MAX(VC5_HDMI_HORZA_HAP_MASK) ||
++		    hfp > FIELD_MAX(VC5_HDMI_HORZA_HFP_MASK) ||
++		    hsp > FIELD_MAX(VC5_HDMI_HORZB_HSP_MASK) ||
++		    hbp > FIELD_MAX(VC5_HDMI_HORZB_HBP_MASK) ||
++		    mode->crtc_htotal * pixel_rep / 2 > FIELD_MAX(VC5_HDMI_VERTB_VSPO_MASK))
++			return -EINVAL;
++	}
++
++	if (mode->crtc_vdisplay > FIELD_MAX(VC4_HDMI_VERTA_VAL_MASK) ||
++	    mode->crtc_vsync_start - mode->crtc_vdisplay > FIELD_MAX(VC4_HDMI_VERTA_VFP_MASK) ||
++	    mode->crtc_vsync_end - mode->crtc_vsync_start > FIELD_MAX(VC4_HDMI_VERTA_VSP_MASK) ||
++	    mode->crtc_vtotal - mode->crtc_vsync_end + interlace >
++	    FIELD_MAX(VC4_HDMI_VERTB_VBP_MASK))
++		return -EINVAL;
++
++	return 0;
++}
++
++static enum drm_mode_status
++vc4_hdmi_connector_mode_valid(struct drm_connector *connector,
++			      const struct drm_display_mode *mode)
++{
++	struct drm_display_mode adjusted;
++
++	drm_mode_init(&adjusted, mode);
++	if (vc4_hdmi_stereo_mode_fixup(connector_to_vc4_hdmi(connector),
++				       &adjusted, 0))
++		return MODE_BAD;
++
++	return drm_hdmi_connector_mode_valid(connector, mode);
++}
++
+ static int vc4_hdmi_connector_atomic_check(struct drm_connector *connector,
+ 					   struct drm_atomic_commit *state)
+ {
+@@ -466,6 +602,20 @@ static int vc4_hdmi_connector_atomic_check(struct drm_connector *connector,
+ 	if (!crtc)
+ 		return 0;
+ 
++	{
++		struct drm_crtc_state *crtc_state = drm_atomic_get_crtc_state(state, crtc);
++		struct drm_display_mode adjusted;
++
++		if (IS_ERR(crtc_state))
++			return PTR_ERR(crtc_state);
++
++		drm_mode_init(&adjusted, &crtc_state->mode);
++		if (vc4_hdmi_stereo_mode_fixup(connector_to_vc4_hdmi(connector),
++					       &adjusted,
++					       drm_connector_stereo_crtc_flags(new_state)))
++			return -EINVAL;
++	}
++
+ 	if (old_state->tv.margins.left != new_state->tv.margins.left ||
+ 	    old_state->tv.margins.right != new_state->tv.margins.right ||
+ 	    old_state->tv.margins.top != new_state->tv.margins.top ||
+@@ -524,7 +674,7 @@ static const struct drm_connector_helper_funcs vc4_hdmi_connector_helper_funcs =
+ 	.detect_ctx = vc4_hdmi_connector_detect_ctx,
+ 	.get_modes = vc4_hdmi_connector_get_modes,
+ 	.atomic_check = vc4_hdmi_connector_atomic_check,
+-	.mode_valid = drm_hdmi_connector_mode_valid,
++	.mode_valid = vc4_hdmi_connector_mode_valid,
+ };
+ 
+ static const struct drm_connector_hdmi_funcs vc4_hdmi_hdmi_connector_funcs;
+@@ -794,7 +944,6 @@ static void vc4_hdmi_enable_scrambling(struct drm_encoder *encoder)
+ 	struct vc4_hdmi *vc4_hdmi = encoder_to_vc4_hdmi(encoder);
+ 	struct drm_connector *connector = &vc4_hdmi->connector;
+ 	struct drm_device *drm = connector->dev;
+-	const struct drm_display_mode *mode = &vc4_hdmi->saved_adjusted_mode;
+ 	unsigned long flags;
+ 	int idx;
+ 
+@@ -803,9 +952,7 @@ static void vc4_hdmi_enable_scrambling(struct drm_encoder *encoder)
+ 	if (!vc4_hdmi_supports_scrambling(vc4_hdmi))
+ 		return;
+ 
+-	if (!vc4_hdmi_mode_needs_scrambling(mode,
+-					    vc4_hdmi->output_bpc,
+-					    vc4_hdmi->output_format))
++	if (!vc4_hdmi_saved_mode_needs_scrambling(vc4_hdmi))
+ 		return;
+ 
+ 	if (!drm_dev_enter(drm, &idx))
+@@ -1262,6 +1409,10 @@ static void vc4_hdmi_set_timings(struct vc4_hdmi *vc4_hdmi,
+ 				 const struct drm_display_mode *mode)
+ {
+ 	struct drm_device *drm = vc4_hdmi->connector.dev;
++	u32 hdisplay = drm_mode_is_stereo(mode) ? mode->crtc_hdisplay : mode->hdisplay;
++	u32 hsync_start = drm_mode_is_stereo(mode) ? mode->crtc_hsync_start : mode->hsync_start;
++	u32 hsync_end = drm_mode_is_stereo(mode) ? mode->crtc_hsync_end : mode->hsync_end;
++	u32 htotal = drm_mode_is_stereo(mode) ? mode->crtc_htotal : mode->htotal;
+ 	bool hsync_pos = mode->flags & DRM_MODE_FLAG_PHSYNC;
+ 	bool vsync_pos = mode->flags & DRM_MODE_FLAG_PVSYNC;
+ 	bool interlaced = mode->flags & DRM_MODE_FLAG_INTERLACE;
+@@ -1291,18 +1442,18 @@ static void vc4_hdmi_set_timings(struct vc4_hdmi *vc4_hdmi,
+ 	HDMI_WRITE(HDMI_HORZA,
+ 		   (vsync_pos ? VC4_HDMI_HORZA_VPOS : 0) |
+ 		   (hsync_pos ? VC4_HDMI_HORZA_HPOS : 0) |
+-		   VC4_SET_FIELD(mode->hdisplay * pixel_rep,
++		   VC4_SET_FIELD(hdisplay * pixel_rep,
+ 				 VC4_HDMI_HORZA_HAP));
+ 
+ 	HDMI_WRITE(HDMI_HORZB,
+-		   VC4_SET_FIELD((mode->htotal -
+-				  mode->hsync_end) * pixel_rep,
++		   VC4_SET_FIELD((htotal -
++				  hsync_end) * pixel_rep,
+ 				 VC4_HDMI_HORZB_HBP) |
+-		   VC4_SET_FIELD((mode->hsync_end -
+-				  mode->hsync_start) * pixel_rep,
++		   VC4_SET_FIELD((hsync_end -
++				  hsync_start) * pixel_rep,
+ 				 VC4_HDMI_HORZB_HSP) |
+-		   VC4_SET_FIELD((mode->hsync_start -
+-				  mode->hdisplay) * pixel_rep,
++		   VC4_SET_FIELD((hsync_start -
++				  hdisplay) * pixel_rep,
+ 				 VC4_HDMI_HORZB_HFP));
+ 
+ 	HDMI_WRITE(HDMI_VERTA0, verta);
+@@ -1326,6 +1477,10 @@ static void vc5_hdmi_set_timings(struct vc4_hdmi *vc4_hdmi,
+ 				 const struct drm_display_mode *mode)
+ {
+ 	struct drm_device *drm = vc4_hdmi->connector.dev;
++	u32 hdisplay = drm_mode_is_stereo(mode) ? mode->crtc_hdisplay : mode->hdisplay;
++	u32 hsync_start = drm_mode_is_stereo(mode) ? mode->crtc_hsync_start : mode->hsync_start;
++	u32 hsync_end = drm_mode_is_stereo(mode) ? mode->crtc_hsync_end : mode->hsync_end;
++	u32 htotal = drm_mode_is_stereo(mode) ? mode->crtc_htotal : mode->htotal;
+ 	bool hsync_pos = mode->flags & DRM_MODE_FLAG_PHSYNC;
+ 	bool vsync_pos = mode->flags & DRM_MODE_FLAG_PVSYNC;
+ 	bool interlaced = mode->flags & DRM_MODE_FLAG_INTERLACE;
+@@ -1335,7 +1490,7 @@ static void vc5_hdmi_set_timings(struct vc4_hdmi *vc4_hdmi,
+ 		     VC4_SET_FIELD(mode->crtc_vsync_start - mode->crtc_vdisplay,
+ 				   VC5_HDMI_VERTA_VFP) |
+ 		     VC4_SET_FIELD(mode->crtc_vdisplay, VC5_HDMI_VERTA_VAL));
+-	u32 vertb = (VC4_SET_FIELD(mode->htotal >> (2 - pixel_rep),
++	u32 vertb = (VC4_SET_FIELD(htotal >> (2 - pixel_rep),
+ 				   VC5_HDMI_VERTB_VSPO) |
+ 		     VC4_SET_FIELD(mode->crtc_vtotal - mode->crtc_vsync_end +
+ 				   interlaced,
+@@ -1357,18 +1512,18 @@ static void vc5_hdmi_set_timings(struct vc4_hdmi *vc4_hdmi,
+ 	HDMI_WRITE(HDMI_HORZA,
+ 		   (vsync_pos ? VC5_HDMI_HORZA_VPOS : 0) |
+ 		   (hsync_pos ? VC5_HDMI_HORZA_HPOS : 0) |
+-		   VC4_SET_FIELD(mode->hdisplay * pixel_rep,
++		   VC4_SET_FIELD(hdisplay * pixel_rep,
+ 				 VC5_HDMI_HORZA_HAP) |
+-		   VC4_SET_FIELD((mode->hsync_start -
+-				  mode->hdisplay) * pixel_rep,
++		   VC4_SET_FIELD((hsync_start -
++				  hdisplay) * pixel_rep,
+ 				 VC5_HDMI_HORZA_HFP));
+ 
+ 	HDMI_WRITE(HDMI_HORZB,
+-		   VC4_SET_FIELD((mode->htotal -
+-				  mode->hsync_end) * pixel_rep,
++		   VC4_SET_FIELD((htotal -
++				  hsync_end) * pixel_rep,
+ 				 VC5_HDMI_HORZB_HBP) |
+-		   VC4_SET_FIELD((mode->hsync_end -
+-				  mode->hsync_start) * pixel_rep,
++		   VC4_SET_FIELD((hsync_end -
++				  hsync_start) * pixel_rep,
+ 				 VC5_HDMI_HORZB_HSP));
+ 
+ 	HDMI_WRITE(HDMI_VERTA0, verta);
+@@ -1711,6 +1866,7 @@ static void vc4_hdmi_encoder_atomic_mode_set(struct drm_encoder *encoder,
+ 	mutex_lock(&vc4_hdmi->mutex);
+ 	drm_mode_copy(&vc4_hdmi->saved_adjusted_mode,
+ 		      &crtc_state->adjusted_mode);
++	vc4_hdmi->tmds_char_rate = conn_state->hdmi.tmds_char_rate;
+ 	vc4_hdmi->output_bpc = conn_state->hdmi.output_bpc;
+ 	vc4_hdmi->output_format = conn_state->hdmi.output_format;
+ 	mutex_unlock(&vc4_hdmi->mutex);
+@@ -1766,33 +1922,33 @@ static const struct drm_connector_hdmi_funcs vc4_hdmi_hdmi_connector_funcs = {
+ #define WIFI_2_4GHz_CH1_MIN_FREQ	2400000000ULL
+ #define WIFI_2_4GHz_CH1_MAX_FREQ	2422000000ULL
+ 
+-static int vc4_hdmi_encoder_atomic_check(struct drm_encoder *encoder,
+-					 struct drm_crtc_state *crtc_state,
+-					 struct drm_connector_state *conn_state)
++int vc4_hdmi_encoder_atomic_check(struct drm_encoder *encoder,
++				  struct drm_crtc_state *crtc_state,
++				  struct drm_connector_state *conn_state)
+ {
+ 	struct vc4_hdmi *vc4_hdmi = encoder_to_vc4_hdmi(encoder);
+ 	struct drm_display_mode *mode = &crtc_state->adjusted_mode;
+-	unsigned long long tmds_char_rate = mode->clock * 1000;
++	unsigned long long tmds_char_rate = (u64)mode->clock * 1000;
+ 	unsigned long long tmds_bit_rate;
+ 
+ 	if (vc4_hdmi->variant->unsupported_odd_h_timings) {
+-		if (mode->flags & DRM_MODE_FLAG_DBLCLK) {
+-			/* Only try to fixup DBLCLK modes to get 480i and 576i
+-			 * working.
+-			 * A generic solution for all modes with odd horizontal
+-			 * timing values seems impossible based on trying to
+-			 * solve it for 1366x768 monitors.
+-			 */
+-			if ((mode->hsync_start - mode->hdisplay) & 1)
+-				mode->hsync_start--;
+-			if ((mode->hsync_end - mode->hsync_start) & 1)
+-				mode->hsync_end--;
+-		}
++		vc4_hdmi_fixup_dblclk(vc4_hdmi, mode);
+ 
+ 		/* Now check whether we still have odd values remaining */
+-		if ((mode->hdisplay % 2) || (mode->hsync_start % 2) ||
+-		    (mode->hsync_end % 2) || (mode->htotal % 2))
++		if (!drm_mode_is_stereo(mode) &&
++		    ((mode->hdisplay % 2) || (mode->hsync_start % 2) ||
++		     (mode->hsync_end % 2) || (mode->htotal % 2)))
++			return -EINVAL;
++	}
++
++	if (drm_mode_is_stereo(mode)) {
++		/* Scaling the whole packed raster moves its active spaces. */
++		if (conn_state->tv.margins.left || conn_state->tv.margins.right ||
++		    conn_state->tv.margins.top || conn_state->tv.margins.bottom)
+ 			return -EINVAL;
++
++		return vc4_hdmi_stereo_mode_fixup(vc4_hdmi, mode,
++						  drm_connector_stereo_crtc_flags(conn_state));
+ 	}
+ 
+ 	/*
+@@ -1818,6 +1974,13 @@ vc4_hdmi_encoder_mode_valid(struct drm_encoder *encoder,
+ {
+ 	struct vc4_hdmi *vc4_hdmi = encoder_to_vc4_hdmi(encoder);
+ 
++	if (drm_mode_is_stereo(mode)) {
++		struct drm_display_mode adjusted;
++
++		drm_mode_init(&adjusted, mode);
++		return vc4_hdmi_stereo_mode_fixup(vc4_hdmi, &adjusted, 0) ? MODE_BAD : MODE_OK;
++	}
++
+ 	if (vc4_hdmi->variant->unsupported_odd_h_timings &&
+ 	    !(mode->flags & DRM_MODE_FLAG_DBLCLK) &&
+ 	    ((mode->hdisplay % 2) || (mode->hsync_start % 2) ||
+@@ -1932,7 +2095,8 @@ static void vc4_hdmi_set_n_cts(struct vc4_hdmi *vc4_hdmi, unsigned int samplerat
+ 	lockdep_assert_held(&vc4_hdmi->hw_lock);
+ 
+ 	n = 128 * samplerate / 1000;
+-	tmp = (u64)(mode->clock * 1000) * n;
++	tmp = drm_mode_is_stereo(mode) ? vc4_hdmi->tmds_char_rate * n :
++		(u64)(mode->clock * 1000) * n;
+ 	do_div(tmp, 128 * samplerate);
+ 	cts = tmp;
+ 
+diff --git a/drivers/gpu/drm/vc4/vc4_hdmi.h b/drivers/gpu/drm/vc4/vc4_hdmi.h
+index 29d461d..d6dad25 100644
+--- a/drivers/gpu/drm/vc4/vc4_hdmi.h
++++ b/drivers/gpu/drm/vc4/vc4_hdmi.h
+@@ -10,6 +10,10 @@
+ #include "vc4_drv.h"
+ 
+ struct vc4_hdmi;
++
++int vc4_hdmi_encoder_atomic_check(struct drm_encoder *encoder,
++				  struct drm_crtc_state *crtc_state,
++				  struct drm_connector_state *conn_state);
+ struct vc4_hdmi_register;
+ 
+ enum vc4_hdmi_phy_channel {
+@@ -205,6 +209,9 @@ struct vc4_hdmi {
+ 	 */
+ 	unsigned int output_bpc;
+ 
++	/* Committed TMDS rate, including stereo timing and output format. */
++	unsigned long long tmds_char_rate;
++
+ 	/**
+ 	 * @output_format: Copy of
+ 	 * @drm_connector_state.hdmi.output_format for use outside of
+diff --git a/drivers/gpu/drm/vc4/vc4_hvs.c b/drivers/gpu/drm/vc4/vc4_hvs.c
+index e715147..75f3348 100644
+--- a/drivers/gpu/drm/vc4/vc4_hvs.c
++++ b/drivers/gpu/drm/vc4/vc4_hvs.c
+@@ -627,10 +627,14 @@ static int vc4_hvs_init_channel(struct vc4_hvs *hvs, struct drm_crtc *crtc,
+ 	bool interlace = mode->flags & DRM_MODE_FLAG_INTERLACE;
+ 	u32 dispbkgndx;
+ 	u32 dispctrl;
++	int width = mode->hdisplay, height = mode->vdisplay;
+ 	int idx;
+ 
+ 	WARN_ON_ONCE(vc4->gen > VC4_GEN_5);
+ 
++	if (drm_mode_is_stereo(mode))
++		drm_mode_get_hv_timing(mode, &width, &height);
++
+ 	if (!drm_dev_enter(drm, &idx))
+ 		return -ENODEV;
+ 
+@@ -647,16 +651,16 @@ static int vc4_hvs_init_channel(struct vc4_hvs *hvs, struct drm_crtc *crtc,
+ 	dispbkgndx = HVS_READ(SCALER_DISPBKGNDX(chan));
+ 
+ 	if (vc4->gen == VC4_GEN_4) {
+-		dispctrl |= VC4_SET_FIELD(mode->hdisplay,
++		dispctrl |= VC4_SET_FIELD(width,
+ 					  SCALER_DISPCTRLX_WIDTH) |
+-			    VC4_SET_FIELD(mode->vdisplay,
++			    VC4_SET_FIELD(height,
+ 					  SCALER_DISPCTRLX_HEIGHT) |
+ 			    (oneshot ? SCALER_DISPCTRLX_ONESHOT : 0);
+ 		dispbkgndx |= SCALER_DISPBKGND_AUTOHS;
+ 	} else {
+-		dispctrl |= VC4_SET_FIELD(mode->hdisplay,
++		dispctrl |= VC4_SET_FIELD(width,
+ 					  SCALER5_DISPCTRLX_WIDTH) |
+-			    VC4_SET_FIELD(mode->vdisplay,
++			    VC4_SET_FIELD(height,
+ 					  SCALER5_DISPCTRLX_HEIGHT) |
+ 			    (oneshot ? SCALER5_DISPCTRLX_ONESHOT : 0);
+ 		dispbkgndx &= ~SCALER5_DISPBKGND_BCK2BCK;
+@@ -690,10 +694,14 @@ static int vc6_hvs_init_channel(struct vc4_hvs *hvs, struct drm_crtc *crtc,
+ 	unsigned int chan = vc4_crtc_state->assigned_channel;
+ 	bool interlace = mode->flags & DRM_MODE_FLAG_INTERLACE;
+ 	u32 disp_ctrl1;
++	int width = mode->hdisplay, height = mode->vdisplay;
+ 	int idx;
+ 
+ 	WARN_ON_ONCE(vc4->gen < VC4_GEN_6_C);
+ 
++	if (drm_mode_is_stereo(mode))
++		drm_mode_get_hv_timing(mode, &width, &height);
++
+ 	if (!drm_dev_enter(drm, &idx))
+ 		return -ENODEV;
+ 
+@@ -706,10 +714,10 @@ static int vc6_hvs_init_channel(struct vc4_hvs *hvs, struct drm_crtc *crtc,
+ 
+ 	HVS_WRITE(SCALER6_DISPX_CTRL0(chan),
+ 		  SCALER6_DISPX_CTRL0_ENB |
+-		  VC4_SET_FIELD(mode->hdisplay - 1,
++		  VC4_SET_FIELD(width - 1,
+ 				SCALER6_DISPX_CTRL0_FWIDTH) |
+ 		  (oneshot ? SCALER6_DISPX_CTRL0_ONESHOT : 0) |
+-		  VC4_SET_FIELD(mode->vdisplay - 1,
++		  VC4_SET_FIELD(height - 1,
+ 				SCALER6_DISPX_CTRL0_LINES));
+ 
+ 	drm_dev_exit(idx);
+diff --git a/drivers/gpu/drm/vc4/vc4_plane.c b/drivers/gpu/drm/vc4/vc4_plane.c
+index 6c43327..775e0e2 100644
+--- a/drivers/gpu/drm/vc4/vc4_plane.c
++++ b/drivers/gpu/drm/vc4/vc4_plane.c
+@@ -1215,6 +1215,7 @@ static int vc4_plane_mode_set(struct drm_plane *plane,
+ 	u32 v_subsample = fb->format->vsub;
+ 	bool mix_plane_alpha;
+ 	bool covers_screen;
++	struct drm_crtc_state *crtc_state;
+ 	u32 scl0, scl1, pitch0;
+ 	u32 tiling, src_x, src_y;
+ 	u32 width, height;
+@@ -1671,8 +1672,10 @@ static int vc4_plane_mode_set(struct drm_plane *plane,
+ 	vc4_state->dlist[ctl0_offset] |=
+ 		VC4_SET_FIELD(vc4_state->dlist_count, SCALER_CTL0_SIZE);
+ 
+-	/* crtc_* are already clipped coordinates. */
+-	covers_screen = vc4_state->crtc_x == 0 && vc4_state->crtc_y == 0 &&
++	/* A one-view plane must not suppress the other view's background. */
++	crtc_state = drm_atomic_get_new_crtc_state(state->state, state->crtc);
++	covers_screen = !drm_mode_is_stereo(&crtc_state->mode) &&
++			vc4_state->crtc_x == 0 && vc4_state->crtc_y == 0 &&
+ 			vc4_state->crtc_w == state->crtc->mode.hdisplay &&
+ 			vc4_state->crtc_h == state->crtc->mode.vdisplay;
+ 	/* Background fill might be necessary when the plane has per-pixel
+@@ -1745,6 +1748,7 @@ static int vc6_plane_mode_set(struct drm_plane *plane,
+ 	u32 v_subsample = fb->format->vsub;
+ 	bool mix_plane_alpha;
+ 	bool covers_screen;
++	struct drm_crtc_state *crtc_state;
+ 	u32 scl0, scl1, pitch0;
+ 	u32 tiling, src_x, src_y;
+ 	u32 width, height;
+@@ -2086,8 +2090,10 @@ static int vc6_plane_mode_set(struct drm_plane *plane,
+ 	vc4_state->dlist[0] |=
+ 		VC4_SET_FIELD(vc4_state->dlist_count, SCALER6_CTL0_NEXT);
+ 
+-	/* crtc_* are already clipped coordinates. */
+-	covers_screen = vc4_state->crtc_x == 0 && vc4_state->crtc_y == 0 &&
++	/* A one-view plane must not suppress the other view's background. */
++	crtc_state = drm_atomic_get_new_crtc_state(state->state, state->crtc);
++	covers_screen = !drm_mode_is_stereo(&crtc_state->mode) &&
++			vc4_state->crtc_x == 0 && vc4_state->crtc_y == 0 &&
+ 			vc4_state->crtc_w == state->crtc->mode.hdisplay &&
+ 			vc4_state->crtc_h == state->crtc->mode.vdisplay;
+ 
+-- 
+2.53.0
+
