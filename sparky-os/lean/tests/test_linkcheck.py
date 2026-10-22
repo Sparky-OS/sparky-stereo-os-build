@@ -1,0 +1,88 @@
+"""The link gate must reject the torcs failure (a library dropped from NEEDED that a sibling still uses)."""
+
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from lean import linkcheck, package
+
+LIBDIR = 'usr/lib/x86_64-linux-gnu/demo/lib'
+
+
+@unittest.skipUnless(shutil.which('gcc') and shutil.which('dpkg-deb') and shutil.which('ldd'), 'needs gcc, dpkg-deb, ldd')
+class LinkGate(unittest.TestCase):
+    def setUp(self):
+        self.work = tempfile.TemporaryDirectory(prefix='test-link-')
+        self.addCleanup(self.work.cleanup)
+        self.base = Path(self.work.name)
+        src = self.base / 'src'
+        src.mkdir()
+        (src / 'b.c').write_text('int xrr_current(void) { return 7; }\n')
+        (src / 'a.c').write_text('int xrr_current(void);\nint client_size(void) { return xrr_current(); }\n')
+        (src / 'm.c').write_text('int client_size(void);\nint main(void) { return client_size() == 7 ? 0 : 1; }\n')
+        self.src = src
+        # libb stands for libXrandr, liba for libtgfclient (uses it, does not list it), m for torcs-bin.
+        self.run_cc(['-shared', '-fPIC', '-o', 'libb.so.1', '-Wl,-soname,libb.so.1', 'b.c'])
+        self.run_cc(['-shared', '-fPIC', '-o', 'liba.so', 'a.c'])
+
+    def run_cc(self, args):
+        subprocess.run(['gcc'] + args, cwd=self.src, check=True)
+
+    def deb(self, name, version, as_needed, listed=True, broken_depends=False):
+        root = self.base / f'pkg-{version}'
+        (root / LIBDIR).mkdir(parents=True)
+        (root / 'usr/games').mkdir()
+        (root / 'DEBIAN').mkdir()
+        shutil.copy(self.src / 'libb.so.1', root / LIBDIR / 'libb.so.1')
+        shutil.copy(self.src / 'liba.so', root / LIBDIR / 'liba.so')
+        flag = '-Wl,--as-needed' if as_needed else '-Wl,--no-as-needed'
+        # --as-needed with the unused library listed before its only user drops it from NEEDED,
+        # which is the situation of libXrandr in torcs-bin (its user, libtgfclient, does not list it).
+        order = ['-l:libb.so.1', '-la'] if as_needed else ['-la', '-l:libb.so.1']
+        self.run_cc(['-o', str(root / 'usr/games/demo'), 'm.c', f'-L{root / LIBDIR}', flag] + order +
+                    ['-Wl,--allow-shlib-undefined', f'-Wl,-rpath-link,{root / LIBDIR}'])
+        depends = 'libc6' + (', libxrandr2' if listed else '')
+        (root / 'DEBIAN/control').write_text(
+            f'Package: {name}\nVersion: {version}\nArchitecture: amd64\nMaintainer: t <t@example.org>\n'
+            f'Description: t\nDepends: {depends}\n')
+        out = self.base / f'{name}_{version}_amd64.deb'
+        subprocess.run(['dpkg-deb', '--build', str(root), str(out)], check=True, stdout=subprocess.DEVNULL)
+        return out
+
+    def test_dropped_needed_is_rejected(self):
+        before = self.deb('demo', '1', as_needed=False)
+        after = self.deb('demo', '1+lc1', as_needed=True, listed=False)
+        exe = self.base / 'pkg-1+lc1/usr/games/demo'
+        if 'libb.so.1' in linkcheck.needed(exe):
+            self.skipTest('this linker kept the library; nothing to reproduce')
+        # Without a previous build the library's own undefined symbol is a finding, with one it is known noise.
+        self.assertEqual(linkcheck.check(before, previous_deb=before), [])
+        with self.assertRaises(package.Invalid) as raised:
+            linkcheck.check(after, previous_deb=before)
+        self.assertIn('xrr_current', str(raised.exception))
+
+    def test_smoke_start_catches_loader_error(self):
+        after = self.deb('demo', '2+lc1', as_needed=True, listed=False)
+        exe = self.base / 'pkg-2+lc1/usr/games/demo'
+        if 'libb.so.1' in linkcheck.needed(exe):
+            self.skipTest('this linker kept the library; nothing to reproduce')
+        table = self.base / 'smoke.tsv'
+        table.write_text('demo\t/usr/games/demo\t--version\n')
+        findings = linkcheck.smoke(after, table)
+        self.assertTrue(findings and 'xrr_current' in findings[0], findings)
+
+    def test_same_link_passes(self):
+        before = self.deb('demo', '3', as_needed=False)
+        after = self.deb('demo', '3+lc1', as_needed=False)
+        table = self.base / 'smoke.tsv'
+        table.write_text('demo\t/usr/games/demo\t--version\n')
+        self.assertEqual(linkcheck.check(after, previous_deb=before, smoke_table=table), [])
+
+
+if __name__ == '__main__':
+    unittest.main()

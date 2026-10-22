@@ -17,6 +17,9 @@ python3 -m lean.release build-tree STAGING OUTPUT
 python3 -m lean.release check-debs OUTPUT/*.deb
 python3 -m lean.release check-repo PUBLISHED_TREE
 
+# Link and start gate (needs the package's runtime dependencies installed: build or throwaway container):
+python3 -m lean.release check-link OUTPUT/*.deb --previous-dir DIR_WITH_PRE_LC1_DEBS
+
 # Before an ISO upload:
 python3 -m lean.release check-iso IMAGE.iso
 
@@ -45,3 +48,9 @@ External updater adapters (Discord's self-updated payload, npm helpers, vendor i
 `source_tree.py` projects disposable native inputs before configuration and retains authored hashes/copies plus mtimes. `debhelper.py` restores installed headers from that exact source before the payload pass and registers ordinary, HR and automatic debug archives before `.changes`/`.buildinfo` checksums. Native `.dsc` inputs stay authored. KPipeWire 6.7.4-1+stereo3d7 and KRdp 6.7.4-1+stereo3d8 exercise this path.
 
 Java and Kotlin adapters use real compiler lexers (qualified Android build: JDK 17, Kotlin 2.4.0). The compiler classpath is needed only where source is projected/resolved, not by ordinary binary clients. Flat Headset publishes its pre-compilation wrapper, per-component evidence and source resolver in its Android source tree. Its generator-read FreeRDP header remains authored. The `lc1` marker does not certify these separate pre-compilation checks.
+
+## Link and start gate (22 October)
+
+`check-debs` proves archive bytes and HR companions, not that the programs still run. On 22 October 2026 torcs 1.3.7+dfsg-5+stereo3d1+lc1 was published although torcs-bin stopped with `undefined symbol: XRRConfigCurrentConfiguration`: libtgfclient calls libXrandr without listing it, torcs-bin had kept libXrandr only because the libglut it was linked against still listed it, and the lc1 rebuild of libglut no longer did.
+
+`lean/linkcheck.py` (`release check-link`) runs `ldd -r` on every ELF of a rebuilt package with the package's own library directories on `LD_LIBRARY_PATH`, and blocks on any missing library or undefined symbol that the previous build of the same package resolved. Without a previous build it blocks on a missing library or an undefined symbol in a program. It then starts the programs listed in `lean/smoke.tsv` with `LD_BIND_NOW=1` and no display, and blocks on a dynamic-loader error. Lost NEEDED entries and lost Depends names are printed as notes: a library nothing uses may legitimately disappear under `--as-needed`. The gate installs nothing and must run where the runtime dependencies are installed.

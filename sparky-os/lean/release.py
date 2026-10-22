@@ -15,7 +15,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-from . import package
+from . import linkcheck, package
 
 
 def projection_hash(path):
@@ -132,6 +132,20 @@ def check_debs(paths):
     return verified
 
 
+def check_link(debs, previous_dir=None, smoke_table=None):
+    """Link and start gate (ORDER 198): every ELF of a rebuilt package must resolve like its predecessor.
+
+    Run it where the runtime dependencies are installed (a build or throwaway container). The
+    predecessor of NAME_VERSION+lc1_ARCH.deb is NAME_VERSION_ARCH.deb in previous_dir."""
+    for deb in map(Path, debs):
+        previous = None
+        if previous_dir:
+            candidate = Path(previous_dir) / deb.name.replace('+lc1_', '_')
+            previous = candidate if candidate.is_file() else None
+        linkcheck.check(deb, previous_deb=previous, smoke_table=smoke_table)
+    print(f'lc1: link check passed for {len(debs)} packages')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
@@ -140,6 +154,10 @@ def main():
     build.add_argument('out')
     check = commands.add_parser('check-debs')
     check.add_argument('debs', nargs='+')
+    link = commands.add_parser('check-link')
+    link.add_argument('debs', nargs='+')
+    link.add_argument('--previous-dir', help='directory holding the pre-lc1 builds to compare with')
+    link.add_argument('--smoke', default=str(Path(__file__).with_name('smoke.tsv')), help='programs to start with LD_BIND_NOW=1')
     selection = commands.add_parser('check-selection')
     selection.add_argument('tsv')
     tree = commands.add_parser('check-tree')
@@ -158,6 +176,8 @@ def main():
             build_tree(args.tree, args.out)
         elif args.command == 'check-debs':
             check_debs(args.debs)
+        elif args.command == 'check-link':
+            check_link(args.debs, args.previous_dir, args.smoke)
         elif args.command == 'check-selection':
             paths = [line.split('\t')[0] for line in Path(args.tsv).read_text().splitlines()
                      if line.split('\t')[-1] != 'source']
