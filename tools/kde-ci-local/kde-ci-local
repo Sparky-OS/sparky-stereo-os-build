@@ -494,6 +494,10 @@ def run_job_locked(name, job, cfg, args, ctx):
         cmd += ["--tmpfs", "/run/user/1000:uid=1000,gid=1000,mode=700", "-e", "XDG_RUNTIME_DIR=/run/user/1000"]
         if os.path.exists("/sys/class/drm/renderD128") and dri_gid("/dev/dri/renderD128"):
             cmd += ["--device", "/dev/dri/renderD128", "--group-add", dri_gid("/dev/dri/renderD128")]
+        # KWin's DMA-BUF tests make real buffers with /dev/udmabuf, which the VM images have;
+        # without it they skip here and pass, while the pipeline runs them
+        if os.path.exists("/dev/udmabuf"):
+            cmd += ["--device", "/dev/udmabuf", "--group-add", str(os.stat("/dev/udmabuf").st_gid)]
         # KWin's DRM tests open /dev/dri/card1 when CI is set: a vkms device on KDE's runners.
         # When the host has vkms loaded, its card goes in under that name.
         card = vkms_card()
