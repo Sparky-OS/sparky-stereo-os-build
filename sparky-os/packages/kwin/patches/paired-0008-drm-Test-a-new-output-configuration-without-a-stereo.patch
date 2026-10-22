@@ -1,0 +1,34 @@
+Description: drm: Test a new output configuration without a stereo pair's shared buffer
+ The second output of a stereo pair scans out its partner's buffer. The
+ test of a new configuration kept that buffer on its primary layer, so
+ changing the mode of a paired pair tested the old, smaller frame against
+ the new mode's eye and the kernel refused it ("No space left on device"
+ from the source rectangle check). The pair could not change mode.
+ .
+ Test with the layer's own buffer, as for every other output.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://github.com/Sparky-OS/kwin/commit/dbbc34b396df55466e37642f73e9b359d03ab88d
+Forwarded: no
+Last-Update: 2026-10-22
+Assisted-by: Claude Opus 5.5
+---
+ src/backends/drm/drm_gpu.cpp | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/backends/drm/drm_gpu.cpp b/src/backends/drm/drm_gpu.cpp
+index 2ef7cd7..b8fa916 100644
+--- a/src/backends/drm/drm_gpu.cpp
++++ b/src/backends/drm/drm_gpu.cpp
+@@ -503,7 +503,8 @@ DrmPipeline::Error DrmGpu::testPipelines()
+                 layer->setTargetRect(Rect(QPoint(0, 0), pipeline->mode()->size()));
+                 layer->setSourceRect(Rect(QPoint(0, 0), pipeline->mode()->size()));
+                 layer->setEnabled(true);
+-                // ensure we have suitable buffers for the test
++                // ensure we have suitable buffers for the test, not the buffer of a stereo pair's partner
++                layer->clearSharedBuffer();
+                 if (!layer->preparePresentationTest()) {
+                     return DrmPipeline::Error::InvalidArguments;
+                 }
+-- 
+2.53.0
+

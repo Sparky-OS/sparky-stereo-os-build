@@ -1,0 +1,36 @@
+Description: drm: Skip a stereo pair pipeline removed while its commit was in flight
+ When an output of a pair is unplugged while the pair's commit, owned by
+ the partner's commit thread, waits for its page flip, the commit still
+ lists the removed pipeline, and the page flip called into it after it
+ was freed.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://github.com/Sparky-OS/kwin/commit/cdbda2b8ad789261c00840524c5eb6e2bc831395
+Forwarded: no
+Last-Update: 2026-10-22
+Assisted-by: Claude Opus 5.5
+---
+ src/backends/drm/drm_commit.cpp | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/src/backends/drm/drm_commit.cpp b/src/backends/drm/drm_commit.cpp
+index 3c38ac1..f76556d 100644
+--- a/src/backends/drm/drm_commit.cpp
++++ b/src/backends/drm/drm_commit.cpp
+@@ -207,9 +207,14 @@ void DrmAtomicCommit::pageFlipped(std::chrono::nanoseconds timestamp, std::optio
+     // The commit thread that owns this commit destroys it in pageFlipped(). The pipelines
+     // of a stereo pair's commit release only this commit, not one their other thread has in flight.
+     const DrmCommit *pairCommit = !m_modeset && m_pipelines.size() > 1 ? this : nullptr;
++    const QList<DrmPipeline *> gpuPipelines = m_gpu->pipelines();
+     QList<std::pair<DrmPipeline *, std::optional<StereoEye>>> completedPipelines;
+     completedPipelines.reserve(m_pipelines.size());
+     for (const auto pipeline : std::as_const(m_pipelines)) {
++        // an output of a stereo pair can be removed while their commit is in flight
++        if (pairCommit && !gpuPipelines.contains(pipeline)) {
++            continue;
++        }
+         completedPipelines.emplace_back(pipeline, frameSequentialEye(pipeline));
+     }
+     for (const auto &[pipeline, eye] : std::as_const(completedPipelines)) {
+-- 
+2.53.0
+

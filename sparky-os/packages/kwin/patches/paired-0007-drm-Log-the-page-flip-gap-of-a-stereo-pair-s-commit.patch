@@ -1,0 +1,32 @@
+Description: drm: Log the page-flip gap of a stereo pair's commit
+ The debug message with the time between a pair's two page-flip events
+ sat after an early return and was never printed.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://github.com/Sparky-OS/kwin/commit/0280eaeb0ff4e3959366735de685f82dadcf8ffa
+Forwarded: no
+Last-Update: 2026-10-22
+Assisted-by: Claude Opus 5.5
+---
+ src/backends/drm/drm_commit.cpp | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/src/backends/drm/drm_commit.cpp b/src/backends/drm/drm_commit.cpp
+index f76556d..2de97fc 100644
+--- a/src/backends/drm/drm_commit.cpp
++++ b/src/backends/drm/drm_commit.cpp
+@@ -180,9 +180,9 @@ void DrmAtomicCommit::pageFlipped(std::chrono::nanoseconds timestamp, std::optio
+             m_firstPageflipTimestamp = timestamp;
+         }
+         --m_pendingPageflips;
+-        if (m_pendingPageflips > 0) {
+-            return;
+-        }
++        return;
++    }
++    if (m_firstPageflipTimestamp) {
+         qCDebug(KWIN_DRM) << "Stereo pair pageflip gap"
+                           << std::chrono::duration_cast<std::chrono::microseconds>(timestamp - *m_firstPageflipTimestamp).count() << "us";
+     }
+-- 
+2.53.0
+

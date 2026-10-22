@@ -1,0 +1,33 @@
+Description: drm: Scan out an output's own buffer unless it is the second of a stereo pair
+ The second output of a pair to present scans out the first one's
+ buffer, set with setSharedPrimaryBuffer(). Nothing cleared it again:
+ after unpairing, or when the outputs presented in the other order, the
+ output kept scanning out a stale buffer of its partner.
+ .
+ Clear it each time an output presents; the second output of a pair gets
+ the first one's current buffer again right after.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://github.com/Sparky-OS/kwin/commit/01035541737cb8a6964a6778660d3b1153625253
+Forwarded: no
+Last-Update: 2026-10-22
+Assisted-by: Claude Opus 5.5
+---
+ src/backends/drm/drm_gpu.cpp | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/src/backends/drm/drm_gpu.cpp b/src/backends/drm/drm_gpu.cpp
+index 3ccd1d2..7d83c87 100644
+--- a/src/backends/drm/drm_gpu.cpp
++++ b/src/backends/drm/drm_gpu.cpp
+@@ -604,6 +604,8 @@ void DrmGpu::addDefunctCommit(std::unique_ptr<DrmCommit> &&commit)
+ 
+ DrmPipeline::Error DrmGpu::presentStereoPair(DrmOutput *output, const QList<OutputLayer *> &layersToUpdate, const std::shared_ptr<OutputFrame> &frame)
+ {
++    // An output scans out its own buffer, unless it is the second of a pair below.
++    output->setSharedPrimaryBuffer(nullptr);
+     DrmOutput *partner = nullptr;
+     if (output->isStereoPair()) {
+         for (DrmOutput *candidate : std::as_const(m_drmOutputs)) {
+-- 
+2.53.0
+
