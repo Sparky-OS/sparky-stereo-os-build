@@ -13,15 +13,16 @@ printf 'deb http://deb.debian.org/debian testing contrib non-free non-free-firmw
 printf 'Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n' > /etc/apt/preferences.d/edition
 apt-get -y update >/dev/null 2>&1
 apt-get -y --no-install-recommends build-dep /work/lc/source >/t/build-dep.log 2>&1 || { echo build-dep failed; exit 1; }
-apt-get -y --no-install-recommends install ninja-build xauth xvfb dbus libei-dev libeis-dev >>/t/build-dep.log 2>&1
+apt-get -y --no-install-recommends install ninja-build xauth xvfb xwayland dbus libei-dev libeis-dev breeze mesa-utils >>/t/build-dep.log 2>&1
 [ -x /t/build/bin/testMockDrmStereoPair ] && REUSE=1 || { REUSE=0; rm -rf /t/build; mkdir -p /t/build; }
 useradd --create-home --uid 1000 builder 2>/dev/null
 chown -R builder:builder /t
 cd /t/build
-TARGETS="testMockDrm testMockDrmFrameSequential testVirtualStereo testStereoPair testMockDrmStereoPair testMockDrmDepthStructures testFrameSequential"
+TARGETS="testMockDrm testMockDrmFrameSequential testVirtualStereo testStereoPair testMockDrmStereoPair testMockDrmDepthStructures testFrameSequential testStereoDownscale testX11Window testDmabufFormatSwitch"
 [ "$REUSE" = 1 ] || runuser -u builder -- env HOME=/t sh -c "cmake -G Ninja /work/lc/source -DBUILD_TESTING=ON -DKWIN_BUILD_KCMS=ON -DQTWAYLANDSCANNER_KDE_EXECUTABLE=/usr/lib/qt6/libexec/qtwaylandscanner -DCMAKE_BUILD_TYPE=RelWithDebInfo > /t/cmake.log 2>&1 && nice ninja -j4 $TARGETS > /t/ninja.log 2>&1" || { tail -n 30 /t/cmake.log; tail -n 30 /t/ninja.log; echo BUILD FAILED; exit 1; }
 for t in $TARGETS; do
-    out=$(setpriv --reuid=1000 --regid=1000 --groups=$(stat -c %g /dev/dri/renderD128) env HOME=/t LANG=C.UTF-8 QT_QPA_PLATFORM=offscreen XDG_RUNTIME_DIR=/t timeout 300 bin/$t 2>&1); rc=$?
+    # testStereoDownscale opens EGL's default display, which has no platform without a display server
+    out=$(setpriv --reuid=1000 --regid=1000 --groups=$(stat -c %g /dev/dri/renderD128)$([ -c /dev/udmabuf ] && echo ,$(stat -c %g /dev/udmabuf)) env HOME=/t LANG=C.UTF-8 QT_QPA_PLATFORM=offscreen EGL_PLATFORM=surfaceless XDG_RUNTIME_DIR=/t timeout 300 bin/$t 2>&1); rc=$?
     echo "$out" > /t/$t.log
     echo "$t exit $rc $(echo "$out" | grep -E '^Totals')"
 done
