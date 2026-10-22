@@ -1,0 +1,7 @@
+mpvqt (1.2.0-3+stereo3d3) unstable; urgency=medium
+
+  * The video layer of a 3D video hands the compositor the frame mpv outputs,
+    both views at the resolution they have, and Stereo KWin resizes once
+    (patch 0007): a half top-and-bottom 1920x1080 video is one 3840x540
+    buffer in a 1280x720 item, where it was two 1280x720 views resized here
+    first. The viewport keeps the size of one view in the item.

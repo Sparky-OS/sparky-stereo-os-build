@@ -1,0 +1,9 @@
+mlt (7.40.0-1+stereo3d4) unstable; urgency=medium
+
+  * stereo3d_unpack with output=side_by_side keeps each view at the
+    resolution the frame carries it (patch 0009): a half top-and-bottom
+    1920x1080 frame gives 3840x540 instead of a 3840x1080 frame that
+    stretched the half views, and the frame's sample aspect ratio says the
+    shape of a view, so the program showing it hands the views to the
+    compositor, which resizes once. A single view (output=left or right) is
+    still restored for programs that show it as an ordinary picture.

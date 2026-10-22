@@ -1,0 +1,8 @@
+qt6-multimedia (6.11.2-3+stereo3d7) unstable; urgency=medium
+
+  * The VideoOutput stereo layer hands the compositor each view at the
+    resolution the frame carries it (patch 0011, edition only): a half
+    top-and-bottom 1920x1080 video is one 3840x540 buffer, and Stereo KWin
+    resizes once. Before, the layer restored half views to full size with
+    stereoScaling on the CPU and the compositor resized them again;
+    stereoScaling stays for a view shown flat in the scene graph.

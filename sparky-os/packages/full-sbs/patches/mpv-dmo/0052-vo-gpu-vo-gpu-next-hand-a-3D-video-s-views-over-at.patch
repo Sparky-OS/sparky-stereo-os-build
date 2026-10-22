@@ -1,0 +1,200 @@
+Description: vo_gpu, vo_gpu_next: hand a 3D video's views over at their own resolution
+ .
+ The video layer of a 3D video was twice the window's width, and each
+ view was scaled into its half at the window's size, so the compositor
+ received views the renderer had already resized: a half top-and-bottom
+ 1920x1080 video went as two 1920x1080 views to a full screen window,
+ stretched from 1920x540.
+ .
+ vo_get_stereo_layer() measures the window in the view's own samples:
+ the layer still covers the window, its letterbox counted in samples,
+ and each view is drawn into its half at the resolution it has, so the
+ renderer only copies it. The viewport, which has the window's size,
+ gives the compositor the one resize; that video goes as one 3840x540
+ layer to a full screen window. A layer larger than a texture can be
+ (16384) keeps the window's size as before.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://github.com/Sparky-OS/mpv/commit/1ce19bafccc3e7d8ad98e777cc20c5ac4884eae9
+Forwarded: no
+Last-Update: 2026-10-22
+Assisted-by: Claude Opus 5.5
+---
+ video/out/vo.c          | 27 +++++++++++++++++++++++++++
+ video/out/vo.h          |  3 +++
+ video/out/vo_gpu.c      | 36 +++++++++++++++++++++++++++++-------
+ video/out/vo_gpu_next.c | 27 ++++++++++++++++++++++-----
+ 4 files changed, 81 insertions(+), 12 deletions(-)
+
+diff --git a/video/out/vo.c b/video/out/vo.c
+index c9cde30..72de9ed 100644
+--- a/video/out/vo.c
++++ b/video/out/vo.c
+@@ -1316,6 +1316,33 @@ void vo_query_formats(struct vo *vo, uint8_t *list)
+ // out_dst: area of screen covered by the video source rectangle
+ // out_osd: OSD size, OSD margins, etc.
+ // Must be called from the VO thread only.
++// The video layer of a 3D video at the resolution of its views. The window,
++// win_w x win_h, shows one view of src's two (side by side in the frame's
++// samples) at dst. The layer is the window measured in the view's samples, so
++// each view goes to it as it is, never resized, and the compositor resizes the
++// layer once, to the window. view_dst is where the left view goes in the layer
++// (the right one goes layer_w / 2 further). Returns false where such a layer
++// would be larger than a texture can be (16384, current GPUs' maximum).
++bool vo_get_stereo_layer(int win_w, int win_h, const struct mp_rect *src,
++                         const struct mp_rect *dst, int *layer_w, int *layer_h,
++                         struct mp_rect *view_dst)
++{
++    int view_w = mp_rect_w(*src) / 2, view_h = mp_rect_h(*src);
++    int dst_w = mp_rect_w(*dst), dst_h = mp_rect_h(*dst);
++    if (view_w <= 0 || view_h <= 0 || dst_w <= 0 || dst_h <= 0 || win_w <= 0 || win_h <= 0)
++        return false;
++    // the view's samples per window pixel, along each axis
++    double kx = view_w / (double)dst_w, ky = view_h / (double)dst_h;
++    int x = lrint(dst->x0 * kx), y = lrint(dst->y0 * ky);
++    int w = MPMAX(lrint(win_w * kx), x + view_w), h = MPMAX(lrint(win_h * ky), y + view_h);
++    if (2 * w > 16384 || h > 16384)
++        return false;
++    *layer_w = 2 * w;
++    *layer_h = h;
++    *view_dst = (struct mp_rect){x, y, x + view_w, y + view_h};
++    return true;
++}
++
+ void vo_get_src_dst_rects(struct vo *vo, struct mp_rect *out_src,
+                           struct mp_rect *out_dst, struct mp_osd_res *out_osd)
+ {
+diff --git a/video/out/vo.h b/video/out/vo.h
+index f8bc79f..fa70ab0 100644
+--- a/video/out/vo.h
++++ b/video/out/vo.h
+@@ -587,6 +587,9 @@ struct mp_keymap {
+ int lookup_keymap_table(const struct mp_keymap *map, int key);
+ 
+ struct mp_osd_res;
++bool vo_get_stereo_layer(int win_w, int win_h, const struct mp_rect *src,
++                         const struct mp_rect *dst, int *layer_w, int *layer_h,
++                         struct mp_rect *view_dst);
+ void vo_get_src_dst_rects(struct vo *vo, struct mp_rect *out_src,
+                           struct mp_rect *out_dst, struct mp_osd_res *out_osd);
+ 
+diff --git a/video/out/vo_gpu.c b/video/out/vo_gpu.c
+index 3bfe7f6..447e098 100644
+--- a/video/out/vo_gpu.c
++++ b/video/out/vo_gpu.c
+@@ -58,6 +58,11 @@ struct gpu_priv {
+     bool stereo_wanted;
+     struct mp_rect src, dst;
+     struct mp_osd_res osd;
++    // A 3D video's layer at the resolution of its views, and where the left
++    // view goes in it; false where the views go at the window's size
++    bool stereo_native;
++    int layer_w, layer_h;
++    struct mp_rect view_dst;
+ };
+ static void resize(struct vo *vo)
+ {
+@@ -77,9 +82,19 @@ static void resize(struct vo *vo)
+     gl_video_resize(p->renderer, &src, &dst, &osd);
+ 
+     if (video_sw) {
+-        // The video layer holds both views of a 3D video, and the video is
+-        // what gets dithered
+-        p->ctx->fns->resize_video(p->ctx, vo->dwidth * (p->stereo ? 2 : 1), vo->dheight);
++        // The video layer holds both views of a 3D video, each at the
++        // resolution it has, and the video is what gets dithered
++        int w = vo->dwidth, h = vo->dheight;
++        p->stereo_native = p->stereo &&
++            vo_get_stereo_layer(vo->dwidth, vo->dheight, &src, &dst, &p->layer_w,
++                                &p->layer_h, &p->view_dst);
++        if (p->stereo_native) {
++            w = p->layer_w;
++            h = p->layer_h;
++        } else if (p->stereo) {
++            w *= 2;
++        }
++        p->ctx->fns->resize_video(p->ctx, w, h);
+         sw = video_sw;
+     }
+     int fb_depth = sw->fns->color_depth ? sw->fns->color_depth(sw) : 0;
+@@ -121,15 +136,22 @@ static bool draw_frame_layers(struct vo *vo, struct vo_frame *frame)
+     if (video_ok && !p->stereo) {
+         gl_video_render_frame(p->renderer, frame, &video_fbo, RENDER_SCREEN_COLOR);
+     } else if (video_ok) {
+-        // Each eye gets its view at the window's size, centred in its half of the
+-        // video layer, as for a window that shows one view
++        // Each eye gets its view in its half of the video layer: at the
++        // resolution it has, for the compositor to resize once, or else at the
++        // window's size, centred, as for a window that shows one view
+         int half = (p->src.x1 - p->src.x0) / 2;
+         for (int view = 0; view < 2; view++) {
+             struct mp_rect src = p->src, dst = p->dst;
+             src.x0 += view * half;
+             src.x1 = src.x0 + half;
+-            dst.x0 += view * vo->dwidth;
+-            dst.x1 += view * vo->dwidth;
++            if (p->stereo_native) {
++                dst = p->view_dst;
++                dst.x0 += view * p->layer_w / 2;
++                dst.x1 += view * p->layer_w / 2;
++            } else {
++                dst.x0 += view * vo->dwidth;
++                dst.x1 += view * vo->dwidth;
++            }
+             gl_video_set_view(p->renderer, view);
+             gl_video_resize(p->renderer, &src, &dst, &p->osd);
+             gl_video_render_frame(p->renderer, frame, &video_fbo, RENDER_SCREEN_COLOR |
+diff --git a/video/out/vo_gpu_next.c b/video/out/vo_gpu_next.c
+index e461e65..2d7bc68 100644
+--- a/video/out/vo_gpu_next.c
++++ b/video/out/vo_gpu_next.c
+@@ -1286,10 +1286,20 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
+     bool should_draw = sw->fns->start_frame(sw, NULL); // for wayland logic
+     if (should_draw && !pl_swapchain_start_frame(p->sw, layered ? &ctlframe : &swframe))
+         should_draw = false;
++    struct mp_rect view_dst = {0};
++    int layer_w = 0, layer_h = 0;
++    bool native = false;
+     if (should_draw && layered) {
+-        // The video layer holds both views when it is declared as stereo
++        // The video layer holds both views when it is declared as stereo, each
++        // at the resolution it has, or else at the window's size
+         int w = ctlframe.fbo->params.w * (stereo ? 2 : 1);
+         int h = ctlframe.fbo->params.h;
++        native = stereo && vo_get_stereo_layer(ctlframe.fbo->params.w, ctlframe.fbo->params.h,
++                                               &p->src, &p->dst, &layer_w, &layer_h, &view_dst);
++        if (native) {
++            w = layer_w;
++            h = layer_h;
++        }
+         if (w != p->video_w || h != p->video_h) {
+             p->video_w = w;
+             p->video_h = h;
+@@ -1485,8 +1495,9 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
+     if (layered)
+         vsw->fns->start_frame(vsw, NULL); // for contexts with a surface each
+     bool render_ok = true;
+-    // Each eye gets its view at the window's size, centred in its half of the
+-    // video layer, as for a window that shows one view.
++    // Each eye gets its view in its half of the video layer: at the resolution
++    // it has, for the compositor to resize once, or else at the window's size,
++    // centred, as for a window that shows one view.
+     for (int view = 0; view < (stereo ? 2 : 1) && render_ok; view++) {
+         struct pl_render_params view_params = params;
+         if (stereo) {
+@@ -1494,8 +1505,14 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
+             int half = (src.x1 - src.x0) / 2;
+             src.x0 += view * half;
+             src.x1 = src.x0 + half;
+-            dst.x0 += view * ctlframe.fbo->params.w;
+-            dst.x1 += view * ctlframe.fbo->params.w;
++            if (native) {
++                dst = view_dst;
++                dst.x0 += view * layer_w / 2;
++                dst.x1 += view * layer_w / 2;
++            } else {
++                dst.x0 += view * ctlframe.fbo->params.w;
++                dst.x1 += view * ctlframe.fbo->params.w;
++            }
+             for (int i = 0; i < mix.num_frames; i++) {
+                 apply_crop((struct pl_frame *) mix.frames[i], src,
+                            vo->params->w, vo->params->h);

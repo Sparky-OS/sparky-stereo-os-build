@@ -1,0 +1,7 @@
+qemu (1:11.1.2+ds-3+stereo3d6) unstable; urgency=medium
+
+  * The GTK display hands the compositor the views of a stereo scanout as the
+    guest scans them out (patch stereo3d/0008): a top-and-bottom 1920x1080
+    frame is one 3840x540 buffer and a side by side (half) frame two
+    960x1080 views, and Stereo KWin resizes once. Before, each view was
+    stretched back to the size of a view here and resized again to the window.

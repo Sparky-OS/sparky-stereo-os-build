@@ -1,0 +1,168 @@
+Description: Hand a 3D video's views to the compositor at their own resolution
+ .
+ The video layer of a 3D video was twice the item's width in pixels, so
+ mpv scaled both views into the window and the compositor got views the
+ program had already resized: a half top-and-bottom 1920x1080 video went
+ as two 1280x720 views in a 1280x720 item.
+ .
+ The layer's buffer is now the frame mpv outputs, both views at the
+ resolution they have (that video as one 3840x540 buffer), and the
+ viewport, which has the size of one view in the item, gives the
+ compositor the one resize. mpv keeps no aspect of its own while the
+ layer holds a 3D video, so it draws the frame onto the whole buffer
+ sample for sample; the layer's rectangle has the video's shape, and
+ mpv's own keepaspect comes back with the next 2D video.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://invent.kde.org/danielcamposramos/mpvqt/-/commit/8dbee417c068106b3973c1e92610e5ec2a80d99a
+Forwarded: no
+Last-Update: 2026-10-22
+Assisted-by: Claude Opus 5.5
+---
+ src/mpvabstractitem.cpp | 22 +++++++++++++++++++++-
+ src/mpvabstractitem_p.h |  5 +++++
+ src/mpvrenderer.cpp     |  5 ++++-
+ src/mpvvideolayer.cpp   |  7 +++++--
+ src/mpvvideolayer.h     |  4 +++-
+ 5 files changed, 38 insertions(+), 5 deletions(-)
+
+diff --git a/src/mpvabstractitem.cpp b/src/mpvabstractitem.cpp
+index 781e28f..189c0d9 100644
+--- a/src/mpvabstractitem.cpp
++++ b/src/mpvabstractitem.cpp
+@@ -74,6 +74,20 @@ void MpvAbstractItemPrivate::applyVideoState()
+     }
+     if (stereo != m_stereoVideo) {
+         m_stereoVideo = stereo;
++        // mpv draws a 3D video at the resolution of its views, onto the whole layer, whose rectangle has the video's
++        // shape: mpv keeps no aspect of its own meanwhile, and gets its own back afterwards
++        if (mpv_handle *mpv = m_mpvController->mpv()) {
++            if (stereo) {
++                if (char *keepAspect = mpv_get_property_string(mpv, "keepaspect")) {
++                    m_keepAspect = keepAspect;
++                    mpv_free(keepAspect);
++                }
++                mpv_set_property_string(mpv, "keepaspect", "no");
++            } else if (!m_keepAspect.isEmpty()) {
++                mpv_set_property_string(mpv, "keepaspect", m_keepAspect.constData());
++                m_keepAspect.clear();
++            }
++        }
+         Q_EMIT q_ptr->stereoVideoChanged();
+     }
+     updateVideoRect();
+@@ -87,13 +101,18 @@ void MpvVideoState::update(mpv_handle *mpv)
+     }
+     bool isStereo = false;
+     QSizeF videoSize;
++    QSize frameSize;
+     QString format;
+     QString hwFormat;
+     if (node.format == MPV_FORMAT_NODE_MAP) {
+         for (int i = 0; i < node.u.list->num; ++i) {
+             const QLatin1String key(node.u.list->keys[i]);
+             const mpv_node &value = node.u.list->values[i];
+-            if (value.format == MPV_FORMAT_INT64 && key == QLatin1String("dw")) {
++            if (value.format == MPV_FORMAT_INT64 && key == QLatin1String("w")) {
++                frameSize.setWidth(value.u.int64);
++            } else if (value.format == MPV_FORMAT_INT64 && key == QLatin1String("h")) {
++                frameSize.setHeight(value.u.int64);
++            } else if (value.format == MPV_FORMAT_INT64 && key == QLatin1String("dw")) {
+                 videoSize.setWidth(value.u.int64);
+             } else if (value.format == MPV_FORMAT_INT64 && key == QLatin1String("dh")) {
+                 videoSize.setHeight(value.u.int64);
+@@ -115,6 +134,7 @@ void MpvVideoState::update(mpv_handle *mpv)
+     }
+     stereo = isStereo && !stereoRefused;
+     size = videoSize;
++    frame = frameSize;
+     depth = pixelFormatDepth(hwFormat.isEmpty() ? format : hwFormat);
+ }
+ 
+diff --git a/src/mpvabstractitem_p.h b/src/mpvabstractitem_p.h
+index 90b4463..939d1ca 100644
+--- a/src/mpvabstractitem_p.h
++++ b/src/mpvabstractitem_p.h
+@@ -33,6 +33,9 @@ struct MpvVideoState {
+     int depth{8};
+     // the display size of the video as mpv outputs it, both views of a 3D video
+     QSizeF size;
++    // the samples of the frames mpv outputs: both views of a 3D video side by side, each at the resolution it has,
++    // which is the size the layer takes them at, the compositor resizing them once
++    QSize frame;
+ 
+     // Reads the state from mpv's current parameters of the video, from any thread
+     void update(mpv_handle *mpv);
+@@ -57,6 +60,8 @@ public:
+     // the display size of the video as mpv outputs it
+     QSizeF m_videoSize;
+     QRect m_videoRect;
++    // mpv's own keepaspect while the layer holds a 3D video, which the layer's rectangle keeps instead
++    QByteArray m_keepAspect;
+     std::shared_ptr<MpvVideoState> m_videoState{std::make_shared<MpvVideoState>()};
+ 
+     // on mpv's thread: reads what the video layer needs to know about the video, as soon as mpv reconfigures
+diff --git a/src/mpvrenderer.cpp b/src/mpvrenderer.cpp
+index e3d6425..3b7f72e 100644
+--- a/src/mpvrenderer.cpp
++++ b/src/mpvrenderer.cpp
+@@ -152,11 +152,13 @@ bool MpvRenderer::renderVideoLayer(QOpenGLFramebufferObject *fbo)
+     bool stereo = false;
+     int depth = 8;
+     QSizeF videoSize;
++    QSize frameSize;
+     {
+         QMutexLocker locker(&m_videoState->mutex);
+         stereo = m_videoState->stereo;
+         depth = m_videoState->depth;
+         videoSize = m_videoState->size;
++        frameSize = m_videoState->frame;
+     }
+     m_videoLayer->setDepth(depth);
+     // Both views go to the layer only where the compositor took the declaration
+@@ -180,7 +182,8 @@ bool MpvRenderer::renderVideoLayer(QOpenGLFramebufferObject *fbo)
+     const QRect rect = MpvVideoState::viewRect(m_itemSize, stereo, videoSize).translated(m_origin);
+     m_videoLayer->resize(QRect(qRound(rect.x() * m_surfaceScale), qRound(rect.y() * m_surfaceScale), qRound(rect.width() * m_surfaceScale), qRound(rect.height() * m_surfaceScale)),
+                          m_devicePixelRatio / m_surfaceScale,
+-                         stereo);
++                         stereo,
++                         frameSize);
+ 
+     m_videoLayer->makeCurrent();
+     if (!m_mpvResourceManager->mpvRenderContext) {
+diff --git a/src/mpvvideolayer.cpp b/src/mpvvideolayer.cpp
+index 47ecba5..405e06b 100644
+--- a/src/mpvvideolayer.cpp
++++ b/src/mpvvideolayer.cpp
+@@ -386,12 +386,15 @@ MpvVideoLayer::~MpvVideoLayer()
+     wl_display_flush(d->display);
+ }
+ 
+-void MpvVideoLayer::resize(const QRect &rect, qreal devicePixelRatio, bool stereo)
++void MpvVideoLayer::resize(const QRect &rect, qreal devicePixelRatio, bool stereo, const QSize &frame)
+ {
+     // Nothing is listened to on the queue of the layer, keep it empty
+     wl_display_dispatch_queue_pending(d->display, d->queue);
+ 
+-    const QSize size(qMax(1, qRound(rect.width() * devicePixelRatio)) * (stereo ? 2 : 1), qMax(1, qRound(rect.height() * devicePixelRatio)));
++    // a 3D video at the resolution of its views, never resized here; a 2D one at the window's pixels
++    const QSize size = stereo && !frame.isEmpty()
++        ? frame
++        : QSize(qMax(1, qRound(rect.width() * devicePixelRatio)) * (stereo ? 2 : 1), qMax(1, qRound(rect.height() * devicePixelRatio)));
+     if (rect.topLeft() != d->rect.topLeft()) {
+         wl_subsurface_set_position(d->subsurface, rect.x(), rect.y());
+     }
+diff --git a/src/mpvvideolayer.h b/src/mpvvideolayer.h
+index 71293a9..f1fbc75 100644
+--- a/src/mpvvideolayer.h
++++ b/src/mpvvideolayer.h
+@@ -40,7 +40,9 @@ public:
+ 
+     // The rectangle of one view of the video in the window, in logical pixels, the window's scale,
+     // and whether the layer holds both views, which is when it is declared
+-    void resize(const QRect &rect, qreal devicePixelRatio, bool stereo);
++    // The layer over rect of the window; a 3D video's buffer holds both views at the resolution mpv outputs them,
++    // frame, which the compositor resizes once to rect
++    void resize(const QRect &rect, qreal devicePixelRatio, bool stereo, const QSize &frame = QSize());
+     QSize bufferSize() const;
+ 
+     // The bits per channel of the video: the layer takes the deepest color depth the display

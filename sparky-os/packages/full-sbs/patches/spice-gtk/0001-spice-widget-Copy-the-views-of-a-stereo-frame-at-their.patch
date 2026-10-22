@@ -1,0 +1,109 @@
+Description: spice-widget: Copy the views of a stereo frame at their own resolution
+ .
+ The subsurface held both views scaled to the size one view is shown
+ at, so a top-and-bottom or side by side (half) frame was stretched
+ back to full size here and resized again by the compositor to the
+ widget.
+ .
+ Copy each view as the frame carries it instead: a top-and-bottom
+ 1920x1080 frame becomes one 3840x540 buffer, a side by side (half)
+ frame two 960x1080 views.  The viewport, which already has the size
+ a view is shown at, gives the compositor the one resize.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://gitlab.freedesktop.org/danielcamposramos/spice-gtk/-/commit/3e1a3f54ed20b1ec5448e7768d75b75e1aa0ddfa
+Forwarded: no
+Last-Update: 2026-10-22
+Assisted-by: Claude Opus 5.5
+---
+ src/spice-widget-stereo.c | 59 +++++++++++++++++----------------------
+ 1 file changed, 25 insertions(+), 34 deletions(-)
+
+diff --git a/src/spice-widget-stereo.c b/src/spice-widget-stereo.c
+index bff9132..68e6640 100644
+--- a/src/spice-widget-stereo.c
++++ b/src/spice-widget-stereo.c
+@@ -3,11 +3,14 @@
+    Stereo frames on a Wayland subsurface
+ 
+    The two views of a stereo frame go to the compositor side by side,
+-   left view first, each at full size, on a subsurface of the display
+-   widget's window, with a viewport that gives it the size of one view.
+-   The subsurface is declared once as full side by side through
+-   libstereo-declare (KWin's stereo content protocol); it takes no input,
+-   which goes to the widget below it.
++   left view first, each at the resolution the frame carries it at, on a
++   subsurface of the display widget's window, with a viewport that gives
++   it the size one view is shown at.  The views are copied, never scaled:
++   a top-and-bottom 1920x1080 frame becomes one 3840x540 buffer, a side
++   by side (half) one two 960x1080 views, and the compositor resizes them
++   once to the viewport.  The subsurface is declared once as full side by
++   side through libstereo-declare (KWin's stereo content protocol); it
++   takes no input, which goes to the widget below it.
+ 
+    This library is free software; you can redistribute it and/or
+    modify it under the terms of the GNU Lesser General Public
+@@ -223,28 +226,12 @@ static StereoBuffer *buffer_get(SpiceStereoSurface *ss, int width, int height)
+     return NULL;
+ }
+ 
+-/* Scales one view of the frame to width x height at dst_x in dst. */
+-static void unpack_view(pixman_image_t *frame, int x, int y, int w, int h,
+-                        pixman_image_t *dst, int dst_x, int width, int height)
++/* Copies one view of the frame, at its own size, to dst_x in dst. */
++static void copy_view(pixman_image_t *frame, int x, int y, int w, int h,
++                      pixman_image_t *dst, int dst_x)
+ {
+-    pixman_format_code_t format = pixman_image_get_format(frame);
+-    int stride = pixman_image_get_stride(frame);
+-    uint8_t *data = (uint8_t *)pixman_image_get_data(frame) +
+-                    y * stride + x * PIXMAN_FORMAT_BPP(format) / 8;
+-    pixman_image_t *src;
+-    pixman_transform_t transform;
+-
+-    /* a view of its own, so filtering never reaches into the other one */
+-    src = pixman_image_create_bits(format, w, h, (uint32_t *)data, stride);
+-    pixman_transform_init_scale(&transform,
+-                                pixman_double_to_fixed((double)w / width),
+-                                pixman_double_to_fixed((double)h / height));
+-    pixman_image_set_transform(src, &transform);
+-    pixman_image_set_repeat(src, PIXMAN_REPEAT_PAD);
+-    pixman_image_set_filter(src, PIXMAN_FILTER_BILINEAR, NULL, 0);
+-    pixman_image_composite(PIXMAN_OP_SRC, src, NULL, dst,
+-                           0, 0, 0, 0, dst_x, 0, width, height);
+-    pixman_image_unref(src);
++    pixman_image_composite(PIXMAN_OP_SRC, frame, NULL, dst,
++                           x, y, 0, 0, dst_x, 0, w, h);
+ }
+ 
+ void spice_stereo_surface_show(SpiceStereoSurface *ss, pixman_image_t *frame,
+@@ -253,18 +240,22 @@ void spice_stereo_surface_show(SpiceStereoSurface *ss, pixman_image_t *frame,
+ {
+     StereoBuffer *buf;
+ 
++    /* every 3D structure gives both views one size */
++    if (stereo->left_width != stereo->right_width ||
++        stereo->left_height != stereo->right_height) {
++        return;
++    }
++
+     wl_display_dispatch_queue_pending(wl.display, wl.queue);
+-    buf = buffer_get(ss, stereo->view_width * 2, stereo->view_height);
++    buf = buffer_get(ss, stereo->left_width * 2, stereo->left_height);
+     if (!buf) {
+         return;
+     }
+-    unpack_view(frame, stereo->left_x, stereo->left_y,
+-                stereo->left_width, stereo->left_height,
+-                buf->image, 0, stereo->view_width, stereo->view_height);
+-    unpack_view(frame, stereo->right_x, stereo->right_y,
+-                stereo->right_width, stereo->right_height,
+-                buf->image, stereo->view_width,
+-                stereo->view_width, stereo->view_height);
++    copy_view(frame, stereo->left_x, stereo->left_y,
++              stereo->left_width, stereo->left_height, buf->image, 0);
++    copy_view(frame, stereo->right_x, stereo->right_y,
++              stereo->right_width, stereo->right_height,
++              buf->image, stereo->left_width);
+ 
+     if (!ss->declared) {
+         stereo_declare_wayland(ss->surface, STEREO_SBS_FULL,

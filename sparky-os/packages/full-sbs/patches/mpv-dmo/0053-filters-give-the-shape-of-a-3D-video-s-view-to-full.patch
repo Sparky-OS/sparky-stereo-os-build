@@ -1,0 +1,29 @@
+Description: filters: give the shape of a 3D video's view to full precision
+ .
+ The autostereo filter told the format filter the view's display aspect
+ with six decimals (1.777778 for 16:9), so a window of the video's own
+ shape got a destination a pixel short of it (1280x719 in a 1280x720
+ window) and a letterbox row: the view was then resized to one row less
+ than the window. The aspect now goes with all its digits.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://github.com/Sparky-OS/mpv/commit/df4037921891d689a59c8b38a9d829ea5c343282
+Forwarded: no
+Last-Update: 2026-10-22
+Assisted-by: Claude Opus 5.5
+---
+ filters/f_auto_filters.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/filters/f_auto_filters.c b/filters/f_auto_filters.c
+index 8521e9a..4c12de1 100644
+--- a/filters/f_auto_filters.c
++++ b/filters/f_auto_filters.c
+@@ -750,7 +750,7 @@ static void stereo_process(struct mp_filter *f)
+         bool plane = stereo_has_plane(&img->params);
+         if (declared || plane) {
+             format_args[2] = "dar";
+-            format_args[3] = mp_tprintf(32, "%f", declared ? view_aspect : 2 * view_aspect);
++            format_args[3] = mp_tprintf(32, "%.17g", declared ? view_aspect : 2 * view_aspect);
+         }
+         filters[2] = mp_create_user_filter(subf, MP_OUTPUT_CHAIN_VIDEO,
+                                            "format", format_args);

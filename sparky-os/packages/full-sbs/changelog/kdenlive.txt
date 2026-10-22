@@ -1,0 +1,8 @@
+kdenlive (26.08.1-1+stereo3d4) unstable; urgency=medium
+
+  * The monitor hands the compositor the 3D views as the frame carries them,
+    never scaled, with the area's black bars counted in the views' own
+    samples, and Stereo KWin resizes once (patch 0007): a half top-and-bottom
+    1920x1080 frame arrives from MLT as 3840x540 and goes on as it is.
+  * debian/control: Depends: libmlt7 (>= 7.40.0-1+stereo3d4), the MLT that
+    keeps the views at their resolution and sets the sample aspect ratio.

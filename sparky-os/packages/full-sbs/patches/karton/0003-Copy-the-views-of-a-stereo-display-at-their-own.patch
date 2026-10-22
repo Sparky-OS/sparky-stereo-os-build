@@ -1,0 +1,206 @@
+Description: Copy the views of a stereo display at their own resolution
+ .
+ The image handed to the compositor held both views scaled to the size
+ one view is shown at, so a top-and-bottom or side by side (half)
+ display was stretched back to full size here and resized again by the
+ compositor to the window.
+ .
+ Copy each view as the guest's frame carries it instead: a top-and-bottom
+ 1920x1080 frame becomes one 3840x540 image, a side by side (half) frame
+ two 960x1080 views. The surface's viewport, which already has the size
+ a view is shown at, gives the compositor the one resize.
+ .
+ The test checks the packed size and every sample of both views against
+ the frame, for each HDMI 1.4b structure.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://invent.kde.org/danielcamposramos/karton/-/commit/f21aa6932a29e8aa88e809ea4e3812991edb4b91
+Forwarded: no
+Last-Update: 2026-10-22
+Assisted-by: Claude Opus 5.5
+---
+ autotests/stereoframetest.cpp | 75 ++++++++++++++++++++++++++++-------
+ src/stereoframe.cpp           | 17 ++------
+ src/stereoframe.h             |  7 ++--
+ src/stereosurface.h           |  5 ++-
+ 4 files changed, 71 insertions(+), 33 deletions(-)
+
+diff --git a/autotests/stereoframetest.cpp b/autotests/stereoframetest.cpp
+index 8066aeb..59870f9 100644
+--- a/autotests/stereoframetest.cpp
++++ b/autotests/stereoframetest.cpp
+@@ -20,6 +20,28 @@ static QImage frame(const QSize &size, const QRect &left, const QRect &right)
+     return image;
+ }
+ 
++// the address of a sample of a view: its view, column and row
++static QRgb address(int view, int x, int y)
++{
++    return qRgb(x & 0xff, y & 0xff, view << 7 | ((x >> 8) & 0xf) << 3 | ((y >> 8) & 0x7));
++}
++
++// a frame whose views carry the address of each of their samples, the rest black
++static QImage addressedFrame(const QSize &size, const QRect &left, const QRect &right)
++{
++    QImage image(size, QImage::Format_RGB32);
++    image.fill(Qt::black);
++    for (int view = 0; view < 2; ++view) {
++        const QRect &rect = view ? right : left;
++        for (int y = 0; y < rect.height(); ++y) {
++            for (int x = 0; x < rect.width(); ++x) {
++                image.setPixel(rect.x() + x, rect.y() + y, address(view, x, y));
++            }
++        }
++    }
++    return image;
++}
++
+ class StereoFrameTest : public QObject
+ {
+     Q_OBJECT
+@@ -27,7 +49,9 @@ class StereoFrameTest : public QObject
+ private Q_SLOTS:
+     void packing_data();
+     void packing();
+-    void viewsDoNotMix();
++    void samplesAreCopied_data();
++    void samplesAreCopied();
++    void viewsOfDifferentSizes();
+     void viewOutsideTheFrame();
+     void invalidInfo();
+ };
+@@ -39,7 +63,8 @@ void StereoFrameTest::packing_data()
+     QTest::addColumn<QRect>("right");
+     QTest::addColumn<QSize>("viewSize");
+ 
+-    // the HDMI 1.4b structures at 1920x1080: a view is 1920x1080 in all of them
++    // the HDMI 1.4b structures at 1920x1080: a view is shown at 1920x1080 in all of them, and
++    // carried at 1920x1080, 1920x540 or 960x1080
+     QTest::newRow("frame packing") << QSize(1920, 2205) << QRect(0, 0, 1920, 1080) << QRect(0, 1125, 1920, 1080) << QSize(1920, 1080);
+     QTest::newRow("side by side full") << QSize(3840, 1080) << QRect(0, 0, 1920, 1080) << QRect(1920, 0, 1920, 1080) << QSize(1920, 1080);
+     QTest::newRow("top and bottom") << QSize(1920, 1080) << QRect(0, 0, 1920, 540) << QRect(0, 540, 1920, 540) << QSize(1920, 1080);
+@@ -55,25 +80,45 @@ void StereoFrameTest::packing()
+ 
+     const QImage packed = packStereoFrame(frame(frameSize, left, right), StereoInfo{viewSize, left, right});
+ 
+-    // the left view first, then the right one, each at the size of a view
+-    QCOMPARE(packed.size(), QSize(viewSize.width() * 2, viewSize.height()));
+-    for (const QPoint &point : {QPoint(0, 0), QPoint(viewSize.width() / 2, viewSize.height() / 2), QPoint(viewSize.width() - 1, viewSize.height() - 1)}) {
++    // the left view first, then the right one, each at the size it is carried at, not the size it is shown at
++    QCOMPARE(packed.size(), QSize(left.width() * 2, left.height()));
++    for (const QPoint &point : {QPoint(0, 0), QPoint(left.width() / 2, left.height() / 2), QPoint(left.width() - 1, left.height() - 1)}) {
+         QCOMPARE(packed.pixelColor(point), leftColor);
+-        QCOMPARE(packed.pixelColor(point + QPoint(viewSize.width(), 0)), rightColor);
++        QCOMPARE(packed.pixelColor(point + QPoint(left.width(), 0)), rightColor);
+     }
+ }
+ 
+-void StereoFrameTest::viewsDoNotMix()
++void StereoFrameTest::samplesAreCopied_data()
++{
++    packing_data();
++}
++
++void StereoFrameTest::samplesAreCopied()
+ {
+-    // scaled up from half, a view still has nothing of the other one at its edge
+-    const QRect left(0, 0, 960, 1080);
+-    const QRect right(960, 0, 960, 1080);
+-    const QImage packed = packStereoFrame(frame(QSize(1920, 1080), left, right), StereoInfo{QSize(1920, 1080), left, right});
+-
+-    for (int y = 0; y < packed.height(); y += 90) {
+-        QCOMPARE(packed.pixelColor(1919, y), leftColor);
+-        QCOMPARE(packed.pixelColor(1920, y), rightColor);
++    QFETCH(QSize, frameSize);
++    QFETCH(QRect, left);
++    QFETCH(QRect, right);
++    QFETCH(QSize, viewSize);
++
++    // every sample of the packed image is the sample of its view at its place: nothing rescaled
++    const QImage packed = packStereoFrame(addressedFrame(frameSize, left, right), StereoInfo{viewSize, left, right});
++    QCOMPARE(packed.size(), QSize(left.width() * 2, left.height()));
++    int wrong = 0;
++    for (int y = 0; y < packed.height(); ++y) {
++        const QRgb *line = reinterpret_cast<const QRgb *>(packed.constScanLine(y));
++        for (int x = 0; x < packed.width(); ++x) {
++            const int view = x >= left.width() ? 1 : 0;
++            wrong += (line[x] & 0xffffff) != (address(view, x - view * left.width(), y) & 0xffffff);
++        }
+     }
++    QCOMPARE(wrong, 0);
++}
++
++void StereoFrameTest::viewsOfDifferentSizes()
++{
++    const QImage image = frame(QSize(200, 100), QRect(0, 0, 100, 100), QRect(100, 0, 90, 100));
++
++    QVERIFY(packStereoFrame(image, StereoInfo{QSize(100, 100), QRect(0, 0, 100, 100), QRect(100, 0, 90, 100)}).isNull());
+ }
+ 
+ void StereoFrameTest::viewOutsideTheFrame()
+diff --git a/src/stereoframe.cpp b/src/stereoframe.cpp
+index 08cb498..54ba3cf 100644
+--- a/src/stereoframe.cpp
++++ b/src/stereoframe.cpp
+@@ -5,26 +5,17 @@
+ 
+ #include <QPainter>
+ 
+-static QImage view(const QImage &frame, const QRect &rect, const QSize &size)
+-{
+-    const QImage cut = frame.copy(rect);
+-    if (cut.size() == size) {
+-        return cut;
+-    }
+-    return cut.scaled(size, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+-}
+-
+ QImage packStereoFrame(const QImage &frame, const StereoInfo &stereo)
+ {
+     const QRect bounds(QPoint(0, 0), frame.size());
+-    if (!stereo.isValid() || !bounds.contains(stereo.left) || !bounds.contains(stereo.right)) {
++    if (!stereo.isValid() || !bounds.contains(stereo.left) || !bounds.contains(stereo.right) || stereo.left.size() != stereo.right.size()) {
+         return QImage();
+     }
+ 
+-    QImage packed(stereo.viewSize.width() * 2, stereo.viewSize.height(), QImage::Format_RGB32);
++    QImage packed(stereo.left.width() * 2, stereo.left.height(), QImage::Format_RGB32);
+     QPainter painter(&packed);
+     painter.setCompositionMode(QPainter::CompositionMode_Source);
+-    painter.drawImage(QPoint(0, 0), view(frame, stereo.left, stereo.viewSize));
+-    painter.drawImage(QPoint(stereo.viewSize.width(), 0), view(frame, stereo.right, stereo.viewSize));
++    painter.drawImage(QPoint(0, 0), frame, stereo.left);
++    painter.drawImage(QPoint(stereo.left.width(), 0), frame, stereo.right);
+     return packed;
+ }
+diff --git a/src/stereoframe.h b/src/stereoframe.h
+index e9391dd..115c7db 100644
+--- a/src/stereoframe.h
++++ b/src/stereoframe.h
+@@ -22,7 +22,8 @@ struct StereoInfo {
+     bool operator==(const StereoInfo &) const = default;
+ };
+ 
+-// The two views of @p frame side by side, left first, each scaled to the view size. The views
+-// are cut out before they are scaled, so scaling never reaches into the other one.
+-// Returns a null image when a view does not lie inside the frame.
++// The two views of @p frame side by side, left first, each copied at the size it has in the
++// frame, never scaled: a top-and-bottom 1920x1080 frame gives one 3840x540 image, a side by
++// side (half) one two 960x1080 views. The compositor resizes them once, to the view size.
++// Returns a null image when a view does not lie inside the frame or the views differ in size.
+ QImage packStereoFrame(const QImage &frame, const StereoInfo &stereo);
+diff --git a/src/stereosurface.h b/src/stereosurface.h
+index 247d161..425412e 100644
+--- a/src/stereosurface.h
++++ b/src/stereosurface.h
+@@ -21,8 +21,9 @@ public:
+     static std::unique_ptr<StereoSurface> create(QWindow *window);
+     ~StereoSurface();
+ 
+-    // Shows @p sideBySide (the left view first, then the right one, both of the size of one view) over
+-    // the area at @p position (in the window) of @p size
++    // Shows @p sideBySide (the left view first, then the right one, each at the resolution it has) over
++    // the area at @p position (in the window) of @p size, the size one view is shown at: the compositor
++    // resizes the views to it
+     void show(const QImage &sideBySide, const QPoint &position, const QSize &size);
+     void hide();
+ 

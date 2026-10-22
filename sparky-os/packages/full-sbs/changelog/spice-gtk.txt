@@ -1,0 +1,7 @@
+spice-gtk (0.43+git20261010.77a4ac6-1+stereo3d3) unstable; urgency=medium
+
+  * The widget hands the compositor the views of a stereo frame as the frame
+    carries them (patch stereo3d/0001): a top-and-bottom 1920x1080 frame is
+    one 3840x540 buffer and a side by side (half) frame two 960x1080 views,
+    and Stereo KWin resizes once. Before, each view was stretched back to
+    the size of a view here and resized again to the widget.

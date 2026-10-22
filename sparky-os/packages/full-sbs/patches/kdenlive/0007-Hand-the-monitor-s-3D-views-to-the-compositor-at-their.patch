@@ -1,0 +1,131 @@
+Description: Hand the monitor's 3D views to the compositor at their own resolution
+ .
+ The monitor's stereo layer scaled each view to the area's pixels, so
+ the compositor received views Kdenlive had already resized.
+ .
+ Each view now goes as the frame carries it, never scaled, with the
+ area's black bars counted in its own samples: the layer still covers
+ the area, and the compositor resizes the whole to it once, so the view
+ keeps its shape. The shape comes from the frame's sample aspect ratio,
+ which MLT's stereo3d_unpack sets when it keeps a half view half (a half
+ top-and-bottom 1920x1080 frame arrives as 3840x540). Views larger than
+ a compositor's texture are still scaled to the area.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://invent.kde.org/danielcamposramos/kdenlive/-/commit/4e7d826d7cffc2100485443dfe74d21bfb58933e
+Forwarded: no
+Last-Update: 2026-10-22
+Assisted-by: Claude Opus 5.5
+---
+ src/monitor/monitor.cpp     |  3 ++-
+ src/monitor/stereolayer.cpp | 43 ++++++++++++++++++++++++++++++++-----
+ src/monitor/stereolayer.h   |  8 ++++---
+ 3 files changed, 45 insertions(+), 9 deletions(-)
+
+diff --git a/src/monitor/monitor.cpp b/src/monitor/monitor.cpp
+index a09854b..ad942e0 100644
+--- a/src/monitor/monitor.cpp
++++ b/src/monitor/monitor.cpp
+@@ -2737,7 +2737,8 @@ void Monitor::onFrameDisplayed(const SharedFrame &frame)
+         const uint8_t *data = frame.get_image(mlt_image_rgba);
+         if (data && width >= 2 && height > 0) {
+             const QImage views(data, width, height, QImage::Format_RGBA8888);
+-            m_stereoLayer->showEyes(views.copy(0, 0, width / 2, height), views.copy(width / 2, 0, width / 2, height));
++            // each view at the resolution the frame carries it, its samples' shape the frame's aspect ratio
++            m_stereoLayer->showEyes(views.copy(0, 0, width / 2, height), views.copy(width / 2, 0, width / 2, height), frame.get_double("aspect_ratio"));
+         }
+     }
+ #endif
+diff --git a/src/monitor/stereolayer.cpp b/src/monitor/stereolayer.cpp
+index eae8c0d..d2f6ca0 100644
+--- a/src/monitor/stereolayer.cpp
++++ b/src/monitor/stereolayer.cpp
+@@ -358,7 +358,32 @@ static QImage fitted(const QImage &view, const QSize &pixels)
+     return result;
+ }
+ 
+-void StereoLayer::showEyes(const QImage &left, const QImage &right)
++// One view at the resolution it has, with the black bars of an area of this size in its own samples: the compositor resizes
++// the whole to the area once, and the view keeps its shape. Null where that would be larger than a compositor's texture.
++static QImage letterboxed(const QImage &view, const QSize &area, double sampleAspect)
++{
++    const QSizeF fitted = QSizeF(view.width() * sampleAspect, view.height()).scaled(QSizeF(area), Qt::KeepAspectRatio);
++    if (view.isNull() || fitted.isEmpty()) {
++        return {};
++    }
++    // the view's samples per pixel of the area, along each axis
++    const qreal kx = view.width() / fitted.width();
++    const qreal ky = view.height() / fitted.height();
++    const int x = qRound((area.width() - fitted.width()) / 2 * kx);
++    const int y = qRound((area.height() - fitted.height()) / 2 * ky);
++    const QSize size(qMax(qRound(area.width() * kx), x + view.width()), qMax(qRound(area.height() * ky), y + view.height()));
++    if (size.width() > 8192 || size.height() > 16384) {
++        return {};
++    }
++    QImage result(size, QImage::Format_RGB32);
++    result.fill(Qt::black);
++    QPainter painter(&result);
++    painter.setCompositionMode(QPainter::CompositionMode_Source);
++    painter.drawImage(QPoint(x, y), view);
++    return result;
++}
++
++void StereoLayer::showEyes(const QImage &left, const QImage &right, double sampleAspect)
+ {
+     if (!d->active || !d->area || !d->area->isVisible() || d->area->size().isEmpty() || left.isNull() || right.isNull()) {
+         return;
+@@ -369,8 +394,16 @@ void StereoLayer::showEyes(const QImage &left, const QImage &right)
+     // Nothing is listened to on the queue of the layer but the release of buffers
+     wl_display_dispatch_queue_pending(d->display, d->queue);
+ 
+-    const qreal ratio = d->area->devicePixelRatioF();
+-    const QSize view(qMax(1, qRound(d->area->width() * ratio)), qMax(1, qRound(d->area->height() * ratio)));
++    // each view as the frame carries it; where that cannot be a texture, scaled to the area's pixels
++    QImage leftView = letterboxed(left, d->area->size(), sampleAspect > 0 ? sampleAspect : 1.0);
++    QImage rightView = letterboxed(right, d->area->size(), sampleAspect > 0 ? sampleAspect : 1.0);
++    if (leftView.isNull() || rightView.isNull() || leftView.size() != rightView.size()) {
++        const qreal ratio = d->area->devicePixelRatioF();
++        const QSize area(qMax(1, qRound(d->area->width() * ratio)), qMax(1, qRound(d->area->height() * ratio)));
++        leftView = fitted(left, area);
++        rightView = fitted(right, area);
++    }
++    const QSize view = leftView.size();
+     const QSize pixels(view.width() * 2, view.height());
+ 
+     Buffer *buffer = nullptr;
+@@ -396,8 +429,8 @@ void StereoLayer::showEyes(const QImage &left, const QImage &right)
+     QImage target(buffer->data, pixels.width(), pixels.height(), pixels.width() * 4, QImage::Format_RGB32);
+     QPainter painter(&target);
+     painter.setCompositionMode(QPainter::CompositionMode_Source);
+-    painter.drawImage(0, 0, fitted(left, view));
+-    painter.drawImage(view.width(), 0, fitted(right, view));
++    painter.drawImage(0, 0, leftView);
++    painter.drawImage(view.width(), 0, rightView);
+     painter.end();
+ 
+     d->place();
+diff --git a/src/monitor/stereolayer.h b/src/monitor/stereolayer.h
+index d485af9..e15ead7 100644
+--- a/src/monitor/stereolayer.h
++++ b/src/monitor/stereolayer.h
+@@ -16,7 +16,7 @@
+ /** @class StereoLayer
+  *  @brief The 3D area of a window: a layer under the window's surface that shows a monitor's frames in 3D through a compositor that takes stereo content.
+  *
+- *  The two views of the frame, side by side with the left eye first and each at the size of the area, are in a surface under
++ *  The two views of the frame, side by side with the left eye first and each at the resolution the frame carries it, are in a surface under
+  *  the window's, a wl_subsurface placed below it (Qt creates subsurfaces only above their parent) at the rectangle of a widget
+  *  of the window, and declared to the compositor as full side by side stereo content. The widget is transparent over it and the rest of the
+  *  window stays as it is, the same in both eyes, so whatever is drawn over the area (the monitor's ruler and overlays) is on the screen plane.
+@@ -35,8 +35,10 @@ public:
+ 
+     bool isActive() const;
+     void setActive(bool active);
+-    /** @brief Show the two views, each scaled to the size of the area with black bars where its shape is not the area's */
+-    void showEyes(const QImage &left, const QImage &right);
++    /** @brief Show the two views, each at the resolution it has, never scaled: the black bars where its shape is not the area's are
++     *  counted in its own samples, and the compositor resizes the whole to the area once
++     *  @param sampleAspect The width of a sample of the views against its height (a half view's samples are twice as wide or as tall) */
++    void showEyes(const QImage &left, const QImage &right, double sampleAspect = 1.0);
+     /** @brief Follow the area when it moves or changes size, and hide the layer while it is not shown */
+     void update();
+ 

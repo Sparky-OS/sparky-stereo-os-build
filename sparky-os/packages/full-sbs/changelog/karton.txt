@@ -1,0 +1,9 @@
+karton (0.1~prealpha+git20260905.08e13cf-1+stereo3d3) unstable; urgency=medium
+
+  * Karton hands the compositor the views of a stereo display as the guest's
+    frame carries them (patch stereo3d/0003): a top-and-bottom 1920x1080
+    frame is one 3840x540 image and a side by side (half) frame two 960x1080
+    views, and Stereo KWin resizes once. Before, each view was stretched back
+    to the size of a view here and resized again to the window. The test
+    checks the packed size and every sample of both views for each HDMI 1.4b
+    structure.

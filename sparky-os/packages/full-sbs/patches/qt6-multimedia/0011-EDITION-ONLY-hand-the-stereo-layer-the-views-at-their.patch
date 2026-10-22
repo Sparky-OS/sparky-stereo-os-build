@@ -1,0 +1,160 @@
+Description: EDITION ONLY: hand the stereo layer the views at their own resolution
+ .
+ The layer took the views from extractView(), which restores a half
+ view to the size of a view with the filter stereoScaling names (Lanczos
+ by default), and the compositor then resized the restored views again
+ to the item: two resizes of a half top-and-bottom or side by side
+ video, the first of them on the CPU.
+ .
+ storedView() copies each view at the resolution the frame carries it,
+ never scaled: the half of a side by side or top and bottom frame, half
+ or full, the even or odd rows or columns of an interleaved one, the
+ row's own checkers of a checkerboard, the whole frame of a frame
+ sequence. The layer hands those over (a half top-and-bottom 1920x1080
+ video as one 3840x540 buffer), and its viewport, which has the shape of
+ a view, gives the compositor the one resize. stereoScaling stays for a
+ view shown flat in the scene graph.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://github.com/Sparky-OS/qtmultimedia/commit/c9f39cf6b45c60b4d5b700d38041500d2958d6e3
+Forwarded: no
+Last-Update: 2026-10-22
+Assisted-by: Claude Opus 5.5
+---
+ src/multimediaquick/qquickvideooutput.cpp     |  7 ++-
+ src/multimediaquick/qquickvideostereo.cpp     | 59 +++++++++++++++++++
+ src/multimediaquick/qquickvideostereo_p.h     |  8 +++
+ .../qquickvideostereopresenter.cpp            |  9 +--
+ 4 files changed, 77 insertions(+), 6 deletions(-)
+
+diff --git a/src/multimediaquick/qquickvideooutput.cpp b/src/multimediaquick/qquickvideooutput.cpp
+index 026db0b..dfdc762 100644
+--- a/src/multimediaquick/qquickvideooutput.cpp
++++ b/src/multimediaquick/qquickvideooutput.cpp
+@@ -626,8 +626,11 @@ void QQuickVideoOutput::setStereoShapeFallback(bool fallback)
+ /*!
+     \qmlproperty enumeration QtMultimedia::VideoOutput::stereoScaling
+ 
+-    The filter that restores the full size of the views of a 3D video: a half view is
+-    stretched back to the size of the frame, an interleaved view has half its rows or columns.
++    The filter that restores the full size of one view of a 3D video shown flat in the
++    scene graph (\l stereoView StereoLeftEye or StereoRightEye of an interleaved packing,
++    whose view has half its rows or columns). Where the views are shown in the stereo layer,
++    they go to the compositor at the resolution the video carries them, a half view as it is,
++    and the compositor resizes them once.
+ 
+     \value StereoBilinear Bilinear.
+     \value StereoBicubic Bicubic (Catmull-Rom).
+diff --git a/src/multimediaquick/qquickvideostereo.cpp b/src/multimediaquick/qquickvideostereo.cpp
+index ac1f6ee..4b73919 100644
+--- a/src/multimediaquick/qquickvideostereo.cpp
++++ b/src/multimediaquick/qquickvideostereo.cpp
+@@ -339,6 +339,65 @@ QImage extractView(const QImage &frameImage, const Packing &packing, int index,
+     return result;
+ }
+ 
++QImage storedView(const QImage &frameImage, const Packing &packing, int index)
++{
++    const QImage src = frameImage.format() == QImage::Format_RGBA32FPx4_Premultiplied
++            ? frameImage
++            : frameImage.convertToFormat(QImage::Format_RGBA32FPx4_Premultiplied);
++    if (src.isNull())
++        return {};
++    const QSize frameSize = src.size();
++    const int first = index; // 0 or 1: the view that is first or second in the packing
++    // where the view's samples are: a rectangle, or every second row, column or checker
++    int x0 = 0, y0 = 0, width = frameSize.width(), height = frameSize.height();
++    int rowStep = 1, colStep = 1;
++    bool checker = false;
++    switch (packing.mode) {
++    case Mode::SideBySide:
++    case Mode::SideBySideQuincunx:
++        width = frameSize.width() / 2;
++        x0 = first * width;
++        break;
++    case Mode::TopBottom:
++        height = frameSize.height() / 2;
++        y0 = first * height;
++        break;
++    case Mode::RowInterleaved:
++        rowStep = 2;
++        y0 = first;
++        height = (frameSize.height() - first + 1) / 2;
++        break;
++    case Mode::ColumnInterleaved:
++        colStep = 2;
++        x0 = first;
++        width = (frameSize.width() - first + 1) / 2;
++        break;
++    case Mode::Checkerboard:
++        checker = true;
++        width = frameSize.width() / 2;
++        break;
++    default:
++        break;
++    }
++    if (width <= 0 || height <= 0)
++        return {};
++    QImage view(width, height, QImage::Format_RGBA32FPx4_Premultiplied);
++    for (int y = 0; y < height; ++y) {
++        const int sy = y0 + y * rowStep;
++        const float *line = reinterpret_cast<const float *>(src.constScanLine(sy));
++        float *out = reinterpret_cast<float *>(view.scanLine(y));
++        if (!checker && colStep == 1) {
++            std::copy(line + x0 * 4, line + (x0 + width) * 4, out);
++            continue;
++        }
++        // a checkerboard view's samples shift by one column from row to row
++        const int start = checker ? (sy + first) % 2 : x0;
++        for (int x = 0; x < width; ++x)
++            std::copy_n(line + std::min(start + 2 * x, frameSize.width() - 1) * 4, 4, out + x * 4);
++    }
++    return view;
++}
++
+ int bytesPerPixel(BufferFormat format)
+ {
+     return format == BufferFormat::Xbgr16161616f || format == BufferFormat::Xbgr16161616 ? 8 : 4;
+diff --git a/src/multimediaquick/qquickvideostereo_p.h b/src/multimediaquick/qquickvideostereo_p.h
+index a714a26..99d2161 100644
+--- a/src/multimediaquick/qquickvideostereo_p.h
++++ b/src/multimediaquick/qquickvideostereo_p.h
+@@ -59,6 +59,14 @@ Q_MULTIMEDIAQUICK_EXPORT bool viewRect(const Packing &packing, QSize frameSize,
+ // of viewSize(). The image is any RGBA float image or an 8 bit one; the result is RGBA32FPx4
+ Q_MULTIMEDIAQUICK_EXPORT QImage extractView(const QImage &frame, const Packing &packing, int index, Scaling scaling);
+ 
++// Copies the view that is first (0) or second (1) in the packing out of the image at the
++// resolution the frame carries it, never scaled: the half of a side by side or top and bottom
++// frame, half or full, the even or odd rows or columns of an interleaved one, the row's own
++// checkers of a checkerboard, the whole frame of a frame sequence. This is what a stereo
++// surface hands the compositor, which resizes it once to the view's place. The image is any
++// RGBA float image or an 8 bit one; the result is RGBA32FPx4
++Q_MULTIMEDIAQUICK_EXPORT QImage storedView(const QImage &frame, const Packing &packing, int index);
++
+ // Writes the pair left|right into memory as the given Wayland shm format, the layer's buffer:
+ // 8 bits (XRGB8888), 10 bits (XRGB2101010), 16 bits (XBGR16161616) or half float (XBGR16161616F)
+ enum class BufferFormat { Xrgb8888, Xrgb2101010, Xbgr16161616, Xbgr16161616f };
+diff --git a/src/multimediaquick/qquickvideostereopresenter.cpp b/src/multimediaquick/qquickvideostereopresenter.cpp
+index a501c75..8b67ca0 100644
+--- a/src/multimediaquick/qquickvideostereopresenter.cpp
++++ b/src/multimediaquick/qquickvideostereopresenter.cpp
+@@ -99,15 +99,16 @@ void QQuickVideoStereoPresenter::process(Job &job)
+         // each frame is one view (frameView is the eye of the first), the other frame is the other eye's
+         const QImage other = qImageFromVideoFrame(
+                 job.otherFrame, job.wide ? QVideoFrameImageDepth::Float32 : QVideoFrameImageDepth::Float16);
+-        QImage mine = extractView(image, job.packing, 0, job.scaling);
+-        QImage theirs = extractView(other, job.packing, 0, job.scaling);
++        QImage mine = storedView(image, job.packing, 0);
++        QImage theirs = storedView(other, job.packing, 0);
+         if (mine.isNull() || theirs.isNull() || mine.size() != theirs.size())
+             return;
+         left = job.frameView == 0 ? mine : theirs;
+         right = job.frameView == 0 ? theirs : mine;
+     } else {
+-        left = extractView(image, job.packing, rightFirst ? 1 : 0, job.scaling);
+-        right = extractView(image, job.packing, rightFirst ? 0 : 1, job.scaling);
++        // each view at the resolution the frame carries it: the compositor resizes it once
++        left = storedView(image, job.packing, rightFirst ? 1 : 0);
++        right = storedView(image, job.packing, rightFirst ? 0 : 1);
+     }
+     if (left.isNull() || right.isNull())
+         return;

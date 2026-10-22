@@ -1,0 +1,12 @@
+mpv-dmo (1:0.41.0-dmo9+stereo3d4) unstable; urgency=medium
+
+  * A 3D video's views go to the compositor at the resolution the video has
+    them, and Stereo KWin resizes them once (patches 0052, 0053): the video
+    layer of vo_gpu and vo_gpu_next measures the window in the view's own
+    samples and each view is drawn into its half without a resize of ours.
+    A half top-and-bottom 1920x1080 video goes as one 3840x540 layer to a
+    full screen window; before, each view was stretched to 1920x1080 here
+    and resized again by the compositor.
+  * The autostereo filter tells the format filter the view's display aspect
+    with all its digits, so a window of the video's own shape gets a
+    destination of its exact size instead of one row less.
