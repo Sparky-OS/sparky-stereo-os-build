@@ -31,6 +31,7 @@ private Q_SLOTS:
     void systemKeyCanBeOverriddenAndRestored();
     void aCopyWithOtherEditsStays();
     void staleCopyFollowsTheSystemEntry();
+    void personsFolderInTheDataDirsIsNotASystemFolder();
     void unknownEntry();
     void subdirectoryIds();
 
@@ -240,6 +241,19 @@ void AppEntriesTest::staleCopyFollowsTheSystemEntry()
     entry(system() + u"/applications"_s, id, QString(s_player).replace(u"player %U"_s, u"player --newer %U"_s));
     QCOMPARE(e.refreshCopies(), 0);
     QCOMPARE(KDesktopFile(userFile(id)).desktopGroup().readEntry("Exec"), u"player --mine %U"_s);
+}
+
+void AppEntriesTest::personsFolderInTheDataDirsIsNotASystemFolder()
+{
+    // QStandardPaths::standardLocations() starts with the person's own folder; the copy must never count as the system entry
+    AppEntries e(home(), {home(), system()});
+    const QString id = u"org.example.player.desktop"_s;
+    QVERIFY(e.setPreference(id, AppPreference::OtherGpu));
+    QCOMPARE(e.refreshCopies(), 0);
+    QVERIFY(QFile::exists(userFile(id)));
+    QVERIFY(KService(userFile(id)).runOnDiscreteGpu());
+    QVERIFY(e.setPreference(id, AppPreference::Unset));
+    QVERIFY(!QFile::exists(userFile(id)));
 }
 
 void AppEntriesTest::unknownEntry()

@@ -24,6 +24,7 @@ add_subdirectory(src)
 if(BUILD_TESTING)
     find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Test)
     find_package(KF6 ${KF_MIN_VERSION} REQUIRED COMPONENTS Service)
+    find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Quick)
     add_subdirectory(autotests)
 endif()
 

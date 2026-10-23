@@ -151,6 +151,9 @@ AppEntries::AppEntries(const QString &dataHome, const QStringList &dataDirs)
     : m_dataHome(dataHome)
     , m_dataDirs(dataDirs)
 {
+    // QStandardPaths lists the person's folder first among all data folders: it is not a system folder
+    m_dataDirs.removeAll(dataHome);
+    m_dataDirs.removeAll(dataHome + u'/');
 }
 
 AppEntries AppEntries::fromEnvironment()
