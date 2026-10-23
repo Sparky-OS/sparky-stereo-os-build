@@ -10,6 +10,7 @@ import zlib
 
 p = argparse.ArgumentParser()
 p.add_argument('work', type=Path)
+p.add_argument('--published-controls', type=Path, help='installed signed published package controls')
 a = p.parse_args()
 w = a.work
 size = 640 * 192
@@ -88,10 +89,18 @@ assert not [p for p in (w/'final').rglob('*.exit') if p.parent.name != 'fallback
 assert (w/'final/fallback/before.exit').read_text().strip() == '134'
 assert (w/'final/fallback/after.exit').read_text().strip() == '0'
 assert (w/'final/fallback/after.raw').read_bytes() == (w/'final/nvidia/hevc-eyes10-software.raw').read_bytes()
+if a.published_controls:
+    published=a.published_controls/'final/published-controls'
+    assert (published/'device-choice.exit').read_text().strip()=='1'
+    for engine in ('mlt','qt','vlc','libmpv'):
+        assert (published/(engine+'-display-route.exit')).read_text().strip()=='1'
+        baseline=rows(published/(engine+'.trace'))
+        assert baseline and all(r[2]==('cuda' if engine=='qt' else 'yuv420p') for r in baseline)
 for gpu in ['amd', 'nvidia']:
-    for engine in ['mpv', 'mlt', 'vlc']:
-        baseline = rows(w/'final/before'/gpu/f'{engine}.trace')
-        assert baseline and all(r[7] == '0' for r in baseline), (gpu, engine, 'baseline')
+    if not a.published_controls:
+        for engine in ['mpv', 'mlt', 'vlc']:
+            baseline = rows(w/'final/before'/gpu/f'{engine}.trace')
+            assert baseline and all(r[7] == '0' for r in baseline), (gpu, engine, 'baseline')
     for name in names:
         bits = depth(name)
         frames = count(name)
