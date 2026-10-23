@@ -1,0 +1,94 @@
+Description: rhi: gl: give a swapchain the eye targets of a window that becomes stereo
+ .
+ A platform may give a shown window's surface a second view, or take it away,
+ by recreating the surface with another number of views: the Wayland platform
+ does this while an engine draws the window once per eye. The swapchain built
+ the left and right render targets only when it was created or resized, from
+ the format the window had then, so a window that became stereo had no right
+ buffer to render into until it was resized, and one that stopped kept a right
+ target that no longer existed.
+ .
+ The swapchain now follows the window's format at the start of each frame,
+ after making the context current, which is where the platform gives the
+ surface the views it now has.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://github.com/Sparky-OS/qtbase/commit/90037a6bb5aa3f275aa361ec0dce005accff388d
+Forwarded: no
+Last-Update: 2026-10-23
+Assisted-by: Claude Opus 5.5
+---
+ src/gui/rhi/qrhigles2.cpp | 34 ++++++++++++++++++++++++++++------
+ src/gui/rhi/qrhigles2_p.h |  1 +
+ 2 files changed, 29 insertions(+), 6 deletions(-)
+
+diff --git a/src/gui/rhi/qrhigles2.cpp b/src/gui/rhi/qrhigles2.cpp
+index cdbc487..c333862 100644
+--- a/src/gui/rhi/qrhigles2.cpp
++++ b/src/gui/rhi/qrhigles2.cpp
+@@ -2343,6 +2343,9 @@ QRhi::FrameOpResult QRhiGles2::beginFrame(QRhiSwapChain *swapChain, QRhi::BeginF
+     if (!ensureContext(swapChainD->surface))
+         return contextLost ? QRhi::FrameOpDeviceLost : QRhi::FrameOpError;
+ 
++    // Making the context current is where a platform gives the surface the views it now has.
++    swapChainD->updateStereoTargets();
++
+     ctx->handle()->beginFrame();
+ 
+     currentSwapChain = swapChainD;
+@@ -6940,6 +6943,28 @@ void QGles2SwapChain::initSwapChainRenderTarget(QGles2SwapChainRenderTarget *rt)
+     rt->d.srgbUpdateAndBlend = m_flags.testFlag(QRhiSwapChain::sRGB);
+ }
+ 
++void QGles2SwapChain::updateStereoTargets()
++{
++    // The window's surface may gain or lose its right buffer while it is shown, when the
++    // platform recreates it with another number of views, so this follows the format the
++    // surface has now rather than the one it had when the swapchain was built.
++    const bool stereo = m_window && m_window->format().stereo();
++    if (stereo == rtLeft.d.isValid())
++        return;
++
++    if (stereo) {
++        initSwapChainRenderTarget(&rtLeft);
++        rtLeft.d.stereoTarget = QRhiSwapChain::LeftBuffer;
++        initSwapChainRenderTarget(&rtRight);
++        rtRight.d.stereoTarget = QRhiSwapChain::RightBuffer;
++    } else {
++        rtLeft.d.rp = nullptr;
++        rtLeft.d.stereoTarget.reset();
++        rtRight.d.rp = nullptr;
++        rtRight.d.stereoTarget.reset();
++    }
++}
++
+ bool QGles2SwapChain::createOrResize()
+ {
+     // can be called multiple times due to window resizes
+@@ -6959,12 +6984,9 @@ bool QGles2SwapChain::createOrResize()
+ 
+     initSwapChainRenderTarget(&rt);
+ 
+-    if (m_window->format().stereo()) {
+-        initSwapChainRenderTarget(&rtLeft);
+-        rtLeft.d.stereoTarget = QRhiSwapChain::LeftBuffer;
+-        initSwapChainRenderTarget(&rtRight);
+-        rtRight.d.stereoTarget = QRhiSwapChain::RightBuffer;
+-    }
++    rtLeft.d.rp = nullptr;
++    rtRight.d.rp = nullptr;
++    updateStereoTargets();
+ 
+     QRHI_RES_RHI(QRhiGles2);
+     if (rhiD->rhiFlags.testFlag(QRhi::EnableTimestamps) && rhiD->caps.timestamps)
+diff --git a/src/gui/rhi/qrhigles2_p.h b/src/gui/rhi/qrhigles2_p.h
+index 66f3095..4238961 100644
+--- a/src/gui/rhi/qrhigles2_p.h
++++ b/src/gui/rhi/qrhigles2_p.h
+@@ -754,6 +754,7 @@ struct QGles2SwapChain : public QRhiSwapChain
+     bool createOrResize() override;
+ 
+     void initSwapChainRenderTarget(QGles2SwapChainRenderTarget *rt);
++    void updateStereoTargets();
+ 
+     QSurface *surface = nullptr;
+     QSize pixelSize;

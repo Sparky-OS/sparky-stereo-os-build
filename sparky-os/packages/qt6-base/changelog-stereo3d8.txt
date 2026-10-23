@@ -1,0 +1,23 @@
+qt6-base (6.11.2+dfsg-5+stereo3d8) unstable; urgency=medium
+
+  * Sparky Stereo OS: a window whose style shows its elements in depth
+    (Union on Stereo KWin) is drawn once per eye, so Stereo KWin shows
+    depth inside it, and every other window is drawn as before
+    (Sparky-OS/qtbase stereo3d-6.11-depth):
+  * Wayland (s8-0001, f0de001): a raster window painted as a pair is
+    declared with kde_stereo_content_v1 version 3 as full side by side and
+    marked with kde_stereo_depth_v1 as the desktop's own depth, not as
+    stereo content; painted once again, the declaration is withdrawn.
+  * Widgets (s8-0002, 4a56b01): while the window's _q_stereo_depth is set,
+    the repaint manager paints it once per eye into a backing store twice
+    as wide, each widget moved by its own eye share of its
+    _q_stereo_parallax, a deeper widget cut to its rectangle; without it
+    the window is painted once, as before.
+  * RHI (s8-0003, 90037a6): an OpenGL swapchain follows its window's
+    format at each frame, so a window that gains a second view has a right
+    target to render into.
+  * Wayland EGL (s8-0004, 7ddbb67): a window whose engine draws it as a
+    pair (_q_stereo_views 2) gets its surface made again with two views
+    between frames, marked as the desktop's depth on its first commit.
+  * qt6-base-dev installs the protocol file s8-0001 carries,
+    kde-stereo-content-v1.xml, beside Qt's other Wayland protocols.

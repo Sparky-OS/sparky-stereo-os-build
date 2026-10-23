@@ -1,0 +1,462 @@
+Description: Wayland: give a window two views while an engine draws it as a pair
+ .
+ Stereo KWin shows depth inside a surface when a toolkit draws the surface's
+ elements once per eye and hands the two views over as the desktop's own depth.
+ For a raster window the backing store holds both eyes; an OpenGL window needs
+ the EGL surface to have them. An engine that draws a window once per eye, as
+ the edition's Qt Quick does, now asks for them with the window's
+ _q_stereo_views set to 2. At the start of the next frame, never between the
+ two parts of one, the window's EGL surface is created again with two views
+ (EGL_EXT_multiview_window), which the EGL implementation declares as a full
+ side-by-side pair, and the window reports a stereo format; the same first
+ commit marks the pair, with kde_stereo_depth_v1, as the desktop's depth rather
+ than stereo content. When the engine asks for one view again, the surface is
+ made again with one, and the mark goes with the same commit as the EGL
+ implementation's declaration.
+ .
+ A window that asked for stereo buffers itself keeps its two views either way;
+ only the mark changes. QWaylandStereoDepth may now be called from a window's
+ render thread.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://github.com/Sparky-OS/qtbase/commit/7ddbb674c05e4a10b5d5105145cea7ea5522b897
+Forwarded: no
+Last-Update: 2026-10-23
+Assisted-by: Claude Opus 5.5
+---
+ .../qwaylandeglclientbufferintegration.cpp    |  7 +-
+ .../qwaylandeglclientbufferintegration_p.h    |  2 +
+ .../wayland-egl/qwaylandeglwindow.cpp         | 93 ++++++++++++++++---
+ .../wayland-egl/qwaylandeglwindow_p.h         | 25 +++++
+ .../wayland-egl/qwaylandglcontext.cpp         |  2 +
+ .../platforms/wayland/qwaylandstereodepth.cpp | 55 +++++++++--
+ .../platforms/wayland/qwaylandstereodepth_p.h |  5 +-
+ 7 files changed, 168 insertions(+), 21 deletions(-)
+
+diff --git a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglclientbufferintegration.cpp b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglclientbufferintegration.cpp
+index 25638e2..c0320ce 100644
+--- a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglclientbufferintegration.cpp
++++ b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglclientbufferintegration.cpp
+@@ -183,9 +183,14 @@ EGLDisplay QWaylandEglClientBufferIntegration::eglDisplay() const
+ }
+ 
+ bool QWaylandEglClientBufferIntegration::supportsStereo(const QSurfaceFormat &format) const
++{
++    return format.stereo() && supportsTwoViews(format);
++}
++
++bool QWaylandEglClientBufferIntegration::supportsTwoViews(const QSurfaceFormat &format) const
+ {
+     // Two views of the window surface are the left and right back buffers of desktop OpenGL
+-    return format.stereo() && m_supportsMultiview
++    return m_supportsMultiview
+             && format.renderableType() != QSurfaceFormat::OpenGLES
+             && QOpenGLContext::openGLModuleType() == QOpenGLContext::LibGL;
+ }
+diff --git a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglclientbufferintegration_p.h b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglclientbufferintegration_p.h
+index 065eac1..31210ce 100644
+--- a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglclientbufferintegration_p.h
++++ b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglclientbufferintegration_p.h
+@@ -38,6 +38,8 @@ public:
+ 
+     EGLDisplay eglDisplay() const;
+     bool supportsStereo(const QSurfaceFormat &format) const override;
++    // Whether a window surface of this format can have two views, a left and a right back buffer.
++    bool supportsTwoViews(const QSurfaceFormat &format) const;
+ 
+ private:
+     QWaylandDisplay *m_display = nullptr;
+diff --git a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
+index a30d719..be451a2 100644
+--- a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
++++ b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
+@@ -6,11 +6,13 @@
+ 
+ #include <QtWaylandClient/private/qwaylandscreen_p.h>
+ #include <QtWaylandClient/private/qwaylandsurface_p.h>
++#include <QtWaylandClient/private/qwaylandstereodepth_p.h>
+ #include "qwaylandglcontext_p.h"
+ 
+ #include <QtGui/private/qeglconvenience_p.h>
+ 
+ #include <QDebug>
++#include <QtCore/QEvent>
+ #include <QtGui/QWindow>
+ #include <qpa/qwindowsysteminterface.h>
+ #include <QOpenGLFramebufferObject>
+@@ -28,11 +30,14 @@ QWaylandEglWindow::QWaylandEglWindow(QWindow *window, QWaylandDisplay *display)
+         m_clientBufferIntegration = static_cast<QWaylandEglClientBufferIntegration *>(
+                 mDisplay->clientBufferIntegration());
+     });
++    m_pairRequested = window->property("_q_stereo_views").toInt() == 2;
++    window->installEventFilter(this);
+     ensureSize();
+ }
+ 
+ QWaylandEglWindow::~QWaylandEglWindow()
+ {
++    window()->removeEventFilter(this);
+     if (m_eglSurface) {
+         eglDestroySurface(m_clientBufferIntegration->eglDisplay(), m_eglSurface);
+         m_eglSurface = 0;
+@@ -79,14 +84,7 @@ void QWaylandEglWindow::updateSurface(bool create)
+     // implementations may do that, so check the size ourself. Besides, we must deal with resizing
+     // a valid window to 0x0, which would make it invalid. Hence, destroy it.
+     if (sizeWithMargins.isEmpty()) {
+-        if (m_eglSurface) {
+-            eglDestroySurface(m_clientBufferIntegration->eglDisplay(), m_eglSurface);
+-            m_eglSurface = 0;
+-        }
+-        if (m_waylandEglWindow) {
+-            wl_egl_window_destroy(m_waylandEglWindow);
+-            m_waylandEglWindow = 0;
+-        }
++        destroySurface();
+         mOffset = QPoint();
+     } else {
+         QReadLocker locker(&mSurfaceLock);
+@@ -108,7 +106,8 @@ void QWaylandEglWindow::updateSurface(bool create)
+         } else if (create && mSurface) {
+             // The EGL implementation sizes a stereo surface itself, from the window it is created with and
+             // not from the size Qt gives the surface later: wait until the window is shown and has its size
+-            if (!window()->isVisible() && m_clientBufferIntegration->supportsStereo(window()->requestedFormat()))
++            const bool pair = pairWanted(window()->requestedFormat());
++            if (!window()->isVisible() && (m_clientBufferIntegration->supportsStereo(window()->requestedFormat()) || pair))
+                 return;
+ 
+             wl_egl_window *eglWindow = wl_egl_window_create(mSurface->object(), sizeWithMargins.width(), sizeWithMargins.height());
+@@ -125,12 +124,16 @@ void QWaylandEglWindow::updateSurface(bool create)
+             QSurfaceFormat eglFormat = q_glFormatFromConfig(m_clientBufferIntegration->eglDisplay(), eglConfig, fmt);
+ 
+             // Two views make the surface a stereo one: the left and the right back buffer
+-            const bool stereo = m_clientBufferIntegration->supportsStereo(fmt);
++            const bool stereo = m_clientBufferIntegration->supportsStereo(fmt) || pair;
+             const EGLint surfaceAttribs[] = { EGL_MULTIVIEW_VIEW_COUNT_EXT, 2, EGL_NONE };
+             if (stereo)
+                 eglFormat.setStereo(true);
+             setFormat(eglFormat);
+ 
++            // The EGL implementation declares the two views as a full side-by-side pair; an engine's
++            // pair is marked, with the same first commit, as the desktop's own depth.
++            QWaylandStereoDepth::setDesktopDepth(this, pair);
++
+             EGLSurface eglSurface = eglCreateWindowSurface(m_clientBufferIntegration->eglDisplay(), eglConfig, (EGLNativeWindowType) eglWindow, stereo ? surfaceAttribs : nullptr);
+             if (Q_UNLIKELY(eglSurface == EGL_NO_SURFACE)) {
+                 qCWarning(lcQpaWayland, "Could not create EGL surface (EGL error 0x%x)\n", eglGetError());
+@@ -141,6 +144,8 @@ void QWaylandEglWindow::updateSurface(bool create)
+             m_waylandEglWindow = eglWindow;
+             m_eglSurface = eglSurface;
+             m_requestedSize = sizeWithMargins;
++            m_twoViews = stereo;
++            m_pairSurface = pair;
+         }
+     }
+ }
+@@ -156,6 +161,14 @@ void QWaylandEglWindow::invalidateSurface()
+ {
+     QMutexLocker lock (&m_eglSurfaceLock);
+ 
++    destroySurface();
++    delete m_contentFBO;
++    m_contentFBO = nullptr;
++}
++
++void QWaylandEglWindow::destroySurface()
++{
++    // eglSurfaceLock should be locked before calling this method
+     if (m_eglSurface) {
+         eglDestroySurface(m_clientBufferIntegration->eglDisplay(), m_eglSurface);
+         m_eglSurface = 0;
+@@ -164,8 +177,62 @@ void QWaylandEglWindow::invalidateSurface()
+         wl_egl_window_destroy(m_waylandEglWindow);
+         m_waylandEglWindow = nullptr;
+     }
+-    delete m_contentFBO;
+-    m_contentFBO = nullptr;
++    m_twoViews = false;
++    m_pairSurface = false;
++}
++
++bool QWaylandEglWindow::pairWanted(const QSurfaceFormat &format) const
++{
++    return m_pairRequested.load(std::memory_order_acquire)
++            && m_clientBufferIntegration->supportsTwoViews(format)
++            && QWaylandStereoDepth::isSupported(mDisplay);
++}
++
++bool QWaylandEglWindow::eventFilter(QObject *watched, QEvent *event)
++{
++    if (watched == window() && event->type() == QEvent::DynamicPropertyChange
++        && static_cast<QDynamicPropertyChangeEvent *>(event)->propertyName() == "_q_stereo_views") {
++        m_pairRequested.store(window()->property("_q_stereo_views").toInt() == 2, std::memory_order_release);
++    }
++    return QWaylandWindow::eventFilter(watched, event);
++}
++
++void QWaylandEglWindow::frameSwapped()
++{
++    QMutexLocker lock(&m_eglSurfaceLock);
++    m_frameSwapped = true;
++}
++
++void QWaylandEglWindow::beginFrameViews()
++{
++    // eglSurfaceLock should be locked before calling this method. Within a frame, which an engine
++    // drawing a pair renders in two parts, the surface keeps its views.
++    if (!m_frameSwapped)
++        return;
++    m_frameSwapped = false;
++    if (!m_eglSurface)
++        return;
++
++    const QSurfaceFormat fmt = window()->requestedFormat();
++    const bool pair = pairWanted(fmt);
++    if (pair == m_pairSurface)
++        return;
++
++    if (m_clientBufferIntegration->supportsStereo(fmt)) {
++        // A stereo window has two views either way: only the mark changes.
++        QWaylandStereoDepth::setDesktopDepth(this, pair);
++        m_pairSurface = pair;
++        return;
++    }
++
++    // The context is made current again, on the new surface, right after this.
++    eglMakeCurrent(m_clientBufferIntegration->eglDisplay(), EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
++    const bool wasPair = m_pairSurface;
++    destroySurface();
++    // The EGL implementation withdrew its declaration with the surface; the mark goes with the
++    // same next commit, the first of the surface made again.
++    if (wasPair)
++        QWaylandStereoDepth::setDesktopDepth(this, false);
+ }
+ 
+ EGLSurface QWaylandEglWindow::eglSurface() const
+@@ -188,7 +255,7 @@ GLuint QWaylandEglWindow::contentFBO() const
+         QSize fboSize = geometry().size() * scale();
+         m_contentFBO = new QOpenGLFramebufferObject(fboSize.width(), fboSize.height(), QOpenGLFramebufferObject::CombinedDepthStencil);
+         // A stereo window has a slot per eye: the right eye is rendered into the second attachment
+-        if (m_clientBufferIntegration->supportsStereo(window()->requestedFormat())) {
++        if (m_twoViews) {
+             m_contentFBO->bind();
+             m_contentFBO->addColorAttachment(fboSize);
+         }
+diff --git a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow_p.h b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow_p.h
+index 2de1618..39f6d1f 100644
+--- a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow_p.h
++++ b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow_p.h
+@@ -8,6 +8,8 @@
+ #include "qwaylandeglinclude_p.h"
+ #include "qwaylandeglclientbufferintegration_p.h"
+ 
++#include <atomic>
++
+ QT_BEGIN_NAMESPACE
+ 
+ class QOpenGLFramebufferObject;
+@@ -40,7 +42,23 @@ public:
+ 
+     QMutex* eglSurfaceLock();
+ 
++    // A frame was presented: the next context made current on the window begins a new one.
++    void frameSwapped();
++    // With the EGL surface lock held, before a context is made current on the window: at the start
++    // of a frame, a surface that should now have a different number of views is destroyed, so it
++    // is created again with them.
++    void beginFrameViews();
++
++protected:
++    bool eventFilter(QObject *watched, QEvent *event) override;
++
+ private:
++    // Whether an engine asks for the window's surface to have two views while it draws the
++    // window's elements once per eye (the window's _q_stereo_views), and they can be had: the
++    // pair is then the desktop's own depth rather than stereo content.
++    bool pairWanted(const QSurfaceFormat &format) const;
++    void destroySurface();
++
+     QWaylandEglClientBufferIntegration *m_clientBufferIntegration = nullptr;
+     struct wl_egl_window *m_waylandEglWindow = nullptr;
+ 
+@@ -57,6 +75,13 @@ private:
+     // This is always written to from the main thread, potentially read from the rendering thread
+     QReadWriteLock m_bufferSizeLock;
+     QSize m_bufferSize;
++
++    // Written from the main thread, read from the rendering thread
++    std::atomic<bool> m_pairRequested = false;
++    // The surface's views, and whether its two views are a pair marked as the desktop's depth
++    bool m_twoViews = false;
++    bool m_pairSurface = false;
++    bool m_frameSwapped = false;
+ };
+ 
+ }
+diff --git a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandglcontext.cpp b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandglcontext.cpp
+index 06e9c3b..c0728b1 100644
+--- a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandglcontext.cpp
++++ b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandglcontext.cpp
+@@ -459,6 +459,7 @@ bool QWaylandGLContext::makeCurrent(QPlatformSurface *surface)
+     m_currentWindow = static_cast<QWaylandEglWindow *>(surface);
+ 
+     QMutexLocker lock(m_currentWindow->eglSurfaceLock());
++    m_currentWindow->beginFrameViews();
+     EGLSurface eglSurface = m_currentWindow->eglSurface();
+ 
+     if (!checkGraphicsReset())
+@@ -540,6 +541,7 @@ void QWaylandGLContext::swapBuffers(QPlatformSurface *surface)
+     window->handleUpdate();
+     if (!eglSwapBuffers(eglDisplay(), eglSurface))
+         qCWarning(lcQpaWayland, "eglSwapBuffers failed with %#x, surface: %p", eglGetError(), eglSurface);
++    window->frameSwapped();
+ }
+ 
+ GLuint QWaylandGLContext::defaultFramebufferObject(QPlatformSurface *surface) const
+diff --git a/src/plugins/platforms/wayland/qwaylandstereodepth.cpp b/src/plugins/platforms/wayland/qwaylandstereodepth.cpp
+index 42ca121..68d0797 100644
+--- a/src/plugins/platforms/wayland/qwaylandstereodepth.cpp
++++ b/src/plugins/platforms/wayland/qwaylandstereodepth.cpp
+@@ -8,6 +8,8 @@
+ 
+ #include <QtWaylandClient/private/qwayland-kde-stereo-content-v1.h>
+ 
++#include <QtCore/qmutex.h>
++
+ #include <memory>
+ #include <unordered_map>
+ 
+@@ -50,8 +52,12 @@ struct WindowState
+     std::unique_ptr<Content> content;
+     std::unique_ptr<Depth> depth;
+     bool pair = false;
++    bool desktopDepth = false;
+ };
+ 
++// A window's render thread marks its surface while the gui thread may declare others.
++QBasicMutex s_mutex;
++
+ std::unordered_map<QWaylandDisplay *, Manager> &managers()
+ {
+     static std::unordered_map<QWaylandDisplay *, Manager> s_managers;
+@@ -78,6 +84,7 @@ void forgetWindowsOf(QWaylandDisplay *display)
+ 
+ void QWaylandStereoDepth::addGlobal(QWaylandDisplay *display, ::wl_registry *registry, uint32_t id, uint32_t version)
+ {
++    QMutexLocker locker(&s_mutex);
+     // Version 3 marks a pair as the desktop's own depth; without it a window is never drawn per eye.
+     if (version < 3)
+         return;
+@@ -88,6 +95,7 @@ void QWaylandStereoDepth::addGlobal(QWaylandDisplay *display, ::wl_registry *reg
+ 
+ void QWaylandStereoDepth::removeGlobal(QWaylandDisplay *display, uint32_t id)
+ {
++    QMutexLocker locker(&s_mutex);
+     auto it = managers().find(display);
+     if (it == managers().end() || it->second.id != id)
+         return;
+@@ -97,18 +105,26 @@ void QWaylandStereoDepth::removeGlobal(QWaylandDisplay *display, uint32_t id)
+ 
+ void QWaylandStereoDepth::removeDisplay(QWaylandDisplay *display)
+ {
++    QMutexLocker locker(&s_mutex);
+     forgetWindowsOf(display);
+     managers().erase(display);
+ }
+ 
+-bool QWaylandStereoDepth::isSupported(QWaylandDisplay *display)
++static bool isSupportedLocked(QWaylandDisplay *display)
+ {
+     auto it = managers().find(display);
+     return it != managers().end() && it->second.manager;
+ }
+ 
++bool QWaylandStereoDepth::isSupported(QWaylandDisplay *display)
++{
++    QMutexLocker locker(&s_mutex);
++    return isSupportedLocked(display);
++}
++
+ void QWaylandStereoDepth::setPair(QWaylandWindow *window, bool pair)
+ {
++    QMutexLocker locker(&s_mutex);
+     ::wl_surface *surface = window->wlSurface();
+     auto it = windows().find(window);
+     if (it != windows().end() && it->second.surface != surface) {
+@@ -118,26 +134,53 @@ void QWaylandStereoDepth::setPair(QWaylandWindow *window, bool pair)
+     }
+     if (!pair && it == windows().end())
+         return;
+-    if (!surface || !isSupported(window->display()))
++    if (!surface || !isSupportedLocked(window->display()))
+         return;
+ 
+     WindowState &state = it != windows().end() ? it->second : windows()[window];
+     if (state.pair == pair && state.content)
+         return;
+-    if (!state.content) {
+-        auto *manager = managers()[window->display()].manager.get();
+-        state.surface = surface;
++    auto *manager = managers()[window->display()].manager.get();
++    state.surface = surface;
++    if (!state.content)
+         state.content = std::make_unique<Content>(manager->create(surface));
++    if (!state.depth)
+         state.depth = std::make_unique<Depth>(manager->get_depth(surface));
+-    }
+     state.content->set_content(pair ? QtWayland::kde_stereo_content_v1::content_side_by_side_full
+                                     : QtWayland::kde_stereo_content_v1::content_none);
+     state.depth->set_desktop_depth(pair ? 1 : 0);
+     state.pair = pair;
++    state.desktopDepth = pair;
++}
++
++void QWaylandStereoDepth::setDesktopDepth(QWaylandWindow *window, bool desktopDepth)
++{
++    QMutexLocker locker(&s_mutex);
++    ::wl_surface *surface = window->wlSurface();
++    auto it = windows().find(window);
++    if (it != windows().end() && it->second.surface != surface) {
++        windows().erase(it);
++        it = windows().end();
++    }
++    if (!desktopDepth && it == windows().end())
++        return;
++    if (!surface || !isSupportedLocked(window->display()))
++        return;
++
++    WindowState &state = it != windows().end() ? it->second : windows()[window];
++    if (state.depth && state.desktopDepth == desktopDepth)
++        return;
++    if (!state.depth) {
++        state.surface = surface;
++        state.depth = std::make_unique<Depth>(managers()[window->display()].manager->get_depth(surface));
++    }
++    state.depth->set_desktop_depth(desktopDepth ? 1 : 0);
++    state.desktopDepth = desktopDepth;
+ }
+ 
+ void QWaylandStereoDepth::forgetWindow(QWaylandWindow *window)
+ {
++    QMutexLocker locker(&s_mutex);
+     windows().erase(window);
+ }
+ 
+diff --git a/src/plugins/platforms/wayland/qwaylandstereodepth_p.h b/src/plugins/platforms/wayland/qwaylandstereodepth_p.h
+index 0b6da9f..474cf4d 100644
+--- a/src/plugins/platforms/wayland/qwaylandstereodepth_p.h
++++ b/src/plugins/platforms/wayland/qwaylandstereodepth_p.h
+@@ -40,11 +40,14 @@ void removeGlobal(QWaylandDisplay *display, uint32_t id);
+ void removeDisplay(QWaylandDisplay *display);
+ 
+ // Whether the compositor takes a window's pair as the desktop's own depth.
+-bool isSupported(QWaylandDisplay *display);
++Q_WAYLANDCLIENT_EXPORT bool isSupported(QWaylandDisplay *display);
+ 
+ // Declares, with the window's next commit, that the buffer holds both eyes side by side and is
+ // the desktop's own depth, or withdraws it.
+ void setPair(QWaylandWindow *window, bool pair);
++// Marks, with the window's next commit, the pair someone else declares (the EGL implementation
++// for a surface with two views) as the desktop's own depth, or withdraws the mark. Any thread.
++Q_WAYLANDCLIENT_EXPORT void setDesktopDepth(QWaylandWindow *window, bool desktopDepth);
+ // Before the window's surface goes away.
+ void forgetWindow(QWaylandWindow *window);
+ 
