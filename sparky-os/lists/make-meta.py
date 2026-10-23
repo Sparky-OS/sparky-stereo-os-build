@@ -222,6 +222,20 @@ KERNEL_PROVIDES = {
     'headers': ['linux-headers-generic'],
 }
 
+# Dependency fields of Debian 7.2.11-1's linux-image-7.2.11+deb14-amd64 that our monolithic image
+# package does not carry (audit of ORDER 212c; Daniel, 2026-10-23: "we need all functionality
+# debian offer, in the kernels including"). Meta-level stand-ins until kernel build 11 puts them on
+# the image package itself (Pre-Depends: linux-base (>= 4.17~), the linux-base maintainer scripts).
+# Debian: Pre-Depends linux-base (>= 4.17~); Recommends apparmor; Suggests debian-kernel-handbook,
+# firmware-linux-free, grub-pc | grub-efi-amd64 | extlinux (linux-doc-7.2 does not apply to 7.3);
+# Breaks fwupdate (<< 12-7), initramfs-tools (<< 0.120+deb8u2), wireless-regdb (<< 2019.06.03-1~).
+KERNEL_IMAGE_EXTRA = {
+    'Depends': ['linux-base (>= 4.17~)'],
+    'Recommends': ['apparmor'],
+    'Suggests': ['firmware-linux-free', 'debian-kernel-handbook', 'grub-pc | grub-efi-amd64 | extlinux'],
+    'Breaks': ['fwupdate (<< 12-7)', 'initramfs-tools (<< 0.120+deb8u2)', 'wireless-regdb (<< 2019.06.03-1~)'],
+}
+
 # name: (title line, body, depends, recommends)
 META = {
     'sparky-stereo-desktop': (
@@ -317,6 +331,10 @@ def main():
         path = os.path.join(dd, name)
         open(path, 'w').write('\n'.join(l for l in lines if l != '') + '\n'); os.chmod(path, 0o755)
     for pkg, (title, body, dep, rec) in META.items():
+        is_kimage = pkg.startswith('linux-image-sparky-stereo')
+        if is_kimage:
+            dep = list(dep) + KERNEL_IMAGE_EXTRA['Depends']
+            rec = list(rec) + KERNEL_IMAGE_EXTRA['Recommends']
         dep = sorted(set(dep))
         for n in dep:   # no versioned library names in Depends
             b = n.split(' ')[0].split(':')[0]
@@ -338,6 +356,9 @@ def main():
             f.append(('Depends', ', '.join(dep)))
         if rec:
             f.append(('Recommends', ', '.join(rec)))
+        if is_kimage:
+            f.append(('Suggests', ', '.join(KERNEL_IMAGE_EXTRA['Suggests'])))
+            f.append(('Breaks', ', '.join(KERNEL_IMAGE_EXTRA['Breaks'])))
         if pkg in BREAKS:
             f.append(('Breaks', ', '.join(BREAKS[pkg])))
         if pkg.startswith(('linux-image-sparky-stereo', 'linux-headers-sparky-stereo')):
