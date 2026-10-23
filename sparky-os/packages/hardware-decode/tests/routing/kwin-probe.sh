@@ -23,7 +23,12 @@ exec dbus-run-session -- sh -c '
  export WAYLAND_DISPLAY=order223-route
  query=/w/route-build/media-gpu-route-query
  [ "${ROUTE_INSTALLED:-0}" != 1 ] || query=/usr/bin/media-gpu-route-query
- "$query" > /w/logs/$SCENARIO-route.log
+ if [ -x "$query" ]; then
+  "$query" > /w/logs/$SCENARIO-route.log
+ else
+  [ "${ROUTE_BEFORE:-0}" = 1 ]
+  echo "Published control predates the shared routing package" > /w/logs/$SCENARIO-route.log
+ fi
  /usr/lib/qt6/bin/qdbus org.kde.KWin /KWin org.kde.KWin.supportInformation > /w/logs/$SCENARIO-support.log
  if [ -n "${CLIENT_SCRIPT:-}" ]; then python3 /kit/$CLIENT_SCRIPT.py; fi
 '

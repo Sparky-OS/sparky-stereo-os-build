@@ -2,6 +2,7 @@
 set -eu
 unset __EGL_VENDOR_LIBRARY_FILENAMES MESA_LOADER_DRIVER_OVERRIDE DRI_PRIME
 export WAYLAND_DISPLAY=order223-route LD_LIBRARY_PATH=/w/route-prefix/lib
+[ "${ROUTE_INSTALLED:-0}" != 1 ] || unset LD_LIBRARY_PATH
 exec > /w/logs/$SCENARIO-caps.log 2>&1
 primary=vaapi
 [ "$DISPLAY_GPU" = amd ] || primary=cuda

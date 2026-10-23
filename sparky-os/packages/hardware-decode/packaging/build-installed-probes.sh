@@ -10,7 +10,9 @@ cc -Wall -Wextra -Werror /kit/tests/mlt-proof.c -o /w/probes/mlt-proof $(pkg-con
 cc -Wall -Wextra -Werror /kit/tests/vlc-proof.c -o /w/probes/vlc-proof $(pkg-config --cflags libvlc) -L/usr/lib/x86_64-linux-gnu/vlc-stereo -Wl,-rpath,/usr/lib/x86_64-linux-gnu/vlc-stereo -lvlc
 cc -Wall -Wextra -Werror /kit/tests/libmpv-proof.c -o /w/probes/libmpv-proof $(pkg-config --cflags --libs mpv)
 cc -Wall -Wextra -Werror /kit/tests/routing/device-choice.c -o /w/device-choice $(pkg-config --cflags --libs vulkan libplacebo) -ldl
-cc -Wall -Wextra -Werror /kit/tests/routing/decoder-choice.c -o /w/decoder-choice $(pkg-config --cflags --libs media-gpu-route libavformat libavcodec libavutil)
+if pkg-config --exists media-gpu-route; then
+ cc -Wall -Wextra -Werror /kit/tests/routing/decoder-choice.c -o /w/decoder-choice $(pkg-config --cflags --libs media-gpu-route libavformat libavcodec libavutil)
+fi
 cc -Wall -Wextra -Werror -shared -fPIC /kit/tests/routing/compositor-device.c -o /w/compositor-device.so $(pkg-config --cflags --libs libdrm) -ldl
 ldd /usr/bin/mpv /w/probes/qt-proof /w/probes/mlt-proof /w/probes/vlc-proof /w/probes/libmpv-proof > /w/probes/installed-linkage.log
 if grep -E '/(prev|w)/(.*-build|route-prefix)' /w/probes/installed-linkage.log; then
