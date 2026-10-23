@@ -5,6 +5,7 @@ KDE takes translations only through its translation teams, never as commits to a
 **The required set (Daniel, 2026-10-11; German since 2026-10-15):** Polish, Brazilian Portuguese, French, German, Japanese, Korean and Chinese (Simplified and Traditional), beside the English in the code.
 
 - `kwin-virtual-3d-modes.po.patch`: KWin's virtual 3D mode strings.
+- `kinfocenter-stereo3d.po.patch`: KInfoCenter's Stereo 3D and Deep Colour page, in French.
 - `kscreen-virtual-3d-modes.po.patch`: the display settings' toggles and labels.
 - `kscreen-stereo-pairs.po.patch`: the display settings' stereo pairs.
 - `krdc-catch.po.patch`: KRDC's Catch receiver (the Kirigami frontend that catches a Throw on Plasma Mobile and the desktop, ORDER 124): its eight messages and translated launcher entries in eight languages; from the phone lane, on invent danielcamposramos/krdc stereo3d b3cd02d484.
