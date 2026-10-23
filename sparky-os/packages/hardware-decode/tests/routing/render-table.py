@@ -3,6 +3,7 @@ import argparse, json, re
 from pathlib import Path
 p=argparse.ArgumentParser(); p.add_argument('work',type=Path)
 p.add_argument('--published',action='store_true',help='check and tabulate the published hybrid AMD display control')
+p.add_argument('--measure-only',action='store_true',help='report measured cadence and drops without imposing the optional zero-drop performance gate; routing and stereo assertions remain active')
 a=p.parse_args()
 print('| GPU case | Outputs | API | Film | Decode GPU / API | Render GPU | Frame path | VO flips/s | VO drops total / settled; decoder max | Process CPU |')
 print('| --- | ---: | --- | --- | --- | --- | --- | ---: | ---: | ---: |')
@@ -43,7 +44,7 @@ for pair in (('hybrid-amd',) if a.published else ('amd-only','nvidia-only','hybr
                 timing=(root/(name+'.stats')).read_text().splitlines()
                 drops=sum(line.endswith(' drop-vo') for line in timing)
                 steady_drops=sum(line.endswith(' drop-vo') and start<=int(line.split()[0])/1e9<=end for line in timing)
-                if not a.published:
+                if not a.published and not a.measure_only:
                     assert steady_drops == 0, (root/name, steady_drops)
                     assert fps >= 48*.98, (root/name, fps)
                 decoder_drops=max(r['decoder-frame-drop-count'].get('data',0) for r in rows)
