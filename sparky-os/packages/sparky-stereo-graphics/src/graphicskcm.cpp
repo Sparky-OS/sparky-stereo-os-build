@@ -8,7 +8,6 @@
 
 #include <QDir>
 #include <QFile>
-#include <QProcess>
 #include <QRegularExpression>
 #include <QStandardPaths>
 
@@ -461,11 +460,6 @@ void GraphicsKcm::setPowerAction(const QString &name, bool enabled)
 QString GraphicsKcm::errorText() const
 {
     return m_errorText;
-}
-
-void GraphicsKcm::openModule(const QString &name)
-{
-    QProcess::startDetached(u"systemsettings"_s, {name});
 }
 
 #include "graphicskcm.moc"

@@ -109,12 +109,12 @@ KCM.SimpleKCM {
             QQC2.Button {
                 icon.name: "preferences-desktop-display"
                 text: i18nc("@action:button", "Display && Monitor…")
-                onClicked: kcm.openModule("kcm_kscreen")
+                onClicked: KCM.KCMLauncher.openSystemSettings("kcm_kscreen")
             }
             QQC2.Button {
                 icon.name: "preferences-system-power-management"
                 text: i18nc("@action:button", "Power Management…")
-                onClicked: kcm.openModule("kcm_powerdevilprofilesconfig")
+                onClicked: KCM.KCMLauncher.openSystemSettings("kcm_powerdevilprofilesconfig")
             }
         }
 

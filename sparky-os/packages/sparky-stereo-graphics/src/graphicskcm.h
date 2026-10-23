@@ -62,7 +62,6 @@ public:
     Q_INVOKABLE void setAppPreference(const QString &id, int preference);
     Q_INVOKABLE void setPowerAction(const QString &name, bool enabled);
     Q_INVOKABLE QVariantList choiceOptions(const QString &current) const;
-    Q_INVOKABLE void openModule(const QString &name);
 
     void load() override;
     void save() override;
