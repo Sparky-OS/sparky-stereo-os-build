@@ -1,0 +1,45 @@
+From f24ddbdd50853c41d268b9c114dc383a33562ee9 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 23 Oct 2026 08:11:40 -0300
+Subject: [PATCH] avformat: use hardware-capable VP8 and VP9 decoders for
+ opaque video
+
+Keep libvpx for alpha and explicit software decoding.
+
+Assisted-by: gpt-6.1-sol via Codex
+---
+ src/modules/avformat/producer_avformat.c | 11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/src/modules/avformat/producer_avformat.c b/src/modules/avformat/producer_avformat.c
+index f28a2cb..89f6023 100644
+--- a/src/modules/avformat/producer_avformat.c
++++ b/src/modules/avformat/producer_avformat.c
+@@ -3503,15 +3503,22 @@ static int video_codec_init(producer_avformat self, int index, mlt_properties pr
+         // Get codec context
+         AVCodecParameters *codec_params = stream->codecpar;
+ 
++        // Alpha needs libvpx; ordinary VP8/VP9 can use the native hardware-capable decoder.
++        const AVDictionaryEntry *alpha = av_dict_get(stream->metadata, "alpha_mode", NULL, 0);
++        int needs_alpha = codec_params->format == AV_PIX_FMT_YUVA420P
++                          || (alpha && atoi(alpha->value));
++        int wants_hardware = self->hwaccel.automatic
++                             || self->hwaccel.device_type != AV_HWDEVICE_TYPE_NONE;
++
+         // Find the codec
+         const AVCodec *codec = avcodec_find_decoder(codec_params->codec_id);
+         if (mlt_properties_get(properties, "vcodec")) {
+             if (!(codec = avcodec_find_decoder_by_name(mlt_properties_get(properties, "vcodec"))))
+                 codec = avcodec_find_decoder(codec_params->codec_id);
+-        } else if (codec_params->codec_id == AV_CODEC_ID_VP9) {
++        } else if (codec_params->codec_id == AV_CODEC_ID_VP9 && (!wants_hardware || needs_alpha)) {
+             if (!(codec = avcodec_find_decoder_by_name("libvpx-vp9")))
+                 codec = avcodec_find_decoder(codec_params->codec_id);
+-        } else if (codec_params->codec_id == AV_CODEC_ID_VP8) {
++        } else if (codec_params->codec_id == AV_CODEC_ID_VP8 && (!wants_hardware || needs_alpha)) {
+             if (!(codec = avcodec_find_decoder_by_name("libvpx")))
+                 codec = avcodec_find_decoder(codec_params->codec_id);
+         }
+-- 
+2.53.0
+

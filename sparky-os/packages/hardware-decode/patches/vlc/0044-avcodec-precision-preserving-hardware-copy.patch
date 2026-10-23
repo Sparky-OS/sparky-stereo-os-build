@@ -1,0 +1,182 @@
+From b14e919cc5844090ed41ad6cb3dcf65af6cb8f13 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 23 Oct 2026 08:17:23 -0300
+Subject: [PATCH] avcodec: copy precision-preserving NVDEC and VA-API frames
+ for ordinary outputs
+
+Use native libavcodec hardware decoding independently of the display importer. Reject surfaces that discard components, chroma or precision, keep explicit software choices, and copy frame properties when downloading. This needs the shared libavcodec format-query cleanup fix for threaded software fallback.
+
+Assisted-by: gpt-6.1-sol via Codex
+---
+ modules/codec/avcodec/video.c | 92 +++++++++++++++++++++++++++++++++--
+ 1 file changed, 89 insertions(+), 3 deletions(-)
+
+diff --git a/modules/codec/avcodec/video.c b/modules/codec/avcodec/video.c
+index 93de132..3695de7 100644
+--- a/modules/codec/avcodec/video.c
++++ b/modules/codec/avcodec/video.c
+@@ -39,6 +39,7 @@
+ #include <libavcodec/avcodec.h>
+ #include <libavutil/mem.h>
+ #include <libavutil/pixdesc.h>
++#include <libavutil/hwcontext.h>
+ #include "avcommon_compat.h"
+ #if LIBAVUTIL_VERSION_CHECK( 55, 16, 101 )
+ #include <libavutil/mastering_display_metadata.h>
+@@ -83,6 +84,7 @@ struct decoder_sys_t
+ 
+     /* for direct rendering */
+     bool        b_direct_rendering;
++    bool        b_hw_copy;
+     atomic_bool b_dr_failure;
+ 
+     /* Hack to force display of still pictures */
+@@ -1423,6 +1425,20 @@ static picture_t *DecodeBlock( decoder_t *p_dec, block_t **pp_block, bool *error
+             }
+             break;
+         }
++        if (ret == 0 && frame->hw_frames_ctx && frame->opaque == NULL)
++        {
++            AVFrame *download = av_frame_alloc();
++            if (!download || av_hwframe_transfer_data(download, frame, 0) < 0
++             || av_frame_copy_props(download, frame) < 0)
++            {
++                av_frame_free(&download);
++                av_frame_free(&frame);
++                *error = true;
++                break;
++            }
++            av_frame_free(&frame);
++            frame = download;
++        }
+         bool not_received_frame = ret;
+ 
+         wait_mt( p_sys );
+@@ -1517,8 +1533,8 @@ static picture_t *DecodeBlock( decoder_t *p_dec, block_t **pp_block, bool *error
+              * might not be called. The output video format must be set here
+              * then picture buffer can be allocated. */
+             if (p_sys->p_va == NULL
+-             && lavc_UpdateVideoFormat(p_dec, p_context, p_context->pix_fmt,
+-                                       p_context->pix_fmt) == 0)
++             && lavc_UpdateVideoFormat(p_dec, p_context, frame->format,
++                                       frame->format) == 0)
+                 p_pic = decoder_NewPicture(p_dec);
+ 
+             if( !p_pic )
+@@ -1825,6 +1841,9 @@ static int lavc_GetFrame(struct AVCodecContext *ctx, AVFrame *frame, int flags)
+     decoder_sys_t *sys = dec->p_sys;
+     picture_t *pic;
+ 
++    if (sys->b_hw_copy)
++        return avcodec_default_get_buffer2(ctx, frame, flags);
++
+     for (unsigned i = 0; i < AV_NUM_DATA_POINTERS; i++)
+     {
+         frame->data[i] = NULL;
+@@ -1868,6 +1887,53 @@ static int lavc_GetFrame(struct AVCodecContext *ctx, AVFrame *frame, int flags)
+     return ret;
+ }
+ 
++/* A copy-back path also works when the output cannot import hardware surfaces. */
++static int OpenHardwareCopy(decoder_t *dec, AVCodecContext *context,
++                            enum AVPixelFormat source, enum AVPixelFormat hardware,
++                            enum AVHWDeviceType type)
++{
++    char *wanted = var_InheritString(dec, "avcodec-hw");
++    bool enabled = wanted && (!strcmp(wanted, "any")
++        || (type == AV_HWDEVICE_TYPE_CUDA && (!strcmp(wanted, "nvdec") || !strcmp(wanted, "cuda")))
++        || (type == AV_HWDEVICE_TYPE_VAAPI && !strcmp(wanted, "vaapi")));
++    free(wanted);
++    if (!enabled)
++        return 0;
++
++    AVBufferRef *device = NULL, *parameters = NULL;
++    if (av_hwdevice_ctx_create(&device, type, NULL, NULL, 0) < 0)
++        return 0;
++    bool keeps = false;
++    if (avcodec_get_hw_frames_parameters(context, device, hardware, &parameters) >= 0)
++    {
++        const AVHWFramesContext *frames = (const AVHWFramesContext *) parameters->data;
++        const AVPixFmtDescriptor *src = av_pix_fmt_desc_get(source);
++        const AVPixFmtDescriptor *dst = av_pix_fmt_desc_get(frames->sw_format);
++        keeps = src && dst && FindVlcChroma(frames->sw_format)
++             && src->nb_components == dst->nb_components
++             && dst->log2_chroma_w <= src->log2_chroma_w
++             && dst->log2_chroma_h <= src->log2_chroma_h;
++        for (int i = 0; keeps && i < src->nb_components; i++)
++            keeps = dst->comp[i].depth >= src->comp[i].depth;
++    }
++    av_buffer_unref(&parameters);
++    if (!keeps)
++    {
++        av_buffer_unref(&device);
++        msg_Dbg(dec, "Using software decoding: no supported hardware output format preserving source precision");
++        return -1;
++    }
++    av_buffer_unref(&context->hw_frames_ctx);
++    av_buffer_unref(&context->hw_device_ctx);
++    context->hw_device_ctx = device;
++    dec->p_sys->b_direct_rendering = false;
++    dec->p_sys->b_hw_copy = true;
++    dec->p_sys->pix_fmt = hardware;
++    msg_Info(dec, "Using %s copy-back for hardware decoding without reducing source precision",
++             type == AV_HWDEVICE_TYPE_CUDA ? "NVDEC" : "VAAPI");
++    return 1;
++}
++
+ static enum PixelFormat ffmpeg_GetFormat( AVCodecContext *p_context,
+                                           const enum PixelFormat *pi_fmt )
+ {
+@@ -1917,7 +1983,7 @@ static enum PixelFormat ffmpeg_GetFormat( AVCodecContext *p_context,
+         swfmt = defaultfmt;
+     }
+ 
+-    if (p_sys->pix_fmt == AV_PIX_FMT_NONE)
++    if (p_sys->pix_fmt == AV_PIX_FMT_NONE || p_sys->b_hw_copy)
+         goto no_reuse;
+ 
+     /* If the format did not actually change (e.g. seeking), try to reuse the
+@@ -1954,6 +2020,7 @@ static enum PixelFormat ffmpeg_GetFormat( AVCodecContext *p_context,
+         }
+ 
+ no_reuse:
++    p_sys->b_hw_copy = false;
+     if (p_sys->p_va != NULL)
+     {
+         msg_Err(p_dec, "existing hardware acceleration cannot be reused");
+@@ -1980,6 +2047,24 @@ no_reuse:
+     }
+ #endif
+ 
++    wait_mt(p_sys);
++    const enum AVPixelFormat copy_formats[] = { AV_PIX_FMT_CUDA, AV_PIX_FMT_VAAPI };
++    const enum AVHWDeviceType copy_devices[] = { AV_HWDEVICE_TYPE_CUDA, AV_HWDEVICE_TYPE_VAAPI };
++    for (unsigned i = 0; i < ARRAY_SIZE(copy_formats); i++)
++        for (const enum AVPixelFormat *format = pi_fmt; *format != AV_PIX_FMT_NONE; format++)
++            if (*format == copy_formats[i])
++            {
++                int copy = OpenHardwareCopy(p_dec, p_context, swfmt, *format, copy_devices[i]);
++                if (copy)
++                {
++                    post_mt(p_sys);
++                    if (copy > 0)
++                        return *format;
++                    goto software;
++                }
++            }
++    post_mt(p_sys);
++
+     wait_mt(p_sys);
+ 
+     const AVPixFmtDescriptor *src_desc = av_pix_fmt_desc_get(swfmt);
+@@ -1999,6 +2084,7 @@ no_reuse:
+     }
+ 
+     post_mt(p_sys);
++software:
+     /* Fallback to default behaviour */
+     p_sys->pix_fmt = swfmt;
+     return swfmt;
+-- 
+2.53.0
+
