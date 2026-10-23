@@ -1,0 +1,49 @@
+From 800df5604afb922615341ce5469d1c5f5b462aa3 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 23 Oct 2026 08:52:08 -0300
+Subject: [PATCH] vulkan: keep the compositor and driver preference between
+ hardware GPUs
+
+Inside Sparky Stereo, prefer the first suitable hardware device that Mesa orders for the active display instead of promoting a discrete GPU over it. Explicit device name and UUID choices remain overrides. This avoids an unnecessary cross-GPU hand-over on hybrid displays.
+
+Assisted-by: gpt-6.1-sol via Codex
+---
+ src/include/libplacebo/vulkan.h | 8 ++++----
+ src/vulkan/context.c            | 2 +-
+ 2 files changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/src/include/libplacebo/vulkan.h b/src/include/libplacebo/vulkan.h
+index f873f54..c65c474 100644
+--- a/src/include/libplacebo/vulkan.h
++++ b/src/include/libplacebo/vulkan.h
+@@ -186,10 +186,10 @@ struct pl_vulkan_params {
+     // --- Physical device selection options
+ 
+     // The vulkan physical device. May be set by the caller to indicate the
+-    // physical device to use. Otherwise, libplacebo will pick the "best"
+-    // available GPU, based on the advertised device type. (i.e., it will
+-    // prefer discrete GPUs over integrated GPUs). Only legal when specifying
+-    // an existing VkInstance to use.
++    // physical device to use. Otherwise, libplacebo preserves the driver's
++    // ordering between integrated and discrete GPUs, so the compositor's
++    // preferred device is not displaced just because another GPU is discrete.
++    // Only legal when specifying an existing VkInstance to use.
+     VkPhysicalDevice device;
+ 
+     // When choosing the device, only choose a device with this exact name.
+diff --git a/src/vulkan/context.c b/src/vulkan/context.c
+index 168b420..e73dc5e 100644
+--- a/src/vulkan/context.c
++++ b/src/vulkan/context.c
+@@ -1011,7 +1011,7 @@ VkPhysicalDevice pl_vulkan_choose_device(pl_log log,
+ 
+     static const struct { const char *name; int priority; } types[] = {
+         [VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU]   = {"discrete",   5},
+-        [VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU] = {"integrated", 4},
++        [VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU] = {"integrated", 5},
+         [VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU]    = {"virtual",    3},
+         [VK_PHYSICAL_DEVICE_TYPE_CPU]            = {"software",   2},
+         [VK_PHYSICAL_DEVICE_TYPE_OTHER]          = {"other",      1},
+-- 
+2.53.0
+
