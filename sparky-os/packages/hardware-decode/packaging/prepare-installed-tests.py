@@ -18,7 +18,7 @@ changes={
 for name in ('decode-proof','mlt-proof','qt-proof','vlc-proof','libmpv-proof'):
  changes['/w/'+name]='/w/probes/'+name
 records={}
-names=('qualify-gpu','final-run-mpv','final-run-engines','final-run-cancellation-recorded','additional-codecs','references','mpv-images','final-run-vlc','vlc-vmem-matrix','libmpv-defaults','vlc-weston-cases','vlc-qt-cases')
+names=('qualify-gpu','final-run-mpv','final-run-engines','final-run-cancellation-recorded','additional-codecs','references','mpv-images','final-run-vlc','vlc-vmem-matrix','libmpv-defaults','vlc-weston-cases','vlc-qt-cases','benchmark')
 for path in (source/(name+'.sh') for name in names):
  text=path.read_text()
  for old,new in changes.items():text=text.replace(old,new)
