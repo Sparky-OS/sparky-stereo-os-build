@@ -1,0 +1,1407 @@
+Description: Quick: draw a window whose elements show depth once per eye
+ .
+ Stereo KWin shows depth inside a surface when a toolkit draws the surface's
+ elements once per eye and hands both views over as the desktop's own depth;
+ the edition's Qt Widgets does this for raster windows. A QQuickWindow drew
+ one picture, into the left buffer only.
+ .
+ A style that shows the depth of a window's elements sets the window's
+ _q_stereo_depth while it does, and gives each item that lies off the screen's
+ plane its parallax, _q_stereo_parallax, in device pixels, positive when
+ nearer. The window then asks the platform for two views of its surface
+ (_q_stereo_views), and once the surface has them it is drawn as a pair
+ (_q_stereo_pair): each eye is polished, synchronized and rendered in a pass
+ of its own, with the window's _q_stereo_eye telling the style which. The
+ left eye ends a frame of its own that is not presented, since what the right
+ eye's synchronization updates is read when a frame's commands are submitted;
+ the right eye is rendered into the right buffer and presents both.
+ .
+ For each eye an item with a parallax moves sideways by its share of the
+ parallax relative to what it lies on, its nearest ancestor with a parallax or
+ else the window, split as Stereo KWin splits a window's parallax: the right
+ eye by whole pixels, the left eye the rest. An item deeper than what it lies
+ on is cut to its own rectangle where it is in 2D, the opening it is seen
+ through, an item that draws itself too. Only the nodes move: the items'
+ geometry, input and mapping stay as in 2D.
+ .
+ Both render loops draw the pair; in the threaded one the gui thread polishes
+ and synchronizes the right eye while the render thread renders the left, and
+ a repaint asked for on the render thread becomes a whole frame. What setting
+ an eye dirties is drawn by the frame that sets it and asks for no frame of
+ its own, so a still window stays still. Until the surface has its two views,
+ and in a frame drawn for an expose, both eyes show the window's one picture.
+ A window whose style shows no depth, or whose platform gives its surface one
+ view, is drawn exactly as before. The state is kept beside the window's and
+ the items' own, which keeps their layouts.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://github.com/Sparky-OS/qtdeclarative/commit/5c961eb0b32378f57dc2f24810665728f788887f
+Forwarded: no
+Last-Update: 2026-10-23
+Assisted-by: Claude Opus 5.5
+---
+ src/quick/CMakeLists.txt                      |   1 +
+ src/quick/items/qquickitem.cpp                |  11 +-
+ src/quick/items/qquickwindow.cpp              |  50 ++-
+ src/quick/items/qquickwindowstereo.cpp        | 288 ++++++++++++++++
+ src/quick/items/qquickwindowstereo_p.h        | 132 ++++++++
+ src/quick/scenegraph/qsgrenderloop.cpp        |  57 ++++
+ .../scenegraph/qsgthreadedrenderloop.cpp      | 121 ++++++-
+ tests/auto/quick/CMakeLists.txt               |   1 +
+ .../quick/qquickwindowstereo/CMakeLists.txt   |  35 ++
+ .../tst_qquickwindowstereo.cpp                | 315 ++++++++++++++++++
+ 10 files changed, 997 insertions(+), 14 deletions(-)
+ create mode 100644 src/quick/items/qquickwindowstereo.cpp
+ create mode 100644 src/quick/items/qquickwindowstereo_p.h
+ create mode 100644 tests/auto/quick/qquickwindowstereo/CMakeLists.txt
+ create mode 100644 tests/auto/quick/qquickwindowstereo/tst_qquickwindowstereo.cpp
+
+diff --git a/src/quick/CMakeLists.txt b/src/quick/CMakeLists.txt
+index 561ca6d..327f52b 100644
+--- a/src/quick/CMakeLists.txt
++++ b/src/quick/CMakeLists.txt
+@@ -97,6 +97,7 @@ qt_internal_add_qml_module(Quick
+         items/qquicktranslate.cpp items/qquicktranslate_p.h
+         items/qquickview.cpp items/qquickview.h items/qquickview_p.h
+         items/qquickwindow.cpp items/qquickwindow.h items/qquickwindow_p.h
++        items/qquickwindowstereo.cpp items/qquickwindowstereo_p.h
+         items/qquickwindowattached.cpp items/qquickwindowattached_p.h
+         items/qquickwindowcontainer.cpp items/qquickwindowcontainer_p.h
+         items/qquickwindowmodule.cpp items/qquickwindowmodule_p.h
+diff --git a/src/quick/items/qquickitem.cpp b/src/quick/items/qquickitem.cpp
+index 420d25d..5f40705 100644
+--- a/src/quick/items/qquickitem.cpp
++++ b/src/quick/items/qquickitem.cpp
+@@ -8,6 +8,7 @@
+ #include "qquickrendercontrol.h"
+ #include <QtQml/qjsengine.h>
+ #include "qquickwindow_p.h"
++#include "qquickwindowstereo_p.h"
+ 
+ #include "qquickevents_p_p.h"
+ #include "qquickscreen_p.h"
+@@ -3143,6 +3144,8 @@ void QQuickItemPrivate::refWindow(QQuickWindow *c)
+     if (extra.isAllocated() && extra->screenAttached)
+         extra->screenAttached->windowChanged(c);
+     itemChange(QQuickItem::ItemSceneChange, c);
++
++    QQuickWindowStereo::itemEnteredWindow(q, c);
+ }
+ 
+ void QQuickItemPrivate::derefWindow()
+@@ -3178,6 +3181,7 @@ void QQuickItemPrivate::derefWindow()
+             da->activeFocusItem = nullptr;
+         }
+     }
++    QQuickWindowStereo::itemLeftWindow(q, window);
+     window = nullptr;
+ 
+     itemNodeInstance = nullptr;
+@@ -4686,7 +4690,9 @@ void QQuickItem::polish()
+             QQuickWindowPrivate *p = QQuickWindowPrivate::get(d->window);
+             bool maybeupdate = p->itemsToPolish.isEmpty();
+             p->itemsToPolish.append(this);
+-            if (maybeupdate) d->window->maybeUpdate();
++            // What an eye changes is polished by the frame that draws the eye.
++            if (maybeupdate && !QQuickWindowStereo::isSettingEye(d->window))
++                d->window->maybeUpdate();
+         }
+     }
+ }
+@@ -9428,6 +9434,9 @@ bool QQuickItem::event(QEvent *ev)
+         // ### Qt 7: add virtual contextMenuEvent (and to QWindow?)
+         d->handleContextMenuEvent(static_cast<QContextMenuEvent*>(ev));
+         break;
++    case QEvent::DynamicPropertyChange:
++        QQuickWindowStereo::itemPropertyChanged(this, static_cast<QDynamicPropertyChangeEvent *>(ev)->propertyName());
++        return QObject::event(ev);
+     default:
+         return QObject::event(ev);
+     }
+diff --git a/src/quick/items/qquickwindow.cpp b/src/quick/items/qquickwindow.cpp
+index db2e6e2..210a414 100644
+--- a/src/quick/items/qquickwindow.cpp
++++ b/src/quick/items/qquickwindow.cpp
+@@ -3,6 +3,7 @@
+ // Qt-Security score:significant reason:default
+ 
+ #include "qquickwindow.h"
++#include "qquickwindowstereo_p.h"
+ #include "qquickwindow_p.h"
+ 
+ #include "qquickitem.h"
+@@ -646,7 +647,9 @@ void QQuickWindowPrivate::renderSceneGraph()
+                 qWarning("QQuickWindow: No render target (neither swapchain nor custom target was provided)");
+                 return;
+             }
+-            rt = swapchain->currentFrameRenderTarget();
++            // A window drawn as a pair renders its right eye into the right buffer.
++            const QQuickWindowStereo *stereo = QQuickWindowStereo::of(q);
++            rt = stereo ? stereo->renderTarget(swapchain) : swapchain->currentFrameRenderTarget();
+             rp = rpDescForSwapchain;
+             cb = swapchain->currentFrameCommandBuffer();
+         }
+@@ -887,6 +890,10 @@ void QQuickWindowPrivate::dirtyItem(QQuickItem *item)
+     if (itemPriv->dirtyAttributes & QQuickItemPrivate::ChildrenStackingChanged)
+         needsChildWindowStackingOrderUpdate = true;
+ 
++    // What an eye changes is drawn by the frame that draws the eye.
++    if (QQuickWindowStereo::isSettingEye(q))
++        return;
++
+     q->maybeUpdate();
+ }
+ 
+@@ -1234,6 +1241,7 @@ QQuickWindow::~QQuickWindow()
+         d->windowManager->removeWindow(this);
+         d->windowManager->windowDestroyed(this);
+     }
++    QQuickWindowStereo::windowDestroyed(this);
+ 
+     disconnect(this, &QQuickWindow::focusObjectChanged, this, &QQuickWindow::activeFocusItemChanged);
+     disconnect(this, &QQuickWindow::screenChanged, this, &QQuickWindow::handleScreenChanged);
+@@ -1689,6 +1697,9 @@ bool QQuickWindow::event(QEvent *event)
+     case QEvent::SafeAreaMarginsChange:
+         QQuickSafeArea::updateSafeAreasRecursively(d->contentItem);
+         break;
++    case QEvent::DynamicPropertyChange:
++        QQuickWindowStereo::windowPropertyChanged(this, static_cast<QDynamicPropertyChangeEvent *>(event)->propertyName());
++        break;
+     case QEvent::ChildWindowAdded: {
+         auto *childEvent = static_cast<QChildWindowEvent*>(event);
+         auto *childWindow = childEvent->child();
+@@ -2137,6 +2148,11 @@ void QQuickWindowPrivate::updateDirtyNodes()
+     dirtyItemList = nullptr;
+     if (updateList) QQuickItemPrivate::get(updateList)->prevDirtyItem = &updateList;
+ 
++    // Items are placed for the eye being drawn, if one is.
++    Q_Q(QQuickWindow);
++    const QQuickWindowStereo *stereo = QQuickWindowStereo::of(q);
++    QQuickWindowStereo::setPlacing(stereo && stereo->eye() != QQuickWindowStereo::Eye::None ? stereo : nullptr);
++
+     while (updateList) {
+         QQuickItem *item = updateList;
+         QQuickItemPrivate *itemPriv = QQuickItemPrivate::get(item);
+@@ -2145,6 +2161,18 @@ void QQuickWindowPrivate::updateDirtyNodes()
+         qCDebug(lcDirty) << "   QSGNode:" << item << qPrintable(itemPriv->dirtyToString());
+         updateDirtyNode(item);
+     }
++
++    QQuickWindowStereo::setPlacing(nullptr);
++}
++
++// The rectangle an item is clipped to: its own clip, and, while an eye is drawn and the item lies
++// deeper than what it lies on, the opening it is seen through.
++static QRectF qquickitem_clip_rect(QQuickItem *item, const QQuickWindowStereo::Placement &placement)
++{
++    if (!placement.cut)
++        return item->clipRect();
++    const QRectF opening = QRectF(QPointF(), item->size()).translated(placement.opening);
++    return item->clip() ? item->clipRect() & opening : opening;
+ }
+ 
+ static inline QSGNode *qquickitem_before_paintNode(QQuickItemPrivate *d)
+@@ -2200,12 +2228,20 @@ void QQuickWindowPrivate::updateDirtyNode(QQuickItem *item)
+     quint32 dirty = itemPriv->dirtyAttributes;
+     itemPriv->dirtyAttributes = 0;
+ 
++    const QQuickWindowStereo *stereo = QQuickWindowStereo::placing();
++    const QQuickWindowStereo::Placement placement = stereo ? stereo->placement(item) : QQuickWindowStereo::Placement();
++    const bool clipped = item->clip() || placement.cut;
++
+     if ((dirty & QQuickItemPrivate::TransformUpdateMask) ||
+         (dirty & QQuickItemPrivate::Size && itemPriv->origin() != QQuickItem::TopLeft &&
+          (itemPriv->scale() != 1. || itemPriv->rotation() != 0.))) {
+ 
+         QMatrix4x4 matrix;
+ 
++        // For one eye, the item moves sideways on what it lies on.
++        if (!placement.shift.isNull())
++            matrix.translate(placement.shift.x(), placement.shift.y());
++
+         if (itemPriv->x != 0. || itemPriv->y != 0.)
+             matrix.translate(itemPriv->x, itemPriv->y);
+ 
+@@ -2231,9 +2267,9 @@ void QQuickWindowPrivate::updateDirtyNode(QQuickItem *item)
+                                                   : (QSGNode *)itemPriv->itemNode();
+         QSGNode *child = itemPriv->rootNode();
+ 
+-        if (bool initializeClipNode = item->clip() && itemPriv->clipNode() == nullptr;
++        if (bool initializeClipNode = clipped && itemPriv->clipNode() == nullptr;
+             initializeClipNode) {
+-            QQuickDefaultClipNode *clip = new QQuickDefaultClipNode(item->clipRect());
++            QQuickDefaultClipNode *clip = new QQuickDefaultClipNode(qquickitem_clip_rect(item, placement));
+             itemPriv->extra.value().clipNode = clip;
+             clip->update();
+ 
+@@ -2246,13 +2282,13 @@ void QQuickWindowPrivate::updateDirtyNode(QQuickItem *item)
+                 parent->appendChildNode(clip);
+             }
+ 
+-        } else if (bool updateClipNode = item->clip() && itemPriv->clipNode() != nullptr;
++        } else if (bool updateClipNode = clipped && itemPriv->clipNode() != nullptr;
+                    updateClipNode) {
+             // setRect(), so that the node's geometry follows the rectangle too
+             QQuickDefaultClipNode *clip = itemPriv->clipNode();
+-            clip->setRect(item->clipRect());
++            clip->setRect(qquickitem_clip_rect(item, placement));
+             clip->update();
+-        } else if (bool removeClipNode = !item->clip() && itemPriv->clipNode() != nullptr;
++        } else if (bool removeClipNode = !clipped && itemPriv->clipNode() != nullptr;
+                    removeClipNode) {
+             QQuickDefaultClipNode *clip = itemPriv->clipNode();
+             parent->removeChildNode(clip);
+@@ -2366,7 +2402,7 @@ void QQuickWindowPrivate::updateDirtyNode(QQuickItem *item)
+     }
+ 
+     if ((dirty & QQuickItemPrivate::Size) && itemPriv->clipNode()) {
+-        itemPriv->clipNode()->setRect(item->clipRect());
++        itemPriv->clipNode()->setRect(qquickitem_clip_rect(item, placement));
+         itemPriv->clipNode()->update();
+     }
+ 
+diff --git a/src/quick/items/qquickwindowstereo.cpp b/src/quick/items/qquickwindowstereo.cpp
+new file mode 100644
+index 0000000..f0dbcc8
+--- /dev/null
++++ b/src/quick/items/qquickwindowstereo.cpp
+@@ -0,0 +1,288 @@
++// Copyright (C) 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++
++#include "qquickwindowstereo_p.h"
++
++#include <QtQuick/private/qquickitem_p.h>
++#include <QtQuick/qquickwindow.h>
++
++#include <QtCore/qmutex.h>
++#include <QtCore/qpointer.h>
++#include <QtGui/rhi/qrhi.h>
++
++#include <cmath>
++#include <utility>
++
++QT_BEGIN_NAMESPACE
++
++namespace {
++
++// The windows that ever showed depth: written from the gui thread, read from render threads too.
++QBasicMutex s_mutex;
++QHash<const QQuickWindow *, QQuickWindowStereo *> *s_windows = nullptr;
++std::atomic<int> s_count = 0;
++
++thread_local const QQuickWindow *t_settingEye = nullptr;
++thread_local const QQuickWindowStereo *t_placing = nullptr;
++
++// As Stereo KWin splits a parallax (StereoDepth::eyeShift()): the right eye by whole pixels and
++// the left eye the rest, the left eye to the right and the right eye to the left for a positive
++// parallax, so a whole parallax keeps both eyes on whole pixels.
++qreal eyeShift(qreal parallax, QQuickWindowStereo::Eye eye)
++{
++    const qreal right = -std::trunc(parallax / 2);
++    switch (eye) {
++    case QQuickWindowStereo::Eye::Left:
++        return parallax + right;
++    case QQuickWindowStereo::Eye::Right:
++        return right == 0 ? 0 : right;
++    case QQuickWindowStereo::Eye::None:
++        break;
++    }
++    return 0;
++}
++
++// A move in the window's coordinates, as a move in the coordinates of whatever a transform maps
++// to the window.
++QPointF mapMove(const QTransform &toWindow, QPointF move)
++{
++    const QTransform fromWindow = toWindow.inverted();
++    return fromWindow.map(move) - fromWindow.map(QPointF());
++}
++
++} // namespace
++
++QQuickWindowStereo::QQuickWindowStereo(QQuickWindow *window)
++    : m_window(window)
++{
++}
++
++QQuickWindowStereo *QQuickWindowStereo::of(const QQuickWindow *window)
++{
++    if (!window || s_count.load(std::memory_order_acquire) == 0)
++        return nullptr;
++    QMutexLocker locker(&s_mutex);
++    return s_windows ? s_windows->value(window) : nullptr;
++}
++
++void QQuickWindowStereo::windowDestroyed(QQuickWindow *window)
++{
++    QQuickWindowStereo *stereo = nullptr;
++    {
++        QMutexLocker locker(&s_mutex);
++        if (s_windows)
++            stereo = s_windows->take(window);
++        if (stereo)
++            s_count.fetch_sub(1, std::memory_order_release);
++    }
++    delete stereo;
++}
++
++void QQuickWindowStereo::windowPropertyChanged(QQuickWindow *window, const QByteArray &name)
++{
++    if (name != DepthProperty)
++        return;
++
++    QQuickWindowStereo *stereo = of(window);
++    if (!stereo) {
++        if (!window->property(DepthProperty).toBool())
++            return;
++        stereo = new QQuickWindowStereo(window);
++        {
++            QMutexLocker locker(&s_mutex);
++            if (!s_windows)
++                s_windows = new QHash<const QQuickWindow *, QQuickWindowStereo *>;
++            s_windows->insert(window, stereo);
++            s_count.fetch_add(1, std::memory_order_release);
++        }
++        if (window->contentItem())
++            stereo->addItems(window->contentItem());
++    }
++    stereo->depthChanged();
++}
++
++void QQuickWindowStereo::depthChanged()
++{
++    m_depth = m_window->property(DepthProperty).toBool();
++    // The platform gives the surface its views at the start of a frame.
++    m_window->setProperty(ViewsProperty, m_depth ? QVariant(2) : QVariant());
++    m_window->update();
++}
++
++void QQuickWindowStereo::itemPropertyChanged(QQuickItem *item, const QByteArray &name)
++{
++    if (name != ParallaxProperty)
++        return;
++    if (QQuickWindowStereo *stereo = of(item->window()))
++        stereo->addItem(item);
++}
++
++void QQuickWindowStereo::itemEnteredWindow(QQuickItem *item, QQuickWindow *window)
++{
++    if (QQuickWindowStereo *stereo = of(window))
++        stereo->addItem(item);
++}
++
++void QQuickWindowStereo::itemLeftWindow(QQuickItem *item, QQuickWindow *window)
++{
++    if (QQuickWindowStereo *stereo = of(window))
++        stereo->m_items.remove(item);
++}
++
++bool QQuickWindowStereo::isSettingEye(const QQuickWindow *window)
++{
++    return t_settingEye && t_settingEye == window;
++}
++
++void QQuickWindowStereo::addItem(QQuickItem *item)
++{
++    const QVariant parallax = item->property(ParallaxProperty);
++    if (!parallax.isValid()) {
++        removeItem(item);
++        return;
++    }
++    // Placed with the next eye.
++    m_items[item].parallax = parallax.toReal();
++}
++
++void QQuickWindowStereo::addItems(QQuickItem *item)
++{
++    addItem(item);
++    const auto children = QQuickItemPrivate::get(item)->childItems;
++    for (QQuickItem *child : children)
++        addItems(child);
++}
++
++void QQuickWindowStereo::removeItem(QQuickItem *item)
++{
++    auto it = m_items.find(item);
++    if (it == m_items.end())
++        return;
++    const Placement placement = it->placement;
++    m_items.erase(it);
++    if (!(placement == Placement{}))
++        dirtyItem(item, placement.cut);
++}
++
++bool QQuickWindowStereo::beginFrame()
++{
++    // A window with client-side decorations is drawn once: its frame is no part of the pair.
++    const bool pair = m_depth && m_twoViews.load(std::memory_order_acquire) && m_window->frameMargins().isNull();
++    if (pair != m_pair.load(std::memory_order_relaxed)) {
++        m_pair.store(pair, std::memory_order_release);
++        m_window->setProperty(PairProperty, pair);
++    }
++    return pair;
++}
++
++void QQuickWindowStereo::setEye(Eye eye)
++{
++    if (eye == m_eye)
++        return;
++
++    const QQuickWindow *settingEye = std::exchange(t_settingEye, m_window);
++    m_eye = eye;
++    // The style draws what the eye shows of its elements; their parallax may move with it.
++    m_window->setProperty(EyeProperty, int(eye));
++    placeItems();
++    t_settingEye = settingEye;
++}
++
++qreal QQuickWindowStereo::referenceParallax(const QQuickItem *item) const
++{
++    for (const QQuickItem *parent = item->parentItem(); parent; parent = parent->parentItem()) {
++        auto it = m_items.constFind(parent);
++        if (it != m_items.cend())
++            return it->parallax;
++    }
++    // The window lies at the screen.
++    return 0;
++}
++
++void QQuickWindowStereo::placeItems()
++{
++    const qreal devicePixelRatio = std::max(m_window->effectiveDevicePixelRatio(), qreal(1e-3));
++    for (auto it = m_items.begin(); it != m_items.end(); ++it) {
++        QQuickItem *item = const_cast<QQuickItem *>(it.key());
++        Placement placement;
++        if (m_eye != Eye::None) {
++            const qreal reference = referenceParallax(item);
++            const qreal move = (eyeShift(it->parallax, m_eye) - eyeShift(reference, m_eye)) / devicePixelRatio;
++            if (move != 0) {
++                const QQuickItemPrivate *itemPrivate = QQuickItemPrivate::get(item);
++                const QTransform parentToWindow = item->parentItem()
++                        ? QQuickItemPrivate::get(item->parentItem())->itemToWindowTransform()
++                        : QTransform();
++                placement.shift = mapMove(parentToWindow, QPointF(move, 0));
++                // Deeper than what it lies on, the item is seen through its own opening, which
++                // stays where the item is in 2D: as the frame of a window cuts the view through it.
++                if (it->parallax < reference) {
++                    placement.cut = true;
++                    placement.opening = mapMove(itemPrivate->itemToWindowTransform(), QPointF(-move, 0));
++                }
++            }
++        }
++        if (placement == it->placement)
++            continue;
++        const bool clip = placement.cut != it->placement.cut || placement.opening != it->placement.opening;
++        it->placement = placement;
++        dirtyItem(item, clip);
++    }
++}
++
++void QQuickWindowStereo::dirtyItem(QQuickItem *item, bool clip)
++{
++    // Only the item's nodes change: its geometry, and so what maps to it, stays as in 2D.
++    QQuickItemPrivate *itemPrivate = QQuickItemPrivate::get(item);
++    if (!itemPrivate->window || !itemPrivate->componentComplete)
++        return;
++    itemPrivate->dirtyAttributes |= QQuickItemPrivate::Transform;
++    if (clip)
++        itemPrivate->dirtyAttributes |= QQuickItemPrivate::Clip;
++    itemPrivate->addToDirtyList();
++}
++
++QQuickWindowStereo::Placement QQuickWindowStereo::placement(const QQuickItem *item) const
++{
++    if (m_eye == Eye::None)
++        return {};
++    auto it = m_items.constFind(item);
++    return it == m_items.cend() ? Placement{} : it->placement;
++}
++
++const QQuickWindowStereo *QQuickWindowStereo::placing()
++{
++    return t_placing;
++}
++
++void QQuickWindowStereo::setPlacing(const QQuickWindowStereo *stereo)
++{
++    t_placing = stereo;
++}
++
++bool QQuickWindowStereo::hasRightTarget(QRhiSwapChain *swapchain)
++{
++    return swapchain
++            && swapchain->currentFrameRenderTarget(QRhiSwapChain::RightBuffer)
++                    != swapchain->currentFrameRenderTarget(QRhiSwapChain::LeftBuffer);
++}
++
++QRhiRenderTarget *QQuickWindowStereo::renderTarget(QRhiSwapChain *swapchain) const
++{
++    return m_rightPass ? swapchain->currentFrameRenderTarget(QRhiSwapChain::RightBuffer)
++                       : swapchain->currentFrameRenderTarget();
++}
++
++void QQuickWindowStereo::frameRendered(QRhiSwapChain *swapchain)
++{
++    const bool twoViews = hasRightTarget(swapchain);
++    if (m_twoViews.exchange(twoViews, std::memory_order_acq_rel) != twoViews) {
++        // The next frame can be drawn as a pair, or no longer.
++        QMetaObject::invokeMethod(m_window, [window = QPointer<QQuickWindow>(m_window)] {
++            if (window)
++                window->update();
++        }, Qt::QueuedConnection);
++    }
++}
++
++QT_END_NAMESPACE
+diff --git a/src/quick/items/qquickwindowstereo_p.h b/src/quick/items/qquickwindowstereo_p.h
+new file mode 100644
+index 0000000..35363a5
+--- /dev/null
++++ b/src/quick/items/qquickwindowstereo_p.h
+@@ -0,0 +1,132 @@
++// Copyright (C) 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++
++#ifndef QQUICKWINDOWSTEREO_P_H
++#define QQUICKWINDOWSTEREO_P_H
++
++//
++//  W A R N I N G
++//  -------------
++//
++// This file is not part of the Qt API.  It exists purely as an
++// implementation detail.  This header file may change from version to
++// version without notice, or even be removed.
++//
++// We mean it.
++//
++
++#include <QtQuick/private/qtquickglobal_p.h>
++
++#include <QtCore/qbytearray.h>
++#include <QtCore/qhash.h>
++#include <QtCore/qpoint.h>
++
++#include <atomic>
++
++QT_BEGIN_NAMESPACE
++
++class QQuickItem;
++class QQuickWindow;
++class QRhiRenderTarget;
++class QRhiSwapChain;
++
++// A window whose style shows the depth of its elements (the window's _q_stereo_depth) is drawn
++// once per eye, as the desktop's own depth: the platform gives its surface two views (the
++// window's _q_stereo_views), each eye is polished, synchronized and rendered in a pass of its
++// own with the window's _q_stereo_eye telling which, and while that happens the window's
++// _q_stereo_pair is set. Every item that carries a parallax (its _q_stereo_parallax: device
++// pixels, positive when nearer than the screen) moves sideways by its share of it for the eye,
++// relative to what it lies on, which is its nearest ancestor with a parallax or else the window,
++// split as Stereo KWin splits a window's parallax; an item deeper than what it lies on is cut to
++// its own rectangle, the opening it is seen through. Nothing changes for any other window.
++//
++// The state is kept beside the window's and the items' own, which keeps their layouts.
++class Q_QUICK_EXPORT QQuickWindowStereo
++{
++public:
++    enum class Eye { None = 0, Left = 1, Right = 2 };
++
++    struct Placement
++    {
++        // How far the item moves, in the coordinates of its parent.
++        QPointF shift;
++        // Whether it is cut to its rectangle, where it is without the move: how far that is, in
++        // its own coordinates.
++        bool cut = false;
++        QPointF opening;
++
++        bool operator==(const Placement &other) const
++        {
++            return shift == other.shift && cut == other.cut && opening == other.opening;
++        }
++    };
++
++    static constexpr char DepthProperty[] = "_q_stereo_depth";
++    static constexpr char EyeProperty[] = "_q_stereo_eye";
++    static constexpr char PairProperty[] = "_q_stereo_pair";
++    static constexpr char ViewsProperty[] = "_q_stereo_views";
++    static constexpr char ParallaxProperty[] = "_q_stereo_parallax";
++
++    // The window's state once it ever showed depth, otherwise nullptr. Any thread.
++    static QQuickWindowStereo *of(const QQuickWindow *window);
++    static void windowDestroyed(QQuickWindow *window);
++
++    // Gui thread.
++    static void windowPropertyChanged(QQuickWindow *window, const QByteArray &name);
++    static void itemPropertyChanged(QQuickItem *item, const QByteArray &name);
++    static void itemEnteredWindow(QQuickItem *item, QQuickWindow *window);
++    static void itemLeftWindow(QQuickItem *item, QQuickWindow *window);
++    // While an eye is set on the window, what it dirties is drawn by the frame setting it and
++    // asks for no frame of its own.
++    static bool isSettingEye(const QQuickWindow *window);
++
++    // Gui thread, before a frame is polished: whether the frame is drawn as a pair.
++    bool beginFrame();
++    // Any thread: whether the last frame begun was drawn as a pair.
++    bool isDrawingPair() const { return m_pair.load(std::memory_order_acquire); }
++    void setEye(Eye eye);
++    Eye eye() const { return m_eye; }
++
++    // While an eye is synchronized: how an item is placed for it.
++    Placement placement(const QQuickItem *item) const;
++    // The placement of the items being synchronized for the window, if any: set around
++    // QQuickWindowPrivate::updateDirtyNodes().
++    static const QQuickWindowStereo *placing();
++    static void setPlacing(const QQuickWindowStereo *stereo);
++
++    // Render thread.
++    static bool hasRightTarget(QRhiSwapChain *swapchain);
++    void setRightPass(bool right) { m_rightPass = right; }
++    QRhiRenderTarget *renderTarget(QRhiSwapChain *swapchain) const;
++    // While a frame is recorded: whether the surface it is drawn on has two views, for the next.
++    void frameRendered(QRhiSwapChain *swapchain);
++
++private:
++    explicit QQuickWindowStereo(QQuickWindow *window);
++
++    struct ItemState
++    {
++        qreal parallax = 0;
++        Placement placement;
++    };
++
++    void depthChanged();
++    void addItem(QQuickItem *item);
++    void addItems(QQuickItem *item);
++    void removeItem(QQuickItem *item);
++    void placeItems();
++    qreal referenceParallax(const QQuickItem *item) const;
++    void dirtyItem(QQuickItem *item, bool clip);
++
++    QQuickWindow *m_window;
++    QHash<const QQuickItem *, ItemState> m_items;
++    Eye m_eye = Eye::None;
++    bool m_depth = false;
++    std::atomic<bool> m_pair = false;
++    bool m_rightPass = false;
++    std::atomic<bool> m_twoViews = false;
++};
++
++QT_END_NAMESPACE
++
++#endif // QQUICKWINDOWSTEREO_P_H
+diff --git a/src/quick/scenegraph/qsgrenderloop.cpp b/src/quick/scenegraph/qsgrenderloop.cpp
+index 6e317dd..d1d510d 100644
+--- a/src/quick/scenegraph/qsgrenderloop.cpp
++++ b/src/quick/scenegraph/qsgrenderloop.cpp
+@@ -21,6 +21,7 @@
+ #include <QtQuick/QQuickWindow>
+ #include <QtQuick/private/qquickwindow_p.h>
+ #include <QtQuick/private/qquickitem_p.h>
++#include <QtQuick/private/qquickwindowstereo_p.h>
+ #include <QtQuick/private/qsgcontext_p.h>
+ #include <QtQuick/private/qsgrenderer_p.h>
+ #include <private/qquickprofiler_p.h>
+@@ -609,6 +610,13 @@ void QSGGuiThreadRenderLoop::renderWindow(QQuickWindow *window)
+     Q_TRACE(QSG_polishItems_entry);
+     Q_QUICK_SG_PROFILE_START(QQuickProfiler::SceneGraphPolishFrame);
+ 
++    // A window whose elements show depth is drawn as a pair once its surface has two views: each
++    // eye is polished, synchronized and rendered in a pass of its own.
++    QQuickWindowStereo *stereo = QQuickWindowStereo::of(window);
++    bool pair = stereo && stereo->beginFrame();
++    if (pair)
++        stereo->setEye(QQuickWindowStereo::Eye::Left);
++
+     m_inPolish = true;
+     cd->polishItems();
+     m_inPolish = false;
+@@ -675,10 +683,22 @@ void QSGGuiThreadRenderLoop::renderWindow(QQuickWindow *window)
+                 qWarning("Failed to start frame");
+             // out of date is not worth warning about - it may happen even during resizing on some platforms
+             emit window->afterFrameEnd();
++            if (pair)
++                stereo->setEye(QQuickWindowStereo::Eye::None);
+             return;
+         }
+     }
+ 
++    // Beginning the frame gave the surface the views it has now.
++    const bool twoViews = stereo && QQuickWindowStereo::hasRightTarget(cd->swapchain);
++    if (pair && !twoViews) {
++        stereo->setEye(QQuickWindowStereo::Eye::None);
++        m_inPolish = true;
++        cd->polishItems();
++        m_inPolish = false;
++        pair = false;
++    }
++
+     // Enable external OpenGL rendering connected to one of the
+     // QQuickWindow signals (beforeSynchronizing, beforeRendering,
+     // etc.) to function like it did on the direct OpenGL path,
+@@ -698,6 +718,40 @@ void QSGGuiThreadRenderLoop::renderWindow(QQuickWindow *window)
+ 
+     cd->renderSceneGraph();
+ 
++    if (twoViews) {
++        stereo->frameRendered(cd->swapchain);
++        if (pair) {
++            // The left eye ends a frame of its own, not presented, as what the right eye's
++            // synchronization updates is read when a frame's commands are submitted.
++            QRhi::FrameOpResult frameResult = data.rhi->endFrame(cd->swapchain, QRhi::SkipPresent);
++            if (frameResult == QRhi::FrameOpSuccess)
++                frameResult = data.rhi->beginFrame(cd->swapchain);
++            if (frameResult != QRhi::FrameOpSuccess) {
++                if (frameResult == QRhi::FrameOpDeviceLost)
++                    handleDeviceLoss();
++                else if (frameResult == QRhi::FrameOpError)
++                    qWarning("Failed to render the right eye");
++                emit window->afterFrameEnd();
++                stereo->setEye(QQuickWindowStereo::Eye::None);
++                return;
++            }
++
++            stereo->setEye(QQuickWindowStereo::Eye::Right);
++            m_inPolish = true;
++            cd->polishItems();
++            m_inPolish = false;
++            data.rhi->makeThreadLocalNativeContextCurrent();
++            cd->syncSceneGraph();
++            data.rc->endSync();
++        }
++        // The right eye; until the window is drawn as a pair, its one picture again.
++        stereo->setRightPass(true);
++        cd->renderSceneGraph();
++        stereo->setRightPass(false);
++    } else if (stereo && cd->swapchain) {
++        stereo->frameRendered(cd->swapchain);
++    }
++
+     if (profileFrames)
+         renderTime = renderTimer.nsecsElapsed();
+     Q_TRACE(QSG_render_exit);
+@@ -726,6 +780,9 @@ void QSGGuiThreadRenderLoop::renderWindow(QQuickWindow *window)
+ 
+     emit window->afterFrameEnd();
+ 
++    if (pair)
++        stereo->setEye(QQuickWindowStereo::Eye::None);
++
+     qint64 swapTime = 0;
+     if (profileFrames)
+         swapTime = renderTimer.nsecsElapsed();
+diff --git a/src/quick/scenegraph/qsgthreadedrenderloop.cpp b/src/quick/scenegraph/qsgthreadedrenderloop.cpp
+index 9ca2bc6..0c3bb47 100644
+--- a/src/quick/scenegraph/qsgthreadedrenderloop.cpp
++++ b/src/quick/scenegraph/qsgthreadedrenderloop.cpp
+@@ -18,6 +18,7 @@
+ #include <QtQuick/QQuickWindow>
+ #include <private/qquickwindow_p.h>
+ #include <private/qquickitem_p.h>
++#include <private/qquickwindowstereo_p.h>
+ #include <QtGui/qpa/qplatformwindow_p.h>
+ 
+ #include <QtQuick/private/qsgrenderer_p.h>
+@@ -148,6 +149,8 @@ public:
+     bool syncInExpose;
+     bool forceRenderPass;
+     QRhiSwapChainProxyData scProxyData;
++    // For a window drawn as a pair: the eye this synchronization is for (QQuickWindowStereo::Eye).
++    int stereoEye = 0;
+ };
+ 
+ 
+@@ -308,6 +311,16 @@ public:
+     // Local event queue stuff...
+     bool stopEventProcessing;
+     QSGRenderThreadEventQueue eventQueue;
++
++    // A window drawn as a pair renders each eye in a frame of its own, the left one not presented,
++    // after a synchronization of its own: the eye the next one is for, whether the one being made
++    // starts a pair (told to the gui thread, which then asks for the right eye's), and whether a
++    // left eye was rendered, at which size, and waits for its right eye.
++    int pendingStereoEye = 0;
++    bool stereoLeftHalf = false;
++    bool stereoRightPending = false;
++    bool stereoAwaitingRight = false;
++    QSize stereoLeftSize;
+ };
+ 
+ bool QSGRenderThread::event(QEvent *e)
+@@ -325,6 +338,7 @@ bool QSGRenderThread::event(QEvent *e)
+             qCDebug(QSG_LOG_RENDERLOOP, QSG_RT_PAD, "- window removed");
+             window = nullptr;
+         }
++        stereoAwaitingRight = false;
+         waitCondition.wakeOne();
+         mutex.unlock();
+ 
+@@ -350,6 +364,7 @@ bool QSGRenderThread::event(QEvent *e)
+         windowSize = se->size;
+         dpr = se->dpr;
+         scProxyData = se->scProxyData;
++        pendingStereoEye = se->stereoEye;
+ 
+         pendingUpdate |= SyncRequest;
+         if (se->syncInExpose) {
+@@ -563,6 +578,9 @@ void QSGRenderThread::sync(bool inExpose)
+         qCDebug(QSG_LOG_RENDERLOOP, QSG_RT_PAD, "- window has bad size, sync aborted");
+     }
+ 
++    // The gui thread asks for the right eye's synchronization once it is woken.
++    stereoRightPending = stereoLeftHalf;
++
+     // Two special cases: For grabs we do not care about blocking the gui
+     // (main) thread. When this is from an expose, we will keep locked until
+     // the frame is rendered (submitted), so in that case waking happens later
+@@ -624,6 +642,16 @@ void QSGRenderThread::syncAndRender()
+     const bool exposeRequested = (pendingUpdate & ExposeRequest) == ExposeRequest;
+     pendingUpdate = 0;
+ 
++    // A window drawn as a pair is drawn from the gui thread's synchronization of each eye: a
++    // repaint asked for on the render thread becomes a whole frame.
++    QQuickWindowStereo *stereo = QQuickWindowStereo::of(window);
++    const int stereoEye = std::exchange(pendingStereoEye, 0);
++    const bool rightHalf = syncRequested && stereoEye == int(QQuickWindowStereo::Eye::Right);
++    if (!syncRequested && stereo && stereo->isDrawingPair()) {
++        QCoreApplication::postEvent(window, new QEvent(QEvent::Type(QQuickWindowPrivate::FullUpdateRequest)));
++        return;
++    }
++
+     QQuickWindowPrivate *cd = QQuickWindowPrivate::get(window);
+     QSGRhiSupport *rhiSupport = QSGRhiSupport::instance();
+     // Begin the frame before syncing -> sync is where we may invoke
+@@ -714,9 +742,18 @@ void QSGRenderThread::syncAndRender()
+         }
+     }
+ 
++    // Beginning the frame gave the surface the views it has now.
++    const bool twoViews = stereo && hasValidSwapChain && QQuickWindowStereo::hasRightTarget(cd->swapchain);
++    const bool leftHalf = syncRequested && stereoEye == int(QQuickWindowStereo::Eye::Left) && twoViews && !exposeRequested;
++    // A right eye whose left eye was not rendered, or at another size, draws nothing.
++    const bool rightWithLeft = rightHalf && stereoAwaitingRight && twoViews
++            && cd->swapchain->currentPixelSize() == stereoLeftSize;
++
+     if (syncRequested) {
+         qCDebug(QSG_LOG_RENDERLOOP, QSG_RT_PAD, "- updatePending, doing sync");
++        stereoLeftHalf = leftHalf;
+         sync(exposeRequested);
++        stereoLeftHalf = false;
+     }
+ #ifndef QSG_NO_RENDER_TIMING
+     if (profileFrames)
+@@ -746,8 +783,8 @@ void QSGRenderThread::syncAndRender()
+     // be set in pendingUpdate at this point)
+     pendingUpdate = 0;
+ 
+-    // Advance render thread animations (from the QQuickAnimator subclasses).
+-    if (animatorDriver->isRunning()) {
++    // Advance render thread animations (from the QQuickAnimator subclasses), once for both eyes.
++    if (!rightHalf && animatorDriver->isRunning()) {
+         d->animationController->lock();
+         animatorDriver->advance();
+         d->animationController->unlock();
+@@ -761,7 +798,30 @@ void QSGRenderThread::syncAndRender()
+         if (!syncRequested) // else this was already done in sync()
+             rhi->makeThreadLocalNativeContextCurrent();
+ 
+-        d->renderSceneGraph();
++        // The left eye of a pair ends a frame of its own, not presented, as what the right eye's
++        // synchronization updates is read when a frame's commands are submitted; the right eye
++        // is rendered into the right buffer and presents both.
++        bool present = true;
++        if (rightHalf) {
++            if (rightWithLeft) {
++                stereo->setRightPass(true);
++                d->renderSceneGraph();
++                stereo->setRightPass(false);
++            } else {
++                present = false;
++            }
++        } else {
++            d->renderSceneGraph();
++            // Until the window is drawn as a pair both eyes show its one picture.
++            if (twoViews && !leftHalf) {
++                stereo->setRightPass(true);
++                d->renderSceneGraph();
++                stereo->setRightPass(false);
++            }
++            present = !leftHalf;
++        }
++        if (stereo && hasValidSwapChain)
++            stereo->frameRendered(cd->swapchain);
+ 
+         if (profileFrames)
+             renderTime = threadTimer.nsecsElapsed();
+@@ -770,7 +830,7 @@ void QSGRenderThread::syncAndRender()
+                                   QQuickProfiler::SceneGraphRenderLoopRender);
+         Q_TRACE(QSG_swap_entry);
+ 
+-        QRhi::FrameOpResult frameResult = rhi->endFrame(cd->swapchain);
++        QRhi::FrameOpResult frameResult = rhi->endFrame(cd->swapchain, present ? QRhi::EndFrameFlags() : QRhi::SkipPresent);
+         if (frameResult != QRhi::FrameOpSuccess) {
+             if (frameResult == QRhi::FrameOpDeviceLost)
+                 handleDeviceLoss();
+@@ -778,11 +838,19 @@ void QSGRenderThread::syncAndRender()
+                 qWarning("Failed to end frame");
+             if (frameResult == QRhi::FrameOpDeviceLost || frameResult == QRhi::FrameOpSwapChainOutOfDate)
+                 QCoreApplication::postEvent(window, new QEvent(QEvent::Type(QQuickWindowPrivate::FullUpdateRequest)));
++            stereoAwaitingRight = false;
+         } else {
+             lastCompletedGpuTime = cd->swapchain->currentFrameCommandBuffer()->lastCompletedGpuTime();
++            stereoAwaitingRight = leftHalf;
++            if (leftHalf)
++                stereoLeftSize = cd->swapchain->currentPixelSize();
+         }
+-        d->fireFrameSwapped();
++        if (present)
++            d->fireFrameSwapped();
++        else if (rightHalf)
++            QCoreApplication::postEvent(window, new QEvent(QEvent::Type(QQuickWindowPrivate::FullUpdateRequest)));
+     } else {
++        stereoAwaitingRight = false;
+         Q_TRACE(QSG_render_exit);
+         Q_QUICK_SG_PROFILE_SKIP(QQuickProfiler::SceneGraphRenderLoopFrame,
+                                 QQuickProfiler::SceneGraphRenderLoopSync, 1);
+@@ -1637,6 +1705,15 @@ void QSGThreadedRenderLoop::polishAndSync(Window *w, bool inExpose)
+     Q_TRACE(QSG_polishItems_entry);
+ 
+     QQuickWindowPrivate *d = QQuickWindowPrivate::get(window);
++
++    // A window whose elements show depth is drawn as a pair once its surface has two views: each
++    // eye is polished and synchronized in turn, and the render thread renders each in a pass of
++    // its own. A frame drawn while the window is exposed is drawn once.
++    QQuickWindowStereo *stereo = inExpose ? nullptr : QQuickWindowStereo::of(window);
++    const bool pair = stereo && stereo->beginFrame();
++    if (pair)
++        stereo->setEye(QQuickWindowStereo::Eye::Left);
++
+     m_inPolish = true;
+     d->polishItems();
+     m_inPolish = false;
+@@ -1664,7 +1741,9 @@ void QSGThreadedRenderLoop::polishAndSync(Window *w, bool inExpose)
+     qCDebug(QSG_LOG_RENDERLOOP, "- lock for sync");
+     w->thread->mutex.lock();
+     m_lockedForSync = true;
+-    w->thread->postEvent(new WMSyncEvent(window, inExpose, w->forceRenderPass, scProxyData));
++    auto *syncEvent = new WMSyncEvent(window, inExpose, w->forceRenderPass, scProxyData);
++    syncEvent->stereoEye = int(pair ? QQuickWindowStereo::Eye::Left : QQuickWindowStereo::Eye::None);
++    w->thread->postEvent(syncEvent);
+     w->forceRenderPass = false;
+ 
+     qCDebug(QSG_LOG_RENDERLOOP, "- wait for sync");
+@@ -1677,9 +1756,39 @@ void QSGThreadedRenderLoop::polishAndSync(Window *w, bool inExpose)
+ 
+     w->thread->waitCondition.wait(&w->thread->mutex);
+     m_lockedForSync = false;
++    const bool rightPending = pair && std::exchange(w->thread->stereoRightPending, false);
+     w->thread->mutex.unlock();
+     qCDebug(QSG_LOG_RENDERLOOP, "- unlock after sync");
+ 
++    if (rightPending) {
++        // The render thread renders the left eye meanwhile.
++        stereo->setEye(QQuickWindowStereo::Eye::Right);
++        m_inPolish = true;
++        d->polishItems();
++        m_inPolish = false;
++
++        w = windowFor(window);
++        if (w && w->thread && w->thread->window) {
++            qCDebug(QSG_LOG_RENDERLOOP, "- lock for the right eye's sync");
++            w->thread->mutex.lock();
++            m_lockedForSync = true;
++            auto *rightEvent = new WMSyncEvent(window, false, false, scProxyData);
++            rightEvent->stereoEye = int(QQuickWindowStereo::Eye::Right);
++            w->thread->postEvent(rightEvent);
++            w->thread->waitCondition.wait(&w->thread->mutex);
++            m_lockedForSync = false;
++            w->thread->mutex.unlock();
++        }
++    }
++    if (pair)
++        stereo->setEye(QQuickWindowStereo::Eye::None);
++
++    w = windowFor(window);
++    if (!w) {
++        qCDebug(QSG_LOG_RENDERLOOP, "- removed after the eyes were drawn, abort");
++        return;
++    }
++
+     if (profileFrames)
+         syncTime = timer.nsecsElapsed();
+     Q_TRACE(QSG_sync_exit);
+diff --git a/tests/auto/quick/CMakeLists.txt b/tests/auto/quick/CMakeLists.txt
+index b6da4bb..b01f8c2 100644
+--- a/tests/auto/quick/CMakeLists.txt
++++ b/tests/auto/quick/CMakeLists.txt
+@@ -11,6 +11,7 @@ add_subdirectory(geometry)
+ add_subdirectory(nodes)
+ add_subdirectory(qquickpixmapcache)
+ add_subdirectory(qquicktransform)
++add_subdirectory(qquickwindowstereo)
+ 
+ if(QT_FEATURE_private_tests)
+     add_subdirectory(doc)
+diff --git a/tests/auto/quick/qquickwindowstereo/CMakeLists.txt b/tests/auto/quick/qquickwindowstereo/CMakeLists.txt
+new file mode 100644
+index 0000000..a990a02
+--- /dev/null
++++ b/tests/auto/quick/qquickwindowstereo/CMakeLists.txt
+@@ -0,0 +1,35 @@
++# Copyright (C) 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++# SPDX-License-Identifier: BSD-3-Clause
++
++#####################################################################
++## tst_qquickwindowstereo Test:
++#####################################################################
++
++if(NOT QT_BUILD_STANDALONE_TESTS AND NOT QT_BUILDING_QT)
++    cmake_minimum_required(VERSION 3.16)
++    project(tst_qquickwindowstereo LANGUAGES CXX)
++    find_package(Qt6BuildInternals REQUIRED COMPONENTS STANDALONE_TEST)
++endif()
++
++qt_internal_add_test(tst_qquickwindowstereo
++    SOURCES
++        tst_qquickwindowstereo.cpp
++    LIBRARIES
++        Qt::Gui
++        Qt::GuiPrivate
++        Qt::Qml
++        Qt::QuickPrivate
++)
++
++# The same test holding only the properties' contract, which runs against any Qt Quick.
++qt_internal_add_test(tst_qquickwindowstereo_contract
++    SOURCES
++        tst_qquickwindowstereo.cpp
++    DEFINES
++        TST_STEREO_CONTRACT_ONLY
++    LIBRARIES
++        Qt::Gui
++        Qt::GuiPrivate
++        Qt::Qml
++        Qt::QuickPrivate
++)
+diff --git a/tests/auto/quick/qquickwindowstereo/tst_qquickwindowstereo.cpp b/tests/auto/quick/qquickwindowstereo/tst_qquickwindowstereo.cpp
+new file mode 100644
+index 0000000..5c52c9a
+--- /dev/null
++++ b/tests/auto/quick/qquickwindowstereo/tst_qquickwindowstereo.cpp
+@@ -0,0 +1,315 @@
++// Copyright (C) 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
++
++#include <QtTest/QtTest>
++#include <QtQml/QQmlComponent>
++#include <QtQml/QQmlEngine>
++#include <QtQuick/QQuickItem>
++#include <QtQuick/QQuickWindow>
++#include <QtQuick/private/qquickitem_p.h>
++#include <QtQuick/qsgnode.h>
++// Built with TST_STEREO_CONTRACT_ONLY, the test holds only what the window's and the items'
++// properties say, and runs against any Qt Quick.
++#ifndef TST_STEREO_CONTRACT_ONLY
++#include <QtQuick/private/qquickwindowstereo_p.h>
++#endif
++
++#include <QtCore/QMutex>
++#include <utility>
++
++#include <memory>
++
++// A window whose elements show depth (_q_stereo_depth) asks the platform for two views
++// (_q_stereo_views) and, once its surface has them, is drawn once per eye (_q_stereo_pair while it
++// is, _q_stereo_eye during each eye), every item that carries a parallax (_q_stereo_parallax,
++// device pixels) moved by its share for the eye relative to what it lies on, and an item deeper
++// than what it lies on cut to its own rectangle.
++static constexpr char DepthProperty[] = "_q_stereo_depth";
++static constexpr char EyeProperty[] = "_q_stereo_eye";
++static constexpr char PairProperty[] = "_q_stereo_pair";
++static constexpr char ViewsProperty[] = "_q_stereo_views";
++static constexpr char ParallaxProperty[] = "_q_stereo_parallax";
++
++class tst_QQuickWindowStereo : public QObject
++{
++    Q_OBJECT
++
++private slots:
++    void identityWithoutDepth();
++    void identityWithoutTwoViews();
++    void placesItemsForEachEye();
++    void drawsEachEyeInAPass();
++
++private:
++    struct Scene
++    {
++        std::unique_ptr<QQuickWindow> window;
++        QQuickItem *near = nullptr;
++        QQuickItem *deep = nullptr;
++        QQuickItem *deepChild = nullptr;
++    };
++    Scene makeScene();
++
++    QQmlEngine m_engine;
++};
++
++// A white window 200 by 100: a red square at (20, 20) 40 wide, a blue square at (100, 20) 60 wide
++// holding a green square 20 wide at its top left corner.
++static const char s_scene[] = R"(
++import QtQuick
++Window {
++    width: 200; height: 100
++    flags: Qt.FramelessWindowHint
++    color: "white"
++    Rectangle { objectName: "near"; x: 20; y: 20; width: 40; height: 40; color: "#ff0000" }
++    Rectangle {
++        objectName: "deep"; x: 100; y: 20; width: 60; height: 60; color: "#0000ff"
++        Rectangle { objectName: "deepChild"; width: 20; height: 20; color: "#00ff00" }
++    }
++}
++)";
++
++tst_QQuickWindowStereo::Scene tst_QQuickWindowStereo::makeScene()
++{
++    Scene scene;
++    QQmlComponent component(&m_engine);
++    component.setData(s_scene, QUrl());
++    scene.window.reset(qobject_cast<QQuickWindow *>(component.create()));
++    if (!scene.window) {
++        qWarning() << component.errors();
++        return scene;
++    }
++    scene.near = scene.window->findChild<QQuickItem *>("near");
++    scene.deep = scene.window->findChild<QQuickItem *>("deep");
++    scene.deepChild = scene.window->findChild<QQuickItem *>("deepChild");
++    if (!scene.near || !scene.deep || !scene.deepChild)
++        scene.window.reset();
++    return scene;
++}
++
++// The columns of row y whose color is c, as the first and one past the last.
++static std::pair<int, int> span(const QImage &image, int y, QRgb c)
++{
++    int first = -1;
++    int last = -1;
++    for (int x = 0; x < image.width(); ++x) {
++        if ((image.pixel(x, y) & 0xffffff) == (c & 0xffffff)) {
++            if (first < 0)
++                first = x;
++            last = x + 1;
++        }
++    }
++    return {first, last};
++}
++
++static bool isSoftware()
++{
++    return QQuickWindow::sceneGraphBackend() == QLatin1String("software")
++            || qEnvironmentVariable("QT_QUICK_BACKEND") == QLatin1String("software");
++}
++
++void tst_QQuickWindowStereo::identityWithoutDepth()
++{
++    if (!isSoftware())
++        QSKIP("Compares grabs of the software renderer (QT_QUICK_BACKEND=software)");
++
++    Scene scene = makeScene();
++    QVERIFY(scene.window);
++    scene.window->show();
++    QVERIFY(QTest::qWaitForWindowExposed(scene.window.get()));
++    const QImage flat = scene.window->grabWindow();
++
++    // A parallax without depth shown moves nothing.
++    scene.near->setProperty(ParallaxProperty, 4.0);
++    scene.deep->setProperty(ParallaxProperty, -4.0);
++    QCOMPARE(scene.window->grabWindow(), flat);
++    QVERIFY(!scene.window->property(ViewsProperty).isValid());
++#ifndef TST_STEREO_CONTRACT_ONLY
++    QVERIFY(!QQuickWindowStereo::of(scene.window.get()));
++#endif
++}
++
++void tst_QQuickWindowStereo::identityWithoutTwoViews()
++{
++    if (!isSoftware())
++        QSKIP("Compares grabs of the software renderer (QT_QUICK_BACKEND=software)");
++
++    Scene scene = makeScene();
++    QVERIFY(scene.window);
++    scene.window->show();
++    QVERIFY(QTest::qWaitForWindowExposed(scene.window.get()));
++    const QImage flat = scene.window->grabWindow();
++
++    scene.near->setProperty(ParallaxProperty, 4.0);
++    scene.deep->setProperty(ParallaxProperty, -4.0);
++    scene.window->setProperty(DepthProperty, true);
++
++    // The window asks for two views; a surface without them draws the window once, as in 2D.
++    QCOMPARE(scene.window->property(ViewsProperty).toInt(), 2);
++    for (int frame = 0; frame < 3; ++frame) {
++        scene.window->update();
++        QTest::qWait(20);
++    }
++    QVERIFY(!scene.window->property(PairProperty).toBool());
++    QCOMPARE(scene.window->property(EyeProperty).toInt(), 0);
++    QCOMPARE(scene.window->grabWindow(), flat);
++
++    // Once depth no longer shows, the window asks for one view again.
++    scene.window->setProperty(DepthProperty, false);
++    QVERIFY(!scene.window->property(ViewsProperty).isValid());
++    QCOMPARE(scene.window->grabWindow(), flat);
++}
++
++void tst_QQuickWindowStereo::placesItemsForEachEye()
++{
++#ifdef TST_STEREO_CONTRACT_ONLY
++    QSKIP("Sets the eye through the engine's own interface");
++#else
++    if (!isSoftware())
++        QSKIP("Compares grabs of the software renderer (QT_QUICK_BACKEND=software)");
++
++    Scene scene = makeScene();
++    QVERIFY(scene.window);
++    scene.window->show();
++    QVERIFY(QTest::qWaitForWindowExposed(scene.window.get()));
++    QCOMPARE(scene.window->effectiveDevicePixelRatio(), 1.0);
++    const QImage flat = scene.window->grabWindow();
++
++    scene.near->setProperty(ParallaxProperty, 4.0);
++    scene.deep->setProperty(ParallaxProperty, -4.0);
++    scene.window->setProperty(DepthProperty, true);
++    QQuickWindowStereo *stereo = QQuickWindowStereo::of(scene.window.get());
++    QVERIFY(stereo);
++
++    const QRgb red = qRgb(255, 0, 0);
++    const QRgb blue = qRgb(0, 0, 255);
++    const QRgb green = qRgb(0, 255, 0);
++    using Span = std::pair<int, int>;
++
++    // 4 pixels nearer: the left eye 2 to the right, the right eye 2 to the left.
++    // 4 pixels deeper: the left eye 2 to the left, the right eye 2 to the right, seen through the
++    // opening the blue square leaves at its place, its child moving with it.
++    stereo->setEye(QQuickWindowStereo::Eye::Left);
++    QCOMPARE(scene.window->property(EyeProperty).toInt(), 1);
++    const QImage left = scene.window->grabWindow();
++    QCOMPARE(span(left, 40, red), Span(22, 62));
++    QCOMPARE(span(left, 60, blue), Span(100, 158));
++    QCOMPARE(span(left, 30, green), Span(100, 118));
++    QCOMPARE(span(left, 30, blue), Span(118, 158));
++
++    stereo->setEye(QQuickWindowStereo::Eye::Right);
++    const QImage right = scene.window->grabWindow();
++    QCOMPARE(span(right, 40, red), Span(18, 58));
++    QCOMPARE(span(right, 60, blue), Span(102, 160));
++    QCOMPARE(span(right, 30, green), Span(102, 122));
++    // The opening shows what lies behind the blue square.
++    QCOMPARE(right.pixel(100, 60) & 0xffffff, 0xffffffu);
++    QCOMPARE(right.pixel(101, 60) & 0xffffff, 0xffffffu);
++
++    // The items themselves stay where they are: only what is drawn of them moves.
++    QCOMPARE(scene.near->x(), 20.0);
++    QCOMPARE(scene.deep->x(), 100.0);
++    QCOMPARE(scene.near->mapToScene(QPointF()), QPointF(20, 20));
++
++    // A parallax equal to what an item lies on moves it with that.
++    scene.deepChild->setProperty(ParallaxProperty, -4.0);
++    stereo->setEye(QQuickWindowStereo::Eye::Left);
++    const QImage leftAgain = scene.window->grabWindow();
++    QCOMPARE(span(leftAgain, 30, green), Span(100, 118));
++
++    // No eye: the window as in 2D.
++    stereo->setEye(QQuickWindowStereo::Eye::None);
++    QCOMPARE(scene.window->property(EyeProperty).toInt(), 0);
++    QCOMPARE(scene.window->grabWindow(), flat);
++
++    // An item whose parallax is withdrawn is drawn where it is.
++    scene.near->setProperty(ParallaxProperty, QVariant());
++    stereo->setEye(QQuickWindowStereo::Eye::Left);
++    QCOMPARE(span(scene.window->grabWindow(), 40, red), Span(20, 60));
++    stereo->setEye(QQuickWindowStereo::Eye::None);
++#endif
++}
++
++// Needs a platform that gives a window's surface two views, such as Wayland with Stereo KWin
++// (kde_stereo_content_manager_v1 version 3) and an EGL implementation with
++// EGL_EXT_multiview_window that declares them: QTEST_STEREO_TWO_VIEWS=1 says it is one.
++void tst_QQuickWindowStereo::drawsEachEyeInAPass()
++{
++    if (qEnvironmentVariableIntValue("QTEST_STEREO_TWO_VIEWS") != 1)
++        QSKIP("Needs a platform that gives a surface two views (QTEST_STEREO_TWO_VIEWS=1)");
++    if (isSoftware())
++        QSKIP("The software renderer draws a window once");
++
++    Scene scene = makeScene();
++    QVERIFY(scene.window);
++    scene.near->setProperty(ParallaxProperty, 4.0);
++    scene.deep->setProperty(ParallaxProperty, -4.0);
++
++    // What each pass drew the red square at, and when a frame was presented (-1).
++    QMutex mutex;
++    QList<qreal> passes;
++    QQuickItemPrivate *nearPrivate = QQuickItemPrivate::get(scene.near);
++    connect(scene.window.get(), &QQuickWindow::beforeRendering, scene.window.get(), [&] {
++        QMutexLocker locker(&mutex);
++        passes.append(nearPrivate->itemNode()->matrix()(0, 3));
++    }, Qt::DirectConnection);
++    connect(scene.window.get(), &QQuickWindow::frameSwapped, scene.window.get(), [&] {
++        QMutexLocker locker(&mutex);
++        passes.append(-1);
++    }, Qt::DirectConnection);
++    const auto framesAfter = [&](qsizetype from) {
++        QMutexLocker locker(&mutex);
++        QList<QList<qreal>> frames(1);
++        for (qsizetype i = from; i < passes.size(); ++i) {
++            if (passes.at(i) < 0)
++                frames.append(QList<qreal>());
++            else
++                frames.last().append(passes.at(i));
++        }
++        frames.removeLast(); // not presented yet
++        if (!frames.isEmpty())
++            frames.removeFirst(); // may have begun before
++        return frames;
++    };
++    const auto passCount = [&] {
++        QMutexLocker locker(&mutex);
++        return passes.size();
++    };
++
++    scene.window->show();
++    QVERIFY(QTest::qWaitForWindowExposed(scene.window.get()));
++    scene.window->setProperty(DepthProperty, true);
++    QTRY_VERIFY_WITH_TIMEOUT(scene.window->property(PairProperty).toBool(), 5000);
++
++    // Each frame draws the left eye and then the right eye.
++    qsizetype from = passCount();
++    for (int frame = 0; frame < 4; ++frame) {
++        scene.window->update();
++        QTest::qWait(50);
++    }
++    QTRY_VERIFY_WITH_TIMEOUT(framesAfter(from).size() >= 2, 5000);
++    const auto frames = framesAfter(from);
++    for (const auto &frame : frames)
++        QCOMPARE(frame, QList<qreal>({22, 18}));
++
++    // Between frames no eye is set and the items are where they are.
++    QCOMPARE(scene.window->property(EyeProperty).toInt(), 0);
++    QCOMPARE(scene.near->x(), 20.0);
++
++    // Once depth no longer shows, the window is drawn once again.
++    scene.window->setProperty(DepthProperty, false);
++    QTRY_VERIFY_WITH_TIMEOUT(!scene.window->property(PairProperty).toBool(), 5000);
++    QTest::qWait(200);
++    from = passCount();
++    for (int frame = 0; frame < 4; ++frame) {
++        scene.window->update();
++        QTest::qWait(50);
++    }
++    QTRY_VERIFY_WITH_TIMEOUT(framesAfter(from).size() >= 2, 5000);
++    for (const auto &frame : framesAfter(from))
++        QCOMPARE(frame, QList<qreal>({20}));
++}
++
++QTEST_MAIN(tst_QQuickWindowStereo)
++
++#include "tst_qquickwindowstereo.moc"

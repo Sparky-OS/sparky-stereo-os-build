@@ -1,0 +1,18 @@
+qt6-declarative (6.11.2+dfsg-3+stereo3d1) unstable; urgency=medium
+
+  * Sparky Stereo OS: a Qt Quick window whose style shows its elements in
+    depth (Union on Stereo KWin) is drawn once per eye by Qt Quick itself,
+    so Stereo KWin shows depth inside it; every other window is drawn as
+    before (Sparky-OS/qtdeclarative stereo3d-6.11-depth, on v6.11.2 with
+    Debian's one patch).
+  * s1-0001 (6f4e119): an item's clip node follows a changed clip
+    rectangle.
+  * s1-0002 (5c961eb): while a window's _q_stereo_depth is set and the
+    platform gives it two views, both render loops polish, sync and render
+    the left eye, end that frame without presenting it, then polish, sync
+    and render the right eye into the right buffer and present. Each item
+    with a _q_stereo_parallax moves by its eye share relative to its
+    nearest ancestor with one, a deeper item seen through its own
+    rectangle; only node matrices and clip nodes change, so geometry,
+    input and mapToScene stay 2D. Without depth one pass per frame, as
+    before. With tst_qquickwindowstereo.

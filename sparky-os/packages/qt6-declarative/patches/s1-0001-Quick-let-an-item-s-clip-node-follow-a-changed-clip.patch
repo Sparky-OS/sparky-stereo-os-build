@@ -1,0 +1,34 @@
+Description: Quick: let an item's clip node follow a changed clip rectangle
+ .
+ When an item that already clips is marked as having a changed clip, the scene
+ graph set the new rectangle with QSGClipNode::setClipRect() and called
+ QQuickDefaultClipNode::update(), which rebuilds the node's geometry only from
+ the rectangle given to QQuickDefaultClipNode::setRect(). The geometry and the
+ dirty state stayed those of the old rectangle, so renderers that clip by the
+ geometry kept the old one, and the software renderer, which is told of the
+ change by the dirty geometry, too. Set it with setRect(), as a size change
+ already does.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://github.com/Sparky-OS/qtdeclarative/commit/6f4e1194235ee9725c0317caf1a50702435015f2
+Forwarded: no
+Last-Update: 2026-10-23
+Assisted-by: Claude Opus 5.5
+---
+ src/quick/items/qquickwindow.cpp | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/quick/items/qquickwindow.cpp b/src/quick/items/qquickwindow.cpp
+index ce22a92..db2e6e2 100644
+--- a/src/quick/items/qquickwindow.cpp
++++ b/src/quick/items/qquickwindow.cpp
+@@ -2248,8 +2248,9 @@ void QQuickWindowPrivate::updateDirtyNode(QQuickItem *item)
+ 
+         } else if (bool updateClipNode = item->clip() && itemPriv->clipNode() != nullptr;
+                    updateClipNode) {
++            // setRect(), so that the node's geometry follows the rectangle too
+             QQuickDefaultClipNode *clip = itemPriv->clipNode();
+-            clip->setClipRect(item->clipRect());
++            clip->setRect(item->clipRect());
+             clip->update();
+         } else if (bool removeClipNode = !item->clip() && itemPriv->clipNode() != nullptr;
+                    removeClipNode) {
