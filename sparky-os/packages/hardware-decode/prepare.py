@@ -13,6 +13,8 @@ p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('package', choices=['ffmpeg-dmo', 'mpv-dmo', 'mlt', 'kdenlive', 'vlc', 'qt6-multimedia', 'libplacebo-dmo'])
 p.add_argument('source', type=Path)
 p.add_argument('--version', required=True)
+p.add_argument('--published-lc', action='store_true',
+               help="retain the published source package's existing Lean Code integration")
 p.add_argument('--ffmpeg-min-version', help='FFmpeg release containing the format-query cleanup')
 p.add_argument('--gpu-route-min-version', help='shared GPU routing library release')
 p.add_argument('--mlt-min-version', help='MLT release containing automatic precision-preserving decoding')
@@ -30,8 +32,14 @@ if not old.startswith(a.package + ' ('):
     p.error('source package does not match')
 current = old.split('(', 1)[1].split(')', 1)[0]
 subprocess.run(['dpkg', '--compare-versions', a.version, 'gt', current], check=True)
-if '+lc' in a.version or '+lc' in current:
-    p.error('prepare plain sources before the existing Lean Code pipeline')
+integrated = (source/'debian/sparky-lean-toolkit/lean/source_tree.py').is_file()
+if a.published_lc:
+    if not integrated or not current.endswith('+lc1') or not a.version.endswith('+lc1'):
+        p.error('--published-lc requires an integrated published lc1 source and lc1 successor')
+    if 'sparky-lean-toolkit' not in (source/'debian/rules').read_text():
+        p.error('published source lacks its retained Lean Code build hooks')
+elif '+lc' in a.version or '+lc' in current or integrated:
+    p.error('prepare plain sources or explicitly retain --published-lc integration')
 patches = source/'debian/patches'
 series = patches/'series'
 existing = series.read_text() if series.exists() else ''
@@ -86,4 +94,4 @@ entry = (f'{a.package} ({a.version}) unstable; urgency=medium\n\n'
          ' -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  '
          + email.utils.formatdate(localtime=True) + '\n\n')
 changelog.write_text(entry + old)
-print(f'Prepared plain {a.package} {a.version}; run the existing qualified release pipeline.')
+print(f'Prepared {a.package} {a.version}; existing Lean Code integration retained: {a.published_lc}.')
