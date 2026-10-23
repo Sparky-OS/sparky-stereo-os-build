@@ -96,5 +96,12 @@ for lang in languages:
             if not set(got) <= set(need) or (("%2" in need) and "%2" not in got) or ("%1" in need and "%1" not in got and "plural" not in src and nplurals[lang] > 1 and False):
                 print("FAIL", lang, "placeholders", got, "vs", need, "in", src["id"])
                 failed += 1
+import json
+meta = json.loads((po_dir.parent / "src" / "kcm_sparkystereo_graphics.json").read_text(encoding="utf8"))
+for lang in languages:
+    for key in ("Name", "Description"):
+        if not meta["KPlugin"].get("%s[%s]" % (key, lang)):
+            print("FAIL the page's metadata has no", key, "in", lang)
+            failed += 1
 print("translations: %d languages checked, %d failures" % (len(languages), failed))
 sys.exit(1 if failed else 0)
