@@ -19,6 +19,7 @@ mkdir -p "$SPARKY_PACKAGE_WORK/out/$pkg" "$work" "$SPARKY_PACKAGE_WORK/previous"
 name=$SPARKY_TEST_PREFIX-package-$pkg$suffix
 entry=build-in-container.sh
 [ "$pkg" != sparky-stereo-hardware ] || entry=build-hardware.sh
+cp "$here/$entry" "$work/build-entry.sh"
 printf '%s\n' "$name" >> "${SPARKY_ARTIFACTS:?Set the lane artifact record}"
 docker run --platform linux/amd64 --cpus 4 --name "$name" -e PKG="$pkg" -e SOURCE_DSC="${SOURCE_DSC:-}" -e BINARY_ONLY="${BINARY_ONLY:-}" \
  -v "$work:/work" -v "$SPARKY_PUBLISHED_TREE:/pub:ro" \
@@ -26,5 +27,5 @@ docker run --platform linux/amd64 --cpus 4 --name "$name" -e PKG="$pkg" -e SOURC
  -v "$SPARKY_PACKAGE_WORK/out/$pkg:/candidate:ro" -v "$packages:/kit:ro" -v "$SPARKY_RELEASE_TOOLKIT:/toolkit:ro" \
  -v "$SPARKY_LIBPLACEBO_INPUT:/libplacebo-input:ro" \
  -v "${SPARKY_DMO_KEYRING:?Set the public multimedia keyring}:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro" \
- "$SPARKY_PACKAGE_IMAGE" bash /kit/hardware-decode/packaging/"$entry" \
+ "$SPARKY_PACKAGE_IMAGE" bash /work/build-entry.sh \
  > "$SPARKY_PACKAGE_WORK/logs/$pkg-container.log" 2>&1

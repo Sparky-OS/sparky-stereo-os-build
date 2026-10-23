@@ -5,8 +5,20 @@ set -euo pipefail
 unset DISPLAY WAYLAND_DISPLAY XAUTHORITY DBUS_SESSION_BUS_ADDRESS
 export DEBIAN_FRONTEND=noninteractive
 trap 'chown -R 1000:1000 /w' EXIT
+python3 - <<'APT_SOURCES'
+from pathlib import Path
+archive=Path('/var/tmp/order223-original-apt-sources')
+archive.mkdir(exist_ok=True)
+for directory in (Path('/etc/apt/sources.list.d'),):
+ for path in directory.iterdir():
+  if path.suffix in ('.list','.sources'):
+   path.rename(archive/path.name)
+Path('/etc/apt/sources.list').write_text('')
+APT_SOURCES
+printf 'deb http://deb.debian.org/debian testing main contrib non-free non-free-firmware\n' > /etc/apt/sources.list.d/debian.list
 printf 'deb [signed-by=/pub/sparky-stereo-repo.asc] file:/pub mashtabba main\n' > /etc/apt/sources.list.d/edition.list
 printf 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://www.deb-multimedia.org forky main non-free\n' > /etc/apt/sources.list.d/multimedia.list
+printf 'deb [signed-by=/sparky-repo.asc] https://repo.sparkylinux.org/ core main\ndeb [signed-by=/sparky-repo.asc] https://repo.sparkylinux.org/ tiamat main\n' > /etc/apt/sources.list.d/sparky.list
 printf 'Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n' > /etc/apt/preferences.d/edition
 if [ "$PHASE" = after ]; then
  printf 'deb [trusted=yes] file:/new ./\n' > /etc/apt/sources.list.d/edition-new.list
