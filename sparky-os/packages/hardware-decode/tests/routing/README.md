@@ -33,11 +33,12 @@ Each decoder trace must retain depth, stereo layout, eye order, cancellation and
 The accepted decoder harness separately covers all-component downloaded frame equality.
 The new route checker does not claim to capture every chroma plane through every GUI.
 
-Run `run-render-matrix.sh` serially after other lane jobs stop.
+Generate continuous 20 second performance files with `make-performance.sh` before the rendered matrix.
+Run `run-render-matrix.sh` serially after other lane jobs stop, with `RUN_PREFIX=continuous`.
 It launches a fresh private KWin with one or two virtual outputs for each GPU case, then renders 2D and stereo media through Vulkan and GL.
 `PAIRS`, `SCREENS` and `RUN_PREFIX` can select a smaller rerun without overwriting a failed case.
 The player records IPC counters, process CPU time, its real driver log, Wayland traffic and native `video-flip` timing.
-Count flips over the settled interval to report VO flips per second; this is virtual presentation, not physical scanout.
+Count flips over the five second interval starting one second after the first flip to report VO flips per second; this is virtual presentation, not physical scanout.
 The table must identify source frame rate, dropped frame counters, GPU names and any hardware download or cross-GPU transfer.
 Do not call a virtual stereo-content case a physical HDMI frame packing test.
 
@@ -53,3 +54,14 @@ The native decoder checks retain that raster witness.
 `render-table.py WORK` checks GPU identities, decoder APIs, stereo declarations and counters while generating the host matrix table.
 `ROUTE_BEFORE=1` is a test control that loads the installed libplacebo for a before comparison.
 It is never installed as a user configuration setting.
+
+`before-engines.sh` uses the accepted decoder binaries and installed Qt plugin on an AMD compositor with both GPUs visible.
+Mount the accepted VLC plugin for this control.
+All three old automatic defaults select CUDA, so each display-route assertion records exit 1.
+The corresponding rebuilt native route assertions must pass before accepting the new defaults.
+
+Continuous fixtures avoid player loop-boundary seeks and stereo reconfiguration inside the timing interval.
+The 2D load is H.264 1920x1080 at 48 fps from testsrc2.
+The 3D load is a stream-copy extension of the owned H.264 1920x540 at 48 fps source.
+The timing checker requires no settled VO drops and at least 98% of source cadence.
+It still reports startup drops and sampled decoder counters separately.

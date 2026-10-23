@@ -6,9 +6,9 @@ print('| GPU case | Outputs | API | Film | Decode GPU / API | Render GPU | Frame
 print('| --- | ---: | --- | --- | --- | --- | --- | ---: | ---: | ---: |')
 for pair in ('amd-only','nvidia-only','hybrid-amd','hybrid-nvidia'):
     for screens in (1,2):
-        case=f'{"matrix" if pair=="amd-only" else "matrix2"}-{pair}-{screens}'
+        case=f'continuous-{pair}-{screens}'
         for api in ('vulkan','opengl'):
-            for film,label in [('h264-2d8','2D 24 fps, 640x192'),('h264-sbs8','3D 48 fps, 1920x540')]:
+            for film,label in [('perf-2d1080','2D 48 fps, 1920x1080'),('perf-3d','3D 48 fps, 1920x540')]:
                 name=f'{api}-{film}'
                 root=a.work/'final'/case
                 data=json.loads((root/(name+'.json')).read_text())
@@ -27,7 +27,7 @@ for pair in ('amd-only','nvidia-only','hybrid-amd','hybrid-nvidia'):
                     assert names and ('NVIDIA' if expected=='nvdec' else 'AMD') in names[-1],(case,names)
                 wayland=(root/(name+'.log')).read_text()
                 declared=bool(re.search(r'kde_stereo_content_v1#\d+\.set_content\(3\)',wayland))
-                assert declared==(film=='h264-sbs8'),(root/name,declared)
+                assert declared==(film=='perf-3d'),(root/name,declared)
                 flips=[int(line.split()[0])/1e9 for line in (root/(name+'.stats')).read_text().splitlines() if line.endswith('start video-flip')]
                 assert len(flips)>20,root/name
                 # Both source fixtures run long enough for an identical settled interval.
@@ -40,8 +40,10 @@ for pair in ('amd-only','nvidia-only','hybrid-amd','hybrid-nvidia'):
                 timing=(root/(name+'.stats')).read_text().splitlines()
                 drops=sum(line.endswith(' drop-vo') for line in timing)
                 steady_drops=sum(line.endswith(' drop-vo') and start<=int(line.split()[0])/1e9<=end for line in timing)
+                assert steady_drops == 0, (root/name, steady_drops)
+                assert fps >= 48*.98, (root/name, fps)
                 decoder_drops=max(r['decoder-frame-drop-count'].get('data',0) for r in rows)
                 params=rows[-1]['video-out-params']['data']
                 copy=params['pixelformat'] not in ('vaapi','cuda')
-                path=('download, stereo copy, upload' if copy and film=='h264-sbs8' else 'hardware surface import' if not copy else 'download and upload')+', same GPU to compositor'
+                path=('download, stereo copy, upload' if copy and film=='perf-3d' else 'hardware surface import' if not copy else 'download and upload')+', same GPU to compositor'
                 print(f'| {pair} | {screens} | {api} | {label} | {gpu} / {expected} | {gpu} | {path} | {fps:.2f} | {drops} / {steady_drops}; {decoder_drops} | {data["cpu_percent"]:.1f}% |')
