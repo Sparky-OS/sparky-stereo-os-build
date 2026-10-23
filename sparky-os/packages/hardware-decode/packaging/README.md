@@ -82,3 +82,23 @@ Keep the kernel and KWin build the same in both package phases, and announce the
 `--host` uses the main session's existing SSH alias and sends this one script over stdin.
 No host name, account or credential is stored in the machinery.
 Execution refuses a machine that is not the Lenovo A10 topology.
+
+`a10-runtime-packages.json` lists the exact runtime companions to install together, including the FFmpeg libraries, Qt QML plugin, MLT data, Kdenlive data and VLC PipeWire plugin.
+It excludes source, development, HR, documentation and debug archives from the playback transaction.
+The main session first makes the reviewed repository copy available to APT, retains the edition pin and signed deb-multimedia source, and checks the transaction as root on its bench:
+
+```sh
+phase=after
+mapfile -t cohort < <(python3 - "$phase" <<'PYTHON'
+import json, sys
+for package, version in json.load(open('a10-runtime-packages.json'))[sys.argv[1]].items():
+    print(package+'='+version)
+PYTHON
+)
+apt-get -s --allow-downgrades install "${cohort[@]}"
+```
+
+After Daniel approves the bench installation, the main session repeats that exact transaction without `-s`.
+For the before phase, use `phase=before` with the retained published packages available, then the same script and film selections.
+APT installs the dependency graph in order; the manual sequence above names the same layers.
+The runtime list does not change the kernel, KWin or GPU drivers during the before/after player comparison.
