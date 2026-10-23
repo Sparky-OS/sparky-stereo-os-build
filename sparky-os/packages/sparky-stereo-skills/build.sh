@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/16
+# Last update 2026/10/22
 # Builds sparky-stereo-skills: the public skills of Sparky Stereo OS, with the documents and tools they link to, in
 # /usr/share/sparky-stereo-os, and the per-person helper that links them into the AI assistants' skill folders.
 # The skills have one source, Sparky-OS/sparky-stereo-os (https://github.com/Sparky-OS/sparky-stereo-os): the files are
@@ -16,7 +16,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the output directory}
 VERSION=$(dpkg-parsechangelog -l "$HERE/debian/changelog" -S Version)
 PACKAGE=sparky-stereo-skills
-SKILLS_SRC=${SKILLS_SRC:-${SPARKY_PUBLIC_EDITION:?}}
+SKILLS_SRC=${SKILLS_SRC:-${SPARKY_PUBLIC_EDITION:-}}
 SKILLS_COMMIT=${SKILLS_COMMIT:-}
 SOURCE_PACKAGE=${SOURCE_PACKAGE:-yes}
 TOOLKIT=${SPARKY_LEAN_TOOLKIT:-$HERE/release-toolkit}
@@ -61,6 +61,7 @@ if listed != actual:
 PY
 	(cd "$P" && sha256sum --quiet -c MANIFEST.sha256)
 else
+	: "${SKILLS_SRC:?Set SKILLS_SRC (or SPARKY_PUBLIC_EDITION) to the public checkout}"
 	: "${SKILLS_COMMIT:?Set SKILLS_COMMIT to the reviewed public source commit}"
 	SKILLS_COMMIT=$(git -C "$SKILLS_SRC" rev-parse --verify "$SKILLS_COMMIT^{commit}")
 	mkdir -p "$P"
