@@ -1,0 +1,44 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Subject: kcm: link the Graphics page from Power Management's related pages
+
+The Graphics page (sparky-stereo-graphics) lets the person choose which GPU
+a kind of program uses and says that Automatic follows the power profile.
+Power Management is where that profile is chosen, so its related pages get
+a button to the Graphics page, beside Notifications, Shortcuts, Screen
+Locking, Desktop Session and Activities.
+
+The button opens kcm_sparkystereo_graphics through KCMLauncher, as the other
+buttons do; the patched PowerDevil package recommends sparky-stereo-graphics.
+The string carries no translation here: KDE forks take translations only from
+KDE's translation teams, the edition's catalogs are in
+sparky-os/translations/powerdevil-graphics-link.po.patch.
+
+Assisted-by: Claude Sonnet 5.5
+---
+diff --git a/kcm/ui/GlobalConfig.qml b/kcm/ui/GlobalConfig.qml
+index c95eb3d..3bcb264 100644
+--- a/kcm/ui/GlobalConfig.qml
++++ b/kcm/ui/GlobalConfig.qml
+@@ -373,6 +373,7 @@ Kirigami.ScrollablePage {
+                 screenLockingPage.implicitWidth,
+                 desktopSessionsPage.implicitWidth,
+                 activitiesPage.implicitWidth,
++                graphicsPage.implicitWidth,
+             )
+ 
+             MostUsedItem {
+@@ -421,6 +422,14 @@ Kirigami.ScrollablePage {
+                 Layout.preferredWidth: relatedPagesLayout.maxPageButtonImplicitWidth
+                 onClicked: KCM.KCMLauncher.openSystemSettings("kcm_activities")
+             }
++            MostUsedItem {
++                id: graphicsPage
++                kcmIcon: "video-card"
++                kcmName: i18nc("@text:button Name of KCM", "Graphics")
++                Accessible.name: i18n("Open \"Graphics\" settings page")
++                Layout.preferredWidth: relatedPagesLayout.maxPageButtonImplicitWidth
++                onClicked: KCM.KCMLauncher.openSystemSettings("kcm_sparkystereo_graphics")
++            }
+         }
+     }
+ }

@@ -1,0 +1,155 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Subject: powerdevil: carry the translated Graphics button in nine languages
+
+The button added by graphics-page-link.patch: its name and its accessible
+name in Polish, Brazilian Portuguese, French, German, Japanese, Korean and
+Chinese (Simplified and Traditional); English stays in the code.
+The translations are a first draft made with AI assistance and need review
+by a native speaker.
+
+Assisted-by: Claude Sonnet 5.5
+---
+diff --git a/po/de/kcm_powerdevilprofilesconfig.po b/po/de/kcm_powerdevilprofilesconfig.po
+index 246faaf..cff4aa1 100644
+--- a/po/de/kcm_powerdevilprofilesconfig.po
++++ b/po/de/kcm_powerdevilprofilesconfig.po
+@@ -1141,3 +1141,13 @@ msgstr "Benutzerdefinierte Dauer"
+ 
+ #~ msgid "Edit Profile"
+ #~ msgstr "Profil bearbeiten"
++
++#: kcm/ui/GlobalConfig.qml:429
++msgctxt "@text:button Name of KCM"
++msgid "Graphics"
++msgstr "Grafik"
++
++#: kcm/ui/GlobalConfig.qml:430
++#, kde-format
++msgid "Open \"Graphics\" settings page"
++msgstr "Einstellungsseite „Grafik“ öffnen"
+diff --git a/po/fr/kcm_powerdevilprofilesconfig.po b/po/fr/kcm_powerdevilprofilesconfig.po
+index ea7899a..f726124 100644
+--- a/po/fr/kcm_powerdevilprofilesconfig.po
++++ b/po/fr/kcm_powerdevilprofilesconfig.po
+@@ -1087,3 +1087,13 @@ msgstr "Durée personnalisée"
+ #~ "fonctionnement.\n"
+ #~ "Ce problème peut être résolu en le démarrant ou en le programmant dans "
+ #~ "« Démarrage et arrêt »"
++
++#: kcm/ui/GlobalConfig.qml:429
++msgctxt "@text:button Name of KCM"
++msgid "Graphics"
++msgstr "Graphiques"
++
++#: kcm/ui/GlobalConfig.qml:430
++#, kde-format
++msgid "Open \"Graphics\" settings page"
++msgstr "Ouvrir la page de configuration « Graphiques »"
+diff --git a/po/ja/kcm_powerdevilprofilesconfig.po b/po/ja/kcm_powerdevilprofilesconfig.po
+index b15cbcc..edb58a4 100644
+--- a/po/ja/kcm_powerdevilprofilesconfig.po
++++ b/po/ja/kcm_powerdevilprofilesconfig.po
+@@ -965,3 +965,13 @@ msgstr "スクリプトファイルを選択"
+ msgctxt "@title:window"
+ msgid "Custom Duration"
+ msgstr "カスタム期間"
++
++#: kcm/ui/GlobalConfig.qml:429
++msgctxt "@text:button Name of KCM"
++msgid "Graphics"
++msgstr "グラフィックス"
++
++#: kcm/ui/GlobalConfig.qml:430
++#, kde-format
++msgid "Open \"Graphics\" settings page"
++msgstr "「グラフィックス」設定ページを開く"
+diff --git a/po/ko/kcm_powerdevilprofilesconfig.po b/po/ko/kcm_powerdevilprofilesconfig.po
+index 2adfaef..b893cc3 100644
+--- a/po/ko/kcm_powerdevilprofilesconfig.po
++++ b/po/ko/kcm_powerdevilprofilesconfig.po
+@@ -1041,3 +1041,13 @@ msgstr "사용자 정의 시간"
+ 
+ #~ msgid "Maintainer"
+ #~ msgstr "관리자"
++
++#: kcm/ui/GlobalConfig.qml:429
++msgctxt "@text:button Name of KCM"
++msgid "Graphics"
++msgstr "그래픽"
++
++#: kcm/ui/GlobalConfig.qml:430
++#, kde-format
++msgid "Open \"Graphics\" settings page"
++msgstr "\"그래픽\" 설정 페이지 열기"
+diff --git a/po/pl/kcm_powerdevilprofilesconfig.po b/po/pl/kcm_powerdevilprofilesconfig.po
+index f8eabcf..e41fcfc 100644
+--- a/po/pl/kcm_powerdevilprofilesconfig.po
++++ b/po/pl/kcm_powerdevilprofilesconfig.po
+@@ -1083,3 +1083,13 @@ msgstr "Własny czas oczekiwania"
+ #~ "Wygląda na to, że usługa zarządzania energią nie jest uruchomiona.\n"
+ #~ "Może to być rozwiązane przez uruchomienie planowania wewnątrz "
+ #~ "\"Uruchamianie i wyłączanie\""
++
++#: kcm/ui/GlobalConfig.qml:429
++msgctxt "@text:button Name of KCM"
++msgid "Graphics"
++msgstr "Grafika"
++
++#: kcm/ui/GlobalConfig.qml:430
++#, kde-format
++msgid "Open \"Graphics\" settings page"
++msgstr "Otwórz stronę ustawień „Grafika”"
+diff --git a/po/pt_BR/kcm_powerdevilprofilesconfig.po b/po/pt_BR/kcm_powerdevilprofilesconfig.po
+index 1721ddf..827ded8 100644
+--- a/po/pt_BR/kcm_powerdevilprofilesconfig.po
++++ b/po/pt_BR/kcm_powerdevilprofilesconfig.po
+@@ -1079,3 +1079,13 @@ msgstr "Duração personalizada"
+ #~ "O serviço de gerenciamento de energia não parece estar em execução.\n"
+ #~ "Isto pode ser resolvido se iniciá-lo ou fazer um agendamento em "
+ #~ "\"Inicialização e desligamento\""
++
++#: kcm/ui/GlobalConfig.qml:429
++msgctxt "@text:button Name of KCM"
++msgid "Graphics"
++msgstr "Gráficos"
++
++#: kcm/ui/GlobalConfig.qml:430
++#, kde-format
++msgid "Open \"Graphics\" settings page"
++msgstr "Abrir a página de configurações \"Gráficos\""
+diff --git a/po/zh_CN/kcm_powerdevilprofilesconfig.po b/po/zh_CN/kcm_powerdevilprofilesconfig.po
+index fd54078..0db8ef7 100644
+--- a/po/zh_CN/kcm_powerdevilprofilesconfig.po
++++ b/po/zh_CN/kcm_powerdevilprofilesconfig.po
+@@ -948,3 +948,13 @@ msgstr "选择脚本文件"
+ msgctxt "@title:window"
+ msgid "Custom Duration"
+ msgstr "自定义时间长度"
++
++#: kcm/ui/GlobalConfig.qml:429
++msgctxt "@text:button Name of KCM"
++msgid "Graphics"
++msgstr "图形"
++
++#: kcm/ui/GlobalConfig.qml:430
++#, kde-format
++msgid "Open \"Graphics\" settings page"
++msgstr "打开“图形”设置页面"
+diff --git a/po/zh_TW/kcm_powerdevilprofilesconfig.po b/po/zh_TW/kcm_powerdevilprofilesconfig.po
+index f51b1db..fb72304 100644
+--- a/po/zh_TW/kcm_powerdevilprofilesconfig.po
++++ b/po/zh_TW/kcm_powerdevilprofilesconfig.po
+@@ -1028,3 +1028,13 @@ msgstr "自訂時長"
+ #~ msgstr ""
+ #~ "電源管理服務似乎尚未執行。\n"
+ #~ "您可以在「啟動與關閉」裡啟動或將它加入排程。"
++
++#: kcm/ui/GlobalConfig.qml:429
++msgctxt "@text:button Name of KCM"
++msgid "Graphics"
++msgstr "圖形"
++
++#: kcm/ui/GlobalConfig.qml:430
++#, kde-format
++msgid "Open \"Graphics\" settings page"
++msgstr "開啟「圖形」設定頁面"
