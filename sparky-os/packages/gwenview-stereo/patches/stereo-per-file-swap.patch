@@ -73,16 +73,17 @@ Index: gwenview-source/app/viewmainpage.cpp
 +
      void updateStereo()
      {
-         if (!mStereoAdapter) {
-             return;
-         }
-         Stereo::Picture::Options options;
--        options.swapEyes = mStereoSwap;
++        Stereo::Picture::Options options;
 +        options.swapEyes = stereoSwap();
 +        if (auto *action = mActionCollection->action(QStringLiteral("stereo_swap_eyes"))) {
 +            const QSignalBlocker blocker(action);
 +            action->setChecked(options.swapEyes);
 +        }
+         if (!mStereoAdapter) {
+             return;
+         }
+-        Stereo::Picture::Options options;
+-        options.swapEyes = mStereoSwap;
          options.anaglyph = mAnaglyphPair;
          switch (mStereoInput) {
          case ViewMainPage::StereoInput::Automatic:
