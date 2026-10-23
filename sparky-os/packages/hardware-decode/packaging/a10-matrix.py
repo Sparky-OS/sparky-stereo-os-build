@@ -116,11 +116,15 @@ def machine_logger(root, stop):
             new_total, new_idle = cpu()
             busy = 100*((new_total-total)-(new_idle-idle))/max(1, new_total-total)
             total, idle = new_total, new_idle
-            frequencies = [float(read(p)) for p in Path('/sys/devices/system/cpu').glob('cpu*/cpufreq/scaling_cur_freq') if read(p)]
+            frequencies = []
+            for path in Path('/sys/devices/system/cpu').glob('cpu*/cpufreq/scaling_cur_freq'):
+                value = read(path)
+                if value:
+                    frequencies.append(float(value))
             measured = {}
             for sensor in sensors:
                 for value in list(sensor.glob('temp*_input'))+list(sensor.glob('power*_input'))+list(sensor.glob('power*_average')):
-                    measured[f'{read(sensor/"name")}/{value.name}'] = read(value)
+                    measured[f'{sensor.name}/{read(sensor/"name")}/{value.name}'] = read(value)
             writer.writerow([f'{time.monotonic():.6f}', f'{busy:.3f}', sum(frequencies)/len(frequencies)/1000 if frequencies else ''] + [read(c/'device/gpu_busy_percent') for c in cards] + [json.dumps(measured, sort_keys=True)])
             stream.flush()
 
