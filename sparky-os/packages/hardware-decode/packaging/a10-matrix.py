@@ -194,6 +194,7 @@ def execute(a):
     root.mkdir(parents=True, exist_ok=False)
     (root/'packages.json').write_text(json.dumps(actual, indent=2)+'\n')
     (root/'session.json').write_text(json.dumps({'kernel': os.uname().release, 'architecture': os.uname().machine, 'warm_seconds': 60, 'record_seconds': 180}, indent=2)+'\n')
+    (root/'kwin-support.txt').write_text(subprocess.check_output(['qdbus6', 'org.kde.KWin', '/KWin', 'org.kde.KWin.supportInformation'], text=True))
     for name, path in films.items():
         with (root/(name+'-source.json')).open('w') as stream:
             run('ffprobe', '-v', 'error', '-select_streams', 'v:0', '-read_intervals', '%+#8',
