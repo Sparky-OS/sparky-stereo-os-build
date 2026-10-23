@@ -1,0 +1,101 @@
+Description: Keep eye corrections in Gwenview per-file configuration
+ Navigation and restart restore the selected file's correction and checkbox.
+ Legacy attributes are read as defaults, and neither the image nor its attributes
+ are written by the correction action.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Last-Update: 2026-10-23
+Forwarded: no
+
+Index: gwenview-source/app/stereo/stereoviewadapter.cpp
+===================================================================
+--- gwenview-source.orig/app/stereo/stereoviewadapter.cpp
++++ gwenview-source/app/stereo/stereoviewadapter.cpp
+@@ -132,11 +132,7 @@ void StereoViewAdapter::update()
+             metadata = image.text(QStringLiteral("Stereo3DLayout"));
+         }
+         const QImage second = multiView && reader.jumpToImage(1) ? reader.read() : QImage();
+-        // The user's correction kept with the file (Stereo::Picture::setUserSwapEyes()) applies over its mark
+         Stereo::Picture::Options options = mOptions;
+-        if (document->url().isLocalFile()) {
+-            options.swapEyes = options.swapEyes != Stereo::Picture::userSwapEyes(document->url().toLocalFile());
+-        }
+         mPicture = Stereo::Picture::fromImages(image, second, metadata, format, mData.left(1024 * 1024), options, mOutput.mode());
+         imageView->clearStereoMonoImage();
+         if (mPicture.isStereo()) {
+Index: gwenview-source/app/viewmainpage.cpp
+===================================================================
+--- gwenview-source.orig/app/viewmainpage.cpp
++++ gwenview-source/app/viewmainpage.cpp
+@@ -26,12 +26,15 @@ Foundation, Inc., 51 Franklin Street, Fi
+ #include <QItemSelectionModel>
+ #include <QMenu>
+ #include <QShortcut>
++#include <QSignalBlocker>
+ #include <QTimer>
+ #include <QVBoxLayout>
+ 
+ // KF
+ #include <KActionCategory>
+ #include <KActionCollection>
++#include <KConfig>
++#include <KConfigGroup>
+ #include <KLocalizedString>
+ #include <KMessageBox>
+ #include <KModelIndexProxyMapper>
+@@ -138,7 +141,7 @@ struct ViewMainPagePrivate {
+     StereoViewAdapter *mStereoAdapter = nullptr;
+     ViewMainPage::StereoInput mStereoInput = ViewMainPage::StereoInput::Automatic;
+     ViewMainPage::StereoEyeMode mStereoEyeMode = ViewMainPage::StereoEyeMode::Stereo;
+-    bool mStereoSwap = false;
++    KConfig mStereoState{QStringLiteral("gwenviewstereorc"), KConfig::SimpleConfig};
+     Stereo::Picture::AnaglyphColorPair mAnaglyphPair = Stereo::Picture::AnaglyphColorPair::None;
+ #endif
+ 
+@@ -146,13 +149,33 @@ struct ViewMainPagePrivate {
+     ZoomMode::Enum mZoomMode;
+ 
+ #ifdef GWENVIEW_STEREO
++    KConfigGroup stereoFileState()
++    {
++        const auto *view = currentView();
++        return KConfigGroup(&mStereoState, view ? view->url().toString(QUrl::FullyEncoded) : QString());
++    }
++
++    bool stereoSwap()
++    {
++        const auto *view = currentView();
++        if (!view) {
++            return false;
++        }
++        const bool previousChoice = view->url().isLocalFile() && Stereo::Picture::userSwapEyes(view->url().toLocalFile());
++        return stereoFileState().readEntry("SwapEyes", previousChoice);
++    }
++
+     void updateStereo()
+     {
+         if (!mStereoAdapter) {
+             return;
+         }
+         Stereo::Picture::Options options;
+-        options.swapEyes = mStereoSwap;
++        options.swapEyes = stereoSwap();
++        if (auto *action = mActionCollection->action(QStringLiteral("stereo_swap_eyes"))) {
++            const QSignalBlocker blocker(action);
++            action->setChecked(options.swapEyes);
++        }
+         options.anaglyph = mAnaglyphPair;
+         switch (mStereoInput) {
+         case ViewMainPage::StereoInput::Automatic:
+@@ -530,7 +553,11 @@ void ViewMainPage::setStereoInput(Stereo
+ 
+ void ViewMainPage::toggleStereoSwap()
+ {
+-    d->mStereoSwap = !d->mStereoSwap;
++    if (!d->currentView()) {
++        return;
++    }
++    d->stereoFileState().writeEntry("SwapEyes", !d->stereoSwap());
++    d->mStereoState.sync();
+     d->updateStereo();
+ }
+ 
