@@ -26,6 +26,8 @@ int media_gpu_cuda_supports(const struct media_gpu_video *v, const struct media_
 {
     int codec = codec_for(v->codec);
     if (codec < 0) return -1;
+    if (v->codec == MEDIA_GPU_CODEC_VC1 && v->profile == 2)
+        return -1;
     /* NVDEC reports depth and chroma capabilities, not these profile tools. */
     if (v->codec == MEDIA_GPU_CODEC_H264 && v->profile >= 0
         && (v->profile & 255) != 66 && (v->profile & 255) != 77

@@ -42,7 +42,7 @@ static VAProfile profile_for(const struct media_gpu_video *v)
     case MEDIA_GPU_CODEC_MPEG4:
         return v->profile == 0 ? VAProfileMPEG4Simple : v->profile == 3 ? VAProfileMPEG4Main : v->profile == 15 ? VAProfileMPEG4AdvancedSimple : VAProfileNone;
     case MEDIA_GPU_CODEC_VC1:
-        return v->profile == 0 ? VAProfileVC1Simple : v->profile == 1 ? VAProfileVC1Main : v->profile == 2 || v->profile == 3 ? VAProfileVC1Advanced : VAProfileNone;
+        return v->profile == 0 ? VAProfileVC1Simple : v->profile == 1 ? VAProfileVC1Main : v->profile == 3 ? VAProfileVC1Advanced : VAProfileNone;
     case MEDIA_GPU_CODEC_MJPEG: return VAProfileJPEGBaseline;
     default: return VAProfileNone;
     }
