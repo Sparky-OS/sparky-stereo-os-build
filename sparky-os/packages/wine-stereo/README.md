@@ -55,3 +55,8 @@ It appends `patches/wine-quad-buffer-size.patch`, pins the retained dependencies
 Generate one source package with `dpkg-buildpackage -S -us -uc -d`, then build every architecture from its `.dsc`.
 The correction queries `GLX_STEREO` on the actual framebuffer configuration.
 Genuine quad-buffer drawables retain one view's dimensions; prepacked OpenGL and Vulkan clients retain the existing packed-size path.
+
+The same source preparation also appends `patches/wine-popup-metadata.patch`.
+It describes Wine's override-redirect menus, tooltips and combo lists through EWMH window types.
+A submenu's X11 transient owner names its parent menu, while Win32 command ownership stays intact.
+The declaration is refreshed before mapping, after the menu's selected child is known.

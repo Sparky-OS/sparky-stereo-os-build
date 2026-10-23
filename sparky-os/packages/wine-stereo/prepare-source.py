@@ -43,14 +43,18 @@ def main():
         first = matches[0].start()
         control = re.sub(pattern, lambda m: m[1] + name + ' (= ' + version + '),\n' if m.start() == first else '', control)
     control_path.write_text(control)
-    patch_name = 'stereo3d/0005-winex11-quad-buffer-drawable-size.patch'
-    destination = source / 'debian/patches' / patch_name
-    if destination.exists():
-        raise ValueError('Refusing to replace an existing Wine patch')
-    shutil.copy2(recipe / 'patches/wine-quad-buffer-size.patch', destination)
-    with (source / 'debian/patches/series').open('a') as stream:
-        stream.write('\n' + patch_name + '\n')
-    subprocess.run(['quilt', 'push'], cwd=source, env=environment, check=True)
+    patches = [
+        ('stereo3d/0005-winex11-quad-buffer-drawable-size.patch', 'wine-quad-buffer-size.patch'),
+        ('stereo3d/0006-winex11-popup-metadata.patch', 'wine-popup-metadata.patch'),
+    ]
+    for patch_name, authored in patches:
+        destination = source / 'debian/patches' / patch_name
+        if destination.exists():
+            raise ValueError('Refusing to replace an existing Wine patch')
+        shutil.copy2(recipe / 'patches' / authored, destination)
+        with (source / 'debian/patches/series').open('a') as stream:
+            stream.write('\n' + patch_name + '\n')
+    subprocess.run(['quilt', 'push', '-a'], cwd=source, env=environment, check=True)
     subprocess.run([
         sys.executable, '-m', 'lean.debian_prepare', str(source), args.version,
         '--toolkit', str(toolkit), '--preserve-source', '*.h',
@@ -58,7 +62,7 @@ def main():
     ], env=environment, check=True)
     subprocess.run([
         'dch', '--append', '--maintmaint',
-        'Keep quad-buffer GLX drawables at one view size while retaining the packed SBS client path; correct StereoPhoto Maker eye geometry.',
+        'Keep quad-buffer GLX drawables at one view size and describe X11 popup types and menu parents; preserve packed SBS clients.',
     ], cwd=source, env=environment, check=True)
     subprocess.run([sys.executable, str(recipe / 'sync-control.py'), str(source)], env=environment, check=True)
     subprocess.run([sys.executable, str(recipe / 'pin-vulkan-registry.py'), str(source)], env=environment, check=True)
