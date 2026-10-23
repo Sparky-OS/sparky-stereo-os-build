@@ -212,6 +212,16 @@ BREAKS = {
     'sparky-stereo-desktop': ['libkf6idletime6 (<< 6.30.0-2)'],
 }
 
+# Provides per kernel meta-package: the same virtual packages Debian's linux-image-amd64 and
+# linux-headers-amd64 provide, so packages written for Debian's kernel install on ours (Daniel,
+# 2026-10-23: "we need all functionality debian offer, in the kernels including"). xone-dkms, for
+# one, depends on linux-headers-generic. Our kernels keep Debian's WIREGUARD, VBOXGUEST, VBOXSF_FS and
+# DRM_VBOXVIDEO modules (config/debian-*.config; the edition fragment does not touch them).
+KERNEL_PROVIDES = {
+    'image': ['linux-image-generic', 'virtualbox-guest-modules', 'wireguard-modules (= 1.0.0)'],
+    'headers': ['linux-headers-generic'],
+}
+
 # name: (title line, body, depends, recommends)
 META = {
     'sparky-stereo-desktop': (
@@ -330,6 +340,8 @@ def main():
             f.append(('Recommends', ', '.join(rec)))
         if pkg in BREAKS:
             f.append(('Breaks', ', '.join(BREAKS[pkg])))
+        if pkg.startswith(('linux-image-sparky-stereo', 'linux-headers-sparky-stereo')):
+            f.append(('Provides', ', '.join(KERNEL_PROVIDES['image' if pkg.startswith('linux-image-') else 'headers'])))
         f += [('Section', 'System'), ('Priority', 'optional'), ('Homepage', 'https://sparkylinux.org'),
               ('Description', title + '\n  ' + body)]
         with open(os.path.join(d, 'DEBIAN', 'control'), 'w') as c:
