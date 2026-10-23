@@ -53,7 +53,7 @@ def main(root, recipe, counter, smoke, packaging_revision=None):
         'Standards-Version: 4.7.4\nRules-Requires-Root: no\nHomepage: https://sparkylinux.org\n\n')
     for kind, depends in (
         ('image', 'kmod, initramfs-tools (>= 0.120+deb8u2) | linux-initramfs-tool'),
-        ('headers', 'gcc, make, kmod, libelf1t64, libssl3t64, dwarves, libc6-dev'),
+        ('headers', 'gcc, make, kmod, libelf1t64, libssl3t64, pahole | dwarves, libc6-dev'),
     ):
         control += (f'Package: linux-{kind}-{release}\nArchitecture: amd64\n'
                     f'Depends: {depends}, ${{misc:Depends}}\n'

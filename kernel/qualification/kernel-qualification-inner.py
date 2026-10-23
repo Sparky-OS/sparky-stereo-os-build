@@ -42,13 +42,22 @@ for required in [headers / '.config', headers / 'Module.symvers',
 assert os.access('/dev/kvm', os.R_OK | os.W_OK), 'KVM is required for this matrix'
 assert (inputs / 'guest/bin/scx_simple').is_file()
 assert (inputs / 'settings/usr/lib/sysctl.d/70-sparky-stereo.conf').is_file()
-assert run('image-signature', ['sbverify', '--cert', '/inputs/edition.pem', str(kernel)])
-unsigned = root / 'kernel.unsigned'
-shutil.copy2(kernel, unsigned)
-assert run('unsigned-control', ['sbattach', '--remove', str(unsigned)])
-env = dict(os.environ, KEXEC_UNSIGNED=str(unsigned))
+# SPARKY_UNSIGNED=1: the image is still unsigned (before the release coordinator signs it). The bench then signs it with
+# its own throw-away key, exactly as it does for any kernel it is given, and the edition certificate is not involved.
+unsigned_mode = os.environ.get('SPARKY_UNSIGNED') == '1'
+if unsigned_mode:
+    assert run('image-unsigned-as-built', ['sh', '-c', '! sbverify --list "$1" 2>&1 | grep -q "^signature 1"', 'x', str(kernel)])
+    env = dict(os.environ, KEXEC_UNSIGNED=str(kernel))
+    signing = []
+else:
+    assert run('image-signature', ['sbverify', '--cert', '/inputs/edition.pem', str(kernel)])
+    unsigned = root / 'kernel.unsigned'
+    shutil.copy2(kernel, unsigned)
+    assert run('unsigned-control', ['sbattach', '--remove', str(unsigned)])
+    env = dict(os.environ, KEXEC_UNSIGNED=str(unsigned))
+    signing = ['--kernel-signed', '--db-cert', '/inputs/edition.pem']
 bench = [str(inputs / 'bench/bench'), '--work', str(root / 'boot-work'),
-         '--kernel', str(kernel), '--kernel-signed', '--db-cert', '/inputs/edition.pem',
+         '--kernel', str(kernel)] + signing + [
          '--ksrc', str(headers), '--modules-dir', str(root / 'image'),
          '--mem', '2048', '--cpus', '4', '--timeout', '600', '--accel', 'kvm']
 assert run('doctor', [str(inputs / 'bench/bench'), '--work', str(root / 'doctor'), 'doctor'])
