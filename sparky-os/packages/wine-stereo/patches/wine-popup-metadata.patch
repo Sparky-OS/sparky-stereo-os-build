@@ -64,8 +64,11 @@ Assisted-by: GPT-6 (Codex)
  /***********************************************************************
   *              set_style_hints
   */
-@@ -946,7 +994,7 @@
+@@ -944,9 +992,10 @@
+ {
+     Window group_leader = data->whole_window;
      HWND owner = NtUserGetWindowRelative( data->hwnd, GW_OWNER );
++    HWND group_owner = owner;
      Window owner_win = 0;
      XWMHints *wm_hints;
 -    Atom window_type;
@@ -73,10 +76,17 @@ Assisted-by: GPT-6 (Codex)
  
      if (owner)
      {
-@@ -959,15 +1007,19 @@
+@@ -958,16 +1007,25 @@
+     {
          XSetTransientForHint( data->display, data->whole_window, owner_win );
          group_leader = owner_win;
-     }
+-    }
++        if (group_owner && group_owner != owner)
++        {
++            Window group_window = X11DRV_get_whole_window( NtUserGetAncestor( group_owner, GA_ROOT ));
++            if (group_window) group_leader = group_window;
++        }
++    }
 +    else if (!data->managed) XDeleteProperty( data->display, data->whole_window, XA_WM_TRANSIENT_FOR );
  
      /* Only use dialog type for owned popups. Metacity allows making fullscreen
