@@ -32,9 +32,8 @@ source are not falsely counted as projected compiler inputs.
 The migration used these exact build inputs from Debian's authenticated trixie
 archive, because they had left testing. Retain the signed index, package hashes
 and architecture-specific packages; do not add an unauthenticated mirror or
-substitute the amd64 CAPI packages for i386. The prepared source records its
-inputs in `debian/verified-build-inputs.json`; `.buildinfo` records the build
-environment.
+substitute the amd64 CAPI packages for i386. The prepared source pins these versions in `debian/control` and `debian/control.in`.
+The Vulkan registry has its own `debian/vulkan-registry/provenance.json`; `.buildinfo` records the complete build environment.
 
 | Package | Version |
 | --- | --- |
@@ -51,12 +50,8 @@ also occur in both architectures' previous accepted builds. Those features
 are not newly enabled by this migration. At this checkpoint the i386 build,
 shared-file comparison and installed runtime checks remain separate gates.
 
-For the quad-buffer drawable correction, run `prepare-source.py SOURCE VERSION`
-on an extracted, unprojected edition source package with its existing quilt
-series applied. It appends `patches/wine-quad-buffer-size.patch`, pins the
-retained dependencies, prepares the standard Lean Code hooks and records the
-changelog using the edition's packaging identity. Generate one source package
-with `dpkg-buildpackage -S -us -uc -d`, then build every architecture from its
-`.dsc`. The correction queries `GLX_STEREO` on the actual framebuffer
-configuration: genuine quad-buffer drawables retain one view's dimensions;
-prepacked OpenGL and Vulkan clients retain the existing packed-size path.
+For the quad-buffer drawable correction, run `prepare-source.py SOURCE VERSION` on an extracted, unprojected edition source package with its existing quilt series applied.
+It appends `patches/wine-quad-buffer-size.patch`, pins the retained dependencies, prepares the standard Lean Code hooks and records the changelog using the edition's packaging identity.
+Generate one source package with `dpkg-buildpackage -S -us -uc -d`, then build every architecture from its `.dsc`.
+The correction queries `GLX_STEREO` on the actual framebuffer configuration.
+Genuine quad-buffer drawables retain one view's dimensions; prepacked OpenGL and Vulkan clients retain the existing packed-size path.
