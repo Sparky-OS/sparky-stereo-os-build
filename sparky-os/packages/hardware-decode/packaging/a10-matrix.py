@@ -165,9 +165,10 @@ def counters(path):
 
 def execute(a):
     # This script is never a host benchmark by accident.
-    if '310-15ABR' not in read('/sys/class/dmi/id/product_name') or 'A10' not in read('/proc/cpuinfo'):
+    model = ' '.join(read('/sys/class/dmi/id/'+field) for field in ('product_name', 'product_version', 'product_family'))
+    if '310-15ABR' not in model or 'A10' not in read('/proc/cpuinfo'):
         raise ValueError('Execution requires the granted A10 laptop, not this host')
-    for command in ('kscreen-doctor', 'mpv', 'qdbus6', 'dpkg-query'):
+    for command in ('kscreen-doctor', 'mpv', 'ffprobe', 'qdbus6', 'dpkg-query'):
         if not shutil.which(command):
             raise ValueError(f'Missing installed command: {command}')
     expected = json.loads(a.versions.read_text())[a.phase]
@@ -184,6 +185,10 @@ def execute(a):
     root = a.output.resolve()/a.phase
     root.mkdir(parents=True, exist_ok=False)
     (root/'packages.json').write_text(json.dumps(actual, indent=2)+'\n')
+    for name, path in films.items():
+        with (root/(name+'-source.json')).open('w') as stream:
+            run('ffprobe', '-v', 'error', '-select_streams', 'v:0', '-read_intervals', '%+#8',
+                '-show_streams', '-show_frames', '-of', 'json', str(path), stdout=stream)
     snapshot = json.loads(subprocess.check_output(['kscreen-doctor', '-j'], text=True))
     restore = restore_args(snapshot)
     (root/'outputs-original.json').write_text(json.dumps(snapshot, indent=2)+'\n')

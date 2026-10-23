@@ -15,6 +15,7 @@ p.add_argument('source', type=Path)
 p.add_argument('--version', required=True)
 p.add_argument('--published-lc', action='store_true',
                help="retain the published source package's existing Lean Code integration")
+p.add_argument('--libplacebo-min-version', help='libplacebo release retaining compositor device order')
 p.add_argument('--ffmpeg-min-version', help='FFmpeg release containing the format-query cleanup')
 p.add_argument('--gpu-route-min-version', help='shared GPU routing library release')
 p.add_argument('--mlt-min-version', help='MLT release containing automatic precision-preserving decoding')
@@ -83,6 +84,13 @@ if a.package in ['mlt', 'vlc', 'qt6-multimedia']:
     dependency(binary, 'libmedia-gpu-route0', a.gpu_route_min_version)
     text, changed = re.subn(r'^Build-Depends:[ \t]*',
         f'Build-Depends: libmedia-gpu-route-dev (>= {a.gpu_route_min_version}), ',
+        text, count=1, flags=re.M)
+    assert changed == 1
+if a.package == 'mpv-dmo' and a.libplacebo_min_version:
+    dependency('mpv', 'libplacebo360', a.libplacebo_min_version)
+    dependency('libmpv2', 'libplacebo360', a.libplacebo_min_version)
+    text, changed = re.subn(r'^Build-Depends:[ \t]*',
+        f'Build-Depends: libplacebo-dev (>= {a.libplacebo_min_version}), ',
         text, count=1, flags=re.M)
     assert changed == 1
 if a.package == 'kdenlive':

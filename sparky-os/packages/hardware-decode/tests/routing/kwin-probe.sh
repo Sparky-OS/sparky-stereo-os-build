@@ -21,7 +21,9 @@ exec dbus-run-session -- sh -c '
  test -S "$XDG_RUNTIME_DIR/order223-route"
  unset LD_PRELOAD RIG_COMPOSITOR_RENDER_NODE __EGL_VENDOR_LIBRARY_FILENAMES QT_QPA_PLATFORM
  export WAYLAND_DISPLAY=order223-route
- /w/route-build/media-gpu-route-query > /w/logs/$SCENARIO-route.log
+ query=/w/route-build/media-gpu-route-query
+ [ "${ROUTE_INSTALLED:-0}" != 1 ] || query=/usr/bin/media-gpu-route-query
+ "$query" > /w/logs/$SCENARIO-route.log
  /usr/lib/qt6/bin/qdbus org.kde.KWin /KWin org.kde.KWin.supportInformation > /w/logs/$SCENARIO-support.log
  if [ -n "${CLIENT_SCRIPT:-}" ]; then python3 /kit/$CLIENT_SCRIPT.py; fi
 '

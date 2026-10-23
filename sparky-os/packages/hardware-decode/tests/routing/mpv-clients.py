@@ -9,15 +9,20 @@ for key in ('LD_PRELOAD', 'RIG_COMPOSITOR_RENDER_NODE', '__EGL_VENDOR_LIBRARY_FI
 env['WAYLAND_DISPLAY'] = 'order223-route'
 env['WAYLAND_DEBUG'] = 'client'
 env['LD_LIBRARY_PATH'] = ('/w/placebo-build/src:' if not os.environ.get('ROUTE_BEFORE') else '') + '/w/route-prefix/lib:/prev/ffmpeg-build/libavcodec'
+installed = os.environ.get('ROUTE_INSTALLED') == '1'
+if installed:
+    env.pop('LD_LIBRARY_PATH', None)
 for api in ('vulkan', 'opengl'):
     for film in ('perf-3d.mp4', 'perf-2d1080.mkv'):
         name = api + '-' + film.split('.')[0]
         ipc = '/tmp/' + name + '.sock'
         log = (out / (name + '.log')).open('w')
-        args = ['/prev/mpv-build/mpv', '--no-config', '--ao=null', '--vo=gpu-next', '--gpu-api='+api,
+        args = ['/usr/bin/mpv' if installed else '/prev/mpv-build/mpv', '--no-config', '--ao=null', '--vo=gpu-next', '--gpu-api='+api,
                 '--gpu-context=wayland' + ('vk' if api == 'vulkan' else ''), '--hwdec=auto',
                 '--dump-stats='+str(out / (name+'.stats')), '--geometry=1920x1080', '--input-ipc-server='+ipc,
                 '--no-terminal', '--log-file='+str(out / (name + '.mpv.log')), '--msg-level=all=v', '/w/fixtures/'+film]
+        if installed:
+            args.remove('--hwdec=auto')
         start = time.monotonic()
         before = resource.getrusage(resource.RUSAGE_CHILDREN)
         proc = subprocess.Popen(args, env=env, stdout=log, stderr=subprocess.STDOUT)

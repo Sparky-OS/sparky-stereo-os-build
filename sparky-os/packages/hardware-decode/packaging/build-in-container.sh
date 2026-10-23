@@ -16,11 +16,26 @@ printf 'deb http://deb.debian.org/debian testing contrib non-free non-free-firmw
 printf 'Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n' > /etc/apt/preferences.d/edition
 apt-get -y update > /work/apt-update.log 2>&1
 apt-get -y --no-install-recommends install quilt devscripts dpkg-dev > /work/prepare-deps.log 2>&1
-python3 /kit/hardware-decode/packaging/build-source.py "$PKG" /work /pub /toolkit --libplacebo-source /libplacebo-input > /work/prepare.log 2>&1
+if [ -n "${SOURCE_DSC:-}" ]; then
+ cd /work
+ python3 - <<'COPY_SOURCE'
+import os,shutil
+from pathlib import Path
+p=Path('/candidate')/os.environ['SOURCE_DSC']
+shutil.copy2(p,Path('/work')/p.name)
+for line in p.read_text().split('Checksums-Sha256:\n',1)[1].splitlines():
+ if not line.startswith(' '):break
+ name=line.split()[-1]
+ shutil.copy2(p.parent/name,Path('/work')/name)
+COPY_SOURCE
+ dpkg-source -x "$SOURCE_DSC" source > /work/prepare.log 2>&1
+else
+ python3 /kit/hardware-decode/packaging/build-source.py "$PKG" /work /pub /toolkit --libplacebo-source /libplacebo-input > /work/prepare.log 2>&1
+fi
 apt-get -y --no-install-recommends build-dep /work/source > /work/build-dep.log 2>&1
 id -u builder >/dev/null 2>&1 || useradd --create-home --uid 1000 builder
 chown -R builder:builder /work
 cd /work/source
-runuser -u builder -- env SPARKY_LC_PREVIOUS_DIR=/previous dpkg-buildpackage -us -uc -j4 > /work/build.log 2>&1
+runuser -u builder -- env SPARKY_LC_PREVIOUS_DIR=/previous dpkg-buildpackage -us -uc ${BINARY_ONLY:--F} -j4 > /work/build.log 2>&1
 PYTHONPATH=/toolkit python3 -m lean.release check-debs /work/*.deb > /work/check-debs.log 2>&1
 PYTHONPATH=/toolkit python3 -m lean.release check-link --previous-dir /previous /work/*.deb > /work/check-link.log 2>&1

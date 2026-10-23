@@ -5,8 +5,9 @@ from pathlib import Path
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('work',type=Path)
 p.add_argument('package')
+p.add_argument('--job',help='job directory name for an architecture twin')
 a=p.parse_args()
-job=a.work/'jobs'/a.package
+job=a.work/'jobs'/(a.job or a.package)
 for name in ('check-debs.log','check-link.log'):
     assert (job/name).is_file(), name
 out=a.work/'out'/a.package

@@ -68,6 +68,8 @@ else:
         args += ['--published-lc']
     if a.package in ('mlt', 'vlc', 'qt6-multimedia'):
         args += ['--ffmpeg-min-version', versions['ffmpeg-dmo'], '--gpu-route-min-version', versions['media-gpu-route']]
+    if a.package == 'mpv-dmo':
+        args += ['--libplacebo-min-version', versions['libplacebo-dmo']]
     if a.package == 'kdenlive':
         args += ['--mlt-min-version', versions['mlt']]
     subprocess.run(args, check=True)
