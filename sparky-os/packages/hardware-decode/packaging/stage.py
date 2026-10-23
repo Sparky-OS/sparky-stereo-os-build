@@ -25,7 +25,9 @@ for f in sorted(job.iterdir()):
         shutil.copy2(f,out/f.name)
 for f in out.glob('*.deb'):
     shutil.copy2(f,a.work/'new'/f.name)
-(out/'SHA256SUMS').write_text(''.join(f'{hashlib.sha256(f.read_bytes()).hexdigest()}  {f.name}\n' for f in sorted(out.iterdir()) if f.is_file() and f.name!='SHA256SUMS'))
-with (a.work/'new/Packages').open('w') as stream:
+temporary=a.work/'new/Packages.tmp'
+with temporary.open('w') as stream:
     subprocess.run(['dpkg-scanpackages','--multiversion','.','/dev/null'],cwd=a.work/'new',stdout=stream,check=True)
+temporary.replace(a.work/'new/Packages')
+(out/'SHA256SUMS').write_text(''.join(f'{hashlib.sha256(f.read_bytes()).hexdigest()}  {f.name}\n' for f in sorted(out.iterdir()) if f.is_file() and f.name!='SHA256SUMS'))
 print(out)
