@@ -47,3 +47,14 @@ The Lean Code build-9 migration now takes RT from the same accepted common
 source tree as base, closing build 8's two-patch virtio-gpu omission. Its native
 build, VM and DKMS results remain pending. This parity correction does not mark
 the separately queued EV_BTN work or the depth/group-34 work complete.
+
+## Build 10 (2026-10-23, ORDER 212): series group 34 shipped, all three flavours at 7.3.0~rc6-10+lc1
+
+- Group 34 (16 patches, vc4's 0016 included) applied in series order, strictly (`git apply`, no fuzz), on build 9's patched trees: base and rt share one tree, v3 has its own (it carries the ISA patch).
+  `qualification/prepare-kernel-source.py FLAVOUR --counter 10 --source-dir DIR --manifest FILE` turns such a tree into the Lean Code source; `qualification/run-kernel-build.py FLAVOUR --counter 10` builds it unsigned in a container (about 1 h 50 min for base on four CPUs, 35 minutes of it the single-threaded source projection); the tree is deleted once the packages are retained.
+- The packages are unsigned on purpose. The Secure Boot key signs the image afterwards with `qualification/sign-kernel-image.py`, which keeps the Lean Code manifest, marker and md5sums of the image package true (the image is a "left" row of the manifest with its hash; replacing the file alone fails check-debs).
+- Headers now depend on `pahole | dwarves`. In Debian forky `dwarves` is a transitional package that depends on `pahole`, and kbuild's `scripts/gen-btf.sh` calls `pahole` for every module (our headers ship a BTF vmlinux and `CONFIG_DEBUG_INFO_BTF_MODULES=y`), so a DKMS build without pahole stops with "pahole: not found" (reproduced, `Error 127`). Depending on the real package keeps that true when the transitional one goes.
+- ORDER 139 (DKMS never built for our kernel on the A10) was already fixed by the headers package's postinst (it runs `header_postinst.d`, so image-then-headers and headers-then-image both build); build 10 re-proves it in a clean forky container, both orders, with NVIDIA open, xpadneo, acpi-call, v4l2loopback and vhba, for all three flavours.
+- `CONFIG_KUNIT` is off in the shipped kernels, so group 34's KUnit suites cannot run in them. They run in a KUnit kernel built from the same source (`tools/testing/kunit/kunit.py run --arch=x86_64`, QEMU), and vc4's on ARM64. The shipped kernels have VKMS without the configfs series, so the vkms-stereo bench uses a test kernel from the same source plus Louis Chauvet's configfs series and the bench's patches.
+- Docker from a lane: the per-lane socat proxy cut attached `docker run` output after the first chunk (the build kept running); use `docker logs` or the unproxied socket for builds.
+- Not covered by the unsigned VM run: the matrix with the edition-signed image (`qualification/qualify-kernel-boot.py`, with the 9 hardcoded in it now generalised only in the unsigned script), IGT's kms_3d and the kwin phase of the bench, and any physical output.

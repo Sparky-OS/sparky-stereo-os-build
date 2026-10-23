@@ -27,6 +27,7 @@ kit = cfg.TREE / 'kernel/qualification'
 shutil.copytree(kit / 'hibernate-bench', inputs / 'bench')
 shutil.copytree(cfg.path('SPARKY_INPUTS_DIR') / 'kernel-soul/work/bench-run/r2/initrd-tree/guest', inputs / 'guest')
 shutil.copy2(kit / 'guest/features.sh', inputs / 'features.sh')
+shutil.copy2(kit / 'guest/modules.sh', inputs / 'modules.sh')
 shutil.copy2(kit / 'kernel-qualification-inner.py', inputs / 'run.py')
 (inputs / 'edition.pem').write_text('unused in unsigned mode\n')
 settings = next(repo.glob('pool/main/s/sparky-stereo-kernel-settings/sparky-stereo-kernel-settings_*_all.deb'))

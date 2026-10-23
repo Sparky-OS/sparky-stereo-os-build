@@ -69,6 +69,8 @@ run('settings-hibernate', bench + settings + ['run', 'hibernate'], ['hibernate']
 run('features', bench + ['--load-modules', 'virtio_blk efivarfs binder_linux ntsync tcp_bbr3 adios',
     '--guest-script', '/inputs/features.sh', '--guest-dir', '/inputs/guest', 'run', 'custom'],
     ['custom'], env)
+run('modules', bench + ['--load-modules', 'virtio_blk vkms rtw89_8852au rtw89_8852cu rtw89_8922au rtw89_8922de',
+    '--guest-script', '/inputs/modules.sh', '--guest-dir', '/inputs/guest', 'run', 'custom'], ['custom'], env)
 run('settings-kexec', bench + settings + ['run', 'kexec'], ['kexec'], env)
 run('legacy-bios', bench + ['--bios', 'run', 'policy'], ['policy'], env)
 
