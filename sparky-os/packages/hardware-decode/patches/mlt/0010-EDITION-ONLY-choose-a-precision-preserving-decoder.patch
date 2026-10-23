@@ -1,0 +1,160 @@
+From 2e1e56c0d4a462298f1cdab075107c6acf20dab1 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 23 Oct 2026 07:13:00 -0300
+Subject: [PATCH] avformat: choose a decoder that preserves source precision by
+ default
+
+Try the supported CUDA and VAAPI devices without requiring a per-machine setting. Retain explicit choices and software fallback, and reject hardware surfaces whose precision or chroma sampling cannot preserve the source. This uses the shared libavcodec cleanup correction when a successful hardware query is declined.
+
+Assisted-by: gpt-6.1-sol via Codex
+---
+ src/modules/avformat/producer_avformat.c   | 77 +++++++++++++++++++++-
+ src/modules/avformat/producer_avformat.yml |  3 +
+ 2 files changed, 77 insertions(+), 3 deletions(-)
+
+diff --git a/src/modules/avformat/producer_avformat.c b/src/modules/avformat/producer_avformat.c
+index 5654c48..f28a2cb 100644
+--- a/src/modules/avformat/producer_avformat.c
++++ b/src/modules/avformat/producer_avformat.c
+@@ -147,6 +147,7 @@ struct producer_avformat_s
+     {
+         int pix_fmt;
+         int device_type;
++        int automatic;
+         char device[128];
+         AVBufferRef *device_ctx;
+         int filters_initialized;
+@@ -1674,6 +1675,8 @@ static int producer_open(
+             AVDictionaryEntry *hwaccel = av_dict_get(params, "hwaccel", NULL, 0);
+             AVDictionaryEntry *hwaccel_device = av_dict_get(params, "hwaccel_device", NULL, 0);
+             const char *hwaccel_env = getenv("MLT_AVFORMAT_HWACCEL");
++            if (!hwaccel && !hwaccel_env)
++                hwaccel_env = "auto";
+             const char *pps_env = getenv("MLT_AVFORMAT_HWACCEL_PPS");
+ 
+             if (pps_env && self->video_index >= 0 && !test_open) {
+@@ -1704,7 +1707,10 @@ static int producer_open(
+             if (((hwaccel && hwaccel->value) || hwaccel_env) && !test_open) {
+                 // Leaving `device=NULL` will cause query string parameter `hwaccel_device` to be ignored
+                 char *device = getenv("MLT_AVFORMAT_HWACCEL_DEVICE");
+-                if ((hwaccel && hwaccel->value && !strcmp(hwaccel->value, "vaapi"))
++                if ((hwaccel && hwaccel->value && !strcmp(hwaccel->value, "auto"))
++                    || (!hwaccel && hwaccel_env && !strcmp(hwaccel_env, "auto"))) {
++                    self->hwaccel.automatic = 1;
++                } else if ((hwaccel && hwaccel->value && !strcmp(hwaccel->value, "vaapi"))
+                     || (hwaccel_env && !strcmp(hwaccel_env, "vaapi"))) {
+                     self->hwaccel.pix_fmt = AV_PIX_FMT_VAAPI;
+                     self->hwaccel.device_type = AV_HWDEVICE_TYPE_VAAPI;
+@@ -3443,6 +3449,47 @@ static void apply_properties(void *obj, mlt_properties properties, int flags)
+     }
+ }
+ 
++/* Do not let a hardware surface discard source precision or chroma samples. */
++static enum AVPixelFormat hwaccel_get_format(AVCodecContext *context,
++                                            const enum AVPixelFormat *formats)
++{
++    producer_avformat self = context->opaque;
++    const AVPixFmtDescriptor *source = av_pix_fmt_desc_get(context->sw_pix_fmt);
++    for (const enum AVPixelFormat *format = formats; *format != AV_PIX_FMT_NONE; format++) {
++        if (*format != self->hwaccel.pix_fmt)
++            continue;
++        AVBufferRef *parameters = NULL;
++        int ret = avcodec_get_hw_frames_parameters(context, context->hw_device_ctx,
++                                                  *format, &parameters);
++        const AVPixFmtDescriptor *surface = NULL;
++        if (ret >= 0 && parameters) {
++            AVHWFramesContext *frames = (AVHWFramesContext *) parameters->data;
++            surface = av_pix_fmt_desc_get(frames->sw_format);
++        }
++        int keeps = source && surface && surface->nb_components == source->nb_components
++                    && surface->log2_chroma_w <= source->log2_chroma_w
++                    && surface->log2_chroma_h <= source->log2_chroma_h;
++        for (int i = 0; keeps && i < source->nb_components; i++)
++            keeps = surface->comp[i].depth >= source->comp[i].depth;
++        av_buffer_unref(&parameters);
++        if (keeps) {
++            mlt_log_info(MLT_PRODUCER_SERVICE(self->parent),
++                         "Using hardware decoding (%s) without reducing source precision\n",
++                         av_get_pix_fmt_name(*format));
++            return *format;
++        }
++        mlt_log_info(MLT_PRODUCER_SERVICE(self->parent),
++                     "Using software decoding: hardware precision is insufficient or unknown\n");
++        break;
++    }
++    for (const enum AVPixelFormat *format = formats; *format != AV_PIX_FMT_NONE; format++) {
++        const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(*format);
++        if (desc && !(desc->flags & AV_PIX_FMT_FLAG_HWACCEL))
++            return *format;
++    }
++    return AV_PIX_FMT_NONE;
++}
++
+ /** Initialize the video codec context.
+  */
+ 
+@@ -3505,6 +3552,27 @@ static int video_codec_init(producer_avformat self, int index, mlt_properties pr
+             mlt_properties_set_int(properties, "lowres", codec_context->codec->max_lowres);
+         }
+ 
++        if (self->hwaccel.automatic) {
++            const enum AVHWDeviceType devices[] = {AV_HWDEVICE_TYPE_CUDA,
++                                                  AV_HWDEVICE_TYPE_VAAPI};
++            for (unsigned d = 0; d < sizeof(devices) / sizeof(devices[0]); d++) {
++                const AVCodecHWConfig *config = NULL;
++                for (int i = 0; (config = avcodec_get_hw_config(codec, i)); i++) {
++                    if (config->device_type == devices[d]
++                        && (config->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX))
++                        break;
++                }
++                if (!config)
++                    continue;
++                if (av_hwdevice_ctx_create(&self->hwaccel.device_ctx, devices[d],
++                                           NULL, NULL, 0) < 0)
++                    continue;
++                self->hwaccel.device_type = devices[d];
++                self->hwaccel.pix_fmt = config->pix_fmt;
++                break;
++            }
++        }
++
+         if (self->hwaccel.device_type == AV_HWDEVICE_TYPE_NONE
+             || self->hwaccel.pix_fmt == AV_PIX_FMT_NONE) {
+             mlt_log_debug(MLT_PRODUCER_SERVICE(self->parent),
+@@ -3527,14 +3595,17 @@ static int video_codec_init(producer_avformat self, int index, mlt_properties pr
+         }
+ 
+         if (found_hw_pix_fmt) {
+-            av_buffer_unref(&self->hwaccel.device_ctx);
+-            int ret = av_hwdevice_ctx_create(&self->hwaccel.device_ctx,
++            int ret = 0;
++            if (!self->hwaccel.device_ctx)
++                ret = av_hwdevice_ctx_create(&self->hwaccel.device_ctx,
+                                              self->hwaccel.device_type,
+                                              self->hwaccel.device,
+                                              NULL,
+                                              0);
+             if (ret >= 0) {
+                 codec_context->hw_device_ctx = av_buffer_ref(self->hwaccel.device_ctx);
++                codec_context->opaque = self;
++                codec_context->get_format = hwaccel_get_format;
+                 mlt_log_info(MLT_PRODUCER_SERVICE(self->parent),
+                              "hwaccel %s av_hwdevice_ctx_create() success\n",
+                              av_get_pix_fmt_name(self->hwaccel.pix_fmt));
+diff --git a/src/modules/avformat/producer_avformat.yml b/src/modules/avformat/producer_avformat.yml
+index e2c84b7..6649205 100644
+--- a/src/modules/avformat/producer_avformat.yml
++++ b/src/modules/avformat/producer_avformat.yml
+@@ -33,6 +33,9 @@ notes: >
+   video's PPS is less than or equal to this threshold. You should not use
+   MLT_AVFORMAT_HWACCEL_PPS in conjunction with the consumer scale property.
+   Hardware decoding gracefully falls back to software decoding.
++  The edition automatically tries CUDA and VAAPI when no hardware option is set.
++  A hardware frame must preserve the source precision and chroma sampling.
++  Set MLT_AVFORMAT_HWACCEL to none to select software decoding explicitly.
+ 
+ bugs:
+   - Audio sync discrepancy with some content.
+-- 
+2.53.0
+

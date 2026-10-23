@@ -1,0 +1,61 @@
+From 124f05e774ef451e6196dbe55a787a05d2ac1a85 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 23 Oct 2026 07:13:00 -0300
+Subject: [PATCH] Use the automatic MLT decoder default and preserve a saved
+ software choice
+
+Default new configurations to auto. Pass an explicitly stored empty setting as none so the new engine default cannot turn a saved software override back on. Native KConfig generation checks the new default and reads a saved empty override after restart.
+
+Assisted-by: gpt-6.1-sol via Codex
+---
+ src/core.cpp              | 3 ++-
+ src/kdenlivesettings.kcfg | 2 +-
+ src/mltconnection.cpp     | 5 ++---
+ 3 files changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/src/core.cpp b/src/core.cpp
+index 5174316..17edf04 100644
+--- a/src/core.cpp
++++ b/src/core.cpp
+@@ -2335,7 +2335,8 @@ int Core::currentTimelineOffset()
+ 
+ void Core::updateHwDecoding()
+ {
+-    qputenv("MLT_AVFORMAT_HWACCEL", KdenliveSettings::hwDecoding().toUtf8());
++    const auto decoder = KdenliveSettings::hwDecoding().toUtf8();
++    qputenv("MLT_AVFORMAT_HWACCEL", decoder.isEmpty() ? QByteArrayLiteral("none") : decoder);
+ }
+ 
+ void Core::closeApp()
+diff --git a/src/kdenlivesettings.kcfg b/src/kdenlivesettings.kcfg
+index eade181..f695df4 100644
+--- a/src/kdenlivesettings.kcfg
++++ b/src/kdenlivesettings.kcfg
+@@ -357,7 +357,7 @@
+     </entry>
+     <entry name="hwDecoding" type="String">
+       <label>Enable hw decoding. String must be vaapi, nvdec, etc</label>
+-      <default></default>
++      <default>auto</default>
+     </entry>
+ 
+     <entry name="showRenderTextParameters" type="Bool">
+diff --git a/src/mltconnection.cpp b/src/mltconnection.cpp
+index 739ec34..f5ba124 100644
+--- a/src/mltconnection.cpp
++++ b/src/mltconnection.cpp
+@@ -74,9 +74,8 @@ MltConnection::MltConnection(const QString &mltPath)
+     // Disable VDPAU that crashes in multithread environment.
+     // TODO: make configurable
+     qputenv("MLT_NO_VDPAU", "1");
+-    if (!KdenliveSettings::hwDecoding().isEmpty()) {
+-        qputenv("MLT_AVFORMAT_HWACCEL", KdenliveSettings::hwDecoding().toUtf8());
+-    }
++    const auto decoder = KdenliveSettings::hwDecoding().toUtf8();
++    qputenv("MLT_AVFORMAT_HWACCEL", decoder.isEmpty() ? QByteArrayLiteral("none") : decoder);
+ 
+     locateMeltAndProfilesPath(mltPath);
+ 
+-- 
+2.53.0
+
