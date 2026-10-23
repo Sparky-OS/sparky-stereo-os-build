@@ -193,6 +193,10 @@ void GraphicsKcmTest::mainChoiceIsSavedForTheNextLogin()
     // the GPU that will draw the desktop is the NVIDIA one; this session still draws on the AMD one
     QVERIFY(fresh->gpus()[1].toMap().value(u"drawsDesktop"_s).toBool());
     QVERIFY(fresh->mainAppliesLater());
+    // the cards say which GPU draws the desktop now and which will after the next login
+    QVERIFY(fresh->gpus()[0].toMap().value(u"runningDesktop"_s).toBool());
+    QVERIFY(!fresh->gpus()[0].toMap().value(u"drawsDesktop"_s).toBool());
+    QVERIFY(!fresh->gpus()[1].toMap().value(u"runningDesktop"_s).toBool());
     QCOMPARE(fresh->mainNowText(), u"AMD Radeon Vega Series / Radeon Vega Mobile Series"_s);
 }
 

@@ -29,3 +29,7 @@ add_test(NAME powerprofilestest COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/powerprofile
 set_tests_properties(powerprofilestest PROPERTIES ENVIRONMENT "BIN=${CMAKE_BINARY_DIR}/bin;SRC=${CMAKE_CURRENT_SOURCE_DIR}/..")
 
 add_test(NAME translationstest COMMAND python3 -I ${CMAKE_CURRENT_SOURCE_DIR}/translations-test.py ${CMAKE_CURRENT_SOURCE_DIR}/../po)
+
+add_executable(hostprobe hostprobe.cpp ../src/graphicskcm.cpp ../src/graphicskcm.h)
+target_include_directories(hostprobe PRIVATE ../src)
+target_link_libraries(hostprobe sparkystereo_graphics Qt::Quick KF6::CoreAddons KF6::I18n KF6::KCMUtils KF6::KCMUtilsQuick)

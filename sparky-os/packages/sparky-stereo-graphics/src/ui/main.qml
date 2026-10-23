@@ -58,8 +58,12 @@ KCM.SimpleKCM {
                             closable: false
                         }
                         Kirigami.Chip {
-                            visible: modelData.drawsDesktop
-                            text: i18nc("@label", "Draws the desktop")
+                            visible: modelData.drawsDesktop || modelData.runningDesktop
+                            text: modelData.drawsDesktop && modelData.runningDesktop
+                                ? i18nc("@label", "Draws the desktop")
+                                : (modelData.drawsDesktop
+                                    ? i18nc("@label", "Draws the desktop after the next login")
+                                    : i18nc("@label", "Draws this session until the next login"))
                             checkable: false
                             closable: false
                         }
