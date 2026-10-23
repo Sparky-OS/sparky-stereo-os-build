@@ -18,7 +18,7 @@ apt-get -y --no-install-recommends install ninja-build xauth xvfb xwayland dbus 
 useradd --create-home --uid 1000 builder 2>/dev/null
 chown -R builder:builder /t
 cd /t/build
-TARGETS="testMockDrm testMockDrmFrameSequential testVirtualStereo testStereoPair testMockDrmStereoPair testMockDrmDepthStructures testFrameSequential testStereoDownscale testX11Window testDmabufFormatSwitch"
+TARGETS="testStereoOutputRepaint testMockDrm testMockDrmFrameSequential testVirtualStereo testStereoPair testMockDrmStereoPair testMockDrmDepthStructures testFrameSequential testStereoDownscale testX11Window testDmabufFormatSwitch"
 [ "$REUSE" = 1 ] || runuser -u builder -- env HOME=/t sh -c "cmake -G Ninja /work/lc/source -DBUILD_TESTING=ON -DKWIN_BUILD_KCMS=ON -DQTWAYLANDSCANNER_KDE_EXECUTABLE=/usr/lib/qt6/libexec/qtwaylandscanner -DCMAKE_BUILD_TYPE=RelWithDebInfo > /t/cmake.log 2>&1 && nice ninja -j4 $TARGETS > /t/ninja.log 2>&1" || { tail -n 30 /t/cmake.log; tail -n 30 /t/ninja.log; echo BUILD FAILED; exit 1; }
 for t in $TARGETS; do
     # testStereoDownscale opens EGL's default display, which has no platform without a display server

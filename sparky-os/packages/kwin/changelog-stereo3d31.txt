@@ -1,0 +1,23 @@
+kwin (4:6.7.4-2+stereo3d31) unstable; urgency=medium
+
+  * Sparky-OS/kwin stereo3d31 is stereo3d30 plus three commits: the fix of
+    a full-screen stereo window repainting the outputs next to it, the
+    mirror that copies the composed eyes, and the release of the held eyes
+    when the swapchains are replaced.
+  * A full-screen full side by side window no longer damages the output
+    next to it: SurfaceItem::addDamage took the whole buffer, both eyes
+    wide, for the scale of a view, so the damage grew by a pixel into the
+    neighbouring output, which then rendered a frame for every picture of
+    the film while nothing on it changed. A view now scales with one eye's
+    width (s31-0001, with testStereoOutputRepaint).
+  * A mirror of a stereo output copies the two eyes the composing output
+    composed instead of painting the scene again, and then runs its own
+    output layout (frame packing, anaglyph, half side by side or top and
+    bottom, rows, columns, checkerboard, the left eye on a 2D screen),
+    scaled once into the place its view shows the scene. It paints the
+    scene as before for a 2D source, another GPU, a rotated output,
+    another colour space, an ICC profile, frame sequential, a stereo pair of
+    outputs and the picture and depth layouts, and for every output with
+    KWIN_STEREO_REPLICA_COPY=0 (s31-0002).
+  * The eyes held for mirrors are let go when the swapchains are replaced
+    (s31-0003).
