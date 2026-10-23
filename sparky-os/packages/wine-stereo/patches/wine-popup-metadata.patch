@@ -9,7 +9,7 @@ Assisted-by: GPT-6 (Codex)
 
 --- a/dlls/winex11.drv/window.c
 +++ b/dlls/winex11.drv/window.c
-@@ -937,6 +937,55 @@
+@@ -937,6 +937,54 @@
  }
  
  
@@ -55,7 +55,6 @@ Assisted-by: GPT-6 (Codex)
 +        return x11drv_atom(_NET_WM_WINDOW_TYPE_POPUP_MENU);
 +    }
 +    if (!NtUserGetClassName( data->hwnd, FALSE, &name )) return None;
-+    buffer[name.Length / sizeof(WCHAR)] = 0;
 +    if (!wcsicmp( buffer, L"tooltips_class32" )) return x11drv_atom(_NET_WM_WINDOW_TYPE_TOOLTIP);
 +    if (!wcsicmp( buffer, L"ComboLBox" )) return x11drv_atom(_NET_WM_WINDOW_TYPE_COMBO);
 +    return None;
@@ -65,7 +64,7 @@ Assisted-by: GPT-6 (Codex)
  /***********************************************************************
   *              set_style_hints
   */
-@@ -946,7 +995,7 @@
+@@ -946,7 +994,7 @@
      HWND owner = NtUserGetWindowRelative( data->hwnd, GW_OWNER );
      Window owner_win = 0;
      XWMHints *wm_hints;
@@ -74,7 +73,7 @@ Assisted-by: GPT-6 (Codex)
  
      if (owner)
      {
-@@ -959,15 +1008,19 @@
+@@ -959,15 +1007,19 @@
          XSetTransientForHint( data->display, data->whole_window, owner_win );
          group_leader = owner_win;
      }
