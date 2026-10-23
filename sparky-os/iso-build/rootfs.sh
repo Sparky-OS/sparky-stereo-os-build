@@ -89,7 +89,7 @@ if [ "$STEP" = packages ] || [ "$STEP" = all ]; then
 	apt_in install --no-install-recommends sparky-stereo sparky-stereo-languages
 	apt_in install hunspell-de-de hyphen-de mythes-de libreoffice-l10n-de libreoffice-help-de hunspell-en-gb hunspell-en-us hyphen-en-us mythes-en-us libreoffice-help-en-us locales-all
 	echo "== $(date -u +%T) kernels: Debian's signed kernel beside ours; NVIDIA 615 with the edition's open modules"
-	apt_in install linux-image-amd64 nvidia-driver=615.71.09-2 nvidia-kernel-open-dkms-stereo3d
+	apt_in install linux-image-amd64 nvidia-driver=615.71.09-2 nvidia-kernel-open-dkms-stereo3d libnvcuvid1=615.71.09-2 nvidia-vaapi-driver
 	apt_in clean
 fi
 echo "== $(date -u +%T) installed: $(inr dpkg-query -f '${binary:Package}\n' -W | wc -l) packages, $(du -sxh $R | cut -f1)"
