@@ -8,8 +8,9 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 export SPARKY_PACKAGE_IMAGE=$SPARKY_I386_IMAGE BINARY_ONLY=-B
 for package in libplacebo-dmo ffmpeg-dmo; do
- SOURCE_DSC=$(find "$SPARKY_PACKAGE_WORK/out/$package" -maxdepth 1 -name '*.dsc' -printf '%f\n')
- [ "$(printf '%s\n' "$SOURCE_DSC" | wc -l)" = 1 ]
+ dscs=("$SPARKY_PACKAGE_WORK/out/$package"/*.dsc)
+ [ "${#dscs[@]}" = 1 ]
+ SOURCE_DSC=${dscs[0]##*/}
  export SOURCE_DSC
  bash "$here/run-build.sh" "$package" -i386
  python3 "$here/stage.py" "$SPARKY_PACKAGE_WORK" "$package" --job "$package-i386"

@@ -145,10 +145,11 @@ def counters(path):
         with socket.socket(socket.AF_UNIX) as client:
             client.settimeout(.3)
             client.connect(str(path))
-            for i, prop in enumerate(('hwdec-current', 'decoder-frame-drop-count', 'frame-drop-count', 'vo-delayed-frame-count', 'video-params', 'video-out-params')):
+            properties = ('hwdec-current', 'decoder-frame-drop-count', 'frame-drop-count', 'vo-delayed-frame-count', 'video-params', 'video-out-params', 'time-pos', 'estimated-vf-fps', 'estimated-display-fps')
+            for i, prop in enumerate(properties):
                 client.sendall((json.dumps({'command': ['get_property', prop], 'request_id': i})+'\n').encode())
             data = b''
-            while len(result) < 6:
+            while len(result) < len(properties):
                 chunk = client.recv(65536)
                 if not chunk:
                     break
@@ -157,7 +158,7 @@ def counters(path):
                     line, data = data.split(b'\n', 1)
                     reply = json.loads(line)
                     if 'request_id' in reply:
-                        result[str(reply['request_id'])] = reply
+                        result[properties[int(reply['request_id'])]] = reply
     except (OSError, ValueError):
         pass
     return result
@@ -320,8 +321,11 @@ def main():
             p.error('--'+value.replace('_', '-')+' is required with --execute')
     if a.host:
         arguments = sys.argv[1:]
-        index = arguments.index('--host')
-        del arguments[index:index+2]
+        if '--host' in arguments:
+            index = arguments.index('--host')
+            del arguments[index:index+2]
+        else:
+            arguments = [arg for arg in arguments if not arg.startswith('--host=')]
         command = 'python3 - '+shlex.join(arguments)
         subprocess.run(['ssh', '--', a.host, command], input=Path(__file__).read_bytes(), check=True)
     else:
