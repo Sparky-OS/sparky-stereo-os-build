@@ -1,0 +1,31 @@
+From 8471e54f1cb9549544f6dfc0ead5f057f0ae8af1 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 23 Oct 2026 07:11:20 -0300
+Subject: [PATCH] avcodec/decode: clean queried hardware state when choosing
+ software
+
+A get_format callback can call avcodec_get_hw_frames_parameters and then choose a software format. A successful query allocates hwaccel private state, but ff_get_format only cleared it on an error. Frame threaded HEVC decoding then asserted while synchronizing decoder contexts. Uninitialize that state for a successful software choice too. A four-thread CUDA query followed by software selection fails before this change and preserves all 48 source frames after it.
+
+Assisted-by: gpt-6.1-sol via Codex
+---
+ libavcodec/decode.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/libavcodec/decode.c b/libavcodec/decode.c
+index 3f1dfac..0cd8477 100644
+--- a/libavcodec/decode.c
++++ b/libavcodec/decode.c
+@@ -1357,7 +1357,9 @@ int ff_get_format(AVCodecContext *avctx, const enum AVPixelFormat *fmt)
+         --n;
+     }
+ 
+-    if (ret < 0)
++    // The callback may query hardware frame parameters before choosing software.
++    // Such a query can allocate hwaccel state even without initializing it.
++    if (ret < 0 || !(desc->flags & AV_PIX_FMT_FLAG_HWACCEL))
+         ff_hwaccel_uninit(avctx);
+ 
+     av_freep(&choices);
+-- 
+2.53.0
+
