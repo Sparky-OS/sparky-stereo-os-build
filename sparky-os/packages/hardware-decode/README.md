@@ -37,3 +37,18 @@ Run `benchmark.sh` serially after other qualification jobs stop.
 The checker distinguishes strict decoded-frame and downloaded-frame equality from video output presentation cadence, which can repeat or skip pictures.
 It also checks the real VLC Qt interface in an isolated Weston headless session and the native libmpv client default.
 The qualified binaries are diagnostic builds; use the normal package flags, dependencies and release gates for deliverable packages.
+
+GPU routing also belongs to the shared engines.
+The libplacebo patch retains the driver's display preference instead of promoting a discrete GPU over an integrated GPU.
+MLT, Qt Multimedia and VLC use the adjacent `media-gpu-route` library to select a supported decoder on that display GPU before startup where possible.
+The library can select another GPU for a source the display GPU cannot decode at its depth.
+Its runtime must be built first.
+For these three sources, pass `--gpu-route-min-version VERSION` in addition to the FFmpeg floor.
+The preparation helper inserts both the build dependency and the runtime floor.
+For Qt Multimedia it also retains the accepted full side by side Quick surface patch.
+`prepare.py libplacebo-dmo` prepares the library correction for all consumers of libplacebo, including mpv.
+No per-film rule or user configuration file is installed.
+The renderer still owns hardware surface import, copy fallback and transfer to the compositor.
+GL follows the window system's display device; this change does not force a global DRI_PRIME value.
+The routing probes use one fresh private compositor session per case and clear compositor-only device controls before launching clients.
+They measure virtual output presentation and must not be reported as physical connector, HDMI or TV timing proof.
