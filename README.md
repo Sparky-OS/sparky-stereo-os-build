@@ -22,7 +22,7 @@ The edition itself, what it does and how to try it, is presented at [Sparky-OS/s
 | `sparky-os/apt`, `sparky-os/power-idle`, `sparky-os/stereo-oxygen`, `sparky-os/vm`, `sparky-os/tests` | Apt pinning, power and idle defaults, the stereo icon generator, the development VM, edition-wide tests. |
 | `gl-stereo` | The OpenGL stereo layer for programs without stereo of their own. |
 | `openxr`, `stereo-content-test`, `upstream`, `tools` | Open VR stack patches, stereo surface tests, findings and patches for FFmpeg's containers, and development tools (local KDE CI, `proof-pair`, `measure-machine`, `nvkms-query`). |
-| `kwin`, `kscreen`, `libkscreen`, `plasma-wayland-protocols`, `mesa`, `linux`, `open-gpu-kernel-modules`, `egl-wayland`, `kimageformats`, `spectacle` | Our forks, as submodules on their `stereo3d` branches. |
+| `kwin`, `kscreen`, `libkscreen`, `plasma-wayland-protocols`, `mesa`, `linux`, `open-gpu-kernel-modules`, `egl-wayland`, `kimageformats`, `spectacle` | Our forks, as submodules on their `stereo3d` branches; `mesa` on `stereo3d-26.1`, the source of the published Mesa 26.1.6-1+stereo3d14. |
 
 ## Settings
 
