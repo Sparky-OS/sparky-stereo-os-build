@@ -36,7 +36,7 @@ rc=0
 for f in $FLAVOURS; do
     rm -rf /out/$f; mkdir -p /out/$f
     sh /series/apply-series.sh /tmp/src $( [ "$f" = base ] || echo "$f" ) >/out/$f/series.log
-    case "$f" in rt) B=/kernel/config/debian-7.2.9-rt-amd64.config;; *) B=/kernel/config/debian-7.2.9-amd64.config;; esac
+    case "$f" in rt) B=/kernel/config/debian-7.2.11-rt-amd64.config;; *) B=/kernel/config/debian-7.2.11-amd64.config;; esac
     mkdir -p /out/$f/deb-only && cp "$B" /out/$f/deb-only/.config && make -s O=/out/$f/deb-only olddefconfig
     sh /kernel/configure.sh "$f" /out/$f >/out/$f/configure.log 2>&1 || rc=1
     FR="/kernel/config/sparky-stereo.config"; [ -f /kernel/config/flavour-$f.config ] && FR="$FR /kernel/config/flavour-$f.config"

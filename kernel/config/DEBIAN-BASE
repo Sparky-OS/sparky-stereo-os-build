@@ -1,14 +1,20 @@
 The two base configurations in this directory are Debian's own, byte for byte, unpacked from the Debian package
-linux-config-7.2 7.2.9-1 (the amd64 file of that source package):
+linux-config-7.2 7.2.11-1 (the amd64 file of that source package):
 
-  debian-7.2.9-amd64.config      = usr/src/linux-config-7.2/config.amd64_none_amd64.xz      (baseline and v3 flavours)
-      sha256 247d3e6a63e853d87496c1752d6ecb7278e3839bcc3b2277bb7532621864e91f
-  debian-7.2.9-rt-amd64.config   = usr/src/linux-config-7.2/config.amd64_none_rt-amd64.xz   (rt flavour)
-      sha256 1547e1d78ea86c60f62340928f9fb172ee926598f96df00ad00656932ad4aec7
+  debian-7.2.11-amd64.config      = usr/src/linux-config-7.2/config.amd64_none_amd64.xz      (baseline and v3 flavours)
+      xz sha256 05e8040e58c193b8a537081929b33102c2594dced9dd6e0562bf0bf3d5f967f1
+      sha256    34b952865cf82ade4190a65b2fd5311a6ab002fd7260a9a12bff551e82a6ff4e
+  debian-7.2.11-rt-amd64.config   = usr/src/linux-config-7.2/config.amd64_none_rt-amd64.xz   (rt flavour)
+      xz sha256 7a9fc90c7322254c55a2bbb0b043843322a411bbc618a4221d37801ea86b6d9b
+      sha256    4a82f072bb270101f3e6be1b03b51d2f24bb21ce6a6a1c7d051dd93809c336e7
 
-  package   pool/main/l/linux/linux-config-7.2_7.2.9-1_amd64.deb   (Debian unstable on 2026-10-08; testing had 7.2.8-1)
-  sha256    04fdd2602df31676fcd63b34727ee6274c2a2cdc8f076b2676706f9cc2e463a7
-  source    Debian kernel team, https://salsa.debian.org/kernel-team/linux (tag debian/7.2.9-1), GPL-2.0
+  package   pool/main/l/linux/linux-config-7.2_7.2.11-1_amd64.deb   (Debian forky/testing on 2026-10-23)
+  sha256    ab2d34bac7e7959e6be3e8aeb5cc1073643d4f41a941249be2e053f400e5aff4
+  source    Debian kernel team, https://salsa.debian.org/kernel-team/linux (tag debian/7.2.11-1), GPL-2.0
+
+History: build 10 and earlier used linux-config-7.2 7.2.9-1 (xz sha256 247d3e6a63e853d87496c1752d6ecb7278e3839bcc3b2277bb7532621864e91f and 1547e1d78ea86c60f62340928f9fb172ee926598f96df00ad00656932ad4aec7).
+7.2.9 to 7.2.11 changed in Debian's config only: CONFIG_SENSORS_ARCTIC_FAN_CONTROLLER (not set -> m), CONFIG_CRYPTO_SHA512 (m -> y), the new
+"# CONFIG_IMA_DEFAULT_HASH_SHA512 is not set", the new CONFIG_CC_OPT_INLINE_MEMSET (written by the compiler probe) and the rustc version lines.
 
 To move to a newer Debian configuration: unpack the new linux-config-7.x package, replace the two files, run
 kernel/tests/config-proof.sh for every flavour, and read the table it prints (options that stopped holding, options gone

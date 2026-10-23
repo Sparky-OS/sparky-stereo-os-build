@@ -1,6 +1,6 @@
 # The kernel build, and what to check after it
 
-`build-deb.sh` builds the edition's kernel from vanilla Linux at a pinned tag, the patch series in `series/` (one file per change, grouped; `series/series.txt` lists them and says why), Debian's own configuration for the nearest kernel (`config/debian-7.2.9-*.config`, provenance in `config/DEBIAN-BASE`) and the edition's fragment (`config/sparky-stereo.config`, one reason above every option). Three flavours: base (generic x86-64), v3 (x86-64-v3) and rt (PREEMPT_RT). A release name is never reused: `-b BUILD` is a new number every time.
+`build-deb.sh` builds the edition's kernel from vanilla Linux at a pinned tag, the patch series in `series/` (one file per change, grouped; `series/series.txt` lists them and says why), Debian's own configuration for the nearest kernel (`config/debian-7.2.11-*.config`, provenance in `config/DEBIAN-BASE`) and the edition's fragment (`config/sparky-stereo.config`, one reason above every option). Three flavours: base (generic x86-64), v3 (x86-64-v3) and rt (PREEMPT_RT). A release name is never reused: `-b BUILD` is a new number every time.
 
 ```
 kernel/build-deb.sh -b 7                 # base

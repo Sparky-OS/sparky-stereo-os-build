@@ -1,6 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-only
-# The configuration part of kernel/build-deb.sh: Debian's own configuration for the nearest kernel (linux-config-7.2 7.2.9-1),
+# The configuration part of kernel/build-deb.sh: Debian's own configuration for the nearest kernel (linux-config-7.2 7.2.11-1),
 # the edition's fragment on top (kernel/config/sparky-stereo.config, one reason above every option) and, for the v3 and rt
 # flavours, the flavour's fragment; then make olddefconfig. Run from the kernel source root inside the build container.
 #
@@ -13,8 +13,8 @@ F=${1:?usage: configure.sh base|v3|rt [build-dir]}
 B=${2:-.}
 CFG=${CFG:-$(cd "$(dirname "$0")" && pwd)/config}
 case "$F" in
-    base|v3) BASE=$CFG/debian-7.2.9-amd64.config;;
-    rt) BASE=$CFG/debian-7.2.9-rt-amd64.config;;
+    base|v3) BASE=$CFG/debian-7.2.11-amd64.config;;
+    rt) BASE=$CFG/debian-7.2.11-rt-amd64.config;;
     *) echo "configure.sh: unknown flavour $F" >&2; exit 2;;
 esac
 FRAGS="$CFG/sparky-stereo.config"
