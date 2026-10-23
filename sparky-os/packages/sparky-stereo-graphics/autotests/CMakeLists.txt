@@ -27,3 +27,5 @@ target_include_directories(powerprofilestest PRIVATE ../src)
 target_link_libraries(powerprofilestest sparkystereo_graphics Qt::Test Qt::Quick KF6::Service KF6::CoreAddons KF6::I18n KF6::KCMUtils KF6::KCMUtilsQuick)
 add_test(NAME powerprofilestest COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/powerprofiles-test.sh)
 set_tests_properties(powerprofilestest PROPERTIES ENVIRONMENT "BIN=${CMAKE_BINARY_DIR}/bin;SRC=${CMAKE_CURRENT_SOURCE_DIR}/..")
+
+add_test(NAME translationstest COMMAND python3 -I ${CMAKE_CURRENT_SOURCE_DIR}/translations-test.py ${CMAKE_CURRENT_SOURCE_DIR}/../po)

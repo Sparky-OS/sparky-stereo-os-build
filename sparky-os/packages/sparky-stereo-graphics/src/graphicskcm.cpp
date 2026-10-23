@@ -408,7 +408,7 @@ int GraphicsKcm::hiddenApps() const
 QVariantList GraphicsKcm::appOptions() const
 {
     return {
-        QVariantMap{{u"value"_s, int(AppPreference::Unset)}, {u"text"_s, i18nc("@item:inlistbox", "Same as its kind")}},
+        QVariantMap{{u"value"_s, int(AppPreference::Unset)}, {u"text"_s, i18nc("@item:inlistbox", "Same as its group")}},
         QVariantMap{{u"value"_s, int(AppPreference::OtherGpu)}, {u"text"_s, i18nc("@item:inlistbox", "The other GPU")}},
         QVariantMap{{u"value"_s, int(AppPreference::MainGpu)}, {u"text"_s, i18nc("@item:inlistbox", "The main GPU")}},
     };
