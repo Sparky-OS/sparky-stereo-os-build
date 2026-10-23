@@ -1,0 +1,36 @@
+#!/bin/sh
+# Created by Daniel Ramos (Capitain Jack) 2026/10/23
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/23
+# Starts a program on the GPU the Graphics page picked for it:
+#   sparky-stereo-gpu-run [--category players|games|browsers|other | --app ID.desktop] COMMAND [ARGUMENT...]
+# Steam: set the launch options of a game to  sparky-stereo-gpu-run --category games %command%
+# It never stops a program from starting: when the choice cannot be read, the program starts unchanged.
+set -u
+if [ "$#" -eq 0 ]; then
+	echo "Usage: sparky-stereo-gpu-run [--category CATEGORY | --app ID.desktop] COMMAND [ARGUMENT...]" >&2
+	exit 2
+fi
+choice=
+while [ "$#" -gt 0 ]; do
+	case $1 in
+	--category | --app)
+		[ "$#" -ge 2 ] || { echo "sparky-stereo-gpu-run: $1 needs a value" >&2; exit 2; }
+		choice="$1 $2"
+		shift 2
+		;;
+	--)
+		shift
+		break
+		;;
+	*) break ;;
+	esac
+done
+[ "$#" -gt 0 ] || { echo "sparky-stereo-gpu-run: no command" >&2; exit 2; }
+if command -v sparky-stereo-gpu-env >/dev/null 2>&1; then
+	# shellcheck disable=SC2086
+	if gpu_env=$(sparky-stereo-gpu-env --shell $choice 2>/dev/null); then
+		eval "$gpu_env"
+	fi
+fi
+exec "$@"

@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack)
+# SPDX-License-Identifier: GPL-3.0-or-later
+foreach(name gpuinventory settings resolver appentries)
+    add_executable(${name}test ${name}test.cpp fixtures.h)
+    target_include_directories(${name}test PRIVATE ../src)
+    target_link_libraries(${name}test sparkystereo_graphics Qt::Test KF6::Service KF6::ConfigCore KF6::CoreAddons)
+    add_test(NAME ${name}test COMMAND ${name}test)
+endforeach()
+
+add_executable(makefixture makefixture.cpp fixtures.h)
+target_link_libraries(makefixture Qt::Test)
+add_test(NAME clitest COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/cli-test.sh)
+set(PRIMARY_GPU_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/../../sparky-stereo-hardware/share/plasma-env/sparky-stereo-primary-gpu.sh")
+if(NOT EXISTS "${PRIMARY_GPU_SCRIPT}")
+    set(PRIMARY_GPU_SCRIPT "")
+endif()
+set_tests_properties(clitest PROPERTIES ENVIRONMENT "BIN=${CMAKE_BINARY_DIR}/bin;SRC=${CMAKE_CURRENT_SOURCE_DIR}/..;PRIMARY_GPU_SCRIPT=${PRIMARY_GPU_SCRIPT}")
