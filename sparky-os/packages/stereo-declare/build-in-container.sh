@@ -1,6 +1,6 @@
 #!/bin/bash
-# Sparky Stereo OS: stereo-declare 1.4.0-1 from the release commit of libstereo-declare, built with Lean Code.
-# Created by Daniel Ramos (Capitain Jack) 2026/10/22
+# Sparky Stereo OS: stereo-declare 1.5.0-1 from the release commit of libstereo-declare, built with Lean Code.
+# Created by Daniel Ramos (Capitain Jack) 2026/10/22, 1.5.0 on 2026/10/23
 # Copyright 2026 under the GNU GPL3 License
 # Runs inside the Lean Code migration container; build.sh starts it. /work is the job folder, /fork the release clone,
 # /prev the earlier +lc1 builds. The release commit carries debian/ with its changelog entry; the tests run in the build.
@@ -8,10 +8,10 @@ trap 'chown -R 1000:1000 /work' EXIT
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=4
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
-NEWV=1.4.0-1
-REV=002a7bf72662d2c09ab65d8512ca59ca8289db20
-PREFIX=stereo-declare-1.4.0
-ORIG=stereo-declare_1.4.0.orig.tar.xz
+NEWV=1.5.0-1
+REV=8a2e08140a80fee7bfdf129e9257115f4f0495b4
+PREFIX=stereo-declare-1.5.0
+ORIG=stereo-declare_1.5.0.orig.tar.xz
 git config --global safe.directory '*'
 test "$(git -C /fork show "$REV":debian/changelog | head -1)" = "stereo-declare ($NEWV) unstable; urgency=medium"
 mkdir -p /work/plain /work/export && cd /work/plain
