@@ -1,0 +1,42 @@
+Description: kde-stereo-content-v1: the text KWin and stereo-declare carry
+ .
+ KWin's copy of the protocol (src/wayland/protocols/stereo) and
+ libstereo-declare's protocol/ are now one file; this branch had the same
+ version 2 with other line breaks and "The values match" for the one value
+ of the content enum. Take that text, so the three copies are equal byte
+ for byte. No wire change.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://invent.kde.org/danielcamposramos/plasma-wayland-protocols/-/commit/2ee5d4144223753017c6f2202578465e0301da28
+Forwarded: no
+Last-Update: 2026-10-22
+Assisted-by: Claude Opus 5.5
+---
+ src/protocols/kde-stereo-content-v1.xml | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/src/protocols/kde-stereo-content-v1.xml b/src/protocols/kde-stereo-content-v1.xml
+index 8ff2c11..a8f3675 100644
+--- a/src/protocols/kde-stereo-content-v1.xml
++++ b/src/protocols/kde-stereo-content-v1.xml
+@@ -9,9 +9,9 @@
+ <interface name="kde_stereo_content_manager_v1" version="2">
+   <description summary="declare stereo content of surfaces">
+     A program tells the compositor that a surface's picture holds two
+-    views, one per eye, packed full side by side, with the left eye
+-    first. The compositor renders the declared surface once per eye
+-    with that eye's view. The global being present announces support.
++    views, one per eye, packed full side by side, with the left eye first.
++    The compositor renders the declared surface once per eye with that
++    eye's view. The global being present announces support.
+ 
+     Clients may use this protocol to declare stereo content. The version 1
+     wire values are stable; future requests must use a new interface version.
+@@ -65,7 +65,7 @@
+ 
+   <enum name="content">
+     <description summary="full side-by-side packing of the two views">
+-      The values match the X11 property _KDE_NET_WM_STEREO_CONTENT.
++      The value matches the X11 property _KDE_NET_WM_STEREO_CONTENT.
+     </description>
+     <entry name="none" value="0" summary="no stereo content"/>
+     <entry name="side_by_side_full" value="3" summary="side by side, full width per eye, left first"/>

@@ -1,0 +1,15 @@
+plasma-wayland-protocols (1.21.0-1+stereo3d8) unstable; urgency=medium
+
+  * kde-stereo-content-v1 version 3 (s8-0002, f04d76a):
+    kde_stereo_content_manager_v1.get_depth makes a kde_stereo_depth_v1
+    for a surface. Its depth_state event says whether the elements inside
+    the surface may be shown in depth now (the surface is on a stereo
+    output and awake, not one of the windows lying flat behind the active
+    one) and which of its edges touch its output's edge;
+    set_desktop_depth marks the surface's pair as the desktop's own
+    elements drawn once per eye rather than stereo content; set_place and
+    unset_place declare where a popup surface sits, as a fraction of the
+    user's limits. Nothing changes for clients of versions 1 and 2. The
+    contract test checks the new wire values.
+  * The protocol text is the one KWin and libstereo-declare carry, byte for
+    byte (s8-0001, 2ee5d41); no wire change.
