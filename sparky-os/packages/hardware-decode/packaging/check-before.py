@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Check actual published-package routes against the required display GPU default."""
-import argparse,csv
+import argparse,csv,subprocess,sys
 from pathlib import Path
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('work',type=Path)
@@ -26,7 +26,10 @@ for engine in ('mlt','qt','vlc','libmpv'):
         assert all(data[i:i+frame] in source_frames for i in range(0,len(data),frame))
     # Every published route fails the AMD display-device expectation.
     assert formats!={'vaapi'}
-    (root/(engine+'-display-route.exit')).write_text('1\n')
+    assertion=subprocess.run([sys.executable,str(Path(__file__).with_name('route-assert.py')),str(root/(engine+'.trace')),'vaapi'],capture_output=True,text=True)
+    assert assertion.returncode==1,assertion.stdout
+    (root/(engine+'-display-route.log')).write_text(assertion.stdout+assertion.stderr)
+    (root/(engine+'-display-route.exit')).write_text(str(assertion.returncode)+'\n')
     lines.append(f'{engine}: published {formats}; AMD display-route assertion exit 1; source depth and mark retained\n')
 assert (root/'device-choice.exit').read_text().strip()=='1'
 assert (a.work/'final/fallback/before.exit').read_text().strip()=='134'
