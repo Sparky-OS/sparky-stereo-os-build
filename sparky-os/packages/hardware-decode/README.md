@@ -26,3 +26,14 @@ Elsewhere, automatic decoding defaults are each project's choice.
 The small FFmpeg cleanup is independent of the edition and can go upstream separately.
 MLT automatic selection and VLC hardware copy improvements can be proposed independently with the precision and software fallback gates.
 The edition default policy and its package dependencies stay inside Sparky Stereo until the respective projects accept an equivalent policy.
+
+The test components expect `/w` to be an owned container workspace and `/kit` to mount this directory read only.
+Build the probes with `tests/build-probes.sh` against the edition SDK image.
+Generate recorded inputs with `make-fixtures.py`, `extra-fixtures.sh`, `cancel-recorded.sh` and `more-codecs.sh` using the installed edition FFmpeg, whose metadata options create the test declarations.
+Run `before-defaults.sh` separately with the installed modules and libraries, then `qualify-gpu.sh` with the rebuilt codec library and the rebuilt VLC plugin mounted over the installed plugin.
+Set `GPU=amd API=vaapi` with the AMD render node, or `GPU=nvidia API=cuda` with NVIDIA CDI.
+Run `fallback.sh` in the NVIDIA container to record the format-query failure before the FFmpeg fix and the successful software fallback afterward.
+Run `benchmark.sh` serially after other qualification jobs stop.
+The checker distinguishes strict decoded-frame and downloaded-frame equality from video output presentation cadence, which can repeat or skip pictures.
+It also checks the real VLC Qt interface in an isolated Weston headless session and the native libmpv client default.
+The qualified binaries are diagnostic builds; use the normal package flags, dependencies and release gates for deliverable packages.

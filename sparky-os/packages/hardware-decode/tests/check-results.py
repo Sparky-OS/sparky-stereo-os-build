@@ -89,6 +89,9 @@ assert (w/'final/fallback/before.exit').read_text().strip() == '134'
 assert (w/'final/fallback/after.exit').read_text().strip() == '0'
 assert (w/'final/fallback/after.raw').read_bytes() == (w/'final/nvidia/hevc-eyes10-software.raw').read_bytes()
 for gpu in ['amd', 'nvidia']:
+    for engine in ['mpv', 'mlt', 'vlc']:
+        baseline = rows(w/'final/before'/gpu/f'{engine}.trace')
+        assert baseline and all(r[7] == '0' for r in baseline), (gpu, engine, 'baseline')
     for name in names:
         bits = depth(name)
         frames = count(name)
@@ -142,8 +145,20 @@ for gpu in ['amd', 'nvidia']:
             assert 'stereo=sbs2l' in log and 'stereo=sbsl' in log
         else:
             marks(trace, name, 5, 6)
+        gui = rows(w/'final'/f'{gpu}-vlc-qt'/f'{name}.trace')[-frames:]
+        gui_hw = hw and name != 'hevc-eyes12'
+        assert len(gui) == frames and all(int(r[4]) == bits and int(r[7]) == gui_hw for r in gui), (gpu, name, 'VLC Qt GUI')
+        if name.startswith('vp9'):
+            # VLC's native Matroska demuxer carries the container mark in video_format_t.
+            log = (w/'final'/f'{gpu}-vlc-qt'/f'{name}.log').read_text()
+            assert 'multiview 1' in log, (gpu, name, 'VLC container mark')
+        else:
+            marks(gui, name, 5, 6)
         if name.startswith(('mpeg2', 'vp9')):
             continue
+        native = rows(w/'final'/f'{gpu}-libmpv'/f'{name}.trace')[-frames:]
+        assert len(native) == frames and all(int(r[4]) == bits and int(r[7]) == hw for r in native), (gpu, name, 'native libmpv')
+        marks(native, name, 5, 6)
         vlchw = hw and name != 'hevc-eyes12' # VLC 3 has no P012 chroma mapping.
         trace = rows(w/'final'/f'{gpu}-vlc'/f'{name}.trace')[-frames:]
         assert len(trace) == frames and all(int(r[4]) == bits and int(r[7]) == vlchw for r in trace), (gpu, name, 'vlc')
