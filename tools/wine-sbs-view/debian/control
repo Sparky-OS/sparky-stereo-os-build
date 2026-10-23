@@ -1,0 +1,15 @@
+Source: wine-sbs-view
+Section: graphics
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: debhelper-compat (= 13), pkgconf, gettext, libx11-dev, libxcomposite-dev, libxdamage-dev, libstereo-declare-dev (>= 1.4.0)
+Standards-Version: 4.7.4
+Rules-Requires-Root: no
+
+Package: wine-sbs-view
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Native stereo presentation of an explicitly selected X11 image drawable
+ Copy the native left-first side by side drawable into one declared image window
+ without resampling. Stereo KWin presents each eye and leaves the application's
+ original controls in ordinary 2D. Requires the edition's declaration version 6.
