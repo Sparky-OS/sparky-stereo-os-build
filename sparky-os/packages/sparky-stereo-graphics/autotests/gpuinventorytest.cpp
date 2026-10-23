@@ -16,6 +16,7 @@ private Q_SLOTS:
     void hostAmdAndNvidia();
     void bmcCannotRender();
     void threeGpus();
+    void renderNodeWithoutPermission();
     void noGpus();
     void edidName();
     void edidWithoutName();
@@ -116,6 +117,20 @@ void GpuInventoryTest::threeGpus()
     QVERIFY(gpus[2].kind == GpuKind::Discrete);
     QCOMPARE(gpus[2].name, u"AMD Radeon RX 5500/5500M / Pro 5500M"_s);
     QCOMPARE(gpus[2].cardNode, u"/dev/dri/card2"_s);
+}
+
+void GpuInventoryTest::renderNodeWithoutPermission()
+{
+    SysfsFixture fixture;
+    QList<FixtureGpu> machine = SysfsFixture::a10();
+    machine[1].accessible = false;
+    const QList<Gpu> gpus = read(machine, fixture);
+    QVERIFY(gpus[0].accessible);
+    QVERIFY(gpus[0].usable());
+    // the chip can draw, the account may not open it: it is listed, and is not something to send programs to
+    QVERIFY(gpus[1].canRender);
+    QVERIFY(!gpus[1].accessible);
+    QVERIFY(!gpus[1].usable());
 }
 
 void GpuInventoryTest::noGpus()

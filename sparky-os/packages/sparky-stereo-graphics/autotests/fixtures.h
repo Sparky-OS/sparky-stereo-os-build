@@ -30,6 +30,7 @@ struct FixtureGpu {
     bool bootVga = false;
     bool render = true;
     QList<FixtureConnector> connectors;
+    bool accessible = true; // the account may open the render node
 };
 
 inline QByteArray fixtureEdid(const QString &monitor)
@@ -78,6 +79,10 @@ public:
         QDir().mkpath(m_dir.filePath(device + QStringLiteral("/drm/") + card));
         if (gpu.render) {
             QDir().mkpath(m_dir.filePath(device + QStringLiteral("/drm/renderD%1").arg(128 + gpu.card)));
+            // the node itself, so the account's access can be tested
+            const QString node = QStringLiteral("dev/dri/renderD%1").arg(128 + gpu.card);
+            write(node, "");
+            QFile::setPermissions(m_dir.filePath(node), gpu.accessible ? QFileDevice::Permissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner) : QFileDevice::Permissions());
         }
         QDir().mkpath(m_dir.filePath(QStringLiteral("sys/bus/pci/drivers/") + gpu.driver));
         QFile::link(QStringLiteral("../../../../bus/pci/drivers/") + gpu.driver, m_dir.filePath(device + QStringLiteral("/driver")));

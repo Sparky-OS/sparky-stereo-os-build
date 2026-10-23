@@ -8,6 +8,8 @@
 #include <QFileInfo>
 #include <QRegularExpression>
 
+#include <unistd.h>
+
 using namespace Qt::StringLiterals;
 
 namespace SparkyGraphics
@@ -37,6 +39,11 @@ bool Gpu::hasInternalScreen() const
         }
     }
     return false;
+}
+
+bool Gpu::usable() const
+{
+    return canRender && accessible;
 }
 
 QString Gpu::mesaId() const
@@ -196,6 +203,7 @@ QList<Gpu> GpuInventory::read(const QString &root)
         if (!renderNodes.isEmpty()) {
             gpu.renderNode = u"/dev/dri/"_s + renderNodes.first();
             gpu.canRender = true;
+            gpu.accessible = ::access(QFile::encodeName(root + gpu.renderNode).constData(), R_OK | W_OK) == 0;
         }
 
         const PciNames names = lookupPci(root, gpu.vendorId, gpu.deviceId);

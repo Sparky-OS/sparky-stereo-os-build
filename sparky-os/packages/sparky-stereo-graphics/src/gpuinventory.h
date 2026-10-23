@@ -33,11 +33,14 @@ struct Gpu {
     QString renderNode; // "/dev/dri/renderD128", empty when the chip cannot render
     bool bootVga = false;
     bool canRender = false;
+    bool accessible = true; // the person's account may open the render node
     GpuKind kind = GpuKind::Discrete;
     QList<Connector> connectors;
 
     bool hasScreens() const;
     int connectedCount() const;
+    // Can draw and the account may use it: what programs can be sent to
+    bool usable() const;
     bool hasInternalScreen() const;
     // Mesa's spelling of the PCI address for DRI_PRIME, "pci-0000_0b_00_0"
     QString mesaId() const;

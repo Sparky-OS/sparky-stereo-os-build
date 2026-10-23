@@ -199,6 +199,7 @@ QVariantList GraphicsKcm::gpus() const
             {u"drawsDesktop"_s, i == main},
             {u"runningDesktop"_s, i == m_runningMain},
             {u"canRender"_s, gpu.canRender},
+            {u"accessible"_s, gpu.accessible},
             {u"usedText"_s, used.isEmpty() ? QString() : i18nc("@info %1 is a list of kinds of program", "Used now for: %1", used.join(u", "_s))},
         });
     }
@@ -214,7 +215,7 @@ bool GraphicsKcm::multiGpu() const
 {
     int renderers = 0;
     for (const Gpu &gpu : m_gpus) {
-        renderers += gpu.canRender ? 1 : 0;
+        renderers += gpu.usable() ? 1 : 0;
     }
     return renderers > 1;
 }
@@ -274,7 +275,7 @@ QVariantList GraphicsKcm::choiceOptions(const QString &current) const
     bool discrete = false;
     int renderers = 0;
     for (const Gpu &gpu : m_gpus) {
-        if (gpu.canRender) {
+        if (gpu.usable()) {
             ++renderers;
             (gpu.kind == GpuKind::Integrated ? integrated : discrete) = true;
         }
@@ -287,7 +288,7 @@ QVariantList GraphicsKcm::choiceOptions(const QString &current) const
     }
     if (renderers > 2) {
         for (int i = 0; i < m_gpus.size(); ++i) {
-            if (m_gpus.at(i).canRender) {
+            if (m_gpus.at(i).usable()) {
                 options.append(QVariantMap{{u"value"_s, m_gpus.at(i).id}, {u"text"_s, gpuLabel(i)}});
             }
         }

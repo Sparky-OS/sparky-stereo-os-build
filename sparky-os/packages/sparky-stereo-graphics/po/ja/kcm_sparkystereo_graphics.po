@@ -42,96 +42,101 @@ msgstr "デスクトップを描画"
 
 #: src/ui/main.qml:90
 msgctxt "@info"
+msgid "Your account may not use this GPU. Add it to the render group to send programs here."
+msgstr "このアカウントはこのGPUを使えません。ここへプログラムを送るには、アカウントを render グループに追加してください。"
+
+#: src/ui/main.qml:97
+msgctxt "@info"
 msgid "This chip only shows a picture. It cannot draw 3D or decode video, so it is never offered below."
 msgstr "このチップは映像を表示するだけです。3D描画やビデオのデコードはできないため、下の選択肢には表示されません。"
 
-#: src/ui/main.qml:100
+#: src/ui/main.qml:107
 msgctxt "@action:button"
 msgid "Display && Monitor…"
 msgstr "ディスプレイとモニター…"
 
-#: src/ui/main.qml:105
+#: src/ui/main.qml:112
 msgctxt "@action:button"
 msgid "Power Management…"
 msgstr "電源管理…"
 
-#: src/ui/main.qml:116
+#: src/ui/main.qml:123
 msgctxt "@title:group"
 msgid "Main desktop GPU"
 msgstr "デスクトップのメインGPU"
 
-#: src/ui/main.qml:121
+#: src/ui/main.qml:128
 msgctxt "@label:listbox"
 msgid "Draws the desktop:"
 msgstr "デスクトップを描画するGPU:"
 
-#: src/ui/main.qml:139
+#: src/ui/main.qml:146
 msgctxt "@info"
 msgid "The desktop and every window are put together on this GPU. A change applies at the next login."
 msgstr "デスクトップとすべてのウィンドウはこのGPUで合成されます。変更は次回のログインから有効になります。"
 
-#: src/ui/main.qml:140
+#: src/ui/main.qml:147
 msgctxt "@info"
 msgid "There is only one GPU to draw the desktop on."
 msgstr "デスクトップを描画できるGPUは1つだけです。"
 
-#: src/ui/main.qml:148
+#: src/ui/main.qml:155
 msgctxt "@info %1 is a GPU name"
 msgid "This session still draws on %1 until you log in again."
 msgstr "このセッションは、再ログインするまで %1 で描画し続けます。"
 
-#: src/ui/main.qml:149
+#: src/ui/main.qml:156
 msgctxt "@info %1 is a GPU name"
 msgid "This session draws on %1."
 msgstr "このセッションは %1 で描画しています。"
 
-#: src/ui/main.qml:155
+#: src/ui/main.qml:162
 msgctxt "@info"
 msgid "A KWIN_DRM_DEVICES line in your own folder ~/.config/plasma-workspace/env is used instead of this choice."
 msgstr "~/.config/plasma-workspace/env にある独自の KWIN_DRM_DEVICES の行が、この選択の代わりに使われます。"
 
-#: src/ui/main.qml:166
+#: src/ui/main.qml:173
 msgctxt "@title:group"
 msgid "Where programs draw"
 msgstr "プログラムの描画先"
 
-#: src/ui/main.qml:203
+#: src/ui/main.qml:210
 msgctxt "@info"
 msgid "Players follow their choice from the next time they start. For a game in Steam, set its launch options to: sparky-stereo-gpu-run --category games %command%. For any single program, use the list below."
 msgstr "プレーヤーは次回の起動からこの選択に従います。Steam のゲームは、起動オプションに次を設定してください: sparky-stereo-gpu-run --category games %command%。個別のプログラムは下の一覧で設定します。"
 
-#: src/ui/main.qml:214
+#: src/ui/main.qml:221
 msgctxt "@title:group"
 msgid "Programs"
 msgstr "プログラム"
 
-#: src/ui/main.qml:221
+#: src/ui/main.qml:228
 msgctxt "@info"
 msgid "This is the same setting as Run Using Dedicated Graphics in the application menu. The other GPU is the one that does not draw the desktop. A change applies the next time the program starts."
 msgstr "アプリケーションメニューの「専用GPUで実行」と同じ設定です。もう一方のGPUとは、デスクトップを描画していないGPUです。変更は次にそのプログラムを起動したときから有効になります。"
 
-#: src/ui/main.qml:255
+#: src/ui/main.qml:262
 msgctxt "@info %1 is a GPU name"
 msgid "Now: %1. The program asks for this itself."
 msgstr "現在: %1。プログラム自身がこれを要求しています。"
 
-#: src/ui/main.qml:256
+#: src/ui/main.qml:263
 msgctxt "@info %1 is a GPU name"
 msgid "Now: %1"
 msgstr "現在: %1"
 
-#: src/ui/main.qml:277
+#: src/ui/main.qml:284
 msgctxt "@info %1 is a number"
 msgid "%1 more program is not shown. Type part of its name to find it."
 msgid_plural "%1 more programs are not shown. Type part of their name to find them."
 msgstr[0] "他に%1個のプログラムが表示されていません。名前の一部を入力して探してください。"
 
-#: src/ui/main.qml:288
+#: src/ui/main.qml:295
 msgctxt "@title:group"
 msgid "GPU power"
 msgstr "GPUの電力"
 
-#: src/ui/main.qml:295
+#: src/ui/main.qml:302
 msgctxt "@info"
 msgid "These save power when the power profile asks for it. They work for the graphics chip in this computer, with one GPU or several."
 msgstr "電源プロファイルが求めたときに電力を節約します。GPUが1つでも複数でも、このコンピュータのグラフィックスチップに対して働きます。"
@@ -246,67 +251,67 @@ msgctxt "@info %1 is a list of screens"
 msgid "Screens: %1"
 msgstr "画面: %1"
 
-#: src/graphicskcm.cpp:202
+#: src/graphicskcm.cpp:203
 msgctxt "@info %1 is a list of kinds of program"
 msgid "Used now for: %1"
 msgstr "現在の使用先: %1"
 
-#: src/graphicskcm.cpp:241
+#: src/graphicskcm.cpp:242
 msgctxt "@item:inlistbox %1 is a GPU name"
 msgid "Automatic (%1)"
 msgstr "自動 (%1)"
 
-#: src/graphicskcm.cpp:248 src/graphicskcm.cpp:299
+#: src/graphicskcm.cpp:249 src/graphicskcm.cpp:300
 msgctxt "@item:inlistbox %1 is a PCI address"
 msgid "Missing GPU (%1)"
 msgstr "見つからないGPU (%1)"
 
-#: src/graphicskcm.cpp:272
+#: src/graphicskcm.cpp:273
 msgctxt "@item:inlistbox"
 msgid "Automatic"
 msgstr "自動"
 
-#: src/graphicskcm.cpp:283
+#: src/graphicskcm.cpp:284
 msgctxt "@item:inlistbox"
 msgid "Integrated GPU"
 msgstr "内蔵GPU"
 
-#: src/graphicskcm.cpp:286
+#: src/graphicskcm.cpp:287
 msgctxt "@item:inlistbox"
 msgid "Discrete GPU"
 msgstr "専用GPU"
 
-#: src/graphicskcm.cpp:317
+#: src/graphicskcm.cpp:318
 msgctxt "@info %1 is a GPU name, %2 the reason"
 msgid "Now: %1, %2"
 msgstr "現在: %1、%2"
 
-#: src/graphicskcm.cpp:343
+#: src/graphicskcm.cpp:344
 msgctxt "@info"
 msgid "Power profile: Power Saver. Automatic uses the integrated GPU."
 msgstr "電源プロファイル: 省電力。「自動」は内蔵GPUを使います。"
 
-#: src/graphicskcm.cpp:345
+#: src/graphicskcm.cpp:346
 msgctxt "@info"
 msgid "Power profile: Performance. Automatic uses the discrete GPU."
 msgstr "電源プロファイル: パフォーマンス。「自動」は専用GPUを使います。"
 
-#: src/graphicskcm.cpp:349
+#: src/graphicskcm.cpp:350
 msgctxt "@info"
 msgid "Power profile: Balanced. Automatic uses the GPU that draws the desktop."
 msgstr "電源プロファイル: バランス。「自動」はデスクトップを描画するGPUを使います。"
 
-#: src/graphicskcm.cpp:411
+#: src/graphicskcm.cpp:412
 msgctxt "@item:inlistbox"
 msgid "Same as its group"
 msgstr "グループと同じ"
 
-#: src/graphicskcm.cpp:412
+#: src/graphicskcm.cpp:413
 msgctxt "@item:inlistbox"
 msgid "The other GPU"
 msgstr "もう一方のGPU"
 
-#: src/graphicskcm.cpp:413
+#: src/graphicskcm.cpp:414
 msgctxt "@item:inlistbox"
 msgid "The main GPU"
 msgstr "メインGPU"

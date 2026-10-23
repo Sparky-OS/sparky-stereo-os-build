@@ -25,6 +25,7 @@ private Q_SLOTS:
     void oneGpuHasNothingToChoose();
     void noGpu();
     void bmcNeverRendersTheDesktop();
+    void aGpuTheAccountMayNotOpenIsNotOffered();
     void kwinDevices();
     void environments();
     void appPreferences();
@@ -198,6 +199,23 @@ void ResolverTest::bmcNeverRendersTheDesktop()
     QCOMPARE(resolver.resolveChoice(u"integrated"_s).gpuIndex, 1);
     // the chip that cannot render is not chosen even by its id
     QCOMPARE(resolver.resolveChoice(u"pci-0000:04:00.0"_s).gpuIndex, 1);
+}
+
+void ResolverTest::aGpuTheAccountMayNotOpenIsNotOffered()
+{
+    QList<FixtureGpu> machine = SysfsFixture::host();
+    machine[1].accessible = false;
+    Resolver resolver(read(machine), QString(), PowerProfile::Performance);
+    // Performance would send programs to the discrete GPU, which this account cannot open: the main GPU instead
+    const Resolution r = resolver.resolveChoice(u"auto"_s);
+    QCOMPARE(r.gpuIndex, 0);
+    QVERIFY(r.isMain);
+    QCOMPARE(resolver.resolveChoice(u"discrete"_s).gpuIndex, 0);
+    QCOMPARE(resolver.resolveChoice(u"pci-0000:01:00.0"_s).reason, u"only-gpu"_s); // one GPU left to use
+    AppEntry app;
+    app.preference = AppPreference::OtherGpu;
+    GraphicsSettings settings;
+    QCOMPARE(resolver.resolveApp(app, settings).gpuIndex, 0);
 }
 
 void ResolverTest::kwinDevices()

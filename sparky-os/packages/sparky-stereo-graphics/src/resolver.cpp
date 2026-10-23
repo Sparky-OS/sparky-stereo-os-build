@@ -101,7 +101,7 @@ int Resolver::mainIndex() const
 int Resolver::firstOfKind(GpuKind kind) const
 {
     for (int i = 0; i < m_gpus.size(); ++i) {
-        if (m_gpus.at(i).canRender && m_gpus.at(i).kind == kind) {
+        if (m_gpus.at(i).usable() && m_gpus.at(i).kind == kind) {
             return i;
         }
     }
@@ -142,7 +142,7 @@ Resolution Resolver::resolveChoice(const QString &choice) const
     }
     int renderers = 0;
     for (const Gpu &gpu : m_gpus) {
-        renderers += gpu.canRender ? 1 : 0;
+        renderers += gpu.usable() ? 1 : 0;
     }
     if (renderers <= 1) {
         return make(main, u"only-gpu"_s);
@@ -167,7 +167,7 @@ Resolution Resolver::resolveChoice(const QString &choice) const
         index = firstOfKind(GpuKind::Discrete);
     } else {
         index = indexOfId(choice);
-        if (index < 0 || !m_gpus.at(index).canRender) {
+        if (index < 0 || !m_gpus.at(index).usable()) {
             index = -1;
             missing = true;
         }
@@ -199,12 +199,12 @@ Resolution Resolver::resolveApp(const AppEntry &entry, const GraphicsSettings &s
         const GpuKind opposite = m_gpus.at(main).kind == GpuKind::Integrated ? GpuKind::Discrete : GpuKind::Integrated;
         int index = -1;
         for (int i = 0; i < m_gpus.size() && index < 0; ++i) {
-            if (i != main && m_gpus.at(i).canRender && m_gpus.at(i).kind == opposite) {
+            if (i != main && m_gpus.at(i).usable() && m_gpus.at(i).kind == opposite) {
                 index = i;
             }
         }
         for (int i = 0; i < m_gpus.size() && index < 0; ++i) {
-            if (i != main && m_gpus.at(i).canRender) {
+            if (i != main && m_gpus.at(i).usable()) {
                 index = i;
             }
         }

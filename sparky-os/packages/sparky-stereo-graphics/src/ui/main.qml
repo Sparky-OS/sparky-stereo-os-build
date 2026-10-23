@@ -84,6 +84,13 @@ KCM.SimpleKCM {
                         font: Kirigami.Theme.smallFont
                     }
                     QQC2.Label {
+                        visible: modelData.canRender && !modelData.accessible
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                        text: i18nc("@info", "Your account may not use this GPU. Add it to the render group to send programs here.")
+                        font: Kirigami.Theme.smallFont
+                    }
+                    QQC2.Label {
                         visible: !modelData.canRender
                         Layout.fillWidth: true
                         wrapMode: Text.Wrap
