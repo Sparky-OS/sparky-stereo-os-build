@@ -98,7 +98,7 @@ PYTHON
 apt-get -s --allow-downgrades install "${cohort[@]}"
 ```
 
-After Daniel approves the bench installation, the main session repeats that exact transaction without `-s`.
+For its authorized bench installation, the main session repeats that exact transaction without `-s` after checking the simulation.
 For the before phase, use `phase=before` with the retained published packages available, then the same script and film selections.
 APT installs the dependency graph in order; the manual sequence above names the same layers.
 The runtime list does not change the kernel, KWin or GPU drivers during the before/after player comparison.
