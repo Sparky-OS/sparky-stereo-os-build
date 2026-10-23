@@ -44,3 +44,12 @@ Do not call a virtual stereo-content case a physical HDMI frame packing test.
 `prepare-packages.sh` verifies the exact Debian patch stacks and runtime floors against pinned plain sources.
 The diagnostic version suffix in that test is not a release version reservation.
 Run the existing edition packaging and Lean Code qualification pipeline before release.
+
+`capture-clients.py` and `capture.lua` take GPU-rendered screenshots after playback restart, rather than issuing a screenshot before the first frame is ready.
+Run them through the same private KWin fixture for both hybrid display preferences.
+The RGB PNGs preserve 16 bit output and are compared with software decoding by `check-captures.py`.
+Their dimensions follow mpv's screenshot display aspect; they are not a raw handoff raster witness.
+The native decoder checks retain that raster witness.
+`render-table.py WORK` checks GPU identities, decoder APIs, stereo declarations and counters while generating the host matrix table.
+`ROUTE_BEFORE=1` is a test control that loads the installed libplacebo for a before comparison.
+It is never installed as a user configuration setting.
