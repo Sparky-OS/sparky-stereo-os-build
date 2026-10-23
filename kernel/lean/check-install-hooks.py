@@ -4,6 +4,10 @@
 Provide one --packages directory per flavour, with exactly one image archive and
 one non-HR headers archive. Never execute these maintainer scripts on the host.
 The output directory must not exist. This is not a boot or DKMS qualification.
+
+It checks the maintainer scripts of builds 9 and 10 (run-parts loops, INITRD=Yes). From build 11 the image scripts are Debian's
+(linux-run-hooks, linux-update-symlinks, linux-check-removal of linux-base): kernel/tests/maint-scripts-proof.sh runs them for
+real against Debian's own packages instead of recording consumers.
 """
 from pathlib import Path
 import argparse
