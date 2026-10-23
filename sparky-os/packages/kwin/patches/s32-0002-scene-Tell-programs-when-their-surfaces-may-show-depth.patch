@@ -1,0 +1,889 @@
+Description: scene: Tell programs when their surfaces may show depth inside them
+ .
+ StereoDepthStates sends every followed surface its desktop depth state from
+ StereoDepth's own rules whenever it may have changed: a window activated,
+ raised, moved, pinned, minimized or put on another output, an output switched
+ into or out of a 3D mode, a surface newly followed.
+ .
+ - StereoDepth::isAwake(): the window is shown on a stereo output and is the
+   active window on top of what it overlaps, what pops up, a panel, the
+   desktop, a window pinned above the others, or an active fullscreen window;
+   a window in the pile behind the active one, or pinned below, lies flat.
+ - StereoDepth::outputEdges(): the edges of the window's frame on its output's
+   edge.
+ - A popup's declared place is its level, under the rules popups already
+   follow: at the output's edge it stays at the screen, and it is never behind
+   the popup it was opened from. It takes no share of the popped limit. A
+   window that is not a popup keeps its place in the stack.
+ - A pair marked as the desktop's own depth is still drawn per eye, but
+   Window::holdsStereoContent() leaves it out: it is not 3D content for the
+   automatic 3D mode switch, stereo screenshots or the depth estimator.
+ .
+ testStereoDepthExchange covers each of these from a client.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://invent.kde.org/danielcamposramos/kwin/-/commit/2353e638ae4af51b5111718d9ed46ab1e6cbf3d6
+Forwarded: no
+Last-Update: 2026-10-23
+Assisted-by: Claude Opus 5.5
+---
+ autotests/integration/CMakeLists.txt          |   1 +
+ autotests/integration/kwin_wayland_test.h     |  20 +
+ .../stereo_depth_exchange_test.cpp            | 414 ++++++++++++++++++
+ autotests/integration/test_helpers.cpp        |  18 +
+ src/CMakeLists.txt                            |   1 +
+ src/scene/stereodepth.cpp                     |  76 +++-
+ src/scene/stereodepth.h                       |  14 +
+ src/scene/stereodepthstates.cpp               | 102 +++++
+ src/scene/stereodepthstates.h                 |  37 ++
+ src/wayland_server.cpp                        |   6 +-
+ src/window.cpp                                |   6 +-
+ 11 files changed, 682 insertions(+), 13 deletions(-)
+ create mode 100644 autotests/integration/stereo_depth_exchange_test.cpp
+ create mode 100644 src/scene/stereodepthstates.cpp
+ create mode 100644 src/scene/stereodepthstates.h
+
+diff --git a/autotests/integration/CMakeLists.txt b/autotests/integration/CMakeLists.txt
+index e7a82fe1ec..081330680b 100644
+--- a/autotests/integration/CMakeLists.txt
++++ b/autotests/integration/CMakeLists.txt
+@@ -162,6 +162,7 @@ integrationTest(NAME testMouseActions SRCS mouseactions_test.cpp LIBS)
+ integrationTest(NAME testColorManagement SRCS test_colormanagement.cpp)
+ integrationTest(NAME testAlphaModifier SRCS alpha_modifier_test.cpp)
+ integrationTest(NAME testStereoContent SRCS stereo_content_test.cpp)
++integrationTest(NAME testStereoDepthExchange SRCS stereo_depth_exchange_test.cpp)
+ integrationTest(NAME testScreenshotStereo SRCS screenshot_stereo_test.cpp LIBS screenshot_test_support)
+ integrationTest(NAME testStereoDepthPinned SRCS stereo_depth_pinned_test.cpp LIBS screenshot_test_support)
+ integrationTest(NAME testStereoDepthPopups SRCS stereo_depth_popups_test.cpp LIBS screenshot_test_support)
+diff --git a/autotests/integration/kwin_wayland_test.h b/autotests/integration/kwin_wayland_test.h
+index 1036448024..36823bf24d 100644
+--- a/autotests/integration/kwin_wayland_test.h
++++ b/autotests/integration/kwin_wayland_test.h
+@@ -1072,6 +1072,26 @@ public:
+     ~StereoContentV1() override;
+ };
+ 
++class StereoDepthV1 : public QObject, public QtWayland::kde_stereo_depth_v1
++{
++    Q_OBJECT
++
++public:
++    explicit StereoDepthV1(::kde_stereo_depth_v1 *object);
++    ~StereoDepthV1() override;
++
++    // the last depth_state, and how many arrived
++    bool awake = false;
++    uint32_t outputEdges = 0;
++    int states = 0;
++
++Q_SIGNALS:
++    void stateReceived();
++
++protected:
++    void kde_stereo_depth_v1_depth_state(uint32_t awake, uint32_t output_edges) override;
++};
++
+ class WlKeyboard;
+ class WlPointer;
+ class WlTouch;
+diff --git a/autotests/integration/stereo_depth_exchange_test.cpp b/autotests/integration/stereo_depth_exchange_test.cpp
+new file mode 100644
+index 0000000000..bc54b88d9b
+--- /dev/null
++++ b/autotests/integration/stereo_depth_exchange_test.cpp
+@@ -0,0 +1,414 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++    SPDX-License-Identifier: GPL-2.0-or-later
++*/
++
++#include "kwin_wayland_test.h"
++
++#include "core/output.h"
++#include "core/outputconfiguration.h"
++#include "effect/globals.h"
++#include "options.h"
++#include "pointer_input.h"
++#include "scene/stereodepth.h"
++#include "wayland/surface.h"
++#include "wayland_server.h"
++#include "window.h"
++#include "workspace.h"
++
++#include <KWayland/Client/surface.h>
++
++#include <functional>
++
++namespace KWin
++{
++
++/**
++ * kde_stereo_depth_v1: a program follows a surface's desktop depth. Stereo KWin says whether the
++ * elements drawn inside the surface may be shown in depth now (awake, on a stereo output) and which
++ * of its edges lie on its output's edge; the program marks its pair as the desktop's own depth and
++ * declares where its popups sit.
++ */
++class StereoDepthExchangeTest : public QObject
++{
++    Q_OBJECT
++
++private Q_SLOTS:
++    void initTestCase();
++    void init();
++    void cleanup();
++
++    void testActiveWindowIsAwake();
++    void testPileIsAsleep();
++    void testTwoDimensionalOutputIsAsleep();
++    void testOutputEdges();
++    void testFollowedBeforeShown();
++    void testManyFollowers();
++    void testPopupIsAwake();
++    void testDesktopDepthIsNotStereoContent();
++    void testDeclaredPlace();
++    void testInertWithoutSurface();
++};
++
++static const QSize s_outputSize(1280, 1024);
++
++static OutputModeline plainMode()
++{
++    return OutputModeline(s_outputSize, 60000, OutputModeline::Flag::Preferred);
++}
++
++static OutputModeline stereoMode()
++{
++    return OutputModeline(s_outputSize, 60000, OutputModeline::Flag::Stereo3DSideBySideFull);
++}
++
++static bool stereoOutput(bool enabled)
++{
++    OutputConfiguration configuration;
++    configuration.changeSet(workspace()->outputs().front()->backendOutput())->currentMode = enabled ? stereoMode() : plainMode();
++    workspace()->applyOutputConfiguration(configuration);
++    return Test::waylandSync() && workspace()->outputs().front()->hasStereoEyes() == enabled;
++}
++
++struct TestWindow
++{
++    std::unique_ptr<KWayland::Client::Surface> surface;
++    std::unique_ptr<Test::XdgToplevel> toplevel;
++    std::unique_ptr<Test::XdgPopup> popup;
++    Window *window = nullptr;
++};
++
++static std::unique_ptr<TestWindow> createWindow(const QPointF &position, const QSize &size = QSize(100, 50))
++{
++    auto result = std::make_unique<TestWindow>();
++    result->surface = Test::createSurface();
++    result->toplevel = Test::createXdgToplevelSurface(result->surface.get());
++    result->window = Test::renderAndWaitForShown(result->surface.get(), size, Qt::blue);
++    if (result->window) {
++        result->window->move(position);
++    }
++    return result;
++}
++
++static std::unique_ptr<TestWindow> createPopup(Test::XdgSurface *parent, const QPoint &position, const QSize &size = QSize(60, 60))
++{
++    auto result = std::make_unique<TestWindow>();
++    result->surface = Test::createSurface();
++    std::unique_ptr<Test::XdgPositioner> positioner(Test::createXdgPositioner());
++    positioner->set_size(size.width(), size.height());
++    positioner->set_anchor_rect(position.x(), position.y(), 1, 1);
++    positioner->set_anchor(Test::XdgPositioner::anchor_top_left);
++    positioner->set_gravity(Test::XdgPositioner::gravity_bottom_right);
++    result->popup = Test::createXdgPopupSurface(result->surface.get(), parent, positioner.get());
++    result->window = Test::renderAndWaitForShown(result->surface.get(), size, Qt::green);
++    return result;
++}
++
++// KWin flushes what it sends to clients when its event loop is about to block, so the wait runs
++// an event loop rather than polling.
++static bool waitFor(Test::StereoDepthV1 *depth, const std::function<bool()> &condition)
++{
++    for (int i = 0; i < 20 && !condition(); ++i) {
++        QSignalSpy received(depth, &Test::StereoDepthV1::stateReceived);
++        received.wait(250);
++    }
++    return condition();
++}
++
++static std::unique_ptr<Test::StereoDepthV1> follow(KWayland::Client::Surface *surface)
++{
++    return std::make_unique<Test::StereoDepthV1>(Test::stereoContentManager()->get_depth(*surface));
++}
++
++static bool commit(KWayland::Client::Surface *surface, Window *window)
++{
++    QSignalSpy committed(window->surface(), &SurfaceInterface::committed);
++    surface->commit(KWayland::Client::Surface::CommitFlag::None);
++    return committed.wait();
++}
++
++void StereoDepthExchangeTest::initTestCase()
++{
++    qRegisterMetaType<Window *>();
++    QVERIFY(waylandServer()->init(qAppName()));
++    kwinApp()->start();
++}
++
++void StereoDepthExchangeTest::init()
++{
++    Test::setOutputConfig({Test::OutputInfo{
++        .geometry = Rect(QPoint(), s_outputSize),
++        .modes = {plainMode(), stereoMode()},
++    }});
++    QVERIFY(Test::setupWaylandConnection(Test::AdditionalWaylandInterface::StereoContentV1));
++    QCOMPARE(Test::stereoContentManager()->version(), 3u);
++    QVERIFY(stereoOutput(true));
++    options->setStereoSunkLimit(10);
++    options->setStereoPoppedLimit(4);
++    workspace()->setActiveOutput(QPoint(640, 512));
++    input()->pointer()->warp(QPoint(640, 512));
++}
++
++void StereoDepthExchangeTest::cleanup()
++{
++    Test::destroyWaylandConnection();
++    QTRY_VERIFY(workspace()->windows().isEmpty());
++}
++
++// The active window on a stereo output may show depth inside it, away from the output's edges.
++void StereoDepthExchangeTest::testActiveWindowIsAwake()
++{
++    auto window = createWindow(QPointF(100, 100));
++    QVERIFY(window->window);
++    QCOMPARE(workspace()->activeWindow(), window->window);
++
++    auto depth = follow(window->surface.get());
++    QVERIFY(waitFor(depth.get(), [&] {
++        return depth->states >= 1;
++    }));
++    QVERIFY(depth->awake);
++    QCOMPARE(depth->outputEdges, 0u);
++    QVERIFY(StereoDepth::isAwake(window->window));
++}
++
++// A window falling behind the active one lies flat in the pile, and wakes when it comes back.
++void StereoDepthExchangeTest::testPileIsAsleep()
++{
++    auto first = createWindow(QPointF(100, 100));
++    QVERIFY(first->window);
++    auto firstDepth = follow(first->surface.get());
++    QVERIFY(waitFor(firstDepth.get(), [&] {
++        return firstDepth->awake;
++    }));
++
++    auto second = createWindow(QPointF(400, 400));
++    QVERIFY(second->window);
++    QCOMPARE(workspace()->activeWindow(), second->window);
++    auto secondDepth = follow(second->surface.get());
++    QVERIFY(waitFor(secondDepth.get(), [&] {
++        return secondDepth->awake;
++    }));
++    QVERIFY(waitFor(firstDepth.get(), [&] {
++        return !firstDepth->awake;
++    }));
++
++    workspace()->activateWindow(first->window);
++    workspace()->raiseWindow(first->window);
++    QVERIFY(waitFor(firstDepth.get(), [&] {
++        return firstDepth->awake;
++    }));
++    QVERIFY(waitFor(secondDepth.get(), [&] {
++        return !secondDepth->awake;
++    }));
++}
++
++// On a 2D output nothing shows depth inside it.
++void StereoDepthExchangeTest::testTwoDimensionalOutputIsAsleep()
++{
++    auto window = createWindow(QPointF(100, 100));
++    QVERIFY(window->window);
++    auto depth = follow(window->surface.get());
++    QVERIFY(waitFor(depth.get(), [&] {
++        return depth->awake;
++    }));
++
++    QVERIFY(stereoOutput(false));
++    QVERIFY(waitFor(depth.get(), [&] {
++        return !depth->awake;
++    }));
++    QVERIFY(!StereoDepth::isAwake(window->window));
++
++    QVERIFY(stereoOutput(true));
++    QVERIFY(waitFor(depth.get(), [&] {
++        return depth->awake;
++    }));
++}
++
++// The edges of the frame that touch the output's edges, which change as the window moves.
++void StereoDepthExchangeTest::testOutputEdges()
++{
++    auto window = createWindow(QPointF(100, 100));
++    QVERIFY(window->window);
++    auto depth = follow(window->surface.get());
++    QVERIFY(waitFor(depth.get(), [&] {
++        return depth->states >= 1;
++    }));
++    QCOMPARE(depth->outputEdges, 0u);
++
++    window->window->move(QPointF(0, 0));
++    QVERIFY(waitFor(depth.get(), [&] {
++        return depth->outputEdges == uint32_t(Test::StereoDepthV1::edge_left | Test::StereoDepthV1::edge_top);
++    }));
++    QCOMPARE(StereoDepth::outputEdges(window->window), Qt::LeftEdge | Qt::TopEdge);
++
++    window->window->move(QPointF(s_outputSize.width() - 100, s_outputSize.height() - 50));
++    QVERIFY(waitFor(depth.get(), [&] {
++        return depth->outputEdges == uint32_t(Test::StereoDepthV1::edge_right | Test::StereoDepthV1::edge_bottom);
++    }));
++
++    // Only changes are sent.
++    const int states = depth->states;
++    window->window->move(QPointF(s_outputSize.width() - 100, s_outputSize.height() - 50));
++    QVERIFY(Test::waylandSync());
++    QCOMPARE(depth->states, states);
++}
++
++// A surface followed before its window is shown hears once it is.
++void StereoDepthExchangeTest::testFollowedBeforeShown()
++{
++    std::unique_ptr<KWayland::Client::Surface> surface = Test::createSurface();
++    auto depth = follow(surface.get());
++    QVERIFY(Test::waylandSync());
++    QCOMPARE(depth->states, 0);
++
++    auto toplevel = Test::createXdgToplevelSurface(surface.get());
++    Window *window = Test::renderAndWaitForShown(surface.get(), QSize(100, 50), Qt::blue);
++    QVERIFY(window);
++    QVERIFY(waitFor(depth.get(), [&] {
++        return depth->states >= 1;
++    }));
++    QVERIFY(depth->awake);
++}
++
++// A toolkit and its style may follow the same surface; each hears the same, a late one at once.
++void StereoDepthExchangeTest::testManyFollowers()
++{
++    auto window = createWindow(QPointF(100, 100));
++    QVERIFY(window->window);
++    auto first = follow(window->surface.get());
++    auto second = follow(window->surface.get());
++    QVERIFY(waitFor(first.get(), [&] {
++        return first->states >= 1 && second->states >= 1;
++    }));
++    QVERIFY(first->awake && second->awake);
++
++    auto late = follow(window->surface.get());
++    QVERIFY(Test::waylandSync());
++    QCOMPARE(late->states, 1);
++    QVERIFY(late->awake);
++}
++
++// What pops up over the active window is awake.
++void StereoDepthExchangeTest::testPopupIsAwake()
++{
++    auto parent = createWindow(QPointF(100, 100), QSize(300, 300));
++    QVERIFY(parent->window);
++    auto popup = createPopup(parent->toplevel->xdgSurface(), QPoint(50, 50));
++    QVERIFY(popup->window);
++    QVERIFY(popup->window->isPopupWindow());
++
++    auto depth = follow(popup->surface.get());
++    QVERIFY(waitFor(depth.get(), [&] {
++        return depth->states >= 1;
++    }));
++    QVERIFY(depth->awake);
++}
++
++// A pair the program marks as the desktop's own depth is still drawn per eye, but is not stereo
++// content; the mark is the surface's while any of its objects sets it, and goes with the object.
++void StereoDepthExchangeTest::testDesktopDepthIsNotStereoContent()
++{
++    auto window = createWindow(QPointF(100, 100));
++    QVERIFY(window->window);
++    auto declaration = std::make_unique<Test::StereoContentV1>(Test::stereoContentManager()->create(*window->surface));
++    declaration->set_content(Test::StereoContentV1::content_side_by_side_full);
++    QVERIFY(commit(window->surface.get(), window->window));
++    QVERIFY(window->window->holdsStereoContent());
++
++    auto marking = follow(window->surface.get());
++    auto other = follow(window->surface.get());
++    marking->set_desktop_depth(1);
++    QVERIFY(Test::waylandSync());
++    // double-buffered
++    QVERIFY(!window->window->surface()->isStereoDesktopDepth());
++    QSignalSpy depthChanged(window->window->surface(), &SurfaceInterface::stereoDepthChanged);
++    QVERIFY(commit(window->surface.get(), window->window));
++    QCOMPARE(depthChanged.count(), 1);
++    QVERIFY(window->window->surface()->isStereoDesktopDepth());
++    QVERIFY(!window->window->holdsStereoContent());
++    // still drawn as a pair
++    QCOMPARE(window->window->surface()->stereoContent(), StereoContentSideBySideFull);
++    QCOMPARE(window->window->stereoContent(), StereoContentSideBySideFull);
++
++    // another object that does not mark it leaves the mark
++    other->set_desktop_depth(0);
++    QVERIFY(commit(window->surface.get(), window->window));
++    QVERIFY(window->window->surface()->isStereoDesktopDepth());
++
++    // the mark goes with the object that set it
++    marking.reset();
++    QVERIFY(commit(window->surface.get(), window->window));
++    QVERIFY(!window->window->surface()->isStereoDesktopDepth());
++    QVERIFY(window->window->holdsStereoContent());
++}
++
++// A popup's declared place, under KWin's rules: never behind the popup it was opened from, and
++// nothing for a window that is not a popup.
++void StereoDepthExchangeTest::testDeclaredPlace()
++{
++    auto parent = createWindow(QPointF(100, 100), QSize(400, 400));
++    QVERIFY(parent->window);
++    auto menu = createPopup(parent->toplevel->xdgSurface(), QPoint(50, 50));
++    QVERIFY(menu->window);
++    QCOMPARE(StereoDepth::level(menu->window), 1.0);
++
++    auto menuDepth = follow(menu->surface.get());
++    menuDepth->set_place(wl_fixed_from_double(0.5));
++    QVERIFY(commit(menu->surface.get(), menu->window));
++    QCOMPARE(menu->window->surface()->stereoPlace(), 0.5);
++    QCOMPARE(StereoDepth::level(menu->window), 0.5);
++    QCOMPARE(StereoDepth::levelDepth(menu->window), 2.0);
++
++    // a sub-menu declared behind it stays at its level
++    auto subMenu = createPopup(menu->popup->xdgSurface(), QPoint(30, 30));
++    QVERIFY(subMenu->window);
++    auto subMenuDepth = follow(subMenu->surface.get());
++    subMenuDepth->set_place(wl_fixed_from_double(-1.0));
++    QVERIFY(commit(subMenu->surface.get(), subMenu->window));
++    QCOMPARE(StereoDepth::level(subMenu->window), 0.5);
++
++    // beyond the range is limited to it
++    subMenuDepth->set_place(wl_fixed_from_double(3.0));
++    QVERIFY(commit(subMenu->surface.get(), subMenu->window));
++    QCOMPARE(subMenu->window->surface()->stereoPlace(), 1.0);
++    QCOMPARE(StereoDepth::level(subMenu->window), 1.0);
++
++    // withdrawn, the menu takes a share of the popped limit again, the only popup without a place
++    menuDepth->unset_place();
++    QVERIFY(commit(menu->surface.get(), menu->window));
++    QVERIFY(!menu->window->surface()->stereoPlace());
++    QCOMPARE(StereoDepth::level(menu->window), 1.0);
++
++    // a window that is not a popup keeps its place in the stack
++    auto parentDepth = follow(parent->surface.get());
++    parentDepth->set_place(wl_fixed_from_double(1.0));
++    QVERIFY(commit(parent->surface.get(), parent->window));
++    QCOMPARE(StereoDepth::level(parent->window), 0.0);
++}
++
++// Once its surface is gone, an object's requests are ignored.
++void StereoDepthExchangeTest::testInertWithoutSurface()
++{
++    auto window = createWindow(QPointF(100, 100));
++    QVERIFY(window->window);
++    auto depth = follow(window->surface.get());
++    QVERIFY(waitFor(depth.get(), [&] {
++        return depth->states >= 1;
++    }));
++
++    window->toplevel.reset();
++    window->surface.reset();
++    QVERIFY(Test::waylandSync());
++    depth->set_desktop_depth(1);
++    depth->set_place(wl_fixed_from_double(0.5));
++    depth->unset_place();
++    QVERIFY(Test::waylandSync());
++    depth.reset();
++    QVERIFY(Test::waylandSync());
++}
++
++}
++
++WAYLANDTEST_MAIN(KWin::StereoDepthExchangeTest)
++#include "stereo_depth_exchange_test.moc"
+diff --git a/autotests/integration/test_helpers.cpp b/autotests/integration/test_helpers.cpp
+index b92a9c60d2..705fdf594b 100644
+--- a/autotests/integration/test_helpers.cpp
++++ b/autotests/integration/test_helpers.cpp
+@@ -2050,6 +2050,24 @@ StereoContentV1::~StereoContentV1()
+     destroy();
+ }
+ 
++StereoDepthV1::StereoDepthV1(::kde_stereo_depth_v1 *object)
++    : QtWayland::kde_stereo_depth_v1(object)
++{
++}
++
++StereoDepthV1::~StereoDepthV1()
++{
++    destroy();
++}
++
++void StereoDepthV1::kde_stereo_depth_v1_depth_state(uint32_t awake, uint32_t output_edges)
++{
++    this->awake = awake != 0;
++    outputEdges = output_edges;
++    states++;
++    Q_EMIT stateReceived();
++}
++
+ FifoManagerV1::FifoManagerV1(::wl_registry *registry, uint32_t id, int version)
+     : QtWayland::wp_fifo_manager_v1(registry, id, version)
+ {
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 51f438f1a8..2a2ab7a5c9 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -191,6 +191,7 @@ target_sources(kwin PRIVATE
+     scene/scene.cpp
+     scene/shadowitem.cpp
+     scene/stereodepth.cpp
++    scene/stereodepthstates.cpp
+     scene/stereodepthestimator.cpp
+     scene/surfaceitem.cpp
+     scene/surfaceitem_internal.cpp
+diff --git a/src/scene/stereodepth.cpp b/src/scene/stereodepth.cpp
+index 3f210a4326..02319fcbfa 100644
+--- a/src/scene/stereodepth.cpp
++++ b/src/scene/stereodepth.cpp
+@@ -9,6 +9,7 @@
+ #include "core/output.h"
+ #include "effect/effecthandler.h"
+ #include "options.h"
++#include "wayland/surface.h"
+ #include "window.h"
+ #include "workspace.h"
+ 
+@@ -111,6 +112,13 @@ static Role roleOf(const Window *window)
+     return active && mainWindow(active) == window && !isCovered(window) ? Role::Active : Role::Sunk;
+ }
+ 
++// where the program declared a popup sits (kde_stereo_depth_v1.set_place), from -1 to 1
++static std::optional<qreal> declaredPlace(const Window *window)
++{
++    const SurfaceInterface *surface = window->surface();
++    return surface ? surface->stereoPlace() : std::nullopt;
++}
++
+ static bool touchesEdge(const Window *window)
+ {
+     const RectF frame = window->frameGeometry();
+@@ -151,18 +159,25 @@ qreal StereoDepth::level(const Window *window)
+         if (touchesEdge(window)) {
+             return 0;
+         }
+-        // the popped limit is shared by what is popped over each other, the topmost at the limit
+-        int count = 0;
+-        int below = 0;
+-        bool found = false;
+-        for (const Window *other : stack) {
+-            if (isOnStage(other, output) && roleOf(other) == Role::Popped && !touchesEdge(other)) {
+-                count++;
+-                found |= other == window;
+-                below += !found;
++        qreal level = 1;
++        if (const auto place = declaredPlace(window)) {
++            // where the program declared it, under the rules below
++            level = std::clamp(*place, -1.0, 1.0);
++        } else {
++            // the popped limit is shared by what is popped over each other, the topmost at the
++            // limit; a popup with a declared place takes no share
++            int count = 0;
++            int below = 0;
++            bool found = false;
++            for (const Window *other : stack) {
++                if (isOnStage(other, output) && roleOf(other) == Role::Popped && !touchesEdge(other) && !declaredPlace(other)) {
++                    count++;
++                    found |= other == window;
++                    below += !found;
++                }
+             }
++            level = found ? qreal(below + 1) / count : 1;
+         }
+-        qreal level = found ? qreal(below + 1) / count : 1;
+         // nor behind what its own window popped up before it, which it was opened from: a sub-menu
+         // that ends up under its menu shares the menu's level
+         const Window *main = mainWindow(window);
+@@ -194,6 +209,47 @@ qreal StereoDepth::level(const Window *window)
+     return 0;
+ }
+ 
++bool StereoDepth::isAwake(const Window *window)
++{
++    const LogicalOutput *output = window->output();
++    if (!output || !output->hasStereoEyes() || !isOnStage(window, output)) {
++        return false;
++    }
++    switch (roleOf(window)) {
++    case Role::Active:
++    case Role::Popped:
++    case Role::Above:
++    case Role::Desktop:
++        return true;
++    case Role::Fixed: {
++        // a panel is never in the pile; a fullscreen window is awake while it is the active one
++        const Window *active = workspace()->activeWindow();
++        return window->isDock() || window->isLockScreen() || window->isInternal()
++            || (window->isFullScreen() && active && mainWindow(active) == mainWindow(window));
++    }
++    case Role::Sunk:
++    case Role::Below:
++        return false;
++    }
++    return false;
++}
++
++Qt::Edges StereoDepth::outputEdges(const Window *window)
++{
++    const LogicalOutput *output = window->output();
++    if (!output) {
++        return Qt::Edges();
++    }
++    const RectF frame = window->frameGeometry();
++    const RectF screen = output->geometryF();
++    Qt::Edges edges;
++    edges.setFlag(Qt::LeftEdge, frame.x() <= screen.x());
++    edges.setFlag(Qt::TopEdge, frame.y() <= screen.y());
++    edges.setFlag(Qt::RightEdge, frame.x() + frame.width() >= screen.x() + screen.width());
++    edges.setFlag(Qt::BottomEdge, frame.y() + frame.height() >= screen.y() + screen.height());
++    return edges;
++}
++
+ int StereoDepth::parallax(const Window *window, int viewWidth)
+ {
+     return parallax(levelDepth(window), viewWidth);
+diff --git a/src/scene/stereodepth.h b/src/scene/stereodepth.h
+index 07484187ff..21e7b753d7 100644
+--- a/src/scene/stereodepth.h
++++ b/src/scene/stereodepth.h
+@@ -84,6 +84,20 @@ public:
+ 
+     static qreal level(const Window *window);
+ 
++    /**
++     * Whether the elements a program draws inside @a window may be shown in depth now: the window
++     * is shown on a stereo output and awake, as the active window on top of what it overlaps, what
++     * pops up, a panel, the desktop or a window pinned above the others are, rather than lying flat
++     * in the pile behind the active window (kde_stereo_depth_v1.depth_state).
++     */
++    static bool isAwake(const Window *window);
++
++    /**
++     * The edges of @a window's frame that lie on an edge of its output. A popped thing touching
++     * them stays at the screen's level.
++     */
++    static Qt::Edges outputEdges(const Window *window);
++
+     /**
+      * Whether effects may use depth: either of the effects' limits is above zero. Effects
+      * describe their motion in depth with a z in pixels of a view 1920 wide, the unit of the
+diff --git a/src/scene/stereodepthstates.cpp b/src/scene/stereodepthstates.cpp
+new file mode 100644
+index 0000000000..6e49f00403
+--- /dev/null
++++ b/src/scene/stereodepthstates.cpp
+@@ -0,0 +1,102 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++    SPDX-License-Identifier: GPL-2.0-or-later
++*/
++
++#include "scene/stereodepthstates.h"
++
++#include "core/backendoutput.h"
++#include "core/output.h"
++#include "scene/stereodepth.h"
++#include "wayland/surface.h"
++#include "window.h"
++#include "workspace.h"
++
++namespace KWin
++{
++
++StereoDepthStates::StereoDepthStates(QObject *parent)
++    : QObject(parent)
++{
++    Workspace *ws = workspace();
++    connect(ws, &Workspace::windowAdded, this, [this](Window *window) {
++        watch(window);
++        scheduleUpdate();
++    });
++    connect(ws, &Workspace::windowRemoved, this, &StereoDepthStates::scheduleUpdate);
++    connect(ws, &Workspace::windowActivated, this, &StereoDepthStates::scheduleUpdate);
++    connect(ws, &Workspace::stackingOrderChanged, this, &StereoDepthStates::scheduleUpdate);
++    connect(ws, &Workspace::currentDesktopChanged, this, &StereoDepthStates::scheduleUpdate);
++    connect(ws, &Workspace::currentActivityChanged, this, &StereoDepthStates::scheduleUpdate);
++    // an output switched into or out of a 3D mode
++    auto watchOutput = [this](LogicalOutput *output) {
++        connect(output->backendOutput(), &BackendOutput::changed, this, &StereoDepthStates::scheduleUpdate);
++    };
++    connect(ws, &Workspace::outputAdded, this, watchOutput);
++    connect(ws, &Workspace::outputsChanged, this, &StereoDepthStates::scheduleUpdate);
++    const auto outputs = ws->outputs();
++    for (LogicalOutput *output : outputs) {
++        watchOutput(output);
++    }
++    const auto windows = ws->windows();
++    for (Window *window : windows) {
++        watch(window);
++    }
++    scheduleUpdate();
++}
++
++void StereoDepthStates::watch(Window *window)
++{
++    connect(window, &Window::frameGeometryChanged, this, &StereoDepthStates::scheduleUpdate);
++    connect(window, &Window::outputChanged, this, &StereoDepthStates::scheduleUpdate);
++    connect(window, &Window::fullScreenChanged, this, &StereoDepthStates::scheduleUpdate);
++    connect(window, &Window::keepAboveChanged, this, &StereoDepthStates::scheduleUpdate);
++    connect(window, &Window::keepBelowChanged, this, &StereoDepthStates::scheduleUpdate);
++    connect(window, &Window::minimizedChanged, this, &StereoDepthStates::scheduleUpdate);
++    connect(window, &Window::hiddenChanged, this, &StereoDepthStates::scheduleUpdate);
++    connect(window, &Window::desktopsChanged, this, &StereoDepthStates::scheduleUpdate);
++    if (SurfaceInterface *surface = window->surface()) {
++        // a surface may be followed before its window is shown, or again later
++        connect(surface, &SurfaceInterface::stereoDepthFollowed, this, &StereoDepthStates::scheduleUpdate);
++    }
++}
++
++void StereoDepthStates::scheduleUpdate()
++{
++    if (m_scheduled) {
++        return;
++    }
++    m_scheduled = true;
++    QMetaObject::invokeMethod(this, &StereoDepthStates::update, Qt::QueuedConnection);
++}
++
++void StereoDepthStates::update()
++{
++    m_scheduled = false;
++    const auto windows = workspace()->windows();
++    for (Window *window : windows) {
++        SurfaceInterface *surface = window->surface();
++        if (!surface || window->isDeleted()) {
++            continue;
++        }
++        bool followed = false;
++        surface->traverseTree([&followed](SurfaceInterface *child) {
++            followed = followed || child->followsStereoDepth();
++        });
++        if (!followed) {
++            continue;
++        }
++        const bool awake = StereoDepth::isAwake(window);
++        const Qt::Edges edges = StereoDepth::outputEdges(window);
++        surface->traverseTree([awake, edges](SurfaceInterface *child) {
++            if (child->followsStereoDepth()) {
++                child->setStereoDepthState(awake, edges);
++            }
++        });
++    }
++}
++
++}
++
++#include "moc_stereodepthstates.cpp"
+diff --git a/src/scene/stereodepthstates.h b/src/scene/stereodepthstates.h
+new file mode 100644
+index 0000000000..b78fa14fb6
+--- /dev/null
++++ b/src/scene/stereodepthstates.h
+@@ -0,0 +1,37 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++    SPDX-License-Identifier: GPL-2.0-or-later
++*/
++
++#pragma once
++
++#include <QObject>
++
++namespace KWin
++{
++
++class Window;
++
++/**
++ * Tells the programs that follow a surface's desktop depth (kde_stereo_depth_v1) whether the
++ * elements they draw inside it may be shown in depth now and which of its edges lie on its output's
++ * edge, from StereoDepth's own rules, whenever that may have changed: a window activated, raised,
++ * moved, pinned or put on another output, an output switched into or out of a 3D mode.
++ */
++class StereoDepthStates : public QObject
++{
++    Q_OBJECT
++
++public:
++    explicit StereoDepthStates(QObject *parent = nullptr);
++
++private:
++    void watch(Window *window);
++    void scheduleUpdate();
++    void update();
++
++    bool m_scheduled = false;
++};
++
++}
+diff --git a/src/wayland_server.cpp b/src/wayland_server.cpp
+index 6f238a4f71..6e9b638518 100644
+--- a/src/wayland_server.cpp
++++ b/src/wayland_server.cpp
+@@ -21,12 +21,12 @@
+ #include "layershellv1window.h"
+ #include "main.h"
+ #include "options.h"
++#include "scene/stereodepthstates.h"
+ #include "utils/envvar.h"
+ #include "utils/kernel.h"
+ #include "utils/serviceutils.h"
+ #include "virtualdesktops.h"
+ #include "wayland/alphamodifier_v1.h"
+-#include "wayland/stereocontent_v1.h"
+ #include "wayland/appmenu.h"
+ #include "wayland/backgroundeffect_v1.h"
+ #include "wayland/clientconnection.h"
+@@ -76,6 +76,7 @@
+ #include "wayland/server_decoration_palette.h"
+ #include "wayland/shadow.h"
+ #include "wayland/singlepixelbuffer.h"
++#include "wayland/stereocontent_v1.h"
+ #include "wayland/subcompositor.h"
+ #include "wayland/tablet_v2.h"
+ #include "wayland/tearingcontrol_v1.h"
+@@ -598,6 +599,9 @@ void WaylandServer::initWorkspace()
+ 
+     new KeyStateInterface(m_display, m_display);
+ 
++    // whether what programs draw inside their surfaces may be shown in depth (kde_stereo_depth_v1)
++    new StereoDepthStates(this);
++
+     VirtualDesktopManager::self()->setVirtualDesktopManagement(m_virtualDesktopManagement);
+ 
+     if (m_windowManagement) {
+diff --git a/src/window.cpp b/src/window.cpp
+index 2ac8ac6aa1..b7fff11d77 100644
+--- a/src/window.cpp
++++ b/src/window.cpp
+@@ -4753,10 +4753,12 @@ StereoContent Window::stereoContent() const
+ 
+ bool Window::holdsStereoContent() const
+ {
+-    bool stereo = m_stereoContent != StereoContentNone;
++    // a pair the program marks as the desktop's own depth, its elements drawn once per eye, is not
++    // stereo content (kde_stereo_depth_v1.set_desktop_depth)
++    bool stereo = m_stereoContent != StereoContentNone && !(m_surface && m_surface->isStereoDesktopDepth());
+     if (m_surface) {
+         m_surface->traverseTree([&stereo](SurfaceInterface *surface) {
+-            stereo = stereo || surface->stereoContent() != StereoContentNone;
++            stereo = stereo || (surface->stereoContent() != StereoContentNone && !surface->isStereoDesktopDepth());
+         });
+     }
+ #if KWIN_BUILD_X11

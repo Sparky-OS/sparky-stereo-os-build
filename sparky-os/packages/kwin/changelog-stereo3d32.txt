@@ -1,0 +1,27 @@
+kwin (4:6.7.4-2+stereo3d32) unstable; urgency=medium
+
+  * Sparky-OS/kwin stereo3d32 is stereo3d31 plus the three commits of the
+    depth exchange (stereo3d-depth-exchange), rebased: Stereo KWin tells a
+    program when the elements inside its surfaces may show depth, and the
+    program's pair drawn once per eye counts as the desktop's own depth.
+  * kde_stereo_content_v1 version 3 (s32-0001):
+    kde_stereo_content_manager_v1.get_depth makes a kde_stereo_depth_v1 for
+    a surface; its depth_state event says whether the surface may show depth
+    inside it now and which of its edges lie on its output's edge;
+    set_desktop_depth marks its pair as the desktop's own depth, set_place
+    and unset_place declare where a popup surface sits. The protocol text is
+    the plasma-wayland-protocols fork's version 3, carried in the tree while
+    the installed PlasmaWaylandProtocols lacks kde_stereo_depth_v1.
+  * StereoDepthStates (s32-0002) sends every followed surface its state from
+    StereoDepth's own rules whenever it may have changed: a window is awake
+    while it is shown on a stereo output and is the active window on top of
+    what it overlaps, a popup, a panel, the desktop, a window pinned above
+    or an active fullscreen window; a window in the pile or pinned below
+    lies flat. A popup's declared place follows the popup rules (the screen
+    at the output's edge, never behind its parent). A pair marked as the
+    desktop's depth is drawn per eye but is not 3D content for the automatic
+    3D mode switch, stereo screenshots or the depth estimator. With
+    testStereoDepthExchange.
+  * With KWIN_VIRTUAL_STEREO_MODES=1 a headless virtual output also has the
+    3D twins "Anaglyph" and "Other stereo formats" give a monitor, so a test
+    can switch it into a 3D mode (s32-0003); without it nothing changes.
