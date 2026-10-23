@@ -1,0 +1,99 @@
+Description: Depth: Tell the engine while a window's elements show depth
+ .
+ Whoever draws a window once per eye, the edition's Qt Widgets and Qt Quick,
+ needs to know when to: while the platform says the window is awake on a
+ stereo output and the limits are not all zero. Both outputs now keep the
+ window's _q_stereo_depth to that, so the engine draws one picture, as on a
+ 2D output, whenever it is false.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://invent.kde.org/danielcamposramos/union/-/commit/c53c91a7437c2a5906dabb64a5fab0d0ca69fa5f
+Forwarded: no
+Last-Update: 2026-10-23
+Assisted-by: Claude Opus 5.5
+---
+ autotests/output/quick/TestQuickDepth.cpp     | 3 +++
+ autotests/output/widgets/TestWidgetsDepth.cpp | 3 +++
+ src/Depth.h                                   | 9 +++++++++
+ src/output/qtquick/plugin/DepthWindow.cpp     | 5 +++++
+ src/output/qtwidgets/WidgetDepth.cpp          | 4 ++++
+ 5 files changed, 24 insertions(+)
+
+diff --git a/autotests/output/quick/TestQuickDepth.cpp b/autotests/output/quick/TestQuickDepth.cpp
+index 55634dd5..cb073af9 100644
+--- a/autotests/output/quick/TestQuickDepth.cpp
++++ b/autotests/output/quick/TestQuickDepth.cpp
+@@ -229,6 +229,9 @@ private Q_SLOTS:
+         QCOMPARE(raised.metaType(), QMetaType::fromType<qreal>());
+         QVERIFY(std::abs(raised.toReal() - ElementLimit / 1.5) < 1e-6);
+         QVERIFY(std::abs(item(u"checked"_s)->property(Depth::ParallaxProperty).toReal() + ElementLimit) < 1e-6);
++        // The engine draws the window once per eye while its elements show depth.
++        QVERIFY(m_window->property(Depth::DepthProperty).toBool());
++
+         // At the window's plane too, every element carries its parallax.
+         QTRY_VERIFY(item(u"flat"_s)->property(Depth::ParallaxProperty).isValid());
+         QCOMPARE(item(u"flat"_s)->property(Depth::ParallaxProperty).toReal(), 0.0);
+diff --git a/autotests/output/widgets/TestWidgetsDepth.cpp b/autotests/output/widgets/TestWidgetsDepth.cpp
+index eebd984e..1d27e8fa 100644
+--- a/autotests/output/widgets/TestWidgetsDepth.cpp
++++ b/autotests/output/widgets/TestWidgetsDepth.cpp
+@@ -197,6 +197,9 @@ private Q_SLOTS:
+         QCOMPARE(m_onFrame->property(Depth::ParallaxProperty).toInt(), parallax(1.0));
+         QCOMPARE(m_tabs->property(Depth::ParallaxProperty).toInt(), 0);
+         QCOMPARE(parallax(1.0), qRound(ElementLimit));
++
++        // The engine draws the window once per eye while its elements show depth.
++        QVERIFY(m_window->windowHandle()->property(Depth::DepthProperty).toBool());
+     }
+ 
+     void testSegmentsAreThePile()
+diff --git a/src/Depth.h b/src/Depth.h
+index 5a6f04c3..cadcec72 100644
+--- a/src/Depth.h
++++ b/src/Depth.h
+@@ -89,6 +89,15 @@ enum class Range {
+     Desktop,
+ };
+ 
++/*!
++ * The name of the dynamic property of a QWindow, a bool, that is true while its
++ * elements are shown in depth: the platform says the window is awake on a
++ * stereo output and the limits are not all zero. Whoever draws windows once per
++ * eye (the edition's Qt Widgets and Qt Quick) does so only while it is true,
++ * and hands the pair over as the desktop's own depth; otherwise the window is
++ * drawn once, as on a 2D output.
++ */
++inline constexpr char DepthProperty[] = "_q_stereo_depth";
+ /*!
+  * The name of the dynamic property of a QWindow that says which eye is being
+  * drawn, as an int with the values of Eye. Whoever draws a window once per eye
+diff --git a/src/output/qtquick/plugin/DepthWindow.cpp b/src/output/qtquick/plugin/DepthWindow.cpp
+index 34a499f7..7c3fa01b 100644
+--- a/src/output/qtquick/plugin/DepthWindow.cpp
++++ b/src/output/qtquick/plugin/DepthWindow.cpp
+@@ -210,6 +210,11 @@ void DepthWindow::refresh()
+     m_viewWidth = screen ? qRound(screen->geometry().width() * screen->devicePixelRatio()) : 0;
+     m_devicePixelRatio = std::max(m_renderWindow->devicePixelRatio(), 1e-3);
+ 
++    // The engine draws the window once per eye while its elements show depth.
++    if (m_renderWindow->property(Depth::DepthProperty).toBool() != isEnabled()) {
++        m_renderWindow->setProperty(Depth::DepthProperty, isEnabled());
++    }
++
+     if (wasEnabled != isEnabled()) {
+         Q_EMIT stateChanged();
+     }
+diff --git a/src/output/qtwidgets/WidgetDepth.cpp b/src/output/qtwidgets/WidgetDepth.cpp
+index 965ba13a..7f5f5bc3 100644
+--- a/src/output/qtwidgets/WidgetDepth.cpp
++++ b/src/output/qtwidgets/WidgetDepth.cpp
+@@ -285,6 +285,10 @@ void WidgetDepth::refresh(Window &window) const
+         window.devicePixelRatio = std::max(window.handle->devicePixelRatio(), 1e-3);
+     }
+     window.enabled = window.enabled && window.viewWidth > 0;
++    // The engine draws the window once per eye while its elements show depth.
++    if (window.handle && window.handle->property(Depth::DepthProperty).toBool() != window.enabled) {
++        window.handle->setProperty(Depth::DepthProperty, window.enabled);
++    }
+ 
+     // Every widget of the window looks at its depth again when it is drawn next.
+     for (auto itr = m_widgetWindows.cbegin(); itr != m_widgetWindows.cend(); ++itr) {

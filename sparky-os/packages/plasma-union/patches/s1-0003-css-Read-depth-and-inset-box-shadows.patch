@@ -1,0 +1,347 @@
+Description: css: Read depth and inset box shadows
+ .
+ depth takes sunk, screen and popped, or a percentage or number from -100%
+ (-1.0) to 100% (1.0). A value outside that range is ignored with a
+ warning instead of being cut to the limit, as CSS Values 4 §5.1 makes
+ such a declaration invalid. box-shadow takes the inset keyword first or
+ last (CSS Backgrounds 3 §6.1).
+ .
+ TestCss now also loads small styles through CssLoader, with the default
+ rules from the source tree, so the generated property syntax is part of
+ what it checks.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://invent.kde.org/danielcamposramos/union/-/commit/180f5c1c8ba7585f76b649566e24b4bdfb8486f3
+Forwarded: no
+Last-Update: 2026-10-23
+Assisted-by: Claude Opus 5.5
+---
+ autotests/CMakeLists.txt    |  19 +++-
+ autotests/input/TestCss.cpp | 171 ++++++++++++++++++++++++++++++++++++
+ src/input/css/CssLoader.cpp |  57 ++++++++++--
+ 3 files changed, 239 insertions(+), 8 deletions(-)
+
+diff --git a/autotests/CMakeLists.txt b/autotests/CMakeLists.txt
+index d2d23fdc..06aa9b13 100644
+--- a/autotests/CMakeLists.txt
++++ b/autotests/CMakeLists.txt
+@@ -22,8 +22,23 @@ set_tests_properties(TestStyle PROPERTIES FIXTURES_SETUP Style)
+ set_tests_properties(TestStyleRegistry PROPERTIES FIXTURES_REQUIRED Style)
+ 
+ if (BUILD_INPUT_CSS)
+-    ecm_add_test(input/TestCss.cpp LINK_LIBRARIES Qt6::Test Union::Union cxx-rust-cssparser)
+-    set_tests_properties(TestCss PROPERTIES ENVIRONMENT "UNION_DISABLE_CACHE=1")
++    ecm_add_test(input/TestCss.cpp ${CMAKE_SOURCE_DIR}/src/input/css/CssLoader.cpp
++        TEST_NAME TestCss
++        LINK_LIBRARIES Qt6::Test Union::Union cxx-rust-cssparser
++    )
++    ecm_qt_declare_logging_category(TestCss
++        HEADER css_logging.h
++        IDENTIFIER UNION_CSS
++        CATEGORY_NAME union.css
++    )
++    target_include_directories(TestCss PRIVATE ${CMAKE_SOURCE_DIR}/src/input/css)
++    kde_target_enable_exceptions(TestCss PRIVATE)
++
++    # The loader finds the default rules, the generated property syntax included, through
++    # QStandardPaths; point it at the source tree's copy.
++    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/data/union/css)
++    file(CREATE_LINK ${CMAKE_SOURCE_DIR}/src/input/css/defaults ${CMAKE_CURRENT_BINARY_DIR}/data/union/css/defaults SYMBOLIC)
++    set_tests_properties(TestCss PROPERTIES ENVIRONMENT "UNION_DISABLE_CACHE=1;XDG_DATA_DIRS=${CMAKE_CURRENT_BINARY_DIR}/data")
+ endif()
+ 
+ ecm_add_test(TestDepth.cpp LINK_LIBRARIES Qt6::Test Union::Union)
+diff --git a/autotests/input/TestCss.cpp b/autotests/input/TestCss.cpp
+index 141d14a6..41c7de1a 100644
+--- a/autotests/input/TestCss.cpp
++++ b/autotests/input/TestCss.cpp
+@@ -3,21 +3,62 @@
+ 
+ #include <QtTest>
+ 
++#include <fstream>
++
+ #include <QStandardPaths>
++#include <QTemporaryDir>
+ 
++#include <ElementQuery.h>
+ #include <Style.h>
+ 
+ #include <CssParser.h>
+ 
++#include "CssLoader.h"
++
+ namespace fs = std::filesystem;
+ 
+ using namespace Union;
++using namespace Union::Properties;
+ using namespace Qt::StringLiterals;
+ using namespace std::string_literals;
+ 
+ class TestCss : public QObject
+ {
+     Q_OBJECT
++
++    // Styles are kept alive for the whole test: ElementQuery caches matches by style address.
++    QList<Style::Ptr> m_styles;
++    QList<std::shared_ptr<QTemporaryDir>> m_directories;
++
++    Style::Ptr loadStyle(const QString &css)
++    {
++        auto directory = std::make_shared<QTemporaryDir>();
++        const auto path = fs::path(directory->path().toStdString());
++        fs::create_directories(path / "contents" / "css");
++        std::ofstream(path / "contents" / "css" / "style.css") << css.toStdString();
++
++        auto style = Style::create(path, std::make_unique<CssLoader>());
++        style->load();
++
++        m_directories.append(directory);
++        m_styles.append(style);
++        return style;
++    }
++
++    StylePropertyGroup *query(const Style::Ptr &style, const QString &type)
++    {
++        auto element = Element::create();
++        element->setType(type);
++
++        auto elementQuery = new ElementQuery(style);
++        elementQuery->setElements({element});
++        elementQuery->execute();
++        m_queries.push_back(std::unique_ptr<ElementQuery>(elementQuery));
++        return elementQuery->properties();
++    }
++
++    std::vector<std::unique_ptr<ElementQuery>> m_queries;
++
+ private Q_SLOTS:
+     void testLoad_data()
+     {
+@@ -47,6 +88,136 @@ private Q_SLOTS:
+             QFAIL("Parsing stylesheet produced errors!");
+         }
+     }
++
++    void testDepth_data()
++    {
++        QTest::addColumn<QString>("value");
++        QTest::addColumn<bool>("valid");
++        QTest::addColumn<qreal>("expected");
++        QTest::addColumn<bool>("parsed");
++
++        // The three places.
++        QTest::addRow("sunk") << u"sunk"_s << true << -1.0 << true;
++        QTest::addRow("screen") << u"screen"_s << true << 0.0 << true;
++        QTest::addRow("popped") << u"popped"_s << true << 1.0 << true;
++
++        // Anything in between is valid.
++        QTest::addRow("50%") << u"50%"_s << true << 0.5 << true;
++        QTest::addRow("-25%") << u"-25%"_s << true << -0.25 << true;
++        QTest::addRow("100%") << u"100%"_s << true << 1.0 << true;
++        QTest::addRow("-100%") << u"-100%"_s << true << -1.0 << true;
++        QTest::addRow("0.5") << u"0.5"_s << true << 0.5 << true;
++        QTest::addRow("-0.75") << u"-0.75"_s << true << -0.75 << true;
++        QTest::addRow("1") << u"1"_s << true << 1.0 << true;
++        QTest::addRow("0") << u"0"_s << true << 0.0 << true;
++        QTest::addRow("-1") << u"-1"_s << true << -1.0 << true;
++
++        // Nothing beyond the limits: CSS Values 4 §5.1, a value outside the allowed range makes the
++        // declaration invalid, so it is ignored.
++        QTest::addRow("150%") << u"150%"_s << false << 0.0 << true;
++        QTest::addRow("-101%") << u"-101%"_s << false << 0.0 << true;
++        QTest::addRow("2") << u"2"_s << false << 0.0 << true;
++        QTest::addRow("-1.5") << u"-1.5"_s << false << 0.0 << true;
++
++        // Not a depth. cxx-rust-cssparser 1.1.0 drops the whole rule when a value does not match the
++        // property's syntax, where CSS 2.1 §4.2 ignores only that declaration.
++        QTest::addRow("length") << u"4px"_s << false << 0.0 << false;
++        QTest::addRow("keyword") << u"deep"_s << false << 0.0 << false;
++    }
++
++    void testDepth()
++    {
++        QFETCH(QString, value);
++        QFETCH(bool, valid);
++        QFETCH(qreal, expected);
++        QFETCH(bool, parsed);
++
++        auto style = loadStyle(u"button { opacity: 0.5; depth: %1; }"_s.arg(value));
++        auto properties = query(style, u"button"_s);
++
++        if (!parsed) {
++            QVERIFY(!properties || !properties->display() || !properties->display()->depth().has_value());
++            return;
++        }
++
++        // The rest of the rule still applies when the depth is ignored.
++        QVERIFY(properties);
++        QVERIFY(properties->display());
++        QCOMPARE(properties->display()->opacity(), 0.5);
++
++        auto depth = properties->display()->depth();
++        QCOMPARE(depth.has_value(), valid);
++        if (valid) {
++            QCOMPARE(depth.value(), expected);
++        }
++    }
++
++    void testDepthIsPerState()
++    {
++        auto style = loadStyle(u"button { depth: 50%; } button:checked { depth: sunk; }"_s);
++
++        auto element = Element::create();
++        element->setType(u"button"_s);
++
++        ElementQuery query(style);
++        query.setElements({element});
++        QVERIFY(query.execute());
++        QVERIFY(query.properties()->display());
++        QCOMPARE(query.properties()->display()->depth(), 0.5);
++
++        element->setStates(Element::State::Checked);
++        QVERIFY(query.execute());
++        QVERIFY(query.properties()->display());
++        QCOMPARE(query.properties()->display()->depth(), -1.0);
++    }
++
++    void testShadowInset_data()
++    {
++        QTest::addColumn<QString>("value");
++        QTest::addColumn<bool>("inset");
++        QTest::addColumn<qreal>("vertical");
++        QTest::addColumn<qreal>("blur");
++
++        // CSS Backgrounds 3 §6.1: inset may come first or last.
++        QTest::addRow("outer") << u"0px 1px 2px 0px rgba(0, 0, 0, 0.1)"_s << false << 1.0 << 2.0;
++        QTest::addRow("inset first") << u"inset 0px 3px 4px 0px rgba(0, 0, 0, 0.1)"_s << true << 3.0 << 4.0;
++        QTest::addRow("inset last") << u"0px 5px 6px 0px rgba(0, 0, 0, 0.1) inset"_s << true << 5.0 << 6.0;
++    }
++
++    void testShadowInset()
++    {
++        QFETCH(QString, value);
++        QFETCH(bool, inset);
++        QFETCH(qreal, vertical);
++        QFETCH(qreal, blur);
++
++        auto style = loadStyle(u"button { box-shadow: %1; }"_s.arg(value));
++        auto properties = query(style, u"button"_s);
++        QVERIFY(properties);
++        QVERIFY(properties->shadow());
++
++        QCOMPARE(properties->shadow()->inset().value_or(false), inset);
++        QVERIFY(properties->shadow()->offset());
++        QCOMPARE(properties->shadow()->offset()->vertical(), vertical);
++        QCOMPARE(properties->shadow()->blur(), blur);
++        QCOMPARE(properties->shadow()->size(), 0.0);
++        QVERIFY(properties->shadow()->color().has_value());
++    }
++
++    void testShadowNoneIsNotInset()
++    {
++        auto style = loadStyle(u"button { box-shadow: inset 0px 1px 2px 0px rgba(0, 0, 0, 0.1); } button:pressed { box-shadow: none; }"_s);
++
++        auto element = Element::create();
++        element->setType(u"button"_s);
++        element->setStates(Element::State::Pressed);
++
++        ElementQuery query(style);
++        query.setElements({element});
++        QVERIFY(query.execute());
++        QVERIFY(query.properties()->shadow());
++        QVERIFY(!query.properties()->shadow()->inset().value_or(false));
++    }
+ };
+ 
+ QTEST_MAIN(TestCss)
+diff --git a/src/input/css/CssLoader.cpp b/src/input/css/CssLoader.cpp
+index 21d5e2ed..002535c5 100644
+--- a/src/input/css/CssLoader.cpp
++++ b/src/input/css/CssLoader.cpp
+@@ -10,6 +10,7 @@
+ #include <QStandardPaths>
+ 
+ #include <Color.h>
++#include <Depth.h>
+ #include <Style.h>
+ #include <StyleRule.h>
+ 
+@@ -320,7 +321,7 @@ void CssLoader::createProperties(StylePropertyGroup *output, std::span<const css
+     /* clang-format off */
+     for (const auto &property : properties) {
+         switchString(property
+-            ,Case{{"visibility", u"opacity"}, [&]{
++            ,Case{{"visibility", u"opacity", u"depth"}, [&]{
+                 setDisplayProperty(output, property);
+             }}
+             ,Case{{"width", "height", "spacing"}, [&]{
+@@ -386,6 +387,33 @@ void CssLoader::setDisplayProperty(StylePropertyGroup *output, const cssparser::
+         ,Case{"opacity", [&](auto &&value) {
+             display->setOpacity(to_number(value));
+         }}
++        ,Case{"depth", [&](CssValue &&value) {
++            std::optional<qreal> depth;
++            if (value.type() == cssparser::Value::Type::String) {
++                switchString(value
++                    ,Case{"sunk", [&]{ depth = Depth::Sunk; }}
++                    ,Case{"screen", [&]{ depth = Depth::Screen; }}
++                    ,Case{"popped", [&]{ depth = Depth::Popped; }}
++                );
++            } else if (value.type() == cssparser::Value::Type::Integer) {
++                depth = value.get<int>();
++            } else if (value.type() == cssparser::Value::Type::Dimension) {
++                // The parser hands percentages over as fractions: 50% is 0.5.
++                auto dimension = value.get<cssparser::Dimension>();
++                if (dimension.unit() == cssparser::Dimension::Unit::Number || dimension.unit() == cssparser::Dimension::Unit::Percent) {
++                    depth = dimension.value();
++                }
++            }
++
++            // CSS Values 4 §5.1: a value outside the allowed range makes the declaration invalid,
++            // and it is ignored rather than cut to the limit.
++            if (!depth || depth.value() < Depth::Sunk || depth.value() > Depth::Popped) {
++                qCWarning(UNION_CSS) << "Ignoring depth outside the range from sunk (-100%) to popped (100%) in" << m_stylePath.string();
++                return;
++            }
++
++            display->setDepth(depth);
++        }}
+     );
+     /* clang-format on */
+ }
+@@ -690,13 +718,30 @@ void CssLoader::setShadowProperty(StylePropertyGroup *output, const cssparser::P
+         } else {
+             PropertyGroupBuilder shadow(output, &StylePropertyGroup::shadow, &StylePropertyGroup::setShadow);
+ 
++            // CSS Backgrounds 3 §6.1: the inset keyword may come first or last.
++            auto values = property.values();
++            bool inset = false;
++            if (!values.empty() && matches_keyword(values.front(), u"inset"_s)) {
++                inset = true;
++                values = values.subspan(1);
++            } else if (!values.empty() && matches_keyword(values.back(), u"inset"_s)) {
++                inset = true;
++                values = values.first(values.size() - 1);
++            }
++
++            if (values.size() < 5) {
++                qCWarning(UNION_CSS) << "Ignoring incomplete box-shadow in" << m_stylePath.string();
++                return;
++            }
++
+             PropertyGroupBuilder offset(shadow.instance, &ShadowPropertyGroup::offset, &ShadowPropertyGroup::setOffset);
+-            offset->setHorizontal(to_px(property.value(0)));
+-            offset->setVertical(to_px(property.value(1)));
++            offset->setHorizontal(to_px(values[0]));
++            offset->setVertical(to_px(values[1]));
+ 
+-            shadow->setBlur(to_px(property.value(2)));
+-            shadow->setSize(to_px(property.value(3)));
+-            shadow->setColor(to_color(property.value(4)));
++            shadow->setBlur(to_px(values[2]));
++            shadow->setSize(to_px(values[3]));
++            shadow->setColor(to_color(values[4]));
++            shadow->setInset(inset);
+         }
+     }
+ }

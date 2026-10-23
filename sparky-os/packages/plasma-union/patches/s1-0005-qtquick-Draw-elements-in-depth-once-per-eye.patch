@@ -1,0 +1,1596 @@
+Description: qtquick: Draw elements in depth, once per eye
+ .
+ Each element now takes its place in its window's DepthTree: it stands on
+ the element it lies on, a popup lies on the window or on the popup it was
+ opened from, the top element of a surface lies at the surface (where the
+ surface sits is the compositor's), and what is hidden takes no place, so a
+ closed menu does not push the others down. Under a modal overlay the
+ window's content lies flat. The fitted depth is Union.Element.depth, and
+ items carry their parallax for a renderer that draws per eye itself.
+ .
+ Whoever draws a window once per eye sets the window's _q_stereo_eye to the
+ eye it draws. For that eye each element moves sideways by its share of
+ the parallax, relative to what it lies on: the whole element, its text and
+ icon with it. An element nearer than what it lies on keeps its own shadow
+ where the shadow falls; an element behind it is seen through its own
+ opening, cut to its own rectangle, so nothing is drawn behind what it
+ covers. The moves follow Stereo KWin's motion.
+ .
+ While no eye is drawn, and in a window that shows no depth, nothing
+ changes: the eye transforms are only created once something has to move.
+ Inset shadows are not drawn yet, instead of being drawn outside.
+ .
+ TestQuickDepth renders a window per eye and finds each element's picture
+ by exact pixel matching against the window drawn without depth.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://invent.kde.org/danielcamposramos/union/-/commit/d4885a27f78affb0bb77d611abf5aed16ecb27fa
+Forwarded: no
+Last-Update: 2026-10-23
+Assisted-by: Claude Opus 5.5
+---
+ REUSE.toml                                    |   5 +
+ autotests/CMakeLists.txt                      |   9 +
+ .../depthtest/contents/css/style.css          |  45 +++
+ .../DepthTestData/depthtest/metadata.json     |   8 +
+ autotests/output/quick/CMakeLists.txt         |   4 +
+ autotests/output/quick/TestQuickDepth.cpp     | 345 ++++++++++++++++++
+ .../platform/DepthTestPlatformPlugin.cpp      |  35 ++
+ autotests/platform/DepthTestPlatformPlugin.h  |  28 ++
+ autotests/platform/depthtest.json             |   5 +
+ src/output/qtquick/plugin/CMakeLists.txt      |   2 +
+ src/output/qtquick/plugin/DepthWindow.cpp     | 285 +++++++++++++++
+ src/output/qtquick/plugin/DepthWindow.h       | 129 +++++++
+ src/output/qtquick/plugin/QuickElement.cpp    | 288 +++++++++++++++
+ src/output/qtquick/plugin/QuickElement.h      |  48 +++
+ src/output/qtquick/plugin/QuickStyle.cpp      |   7 +
+ src/output/qtquick/plugin/QuickStyle.h        |  10 +
+ src/output/qtquick/plugin/StyledRectangle.cpp |  21 +-
+ 17 files changed, 1271 insertions(+), 3 deletions(-)
+ create mode 100644 autotests/DepthTestData/depthtest/contents/css/style.css
+ create mode 100644 autotests/DepthTestData/depthtest/metadata.json
+ create mode 100644 autotests/output/quick/TestQuickDepth.cpp
+ create mode 100644 autotests/platform/DepthTestPlatformPlugin.cpp
+ create mode 100644 autotests/platform/DepthTestPlatformPlugin.h
+ create mode 100644 autotests/platform/depthtest.json
+ create mode 100644 src/output/qtquick/plugin/DepthWindow.cpp
+ create mode 100644 src/output/qtquick/plugin/DepthWindow.h
+
+diff --git a/REUSE.toml b/REUSE.toml
+index c19d6b12..547e09dc 100644
+--- a/REUSE.toml
++++ b/REUSE.toml
+@@ -53,3 +53,8 @@ path = "extraJsonTranslationPaths.txt"
+ SPDX-License-Identifier = "CC0-1.0"
+ SPDX-FileCopyrightText = "None"
+ 
++
++[[annotations]]
++path = "autotests/platform/depthtest.json"
++SPDX-License-Identifier = "BSD-2-Clause"
++SPDX-FileCopyrightText = "2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>"
+diff --git a/autotests/CMakeLists.txt b/autotests/CMakeLists.txt
+index d3c6f7e8..0c60fdbc 100644
+--- a/autotests/CMakeLists.txt
++++ b/autotests/CMakeLists.txt
+@@ -43,6 +43,15 @@ endif()
+ 
+ ecm_add_test(TestDepth.cpp LINK_LIBRARIES Qt6::Test Union::Union)
+ 
++# A platform that shows depth in every window, for the outputs' depth tests. It
++# is built next to the other plugins but never installed, and never chosen on
++# its own.
++add_library(union-platform-depthtest MODULE platform/DepthTestPlatformPlugin.cpp platform/DepthTestPlatformPlugin.h)
++target_link_libraries(union-platform-depthtest PRIVATE Union::Union)
++set_target_properties(union-platform-depthtest PROPERTIES
++    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/union
++)
++
+ if (BUILD_OUTPUT_QTQUICK)
+     add_subdirectory(output/quick)
+ endif()
+diff --git a/autotests/DepthTestData/depthtest/contents/css/style.css b/autotests/DepthTestData/depthtest/contents/css/style.css
+new file mode 100644
+index 00000000..05bb9dc7
+--- /dev/null
++++ b/autotests/DepthTestData/depthtest/contents/css/style.css
+@@ -0,0 +1,45 @@
++/*
++ * SPDX-License-Identifier: BSD-2-Clause
++ * SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++ */
++
++applicationwindow, page, pane {
++    background-color: #ffffff;
++}
++
++button {
++    width: 120px;
++    height: 48px;
++    padding: 4px;
++    text-alignment: content center center 0;
++    color: #000000;
++    background-color: #ffd040;
++    /* A hard shadow, so it can be found: the element rises one step. */
++    box-shadow: 0px 12px 0px 0px rgba(0, 0, 0, 1.0);
++}
++
++button:pressed {
++    box-shadow: none;
++}
++
++button:checked {
++    background-color: #40c0ff;
++    box-shadow: none;
++    depth: sunk;
++}
++
++button.flat {
++    background-color: #a0e070;
++    box-shadow: none;
++}
++
++frame {
++    background-color: #e0e0e0;
++    depth: 50%;
++}
++
++popup {
++    background-color: #f0a0f0;
++    padding: 8px;
++    depth: popped;
++}
+diff --git a/autotests/DepthTestData/depthtest/metadata.json b/autotests/DepthTestData/depthtest/metadata.json
+new file mode 100644
+index 00000000..f21c76e8
+--- /dev/null
++++ b/autotests/DepthTestData/depthtest/metadata.json
+@@ -0,0 +1,8 @@
++{
++    "input-type": "css",
++    "name": "Depth Test",
++    "description": "Flat colours and a hard shadow, so a test can measure where each element is drawn for each eye.",
++    "version": "1.0",
++    "license": "BSD-2-Clause",
++    "authors": ["Daniel Campos Ramos"]
++}
+diff --git a/autotests/output/quick/CMakeLists.txt b/autotests/output/quick/CMakeLists.txt
+index 1abfd68f..e1aa8a43 100644
+--- a/autotests/output/quick/CMakeLists.txt
++++ b/autotests/output/quick/CMakeLists.txt
+@@ -12,3 +12,7 @@ ecm_add_test(TEST_NAME TestMnemonics
+     LINK_LIBRARIES Qt6::Test Qt6::Quick Union::Union
+ )
+ target_include_directories(TestMnemonics PRIVATE ${CMAKE_SOURCE_DIR}/src/output/qtquick/plugin)
++
++ecm_add_test(TestQuickDepth.cpp LINK_LIBRARIES Qt6::Test Qt6::Quick Union::Union)
++add_dependencies(TestQuickDepth union-platform-depthtest)
++set_tests_properties(TestQuickDepth PROPERTIES ENVIRONMENT "UNION_DISABLE_CACHE=1;XDG_DATA_DIRS=${CMAKE_BINARY_DIR}/autotests/data")
+diff --git a/autotests/output/quick/TestQuickDepth.cpp b/autotests/output/quick/TestQuickDepth.cpp
+new file mode 100644
+index 00000000..a7e4d40b
+--- /dev/null
++++ b/autotests/output/quick/TestQuickDepth.cpp
+@@ -0,0 +1,345 @@
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++#include <QtTest>
++
++#include <QPainter>
++#include <QQmlComponent>
++#include <QQmlEngine>
++#include <QQuickItem>
++#include <QQuickWindow>
++
++#include <Depth.h>
++#include <StyleRegistry.h>
++
++using namespace Union;
++using namespace Qt::StringLiterals;
++
++// Limits large enough to measure, in pixels of a view 1920 wide.
++static constexpr qreal SunkLimit = 40.0;
++static constexpr qreal PoppedLimit = 20.0;
++
++static const char *const Scene = R"(
++import QtQuick
++import org.kde.union
++
++ApplicationWindow {
++    width: 640
++    height: 260
++    visible: true
++
++    Row {
++        x: 30
++        y: 30
++        spacing: 40
++        Button { objectName: "raised"; text: "Raised" }
++        Button { objectName: "checked"; text: "Checked"; checkable: true; checked: true }
++        Button { objectName: "flat"; text: "Flat"; flat: true }
++    }
++
++    Frame {
++        objectName: "frame"
++        x: 30
++        y: 130
++        width: 300
++        height: 110
++        Button { objectName: "onFrame"; x: 20; y: 12; text: "On frame" }
++    }
++
++    Popup {
++        objectName: "popup"
++        x: 380
++        y: 120
++        width: 220
++        height: 120
++        closePolicy: Popup.NoAutoClose
++        Button { objectName: "inPopup"; x: 30; y: 20; text: "In popup" }
++    }
++
++    Popup {
++        objectName: "modal"
++        modal: true
++        x: 380
++        y: 10
++        width: 100
++        height: 60
++        closePolicy: Popup.NoAutoClose
++    }
++}
++)";
++
++class TestQuickDepth : public QObject
++{
++    Q_OBJECT
++
++    QQmlEngine m_engine;
++    std::unique_ptr<QQuickWindow> m_window;
++
++    QQuickItem *item(const QString &name) const
++    {
++        return m_window->findChild<QQuickItem *>(name);
++    }
++
++    QObject *object(const QString &name) const
++    {
++        return m_window->findChild<QObject *>(name);
++    }
++
++    qreal depthOf(const QString &name) const
++    {
++        // Union.Element.depth, read through QML as an application would.
++        QQmlComponent component(const_cast<QQmlEngine *>(&m_engine));
++        component.setData(
++            "import QtQuick\nimport org.kde.union.impl as Union\nQtObject { property var target; property real depth: target.Union.Element.depth }",
++            QUrl{});
++        std::unique_ptr<QObject> reader(component.createWithInitialProperties({{u"target"_s, QVariant::fromValue(object(name))}}));
++        if (!reader) {
++            qWarning() << component.errors();
++            return qQNaN();
++        }
++        return reader->property("depth").toReal();
++    }
++
++    QImage grab(Depth::Eye eye)
++    {
++        m_window->setProperty(Depth::EyeProperty, int(eye));
++        auto image = m_window->grabWindow().convertToFormat(QImage::Format_RGB32);
++        m_window->setProperty(Depth::EyeProperty, int(Depth::Eye::None));
++        return image;
++    }
++
++    QRect deviceRect(const QString &name) const
++    {
++        auto target = item(name);
++        const auto rect = target->mapRectToScene(target->boundingRect());
++        const auto dpr = m_window->effectiveDevicePixelRatio();
++        return QRectF(rect.topLeft() * dpr, rect.size() * dpr).toAlignedRect();
++    }
++
++    // The horizontal shift that makes the picture of `area` in `reference` appear in
++    // `image`, or INT_MIN when no shift within `range` matches it exactly.
++    static int shiftOf(const QImage &reference, const QImage &image, const QRect &area, int range)
++    {
++        for (int distance = 0; distance <= range; ++distance) {
++            for (int dx : {distance, -distance}) {
++                bool same = true;
++                for (int y = area.top(); same && y <= area.bottom(); ++y) {
++                    for (int x = area.left(); x <= area.right(); ++x) {
++                        if (reference.pixel(x, y) != image.pixel(x + dx, y)) {
++                            same = false;
++                            break;
++                        }
++                    }
++                }
++                if (same) {
++                    return dx;
++                }
++            }
++        }
++        return std::numeric_limits<int>::min();
++    }
++
++    static int expectedShift(qreal depth, Depth::Eye eye, int viewWidth)
++    {
++        return Depth::eyeShift(Depth::parallax(depth, Depth::Limits{.sunk = SunkLimit, .popped = PoppedLimit}, viewWidth), eye);
++    }
++
++    int viewWidth() const
++    {
++        return qRound(m_window->screen()->geometry().width() * m_window->screen()->devicePixelRatio());
++    }
++
++private Q_SLOTS:
++    void initTestCase()
++    {
++        qputenv("UNION_FORCE_PLATFORM", "depthtest");
++        qputenv("UNION_TEST_STYLE_PATH", QFINDTESTDATA("../../DepthTestData").toUtf8());
++        qputenv("UNION_TEST_DEPTH_LIMITS", QByteArray(QByteArray::number(SunkLimit) + "," + QByteArray::number(PoppedLimit)));
++
++        StyleRegistry::instance()->load();
++
++        QQmlComponent component(&m_engine);
++        component.setData(Scene, QUrl{});
++        if (component.isError()) {
++            qCritical() << component.errors();
++            QFAIL("The scene did not load");
++        }
++        m_window.reset(qobject_cast<QQuickWindow *>(component.create()));
++        QVERIFY(m_window);
++        QVERIFY(QTest::qWaitForWindowExposed(m_window.get()));
++
++        QVERIFY(StyleRegistry::instance()->platform()->depthEnabled(m_window.get()));
++        QCOMPARE(StyleRegistry::instance()->platform()->metaObject()->className(), "DepthTestPlatformPlugin");
++    }
++
++    void testDepths()
++    {
++        // From the style: a shadow raises one step, a declared sunk sinks to the limit, a flat
++        // button lies on the window, the frame declares 50% and the button on it stands on it.
++        QTRY_COMPARE(depthOf(u"raised"_s), 0.5);
++        QCOMPARE(depthOf(u"checked"_s), -1.0);
++        QCOMPARE(depthOf(u"flat"_s), 0.0);
++        QCOMPARE(depthOf(u"frame"_s), 0.5);
++        QCOMPARE(depthOf(u"onFrame"_s), 1.0);
++
++        // The parallax a two-pass renderer can read from the items.
++        QCOMPARE(item(u"raised"_s)->property(Depth::ParallaxProperty).toInt(), Depth::parallax(0.5, {SunkLimit, PoppedLimit}, viewWidth()));
++        QCOMPARE(item(u"checked"_s)->property(Depth::ParallaxProperty).toInt(), Depth::parallax(-1.0, {SunkLimit, PoppedLimit}, viewWidth()));
++    }
++
++    void testFlatPictureIsUnchanged()
++    {
++        QTRY_COMPARE(depthOf(u"raised"_s), 0.5);
++
++        // Without an eye being drawn, the window is drawn as it is without depth; drawing the
++        // eyes leaves nothing behind.
++        const auto before = grab(Depth::Eye::None);
++        grab(Depth::Eye::Left);
++        grab(Depth::Eye::Right);
++        const auto after = grab(Depth::Eye::None);
++        QCOMPARE(after, before);
++    }
++
++    void testEyes_data()
++    {
++        QTest::addColumn<QString>("name");
++        QTest::addColumn<qreal>("depth");
++        QTest::addColumn<int>("margin");
++
++        QTest::addRow("raised") << u"raised"_s << 0.5 << 30;
++        QTest::addRow("sunk") << u"checked"_s << -1.0 << 30;
++        QTest::addRow("flat") << u"flat"_s << 0.0 << 30;
++        QTest::addRow("on a raised frame") << u"onFrame"_s << 1.0 << 30;
++    }
++
++    void testEyes()
++    {
++        QFETCH(QString, name);
++        QFETCH(qreal, depth);
++        QFETCH(int, margin);
++
++        QTRY_COMPARE(depthOf(name), depth);
++
++        const auto flat = grab(Depth::Eye::None);
++        const auto left = grab(Depth::Eye::Left);
++        const auto right = grab(Depth::Eye::Right);
++
++        // UNION_TEST_SAVE_IMAGES=directory keeps the pictures to look at.
++        if (const auto directory = qEnvironmentVariable("UNION_TEST_SAVE_IMAGES"); !directory.isEmpty()) {
++            flat.save(directory + u"/flat.png"_s);
++            QImage pair(left.width() * 2, left.height(), QImage::Format_RGB32);
++            QPainter painter(&pair);
++            painter.drawImage(0, 0, left);
++            painter.drawImage(left.width(), 0, right);
++            painter.end();
++            pair.save(directory + u"/full-sbs.png"_s);
++        }
++
++        // The label, inside the element: the element moves as a whole, its text with it.
++        const auto label = deviceRect(name).adjusted(margin, 10, -margin, -10);
++        const int leftShift = shiftOf(flat, left, label, 40);
++        const int rightShift = shiftOf(flat, right, label, 40);
++
++        QCOMPARE(leftShift, expectedShift(depth, Depth::Eye::Left, viewWidth()));
++        QCOMPARE(rightShift, expectedShift(depth, Depth::Eye::Right, viewWidth()));
++        QCOMPARE(leftShift - rightShift, Depth::parallax(depth, {SunkLimit, PoppedLimit}, viewWidth()));
++    }
++
++    void testSunkIsSeenThroughItsOpening()
++    {
++        QTRY_COMPARE(depthOf(u"checked"_s), -1.0);
++
++        const auto flat = grab(Depth::Eye::None);
++        const auto rect = deviceRect(u"checked"_s);
++
++        // Behind what it lies on, the element is cut to its own rectangle: nothing of it is
++        // drawn beside it in either eye, where the window covers it.
++        for (auto eye : {Depth::Eye::Left, Depth::Eye::Right}) {
++            const auto image = grab(eye);
++            const int shift = std::abs(expectedShift(-1.0, eye, viewWidth()));
++            QVERIFY(shift > 4);
++
++            // It did move inside its opening.
++            QCOMPARE(shiftOf(flat, image, rect.adjusted(30, 10, -30, -10), 40), expectedShift(-1.0, eye, viewWidth()));
++            for (int y = rect.top(); y <= rect.bottom(); ++y) {
++                for (int x = rect.left() - shift; x < rect.left(); ++x) {
++                    QCOMPARE(image.pixel(x, y), flat.pixel(x, y));
++                }
++                for (int x = rect.right() + 1; x <= rect.right() + shift; ++x) {
++                    QCOMPARE(image.pixel(x, y), flat.pixel(x, y));
++                }
++            }
++        }
++    }
++
++    void testShadowStaysWhereItFalls()
++    {
++        QTRY_COMPARE(depthOf(u"raised"_s), 0.5);
++
++        const auto flat = grab(Depth::Eye::None);
++        const auto left = grab(Depth::Eye::Left);
++        const auto rect = deviceRect(u"raised"_s);
++
++        // The hard shadow below the raised button, without its ends: it lies on the window, so
++        // it stays where it is, while the button above it moves.
++        if (flat.pixelColor(rect.left() + 4, rect.top() + 4) == QColor(Qt::white)) {
++            QSKIP("Union's rectangles are not drawn on this platform (the offscreen platform draws only text)");
++        }
++
++        const auto shadow = QRect(rect.left() + 12, rect.bottom() + 2, rect.width() - 24, 8);
++        QCOMPARE(flat.pixelColor(shadow.center()), QColor(Qt::black));
++        QCOMPARE(shiftOf(flat, left, shadow, 20), 0);
++
++        // While the button itself moved.
++        QVERIFY(expectedShift(0.5, Depth::Eye::Left, viewWidth()) != 0);
++        QCOMPARE(shiftOf(flat, left, rect.adjusted(30, 10, -30, -10), 40), expectedShift(0.5, Depth::Eye::Left, viewWidth()));
++        // So beside it, under its edge, its shadow shows.
++        const int shift = expectedShift(0.5, Depth::Eye::Left, viewWidth());
++        QCOMPARE(left.pixelColor(rect.left() + shift / 2, rect.bottom() - 2), QColor(Qt::black));
++        QVERIFY(flat.pixelColor(rect.left() + shift / 2, rect.bottom() - 2) != QColor(Qt::black));
++    }
++
++    void testPopupFitsTheStack()
++    {
++        QTRY_COMPARE(depthOf(u"raised"_s), 0.5);
++
++        // A popped popup with a raised button in it is a stack of 1.5 steps: the window's
++        // popped side is fitted so the button in the popup sits at the limit.
++        auto popup = object(u"popup"_s);
++        QVERIFY(popup);
++        popup->setProperty("visible", true);
++
++        QTRY_COMPARE(depthOf(u"inPopup"_s), 1.0);
++        QCOMPARE(depthOf(u"popup"_s), 1.0 / 1.5);
++        QCOMPARE(depthOf(u"raised"_s), 0.5 / 1.5);
++        QCOMPARE(depthOf(u"onFrame"_s), 1.0 / 1.5);
++        // The sunk side keeps its own limit.
++        QCOMPARE(depthOf(u"checked"_s), -1.0);
++
++        popup->setProperty("visible", false);
++        QTRY_COMPARE(depthOf(u"raised"_s), 0.5);
++        QCOMPARE(depthOf(u"onFrame"_s), 1.0);
++    }
++
++    void testModalOverlayFlattensTheContent()
++    {
++        QTRY_COMPARE(depthOf(u"raised"_s), 0.5);
++
++        auto modal = object(u"modal"_s);
++        QVERIFY(modal);
++        modal->setProperty("visible", true);
++
++        QTRY_COMPARE(depthOf(u"raised"_s), 0.0);
++        QCOMPARE(depthOf(u"checked"_s), 0.0);
++        QCOMPARE(depthOf(u"onFrame"_s), 0.0);
++        QCOMPARE(depthOf(u"modal"_s), 1.0);
++
++        modal->setProperty("visible", false);
++        QTRY_COMPARE(depthOf(u"raised"_s), 0.5);
++        QCOMPARE(depthOf(u"checked"_s), -1.0);
++    }
++};
++
++QTEST_MAIN(TestQuickDepth)
++
++#include "TestQuickDepth.moc"
+diff --git a/autotests/platform/DepthTestPlatformPlugin.cpp b/autotests/platform/DepthTestPlatformPlugin.cpp
+new file mode 100644
+index 00000000..8d81b705
+--- /dev/null
++++ b/autotests/platform/DepthTestPlatformPlugin.cpp
+@@ -0,0 +1,35 @@
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++#include "DepthTestPlatformPlugin.h"
++
++using namespace Qt::StringLiterals;
++
++QString DepthTestPlatformPlugin::defaultStyleName()
++{
++    return u"depthtest"_s;
++}
++
++QList<std::filesystem::path> DepthTestPlatformPlugin::stylePackagePaths()
++{
++    return {std::filesystem::path(qEnvironmentVariable("UNION_TEST_STYLE_PATH").toStdString())};
++}
++
++qreal DepthTestPlatformPlugin::animationSpeedMultiplier()
++{
++    // Depth changes are measured where they end up.
++    return 0.0;
++}
++
++Union::Depth::Limits DepthTestPlatformPlugin::depthLimits()
++{
++    const auto values = qEnvironmentVariable("UNION_TEST_DEPTH_LIMITS", u"10,4"_s).split(u',');
++    return Union::Depth::Limits{.sunk = values.value(0).toDouble(), .popped = values.value(1).toDouble()};
++}
++
++bool DepthTestPlatformPlugin::depthEnabled([[maybe_unused]] QWindow *window)
++{
++    return qEnvironmentVariableIntValue("UNION_TEST_DEPTH_DISABLED") == 0;
++}
++
++#include "moc_DepthTestPlatformPlugin.cpp"
+diff --git a/autotests/platform/DepthTestPlatformPlugin.h b/autotests/platform/DepthTestPlatformPlugin.h
+new file mode 100644
+index 00000000..59933ec5
+--- /dev/null
++++ b/autotests/platform/DepthTestPlatformPlugin.h
+@@ -0,0 +1,28 @@
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++#pragma once
++
++#include <PlatformPlugin.h>
++
++/*
++ * A platform for tests that shows depth in every window, as Stereo KWin does for
++ * an awake window on a stereo output. The limits come from
++ * UNION_TEST_DEPTH_LIMITS ("sunk,popped", Stereo KWin's defaults "10,4" when
++ * unset) and styles from UNION_TEST_STYLE_PATH. It is never chosen on its own:
++ * select it with UNION_FORCE_PLATFORM=depthtest.
++ */
++class DepthTestPlatformPlugin : public Union::PlatformPlugin
++{
++    Q_OBJECT
++    Q_PLUGIN_METADATA(IID "org.kde.union.PlatformPlugin" FILE "depthtest.json")
++
++public:
++    using Union::PlatformPlugin::PlatformPlugin;
++
++    QString defaultStyleName() override;
++    QList<std::filesystem::path> stylePackagePaths() override;
++    qreal animationSpeedMultiplier() override;
++    Union::Depth::Limits depthLimits() override;
++    bool depthEnabled(QWindow *window) override;
++};
+diff --git a/autotests/platform/depthtest.json b/autotests/platform/depthtest.json
+new file mode 100644
+index 00000000..531039ef
+--- /dev/null
++++ b/autotests/platform/depthtest.json
+@@ -0,0 +1,5 @@
++{
++    "union-plugintype": "platform",
++    "union-pluginname": "depthtest",
++    "union-supported-platforms": []
++}
+diff --git a/src/output/qtquick/plugin/CMakeLists.txt b/src/output/qtquick/plugin/CMakeLists.txt
+index b27ac6d2..70b8a3f1 100644
+--- a/src/output/qtquick/plugin/CMakeLists.txt
++++ b/src/output/qtquick/plugin/CMakeLists.txt
+@@ -8,6 +8,8 @@ ecm_add_qml_module(UnionQuickImpl URI "org.kde.union.impl"
+ )
+ 
+ target_sources(UnionQuickImpl PRIVATE
++    DepthWindow.cpp
++    DepthWindow.h
+     QuickElement.cpp
+     QuickElement.h
+     QuickStyle.cpp
+diff --git a/src/output/qtquick/plugin/DepthWindow.cpp b/src/output/qtquick/plugin/DepthWindow.cpp
+new file mode 100644
+index 00000000..a3b4ec3e
+--- /dev/null
++++ b/src/output/qtquick/plugin/DepthWindow.cpp
+@@ -0,0 +1,285 @@
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++#include "DepthWindow.h"
++
++#include <QDynamicPropertyChangeEvent>
++#include <QQuickRenderControl>
++#include <QQuickWindow>
++#include <QScreen>
++
++#include <PlatformPlugin.h>
++#include <StyleRegistry.h>
++
++#include "QuickElement.h"
++
++using namespace Union;
++using namespace Union::Quick;
++
++static std::chrono::nanoseconds now()
++{
++    return std::chrono::steady_clock::now().time_since_epoch();
++}
++
++DepthWindow *DepthWindow::get(QQuickWindow *window)
++{
++    if (!window) {
++        return nullptr;
++    }
++
++    if (auto existing = window->findChild<DepthWindow *>(QString{}, Qt::FindDirectChildrenOnly)) {
++        return existing;
++    }
++
++    return new DepthWindow(window);
++}
++
++DepthWindow::DepthWindow(QQuickWindow *window)
++    : QObject(window)
++    , m_window(window)
++{
++    m_window->installEventFilter(this);
++    StyleRegistry::instance()->platform()->installEventFilter(this);
++    connect(m_window, &QWindow::screenChanged, this, &DepthWindow::refresh);
++
++    refresh();
++}
++
++bool DepthWindow::isEnabled() const
++{
++    return m_platformEnabled && m_limits.isEnabled() && m_viewWidth > 0;
++}
++
++Depth::Limits DepthWindow::limits() const
++{
++    return m_limits;
++}
++
++Depth::Eye DepthWindow::eye() const
++{
++    return m_eye;
++}
++
++Qt::Edges DepthWindow::outputEdges() const
++{
++    return m_outputEdges;
++}
++
++void DepthWindow::setElement(QuickElement *element, QuickElement *parent, qreal depth, bool atOutputEdge, bool flat)
++{
++    auto &entry = m_elements[element];
++    entry.element = element;
++    entry.parent = parent;
++
++    m_tree.setElement(element, parent, depth);
++    m_tree.setAtOutputEdge(element, atOutputEdge);
++    m_tree.setFlat(element, flat);
++
++    scheduleChanges();
++}
++
++void DepthWindow::removeElement(QuickElement *element)
++{
++    if (m_elements.remove(element)) {
++        m_tree.removeElement(element);
++        scheduleChanges();
++    }
++    setModalOverlay(element, false);
++}
++
++qreal DepthWindow::depth(const QuickElement *element) const
++{
++    return isEnabled() ? m_tree.depth(element) : Depth::Screen;
++}
++
++int DepthWindow::parallax(const QuickElement *element) const
++{
++    return parallaxAt(element, now());
++}
++
++int DepthWindow::parallaxAt(const QuickElement *element, std::chrono::nanoseconds time) const
++{
++    if (!isEnabled()) {
++        return 0;
++    }
++
++    auto itr = m_elements.constFind(element);
++    if (itr == m_elements.cend()) {
++        return 0;
++    }
++
++    return Depth::parallax(itr->motion.depth(time), m_limits, m_viewWidth);
++}
++
++qreal DepthWindow::relativeShift(const QuickElement *element) const
++{
++    if (!isEnabled() || m_eye == Depth::Eye::None) {
++        return 0.0;
++    }
++
++    auto itr = m_elements.constFind(element);
++    if (itr == m_elements.cend()) {
++        return 0.0;
++    }
++
++    const auto time = now();
++    const int shift = Depth::eyeShift(parallaxAt(element, time), m_eye);
++    const int parentShift = itr->parent ? Depth::eyeShift(parallaxAt(itr->parent, time), m_eye) : 0;
++    return (shift - parentShift) / m_devicePixelRatio;
++}
++
++bool DepthWindow::isDeeper(const QuickElement *element) const
++{
++    auto itr = m_elements.constFind(element);
++    if (!isEnabled() || itr == m_elements.cend()) {
++        return false;
++    }
++
++    const qreal parentDepth = itr->parent ? m_tree.depth(itr->parent) : Depth::Screen;
++    return m_tree.depth(element) < parentDepth;
++}
++
++void DepthWindow::setModalOverlay(QObject *overlay, bool shown)
++{
++    const bool had = hasModalOverlay();
++    if (shown && !m_modalOverlays.contains(overlay)) {
++        m_modalOverlays.append(overlay);
++    } else if (!shown) {
++        m_modalOverlays.removeAll(overlay);
++    }
++
++    if (had != hasModalOverlay()) {
++        Q_EMIT stateChanged();
++    }
++}
++
++bool DepthWindow::hasModalOverlay() const
++{
++    return !m_modalOverlays.isEmpty();
++}
++
++bool DepthWindow::eventFilter(QObject *watched, QEvent *event)
++{
++    if (event->type() == QEvent::DynamicPropertyChange && (watched == m_window || watched == m_renderWindow)) {
++        auto propertyEvent = static_cast<QDynamicPropertyChangeEvent *>(event);
++        if (propertyEvent->propertyName() == Depth::EyeProperty) {
++            setEye(Depth::Eye(watched->property(Depth::EyeProperty).toInt()));
++        }
++    } else if (event->type() == DepthChangedEvent::s_type) {
++        auto depthEvent = static_cast<DepthChangedEvent *>(event);
++        if (!depthEvent->window || depthEvent->window == m_renderWindow || depthEvent->window == m_window) {
++            refresh();
++        }
++    }
++
++    return QObject::eventFilter(watched, event);
++}
++
++void DepthWindow::refresh()
++{
++    // The window that is shown, which for a QQuickWidget is not the QQuickWindow itself.
++    QWindow *renderWindow = QQuickRenderControl::renderWindowFor(m_window);
++    if (!renderWindow) {
++        renderWindow = m_window;
++    }
++    if (renderWindow != m_renderWindow) {
++        if (m_renderWindow && m_renderWindow != m_window) {
++            m_renderWindow->removeEventFilter(this);
++        }
++        m_renderWindow = renderWindow;
++        if (m_renderWindow != m_window) {
++            m_renderWindow->installEventFilter(this);
++        }
++    }
++
++    const bool wasEnabled = isEnabled();
++
++    auto platform = StyleRegistry::instance()->platform();
++    m_platformEnabled = platform->depthEnabled(m_renderWindow);
++    m_limits = platform->depthLimits();
++    m_outputEdges = platform->depthOutputEdges(m_renderWindow);
++
++    // The width of one view of the output, in device pixels: the unit of a parallax.
++    auto screen = m_renderWindow->screen();
++    m_viewWidth = screen ? qRound(screen->geometry().width() * screen->devicePixelRatio()) : 0;
++    m_devicePixelRatio = std::max(m_renderWindow->devicePixelRatio(), 1e-3);
++
++    if (wasEnabled != isEnabled()) {
++        Q_EMIT stateChanged();
++    }
++    scheduleChanges();
++}
++
++void DepthWindow::scheduleChanges()
++{
++    if (m_changesScheduled) {
++        return;
++    }
++
++    m_changesScheduled = true;
++    QMetaObject::invokeMethod(this, &DepthWindow::applyChanges, Qt::QueuedConnection);
++}
++
++void DepthWindow::applyChanges()
++{
++    m_changesScheduled = false;
++
++    if (!isEnabled()) {
++        return;
++    }
++
++    const auto time = now();
++    const auto speed = StyleRegistry::instance()->platform()->animationSpeedMultiplier();
++
++    const auto changes = m_tree.takeChanges();
++    for (auto key : changes) {
++        auto itr = m_elements.find(static_cast<const QuickElement *>(key));
++        if (itr == m_elements.end()) {
++            continue;
++        }
++
++        itr->motion.setTarget(m_tree.depth(key), time, speed);
++        if (itr->element) {
++            itr->element->depthUpdated();
++        }
++    }
++
++    if (m_eye != Depth::Eye::None) {
++        applyEye();
++    }
++}
++
++void DepthWindow::setEye(Depth::Eye eye)
++{
++    if (eye == m_eye) {
++        return;
++    }
++
++    m_eye = eye;
++
++    if (m_changesScheduled) {
++        applyChanges();
++    }
++
++    applyEye();
++}
++
++void DepthWindow::applyEye()
++{
++    bool moving = false;
++    const auto time = now();
++
++    for (const auto &entry : std::as_const(m_elements)) {
++        if (entry.element) {
++            entry.element->updateEyeShift();
++        }
++        moving |= entry.motion.isMoving(time);
++    }
++
++    // While something moves in depth, every frame draws it a little further.
++    if (moving && m_eye != Depth::Eye::None) {
++        m_window->update();
++    }
++}
++
++#include "moc_DepthWindow.cpp"
+diff --git a/src/output/qtquick/plugin/DepthWindow.h b/src/output/qtquick/plugin/DepthWindow.h
+new file mode 100644
+index 00000000..1a25824a
+--- /dev/null
++++ b/src/output/qtquick/plugin/DepthWindow.h
+@@ -0,0 +1,129 @@
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++#pragma once
++
++#include <QHash>
++#include <QObject>
++#include <QPointer>
++
++#include <Depth.h>
++
++#include "unionquickimpl_export.h"
++
++class QQuickWindow;
++class QWindow;
++
++namespace Union
++{
++namespace Quick
++{
++
++class QuickElement;
++
++/*!
++ * The depth of the elements of one window.
++ *
++ * It holds the window's DepthTree, follows what the platform says the window
++ * may show in depth, and the eye being drawn, which whoever draws the window
++ * once per eye sets as the window's Depth::EyeProperty. While no eye is drawn,
++ * and whenever the window shows no depth, every element is drawn exactly as on
++ * a 2D output.
++ */
++class UNIONQUICKIMPL_EXPORT DepthWindow : public QObject
++{
++    Q_OBJECT
++
++public:
++    /*!
++     * Returns the DepthWindow of \a window, creating it the first time.
++     */
++    static DepthWindow *get(QQuickWindow *window);
++
++    /*!
++     * Whether the window shows depth: the platform allows it and the user's
++     * limits are not both zero.
++     */
++    bool isEnabled() const;
++    Depth::Limits limits() const;
++    Depth::Eye eye() const;
++
++    /*!
++     * Adds or updates \a element, lying on \a parent (null: on the window) with
++     * \a depth relative to it.
++     */
++    void setElement(QuickElement *element, QuickElement *parent, qreal depth, bool atOutputEdge, bool flat);
++    void removeElement(QuickElement *element);
++
++    /*!
++     * The edges of the window that lie on an edge of its output.
++     */
++    Qt::Edges outputEdges() const;
++
++    /*!
++     * The element's depth in the window, fitted into the limits.
++     */
++    qreal depth(const QuickElement *element) const;
++    /*!
++     * The element's parallax in device pixels, as it moves towards its depth.
++     */
++    int parallax(const QuickElement *element) const;
++    /*!
++     * How far the element's picture moves in the eye being drawn, relative to
++     * what it lies on, in logical pixels.
++     */
++    qreal relativeShift(const QuickElement *element) const;
++    /*!
++     * Whether the element is behind what it lies on.
++     */
++    bool isDeeper(const QuickElement *element) const;
++
++    /*!
++     * Adds or removes a modal overlay: while one is shown, the window's content
++     * lies flat under it.
++     */
++    void setModalOverlay(QObject *overlay, bool shown);
++    bool hasModalOverlay() const;
++
++Q_SIGNALS:
++    /*!
++     * Emitted when the window starts or stops showing depth, or a modal overlay
++     * is shown or hidden: every element has to look at its depth again.
++     */
++    void stateChanged();
++
++protected:
++    bool eventFilter(QObject *watched, QEvent *event) override;
++
++private:
++    explicit DepthWindow(QQuickWindow *window);
++
++    struct Entry {
++        QPointer<QuickElement> element;
++        const QuickElement *parent = nullptr;
++        DepthMotion motion;
++    };
++
++    void refresh();
++    void scheduleChanges();
++    void applyChanges();
++    void setEye(Depth::Eye eye);
++    void applyEye();
++    int parallaxAt(const QuickElement *element, std::chrono::nanoseconds time) const;
++
++    QQuickWindow *m_window = nullptr;
++    QPointer<QWindow> m_renderWindow;
++    DepthTree m_tree;
++    QHash<const QuickElement *, Entry> m_elements;
++    QList<QObject *> m_modalOverlays;
++    Depth::Eye m_eye = Depth::Eye::None;
++    Depth::Limits m_limits;
++    Qt::Edges m_outputEdges;
++    bool m_platformEnabled = false;
++    bool m_changesScheduled = false;
++    int m_viewWidth = 0;
++    qreal m_devicePixelRatio = 1.0;
++};
++
++}
++}
+diff --git a/src/output/qtquick/plugin/QuickElement.cpp b/src/output/qtquick/plugin/QuickElement.cpp
+index 6dfbaccf..a68b4bad 100644
+--- a/src/output/qtquick/plugin/QuickElement.cpp
++++ b/src/output/qtquick/plugin/QuickElement.cpp
+@@ -4,20 +4,60 @@
+ #include "QuickElement.h"
+ 
+ #include <QCoreApplication>
++#include <QMatrix4x4>
+ #include <QQmlEngine>
+ #include <QQuickItem>
++#include <QQuickWindow>
+ 
++#include "Depth.h"
+ #include "Element.h"
+ #include "EventHelper.h"
+ #include "Style.h"
+ #include "StyleRegistry.h"
+ #include "StyleRule.h"
+ 
++#include "DepthWindow.h"
+ #include "QuickStyle.h"
+ #include "WindowHandler.h"
+ 
+ using namespace Union;
+ using namespace Union::Quick;
++using namespace Qt::StringLiterals;
++
++namespace Union
++{
++namespace Quick
++{
++// Moves an item sideways for the eye being drawn. It is only created once an
++// element has to move, so a window that is never drawn per eye keeps its items
++// exactly as they are.
++class EyeShiftTransform : public QQuickTransform
++{
++public:
++    using QQuickTransform::QQuickTransform;
++
++    void applyTo(QMatrix4x4 *matrix) const override
++    {
++        if (m_shift != 0.0) {
++            matrix->translate(m_shift, 0.0);
++        }
++    }
++
++    void setShift(qreal shift)
++    {
++        if (shift == m_shift) {
++            return;
++        }
++
++        m_shift = shift;
++        update();
++    }
++
++private:
++    qreal m_shift = 0.0;
++};
++}
++}
+ 
+ UNIONQUICKIMPL_EXPORT QEvent::Type QuickElementUpdatedEvent::s_type = QEvent::None;
+ static EventTypeRegistration<QuickElementUpdatedEvent> quickElementRegistration;
+@@ -308,6 +348,14 @@ QuickElement::QuickElement(QObject *parent)
+     update();
+ }
+ 
++QuickElement::~QuickElement()
++{
++    restoreClip();
++    if (m_depthWindow) {
++        m_depthWindow->removeElement(this);
++    }
++}
++
+ QString QuickElement::styleId() const
+ {
+     return m_styleId;
+@@ -606,12 +654,252 @@ void QuickElement::update()
+ 
+     Q_EMIT updated();
+ 
++    updateDepth();
++
+     const auto children = attachedChildren();
+     for (auto child : children) {
+         qobject_cast<QuickElement *>(child)->update();
+     }
+ }
+ 
++qreal QuickElement::depth() const
++{
++    return m_depthWindow ? m_depthWindow->depth(this) : Depth::Screen;
++}
++
++qreal QuickElement::shadowEyeShift() const
++{
++    return m_shadowEyeShift;
++}
++
++QQuickWindow *QuickElement::elementWindow() const
++{
++    if (auto window = qobject_cast<QQuickWindow *>(parent())) {
++        return window;
++    }
++
++    const auto items = shiftedItems();
++    return items.isEmpty() ? nullptr : items.first()->window();
++}
++
++QList<QQuickItem *> QuickElement::shiftedItems() const
++{
++    if (auto item = qobject_cast<QQuickItem *>(parent())) {
++        return {item};
++    }
++
++    // A popup is not an item: its background and content are.
++    QList<QQuickItem *> items;
++    if (isPopup()) {
++        for (const auto name : {"background", "contentItem"}) {
++            if (auto item = parent()->property(name).value<QQuickItem *>()) {
++                items.append(item);
++            }
++        }
++    }
++    return items;
++}
++
++bool QuickElement::isPopup() const
++{
++    return parent() && parent()->inherits("QQuickPopup");
++}
++
++bool QuickElement::isWindowRoot() const
++{
++    return qobject_cast<QQuickWindow *>(parent());
++}
++
++QuickElement *QuickElement::depthParent() const
++{
++    const auto window = elementWindow();
++    auto ancestor = parentElement();
++
++    if (isPopup()) {
++        // A popup lies over the whole window, or on the popup it was opened from.
++        while (ancestor && ancestor->elementWindow() == window) {
++            if (ancestor->isPopup() || ancestor->isWindowRoot()) {
++                return ancestor;
++            }
++            ancestor = ancestor->parentElement();
++        }
++        return nullptr;
++    }
++
++    return ancestor && ancestor->elementWindow() == window ? ancestor : nullptr;
++}
++
++void QuickElement::updateDepth()
++{
++    if (!m_completed) {
++        return;
++    }
++
++    auto window = elementWindow();
++    auto depthWindow = window ? DepthWindow::get(window) : nullptr;
++    if (depthWindow != m_depthWindow) {
++        // Removing an element can change the window's state, which calls this again.
++        const QPointer<DepthWindow> previous = m_depthWindow;
++        m_depthWindow = depthWindow;
++        if (previous) {
++            disconnect(previous, nullptr, this, nullptr);
++            previous->removeElement(this);
++        }
++
++        updateEyeShift();
++
++        if (m_depthWindow) {
++            connect(m_depthWindow, &DepthWindow::stateChanged, this, &QuickElement::updateDepth);
++        }
++    }
++
++    const auto items = shiftedItems();
++    auto item = items.value(0);
++    if (item != m_watchedItem) {
++        if (m_watchedItem) {
++            disconnect(m_watchedItem, nullptr, this, nullptr);
++        }
++        m_watchedItem = item;
++        if (m_watchedItem) {
++            connect(m_watchedItem, &QQuickItem::windowChanged, this, &QuickElement::updateDepth);
++            connect(m_watchedItem, &QQuickItem::visibleChanged, this, &QuickElement::updateDepth);
++        }
++    }
++
++    if (!m_depthWindow) {
++        return;
++    }
++
++    // What is not shown takes no place: a closed menu does not push the others down.
++    const bool visible = isWindowRoot() || (item && item->isVisible());
++
++    if (m_element->type() == u"Overlay"_s) {
++        m_depthWindow->setModalOverlay(this, visible && m_element->hints().contains(u"modal"_s));
++    }
++
++    if (!visible) {
++        m_depthWindow->removeElement(this);
++        updateEyeShift();
++        depthUpdated();
++        return;
++    }
++
++    auto parent = depthParent();
++
++    // The top element of a surface lies at the surface: where the surface itself
++    // sits is the compositor's.
++    const bool surfaceTop = isWindowRoot() || (!parent && parentElement());
++
++    qreal relativeDepth = Depth::Screen;
++    if (!surfaceTop) {
++        relativeDepth = Depth::elementDepth(m_query && m_query->hasMatches() ? m_query->properties() : nullptr);
++    }
++
++    bool atOutputEdge = false;
++    const auto edges = m_depthWindow->outputEdges();
++    if (edges && item && window) {
++        const auto rect = item->mapRectToScene(item->boundingRect());
++        atOutputEdge = (edges.testFlag(Qt::LeftEdge) && rect.left() <= 0.5) || (edges.testFlag(Qt::TopEdge) && rect.top() <= 0.5)
++            || (edges.testFlag(Qt::RightEdge) && rect.right() >= window->width() - 0.5)
++            || (edges.testFlag(Qt::BottomEdge) && rect.bottom() >= window->height() - 0.5);
++    }
++
++    // Under a modal overlay the window's content lies flat; the popups over it keep their places.
++    const bool flat = m_depthWindow->hasModalOverlay() && !isPopup() && !isWindowRoot() && (!parent || parent->isWindowRoot());
++
++    m_depthWindow->setElement(this, parent, relativeDepth, atOutputEdge, flat);
++
++    if (!m_depthWindow->isEnabled()) {
++        updateEyeShift();
++        depthUpdated();
++    }
++}
++
++void QuickElement::depthUpdated()
++{
++    const bool enabled = m_depthWindow && m_depthWindow->isEnabled();
++
++    // The parallax, for a renderer that draws the window once per eye itself.
++    const auto items = shiftedItems();
++    for (auto item : items) {
++        if (enabled) {
++            item->setProperty(Depth::ParallaxProperty, m_depthWindow->parallax(this));
++        } else if (item->property(Depth::ParallaxProperty).isValid()) {
++            item->setProperty(Depth::ParallaxProperty, QVariant{});
++        }
++    }
++
++    Q_EMIT depthChanged();
++}
++
++void QuickElement::updateEyeShift()
++{
++    const qreal shift = m_depthWindow ? m_depthWindow->relativeShift(this) : 0.0;
++    const auto items = shiftedItems();
++    const bool deeper = shift != 0.0 && items.size() == 1 && m_depthWindow->isDeeper(this);
++
++    QList<QQuickItem *> shifted;
++    if (deeper) {
++        // Behind what it lies on, the element is seen through its own opening: it
++        // is cut to its own rectangle, as the frame of a window cuts the view
++        // through it, so nothing is drawn behind what it covers.
++        auto item = items.first();
++        if (m_clippedItem != item) {
++            restoreClip();
++            m_clippedItem = item;
++            m_clipWasSet = item->clip();
++        }
++        item->setClip(true);
++
++        shifted = item->childItems();
++    } else {
++        restoreClip();
++        shifted = items;
++    }
++
++    for (auto item : std::as_const(shifted)) {
++        setEyeShift(item, shift);
++    }
++    for (auto itr = m_eyeShifts.cbegin(); itr != m_eyeShifts.cend(); ++itr) {
++        if (itr.value() && !shifted.contains(itr.key())) {
++            itr.value()->setShift(0.0);
++        }
++    }
++
++    const qreal shadowShift = deeper ? 0.0 : shift;
++    if (shadowShift != m_shadowEyeShift) {
++        m_shadowEyeShift = shadowShift;
++        Q_EMIT eyeShiftChanged();
++    }
++}
++
++void QuickElement::setEyeShift(QQuickItem *item, qreal shift)
++{
++    auto itr = m_eyeShifts.find(item);
++    if (itr == m_eyeShifts.end() || !itr.value()) {
++        if (shift == 0.0) {
++            return;
++        }
++
++        auto transform = new EyeShiftTransform(this);
++        transform->appendToItem(item);
++        itr = m_eyeShifts.insert(item, transform);
++        connect(item, &QObject::destroyed, this, [this, item]() {
++            m_eyeShifts.remove(item);
++        });
++    }
++
++    itr.value()->setShift(shift);
++}
++
++void QuickElement::restoreClip()
++{
++    if (m_clippedItem) {
++        m_clippedItem->setClip(m_clipWasSet);
++    }
++    m_clippedItem = nullptr;
++}
++
+ void Quick::QuickElement::updateStyleFromParent()
+ {
+     if (m_styleId.isEmpty() && attachedParent()) {
+diff --git a/src/output/qtquick/plugin/QuickElement.h b/src/output/qtquick/plugin/QuickElement.h
+index 5ce5d202..ac586e04 100644
+--- a/src/output/qtquick/plugin/QuickElement.h
++++ b/src/output/qtquick/plugin/QuickElement.h
+@@ -4,7 +4,9 @@
+ #pragma once
+ 
+ #include <QEvent>
++#include <QHash>
+ #include <QObject>
++#include <QPointer>
+ #include <QQmlListProperty>
+ #include <QQmlParserStatus>
+ #include <QQuickAttachedPropertyPropagator>
+@@ -16,11 +18,16 @@
+ 
+ #include "unionquickimpl_export.h"
+ 
++class QQuickItem;
++class QQuickWindow;
++
+ namespace Union
+ {
+ namespace Quick
+ {
+ 
++class DepthWindow;
++class EyeShiftTransform;
+ class QuickElement;
+ 
+ class StatesGroup : public QObject
+@@ -447,6 +454,28 @@ public:
+      */
+     Q_SIGNAL void updated();
+ 
++    /*!
++     * \qmlattachedproperty real Element::depth
++     *
++     * The element's depth in its window on a stereo output, from -1.0 (the
++     * user's sunk limit) through 0.0 (the screen) to 1.0 (the popped limit),
++     * after nesting and fitting into the limits. It is 0.0 while the window
++     * shows no depth.
++     */
++    Q_PROPERTY(qreal depth READ depth NOTIFY depthChanged)
++    qreal depth() const;
++    Q_SIGNAL void depthChanged();
++
++    /*!
++     * How far the element's picture moves for the eye being drawn, relative to
++     * what it lies on, in logical pixels, when it is nearer than what it lies
++     * on. Its own shadow stays where it falls, so it moves back by as much.
++     */
++    qreal shadowEyeShift() const;
++    Q_SIGNAL void eyeShiftChanged();
++
++    ~QuickElement() override;
++
+     static QuickElement *qmlAttachedProperties(QObject *parent);
+ 
+     void componentComplete() override;
+@@ -461,6 +490,7 @@ private:
+     friend class StatesGroup;
+     friend class ElementHint;
+     friend class ElementAttribute;
++    friend class DepthWindow;
+ 
+     void setActiveStates(Union::Element::States newActiveStates);
+     void setStyle(const std::shared_ptr<Union::Style> &newStyle);
+@@ -469,6 +499,17 @@ private:
+     void update();
+     void updateStyleFromParent();
+ 
++    QQuickWindow *elementWindow() const;
++    QList<QQuickItem *> shiftedItems() const;
++    bool isPopup() const;
++    bool isWindowRoot() const;
++    QuickElement *depthParent() const;
++    void updateDepth();
++    void depthUpdated();
++    void updateEyeShift();
++    void setEyeShift(QQuickItem *item, qreal shift);
++    void restoreClip();
++
+     std::shared_ptr<Union::Element> m_element;
+     std::unique_ptr<StatesGroup> m_statesGroup;
+ 
+@@ -481,6 +522,13 @@ private:
+     std::shared_ptr<Union::Style> m_style;
+ 
+     bool m_completed = false;
++
++    QPointer<DepthWindow> m_depthWindow;
++    QHash<QQuickItem *, QPointer<EyeShiftTransform>> m_eyeShifts;
++    QPointer<QQuickItem> m_clippedItem;
++    QPointer<QQuickItem> m_watchedItem;
++    bool m_clipWasSet = false;
++    qreal m_shadowEyeShift = 0.0;
+ };
+ 
+ class QuickElementUpdatedEvent : public QEvent
+diff --git a/src/output/qtquick/plugin/QuickStyle.cpp b/src/output/qtquick/plugin/QuickStyle.cpp
+index 2f1892f6..80718c5e 100644
+--- a/src/output/qtquick/plugin/QuickStyle.cpp
++++ b/src/output/qtquick/plugin/QuickStyle.cpp
+@@ -45,6 +45,11 @@ Union::ElementQuery *QuickStyle::query() const
+     return nullptr;
+ }
+ 
++QuickElement *QuickStyle::element() const
++{
++    return m_element;
++}
++
+ QQmlEngine *QuickStyle::engine() const
+ {
+     return m_engine;
+@@ -100,12 +105,14 @@ void QuickStyle::setElement(QuickElement *newElement)
+ 
+     if (m_element) {
+         m_element->removeEventFilter(this);
++        disconnect(m_element, &QuickElement::eyeShiftChanged, this, &QuickStyle::eyeShiftChanged);
+     }
+ 
+     m_element = newElement;
+ 
+     if (m_element) {
+         m_element->installEventFilter(this);
++        connect(m_element, &QuickElement::eyeShiftChanged, this, &QuickStyle::eyeShiftChanged);
+     }
+ }
+ 
+diff --git a/src/output/qtquick/plugin/QuickStyle.h b/src/output/qtquick/plugin/QuickStyle.h
+index f6013844..54babed7 100644
+--- a/src/output/qtquick/plugin/QuickStyle.h
++++ b/src/output/qtquick/plugin/QuickStyle.h
+@@ -64,6 +64,16 @@ public:
+      */
+     Union::ElementQuery *query() const;
+ 
++    /*!
++     * The element whose style this is.
++     */
++    QuickElement *element() const;
++
++    /*!
++     * Emitted when the element's picture moves for the eye being drawn.
++     */
++    Q_SIGNAL void eyeShiftChanged();
++
+     /*!
+      * \qmlattachedsignal Style::updated
+      *
+diff --git a/src/output/qtquick/plugin/StyledRectangle.cpp b/src/output/qtquick/plugin/StyledRectangle.cpp
+index b6e4a903..264db59d 100644
+--- a/src/output/qtquick/plugin/StyledRectangle.cpp
++++ b/src/output/qtquick/plugin/StyledRectangle.cpp
+@@ -4,6 +4,7 @@
+ #include "StyledRectangle.h"
+ 
+ #include "PixelAlignment.h"
++#include "QuickElement.h"
+ #include "StyleRule.h"
+ 
+ #include "scenegraph/OutlineBorderRectangleNode.h"
+@@ -33,7 +34,13 @@ void StyledRectangle::setStyle(QuickStyle *newStyle)
+         return;
+     }
+ 
++    if (m_style) {
++        disconnect(m_style, &QuickStyle::eyeShiftChanged, this, &StyledRectangle::update);
++    }
+     m_style = newStyle;
++    if (m_style) {
++        connect(m_style, &QuickStyle::eyeShiftChanged, this, &StyledRectangle::update);
++    }
+     Q_EMIT styleChanged();
+ }
+ 
+@@ -42,7 +49,7 @@ void StyledRectangle::componentComplete()
+     QQuickItem::componentComplete();
+ 
+     if (!m_style) {
+-        m_style = qobject_cast<QuickStyle *>(qmlAttachedPropertiesObject<QuickStyle>(this, true));
++        setStyle(qobject_cast<QuickStyle *>(qmlAttachedPropertiesObject<QuickStyle>(this, true)));
+         updateImplicitSize();
+     }
+ }
+@@ -128,7 +135,8 @@ QSGNode *StyledRectangle::updateShaderNode(QSGNode *node, const StylePropertyGro
+         node = new QSGNode{};
+     }
+ 
+-    auto shadows = style->shadow() ? QList{style->shadow()} : QList<ShadowPropertyGroup *>{};
++    // Inset shadows are not drawn yet; drawing one outside the element would cast it the wrong way.
++    auto shadows = style->shadow() && !style->shadow()->inset().value_or(false) ? QList{style->shadow()} : QList<ShadowPropertyGroup *>{};
+     auto backgrounds = style->background() ? QList{style->background()} : QList<BackgroundPropertyGroup *>{};
+     auto border = style->border();
+     auto outline = style->outline();
+@@ -174,6 +182,11 @@ QSGNode *StyledRectangle::updateShaderNode(QSGNode *node, const StylePropertyGro
+     // Shader corner radius order is bottom right, top right, bottom left, top left.
+     auto radii = QVector4D{float(cornerSizes.bottomRight), float(cornerSizes.topRight), float(cornerSizes.bottomLeft), float(cornerSizes.topLeft)};
+ 
++    // While the element is drawn for one eye nearer than what it lies on, its
++    // shadow stays where it falls, on what it lies on.
++    const auto element = m_style ? m_style->element() : nullptr;
++    const float shadowEyeShift = element ? element->shadowEyeShift() : 0.0;
++
+     int i = 0;
+     for (; i < m_shadowCount; ++i) {
+         auto shadow = shadows.at(i);
+@@ -182,7 +195,9 @@ QSGNode *StyledRectangle::updateShaderNode(QSGNode *node, const StylePropertyGro
+         shadowNode->setRadius(radii);
+         shadowNode->setBlur(shadow->blur().value_or(0.0));
+         shadowNode->setSpread(shadow->size().value_or(0.0));
+-        shadowNode->setOffset(shadow->offset() ? shadow->offset()->toVector2D() : QVector2D{});
++        auto offset = shadow->offset() ? shadow->offset()->toVector2D() : QVector2D{};
++        offset.setX(offset.x() - shadowEyeShift);
++        shadowNode->setOffset(offset);
+         shadowNode->setColor(shadow->color().value_or(Union::Color{}).toQColor());
+         shadowNode->update();
+     }

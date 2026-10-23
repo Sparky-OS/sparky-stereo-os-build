@@ -1,0 +1,812 @@
+Description: qtwidgets: Give widgets their depth, and move parts per eye
+ .
+ When the style draws a widget's own element, the element gives the widget
+ its depth, relative to the nearest widget around it that has one, fitted
+ into the limits per window as in Qt Quick. The widget carries its parallax
+ as _q_stereo_parallax: whoever draws the window once per eye moves the
+ whole widget by its share, its text included, and cuts a widget behind
+ the one it lies on to its own rectangle. A hidden widget takes no place.
+ .
+ Parts drawn inside one widget, such as the current tab of a tab bar, are
+ moved by the style itself while an eye is drawn, which the window's
+ _q_stereo_eye says, and a part behind its widget is cut to its own
+ rectangle.
+ .
+ Frames now carry their QFrame::Shadow as the hints raised and sunken, so
+ a style can give a frame Qt's own "the frame and contents appear raised"
+ or "sunken" as a depth. Breeze matches neither, so nothing changes there.
+ .
+ In a window that shows no depth nothing is recorded and nothing moves.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://invent.kde.org/danielcamposramos/union/-/commit/b1d660f4baa2f3129f2c597d0b912dd5d5a115ae
+Forwarded: no
+Last-Update: 2026-10-23
+Assisted-by: Claude Opus 5.5
+---
+ autotests/CMakeLists.txt                      |   4 +
+ .../depthtest/contents/css/style.css          |  20 ++
+ autotests/output/widgets/CMakeLists.txt       |   6 +
+ autotests/output/widgets/TestWidgetsDepth.cpp | 242 ++++++++++++++++++
+ src/output/qtwidgets/CMakeLists.txt           |   2 +
+ src/output/qtwidgets/UnionStyle.cpp           |  28 +-
+ src/output/qtwidgets/UnionStyle.h             |   5 +
+ src/output/qtwidgets/WidgetDepth.cpp          | 222 ++++++++++++++++
+ src/output/qtwidgets/WidgetDepth.h            |  77 ++++++
+ .../qtwidgets/elements/AbstractElement.h      |  16 ++
+ .../qtwidgets/elements/FrameElement.cpp       |  10 +
+ 11 files changed, 629 insertions(+), 3 deletions(-)
+ create mode 100644 autotests/output/widgets/CMakeLists.txt
+ create mode 100644 autotests/output/widgets/TestWidgetsDepth.cpp
+ create mode 100644 src/output/qtwidgets/WidgetDepth.cpp
+ create mode 100644 src/output/qtwidgets/WidgetDepth.h
+
+diff --git a/autotests/CMakeLists.txt b/autotests/CMakeLists.txt
+index 0c60fdbc..53ede8db 100644
+--- a/autotests/CMakeLists.txt
++++ b/autotests/CMakeLists.txt
+@@ -56,6 +56,10 @@ if (BUILD_OUTPUT_QTQUICK)
+     add_subdirectory(output/quick)
+ endif()
+ 
++if (BUILD_OUTPUT_QTWIDGETS)
++    add_subdirectory(output/widgets)
++endif()
++
+ if (BUILD_PLATFORM_PLASMA)
+     ecm_add_test(platform/TestPlasmaDepth.cpp LINK_LIBRARIES Qt6::Test Union::Union KF6::ConfigCore)
+     add_dependencies(TestPlasmaDepth union-platform-plasma)
+diff --git a/autotests/DepthTestData/depthtest/contents/css/style.css b/autotests/DepthTestData/depthtest/contents/css/style.css
+index 05bb9dc7..ad3b5175 100644
+--- a/autotests/DepthTestData/depthtest/contents/css/style.css
++++ b/autotests/DepthTestData/depthtest/contents/css/style.css
+@@ -43,3 +43,23 @@ popup {
+     padding: 8px;
+     depth: popped;
+ }
++
++tabbar {
++    background-color: #ffffff;
++}
++
++tabbutton {
++    width: 100px;
++    height: 40px;
++    padding: 4px;
++    text-alignment: content center center 0;
++    color: #000000;
++    background-color: #c0c0c0;
++}
++
++/* The current tab: checked in Qt Quick's TabBar and in Widgets. */
++tabbutton:checked,
++tabbutton:highlighted {
++    background-color: #ff8080;
++    depth: sunk;
++}
+diff --git a/autotests/output/widgets/CMakeLists.txt b/autotests/output/widgets/CMakeLists.txt
+new file mode 100644
+index 00000000..95175a34
+--- /dev/null
++++ b/autotests/output/widgets/CMakeLists.txt
+@@ -0,0 +1,6 @@
++# SPDX-License-Identifier: BSD-2-Clause
++# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++ecm_add_test(TestWidgetsDepth.cpp LINK_LIBRARIES Qt6::Test Qt6::Widgets Union::Union)
++add_dependencies(TestWidgetsDepth union-platform-depthtest UnionWidgetsStyle)
++set_tests_properties(TestWidgetsDepth PROPERTIES ENVIRONMENT "UNION_DISABLE_CACHE=1;XDG_DATA_DIRS=${CMAKE_BINARY_DIR}/autotests/data")
+diff --git a/autotests/output/widgets/TestWidgetsDepth.cpp b/autotests/output/widgets/TestWidgetsDepth.cpp
+new file mode 100644
+index 00000000..91c904e9
+--- /dev/null
++++ b/autotests/output/widgets/TestWidgetsDepth.cpp
+@@ -0,0 +1,242 @@
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++#include <QtTest>
++
++#include <QApplication>
++#include <QFrame>
++#include <QPainter>
++#include <QPluginLoader>
++#include <QPushButton>
++#include <QStylePlugin>
++#include <QTabBar>
++#include <QWindow>
++
++#include <Depth.h>
++
++using namespace Union;
++using namespace Qt::StringLiterals;
++
++// Limits large enough to measure, in pixels of a view 1920 wide.
++static constexpr qreal SunkLimit = 40.0;
++static constexpr qreal PoppedLimit = 20.0;
++
++class TestWidgetsDepth : public QObject
++{
++    Q_OBJECT
++
++    std::unique_ptr<QWidget> m_window;
++    QPushButton *m_raised = nullptr;
++    QPushButton *m_checked = nullptr;
++    QPushButton *m_flat = nullptr;
++    QFrame *m_frame = nullptr;
++    QPushButton *m_onFrame = nullptr;
++    QTabBar *m_tabs = nullptr;
++
++    int viewWidth() const
++    {
++        auto screen = m_window->windowHandle()->screen();
++        return qRound(screen->geometry().width() * screen->devicePixelRatio());
++    }
++
++    int parallax(qreal depth) const
++    {
++        return Depth::parallax(depth, Depth::Limits{.sunk = SunkLimit, .popped = PoppedLimit}, viewWidth());
++    }
++
++    // What the engine that draws a window once per eye does with the style's
++    // parallax: each widget is drawn moved by its own eye shift, and a widget
++    // behind the widget it lies on is cut to its own rectangle.
++    static void drawWidget(QWidget *widget, QPainter &painter, QPoint origin, Depth::Eye eye, int parentParallax)
++    {
++        const int parallax = widget->property(Depth::ParallaxProperty).toInt();
++        painter.save();
++        if (eye != Depth::Eye::None && parallax < parentParallax) {
++            painter.setClipRect(QRect(origin, widget->size()), Qt::IntersectClip);
++        }
++        widget->render(&painter, origin + QPoint(Depth::eyeShift(parallax, eye), 0), QRegion{}, QWidget::DrawWindowBackground);
++        painter.restore();
++
++        const auto children = widget->children();
++        for (auto child : children) {
++            auto childWidget = qobject_cast<QWidget *>(child);
++            if (childWidget && childWidget->isVisible() && !childWidget->isWindow()) {
++                drawWidget(childWidget, painter, origin + childWidget->pos(), eye, parallax);
++            }
++        }
++    }
++
++    QImage draw(Depth::Eye eye)
++    {
++        m_window->windowHandle()->setProperty(Depth::EyeProperty, int(eye));
++        QImage image(m_window->size(), QImage::Format_RGB32);
++        image.fill(Qt::white);
++        QPainter painter(&image);
++        drawWidget(m_window.get(), painter, QPoint{}, eye, 0);
++        painter.end();
++        m_window->windowHandle()->setProperty(Depth::EyeProperty, int(Depth::Eye::None));
++        return image;
++    }
++
++    static QRect rectInWindow(QWidget *widget)
++    {
++        return QRect(widget->mapTo(widget->window(), QPoint{}), widget->size());
++    }
++
++    // The horizontal shift that makes the picture of `area` in `reference` appear
++    // in `image`, or INT_MIN when no shift within `range` matches it exactly.
++    static int shiftOf(const QImage &reference, const QImage &image, const QRect &area, int range)
++    {
++        for (int distance = 0; distance <= range; ++distance) {
++            for (int dx : {distance, -distance}) {
++                bool same = true;
++                for (int y = area.top(); same && y <= area.bottom(); ++y) {
++                    for (int x = area.left(); x <= area.right(); ++x) {
++                        if (reference.pixel(x, y) != image.pixel(x + dx, y)) {
++                            same = false;
++                            break;
++                        }
++                    }
++                }
++                if (same) {
++                    return dx;
++                }
++            }
++        }
++        return std::numeric_limits<int>::min();
++    }
++
++private Q_SLOTS:
++    void initTestCase()
++    {
++        qputenv("UNION_FORCE_PLATFORM", "depthtest");
++        qputenv("UNION_TEST_STYLE_PATH", QFINDTESTDATA("../../DepthTestData").toUtf8());
++        qputenv("UNION_TEST_DEPTH_LIMITS", QByteArray(QByteArray::number(SunkLimit) + "," + QByteArray::number(PoppedLimit)));
++
++        QPluginLoader loader(QCoreApplication::applicationDirPath() + u"/UnionWidgetsStyle.so"_s);
++        auto plugin = qobject_cast<QStylePlugin *>(loader.instance());
++        QVERIFY2(plugin, qPrintable(loader.errorString()));
++        QApplication::setStyle(plugin->create(u"Union"_s));
++
++        m_window = std::make_unique<QWidget>();
++        m_window->resize(640, 260);
++
++        m_raised = new QPushButton(u"Raised"_s, m_window.get());
++        m_raised->setGeometry(30, 30, 120, 48);
++        m_checked = new QPushButton(u"Checked"_s, m_window.get());
++        m_checked->setCheckable(true);
++        m_checked->setChecked(true);
++        m_checked->setGeometry(190, 30, 120, 48);
++        m_flat = new QPushButton(u"Flat"_s, m_window.get());
++        m_flat->setFlat(true);
++        m_flat->setGeometry(350, 30, 120, 48);
++
++        m_frame = new QFrame(m_window.get());
++        m_frame->setFrameShape(QFrame::StyledPanel);
++        m_frame->setGeometry(30, 130, 300, 110);
++        m_onFrame = new QPushButton(u"On frame"_s, m_frame);
++        m_onFrame->setGeometry(20, 12, 120, 48);
++
++        m_tabs = new QTabBar(m_window.get());
++        m_tabs->addTab(u"One"_s);
++        m_tabs->addTab(u"Two"_s);
++        m_tabs->setCurrentIndex(1);
++        m_tabs->setGeometry(380, 150, 240, 40);
++
++        m_window->show();
++        QVERIFY(QTest::qWaitForWindowExposed(m_window.get()));
++
++        // The depths are recorded while the widgets are drawn.
++        m_window->grab();
++        QCoreApplication::processEvents();
++    }
++
++    void testParallax()
++    {
++        // From the style: a shadow raises one step, a declared sunk sinks to the limit, a flat
++        // button lies on the window, the frame declares 50% and the button on it stands on it.
++        QTRY_COMPARE(m_raised->property(Depth::ParallaxProperty).toInt(), parallax(0.5));
++        QCOMPARE(m_checked->property(Depth::ParallaxProperty).toInt(), parallax(-1.0));
++        QCOMPARE(m_flat->property(Depth::ParallaxProperty).toInt(), 0);
++        QCOMPARE(m_frame->property(Depth::ParallaxProperty).toInt(), parallax(0.5));
++        QCOMPARE(m_onFrame->property(Depth::ParallaxProperty).toInt(), parallax(1.0));
++        QCOMPARE(m_tabs->property(Depth::ParallaxProperty).toInt(), 0);
++    }
++
++    void testFlatPictureIsUnchanged()
++    {
++        const auto before = m_window->grab().toImage();
++        draw(Depth::Eye::Left);
++        draw(Depth::Eye::Right);
++        const auto after = m_window->grab().toImage();
++        QCOMPARE(after, before);
++    }
++
++    void testEyes_data()
++    {
++        QTest::addColumn<QString>("name");
++        QTest::addColumn<qreal>("depth");
++
++        QTest::addRow("raised") << u"raised"_s << 0.5;
++        QTest::addRow("sunk") << u"checked"_s << -1.0;
++        QTest::addRow("flat") << u"flat"_s << 0.0;
++        QTest::addRow("on a raised frame") << u"onFrame"_s << 1.0;
++    }
++
++    void testEyes()
++    {
++        QFETCH(QString, name);
++        QFETCH(qreal, depth);
++
++        QWidget *widget = name == u"raised" ? m_raised : name == u"checked" ? m_checked : name == u"flat" ? m_flat : m_onFrame;
++
++        const auto flat = draw(Depth::Eye::None);
++        const auto left = draw(Depth::Eye::Left);
++        const auto right = draw(Depth::Eye::Right);
++
++        if (const auto directory = qEnvironmentVariable("UNION_TEST_SAVE_IMAGES"); !directory.isEmpty() && name == u"raised") {
++            flat.save(directory + u"/widgets-flat.png"_s);
++            QImage pair(left.width() * 2, left.height(), QImage::Format_RGB32);
++            QPainter painter(&pair);
++            painter.drawImage(0, 0, left);
++            painter.drawImage(left.width(), 0, right);
++            painter.end();
++            pair.save(directory + u"/widgets-full-sbs.png"_s);
++        }
++
++        // The label, inside the widget: the widget moves as a whole, its text with it.
++        const auto label = rectInWindow(widget).adjusted(30, 10, -30, -10);
++        const int leftShift = shiftOf(flat, left, label, 40);
++        const int rightShift = shiftOf(flat, right, label, 40);
++
++        QCOMPARE(leftShift, Depth::eyeShift(parallax(depth), Depth::Eye::Left));
++        QCOMPARE(rightShift, Depth::eyeShift(parallax(depth), Depth::Eye::Right));
++        QCOMPARE(leftShift - rightShift, parallax(depth));
++    }
++
++    void testSelectedTabSinksWithinTheTabBar()
++    {
++        // The current tab is a part of the tab bar: the style moves it, cut to its own rectangle.
++        const auto flat = draw(Depth::Eye::None);
++        const auto tab = m_tabs->tabRect(1).translated(rectInWindow(m_tabs).topLeft());
++        const auto other = m_tabs->tabRect(0).translated(rectInWindow(m_tabs).topLeft());
++
++        for (auto eye : {Depth::Eye::Left, Depth::Eye::Right}) {
++            const auto image = draw(eye);
++            const int expected = Depth::eyeShift(parallax(-1.0), eye);
++            QCOMPARE(shiftOf(flat, image, tab.adjusted(28, 8, -28, -8), 40), expected);
++
++            // The tab that is not selected stays, and nothing of the sunk tab is drawn beside it.
++            QCOMPARE(shiftOf(flat, image, other, 40), 0);
++            for (int y = tab.top(); y <= tab.bottom(); ++y) {
++                for (int x = tab.right() + 1; x <= std::min(tab.right() + std::abs(expected), flat.width() - 1); ++x) {
++                    QCOMPARE(image.pixel(x, y), flat.pixel(x, y));
++                }
++            }
++        }
++    }
++};
++
++QTEST_MAIN(TestWidgetsDepth)
++
++#include "TestWidgetsDepth.moc"
+diff --git a/src/output/qtwidgets/CMakeLists.txt b/src/output/qtwidgets/CMakeLists.txt
+index 3131b9fe..36ecd080 100644
+--- a/src/output/qtwidgets/CMakeLists.txt
++++ b/src/output/qtwidgets/CMakeLists.txt
+@@ -21,6 +21,8 @@ target_sources(UnionWidgetsStyle PRIVATE
+         UnionStyle.h
+         UnionStylePlugin.cpp
+         UnionStylePlugin.h
++        WidgetDepth.cpp
++        WidgetDepth.h
+         elements/AbstractElement.cpp
+         elements/AbstractElement.h
+         elements/ButtonElement.cpp
+diff --git a/src/output/qtwidgets/UnionStyle.cpp b/src/output/qtwidgets/UnionStyle.cpp
+index 4d22bfe2..d3b3a082 100644
+--- a/src/output/qtwidgets/UnionStyle.cpp
++++ b/src/output/qtwidgets/UnionStyle.cpp
+@@ -107,6 +107,7 @@
+ #include <QWidgetAction>
+ 
+ #include "ElementCache.h"
++#include "WidgetDepth.h"
+ 
+ using namespace Qt::StringLiterals;
+ using namespace Union::Properties;
+@@ -114,6 +115,7 @@ using namespace Union::Properties;
+ UnionStyle::UnionStyle()
+     : QCommonStyle()
+     , m_showMnemonics(false)
++    , m_depth(std::make_unique<WidgetDepth>())
+ {
+     qApp->installEventFilter(this);
+     Union::StyleRegistry::instance()->load();
+@@ -174,7 +176,7 @@ void UnionStyle::drawControl(QStyle::ControlElement controlElement, const QStyle
+                                         QStyle::CE_ItemViewItem,
+                                         QStyle::CE_ShapedFrame>(controlElement, hash, this, option, widget);
+     if (cached) {
+-        cached->draw(painter, drawEnums);
++        drawElement(cached.get(), painter, drawEnums, option, widget);
+     } else {
+         switch (controlElement) {
+         case CE_MenuEmptyArea:
+@@ -209,7 +211,7 @@ void UnionStyle::drawComplexControl(ComplexControl control, const QStyleOptionCo
+                                         QStyle::CC_TitleBar,
+                                         QStyle::CC_GroupBox>(control, hash, this, option, widget);
+     if (cached) {
+-        cached->draw(painter, drawEnums);
++        drawElement(cached.get(), painter, drawEnums, option, widget);
+     } else {
+         // TODO: Dial, MDI controls
+         QCommonStyle::drawComplexControl(control, option, painter, widget);
+@@ -302,7 +304,7 @@ void UnionStyle::drawPrimitive(QStyle::PrimitiveElement element, const QStyleOpt
+                                         QStyle::PE_PanelMenu,
+                                         QStyle::PE_IndicatorDockWidgetResizeHandle>(element, hash, this, option, widget);
+     if (cached) {
+-        cached->draw(painter, drawEnums);
++        drawElement(cached.get(), painter, drawEnums, option, widget);
+     } else {
+         // Handle some items that are just duplicates of the above, or need fallback
+         switch (element) {
+@@ -858,6 +860,26 @@ void UnionStyle::drawItemText(QPainter *painter,
+     QCommonStyle::drawItemText(painter, rect, flags, pal, enabled, text, textRole);
+ }
+ 
++void UnionStyle::drawElement(const AbstractElement *element, QPainter *painter, DrawEnums enums, const QStyleOption *option, const QWidget *widget) const
++{
++    m_depth->elementDrawn(widget, element);
++
++    // A part of a widget at another depth than the widget, drawn for one eye.
++    const auto part = m_depth->partShift(widget, element);
++    if (!part) {
++        element->draw(painter, enums);
++        return;
++    }
++
++    painter->save();
++    if (part->clip) {
++        painter->setClipRect(option->rect, Qt::IntersectClip);
++    }
++    painter->translate(part->shift, 0.0);
++    element->draw(painter, enums);
++    painter->restore();
++}
++
+ void UnionStyle::setMnemonics(bool enabled)
+ {
+     if (m_showMnemonics != enabled) {
+diff --git a/src/output/qtwidgets/UnionStyle.h b/src/output/qtwidgets/UnionStyle.h
+index 73ba0cba..79f35957 100644
+--- a/src/output/qtwidgets/UnionStyle.h
++++ b/src/output/qtwidgets/UnionStyle.h
+@@ -11,6 +11,8 @@
+ #include "elements/CheckBoxElement.h"
+ #include <QCommonStyle>
+ 
++class WidgetDepth;
++
+ /*!
+  * \brief Provides Union styling for QtWidgets applications.
+  */
+@@ -133,4 +135,7 @@ public:
+ private:
+     bool m_showMnemonics;
+     void setMnemonics(bool enabled);
++    void drawElement(const AbstractElement *element, QPainter *painter, DrawEnums enums, const QStyleOption *option, const QWidget *widget) const;
++
++    std::unique_ptr<WidgetDepth> m_depth;
+ };
+diff --git a/src/output/qtwidgets/WidgetDepth.cpp b/src/output/qtwidgets/WidgetDepth.cpp
+new file mode 100644
+index 00000000..ab8af800
+--- /dev/null
++++ b/src/output/qtwidgets/WidgetDepth.cpp
+@@ -0,0 +1,222 @@
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++#include "WidgetDepth.h"
++
++#include <QScreen>
++#include <QWidget>
++#include <QWindow>
++
++#include <PlatformPlugin.h>
++#include <StyleRegistry.h>
++
++#include "StyleUtils.h"
++#include "elements/AbstractElement.h"
++
++using namespace Union;
++
++// Whether the element is the widget's own, rather than one of its parts: its
++// element hierarchy is the widget's.
++static bool isOwnElement(const QWidget *widget, const AbstractElement *element)
++{
++    const auto types = widget->property(property_union_member_list).toStringList();
++    const auto &elements = element->elementList();
++    return !types.isEmpty() && elements.size() == types.size() && elements.last()->type() == types.last();
++}
++
++WidgetDepth::WidgetDepth(QObject *parent)
++    : QObject(parent)
++{
++    StyleRegistry::instance()->platform()->installEventFilter(this);
++}
++
++WidgetDepth::~WidgetDepth() = default;
++
++void WidgetDepth::elementDrawn(const QWidget *widget, const AbstractElement *element)
++{
++    if (!widget || !element || !isOwnElement(widget, element)) {
++        return;
++    }
++
++    auto window = windowFor(widget);
++    if (!window || !window->enabled) {
++        return;
++    }
++
++    // The widget stands on the nearest widget around it that has a depth; the
++    // top of a window lies at the window, where the window sits is the compositor's.
++    const QWidget *parent = nullptr;
++    if (!widget->isWindow()) {
++        for (auto ancestor = widget->parentWidget(); ancestor; ancestor = ancestor->isWindow() ? nullptr : ancestor->parentWidget()) {
++            if (window->tree.contains(ancestor)) {
++                parent = ancestor;
++                break;
++            }
++        }
++    }
++    const qreal depth = widget->isWindow() ? Depth::Screen : Depth::elementDepth(element->elementProperties());
++
++    if (!m_widgetWindows.contains(widget)) {
++        m_widgetWindows.insert(widget, widget->window());
++        const_cast<QWidget *>(widget)->installEventFilter(this);
++        connect(widget, &QObject::destroyed, this, [this, widget]() {
++            removeWidget(widget);
++        });
++    }
++
++    window->tree.setElement(widget, parent, depth);
++    applyChanges(*window);
++}
++
++std::optional<WidgetDepth::PartShift> WidgetDepth::partShift(const QWidget *widget, const AbstractElement *element) const
++{
++    if (!widget || !element) {
++        return std::nullopt;
++    }
++
++    auto window = windowFor(widget);
++    if (!window || !window->enabled || !window->handle) {
++        return std::nullopt;
++    }
++
++    const auto eye = Depth::Eye(window->handle->property(Depth::EyeProperty).toInt());
++    if (eye == Depth::Eye::None || isOwnElement(widget, element)) {
++        return std::nullopt;
++    }
++
++    const qreal relativeDepth = Depth::elementDepth(element->elementProperties());
++    if (relativeDepth == Depth::Screen) {
++        return std::nullopt;
++    }
++
++    const auto limits = StyleRegistry::instance()->platform()->depthLimits();
++    const qreal widgetDepth = window->tree.depth(widget);
++    const qreal partDepth = std::clamp(widgetDepth + relativeDepth, Depth::Sunk, Depth::Popped);
++
++    const int shift = Depth::eyeShift(Depth::parallax(partDepth, limits, window->viewWidth), eye);
++    const int widgetShift = Depth::eyeShift(Depth::parallax(widgetDepth, limits, window->viewWidth), eye);
++    if (shift == widgetShift) {
++        return std::nullopt;
++    }
++
++    return PartShift{.shift = (shift - widgetShift) / window->devicePixelRatio, .clip = partDepth < widgetDepth};
++}
++
++bool WidgetDepth::eventFilter(QObject *watched, QEvent *event)
++{
++    if (event->type() == DepthChangedEvent::s_type) {
++        auto depthEvent = static_cast<DepthChangedEvent *>(event);
++        for (auto &window : m_windows) {
++            if (!depthEvent->window || depthEvent->window == window->handle) {
++                refresh(*window);
++            }
++        }
++    } else if (event->type() == QEvent::Hide && watched->isWidgetType()) {
++        // What is not shown takes no place.
++        auto widget = static_cast<QWidget *>(watched);
++        if (auto window = m_windows.value(m_widgetWindows.value(widget))) {
++            widget->setProperty(Depth::ParallaxProperty, QVariant{});
++            window->tree.removeElement(widget);
++            applyChanges(*window);
++        }
++    }
++
++    return QObject::eventFilter(watched, event);
++}
++
++WidgetDepth::Window *WidgetDepth::windowFor(const QWidget *widget) const
++{
++    const auto topLevel = widget->window();
++
++    auto window = m_windows.value(topLevel);
++    if (!window) {
++        window = std::make_shared<Window>();
++        m_windows.insert(topLevel, window);
++        connect(topLevel, &QObject::destroyed, this, [this, topLevel]() {
++            m_windows.remove(topLevel);
++        });
++    }
++
++    // The native window may be created after the first paint.
++    if (!window->handle && topLevel->windowHandle()) {
++        window->handle = topLevel->windowHandle();
++        connect(window->handle, &QWindow::screenChanged, this, [this, topLevel]() {
++            if (auto window = m_windows.value(topLevel)) {
++                refresh(*window);
++            }
++        });
++        refresh(*window);
++    }
++
++    return window.get();
++}
++
++void WidgetDepth::refresh(Window &window) const
++{
++    const bool wasEnabled = window.enabled;
++
++    auto platform = StyleRegistry::instance()->platform();
++    window.enabled = window.handle && platform->depthEnabled(window.handle) && platform->depthLimits().isEnabled();
++    if (window.handle) {
++        auto screen = window.handle->screen();
++        window.viewWidth = screen ? qRound(screen->geometry().width() * screen->devicePixelRatio()) : 0;
++        window.devicePixelRatio = std::max(window.handle->devicePixelRatio(), 1e-3);
++    }
++    window.enabled = window.enabled && window.viewWidth > 0;
++
++    // Every widget of the window looks at its depth again when it is drawn next.
++    for (auto itr = m_widgetWindows.cbegin(); itr != m_widgetWindows.cend(); ++itr) {
++        if (m_windows.value(itr.value()).get() != &window) {
++            continue;
++        }
++        auto widget = const_cast<QWidget *>(itr.key());
++        if (!window.enabled) {
++            widget->setProperty(Depth::ParallaxProperty, QVariant{});
++        }
++        widget->update();
++    }
++
++    if (!window.enabled) {
++        for (auto itr = m_widgetWindows.cbegin(); itr != m_widgetWindows.cend(); ++itr) {
++            window.tree.removeElement(itr.key());
++        }
++        window.tree.takeChanges();
++    } else if (!wasEnabled) {
++        for (auto itr = m_windows.cbegin(); itr != m_windows.cend(); ++itr) {
++            if (itr.value().get() == &window) {
++                const auto widgets = itr.key()->findChildren<QWidget *>();
++                for (auto widget : widgets) {
++                    widget->update();
++                }
++                const_cast<QWidget *>(itr.key())->update();
++            }
++        }
++    }
++}
++
++void WidgetDepth::applyChanges(Window &window) const
++{
++    const auto limits = StyleRegistry::instance()->platform()->depthLimits();
++    const auto changes = window.tree.takeChanges();
++    for (auto key : changes) {
++        auto widget = static_cast<const QWidget *>(key);
++        if (!m_widgetWindows.contains(widget) || !window.tree.contains(widget)) {
++            continue;
++        }
++
++        auto mutableWidget = const_cast<QWidget *>(widget);
++        mutableWidget->setProperty(Depth::ParallaxProperty, Depth::parallax(window.tree.depth(widget), limits, window.viewWidth));
++        mutableWidget->update();
++    }
++}
++
++void WidgetDepth::removeWidget(const QWidget *widget) const
++{
++    const auto topLevel = m_widgetWindows.take(widget);
++    if (auto window = m_windows.value(topLevel)) {
++        window->tree.removeElement(widget);
++        applyChanges(*window);
++    }
++}
++
++#include "moc_WidgetDepth.cpp"
+diff --git a/src/output/qtwidgets/WidgetDepth.h b/src/output/qtwidgets/WidgetDepth.h
+new file mode 100644
+index 00000000..15575a77
+--- /dev/null
++++ b/src/output/qtwidgets/WidgetDepth.h
+@@ -0,0 +1,77 @@
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++#pragma once
++
++#include <memory>
++#include <optional>
++
++#include <QHash>
++#include <QObject>
++#include <QPointer>
++
++#include <Depth.h>
++
++class AbstractElement;
++class QWidget;
++class QWindow;
++
++/*
++ * The depth of widgets on stereo outputs.
++ *
++ * When the style draws a widget's own element, that element gives the widget
++ * its depth, relative to the nearest widget around it that has one, in a
++ * DepthTree per window. The widget then carries its parallax as
++ * Depth::ParallaxProperty, for whoever draws the window once per eye to move
++ * the whole widget, its text included.
++ *
++ * Parts drawn inside one widget, such as a tab of a tab bar, are moved by the
++ * style itself while an eye is drawn, which the window's Depth::EyeProperty
++ * says. A part behind its widget is cut to its own rectangle.
++ *
++ * In a window that shows no depth nothing is recorded and nothing moves.
++ */
++class WidgetDepth : public QObject
++{
++    Q_OBJECT
++
++public:
++    explicit WidgetDepth(QObject *parent = nullptr);
++    ~WidgetDepth() override;
++
++    struct PartShift {
++        qreal shift = 0.0;
++        bool clip = false;
++    };
++
++    /*
++     * Called when the style drew \a element for \a widget.
++     */
++    void elementDrawn(const QWidget *widget, const AbstractElement *element);
++
++    /*
++     * How far the style moves \a element, a part of \a widget, in the eye being
++     * drawn, in logical pixels; nothing when it does not move.
++     */
++    std::optional<PartShift> partShift(const QWidget *widget, const AbstractElement *element) const;
++
++protected:
++    bool eventFilter(QObject *watched, QEvent *event) override;
++
++private:
++    struct Window {
++        QPointer<QWindow> handle;
++        Union::DepthTree tree;
++        bool enabled = false;
++        int viewWidth = 0;
++        qreal devicePixelRatio = 1.0;
++    };
++
++    Window *windowFor(const QWidget *widget) const;
++    void refresh(Window &window) const;
++    void applyChanges(Window &window) const;
++    void removeWidget(const QWidget *widget) const;
++
++    mutable QHash<const QWidget *, std::shared_ptr<Window>> m_windows;
++    mutable QHash<const QWidget *, const QWidget *> m_widgetWindows;
++};
+diff --git a/src/output/qtwidgets/elements/AbstractElement.h b/src/output/qtwidgets/elements/AbstractElement.h
+index 0bf1cade..7d36f164 100644
+--- a/src/output/qtwidgets/elements/AbstractElement.h
++++ b/src/output/qtwidgets/elements/AbstractElement.h
+@@ -54,6 +54,22 @@ public:
+      */
+     bool isValid() const;
+ 
++    /*
++     * The elements this element was matched with, the last one its own.
++     */
++    const Union::ElementList &elementList() const
++    {
++        return m_elementList;
++    }
++
++    /*
++     * The properties the style gives this element.
++     */
++    Union::Properties::StylePropertyGroup *elementProperties() const
++    {
++        return m_elementProperties;
++    }
++
+     /*!
+      * \brief Draw the whole element, including text, icon, background and indicator.
+      */
+diff --git a/src/output/qtwidgets/elements/FrameElement.cpp b/src/output/qtwidgets/elements/FrameElement.cpp
+index b56e22b3..1ae1b037 100644
+--- a/src/output/qtwidgets/elements/FrameElement.cpp
++++ b/src/output/qtwidgets/elements/FrameElement.cpp
+@@ -193,6 +193,16 @@ QStringList FrameElement::elementHints() const
+ {
+     auto hints = frameHints(m_frameOption);
+ 
++    // QFrame::Shadow: the frame and its contents appear raised or sunken, which
++    // a style can give a depth.
++    if (const auto frame = qobject_cast<const QFrame *>(m_widget)) {
++        if (frame->frameShadow() == QFrame::Raised) {
++            hints.append(u"raised"_s);
++        } else if (frame->frameShadow() == QFrame::Sunken) {
++            hints.append(u"sunken"_s);
++        }
++    }
++
+     // Backwards compatibility:
+     // Custom KDE style hint used by KDE widgets applications, for declaring sidebars
+     if (m_widget) {

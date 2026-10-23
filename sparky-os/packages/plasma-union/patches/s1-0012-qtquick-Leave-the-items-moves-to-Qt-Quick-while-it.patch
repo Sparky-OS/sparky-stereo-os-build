@@ -1,0 +1,389 @@
+Description: qtquick: Leave the items' moves to Qt Quick while it draws the pair
+ .
+ The edition's Qt Quick now draws a window whose elements show depth once per
+ eye itself: it moves each item by the parallax the item carries, relative to
+ what it lies on, and cuts an item deeper than what it lies on to its own
+ rectangle, an item that draws itself too. While it does, it says so with the
+ window's _q_stereo_pair (Depth::PairProperty). Union then moves no item, so
+ nothing moves twice, and keeps only what differs inside an element: the shadow
+ left where it falls.
+ .
+ Both eyes of a frame show the same moment of a motion in depth, the parallax
+ the engine reads follows the motion frame by frame, and Union's rectangles and
+ icons are aligned to pixels where the engine draws them, so they land on whole
+ pixels as they did when Union moved them itself.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://invent.kde.org/danielcamposramos/union/-/commit/7c8ab92f0fd3b86d0e662ee740adf5f1ac882152
+Forwarded: no
+Last-Update: 2026-10-23
+Assisted-by: Claude Opus 5.5
+---
+ autotests/output/quick/TestQuickDepth.cpp     | 41 +++++++++++++++++++
+ src/Depth.h                                   |  9 ++++
+ src/output/qtquick/plugin/DepthWindow.cpp     | 39 ++++++++++++++++--
+ src/output/qtquick/plugin/DepthWindow.h       | 14 +++++++
+ src/output/qtquick/plugin/Icon.cpp            |  7 +++-
+ src/output/qtquick/plugin/PixelAlignment.h    | 15 ++++---
+ src/output/qtquick/plugin/QuickElement.cpp    | 23 ++++++++---
+ src/output/qtquick/plugin/QuickElement.h      |  7 ++++
+ src/output/qtquick/plugin/StyledRectangle.cpp |  4 +-
+ 9 files changed, 140 insertions(+), 19 deletions(-)
+
+diff --git a/autotests/output/quick/TestQuickDepth.cpp b/autotests/output/quick/TestQuickDepth.cpp
+index cb073af9..65c0d3d5 100644
+--- a/autotests/output/quick/TestQuickDepth.cpp
++++ b/autotests/output/quick/TestQuickDepth.cpp
+@@ -382,6 +382,47 @@ private Q_SLOTS:
+         QVERIFY(flat.pixelColor(rect.left() + shift / 2, rect.bottom() - 2) != QColor(Qt::black));
+     }
+ 
++    void testEngineMovesItems()
++    {
++        // While the engine draws the window as a pair (the edition's Qt Quick), it moves each item
++        // by the parallax the item carries: Union no longer moves it, and only keeps the shadow
++        // where it falls, against the move the engine makes.
++        QTRY_COMPARE(depthOf(u"raised"_s), 1.0 / 1.5);
++        const auto flat = grab(Depth::Eye::None);
++        const auto rect = deviceRect(u"raised"_s);
++        const qreal parallax = Depth::exactParallax(Depth::referenceDepth(element(1.0 / 1.5), limits()), viewWidth());
++        QCOMPARE(item(u"raised"_s)->property(Depth::ParallaxProperty).toReal(), parallax);
++
++        m_window->setProperty(Depth::PairProperty, true);
++        const auto left = grab(Depth::Eye::Left);
++        const auto right = grab(Depth::Eye::Right);
++        m_window->setProperty(Depth::PairProperty, false);
++
++        QCOMPARE(shiftOf(flat, left, rect.adjusted(30, 10, -30, -10), 40), 0);
++        QCOMPARE(shiftOf(flat, right, rect.adjusted(30, 10, -30, -10), 40), 0);
++
++        if (flat.pixelColor(rect.left() + 4, rect.top() + 4) == QColor(Qt::white)) {
++            QSKIP("Union's rectangles are not drawn on this platform (the offscreen platform draws only text)");
++        }
++        // The hard shadow below the button, as wide as the button, moves against the engine's move:
++        // in the left eye it reaches out past the button's left edge, in the right eye past its right.
++        const int leftShift = qRound(expectedShift(element(1.0 / 1.5), Depth::Eye::Left));
++        const int rightShift = qRound(expectedShift(element(1.0 / 1.5), Depth::Eye::Right));
++        QVERIFY(leftShift > 2 && rightShift < -2);
++        const int row = rect.bottom() + 4;
++        QCOMPARE(flat.pixelColor(rect.center().x(), row), QColor(Qt::black));
++        QVERIFY(flat.pixelColor(rect.left() - leftShift / 2, row) != QColor(Qt::black));
++        QCOMPARE(left.pixelColor(rect.left() - leftShift / 2, row), QColor(Qt::black));
++        QVERIFY(left.pixelColor(rect.right() - leftShift / 2, row) != QColor(Qt::black));
++        QVERIFY(flat.pixelColor(rect.right() - rightShift / 2, row) != QColor(Qt::black));
++        QCOMPARE(right.pixelColor(rect.right() - rightShift / 2, row), QColor(Qt::black));
++        QVERIFY(right.pixelColor(rect.left() - rightShift / 2, row) != QColor(Qt::black));
++
++        // Drawn once per eye by Union itself again, the element moves.
++        const auto leftAgain = grab(Depth::Eye::Left);
++        QCOMPARE(shiftOf(flat, leftAgain, rect.adjusted(30, 10, -30, -10), 40), qRound(expectedShift(element(1.0 / 1.5), Depth::Eye::Left)));
++    }
++
+     void testPopupIsADesktopElement()
+     {
+         QTRY_COMPARE(depthOf(u"raised"_s), 1.0 / 1.5);
+diff --git a/src/Depth.h b/src/Depth.h
+index cadcec72..2e59b73f 100644
+--- a/src/Depth.h
++++ b/src/Depth.h
+@@ -98,6 +98,15 @@ enum class Range {
+  * drawn once, as on a 2D output.
+  */
+ inline constexpr char DepthProperty[] = "_q_stereo_depth";
++/*!
++ * The name of the dynamic property of a QWindow, a bool, that is true while
++ * whoever draws the window once per eye draws it as a pair. The edition's Qt
++ * Quick then moves each item by its Depth::ParallaxProperty for the eye drawn,
++ * relative to what it lies on, and cuts an item deeper than what it lies on to
++ * its own rectangle; the style only draws what differs between the eyes inside
++ * an element, such as a shadow left where it falls.
++ */
++inline constexpr char PairProperty[] = "_q_stereo_pair";
+ /*!
+  * The name of the dynamic property of a QWindow that says which eye is being
+  * drawn, as an int with the values of Eye. Whoever draws a window once per eye
+diff --git a/src/output/qtquick/plugin/DepthWindow.cpp b/src/output/qtquick/plugin/DepthWindow.cpp
+index 7c3fa01b..2c1c077a 100644
+--- a/src/output/qtquick/plugin/DepthWindow.cpp
++++ b/src/output/qtquick/plugin/DepthWindow.cpp
+@@ -94,7 +94,27 @@ qreal DepthWindow::depth(const QuickElement *element) const
+ 
+ qreal DepthWindow::parallax(const QuickElement *element) const
+ {
+-    return parallaxAt(element, now());
++    return parallaxAt(element, eyeTime());
++}
++
++std::chrono::nanoseconds DepthWindow::eyeTime() const
++{
++    return m_eye == Depth::Eye::None ? now() : m_eyeTime;
++}
++
++bool DepthWindow::engineMovesItems() const
++{
++    return m_renderWindow && m_renderWindow->property(Depth::PairProperty).toBool();
++}
++
++qreal DepthWindow::engineShift(const QuickElement *element) const
++{
++    if (!isEnabled() || m_eye == Depth::Eye::None || !engineMovesItems() || !m_elements.contains(element)) {
++        return 0.0;
++    }
++
++    // Relative to what it lies on at each level, the moves add up to the element's own share.
++    return Depth::exactEyeShift(parallaxAt(element, eyeTime()), m_eye) / m_devicePixelRatio;
+ }
+ 
+ qreal DepthWindow::parallaxAt(const QuickElement *element, std::chrono::nanoseconds time) const
+@@ -128,7 +148,7 @@ qreal DepthWindow::relativeShift(const QuickElement *element) const
+         return 0.0;
+     }
+ 
+-    const auto time = now();
++    const auto time = eyeTime();
+     const qreal shift = Depth::exactEyeShift(parallaxAt(element, time), m_eye);
+     const qreal parentShift = itr->parent ? Depth::exactEyeShift(parallaxAt(itr->parent, time), m_eye) : 0.0;
+     return (shift - parentShift) / m_devicePixelRatio;
+@@ -269,6 +289,10 @@ void DepthWindow::setEye(Depth::Eye eye)
+         return;
+     }
+ 
++    // A frame's eyes begin.
++    if (m_eye == Depth::Eye::None) {
++        m_eyeTime = now();
++    }
+     m_eye = eye;
+ 
+     if (m_changesScheduled) {
+@@ -281,13 +305,20 @@ void DepthWindow::setEye(Depth::Eye eye)
+ void DepthWindow::applyEye()
+ {
+     bool moving = false;
+-    const auto time = now();
++    const auto time = eyeTime();
++    // The engine moves the items by the parallax they carry: while they move in depth, it is the
++    // one of the frame's moment.
++    const bool engine = engineMovesItems() && m_eye != Depth::Eye::None;
+ 
+     for (const auto &entry : std::as_const(m_elements)) {
++        const bool entryMoving = entry.motion.isMoving(time);
+         if (entry.element) {
++            if (engine && entryMoving) {
++                entry.element->depthUpdated();
++            }
+             entry.element->updateEyeShift();
+         }
+-        moving |= entry.motion.isMoving(time);
++        moving |= entryMoving;
+     }
+ 
+     // While something moves in depth, every frame draws it a little further.
+diff --git a/src/output/qtquick/plugin/DepthWindow.h b/src/output/qtquick/plugin/DepthWindow.h
+index 4cfed2d8..651855be 100644
+--- a/src/output/qtquick/plugin/DepthWindow.h
++++ b/src/output/qtquick/plugin/DepthWindow.h
+@@ -78,6 +78,17 @@ public:
+      * Whether the element is behind what it lies on.
+      */
+     bool isDeeper(const QuickElement *element) const;
++    /*!
++     * Whether whoever draws the window once per eye moves its items by their
++     * parallax itself, as the edition's Qt Quick does while it draws the window
++     * as a pair (the window's Depth::PairProperty).
++     */
++    bool engineMovesItems() const;
++    /*!
++     * How far the engine moves the element's picture in the eye being drawn, in
++     * the scene's logical pixels, while it moves items itself; otherwise 0.
++     */
++    qreal engineShift(const QuickElement *element) const;
+ 
+     /*!
+      * Adds or removes a modal overlay: while one is shown, the window's content
+@@ -113,6 +124,8 @@ private:
+     void applyEye();
+     qreal parallaxAt(const QuickElement *element, std::chrono::nanoseconds time) const;
+     qreal referenceDepth(const QuickElement *element) const;
++    // The moment the eyes of a frame are drawn at: both eyes show the same moment of a motion.
++    std::chrono::nanoseconds eyeTime() const;
+ 
+     QQuickWindow *m_window = nullptr;
+     QPointer<QWindow> m_renderWindow;
+@@ -120,6 +133,7 @@ private:
+     QHash<const QuickElement *, Entry> m_elements;
+     QList<QObject *> m_modalOverlays;
+     Depth::Eye m_eye = Depth::Eye::None;
++    std::chrono::nanoseconds m_eyeTime{};
+     Depth::Limits m_limits;
+     Qt::Edges m_outputEdges;
+     bool m_platformEnabled = false;
+diff --git a/src/output/qtquick/plugin/Icon.cpp b/src/output/qtquick/plugin/Icon.cpp
+index 21510cc0..1b2dedbe 100644
+--- a/src/output/qtquick/plugin/Icon.cpp
++++ b/src/output/qtquick/plugin/Icon.cpp
+@@ -12,6 +12,7 @@
+ #include <StyleRegistry.h>
+ 
+ #include "PixelAlignment.h"
++#include "QuickElement.h"
+ #include "QuickStyle.h"
+ 
+ #include "qtquick_logging.h"
+@@ -151,6 +152,7 @@ void Icon::setControl(QQuickItem *newControl)
+ 
+     if (m_style) {
+         m_style->removeEventFilter(this);
++        disconnect(m_style, &QuickStyle::eyeShiftChanged, this, &QQuickItem::update);
+     }
+ 
+     m_control = newControl;
+@@ -161,6 +163,8 @@ void Icon::setControl(QQuickItem *newControl)
+ 
+         m_style = qobject_cast<QuickStyle *>(qmlAttachedPropertiesObject<QuickStyle>(this, true));
+         m_style->installEventFilter(this);
++        // Aligned to pixels where the engine draws it for the eye.
++        connect(m_style, &QuickStyle::eyeShiftChanged, this, &QQuickItem::update);
+ 
+         onControlIconChanged();
+     }
+@@ -195,7 +199,8 @@ QSGNode *Icon::updatePaintNode(QSGNode *node, QQuickItem::UpdatePaintNodeData *)
+     auto bounds = boundingRect();
+     auto centerPos = QPointF{std::round(bounds.x() + (bounds.width() - m_iconSize.width()) / 2.0), //
+                              std::round(bounds.y() + (bounds.height() - m_iconSize.height()) / 2.0)};
+-    imageNode->setRect(QRectF{alignPoint(centerPos, this), m_iconSize.toSizeF()});
++    const auto element = m_style ? m_style->element() : nullptr;
++    imageNode->setRect(QRectF{alignPoint(centerPos, this, element ? element->engineEyeShift() : 0.0), m_iconSize.toSizeF()});
+     imageNode->setOwnsTexture(true);
+ 
+     if (smooth()) {
+diff --git a/src/output/qtquick/plugin/PixelAlignment.h b/src/output/qtquick/plugin/PixelAlignment.h
+index ff747815..9e6fe683 100644
+--- a/src/output/qtquick/plugin/PixelAlignment.h
++++ b/src/output/qtquick/plugin/PixelAlignment.h
+@@ -25,20 +25,23 @@ inline QPointF roundPoint(const QPointF &unrounded, float factor)
+     return QPointF{std::round(unrounded.x() * factor) / factor, std::round(unrounded.y() * factor) / factor};
+ }
+ 
+-inline QPointF alignPoint(const QPointF &unaligned, QQuickItem *item)
++// While the edition's Qt Quick draws a window as a pair, it moves an item for the eye drawn
++// outside the item's own geometry, by eyeShift in the scene's coordinates: what is aligned to
++// pixels is aligned where it is drawn.
++inline QPointF alignPoint(const QPointF &unaligned, QQuickItem *item, qreal eyeShift = 0.0)
+ {
+     auto dpr = devicePixelRatioFor(item);
+-    auto scenePoint = item->mapToScene(unaligned);
+-    return item->mapFromScene(roundPoint(scenePoint, dpr));
++    auto scenePoint = item->mapToScene(unaligned) + QPointF{eyeShift, 0.0};
++    return item->mapFromScene(roundPoint(scenePoint, dpr) - QPointF{eyeShift, 0.0});
+ }
+ 
+-inline QRectF alignRect(const QRectF &unaligned, QQuickItem *item)
++inline QRectF alignRect(const QRectF &unaligned, QQuickItem *item, qreal eyeShift = 0.0)
+ {
+     auto dpr = devicePixelRatioFor(item);
+-    auto sceneRect = item->mapRectToScene(unaligned);
++    auto sceneRect = item->mapRectToScene(unaligned).translated(eyeShift, 0.0);
+ 
+     auto alignedTopLeft = roundPoint(sceneRect.topLeft(), dpr);
+     auto alignedBottomRight = roundPoint(QPointF{alignedTopLeft.x() + sceneRect.width(), alignedTopLeft.y() + sceneRect.height()}, dpr);
+ 
+-    return item->mapRectFromScene(QRectF{alignedTopLeft, alignedBottomRight});
++    return item->mapRectFromScene(QRectF{alignedTopLeft, alignedBottomRight}.translated(-eyeShift, 0.0));
+ }
+diff --git a/src/output/qtquick/plugin/QuickElement.cpp b/src/output/qtquick/plugin/QuickElement.cpp
+index ebba1bb7..9c76ee81 100644
+--- a/src/output/qtquick/plugin/QuickElement.cpp
++++ b/src/output/qtquick/plugin/QuickElement.cpp
+@@ -672,6 +672,11 @@ qreal QuickElement::shadowEyeShift() const
+     return m_shadowEyeShift;
+ }
+ 
++qreal QuickElement::engineEyeShift() const
++{
++    return m_engineEyeShift;
++}
++
+ QQuickWindow *QuickElement::elementWindow() const
+ {
+     if (auto window = qobject_cast<QQuickWindow *>(parent())) {
+@@ -945,13 +950,17 @@ void QuickElement::updateEyeShift()
+     const qreal shift = m_depthWindow ? m_depthWindow->relativeShift(this) : 0.0;
+     const auto items = shiftedItems();
+     const bool deeper = shift != 0.0 && items.size() == 1 && m_depthWindow->isDeeper(this);
+-    // An item that draws itself, such as a text field drawing its text, would leave what it draws
+-    // behind if only what it holds moved: it moves whole, uncut. At the element range that is a
+-    // pixel at most.
+-    const bool cut = deeper && !items.first()->flags().testFlag(QQuickItem::ItemHasContents);
++    // The engine that draws the window as a pair moves and cuts the items by their parallax
++    // itself, an item that draws itself too; otherwise an item that draws itself, such as a text
++    // field drawing its text, would leave what it draws behind if only what it holds moved: it
++    // moves whole, uncut. At the element range that is a pixel at most.
++    const bool engine = m_depthWindow && m_depthWindow->engineMovesItems();
++    const bool cut = !engine && deeper && !items.first()->flags().testFlag(QQuickItem::ItemHasContents);
+ 
+     QList<QQuickItem *> shifted;
+-    if (cut) {
++    if (engine) {
++        restoreClip();
++    } else if (cut) {
+         // Behind what it lies on, the element is seen through its own opening: it
+         // is cut to its own rectangle, as the frame of a window cuts the view
+         // through it, so nothing is drawn behind what it covers.
+@@ -979,8 +988,10 @@ void QuickElement::updateEyeShift()
+     }
+ 
+     const qreal shadowShift = deeper ? 0.0 : shift;
+-    if (shadowShift != m_shadowEyeShift) {
++    const qreal engineShift = engine ? m_depthWindow->engineShift(this) : 0.0;
++    if (shadowShift != m_shadowEyeShift || engineShift != m_engineEyeShift) {
+         m_shadowEyeShift = shadowShift;
++        m_engineEyeShift = engineShift;
+         Q_EMIT eyeShiftChanged();
+     }
+ }
+diff --git a/src/output/qtquick/plugin/QuickElement.h b/src/output/qtquick/plugin/QuickElement.h
+index 61eb6898..161a1975 100644
+--- a/src/output/qtquick/plugin/QuickElement.h
++++ b/src/output/qtquick/plugin/QuickElement.h
+@@ -474,6 +474,12 @@ public:
+      * on. Its own shadow stays where it falls, so it moves back by as much.
+      */
+     qreal shadowEyeShift() const;
++    /*!
++     * How far the engine that draws the window as a pair moves the element's
++     * picture in the eye being drawn, in the scene's logical pixels; 0 when it
++     * does not: what is aligned to pixels is aligned where it is drawn.
++     */
++    qreal engineEyeShift() const;
+     Q_SIGNAL void eyeShiftChanged();
+ 
+     ~QuickElement() override;
+@@ -540,6 +546,7 @@ private:
+     QPointer<QObject> m_watchedGroup;
+     bool m_clipWasSet = false;
+     qreal m_shadowEyeShift = 0.0;
++    qreal m_engineEyeShift = 0.0;
+ };
+ 
+ class QuickElementUpdatedEvent : public QEvent
+diff --git a/src/output/qtquick/plugin/StyledRectangle.cpp b/src/output/qtquick/plugin/StyledRectangle.cpp
+index 264db59d..e43f74c3 100644
+--- a/src/output/qtquick/plugin/StyledRectangle.cpp
++++ b/src/output/qtquick/plugin/StyledRectangle.cpp
+@@ -176,7 +176,8 @@ QSGNode *StyledRectangle::updateShaderNode(QSGNode *node, const StylePropertyGro
+         }
+     }
+ 
+-    auto rect = alignRect(boundingRect(), this);
++    const auto element = m_style ? m_style->element() : nullptr;
++    auto rect = alignRect(boundingRect(), this, element ? element->engineEyeShift() : 0.0);
+     auto cornerSizes = style->safePropertyLookup(CornersPropertyGroup::CornerRadii{}, &StylePropertyGroup::corners, &CornersPropertyGroup::radii);
+ 
+     // Shader corner radius order is bottom right, top right, bottom left, top left.
+@@ -184,7 +185,6 @@ QSGNode *StyledRectangle::updateShaderNode(QSGNode *node, const StylePropertyGro
+ 
+     // While the element is drawn for one eye nearer than what it lies on, its
+     // shadow stays where it falls, on what it lies on.
+-    const auto element = m_style ? m_style->element() : nullptr;
+     const float shadowEyeShift = element ? element->shadowEyeShift() : 0.0;
+ 
+     int i = 0;

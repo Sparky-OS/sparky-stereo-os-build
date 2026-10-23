@@ -1,0 +1,359 @@
+Description: plasma: Learn from Stereo KWin when a window's elements may show depth
+ .
+ With libstereo-declare 1.5 or later, the Plasma platform follows each
+ window's surface: Stereo KWin says whether the elements inside the window
+ may be shown in depth now (the window is on a stereo output and awake,
+ not lying flat behind the active one) and which of its edges lie on the
+ output's edge, and Union looks at its depths again whenever that changes.
+ Without the library, or on X11, no window is awake and Union draws as
+ before.
+ .
+ libstereo-declare 1.5 and the protocol version it binds are still to be
+ written; this is the side Union needs from them.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://invent.kde.org/danielcamposramos/union/-/commit/b23e59c83d01156aecd3d6cb4aacfd338c1b64a5
+Forwarded: no
+Last-Update: 2026-10-23
+Assisted-by: Claude Opus 5.5
+---
+ CMakeLists.txt                               |  10 ++
+ src/platform/plasma/CMakeLists.txt           |   8 ++
+ src/platform/plasma/PlasmaDepthExchange.cpp  | 134 +++++++++++++++++++
+ src/platform/plasma/PlasmaDepthExchange.h    |  51 +++++++
+ src/platform/plasma/PlasmaPlatformPlugin.cpp |  30 +++++
+ src/platform/plasma/PlasmaPlatformPlugin.h   |  12 ++
+ 6 files changed, 245 insertions(+)
+ create mode 100644 src/platform/plasma/PlasmaDepthExchange.cpp
+ create mode 100644 src/platform/plasma/PlasmaDepthExchange.h
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 5896b43b..54276c5e 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -102,6 +102,16 @@ endif()
+ 
+ if (BUILD_PLATFORM_PLASMA)
+     find_package(Qt6DBus ${QT_MIN_VERSION} CONFIG REQUIRED)
++
++    # libstereo-declare 1.5 and later carry what Stereo KWin tells each window about depth.
++    find_package(StereoDeclare 1.5 CONFIG)
++    set_package_properties(StereoDeclare PROPERTIES
++        TYPE OPTIONAL
++        PURPOSE "Lets the Plasma platform learn from Stereo KWin when a window's elements may be shown in depth"
++    )
++    if (StereoDeclare_FOUND)
++        find_package(Qt6 ${QT_MIN_VERSION} CONFIG REQUIRED COMPONENTS GuiPrivate)
++    endif()
+ endif()
+ 
+ if (BUILD_TOOLS)
+diff --git a/src/platform/plasma/CMakeLists.txt b/src/platform/plasma/CMakeLists.txt
+index 9290cdcd..f7fb8b28 100644
+--- a/src/platform/plasma/CMakeLists.txt
++++ b/src/platform/plasma/CMakeLists.txt
+@@ -9,6 +9,14 @@ target_sources(union-platform-plasma PRIVATE
+ 
+ target_link_libraries(union-platform-plasma PRIVATE Union KF6::CoreAddons KF6::ConfigGui KF6::IconThemes Qt6::DBus)
+ 
++if (StereoDeclare_FOUND)
++    target_sources(union-platform-plasma PRIVATE PlasmaDepthExchange.cpp PlasmaDepthExchange.h)
++    target_link_libraries(union-platform-plasma PRIVATE StereoDeclare::stereo-declare Qt6::GuiPrivate)
++    target_compile_definitions(union-platform-plasma PRIVATE HAVE_STEREO_DECLARE_DEPTH=1)
++else()
++    target_compile_definitions(union-platform-plasma PRIVATE HAVE_STEREO_DECLARE_DEPTH=0)
++endif()
++
+ set_target_properties(union-platform-plasma PROPERTIES
+     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/union
+     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/union
+diff --git a/src/platform/plasma/PlasmaDepthExchange.cpp b/src/platform/plasma/PlasmaDepthExchange.cpp
+new file mode 100644
+index 00000000..536910f4
+--- /dev/null
++++ b/src/platform/plasma/PlasmaDepthExchange.cpp
+@@ -0,0 +1,134 @@
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++#include "PlasmaDepthExchange.h"
++
++#include <cerrno>
++
++#include <QGuiApplication>
++#include <QPlatformSurfaceEvent>
++#include <QWindow>
++#include <qpa/qplatformnativeinterface.h>
++
++#include <stereo-declare.h>
++
++PlasmaDepthExchange::PlasmaDepthExchange(std::function<void(QWindow *)> changed, QObject *parent)
++    : QObject(parent)
++    , m_changed(std::move(changed))
++{
++    auto wayland = qGuiApp->nativeInterface<QNativeInterface::QWaylandApplication>();
++    if (!wayland || !wayland->display()) {
++        return;
++    }
++
++    // The library binds its globals on Qt's own queue; the edition's Qt may have
++    // started it on this thread already for its stereo windows.
++    const int result = stereo_declare_wayland_init(wayland->display(), nullptr);
++    m_initialized = result == 0 || result == -EBUSY;
++}
++
++PlasmaDepthExchange::~PlasmaDepthExchange()
++{
++    for (auto itr = m_windows.begin(); itr != m_windows.end(); ++itr) {
++        unwatch(itr.key(), itr.value());
++    }
++}
++
++bool PlasmaDepthExchange::isAwake(QWindow *window)
++{
++    auto state = follow(window);
++    return state && state->awake;
++}
++
++Qt::Edges PlasmaDepthExchange::outputEdges(QWindow *window)
++{
++    auto state = follow(window);
++    return state ? state->edges : Qt::Edges{};
++}
++
++PlasmaDepthExchange::State *PlasmaDepthExchange::follow(QWindow *window)
++{
++    if (!m_initialized || !window) {
++        return nullptr;
++    }
++
++    auto itr = m_windows.find(window);
++    if (itr == m_windows.end()) {
++        itr = m_windows.insert(window, State{});
++        window->installEventFilter(this);
++        connect(window, &QObject::destroyed, this, [this, window]() {
++            m_windows.remove(window);
++        });
++    }
++
++    if (!itr->surface) {
++        watch(window, itr.value());
++    }
++    return &itr.value();
++}
++
++void PlasmaDepthExchange::watch(QWindow *window, State &state)
++{
++    auto native = QGuiApplication::platformNativeInterface();
++    auto surface = native ? static_cast<wl_surface *>(native->nativeResourceForWindow("surface", window)) : nullptr;
++    if (!surface || stereo_depth_wayland_watch(surface, &PlasmaDepthExchange::handleState, this) != 0) {
++        return;
++    }
++    state.surface = surface;
++}
++
++void PlasmaDepthExchange::unwatch(QWindow *window, State &state)
++{
++    if (state.surface) {
++        stereo_depth_wayland_unwatch(state.surface);
++        state.surface = nullptr;
++    }
++
++    if (state.awake) {
++        state.awake = false;
++        m_changed(window);
++    }
++}
++
++bool PlasmaDepthExchange::eventFilter(QObject *watched, QEvent *event)
++{
++    auto window = qobject_cast<QWindow *>(watched);
++    auto itr = window ? m_windows.find(window) : m_windows.end();
++    if (itr != m_windows.end()) {
++        if (event->type() == QEvent::PlatformSurface
++            && static_cast<QPlatformSurfaceEvent *>(event)->surfaceEventType() == QPlatformSurfaceEvent::SurfaceAboutToBeDestroyed) {
++            unwatch(window, itr.value());
++        } else if (event->type() == QEvent::Expose && !itr->surface) {
++            // The surface exists once the window is shown.
++            watch(window, itr.value());
++        }
++    }
++
++    return QObject::eventFilter(watched, event);
++}
++
++void PlasmaDepthExchange::handleState(void *data, wl_surface *surface, const stereo_depth_state *state)
++{
++    auto self = static_cast<PlasmaDepthExchange *>(data);
++    for (auto itr = self->m_windows.begin(); itr != self->m_windows.end(); ++itr) {
++        if (itr->surface != surface) {
++            continue;
++        }
++
++        Qt::Edges edges;
++        edges.setFlag(Qt::LeftEdge, state->output_edges & STEREO_DEPTH_EDGE_LEFT);
++        edges.setFlag(Qt::TopEdge, state->output_edges & STEREO_DEPTH_EDGE_TOP);
++        edges.setFlag(Qt::RightEdge, state->output_edges & STEREO_DEPTH_EDGE_RIGHT);
++        edges.setFlag(Qt::BottomEdge, state->output_edges & STEREO_DEPTH_EDGE_BOTTOM);
++
++        const bool awake = state->awake != 0;
++        if (awake != itr->awake || edges != itr->edges) {
++            itr->awake = awake;
++            itr->edges = edges;
++            self->m_changed(itr.key());
++        }
++        return;
++    }
++}
++
++#include "moc_PlasmaDepthExchange.cpp"
+diff --git a/src/platform/plasma/PlasmaDepthExchange.h b/src/platform/plasma/PlasmaDepthExchange.h
+new file mode 100644
+index 00000000..0c3ab97a
+--- /dev/null
++++ b/src/platform/plasma/PlasmaDepthExchange.h
+@@ -0,0 +1,51 @@
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++#pragma once
++
++#include <functional>
++
++#include <QHash>
++#include <QObject>
++
++class QWindow;
++struct wl_surface;
++struct stereo_depth_state;
++
++/*
++ * What Stereo KWin tells each window about depth, through libstereo-declare:
++ * whether the elements inside it may be shown in depth now (the window is on a
++ * stereo output and awake, not lying flat behind the active one) and which of
++ * its edges lie on the output's edge. Only on Wayland; elsewhere no window is
++ * awake.
++ */
++class PlasmaDepthExchange : public QObject
++{
++    Q_OBJECT
++
++public:
++    explicit PlasmaDepthExchange(std::function<void(QWindow *)> changed, QObject *parent = nullptr);
++    ~PlasmaDepthExchange() override;
++
++    bool isAwake(QWindow *window);
++    Qt::Edges outputEdges(QWindow *window);
++
++protected:
++    bool eventFilter(QObject *watched, QEvent *event) override;
++
++private:
++    struct State {
++        wl_surface *surface = nullptr;
++        bool awake = false;
++        Qt::Edges edges;
++    };
++
++    State *follow(QWindow *window);
++    void watch(QWindow *window, State &state);
++    void unwatch(QWindow *window, State &state);
++    static void handleState(void *data, wl_surface *surface, const stereo_depth_state *state);
++
++    std::function<void(QWindow *)> m_changed;
++    QHash<QWindow *, State> m_windows;
++    bool m_initialized = false;
++};
+diff --git a/src/platform/plasma/PlasmaPlatformPlugin.cpp b/src/platform/plasma/PlasmaPlatformPlugin.cpp
+index 14ef357f..00377a00 100644
+--- a/src/platform/plasma/PlasmaPlatformPlugin.cpp
++++ b/src/platform/plasma/PlasmaPlatformPlugin.cpp
+@@ -13,6 +13,10 @@
+ #include <KIconColors>
+ #include <KRuntimePlatform>
+ 
++#if HAVE_STEREO_DECLARE_DEPTH
++#include "PlasmaDepthExchange.h"
++#endif
++
+ using namespace Qt::StringLiterals;
+ 
+ static const QString DefaultStyleId = u"breeze"_s;
+@@ -49,6 +53,12 @@ PlasmaPlatformPlugin::PlasmaPlatformPlugin(QObject *parent)
+         }
+     });
+ 
++#if HAVE_STEREO_DECLARE_DEPTH
++    m_depthExchange = std::make_unique<PlasmaDepthExchange>([this](QWindow *window) {
++        sendDepthChangedEvent(window);
++    });
++#endif
++
+     readDepthLimits();
+     connect(m_kwinWatcher.data(), &KConfigWatcher::configChanged, this, [this](const KConfigGroup &group) {
+         if (group.name() == DepthGroup) {
+@@ -132,6 +142,26 @@ void PlasmaPlatformPlugin::setAnimationSpeedMultiplier(qreal multiplier)
+     sendAnimationSpeedMultiplierChangedEvent();
+ }
+ 
++PlasmaPlatformPlugin::~PlasmaPlatformPlugin() = default;
++
++bool PlasmaPlatformPlugin::depthEnabled([[maybe_unused]] QWindow *window)
++{
++#if HAVE_STEREO_DECLARE_DEPTH
++    return m_depthExchange->isAwake(window);
++#else
++    return false;
++#endif
++}
++
++Qt::Edges PlasmaPlatformPlugin::depthOutputEdges([[maybe_unused]] QWindow *window)
++{
++#if HAVE_STEREO_DECLARE_DEPTH
++    return m_depthExchange->outputEdges(window);
++#else
++    return Qt::Edges{};
++#endif
++}
++
+ Union::Depth::Limits PlasmaPlatformPlugin::depthLimits()
+ {
+     return m_depthLimits;
+diff --git a/src/platform/plasma/PlasmaPlatformPlugin.h b/src/platform/plasma/PlasmaPlatformPlugin.h
+index 68db91b1..cedbacf4 100644
+--- a/src/platform/plasma/PlasmaPlatformPlugin.h
++++ b/src/platform/plasma/PlasmaPlatformPlugin.h
+@@ -3,10 +3,14 @@
+ 
+ #pragma once
+ 
++#include <memory>
++
+ #include <KConfigWatcher>
+ 
+ #include <PlatformPlugin.h>
+ 
++class PlasmaDepthExchange;
++
+ class PlasmaPlatformPlugin : public Union::PlatformPlugin
+ {
+     Q_OBJECT
+@@ -24,6 +28,10 @@ public:
+     qreal animationSpeedMultiplier() override;
+ 
+     Union::Depth::Limits depthLimits() override;
++    bool depthEnabled(QWindow *window) override;
++    Qt::Edges depthOutputEdges(QWindow *window) override;
++
++    ~PlasmaPlatformPlugin() override;
+ 
+ private:
+     Q_SLOT void setSmoothScroll(bool enabled);
+@@ -38,4 +46,8 @@ private:
+     KConfigWatcher::Ptr m_kdeGlobalsWatcher;
+     KConfigWatcher::Ptr m_unionSettingsWatcher;
+     KConfigWatcher::Ptr m_kwinWatcher;
++#if HAVE_STEREO_DECLARE_DEPTH
++    // What Stereo KWin tells windows about depth.
++    std::unique_ptr<PlasmaDepthExchange> m_depthExchange;
++#endif
+ };

@@ -1,0 +1,207 @@
+Description: breeze: Declare the depths its shadows do not say
+ .
+ Breeze's buttons, combo boxes and cards are raised by their own shadows,
+ and a pressed, flat or disabled button has none, so it lies flat. A new
+ depth.css, imported last, declares the rest of Daniel's rules: what is
+ toggled or selected is sunk (checked buttons, the current tab, selected
+ rows, but not the current item of a menu or a list), disabled controls
+ lie at the screen, a tool button that is not flat is raised as Qt raises
+ it, a flat one rises only under the pointer, as Qt's own model does, and
+ menus, popups, tooltips and dialogs drawn inside a window are popped, as
+ Stereo KWin places those that are surfaces of their own. Breeze's 2D
+ look is unchanged.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://invent.kde.org/danielcamposramos/union/-/commit/572c351bf72ea218c2a94f411e53ad4ec3292d05
+Forwarded: no
+Last-Update: 2026-10-23
+Assisted-by: Claude Opus 5.5
+---
+ autotests/input/TestCss.cpp                   | 79 +++++++++++++++++++
+ .../css/styles/breeze/contents/css/depth.css  | 70 ++++++++++++++++
+ .../css/styles/breeze/contents/css/style.css  |  2 +
+ 3 files changed, 151 insertions(+)
+ create mode 100644 src/input/css/styles/breeze/contents/css/depth.css
+
+diff --git a/autotests/input/TestCss.cpp b/autotests/input/TestCss.cpp
+index 41c7de1a..2de8dd88 100644
+--- a/autotests/input/TestCss.cpp
++++ b/autotests/input/TestCss.cpp
+@@ -8,6 +8,7 @@
+ #include <QStandardPaths>
+ #include <QTemporaryDir>
+ 
++#include <Depth.h>
+ #include <ElementQuery.h>
+ #include <Style.h>
+ 
+@@ -171,6 +172,84 @@ private Q_SLOTS:
+         QCOMPARE(query.properties()->display()->depth(), -1.0);
+     }
+ 
++    void testBreezeDepths_data()
++    {
++        QTest::addColumn<QString>("type");
++        QTest::addColumn<QStringList>("hints");
++        QTest::addColumn<int>("states");
++        QTest::addColumn<qreal>("expected");
++
++        using S = Element::State;
++        const auto none = QStringList{};
++
++        // Daniel's rules (2026-10-07, ORDER 208 answers 1A and 4A): enabled and unpressed is
++        // raised, by the button's own shadow; pressed is flat; toggled or selected is sunk;
++        // disabled is at the screen; hovering moves nothing but a flat tool button; the current
++        // item of a menu or a list stays where it is.
++        QTest::addRow("button") << u"Button"_s << none << 0 << 0.5;
++        QTest::addRow("button hovered") << u"Button"_s << none << int(S::Hovered) << 0.5;
++        QTest::addRow("button pressed") << u"Button"_s << none << int(S::Pressed) << 0.0;
++        QTest::addRow("button checked") << u"Button"_s << none << int(S::Checked) << -1.0;
++        QTest::addRow("button checked disabled") << u"Button"_s << none << int(S::Checked | S::Disabled) << 0.0;
++        QTest::addRow("button disabled") << u"Button"_s << none << int(S::Disabled) << 0.0;
++        QTest::addRow("flat button") << u"Button"_s << QStringList{u"flat"_s} << 0 << 0.0;
++        QTest::addRow("flat button hovered") << u"Button"_s << QStringList{u"flat"_s} << int(S::Hovered) << 0.0;
++        QTest::addRow("combobox") << u"ComboBox"_s << none << 0 << 0.5;
++        QTest::addRow("tool button") << u"ToolButton"_s << none << 0 << 0.0;
++        QTest::addRow("tool button hovered") << u"ToolButton"_s << none << int(S::Hovered) << 0.5;
++        QTest::addRow("tool button hovered pressed") << u"ToolButton"_s << none << int(S::Hovered | S::Pressed) << 0.0;
++        QTest::addRow("tool button hovered checked") << u"ToolButton"_s << none << int(S::Hovered | S::Checked) << -1.0;
++        QTest::addRow("tool button disabled") << u"ToolButton"_s << none << int(S::Disabled) << 0.0;
++        QTest::addRow("raised tool button") << u"ToolButton"_s << QStringList{u"raised"_s} << 0 << 0.5;
++        QTest::addRow("raised tool button pressed") << u"ToolButton"_s << QStringList{u"raised"_s} << int(S::Pressed) << 0.0;
++        QTest::addRow("tab") << u"TabButton"_s << none << 0 << 0.0;
++        QTest::addRow("current tab, Qt Quick") << u"TabButton"_s << none << int(S::Checked) << -1.0;
++        QTest::addRow("current tab, Widgets") << u"TabButton"_s << none << int(S::Highlighted) << -1.0;
++        QTest::addRow("selected row, Widgets") << u"ItemViewItem"_s << none << int(S::Highlighted) << -1.0;
++        QTest::addRow("row") << u"ItemViewItem"_s << none << 0 << 0.0;
++        QTest::addRow("selected row, table") << u"TableViewDelegate"_s << QStringList{u"selected"_s} << int(S::Highlighted) << -1.0;
++        QTest::addRow("current row, table") << u"TableViewDelegate"_s << QStringList{u"current"_s} << 0 << 0.0;
++        QTest::addRow("checked delegate") << u"ItemDelegate"_s << none << int(S::Checked) << -1.0;
++        QTest::addRow("current delegate") << u"ItemDelegate"_s << none << int(S::Highlighted) << 0.0;
++        QTest::addRow("current menu item") << u"MenuItem"_s << none << int(S::Highlighted | S::Hovered) << 0.0;
++        QTest::addRow("checked menu item") << u"MenuItem"_s << none << int(S::Checked) << 0.0;
++        // In-window popups are popped, as Stereo KWin places popup surfaces.
++        QTest::addRow("menu") << u"Menu"_s << none << 0 << 1.0;
++        QTest::addRow("popup") << u"Popup"_s << none << 0 << 1.0;
++        QTest::addRow("tooltip") << u"ToolTip"_s << none << 0 << 1.0;
++        QTest::addRow("dialog") << u"Dialog"_s << none << 0 << 1.0;
++        // A card is raised by its shadow; a frame lies flat.
++        QTest::addRow("card") << u"Card"_s << none << 0 << 0.5;
++        QTest::addRow("frame") << u"Frame"_s << none << 0 << 0.0;
++    }
++
++    void testBreezeDepths()
++    {
++        QFETCH(QString, type);
++        QFETCH(QStringList, hints);
++        QFETCH(int, states);
++        QFETCH(qreal, expected);
++
++        static Style::Ptr breeze;
++        if (!breeze) {
++            breeze = Style::create(fs::path(QFINDTESTDATA("../../src/input/css/styles/breeze").toStdString()), std::make_unique<CssLoader>());
++            QVERIFY(breeze->load());
++            m_styles.append(breeze);
++        }
++
++        auto window = Element::create();
++        window->setType(u"ApplicationWindow"_s);
++        auto element = Element::create();
++        element->setType(type);
++        element->setHints(hints);
++        element->setStates(Element::States(states));
++
++        ElementQuery query(breeze);
++        query.setElements({window, element});
++        QVERIFY(query.execute());
++        QCOMPARE(Depth::elementDepth(query.properties()), expected);
++    }
++
+     void testShadowInset_data()
+     {
+         QTest::addColumn<QString>("value");
+diff --git a/src/input/css/styles/breeze/contents/css/depth.css b/src/input/css/styles/breeze/contents/css/depth.css
+new file mode 100644
+index 00000000..6314e4a7
+--- /dev/null
++++ b/src/input/css/styles/breeze/contents/css/depth.css
+@@ -0,0 +1,70 @@
++/*
++ * SPDX-License-Identifier: BSD-2-Clause
++ * SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++ */
++
++/*
++ * Where elements stand in depth on a stereo output. A 2D output shows them as
++ * they are.
++ *
++ * Without a declaration, an element with an outer shadow is raised one step
++ * (half of the popped limit), one with an inset shadow is sunk, and any other
++ * lies on what it is drawn on. Buttons and cards are raised by their shadow;
++ * a pressed, flat or disabled button has none and lies flat. The rules below
++ * give the places a shadow does not say. Hovering moves nothing, except a flat
++ * tool button, which rises as Qt raises it under the pointer; the current item
++ * of a menu or a list stays where it is.
++ *
++ * This file is imported last: at equal weight the later rule wins, so pressed,
++ * checked and disabled come after hovered.
++ */
++
++/* Qt raises a tool button that is not flat (QStyle::State_Raised). */
++toolbutton.raised {
++    depth: 50%;
++}
++
++/* A flat tool button rises under the pointer. */
++toolbutton:hovered {
++    depth: 50%;
++}
++
++/* Pressed is flat. */
++toolbutton:pressed {
++    depth: screen;
++}
++
++/* What is toggled or selected is sunk: checked buttons, the current tab and selected rows. */
++button:checked,
++toolbutton:checked,
++roundbutton:checked,
++delaybutton:checked,
++tabbutton:checked,
++tabbutton:highlighted,
++itemviewitem:highlighted,
++itemdelegate:checked,
++tableviewdelegate.selected,
++treeviewdelegate.selected {
++    depth: sunk;
++}
++
++/* What is disabled lies at the screen. */
++button:disabled,
++toolbutton:disabled,
++roundbutton:disabled,
++delaybutton:disabled,
++tabbutton:disabled {
++    depth: screen;
++}
++
++/*
++ * Menus, popups, tooltips and dialogs drawn inside a window are popped, as
++ * Stereo KWin places those that are surfaces of their own; one opened from
++ * another stands on it, and the stack is fitted into the popped limit.
++ */
++menu,
++popup,
++tooltip,
++dialog {
++    depth: popped;
++}
+diff --git a/src/input/css/styles/breeze/contents/css/style.css b/src/input/css/styles/breeze/contents/css/style.css
+index 901fb70d..bd2eee61 100644
+--- a/src/input/css/styles/breeze/contents/css/style.css
++++ b/src/input/css/styles/breeze/contents/css/style.css
+@@ -24,3 +24,5 @@
+ @import "tables.css";
+ @import "calendar.css";
+ @import "widgets.css";
++
++@import "depth.css";

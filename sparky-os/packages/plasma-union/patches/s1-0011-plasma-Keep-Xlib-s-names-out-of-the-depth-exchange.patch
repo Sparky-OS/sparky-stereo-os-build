@@ -1,0 +1,32 @@
+Description: plasma: Keep Xlib's names out of the depth exchange
+ .
+ libstereo-declare's header includes Xlib for its X11 calls, and Xlib defines
+ Expose, None, Bool, Status and Unsorted as macros, which broke QEvent::Expose
+ in the Plasma platform built against the real library 1.5 rather than a
+ stand-in.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://invent.kde.org/danielcamposramos/union/-/commit/43ef0b44894c74f70e1f095081a1113238b04be3
+Forwarded: no
+Last-Update: 2026-10-23
+Assisted-by: Claude Opus 5.5
+---
+ src/platform/plasma/PlasmaDepthExchange.cpp | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/src/platform/plasma/PlasmaDepthExchange.cpp b/src/platform/plasma/PlasmaDepthExchange.cpp
+index 536910f4..120469bb 100644
+--- a/src/platform/plasma/PlasmaDepthExchange.cpp
++++ b/src/platform/plasma/PlasmaDepthExchange.cpp
+@@ -11,6 +11,12 @@
+ #include <qpa/qplatformnativeinterface.h>
+ 
+ #include <stereo-declare.h>
++// The library's header includes Xlib for its X11 calls, and Xlib defines names Qt uses.
++#undef Expose
++#undef None
++#undef Bool
++#undef Status
++#undef Unsorted
+ 
+ PlasmaDepthExchange::PlasmaDepthExchange(std::function<void(QWindow *)> changed, QObject *parent)
+     : QObject(parent)

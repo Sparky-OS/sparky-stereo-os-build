@@ -1,0 +1,745 @@
+Description: properties: Add depth to display and inset to shadow
+ .
+ depth is where an element is shown in depth on a stereo output, relative
+ to what it lies on, as a fraction of the user's range: -1.0 is the sunk
+ limit, 0.0 the plane it lies on and 1.0 the popped limit. It moves the
+ whole element, text included, and never changes the layout; a 2D output
+ shows the element as it is without depth.
+ .
+ inset marks a shadow cast inside the element, CSS Backgrounds 3's inset
+ keyword, which may come first or last in box-shadow. Without depth, an
+ outer shadow will raise an element and an inset one sink it.
+ .
+ The syntax also takes <integer> because the parser does not match
+ integers against <number>.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://invent.kde.org/danielcamposramos/union/-/commit/970436aefed7268458cf2e25bd4e8a2a32cbeedd
+Forwarded: no
+Last-Update: 2026-10-23
+Assisted-by: Claude Opus 5.5
+---
+ autotests/properties/CreateTestInstances.h    |  2 +
+ .../properties/TestDisplayPropertyGroup.cpp   | 11 +++++
+ .../properties/TestShadowPropertyGroup.cpp    | 11 +++++
+ doc/css/css-properties.qdoc                   | 29 ++++++++++++-
+ .../css/defaults/generated-properties.css     | 10 ++++-
+ .../properties/DisplayPropertyGroupQuick.cpp  | 15 +++++++
+ .../properties/DisplayPropertyGroupQuick.h    |  9 ++++
+ .../properties/ShadowPropertyGroupQuick.cpp   | 15 +++++++
+ .../properties/ShadowPropertyGroupQuick.h     |  9 ++++
+ src/properties/DisplayPropertyGroup.cpp       | 42 +++++++++++++++++++
+ src/properties/DisplayPropertyGroup.h         | 17 ++++++++
+ src/properties/ShadowPropertyGroup.cpp        | 42 +++++++++++++++++++
+ src/properties/ShadowPropertyGroup.h          | 14 +++++++
+ src/properties/StylePropertyGroup.cpp         |  2 +-
+ tools/propertygenerator/properties.yml        | 38 ++++++++++++++++-
+ 15 files changed, 260 insertions(+), 6 deletions(-)
+
+diff --git a/autotests/properties/CreateTestInstances.h b/autotests/properties/CreateTestInstances.h
+index ce0bcb0b..892dc638 100644
+--- a/autotests/properties/CreateTestInstances.h
++++ b/autotests/properties/CreateTestInstances.h
+@@ -148,6 +148,7 @@ std::unique_ptr<DisplayPropertyGroup> testDisplayPropertyGroupInstance()
+ 
+     instance->setVisible(bool{});
+     instance->setOpacity(testQrealInstance());
++    instance->setDepth(testQrealInstance());
+ 
+     return instance;
+ }
+@@ -265,6 +266,7 @@ std::unique_ptr<ShadowPropertyGroup> testShadowPropertyGroupInstance()
+     instance->setColor(Union::Color{});
+     instance->setSize(testQrealInstance());
+     instance->setBlur(testQrealInstance());
++    instance->setInset(bool{});
+ 
+     return instance;
+ }
+diff --git a/autotests/properties/TestDisplayPropertyGroup.cpp b/autotests/properties/TestDisplayPropertyGroup.cpp
+index b5c12ef3..06d259df 100644
+--- a/autotests/properties/TestDisplayPropertyGroup.cpp
++++ b/autotests/properties/TestDisplayPropertyGroup.cpp
+@@ -24,6 +24,7 @@ private Q_SLOTS:
+         // A null instance should not have any values for its properties.
+         QVERIFY(!property->visible().has_value());
+         QVERIFY(!property->opacity().has_value());
++        QVERIFY(!property->depth().has_value());
+     }
+ 
+     void testEmpty()
+@@ -33,6 +34,7 @@ private Q_SLOTS:
+         // An empty instance should only have values that are considered "empty".
+         QCOMPARE(property->visible().value(), emptyValue<bool>());
+         QCOMPARE(property->opacity().value(), emptyValue<qreal>());
++        QCOMPARE(property->depth().value(), emptyValue<qreal>());
+     }
+ 
+     void testHasAnyValue()
+@@ -56,6 +58,13 @@ private Q_SLOTS:
+             property->setOpacity(std::nullopt);
+             QVERIFY(!property->hasAnyValue());
+         }
++        {
++            qreal value;
++            property->setDepth(value);
++            QVERIFY(property->hasAnyValue());
++            property->setDepth(std::nullopt);
++            QVERIFY(!property->hasAnyValue());
++        }
+     }
+ 
+     void testResolveProperties()
+@@ -73,6 +82,7 @@ private Q_SLOTS:
+ 
+         source->setVisible(bool{});
+         source->setOpacity(qreal{});
++        source->setDepth(qreal{});
+ 
+         QVERIFY(source->hasAnyValue());
+         QVERIFY(!destination->hasAnyValue());
+@@ -83,6 +93,7 @@ private Q_SLOTS:
+ 
+         QCOMPARE(destination->visible(), source->visible());
+         QCOMPARE(destination->opacity(), source->opacity());
++        QCOMPARE(destination->depth(), source->depth());
+     }
+ 
+     void testDataStream()
+diff --git a/autotests/properties/TestShadowPropertyGroup.cpp b/autotests/properties/TestShadowPropertyGroup.cpp
+index f6556869..188c7e80 100644
+--- a/autotests/properties/TestShadowPropertyGroup.cpp
++++ b/autotests/properties/TestShadowPropertyGroup.cpp
+@@ -26,6 +26,7 @@ private Q_SLOTS:
+         QVERIFY(!property->color().has_value());
+         QVERIFY(!property->size().has_value());
+         QVERIFY(!property->blur().has_value());
++        QVERIFY(!property->inset().has_value());
+     }
+ 
+     void testEmpty()
+@@ -37,6 +38,7 @@ private Q_SLOTS:
+         QCOMPARE(property->color().value(), emptyValue<Union::Color>());
+         QCOMPARE(property->size().value(), emptyValue<qreal>());
+         QCOMPARE(property->blur().value(), emptyValue<qreal>());
++        QCOMPARE(property->inset().value(), emptyValue<bool>());
+     }
+ 
+     void testHasAnyValue()
+@@ -78,6 +80,13 @@ private Q_SLOTS:
+             property->setBlur(std::nullopt);
+             QVERIFY(!property->hasAnyValue());
+         }
++        {
++            bool value;
++            property->setInset(value);
++            QVERIFY(property->hasAnyValue());
++            property->setInset(std::nullopt);
++            QVERIFY(!property->hasAnyValue());
++        }
+     }
+ 
+     void testResolveProperties()
+@@ -97,6 +106,7 @@ private Q_SLOTS:
+         source->setColor(Union::Color{});
+         source->setSize(qreal{});
+         source->setBlur(qreal{});
++        source->setInset(bool{});
+ 
+         QVERIFY(source->hasAnyValue());
+         QVERIFY(!destination->hasAnyValue());
+@@ -109,6 +119,7 @@ private Q_SLOTS:
+         QCOMPARE(destination->color(), source->color());
+         QCOMPARE(destination->size(), source->size());
+         QCOMPARE(destination->blur(), source->blur());
++        QCOMPARE(destination->inset(), source->inset());
+     }
+ 
+     void testDataStream()
+diff --git a/doc/css/css-properties.qdoc b/doc/css/css-properties.qdoc
+index f5e34af0..20a734e8 100644
+--- a/doc/css/css-properties.qdoc
++++ b/doc/css/css-properties.qdoc
+@@ -35,6 +35,23 @@ to hidden also removes the element's box from any layout. Effectively
+ The opacity of the element.
+ 
+ 
++\section3 depth (sunk | screen | popped | <percentage> | <number> | <integer>)
++
++The depth of the element on a stereo output, relative to what the element lies on:
++how far the element and everything it contains, its text included, are shown in
++front of it or behind it. \c{sunk} is the sunk limit, \c{screen} the plane of what
++the element lies on and \c{popped} the popped limit; a percentage or a number from
++-100% (-1.0) to 100% (1.0) is a fraction of the limit on its side. The limits are the
++user's settings. A value outside that range is ignored.
++
++When a style declares no depth for an element, the element's shadow gives it one:
++an outer shadow raises the element by half of the popped limit, an inset shadow
++sinks it to the sunk limit, and an element without a shadow lies on what it is drawn
++on. The depth never changes the layout, and a 2D output shows the element exactly as
++it is without depth.
++
++
++
+ 
+ \section2 layout
+ 
+@@ -775,11 +792,12 @@ The radius of the corner.
+ 
+ These properties describe an element's shadow.
+ 
+-\section3 box-shadow (none | (<length> <length> <length> <length> <color>))
++\section3 box-shadow (none | (<length> <length> <length> <length> <color> inset) | (inset <length> <length> <length> <length> <color>) | (<length> <length> <length> <length> <color>))
+ 
+ A shorthand to set the shadow of an element to a box-shaped shadow. If set to none,
+ the shadow will explicitly be disabled. Otherwise, the parameters are X offset, Y offset,
+-size, blur and finally color.
++blur, size and finally color, with an optional \c{inset} keyword first or last for a
++shadow inside the element.
+ 
+ 
+ 
+@@ -819,6 +837,13 @@ goes from fully transparent to the full shadow color.
+ 
+ 
+ 
++\section3 shadow-inset (true | false)
++
++Whether the shadow is cast inside the element, as if the element were cut out of what it
++lies on, instead of outside it, as if it were lifted above it.
++
++
++
+ 
+ 
+ 
+diff --git a/src/input/css/defaults/generated-properties.css b/src/input/css/defaults/generated-properties.css
+index 22e2a4db..3c86cd32 100644
+--- a/src/input/css/defaults/generated-properties.css
++++ b/src/input/css/defaults/generated-properties.css
+@@ -15,6 +15,10 @@
+     syntax: "<number>";
+ }
+ 
++@property depth {
++    syntax: "sunk | screen | popped | <percentage> | <number> | <integer>";
++}
++
+ @property layout-alignment {
+     syntax: "(item | content | background) (start | center | end | fill) (start | center | end | fill | stack-center | stack-fill) <integer>";
+ }
+@@ -428,7 +432,7 @@
+ }
+ 
+ @property box-shadow {
+-    syntax: "none | (<length> <length> <length> <length> <color>)";
++    syntax: "none | (<length> <length> <length> <length> <color> inset) | (inset <length> <length> <length> <length> <color>) | (<length> <length> <length> <length> <color>)";
+ }
+ 
+ @property shadow-offset-horizontal {
+@@ -451,4 +455,8 @@
+     syntax: "<length>";
+ }
+ 
++@property shadow-inset {
++    syntax: "true | false";
++}
++
+ 
+diff --git a/src/output/qtquick/plugin/properties/DisplayPropertyGroupQuick.cpp b/src/output/qtquick/plugin/properties/DisplayPropertyGroupQuick.cpp
+index ae755d35..1b15f135 100644
+--- a/src/output/qtquick/plugin/properties/DisplayPropertyGroupQuick.cpp
++++ b/src/output/qtquick/plugin/properties/DisplayPropertyGroupQuick.cpp
+@@ -34,6 +34,7 @@ void DisplayPropertyGroupQuick::update(DisplayPropertyGroup *newState)
+ 
+     Q_EMIT visibleChanged();
+     Q_EMIT opacityChanged();
++    Q_EMIT depthChanged();
+     Q_EMIT updated();
+ }
+ 
+@@ -69,4 +70,18 @@ QJSValue DisplayPropertyGroupQuick::opacity() const
+     return QJSValue(QJSValue::UndefinedValue);
+ }
+ 
++QJSValue DisplayPropertyGroupQuick::depth() const
++{
++    if (!m_state) {
++        return QJSValue(QJSValue::UndefinedValue);
++    }
++
++    auto value = m_state->depth();
++    if (value) {
++        return m_style->engine()->toScriptValue(value.value());
++    }
++
++    return QJSValue(QJSValue::UndefinedValue);
++}
++
+ #include "moc_DisplayPropertyGroupQuick.cpp"
+\ No newline at end of file
+diff --git a/src/output/qtquick/plugin/properties/DisplayPropertyGroupQuick.h b/src/output/qtquick/plugin/properties/DisplayPropertyGroupQuick.h
+index 23b84bd4..10ee1b18 100644
+--- a/src/output/qtquick/plugin/properties/DisplayPropertyGroupQuick.h
++++ b/src/output/qtquick/plugin/properties/DisplayPropertyGroupQuick.h
+@@ -61,6 +61,15 @@ public:
+     QJSValue opacity() const;
+     Q_SIGNAL void opacityChanged();
+ 
++    /*!
++     * \qmlproperty qreal DisplayPropertyGroupQuick::depth
++     *
++     * Exposes DisplayPropertyGroup::depth to QML.
++     */
++    Q_PROPERTY(QJSValue depth READ depth NOTIFY depthChanged)
++    QJSValue depth() const;
++    Q_SIGNAL void depthChanged();
++
+ private:
+     QuickStyle *m_style = nullptr;
+ 
+diff --git a/src/output/qtquick/plugin/properties/ShadowPropertyGroupQuick.cpp b/src/output/qtquick/plugin/properties/ShadowPropertyGroupQuick.cpp
+index e92fa2f8..8d682fb2 100644
+--- a/src/output/qtquick/plugin/properties/ShadowPropertyGroupQuick.cpp
++++ b/src/output/qtquick/plugin/properties/ShadowPropertyGroupQuick.cpp
+@@ -38,6 +38,7 @@ void ShadowPropertyGroupQuick::update(ShadowPropertyGroup *newState)
+     Q_EMIT colorChanged();
+     Q_EMIT sizeChanged();
+     Q_EMIT blurChanged();
++    Q_EMIT insetChanged();
+     Q_EMIT updated();
+ }
+ 
+@@ -94,4 +95,18 @@ QJSValue ShadowPropertyGroupQuick::blur() const
+     return QJSValue(QJSValue::UndefinedValue);
+ }
+ 
++QJSValue ShadowPropertyGroupQuick::inset() const
++{
++    if (!m_state) {
++        return QJSValue(QJSValue::UndefinedValue);
++    }
++
++    auto value = m_state->inset();
++    if (value) {
++        return m_style->engine()->toScriptValue(value.value());
++    }
++
++    return QJSValue(QJSValue::UndefinedValue);
++}
++
+ #include "moc_ShadowPropertyGroupQuick.cpp"
+\ No newline at end of file
+diff --git a/src/output/qtquick/plugin/properties/ShadowPropertyGroupQuick.h b/src/output/qtquick/plugin/properties/ShadowPropertyGroupQuick.h
+index 104027fc..320bdf90 100644
+--- a/src/output/qtquick/plugin/properties/ShadowPropertyGroupQuick.h
++++ b/src/output/qtquick/plugin/properties/ShadowPropertyGroupQuick.h
+@@ -79,6 +79,15 @@ public:
+     QJSValue blur() const;
+     Q_SIGNAL void blurChanged();
+ 
++    /*!
++     * \qmlproperty bool ShadowPropertyGroupQuick::inset
++     *
++     * Exposes ShadowPropertyGroup::inset to QML.
++     */
++    Q_PROPERTY(QJSValue inset READ inset NOTIFY insetChanged)
++    QJSValue inset() const;
++    Q_SIGNAL void insetChanged();
++
+ private:
+     QuickStyle *m_style = nullptr;
+     std::unique_ptr<OffsetPropertyGroupQuick> m_offset;
+diff --git a/src/properties/DisplayPropertyGroup.cpp b/src/properties/DisplayPropertyGroup.cpp
+index 49e10349..ab81e94a 100644
+--- a/src/properties/DisplayPropertyGroup.cpp
++++ b/src/properties/DisplayPropertyGroup.cpp
+@@ -17,6 +17,7 @@ class Union::Properties::DisplayPropertyGroupPrivate
+ public:
+     std::optional<bool> visible;
+     std::optional<qreal> opacity;
++    std::optional<qreal> depth;
+ };
+ 
+ DisplayPropertyGroup::DisplayPropertyGroup()
+@@ -29,6 +30,7 @@ DisplayPropertyGroup::DisplayPropertyGroup(const DisplayPropertyGroup &other)
+ {
+     d->visible = other.d->visible;
+     d->opacity = other.d->opacity;
++    d->depth = other.d->depth;
+ }
+ 
+ DisplayPropertyGroup::DisplayPropertyGroup(DisplayPropertyGroup &&other)
+@@ -43,6 +45,7 @@ DisplayPropertyGroup &DisplayPropertyGroup::operator=(const DisplayPropertyGroup
+     if (this != &other) {
+         d->visible = other.d->visible;
+         d->opacity = other.d->opacity;
++        d->depth = other.d->depth;
+     }
+     return *this;
+ }
+@@ -81,6 +84,20 @@ void DisplayPropertyGroup::setOpacity(const std::optional<qreal> &newValue)
+     d->opacity = newValue;
+ }
+ 
++std::optional<qreal> DisplayPropertyGroup::depth() const
++{
++    return d->depth;
++}
++
++void DisplayPropertyGroup::setDepth(const std::optional<qreal> &newValue)
++{
++    if (newValue == d->depth) {
++        return;
++    }
++
++    d->depth = newValue;
++}
++
+ bool DisplayPropertyGroup::hasAnyValue() const
+ {
+     if (d->visible.has_value()) {
+@@ -89,6 +106,9 @@ bool DisplayPropertyGroup::hasAnyValue() const
+     if (d->opacity.has_value()) {
+         return true;
+     }
++    if (d->depth.has_value()) {
++        return true;
++    }
+     return false;
+ }
+ 
+@@ -104,6 +124,9 @@ bool DisplayPropertyGroup::isEmpty() const
+     if (d->opacity.has_value() && d->opacity.value() != emptyValue<qreal>()) {
+         return false;
+     }
++    if (d->depth.has_value() && d->depth.value() != emptyValue<qreal>()) {
++        return false;
++    }
+ 
+     return true;
+ }
+@@ -151,6 +174,12 @@ QString DisplayPropertyGroup::toString(int indentation, ToStringFlags flags) con
+     } else {
+         out << empty << maybeNewLine;
+     }
++    out << indent(indentation, multiline, false) << "depth: ";
++    if (d->depth) {
++        out << d->depth.value() << maybeNewLine;
++    } else {
++        out << empty << maybeNewLine;
++    }
+ 
+     if (types) {
+         out << indent(indentation - 2, multiline, true) << ")";
+@@ -174,6 +203,9 @@ void DisplayPropertyGroup::resolveProperties(const DisplayPropertyGroup *source,
+     if (!destination->d->opacity.has_value()) {
+         destination->d->opacity = source->d->opacity;
+     }
++    if (!destination->d->depth.has_value()) {
++        destination->d->depth = source->d->depth;
++    }
+ }
+ 
+ std::unique_ptr<DisplayPropertyGroup> DisplayPropertyGroup::empty()
+@@ -181,6 +213,7 @@ std::unique_ptr<DisplayPropertyGroup> DisplayPropertyGroup::empty()
+     auto result = std::make_unique<DisplayPropertyGroup>();
+     result->d->visible = emptyValue<bool>();
+     result->d->opacity = emptyValue<qreal>();
++    result->d->depth = emptyValue<qreal>();
+     return result;
+ }
+ 
+@@ -192,6 +225,9 @@ bool Union::Properties::operator==(const DisplayPropertyGroup &left, const Displ
+     if (left.opacity() != right.opacity()) {
+         return false;
+     }
++    if (left.depth() != right.depth()) {
++        return false;
++    }
+     return true;
+ }
+ 
+@@ -210,6 +246,7 @@ QDataStream &operator<<(QDataStream &stream, const Union::Properties::DisplayPro
+ {
+     stream << type->visible();
+     stream << type->opacity();
++    stream << type->depth();
+     return stream;
+ }
+ 
+@@ -225,6 +262,11 @@ QDataStream &operator>>(QDataStream &stream, std::unique_ptr<Union::Properties::
+         stream >> data;
+         type->setOpacity(data);
+     }
++    {
++        std::optional<qreal> data;
++        stream >> data;
++        type->setDepth(data);
++    }
+ 
+     return stream;
+ }
+\ No newline at end of file
+diff --git a/src/properties/DisplayPropertyGroup.h b/src/properties/DisplayPropertyGroup.h
+index f754901d..4e6e8c5e 100644
+--- a/src/properties/DisplayPropertyGroup.h
++++ b/src/properties/DisplayPropertyGroup.h
+@@ -112,6 +112,23 @@ public:
+      */
+     void setOpacity(const std::optional<qreal> &newValue);
+ 
++    /*!
++        The depth of the element on a stereo output, relative to what the element lies on:
++how far the element and everything it contains are shown in front of it (positive)
++or behind it (negative), as a fraction of the user's range, from -1.0 (the sunk limit)
++to 1.0 (the popped limit). The depth never changes the layout, and a 2D output shows
++the element exactly as it is without depth.
++
++     */
++    std::optional<qreal> depth() const;
++
++    /*!
++     * Set the value of depth.
++     *
++     * \a newValue The new value or \c{std::nullopt} to unset the value.
++     */
++    void setDepth(const std::optional<qreal> &newValue);
++
+     /*!
+      * Returns if this property group has any value set.
+      *
+diff --git a/src/properties/ShadowPropertyGroup.cpp b/src/properties/ShadowPropertyGroup.cpp
+index c63403d4..c906592f 100644
+--- a/src/properties/ShadowPropertyGroup.cpp
++++ b/src/properties/ShadowPropertyGroup.cpp
+@@ -19,6 +19,7 @@ public:
+     std::optional<Union::Color> color;
+     std::optional<qreal> size;
+     std::optional<qreal> blur;
++    std::optional<bool> inset;
+ };
+ 
+ ShadowPropertyGroup::ShadowPropertyGroup()
+@@ -34,6 +35,7 @@ ShadowPropertyGroup::ShadowPropertyGroup(const ShadowPropertyGroup &other)
+     d->color = other.d->color;
+     d->size = other.d->size;
+     d->blur = other.d->blur;
++    d->inset = other.d->inset;
+ }
+ 
+ ShadowPropertyGroup::ShadowPropertyGroup(ShadowPropertyGroup &&other)
+@@ -50,6 +52,7 @@ ShadowPropertyGroup &ShadowPropertyGroup::operator=(const ShadowPropertyGroup &o
+         d->color = other.d->color;
+         d->size = other.d->size;
+         d->blur = other.d->blur;
++        d->inset = other.d->inset;
+     }
+     return *this;
+ }
+@@ -112,6 +115,20 @@ void ShadowPropertyGroup::setBlur(const std::optional<qreal> &newValue)
+     d->blur = newValue;
+ }
+ 
++std::optional<bool> ShadowPropertyGroup::inset() const
++{
++    return d->inset;
++}
++
++void ShadowPropertyGroup::setInset(const std::optional<bool> &newValue)
++{
++    if (newValue == d->inset) {
++        return;
++    }
++
++    d->inset = newValue;
++}
++
+ bool ShadowPropertyGroup::hasAnyValue() const
+ {
+     if (d->offset && d->offset->hasAnyValue()) {
+@@ -126,6 +143,9 @@ bool ShadowPropertyGroup::hasAnyValue() const
+     if (d->blur.has_value()) {
+         return true;
+     }
++    if (d->inset.has_value()) {
++        return true;
++    }
+     return false;
+ }
+ 
+@@ -147,6 +167,9 @@ bool ShadowPropertyGroup::isEmpty() const
+     if (d->blur.has_value() && d->blur.value() != emptyValue<qreal>()) {
+         return false;
+     }
++    if (d->inset.has_value() && d->inset.value() != emptyValue<bool>()) {
++        return false;
++    }
+ 
+     return true;
+ }
+@@ -206,6 +229,12 @@ QString ShadowPropertyGroup::toString(int indentation, ToStringFlags flags) cons
+     } else {
+         out << empty << maybeNewLine;
+     }
++    out << indent(indentation, multiline, false) << "inset: ";
++    if (d->inset) {
++        out << d->inset.value() << maybeNewLine;
++    } else {
++        out << empty << maybeNewLine;
++    }
+ 
+     if (types) {
+         out << indent(indentation - 2, multiline, true) << ")";
+@@ -238,6 +267,9 @@ void ShadowPropertyGroup::resolveProperties(const ShadowPropertyGroup *source, S
+     if (!destination->d->blur.has_value()) {
+         destination->d->blur = source->d->blur;
+     }
++    if (!destination->d->inset.has_value()) {
++        destination->d->inset = source->d->inset;
++    }
+ }
+ 
+ std::unique_ptr<ShadowPropertyGroup> ShadowPropertyGroup::empty()
+@@ -247,6 +279,7 @@ std::unique_ptr<ShadowPropertyGroup> ShadowPropertyGroup::empty()
+     result->d->color = emptyValue<Union::Color>();
+     result->d->size = emptyValue<qreal>();
+     result->d->blur = emptyValue<qreal>();
++    result->d->inset = emptyValue<bool>();
+     return result;
+ }
+ 
+@@ -268,6 +301,9 @@ bool Union::Properties::operator==(const ShadowPropertyGroup &left, const Shadow
+     if (left.blur() != right.blur()) {
+         return false;
+     }
++    if (left.inset() != right.inset()) {
++        return false;
++    }
+     return true;
+ }
+ 
+@@ -294,6 +330,7 @@ QDataStream &operator<<(QDataStream &stream, const Union::Properties::ShadowProp
+     stream << type->color();
+     stream << type->size();
+     stream << type->blur();
++    stream << type->inset();
+     return stream;
+ }
+ 
+@@ -324,6 +361,11 @@ QDataStream &operator>>(QDataStream &stream, std::unique_ptr<Union::Properties::
+         stream >> data;
+         type->setBlur(data);
+     }
++    {
++        std::optional<bool> data;
++        stream >> data;
++        type->setInset(data);
++    }
+ 
+     return stream;
+ }
+\ No newline at end of file
+diff --git a/src/properties/ShadowPropertyGroup.h b/src/properties/ShadowPropertyGroup.h
+index 4745311e..1342abb2 100644
+--- a/src/properties/ShadowPropertyGroup.h
++++ b/src/properties/ShadowPropertyGroup.h
+@@ -142,6 +142,20 @@ goes from fully transparent to the full shadow color.
+      */
+     void setBlur(const std::optional<qreal> &newValue);
+ 
++    /*!
++        Whether the shadow is cast inside the element, as if the element were cut out of what it
++lies on, instead of outside it, as if it were lifted above it.
++
++     */
++    std::optional<bool> inset() const;
++
++    /*!
++     * Set the value of inset.
++     *
++     * \a newValue The new value or \c{std::nullopt} to unset the value.
++     */
++    void setInset(const std::optional<bool> &newValue);
++
+     /*!
+      * Returns if this property group has any value set.
+      *
+diff --git a/src/properties/StylePropertyGroup.cpp b/src/properties/StylePropertyGroup.cpp
+index 0888f828..51dbb6a5 100644
+--- a/src/properties/StylePropertyGroup.cpp
++++ b/src/properties/StylePropertyGroup.cpp
+@@ -417,7 +417,7 @@ std::unique_ptr<StylePropertyGroup> StylePropertyGroup::empty()
+ 
+ QString StylePropertyGroup::dataModelHash()
+ {
+-    return u"23772a82841b2a331a41075be7b331569949c508cb40ddd7f1bb0fbfbaa45b64"_s;
++    return u"d9418edfc0c9a701f3dc957a8ecdeb387cac5c428f598ad1b9ebfa64820da6f2"_s;
+ }
+ 
+ bool Union::Properties::operator==(const StylePropertyGroup &left, const StylePropertyGroup &right)
+diff --git a/tools/propertygenerator/properties.yml b/tools/propertygenerator/properties.yml
+index 2b923230..3f3fa26b 100644
+--- a/tools/propertygenerator/properties.yml
++++ b/tools/propertygenerator/properties.yml
+@@ -206,6 +206,33 @@ children:
+                     name: opacity
+                     syntax: "<number>"
+ 
++            depth:
++                type: qreal
++
++                doc: |
++                    The depth of the element on a stereo output, relative to what the element lies on:
++                    how far the element and everything it contains are shown in front of it (positive)
++                    or behind it (negative), as a fraction of the user's range, from -1.0 (the sunk limit)
++                    to 1.0 (the popped limit). The depth never changes the layout, and a 2D output shows
++                    the element exactly as it is without depth.
++
++                css:
++                    name: depth
++                    syntax: "sunk | screen | popped | <percentage> | <number> | <integer>"
++                    doc: |
++                        The depth of the element on a stereo output, relative to what the element lies on:
++                        how far the element and everything it contains, its text included, are shown in
++                        front of it or behind it. \c{sunk} is the sunk limit, \c{screen} the plane of what
++                        the element lies on and \c{popped} the popped limit; a percentage or a number from
++                        -100% (-1.0) to 100% (1.0) is a fraction of the limit on its side. The limits are the
++                        user's settings. A value outside that range is ignored.
++
++                        When a style declares no depth for an element, the element's shadow gives it one:
++                        an outer shadow raises the element by half of the popped limit, an inset shadow
++                        sinks it to the sunk limit, and an element without a shadow lies on what it is drawn
++                        on. The depth never changes the layout, and a 2D output shows the element exactly as
++                        it is without depth.
++
+     layout:
+         type: group
+ 
+@@ -718,11 +745,12 @@ children:
+ 
+             extra_properties:
+             -   name: box-shadow
+-                syntax: "none | (<length> <length> <length> <length> <color>)"
++                syntax: "none | (<length> <length> <length> <length> <color> inset) | (inset <length> <length> <length> <length> <color>) | (<length> <length> <length> <length> <color>)"
+                 doc: |
+                     A shorthand to set the shadow of an element to a box-shaped shadow. If set to none,
+                     the shadow will explicitly be disabled. Otherwise, the parameters are X offset, Y offset,
+-                    size, blur and finally color.
++                    blur, size and finally color, with an optional \c{inset} keyword first or last for a
++                    shadow inside the element.
+ 
+         children:
+             offset:
+@@ -775,6 +803,12 @@ children:
+                     The amount of blur to use for the shadow. Increasing this will increase how smooth the shadow
+                     goes from fully transparent to the full shadow color.
+ 
++            inset:
++                type: bool
++                doc: |
++                    Whether the shadow is cast inside the element, as if the element were cut out of what it
++                    lies on, instead of outside it, as if it were lifted above it.
++
+ extra_code:
+     "property.h.j2":
+         public: |4

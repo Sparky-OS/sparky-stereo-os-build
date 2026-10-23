@@ -1,0 +1,42 @@
+Source: plasma-union
+Section: kde
+Maintainer: Debian Qt/KDE Maintainers <debian-qt-kde@lists.debian.org>
+Uploaders: Patrick Franz <deltaone@debian.org>,
+Build-Depends: debhelper-compat (= 14),
+               dh-sequence-kf6,
+               dh-sequence-plasma,
+               dh-sequence-qmldeps,
+               dh-sequence-single-binary,
+               breeze-dev (>= 4:6.7.4~),
+               cmake (>= 3.27~),
+               extra-cmake-modules (>= 6.26.0~),
+               libcxx-rust-cssparser-dev,
+               libkf6archive-dev (>= 6.26.0~),
+               libkf6colorscheme-dev (>= 6.26.0~),
+               libkf6config-dev (>= 6.26.0~),
+               libkf6coreaddons-dev (>= 6.26.0~),
+               libkf6guiaddons-dev (>= 6.26.0~),
+               libkf6iconthemes-dev (>= 6.26.0~),
+               libkirigami-dev (>= 6.26.0~),
+               libplasma-dev (>=6.7.4),
+               libryml-dev,
+               qt6-base-dev (>= 6.9.0~),
+               qt6-declarative-dev (>= 6.9.0~),
+               qt6-shadertools-dev (>= 6.9.0~),
+               qt6-svg-dev (>= 6.9.0~),
+               xauth <!nocheck>,
+               xvfb <!nocheck>,
+Standards-Version: 4.7.4
+Homepage: https://invent.kde.org/plasma/union
+Vcs-Browser: https://salsa.debian.org/qt-kde-team/kde/plasma-union
+Vcs-Git: https://salsa.debian.org/qt-kde-team/kde/plasma-union.git
+
+Package: kde-style-union
+Architecture: any
+Depends: cxx-rust-cssparser-parse,
+         ${qml6:Depends},
+Description: Qt 6 style supporting both QtQuick and QtWidgets
+ Union is a Qt 6 style supporting both QtQuick and QtWidgets, released as
+ part of Plasma 6.
+ .
+ This package contains the Union main libraries, binaries and data.

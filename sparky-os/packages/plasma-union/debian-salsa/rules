@@ -1,0 +1,19 @@
+#!/usr/bin/make -f
+# -*- makefile -*-
+
+export DEB_BUILD_MAINT_OPTIONS=hardening=+all
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	dh_auto_configure -- -DBUILD_TESTING=ON -DBUILD_INPUT_PLASMASVG=OFF
+
+execute_after_dh_auto_install:
+	# remove development files
+	rm -f debian/kde-style-union/usr/lib/*/libUnion.so
+	rm -rf debian/kde-style-union/usr/include/
+	rm -rf debian/kde-style-union/usr/lib/*/cmake/
+
+override_dh_auto_test:
+	xvfb-run -a -- dh_auto_test

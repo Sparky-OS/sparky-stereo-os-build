@@ -1,0 +1,1017 @@
+Description: Add Depth: an element's depth from its style, fitted into the limits
+ .
+ Depth::elementDepth() gives the depth an element declares, or else the
+ one its shadow gives it, following CSS Backgrounds 3 §6.1: an outer
+ shadow is cast as if the box were lifted above the canvas, so it raises
+ the element one step, half of the popped limit; an inset shadow is cast
+ as if the box were cut out of the canvas, so it sinks it. Without either
+ the element lies on what it is drawn on. A declared depth always wins,
+ so a style without shadows keeps the depths it declares.
+ .
+ DepthTree holds the elements of one surface. Each stands on what it lies
+ on, and when a stack would pass a limit every depth on that side is
+ scaled down until the farthest sits at the limit, the way Stereo KWin
+ fits a sub-menu over its menu (menu +2, sub-menu +4 at a popped limit of
+ 4). Elements flush with the output's edge never come nearer than the
+ screen, and a branch can lie flat, as a window's content does under a
+ modal overlay.
+ .
+ parallax() and eyeShift() turn a depth into whole pixels with Stereo
+ KWin's own rounding, from the user's limits in pixels of a view 1920
+ wide, and DepthMotion moves between depths with its motion: about 80 ms
+ towards the viewer, 150 ms away, eased out, at the animation speed.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://invent.kde.org/danielcamposramos/union/-/commit/55c353b86406c017b035f9afca212ba2dfeffe7e
+Forwarded: no
+Last-Update: 2026-10-23
+Assisted-by: Claude Opus 5.5
+---
+ autotests/CMakeLists.txt |   2 +
+ autotests/TestDepth.cpp  | 387 +++++++++++++++++++++++++++++++++++++++
+ src/CMakeLists.txt       |   2 +
+ src/Depth.cpp            | 278 ++++++++++++++++++++++++++++
+ src/Depth.h              | 263 ++++++++++++++++++++++++++
+ 5 files changed, 932 insertions(+)
+ create mode 100644 autotests/TestDepth.cpp
+ create mode 100644 src/Depth.cpp
+ create mode 100644 src/Depth.h
+
+diff --git a/autotests/CMakeLists.txt b/autotests/CMakeLists.txt
+index 4f7f970d..d2d23fdc 100644
+--- a/autotests/CMakeLists.txt
++++ b/autotests/CMakeLists.txt
+@@ -26,6 +26,8 @@ if (BUILD_INPUT_CSS)
+     set_tests_properties(TestCss PROPERTIES ENVIRONMENT "UNION_DISABLE_CACHE=1")
+ endif()
+ 
++ecm_add_test(TestDepth.cpp LINK_LIBRARIES Qt6::Test Union::Union)
++
+ if (BUILD_OUTPUT_QTQUICK)
+     add_subdirectory(output/quick)
+ endif()
+diff --git a/autotests/TestDepth.cpp b/autotests/TestDepth.cpp
+new file mode 100644
+index 00000000..45003062
+--- /dev/null
++++ b/autotests/TestDepth.cpp
+@@ -0,0 +1,387 @@
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++#include <QtTest>
++
++#include <Depth.h>
++#include <properties/StylePropertyGroup.h>
++
++using namespace Union;
++using namespace Union::Properties;
++using namespace std::chrono_literals;
++
++class TestDepth : public QObject
++{
++    Q_OBJECT
++
++    static std::unique_ptr<ShadowPropertyGroup> shadow(qreal x, qreal y, qreal blur, qreal size, qreal alpha, bool inset)
++    {
++        auto result = std::make_unique<ShadowPropertyGroup>();
++        auto offset = std::make_unique<OffsetPropertyGroup>();
++        offset->setHorizontal(x);
++        offset->setVertical(y);
++        result->setOffset(std::move(offset));
++        result->setBlur(blur);
++        result->setSize(size);
++        result->setColor(Color::rgba(0, 0, 0, int(alpha * 255)));
++        result->setInset(inset);
++        return result;
++    }
++
++private Q_SLOTS:
++    void testShadowDepth_data()
++    {
++        QTest::addColumn<qreal>("x");
++        QTest::addColumn<qreal>("y");
++        QTest::addColumn<qreal>("blur");
++        QTest::addColumn<qreal>("size");
++        QTest::addColumn<qreal>("alpha");
++        QTest::addColumn<bool>("inset");
++        QTest::addColumn<bool>("hasDepth");
++        QTest::addColumn<qreal>("expected");
++
++        // CSS Backgrounds 3 §6.1: an outer shadow is cast "as if [the box] were lifted above the
++        // canvas", one step: half of the popped limit.
++        QTest::addRow("Breeze button") << 0.0 << 1.0 << 0.0 << 0.0 << 0.1 << false << true << 0.5;
++        QTest::addRow("Breeze menu") << 0.0 << 2.0 << 20.0 << 0.0 << 0.2 << false << true << 0.5;
++        QTest::addRow("blur only") << 0.0 << 0.0 << 4.0 << 0.0 << 0.2 << false << true << 0.5;
++        QTest::addRow("spread only") << 0.0 << 0.0 << 0.0 << 2.0 << 0.2 << false << true << 0.5;
++        // An inset shadow is cast "as if the box were cut out of the canvas": sunk.
++        QTest::addRow("inset") << 0.0 << 1.0 << 2.0 << 0.0 << 0.2 << true << true << -1.0;
++        // A shadow that draws nothing gives no depth.
++        QTest::addRow("transparent") << 0.0 << 1.0 << 2.0 << 0.0 << 0.0 << false << false << 0.0;
++        QTest::addRow("hidden under the box") << 0.0 << 0.0 << 0.0 << 0.0 << 0.5 << false << false << 0.0;
++    }
++
++    void testShadowDepth()
++    {
++        QFETCH(qreal, x);
++        QFETCH(qreal, y);
++        QFETCH(qreal, blur);
++        QFETCH(qreal, size);
++        QFETCH(qreal, alpha);
++        QFETCH(bool, inset);
++        QFETCH(bool, hasDepth);
++        QFETCH(qreal, expected);
++
++        auto group = shadow(x, y, blur, size, alpha, inset);
++        auto depth = Depth::shadowDepth(group.get());
++        QCOMPARE(depth.has_value(), hasDepth);
++        if (hasDepth) {
++            QCOMPARE(depth.value(), expected);
++        }
++
++        QVERIFY(!Depth::shadowDepth(nullptr).has_value());
++        QVERIFY(!Depth::shadowDepth(ShadowPropertyGroup::empty().get()).has_value());
++    }
++
++    void testElementDepth()
++    {
++        // Nothing at all: the element lies on what it is drawn on.
++        QCOMPARE(Depth::elementDepth(nullptr), 0.0);
++        StylePropertyGroup properties;
++        QCOMPARE(Depth::elementDepth(&properties), 0.0);
++
++        // The default from the shadow.
++        properties.setShadow(shadow(0, 1, 0, 0, 0.1, false));
++        QCOMPARE(Depth::elementDepth(&properties), 0.5);
++        properties.setShadow(shadow(0, 1, 2, 0, 0.1, true));
++        QCOMPARE(Depth::elementDepth(&properties), -1.0);
++        properties.setShadow(ShadowPropertyGroup::empty());
++        QCOMPARE(Depth::elementDepth(&properties), 0.0);
++
++        // A declared depth always wins, whatever the shadow says.
++        auto display = std::make_unique<DisplayPropertyGroup>();
++        display->setDepth(-0.25);
++        properties.setDisplay(std::move(display));
++        properties.setShadow(shadow(0, 1, 0, 0, 0.1, false));
++        QCOMPARE(Depth::elementDepth(&properties), -0.25);
++        properties.setShadow(nullptr);
++        QCOMPARE(Depth::elementDepth(&properties), -0.25);
++
++        // A declared screen is a declaration too.
++        properties.display()->setDepth(0.0);
++        properties.setShadow(shadow(0, 1, 0, 0, 0.1, false));
++        QCOMPARE(Depth::elementDepth(&properties), 0.0);
++
++        // A display group without a depth does not hide the shadow.
++        properties.display()->setDepth(std::nullopt);
++        properties.display()->setOpacity(0.5);
++        QCOMPARE(Depth::elementDepth(&properties), 0.5);
++    }
++
++    void testNesting()
++    {
++        int window, card, button, field, menu, submenu, item;
++        DepthTree tree;
++
++        // A raised card on the window, a raised button on the card: each stands on what it lies on.
++        tree.setElement(&card, &window, 0.5);
++        tree.setElement(&button, &card, 0.5);
++        QCOMPARE(tree.depth(&card), 0.5);
++        QCOMPARE(tree.depth(&button), 1.0);
++
++        // A sunk field on the card is a well in the card.
++        tree.setElement(&field, &card, -1.0);
++        QCOMPARE(tree.depth(&field), -0.5);
++
++        // Unknown keys and elements lying on the surface itself are at the surface.
++        QCOMPARE(tree.depth(&window), 0.0);
++        QVERIFY(!tree.contains(&window));
++        QVERIFY(tree.contains(&card));
++    }
++
++    void testFitting()
++    {
++        int window, menu, submenu, subsubmenu, button;
++        DepthTree tree;
++
++        // One popped menu sits at the popped limit, as Stereo KWin places a single popup.
++        tree.setElement(&menu, &window, Depth::Popped);
++        QCOMPARE(tree.depth(&menu), 1.0);
++
++        // A popped sub-menu over it: the stack is fitted into the limit, the topmost at the limit,
++        // as Stereo KWin fits a sub-menu over its menu (menu +2, sub-menu +4 at a limit of 4).
++        tree.setElement(&submenu, &menu, Depth::Popped);
++        QCOMPARE(tree.depth(&menu), 0.5);
++        QCOMPARE(tree.depth(&submenu), 1.0);
++
++        tree.setElement(&subsubmenu, &submenu, Depth::Popped);
++        QCOMPARE(tree.depth(&menu), 1.0 / 3.0);
++        QCOMPARE(tree.depth(&submenu), 2.0 / 3.0);
++        QCOMPARE(tree.depth(&subsubmenu), 1.0);
++
++        // Closing them gives the menu its place back.
++        tree.removeElement(&subsubmenu);
++        tree.removeElement(&submenu);
++        QCOMPARE(tree.depth(&menu), 1.0);
++
++        // The sunk side is fitted on its own.
++        tree.setElement(&button, &window, Depth::Sunk);
++        tree.setElement(&submenu, &button, Depth::Sunk);
++        QCOMPARE(tree.depth(&button), -0.5);
++        QCOMPARE(tree.depth(&submenu), -1.0);
++        QCOMPARE(tree.depth(&menu), 1.0);
++    }
++
++    void testFittingKeepsOrder()
++    {
++        int window, popup, raised, flat, sunk;
++        DepthTree tree;
++
++        tree.setElement(&popup, &window, Depth::Popped);
++        tree.setElement(&raised, &popup, Depth::OuterShadow);
++        tree.setElement(&flat, &popup, 0.0);
++        tree.setElement(&sunk, &popup, Depth::Sunk);
++
++        // Nothing goes beyond the limits, and every element keeps its place relative to its
++        // neighbours: nearer than what it lies on when it rises, behind it when it sinks.
++        QCOMPARE(tree.depth(&raised), 1.0);
++        QCOMPARE(tree.depth(&popup), 1.0 / 1.5);
++        QCOMPARE(tree.depth(&flat), tree.depth(&popup));
++        QVERIFY(tree.depth(&sunk) < tree.depth(&popup));
++        QVERIFY(tree.depth(&sunk) >= -1.0);
++        QCOMPARE(tree.depth(&sunk), 0.0);
++    }
++
++    void testRelativeDepthsAreClamped()
++    {
++        int window, element;
++        DepthTree tree;
++        tree.setElement(&element, &window, 3.0);
++        QCOMPARE(tree.depth(&element), 1.0);
++        tree.setElement(&element, &window, -3.0);
++        QCOMPARE(tree.depth(&element), -1.0);
++    }
++
++    void testParentChanges()
++    {
++        int window, card, button;
++        DepthTree tree;
++        tree.setElement(&card, &window, 0.5);
++        tree.setElement(&button, &window, 0.5);
++        QCOMPARE(tree.depth(&button), 0.5);
++
++        tree.setElement(&button, &card, 0.5);
++        QCOMPARE(tree.depth(&button), 1.0);
++
++        // An element whose parent goes away lies on the surface.
++        tree.removeElement(&card);
++        QCOMPARE(tree.depth(&button), 0.5);
++
++        // A loop does not hang, and leaves every depth inside the limits.
++        tree.setElement(&card, &button, 0.5);
++        tree.setElement(&button, &card, 0.5);
++        QVERIFY(std::abs(tree.depth(&card)) <= 1.0);
++        QVERIFY(std::abs(tree.depth(&button)) <= 1.0);
++    }
++
++    void testChanges()
++    {
++        int window, menu, submenu, other;
++        DepthTree tree;
++
++        tree.setElement(&menu, &window, Depth::Popped);
++        tree.setElement(&other, &window, 0.0);
++        auto changes = tree.takeChanges();
++        QCOMPARE(changes.size(), 1);
++        QVERIFY(changes.contains(&menu));
++        QVERIFY(tree.takeChanges().isEmpty());
++
++        // Opening a sub-menu moves the menu too.
++        tree.setElement(&submenu, &menu, Depth::Popped);
++        changes = tree.takeChanges();
++        QCOMPARE(changes.size(), 2);
++        QVERIFY(changes.contains(&menu));
++        QVERIFY(changes.contains(&submenu));
++
++        // Setting the same value again changes nothing.
++        tree.setElement(&submenu, &menu, Depth::Popped);
++        QVERIFY(tree.takeChanges().isEmpty());
++
++        // A removed element that had a depth is reported once.
++        tree.removeElement(&submenu);
++        changes = tree.takeChanges();
++        QVERIFY(changes.contains(&menu));
++        QVERIFY(changes.contains(&submenu));
++        QVERIFY(!tree.contains(&submenu));
++    }
++
++    void testOutputEdge()
++    {
++        int window, panel, button, inner;
++        DepthTree tree;
++
++        // A popped part flush with the output's edge stays at the screen; what lies on it may rise.
++        tree.setElement(&panel, &window, Depth::Popped);
++        tree.setElement(&button, &panel, Depth::OuterShadow);
++        tree.setAtOutputEdge(&panel, true);
++        QCOMPARE(tree.depth(&panel), 0.0);
++        QCOMPARE(tree.depth(&button), 0.5);
++
++        // It may still sink.
++        tree.setElement(&panel, &window, Depth::Sunk);
++        QCOMPARE(tree.depth(&panel), -1.0);
++
++        tree.setElement(&panel, &window, Depth::Popped);
++        tree.setAtOutputEdge(&panel, false);
++        tree.setElement(&inner, &button, 0.0);
++        QCOMPARE(tree.depth(&panel), 1.0 / 1.5);
++        QCOMPARE(tree.depth(&button), 1.0);
++        QCOMPARE(tree.depth(&inner), 1.0);
++    }
++
++    void testFlat()
++    {
++        int window, content, button, popup, item;
++        DepthTree tree;
++
++        // Under a modal overlay the window's content lies flat, and what the overlay holds keeps its place.
++        tree.setElement(&content, &window, 0.0);
++        tree.setElement(&button, &content, Depth::OuterShadow);
++        tree.setElement(&popup, &window, Depth::Popped);
++        tree.setElement(&item, &popup, Depth::OuterShadow);
++        // The popup's stack reaches 1.5 steps, so the whole surface is fitted into the limit.
++        QCOMPARE(tree.depth(&button), 0.5 / 1.5);
++
++        tree.setFlat(&content, true);
++        QCOMPARE(tree.depth(&button), 0.0);
++        QCOMPARE(tree.depth(&content), 0.0);
++        QCOMPARE(tree.depth(&popup), 1.0 / 1.5);
++        QCOMPARE(tree.depth(&item), 1.0);
++
++        tree.setFlat(&content, false);
++        QCOMPARE(tree.depth(&button), 0.5 / 1.5);
++    }
++
++    void testParallax_data()
++    {
++        QTest::addColumn<qreal>("depth");
++        QTest::addColumn<qreal>("sunkLimit");
++        QTest::addColumn<qreal>("poppedLimit");
++        QTest::addColumn<int>("viewWidth");
++        QTest::addColumn<int>("parallax");
++        QTest::addColumn<int>("left");
++        QTest::addColumn<int>("right");
++
++        // Stereo KWin's defaults: SunkLimit 10 and PoppedLimit 4, in pixels of a view 1920 wide
++        // (kwin.kcfg [StereoDepth]); its parallax rounds to whole pixels and its eye shift gives
++        // the left eye the larger half, to the right for nearer (StereoDepth::eyeShift).
++        QTest::addRow("raised") << 0.5 << 10.0 << 4.0 << 1920 << 2 << 1 << -1;
++        QTest::addRow("popped") << 1.0 << 10.0 << 4.0 << 1920 << 4 << 2 << -2;
++        QTest::addRow("sunk") << -1.0 << 10.0 << 4.0 << 1920 << -10 << -5 << 5;
++        QTest::addRow("screen") << 0.0 << 10.0 << 4.0 << 1920 << 0 << 0 << 0;
++        QTest::addRow("3840 wide") << 0.5 << 10.0 << 4.0 << 3840 << 4 << 2 << -2;
++        QTest::addRow("odd") << 0.75 << 10.0 << 4.0 << 1920 << 3 << 2 << -1;
++        QTest::addRow("odd sunk") << -0.3 << 10.0 << 4.0 << 1920 << -3 << -2 << 1;
++        QTest::addRow("1280 wide") << -1.0 << 10.0 << 4.0 << 1280 << -7 << -4 << 3;
++        QTest::addRow("limits off") << 1.0 << 0.0 << 0.0 << 1920 << 0 << 0 << 0;
++    }
++
++    void testParallax()
++    {
++        QFETCH(qreal, depth);
++        QFETCH(qreal, sunkLimit);
++        QFETCH(qreal, poppedLimit);
++        QFETCH(int, viewWidth);
++        QFETCH(int, parallax);
++        QFETCH(int, left);
++        QFETCH(int, right);
++
++        const Depth::Limits limits{.sunk = sunkLimit, .popped = poppedLimit};
++        QCOMPARE(Depth::parallax(depth, limits, viewWidth), parallax);
++        QCOMPARE(Depth::eyeShift(parallax, Depth::Eye::Left), left);
++        QCOMPARE(Depth::eyeShift(parallax, Depth::Eye::Right), right);
++        QCOMPARE(Depth::eyeShift(parallax, Depth::Eye::None), 0);
++        QCOMPARE(Depth::eyeShift(parallax, Depth::Eye::Left) - Depth::eyeShift(parallax, Depth::Eye::Right), parallax);
++    }
++
++    void testLimitsEnabled()
++    {
++        QVERIFY(!Depth::Limits{}.isEnabled());
++        QVERIFY((Depth::Limits{.sunk = 10.0, .popped = 0.0}).isEnabled());
++        QVERIFY((Depth::Limits{.sunk = 0.0, .popped = 4.0}).isEnabled());
++    }
++
++    void testMotion()
++    {
++        // Stereo KWin's motion: towards the viewer about 80 ms, away about 150 ms, eased out, at the
++        // animation speed, instant when animations are off (StereoDepth::Motion).
++        DepthMotion motion;
++        motion.setTarget(0.5, 0ms, 1.0);
++        QCOMPARE(motion.depth(0ms), 0.5);
++        QVERIFY(!motion.isMoving(0ms));
++
++        motion.setTarget(1.0, 1000ms, 1.0);
++        QVERIFY(motion.isMoving(1000ms));
++        QCOMPARE(motion.depth(1000ms), 0.5);
++        QVERIFY(motion.depth(1040ms) > 0.75);
++        QVERIFY(motion.depth(1040ms) < 1.0);
++        QCOMPARE(motion.depth(1080ms), 1.0);
++        QVERIFY(!motion.isMoving(1080ms));
++
++        motion.setTarget(0.0, 2000ms, 1.0);
++        QVERIFY(motion.isMoving(2100ms));
++        QCOMPARE(motion.depth(2150ms), 0.0);
++
++        // Twice the animation duration.
++        motion.setTarget(1.0, 3000ms, 2.0);
++        QVERIFY(motion.isMoving(3150ms));
++        QCOMPARE(motion.depth(3160ms), 1.0);
++
++        // Animations off.
++        motion.setTarget(-1.0, 4000ms, 0.0);
++        QVERIFY(!motion.isMoving(4000ms));
++        QCOMPARE(motion.depth(4000ms), -1.0);
++
++        // Retargeting midway starts from where it is.
++        motion.setTarget(0.0, 5000ms, 1.0);
++        const auto midway = motion.depth(5075ms);
++        motion.setTarget(1.0, 5075ms, 1.0);
++        QCOMPARE(motion.depth(5075ms), midway);
++    }
++};
++
++QTEST_GUILESS_MAIN(TestDepth)
++
++#include "TestDepth.moc"
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 3efcfc5f..13b949df 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -15,6 +15,7 @@ target_sources(Union PRIVATE
+     InputPlugin.cpp
+     Selector.cpp
+     Color.cpp
++    Depth.cpp
+     PlatformPlugin.cpp
+     StyleCache.cpp
+     StylePackage.cpp
+@@ -37,6 +38,7 @@ target_sources(Union PUBLIC
+     Selector.h
+     PropertiesTypes.h
+     Color.h
++    Depth.h
+     PluginRegistry.h
+     PlatformPlugin.h
+     StylePackage.h
+diff --git a/src/Depth.cpp b/src/Depth.cpp
+new file mode 100644
+index 00000000..3bab2c03
+--- /dev/null
++++ b/src/Depth.cpp
+@@ -0,0 +1,278 @@
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++#include "Depth.h"
++
++#include <algorithm>
++#include <cmath>
++
++#include <QEasingCurve>
++#include <QHash>
++
++#include "properties/StylePropertyGroup.h"
++
++using namespace Union;
++using namespace Union::Properties;
++
++// Stereo KWin's limits are given for a view this wide (src/scene/stereodepth.cpp).
++static constexpr qreal s_referenceWidth = 1920.0;
++
++// A stack deeper than this is a loop.
++static constexpr int s_maximumNesting = 64;
++
++bool Depth::Limits::isEnabled() const
++{
++    return sunk > 0.0 || popped > 0.0;
++}
++
++std::optional<qreal> Depth::shadowDepth(const ShadowPropertyGroup *shadow)
++{
++    if (!shadow) {
++        return std::nullopt;
++    }
++
++    const auto color = shadow->color().value_or(Color{}).toQColor();
++    if (!color.isValid() || color.alpha() == 0) {
++        return std::nullopt;
++    }
++
++    // A shadow with no offset, blur or spread lies under the box and draws nothing.
++    const auto offset = shadow->offset() ? shadow->offset()->toVector2D() : QVector2D{};
++    if (offset.isNull() && shadow->blur().value_or(0.0) <= 0.0 && shadow->size().value_or(0.0) <= 0.0) {
++        return std::nullopt;
++    }
++
++    return shadow->inset().value_or(false) ? InsetShadow : OuterShadow;
++}
++
++qreal Depth::elementDepth(const StylePropertyGroup *properties)
++{
++    if (!properties) {
++        return Screen;
++    }
++
++    if (properties->display() && properties->display()->depth()) {
++        return std::clamp(properties->display()->depth().value(), Sunk, Popped);
++    }
++
++    return shadowDepth(properties->shadow()).value_or(Screen);
++}
++
++int Depth::parallax(qreal depth, const Limits &limits, int viewWidth)
++{
++    const qreal limit = depth > 0.0 ? limits.popped : limits.sunk;
++    return std::lround(depth * limit * viewWidth / s_referenceWidth);
++}
++
++int Depth::eyeShift(int parallax, Eye eye)
++{
++    switch (eye) {
++    case Eye::Left:
++        return parallax - parallax / 2;
++    case Eye::Right:
++        return -(parallax / 2);
++    case Eye::None:
++        break;
++    }
++    return 0;
++}
++
++struct DepthNode {
++    DepthTree::Key parent = nullptr;
++    qreal relative = 0.0;
++    bool atOutputEdge = false;
++    bool flat = false;
++
++    // Computed.
++    qreal unfitted = 0.0;
++    bool flatBranch = false;
++    bool computed = false;
++};
++
++class Union::DepthTreePrivate
++{
++public:
++    void compute(DepthTree::Key key, DepthNode &node, int nesting)
++    {
++        if (node.computed) {
++            return;
++        }
++
++        qreal base = 0.0;
++        bool flatBranch = false;
++        auto parent = nodes.find(node.parent);
++        if (parent != nodes.end() && nesting < s_maximumNesting && node.parent != key) {
++            compute(node.parent, parent.value(), nesting + 1);
++            base = parent->unfitted;
++            flatBranch = parent->flatBranch;
++        }
++
++        node.flatBranch = flatBranch || node.flat;
++        node.unfitted = node.flatBranch ? base : base + node.relative;
++        if (node.atOutputEdge) {
++            node.unfitted = std::min(node.unfitted, 0.0);
++        }
++        node.computed = true;
++    }
++
++    void update()
++    {
++        if (!dirty) {
++            return;
++        }
++        dirty = false;
++
++        for (auto &node : nodes) {
++            node.computed = false;
++        }
++
++        qreal nearest = 0.0;
++        qreal farthest = 0.0;
++        for (auto itr = nodes.begin(); itr != nodes.end(); ++itr) {
++            compute(itr.key(), itr.value(), 0);
++            nearest = std::max(nearest, itr->unfitted);
++            farthest = std::min(farthest, itr->unfitted);
++        }
++
++        // Each side of the surface is fitted on its own, so the farthest element sits at the limit.
++        const qreal poppedScale = nearest > Depth::Popped ? Depth::Popped / nearest : 1.0;
++        const qreal sunkScale = farthest < Depth::Sunk ? Depth::Sunk / farthest : 1.0;
++
++        fitted.clear();
++        for (auto itr = nodes.cbegin(); itr != nodes.cend(); ++itr) {
++            const qreal value = itr->unfitted;
++            fitted.insert(itr.key(), std::clamp(value * (value > 0.0 ? poppedScale : sunkScale), Depth::Sunk, Depth::Popped));
++        }
++    }
++
++    QHash<DepthTree::Key, DepthNode> nodes;
++    QHash<DepthTree::Key, qreal> fitted;
++    QHash<DepthTree::Key, qreal> reported;
++    bool dirty = false;
++};
++
++DepthTree::DepthTree()
++    : d(std::make_unique<DepthTreePrivate>())
++{
++}
++
++DepthTree::~DepthTree() = default;
++
++void DepthTree::setElement(Key key, Key parent, qreal depth)
++{
++    depth = std::clamp(depth, Depth::Sunk, Depth::Popped);
++
++    auto &node = d->nodes[key];
++    if (node.parent == parent && node.relative == depth && d->fitted.contains(key)) {
++        return;
++    }
++
++    node.parent = parent;
++    node.relative = depth;
++    d->dirty = true;
++}
++
++void DepthTree::removeElement(Key key)
++{
++    if (d->nodes.remove(key)) {
++        d->fitted.remove(key);
++        d->dirty = true;
++    }
++}
++
++bool DepthTree::contains(Key key) const
++{
++    return d->nodes.contains(key);
++}
++
++void DepthTree::setAtOutputEdge(Key key, bool atEdge)
++{
++    auto itr = d->nodes.find(key);
++    if (itr == d->nodes.end() || itr->atOutputEdge == atEdge) {
++        return;
++    }
++
++    itr->atOutputEdge = atEdge;
++    d->dirty = true;
++}
++
++void DepthTree::setFlat(Key key, bool flat)
++{
++    auto itr = d->nodes.find(key);
++    if (itr == d->nodes.end() || itr->flat == flat) {
++        return;
++    }
++
++    itr->flat = flat;
++    d->dirty = true;
++}
++
++qreal DepthTree::depth(Key key) const
++{
++    d->update();
++    return d->fitted.value(key, Depth::Screen);
++}
++
++QList<DepthTree::Key> DepthTree::takeChanges()
++{
++    d->update();
++
++    QList<Key> changes;
++    for (auto itr = d->fitted.cbegin(); itr != d->fitted.cend(); ++itr) {
++        if (!qFuzzyCompare(1.0 + itr.value(), 1.0 + d->reported.value(itr.key(), Depth::Screen))) {
++            changes.append(itr.key());
++        }
++    }
++
++    // Removed elements that were reported with a depth are reported once more, at the screen.
++    for (auto itr = d->reported.cbegin(); itr != d->reported.cend(); ++itr) {
++        if (!d->fitted.contains(itr.key()) && !qFuzzyIsNull(itr.value())) {
++            changes.append(itr.key());
++        }
++    }
++
++    d->reported = d->fitted;
++    return changes;
++}
++
++void DepthMotion::setTarget(qreal depth, std::chrono::nanoseconds time, qreal speedFactor)
++{
++    if (!m_started) {
++        m_from = m_to = depth;
++        m_started = true;
++        return;
++    }
++    if (depth == m_to) {
++        return;
++    }
++
++    m_from = this->depth(time);
++    m_to = depth;
++    m_start = time;
++
++    const auto duration = m_to > m_from ? RiseDuration : SinkDuration;
++    m_duration = std::chrono::duration_cast<std::chrono::nanoseconds>(duration * std::max(speedFactor, 0.0));
++}
++
++qreal DepthMotion::depth(std::chrono::nanoseconds time) const
++{
++    if (m_duration <= std::chrono::nanoseconds::zero() || time >= m_start + m_duration) {
++        return m_to;
++    }
++    if (time <= m_start) {
++        return m_from;
++    }
++
++    const qreal progress = qreal((time - m_start).count()) / m_duration.count();
++    return m_from + (m_to - m_from) * QEasingCurve(QEasingCurve::OutCubic).valueForProgress(progress);
++}
++
++qreal DepthMotion::target() const
++{
++    return m_to;
++}
++
++bool DepthMotion::isMoving(std::chrono::nanoseconds time) const
++{
++    return m_duration > std::chrono::nanoseconds::zero() && time < m_start + m_duration;
++}
+diff --git a/src/Depth.h b/src/Depth.h
+new file mode 100644
+index 00000000..e71d8bc4
+--- /dev/null
++++ b/src/Depth.h
+@@ -0,0 +1,263 @@
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++#pragma once
++
++#include <chrono>
++#include <memory>
++#include <optional>
++
++#include <QList>
++#include <QtGlobal>
++
++#include "union_export.h"
++
++namespace Union
++{
++
++namespace Properties
++{
++class StylePropertyGroup;
++class ShadowPropertyGroup;
++}
++
++/*!
++ * \namespace Union::Depth
++ * \inmodule core
++ * \ingroup core-namespaces
++ *
++ * \brief Where elements are shown in depth on a stereo output.
++ *
++ * A depth is a fraction of the user's range: -1.0 is the sunk limit, behind the
++ * screen, 0.0 the screen and 1.0 the popped limit, in front of it. Anything in
++ * between is valid, nothing beyond. The limits are the user's settings, in
++ * pixels of a view 1920 pixels wide, the unit Stereo KWin uses for them.
++ *
++ * An element's depth is relative to what it lies on, and moves the whole
++ * element: its background, border, text and icon. It never changes the layout,
++ * and a 2D output shows the element exactly as it is without depth.
++ */
++namespace Depth
++{
++/*!
++ * The sunk limit.
++ */
++inline constexpr qreal Sunk = -1.0;
++/*!
++ * The plane of what an element lies on.
++ */
++inline constexpr qreal Screen = 0.0;
++/*!
++ * The popped limit.
++ */
++inline constexpr qreal Popped = 1.0;
++/*!
++ * The depth an outer shadow gives an element that declares none: one step,
++ * half of the popped limit.
++ */
++inline constexpr qreal OuterShadow = 0.5;
++/*!
++ * The depth an inset shadow gives an element that declares none: sunk.
++ */
++inline constexpr qreal InsetShadow = Sunk;
++
++/*!
++ * The name of the dynamic property of a QWindow that says which eye is being
++ * drawn, as an int with the values of Eye. Whoever draws a window once per eye
++ * sets it before drawing each eye and resets it to Eye::None afterwards.
++ */
++inline constexpr char EyeProperty[] = "_q_stereo_eye";
++/*!
++ * The name of the dynamic property of an item or a widget that holds its
++ * parallax on its surface, an int in device pixels, positive when it is nearer
++ * than the screen. It is only set while the surface shows depth.
++ */
++inline constexpr char ParallaxProperty[] = "_q_stereo_parallax";
++
++/*!
++ * \enum Union::Depth::Eye
++ *
++ * The eye a picture is drawn for.
++ *
++ * \value None
++ *      A single picture, for both eyes or a 2D output.
++ * \value Left
++ *      The left eye's picture.
++ * \value Right
++ *      The right eye's picture.
++ */
++enum class Eye {
++    None = 0,
++    Left = 1,
++    Right = 2,
++};
++
++/*!
++ * \class Union::Depth::Limits
++ * \inmodule core
++ *
++ * \brief The user's limits, in pixels of a view 1920 pixels wide.
++ */
++struct UNION_EXPORT Limits {
++    qreal sunk = 0.0;
++    qreal popped = 0.0;
++
++    /*!
++     * Whether either limit is above zero. With both at zero nothing has depth.
++     */
++    bool isEnabled() const;
++
++    bool operator==(const Limits &other) const = default;
++};
++
++/*!
++ * Returns the depth \a shadow gives an element that declares none, or no value
++ * when the shadow draws nothing.
++ *
++ * CSS Backgrounds and Borders 3, section 6.1: an outer shadow is cast "as if [the
++ * box] were lifted above the canvas", so it raises the element by OuterShadow;
++ * an inset shadow is cast "as if the box were cut out of the canvas", so it
++ * sinks it to InsetShadow.
++ */
++UNION_EXPORT std::optional<qreal> shadowDepth(const Properties::ShadowPropertyGroup *shadow);
++
++/*!
++ * Returns the depth of an element with \a properties, relative to what it lies
++ * on: the depth the style declares, or else the depth its shadow gives it, or
++ * else Screen, lying on what it is drawn on. A declared depth always wins.
++ */
++UNION_EXPORT qreal elementDepth(const Properties::StylePropertyGroup *properties);
++
++/*!
++ * Returns the parallax of \a depth in whole pixels of a view \a viewWidth pixels
++ * wide, positive when nearer than the screen, as Stereo KWin computes it.
++ */
++UNION_EXPORT int parallax(qreal depth, const Limits &limits, int viewWidth);
++
++/*!
++ * Returns how far \a eye's picture moves for \a parallax: the left eye's to the
++ * right and the right eye's to the left for a positive parallax, so that the two
++ * end up \a parallax pixels apart, as Stereo KWin moves windows.
++ */
++UNION_EXPORT int eyeShift(int parallax, Eye eye);
++}
++
++class DepthTreePrivate;
++
++/*!
++ * \class Union::DepthTree
++ * \inmodule core
++ * \ingroup core-classes
++ *
++ * \brief The elements of one surface and their depths, fitted into the limits.
++ *
++ * Each element stands on what it lies on: its depth is relative to its parent's.
++ * When a stack of elements would go beyond a limit, every depth on that side of
++ * the surface is scaled down until the farthest element sits at the limit, the
++ * way Stereo KWin fits popups opened from each other. That keeps every element
++ * where it is relative to its neighbours: nearer than what it lies on when it
++ * rises, behind it when it sinks.
++ *
++ * Keys are the outputs' own objects; an element whose parent is not in the tree
++ * lies on the surface itself.
++ */
++class UNION_EXPORT DepthTree
++{
++public:
++    using Key = const void *;
++
++    DepthTree();
++    ~DepthTree();
++
++    /*!
++     * Adds \a key, or updates it, lying on \a parent with \a depth relative to
++     * it. The depth is limited to [-1, 1].
++     */
++    void setElement(Key key, Key parent, qreal depth);
++    /*!
++     * Removes \a key. Elements lying on it then lie on the surface.
++     */
++    void removeElement(Key key);
++    /*!
++     * Returns whether \a key is in the tree.
++     */
++    bool contains(Key key) const;
++
++    /*!
++     * Sets whether \a key touches an edge of its surface that lies on the edge of
++     * the output. Such an element never comes nearer than the screen, as Stereo
++     * KWin keeps a popped window at the output's edge at the screen.
++     */
++    void setAtOutputEdge(Key key, bool atEdge);
++    /*!
++     * Sets whether \a key and everything on it lie flat on what \a key lies on,
++     * for example the content of a window under a modal overlay.
++     */
++    void setFlat(Key key, bool flat);
++
++    /*!
++     * Returns the depth of \a key on its surface, from -1.0 to 1.0. Keys that are
++     * not in the tree are at the surface, 0.0.
++     */
++    qreal depth(Key key) const;
++
++    /*!
++     * Returns the keys whose depth changed since the last call, removed keys
++     * that had a depth included.
++     */
++    QList<Key> takeChanges();
++
++private:
++    const std::unique_ptr<DepthTreePrivate> d;
++};
++
++/*!
++ * \class Union::DepthMotion
++ * \inmodule core
++ * \ingroup core-classes
++ *
++ * \brief A depth that follows its target in a short eased motion.
++ *
++ * Towards the viewer the motion is quick, so that nothing is drawn behind what it
++ * is over for more than an instant, and away from the viewer it is gentle. Both
++ * ease out, follow the animation speed and are instant when animations are off,
++ * as Stereo KWin moves windows between levels.
++ */
++class UNION_EXPORT DepthMotion
++{
++public:
++    /*!
++     * Moves towards \a depth from where the motion is at \a time, with durations
++     * multiplied by \a speedFactor (zero is instant). The first target is taken
++     * at once.
++     */
++    void setTarget(qreal depth, std::chrono::nanoseconds time, qreal speedFactor);
++    /*!
++     * Returns the depth at \a time.
++     */
++    qreal depth(std::chrono::nanoseconds time) const;
++    /*!
++     * Returns the depth the motion goes to.
++     */
++    qreal target() const;
++    /*!
++     * Returns whether the motion is still moving at \a time.
++     */
++    bool isMoving(std::chrono::nanoseconds time) const;
++
++    /*!
++     * How long a motion towards the viewer and away from it lasts at the default
++     * animation speed.
++     */
++    static constexpr std::chrono::milliseconds RiseDuration{80};
++    static constexpr std::chrono::milliseconds SinkDuration{150};
++
++private:
++    qreal m_from = 0.0;
++    qreal m_to = 0.0;
++    std::chrono::nanoseconds m_start = std::chrono::nanoseconds::zero();
++    std::chrono::nanoseconds m_duration = std::chrono::nanoseconds::zero();
++    bool m_started = false;
++};
++
++}

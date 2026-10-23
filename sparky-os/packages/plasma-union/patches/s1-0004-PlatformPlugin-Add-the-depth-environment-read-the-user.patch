@@ -1,0 +1,357 @@
+Description: PlatformPlugin: Add the depth environment; read the user's limits on Plasma
+ .
+ A platform now says what an output may show in depth: the user's limits
+ (depthLimits), whether a window's elements may be shown in depth now
+ (depthEnabled: the window is on a stereo output and awake, not lying flat
+ behind the active one) and which of its edges lie on the output's edge.
+ The defaults give no depth anywhere, so every platform draws exactly what
+ it drew before.
+ .
+ The Plasma platform reads the limits from Stereo KWin's own settings, the
+ SunkLimit and PoppedLimit keys of kwinrc's StereoDepth group that System
+ Settings' 3D Depth page writes, with KWin's defaults of 10 and 4 pixels of
+ a view 1920 wide, and follows their changes. Whether a window is awake
+ comes from the compositor; until it can say so, no window shows depth.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://invent.kde.org/danielcamposramos/union/-/commit/d014904f0d6e1e27920d34b5e70473b342644baa
+Forwarded: no
+Last-Update: 2026-10-23
+Assisted-by: Claude Opus 5.5
+---
+ autotests/CMakeLists.txt                     |  5 ++
+ autotests/platform/TestPlasmaDepth.cpp       | 88 ++++++++++++++++++++
+ src/PlatformPlugin.cpp                       | 32 ++++++-
+ src/PlatformPlugin.h                         | 43 ++++++++++
+ src/platform/plasma/PlasmaPlatformPlugin.cpp | 39 +++++++++
+ src/platform/plasma/PlasmaPlatformPlugin.h   |  5 ++
+ 6 files changed, 211 insertions(+), 1 deletion(-)
+ create mode 100644 autotests/platform/TestPlasmaDepth.cpp
+
+diff --git a/autotests/CMakeLists.txt b/autotests/CMakeLists.txt
+index 06aa9b13..d3c6f7e8 100644
+--- a/autotests/CMakeLists.txt
++++ b/autotests/CMakeLists.txt
+@@ -46,3 +46,8 @@ ecm_add_test(TestDepth.cpp LINK_LIBRARIES Qt6::Test Union::Union)
+ if (BUILD_OUTPUT_QTQUICK)
+     add_subdirectory(output/quick)
+ endif()
++
++if (BUILD_PLATFORM_PLASMA)
++    ecm_add_test(platform/TestPlasmaDepth.cpp LINK_LIBRARIES Qt6::Test Union::Union KF6::ConfigCore)
++    add_dependencies(TestPlasmaDepth union-platform-plasma)
++endif()
+diff --git a/autotests/platform/TestPlasmaDepth.cpp b/autotests/platform/TestPlasmaDepth.cpp
+new file mode 100644
+index 00000000..4c5e1ed7
+--- /dev/null
++++ b/autotests/platform/TestPlasmaDepth.cpp
+@@ -0,0 +1,88 @@
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++#include <QtTest>
++
++#include <QPluginLoader>
++#include <QSignalSpy>
++#include <QTemporaryDir>
++
++#include <KConfigGroup>
++#include <KSharedConfig>
++
++#include <PlatformPlugin.h>
++
++using namespace Union;
++using namespace Qt::StringLiterals;
++
++class TestPlasmaDepth : public QObject
++{
++    Q_OBJECT
++
++    QTemporaryDir m_configHome;
++    PlatformPlugin *m_plugin = nullptr;
++
++    void writeLimits(std::optional<qreal> sunk, std::optional<qreal> popped)
++    {
++        auto config = KSharedConfig::openConfig(u"kwinrc"_s);
++        KConfigGroup group(config, u"StereoDepth"_s);
++        if (sunk) {
++            group.writeEntry("SunkLimit", sunk.value(), KConfig::Notify);
++        }
++        if (popped) {
++            group.writeEntry("PoppedLimit", popped.value(), KConfig::Notify);
++        }
++        config->sync();
++    }
++
++private Q_SLOTS:
++    void initTestCase()
++    {
++        QVERIFY(m_configHome.isValid());
++        qputenv("XDG_CONFIG_HOME", m_configHome.path().toUtf8());
++        qRegisterMetaType<QWindow *>();
++    }
++
++    void testDefaults()
++    {
++        // Without settings the limits are Stereo KWin's defaults (kwin.kcfg, StereoDepth).
++        QPluginLoader loader(QCoreApplication::applicationDirPath() + u"/union/union-platform-plasma.so"_s);
++        auto instance = loader.instance();
++        QVERIFY2(instance, qPrintable(loader.errorString()));
++        QCOMPARE(instance->metaObject()->className(), "PlasmaPlatformPlugin");
++        // As PluginRegistry does: platform plugins do not declare Q_INTERFACES.
++        m_plugin = static_cast<PlatformPlugin *>(instance);
++
++        QCOMPARE(m_plugin->depthLimits(), (Depth::Limits{.sunk = 10.0, .popped = 4.0}));
++
++        // Nothing tells a window it may show depth yet, so every window is drawn as on a 2D output.
++        QWindow window;
++        QVERIFY(!m_plugin->depthEnabled(&window));
++    }
++
++    void testUserLimits()
++    {
++        QVERIFY(m_plugin);
++
++        // The user's limits from System Settings' 3D Depth page.
++        QSignalSpy spy(m_plugin, &PlatformPlugin::depthChanged);
++        writeLimits(16.0, 6.0);
++        QTRY_COMPARE(m_plugin->depthLimits(), (Depth::Limits{.sunk = 16.0, .popped = 6.0}));
++        QVERIFY(spy.count() >= 1);
++        QVERIFY(spy.last().at(0).isValid());
++        QCOMPARE(spy.last().at(0).value<QWindow *>(), nullptr);
++
++        // Both at zero switch depth off.
++        writeLimits(0.0, 0.0);
++        QTRY_COMPARE(m_plugin->depthLimits(), (Depth::Limits{.sunk = 0.0, .popped = 0.0}));
++        QVERIFY(!m_plugin->depthLimits().isEnabled());
++
++        // Below zero is not a limit.
++        writeLimits(-5.0, 3.0);
++        QTRY_COMPARE(m_plugin->depthLimits(), (Depth::Limits{.sunk = 0.0, .popped = 3.0}));
++    }
++};
++
++QTEST_MAIN(TestPlasmaDepth)
++
++#include "TestPlasmaDepth.moc"
+diff --git a/src/PlatformPlugin.cpp b/src/PlatformPlugin.cpp
+index 04a24458..4702a940 100644
+--- a/src/PlatformPlugin.cpp
++++ b/src/PlatformPlugin.cpp
+@@ -13,7 +13,8 @@ using namespace Qt::StringLiterals;
+ 
+ UNION_EXPORT QEvent::Type DefaultStyleChangedEvent::s_type = QEvent::None;
+ UNION_EXPORT QEvent::Type AnimationSpeedMultiplierChangedEvent::s_type = QEvent::None;
+-static EventTypeRegistration<DefaultStyleChangedEvent, AnimationSpeedMultiplierChangedEvent> platformPluginEventRegistration;
++UNION_EXPORT QEvent::Type DepthChangedEvent::s_type = QEvent::None;
++static EventTypeRegistration<DefaultStyleChangedEvent, AnimationSpeedMultiplierChangedEvent, DepthChangedEvent> platformPluginEventRegistration;
+ 
+ PlatformPlugin::PlatformPlugin(QObject *parent)
+     : Plugin(parent)
+@@ -50,6 +51,29 @@ qreal PlatformPlugin::animationSpeedMultiplier()
+     return 1.0;
+ }
+ 
++Depth::Limits PlatformPlugin::depthLimits()
++{
++    return Depth::Limits{};
++}
++
++bool PlatformPlugin::depthEnabled([[maybe_unused]] QWindow *window)
++{
++    return false;
++}
++
++Qt::Edges PlatformPlugin::depthOutputEdges([[maybe_unused]] QWindow *window)
++{
++    return Qt::Edges{};
++}
++
++void PlatformPlugin::sendDepthChangedEvent(QWindow *window)
++{
++    Q_EMIT depthChanged(window);
++
++    DepthChangedEvent event(window);
++    QCoreApplication::sendEvent(this, &event);
++}
++
+ void PlatformPlugin::sendDefaultStyleChangedEvent()
+ {
+     DefaultStyleChangedEvent event;
+@@ -71,3 +95,9 @@ AnimationSpeedMultiplierChangedEvent::AnimationSpeedMultiplierChangedEvent()
+     : QEvent(AnimationSpeedMultiplierChangedEvent::s_type)
+ {
+ }
++
++DepthChangedEvent::DepthChangedEvent(QWindow *_window)
++    : QEvent(DepthChangedEvent::s_type)
++    , window(_window)
++{
++}
+diff --git a/src/PlatformPlugin.h b/src/PlatformPlugin.h
+index 760317fb..28454391 100644
+--- a/src/PlatformPlugin.h
++++ b/src/PlatformPlugin.h
+@@ -3,10 +3,13 @@
+ 
+ #pragma once
+ 
++#include "Depth.h"
+ #include "PluginRegistry.h"
+ 
+ #include "union_export.h"
+ 
++class QWindow;
++
+ namespace Union
+ {
+ class ColorProvider;
+@@ -78,10 +81,39 @@ public:
+      * Emitted whenever animationSpeedMultiplier changes.
+      */
+     Q_SIGNAL void animationSpeedMultiplierChanged();
++    /*!
++     * Returns the user's depth limits for stereo outputs, in pixels of a view
++     * 1920 pixels wide.
++     *
++     * By default both limits are zero and no element has depth.
++     */
++    virtual Depth::Limits depthLimits();
++    /*!
++     * Returns whether the elements inside \a window may be shown in depth now:
++     * the window is on a stereo output and awake, not one of the windows lying
++     * flat behind the active one.
++     *
++     * By default no window shows depth, and every element is drawn exactly as on
++     * a 2D output.
++     */
++    virtual bool depthEnabled(QWindow *window);
++    /*!
++     * Returns the edges of \a window that lie on an edge of its output. Nothing
++     * touching them comes nearer than the screen.
++     *
++     * By default no edge does.
++     */
++    virtual Qt::Edges depthOutputEdges(QWindow *window);
++    /*!
++     * Emitted when the depth limits change, or when what \a window may show in
++     * depth changes. \a window is null when every window is concerned.
++     */
++    Q_SIGNAL void depthChanged(QWindow *window);
+ 
+ protected:
+     void sendDefaultStyleChangedEvent();
+     void sendAnimationSpeedMultiplierChangedEvent();
++    void sendDepthChangedEvent(QWindow *window);
+ };
+ 
+ class DefaultStyleChangedEvent : public QEvent
+@@ -99,6 +131,17 @@ public:
+ 
+     static QEvent::Type s_type;
+ };
++
++class DepthChangedEvent : public QEvent
++{
++public:
++    DepthChangedEvent(QWindow *window);
++
++    // The window concerned, or null for every window.
++    QWindow *window = nullptr;
++
++    static QEvent::Type s_type;
++};
+ }
+ 
+ Q_DECLARE_INTERFACE(Union::PlatformPlugin, "org.kde.union.PlatformPlugin")
+diff --git a/src/platform/plasma/PlasmaPlatformPlugin.cpp b/src/platform/plasma/PlasmaPlatformPlugin.cpp
+index ace10175..14ef357f 100644
+--- a/src/platform/plasma/PlasmaPlatformPlugin.cpp
++++ b/src/platform/plasma/PlasmaPlatformPlugin.cpp
+@@ -17,9 +17,16 @@ using namespace Qt::StringLiterals;
+ 
+ static const QString DefaultStyleId = u"breeze"_s;
+ 
++// Stereo KWin's depth limits, the user's settings on System Settings' 3D Depth page, with KWin's
++// defaults (kwin.kcfg, group StereoDepth).
++static const QString DepthGroup = u"StereoDepth"_s;
++static constexpr qreal DefaultSunkLimit = 10.0;
++static constexpr qreal DefaultPoppedLimit = 4.0;
++
+ PlasmaPlatformPlugin::PlasmaPlatformPlugin(QObject *parent)
+     : Union::PlatformPlugin(parent)
+     , m_kdeGlobalsWatcher(KConfigWatcher::create(KSharedConfig::openConfig()))
++    , m_kwinWatcher(KConfigWatcher::create(KSharedConfig::openConfig(u"kwinrc"_s)))
+ {
+     KConfigGroup generalCfg = KConfigGroup(KSharedConfig::openConfig(), u"KDE"_s);
+     m_smoothScroll = generalCfg.readEntry(u"SmoothScroll"_s, true);
+@@ -42,6 +49,15 @@ PlasmaPlatformPlugin::PlasmaPlatformPlugin(QObject *parent)
+         }
+     });
+ 
++    readDepthLimits();
++    connect(m_kwinWatcher.data(), &KConfigWatcher::configChanged, this, [this](const KConfigGroup &group) {
++        if (group.name() == DepthGroup) {
++            readDepthLimits();
++        }
++    });
++    // The 3D Depth page also asks KWin to reload its settings.
++    QDBusConnection::sessionBus().connect(QString(), u"/KWin"_s, u"org.kde.KWin"_s, u"reloadConfig"_s, this, SLOT(readDepthLimits()));
++
+     // Listen to smooth scroll changed events
+     QDBusConnection::sessionBus().connect(QString(),
+                                           QStringLiteral("/SmoothScroll"),
+@@ -116,6 +132,29 @@ void PlasmaPlatformPlugin::setAnimationSpeedMultiplier(qreal multiplier)
+     sendAnimationSpeedMultiplierChangedEvent();
+ }
+ 
++Union::Depth::Limits PlasmaPlatformPlugin::depthLimits()
++{
++    return m_depthLimits;
++}
++
++void PlasmaPlatformPlugin::readDepthLimits()
++{
++    m_kwinWatcher->config()->reparseConfiguration();
++
++    const KConfigGroup group(m_kwinWatcher->config(), DepthGroup);
++    const Union::Depth::Limits limits{
++        .sunk = std::max(0.0, group.readEntry(u"SunkLimit"_s, DefaultSunkLimit)),
++        .popped = std::max(0.0, group.readEntry(u"PoppedLimit"_s, DefaultPoppedLimit)),
++    };
++
++    if (limits == m_depthLimits) {
++        return;
++    }
++
++    m_depthLimits = limits;
++    sendDepthChangedEvent(nullptr);
++}
++
+ void PlasmaPlatformPlugin::setDefaultStyle(const QString &style)
+ {
+     if (m_defaultStyle == style) {
+diff --git a/src/platform/plasma/PlasmaPlatformPlugin.h b/src/platform/plasma/PlasmaPlatformPlugin.h
+index 2de19a7e..68db91b1 100644
+--- a/src/platform/plasma/PlasmaPlatformPlugin.h
++++ b/src/platform/plasma/PlasmaPlatformPlugin.h
+@@ -23,14 +23,19 @@ public:
+ 
+     qreal animationSpeedMultiplier() override;
+ 
++    Union::Depth::Limits depthLimits() override;
++
+ private:
+     Q_SLOT void setSmoothScroll(bool enabled);
+     void setAnimationSpeedMultiplier(qreal multiplier);
+     void setDefaultStyle(const QString &style);
++    Q_SLOT void readDepthLimits();
+ 
+     bool m_smoothScroll = true;
+     qreal m_animationSpeedMultiplier = 1.0;
+     QString m_defaultStyle;
++    Union::Depth::Limits m_depthLimits;
+     KConfigWatcher::Ptr m_kdeGlobalsWatcher;
+     KConfigWatcher::Ptr m_unionSettingsWatcher;
++    KConfigWatcher::Ptr m_kwinWatcher;
+ };

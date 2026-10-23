@@ -1,0 +1,34 @@
+plasma-union (6.8.80~git20261022.2163195c-0+stereo3d1) unstable; urgency=medium
+
+  * Sparky Stereo OS: Union master 2163195c (2026-10-22) with Debian's
+    plasma-union 6.7.4-2 packaging, plus the twelve commits of the
+    edition's depth in Union (danielcamposramos/union stereo3d-depth,
+    7c8ab92f), so an element's depth comes from its style and is shown on
+    Stereo KWin, and a 2D output shows every element exactly as before:
+  * properties and CSS (s1-0001, s1-0003): depth in the display group,
+    read as depth: sunk | screen | popped | <percentage> | <number>, and
+    inset box shadows.
+  * Depth (s1-0002, s1-0009, s1-0010): a declared depth wins; without one,
+    an outer shadow raises the element and an inset shadow sinks it, by the
+    shadow's strength against the strongest in the window, and an element
+    with no shadow lies on its parent. Menus, popups, tooltips and dialogs
+    drawn inside a window use the user's limits (SunkLimit and PoppedLimit
+    in kwinrc's [StereoDepth], 10 and 4 pixels at 1920 wide by default);
+    a window's own elements use ElementLimit, 1 pixel by default, nested
+    and fitted as Stereo KWin stacks windows and fits menus.
+  * Outputs (s1-0004 to s1-0006, s1-0012): the Qt Quick output sets each
+    item's _q_stereo_parallax and leaves the moves to Qt Quick while it
+    draws the window once per eye; the Qt Widgets output gives widgets
+    their parallax and moves the parts it draws itself.
+  * Breeze (s1-0007): the depths its shadows do not say: checked buttons,
+    the current tab and selected rows sink, menus, popups, tooltips and
+    dialogs pop, a flat tool button rises under the pointer.
+  * Plasma (s1-0008, s1-0011): Stereo KWin tells each window, through
+    libstereo-declare 1.5, whether its elements may show depth now.
+  * Build-Depends: libstereo-declare-dev (>= 1.5.0~) and
+    qt6-base-private-dev for the exchange; the tests run in a D-Bus session
+    as well as an X server, which the depth tests need for KConfig.
+  * kde-style-union depends on plasma-version-base-6.7, the Plasma it is built
+    against and tested with: dh_plasmaversionbase reads the release from the
+    upstream version, which for this snapshot of master is a pre-release of
+    6.9 with a suffix it cannot read.
