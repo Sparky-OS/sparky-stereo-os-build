@@ -52,7 +52,7 @@ It never restarts KWin or edits a service drop-in.
 Use the existing bench drop-in rather than altering Daniel's ordinary session from a lane.
 The exact modes are those in the reference A10 matrix, including the laptop anaglyph mode and the TV frame packing mode.
 Missing modes stop execution rather than selecting a different raster.
-The original enabled outputs, modes, positions, scales and mirror relationships are restored on normal exit, errors, Ctrl-C and SIGTERM.
+The original enabled outputs, modes, positions, scales, priorities and mirror relationships are restored on normal exit, errors, Ctrl-C and SIGTERM.
 A forced kill or machine failure cannot run cleanup; `outputs-original.json` retains the snapshot.
 
 The main session installs the published cohort for `before`, then the new cohort for `after`, using the matching version manifest supplied with the staged results.
@@ -77,6 +77,8 @@ python3 a10-matrix.py --phase before --host A10 --execute \
 
 Repeat the same selected cases with `--phase after` after the main session installs the candidate cohort.
 All paths in the executed command are A10 paths.
+Use the A10 desktop account; the runner supplies its normal runtime directory, user bus and wayland-0 socket when SSH has not exported them, and refuses missing sockets.
+Keep the kernel and KWin build the same in both package phases, and announce the screen changes to Daniel before the main session runs the bench.
 `--host` uses the main session's existing SSH alias and sends this one script over stdin.
 No host name, account or credential is stored in the machinery.
 Execution refuses a machine that is not the Lenovo A10 topology.

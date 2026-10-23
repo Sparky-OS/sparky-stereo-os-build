@@ -76,6 +76,8 @@ def restore_args(snapshot):
             pos = output['pos']
             args += [f'output.{name}.position.{pos["x"]},{pos["y"]}',
                      f'output.{name}.scale.{output["scale"]}']
+            if output.get('priority'):
+                args.append(f'output.{name}.priority.{output["priority"]}')
             if output.get('replicationSource', 0):
                 source = next(o['name'] for o in snapshot['outputs'] if o['id'] == output['replicationSource'])
                 args.append(f'output.{name}.mirror.{source}')
@@ -169,6 +171,11 @@ def execute(a):
     model = ' '.join(read('/sys/class/dmi/id/'+field) for field in ('product_name', 'product_version', 'product_family'))
     if '310-15ABR' not in model or 'A10' not in read('/proc/cpuinfo'):
         raise ValueError('Execution requires the granted A10 laptop, not this host')
+    runtime = Path(os.environ.setdefault('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}'))
+    os.environ.setdefault('DBUS_SESSION_BUS_ADDRESS', 'unix:path='+str(runtime/'bus'))
+    display = os.environ.setdefault('WAYLAND_DISPLAY', 'wayland-0')
+    if not (runtime/display).is_socket() or not (runtime/'bus').is_socket():
+        raise ValueError('Run through the A10 desktop account with its Wayland and user bus sockets')
     for command in ('kscreen-doctor', 'mpv', 'ffprobe', 'qdbus6', 'dpkg-query'):
         if not shutil.which(command):
             raise ValueError(f'Missing installed command: {command}')
@@ -186,6 +193,7 @@ def execute(a):
     root = a.output.resolve()/a.phase
     root.mkdir(parents=True, exist_ok=False)
     (root/'packages.json').write_text(json.dumps(actual, indent=2)+'\n')
+    (root/'session.json').write_text(json.dumps({'kernel': os.uname().release, 'architecture': os.uname().machine, 'warm_seconds': 60, 'record_seconds': 180}, indent=2)+'\n')
     for name, path in films.items():
         with (root/(name+'-source.json')).open('w') as stream:
             run('ffprobe', '-v', 'error', '-select_streams', 'v:0', '-read_intervals', '%+#8',
@@ -214,6 +222,7 @@ def execute(a):
     setup = None
     try:
         for case in cases(a.select):
+            print(json.dumps({'phase': a.phase, 'case': case['name'], 'event': 'start'}), flush=True)
             if case['setup'] != setup:
                 setup = case['setup']
                 args = []

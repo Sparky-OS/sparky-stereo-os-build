@@ -38,11 +38,13 @@ class A10(unittest.TestCase):
             a10.mode_ids(sample.replace('(3D-FP)',''))
 
     def test_restore_original_extended_geometry(self):
-        snapshot={'outputs':[{'name':'eDP-1','enabled':True,'currentModeId':'31','pos':{'x':1920,'y':0},'scale':1.25,'id':1,'replicationSource':0}, {'name':'HDMI-A-1','enabled':True,'currentModeId':'21','pos':{'x':0,'y':0},'scale':1,'id':2,'replicationSource':0}]}
+        snapshot={'outputs':[{'name':'eDP-1','enabled':True,'currentModeId':'31','pos':{'x':1920,'y':0},'scale':1.25,'priority':2,'id':1,'replicationSource':0}, {'name':'HDMI-A-1','enabled':True,'currentModeId':'21','pos':{'x':0,'y':0},'scale':1,'priority':1,'id':2,'replicationSource':0}]}
         args=a10.restore_args(snapshot)
         self.assertIn('output.eDP-1.mode.31',args)
         self.assertIn('output.eDP-1.position.1920,0',args)
         self.assertIn('output.eDP-1.scale.1.25',args)
+        self.assertIn('output.eDP-1.priority.2',args)
+        self.assertIn('output.HDMI-A-1.priority.1',args)
         self.assertIn('output.HDMI-A-1.mirror.none',args)
 
     def test_execution_refuses_other_machine_before_commands(self):
