@@ -51,14 +51,35 @@ def main(root, recipe, counter, smoke, packaging_revision=None):
         'libssl-dev, libelf-dev, libdw-dev, dwarves, cpio, kmod, rsync, python3, '
         'xz-utils, zstd, rustc, rust-src, bindgen, libclang-dev, sbsigntool\n'
         'Standards-Version: 4.7.4\nRules-Requires-Root: no\nHomepage: https://sparkylinux.org\n\n')
-    for kind, depends in (
-        ('image', 'kmod, initramfs-tools (>= 0.120+deb8u2) | linux-initramfs-tool'),
-        ('headers', 'gcc, make, kmod, libelf1t64, libssl3t64, pahole | dwarves, libc6-dev'),
-    ):
-        control += (f'Package: linux-{kind}-{release}\nArchitecture: amd64\n'
-                    f'Depends: {depends}, ${{misc:Depends}}\n'
+    # The fields are Debian's, from linux-image-7.2.11+deb14-amd64 and linux-headers-7.2.11+deb14-amd64 (forky,
+    # ORDER 222; the audit is in the lane report of ORDER 212c). Image: the maintainer scripts call linux-base's
+    # tools (Pre-Depends, as Debian's), dracut is the first alternative of the initramfs generator as in Debian's
+    # own package, and the Recommends, Suggests and Breaks are Debian's. Headers: the compiler the kernel was built
+    # with is read from its configuration by stage.sh (${kernel:Compiler}); the toolchain is otherwise ours because
+    # our headers carry the tools compiled in (Debian's linux-kbuild package is not needed).
+    image_fields = (
+        'Pre-Depends: linux-base (>= 4.17~)\n'
+        'Depends: kmod, dracut | initramfs-tools (>= 0.120+deb8u2) | linux-initramfs-tool, ${misc:Depends}\n'
+        'Recommends: apparmor\n'
+        'Suggests: debian-kernel-handbook, firmware-linux-free, grub-pc | grub-efi-amd64 | extlinux\n'
+        'Breaks: fwupdate (<< 12-7), initramfs-tools (<< 0.120+deb8u2), wireless-regdb (<< 2019.06.03-1~)\n')
+    headers_fields = (
+        'Depends: ${kernel:Compiler}, make, kmod, libelf1t64, libssl3t64, pahole | dwarves, libc6-dev, '
+        'linux-base (>= 4.17~), ${misc:Depends}\n')
+    for kind, fields in (('image', image_fields), ('headers', headers_fields)):
+        control += (f'Package: linux-{kind}-{release}\nArchitecture: amd64\n{fields}'
                     f'Description: Sparky Stereo Linux {kind}, version {release}\n'
                     ' Edition kernel built from the retained patched source.\n\n')
+    if flavour == 'base':
+        # userspace API headers of this tree: Debian's linux-libc-dev layout, from our source (kernel/lean/libc-dev.py)
+        control += ('Package: linux-libc-dev\nSection: devel\nArchitecture: all\nMulti-Arch: foreign\n'
+                    'Depends: ${misc:Depends}\n'
+                    'Description: Linux support headers for userspace development\n'
+                    ' This package provides userspace headers from the Linux kernel of Sparky Stereo OS,\n'
+                    ' built from the same source as its kernel image: they hold the UAPI of the edition\'s\n'
+                    ' patches (the HDMI 3D metadata of drm_mode.h). These files are going to be installed\n'
+                    ' into /usr/include, and are used by the installed headers for GNU libc and other\n'
+                    ' system libraries.\n\n')
     (debian / 'control').write_text(control)
     (debian / 'changelog').write_text(
         f'{name} ({version}) unstable; urgency=medium\n\n'
@@ -71,6 +92,8 @@ def main(root, recipe, counter, smoke, packaging_revision=None):
         shutil.copytree(recipe / directory, target / directory)
     for filename in ['configure.sh', 'headers-postinst.sh']:
         shutil.copy2(recipe / filename, target / filename)
+    shutil.copytree(HERE / 'maint', target / 'maint')
+    shutil.copy2(HERE / 'libc-dev.py', target / 'libc-dev.py')
     for filename in ['build.sh', 'stage.sh', 'check-module-signature.py', 'check-source-consumers.py']:
         shutil.copy2(HERE / filename, debian / filename)
     subprocess.run([sys.executable, str(debian / 'check-source-consumers.py'),

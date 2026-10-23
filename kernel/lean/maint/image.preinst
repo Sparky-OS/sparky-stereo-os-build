@@ -1,0 +1,25 @@
+#!/bin/sh
+
+set -e
+
+# Maintainer scripts of the image package, as Debian's linux-image-7.2.11+deb14-amd64 writes them
+# (ORDER 222): linux-base's linux-run-hooks runs the hooks of /etc/kernel and /usr/share/kernel and stops
+# at the first failure, linux-update-symlinks keeps /vmlinuz, /initrd.img and their .old links, and
+# linux-check-removal asks before the running kernel is removed. kernel/lean/stage.sh puts the
+# release in place of @RELEASE@ and debhelper adds the module dependency map (depmod) at #DEBHELPER#.
+version=@RELEASE@
+image_path=/boot/vmlinuz-$version
+
+if [ "$1" = abort-upgrade ]; then
+    exit 0
+fi
+
+if [ "$1" = install ]; then
+    # flag file for postinst: a first install and an upgrade link differently
+    mkdir -p /lib/modules/$version
+    touch /lib/modules/$version/.fresh-install
+fi
+
+linux-run-hooks image preinst $version $image_path -- "$@"
+
+exit 0

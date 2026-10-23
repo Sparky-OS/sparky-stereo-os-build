@@ -40,6 +40,10 @@ source = origin / 'source'
 for filename in ['build.sh', 'stage.sh', 'check-module-signature.py', 'check-source-consumers.py']:
     assert (source / 'debian' / filename).read_bytes() == (kit / 'kernel/lean' / filename).read_bytes(), \
         'Prepared source recipe changed; repackage before building'
+recipe_dir = source / 'debian/kernel-recipe'
+for relative in ['libc-dev.py', 'maint/image.preinst', 'maint/image.postinst', 'maint/image.prerm', 'maint/image.postrm']:
+    assert (recipe_dir / relative).read_bytes() == (kit / 'kernel/lean' / relative).read_bytes(), \
+        'Prepared source recipe changed; repackage before building'
 descriptor = origin / f'{name}_{version}.dsc'
 sys.path.insert(0, str(kit / 'sparky-os'))
 from lean.package import stanzas

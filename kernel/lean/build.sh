@@ -48,6 +48,14 @@ make -j4 O="$obj" bindeb-pkg LOCALVERSION="$LOCALVERSION" \
 test "$(cat "$obj/include/config/kernel.release")" = "$RELEASE"
 cp "$obj/.config" debian/built.config
 
+# The userspace API headers of this tree, as linux-libc-dev (ORDER 222). Built from the base flavour only: the
+# UAPI is the same in every flavour and the package name is one. The kernel's own headers_install runs for
+# every architecture Debian's package covers, in separate output directories (the tree itself stays clean).
+if [ "$FLAVOUR" = base ]; then
+    python3 debian/kernel-recipe/libc-dev.py "$root" "$obj/libc-dev-work" "$obj/libc-dev"
+    rm -rf "$obj/libc-dev-work"
+fi
+
 # Test the nested archives before the final staging and Lean Code pass.
 image="linux-image-${RELEASE}_${PACKAGE_VERSION}_amd64.deb"
 headers="linux-headers-${RELEASE}_${PACKAGE_VERSION}_amd64.deb"
