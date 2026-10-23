@@ -4,6 +4,7 @@
 set -euo pipefail
 unset DISPLAY WAYLAND_DISPLAY XAUTHORITY DBUS_SESSION_BUS_ADDRESS
 export DEBIAN_FRONTEND=noninteractive
+case "$PHASE" in before|after|publication) ;; *) echo 'unknown install phase' >&2; exit 2;; esac
 trap 'chown -R 1000:1000 /w' EXIT
 python3 - <<'APT_SOURCES'
 from pathlib import Path
@@ -25,7 +26,7 @@ if [ "$PHASE" = after ]; then
 fi
 apt-get -y update > /w/apt-update.log 2>&1
 packages=(ffmpeg mpv libmpv-dev libmlt-dev libmlt++-dev libmlt-data melt qt6-multimedia-dev qml6-module-qtmultimedia kdenlive vlc-stereo libvlc-dev sparky-stereo-hardware pkgconf gcc g++ weston vulkan-tools vainfo)
-if [ "$PHASE" = after ]; then
+if [ "$PHASE" != before ]; then
  packages+=(libmedia-gpu-route-dev media-gpu-route-tools libplacebo-dev)
 else
  packages+=(libplacebo-dev=2:7.360.1-dmo1 libplacebo360=2:7.360.1-dmo1)
@@ -49,6 +50,6 @@ apt-get -y --no-install-recommends install "${packages[@]}" "${cohort[@]}" > /w/
 mkdir -p /w/logs /w/final
 sh /kit/packaging/build-installed-probes.sh > /w/probes-build.log 2>&1
 dpkg-query -W -f='${binary:Package}\t${Version}\n' ffmpeg libavcodec63 libavcodec-dev mpv libmpv2 libmpv-dev libplacebo360 libmlt7 libmlt-dev libqt6multimedia6 kdenlive vlc-stereo sparky-stereo-hardware > /w/installed-versions.tsv
-if [ "$PHASE" = after ]; then
+if [ "$PHASE" != before ]; then
  dpkg-query -W -f='${binary:Package}\t${Version}\n' libmedia-gpu-route0 >> /w/installed-versions.tsv
 fi
