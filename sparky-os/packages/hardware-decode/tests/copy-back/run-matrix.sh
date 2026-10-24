@@ -5,7 +5,7 @@
 # that imports decoded surfaces (zero-copy present), the cases run as they
 # are, and with --a10 the test layer makes the same GPU copy-only, as RADV
 # is on the A10's Carrizo. NOGPU=1 runs the cases for a container without
-# a GPU (none).
+# a GPU (none), with mpv's null video output.
 # Usage: run-matrix.sh OUTDIR FIXTUREDIR WORKDIR
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
@@ -16,8 +16,9 @@ mkdir -p "$out" "$work/layer"
 dpkg-query -W -f="\${Package} \${Version}\n" mpv libplacebo360 libmedia-gpu-route0 mesa-vulkan-drivers mesa-va-drivers > "$out/versions.txt" || true
 case=("$here/mpv-case.py" --out "$out" --layer-dir "$work/layer")
 if [ "${NOGPU:-0}" = 1 ]; then
-    "${case[@]}" --name none-2d --film "$fixtures/2d.mkv"
-    "${case[@]}" --name none-sbs --film "$fixtures/sbs.mkv"
+    # without a GPU no Vulkan or OpenGL output starts, so the decoder choice is read with the null output
+    "${case[@]}" --name none-2d --vo null --film "$fixtures/2d.mkv"
+    "${case[@]}" --name none-sbs --vo null --film "$fixtures/sbs.mkv"
     exit 0
 fi
 gcc -shared -fPIC -fvisibility=hidden -O2 -Wall -Wextra -Werror -o "$work/layer/libhide-modifiers-layer.so" "$here/hide-modifiers-layer.c"
