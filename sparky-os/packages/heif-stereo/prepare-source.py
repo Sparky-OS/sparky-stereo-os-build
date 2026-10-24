@@ -54,4 +54,11 @@ if args.project != 'libheif':
 
 if args.project != 'libheif':
     fixtures = source / ('autotests/depth/heif-stem' if args.project == 'kf6-kimageformats' else 'autotests/samplefiles/stereo/depth/heif-stem')
-    shutil.copytree(recipe / 'fixtures', fixtures)
+    fixtures.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for asset in (recipe / 'fixtures').iterdir():
+        if asset.suffix in ('.heic', '.png'):
+            shutil.copy2(asset, fixtures / asset.name)
+            paths.append(str((fixtures / asset.name).relative_to(source)))
+    with (source / 'debian/source/include-binaries').open('a') as output:
+        output.write('\n'.join(paths) + '\n')
