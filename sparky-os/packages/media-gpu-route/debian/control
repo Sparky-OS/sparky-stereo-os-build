@@ -1,0 +1,37 @@
+Source: media-gpu-route
+Section: libs
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: debhelper-compat (= 14), cmake, pkgconf, libvulkan-dev, libdrm-dev, libva-dev, libffmpeg-nvenc-dev
+Standards-Version: 4.7.3
+Rules-Requires-Root: no
+
+Package: libmedia-gpu-route0
+Architecture: linux-any
+Multi-Arch: same
+Depends: mesa-vulkan-drivers, ${shlibs:Depends}, ${misc:Depends}
+Description: shared display GPU preference for media engines
+ Resolves the graphics driver's default hardware GPU, including the
+ compositor's display preference and explicit driver overrides.
+ Decoder selection checks codec, component depth and chroma capabilities
+ before startup and retains software fallback. Hardware decoding that
+ copies every picture back is chosen only where the person or the
+ machine's measured record allows it.
+ It writes no user settings.
+
+Package: libmedia-gpu-route-dev
+Section: libdevel
+Architecture: linux-any
+Multi-Arch: same
+Depends: libmedia-gpu-route0 (= ${binary:Version}), libavcodec-dev, libavutil-dev, ${misc:Depends}
+Description: development files for shared media GPU routing
+ Headers and linker metadata for media-gpu-route.
+
+Package: media-gpu-route-tools
+Section: utils
+Architecture: linux-any
+Depends: libmedia-gpu-route0 (= ${binary:Version}), ${shlibs:Depends}, ${misc:Depends}
+Description: inspect the default display GPU for media engines
+ Prints the selected hardware device and its DRM render node, each GPU's
+ zero-copy import capability, the copy-back choice and the decoder chosen
+ for a source, for isolated qualification and diagnosis.

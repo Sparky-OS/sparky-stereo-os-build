@@ -96,13 +96,13 @@ grep -Fxq 'Pin-Priority: 1002' "$ROOT/etc/apt/preferences.d/91sparky-stereo-cuda
 grep -Fxq 'Pin: origin developer.download.nvidia.com' "$ROOT/etc/apt/preferences.d/91sparky-stereo-cuda"
 grep -Fxq 'Signed-By: /etc/apt/keyrings/sparky-stereo-cuda.gpg' "$ROOT/etc/apt/sources.list.d/sparky-stereo-cuda.sources"
 cmp "$T/key/usr/share/keyrings/cuda-archive-keyring.gpg" "$ROOT/etc/apt/keyrings/sparky-stereo-cuda.gpg"
-grep -Fxq 'DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install nvidia-driver=615.71.09-2 nvidia-kernel-open-dkms-stereo3d' "$calls"
+grep -Fxq 'DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install nvidia-driver=615.71.09-2 nvidia-kernel-open-dkms-stereo3d libnvcuvid1=615.71.09-2 nvidia-vaapi-driver' "$calls"
 echo 'PASS NVIDIA exact userspace, explicit edition module, key archive verification, Signed-By and origin pin'
 # The userspace driver follows the module's version, whatever NVIDIA version that is.
 : >"$calls"
 module_version=620.10.01-1+stereo3d1
 setup_nvidia
-grep -Fxq 'DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install nvidia-driver=620.10.01-1 nvidia-kernel-open-dkms-stereo3d' "$calls"
+grep -Fxq 'DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install nvidia-driver=620.10.01-1 nvidia-kernel-open-dkms-stereo3d libnvcuvid1=620.10.01-1 nvidia-vaapi-driver' "$calls"
 module_version=615.71.09-2
 : >"$calls"
 setup_nvidia

@@ -1,0 +1,28 @@
+From ce72516b2d8c9fd089729b91897aec4cc050575e Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 23 Oct 2026 08:11:40 -0300
+Subject: [PATCH] vd_lavc: allow automatic hardware decoding for all codecs
+
+MPEG-2 is also a normal playback input and the decoder already falls back when the device cannot decode a profile.
+
+Assisted-by: gpt-6.1-sol via Codex
+---
+ video/decode/vd_lavc.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/video/decode/vd_lavc.c b/video/decode/vd_lavc.c
+index 24555c9..51bda57 100644
+--- a/video/decode/vd_lavc.c
++++ b/video/decode/vd_lavc.c
+@@ -165,7 +165,7 @@ const struct m_sub_options hwdec_conf = {
+     .defaults = &(const struct hwdec_opts){
+         .software_fallback = 3,
+         .hwdec_api = (char *[]){"auto", NULL,},
+-        .hwdec_codecs = "h264,vc1,hevc,vp8,vp9,av1,prores,prores_raw,ffv1,dpx",
++        .hwdec_codecs = "all",
+         // Maximum number of surfaces the player wants to buffer. This number
+         // might require adjustment depending on whatever the player does;
+         // for example, if vo_gpu increases the number of reference surfaces for
+-- 
+2.53.0
+

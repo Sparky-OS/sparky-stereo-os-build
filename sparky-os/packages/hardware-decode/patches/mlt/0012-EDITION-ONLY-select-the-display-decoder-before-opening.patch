@@ -1,0 +1,107 @@
+From 59951f9f69f1975856100796d1b5caa6bbdc274b Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 23 Oct 2026 09:51:51 -0300
+Subject: [PATCH] EDITION ONLY: choose a supported display GPU before decoder
+ startup
+
+Assisted-by: gpt-6.1-sol via Codex
+---
+ CMakeLists.txt                           |  1 +
+ src/modules/avformat/CMakeLists.txt      |  5 ++++
+ src/modules/avformat/producer_avformat.c | 38 +++++++++++++++++++++---
+ 3 files changed, 40 insertions(+), 4 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 471c9a3..6dce74f 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -203,6 +203,7 @@ find_package(Threads REQUIRED)
+ find_package(PkgConfig REQUIRED)
+ # Sparky Stereo OS's stereo policy decides whether the views of a packed 3D video are full or half size
+ pkg_check_modules(STEREO_POLICY IMPORTED_TARGET stereo-policy)
++pkg_check_modules(MEDIA_GPU_ROUTE IMPORTED_TARGET media-gpu-route)
+ 
+ if(WIN32)
+   find_package(Iconv REQUIRED)
+diff --git a/src/modules/avformat/CMakeLists.txt b/src/modules/avformat/CMakeLists.txt
+index 730e66b..e56a7de 100644
+--- a/src/modules/avformat/CMakeLists.txt
++++ b/src/modules/avformat/CMakeLists.txt
+@@ -51,6 +51,11 @@ if(WIN32)
+   endif()
+ endif()
+ 
++if(MEDIA_GPU_ROUTE_FOUND)
++  target_compile_definitions(mltavformat PRIVATE HAVE_MEDIA_GPU_ROUTE)
++  target_link_libraries(mltavformat PRIVATE PkgConfig::MEDIA_GPU_ROUTE)
++endif()
++
+ if(STEREO_POLICY_FOUND)
+   target_compile_definitions(mltavformat PRIVATE HAVE_STEREO_POLICY)
+   target_link_libraries(mltavformat PRIVATE PkgConfig::STEREO_POLICY)
+diff --git a/src/modules/avformat/producer_avformat.c b/src/modules/avformat/producer_avformat.c
+index 89f6023..689c46e 100644
+--- a/src/modules/avformat/producer_avformat.c
++++ b/src/modules/avformat/producer_avformat.c
+@@ -54,6 +54,10 @@
+ #ifdef HAVE_STEREO_POLICY
+ #include <stereo-policy.h>
+ #endif
++#ifdef HAVE_MEDIA_GPU_ROUTE
++#include <media-gpu-route.h>
++#include <media-gpu-route-ffmpeg.h>
++#endif
+ #include <libavutil/version.h>
+ #include <libswscale/swscale.h>
+ 
+@@ -3560,9 +3564,35 @@ static int video_codec_init(producer_avformat self, int index, mlt_properties pr
+         }
+ 
+         if (self->hwaccel.automatic) {
+-            const enum AVHWDeviceType devices[] = {AV_HWDEVICE_TYPE_CUDA,
+-                                                  AV_HWDEVICE_TYPE_VAAPI};
+-            for (unsigned d = 0; d < sizeof(devices) / sizeof(devices[0]); d++) {
++            enum AVHWDeviceType devices[] = {AV_HWDEVICE_TYPE_CUDA, AV_HWDEVICE_TYPE_VAAPI};
++            const char *nodes[] = {NULL, NULL};
++            unsigned num_devices = sizeof(devices) / sizeof(devices[0]);
++#ifdef HAVE_MEDIA_GPU_ROUTE
++            struct media_gpu_decoder selection;
++            int selected = media_gpu_route_av(codec_params->codec_id, codec_params->profile,
++                                              codec_params->format, codec_params->width,
++                                              codec_params->height, &selection);
++            if (selected == 0)
++                goto skip_hwaccel;
++            struct media_gpu_route route;
++            if (selected > 0) {
++                devices[0] = selection.backend == MEDIA_GPU_CUDA
++                                 ? AV_HWDEVICE_TYPE_CUDA : AV_HWDEVICE_TYPE_VAAPI;
++                num_devices = 1;
++                nodes[0] = selection.device;
++                mlt_log_info(MLT_PRODUCER_SERVICE(self->parent),
++                             "Default decoder GPU: %s (%s)\n", selection.gpu.name, nodes[0]);
++            } else if (media_gpu_route_default(&route)) {
++                if (route.vendor_id != 0x10de) {
++                    devices[0] = AV_HWDEVICE_TYPE_VAAPI;
++                    devices[1] = AV_HWDEVICE_TYPE_CUDA;
++                    nodes[0] = route.render_node;
++                }
++                mlt_log_info(MLT_PRODUCER_SERVICE(self->parent),
++                             "Default display GPU: %s (%s)\n", route.name, route.render_node);
++            }
++#endif
++            for (unsigned d = 0; d < num_devices; d++) {
+                 const AVCodecHWConfig *config = NULL;
+                 for (int i = 0; (config = avcodec_get_hw_config(codec, i)); i++) {
+                     if (config->device_type == devices[d]
+@@ -3572,7 +3602,7 @@ static int video_codec_init(producer_avformat self, int index, mlt_properties pr
+                 if (!config)
+                     continue;
+                 if (av_hwdevice_ctx_create(&self->hwaccel.device_ctx, devices[d],
+-                                           NULL, NULL, 0) < 0)
++                                           nodes[d], NULL, 0) < 0)
+                     continue;
+                 self->hwaccel.device_type = devices[d];
+                 self->hwaccel.pix_fmt = config->pix_fmt;
+-- 
+2.53.0
+

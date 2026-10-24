@@ -1,0 +1,31 @@
+Description: EDITION ONLY: say that the video sinks import decoded surfaces
+ .
+ libmedia-gpu-route 0.2.0 gives a caller that copies every decoded picture
+ back to memory software decoding unless copying back is allowed, because
+ copying back is slower than software on some machines (an AMD
+ A10-9600P). Qt Multimedia's VA-API and CUDA texture converters hand the
+ decoder's surfaces to the RHI without a copy, so its automatic choice
+ asks as an importing caller and keeps hardware decoding there.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-10-23
+Assisted-by: Claude Opus 5.5
+---
+--- a/src/plugins/multimedia/ffmpeg/qffmpeghwaccel.cpp
++++ b/src/plugins/multimedia/ffmpeg/qffmpeghwaccel.cpp
+@@ -230,10 +230,11 @@ std::pair<std::optional<Codec>, HWAccelU
+ #ifdef HAVE_MEDIA_GPU_ROUTE
+     if (!qEnvironmentVariableIsSet("QT_FFMPEG_DECODING_HW_DEVICE_TYPES")) {
+         media_gpu_decoder selection{};
+-        const int selected = media_gpu_route_av(id, parameters->profile,
+-                                                AVPixelFormat(parameters->format),
+-                                                parameters->width, parameters->height,
+-                                                &selection);
++        // The texture converters hand decoded surfaces to the RHI without a copy
++        const int selected = media_gpu_route_av_frames(id, parameters->profile,
++                                                       AVPixelFormat(parameters->format),
++                                                       parameters->width, parameters->height,
++                                                       MEDIA_GPU_FRAMES_IMPORT, &selection);
+         if (selected == 0)
+             return { std::nullopt, nullptr };
+         if (selected > 0) {

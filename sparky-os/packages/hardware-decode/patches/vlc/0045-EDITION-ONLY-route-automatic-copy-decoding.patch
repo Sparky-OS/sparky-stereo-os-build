@@ -1,0 +1,134 @@
+From 0183705df1eb971e2b08d5c832c160063211d7d3 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 23 Oct 2026 09:51:51 -0300
+Subject: [PATCH] EDITION ONLY: route automatic copy decoding through the
+ display GPU
+
+Assisted-by: gpt-6.1-sol via Codex
+---
+ configure.ac                  |  7 +++++
+ modules/codec/avcodec/video.c | 57 +++++++++++++++++++++++++++++------
+ 2 files changed, 55 insertions(+), 9 deletions(-)
+
+diff --git a/configure.ac b/configure.ac
+index aa52754..dec8039 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -2552,6 +2552,13 @@ AS_IF([test "${enable_avcodec}" != "no"], [
+   have_avcodec="no"
+ ])
+ AM_CONDITIONAL([HAVE_AVCODEC], [test "${have_avcodec}" != "no"])
++AS_IF([test "${have_avcodec}" != "no"], [
++  PKG_CHECK_MODULES([MEDIA_GPU_ROUTE], [media-gpu-route], [
++    AC_DEFINE([HAVE_MEDIA_GPU_ROUTE], [1], [Shared default display GPU preference])
++    AVCODEC_CFLAGS="${AVCODEC_CFLAGS} ${MEDIA_GPU_ROUTE_CFLAGS}"
++    AVCODEC_LIBS="${AVCODEC_LIBS} ${MEDIA_GPU_ROUTE_LIBS}"
++  ], [])
++])
+ 
+ dnl
+ dnl libva needs avcodec
+diff --git a/modules/codec/avcodec/video.c b/modules/codec/avcodec/video.c
+index 3695de7..7c4e3ee 100644
+--- a/modules/codec/avcodec/video.c
++++ b/modules/codec/avcodec/video.c
+@@ -40,6 +40,10 @@
+ #include <libavutil/mem.h>
+ #include <libavutil/pixdesc.h>
+ #include <libavutil/hwcontext.h>
++#ifdef HAVE_MEDIA_GPU_ROUTE
++#include <media-gpu-route.h>
++#include <media-gpu-route-ffmpeg.h>
++#endif
+ #include "avcommon_compat.h"
+ #if LIBAVUTIL_VERSION_CHECK( 55, 16, 101 )
+ #include <libavutil/mastering_display_metadata.h>
+@@ -1890,7 +1894,7 @@ static int lavc_GetFrame(struct AVCodecContext *ctx, AVFrame *frame, int flags)
+ /* A copy-back path also works when the output cannot import hardware surfaces. */
+ static int OpenHardwareCopy(decoder_t *dec, AVCodecContext *context,
+                             enum AVPixelFormat source, enum AVPixelFormat hardware,
+-                            enum AVHWDeviceType type)
++                            enum AVHWDeviceType type, const char *device_node)
+ {
+     char *wanted = var_InheritString(dec, "avcodec-hw");
+     bool enabled = wanted && (!strcmp(wanted, "any")
+@@ -1901,10 +1905,11 @@ static int OpenHardwareCopy(decoder_t *dec, AVCodecContext *context,
+         return 0;
+ 
+     AVBufferRef *device = NULL, *parameters = NULL;
+-    if (av_hwdevice_ctx_create(&device, type, NULL, NULL, 0) < 0)
++    if (av_hwdevice_ctx_create(&device, type, device_node, NULL, 0) < 0)
+         return 0;
+     bool keeps = false;
+-    if (avcodec_get_hw_frames_parameters(context, device, hardware, &parameters) >= 0)
++    int query = avcodec_get_hw_frames_parameters(context, device, hardware, &parameters);
++    if (query >= 0)
+     {
+         const AVHWFramesContext *frames = (const AVHWFramesContext *) parameters->data;
+         const AVPixFmtDescriptor *src = av_pix_fmt_desc_get(source);
+@@ -1920,8 +1925,10 @@ static int OpenHardwareCopy(decoder_t *dec, AVCodecContext *context,
+     if (!keeps)
+     {
+         av_buffer_unref(&device);
+-        msg_Dbg(dec, "Using software decoding: no supported hardware output format preserving source precision");
+-        return -1;
++        msg_Dbg(dec, "Hardware output is unsupported or does not preserve source precision");
++        /* A failed query released its temporary state. A successful query
++         * must return software to let libavcodec clean that state first. */
++        return query < 0 ? 0 : -1;
+     }
+     av_buffer_unref(&context->hw_frames_ctx);
+     av_buffer_unref(&context->hw_device_ctx);
+@@ -2048,13 +2055,45 @@ no_reuse:
+ #endif
+ 
+     wait_mt(p_sys);
+-    const enum AVPixelFormat copy_formats[] = { AV_PIX_FMT_CUDA, AV_PIX_FMT_VAAPI };
+-    const enum AVHWDeviceType copy_devices[] = { AV_HWDEVICE_TYPE_CUDA, AV_HWDEVICE_TYPE_VAAPI };
+-    for (unsigned i = 0; i < ARRAY_SIZE(copy_formats); i++)
++    /* A threaded decoder must not change its hardware device in get_format.
++     * A later unsupported format uses software until the decoder is reopened. */
++    if (p_context->hw_device_ctx)
++    {
++        post_mt(p_sys);
++        goto software;
++    }
++    enum AVPixelFormat copy_formats[] = { AV_PIX_FMT_CUDA, AV_PIX_FMT_VAAPI };
++    enum AVHWDeviceType copy_devices[] = { AV_HWDEVICE_TYPE_CUDA, AV_HWDEVICE_TYPE_VAAPI };
++    const char *device_node = NULL;
++    unsigned copy_count = ARRAY_SIZE(copy_formats);
++#ifdef HAVE_MEDIA_GPU_ROUTE
++    struct media_gpu_decoder selection;
++    char *wanted = var_InheritString(p_dec, "avcodec-hw");
++    int selected = wanted && !strcmp(wanted, "any")
++        ? media_gpu_route_av(p_context->codec_id, p_context->profile, swfmt,
++                             p_context->coded_width, p_context->coded_height, &selection) : -1;
++    free(wanted);
++    if (selected == 0)
++    {
++        post_mt(p_sys);
++        goto software;
++    }
++    if (selected > 0)
++    {
++        copy_count = 1;
++        copy_devices[0] = selection.backend == MEDIA_GPU_CUDA
++            ? AV_HWDEVICE_TYPE_CUDA : AV_HWDEVICE_TYPE_VAAPI;
++        copy_formats[0] = selection.backend == MEDIA_GPU_CUDA ? AV_PIX_FMT_CUDA : AV_PIX_FMT_VAAPI;
++        device_node = selection.device;
++        msg_Dbg(p_dec, "Default decoder GPU: %s (%s)", selection.gpu.name, device_node);
++    }
++#endif
++    for (unsigned i = 0; i < copy_count; i++)
+         for (const enum AVPixelFormat *format = pi_fmt; *format != AV_PIX_FMT_NONE; format++)
+             if (*format == copy_formats[i])
+             {
+-                int copy = OpenHardwareCopy(p_dec, p_context, swfmt, *format, copy_devices[i]);
++                int copy = OpenHardwareCopy(p_dec, p_context, swfmt, *format, copy_devices[i],
++                                            device_node);
+                 if (copy)
+                 {
+                     post_mt(p_sys);
+-- 
+2.53.0
+

@@ -1,0 +1,192 @@
+From 7efc572f1669394b04708b0f9761b3b7f4b541d3 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 23 Oct 2026 09:51:51 -0300
+Subject: [PATCH] EDITION ONLY: follow the display GPU for precision preserving
+ decoding
+
+Assisted-by: gpt-6.1-sol via Codex
+---
+ src/plugins/multimedia/ffmpeg/CMakeLists.txt  | 11 +++
+ .../playbackengine/qffmpegcodeccontext.cpp    |  2 +-
+ .../multimedia/ffmpeg/qffmpeghwaccel.cpp      | 69 +++++++++++++++++--
+ .../multimedia/ffmpeg/qffmpeghwaccel_p.h      |  4 +-
+ 4 files changed, 76 insertions(+), 10 deletions(-)
+
+diff --git a/src/plugins/multimedia/ffmpeg/CMakeLists.txt b/src/plugins/multimedia/ffmpeg/CMakeLists.txt
+index 206e01a..9ae6dcb 100644
+--- a/src/plugins/multimedia/ffmpeg/CMakeLists.txt
++++ b/src/plugins/multimedia/ffmpeg/CMakeLists.txt
+@@ -340,3 +340,14 @@ if (ANDROID)
+         NAME android.permission.MODIFY_AUDIO_SETTINGS
+     )
+ endif()
++
++find_package(PkgConfig QUIET)
++if(PkgConfig_FOUND)
++    pkg_check_modules(MEDIA_GPU_ROUTE QUIET IMPORTED_TARGET media-gpu-route)
++    if(MEDIA_GPU_ROUTE_FOUND)
++        qt_internal_extend_target(FFmpegMediaPluginImplPrivate
++            DEFINES HAVE_MEDIA_GPU_ROUTE
++            LIBRARIES PkgConfig::MEDIA_GPU_ROUTE
++        )
++    endif()
++endif()
+diff --git a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegcodeccontext.cpp b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegcodeccontext.cpp
+index 040666a..edaa2f4 100644
+--- a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegcodeccontext.cpp
++++ b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegcodeccontext.cpp
+@@ -70,7 +70,7 @@ q23::expected<CodecContext, QString> CodecContext::create(AVStream *stream,
+     std::unique_ptr<QFFmpeg::HWAccel> hwAccel;
+ 
+     if (videoCodecPolicy == Hw)
+-        std::tie(decoder, hwAccel) = HWAccel::findDecoderWithHwAccel(stream->codecpar->codec_id);
++        std::tie(decoder, hwAccel) = HWAccel::findDecoderWithHwAccel(stream->codecpar);
+     else
+         decoder = QFFmpeg::findAVDecoder(stream->codecpar->codec_id);
+ 
+diff --git a/src/plugins/multimedia/ffmpeg/qffmpeghwaccel.cpp b/src/plugins/multimedia/ffmpeg/qffmpeghwaccel.cpp
+index 4ff194d..8fa393b 100644
+--- a/src/plugins/multimedia/ffmpeg/qffmpeghwaccel.cpp
++++ b/src/plugins/multimedia/ffmpeg/qffmpeghwaccel.cpp
+@@ -28,6 +28,10 @@ extern "C" {
+ }
+ #include <qloggingcategory.h>
+ #include <unordered_set>
++#ifdef HAVE_MEDIA_GPU_ROUTE
++#include <media-gpu-route.h>
++#include <media-gpu-route-ffmpeg.h>
++#endif
+ 
+ /* Infrastructure for HW acceleration goes into this file. */
+ 
+@@ -57,11 +61,11 @@ static const std::initializer_list<AVHWDeviceType> preferredHardwareAccelerators
+ #endif
+ };
+ 
+-static AVBufferUPtr loadHWContext(AVHWDeviceType type)
++static AVBufferUPtr loadHWContext(AVHWDeviceType type, const char *device = nullptr)
+ {
+     AVBufferRef *hwContext = nullptr;
+     qCDebug(qLHWAccel) << "    Checking HW context:" << av_hwdevice_get_type_name(type);
+-    int ret = av_hwdevice_ctx_create(&hwContext, type, nullptr, nullptr, 0);
++    int ret = av_hwdevice_ctx_create(&hwContext, type, device, nullptr, 0);
+ 
+     if (ret == 0) {
+         qCDebug(qLHWAccel) << "    Using above hw context.";
+@@ -144,6 +148,18 @@ static bool checkHwType(AVHWDeviceType type)
+     return loadHWContext(type) != nullptr;
+ }
+ 
++#ifdef HAVE_MEDIA_GPU_ROUTE
++static const media_gpu_route &decoderGpuRoute()
++{
++    static const auto route = [] {
++        media_gpu_route result{};
++        media_gpu_route_default(&result);
++        return result;
++    }();
++    return route;
++}
++#endif
++
+ static const std::vector<AVHWDeviceType> &deviceTypes()
+ {
+     static const auto types = []() {
+@@ -208,8 +224,29 @@ static std::vector<AVHWDeviceType> deviceTypes(const char *envVarName)
+     return result;
+ }
+ 
+-std::pair<std::optional<Codec>, HWAccelUPtr> HWAccel::findDecoderWithHwAccel(AVCodecID id)
++std::pair<std::optional<Codec>, HWAccelUPtr> HWAccel::findDecoderWithHwAccel(const AVCodecParameters *parameters)
+ {
++    const auto id = parameters->codec_id;
++#ifdef HAVE_MEDIA_GPU_ROUTE
++    if (!qEnvironmentVariableIsSet("QT_FFMPEG_DECODING_HW_DEVICE_TYPES")) {
++        media_gpu_decoder selection{};
++        const int selected = media_gpu_route_av(id, parameters->profile,
++                                                AVPixelFormat(parameters->format),
++                                                parameters->width, parameters->height,
++                                                &selection);
++        if (selected == 0)
++            return { std::nullopt, nullptr };
++        if (selected > 0) {
++            const auto type = selection.backend == MEDIA_GPU_CUDA
++                    ? AV_HWDEVICE_TYPE_CUDA : AV_HWDEVICE_TYPE_VAAPI;
++            const auto codec = findAVDecoder(id, pixelFormatForHwDevice(type));
++            if (codec) {
++                if (auto hw = create(type, selection.device))
++                    return { codec, std::move(hw) };
++            }
++        }
++    }
++#endif
+     for (auto type : decodingDeviceTypes()) {
+         const std::optional<Codec> codec = findAVDecoder(id, pixelFormatForHwDevice(type));
+ 
+@@ -219,7 +256,13 @@ std::pair<std::optional<Codec>, HWAccelUPtr> HWAccel::findDecoderWithHwAccel(AVC
+         qCDebug(qLHWAccel) << "Found potential codec" << codec->name() << "for hw accel" << type
+                            << "; Checking the hw device...";
+ 
+-        HWAccelUPtr hwAccel = create(type);
++        const char *device = nullptr;
++#ifdef HAVE_MEDIA_GPU_ROUTE
++        const auto &route = decoderGpuRoute();
++        if (type == AV_HWDEVICE_TYPE_VAAPI && route.vendor_id && route.vendor_id != 0x10de)
++            device = route.render_node;
++#endif
++        HWAccelUPtr hwAccel = create(type, device);
+ 
+         if (!hwAccel)
+             continue;
+@@ -336,9 +379,9 @@ AVPixelFormat getFormat(AVCodecContext *codecContext, const AVPixelFormat *fmt)
+ 
+ HWAccel::~HWAccel() = default;
+ 
+-HWAccelUPtr HWAccel::create(AVHWDeviceType deviceType)
++HWAccelUPtr HWAccel::create(AVHWDeviceType deviceType, const char *device)
+ {
+-    if (auto ctx = loadHWContext(deviceType))
++    if (auto ctx = loadHWContext(deviceType, device))
+         return HWAccelUPtr(new HWAccel(std::move(ctx)));
+     else
+         return {};
+@@ -362,7 +405,19 @@ const std::vector<AVHWDeviceType> &HWAccel::encodingDeviceTypes()
+ 
+ const std::vector<AVHWDeviceType> &HWAccel::decodingDeviceTypes()
+ {
+-    static const auto &result = deviceTypes("QT_FFMPEG_DECODING_HW_DEVICE_TYPES");
++    static const auto result = [] {
++        auto types = deviceTypes("QT_FFMPEG_DECODING_HW_DEVICE_TYPES");
++#ifdef HAVE_MEDIA_GPU_ROUTE
++        if (!qEnvironmentVariableIsSet("QT_FFMPEG_DECODING_HW_DEVICE_TYPES")) {
++            const auto &route = decoderGpuRoute();
++            const auto preferred = route.vendor_id == 0x10de ? AV_HWDEVICE_TYPE_CUDA : AV_HWDEVICE_TYPE_VAAPI;
++            auto found = std::find(types.begin(), types.end(), preferred);
++            if (route.vendor_id && found != types.end())
++                std::rotate(types.begin(), found, std::next(found));
++        }
++#endif
++        return types;
++    }();
+     return result;
+ }
+ 
+diff --git a/src/plugins/multimedia/ffmpeg/qffmpeghwaccel_p.h b/src/plugins/multimedia/ffmpeg/qffmpeghwaccel_p.h
+index 48d957a..4fc1ed7 100644
+--- a/src/plugins/multimedia/ffmpeg/qffmpeghwaccel_p.h
++++ b/src/plugins/multimedia/ffmpeg/qffmpeghwaccel_p.h
+@@ -73,9 +73,9 @@ class HWAccel
+ public:
+     ~HWAccel();
+ 
+-    static HWAccelUPtr create(AVHWDeviceType deviceType);
++    static HWAccelUPtr create(AVHWDeviceType deviceType, const char *device = nullptr);
+ 
+-    static std::pair<std::optional<Codec>, HWAccelUPtr> findDecoderWithHwAccel(AVCodecID id);
++    static std::pair<std::optional<Codec>, HWAccelUPtr> findDecoderWithHwAccel(const AVCodecParameters *parameters);
+ 
+     AVHWDeviceType deviceType() const;
+ 
+-- 
+2.53.0
+

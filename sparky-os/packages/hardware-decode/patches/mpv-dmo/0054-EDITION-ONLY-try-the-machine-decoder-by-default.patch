@@ -1,0 +1,50 @@
+From 2d9f8a0e5eee204c6a631aeec95b64c670a9a8e5 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 23 Oct 2026 06:36:13 -0300
+Subject: [PATCH] vd_lavc: try the machine decoder by default in the edition
+
+Use the existing safe automatic probing and software fallback for mpv and libmpv clients. Prefer NVDEC and VA-API over Vulkan so the default follows the edition driver paths. Explicit user options and the software-only depth auxiliary layer path remain effective.
+
+Assisted-by: gpt-6.1-sol via Codex
+---
+ video/decode/vd_lavc.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/video/decode/vd_lavc.c b/video/decode/vd_lavc.c
+index 3044023..24555c9 100644
+--- a/video/decode/vd_lavc.c
++++ b/video/decode/vd_lavc.c
+@@ -164,7 +164,7 @@ const struct m_sub_options hwdec_conf = {
+     .size = sizeof(struct hwdec_opts),
+     .defaults = &(const struct hwdec_opts){
+         .software_fallback = 3,
+-        .hwdec_api = (char *[]){"no", NULL,},
++        .hwdec_api = (char *[]){"auto", NULL,},
+         .hwdec_codecs = "h264,vc1,hevc,vp8,vp9,av1,prores,prores_raw,ffv1,dpx",
+         // Maximum number of surfaces the player wants to buffer. This number
+         // might require adjustment depending on whatever the player does;
+@@ -271,19 +271,19 @@ struct autoprobe_info {
+ // Things not included in this list will be tried last, in random order.
+ const struct autoprobe_info hwdec_autoprobe_info[] = {
+     {"d3d11va",         HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
+-    {"vulkan",          HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
+     {"dxva2",           HWDEC_FLAG_AUTO},
+     {"nvdec",           HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
+     {"vaapi",           HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
++    {"vulkan",          HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
+     {"vdpau",           HWDEC_FLAG_AUTO},
+     {"drm",             HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
+     {"mediacodec",      HWDEC_FLAG_AUTO},
+     {"videotoolbox",    HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
+     {"d3d11va-copy",    HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
+-    {"vulkan-copy",     HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
+     {"dxva2-copy",      HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
+     {"nvdec-copy",      HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
+     {"vaapi-copy",      HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
++    {"vulkan-copy",     HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
+     {"vdpau-copy",      HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
+     {"drm-copy",        HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
+     {"mediacodec-copy", HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
+-- 
+2.53.0
+

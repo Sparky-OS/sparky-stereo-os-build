@@ -1,0 +1,8 @@
+  * Choose the Vulkan device in libplacebo's own order again, the discrete
+    GPU before the integrated one. Measured on the AMD A10-9600P (ORDER 234),
+    rendering mpv on the Carrizo that drives the screens and composites the
+    desktop dropped 589.6 frames a minute of Life of Pi 3D with KWin in frame
+    packing and software decoding, against 65.3 on the Hainan dGPU; the
+    default had moved to the Carrizo with stereo3d1. The display GPU stays a
+    choice: MESA_VK_DEVICE_SELECT_FORCE_DEFAULT_DEVICE=1, DRI_PRIME with "!",
+    mpv's --vulkan-device, or the Graphics page.

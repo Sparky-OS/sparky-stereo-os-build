@@ -1,0 +1,240 @@
+Description: EDITION ONLY: decode 3D video in software rather than copy it back for its conversion
+ .
+ A 3D packing other than left-first side by side is rearranged into
+ full side by side by a copy in system memory, so frames of a hardware
+ decoder that the output could have used directly were copied back
+ first: copy-back by default, which the edition takes only by choice.
+ .
+ The automatic stereo filter now asks for software decoding when such a
+ frame arrives in GPU memory. The player asks the decoder
+ (VDCTRL_SOFTWARE_FRAMES), which switches to software only when its
+ hardware decoder came from an automatic mode and copying back is not
+ allowed. Either way the player decodes again from the keyframe before
+ that picture with an exact seek, as a change of --hwdec does, so no
+ picture is lost. A hardware decoder the person chose, or copying back
+ the person or the machine's record allowed, keeps the copy as before.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-10-23
+Assisted-by: Claude Opus 5.5
+---
+--- a/filters/f_auto_filters.c
++++ b/filters/f_auto_filters.c
+@@ -706,6 +706,16 @@ static void stereo_process(struct mp_fil
+         }
+     }
+ 
++    // Hardware frames would be copied back to memory for this conversion: ask for software decoding instead,
++    // keeping the frame until the player answers (the answer resets the chain, or refuses and the frame is copied)
++    if (!p->sub.filter && img->hwctx) {
++        struct mp_stream_info *info = mp_filter_find_stream_info(f);
++        if (info && info->software_frames && info->software_frames(info, img->pts)) {
++            MP_VERBOSE(f, "Asking for software decoding rather than copying hardware frames back.\n");
++            return;
++        }
++    }
++
+     if (!p->sub.filter) {
+         struct mp_filter *subf = mp_bidir_dummy_filter_create(f);
+         struct mp_filter *filters[3] = {0};
+--- a/filters/f_decoder_wrapper.h
++++ b/filters/f_decoder_wrapper.h
+@@ -75,6 +75,9 @@ enum dec_ctrl {
+     // framedrop mode: 0=none, 1=standard, 2=hrseek
+     VDCTRL_SET_FRAMEDROP,
+     VDCTRL_CHECK_FORCED_EOF,
++    // decode in software if hardware decoding was only the automatic choice
++    // and copying pictures back is not allowed (the filters need them in memory)
++    VDCTRL_SOFTWARE_FRAMES,
+ };
+ 
+ int mp_decoder_wrapper_control(struct mp_decoder_wrapper *d,
+--- a/filters/f_output_chain.c
++++ b/filters/f_output_chain.c
+@@ -338,6 +338,7 @@ void mp_output_chain_reset_harder(struct
+     mp_filter_reset(p->f);
+ 
+     p->public.failed_output_conversion = false;
++    p->public.software_frames_wanted = false;
+     for (int n = 0; n < p->num_all_filters; n++) {
+         struct mp_user_filter *u = p->all_filters[n];
+ 
+@@ -391,6 +392,18 @@ static bool stereo_declared(struct mp_st
+     return p->vo && p->vo->stereo_declared;
+ }
+ 
++static bool software_frames(struct mp_stream_info *i, double pts)
++{
++    struct chain *p = i->priv;
++    if (p->public.software_frames_refused)
++        return false;
++    if (!p->public.software_frames_wanted) {
++        p->public.software_frames_wanted = true;
++        p->public.software_frames_pts = pts;
++    }
++    return true;
++}
++
+ void mp_output_chain_set_vo(struct mp_output_chain *c, struct vo *vo)
+ {
+     struct chain *p = c->f->priv;
+@@ -666,6 +679,7 @@ static void create_video_things(struct c
+     p->stream_info.get_display_fps = get_display_fps;
+     p->stream_info.get_display_res = get_display_res;
+     p->stream_info.stereo_declared = stereo_declared;
++    p->stream_info.software_frames = software_frames;
+ 
+     p->f->stream_info = &p->stream_info;
+ 
+--- a/filters/f_output_chain.h
++++ b/filters/f_output_chain.h
+@@ -23,6 +23,14 @@ struct mp_output_chain {
+     // supports.
+     bool failed_output_conversion;
+ 
++    // A filter asked for the pictures decoded in software, from the one at
++    // software_frames_pts on, rather than copying hardware frames back. The
++    // user answers with VDCTRL_SOFTWARE_FRAMES, and sets
++    // software_frames_refused if the decoder keeps hardware decoding.
++    bool software_frames_wanted;
++    bool software_frames_refused;
++    double software_frames_pts;
++
+     // Set if any formats in the chain changed. The user can reset the flag.
+     // For implementing change notifications out input/output_params.
+     bool reconfig_happened;
+--- a/filters/filter.h
++++ b/filters/filter.h
+@@ -409,6 +409,10 @@ struct mp_stream_info {
+     bool stereo_view;
+     // whether the compositor accepted the declaration of the video as stereo content
+     bool (*stereo_declared)(struct mp_stream_info *i);
++    // ask for the pictures decoded in software, from the one at pts on, rather
++    // than copying hardware frames back to memory; true while the request
++    // stands, false when it was refused and the frames are to be copied
++    bool (*software_frames)(struct mp_stream_info *i, double pts);
+     bool rotate90;
+     struct vo *dr_vo; // for calling vo_get_image()
+ };
+--- a/player/command.c
++++ b/player/command.c
+@@ -8016,6 +8016,9 @@ void mp_option_run_callback(struct MPCon
+         struct track *track = mpctx->current_track[0][STREAM_VIDEO];
+         struct mp_decoder_wrapper *dec = track ? track->dec : NULL;
+         if (dec) {
++            // a new choice is asked again whether it keeps hardware frames
++            if (mpctx->vo_chain)
++                mpctx->vo_chain->filter->software_frames_refused = false;
+             mp_decoder_wrapper_control(dec, VDCTRL_REINIT, NULL);
+             // filter chain might not change (which normally triggers this), but
+             // hwdec will.
+--- a/player/video.c
++++ b/player/video.c
+@@ -570,6 +570,34 @@ static bool check_for_hwdec_fallback(str
+     return true;
+ }
+ 
++// A filter asked for the pictures in memory rather than copying hardware frames
++// back (the stereo conversion): decode in software from that picture on, unless
++// the decoder keeps a hardware decoder the person chose.
++static bool check_for_software_frames(struct MPContext *mpctx)
++{
++    struct vo_chain *vo_c = mpctx->vo_chain;
++
++    if (!vo_c->filter->software_frames_wanted)
++        return false;
++    vo_c->filter->software_frames_wanted = false;
++
++    // A hardware decoder the person chose keeps its frames, and the filter
++    // copies them from now on.
++    if (!vo_c->track || !vo_c->track->dec ||
++        mp_decoder_wrapper_control(vo_c->track->dec,
++                            VDCTRL_SOFTWARE_FRAMES, NULL) != CONTROL_OK)
++        vo_c->filter->software_frames_refused = true;
++
++    double pts = vo_c->filter->software_frames_pts;
++    if (pts == MP_NOPTS_VALUE)
++        pts = mpctx->video_pts;
++    mp_output_chain_reset_harder(vo_c->filter);
++    // Decode again from the keyframe before that picture, so none is lost.
++    if (pts != MP_NOPTS_VALUE)
++        queue_seek(mpctx, MPSEEK_ABSOLUTE, pts, MPSEEK_EXACT, 0);
++    return true;
++}
++
+ static bool check_for_forced_eof(struct MPContext *mpctx)
+ {
+     struct vo_chain *vo_c = mpctx->vo_chain;
+@@ -1074,6 +1102,9 @@ void write_video(struct MPContext *mpctx
+     MP_TRACE(mpctx, "video_output_image: r=%d/eof=%d/st=%s\n", r, logical_eof,
+              mp_status_str(mpctx->video_status));
+ 
++    if (check_for_software_frames(mpctx))
++        return;
++
+     if (r < 0)
+         goto error;
+ 
+--- a/video/decode/vd_lavc.c
++++ b/video/decode/vd_lavc.c
+@@ -235,6 +235,8 @@ typedef struct lavc_ctx {
+     // The stream's depth auxiliary layer (H.265 AuxId 2) is decoded: each depth picture goes with its picture
+     bool depth_wanted; // --video-depth on an H.265 stream
+     bool depth_software; // the stream has a depth layer: software decoding, which outputs it
++    bool hwdec_automatic; // the hardware decoder in use came from an automatic mode
++    bool software_frames; // the filters need the pictures in memory: software decoding
+     bool depth_output;
+     bool depth_probe; // not known yet whether the stream has the layer: the first picture waits for the next one
+     bool depth_layer; // a depth picture came: a picture waits in the queue for its own
+@@ -527,9 +529,13 @@ static void select_and_set_hwdec(struct
+     add_all_hwdec_methods(&hwdecs, &num_hwdecs);
+ 
+     // a stream whose depth layer is wanted is decoded in software, which outputs the layer
+-    char **hwdec_api = ctx->depth_software ? NULL : ctx->hwdec_opts->hwdec_api;
++    char **hwdec_api = ctx->depth_software || ctx->software_frames ? NULL : ctx->hwdec_opts->hwdec_api;
+     if (ctx->depth_software)
+         MP_VERBOSE(vd, "Not using hardware decoding: the depth layer is decoded in software.\n");
++    if (ctx->software_frames)
++        MP_INFO(vd, "Decoding in software: the filters need the pictures in memory, "
++                "and copying them back is not allowed.\n");
++    ctx->hwdec_automatic = false;
+     for (int i = 0; hwdec_api && hwdec_api[i]; i++) {
+         bstr opt = bstr0(hwdec_api[i]);
+ 
+@@ -641,6 +647,7 @@ static void select_and_set_hwdec(struct
+ 
+                 ctx->use_hwdec = true;
+                 ctx->hwdec = *hwdec;
++                ctx->hwdec_automatic = hwdec_auto && !hwdec_auto_copy;
+                 break;
+             }
+             if (ctx->use_hwdec)
+@@ -725,6 +732,7 @@ static void reinit(struct mp_filter *vd)
+     ctx->num_attempted_hwdecs = 0;
+     ctx->hwdec_notified = false;
+     ctx->depth_software = false;
++    ctx->software_frames = false;
+ 
+     select_and_set_hwdec(vd);
+ 
+@@ -1477,6 +1485,20 @@ static int control(struct mp_filter *vd,
+     case VDCTRL_REINIT:
+         reinit(vd);
+         return CONTROL_TRUE;
++    case VDCTRL_SOFTWARE_FRAMES:
++        // A hardware decoder the person chose stays; so does copying back
++        // where the person or the machine's record allows it.
++        if (ctx->use_hwdec && ctx->hwdec_automatic && !ctx->hwdec.copying &&
++            !copy_back_allowed())
++        {
++            // not a failure of the hardware decoder: no fallback message
++            ctx->software_frames = true;
++            uninit_avctx(vd);
++            select_and_set_hwdec(vd);
++            init_avctx(vd);
++            return ctx->avctx ? CONTROL_OK : CONTROL_ERROR;
++        }
++        return CONTROL_FALSE;
+     }
+     return CONTROL_UNKNOWN;
+ }

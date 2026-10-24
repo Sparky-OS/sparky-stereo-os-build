@@ -201,6 +201,7 @@ group('hardware-found', 'Hardware support installed when the hardware is found',
     # vdpau-va-driver (VDPAU bridge, X11 only): it segfaults any VA-API probe on a DRM display
     # (Discord's encoder helper, `vainfo --display drm`; measured on Daniel's machine 2026-10-07).
     'nvidia-vaapi-driver',
+    'libnvcuvid1',   # NVDEC and its matching libcuda1, not pulled in by the graphics driver
 ])
 
 # 8. System: apps from Flathub, containers, Android, snapshots. No zram (Daniel, 2026-10-10): the swap is an emergency swap

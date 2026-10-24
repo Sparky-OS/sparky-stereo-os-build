@@ -114,7 +114,7 @@ setup_nvidia() {
 	local key="$ROOT/etc/apt/keyrings/sparky-stereo-cuda.gpg"
 	local source="$ROOT/etc/apt/sources.list.d/sparky-stereo-cuda.sources"
 	local pin="$ROOT/etc/apt/preferences.d/91sparky-stereo-cuda"
-	local driver nvidia_version
+	local driver decoder nvidia_version
 	local module=nvidia-kernel-open-dkms-stereo3d
 	local file
 	# Do not start a repository change if the edition's module is unavailable.
@@ -130,6 +130,7 @@ setup_nvidia() {
 		return 0
 	fi
 	driver=nvidia-driver=$nvidia_version
+	decoder=libnvcuvid1=$nvidia_version
 	if ! run curl --fail --location --max-time 60 "$base/cuda-keyring_1.1-1_all.deb" -o "$WORK/cuda-keyring.deb"; then
 		log 'FALLBACK CUDA key download failed; nouveau firmware installed'
 		return 0
@@ -161,7 +162,7 @@ Pin: origin developer.download.nvidia.com
 Pin-Priority: 1002
 EOF
 	if ! run env DEBIAN_FRONTEND=noninteractive apt-get -y update ||
-		! run env DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests --simulate install "$driver" "$module"; then
+		! run env DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests --simulate install "$driver" "$module" "$decoder" nvidia-vaapi-driver; then
 		for file in "$key" "$source" "$pin"; do
 			if [[ -e "$WORK/${file##*/}.previous" ]]; then
 				cp -p "$WORK/${file##*/}.previous" "$file" || return 1
@@ -172,7 +173,7 @@ EOF
 		log 'FALLBACK NVIDIA preflight failed; previous repository policy restored; nouveau firmware installed'
 		return 0
 	fi
-	if ! apt_install "$driver" "$module"; then
+	if ! apt_install "$driver" "$module" "$decoder" nvidia-vaapi-driver; then
 		log 'ERROR NVIDIA transaction failed; inspect apt/dpkg state before reboot; nouveau firmware is present'
 		return 1
 	fi
