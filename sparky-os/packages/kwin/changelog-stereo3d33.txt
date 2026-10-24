@@ -1,0 +1,35 @@
+kwin (4:6.7.4-2+stereo3d33) unstable; urgency=medium
+
+  * Sparky-OS/kwin stereo3d33 is stereo3d32 plus three commits from the
+    A10's evidence (ORDER 230): the rest of the repaint of the output next to
+    a full screen stereo window, one conversion table per pair of colour
+    descriptions, and the mirror that converts the eyes it copies; and the
+    four commits of the X11 one-view place contract (sView lane, s33-0004 to
+    s33-0007).
+  * A full-screen window drawn at another size than its buffer (a film larger
+    than the output through a viewport, a fractional scale) no longer damages
+    the output next to it: the padding added to a surface's damage for the
+    filtering between pixels is cut at the surface (s33-0001, with the A10's
+    cases in testStereoOutputRepaint: the 3D film on a laptop panel no longer
+    makes the TV beside it render 20 frames a second).
+  * ColorConversionTable (s33-0002): the conversion of a pair of colour
+    descriptions (transfer function, matrix, tone mapping, clamp, encoding)
+    is built once from KWin's colour pipeline, cached, and reused for every
+    frame, both eyes and every output; it is rebuilt only when either
+    description changes. GLShader::setColorspaceUniforms takes its values
+    from it. The same table converts HDR content (PQ, BT.2020) into an SDR
+    output with deep colour in floating point, so the output's depth is
+    applied once. Test: testColorConversion.
+  * A mirror of a stereo output whose colour space differs from the
+    composing output's (brightness or dimming, another colour resolution)
+    copies the composed eyes and converts them once, in the same draw that
+    scales them, with the pair's table, when that gives what painting the
+    scene again would give (within one level of 10 bits for SDR content);
+    HDR content on screen that would differ, and an ICC profile, keep the old
+    path with the reason logged; KWIN_STEREO_REPLICA_COPY=0 keeps the old
+    path everywhere (s33-0003).
+  * The X11 one-view place contract (s33-0004 to s33-0007): version 7 of the
+    root property, serialled one-view size proposals held until the client
+    answers and its frame arrives, move and stacking requests kept with a
+    separate native raster, size hints refreshed into the pending place; with
+    its tests (X11WindowTest).

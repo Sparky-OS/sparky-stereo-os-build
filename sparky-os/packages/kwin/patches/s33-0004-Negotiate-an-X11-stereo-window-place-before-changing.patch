@@ -1,0 +1,326 @@
+Description: Negotiate an X11 stereo window place before changing its destination
+ .
+ Announce version 7 and send serialled one-view size proposals. Hold the old destination until the client answers and its frame arrives. Keep native ConfigureNotify and XSync repaint semantics separate, and apply normal hints in one-view units.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://invent.kde.org/danielcamposramos/kwin/-/commit/4673d0fc6981e0e10f21a7439793474ac0cc8343
+Forwarded: no
+Last-Update: 2026-10-23
+Assisted-by: GPT-6 (Codex)
+---
+ STEREO3D.md       | 34 ++++++++++++++++-
+ src/atoms.cpp     |  2 +
+ src/atoms.h       |  2 +
+ src/events.cpp    | 18 +++++++++
+ src/netinfo.cpp   |  3 +-
+ src/x11window.cpp | 93 +++++++++++++++++++++++++++++++++++++++++++++--
+ src/x11window.h   | 10 +++++
+ 7 files changed, 156 insertions(+), 6 deletions(-)
+
+diff --git a/STEREO3D.md b/STEREO3D.md
+index 2fae381046..7356836466 100644
+--- a/STEREO3D.md
++++ b/STEREO3D.md
+@@ -213,10 +213,42 @@ Mesa lists a stereo child in its window's `_KDE_NET_WM_STEREO_CONTENT_CHILDREN`,
+ KWin announces this as version 5 of `_KDE_NET_WM_STEREO_CONTENT_SUPPORTED`.
+ **X11 views at their own resolution, tested in containers (2026-10-22):** an X11 window's buffer is its own pixmap, so on X11 the size a view is shown at is declared apart from its resolution, as a Wayland program sets its `wp_viewport` destination.
+ A program lists it in `_KDE_NET_WM_STEREO_CONTENT_ONE_VIEW_SIZE` (CARDINAL/32, the width and the height one view is shown at, in display pixels): the two 1920x540 views of a half top-and-bottom 1920x1080 video make a 3840x540 X11 window whose place on screen is one view at 1920x1080.
+-The X11 window keeps the program's own size, KWin resizes each view once, to the window's place, and the pointer reaches the first view at that place; a new declared size resizes the place, and maximizing or resizing the window changes only the size the views are drawn at.
++The X11 window keeps the program's own size, KWin resizes each view once, to the window's place, and the pointer reaches the first view at that place; a new declared size resizes the place, and a program chooses a new declared size when its place changes.
+ KWin announces this as version 6 of `_KDE_NET_WM_STEREO_CONTENT_SUPPORTED`.
+ **Every shrink is integrated (2026-10-22):** a view drawn smaller than its resolution, on either axis, is the average of the samples each pixel covers, taken within its own view; a view drawn at its size or larger is bilinear.
+ **Anaglyph:** the same Dubois matrices (modern screens and CRT, in linear light) were tested in a game, Half-Life 2 handing its full side by side eyes to a gamescope effect, on the HX855 (2026-09-25, both profiles). In KWin it is built and switched by an environment variable for now; its first screen test comes with the toggle.
+ **Planned, in this order:** the virtual 3D modes and their toggles, the other stereo formats, VR.
+ 
+ Daniel (Sparky Stereo OS, an edition of SparkyLinux)
++
++## X11 one-view place requests (version 7)
++
++A window with a valid ONE_VIEW_SIZE receives a proposed place when it is resized, maximized, tiled or made fullscreen.
++KWin does not change the current destination until the client answers and submits its next frame.
++The native X11 pixmap and ConfigureNotify geometry remain native geometry.
++
++KWin writes the window property `_KDE_NET_WM_STEREO_CONTENT_ONE_VIEW_CONFIGURE`, CARDINAL/32, exactly three values: nonzero serial, width, height.
++The dimensions are one view's display pixels, in the same units as ONE_VIEW_SIZE, from 1 to 32767.
++A newer serial supersedes an earlier request.
++The client selects PropertyChangeMask, chooses its buffer, paints, writes ONE_VIEW_SIZE with its chosen destination, and sends `_KDE_NET_WM_STEREO_CONTENT_ONE_VIEW_COMMIT` to the root with SubstructureRedirectMask | SubstructureNotifyMask.
++That ClientMessage has format 32, its window is the client, data[0] is the request serial, and data[1..4] are zero.
++The chosen destination may differ from the proposal.
++Only the latest serial is accepted.
++KWin holds Xwayland surface commits until the answer, then applies the answer with the next surface commit.
++Removing the declaration or ONE_VIEW_SIZE cancels the pending request.
++An unanswered request leaves the old picture at its old size.
++
++The root `_KDE_NET_WM_STEREO_CONTENT_SUPPORTED` is 7.
++libstereo-declare 1.6.0 exposes `stereo_x11_one_view_event()` and `stereo_declare_x11_one_view_commit()`; its API.md specifies validation and client use.
++WM_NORMAL_HINTS dimensions and aspect bounds use one-view display units.
++An explicit strict-geometry window rule remains a user choice.
++Fullscreen proposes the whole output so the program can pad its native canvas.
++
++ICCCM 4.1.5 requires refused ConfigureRequests to report the “(unchanged) geometry of the window”.
++ICCCM 4.2.8 requires a ResizeRedirect recipient to use “the width and height specified”.
++These mechanisms describe native X geometry, so neither carries a separate destination.
++ICCCM 4.1.2.3 defines aspect fractions with “the numerator first and the denominator second”; an explicit base size is subtracted for aspect constraints, and a minimum size is not its substitute.
++See [ICCCM](https://xorg.freedesktop.org/archive/current/doc/xorg-docs/icccm/icccm.html).
++EWMH 6.2 says synchronization covers “the client repainting the window”.
++KWin retains that repaint counter protocol and its existing timeout handling; the place acknowledgement is separate, and both gates must release a pending frame.
++See [EWMH 6.2](https://specifications.freedesktop.org/wm/latest/ar01s06.html).
+diff --git a/src/atoms.cpp b/src/atoms.cpp
+index 8603fd354e..3a4220cac0 100644
+--- a/src/atoms.cpp
++++ b/src/atoms.cpp
+@@ -56,6 +56,8 @@ Atoms::Atoms()
+     , kde_net_wm_stereo_content_class(QByteArrayLiteral("_KDE_NET_WM_STEREO_CONTENT_CLASS"))
+     , kde_net_wm_stereo_content_children(QByteArrayLiteral("_KDE_NET_WM_STEREO_CONTENT_CHILDREN"))
+     , kde_net_wm_stereo_content_version(QByteArrayLiteral("_KDE_NET_WM_STEREO_CONTENT_VERSION"))
++    , kde_net_wm_stereo_content_one_view_configure(QByteArrayLiteral("_KDE_NET_WM_STEREO_CONTENT_ONE_VIEW_CONFIGURE"))
++    , kde_net_wm_stereo_content_one_view_commit(QByteArrayLiteral("_KDE_NET_WM_STEREO_CONTENT_ONE_VIEW_COMMIT"))
+     , kde_net_wm_stereo_content_one_view_size(QByteArrayLiteral("_KDE_NET_WM_STEREO_CONTENT_ONE_VIEW_SIZE"))
+     , kde_net_wm_stereo_content_supported(QByteArrayLiteral("_KDE_NET_WM_STEREO_CONTENT_SUPPORTED"))
+     , utf8_string(QByteArrayLiteral("UTF8_STRING"))
+diff --git a/src/atoms.h b/src/atoms.h
+index 3561afbded..d0e1f3c317 100644
+--- a/src/atoms.h
++++ b/src/atoms.h
+@@ -71,6 +71,8 @@ public:
+     Xcb::Atom kde_net_wm_stereo_content_class;
+     Xcb::Atom kde_net_wm_stereo_content_children;
+     Xcb::Atom kde_net_wm_stereo_content_version;
++    Xcb::Atom kde_net_wm_stereo_content_one_view_configure;
++    Xcb::Atom kde_net_wm_stereo_content_one_view_commit;
+     Xcb::Atom kde_net_wm_stereo_content_one_view_size;
+     Xcb::Atom kde_net_wm_stereo_content_supported;
+     Xcb::Atom utf8_string;
+diff --git a/src/events.cpp b/src/events.cpp
+index 8f3418c9ac..5701f4e987 100644
+--- a/src/events.cpp
++++ b/src/events.cpp
+@@ -414,6 +414,13 @@ void X11Window::destroyNotifyEvent(xcb_destroy_notify_event_t *e)
+  */
+ void X11Window::clientMessageEvent(xcb_client_message_event_t *e)
+ {
++    if (e->type == atoms->kde_net_wm_stereo_content_one_view_commit) {
++        if (e->format == 32 && e->data.data32[1] == 0 && e->data.data32[2] == 0
++            && e->data.data32[3] == 0 && e->data.data32[4] == 0) {
++            commitStereoOneViewPlace(e->data.data32[0]);
++        }
++        return;
++    }
+     if (e->type == atoms->wl_surface_serial) {
+         m_surfaceSerial = (uint64_t(e->data.data32[1]) << 32) | e->data.data32[0];
+         if (XwaylandSurfaceV1Interface *xwaylandSurface = waylandServer()->xwaylandShell()->findSurface(m_surfaceSerial)) {
+@@ -455,6 +462,17 @@ void X11Window::configureNotifyEvent(xcb_configure_notify_event_t *e)
+  */
+ void X11Window::configureRequestEvent(xcb_configure_request_event_t *e)
+ {
++    if (hasStereoOneViewSize()) {
++        if (e->value_mask & XCB_CONFIG_WINDOW_WIDTH) {
++            m_programSize.setWidth(Xcb::fromXNative(e->width));
++        }
++        if (e->value_mask & XCB_CONFIG_WINDOW_HEIGHT) {
++            m_programSize.setHeight(Xcb::fromXNative(e->height));
++        }
++        configure(Xcb::toXNative(m_bufferGeometry));
++        sendSyntheticConfigureNotify();
++        return;
++    }
+     if (isInteractiveResize() || isInteractiveMove()) {
+         return; // we have better things to do right now
+     }
+diff --git a/src/netinfo.cpp b/src/netinfo.cpp
+index 003dbcbfb2..660a99048b 100644
+--- a/src/netinfo.cpp
++++ b/src/netinfo.cpp
+@@ -130,7 +130,8 @@ RootInfo *RootInfo::create()
+     // _KDE_NET_WM_STEREO_CONTENT_ONE_VIEW_SIZE: the X11 window keeps the
+     // program's own size, its views at their own resolution, and its place on
+     // screen is one view at that size, as a Wayland surface's viewport destination).
+-    const uint32_t stereoContentSupported = 6;
++    // 7 negotiates changes of that place with the client before applying them.
++    const uint32_t stereoContentSupported = 7;
+     xcb_change_property(kwinApp()->x11Connection(), XCB_PROP_MODE_REPLACE, kwinApp()->x11RootWindow(),
+                         atoms->kde_net_wm_stereo_content_supported, XCB_ATOM_CARDINAL, 32, 1, &stereoContentSupported);
+ 
+diff --git a/src/x11window.cpp b/src/x11window.cpp
+index 311e484e0f..74e3ef134d 100644
+--- a/src/x11window.cpp
++++ b/src/x11window.cpp
+@@ -2868,7 +2868,7 @@ QSizeF X11Window::constrainClientSize(const QSizeF &size, SizeMode mode) const
+     w = std::max(min_size.width(), w);
+     h = std::max(min_size.height(), h);
+ 
+-    if (!rules()->checkStrictGeometry(false)) {
++    if (!rules()->checkStrictGeometry(hasStereoOneViewSize())) {
+         // Disobey increments and aspect by explicit rule.
+         return QSizeF(w, h);
+     }
+@@ -3080,14 +3080,14 @@ void X11Window::getWmNormalHints()
+ QSizeF X11Window::minSize() const
+ {
+     const QSizeF size = Xcb::fromXNative(m_geometryHints.minSize());
+-    const QSizeF scale = programSizeScale();
++    const QSizeF scale = hasStereoOneViewSize() ? QSizeF(1, 1) : programSizeScale();
+     return rules()->checkMinSize(QSizeF(size.width() / scale.width(), size.height() / scale.height()));
+ }
+ 
+ QSizeF X11Window::maxSize() const
+ {
+     const QSizeF size = Xcb::fromXNative(m_geometryHints.maxSize());
+-    const QSizeF scale = programSizeScale();
++    const QSizeF scale = hasStereoOneViewSize() ? QSizeF(1, 1) : programSizeScale();
+     return rules()->checkMaxSize(QSizeF(size.width() / scale.width(), size.height() / scale.height()));
+ }
+ 
+@@ -3212,6 +3212,12 @@ void X11Window::handleStereoContentChanged()
+     if (!m_managed) {
+         return;
+     }
++    if (!hasStereoOneViewSize()) {
++        cancelStereoOneViewPlace();
++    }
++    const bool wasApplying = m_applyingStereoPlace;
++    m_applyingStereoPlace = true;
++    const auto restoreApplying = qScopeGuard([this, wasApplying]() { m_applyingStereoPlace = wasApplying; });
+     // the program's own size stays: a program declaring stereo itself keeps its place on
+     // screen and its X11 window changes, a window rule keeps the X11 window and its place on
+     // screen changes; a fullscreen or maximized window keeps its place
+@@ -3228,6 +3234,9 @@ void X11Window::handleStereoContentChanged()
+ void X11Window::handleCommitted()
+ {
+     if (surface()->isMapped()) {
++        if (m_stereoPlaceAcked && (!m_syncRequest.pending || !m_syncRequest.enabled)) {
++            applyStereoOneViewPlace();
++        }
+         if (m_syncRequest.acked) {
+             finishSync();
+         }
+@@ -3237,7 +3246,7 @@ void X11Window::handleCommitted()
+ void X11Window::setAllowCommits(bool allow)
+ {
+     static bool disabled = qEnvironmentVariableIntValue("KWIN_NO_XWAYLAND_ALLOW_COMMITS") == 1;
+-    if (disabled) {
++    if (disabled || (allow && m_stereoPlacePending && !m_stereoPlaceAcked)) {
+         return;
+     }
+ 
+@@ -3654,6 +3663,11 @@ void X11Window::moveResizeInternal(const RectF &rect, MoveResizeMode mode)
+ 
+     const RectF frameGeometry = Xcb::fromXNative(Xcb::toXNative(rect));
+     const RectF clientGeometry = nextFrameRectToClientRect(frameGeometry);
++    if (m_managed && hasStereoOneViewSize() && !m_applyingStereoPlace
++        && (clientGeometry.size() != m_clientGeometry.size() || m_stereoPlacePending)) {
++        requestStereoOneViewPlace(frameGeometry);
++        return;
++    }
+     const RectF bufferGeometry = nextFrameRectToBufferRect(frameGeometry);
+     const qreal bufferScale = kwinApp()->xwaylandScale();
+     const QSizeF stereoClientScale = this->stereoClientScale();
+@@ -4362,10 +4376,81 @@ void X11Window::readStereoContentOneViewSize(Xcb::Property &property)
+ void X11Window::getStereoContentOneViewSize()
+ {
+     auto property = fetchStereoContentOneViewSize();
++    const QSizeF oldSize = m_stereoOneViewSize;
+     readStereoContentOneViewSize(property);
++    if (m_stereoPlacePending && !m_stereoOneViewSize.isEmpty()) {
++        m_stereoOneViewSize = oldSize;
++        return; // the serial acknowledgement commits this answer
++    }
+     handleStereoContentChanged();
+ }
+ 
++void X11Window::requestStereoOneViewPlace(const RectF &frame)
++{
++    RectF proposed = frame;
++    if (!isFullScreen()) {
++        proposed.setSize(clientSizeToFrameSize(constrainClientSize(nextFrameRectToClientRect(frame).size())));
++    }
++    if (m_stereoPlacePending && m_stereoPlaceFrame == proposed && !m_stereoPlaceAcked) {
++        return;
++    }
++    m_stereoPlaceFrame = proposed;
++    m_stereoPlacePending = true;
++    m_stereoPlaceAcked = false;
++    if (++m_stereoPlaceSerial == 0) {
++        ++m_stereoPlaceSerial;
++    }
++    const QSize size = Xcb::toXNative(nextFrameRectToClientRect(proposed).size());
++    const uint32_t request[] = {m_stereoPlaceSerial, uint32_t(std::clamp(size.width(), 1, 32767)),
++                               uint32_t(std::clamp(size.height(), 1, 32767))};
++    setAllowCommits(false);
++    xcb_change_property(kwinApp()->x11Connection(), XCB_PROP_MODE_REPLACE, window(),
++                        atoms->kde_net_wm_stereo_content_one_view_configure, XCB_ATOM_CARDINAL, 32, 3, request);
++    xcb_flush(kwinApp()->x11Connection());
++}
++
++void X11Window::commitStereoOneViewPlace(uint32_t serial)
++{
++    if (!m_stereoPlacePending || !serial || serial != m_stereoPlaceSerial || !hasStereoOneViewSize()) {
++        return;
++    }
++    auto property = fetchStereoContentOneViewSize();
++    const QSizeF oldSize = m_stereoOneViewSize;
++    readStereoContentOneViewSize(property);
++    m_stereoPlaceAnswer = m_stereoOneViewSize;
++    m_stereoOneViewSize = oldSize;
++    if (m_stereoPlaceAnswer.isEmpty()) {
++        return;
++    }
++    m_stereoPlaceAcked = true;
++    if (!m_syncRequest.pending || !m_syncRequest.enabled) {
++        setAllowCommits(true);
++    }
++}
++
++void X11Window::applyStereoOneViewPlace()
++{
++    m_stereoOneViewSize = m_stereoPlaceAnswer;
++    RectF frame = m_stereoPlaceFrame;
++    frame.setSize(clientSizeToFrameSize(m_stereoOneViewSize));
++    m_stereoPlacePending = false;
++    m_stereoPlaceAcked = false;
++    m_applyingStereoPlace = true;
++    moveResize(frame);
++    m_applyingStereoPlace = false;
++    xcb_delete_property(kwinApp()->x11Connection(), window(), atoms->kde_net_wm_stereo_content_one_view_configure);
++}
++
++void X11Window::cancelStereoOneViewPlace()
++{
++    m_stereoPlacePending = false;
++    m_stereoPlaceAcked = false;
++    xcb_delete_property(kwinApp()->x11Connection(), window(), atoms->kde_net_wm_stereo_content_one_view_configure);
++    if (!m_syncRequest.pending || !m_syncRequest.enabled) {
++        setAllowCommits(true);
++    }
++}
++
+ //********************************************
+ // Client
+ //********************************************
+diff --git a/src/x11window.h b/src/x11window.h
+index 0bd721e809..879c070180 100644
+--- a/src/x11window.h
++++ b/src/x11window.h
+@@ -327,6 +327,10 @@ private:
+     void readStereoContentOneViewSize(Xcb::Property &property);
+     void getStereoContentOneViewSize();
+     bool hasStereoOneViewSize() const;
++    void requestStereoOneViewPlace(const RectF &frame);
++    void commitStereoOneViewPlace(uint32_t serial);
++    void cancelStereoOneViewPlace();
++    void applyStereoOneViewPlace();
+     QSizeF stereoViewScale() const;
+     void setupStereoChildren();
+ 
+@@ -380,6 +384,12 @@ private:
+     uint32_t m_stereoContentVersion = 0;
+     // the size one view is shown at, as the program declares it
+     QSizeF m_stereoOneViewSize;
++    uint32_t m_stereoPlaceSerial = 0;
++    bool m_stereoPlacePending = false;
++    bool m_stereoPlaceAcked = false;
++    bool m_applyingStereoPlace = false;
++    RectF m_stereoPlaceFrame;
++    QSizeF m_stereoPlaceAnswer;
+     std::unique_ptr<X11StereoChildren> m_stereoChildren;
+     // how much larger the program's own sizes are than its place on screen
+     QSizeF m_programSizeScale = QSizeF(1, 1);
