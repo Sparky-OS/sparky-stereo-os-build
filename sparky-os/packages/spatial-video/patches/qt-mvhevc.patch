@@ -1,0 +1,325 @@
+Description: Decode native MV-HEVC views through the shared stereo frame assembly
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-10-24
+
+--- a/src/multimedia/video/qvideoframeformat.h
++++ b/src/multimedia/video/qvideoframeformat.h
+@@ -146,7 +146,9 @@
+ 
+     enum class StereoFlag
+     {
+-        RightEyeFirst = 0x1
++        RightEyeFirst = 0x1,
++        Multiview = 0x2,
++        BaseViewRight = 0x4
+     };
+     Q_DECLARE_FLAGS(StereoFlags, StereoFlag)
+     Q_FLAG(StereoFlags)
+--- a/src/multimediaquick/qquickvideooutput.cpp
++++ b/src/multimediaquick/qquickvideooutput.cpp
+@@ -1166,7 +1166,11 @@
+         displaySize = frameSize;
+         packing.mode = format.stereoMode();
+         packing.rightEyeFirst = format.stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::RightEyeFirst);
+-        if (st.input != StereoAutomatic) {
++        const bool multiview = format.stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::Multiview);
++        const bool baseOnly = multiview && (st.input == StereoNone || st.view == StereoFlat);
++        if (multiview)
++            packing.size = Size::Full;
++        if (st.input != StereoAutomatic && !baseOnly) {
+             packingFromInput(st.input, &packing);
+         }
+ #ifdef QT_MM_STEREO_POLICY
+@@ -1178,7 +1182,7 @@
+         if (storedSize != frameSize)
+             packing.displaySize = frameSize;
+         twoViews = hasTwoViews(packing.mode) && !frameSize.isEmpty();
+-        result.video = twoViews;
++        result.video = twoViews && !baseOnly;
+         result.packing = packing.mode == StereoMode::None ? StereoNone
+                                                           : inputFromPacking(packing, frameSize);
+         if (!twoViews)
+@@ -1188,7 +1192,7 @@
+         // a surface of its own is a rectangle of the window: it cannot be cropped by the item, rotated or mirrored
+         const bool plain = transformation.rotation == QtVideo::Rotation::None
+                 && !transformation.mirroredHorizontallyAfterRotation && !mirrored && !cropped;
+-        const bool rightFirst = packing.rightEyeFirst != st.swapEyes;
++        const bool rightFirst = packing.rightEyeFirst != (baseOnly ? false : st.swapEyes);
+         if (twoViews && packing.mode == StereoMode::FrameSequence) {
+             // The eye this frame is for. Frames that say it, and say it differently from one
+             // frame to the next, are trusted; a stream that says one view for all of them (the stream's
+@@ -1216,7 +1220,7 @@
+ #ifdef QT_MM_STEREO_LAYER
+         // a video whose colours the compositor cannot be told (HLG without HLG, say) is better
+         // shown by the scene graph, which maps them to what the window shows
+-        result.layerWanted = twoViews && st.view == StereoBothEyes && plain && stereoLayerSupported()
++        result.layerWanted = twoViews && !baseOnly && st.view == StereoBothEyes && plain && stereoLayerSupported()
+                 && QQuickVideoStereoLayer::canDescribe({ format.colorSpace(), format.colorTransfer(),
+                                                          format.colorRange(), format.maxLuminance() });
+         result.layerActive = result.layerWanted && presenterReady;
+@@ -1271,9 +1275,12 @@
+ #else
+         Q_UNUSED(plain);
+ #endif
+-        if (!shownInLayer && twoViews && st.view != StereoFlat) {
++        if (!shownInLayer && twoViews && (baseOnly || st.view != StereoFlat)) {
+             // one view, in the scene graph: the left, if both are wanted and cannot be shown
+-            const int wanted = st.view == StereoRightEye ? 1 : 0;
++            const bool fallback = multiview && st.view == StereoBothEyes;
++            const int wanted = (baseOnly || fallback)
++                    ? int(format.stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::BaseViewRight))
++                    : st.view == StereoRightEye ? 1 : 0;
+             if (packing.mode == StereoMode::FrameSequence) {
+                 skip = !repeated && eye != wanted;
+                 displaySize = frameSize;
+--- a/src/multimediawidgets/qgraphicsvideoitem.cpp
++++ b/src/multimediawidgets/qgraphicsvideoitem.cpp
+@@ -4,6 +4,7 @@
+ #include "qgraphicsvideoitem.h"
+ 
+ #include <QtMultimedia/qvideosink.h>
++#include <QtMultimedia/private/qvideoframeconverter_p.h>
+ #include <QtMultimedia/qvideoframe.h>
+ #include <QtMultimedia/qvideoframeformat.h>
+ 
+@@ -57,7 +58,9 @@
+     q_ptr->update(boundingRect);
+ 
+     if (frame.isValid()) {
+-        const QSize &size = frame.surfaceFormat().viewport().size();
++        QSize size = frame.surfaceFormat().viewport().size();
++        if (frame.surfaceFormat().stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::Multiview))
++            size.setWidth(size.width() / 2);
+         if (nativeSize != size) {
+             nativeSize = size;
+ 
+@@ -216,7 +219,13 @@
+     Q_UNUSED(option);
+     Q_UNUSED(widget);
+ 
+-    d->m_frame.paint(painter, d->rect, { Qt::transparent, d->m_aspectRatioMode });
++    if (d->m_frame.surfaceFormat().stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::Multiview)) {
++        const QImage packed = qImageFromVideoFrame(d->m_frame, QVideoFrameImageDepth::Float32);
++        const int eye = d->m_frame.surfaceFormat().stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::BaseViewRight) ? 1 : 0;
++        painter->drawImage(d->boundingRect, packed.copy(eye * packed.width() / 2, 0, packed.width() / 2, packed.height()));
++    } else {
++        d->m_frame.paint(painter, d->rect, { Qt::transparent, d->m_aspectRatioMode });
++    }
+ }
+ 
+ /*!
+--- a/src/plugins/multimedia/ffmpeg/CMakeLists.txt
++++ b/src/plugins/multimedia/ffmpeg/CMakeLists.txt
+@@ -3,6 +3,9 @@
+ 
+ qt_find_package(EGL)
+ qt_find_package(VAAPI COMPONENTS VA DRM PROVIDED_TARGETS VAAPI::VAAPI MODULE_NAME multimedia QMAKE_LIB vaapi)
++
++find_package(PkgConfig REQUIRED)
++pkg_check_modules(STEREO_AV REQUIRED IMPORTED_TARGET GLOBAL stereo-av>=1.12.0)
+ 
+ qt_internal_add_module(FFmpegMediaPluginImplPrivate
+     STATIC
+@@ -351,3 +354,5 @@
+         )
+     endif()
+ endif()
++
++target_link_libraries(FFmpegMediaPluginImplPrivate PRIVATE PkgConfig::STEREO_AV)
+--- a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegcodeccontext.cpp
++++ b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegcodeccontext.cpp
+@@ -5,6 +5,9 @@
+ #include "qffmpegcodecstorage_p.h"
+ 
+ #include <QtMultimedia/qplaybackoptions.h>
++extern "C" {
++#include <libavutil/pixdesc.h>
++}
+ #include <QtCore/qloggingcategory.h>
+ 
+ QT_BEGIN_NAMESPACE
+@@ -17,8 +20,10 @@
+ 
+ CodecContext::Data::Data(AVCodecContextUPtr context, AVStream *avStream,
+                          AVFormatContext *avFormatContext,
+-                         std::unique_ptr<QFFmpeg::HWAccel> hwAccel)
+-    : context(std::move(context)),
++                         std::unique_ptr<QFFmpeg::HWAccel> hwAccel,
++                         std::shared_ptr<StereoAVPair> stereoPair)
++    : stereoPair(std::move(stereoPair)),
++      context(std::move(context)),
+       stream(avStream),
+       formatContext(avFormatContext),
+       hwAccel(std::move(hwAccel))
+@@ -114,7 +119,24 @@
+ 
+     // ### This still gives errors about wrong HW formats (as we accept all of them)
+     // But it would be good to get so we can filter out pixel format we don't support natively
+-    context->get_format = QFFmpeg::getFormat;
++    std::shared_ptr<StereoAVPair> stereoPair(stereo_av_pair_alloc(), [](StereoAVPair *pair) {
++        stereo_av_pair_free(&pair);
++    });
++    if (!stereoPair)
++        return q23::unexpected{ u"Failed to allocate a FFmpeg codec context"_s };
++    context->opaque = stereoPair.get();
++    context->get_format = [](AVCodecContext *ctx, const AVPixelFormat *formats) {
++        stereo_av_pair_configure(static_cast<StereoAVPair *>(ctx->opaque), ctx);
++        if (stereo_av_decoder_multiview(ctx)) {
++            for (auto fmt = formats; *fmt != AV_PIX_FMT_NONE; ++fmt) {
++                const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(*fmt);
++                if (desc && !(desc->flags & AV_PIX_FMT_FLAG_HWACCEL))
++                    return *fmt;
++            }
++            return AV_PIX_FMT_NONE;
++        }
++        return QFFmpeg::getFormat(ctx, formats);
++    };
+ 
+     /* Init the decoder, with reference counting and threading */
+     AVDictionaryHolder opts;
+@@ -125,6 +147,7 @@
+     av_dict_set(opts, "threads", "auto", 0);
+     applyExperimentalCodecOptions(*decoder, opts);
+ 
++    stereo_av_decoder_views(context.get());
+     ret = avcodec_open2(context.get(), decoder->get(), opts);
+ 
+     if (ret < 0)
+@@ -132,7 +155,7 @@
+             QStringLiteral("Failed to open FFmpeg codec context: %1").arg(err2str(ret))
+         };
+ 
+-    return CodecContext(new Data(std::move(context), stream, formatContext, std::move(hwAccel)));
++    return CodecContext(new Data(std::move(context), stream, formatContext, std::move(hwAccel), std::move(stereoPair)));
+ }
+ 
+ QT_END_NAMESPACE
+--- a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegcodeccontext_p.h
++++ b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegcodeccontext_p.h
+@@ -22,6 +22,8 @@
+ #include <QtCore/qshareddata.h>
+ #include <QtCore/private/qexpected_p.h>
+ 
++#include <stereo-av.h>
++
+ QT_BEGIN_NAMESPACE
+ 
+ class QPlaybackOptions;
+@@ -33,7 +35,8 @@
+     struct Data : QSharedData
+     {
+         Data(AVCodecContextUPtr context, AVStream *avStream, AVFormatContext *formatContext,
+-             std::unique_ptr<QFFmpeg::HWAccel> hwAccel);
++             std::unique_ptr<QFFmpeg::HWAccel> hwAccel, std::shared_ptr<StereoAVPair> stereoPair);
++        std::shared_ptr<StereoAVPair> stereoPair;
+         AVCodecContextUPtr context;
+         AVStream *stream = nullptr;
+         AVFormatContext *formatContext = nullptr;
+@@ -47,6 +50,7 @@
+ 
+     AVRational pixelAspectRatio(AVFrame *frame) const;
+ 
++    StereoAVPair *stereoPair() const { return d->stereoPair.get(); }
+     AVCodecContext *context() const { return d->context.get(); }
+     AVStream *stream() const { return d->stream; }
+     uint streamIndex() const { return d->stream->index; }
+--- a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegframe_p.h
++++ b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegframe_p.h
+@@ -33,6 +33,8 @@
+ {
+     struct Data
+     {
++        bool multiview = false;
++        bool baseViewRight = false;
+         Data(const LoopOffset &offset, AVFrameUPtr f, const CodecContext &codecContext,
+              const PlaybackEngineObjectID &sourceID)
+             : loopOffset(offset),
+@@ -93,6 +95,9 @@
+         : d(new Data(offset, text, pts, duration, sourceId))
+     {
+     }
++    void setMultiview(bool baseRight) { data().multiview = true; data().baseViewRight = baseRight; }
++    bool multiview() const { return data().multiview; }
++    bool baseViewRight() const { return data().baseViewRight; }
+     bool isValid() const { return !!d; }
+ 
+     AVFrame *avFrame() const { return data().frame.get(); }
+--- a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegstreamdecoder.cpp
++++ b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegstreamdecoder.cpp
+@@ -4,6 +4,9 @@
+ #include "playbackengine/qffmpegstreamdecoder_p.h"
+ #include "playbackengine/qffmpegmediadataholder_p.h"
+ #include <qloggingcategory.h>
++extern "C" {
++#include <libavutil/stereo3d.h>
++}
+ 
+ QT_BEGIN_NAMESPACE
+ 
+@@ -26,6 +29,7 @@
+ StreamDecoder::~StreamDecoder()
+ {
+     avcodec_flush_buffers(m_codecContext.context());
++    stereo_av_pair_reset(m_codecContext.stereoPair());
+ }
+ 
+ void StreamDecoder::seek(quint64 sessionID, TrackPosition pos, const LoopOffset &offset)
+@@ -33,6 +37,7 @@
+     updateSession(sessionID, [this, pos, offset]() {
+         m_sessionCtx = { offset.loopStartTimeUs.asDuration() + pos };
+         avcodec_flush_buffers(m_codecContext.context());
++    stereo_av_pair_reset(m_codecContext.stereoPair());
+     });
+ }
+ 
+@@ -73,6 +78,7 @@
+                                   << packet.loopOffset().loopIndex;
+ 
+         avcodec_flush_buffers(m_codecContext.context());
++    stereo_av_pair_reset(m_codecContext.stereoPair());
+         m_sessionCtx.offset = packet.loopOffset();
+     }
+ 
+@@ -191,11 +197,26 @@
+         }
+ 
+ 
++        bool multiview = false;
++        if (m_trackType == QPlatformMediaPlayer::VideoStream) {
++            int paired = stereo_av_pair_frame(m_codecContext.stereoPair(), m_codecContext.context(), avFrame.get(), 1);
++            if (paired == 0)
++                continue;
++            if (paired < 0) {
++                emit error(QMediaPlayer::FormatError, err2str(paired));
++                break;
++            }
++            multiview = paired == 2;
++        }
++
+         // Avoid starvation on FFmpeg decoders with fixed size frame pool
+         if (m_trackType == QPlatformMediaPlayer::VideoStream)
+             avFrame = copyFromHwPool(std::move(avFrame));
+ 
+-        onFrameFound({ m_sessionCtx.offset, std::move(avFrame), m_codecContext, id() });
++        Frame frame{ m_sessionCtx.offset, std::move(avFrame), m_codecContext, id() };
++        if (multiview)
++            frame.setMultiview(stereo_av_pair_base_eye(m_codecContext.stereoPair()) == AV_STEREO3D_VIEW_RIGHT);
++        onFrameFound(frame);
+     }
+ }
+ 
+--- a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegvideorenderer.cpp
++++ b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegvideorenderer.cpp
+@@ -80,6 +80,11 @@
+         m_stereoMode = stereo->mode;
+         m_stereoFlags = stereo->flags;
+     }
++    if (frame.multiview()) {
++        m_stereoFlags |= QVideoFrameFormat::StereoFlag::Multiview;
++        if (frame.baseViewRight())
++            m_stereoFlags |= QVideoFrameFormat::StereoFlag::BaseViewRight;
++    }
+     format.setStereoMode(m_stereoMode);
+     format.setStereoFlags(m_stereoFlags);
+     format.setStereoView(stereo ? stereo->view : QVideoFrameFormat::StereoView::Packed);

@@ -1,0 +1,189 @@
+Description: Decode native MV-HEVC views through the shared stereo frame assembly
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-10-24
+
+--- a/meson.build
++++ b/meson.build
+@@ -33,7 +33,8 @@
+ 
+ # the dependency order of libass -> ffmpeg is necessary due to
+ # static linking symbol resolution between fontconfig and MinGW
+-dependencies = [libass,
++stereo_av = dependency('stereo-av', version: '>=1.12.0')
++dependencies = [stereo_av, libass,
+                 libavcodec,
+                 libavfilter,
+                 libavformat,
+--- a/options/options.c
++++ b/options/options.c
+@@ -1167,6 +1167,9 @@
+     .cuda_device = -1,
+ 
+     .watch_later_options = (char *[]){
++        "video-stereo",
++        "video-stereo-input",
++        "video-stereo-swap",
+         "start",
+         "speed",
+         "pitch",
+--- a/player/command.c
++++ b/player/command.c
+@@ -2626,6 +2626,16 @@
+     return M_PROPERTY_UNAVAILABLE;
+ }
+ 
++static int mp_property_video_stereo_swap(void *ctx, struct m_property *prop,
++                                          int action, void *arg)
++{
++    MPContext *mpctx = ctx;
++    int result = mp_property_generic_option(ctx, prop, action, arg);
++    if (action == M_PROPERTY_SET && result == M_PROPERTY_OK && mpctx->playing)
++        mp_write_watch_later_conf(mpctx);
++    return result;
++}
++
+ static int mp_property_video_frame_info(void *ctx, struct m_property *prop,
+                                         int action, void *arg)
+ {
+@@ -4452,6 +4462,7 @@
+     {"video-out-params", mp_property_vo_imgparams},
+     {"video-dec-params", mp_property_dec_imgparams},
+     {"video-params", mp_property_vd_imgparams},
++    {"video-stereo-swap", mp_property_video_stereo_swap},
+     {"video-frame-info", mp_property_video_frame_info},
+     M_PROPERTY_ALIAS("video-format", "current-tracks/video/codec"),
+     M_PROPERTY_ALIAS("video-codec", "current-tracks/video/codec-desc"),
+--- a/player/loadfile.c
++++ b/player/loadfile.c
+@@ -1794,6 +1794,9 @@
+                             bstr0(stored_swap ? "yes" : "no"), 0);
+ #endif
+ 
++    m_config_backup_opt(mpctx->mconfig, "video-stereo");
++    m_config_backup_opt(mpctx->mconfig, "video-stereo-input");
++    m_config_backup_opt(mpctx->mconfig, "video-stereo-swap");
+     mpctx->add_osd_seek_info &= OSD_SEEK_INFO_CURRENT_FILE;
+ 
+     if (opts->reset_options) {
+--- a/video/decode/vd_lavc.c
++++ b/video/decode/vd_lavc.c
+@@ -15,6 +15,7 @@
+  * License along with mpv.  If not, see <http://www.gnu.org/licenses/>.
+  */
+ 
++#include <stereo-av.h>
+ #include <float.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+@@ -60,6 +61,8 @@
+ #include <media-gpu-route.h>
+ #endif
+ 
++static enum AVPixelFormat get_format_stereo(AVCodecContext *avctx,
++                                            const enum AVPixelFormat *formats);
+ static void init_avctx(struct mp_filter *vd);
+ static void uninit_avctx(struct mp_filter *vd);
+ 
+@@ -204,6 +207,7 @@
+     struct mp_codec_params *codec;
+     AVCodecContext *avctx;
+     AVFrame *pic;
++    StereoAVPair *multiview;
+     AVPacket *avpkt;
+     bool use_hwdec;
+     struct hwdec_info hwdec; // valid only if use_hwdec==true
+@@ -776,6 +780,11 @@
+     AVCodecContext *avctx = ctx->avctx;
+     if (!ctx->avctx)
+         goto error;
++    ctx->multiview = stereo_av_pair_alloc();
++    if (!ctx->multiview)
++        goto error;
++    avctx->opaque = vd;
++    avctx->get_format = get_format_stereo;
+     avctx->codec_type = AVMEDIA_TYPE_VIDEO;
+     avctx->codec_id = lavc_codec->id;
+     avctx->pkt_timebase = ctx->codec_timebase;
+@@ -892,6 +901,7 @@
+     if (ctx->depth_wanted && !ctx->use_hwdec && av_opt_set(avctx, "depth_output", "both", AV_OPT_SEARCH_CHILDREN) >= 0)
+         ctx->depth_output = ctx->depth_probe = true;
+ 
++    stereo_av_decoder_views(avctx);
+     mp_set_avopts(vd->log, avctx, lavc_param->avopts);
+ 
+     // Do this after the above avopt handling in case it changes values
+@@ -938,6 +948,7 @@
+ 
+     if (ctx->avctx && avcodec_is_open(ctx->avctx))
+         avcodec_flush_buffers(ctx->avctx);
++    stereo_av_pair_reset(ctx->multiview);
+     ctx->flushing = false;
+     ctx->hwdec_request_reinit = false;
+ }
+@@ -967,6 +978,7 @@
+ 
+     flush_all(vd);
+     av_frame_free(&ctx->pic);
++    stereo_av_pair_free(&ctx->multiview);
+     mp_free_av_packet(&ctx->avpkt);
+     av_buffer_unref(&ctx->cached_hw_frames_ctx);
+ 
+@@ -1054,6 +1066,15 @@
+     return -1;
+ }
+ 
++static enum AVPixelFormat get_format_stereo(AVCodecContext *avctx,
++                                            const enum AVPixelFormat *formats)
++{
++    struct mp_filter *vd = avctx->opaque;
++    vd_ffmpeg_ctx *ctx = vd->priv;
++    stereo_av_pair_configure(ctx->multiview, avctx);
++    return avcodec_default_get_format(avctx, formats);
++}
++
+ static enum AVPixelFormat get_format_hwdec(struct AVCodecContext *avctx,
+                                            const enum AVPixelFormat *fmt)
+ {
+@@ -1070,6 +1091,12 @@
+                avctx->profile);
+ 
+     mp_assert(ctx->use_hwdec);
++    stereo_av_pair_configure(ctx->multiview, avctx);
++    if (stereo_av_decoder_multiview(avctx)) {
++        MP_INFO(vd, "Decoding both MV-HEVC views in software.\n");
++        ctx->hwdec_failed = true;
++        return AV_PIX_FMT_NONE;
++    }
+ 
+     ctx->hwdec_request_reinit |= ctx->hwdec_failed;
+     ctx->hwdec_failed = false;
+@@ -1314,6 +1341,15 @@
+         return ret;
+     }
+ 
++    struct filter_opts *stereo_opts = mp_get_config_group(ctx, vd->global, &filter_conf);
++    bool stereo_enabled = stereo_opts->video_stereo && stereo_opts->video_stereo_input != MP_STEREO3D_MONO;
++    talloc_free(stereo_opts);
++    int multiview = stereo_av_pair_frame(ctx->multiview, avctx, ctx->pic, stereo_enabled);
++    if (multiview <= 0) {
++        av_frame_unref(ctx->pic);
++        return multiview;
++    }
++
+     mp_codec_info_from_av(avctx, ctx->codec);
+ 
+     // If something was decoded successfully, it must return a frame with valid
+@@ -1324,6 +1360,12 @@
+     if (!mpi) {
+         av_frame_unref(ctx->pic);
+         return ret;
++    }
++
++    if (multiview == 2) {
++        mpi->params.stereo3d = MP_STEREO3D_SBSL;
++        mpi->params.stereo3d_plane_w = mpi->w / 2;
++        mpi->params.stereo3d_plane_h = mpi->h;
+     }
+ 
+     if (mpi->imgfmt == IMGFMT_CUDA && !mpi->planes[0]) {
