@@ -50,12 +50,12 @@ check "a package alternative is accepted ($n_agents agents, $valid skills, 2 gat
 check "the same into ~/.claude, except the person's own audio ($n_claude of $((valid - 2)))" '[ "$n_claude" -eq $((valid - 2)) ]'
 check "the skill whose package is absent is not linked" '[ ! -e "$HOME/.agents/skills/zz-absent" ] && [ ! -e "$HOME/.claude/skills/zz-absent" ]'
 check "and the helper says none of its packages are installed" 'grep -q "zz-absent" <<<"$out"'
-remaining=$(printf '%s\n' "$packages" | grep -v '^zz-single-package$' | xargs)
+remaining=$(tr ' ' '\n' <<<"$packages" | grep -vx zz-single-package | xargs)
 SPARKY_STEREO_PACKAGES="$remaining" "$HELPER" link >/dev/null
 check "a package that has gone away removes the stale link" '[ ! -e "$HOME/.agents/skills/zz-single" ] && [ ! -e "$HOME/.claude/skills/zz-single" ] && [ -e "$HOME/.agents/skills/zz-alternative" ] && [ -e "$HOME/.claude/skills/zz-alternative" ]'
 env SPARKY_STEREO_PACKAGES="$packages" "$HELPER" --first-login >/dev/null
 check "login relinks the same still-installed packages" '[ -L "$HOME/.agents/skills/zz-single" ] && [ -L "$HOME/.claude/skills/zz-single" ]'
-remaining=$(printf '%s\n' "$remaining" | grep -v '^zz-alternative-present$' | xargs)
+remaining=$(tr ' ' '\n' <<<"$remaining" | grep -vx zz-alternative-present | xargs)
 SPARKY_STEREO_PACKAGES="$remaining" "$HELPER" link >/dev/null
 check "when every alternative has gone away the stale link goes too" '[ ! -e "$HOME/.agents/skills/zz-alternative" ] && [ ! -e "$HOME/.claude/skills/zz-alternative" ]'
 check "the person's own ~/.claude/skills/audio is untouched" '[ ! -L "$HOME/.claude/skills/audio" ] && grep -qx "my own skill" "$HOME/.claude/skills/audio/SKILL.md"'
