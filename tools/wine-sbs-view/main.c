@@ -12,6 +12,7 @@
 #define _(text) gettext(text)
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static volatile sig_atomic_t stopped;
 static int failed;
@@ -30,6 +31,7 @@ int main(int argc, char **argv)
 {
     setlocale(LC_ALL, "");
     bindtextdomain("wine-sbs-view", "/usr/share/locale");
+    bind_textdomain_codeset("wine-sbs-view", "UTF-8");
     textdomain("wine-sbs-view");
     if (argc != 2) {
         fprintf(stderr, _("Usage: wine-sbs-view X11_IMAGE_WINDOW_ID\nSelect a full side by side image window with the left eye first and no controls.\n"));
@@ -61,7 +63,11 @@ int main(int argc, char **argv)
     Pixmap pixmap = XCompositeNameWindowPixmap(display, source);
     const Window window = XCreateSimpleWindow(display, DefaultRootWindow(display), 800, 200,
                                                attributes.width / 2, attributes.height, 0, 0, 0);
-    XStoreName(display, window, _("Stereo SBS image"));
+    const char *title = _("Stereo SBS image");
+    Xutf8SetWMProperties(display, window, title, title, NULL, 0, NULL, NULL, NULL);
+    XChangeProperty(display, window, XInternAtom(display, "_NET_WM_NAME", False),
+                    XInternAtom(display, "UTF8_STRING", False), 8, PropModeReplace,
+                    (const unsigned char *)title, strlen(title));
     XSelectInput(display, window, ExposureMask | StructureNotifyMask);
     Atom close = XInternAtom(display, "WM_DELETE_WINDOW", False);
     XSetWMProtocols(display, window, &close, 1);
