@@ -4,6 +4,8 @@ Subject: winex11: Describe override-redirect popup types and menu parents
 EWMH 1.5 section 5.6 recommends window types on override-redirect windows
 for compositor behavior too. Keep each submenu transient for its actual
 parent menu, while retaining the Win32 command recipient unchanged.
+Retain the combo owner after its list is reparented to the desktop so
+the X11 driver can publish the correct transient hint before mapping.
 
 Assisted-by: GPT-6 (Codex)
 
@@ -135,3 +137,13 @@ Assisted-by: GPT-6 (Codex)
      "_NET_WM_WINDOW_TYPE_NORMAL",
      "_NET_WM_WINDOW_TYPE_UTILITY",
      "_NET_WORKAREA",
+--- a/dlls/user32/combo.c
++++ b/dlls/user32/combo.c
+@@ -528,6 +528,7 @@
+ 	    {
+               /* Now do the trick with parent */
+               NtUserSetParent( lphc->hWndLBox, HWND_DESKTOP );
++              SetWindowLongPtrW( lphc->hWndLBox, GWLP_HWNDPARENT, (LONG_PTR)hwnd );
+               /*
+                * If the combo is a dropdown, we must resize the control
+ 	       * to fit only the text area and button. To do this,
