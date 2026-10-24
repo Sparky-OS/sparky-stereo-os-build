@@ -1,4 +1,12 @@
 -------------------------------------------------------------------------------
+  Version 0.1.2 (2026-10-24)
+-------------------------------------------------------------------------------
+  * On 32-bit UEFI, nokaslr only while a kernel in /boot lacks the fix: the edition's kernels from build 12 on
+    (7.3.0-rc6-stereo3d12) keep themselves below 4 GiB there and boot with KASLR; Debian's kernel and older
+    builds still get nokaslr, as GRUB gives every kernel in its menu the same command line
+  * nokaslr goes into GRUB_CMDLINE_LINUX, so the recovery entries get it too (0.1.1 left them without it)
+  * SPARKY_STEREO_IA32_NOKASLR: auto (that rule), yes (always on 32-bit UEFI) or no (never)
+-------------------------------------------------------------------------------
   Version 0.1.1 (2026-10-16)
 -------------------------------------------------------------------------------
   * NVIDIA's display driver in the boot image, so the boot splash runs on an NVIDIA screen: nvidia-drm with
