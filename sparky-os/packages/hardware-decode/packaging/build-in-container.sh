@@ -14,6 +14,13 @@ printf 'deb [signed-by=/pub/sparky-stereo-repo.asc] file:/pub mashtabba main\n' 
 printf 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://www.deb-multimedia.org forky main non-free\n' > /etc/apt/sources.list.d/multimedia.list
 printf 'deb http://deb.debian.org/debian testing contrib non-free non-free-firmware\n' > /etc/apt/sources.list.d/debian-extra-components.list
 printf 'Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n' > /etc/apt/preferences.d/edition
+# The staged cohort replaces its published predecessors, which the edition pin would otherwise keep.
+python3 - <<'PIN' > /etc/apt/preferences.d/edition-new
+for stanza in open('/new/Packages').read().split('\n\n'):
+    fields = dict(line.split(': ', 1) for line in stanza.splitlines() if ': ' in line and not line.startswith(' '))
+    if 'Package' in fields:
+        print(f"Package: {fields['Package']}\nPin: version {fields['Version']}\nPin-Priority: 1002\n")
+PIN
 apt-get -y update > /work/apt-update.log 2>&1
 apt-get -y --no-install-recommends install quilt devscripts dpkg-dev > /work/prepare-deps.log 2>&1
 if [ -n "${SOURCE_DSC:-}" ]; then
