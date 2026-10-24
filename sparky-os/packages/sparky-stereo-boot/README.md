@@ -23,7 +23,7 @@ When the file changes, the session sends it to a socket the system runs, and the
 A stereo boot splash hands the screen to the login screen's KWin with no new mode set: plymouth-quit.service deactivates it, KWin takes the same 3D mode, and the splash quits after KWin's first frame.
 On an NVIDIA screen the splash needs NVIDIA's display driver in the boot image: an initramfs hook adds nvidia-drm (with nvidia-modeset, nvidia and their firmware) when the machine has an NVIDIA display device and in a live system, and modeset and fbdev are on (/usr/lib/modprobe.d/sparky-stereo-nvidia-kms.conf). SPARKY_STEREO_NVIDIA_EARLY=yes or no overrides it (then: sudo update-initramfs -u).
 
-On 32-bit UEFI (EFI mixed mode) the kernel starts at a fixed physical address (nokaslr, /etc/default/grub.d/31-sparky-stereo-ia32.cfg): at a randomized one, Linux maps its firmware-call return trampoline without execute permission and stops at the first firmware call.
+On 32-bit UEFI (EFI mixed mode) the firmware returns from every firmware call to a 32-bit address in the kernel image, so the kernel must stay below 4 GiB. The edition's kernels from build 12 on do that themselves and keep KASLR; while any kernel in /boot lacks the fix (Debian's, or an older build), the kernel line gets nokaslr, because GRUB gives every kernel the same line (/etc/default/grub.d/31-sparky-stereo-ia32.cfg; SPARKY_STEREO_IA32_NOKASLR=auto, yes or no).
 
 Options: /etc/default/sparky-stereo-boot (then: sudo sparky-stereo-boot reapply).
 Status: sparky-stereo-boot status

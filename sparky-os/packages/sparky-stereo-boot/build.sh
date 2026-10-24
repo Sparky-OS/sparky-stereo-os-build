@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/16
+# Last update 2026/10/24
 #
 # Builds the sparky-stereo-boot package (hand assembled, Paweł's formula).
 #   build.sh OUTDIR
@@ -9,7 +9,7 @@ set -euo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
 OUT=$(readlink -f "${1:-.}")
 PKG=sparky-stereo-boot
-VERSION=0.1.1+lc1
+VERSION=0.1.2+lc1
 umask 022
 mkdir -p "$OUT"
 D=$(mktemp -d "${TMPDIR:-/tmp}/stereo-boot-build.XXXXXX")

@@ -24,3 +24,9 @@ SPARKY_STEREO_SDDM_WAYLAND=auto
 # auto: when this machine has an NVIDIA display device, and in a live system. yes: always.
 # no: never. Then: sudo update-initramfs -u
 SPARKY_STEREO_NVIDIA_EARLY=auto
+
+# On 32-bit UEFI the kernel line gets nokaslr for kernels that could start above 4 GiB, where
+# the 32-bit firmware cannot return to them. auto: while any kernel in /boot lacks the fix
+# (the edition's kernels from build 12 on have it). yes: always on 32-bit UEFI. no: never.
+# Then: sudo update-grub
+SPARKY_STEREO_IA32_NOKASLR=auto
