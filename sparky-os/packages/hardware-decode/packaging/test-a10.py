@@ -52,5 +52,35 @@ class A10(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'A10 laptop'):
                 a10.execute(None)
 
+    DIMMED=('[   0.401][v][vo/gpu-next/wayland] Preferred surface feedback received:\n'
+            '[   0.401][v][vo/gpu-next/wayland] transfer: min_luma=0.200000, max_luma=80.000000, ref_luma=80.000000\n'
+            '[   0.404][v][vo/gpu-next/wayland] transfer: min_luma=0.010000, max_luma=200.000000, ref_luma=63.000000\n'
+            '[   0.404][v][vo/gpu-next/wayland] Setting preferred transfer to PQ for HDR output.\n')
+    UNDIMMED=('[   0.439][v][vo/gpu-next/wayland] transfer: min_luma=0.200000, max_luma=80.000000, ref_luma=80.000000\n'
+              '[   0.441][v][vo/gpu-next/wayland] transfer: min_luma=0.010000, max_luma=200.000000, ref_luma=200.000000\n')
+
+    def test_dimmed_output_is_recognised(self):
+        # the A10's TV in the first ORDER 234 run: PowerDevil's 30% dimming gave 63 nits of 200
+        environment=a10.output_environment(self.DIMMED)
+        self.assertTrue(environment['dimmed'])
+        self.assertTrue(environment['pq'])
+        environment=a10.output_environment(self.UNDIMMED)
+        self.assertFalse(environment['dimmed'])
+        self.assertFalse(environment['pq'])
+
+    def test_ab_phase_names_and_unsafe_names(self):
+        output=io.StringIO()
+        with patch.object(sys, 'argv', ['a10-matrix.py', '--phase', 'ab1', '--select', 'tv-3d/HDMI-A-1/vulkan/default/3d$', '--dry-run']), \
+             contextlib.redirect_stdout(output):
+            a10.main()
+        self.assertEqual(json.loads(output.getvalue())['phase'],'ab1')
+        with patch.object(sys, 'argv', ['a10-matrix.py', '--phase', '../x', '--dry-run']), \
+             contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            a10.main()
+
+    def test_keep_awake_uses_the_freedesktop_activity_call(self):
+        self.assertEqual(a10.AWAKE[-1],'org.freedesktop.ScreenSaver.SimulateUserActivity')
+        self.assertEqual(a10.INHIBIT[:3],['kde-inhibit','--power','--screenSaver'])
+
 if __name__=='__main__':
     unittest.main()

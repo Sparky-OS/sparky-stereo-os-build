@@ -145,6 +145,33 @@ def gpu_pci():
     return devices
 
 
+# A dimmed output: KWin lowers the reference luminance of an output without a
+# backlight (PowerDevil's idle dimming to 30% gives 5 + 195 * 0.3 = 63 nits of
+# 200), mpv then sees headroom and renders SDR film as PQ for KWin to convert:
+# such a case does not compare with an undimmed one (ORDER 234).
+FEEDBACK = re.compile(r'transfer: min_luma=([0-9.]+), max_luma=([0-9.]+), ref_luma=([0-9.]+)')
+
+
+def output_environment(log_text):
+    descriptions = [(float(low), float(high), float(ref)) for low, high, ref in FEEDBACK.findall(log_text)]
+    return {
+        'descriptions': descriptions,
+        'dimmed': any(high > ref + 0.5 for _, high, ref in descriptions),
+        'pq': 'Setting preferred transfer to PQ' in log_text,
+    }
+
+
+AWAKE = ['qdbus6', 'org.freedesktop.ScreenSaver', '/ScreenSaver', 'org.freedesktop.ScreenSaver.SimulateUserActivity']
+INHIBIT = ['kde-inhibit', '--power', '--screenSaver', 'sleep', '1000000']
+
+
+def keep_awake(root):
+    # User activity, as the freedesktop screen saver interface defines it: undims and restarts idle timers
+    result = subprocess.run(AWAKE, capture_output=True, text=True)
+    with (root/'awake.log').open('a') as stream:
+        stream.write(f'{time.monotonic():.6f} exit={result.returncode} {result.stderr.strip()}\n')
+
+
 def counters(path):
     result = {}
     try:
@@ -218,6 +245,12 @@ def execute(a):
             raise ValueError(f'Unexpected per-frame log: {p}')
     def interrupted(signum, frame):
         raise KeyboardInterrupt(f'Interrupted by signal {signum}')
+    inhibitor = None
+    if a.keep_awake:
+        if not shutil.which(INHIBIT[0]):
+            raise ValueError('kde-inhibit is missing; install kde-cli-tools or pass --no-keep-awake')
+        inhibitor = subprocess.Popen(INHIBIT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        keep_awake(root)
     previous_term = signal.signal(signal.SIGTERM, interrupted)
     stop = threading.Event()
     logger = threading.Thread(target=machine_logger, args=(root, stop))
@@ -228,6 +261,8 @@ def execute(a):
     try:
         for case in cases(a.select):
             print(json.dumps({'phase': a.phase, 'case': case['name'], 'event': 'start'}), flush=True)
+            if a.keep_awake:
+                keep_awake(root)
             if case['setup'] != setup:
                 setup = case['setup']
                 args = []
@@ -254,7 +289,7 @@ def execute(a):
             command = ['mpv', '--no-config', '--no-audio', '--loop-file=inf', '--no-terminal', '--fs',
                        '--vo=gpu-next', '--gpu-api='+case['api'], '--fs-screen-name='+case['output'],
                        '--screen-name='+case['output'], '--input-ipc-server='+str(ipc),
-                       '--log-file='+str(root/(name+'-mpv.log')), '-v', str(films[case['film']])]
+                       '--log-file='+str(root/(name+'-mpv.log')), '-v', *a.mpv_arg, str(films[case['film']])]
             (root/(name+'-command.json')).write_text(json.dumps({'argv': command, 'gpu_env': {k: v for k, v in env.items() if k == 'DRI_PRIME'}, 'case': case}, indent=2)+'\n')
             before = {p: p.stat().st_size for p in kwin_files}
             player = subprocess.Popen(command, env=env)
@@ -283,6 +318,11 @@ def execute(a):
                 if path.name.endswith(case['output']+'.csv') and path.stat().st_size <= before[path]:
                     raise ValueError(f'KWin per-frame log did not grow: {path}')
             (root/(name+'-outputs.json')).write_text(subprocess.check_output(['kscreen-doctor', '-j'], text=True))
+            environment = output_environment(read(root/(name+'-mpv.log')))
+            (root/(name+'-environment.json')).write_text(json.dumps(environment, indent=2)+'\n')
+            if environment['dimmed'] and not a.allow_dimmed:
+                raise ValueError(f'{name}: the output was dimmed (reference luminance below peak), '
+                                 'so this case does not compare with undimmed runs; rerun, or pass --allow-dimmed')
             time.sleep(8)
     finally:
         if player is not None and player.poll() is None:
@@ -296,6 +336,9 @@ def execute(a):
             subprocess.run(['qdbus6', 'org.kde.KWin', '/Scripting/Script'+script_id, 'org.kde.kwin.Script.stop'], check=False)
         stop.set()
         logger.join()
+        if inhibitor is not None:
+            inhibitor.terminate()
+            inhibitor.wait()
         try:
             for p in kwin_files:
                 shutil.copy2(p, root/p.name)
@@ -309,7 +352,7 @@ def execute(a):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--phase', choices=('before', 'after'), required=True)
+    p.add_argument('--phase', required=True, help="the versions file's key and the output subfolder, e.g. before, after, ab1")
     p.add_argument('--host', help='A10 SSH alias; the script is sent over stdin only with --execute')
     action = p.add_mutually_exclusive_group()
     action.add_argument('--dry-run', action='store_true', help='print cases only, with no subprocesses or writes')
@@ -321,7 +364,13 @@ def main():
     p.add_argument('--film-2d', type=Path)
     p.add_argument('--film-3d', type=Path)
     p.add_argument('--coyote', type=Path)
+    p.add_argument('--keep-awake', action=argparse.BooleanOptionalAction, default=True,
+                   help='hold a kde-inhibit screen saver and power inhibition and simulate user activity before every case')
+    p.add_argument('--allow-dimmed', action='store_true', help='record a dimmed output instead of stopping')
+    p.add_argument('--mpv-arg', action='append', default=[], help='an extra mpv option for every case (A/B runs)')
     a = p.parse_args()
+    if not re.fullmatch(r'[a-z0-9][a-z0-9-]*', a.phase):
+        p.error('--phase must be a lower-case name such as after or ab1')
     selected = list(cases(a.select))
     if not selected:
         p.error('No matching cases')
