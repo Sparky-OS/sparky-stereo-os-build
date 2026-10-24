@@ -24,6 +24,10 @@ cp -a "$SYSTEM" "$F"
 export SPARKY_STEREO_SKILLS=$F
 valid=$(for d in "$F"/*/; do head -n 1 "$d/SKILL.md" | grep -qx -- --- && echo x; done | wc -l)
 total=$(find "$F" -mindepth 1 -maxdepth 1 -type d | wc -l)
+real_packages=$(for d in "$F"/*/; do
+	awk 'NR > 1 && /^---[ \t]*$/ {exit}
+		/^  requires-packages:/ {sub(/^  requires-packages:[ \t]*/, ""); print; exit}' "$d/SKILL.md"
+done | sed 's/|/ /g' | xargs)
 export HOME=$T/home XDG_CONFIG_HOME=$T/home/.config LANG=C.UTF-8 LC_ALL='' LC_MESSAGES=''
 unset DISPLAY WAYLAND_DISPLAY
 mkdir -p "$HOME/.claude" "$HOME/.codex" "$HOME/.claude/skills/audio"
