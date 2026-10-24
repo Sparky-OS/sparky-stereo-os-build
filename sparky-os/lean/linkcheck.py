@@ -126,7 +126,9 @@ def sibling_dirs(debs):
 def resolve(root, timeout=20, extra_dirs=()):
     """{(relative file, kind, item): True} for every unresolved library or symbol of the tree."""
     root = Path(root)
-    env = dict(os.environ, LD_LIBRARY_PATH=':'.join(private_dirs(root) + list(extra_dirs)))
+    # ldd's messages are matched as text: read them in the C locale, whatever the host's language
+    # (a pt_BR host says "não é um executável dinâmico" for a static file such as a kernel's vmlinux)
+    env = dict(os.environ, LD_LIBRARY_PATH=':'.join(private_dirs(root) + list(extra_dirs)), LC_ALL='C', LANGUAGE='C')
     result = {}
     for path in elf_files(root):
         rel = '/' + str(path.relative_to(root))

@@ -151,3 +151,19 @@ class LinkGate(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def test_static_elf_passes_in_any_locale(tmp_path, monkeypatch):
+    """A static ELF (a kernel's vmlinux, a static tool) is not a loader error, whatever the host's language."""
+    import shutil, subprocess
+    cc = shutil.which('cc') or shutil.which('gcc')
+    if not cc:
+        import pytest; pytest.skip('no C compiler')
+    src = tmp_path / 's.c'; src.write_text('int main(void){return 0;}\n')
+    root = tmp_path / 'root'; (root / 'usr/bin').mkdir(parents=True)
+    exe = root / 'usr/bin/static-tool'
+    if subprocess.run([cc, '-static', '-o', str(exe), str(src)], capture_output=True).returncode != 0:
+        import pytest; pytest.skip('no static libc')
+    monkeypatch.setenv('LC_ALL', 'pt_BR.UTF-8'); monkeypatch.setenv('LANG', 'pt_BR.UTF-8')
+    from lean import linkcheck
+    assert linkcheck.resolve(root) == {}
