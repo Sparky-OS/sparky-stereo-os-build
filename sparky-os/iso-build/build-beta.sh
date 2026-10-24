@@ -33,7 +33,7 @@ run() {
 	# shellcheck disable=SC2086
 	docker run --rm --name "beta-iso-lutz-$1" --privileged --cpus 4 --memory 16g \
 		-v "$TREE:/rootfs" -v "$CACHE:/cache" -v "$REPO:/repo:ro" -v "$STAGE:/stage" -v "$HERE:/build:ro" \
-		-v "$ED/sparky-os/apt:/edition-apt:ro" -v "$ED/sparky-os/lists:/edition-lists:ro" -v "$WORK:/work" -v "$OUT:/out" -v "$OVL:/overlay" \
+		-v "$ED/sparky-os/apt:/edition-apt:ro" -v "$ED/sparky-os/lists:/edition-lists:ro" -v "$ED/sparky-os/repo:/edition-repo:ro" -v "$WORK:/work" -v "$OUT:/out" -v "$OVL:/overlay" \
 		-e LABEL="${LABEL:-Sparky Stereo OS 9 Mashtabba beta 2}" -e ISONAME="${ISONAME:-sparky-stereo-os-9-mashtabba-beta2-x86_64.iso}" \
 		$sm $IMAGE sh -c "$2"
 }

@@ -8,6 +8,7 @@
 #   sparky-stereo-integration run PACK [ARG...] -- FILE...
 #   sparky-stereo-integration hide-missing [on|off|status|sync]
 #   sparky-stereo-integration packs
+#   sparky-stereo-integration install PACKAGE
 # A pack is /usr/share/sparky-stereo/integrations.d/PACK.conf (program=, worker=, menus=), its service
 # menus in /usr/share/kio/servicemenus, its strings in its own package. See the stereo-integrations skill.
 set -u
@@ -151,6 +152,13 @@ case "$cmd" in
 		fi
 		exec "$worker" "$@"
 		;;
+	install)
+		# the install route of the offer, for other callers (KRunner's missing program runner): the package, and the stereo packs
+		# listed for it, one apt call in a terminal; apt asks its own question there, which is the person's consent
+		pkg=${1:?package}
+		set=$(awk -F'\t' -v p="$pkg" '$1 == p {print $2}' "$MAP" 2>/dev/null)
+		install_packages "$pkg" $set && sync_menus
+		;;
 	hide-missing)
 		case "${1:-status}" in
 			on) rc_set HideMissing true; sync_menus ;;
@@ -169,7 +177,7 @@ case "$cmd" in
 		done
 		;;
 	*)
-		echo "usage: sparky-stereo-integration run PACK [ARG...] -- FILE... | hide-missing [on|off|status|sync] | packs" >&2
+		echo "usage: sparky-stereo-integration run PACK [ARG...] -- FILE... | install PACKAGE | hide-missing [on|off|status|sync] | packs" >&2
 		exit 2
 		;;
 esac

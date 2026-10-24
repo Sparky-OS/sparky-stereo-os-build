@@ -149,7 +149,7 @@ class SyncTest(unittest.TestCase):
         self.program(False)
         r = self.run_cli('run', 't', '1', '--', '/nonexistent')
         self.assertEqual(r.returncode, 127)
-        self.assertIn('tprog is not installed.', r.stderr)
+        self.assertIn('tprog', r.stderr)  # command-not-found's own words, or ours when it is absent
 
     def test_present_program_runs_the_worker_with_the_arguments(self):
         self.program(True)
@@ -159,6 +159,38 @@ class SyncTest(unittest.TestCase):
         r = self.run_cli('run', 't', '3', 'swap', '--', 'a b.mkv')
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual((self.d / 'args').read_text().strip(), '3 swap -- a b.mkv')
+
+
+class ContentsTest(unittest.TestCase):
+    def deb(self, d, name, arch, files):
+        root = pathlib.Path(d) / name
+        (root / 'DEBIAN').mkdir(parents=True)
+        for f in files:
+            (root / f).parent.mkdir(parents=True, exist_ok=True)
+            (root / f).write_text('x')
+        (root / 'DEBIAN/control').write_text(f'Package: {name}\nVersion: 1\nArchitecture: {arch}\nMaintainer: t <t@example.invalid>\nSection: Utilities\nDescription: t\n t\n')
+        out = pathlib.Path(d) / f'{name}_1_{arch}.deb'
+        subprocess.run(['dpkg-deb', '--root-owner-group', '-b', str(root), str(out)], check=True, capture_output=True)
+        return str(out)
+
+    def test_format_arch_all_and_owners(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(subprocess.run, ['rm', '-rf', d])
+        a = self.deb(d, 'pa', 'amd64', ['usr/bin/tool', 'usr/share/pa/x'])
+        b = self.deb(d, 'pb', 'all', ['usr/share/pb/y', 'usr/share/pa/x'])
+        c = self.deb(d, 'pc', 'i386', ['usr/bin/tool32'])
+        out = pathlib.Path(d) / 'out'
+        r = subprocess.run([sys.executable, str(ROOT / 'repo/make-contents.py'), str(out), 'amd64 i386 all', a, b, c], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        amd64 = (out / 'Contents-amd64').read_text().splitlines()
+        self.assertIn('usr/bin/tool\tutilities/pa', amd64)
+        self.assertIn('usr/share/pb/y\tutilities/pb', amd64)
+        self.assertIn('usr/share/pa/x\tutilities/pa,utilities/pb', amd64)
+        self.assertEqual(amd64, sorted(amd64))
+        self.assertNotIn('usr/bin/tool32', '\n'.join(amd64))
+        self.assertIn('usr/bin/tool32\tutilities/pc', (out / 'Contents-i386').read_text().splitlines())
+        self.assertEqual((out / 'Contents-all').read_text().splitlines(), ['usr/share/pa/x\tutilities/pb', 'usr/share/pb/y\tutilities/pb'])
+        self.assertFalse(any(l.endswith('/') or l.startswith('./') for l in amd64))
 
 
 if __name__ == '__main__':

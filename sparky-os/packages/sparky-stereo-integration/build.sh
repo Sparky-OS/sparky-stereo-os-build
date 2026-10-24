@@ -13,8 +13,11 @@ mkdir -p "$OUT"
 W=$(mktemp -d "$OUT/.$PKG.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 D=$W/$PKG
-mkdir -p "$D/DEBIAN" "$D/usr/bin" "$D/etc/xdg/autostart" "$D/usr/share/sparky/$PKG" "$D/usr/share/sparky-stereo/integrations.d" "$D/usr/share/doc/$PKG"
+mkdir -p "$D/DEBIAN" "$D/usr/bin" "$D/etc/xdg/autostart" "$D/usr/share/sparky/$PKG" "$D/usr/share/sparky-stereo/integrations.d" "$D/usr/share/doc/$PKG" "$D/usr/lib/sparky-stereo" "$D/usr/share/krunner/dbusplugins" "$D/usr/share/dbus-1/services"
 install -m755 "$HERE/bin/sparky-stereo-integration" "$D/usr/bin/"
+install -m755 "$HERE/krunner/missing-program" "$D/usr/lib/sparky-stereo/krunner-missing-program"
+install -m644 "$HERE/share/sparky-stereo-missing-program.desktop" "$D/usr/share/krunner/dbusplugins/"
+install -m644 "$HERE/share/org.sparky.stereo.MissingProgram.service" "$D/usr/share/dbus-1/services/"
 install -m644 "$HERE/share/sparky-stereo-integrationrc" "$D/etc/xdg/"
 install -m644 "$HERE/share/sparky-stereo-integration-sync.desktop" "$D/etc/xdg/autostart/"
 install -m644 "$HERE"/lang/* "$D/usr/share/sparky/$PKG/"
@@ -39,7 +42,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: bash, command-not-found, kdialog
+Depends: bash, command-not-found, kdialog, python3, python3-dbus, python3-gi
 Recommends: pkexec
 Section: Utilities
 Priority: optional

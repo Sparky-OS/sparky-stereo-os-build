@@ -11,15 +11,17 @@
 #   /etc/skel/.bashrc            Debian's, with the coloured prompt forced on (the Linux
 #                                console too), red for root
 #   fastfetch                    the neofetch layout with the Sparky leaf; `neofetch` runs it
-#   command-not-found            a dependency; its index is built when the ISO is packed
+#   command-not-found            a dependency; its index is filled at build time and by its own apt update hook; bash and fish
+#                                call it already (Debian's /etc/bash.bashrc, fish's own handler); zsh does not, so /etc/zsh/zshrc is
+#                                diverted and ours sources Debian's, then /etc/zsh_command_not_found (ORDER 251)
 # Debian's /etc/issue, /etc/issue.net, 10-uname and skel .bashrc are diverted to *.debian
 # and given back when the package is removed.
-# Last update 2026/10/02
+# Last update 2026/10/24
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
-VERSION=20261014.1~sparky9~0+lc1
+VERSION=20261024.1~sparky9~0+lc1
 PKG=sparky-stereo-console
 B=$HERE/base
 W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}/sparky-os}/console-build.XXXXXX")
@@ -117,7 +119,14 @@ printf '#!/bin/sh\n# neofetch left Debian; fastfetch, its successor, runs in the
 chmod 755 "$D/etc/update-motd.d/10-uname" "$D/usr/bin/neofetch"
 chmod 644 "$D/etc/skel/.bashrc" "$D/etc/skel/.selected_editor" "$D/etc/nanorc"
 
-DIVERTED="/etc/issue /etc/issue.net /etc/update-motd.d/10-uname /etc/skel/.bashrc /etc/nanorc"
+mkdir -p "$D/etc/zsh"
+cat >"$D/etc/zsh/zshrc" <<'ZSH'
+# Sparky Stereo OS: Debian's own zshrc, then command-not-found, so a missing command names its package in zsh as it does in bash and fish
+[[ -r /etc/zsh/zshrc.debian ]] && source /etc/zsh/zshrc.debian
+[[ -r /etc/zsh_command_not_found ]] && source /etc/zsh_command_not_found
+ZSH
+chmod 644 "$D/etc/zsh/zshrc"
+DIVERTED="/etc/issue /etc/issue.net /etc/update-motd.d/10-uname /etc/skel/.bashrc /etc/nanorc /etc/zsh/zshrc"
 cat >"$D/DEBIAN/preinst" <<EOF
 #!/bin/sh
 # preinst script
