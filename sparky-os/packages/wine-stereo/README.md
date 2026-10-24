@@ -60,3 +60,6 @@ The same source preparation also appends `patches/wine-popup-metadata.patch`.
 It describes Wine's override-redirect menus, tooltips and combo lists through EWMH window types.
 A submenu's X11 transient owner names its parent menu, while Win32 command ownership stays intact.
 The declaration is refreshed before mapping, after the menu's selected child is known.
+A dropdown combo list also retains its combo owner when user32 reparents it to the desktop, allowing winex11 to name the application's root window in the transient hint.
+The functional types follow [EWMH 1.5 section 5.6](https://specifications.freedesktop.org/wm/1.5/ar01s05.html).
+The compositor must read override-redirect transient hints to apply popup depth through that owner chain.
