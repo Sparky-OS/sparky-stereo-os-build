@@ -6,9 +6,11 @@ KIO decides where an application started from its desktop entry runs in one plac
 The patch adds the other entries: when the entry sets neither `PrefersNonDefaultGPU` nor the older `X-KDE-RunOnDiscreteGpu`, and the launch environment chooses no GPU (`DRI_PRIME`, `MESA_VK_DEVICE_SELECT`, `VK_LOADER_DRIVERS_SELECT`, `__NV_PRIME_RENDER_OFFLOAD`, the variables libmedia-gpu-route also leaves to the launch), KIO runs `sparky-stereo-gpu-env --app MENU-ID` (or the desktop file's absolute path when it is outside the menu) and starts the application with the `VARIABLE=value` lines it prints.
 That is the Graphics page's resolver (`sparky-stereo-graphics`), the same command `sparky-stereo-gpu-run` and libmedia-gpu-route ask; KIO keeps no policy of its own.
 A missing command, a non-zero exit or no answer within two seconds leaves the launch as it was.
-D-Bus activated applications (`DBusActivatable=true`, started without files) are started by the session bus and get neither KDE's own key nor this answer, as before.
+An application that D-Bus would activate (`DBusActivatable=true`, started without files) is started by KIO itself when a GPU environment applies (KDE's own key or the resolver's answer) and its entry has an `Exec` line, since the session bus would start it without those variables; with no GPU environment it is activated as before.
+Gwenview's videos follow Gwenview's own kind: its Categories (`Graphics;Viewer;Photography`) make it another program, which stays on the GPU that draws the desktop, and the page's per-program choice moves it.
+Typed commands (KRunner's shell commands, an executable opened from Dolphin, `kstart COMMAND`) start where the session puts them: they have no desktop entry, so no kind, and KDE does not apply its own key to them either.
 
-The tests are in `autotests/applicationlauncherjobtest.cpp` (`shouldRunOnTheGpuOfTheGraphicsSettings`, twelve rows with a stand-in resolver); Debian's build does not run them (`BUILD_TESTING=OFF`).
+The tests are in `autotests/applicationlauncherjobtest.cpp` (`shouldRunOnTheGpuOfTheGraphicsSettings`, twelve rows with a stand-in resolver, and `shouldStartAnActivatableApplicationOnItsGpu`, two rows); Debian's build does not run them (`BUILD_TESTING=OFF`).
 
 ## Build
 

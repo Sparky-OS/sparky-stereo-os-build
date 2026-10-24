@@ -60,10 +60,14 @@ old = changelog.read_text()
 entry = (f'kf6-kio ({version}) testing; urgency=medium\n\n'
          '  * Start an application whose desktop entry does not say where it runs on\n'
          '    the GPU the Graphics page chooses for its kind (sparky-stereo-gpu-env\n'
-         '    --app): players on the GPU measured best, battery included, games and\n'
-         '    other programs in 2D by the power profile. PrefersNonDefaultGPU and a\n'
-         '    GPU chosen in the launch environment keep their precedence; without\n'
-         '    the command the launch is unchanged.\n\n'
+         '    --app): players and games on the GPU measured best, battery included,\n'
+         '    browsers by the power profile, other programs on the GPU that draws\n'
+         '    the desktop. PrefersNonDefaultGPU and a GPU chosen in the launch\n'
+         '    environment keep their precedence; without the command the launch is\n'
+         '    unchanged.\n'
+         '  * Start a D-Bus activatable application itself when a GPU environment\n'
+         '    applies (its own key or the Graphics page) and it has an Exec line, so\n'
+         '    the variables reach it; otherwise activate it as before.\n\n'
          ' -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + email.utils.formatdate(localtime=True) + '\n\n')
 changelog.write_text(entry + old)
 PY
