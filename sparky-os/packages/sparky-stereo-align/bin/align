@@ -1,0 +1,361 @@
+#!/usr/bin/python3
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/24
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/24
+# Aligns the two views of a stereo pair with Hugin's align_image_stack -S and saves the result as a new stereo file,
+# next to the original, which is never touched:  align FORMAT [swap] -- FILE...   (FORMAT: jps, mpo or pns)
+#   two files: the first is the left eye, or the right eye with "swap" (the input correction of an unmarked pair);
+#   one file: a JPS, MPO or PNS, whose own mark says which view is which (JPS without a block and PNS without sTER
+#   are right eye first, the convention both formats share; MPO: the viewpoint numbers).
+# Output marks: JPS: the VRex _JPSJPS_ block, side by side, left eye first (VRex JPS specification);
+#   MPO: CIPA DC-007 MP Index and Individual numbers 1 and 2; PNS: the sTER chunk, mode 1, with the padding columns
+#   of the PNG extensions specification 3.6.
+import io, os, re, struct, subprocess, sys, tempfile, zlib
+from PIL import Image
+
+DIR = '/usr/share/sparky/sparky-stereo-align'
+SYSRC = os.environ.get('SPARKY_STEREO_INTEGRATION_SYSRC', '/etc/xdg/sparky-stereo-integrationrc')
+USERRC = os.path.join(os.environ.get('XDG_CONFIG_HOME', os.path.expanduser('~/.config')), 'sparky-stereo-integrationrc')
+
+
+def strings():
+    lang = os.environ.get('LC_ALL') or os.environ.get('LC_MESSAGES') or os.environ.get('LANG') or ''
+    if not lang:
+        try:
+            for l in open('/etc/default/locale'):
+                if l.startswith('LANG='):
+                    lang = l.split('=', 1)[1].strip().strip('"')
+        except OSError:
+            pass
+    lang = re.split(r'[.@]', lang)[0]
+    for code in (lang, lang.split('_')[0], 'en'):
+        p = os.path.join(DIR, code)
+        if code and os.path.isfile(p):
+            return {m.group(1): m.group(2) for m in re.finditer(r'^LOCAL(\d+)="(.*)"$', open(p, encoding='utf-8').read(), re.M)}
+    return {}
+
+
+S = strings()
+
+
+def rc(key, default):
+    for f in (USERRC, SYSRC):
+        try:
+            for l in open(f):
+                if l.startswith(key + '='):
+                    return l.split('=', 1)[1].strip()
+        except OSError:
+            pass
+    return default
+
+
+def ui():
+    return os.environ.get('SPARKY_STEREO_INTEGRATION_UI', 'auto') != 'none' and (os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY')) and shutil_which('kdialog')
+
+
+def shutil_which(n):
+    for d in os.environ.get('PATH', '').split(':'):
+        if os.access(os.path.join(d, n), os.X_OK):
+            return os.path.join(d, n)
+
+
+def say(text, error=False):
+    if ui():
+        subprocess.Popen(['kdialog', '--title', S['1'], '--error' if error else '--passivepopup', text] + ([] if error else ['8']),
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:
+        print(text, file=sys.stderr if error else sys.stdout)
+
+
+class Fail(Exception):
+    pass
+
+
+# ---- reading the marks -------------------------------------------------------------------------------
+
+def segments(data):
+    # (marker, start, end) of the JPEG header segments up to the first scan
+    i = 2
+    while i + 4 <= len(data) and data[i] == 0xFF:
+        m = data[i + 1]
+        if m in (0xDA, 0xD9):
+            break
+        n = struct.unpack('>H', data[i + 2:i + 4])[0]
+        if n < 2 or i + 2 + n > len(data):
+            break
+        yield m, i, i + 2 + n
+        i += 2 + n
+
+
+def insertion_point(data):
+    # after the leading JFIF (APP0) and Exif (APP1) segments
+    at = 2
+    for m, s, e in segments(data):
+        if m in (0xE0, 0xE1):
+            at = e
+        else:
+            break
+    return at
+
+
+def mpf_viewpoints(data):
+    # the MP Individual Number (tag 0xB101) of the MPF segment of one image, or None
+    for m, s, e in segments(data):
+        if m == 0xE2 and data[s + 4:s + 8] == b'MPF\0':
+            t = s + 8
+            end = {b'II': '<', b'MM': '>'}.get(data[t:t + 2])
+            if not end:
+                return None
+            ifd = struct.unpack(end + 'I', data[t + 4:t + 8])[0]
+            seen = 0
+            while ifd and seen < 4:
+                seen += 1
+                p = t + ifd
+                count = struct.unpack(end + 'H', data[p:p + 2])[0]
+                for k in range(count):
+                    q = p + 2 + 12 * k
+                    tag, typ, cnt, val = struct.unpack(end + 'HHII', data[q:q + 12])
+                    if tag == 0xB101 and typ == 4 and cnt == 1:
+                        return val
+                ifd = struct.unpack(end + 'I', data[p + 2 + 12 * count:p + 6 + 12 * count])[0]
+    return None
+
+
+def split_mpo(data):
+    # the two JPEG streams, by the MP Entry records of the first image's MP Index
+    for m, s, e in segments(data):
+        if m == 0xE2 and data[s + 4:s + 8] == b'MPF\0':
+            t = s + 8
+            end = {b'II': '<', b'MM': '>'}.get(data[t:t + 2])
+            if not end:
+                break
+            ifd = t + struct.unpack(end + 'I', data[t + 4:t + 8])[0]
+            count = struct.unpack(end + 'H', data[ifd:ifd + 2])[0]
+            number, entries = 0, 0
+            for k in range(count):
+                tag, typ, cnt, val = struct.unpack(end + 'HHII', data[ifd + 2 + 12 * k:ifd + 14 + 12 * k])
+                if tag == 0xB001:
+                    number = val
+                elif tag == 0xB002:
+                    entries = val
+            if number != 2 or not entries:
+                break
+            out = []
+            for k in range(2):
+                size, off = struct.unpack(end + 'II', data[t + entries + 16 * k + 4:t + entries + 16 * k + 12])
+                start = 0 if k == 0 else t + off
+                if size == 0 or start + size > len(data):
+                    raise Fail
+                out.append(data[start:start + size])
+            return out
+    raise Fail
+
+
+def png_chunks(data):
+    i = 8
+    while i + 8 <= len(data):
+        n, typ = struct.unpack('>I4s', data[i:i + 8])
+        yield typ, data[i + 8:i + 8 + n]
+        i += 12 + n
+
+
+def open_jpeg(b):
+    return Image.open(io.BytesIO(b)).convert('RGB')
+
+
+def read_single(path):
+    # (left, right) of one stereo file, by its own mark
+    data = open(path, 'rb').read()
+    name = os.path.basename(path)
+    try:
+        if data[:2] == b'\xff\xd8':
+            first = split_mpo(data) if any(m == 0xE2 and data[s + 4:s + 8] == b'MPF\0' for m, s, e in segments(data)) else None
+            if first:
+                a, b = mpf_viewpoints(first[0]), mpf_viewpoints(first[1])
+                if a is None or b is None or a == b:
+                    raise Fail
+                l, r = (first[0], first[1]) if a < b else (first[1], first[0])
+                return open_jpeg(l), open_jpeg(r)
+            descriptor = None
+            for m, s, e in segments(data):
+                if m == 0xE3 and data[s + 4:s + 12] == b'_JPSJPS_':
+                    n = struct.unpack('>H', data[s + 12:s + 14])[0]
+                    if n < 4:
+                        raise Fail
+                    descriptor = struct.unpack('>I', data[s + 14:s + 18])[0]
+            if descriptor is None:
+                if not name.lower().endswith('.jps'):
+                    raise Fail
+                left_first = False
+            else:
+                if descriptor & 0xFF != 1 or (descriptor >> 8) & 0xFF != 2:
+                    raise Fail
+                left_first = bool(descriptor & 0x40000)
+            img = open_jpeg(data)
+            w = img.width // 2
+            a, b = img.crop((0, 0, w, img.height)), img.crop((w, 0, 2 * w, img.height))
+            return (a, b) if left_first else (b, a)
+        if data[:8] == b'\x89PNG\r\n\x1a\n':
+            mode = None
+            for typ, body in png_chunks(data):
+                if typ == b'sTER' and len(body) == 1:
+                    mode = body[0]
+                if typ == b'IDAT':
+                    break
+            if mode is None:
+                if not name.lower().endswith('.pns'):
+                    raise Fail
+                mode = 0
+            if mode not in (0, 1):
+                raise Fail
+            img = Image.open(io.BytesIO(data)).convert('RGB')
+            pad = 15 - ((img.width - 1) % 16)
+            if pad > 7:
+                raise Fail
+            w = (img.width - pad) // 2
+            a, b = img.crop((0, 0, w, img.height)), img.crop((w + pad, 0, 2 * w + pad, img.height))
+            return (a, b) if mode == 1 else (b, a)
+    except (Fail, struct.error, OSError, ValueError):
+        pass
+    raise Fail(S['4'] % name)
+
+
+def read_plain(path):
+    try:
+        return Image.open(path).convert('RGB')
+    except Exception:
+        raise Fail(S['6'] % os.path.basename(path))
+
+
+# ---- Hugin -------------------------------------------------------------------------------------------
+
+def align(left, right, tmp):
+    for n, im in (('0', left), ('1', right)):
+        im.save(os.path.join(tmp, f'eye{n}.tif'), compression='tiff_lzw')
+    cmd = ['align_image_stack', '-S', '--use-given-order', '--align-to-first', '-a', os.path.join(tmp, 'aligned')]
+    if rc('AlignCrop', 'true') == 'true':
+        cmd.append('-C')
+    cmd += [os.path.join(tmp, 'eye0.tif'), os.path.join(tmp, 'eye1.tif')]
+    p = subprocess.run(cmd, capture_output=True, text=True)
+    outs = sorted(f for f in os.listdir(tmp) if f.startswith('aligned') and f.endswith('.tif'))
+    if p.returncode != 0 or len(outs) != 2:
+        raise Fail(S['3'])
+    return [Image.open(os.path.join(tmp, f)).convert('RGB') for f in outs]
+
+
+# ---- writing -----------------------------------------------------------------------------------------
+
+def jpeg(img):
+    b = io.BytesIO()
+    img.save(b, 'JPEG', quality=95, subsampling=0)
+    return b.getvalue()
+
+
+def segment(marker, payload):
+    return bytes([0xFF, marker]) + struct.pack('>H', len(payload) + 2) + payload
+
+
+def write_jps(left, right):
+    canvas = Image.new('RGB', (left.width + right.width, left.height))
+    canvas.paste(left, (0, 0))
+    canvas.paste(right, (left.width, 0))
+    data = jpeg(canvas)
+    # type 1 (stereo), layout 2 (side by side), flag bit 18 (left eye first); then an empty comment
+    block = segment(0xE3, b'_JPSJPS_' + struct.pack('>HIH', 4, 1 | 2 << 8 | 1 << 18, 0))
+    at = insertion_point(data)
+    return data[:at] + block + data[at:]
+
+
+def write_mpo(left, right):
+    a, b = jpeg(left), jpeg(right)
+    version = b'0100'
+    # second image: its own MPF with the attribute IFD only (MPIndividualNum 2)
+    tiff2 = b'II' + struct.pack('<HI', 42, 8) + struct.pack('<H', 2) + struct.pack('<HHI4s', 0xB000, 7, 4, version) + \
+        struct.pack('<HHII', 0xB101, 4, 1, 2) + struct.pack('<I', 0)
+    at2 = insertion_point(b)
+    b = b[:at2] + segment(0xE2, b'MPF\0' + tiff2) + b[at2:]
+    attr_off = 8 + 2 + 3 * 12 + 4
+    entries_off = attr_off + 2 + 2 * 12 + 4
+    at1 = insertion_point(a)
+
+    def first(second_offset, size):
+        index = struct.pack('<H', 3) + struct.pack('<HHI4s', 0xB000, 7, 4, version) + struct.pack('<HHII', 0xB001, 4, 1, 2) + \
+            struct.pack('<HHII', 0xB002, 7, 32, entries_off) + struct.pack('<I', attr_off)
+        attr = struct.pack('<H', 2) + struct.pack('<HHI4s', 0xB000, 7, 4, version) + struct.pack('<HHII', 0xB101, 4, 1, 1) + struct.pack('<I', 0)
+        rec = struct.pack('<IIIHH', 0x020002 | 0x20000000, size, 0, 0, 0) + struct.pack('<IIIHH', 0x020002, len(b), second_offset, 0, 0)
+        return segment(0xE2, b'MPF\0' + b'II' + struct.pack('<HI', 42, 8) + index + attr + rec)
+
+    seg_len = len(first(0, 0))
+    size = len(a) + seg_len
+    tiff_base = at1 + 4 + 4
+    mpf = first(size - tiff_base, size)
+    return a[:at1] + mpf + a[at1:] + b
+
+
+def write_pns(left, right):
+    w = left.width
+    pad = 7 - ((w - 1) % 8)
+    canvas = Image.new('RGB', (2 * w + pad, left.height))
+    canvas.paste(left, (0, 0))
+    canvas.paste(right, (w + pad, 0))
+    if pad:
+        canvas.paste(left.crop((w - 1, 0, w, left.height)).resize((pad, left.height)), (w, 0))
+    b = io.BytesIO()
+    canvas.save(b, 'PNG')
+    data = b.getvalue()
+    body = b'\x01'
+    chunk = struct.pack('>I', 1) + b'sTER' + body + struct.pack('>I', zlib.crc32(b'sTER' + body))
+    ihdr_end = 8 + 12 + 13
+    return data[:ihdr_end] + chunk + data[ihdr_end:]
+
+
+WRITERS = {'jps': write_jps, 'mpo': write_mpo, 'pns': write_pns}
+
+
+def unique(path):
+    base, ext = os.path.splitext(path)
+    out, n = path, 1
+    while os.path.exists(out):
+        out = f'{base}-{n}{ext}'
+        n += 1
+    return out
+
+
+def main():
+    args = sys.argv[1:]
+    if '--' not in args or args[0] not in WRITERS:
+        print('usage: align jps|mpo|pns [swap] -- FILE...', file=sys.stderr)
+        return 2
+    cut = args.index('--')
+    fmt, opts, files = args[0], args[1:cut], [f for f in args[cut + 1:] if os.path.isfile(f)]
+    try:
+        if len(files) == 2:
+            a, b = read_plain(files[0]), read_plain(files[1])
+            if 'swap' in opts:
+                a, b = b, a
+                names = (os.path.basename(files[1]), os.path.basename(files[0]))
+            else:
+                names = (os.path.basename(files[0]), os.path.basename(files[1]))
+            if a.size != b.size:
+                raise Fail(S['5'] % (f'{a.width}x{a.height}', f'{b.width}x{b.height}'))
+        elif len(files) == 1:
+            a, b = read_single(files[0])
+            names = (os.path.basename(files[0]),) * 2
+            if a.size != b.size:
+                raise Fail(S['5'] % (f'{a.width}x{a.height}', f'{b.width}x{b.height}'))
+        else:
+            raise Fail(S['7'])
+        with tempfile.TemporaryDirectory(prefix='sparky-stereo-align-') as tmp:
+            left, right = align(a, b, tmp)
+            out = unique(os.path.join(os.path.dirname(os.path.abspath(files[0])),
+                                      os.path.splitext(os.path.basename(files[0]))[0] + '-aligned.' + fmt))
+            with open(out, 'wb') as f:
+                f.write(WRITERS[fmt](left, right))
+        say(S['2'] % os.path.basename(out) + ((' ' + S['8'] % names) if len(files) == 2 else ''))
+        return 0
+    except Fail as e:
+        say(str(e), error=True)
+        return 1
+
+
+sys.exit(main())

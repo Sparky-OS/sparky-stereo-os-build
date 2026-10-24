@@ -1,0 +1,104 @@
+#!/bin/bash
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/24
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/24
+# Writes the Matroska StereoMode (RFC 9559 section 5.1.4.1.28.3, 0 to 14) of the first video track with
+# mkvpropedit, to the files the person chose it for: mark VALUE|remove -- FILE...
+# Called by the Dolphin menu "Mark as 3D" through sparky-stereo-integration, which has checked for mkvpropedit.
+# Nothing is written to a file the person did not choose, and a file that already has this mark is left alone.
+set -u
+DIR=/usr/share/sparky/sparky-stereo-mkv-mark
+LANGCODE=$(grep -m1 '^LANG=' /etc/default/locale 2>/dev/null | cut -d= -f2 | tr -d '"')
+LANGCODE=${LC_ALL:-${LC_MESSAGES:-${LANG:-$LANGCODE}}}
+LANGCODE=${LANGCODE%%.*}
+LANGCODE=${LANGCODE%%@*}
+if [ -f "$DIR/$LANGCODE" ]; then
+	. "$DIR/$LANGCODE"
+elif [ -f "$DIR/${LANGCODE%%_*}" ]; then
+	. "$DIR/${LANGCODE%%_*}"
+else
+	. "$DIR/en"
+fi
+
+VALUE=${1:-}
+shift || true
+[ "${1:-}" = -- ] && shift
+case "$VALUE" in
+	remove) LABEL=$LOCALREMOVE ;;
+	[0-9]|1[0-4]) eval "LABEL=\$MODE$VALUE" ;;
+	*) echo "usage: mark 0..14|remove -- FILE..." >&2; exit 2 ;;
+esac
+[ $# -gt 0 ] || { echo "usage: mark 0..14|remove -- FILE..." >&2; exit 2; }
+
+ui() { [ "${SPARKY_STEREO_INTEGRATION_UI:-auto}" != none ] && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v kdialog >/dev/null; }
+say() {
+	if ui; then kdialog --title "$LOCAL1" --passivepopup "$1" "${2:-6}" >/dev/null 2>&1 &
+	else echo "$1"; fi
+}
+fail() {
+	if ui; then kdialog --title "$LOCAL1" --error "$1"; else echo "$1" >&2; fi
+}
+
+current() { # the first video track's StereoMode: a number, "none" when the element is absent, "novideo" without a video track
+	mkvmerge -J "$1" 2>/dev/null | python3 -c '
+import json, sys
+try:
+    j = json.load(sys.stdin)
+except Exception:
+    print("error"); sys.exit()
+v = [t for t in j.get("tracks", []) if t.get("type") == "video"]
+if not v:
+    print("novideo")
+else:
+    print(v[0].get("properties", {}).get("stereo_mode", "none"))
+'
+}
+
+name_of() { # a mode number, or none, as words
+	case "$1" in
+		none) echo "-" ;;
+		[0-9]|1[0-4]) eval "echo \"\$MODE$1\"" ;;
+		*) echo "$1" ;;
+	esac
+}
+
+ok=0
+bad=0
+for f in "$@"; do
+	[ -f "$f" ] || continue
+	base=$(basename "$f")
+	cur=$(current "$f")
+	case "$cur" in
+		error) fail "$(printf "$LOCAL2" "$base")"; bad=$((bad + 1)); continue ;;
+		novideo) fail "$(printf "$LOCAL7" "$base")"; bad=$((bad + 1)); continue ;;
+	esac
+	if [ "$VALUE" = remove ]; then
+		[ "$cur" = none ] && { say "$(printf "$LOCAL9" "$base")"; continue; }
+	elif [ "$cur" = "$VALUE" ]; then
+		say "$(printf "$LOCAL5" "$base")"
+		continue
+	fi
+	if [ "$cur" != none ] && [ "$VALUE" != remove ] && ui; then
+		kdialog --title "$LOCAL1" --yesno "$(printf "$LOCAL6" "$base" "$(name_of "$cur")" "$LABEL")" || continue
+	fi
+	if [ "$VALUE" = remove ]; then
+		mkvpropedit --quiet "$f" --edit track:v1 --delete stereo-mode >/dev/null 2>&1
+	else
+		mkvpropedit --quiet "$f" --edit track:v1 --set stereo-mode="$VALUE" >/dev/null 2>&1
+	fi
+	if [ $? -eq 0 ]; then
+		ok=$((ok + 1))
+	else
+		bad=$((bad + 1))
+		fail "$(printf "$LOCAL2" "$base")"
+	fi
+done
+
+if [ "$bad" -eq 0 ]; then
+	if [ "$ok" -gt 0 ]; then
+		if [ "$VALUE" = remove ]; then say "$(printf "$LOCAL4" "$ok")"; else say "$(printf "$LOCAL3" "$ok" "$LABEL")"; fi
+	fi
+else
+	say "$(printf "$LOCAL8" "$ok" "$bad")" 10
+fi
+[ "$bad" -eq 0 ]
