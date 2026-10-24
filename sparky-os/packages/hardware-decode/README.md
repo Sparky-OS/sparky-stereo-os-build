@@ -4,7 +4,8 @@ These patches prepare the shared engines used inside Sparky Stereo.
 mpv, Haruna and mpvqt use the libmpv default unless the person selects a decoder.
 Dragon, Gwenview video and other Qt Multimedia clients already select hardware automatically and retain their shared precision guard.
 MLT selects CUDA or VA-API automatically for Kdenlive, whose new default selects that shared engine behavior.
-VLC Stereo uses a precision preserving hardware copy path independently of the display importer.
+VLC Stereo uses a precision preserving hardware copy path independently of the display importer, when copying back is allowed or the person names a decoder.
+Since ORDER 234 hardware decoding that copies every picture back is the person's choice, or the machine's measured record (`CopyBack` in group `[Decoding]` of `sparky-stereo-graphicsrc`), never the default: on the AMD A10-9600P it dropped many more frames than software decoding. The order is hardware whose pictures the output imports, then software, then copy-back by choice; `tests/copy-back` holds the checks.
 The software choice remains available in every engine.
 The FFmpeg patch is required before installing the new MLT and VLC builds because a declined hardware query must clear decoder private state.
 
@@ -39,14 +40,14 @@ It also checks the real VLC Qt interface in an isolated Weston headless session 
 The qualified binaries are diagnostic builds; use the normal package flags, dependencies and release gates for deliverable packages.
 
 GPU routing also belongs to the shared engines.
-The libplacebo patch retains the driver's display preference instead of promoting a discrete GPU over an integrated GPU.
+ORDER 223's libplacebo patch, which kept the compositor's GPU first, is dropped again in +stereo3d2 (`patches/libplacebo-dmo/DROPPED`): on the A10 rendering on the Carrizo that composites the desktop dropped 589.6 frames a minute of 3D film in frame packing, against 65.3 on its discrete Hainan. libplacebo prefers the discrete GPU again; the display GPU stays a choice through Mesa's device selection and mpv's `--vulkan-device`.
 MLT, Qt Multimedia and VLC use the adjacent `media-gpu-route` library to select a supported decoder on that display GPU before startup where possible.
 The library can select another GPU for a source the display GPU cannot decode at its depth.
 Its runtime must be built first.
 For these three sources, pass `--gpu-route-min-version VERSION` in addition to the FFmpeg floor.
 The preparation helper inserts both the build dependency and the runtime floor.
 For Qt Multimedia it also retains the accepted full side by side Quick surface patch.
-`prepare.py libplacebo-dmo` prepares the library correction for all consumers of libplacebo, including mpv.
+`prepare.py libplacebo-dmo` prepares libplacebo for all its consumers, including mpv, and drops the patches `DROPPED` lists.
 No per-film rule or user configuration file is installed.
 The renderer still owns hardware surface import, copy fallback and transfer to the compositor.
 GL follows the window system's display device; this change does not force a global DRI_PRIME value.
