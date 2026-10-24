@@ -1,11 +1,11 @@
 # SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack)
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Drafted with AI assistance (Claude Sonnet 5.5, round 2 Claude Opus 5.5); needs review by a native speaker.
+# Drafted with AI assistance (Claude Sonnet 5.5, round 2 and ORDER 239 Claude Opus 5.5); needs review by a native speaker.
 msgid ""
 msgstr ""
 "Project-Id-Version: sparky-stereo-graphics\n"
 "Report-Msgid-Bugs-To: \n"
-"PO-Revision-Date: 2026-10-24 12:00-0300\n"
+"PO-Revision-Date: 2026-10-24 04:15-0300\n"
 "Last-Translator: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>\n"
 "Language-Team: Sparky Stereo OS\n"
 "MIME-Version: 1.0\n"
@@ -136,9 +136,10 @@ msgstr "프로그램"
 msgctxt "@info"
 msgid ""
 "This is the same setting as Run Using Dedicated Graphics in the application "
-"menu. The other GPU is the one that does not draw the desktop. A change "
-"applies the next time the program starts."
-msgstr "응용 프로그램 메뉴의 \"전용 GPU로 실행\"과 같은 설정입니다. 다른 GPU는 데스크톱을 그리지 않는 GPU입니다. 변경 사항은 프로그램을 다음에 시작할 때 적용됩니다."
+"menu. The dedicated GPU is the discrete GPU; when the GPU the computer "
+"starts with is already discrete, the program stays on it. A change applies "
+"the next time the program starts."
+msgstr "응용 프로그램 메뉴의 \"전용 GPU로 실행\"과 같은 설정입니다. 전용 GPU는 외장 GPU입니다. 컴퓨터가 시작할 때 쓰는 GPU가 이미 외장 GPU이면 프로그램은 그 GPU에 그대로 있습니다. 변경 사항은 프로그램을 다음에 시작할 때 적용됩니다."
 
 #: src/ui/main.qml:284
 msgctxt "@info %1 is a GPU name"
@@ -247,198 +248,203 @@ msgstr "균형 프로필"
 
 #: src/graphicskcm.cpp:80
 msgctxt "@info"
+msgid "the GPU that draws the desktop"
+msgstr "데스크톱을 그리는 GPU"
+
+#: src/graphicskcm.cpp:83
+msgctxt "@info"
 msgid "the program's own setting"
 msgstr "프로그램 자체 설정"
 
-#: src/graphicskcm.cpp:83
+#: src/graphicskcm.cpp:86
 msgctxt "@info"
 msgid "measured best for this model"
 msgstr "이 모델에서 가장 좋다고 측정됨"
 
-#: src/graphicskcm.cpp:83
+#: src/graphicskcm.cpp:86
 msgctxt "@info"
 msgid "measured best on this computer"
 msgstr "이 컴퓨터에서 가장 좋다고 측정됨"
 
-#: src/graphicskcm.cpp:86
+#: src/graphicskcm.cpp:89
 msgctxt "@info"
 msgid "not measured on this computer yet"
 msgstr "이 컴퓨터에서 아직 측정되지 않음"
 
-#: src/graphicskcm.cpp:88
+#: src/graphicskcm.cpp:91
 msgctxt "@info"
 msgid "your choice"
 msgstr "사용자의 선택"
 
-#: src/graphicskcm.cpp:141
+#: src/graphicskcm.cpp:144
 msgctxt "@info"
 msgid "The graphics settings could not be saved."
 msgstr "그래픽 설정을 저장하지 못했습니다."
 
-#: src/graphicskcm.cpp:146
+#: src/graphicskcm.cpp:149
 msgctxt "@info %1 is a program's menu entry"
 msgid "The setting for %1 could not be saved."
 msgstr "%1의 설정을 저장하지 못했습니다."
 
-#: src/graphicskcm.cpp:151
+#: src/graphicskcm.cpp:154
 msgctxt "@info"
 msgid ""
 "The power setting could not be changed. The power profile service may not "
 "allow it."
 msgstr "전원 설정을 변경하지 못했습니다. 전원 프로필 서비스가 허용하지 않을 수 있습니다."
 
-#: src/graphicskcm.cpp:195
+#: src/graphicskcm.cpp:198
 msgctxt "@label kind of GPU"
 msgid "Integrated"
 msgstr "내장"
 
-#: src/graphicskcm.cpp:195
+#: src/graphicskcm.cpp:198
 msgctxt "@label kind of GPU"
 msgid "Discrete"
 msgstr "외장"
 
-#: src/graphicskcm.cpp:197
+#: src/graphicskcm.cpp:200
 msgctxt "@label kind of GPU"
 msgid "Display adapter only"
 msgstr "디스플레이 어댑터 전용"
 
-#: src/graphicskcm.cpp:203
+#: src/graphicskcm.cpp:206
 msgctxt "@info"
 msgid "No driver loaded"
 msgstr "불러온 드라이버 없음"
 
-#: src/graphicskcm.cpp:203
+#: src/graphicskcm.cpp:206
 msgctxt "@info %1 is a kernel driver name"
 msgid "Driver: %1"
 msgstr "드라이버: %1"
 
-#: src/graphicskcm.cpp:204
+#: src/graphicskcm.cpp:207
 msgctxt "@info"
 msgid "No screen attached"
 msgstr "연결된 화면 없음"
 
-#: src/graphicskcm.cpp:204
+#: src/graphicskcm.cpp:207
 msgctxt "@info %1 is a list of screens"
 msgid "Screens: %1"
 msgstr "화면: %1"
 
-#: src/graphicskcm.cpp:209
+#: src/graphicskcm.cpp:212
 msgctxt "@info %1 is a list of kinds of program"
 msgid "Used now for: %1"
 msgstr "현재 사용 중: %1"
 
-#: src/graphicskcm.cpp:248
+#: src/graphicskcm.cpp:251
 msgctxt "@item:inlistbox %1 is a GPU name"
 msgid "Automatic (%1)"
 msgstr "자동 (%1)"
 
-#: src/graphicskcm.cpp:255 src/graphicskcm.cpp:307
+#: src/graphicskcm.cpp:258 src/graphicskcm.cpp:310
 msgctxt "@item:inlistbox %1 is a PCI address"
 msgid "Missing GPU (%1)"
 msgstr "없는 GPU (%1)"
 
-#: src/graphicskcm.cpp:279
+#: src/graphicskcm.cpp:282
 msgctxt "@item:inlistbox"
 msgid "Automatic"
 msgstr "자동"
 
-#: src/graphicskcm.cpp:280
+#: src/graphicskcm.cpp:283
 msgctxt "@item:inlistbox"
 msgid "Follow the power profile"
 msgstr "전원 프로필 따르기"
 
-#: src/graphicskcm.cpp:291
+#: src/graphicskcm.cpp:294
 msgctxt "@item:inlistbox"
 msgid "Integrated GPU"
 msgstr "내장 GPU"
 
-#: src/graphicskcm.cpp:294
+#: src/graphicskcm.cpp:297
 msgctxt "@item:inlistbox"
 msgid "Discrete GPU"
 msgstr "외장 GPU"
 
-#: src/graphicskcm.cpp:322
+#: src/graphicskcm.cpp:325
 msgctxt "@info %1 is a GPU name, %2 the reason"
 msgid "Started in 3D: %1, %2"
 msgstr "3D로 시작하면: %1, %2"
 
-#: src/graphicskcm.cpp:331
+#: src/graphicskcm.cpp:334
 msgctxt "@info %1 is a GPU name, %2 the reason"
 msgid "Now: %1, %2"
 msgstr "현재: %1, %2"
 
-#: src/graphicskcm.cpp:357
+#: src/graphicskcm.cpp:360
 msgctxt "@info"
 msgid ""
-"Power profile: Power Saver. Automatic draws games, browsers and other "
-"programs on the integrated GPU."
-msgstr "전원 프로필: 절전. 자동은 게임, 브라우저, 기타 프로그램을 내장 GPU에서 그립니다."
+"Power profile: Power Saver. Automatic draws browsers on the integrated GPU. "
+"Other programs stay on the GPU that draws the desktop."
+msgstr "전원 프로필: 절전. 자동은 브라우저를 내장 GPU에서 그립니다. 기타 프로그램은 데스크톱을 그리는 GPU에 그대로 있습니다."
 
-#: src/graphicskcm.cpp:359
+#: src/graphicskcm.cpp:362
 msgctxt "@info"
 msgid ""
-"Power profile: Performance. Automatic draws games, browsers and other "
-"programs on the discrete GPU."
-msgstr "전원 프로필: 성능. 자동은 게임, 브라우저, 기타 프로그램을 외장 GPU에서 그립니다."
+"Power profile: Performance. Automatic draws browsers on the discrete GPU. "
+"Other programs stay on the GPU that draws the desktop."
+msgstr "전원 프로필: 성능. 자동은 브라우저를 외장 GPU에서 그립니다. 기타 프로그램은 데스크톱을 그리는 GPU에 그대로 있습니다."
 
-#: src/graphicskcm.cpp:363
+#: src/graphicskcm.cpp:366
 msgctxt "@info"
 msgid ""
-"Power profile: Balanced. Automatic draws games, browsers and other programs "
-"on the GPU that draws the desktop."
-msgstr "전원 프로필: 균형. 자동은 게임, 브라우저, 기타 프로그램을 데스크톱을 그리는 GPU에서 그립니다."
+"Power profile: Balanced. Automatic draws browsers on the GPU that draws the "
+"desktop. Other programs stay there too."
+msgstr "전원 프로필: 균형. 자동은 브라우저를 데스크톱을 그리는 GPU에서 그립니다. 기타 프로그램도 그곳에 그대로 있습니다."
 
-#: src/graphicskcm.cpp:375
+#: src/graphicskcm.cpp:378
 msgctxt "@info %1 is a GPU name"
 msgid ""
-"Automatic draws players, and any program started in 3D, on %1 whatever the "
-"power profile, on battery too. This computer has not been measured yet, so "
-"that is its discrete GPU."
-msgstr "자동은 플레이어와 3D로 시작한 모든 프로그램을 전원 프로필과 관계없이, 배터리 사용 중에도 %1에서 그립니다. 이 컴퓨터는 아직 측정되지 않아 이것은 외장 GPU입니다."
+"Automatic draws players, games and any program started in 3D on %1 whatever "
+"the power profile, on battery too. This computer has not been measured yet, "
+"so that is its discrete GPU."
+msgstr "자동은 플레이어, 게임, 3D로 시작한 모든 프로그램을 전원 프로필과 관계없이, 배터리 사용 중에도 %1에서 그립니다. 이 컴퓨터는 아직 측정되지 않아 이것은 외장 GPU입니다."
 
-#: src/graphicskcm.cpp:381
+#: src/graphicskcm.cpp:384
 msgctxt "@info %1 is a GPU name, %2 a computer model"
 msgid ""
-"Automatic draws players, and any program started in 3D, on %1 whatever the "
-"power profile, on battery too: it was measured best for them on the %2."
-msgstr "자동은 플레이어와 3D로 시작한 모든 프로그램을 전원 프로필과 관계없이, 배터리 사용 중에도 %1에서 그립니다. %2에서 이들에게 가장 좋다고 측정되었습니다."
+"Automatic draws players, games and any program started in 3D on %1 whatever "
+"the power profile, on battery too: it was measured best for them on the %2."
+msgstr "자동은 플레이어, 게임, 3D로 시작한 모든 프로그램을 전원 프로필과 관계없이, 배터리 사용 중에도 %1에서 그립니다. %2에서 이들에게 가장 좋다고 측정되었습니다."
 
-#: src/graphicskcm.cpp:387
+#: src/graphicskcm.cpp:390
 msgctxt "@info %1 is a GPU name"
 msgid ""
-"Automatic draws players, and any program started in 3D, on %1 whatever the "
-"power profile, on battery too: it was measured best for them on this "
+"Automatic draws players, games and any program started in 3D on %1 whatever "
+"the power profile, on battery too: it was measured best for them on this "
 "computer."
-msgstr "자동은 플레이어와 3D로 시작한 모든 프로그램을 전원 프로필과 관계없이, 배터리 사용 중에도 %1에서 그립니다. 이 컴퓨터에서 이들에게 가장 좋다고 측정되었습니다."
+msgstr "자동은 플레이어, 게임, 3D로 시작한 모든 프로그램을 전원 프로필과 관계없이, 배터리 사용 중에도 %1에서 그립니다. 이 컴퓨터에서 이들에게 가장 좋다고 측정되었습니다."
 
-#: src/graphicskcm.cpp:412
+#: src/graphicskcm.cpp:415
 msgctxt "@info"
 msgid ""
 "This computer has not been measured for it, so it is Off unless you turn it "
 "on."
 msgstr "이 컴퓨터는 이 항목이 측정되지 않아, 켜지 않는 한 꺼져 있습니다."
 
-#: src/graphicskcm.cpp:414
+#: src/graphicskcm.cpp:417
 msgctxt "@info"
 msgid "This computer's measured setting: On."
 msgstr "이 컴퓨터의 측정된 설정: 켜짐."
 
-#: src/graphicskcm.cpp:414
+#: src/graphicskcm.cpp:417
 msgctxt "@info"
 msgid "This computer's measured setting: Off."
 msgstr "이 컴퓨터의 측정된 설정: 꺼짐."
 
-#: src/graphicskcm.cpp:481
+#: src/graphicskcm.cpp:484
 msgctxt "@item:inlistbox"
 msgid "Same as its group"
 msgstr "그룹과 같음"
 
-#: src/graphicskcm.cpp:482
+#: src/graphicskcm.cpp:485
 msgctxt "@item:inlistbox"
-msgid "The other GPU"
-msgstr "다른 GPU"
+msgid "The dedicated GPU"
+msgstr "전용 GPU"
 
-#: src/graphicskcm.cpp:483
+#: src/graphicskcm.cpp:486
 msgctxt "@item:inlistbox"
 msgid "The main GPU"
 msgstr "주 GPU"
