@@ -225,6 +225,8 @@ group('hardware', 'Hardware support', [
     'acpi', 'acpid', 'acpitool',   # battery, thermal and ACPI event tools (kacpimon comes with acpid)
     'acpi-call-dkms',   # ACPI method calls: battery thresholds on older ThinkPads, hybrid-graphics power switching
     'acpi-support',   # hotkey scripts; check in the VM that the power button acts once (logind and PowerDevil handle it too)
+    'edid-decode', 'ddcutil',   # read what a display announces (EDID) and talk DDC/CI, on the live image and every
+    # install (Lutz Moehr's XREAL glasses, 2026-10-24); libddcutil5 was already here for PowerDevil
 ])
 
 # 7b. Installed by the hardware setup only when it finds the hardware (not in the base build).
