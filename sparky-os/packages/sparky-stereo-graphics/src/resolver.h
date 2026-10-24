@@ -25,7 +25,7 @@ struct Resolution {
     int gpuIndex = -1; // into the inventory, -1 when the machine has no GPU
     bool isMain = true;
     bool missing = false; // the saved choice names a GPU that is not here
-    QString reason; // "app", "choice", "profile:performance", "measured", "unmeasured", "only-gpu", ...
+    QString reason; // "app", "choice", "profile:performance", "desktop", "measured", "unmeasured", "only-gpu", ...
     QStringList environment; // KEY=value lines; empty for the main GPU
 };
 
@@ -52,9 +52,12 @@ public:
     Resolution resolveCategory(Category category, const GraphicsSettings &settings, bool stereo = false) const;
     Resolution resolveApp(const AppEntry &entry, const GraphicsSettings &settings, bool stereo = false) const;
 
-    // What Automatic means for a kind of program now: "measured" (players, and any program while it
-    // presents 3D, whatever the profile), else "integrated", "main" or "discrete" by the power profile
+    // What Automatic means for a kind of program now: "measured" for players, games and any program while it
+    // presents 3D, whatever the profile; for browsers "integrated", "main" or "discrete" by the power profile;
+    // "main" (the GPU that draws the desktop) for other programs
     static QString automaticTarget(Category category, PowerProfile profile, bool stereo = false);
+    // What the power profile asks for: "integrated", "main" or "discrete"
+    static QString profileTarget(PowerProfile profile);
 
     // Value of KWIN_DRM_DEVICES that puts the main GPU first, or empty when the saved choice is Automatic or missing
     QString kwinDrmDevices() const;

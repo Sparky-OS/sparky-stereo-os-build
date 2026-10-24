@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack)
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# powerprofilestest and the command line against a private bus carrying fake-ppd.py.
+# powerprofilestest and the command line against a private bus carrying fake-ppd.py (browsers: the kind that follows the profile).
 set -u
 BIN=${BIN:?}
 SRC=${SRC:?}
@@ -25,13 +25,13 @@ grep -q ready "$T/ppd.log" || { cat "$T/ppd.log"; exit 1; }
 # the command line reads the profile from the daemon too
 "$BIN/makefixture" host "$T/host" || exit 1
 export XDG_CONFIG_HOME=$T/c XDG_CONFIG_DIRS=$T/c XDG_DATA_HOME=$T/d XDG_DATA_DIRS=$T/u
-got=$(SPARKY_STEREO_GRAPHICS_ROOT=$T/host "$BIN/sparky-stereo-gpu-env" --category games --print gpu)
+got=$(SPARKY_STEREO_GRAPHICS_ROOT=$T/host "$BIN/sparky-stereo-gpu-env" --category browsers --print gpu)
 [ "$got" = "NVIDIA GeForce RTX 3060 Lite Hash Rate" ] || { echo "FAIL cli profile from the daemon: $got"; exit 1; }
 echo "powerprofiles: cli follows the daemon's performance profile"
 # the daemon gone, on a bus that still runs, and no bus at all: Balanced, the page and the command keep working
 kill $PPD; wait $PPD 2>/dev/null
-got=$(SPARKY_STEREO_GRAPHICS_ROOT=$T/host "$BIN/sparky-stereo-gpu-env" --category games --print gpu)
+got=$(SPARKY_STEREO_GRAPHICS_ROOT=$T/host "$BIN/sparky-stereo-gpu-env" --category browsers --print gpu)
 [ "$got" = "AMD Radeon Vega Series / Radeon Vega Mobile Series" ] || { echo "FAIL cli without the daemon: $got"; exit 1; }
-got=$(DBUS_SYSTEM_BUS_ADDRESS=unix:path=/nonexistent/bus SPARKY_STEREO_GRAPHICS_ROOT=$T/host "$BIN/sparky-stereo-gpu-env" --category games --print gpu)
+got=$(DBUS_SYSTEM_BUS_ADDRESS=unix:path=/nonexistent/bus SPARKY_STEREO_GRAPHICS_ROOT=$T/host "$BIN/sparky-stereo-gpu-env" --category browsers --print gpu)
 [ "$got" = "AMD Radeon Vega Series / Radeon Vega Mobile Series" ] || { echo "FAIL cli without a bus: $got"; exit 1; }
 echo "powerprofiles: without the daemon or the bus the profile is Balanced"

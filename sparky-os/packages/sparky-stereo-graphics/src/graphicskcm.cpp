@@ -76,6 +76,9 @@ QString GraphicsKcm::reasonText(const Resolution &resolution) const
     if (resolution.reason == u"profile:balanced"_s) {
         return i18nc("@info", "balanced profile");
     }
+    if (resolution.reason == u"desktop"_s) {
+        return i18nc("@info", "the GPU that draws the desktop");
+    }
     if (resolution.reason == u"app"_s) {
         return i18nc("@info", "the program's own setting");
     }
@@ -354,13 +357,13 @@ QString GraphicsKcm::profileText() const
 {
     switch (m_profile) {
     case PowerProfile::PowerSaver:
-        return i18nc("@info", "Power profile: Power Saver. Automatic draws games, browsers and other programs on the integrated GPU.");
+        return i18nc("@info", "Power profile: Power Saver. Automatic draws browsers on the integrated GPU. Other programs stay on the GPU that draws the desktop.");
     case PowerProfile::Performance:
-        return i18nc("@info", "Power profile: Performance. Automatic draws games, browsers and other programs on the discrete GPU.");
+        return i18nc("@info", "Power profile: Performance. Automatic draws browsers on the discrete GPU. Other programs stay on the GPU that draws the desktop.");
     case PowerProfile::Balanced:
         break;
     }
-    return i18nc("@info", "Power profile: Balanced. Automatic draws games, browsers and other programs on the GPU that draws the desktop.");
+    return i18nc("@info", "Power profile: Balanced. Automatic draws browsers on the GPU that draws the desktop. Other programs stay there too.");
 }
 
 QString GraphicsKcm::measuredText() const
@@ -372,20 +375,20 @@ QString GraphicsKcm::measuredText() const
     const QString gpu = gpuLabel(r.presentingIndex());
     if (r.measuredIndex() < 0) {
         return i18nc("@info %1 is a GPU name",
-                     "Automatic draws players, and any program started in 3D, on %1 whatever the power profile, on battery too. This computer has not "
-                     "been measured yet, so that is its discrete GPU.",
+                     "Automatic draws players, games and any program started in 3D on %1 whatever the power profile, on battery too. This computer has "
+                     "not been measured yet, so that is its discrete GPU.",
                      gpu);
     }
     if (m_record.origin == u"shipped"_s && !m_record.model.isEmpty()) {
         return i18nc("@info %1 is a GPU name, %2 a computer model",
-                     "Automatic draws players, and any program started in 3D, on %1 whatever the power profile, on battery too: it was measured "
-                     "best for them on the %2.",
+                     "Automatic draws players, games and any program started in 3D on %1 whatever the power profile, on battery too: it was "
+                     "measured best for them on the %2.",
                      gpu,
                      m_record.model);
     }
     return i18nc("@info %1 is a GPU name",
-                 "Automatic draws players, and any program started in 3D, on %1 whatever the power profile, on battery too: it was measured best "
-                 "for them on this computer.",
+                 "Automatic draws players, games and any program started in 3D on %1 whatever the power profile, on battery too: it was measured "
+                 "best for them on this computer.",
                  gpu);
 }
 

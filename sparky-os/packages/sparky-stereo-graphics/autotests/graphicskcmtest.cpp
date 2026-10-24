@@ -156,15 +156,18 @@ void GraphicsKcmTest::hostListsBothGpus()
     QCOMPARE(options.size(), 3);
     QVERIFY(options[0].toMap().value(u"text"_s).toString().startsWith(u"Automatic ("_s));
     QCOMPARE(options[2].toMap().value(u"value"_s).toString(), u"pci-0000:01:00.0"_s);
-    // four kinds of program, each with a place to draw now: players on the discrete GPU (not measured
-    // here), the rest on balanced's GPU that draws the desktop
+    // four kinds of program, each with a place to draw now: players and games on the discrete GPU (not
+    // measured here), browsers on balanced's GPU that draws the desktop, other programs there in every profile
     const QVariantList categories = kcm->categories();
     QCOMPARE(categories.size(), 4);
     for (const QVariant &c : categories) {
         const QString now = c.toMap().value(u"nowText"_s).toString();
-        const bool players = c.toMap().value(u"key"_s).toString() == u"Players"_s;
-        QVERIFY2(now.startsWith(players ? u"Now: NVIDIA"_s : u"Now: AMD"_s), qPrintable(now));
+        const QString key = c.toMap().value(u"key"_s).toString();
+        const bool measured = key == u"Players"_s || key == u"Games"_s;
+        QVERIFY2(now.startsWith(measured ? u"Now: NVIDIA"_s : u"Now: AMD"_s), qPrintable(key + u": "_s + now));
     }
+    QVERIFY2(row(categories, u"key"_s, u"Other"_s).value(u"nowText"_s).toString().contains(u"the GPU that draws the desktop"_s),
+             qPrintable(row(categories, u"key"_s, u"Other"_s).value(u"nowText"_s).toString()));
     QVERIFY(!kcm->needsSave());
 }
 
@@ -228,8 +231,12 @@ void GraphicsKcmTest::categoryChoiceRoundTrip()
 {
     qputenv("SPARKY_STEREO_POWER_PROFILE", "performance");
     auto kcm = page(u"host"_s);
-    // Automatic on the performance profile: the discrete GPU
+    // Automatic on the performance profile: games and browsers on the discrete GPU, other programs on the desktop's
     QVERIFY(row(kcm->categories(), u"key"_s, u"Games"_s).value(u"nowText"_s).toString().contains(u"NVIDIA"_s));
+    QVERIFY(row(kcm->categories(), u"key"_s, u"Browsers"_s).value(u"nowText"_s).toString().contains(u"NVIDIA"_s));
+    QVERIFY(row(kcm->categories(), u"key"_s, u"Other"_s).value(u"nowText"_s).toString().contains(u"AMD"_s));
+    QVERIFY2(kcm->profileText().contains(u"browsers on the discrete GPU"_s), qPrintable(kcm->profileText()));
+    QVERIFY2(kcm->profileText().contains(u"Other programs stay on the GPU that draws the desktop"_s), qPrintable(kcm->profileText()));
     kcm->setCategoryChoice(u"Games"_s, u"integrated"_s);
     kcm->setCategoryChoice(u"Players"_s, u"pci-0000:01:00.0"_s);
     QVERIFY(row(kcm->categories(), u"key"_s, u"Games"_s).value(u"nowText"_s).toString().contains(u"AMD"_s));
@@ -357,12 +364,18 @@ void GraphicsKcmTest::a10PlayersOnTheMeasuredGpuOnBattery()
         // the card of the R5 M430 says players draw there
         QVERIFY(kcm->gpus()[1].toMap().value(u"usedText"_s).toString().contains(u"Players"_s));
     }
-    // on battery a game in 2D stays on the integrated GPU, the same game started in 3D goes to the R5 M430
+    // on battery a game draws on the R5 M430 in 2D too; a browser in 2D stays on the integrated GPU, started in 3D it goes to the R5 M430
     qputenv("SPARKY_STEREO_POWER_PROFILE", "power-saver");
     auto kcm = page(u"a10"_s);
     const QVariantMap games = row(kcm->categories(), u"key"_s, u"Games"_s);
-    QVERIFY2(games.value(u"nowText"_s).toString().contains(u"R5/R6/R7"_s), qPrintable(games.value(u"nowText"_s).toString()));
-    QVERIFY2(games.value(u"stereoText"_s).toString().contains(u"M430"_s), qPrintable(games.value(u"stereoText"_s).toString()));
+    QVERIFY2(games.value(u"nowText"_s).toString().contains(u"M430"_s), qPrintable(games.value(u"nowText"_s).toString()));
+    QVERIFY(games.value(u"stereoText"_s).toString().isEmpty());
+    const QVariantMap browsers = row(kcm->categories(), u"key"_s, u"Browsers"_s);
+    QVERIFY2(browsers.value(u"nowText"_s).toString().contains(u"R5/R6/R7"_s), qPrintable(browsers.value(u"nowText"_s).toString()));
+    QVERIFY2(browsers.value(u"stereoText"_s).toString().contains(u"M430"_s), qPrintable(browsers.value(u"stereoText"_s).toString()));
+    QVERIFY2(kcm->measuredText().contains(u"players, games and any program started in 3D"_s), qPrintable(kcm->measuredText()));
+    // a program's own setting is KDE's dedicated GPU
+    QCOMPARE(kcm->appOptions()[1].toMap().value(u"text"_s).toString(), u"The dedicated GPU"_s);
     QVERIFY(row(kcm->categories(), u"key"_s, u"Players"_s).value(u"stereoText"_s).toString().isEmpty());
     // the person's choice wins
     kcm->setCategoryChoice(u"Players"_s, u"integrated"_s);

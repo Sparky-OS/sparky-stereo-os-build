@@ -149,11 +149,20 @@ int Resolver::firstOfKind(GpuKind kind) const
 
 QString Resolver::automaticTarget(Category category, PowerProfile profile, bool stereo)
 {
-    // Daniel, 2026-10-24: players, and any program while it presents 3D, draw on the GPU measured best on the
-    // machine whatever the power profile, battery included; the person's choice wins over it
-    if (category == Category::Players || stereo) {
+    // Daniel, 2026-10-24, split by kind: players, games and any program while it presents 3D draw on the GPU
+    // measured best on the machine whatever the power profile, battery included; browsers follow the power
+    // profile; other programs stay on the GPU that draws the desktop. The person's choice wins over it
+    if (category == Category::Players || category == Category::Games || stereo) {
         return u"measured"_s;
     }
+    if (category == Category::Browsers) {
+        return profileTarget(profile);
+    }
+    return u"main"_s;
+}
+
+QString Resolver::profileTarget(PowerProfile profile)
+{
     switch (profile) {
     case PowerProfile::PowerSaver:
         return u"integrated"_s;
@@ -162,7 +171,7 @@ QString Resolver::automaticTarget(Category category, PowerProfile profile, bool 
     case PowerProfile::Balanced:
         break;
     }
-    // the GPU that draws the desktop: no hand-over between GPUs for games, browsers and other programs
+    // the GPU that draws the desktop: no hand-over between GPUs
     return u"main"_s;
 }
 
@@ -206,11 +215,14 @@ Resolution Resolver::resolveChoice(const QString &choice, Category category, boo
     QString reason = u"choice"_s;
     bool missing = false;
     if (choice == u"auto"_s || choice == u"profile"_s) {
-        const QString target = choice == u"profile"_s ? automaticTarget(Category::Other, m_profile) : automaticTarget(category, m_profile, stereo);
+        const QString target = choice == u"profile"_s ? profileTarget(m_profile) : automaticTarget(category, m_profile, stereo);
         reason = u"profile:"_s + powerProfileToString(m_profile);
         if (target == u"measured"_s) {
             index = presentingIndex();
             reason = measuredIndex() >= 0 ? u"measured"_s : u"unmeasured"_s;
+        } else if (choice == u"auto"_s && category == Category::Other && !stereo) {
+            index = main;
+            reason = u"desktop"_s;
         } else if (target == u"integrated"_s) {
             index = firstOfKind(GpuKind::Integrated);
         } else if (target == u"discrete"_s) {

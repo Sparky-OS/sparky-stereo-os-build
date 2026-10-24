@@ -29,10 +29,16 @@ for p in power-saver balanced performance; do
 	check "players $p, not measured: the reason" "$(env_for host --category players --profile $p --print reason)" unmeasured
 	check "a10 players $p -> the R5 M430" "$(env_for a10 --category players --profile $p --print render-node)" "/dev/dri/renderD129"
 done
-check "games balanced -> main GPU, no variables" "$(env_for host --category games --profile balanced | wc -l)" 0
+check "browsers balanced -> main GPU, no variables" "$(env_for host --category browsers --profile balanced | wc -l)" 0
+# split by kind (Daniel, 2026-10-24): other programs on the GPU that draws the desktop in every profile, browsers by the profile, games measured
+for p in power-saver balanced performance; do
+	check "other $p -> the desktop's GPU, no variables" "$(env_for host --category other --profile $p | wc -l) $(env_for host --category other --profile $p --print reason)" "0 desktop"
+	check "a10 games $p -> the R5 M430" "$(env_for a10 --category games --profile $p --print render-node)" "/dev/dri/renderD129"
+done
+check "browsers performance -> NVIDIA offload" "$(env_for host --category browsers --profile performance | grep -c '^__NV_PRIME_RENDER_OFFLOAD=1$')" 1
+check "a10 browsers on battery: integrated" "$(env_for a10 --category browsers --profile power-saver --print render-node)" "/dev/dri/renderD128"
 check "gpu name" "$(env_for host --category games --profile performance --print gpu)" "NVIDIA GeForce RTX 3060 Lite Hash Rate"
-check "a10 games on battery: integrated" "$(env_for a10 --category games --profile power-saver --print render-node)" "/dev/dri/renderD128"
-check "a10 games on battery started in 3D: the R5 M430" "$(env_for a10 --category games --3d --profile power-saver --print render-node)" "/dev/dri/renderD129"
+check "a10 browsers on battery started in 3D: the R5 M430" "$(env_for a10 --category browsers --3d --profile power-saver --print render-node)" "/dev/dri/renderD129"
 check "a10 any program started in 3D" "$(env_for a10 --3d --profile power-saver --print render-node)" "/dev/dri/renderD129"
 check "follow the power profile, a player on battery" "$(env_for a10 --choice profile --profile power-saver --print render-node)" "/dev/dri/renderD128"
 check "follow the power profile, on performance" "$(env_for a10 --choice profile --profile performance --print render-node)" "/dev/dri/renderD129"
@@ -40,9 +46,13 @@ check "follow the power profile, on performance" "$(env_for a10 --choice profile
 mkdir -p "$T/Desktop"
 printf '[Desktop Entry]\nType=Application\nName=Player\nExec=true\nCategories=AudioVideo;Video;Player;\n' >"$T/Desktop/player.desktop"
 printf '[Desktop Entry]\nType=Application\nName=Game\nExec=true\nCategories=Game;\n' >"$T/Desktop/game.desktop"
+printf '[Desktop Entry]\nType=Application\nName=Browser\nExec=true\nCategories=Network;WebBrowser;\n' >"$T/Desktop/browser.desktop"
+printf '[Desktop Entry]\nType=Application\nName=Music\nExec=true\nCategories=Qt;KDE;Audio;AudioVideo;\n' >"$T/Desktop/music.desktop"
 check "a10 player outside the menu, on battery: the R5 M430" "$(env_for a10 --app "$T/Desktop/player.desktop" --profile power-saver --print render-node)" "/dev/dri/renderD129"
-check "a10 game outside the menu, on battery: integrated" "$(env_for a10 --app "$T/Desktop/game.desktop" --profile power-saver --print render-node)" "/dev/dri/renderD128"
-check "a10 game outside the menu, on performance" "$(env_for a10 --app "$T/Desktop/game.desktop" --profile performance | head -1)" "DRI_PRIME=pci-0000_03_00_0"
+check "a10 game outside the menu, on battery: the R5 M430" "$(env_for a10 --app "$T/Desktop/game.desktop" --profile power-saver --print render-node)" "/dev/dri/renderD129"
+check "a10 browser outside the menu, on battery: integrated" "$(env_for a10 --app "$T/Desktop/browser.desktop" --profile power-saver --print render-node)" "/dev/dri/renderD128"
+check "a10 browser outside the menu, on performance" "$(env_for a10 --app "$T/Desktop/browser.desktop" --profile performance | head -1)" "DRI_PRIME=pci-0000_03_00_0"
+check "an audio player (Audio without Video) is another program" "$(env_for a10 --app "$T/Desktop/music.desktop" --profile performance | wc -l) $(env_for a10 --app "$T/Desktop/music.desktop" --print reason)" "0 desktop"
 check "a desktop file that is not there exits 2" "$(env_for a10 --app "$T/Desktop/missing.desktop" >/dev/null 2>&1; echo $?)" 2
 check "shell form quotes the star" "$(env_for host --category games --profile performance --shell | grep VK_LOADER)" "export VK_LOADER_DRIVERS_SELECT='*nvidia*'"
 check "one GPU: nothing to export" "$(env_for one --category games --profile performance | wc -l)" 0
@@ -113,10 +123,11 @@ wrapped() { # root profile args...
 }
 check "wrapper: performance games get the offload" "$(wrapped host performance --category games env | grep -c '^__NV_PRIME_RENDER_OFFLOAD=1$')" 1
 check "wrapper: the star arrives unexpanded" "$(wrapped host performance --category games env | grep '^VK_LOADER')" "VK_LOADER_DRIVERS_SELECT=*nvidia*"
-check "wrapper: balanced adds nothing" "$(wrapped host balanced --category games env | grep -c -E '^(DRI_PRIME|__NV_PRIME)')" 0
-check "wrapper: a game started in 3D on battery" "$(wrapped a10 power-saver --category games --3d env | grep '^DRI_PRIME')" "DRI_PRIME=pci-0000_03_00_0"
-check "wrapper: --3d first" "$(wrapped a10 power-saver --3d --category games env | grep '^DRI_PRIME')" "DRI_PRIME=pci-0000_03_00_0"
-check "wrapper: the same game in 2D" "$(wrapped a10 power-saver --category games env | grep -c '^DRI_PRIME')" 0
+check "wrapper: balanced adds nothing" "$(wrapped host balanced --category browsers env | grep -c -E '^(DRI_PRIME|__NV_PRIME)')" 0
+check "wrapper: a browser started in 3D on battery" "$(wrapped a10 power-saver --category browsers --3d env | grep '^DRI_PRIME')" "DRI_PRIME=pci-0000_03_00_0"
+check "wrapper: --3d first" "$(wrapped a10 power-saver --3d --category browsers env | grep '^DRI_PRIME')" "DRI_PRIME=pci-0000_03_00_0"
+check "wrapper: the same browser in 2D" "$(wrapped a10 power-saver --category browsers env | grep -c '^DRI_PRIME')" 0
+check "wrapper: a game on battery on the R5 M430" "$(wrapped a10 power-saver --category games env | grep '^DRI_PRIME')" "DRI_PRIME=pci-0000_03_00_0"
 check "wrapper: arguments are passed on" "$(wrapped host balanced --category games printf '%s|' a 'b c')" "a|b c|"
 check "wrapper: no option, the command runs" "$(wrapped host balanced printf ok)" ok
 check "wrapper: -- ends the options" "$(wrapped host performance -- printf ok)" ok
