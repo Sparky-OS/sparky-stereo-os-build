@@ -5,7 +5,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.2.1
+VERSION=0.2.2
 PACKAGE=sparky-stereo-graphics
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.graphics.XXXXXX")
@@ -39,9 +39,10 @@ Homepage: https://sparkylinux.org
 Description: Graphics page for System Settings
   Lists every graphics processor, lets the person choose which one draws the
   desktop and where players, games, browsers and other programs draw, and
-  edits KDE's own per-program setting. Automatic puts players, and any program
-  started in 3D, on the GPU measured best on the machine whatever the power
-  profile, and the rest by the power profile. Also the copy-back choice of
+  edits KDE's own per-program setting. Automatic puts players, games and any
+  program started in 3D on the GPU measured best on the machine whatever the
+  power profile, browsers by the power profile, and other programs on the GPU
+  that draws the desktop. Also the copy-back choice of
   hardware video decoding, the GPU power switches of power-profiles-daemon,
   and the machine record shipped for measured models.
 EOS
@@ -119,6 +120,21 @@ Description: Graphics page for System Settings
 EOS
 cat >"$S/debian/changelog" <<EOS
 $PACKAGE ($VERSION) unstable; urgency=medium
+
+  * Automatic split by kind (Daniel, 2026-10-24): players, games and any
+    program started in 3D on the GPU measured best whatever the power
+    profile; browsers by the power profile; other programs on the GPU that
+    draws the desktop in every profile.
+  * PrefersNonDefaultGPU=true means what KDE's launcher does with it: the
+    first discrete GPU, nothing when the default GPU is discrete; the page
+    calls it "The dedicated GPU".
+  * An audio program without video counts as another program.
+  * From an NVIDIA desktop to a Mesa GPU, name Mesa's EGL and GLX vendors.
+  * sparky-stereo-gpu-run keeps a GPU its caller already chose.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 24 Oct 2026 04:03:00 -0300
+
+$PACKAGE (0.2.1) unstable; urgency=medium
 
   * sparky-stereo-gpu-env --app also takes the path of a desktop file outside
     the menu (a launcher on the desktop), as Plasma's launcher (kf6-kio
