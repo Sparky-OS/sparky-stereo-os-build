@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack)
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.22)
-project(sparky-stereo-graphics VERSION 0.1.0)
+project(sparky-stereo-graphics VERSION 0.2.2)
 
 set(QT_MIN_VERSION "6.8.0")
 set(KF_MIN_VERSION "6.10.0")
@@ -30,6 +30,9 @@ endif()
 
 install(PROGRAMS share/sparky-stereo-gpu-run DESTINATION ${KDE_INSTALL_BINDIR})
 install(FILES share/plasma-env/sparky-stereo-graphics.sh DESTINATION /etc/xdg/plasma-workspace/env)
+file(GLOB SPARKY_MACHINES share/machines/*.conf)
+install(FILES ${SPARKY_MACHINES} DESTINATION ${KDE_INSTALL_DATADIR}/sparky-stereo-graphics/machines)
+install(FILES share/systemd/sparky-stereo-gpu-record.service DESTINATION ${KDE_INSTALL_SYSTEMDUNITDIR}/system)
 
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/po)
     ki18n_install(po)

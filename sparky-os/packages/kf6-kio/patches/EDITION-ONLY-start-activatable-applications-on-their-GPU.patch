@@ -1,0 +1,207 @@
+Description: Start an activatable application itself when it runs on another GPU
+ D-Bus activation starts an application with the session bus's environment,
+ so the variables of its GPU never reached a DBusActivatable entry: neither
+ KDE's own PrefersNonDefaultGPU nor the Graphics page's answer. The GPU
+ environment is now decided first; when there is one and the entry has an
+ Exec line, the application is started through the forking or systemd
+ runner instead of Activate. Without a GPU environment it is activated as
+ before. Tests: shouldStartAnActivatableApplicationOnItsGpu, an entry in
+ Elisa's form with and without a GPU to run on.
+Author: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Forwarded: not-needed, edition-only (builds on the Graphics page patch before it)
+Last-Update: 2026-10-24
+
+diff --git a/autotests/applicationlauncherjobtest.cpp b/autotests/applicationlauncherjobtest.cpp
+index 6c244cf..7014111 100644
+--- a/autotests/applicationlauncherjobtest.cpp
++++ b/autotests/applicationlauncherjobtest.cpp
+@@ -24,6 +24,9 @@
+ #include <signal.h> // kill
+ #endif
+ 
++#ifdef WITH_QTDBUS
++#include <QDBusConnection>
++#endif
+ #include <QRegularExpression>
+ #include <QStandardPaths>
+ #include <QTemporaryDir>
+@@ -578,6 +581,95 @@ void ApplicationLauncherJobTest::shouldRunOnTheGpuOfTheGraphicsSettings()
+ #endif
+ }
+ 
++void ApplicationLauncherJobTest::shouldStartAnActivatableApplicationOnItsGpu_data()
++{
++    QTest::addColumn<bool>("gpuEnvironment");
++    QTest::newRow("runs_on_another_gpu") << true;
++    QTest::newRow("runs_on_the_desktop_gpu") << false;
++}
++
++void ApplicationLauncherJobTest::shouldStartAnActivatableApplicationOnItsGpu()
++{
++#ifdef WITH_QTDBUS
++    QFETCH(bool, gpuEnvironment);
++    QDBusConnection bus = QDBusConnection::sessionBus();
++    if (!bus.isConnected()) {
++        QSKIP("This test needs a session bus");
++    }
++
++    // Given the stand-in resolver, answering a GPU for the application or nothing
++    QTemporaryDir tempDir;
++    const QString dir = tempDir.path();
++    QVERIFY(QDir(dir).mkpath(QStringLiteral("bin")));
++    QFile resolver(dir + QLatin1String("/bin/sparky-stereo-gpu-env"));
++    QVERIFY(resolver.open(QIODevice::WriteOnly));
++    resolver.write(s_fakeResolver);
++    resolver.close();
++    QVERIFY(resolver.setPermissions(resolver.permissions() | QFileDevice::ExeOwner));
++    const auto writeFile = [&dir](const QString &name, const QByteArray &content) {
++        QFile file(dir + QLatin1Char('/') + name);
++        QVERIFY(file.open(QIODevice::WriteOnly));
++        file.write(content);
++    };
++    writeFile(QStringLiteral("mode"), "answer");
++    writeFile(QStringLiteral("profile"), "balanced");
++
++    // and an application in Elisa's form: a reverse-DNS name, DBusActivatable=true and an Exec line
++    const QString name = gpuEnvironment ? QStringLiteral("org.kde.kiogputest.activatable1") : QStringLiteral("org.kde.kiogputest.activatable2");
++    const QString id = name + QLatin1String(".desktop");
++    const QString desktopFilePath = QStandardPaths::writableLocation(QStandardPaths::ApplicationsLocation) + QLatin1Char('/') + id;
++    const QString envFile = dir + QLatin1String("/env");
++    {
++        KDesktopFile file(desktopFilePath);
++        KConfigGroup group = file.desktopGroup();
++        group.writeEntry("Name", "KIOGpuTestActivatable");
++        group.writeEntry("Type", "Application");
++        group.writeEntry("Exec", QStringLiteral("sh -c 'env > %1'").arg(envFile));
++        group.writeEntry("Categories", "Qt;KDE;Audio;AudioVideo;");
++        group.writeEntry("DBusActivatable", true);
++        QVERIFY(file.sync());
++    }
++    m_filesToRemove.append(desktopFilePath);
++    writeFile(QStringLiteral("answers"), gpuEnvironment ? id.toUtf8() + " balanced DRI_PRIME=pci-0000_99_00_0 VK_LOADER_DRIVERS_SELECT=*kiogputest*\n" : QByteArray());
++    ksycoca_ms_between_checks = 0;
++    KService::Ptr service = KService::serviceByMenuId(id);
++    ksycoca_ms_between_checks = 5000;
++    QVERIFY(service);
++
++    // already on the session bus, where activation finds it
++    ActivatedApplication application;
++    QVERIFY(bus.registerService(name));
++    QVERIFY(bus.registerObject(QLatin1Char('/') + QString(name).replace(QLatin1Char('.'), QLatin1Char('/')), &application, QDBusConnection::ExportAllSlots));
++
++    // When starting it
++    const QByteArray oldPath = qgetenv("PATH");
++    qputenv("PATH", QByteArray(QFile::encodeName(dir) + "/bin:" + oldPath));
++    qunsetenv("DRI_PRIME");
++    KIO::ApplicationLauncherJob *job = new KIO::ApplicationLauncherJob(service, this);
++    const bool started = job->exec();
++    qputenv("PATH", oldPath);
++    QVERIFY2(started, qPrintable(job->errorString()));
++
++    // Then KIO starts it itself with its GPU's variables, which activation would lose; without them it is activated
++    if (gpuEnvironment) {
++        QTRY_VERIFY(QFileInfo(envFile).size() > 0);
++        QFile envOutput(envFile);
++        QVERIFY(envOutput.open(QIODevice::ReadOnly));
++        QVERIFY(envOutput.readAll().split('\n').contains("DRI_PRIME=pci-0000_99_00_0"));
++        QCOMPARE(application.activated, 0);
++    } else {
++        QTRY_COMPARE(application.activated, 1);
++        QVERIFY(!QFile::exists(envFile));
++    }
++
++    bus.unregisterObject(QLatin1Char('/') + QString(name).replace(QLatin1Char('.'), QLatin1Char('/')));
++    bus.unregisterService(name);
++    QTRY_COMPARE(KProcessRunner::instanceCount(), 0);
++#else
++    QSKIP("D-Bus activation needs QtDBus");
++#endif
++}
++
+ void ApplicationLauncherJobTest::writeTempServiceDesktopFile(const QString &filePath)
+ {
+     if (QFile::exists(filePath)) {
+diff --git a/autotests/applicationlauncherjobtest.h b/autotests/applicationlauncherjobtest.h
+index 0e4be3e..34609c0 100644
+--- a/autotests/applicationlauncherjobtest.h
++++ b/autotests/applicationlauncherjobtest.h
+@@ -10,6 +10,28 @@
+ 
+ #include <QObject>
+ #include <QStringList>
++#include <QVariantMap>
++
++// An application the session bus can activate: it counts the Activate calls it gets
++class ActivatedApplication : public QObject
++{
++    Q_OBJECT
++    Q_CLASSINFO("D-Bus Interface", "org.freedesktop.Application")
++
++public:
++    int activated = 0;
++
++public Q_SLOTS:
++    void Activate()
++    {
++        ++activated;
++    }
++    void Activate(const QVariantMap &platformData)
++    {
++        Q_UNUSED(platformData);
++        ++activated;
++    }
++};
+ 
+ class ApplicationLauncherJobTest : public QObject
+ {
+@@ -38,6 +60,9 @@ private Q_SLOTS:
+     void shouldRunOnTheGpuOfTheGraphicsSettings_data();
+     void shouldRunOnTheGpuOfTheGraphicsSettings();
+ 
++    void shouldStartAnActivatableApplicationOnItsGpu_data();
++    void shouldStartAnActivatableApplicationOnItsGpu();
++
+ private:
+     QString createTempService();
+     void writeTempServiceDesktopFile(const QString &filePath);
+diff --git a/src/gui/kprocessrunner.cpp b/src/gui/kprocessrunner.cpp
+index 63f6ab9..8bae56f 100644
+--- a/src/gui/kprocessrunner.cpp
++++ b/src/gui/kprocessrunner.cpp
+@@ -96,6 +96,14 @@ KProcessRunner *KProcessRunner::fromApplication(const KService::Ptr &service,
+                                                 const QString &suggestedFileName,
+                                                 const QByteArray &asn)
+ {
++    // Where the application runs: its own PrefersNonDefaultGPU, else what the graphics settings choose
++    QProcessEnvironment gpuEnv;
++#ifndef Q_OS_ANDROID
++    if (service->isValid()) {
++        gpuEnv = service->runOnDiscreteGpu() ? KIO::discreteGpuEnvironment() : KIO::graphicsSettingsEnvironment(*service);
++    }
++#endif
++
+ #ifdef WITH_QTDBUS
+     // special case for applicationlauncherjob
+     // FIXME: KProcessRunner is currently broken and fails to prepare the m_urls member
+@@ -105,7 +113,9 @@ KProcessRunner *KProcessRunner::fromApplication(const KService::Ptr &service,
+     // the invoked service/executable might not support.
+     KProcessRunner *instance;
+     const bool notYetSupportedOpenActivationNeeded = !urls.isEmpty();
+-    if (!notYetSupportedOpenActivationNeeded && DBusActivationRunner::activationPossible(service, flags, suggestedFileName)) {
++    // D-Bus activation would start it without the variables of its GPU, so it is started itself
++    const bool needsGpuEnv = !gpuEnv.isEmpty() && !service->exec().isEmpty();
++    if (!notYetSupportedOpenActivationNeeded && !needsGpuEnv && DBusActivationRunner::activationPossible(service, flags, suggestedFileName)) {
+         const auto actions = service->actions();
+         auto action = std::find_if(actions.cbegin(), actions.cend(), [actionName](const KServiceAction &action) {
+             return action.name() == actionName;
+@@ -140,9 +150,7 @@ KProcessRunner *KProcessRunner::fromApplication(const KService::Ptr &service,
+     *instance->m_process << args;
+ 
+ #ifndef Q_OS_ANDROID
+-    if (service->runOnDiscreteGpu()) {
+-        modifyEnv(*instance->m_process, KIO::discreteGpuEnvironment());
+-    } else if (const QProcessEnvironment gpuEnv = KIO::graphicsSettingsEnvironment(*service); !gpuEnv.isEmpty()) {
++    if (!gpuEnv.isEmpty()) {
+         modifyEnv(*instance->m_process, gpuEnv);
+     }
+ #endif

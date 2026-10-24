@@ -4,6 +4,7 @@
 // hostprobe: the page against the machine it runs on (the real sysfs), for the container proofs.
 //   hostprobe list                 print what the page lists
 //   hostprobe choose MAINID        save a main GPU and Games=discrete, print what a fresh page reads back
+//   hostprobe copyback on|off      set "Copy decoded video back" and Apply, print the file and a fresh page
 #include "graphicskcm.h"
 
 #include <KPluginMetaData>
@@ -32,8 +33,22 @@ static void print(const GraphicsKcm &kcm, QTextStream &out)
     for (const QVariant &c : kcm.categories()) {
         const QVariantMap m = c.toMap();
         out << "category " << m.value(u"key"_s).toString() << " choice=" << m.value(u"choice"_s).toString() << " " << m.value(u"nowText"_s).toString() << "\n";
+        if (!m.value(u"stereoText"_s).toString().isEmpty()) {
+            out << "  " << m.value(u"stereoText"_s).toString() << "\n";
+        }
     }
-    out << kcm.profileText() << "\n";
+    out << kcm.measuredText() << "\n" << kcm.profileText() << "\n";
+    out << "copy-back=" << (kcm.copyBack() ? "on" : "off") << " " << kcm.copyBackMachineText() << "\n";
+}
+
+static void printFile(QTextStream &out)
+{
+    const QString path = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + u"/sparky-stereo-graphicsrc"_s;
+    out << "saved; file " << path << ":\n";
+    QFile file(path);
+    if (file.open(QIODevice::ReadOnly)) {
+        out << QString::fromUtf8(file.readAll());
+    }
 }
 
 int main(int argc, char **argv)
@@ -60,6 +75,16 @@ int main(int argc, char **argv)
         if (file.open(QIODevice::ReadOnly)) {
             out << QString::fromUtf8(file.readAll());
         }
+        GraphicsKcm fresh(nullptr, KPluginMetaData());
+        fresh.load();
+        out << "-- read back by a fresh page --\n";
+        print(fresh, out);
+        return 0;
+    }
+    if (args.first() == u"copyback"_s && args.size() == 2) {
+        kcm.setCopyBack(args.at(1) == u"on"_s);
+        kcm.save();
+        printFile(out);
         GraphicsKcm fresh(nullptr, KPluginMetaData());
         fresh.load();
         out << "-- read back by a fresh page --\n";

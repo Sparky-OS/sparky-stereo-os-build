@@ -16,6 +16,11 @@ private Q_SLOTS:
     void initTestCase();
     void profileNames();
     void automaticTargets();
+    void playersOnTheMeasuredGpu_data();
+    void playersOnTheMeasuredGpu();
+    void threeDFollowsTheMeasuredGpu();
+    void followThePowerProfileIsAChoice();
+    void oneGpuIgnoresTheRecord();
     void automaticMain_data();
     void automaticMain();
     void profileMapping_data();
@@ -66,9 +71,122 @@ void ResolverTest::profileNames()
 
 void ResolverTest::automaticTargets()
 {
-    QCOMPARE(Resolver::automaticTarget(PowerProfile::PowerSaver), u"integrated"_s);
-    QCOMPARE(Resolver::automaticTarget(PowerProfile::Balanced), u"main"_s);
-    QCOMPARE(Resolver::automaticTarget(PowerProfile::Performance), u"discrete"_s);
+    // Daniel, 2026-10-24, split by kind: players, games and any program presenting 3D on the GPU measured best,
+    // battery included; browsers by the power profile; other programs on the GPU that draws the desktop
+    for (PowerProfile profile : {PowerProfile::PowerSaver, PowerProfile::Balanced, PowerProfile::Performance}) {
+        QCOMPARE(Resolver::automaticTarget(Category::Players, profile), u"measured"_s);
+        QCOMPARE(Resolver::automaticTarget(Category::Games, profile), u"measured"_s);
+        QCOMPARE(Resolver::automaticTarget(Category::Other, profile), u"main"_s);
+        for (Category category : {Category::Players, Category::Games, Category::Browsers, Category::Other}) {
+            QCOMPARE(Resolver::automaticTarget(category, profile, true), u"measured"_s);
+        }
+    }
+    QCOMPARE(Resolver::automaticTarget(Category::Browsers, PowerProfile::PowerSaver), u"integrated"_s);
+    QCOMPARE(Resolver::automaticTarget(Category::Browsers, PowerProfile::Balanced), u"main"_s);
+    QCOMPARE(Resolver::automaticTarget(Category::Browsers, PowerProfile::Performance), u"discrete"_s);
+}
+
+void ResolverTest::playersOnTheMeasuredGpu_data()
+{
+    QTest::addColumn<int>("machine"); // 1 a10, 2 host, 4 three
+    QTest::addColumn<QString>("record"); // the machine record's BestGpu
+    QTest::addColumn<QString>("profile");
+    QTest::addColumn<int>("expected");
+    QTest::addColumn<QString>("reason");
+    QTest::addColumn<QString>("environmentContains");
+    // the A10: the R5 M430 (Hainan) dropped about a ninth of the frames the Carrizo that drives the screens did (ORDER 234)
+    for (const QString &profile : {u"power-saver"_s, u"balanced"_s, u"performance"_s}) {
+        QTest::addRow("a10 record by id, %s", qPrintable(profile)) << 1 << u"1002:6660"_s << profile << 1 << u"measured"_s << u"DRI_PRIME=pci-0000_03_00_0"_s;
+        QTest::addRow("a10 record by slot, %s", qPrintable(profile)) << 1 << u"pci-0000:03:00.0"_s << profile << 1 << u"measured"_s << u"DRI_PRIME=pci-0000_03_00_0"_s;
+        // without a record: the discrete GPU, also on battery
+        QTest::addRow("a10 not measured, %s", qPrintable(profile)) << 1 << QString() << profile << 1 << u"unmeasured"_s << u"DRI_PRIME=pci-0000_03_00_0"_s;
+        QTest::addRow("host not measured, %s", qPrintable(profile)) << 2 << QString() << profile << 1 << u"unmeasured"_s << u"__NV_PRIME_RENDER_OFFLOAD=1"_s;
+        // a record that names the GPU that draws the desktop keeps players there, even on performance
+        QTest::addRow("host record names the APU, %s", qPrintable(profile)) << 2 << u"1002:1638"_s << profile << 0 << u"measured"_s << QString();
+        QTest::addRow("three record names the third, %s", qPrintable(profile)) << 4 << u"pci-0000:02:00.0"_s << profile << 2 << u"measured"_s << u"DRI_PRIME=pci-0000_02_00_0"_s;
+        // a record for a GPU that is not here: as if not measured
+        QTest::addRow("a10 record names a missing GPU, %s", qPrintable(profile)) << 1 << u"10de:2504"_s << profile << 1 << u"unmeasured"_s << u"DRI_PRIME=pci-0000_03_00_0"_s;
+    }
+}
+
+void ResolverTest::playersOnTheMeasuredGpu()
+{
+    QFETCH(int, machine);
+    QFETCH(QString, record);
+    QFETCH(QString, profile);
+    QFETCH(int, expected);
+    QFETCH(QString, reason);
+    QFETCH(QString, environmentContains);
+    const QList<QList<FixtureGpu>> machines = {{SysfsFixture::intel()}, SysfsFixture::a10(), SysfsFixture::host(), {}, SysfsFixture::three()};
+    Resolver resolver(read(machines[machine]), QString(), powerProfileFromString(profile), record);
+    GraphicsSettings settings;
+    const Resolution r = resolver.resolveCategory(Category::Players, settings);
+    QCOMPARE(r.gpuIndex, expected);
+    QCOMPARE(r.reason, reason);
+    if (environmentContains.isEmpty()) {
+        QVERIFY2(r.environment.isEmpty(), qPrintable(r.environment.join(u' ')));
+    } else {
+        QVERIFY2(r.environment.contains(environmentContains), qPrintable(r.environment.join(u' ')));
+    }
+    QCOMPARE(resolver.presentingIndex(), expected);
+}
+
+void ResolverTest::threeDFollowsTheMeasuredGpu()
+{
+    GraphicsSettings settings;
+    // the A10 on battery: a game on the measured R5 M430 in 2D and in 3D; a browser in 2D on the integrated GPU, in 3D on the R5 M430
+    Resolver battery(read(SysfsFixture::a10()), QString(), PowerProfile::PowerSaver, u"1002:6660"_s);
+    QCOMPARE(battery.resolveCategory(Category::Games, settings).gpuIndex, 1);
+    QCOMPARE(battery.resolveCategory(Category::Games, settings).reason, u"measured"_s);
+    QCOMPARE(battery.resolveCategory(Category::Browsers, settings).gpuIndex, 0);
+    QCOMPARE(battery.resolveCategory(Category::Browsers, settings, true).gpuIndex, 1);
+    QCOMPARE(battery.resolveCategory(Category::Games, settings, true).gpuIndex, 1);
+    QCOMPARE(battery.resolveCategory(Category::Games, settings, true).reason, u"measured"_s);
+    QCOMPARE(battery.resolveCategory(Category::Other, settings, true).gpuIndex, 1);
+    // the person's choice wins over Automatic, in 3D as well
+    settings.setRenderChoice(Category::Games, u"integrated"_s);
+    QCOMPARE(battery.resolveCategory(Category::Games, settings, true).gpuIndex, 0);
+    QCOMPARE(battery.resolveCategory(Category::Games, settings, true).reason, u"choice"_s);
+    settings.setRenderChoice(Category::Players, u"integrated"_s);
+    QCOMPARE(battery.resolveCategory(Category::Players, settings).gpuIndex, 0);
+    // a program's own setting wins over everything
+    AppEntry app;
+    app.category = Category::Players;
+    app.preference = AppPreference::MainGpu;
+    GraphicsSettings automatic;
+    QCOMPARE(battery.resolveApp(app, automatic, true).gpuIndex, 0);
+    app.preference = AppPreference::Unset;
+    QCOMPARE(battery.resolveApp(app, automatic).gpuIndex, 1);
+    app.category = Category::Other;
+    QCOMPARE(battery.resolveApp(app, automatic).gpuIndex, 0);
+    QCOMPARE(battery.resolveApp(app, automatic, true).gpuIndex, 1);
+}
+
+void ResolverTest::followThePowerProfileIsAChoice()
+{
+    // "profile" keeps the power profile in charge where Automatic would not: players, and 3D
+    GraphicsSettings settings;
+    settings.setRenderChoice(Category::Players, u"profile"_s);
+    settings.setRenderChoice(Category::Games, u"profile"_s);
+    Resolver battery(read(SysfsFixture::a10()), QString(), PowerProfile::PowerSaver, u"1002:6660"_s);
+    QCOMPARE(battery.resolveCategory(Category::Players, settings).gpuIndex, 0);
+    QCOMPARE(battery.resolveCategory(Category::Players, settings).reason, u"profile:power-saver"_s);
+    QCOMPARE(battery.resolveCategory(Category::Games, settings, true).gpuIndex, 0);
+    Resolver mains(read(SysfsFixture::a10()), QString(), PowerProfile::Performance, u"1002:6660"_s);
+    QCOMPARE(mains.resolveCategory(Category::Players, settings).gpuIndex, 1);
+    Resolver balanced(read(SysfsFixture::host()), QString(), PowerProfile::Balanced);
+    QCOMPARE(balanced.resolveChoice(u"profile"_s, Category::Players).gpuIndex, 0);
+    QCOMPARE(balanced.resolveChoice(u"profile"_s, Category::Players).reason, u"profile:balanced"_s);
+}
+
+void ResolverTest::oneGpuIgnoresTheRecord()
+{
+    Resolver one(read({SysfsFixture::intel()}), QString(), PowerProfile::PowerSaver, u"1002:6660"_s);
+    GraphicsSettings settings;
+    const Resolution r = one.resolveCategory(Category::Players, settings, true);
+    QCOMPARE(r.gpuIndex, 0);
+    QCOMPARE(r.reason, u"only-gpu"_s);
+    QVERIFY(r.environment.isEmpty());
 }
 
 void ResolverTest::automaticMain_data()
@@ -94,6 +212,7 @@ void ResolverTest::automaticMain()
 
 void ResolverTest::profileMapping_data()
 {
+    QTest::addColumn<int>("category");
     QTest::addColumn<int>("machine"); // 0 one, 1 a10, 2 host, 4 three
     QTest::addColumn<QString>("savedMain");
     QTest::addColumn<QString>("profile");
@@ -101,28 +220,41 @@ void ResolverTest::profileMapping_data()
     QTest::addColumn<bool>("isMain");
     QTest::addColumn<QString>("environmentContains");
 
-    QTest::newRow("one saver") << 0 << QString() << u"power-saver"_s << 0 << true << QString();
-    QTest::newRow("one performance") << 0 << QString() << u"performance"_s << 0 << true << QString();
+    const int browsers = int(Category::Browsers);
+    const int other = int(Category::Other);
+    QTest::newRow("browsers one saver") << browsers << 0 << QString() << u"power-saver"_s << 0 << true << QString();
+    QTest::newRow("browsers one performance") << browsers << 0 << QString() << u"performance"_s << 0 << true << QString();
 
-    QTest::newRow("a10 saver") << 1 << QString() << u"power-saver"_s << 0 << true << QString();
-    QTest::newRow("a10 balanced") << 1 << QString() << u"balanced"_s << 0 << true << QString();
-    QTest::newRow("a10 performance") << 1 << QString() << u"performance"_s << 1 << false << u"DRI_PRIME=pci-0000_03_00_0"_s;
+    QTest::newRow("browsers a10 saver") << browsers << 1 << QString() << u"power-saver"_s << 0 << true << QString();
+    QTest::newRow("browsers a10 balanced") << browsers << 1 << QString() << u"balanced"_s << 0 << true << QString();
+    QTest::newRow("browsers a10 performance") << browsers << 1 << QString() << u"performance"_s << 1 << false << u"DRI_PRIME=pci-0000_03_00_0"_s;
 
-    QTest::newRow("host saver") << 2 << QString() << u"power-saver"_s << 0 << true << QString();
-    QTest::newRow("host balanced") << 2 << QString() << u"balanced"_s << 0 << true << QString();
-    QTest::newRow("host performance") << 2 << QString() << u"performance"_s << 1 << false << u"__NV_PRIME_RENDER_OFFLOAD=1"_s;
+    QTest::newRow("browsers host saver") << browsers << 2 << QString() << u"power-saver"_s << 0 << true << QString();
+    QTest::newRow("browsers host balanced") << browsers << 2 << QString() << u"balanced"_s << 0 << true << QString();
+    QTest::newRow("browsers host performance") << browsers << 2 << QString() << u"performance"_s << 1 << false << u"__NV_PRIME_RENDER_OFFLOAD=1"_s;
 
-    // the person made the RTX 3060 the main GPU: it is then the ordinary path, the APU the offload
-    QTest::newRow("host main nvidia saver") << 2 << u"pci-0000:01:00.0"_s << u"power-saver"_s << 0 << false << u"DRI_PRIME=pci-0000_0b_00_0"_s;
-    QTest::newRow("host main nvidia balanced") << 2 << u"pci-0000:01:00.0"_s << u"balanced"_s << 1 << true << QString();
-    QTest::newRow("host main nvidia performance") << 2 << u"pci-0000:01:00.0"_s << u"performance"_s << 1 << true << QString();
+    // the person made the RTX 3060 the main GPU: it is then the ordinary path, the APU the offload, with Mesa's EGL and GLX named
+    QTest::newRow("browsers host main nvidia saver") << browsers << 2 << u"pci-0000:01:00.0"_s << u"power-saver"_s << 0 << false
+                                                     << u"__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json"_s;
+    QTest::newRow("browsers host main nvidia balanced") << browsers << 2 << u"pci-0000:01:00.0"_s << u"balanced"_s << 1 << true << QString();
+    QTest::newRow("browsers host main nvidia performance") << browsers << 2 << u"pci-0000:01:00.0"_s << u"performance"_s << 1 << true << QString();
 
-    QTest::newRow("three saver") << 4 << QString() << u"power-saver"_s << 0 << true << QString();
-    QTest::newRow("three performance: the first discrete") << 4 << QString() << u"performance"_s << 1 << false << u"__NV_PRIME_RENDER_OFFLOAD=1"_s;
+    QTest::newRow("browsers three saver") << browsers << 4 << QString() << u"power-saver"_s << 0 << true << QString();
+    QTest::newRow("browsers three performance: the first discrete") << browsers << 4 << QString() << u"performance"_s << 1 << false
+                                                                   << u"__NV_PRIME_RENDER_OFFLOAD=1"_s;
+
+    // other programs stay on the GPU that draws the desktop in every profile
+    for (const QString &profile : {u"power-saver"_s, u"balanced"_s, u"performance"_s}) {
+        QTest::addRow("other a10 %s", qPrintable(profile)) << other << 1 << QString() << profile << 0 << true << QString();
+        QTest::addRow("other host %s", qPrintable(profile)) << other << 2 << QString() << profile << 0 << true << QString();
+        QTest::addRow("other host main nvidia %s", qPrintable(profile)) << other << 2 << u"pci-0000:01:00.0"_s << profile << 1 << true << QString();
+        QTest::addRow("other three %s", qPrintable(profile)) << other << 4 << QString() << profile << 0 << true << QString();
+    }
 }
 
 void ResolverTest::profileMapping()
 {
+    QFETCH(int, category);
     QFETCH(int, machine);
     QFETCH(QString, savedMain);
     QFETCH(QString, profile);
@@ -131,7 +263,7 @@ void ResolverTest::profileMapping()
     QFETCH(QString, environmentContains);
     const QList<QList<FixtureGpu>> machines = {{SysfsFixture::intel()}, SysfsFixture::a10(), SysfsFixture::host(), {}, SysfsFixture::three()};
     Resolver resolver(read(machines[machine]), savedMain, powerProfileFromString(profile));
-    const Resolution r = resolver.resolveChoice(u"auto"_s);
+    const Resolution r = resolver.resolveChoice(u"auto"_s, Category(category));
     QCOMPARE(r.gpuIndex, expected);
     QCOMPARE(r.isMain, isMain);
     QVERIFY(!r.missing);
@@ -140,7 +272,7 @@ void ResolverTest::profileMapping()
     } else {
         QVERIFY2(r.environment.contains(environmentContains), qPrintable(r.environment.join(u' ')));
     }
-    QVERIFY(r.reason.startsWith(u"profile:"_s) || r.reason == u"only-gpu"_s);
+    QVERIFY(r.reason.startsWith(u"profile:"_s) || r.reason == u"desktop"_s || r.reason == u"only-gpu"_s);
 }
 
 void ResolverTest::explicitChoices()
@@ -246,6 +378,16 @@ void ResolverTest::environments()
     QCOMPARE(Resolver::environmentFor(host[0]), (QStringList{u"DRI_PRIME=pci-0000_0b_00_0"_s, u"VK_LOADER_DRIVERS_SELECT=*radeon*"_s}));
     const QList<Gpu> intel = read({SysfsFixture::intel()});
     QCOMPARE(Resolver::environmentFor(intel[0]), (QStringList{u"DRI_PRIME=pci-0000_00_02_0"_s, u"VK_LOADER_DRIVERS_SELECT=*intel*"_s}));
+
+    // NVIDIA draws the desktop: glvnd would give a program its EGL and GLX first, so a program sent to the APU names Mesa's
+    Resolver nvidiaMain(host, u"pci-0000:01:00.0"_s, PowerProfile::Balanced);
+    QCOMPARE(nvidiaMain.resolveChoice(u"integrated"_s).environment,
+             (QStringList{u"DRI_PRIME=pci-0000_0b_00_0"_s, u"VK_LOADER_DRIVERS_SELECT=*radeon*"_s,
+                          u"__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json"_s, u"__GLX_VENDOR_LIBRARY_NAME=mesa"_s}));
+    // the APU draws the desktop: Mesa is already first, nothing more to name
+    Resolver apuMain(host, QString(), PowerProfile::Balanced);
+    QCOMPARE(apuMain.resolveChoice(u"discrete"_s).environment, Resolver::environmentFor(host[1]));
+    QCOMPARE(apuMain.resolveChoice(host[0].id).environment, QStringList());
 }
 
 void ResolverTest::appPreferences()
@@ -262,15 +404,37 @@ void ResolverTest::appPreferences()
     QCOMPARE(r.reason, u"app"_s);
     QVERIFY(!r.environment.isEmpty());
 
-    // "the other GPU" is relative to the main one, as KDE's key is relative to the default
+    // KDE's meaning of the key (Desktop Entry Specification: "a more powerful discrete GPU if available"; KIO's
+    // gpudetection.cpp): the first discrete GPU, also when the person made it the main GPU, so no variables then
     Resolver nvidiaMain(read(SysfsFixture::host()), u"pci-0000:01:00.0"_s, PowerProfile::Balanced);
-    QCOMPARE(nvidiaMain.resolveApp(app, settings).gpuIndex, 0);
+    r = nvidiaMain.resolveApp(app, settings);
+    QCOMPARE(r.gpuIndex, 1);
+    QVERIFY(r.environment.isEmpty());
 
-    // three GPUs: the first of the opposite kind
+    // three GPUs: the first discrete one, whichever GPU draws the desktop
     Resolver three(read(SysfsFixture::three()), QString(), PowerProfile::Balanced);
     QCOMPARE(three.resolveApp(app, settings).gpuIndex, 1);
     Resolver threeNvidiaMain(read(SysfsFixture::three()), u"pci-0000:01:00.0"_s, PowerProfile::Balanced);
-    QCOMPARE(threeNvidiaMain.resolveApp(app, settings).gpuIndex, 0);
+    QCOMPARE(threeNvidiaMain.resolveApp(app, settings).gpuIndex, 1);
+    Resolver threeAmdMain(read(SysfsFixture::three()), u"pci-0000:02:00.0"_s, PowerProfile::Balanced);
+    QCOMPARE(threeAmdMain.resolveApp(app, settings).gpuIndex, 1);
+
+    // the default GPU (switcheroo-control's Default: the boot VGA) is discrete: the program stays where it is
+    QList<FixtureGpu> desktop = SysfsFixture::host();
+    desktop[0].bootVga = false;
+    desktop[1].bootVga = true;
+    Resolver discreteDefault(read(desktop), QString(), PowerProfile::Balanced);
+    r = discreteDefault.resolveApp(app, settings);
+    QCOMPARE(r.gpuIndex, discreteDefault.mainIndex());
+    QVERIFY(r.environment.isEmpty());
+    // two integrated GPUs and no discrete one: the first GPU other than the default
+    FixtureGpu carrizo = SysfsFixture::a10()[0];
+    carrizo.card = 1;
+    carrizo.bootVga = false;
+    const QList<Gpu> twoIntegrated = read({SysfsFixture::intel(), carrizo});
+    QCOMPARE(twoIntegrated[1].kind, GpuKind::Integrated);
+    Resolver integrated(twoIntegrated, QString(), PowerProfile::Balanced);
+    QCOMPARE(integrated.resolveApp(app, settings).gpuIndex, 1);
 
     // MainGpu keeps the program on the main GPU whatever the category and the profile say
     settings.setRenderChoice(Category::Players, u"discrete"_s);
@@ -300,9 +464,10 @@ void ResolverTest::categories()
     Resolver host(read(SysfsFixture::host()), QString(), PowerProfile::Performance);
     QCOMPARE(host.resolveCategory(Category::Players, settings).gpuIndex, 0);
     QCOMPARE(host.resolveCategory(Category::Games, settings).gpuIndex, 1);
-    // Browsers and Other are Automatic: performance, so the discrete GPU
+    // Browsers and Other are Automatic: on performance a browser on the discrete GPU, other programs on the desktop's
     QCOMPARE(host.resolveCategory(Category::Browsers, settings).gpuIndex, 1);
-    QCOMPARE(host.resolveCategory(Category::Other, settings).gpuIndex, 1);
+    QCOMPARE(host.resolveCategory(Category::Other, settings).gpuIndex, 0);
+    QCOMPARE(host.resolveCategory(Category::Other, settings).reason, u"desktop"_s);
     Resolver saver(read(SysfsFixture::host()), QString(), PowerProfile::PowerSaver);
     QCOMPARE(saver.resolveCategory(Category::Browsers, settings).gpuIndex, 0);
     QCOMPARE(saver.resolveCategory(Category::Games, settings).gpuIndex, 1);

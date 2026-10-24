@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: kcm_sparkystereo_graphics\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-23 20:34+0000\n"
+"POT-Creation-Date: 2026-10-24 06:57+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -123,38 +123,40 @@ msgctxt "@title:group"
 msgid "Where programs draw"
 msgstr ""
 
-#: src/ui/main.qml:214
+#: src/ui/main.qml:232
 msgctxt "@info"
 msgid ""
 "Players follow their choice from the next time they start. For a game in "
 "Steam, set its launch options to: sparky-stereo-gpu-run --category games "
-"%command%. For any single program, use the list below."
+"%command%, and add --3d for a game you play in 3D. For any single program, "
+"use the list below."
 msgstr ""
 
-#: src/ui/main.qml:225
+#: src/ui/main.qml:243
 msgctxt "@title:group"
 msgid "Programs"
 msgstr ""
 
-#: src/ui/main.qml:232
+#: src/ui/main.qml:250
 msgctxt "@info"
 msgid ""
 "This is the same setting as Run Using Dedicated Graphics in the application "
-"menu. The other GPU is the one that does not draw the desktop. A change "
-"applies the next time the program starts."
+"menu. The dedicated GPU is the discrete GPU; when the GPU the computer "
+"starts with is already discrete, the program stays on it. A change applies "
+"the next time the program starts."
 msgstr ""
 
-#: src/ui/main.qml:266
+#: src/ui/main.qml:284
 msgctxt "@info %1 is a GPU name"
 msgid "Now: %1. The program asks for this itself."
 msgstr ""
 
-#: src/ui/main.qml:267
+#: src/ui/main.qml:285
 msgctxt "@info %1 is a GPU name"
 msgid "Now: %1"
 msgstr ""
 
-#: src/ui/main.qml:288
+#: src/ui/main.qml:306
 msgctxt "@info %1 is a number"
 msgid "%1 more program is not shown. Type part of its name to find it."
 msgid_plural ""
@@ -162,191 +164,293 @@ msgid_plural ""
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/ui/main.qml:299
+#: src/ui/main.qml:315
+msgctxt "@title:group"
+msgid "Video decoding"
+msgstr ""
+
+#: src/ui/main.qml:319
+msgctxt "@option:check"
+msgid "Copy decoded video back"
+msgstr ""
+
+#: src/ui/main.qml:327
+msgctxt "@info"
+msgid ""
+"Some players can use the GPU's video decoder only by copying every decoded "
+"picture back to the processor. On some computers that drops more frames than "
+"decoding in software. Players that show the decoded pictures where they are "
+"do not need it, and a decoder you choose in a player is always used."
+msgstr ""
+
+#: src/ui/main.qml:339
+msgctxt "@info"
+msgid ""
+"MEDIA_GPU_ROUTE_COPY_BACK is set in this session and is used instead of this "
+"choice."
+msgstr ""
+
+#: src/ui/main.qml:350
 msgctxt "@title:group"
 msgid "GPU power"
 msgstr ""
 
-#: src/ui/main.qml:306
+#: src/ui/main.qml:357
 msgctxt "@info"
 msgid ""
 "These save power when the power profile asks for it. They work for the "
 "graphics chip in this computer, with one GPU or several."
 msgstr ""
 
-#: src/graphicskcm.cpp:42
+#: src/graphicskcm.cpp:41
 msgctxt "@item GPU name, then its PCI address when two GPUs have the same name"
 msgid "%1 (%2)"
 msgstr ""
 
-#: src/graphicskcm.cpp:52
+#: src/graphicskcm.cpp:51
 msgctxt "@label kind of program"
 msgid "Players"
 msgstr ""
 
-#: src/graphicskcm.cpp:54
+#: src/graphicskcm.cpp:53
 msgctxt "@label kind of program"
 msgid "Games"
 msgstr ""
 
-#: src/graphicskcm.cpp:56
+#: src/graphicskcm.cpp:55
 msgctxt "@label kind of program"
 msgid "Browsers"
 msgstr ""
 
-#: src/graphicskcm.cpp:60
+#: src/graphicskcm.cpp:59
 msgctxt "@label kind of program"
 msgid "Other programs"
 msgstr ""
 
-#: src/graphicskcm.cpp:66
+#: src/graphicskcm.cpp:65
 msgctxt "@info"
 msgid "the chosen GPU is not installed, so the main GPU"
 msgstr ""
 
-#: src/graphicskcm.cpp:69
+#: src/graphicskcm.cpp:68
 msgctxt "@info"
 msgid "the only GPU"
 msgstr ""
 
-#: src/graphicskcm.cpp:72
+#: src/graphicskcm.cpp:71
 msgctxt "@info"
 msgid "power saver profile"
 msgstr ""
 
-#: src/graphicskcm.cpp:75
+#: src/graphicskcm.cpp:74
 msgctxt "@info"
 msgid "performance profile"
 msgstr ""
 
-#: src/graphicskcm.cpp:78
+#: src/graphicskcm.cpp:77
 msgctxt "@info"
 msgid "balanced profile"
 msgstr ""
 
-#: src/graphicskcm.cpp:81
+#: src/graphicskcm.cpp:80
 msgctxt "@info"
-msgid "the program's own setting"
+msgid "the GPU that draws the desktop"
 msgstr ""
 
 #: src/graphicskcm.cpp:83
 msgctxt "@info"
+msgid "the program's own setting"
+msgstr ""
+
+#: src/graphicskcm.cpp:86
+msgctxt "@info"
+msgid "measured best for this model"
+msgstr ""
+
+#: src/graphicskcm.cpp:86
+msgctxt "@info"
+msgid "measured best on this computer"
+msgstr ""
+
+#: src/graphicskcm.cpp:89
+msgctxt "@info"
+msgid "not measured on this computer yet"
+msgstr ""
+
+#: src/graphicskcm.cpp:91
+msgctxt "@info"
 msgid "your choice"
 msgstr ""
 
-#: src/graphicskcm.cpp:135
+#: src/graphicskcm.cpp:144
 msgctxt "@info"
 msgid "The graphics settings could not be saved."
 msgstr ""
 
-#: src/graphicskcm.cpp:140
+#: src/graphicskcm.cpp:149
 msgctxt "@info %1 is a program's menu entry"
 msgid "The setting for %1 could not be saved."
 msgstr ""
 
-#: src/graphicskcm.cpp:145
+#: src/graphicskcm.cpp:154
 msgctxt "@info"
 msgid ""
 "The power setting could not be changed. The power profile service may not "
 "allow it."
 msgstr ""
 
-#: src/graphicskcm.cpp:189
+#: src/graphicskcm.cpp:198
 msgctxt "@label kind of GPU"
 msgid "Integrated"
 msgstr ""
 
-#: src/graphicskcm.cpp:189
+#: src/graphicskcm.cpp:198
 msgctxt "@label kind of GPU"
 msgid "Discrete"
 msgstr ""
 
-#: src/graphicskcm.cpp:191
+#: src/graphicskcm.cpp:200
 msgctxt "@label kind of GPU"
 msgid "Display adapter only"
 msgstr ""
 
-#: src/graphicskcm.cpp:197
+#: src/graphicskcm.cpp:206
 msgctxt "@info"
 msgid "No driver loaded"
 msgstr ""
 
-#: src/graphicskcm.cpp:197
+#: src/graphicskcm.cpp:206
 msgctxt "@info %1 is a kernel driver name"
 msgid "Driver: %1"
 msgstr ""
 
-#: src/graphicskcm.cpp:198
+#: src/graphicskcm.cpp:207
 msgctxt "@info"
 msgid "No screen attached"
 msgstr ""
 
-#: src/graphicskcm.cpp:198
+#: src/graphicskcm.cpp:207
 msgctxt "@info %1 is a list of screens"
 msgid "Screens: %1"
 msgstr ""
 
-#: src/graphicskcm.cpp:203
+#: src/graphicskcm.cpp:212
 msgctxt "@info %1 is a list of kinds of program"
 msgid "Used now for: %1"
 msgstr ""
 
-#: src/graphicskcm.cpp:242
+#: src/graphicskcm.cpp:251
 msgctxt "@item:inlistbox %1 is a GPU name"
 msgid "Automatic (%1)"
 msgstr ""
 
-#: src/graphicskcm.cpp:249 src/graphicskcm.cpp:300
+#: src/graphicskcm.cpp:258 src/graphicskcm.cpp:310
 msgctxt "@item:inlistbox %1 is a PCI address"
 msgid "Missing GPU (%1)"
 msgstr ""
 
-#: src/graphicskcm.cpp:273
+#: src/graphicskcm.cpp:282
 msgctxt "@item:inlistbox"
 msgid "Automatic"
 msgstr ""
 
-#: src/graphicskcm.cpp:284
+#: src/graphicskcm.cpp:283
+msgctxt "@item:inlistbox"
+msgid "Follow the power profile"
+msgstr ""
+
+#: src/graphicskcm.cpp:294
 msgctxt "@item:inlistbox"
 msgid "Integrated GPU"
 msgstr ""
 
-#: src/graphicskcm.cpp:287
+#: src/graphicskcm.cpp:297
 msgctxt "@item:inlistbox"
 msgid "Discrete GPU"
 msgstr ""
 
-#: src/graphicskcm.cpp:318
+#: src/graphicskcm.cpp:325
+msgctxt "@info %1 is a GPU name, %2 the reason"
+msgid "Started in 3D: %1, %2"
+msgstr ""
+
+#: src/graphicskcm.cpp:334
 msgctxt "@info %1 is a GPU name, %2 the reason"
 msgid "Now: %1, %2"
 msgstr ""
 
-#: src/graphicskcm.cpp:344
+#: src/graphicskcm.cpp:360
 msgctxt "@info"
-msgid "Power profile: Power Saver. Automatic uses the integrated GPU."
+msgid ""
+"Power profile: Power Saver. Automatic draws browsers on the integrated GPU. "
+"Other programs stay on the GPU that draws the desktop."
 msgstr ""
 
-#: src/graphicskcm.cpp:346
+#: src/graphicskcm.cpp:362
 msgctxt "@info"
-msgid "Power profile: Performance. Automatic uses the discrete GPU."
+msgid ""
+"Power profile: Performance. Automatic draws browsers on the discrete GPU. "
+"Other programs stay on the GPU that draws the desktop."
 msgstr ""
 
-#: src/graphicskcm.cpp:350
+#: src/graphicskcm.cpp:366
 msgctxt "@info"
-msgid "Power profile: Balanced. Automatic uses the GPU that draws the desktop."
+msgid ""
+"Power profile: Balanced. Automatic draws browsers on the GPU that draws the "
+"desktop. Other programs stay there too."
 msgstr ""
 
-#: src/graphicskcm.cpp:412
+#: src/graphicskcm.cpp:378
+msgctxt "@info %1 is a GPU name"
+msgid ""
+"Automatic draws players, games and any program started in 3D on %1 whatever "
+"the power profile, on battery too. This computer has not been measured yet, "
+"so that is its discrete GPU."
+msgstr ""
+
+#: src/graphicskcm.cpp:384
+msgctxt "@info %1 is a GPU name, %2 a computer model"
+msgid ""
+"Automatic draws players, games and any program started in 3D on %1 whatever "
+"the power profile, on battery too: it was measured best for them on the %2."
+msgstr ""
+
+#: src/graphicskcm.cpp:390
+msgctxt "@info %1 is a GPU name"
+msgid ""
+"Automatic draws players, games and any program started in 3D on %1 whatever "
+"the power profile, on battery too: it was measured best for them on this "
+"computer."
+msgstr ""
+
+#: src/graphicskcm.cpp:415
+msgctxt "@info"
+msgid ""
+"This computer has not been measured for it, so it is Off unless you turn it "
+"on."
+msgstr ""
+
+#: src/graphicskcm.cpp:417
+msgctxt "@info"
+msgid "This computer's measured setting: On."
+msgstr ""
+
+#: src/graphicskcm.cpp:417
+msgctxt "@info"
+msgid "This computer's measured setting: Off."
+msgstr ""
+
+#: src/graphicskcm.cpp:484
 msgctxt "@item:inlistbox"
 msgid "Same as its group"
 msgstr ""
 
-#: src/graphicskcm.cpp:413
+#: src/graphicskcm.cpp:485
 msgctxt "@item:inlistbox"
-msgid "The other GPU"
+msgid "The dedicated GPU"
 msgstr ""
 
-#: src/graphicskcm.cpp:414
+#: src/graphicskcm.cpp:486
 msgctxt "@item:inlistbox"
 msgid "The main GPU"
 msgstr ""

@@ -40,6 +40,8 @@ public:
 
     QList<AppEntry> list() const;
     AppEntry find(const QString &id) const;
+    // A desktop file outside the menu (a launcher on the desktop): its own file is the entry
+    static AppEntry fromFile(const QString &path);
 
     // Writes or removes the key in the person's copy of the entry, as KMenuEdit does.
     bool setPreference(const QString &id, AppPreference preference);

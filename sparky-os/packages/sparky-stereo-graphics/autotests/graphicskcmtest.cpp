@@ -3,6 +3,7 @@
 
 #include "fixtures.h"
 #include "graphicskcm.h"
+#include "machinerecord.h"
 
 #include <KConfig>
 #include <KConfigGroup>
@@ -39,6 +40,12 @@ private Q_SLOTS:
     void nothingIsWrittenBeforeApply();
     void missingGpuStaysVisible();
     void handSetKwinDevicesIsReported();
+    void a10PlayersOnTheMeasuredGpuOnBattery();
+    void notMeasuredSaysSo();
+    void followThePowerProfileIsOffered();
+    void copyBackChoice();
+    void copyBackWithoutARecord();
+    void copyBackSetInTheSessionIsReported();
     void qmlLoads_data();
     void qmlLoads();
 
@@ -64,6 +71,7 @@ private:
     QTemporaryDir m_config;
     QTemporaryDir m_data;
     QTemporaryDir m_system;
+    QTemporaryDir m_xdg; // the system configuration folders, where the machine record lives
     std::vector<std::unique_ptr<SysfsFixture>> m_fixtures;
 };
 
@@ -111,7 +119,7 @@ void GraphicsKcmTest::initTestCase()
     entry(u"org.example.player.desktop"_s, u"[Desktop Entry]\nType=Application\nName=Example Player\nExec=player\nIcon=player\nCategories=AudioVideo;Player;\n"_s);
     entry(u"org.example.game.desktop"_s, u"[Desktop Entry]\nType=Application\nName=Example Game\nExec=game\nCategories=Game;\n"_s);
     qputenv("XDG_CONFIG_HOME", m_config.path().toUtf8());
-    qputenv("XDG_CONFIG_DIRS", m_config.path().toUtf8());
+    qputenv("XDG_CONFIG_DIRS", (m_xdg.path() + u"/etc/xdg"_s).toUtf8());
     qputenv("XDG_DATA_HOME", m_data.path().toUtf8());
     qputenv("XDG_DATA_DIRS", m_system.path().toUtf8());
     qputenv("SPARKY_STEREO_POWER_PROFILE", "balanced");
@@ -121,6 +129,8 @@ void GraphicsKcmTest::initTestCase()
 void GraphicsKcmTest::init()
 {
     QFile::remove(configFile());
+    QFile::remove(MachineRecord::systemFile(m_xdg.path()));
+    qunsetenv("MEDIA_GPU_ROUTE_COPY_BACK");
     QDir(m_data.path() + u"/applications"_s).removeRecursively();
     QDir(m_config.path() + u"/plasma-workspace"_s).removeRecursively();
     qunsetenv("KWIN_DRM_DEVICES");
@@ -146,12 +156,18 @@ void GraphicsKcmTest::hostListsBothGpus()
     QCOMPARE(options.size(), 3);
     QVERIFY(options[0].toMap().value(u"text"_s).toString().startsWith(u"Automatic ("_s));
     QCOMPARE(options[2].toMap().value(u"value"_s).toString(), u"pci-0000:01:00.0"_s);
-    // four kinds of program, each with a place to draw now
+    // four kinds of program, each with a place to draw now: players and games on the discrete GPU (not
+    // measured here), browsers on balanced's GPU that draws the desktop, other programs there in every profile
     const QVariantList categories = kcm->categories();
     QCOMPARE(categories.size(), 4);
     for (const QVariant &c : categories) {
-        QVERIFY2(c.toMap().value(u"nowText"_s).toString().startsWith(u"Now: AMD"_s), qPrintable(c.toMap().value(u"nowText"_s).toString()));
+        const QString now = c.toMap().value(u"nowText"_s).toString();
+        const QString key = c.toMap().value(u"key"_s).toString();
+        const bool measured = key == u"Players"_s || key == u"Games"_s;
+        QVERIFY2(now.startsWith(measured ? u"Now: NVIDIA"_s : u"Now: AMD"_s), qPrintable(key + u": "_s + now));
     }
+    QVERIFY2(row(categories, u"key"_s, u"Other"_s).value(u"nowText"_s).toString().contains(u"the GPU that draws the desktop"_s),
+             qPrintable(row(categories, u"key"_s, u"Other"_s).value(u"nowText"_s).toString()));
     QVERIFY(!kcm->needsSave());
 }
 
@@ -173,9 +189,10 @@ void GraphicsKcmTest::threeGpusAppearInEveryChoice()
     QCOMPARE(kcm->mainOptions().size(), 4);
     const QVariantList categories = kcm->categories();
     const QVariantList options = categories[0].toMap().value(u"options"_s).toList();
-    // Automatic, Integrated, Discrete and each of the three GPUs
-    QCOMPARE(options.size(), 6);
-    QCOMPARE(options[3].toMap().value(u"value"_s).toString(), u"pci-0000:00:02.0"_s);
+    // Automatic, Follow the power profile, Integrated, Discrete and each of the three GPUs
+    QCOMPARE(options.size(), 7);
+    QCOMPARE(options[1].toMap().value(u"value"_s).toString(), u"profile"_s);
+    QCOMPARE(options[4].toMap().value(u"value"_s).toString(), u"pci-0000:00:02.0"_s);
 }
 
 void GraphicsKcmTest::mainChoiceIsSavedForTheNextLogin()
@@ -214,8 +231,12 @@ void GraphicsKcmTest::categoryChoiceRoundTrip()
 {
     qputenv("SPARKY_STEREO_POWER_PROFILE", "performance");
     auto kcm = page(u"host"_s);
-    // Automatic on the performance profile: the discrete GPU
+    // Automatic on the performance profile: games and browsers on the discrete GPU, other programs on the desktop's
     QVERIFY(row(kcm->categories(), u"key"_s, u"Games"_s).value(u"nowText"_s).toString().contains(u"NVIDIA"_s));
+    QVERIFY(row(kcm->categories(), u"key"_s, u"Browsers"_s).value(u"nowText"_s).toString().contains(u"NVIDIA"_s));
+    QVERIFY(row(kcm->categories(), u"key"_s, u"Other"_s).value(u"nowText"_s).toString().contains(u"AMD"_s));
+    QVERIFY2(kcm->profileText().contains(u"browsers on the discrete GPU"_s), qPrintable(kcm->profileText()));
+    QVERIFY2(kcm->profileText().contains(u"Other programs stay on the GPU that draws the desktop"_s), qPrintable(kcm->profileText()));
     kcm->setCategoryChoice(u"Games"_s, u"integrated"_s);
     kcm->setCategoryChoice(u"Players"_s, u"pci-0000:01:00.0"_s);
     QVERIFY(row(kcm->categories(), u"key"_s, u"Games"_s).value(u"nowText"_s).toString().contains(u"AMD"_s));
@@ -321,20 +342,160 @@ void GraphicsKcmTest::handSetKwinDevicesIsReported()
     QVERIFY(page(u"host"_s)->mainSetByHand());
 }
 
+void GraphicsKcmTest::a10PlayersOnTheMeasuredGpuOnBattery()
+{
+    // the record shipped for the A10, written the way the boot service writes it
+    auto fixture = std::make_unique<SysfsFixture>();
+    for (const FixtureGpu &gpu : SysfsFixture::a10()) {
+        fixture->add(gpu);
+    }
+    fixture->setDmi("LENOVO", "80ST");
+    QDir().mkpath(m_xdg.path() + u"/etc/xdg"_s);
+    QCOMPARE(RecordWriter::applyKnown(fixture->root(), QStringLiteral(MACHINES_DIR)), RecordWriter::Result::Written);
+    QVERIFY(QFile::copy(MachineRecord::systemFile(fixture->root()), MachineRecord::systemFile(m_xdg.path())));
+    for (const QByteArray &profile : {QByteArray("power-saver"), QByteArray("balanced"), QByteArray("performance")}) {
+        qputenv("SPARKY_STEREO_POWER_PROFILE", profile);
+        auto kcm = page(u"a10"_s);
+        const QString players = row(kcm->categories(), u"key"_s, u"Players"_s).value(u"nowText"_s).toString();
+        QVERIFY2(players.contains(u"M430"_s), qPrintable(QString::fromLatin1(profile) + u": "_s + players));
+        QVERIFY2(players.contains(u"measured best for this model"_s), qPrintable(players));
+        QVERIFY(kcm->measuredText().contains(u"Lenovo ideapad 310-15ABR"_s));
+        QVERIFY(kcm->measuredText().contains(u"M430"_s));
+        // the card of the R5 M430 says players draw there
+        QVERIFY(kcm->gpus()[1].toMap().value(u"usedText"_s).toString().contains(u"Players"_s));
+    }
+    // on battery a game draws on the R5 M430 in 2D too; a browser in 2D stays on the integrated GPU, started in 3D it goes to the R5 M430
+    qputenv("SPARKY_STEREO_POWER_PROFILE", "power-saver");
+    auto kcm = page(u"a10"_s);
+    const QVariantMap games = row(kcm->categories(), u"key"_s, u"Games"_s);
+    QVERIFY2(games.value(u"nowText"_s).toString().contains(u"M430"_s), qPrintable(games.value(u"nowText"_s).toString()));
+    QVERIFY(games.value(u"stereoText"_s).toString().isEmpty());
+    const QVariantMap browsers = row(kcm->categories(), u"key"_s, u"Browsers"_s);
+    QVERIFY2(browsers.value(u"nowText"_s).toString().contains(u"R5/R6/R7"_s), qPrintable(browsers.value(u"nowText"_s).toString()));
+    QVERIFY2(browsers.value(u"stereoText"_s).toString().contains(u"M430"_s), qPrintable(browsers.value(u"stereoText"_s).toString()));
+    QVERIFY2(kcm->measuredText().contains(u"players, games and any program started in 3D"_s), qPrintable(kcm->measuredText()));
+    // a program's own setting is KDE's dedicated GPU
+    QCOMPARE(kcm->appOptions()[1].toMap().value(u"text"_s).toString(), u"The dedicated GPU"_s);
+    QVERIFY(row(kcm->categories(), u"key"_s, u"Players"_s).value(u"stereoText"_s).toString().isEmpty());
+    // the person's choice wins
+    kcm->setCategoryChoice(u"Players"_s, u"integrated"_s);
+    QVERIFY(row(kcm->categories(), u"key"_s, u"Players"_s).value(u"nowText"_s).toString().contains(u"R5/R6/R7"_s));
+}
+
+void GraphicsKcmTest::notMeasuredSaysSo()
+{
+    qputenv("SPARKY_STEREO_POWER_PROFILE", "power-saver");
+    auto kcm = page(u"a10"_s);
+    const QString players = row(kcm->categories(), u"key"_s, u"Players"_s).value(u"nowText"_s).toString();
+    QVERIFY2(players.contains(u"M430"_s), qPrintable(players));
+    QVERIFY2(players.contains(u"not measured"_s), qPrintable(players));
+    QVERIFY2(kcm->measuredText().contains(u"not been measured"_s), qPrintable(kcm->measuredText()));
+    // one GPU: nothing to measure, nothing said
+    QVERIFY(page(u"one"_s)->measuredText().isEmpty());
+}
+
+void GraphicsKcmTest::followThePowerProfileIsOffered()
+{
+    qputenv("SPARKY_STEREO_POWER_PROFILE", "power-saver");
+    auto kcm = page(u"host"_s);
+    for (const QVariant &c : kcm->categories()) {
+        QVERIFY(!row(c.toMap().value(u"options"_s).toList(), u"value"_s, u"profile"_s).isEmpty());
+    }
+    QVERIFY(row(kcm->categories(), u"key"_s, u"Players"_s).value(u"nowText"_s).toString().contains(u"NVIDIA"_s));
+    kcm->setCategoryChoice(u"Players"_s, u"profile"_s);
+    QVERIFY(row(kcm->categories(), u"key"_s, u"Players"_s).value(u"nowText"_s).toString().contains(u"AMD"_s));
+    kcm->save();
+    QVERIFY(configText().contains("Players=profile"));
+}
+
+void GraphicsKcmTest::copyBackChoice()
+{
+    QDir().mkpath(m_xdg.path() + u"/etc/xdg"_s);
+    QFile f(MachineRecord::systemFile(m_xdg.path()));
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write("[Decoding]\nCopyBack=false\n\n[Record]\nOrigin=shipped\n");
+    f.close();
+    auto kcm = page(u"one"_s); // a single GPU has the choice too
+    QVERIFY(!kcm->copyBack());
+    QVERIFY2(kcm->copyBackMachineText().contains(u"Off"_s), qPrintable(kcm->copyBackMachineText()));
+    QVERIFY(kcm->representsDefaults());
+    kcm->setCopyBack(true);
+    QVERIFY(kcm->copyBack());
+    QVERIFY(kcm->needsSave());
+    QVERIFY(!QFile::exists(configFile())); // nothing before Apply
+    kcm->save();
+    QVERIFY2(configText().contains("[Decoding]\nCopyBack=true"), configText().constData());
+    auto fresh = page(u"one"_s);
+    QVERIFY(fresh->copyBack());
+    QVERIFY(!fresh->representsDefaults());
+    // back to the machine's own setting: the key goes, so a better record later reaches this person too
+    fresh->setCopyBack(false);
+    fresh->save();
+    QVERIFY(!configText().contains("CopyBack"));
+    // Defaults
+    auto again = page(u"one"_s);
+    again->setCopyBack(true);
+    again->save();
+    again->defaults();
+    QVERIFY(!again->copyBack());
+    again->save();
+    QVERIFY(!configText().contains("CopyBack"));
+}
+
+void GraphicsKcmTest::copyBackWithoutARecord()
+{
+    auto kcm = page(u"host"_s);
+    QVERIFY(!kcm->copyBack());
+    QVERIFY2(kcm->copyBackMachineText().contains(u"not been measured"_s), qPrintable(kcm->copyBackMachineText()));
+    // a person who turns it off where it is already off writes nothing
+    kcm->setCopyBack(true);
+    kcm->setCopyBack(false);
+    kcm->save();
+    QVERIFY(!configText().contains("CopyBack"));
+    // a machine record that turns it on
+    QDir().mkpath(m_xdg.path() + u"/etc/xdg"_s);
+    QFile f(MachineRecord::systemFile(m_xdg.path()));
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write("[Decoding]\nCopyBack=true\n");
+    f.close();
+    auto on = page(u"host"_s);
+    QVERIFY(on->copyBack());
+    on->setCopyBack(false);
+    on->save();
+    QVERIFY(configText().contains("CopyBack=false"));
+}
+
+void GraphicsKcmTest::copyBackSetInTheSessionIsReported()
+{
+    QVERIFY(!page(u"host"_s)->copyBackSetInSession());
+    qputenv("MEDIA_GPU_ROUTE_COPY_BACK", "true");
+    QVERIFY(page(u"host"_s)->copyBackSetInSession());
+    qunsetenv("MEDIA_GPU_ROUTE_COPY_BACK");
+}
+
 void GraphicsKcmTest::qmlLoads_data()
 {
     QTest::addColumn<QString>("machine");
     QTest::addColumn<int>("cards");
-    QTest::newRow("one GPU") << u"one"_s << 1;
-    QTest::newRow("A10") << u"a10"_s << 2;
-    QTest::newRow("host") << u"host"_s << 2;
-    QTest::newRow("three GPUs") << u"three"_s << 3;
+    QTest::addColumn<bool>("record");
+    QTest::newRow("one GPU") << u"one"_s << 1 << false;
+    QTest::newRow("A10") << u"a10"_s << 2 << false;
+    QTest::newRow("A10 with its record") << u"a10"_s << 2 << true;
+    QTest::newRow("host") << u"host"_s << 2 << false;
+    QTest::newRow("three GPUs") << u"three"_s << 3 << false;
 }
 
 void GraphicsKcmTest::qmlLoads()
 {
     QFETCH(QString, machine);
     QFETCH(int, cards);
+    QFETCH(bool, record);
+    if (record) {
+        QDir().mkpath(m_xdg.path() + u"/etc/xdg"_s);
+        QFile f(MachineRecord::systemFile(m_xdg.path()));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("[Measured]\nBestGpu=1002:6660\nModel=Lenovo ideapad 310-15ABR\n\n[Decoding]\nCopyBack=false\n\n[Record]\nOrigin=shipped\n");
+    }
     auto kcm = page(machine);
     QQuickView view;
     auto *localized = new KLocalizedContext(view.engine());
@@ -353,7 +514,7 @@ void GraphicsKcmTest::qmlLoads()
     const QString shots = qEnvironmentVariable("SCREENSHOT_DIR");
     if (!shots.isEmpty()) {
         QDir().mkpath(shots);
-        QVERIFY(view.grabWindow().save(shots + u'/' + machine + u".png"_s));
+        QVERIFY(view.grabWindow().save(shots + u'/' + machine + (record ? u"-record"_s : QString()) + u".png"_s));
     }
 }
 

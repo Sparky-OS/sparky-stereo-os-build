@@ -6,6 +6,7 @@
 #include "appentries.h"
 #include "gpuinventory.h"
 #include "graphicssettings.h"
+#include "machinerecord.h"
 #include "powerprofiles.h"
 #include "resolver.h"
 
@@ -28,6 +29,10 @@ class GraphicsKcm : public KQuickConfigModule
     Q_PROPERTY(QVariantList categories READ categories NOTIFY changed)
     Q_PROPERTY(QString profile READ profile NOTIFY changed)
     Q_PROPERTY(QString profileText READ profileText NOTIFY changed)
+    Q_PROPERTY(QString measuredText READ measuredText NOTIFY changed)
+    Q_PROPERTY(bool copyBack READ copyBack WRITE setCopyBack NOTIFY changed)
+    Q_PROPERTY(QString copyBackMachineText READ copyBackMachineText NOTIFY changed)
+    Q_PROPERTY(bool copyBackSetInSession READ copyBackSetInSession NOTIFY changed)
     Q_PROPERTY(QString appFilter READ appFilter WRITE setAppFilter NOTIFY appsChanged)
     Q_PROPERTY(QVariantList apps READ apps NOTIFY appsChanged)
     Q_PROPERTY(int hiddenApps READ hiddenApps NOTIFY appsChanged)
@@ -50,6 +55,11 @@ public:
     QVariantList categories() const;
     QString profile() const;
     QString profileText() const;
+    QString measuredText() const;
+    bool copyBack() const;
+    void setCopyBack(bool copyBack);
+    QString copyBackMachineText() const;
+    bool copyBackSetInSession() const;
     QString appFilter() const;
     void setAppFilter(const QString &filter);
     QVariantList apps() const;
@@ -82,6 +92,7 @@ private:
     QString m_root;
     QList<SparkyGraphics::Gpu> m_gpus;
     SparkyGraphics::GraphicsSettings m_settings;
+    SparkyGraphics::MachineRecord m_record;
     SparkyGraphics::PowerProfile m_profile = SparkyGraphics::PowerProfile::Balanced;
     QList<SparkyGraphics::AppEntry> m_apps;
     QMap<QString, int> m_appChanges;

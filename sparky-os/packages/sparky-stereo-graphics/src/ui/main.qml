@@ -180,6 +180,12 @@ KCM.SimpleKCM {
             visible: kcm.multiGpu
             Layout.fillWidth: true
             wrapMode: Text.Wrap
+            text: kcm.measuredText
+        }
+        QQC2.Label {
+            visible: kcm.multiGpu
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
             text: kcm.profileText
         }
         Repeater {
@@ -198,11 +204,23 @@ KCM.SimpleKCM {
                     currentIndex: Math.max(0, indexOfValue(modelData.choice))
                     onActivated: kcm.setCategoryChoice(modelData.key, currentValue)
                 }
-                QQC2.Label {
+                ColumnLayout {
                     Layout.fillWidth: true
-                    wrapMode: Text.Wrap
-                    font: Kirigami.Theme.smallFont
-                    text: modelData.nowText
+                    spacing: 0
+                    QQC2.Label {
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                        font: Kirigami.Theme.smallFont
+                        text: modelData.nowText
+                    }
+                    QQC2.Label {
+                        visible: modelData.stereoText.length > 0
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                        font: Kirigami.Theme.smallFont
+                        opacity: 0.8
+                        text: modelData.stereoText
+                    }
                 }
             }
         }
@@ -211,7 +229,7 @@ KCM.SimpleKCM {
             Layout.fillWidth: true
             wrapMode: Text.Wrap
             font: Kirigami.Theme.smallFont
-            text: i18nc("@info", "Players follow their choice from the next time they start. For a game in Steam, set its launch options to: sparky-stereo-gpu-run --category games %command%. For any single program, use the list below.")
+            text: i18nc("@info", "Players follow their choice from the next time they start. For a game in Steam, set its launch options to: sparky-stereo-gpu-run --category games %command%, and add --3d for a game you play in 3D. For any single program, use the list below.")
         }
 
         Kirigami.Separator {
@@ -229,7 +247,7 @@ KCM.SimpleKCM {
             Layout.fillWidth: true
             wrapMode: Text.Wrap
             font: Kirigami.Theme.smallFont
-            text: i18nc("@info", "This is the same setting as Run Using Dedicated Graphics in the application menu. The other GPU is the one that does not draw the desktop. A change applies the next time the program starts.")
+            text: i18nc("@info", "This is the same setting as Run Using Dedicated Graphics in the application menu. The dedicated GPU is the discrete GPU; when the GPU the computer starts with is already discrete, the program stays on it. A change applies the next time the program starts.")
         }
         Kirigami.SearchField {
             visible: kcm.multiGpu
@@ -286,6 +304,39 @@ KCM.SimpleKCM {
             wrapMode: Text.Wrap
             font: Kirigami.Theme.smallFont
             text: i18ncp("@info %1 is a number", "%1 more program is not shown. Type part of its name to find it.", "%1 more programs are not shown. Type part of their name to find them.", kcm.hiddenApps)
+        }
+
+        Kirigami.Separator {
+            Layout.fillWidth: true
+        }
+
+        Kirigami.Heading {
+            level: 2
+            text: i18nc("@title:group", "Video decoding")
+        }
+        QQC2.CheckBox {
+            Layout.fillWidth: true
+            text: i18nc("@option:check", "Copy decoded video back")
+            checked: kcm.copyBack
+            onToggled: kcm.copyBack = checked
+        }
+        QQC2.Label {
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
+            font: Kirigami.Theme.smallFont
+            text: i18nc("@info", "Some players can use the GPU's video decoder only by copying every decoded picture back to the processor. On some computers that drops more frames than decoding in software. Players that show the decoded pictures where they are do not need it, and a decoder you choose in a player is always used.")
+        }
+        QQC2.Label {
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
+            font: Kirigami.Theme.smallFont
+            text: kcm.copyBackMachineText
+        }
+        Kirigami.InlineMessage {
+            Layout.fillWidth: true
+            visible: kcm.copyBackSetInSession
+            type: Kirigami.MessageType.Warning
+            text: i18nc("@info", "MEDIA_GPU_ROUTE_COPY_BACK is set in this session and is used instead of this choice.")
         }
 
         Kirigami.Separator {

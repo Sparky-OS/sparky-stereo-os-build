@@ -117,7 +117,14 @@ void AppEntriesTest::categoriesMapToTheFourGroups_data()
     QTest::addColumn<int>("expected");
     QTest::newRow("player") << QStringList{u"AudioVideo"_s, u"Player"_s} << int(Category::Players);
     QTest::newRow("video") << QStringList{u"Video"_s} << int(Category::Players);
-    QTest::newRow("audio") << QStringList{u"Audio"_s, u"Music"_s} << int(Category::Players);
+    // an audio application without video draws no pictures that need a GPU: other programs (Desktop Menu
+    // Specification 1.1: Audio "An audio application", Video "A video application", Player "Application to play audio/video files")
+    QTest::newRow("audio") << QStringList{u"Audio"_s, u"Music"_s} << int(Category::Other);
+    QTest::newRow("elisa") << QStringList{u"Qt"_s, u"KDE"_s, u"Audio"_s, u"AudioVideo"_s} << int(Category::Other);
+    QTest::newRow("audio player") << QStringList{u"AudioVideo"_s, u"Audio"_s, u"Player"_s} << int(Category::Other);
+    QTest::newRow("music education") << QStringList{u"Education"_s, u"Music"_s} << int(Category::Other);
+    QTest::newRow("mpv") << QStringList{u"AudioVideo"_s, u"Audio"_s, u"Video"_s, u"Player"_s, u"TV"_s} << int(Category::Players);
+    QTest::newRow("vlc") << QStringList{u"AudioVideo"_s, u"Player"_s, u"Recorder"_s} << int(Category::Players);
     QTest::newRow("game") << QStringList{u"Game"_s} << int(Category::Games);
     QTest::newRow("browser") << QStringList{u"Network"_s, u"WebBrowser"_s} << int(Category::Browsers);
     QTest::newRow("tool") << QStringList{u"Utility"_s} << int(Category::Other);

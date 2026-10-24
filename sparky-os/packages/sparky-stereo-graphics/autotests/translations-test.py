@@ -103,5 +103,9 @@ for lang in languages:
         if not meta["KPlugin"].get("%s[%s]" % (key, lang)):
             print("FAIL the page's metadata has no", key, "in", lang)
             failed += 1
+    # System Settings finds the page by these words too
+    if not meta.get("X-KDE-Keywords[%s]" % lang):
+        print("FAIL the page's metadata has no search keywords in", lang)
+        failed += 1
 print("translations: %d languages checked, %d failures" % (len(languages), failed))
 sys.exit(1 if failed else 0)

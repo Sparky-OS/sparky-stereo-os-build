@@ -1,0 +1,343 @@
+Description: Run an application on the GPU the system's graphics settings choose
+ An application whose desktop entry does not say where it runs asks the
+ Graphics page's resolver, sparky-stereo-gpu-env --app with its menu id (or
+ its desktop file when it is outside the menu), and starts with the
+ variables it answers: DRI_PRIME, the Vulkan driver selection, NVIDIA's
+ render offload. The entry's own PrefersNonDefaultGPU (and the older
+ X-KDE-RunOnDiscreteGpu) keeps KIO's own handling, and a GPU already chosen
+ in the launch environment (DRI_PRIME, MESA_VK_DEVICE_SELECT,
+ VK_LOADER_DRIVERS_SELECT, __NV_PRIME_RENDER_OFFLOAD) wins. When the command
+ is missing, fails or does not answer within two seconds, the application
+ starts as before. Tests with a stand-in resolver are added to
+ applicationlauncherjobtest.
+Author: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Forwarded: not-needed, edition-only (the resolver is Sparky Stereo OS's Graphics page)
+Last-Update: 2026-10-24
+
+diff --git a/autotests/applicationlauncherjobtest.cpp b/autotests/applicationlauncherjobtest.cpp
+index 345b4d2..6c244cf 100644
+--- a/autotests/applicationlauncherjobtest.cpp
++++ b/autotests/applicationlauncherjobtest.cpp
+@@ -31,6 +31,8 @@
+ 
+ QTEST_GUILESS_MAIN(ApplicationLauncherJobTest)
+ 
++extern KSERVICE_EXPORT int ksycoca_ms_between_checks;
++
+ void ApplicationLauncherJobTest::initTestCase()
+ {
+     QStandardPaths::setTestModeEnabled(true);
+@@ -403,6 +405,179 @@ void ApplicationLauncherJobTest::showOpenWithDialog()
+ #endif
+ }
+ 
++// A stand-in for the graphics settings' resolver, sparky-stereo-gpu-env: it logs how it was asked
++// and answers from a table of "ENTRY PROFILE VARIABLE=value..." lines, as the real one answers for
++// a kind of program and the power profile.
++static const char s_fakeResolver[] = R"(#!/bin/sh
++dir=$(dirname "$0")/..
++printf '%s\n' "$*" >> "$dir/asked"
++case $(cat "$dir/mode") in
++fail) exit 1 ;;
++hang) sleep 10 ;;
++esac
++[ "$1" = --app ] || exit 2
++profile=$(cat "$dir/profile")
++grep "^$2 $profile " "$dir/answers" | cut -d' ' -f3- | tr ' ' '\n'
++)";
++
++void ApplicationLauncherJobTest::shouldRunOnTheGpuOfTheGraphicsSettings_data()
++{
++    QTest::addColumn<QString>("categories");
++    QTest::addColumn<QString>("ownKey"); // the entry's own "Key=value", if any
++    QTest::addColumn<bool>("inMenu");
++    QTest::addColumn<QString>("profile");
++    QTest::addColumn<QString>("resolverMode"); // answer, fail, hang, absent
++    QTest::addColumn<QString>("sessionDriPrime");
++    QTest::addColumn<bool>("expectAsked");
++    QTest::addColumn<QString>("expectedDriPrime"); // empty: not set
++
++    const QString player = QStringLiteral("AudioVideo;Video;Player;");
++    const QString game = QStringLiteral("Game;ArcadeGame;");
++    const QString measured = QStringLiteral("pci-0000_99_00_0");
++    // The resolver sends players to the GPU measured best whatever the power profile, battery included
++    QTest::newRow("player_on_battery") << player << QString() << true << "power-saver" << "answer" << QString() << true << measured;
++    QTest::newRow("player_on_ac") << player << QString() << true << "performance" << "answer" << QString() << true << measured;
++    // and a game in 2D by the power profile: the default GPU on battery, the discrete one on AC
++    QTest::newRow("game_2d_on_battery") << game << QString() << true << "power-saver" << "answer" << QString() << true << QString();
++    QTest::newRow("game_2d_on_ac") << game << QString() << true << "performance" << "answer" << QString() << true << measured;
++    QTest::newRow("outside_the_menu") << player << QString() << false << "power-saver" << "answer" << QString() << true << measured;
++    // The program's own key and a GPU the launch environment chooses keep their precedence
++    QTest::newRow("own_key_false") << player << "PrefersNonDefaultGPU=false" << true << "power-saver" << "answer" << QString() << false << QString();
++    QTest::newRow("own_key_true") << game << "PrefersNonDefaultGPU=true" << true << "power-saver" << "answer" << QString() << false << QString();
++    QTest::newRow("own_legacy_key_true") << game << "X-KDE-RunOnDiscreteGpu=true" << true << "power-saver" << "answer" << QString() << false
++                                         << QString();
++    QTest::newRow("session_chooses") << player << QString() << true << "power-saver" << "answer" << "1" << false << "1";
++    // Without an answer the application starts as it always did
++    QTest::newRow("resolver_absent") << player << QString() << true << "power-saver" << "absent" << QString() << false << QString();
++    QTest::newRow("resolver_fails") << player << QString() << true << "power-saver" << "fail" << QString() << true << QString();
++    QTest::newRow("resolver_hangs") << player << QString() << true << "power-saver" << "hang" << QString() << true << QString();
++}
++
++void ApplicationLauncherJobTest::shouldRunOnTheGpuOfTheGraphicsSettings()
++{
++#ifdef Q_OS_UNIX
++    QFETCH(QString, categories);
++    QFETCH(QString, ownKey);
++    QFETCH(bool, inMenu);
++    QFETCH(QString, profile);
++    QFETCH(QString, resolverMode);
++    QFETCH(QString, sessionDriPrime);
++    QFETCH(bool, expectAsked);
++    QFETCH(QString, expectedDriPrime);
++
++    QTemporaryDir tempDir;
++    const QString dir = tempDir.path();
++    QVERIFY(QDir(dir).mkpath(QStringLiteral("bin")));
++    if (resolverMode != QLatin1String("absent")) {
++        QFile resolver(dir + QLatin1String("/bin/sparky-stereo-gpu-env"));
++        QVERIFY(resolver.open(QIODevice::WriteOnly));
++        resolver.write(s_fakeResolver);
++        resolver.close();
++        QVERIFY(resolver.setPermissions(resolver.permissions() | QFileDevice::ExeOwner));
++    }
++    const auto writeFile = [&dir](const QString &name, const QByteArray &content) {
++        QFile file(dir + QLatin1Char('/') + name);
++        QVERIFY(file.open(QIODevice::WriteOnly));
++        file.write(content);
++    };
++    writeFile(QStringLiteral("mode"), resolverMode.toUtf8());
++    writeFile(QStringLiteral("profile"), profile.toUtf8());
++
++    // Given an application that writes its environment, in the menu or outside it
++    const QString id = QStringLiteral("kiogputest_%1.desktop").arg(QString::fromLatin1(QTest::currentDataTag()));
++    const QString desktopFilePath = (inMenu ? QStandardPaths::writableLocation(QStandardPaths::ApplicationsLocation) : dir) + QLatin1Char('/') + id;
++    const QString envFile = dir + QLatin1String("/env");
++    {
++        KDesktopFile file(desktopFilePath);
++        KConfigGroup group = file.desktopGroup();
++        group.writeEntry("Name", "KIOGpuTest");
++        group.writeEntry("Type", "Application");
++        group.writeEntry("Exec", QStringLiteral("sh -c 'env > %1'").arg(envFile));
++        group.writeEntry("Categories", categories);
++        if (!ownKey.isEmpty()) {
++            group.writeEntry(ownKey.section(QLatin1Char('='), 0, 0), ownKey.section(QLatin1Char('='), 1));
++        }
++        QVERIFY(file.sync());
++    }
++    m_filesToRemove.append(desktopFilePath);
++
++    // and the resolver's answers for it, the measured GPU for players, the discrete GPU on AC for games
++    const QString asked = inMenu ? id : desktopFilePath;
++    const QByteArray answer = " DRI_PRIME=pci-0000_99_00_0 VK_LOADER_DRIVERS_SELECT=*kiogputest*\n";
++    if (categories.contains(QLatin1String("Player"))) {
++        writeFile(QStringLiteral("answers"), asked.toUtf8() + " power-saver" + answer + asked.toUtf8() + " performance" + answer);
++    } else {
++        writeFile(QStringLiteral("answers"), asked.toUtf8() + " performance" + answer);
++    }
++
++    KService::Ptr service;
++    if (inMenu) {
++        ksycoca_ms_between_checks = 0;
++        service = KService::serviceByMenuId(id);
++        ksycoca_ms_between_checks = 5000;
++    } else {
++        // as for a desktop file on the desktop, which is started only when it is executable
++        QFile desktopFile(desktopFilePath);
++        QVERIFY(desktopFile.setPermissions(desktopFile.permissions() | QFileDevice::ExeOwner));
++        service = KService::Ptr(new KService(desktopFilePath));
++    }
++    QVERIFY(service);
++
++    const QByteArray oldPath = qgetenv("PATH");
++    qputenv("PATH", QByteArray(QFile::encodeName(dir) + "/bin:" + oldPath));
++    if (sessionDriPrime.isEmpty()) {
++        qunsetenv("DRI_PRIME");
++    } else {
++        qputenv("DRI_PRIME", sessionDriPrime.toUtf8());
++    }
++
++    // When starting it
++    KIO::ApplicationLauncherJob *job = new KIO::ApplicationLauncherJob(service, this);
++    const bool started = job->exec();
++    qputenv("PATH", oldPath);
++    qunsetenv("DRI_PRIME");
++    QVERIFY2(started, qPrintable(job->errorString()));
++
++    // Then it runs where the resolver says, unless its own key or the session chooses
++    QTRY_VERIFY(QFileInfo(envFile).size() > 0);
++    QFile envOutput(envFile);
++    QVERIFY(envOutput.open(QIODevice::ReadOnly));
++    QString driPrime;
++    QString vulkanDrivers;
++    const QList<QByteArray> lines = envOutput.readAll().split('\n');
++    for (const QByteArray &line : lines) {
++        if (line.startsWith("DRI_PRIME=")) {
++            driPrime = QString::fromUtf8(line.mid(10));
++        } else if (line.startsWith("VK_LOADER_DRIVERS_SELECT=")) {
++            vulkanDrivers = QString::fromUtf8(line.mid(25));
++        }
++    }
++    QFile askedLog(dir + QLatin1String("/asked"));
++    const QString askedWith = askedLog.open(QIODevice::ReadOnly) ? QString::fromUtf8(askedLog.readAll()).trimmed() : QString();
++    if (expectAsked) {
++        QCOMPARE(askedWith, QStringLiteral("--app ") + asked);
++    } else {
++        QCOMPARE(askedWith, QString());
++    }
++    if (expectedDriPrime == QLatin1String("pci-0000_99_00_0")) {
++        QCOMPARE(driPrime, expectedDriPrime);
++        QCOMPARE(vulkanDrivers, QStringLiteral("*kiogputest*"));
++    } else {
++        // nothing of the resolver's answer: KIO's own handling of the key, or the session's choice
++        if (expectedDriPrime.isEmpty()) {
++            QVERIFY2(driPrime != QLatin1String("pci-0000_99_00_0"), qPrintable(driPrime));
++        } else {
++            QCOMPARE(driPrime, expectedDriPrime);
++        }
++        QVERIFY2(vulkanDrivers != QLatin1String("*kiogputest*"), qPrintable(vulkanDrivers));
++    }
++
++    QTRY_COMPARE(KProcessRunner::instanceCount(), 0);
++#else
++    QSKIP("This test is not run on Windows");
++#endif
++}
++
+ void ApplicationLauncherJobTest::writeTempServiceDesktopFile(const QString &filePath)
+ {
+     if (QFile::exists(filePath)) {
+diff --git a/autotests/applicationlauncherjobtest.h b/autotests/applicationlauncherjobtest.h
+index ed08405..0e4be3e 100644
+--- a/autotests/applicationlauncherjobtest.h
++++ b/autotests/applicationlauncherjobtest.h
+@@ -35,6 +35,9 @@ private Q_SLOTS:
+     void showOpenWithDialog_data();
+     void showOpenWithDialog();
+ 
++    void shouldRunOnTheGpuOfTheGraphicsSettings_data();
++    void shouldRunOnTheGpuOfTheGraphicsSettings();
++
+ private:
+     QString createTempService();
+     void writeTempServiceDesktopFile(const QString &filePath);
+diff --git a/src/gui/gpudetection.cpp b/src/gui/gpudetection.cpp
+index 6271dec..5153937 100644
+--- a/src/gui/gpudetection.cpp
++++ b/src/gui/gpudetection.cpp
+@@ -6,6 +6,7 @@
+ */
+ 
+ #include "gpudetection_p.h"
++#include "kiogui_debug.h"
+ 
+ #ifdef WITH_QTDBUS
+ #include <QDBusArgument>
+@@ -14,10 +15,14 @@
+ #include <QDBusReply>
+ #include <QDBusVariant>
+ #endif
++#include <QDir>
+ #include <QMap>
++#include <QProcess>
++#include <QStandardPaths>
+ #include <QString>
+ 
+ #include <KProcess>
++#include <KService>
+ 
+ static void checkGpu();
+ // Returns true if switcheroo present
+@@ -147,4 +152,51 @@ QProcessEnvironment discreteGpuEnvironment()
+     return s_gpuEnv;
+ }
+ 
++QProcessEnvironment graphicsSettingsEnvironment(const KService &service)
++{
++    // An application that says where it runs keeps its own choice
++    if (!service.property<QString>(QStringLiteral("PrefersNonDefaultGPU")).isEmpty()
++        || !service.property<QString>(QStringLiteral("X-KDE-RunOnDiscreteGpu")).isEmpty()) {
++        return {};
++    }
++
++    const QProcessEnvironment launchEnv = QProcessEnvironment::systemEnvironment();
++    for (const auto &name : {QStringLiteral("DRI_PRIME"),
++                             QStringLiteral("MESA_VK_DEVICE_SELECT"),
++                             QStringLiteral("VK_LOADER_DRIVERS_SELECT"),
++                             QStringLiteral("__NV_PRIME_RENDER_OFFLOAD")}) {
++        if (launchEnv.contains(name)) {
++            return {};
++        }
++    }
++
++    // The menu id when the application is in the menu, else its desktop file
++    QString entry = service.menuId();
++    if (entry.isEmpty() && QDir::isAbsolutePath(service.entryPath())) {
++        entry = service.entryPath();
++    }
++    const QString resolver = QStandardPaths::findExecutable(QStringLiteral("sparky-stereo-gpu-env"));
++    if (entry.isEmpty() || resolver.isEmpty()) {
++        return {};
++    }
++
++    QProcess process;
++    process.start(resolver, {QStringLiteral("--app"), entry});
++    if (!process.waitForFinished(2000) || process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
++        qCWarning(KIO_GUI) << "No GPU from" << resolver << "for" << entry << process.readAllStandardError();
++        return {};
++    }
++
++    QProcessEnvironment env;
++    const QStringList lines = QString::fromLocal8Bit(process.readAllStandardOutput()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
++    for (const QString &line : lines) {
++        const int equals = line.indexOf(QLatin1Char('='));
++        if (equals > 0) {
++            env.insert(line.left(equals), line.mid(equals + 1));
++        }
++    }
++    qCDebug(KIO_GUI) << "GPU environment from" << resolver << "for" << entry << env.toStringList();
++    return env;
++}
++
+ }
+diff --git a/src/gui/gpudetection_p.h b/src/gui/gpudetection_p.h
+index 7f7c61e..10a3756 100644
+--- a/src/gui/gpudetection_p.h
++++ b/src/gui/gpudetection_p.h
+@@ -9,6 +9,7 @@
+ 
+ #include "kiogui_export.h"
+ 
++class KService;
+ class QProcessEnvironment;
+ 
+ namespace KIO
+@@ -23,6 +24,15 @@ KIOGUI_EXPORT bool hasDiscreteGpu();
+  * Environment variables that make a process run with the discrete GPU.
+  */
+ KIOGUI_NO_EXPORT QProcessEnvironment discreteGpuEnvironment();
++
++/*
++ * Environment variables that make an application run on the GPU the system's
++ * graphics settings choose for it, as the sparky-stereo-gpu-env command answers.
++ * Empty when the application's own desktop entry says where it runs, when the
++ * environment of the launch already chooses a GPU, and when the command is not
++ * installed, fails or chooses the default GPU.
++ */
++KIOGUI_NO_EXPORT QProcessEnvironment graphicsSettingsEnvironment(const KService &service);
+ }
+ 
+ #endif
+diff --git a/src/gui/kprocessrunner.cpp b/src/gui/kprocessrunner.cpp
+index 97b6f0d..63f6ab9 100644
+--- a/src/gui/kprocessrunner.cpp
++++ b/src/gui/kprocessrunner.cpp
+@@ -142,6 +142,8 @@ KProcessRunner *KProcessRunner::fromApplication(const KService::Ptr &service,
+ #ifndef Q_OS_ANDROID
+     if (service->runOnDiscreteGpu()) {
+         modifyEnv(*instance->m_process, KIO::discreteGpuEnvironment());
++    } else if (const QProcessEnvironment gpuEnv = KIO::graphicsSettingsEnvironment(*service); !gpuEnv.isEmpty()) {
++        modifyEnv(*instance->m_process, gpuEnv);
+     }
+ #endif
+ 

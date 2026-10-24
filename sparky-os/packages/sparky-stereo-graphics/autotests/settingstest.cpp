@@ -25,6 +25,9 @@ private Q_SLOTS:
     void aGpuThatIsNotHereIsKept();
     void handEditShows();
     void isDefaultTracksChanges();
+    void followTheProfileIsAChoice();
+    void copyBackRoundTrip();
+    void copyBackReadsKConfigBooleans();
 
 private:
     QString file() const
@@ -152,6 +155,56 @@ void SettingsTest::isDefaultTracksChanges()
     QVERIFY(!settings.isDefault());
     settings.setRenderChoice(Category::Other, u"auto"_s);
     QVERIFY(settings.isDefault());
+}
+
+void SettingsTest::followTheProfileIsAChoice()
+{
+    QVERIFY(GraphicsSettings::validChoice(u"profile"_s));
+    GraphicsSettings settings;
+    settings.setRenderChoice(Category::Players, u"profile"_s);
+    QVERIFY(!settings.isDefault());
+    QVERIFY(settings.save());
+    QVERIFY(text().contains("Players=profile"));
+    QCOMPARE(GraphicsSettings().renderChoice(Category::Players), u"profile"_s);
+}
+
+void SettingsTest::copyBackRoundTrip()
+{
+    GraphicsSettings settings;
+    QVERIFY(!settings.copyBack().has_value());
+    settings.setCopyBack(true);
+    QVERIFY(!settings.isDefault());
+    QVERIFY(settings.save());
+    // the key libmedia-gpu-route 0.2 reads
+    QVERIFY2(text().contains("[Decoding]\nCopyBack=true"), text().constData());
+    QCOMPARE(GraphicsSettings().copyBack(), std::optional<bool>(true));
+    settings.setCopyBack(false);
+    QVERIFY(settings.save());
+    QVERIFY(text().contains("CopyBack=false"));
+    QCOMPARE(GraphicsSettings().copyBack(), std::optional<bool>(false));
+    // Defaults: the machine's record decides again, so the key goes
+    settings.resetToDefaults();
+    QVERIFY(settings.isDefault());
+    QVERIFY(settings.save());
+    QVERIFY(!text().contains("CopyBack"));
+    QVERIFY(!GraphicsSettings().copyBack().has_value());
+}
+
+void SettingsTest::copyBackReadsKConfigBooleans()
+{
+    // the forms libmedia-gpu-route accepts, written by hand
+    for (const QByteArray &value : {QByteArray("on"), QByteArray("yes"), QByteArray("1"), QByteArray("TRUE")}) {
+        QFile f(file());
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("[Decoding]\nCopyBack=" + value + "\n");
+        f.close();
+        QCOMPARE(GraphicsSettings().copyBack(), std::optional<bool>(true));
+    }
+    QFile f(file());
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write("[Decoding]\nCopyBack=off\n");
+    f.close();
+    QCOMPARE(GraphicsSettings().copyBack(), std::optional<bool>(false));
 }
 
 QTEST_GUILESS_MAIN(SettingsTest)
