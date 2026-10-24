@@ -54,6 +54,18 @@ class LinkGate(unittest.TestCase):
         subprocess.run(['dpkg-deb', '--build', str(root), str(out)], check=True, stdout=subprocess.DEVNULL)
         return out
 
+    def test_loader_error_is_rejected(self):
+        # A needed library that the loader cannot use (not an ELF file: masked, truncated, the wrong class)
+        # is neither "not found" nor an undefined symbol; it is still a program that does not start.
+        deb = self.deb('demo', '5+lc1', as_needed=False)
+        root = self.base / 'pkg-5+lc1'
+        (root / LIBDIR / 'libb.so.1').write_bytes(b'not an ELF file\n')
+        subprocess.run(['dpkg-deb', '--build', str(root), str(deb)], check=True, stdout=subprocess.DEVNULL)
+        with self.assertRaises(package.Invalid) as raised:
+            linkcheck.check(deb)
+        self.assertIn('loader error', str(raised.exception))
+        self.assertIn('libb.so.1', str(raised.exception))
+
     def test_dropped_needed_is_rejected(self):
         before = self.deb('demo', '1', as_needed=False)
         after = self.deb('demo', '1+lc1', as_needed=True, listed=False)

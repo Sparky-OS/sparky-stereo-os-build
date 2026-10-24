@@ -138,13 +138,24 @@ def resolve(root, timeout=20, extra_dirs=()):
         text = run.stdout + run.stderr
         if 'not a dynamic executable' in text:
             continue
+        parsed = False
         for line in text.splitlines():
             line = line.strip()
             if 'not found' in line:
                 result[(rel, 'not found', line.split('=>')[0].strip())] = True
+                parsed = True
             elif 'undefined symbol' in line:
                 symbol = line.split('undefined symbol:', 1)[1].split(',')[0].split('\t')[0].strip()
                 result[(rel, 'undefined', symbol)] = True
+                parsed = True
+            elif 'error while loading shared libraries' in line or 'cannot open shared object file' in line:
+                # a library the loader found but cannot use: an invalid ELF header, the wrong ELF class, a
+                # truncated or masked file ("file too short"); the program does not start either
+                result[(rel, 'loader error', line.split('error while loading shared libraries:', 1)[-1].strip())] = True
+                parsed = True
+        if run.returncode != 0 and not parsed:
+            last = text.strip().splitlines()[-1] if text.strip() else f'ldd exited {run.returncode}'
+            result[(rel, 'loader error', last.strip())] = True
     return result
 
 
