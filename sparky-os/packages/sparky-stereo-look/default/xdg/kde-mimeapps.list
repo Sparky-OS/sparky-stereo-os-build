@@ -2,8 +2,14 @@
 # types of vlc-stereo.desktop. The file sits between a user's own ~/.config/mimeapps.list, which still wins,
 # and the KDE file of plasma-desktop (/usr/share/applications/kde-mimeapps.list), which names Haruna.
 # Audio files keep the KDE default (Elisa).
+# Stereo pictures open in Gwenview, the edition's stereo photo viewer (Daniel Ramos, 2026-10-24). Their types come
+# from kimageformats-stereo.xml and are sub-classes of JPEG or PNG, so without a line here KDE handed them to any
+# JPEG viewer (ImageMagick's display on the A10). Every other viewer stays in Open With.
 
 [Default Applications]
+image/x-mpo=org.kde.gwenview.desktop
+image/x-jps=org.kde.gwenview.desktop
+image/x-pns=org.kde.gwenview.desktop
 video/3gp=vlc-stereo.desktop
 video/3gpp=vlc-stereo.desktop
 video/3gpp2=vlc-stereo.desktop
