@@ -36,6 +36,14 @@ check "a10 games on battery started in 3D: the R5 M430" "$(env_for a10 --categor
 check "a10 any program started in 3D" "$(env_for a10 --3d --profile power-saver --print render-node)" "/dev/dri/renderD129"
 check "follow the power profile, a player on battery" "$(env_for a10 --choice profile --profile power-saver --print render-node)" "/dev/dri/renderD128"
 check "follow the power profile, on performance" "$(env_for a10 --choice profile --profile performance --print render-node)" "/dev/dri/renderD129"
+# a desktop file outside the menu (a launcher on the desktop), as Plasma's launcher asks for it
+mkdir -p "$T/Desktop"
+printf '[Desktop Entry]\nType=Application\nName=Player\nExec=true\nCategories=AudioVideo;Video;Player;\n' >"$T/Desktop/player.desktop"
+printf '[Desktop Entry]\nType=Application\nName=Game\nExec=true\nCategories=Game;\n' >"$T/Desktop/game.desktop"
+check "a10 player outside the menu, on battery: the R5 M430" "$(env_for a10 --app "$T/Desktop/player.desktop" --profile power-saver --print render-node)" "/dev/dri/renderD129"
+check "a10 game outside the menu, on battery: integrated" "$(env_for a10 --app "$T/Desktop/game.desktop" --profile power-saver --print render-node)" "/dev/dri/renderD128"
+check "a10 game outside the menu, on performance" "$(env_for a10 --app "$T/Desktop/game.desktop" --profile performance | head -1)" "DRI_PRIME=pci-0000_03_00_0"
+check "a desktop file that is not there exits 2" "$(env_for a10 --app "$T/Desktop/missing.desktop" >/dev/null 2>&1; echo $?)" 2
 check "shell form quotes the star" "$(env_for host --category games --profile performance --shell | grep VK_LOADER)" "export VK_LOADER_DRIVERS_SELECT='*nvidia*'"
 check "one GPU: nothing to export" "$(env_for one --category games --profile performance | wc -l)" 0
 check "bad category exits 2" "$(env_for host --category nonsense >/dev/null 2>&1; echo $?)" 2

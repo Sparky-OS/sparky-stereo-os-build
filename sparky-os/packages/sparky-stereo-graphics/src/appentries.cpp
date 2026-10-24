@@ -10,6 +10,7 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
+#include <QFileInfo>
 #include <QMap>
 #include <QStandardPaths>
 
@@ -190,6 +191,14 @@ AppEntry AppEntries::find(const QString &id) const
     const QMap<QString, Paths> map = collect(m_dataHome, m_dataDirs);
     const auto it = map.constFind(id);
     return it == map.constEnd() ? AppEntry() : entryFrom(id, it.value());
+}
+
+AppEntry AppEntries::fromFile(const QString &path)
+{
+    if (!QFileInfo(path).isFile()) {
+        return {};
+    }
+    return entryFrom(QFileInfo(path).fileName(), Paths{QString(), path});
 }
 
 bool AppEntries::setPreference(const QString &id, AppPreference preference)

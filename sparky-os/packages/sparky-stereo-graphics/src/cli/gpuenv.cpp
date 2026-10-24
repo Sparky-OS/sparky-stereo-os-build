@@ -3,7 +3,7 @@
 
 // sparky-stereo-gpu-env: what the Graphics page decides, for programs that start programs.
 //
-//   sparky-stereo-gpu-env [--category players|games|browsers|other | --app ID.desktop | --choice auto|profile|integrated|discrete|pci-...]
+//   sparky-stereo-gpu-env [--category players|games|browsers|other | --app ID.desktop|/path/to/file.desktop | --choice auto|profile|integrated|discrete|pci-...]
 //                         [--3d] [--profile power-saver|balanced|performance] [--root DIR]
 //                         [--print env|gpu|render-node|card-node|id|reason] [--shell]
 //   sparky-stereo-gpu-env --session     the KWIN_DRM_DEVICES line for the next login, nothing when Automatic
@@ -22,6 +22,7 @@
 #include "resolver.h"
 
 #include <QCoreApplication>
+#include <QDir>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -136,7 +137,7 @@ int main(int argc, char **argv)
 
     Resolution resolution;
     if (!appId.isEmpty()) {
-        const AppEntry entry = AppEntries::fromEnvironment().find(appId);
+        const AppEntry entry = QDir::isAbsolutePath(appId) ? AppEntries::fromFile(appId) : AppEntries::fromEnvironment().find(appId);
         if (entry.id.isEmpty()) {
             return usage(u"No desktop entry %1"_s.arg(appId));
         }
