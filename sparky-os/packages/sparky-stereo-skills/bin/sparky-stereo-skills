@@ -1,10 +1,12 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/16
+# Last update 2026/10/23
 # Gives the person's AI assistants the public skills of Sparky Stereo OS: links each skill in
 # /usr/share/sparky-stereo-os/skills into the folders where the assistants read skills. Run by the person
 # (the package never writes into home directories); offered once at login by its autostart entry.
+# Each skill carries an optional metadata.requires-packages header. Core skills have none and always
+# link; a domain skill links while one of the packages listed in that field is installed.
 # Where each assistant reads skills, from its own documentation (read 2026-10-16):
 #   Claude Code  ~/.claude/skills         https://code.claude.com/docs/en/skills
 #   Codex        ~/.agents/skills         https://learn.chatgpt.com/docs/build-skills
@@ -21,6 +23,9 @@ set -euo pipefail
 SKILLS=${SPARKY_STEREO_SKILLS:-/usr/share/sparky-stereo-os/skills}
 REFERENCE=${SPARKY_STEREO_REFERENCE:-$(dirname "$SKILLS")}
 SHARE=${SPARKY_STEREO_SKILLS_STRINGS:-/usr/share/sparky/sparky-stereo-skills}
+if [ ! -f "$SHARE/en" ]; then
+	SHARE=$(dirname "$0")/../lang
+fi
 STATE_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/sparky-stereo-skills
 STATE=$STATE_DIR/state
 
@@ -44,6 +49,39 @@ cursor	.cursor/skills	Cursor"
 
 folder() { printf '%s\n' "$TOOLS" | awk -F'\t' -v n="$1" '$1 == n {print $2}'; }
 readers() { printf '%s\n' "$TOOLS" | awk -F'\t' -v n="$1" '$1 == n {print $3}'; }
+
+requires_packages() {
+	local s=$1
+	awk 'NR > 1 && /^---[ \t]*$/ {exit}
+		/^  requires-packages:/ {
+			v = $0
+			sub(/^  requires-packages:[ \t]*/, "", v)
+			sub(/[ \t]+$/, "", v)
+			print v
+			exit
+		}' "$s/SKILL.md"
+}
+
+package_allowed() {
+	local p
+	if [ -n "${SPARKY_STEREO_PACKAGES:-}" ]; then
+		for p in $SPARKY_STEREO_PACKAGES; do [ "$p" = "$1" ] && return 0; done
+		return 1
+	fi
+	dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -qx 'ok installed'
+}
+
+packages_allowed() {
+	local field=$1 p
+	[ -z "$field" ] && return 0
+	IFS='|' read -r -a alternatives <<<"$field"
+	for p in "${alternatives[@]}"; do
+		p=${p// /}
+		[ -z "$p" ] && continue
+		package_allowed "$p" && return 0
+	done
+	return 1
+}
 
 # The assistants found for this account: the shared folder serves most of them, Claude Code and Cline have their own
 found() {
@@ -80,16 +118,24 @@ link_into() {
 	mkdir -p "$dir"
 	for s in "$SKILLS"/*/; do
 		s=${s%/}; n=${s##*/}
-		if ! valid "$s"; then printf "$LOCAL12\n" "$n" >&2; continue; fi
-		if ours "$dir/$n"; then ln -sfn "$s" "$dir/$n"
+	if ! valid "$s"; then printf "$LOCAL12\n" "$n" >&2; continue; fi
+	if ! packages_allowed "$(requires_packages "$s")"; then printf "$LOCAL26\n" "$n" >&2; continue; fi
+	if ours "$dir/$n"; then ln -sfn "$s" "$dir/$n"
 		elif [ -e "$dir/$n" ] || [ -L "$dir/$n" ]; then printf "$LOCAL11\n" "$dir/$n" >&2; continue
 		else ln -s "$s" "$dir/$n"
 		fi
 		count=$((count + 1))
 	done
-	# links of ours to skills that are gone or no longer valid
+# links of ours to skills that are gone, no longer valid, or whose packages are no longer installed
 	for l in "$dir"/*; do
-		if ours "$l" && ! { [ -d "$l" ] && valid "$(readlink "$l")"; }; then rm -f "$l"; fi
+		if ours "$l" && [ -d "$l" ] && valid "$(readlink "$l")"; then
+			if ! packages_allowed "$(requires_packages "$(readlink "$l")")"; then
+				rm -f "$l"
+				continue
+			fi
+		elif ours "$l"; then
+			rm -f "$l"
+		fi
 	done
 	printf "$LOCAL10\n" "$count" "$dir"
 }

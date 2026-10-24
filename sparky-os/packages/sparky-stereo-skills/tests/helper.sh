@@ -24,17 +24,41 @@ cp -a "$SYSTEM" "$F"
 export SPARKY_STEREO_SKILLS=$F
 valid=$(for d in "$F"/*/; do head -n 1 "$d/SKILL.md" | grep -qx -- --- && echo x; done | wc -l)
 total=$(find "$F" -mindepth 1 -maxdepth 1 -type d | wc -l)
+real_packages=$(for d in "$F"/*/; do
+	awk 'NR > 1 && /^---[ \t]*$/ {exit}
+		/^  requires-packages:/ {sub(/^  requires-packages:[ \t]*/, ""); print; exit}' "$d/SKILL.md"
+done | sed 's/|/ /g' | xargs)
 export HOME=$T/home XDG_CONFIG_HOME=$T/home/.config LANG=C.UTF-8 LC_ALL='' LC_MESSAGES=''
 unset DISPLAY WAYLAND_DISPLAY
 mkdir -p "$HOME/.claude" "$HOME/.codex" "$HOME/.claude/skills/audio"
 echo 'my own skill' >"$HOME/.claude/skills/audio/SKILL.md"
+mkdir "$F/zz-single" "$F/zz-alternative" "$F/zz-absent"
+printf -- '---\nname: zz-single\ndescription: A skill gated by one package.\n  requires-packages: zz-single-package\n---\n\n# Single\n' >"$F/zz-single/SKILL.md"
+printf -- '---\nname: zz-alternative\ndescription: A skill gated by package alternatives.\n  requires-packages: zz-alternative-absent | zz-alternative-present\n---\n\n# Alternative\n' >"$F/zz-alternative/SKILL.md"
+printf -- '---\nname: zz-absent\ndescription: A skill whose package is absent.\n  requires-packages: zz-absent-package\n---\n\n# Absent\n' >"$F/zz-absent/SKILL.md"
+valid=$(for d in "$F"/*/; do head -n 1 "$d/SKILL.md" | grep -qx -- --- && echo x; done | wc -l)
+total=$(find "$F" -mindepth 1 -maxdepth 1 -type d | wc -l)
 echo "skills in the copy: $total, with a header: $valid"
+packages='zz-single-package zz-alternative-present'" $real_packages"
+export SPARKY_STEREO_PACKAGES="$packages"
 
 out=$("$HELPER" link 2>&1); echo "$out" | sed 's/^/     /'
 n_agents=$(find "$HOME/.agents/skills" -maxdepth 1 -type l | wc -l)
 n_claude=$(find "$HOME/.claude/skills" -maxdepth 1 -type l | wc -l)
-check "every skill with a header is linked into ~/.agents/skills ($n_agents of $valid)" '[ "$n_agents" -eq "$valid" ]'
-check "the same into ~/.claude/skills, except the person's own audio ($n_claude of $((valid - 1)))" '[ "$n_claude" -eq $((valid - 1)) ]'
+check "the skill whose only package is present is linked into ~/.agents/s and ~/.claude" '[ -L "$HOME/.agents/skills/zz-single" ] && [ -L "$HOME/.claude/skills/zz-single" ]'
+check "a package alternative is accepted ($n_agents agents, $valid skills, 2 gated)" '[ -L "$HOME/.agents/skills/zz-alternative" ] && [ -L "$HOME/.claude/skills/zz-alternative" ] && [ "$n_agents" -eq $((valid - 1)) ]'
+check "the same into ~/.claude, except the person's own audio ($n_claude of $((valid - 2)))" '[ "$n_claude" -eq $((valid - 2)) ]'
+check "the skill whose package is absent is not linked" '[ ! -e "$HOME/.agents/skills/zz-absent" ] && [ ! -e "$HOME/.claude/skills/zz-absent" ]'
+check "and the helper says none of its packages are installed" 'grep -q "zz-absent" <<<"$out"'
+remaining=$(tr ' ' '\n' <<<"$packages" | grep -vx zz-single-package | xargs)
+SPARKY_STEREO_PACKAGES="$remaining" "$HELPER" link >/dev/null
+check "a package that has gone away removes the stale link" '[ ! -e "$HOME/.agents/skills/zz-single" ] && [ ! -e "$HOME/.claude/skills/zz-single" ] && [ -e "$HOME/.agents/skills/zz-alternative" ] && [ -e "$HOME/.claude/skills/zz-alternative" ]'
+env SPARKY_STEREO_PACKAGES="$packages" "$HELPER" --first-login >/dev/null
+check "login relinks the same still-installed packages" '[ -L "$HOME/.agents/skills/zz-single" ] && [ -L "$HOME/.claude/skills/zz-single" ]'
+remaining=$(tr ' ' '\n' <<<"$remaining" | grep -vx zz-alternative-present)
+if [ -z "$remaining" ]; then remaining='zz-none-package'; fi
+SPARKY_STEREO_PACKAGES="$remaining" "$HELPER" link >/dev/null
+check "when every alternative has gone away the stale link goes too" '[ ! -e "$HOME/.agents/skills/zz-alternative" ] && [ ! -e "$HOME/.claude/skills/zz-alternative" ]'
 check "the person's own ~/.claude/skills/audio is untouched" '[ ! -L "$HOME/.claude/skills/audio" ] && grep -qx "my own skill" "$HOME/.claude/skills/audio/SKILL.md"'
 check "every link reads its SKILL.md" '! for l in "$HOME"/.agents/skills/* "$HOME"/.claude/skills/*; do [ -r "$l/SKILL.md" ] || echo missing; done | grep -q missing'
 check "Cline is not linked when it is not installed" '[ ! -e "$HOME/.cline" ]'
