@@ -140,10 +140,12 @@ Category AppEntries::categoryFor(const QStringList &categories)
     if (categories.contains(u"AudioVideoEditing"_s)) {
         return Category::Other; // an editor is not a player
     }
-    for (const QString &name : {u"Player"_s, u"Video"_s, u"Audio"_s, u"Music"_s}) {
-        if (categories.contains(name)) {
-            return Category::Players;
-        }
+    // an audio application without video (Desktop Menu Specification: Audio, Video) draws no pictures that need a GPU
+    if (categories.contains(u"Audio"_s) && !categories.contains(u"Video"_s)) {
+        return Category::Other;
+    }
+    if (categories.contains(u"Player"_s) || categories.contains(u"Video"_s)) {
+        return Category::Players;
     }
     return Category::Other;
 }
