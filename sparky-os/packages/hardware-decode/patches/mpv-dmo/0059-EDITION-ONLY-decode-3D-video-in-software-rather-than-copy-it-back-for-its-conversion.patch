@@ -9,9 +9,10 @@ Description: EDITION ONLY: decode 3D video in software rather than copy it back 
  frame arrives in GPU memory. The player asks the decoder
  (VDCTRL_SOFTWARE_FRAMES), which switches to software only when its
  hardware decoder came from an automatic mode and copying back is not
- allowed, and decodes again from the keyframe before that picture with
- an exact seek, as a change of --hwdec does. A hardware decoder the
- person chose, or allowed copying back, keeps the copy as before.
+ allowed. Either way the player decodes again from the keyframe before
+ that picture with an exact seek, as a change of --hwdec does, so no
+ picture is lost. A hardware decoder the person chose, or copying back
+ the person or the machine's record allowed, keeps the copy as before.
 Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Forwarded: not-needed
 Last-Update: 2026-10-23
@@ -129,7 +130,7 @@ Assisted-by: Claude Opus 5.5
              // hwdec will.
 --- a/player/video.c
 +++ b/player/video.c
-@@ -570,6 +570,36 @@ static bool check_for_hwdec_fallback(str
+@@ -570,6 +570,34 @@ static bool check_for_hwdec_fallback(str
      return true;
  }
  
@@ -144,20 +145,18 @@ Assisted-by: Claude Opus 5.5
 +        return false;
 +    vo_c->filter->software_frames_wanted = false;
 +
++    // A hardware decoder the person chose keeps its frames, and the filter
++    // copies them from now on.
 +    if (!vo_c->track || !vo_c->track->dec ||
 +        mp_decoder_wrapper_control(vo_c->track->dec,
 +                            VDCTRL_SOFTWARE_FRAMES, NULL) != CONTROL_OK)
-+    {
 +        vo_c->filter->software_frames_refused = true;
-+        mp_filter_wakeup(vo_c->filter->f);
-+        return false;
-+    }
 +
 +    double pts = vo_c->filter->software_frames_pts;
 +    if (pts == MP_NOPTS_VALUE)
 +        pts = mpctx->video_pts;
 +    mp_output_chain_reset_harder(vo_c->filter);
-+    // The new decoder starts from the keyframe before that picture.
++    // Decode again from the keyframe before that picture, so none is lost.
 +    if (pts != MP_NOPTS_VALUE)
 +        queue_seek(mpctx, MPSEEK_ABSOLUTE, pts, MPSEEK_EXACT, 0);
 +    return true;
@@ -166,7 +165,7 @@ Assisted-by: Claude Opus 5.5
  static bool check_for_forced_eof(struct MPContext *mpctx)
  {
      struct vo_chain *vo_c = mpctx->vo_chain;
-@@ -1074,6 +1104,9 @@ void write_video(struct MPContext *mpctx
+@@ -1074,6 +1102,9 @@ void write_video(struct MPContext *mpctx
      MP_TRACE(mpctx, "video_output_image: r=%d/eof=%d/st=%s\n", r, logical_eof,
               mp_status_str(mpctx->video_status));
  

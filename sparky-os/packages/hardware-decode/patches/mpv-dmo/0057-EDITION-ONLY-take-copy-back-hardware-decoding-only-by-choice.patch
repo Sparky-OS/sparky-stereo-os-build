@@ -80,17 +80,17 @@ Assisted-by: Claude Opus 5.5
  option('vapoursynth', type: 'feature', value: 'auto', description: 'VapourSynth filter bridge')
 --- a/video/decode/vd_lavc.c
 +++ b/video/decode/vd_lavc.c
-@@ -29,6 +29,10 @@
- #include <libavutil/intreadwrite.h>
- #include <libavutil/pixdesc.h>
+@@ -56,6 +56,10 @@
+ 
+ #include "options/m_option.h"
  
 +#if HAVE_MEDIA_GPU_ROUTE
 +#include <media-gpu-route.h>
 +#endif
 +
- #include "mpv_talloc.h"
- #include "common/msg.h"
- #include "options/m_config.h"
+ static void init_avctx(struct mp_filter *vd);
+ static void uninit_avctx(struct mp_filter *vd);
+ 
 @@ -500,6 +504,17 @@ static AVBufferRef *hwdec_create_dev(str
  }
  
