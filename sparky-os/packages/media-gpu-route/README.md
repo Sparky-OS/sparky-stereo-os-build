@@ -36,6 +36,14 @@ On Carrizo each copied picture is a blit to a staging copy on the GPU that also 
 - otherwise not allowed.
 A program's own choice of a copying decoder (mpv's `auto-copy` or `vaapi-copy`, VLC's and Kdenlive's explicit decoders) stays the person's choice and is never overridden.
 
+## The Graphics page
+
+Where players draw is the person's choice on the Graphics page (`sparky-stereo-graphics`); Automatic there is the GPU measured best on the machine for playback, whatever the power profile.
+When `sparky-stereo-gpu-env` is installed and copying back is allowed, a copy-back caller decodes first on the render node it names for players (`--category players --print render-node`), with every other GPU behind it in order, so a source that GPU cannot decode still falls back.
+A caller that imports decoded surfaces, and `media_gpu_route_default`, keep the graphics stack's order: the renderer draws on the GPU the program was started on, and the decoder must be on that GPU for the import to work; the page's launch environment (`sparky-stereo-gpu-run`, KDE's per-program setting) is what moves such a program.
+A GPU chosen at launch (`DRI_PRIME`, `MESA_VK_DEVICE_SELECT`, `VK_LOADER_DRIVERS_SELECT`, an NVIDIA offload) wins over the page, and the page is then not asked; a missing, failing or unknown answer changes nothing.
+`tests/graphics-page.sh` checks this on two real GPUs, `tests/page-order.sh` without any.
+
 `media_gpu_route_vulkan_import` says whether a Vulkan renderer on a GPU can import decoded surfaces: dma-buf memory (`VK_EXT_external_memory_dma_buf`) laid out by DRM format modifiers (`VK_EXT_image_drm_format_modifier`), which libplacebo requires.
 Mesa's RADV offers the modifier extension from GFX9 on (`radv_physical_device.c`, `gfx_level >= GFX9`), so GFX6 to GFX8 GPUs such as Carrizo, Stoney, Polaris and Hainan are copy-only for Vulkan renderers.
 OpenGL renderers import dma-bufs through `EGL_EXT_image_dma_buf_import`, which needs no modifier.

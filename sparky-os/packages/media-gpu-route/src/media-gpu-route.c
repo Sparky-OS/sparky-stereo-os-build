@@ -1,5 +1,6 @@
 /* Copyright 2026 Daniel Campos Ramos. SPDX-License-Identifier: MIT */
 #include "gpu-private.h"
+#include <pthread.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -160,6 +161,51 @@ int media_gpu_route_vulkan_import(const struct media_gpu_route *gpu)
     return result;
 }
 
+/* Where players draw is the person's choice on the Graphics page (sparky-stereo-graphics): its command names
+ * the render node players use now (the choice, or Automatic: the GPU measured best on the machine). A caller
+ * that copies its pictures back decodes there first, every other GPU behind it in order, so a source it cannot
+ * decode still falls back. A caller that imports decoded surfaces keeps the graphics stack's order, because its
+ * renderer draws on the GPU the program was started on, and the page's launch environment puts it there.
+ * Nothing is written. A GPU chosen at launch (DRI_PRIME, a Vulkan device selection, an NVIDIA offload) is
+ * more specific than the page and wins; a missing, failing or unknown answer changes nothing. */
+static char graphics_page_node[128];
+static pthread_once_t graphics_page_once = PTHREAD_ONCE_INIT;
+
+static void ask_graphics_page(void)
+{
+    static const char *const launch_choice[] = { "DRI_PRIME", "MESA_VK_DEVICE_SELECT", "VK_LOADER_DRIVERS_SELECT", "__NV_PRIME_RENDER_OFFLOAD" };
+    for (size_t i = 0; i < sizeof(launch_choice) / sizeof(launch_choice[0]); i++)
+        if (getenv(launch_choice[i]))
+            return;
+    FILE *answer = popen("sparky-stereo-gpu-env --category players --print render-node 2>/dev/null", "re");
+    if (!answer)
+        return;
+    char node[sizeof(graphics_page_node)] = "";
+    if (!fgets(node, sizeof(node), answer))
+        node[0] = '\0';
+    if (pclose(answer) != 0)
+        return;
+    node[strcspn(node, "\n")] = '\0';
+    memcpy(graphics_page_node, node, sizeof(node));
+}
+
+void media_gpu_route_prefer_graphics_page(struct media_gpu_route *routes, int count)
+{
+    if (count < 2)
+        return;
+    pthread_once(&graphics_page_once, ask_graphics_page);
+    if (!graphics_page_node[0])
+        return;
+    for (int i = 1; i < count; i++) {
+        if (strcmp(routes[i].render_node, graphics_page_node))
+            continue;
+        struct media_gpu_route chosen = routes[i];
+        memmove(&routes[1], &routes[0], (size_t)i * sizeof(*routes));
+        routes[0] = chosen;
+        return;
+    }
+}
+
 int media_gpu_route_decoder_frames(const struct media_gpu_video *video, enum media_gpu_frames frames,
                                    struct media_gpu_decoder *decoder)
 {
@@ -177,6 +223,8 @@ int media_gpu_route_decoder_frames(const struct media_gpu_video *video, enum med
         return 0;
     struct media_gpu_route *routes = NULL;
     int count = media_gpu_routes(&routes);
+    if (frames == MEDIA_GPU_FRAMES_COPY)
+        media_gpu_route_prefer_graphics_page(routes, count);
     int unknown = 0;
     for (int i = 0; i < count; i++) {
         struct media_gpu_decoder candidate = { .gpu = routes[i] };

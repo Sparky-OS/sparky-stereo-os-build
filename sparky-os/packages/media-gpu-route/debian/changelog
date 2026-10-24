@@ -1,3 +1,12 @@
+media-gpu-route (0.2.1) unstable; urgency=medium
+
+  * A copy-back caller decodes first on the GPU the Graphics page names for
+    players (sparky-stereo-gpu-env), the other GPUs behind it; an importing
+    caller and media_gpu_route_default keep the graphics stack's order, where
+    the renderer draws. A GPU chosen at launch wins and the page is not asked.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 24 Oct 2026 12:00:00 -0300
+
 media-gpu-route (0.2.0) unstable; urgency=medium
 
   * Never choose hardware decoding that copies every picture back by
