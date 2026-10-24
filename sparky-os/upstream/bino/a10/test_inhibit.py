@@ -49,6 +49,10 @@ class InhibitTests(unittest.TestCase):
             while not ready.exists() and time.monotonic() < deadline:
                 time.sleep(.05)
             self.assertTrue(ready.exists())
+            child_pids = list(self.root.glob('bino-242-inhibit-*/child.pid'))
+            self.assertEqual(len(child_pids), 1)
+            child_pid = int(child_pids[0].read_text())
+            self.assertNotEqual(os.getsid(child_pid), os.getsid(process.pid))
             process.send_signal(signal.SIGTERM)
             process.communicate(timeout=5)
             self.assertEqual(process.returncode, 130)

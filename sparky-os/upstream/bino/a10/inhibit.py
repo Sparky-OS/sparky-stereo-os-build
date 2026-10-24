@@ -45,7 +45,7 @@ def launch(args):
         root = Path(temp)
         with (root/'stderr').open('w') as log:
             process = subprocess.Popen(['kde-inhibit', '--power', '--screenSaver', '--',
-                sys.executable, str(Path(__file__).resolve()), '--child', str(root), *args], stderr=log)
+                sys.executable, str(Path(__file__).resolve()), '--child', str(root), *args], stderr=log, start_new_session=True)
             while process.poll() is None:
                 if pending and (root/'child.pid').exists():
                     try:
