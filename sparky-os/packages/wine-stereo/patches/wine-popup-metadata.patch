@@ -1,0 +1,149 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Subject: winex11: Describe override-redirect popup types and menu parents
+
+EWMH 1.5 section 5.6 recommends window types on override-redirect windows
+for compositor behavior too. Keep each submenu transient for its actual
+parent menu, while retaining the Win32 command recipient unchanged.
+Retain the combo owner after its list is reparented to the desktop so
+the X11 driver can publish the correct transient hint before mapping.
+
+Assisted-by: GPT-6 (Codex)
+
+--- a/dlls/winex11.drv/window.c
++++ b/dlls/winex11.drv/window.c
+@@ -937,6 +937,56 @@
+ }
+ 
+ 
++static BOOL menu_has_popup( HWND parent, LONG id, HWND popup )
++{
++    MENUBARINFO info = { .cbSize = sizeof(info) };
++    UINT i, count;
++
++    if (!NtUserGetMenuBarInfo( parent, id, 0, &info )) return FALSE;
++    count = NtUserGetMenuItemCount( info.hMenu );
++    if (count == ~0u) return FALSE;
++    for (i = 1; i <= count; i++)
++        if (NtUserGetMenuBarInfo( parent, id, i, &info ) && info.hwndMenu == popup) return TRUE;
++    return FALSE;
++}
++
++/* Describe an override-redirect window before mapping it. Menu ownership in
++ * Win32 names the command recipient, so find the visible parent menu too. */
++static Atom get_popup_type( struct x11drv_win_data *data, HWND *owner )
++{
++    static const WCHAR tooltip_class[] = {'t','o','o','l','t','i','p','s','_','c','l','a','s','s','3','2',0};
++    static const WCHAR combo_class[] = {'C','o','m','b','o','L','B','o','x',0};
++    WCHAR buffer[128];
++    UNICODE_STRING name = { .MaximumLength = sizeof(buffer) - sizeof(WCHAR), .Buffer = buffer };
++    HWND *list;
++    UINT i;
++
++    if (data->managed) return None;
++    if (NtUserGetClassLongW( data->hwnd, GCW_ATOM ) == 32768)  /* PopupMenu */
++    {
++        if (*owner && menu_has_popup( *owner, OBJID_MENU, data->hwnd ))
++            return x11drv_atom(_NET_WM_WINDOW_TYPE_DROPDOWN_MENU);
++        if ((list = build_hwnd_list()))
++        {
++            for (i = 0; list[i] != HWND_BOTTOM; i++)
++            {
++                if (list[i] == data->hwnd || NtUserGetWindowThread( list[i], NULL ) != GetCurrentThreadId()) continue;
++                if (NtUserGetClassLongW( list[i], GCW_ATOM ) != 32768) continue;
++                if (!menu_has_popup( list[i], OBJID_CLIENT, data->hwnd )) continue;
++                *owner = list[i];
++                break;
++            }
++            free( list );
++        }
++        return x11drv_atom(_NET_WM_WINDOW_TYPE_POPUP_MENU);
++    }
++    if (!NtUserGetClassName( data->hwnd, FALSE, &name )) return None;
++    if (!wcsicmp( buffer, tooltip_class )) return x11drv_atom(_NET_WM_WINDOW_TYPE_TOOLTIP);
++    if (!wcsicmp( buffer, combo_class )) return x11drv_atom(_NET_WM_WINDOW_TYPE_COMBO);
++    return None;
++}
++
++
+ /***********************************************************************
+  *              set_style_hints
+  */
+@@ -944,9 +994,10 @@
+ {
+     Window group_leader = data->whole_window;
+     HWND owner = NtUserGetWindowRelative( data->hwnd, GW_OWNER );
++    HWND group_owner = owner;
+     Window owner_win = 0;
+     XWMHints *wm_hints;
+-    Atom window_type;
++    Atom window_type = get_popup_type( data, &owner );
+ 
+     if (owner)
+     {
+@@ -958,16 +1009,25 @@
+     {
+         XSetTransientForHint( data->display, data->whole_window, owner_win );
+         group_leader = owner_win;
+-    }
++        if (group_owner && group_owner != owner)
++        {
++            Window group_window = X11DRV_get_whole_window( NtUserGetAncestor( group_owner, GA_ROOT ));
++            if (group_window) group_leader = group_window;
++        }
++    }
++    else if (!data->managed) XDeleteProperty( data->display, data->whole_window, XA_WM_TRANSIENT_FOR );
+ 
+     /* Only use dialog type for owned popups. Metacity allows making fullscreen
+      * only normal windows, and doesn't handle correctly TRANSIENT_FOR hint for
+      * dialogs owned by fullscreen windows.
+      */
+-    if (((style & WS_POPUP) || (ex_style & WS_EX_DLGMODALFRAME)) && owner)
+-        window_type = x11drv_atom(_NET_WM_WINDOW_TYPE_DIALOG);
+-    else
+-        window_type = x11drv_atom(_NET_WM_WINDOW_TYPE_NORMAL);
++    if (!window_type)
++    {
++        if (((style & WS_POPUP) || (ex_style & WS_EX_DLGMODALFRAME)) && owner)
++            window_type = x11drv_atom(_NET_WM_WINDOW_TYPE_DIALOG);
++        else
++            window_type = x11drv_atom(_NET_WM_WINDOW_TYPE_NORMAL);
++    }
+ 
+     XChangeProperty(data->display, data->whole_window, x11drv_atom(_NET_WM_WINDOW_TYPE),
+ 		    XA_ATOM, 32, PropModeReplace, (unsigned char*)&window_type, 1);
+--- a/dlls/winex11.drv/x11drv.h
++++ b/dlls/winex11.drv/x11drv.h
+@@ -511,6 +511,10 @@
+     XATOM__NET_WM_WINDOW_OPACITY,
+     XATOM__NET_WM_WINDOW_TYPE,
+     XATOM__NET_WM_WINDOW_TYPE_DIALOG,
++    XATOM__NET_WM_WINDOW_TYPE_DROPDOWN_MENU,
++    XATOM__NET_WM_WINDOW_TYPE_POPUP_MENU,
++    XATOM__NET_WM_WINDOW_TYPE_TOOLTIP,
++    XATOM__NET_WM_WINDOW_TYPE_COMBO,
+     XATOM__NET_WM_WINDOW_TYPE_NORMAL,
+     XATOM__NET_WM_WINDOW_TYPE_UTILITY,
+     XATOM__NET_WORKAREA,
+--- a/dlls/winex11.drv/x11drv_main.c
++++ b/dlls/winex11.drv/x11drv_main.c
+@@ -153,6 +153,10 @@
+     "_NET_WM_WINDOW_OPACITY",
+     "_NET_WM_WINDOW_TYPE",
+     "_NET_WM_WINDOW_TYPE_DIALOG",
++    "_NET_WM_WINDOW_TYPE_DROPDOWN_MENU",
++    "_NET_WM_WINDOW_TYPE_POPUP_MENU",
++    "_NET_WM_WINDOW_TYPE_TOOLTIP",
++    "_NET_WM_WINDOW_TYPE_COMBO",
+     "_NET_WM_WINDOW_TYPE_NORMAL",
+     "_NET_WM_WINDOW_TYPE_UTILITY",
+     "_NET_WORKAREA",
+--- a/dlls/user32/combo.c
++++ b/dlls/user32/combo.c
+@@ -528,6 +528,7 @@
+ 	    {
+               /* Now do the trick with parent */
+               NtUserSetParent( lphc->hWndLBox, HWND_DESKTOP );
++              SetWindowLongPtrW( lphc->hWndLBox, GWLP_HWNDPARENT, (LONG_PTR)hwnd );
+               /*
+                * If the combo is a dropdown, we must resize the control
+ 	       * to fit only the text area and button. To do this,

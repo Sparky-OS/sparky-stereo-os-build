@@ -1,0 +1,303 @@
+Description: Read HEIF stereo pairs with monoscopic fallback without replacing the primary image
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-10-24
+
+--- a/src/imageformats/heifdepth.cpp
++++ b/src/imageformats/heifdepth.cpp
+@@ -221,30 +221,54 @@
+ {
+     HeifSecondImage result;
+ #if LIBHEIF_HAVE_VERSION(1, 19, 0)
++    Q_UNUSED(primaryOrientation)
+     const heif_item_id primaryId = heif_image_handle_get_item_id(primary);
+-    int groups = 0;
+-    heif_entity_group *group = heif_context_get_entity_groups(ctx, heif_fourcc('s', 't', 'e', 'r'), primaryId, &groups);
+-    for (int i = 0; i < groups && result.image.isNull(); ++i) {
+-        if (group[i].num_entities != 2 || (group[i].entities[0] != primaryId && group[i].entities[1] != primaryId)) {
+-            continue;
+-        }
+-        const bool primaryIsLeft = group[i].entities[0] == primaryId;
+-        const heif_item_id other = primaryIsLeft ? group[i].entities[1] : group[i].entities[0];
+-        heif_image_handle *handle = nullptr;
+-        if (heif_context_get_image_handle(ctx, other, &handle).code) {
+-            continue;
+-        }
+-        result.image = cropped(ctx, other, decodeColor(handle, colorSpace));
+-        heif_image_handle_release(handle);
++    // ISO/IEC 23008-12:2025 6.8.5 and Amd.1 6.8.11: left, right, optional monoscopic fallback.
++    for (const uint32_t type : {heif_entity_group_ster, heif_entity_group_stem}) {
++        int count = 0;
++        heif_entity_group *groups = heif_context_get_entity_groups(ctx, type, primaryId, &count);
++        for (int i = 0; i < count && result.image.isNull(); ++i) {
++            const auto &group = groups[i];
++            const bool stem = type == heif_entity_group_stem;
++            if (group.num_entities != (stem ? 3u : 2u) || group.entities[0] == group.entities[1]) {
++                continue;
++            }
++            heif_image_handle *handles[3] = {};
++            bool valid = true;
++            for (uint32_t n = 0; n < group.num_entities; ++n) {
++                valid &= heif_context_get_image_handle(ctx, group.entities[n], &handles[n]).code == heif_error_Ok;
++            }
++            if (valid && (primaryId == group.entities[0] || primaryId == group.entities[1])) {
++                const bool primaryIsLeft = primaryId == group.entities[0];
++                const int other = primaryIsLeft ? 1 : 0;
++                result.image = cropped(ctx, group.entities[other], decodeColor(handles[other], colorSpace));
++                result.layout = primaryIsLeft ? QStringLiteral("multiViewLeftFirst") : QStringLiteral("multiViewRightFirst");
++                result.orientation = orientation(ctx, group.entities[other]);
++            } else if (valid && stem && primaryId == group.entities[2]) {
++                result.image = cropped(ctx, group.entities[0], decodeColor(handles[0], colorSpace));
++                result.thirdImage = cropped(ctx, group.entities[1], decodeColor(handles[1], colorSpace));
++                result.orientation = orientation(ctx, group.entities[0]);
++                result.thirdOrientation = orientation(ctx, group.entities[1]);
++                result.layout = QStringLiteral("multiViewLeftFirst");
++                result.viewIndices = QStringLiteral("1,2");
++                if (result.thirdImage.isNull()) {
++                    result = {};
++                }
++            }
++            for (auto *handle : handles) {
++                if (handle) {
++                    heif_image_handle_release(handle);
++                }
++            }
++            if (result.image.isNull()) {
++                result = {};
++            }
++        }
++        heif_entity_groups_release(groups, count);
+         if (!result.image.isNull()) {
+-            result.layout = primaryIsLeft ? QStringLiteral("multiViewLeftFirst") : QStringLiteral("multiViewRightFirst");
+-            result.orientation = orientation(ctx, other);
+-            if (result.orientation == 0) {
+-                result.orientation = primaryOrientation;
+-            }
+-        }
+-    }
+-    heif_entity_groups_release(group, groups);
++            break;
++        }
++    }
+ #else
+     Q_UNUSED(ctx)
+     Q_UNUSED(primary)
+--- a/src/imageformats/heifdepth_p.h
++++ b/src/imageformats/heifdepth_p.h
+@@ -30,6 +30,9 @@
+     QString layout;
+     QString depthMark;
+     QImage image;
++    QImage thirdImage; // right view when the primary is a separate monoscopic fallback
++    QString viewIndices; // reader image numbers, left then right; empty for the primary/second pair
++    quint16 thirdOrientation = 0;
+     quint16 orientation = 0; // EXIF orientation; 0 for none
+ };
+ 
+--- a/src/imageformats/heif.cpp
++++ b/src/imageformats/heif.cpp
+@@ -192,7 +192,7 @@
+         return false;
+     }
+ 
+-    *outImage = m_imageNumber == 1 ? m_second.image : m_current_image;
++    *outImage = m_imageNumber == 2 ? m_second.thirdImage : (m_imageNumber == 1 ? m_second.image : m_current_image);
+     return true;
+ }
+ 
+@@ -201,7 +201,7 @@
+     if (!ensureParsed()) {
+         return 0;
+     }
+-    return m_second.image.isNull() ? 1 : 2;
++    return !m_second.thirdImage.isNull() ? 3 : (m_second.image.isNull() ? 1 : 2);
+ }
+ 
+ int HEIFHandler::currentImageNumber() const
+@@ -790,11 +790,12 @@
+ 
+     switch (option) {
+     case Size:
+-        return m_imageNumber == 1 ? m_second.image.size() : m_current_image.size();
++        return m_imageNumber == 2 ? m_second.thirdImage.size() : (m_imageNumber == 1 ? m_second.image.size() : m_current_image.size());
+     case ImageTransformation:
+-        return int(MicroExif::orientationToTransformation(m_imageNumber == 1 ? m_second.orientation : m_orientation));
++        return int(MicroExif::orientationToTransformation(m_imageNumber == 2 ? m_second.thirdOrientation : (m_imageNumber == 1 ? m_second.orientation : m_orientation)));
+     case Description:
+-        return DepthMark::description(m_second.layout, m_second.depthMark);
++        return QString(DepthMark::description(m_second.layout, m_second.depthMark)
++            + (m_second.viewIndices.isEmpty() ? QString() : QStringLiteral("\n\nStereo3DViewIndices: ") + m_second.viewIndices));
+     default:
+         return QVariant();
+     }
+@@ -1392,6 +1393,9 @@
+     if (!m_second.layout.isEmpty()) {
+         m_current_image.setText(DepthMark::layoutKey, m_second.layout);
+     }
++    if (!m_second.viewIndices.isEmpty()) {
++        m_current_image.setText(QStringLiteral("Stereo3DViewIndices"), m_second.viewIndices);
++    }
+     if (!m_second.depthMark.isEmpty()) {
+         m_current_image.setText(DepthMark::depthKey, m_second.depthMark);
+     }
+--- a/autotests/depthtest.cpp
++++ b/autotests/depthtest.cpp
+@@ -221,6 +221,70 @@
+         QCOMPARE(reader.read().size(), QSize(24, 32));
+     }
+ 
++    void stemPair_data()
++    {
++        QTest::addColumn<QString>("file");
++        QTest::addColumn<bool>("stereo");
++        QTest::addColumn<int>("primary");
++        QTest::newRow("ster-primary-0.heic") << QStringLiteral("ster-primary-0.heic") << true << 0;
++        QTest::newRow("ster-primary-1.heic") << QStringLiteral("ster-primary-1.heic") << true << 1;
++        QTest::newRow("stem-primary-0.heic") << QStringLiteral("stem-primary-0.heic") << true << 0;
++        QTest::newRow("stem-primary-1.heic") << QStringLiteral("stem-primary-1.heic") << true << 1;
++        QTest::newRow("stem-primary-2.heic") << QStringLiteral("stem-primary-2.heic") << true << 2;
++        QTest::newRow("stem-fallback-alias-0.heic") << QStringLiteral("stem-fallback-alias-0.heic") << true << 0;
++        QTest::newRow("stem-fallback-alias-1.heic") << QStringLiteral("stem-fallback-alias-1.heic") << true << 1;
++        QTest::newRow("unmarked.heic") << QStringLiteral("unmarked.heic") << false << 2;
++        QTest::newRow("unrelated-group.heic") << QStringLiteral("unrelated-group.heic") << false << 2;
++        QTest::newRow("duplicate-eyes.heic") << QStringLiteral("duplicate-eyes.heic") << false << 2;
++        QTest::newRow("missing-eye.heic") << QStringLiteral("missing-eye.heic") << false << 2;
++        QTest::newRow("short-stem.heic") << QStringLiteral("short-stem.heic") << false << 0;
++        QTest::newRow("reserved-version.heic") << QStringLiteral("reserved-version.heic") << false << 2;
++    }
++
++    void stemPair()
++    {
++        QFETCH(QString, file);
++        QFETCH(bool, stereo);
++        QFETCH(int, primary);
++        QByteArray data = fixture(QStringLiteral("heif-stem/") + file);
++        QBuffer buffer(&data);
++        QVERIFY(buffer.open(QIODevice::ReadOnly));
++        QImageReader reader(&buffer);
++        const QString layout = reader.text(QStringLiteral("Stereo3DLayout"));
++        if (!stereo) {
++            QVERIFY(layout.isEmpty());
++            return;
++        }
++        QVERIFY(layout.startsWith(QLatin1String("multiView")));
++        const auto samePixels = [](const QImage &actual, const QImage &expected) {
++            if (actual.isNull() || actual.size() != expected.size()) {
++                return false;
++            }
++            for (int y = 0; y < actual.height(); ++y) {
++                for (int x = 0; x < actual.width(); ++x) {
++                    if (actual.pixelColor(x, y) != expected.pixelColor(x, y)) {
++                        return false;
++                    }
++                }
++            }
++            return true;
++        };
++        const QImage shown = reader.read();
++        QVERIFY(samePixels(shown, QImage::fromData(fixture(QStringLiteral("heif-stem/reference-%1.png").arg(primary)))));
++        if (primary == 2) {
++            QCOMPARE(reader.imageCount(), 3);
++            QCOMPARE(reader.text(QStringLiteral("Stereo3DViewIndices")), QStringLiteral("1,2"));
++            QVERIFY(reader.jumpToImage(1));
++            QVERIFY(samePixels(reader.read(), QImage::fromData(fixture(QStringLiteral("heif-stem/reference-0.png")))));
++            QVERIFY(reader.jumpToImage(2));
++            QVERIFY(samePixels(reader.read(), QImage::fromData(fixture(QStringLiteral("heif-stem/reference-1.png")))));
++        } else {
++            QCOMPARE(reader.imageCount(), 2);
++            QVERIFY(reader.jumpToImage(1));
++            QVERIFY(samePixels(reader.read(), QImage::fromData(fixture(QStringLiteral("heif-stem/reference-%1.png").arg(1 - primary)))));
++        }
++    }
++
+     // Stereo pairs of ISO/IEC 23008-12:2025 6.8.5: the left view, then the right view.
+     void stereoPair_data()
+     {
+--- /dev/null
++++ b/autotests/depth/heif-stem/LICENSE
+@@ -0,0 +1,2 @@
++SPDX-License-Identifier: CC0-1.0
++Synthetic ORDER 41 fixtures created by Daniel Campos Ramos with GPT-6 assistance.
+--- /dev/null
++++ b/autotests/depth/heif-stem/manifest.json
+@@ -0,0 +1,80 @@
++[
++  {
++    "file": "ster-primary-0.heic",
++    "primary": 0,
++    "stereo": true,
++    "sha256": "78a0290c8becb917aae7764d565bae2270265ecebf90965a44e0e40c4e87fbcf"
++  },
++  {
++    "file": "ster-primary-1.heic",
++    "primary": 1,
++    "stereo": true,
++    "sha256": "13cd5960c65597d87e9ee2aa0dd72c4870e95d0f67a82b4afd1035abb90ea749"
++  },
++  {
++    "file": "stem-primary-0.heic",
++    "primary": 0,
++    "stereo": true,
++    "sha256": "b850e587568ca53fae656b5d299134bb6c3caf486a3757524d2a3f4cfe3fc937"
++  },
++  {
++    "file": "stem-primary-1.heic",
++    "primary": 1,
++    "stereo": true,
++    "sha256": "13b267aff1074d7d64bc2d074cad9073836ac07d5017c734d19aa4f385ff4d7d"
++  },
++  {
++    "file": "stem-primary-2.heic",
++    "primary": 2,
++    "stereo": true,
++    "sha256": "125f2b7df7f2756e891d86da7b47e247aec8bd9218371d3f6e68b72aaa07dc57"
++  },
++  {
++    "file": "stem-fallback-alias-0.heic",
++    "primary": 0,
++    "stereo": true,
++    "sha256": "63296496c4c67a1f03ffcc8ae6b5e8bb5cd0df2cefe2e3c0a8efd67c694ac71e"
++  },
++  {
++    "file": "stem-fallback-alias-1.heic",
++    "primary": 1,
++    "stereo": true,
++    "sha256": "0fba11dc7e02c4b518122072dd04b07ba02d71f78c847b5c0e4012837f035b69"
++  },
++  {
++    "file": "unmarked.heic",
++    "primary": 2,
++    "stereo": false,
++    "sha256": "be0752eea2d7467fc28f6a6f34c249525c95ca236457a16119f09e5193d4b6ec"
++  },
++  {
++    "file": "unrelated-group.heic",
++    "primary": 2,
++    "stereo": false,
++    "sha256": "19e0a9c3f9ffb505f5a72c184fa20a6bb835aa96de8ba220266828af506f269d"
++  },
++  {
++    "file": "duplicate-eyes.heic",
++    "primary": 2,
++    "stereo": false,
++    "sha256": "1ff86919a13ec1eb35ef828c92a24c0f3469d00a093dea036c6a04e1a822e763"
++  },
++  {
++    "file": "missing-eye.heic",
++    "primary": 2,
++    "stereo": false,
++    "sha256": "0c50db4fd9a417aff02f9270f930f9dd6dbeef5c797d361c6028d4d0bc32015d"
++  },
++  {
++    "file": "short-stem.heic",
++    "primary": 0,
++    "stereo": false,
++    "sha256": "a5cea198b39fbd00f61d333708756aeeed3e277c95596d7b3264c3fab4a69a63"
++  },
++  {
++    "file": "reserved-version.heic",
++    "primary": 2,
++    "stereo": false,
++    "sha256": "b6fb633e1246e5e7d5f19e981961ddc3c39dca68172462bcca0b750de1a0ab53"
++  }
++]

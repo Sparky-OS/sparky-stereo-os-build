@@ -1,0 +1,85 @@
+Description: Decode native MV-HEVC views through the shared stereo frame assembly
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-10-24
+
+--- a/src/database.cpp
++++ b/src/database.cpp
+@@ -63,6 +63,8 @@
+ 
+ void Database::createTables()
+ {
++    QSqlQuery stereo(db());
++    stereo.exec(u"CREATE TABLE IF NOT EXISTS media_stereo (url TEXT PRIMARY KEY, swap INTEGER NOT NULL)"_s);
+     QStringList tables = db().tables();
+ 
+     if (!tables.contains(u"recent_files"_s)) {
+@@ -193,3 +195,24 @@
+ }
+ 
+ #include "moc_database.cpp"
++
++// Corrections live beside playback positions, never in the media or its attributes.
++bool Database::stereoSwap(const QUrl &url)
++{
++    QSqlQuery query(db());
++    query.prepare(u"SELECT swap FROM media_stereo WHERE url = ?"_s);
++    query.addBindValue(url.toString(QUrl::FullyEncoded));
++    return query.exec() && query.next() && query.value(0).toBool();
++}
++
++bool Database::setStereoSwap(const QUrl &url, bool swap)
++{
++    if (url.isEmpty()) return false;
++    QSqlQuery query(db());
++    query.prepare(u"INSERT OR REPLACE INTO media_stereo (url, swap) VALUES (?, ?)"_s);
++    query.addBindValue(url.toString(QUrl::FullyEncoded));
++    query.addBindValue(swap);
++    if (query.exec()) return true;
++    qWarning() << "Could not save stereo correction:" << query.lastError();
++    return false;
++}
+--- a/src/database.h
++++ b/src/database.h
+@@ -31,6 +31,9 @@
+     void addRecentFile(const QUrl &url, const QString &filename, const QString &openedFrom, qint64 timestamp);
+     void deleteRecentFiles();
+ 
++    Q_INVOKABLE bool stereoSwap(const QUrl &url);
++    Q_INVOKABLE bool setStereoSwap(const QUrl &url, bool swap);
++
+     double playbackPosition(const QString &md5Hash);
+     void addPlaybackPosition(const QString &md5Hash, const QString &path, double position, QSqlDatabase dbConnection = QSqlDatabase{});
+     void deletePlaybackPositions();
+--- a/src/mpv/mpvitem.cpp
++++ b/src/mpv/mpvitem.cpp
+@@ -391,6 +391,7 @@
+ 
+ void MpvItem::onFileLoaded()
+ {
++    setPropertyBlocking(MpvProperties::self()->VideoStereoSwap, Database::instance()->stereoSwap(m_currentUrl));
+     getPropertyAsync(MpvProperties::self()->ChapterList, static_cast<int>(AsyncIds::ChapterList));
+     getPropertyAsync(MpvProperties::self()->VideoId, static_cast<int>(AsyncIds::VideoId));
+     getPropertyAsync(MpvProperties::self()->TrackList, static_cast<int>(AsyncIds::TrackList));
+--- a/src/qml/Actions.qml
++++ b/src/qml/Actions.qml
+@@ -427,6 +427,7 @@
+         function onStereoSwapEyesAction() {
+             const swap = !root.m_mpv.getProperty(MpvProperties.VideoStereoSwap)
+             root.m_mpv.setProperty(MpvProperties.VideoStereoSwap, swap)
++            Database.setStereoSwap(root.m_mpv.currentUrl, swap)
+             root.refreshStereo()
+             root.m_osd.message(i18nc("@info:tooltip", "Swap eyes: %1", root.stereoSwap))
+         }
+@@ -480,9 +481,8 @@
+         }
+ 
+         function onStereoStoreSwapAction() {
+-            // an error comes back as an object, success as nothing
+-            const result = root.m_mpv.commandBlocking(["video-stereo-store-swap"])
+-            const failed = typeof result === "object" && result !== null
++            const swap = root.m_mpv.getProperty(MpvProperties.VideoStereoSwap)
++            const failed = !Database.setStereoSwap(root.m_mpv.currentUrl, swap)
+             root.refreshStereo()
+             root.m_osd.message(failed ? i18nc("@info:tooltip", "The eye swap could not be kept with this file")
+                                       : i18nc("@info:tooltip", "The eye swap is kept with this file"))

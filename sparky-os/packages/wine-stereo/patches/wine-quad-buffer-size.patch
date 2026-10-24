@@ -1,0 +1,26 @@
+Description: Keep native quad-buffer drawables at one view size
+ Mesa packs GLX stereo views at presentation; the packed SBS client size
+ must remain specific to programs that already supply a packed buffer.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-10-23
+
+--- a/dlls/winex11.drv/opengl.c
++++ b/dlls/winex11.drv/opengl.c
+@@ -1278,7 +1278,15 @@ static void update_gl_drawable_size( struct gl_drawable *gl )
+     XWindowChanges changes;
+     RECT rect;
+ 
+-    get_client_window_rect( gl->hwnd, &rect );
++    int stereo = 0;
++
++    /* Mesa packs a quad-buffer drawable after each eye has been rendered.
++     * Its drawable is one view wide; a prepacked SBS drawable holds both. */
++    pglXGetFBConfigAttrib( gdi_display, gl->format->fbconfig, GLX_STEREO, &stereo );
++    if (stereo)
++        NtUserGetClientRect( gl->hwnd, &rect, NtUserGetDpiForWindow( gl->hwnd ) );
++    else
++        get_client_window_rect( gl->hwnd, &rect );
+     if (EqualRect( &rect, &gl->rect )) return;
+ 
+     changes.width  = min( max( 1, rect.right ), 65535 );
