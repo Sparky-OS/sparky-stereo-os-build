@@ -5,6 +5,7 @@ Run it as the A10's desktop user in the existing Wayland session, during the mai
 It selects these three setups, in order: TV-only 1080p30 frame packing on HDMI-A-1; both displays active with playback on HDMI-A-1; both displays active with playback on eDP-1.
 The extended cases use the reviewed 1366x768@60 anaglyph panel mode and the same TV frame-packing mode.
 Mode IDs are discovered from KScreen's mode attributes, not copied from an older boot.
+When 30.00 and 29.97 Hz are both offered, the nearest reviewed rate wins; a true tie is rejected.
 The runner refuses hardware other than the reviewed Carrizo/Hainan A10.
 
 ## Install privately and run
@@ -38,7 +39,8 @@ Published Bino receives `-o left-right`, as in `players-compare.py`; the candida
 Per-case Bino preferences live under the results directory, so the user's Bino settings stay intact.
 
 Defaults are a 40-second setup settle, 8 seconds before placing each window, 60 seconds of playback warmup and a 180-second measurement.
-The runner verifies fullscreen placement using the observer's actual Qt window/screen state.
+The runner retries placement up to eight times, three seconds apart, until the observer confirms fullscreen on the requested output.
+A locked session is rejected through loginctl LockedHint before waking displays and throughout the run.
 KWin output configuration is checked before and during each case.
 The full run takes roughly half an hour, plus source hashing and package checks.
 `--duration`, `--warmup` and `--settle` are available for controlled reproductions; record any change when comparing runs.
@@ -48,6 +50,9 @@ The full run takes roughly half an hour, plus source hashing and package checks.
 `run-a10.sh` holds `kde-inhibit --power --screenSaver` for the entire run.
 Its wrapper rejects an inhibition error before starting the bench and propagates the bench exit status, since kde-inhibit itself does neither.
 The wrapper forwards Ctrl-C and SIGTERM to the bench while keeping inhibition alive during output restoration.
+Before the run the runner requests `kscreen-doctor --dpms on`, then verifies display power.
+Before and during every case it checks `kscreen-doctor --dpms show`; any off, missing or malformed state aborts the run even if dimming still reads 100%.
+It does not repair DPMS during a measured case.
 The runner calls `SimulateUserActivity` before every case and periodically during waits.
 It checks KScreen's dimming report every two seconds and stops if any output, including a disabled output, reports a value other than 100%.
 It never repairs dimming by changing brightness or PowerDevil preferences.
@@ -97,3 +102,6 @@ The inhibition wrapper has missing-service, exit-status and SIGTERM cleanup cont
 The helper's fullscreen placement and telemetry are also exercised in isolated KWin sessions with the installed published and candidate packages.
 The import observer's retained negative misses EGL 1.5 imports; the final observer sees both NV12 plane imports for each candidate frame.
 The kit has not been run on the A10 by this lane.
+
+The first A10 attempt was discarded by the main session after a TV glasses regression in KWin +stereo3d34 was found.
+Do not retain measurements from that attempt; rerun only on the corrected stack.

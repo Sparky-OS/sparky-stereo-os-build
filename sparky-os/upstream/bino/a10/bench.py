@@ -10,7 +10,7 @@ from pathlib import Path
 import signal
 import subprocess
 import time
-from session import command, outputs, mode_ids, restore_args, setup_args, verify_setup, verify_restore, Guard, place, latest_flip, verify_window
+from session import wake_outputs, place_until_fullscreen, command, outputs, mode_ids, restore_args, setup_args, verify_setup, verify_restore, Guard, place, latest_flip, verify_window
 from summarize import summarize
 
 
@@ -92,6 +92,7 @@ def run(args):
     if not any(p.is_file() for p in raw.values()):
         raise RuntimeError('No active KWin per-frame logs; enable logging before this session')
     guard = Guard(root, pid, logdir)
+    write_json(root/'dpms-before-run.json', wake_outputs())
     guard.activity(); guard.check()
     snapshot = outputs(); ids = mode_ids(snapshot); restore = restore_args(snapshot)
     write_json(root/'outputs-original.json', snapshot)
@@ -151,7 +152,7 @@ def run(args):
                     player = subprocess.Popen(argv, env=runenv, stdout=log, stderr=subprocess.STDOUT)
                     guard.player = player
                     guard.wait(8)
-                    place(case, player.pid, output, f'bino-a10-{os.getpid()}-{setup}-{variant}')
+                    place_until_fullscreen(case, player.pid, output, f'bino-a10-{os.getpid()}-{setup}-{variant}', observer, guard)
                     guard.wait(args.warmup)
                     verify_window(observer, output)
                     if time.monotonic()-latest_flip(raw[output]) > 15:

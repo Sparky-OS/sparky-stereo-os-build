@@ -28,6 +28,36 @@ def check_dimming(text):
         raise RuntimeError(f'Output dimming is not proven clear: {values}')
 
 
+def check_dpms(text, expected=()):
+    rows = re.findall(r'^dpms mode for screen (.+): (on|off)$', text, re.MULTILINE)
+    if not rows or len(rows) != text.count('dpms mode for screen ') or any(state != 'on' for _, state in rows):
+        raise RuntimeError('Display power is not proven on: '+text.strip())
+    states = dict(rows)
+    if not set(expected) <= states.keys():
+        raise RuntimeError('Missing DPMS state for an active output')
+    return states
+
+
+def wake_outputs():
+    assert_unlocked()
+    command('kscreen-doctor', '--dpms', 'on')
+    expected = [o['name'] for o in outputs()['outputs'] if o['enabled']]
+    return check_dpms(command('kscreen-doctor', '--dpms', 'show'), expected)
+
+
+def place_until_fullscreen(root, pid, output, tag, observer, guard):
+    assert_unlocked()
+    for attempt in range(8):
+        place(root, pid, output, f'{tag}-{attempt}')
+        guard.wait(3)
+        try:
+            verify_window(observer, output)
+            return
+        except RuntimeError:
+            if attempt == 7:
+                raise
+
+
 def mode_ids(snapshot):
     by_name = {o['name']: o for o in snapshot['outputs'] if o['connected']}
     if not all(name in by_name for name in OUTPUTS):
@@ -38,7 +68,10 @@ def mode_ids(snapshot):
         matches = [m for m in by_name[name]['modes'] if m['stereo3D'] == stereo
                    and m['viewSize'] == dict(width=width, height=height)
                    and abs(m['refreshRate'] - refresh) < .1]
-        if len(matches) != 1:
+        # A TV may offer the same frame-packing mode at 30.00 and 29.97 Hz: take the one nearest the
+        # reviewed rate and refuse only a true tie.
+        matches.sort(key=lambda m: abs(m['refreshRate'] - refresh))
+        if not matches or (len(matches) > 1 and abs(matches[0]['refreshRate'] - refresh) == abs(matches[1]['refreshRate'] - refresh)):
             raise RuntimeError(f'Expected one reviewed {name} mode, found {matches}')
         result[name] = matches[0]['id']
     return result
@@ -111,6 +144,17 @@ def verify_window(path, output):
         raise RuntimeError(f'Fullscreen placement not observed on {output}')
 
 
+def assert_unlocked():
+    for line in command('loginctl', 'list-sessions', '--no-legend').splitlines():
+        parts = line.split()
+        if len(parts) >= 4 and parts[3] == 'seat0':
+            hint = command('loginctl', 'show-session', parts[0], '-p', 'LockedHint').strip()
+            if hint != 'LockedHint=no':
+                raise RuntimeError('The desktop session is locked: unlock it before the bench')
+            return
+    raise RuntimeError('No seat0 session found')
+
+
 def place(root, pid, output, tag):
     script = root/'place.js'
     script.write_text('for (const w of workspace.windowList()) {\n'
@@ -150,10 +194,13 @@ class Guard:
             raise RuntimeError('KWin restarted during the run')
         if self.player and self.player.poll() is not None:
             raise RuntimeError(f'Bino exited early: {self.player.returncode}')
+        assert_unlocked()
+        expected = ('eDP-1', 'HDMI-A-1') if self.expected and self.expected[1] else ('HDMI-A-1',) if self.expected else ()
+        dpms = check_dpms(command('kscreen-doctor', '--dpms', 'show'), expected)
         text = command('kscreen-doctor', '-o')
         check_dimming(text)
         with (self.root/'awake.jsonl').open('a') as handle:
-            handle.write(json.dumps(dict(monotonic=time.monotonic(), dimming=re.findall(r'dimming to\s+([0-9.]+)%', text)))+'\n')
+            handle.write(json.dumps(dict(monotonic=time.monotonic(), dpms=dpms, dimming=re.findall(r'dimming to\s+([0-9.]+)%', text)))+'\n')
         if self.expected and time.monotonic()-self.last_geometry > 15:
             verify_setup(outputs(), *self.expected)
             self.last_geometry = time.monotonic()

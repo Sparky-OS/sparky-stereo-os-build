@@ -90,4 +90,64 @@ class KitTests(unittest.TestCase):
             self.assertEqual(telemetry(trace,2,5),{'source':1,'texture_upload':1,'unique_source_pts':1})
 
 
+
+
+class FieldRegressionTests(unittest.TestCase):
+    def test_nearest_refresh_and_tie(self):
+        snapshot = fixture()
+        modes = snapshot['outputs'][1]['modes']
+        fractional = dict(modes[0], id='fractional', refreshRate=29.97)
+        modes.insert(0, fractional)
+        self.assertEqual(mode_ids(snapshot)['HDMI-A-1'], '13')
+        modes[0]['refreshRate'] = 30
+        with self.assertRaises(RuntimeError): mode_ids(snapshot)
+
+    def test_lock_hint(self):
+        import session
+        from unittest.mock import patch
+        with patch.object(session, 'command', side_effect=['1 1000 user seat0 tty2\n', 'LockedHint=no\n']):
+            session.assert_unlocked()
+        for replies in (['1 1000 user seat0 tty2\n', 'LockedHint=yes\n'], ['']):
+            with patch.object(session, 'command', side_effect=replies):
+                with self.assertRaises(RuntimeError): session.assert_unlocked()
+
+    def test_dpms_on_and_all_negative_reports(self):
+        import session
+        session.check_dpms('dpms mode for screen eDP-1: on\ndpms mode for screen HDMI-A-1: on\n', ('eDP-1','HDMI-A-1'))
+        for text in ('dpms mode for screen HDMI-A-1: off\n', '', 'DPMS not supported in this system',
+                     'dpms mode for screen HDMI-A-1: on\ndpms mode for screen eDP-1: unknown\n',
+                     'dpms mode for screen HDMI-A-1: on\n'):
+            with self.assertRaises(RuntimeError): session.check_dpms(text, ('eDP-1','HDMI-A-1'))
+
+    def test_late_window_and_retry_bound(self):
+        import session
+        from unittest.mock import patch, Mock
+        guard = Mock()
+        with patch.object(session, 'assert_unlocked'), patch.object(session, 'place') as placement, patch.object(session, 'verify_window', side_effect=[RuntimeError('late')]*3+[None]):
+            session.place_until_fullscreen(Path('.'), 42, 'HDMI-A-1', 'test', Path('observer.csv'), guard)
+            self.assertEqual(placement.call_count, 4)
+        with patch.object(session, 'assert_unlocked'), patch.object(session, 'place') as placement, patch.object(session, 'verify_window', side_effect=RuntimeError('absent')):
+            with self.assertRaises(RuntimeError): session.place_until_fullscreen(Path('.'), 42, 'HDMI-A-1', 'test', Path('observer.csv'), guard)
+            self.assertEqual(placement.call_count, 8)
+
+    def test_wake_checks_lock_before_dpms(self):
+        import session
+        from unittest.mock import patch
+        calls = []
+        def command(*argv):
+            calls.append(argv)
+            return 'dpms mode for screen eDP-1: on\ndpms mode for screen HDMI-A-1: on\n'
+        with patch.object(session, 'assert_unlocked', side_effect=lambda: calls.append(('unlocked',))), patch.object(session, 'outputs', return_value=fixture()), patch.object(session, 'command', side_effect=command):
+            session.wake_outputs()
+        self.assertEqual(calls, [('unlocked',), ('kscreen-doctor','--dpms','on'), ('kscreen-doctor','--dpms','show')])
+
+    def test_guard_rejects_dpms_off_even_without_dimming(self):
+        import session
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp, patch.object(session.Guard, 'process_identity', return_value='same'):
+            guard = session.Guard(Path(temp), 42, Path(temp))
+            with patch.object(session, 'assert_unlocked'), patch.object(session, 'command', return_value='dpms mode for screen HDMI-A-1: off\n') as command:
+                with self.assertRaises(RuntimeError): guard.check()
+                command.assert_called_once_with('kscreen-doctor','--dpms','show')
+
 if __name__=='__main__':unittest.main()
