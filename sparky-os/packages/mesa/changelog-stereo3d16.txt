@@ -1,0 +1,8 @@
+mesa (26.1.6-1+stereo3d16) unstable; urgency=medium
+
+  * Wayland Vulkan WSI: release the old swapchain's stereo declaration
+    and legacy viewport before creating the replacement, clearing both
+    owned pointers so later destruction of the retired swapchain is safe.
+  * The six-swapchain vulkan-stereo-wayland recreation test fails on +15
+    with a duplicate declaration; its mono control completes normally.
+    The stereo3ddemo live render-resolution change exposes the same fault.
