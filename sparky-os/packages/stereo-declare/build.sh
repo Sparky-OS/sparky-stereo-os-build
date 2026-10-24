@@ -1,7 +1,7 @@
 #!/bin/bash
-# Sparky Stereo OS: builds stereo-declare 1.5.0-1+lc1 (libstereo-declare1, libstereo-declare-dev, python3-stereo-declare)
+# Sparky Stereo OS: builds stereo-declare 1.6.0-1+lc1 (libstereo-declare1, libstereo-declare-dev, python3-stereo-declare)
 # from a release clone of Sparky-OS/libstereo-declare, through Lean Code.
-# Created by Daniel Ramos (Capitain Jack) 2026/10/22, 1.5.0 on 2026/10/23
+# Created by Daniel Ramos (Capitain Jack) 2026/10/22, 1.5.0 on 2026/10/23, 1.6.0 on 2026/10/24
 # Copyright 2026 under the GNU GPL3 License
 # The plain source package is made from the release commit (orig tarball without debian/, dated by the commit), then the
 # Lean Code source, then the build with the link and start gate against the earlier +lc1 builds. Candidates stay in WORK.
