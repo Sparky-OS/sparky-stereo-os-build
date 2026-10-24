@@ -3,6 +3,52 @@ Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Forwarded: no
 Last-Update: 2026-10-24
 
+--- a/src/multimedia/video/qvideoframeconverter_p.h
++++ b/src/multimedia/video/qvideoframeconverter_p.h
+@@ -16,6 +16,9 @@
+ //
+ 
+ #include <qvideoframe.h>
++#include <QtMultimedia/private/qmultimediautils_p.h>
++#include <QtGui/qimage.h>
++#include <QtGui/qtransform.h>
+ 
+ QT_BEGIN_NAMESPACE
+ 
+@@ -49,6 +52,22 @@
+ 
+ Q_MULTIMEDIA_EXPORT QImage qImageFromVideoFrame(const QVideoFrame &frame, bool forceCpu = false);
+ 
++// Crop a native packed view before applying rotation and mirroring. Applying the
++// transform to the complete pair first would move the eye boundary for 90/270 degrees.
++inline QImage qImageFromVideoFrameView(const QVideoFrame &frame, int eye,
++                                       QVideoFrameImageDepth depth)
++{
++    const QImage packed = qImageFromVideoFrame(frame, VideoTransformation{}, depth);
++    QImage view = packed.copy((eye ? 1 : 0) * packed.width() / 2, 0,
++                              packed.width() / 2, packed.height());
++    const auto transform = qNormalizedFrameTransformation(frame);
++    if (transform.rotation != QtVideo::Rotation::None)
++        view = view.transformed(QTransform().rotate(qToUnderlying(transform.rotation)));
++    if (transform.mirroredHorizontallyAfterRotation)
++        view = view.flipped(Qt::Horizontal);
++    return view;
++}
++
+ /**
+  *  @brief Maps the video frame and returns an image having a shared ownership for the video frame
+  * and referencing to its mapped data.
+--- a/src/multimedia/video/qvideoframeformat.cpp
++++ b/src/multimedia/video/qvideoframeformat.cpp
+@@ -717,6 +717,8 @@
+ /*!
+     \enum QVideoFrameFormat::StereoFlag
+ 
++    \value Multiview The frame contains two decoded multiview images at their native dimensions.
++    \value BaseViewRight The multiview base image is the right view, used for ordinary 2D fallback.
+     \value RightEyeFirst
+     The first view of the packing is the right eye's (content_interpretation_type 2 of the frame
+     packing arrangement SEI, the "right eye first" StereoMode values, AV_STEREO3D_FLAG_INVERT).
 --- a/src/multimedia/video/qvideoframeformat.h
 +++ b/src/multimedia/video/qvideoframeformat.h
 @@ -146,7 +146,9 @@
@@ -94,15 +140,14 @@ Last-Update: 2026-10-24
          if (nativeSize != size) {
              nativeSize = size;
  
-@@ -216,7 +219,13 @@
+@@ -216,7 +219,12 @@
      Q_UNUSED(option);
      Q_UNUSED(widget);
  
 -    d->m_frame.paint(painter, d->rect, { Qt::transparent, d->m_aspectRatioMode });
 +    if (d->m_frame.surfaceFormat().stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::Multiview)) {
-+        const QImage packed = qImageFromVideoFrame(d->m_frame, QVideoFrameImageDepth::Float32);
 +        const int eye = d->m_frame.surfaceFormat().stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::BaseViewRight) ? 1 : 0;
-+        painter->drawImage(d->boundingRect, packed.copy(eye * packed.width() / 2, 0, packed.width() / 2, packed.height()));
++        painter->drawImage(d->boundingRect, qImageFromVideoFrameView(d->m_frame, eye, QVideoFrameImageDepth::Float32));
 +    } else {
 +        d->m_frame.paint(painter, d->rect, { Qt::transparent, d->m_aspectRatioMode });
 +    }
@@ -269,7 +314,7 @@ Last-Update: 2026-10-24
      updateSession(sessionID, [this, pos, offset]() {
          m_sessionCtx = { offset.loopStartTimeUs.asDuration() + pos };
          avcodec_flush_buffers(m_codecContext.context());
-+    stereo_av_pair_reset(m_codecContext.stereoPair());
++        stereo_av_pair_reset(m_codecContext.stereoPair());
      });
  }
  
@@ -277,11 +322,20 @@ Last-Update: 2026-10-24
                                    << packet.loopOffset().loopIndex;
  
          avcodec_flush_buffers(m_codecContext.context());
-+    stereo_av_pair_reset(m_codecContext.stereoPair());
++        stereo_av_pair_reset(m_codecContext.stereoPair());
          m_sessionCtx.offset = packet.loopOffset();
      }
  
-@@ -191,11 +197,26 @@
+@@ -169,6 +175,8 @@
+         const auto receiveFrameResult = avcodec_receive_frame(m_codecContext.context(), avFrame.get());
+ 
+         if (receiveFrameResult == AVERROR_EOF || receiveFrameResult == AVERROR(EAGAIN)) {
++            if (receiveFrameResult == AVERROR_EOF)
++                stereo_av_pair_reset(m_codecContext.stereoPair());
+             if (flushPacket && receiveFrameResult == AVERROR(EAGAIN)) {
+             // The documentation says that in the EAGAIN state output is not available. The new
+             // input must be sent. It does not say that this state can also be returned for
+@@ -191,11 +199,26 @@
          }
  
  
