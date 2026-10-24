@@ -501,7 +501,33 @@ Last-Update: 2026-10-24
      }
 --- a/src/input/decoder.c
 +++ b/src/input/decoder.c
-@@ -895,6 +895,8 @@
+@@ -94,6 +94,7 @@
+ 
+     /* Current format in use by the output */
+     es_format_t    fmt;
++    bool video_stereo_swap;
+ 
+     /* */
+     bool           b_fmt_description;
+@@ -814,6 +815,7 @@
+ static int vout_update_format( decoder_t *p_dec )
+ {
+     decoder_owner_sys_t *p_owner = p_dec->p_owner;
++    const bool video_stereo_swap = var_InheritBool(p_dec, "video-stereo-swap");
+ 
+     if( p_owner->p_vout == NULL
+      || p_dec->fmt_out.video.i_width != p_owner->fmt.video.i_width
+@@ -826,7 +828,8 @@
+      || (int64_t)p_dec->fmt_out.video.i_sar_num * p_owner->fmt.video.i_sar_den !=
+         (int64_t)p_dec->fmt_out.video.i_sar_den * p_owner->fmt.video.i_sar_num ||
+         p_dec->fmt_out.video.orientation != p_owner->fmt.video.orientation ||
+-        p_dec->fmt_out.video.multiview_mode != p_owner->fmt.video.multiview_mode )
++        p_dec->fmt_out.video.multiview_mode != p_owner->fmt.video.multiview_mode ||
++        video_stereo_swap != p_owner->video_stereo_swap )
+     {
+         vout_thread_t *p_vout;
+ 
+@@ -895,6 +898,8 @@
                       fmt.i_sar_num, fmt.i_sar_den, 50000 );
  
          StereoJudge( p_dec, &fmt );
@@ -510,6 +536,16 @@ Last-Update: 2026-10-24
  
          const bool b_pairs = fmt.multiview_mode == MULTIVIEW_STEREO_FRAME
                            || fmt.multiview_mode == MULTIVIEW_STEREO_FRAME_RIGHT_FIRST;
+@@ -955,6 +960,9 @@
+         p_owner->fmt.video.i_chroma = p_dec->fmt_out.i_codec;
+         vlc_mutex_unlock( &p_owner->lock );
+ 
++        /* Re-evaluate presentation when a per-file correction changes, even
++         * though the decoder's native dimensions and packing are unchanged. */
++        p_owner->video_stereo_swap = video_stereo_swap;
+         if( p_owner->p_input != NULL )
+             input_SendEventVout( p_owner->p_input );
+         if( p_vout == NULL )
 --- a/src/input/var.c
 +++ b/src/input/var.c
 @@ -183,6 +183,8 @@
