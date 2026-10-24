@@ -1,0 +1,57 @@
+{
+  "format": "sparky-stereo-glasses",
+  "version": 1,
+  "about": "USB-C 3D glasses known to Sparky Stereo OS, by the EDID identity they announce. One file, two readers: Stereo KWin reads it at build time (src/outputconfigurationstore.cpp, s_stereoGlasses) and the Windows glasses keeper embeds it. Checked by sparky-os/tests/check-stereo-glasses-table.py.",
+  "mode_rule": "The first detailed timing of the EDID at twice the panel width means Full SBS; at the panel width it means 2D or Half SBS, which the cable cannot tell apart. The glasses' own Real 3D mode is 2D to the computer.",
+  "glasses": [
+    {
+      "maker": "MRG",
+      "product": "0x4100",
+      "name": "XREAL One Pro",
+      "edid_version": "1.3",
+      "serial": 0,
+      "made": { "week": 49, "year": 2024 },
+      "panel_per_eye": { "width": 1920, "height": 1080 },
+      "states": [
+        {
+          "state": "2d",
+          "menu": "2D",
+          "stereo": false,
+          "modes": [ { "width": 1920, "height": 1080, "refresh_hz": [ 90, 60, 120 ] } ],
+          "edid": "xreal-one-pro-2d.bin"
+        },
+        {
+          "state": "half",
+          "menu": "Half SBS",
+          "stereo": true,
+          "modes": [ { "width": 1920, "height": 1080, "refresh_hz": [ 90, 60, 120 ] } ],
+          "edid": "xreal-one-pro-half.bin",
+          "note": "byte-identical to the 2D dump: the glasses announce nothing for half side by side"
+        },
+        {
+          "state": "full",
+          "menu": "Full SBS",
+          "stereo": true,
+          "modes": [ { "width": 3840, "height": 1080, "refresh_hz": [ 60 ] } ],
+          "edid": "xreal-one-pro-full.bin"
+        },
+        {
+          "state": "realD",
+          "menu": "Real 3D",
+          "stereo": false,
+          "modes": [ { "width": 1920, "height": 1080, "refresh_hz": [ 60 ] } ],
+          "edid": "xreal-one-pro-realD.bin",
+          "note": "a 2D to 3D conversion inside the glasses; one 1920x1080 picture to the computer"
+        }
+      ],
+      "menu_path": "double click X, Spatial Screen, 3D Mode, Full SBS",
+      "transport": null,
+      "usb": {
+        "vendor": "0x3318",
+        "products": [ "0x0435", "0x0436" ],
+        "note": "the IMU link (XRLinuxDriver src/devices/xreal.c); not the display identity"
+      },
+      "source": "EDIDs read from an owner's glasses on 24 Oct 2026, one per mode of the glasses' menu; Stereo KWin autotests/integration/data/xreal-one-pro-*.bin"
+    }
+  ]
+}
