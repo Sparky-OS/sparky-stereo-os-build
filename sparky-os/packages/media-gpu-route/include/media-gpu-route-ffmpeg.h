@@ -11,11 +11,18 @@ extern "C" {
 }
 #endif
 #include <string.h>
-static inline int media_gpu_route_av(enum AVCodecID codec, int profile, enum AVPixelFormat format,
-                                    int width, int height, struct media_gpu_decoder *decoder)
+static inline int media_gpu_route_av_frames(enum AVCodecID codec, int profile, enum AVPixelFormat format,
+                                           int width, int height, enum media_gpu_frames frames,
+                                           struct media_gpu_decoder *decoder)
 {
     struct media_gpu_video video;
     memset(&video, 0, sizeof(video));
+    /* Software, whatever the codec, when the pictures would be copied back
+     * and nobody allowed that. */
+    if (frames == MEDIA_GPU_FRAMES_COPY && !media_gpu_route_copy_back()) {
+        memset(decoder, 0, sizeof(*decoder));
+        return 0;
+    }
     switch (codec) {
     case AV_CODEC_ID_H264: video.codec = MEDIA_GPU_CODEC_H264; break;
     case AV_CODEC_ID_HEVC: video.codec = MEDIA_GPU_CODEC_HEVC; break;
@@ -40,6 +47,12 @@ static inline int media_gpu_route_av(enum AVCodecID codec, int profile, enum AVP
     video.rgb = !!(desc->flags & AV_PIX_FMT_FLAG_RGB);
     video.width = width;
     video.height = height;
-    return media_gpu_route_decoder(&video, decoder);
+    return media_gpu_route_decoder_frames(&video, frames, decoder);
+}
+/* For a caller that copies its pictures back. */
+static inline int media_gpu_route_av(enum AVCodecID codec, int profile, enum AVPixelFormat format,
+                                    int width, int height, struct media_gpu_decoder *decoder)
+{
+    return media_gpu_route_av_frames(codec, profile, format, width, height, MEDIA_GPU_FRAMES_COPY, decoder);
 }
 #endif

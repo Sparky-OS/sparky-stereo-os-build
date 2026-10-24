@@ -1,3 +1,17 @@
+media-gpu-route (0.2.0) unstable; urgency=medium
+
+  * Never choose hardware decoding that copies every picture back by
+    default: a copy-back caller gets software unless the person or the
+    machine's measured record allows it ([Decoding] CopyBack in
+    sparky-stereo-graphicsrc, or MEDIA_GPU_ROUTE_COPY_BACK). On an AMD
+    A10-9600P copying back drops many more frames than software decoding.
+  * Add media_gpu_route_decoder_frames and media_gpu_route_av_frames for
+    callers that import decoded surfaces, media_gpu_route_copy_back, and
+    media_gpu_route_vulkan_import, the zero-copy capability probe.
+  * media-gpu-route-query: --capabilities and --decoder.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Fri, 23 Oct 2026 21:10:00 -0300
+
 media-gpu-route (0.1.0) unstable; urgency=medium
 
   * Share the compositor and driver's default hardware device preference

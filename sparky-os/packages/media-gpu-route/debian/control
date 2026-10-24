@@ -14,7 +14,9 @@ Description: shared display GPU preference for media engines
  Resolves the graphics driver's default hardware GPU, including the
  compositor's display preference and explicit driver overrides.
  Decoder selection checks codec, component depth and chroma capabilities
- before startup and retains software fallback.
+ before startup and retains software fallback. Hardware decoding that
+ copies every picture back is chosen only where the person or the
+ machine's measured record allows it.
  It writes no user settings.
 
 Package: libmedia-gpu-route-dev
@@ -30,5 +32,6 @@ Section: utils
 Architecture: linux-any
 Depends: libmedia-gpu-route0 (= ${binary:Version}), ${shlibs:Depends}, ${misc:Depends}
 Description: inspect the default display GPU for media engines
- Prints the selected hardware device and its DRM render node for
- isolated qualification and diagnosis.
+ Prints the selected hardware device and its DRM render node, each GPU's
+ zero-copy import capability, the copy-back choice and the decoder chosen
+ for a source, for isolated qualification and diagnosis.
