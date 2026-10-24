@@ -1,0 +1,46 @@
+Description: keep the explicit save-to-file command, beside the per-file store
+ The published +stereo3d6 command video-stereo-store-swap wrote the swap of the eyes
+ into the playing local file (user.stereo-policy.swap-eyes). +stereo3d7 replaced it by
+ a second write of the per-file playback state, which removed the way to save the
+ correction to the file. The command is back under the same name: it writes the file
+ only when asked, then unmarks the per-file mark; the swap property alone keeps its
+ choice in the per-file store.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-10-24
+
+--- a/player/command.c
++++ b/player/command.c
+@@ -6478,16 +6478,29 @@
+     }
+ }
+ 
+-// Keep the correction in the CLI's existing per-file playback state.
++// Store the effective swap of the eyes of the playing file with the file (user.stereo-policy.swap-eyes), so that the
++// correction is kept with it; the session's swap then reads as no change. This is the only place that writes the file,
++// and only on this command: the swap property keeps the person's choice in the per-file playback state alone. Once the
++// file carries the correction, the per-file mark is unmarked again.
+ static void cmd_video_stereo_store_swap(void *p)
+ {
+     struct mp_cmd_ctx *cmd = p;
+     struct MPContext *mpctx = cmd->mpctx;
+ 
+-    if (mpctx->is_cli && mpctx->playing) {
+-        mp_write_watch_later_conf(mpctx);
++#if HAVE_STEREO_POLICY
++    struct filter_opts *fopts = mp_get_config_group(NULL, mpctx->global, &filter_conf);
++    bool swap = fopts->video_stereo_swap != fopts->video_stereo_swap_file;
++    talloc_free(fopts);
++
++    char *path = mpctx->filename;
++    if (path && !mp_is_url(bstr0(path)) && stereo_policy_set_file_swap_eyes(path, swap) == 0) {
++        m_config_set_option_cli(mpctx->mconfig, bstr0("video-stereo-swap-file"), bstr0(swap ? "yes" : "no"), 0);
++        m_config_set_option_cli(mpctx->mconfig, bstr0("video-stereo-swap"), bstr0("no"), 0);
++        if (mpctx->is_cli && mpctx->playing)
++            mp_write_watch_later_conf(mpctx);
+         return;
+     }
++#endif
+     cmd->success = false;
+ }
+ 

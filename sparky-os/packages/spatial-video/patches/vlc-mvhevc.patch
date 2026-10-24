@@ -1,0 +1,559 @@
+Description: Decode native MV-HEVC views through the shared stereo frame assembly
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-10-24
+
+--- a/configure.ac
++++ b/configure.ac
+@@ -3217,6 +3217,8 @@
+ 
+ dnl The stereo policy the players of the edition share, for the decision whether
+ dnl a video is 3D and how it is packed
++PKG_CHECK_MODULES([STEREO_AV], [stereo-av >= 1.12.0])
++
+ PKG_CHECK_MODULES([STEREO_POLICY], [stereo-policy >= 1.5.0], [
+   AC_DEFINE([HAVE_STEREO_POLICY], 1, [Defined if having libstereo-policy])
+ ], [:])
+--- a/include/vlc_es.h
++++ b/include/vlc_es.h
+@@ -375,6 +375,14 @@
+     unsigned int i_stereo_plane_width;            /**< size of one view of a packed 3D frame as the container states it (Matroska DisplayWidth), 0 if not stated */
+     unsigned int i_stereo_plane_height;           /**< likewise for the height */
+ 
++    /* Apple's ISOBMFF vexu presentation fields; dadj is in 1/10000 and hfov in 1/1000 degrees. */
++    struct {
++        bool present, reversed, assembled, base_right;
++        unsigned primary_eye;
++        uint32_t baseline, field_of_view;
++        int32_t disparity;
++    } stereo_presentation;
++
+     video_projection_mode_t projection_mode;            /**< projection mode */
+     vlc_viewpoint_t pose;
+     struct {
+--- a/modules/codec/Makefile.am
++++ b/modules/codec/Makefile.am
+@@ -385,8 +385,8 @@
+ if ENABLE_SOUT
+ libavcodec_plugin_la_SOURCES += codec/avcodec/encoder.c
+ endif
+-libavcodec_plugin_la_CFLAGS = $(AVCODEC_CFLAGS) $(AM_CFLAGS)
+-libavcodec_plugin_la_LIBADD = $(AVCODEC_LIBS) $(LIBM) libavcodec_common.la
++libavcodec_plugin_la_CFLAGS = $(STEREO_AV_CFLAGS) $(AVCODEC_CFLAGS) $(AM_CFLAGS)
++libavcodec_plugin_la_LIBADD = $(STEREO_AV_LIBS) $(AVCODEC_LIBS) $(LIBM) libavcodec_common.la
+ libavcodec_plugin_la_LDFLAGS = $(AM_LDFLAGS) $(SYMBOLIC_LDFLAGS)
+ 
+ if MERGE_FFMPEG
+--- a/modules/codec/avcodec/video.c
++++ b/modules/codec/avcodec/video.c
+@@ -29,6 +29,7 @@
+ # include "config.h"
+ #endif
+ 
++#include <stereo-av.h>
+ #include <vlc_common.h>
+ #include <vlc_codec.h>
+ #include <vlc_avcodec.h>
+@@ -96,6 +97,8 @@
+ 
+     /* The stereoscopic layout was looked for in the first block */
+     bool b_stereo_probed;
++    StereoAVPair *stereo_pair;
++    int stereo_width, stereo_height;
+ 
+     bool b_draining;
+ 
+@@ -148,8 +151,8 @@
+                                AVCodecContext *ctx, enum AVPixelFormat pix_fmt,
+                                enum AVPixelFormat sw_pix_fmt)
+ {
+-    int width = ctx->coded_width;
+-    int height = ctx->coded_height;
++    int width = dec->p_sys->stereo_width ? dec->p_sys->stereo_width : ctx->coded_width;
++    int height = dec->p_sys->stereo_height ? dec->p_sys->stereo_height : ctx->coded_height;
+ 
+     video_format_Init(fmt, 0);
+ 
+@@ -172,7 +175,7 @@
+     else /* hardware decoding */
+         fmt->i_chroma = vlc_va_GetChroma(pix_fmt, sw_pix_fmt);
+ 
+-    if( width == 0 || height == 0 || width > 8192 || height > 8192 ||
++    if( width == 0 || height == 0 || width > (dec->p_sys->stereo_width ? 16384 : 8192) || height > 8192 ||
+         width < ctx->width || height < ctx->height )
+     {
+         msg_Err(dec, "Invalid frame size %dx%d vsz %dx%d",
+@@ -182,8 +185,9 @@
+ 
+     fmt->i_width = width;
+     fmt->i_height = height;
+-    fmt->i_visible_width = ctx->width;
+-    fmt->i_visible_height = ctx->height;
++    fmt->i_visible_width = dec->p_sys->stereo_width ? dec->p_sys->stereo_width : ctx->width;
++    fmt->i_visible_height = dec->p_sys->stereo_height ? dec->p_sys->stereo_height : ctx->height;
++    fmt->stereo_presentation = dec->fmt_in.video.stereo_presentation;
+ 
+     /* If an aspect-ratio was specified in the input format then force it */
+     if (dec->fmt_in.video.i_sar_num > 0 && dec->fmt_in.video.i_sar_den > 0)
+@@ -451,6 +455,20 @@
+         ctx->flags |= AV_CODEC_FLAG_LOW_DELAY;
+     }
+ 
++    if (ctx->codec_id == AV_CODEC_ID_HEVC && p_dec->fmt_in.video.stereo_presentation.present) {
++        AVPacketSideData *sd = av_packet_side_data_new(&ctx->coded_side_data, &ctx->nb_coded_side_data,
++                                                       AV_PKT_DATA_STEREO3D, sizeof(AVStereo3D), 0);
++        if (!sd)
++            return AVERROR(ENOMEM);
++        AVStereo3D *stereo = (AVStereo3D *)sd->data;
++        *stereo = (AVStereo3D){ .type = AV_STEREO3D_UNSPEC, .view = AV_STEREO3D_VIEW_PACKED,
++            .flags = p_dec->fmt_in.video.stereo_presentation.reversed ? AV_STEREO3D_FLAG_INVERT : 0,
++            .primary_eye = p_dec->fmt_in.video.stereo_presentation.primary_eye,
++            .baseline = p_dec->fmt_in.video.stereo_presentation.baseline,
++            .horizontal_disparity_adjustment = { p_dec->fmt_in.video.stereo_presentation.disparity, 10000 },
++            .horizontal_field_of_view = { p_dec->fmt_in.video.stereo_presentation.field_of_view, 1000 } };
++    }
++    stereo_av_decoder_views(ctx);
+     post_mt( p_sys );
+     ret = ffmpeg_OpenCodec( p_dec, ctx, codec );
+     wait_mt( p_sys );
+@@ -486,6 +504,12 @@
+     const AVCodec *p_codec = p_sys->p_codec;
+     int i_val;
+ 
++    p_sys->stereo_pair = stereo_av_pair_alloc();
++    if (!p_sys->stereo_pair) {
++        avcodec_free_context(&p_context);
++        free(p_sys);
++        return VLC_ENOMEM;
++    }
+     p_sys->p_va = NULL;
+     vlc_sem_init( &p_sys->sem_mt, 0 );
+ 
+@@ -634,6 +658,7 @@
+     if( OpenVideoCodec( p_dec ) < 0 )
+     {
+         vlc_sem_destroy( &p_sys->sem_mt );
++        stereo_av_pair_free(&p_sys->stereo_pair);
+         free( p_sys );
+         avcodec_free_context( &p_context );
+         return VLC_EGENERIC;
+@@ -880,6 +905,7 @@
+     /* do not flush buffers if codec hasn't been opened (theora/vorbis/VC1) */
+     if( avcodec_is_open( p_context ) )
+         avcodec_flush_buffers( p_context );
++    stereo_av_pair_reset(p_sys->stereo_pair);
+     wait_mt( p_sys );
+ 
+     /* Reset cancel state to false */
+@@ -1398,6 +1424,7 @@
+     {
+         int ret;
+         int i_used = 0;
++        bool pair_wait = false;
+         const bool b_has_data = ( p_block && p_block->i_buffer > 0 );
+         const bool b_start_drain = ((pp_block == NULL) || eos_spotted) && !p_sys->b_draining;
+ 
+@@ -1474,9 +1501,40 @@
+             if( ret == AVERROR_EOF )
+             {
+                 avcodec_flush_buffers( p_sys->p_context );
++                stereo_av_pair_reset(p_sys->stereo_pair);
+                 p_sys->b_draining = false;
+             }
+             break;
++        }
++        if (ret == 0) {
++            // VLC's decoder uses the best-effort presentation timestamp below.
++            // Give the assembler that same clock before matching the two views.
++            if (frame->pts == AV_NOPTS_VALUE)
++                frame->pts = frame->best_effort_timestamp;
++            char *input = var_InheritString(p_dec, "video-stereo-input");
++            const bool enabled = !input || strcmp(input, "none");
++            free(input);
++            int paired = stereo_av_pair_frame(p_sys->stereo_pair, p_context, frame, enabled);
++            if (paired < 0) {
++                av_frame_free(&frame);
++                *error = true;
++                break;
++            }
++            if (paired == 0) {
++                pair_wait = true;
++                ret = AVERROR(EAGAIN);
++            } else {
++                p_sys->stereo_width = paired == 2 ? frame->width : 0;
++                p_sys->stereo_height = paired == 2 ? frame->height : 0;
++            }
++            if (paired > 0) {
++                p_dec->fmt_in.video.stereo_presentation.assembled = paired == 2;
++                p_dec->fmt_in.video.stereo_presentation.base_right = stereo_av_pair_base_eye(p_sys->stereo_pair) == AV_STEREO3D_VIEW_RIGHT;
++            }
++            if (paired == 2) {
++                p_dec->fmt_in.video.i_stereo_plane_width = frame->width / 2;
++                p_dec->fmt_in.video.i_stereo_plane_height = frame->height;
++            }
+         }
+         if (ret == 0 && frame->hw_frames_ctx && frame->opaque == NULL)
+         {
+@@ -1513,7 +1571,7 @@
+         if( not_received_frame )
+         {
+             av_frame_free(&frame);
+-            if( i_used == 0 ) break;
++            if( i_used == 0 && !pair_wait ) break;
+             continue;
+         }
+ 
+@@ -1699,6 +1757,7 @@
+     /* do not flush buffers if codec hasn't been opened (theora/vorbis/VC1) */
+     if( avcodec_is_open( ctx ) )
+         avcodec_flush_buffers( ctx );
++    stereo_av_pair_reset(p_sys->stereo_pair);
+ 
+     wait_mt( p_sys );
+ 
+@@ -1711,6 +1770,7 @@
+         vlc_va_Delete( p_sys->p_va, &hwaccel_context );
+ 
+     vlc_sem_destroy( &p_sys->sem_mt );
++    stereo_av_pair_free(&p_sys->stereo_pair);
+     free( p_sys );
+ }
+ 
+@@ -1996,6 +2056,12 @@
+     decoder_t *p_dec = p_context->opaque;
+     decoder_sys_t *p_sys = p_dec->p_sys;
+     video_format_t fmt;
++    stereo_av_pair_configure(p_sys->stereo_pair, p_context);
++    const bool multiview = stereo_av_decoder_multiview(p_context);
++    if (multiview) {
++        p_sys->b_direct_rendering = false;
++        p_sys->stereo_width = p_sys->stereo_height = 0;
++    }
+ 
+     /* Enumerate available formats */
+     enum PixelFormat defaultfmt = avcodec_default_get_format(p_context, pi_fmt);
+@@ -2018,7 +2084,7 @@
+             if (defaultfmt == pi_fmt[i])
+                 defaultfmt = AV_PIX_FMT_NONE;
+ 
+-            can_hwaccel = true;
++            can_hwaccel = !multiview;
+         }
+         else if (swfmt == AV_PIX_FMT_NONE && !p_sys->b_hardware_only)
+             swfmt = pi_fmt[i];
+@@ -2039,7 +2105,7 @@
+         swfmt = defaultfmt;
+     }
+ 
+-    if (p_sys->pix_fmt == AV_PIX_FMT_NONE || p_sys->b_hw_copy)
++    if (multiview || p_sys->pix_fmt == AV_PIX_FMT_NONE || p_sys->b_hw_copy)
+         goto no_reuse;
+ 
+     /* If the format did not actually change (e.g. seeking), try to reuse the
+--- a/modules/demux/mp4/essetup.c
++++ b/modules/demux/mp4/essetup.c
+@@ -600,6 +600,7 @@
+         case VLC_FOURCC( 'd', 'v', 'h', '1' ): /* DolbyVision */
+         {
+             MP4_Box_t *p_hvcC = MP4_BoxGet( p_sample, "hvcC" );
++            const MP4_Box_t *lhvc = MP4_BoxGet(p_sample, "lhvC");
+ 
+             /* Handle DV fourcc collision at demux level */
+             if( p_sample->i_type == VLC_FOURCC( 'd', 'v', 'h', '1' ) )
+@@ -613,6 +614,44 @@
+                     p_track->fmt.i_extra = p_hvcC->data.p_binary->i_blob;
+                     memcpy( p_track->fmt.p_extra, p_hvcC->data.p_binary->p_blob,
+                             p_hvcC->data.p_binary->i_blob );
++                    if (lhvc && lhvc->data.p_binary) {
++                        const MP4_Box_data_binary_t *extra = lhvc->data.p_binary;
++                        uint8_t *config = p_track->fmt.p_extra;
++                        const size_t size = p_track->fmt.i_extra;
++                        if (size >= 23 && size <= INT_MAX && extra->i_blob >= 6 && ((const uint8_t *)extra->p_blob)[0] == 1
++                            && config[22] + ((const uint8_t *)extra->p_blob)[5] <= 255
++                            && extra->i_blob - 6 <= INT_MAX - size) {
++                            uint8_t *joined = realloc(config, size + extra->i_blob - 6);
++                            if (!joined)
++                                return 0;
++                            joined[22] += ((const uint8_t *)extra->p_blob)[5];
++                            memcpy(joined + size, (const uint8_t *)extra->p_blob + 6, extra->i_blob - 6);
++                            p_track->fmt.p_extra = joined;
++                            p_track->fmt.i_extra = size + extra->i_blob - 6;
++                        }
++                    }
++                    const MP4_Box_t *stri = MP4_BoxGet(p_sample, "vexu/eyes/stri");
++                    if (stri && stri->data.p_binary && stri->data.p_binary->i_blob == 5
++                        && GetDWBE(stri->data.p_binary->p_blob) == 0
++                        && (((const uint8_t *)stri->data.p_binary->p_blob)[4] & 3) == 3) {
++                        p_track->fmt.video.stereo_presentation.present = true;
++                        p_track->fmt.video.stereo_presentation.reversed = (((const uint8_t *)stri->data.p_binary->p_blob)[4] & 8) != 0;
++                        const MP4_Box_t *hero = MP4_BoxGet(p_sample, "vexu/eyes/hero");
++                        const MP4_Box_t *baseline = MP4_BoxGet(p_sample, "vexu/eyes/cams/blin");
++                        const MP4_Box_t *disparity = MP4_BoxGet(p_sample, "vexu/eyes/cmfy/dadj");
++                        const MP4_Box_t *fov = MP4_BoxGet(p_sample, "hfov");
++                        if (hero && hero->data.p_binary && hero->data.p_binary->i_blob == 5
++                            && GetDWBE(hero->data.p_binary->p_blob) == 0 && ((const uint8_t *)hero->data.p_binary->p_blob)[4] <= 2)
++                            p_track->fmt.video.stereo_presentation.primary_eye = ((const uint8_t *)hero->data.p_binary->p_blob)[4];
++                        if (baseline && baseline->data.p_binary && baseline->data.p_binary->i_blob == 8
++                            && GetDWBE(baseline->data.p_binary->p_blob) == 0)
++                            p_track->fmt.video.stereo_presentation.baseline = GetDWBE((const uint8_t *)baseline->data.p_binary->p_blob + 4);
++                        if (disparity && disparity->data.p_binary && disparity->data.p_binary->i_blob == 8
++                            && GetDWBE(disparity->data.p_binary->p_blob) == 0)
++                            p_track->fmt.video.stereo_presentation.disparity = (int32_t)GetDWBE((const uint8_t *)disparity->data.p_binary->p_blob + 4);
++                        if (fov && fov->data.p_binary && fov->data.p_binary->i_blob == 4)
++                            p_track->fmt.video.stereo_presentation.field_of_view = GetDWBE(fov->data.p_binary->p_blob);
++                    }
+                 }
+             }
+             else
+--- a/modules/demux/mp4/libmp4.c
++++ b/modules/demux/mp4/libmp4.c
+@@ -4581,6 +4581,16 @@
+     { ATOM_avcC,    MP4_ReadBox_avcC,         ATOM_avc3 },
+     { ATOM_apvC,    MP4_ReadBox_Binary,       ATOM_apv1 },
+     { ATOM_hvcC,    MP4_ReadBox_Binary,       0 },
++    { ATOM_lhvC, MP4_ReadBox_Binary, 0 },
++    { ATOM_vexu, MP4_ReadBoxContainer, 0 },
++    { ATOM_eyes, MP4_ReadBoxContainer, 0 },
++    { ATOM_stri, MP4_ReadBox_Binary, 0 },
++    { ATOM_hero, MP4_ReadBox_Binary, 0 },
++    { ATOM_cams, MP4_ReadBoxContainer, 0 },
++    { ATOM_blin, MP4_ReadBox_Binary, 0 },
++    { ATOM_cmfy, MP4_ReadBoxContainer, 0 },
++    { ATOM_dadj, MP4_ReadBox_Binary, 0 },
++    { ATOM_hfov, MP4_ReadBox_Binary, 0 },
+     { ATOM_vpcC,    MP4_ReadBox_vpcC,         ATOM_vp08 },
+     { ATOM_vpcC,    MP4_ReadBox_vpcC,         ATOM_vp09 },
+     { ATOM_vpcC,    MP4_ReadBox_vpcC,         ATOM_vp10 },
+--- a/modules/demux/mp4/libmp4.h
++++ b/modules/demux/mp4/libmp4.h
+@@ -261,6 +261,16 @@
+ #define ATOM_fiel VLC_FOURCC( 'f', 'i', 'e', 'l' )
+ #define ATOM_glbl VLC_FOURCC( 'g', 'l', 'b', 'l' )
+ #define ATOM_hvcC VLC_FOURCC( 'h', 'v', 'c', 'C' )
++#define ATOM_lhvC VLC_FOURCC( 'l', 'h', 'v', 'C' )
++#define ATOM_vexu VLC_FOURCC( 'v', 'e', 'x', 'u' )
++#define ATOM_eyes VLC_FOURCC( 'e', 'y', 'e', 's' )
++#define ATOM_stri VLC_FOURCC( 's', 't', 'r', 'i' )
++#define ATOM_hero VLC_FOURCC( 'h', 'e', 'r', 'o' )
++#define ATOM_cams VLC_FOURCC( 'c', 'a', 'm', 's' )
++#define ATOM_blin VLC_FOURCC( 'b', 'l', 'i', 'n' )
++#define ATOM_cmfy VLC_FOURCC( 'c', 'm', 'f', 'y' )
++#define ATOM_dadj VLC_FOURCC( 'd', 'a', 'd', 'j' )
++#define ATOM_hfov VLC_FOURCC( 'h', 'f', 'o', 'v' )
+ 
+ #define ATOM_dvc  VLC_FOURCC( 'd', 'v', 'c', ' ' )
+ #define ATOM_dvp  VLC_FOURCC( 'd', 'v', 'p', ' ' )
+--- a/modules/gui/qt/input_manager.cpp
++++ b/modules/gui/qt/input_manager.cpp
+@@ -119,6 +119,9 @@
+         {
+             char *uri = input_item_GetURI( p_item );
+ 
++            const bool corrected = RecentsMRL::getInstance(p_intf)->stereoSwap(qfu(uri));
++            if (RecentsMRL::getInstance(p_intf)->hasStereoSwap(qfu(uri)))
++                var_SetBool(p_input, "video-stereo-swap", corrected);
+             int i_time = RecentsMRL::getInstance( p_intf )->time( qfu(uri) );
+             if( i_time > 0 && qfu( uri ) != lastURI &&
+                     !var_GetFloat( p_input, "run-time" ) &&
+--- a/modules/gui/qt/menus.cpp
++++ b/modules/gui/qt/menus.cpp
+@@ -681,6 +681,25 @@
+     if( current->isEmpty() )
+     {
+         addActionWithSubmenu( current, "video-es", qtr( "Video &Track" ) );
++        QAction *swapEyes = current->addAction(qtr("Swap left and right eyes"));
++        swapEyes->setCheckable(true);
++        QObject::connect(swapEyes, &QAction::toggled, [p_intf](bool swapped) {
++            input_thread_t *input = THEMIM->getInput();
++            if (!input || !var_GetBool(input, "video-stereo-available"))
++                return;
++            char *uri = input_item_GetURI(input_GetItem(input));
++            RecentsMRL::getInstance(p_intf)->setStereoSwap(qfu(uri), swapped);
++            free(uri);
++            var_SetBool(input, "video-stereo-swap", swapped);
++        });
++        QObject::connect(current, &QMenu::aboutToShow, [p_intf, swapEyes]() {
++            input_thread_t *input = THEMIM->getInput();
++            const bool available = input && var_GetBool(input, "video-stereo-available");
++            swapEyes->setEnabled(available);
++            swapEyes->blockSignals(true);
++            swapEyes->setChecked(available && var_GetBool(input, "video-stereo-swap"));
++            swapEyes->blockSignals(false);
++        });
+ 
+         current->addSeparator();
+         /* Surface modifiers */
+--- a/modules/gui/qt/recents.cpp
++++ b/modules/gui/qt/recents.cpp
+@@ -104,14 +104,17 @@
+         /* move to the front */
+         recents.move( i_index, 0 );
+         times.move( i_index, 0 );
++        stereoSwaps.move(i_index, 0);
+     }
+     else
+     {
+         recents.prepend( mrl );
+         times.prepend( "-1" );
++        stereoSwaps.prepend(QString());
+         if( recents.count() > RECENTS_LIST_SIZE ) {
+             recents.takeLast();
+             times.takeLast();
++            stereoSwaps.takeLast();
+         }
+     }
+     VLCMenuBar::updateRecents( p_intf );
+@@ -125,6 +128,7 @@
+ 
+     recents.clear();
+     times.clear();
++    stereoSwaps.clear();
+     if( isActive ) VLCMenuBar::updateRecents( p_intf );
+     save();
+ }
+@@ -139,6 +143,7 @@
+     /* Load from the settings */
+     QStringList list = getSettings()->value( "RecentsMRL/list" ).toStringList();
+     QStringList list2 = getSettings()->value( "RecentsMRL/times" ).toStringList();
++    const QStringList swaps = getSettings()->value("RecentsMRL/stereoSwaps").toStringList();
+ 
+     /* And filter the regexp on the list */
+     for( int i = 0; i < list.count(); ++i )
+@@ -146,6 +151,7 @@
+         if ( !filter || !filter->match( list.at(i) ).hasMatch() ) {
+             recents.append( list.at(i) );
+             times.append( list2.value(i, "-1" ) );
++            stereoSwaps.append(swaps.value(i));
+         }
+     }
+ }
+@@ -154,6 +160,7 @@
+ {
+     getSettings()->setValue( "RecentsMRL/list", recents );
+     getSettings()->setValue( "RecentsMRL/times", times );
++    getSettings()->setValue("RecentsMRL/stereoSwaps", stereoSwaps);
+ }
+ 
+ void RecentsMRL::playMRL( const QString &mrl )
+@@ -230,3 +237,26 @@
+     return i_ret;
+ }
+ 
++
++bool RecentsMRL::stereoSwap(const QString &mrl)
++{
++    const int index = recents.indexOf(mrl);
++    return isActive && index >= 0 && stereoSwaps.value(index) == "1";
++}
++
++void RecentsMRL::setStereoSwap(const QString &mrl, bool swapped)
++{
++    addRecent(mrl);
++    const int index = recents.indexOf(mrl);
++    if (index >= 0) {
++        stereoSwaps[index] = swapped ? "1" : "0";
++        save();
++        getSettings()->sync();
++    }
++}
++
++bool RecentsMRL::hasStereoSwap(const QString &mrl)
++{
++    const int index = recents.indexOf(mrl);
++    return isActive && index >= 0 && !stereoSwaps.value(index).isEmpty();
++}
+--- a/modules/gui/qt/recents.hpp
++++ b/modules/gui/qt/recents.hpp
+@@ -63,6 +63,9 @@
+ 
+     int time( const QString &mrl );
+     void setTime( const QString &mrl, const int64_t time );
++    bool stereoSwap(const QString &mrl);
++    bool hasStereoSwap(const QString &mrl);
++    void setStereoSwap(const QString &mrl, bool swapped);
+ 
+ private:
+     RecentsMRL( intf_thread_t* _p_intf );
+@@ -72,6 +75,7 @@
+ 
+     QStringList   recents;
+     QStringList   times;
++    QStringList   stereoSwaps;
+     QRegularExpression *filter;
+     bool          isActive;
+ 
+--- a/modules/video_output/opengl/vout_helper.c
++++ b/modules/video_output/opengl/vout_helper.c
+@@ -1996,7 +1996,13 @@
+ 
+     for (unsigned eye = 0; eye < (stereo ? 2 : 1); eye++)
+     {
+-        int ret = DisplayView(vgl, source, eye);
++        unsigned source_eye = eye;
++        if (!stereo && vgl->fmt.stereo_presentation.assembled) {
++            source_eye = vgl->fmt.stereo_presentation.base_right;
++            if (vgl->fmt.multiview_mode == MULTIVIEW_STEREO_SBS_RIGHT_FIRST)
++                source_eye = !source_eye;
++        }
++        int ret = DisplayView(vgl, source, source_eye);
+         if (ret != VLC_SUCCESS)
+             return ret;
+     }
+--- a/src/input/decoder.c
++++ b/src/input/decoder.c
+@@ -94,6 +94,7 @@
+ 
+     /* Current format in use by the output */
+     es_format_t    fmt;
++    bool video_stereo_swap;
+ 
+     /* */
+     bool           b_fmt_description;
+@@ -814,6 +815,7 @@
+ static int vout_update_format( decoder_t *p_dec )
+ {
+     decoder_owner_sys_t *p_owner = p_dec->p_owner;
++    const bool video_stereo_swap = var_InheritBool(p_dec, "video-stereo-swap");
+ 
+     if( p_owner->p_vout == NULL
+      || p_dec->fmt_out.video.i_width != p_owner->fmt.video.i_width
+@@ -826,7 +828,8 @@
+      || (int64_t)p_dec->fmt_out.video.i_sar_num * p_owner->fmt.video.i_sar_den !=
+         (int64_t)p_dec->fmt_out.video.i_sar_den * p_owner->fmt.video.i_sar_num ||
+         p_dec->fmt_out.video.orientation != p_owner->fmt.video.orientation ||
+-        p_dec->fmt_out.video.multiview_mode != p_owner->fmt.video.multiview_mode )
++        p_dec->fmt_out.video.multiview_mode != p_owner->fmt.video.multiview_mode ||
++        video_stereo_swap != p_owner->video_stereo_swap )
+     {
+         vout_thread_t *p_vout;
+ 
+@@ -895,6 +898,8 @@
+                      fmt.i_sar_num, fmt.i_sar_den, 50000 );
+ 
+         StereoJudge( p_dec, &fmt );
++        if (p_owner->p_input)
++            var_SetBool(p_owner->p_input, "video-stereo-available", fmt.multiview_mode != MULTIVIEW_2D);
+ 
+         const bool b_pairs = fmt.multiview_mode == MULTIVIEW_STEREO_FRAME
+                           || fmt.multiview_mode == MULTIVIEW_STEREO_FRAME_RIGHT_FIRST;
+@@ -955,6 +960,9 @@
+         p_owner->fmt.video.i_chroma = p_dec->fmt_out.i_codec;
+         vlc_mutex_unlock( &p_owner->lock );
+ 
++        /* Re-evaluate presentation when a per-file correction changes, even
++         * though the decoder's native dimensions and packing are unchanged. */
++        p_owner->video_stereo_swap = video_stereo_swap;
+         if( p_owner->p_input != NULL )
+             input_SendEventVout( p_owner->p_input );
+         if( p_vout == NULL )
+--- a/src/input/var.c
++++ b/src/input/var.c
+@@ -183,6 +183,8 @@
+ 
+     val.i_int = -1;
+     /* Video ES */
++    var_Create(p_input, "video-stereo-swap", VLC_VAR_BOOL | VLC_VAR_DOINHERIT);
++    var_Create(p_input, "video-stereo-available", VLC_VAR_BOOL);
+     var_Create( p_input, "video-es", VLC_VAR_INTEGER );
+     var_Change( p_input, "video-es", VLC_VAR_SETVALUE, &val, NULL );
+     text.psz_string = _("Video Track");

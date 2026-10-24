@@ -1,0 +1,270 @@
+Description: Decode native MV-HEVC views through the shared stereo frame assembly
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-10-24
+
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -58,7 +58,7 @@
+     set(GWENVIEW_NO_WAYLAND_GESTURES ON)
+ endif()
+ 
+-find_package(Qt6 ${QT_MIN_VERSION} CONFIG REQUIRED Core Widgets Concurrent Svg PrintSupport Multimedia MultimediaWidgets)
++find_package(Qt6 ${QT_MIN_VERSION} CONFIG REQUIRED Core Widgets Concurrent Svg PrintSupport Multimedia MultimediaWidgets MultimediaPrivate)
+ find_package(Qt6DBus ${QT_MIN_VERSION} CONFIG QUIET)
+ find_package(Qt6SvgWidgets)
+ find_package(Qt6OpenGLWidgets)
+--- a/app/CMakeLists.txt
++++ b/app/CMakeLists.txt
+@@ -172,3 +172,5 @@
+ if(kImageAnnotator-Qt6_FOUND)
+     target_link_libraries(gwenview kImageAnnotator::kImageAnnotator)
+ endif()
++
++target_link_libraries(gwenview Qt6::MultimediaPrivate)
+--- a/app/stereo/stereoviewadapter.cpp
++++ b/app/stereo/stereoviewadapter.cpp
+@@ -14,6 +14,9 @@
+ #include <QGraphicsScene>
+ #include <QImageReader>
+ #include <QWindow>
++#include <QVideoFrame>
++#include <QVideoFrameFormat>
++#include <QtMultimedia/private/qvideoframeconverter_p.h>
+ #ifdef HAVE_QTDBUS
+ #include <KDirNotify>
+ #include <QDBusConnection>
+@@ -62,6 +65,9 @@
+ 
+ void StereoViewAdapter::restoreView()
+ {
++    if (mView) {
++        mView->setVideoStereoPresentation({}, false);
++    }
+     if (mView && mView->imageView()) {
+         mView->imageView()->clearStereoMonoImage();
+         mView->imageView()->setDocumentSizeOverride({});
+@@ -72,7 +78,12 @@
+ {
+     if (mView != view) {
+         restoreView();
++        if (mView)
++            disconnect(mView, &DocumentView::videoFrameChanged, this, &StereoViewAdapter::update);
+         mView = view;
++        if (mView)
++            connect(mView, &DocumentView::videoFrameChanged, this, &StereoViewAdapter::update);
++        mVideoFrameTime = -1;
+         mDirty = true;
+     }
+     update();
+@@ -107,6 +118,36 @@
+     }
+     auto *imageView = mView ? mView->imageView() : nullptr;
+     const Document::Ptr document = mView ? mView->document() : Document::Ptr();
++    const QVideoFrame frame = mView ? mView->videoFrame() : QVideoFrame();
++    if (!imageView && frame.isValid() && document) {
++        const auto format = frame.surfaceFormat();
++        const bool native = format.stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::Multiview);
++        if (native && format.stereoMode() == QVideoFrameFormat::StereoMode::SideBySide) {
++            if (mDirty || document != mDocument || frame.startTime() != mVideoFrameTime) {
++                mDirty = false;
++                mDocument = document;
++                mVideoFrameTime = frame.startTime();
++                const QImage left = qImageFromVideoFrameView(frame, 0, QVideoFrameImageDepth::Float32);
++                const QImage right = qImageFromVideoFrameView(frame, 1, QVideoFrameImageDepth::Float32);
++                mPicture = Stereo::Picture::fromImages(left, right, QStringLiteral("multiViewLeftFirst"), {}, {}, mOptions, mOutput.mode());
++                if (mOptions.view == Stereo::Picture::View::Mono
++                    || mOptions.view == Stereo::Picture::View::Stereo) {
++                    mPicture.original = format.stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::BaseViewRight) ? right : left;
++                }
++                mLayer.setPicture(mPicture);
++            }
++            mLayer.setTransform(1, {});
++            mContainer->setStereoLayerActive(mLayer.isActive());
++            mView->setVideoStereoPresentation(mPicture.original, mLayer.isActive());
++            mTimer.start();
++            return;
++        }
++        mLayer.setPicture({});
++        mContainer->setStereoLayerActive(false);
++        mView->setVideoStereoPresentation({}, false);
++        mTimer.stop();
++        return;
++    }
+     if (!imageView || !document) {
+         mLayer.setPicture({});
+         mContainer->setStereoLayerActive(false);
+--- a/app/stereo/stereoviewadapter.h
++++ b/app/stereo/stereoviewadapter.h
+@@ -47,5 +47,6 @@
+     qreal mZoom = 0;
+     QPointF mPan;
+     bool mDirty = true;
++    qint64 mVideoFrameTime = -1;
+ };
+ } // namespace Gwenview
+--- a/lib/documentview/documentview.cpp
++++ b/lib/documentview/documentview.cpp
+@@ -25,6 +25,8 @@
+ #include <cmath>
+ 
+ // Qt
++
++#include <QVideoFrame>
+ #include <QApplication>
+ #include <QDrag>
+ #include <QGestureEvent>
+@@ -538,6 +540,7 @@
+     case MimeTypeUtils::KIND_VIDEO:
+         adapter = new VideoViewAdapter;
+         connect(adapter, SIGNAL(videoFinished()), SIGNAL(videoFinished()));
++        connect(static_cast<VideoViewAdapter *>(adapter), &VideoViewAdapter::videoFrameChanged, this, &DocumentView::videoFrameChanged);
+         break;
+     case MimeTypeUtils::KIND_UNKNOWN:
+         adapter = new MessageViewAdapter;
+@@ -606,6 +609,18 @@
+ void DocumentView::loadAdapterConfig()
+ {
+     d->mAdapter->loadConfig();
++}
++
++QVideoFrame DocumentView::videoFrame() const
++{
++    const auto *video = qobject_cast<VideoViewAdapter *>(d->mAdapter.data());
++    return video ? video->videoFrame() : QVideoFrame();
++}
++
++void DocumentView::setVideoStereoPresentation(const QImage &mono, bool active)
++{
++    if (auto *video = qobject_cast<VideoViewAdapter *>(d->mAdapter.data()))
++        video->setStereoPresentation(mono, active);
+ }
+ 
+ RasterImageView *DocumentView::imageView() const
+--- a/lib/documentview/documentview.h
++++ b/lib/documentview/documentview.h
+@@ -33,6 +33,8 @@
+ 
+ class QPropertyAnimation;
+ class QUrl;
++
++class QVideoFrame;
+ 
+ namespace Gwenview
+ {
+@@ -129,6 +131,8 @@
+      * Returns the RasterImageView of the current adapter, if it has one
+      */
+     RasterImageView *imageView() const;
++    QVideoFrame videoFrame() const;
++    void setVideoStereoPresentation(const QImage &mono, bool active);
+ 
+     AbstractRasterImageViewTool *currentTool() const;
+ 
+@@ -188,6 +192,7 @@
+     void toggleFullScreenRequested();
+ 
+     void videoFinished();
++    void videoFrameChanged();
+ 
+     void backgroundColorModeChanged(BackgroundColorMode);
+ 
+--- a/lib/documentview/videoviewadapter.cpp
++++ b/lib/documentview/videoviewadapter.cpp
+@@ -29,6 +29,9 @@
+ #include <QGraphicsProxyWidget>
+ #include <QGraphicsSceneHoverEvent>
+ #include <QGraphicsVideoItem>
++#include <QPainter>
++#include <QVideoFrame>
++#include <QVideoSink>
+ #include <QIcon>
+ #include <QLabel>
+ #include <QMediaPlayer>
+@@ -47,10 +50,29 @@
+ 
+ namespace Gwenview
+ {
++class StereoVideoItem : public QGraphicsVideoItem
++{
++public:
++    using QGraphicsVideoItem::QGraphicsVideoItem;
++    QImage mono;
++    void paint(QPainter *painter, const QStyleOptionGraphicsItem *option, QWidget *widget) override
++    {
++        if (mono.isNull()) {
++            QGraphicsVideoItem::paint(painter, option, widget);
++            return;
++        }
++        QSizeF fitted = mono.size();
++        fitted.scale(size(), Qt::KeepAspectRatio);
++        QRectF target(QPointF(), fitted);
++        target.moveCenter(QRectF(QPointF(), size()).center());
++        painter->drawImage(target, mono);
++    }
++};
++
+ struct VideoViewAdapterPrivate {
+     VideoViewAdapter *q = nullptr;
+     QMediaPlayer *mMediaPlayer = nullptr;
+-    QGraphicsVideoItem *mVideoItem = nullptr;
++    StereoVideoItem *mVideoItem = nullptr;
+     QAudioOutput *mAudioOutput = nullptr;
+     HudWidget *mHud = nullptr;
+     GraphicsWidgetFloater *mFloater = nullptr;
+@@ -213,8 +235,9 @@
+     d->mWidget->setAttribute(Qt::WA_Hover);
+     d->mWidget->installEventFilter(this);
+ 
+-    d->mVideoItem = new QGraphicsVideoItem(d->mWidget);
++    d->mVideoItem = new StereoVideoItem(d->mWidget);
+     d->mMediaPlayer->setVideoOutput(d->mVideoItem);
++    connect(d->mVideoItem->videoSink(), &QVideoSink::videoFrameChanged, this, &VideoViewAdapter::videoFrameChanged);
+ 
+     connect(d->mWidget, &QGraphicsWidget::geometryChanged, this, [=]() {
+         d->mVideoItem->setSize(d->mVideoItem->parentWidget()->size());
+@@ -379,3 +402,17 @@
+ } // namespace
+ 
+ #include "moc_videoviewadapter.cpp"
++
++namespace Gwenview
++{
++QVideoFrame VideoViewAdapter::videoFrame() const
++{
++    return d->mVideoItem->videoSink()->videoFrame();
++}
++void VideoViewAdapter::setStereoPresentation(const QImage &mono, bool active)
++{
++    d->mVideoItem->mono = mono;
++    d->mVideoItem->setOpacity(active ? 0 : 1);
++    d->mVideoItem->update();
++}
++}
+--- a/lib/documentview/videoviewadapter.h
++++ b/lib/documentview/videoviewadapter.h
+@@ -30,6 +30,9 @@
+ // Local
+ #include <lib/documentview/abstractdocumentviewadapter.h>
+ 
++class QVideoFrame;
++class QImage;
++
+ namespace Gwenview
+ {
+ struct VideoViewAdapterPrivate;
+@@ -46,11 +49,14 @@
+     }
+ 
+     Document::Ptr document() const override;
++    QVideoFrame videoFrame() const;
++    void setStereoPresentation(const QImage &mono, bool active);
+ 
+     void setDocument(const Document::Ptr &) override;
+ 
+ Q_SIGNALS:
+     void videoFinished();
++    void videoFrameChanged();
+ 
+ protected:
+     bool eventFilter(QObject *, QEvent *) override;

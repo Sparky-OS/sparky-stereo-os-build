@@ -1,0 +1,616 @@
+Description: Decode native MV-HEVC views through the shared stereo frame assembly
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-10-24
+
+--- a/src/multimedia/video/qvideoframeconverter_p.h
++++ b/src/multimedia/video/qvideoframeconverter_p.h
+@@ -16,6 +16,11 @@
+ //
+ 
+ #include <qvideoframe.h>
++#include <QtMultimedia/private/qmultimediautils_p.h>
++#include <QtGui/qimage.h>
++#include <QtGui/qtransform.h>
++#include <QtMultimedia/private/qvideotexturehelper_p.h>
++#include <cstring>
+ 
+ QT_BEGIN_NAMESPACE
+ 
+@@ -49,6 +54,74 @@
+ 
+ Q_MULTIMEDIA_EXPORT QImage qImageFromVideoFrame(const QVideoFrame &frame, bool forceCpu = false);
+ 
++// Give each decoded view its own native planes before chroma reconstruction.
++// Converting the packed YUV image first would interpolate across the eye boundary.
++inline QVideoFrame qVideoFrameView(const QVideoFrame &frame, int eye, bool preserveTransform = true)
++{
++    auto format = frame.surfaceFormat();
++    const QSize size(frame.width() / 2, frame.height());
++    format.setFrameSize(size);
++    format.setViewport(QRect(QPoint(), size));
++    format.setStereoMode(QVideoFrameFormat::StereoMode::None);
++    format.setStereoFlags({});
++    if (!preserveTransform) {
++        format.setRotation(QtVideo::Rotation::None);
++        format.setMirrored(false);
++    }
++    QVideoFrame source(frame), view(format);
++    if (!source.map(QVideoFrame::ReadOnly))
++        return {};
++    if (!view.map(QVideoFrame::WriteOnly)) {
++        source.unmap();
++        return {};
++    }
++    const auto *description = QVideoTextureHelper::textureDescription(format.pixelFormat());
++    bool valid = description && description->nplanes == source.planeCount();
++    for (int plane = 0; valid && plane < source.planeCount(); ++plane) {
++        int bytes = 0;
++        switch (description->textureFormat[plane]) {
++        case QVideoTextureHelper::TextureDescription::Red_8: bytes = 1; break;
++        case QVideoTextureHelper::TextureDescription::RG_8:
++        case QVideoTextureHelper::TextureDescription::Red_16: bytes = 2; break;
++        case QVideoTextureHelper::TextureDescription::RG_16:
++        case QVideoTextureHelper::TextureDescription::RGBA_8:
++        case QVideoTextureHelper::TextureDescription::BGRA_8: bytes = 4; break;
++        default: valid = false; continue;
++        }
++        const int width = description->widthForPlane(size.width(), plane);
++        const int height = description->heightForPlane(size.height(), plane);
++        const int row = width * bytes;
++        valid = description->widthForPlane(frame.width(), plane) == 2 * width
++                && row <= view.bytesPerLine(plane) && 2 * row <= source.bytesPerLine(plane);
++        for (int y = 0; valid && y < height; ++y)
++            std::memcpy(view.bits(plane) + y * view.bytesPerLine(plane),
++                        source.bits(plane) + y * source.bytesPerLine(plane) + (eye ? row : 0), row);
++    }
++    source.unmap();
++    view.unmap();
++    if (!valid)
++        return {};
++    if (preserveTransform) {
++        view.setRotation(frame.rotation());
++        view.setMirrored(frame.mirrored());
++    }
++    view.setStartTime(frame.startTime());
++    view.setEndTime(frame.endTime());
++    return view;
++}
++
++inline QImage qImageFromVideoFrameView(const QVideoFrame &frame, int eye,
++                                       QVideoFrameImageDepth depth)
++{
++    QImage view = qImageFromVideoFrame(qVideoFrameView(frame, eye, false), VideoTransformation{}, depth);
++    const auto transform = qNormalizedFrameTransformation(frame);
++    if (transform.rotation != QtVideo::Rotation::None)
++        view = view.transformed(QTransform().rotate(qToUnderlying(transform.rotation)));
++    if (transform.mirroredHorizontallyAfterRotation)
++        view = view.flipped(Qt::Horizontal);
++    return view;
++}
++
+ /**
+  *  @brief Maps the video frame and returns an image having a shared ownership for the video frame
+  * and referencing to its mapped data.
+--- a/src/multimedia/video/qvideoframeformat.cpp
++++ b/src/multimedia/video/qvideoframeformat.cpp
+@@ -717,6 +717,8 @@
+ /*!
+     \enum QVideoFrameFormat::StereoFlag
+ 
++    \value Multiview The frame contains two decoded multiview images at their native dimensions.
++    \value BaseViewRight The multiview base image is the right view, used for ordinary 2D fallback.
+     \value RightEyeFirst
+     The first view of the packing is the right eye's (content_interpretation_type 2 of the frame
+     packing arrangement SEI, the "right eye first" StereoMode values, AV_STEREO3D_FLAG_INVERT).
+--- a/src/multimedia/video/qvideoframeformat.h
++++ b/src/multimedia/video/qvideoframeformat.h
+@@ -146,7 +146,9 @@
+ 
+     enum class StereoFlag
+     {
+-        RightEyeFirst = 0x1
++        RightEyeFirst = 0x1,
++        Multiview = 0x2,
++        BaseViewRight = 0x4
+     };
+     Q_DECLARE_FLAGS(StereoFlags, StereoFlag)
+     Q_FLAG(StereoFlags)
+--- a/src/multimediaquick/qquickvideooutput.cpp
++++ b/src/multimediaquick/qquickvideooutput.cpp
+@@ -1166,7 +1166,11 @@
+         displaySize = frameSize;
+         packing.mode = format.stereoMode();
+         packing.rightEyeFirst = format.stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::RightEyeFirst);
+-        if (st.input != StereoAutomatic) {
++        const bool multiview = format.stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::Multiview);
++        const bool baseOnly = multiview && (st.input == StereoNone || st.view == StereoFlat);
++        if (multiview)
++            packing.size = Size::Full;
++        if (st.input != StereoAutomatic && !baseOnly) {
+             packingFromInput(st.input, &packing);
+         }
+ #ifdef QT_MM_STEREO_POLICY
+@@ -1178,7 +1182,7 @@
+         if (storedSize != frameSize)
+             packing.displaySize = frameSize;
+         twoViews = hasTwoViews(packing.mode) && !frameSize.isEmpty();
+-        result.video = twoViews;
++        result.video = twoViews && !baseOnly;
+         result.packing = packing.mode == StereoMode::None ? StereoNone
+                                                           : inputFromPacking(packing, frameSize);
+         if (!twoViews)
+@@ -1188,7 +1192,7 @@
+         // a surface of its own is a rectangle of the window: it cannot be cropped by the item, rotated or mirrored
+         const bool plain = transformation.rotation == QtVideo::Rotation::None
+                 && !transformation.mirroredHorizontallyAfterRotation && !mirrored && !cropped;
+-        const bool rightFirst = packing.rightEyeFirst != st.swapEyes;
++        const bool rightFirst = packing.rightEyeFirst != (baseOnly ? false : st.swapEyes);
+         if (twoViews && packing.mode == StereoMode::FrameSequence) {
+             // The eye this frame is for. Frames that say it, and say it differently from one
+             // frame to the next, are trusted; a stream that says one view for all of them (the stream's
+@@ -1216,7 +1220,7 @@
+ #ifdef QT_MM_STEREO_LAYER
+         // a video whose colours the compositor cannot be told (HLG without HLG, say) is better
+         // shown by the scene graph, which maps them to what the window shows
+-        result.layerWanted = twoViews && st.view == StereoBothEyes && plain && stereoLayerSupported()
++        result.layerWanted = twoViews && !baseOnly && st.view == StereoBothEyes && plain && stereoLayerSupported()
+                 && QQuickVideoStereoLayer::canDescribe({ format.colorSpace(), format.colorTransfer(),
+                                                          format.colorRange(), format.maxLuminance() });
+         result.layerActive = result.layerWanted && presenterReady;
+@@ -1271,10 +1275,20 @@
+ #else
+         Q_UNUSED(plain);
+ #endif
+-        if (!shownInLayer && twoViews && st.view != StereoFlat) {
++        if (!shownInLayer && twoViews && (baseOnly || st.view != StereoFlat)) {
+             // one view, in the scene graph: the left, if both are wanted and cannot be shown
+-            const int wanted = st.view == StereoRightEye ? 1 : 0;
+-            if (packing.mode == StereoMode::FrameSequence) {
++            const bool fallback = multiview && st.view == StereoBothEyes;
++            const int wanted = (baseOnly || fallback)
++                    ? int(format.stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::BaseViewRight))
++                    : st.view == StereoRightEye ? 1 : 0;
++            if (multiview) {
++                // The ordinary fallback is the physical codec base view even
++                // when the user corrects the order of the stereo presentation.
++                const int index = (baseOnly || fallback) ? wanted : (rightFirst ? 1 - wanted : wanted);
++                shown = qVideoFrameView(frame, index);
++                displaySize = shown.size();
++                result.eyeRect = QRectF(0, 0, 1, 1);
++            } else if (packing.mode == StereoMode::FrameSequence) {
+                 skip = !repeated && eye != wanted;
+                 displaySize = frameSize;
+             } else {
+--- a/src/multimediaquick/qquickvideostereo.cpp
++++ b/src/multimediaquick/qquickvideostereo.cpp
+@@ -405,12 +405,22 @@
+ 
+ void writePair(const QImage &left, const QImage &right, BufferFormat format, uchar *dst, int stride)
+ {
+-    const int w = left.width();
+-    const int h = left.height();
++    // Native view extraction may return half-float images. Normalize the
++    // representation before reading float components for any output format.
++    const QImage views[] = {
++        left.format() == QImage::Format_RGBA32FPx4_Premultiplied ? left
++            : left.convertToFormat(QImage::Format_RGBA32FPx4_Premultiplied),
++        right.format() == QImage::Format_RGBA32FPx4_Premultiplied ? right
++            : right.convertToFormat(QImage::Format_RGBA32FPx4_Premultiplied)
++    };
++    if (views[0].isNull() || views[1].isNull() || views[0].size() != views[1].size())
++        return;
++    const int w = views[0].width();
++    const int h = views[0].height();
+     for (int y = 0; y < h; ++y) {
+         uchar *line = dst + qsizetype(y) * stride;
+         for (int e = 0; e < 2; ++e) {
+-            const float *in = reinterpret_cast<const float *>((e ? right : left).constScanLine(y));
++            const float *in = reinterpret_cast<const float *>(views[e].constScanLine(y));
+             switch (format) {
+             case BufferFormat::Xrgb8888: {
+                 quint32 *out = reinterpret_cast<quint32 *>(line) + e * w;
+--- a/src/multimediaquick/qquickvideostereopresenter.cpp
++++ b/src/multimediaquick/qquickvideostereopresenter.cpp
+@@ -86,30 +86,30 @@
+ void QQuickVideoStereoPresenter::process(Job &job)
+ {
+     const QVideoFrameFormat format = job.frame.surfaceFormat();
+-    const QImage image = qImageFromVideoFrame(
+-            job.frame, job.wide ? QVideoFrameImageDepth::Float32 : QVideoFrameImageDepth::Float16);
+-    if (image.isNull())
+-        return;
++    const bool rightFirst = job.packing.rightEyeFirst != job.swapEyes;
++    const auto depth = job.wide ? QVideoFrameImageDepth::Float32 : QVideoFrameImageDepth::Float16;
++    QImage left, right;
++    if (format.stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::Multiview)) {
++        left = qImageFromVideoFrameView(job.frame, rightFirst ? 1 : 0, depth);
++        right = qImageFromVideoFrameView(job.frame, rightFirst ? 0 : 1, depth);
++    } else {
++        const QImage image = qImageFromVideoFrame(job.frame, depth);
++        if (image.isNull())
++            return;
++        if (job.packing.mode == Mode::FrameSequence) {
++            const QImage other = qImageFromVideoFrame(job.otherFrame, depth);
++            QImage mine = storedView(image, job.packing, 0);
++            QImage theirs = storedView(other, job.packing, 0);
++            if (mine.isNull() || theirs.isNull() || mine.size() != theirs.size())
++                return;
++            left = job.frameView == 0 ? mine : theirs;
++            right = job.frameView == 0 ? theirs : mine;
++        } else {
++            left = storedView(image, job.packing, rightFirst ? 1 : 0);
++            right = storedView(image, job.packing, rightFirst ? 0 : 1);
++        }
++    }
+     job.frame = {};
+-
+-    // which of the packing's views is for the left eye
+-    const bool rightFirst = job.packing.rightEyeFirst != job.swapEyes;
+-    QImage left, right;
+-    if (job.packing.mode == Mode::FrameSequence) {
+-        // each frame is one view (frameView is the eye of the first), the other frame is the other eye's
+-        const QImage other = qImageFromVideoFrame(
+-                job.otherFrame, job.wide ? QVideoFrameImageDepth::Float32 : QVideoFrameImageDepth::Float16);
+-        QImage mine = storedView(image, job.packing, 0);
+-        QImage theirs = storedView(other, job.packing, 0);
+-        if (mine.isNull() || theirs.isNull() || mine.size() != theirs.size())
+-            return;
+-        left = job.frameView == 0 ? mine : theirs;
+-        right = job.frameView == 0 ? theirs : mine;
+-    } else {
+-        // each view at the resolution the frame carries it: the compositor resizes it once
+-        left = storedView(image, job.packing, rightFirst ? 1 : 0);
+-        right = storedView(image, job.packing, rightFirst ? 0 : 1);
+-    }
+     if (left.isNull() || right.isNull())
+         return;
+ 
+@@ -140,7 +140,7 @@
+             }
+             return std::count(seen.begin(), seen.end(), true);
+         };
+-        qCDebug(qLcStereoPresenter) << "frame" << format.frameSize() << "image" << image.size() << "packing"
++        qCDebug(qLcStereoPresenter) << "frame" << format.frameSize() << "packing"
+                                     << int(job.packing.mode) << int(job.packing.size) << "right first" << job.packing.rightEyeFirst << "swap" << job.swapEyes << "frame eye" << job.frameView << "stereo view" << int(format.stereoView()) << "view" << left.size() << "format"
+                                     << (bufferFormat == BufferFormat::Xrgb8888 ? "XRGB8888"
+                                         : bufferFormat == BufferFormat::Xrgb2101010 ? "XRGB2101010"
+--- a/src/multimediawidgets/qgraphicsvideoitem.cpp
++++ b/src/multimediawidgets/qgraphicsvideoitem.cpp
+@@ -1,9 +1,11 @@
+ // Copyright (C) 2016 The Qt Company Ltd.
+ // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+ 
++#include <QtGui/qpainter.h>
+ #include "qgraphicsvideoitem.h"
+ 
+ #include <QtMultimedia/qvideosink.h>
++#include <QtMultimedia/private/qvideoframeconverter_p.h>
+ #include <QtMultimedia/qvideoframe.h>
+ #include <QtMultimedia/qvideoframeformat.h>
+ 
+@@ -57,7 +59,11 @@
+     q_ptr->update(boundingRect);
+ 
+     if (frame.isValid()) {
+-        const QSize &size = frame.surfaceFormat().viewport().size();
++        QSize size = frame.surfaceFormat().viewport().size();
++        if (frame.surfaceFormat().stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::Multiview)) {
++            size.setWidth(size.width() / 2);
++            size = qRotatedFrameSize(size, qNormalizedFrameTransformation(frame).rotation);
++        }
+         if (nativeSize != size) {
+             nativeSize = size;
+ 
+@@ -216,7 +222,12 @@
+     Q_UNUSED(option);
+     Q_UNUSED(widget);
+ 
+-    d->m_frame.paint(painter, d->rect, { Qt::transparent, d->m_aspectRatioMode });
++    if (d->m_frame.surfaceFormat().stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::Multiview)) {
++        const int eye = d->m_frame.surfaceFormat().stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::BaseViewRight) ? 1 : 0;
++        painter->drawImage(d->boundingRect, qImageFromVideoFrameView(d->m_frame, eye, QVideoFrameImageDepth::Float32));
++    } else {
++        d->m_frame.paint(painter, d->rect, { Qt::transparent, d->m_aspectRatioMode });
++    }
+ }
+ 
+ /*!
+--- a/src/plugins/multimedia/ffmpeg/CMakeLists.txt
++++ b/src/plugins/multimedia/ffmpeg/CMakeLists.txt
+@@ -3,6 +3,9 @@
+ 
+ qt_find_package(EGL)
+ qt_find_package(VAAPI COMPONENTS VA DRM PROVIDED_TARGETS VAAPI::VAAPI MODULE_NAME multimedia QMAKE_LIB vaapi)
++
++find_package(PkgConfig REQUIRED)
++pkg_check_modules(STEREO_AV REQUIRED IMPORTED_TARGET GLOBAL stereo-av>=1.12.0)
+ 
+ qt_internal_add_module(FFmpegMediaPluginImplPrivate
+     STATIC
+@@ -351,3 +354,5 @@
+         )
+     endif()
+ endif()
++
++target_link_libraries(FFmpegMediaPluginImplPrivate PRIVATE PkgConfig::STEREO_AV)
+--- a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegcodeccontext.cpp
++++ b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegcodeccontext.cpp
+@@ -5,6 +5,9 @@
+ #include "qffmpegcodecstorage_p.h"
+ 
+ #include <QtMultimedia/qplaybackoptions.h>
++extern "C" {
++#include <libavutil/pixdesc.h>
++}
+ #include <QtCore/qloggingcategory.h>
+ 
+ QT_BEGIN_NAMESPACE
+@@ -17,8 +20,10 @@
+ 
+ CodecContext::Data::Data(AVCodecContextUPtr context, AVStream *avStream,
+                          AVFormatContext *avFormatContext,
+-                         std::unique_ptr<QFFmpeg::HWAccel> hwAccel)
+-    : context(std::move(context)),
++                         std::unique_ptr<QFFmpeg::HWAccel> hwAccel,
++                         std::shared_ptr<StereoAVPair> stereoPair)
++    : stereoPair(std::move(stereoPair)),
++      context(std::move(context)),
+       stream(avStream),
+       formatContext(avFormatContext),
+       hwAccel(std::move(hwAccel))
+@@ -114,7 +119,24 @@
+ 
+     // ### This still gives errors about wrong HW formats (as we accept all of them)
+     // But it would be good to get so we can filter out pixel format we don't support natively
+-    context->get_format = QFFmpeg::getFormat;
++    std::shared_ptr<StereoAVPair> stereoPair(stereo_av_pair_alloc(), [](StereoAVPair *pair) {
++        stereo_av_pair_free(&pair);
++    });
++    if (!stereoPair)
++        return q23::unexpected{ u"Failed to allocate a FFmpeg codec context"_s };
++    context->opaque = stereoPair.get();
++    context->get_format = [](AVCodecContext *ctx, const AVPixelFormat *formats) {
++        stereo_av_pair_configure(static_cast<StereoAVPair *>(ctx->opaque), ctx);
++        if (stereo_av_decoder_multiview(ctx)) {
++            for (auto fmt = formats; *fmt != AV_PIX_FMT_NONE; ++fmt) {
++                const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(*fmt);
++                if (desc && !(desc->flags & AV_PIX_FMT_FLAG_HWACCEL))
++                    return *fmt;
++            }
++            return AV_PIX_FMT_NONE;
++        }
++        return QFFmpeg::getFormat(ctx, formats);
++    };
+ 
+     /* Init the decoder, with reference counting and threading */
+     AVDictionaryHolder opts;
+@@ -125,6 +147,7 @@
+     av_dict_set(opts, "threads", "auto", 0);
+     applyExperimentalCodecOptions(*decoder, opts);
+ 
++    stereo_av_decoder_views(context.get());
+     ret = avcodec_open2(context.get(), decoder->get(), opts);
+ 
+     if (ret < 0)
+@@ -132,7 +155,7 @@
+             QStringLiteral("Failed to open FFmpeg codec context: %1").arg(err2str(ret))
+         };
+ 
+-    return CodecContext(new Data(std::move(context), stream, formatContext, std::move(hwAccel)));
++    return CodecContext(new Data(std::move(context), stream, formatContext, std::move(hwAccel), std::move(stereoPair)));
+ }
+ 
+ QT_END_NAMESPACE
+--- a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegcodeccontext_p.h
++++ b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegcodeccontext_p.h
+@@ -22,6 +22,8 @@
+ #include <QtCore/qshareddata.h>
+ #include <QtCore/private/qexpected_p.h>
+ 
++#include <stereo-av.h>
++
+ QT_BEGIN_NAMESPACE
+ 
+ class QPlaybackOptions;
+@@ -33,7 +35,8 @@
+     struct Data : QSharedData
+     {
+         Data(AVCodecContextUPtr context, AVStream *avStream, AVFormatContext *formatContext,
+-             std::unique_ptr<QFFmpeg::HWAccel> hwAccel);
++             std::unique_ptr<QFFmpeg::HWAccel> hwAccel, std::shared_ptr<StereoAVPair> stereoPair);
++        std::shared_ptr<StereoAVPair> stereoPair;
+         AVCodecContextUPtr context;
+         AVStream *stream = nullptr;
+         AVFormatContext *formatContext = nullptr;
+@@ -47,6 +50,7 @@
+ 
+     AVRational pixelAspectRatio(AVFrame *frame) const;
+ 
++    StereoAVPair *stereoPair() const { return d->stereoPair.get(); }
+     AVCodecContext *context() const { return d->context.get(); }
+     AVStream *stream() const { return d->stream; }
+     uint streamIndex() const { return d->stream->index; }
+--- a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegframe_p.h
++++ b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegframe_p.h
+@@ -33,6 +33,8 @@
+ {
+     struct Data
+     {
++        bool multiview = false;
++        bool baseViewRight = false;
+         Data(const LoopOffset &offset, AVFrameUPtr f, const CodecContext &codecContext,
+              const PlaybackEngineObjectID &sourceID)
+             : loopOffset(offset),
+@@ -93,6 +95,9 @@
+         : d(new Data(offset, text, pts, duration, sourceId))
+     {
+     }
++    void setMultiview(bool baseRight) { data().multiview = true; data().baseViewRight = baseRight; }
++    bool multiview() const { return data().multiview; }
++    bool baseViewRight() const { return data().baseViewRight; }
+     bool isValid() const { return !!d; }
+ 
+     AVFrame *avFrame() const { return data().frame.get(); }
+--- a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegstreamdecoder.cpp
++++ b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegstreamdecoder.cpp
+@@ -4,6 +4,9 @@
+ #include "playbackengine/qffmpegstreamdecoder_p.h"
+ #include "playbackengine/qffmpegmediadataholder_p.h"
+ #include <qloggingcategory.h>
++extern "C" {
++#include <libavutil/stereo3d.h>
++}
+ 
+ QT_BEGIN_NAMESPACE
+ 
+@@ -26,6 +29,7 @@
+ StreamDecoder::~StreamDecoder()
+ {
+     avcodec_flush_buffers(m_codecContext.context());
++    stereo_av_pair_reset(m_codecContext.stereoPair());
+ }
+ 
+ void StreamDecoder::seek(quint64 sessionID, TrackPosition pos, const LoopOffset &offset)
+@@ -33,6 +37,7 @@
+     updateSession(sessionID, [this, pos, offset]() {
+         m_sessionCtx = { offset.loopStartTimeUs.asDuration() + pos };
+         avcodec_flush_buffers(m_codecContext.context());
++        stereo_av_pair_reset(m_codecContext.stereoPair());
+     });
+ }
+ 
+@@ -73,6 +78,7 @@
+                                   << packet.loopOffset().loopIndex;
+ 
+         avcodec_flush_buffers(m_codecContext.context());
++        stereo_av_pair_reset(m_codecContext.stereoPair());
+         m_sessionCtx.offset = packet.loopOffset();
+     }
+ 
+@@ -169,6 +175,8 @@
+         const auto receiveFrameResult = avcodec_receive_frame(m_codecContext.context(), avFrame.get());
+ 
+         if (receiveFrameResult == AVERROR_EOF || receiveFrameResult == AVERROR(EAGAIN)) {
++            if (receiveFrameResult == AVERROR_EOF)
++                stereo_av_pair_reset(m_codecContext.stereoPair());
+             if (flushPacket && receiveFrameResult == AVERROR(EAGAIN)) {
+             // The documentation says that in the EAGAIN state output is not available. The new
+             // input must be sent. It does not say that this state can also be returned for
+@@ -191,11 +199,26 @@
+         }
+ 
+ 
++        bool multiview = false;
++        if (m_trackType == QPlatformMediaPlayer::VideoStream) {
++            int paired = stereo_av_pair_frame(m_codecContext.stereoPair(), m_codecContext.context(), avFrame.get(), 1);
++            if (paired == 0)
++                continue;
++            if (paired < 0) {
++                emit error(QMediaPlayer::FormatError, err2str(paired));
++                break;
++            }
++            multiview = paired == 2;
++        }
++
+         // Avoid starvation on FFmpeg decoders with fixed size frame pool
+         if (m_trackType == QPlatformMediaPlayer::VideoStream)
+             avFrame = copyFromHwPool(std::move(avFrame));
+ 
+-        onFrameFound({ m_sessionCtx.offset, std::move(avFrame), m_codecContext, id() });
++        Frame frame{ m_sessionCtx.offset, std::move(avFrame), m_codecContext, id() };
++        if (multiview)
++            frame.setMultiview(stereo_av_pair_base_eye(m_codecContext.stereoPair()) == AV_STEREO3D_VIEW_RIGHT);
++        onFrameFound(frame);
+     }
+ }
+ 
+--- a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegvideorenderer.cpp
++++ b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegvideorenderer.cpp
+@@ -80,6 +80,11 @@
+         m_stereoMode = stereo->mode;
+         m_stereoFlags = stereo->flags;
+     }
++    if (frame.multiview()) {
++        m_stereoFlags |= QVideoFrameFormat::StereoFlag::Multiview;
++        if (frame.baseViewRight())
++            m_stereoFlags |= QVideoFrameFormat::StereoFlag::BaseViewRight;
++    }
+     format.setStereoMode(m_stereoMode);
+     format.setStereoFlags(m_stereoFlags);
+     format.setStereoView(stereo ? stereo->view : QVideoFrameFormat::StereoView::Packed);
+--- a/tests/auto/integration/qquickvideostereo/tst_qquickvideostereo.cpp
++++ b/tests/auto/integration/qquickvideostereo/tst_qquickvideostereo.cpp
+@@ -57,6 +57,8 @@
+     void levels10Bit();
+     void deepConversion();
+     void propertiesDefault();
++    void pairImageFormats_data();
++    void pairImageFormats();
+     void stereoVideoFromFrames();
+ };
+ 
+@@ -309,5 +311,63 @@
+     QTRY_COMPARE(output.implicitWidth(), 1920);
+ }
+ 
++void tst_QQuickVideoStereo::pairImageFormats_data()
++{
++    QTest::addColumn<int>("imageFormat");
++    QTest::addColumn<int>("bufferFormat");
++    for (int image : { int(QImage::Format_RGBA8888_Premultiplied),
++                       int(QImage::Format_RGBA16FPx4_Premultiplied),
++                       int(QImage::Format_RGBA32FPx4_Premultiplied) }) {
++        for (int buffer = 0; buffer < 4; ++buffer)
++            QTest::newRow(qPrintable(QString::number(image) + QLatin1Char('-') + QString::number(buffer))) << image << buffer;
++    }
++}
++
++void tst_QQuickVideoStereo::pairImageFormats()
++{
++    QFETCH(int, imageFormat);
++    QFETCH(int, bufferFormat);
++    // Padding makes each row safe even for the former incorrect float32 cast.
++    QByteArray leftStorage(8 * 8 * 16, '\0'), rightStorage(8 * 8 * 16, '\0');
++    QImage left(reinterpret_cast<uchar *>(leftStorage.data()), 8, 8, 8 * 16, QImage::Format(imageFormat));
++    QImage right(reinterpret_cast<uchar *>(rightStorage.data()), 8, 8, 8 * 16, QImage::Format(imageFormat));
++    left.fill(QColor::fromRgbF(.75, .125, .25));
++    right.fill(QColor::fromRgbF(.125, .25, .75));
++    const auto format = BufferFormat(bufferFormat);
++    const int stride = 16 * bytesPerPixel(format);
++    QByteArray pixels(stride * 8, '\0');
++    writePair(left, right, format, reinterpret_cast<uchar *>(pixels.data()), stride);
++    for (int y = 0; y < 8; ++y) {
++        for (int x = 0; x < 16; ++x) {
++            const uchar *pixel = reinterpret_cast<const uchar *>(pixels.constData() + y * stride + x * bytesPerPixel(format));
++            float red, blue;
++            switch (format) {
++            case BufferFormat::Xrgb8888: {
++                const quint32 value = *reinterpret_cast<const quint32 *>(pixel);
++                red = ((value >> 16) & 255) / 255.f; blue = (value & 255) / 255.f;
++                break;
++            }
++            case BufferFormat::Xrgb2101010: {
++                const quint32 value = *reinterpret_cast<const quint32 *>(pixel);
++                red = ((value >> 20) & 1023) / 1023.f; blue = (value & 1023) / 1023.f;
++                break;
++            }
++            case BufferFormat::Xbgr16161616: {
++                const auto *value = reinterpret_cast<const quint16 *>(pixel);
++                red = value[0] / 65535.f; blue = value[2] / 65535.f;
++                break;
++            }
++            case BufferFormat::Xbgr16161616f: {
++                const auto *value = reinterpret_cast<const qfloat16 *>(pixel);
++                red = float(value[0]); blue = float(value[2]);
++                break;
++            }
++            }
++            QVERIFY2(x < 8 ? red > .7f && blue < .3f : blue > .7f && red < .3f,
++                     qPrintable(QStringLiteral("wrong eye at %1,%2: %3,%4").arg(x).arg(y).arg(red).arg(blue)));
++        }
++    }
++}
++
+ QTEST_MAIN(tst_QQuickVideoStereo)
+ #include "tst_qquickvideostereo.moc"

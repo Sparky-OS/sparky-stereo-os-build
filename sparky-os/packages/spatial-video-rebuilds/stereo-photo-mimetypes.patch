@@ -1,0 +1,21 @@
+Description: list the stereo picture types in Gwenview's desktop files
+ MPO, JPS and PNS are sub-classes of JPEG and PNG (kimageformats-stereo.xml
+ in kf6-kimageformats). The edition makes Gwenview their default
+ (/etc/xdg/kde-mimeapps.list in sparky-stereo-look); naming them in the
+ desktop entry and the part's service makes Open With and the default list
+ Gwenview for these types directly instead of by inheritance only.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -216,6 +216,9 @@ set(IMAGE_MIME_TYPES_LIST
+     image/svg+xml
+     image/svg+xml-compressed
+     application/x-krita
++    image/x-jps
++    image/x-mpo
++    image/x-pns
+ )
+ if (KF6KDcraw_FOUND)
+     list(APPEND IMAGE_MIME_TYPES_LIST

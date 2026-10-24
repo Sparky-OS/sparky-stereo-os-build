@@ -1,0 +1,21 @@
+Description: Select HEIF stereo views through the shared reader before opening the editable pair
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-10-24
+
+--- a/document/kpDocument_Open.cpp
++++ b/document/kpDocument_Open.cpp
+@@ -55,12 +55,7 @@
+         layout = image.text(QStringLiteral("Stereo3DLayout"));
+     }
+ 
+-    QImage second;
+-    if (reader.imageCount() >= 2 && (format == "mpo" || layout.startsWith(QLatin1String("multiView"))) && reader.jumpToImage(1)) {
+-        second = reader.read();
+-    }
+-
+-    const Stereo::Picture picture = Stereo::Picture::fromImages(image, second, layout, format, data.left(1024 * 1024), {}, Stereo::OutputMode::Mono);
++    const Stereo::Picture picture = Stereo::Picture::fromReader(reader, image, layout, format, data.left(1024 * 1024), {}, Stereo::OutputMode::Mono);
+     if (!picture.isStereo() || (picture.source != Stereo::Picture::Source::FileMark && picture.source != Stereo::Picture::Source::Format)) {
+         return {};
+     }

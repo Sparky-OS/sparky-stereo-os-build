@@ -32,9 +32,8 @@ source are not falsely counted as projected compiler inputs.
 The migration used these exact build inputs from Debian's authenticated trixie
 archive, because they had left testing. Retain the signed index, package hashes
 and architecture-specific packages; do not add an unauthenticated mirror or
-substitute the amd64 CAPI packages for i386. The prepared source records its
-inputs in `debian/verified-build-inputs.json`; `.buildinfo` records the build
-environment.
+substitute the amd64 CAPI packages for i386. The prepared source pins these versions in `debian/control` and `debian/control.in`.
+The Vulkan registry has its own `debian/vulkan-registry/provenance.json`; `.buildinfo` records the complete build environment.
 
 | Package | Version |
 | --- | --- |
@@ -50,3 +49,17 @@ Its configure warnings about unavailable OSMesa bitmap and CAPI/ISDN support
 also occur in both architectures' previous accepted builds. Those features
 are not newly enabled by this migration. At this checkpoint the i386 build,
 shared-file comparison and installed runtime checks remain separate gates.
+
+For the quad-buffer drawable correction, run `prepare-source.py SOURCE VERSION` on an extracted, unprojected edition source package with its existing quilt series applied.
+It appends `patches/wine-quad-buffer-size.patch`, pins the retained dependencies, prepares the standard Lean Code hooks and records the changelog using the edition's packaging identity.
+Generate one source package with `dpkg-buildpackage -S -us -uc -d`, then build every architecture from its `.dsc`.
+The correction queries `GLX_STEREO` on the actual framebuffer configuration.
+Genuine quad-buffer drawables retain one view's dimensions; prepacked OpenGL and Vulkan clients retain the existing packed-size path.
+
+The same source preparation also appends `patches/wine-popup-metadata.patch`.
+It describes Wine's override-redirect menus, tooltips and combo lists through EWMH window types.
+A submenu's X11 transient owner names its parent menu, while Win32 command ownership stays intact.
+The declaration is refreshed before mapping, after the menu's selected child is known.
+A dropdown combo list also retains its combo owner when user32 reparents it to the desktop, allowing winex11 to name the application's root window in the transient hint.
+The functional types follow [EWMH 1.5 section 5.6](https://specifications.freedesktop.org/wm/1.5/ar01s05.html).
+The compositor must read override-redirect transient hints to apply popup depth through that owner chain.
