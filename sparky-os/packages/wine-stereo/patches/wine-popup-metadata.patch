@@ -9,7 +9,7 @@ Assisted-by: GPT-6 (Codex)
 
 --- a/dlls/winex11.drv/window.c
 +++ b/dlls/winex11.drv/window.c
-@@ -937,6 +937,54 @@
+@@ -937,6 +937,56 @@
  }
  
  
@@ -30,6 +30,8 @@ Assisted-by: GPT-6 (Codex)
 + * Win32 names the command recipient, so find the visible parent menu too. */
 +static Atom get_popup_type( struct x11drv_win_data *data, HWND *owner )
 +{
++    static const WCHAR tooltip_class[] = {'t','o','o','l','t','i','p','s','_','c','l','a','s','s','3','2',0};
++    static const WCHAR combo_class[] = {'C','o','m','b','o','L','B','o','x',0};
 +    WCHAR buffer[128];
 +    UNICODE_STRING name = { .MaximumLength = sizeof(buffer) - sizeof(WCHAR), .Buffer = buffer };
 +    HWND *list;
@@ -55,8 +57,8 @@ Assisted-by: GPT-6 (Codex)
 +        return x11drv_atom(_NET_WM_WINDOW_TYPE_POPUP_MENU);
 +    }
 +    if (!NtUserGetClassName( data->hwnd, FALSE, &name )) return None;
-+    if (!wcsicmp( buffer, L"tooltips_class32" )) return x11drv_atom(_NET_WM_WINDOW_TYPE_TOOLTIP);
-+    if (!wcsicmp( buffer, L"ComboLBox" )) return x11drv_atom(_NET_WM_WINDOW_TYPE_COMBO);
++    if (!wcsicmp( buffer, tooltip_class )) return x11drv_atom(_NET_WM_WINDOW_TYPE_TOOLTIP);
++    if (!wcsicmp( buffer, combo_class )) return x11drv_atom(_NET_WM_WINDOW_TYPE_COMBO);
 +    return None;
 +}
 +
@@ -64,7 +66,7 @@ Assisted-by: GPT-6 (Codex)
  /***********************************************************************
   *              set_style_hints
   */
-@@ -944,9 +992,10 @@
+@@ -944,9 +994,10 @@
  {
      Window group_leader = data->whole_window;
      HWND owner = NtUserGetWindowRelative( data->hwnd, GW_OWNER );
@@ -76,7 +78,7 @@ Assisted-by: GPT-6 (Codex)
  
      if (owner)
      {
-@@ -958,16 +1007,25 @@
+@@ -958,16 +1009,25 @@
      {
          XSetTransientForHint( data->display, data->whole_window, owner_win );
          group_leader = owner_win;
