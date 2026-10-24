@@ -31,19 +31,22 @@ if a.package == 'media-gpu-route':
                     '--toolkit', str(a.toolkit)], check=True,
                    env=os.environ | {'PYTHONPATH': str(a.toolkit)})
 else:
-    if a.package == 'libplacebo-dmo':
+    stanzas = (a.published/'dists/mashtabba/main/source/Sources').read_text().split('\n\n')
+    entries = []
+    for stanza in stanzas:
+        fields = dict(line.split(': ', 1) for line in stanza.splitlines()
+                      if ': ' in line and not line.startswith(' '))
+        if fields.get('Package') == a.package:
+            entries.append((stanza, fields))
+    # libplacebo's first edition build started from deb-multimedia's source;
+    # once published, it continues from the edition's own source.
+    first_libplacebo = a.package == 'libplacebo-dmo' and not entries
+    if first_libplacebo:
         if not a.libplacebo_source:
             p.error('--libplacebo-source is required')
         directory = a.libplacebo_source
         dsc = directory/'libplacebo-dmo_7.360.1-dmo1.dsc'
     else:
-        stanzas = (a.published/'dists/mashtabba/main/source/Sources').read_text().split('\n\n')
-        entries = []
-        for stanza in stanzas:
-            fields = dict(line.split(': ', 1) for line in stanza.splitlines()
-                          if ': ' in line and not line.startswith(' '))
-            if fields.get('Package') == a.package:
-                entries.append((stanza, fields))
         assert len(entries) == 1, (a.package, len(entries))
         stanza, fields = entries[0]
         directory = a.published/fields['Directory']
@@ -63,8 +66,8 @@ else:
         shutil.copy2(original, work/filename)
     subprocess.run(['dpkg-source', '-x', str(work/dsc.name), str(source)], check=True)
     (work/'predecessor.json').write_text(json.dumps({'dsc': dsc.name, 'sha256': hashlib.sha256(dsc.read_bytes()).hexdigest()}, indent=2)+'\n')
-    args = ['python3', str(here.parent/'prepare.py'), a.package, str(source), '--version', version.removesuffix('+lc1') if a.package == 'libplacebo-dmo' else version]
-    if a.package != 'libplacebo-dmo':
+    args = ['python3', str(here.parent/'prepare.py'), a.package, str(source), '--version', version.removesuffix('+lc1') if first_libplacebo else version]
+    if not first_libplacebo:
         args += ['--published-lc']
     if a.package in ('mlt', 'vlc', 'qt6-multimedia'):
         args += ['--ffmpeg-min-version', versions['ffmpeg-dmo'], '--gpu-route-min-version', versions['media-gpu-route']]
@@ -76,7 +79,7 @@ else:
     if a.package == 'kdenlive':
         args += ['--mlt-min-version', versions['mlt']]
     subprocess.run(args, check=True)
-    if a.package == 'libplacebo-dmo':
+    if first_libplacebo:
         # prepare.py created the authored entry; the pipeline advances to lc1.
         subprocess.run(['python3', '-m', 'lean.debian_prepare', str(source), version,
                         '--toolkit', str(a.toolkit)], check=True,

@@ -50,8 +50,26 @@ inputs = []
 if a.package in ['mpv-dmo', 'mlt', 'kdenlive', 'qt6-multimedia']:
     inputs.extend(sorted((here.parent/'full-sbs/patches'/a.package).glob('*.patch')))
 inputs.extend(sorted((here/'patches'/a.package).glob('*.patch')))
-assert inputs
+# Patches an earlier release carried and this one leaves out, one name a line, each with its reason in DROPPED.
+dropped_list = here/'patches'/a.package/'DROPPED'
+dropped = [line.split()[0] for line in dropped_list.read_text().splitlines()
+           if line.strip() and not line.startswith('#')] if dropped_list.exists() else []
+assert inputs or dropped
 patches.mkdir(exist_ok=True)
+if dropped:
+    quilt_env = os.environ | {'QUILT_PATCHES': 'debian/patches'}
+    subprocess.run(['quilt', 'pop', '-a'], cwd=source, env=quilt_env, check=True)
+    names = [name for name in existing.splitlines() if name.strip()]
+    for name in dropped:
+        if name not in names:
+            raise SystemExit(f'Dropped patch is not in the series: {name}')
+        names.remove(name)
+        (patches/name).unlink()
+    series.write_text(''.join(name + '\n' for name in names))
+    existing = series.read_text()
+    shutil.rmtree(source/'.pc', ignore_errors=True)
+    if names:
+        subprocess.run(['quilt', 'push', '-a'], cwd=source, env=quilt_env, check=True)
 for patch in inputs:
     if patch.name in existing.splitlines():
         continue
@@ -62,8 +80,9 @@ for patch in inputs:
     with series.open('a') as f:
         f.write(patch.name + '\n')
 # dpkg-source has already applied the package's original series.
-subprocess.run(['quilt', 'push', '-a'], cwd=source,
-               env=os.environ | {'QUILT_PATCHES': 'debian/patches'}, check=True)
+if inputs:
+    subprocess.run(['quilt', 'push', '-a'], cwd=source,
+                   env=os.environ | {'QUILT_PATCHES': 'debian/patches'}, check=True)
 control = source/'debian/control'
 text = control.read_text()
 def dependency(binary, package, version):
