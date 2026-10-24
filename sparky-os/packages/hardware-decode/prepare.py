@@ -19,6 +19,7 @@ p.add_argument('--libplacebo-min-version', help='libplacebo release retaining co
 p.add_argument('--ffmpeg-min-version', help='FFmpeg release containing the format-query cleanup')
 p.add_argument('--gpu-route-min-version', help='shared GPU routing library release')
 p.add_argument('--mlt-min-version', help='MLT release containing automatic precision-preserving decoding')
+p.add_argument('--entry', type=Path, help='changelog entry text for this release, instead of the routing entry')
 a = p.parse_args()
 source = a.source.resolve()
 if a.package in ['mlt', 'vlc', 'qt6-multimedia'] and not a.ffmpeg_min_version:
@@ -71,34 +72,53 @@ def dependency(binary, package, version):
     found = False
     for i, section in enumerate(sections):
         if section.startswith('Package: ' + binary + '\n'):
-            # An explicit floor supplements shlibs and any older existing floor.
-            sections[i], changed = re.subn(r'^Depends: ',
-                f'Depends: {package} (>= {version}), ', section, count=1, flags=re.M)
+            # An explicit floor supplements shlibs; a floor an earlier release
+            # wrote is raised in place.
+            sections[i], changed = re.subn(r'(^Depends:(?:[^\n]|\n[ \t])*?)\b' + re.escape(package) + r' \(>= [^)]*\)',
+                lambda m: f'{m.group(1)}{package} (>= {version})', section, count=1, flags=re.M)
+            if not changed:
+                sections[i], changed = re.subn(r'^Depends: ',
+                    f'Depends: {package} (>= {version}), ', section, count=1, flags=re.M)
             assert changed == 1
             found = True
     assert found, binary
     text = '\n\n'.join(sections)
+def build_dependency(package, version):
+    global text
+    text, changed = re.subn(r'(^Build-Depends:(?:[^\n]|\n[ \t])*?)\b' + re.escape(package) + r' \(>= [^)]*\)',
+        lambda m: f'{m.group(1)}{package} (>= {version})', text, count=1, flags=re.M)
+    if not changed:
+        text, changed = re.subn(r'^Build-Depends:[ \t]*',
+            f'Build-Depends: {package} (>= {version}), ', text, count=1, flags=re.M)
+    assert changed == 1
 if a.package in ['mlt', 'vlc', 'qt6-multimedia']:
     binary = {'mlt': 'libmlt7', 'vlc': 'vlc-stereo', 'qt6-multimedia': 'libqt6multimedia6'}[a.package]
     dependency(binary, 'libavcodec63', a.ffmpeg_min_version)
     dependency(binary, 'libmedia-gpu-route0', a.gpu_route_min_version)
-    text, changed = re.subn(r'^Build-Depends:[ \t]*',
-        f'Build-Depends: libmedia-gpu-route-dev (>= {a.gpu_route_min_version}), ',
-        text, count=1, flags=re.M)
-    assert changed == 1
+    build_dependency('libmedia-gpu-route-dev', a.gpu_route_min_version)
 if a.package == 'mpv-dmo' and a.libplacebo_min_version:
     dependency('mpv', 'libplacebo360', a.libplacebo_min_version)
     dependency('libmpv2', 'libplacebo360', a.libplacebo_min_version)
-    text, changed = re.subn(r'^Build-Depends:[ \t]*',
-        f'Build-Depends: libplacebo-dev (>= {a.libplacebo_min_version}), ',
-        text, count=1, flags=re.M)
-    assert changed == 1
+    build_dependency('libplacebo-dev', a.libplacebo_min_version)
+if a.package == 'mpv-dmo' and a.gpu_route_min_version:
+    # The copy-back choice of the automatic hardware decoding modes.
+    dependency('mpv', 'libmedia-gpu-route0', a.gpu_route_min_version)
+    dependency('libmpv2', 'libmedia-gpu-route0', a.gpu_route_min_version)
+    build_dependency('libmedia-gpu-route-dev', a.gpu_route_min_version)
+    rules = source/'debian/rules'
+    rules_text = rules.read_text()
+    if '-Dmedia-gpu-route=enabled' not in rules_text:
+        rules_text, changed = re.subn(r'^(\t-Dstereo-dibr=enabled \\\n)', r'\1\t-Dmedia-gpu-route=enabled \\\n',
+                                      rules_text, count=1, flags=re.M)
+        assert changed == 1
+        rules.write_text(rules_text)
 if a.package == 'kdenlive':
     dependency('kdenlive', 'libmlt7', a.mlt_min_version)
 control.write_text(text)
-entry = (f'{a.package} ({a.version}) unstable; urgency=medium\n\n'
-         '  * Follow the display GPU for media where its decoder preserves source\n'
-         '    precision and retain software fallback and stereo frame properties.\n\n'
+body = (a.entry.read_text().rstrip('\n') + '\n' if a.entry else
+        '  * Follow the display GPU for media where its decoder preserves source\n'
+        '    precision and retain software fallback and stereo frame properties.\n')
+entry = (f'{a.package} ({a.version}) unstable; urgency=medium\n\n' + body + '\n'
          ' -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  '
          + email.utils.formatdate(localtime=True) + '\n\n')
 changelog.write_text(entry + old)

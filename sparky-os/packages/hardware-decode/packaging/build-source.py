@@ -69,7 +69,10 @@ else:
     if a.package in ('mlt', 'vlc', 'qt6-multimedia'):
         args += ['--ffmpeg-min-version', versions['ffmpeg-dmo'], '--gpu-route-min-version', versions['media-gpu-route']]
     if a.package == 'mpv-dmo':
-        args += ['--libplacebo-min-version', versions['libplacebo-dmo']]
+        args += ['--libplacebo-min-version', versions['libplacebo-dmo'],
+                 '--gpu-route-min-version', versions['media-gpu-route']]
+    if (here/'entries'/(a.package + '.txt')).is_file():
+        args += ['--entry', str(here/'entries'/(a.package + '.txt'))]
     if a.package == 'kdenlive':
         args += ['--mlt-min-version', versions['mlt']]
     subprocess.run(args, check=True)

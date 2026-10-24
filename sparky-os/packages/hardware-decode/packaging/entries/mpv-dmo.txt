@@ -1,0 +1,10 @@
+  * Automatic hardware decoding takes only methods whose pictures the video
+    output uses where they are, and software otherwise; copying back is the
+    person's choice (auto-copy, METHOD-copy) or the machine's measured
+    record in libmedia-gpu-route. On an AMD A10-9600P, vaapi-copy dropped
+    many more frames than software decoding (ORDER 234).
+  * Declare left-first side by side 3D video as it is, without the stereo3d
+    copy, so hardware frames stay in GPU memory.
+  * Decode in software rather than copy hardware frames back for the CPU
+    conversion of other 3D packings, unless the person chose hardware
+    decoding or copying back.
