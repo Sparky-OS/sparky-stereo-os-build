@@ -85,10 +85,11 @@ def main():
     before, after = phase(a.before), phase(a.after)
     worse, confounded = [], []
     print(f"{'case':54} {'before/min':>10} {'after/min':>10}  verdict     after: decoder, render device, output")
-    for name in sorted(set(before) | set(after)):
-        b, f = before.get(name), after.get(name)
-        if not b or not f:
-            print(f'{name:54} missing in {"before" if not b else "after"}')
+    # the cases AFTER ran: an A/B phase may run a few of BEFORE's cases
+    for name in sorted(after):
+        b, f = before.get(name), after[name]
+        if not b:
+            print(f'{name:54} missing in before')
             worse.append(name)
             continue
         state = lambda case: (f"dimmed to {case['output']['reference']:g} nits{', PQ' if case['output']['pq'] else ''}"
