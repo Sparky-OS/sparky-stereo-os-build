@@ -8,6 +8,8 @@
 # Steam: set the launch options of a game to  sparky-stereo-gpu-run --category games %command%
 # (for a game played in 3D:  sparky-stereo-gpu-run --category games --3d %command%)
 # It never stops a program from starting: when the choice cannot be read, the program starts unchanged.
+# A GPU already chosen in the environment (DRI_PRIME, MESA_VK_DEVICE_SELECT, VK_LOADER_DRIVERS_SELECT,
+# __NV_PRIME_RENDER_OFFLOAD) is kept and the page is not asked.
 set -u
 if [ "$#" -eq 0 ]; then
 	echo "Usage: sparky-stereo-gpu-run [--category CATEGORY | --app ID.desktop] [--3d] COMMAND [ARGUMENT...]" >&2
@@ -34,7 +36,12 @@ while [ "$#" -gt 0 ]; do
 	esac
 done
 [ "$#" -gt 0 ] || { echo "sparky-stereo-gpu-run: no command" >&2; exit 2; }
-if command -v sparky-stereo-gpu-env >/dev/null 2>&1; then
+# A GPU the caller already chose wins, as in Plasma's launcher and libmedia-gpu-route
+chosen=
+for v in DRI_PRIME MESA_VK_DEVICE_SELECT VK_LOADER_DRIVERS_SELECT __NV_PRIME_RENDER_OFFLOAD; do
+	eval "[ -z \"\${$v+set}\" ]" || chosen=$v
+done
+if [ -z "$chosen" ] && command -v sparky-stereo-gpu-env >/dev/null 2>&1; then
 	# shellcheck disable=SC2086
 	if gpu_env=$(sparky-stereo-gpu-env --shell $choice $stereo 2>/dev/null); then
 		eval "$gpu_env"

@@ -128,6 +128,11 @@ check "wrapper: a browser started in 3D on battery" "$(wrapped a10 power-saver -
 check "wrapper: --3d first" "$(wrapped a10 power-saver --3d --category browsers env | grep '^DRI_PRIME')" "DRI_PRIME=pci-0000_03_00_0"
 check "wrapper: the same browser in 2D" "$(wrapped a10 power-saver --category browsers env | grep -c '^DRI_PRIME')" 0
 check "wrapper: a game on battery on the R5 M430" "$(wrapped a10 power-saver --category games env | grep '^DRI_PRIME')" "DRI_PRIME=pci-0000_03_00_0"
+# a GPU the caller already chose wins, as in KIO and libmedia-gpu-route
+check "wrapper: the caller's DRI_PRIME stays" "$(DRI_PRIME=1 wrapped host performance --category games env | grep -E '^(DRI_PRIME|__NV_PRIME_RENDER_OFFLOAD)=' | tr '\n' ' ')" "DRI_PRIME=1 "
+check "wrapper: the caller's Vulkan selection stays" "$(VK_LOADER_DRIVERS_SELECT='*radeon*' wrapped host performance --category games env | grep -E '^(VK_LOADER_DRIVERS_SELECT|__NV_PRIME_RENDER_OFFLOAD)=' | tr '\n' ' ')" "VK_LOADER_DRIVERS_SELECT=*radeon* "
+check "wrapper: the caller's NVIDIA offload stays alone" "$(__NV_PRIME_RENDER_OFFLOAD=1 wrapped a10 performance --category games env | grep -c '^DRI_PRIME=')" 0
+check "wrapper: the caller's device selection stays" "$(MESA_VK_DEVICE_SELECT=1002:9874 wrapped a10 performance --category games env | grep -c '^DRI_PRIME=')" 0
 check "wrapper: arguments are passed on" "$(wrapped host balanced --category games printf '%s|' a 'b c')" "a|b c|"
 check "wrapper: no option, the command runs" "$(wrapped host balanced printf ok)" ok
 check "wrapper: -- ends the options" "$(wrapped host performance -- printf ok)" ok
