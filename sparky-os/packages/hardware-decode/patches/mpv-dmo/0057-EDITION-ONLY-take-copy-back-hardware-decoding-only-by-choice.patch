@@ -1,0 +1,135 @@
+Description: EDITION ONLY: take copy-back hardware decoding only by choice
+ .
+ The edition's automatic default (patch 0054) also took the copying
+ methods when the video output could not use the decoder's pictures
+ where they are. On an AMD A10-9600P (Carrizo, GFX8), RADV offers no
+ VK_EXT_image_drm_format_modifier, so libplacebo cannot import VA-API
+ surfaces, and every film went through vaapi-copy: a GPU blit to a
+ staging copy and a read back for each picture, on the GPU that also
+ composites the desktop. Frame drops of Life of Pi 3D on its 3D
+ television went from 13.7 a minute in software to 427.7.
+ .
+ The automatic modes now take only methods whose pictures the output
+ uses where they are, and decode in software otherwise. A copying method
+ is taken when the person chooses it (auto-copy, vaapi-copy and the
+ other -copy methods), or where libmedia-gpu-route allows copying back:
+ CopyBack=true in group [Decoding] of sparky-stereo-graphicsrc (the
+ person's own over the machine's measured record) or
+ MEDIA_GPU_ROUTE_COPY_BACK.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-10-23
+Assisted-by: Claude Opus 5.5
+---
+--- a/DOCS/man/options.rst
++++ b/DOCS/man/options.rst
+@@ -1345,8 +1345,9 @@ Video
+     This option accepts a comma delimited list of ``api`` types, along with certain
+     special values:
+ 
+-    :no:          always use software decoding (default)
+-    :auto:        enable any whitelisted hw decoder (see below)
++    :no:          always use software decoding
++    :auto:        enable any whitelisted hw decoder (see below; the default
++                  in Sparky Stereo)
+     :auto-unsafe: forcibly enable any hw decoder found (see below)
+     :yes:         exactly the same as ``auto``
+     :auto-safe:   exactly the same as ``auto``
+@@ -1404,6 +1405,16 @@ Video
+     combinations of HEVC and Intel chips on Windows tend to cause mpv to crash,
+     most likely due to driver bugs.)
+ 
++    In Sparky Stereo, ``auto``, ``auto-safe``, ``yes`` and ``auto-unsafe``
++    take only methods whose pictures the video output uses where they are, and
++    decode in software otherwise: copying every picture back to system memory
++    costs more than software decoding on some machines. A copying method is
++    taken when you choose it (``auto-copy``, ``vaapi-copy`` and the other
++    ``-copy`` methods), or when ``CopyBack=true`` in group ``[Decoding]`` of
++    ``sparky-stereo-graphicsrc`` (your own in ``~/.config``, over the
++    machine's in ``/etc/xdg``) or the environment variable
++    ``MEDIA_GPU_ROUTE_COPY_BACK`` allows it.
++
+     ``auto-unsafe`` is similar to ``auto``, but without the whitelist.
+     In general, you should never need to use this beyond debugging or
+     development use. Any known unsafe hwdec you want to test can simply be
+--- a/meson.build
++++ b/meson.build
+@@ -370,6 +370,13 @@ if features['stereo-policy']
+     dependencies += stereo_policy
+ endif
+ 
++# whether hardware decoding may copy its pictures back without the person choosing it; came with version 0.2
++media_gpu_route = dependency('media-gpu-route', version: '>= 0.2.0', required: get_option('media-gpu-route'))
++features += {'media-gpu-route': media_gpu_route.found()}
++if features['media-gpu-route']
++    dependencies += media_gpu_route
++endif
++
+ # depth-image-based rendering of a picture with its depth map (vf_dibr); stereo_dibr_unpack() came with version 1.9
+ stereo_dibr = dependency('stereo-dibr', required: get_option('stereo-dibr'))
+ features += {'stereo-dibr': stereo_dibr.found() and
+--- a/meson.options
++++ b/meson.options
+@@ -32,6 +32,7 @@ option('sdl2-gamepad', type: 'feature',
+ option('stereo-declare', type: 'feature', value: 'auto', description: 'KWin stereo declaration')
+ option('stereo-policy', type: 'feature', value: 'auto', description: 'the stereo policy of 3D video (libstereo-policy)')
+ option('stereo-dibr', type: 'feature', value: 'auto', description: 'views drawn from a picture with its depth map (libstereo-dibr)')
++option('media-gpu-route', type: 'feature', value: 'auto', description: 'the shared copy-back choice of hardware decoding (libmedia-gpu-route)')
+ option('uchardet', type: 'feature', value: 'auto', description: 'uchardet support')
+ option('uwp', type: 'feature', value: 'disabled', description: 'Universal Windows Platform')
+ option('vapoursynth', type: 'feature', value: 'auto', description: 'VapourSynth filter bridge')
+--- a/video/decode/vd_lavc.c
++++ b/video/decode/vd_lavc.c
+@@ -29,6 +29,10 @@
+ #include <libavutil/intreadwrite.h>
+ #include <libavutil/pixdesc.h>
+ 
++#if HAVE_MEDIA_GPU_ROUTE
++#include <media-gpu-route.h>
++#endif
++
+ #include "mpv_talloc.h"
+ #include "common/msg.h"
+ #include "options/m_config.h"
+@@ -500,6 +504,17 @@ static AVBufferRef *hwdec_create_dev(str
+ }
+ 
+ // Select if and which hwdec to use. Also makes sure to get the decode device.
++// Whether an automatic mode may copy pictures back from the GPU: the person's
++// choice or the machine's measured record, through libmedia-gpu-route.
++static bool copy_back_allowed(void)
++{
++#if HAVE_MEDIA_GPU_ROUTE
++    return media_gpu_route_copy_back();
++#else
++    return true;
++#endif
++}
++
+ static void select_and_set_hwdec(struct mp_filter *vd)
+ {
+     vd_ffmpeg_ctx *ctx = vd->priv;
+@@ -530,6 +545,10 @@ static void select_and_set_hwdec(struct
+                             bstr_equals0(opt, "auto-copy-safe") ||
+                             bstr_equals0(opt, "auto-copy-unsafe");
+         bool hwdec_auto = hwdec_auto_unsafe || hwdec_auto_copy || hwdec_auto_safe;
++        // Copying every picture back costs more than software decoding on
++        // some machines, so the automatic modes take a copying method only
++        // where the person or the machine's record allows it.
++        bool copy_allowed = !hwdec_auto || hwdec_auto_copy || copy_back_allowed();
+ 
+         if (!hwdec_requested) {
+             MP_VERBOSE(vd, "No hardware decoding requested.\n");
+@@ -584,6 +603,12 @@ static void select_and_set_hwdec(struct
+                     continue;
+                 }
+ 
++                if (hwdec->copying && !copy_allowed) {
++                    MP_VERBOSE(vd, "Not copying pictures back by default; choose "
++                               "auto-copy or %s for it.\n", hwdec->method_name);
++                    continue;
++                }
++
+                 if (hwdec->lavc_device) {
+                     ctx->hwdec_dev = hwdec_create_dev(vd, hwdec, hwdec_auto);
+                     if (!ctx->hwdec_dev) {

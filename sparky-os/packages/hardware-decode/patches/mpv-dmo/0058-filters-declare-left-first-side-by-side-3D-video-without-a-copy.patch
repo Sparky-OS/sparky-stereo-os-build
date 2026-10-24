@@ -1,0 +1,61 @@
+Description: filters: declare left-first side by side 3D video without a copy
+ .
+ The automatic stereo filter passed every 3D video through FFmpeg's
+ stereo3d filter, also when the views were already side by side with
+ the left eye first (sbsl, sbs2l). That conversion is a copy of the
+ whole frame into the same layout, and it takes pictures in system
+ memory only, so a hardware decoder's frames were copied back first,
+ and NV12 pictures were converted to yuv420p by swscale on the way.
+ .
+ Such views are full side by side already, at the resolution they
+ have: now only their marks change (stereo-in, and the display shape
+ the conversion gave them), and the frame goes on as it is, in GPU
+ memory too. Every other packing is still rearranged by the copy.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-10-23
+Assisted-by: Claude Opus 5.5
+---
+--- a/filters/f_auto_filters.c
++++ b/filters/f_auto_filters.c
+@@ -672,6 +672,40 @@ static void stereo_process(struct mp_fil
+         return;
+     }
+ 
++    // Views side by side with the left eye first are already full side by side, at the resolution they have: only
++    // the marks change, so the frame is not copied and stays where it is, in GPU memory too
++    if (!p->sub.filter && !depth && (packing == MP_STEREO3D_SBSL || packing == MP_STEREO3D_SBS2L)) {
++        struct mp_filter *subf = mp_bidir_dummy_filter_create(f);
++        char shape[3][32];
++        char *format_args[] = {"stereo-in", "sbsl", NULL, NULL, NULL, NULL, NULL};
++        double view_aspect = stereo_view_aspect(img, packing);
++        if (declared || stereo_has_plane(&img->params)) {
++            // the shape the conversion below gives the views
++            snprintf(shape[0], sizeof(shape[0]), "%.17g", declared ? view_aspect : 2 * view_aspect);
++            format_args[2] = "dar";
++            format_args[3] = shape[0];
++        } else if (packing == MP_STEREO3D_SBS2L) {
++            // half views: the stereo3d filter doubles the sample aspect ratio
++            int dw, dh;
++            mp_image_params_get_dsize(&img->params, &dw, &dh);
++            snprintf(shape[1], sizeof(shape[1]), "%d", 2 * dw);
++            snprintf(shape[2], sizeof(shape[2]), "%d", dh);
++            format_args[2] = "dw";
++            format_args[3] = shape[1];
++            format_args[4] = "dh";
++            format_args[5] = shape[2];
++        }
++        struct mp_filter *format = mp_create_user_filter(subf, MP_OUTPUT_CHAIN_VIDEO, "format", format_args);
++        if (format) {
++            mp_chain_filters(subf->ppins[0], subf->ppins[1], &format, 1);
++            p->sub.filter = subf;
++            MP_INFO(f, "Declaring the 3D video as it is: its views are side by side, left eye first.\n");
++        } else {
++            MP_ERR(f, "creating the stereo declaration failed\n");
++            talloc_free(subf);
++        }
++    }
++
+     if (!p->sub.filter) {
+         struct mp_filter *subf = mp_bidir_dummy_filter_create(f);
+         struct mp_filter *filters[3] = {0};
