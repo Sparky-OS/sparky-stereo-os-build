@@ -96,13 +96,14 @@ int main(int argc, char **argv)
             if (event.xconfigure.width == attributes.width && event.xconfigure.height == attributes.height) continue;
             attributes.width = event.xconfigure.width;
             attributes.height = event.xconfigure.height;
-            XFreePixmap(display, pixmap);
-            pixmap = XCompositeNameWindowPixmap(display, source);
             XResizeWindow(display, window, attributes.width / 2, attributes.height);
             stereo_declare_x11_one_view_size(display, window, attributes.width / 2, attributes.height);
         }
         if (event.type == Expose || event.type == damage_event + XDamageNotify || event.type == ConfigureNotify) {
             XDamageSubtract(display, damage, None, None);
+            // A graphics buffer can be replaced without changing the window size.
+            XFreePixmap(display, pixmap);
+            pixmap = XCompositeNameWindowPixmap(display, source);
             XCopyArea(display, pixmap, window, gc, 0, 0, attributes.width, attributes.height, 0, 0);
             XFlush(display);
         }

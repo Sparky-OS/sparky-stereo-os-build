@@ -20,3 +20,5 @@ Without the stereo declaration protocol, the helper exits and the original appli
 
 Build with `make` against libstereo-declare 1.4.0, Xlib, Composite and Damage.
 For the distribution package, copy this directory to a disposable source tree and use the edition's standard `lean.debian_prepare` adapter before creating the source package.
+
+The source backing pixmap is reacquired on repaint so graphics buffers replaced without a resize are followed.
