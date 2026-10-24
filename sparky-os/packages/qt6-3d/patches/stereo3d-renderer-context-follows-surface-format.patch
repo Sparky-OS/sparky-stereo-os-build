@@ -1,0 +1,119 @@
+--- a/src/render/backend/abstractrenderer_p.h
++++ b/src/render/backend/abstractrenderer_p.h
+@@ -153,6 +153,8 @@
+     virtual void setRHICommandBuffer(QRhiCommandBuffer *commandBuffer) = 0;
+     virtual void setScreen(QScreen *) {}
+     virtual QScreen *screen() const { return nullptr; }
++    // The format of the surface the renderer draws on, for the context it makes itself
++    virtual void setSurfaceFormat(const QSurfaceFormat &) {}
+     virtual bool accessOpenGLTexture(Qt3DCore::QNodeId nodeId, QOpenGLTexture **texture, QMutex **lock, bool readonly) = 0;
+     virtual QSharedPointer<RenderBackendResourceAccessor> resourceAccessor() const = 0;
+ 
+--- a/src/render/frontend/qrenderaspect_p.h
++++ b/src/render/frontend/qrenderaspect_p.h
+@@ -18,6 +18,7 @@
+ #include <Qt3DRender/qrenderaspect.h>
+ #include <Qt3DCore/private/qabstractaspect_p.h>
+ #include <Qt3DRender/private/qt3drender_global_p.h>
++#include <QtGui/qsurfaceformat.h>
+ #include <Qt3DRender/private/expandboundingvolumejob_p.h>
+ #include <Qt3DRender/private/updateworldtransformjob_p.h>
+ #include <Qt3DRender/private/updateworldboundingvolumejob_p.h>
+@@ -98,6 +99,8 @@
+     QList<Render::QRenderPlugin *> m_renderPlugins;
+     Render::OffscreenSurfaceHelper *m_offscreenHelper;
+     QScreen *m_screen = nullptr;
++    QSurfaceFormat m_surfaceFormat;
++    bool m_surfaceFormatSet = false;
+ 
+     Render::UpdateTreeEnabledJobPtr m_updateTreeEnabledJob;
+     Render::UpdateWorldTransformJobPtr m_worldTransformJob;
+--- a/src/render/frontend/qrenderaspect.cpp
++++ b/src/render/frontend/qrenderaspect.cpp
+@@ -760,6 +760,10 @@
+ void QRenderAspect::onEngineStartup()
+ {
+     Q_D(QRenderAspect);
++    // The render surface's format, when its window gave it (at its first show), before the renderer
++    // makes its context from it
++    if (d->m_surfaceFormatSet)
++        d->m_renderer->setSurfaceFormat(d->m_surfaceFormat);
+     if (d->m_renderAfterJobs)   // synchronous rendering but using QWindow
+         d->m_renderer->initialize();
+     d->onEngineStartup();
+--- a/src/plugins/renderers/opengl/renderer/renderer_p.h
++++ b/src/plugins/renderers/opengl/renderer/renderer_p.h
+@@ -17,6 +17,7 @@
+ //
+ 
+ #include <Qt3DRender/qrenderaspect.h>
++#include <QtGui/qsurfaceformat.h>
+ #include <Qt3DRender/qtechnique.h>
+ #include <Qt3DRender/private/handle_types_p.h>
+ #include <Qt3DRender/private/abstractrenderer_p.h>
+@@ -261,6 +262,7 @@
+     RendererCache<RenderCommand> *cache() { return &m_cache; }
+     void setScreen(QScreen *scr) override;
+     QScreen *screen() const override;
++    void setSurfaceFormat(const QSurfaceFormat &format) override;
+ 
+ #ifdef QT3D_RENDER_UNIT_TESTS
+ public:
+@@ -382,6 +384,8 @@
+ 
+     std::vector<FrameGraphNode *> m_frameGraphLeaves;
+     QScreen *m_screen = nullptr;
++    QSurfaceFormat m_surfaceFormat;
++    bool m_surfaceFormatSet = false;
+     QSharedPointer<ResourceAccessor> m_scene2DResourceAccessor;
+ 
+     Debug::ImGuiRenderer *m_imGuiRenderer;
+--- a/src/plugins/renderers/opengl/renderer/renderer.cpp
++++ b/src/plugins/renderers/opengl/renderer/renderer.cpp
+@@ -367,6 +367,12 @@
+     return m_screen;
+ }
+ 
++void Renderer::setSurfaceFormat(const QSurfaceFormat &format)
++{
++    m_surfaceFormat = format;
++    m_surfaceFormatSet = true;
++}
++
+ bool Renderer::accessOpenGLTexture(Qt3DCore::QNodeId nodeId,
+                                    QOpenGLTexture **texture,
+                                    QMutex **lock,
+@@ -417,6 +423,10 @@
+             m_glContext = new QOpenGLContext;
+             if (m_screen)
+                 m_glContext->setScreen(m_screen);
++            // The context follows the render surface's format when the window gave it (its stereo
++            // buffers, for one): the application default format need not match the window's
++            if (m_surfaceFormatSet)
++                m_glContext->setFormat(m_surfaceFormat);
+             m_glContext->setShareContext(qt_gl_global_share_context());
+ 
+             // TO DO: Shouldn't we use the highest context available and trust
+--- a/src/extras/defaults/qt3dwindow.cpp
++++ b/src/extras/defaults/qt3dwindow.cpp
+@@ -21,6 +21,7 @@
+ #include <Qt3DRender/qt3drender-config.h>
+ #include <qopenglcontext.h>
+ #include <private/qrendersettings_p.h>
++#include <Qt3DRender/private/qrenderaspect_p.h>
+ 
+ #include <QEvent>
+ 
+@@ -169,6 +170,12 @@
+ {
+     Q_D(Qt3DWindow);
+     if (!d->m_initialized) {
++        // The renderer's own context takes the format this window asks for (set before the first show), as
++        // the application default format may differ from it
++        auto *renderAspect = static_cast<Qt3DRender::QRenderAspectPrivate *>(Qt3DRender::QRenderAspectPrivate::get(d->m_renderAspect));
++        renderAspect->m_surfaceFormat = requestedFormat();
++        renderAspect->m_surfaceFormatSet = true;
++
+         d->m_root->addComponent(d->m_renderSettings);
+         d->m_root->addComponent(d->m_inputSettings);
+         d->m_aspectEngine->setRootEntity(Qt3DCore::QEntityPtr(d->m_root));

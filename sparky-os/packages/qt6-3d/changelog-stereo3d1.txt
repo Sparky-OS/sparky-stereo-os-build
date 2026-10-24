@@ -1,0 +1,9 @@
+qt6-3d (6.11.2+dfsg-2+stereo3d1) unstable; urgency=medium
+
+  * Sparky Stereo OS: the OpenGL renderer's context follows the format
+    its Qt3DWindow asks for, so a window given a stereo format after it
+    is made (the stereo fork of KDAB's Stereo Demonstrator, ORDER 241)
+    gets a stereo context on X11 too, where the drawable takes the
+    context's configuration (stereo3d-renderer-context-follows-surface-
+    format). The RHI renderer and windows without a format of their own
+    are unchanged.
