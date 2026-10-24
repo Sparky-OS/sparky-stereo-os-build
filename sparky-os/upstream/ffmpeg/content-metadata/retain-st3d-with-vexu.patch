@@ -1,3 +1,13 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Subject: [PATCH] avformat/mov: preserve complementary stereo declarations
+
+Read Spherical Video V2 st3d custom and right-first modes. Keep st3d
+packing when vexu supplies eye identities, including the reverse box
+order. Track st3d presence independently so duplicate boxes still fail.
+
+Specification: https://github.com/google/spatial-media/blob/master/docs/spherical-video-v2-rfc.md#stereoscopic-3d-video-box-st3d
+Assisted-by: gpt-6-astra (Codex)
+
 --- a/libavformat/isom.h
 +++ b/libavformat/isom.h
 @@ -266,6 +266,7 @@
