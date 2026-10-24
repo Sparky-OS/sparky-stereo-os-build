@@ -1,0 +1,68 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 24 Oct 2026 07:39:35 -0300
+Subject: [PATCH] x86/kaslr: Keep the kernel below 4 GiB for 32-bit EFI
+ firmware
+
+A 64-bit kernel started by 32-bit EFI firmware (EFI mixed mode) calls
+the runtime services through __efi64_thunk(), which gives the firmware
+the 1:1 address of __efi64_thunk_ret_tramp, in the kernel's .rodata, as
+a 32-bit return address. efi_setup_page_tables() depends on that:
+"everything needs to be 1:1 mapped and addressable with 32-bit
+pointers".
+
+The EFI stub keeps the kernel below 4 GiB in mixed mode (EFI_ALLOC_LIMIT
+is U32_MAX there), but a loader that enters through the boot protocol
+instead, such as GRUB's "linux" command on i386-efi, leaves the choice
+to the decompressor. Since commit ed9f007ee684 ("x86/KASLR: Extend
+kernel image physical address randomization to addresses larger than
+4G"), its physical randomization takes any EFI conventional memory.
+When it picks an address above 4 GiB, the return address is truncated
+and the first runtime call, SetVirtualAddressMap(), returns into RAM
+that the EFI page tables map non-executable:
+
+  kernel tried to execute NX-protected page - exploit attempt? (uid: 0)
+  BUG: unable to handle page fault for address: 000000002360fb09
+  #PF: supervisor instruction fetch in kernel mode
+  #PF: error_code(0x0011) - permissions violation
+  PGD 100171063 P4D 100171063 PUD 100172063 PMD 80000000236000a3
+  RIP: 0008:0x2360fb09
+  Kernel panic - not syncing: Attempted to kill the idle task!
+
+Here the trampoline was at 0x12360fb00. In QEMU with 32-bit OVMF
+(edk2-stable202502), 4 GiB of RAM and GRUB 2.14 for i386-efi, 33 of 50
+boots of an unpatched kernel ended this way, each with the trampoline
+above 4 GiB, and all 25 boots with "nokaslr" passed.
+
+Limit the physical randomization to the first 4 GiB when the EFI loader
+signature says that the firmware is 32-bit. With this change, 100 of 100
+boots in the same setup passed, at 95 different physical addresses.
+
+Fixes: ed9f007ee684 ("x86/KASLR: Extend kernel image physical address randomization to addresses larger than 4G")
+Cc: stable@vger.kernel.org
+Assisted-by: Claude Opus 5.5
+---
+ arch/x86/boot/compressed/kaslr.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/arch/x86/boot/compressed/kaslr.c b/arch/x86/boot/compressed/kaslr.c
+index 22267a83e..2bb488575 100644
+--- a/arch/x86/boot/compressed/kaslr.c
++++ b/arch/x86/boot/compressed/kaslr.c
+@@ -881,6 +881,16 @@ void choose_random_location(unsigned long input,
+ 	else
+ 		mem_limit = MAXMEM;
+ 
++	/*
++	 * 32-bit EFI firmware (EFI mixed mode) returns from runtime services
++	 * through a trampoline in the kernel image, using a 32-bit address:
++	 * keep the image below 4 GiB, as the EFI stub does (EFI_ALLOC_LIMIT).
++	 */
++	if (IS_ENABLED(CONFIG_EFI_MIXED) &&
++	    !strncmp((char *)&boot_params_ptr->efi_info.efi_loader_signature,
++		     EFI32_LOADER_SIGNATURE, 4))
++		mem_limit = SZ_4G;
++
+ 	/* Record the various known unsafe memory ranges. */
+ 	mem_avoid_init(input, input_size, *output);
+ 

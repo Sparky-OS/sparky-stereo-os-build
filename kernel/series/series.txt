@@ -318,3 +318,8 @@
 34-hdmi-3d-whole-spec/0014-media-vivid-capture-depth-like-a-RealSense-camera-Z1.patch
 34-hdmi-3d-whole-spec/0015-drm-display-hdmi-compute-the-TMDS-rate-of-a-stereo-m.patch
 34-hdmi-3d-whole-spec/0016-drm-vc4-time-HDMI-stereo-rasters-throughout-the-disp.patch
+
+# ==== 35-efi-mixed-kaslr-4g: EFI mixed mode with KASLR: the decompressor keeps the kernel below 4 GiB when the firmware is 32-bit (ORDER 246, queue item 171; 1 commit)
+#      status: this build (build 12, all three flavours: 7.3.0~rc6-12+lc1). Source: lane efi-mixed-kaslr-246, written on upstream master 5b0764a53235; kaslr.c is the same file in v7.3-rc6 + groups 01-34, so it applies unchanged. Upstream: drafted for the x86 and EFI maintainers, not sent.
+#      32-bit firmware returns from every runtime call through __efi64_thunk_ret_tramp at a 32-bit address. GRUB's i386-efi linux command enters through the boot protocol, so the decompressor's physical KASLR chose the address, anywhere in EFI conventional memory: above 4 GiB the address was truncated and SetVirtualAddressMap() returned into RAM mapped non-executable (24 of 50 boots of build 11 in the 32-bit OVMF rig, every one with the trampoline above 4 GiB). The EFI stub already limits itself to 4 GiB there (EFI_ALLOC_LIMIT). Independent of the other groups.
+35-efi-mixed-kaslr-4g/0001-x86-kaslr-Keep-the-kernel-below-4-GiB-for-32-bit-EFI.patch
