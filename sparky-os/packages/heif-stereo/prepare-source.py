@@ -9,13 +9,13 @@ import shutil
 import subprocess
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('project', choices=['libheif', 'kf6-kimageformats', 'kf6-kfilemetadata'])
+parser.add_argument('project', choices=['libheif', 'kf6-kimageformats', 'kf6-kfilemetadata', 'gwenview', 'kolourpaint'])
 parser.add_argument('source', type=Path)
 parser.add_argument('version')
 args = parser.parse_args()
 source = args.source.resolve()
 recipe = Path(__file__).resolve().parent
-patch = {'libheif': 'libheif-stem.patch', 'kf6-kimageformats': 'kimageformats-stem.patch', 'kf6-kfilemetadata': 'kfilemetadata-stem.patch'}[args.project]
+patch = {'libheif': 'libheif-stem.patch', 'kf6-kimageformats': 'kimageformats-stem.patch', 'kf6-kfilemetadata': 'kfilemetadata-stem.patch', 'gwenview': 'gwenview-reader.patch', 'kolourpaint': 'kolourpaint-reader.patch'}[args.project]
 env = os.environ | {'DEBFULLNAME': 'Daniel Ramos (Capitain Jack)', 'DEBEMAIL': 'Capitain_Jack@yahoo.com', 'QUILT_PATCHES': 'debian/patches'}
 if args.project == 'libheif':
     toolkit = recipe.parents[1]
@@ -42,7 +42,7 @@ if args.project != 'libheif':
         control = re.sub(r'libheif-dev \([^)]*\)', dependency, control)
         control = control.replace('Depends: libheif-plugin-j2kdec,', 'Depends: libheif1 (>= 1.23.6-2+stereo3d1+lc1),\n         libheif-plugin-j2kdec,')
         control = control.replace('Breaks: kf6-kimageformat-plugins,', 'Breaks: libstereo-layer1 (<< 1.11.0-1+lc1),\n        kf6-kimageformat-plugins,')
-    else:
+    elif args.project == 'kf6-kfilemetadata':
         control = control.replace('Build-Depends:', 'Build-Depends: ' + dependency + ',')
         control = control.replace('Package: libkf6filemetadata-bin\n', 'Package: libkf6filemetadata-bin\n')
         # The module containing the libheif calls is shipped by this binary package.
@@ -50,9 +50,11 @@ if args.project != 'libheif':
         head, tail = control[:package], control[package:]
         tail = tail.replace('Depends:', 'Depends: libheif1 (>= 1.23.6-2+stereo3d1+lc1),', 1)
         control = head + tail
+    else:
+        control = re.sub(r'libstereo-layer-dev(?: \([^)]*\))?', 'libstereo-layer-dev (>= 1.11.0-1+lc1)', control)
     path.write_text(control)
 
-if args.project != 'libheif':
+if args.project in ('kf6-kimageformats', 'kf6-kfilemetadata'):
     fixtures = source / ('autotests/depth/heif-stem' if args.project == 'kf6-kimageformats' else 'autotests/samplefiles/stereo/depth/heif-stem')
     fixtures.mkdir(parents=True, exist_ok=True)
     paths = []

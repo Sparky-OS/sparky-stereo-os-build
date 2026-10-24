@@ -125,8 +125,8 @@ Last-Update: 2026-10-24
 +        return int(MicroExif::orientationToTransformation(m_imageNumber == 2 ? m_second.thirdOrientation : (m_imageNumber == 1 ? m_second.orientation : m_orientation)));
      case Description:
 -        return DepthMark::description(m_second.layout, m_second.depthMark);
-+        return DepthMark::description(m_second.layout, m_second.depthMark)
-+            + (m_second.viewIndices.isEmpty() ? QString() : QStringLiteral("\n\nStereo3DViewIndices: ") + m_second.viewIndices);
++        return QString(DepthMark::description(m_second.layout, m_second.depthMark)
++            + (m_second.viewIndices.isEmpty() ? QString() : QStringLiteral("\n\nStereo3DViewIndices: ") + m_second.viewIndices));
      default:
          return QVariant();
      }

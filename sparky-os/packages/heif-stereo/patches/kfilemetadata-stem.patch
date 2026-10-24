@@ -102,7 +102,7 @@ Last-Update: 2026-10-24
  install(TARGETS kfilemetadata_stereojpegextractor DESTINATION ${KDE_INSTALL_PLUGINDIR}/kf6/kfilemetadata)
  
 +find_package(PkgConfig REQUIRED)
-+pkg_check_modules(HEIF REQUIRED IMPORTED_TARGET libheif>=1.23.6)
++pkg_check_modules(HEIF REQUIRED IMPORTED_TARGET GLOBAL libheif>=1.23.6)
  add_library(kfilemetadata_stereoheifextractor ${_lib_type} stereoheifextractor.cpp)
 -target_link_libraries(kfilemetadata_stereoheifextractor KF6::FileMetaData)
 +target_link_libraries(kfilemetadata_stereoheifextractor KF6::FileMetaData PkgConfig::HEIF)
