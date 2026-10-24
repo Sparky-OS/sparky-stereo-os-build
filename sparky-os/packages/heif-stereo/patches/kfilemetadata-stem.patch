@@ -1,0 +1,143 @@
+Description: Read HEIF stereo pairs with monoscopic fallback without replacing the primary image
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-10-24
+
+--- a/src/extractors/stereoheifextractor.cpp
++++ b/src/extractors/stereoheifextractor.cpp
+@@ -9,6 +9,7 @@
+ #include <QtEndian>
+ 
+ #include <optional>
++#include <libheif/heif.h>
+ 
+ using namespace KFileMetaData;
+ 
+@@ -106,22 +107,6 @@
+         return {};
+     }
+     const quint32 primary = quint8(data.at(pitm->payload)) == 0 ? be16(data, pitm->payload + 4) : be32(data, pitm->payload + 4);
+-
+-    if (const auto grpl = child(data, meta, "grpl", 4)) {
+-        for (const Box &group : boxes(data, grpl->payload, grpl->end)) {
+-            if (group.type != "ster" || be32(data, group.payload + 8) != 2) {
+-                continue;
+-            }
+-            const quint32 left = be32(data, group.payload + 12);
+-            const quint32 right = be32(data, group.payload + 16);
+-            if (left == primary) {
+-                return QStringLiteral("multiViewLeftFirst");
+-            }
+-            if (right == primary) {
+-                return QStringLiteral("multiViewRightFirst");
+-            }
+-        }
+-    }
+ 
+     // the items whose auxiliary image reference ('auxl') points at the primary image
+     QList<quint32> auxiliary;
+@@ -178,6 +163,46 @@
+ }
+ }
+ 
++namespace
++{
++QString entityLayout(const QString &path)
++{
++    heif_context *ctx = heif_context_alloc();
++    heif_item_id primary = 0;
++    QString layout;
++    if (heif_context_read_from_file(ctx, QFile::encodeName(path).constData(), nullptr).code == heif_error_Ok
++        && heif_context_get_primary_image_ID(ctx, &primary).code == heif_error_Ok) {
++        for (const uint32_t type : {heif_entity_group_ster, heif_entity_group_stem}) {
++            int count = 0;
++            auto *groups = heif_context_get_entity_groups(ctx, type, primary, &count);
++            for (int i = 0; i < count && layout.isEmpty(); ++i) {
++                const auto &group = groups[i];
++                if (group.num_entities != (type == heif_entity_group_stem ? 3u : 2u) || group.entities[0] == group.entities[1]) {
++                    continue;
++                }
++                bool valid = true;
++                for (uint32_t n = 0; n < group.num_entities; ++n) {
++                    heif_image_handle *handle = nullptr;
++                    valid &= heif_context_get_image_handle(ctx, group.entities[n], &handle).code == heif_error_Ok;
++                    if (handle) {
++                        heif_image_handle_release(handle);
++                    }
++                }
++                if (valid) {
++                    layout = primary == group.entities[1] ? QStringLiteral("multiViewRightFirst") : QStringLiteral("multiViewLeftFirst");
++                }
++            }
++            heif_entity_groups_release(groups, count);
++            if (!layout.isEmpty()) {
++                break;
++            }
++        }
++    }
++    heif_context_free(ctx);
++    return layout;
++}
++}
++
+ StereoHeifExtractor::StereoHeifExtractor(QObject *parent)
+     : ExtractorPlugin(parent)
+ {
+@@ -197,7 +222,10 @@
+     if (!file.open(QIODevice::ReadOnly)) {
+         return;
+     }
+-    const QString layout = stereoLayout(metaBox(file));
++    QString layout = entityLayout(result->inputUrl());
++    if (layout.isEmpty()) {
++        layout = stereoLayout(metaBox(file));
++    }
+     if (!layout.isEmpty()) {
+         result->add(Property::Stereo3dLayout, layout);
+     }
+--- a/src/extractors/CMakeLists.txt
++++ b/src/extractors/CMakeLists.txt
+@@ -327,7 +327,9 @@
+ set_target_properties(kfilemetadata_stereojpegextractor PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/kf6/kfilemetadata")
+ install(TARGETS kfilemetadata_stereojpegextractor DESTINATION ${KDE_INSTALL_PLUGINDIR}/kf6/kfilemetadata)
+ 
++find_package(PkgConfig REQUIRED)
++pkg_check_modules(HEIF REQUIRED IMPORTED_TARGET libheif>=1.23.6)
+ add_library(kfilemetadata_stereoheifextractor ${_lib_type} stereoheifextractor.cpp)
+-target_link_libraries(kfilemetadata_stereoheifextractor KF6::FileMetaData)
++target_link_libraries(kfilemetadata_stereoheifextractor KF6::FileMetaData PkgConfig::HEIF)
+ set_target_properties(kfilemetadata_stereoheifextractor PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/kf6/kfilemetadata")
+ install(TARGETS kfilemetadata_stereoheifextractor DESTINATION ${KDE_INSTALL_PLUGINDIR}/kf6/kfilemetadata)
+--- a/autotests/stereoheifextractortest.cpp
++++ b/autotests/stereoheifextractortest.cpp
+@@ -36,6 +36,19 @@
+         }
+         QTest::addRow("stereo pair, left primary") << QStringLiteral("heif_stereo_left_primary.heic") << QStringLiteral("multiViewLeftFirst");
+         QTest::addRow("stereo pair, right primary") << QStringLiteral("heif_stereo_right_primary.heic") << QStringLiteral("multiViewRightFirst");
++        QTest::addRow("ster-primary-0.heic") << QStringLiteral("heif-stem/ster-primary-0.heic") << QStringLiteral("multiViewLeftFirst");
++        QTest::addRow("ster-primary-1.heic") << QStringLiteral("heif-stem/ster-primary-1.heic") << QStringLiteral("multiViewRightFirst");
++        QTest::addRow("stem-primary-0.heic") << QStringLiteral("heif-stem/stem-primary-0.heic") << QStringLiteral("multiViewLeftFirst");
++        QTest::addRow("stem-primary-1.heic") << QStringLiteral("heif-stem/stem-primary-1.heic") << QStringLiteral("multiViewRightFirst");
++        QTest::addRow("stem-primary-2.heic") << QStringLiteral("heif-stem/stem-primary-2.heic") << QStringLiteral("multiViewLeftFirst");
++        QTest::addRow("stem-fallback-alias-0.heic") << QStringLiteral("heif-stem/stem-fallback-alias-0.heic") << QStringLiteral("multiViewLeftFirst");
++        QTest::addRow("stem-fallback-alias-1.heic") << QStringLiteral("heif-stem/stem-fallback-alias-1.heic") << QStringLiteral("multiViewRightFirst");
++        QTest::addRow("unmarked.heic") << QStringLiteral("heif-stem/unmarked.heic") << QStringLiteral("");
++        QTest::addRow("unrelated-group.heic") << QStringLiteral("heif-stem/unrelated-group.heic") << QStringLiteral("");
++        QTest::addRow("duplicate-eyes.heic") << QStringLiteral("heif-stem/duplicate-eyes.heic") << QStringLiteral("");
++        QTest::addRow("missing-eye.heic") << QStringLiteral("heif-stem/missing-eye.heic") << QStringLiteral("");
++        QTest::addRow("short-stem.heic") << QStringLiteral("heif-stem/short-stem.heic") << QStringLiteral("");
++        QTest::addRow("reserved-version.heic") << QStringLiteral("heif-stem/reserved-version.heic") << QStringLiteral("");
+         // auxiliary images that are no depth map, and plain pictures
+         for (const char *name : {"heif_matte_apple.heic", "heif_gainmap_apple.heic", "heif_mono.heic", "avif_mono.avif"}) {
+             QTest::addRow("%s", name) << QString::fromLatin1(name) << QString();
+--- a/autotests/CMakeLists.txt
++++ b/autotests/CMakeLists.txt
+@@ -298,7 +298,7 @@
+ #
+ ecm_add_test(stereoheifextractortest.cpp ../src/extractors/stereoheifextractor.cpp
+     TEST_NAME "stereoheifextractortest"
+-    LINK_LIBRARIES Qt6::Test KF6::FileMetaData
++    LINK_LIBRARIES Qt6::Test KF6::FileMetaData PkgConfig::HEIF
+ )
+ 
+ ################

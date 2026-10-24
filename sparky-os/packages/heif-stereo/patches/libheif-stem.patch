@@ -1,0 +1,101 @@
+Description: Expose stereo pairs with monoscopic fallback through the entity group API
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-10-24
+
+--- a/libheif/box.h
++++ b/libheif/box.h
+@@ -1256,6 +1256,18 @@
+ 
+ protected:
+ 
++  Error parse(BitstreamRange& range, const heif_security_limits*) override;
++};
++
++
++// ISO/IEC 23008-12:2025/Amd.1, 6.8.11: left, right, monoscopic fallback.
++class Box_stem : public Box_EntityToGroup
++{
++public:
++  Box_stem() { set_short_type(fourcc("stem")); }
++  const char* debug_box_name() const override { return "Stereo pair with monoscopic fallback"; }
++
++protected:
+   Error parse(BitstreamRange& range, const heif_security_limits*) override;
+ };
+ 
+--- a/libheif/box.cc
++++ b/libheif/box.cc
+@@ -597,6 +597,10 @@
+       box = std::make_shared<Box_EntityToGroup>();
+       break;
+ 
++    case fourcc("stem"):
++      box = std::make_shared<Box_stem>();
++      break;
++
+     case fourcc("ster"):
+       box = std::make_shared<Box_ster>();
+       break;
+@@ -4635,6 +4639,21 @@
+ 
+ 
+ 
++Error Box_stem::parse(BitstreamRange& range, const heif_security_limits* limits)
++{
++  Error err = Box_EntityToGroup::parse(range, limits);
++  if (err) {
++    return err;
++  }
++  if (get_version() != 0 || entity_ids.size() != 3) {
++    return {heif_error_Invalid_input,
++            heif_suberror_Invalid_box_size,
++            "'stem' entity group requires version zero and exactly three image IDs"};
++  }
++  return Error::Ok;
++}
++
++
+ Error Box_pymd::parse(BitstreamRange& range, const heif_security_limits* limits)
+ {
+   Error err = Box_EntityToGroup::parse(range, limits);
+--- a/tests/entity_groups.cc
++++ b/tests/entity_groups.cc
+@@ -115,3 +115,37 @@
+   heif_entity_groups_release(groups, num_groups);
+   heif_context_free(ctx);
+ }
++
++// A stem group must be visible through the public API, including repeated fallback IDs.
++TEST_CASE("entity_groups: stereo pair with monoscopic fallback") {
++  for (const uint32_t fallback : {11u, 22u, 33u}) {
++    auto data = build_minimal_heif_with_bogus_grpl_child();
++    std::vector<uint8_t> payload;
++    put_u32_be(payload, 7); // group ID
++    put_u32_be(payload, 3);
++    for (uint32_t id : {11u, 22u, fallback}) put_u32_be(payload, id);
++    auto group = make_box("stem", payload, true);
++    auto grpl = make_box("grpl", group);
++    // Replace the last grpl child and adjust meta size, retaining the minimal no-image file.
++    const size_t oldSize = 16;
++    data.resize(data.size() - oldSize);
++    data.insert(data.end(), grpl.begin(), grpl.end());
++    const size_t meta = 24; // ftyp has 16 payload bytes and an eight-byte header
++    const uint32_t metaSize = static_cast<uint32_t>(data.size() - meta);
++    for (int i = 0; i < 4; ++i) data[meta + i] = uint8_t(metaSize >> (24 - 8 * i));
++    heif_context* ctx = heif_context_alloc();
++    REQUIRE(heif_context_read_from_memory_without_copy(ctx, data.data(), data.size(), nullptr).code == heif_error_Ok);
++    int count = 0;
++    auto groups = heif_context_get_entity_groups(ctx, heif_entity_group_stem, 0, &count);
++    REQUIRE(count == 1);
++    REQUIRE(groups[0].num_entities == 3);
++    REQUIRE(groups[0].entities[0] == 11);
++    REQUIRE(groups[0].entities[1] == 22);
++    REQUIRE(groups[0].entities[2] == fallback);
++    heif_entity_groups_release(groups, count);
++    groups = heif_context_get_entity_groups(ctx, heif_entity_group_stem, fallback, &count);
++    REQUIRE(count == 1);
++    heif_entity_groups_release(groups, count);
++    heif_context_free(ctx);
++  }
++}
