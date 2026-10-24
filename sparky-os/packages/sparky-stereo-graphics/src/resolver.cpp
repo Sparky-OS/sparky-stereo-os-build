@@ -163,6 +163,16 @@ Resolution Resolver::make(int index, const QString &reason) const
     resolution.isMain = index == mainIndex();
     if (index >= 0 && !resolution.isMain) {
         resolution.environment = environmentFor(m_gpus.at(index));
+        // glvnd tries NVIDIA's EGL and GLX first, and they draw on the GPU the desktop uses; a program sent from an
+        // NVIDIA desktop to a Mesa GPU names Mesa's (libglvnd: __EGL_VENDOR_LIBRARY_FILENAMES loads only the vendor files
+        // it lists, __GLX_VENDOR_LIBRARY_NAME picks the GLX vendor)
+        const auto nvidiaDriver = [](const Gpu &gpu) {
+            return gpu.vendorId == 0x10de && gpu.driver != u"nouveau"_s;
+        };
+        const int main = mainIndex();
+        if (main >= 0 && nvidiaDriver(m_gpus.at(main)) && !nvidiaDriver(m_gpus.at(index))) {
+            resolution.environment << u"__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json"_s << u"__GLX_VENDOR_LIBRARY_NAME=mesa"_s;
+        }
     }
     return resolution;
 }

@@ -53,6 +53,7 @@ check "empty machine exits 1" "$(mkdir -p $T/empty; SPARKY_STEREO_GRAPHICS_ROOT=
 printf '[General]\nMainGpu=pci-0000:01:00.0\n\n[Render]\nPlayers=integrated\nGames=discrete\n' >"$XDG_CONFIG_HOME/sparky-stereo-graphicsrc"
 check "saved: session line" "$(env_for host --session)" "export KWIN_DRM_DEVICES='/dev/dri/card1:/dev/dri/card0'"
 check "saved: players integrated while NVIDIA draws the desktop" "$(env_for host --category players --profile balanced | head -1)" "DRI_PRIME=pci-0000_0b_00_0"
+check "saved: NVIDIA draws the desktop, so Mesa's EGL and GLX are named" "$(env_for host --category players --profile balanced | grep -E '^__(EGL|GLX)_VENDOR' | tr '\n' ' ')" "__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json __GLX_VENDOR_LIBRARY_NAME=mesa "
 check "saved: games discrete is the main GPU, no variables" "$(env_for host --category games --profile balanced | wc -l)" 0
 rm "$XDG_CONFIG_HOME/sparky-stereo-graphicsrc"
 check "automatic: no session line" "$(env_for host --session | wc -l)" 0

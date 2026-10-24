@@ -362,6 +362,16 @@ void ResolverTest::environments()
     QCOMPARE(Resolver::environmentFor(host[0]), (QStringList{u"DRI_PRIME=pci-0000_0b_00_0"_s, u"VK_LOADER_DRIVERS_SELECT=*radeon*"_s}));
     const QList<Gpu> intel = read({SysfsFixture::intel()});
     QCOMPARE(Resolver::environmentFor(intel[0]), (QStringList{u"DRI_PRIME=pci-0000_00_02_0"_s, u"VK_LOADER_DRIVERS_SELECT=*intel*"_s}));
+
+    // NVIDIA draws the desktop: glvnd would give a program its EGL and GLX first, so a program sent to the APU names Mesa's
+    Resolver nvidiaMain(host, u"pci-0000:01:00.0"_s, PowerProfile::Balanced);
+    QCOMPARE(nvidiaMain.resolveChoice(u"integrated"_s).environment,
+             (QStringList{u"DRI_PRIME=pci-0000_0b_00_0"_s, u"VK_LOADER_DRIVERS_SELECT=*radeon*"_s,
+                          u"__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json"_s, u"__GLX_VENDOR_LIBRARY_NAME=mesa"_s}));
+    // the APU draws the desktop: Mesa is already first, nothing more to name
+    Resolver apuMain(host, QString(), PowerProfile::Balanced);
+    QCOMPARE(apuMain.resolveChoice(u"discrete"_s).environment, Resolver::environmentFor(host[1]));
+    QCOMPARE(apuMain.resolveChoice(host[0].id).environment, QStringList());
 }
 
 void ResolverTest::appPreferences()
