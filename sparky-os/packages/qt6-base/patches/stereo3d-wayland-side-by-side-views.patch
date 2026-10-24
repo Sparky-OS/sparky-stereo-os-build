@@ -1,0 +1,41 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 24 Oct 2026 05:10:00 -0300
+Subject: Wayland: a window that holds its views side by side is shown at one view's width
+
+A program that draws both eyes of a stereo surface itself puts them side
+by side into one window twice as wide and declares the surface as full
+side by side. The compositor (Stereo KWin, kde_stereo_content_v1 from
+version 2) takes a declared surface's wp_viewport destination, when one
+is set, as the size of one view, and Qt gives every window a viewport
+the size of the window; the pair was therefore shown twice as wide,
+each eye stretched over the whole window.
+
+A window may now say how many views it holds side by side, with the
+dynamic property _q_stereo_side_by_side_views (an int, the count); its
+viewport destination is then its width divided by that count. Windows
+without the property are unchanged. The property is read when the
+viewport is updated, so a program sets it before it shows the window,
+or resizes the window after setting it.
+
+Assisted-by: Claude Fable 5.1
+---
+--- a/src/plugins/platforms/wayland/qwaylandwindow.cpp
++++ b/src/plugins/platforms/wayland/qwaylandwindow.cpp
+@@ -565,8 +565,15 @@
+ 
+ void QWaylandWindow::updateViewport()
+ {
+-    if (!surfaceSize().isEmpty())
+-        mViewport->setDestination(surfaceSize());
++    QSize destination = surfaceSize();
++    // A window that holds its views side by side (_q_stereo_side_by_side_views, their count), as a program
++    // that draws both eyes of a declared stereo surface into one window twice as wide, is shown at one
++    // view's width: the compositor takes a declared surface's viewport as the size of one view.
++    const int views = window()->property("_q_stereo_side_by_side_views").toInt();
++    if (views > 1)
++        destination.setWidth(destination.width() / views);
++    if (!destination.isEmpty())
++        mViewport->setDestination(destination);
+ }
+ 
+ void QWaylandWindow::setGeometryFromApplyConfigure(const QPoint &globalPosition, const QSize &sizeWithMargins)

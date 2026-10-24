@@ -1,0 +1,10 @@
+qt6-base (6.11.2+dfsg-5+stereo3d9) unstable; urgency=medium
+
+  * Sparky Stereo OS: a Wayland window that holds its views side by side
+    (the dynamic property _q_stereo_side_by_side_views, their count) is
+    shown at one view's width: its wp_viewport destination is its width
+    divided by the count, so Stereo KWin, which takes a declared surface's
+    viewport as the size of one view, shows a program-drawn full side by
+    side pair at one view's size (stereo3d-wayland-side-by-side-views).
+    Found with the stereo fork of KDAB's Stereo Demonstrator (ORDER 241),
+    whose pair came out twice as wide with each eye stretched.

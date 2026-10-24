@@ -1,8 +1,8 @@
 #!/bin/bash
-# Sparky Stereo OS: builds qt6-base 6.11.2+dfsg-5+stereo3d8+lc1 from the +stereo3d7 source package.
+# Sparky Stereo OS: builds qt6-base 6.11.2+dfsg-5+stereo3d9+lc1 from the +stereo3d7 source package.
 # Created by Daniel Ramos (Capitain Jack) 2026/10/23
 # Copyright 2026 under the GNU GPL3 License
-# Source package once (the s8 patches after the series, changelog entry), then the Lean Code source, then the
+# Source package once (the s8 and side-by-side patches after the series, changelog entry), then the Lean Code source, then the
 # build with the link and start gate against the earlier +lc1 builds. Candidates stay in WORK.
 # Usage: build.sh WORK PREVIOUS_DIR [SOURCE_DIR]   (PREVIOUS_DIR: a folder holding the +stereo3d7+lc1 .deb files;
 #   SOURCE_DIR: the folder holding qt6-base_6.11.2+dfsg-5+stereo3d7.dsc, its debian.tar.xz and the orig tarball,
