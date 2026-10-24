@@ -29,7 +29,8 @@ override_dh_gencontrol:
 
 ''')
 p=Path('debian/control');s=p.read_text().replace(' libstereo-layer-dev (>= 1.5.0),', ''' libstereo-layer-dev (>= 1.5.0),
- libstereo-declare-dev (>= 1.6.0),
+ libstereo-declare-dev (>= 1.7.0),
+ libstereo-av-dev (>= 1.12.0-2+lc1),
  libwayland-dev,
  wayland-protocols,
  libegl-dev,
@@ -37,20 +38,20 @@ p=Path('debian/control');s=p.read_text().replace(' libstereo-layer-dev (>= 1.5.0
  libxext-dev,
  qt6-base-private-dev,
  qt6-multimedia-private-dev (>= 6.11.2-3+stereo3d9+lc1),''')
-s=s.replace(' libxcb-cursor0,',' libxcb-cursor0,\n libqt6multimedia6 (>= 6.11.2-3+stereo3d9+lc1),\n qt6-multimedia-private-abi (= ${qt6:MultimediaVersion}),\n qt6-svg-plugins,')
+s=s.replace(' libxcb-cursor0,',' libxcb-cursor0,\n libstereo-av1 (>= 1.12.0-2+lc1),\n libqt6multimedia6 (>= 6.11.2-3+stereo3d9+lc1),\n qt6-multimedia-private-abi (= ${qt6:MultimediaVersion}),\n qt6-svg-plugins,')
 s=s.replace('3D video player (Sparky Stereo OS build: always OpenGL stereo output)','3D video player (Sparky Stereo OS native eye-pair build)')
 s=s.replace(' It can output these videos for several types\n of anaglyph glasses or 3D displays.',' The stereo desktop receives each eye at its source resolution and\n handles the display format. Ordinary 2D playback remains available.')
 p.write_text(s)
 PY
 rm -rf debian/sparky-lean-toolkit
-dch --newversion 2.8-1+stereo3d3 --distribution unstable \
- 'Deliver native eye pairs with separate ordinary overlays on the published Wayland stack; detect the newer X11 child API at configure time.' \
- 'Import hardware video textures when supported, retain mapping fallback, and repaint on frame/state changes with timed overlay animation only.' \
+dch --newversion 2.8-1+stereo3d4 --distribution unstable \
+ 'Read source packing in process through libstereo-av; preserve source samples and pixel aspect in the native declared strip and fitted viewport.' \
+ 'Keep source corrections per file and use round normal and hover backings for video controls; retain import, fallback and demand-driven repainting.' \
  'Keep upstream output modes behind BINO_STEREO_DESKTOP=OFF; the edition builds with ON.'
-PYTHONPATH="$toolkit" python3 -m lean.debian_prepare . 2.8-1+stereo3d3+lc1 --toolkit "$toolkit" \
+PYTHONPATH="$toolkit" python3 -m lean.debian_prepare . 2.8-1+stereo3d4+lc1 --toolkit "$toolkit" \
  --preserve-source 'src/*.hpp' 'Qt moc consumes these authored declarations; preserve this additional consumer input.'
 dpkg-buildpackage -S -us -uc -d
 cd "$work"
-dpkg-source -x bino_2.8-1+stereo3d3+lc1.dsc binary-source
+dpkg-source -x bino_2.8-1+stereo3d4+lc1.dsc binary-source
 cd binary-source
 dpkg-buildpackage -B -us -uc

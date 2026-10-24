@@ -1,6 +1,6 @@
 Description: Native per-eye delivery, hardware texture import and demand-driven repainting
 Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
-Origin: Bino ORDER 242 reviewed source 2b4f2624f56241f02605a673d6277b2c4b067171
+Origin: Bino ORDER 242 reviewed source 7e9ac077b6e4e71af2edce216f08c85c49e860fa
 Forwarded: not-needed
 
 --- a/CMakeLists.txt
@@ -61,11 +61,12 @@ Forwarded: not-needed
      install(FILES "${CMAKE_BINARY_DIR}/bino.1" DESTINATION share/man/man1)
 --- /dev/null
 +++ b/cmake/NativeVideo.cmake
-@@ -0,0 +1,28 @@
+@@ -0,0 +1,29 @@
 +find_package(Qt6 REQUIRED COMPONENTS GuiPrivate MultimediaPrivate)
 +find_package(PkgConfig REQUIRED)
 +pkg_check_modules(NativeVideo REQUIRED IMPORTED_TARGET wayland-client wayland-egl egl gl xext)
 +pkg_check_modules(NativeDeclaration REQUIRED IMPORTED_TARGET stereo-declare>=1.6)
++pkg_check_modules(NativeContent REQUIRED IMPORTED_TARGET stereo-av>=1.12)
 +include(CheckCXXSourceCompiles)
 +include(CMakePushCheckState)
 +cmake_push_check_state(RESET)
@@ -88,7 +89,7 @@ Forwarded: not-needed
 +    target_sources(${target} PRIVATE ${source_root}/src/videotextureimporter.cpp ${source_root}/src/nativevideolayer.cpp ${source_root}/src/nativex11layer.cpp
 +        ${CMAKE_CURRENT_BINARY_DIR}/wayland-viewporter-protocol.c)
 +    target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-+    target_link_libraries(${target} PRIVATE PkgConfig::NativeVideo PkgConfig::NativeDeclaration Qt6::GuiPrivate Qt6::MultimediaPrivate)
++    target_link_libraries(${target} PRIVATE PkgConfig::NativeVideo PkgConfig::NativeDeclaration PkgConfig::NativeContent Qt6::GuiPrivate Qt6::MultimediaPrivate)
 +endfunction()
 --- /dev/null
 +++ b/cmake/StereoDesktop.cmake
@@ -105,7 +106,7 @@ Forwarded: not-needed
 +endif()
 --- /dev/null
 +++ b/doc/bino-manual-stereo-desktop.md
-@@ -0,0 +1,428 @@
+@@ -0,0 +1,441 @@
 +---
 +title: Bino
 +header: Version 2.8
@@ -123,6 +124,19 @@ Forwarded: not-needed
 +
 +- Support for Virtual Reality environments, including SteamVR,
 +  CAVEs, powerwalls, and other multi-display / multi-GPU / multi-host systems
++
++# Source layout and display
++
++The stereo desktop receives one declared side-by-side strip, left view first, with each view at its stored resolution.
++Bino reads file declarations in process through libstereo-av and uses the decoder's frame metadata.
++The source pixel aspect determines the display shape.
++The compositor resizes each view once into the fitted rectangle in the window or fullscreen area.
++Subtitles and controls use separate ordinary two-dimensional layers.
++
++For a source that declares its packing, the input packing menus are hidden.
++For an unmarked source, choose its packing in the input menu.
++Eye swap and unmarked-source packing corrections are saved per file in Bino's settings, without modifying the media.
++Bino has no display-format selector in this build; the desktop's output settings choose the screen format.
 +
 +# Invocation
 +
@@ -547,12 +561,14 @@ Forwarded: not-needed
  MimeType=video/mp4;video/mpeg;video/ogg;video/quicktime;video/webm;video/x-matroska;video/x-mng;video/x-ms-wmv;video/x-msvideo;
 --- a/src/bino.cpp
 +++ b/src/bino.cpp
-@@ -21,7 +21,12 @@
+@@ -21,7 +21,14 @@
  #include <QDateTime>
  
  #include "bino.hpp"
 +#if BINO_STEREO_DESKTOP
 +#include "videotextureimporter.hpp"
++#include <QSettings>
++#include <QCryptographicHash>
 +#endif
  #include "log.hpp"
 +#include "frametrace.hpp"
@@ -560,7 +576,32 @@ Forwarded: not-needed
  #include "tools.hpp"
  #include "digestiblemedia.hpp"
  #include "metadata.hpp"
-@@ -132,6 +137,11 @@
+@@ -29,6 +36,14 @@
+ 
+ 
+ static Bino* binoSingleton = nullptr;
++
++#if BINO_STEREO_DESKTOP
++static QString correctionKey(const QUrl& url)
++{
++    return QStringLiteral("Files/") + QString::fromLatin1(QCryptographicHash::hash(
++        url.toEncoded(QUrl::FullyEncoded), QCryptographicHash::Sha256).toHex()) + '/';
++}
++#endif
+ 
+ Bino::Bino(ScreenType screenType, const Screen& screen, bool swapEyes) :
+     _wantExit(false),
+@@ -50,6 +65,9 @@
+     _frameIsNew(true),
+     _frameWasSerialized(true),
+     _swapEyes(swapEyes),
++#if BINO_STEREO_DESKTOP
++    _defaultSwapEyes(swapEyes),
++#endif
+     _overlayUIShow(false)
+ {
+     Q_ASSERT(!binoSingleton);
+@@ -132,6 +150,11 @@
                  }
              }
              });
@@ -572,7 +613,67 @@ Forwarded: not-needed
      if (Playlist::instance()->length() > 0) {
          Playlist::instance()->start();
      } else {
-@@ -456,6 +466,7 @@
+@@ -262,6 +285,13 @@
+         QGuiApplication::processEvents();
+     }
+     _playerIgnoreNextStop = false;
++#if BINO_STEREO_DESKTOP
++    _sourceUrl = entry.url;
++    QSettings corrections;
++    _swapEyes = corrections.value(correctionKey(_sourceUrl) + "swapEyes", _defaultSwapEyes).toBool();
++    if (entry.inputMode == Input_Unknown)
++        entry.inputMode = inputModeFromString(corrections.value(correctionKey(_sourceUrl) + "inputMode").toString());
++#endif
+     if (!entry.noMedia()) {
+         // Get meta data
+         MetaData metaData;
+@@ -412,14 +442,17 @@
+ {
+     if (_swapEyes != s) {
+         _swapEyes = s;
++#if BINO_STEREO_DESKTOP
++        if (!_sourceUrl.isEmpty())
++            QSettings().setValue(correctionKey(_sourceUrl) + "swapEyes", s);
++#endif
+         emit stateChanged();
+     }
+ }
+ 
+ void Bino::toggleSwapEyes()
+ {
+-    _swapEyes = !_swapEyes;
+-    emit stateChanged();
++    setSwapEyes(!_swapEyes);
+ }
+ 
+ void Bino::setVideoTrack(int i)
+@@ -427,6 +460,14 @@
+     LOG_DEBUG("changing video track to %d", i);
+     if (playlistMode()) {
+         _player->setActiveVideoTrack(i);
++#if BINO_STEREO_DESKTOP
++        MetaData metaData;
++        metaData.detectCached(_sourceUrl);
++        PlaylistEntry entry(_sourceUrl);
++        entry.videoTrack = i;
++        entry.inputMode = inputModeFromString(QSettings().value(correctionKey(_sourceUrl) + "inputMode").toString());
++        _videoSink->newPlaylistEntry(entry, metaData);
++#endif
+         emit stateChanged();
+     }
+ }
+@@ -451,11 +492,18 @@
+ 
+ void Bino::setInputMode(InputMode mode)
+ {
++#if BINO_STEREO_DESKTOP
++    if (_videoSink->inputDeclared)
++        return;
++    if (!_sourceUrl.isEmpty())
++        QSettings().setValue(correctionKey(_sourceUrl) + "inputMode", inputModeToString(mode));
++#endif
+     _videoSink->inputMode = mode;
+     _frame.inputMode = mode;
      _frame.reUpdate();
      _frameIsNew = true;
      LOG_DEBUG("setting input mode to %s", inputModeToString(mode));
@@ -580,7 +681,7 @@ Forwarded: not-needed
  }
  
  void Bino::setSurroundMode(SurroundMode mode)
-@@ -465,6 +476,7 @@
+@@ -465,6 +513,7 @@
      _frame.reUpdate();
      _frameIsNew = true;
      LOG_DEBUG("setting surround mode to %s", surroundModeToString(mode));
@@ -588,7 +689,19 @@ Forwarded: not-needed
  }
  
  bool Bino::swapEyes() const
-@@ -877,6 +889,18 @@
+@@ -528,6 +577,11 @@
+     else if (playlistMode())
+         t = _player->activeSubtitleTrack();
+     return t;
++}
++
++bool Bino::inputDeclared() const
++{
++    return _videoSink && _videoSink->inputDeclared;
+ }
+ 
+ InputMode Bino::inputMode() const
+@@ -877,6 +931,18 @@
      }
  }
  
@@ -607,7 +720,7 @@ Forwarded: not-needed
  void Bino::rebuildColorPrgIfNecessary(int planeFormat, bool colorRangeSmall, int colorSpace, int colorTransfer)
  {
      if (_colorPrg.isLinked()
-@@ -965,168 +989,198 @@
+@@ -965,168 +1031,198 @@
      return alignment;
  }
  
@@ -954,7 +1067,7 @@ Forwarded: not-needed
          }
      }
      glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-@@ -1143,18 +1197,38 @@
+@@ -1143,18 +1239,38 @@
      glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, frameTex, 0);
      glViewport(0, 0, w, h);
      glDisable(GL_DEPTH_TEST);
@@ -994,7 +1107,7 @@ Forwarded: not-needed
  }
  
  void Bino::overlayToTexture(const QImage& img, unsigned int tex)
-@@ -1166,9 +1240,26 @@
+@@ -1166,9 +1282,26 @@
      glGenerateMipmap(GL_TEXTURE_2D);
  }
  
@@ -1023,7 +1136,29 @@ Forwarded: not-needed
      int viewCount = 2;
      int viewWidth = _frame.width;
      int viewHeight = _frame.height;
-@@ -1227,7 +1318,7 @@
+@@ -1192,6 +1325,8 @@
+     case Input_Mono:
+         viewCount = 1;
+         break;
++    case Input_Rows_LR:
++    case Input_Rows_RL:
+     case Input_Top_Bottom:
+     case Input_Bottom_Top:
+         frameDisplayAspectRatio *= 2.0f;
+@@ -1200,6 +1335,12 @@
+     case Input_Bottom_Top_Half:
+         viewHeight /= 2;
+         break;
++    case Input_Columns_LR:
++    case Input_Columns_RL:
++    case Input_Checkerboard_LR:
++    case Input_Checkerboard_RL:
++    case Input_Quincunx_LR:
++    case Input_Quincunx_RL:
+     case Input_Left_Right:
+     case Input_Right_Left:
+         frameDisplayAspectRatio /= 2.0f;
+@@ -1227,7 +1368,7 @@
       * we want the screen resolution to determine the view texture size
       * so that overlays (subtitles and/or UI) don't look as crappy as the
       * video. */
@@ -1032,7 +1167,7 @@ Forwarded: not-needed
          if (screenWidth / viewWidth > screenHeight / viewHeight) {
              viewWidth = screenWidth;
              viewHeight = viewWidth / frameDisplayAspectRatio;
-@@ -1266,7 +1357,7 @@
+@@ -1266,7 +1407,7 @@
          }
          // Render the subtitle
          _overlaySubtitle.updateParameters(_frame.subtitle);
@@ -1041,7 +1176,7 @@ Forwarded: not-needed
              overlayToTexture(_overlaySubtitle.image(), _overlayTexs[1]);
          }
          // Done.
-@@ -1274,13 +1365,13 @@
+@@ -1274,13 +1415,13 @@
      }
      // Render the audio overlay
      if (!_frame.isValid()) {
@@ -1057,7 +1192,7 @@ Forwarded: not-needed
              overlayToTexture(_overlayUI.image(), _overlayTexs[2]);
          }
      }
-@@ -1302,6 +1393,8 @@
+@@ -1302,6 +1443,8 @@
          int view, // 0 = left, 1 = right
          int texWidth, int texHeight, unsigned int texture)
  {
@@ -1066,7 +1201,40 @@ Forwarded: not-needed
      // Update screen
      switch (_screenType) {
      case ScreenUnited:
-@@ -1431,9 +1524,14 @@
+@@ -1331,9 +1474,32 @@
+     float viewFactorX = 1.0f;
+     float viewOffsetY = 0.0f;
+     float viewFactorY = 1.0f;
++    int sampleLayout = 0;
+     if (_swapEyes)
+         view = (view == 0 ? 1 : 0);
+     switch (_frame.inputMode) {
++    case Input_Rows_LR:
++    case Input_Rows_RL:
++        sampleLayout = 1;
++        viewFactorY = 0.5f;
++        frameAspectRatio *= 2.0f;
++        if (_frame.inputMode == Input_Rows_RL) view = 1 - view;
++        break;
++    case Input_Columns_LR:
++    case Input_Columns_RL:
++    case Input_Checkerboard_LR:
++    case Input_Checkerboard_RL:
++        sampleLayout = (_frame.inputMode == Input_Columns_LR || _frame.inputMode == Input_Columns_RL) ? 2 : 3;
++        viewFactorX = 0.5f;
++        frameAspectRatio /= 2.0f;
++        if (_frame.inputMode == Input_Columns_RL || _frame.inputMode == Input_Checkerboard_RL) view = 1 - view;
++        break;
++    case Input_Quincunx_LR:
++    case Input_Quincunx_RL:
++        viewFactorX = 0.5f;
++        viewOffsetX = ((view ^ (_frame.inputMode == Input_Quincunx_RL)) ? 0.5f : 0.0f);
++        frameAspectRatio /= 2.0f;
++        break;
+     case Input_Unknown: // cannot happen, update() sets a known mode
+     case Input_Mono:
+         // nothing to do
+@@ -1431,9 +1597,16 @@
      _viewPrg.setUniformValue("overlayTex0", 1);
      _viewPrg.setUniformValue("overlayTex1", 2);
      _viewPrg.setUniformValue("overlayTex2", 3);
@@ -1081,10 +1249,12 @@ Forwarded: not-needed
 +        storedView.transpose();
 +    _viewPrg.setUniformValue("nativeSamples", !finalRenderingStep
 +            && storedView == QSize(texWidth, texHeight));
++    _viewPrg.setUniformValue("sampleLayout", sampleLayout);
++    _viewPrg.setUniformValue("sourceView", view);
      _viewPrg.setUniformValue("rotation", rotation);
      _viewPrg.setUniformValue("view_offset_x", viewOffsetX);
      _viewPrg.setUniformValue("view_factor_x", viewFactorX);
-@@ -1485,8 +1583,10 @@
+@@ -1485,8 +1658,10 @@
  bool Bino::overlayUIPointerPress(const QPointF& pointerInView, bool lockUIEvenIfPointerNotOnBox)
  {
      bool r = _overlayUI.pointerPress(pointerInView);
@@ -1096,7 +1266,7 @@ Forwarded: not-needed
      return r;
  }
  
-@@ -1494,6 +1594,7 @@
+@@ -1494,6 +1669,7 @@
  {
      _overlayUI.pointerRelease(pointerInView);
      _overlayUILocked = false;
@@ -1104,7 +1274,7 @@ Forwarded: not-needed
  }
  
  void Bino::overlayUIPointerMove(const QPointF& pointerInView, bool showPointerInOverlayUI)
-@@ -1501,6 +1602,7 @@
+@@ -1501,6 +1677,7 @@
      _overlayUILastTrigger = QDateTime::currentMSecsSinceEpoch();
      _overlayUIPointerInView = pointerInView;
      _overlayUIPointerShow = showPointerInOverlayUI;
@@ -1125,7 +1295,7 @@ Forwarded: not-needed
  
  class Bino : public QObject, QOpenGLExtraFunctions
  {
-@@ -103,6 +107,9 @@
+@@ -103,11 +107,18 @@
      bool _viewPrgNonlinearOutput;
  
      /* Dynamic data for rendering */
@@ -1135,7 +1305,16 @@ Forwarded: not-needed
      VideoFrame _frame;
      VideoFrame _extFrame; // for alternating stereo
      bool _frameIsNew;
-@@ -116,11 +123,12 @@
+     bool _frameWasSerialized;
+     bool _swapEyes;
++#if BINO_STEREO_DESKTOP
++    bool _defaultSwapEyes;
++    QUrl _sourceUrl;
++#endif
+     // for rendering the audio overlay:
+     OverlayAudio _overlayAudio;
+     // for rendering subtitles:
+@@ -116,11 +127,12 @@
      // for rendering the overlay UI:
      OverlayUI _overlayUI;
      bool _overlayUIShow;
@@ -1149,7 +1328,15 @@ Forwarded: not-needed
      void overlayToTexture(const QImage& img, unsigned int text);
  
  public:
-@@ -203,6 +211,8 @@
+@@ -186,6 +198,7 @@
+     int videoTrack() const;
+     int audioTrack() const;
+     int subtitleTrack() const;
++    bool inputDeclared() const;
+     InputMode inputMode() const;                        // this might be unknown
+     InputMode assumeInputMode() const;                  // this is never unknown
+     bool assumeStereoInputMode() const;                 // is the assumed mode stereo?
+@@ -203,6 +216,8 @@
      /* Functions shared by GUI and VR mode */
      bool initProcess();
      void updateMainProcess();
@@ -1158,7 +1345,7 @@ Forwarded: not-needed
      void preRenderProcess(
              int screenWidth,
              int screenHeight,
-@@ -210,7 +220,7 @@
+@@ -210,7 +225,7 @@
              int* viewWidth = nullptr,
              int* viewHeight = nullptr,
              float* frameDisplayAspectRatio = nullptr,
@@ -1167,7 +1354,7 @@ Forwarded: not-needed
      void render(
              const QVector3D& unitedScreenBottomLeft, const QVector3D& unitedScreenBottomRight, const QVector3D& unitedScreenTopLeft,
              const QVector3D& intersectedScreenBottomLeft, const QVector3D& intersectedScreenBottomRight, const QVector3D& intersectedScreenTopLeft,
-@@ -231,5 +241,6 @@
+@@ -231,5 +246,6 @@
      void newVideoFrame();
      void toggleFullscreen();
      void stateChanged();
@@ -1332,7 +1519,31 @@ Forwarded: not-needed
 +}
 --- a/src/gui.cpp
 +++ b/src/gui.cpp
-@@ -225,7 +225,164 @@
+@@ -173,6 +173,7 @@
+     connect(threeDInMono, SIGNAL(triggered()), this, SLOT(threeDInput()));
+     addBinoAction(threeDInMono, threeDMenu);
+     QMenu* threeDInputAboveBelowMenu = threeDMenu->addMenu(tr("Input 3D above-below"));
++    _3dInputMenus.append(threeDInputAboveBelowMenu->menuAction());
+     QAction* threeDInTopBottom = new QAction(inputModeToStringUI(Input_Top_Bottom), this);
+     threeDInTopBottom->setCheckable(true);
+     _3dInputActionGroup->addAction(threeDInTopBottom)->setData(int(Input_Top_Bottom));
+@@ -194,6 +195,7 @@
+     connect(threeDInBottomTopHalf, SIGNAL(triggered()), this, SLOT(threeDInput()));
+     addBinoAction(threeDInBottomTopHalf, threeDInputAboveBelowMenu);
+     QMenu* threeDInputSideBySideMenu = threeDMenu->addMenu(tr("Input 3D side-by-side"));
++    _3dInputMenus.append(threeDInputSideBySideMenu->menuAction());
+     QAction* threeDInLeftRight = new QAction(inputModeToStringUI(Input_Left_Right), this);
+     threeDInLeftRight->setCheckable(true);
+     _3dInputActionGroup->addAction(threeDInLeftRight)->setData(int(Input_Left_Right));
+@@ -215,6 +217,7 @@
+     connect(threeDInRightLeftHalf, SIGNAL(triggered()), this, SLOT(threeDInput()));
+     addBinoAction(threeDInRightLeftHalf, threeDInputSideBySideMenu);
+     QMenu* threeDInputAlternatingMenu = threeDMenu->addMenu(tr("Input 3D alternating"));
++    _3dInputMenus.append(threeDInputAlternatingMenu->menuAction());
+     QAction* threeDInAlternatingLR = new QAction(inputModeToStringUI(Input_Alternating_LR), this);
+     threeDInAlternatingLR->setCheckable(true);
+     _3dInputActionGroup->addAction(threeDInAlternatingLR)->setData(int(Input_Alternating_LR));
+@@ -225,7 +228,164 @@
      _3dInputActionGroup->addAction(threeDInAlternatingRL)->setData(int(Input_Alternating_RL));
      connect(threeDInAlternatingRL, SIGNAL(triggered()), this, SLOT(threeDInput()));
      addBinoAction(threeDInAlternatingRL, threeDInputAlternatingMenu);
@@ -1497,7 +1708,7 @@ Forwarded: not-needed
  
      QMenu* mediaMenu = addBinoMenu(tr("&Media"));
      _mediaToggleVolumeMuteAction = new QAction(tr("Mute audio"), this);
-@@ -617,6 +774,7 @@
+@@ -617,6 +777,7 @@
      }
  }
  
@@ -1505,7 +1716,7 @@ Forwarded: not-needed
  void Gui::threeDOutput()
  {
      QAction* a = _3dOutputActionGroup->checkedAction();
-@@ -627,6 +785,8 @@
+@@ -627,6 +788,8 @@
          _widget->update();
      }
  }
@@ -1514,15 +1725,31 @@ Forwarded: not-needed
  
  void Gui::mediaTogglePause()
  {
-@@ -1031,6 +1191,7 @@
+@@ -1026,11 +1189,22 @@
+         QAction* a = _3dSurroundActionGroup->actions()[i];
+         a->setChecked(a->data().toInt() == int(surroundMode));
+     }
++#if BINO_STEREO_DESKTOP
++    for (QAction* menu : _3dInputMenus)
++        menu->setVisible(!Bino::instance()->inputDeclared());
++#endif
+     InputMode inputMode = Bino::instance()->assumeInputMode();
+     for (int i = 0; i < _3dInputActionGroup->actions().size(); i++) {
          QAction* a = _3dInputActionGroup->actions()[i];
          a->setChecked(a->data().toInt() == int(inputMode));
-     }
+-    }
++#if BINO_STEREO_DESKTOP
++        const auto mode = static_cast<InputMode>(a->data().toInt());
++        const bool half = mode == Input_Left_Right_Half || mode == Input_Right_Left_Half
++            || mode == Input_Top_Bottom_Half || mode == Input_Bottom_Top_Half;
++        a->setVisible(!Bino::instance()->inputDeclared() && !half);
++#endif
++    }
 +#if !BINO_STEREO_DESKTOP
      for (int i = 0; i < _3dOutputActionGroup->actions().size(); i++) {
          QAction* a = _3dOutputActionGroup->actions()[i];
          if (Bino::instance()->assumeStereoInputMode()) {
-@@ -1045,6 +1206,7 @@
+@@ -1045,6 +1219,7 @@
          }
      }
  
@@ -1530,7 +1757,7 @@ Forwarded: not-needed
      _mediaTogglePauseAction->setEnabled(Bino::instance()->playlistMode() && !Bino::instance()->stopped());
      _mediaSeekFwd1SecAction->setEnabled(Bino::instance()->playlistMode() && !Bino::instance()->stopped());
      _mediaSeekBwd1SecAction->setEnabled(Bino::instance()->playlistMode() && !Bino::instance()->stopped());
-@@ -1058,12 +1220,13 @@
+@@ -1058,12 +1233,13 @@
      _widget->update();
  }
  
@@ -1546,7 +1773,7 @@ Forwarded: not-needed
  
  void Gui::setSurroundVerticalFieldOfView(float vfov)
  {
-@@ -1113,9 +1276,13 @@
+@@ -1113,9 +1289,13 @@
  
  void Gui::moveEvent(QMoveEvent*)
  {
@@ -1563,17 +1790,18 @@ Forwarded: not-needed
 +}
 --- a/src/gui.hpp
 +++ b/src/gui.hpp
-@@ -45,7 +45,9 @@
+@@ -45,7 +45,10 @@
      QActionGroup* _trackSubtitleActionGroup;
      QActionGroup* _3dSurroundActionGroup;
      QActionGroup* _3dInputActionGroup;
++    QList<QAction*> _3dInputMenus;
 +#if !BINO_STEREO_DESKTOP
      QActionGroup* _3dOutputActionGroup;
 +#endif
      QAction* _mediaTogglePauseAction;
      QAction* _mediaToggleVolumeMuteAction;
      QAction* _mediaVolumeIncAction;
-@@ -82,7 +84,9 @@
+@@ -82,7 +85,9 @@
      void playlistWait();
      void threeDSurround();
      void threeDInput();
@@ -1583,7 +1811,7 @@ Forwarded: not-needed
      void mediaTogglePause();
      void mediaToggleVolumeMute();
      void mediaVolumeInc();
-@@ -116,7 +120,9 @@
+@@ -116,7 +121,9 @@
  
      static Gui* instance();
  
@@ -1721,9 +1949,176 @@ Forwarded: not-needed
          gui.show();
          // wait for several seconds to process all events before starting
          // the playlist, because otherwise playing might be finished before
+--- a/src/metadata.cpp
++++ b/src/metadata.cpp
+@@ -35,6 +35,11 @@
+ #endif
+ 
+ #include "metadata.hpp"
++#if BINO_STEREO_DESKTOP
++#include <stereo-content.h>
++#include <QFile>
++#include <time.h>
++#endif
+ #include "tools.hpp"
+ #include "log.hpp"
+ 
+@@ -80,6 +85,7 @@
+     /* Detection via file name hints - this sets default modes that can be overridden per stream */
+     InputMode defaultInputMode = Input_Unknown;
+     SurroundMode defaultSurroundMode = Surround_Unknown;
++#if !BINO_STEREO_DESKTOP
+     QString fileName = url.fileName();
+     QString extension = getExtension(fileName);
+ #ifdef HAVE_STEREO_LAYER
+@@ -148,6 +154,8 @@
+         LOG_DEBUG("guessing surround mode %s from file name %s", surroundModeToString(defaultSurroundMode), qPrintable(fileName));
+     }
+ 
++#endif
++
+     /* Detection via QMediaPlayer */
+     QMediaPlayer player;
+     bool failure = false;
+@@ -165,7 +173,9 @@
+     do {
+         // while waiting for the QMediaPlayer meta data to arrive, run ffprobe in parallel
+         if (!didFFprobe) {
++#if !BINO_STEREO_DESKTOP
+             detectViaFFprobe(url, defaultInputMode, defaultSurroundMode);
++#endif
+             didFFprobe = true;
+         }
+         QGuiApplication::processEvents();
+@@ -184,7 +194,7 @@
+     subtitleTracks = player.subtitleTracks();
+     inputModes.resize(videoTracks.size(), defaultInputMode);
+     surroundModes.resize(videoTracks.size(), defaultSurroundMode);
+-#ifdef HAVE_STEREO_LAYER
++#if defined(HAVE_STEREO_LAYER) && !BINO_STEREO_DESKTOP
+     if (nameTagLayout != Stereo::Picture::Layout::None && nameTagViews < 0) {
+         /* The tag in the name does not say half or full: the size of the video does, by the rule the players share
+          * (a single picture's shape holds half views). A mode that the stream's own mark has set is left alone. */
+@@ -196,6 +206,38 @@
+     }
+ #endif
+ 
++#if BINO_STEREO_DESKTOP
++    declaredInputs.resize(videoTracks.size(), false);
++    QFile source(url.isLocalFile() ? url.toLocalFile() : QString());
++    if (url.isLocalFile() && source.open(QIODevice::ReadOnly)) {
++        for (int track = 0; track < videoTracks.size(); ++track) {
++            timespec now;
++            clock_gettime(CLOCK_MONOTONIC, &now);
++            StereoContentRequest request = {};
++            request.size = sizeof(request);
++            request.abi = STEREO_CONTENT_ABI;
++            request.fd = source.handle();
++            request.deadline_us = qint64(now.tv_sec) * 1000000 + now.tv_nsec / 1000 + 400000;
++            request.max_bytes = 4 * 1024 * 1024;
++            request.max_packets = 128;
++            request.video_track_plus_one = track + 1;
++            StereoContentResult result = {};
++            result.size = sizeof(result);
++            if (stereo_content_inspect(&request, &result) < 0
++                    || (result.status != STEREO_CONTENT_OK && result.status != STEREO_CONTENT_INCOMPLETE))
++                continue;
++            if (result.stereo >= 0) {
++                declaredInputs[track] = true;
++                inputModes[track] = inputModeFromPacking(result.layout, result.order, result.anaglyph);
++            }
++            surroundModes[track] = result.coverage == 180 ? Surround_180
++                    : result.coverage == 360 ? Surround_360 : Surround_Off;
++            LOG_DEBUG("shared content: track=%d stereo=%d packing=%d order=%d raster=%dx%d sar=%d:%d",
++                    track, result.stereo, result.layout, result.order, result.width, result.height,
++                    result.sar_num, result.sar_den);
++        }
++    }
++#endif
+     cache.insert(url, *this);
+     return true;
+ }
+--- a/src/metadata.hpp
++++ b/src/metadata.hpp
+@@ -43,6 +43,7 @@
+     QList<QMediaMetaData> subtitleTracks;
+     // additional information for each video track:
+     QList<InputMode> inputModes;
++    QList<bool> declaredInputs;
+     QList<SurroundMode> surroundModes;
+ 
+     MetaData();
 --- a/src/modes.cpp
 +++ b/src/modes.cpp
-@@ -197,6 +197,12 @@
+@@ -23,9 +23,36 @@
+ #include "modes.hpp"
+ 
+ 
++InputMode inputModeFromPacking(int layout, int order, int anaglyph)
++{
++    if (anaglyph)
++        return Input_Unknown;
++    switch (layout) {
++    case 0: return Input_Mono;
++    case 1: return order ? Input_Right_Left : Input_Left_Right;
++    case 2: return order ? Input_Bottom_Top : Input_Top_Bottom;
++    case 4: return order ? Input_Rows_RL : Input_Rows_LR;
++    case 5: return order ? Input_Columns_RL : Input_Columns_LR;
++    case 6: return order ? Input_Checkerboard_RL : Input_Checkerboard_LR;
++    case 7: return order ? Input_Quincunx_RL : Input_Quincunx_LR;
++    case 8:
++    case 9: return order ? Input_Alternating_RL : Input_Alternating_LR;
++    default: return Input_Unknown;
++    }
++}
++
+ const char* inputModeToString(InputMode mode)
+ {
+     switch (mode) {
++    case Input_Rows_LR: return "rows-left-right";
++    case Input_Rows_RL: return "rows-right-left";
++    case Input_Columns_LR: return "columns-left-right";
++    case Input_Columns_RL: return "columns-right-left";
++    case Input_Checkerboard_LR: return "checkerboard-left-right";
++    case Input_Checkerboard_RL: return "checkerboard-right-left";
++    case Input_Quincunx_LR: return "quincunx-left-right";
++    case Input_Quincunx_RL: return "quincunx-right-left";
++
+     case Input_Unknown:
+         return "unknown";
+         break;
+@@ -69,6 +96,15 @@
+ QString inputModeToStringUI(InputMode mode)
+ {
+     switch (mode) {
++    case Input_Rows_LR: return QCoreApplication::translate("Mode", "Input alternating rows, left first");
++    case Input_Rows_RL: return QCoreApplication::translate("Mode", "Input alternating rows, right first");
++    case Input_Columns_LR: return QCoreApplication::translate("Mode", "Input alternating columns, left first");
++    case Input_Columns_RL: return QCoreApplication::translate("Mode", "Input alternating columns, right first");
++    case Input_Checkerboard_LR: return QCoreApplication::translate("Mode", "Input checkerboard, left first");
++    case Input_Checkerboard_RL: return QCoreApplication::translate("Mode", "Input checkerboard, right first");
++    case Input_Quincunx_LR: return QCoreApplication::translate("Mode", "Input side by side quincunx, left first");
++    case Input_Quincunx_RL: return QCoreApplication::translate("Mode", "Input side by side quincunx, right first");
++
+     case Input_Unknown:
+         return QCoreApplication::translate("Mode", "Input autodetection");
+         break;
+@@ -113,6 +149,14 @@
+ {
+     InputMode mode = Input_Unknown;
+     bool r = true;
++    if (s == "rows-left-right") { if (ok) *ok = true; return Input_Rows_LR; }
++    if (s == "rows-right-left") { if (ok) *ok = true; return Input_Rows_RL; }
++    if (s == "columns-left-right") { if (ok) *ok = true; return Input_Columns_LR; }
++    if (s == "columns-right-left") { if (ok) *ok = true; return Input_Columns_RL; }
++    if (s == "checkerboard-left-right") { if (ok) *ok = true; return Input_Checkerboard_LR; }
++    if (s == "checkerboard-right-left") { if (ok) *ok = true; return Input_Checkerboard_RL; }
++    if (s == "quincunx-left-right") { if (ok) *ok = true; return Input_Quincunx_LR; }
++    if (s == "quincunx-right-left") { if (ok) *ok = true; return Input_Quincunx_RL; }
+     if (s == "mono")
+         mode = Input_Mono;
+     else if (s == "top-bottom")
+@@ -197,6 +241,12 @@
      return mode;
  }
  
@@ -1736,7 +2131,7 @@ Forwarded: not-needed
  const char* outputModeToString(OutputMode mode)
  {
      switch (mode) {
-@@ -246,7 +252,7 @@
+@@ -246,7 +296,7 @@
          return "even-odd-columns";
          break;
      case Output_Checkerboard:
@@ -1745,7 +2140,7 @@ Forwarded: not-needed
          break;
      case Output_Red_Cyan_Dubois:
          return "red-cyan-dubois";
-@@ -425,29 +431,29 @@
+@@ -425,29 +475,29 @@
          mode = Output_Even_Odd_Rows;
      else if (s == "even-odd-columns")
          mode = Output_Even_Odd_Columns;
@@ -1782,7 +2177,7 @@ Forwarded: not-needed
          mode = Output_Amber_Blue_HalfColor;
      else if (s == "amber-blue-monochrome")
          mode = Output_Amber_Blue_Monochrome;
-@@ -461,6 +467,8 @@
+@@ -461,6 +511,8 @@
          *ok = r;
      return mode;
  }
@@ -1793,7 +2188,25 @@ Forwarded: not-needed
  {
 --- a/src/modes.hpp
 +++ b/src/modes.hpp
-@@ -56,11 +56,18 @@
+@@ -38,7 +38,17 @@
+     Input_Right_Left_Half = 9, // stereoscopic video, left eye right, right eye left, both half width
+     Input_Alternating_LR = 10, // stereoscopic video, alternating frames, left first
+     Input_Alternating_RL = 11, // stereoscopic video, alternating frames, right first
++    Input_Rows_LR = 12,
++    Input_Rows_RL = 13,
++    Input_Columns_LR = 14,
++    Input_Columns_RL = 15,
++    Input_Checkerboard_LR = 16,
++    Input_Checkerboard_RL = 17,
++    Input_Quincunx_LR = 18,
++    Input_Quincunx_RL = 19,
+ };
++
++InputMode inputModeFromPacking(int layout, int order, int anaglyph = 0);
+ 
+ const char* inputModeToString(InputMode mode);
+ QString inputModeToStringUI(InputMode mode);
+@@ -56,11 +66,18 @@
  QString surroundModeToStringUI(SurroundMode mode);
  SurroundMode surroundModeFromString(const QString& s, bool* ok = nullptr);
  
@@ -1812,7 +2225,7 @@ Forwarded: not-needed
      Output_Right = 1,
      Output_OpenGL_Stereo = 2,
      Output_Alternating = 3,
-@@ -90,11 +97,13 @@
+@@ -90,11 +107,13 @@
      Output_Amber_Blue_Monochrome = 27,
      Output_Red_Green_Monochrome = 28,
      Output_Red_Blue_Monochrome = 29
@@ -2217,7 +2630,7 @@ Forwarded: not-needed
 +};
 --- /dev/null
 +++ b/src/nativex11layer.cpp
-@@ -0,0 +1,241 @@
+@@ -0,0 +1,244 @@
 +/* SPDX-License-Identifier: GPL-3.0-or-later */
 +#include "nativex11layer.hpp"
 +#if BINO_HAVE_X11_CHILD_PLACE
@@ -2406,6 +2819,9 @@ Forwarded: not-needed
 +        const stereo_x11_child_place place = { placed.x(), placed.y(), unsigned(placed.width()), unsigned(placed.height()), 1 };
 +        if (stereo_declare_x11_child_place(display, d->child, &place) < 0)
 +            return false;
++        if (views == 2 && stereo_declare_x11_one_view_size(display, d->child,
++                    placed.width(), placed.height()) < 0)
++            return false;
 +        d->destination = placed;
 +    }
 +    auto* f = d->qtContext->extraFunctions();
@@ -2481,6 +2897,21 @@ Forwarded: not-needed
 +    struct Private;
 +    std::unique_ptr<Private> d;
 +};
+--- a/src/overlay-ui.cpp
++++ b/src/overlay-ui.cpp
+@@ -193,7 +193,11 @@
+                 iconName += i < 4 ? "backward" : "forward";
+                 iconFactor = 0.2f + qAbs(i - 4) * 0.2f;
+             }
+-            painter()->fillRect(_boxes[i], i == highlightedBox ? highlightColor : normalColor);
++            painter()->save();
++            painter()->setPen(Qt::NoPen);
++            painter()->setBrush(i == highlightedBox ? highlightColor : normalColor);
++            painter()->drawEllipse(_boxes[i]);
++            painter()->restore();
+             QIcon icon = QIcon::fromTheme(iconName);
+             float d = 0.5f * (_buttonSize * iconFactor - _buttonSize);
+             QRectF iconRect = _boxes[i].marginsAdded(QMarginsF(d, d, d, d));
 --- a/src/shader-color.frag.glsl
 +++ b/src/shader-color.frag.glsl
 @@ -19,6 +19,8 @@
@@ -2635,20 +3066,31 @@ Forwarded: not-needed
          vec3 rgb0 = texture(view0, vec2(tx, ty)).rgb;
 --- a/src/shader-view.frag.glsl
 +++ b/src/shader-view.frag.glsl
-@@ -25,6 +25,7 @@
+@@ -25,6 +25,9 @@
  uniform bool showOverlayAudio;
  uniform bool showOverlaySubtitle;
  uniform bool showOverlayUI;
 +uniform bool nativeSamples;
++uniform int sampleLayout;
++uniform int sourceView;
  uniform float relative_width;
  uniform float relative_height;
  uniform float view_offset_x;
-@@ -96,7 +97,13 @@
+@@ -96,7 +99,22 @@
          float y_inside = step(0.0, vty) * step(0.0, 1.0 - vty);
          float tx = view_offset_x + view_factor_x * vtx;
          float ty = view_offset_y + view_factor_y * vty;
 -        rgb = x_inside * y_inside * texture(frameTex, vec2(tx, ty)).rgb;
-+        if (nativeSamples) {
++        if (sampleLayout != 0) {
++            ivec2 size = textureSize(frameTex, 0);
++            ivec2 viewSize = sampleLayout == 1 ? ivec2(size.x, size.y / 2) : ivec2(size.x / 2, size.y);
++            ivec2 pixel = clamp(ivec2(vec2(vtx, vty) * vec2(viewSize)), ivec2(0), viewSize - 1);
++            if (sampleLayout == 1)
++                pixel.y = 2 * pixel.y + sourceView;
++            else
++                pixel.x = 2 * pixel.x + (sampleLayout == 3 ? ((pixel.y & 1) ^ sourceView) : sourceView);
++            rgb = x_inside * y_inside * texelFetch(frameTex, pixel, 0).rgb;
++        } else if (nativeSamples) {
 +            ivec2 size = textureSize(frameTex, 0);
 +            ivec2 pixel = clamp(ivec2(vec2(tx, ty) * vec2(size)), ivec2(0), size - 1);
 +            rgb = x_inside * y_inside * texelFetch(frameTex, pixel, 0).rgb;
@@ -2677,7 +3119,47 @@ Forwarded: not-needed
  {
      if (qframe.isMapped())
          qframe.unmap();
-@@ -148,7 +149,7 @@
+@@ -74,9 +75,17 @@
+         width = qframe.width();
+         height = qframe.height();
+         aspectRatio = float(width) / height;
++#if BINO_STEREO_DESKTOP
++        const QSize sar = frame.surfaceFormat().pixelAspectRatio();
++        if (sar.width() > 0 && sar.height() > 0)
++            aspectRatio *= float(sar.width()) / sar.height();
++#endif
+         LOG_FIREHOSE("videoframe receives new %dx%d frame with pixel format %s", width, height,
+                 qPrintable(QVideoFrameFormat::pixelFormatToString(qframe.pixelFormat())));
+         if (im == Input_Unknown) {
++#if BINO_STEREO_DESKTOP
++            im = Input_Mono;
++#else
+             /* Two pictures next to each other: at least three times as wide as high. The shape never says top and bottom. */
+ #ifdef HAVE_STEREO_LAYER
+             if (width % 2 == 0 && Stereo::Video::sideBySideByShape(QSize(width, height)))
+@@ -87,9 +96,13 @@
+             else
+                 im = Input_Mono;
+             LOG_FIREHOSE("videoframe guesses input mode from aspect ratio %g: %s", aspectRatio, inputModeToString(im));
++#endif
+         }
+         inputMode = im;
+         if (sm == Surround_Unknown) {
++#if BINO_STEREO_DESKTOP
++            sm = Surround_Off;
++#else
+             if (width == height && (inputMode == Input_Top_Bottom || inputMode == Input_Bottom_Top))
+                 sm = Surround_360;
+             else if (width == 2 * height && inputMode == Input_Mono)
+@@ -113,6 +126,7 @@
+             else
+                 sm = Surround_Off;
+             LOG_FIREHOSE("videoframe guesses surround mode %s from frame size", surroundModeToString(sm));
++#endif
+         }
+         surroundMode = sm;
+         bool fallbackToImage = true;
+@@ -148,7 +162,7 @@
              image = qframe.toImage();
              image.convertTo(QImage::Format_RGB32);
          } else {
@@ -2686,7 +3168,7 @@ Forwarded: not-needed
              pixelFormat = qframe.pixelFormat();
              // Heuristic used in qtmultimedia/src/multimedia/video/qvideotexturehelper.cpp:
              colorSpace = (qframe.surfaceFormat().frameHeight() > 576 ? CS_BT709 : CS_BT601);
-@@ -199,13 +200,9 @@
+@@ -199,13 +213,9 @@
                  masteringWhite = linearToHLG(qframe.surfaceFormat().maxLuminance() / 100.0f);
                  break;
              }
@@ -2703,7 +3185,7 @@ Forwarded: not-needed
          }
          subtitle = qframe.subtitleText();
          subtitle.replace(QLatin1Char('\n'), QChar::LineSeparator); // qvideoframe.cpp does this
-@@ -230,9 +227,26 @@
+@@ -230,9 +240,26 @@
      }
  }
  
@@ -2731,7 +3213,7 @@ Forwarded: not-needed
  }
  
  void VideoFrame::invalidate()
-@@ -248,6 +262,17 @@
+@@ -248,6 +275,17 @@
  
  QDataStream &operator<<(QDataStream& ds, const VideoFrame& f)
  {
@@ -2749,7 +3231,7 @@ Forwarded: not-needed
      ds << static_cast<int>(f.inputMode);
      ds << static_cast<int>(f.surroundMode);
      ds << f.subtitle;
-@@ -255,6 +280,9 @@
+@@ -255,6 +293,9 @@
      ds << f.height;
      ds << f.aspectRatio;
      switch (f.storage) {
@@ -2759,7 +3241,7 @@ Forwarded: not-needed
      case VideoFrame::Storage_Mapped:
      case VideoFrame::Storage_Copied:
          ds << static_cast<int>(VideoFrame::Storage_Copied);
-@@ -295,6 +323,9 @@
+@@ -295,6 +336,9 @@
      ds >> tmp;
      f.storage = static_cast<enum VideoFrame::Storage>(tmp);
      switch (f.storage) {
@@ -2820,7 +3302,28 @@ Forwarded: not-needed
  
  
  VideoSink::VideoSink(VideoFrame* frame, VideoFrame* extFrame, bool* frameIsNew) :
-@@ -63,6 +64,8 @@
+@@ -41,13 +42,19 @@
+ void VideoSink::newPlaylistEntry(const PlaylistEntry& entry, const MetaData& metaData)
+ {
+     frameCounter = 0;
++    needExtFrame = false;
++    pendingFrame = QVideoFrame();
+     lastFrameWasValid = false;
+ 
+     int vt = entry.videoTrack;
+     if (vt < 0)
+         vt = 0;
+ 
+-    inputMode = entry.inputMode;
++    inputDeclared = false;
++#if BINO_STEREO_DESKTOP
++    inputDeclared = vt < metaData.declaredInputs.size() && metaData.declaredInputs[vt];
++#endif
++    inputMode = inputDeclared ? metaData.inputModes.value(vt, Input_Unknown) : entry.inputMode;
+     if (inputMode == Input_Unknown) {
+         if (vt < metaData.inputModes.size())
+             inputMode = metaData.inputModes[vt];
+@@ -63,6 +70,8 @@
  
  void VideoSink::processNewFrame(const QVideoFrame& frame)
  {
@@ -2829,7 +3332,61 @@ Forwarded: not-needed
      if (!frame.isValid() && lastFrameWasValid) {
          // keep showing the last frame of the current media; ignore that QtMultiMedia
          // with the FFmpeg backend gives us an invalid frame as soon as the media stops
-@@ -92,9 +95,9 @@
+@@ -74,6 +83,53 @@
+         LOG_FIREHOSE("video sink gets a valid frame");
+         lastFrameWasValid = true;
+     }
++
++#if BINO_STEREO_DESKTOP
++    if (frame.isValid()) {
++        const auto format = frame.surfaceFormat();
++        using Stereo = QVideoFrameFormat::StereoMode;
++        int layout = 0;
++        switch (format.stereoMode()) {
++        case Stereo::SideBySide: layout = 1; break;
++        case Stereo::TopBottom: layout = 2; break;
++        case Stereo::RowInterleaved: layout = 4; break;
++        case Stereo::ColumnInterleaved: layout = 5; break;
++        case Stereo::Checkerboard: layout = 6; break;
++        case Stereo::SideBySideQuincunx: layout = 7; break;
++        case Stereo::FrameSequence: layout = 8; break;
++        default: break;
++        }
++        if (layout) {
++            const bool inverted = format.stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::RightEyeFirst);
++            const InputMode declared = inputModeFromPacking(layout, inverted, 0);
++            if (declared != inputMode)
++                needExtFrame = false;
++            inputMode = declared;
++            inputDeclared = true;
++        }
++    }
++#endif
++
++#if BINO_STEREO_DESKTOP
++    if (inputMode == Input_Alternating_LR || inputMode == Input_Alternating_RL) {
++        if (!needExtFrame) {
++            pendingFrame = frame;
++            needExtFrame = true;
++            ++frameCounter;
++            return;
++        }
++        // Publish both temporal views together, including on unrelated UI paints.
++        this->frame->update(inputMode, surroundMode, pendingFrame, frameCounter == 1, true);
++        this->extFrame->update(inputMode, surroundMode, frame, frameCounter == 1, true);
++        pendingFrame = QVideoFrame();
++        needExtFrame = false;
++        *frameIsNew = true;
++        ++frameCounter;
++        emit newVideoFrame();
++        return;
++    }
++    pendingFrame = QVideoFrame();
++#endif
+ 
+     bool updateExtFrame;
+     if (inputMode == Input_Alternating_LR || inputMode == Input_Alternating_RL) {
+@@ -92,9 +148,9 @@
          needExtFrame = false;
      }
      if (updateExtFrame) {
@@ -2841,6 +3398,17 @@ Forwarded: not-needed
          this->extFrame->invalidate();
      }
      if (!needExtFrame) {
+--- a/src/videosink.hpp
++++ b/src/videosink.hpp
+@@ -38,6 +38,8 @@
+     VideoFrame* extFrame; // extension to target video frame, for alternating stereo
+     bool *frameIsNew;     // flag to set when the target frame represents a new frame
+     bool needExtFrame;    // flag to set in alternating stereo when extFrame is not filled yet
++    QVideoFrame pendingFrame; // first temporal view, unpublished until its partner arrives
++    bool inputDeclared = false;
+     InputMode inputMode;  // input mode of current media
+     SurroundMode surroundMode; // surround mode of the current media
+     bool lastFrameWasValid; // last frame of current media was valid
 --- /dev/null
 +++ b/src/videotextureimporter.cpp
 @@ -0,0 +1,220 @@
@@ -3563,7 +4131,7 @@ Forwarded: not-needed
  
 --- /dev/null
 +++ b/tests/frame-path/CMakeLists.txt
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,76 @@
 +cmake_minimum_required(VERSION 3.16)
 +project(BinoFramePath LANGUAGES CXX C)
 +set(CMAKE_CXX_STANDARD 17)
@@ -3612,7 +4180,7 @@ Forwarded: not-needed
 +target_link_libraries(output-modes-probe PRIVATE Qt6::OpenGLWidgets Qt6::Multimedia Stereo::Layer)
 +if(BINO_STEREO_DESKTOP)
 +    target_include_directories(output-modes-probe PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-+    target_link_libraries(output-modes-probe PRIVATE PkgConfig::NativeVideo PkgConfig::NativeDeclaration Qt6::GuiPrivate Qt6::MultimediaPrivate)
++    target_link_libraries(output-modes-probe PRIVATE PkgConfig::NativeVideo PkgConfig::NativeDeclaration PkgConfig::NativeContent Qt6::GuiPrivate Qt6::MultimediaPrivate)
 +endif()
 +
 +add_executable(deferred-probe deferred.cpp ../../src/videoframe.cpp ../../src/modes.cpp ../../src/log.cpp)
@@ -3623,6 +4191,22 @@ Forwarded: not-needed
 +    add_executable(texture-lifetime-probe texture-lifetime.cpp ../../src/videotextureimporter.cpp)
 +    target_include_directories(texture-lifetime-probe PRIVATE ../../src)
 +    target_link_libraries(texture-lifetime-probe PRIVATE Qt6::GuiPrivate Qt6::MultimediaPrivate)
++endif()
++
++add_executable(buttons-probe buttons.cpp ${PROBE_SOURCES})
++target_include_directories(buttons-probe PRIVATE ../../src ${CMAKE_CURRENT_BINARY_DIR})
++target_compile_definitions(buttons-probe PRIVATE HAVE_STEREO_LAYER)
++target_link_libraries(buttons-probe PRIVATE Qt6::OpenGLWidgets Qt6::Multimedia Stereo::Layer)
++if(BINO_STEREO_DESKTOP)
++    target_link_libraries(buttons-probe PRIVATE PkgConfig::NativeVideo PkgConfig::NativeDeclaration PkgConfig::NativeContent Qt6::GuiPrivate Qt6::MultimediaPrivate)
++endif()
++
++add_executable(source-probe source.cpp ${PROBE_SOURCES})
++target_include_directories(source-probe PRIVATE ../../src ${CMAKE_CURRENT_BINARY_DIR})
++target_compile_definitions(source-probe PRIVATE HAVE_STEREO_LAYER)
++target_link_libraries(source-probe PRIVATE Qt6::OpenGLWidgets Qt6::Multimedia Stereo::Layer)
++if(BINO_STEREO_DESKTOP)
++    target_link_libraries(source-probe PRIVATE PkgConfig::NativeVideo PkgConfig::NativeDeclaration PkgConfig::NativeContent Qt6::GuiPrivate Qt6::MultimediaPrivate)
 +endif()
 --- /dev/null
 +++ b/tests/frame-path/Dockerfile
@@ -4057,6 +4641,73 @@ Forwarded: not-needed
 +dpkg-query -W libqt6multimedia6 libqt6openglwidgets6 libgl1-mesa-dri kwin-wayland xwayland ffmpeg > /work/evidence/versions.txt
 +ffmpeg -hide_banner -nostdin -y -f lavfi -i 'testsrc2=size=1920x1080:rate=24000/1001' -frames:v 288 -c:v libx264 -threads 4 -preset fast -crf 20 -x264-params frame-packing=3 -metadata:s:v stereo_mode=left_right /work/clips/test-hsbs.mkv > /work/evidence/fixture.log 2>&1
 +ffprobe -v error -show_streams -show_format -of json /work/clips/test-hsbs.mkv > /work/evidence/fixture.json
+--- /dev/null
++++ b/tests/frame-path/buttons.cpp
+@@ -0,0 +1,34 @@
++#include <QApplication>
++#include <QDir>
++#include <QIcon>
++#include "bino.hpp"
++#include "playlist.hpp"
++#include "commandinterpreter.hpp"
++#include "overlay-ui.hpp"
++int main(int argc, char **argv)
++{
++    QApplication app(argc, argv);
++    if (argc != 2) return 2;
++    QIcon::setThemeSearchPaths({qEnvironmentVariable("BINO_TEST_ICONS", "/work/test-icons")});
++    QIcon::setThemeName("breeze-dark");
++    if (qEnvironmentVariableIsSet("BINO_TEST_ICONS") && QIcon::fromTheme("media-playback-start").isNull())
++        return 4;
++    Playlist playlist;
++    CommandInterpreter commands;
++    Bino bino(Bino::ScreenGeometry, Screen(), false);
++    bino.initializeOutput(QAudioDevice());
++    bino.startPlaylistMode();
++    playlist.append(PlaylistEntry(QUrl("file:///unused-first")));
++    playlist.append(PlaylistEntry(QUrl("file:///unused-second")));
++    QDir().mkpath(argv[1]);
++    for (int stereo = 0; stereo < 2; ++stereo) {
++        for (int hover = -1; hover < 9; ++hover) {
++            OverlayUI overlay;
++            overlay.updateParameters(false, stereo, 5000, 20000, true, false,
++                    hover < 0 ? QPointF(-1,-1) : QPointF((40.0 + hover * 80) / 720, 320.0 / 400), false);
++            overlay.redraw(720, 400);
++            if (!overlay.image().save(QString("%1/%2-%3.png").arg(argv[1]).arg(stereo).arg(hover)))
++                return 3;
++        }
++    }
++}
+--- /dev/null
++++ b/tests/frame-path/buttons.py
+@@ -0,0 +1,27 @@
++#!/usr/bin/env python3
++"""Check actual overlay captures and composition over independent video pixels."""
++import sys
++from pathlib import Path
++import numpy as np
++from PIL import Image
++p=Path(sys.argv[1]);fail=[]
++for hover in range(-1,9):
++    views=[np.asarray(Image.open(p/f'{s}-{hover}.png').convert('RGBA')) for s in (0,1)]
++    assert np.array_equal(*views),'2D and 3D controls differ'
++    for i in range(9):
++        x,y=20+i*80,300
++        for dx,dy in [(1,1),(38,1),(1,38),(38,38)]:
++            pixel=views[0][y+dy,x+dx]
++            if pixel[3]: fail.append((hover,i,dx,dy,pixel.tolist()))
++        # Outside the icon, inside the round backing: unchanged 70% alpha.
++        px=views[0][y+20,x+2]
++        assert 177<=px[3]<=180,(hover,i,px.tolist())
++        assert tuple(px[:3])==((255,0,0) if hover==i else (0,0,0)),(hover,i,px.tolist())
++    # Composite actual overlay over a distinct ordinary video witness.
++    y,x=np.indices((400,720)); video=np.stack((x%256,y%256,np.full_like(x,91)),axis=-1).astype('uint8')
++    alpha=views[0][:,:,3,None]/255
++    composed=np.rint(views[0][:,:,:3]*alpha+video*(1-alpha)).astype('uint8')
++    Image.fromarray(composed).save(p/f'composed-{hover}.png')
++print('opaque button corner samples:',len(fail),'first:',fail[:2])
++assert not fail,'button corners cover the video'
++print('nine buttons: transparent corners, round normal/hover backing, identical 2D/3D')
 --- /dev/null
 +++ b/tests/frame-path/capture.cpp
 @@ -0,0 +1,35 @@
@@ -4989,6 +5640,76 @@ Forwarded: not-needed
 +    return result;
 +}
 --- /dev/null
++++ b/tests/frame-path/source.cpp
+@@ -0,0 +1,67 @@
++#include <QApplication>
++#include <QFile>
++#include <QCryptographicHash>
++#include <QSettings>
++#include "bino.hpp"
++#include "gui.hpp"
++#include <QMenu>
++#include "playlist.hpp"
++#include "commandinterpreter.hpp"
++int main(int argc, char **argv)
++{
++    QApplication app(argc, argv);
++    QCoreApplication::setOrganizationName("Bino");
++    QCoreApplication::setApplicationName("Bino-source-test");
++    if (argc != 3) return 2;
++    const QString root = argv[1];
++    const bool write = QByteArray(argv[2]) == "write";
++    Playlist playlist;
++    CommandInterpreter commands;
++    Bino bino(Bino::ScreenGeometry, Screen(), false);
++    bino.initializeOutput(QAudioDevice());
++    bino.startPlaylistMode();
++    int failed = 0;
++    auto check = [&](bool good, const char *name) {
++        qInfo("%s %s", good ? "PASS" : "FAIL", name); failed += !good;
++    };
++    auto open = [&](const char *name, InputMode mode = Input_Unknown) {
++        bino.mediaChanged(PlaylistEntry(QUrl::fromLocalFile(root + '/' + name), mode, Surround_Off));
++        bino.pause();
++    };
++    open("case-10.mkv", Input_Mono);
++    check(bino.inputMode() == Input_Left_Right, "declared packing wins over explicit input override");
++    bino.setInputMode(Input_Top_Bottom);
++    check(bino.inputMode() == Input_Left_Right, "declared packing cannot be changed through the input action");
++    Gui gui(Output_Left, 90.0f, false);
++    gui.updateActions();
++    bool hidden = true;
++    for (QMenu *menu : gui.findChildren<QMenu*>())
++        if (menu->title().startsWith("Input 3D")) hidden &= !menu->menuAction()->isVisible();
++    check(hidden, "declared file hides input packing menus");
++    if (write) bino.setSwapEyes(true);
++    else check(bino.swapEyes(), "marked file swap survives process restart");
++    open("case-11.mkv");
++    check(!bino.swapEyes(), "swap does not leak to another file");
++    if (write) bino.setInputMode(Input_Top_Bottom);
++    else check(bino.inputMode() == Input_Top_Bottom, "unmarked file correction survives process restart");
++    open("case-01.mkv");
++    check(bino.inputMode() == Input_Right_Left, "inverted StereoMode is right-first input");
++    open("case-10.mkv");
++    check(bino.swapEyes(), "returning to the marked file restores its swap");
++    // Qt carries the decoder's frame metadata even when bounded file inspection
++    // could not reach a frame, and for sources that are not local files.
++    VideoFrame primary, secondary;
++    bool fresh = false;
++    VideoSink sink(&primary, &secondary, &fresh);
++    MetaData metadata;
++    metadata.inputModes.append(Input_Left_Right);
++    metadata.declaredInputs.append(true);
++    sink.newPlaylistEntry(PlaylistEntry(QUrl("file:///marked")), metadata);
++    QVideoFrameFormat format(QSize(320,180), QVideoFrameFormat::Format_RGBA8888);
++    format.setStereoMode(QVideoFrameFormat::StereoMode::TopBottom);
++    format.setStereoFlags(QVideoFrameFormat::StereoFlag::RightEyeFirst);
++    sink.processNewFrame(QVideoFrame(format));
++    check(sink.inputMode == Input_Bottom_Top && sink.inputDeclared,
++            "decoded frame mark takes priority over inspected packing");
++    return failed ? 1 : 0;
++}
+--- /dev/null
 +++ b/tests/frame-path/texture-lifetime.cpp
 @@ -0,0 +1,113 @@
 +/* SPDX-License-Identifier: GPL-3.0-or-later */
@@ -5436,7 +6157,7 @@ Forwarded: not-needed
 +}
 --- /dev/null
 +++ b/tests/frame-path/x11-declaration.py
-@@ -0,0 +1,30 @@
+@@ -0,0 +1,32 @@
 +#!/usr/bin/env python3
 +"""Inspect the live native child contract independently of Bino's GL readback."""
 +import json,os
@@ -5459,6 +6180,8 @@ Forwarded: not-needed
 +        assert place is not None and place.property_type==Xatom.CARDINAL and place.format==32
 +        assert list(place.value)==[0,0,640,360,1],list(place.value)
 +        assert (geometry.width,geometry.height)==(640,180)
++        one_view=prop(child,'_KDE_NET_WM_STEREO_CONTENT_ONE_VIEW_SIZE')
++        assert one_view is not None and list(one_view.value)==[640,360]
 +        parent_content=prop(parent,'_KDE_NET_WM_STEREO_CONTENT')
 +        assert parent_content is None or list(parent_content.value)==[0]
 +        found.append({'child':int(childid),'native_size':[geometry.width,geometry.height],'placement':list(map(int,place.value)),'content':3,'parent_content':0})
@@ -5467,3 +6190,214 @@ Forwarded: not-needed
 +assert len(found)==1,found
 +c.sync()
 +Path(os.environ['CASE_DIR'],'declaration.json').write_text(json.dumps(found,indent=2)+'\n')
+--- /dev/null
++++ b/tests/strip-contract/README.md
+@@ -0,0 +1,31 @@
++# Native strip contract regression
++
++Run in an isolated edition container, with the public stereo-proof-rig `wlrec.c` built as `/work/pact-tools/wlrec.so`.
++`/work` is the lane's mounted scratch directory.
++The real player is exercised without a command-line input mode.
++`STRIP_NO_FFPROBE=1` gives the player an empty executable search path, reproducing installations without the optional ffprobe program.
++It does not alter the clip or the player's linked decoder libraries.
++
++```sh
++python3 tests/strip-contract/fixtures.py /work/pact-fixtures
++STRIP_CLIP=/work/pact-fixtures/case-10.mkv STRIP_NO_FFPROBE=1 \
++  STRIP_BINARY=/work/pact-build/bino tests/strip-contract/case.sh native-sar
++python3 tests/strip-contract/check.py /work/pact-fixtures case-10 /work/pact-evidence/native-sar
++python3 tests/strip-contract/containment.py /work/pact-evidence/native-sar
++```
++
++Run one fresh container session per case, four CPUs, UID 1000, with only the AMD render node exposed.
++KWin's virtual backend needs that render node for its OpenGL screenshot path; without it the compositor falls back and cancels stereo captures.
++Set `STRIP_BINARY` to the extracted shipped Bino executable for the negative control.
++The public recorder retains the real submitted strip and its viewport destination.
++The tests compare every RGB channel in both views, with the previously retained tolerance of one level.
++`--swap-expected` must fail on a successful stereo capture.
++The containment test independently rejects a surface which extends beyond the ordinary top-level window; a correct native strip alone is insufficient.
++
++The first twelve fixtures cover side by side, top and bottom, rows, columns and checkerboard in both orders, the 1920x804 H.264 SAR 2:1 StereoMode 1 case, and an unmarked mono control.
++H.264 uses the lossless RGB encoder so source samples remain independently identifiable.
++The original film is never opened or copied.
++`extra-fixtures.py` adds both temporal eye orders, half-top-bottom 1920x1080 (two 1920x540 views), and full-SBS 3840x1080 (two 1920x1080 views).
++The temporal check includes the first submitted buffer; a black or incomplete initial pair fails.
++The HD check also covers a file whose frame data exceeds the bounded inspection byte allowance.
++Multiview and anaglyph playback and the codec quincunx flag need separate fixtures beyond this matrix.
+--- /dev/null
++++ b/tests/strip-contract/case.sh
+@@ -0,0 +1,10 @@
++#!/bin/bash
++set -eu
++export CASE_DIR=/work/pact-evidence/$1
++mkdir -p "$CASE_DIR/home" "$CASE_DIR/runtime"
++chmod 700 "$CASE_DIR/runtime"
++export HOME="$CASE_DIR/home" XDG_RUNTIME_DIR="$CASE_DIR/runtime" LANG=C.UTF-8
++export XDG_CONFIG_HOME="$HOME/.config" XDG_CACHE_HOME="$HOME/.cache" XDG_DATA_HOME="$HOME/.local/share"
++export QT_QPA_PLATFORM=offscreen KWIN_COMPOSE=O2 KWIN_SCREENSHOT_NO_PERMISSION_CHECKS=1 LP_NUM_THREADS=4
++exec dbus-run-session -- kwin_wayland --virtual --width 800 --height 600 --xwayland \
++    --socket bino-strip --no-global-shortcuts --exit-with-session /work/bino/tests/strip-contract/session.sh > "$CASE_DIR/kwin.log" 2>&1
+--- /dev/null
++++ b/tests/strip-contract/check.py
+@@ -0,0 +1,33 @@
++#!/usr/bin/env python3
++"""Check the actual declared surface against independently authored source samples."""
++import argparse,json
++from pathlib import Path
++import numpy as np
++from PIL import Image
++p=argparse.ArgumentParser();p.add_argument('fixtures',type=Path);p.add_argument('case');p.add_argument('capture',type=Path)
++p.add_argument('--swap-expected',action='store_true')
++a=p.parse_args();case=next(c for c in json.loads((a.fixtures/'manifest.json').read_text()) if c['name']==a.case)
++log=a.capture/'buffers/log.jsonl'
++rows=[json.loads(x) for x in log.read_text().splitlines()] if log.exists() else []
++report=dict(case=a.case,declared_buffers=len(rows),checks={})
++checks=report['checks']; checks['declared_stereo']=bool(rows)==case['stereo']
++if case['stereo'] and rows:
++    expected=np.concatenate([np.asarray(Image.open(a.fixtures/(a.case+'-'+eye+'.png')).convert('RGB')) for eye in (('right','left') if a.swap_expected else ('left','right'))],axis=1)
++    checks['native_size']=all([r['width'],r['height']]==case['strip'] for r in rows)
++    # Destination is layout in the window, not the source's natural display size.
++    # Integer viewport rounding may move either boundary by half a pixel.
++    aspect=case['display'][0]/case['display'][1]
++    checks['source_display_shape']=all(abs(r['destination'][0]-r['destination'][1]*aspect)<=0.51*(1+aspect) for r in rows)
++    errors=[]
++    if checks['native_size']:
++        for r in rows:
++            raw=np.fromfile(a.capture/'buffers'/r['file'],dtype=np.uint8).reshape(r['height'],r['width'],4)[::-1,:,:3]
++            errors.append(int(np.abs(raw.astype('int16')-expected.astype('int16')).max()))
++        checks['source_samples']=max(errors)<=1 # retained Bino source gate, unchanged
++        report['max_channel_error']=max(errors)
++        report['channels_checked']=expected.size*len(rows)
++    else: checks['source_samples']=False
++    report['destinations']=[list(x) for x in sorted({tuple(r['destination']) for r in rows})]
++report['pass']=all(checks.values());print(json.dumps(report,indent=2))
++(a.capture/('swapped-result.json' if a.swap_expected else 'result.json')).write_text(json.dumps(report,indent=2)+'\n')
++raise SystemExit(0 if report['pass'] else 1)
+--- /dev/null
++++ b/tests/strip-contract/containment.py
+@@ -0,0 +1,13 @@
++#!/usr/bin/env python3
++"""A native strip must stay inside the application's ordinary window."""
++import json,re,sys
++from pathlib import Path
++from PIL import Image
++case=Path(sys.argv[1]);app=(case/'app.log').read_text()
++logical=re.findall(r'xdg_surface#\d+\.set_window_geometry\((-?\d+), (-?\d+), (\d+), (\d+)\)',app)
++assert logical,'no committed top-level window geometry'
++w,h=map(int,logical[-1][2:]); actual=Image.open(case/'window.png').size
++# ScreenShot2 includes both views and may include server decoration margins.
++report={'window_geometry':[w,h],'window_capture':list(actual),'pass':actual[0]<=2*(w+16) and actual[1]<=h+64}
++(case/'containment.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
++assert report['pass'],'native video escaped the ordinary window bounds'
+--- /dev/null
++++ b/tests/strip-contract/extra-fixtures.py
+@@ -0,0 +1,26 @@
++#!/usr/bin/env python3
++"""Temporal pairs and HD half/full packings supplement the spatial matrix."""
++import json,subprocess,sys
++from pathlib import Path
++import numpy as np
++from PIL import Image
++out=Path(sys.argv[1]);manifest=json.loads((out/'manifest.json').read_text())
++def eye(e,w,h):
++ y,x=np.indices((h,w));return np.stack((x&255,y&255,(e<<7)|((x>>8)<<3)|(y>>8)),axis=-1).astype('uint8')
++for name,mark,w,h,sar in [('case-12',13,320,180,'1/1'),('case-13',14,320,180,'1/1'),('case-14',3,1920,540,'1/2'),('case-15',1,1920,1080,'1/1')]:
++ left,right=eye(0,w,h),eye(1,w,h)
++ for label,im in [('left',left),('right',right)]:Image.fromarray(im).save(out/(name+'-'+label+'.png'))
++ if mark in (13,14):
++  a,b=(left,right) if mark==13 else (right,left)
++  frames=np.stack([a,b]*18);fw,fh=w,h
++ else:
++  a=np.concatenate((left,right),axis=0 if mark==3 else 1)
++  frames=np.stack([a]*12);fh,fw=a.shape[:2]
++ cmd=['ffmpeg','-v','error','-y','-f','rawvideo','-pixel_format','rgb24','-video_size',f'{fw}x{fh}','-framerate','12','-i','pipe:0','-vf','setsar='+sar,'-c:v','ffv1','-pix_fmt','bgr0','-threads','4','-metadata:s:v','stereo_mode='+str(mark),str(out/(name+'.mkv'))]
++ subprocess.run(cmd,input=frames.tobytes(),check=True)
++ probe=json.loads(subprocess.check_output(['ffprobe','-v','error','-show_streams','-of','json',str(out/(name+'.mkv'))]))
++ (out/(name+'-probe.json')).write_text(json.dumps(probe,indent=2))
++ num,den=map(int,sar.split('/'))
++ row=dict(name=name,mark=mark,codec='ffv1',sar=sar,eye=[w,h],strip=[2*w,h],display=[w*num,h*den],stereo=True)
++ manifest=[r for r in manifest if r['name']!=name]+[row]
++(out/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
+--- /dev/null
++++ b/tests/strip-contract/fixtures.py
+@@ -0,0 +1,51 @@
++#!/usr/bin/env python3
++"""Synthetic source-address fixtures. No filename supplies a packing hint."""
++import json
++import subprocess
++import sys
++from pathlib import Path
++import numpy as np
++from PIL import Image
++
++out = Path(sys.argv[1]); out.mkdir(parents=True, exist_ok=True)
++def eye(e,w,h):
++    y,x=np.indices((h,w))
++    return np.stack((x&255,y&255,(e<<7)|((x>>8)<<3)|(y>>8)),axis=-1).astype('uint8')
++cases=[]
++for packing,mode in [('sbs',1),('tab',3),('rows',7),('columns',9),('checkerboard',5)]:
++    for invert in [False,True]:
++        w,h=(320,90) if packing in ('tab','rows') else (160,180)
++        left,right=eye(0,w,h),eye(1,w,h)
++        a,b=(right,left) if invert else (left,right)
++        if packing=='sbs': frame=np.concatenate((a,b),axis=1)
++        elif packing=='tab': frame=np.concatenate((a,b),axis=0)
++        elif packing=='rows':
++            frame=np.empty((2*h,w,3),dtype='uint8');frame[::2]=a;frame[1::2]=b
++        else:
++            frame=np.empty((h,2*w,3),dtype='uint8')
++            for y in range(h):
++                p=y%2 if packing=='checkerboard' else 0
++                frame[y,p::2]=a[y];frame[y,1-p::2]=b[y]
++        mark={1:11,3:2,7:6,9:8,5:4}[mode] if invert else mode
++        cases.append((frame,left,right,mark,'ffv1','1/1'))
++# Alita's dimensions and marks; synthetic sample addresses, no film bytes.
++left,right=eye(0,960,804),eye(1,960,804)
++cases.append((np.concatenate((left,right),axis=1),left,right,1,'libx264rgb','2/1'))
++cases.append((left,left,None,None,'ffv1','1/1'))
++manifest=[]
++for i,(frame,left,right,mark,codec,sar) in enumerate(cases):
++    name=f'case-{i:02}'
++    Image.fromarray(frame).save(out/(name+'.png'))
++    Image.fromarray(left).save(out/(name+'-left.png'))
++    if right is not None: Image.fromarray(right).save(out/(name+'-right.png'))
++    cmd=['ffmpeg','-v','error','-y','-loop','1','-framerate','12','-i',str(out/(name+'.png')),
++         '-vf','setsar='+sar,'-frames:v','36','-c:v',codec,'-threads','4']
++    cmd += ['-crf','0','-preset','ultrafast'] if codec=='libx264rgb' else ['-pix_fmt','bgr0']
++    if mark is not None: cmd+=['-metadata:s:v','stereo_mode='+str(mark)]
++    subprocess.run(cmd+[str(out/(name+'.mkv'))],check=True)
++    probe=json.loads(subprocess.check_output(['ffprobe','-v','error','-show_streams','-of','json',str(out/(name+'.mkv'))]))
++    (out/(name+'-probe.json')).write_text(json.dumps(probe,indent=2))
++    manifest.append(dict(name=name,mark=mark,codec=codec,sar=sar,eye=[left.shape[1],left.shape[0]],
++                         strip=[left.shape[1]*(2 if right is not None else 1),left.shape[0]],
++                         display=[left.shape[1]*(2 if sar=='2/1' else 1),left.shape[0]],stereo=right is not None))
++(out/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
+--- /dev/null
++++ b/tests/strip-contract/session.sh
+@@ -0,0 +1,26 @@
++#!/bin/bash
++set -eu
++export QT_QPA_PLATFORM=wayland QT_FFMPEG_DECODING_HW_DEVICE_TYPES=,
++export BINO_FRAME_TRACE="$CASE_DIR/trace.csv"
++mkdir -p "$CASE_DIR/buffers"
++printf 'wait 5\npause\nwait 10\nquit\n' > "$CASE_DIR/control.txt"
++args=()
++if [ -n "${STRIP_FULLSCREEN:-}" ]; then args+=(-f); fi
++if [ -n "${STRIP_INPUT:-}" ]; then args+=(-i "$STRIP_INPUT"); fi
++player_path=$PATH
++if [ -n "${STRIP_NO_FFPROBE:-}" ]; then player_path=/work/pact-tools/no-ffprobe; fi
++PATH="$player_path" WLREC_DIR="$CASE_DIR/buffers" LD_PRELOAD=/work/pact-tools/wlrec.so WAYLAND_DEBUG=client \
++    "${STRIP_BINARY:-/work/package-prefix/usr/bin/bino}" --log-level debug \
++    --control-file "$CASE_DIR/control.txt" -l one "${args[@]}" "$STRIP_CLIP" > "$CASE_DIR/app.log" 2>&1 &
++player_pid=$!
++trap 'kill "$player_pid" 2>/dev/null || true' EXIT
++for attempt in $(seq 1 150); do
++    if test -s "$CASE_DIR/buffers/log.jsonl"; then break; fi
++    if [ -n "${STRIP_MONO:-}" ] && grep -Eq '^sink,[0-9]+,[0-9]+,[0-9]+,1,' "$CASE_DIR/trace.csv" 2>/dev/null; then break; fi
++    kill -0 "$player_pid"
++    sleep 0.1
++done
++sleep 1
++QT_QPA_PLATFORM=offscreen /work/probes/screen-capture screen "$CASE_DIR/screen.png" > "$CASE_DIR/capture.log" 2>&1
++QT_QPA_PLATFORM=offscreen /work/probes/screen-capture window "$CASE_DIR/window.png" >> "$CASE_DIR/capture.log" 2>&1
++wait "$player_pid"
