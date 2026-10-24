@@ -47,7 +47,7 @@ n_agents=$(find "$HOME/.agents/skills" -maxdepth 1 -type l | wc -l)
 n_claude=$(find "$HOME/.claude/skills" -maxdepth 1 -type l | wc -l)
 check "the skill whose only package is present is linked into ~/.agents/s and ~/.claude" '[ -L "$HOME/.agents/skills/zz-single" ] && [ -L "$HOME/.claude/skills/zz-single" ]'
 check "a package alternative is accepted ($n_agents agents, $valid skills, 2 gated)" '[ -L "$HOME/.agents/skills/zz-alternative" ] && [ -L "$HOME/.claude/skills/zz-alternative" ] && [ "$n_agents" -eq $((valid - 1)) ]'
-check "the same into ~/.claude, except the person's own audio ($n_claude of $((valid - 1)))" '[ "$n_claude" -eq $((valid - 1)) ]'
+check "the same into ~/.claude, except the person's own audio ($n_claude of $((valid - 2)))" '[ "$n_claude" -eq $((valid - 2)) ]'
 check "the skill whose package is absent is not linked" '[ ! -e "$HOME/.agents/skills/zz-absent" ] && [ ! -e "$HOME/.claude/skills/zz-absent" ]'
 check "and the helper says none of its packages are installed" 'grep -q "zz-absent" <<<"$out"'
 remaining=$(tr ' ' '\n' <<<"$packages" | grep -vx zz-single-package | xargs)
