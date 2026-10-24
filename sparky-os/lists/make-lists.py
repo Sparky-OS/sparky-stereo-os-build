@@ -210,6 +210,7 @@ group('system', 'System', [
     'dosfstools', 'exfatprogs', 'ntfs-3g',
     'flatpak', 'plasma-discover-backend-flatpak', 'distrobox', 'waydroid', 'btrfs-progs',
     'timeshift', 'synaptic',   # snapshots: Timeshift (with grub-btrfs)
+    'command-not-found', 'apt-file',   # a missing program names its package, in the terminal and on Dolphin's right-click (Daniel's design)
     'grub-btrfs', 'scx-scheds', 'ananicy-cpp', 'sunshine', 'protonup-qt', 'hhd', 'decky-loader',
 ])
 
