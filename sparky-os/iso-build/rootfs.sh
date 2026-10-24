@@ -6,7 +6,7 @@
 # (privileged, for the chroot's mounts).
 # Mounts: /rootfs (the tree, on /mnt/build), /cache (apt's archives, outside the tree), /repo (the edition's
 # development repository, read-only), /stage (the lane's staged packages, a flat repository), /build,
-# /edition-apt, /edition-lists (read-only).
+# /edition-apt, /edition-lists, /edition-repo (read-only).
 # Usage: rootfs.sh base|packages|all
 set -eu
 R=/rootfs
@@ -90,6 +90,21 @@ if [ "$STEP" = packages ] || [ "$STEP" = all ]; then
 	apt_in install hunspell-de-de hyphen-de mythes-de libreoffice-l10n-de libreoffice-help-de hunspell-en-gb hunspell-en-us hyphen-en-us mythes-en-us libreoffice-help-en-us locales-all
 	echo "== $(date -u +%T) kernels: Debian's signed kernel beside ours; NVIDIA 615 with the edition's open modules"
 	apt_in install linux-image-amd64 nvidia-driver=615.71.09-2 nvidia-kernel-open-dkms-stereo3d libnvcuvid1=615.71.09-2 nvidia-vaapi-driver
+	echo "== $(date -u +%T) command-not-found: its index is filled at build time, so a live session names the package of a missing program before anyone runs apt update"
+	# apt-file's Contents targets are on (50apt-file.conf) and command-not-found's own hook (50command-not-found) builds the index
+	# after every apt update: Debian's and deb-multimedia's files come that way. The build's own sources are flat repositories with
+	# no Contents, so the edition's packages in them are listed here the way the published repository lists them.
+	inr apt-get update
+	mkdir -p /tmp/cnf
+	python3 /edition-repo/make-contents.py /tmp/cnf "amd64 all" $(find /repo /stage -name '*.deb' ! -name '*-dbgsym_*' 2>/dev/null)
+	cp /tmp/cnf/Contents-amd64 $R/var/lib/apt/lists/edition-build_main_Contents-amd64
+	cp /tmp/cnf/Contents-all $R/var/lib/apt/lists/edition-build_main_Contents-all
+	inr /usr/lib/cnf-update-db
+	[ -s $R/var/lib/command-not-found/commands.db ] || { echo "rootfs: command-not-found's index is empty" >&2; exit 1; }
+	# a Debian-only, a deb-multimedia-only and an edition-only program must be in it (cnf-check.py picks the deb-multimedia one)
+	cp /build/cnf-check.py $R/tmp/
+	inr python3 /tmp/cnf-check.py align_image_stack vlc-stereo || { echo "rootfs: command-not-found's index lacks a program of one of the three sources" >&2; exit 1; }
+	rm -f $R/tmp/cnf-check.py
 	apt_in clean
 fi
 echo "== $(date -u +%T) installed: $(inr dpkg-query -f '${binary:Package}\n' -W | wc -l) packages, $(du -sxh $R | cut -f1)"

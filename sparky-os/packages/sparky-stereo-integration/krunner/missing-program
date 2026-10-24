@@ -1,0 +1,75 @@
+#!/usr/bin/python3
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/24
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/24
+# KRunner's missing program runner (a D-Bus runner, org.kde.krunner1): a typed program that is not installed names the package
+# that provides it, with command-not-found's own message, and the match installs it by the same route as Dolphin's actions
+# (sparky-stereo-integration install). It matches only when command-not-found names exactly one package.
+import re, shutil, subprocess, sys
+import dbus, dbus.mainloop.glib, dbus.service
+from gi.repository import GLib
+
+NAME = 'org.sparky.stereo.MissingProgram'
+CNF = '/usr/lib/command-not-found'
+HELPER_MATCH = 70
+IDLE_SECONDS = 120
+
+
+def lookup(command):
+    # command-not-found's own lookup and message; (message lines, package) or None
+    if not re.fullmatch(r'[a-z0-9][a-z0-9._+-]{2,60}', command) or shutil.which(command):
+        return None
+    try:
+        out = subprocess.run([CNF, '--', command], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    lines = [l for l in out.stdout.splitlines() if l.strip()]
+    pkgs = {m.group(1) for l in lines for m in [re.search(r'apt install ([a-z0-9][a-z0-9.+-]*)', l)] if m}
+    if len(pkgs) != 1:
+        return None
+    return lines, pkgs.pop()
+
+
+class Runner(dbus.service.Object):
+    def __init__(self, bus):
+        super().__init__(bus, '/runner')
+        self.timer = None
+        self.touch()
+
+    def touch(self):
+        if self.timer:
+            GLib.source_remove(self.timer)
+        self.timer = GLib.timeout_add_seconds(IDLE_SECONDS, lambda: sys.exit(0))
+
+    @dbus.service.method('org.kde.krunner1', in_signature='s', out_signature='a(sssida{sv})')
+    def Match(self, query):
+        self.touch()
+        found = lookup(query.strip().split(' ')[0]) if query.strip() else None
+        if not found:
+            return []
+        lines, pkg = found
+        # command-not-found's message as it is: its first line as the text, its install line as the subtext
+        text = lines[0].rstrip(':')
+        sub = ' '.join(lines[1:2])
+        return [('install:' + pkg, text, 'system-software-install', HELPER_MATCH, 0.6, {'subtext': sub})]
+
+    @dbus.service.method('org.kde.krunner1', in_signature='ss')
+    def Run(self, match_id, action_id):
+        self.touch()
+        if match_id.startswith('install:'):
+            subprocess.Popen(['sparky-stereo-integration', 'install', match_id[len('install:'):]], start_new_session=True)
+
+    @dbus.service.method('org.kde.krunner1', out_signature='a(sss)')
+    def Actions(self):
+        return []
+
+
+def main():
+    dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+    bus = dbus.SessionBus()
+    name = dbus.service.BusName(NAME, bus, do_not_queue=True)
+    Runner(bus)
+    GLib.MainLoop().run()
+
+
+main()

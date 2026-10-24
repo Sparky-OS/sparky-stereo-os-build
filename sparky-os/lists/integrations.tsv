@@ -1,0 +1,11 @@
+# The edition's stereo integrations: one row per pack (docs: the stereo-integrations skill, "One list").
+# Columns: program, pack, kind, notes (tab separated).
+#   program  the Debian package of the program the pack serves (what the pack Enhances; the AppCenter installs both)
+#   pack     the edition's package, sparky-stereo-<program or thing>
+#   kind     data    inert files, no Depends on the program: joins sparky-stereo-integrations, which sparky-stereo-desktop
+#                    depends on, so every installation carries it and a program installed later finds it in place
+#            native  links against the program: Recommended by every role task whose roles.tsv lists the program, and
+#                    installed with it by the AppCenter; it leaves with the program (it Depends on it)
+# make-meta.py reads this file; make-appcenter-entries.py writes the AppCenter's install sets from it.
+hugin-tools	sparky-stereo-align	data	"Align stereo pair" and "Align the two views" in Dolphin's right click menu, on align_image_stack -S
+mkvtoolnix	sparky-stereo-mkv-mark	data	"Mark as 3D" in Dolphin's right click menu: every Matroska StereoMode value, both eye orders, through mkvpropedit

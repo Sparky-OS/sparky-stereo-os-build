@@ -11,6 +11,9 @@
 #   dists/mashtabba/main/binary-arm64/Packages{,.gz,.xz}   (Architecture: arm64, when there are arm64 packages)
 #   dists/mashtabba/main/binary-all/Packages{,.gz,.xz}     (Architecture: all, as apt asks for them)
 #   dists/mashtabba/main/source/Sources{,.gz,.xz}          (only when source packages are given)
+#   dists/mashtabba/main/Contents-<arch>{,.gz,.xz}         (amd64 always; i386, arm64 and all when selected; every file of every
+#                                                           selected binary package, Architecture: all included in each architecture's
+#                                                           file, as Debian's archive does; what apt-file and command-not-found read)
 # SparkyLinux's shape with our names: Origin and Label are the distribution ("Sparky Stereo
 # OS"), the Codename is the version of the edition (mashtabba, tied to a Debian: a new
 # Debian means a new codename of the same edition) and the Suite is its role (testing; it
@@ -31,7 +34,7 @@
 #   extra.deb: more packages to include (for example the sparky-stereo-keyring package).
 # With a key that has a passphrase, gpg-agent asks for it once (run from a terminal); it
 # stays cached for the run. A key without a passphrase signs without asking.
-# Last update 2026/10/05
+# Last update 2026/10/24 (Contents files, ORDER 251)
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -277,19 +280,22 @@ find "$DEST/pool" -mindepth 1 -type d -empty -delete 2>/dev/null || true
 # 3. Indexes, compressed, and the by-hash copies.
 D=$DEST/dists/$CODENAME
 sums=()
-# index_done DIR REL NAME: compress DIR/NAME (already written), copy all three by hash, list them
+# index_done DIR REL NAME...: compress DIR/NAME (already written), copy all three by hash, list them
 index_done() {
-	local dir=$1 rel=$2 name=$3 f h live=
-	gzip -9n -c "$dir/$name" >"$dir/$name.gz"
-	xz -9e -T1 -c "$dir/$name" >"$dir/$name.xz"
-	chmod 644 "$dir/$name"*
+	local dir=$1 rel=$2 name f h live=
+	shift 2
 	mkdir -p "$dir/by-hash/SHA256"
-	for f in "$name" "$name.gz" "$name.xz"; do
-		h=$(sha256sum "$dir/$f" | cut -d' ' -f1)
-		cp -f "$dir/$f" "$dir/by-hash/SHA256/$h"
-		chmod 644 "$dir/by-hash/SHA256/$h"
-		sums+=("$h $(stat -c %s "$dir/$f") $rel/$f")
-		live="$live $h"
+	for name in "$@"; do
+		gzip -9n -c "$dir/$name" >"$dir/$name.gz"
+		xz -9e -T1 -c "$dir/$name" >"$dir/$name.xz"
+		chmod 644 "$dir/$name"*
+		for f in "$name" "$name.gz" "$name.xz"; do
+			h=$(sha256sum "$dir/$f" | cut -d' ' -f1)
+			cp -f "$dir/$f" "$dir/by-hash/SHA256/$h"
+			chmod 644 "$dir/by-hash/SHA256/$h"
+			sums+=("$h $(stat -c %s "$dir/$f") $rel/$f")
+			live="$live $h"
+		done
 	done
 	# by-hash files of older indexes stay a few days for clients mid-update, then go
 	for f in "$dir"/by-hash/SHA256/*; do
@@ -327,6 +333,17 @@ if grep -q $'\tsource$' "$W/selection.tsv"; then
 else
 	rm -rf "${dir:?}"
 fi
+
+# 3b. Contents files (apt-file and command-not-found read them): which package ships which path. Debian's
+# format: "path<tab>section/package[,section/package]", sorted by path; Architecture: all packages are listed in
+# every architecture's file and in Contents-all, as the archive does. Deterministic, so a run that changes
+# nothing leaves the signed Release as it was.
+mapfile -t CONTENTS_DEBS < <(awk -F'\t' '$5 != "source" {print $1}' "$W/selection.tsv")
+python3 "$HERE/make-contents.py" "$W" "$ARCHES" "${CONTENTS_DEBS[@]}"
+for arch in $ARCHES; do
+	cp -f "$W/Contents-$arch" "$D/$COMPONENT/Contents-$arch"
+done
+index_done "$D/$COMPONENT" "$COMPONENT" $(for arch in $ARCHES; do echo "Contents-$arch"; done)
 
 # 4. Release, signed. When nothing but the date would change, the signed files stay.
 {

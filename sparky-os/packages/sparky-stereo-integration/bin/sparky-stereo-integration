@@ -1,0 +1,183 @@
+#!/bin/bash
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/24
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/24
+# Runs the actions of the edition's integration packs (Dolphin right click menus) and keeps their one rule:
+# an action whose program is missing runs command-not-found and offers the package it names, with its own message
+# (Daniel, 2026-10-14, answer 6). Hiding such actions instead is the person's option, HideMissing.
+#   sparky-stereo-integration run PACK [ARG...] -- FILE...
+#   sparky-stereo-integration hide-missing [on|off|status|sync]
+#   sparky-stereo-integration packs
+#   sparky-stereo-integration install PACKAGE
+# A pack is /usr/share/sparky-stereo/integrations.d/PACK.conf (program=, worker=, menus=), its service
+# menus in /usr/share/kio/servicemenus, its strings in its own package. See the stereo-integrations skill.
+set -u
+CONFD=${SPARKY_STEREO_INTEGRATIONS_D:-/usr/share/sparky-stereo/integrations.d}
+MENUS=${SPARKY_STEREO_SERVICEMENUS:-/usr/share/kio/servicemenus}
+DIR=${SPARKY_STEREO_INTEGRATION_LANGDIR:-/usr/share/sparky/sparky-stereo-integration}
+SYSRC=${SPARKY_STEREO_INTEGRATION_SYSRC:-/etc/xdg/sparky-stereo-integrationrc}
+USERRC=${XDG_CONFIG_HOME:-$HOME/.config}/sparky-stereo-integrationrc
+USERMENUS=${XDG_DATA_HOME:-$HOME/.local/share}/kio/servicemenus
+MARK='X-Sparky-Stereo-Override=true'
+MAP=${SPARKY_STEREO_INTEGRATIONS_MAP:-/usr/share/sparky-stereo/integrations.map}
+
+LANGCODE=$(grep -m1 '^LANG=' /etc/default/locale 2>/dev/null | cut -d= -f2 | tr -d '"')
+LANGCODE=${LC_ALL:-${LC_MESSAGES:-${LANG:-$LANGCODE}}}
+LANGCODE=${LANGCODE%%.*}
+LANGCODE=${LANGCODE%%@*}
+if [ -f "$DIR/$LANGCODE" ]; then
+	. "$DIR/$LANGCODE"
+elif [ -f "$DIR/${LANGCODE%%_*}" ]; then
+	. "$DIR/${LANGCODE%%_*}"
+else
+	. "$DIR/en"
+fi
+
+have_ui() {
+	[ "${SPARKY_STEREO_INTEGRATION_UI:-auto}" != none ] && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v kdialog >/dev/null
+}
+
+rc_get() { # key: the user's file, then the system default
+	local f v
+	for f in "$USERRC" "$SYSRC"; do
+		[ -f "$f" ] || continue
+		v=$(sed -n "s/^$1=//p" "$f" | tail -n1)
+		[ -n "$v" ] && { echo "$v"; return; }
+	done
+	echo false
+}
+
+rc_set() {
+	mkdir -p "$(dirname "$USERRC")"
+	printf '[General]\n%s=%s\n' "$1" "$2" >"$USERRC"
+}
+
+conf_get() { # file key
+	sed -n "s/^$2=//p" "$1" | head -n1
+}
+
+# --- sync: the service menu overrides that carry the HideMissing option ---------------------------
+# On: each menu of a pack gets a copy in the user's folder with TryExec=program (read by a KIO that
+# knows TryExec) and, while the program is missing, an empty MimeType (so the published KIO, which
+# reads no TryExec, shows nothing either). Off: our copies go; a file of the person's own is never touched.
+sync_menus() {
+	local hide conf program menu src dst tmp
+	hide=$(rc_get HideMissing)
+	for conf in "$CONFD"/*.conf; do
+		[ -f "$conf" ] || continue
+		program=$(conf_get "$conf" program)
+		for menu in $(conf_get "$conf" menus); do
+			src=$MENUS/$menu
+			dst=$USERMENUS/$menu
+			if [ "$hide" != true ]; then
+				if [ -f "$dst" ] && grep -qx "$MARK" "$dst"; then rm -f "$dst"; fi
+				continue
+			fi
+			[ -f "$src" ] || continue
+			if [ -f "$dst" ] && ! grep -qx "$MARK" "$dst"; then continue; fi
+			tmp=$(mktemp)
+			if command -v "$program" >/dev/null 2>&1; then
+				awk -v p="$program" -v m="$MARK" '{print} /^\[Desktop Entry\]/ {print "TryExec=" p; print m}' "$src" >"$tmp"
+			else
+				awk -v p="$program" -v m="$MARK" '/^MimeType=/ {print "MimeType="; next} {print} /^\[Desktop Entry\]/ {print "TryExec=" p; print m}' "$src" >"$tmp"
+			fi
+			mkdir -p "$USERMENUS"
+			if ! cmp -s "$tmp" "$dst" 2>/dev/null; then cat "$tmp" >"$dst"; fi
+			rm -f "$tmp"
+		done
+	done
+}
+
+say() { # text: a KDE popup when there is a desktop, the terminal otherwise
+	if have_ui; then kdialog --title "$LOCAL1" --passivepopup "$1" 8 >/dev/null 2>&1 &
+	else echo "$1" >&2; fi
+}
+
+# --- the offer ---------------------------------------------------------------------------------------
+# command-not-found does the lookup and writes the message; we show its message as it is (Daniel, 2026-10-24).
+# One package named: "Install <package>" or "Cancel". Only after Cancel, or when it names no package, the hide option is
+# offered, as a secondary choice (never the first thing shown).
+offer() { # program
+	local program=$1 cnf msg pkgs set
+	cnf=/usr/lib/command-not-found
+	[ -x "$cnf" ] || cnf=$(command -v command-not-found 2>/dev/null || true)
+	msg=""
+	[ -n "$cnf" ] && msg=$("$cnf" -- "$program" 2>&1 | sed '/^$/d')
+	[ -n "$msg" ] || msg=$(printf "$LOCAL2" "$program")$'\n'$(printf "$LOCAL8" "$program")
+	pkgs=$(printf '%s\n' "$msg" | sed -n 's/.*apt install \([a-z0-9][a-z0-9.+-]*\).*/\1/p' | sort -u)
+	[ "$(printf '%s' "$pkgs" | grep -c .)" -eq 1 ] || pkgs=""
+	if ! have_ui; then
+		printf '%s\n' "$msg" >&2
+		return 127
+	fi
+	if [ -n "$pkgs" ]; then
+		if kdialog --title "$LOCAL1" --yes-label "$(printf "$LOCAL4" "$pkgs")" --no-label "$LOCAL6" --yesno "$msg"; then
+			# the AppCenter's own call: the program and the stereo packs listed for it, one install, in a terminal, with consent
+			set=$(awk -F'\t' -v p="$pkgs" '$1 == p {print $2}' "$MAP" 2>/dev/null)
+			install_packages "$pkgs" $set && sync_menus && say "$LOCAL9"
+			return 127
+		fi
+	else
+		kdialog --title "$LOCAL1" --msgbox "$msg"
+	fi
+	if kdialog --title "$LOCAL1" --yes-label "$LOCAL5" --no-label "$LOCAL10" --yesno "$LOCAL3"; then
+		rc_set HideMissing true; sync_menus; say "$LOCAL7"
+	fi
+	return 127
+}
+
+install_packages() {
+	if command -v konsole >/dev/null; then
+		konsole -e pkexec apt-get install -- "$@"
+	elif command -v x-terminal-emulator >/dev/null; then
+		x-terminal-emulator -e pkexec apt-get install -- "$@"
+	else
+		pkexec apt-get install -y -- "$@"
+	fi
+}
+
+cmd=${1:-}
+shift || true
+case "$cmd" in
+	run)
+		pack=${1:-}; shift || true
+		conf=$CONFD/$pack.conf
+		[ -f "$conf" ] || { echo "sparky-stereo-integration: no pack $pack" >&2; exit 2; }
+		program=$(conf_get "$conf" program)
+		worker=$(conf_get "$conf" worker)
+		if [ "$(rc_get HideMissing)" = true ]; then sync_menus; fi
+		if ! command -v "$program" >/dev/null 2>&1; then
+			offer "$program"
+			exit $?
+		fi
+		exec "$worker" "$@"
+		;;
+	install)
+		# the install route of the offer, for other callers (KRunner's missing program runner): the package, and the stereo packs
+		# listed for it, one apt call in a terminal; apt asks its own question there, which is the person's consent
+		pkg=${1:?package}
+		set=$(awk -F'\t' -v p="$pkg" '$1 == p {print $2}' "$MAP" 2>/dev/null)
+		install_packages "$pkg" $set && sync_menus
+		;;
+	hide-missing)
+		case "${1:-status}" in
+			on) rc_set HideMissing true; sync_menus ;;
+			off) rc_set HideMissing false; sync_menus ;;
+			sync) sync_menus ;;
+			status) rc_get HideMissing ;;
+			*) echo "usage: sparky-stereo-integration hide-missing on|off|status|sync" >&2; exit 2 ;;
+		esac
+		;;
+	packs)
+		for conf in "$CONFD"/*.conf; do
+			[ -f "$conf" ] || continue
+			program=$(conf_get "$conf" program)
+			if command -v "$program" >/dev/null 2>&1; then state=ready; else state=missing; fi
+			printf '%s\t%s\t%s\n' "$(basename "$conf" .conf)" "$program" "$state"
+		done
+		;;
+	*)
+		echo "usage: sparky-stereo-integration run PACK [ARG...] -- FILE... | install PACKAGE | hide-missing [on|off|status|sync] | packs" >&2
+		exit 2
+		;;
+esac

@@ -9,12 +9,17 @@
 # Never listed: hardware-found.list (the hardware setup installs those per machine), aptus.list
 # and base-remove.list (not installed), and emulation-3d.list (emulators install from APTus
 # Stereo AppCenter, never from the ISO; prepack.sh --final purges them).
-# Last update 2026/10/19: both developer tasks remain opt-in; only the OS-developer task depends on
+# Last update 2026/10/24: sparky-stereo-integrations, the meta of the stereo integration packs, read from integrations.tsv
+# (data packs in its Depends, native packs in the Recommends of the role tasks whose programs they serve; sparky-stereo-desktop
+# depends on it). --list-integrations names every pack and what carries it.
+# Earlier update 2026/10/19: both developer tasks remain opt-in; only the OS-developer task depends on
 # sparky-stereo-skills, for distribution maintainers and their human/local/hosted partners.
 # Earlier update 2026/10/14: each package gets its copyright file here (build.sh no longer writes it).
 # Earlier update 2026/10/07: role tasks task-sparky-stereo-<role> (and task-sparky-<role> for the
 # 2D programs of science and education), sparky-stereo-gaming transitional, sparky-stereo-tasks for tasksel
 import os, re, subprocess, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import integrations
 
 REPO = os.environ.get('REPO')
 if not REPO:
@@ -162,6 +167,20 @@ def read_roles():
             by[r][c[2] if len(c) > 2 and c[2] else '3d'].add(c[0])
     return by
 
+def read_integrations():
+    # the one list of the stereo integration packs: program, pack, kind (data or native), notes
+    return integrations.read()
+
+INTEGRATIONS = read_integrations()
+
+def packs_in_repository(kind):
+    # a pack of ours that the repository does not carry yet is left out and named, so a missing build is seen
+    names = [r['pack'] for r in INTEGRATIONS if r['kind'] == kind]
+    missing = [p for p in names if p not in RV]
+    if missing:
+        print('integration pack not in our repository, left out:', ' '.join(missing), file=sys.stderr)
+    return [p for p in names if p in RV]
+
 def available(pkgs):
     # in our repository, or known to apt (the lists already check theirs)
     out = subprocess.run(['apt-cache', 'show', '--no-all-versions'] + sorted(pkgs), capture_output=True, text=True).stdout
@@ -181,6 +200,8 @@ def tasks():
         stereo = sorted(RB[r]['3d'] | (RB[r]['2d'] if r not in SPLIT else set()))
         dep = ['sparky-stereo-desktop']
         rec = available(stereo)
+        # native integration packs ride with their program (integrations.tsv, kind native)
+        rec += [r['pack'] for r in INTEGRATIONS if r['kind'] == 'native' and r['program'] in set(stereo) and r['pack'] in RV]
         if r == 'gamer':
             dep += ['ffmpeg', 'libvulkan1', 'python3']
             rec = sorted(set(rec) | set(GAMING_LISTS) | {'sparky-stereo-game-performance'})
@@ -202,7 +223,7 @@ def tasks():
                 f'This task package installs the {who} programs of SparkyOS that have no stereo 3D version'
                 f' yet: {what}. Install it together with task-sparky-stereo-{r}; it never replaces our'
                 ' stereo builds.',
-                ['sparky-stereo-desktop'], available(sorted(RB[r]['2d'])))
+                ['sparky-stereo-desktop'], available(sorted(RB[r]['2d'])) + [x['pack'] for x in INTEGRATIONS if x['kind'] == 'native' and x['program'] in RB[r]['2d'] and x['pack'] in RV])
     return t
 
 # Breaks per meta-package: older builds that do not work with the stack we ship.
@@ -236,9 +257,13 @@ KERNEL_PROVIDES = {
 META = {
     'sparky-stereo-desktop': (
         'Sparky Stereo desktop',
-        'This meta package installs the desktop of Sparky Stereo OS: the look, console and system information of the edition, the Memory page in System Settings, time synchronisation, the Dolphin menu that converts audio files, VLC Stereo as the video player, and the applications beyond the KDE edition.',
-        ['sparky-stereo-audio-convert', 'sparky-stereo-cec', 'sparky-stereo-console', 'sparky-stereo-info', 'sparky-stereo-look', 'sparky-stereo-memory-kcm', 'sparky-stereo-power-profiles', 'sparky-stereo-time'] + lst('look') + OURS_PLAYER,
+        'This meta package installs the desktop of Sparky Stereo OS: the look, console and system information of the edition, the Memory page in System Settings, time synchronisation, the Dolphin menus (convert audio, and the stereo integration packs), VLC Stereo as the video player, and the applications beyond the KDE edition.',
+        ['sparky-stereo-audio-convert', 'sparky-stereo-cec', 'sparky-stereo-console', 'sparky-stereo-info', 'sparky-stereo-integrations', 'sparky-stereo-look', 'sparky-stereo-memory-kcm', 'sparky-stereo-power-profiles', 'sparky-stereo-time'] + lst('look') + OURS_PLAYER,
         [p for p in lst('apps') if p not in ROLED] + OURS_PLAYER_OUTPUT),
+    'sparky-stereo-integrations': (
+        'Sparky Stereo integrations',
+        'This meta package installs the stereo integration packs of Sparky Stereo OS: the Dolphin right click menus and other data that serve programs such as Hugin and MKVToolNix. Each pack waits inert until its program is installed, and offers the program when the person uses it without; the programs themselves come with the role tasks or the APTus Stereo AppCenter.',
+        ['sparky-stereo-integration'] + packs_in_repository('data'), []),
     'sparky-stereo-gaming': (
         'Sparky Stereo gaming (transitional package)',
         'This transitional package moves systems to task-sparky-stereo-gamer, the gamer task of Sparky Stereo OS. It can be removed.',
@@ -308,6 +333,12 @@ def main():
     if sys.argv[1:2] == ['--list']:
         print(' '.join(sorted(META)))
         return
+    if sys.argv[1:2] == ['--list-integrations']:
+        # pack, kind, program, what carries it, whether the repository has it
+        for r in INTEGRATIONS:
+            by = sorted(k for k, v in META.items() if r['pack'] in v[2] or r['pack'] in v[3])
+            print('\t'.join([r['pack'], r['kind'], r['program'], ' '.join(by) or '-', 'in-repository' if r['pack'] in RV else 'missing']))
+        return
     version, out = sys.argv[1:3]
     d = os.path.join(out, 'sparky-stereo-tasks', 'usr', 'share', 'tasksel', 'descs')
     os.makedirs(d, exist_ok=True)
@@ -341,6 +372,11 @@ def main():
         doc = os.path.join(d, 'usr', 'share', 'doc', pkg)
         os.makedirs(doc, exist_ok=True)
         open(os.path.join(doc, 'copyright'), 'w').write(COPYRIGHT)
+        if pkg == 'sparky-stereo-integrations':
+            # the AppCenter's install sets, from the same list (make-appcenter-entries.py writes the same text)
+            md = os.path.join(d, 'usr', 'share', 'sparky-stereo')
+            os.makedirs(md, exist_ok=True)
+            open(os.path.join(md, 'integrations.map'), 'w').write(integrations.appcenter_map(INTEGRATIONS, lambda p: p in RV))
         size = subprocess.run(['du', '-sk', '--exclude=DEBIAN', d], capture_output=True, text=True).stdout.split()[0]
         f = [('Package', pkg), ('Version', v), ('Architecture', 'all'), ('Maintainer', MAINT),
              ('Installed-Size', size)]
