@@ -39,10 +39,6 @@ printf -- '---\nname: zz-absent\ndescription: A skill whose package is absent.\n
 valid=$(for d in "$F"/*/; do head -n 1 "$d/SKILL.md" | grep -qx -- --- && echo x; done | wc -l)
 total=$(find "$F" -mindepth 1 -maxdepth 1 -type d | wc -l)
 echo "skills in the copy: $total, with a header: $valid"
-real_packages=$(for d in "$F"/*/; do
-	awk 'NR > 1 && /^---[ \t]*$/ {exit}
-		/^  requires-packages:/ {sub(/^  requires-packages:[ \t]*/, ""); print; exit}' "$d/SKILL.md"
-done | sed 's/|/ /g' | xargs)
 packages='zz-single-package zz-alternative-present'" $real_packages"
 export SPARKY_STEREO_PACKAGES="$packages"
 
