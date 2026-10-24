@@ -54,6 +54,35 @@ Last-Update: 2026-10-24
      {"video-frame-info", mp_property_video_frame_info},
      M_PROPERTY_ALIAS("video-format", "current-tracks/video/codec"),
      M_PROPERTY_ALIAS("video-codec", "current-tracks/video/codec-desc"),
+@@ -6467,25 +6478,16 @@
+     }
+ }
+ 
+-// Store the effective swap of the eyes of the playing file with the file (user.stereo-policy.swap-eyes), so that the
+-// correction is kept with it; the session's swap then reads as no change.
++// Keep the correction in the CLI's existing per-file playback state.
+ static void cmd_video_stereo_store_swap(void *p)
+ {
+     struct mp_cmd_ctx *cmd = p;
+     struct MPContext *mpctx = cmd->mpctx;
+ 
+-#if HAVE_STEREO_POLICY
+-    struct filter_opts *fopts = mp_get_config_group(NULL, mpctx->global, &filter_conf);
+-    bool swap = fopts->video_stereo_swap != fopts->video_stereo_swap_file;
+-    talloc_free(fopts);
+-
+-    char *path = mpctx->filename;
+-    if (path && !mp_is_url(bstr0(path)) && stereo_policy_set_file_swap_eyes(path, swap) == 0) {
+-        m_config_set_option_cli(mpctx->mconfig, bstr0("video-stereo-swap-file"), bstr0(swap ? "yes" : "no"), 0);
+-        m_config_set_option_cli(mpctx->mconfig, bstr0("video-stereo-swap"), bstr0("no"), 0);
++    if (mpctx->is_cli && mpctx->playing) {
++        mp_write_watch_later_conf(mpctx);
+         return;
+     }
+-#endif
+     cmd->success = false;
+ }
+ 
 --- a/player/loadfile.c
 +++ b/player/loadfile.c
 @@ -1794,6 +1794,9 @@

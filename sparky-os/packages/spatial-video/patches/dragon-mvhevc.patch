@@ -112,3 +112,21 @@ Last-Update: 2026-10-24
              }
          }
  
+@@ -410,6 +412,17 @@
+     }
+ 
+     Shortcut {
++        context: Qt.ApplicationShortcut
++        sequence: "Alt+Shift+W"
++        enabled: video.stereoVideo
++        onActivated: {
++            const swapped = !video.stereoSwapEyes
++            video.stereoSwapEyes = swapped
++            stereoState.setStereoSwap(player.source, swapped)
++        }
++    }
++
++    Shortcut {
+         // ApplicationShortcut needed to not be stolen by OverlayPopup instances
+         context: Qt.ApplicationShortcut
+         sequences: ["Space", Qt.Key_MediaPlay]
