@@ -1,0 +1,9 @@
+qt6-base (6.11.2+dfsg-5+stereo3d11) unstable; urgency=medium
+
+  * Sparky Stereo OS: a Wayland EGL window drawn as a pair by its engine
+    may say its pair is 3D content (the dynamic property
+    _q_stereo_content): the EGL implementation declares its two views as
+    full side by side and the window gets no desktop-depth mark, which
+    made Stereo KWin show a quad-buffer Qt Quick 3D window as a flat
+    picture (stereo3d-wayland-egl-content-pair). For the stereo fork of
+    KDAB's Stereo Demonstrator (ORDER 241, phase 2).
