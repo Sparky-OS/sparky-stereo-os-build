@@ -247,7 +247,7 @@ KCM.SimpleKCM {
             Layout.fillWidth: true
             wrapMode: Text.Wrap
             font: Kirigami.Theme.smallFont
-            text: i18nc("@info", "This is the same setting as Run Using Dedicated Graphics in the application menu. The other GPU is the one that does not draw the desktop. A change applies the next time the program starts.")
+            text: i18nc("@info", "This is the same setting as Run Using Dedicated Graphics in the application menu. The dedicated GPU is the discrete GPU; when the GPU the computer starts with is already discrete, the program stays on it. A change applies the next time the program starts.")
         }
         Kirigami.SearchField {
             visible: kcm.multiGpu

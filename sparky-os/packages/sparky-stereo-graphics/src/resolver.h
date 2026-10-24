@@ -67,6 +67,7 @@ public:
 private:
     Resolution make(int index, const QString &reason) const;
     int firstOfKind(GpuKind kind) const;
+    int defaultIndex() const;
 
     QList<Gpu> m_gpus;
     QString m_savedMain;

@@ -126,6 +126,17 @@ int Resolver::mainIndex() const
     return automaticMainIndex();
 }
 
+int Resolver::defaultIndex() const
+{
+    // switcheroo-control marks the boot VGA as the Default GPU, and the only GPU when there is one
+    for (int i = 0; i < m_gpus.size(); ++i) {
+        if (m_gpus.at(i).bootVga) {
+            return i;
+        }
+    }
+    return mainIndex();
+}
+
 int Resolver::firstOfKind(GpuKind kind) const
 {
     for (int i = 0; i < m_gpus.size(); ++i) {
@@ -241,16 +252,17 @@ Resolution Resolver::resolveApp(const AppEntry &entry, const GraphicsSettings &s
         if (main < 0) {
             return {};
         }
-        // KDE's key is relative to the default GPU: the first GPU of the opposite kind, else any other
-        const GpuKind opposite = m_gpus.at(main).kind == GpuKind::Integrated ? GpuKind::Discrete : GpuKind::Integrated;
-        int index = -1;
-        for (int i = 0; i < m_gpus.size() && index < 0; ++i) {
-            if (i != main && m_gpus.at(i).usable() && m_gpus.at(i).kind == opposite) {
-                index = i;
-            }
+        // KDE's meaning of the key, as KIO's launcher applies it (gpudetection.cpp): the Desktop Entry Specification's
+        // PrefersNonDefaultGPU "prefers to be run on a more powerful discrete GPU if available", so the first discrete
+        // GPU; nothing to do when the default GPU (switcheroo-control's Default, the boot VGA) is discrete; with no
+        // discrete GPU, the first GPU other than the default
+        const int defaultGpu = defaultIndex();
+        if (m_gpus.at(defaultGpu).kind == GpuKind::Discrete) {
+            return make(main, u"app"_s);
         }
+        int index = firstOfKind(GpuKind::Discrete);
         for (int i = 0; i < m_gpus.size() && index < 0; ++i) {
-            if (i != main && m_gpus.at(i).usable()) {
+            if (i != defaultGpu && m_gpus.at(i).usable()) {
                 index = i;
             }
         }

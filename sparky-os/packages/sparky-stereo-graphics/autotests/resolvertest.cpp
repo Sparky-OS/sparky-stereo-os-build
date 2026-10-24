@@ -388,15 +388,37 @@ void ResolverTest::appPreferences()
     QCOMPARE(r.reason, u"app"_s);
     QVERIFY(!r.environment.isEmpty());
 
-    // "the other GPU" is relative to the main one, as KDE's key is relative to the default
+    // KDE's meaning of the key (Desktop Entry Specification: "a more powerful discrete GPU if available"; KIO's
+    // gpudetection.cpp): the first discrete GPU, also when the person made it the main GPU, so no variables then
     Resolver nvidiaMain(read(SysfsFixture::host()), u"pci-0000:01:00.0"_s, PowerProfile::Balanced);
-    QCOMPARE(nvidiaMain.resolveApp(app, settings).gpuIndex, 0);
+    r = nvidiaMain.resolveApp(app, settings);
+    QCOMPARE(r.gpuIndex, 1);
+    QVERIFY(r.environment.isEmpty());
 
-    // three GPUs: the first of the opposite kind
+    // three GPUs: the first discrete one, whichever GPU draws the desktop
     Resolver three(read(SysfsFixture::three()), QString(), PowerProfile::Balanced);
     QCOMPARE(three.resolveApp(app, settings).gpuIndex, 1);
     Resolver threeNvidiaMain(read(SysfsFixture::three()), u"pci-0000:01:00.0"_s, PowerProfile::Balanced);
-    QCOMPARE(threeNvidiaMain.resolveApp(app, settings).gpuIndex, 0);
+    QCOMPARE(threeNvidiaMain.resolveApp(app, settings).gpuIndex, 1);
+    Resolver threeAmdMain(read(SysfsFixture::three()), u"pci-0000:02:00.0"_s, PowerProfile::Balanced);
+    QCOMPARE(threeAmdMain.resolveApp(app, settings).gpuIndex, 1);
+
+    // the default GPU (switcheroo-control's Default: the boot VGA) is discrete: the program stays where it is
+    QList<FixtureGpu> desktop = SysfsFixture::host();
+    desktop[0].bootVga = false;
+    desktop[1].bootVga = true;
+    Resolver discreteDefault(read(desktop), QString(), PowerProfile::Balanced);
+    r = discreteDefault.resolveApp(app, settings);
+    QCOMPARE(r.gpuIndex, discreteDefault.mainIndex());
+    QVERIFY(r.environment.isEmpty());
+    // two integrated GPUs and no discrete one: the first GPU other than the default
+    FixtureGpu carrizo = SysfsFixture::a10()[0];
+    carrizo.card = 1;
+    carrizo.bootVga = false;
+    const QList<Gpu> twoIntegrated = read({SysfsFixture::intel(), carrizo});
+    QCOMPARE(twoIntegrated[1].kind, GpuKind::Integrated);
+    Resolver integrated(twoIntegrated, QString(), PowerProfile::Balanced);
+    QCOMPARE(integrated.resolveApp(app, settings).gpuIndex, 1);
 
     // MainGpu keeps the program on the main GPU whatever the category and the profile say
     settings.setRenderChoice(Category::Players, u"discrete"_s);
