@@ -49,20 +49,32 @@ int main(int argc, char **argv)
     for (const FixtureGpu &gpu : gpus) {
         fixture.add(gpu);
     }
+    // the A10 is Daniel's Lenovo ideapad 310-15ABR, machine type 80ST; the others are any make
+    if (name == u"a10"_s) {
+        fixture.setDmi("LENOVO", "80ST");
+    } else {
+        fixture.setDmi("Example Computers", "Example 1");
+    }
     // sysfs symlinks hold absolute paths into the temporary tree: rebuild them for the target
     const QString target = QString::fromLocal8Bit(argv[2]);
     QDir().mkpath(target);
     copyTree(fixture.root(), target);
-    // re-point class/drm/cardN/device at the copy
-    const QStringList cards = QDir(target + u"/sys/class/drm"_s).entryList({u"card[0-9]*"_s}, QDir::Dirs | QDir::NoDotAndDotDot);
-    for (const QString &card : cards) {
-        const QString link = target + u"/sys/class/drm/"_s + card + u"/device"_s;
+    // re-point class/drm/cardN/device and bus/pci/devices/SLOT at the copy
+    const auto repoint = [&target](const QString &link) {
         if (QFileInfo(link).isSymLink()) {
             const QString old = QFileInfo(link).symLinkTarget();
             const int at = old.indexOf(u"/sys/devices/"_s);
             QFile::remove(link);
             QFile::link(target + old.mid(at), link);
         }
+    };
+    const QStringList cards = QDir(target + u"/sys/class/drm"_s).entryList({u"card[0-9]*"_s}, QDir::Dirs | QDir::NoDotAndDotDot);
+    for (const QString &card : cards) {
+        repoint(target + u"/sys/class/drm/"_s + card + u"/device"_s);
+    }
+    const QStringList pciSlots = QDir(target + u"/sys/bus/pci/devices"_s).entryList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::System);
+    for (const QString &slot : pciSlots) {
+        repoint(target + u"/sys/bus/pci/devices/"_s + slot);
     }
     return 0;
 }

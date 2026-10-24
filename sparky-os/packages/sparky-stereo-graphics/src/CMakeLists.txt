@@ -3,6 +3,7 @@
 add_library(sparkystereo_graphics STATIC
     gpuinventory.cpp gpuinventory.h
     graphicssettings.cpp graphicssettings.h
+    machinerecord.cpp machinerecord.h
     appentries.cpp appentries.h
     resolver.cpp resolver.h
     powerprofiles.cpp powerprofiles.h
@@ -17,3 +18,8 @@ target_link_libraries(kcm_sparkystereo_graphics PRIVATE sparkystereo_graphics KF
 add_executable(sparky-stereo-gpu-env cli/gpuenv.cpp)
 target_link_libraries(sparky-stereo-gpu-env PRIVATE sparkystereo_graphics)
 install(TARGETS sparky-stereo-gpu-env DESTINATION ${KDE_INSTALL_BINDIR})
+
+add_executable(sparky-stereo-gpu-record cli/gpurecord.cpp)
+target_compile_definitions(sparky-stereo-gpu-record PRIVATE SPARKY_MACHINES_DIR="${KDE_INSTALL_FULL_DATADIR}/sparky-stereo-graphics/machines")
+target_link_libraries(sparky-stereo-gpu-record PRIVATE sparkystereo_graphics)
+install(TARGETS sparky-stereo-gpu-record DESTINATION ${KDE_INSTALL_BINDIR})

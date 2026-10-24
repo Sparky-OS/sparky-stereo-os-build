@@ -35,11 +35,39 @@ QString powerProfileToString(PowerProfile profile)
     return u"balanced"_s;
 }
 
-Resolver::Resolver(const QList<Gpu> &gpus, const QString &savedMainGpu, PowerProfile profile)
+Resolver::Resolver(const QList<Gpu> &gpus, const QString &savedMainGpu, PowerProfile profile, const QString &measuredBest)
     : m_gpus(gpus)
     , m_savedMain(savedMainGpu)
     , m_profile(profile)
+    , m_measuredBest(measuredBest)
 {
+}
+
+int Resolver::measuredIndex() const
+{
+    if (m_measuredBest.isEmpty()) {
+        return -1;
+    }
+    for (int i = 0; i < m_gpus.size(); ++i) {
+        const Gpu &gpu = m_gpus.at(i);
+        const QString pciId = QStringLiteral("%1:%2").arg(gpu.vendorId, 4, 16, QLatin1Char('0')).arg(gpu.deviceId, 4, 16, QLatin1Char('0'));
+        if ((gpu.id == m_measuredBest || pciId == m_measuredBest) && gpu.usable()) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+int Resolver::presentingIndex() const
+{
+    const int measured = measuredIndex();
+    if (measured >= 0) {
+        return measured;
+    }
+    // Not measured here: the discrete GPU, which libplacebo also prefers, and which drew 3D film with far
+    // fewer dropped frames than the integrated GPU that drives the screens on the A10 (ORDER 234)
+    const int discrete = firstOfKind(GpuKind::Discrete);
+    return discrete >= 0 ? discrete : mainIndex();
 }
 
 const QList<Gpu> &Resolver::gpus() const
@@ -108,8 +136,13 @@ int Resolver::firstOfKind(GpuKind kind) const
     return -1;
 }
 
-QString Resolver::automaticTarget(PowerProfile profile)
+QString Resolver::automaticTarget(Category category, PowerProfile profile, bool stereo)
 {
+    // Daniel, 2026-10-24: players, and any program while it presents 3D, draw on the GPU measured best on the
+    // machine whatever the power profile, battery included; the person's choice wins over it
+    if (category == Category::Players || stereo) {
+        return u"measured"_s;
+    }
     switch (profile) {
     case PowerProfile::PowerSaver:
         return u"integrated"_s;
@@ -118,7 +151,7 @@ QString Resolver::automaticTarget(PowerProfile profile)
     case PowerProfile::Balanced:
         break;
     }
-    // the GPU that draws the desktop: ORDER 223's measured default, one constant to change
+    // the GPU that draws the desktop: no hand-over between GPUs for games, browsers and other programs
     return u"main"_s;
 }
 
@@ -134,7 +167,7 @@ Resolution Resolver::make(int index, const QString &reason) const
     return resolution;
 }
 
-Resolution Resolver::resolveChoice(const QString &choice) const
+Resolution Resolver::resolveChoice(const QString &choice, Category category, bool stereo) const
 {
     const int main = mainIndex();
     if (main < 0) {
@@ -151,10 +184,13 @@ Resolution Resolver::resolveChoice(const QString &choice) const
     int index = -1;
     QString reason = u"choice"_s;
     bool missing = false;
-    if (choice == u"auto"_s) {
-        const QString target = automaticTarget(m_profile);
+    if (choice == u"auto"_s || choice == u"profile"_s) {
+        const QString target = choice == u"profile"_s ? automaticTarget(Category::Other, m_profile) : automaticTarget(category, m_profile, stereo);
         reason = u"profile:"_s + powerProfileToString(m_profile);
-        if (target == u"integrated"_s) {
+        if (target == u"measured"_s) {
+            index = presentingIndex();
+            reason = measuredIndex() >= 0 ? u"measured"_s : u"unmeasured"_s;
+        } else if (target == u"integrated"_s) {
             index = firstOfKind(GpuKind::Integrated);
         } else if (target == u"discrete"_s) {
             index = firstOfKind(GpuKind::Discrete);
@@ -180,12 +216,12 @@ Resolution Resolver::resolveChoice(const QString &choice) const
     return resolution;
 }
 
-Resolution Resolver::resolveCategory(Category category, const GraphicsSettings &settings) const
+Resolution Resolver::resolveCategory(Category category, const GraphicsSettings &settings, bool stereo) const
 {
-    return resolveChoice(settings.renderChoice(category));
+    return resolveChoice(settings.renderChoice(category), category, stereo);
 }
 
-Resolution Resolver::resolveApp(const AppEntry &entry, const GraphicsSettings &settings) const
+Resolution Resolver::resolveApp(const AppEntry &entry, const GraphicsSettings &settings, bool stereo) const
 {
     const int main = mainIndex();
     switch (entry.preference) {
@@ -213,7 +249,7 @@ Resolution Resolver::resolveApp(const AppEntry &entry, const GraphicsSettings &s
     case AppPreference::Unset:
         break;
     }
-    return resolveCategory(entry.category, settings);
+    return resolveCategory(entry.category, settings, stereo);
 }
 
 QString Resolver::kwinDrmDevices() const

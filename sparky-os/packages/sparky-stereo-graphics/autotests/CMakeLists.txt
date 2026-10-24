@@ -7,6 +7,12 @@ foreach(name gpuinventory settings resolver appentries)
     add_test(NAME ${name}test COMMAND ${name}test)
 endforeach()
 
+add_executable(machinerecordtest machinerecordtest.cpp fixtures.h)
+target_include_directories(machinerecordtest PRIVATE ../src)
+target_compile_definitions(machinerecordtest PRIVATE MACHINES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../share/machines")
+target_link_libraries(machinerecordtest sparkystereo_graphics Qt::Test KF6::ConfigCore)
+add_test(NAME machinerecordtest COMMAND machinerecordtest)
+
 add_executable(makefixture makefixture.cpp fixtures.h)
 target_link_libraries(makefixture Qt::Test)
 add_test(NAME clitest COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/cli-test.sh)
@@ -18,7 +24,7 @@ set_tests_properties(clitest PROPERTIES ENVIRONMENT "BIN=${CMAKE_BINARY_DIR}/bin
 
 add_executable(graphicskcmtest graphicskcmtest.cpp ../src/graphicskcm.cpp ../src/graphicskcm.h fixtures.h)
 target_include_directories(graphicskcmtest PRIVATE ../src)
-target_compile_definitions(graphicskcmtest PRIVATE SOURCE_UI="${CMAKE_CURRENT_SOURCE_DIR}/../src/ui/main.qml")
+target_compile_definitions(graphicskcmtest PRIVATE SOURCE_UI="${CMAKE_CURRENT_SOURCE_DIR}/../src/ui/main.qml" MACHINES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../share/machines")
 target_link_libraries(graphicskcmtest sparkystereo_graphics Qt::Test Qt::Quick KF6::Service KF6::CoreAddons KF6::I18n KF6::KCMUtils KF6::KCMUtilsQuick)
 add_test(NAME graphicskcmtest COMMAND graphicskcmtest)
 

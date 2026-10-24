@@ -1,0 +1,17 @@
+# Created by Daniel Ramos (Capitain Jack) 2026/10/24
+# Copyright 2026 under the GNU GPL3 License
+# The record shipped for this model of computer, when the machine has no record of its own: which GPU players
+# and 3D draw best on, and whether decoded video may be copied back (/etc/xdg/sparky-stereo-graphicsrc).
+# A record measured or set on this machine is never replaced; a shipped record for another model goes.
+[Unit]
+Description=Graphics page: the measured GPU record of this computer
+Documentation=file:/usr/share/doc/sparky-stereo-graphics/README.md
+Before=display-manager.service systemd-user-sessions.service
+ConditionPathIsReadWrite=/etc
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/sparky-stereo-gpu-record --apply-known
+
+[Install]
+WantedBy=multi-user.target

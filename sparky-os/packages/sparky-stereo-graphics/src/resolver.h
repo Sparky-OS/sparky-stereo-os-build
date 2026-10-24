@@ -25,14 +25,15 @@ struct Resolution {
     int gpuIndex = -1; // into the inventory, -1 when the machine has no GPU
     bool isMain = true;
     bool missing = false; // the saved choice names a GPU that is not here
-    QString reason; // "app", "choice", "profile:performance", "only-gpu", ...
+    QString reason; // "app", "choice", "profile:performance", "measured", "unmeasured", "only-gpu", ...
     QStringList environment; // KEY=value lines; empty for the main GPU
 };
 
 class Resolver
 {
 public:
-    Resolver(const QList<Gpu> &gpus, const QString &savedMainGpu, PowerProfile profile);
+    // measuredBest: the machine record's GPU for players and 3D ("pci-0000:03:00.0" or "1002:6660"), empty when not measured
+    Resolver(const QList<Gpu> &gpus, const QString &savedMainGpu, PowerProfile profile, const QString &measuredBest = QString());
 
     // The GPU that draws the desktop after the next login
     int mainIndex() const;
@@ -40,13 +41,20 @@ public:
     int automaticMainIndex() const;
     int indexOfId(const QString &id) const;
 
-    // Pins every choice to a GPU: "auto" follows the profile, "integrated"/"discrete" pick a kind, an id picks a GPU
-    Resolution resolveChoice(const QString &choice) const;
-    Resolution resolveCategory(Category category, const GraphicsSettings &settings) const;
-    Resolution resolveApp(const AppEntry &entry, const GraphicsSettings &settings) const;
+    // The GPU the machine record names, when it is here and usable, else -1
+    int measuredIndex() const;
+    // Where players and 3D go on Automatic: the measured GPU, else the first discrete GPU, else the main GPU
+    int presentingIndex() const;
 
-    // What Automatic means now: "integrated", "main" (the balanced default) or "discrete"
-    static QString automaticTarget(PowerProfile profile);
+    // Pins every choice to a GPU. "auto" is Automatic for that kind of program (stereo: it presents 3D),
+    // "profile" follows the power profile, "integrated"/"discrete" pick a kind, an id picks a GPU
+    Resolution resolveChoice(const QString &choice, Category category = Category::Other, bool stereo = false) const;
+    Resolution resolveCategory(Category category, const GraphicsSettings &settings, bool stereo = false) const;
+    Resolution resolveApp(const AppEntry &entry, const GraphicsSettings &settings, bool stereo = false) const;
+
+    // What Automatic means for a kind of program now: "measured" (players, and any program while it
+    // presents 3D, whatever the profile), else "integrated", "main" or "discrete" by the power profile
+    static QString automaticTarget(Category category, PowerProfile profile, bool stereo = false);
 
     // Value of KWIN_DRM_DEVICES that puts the main GPU first, or empty when the saved choice is Automatic or missing
     QString kwinDrmDevices() const;
@@ -63,6 +71,7 @@ private:
     QList<Gpu> m_gpus;
     QString m_savedMain;
     PowerProfile m_profile;
+    QString m_measuredBest;
 };
 
 }

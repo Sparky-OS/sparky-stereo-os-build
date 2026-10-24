@@ -3,17 +3,21 @@
 
 // sparky-stereo-gpu-env: what the Graphics page decides, for programs that start programs.
 //
-//   sparky-stereo-gpu-env [--category players|games|browsers|other | --app ID.desktop | --choice auto|integrated|discrete|pci-...]
-//                         [--profile power-saver|balanced|performance] [--root DIR]
+//   sparky-stereo-gpu-env [--category players|games|browsers|other | --app ID.desktop | --choice auto|profile|integrated|discrete|pci-...]
+//                         [--3d] [--profile power-saver|balanced|performance] [--root DIR]
 //                         [--print env|gpu|render-node|card-node|id|reason] [--shell]
 //   sparky-stereo-gpu-env --session     the KWIN_DRM_DEVICES line for the next login, nothing when Automatic
 //   sparky-stereo-gpu-env --list        the GPUs, one line each (--json for a machine reader)
+//
+// --3d: the program presents 3D, so Automatic is the GPU measured best on this machine (the machine record,
+// sparky-stereo-gpu-record), whatever the power profile, as it always is for players.
 //
 // Exit status: 0 done, 1 no usable GPU, 2 wrong arguments.
 
 #include "appentries.h"
 #include "gpuinventory.h"
 #include "graphicssettings.h"
+#include "machinerecord.h"
 #include "powerprofiles.h"
 #include "resolver.h"
 
@@ -36,7 +40,7 @@ static QString shellQuote(const QString &text)
 static int usage(const QString &problem)
 {
     QTextStream err(stderr);
-    err << problem << "\nUsage: sparky-stereo-gpu-env [--category C | --app ID | --choice X] [--profile P] [--root DIR] [--print what] [--shell] | --session | --list [--json]\n";
+    err << problem << "\nUsage: sparky-stereo-gpu-env [--category C | --app ID | --choice X] [--3d] [--profile P] [--root DIR] [--print what] [--shell] | --session | --list [--json]\n";
     return 2;
 }
 
@@ -55,6 +59,7 @@ int main(int argc, char **argv)
     bool session = false;
     bool list = false;
     bool json = false;
+    bool stereo = false;
     for (int i = 0; i < args.size(); ++i) {
         const QString &arg = args.at(i);
         const auto value = [&]() -> QString {
@@ -80,6 +85,8 @@ int main(int argc, char **argv)
             list = true;
         } else if (arg == u"--json"_s) {
             json = true;
+        } else if (arg == u"--3d"_s) {
+            stereo = true;
         } else {
             return usage(u"Unknown argument %1"_s.arg(arg));
         }
@@ -88,7 +95,8 @@ int main(int argc, char **argv)
     const QList<Gpu> gpus = GpuInventory::read(root);
     const GraphicsSettings settings;
     const PowerProfile powerProfile = profile.isEmpty() ? PowerProfiles::active() : powerProfileFromString(profile);
-    const Resolver resolver(gpus, settings.mainGpu(), powerProfile);
+    const MachineRecord record = MachineRecord::read();
+    const Resolver resolver(gpus, settings.mainGpu(), powerProfile, record.bestGpu);
     QTextStream out(stdout);
 
     if (session) {
@@ -101,6 +109,7 @@ int main(int argc, char **argv)
 
     if (list) {
         const int main = resolver.mainIndex();
+        const int measured = resolver.measuredIndex();
         QJsonArray array;
         for (int i = 0; i < gpus.size(); ++i) {
             const Gpu &gpu = gpus.at(i);
@@ -112,7 +121,8 @@ int main(int argc, char **argv)
             if (json) {
                 array.append(QJsonObject{{u"id"_s, gpu.id}, {u"name"_s, gpu.name}, {u"vendor"_s, gpu.vendor}, {u"chip"_s, gpu.chip}, {u"driver"_s, gpu.driver},
                                          {u"kind"_s, kind}, {u"cardNode"_s, gpu.cardNode}, {u"renderNode"_s, gpu.renderNode}, {u"canRender"_s, gpu.canRender},
-                                         {u"bootVga"_s, gpu.bootVga}, {u"main"_s, i == main}, {u"connectors"_s, connectors}});
+                                         {u"bootVga"_s, gpu.bootVga}, {u"main"_s, i == main}, {u"measuredBest"_s, i == measured},
+                                         {u"connectors"_s, connectors}});
             } else {
                 out << gpu.id << '\t' << kind << '\t' << gpu.driver << '\t' << gpu.cardNode << '\t' << (gpu.canRender ? gpu.renderNode : u"-"_s) << '\t'
                     << (i == main ? u"main"_s : u"-"_s) << '\t' << gpu.name << '\n';
@@ -130,12 +140,12 @@ int main(int argc, char **argv)
         if (entry.id.isEmpty()) {
             return usage(u"No desktop entry %1"_s.arg(appId));
         }
-        resolution = resolver.resolveApp(entry, settings);
+        resolution = resolver.resolveApp(entry, settings, stereo);
     } else if (!choice.isEmpty()) {
         if (!GraphicsSettings::validChoice(choice)) {
             return usage(u"Not a choice: %1"_s.arg(choice));
         }
-        resolution = resolver.resolveChoice(choice);
+        resolution = resolver.resolveChoice(choice, Category::Other, stereo);
     } else {
         const QList<Category> categories = allCategories();
         Category selected = Category::Other;
@@ -149,7 +159,7 @@ int main(int argc, char **argv)
         if (!known) {
             return usage(u"Not a category: %1"_s.arg(category));
         }
-        resolution = resolver.resolveCategory(selected, settings);
+        resolution = resolver.resolveCategory(selected, settings, stereo);
     }
     if (resolution.gpuIndex < 0) {
         return 1;

@@ -86,6 +86,9 @@ public:
         }
         QDir().mkpath(m_dir.filePath(QStringLiteral("sys/bus/pci/drivers/") + gpu.driver));
         QFile::link(QStringLiteral("../../../../bus/pci/drivers/") + gpu.driver, m_dir.filePath(device + QStringLiteral("/driver")));
+        // the PCI bus lists every device, with or without a driver, as the kernel does
+        QDir().mkpath(m_dir.filePath(QStringLiteral("sys/bus/pci/devices")));
+        QFile::link(m_dir.filePath(device), m_dir.filePath(QStringLiteral("sys/bus/pci/devices/") + gpu.slot));
         const QString cls = QStringLiteral("sys/class/drm/") + card;
         QDir().mkpath(m_dir.filePath(cls));
         QFile::link(m_dir.filePath(device), m_dir.filePath(cls + QStringLiteral("/device")));
@@ -98,6 +101,13 @@ public:
                 write(dir + QStringLiteral("/edid"), "");
             }
         }
+    }
+
+    // The firmware's model strings, as the kernel shows them in /sys/class/dmi/id
+    void setDmi(const QByteArray &vendor, const QByteArray &product)
+    {
+        write(QStringLiteral("sys/class/dmi/id/sys_vendor"), vendor + '\n');
+        write(QStringLiteral("sys/class/dmi/id/product_name"), product + '\n');
     }
 
     void write(const QString &relative, const QByteArray &data)

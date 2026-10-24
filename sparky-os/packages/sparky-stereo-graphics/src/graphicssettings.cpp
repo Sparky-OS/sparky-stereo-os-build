@@ -38,7 +38,20 @@ static bool validGpuId(const QString &id)
 
 bool GraphicsSettings::validChoice(const QString &choice)
 {
-    return choice == u"auto"_s || choice == u"integrated"_s || choice == u"discrete"_s || validGpuId(choice);
+    return choice == u"auto"_s || choice == u"profile"_s || choice == u"integrated"_s || choice == u"discrete"_s || validGpuId(choice);
+}
+
+std::optional<bool> GraphicsSettings::parseBool(const QString &text)
+{
+    // the forms libmedia-gpu-route reads, so the page and the players agree on every hand-written value
+    const QString value = text.trimmed().toLower();
+    if (value == u"true"_s || value == u"on"_s || value == u"yes"_s || value == u"1"_s) {
+        return true;
+    }
+    if (value == u"false"_s || value == u"off"_s || value == u"no"_s || value == u"0"_s) {
+        return false;
+    }
+    return std::nullopt;
 }
 
 GraphicsSettings::GraphicsSettings()
@@ -57,6 +70,17 @@ GraphicsSettings::GraphicsSettings()
             m_choices[i] = choice;
         }
     }
+    m_copyBack = parseBool(config.group(u"Decoding"_s).readEntry("CopyBack", QString()));
+}
+
+std::optional<bool> GraphicsSettings::copyBack() const
+{
+    return m_copyBack;
+}
+
+void GraphicsSettings::setCopyBack(std::optional<bool> value)
+{
+    m_copyBack = value;
 }
 
 QString GraphicsSettings::mainGpu() const
@@ -85,13 +109,14 @@ void GraphicsSettings::setRenderChoice(Category category, const QString &choice)
 
 bool GraphicsSettings::isDefault() const
 {
-    return m_mainGpu.isEmpty() && m_choices == QStringList(s_keys.size(), u"auto"_s);
+    return m_mainGpu.isEmpty() && m_choices == QStringList(s_keys.size(), u"auto"_s) && !m_copyBack.has_value();
 }
 
 void GraphicsSettings::resetToDefaults()
 {
     m_mainGpu.clear();
     m_choices = QStringList(s_keys.size(), u"auto"_s);
+    m_copyBack.reset();
 }
 
 bool GraphicsSettings::save()
@@ -110,6 +135,12 @@ bool GraphicsSettings::save()
         } else {
             render.writeEntry(s_keys.at(i), m_choices.at(i));
         }
+    }
+    KConfigGroup decoding = config.group(u"Decoding"_s);
+    if (m_copyBack.has_value()) {
+        decoding.writeEntry("CopyBack", *m_copyBack);
+    } else {
+        decoding.deleteEntry("CopyBack");
     }
     return config.sync();
 }

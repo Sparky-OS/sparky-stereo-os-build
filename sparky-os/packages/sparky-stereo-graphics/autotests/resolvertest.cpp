@@ -16,6 +16,11 @@ private Q_SLOTS:
     void initTestCase();
     void profileNames();
     void automaticTargets();
+    void playersOnTheMeasuredGpu_data();
+    void playersOnTheMeasuredGpu();
+    void threeDFollowsTheMeasuredGpu();
+    void followThePowerProfileIsAChoice();
+    void oneGpuIgnoresTheRecord();
     void automaticMain_data();
     void automaticMain();
     void profileMapping_data();
@@ -66,9 +71,120 @@ void ResolverTest::profileNames()
 
 void ResolverTest::automaticTargets()
 {
-    QCOMPARE(Resolver::automaticTarget(PowerProfile::PowerSaver), u"integrated"_s);
-    QCOMPARE(Resolver::automaticTarget(PowerProfile::Balanced), u"main"_s);
-    QCOMPARE(Resolver::automaticTarget(PowerProfile::Performance), u"discrete"_s);
+    // Daniel, 2026-10-24: players, and any program presenting 3D, on the GPU measured best, battery included
+    for (PowerProfile profile : {PowerProfile::PowerSaver, PowerProfile::Balanced, PowerProfile::Performance}) {
+        QCOMPARE(Resolver::automaticTarget(Category::Players, profile), u"measured"_s);
+        QCOMPARE(Resolver::automaticTarget(Category::Players, profile, true), u"measured"_s);
+        for (Category category : {Category::Games, Category::Browsers, Category::Other}) {
+            QCOMPARE(Resolver::automaticTarget(category, profile, true), u"measured"_s);
+        }
+    }
+    // the power profile keeps steering the other kinds
+    for (Category category : {Category::Games, Category::Browsers, Category::Other}) {
+        QCOMPARE(Resolver::automaticTarget(category, PowerProfile::PowerSaver), u"integrated"_s);
+        QCOMPARE(Resolver::automaticTarget(category, PowerProfile::Balanced), u"main"_s);
+        QCOMPARE(Resolver::automaticTarget(category, PowerProfile::Performance), u"discrete"_s);
+    }
+}
+
+void ResolverTest::playersOnTheMeasuredGpu_data()
+{
+    QTest::addColumn<int>("machine"); // 1 a10, 2 host, 4 three
+    QTest::addColumn<QString>("record"); // the machine record's BestGpu
+    QTest::addColumn<QString>("profile");
+    QTest::addColumn<int>("expected");
+    QTest::addColumn<QString>("reason");
+    QTest::addColumn<QString>("environmentContains");
+    // the A10: the R5 M430 (Hainan) dropped about a ninth of the frames the Carrizo that drives the screens did (ORDER 234)
+    for (const QString &profile : {u"power-saver"_s, u"balanced"_s, u"performance"_s}) {
+        QTest::addRow("a10 record by id, %s", qPrintable(profile)) << 1 << u"1002:6660"_s << profile << 1 << u"measured"_s << u"DRI_PRIME=pci-0000_03_00_0"_s;
+        QTest::addRow("a10 record by slot, %s", qPrintable(profile)) << 1 << u"pci-0000:03:00.0"_s << profile << 1 << u"measured"_s << u"DRI_PRIME=pci-0000_03_00_0"_s;
+        // without a record: the discrete GPU, also on battery
+        QTest::addRow("a10 not measured, %s", qPrintable(profile)) << 1 << QString() << profile << 1 << u"unmeasured"_s << u"DRI_PRIME=pci-0000_03_00_0"_s;
+        QTest::addRow("host not measured, %s", qPrintable(profile)) << 2 << QString() << profile << 1 << u"unmeasured"_s << u"__NV_PRIME_RENDER_OFFLOAD=1"_s;
+        // a record that names the GPU that draws the desktop keeps players there, even on performance
+        QTest::addRow("host record names the APU, %s", qPrintable(profile)) << 2 << u"1002:1638"_s << profile << 0 << u"measured"_s << QString();
+        QTest::addRow("three record names the third, %s", qPrintable(profile)) << 4 << u"pci-0000:02:00.0"_s << profile << 2 << u"measured"_s << u"DRI_PRIME=pci-0000_02_00_0"_s;
+        // a record for a GPU that is not here: as if not measured
+        QTest::addRow("a10 record names a missing GPU, %s", qPrintable(profile)) << 1 << u"10de:2504"_s << profile << 1 << u"unmeasured"_s << u"DRI_PRIME=pci-0000_03_00_0"_s;
+    }
+}
+
+void ResolverTest::playersOnTheMeasuredGpu()
+{
+    QFETCH(int, machine);
+    QFETCH(QString, record);
+    QFETCH(QString, profile);
+    QFETCH(int, expected);
+    QFETCH(QString, reason);
+    QFETCH(QString, environmentContains);
+    const QList<QList<FixtureGpu>> machines = {{SysfsFixture::intel()}, SysfsFixture::a10(), SysfsFixture::host(), {}, SysfsFixture::three()};
+    Resolver resolver(read(machines[machine]), QString(), powerProfileFromString(profile), record);
+    GraphicsSettings settings;
+    const Resolution r = resolver.resolveCategory(Category::Players, settings);
+    QCOMPARE(r.gpuIndex, expected);
+    QCOMPARE(r.reason, reason);
+    if (environmentContains.isEmpty()) {
+        QVERIFY2(r.environment.isEmpty(), qPrintable(r.environment.join(u' ')));
+    } else {
+        QVERIFY2(r.environment.contains(environmentContains), qPrintable(r.environment.join(u' ')));
+    }
+    QCOMPARE(resolver.presentingIndex(), expected);
+}
+
+void ResolverTest::threeDFollowsTheMeasuredGpu()
+{
+    GraphicsSettings settings;
+    // the A10 on battery: a game in 2D on the integrated GPU, the same game in 3D on the measured R5 M430
+    Resolver battery(read(SysfsFixture::a10()), QString(), PowerProfile::PowerSaver, u"1002:6660"_s);
+    QCOMPARE(battery.resolveCategory(Category::Games, settings).gpuIndex, 0);
+    QCOMPARE(battery.resolveCategory(Category::Games, settings, true).gpuIndex, 1);
+    QCOMPARE(battery.resolveCategory(Category::Games, settings, true).reason, u"measured"_s);
+    QCOMPARE(battery.resolveCategory(Category::Other, settings, true).gpuIndex, 1);
+    // the person's choice wins over Automatic, in 3D as well
+    settings.setRenderChoice(Category::Games, u"integrated"_s);
+    QCOMPARE(battery.resolveCategory(Category::Games, settings, true).gpuIndex, 0);
+    QCOMPARE(battery.resolveCategory(Category::Games, settings, true).reason, u"choice"_s);
+    settings.setRenderChoice(Category::Players, u"integrated"_s);
+    QCOMPARE(battery.resolveCategory(Category::Players, settings).gpuIndex, 0);
+    // a program's own setting wins over everything
+    AppEntry app;
+    app.category = Category::Players;
+    app.preference = AppPreference::MainGpu;
+    GraphicsSettings automatic;
+    QCOMPARE(battery.resolveApp(app, automatic, true).gpuIndex, 0);
+    app.preference = AppPreference::Unset;
+    QCOMPARE(battery.resolveApp(app, automatic).gpuIndex, 1);
+    app.category = Category::Games;
+    QCOMPARE(battery.resolveApp(app, automatic).gpuIndex, 0);
+    QCOMPARE(battery.resolveApp(app, automatic, true).gpuIndex, 1);
+}
+
+void ResolverTest::followThePowerProfileIsAChoice()
+{
+    // "profile" keeps the power profile in charge where Automatic would not: players, and 3D
+    GraphicsSettings settings;
+    settings.setRenderChoice(Category::Players, u"profile"_s);
+    settings.setRenderChoice(Category::Games, u"profile"_s);
+    Resolver battery(read(SysfsFixture::a10()), QString(), PowerProfile::PowerSaver, u"1002:6660"_s);
+    QCOMPARE(battery.resolveCategory(Category::Players, settings).gpuIndex, 0);
+    QCOMPARE(battery.resolveCategory(Category::Players, settings).reason, u"profile:power-saver"_s);
+    QCOMPARE(battery.resolveCategory(Category::Games, settings, true).gpuIndex, 0);
+    Resolver mains(read(SysfsFixture::a10()), QString(), PowerProfile::Performance, u"1002:6660"_s);
+    QCOMPARE(mains.resolveCategory(Category::Players, settings).gpuIndex, 1);
+    Resolver balanced(read(SysfsFixture::host()), QString(), PowerProfile::Balanced);
+    QCOMPARE(balanced.resolveChoice(u"profile"_s, Category::Players).gpuIndex, 0);
+    QCOMPARE(balanced.resolveChoice(u"profile"_s, Category::Players).reason, u"profile:balanced"_s);
+}
+
+void ResolverTest::oneGpuIgnoresTheRecord()
+{
+    Resolver one(read({SysfsFixture::intel()}), QString(), PowerProfile::PowerSaver, u"1002:6660"_s);
+    GraphicsSettings settings;
+    const Resolution r = one.resolveCategory(Category::Players, settings, true);
+    QCOMPARE(r.gpuIndex, 0);
+    QCOMPARE(r.reason, u"only-gpu"_s);
+    QVERIFY(r.environment.isEmpty());
 }
 
 void ResolverTest::automaticMain_data()

@@ -27,7 +27,7 @@ GraphicsKcm::GraphicsKcm(QObject *parent, const KPluginMetaData &data)
 
 Resolver GraphicsKcm::resolver() const
 {
-    return Resolver(m_gpus, m_settings.mainGpu(), m_profile);
+    return Resolver(m_gpus, m_settings.mainGpu(), m_profile, m_record.bestGpu);
 }
 
 QString GraphicsKcm::gpuLabel(int index) const
@@ -79,6 +79,12 @@ QString GraphicsKcm::reasonText(const Resolution &resolution) const
     if (resolution.reason == u"app"_s) {
         return i18nc("@info", "the program's own setting");
     }
+    if (resolution.reason == u"measured"_s) {
+        return m_record.origin == u"shipped"_s ? i18nc("@info", "measured best for this model") : i18nc("@info", "measured best on this computer");
+    }
+    if (resolution.reason == u"unmeasured"_s) {
+        return i18nc("@info", "not measured on this computer yet");
+    }
     return i18nc("@info", "your choice");
 }
 
@@ -86,6 +92,7 @@ void GraphicsKcm::load()
 {
     m_gpus = GpuInventory::read(m_root);
     m_settings = GraphicsSettings();
+    m_record = MachineRecord::read();
     m_profile = PowerProfiles::active();
     m_actions = PowerProfiles::gpuActions();
     m_appChanges.clear();
@@ -270,6 +277,7 @@ QVariantList GraphicsKcm::choiceOptions(const QString &current) const
 {
     QVariantList options;
     options.append(QVariantMap{{u"value"_s, u"auto"_s}, {u"text"_s, i18nc("@item:inlistbox", "Automatic")}});
+    options.append(QVariantMap{{u"value"_s, u"profile"_s}, {u"text"_s, i18nc("@item:inlistbox", "Follow the power profile")}});
     bool integrated = false;
     bool discrete = false;
     int renderers = 0;
@@ -308,7 +316,13 @@ QVariantList GraphicsKcm::categories() const
     for (Category category : allCategories()) {
         const Resolution resolution = r.resolveCategory(category, m_settings);
         const QString choice = m_settings.renderChoice(category);
+        // a program of this kind started in 3D goes elsewhere on Automatic: say where
+        const Resolution stereo = r.resolveCategory(category, m_settings, true);
+        const QString stereoText = stereo.gpuIndex >= 0 && stereo.gpuIndex != resolution.gpuIndex
+            ? i18nc("@info %1 is a GPU name, %2 the reason", "Started in 3D: %1, %2", gpuLabel(stereo.gpuIndex), reasonText(stereo))
+            : QString();
         list.append(QVariantMap{
+            {u"stereoText"_s, stereoText},
             {u"key"_s, categoryKey(category)},
             {u"label"_s, categoryLabel(category)},
             {u"choice"_s, choice},
@@ -340,13 +354,69 @@ QString GraphicsKcm::profileText() const
 {
     switch (m_profile) {
     case PowerProfile::PowerSaver:
-        return i18nc("@info", "Power profile: Power Saver. Automatic uses the integrated GPU.");
+        return i18nc("@info", "Power profile: Power Saver. Automatic draws games, browsers and other programs on the integrated GPU.");
     case PowerProfile::Performance:
-        return i18nc("@info", "Power profile: Performance. Automatic uses the discrete GPU.");
+        return i18nc("@info", "Power profile: Performance. Automatic draws games, browsers and other programs on the discrete GPU.");
     case PowerProfile::Balanced:
         break;
     }
-    return i18nc("@info", "Power profile: Balanced. Automatic uses the GPU that draws the desktop.");
+    return i18nc("@info", "Power profile: Balanced. Automatic draws games, browsers and other programs on the GPU that draws the desktop.");
+}
+
+QString GraphicsKcm::measuredText() const
+{
+    if (!multiGpu()) {
+        return {};
+    }
+    const Resolver r = resolver();
+    const QString gpu = gpuLabel(r.presentingIndex());
+    if (r.measuredIndex() < 0) {
+        return i18nc("@info %1 is a GPU name",
+                     "Automatic draws players, and any program started in 3D, on %1 whatever the power profile, on battery too. This computer has not "
+                     "been measured yet, so that is its discrete GPU.",
+                     gpu);
+    }
+    if (m_record.origin == u"shipped"_s && !m_record.model.isEmpty()) {
+        return i18nc("@info %1 is a GPU name, %2 a computer model",
+                     "Automatic draws players, and any program started in 3D, on %1 whatever the power profile, on battery too: it was measured "
+                     "best for them on the %2.",
+                     gpu,
+                     m_record.model);
+    }
+    return i18nc("@info %1 is a GPU name",
+                 "Automatic draws players, and any program started in 3D, on %1 whatever the power profile, on battery too: it was measured best "
+                 "for them on this computer.",
+                 gpu);
+}
+
+bool GraphicsKcm::copyBack() const
+{
+    return m_settings.copyBack().value_or(m_record.copyBack.value_or(false));
+}
+
+void GraphicsKcm::setCopyBack(bool copyBack)
+{
+    // the machine's own setting is not written for the person, so a better record later reaches them too
+    const std::optional<bool> value = copyBack == m_record.copyBack.value_or(false) ? std::nullopt : std::optional<bool>(copyBack);
+    if (value == m_settings.copyBack()) {
+        return;
+    }
+    m_settings.setCopyBack(value);
+    updateState();
+    setNeedsSave(true);
+}
+
+QString GraphicsKcm::copyBackMachineText() const
+{
+    if (!m_record.copyBack.has_value()) {
+        return i18nc("@info", "This computer has not been measured for it, so it is Off unless you turn it on.");
+    }
+    return *m_record.copyBack ? i18nc("@info", "This computer's measured setting: On.") : i18nc("@info", "This computer's measured setting: Off.");
+}
+
+bool GraphicsKcm::copyBackSetInSession() const
+{
+    return qEnvironmentVariableIsSet("MEDIA_GPU_ROUTE_COPY_BACK");
 }
 
 QString GraphicsKcm::appFilter() const
