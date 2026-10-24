@@ -129,16 +129,14 @@ Last-Update: 2026-10-24
      p_sys->p_va = NULL;
      vlc_sem_init( &p_sys->sem_mt, 0 );
  
-@@ -634,7 +658,8 @@
+@@ -634,6 +658,7 @@
      if( OpenVideoCodec( p_dec ) < 0 )
      {
          vlc_sem_destroy( &p_sys->sem_mt );
--        free( p_sys );
 +        stereo_av_pair_free(&p_sys->stereo_pair);
-+    free( p_sys );
+         free( p_sys );
          avcodec_free_context( &p_context );
          return VLC_EGENERIC;
-     }
 @@ -880,6 +905,7 @@
      /* do not flush buffers if codec hasn't been opened (theora/vorbis/VC1) */
      if( avcodec_is_open( p_context ) )
@@ -155,7 +153,7 @@ Last-Update: 2026-10-24
          const bool b_has_data = ( p_block && p_block->i_buffer > 0 );
          const bool b_start_drain = ((pp_block == NULL) || eos_spotted) && !p_sys->b_draining;
  
-@@ -1474,9 +1501,36 @@
+@@ -1474,9 +1501,40 @@
              if( ret == AVERROR_EOF )
              {
                  avcodec_flush_buffers( p_sys->p_context );
@@ -165,6 +163,10 @@ Last-Update: 2026-10-24
              break;
 +        }
 +        if (ret == 0) {
++            // VLC's decoder uses the best-effort presentation timestamp below.
++            // Give the assembler that same clock before matching the two views.
++            if (frame->pts == AV_NOPTS_VALUE)
++                frame->pts = frame->best_effort_timestamp;
 +            char *input = var_InheritString(p_dec, "video-stereo-input");
 +            const bool enabled = !input || strcmp(input, "none");
 +            free(input);
@@ -192,7 +194,7 @@ Last-Update: 2026-10-24
          }
          if (ret == 0 && frame->hw_frames_ctx && frame->opaque == NULL)
          {
-@@ -1513,7 +1567,7 @@
+@@ -1513,7 +1571,7 @@
          if( not_received_frame )
          {
              av_frame_free(&frame);
@@ -201,7 +203,7 @@ Last-Update: 2026-10-24
              continue;
          }
  
-@@ -1699,6 +1753,7 @@
+@@ -1699,6 +1757,7 @@
      /* do not flush buffers if codec hasn't been opened (theora/vorbis/VC1) */
      if( avcodec_is_open( ctx ) )
          avcodec_flush_buffers( ctx );
@@ -209,7 +211,7 @@ Last-Update: 2026-10-24
  
      wait_mt( p_sys );
  
-@@ -1711,6 +1766,7 @@
+@@ -1711,6 +1770,7 @@
          vlc_va_Delete( p_sys->p_va, &hwaccel_context );
  
      vlc_sem_destroy( &p_sys->sem_mt );
@@ -217,7 +219,7 @@ Last-Update: 2026-10-24
      free( p_sys );
  }
  
-@@ -1996,6 +2052,12 @@
+@@ -1996,6 +2056,12 @@
      decoder_t *p_dec = p_context->opaque;
      decoder_sys_t *p_sys = p_dec->p_sys;
      video_format_t fmt;
@@ -230,7 +232,7 @@ Last-Update: 2026-10-24
  
      /* Enumerate available formats */
      enum PixelFormat defaultfmt = avcodec_default_get_format(p_context, pi_fmt);
-@@ -2018,7 +2080,7 @@
+@@ -2018,7 +2084,7 @@
              if (defaultfmt == pi_fmt[i])
                  defaultfmt = AV_PIX_FMT_NONE;
  
@@ -239,7 +241,7 @@ Last-Update: 2026-10-24
          }
          else if (swfmt == AV_PIX_FMT_NONE && !p_sys->b_hardware_only)
              swfmt = pi_fmt[i];
-@@ -2039,7 +2101,7 @@
+@@ -2039,7 +2105,7 @@
          swfmt = defaultfmt;
      }
  

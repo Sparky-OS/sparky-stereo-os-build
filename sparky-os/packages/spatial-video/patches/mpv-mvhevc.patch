@@ -188,3 +188,32 @@ Last-Update: 2026-10-24
      }
  
      if (mpi->imgfmt == IMGFMT_CUDA && !mpi->planes[0]) {
+--- a/video/out/gpu/video.c
++++ b/video/out/gpu/video.c
+@@ -1469,8 +1469,24 @@
+         img.multiplier *= 1.0 / (tex_max - 1);
+     }
+ 
+-    GLSLF("color.%s = %f * vec4(texture(texture%d, texcoord%d)).%s;\n",
+-          dst, img.multiplier, id, id, src);
++    // Chroma interpolation must stop at the current eye's texel centers.
++    // The two eyes share one texture, so the texture's outer clamp cannot
++    // protect their internal boundary. This also protects the merge pass
++    // before a custom chroma scaler reads the planar HEVC samples.
++    if (img.type == PLANE_CHROMA && p->image_params.stereo3d == MP_STEREO3D_SBSL &&
++        !p->image_params.rotate &&
++        mp_rect_w(p->src_rect) == p->image_params.w / 2)
++    {
++        float norm = img.tex->params.non_normalized ? 1 : img.tex->params.w;
++        float lo = (p->view * img.w / 2.0f + 0.5f) / norm;
++        float hi = ((p->view + 1) * img.w / 2.0f - 0.5f) / norm;
++        GLSLF("color.%s = %f * vec4(texture(texture%d, "
++              "vec2(clamp(texcoord%d.x, %.9g, %.9g), texcoord%d.y))).%s;\n",
++              dst, img.multiplier, id, id, lo, hi, id, src);
++    } else {
++        GLSLF("color.%s = %f * vec4(texture(texture%d, texcoord%d)).%s;\n",
++              dst, img.multiplier, id, id, src);
++    }
+ 
+     *offset += count;
+ }

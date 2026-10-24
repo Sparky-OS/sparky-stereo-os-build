@@ -21,7 +21,7 @@ Last-Update: 2026-10-24
      target_link_libraries(gwenview kImageAnnotator::kImageAnnotator)
  endif()
 +
-+target_link_libraries(gwenview PRIVATE Qt6::MultimediaPrivate)
++target_link_libraries(gwenview Qt6::MultimediaPrivate)
 --- a/app/stereo/stereoviewadapter.cpp
 +++ b/app/stereo/stereoviewadapter.cpp
 @@ -14,6 +14,9 @@
@@ -118,7 +118,7 @@ Last-Update: 2026-10-24
      case MimeTypeUtils::KIND_VIDEO:
          adapter = new VideoViewAdapter;
          connect(adapter, SIGNAL(videoFinished()), SIGNAL(videoFinished()));
-+        connect(adapter, &VideoViewAdapter::videoFrameChanged, this, &DocumentView::videoFrameChanged);
++        connect(static_cast<VideoViewAdapter *>(adapter), &VideoViewAdapter::videoFrameChanged, this, &DocumentView::videoFrameChanged);
          break;
      case MimeTypeUtils::KIND_UNKNOWN:
          adapter = new MessageViewAdapter;
@@ -130,13 +130,13 @@ Last-Update: 2026-10-24
 +
 +QVideoFrame DocumentView::videoFrame() const
 +{
-+    const auto *video = qobject_cast<VideoViewAdapter *>(d->mAdapter);
++    const auto *video = qobject_cast<VideoViewAdapter *>(d->mAdapter.data());
 +    return video ? video->videoFrame() : QVideoFrame();
 +}
 +
 +void DocumentView::setVideoStereoPresentation(const QImage &mono, bool active)
 +{
-+    if (auto *video = qobject_cast<VideoViewAdapter *>(d->mAdapter))
++    if (auto *video = qobject_cast<VideoViewAdapter *>(d->mAdapter.data()))
 +        video->setStereoPresentation(mono, active);
  }
  

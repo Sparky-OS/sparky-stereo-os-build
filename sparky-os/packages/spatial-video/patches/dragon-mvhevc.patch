@@ -1,0 +1,114 @@
+Description: Decode native MV-HEVC views through the shared stereo frame assembly
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-10-24
+
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -29,6 +29,7 @@
+ target_link_libraries(dragonmodule
+     PRIVATE
+         Qt6::Core
++        KF6::ConfigCore
+         KF6::KIOCore
+         KF6::I18n
+         KF6::Service
+--- a/src/backend.cpp
++++ b/src/backend.cpp
+@@ -4,6 +4,9 @@
+ #include "backend.h"
+ 
+ #include <QtMultimedia/QVideoSink>
++#include <KConfigGroup>
++#include <KSharedConfig>
++#include <QCryptographicHash>
+ 
+ using namespace Qt::StringLiterals;
+ 
+@@ -43,3 +46,21 @@
+     }
+     return new BackendAttachedType(videoSink, object);
+ }
++
++static QString stereoKey(const QUrl &url)
++{
++    return QString::fromLatin1(QCryptographicHash::hash(url.toEncoded(), QCryptographicHash::Sha256).toHex());
++}
++
++bool Backend::stereoSwap(const QUrl &url) const
++{
++    return KConfigGroup(KSharedConfig::openConfig(), QStringLiteral("StereoVideo")).readEntry(stereoKey(url), false);
++}
++
++void Backend::setStereoSwap(const QUrl &url, bool swap)
++{
++    if (url.isEmpty()) return;
++    KConfigGroup group(KSharedConfig::openConfig(), QStringLiteral("StereoVideo"));
++    group.writeEntry(stereoKey(url), swap);
++    group.sync();
++}
+--- a/src/backend.h
++++ b/src/backend.h
+@@ -4,6 +4,7 @@
+ #pragma once
+ 
+ #include <QtQmlIntegration>
++#include <QUrl>
+ 
+ class QVideoSink;
+ 
+@@ -29,5 +30,8 @@
+ public:
+     using QObject::QObject;
+ 
++    Q_INVOKABLE bool stereoSwap(const QUrl &url) const;
++    Q_INVOKABLE void setStereoSwap(const QUrl &url, bool swap);
++
+     static BackendAttachedType *qmlAttachedProperties(QObject *object);
+ };
+--- a/src/qml/ControlsBar.qml
++++ b/src/qml/ControlsBar.qml
+@@ -8,9 +8,11 @@
+ import org.kde.kirigami as Kirigami
+ import QtMultimedia as Multimedia
+ import org.kde.coreaddons as KCoreAddons
++import org.kde.dragon as Dragon
+ 
+ OverlayPopup {
+     id: toolbar
++    Dragon.Backend { id: stereoState }
+     readonly property bool anyMenusOpen: menuButton.menu.opened || volumeButton.popup.opened
+     readonly property int leftRightOffset: Math.round(rightControls.implicitWidth - leftControls.implicitWidth) / 2
+     property alias volumeButton: volumeButton
+@@ -283,7 +285,10 @@
+                     QQC2.CheckDelegate {
+                         text: i18nc("@action:button 3D video, the left and right views are the other way round", "Swap Eyes")
+                         checked: videoOutput.stereoSwapEyes
+-                        onToggled: videoOutput.stereoSwapEyes = checked
++                        onToggled: {
++                            videoOutput.stereoSwapEyes = checked
++                            stereoState.setStereoSwap(player.source, checked)
++                        }
+                     }
+                 }
+                 QQC2.Menu {
+--- a/src/qml/PlayerPage.qml
++++ b/src/qml/PlayerPage.qml
+@@ -13,6 +13,8 @@
+ 
+ Kirigami.Page {
+     id: videoPage
++
++    Dragon.Backend { id: stereoState }
+ 
+     property var storedVisibility: null
+     property alias player: player
+@@ -197,7 +199,7 @@
+                 activeTimer.restart()
+                 // The choice of the packing is for the file it was made for
+                 video.stereoInput = Multimedia.VideoOutput.StereoAutomatic
+-                video.stereoSwapEyes = false
++                video.stereoSwapEyes = stereoState.stereoSwap(source)
+             }
+         }
+ 
