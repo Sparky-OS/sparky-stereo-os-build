@@ -39,7 +39,7 @@ real_packages=$(for d in "$F"/*/; do
 	awk 'NR > 1 && /^---[ \t]*$/ {exit}
 		/^  requires-packages:/ {sub(/^  requires-packages:[ \t]*/, ""); print; exit}' "$d/SKILL.md"
 done | sed 's/|/ /g' | xargs)
-packages='zz-single-package zz-alternative-absent zz-alternative-present'" $real_packages"
+packages='zz-single-package zz-alternative-present'" $real_packages"
 export SPARKY_STEREO_PACKAGES="$packages"
 
 out=$("$HELPER" link 2>&1); echo "$out" | sed 's/^/     /'
@@ -55,7 +55,8 @@ SPARKY_STEREO_PACKAGES="$remaining" "$HELPER" link >/dev/null
 check "a package that has gone away removes the stale link" '[ ! -e "$HOME/.agents/skills/zz-single" ] && [ ! -e "$HOME/.claude/skills/zz-single" ] && [ -e "$HOME/.agents/skills/zz-alternative" ] && [ -e "$HOME/.claude/skills/zz-alternative" ]'
 env SPARKY_STEREO_PACKAGES="$packages" "$HELPER" --first-login >/dev/null
 check "login relinks the same still-installed packages" '[ -L "$HOME/.agents/skills/zz-single" ] && [ -L "$HOME/.claude/skills/zz-single" ]'
-remaining=$(tr ' ' '\n' <<<"$remaining" | grep -vx zz-alternative-present | xargs)
+remaining=$(tr ' ' '\n' <<<"$remaining" | grep -vx zz-alternative-present)
+if [ -z "$remaining" ]; then remaining='zz-none-package'; fi
 SPARKY_STEREO_PACKAGES="$remaining" "$HELPER" link >/dev/null
 check "when every alternative has gone away the stale link goes too" '[ ! -e "$HOME/.agents/skills/zz-alternative" ] && [ ! -e "$HOME/.claude/skills/zz-alternative" ]'
 check "the person's own ~/.claude/skills/audio is untouched" '[ ! -L "$HOME/.claude/skills/audio" ] && grep -qx "my own skill" "$HOME/.claude/skills/audio/SKILL.md"'
