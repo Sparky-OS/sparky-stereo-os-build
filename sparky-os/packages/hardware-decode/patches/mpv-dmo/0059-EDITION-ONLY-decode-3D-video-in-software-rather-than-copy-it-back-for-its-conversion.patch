@@ -195,8 +195,8 @@ Assisted-by: Claude Opus 5.5
      if (ctx->depth_software)
          MP_VERBOSE(vd, "Not using hardware decoding: the depth layer is decoded in software.\n");
 +    if (ctx->software_frames)
-+        MP_VERBOSE(vd, "Decoding in software: the filters need the pictures in memory, "
-+                   "and copying them back is not allowed.\n");
++        MP_INFO(vd, "Decoding in software: the filters need the pictures in memory, "
++                "and copying them back is not allowed.\n");
 +    ctx->hwdec_automatic = false;
      for (int i = 0; hwdec_api && hwdec_api[i]; i++) {
          bstr opt = bstr0(hwdec_api[i]);
@@ -217,7 +217,7 @@ Assisted-by: Claude Opus 5.5
  
      select_and_set_hwdec(vd);
  
-@@ -1477,6 +1485,17 @@ static int control(struct mp_filter *vd,
+@@ -1477,6 +1485,20 @@ static int control(struct mp_filter *vd,
      case VDCTRL_REINIT:
          reinit(vd);
          return CONTROL_TRUE;
@@ -227,8 +227,11 @@ Assisted-by: Claude Opus 5.5
 +        if (ctx->use_hwdec && ctx->hwdec_automatic && !ctx->hwdec.copying &&
 +            !copy_back_allowed())
 +        {
++            // not a failure of the hardware decoder: no fallback message
 +            ctx->software_frames = true;
-+            force_fallback(vd);
++            uninit_avctx(vd);
++            select_and_set_hwdec(vd);
++            init_avctx(vd);
 +            return ctx->avctx ? CONTROL_OK : CONTROL_ERROR;
 +        }
 +        return CONTROL_FALSE;
