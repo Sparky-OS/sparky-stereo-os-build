@@ -177,7 +177,7 @@ Last-Update: 2026-10-24
 +                const int index = (baseOnly || fallback) ? wanted : (rightFirst ? 1 - wanted : wanted);
 +                shown = qVideoFrameView(frame, index);
 +                displaySize = shown.size();
-+                result.eyeRect = {};
++                result.eyeRect = QRectF(0, 0, 1, 1);
 +            } else if (packing.mode == StereoMode::FrameSequence) {
                  skip = !repeated && eye != wanted;
                  displaySize = frameSize;
