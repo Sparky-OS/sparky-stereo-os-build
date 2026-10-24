@@ -5,7 +5,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.2.0
+VERSION=0.2.1
 PACKAGE=sparky-stereo-graphics
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.graphics.XXXXXX")
@@ -119,6 +119,14 @@ Description: Graphics page for System Settings
 EOS
 cat >"$S/debian/changelog" <<EOS
 $PACKAGE ($VERSION) unstable; urgency=medium
+
+  * sparky-stereo-gpu-env --app also takes the path of a desktop file outside
+    the menu (a launcher on the desktop), as Plasma's launcher (kf6-kio
+    6.30.0-1+stereo3d6) asks for such a program.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 24 Oct 2026 03:25:00 -0300
+
+$PACKAGE (0.2.0) unstable; urgency=medium
 
   * Automatic puts players, and any program started in 3D, on the GPU
     measured best on the machine whatever the power profile, battery

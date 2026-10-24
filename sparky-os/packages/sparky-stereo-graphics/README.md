@@ -18,7 +18,7 @@ OUT=/path/in/workspace/pending-pack ./build.sh (inside a Debian container with K
 Install:
 -------------
 su
-apt-get install ./sparky-stereo-graphics_0.2.0_amd64.deb
+apt-get install ./sparky-stereo-graphics_0.2.1_amd64.deb
 
 Uninstall:
 -------------
@@ -38,7 +38,7 @@ Nothing is written until Apply. Defaults clears the main GPU, the render choices
 
 Commands
 -------------
-sparky-stereo-gpu-env: what the page decides, for programs that start programs (--category, --app, --choice, --3d, --profile, --print, --shell, --session, --list, --json). libmedia-gpu-route asks it which GPU players decode on.
+sparky-stereo-gpu-env: what the page decides, for programs that start programs (--category, --app ID or the path of a desktop file, --choice, --3d, --profile, --print, --shell, --session, --list, --json). Plasma's launcher (KIO, kf6-kio 6.30.0-1+stereo3d6) asks it with --app for every program whose desktop entry does not set PrefersNonDefaultGPU; libmedia-gpu-route asks it which GPU players decode on.
 sparky-stereo-gpu-run [--category C | --app ID] [--3d] COMMAND: starts a program on its GPU; in Steam, set a game's launch options to `sparky-stereo-gpu-run --category games %command%` (add --3d for a game played in 3D). It never stops a program from starting.
 sparky-stereo-gpu-record (root): --apply-known, --set-best GPU [--copy-back true|false] [--model TEXT] [--measurement TEXT], --copy-back true|false|unset, --forget, --show; --root DIR for another system's root.
 
