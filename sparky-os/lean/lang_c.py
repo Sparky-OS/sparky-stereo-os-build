@@ -37,6 +37,8 @@ FALLTHROUGH = re.compile(r'fall(s| |-)?thr(ough|u)|\bnotreached\b|\blint\b', re.
 RAW_PREFIX = ('R', 'u8R', 'uR', 'UR', 'LR')
 RAW_OPEN = re.compile(r'"([^()\\\s]{0,16})\(')
 CONDITIONAL = re.compile(r'^[ \t]*#[ \t]*(if|ifdef|ifndef|elif|elifdef|elifndef|else|endif)\b')
+# an #include directive's header-name between < and > is one token (C23 6.4.7): no comment starts inside it
+HEADER_NAME = re.compile(r'#[ \t]*(?:include(?:_next)?|import|embed)[ \t]*<[^>\n]*>')
 
 
 def keep_empty_after(line: str) -> bool:
@@ -58,6 +60,15 @@ def lex(src: str) -> list:
     while i < n:
         c = s[i]
         nx = s[i + 1] if i + 1 < n else ''
+        if c == '#':
+            k = i - 1
+            while k >= 0 and s[k] in ' \t':
+                k -= 1
+            if k < 0 or s[k] == '\n':
+                m = HEADER_NAME.match(s, i)
+                if m:
+                    i = m.end()
+                    continue
         if c == '/' and nx == '/':
             j = i + 2
             while j < n:

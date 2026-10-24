@@ -84,6 +84,18 @@ class C(unittest.TestCase):
                 self.assertIn('consumer qualification', result.reason)
                 self.assertEqual(mr, src)
 
+    def test_include_header_name_is_not_a_comment(self):
+        # A header-name between < and > is one preprocessing token (C23 6.4.7); the // inside
+        # <Qt3DAnimation//private/qabstractchannelmapping_p.h> (qt6-3d 6.11.2) is part of the path, not a
+        # comment, and a projection that cuts the line there leaves "missing terminating '>'" to the compiler.
+        src = '// a comment to remove\n#include <Qt3DAnimation//private/x_p.h>\n#include "a//b.h" // trailing\nint x;\n'
+        r, text = lean('/src/a.h', src)
+        self.assertEqual(r.status, 'projected')
+        self.assertIn('#include <Qt3DAnimation//private/x_p.h>\n', text)
+        self.assertIn('#include "a//b.h"\n', text)
+        self.assertNotIn('a comment to remove', text)
+        self.assertNotIn('trailing', text)
+
     def test_annotation_text_in_a_string_is_not_a_comment(self):
         src = ('// A long ordinary explanation that can safely be removed.\n'
                'const char *text = "/** literal text */ //: not an annotation";\n')
