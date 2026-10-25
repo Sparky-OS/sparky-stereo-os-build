@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sun, 25 Oct 2026 01:30:41 -0300
+Subject: drm/virtio: make room for the stereo scanout command in a vbuffer
+
+Every command a vbuffer carries is allocated inline, and
+virtio_gpu_get_vbuf() refuses a command larger than MAX_INLINE_CMD_SIZE
+(96 bytes, the size of struct virtio_gpu_set_scanout_blob) with a BUG_ON.
+struct virtio_gpu_set_scanout_stereo grew to 104 bytes when it gained the
+rectangles of the graphics and graphics-depth pictures of the L + depth +
+graphics + graphics-depth structure, so the first modeset on a device
+that offers VIRTIO_GPU_F_STEREO hits the BUG_ON: on QEMU with
+virtio-gpu-pci,stereo=on the fbdev modeset at module load oopses in
+virtio_gpu_cmd_set_scanout_stereo() (virtgpu_vq.c:126), before any stereo
+mode is set.
+
+Raise MAX_INLINE_CMD_SIZE to 104 and make a stereo command that does not
+fit a build error instead of a runtime BUG.
+
+Assisted-by: Claude Opus 5.5
+---
+ drivers/gpu/drm/virtio/virtgpu_vq.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/virtio/virtgpu_vq.c b/drivers/gpu/drm/virtio/virtgpu_vq.c
+index 2f59b90552..95af694a74 100644
+--- a/drivers/gpu/drm/virtio/virtgpu_vq.c
++++ b/drivers/gpu/drm/virtio/virtgpu_vq.c
+@@ -39,7 +39,7 @@
+ #include "virtgpu_drv.h"
+ #include "virtgpu_trace.h"
+ 
+-#define MAX_INLINE_CMD_SIZE   96
++#define MAX_INLINE_CMD_SIZE   104
+ #define MAX_INLINE_RESP_SIZE  24
+ #define VBUFFER_SIZE          (sizeof(struct virtio_gpu_vbuffer) \
+ 			       + MAX_INLINE_CMD_SIZE		 \
+@@ -806,6 +806,7 @@ void virtio_gpu_cmd_set_scanout_stereo(struct virtio_gpu_device *vgdev,
+ 		break;
+ 	}
+ 
++	BUILD_BUG_ON(sizeof(*cmd_p) > MAX_INLINE_CMD_SIZE);
+ 	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
+ 	memset(cmd_p, 0, sizeof(*cmd_p));
+ 
