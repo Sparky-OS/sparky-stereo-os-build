@@ -1,3 +1,18 @@
+nvidia-kmod-open (615.71.09-2+stereo3d5) unstable; urgency=medium
+
+  * Three more deep-colour patches from the stereo3d branch, the rest of
+    the standard after 16-bit HDMI TMDS (0004): 0009 HDMI 2.1 FRL at
+    16 bits per component (the FRL query now receives HDMI_BPC16); 0010
+    DisplayPort at 16 bits per component (EDID 1.4 depth, VSC SDP bit
+    depth, 4:2:2 kept at 12, active DP-to-HDMI adapters gated on DC_48bit);
+    0011 HDMI YCbCr 4:2:0 Deep Colour at 12 and 16 bits per component
+    (HF-VSDB DC_36bit_420 and DC_48bit_420, hardware 4:2:0 packer only).
+    Each gated on what the sink declares; sinks without the flags are
+    unchanged. Built against linux-headers-7.3.0-rc6-stereo3d8; not yet
+    run on hardware.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Wed, 14 Oct 2026 21:45:00 -0300
+
 nvidia-kmod-open (615.71.09-2+stereo3d4) unstable; urgency=medium
 
   * Build from a source package: NVIDIA's DKMS tree of 615.71.09-2 as the
