@@ -1,17 +1,20 @@
 #!/bin/sh
-# Builds the beta's root file system: Sparky KDE 2026.09's package set on today's Debian testing,
+# Builds the image's root file system: Sparky KDE 2026.09's package set on today's Debian testing,
 # the edition (sparky-stereo with its desktop, system, hardware-support and look metas and their
-# Recommends), our stereo kernel with Debian's signed kernel beside it, NVIDIA's 615 userspace with the
-# edition's open modules, the installer and the live system. Runs as root inside beta-iso-lutz-build:1
-# (privileged, for the chroot's mounts).
-# Mounts: /rootfs (the tree, on /mnt/build), /cache (apt's archives, outside the tree), /repo (the edition's
-# development repository, read-only), /stage (the lane's staged packages, a flat repository), /build,
-# /edition-apt, /edition-lists, /edition-repo (read-only).
+# Recommends), the edition's kernel and no other (Daniel, 2026-10-24: Debian's kernel has no stereo 3D and
+# is not shipped with the distribution; Secure Boot goes through Debian's shim and GRUB to our signed kernel
+# once the edition's key is enrolled), NVIDIA's 615 userspace with the edition's open modules, the installer
+# and the live system. Runs as root inside the build image (privileged, for the chroot's mounts).
+# Mounts: /rootfs (the tree, on an SSD), /cache (apt's archives, outside the tree), /repo (EDITION_REPO=flat: the
+# edition's development repository, read-only; live: empty), /stage (staged packages, a flat repository),
+# /build, /edition-apt, /edition-lists, /edition-repo (read-only).
+# EDITION_REPO: live (default, the published repository) or flat (/repo), as apt-setup.sh.
 # Usage: rootfs.sh base|packages|all
 set -eu
 R=/rootfs
 STEP=${1:-all}
-export DEBIAN_FRONTEND=noninteractive LC_ALL=C.UTF-8
+EDITION_REPO=${EDITION_REPO:-live}
+export DEBIAN_FRONTEND=noninteractive LC_ALL=C.UTF-8 EDITION_REPO
 
 mounts() {
 	mountpoint -q $R/proc || mount -t proc proc $R/proc
@@ -21,9 +24,12 @@ mounts() {
 	mountpoint -q $R/repo || mount --bind /repo $R/repo
 	mountpoint -q $R/stage || mount --bind /stage $R/stage
 	mountpoint -q $R/var/cache/apt/archives || mount --bind /cache $R/var/cache/apt/archives
+	# the container's name resolution (docker run --add-host), so the chroot reaches the hosts the build names
+	[ -f $R/etc/hosts ] || : > $R/etc/hosts
+	mountpoint -q $R/etc/hosts || mount --bind /etc/hosts $R/etc/hosts
 }
 umounts() {
-	for m in var/cache/apt/archives stage repo dev sys proc; do
+	for m in etc/hosts var/cache/apt/archives stage repo dev sys proc; do
 		mountpoint -q $R/$m && umount -R $R/$m || true
 	done
 }
@@ -39,9 +45,16 @@ if [ "$STEP" = base ] || [ "$STEP" = all ]; then
 	# the build's own apt sources (removed before packing), keys and the edition's pins
 	cp /build/apt-setup.sh $R/tmp/
 	mkdir -p $R/edition-apt && cp /edition-apt/sparky-stereo /edition-apt/sparky-stereo-only-ours $R/edition-apt/
-	inr sh /tmp/apt-setup.sh /
+	inr env EDITION_REPO=$EDITION_REPO sh /tmp/apt-setup.sh /
 	rm -rf $R/edition-apt $R/tmp/apt-setup.sh $R/etc/apt/sources.list.d/debian.sources
 	mv $R/etc/apt/sources.list.d/sparky.sources $R/etc/apt/sources.list.d/beta-build-sparky.sources
+	# Debian's kernels never come in while the tree is built, whatever asks for them (the edition's kernels are
+	# named linux-image-<release>-stereo3dN, without -amd64; plain linux-base stays, every kernel uses its tools)
+	cat > $R/etc/apt/preferences.d/beta-build-no-debian-kernel <<'EOF'
+Package: /^linux-(image|headers|binary|modules|signed|base)-.*amd64(-unsigned)?$/
+Pin: release o=Debian
+Pin-Priority: -1
+EOF
 	cat > $R/etc/apt/sources.list.d/beta-build-stage.sources <<'EOF'
 Types: deb
 URIs: file:/stage
@@ -88,17 +101,25 @@ if [ "$STEP" = packages ] || [ "$STEP" = all ]; then
 	echo "== $(date -u +%T) the edition's top meta and languages (German and English packs; the rest stay Recommends)"
 	apt_in install --no-install-recommends sparky-stereo sparky-stereo-languages
 	apt_in install hunspell-de-de hyphen-de mythes-de libreoffice-l10n-de libreoffice-help-de hunspell-en-gb hunspell-en-us hyphen-en-us mythes-en-us libreoffice-help-en-us locales-all
-	echo "== $(date -u +%T) kernels: Debian's signed kernel beside ours; NVIDIA 615 with the edition's open modules"
-	apt_in install linux-image-amd64 nvidia-driver=615.71.09-2 nvidia-kernel-open-dkms-stereo3d libnvcuvid1=615.71.09-2 nvidia-vaapi-driver
+	echo "== $(date -u +%T) kernels: the edition's kernel and its headers, no other; NVIDIA 615 with the edition's open modules"
+	apt_in install linux-image-sparky-stereo linux-headers-sparky-stereo nvidia-driver=615.71.09-2 nvidia-kernel-open-dkms-stereo3d libnvcuvid1=615.71.09-2 nvidia-vaapi-driver
+	cp /build/boot-kernels.py $R/tmp/
+	inr python3 /tmp/boot-kernels.py / || { echo "rootfs: a kernel that is not the edition's is in the tree" >&2; exit 1; }
+	rm -f $R/tmp/boot-kernels.py
 	echo "== $(date -u +%T) command-not-found: its index is filled at build time, so a live session names the package of a missing program before anyone runs apt update"
 	# apt-file's Contents targets are on (50apt-file.conf) and command-not-found's own hook (50command-not-found) builds the index
 	# after every apt update: Debian's and deb-multimedia's files come that way. The build's own sources are flat repositories with
 	# no Contents, so the edition's packages in them are listed here the way the published repository lists them.
+	# The published repository has its Contents (EDITION_REPO=live); a flat development repository has none.
 	inr apt-get update
-	mkdir -p /tmp/cnf
-	python3 /edition-repo/make-contents.py /tmp/cnf "amd64 all" $(find /repo /stage -name '*.deb' ! -name '*-dbgsym_*' 2>/dev/null)
-	cp /tmp/cnf/Contents-amd64 $R/var/lib/apt/lists/edition-build_main_Contents-amd64
-	cp /tmp/cnf/Contents-all $R/var/lib/apt/lists/edition-build_main_Contents-all
+	debs=$(find /repo /stage -name '*.deb' ! -name '*-dbgsym_*' 2>/dev/null)
+	if [ -n "$debs" ]; then
+		mkdir -p /tmp/cnf
+		# shellcheck disable=SC2086
+		python3 /edition-repo/make-contents.py /tmp/cnf "amd64 all" $debs
+		cp /tmp/cnf/Contents-amd64 $R/var/lib/apt/lists/edition-build_main_Contents-amd64
+		cp /tmp/cnf/Contents-all $R/var/lib/apt/lists/edition-build_main_Contents-all
+	fi
 	inr /usr/lib/cnf-update-db
 	[ -s $R/var/lib/command-not-found/commands.db ] || { echo "rootfs: command-not-found's index is empty" >&2; exit 1; }
 	# a Debian-only, a deb-multimedia-only and an edition-only program must be in it (cnf-check.py picks the deb-multimedia one)
