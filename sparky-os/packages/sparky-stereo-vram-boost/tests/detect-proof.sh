@@ -41,16 +41,16 @@ run() { # run CASE MODE EXPECTED
 	fi
 }
 CTL="cpuset cpu io memory hugetlb pids rdma misc dmem"
-setup no-dmem "cpuset cpu io memory hugetlb pids rdma misc"; gpu no-dmem 0000:03:00.0 amdgpu vendor; run no-dmem auto off
-setup no-region "$CTL"; run no-region auto off; run no-region yes off
+setup no-dmem "cpuset cpu io memory hugetlb pids rdma misc"; gpu no-dmem 0000:03:00.0 amdgpu vendor; run no-dmem auto off; run no-dmem amd-dgpu off; run no-dmem yes off
+setup no-region "$CTL"; run no-region auto off; run no-region amd-dgpu off; run no-region yes off
 setup amd-dgpu "$CTL" "drm/0000:03:00.0/vram 8573157376"; gpu amd-dgpu 0000:03:00.0 amdgpu vendor
-run amd-dgpu auto on; run amd-dgpu yes on; run amd-dgpu no off; run amd-dgpu sometimes off
-setup amd-apu "$CTL" "drm/0000:c5:00.0/vram 536870912"; gpu amd-apu 0000:c5:00.0 amdgpu; run amd-apu auto off; run amd-apu yes on
-setup intel-xe "$CTL" "drm/0000:00:02.0/vram0 4294967296"; gpu intel-xe 0000:00:02.0 xe; run intel-xe auto off; run intel-xe yes on
-setup nouveau "$CTL" "drm/0000:01:00.0/vram 6442450944"; gpu nouveau 0000:01:00.0 nouveau vendor; run nouveau auto off; run nouveau yes on
-setup nvidia-amd "$CTL" "drm/0000:01:00.0/vram 12884901888" "drm/0000:03:00.0/vram 8573157376"
+run amd-dgpu auto on; run amd-dgpu amd-dgpu on; run amd-dgpu yes on; run amd-dgpu no off; run amd-dgpu sometimes off
+setup amd-apu "$CTL" "drm/0000:c5:00.0/vram 536870912"; gpu amd-apu 0000:c5:00.0 amdgpu; run amd-apu auto on; run amd-apu amd-dgpu off; run amd-apu yes on
+setup intel-xe "$CTL" "drm/0000:00:02.0/vram0 4294967296"; gpu intel-xe 0000:00:02.0 xe; run intel-xe auto on; run intel-xe amd-dgpu off; run intel-xe yes on
+setup nouveau "$CTL" "drm/0000:01:00.0/vram 6442450944"; gpu nouveau 0000:01:00.0 nouveau vendor; run nouveau auto on; run nouveau amd-dgpu off; run nouveau yes on
+setup nvidia-amd "$CTL" "drm/0000:03:00.0/vram 8573157376"
 gpu nvidia-amd 0000:01:00.0 nvidia vendor; gpu nvidia-amd 0000:03:00.0 amdgpu vendor; run nvidia-amd auto on
-setup nvidia-only "$CTL" "drm/0000:01:00.0/vram 12884901888"; gpu nvidia-only 0000:01:00.0 nvidia vendor; run nvidia-only auto off
+setup nvidia-only "$CTL"; gpu nvidia-only 0000:01:00.0 nvidia vendor; run nvidia-only auto off; run nvidia-only amd-dgpu off; run nvidia-only yes off
 # amdgpu bound but its region registered two seconds after the detector starts: it waits (WAIT seconds) and turns on
 setup late "$CTL"; gpu late 0000:03:00.0 amdgpu vendor
 ( sleep 2; echo "drm/0000:03:00.0/vram 8573157376" >>"$T/late/cg/dmem.capacity" ) &

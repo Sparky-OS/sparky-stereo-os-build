@@ -1,7 +1,8 @@
 # VRAM protection for the window in front (dmemcg-booster and plasma-foreground-booster), decided at every boot.
-#   auto  on when the kernel has the dmem cgroup controller and an AMD GPU with its own VRAM is found
-#   yes   on with any GPU whose driver registers its VRAM with the dmem controller (AMD APUs, Intel xe, nouveau)
-#   no    off
+#   auto      (default) on whenever any GPU has registered VRAM with the dmem cgroup controller
+#   amd-dgpu  on only for amdgpu with its own VRAM registered with the dmem controller
+#   yes       same as auto, kept for existing configurations
+#   no        off
 # The decision and its reason are in /run/sparky-stereo-vram-boost/state and in the journal
 # (journalctl -u sparky-stereo-vram-boost). A new value counts from the next boot.
 SPARKY_STEREO_VRAM_BOOST=auto

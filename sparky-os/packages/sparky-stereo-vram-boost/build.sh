@@ -5,7 +5,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.1.0+lc1
+VERSION=0.1.1+lc1
 PACKAGE=sparky-stereo-vram-boost
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.vram-boost.XXXXXX")
@@ -37,8 +37,8 @@ Priority: optional
 Homepage: https://sparkylinux.org
 Description: Decide at every boot whether the window in front gets VRAM protection
   Starts dmemcg-booster and plasma-foreground-booster only where they help:
-  a kernel with the dmem cgroup controller and an AMD GPU with its own VRAM.
-  SPARKY_STEREO_VRAM_BOOST=auto, yes or no in its /etc/default file.
+  a kernel with the dmem cgroup controller and any GPU with registered VRAM.
+  SPARKY_STEREO_VRAM_BOOST=auto, amd-dgpu, yes or no in its /etc/default file.
 CONTROL
 echo /etc/default/sparky-stereo-vram-boost >"$D/DEBIAN/conffiles"
 (cd "$D" && find etc usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)

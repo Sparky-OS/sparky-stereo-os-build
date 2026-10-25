@@ -8,10 +8,10 @@
 # when they run, and state with the reason. Their units carry ConditionPathExists=/run/sparky-stereo-vram-boost/enabled.
 #
 #   SPARKY_STEREO_VRAM_BOOST in /etc/default/sparky-stereo-vram-boost:
-#     auto  (default) on when the kernel has the dmem cgroup controller and an AMD GPU with its own VRAM (amdgpu,
-#           mem_info_vram_vendor present) has registered its VRAM with it: the case Natalie Vock measured
-#     yes   on whenever any GPU has registered VRAM with the dmem controller (AMD APUs, Intel xe, nouveau)
-#     no    off
+#     auto      (default) on whenever any GPU has registered VRAM with the dmem controller
+#     amd-dgpu  on only for amdgpu with its own VRAM (mem_info_vram_vendor present) registered with dmem
+#     yes       same as auto, kept for existing configurations
+#     no        off
 #
 # The dmem regions are the lines of /sys/fs/cgroup/dmem.capacity, "drm/<PCI address>/vram<N> <bytes>"
 # (drmm_cgroup_register_region() and amdgpu_vram_mgr_init() in Linux 7.3).
@@ -43,9 +43,9 @@ driver_of() {
 
 regions=
 case "$mode" in
-	auto|yes) ;;
+	auto|amd-dgpu|yes) ;;
 	no) decide off "SPARKY_STEREO_VRAM_BOOST=no" ;;
-	*) decide off "unknown SPARKY_STEREO_VRAM_BOOST=$mode (auto, yes or no)" ;;
+	*) decide off "unknown SPARKY_STEREO_VRAM_BOOST=$mode (auto, amd-dgpu, yes or no)" ;;
 esac
 grep -qw dmem "$CGROUP/cgroup.controllers" 2>/dev/null || decide off "the kernel has no dmem cgroup controller"
 
@@ -71,13 +71,13 @@ while read -r region size; do
 	address=${region#drm/}
 	address=${address%%/*}
 	driver=$(driver_of "$address")
-	if [ "$mode" = yes ]; then
+	if [ "$mode" = auto ] || [ "$mode" = yes ]; then
 		on="${on:-$region ($driver)}"
 	elif [ "$driver" = amdgpu ] && [ -e "$PCI/$address/mem_info_vram_vendor" ]; then
 		on="${on:-$region (amdgpu, its own VRAM)}"
 	fi
 done <"$CGROUP/dmem.capacity"
 
-[ -n "$regions" ] || decide off "no GPU has registered VRAM with the dmem controller"
+[ -n "$regions" ] || decide off "no GPU has registered VRAM with the dmem controller (NVIDIA's own driver registers none)"
 [ -n "$on" ] && decide on "$on"
-decide off "no AMD GPU with its own VRAM among the dmem regions (SPARKY_STEREO_VRAM_BOOST=yes turns it on for the others)"
+decide off "no AMD GPU with its own VRAM among the dmem regions (SPARKY_STEREO_VRAM_BOOST=auto turns it on for the others)"

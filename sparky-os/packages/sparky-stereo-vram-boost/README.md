@@ -36,13 +36,14 @@ plasma-foreground-booster run, and state with the reason.
 Their units carry ConditionPathExists=/run/sparky-stereo-vram-boost/enabled.
 
 The default, auto, is on when the kernel has the dmem cgroup controller
-(CONFIG_CGROUP_DMEM, Sparky Stereo kernels from build 13) and an AMD GPU
-with its own VRAM has registered it with the controller: the case
-Natalie Vock measured (pixelcluster.dev/VRAM-Mgmt-fixed). The other GPUs
-whose drivers register VRAM (AMD APUs, Intel xe, nouveau) stay as they are
-unless SPARKY_STEREO_VRAM_BOOST=yes is set in
-/etc/default/sparky-stereo-vram-boost; no turns it off everywhere.
-NVIDIA's own driver and machines without such a GPU never start it.
+(CONFIG_CGROUP_DMEM, Sparky Stereo kernels from build 13) and any GPU has
+registered its VRAM with it, including AMD cards and APUs, Intel xe and nouveau.
+Set SPARKY_STEREO_VRAM_BOOST in /etc/default/sparky-stereo-vram-boost:
+auto uses that default; amd-dgpu keeps the old rule, on only for an amdgpu
+GPU with its own VRAM (mem_info_vram_vendor present) registered with dmem;
+yes is the same as auto, kept for existing configurations; no turns it off.
+With no registered VRAM it stays off, including NVIDIA's own driver,
+which registers none.
 Each person can also turn the foreground booster off for their own session
 with upstream's switch: autostart=false in the [Foreground Booster] group
 of ~/.config/kcgroupsrc.
