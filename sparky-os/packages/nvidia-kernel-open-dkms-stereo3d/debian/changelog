@@ -1,3 +1,16 @@
+nvidia-kmod-open (615.71.09-2+stereo3d6) unstable; urgency=medium
+
+  * 0012: dmem_cgroup_register_region() takes a struct dmem_cgroup_init on
+    Linux 7.3 (commit e11640b9cea4). NVIDIA's own change from 615.78.08,
+    taken as it is: the conftest
+    dmem_cgroup_register_region_has_init_arg and the call that builds the
+    structure. With CONFIG_CGROUP_DMEM=y, which the edition's kernel turns
+    on from build 13 for the VRAM protection Linux 7.3 merged, 615.71.09
+    did not compile (os-interface.c, argument 1 of
+    dmem_cgroup_register_region). Older kernels keep the old call.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 25 Oct 2026 00:55:08 -0300
+
 nvidia-kmod-open (615.71.09-2+stereo3d5) unstable; urgency=medium
 
   * Three more deep-colour patches from the stereo3d branch, the rest of
