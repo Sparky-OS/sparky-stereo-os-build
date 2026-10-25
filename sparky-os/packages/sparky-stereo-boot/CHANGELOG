@@ -7,7 +7,8 @@
     EFI system partition (at install, after every kernel, and whenever shim's or GRUB's signed programs are
     installed again); GRUB's menu gets "Secure Boot: enroll the Sparky Stereo OS key" in the system's language,
     which shows the steps in the nine required languages and starts the MokManager beside GRUB; under Secure Boot
-    it is the menu's fallback, so a refused boot goes there by itself
+    the menu asks shim about the newest kernel first, and when shim refuses it the enrolment entry is the default,
+    so the timeout starts it
 -------------------------------------------------------------------------------
   Version 0.1.2 (2026-10-24)
 -------------------------------------------------------------------------------

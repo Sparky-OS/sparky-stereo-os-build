@@ -14,10 +14,14 @@ grub-core/kern/efi/sb.c) and the system does not start. So the certificate stays
 each shim and MokManager (mmx64.efi, which shim's packages install beside it), and GRUB's menu has an entry that shows
 the steps in the nine required languages and starts that MokManager: "Enroll key from disk" enrolls the certificate
 from the partition with a confirmation, no password (MokManager.c, enroll_file). When Secure Boot is on (GRUB sets
-shim_lock=y, grub_shim_lock_verifier_setup), the entry is the menu's fallback, so a refused default boot goes to it
-by itself (grub_menu_execute_with_fallback, grub-core/normal/menu.c).
+shim_lock=y, grub_shim_lock_verifier_setup), the menu first asks shim about the newest edition kernel (GRUB's linux
+command verifies it); if shim refuses it, the enrolment entry becomes the menu's default, so the timeout starts it
+and the person sees it selected. (GRUB's fallback takes entry numbers only, get_and_remove_first_entry_number in
+grub-core/normal/menu.c, and the number of entries before this one is not known here.)
 Environment: SPARKY_STEREO_ESP (default /boot/efi), SPARKY_STEREO_CERT (default the packaged certificate),
-SPARKY_STEREO_LANG_DIR (default /usr/share/sparky/sparky-stereo-boot), LANG.
+SPARKY_STEREO_LANG_DIR (default /usr/share/sparky/sparky-stereo-boot), LANG; from the grub.d script:
+SPARKY_STEREO_KERNEL_PATH (the kernel as GRUB reaches it), SPARKY_STEREO_KERNEL_ACCESS (GRUB's lines to reach its
+file system, grub-mkconfig_lib's prepare_grub_to_access_device) and SPARKY_STEREO_ESP_UUID (the partition's).
 """
 import filecmp
 import os
@@ -157,14 +161,36 @@ def grub():
             continue
         for line in wrap('%s: %s' % (s.get('LOCAL14', lang), text.replace('{folder}', folder))):
             out.append('            echo "%s"' % line.replace('"', '').replace('$', '').replace('\\', ''))
-    out += ['            sleep --interruptible --verbose 60',
+    # MokManager beside shim in the system's folder: the partition by its UUID, else by the file (GRUB's cmdpath is not
+    # exported into the configfile that reads this menu, so it cannot name the folder GRUB came from)
+    uuid = os.environ.get('SPARKY_STEREO_ESP_UUID', '')
+    mm = '/EFI/%s/mmx64.efi' % folder
+    find = ['            set sparky_mm=',
+            '            search --no-floppy --file --set=sparky_mm %s' % mm]
+    if uuid:
+        find = ['            set sparky_mm=',
+                '            search --no-floppy --fs-uuid --set=sparky_mm %s' % uuid,
+                '            if [ -z "$sparky_mm" ]; then',
+                '                search --no-floppy --file --set=sparky_mm %s' % mm,
+                '            fi']
+    out += ['            sleep --interruptible --verbose 60'] + find + [
             '            terminal_output console',
-            '            chainloader "$cmdpath/mmx64.efi"',
-            '        }',
-            '        if [ "$shim_lock" = y ]; then',
-            '            set fallback=sparky-enroll',
-            '        fi',
-            '    fi',
+            '            chainloader ($sparky_mm)%s' % mm,
+            '        }']
+    path = os.environ.get('SPARKY_STEREO_KERNEL_PATH')
+    if path:
+        access = [l.strip() for l in os.environ.get('SPARKY_STEREO_KERNEL_ACCESS', '').splitlines() if l.strip()]
+        out += ['        if [ "$shim_lock" = y ]; then',
+                '            set sparky_root="$root"',
+                *['            ' + l for l in access],
+                '            if linux %s; then' % path,
+                '                true',
+                '            else',
+                '                set default=sparky-enroll',
+                '            fi',
+                '            set root="$sparky_root"',
+                '        fi']
+    out += ['    fi',
             'fi']
     print('\n'.join(out))
 

@@ -48,8 +48,14 @@ for l in en_US pl_PL pt_BR fr_FR de_DE ja_JP ko_KR zh_CN zh_TW; do
 	check "$l: the system's folder named" "$(echo "$out" | grep -c 'sparky-stereo-secureboot-2026.der')" 9
 done
 out=$(run a de_DE.UTF-8 grub)
-check "MokManager from GRUB's own folder" "$(echo "$out" | grep -c 'chainloader "$cmdpath/mmx64.efi"')" 1
-check "fallback only when shim_lock is set" "$(echo "$out" | grep -A1 'if \[ "$shim_lock" = y \]; then' | tail -1 | tr -d ' ')" "setfallback=sparky-enroll"
+check "MokManager from the system's folder, the partition found by file" "$(echo "$out" | grep -c -E 'search --no-floppy --file --set=sparky_mm /EFI/sparky/mmx64.efi|chainloader \(\$sparky_mm\)/EFI/sparky/mmx64.efi')" 2
+out2=$(SPARKY_STEREO_ESP_UUID=ABCD-1234 run a de_DE.UTF-8 grub)
+check "the partition by its UUID first" "$(echo "$out2" | grep -c 'search --no-floppy --fs-uuid --set=sparky_mm ABCD-1234')" 1
+check "no kernel known: no Secure Boot test" "$(echo "$out" | grep -c shim_lock)" 0
+out=$(SPARKY_STEREO_KERNEL_PATH=/boot/vmlinuz-7.3.0-rc6-stereo3d12 SPARKY_STEREO_KERNEL_ACCESS="$(printf 'insmod part_gpt\nsearch --no-floppy --fs-uuid --set=root 1234')" run a de_DE.UTF-8 grub)
+check "under Secure Boot shim is asked about the kernel" "$(echo "$out" | grep -A4 'if \[ "$shim_lock" = y \]; then' | tail -1 | tr -d ' ')" "iflinux/boot/vmlinuz-7.3.0-rc6-stereo3d12;then"
+check "a refused kernel makes the enrolment the default" "$(echo "$out" | grep -c 'set default=sparky-enroll')" 1
+check "the menu's root comes back" "$(echo "$out" | grep -c 'set root="$sparky_root"')" 1
 check "only on 64-bit UEFI" "$(echo "$out" | head -2 | tr -d ' ' | tr '\n' ' ')" 'if["$grub_platform"=efi];then if["$grub_cpu"=x86_64];then '
 check "no character GRUB would expand in the texts" "$(echo "$out" | grep 'echo "' | grep -c -E '\$|\\')" 0
 w=$(echo "$out" | grep 'echo "' | sed 's/^ *echo "//; s/"$//' | python3 -c 'import sys,unicodedata; print(max(sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in l.rstrip("\n")) for l in sys.stdin))')

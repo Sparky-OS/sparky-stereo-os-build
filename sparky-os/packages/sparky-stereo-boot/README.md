@@ -29,7 +29,7 @@ Secure Boot: the edition's kernels are signed with the Sparky Stereo OS key, whi
 A new or reset motherboard, or Secure Boot turned on after the installation, leaves the list without it, and GRUB refuses the kernel ("bad shim loader signature").
 So the package keeps the edition's public certificate (sparky-stereo-secureboot-2026.der) next to every shim on the EFI system partition, and GRUB's menu has "Secure Boot: enroll the Sparky Stereo OS key" (/etc/grub.d/35_sparky_stereo_secureboot).
 The entry shows the steps in the nine required languages and starts MokManager: Enroll key from disk, the disk, EFI, the system's folder, the certificate, Continue, Yes, Reboot; no password is asked.
-Under Secure Boot the entry is the menu's fallback, so a boot GRUB refuses goes to it by itself.
+Under Secure Boot the menu first asks shim about the newest kernel; when shim refuses it, the entry is the menu's default, so the timeout starts it and the person sees it selected.
 
 Options: /etc/default/sparky-stereo-boot (then: sudo sparky-stereo-boot reapply).
 Status: sparky-stereo-boot status
