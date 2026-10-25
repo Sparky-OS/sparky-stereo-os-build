@@ -12,5 +12,6 @@ sudo -n find /boot/efi -type f -iname '*.efi' -exec sha256sum {} +
 sudo -n efibootmgr -v 2>/dev/null | head -8
 sudo -n grep -E '^(menuentry|submenu)|^\s+linux\s' /boot/grub/grub.cfg | head -12
 sudo -n plymouth-set-default-theme; grep -h Theme /etc/plymouth/plymouthd.conf
-/usr/lib/command-not-found -- cowsay 2>&1 | head -4
+for c in cmatrix aacgain filmcraft; do /usr/lib/command-not-found -- $c 2>&1 | head -4; done
 systemctl is-system-running; systemctl --failed --no-legend | cat
+sudo -n journalctl -b -u nvidia-persistenced --no-pager | tail -4
