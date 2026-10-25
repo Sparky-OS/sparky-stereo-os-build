@@ -1,0 +1,10 @@
+#!/usr/bin/make -f
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/25
+# Copyright 2026 under the GNU GPL3 License
+# Built with Qt 6 as upstream's own Arch package does (-DBUILD_WITH_QT6=ON). The tests need a systemd user session on a
+# session bus, so the package build leaves them out.
+%:
+	dh $@
+
+override_dh_auto_configure:
+	dh_auto_configure -- -DBUILD_WITH_QT6=ON -DBUILD_TESTING=OFF
