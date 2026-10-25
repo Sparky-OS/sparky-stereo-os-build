@@ -1,0 +1,33 @@
+#!/usr/bin/make -f
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/25
+# Copyright 2026 under the GNU GPL3 License
+# Debian's Rust crates (dh-cargo), never the network. Upstream's Cargo.lock pins dbus 0.9.10; Debian has 0.9.12 of the
+# same 0.9 series, so the lock file is set aside at build time and cargo resolves against the Debian registry.
+include /usr/share/rustc/architecture.mk
+export CARGO_NET_OFFLINE = true
+export DEB_HOST_GNU_TYPE DEB_HOST_RUST_TYPE
+
+%:
+	dh $@ --buildsystem cargo
+
+execute_after_dh_auto_clean:
+	if [ -f debian/Cargo.lock.upstream ]; then mv debian/Cargo.lock.upstream Cargo.lock; fi
+
+override_dh_auto_configure:
+	if [ -f Cargo.lock ]; then mv Cargo.lock debian/Cargo.lock.upstream; fi
+	dh_auto_configure
+
+override_dh_auto_build:
+	CARGO_HOME=$(CURDIR)/debian/cargo_home /usr/share/cargo/bin/cargo build --release
+
+override_dh_auto_install:
+	install -Dm755 target/$(DEB_HOST_RUST_TYPE)/release/dmemcg-booster debian/dmemcg-booster/usr/bin/dmemcg-booster
+	install -Dm644 dmemcg-booster-system.service debian/dmemcg-booster/usr/lib/systemd/system/dmemcg-booster-system.service
+	install -Dm644 dmemcg-booster-user.service debian/dmemcg-booster/usr/lib/systemd/user/dmemcg-booster-user.service
+
+# upstream's units: the system one is WantedBy=multi-user.target, the user one WantedBy=graphical-session-pre.target
+override_dh_installsystemd:
+	dh_installsystemd --name=dmemcg-booster-system
+
+override_dh_installsystemduser:
+	dh_installsystemduser --name=dmemcg-booster-user

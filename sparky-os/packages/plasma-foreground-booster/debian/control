@@ -1,0 +1,31 @@
+Source: plasma-foreground-booster
+Section: kde
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: debhelper-compat (= 13), cmake, extra-cmake-modules, libkf5cgroups-dev, libkf6config-dev, libkf6dbusaddons-dev, plasma-workspace-dev, qt6-base-dev
+Standards-Version: 4.7.2
+Homepage: https://sparkylinux.org
+Rules-Requires-Root: no
+XS-Upstream-Homepage: https://github.com/pixelcluster/kcgroups/tree/dmemcg-foreground-booster
+
+Package: plasma-foreground-booster
+Architecture: linux-any
+Depends: plasma-workspace, systemd, ${misc:Depends}, ${shlibs:Depends}
+Recommends: dmemcg-booster, sparky-stereo-vram-boost
+XB-Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues
+Description: give the window in front the VRAM and CPU priority in Plasma
+ Plasma's Foreground Booster follows the active window through Plasma's
+ task manager and gives the systemd unit of its application the GPUs'
+ whole VRAM as dmem.low protection (Linux 7.3's dmem cgroup controller)
+ and a higher CPU weight, and takes both back when another window comes
+ to the front. dmemcg-booster turns the dmem controller on in the
+ session, so the game in front keeps its VRAM when background programs
+ want more.
+ .
+ This is Natalie Vock's dmem version
+ (https://github.com/pixelcluster/kcgroups, branch
+ dmemcg-foreground-booster at 0553351, after the tag
+ booster-dmemcg-experimental) of the KDE Foreground Booster by Henri Chain
+ and David Redondo. Its switch is upstream's: autostart in the
+ [Foreground Booster] group of kcgroupsrc. The edition starts it only
+ where sparky-stereo-vram-boost finds an AMD GPU with its own VRAM.

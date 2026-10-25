@@ -1,0 +1,54 @@
+From 3072419bdecb91a07daa6ad96fb429939a8efa14 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 14 Oct 2026 21:35:48 -0300
+Subject: [PATCH 09/11] nvidia-modeset: HDMI 2.1 FRL at 16 bits per component
+
+HDMI 2.1 carries uncompressed video over the Fixed Rate Link at 8, 10,
+12 and 16 bits per component: the FRL capacity computation of HDMI 2.1
+section 7.7 takes the colour depth as an input (its Kcd factor is 2.0 at
+16 bpc), and the sink declares 48-bit Deep Colour with the same DC_48bit
+flag of the HDMI VSDB (CTA-861, HDMI 1.4b section 8.3.2) that gates the
+TMDS path. NVKMS already types 16 bpc for FRL (HDMI_BPC16 in
+nvHdmiFrlCommon.h, used by the HDMI library's DSC gate on DSC_16bpc and
+by its bits-per-pixel limits), but the FRL query returned FALSE for a
+16 bpc colour attribute, so a mode that needs FRL at 16 bpc was never
+asked for and fell to 12 bpc through the downgrade chain.
+
+Hand HDMI_BPC16 to NvHdmi_QueryFRLConfig() for a 16 bpc colour
+attribute. The rest follows the existing code: the library asks the
+GSP for the FRL rate with bpc = 16, the head is programmed with
+PIXEL_DEPTH_BPP_48_444, the GCP carries CD = 7 (HDMI 1.4b section
+6.5.3), and DSC at 16 bpc is only engaged when the HF-VSDB sets
+DSC_16bpc (evaluateIsDSCPossible in nvhdmipkt_C671.c).
+
+Sinks that do not declare DC_48bit are unchanged: nvDpyGetOutputColorFormatInfo()
+offers 16 bpc only through nvDpyIsHdmiDepth48Evo(), so pDpyColor->bpc is
+never 16 for them and this case is not reached.
+
+Not verified on hardware: the FRL capacity computation runs in the GSP
+firmware (NV0073_CTRL_CMD_SPECIFIC_GET_HDMI_FRL_CAPACITY_COMPUTATION has
+no implementation in the open kernel RM), so its answer for bpc = 16 is
+unknown until a DC_48 FRL sink is tried. Build-tested only.
+
+Assisted-by: Claude Fable via Claude Code
+---
+ src/nvidia-modeset/src/nvkms-hdmi.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/src/nvidia-modeset/src/nvkms-hdmi.c b/src/nvidia-modeset/src/nvkms-hdmi.c
+index 0447ad3..a664b97 100644
+--- a/src/nvidia-modeset/src/nvkms-hdmi.c
++++ b/src/nvidia-modeset/src/nvkms-hdmi.c
+@@ -2560,6 +2560,9 @@ NvBool nvHdmiFrlQueryConfigOneColorFormatAndBpc(
+      * nvConstructHwModeTimingsEvo().
+      */
+     switch(pDpyColor->bpc) {
++        case NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_16:
++            videoTransportInfo.bpc = HDMI_BPC16;
++            break;
+         case NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_12:
+             videoTransportInfo.bpc = HDMI_BPC12;
+             break;
+-- 
+2.53.0
+

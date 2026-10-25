@@ -1,0 +1,30 @@
+Source: dmemcg-booster
+Section: admin
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: debhelper-compat (= 13), dh-sequence-cargo, cargo:native, rustc:native, librust-dbus-0.9+default-dev (>= 0.9.10), libdbus-1-dev, pkgconf
+Standards-Version: 4.7.2
+Homepage: https://sparkylinux.org
+Rules-Requires-Root: no
+XS-Upstream-Homepage: https://gitlab.steamos.cloud/holo/dmemcg-booster
+
+Package: dmemcg-booster
+Architecture: linux-any
+Depends: systemd, ${misc:Depends}, ${shlibs:Depends}
+Recommends: sparky-stereo-vram-boost
+XB-Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues
+Description: enable the dmem cgroup controller so the foreground game keeps its VRAM
+ Linux 7.3 lets a cgroup's dmem.min and dmem.low protect its video memory
+ when other programs push it out of VRAM, on drivers that register their
+ VRAM with the dmem cgroup controller (amdgpu, xe and nouveau).
+ This service turns that controller on in the cgroups systemd creates,
+ at system level and in each user's session, and gives the user's
+ applications (app.slice) the GPUs' whole VRAM as their protection, so a
+ desktop program in the background loses VRAM before the game in front.
+ A foreground booster such as plasma-foreground-booster then gives the
+ window in front the protection.
+ .
+ This is Natalie Vock's dmemcg-booster 0.1.3 (Valve Corporation, MIT),
+ from https://gitlab.steamos.cloud/holo/dmemcg-booster, built with
+ Debian's Rust crates. The edition starts it only where
+ sparky-stereo-vram-boost finds an AMD GPU with its own VRAM.

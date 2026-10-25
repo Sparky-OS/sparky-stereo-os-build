@@ -12,6 +12,11 @@
 #   0007 nvidia-drm: send the HDMI 3D InfoFrame (VSIF) built from the mode, so the TV
 #        switches itself into 3D when KWin sets a 3D mode
 #   0008 nvidia-drm: "max bpc", "Broadcast RGB" and "color format" connector properties
+#   0009 nvidia-modeset: HDMI 2.1 FRL at 16 bits per component
+#   0010 nvidia-modeset: DisplayPort at 16 bits per component
+#   0011 nvidia-modeset: HDMI YCbCr 4:2:0 Deep Colour at 12 and 16 bits per component
+#   0012 nvidia: dmem_cgroup_register_region() takes a struct dmem_cgroup_init on Linux 7.3
+#        (NVIDIA's own change from 615.78.08; needed with the kernel's CONFIG_CGROUP_DMEM=y)
 # Since +stereo3d4 this builds a Debian source package, nvidia-kmod-open: the upstream tarball
 # is the DKMS tree of NVIDIA's own nvidia-kernel-open-dkms at the version in debian/changelog
 # (615.71.09-2 for 615.71.09-2+stereo3d4), debian/ is ours. Two binary packages come out:

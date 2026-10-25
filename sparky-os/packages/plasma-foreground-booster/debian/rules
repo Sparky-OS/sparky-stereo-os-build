@@ -1,0 +1,14 @@
+#!/usr/bin/make -f
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/25
+# Copyright 2026 under the GNU GPL3 License
+# The tests need a running Plasma session, so the package build leaves them out.
+%:
+	dh $@
+
+override_dh_auto_configure:
+	dh_auto_configure -- -DBUILD_TESTING=OFF
+
+# upstream's user unit has no [Install] section (its WantedBy was dropped to break a dependency cycle);
+# sparky-stereo-vram-boost decides at every boot whether the session starts it
+override_dh_installsystemduser:
+	dh_installsystemduser --no-enable

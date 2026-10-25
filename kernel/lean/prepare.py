@@ -18,6 +18,8 @@ import sys
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parents[1] / 'sparky-os'))
 from lean.debian_prepare import prepare
+sys.path.insert(0, str(HERE))
+import upstream
 
 
 def main(root, recipe, counter, smoke, packaging_revision=None):
@@ -25,15 +27,15 @@ def main(root, recipe, counter, smoke, packaging_revision=None):
     source = json.loads((root / 'SOURCE.edition.json').read_text())
     flavour = source['flavour']
     if (flavour not in ('base', 'v3', 'rt') or not re.fullmatch(r'[0-9]+', counter)
-            or source['tag'] != 'v7.3-rc6'
-            or source['commit'] != 'a90ee4305c4a5df72c11b31dacfdc76e00fcf78a'
+            or upstream.PINNED.get(source['tag']) != source['commit']
             or (root / '.git').exists() or (root / 'debian').exists()):
         raise ValueError('Expected a fresh, pinned Linux export and a new release counter')
+    kernel_version, debian_upstream = upstream.versions(source['tag'])
     suffix = ('-rt' if flavour == 'rt' else '') + '-stereo3d' + counter
     if flavour == 'v3':
         suffix += '-v3'
-    release = '7.3.0-rc6' + suffix
-    version = '7.3.0~rc6-' + counter
+    release = kernel_version + suffix
+    version = debian_upstream + '-' + counter
     if packaging_revision is not None:
         if not re.fullmatch(r'[1-9][0-9]*', packaging_revision):
             raise ValueError('Expected a positive packaging revision')
@@ -63,9 +65,13 @@ def main(root, recipe, counter, smoke, packaging_revision=None):
         'Recommends: apparmor\n'
         'Suggests: debian-kernel-handbook, firmware-linux-free, grub-pc | grub-efi-amd64 | extlinux\n'
         'Breaks: fwupdate (<< 12-7), initramfs-tools (<< 0.120+deb8u2), wireless-regdb (<< 2019.06.03-1~)\n')
+    # The Breaks is ours (build 13): with CONFIG_CGROUP_DMEM=y, NVIDIA's open modules before the edition's
+    # 615.71.09-2+stereo3d6 do not compile against Linux 7.3's dmem_cgroup_register_region(), and a DKMS build that
+    # fails stops the headers' postinst; the Breaks makes APT take the fixed module source first.
     headers_fields = (
         'Depends: ${kernel:Compiler}, make, kmod, libelf1t64, libssl3t64, pahole | dwarves, libc6-dev, '
-        'linux-base (>= 4.17~), ${misc:Depends}\n')
+        'linux-base (>= 4.17~), ${misc:Depends}\n'
+        'Breaks: nvidia-kernel-open-dkms-stereo3d (<< 615.71.09-2+stereo3d6~)\n')
     for kind, fields in (('image', image_fields), ('headers', headers_fields)):
         control += (f'Package: linux-{kind}-{release}\nArchitecture: amd64\n{fields}'
                     f'Description: Sparky Stereo Linux {kind}, version {release}\n'

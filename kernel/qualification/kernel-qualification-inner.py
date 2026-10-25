@@ -69,7 +69,7 @@ run('settings-hibernate', bench + settings + ['run', 'hibernate'], ['hibernate']
 run('features', bench + ['--load-modules', 'virtio_blk efivarfs binder_linux ntsync tcp_bbr3 adios',
     '--guest-script', '/inputs/features.sh', '--guest-dir', '/inputs/guest', 'run', 'custom'],
     ['custom'], env)
-run('modules', bench + ['--load-modules', 'virtio_blk vkms rtw89_8852au rtw89_8852cu rtw89_8922au rtw89_8922de',
+run('modules', bench + ['--load-modules', 'virtio_blk vkms rtw89_8852au rtw89_8852cu rtw89_8922au rtw89_8922de amdgpu nouveau',
     '--guest-script', '/inputs/modules.sh', '--guest-dir', '/inputs/guest', 'run', 'custom'], ['custom'], env)
 run('settings-kexec', bench + settings + ['run', 'kexec'], ['kexec'], env)
 run('legacy-bios', bench + ['--bios', 'run', 'policy'], ['policy'], env)
@@ -80,7 +80,9 @@ features = (root / 'features.log').read_text(errors='replace')
 mandatory = ['secure_boot', 'btf_vmlinux', 'btf_modules', 'sched_ext_load',
              'sysctl_sched_bore', 'sysctl_sched_poc_selector', 'binderfs',
              'dev_ntsync', 'tcp_bbr3', 'module_virtio_blk', 'module_binder_linux',
-             'module_ntsync', 'module_tcp_bbr3', 'module_adios']
+             'module_ntsync', 'module_tcp_bbr3', 'module_adios',
+             # build 13 on: Linux 7.3's group share mode and the dmem cgroup controller
+             'sched_cgroup_mode', 'cgroup_dmem', 'cgroup_dmem_files']
 missing = [key for key in mandatory if not re.search(r'^PASS\s+' + key + r'\s', features, re.M)]
 results.append(dict(label='required-features', passed=not missing, missing=missing))
 (root / 'results.json').write_text(json.dumps(results, indent=2) + '\n')

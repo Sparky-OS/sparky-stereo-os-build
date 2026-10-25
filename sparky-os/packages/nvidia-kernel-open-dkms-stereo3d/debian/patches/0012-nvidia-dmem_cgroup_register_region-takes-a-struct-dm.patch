@@ -1,0 +1,105 @@
+From 2c3066010a81d878dd1f377ea4e9258c2b6ba519 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sun, 25 Oct 2026 00:54:18 -0300
+Subject: [PATCH 12/12] nvidia: dmem_cgroup_register_region() takes a struct
+ dmem_cgroup_init on Linux 7.3
+
+Linux 7.3 (commit e11640b9cea4, "cgroup/dmem: Introduce struct
+dmem_cgroup_init for region initialization") changed the first argument
+of dmem_cgroup_register_region() from the region size to a pointer to
+struct dmem_cgroup_init. 615.71.09 still passes the size, so with
+CONFIG_CGROUP_DMEM=y (NV_DMEM_CGROUP_PRESENT) nvidia.ko does not compile:
+
+  nvidia/os-interface.c: error: passing argument 1 of
+  'dmem_cgroup_register_region' makes pointer from integer without a cast
+
+This is NVIDIA's own change from 615.78.08, taken as it is: the
+conftest dmem_cgroup_register_region_has_init_arg, its line in
+nvidia.Kbuild, and os_dmem_cgroup_register_region() building the
+structure when NV_DMEM_CGROUP_REGISTER_REGION_HAS_INIT_ARG is set.
+Kernels before 7.3 keep the old call. The other dmem calls the driver
+makes (try_charge, uncharge, unregister_region, pool_state_put,
+state_evict_valuable) kept their signatures in 7.3.
+
+Assisted-by: Claude Opus 5.5
+---
+ kernel-open/conftest.sh           | 27 +++++++++++++++++++++++++++
+ kernel-open/nvidia/nvidia.Kbuild  |  1 +
+ kernel-open/nvidia/os-interface.c | 11 ++++++++++-
+ 3 files changed, 38 insertions(+), 1 deletion(-)
+
+diff --git a/kernel-open/conftest.sh b/kernel-open/conftest.sh
+index 6373f36..87f7008 100755
+--- a/kernel-open/conftest.sh
++++ b/kernel-open/conftest.sh
+@@ -5441,6 +5441,33 @@ compile_test() {
+             compile_check_conftest "$CODE" "NV_DMEM_CGROUP_PRESENT" "" "types"
+         ;;
+ 
++        dmem_cgroup_register_region_has_init_arg)
++            #
++            # Determine if dmem_cgroup_register_region() takes a
++            # 'const struct dmem_cgroup_init *' argument.
++            #
++            # Commit e11640b9cea4 ("cgroup/dmem: Introduce struct
++            # dmem_cgroup_init for region initialization") changed the first
++            # argument from 'u64 size' to 'const struct dmem_cgroup_init *'
++            # in Linux 7.3.
++            #
++            CODE="
++            #include <linux/cgroup_dmem.h>
++
++            typeof(dmem_cgroup_register_region)
++                conftest_dmem_cgroup_register_region_has_init_arg;
++
++            struct dmem_cgroup_region *
++            conftest_dmem_cgroup_register_region_has_init_arg(
++                const struct dmem_cgroup_init *init,
++                const char *name_fmt, ...)
++            {
++                return NULL;
++            }"
++
++            compile_check_conftest "$CODE" "NV_DMEM_CGROUP_REGISTER_REGION_HAS_INIT_ARG" "" "types"
++        ;;
++
+         misc_cgrp_id)
+             #
+             # Check to see if the misc cgroup type is available
+diff --git a/kernel-open/nvidia/nvidia.Kbuild b/kernel-open/nvidia/nvidia.Kbuild
+index 99d739a..d604b86 100644
+--- a/kernel-open/nvidia/nvidia.Kbuild
++++ b/kernel-open/nvidia/nvidia.Kbuild
+@@ -264,6 +264,7 @@ NV_CONFTEST_TYPE_COMPILE_TESTS += register_shrinker_has_format_arg
+ NV_CONFTEST_TYPE_COMPILE_TESTS += nr_kernel_misc_reclaimable
+ NV_CONFTEST_TYPE_COMPILE_TESTS += pci_resize_resource_has_exclude_bars_arg
+ NV_CONFTEST_TYPE_COMPILE_TESTS += dmem_cgrp_id
++NV_CONFTEST_TYPE_COMPILE_TESTS += dmem_cgroup_register_region_has_init_arg
+ NV_CONFTEST_TYPE_COMPILE_TESTS += misc_cgrp_id
+ NV_CONFTEST_TYPE_COMPILE_TESTS += is_vma_write_locked_has_mm_lock_seq_arg
+ NV_CONFTEST_TYPE_COMPILE_TESTS += percpu_mm_counter
+diff --git a/kernel-open/nvidia/os-interface.c b/kernel-open/nvidia/os-interface.c
+index f4f92f6..47c4c2c 100644
+--- a/kernel-open/nvidia/os-interface.c
++++ b/kernel-open/nvidia/os-interface.c
+@@ -3028,7 +3028,16 @@ void* NV_API_CALL os_cgroup_parent(void *cgroup) { return NULL; }
+ #if defined(NV_DMEM_CGROUP_PRESENT)
+ void* NV_API_CALL os_dmem_cgroup_register_region(const char *name, NvU64 size, NvU64 precharge, void **prechargePool)
+ {
+-    void *region = dmem_cgroup_register_region(size, name);
++    void *region;
++#if defined(NV_DMEM_CGROUP_REGISTER_REGION_HAS_INIT_ARG)
++    const struct dmem_cgroup_init init =
++    {
++        .size = size,
++    };
++    region = dmem_cgroup_register_region(&init, name);
++#else
++    region = dmem_cgroup_register_region(size, name);
++#endif
+     if (IS_ERR(region))
+     {
+         return NULL;
+-- 
+2.53.0
+

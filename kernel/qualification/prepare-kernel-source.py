@@ -16,6 +16,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'sparky-os' / 'config'))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'sparky-os' / 'release'))
 import local_config as cfg
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'lean'))
+import upstream
 
 parser = argparse.ArgumentParser()
 parser.add_argument('flavour', choices=['base', 'v3', 'rt'])
@@ -28,9 +30,10 @@ base = cfg.path('SPARKY_MIGRATION_WORK')
 flavour = args.flavour
 kit = (cfg.TREE / 'kernel')
 manifest_path = args.manifest or base / 'kernel-inputs/accepted-source-manifests.json'
-version = '7.3.0~rc6-' + args.counter + ('.' + args.packaging_revision if args.packaging_revision else '') + '+lc1'
 subprocess.run([sys.executable, str(kit / 'lean/check-flavours.py'), str(manifest_path)], check=True)
 manifest = json.loads(manifest_path.read_text())[flavour]
+upstream_version = upstream.versions(manifest['tag'])[1]
+version = upstream_version + '-' + args.counter + ('.' + args.packaging_revision if args.packaging_revision else '') + '+lc1'
 repo = (cfg.path('SPARKY_INPUTS_DIR') / 'kernel-soul/work/kt')
 series = cfg.TREE / 'kernel/series'
 if shutil.disk_usage(base).free < 26 * 1024**3:
@@ -56,10 +59,10 @@ manifest['configuration_sha256'] = {p.name: hashlib.sha256(p.read_bytes()).hexdi
 (source / 'SOURCE.edition.json').write_text(json.dumps(manifest, indent=2) + '\n')
 subprocess.run(['python3', str(kit / 'lean/prepare.py'), str(source), str(kit), '--counter', args.counter]
                + (['--packaging-revision', args.packaging_revision] if args.packaging_revision else []), check=True)
-archive = work / f'linux-stereo-{flavour}_7.3.0~rc6.orig.tar.xz'
+archive = work / f'linux-stereo-{flavour}_{upstream_version}.orig.tar.xz'
 with archive.open('wb') as sink:
     packed = subprocess.Popen(['tar', '-C', str(source), '--exclude=./debian',
-                               '--transform=flags=r;s,^\\.,linux-stereo-' + flavour + '-7.3.0~rc6,',
+                               '--transform=flags=r;s,^\\.,linux-stereo-' + flavour + '-' + upstream_version + ',',
                                '-cf', '-', '.'], stdout=subprocess.PIPE)
     compressed = subprocess.Popen(['xz', '-T2', '-3'], stdin=packed.stdout, stdout=sink)
     packed.stdout.close()

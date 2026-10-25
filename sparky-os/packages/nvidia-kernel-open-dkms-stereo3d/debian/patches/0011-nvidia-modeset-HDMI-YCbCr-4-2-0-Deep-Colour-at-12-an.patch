@@ -1,0 +1,186 @@
+From b124bbe2101446017bcb73ad6d1c5044524a6556 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 14 Oct 2026 21:42:45 -0300
+Subject: [PATCH 11/11] nvidia-modeset: HDMI YCbCr 4:2:0 Deep Colour at 12 and
+ 16 bits per component
+
+HDMI 2.0 added YCbCr 4:2:0 pixel encoding, and defines it at 24, 30, 36
+and 48 bits per pixel (HDMI 2.0 section 7.1; the TMDS character rate is
+half the pixel clock times the depth factor, and the GCP CD field
+carries the depth as for 4:4:4). The sink declares each 4:2:0 depth with
+its own flag in the HDMI Forum VSDB: DC_30bit_420, DC_36bit_420 and
+DC_48bit_420 (HDMI 2.1 section 10.3.2, parsed to hdmiForumInfo in
+nvt_edidext_861.c), or in the YCbCr 4:2:0 colour depth byte of the
+DisplayID 2.0 Display Interface Features data block. NVKMS honoured only
+DC_30bit_420: a 4:2:0 mode ran at 8 bpc, or 10 bpc when
+IsYuv42010BPCSupported() agreed, and the 12 and 16 bpc flags were parsed
+and ignored.
+
+Generalise the check to IsYuv420BpcSupported(pDpyEvo, bpc). It keeps
+the 10 bpc rule as it was (DC_30bit in the HDMI VSDB and
+DC_30bit_420 in the HF-VSDB, or DisplayID support_10b) and adds the same
+shape for 12 (DC_36bit and DC_36bit_420, or support_12b) and 16
+(DC_48bit and DC_48bit_420, or support_16b; nvDpyIsHdmiDepth48Evo() also
+brings the Turing-and-newer HAL cap and the module parameter).
+
+nvChooseCurrentColorFormatAndRangeEvo() offers 12 and 16 bpc for 4:2:0
+only in NV_YUV420_MODE_HW, where the display hardware packs 4:2:0 from
+the head's 36_444 or 48_444 output: in the SW mode the head scans out
+RGB from the headSurface and its composite shader packs 4:2:0 at the
+headSurface's depth, so that mode stays at 8 or 10 bpc as before.
+IsColorBpcSupported() answers for YCbCr 4:2:0 from the same function
+instead of asserting, so DowngradeColorBpc() steps 16 to 12 to 10 to 8
+for 4:2:0 with the sink's flags, as it does for 4:4:4 with the format
+table.
+
+Everything below the choice already handles the depth: the pixel depth
+map takes YCbCr420 with RGB and 4:4:4 (nvEvoDpyColorToPixelDepth), the
+TMDS clock check halves the pixel clock for 4:2:0 and then applies the
+2/3 (12 bpc) or 1/2 (16 bpc) rule, the FRL query hands the bpc to the
+HDMI library, which sizes 4:2:0 at 3 * bpc * 8 bits per two pixels, and
+SendHdmiGcp() sends CD = 6 or CD = 7 whenever the head depth is 36_444
+or 48_444 and the format is not 4:2:2.
+
+Sinks that do not set DC_36bit_420 or DC_48bit_420 (and have no
+DisplayID 2.0 depth bits) are unchanged: IsYuv420BpcSupported() is false
+for 12 and 16 and the 8 and 10 bpc results are exactly the previous
+ones.
+
+Not verified on hardware; build-tested only. To check on a sink that
+declares DC_36bit_420 or DC_48bit_420: that the display hardware's 4:2:0
+packer accepts the 36_444 and 48_444 head depths (not documented), and
+at 12 bpc that the GCP packing phase, computed from the full-width
+raster as for 4:4:4, matches what the packer sends on the half-rate
+TMDS link (16 bpc always uses phase 0 and is not affected).
+
+Assisted-by: Claude Fable via Claude Code
+---
+ src/nvidia-modeset/src/nvkms-evo.c | 79 ++++++++++++++++++++++++++----
+ 1 file changed, 69 insertions(+), 10 deletions(-)
+
+diff --git a/src/nvidia-modeset/src/nvkms-evo.c b/src/nvidia-modeset/src/nvkms-evo.c
+index 11c5798..99504ff 100644
+--- a/src/nvidia-modeset/src/nvkms-evo.c
++++ b/src/nvidia-modeset/src/nvkms-evo.c
+@@ -2687,30 +2687,69 @@ static enum NvKmsDpyAttributeColorBpcValue ChooseColorBpc(
+     return result;
+ }
+ 
+-static NvBool IsYuv42010BPCSupported(
+-    const NVDpyEvoRec *pDpyEvo)
++/*
++ * Return whether the sink declares YCbCr 4:2:0 at the given depth: the
++ * HF-VSDB flags DC_30bit_420, DC_36bit_420 and DC_48bit_420 (HDMI 2.1
++ * section 10.3.2), or the YCbCr 4:2:0 colour depth bits of the DisplayID
++ * 2.0 Display Interface Features data block. On HDMI the GPU and the sink
++ * also need the matching 4:4:4 Deep Colour depth.
++ */
++static NvBool IsYuv420BpcSupported(
++    const NVDpyEvoRec *pDpyEvo,
++    const enum NvKmsDpyAttributeColorBpcValue bpc)
+ {
+     const NVT_EDID_INFO *pEdidInfo = &pDpyEvo->parsedEdid.info;
+     const NVT_EDID_CEA861_INFO *pExt861 = &pEdidInfo->ext861;
++    const NVT_HDMI_FORUM_INFO *pHfInfo = &pEdidInfo->hdmiForumInfo;
+ 
+     nvAssert(pDpyEvo->parsedEdid.valid);
+ 
++    if (bpc == NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_8) {
++        return NV_TRUE;
++    }
++
+     if (nvDpyIsHdmiEvo(pDpyEvo)) {
+-        if (!nvDpyIsHdmiDepth30Evo(pDpyEvo)) {
+-            return NV_FALSE; 
++        NvBool hdmiDepth, hdmiDepth420;
++
++        switch (bpc) {
++        case NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_16:
++            hdmiDepth = nvDpyIsHdmiDepth48Evo(pDpyEvo);
++            hdmiDepth420 = pHfInfo->dc_48bit_420;
++            break;
++        case NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_12:
++            hdmiDepth = nvDpyIsHdmiDepth36Evo(pDpyEvo);
++            hdmiDepth420 = pHfInfo->dc_36bit_420;
++            break;
++        case NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_10:
++            hdmiDepth = nvDpyIsHdmiDepth30Evo(pDpyEvo);
++            hdmiDepth420 = pHfInfo->dc_30bit_420;
++            break;
++        default:
++            return NV_FALSE;
++        }
++
++        if (!hdmiDepth) {
++            return NV_FALSE;
+         }
+         if (pExt861->valid.H20_HF_VSDB) {
+-            return pEdidInfo->hdmiForumInfo.dc_30bit_420;
++            return hdmiDepth420;
+         }
+     }
+ 
+     if (pEdidInfo->ext_displayid.supported_displayId2_0) {
+         const NVT_DISPLAYID_INFO *pDidInfo = &pEdidInfo->ext_displayid;
+ 
+-        if (pDidInfo->u4.display_interface_features.ycbcr420_depth.support_10b) {
+-            return NV_TRUE;
++        switch (bpc) {
++        case NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_16:
++            return pDidInfo->u4.display_interface_features.ycbcr420_depth.support_16b;
++        case NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_12:
++            return pDidInfo->u4.display_interface_features.ycbcr420_depth.support_12b;
++        case NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_10:
++            return pDidInfo->u4.display_interface_features.ycbcr420_depth.support_10b;
++        default:
++            break;
+         }
+-    } 
++    }
+     return NV_FALSE;
+ }
+ 
+@@ -2767,10 +2806,26 @@ NvBool nvChooseCurrentColorFormatAndRangeEvo(
+         newColorFormat = NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_FORMAT_YCbCr420;
+         maxBpc = NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_8;
+ 
+-        if (IsYuv42010BPCSupported(pDpyEvo)) {
++        if (IsYuv420BpcSupported(pDpyEvo,
++                                 NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_10)) {
+             maxBpc = NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_10;
+         }
+ 
++        /*
++         * 12 and 16 bpc 4:2:0 only with the hardware packer: in SW YUV420
++         * mode the head scans out RGB from the headSurface, whose composite
++         * shader packs 4:2:0 at the headSurface's own depth.
++         */
++        if (yuv420Mode == NV_YUV420_MODE_HW) {
++            if (IsYuv420BpcSupported(pDpyEvo,
++                                     NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_16)) {
++                maxBpc = NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_16;
++            } else if (IsYuv420BpcSupported(pDpyEvo,
++                                            NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_12)) {
++                maxBpc = NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_12;
++            }
++        }
++
+         newColorBpc = ChooseColorBpc(pDpyEvo,
+                                      requestedColorBpc,
+                                      maxBpc,
+@@ -6911,7 +6966,11 @@ static NvBool IsColorBpcSupported(
+     const enum NvKmsDpyAttributeCurrentColorFormatValue format,
+     const enum NvKmsDpyAttributeColorBpcValue bpc)
+ {
+-    nvAssert(format != NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_FORMAT_YCbCr420);
++    /* YCbCr 4:2:0 depths come from the HF-VSDB or DisplayID, not the format table. */
++    if (format == NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_FORMAT_YCbCr420) {
++        return (bpc >= NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_8) &&
++               IsYuv420BpcSupported(pDpyEvo, bpc);
++    }
+ 
+     if (nvDpyIsHdmiEvo(pDpyEvo) &&
+         (!nvDpyIsHdmiDepth30Evo(pDpyEvo)) &&
+-- 
+2.53.0
+

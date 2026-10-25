@@ -38,15 +38,19 @@ res('side_by_side_full_listed', len(sbsf) >= 2, '%d side by side (full) modes (s
 bad = []
 for m in modes:
     w, h, hz, il, s, clk, ht, vt, cclk, chd, cht, cvd, cvt = m
-    if s == 1:      # frame packing: two frames, the blanking between them counted once (HDMI 1.4b Table 8-14: 1080p24 FP is 1920x2205 in 2250 lines at 148.5 MHz)
+    if s in (1, 2, 5):  # frame packing, field alternative, L + depth: two frames, the blanking between them counted once (HDMI 1.4b Table 8-14: 1080p24 FP is 1920x2205 in 2250 lines at 148.5 MHz)
         okk = cclk == 2 * clk and cvt == 2 * vt and cvd == h + vt and chd == w and cht == ht
-    elif s == 4:    # side by side (full), as the series patch defines it: width doubled, blanking kept, clock grows with the total width
-        okk = chd == 2 * w and cht == ht + w and abs(cclk - clk * (ht + w) / ht) <= 1 and cvd == h and cvt == vt
+    elif s == 4:    # side by side (full) by series 34/0004's default, HDMI 1.4a Figure H-4: the whole line doubles, and the clock (297 MHz for VIC 16)
+        okk = chd == 2 * w and cht == 2 * ht and cclk == 2 * clk and cvd == h and cvt == vt
+    elif s == 3:    # line alternative, Figure H-3: every vertical value and the clock double
+        okk = cclk == 2 * clk and cvd == 2 * h and cvt == 2 * vt and chd == w and cht == ht
+    elif s == 6:    # L + depth + graphics + graphics-depth, Figure H-6: four pictures one vtotal apart
+        okk = cclk == 4 * clk and cvt == 4 * vt and cvd == h + 3 * vt and chd == w and cht == ht
     else:           # everything else keeps the 2D timing
         okk = cclk == clk and chd == w and cht == ht and cvd == h and cvt == vt
     if not okk:
         bad.append(fmt((w, h, hz, il, s)) + ' %s' % m[5:])
-res('stereo_timings', not bad, ('wrong: ' + '; '.join(bad[:3])) if bad else 'frame packing, side by side (full) and the layouts that keep the 2D timing all computed as defined')
+res('stereo_timings', not bad, ('wrong: ' + '; '.join(bad[:3])) if bad else 'every listed 3D structure timed as series group 34 defines it (HDMI 1.4a Appendix H)')
 fp = [m for m in modes if m[4] == 1 and m[0] == 1920 and m[1] == 1080 and m[2] == 24]
 if fp:
     m = fp[0]

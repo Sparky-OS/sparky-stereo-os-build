@@ -1,0 +1,36 @@
+Source: kcgroups
+Section: libs
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: debhelper-compat (= 13), cmake, extra-cmake-modules, qt6-base-dev
+Standards-Version: 4.7.2
+Homepage: https://sparkylinux.org
+Rules-Requires-Root: no
+XS-Upstream-Homepage: https://github.com/pixelcluster/kcgroups
+
+Package: libkf5cgroups5
+Architecture: linux-any
+Multi-Arch: same
+Depends: systemd, ${misc:Depends}, ${shlibs:Depends}
+XB-Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues
+Description: KDE library to control the cgroup resources of running applications
+ KCGroups lists the running applications and their systemd units and
+ changes their control group resources (CPU weight, memory limits)
+ through systemd's D-Bus interface.
+ .
+ This is Natalie Vock's fork (https://github.com/pixelcluster/kcgroups,
+ branch dmemcg, tag kcgroups-dmemcg-experimental) of KDE's kcgroups by
+ Henri Chain and Kevin Ottens, built with Qt 6. It adds the device memory
+ low protection of the dmem cgroup controller (Linux 7.3), which
+ plasma-foreground-booster sets on the window in front.
+
+Package: libkf5cgroups-dev
+Section: libdevel
+Architecture: linux-any
+Multi-Arch: same
+Depends: libkf5cgroups5 (= ${binary:Version}), qt6-base-dev, ${misc:Depends}
+XB-Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues
+Description: KDE cgroups library of running applications, development files
+ The headers and CMake configuration (KF5CGroups, the KF5::CGroups target)
+ of the dmem fork of KCGroups, built with Qt 6, for building
+ plasma-foreground-booster.
