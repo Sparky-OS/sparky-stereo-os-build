@@ -9,7 +9,7 @@ set -euo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
 OUT=$(readlink -f "${1:-.}")
 PKG=sparky-stereo-boot
-VERSION=0.1.2+lc1
+VERSION=0.1.3+lc1
 umask 022
 mkdir -p "$OUT"
 D=$(mktemp -d "${TMPDIR:-/tmp}/stereo-boot-build.XXXXXX")
@@ -32,13 +32,19 @@ install -D -m 755 "$HERE/initramfs/sparky-stereo-nvidia" "$D/usr/share/initramfs
 install -D -m 644 "$HERE/modprobe/sparky-stereo-nvidia-kms.conf" "$D/usr/lib/modprobe.d/sparky-stereo-nvidia-kms.conf"
 install -D -m 644 "$HERE/grub/30-sparky-stereo-boot.cfg" "$D/etc/default/grub.d/30-sparky-stereo-boot.cfg"
 install -D -m 644 "$HERE/grub/31-sparky-stereo-ia32.cfg" "$D/etc/default/grub.d/31-sparky-stereo-ia32.cfg"
+# Secure Boot: the edition's public certificate, kept next to every shim on the EFI system partition, and the GRUB
+# entry that enrolls it with MokManager (lib/secureboot.py)
+install -D -m 644 "$HERE/../../secureboot/sparky-stereo-secureboot-2026.der" "$D/usr/share/sparky-stereo-boot/secureboot/sparky-stereo-secureboot-2026.der"
+install -D -m 644 "$HERE/lib/secureboot.py" "$D/usr/lib/sparky-stereo-boot/secureboot.py"
+install -D -m 755 "$HERE/grub/35_sparky_stereo_secureboot" "$D/etc/grub.d/35_sparky_stereo_secureboot"
+install -D -m 755 "$HERE/kernel/zz-sparky-stereo-secureboot" "$D/etc/kernel/postinst.d/zz-sparky-stereo-secureboot"
 for l in "$HERE"/lang/*; do
 	install -D -m 644 "$l" "$D/usr/share/sparky/sparky-stereo-boot/$(basename "$l")"
 done
 install -D -m 644 "$HERE/copyright" "$D/usr/share/doc/$PKG/copyright"
 install -D -m 644 "$HERE/README.md" "$D/usr/share/doc/$PKG/README.md"
 mkdir -p "$D/DEBIAN"
-printf '/etc/default/sparky-stereo-boot\n/etc/default/grub.d/30-sparky-stereo-boot.cfg\n/etc/default/grub.d/31-sparky-stereo-ia32.cfg\n' > "$D/DEBIAN/conffiles"
+printf '/etc/default/sparky-stereo-boot\n/etc/default/grub.d/30-sparky-stereo-boot.cfg\n/etc/default/grub.d/31-sparky-stereo-ia32.cfg\n/etc/grub.d/35_sparky_stereo_secureboot\n/etc/kernel/postinst.d/zz-sparky-stereo-secureboot\n' > "$D/DEBIAN/conffiles"
 cat > "$D/DEBIAN/postinst" <<'SCRIPT'
 #!/bin/sh
 set -e
@@ -47,10 +53,17 @@ if [ "$1" = configure ]; then
 		systemctl daemon-reload || true
 		systemctl start sparky-stereo-boot.socket || true
 	fi
-	# the kernel line takes ${sparky_stereo_boot} from GRUB's environment block from now on
-	if [ -z "$2" ] && [ -x /usr/sbin/update-grub ] && [ -e /boot/grub/grub.cfg ]; then
+	# the Sparky Stereo OS certificate next to every shim on the EFI system partition
+	python3 /usr/lib/sparky-stereo-boot/secureboot.py esp || true
+	# the kernel line takes ${sparky_stereo_boot} from GRUB's environment block (0.1.0), and the menu the Secure Boot
+	# enrolment entry (0.1.3)
+	if { [ -z "$2" ] || dpkg --compare-versions "$2" lt 0.1.3; } && [ -x /usr/sbin/update-grub ] && [ -e /boot/grub/grub.cfg ]; then
 		update-grub || true
 	fi
+fi
+if [ "$1" = triggered ]; then
+	# shim's or GRUB's signed programs were installed again: the certificate beside them again
+	python3 /usr/lib/sparky-stereo-boot/secureboot.py esp || true
 fi
 SCRIPT
 cat > "$D/DEBIAN/postrm" <<'SCRIPT'
@@ -68,13 +81,14 @@ remove)
 	;;
 purge)
 	rm -rf /var/lib/sparky-stereo-boot
+	rm -f /boot/efi/EFI/*/sparky-stereo-secureboot-2026.der 2>/dev/null || true
 	if [ -x /usr/sbin/update-grub ] && [ -e /boot/grub/grub.cfg ]; then update-grub || true; fi
 	;;
 esac
 SCRIPT
 chmod 755 "$D/DEBIAN/postinst" "$D/DEBIAN/postrm"
 # the boot image takes the NVIDIA hook and its options at the next initramfs-tools run
-printf 'activate-noawait update-initramfs\n' > "$D/DEBIAN/triggers"
+printf 'activate-noawait update-initramfs\ninterest-noawait /usr/lib/shim\ninterest-noawait /usr/lib/grub/x86_64-efi-signed\n' > "$D/DEBIAN/triggers"
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
 cat > "$D/DEBIAN/control" <<CONTROL
 Package: $PKG

@@ -24,3 +24,8 @@ install -Dm644 "$HERE/share/plasma-env/sparky-stereo-opengl.sh" "$D/etc/xdg/plas
 install -Dm644 "$HERE/share/systemd/sparky-stereo-opengl-default.service" "$D/usr/lib/systemd/system/sparky-stereo-opengl-default.service"
 install -Dm644 "$HERE/share/systemd-user/sparky-stereo-opengl.conf" "$D/usr/lib/systemd/user/plasma-kwin_wayland.service.d/sparky-stereo-opengl.conf"
 install -Dm644 "$HERE/share/udev/71-sparky-stereo-opengl-default.rules" "$D/usr/lib/udev/rules.d/71-sparky-stereo-opengl-default.rules"
+# NVIDIA's services run only with NVIDIA's driver loaded, decided at every boot and when a card is added
+for u in nvidia-persistenced nvidia-powerd; do
+	install -Dm644 "$HERE/share/systemd/nvidia-units/sparky-stereo-hardware.conf" "$D/usr/lib/systemd/system/$u.service.d/sparky-stereo-hardware.conf"
+done
+install -Dm644 "$HERE/share/udev/71-sparky-stereo-nvidia-units.rules" "$D/usr/lib/udev/rules.d/71-sparky-stereo-nvidia-units.rules"

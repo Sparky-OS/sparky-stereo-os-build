@@ -1,0 +1,8 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/25
+# Copyright 2026 under the GNU GPL3 License
+# The entry that enrolls the Sparky Stereo OS key with MokManager, in the system's language, and the fallback of a
+# boot that Secure Boot refuses (sparky-stereo-boot; /usr/lib/sparky-stereo-boot/secureboot.py).
+set -e
+[ -x /usr/bin/python3 ] && [ -f /usr/lib/sparky-stereo-boot/secureboot.py ] || exit 0
+exec /usr/bin/python3 /usr/lib/sparky-stereo-boot/secureboot.py grub

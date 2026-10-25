@@ -8,5 +8,11 @@ if [ "$1" = configure ]; then
 	deb-systemd-helper unmask sparky-stereo-opengl-default.service >/dev/null || true
 	deb-systemd-helper enable sparky-stereo-opengl-default.service >/dev/null || true
 	if [ -d /run/udev ]; then udevadm control --reload-rules || true; fi
+	# NVIDIA's services wait for NVIDIA's driver (sparky-stereo-hardware.conf); one that failed on a machine
+	# without the driver is no longer counted as failed
+	if [ -d /run/systemd/system ]; then
+		systemctl daemon-reload || true
+		if [ ! -e /sys/module/nvidia ]; then systemctl reset-failed nvidia-persistenced.service nvidia-powerd.service >/dev/null 2>&1 || true; fi
+	fi
 	sparky-stereo-opengl-default || true
 fi

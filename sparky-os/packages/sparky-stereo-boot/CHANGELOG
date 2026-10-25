@@ -1,4 +1,14 @@
 -------------------------------------------------------------------------------
+  Version 0.1.3 (2026-10-25)
+-------------------------------------------------------------------------------
+  * Secure Boot without the edition's key is never a dead end: a new or reset motherboard, or Secure Boot turned on
+    after the installation, leaves the firmware's MOK list without the Sparky Stereo OS key and GRUB refuses the
+    edition's kernel. The package ships the edition's public certificate and keeps it next to every shim on the
+    EFI system partition (at install, after every kernel, and whenever shim's or GRUB's signed programs are
+    installed again); GRUB's menu gets "Secure Boot: enroll the Sparky Stereo OS key" in the system's language,
+    which shows the steps in the nine required languages and starts the MokManager beside GRUB; under Secure Boot
+    it is the menu's fallback, so a refused boot goes there by itself
+-------------------------------------------------------------------------------
   Version 0.1.2 (2026-10-24)
 -------------------------------------------------------------------------------
   * On 32-bit UEFI, nokaslr only while a kernel in /boot lacks the fix: the edition's kernels from build 12 on

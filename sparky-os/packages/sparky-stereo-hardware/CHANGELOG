@@ -1,4 +1,11 @@
 -------------------------------------------------------------------------------
+  Version 0.1.12 (2026-10-25)
+-------------------------------------------------------------------------------
+  * NVIDIA's services (nvidia-persistenced, nvidia-powerd) run only while NVIDIA's driver is loaded, decided at every
+    boot: a machine without an NVIDIA card skips them and is no longer "degraded"; a card added later starts them
+    with no step, when udev loads the driver for it
+
+-------------------------------------------------------------------------------
   Version 0.1.10 (2026-10-16)
 -------------------------------------------------------------------------------
   * Programs that share CUDA with OpenGL, and NVIDIA's control panel, keep NVIDIA's own OpenGL when the session runs OpenGL on zink: their menu entries and their names in a terminal start through sparky-stereo-nvidia-opengl; the list starts with DaVinci Resolve and nvidia-settings, /etc/sparky-stereo/opengl-programs and ~/.config/sparky-stereo/opengl-programs add a program ("NAME nvidia") or give one back to zink ("NAME zink"), and the person's choice wins

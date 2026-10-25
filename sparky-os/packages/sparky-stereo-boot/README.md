@@ -25,6 +25,12 @@ On an NVIDIA screen the splash needs NVIDIA's display driver in the boot image: 
 
 On 32-bit UEFI (EFI mixed mode) the firmware returns from every firmware call to a 32-bit address in the kernel image, so the kernel must stay below 4 GiB. The edition's kernels from build 12 on do that themselves and keep KASLR; while any kernel in /boot lacks the fix (Debian's, or an older build), the kernel line gets nokaslr, because GRUB gives every kernel the same line (/etc/default/grub.d/31-sparky-stereo-ia32.cfg; SPARKY_STEREO_IA32_NOKASLR=auto, yes or no).
 
+Secure Boot: the edition's kernels are signed with the Sparky Stereo OS key, which shim accepts once it is in the firmware's MOK list.
+A new or reset motherboard, or Secure Boot turned on after the installation, leaves the list without it, and GRUB refuses the kernel ("bad shim loader signature").
+So the package keeps the edition's public certificate (sparky-stereo-secureboot-2026.der) next to every shim on the EFI system partition, and GRUB's menu has "Secure Boot: enroll the Sparky Stereo OS key" (/etc/grub.d/35_sparky_stereo_secureboot).
+The entry shows the steps in the nine required languages and starts MokManager: Enroll key from disk, the disk, EFI, the system's folder, the certificate, Continue, Yes, Reboot; no password is asked.
+Under Secure Boot the entry is the menu's fallback, so a boot GRUB refuses goes to it by itself.
+
 Options: /etc/default/sparky-stereo-boot (then: sudo sparky-stereo-boot reapply).
 Status: sparky-stereo-boot status
 

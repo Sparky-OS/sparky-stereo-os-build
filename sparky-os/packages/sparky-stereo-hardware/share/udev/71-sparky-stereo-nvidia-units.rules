@@ -1,0 +1,5 @@
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/25
+# Copyright 2026 under the GNU GPL3 License
+# NVIDIA's driver is loaded (udev loads it for an NVIDIA card, at every boot and when a card is added): its services
+# start now. Without it they are skipped (ConditionPathExists=/sys/module/nvidia in their sparky-stereo-hardware.conf).
+SUBSYSTEM=="module", KERNEL=="nvidia", ACTION=="add", TAG+="systemd", ENV{SYSTEMD_WANTS}+="nvidia-persistenced.service nvidia-powerd.service"
