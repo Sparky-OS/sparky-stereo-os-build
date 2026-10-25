@@ -210,6 +210,7 @@ group('system', 'System', [
     'dosfstools', 'exfatprogs', 'ntfs-3g',
     'flatpak', 'plasma-discover-backend-flatpak', 'distrobox', 'waydroid', 'btrfs-progs',
     'timeshift', 'synaptic',   # snapshots: Timeshift (with grub-btrfs)
+    'sparky-stereo-boot',   # the boot follows the main screen's saved choice, splash and login in its 3D mode (ORDER 138)
     'command-not-found', 'apt-file',   # a missing program names its package, in the terminal and on Dolphin's right-click (Daniel's design)
     'grub-btrfs', 'scx-scheds', 'ananicy-cpp', 'sunshine', 'protonup-qt', 'hhd', 'decky-loader',
 ])
@@ -224,6 +225,7 @@ group('look', 'Look', [
     'kwin-decoration-oxygen', 'qt6ct',
     'kde-style-oxygen-qt5', 'gtk2-engines-oxygen', 'fonts-oxygen', 'oxygen-sounds', 'oxygen-wallpapers',
     'oxygen-gtk3',
+    'sparky-stereo-plymouth',   # the Stereo boot splash, the default (Daniel 2026-10-24: "default plymouth, approved to stereo")
 ])
 
 # 10. Developer: code and game engines (Daniel, 2026-10-16: "we must start collecting two extra meta packages - dev, for
