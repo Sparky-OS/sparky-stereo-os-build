@@ -1,12 +1,15 @@
 #!/bin/sh
-# Packs the beta from the root file system with Sparky Backup Core Stereo, the way SparkyLinux packs its
+# Packs the ISO from the root file system with Sparky Backup Core Stereo, the way SparkyLinux packs its
 # images (sparkybackup dist on the system itself), run in a chroot: the staged packages go in, the build's
-# own apt sources, policy and DKMS signing key come out, and sparkybackup-stereo makes the ISO.
+# own apt sources, policy and DKMS signing key come out, and sparkybackup-stereo makes the ISO with the
+# edition's kernel as its only kernel and the boot menus gen-menus.py writes.
 # Runs as root inside beta-iso-lutz-build:1 (privileged). Mounts as rootfs.sh, plus /work (the packer's
 # work tree) and /out (the ISO and its files), both outside the root file system.
 # Environment: LABEL (menu label), ISONAME (file name), SIGNED_MODULES (optional: a folder whose
 # lib/modules/... files replace the DKMS modules, signed with the edition's key by the main session),
 # SIGNED_KERNEL (optional: the linux-image package signed with the edition's key, installed over the tree's),
+# MOKCERT_FILE (optional: the edition's public Secure Boot certificate, DER, for the EFI image; default: the packer
+# package's copy), EDITION_REPO (live or flat, as rootfs.sh),
 # LEAN (1: the packer runs dpkg-stereo's pre-squashfs hook, the Lean Code projection, on the folders it squashes;
 # 1 is mandatory for release builds; 0 requires ISO_PURPOSE=benchmark and a -nolean- name).
 # The iso step packs from an overlay of the root file system (upper layer in /work), so the root file system is
@@ -18,6 +21,7 @@ STEP=${1:-all}
 LABEL=${LABEL:-Sparky Stereo OS 9 Mashtabba beta 2}
 ISONAME=${ISONAME:-sparky-stereo-os-9-mashtabba-beta2-x86_64.iso}
 LEAN=${LEAN:-1}
+EDITION_REPO=${EDITION_REPO:-live}
 case "$LEAN" in
 1) ;;
 0)
@@ -42,8 +46,11 @@ mounts() {
 	mountpoint -q $R/home/sparkybackup-sys || mount --bind /work $R/home/sparkybackup-sys
 	mountpoint -q $R/home/sparkybackup-out || mount --bind /out $R/home/sparkybackup-out
 }
+# the container's name resolution (docker run --add-host) for apt in the chroot; never while the packer runs,
+# or the image would carry the build's hosts file
+hosts_on() { mountpoint -q $R/etc/hosts || mount --bind /etc/hosts $R/etc/hosts; }
 umounts() {
-	for m in home/sparkybackup-out home/sparkybackup-sys var/cache/apt/archives stage repo dev sys proc; do
+	for m in etc/hosts home/sparkybackup-out home/sparkybackup-sys var/cache/apt/archives stage repo dev sys proc; do
 		mountpoint -q $R/$m && umount -R $R/$m || true
 	done
 }
@@ -52,9 +59,14 @@ mounts
 
 if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
 	echo "== $(date -u +%T) staged packages: the packer fork, hardware, service defaults, installer settings and branding, calamares, info, look, artwork, splash, boot, GRUB translations, headers 8.1"
+	hosts_on
 	# the build's sources and stubs (rootfs.sh) again, so the step can be repeated
 	printf 'Types: deb\nURIs: file:/stage\nSuites: ./\nTrusted: yes\n' > $R/etc/apt/sources.list.d/beta-build-stage.sources
-	printf 'Types: deb\nURIs: file:/repo\nSuites: ./\nTrusted: yes\n' > $R/etc/apt/sources.list.d/sparky-stereo-build.sources
+	if [ "$EDITION_REPO" = flat ]; then
+		printf 'Types: deb\nURIs: file:/repo\nSuites: ./\nTrusted: yes\n' > $R/etc/apt/sources.list.d/sparky-stereo-build.sources
+	fi
+	printf 'Package: /^linux-(image|headers|binary|modules|signed|base)-.*amd64(-unsigned)?$/\nPin: release o=Debian\nPin-Priority: -1\n' \
+		> $R/etc/apt/preferences.d/beta-build-no-debian-kernel
 	printf '#!/bin/sh\nexit 101\n' > $R/usr/sbin/policy-rc.d; chmod 755 $R/usr/sbin/policy-rc.d
 	for f in /usr/bin/os-prober /usr/sbin/grub-mkconfig; do
 		inr dpkg-divert --list "$f" | grep -q . || inr dpkg-divert --local --rename --add "$f"
@@ -76,14 +88,20 @@ if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
 		[ -s $R/etc/apt/$f ] || { echo "!! /etc/apt/$f is missing"; exit 1; }
 	done
 	inr apt-get update
-	echo "== $(date -u +%T) the development repository's current versions of every installed package it carries"
+	echo "== $(date -u +%T) the edition repository's current versions of every installed package it carries ($EDITION_REPO)"
 	# only packages already in the image, and only upgrades: the edition's pin makes the repository's builds the candidates
-	inr sh -c "awk '/^Package: /{print \$2}' /repo/Packages | sort -u | xargs dpkg-query -W -f '\${Package} \${Status}\n' 2>/dev/null | awk '/ ok installed\$/{print \$1}'" > /tmp/beta-repo-installed.list
+	if [ "$EDITION_REPO" = flat ]; then idx=/repo/Packages; else idx=$(ls $R/var/lib/apt/lists/*repo.sparkyos.org_dists_mashtabba_main_binary-*_Packages | sed "s|^$R||"); fi
+	# shellcheck disable=SC2086
+	inr sh -c "cat $idx | awk '/^Package: /{print \$2}' | sort -u | xargs dpkg-query -W -f '\${Package} \${Status}\n' 2>/dev/null | awk '/ ok installed\$/{print \$1}'" > /tmp/beta-repo-installed.list
 	apt_in install --only-upgrade $(cat /tmp/beta-repo-installed.list)
 	rm -f /tmp/beta-repo-installed.list
 	apt_in install --reinstall sparky-backup-core-stereo sparky-stereo-hardware sparky-stereo-service-defaults calamares-settings-sparky-stereo \
-		calamares sparky-stereo-calamares-branding sparky-stereo-info sparky-stereo-look sparkyos-artwork sparkyos-plymouth sparky-stereo-boot \
-		linux-headers-7.3.0-rc6-stereo3d8
+		calamares sparky-stereo-calamares-branding sparky-stereo-info sparky-stereo-look sparkyos-artwork sparkyos-plymouth sparky-stereo-boot
+	apt_in install linux-image-sparky-stereo linux-headers-sparky-stereo
+	# the edition's kernel release (linux-image-sparky-stereo depends on linux-image-<release>)
+	KV=$(inr dpkg-query -W -f '${Depends}' linux-image-sparky-stereo | sed -n 's/^linux-image-\([^ ,]*\).*/\1/p')
+	[ -n "$KV" ] && [ -f $R/boot/vmlinuz-$KV ] || { echo "!! the edition's kernel release ($KV) is not in /boot"; exit 1; }
+	echo "   the edition's kernel: $KV"
 	echo "== $(date -u +%T) the boot chain in 3D (ORDER 138): the stereo Plymouth, sparky-stereo-boot, the stereo splash themes; GRUB's menu translated; Kubabbar Glass for Quick Settings"
 	apt_in install plymouth libplymouth5 plymouth-themes plymouth-label sparky-stereo-boot sparky-stereo-plymouth sparky-stereo-grub-l10n \
 		sparky-stereo-look-kubabbar-glass sparky-stereo-look-kubabbar-glass-menubar
@@ -104,6 +122,10 @@ if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
 	[ -z "$rm_list" ] || apt_in remove $rm_list
 	# usbguard blocks USB keyboards and pointers present at boot (the boot lane's dev VM); it never goes in
 	if inr dpkg-query -W -f '${Status}' usbguard 2>/dev/null | grep -q 'ok installed'; then apt_in purge usbguard; fi
+	# the Stereo boot splash is the default (Daniel, 2026-10-24: "default plymouth, approved to stereo"); sparkyos-plymouth's
+	# record names it, so its trigger puts it back when sparky-plymouth's upgrade sets sparky-blue
+	inr plymouth-set-default-theme sparky-stereo-lines
+	mkdir -p $R/var/lib/sparkyos-plymouth && echo sparky-stereo-lines > $R/var/lib/sparkyos-plymouth/theme
 	echo "== $(date -u +%T) the default boot splash: $(inr plymouth-set-default-theme)"
 	# the packages SparkyLinux's securebootinstall asks apt for that the image lacks (an offline install finds the rest)
 	for p in libjcat1 grub-efi-amd64-signed-template shim-helpers-amd64-signed-template; do
@@ -136,8 +158,13 @@ if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
 	if [ -n "${SIGNED_MODULES:-}" ] && [ -d "$SIGNED_MODULES/lib/modules" ]; then
 		echo "== $(date -u +%T) DKMS modules signed with the edition's key"
 		cp -a "$SIGNED_MODULES/lib/modules/." $R/lib/modules/
-		inr depmod -a 7.3.0-rc6-stereo3d8
+		inr depmod -a "$KV"
 	fi
+	# the boot image of the edition's kernel with the splash chosen above (and the signed modules)
+	inr update-initramfs -u -k "$KV"
+	cp /build/boot-kernels.py $R/tmp/
+	inr python3 /tmp/boot-kernels.py / || { echo "!! a kernel that is not the edition's is in the tree"; exit 1; }
+	rm -f $R/tmp/boot-kernels.py
 	# DKMS made its own signing key while building in the chroot; a private key never ships
 	rm -f $R/var/lib/dkms/mok.key $R/var/lib/dkms/mok.pub
 	# each installed system gets its own identity
@@ -145,10 +172,12 @@ if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
 	rm -f $R/etc/nvme/hostid $R/etc/nvme/hostnqn
 	rm -f $R/etc/ssh/ssh_host_*
 	echo "== $(date -u +%T) the Stereo profile's values"
-	DK=$(ls $R/boot/vmlinuz-*-amd64 | sed 's|.*/vmlinuz-||' | sort -V | tail -n1)
+	# the kernels, menus and certificate of a pack come from the environment (pack.sh's iso step); the image's own
+	# profile keeps its defaults: the running kernel, no second kernel, the package's menus and certificate
 	C=$R/etc/sparkybackup/sparkybackup-stereo.conf
 	sed -i -e "s|^ISOLABELFULL=.*|ISOLABELFULL=\"$LABEL\"|" -e "s|^CUSTOMISO=.*|CUSTOMISO=\"$ISONAME\"|" \
-		-e "s|^LIVEKERNEL=.*|LIVEKERNEL=\"7.3.0-rc6-stereo3d8\"|" -e "s|^LIVEKERNEL2=.*|LIVEKERNEL2=\"$DK\"|" $C
+		-e 's|^LIVEKERNEL=.*|LIVEKERNEL="${SPARKY_LIVEKERNEL:-}"|' -e 's|^LIVEKERNEL2=.*|LIVEKERNEL2=""|' \
+		-e 's|^BOOTMENUS="\([^"$]*\)"|BOOTMENUS="${SPARKY_BOOTMENUS:-\1}"|' -e 's|^MOKCERT="\([^"$]*\)"|MOKCERT="${SPARKY_MOKCERT:-\1}"|' $C
 	grep -q '^OUTDIR=' $C || printf 'OUTDIR="/home/sparkybackup-out"\n' >> $C
 	grep -v '^#' $C | grep -v '^$'
 fi
@@ -178,10 +207,19 @@ if [ "$STEP" = iso ] || [ "$STEP" = all ]; then
 	fi
 	# the image's name and label for this pack (a pair of packs from one configured tree differs in name)
 	sed -i -e "s|^ISOLABELFULL=.*|ISOLABELFULL=\"$LABEL\"|" -e "s|^CUSTOMISO=.*|CUSTOMISO=\"$ISONAME\"|" $R/etc/sparkybackup/sparkybackup-stereo.conf
+	KV=$(inr dpkg-query -W -f '${Depends}' linux-image-sparky-stereo | sed -n 's/^linux-image-\([^ ,]*\).*/\1/p')
+	[ -n "$KV" ] && [ -f $R/boot/vmlinuz-$KV ] || { echo "!! the edition's kernel release ($KV) is not in /boot"; exit 1; }
+	# the boot menus (gen-menus.py) and the certificate for MokManager, in the packer's work folder: outside the image
+	P=/usr/lib/sparkybackup/stereo
+	python3 /build/gen-menus.py /work/menus $R$P $R$P/isolinux/isolinux.cfg "$LABEL LIVE/INSTALL"
+	rm -rf /work/menus-cert; mkdir -p /work/menus-cert
+	cp "${MOKCERT_FILE:-$R$P/secureboot/sparky-stereo-secureboot-2026.der}" /work/menus-cert/sparky-stereo-secureboot-2026.der
+	echo "== $(date -u +%T) live kernel $KV, no other; MokManager's certificate: $(sha256sum /work/menus-cert/*.der | cut -c1-64)"
 	echo "== $(date -u +%T) LEAN=$LEAN hook=${hook:-none}; top folders of the image: $(ls $R | tr '\n' ' ')"
 	echo "== $(date -u +%T) sparkybackup-stereo dist"
 	t0=$(date +%s)
-	inr env PRESQUASHFS_HOOK="$hook" LEANCODE_JOBS=4 sparkybackup-stereo dist
+	inr env PRESQUASHFS_HOOK="$hook" LEANCODE_JOBS=4 SPARKY_LIVEKERNEL="$KV" SPARKY_BOOTMENUS=/home/sparkybackup-sys/menus \
+		SPARKY_MOKCERT=/home/sparkybackup-sys/menus-cert/sparky-stereo-secureboot-2026.der sparkybackup-stereo dist
 	echo "== $(date -u +%T) packed in $(( $(date +%s) - t0 )) s (LEAN=$LEAN)"
 	# the projection's build record beside the ISO
 	for f in lean-code-projection.tsv lean-code-left.tsv; do
