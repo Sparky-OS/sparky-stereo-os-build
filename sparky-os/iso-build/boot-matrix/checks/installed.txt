@@ -1,0 +1,16 @@
+# Checks on an installed system (live-check.py --cmds, a getty on ttyS0 from disk-tool.sh getty): the kernel, the
+# Secure Boot chain on the EFI system partition, /boot and the kernel packages, GRUB's menu, the splash, command-not-found.
+uname -r
+cat /proc/cmdline
+ls -l /boot
+dpkg-query -W -f '${Package} ${Version} ${db:Status-Abbrev}\n' 'linux-image*' 'linux-headers*' 'linux-binary*' 'linux-modules*' 2>/dev/null | grep ' ii'
+mokutil --sb-state
+sudo -n mokutil --list-enrolled | grep -E 'Subject:|SHA1 Fingerprint'
+cat /sys/kernel/security/lockdown
+sudo -n journalctl -k -b --no-pager | grep -i -E 'secure boot|MokListRT|Sparky Stereo' | head -8
+sudo -n find /boot/efi -type f -iname '*.efi' -exec sha256sum {} +
+sudo -n efibootmgr -v 2>/dev/null | head -8
+sudo -n grep -E '^(menuentry|submenu)|^\s+linux\s' /boot/grub/grub.cfg | head -12
+sudo -n plymouth-set-default-theme; grep -h Theme /etc/plymouth/plymouthd.conf
+/usr/lib/command-not-found -- cowsay 2>&1 | head -4
+systemctl is-system-running; systemctl --failed --no-legend | cat

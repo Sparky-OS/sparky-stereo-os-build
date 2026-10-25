@@ -1,0 +1,19 @@
+# Checks in a live session (live-check.py --cmds): the kernel, the boot chain's Secure Boot state, the medium's
+# kernels, the image's /boot and kernel packages, the boot splash, command-not-found, the session.
+uname -r
+cat /proc/cmdline
+ls /run/live/medium/live/
+ls -l /boot
+dpkg-query -W -f '${Package} ${Version} ${db:Status-Abbrev}\n' 'linux-image*' 'linux-headers*' 'linux-binary*' 'linux-modules*' 2>/dev/null | grep ' ii'
+mokutil --sb-state
+sudo -n mokutil --list-enrolled | grep -E 'Subject:|SHA1 Fingerprint'
+sudo -n mokutil --list-enrolled --der | sha256sum; true
+cat /sys/kernel/security/lockdown
+sudo -n grep -w _text /proc/kallsyms
+sudo -n journalctl -k -b --no-pager | grep -i -E 'secure boot|MokListRT|Sparky Stereo|Lockdown|KASLR|efi: EFI v' | head -12
+sudo -n plymouth-set-default-theme; grep -h Theme /etc/plymouth/plymouthd.conf
+ls -la /var/lib/command-not-found/
+/usr/lib/command-not-found -- cowsay 2>&1 | head -4
+bash -ic cowsay 2>&1 | grep -v -i -E 'job control|no access to tty' | head -4
+systemctl is-system-running; systemctl --failed --no-legend | cat
+loginctl list-sessions --no-legend | cat; ps -eo comm | grep -c -x kwin_wayland
