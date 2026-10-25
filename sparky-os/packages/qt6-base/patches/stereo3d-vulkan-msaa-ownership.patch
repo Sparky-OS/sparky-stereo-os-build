@@ -1,16 +1,20 @@
-From d9bb0237d9b5fdf0f904bf29761f5662df51df8b Mon Sep 17 00:00:00 2001
+From 2c5564fc640eff3c44113e3c8b529dc29a18b9c4 Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
-Date: Sat, 24 Oct 2026 21:00:43 -0300
-Subject: [PATCH] RHI: Destroy shared Vulkan stereo MSAA resources only once
+Date: Sat, 24 Oct 2026 21:08:35 -0300
+Subject: [PATCH] RHI: Give each Vulkan stereo swapchain eye its own MSAA
+ target
 
 The two eye entries refer to the same transient MSAA image and view.
 Releasing a stereo swapchain destroys those handles twice, which can
 abort on resize or window destruction when multisampling is enabled.
+Synchronization validation also reports a write-after-write hazard when
+the second eye pass transitions the shared attachment after the first
+pass's store operation.
 
-Let the first bufferCount entries own the shared MSAA resources and
-clear the borrowed handles in the right-eye entries without destroying
-them again. Keep the existing allocation size and rendering order:
-each eye pass resolves to its own swapchain layer before the next pass.
+Allocate the transient MSAA images and views for both eyes and index
+them like the swapchain image resources. This gives each handle one
+owner and keeps the eye passes from overwriting each other's MSAA
+attachments. The allocation increases only for stereo multisampling.
 
 Add data-driven resize and destruction coverage for mono and stereo
 swapchains across the supported sample counts. Read back the left
@@ -25,32 +29,51 @@ Assisted-by: gpt-6-astra (Codex)
 Backport to 6.11.2: adjust autotest context without changing the test.
 ---
 diff --git a/src/gui/rhi/qrhivulkan.cpp b/src/gui/rhi/qrhivulkan.cpp
+index d62f6242..1bb8fc44 100644
 --- a/src/gui/rhi/qrhivulkan.cpp
 +++ b/src/gui/rhi/qrhivulkan.cpp
-@@ -2559,14 +2559,15 @@
-             df->vkDestroyImageView(dev, image.imageView, nullptr);
-             image.imageView = VK_NULL_HANDLE;
-         }
--        if (image.msaaImageView) {
--            df->vkDestroyImageView(dev, image.msaaImageView, nullptr);
--            image.msaaImageView = VK_NULL_HANDLE;
--        }
--        if (image.msaaImage) {
--            df->vkDestroyImage(dev, image.msaaImage, nullptr);
--            image.msaaImage = VK_NULL_HANDLE;
--        }
-+        // The right-eye entries borrow the first eye's MSAA image and view.
-+        if (i < swapChainD->bufferCount) {
-+            if (image.msaaImageView)
-+                df->vkDestroyImageView(dev, image.msaaImageView, nullptr);
-+            if (image.msaaImage)
-+                df->vkDestroyImage(dev, image.msaaImage, nullptr);
-+        }
-+        image.msaaImageView = VK_NULL_HANDLE;
-+        image.msaaImage = VK_NULL_HANDLE;
-         if (image.drawSem) {
-             df->vkDestroySemaphore(dev, image.drawSem, nullptr);
-             image.drawSem = VK_NULL_HANDLE;
+@@ -2552,8 +2552,9 @@ bool QRhiVulkan::recreateSwapChain(QRhiSwapChain *swapChain)
+         return false;
+     }
+ 
+-    QVarLengthArray<VkImage, QVkSwapChain::EXPECTED_MAX_BUFFER_COUNT> msaaImages(swapChainD->bufferCount);
+-    QVarLengthArray<VkImageView, QVkSwapChain::EXPECTED_MAX_BUFFER_COUNT> msaaViews(swapChainD->bufferCount);
++    const int imageResourceCount = swapChainD->bufferCount * (stereo ? 2 : 1);
++    QVarLengthArray<VkImage, QVkSwapChain::EXPECTED_MAX_BUFFER_COUNT> msaaImages(imageResourceCount);
++    QVarLengthArray<VkImageView, QVkSwapChain::EXPECTED_MAX_BUFFER_COUNT> msaaViews(imageResourceCount);
+     if (swapChainD->samples > VK_SAMPLE_COUNT_1_BIT) {
+         if (!createTransientImage(swapChainD->colorFormat,
+                                   swapChainD->pixelSize,
+@@ -2563,7 +2564,7 @@ bool QRhiVulkan::recreateSwapChain(QRhiSwapChain *swapChain)
+                                   &swapChainD->msaaImageMem,
+                                   msaaImages.data(),
+                                   msaaViews.data(),
+-                                  swapChainD->bufferCount))
++                                  imageResourceCount))
+         {
+             qWarning("Failed to create transient image for MSAA color buffer");
+             return false;
+@@ -2574,8 +2575,7 @@ bool QRhiVulkan::recreateSwapChain(QRhiSwapChain *swapChain)
+     fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+     fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+ 
+-    // Double up for stereo
+-    swapChainD->imageRes.resize(swapChainD->bufferCount * (stereo ? 2u : 1u));
++    swapChainD->imageRes.resize(imageResourceCount);
+ 
+     for (int i = 0; i < swapChainD->bufferCount; ++i) {
+         QVkSwapChain::ImageResources &image(swapChainD->imageRes[i]);
+@@ -2613,8 +2613,8 @@ bool QRhiVulkan::recreateSwapChain(QRhiSwapChain *swapChain)
+             QVkSwapChain::ImageResources &image(swapChainD->imageRes[i + swapChainD->bufferCount]);
+             image.image = swapChainImages[i];
+             if (swapChainD->samples > VK_SAMPLE_COUNT_1_BIT) {
+-                image.msaaImage = msaaImages[i];
+-                image.msaaImageView = msaaViews[i];
++                image.msaaImage = msaaImages[i + swapChainD->bufferCount];
++                image.msaaImageView = msaaViews[i + swapChainD->bufferCount];
+             }
+ 
+             VkImageViewCreateInfo imgViewInfo = {};
 diff --git a/tests/auto/gui/rhi/qrhi/tst_qrhi.cpp b/tests/auto/gui/rhi/qrhi/tst_qrhi.cpp
 --- a/tests/auto/gui/rhi/qrhi/tst_qrhi.cpp
 +++ b/tests/auto/gui/rhi/qrhi/tst_qrhi.cpp
