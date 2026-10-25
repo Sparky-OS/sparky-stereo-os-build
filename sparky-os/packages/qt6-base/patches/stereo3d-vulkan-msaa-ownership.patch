@@ -1,0 +1,172 @@
+From d9bb0237d9b5fdf0f904bf29761f5662df51df8b Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 24 Oct 2026 21:00:43 -0300
+Subject: [PATCH] RHI: Destroy shared Vulkan stereo MSAA resources only once
+
+The two eye entries refer to the same transient MSAA image and view.
+Releasing a stereo swapchain destroys those handles twice, which can
+abort on resize or window destruction when multisampling is enabled.
+
+Let the first bufferCount entries own the shared MSAA resources and
+clear the borrowed handles in the right-eye entries without destroying
+them again. Keep the existing allocation size and rendering order:
+each eye pass resolves to its own swapchain layer before the next pass.
+
+Add data-driven resize and destruction coverage for mono and stereo
+swapchains across the supported sample counts. Read back the left
+resolve after rendering both eyes to check that it remains intact.
+The stereo 8x rows abort before this fix, while mono 8x and stereo 1x
+controls pass.
+
+Pick-to: 6.12 6.11
+Change-Id: I0c959905dcda2ef1e721933342c3d992f5a0c902
+Assisted-by: gpt-6-astra (Codex)
+
+Backport to 6.11.2: adjust autotest context without changing the test.
+---
+diff --git a/src/gui/rhi/qrhivulkan.cpp b/src/gui/rhi/qrhivulkan.cpp
+--- a/src/gui/rhi/qrhivulkan.cpp
++++ b/src/gui/rhi/qrhivulkan.cpp
+@@ -2559,14 +2559,15 @@
+             df->vkDestroyImageView(dev, image.imageView, nullptr);
+             image.imageView = VK_NULL_HANDLE;
+         }
+-        if (image.msaaImageView) {
+-            df->vkDestroyImageView(dev, image.msaaImageView, nullptr);
+-            image.msaaImageView = VK_NULL_HANDLE;
+-        }
+-        if (image.msaaImage) {
+-            df->vkDestroyImage(dev, image.msaaImage, nullptr);
+-            image.msaaImage = VK_NULL_HANDLE;
+-        }
++        // The right-eye entries borrow the first eye's MSAA image and view.
++        if (i < swapChainD->bufferCount) {
++            if (image.msaaImageView)
++                df->vkDestroyImageView(dev, image.msaaImageView, nullptr);
++            if (image.msaaImage)
++                df->vkDestroyImage(dev, image.msaaImage, nullptr);
++        }
++        image.msaaImageView = VK_NULL_HANDLE;
++        image.msaaImage = VK_NULL_HANDLE;
+         if (image.drawSem) {
+             df->vkDestroySemaphore(dev, image.drawSem, nullptr);
+             image.drawSem = VK_NULL_HANDLE;
+diff --git a/tests/auto/gui/rhi/qrhi/tst_qrhi.cpp b/tests/auto/gui/rhi/qrhi/tst_qrhi.cpp
+--- a/tests/auto/gui/rhi/qrhi/tst_qrhi.cpp
++++ b/tests/auto/gui/rhi/qrhi/tst_qrhi.cpp
+@@ -133,6 +133,8 @@
+     void renderToTextureSameSrbDifferentShaders();
+     void renderToTextureScissorChange_data();
+     void renderToTextureScissorChange();
++    void vulkanSwapChainLifetime_data();
++    void vulkanSwapChainLifetime();
+     void renderToWindowSimple_data();
+     void renderToWindowSimple();
+     void continuousReadbackFromWindow_data();
+@@ -4395,6 +4397,106 @@
+     rhi->endOffscreenFrame();
+ }
+ 
++void tst_QRhi::vulkanSwapChainLifetime_data()
++{
++    QTest::addColumn<bool>("stereo");
++    QTest::addColumn<int>("samples");
++    QTest::addColumn<bool>("resize");
++
++    for (bool stereo : { false, true }) {
++        for (int samples : { 1, 2, 4, 8, 16, 32, 64 }) {
++            for (bool resize : { false, true }) {
++                const QByteArray name = QByteArray(stereo ? "stereo" : "mono")
++                        + '-' + QByteArray::number(samples) + (resize ? "-resize" : "-destroy");
++                QTest::newRow(name.constData()) << stereo << samples << resize;
++            }
++        }
++    }
++}
++
++void tst_QRhi::vulkanSwapChainLifetime()
++{
++#ifndef TST_VK
++    QSKIP("Vulkan is not available");
++#else
++    if (!vulkanInstance.isValid())
++        QSKIP("Vulkan instance could not be created");
++    if (QGuiApplication::platformName().startsWith(QLatin1String("offscreen")))
++        QSKIP("A window surface is required");
++
++    QFETCH(bool, stereo);
++    QFETCH(int, samples);
++    QFETCH(bool, resize);
++
++    QScopedPointer<QWindow> window(new QWindow);
++    setWindowType(window.data(), QRhi::Vulkan);
++    QSurfaceFormat format = window->format();
++    format.setStereo(stereo);
++    window->setFormat(format);
++    window->resize(320, 240);
++    window->show();
++    QVERIFY(QTest::qWaitForWindowExposed(window.data()));
++
++    QRhiVulkanInitParams params = initParams.vk;
++    params.window = window.data();
++    QScopedPointer<QRhi> rhi(QRhi::create(QRhi::Vulkan, &params));
++    if (!rhi)
++        QSKIP("Vulkan QRhi could not be created");
++    if (!rhi->supportedSampleCounts().contains(samples))
++        QSKIP("Sample count is not supported");
++
++    QScopedPointer<QRhiSwapChain> swapChain(rhi->newSwapChain());
++    swapChain->setWindow(window.data());
++    swapChain->setSampleCount(samples);
++    swapChain->setFlags(QRhiSwapChain::UsedAsTransferSource);
++    QScopedPointer<QRhiRenderPassDescriptor> rpDesc(swapChain->newCompatibleRenderPassDescriptor());
++    swapChain->setRenderPassDescriptor(rpDesc.data());
++    QVERIFY(swapChain->createOrResize());
++    if (stereo && swapChain->currentFrameRenderTarget(QRhiSwapChain::LeftBuffer)
++            == swapChain->currentFrameRenderTarget(QRhiSwapChain::RightBuffer))
++        QSKIP("Stereo swapchains are not supported on this surface");
++
++    const QSize sizes[] = { { 320, 240 }, { 256, 192 }, { 384, 256 }, { 320, 240 } };
++    for (int i = 0; i < (resize ? 4 : 1); ++i) {
++        if (i) {
++            window->resize(sizes[i]);
++            QTRY_COMPARE(window->size(), sizes[i]);
++            QVERIFY(swapChain->createOrResize());
++        }
++        QCOMPARE(swapChain->currentPixelSize(), swapChain->surfacePixelSize());
++        QVERIFY(rhi->beginFrame(swapChain.data()) == QRhi::FrameOpSuccess);
++        QRhiCommandBuffer *cb = swapChain->currentFrameCommandBuffer();
++        cb->beginPass(swapChain->currentFrameRenderTarget(QRhiSwapChain::LeftBuffer),
++                      Qt::red, { 1.0f, 0 });
++        cb->endPass();
++        if (stereo) {
++            cb->beginPass(swapChain->currentFrameRenderTarget(QRhiSwapChain::RightBuffer),
++                          Qt::green, { 1.0f, 0 });
++            cb->endPass();
++        }
++
++        // The left resolve must survive rendering the right eye.
++        QRhiReadbackResult readback;
++        bool completed = false;
++        readback.completed = [&completed] { completed = true; };
++        QRhiResourceUpdateBatch *updates = rhi->nextResourceUpdateBatch();
++        updates->readBackTexture({}, &readback);
++        cb->resourceUpdate(updates);
++        QVERIFY(rhi->endFrame(swapChain.data()) == QRhi::FrameOpSuccess);
++        QVERIFY(rhi->finish() == QRhi::FrameOpSuccess);
++        QVERIFY(completed);
++        QCOMPARE(readback.pixelSize, swapChain->currentPixelSize());
++        QVERIFY(readback.format == QRhiTexture::RGBA8 || readback.format == QRhiTexture::BGRA8);
++        QImage image(reinterpret_cast<const uchar *>(readback.data.constData()),
++                     readback.pixelSize.width(), readback.pixelSize.height(),
++                     readback.format == QRhiTexture::RGBA8 ? QImage::Format_RGBA8888
++                                                           : QImage::Format_ARGB32);
++        QCOMPARE(image.pixelColor(image.width() / 2, image.height() / 2), QColor(Qt::red));
++    }
++    swapChain.reset();
++#endif
++}
++
+ void tst_QRhi::renderToWindowSimple_data()
+ {
+     rhiTestData();
