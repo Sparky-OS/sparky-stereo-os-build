@@ -1,0 +1,10 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/25
+# Copyright 2026 under the GNU GPL3 License
+# Plymouth's distribution defaults move aside for the edition's (plymouthd.defaults names sparky-stereo-lines)
+set -e
+if [ "$1" = install ] || [ "$1" = upgrade ]; then
+	dpkg-divert --package sparky-stereo-plymouth --add --rename \
+		--divert /usr/share/plymouth/plymouthd.defaults.debian /usr/share/plymouth/plymouthd.defaults >/dev/null
+fi
+exit 0

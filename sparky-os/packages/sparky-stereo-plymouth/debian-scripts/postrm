@@ -1,0 +1,17 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/25
+# Copyright 2026 under the GNU GPL3 License
+# Plymouth's distribution defaults come back; a system that followed the edition's default follows Plymouth's again.
+set -e
+case "$1" in
+remove|abort-install|abort-upgrade)
+	if [ "$1" = remove ] || [ -z "$2" ] || dpkg --compare-versions "$2" lt 20261025~sparky9~0; then
+		dpkg-divert --package sparky-stereo-plymouth --remove --rename \
+			--divert /usr/share/plymouth/plymouthd.defaults.debian /usr/share/plymouth/plymouthd.defaults >/dev/null
+	fi
+	;;
+purge)
+	rm -rf /var/lib/sparky-stereo-plymouth
+	;;
+esac
+exit 0

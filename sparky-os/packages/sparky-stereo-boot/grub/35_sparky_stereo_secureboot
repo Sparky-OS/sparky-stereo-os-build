@@ -1,0 +1,23 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/25
+# Copyright 2026 under the GNU GPL3 License
+# The entry that enrolls the Sparky Stereo OS key with MokManager, in the system's language, and under Secure Boot the
+# menu's default when shim refuses the newest kernel (sparky-stereo-boot; /usr/lib/sparky-stereo-boot/secureboot.py).
+set -e
+[ -x /usr/bin/python3 ] && [ -f /usr/lib/sparky-stereo-boot/secureboot.py ] || exit 0
+prefix=/usr
+exec_prefix=/usr
+datarootdir=/usr/share
+. /usr/share/grub/grub-mkconfig_lib
+kernel=$(ls -1 /boot/vmlinuz-* 2>/dev/null | sort -V | tail -n 1)
+if [ -n "$kernel" ]; then
+	SPARKY_STEREO_KERNEL_PATH=$(make_system_path_relative_to_its_root "$kernel")
+	SPARKY_STEREO_KERNEL_ACCESS=$(prepare_grub_to_access_device $(${grub_probe:-grub-probe} --target=device "$kernel"))
+	export SPARKY_STEREO_KERNEL_PATH SPARKY_STEREO_KERNEL_ACCESS
+fi
+esp=${SPARKY_STEREO_ESP:-/boot/efi}
+if mountpoint -q "$esp" 2>/dev/null; then
+	SPARKY_STEREO_ESP_UUID=$(${grub_probe:-grub-probe} --target=fs_uuid "$esp" 2>/dev/null || true)
+	export SPARKY_STEREO_ESP_UUID
+fi
+exec /usr/bin/python3 /usr/lib/sparky-stereo-boot/secureboot.py grub

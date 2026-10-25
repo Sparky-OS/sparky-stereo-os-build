@@ -5,7 +5,8 @@
 # stereo: QEMU's stereo virtio-vga at 1920x1080 and QEMU's own trace of every scanout and mode set
 # (OUTDIR/qemu-trace.log, the boot chain lane's events); std: the standard VGA.
 # OUTDIR gets qmp.sock, serial.sock (a getty there needs serial-getty@ttyS0 enabled in the system),
-# VARS.fd (a copy), cmdline.txt and qemu.log. FW_DIR: the unpacked firmware (default fw/ here). Nothing touches a display.
+# VARS.fd (a copy), cmdline.txt and qemu.log. FW_DIR: the unpacked firmware (default fw/ here). EXTRA_DISK: a further
+# raw disk, read-only (packages to install, for instance). Nothing touches a display.
 set -eu
 DISK=$(readlink -f "$1"); VARS=$(readlink -f "$2"); OUT=$3; FW=${4:-sb}; GPU=${5:-std}
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -27,7 +28,8 @@ set -- qemu-system-x86_64 -name beta-iso-lutz-installed $M -cpu host -smp 4 -m 8
 	-nodefaults -device qemu-xhci,id=xin -device usb-kbd,bus=xin.0 -device usb-tablet,bus=xin.0 \
 	-netdev user,id=n0,restrict=on -device virtio-net-pci,netdev=n0 \
 	-drive if=pflash,format=raw,unit=0,readonly=on,file=$CODE -drive if=pflash,format=raw,unit=1,file=$OUT/VARS.fd \
-	-drive file=$DISK,if=none,id=d0,format=raw,discard=unmap -device virtio-blk-pci,drive=d0,bootindex=1
+	-drive file=$DISK,if=none,id=d0,format=raw,discard=unmap -device virtio-blk-pci,drive=d0,bootindex=1 \
+	${EXTRA_DISK:+-drive file=$EXTRA_DISK,if=none,id=x0,format=raw,readonly=on -device virtio-blk-pci,drive=x0}
 echo "$*" > "$OUT/cmdline.txt"
 date -u +%Y-%m-%dT%H:%M:%S.%NZ > "$OUT/t0"
 setsid "$@" > "$OUT/qemu.log" 2>&1 < /dev/null &

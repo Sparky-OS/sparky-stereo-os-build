@@ -2,7 +2,7 @@
 # Packs the ISO from the root file system with Sparky Backup Core Stereo, the way SparkyLinux packs its
 # images (sparkybackup dist on the system itself), run in a chroot: the staged packages go in, the build's
 # own apt sources, policy and DKMS signing key come out, and sparkybackup-stereo makes the ISO with the
-# edition's kernel as its only kernel and the boot menus gen-menus.py writes.
+# edition's kernel as its only kernel; the packer writes the boot menus from what the image holds.
 # Runs as root inside beta-iso-lutz-build:1 (privileged). Mounts as rootfs.sh, plus /work (the packer's
 # work tree) and /out (the ISO and its files), both outside the root file system.
 # Environment: LABEL (menu label), ISONAME (file name), SIGNED_MODULES (optional: a folder whose
@@ -122,11 +122,14 @@ if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
 	[ -z "$rm_list" ] || apt_in remove $rm_list
 	# usbguard blocks USB keyboards and pointers present at boot (the boot lane's dev VM); it never goes in
 	if inr dpkg-query -W -f '${Status}' usbguard 2>/dev/null | grep -q 'ok installed'; then apt_in purge usbguard; fi
-	# the Stereo boot splash is the default (Daniel, 2026-10-24: "default plymouth, approved to stereo"); sparkyos-plymouth's
-	# record names it, so its trigger puts it back when sparky-plymouth's upgrade sets sparky-blue
-	inr plymouth-set-default-theme sparky-stereo-lines
-	mkdir -p $R/var/lib/sparkyos-plymouth && echo sparky-stereo-lines > $R/var/lib/sparkyos-plymouth/theme
-	echo "== $(date -u +%T) the default boot splash: $(inr plymouth-set-default-theme)"
+	# the Stereo boot splash is the default (Daniel, 2026-10-24: "default plymouth, approved to stereo"): from
+	# sparky-stereo-plymouth 20261025 the package makes it the distribution's default; with an older one the
+	# recipe sets it and names it in sparkyos-plymouth's record, so that package's trigger puts it back
+	if [ "$(inr plymouth-set-default-theme)" != sparky-stereo-lines ]; then
+		inr plymouth-set-default-theme sparky-stereo-lines
+		mkdir -p $R/var/lib/sparkyos-plymouth && echo sparky-stereo-lines > $R/var/lib/sparkyos-plymouth/theme
+	fi
+	echo "== $(date -u +%T) the default boot splash: $(inr plymouth-set-default-theme) (plymouthd.conf: $(sed -n 's/^Theme=//p' $R/etc/plymouth/plymouthd.conf))"
 	# the packages SparkyLinux's securebootinstall asks apt for that the image lacks (an offline install finds the rest)
 	for p in libjcat1 grub-efi-amd64-signed-template shim-helpers-amd64-signed-template; do
 		apt_in install --no-install-recommends "$p" || echo "!! $p: not installed"
@@ -209,16 +212,17 @@ if [ "$STEP" = iso ] || [ "$STEP" = all ]; then
 	sed -i -e "s|^ISOLABELFULL=.*|ISOLABELFULL=\"$LABEL\"|" -e "s|^CUSTOMISO=.*|CUSTOMISO=\"$ISONAME\"|" $R/etc/sparkybackup/sparkybackup-stereo.conf
 	KV=$(inr dpkg-query -W -f '${Depends}' linux-image-sparky-stereo | sed -n 's/^linux-image-\([^ ,]*\).*/\1/p')
 	[ -n "$KV" ] && [ -f $R/boot/vmlinuz-$KV ] || { echo "!! the edition's kernel release ($KV) is not in /boot"; exit 1; }
-	# the boot menus (gen-menus.py) and the certificate for MokManager, in the packer's work folder: outside the image
+	# the certificate for MokManager, in the packer's work folder (outside the image); the packer writes the menus from
+	# what the image and the medium hold (sparky-backup-core-stereo's stereo/gen-menus.py)
 	P=/usr/lib/sparkybackup/stereo
-	python3 /build/gen-menus.py /work/menus $R$P $R$P/isolinux/isolinux.cfg "$LABEL LIVE/INSTALL"
+	[ -f $R$P/gen-menus.py ] || { echo "!! sparky-backup-core-stereo without stereo/gen-menus.py (20261025 or newer is needed)"; exit 1; }
 	rm -rf /work/menus-cert; mkdir -p /work/menus-cert
 	cp "${MOKCERT_FILE:-$R$P/secureboot/sparky-stereo-secureboot-2026.der}" /work/menus-cert/sparky-stereo-secureboot-2026.der
-	echo "== $(date -u +%T) live kernel $KV, no other; MokManager's certificate: $(sha256sum /work/menus-cert/*.der | cut -c1-64)"
+	echo "== $(date -u +%T) default live kernel $KV, kernels in /boot: $(ls $R/boot | sed -n 's/^vmlinuz-//p' | tr '\n' ' '); MokManager's certificate: $(sha256sum /work/menus-cert/*.der | cut -c1-64)"
 	echo "== $(date -u +%T) LEAN=$LEAN hook=${hook:-none}; top folders of the image: $(ls $R | tr '\n' ' ')"
 	echo "== $(date -u +%T) sparkybackup-stereo dist"
 	t0=$(date +%s)
-	inr env PRESQUASHFS_HOOK="$hook" LEANCODE_JOBS=4 SPARKY_LIVEKERNEL="$KV" SPARKY_BOOTMENUS=/home/sparkybackup-sys/menus \
+	inr env PRESQUASHFS_HOOK="$hook" LEANCODE_JOBS=4 SPARKY_LIVEKERNEL="$KV" \
 		SPARKY_MOKCERT=/home/sparkybackup-sys/menus-cert/sparky-stereo-secureboot-2026.der sparkybackup-stereo dist
 	echo "== $(date -u +%T) packed in $(( $(date +%s) - t0 )) s (LEAN=$LEAN)"
 	# the projection's build record beside the ISO
