@@ -10,7 +10,8 @@ kernel, log in on the serial line and run checks, with screenshots along the way
 
 The machine starts with bootmatrix.py (QEMU, -display none, the QMP and serial sockets in DIR). --keys is a list of
 key steps for the boot menus before the system starts, comma separated: a qcode or chord (ret, esc, down, ctrl+x),
-"type:TEXT", "wait:SECONDS", "shot:NAME" or "console"; the default waits for the menu and presses Enter. "console"
+"type:TEXT", "slowtype:TEXT" (0.4 s a key: ISOLINUX reads the BIOS keyboard buffer, 15 keys, and loses keys typed
+faster while it redraws), "wait:SECONDS", "shot:NAME" or "console"; the default waits for the menu and presses Enter. "console"
 edits the selected GRUB entry and starts it: the linux line (the entry's first line, "if linux ...; then") gets
 console=ttyS0,115200 console=tty0 before its "; then", so the kernel and a getty speak on the serial line too. Every byte of the serial
 line goes to DIR/serial.log; the commands' output to DIR/session.txt. Nothing is shown on any display.
@@ -125,10 +126,10 @@ def main():
     def key(k):
         q.cmd('send-key', keys=[{'type': 'qcode', 'data': x} for x in k.split('+')])
 
-    def typ(text):
+    def typ(text, pause=0.05):
         for ch in text:
             q.cmd('send-key', keys=[{'type': 'qcode', 'data': k} for k in keys_for(ch)])
-            time.sleep(0.05)
+            time.sleep(pause)
 
     steps = a.keys.split(',') if a.keys else []
     for st in steps:
@@ -138,6 +139,8 @@ def main():
             shot(st[5:])
         elif st.startswith('type:'):
             typ(st[5:])
+        elif st.startswith('slowtype:'):
+            typ(st[9:], 0.4)
         else:
             if st == 'console':
                 # GRUB's editor shows "setparams '<title>'", an empty line, then the entry: its first line, at its
