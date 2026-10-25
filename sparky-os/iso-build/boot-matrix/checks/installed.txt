@@ -1,17 +1,18 @@
 # Checks on an installed system (live-check.py --cmds, a getty on ttyS0 from disk-tool.sh getty): the kernel, the
 # Secure Boot chain on the EFI system partition, /boot and the kernel packages, GRUB's menu, the splash, command-not-found.
+# sudo reads the account's password from $PW, which the runner sets first (serial-run.py SOCK USER PASSWORD 'PW=...' ...).
 uname -r
 cat /proc/cmdline
 ls -l /boot
 dpkg-query -W -f '${Package} ${Version} ${db:Status-Abbrev}\n' 'linux-image*' 'linux-headers*' 'linux-binary*' 'linux-modules*' 2>/dev/null | grep ' ii'
 mokutil --sb-state
-sudo -n mokutil --list-enrolled | grep -E 'Subject:|SHA1 Fingerprint'
+printf '%s\n' "$PW" | sudo -S -p '' mokutil --list-enrolled | grep -E 'Subject:|SHA1 Fingerprint'
 cat /sys/kernel/security/lockdown
-sudo -n journalctl -k -b --no-pager | grep -i -E 'secure boot|MokListRT|Sparky Stereo' | head -8
-sudo -n find /boot/efi -type f -iname '*.efi' -exec sha256sum {} +
-sudo -n efibootmgr -v 2>/dev/null | head -8
-sudo -n grep -E '^(menuentry|submenu)|^\s+linux\s' /boot/grub/grub.cfg | head -12
-sudo -n plymouth-set-default-theme; grep -h Theme /etc/plymouth/plymouthd.conf
+printf '%s\n' "$PW" | sudo -S -p '' journalctl -k -b --no-pager | grep -i -E 'secure boot|MokListRT|Sparky Stereo' | head -8
+printf '%s\n' "$PW" | sudo -S -p '' find /boot/efi -type f -iname '*.efi' -exec sha256sum {} +
+printf '%s\n' "$PW" | sudo -S -p '' efibootmgr -v 2>/dev/null | head -8
+printf '%s\n' "$PW" | sudo -S -p '' grep -E '^(menuentry|submenu)|^\s+linux\s' /boot/grub/grub.cfg | head -12
+printf '%s\n' "$PW" | sudo -S -p '' plymouth-set-default-theme; grep -h Theme /etc/plymouth/plymouthd.conf
 for c in cmatrix aacgain filmcraft; do /usr/lib/command-not-found -- $c 2>&1 | head -4; done
 systemctl is-system-running; systemctl --failed --no-legend | cat
-sudo -n journalctl -b -u nvidia-persistenced --no-pager | tail -4
+printf '%s\n' "$PW" | sudo -S -p '' journalctl -b -u nvidia-persistenced --no-pager | tail -4
