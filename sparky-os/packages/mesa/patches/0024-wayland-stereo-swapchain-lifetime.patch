@@ -1,0 +1,35 @@
+From b926ba9778860e8028e2112f5c3340029dfe3a0f Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 24 Oct 2026 16:54:21 -0300
+Subject: [PATCH] vulkan/wsi: release stereo surface objects before replacing a
+ Wayland swapchain
+
+Destroy the retired swapchain stereo declaration and legacy viewport alongside its other exclusive surface objects. Clear both pointers so destroying the retired swapchain cannot destroy them again. The existing vulkan-stereo-wayland test with VULKAN_STEREO_RECREATE=1 aborts on the installed +stereo3d15 runtime at its second swapchain with a duplicate stereo declaration; its mono control remains valid. The live render-resolution change in stereo3ddemo reproduces the same failure.
+
+Assisted-by: gpt-6-astra (Codex)
+---
+ src/vulkan/wsi/wsi_common_wayland.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/src/vulkan/wsi/wsi_common_wayland.c b/src/vulkan/wsi/wsi_common_wayland.c
+index c4ae3f3..643d7d4 100644
+--- a/src/vulkan/wsi/wsi_common_wayland.c
++++ b/src/vulkan/wsi/wsi_common_wayland.c
+@@ -3799,6 +3799,14 @@ wsi_wl_surface_create_swapchain(VkIcdSurfaceBase *icd_surface,
+    }
+    if (pCreateInfo->oldSwapchain) {
+       VK_FROM_HANDLE(wsi_wl_swapchain, old_chain, pCreateInfo->oldSwapchain);
++      if (old_chain->stereo_content) {
++         kde_stereo_content_destroy(old_chain->stereo_content);
++         old_chain->stereo_content = NULL;
++      }
++      if (old_chain->viewport) {
++         wp_viewport_destroy(old_chain->viewport);
++         old_chain->viewport = NULL;
++      }
+       if (old_chain->tearing_control) {
+          wp_tearing_control_v1_destroy(old_chain->tearing_control);
+          old_chain->tearing_control = NULL;
+-- 
+2.53.0
+
