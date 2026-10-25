@@ -6,13 +6,13 @@
 kernel, log in on the serial line and run checks, with screenshots along the way.
 
   live-check.py --iso FILE --fw CASE --media cd|usb --out DIR [--vars VARS.fd] [--disk RAW] [--keys STEPS]
-                [--console] [--user live --password live] [--cmds FILE] [--login-wait 600] [--desktop-wait 60]
+                [--user live --password live] [--cmds FILE] [--login-wait 600] [--desktop-wait 60]
 
 The machine starts with bootmatrix.py (QEMU, -display none, the QMP and serial sockets in DIR). --keys is a list of
 key steps for the boot menus before the system starts, comma separated: a qcode or chord (ret, esc, down, ctrl+x),
-"type:TEXT", "wait:SECONDS" or "shot:NAME"; the default waits for the menu and presses Enter. --console edits the
-selected GRUB entry first: the linux line (the entry's first line, "if linux ...; then") gets console=ttyS0,115200
-console=tty0 before its "; then", so the kernel and a getty speak on the serial line too. Every byte of the serial
+"type:TEXT", "wait:SECONDS", "shot:NAME" or "console"; the default waits for the menu and presses Enter. "console"
+edits the selected GRUB entry and starts it: the linux line (the entry's first line, "if linux ...; then") gets
+console=ttyS0,115200 console=tty0 before its "; then", so the kernel and a getty speak on the serial line too. Every byte of the serial
 line goes to DIR/serial.log; the commands' output to DIR/session.txt. Nothing is shown on any display.
 """
 import argparse
@@ -89,7 +89,6 @@ def main():
     ap.add_argument('--vars')
     ap.add_argument('--disk')
     ap.add_argument('--keys', default='wait:30,shot:menu,ret')
-    ap.add_argument('--console', action='store_true')
     ap.add_argument('--user', default='live')
     ap.add_argument('--password', default='live')
     ap.add_argument('--cmds')
@@ -132,7 +131,6 @@ def main():
             time.sleep(0.05)
 
     steps = a.keys.split(',') if a.keys else []
-    edited = False
     for st in steps:
         if st.startswith('wait:'):
             ser.read(float(st[5:]))
@@ -141,7 +139,7 @@ def main():
         elif st.startswith('type:'):
             typ(st[5:])
         else:
-            if a.console and st == 'ret' and not edited:
+            if st == 'console':
                 # GRUB's editor shows "setparams '<title>'", an empty line, then the entry: its first line, at its
                 # end, before "; then"
                 key('e'); ser.read(1.5)
@@ -152,7 +150,6 @@ def main():
                 typ(CONSOLE); ser.read(1)
                 shot('edited-entry')
                 key('ctrl+x')
-                edited = True
                 note('edited the entry: +' + CONSOLE.strip() + ', started it')
                 continue
             key(st)
