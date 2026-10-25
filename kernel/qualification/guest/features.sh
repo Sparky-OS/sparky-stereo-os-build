@@ -26,6 +26,23 @@ for k in sched_bore sched_poc_selector; do
 done
 if [ -d /sys/kernel/sched_ext ]; then ok sched_ext_present "state=$(cat /sys/kernel/sched_ext/state 2>/dev/null)"; else bad sched_ext_present "no /sys/kernel/sched_ext"; fi
 inf preempt_model "$(cat /sys/kernel/debug/sched/preempt 2>/dev/null || echo 'debugfs sched/preempt not readable')"
+# Linux 7.3's cgroup scheduling (Peter Zijlstra's "sched: Flatten the pick"): the group share mode in debugfs, concur by default
+# (kernel/sched/debug.c cgroup_mode = 2, "up smp concur max tasks"); BORE (series 10) must leave it in place
+cm=$(cat /sys/kernel/debug/sched/cgroup_mode 2>/dev/null)
+case "$cm" in *"(concur)"*) ok sched_cgroup_mode "$cm";; *) bad sched_cgroup_mode "sched/cgroup_mode: ${cm:-not readable}";; esac
+
+# The dmem cgroup controller (CONFIG_CGROUP_DMEM, build 13 on): listed at the root, and a child gets dmem.min, dmem.low and dmem.max once it is enabled
+mkdir -p /sys/fs/cgroup
+grep -qw cgroup2 /proc/mounts || mount -t cgroup2 cgroup2 /sys/fs/cgroup 2>/run/cg.err
+ctl=$(cat /sys/fs/cgroup/cgroup.controllers 2>/dev/null)
+case " $ctl " in *" dmem "*) ok cgroup_dmem "controllers: $ctl";; *) bad cgroup_dmem "controllers: ${ctl:-none} $(cat /run/cg.err 2>/dev/null)";; esac
+if echo +dmem > /sys/fs/cgroup/cgroup.subtree_control 2>/run/cg.err && mkdir -p /sys/fs/cgroup/sparky-dmem-probe; then
+    f=$(cd /sys/fs/cgroup/sparky-dmem-probe && ls -d dmem.* 2>/dev/null | tr '\n' ' ')
+    case " $f " in *" dmem.low "*" dmem.max "*" dmem.min "*|*" dmem.low "*" dmem.min "*) ok cgroup_dmem_files "$f; capacity: $(tr '\n' ';' < /sys/fs/cgroup/dmem.capacity 2>/dev/null)";; *) bad cgroup_dmem_files "child files: $f";; esac
+    rmdir /sys/fs/cgroup/sparky-dmem-probe; echo -dmem > /sys/fs/cgroup/cgroup.subtree_control
+else
+    bad cgroup_dmem_files "enabling dmem in the root's subtree_control failed: $(cat /run/cg.err)"
+fi
 
 # Binder: with binderfs built in (CONFIG_ANDROID_BINDERFS=y) the legacy /dev/binder nodes are not created; a binderfs mount provides binder, hwbinder and vndbinder
 if grep -qw binder /proc/filesystems; then
