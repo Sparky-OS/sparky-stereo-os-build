@@ -1,0 +1,10 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/25
+# Copyright 2026 under the GNU GPL3 License
+set -e
+if [ "$1" = remove ]; then
+	for t in sparky-stereo-lines sparky-stereo-lines-height; do
+		update-alternatives --remove default.plymouth /usr/share/plymouth/themes/$t/$t.plymouth || true
+	done
+fi
+exit 0

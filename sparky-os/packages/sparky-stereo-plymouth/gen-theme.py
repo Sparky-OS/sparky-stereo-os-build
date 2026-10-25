@@ -49,13 +49,17 @@ header = '''\
 #     Plymouth hands it both eyes side by side (Window.GetStereo () is then
 #     true): the left eye in the left half, the right eye in the right half,
 #     both from one animation clock; elsewhere it draws once, like the original;
-#   - the lines are drawn once per eye, and each eye computes the path of an
+#   - three levels, each item shifted by its own depth and drawn once per eye:
+#     the background on the screen; the base, the swirl with its orbit lines,
+#     one step in front of it; the SparkyOS logo (its swirl and the wordmark
+#     SPARKYOS / POWERED BY DEBIAN / STEREO 3D EDITION) one more step in front,
+#     standing on the raised base;
+#   - the electrons ride the base's orbits, and each eye computes the path of an
 #     electron from its own shifted point. Along a curve the electron pops where
 #     the curve rises and sinks where it falls (DEPTH_FOLLOWS = "slope"), or pops
 #     in the upper half and sinks in the lower half ("height"), a few pixels
-#     either way;
-#   - everything else (background, logo, messages, password, progress) is drawn
-#     in both eyes on the screen plane.
+#     either way from the base;
+#   - the messages, password and progress are drawn in both eyes on the screen.
 #
 #  This program is free software; you can redistribute it and/or modify
 #  it under the terms of the GNU General Public License as published by
@@ -72,6 +76,14 @@ SECS_BETWEEN_ANIMS = 2.5;
 DEPTH_FOLLOWS = "%(depth)s";
 POP_PX = 4.0;
 SINK_PX = 6.0;
+
+# The levels, as parallax in front of the screen in pixels at 1920 pixels per eye (scaled to the eye's width):
+# the base one step, the logo two. Two steps are the logo's raise in the SparkyOS stereo theme (sparkyos-stereo:
+# 0.00473 of the eye's width, 9.08 px at 1920, measured in front of the background in a real stereo clip), so the
+# logo stands one step above the base as the base stands one step above the screen.
+STEP_PX = 4.54;
+BASE_PX = STEP_PX;
+LOGO_PX = 2 * STEP_PX;
 
 #------------------------------- Globals -------------------------------------------
 ''' % {'depth': depth}
@@ -91,9 +103,12 @@ EYE_W = win_width / EYES;
 EYE_H = win_height;
 POP = POP_PX * EYE_W / 1920;
 SINK = SINK_PX * EYE_W / 1920;
+BASE = BASE_PX * EYE_W / 1920;
+LOGO = LOGO_PX * EYE_W / 1920;
 
 # A stereo sprite is one sprite per eye. d is the parallax in pixels, positive in front of
 # the screen: the left eye's picture moves right by d / 2 and the right eye's left by d / 2.
+# One eye (a 2D screen) draws every level in its place.
 fun SS_New (image) {
     local.ss;
     ss.s[0] = Sprite (image);
@@ -107,6 +122,8 @@ fun SS_Place (ss, x, y, z, d) {
     local.half;
     for (e = 0; e < EYES; e++) {
         half = d / 2;
+        if (EYES == 1)
+            half = 0;
         if (e == 1)
             half = -half;
         ss.s[e].SetPosition (Math.Int (x + e * EYE_W + half + 0.5), Math.Int (y + 0.5), z);
@@ -144,7 +161,7 @@ SS_Place(bg_sprite, EYE_W / 2 - scaled_bg_image.GetWidth() / 2,
                     EYE_H / 2 - scaled_bg_image.GetHeight() / 2,
                     -10000, 0);
 
-#------------------------------- Logo ----------------------------------------------
+#------------------------------- Base: the swirl and its orbits ----------------------
 logo_image = Image("logo.png");
 logo_height = Math.Min(EYE_W, EYE_H) * 0.7;
 logo_scale_factor = logo_height / logo_image.GetHeight();
@@ -155,10 +172,10 @@ logo_to_top_edge = EYE_H * 0;
 logo_right_shift = logo_image.GetWidth() * 0.092;
 logo_x = EYE_W / 2 - logo_image.GetWidth() / 2 + logo_right_shift;
 logo_y = logo_to_top_edge;
-SS_Place(logo_sprite, logo_x, logo_y, -100, 0);
+SS_Place(logo_sprite, logo_x, logo_y, -100, BASE);
 
-#------------------------------- Debian ----------------------------------------------
-debian_image = Image("sparky-logo2.png");
+#------------------------------- Logo: SPARKYOS / POWERED BY DEBIAN / STEREO 3D EDITION -
+debian_image = Image("wordmark.png");
 debian_width = logo_image.GetWidth();
 debian_scale_factor = debian_width / debian_image.GetWidth() * 0.7;
 if (debian_scale_factor < 1) {
@@ -169,7 +186,7 @@ debian_sprite = SS_New(debian_image);
 debian_to_bottom_edge = EYE_H * 0.092;
 debian_x = EYE_W / 2 - debian_image.GetWidth() / 2;
 debian_y = EYE_H - debian_to_bottom_edge - debian_image.GetHeight();
-SS_Place(debian_sprite, debian_x, debian_y, -90, 0);
+SS_Place(debian_sprite, debian_x, debian_y, -90, LOGO);
 
 #------------------------------- Electrons --------------------------------------------
 
@@ -313,7 +330,7 @@ fun compute_opacity(ellipse) {
 # steepest, and at the screen where the curve is level.
 # "height": f is minus the height over the centre in units of b: the upper half pops, the lower
 # half sinks.
-# Popped uses POP and sunk uses SINK.
+# Popped uses POP and sunk uses SINK, from the base the orbits are drawn on.
 fun compute_depth (ellipse, phi) {
     local.f;
     local.tx;
@@ -330,8 +347,8 @@ fun compute_depth (ellipse, phi) {
     }
 
     if (f >= 0)
-        return POP * f;
-    return SINK * f;
+        return BASE + POP * f;
+    return BASE + SINK * f;
 }
 
 # Draw the 5 electron sprites to create a gradient effect, in both eyes

@@ -1,0 +1,46 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/25
+# Copyright 2026 under the GNU GPL3 License
+# sparky-stereo-lines is the edition's default boot splash (Daniel, 2026-10-24). A system on an automatic default
+# follows it; a theme a person chose stays.
+# Plymouth takes the theme of /etc/plymouth/plymouthd.conf, else the distribution's (plymouthd.defaults, ours), else
+# the default.plymouth alternative. The packages before this one wrote their own defaults into plymouthd.conf as if a
+# person had chosen them: sparky-plymouth sets sparky-blue at every installation and upgrade, and sparkyos-plymouth
+# sets its default and records it in /var/lib/sparkyos-plymouth/theme. Those are automatic, as is an empty choice;
+# anything else is a person's choice.
+set -e
+CONF=/etc/plymouth/plymouthd.conf
+STATE=/var/lib/sparky-stereo-plymouth/automatic
+SOS=/var/lib/sparkyos-plymouth/theme
+THEMES=/usr/share/plymouth/themes
+chosen() { sed -n 's/^[[:space:]]*Theme[[:space:]]*=[[:space:]]*//p' "$CONF" 2>/dev/null | tail -n1; }
+automatic() {
+	t=$(chosen)
+	[ -z "$t" ] && return 0
+	[ "$t" = sparky-blue ] && return 0
+	[ -f "$SOS" ] && [ "$t" = "$(cat "$SOS")" ] && return 0
+	[ -f "$STATE" ] && [ "$t" = sparky-stereo-lines ] && return 0
+	return 1
+}
+follow_default() {
+	# the choice in plymouthd.conf goes, so the distribution's default applies; sparkyos-plymouth's record goes
+	# with it, so its trigger no longer puts its theme back
+	if [ -f "$CONF" ]; then sed -i -e '/^[[:space:]]*Theme[[:space:]]*=/d' "$CONF"; fi
+	rm -f "$SOS"
+	mkdir -p /var/lib/sparky-stereo-plymouth
+	: > "$STATE"
+}
+case "$1" in
+configure)
+	update-alternatives --install $THEMES/default.plymouth default.plymouth \
+		$THEMES/sparky-stereo-lines/sparky-stereo-lines.plymouth 300
+	update-alternatives --install $THEMES/default.plymouth default.plymouth \
+		$THEMES/sparky-stereo-lines-height/sparky-stereo-lines-height.plymouth 290
+	if automatic; then follow_default; else rm -f "$STATE"; fi
+	;;
+triggered)
+	# sparky-plymouth or sparkyos-plymouth was installed or upgraded and set its theme again
+	if automatic; then follow_default; fi
+	;;
+esac
+exit 0
