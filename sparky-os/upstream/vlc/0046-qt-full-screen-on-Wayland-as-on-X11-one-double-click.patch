@@ -1,0 +1,176 @@
+From 9dabb681f497edc7307a832fd9a2f232cb8aa4d4 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sun, 25 Oct 2026 00:54:20 -0300
+Subject: [PATCH] qt: full screen on Wayland as on X11: one double click, the
+ controller, the cursor
+
+On Wayland the video is a native child window (3d-0021) whose input reaches
+the video widget through an event filter. Three things worked on X11 and
+not there.
+
+Qt delivers the second click of a double click on a window as a press
+flagged Qt::MouseEventCreatedDoubleClick, then the double click event.
+QWidgetWindow drops that press for widgets (QTBUG-25831); the filter passed
+it on, so the video output took it for a double click of its own, and the
+double click event for a second one: full screen on and off at once. The
+window still went full screen, because Qt on Wayland had sent set_fullscreen
+and sends nothing for the second change before the compositor configures
+the first, while VLC's interface went back to its windowed layout with the
+menu bar and the controls. The filter now drops that press too.
+
+The video widget did not track the mouse, so Qt dropped every move without
+a button before it reached the video output: the full screen controller
+never showed and the hidden cursor never came back. Track it, as the X11
+path does. First written by Daniel Ramos as patch 3d-0027 of the A10 field
+build (vlc-stereo 3.0.24-1+stereo3d11~a10.1, 19 October 2026), and as
+3d-0042 of the +stereo3d12 series, which never shipped.
+
+VLC hides the cursor over the video by setting it on the video widget, and
+the native window kept a cursor of its own. Give it the widget's cursor
+while the pointer is over it, and only then: Qt on Wayland sets a window's
+cursor for the whole seat (QWaylandCursor::changeCursor), so the controller
+keeps its own cursor.
+
+The full screen controller is a frameless tool window that places itself at
+the bottom centre of the screen. A Wayland client cannot place a top-level
+window, and KWin centred it on the video. On Wayland it is a tooltip window
+instead, which Qt makes an xdg_popup of the main window, placed where the
+controller asks.
+
+Assisted-by: Claude Opus 5.5
+---
+ modules/gui/qt/components/controller.cpp      |  7 +++-
+ .../gui/qt/components/interface_widgets.cpp   | 34 +++++++++++++++++++
+ .../gui/qt/components/interface_widgets.hpp   |  4 +++
+ 3 files changed, 44 insertions(+), 1 deletion(-)
+
+diff --git a/modules/gui/qt/components/controller.cpp b/modules/gui/qt/components/controller.cpp
+index e1529d2..8dcbd7f 100644
+--- a/modules/gui/qt/components/controller.cpp
++++ b/modules/gui/qt/components/controller.cpp
+@@ -798,7 +798,12 @@ FullscreenControllerWidget::FullscreenControllerWidget( intf_thread_t *_p_i, QWi
+ 
+     vout.clear();
+ 
+-    setWindowFlags( Qt::Tool | Qt::FramelessWindowHint | Qt::X11BypassWindowManagerHint );
++    /* A Wayland client cannot place a top-level window, and the compositor
++     * centres a tool window on the video. A tooltip window is a popup of the
++     * main window instead, which Qt places where the controller asks. */
++    const Qt::WindowType type =
++        QGuiApplication::platformName().startsWith( qfu("wayland") ) ? Qt::ToolTip : Qt::Tool;
++    setWindowFlags( type | Qt::FramelessWindowHint | Qt::X11BypassWindowManagerHint );
+     setAttribute( Qt::WA_ShowWithoutActivating );
+     setMinimumWidth( FSC_WIDTH );
+     isWideFSC = false;
+diff --git a/modules/gui/qt/components/interface_widgets.cpp b/modules/gui/qt/components/interface_widgets.cpp
+index c9b6100..c5ac1bf 100644
+--- a/modules/gui/qt/components/interface_widgets.cpp
++++ b/modules/gui/qt/components/interface_widgets.cpp
+@@ -88,6 +88,7 @@ VideoWidget::VideoWidget( intf_thread_t *_p_i, QWidget* p_parent )
+     layout->setContentsMargins( 0, 0, 0, 0 );
+     stable = NULL;
+     p_window = NULL;
++    videoWindowHovered = false;
+     qApp->installNativeEventFilter(this);
+     show();
+ }
+@@ -132,8 +133,16 @@ bool VideoWidget::request( struct vout_window_t *p_wnd )
+         QWindow *video = new QWindow;
+         video->setSurfaceType(QSurface::OpenGLSurface);
+         video->installEventFilter(this);
++        video->setCursor(cursor());
++        videoWindow = video;
++        videoWindowHovered = false;
+         stable = QWidget::createWindowContainer(video, this);
+         stable->setFocusPolicy(Qt::StrongFocus);
++        /* The native window's mouse moves reach this widget through the event
++         * filter: as on X11, track them, or Qt drops those with no button and
++         * the full screen controls never come back */
++        stable->setMouseTracking(true);
++        setMouseTracking(true);
+         layout->addWidget(stable);
+         stable->show();
+         video->create();
+@@ -325,11 +334,29 @@ void VideoWidget::resizeEvent( QResizeEvent *event )
+     reportSize();
+ }
+ 
++bool VideoWidget::event(QEvent *event)
++{
++    /* The native video window shows a cursor of its own: give it the one set
++     * on this widget, the cursor VLC hides over the video when the mouse rests.
++     * Qt on Wayland sets a window's cursor for the whole seat, so only while
++     * the pointer is over the video: the full screen controls keep theirs. */
++    if( event->type() == QEvent::CursorChange && videoWindow && videoWindowHovered )
++        videoWindow->setCursor( cursor() );
++    return QFrame::event( event );
++}
++
+ bool VideoWidget::eventFilter(QObject *watched, QEvent *event)
+ {
+     switch(event->type())
+     {
+         case QEvent::MouseButtonPress:
++            /* As QWidgetWindow does for widgets (QTBUG-25831): skip the press
++             * that Qt follows with the double click event itself, which the
++             * video output would take for a second double click */
++            if( static_cast<QMouseEvent *>(event)->flags()
++                & Qt::MouseEventCreatedDoubleClick )
++                return true;
++            /* fall through */
+         case QEvent::MouseButtonRelease:
+         case QEvent::MouseButtonDblClick:
+         case QEvent::MouseMove:
+@@ -337,6 +364,12 @@ bool VideoWidget::eventFilter(QObject *watched, QEvent *event)
+         case QEvent::KeyRelease:
+         case QEvent::Wheel:
+             return QCoreApplication::sendEvent(this, event);
++        case QEvent::Enter:
++        case QEvent::Leave:
++            videoWindowHovered = event->type() == QEvent::Enter;
++            if( videoWindowHovered && videoWindow )
++                videoWindow->setCursor( cursor() );
++            return QFrame::eventFilter(watched, event);
+         default:
+             return QFrame::eventFilter(watched, event);
+     }
+@@ -452,6 +485,7 @@ void VideoWidget::release( bool forced )
+         layout->removeWidget( stable );
+         stable->deleteLater();
+         stable = NULL;
++        videoWindow = NULL;
+         p_window = NULL;
+     }
+ 
+diff --git a/modules/gui/qt/components/interface_widgets.hpp b/modules/gui/qt/components/interface_widgets.hpp
+index 89557b5..3935571 100644
+--- a/modules/gui/qt/components/interface_widgets.hpp
++++ b/modules/gui/qt/components/interface_widgets.hpp
+@@ -44,6 +44,7 @@
+ #include <QMouseEvent>
+ #include <QPropertyAnimation>
+ #include <QAbstractNativeEventFilter>
++#include <QPointer>
+ 
+ class QMenu;
+ class QSlider;
+@@ -64,6 +65,7 @@ public:
+     void sync( void );
+ 
+ protected:
++    bool event(QEvent *) Q_DECL_OVERRIDE;
+     bool eventFilter(QObject *, QEvent *) Q_DECL_OVERRIDE;
+     QPaintEngine *paintEngine() const Q_DECL_OVERRIDE
+     {
+@@ -88,6 +90,8 @@ private:
+     vout_window_t *p_window;
+ 
+     QWidget *stable;
++    QPointer<QWindow> videoWindow;
++    bool videoWindowHovered;
+     QLayout *layout;
+ 
+     bool enable_mouse_events;
+-- 
+2.53.0
+
