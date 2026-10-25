@@ -6,7 +6,7 @@
 # The root file system is the largest ext4 partition. Nothing else on the disk is changed.
 set -eu
 DISK=$(readlink -f "$1"); ACT=$2
-exec docker run --rm --privileged --name beta-iso-lutz-disktool -v "$(dirname "$DISK"):/d" beta-iso-lutz-build:1 sh -c '
+exec docker run --rm --privileged --name "${NAME:-beta-iso-lutz}-disktool" -v "$(dirname "$DISK"):/d" "${IMAGE:-beta-iso-lutz-build:1}" sh -c '
 set -eu
 for i in $(seq 0 127); do [ -e /dev/loop$i ] || mknod /dev/loop$i b 7 $i; done
 D=/d/'"$(basename "$DISK")"'
