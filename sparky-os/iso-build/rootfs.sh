@@ -102,7 +102,11 @@ if [ "$STEP" = packages ] || [ "$STEP" = all ]; then
 	apt_in install --no-install-recommends sparky-stereo sparky-stereo-languages
 	apt_in install hunspell-de-de hyphen-de mythes-de libreoffice-l10n-de libreoffice-help-de hunspell-en-gb hunspell-en-us hyphen-en-us mythes-en-us libreoffice-help-en-us locales-all
 	echo "== $(date -u +%T) kernels: the edition's kernel and its headers, no other; NVIDIA 615 with the edition's open modules"
-	apt_in install linux-image-sparky-stereo linux-headers-sparky-stereo nvidia-driver=615.71.09-2 nvidia-kernel-open-dkms-stereo3d libnvcuvid1=615.71.09-2 nvidia-vaapi-driver
+	apt_in install linux-image-sparky-stereo linux-headers-sparky-stereo
+	# sparky-stereo-nvidia-driver-lock first: its pin keeps NVIDIA's whole driver at the version the edition's open
+	# module is built for (NVIDIA's CUDA repository moves ahead: 615.71.10-1 on 2026-10-25, while the module is 615.71.09-2)
+	apt_in install sparky-stereo-nvidia-driver-lock
+	apt_in install nvidia-driver nvidia-kernel-open-dkms-stereo3d libnvcuvid1 nvidia-vaapi-driver
 	cp /build/boot-kernels.py $R/tmp/
 	inr python3 /tmp/boot-kernels.py / || { echo "rootfs: a kernel that is not the edition's is in the tree" >&2; exit 1; }
 	rm -f $R/tmp/boot-kernels.py

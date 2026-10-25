@@ -18,6 +18,7 @@
 #   SIGNED_MODULES  optional: the DKMS modules signed with the edition's key (sign-modules.sh output); pack only
 #   SIGNED_KERNEL   optional: the linux-image package signed with the edition's key (sign-kernel-deb.sh output); pack only
 #   LABEL, ISONAME  the menu label and the file name
+#   ROOTFSSTEP      base, packages or all (the default); rootfs only
 #   PACKSTEP        configure, iso or all (the default); pack only
 #   LEAN            1: the packer runs dpkg-stereo's pre-squashfs hook (the Lean Code projection) on the folders it
 #                   squashes (default); 0 only for ISO_PURPOSE=benchmark and a -nolean- name
@@ -53,7 +54,7 @@ run() {
 		$sm "$IMAGE" sh -c "$2"
 }
 case ${1:-all} in
-rootfs) run rootfs "/build/stage-index.sh >/dev/null; /build/rootfs.sh all" ;;
+rootfs) run rootfs "/build/stage-index.sh >/dev/null; /build/rootfs.sh ${ROOTFSSTEP:-all}" ;;
 pack) run pack "mkdir -p /rootfs/repo /rootfs/stage; /build/pack.sh ${PACKSTEP:-all}" ;;
 check) run check "/build/check-iso.sh /out/${ISONAME:-sparky-stereo-os-9-mashtabba-beta2-x86_64.iso}${MOKCERT_FILE:+ /mokcert.der}" ;;
 all) "$0" rootfs && "$0" pack && "$0" check ;;
