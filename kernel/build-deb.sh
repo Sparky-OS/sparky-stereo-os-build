@@ -13,10 +13,10 @@
 #   -t           smoke test: a tiny kernel through the same packaging steps (see tests/package-smoke.sh), no series, no Debian configuration
 #
 # Release names (uname -r), chosen so that GRUB's version sort (sort -V, newest first) puts v3 above base above rt:
-#   base  7.3.0-rc6-stereo3d<BUILD>        v3  7.3.0-rc6-stereo3d<BUILD>-v3        rt  7.3.0-rc6-rt-stereo3d<BUILD>
+#   base  7.3.0-stereo3d<BUILD>            v3  7.3.0-stereo3d<BUILD>-v3            rt  7.3.0-rt-stereo3d<BUILD>   (v7.3; at v7.3-rc6 they read 7.3.0-rc6-...)
 #
 # Environment:
-#   TAG, TAG_COMMIT   upstream tag and the commit it must point to (default v7.3-rc6, a90ee430...); move both together
+#   TAG, TAG_COMMIT   upstream tag and the commit it must point to (default v7.3, c03c1a14...); move both together (kernel/lean/upstream.py pins them)
 #   KERNEL_GIT        a git directory that has TAG (otherwise the tag is cloned from git.kernel.org, depth 1)
 #   SERIES            patch series directory (default kernel/series); SKIP: regular expression of series lines to leave out
 #   CPUS, MEM, JOBS   container limits (default 4, 16g) and make -j (default 4)
@@ -36,8 +36,8 @@ while getopts b:f:o:kth opt; do
 done
 [ -n "$BUILD" ] || { echo "build-deb.sh: -b BUILD is required (a new number for every build)" >&2; exit 2; }
 case "$BUILD" in *[!0-9]*|'') echo "build-deb.sh: BUILD must be a number" >&2; exit 2;; esac
-TAG=${TAG:-v7.3-rc6}
-TAG_COMMIT=${TAG_COMMIT:-a90ee4305c4a5df72c11b31dacfdc76e00fcf78a}
+TAG=${TAG:-v7.3}
+TAG_COMMIT=${TAG_COMMIT:-c03c1a14507dfaf8b856c2608f9ac216021fc222}
 SERIES=${SERIES:-$HERE/series}
 CPUS=${CPUS:-4}; MEM=${MEM:-16g}; JOBS=${JOBS:-4}
 WORK=${WORK:-${SPARKY_SCRATCH:?}/linux-stereo3d-build}

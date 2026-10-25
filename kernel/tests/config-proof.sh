@@ -15,8 +15,8 @@ HERE=$(cd "$(dirname "$0")/.." && pwd)
 OUT=${1:-${SPARKY_SCRATCH:?}/linux-stereo3d-config-proof}
 [ $# -gt 0 ] && shift
 FLAVOURS=${*:-base v3 rt}
-TAG=${TAG:-v7.3-rc6}
-TAG_COMMIT=${TAG_COMMIT:-a90ee4305c4a5df72c11b31dacfdc76e00fcf78a}
+TAG=${TAG:-v7.3}
+TAG_COMMIT=${TAG_COMMIT:-c03c1a14507dfaf8b856c2608f9ac216021fc222}
 SERIES=${SERIES:-$HERE/series}
 IMAGE=${IMAGE:-sparky-kernel-build:1}
 docker image inspect "$IMAGE" >/dev/null 2>&1 || docker build --platform linux/amd64 -t "$IMAGE" "$HERE/docker"

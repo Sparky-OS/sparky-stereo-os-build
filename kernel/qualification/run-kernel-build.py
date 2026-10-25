@@ -30,9 +30,12 @@ args = parser.parse_args()
 base = cfg.path('SPARKY_MIGRATION_WORK')
 kit = cfg.TREE
 flavour = args.flavour
-version = '7.3.0~rc6-' + args.counter + ('.' + args.packaging_revision if args.packaging_revision else '') + '+lc1'
 name = 'linux-stereo-' + flavour
 origin = base / 'kernel-sources' / flavour
+sys.path.insert(0, str(kit / 'kernel/lean'))
+import upstream
+upstream_version = upstream.versions(json.loads((origin / 'source/SOURCE.edition.json').read_text())['tag'])[1]
+version = upstream_version + '-' + args.counter + ('.' + args.packaging_revision if args.packaging_revision else '') + '+lc1'
 work = base / 'jobs' / (name + '-amd64')
 if work.exists():
     raise SystemExit(f'{name}: existing job needs review; never overwrite it')

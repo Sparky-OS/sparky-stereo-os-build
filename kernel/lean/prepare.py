@@ -18,6 +18,8 @@ import sys
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parents[1] / 'sparky-os'))
 from lean.debian_prepare import prepare
+sys.path.insert(0, str(HERE))
+import upstream
 
 
 def main(root, recipe, counter, smoke, packaging_revision=None):
@@ -25,15 +27,15 @@ def main(root, recipe, counter, smoke, packaging_revision=None):
     source = json.loads((root / 'SOURCE.edition.json').read_text())
     flavour = source['flavour']
     if (flavour not in ('base', 'v3', 'rt') or not re.fullmatch(r'[0-9]+', counter)
-            or source['tag'] != 'v7.3-rc6'
-            or source['commit'] != 'a90ee4305c4a5df72c11b31dacfdc76e00fcf78a'
+            or upstream.PINNED.get(source['tag']) != source['commit']
             or (root / '.git').exists() or (root / 'debian').exists()):
         raise ValueError('Expected a fresh, pinned Linux export and a new release counter')
+    kernel_version, debian_upstream = upstream.versions(source['tag'])
     suffix = ('-rt' if flavour == 'rt' else '') + '-stereo3d' + counter
     if flavour == 'v3':
         suffix += '-v3'
-    release = '7.3.0-rc6' + suffix
-    version = '7.3.0~rc6-' + counter
+    release = kernel_version + suffix
+    version = debian_upstream + '-' + counter
     if packaging_revision is not None:
         if not re.fullmatch(r'[1-9][0-9]*', packaging_revision):
             raise ValueError('Expected a positive packaging revision')
