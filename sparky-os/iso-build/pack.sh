@@ -90,7 +90,7 @@ if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
 	inr apt-get update
 	echo "== $(date -u +%T) the edition repository's current versions of every installed package it carries ($EDITION_REPO)"
 	# only packages already in the image, and only upgrades: the edition's pin makes the repository's builds the candidates
-	if [ "$EDITION_REPO" = flat ]; then idx=/repo/Packages; else idx=$(ls $R/var/lib/apt/lists/*repo.sparkyos.org_dists_mashtabba_main_binary-*_Packages | sed "s|^$R||"); fi
+	if [ "$EDITION_REPO" = flat ]; then idx=/repo/Packages; else idx=$(ls $R/var/lib/apt/lists/*repo.sparkyos.org_dists_mashtabba_main_binary-*_Packages | sed "s|^$R||" | tr '\n' ' '); fi
 	# shellcheck disable=SC2086
 	inr sh -c "cat $idx | awk '/^Package: /{print \$2}' | sort -u | xargs dpkg-query -W -f '\${Package} \${Status}\n' 2>/dev/null | awk '/ ok installed\$/{print \$1}'" > /tmp/beta-repo-installed.list
 	apt_in install --only-upgrade $(cat /tmp/beta-repo-installed.list)
