@@ -1,6 +1,7 @@
 # Checks in a live session (live-check.py --cmds): the kernel, the boot chain's Secure Boot state, the medium's
 # kernels, the image's /boot and kernel packages, the boot splash, command-not-found, the session.
 uname -r
+cat /sys/firmware/efi/fw_platform_size 2>/dev/null || echo "no UEFI (BIOS boot)"
 cat /proc/cmdline
 ls /run/live/medium/live/
 ls -l /boot
