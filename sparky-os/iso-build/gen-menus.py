@@ -11,12 +11,14 @@ GRUB theme) with the menus written here:
   OUT/.disk/info               DISK_INFO, the line GRUB's EFI image searches for (and the label people see)
 The ISO carries the edition's kernel and no other (Daniel, 2026-10-24). Under Secure Boot, shim checks that kernel
 against its MOK list, so a machine that does not know the edition's key yet refuses it ("bad shim loader signature",
-grub-core/kern/efi/sb.c). Every live entry then explains it in the nine required languages and selects the entry
-"Secure Boot: enroll the Sparky Stereo OS key", which starts Debian's signed MokManager (mmx64.efi, beside shim on
-the EFI image) to enroll the certificate the EFI image carries; GRUB's own "Press any key to continue..." follows
-(grub_wait_after_message, grub-core/normal/menu.c) and the menu comes back with that entry selected. GRUB sets
-shim_lock=y when Secure Boot is on and shim's protocol is there (grub_shim_lock_verifier_setup), so a kernel refused
-for another reason shows only GRUB's error.
+grub-core/kern/efi/sb.c). Every live entry then explains it in the nine required languages and opens the menu again
+with "Secure Boot: enroll the Sparky Stereo OS key" selected (GRUB puts "default" back after an entry,
+grub_menu_execute_entry in grub-core/normal/menu.c, so the menu is loaded again with configfile and sparky_default).
+That entry shows MokManager's steps in the nine languages and starts Debian's signed MokManager (mmx64.efi, beside
+shim on the EFI image) to enroll the certificate the EFI image carries. GRUB sets shim_lock=y when Secure Boot is on
+and shim's protocol is there (grub_shim_lock_verifier_setup), so a kernel refused for another reason shows only
+GRUB's error. GRUB's sleep --interruptible stops on Esc, F4 or Shift (grub_key_is_interrupt, grub-core/kern/term.c),
+so the texts name Esc. The theme's terminal takes the whole screen (100 columns and 37 lines at 800x600) for them.
 """
 import os
 import shutil
@@ -33,24 +35,29 @@ COLUMNS = 98   # GRUB's gfxterm at 800x600 (config.cfg) with Unifont 16: 100 col
 # know the person's language before the system starts. MokManager is English only, so its menu items stay English.
 NO_KEY = [
     ('English', 'Secure Boot is on, and this computer does not know the Sparky Stereo OS key yet. Choose “' + ENROLL
-     + '” (now selected) to enroll it once, or turn Secure Boot off in “uEFI firmware setup”.'),
+     + '” (selected in the menu that follows) to enroll it once, or turn Secure Boot off in “uEFI firmware setup”. '
+     'Esc: go on now.'),
     ('Polski', 'Secure Boot jest włączony, a ten komputer nie zna jeszcze klucza Sparky Stereo OS. Wybierz „' + ENROLL
-     + '” (już zaznaczone), aby jednorazowo zarejestrować klucz, albo wyłącz Secure Boot w „uEFI firmware setup”.'),
+     + '” (zaznaczone w następnym menu), aby jednorazowo zarejestrować klucz, albo wyłącz Secure Boot w „uEFI firmware '
+     'setup”. Esc: dalej.'),
     ('Português', 'O Secure Boot está ligado e este computador ainda não conhece a chave do Sparky Stereo OS. Escolha “'
-     + ENROLL + '” (já selecionada) para registrar a chave uma vez, ou desligue o Secure Boot em “uEFI firmware setup”.'),
+     + ENROLL + '” (selecionada no menu a seguir) para registrar a chave uma vez, ou desligue o Secure Boot em “uEFI '
+     'firmware setup”. Esc: continuar agora.'),
     ('Français', 'Secure Boot est activé et cet ordinateur ne connaît pas encore la clé de Sparky Stereo OS. Choisissez « '
-     + ENROLL + ' » (déjà sélectionnée) pour l’enregistrer une fois, ou désactivez Secure Boot dans « uEFI firmware setup ».'),
+     + ENROLL + ' » (sélectionnée dans le menu suivant) pour l’enregistrer une fois, ou désactivez Secure Boot dans « uEFI '
+     'firmware setup ». Échap : continuer.'),
     ('Deutsch', 'Secure Boot ist eingeschaltet, und dieser Computer kennt den Schlüssel von Sparky Stereo OS noch nicht. '
-     'Wählen Sie „' + ENROLL + '“ (schon ausgewählt), um ihn einmalig einzutragen, oder schalten Sie Secure Boot unter '
-     '„uEFI firmware setup“ aus.'),
+     'Wählen Sie „' + ENROLL + '“ (im folgenden Menü ausgewählt), um ihn einmalig einzutragen, oder schalten Sie Secure '
+     'Boot unter „uEFI firmware setup“ aus. Esc: weiter.'),
     ('日本語', 'セキュアブートが有効ですが、このコンピューターはまだ Sparky Stereo OS の鍵を知りません。「' + ENROLL
-     + '」(選択済み) を選んで鍵を一度だけ登録するか、「uEFI firmware setup」でセキュアブートを無効にしてください。'),
+     + '」(次のメニューで選択済み) を選んで鍵を一度だけ登録するか、「uEFI firmware setup」でセキュアブートを無効にして'
+     'ください。Esc: すぐに続行。'),
     ('한국어', '보안 부팅이 켜져 있지만 이 컴퓨터는 아직 Sparky Stereo OS 키를 모릅니다. “' + ENROLL
-     + '”(선택됨)을 골라 키를 한 번 등록하거나, “uEFI firmware setup”에서 보안 부팅을 끄세요.'),
+     + '”(다음 메뉴에서 선택됨)을 골라 키를 한 번 등록하거나, “uEFI firmware setup”에서 보안 부팅을 끄세요. Esc: 바로 계속.'),
     ('简体中文', '安全启动已开启，但这台电脑还不认识 Sparky Stereo OS 的密钥。请选择“' + ENROLL
-     + '”（已选中）一次性注册密钥，或在“uEFI firmware setup”中关闭安全启动。'),
+     + '”（在接下来的菜单中已选中）一次性注册密钥，或在“uEFI firmware setup”中关闭安全启动。Esc：立即继续。'),
     ('繁體中文', '安全開機已開啟，但這台電腦還不認得 Sparky Stereo OS 的金鑰。請選擇「' + ENROLL
-     + '」（已選取）一次性註冊金鑰，或在「uEFI firmware setup」中關閉安全開機。'),
+     + '」（在接下來的選單中已選取）一次性註冊金鑰，或在「uEFI firmware setup」中關閉安全開機。Esc：立即繼續。'),
 ]
 STEPS = 'Enroll key from disk, ?, EFI, boot, ' + CERT + ', Continue, Yes, Reboot'
 MOKMANAGER = [
@@ -151,14 +158,20 @@ def grub_entry(title, args, indent=''):
 
 def grub_cfg():
     live, find = 'boot=live components', 'findiso=${iso_path}'
-    g = ['source /boot/grub/config.cfg', '',
+    g = ['source /boot/grub/config.cfg',
+         'if [ -n "$sparky_default" ]; then',
+         '    set default="$sparky_default"',
+         'fi', '',
          '# The edition\'s kernel is the only one on this medium. Under Secure Boot shim refuses it until the',
-         '# Sparky Stereo OS key is in the MOK list: then the entry says so in the nine required languages and selects',
-         '# the entry that enrolls the key with MokManager.',
+         '# Sparky Stereo OS key is in the MOK list: then the entry says so in the nine required languages and opens',
+         '# the menu again with the entry that enrolls the key with MokManager selected.',
          'function sparky_no_key {',
          '    if [ "$shim_lock" = y ]; then',
          *grub_text(NO_KEY, '        '),
-         '        set default=sparky-enroll',
+         '        sleep --interruptible --verbose 60',
+         '        set sparky_default=sparky-enroll',
+         '        export sparky_default',
+         '        configfile /boot/grub/grub.cfg',
          '    fi',
          '}', '']
     g.append(grub_entry(f'{NAME} (live)', f'{live} quiet splash {find}'))
@@ -219,6 +232,14 @@ def main():
         shutil.rmtree(out)
     shutil.copytree(profile, out, symlinks=True)
     shutil.rmtree(os.path.join(out, 'secureboot'), ignore_errors=True)   # the certificate goes on the EFI image only
+    theme = os.path.join(out, 'boot/grub/live-theme/theme.txt')
+    if os.path.exists(theme):
+        text = open(theme, encoding='utf-8').read()
+        with open(theme, 'w', encoding='utf-8') as f:
+            f.write('# the terminal (a running entry, the editor, the command line) takes the whole screen: the Secure Boot\n'
+                    '# texts in the nine required languages need its 100 columns and 37 lines at 800x600\n'
+                    'terminal-left: "0"\nterminal-top: "0"\nterminal-width: "100%"\nterminal-height: "100%"\n'
+                    'terminal-border: "0"\n' + text)
     os.makedirs(os.path.join(out, 'boot/grub'), exist_ok=True)
     os.makedirs(os.path.join(out, 'isolinux'), exist_ok=True)
     os.makedirs(os.path.join(out, '.disk'), exist_ok=True)
