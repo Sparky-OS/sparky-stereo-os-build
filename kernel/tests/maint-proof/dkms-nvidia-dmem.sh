@@ -13,6 +13,7 @@ cp /repo/sparky-stereo-repo.asc /usr/share/keyrings/
 printf 'Types: deb\nURIs: file:/repo\nSuites: mashtabba\nComponents: main\nSigned-By: /usr/share/keyrings/sparky-stereo-repo.asc\n' > /etc/apt/sources.list.d/sparky.sources
 printf 'Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n' > /etc/apt/preferences.d/sparky
 apt-get -y update >/dev/null 2>&1
+apt-get -y install apt-utils >/dev/null 2>&1
 mkdir -p /stub/a/DEBIAN /stub/b/DEBIAN /flat
 printf 'Package: firmware-nvidia-gsp\nVersion: 615.71.09-2\nArchitecture: amd64\nMaintainer: Stub\nDescription: EMPTY STUB for this test: the real package comes from NVIDIA repository, not from the edition repo\n' > /stub/a/DEBIAN/control
 printf 'Package: nvidia-installer-cleanup\nVersion: 1\nArchitecture: amd64\nMaintainer: Stub\nDescription: EMPTY STUB for this test (NVIDIA repository package)\n' > /stub/b/DEBIAN/control
@@ -25,8 +26,10 @@ apt-get -y install dkms nvidia-kernel-open-dkms-stereo3d >/dev/null 2>&1
 echo "== module source: $(dpkg-query -W -f='${Version}' nvidia-kernel-open-dkms-stereo3d)"
 echo "== 1. apt with the Breaks (simulated)"
 apt-get -s install linux-image-$REL linux-headers-$REL 2>&1 | grep -E "^(Inst|Remv|Conf) |Breaks|E: " | cut -c1-200
-echo "== 2. dpkg past the Breaks"
-dpkg -i --force-breaks /flat/linux-image-${REL}_*.deb /flat/linux-headers-${REL}_*.deb > /tmp/dpkg.log 2>&1; echo "dpkg exit $?"
+echo "== 2. dpkg past the Breaks: the image (no Breaks) and the headers' own dependencies through apt, then the headers by dpkg"
+apt-get -y install linux-image-$REL > /tmp/image.log 2>&1; echo "image install exit $?"
+apt-get -y install $(dpkg-deb -f /flat/linux-headers-${REL}_*.deb Depends | tr ',' '\n' | sed 's/(.*)//; s/|.*//; s/ //g' | grep -v '^\$' | sed 's/:.*//') > /tmp/deps.log 2>&1; echo "headers dependencies exit $?"
+dpkg -i --force-breaks /flat/linux-headers-${REL}_*.deb > /tmp/dpkg.log 2>&1; echo "dpkg exit $?"
 grep -E "Error!|error:|os-interface.c|dmem_cgroup_register_region|Autoinstall|returned error|subprocess .* returned" /tmp/dpkg.log | head -12 | cut -c1-220
 f=$(ls /var/lib/dkms/nvidia/615.71.09/build/make.log 2>/dev/null); [ -n "$f" ] && grep -m3 -E "dmem_cgroup_register_region|error:" "$f" | cut -c1-220
 echo "== package states"; dpkg-query -W -f='${Package} ${Status}\n' linux-image-$REL linux-headers-$REL
