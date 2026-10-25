@@ -1,7 +1,7 @@
 # Kernel build and qualification
 
 These tools build the edition's kernel flavours as Lean Code source packages (`kernel/lean`) and qualify each one in isolation: a boot in a QEMU guest with its feature probes, and the DKMS module matrix, before anything reaches a machine.
-They built and qualified kernel build 9 (`7.3.0~rc6-9+lc1`) on 20 October 2026; the version is written in the tools, so the next build updates it there.
+They built and qualified kernel build 9 (`7.3.0~rc6-9+lc1`) on 20 October 2026. From build 13 the upstream tag comes from the source manifest and its version strings from `kernel/lean/upstream.py`, which pins every accepted tag to its verified commit; a new tag is added there.
 
 Settings come from the local configuration (`sparky-os/config/build.conf.example`); the shared helpers are in `sparky-os/release`.
 

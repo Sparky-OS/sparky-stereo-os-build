@@ -42,6 +42,7 @@ esac
 echo "== headers Depends: $(dpkg-query -W -f='${Depends}' linux-headers-$REL)"
 echo "== compiler: $(grep CONFIG_CC_VERSION_TEXT /usr/src/linux-headers-$REL/.config); installed: $(dpkg-query -W -f='${Package} ${Version}\n' 'gcc-*-for-host' 2>/dev/null | tr '\n' ' ')"
 echo "== pahole: $(dpkg-query -W -f='${Package} ${Version}\n' pahole)"
+echo "== module sources: $(dpkg-query -W -f='${Package} ${Version}; ' nvidia-kernel-open-dkms-stereo3d xpadneo-dkms acpi-call-dkms v4l2loopback-dkms vhba-dkms xone-dkms 2>/dev/null)"
 echo "== dkms status"; dkms status
 echo "== modules"; find /lib/modules/$REL/updates -name '*.ko*' | sort | while read f; do echo "$f signer=$(modinfo -F signer $f) vermagic=$(modinfo -F vermagic $f | cut -d' ' -f1)"; done
 echo "== which kernels does DKMS know: $(dkms status | awk -F', ' '{print $2}' | sort -u | tr '\n' ' ')"

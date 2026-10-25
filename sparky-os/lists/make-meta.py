@@ -279,7 +279,9 @@ META = {
         sorted(set(lst('hardware')) - HARDWARE_OPTIONAL - {'libfdk-aac2'}) + OURS_HARDWARE,
         # NVIDIA's optional GDS module needs newer DKMS from its vendor repo.
         # Do not require that repository or DKMS version on other hardware.
-        sorted(HARDWARE_OPTIONAL & set(lst('hardware'))) + ['sparky-stereo-dkms-compat']),
+        # sparky-stereo-vram-boost decides at every boot whether dmemcg-booster and plasma-foreground-booster run
+        # (an AMD GPU with its own VRAM and the dmem cgroup controller, kernel build 13 on)
+        sorted(HARDWARE_OPTIONAL & set(lst('hardware'))) + ['sparky-stereo-dkms-compat', 'sparky-stereo-vram-boost']),
     'sparky-stereo-system': (
         'Sparky Stereo system',
         'This meta package installs the system tools of Sparky Stereo OS: Flatpak, snapshots, containers, Android support, the kernel settings (zram only where the hardware needs it), the Cushion Swap File and the groups every desktop user needs.',
