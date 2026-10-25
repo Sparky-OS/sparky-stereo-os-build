@@ -3,10 +3,12 @@
 #   disk-tool.sh DISK getty      enable a login on the serial port (serial-getty@ttyS0) for the checks
 #   disk-tool.sh DISK fallback   print the sha256 of every file in the EFI system partition's EFI/Boot
 #   disk-tool.sh DISK grubcfg    print the installed /boot/grub/grub.cfg's menu entries and background lines
+#   disk-tool.sh DISK kernels    boot-kernels.py on the installed system: /boot and the kernel packages, edition kernels only
 # The root file system is the largest ext4 partition. Nothing else on the disk is changed.
 set -eu
 DISK=$(readlink -f "$1"); ACT=$2
-exec docker run --rm --privileged --name beta-iso-lutz-disktool -v "$(dirname "$DISK"):/d" beta-iso-lutz-build:1 sh -c '
+exec docker run --rm --privileged --name "${NAME:-beta-iso-lutz}-disktool" -v "$(dirname "$DISK"):/d" \
+	-v "$(cd "$(dirname "$0")/.." && pwd):/iso-build:ro" "${IMAGE:-beta-iso-lutz-build:1}" sh -c '
 set -eu
 for i in $(seq 0 127); do [ -e /dev/loop$i ] || mknod /dev/loop$i b 7 $i; done
 D=/d/'"$(basename "$DISK")"'
@@ -32,6 +34,10 @@ fallback)
 	mount -o ro,offset=$((esp * 512)) "$D" /mnt/e
 	find /mnt/e -iname "*.efi" -o -iname "grub.cfg" -o -iname "*.cer" -o -iname "*.der" | sort | while read -r f; do sha256sum "$f"; done
 	umount /mnt/e ;;
+kernels)
+	mount -o ro,offset=$((root * 512)) "$D" /mnt/r
+	python3 /iso-build/boot-kernels.py /mnt/r; r=$?
+	umount /mnt/r; exit $r ;;
 grubcfg)
 	mount -o ro,offset=$((root * 512)) "$D" /mnt/r
 	grep -E "^(menuentry|submenu)|background_image|set lang|set menu_color|GRUB_BACKGROUND|insmod png" /mnt/r/boot/grub/grub.cfg

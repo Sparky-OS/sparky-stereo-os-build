@@ -5,14 +5,14 @@
 # stereo: QEMU's stereo virtio-vga at 1920x1080 and QEMU's own trace of every scanout and mode set
 # (OUTDIR/qemu-trace.log, the boot chain lane's events); std: the standard VGA.
 # OUTDIR gets qmp.sock, serial.sock (a getty there needs serial-getty@ttyS0 enabled in the system),
-# VARS.fd (a copy), cmdline.txt and qemu.log. Nothing touches a display.
+# VARS.fd (a copy), cmdline.txt and qemu.log. FW_DIR: the unpacked firmware (default fw/ here). Nothing touches a display.
 set -eu
 DISK=$(readlink -f "$1"); VARS=$(readlink -f "$2"); OUT=$3; FW=${4:-sb}; GPU=${5:-std}
 HERE=$(cd "$(dirname "$0")" && pwd)
 mkdir -p "$OUT"; OUT=$(cd "$OUT" && pwd)
 rm -f "$OUT/qmp.sock" "$OUT/serial.sock"
 [ -f "$OUT/VARS.fd" ] || cp "$VARS" "$OUT/VARS.fd"
-F=$HERE/fw/ovmf-forky/usr/share/OVMF
+F=${FW_DIR:-$HERE/fw}/ovmf-forky/usr/share/OVMF
 case $FW in
 sb) M="-machine q35,accel=kvm,smm=on -global driver=cfi.pflash01,property=secure,value=on"; CODE=$F/OVMF_CODE_4M.secboot.fd ;;
 *) M="-machine q35,accel=kvm"; CODE=$F/OVMF_CODE_4M.fd ;;
