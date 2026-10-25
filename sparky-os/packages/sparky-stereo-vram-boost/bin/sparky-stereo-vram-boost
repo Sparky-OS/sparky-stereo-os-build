@@ -1,0 +1,83 @@
+#!/bin/bash
+# Created by Daniel Ramos (Capitain Jack) 2026/10/25
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/25
+#
+# Decides at every boot whether dmemcg-booster and plasma-foreground-booster run, from the hardware and the kernel
+# (Daniel's hardware auto-detection rule), and writes the decision to /run/sparky-stereo-vram-boost: the file enabled
+# when they run, and state with the reason. Their units carry ConditionPathExists=/run/sparky-stereo-vram-boost/enabled.
+#
+#   SPARKY_STEREO_VRAM_BOOST in /etc/default/sparky-stereo-vram-boost:
+#     auto  (default) on when the kernel has the dmem cgroup controller and an AMD GPU with its own VRAM (amdgpu,
+#           mem_info_vram_vendor present) has registered its VRAM with it: the case Natalie Vock measured
+#     yes   on whenever any GPU has registered VRAM with the dmem controller (AMD APUs, Intel xe, nouveau)
+#     no    off
+#
+# The dmem regions are the lines of /sys/fs/cgroup/dmem.capacity, "drm/<PCI address>/vram<N> <bytes>"
+# (drmm_cgroup_register_region() and amdgpu_vram_mgr_init() in Linux 7.3).
+set -u
+RUN=${SPARKY_STEREO_VRAM_BOOST_RUN:-/run/sparky-stereo-vram-boost}
+CGROUP=${SPARKY_STEREO_VRAM_BOOST_CGROUP:-/sys/fs/cgroup}
+PCI=${SPARKY_STEREO_VRAM_BOOST_PCI:-/sys/bus/pci/devices}
+DEFAULTS=${SPARKY_STEREO_VRAM_BOOST_DEFAULTS:-/etc/default/sparky-stereo-vram-boost}
+WAIT=${SPARKY_STEREO_VRAM_BOOST_WAIT:-15}
+SPARKY_STEREO_VRAM_BOOST=auto
+[ -r "$DEFAULTS" ] && . "$DEFAULTS"
+mode=${SPARKY_STEREO_VRAM_BOOST:-auto}
+
+decide() {
+	# decide on|off REASON
+	mkdir -p "$RUN"
+	rm -f "$RUN/enabled"
+	[ "$1" = on ] && : >"$RUN/enabled"
+	printf 'decision=%s\nmode=%s\nreason=%s\nregions=%s\n' "$1" "$mode" "$2" "${regions:-}" >"$RUN/state"
+	echo "VRAM protection $1: $2"
+	exit 0
+}
+
+driver_of() {
+	local link
+	link=$(readlink "$PCI/$1/driver" 2>/dev/null) || return 0
+	basename "$link"
+}
+
+regions=
+case "$mode" in
+	auto|yes) ;;
+	no) decide off "SPARKY_STEREO_VRAM_BOOST=no" ;;
+	*) decide off "unknown SPARKY_STEREO_VRAM_BOOST=$mode (auto, yes or no)" ;;
+esac
+grep -qw dmem "$CGROUP/cgroup.controllers" 2>/dev/null || decide off "the kernel has no dmem cgroup controller"
+
+# amdgpu registers its VRAM at the end of its probe; wait for every bound amdgpu device to appear, a few seconds at most.
+amd=()
+for dev in "$PCI"/*; do
+	[ "$(driver_of "${dev##*/}")" = amdgpu ] && amd+=("${dev##*/}")
+done
+for ((i = 0; i < WAIT; i++)); do
+	missing=0
+	for a in "${amd[@]}"; do
+		grep -q "^drm/$a/" "$CGROUP/dmem.capacity" 2>/dev/null || missing=1
+	done
+	[ "$missing" = 0 ] && break
+	sleep 1
+done
+
+on=
+[ -r "$CGROUP/dmem.capacity" ] || decide off "no dmem.capacity in $CGROUP"
+while read -r region size; do
+	[ -n "$region" ] || continue
+	regions="${regions:+$regions }$region=$size"
+	address=${region#drm/}
+	address=${address%%/*}
+	driver=$(driver_of "$address")
+	if [ "$mode" = yes ]; then
+		on="${on:-$region ($driver)}"
+	elif [ "$driver" = amdgpu ] && [ -e "$PCI/$address/mem_info_vram_vendor" ]; then
+		on="${on:-$region (amdgpu, its own VRAM)}"
+	fi
+done <"$CGROUP/dmem.capacity"
+
+[ -n "$regions" ] || decide off "no GPU has registered VRAM with the dmem controller"
+[ -n "$on" ] && decide on "$on"
+decide off "no AMD GPU with its own VRAM among the dmem regions (SPARKY_STEREO_VRAM_BOOST=yes turns it on for the others)"

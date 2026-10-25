@@ -1,0 +1,13 @@
+[Unit]
+Description=Decide whether the window in front gets VRAM protection (dmem cgroup controller)
+Documentation=file:/usr/share/doc/sparky-stereo-vram-boost/README.md
+After=systemd-udev-trigger.service systemd-modules-load.service
+Before=dmemcg-booster-system.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/sparky-stereo-vram-boost/sparky-stereo-vram-boost
+
+[Install]
+WantedBy=multi-user.target
