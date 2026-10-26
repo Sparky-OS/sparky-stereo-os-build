@@ -7,12 +7,14 @@ Forwarded: not-needed
 
 --- a/core/app/main/main.cpp
 +++ b/core/app/main/main.cpp
-@@ -100,6 +100,8 @@
+@@ -100,6 +100,10 @@
  #include "databaseserverstarter.h"
  #include "filesdownloader.h"
  #include "dfileoperations.h"
 +#include "filepreview.h"
 +#include "loadingcacheinterface.h"
++#include "dpluginloader.h"
++#include "metaenginesettings.h"
  
  #ifdef Q_OS_WIN
  #   include <windows.h>
@@ -25,15 +27,19 @@ Forwarded: not-needed
      parser.process(app);
      aboutData.processCommandLine(&parser);
  
-@@ -284,6 +288,13 @@
+@@ -284,6 +290,17 @@
      QApplication::setWindowIcon(QIcon::fromTheme(QLatin1String("digikam"), app.windowIcon()));
  
  #endif
 +
 +    if (!parser.positionalArguments().isEmpty())
 +    {
++        LoadingCacheInterface::initialize();
++        MetaEngineSettings::instance();
++        DPluginLoader::instance()->init();
 +        const int ret = previewFiles(app, parser.positionalArguments());
 +        LoadingCacheInterface::cleanUp();
++        DPluginLoader::instance()->cleanUp();
 +        return ret;
 +    }
  
@@ -76,7 +82,7 @@ Forwarded: not-needed
 +} // namespace Digikam
 --- /dev/null
 +++ b/core/app/main/filepreview.cpp
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,94 @@
 +/* ============================================================
 + *
 + * This file is a part of digiKam project
@@ -127,10 +133,12 @@ Forwarded: not-needed
 +
 +    QToolBar* const toolbar = window.addToolBar(QString());
 +    toolbar->setObjectName(QLatin1String("filePreviewToolBar"));
-+    QAction* const previous = toolbar->addAction(QIcon::fromTheme(QLatin1String("go-previous")),
-+                                                 i18nc("@action", "Previous Image"));
-+    QAction* const next     = toolbar->addAction(QIcon::fromTheme(QLatin1String("go-next")),
-+                                                 i18nc("@action", "Next Image"));
++    QAction* const previous = new QAction(QIcon::fromTheme(QLatin1String("go-previous")),
++                                                 i18nc("@action", "Previous Image"), toolbar);
++    QAction* const next     = new QAction(QIcon::fromTheme(QLatin1String("go-next")),
++                                                 i18nc("@action", "Next Image"), toolbar);
++    toolbar->addAction(previous);
++    toolbar->addAction(next);
 +    previous->setShortcut(QKeySequence(Qt::Key_Left));
 +    next->setShortcut(QKeySequence(Qt::Key_Right));
 +

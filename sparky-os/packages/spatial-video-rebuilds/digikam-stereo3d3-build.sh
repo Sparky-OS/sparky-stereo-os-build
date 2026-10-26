@@ -27,7 +27,13 @@ echo digikam-open-files.patch >> debian/patches/series
 cp /patch/digikam-stereo-photo-mimetypes.patch debian/patches/$P
 echo $P >> debian/patches/series
 QUILT_PATCHES=debian/patches quilt push -a -q
-dch --newversion 4:9.1.0-1+stereo3d3 --distribution unstable 'Open local files in the native digiKam preview without importing or changing them. List image/x-jps, image/x-mpo and image/x-pns directly in both digiKam and Showfoto desktop entries; retain Gwenview as the edition default.'
+# These unchanged SONAME APIs are the ones used by the published +2 build.
+cat > debian/shlibs.local <<'SHLIBS'
+libMagick++-7.Q16 5 libmagick++-7.q16-5 (>= 8:7.1.2.33+dmo)
+libMagickCore-7.Q16 10 libmagickcore-7.q16-10 (>= 8:7.1.2.33+dmo)
+libstereo-layer 1 libstereo-layer1 (>= 1.9.0)
+SHLIBS
+dch --newversion 4:9.1.0-1+stereo3d3 --distribution unstable 'Open local files in the native digiKam preview without importing or changing them. List image/x-jps, image/x-mpo and image/x-pns directly in both digiKam and Showfoto desktop entries; retain Gwenview as the edition default and preserve the published dependency floors.'
 head -14 debian/changelog
 PYTHONPATH=/toolkit python3 -m lean.debian_prepare . 4:9.1.0-1+stereo3d3+lc1 --toolkit /toolkit
 apt-get -y --no-install-recommends build-dep /out/lc/src > /out/build-dep.log 2>&1 || { tail -20 /out/build-dep.log; exit 1; }
