@@ -1,12 +1,26 @@
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
-Subject: [PATCH] avformat/mov: preserve complementary stereo declarations
+Subject: [PATCH] avformat/mov: retain st3d packing when merging vexu metadata
 
-Read Spherical Video V2 st3d custom and right-first modes. Keep st3d
-packing when vexu supplies eye identities, including the reverse box
-order. Track st3d presence independently so duplicate boxes still fail.
+st3d describes the packing, while vexu/eyes describes the views and
+camera metadata. Rejecting st3d when eyes already allocated stereo
+side data makes the result depend on the box order. A later eyes box
+also loses st3d's explicit monoscopic type and right-first flag.
 
-Specification: https://github.com/google/spatial-media/blob/master/docs/spherical-video-v2-rfc.md#stereoscopic-3d-video-box-st3d
-Assisted-by: gpt-6-astra (Codex)
+Track accepted st3d boxes separately from the shared side data. Merge
+complementary fields without overwriting the packing or inversion, and
+keep rejecting duplicate st3d declarations. Read the custom and
+right-first modes defined by Spherical Video V2 as well.
+
+The generated MOV metadata regression fails on the parent and passes
+with this change, including both box orders and reserved/duplicate
+controls.
+
+https://github.com/google/spatial-media/blob/master/docs/spherical-video-v2-rfc.md#stereoscopic-3d-video-box-st3d
+https://developer.apple.com/av-foundation/Stereo-Video-ISOBMFF-Extensions.pdf
+Assisted-by: gpt-6 (Codex)
+
+Backport of ca5dbc9 from upstream base d31915e9dce4.
+The published 9.0.2 source predates the partial eyes packing check.
 
 --- a/libavformat/isom.h
 +++ b/libavformat/isom.h

@@ -1,0 +1,292 @@
+From 19e75ab19f960cc52930f14b6da358eee248f0c3 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 26 Oct 2026 17:04:30 -0300
+Subject: [PATCH] fate/mov: cover complementary st3d and vexu declarations
+
+Generate empty visual sample entries in memory and demux them through
+the MOV input format. Compare the observed stereo side data with the
+specification's mode table, independently of the parser implementation.
+
+Cover modes 0 through 4, both box orders, inversion and complementary
+camera fields, plain and vexu-only entries, reserved modes and duplicate
+st3d declarations. No external media sample is needed.
+
+Assisted-by: gpt-6 (Codex)
+---
+ libavformat/Makefile           |   2 +
+ libavformat/tests/mov_stereo.c | 196 +++++++++++++++++++++++++++++++++
+ tests/fate/libavformat.mak     |   4 +
+ tests/ref/fate/mov-stereo      |  36 ++++++
+ 4 files changed, 238 insertions(+)
+ create mode 100644 libavformat/tests/mov_stereo.c
+ create mode 100644 tests/ref/fate/mov-stereo
+
+diff --git a/libavformat/Makefile b/libavformat/Makefile
+index 92c0971..a582051 100644
+--- a/libavformat/Makefile
++++ b/libavformat/Makefile
+@@ -814,3 +814,5 @@ TOOLS     = aviocat                                                     \
+             seek_print                                                  \
+             sidxindex                                                   \
+             venc_data_dump
++
++TESTPROGS-$(CONFIG_MOV_DEMUXER)             += mov_stereo
+diff --git a/libavformat/tests/mov_stereo.c b/libavformat/tests/mov_stereo.c
+new file mode 100644
+index 0000000..a241a0b
+--- /dev/null
++++ b/libavformat/tests/mov_stereo.c
+@@ -0,0 +1,196 @@
++/*
++ * MOV stereoscopic metadata tests
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++#include <stdio.h>
++
++#include "libavutil/mem.h"
++#include "libavutil/stereo3d.h"
++#include "libavformat/avformat.h"
++#include "libavformat/avio_internal.h"
++
++static int64_t box_start(AVIOContext *pb, const char *tag)
++{
++    int64_t start = avio_tell(pb);
++    avio_wb32(pb, 0);
++    avio_write(pb, tag, 4);
++    return start;
++}
++
++static void box_end(AVIOContext *pb, int64_t start)
++{
++    int64_t end = avio_tell(pb);
++    avio_seek(pb, start, SEEK_SET);
++    avio_wb32(pb, end - start);
++    avio_seek(pb, end, SEEK_SET);
++}
++
++static void write_st3d(AVIOContext *pb, int mode)
++{
++    int64_t start = box_start(pb, "st3d");
++    avio_wb32(pb, 0);
++    avio_w8(pb, mode);
++    box_end(pb, start);
++}
++
++static void write_vexu(AVIOContext *pb, int reversed)
++{
++    int64_t vexu = box_start(pb, "vexu");
++    int64_t eyes = box_start(pb, "eyes");
++    int64_t stri = box_start(pb, "stri");
++    int64_t hero, cams, blin, cmfy, dadj;
++
++    avio_wb32(pb, 0);
++    avio_w8(pb, 3 | (reversed ? 8 : 0));
++    box_end(pb, stri);
++    hero = box_start(pb, "hero");
++    avio_wb32(pb, 0);
++    avio_w8(pb, 2);
++    box_end(pb, hero);
++    cams = box_start(pb, "cams");
++    blin = box_start(pb, "blin");
++    avio_wb32(pb, 0);
++    avio_wb32(pb, 65000);
++    box_end(pb, blin);
++    box_end(pb, cams);
++    cmfy = box_start(pb, "cmfy");
++    dadj = box_start(pb, "dadj");
++    avio_wb32(pb, 0);
++    avio_wb32(pb, -125);
++    box_end(pb, dadj);
++    box_end(pb, cmfy);
++    box_end(pb, eyes);
++    box_end(pb, vexu);
++}
++
++/* Empty raw-video sample entry: only the metadata is under test. */
++static int run_case(int mode, int order, int reversed, int duplicate)
++{
++    AVIOContext *pb;
++    AVFormatContext *in;
++    FFIOContext in_pb;
++    const AVPacketSideData *sd;
++    uint8_t *buf;
++    int64_t moov, trak, mdia, hdlr, minf, stbl, stsd, raw;
++    int ret, size, i;
++
++    if (avio_open_dyn_buf(&pb) < 0)
++        return 1;
++    moov = box_start(pb, "moov");
++    trak = box_start(pb, "trak");
++    mdia = box_start(pb, "mdia");
++    hdlr = box_start(pb, "hdlr");
++    avio_wb32(pb, 0);
++    avio_wb32(pb, 0);
++    avio_write(pb, "vide", 4);
++    for (i = 0; i < 3; i++)
++        avio_wb32(pb, 0);
++    avio_w8(pb, 0);
++    box_end(pb, hdlr);
++    minf = box_start(pb, "minf");
++    stbl = box_start(pb, "stbl");
++    stsd = box_start(pb, "stsd");
++    avio_wb32(pb, 0);
++    avio_wb32(pb, 1);
++    raw = box_start(pb, "raw ");
++    for (i = 0; i < 6; i++)
++        avio_w8(pb, 0);
++    avio_wb16(pb, 1);
++    for (i = 0; i < 4; i++)
++        avio_wb32(pb, 0);
++    avio_wb16(pb, 16);
++    avio_wb16(pb, 16);
++    avio_wb32(pb, 72 << 16);
++    avio_wb32(pb, 72 << 16);
++    avio_wb32(pb, 0);
++    avio_wb16(pb, 1);
++    for (i = 0; i < 32; i++)
++        avio_w8(pb, 0);
++    avio_wb16(pb, 24);
++    avio_wb16(pb, -1);
++    if (order == 2)
++        write_vexu(pb, reversed);
++    if (mode >= 0)
++        write_st3d(pb, mode);
++    if (order == 1)
++        write_vexu(pb, reversed);
++    if (duplicate)
++        write_st3d(pb, mode);
++    box_end(pb, raw);
++    box_end(pb, stsd);
++    box_end(pb, stbl);
++    box_end(pb, minf);
++    box_end(pb, mdia);
++    box_end(pb, trak);
++    box_end(pb, moov);
++    size = avio_close_dyn_buf(pb, &buf);
++    if (size < 0)
++        return 1;
++    in = avformat_alloc_context();
++    if (!in) {
++        av_free(buf);
++        return 1;
++    }
++    ffio_init_read_context(&in_pb, buf, size);
++    in->pb = &in_pb.pub;
++    ret = avformat_open_input(&in, NULL, av_find_input_format("mov"), NULL);
++    printf("mode=%d order=%d reversed=%d duplicate=%d: ",
++           mode, order, reversed, duplicate);
++    if (ret < 0) {
++        printf("rejected\n");
++    } else if (in->nb_streams != 1) {
++        printf("streams=%u\n", in->nb_streams);
++    } else {
++        const AVCodecParameters *par = in->streams[0]->codecpar;
++        sd = av_packet_side_data_get(par->coded_side_data, par->nb_coded_side_data,
++                                     AV_PKT_DATA_STEREO3D);
++        if (sd) {
++            const AVStereo3D *s = (const AVStereo3D *)sd->data;
++            printf("%s invert=%d view=%d primary=%d baseline=%u disparity=%d/%d\n",
++                   av_stereo3d_type_name(s->type), !!(s->flags & AV_STEREO3D_FLAG_INVERT),
++                   s->view, s->primary_eye, s->baseline,
++                   s->horizontal_disparity_adjustment.num,
++                   s->horizontal_disparity_adjustment.den);
++        } else {
++            printf("none\n");
++        }
++    }
++    avformat_close_input(&in);
++    av_free(buf);
++    return 0;
++}
++
++int main(void)
++{
++    int mode, order, reversed, ret = 0;
++
++    av_log_set_level(AV_LOG_QUIET);
++    ret |= run_case(-1, 0, 0, 0);
++    for (mode = -1; mode <= 4; mode++)
++        for (order = mode < 0 ? 1 : 0; order <= 2; order++)
++            for (reversed = 0; reversed <= (order != 0); reversed++)
++                ret |= run_case(mode, order, reversed, 0);
++    ret |= run_case(255, 0, 0, 0);
++    ret |= run_case(255, 1, 0, 0);
++    ret |= run_case(255, 2, 0, 0);
++    ret |= run_case(2, 0, 0, 1);
++    ret |= run_case(2, 1, 0, 1);
++    ret |= run_case(2, 2, 0, 1);
++    return ret;
++}
+diff --git a/tests/fate/libavformat.mak b/tests/fate/libavformat.mak
+index 18270bb..0b0fd27 100644
+--- a/tests/fate/libavformat.mak
++++ b/tests/fate/libavformat.mak
+@@ -1,3 +1,7 @@
++FATE_LIBAVFORMAT-$(CONFIG_MOV_DEMUXER) += fate-mov-stereo
++fate-mov-stereo: libavformat/tests/mov_stereo$(EXESUF)
++fate-mov-stereo: CMD = run libavformat/tests/mov_stereo$(EXESUF)
++
+ #FATE_LIBAVFORMAT-$(HAVE_PTHREADS) += fate-async
+ #fate-async: libavformat/tests/async$(EXESUF)
+ #fate-async: CMD = run libavformat/tests/async
+diff --git a/tests/ref/fate/mov-stereo b/tests/ref/fate/mov-stereo
+new file mode 100644
+index 0000000..9411b35
+--- /dev/null
++++ b/tests/ref/fate/mov-stereo
+@@ -0,0 +1,36 @@
++mode=-1 order=0 reversed=0 duplicate=0: none
++mode=-1 order=1 reversed=0 duplicate=0: unspecified invert=0 view=0 primary=2 baseline=65000 disparity=-125/10000
++mode=-1 order=1 reversed=1 duplicate=0: unspecified invert=1 view=0 primary=2 baseline=65000 disparity=-125/10000
++mode=-1 order=2 reversed=0 duplicate=0: unspecified invert=0 view=0 primary=2 baseline=65000 disparity=-125/10000
++mode=-1 order=2 reversed=1 duplicate=0: unspecified invert=1 view=0 primary=2 baseline=65000 disparity=-125/10000
++mode=0 order=0 reversed=0 duplicate=0: 2D invert=0 view=0 primary=0 baseline=0 disparity=0/1
++mode=0 order=1 reversed=0 duplicate=0: 2D invert=0 view=0 primary=2 baseline=65000 disparity=-125/10000
++mode=0 order=1 reversed=1 duplicate=0: 2D invert=1 view=0 primary=2 baseline=65000 disparity=-125/10000
++mode=0 order=2 reversed=0 duplicate=0: 2D invert=0 view=0 primary=2 baseline=65000 disparity=-125/10000
++mode=0 order=2 reversed=1 duplicate=0: 2D invert=1 view=0 primary=2 baseline=65000 disparity=-125/10000
++mode=1 order=0 reversed=0 duplicate=0: top and bottom invert=0 view=0 primary=0 baseline=0 disparity=0/1
++mode=1 order=1 reversed=0 duplicate=0: top and bottom invert=0 view=0 primary=2 baseline=65000 disparity=-125/10000
++mode=1 order=1 reversed=1 duplicate=0: top and bottom invert=1 view=0 primary=2 baseline=65000 disparity=-125/10000
++mode=1 order=2 reversed=0 duplicate=0: top and bottom invert=0 view=0 primary=2 baseline=65000 disparity=-125/10000
++mode=1 order=2 reversed=1 duplicate=0: top and bottom invert=1 view=0 primary=2 baseline=65000 disparity=-125/10000
++mode=2 order=0 reversed=0 duplicate=0: side by side invert=0 view=0 primary=0 baseline=0 disparity=0/1
++mode=2 order=1 reversed=0 duplicate=0: side by side invert=0 view=0 primary=2 baseline=65000 disparity=-125/10000
++mode=2 order=1 reversed=1 duplicate=0: side by side invert=1 view=0 primary=2 baseline=65000 disparity=-125/10000
++mode=2 order=2 reversed=0 duplicate=0: side by side invert=0 view=0 primary=2 baseline=65000 disparity=-125/10000
++mode=2 order=2 reversed=1 duplicate=0: side by side invert=1 view=0 primary=2 baseline=65000 disparity=-125/10000
++mode=3 order=0 reversed=0 duplicate=0: unspecified invert=0 view=0 primary=0 baseline=0 disparity=0/1
++mode=3 order=1 reversed=0 duplicate=0: unspecified invert=0 view=0 primary=2 baseline=65000 disparity=-125/10000
++mode=3 order=1 reversed=1 duplicate=0: unspecified invert=1 view=0 primary=2 baseline=65000 disparity=-125/10000
++mode=3 order=2 reversed=0 duplicate=0: unspecified invert=0 view=0 primary=2 baseline=65000 disparity=-125/10000
++mode=3 order=2 reversed=1 duplicate=0: unspecified invert=1 view=0 primary=2 baseline=65000 disparity=-125/10000
++mode=4 order=0 reversed=0 duplicate=0: side by side invert=1 view=0 primary=0 baseline=0 disparity=0/1
++mode=4 order=1 reversed=0 duplicate=0: side by side invert=1 view=0 primary=2 baseline=65000 disparity=-125/10000
++mode=4 order=1 reversed=1 duplicate=0: side by side invert=1 view=0 primary=2 baseline=65000 disparity=-125/10000
++mode=4 order=2 reversed=0 duplicate=0: side by side invert=1 view=0 primary=2 baseline=65000 disparity=-125/10000
++mode=4 order=2 reversed=1 duplicate=0: side by side invert=1 view=0 primary=2 baseline=65000 disparity=-125/10000
++mode=255 order=0 reversed=0 duplicate=0: none
++mode=255 order=1 reversed=0 duplicate=0: unspecified invert=0 view=0 primary=2 baseline=65000 disparity=-125/10000
++mode=255 order=2 reversed=0 duplicate=0: unspecified invert=0 view=0 primary=2 baseline=65000 disparity=-125/10000
++mode=2 order=0 reversed=0 duplicate=1: rejected
++mode=2 order=1 reversed=0 duplicate=1: rejected
++mode=2 order=2 reversed=0 duplicate=1: rejected
+-- 
+2.53.0
+
