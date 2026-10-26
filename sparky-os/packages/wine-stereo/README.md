@@ -3,6 +3,54 @@
 These helpers supplement the shared `lean.debian_prepare` adapter for the
 edition's Wine 10 source. Keep Wine's `debian/scripts/check-control` enabled.
 
+## Audit WoW64 before changing the build
+
+The published `10.0~repack-12+stereo3d5+lc1` source already configures amd64
+with `--enable-archs=x86_64,i386` in `debian/rules`.
+Its `libwine:amd64` contains both `x86_64-windows` and `i386-windows` PE
+payloads, alongside `x86_64-unix` modules.
+Enabling that configure option again is not a Wine transition.
+Start from the actual signed source and package members, then prove PE32 and
+PE32+ execution using the installed amd64 packages in a root without i386 Unix
+libraries. Record the executable and loaded ELF classes as well as program
+output and exit status.
+
+The edition's `debian/scripts/wine.in` selects `/usr/bin/wine32` for an
+explicit `WINEARCH=win32` or a prefix marked `#arch=win32`, when that loader is
+installed; otherwise it prefers `/usr/bin/wine64`.
+The latter wrapper executes `/usr/lib/x86_64-linux-gnu/wine/wine`.
+The `wine32` route and `libwine:i386` preserve pure 32-bit prefixes; PE32
+execution in a 64-bit prefix does not prove those prefixes can be migrated.
+Keep the existing package set and rollback inputs until the prefix and
+dependency transition is separately qualified.
+
+Separate PE payload architecture from Unix runtime architecture.
+In particular, the edition's `dxvk-wine32:i386` package contains Windows DLLs,
+while the `libdxvk-*` packages contain native Unix libraries.
+A PE32 DLL remains necessary for a 32-bit Windows application even when Wine
+loads only ELF64 Unix libraries.
+Native Linux i386 applications remain separate consumers of i386 libraries.
+Check installed dependency relationships and simulate removals with the
+actual machine inventory; do not infer an image-library removal set from Wine
+alone.
+The current `wine64` control stanza suggests the matching `wine32` package.
+Account for that relationship when the installation policy enables Suggests;
+removing an installed package alone does not change future package selection.
+
+Wine 10's implementation still describes new WoW64 as experimental.
+[Wine 11.0's release notes](https://gitlab.winehq.org/wine/wine/-/raw/wine-11.0/ANNOUNCE.md)
+call it fully supported, but continue to exclude pure 32-bit prefixes.
+That release also changes the X11 OpenGL default to EGL, retaining GLX as an
+option and fallback.
+A rebase therefore needs review of the stereo GLX drawable and declaration
+patches, the EGL path, Vulkan integration and popup ownership, in addition to
+loader and prefix checks.
+Preserve `/usr/bin/wine64` as a packaging interface where callers require it;
+upstream's removal of a loader named `wine64` is not permission to remove the
+edition's wrapper.
+
+## Prepare retained build inputs
+
 Prepare a disposable source export in this order:
 
 1. Retain and pin the build dependencies described below in `debian/control`.
