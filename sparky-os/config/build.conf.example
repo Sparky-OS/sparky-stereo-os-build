@@ -21,6 +21,16 @@ SPARKY_BUILD_SCRATCH=/var/tmp/sparky-build
 
 # Work area of a Lean Code migration or release qualification run (sparky-os/release).
 SPARKY_MIGRATION_WORK=/var/tmp/sparky-lc-migration
+# Signed public archive sources for isolated runtime dependency qualification.
+# Copy sparky-os/lean/archive.example.json and select the required sources and
+# public keyrings explicitly. The edition's FFmpeg also needs deb-multimedia Forky;
+# the Debian-only example is not a complete configuration for those packages.
+# Export these settings before invoking the repository publisher or check-link.
+SPARKY_LC_ARCHIVE_CONFIG=$HOME/.config/sparky-stereo/archive-public-sources.json
+SPARKY_LC_SCRATCH=/var/tmp/sparky-archive-link
+# Optional higher space floors; the gate enforces minima of 2 GiB scratch and 12 GiB root.
+#SPARKY_LC_MIN_FREE_GIB=2
+#SPARKY_LC_ROOT_MIN_FREE_GIB=12
 # The run's own record: its inventories (source-migration-inventory.json and the
 # overrides), checkpoints and captured evidence. Keep it outside the machinery tree.
 SPARKY_RUN_RECORD=$HOME/sparky-os/release-record
