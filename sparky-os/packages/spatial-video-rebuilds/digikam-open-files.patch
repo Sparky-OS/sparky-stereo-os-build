@@ -82,7 +82,7 @@ Forwarded: not-needed
 +} // namespace Digikam
 --- /dev/null
 +++ b/core/app/main/filepreview.cpp
-@@ -0,0 +1,94 @@
+@@ -0,0 +1,98 @@
 +/* ============================================================
 + *
 + * This file is a part of digiKam project
@@ -104,6 +104,8 @@ Forwarded: not-needed
 +#include <QIcon>
 +#include <QKeySequence>
 +#include <QMainWindow>
++#include <QMenu>
++#include <QMenuBar>
 +#include <QToolBar>
 +#include <QUrl>
 +
@@ -124,6 +126,8 @@ Forwarded: not-needed
 +    QMainWindow window;
 +    GraphicsDImgView::prepareStereoWindow(&window);
 +    window.resize(1000, 700);
++    QMenu* const viewMenu = window.menuBar()->addMenu(i18n("&View"));
++    viewMenu->setObjectName(QLatin1String("View"));
 +
 +    GraphicsDImgView* const view = new GraphicsDImgView(&window);
 +    DImgPreviewItem* const item  = new DImgPreviewItem();
