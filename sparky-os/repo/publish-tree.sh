@@ -220,11 +220,16 @@ PYTHONPATH="$HERE/..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release check-s
 # Link and start gate (ORDER 198): what check-selection proves is the archive bytes, not that
 # the programs run. Every package that is new to DEST and runs on this machine must resolve like
 # its predecessor and start (lean/smoke.tsv). SPARKY_LC_PREVIOUS_DIR holds the known-good
-# earlier builds to compare with; run where the runtime dependencies are installed.
+# earlier builds to compare with. SPARKY_LC_ARCHIVE_CONFIG names explicit signed public archive
+# sources and SPARKY_LC_SCRATCH owns the isolated APT state, cache, roots and evidence (lean/archive.md).
 HOST_ARCH=$(dpkg --print-architecture)
 : >"$W/link-debs.txt"
 while IFS=$'\t' read -r from to _ _ arch; do
-	[ "$arch" = "$HOST_ARCH" ] || continue
+	case "$arch" in
+		"$HOST_ARCH"|all) ;;
+		source) continue ;;
+		*) echo "lc1 link: unsupported execution gate for $arch on $HOST_ARCH; foreign package not runtime-qualified: $from" >&2; continue ;;
+	esac
 	case $from in *-dbgsym_*|*-lc-hr_*) continue ;; esac
 	[ -f "$DEST/$to" ] || echo "$from" >>"$W/link-debs.txt"
 done <"$W/selection.tsv"

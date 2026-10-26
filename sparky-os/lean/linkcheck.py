@@ -24,20 +24,20 @@ Four checks, none installs anything and none needs a display:
            at load, which is exactly what failed for torcs) and no display; a dynamic-loader
            error in the output blocks.
 
-Run it where the package's runtime dependencies are installed (the build container, a
-throwaway container), never on the host. Python 3 only, standard library only.
+Runtime dependencies come from explicit signed archives through lean.archive.
+The loader and smoke programs run in a bubblewrap root containing only qualified
+inputs, without workstation library paths, cache, configuration or environment.
 """
 
 from __future__ import annotations
 
-import contextlib
 import os
 from pathlib import Path
 import re
 import subprocess
 import tempfile
 
-from . import package
+from . import archive, package
 
 LOADER_ERRORS = re.compile(
     r'symbol lookup error|undefined symbol|cannot open shared object file|'
@@ -89,7 +89,7 @@ def stereo_imports(path):
 
 
 def extract(deb, dest):
-    subprocess.run(['dpkg-deb', '-x', str(deb), str(dest)], check=True, stdout=subprocess.DEVNULL)
+    archive.unpack(deb, Path(dest))
 
 
 def control_field(deb, field):
@@ -108,38 +108,60 @@ def private_dirs(root):
     return sorted(dirs)
 
 
-@contextlib.contextmanager
-def sibling_dirs(debs):
-    """Library directories of other packages built from the same source, extracted for the run.
 
-    A plugin links the library its sibling package ships; the build container has not installed it."""
-    with tempfile.TemporaryDirectory(prefix='lc-link-sib-') as base:
-        dirs = set()
-        for index, deb in enumerate(debs):
-            root = Path(base) / str(index)
-            root.mkdir()
-            extract(deb, root)
-            dirs.update(str(p.parent) for p in elf_files(root) if '.so' in p.name)
-        yield sorted(dirs)
+LOADERS = {'amd64': '/lib64/ld-linux-x86-64.so.2', 'i386': '/lib/ld-linux.so.2',
+           'arm64': '/lib/ld-linux-aarch64.so.1'}
+MACHINES = {'amd64': 'Advanced Micro Devices X86-64', 'i386': 'Intel 80386', 'arm64': 'AArch64'}
 
 
-def resolve(root, timeout=20, extra_dirs=()):
-    """{(relative file, kind, item): True} for every unresolved library or symbol of the tree."""
+def loader_command(path, root, qualified):
+    """Use the matching archive loader and libc inside the qualified filesystem."""
+    run = subprocess.run(['readelf', '-h', '-l', '-d', '-W', str(path)], capture_output=True,
+                         text=True, timeout=30, env={'PATH': '/usr/bin:/bin', 'LC_ALL': 'C'})
+    if run.returncode:
+        raise package.Invalid(f'unusable ELF: {run.stderr.strip()}')
+    machine = re.search(r'Machine:\s*(.+)', run.stdout)
+    if not machine or machine[1].strip() != MACHINES.get(qualified.arch):
+        raise package.Invalid(f'ELF machine does not match {qualified.arch}')
+    rel = '/' + str(path.relative_to(root))
+    interp = re.search(r'Requesting program interpreter: ([^]]+)', run.stdout)
+    if not interp and '(NEEDED)' not in run.stdout and 'There is no dynamic section' in run.stdout:
+        return [rel], True
+    loader = interp[1] if interp else LOADERS.get(qualified.arch)
+    if not loader or not archive.rooted(qualified.root, loader).is_file():
+        raise package.Invalid(f'qualified interpreter missing: {loader}; declare the matching libc dependency')
+    directories = [str(Path(d).relative_to(root)) for d in private_dirs(root)]
+    directories += [str(Path(d).relative_to(qualified.root)) for d in private_dirs(qualified.root)]
+    directories += [f'usr/lib/{MULTIARCH[qualified.arch]}', f'lib/{MULTIARCH[qualified.arch]}', 'usr/lib', 'lib']
+    search = ':'.join(dict.fromkeys('/' + d for d in directories))
+    return [loader, '--inhibit-cache', '--library-path', search, rel], False
+
+
+def resolve(root, timeout=20, extra_dirs=(), qualified=None):
+    """{(relative file, kind, item): True}, confined to the qualified archive root."""
+    if extra_dirs:
+        raise package.Invalid('unqualified library directories are forbidden; supply sibling .debs')
+    if qualified is None:
+        raise package.Invalid('archive-qualified execution context required; use lean.release check-link')
     root = Path(root)
-    # ldd's messages are matched as text: read them in the C locale, whatever the host's language
-    # (a pt_BR host says "não é um executável dinâmico" for a static file such as a kernel's vmlinux)
-    env = dict(os.environ, LD_LIBRARY_PATH=':'.join(private_dirs(root) + list(extra_dirs)), LC_ALL='C', LANGUAGE='C')
     result = {}
     for path in elf_files(root):
         rel = '/' + str(path.relative_to(root))
         try:
-            run = subprocess.run(['ldd', '-r', str(path)], capture_output=True, text=True, timeout=timeout, env=env)
+            command, static = loader_command(path, root, qualified)
+            if static:
+                continue
+            run = qualified.run(command, {'LD_TRACE_LOADED_OBJECTS': '1', 'LD_WARN': 'yes',
+                                           'LD_BIND_NOW': 'yes'}, timeout)
         except subprocess.TimeoutExpired:
             result[(rel, 'timeout', '')] = True
             continue
-        text = run.stdout + run.stderr
-        if 'not a dynamic executable' in text:
+        except archive.ExecutionUnavailable:
+            raise
+        except package.Invalid as exc:
+            result[(rel, 'loader error', str(exc))] = True
             continue
+        text = run.stdout + run.stderr
         parsed = False
         for line in text.splitlines():
             line = line.strip()
@@ -150,29 +172,27 @@ def resolve(root, timeout=20, extra_dirs=()):
                 symbol = line.split('undefined symbol:', 1)[1].split(',')[0].split('\t')[0].strip()
                 result[(rel, 'undefined', symbol)] = True
                 parsed = True
-            elif 'error while loading shared libraries' in line or 'cannot open shared object file' in line:
-                # a library the loader found but cannot use: an invalid ELF header, the wrong ELF class, a
-                # truncated or masked file ("file too short"); the program does not start either
+            elif LOADER_ERRORS.search(line):
                 result[(rel, 'loader error', line.split('error while loading shared libraries:', 1)[-1].strip())] = True
                 parsed = True
         if run.returncode != 0 and not parsed:
-            last = text.strip().splitlines()[-1] if text.strip() else f'ldd exited {run.returncode}'
+            last = text.strip().splitlines()[-1] if text.strip() else f'loader exited {run.returncode}'
             result[(rel, 'loader error', last.strip())] = True
     return result
 
 
-def compare(new_deb, previous_deb=None, extra_dirs=()):
+def compare(new_deb, previous_deb=None, extra_dirs=(), qualified=None, previous_qualified=None):
     """Return (findings, notes). A finding blocks the release, a note is informational."""
     findings, notes = [], []
     with tempfile.TemporaryDirectory(prefix='lc-link-new-') as new_root:
         extract(new_deb, new_root)
-        now = resolve(new_root, extra_dirs=extra_dirs)
+        now = resolve(new_root, extra_dirs=extra_dirs, qualified=qualified)
         new_needed = {str(p.relative_to(new_root)): needed(p) for p in elf_files(new_root)}
         new_stereo = {str(p.relative_to(new_root)): stereo_imports(p) for p in elf_files(new_root)}
         if previous_deb:
             with tempfile.TemporaryDirectory(prefix='lc-link-old-') as old_root:
                 extract(previous_deb, old_root)
-                before = resolve(old_root)
+                before = resolve(old_root, qualified=previous_qualified)
                 old_needed = {str(p.relative_to(old_root)): needed(p) for p in elf_files(old_root)}
                 old_stereo = {str(p.relative_to(old_root)): stereo_imports(p) for p in elf_files(old_root)}
             grouped = {}
@@ -217,21 +237,16 @@ def _depends(deb):
     return {re.split(r'[ (:]', alt.strip())[0] for part in fields.split(',') for alt in part.split('|') if alt.strip()}
 
 
-def smoke(deb, table, timeout=10, extra_dirs=()):
-    """Start every program named for this package in `table` (package TAB path TAB args).
-    `{multiarch}` in a path stands for the package architecture's library triplet.
-
-    LD_BIND_NOW=1 binds every symbol at load; DISPLAY and WAYLAND_DISPLAY are removed, so no
-    program can reach a desktop. Returns findings."""
-    name, arch = control_field(deb, 'Package'), control_field(deb, 'Architecture')
+def smoke(deb, table, timeout=10, extra_dirs=(), qualified=None):
+    """Start smoke programs with immediate binding in the qualified, headless root."""
+    if extra_dirs or qualified is None:
+        raise package.Invalid('smoke requires archive-qualified inputs; supply sibling .debs')
+    name, arch = control_field(deb, 'Package'), qualified.arch
     findings = []
     rows = [line.split('\t') for line in Path(table).read_text().splitlines()
             if line.strip() and not line.startswith('#')]
     with tempfile.TemporaryDirectory(prefix='lc-smoke-') as root:
         extract(deb, root)
-        env = {k: v for k, v in os.environ.items() if k not in ('DISPLAY', 'WAYLAND_DISPLAY', 'XAUTHORITY')}
-        env['LD_BIND_NOW'] = '1'
-        env['LD_LIBRARY_PATH'] = ':'.join(private_dirs(root) + list(extra_dirs))
         for row in rows:
             if row[0] != name:
                 continue
@@ -242,21 +257,30 @@ def smoke(deb, table, timeout=10, extra_dirs=()):
                 continue
             args = row[2].split() if len(row) > 2 else ['--version']
             try:
-                run = subprocess.run([str(exe)] + args, capture_output=True, text=True, timeout=timeout,
-                                     env=env, stdin=subprocess.DEVNULL)
+                command, _ = loader_command(exe, Path(root), qualified) if _is_elf(exe) else ([program], False)
+                run = qualified.run(command + args, {'LD_BIND_NOW': '1'}, timeout)
                 text = run.stdout + run.stderr
+                if 'bwrap:' in text:
+                    findings.append(f'{program}: isolated smoke runner failed: {text.strip()[:300]}')
             except subprocess.TimeoutExpired as exc:
                 text = (exc.stdout or b'').decode(errors='replace') + (exc.stderr or b'').decode(errors='replace')
+            except (OSError, package.Invalid) as exc:
+                findings.append(f'{program}: loader error at start: {exc}')
+                continue
             if LOADER_ERRORS.search(text):
-                findings.append(f'{program}: loader error at start: {text.replace(root, "").strip()[:300]}')
+                findings.append(f'{program}: loader error at start: {text.strip()[:300]}')
     return findings
 
 
-def check(new_deb, previous_deb=None, smoke_table=None, extra_dirs=()):
-    """`extra_dirs`: library directories of the other packages built from the same source."""
-    findings, notes = compare(new_deb, previous_deb, extra_dirs)
+def check(new_deb, previous_deb=None, smoke_table=None, extra_dirs=(), archive_context=None, siblings=()):
+    """Qualify both builds against the same frozen archive and supplied sibling set."""
+    if extra_dirs or archive_context is None:
+        raise package.Invalid('archive context required; configure --archive-config and --scratch, and supply sibling .debs')
+    qualified = archive_context.qualify(new_deb, siblings)
+    previous_qualified = archive_context.qualify(previous_deb, siblings) if previous_deb else None
+    findings, notes = compare(new_deb, previous_deb, qualified=qualified, previous_qualified=previous_qualified)
     if smoke_table:
-        findings += smoke(new_deb, smoke_table, extra_dirs=extra_dirs)
+        findings += smoke(new_deb, smoke_table, qualified=qualified)
     for note in notes:
         print(f'lc1 link note: {Path(new_deb).name}: {note}')
     if findings:

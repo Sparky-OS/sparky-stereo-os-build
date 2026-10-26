@@ -15,7 +15,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-from . import linkcheck, package
+from . import archive, linkcheck, package
 
 
 def projection_hash(path):
@@ -152,16 +152,29 @@ def previous_build(deb, previous_dir):
     return best[1] if best else None
 
 
-def check_link(debs, previous_dir=None, smoke_table=None):
-    """Link and start gate (ORDER 198): every ELF of a rebuilt package must resolve like its predecessor.
-
-    Run it where the runtime dependencies are installed (a build or throwaway container). The
-    predecessor is the newest build of the package below its version in previous_dir."""
-    with linkcheck.sibling_dirs(debs) as extra:
-        for deb in map(Path, debs):
-            previous = previous_build(deb, previous_dir) if previous_dir else None
-            linkcheck.check(deb, previous_deb=previous, smoke_table=smoke_table, extra_dirs=extra)
-    print(f'lc1: link check passed for {len(debs)} packages')
+def check_link(debs, previous_dir=None, smoke_table=None, archive_config=None, scratch=None, siblings=()):
+    """Resolve declared dependencies from signed archives, then check isolated ELF/start behavior."""
+    archive_config = archive_config or os.environ.get('SPARKY_LC_ARCHIVE_CONFIG')
+    scratch = scratch or os.environ.get('SPARKY_LC_SCRATCH')
+    if not archive_config or not scratch:
+        raise package.Invalid('check-link needs --archive-config / --scratch (or SPARKY_LC_ARCHIVE_CONFIG / '
+                              'SPARKY_LC_SCRATCH); see lean/archive.md')
+    contexts = {}
+    native = subprocess.run(['dpkg', '--print-architecture'], capture_output=True, text=True, check=True).stdout.strip()
+    for deb in map(Path, debs):
+        arch = linkcheck.control_field(deb, 'Architecture')
+        if arch == 'all':
+            arch = native
+        if arch != native:
+            raise package.Invalid(f'{deb}: unsupported execution gate for {arch} on {native}; use a native runner')
+        if arch not in contexts:
+            contexts[arch] = archive.Archive(archive_config, scratch, arch)
+        previous = previous_build(deb, previous_dir) if previous_dir else None
+        same_arch = [p for p in list(debs) + list(siblings)
+                     if linkcheck.control_field(p, 'Architecture') in (arch, 'all')]
+        linkcheck.check(deb, previous_deb=previous, smoke_table=smoke_table,
+                        archive_context=contexts[arch], siblings=same_arch)
+    print(f'lc1: archive-qualified link check passed for {len(debs)} packages')
 
 
 def main():
@@ -176,6 +189,9 @@ def main():
     link.add_argument('debs', nargs='+')
     link.add_argument('--previous-dir', help='directory holding the pre-lc1 builds to compare with')
     link.add_argument('--smoke', default=str(Path(__file__).with_name('smoke.tsv')), help='programs to start with LD_BIND_NOW=1')
+    link.add_argument('--archive-config', help='JSON signed public archive sources (SPARKY_LC_ARCHIVE_CONFIG)')
+    link.add_argument('--scratch', help='private APT state, verified cache and roots (SPARKY_LC_SCRATCH)')
+    link.add_argument('--siblings-file', help='newline-separated authoritative edition .debs')
     selection = commands.add_parser('check-selection')
     selection.add_argument('tsv')
     tree = commands.add_parser('check-tree')
@@ -195,7 +211,8 @@ def main():
         elif args.command == 'check-debs':
             check_debs(args.debs)
         elif args.command == 'check-link':
-            check_link(args.debs, args.previous_dir, args.smoke)
+            check_link(args.debs, args.previous_dir, args.smoke, args.archive_config, args.scratch,
+                       Path(args.siblings_file).read_text().splitlines() if args.siblings_file else ())
         elif args.command == 'check-selection':
             paths = [line.split('\t')[0] for line in Path(args.tsv).read_text().splitlines()
                      if line.split('\t')[-1] != 'source']

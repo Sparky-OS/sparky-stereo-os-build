@@ -9,7 +9,8 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from lean import linkcheck, package, release
+from lean import archive, linkcheck, package, release
+from lean.tests.archive_fixtures import signed_archive
 
 LIBDIR = 'usr/lib/x86_64-linux-gnu/demo/lib'
 
@@ -20,6 +21,7 @@ class LinkGate(unittest.TestCase):
         self.work = tempfile.TemporaryDirectory(prefix='test-link-')
         self.addCleanup(self.work.cleanup)
         self.base = Path(self.work.name)
+        self.context = archive.Archive(signed_archive(self.base / 'archive'), self.base / 'scratch', 'amd64')
         src = self.base / 'src'
         src.mkdir()
         (src / 'b.c').write_text('int xrr_current(void) { return 7; }\n')
@@ -29,6 +31,9 @@ class LinkGate(unittest.TestCase):
         # libb stands for libXrandr, liba for libtgfclient (uses it, does not list it), m for torcs-bin.
         self.run_cc(['-shared', '-fPIC', '-o', 'libb.so.1', '-Wl,-soname,libb.so.1', 'b.c'])
         self.run_cc(['-shared', '-fPIC', '-o', 'liba.so', 'a.c'])
+
+    def check(self, *args, **kwargs):
+        return linkcheck.check(*args, archive_context=self.context, **kwargs)
 
     def run_cc(self, args):
         subprocess.run(['gcc'] + args, cwd=self.src, check=True)
@@ -62,7 +67,7 @@ class LinkGate(unittest.TestCase):
         (root / LIBDIR / 'libb.so.1').write_bytes(b'not an ELF file\n')
         subprocess.run(['dpkg-deb', '--build', str(root), str(deb)], check=True, stdout=subprocess.DEVNULL)
         with self.assertRaises(package.Invalid) as raised:
-            linkcheck.check(deb)
+            self.check(deb)
         self.assertIn('loader error', str(raised.exception))
         self.assertIn('libb.so.1', str(raised.exception))
 
@@ -73,9 +78,9 @@ class LinkGate(unittest.TestCase):
         if 'libb.so.1' in linkcheck.needed(exe):
             self.skipTest('this linker kept the library; nothing to reproduce')
         # Without a previous build the library's own undefined symbol is a finding, with one it is known noise.
-        self.assertEqual(linkcheck.check(before, previous_deb=before), [])
+        self.assertEqual(self.check(before, previous_deb=before), [])
         with self.assertRaises(package.Invalid) as raised:
-            linkcheck.check(after, previous_deb=before)
+            self.check(after, previous_deb=before)
         self.assertIn('xrr_current', str(raised.exception))
 
     def test_smoke_start_catches_loader_error(self):
@@ -85,7 +90,7 @@ class LinkGate(unittest.TestCase):
             self.skipTest('this linker kept the library; nothing to reproduce')
         table = self.base / 'smoke.tsv'
         table.write_text('demo\t/usr/games/demo\t--version\n')
-        findings = linkcheck.smoke(after, table)
+        findings = linkcheck.smoke(after, table, qualified=self.context.qualify(after))
         self.assertTrue(findings and 'xrr_current' in findings[0], findings)
 
     def test_lost_stereo_feature_is_rejected(self):
@@ -112,9 +117,9 @@ class LinkGate(unittest.TestCase):
             subprocess.run(['dpkg-deb', '--build', str(root), str(out)], check=True, stdout=subprocess.DEVNULL)
             return out
         before, after = pack('1', 'm1.c'), pack('1+lc1', 'm2.c')
-        self.assertEqual(linkcheck.check(before, previous_deb=before), [])
+        self.assertEqual(self.check(before, previous_deb=before), [])
         with self.assertRaises(package.Invalid) as raised:
-            linkcheck.check(after, previous_deb=before)
+            self.check(after, previous_deb=before)
         self.assertIn('stereo imports lost', str(raised.exception))
 
     def test_same_link_passes(self):
@@ -122,7 +127,7 @@ class LinkGate(unittest.TestCase):
         after = self.deb('demo', '3+lc1', as_needed=False)
         table = self.base / 'smoke.tsv'
         table.write_text('demo\t/usr/games/demo\t--version\n')
-        self.assertEqual(linkcheck.check(after, previous_deb=before, smoke_table=table), [])
+        self.assertEqual(self.check(after, previous_deb=before, smoke_table=table), [])
 
     def test_sibling_library_is_found_and_previous_build_is_chosen(self):
         """A plugin links the library a sibling package ships; the newest older build is the baseline."""
@@ -138,9 +143,8 @@ class LinkGate(unittest.TestCase):
         (self.base / 'pkg-4+lc1' / LIBDIR / 'libb.so.1').unlink()
         subprocess.run(['dpkg-deb', '--build', str(self.base / 'pkg-4+lc1'), str(client)], check=True, stdout=subprocess.DEVNULL)
         with self.assertRaises(package.Invalid):
-            linkcheck.check(client)
-        with linkcheck.sibling_dirs([libb]) as extra:
-            linkcheck.check(client, extra_dirs=extra)
+            self.check(client)
+        self.check(client, siblings=[libb])
         older, newer = self.deb('demo', '3', as_needed=False), self.deb('demo', '3.5', as_needed=False)
         previous = self.base / 'previous'
         previous.mkdir()
@@ -166,4 +170,8 @@ def test_static_elf_passes_in_any_locale(tmp_path, monkeypatch):
         import pytest; pytest.skip('no static libc')
     monkeypatch.setenv('LC_ALL', 'pt_BR.UTF-8'); monkeypatch.setenv('LANG', 'pt_BR.UTF-8')
     from lean import linkcheck
-    assert linkcheck.resolve(root) == {}
+    from lean import archive
+    from lean.tests.archive_fixtures import signed_archive, deb
+    binary = deb(tmp_path / 'pkg', 'static-fixture', files={'usr/bin/static-tool': exe})
+    context = archive.Archive(signed_archive(tmp_path / 'archive'), tmp_path / 'scratch', 'amd64')
+    assert linkcheck.resolve(root, qualified=context.qualify(binary)) == {}
