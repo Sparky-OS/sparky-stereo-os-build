@@ -415,3 +415,16 @@ def test_known_predecessor_cannot_disappear_silently(publisher_env, tmp_path, fa
     failure = publish_fixture(new_out, destination, publisher_env)
     assert failure.returncode != 0 and diagnostic in failure.stderr, failure.stdout + failure.stderr
     assert tree_hashes(destination) == before
+
+
+def test_public_key_copy_obeys_space_guard(sources, tmp_path):
+    size = Path(json.loads(sources.read_text())[0]['keyring']).stat().st_size
+    original = archive.Archive.ensure_space
+    def refuse_key_copy(self, required=0):
+        if required == size + 16384:
+            raise package.Invalid('controlled public-key space refusal')
+        return original(self, required)
+    with patch.object(archive.Archive, 'ensure_space', refuse_key_copy):
+        with pytest.raises(package.Invalid, match='public-key space refusal'):
+            archive.Archive(sources, tmp_path / 'scratch', 'amd64')
+    assert not list((tmp_path / 'scratch').glob('link-*/etc/key-*.gpg'))

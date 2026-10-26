@@ -70,7 +70,7 @@ Scratch is persistent and private to the invocation owner; remove completed run 
 The enforced minimum floors are 2 GiB on scratch and 12 GiB on the root filesystem, with the larger floor applying when they share storage.
 `--min-free-gib` / `SPARKY_LC_MIN_FREE_GIB` and `--root-min-free-gib` / `SPARKY_LC_ROOT_MIN_FREE_GIB` can raise these floors.
 The gate reserves the impending write against both floors conservatively because bind mounts and overlay filesystems can share physical storage despite reporting different devices.
-Checks occur before input caching, index construction, downloads, archive members and each 1 MiB write chunk.
+Checks occur before public-key copying, input caching, index construction, downloads, archive members and each 1 MiB write chunk.
 APT state operations require an additional 256 MiB guard and are monitored while running; initial index refresh also reserves 1 GiB per configured source.
 These are per-invocation guards, not a reservation against concurrent work by other processes.
 Space refusal blocks the gate and leaves prior publication bytes unchanged.

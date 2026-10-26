@@ -246,7 +246,10 @@ class Archive:
             if any(not re.fullmatch(r'[a-zA-Z0-9._/-]+', c) for c in components):
                 raise package.Invalid('invalid archive component')
             key = self.base / f'etc/key-{index}.gpg'
-            shutil.copyfile(source['keyring'], key)
+            key_source = Path(source['keyring'])
+            self.ensure_space(key_source.stat().st_size + 16384)
+            with key_source.open('rb') as src, key.open('xb') as dest:
+                copy_stream(src, dest, self.ensure_space)
             opts = f'arch={arch} signed-by={key}'
             if source.get('check_valid_until', True) is False:
                 opts += ' check-valid-until=no'
