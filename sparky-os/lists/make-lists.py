@@ -3,7 +3,7 @@
 # Writes one <name>.list per group (one package per line, comments for context) and
 # MISSING.md for every wanted package apt does not have (to package, or for APTus).
 # Run on a system with the edition's apt sources (Debian testing, Sparky, deb-multimedia).
-import glob, os, sys
+import glob, os, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, '..', 'data')
@@ -16,16 +16,21 @@ except ImportError:
 
 # Every package the edition's sources offer (Debian testing, Sparky, deb-multimedia; not the
 # vendor repositories of this system), by architecture (amd64, all, i386 when multiarch is on).
-SOURCES = ('deb.debian.org_', 'repo.sparkylinux.org_', 'www.deb-multimedia.org_', 'deb-multimedia.org_')
+SOURCES = ('deb.debian.org_', 'repo.sparkylinux.org_', 'repo.sparkyos.org_', 'www.deb-multimedia.org_', 'deb-multimedia.org_')
 available = set()
-for f in glob.glob('/var/lib/apt/lists/*_Packages'):
+for f in glob.glob('/var/lib/apt/lists/*_Packages*'):
     if not os.path.basename(f).startswith(SOURCES):
         continue
     arch = 'i386' if 'binary-i386' in f else ''
-    for line in open(f, errors='replace'):
-        if line.startswith('Package: '):
-            p = line[9:].strip()
-            available.add(p + (':i386' if arch else ''))
+    # APT may retain an index compressed (including the edition's lz4 indexes).
+    with subprocess.Popen(['/usr/lib/apt/apt-helper', 'cat-file', f],
+                          stdout=subprocess.PIPE, text=True, errors='replace') as index:
+        for line in index.stdout:
+            if line.startswith('Package: '):
+                p = line[9:].strip()
+                available.add(p + (':i386' if arch else ''))
+        if index.wait():
+            raise SystemExit('Cannot read package index: ' + f)
 
 groups = {}
 missing = {}
@@ -82,6 +87,9 @@ apps = [p for p in apps if p not in dedup]
 group('apps', "Applications beyond the KDE edition (Daniel's, deduplicated)", apps + [
     'dolphin', 'konsole', 'kdenlive', 'skanpage', 'subtitlecomposer', 'neochat', 'qpwgraph',
     'libreoffice-kf6', 'libreoffice-draw', 'kdenetwork-filesharing', 'kio-fuse',
+    # ORDER 252a: installed consumers for speech, privileged/cloud files, diffs and Markdown.
+    'qt6-speech-speechd-plugin', 'speech-dispatcher', 'speech-dispatcher-espeak-ng',
+    'kio-admin', 'kio-gdrive', 'kompare', 'markdownpart',
     'coolercontrol',   # fans and pumps (GPL-3; its repository is the vendor's: to package)
     # stereo editing and 3D work (Daniel, 2026-10-02): ours to package first, then Debian's
     'stereophotoview', 'sview', 'blender', 'freecad', 'paraview', 'hugin-tools', 'libimage-exiftool-perl',
@@ -215,6 +223,12 @@ group('hardware-found', 'Hardware support installed when the hardware is found',
 # file, on only under memory pressure.
 group('system', 'System', [
     'dosfstools', 'exfatprogs', 'ntfs-3g',
+    # Partition Manager's installed filesystem backends and explicitly invoked rescue tools.
+    'jfsutils', 'hfsprogs', 'udftools', 'f2fs-tools', 'nilfs-tools',
+    'gocryptfs', 'testdisk', 'gddrescue', 'needrestart',
+    'network-manager-openvpn', 'network-manager-openconnect', 'network-manager-l2tp',
+    'network-manager-config-connectivity-debian',
+    'plasma-discover-backend-fwupd',
     'flatpak', 'plasma-discover-backend-flatpak', 'distrobox', 'waydroid', 'btrfs-progs',
     'timeshift', 'synaptic',   # snapshots: Timeshift (with grub-btrfs)
     'sparky-stereo-boot',   # the boot follows the main screen's saved choice, splash and login in its 3D mode (ORDER 138)

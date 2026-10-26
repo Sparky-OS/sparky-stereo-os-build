@@ -1,6 +1,6 @@
 # Wanted, not in apt: to package ourselves or to offer through APTus
 
-- **apps:** coolercontrol, stereophotoview, sview
+- **apps:** coolercontrol, stereophotoview
 - **film:** materialx, openrv, openshadinglanguage, opentimelineio, openusd, partio, ptex, xstudio
 - **emulation-3d:** azahar, rpcs3
 - **hardware:** pipewire-bluez5-codec-aac, xpadneo
