@@ -12,4 +12,4 @@ mkdir -p "$work"
 dpkg-source -x "$input/ffmpeg-dmo_9.0.2-dmo1+stereo3d7+lc1.dsc" "$work/source"
 cd "$work/source"
 dpkg-buildpackage "$mode" -us -uc
-make -j4 fate-mov-stereo
+LD_LIBRARY_PATH="$PWD/libavformat:$PWD/libavcodec:$PWD/libavutil:$PWD/libswresample" make -j4 fate-mov-stereo
