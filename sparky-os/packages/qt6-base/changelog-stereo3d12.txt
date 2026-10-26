@@ -1,0 +1,6 @@
+qt6-base (6.11.2+dfsg-5+stereo3d12) unstable; urgency=medium
+
+  * Give each Vulkan stereo swapchain eye its own MSAA image and view,
+    preventing double destruction and shared-attachment write hazards.
+  * Add QRhi mono/stereo resize and destruction tests across sample counts,
+    checking that the left resolve survives rendering the right eye.
