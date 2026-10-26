@@ -98,9 +98,10 @@ if [ "$STEP" = packages ] || [ "$STEP" = all ]; then
 	echo "== $(date -u +%T) the edition: metas with their Recommends"
 	apt_in install sparky-stereo-desktop sparky-stereo-system sparky-stereo-hardware-support sparky-stereo-look \
 		sparky-stereo-calamares-branding
-	echo "== $(date -u +%T) the edition's top meta and languages (German and English packs; the rest stay Recommends)"
-	apt_in install --no-install-recommends sparky-stereo sparky-stereo-languages
-	apt_in install hunspell-de-de hyphen-de mythes-de libreoffice-l10n-de libreoffice-help-de hunspell-en-gb hunspell-en-us hyphen-en-us mythes-en-us libreoffice-help-en-us locales-all
+	echo "== $(date -u +%T) the edition's languages, input methods and language data with their Recommends"
+	apt_in install sparky-stereo-languages
+	echo "== $(date -u +%T) the edition's top meta, without the optional role tasks"
+	apt_in install --no-install-recommends sparky-stereo
 	echo "== $(date -u +%T) kernels: the edition's kernel and its headers, no other; NVIDIA 615 with the edition's open modules"
 	apt_in install linux-image-sparky-stereo linux-headers-sparky-stereo
 	# sparky-stereo-nvidia-driver-lock first: its pin keeps NVIDIA's whole driver at the version the edition's open

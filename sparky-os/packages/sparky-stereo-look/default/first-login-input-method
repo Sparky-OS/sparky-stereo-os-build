@@ -1,0 +1,30 @@
+#!/bin/sh
+# Created by Daniel Ramos (Capitain Jack) 2026/10/26
+# Copyright 2026 under the GNU GPL3 License
+# Run before KWin reads its Wayland input-method setting, without replacing a choice.
+set -eu
+locale=${LC_ALL:-${LC_CTYPE:-${LANG:-}}}
+locale=${locale%%.*}
+locale=${locale%%@*}
+case "$locale" in
+	ja|ja_*|ko|ko_*|zh_CN|zh_TW) ;;
+	*) exit 0 ;;
+esac
+desktop=/usr/share/applications/org.fcitx.Fcitx5.desktop
+[ -f "$desktop" ] || exit 0
+config=${XDG_CONFIG_HOME:-$HOME/.config}/kwinrc
+if [ -f "$config" ]; then
+	# Also preserve an explicit KConfig deletion, which a normal value lookup hides.
+	if LC_ALL=C awk '
+		/^\[/ { wayland = ($0 ~ /^\[Wayland\](\[\$[^]]*\])*[ \t]*$/) }
+		wayland && /^[ \t]*InputMethod(\[\$[^]]*\])*[ \t]*=/ { found = 1 }
+		END { exit !found }
+	' "$config"; then
+		exit 0
+	fi
+fi
+entries=$(LC_ALL=C.UTF-8 kreadconfig6 --file kwinrc --group Wayland --dump) || exit 0
+if printf '%s\n' "$entries" | grep -q '^  InputMethod:'; then
+	exit 0
+fi
+kwriteconfig6 --file kwinrc --group Wayland --key InputMethod "$desktop"

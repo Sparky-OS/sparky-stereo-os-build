@@ -160,6 +160,13 @@ for codes in steam.values():
                 langs.append(pre + c)
 group('languages', 'Languages (all of Steam\'s)', langs + [
     'locales-all', 'fonts-noto-core', 'fonts-noto-cjk', 'fonts-noto-cjk-extra', 'fonts-thai-tlwg',
+    # The image's nine required languages: English is built into LibreOffice; CJK spelling
+    # and hyphenation dictionaries are included only where the archive actually has them.
+    'manpages', 'manpages-pl', 'manpages-pt-br', 'manpages-fr', 'manpages-de',
+    'manpages-ja', 'manpages-ko', 'manpages-zh',
+    'tesseract-ocr-eng', 'tesseract-ocr-pol', 'tesseract-ocr-por', 'tesseract-ocr-fra',
+    'tesseract-ocr-deu', 'tesseract-ocr-jpn', 'tesseract-ocr-jpn-vert', 'tesseract-ocr-kor',
+    'tesseract-ocr-chi-sim', 'tesseract-ocr-chi-sim-vert', 'tesseract-ocr-chi-tra', 'tesseract-ocr-chi-tra-vert',
     # input methods: Fcitx 5, KDE's recommendation on Wayland
     'fcitx5', 'kde-config-fcitx5', 'fcitx5-frontend-gtk3', 'fcitx5-frontend-gtk4', 'fcitx5-frontend-qt6',
     'fcitx5-mozc', 'fcitx5-hangul', 'fcitx5-chinese-addons', 'fcitx5-chewing', 'fcitx5-unikey', 'fcitx5-m17n',

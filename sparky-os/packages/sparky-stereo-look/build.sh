@@ -12,13 +12,14 @@
 #                                  cursor and splash
 # The art comes from where it is installed on Daniel's system (the edition's build host);
 # the theme definitions and fixes are in this folder.
-# Usage: build.sh   (packages land in $OUT, default ${SPARKY_REPO_DIR})
+# Usage: build.sh [all|default]   (packages land in $OUT, default ${SPARKY_REPO_DIR})
 # Version history in CHANGELOG; fixes offered to Pawel in upstream-patches/.
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
-VERSION=${VERSION:-20261024.1~sparky9~0+lc1}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
+VERSION=${VERSION:-20261026~sparky9~0+lc1}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
+case ${1:-all} in all|default) ;; *) echo 'Usage: build.sh [all|default]' >&2; exit 2 ;; esac
 WORK=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}/sparky-os}/look-build.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 LNF=usr/share/plasma/look-and-feel
@@ -64,8 +65,11 @@ cp -a "$OXYGEN/contents/splash" "$OXYGEN/contents/previews" "$T/contents/"
 # Oxygen's Splash.qml animates a bottomRect that does not exist: our fixed copy (see upstream-patches/)
 cp "$HERE/default/splash/Splash.qml" "$T/contents/splash/Splash.qml"
 cp "$HERE/default/xdg/kdeglobals" "$HERE/default/xdg/kwinrc" "$HERE/default/xdg/kde-mimeapps.list" "$HERE/default/xdg/krunnerrc" "$HERE/default/xdg/konsolerc" "$D/etc/xdg/"
+install -D -m 755 "$HERE/default/first-login-input-method" "$D/usr/lib/sparky-stereo-look/first-login-input-method"
+install -D -m 644 "$HERE/default/xdg/plasma-workspace/env/10-sparky-stereo-input-method.sh" \
+	"$D/etc/xdg/plasma-workspace/env/10-sparky-stereo-input-method.sh"
 control "$D" sparky-stereo-look \
-	"plasma-theme-oxygen, oxygen-icon-theme, oxygencursors, kde-style-oxygen-qt6, kwin-decoration-oxygen, plasma-runners-addons (>= 4:6.7.4-1+stereo3d1), plasma-systemmonitor, sparky-stereo-gtk" \
+	"plasma-theme-oxygen, oxygen-icon-theme, oxygencursors, kde-style-oxygen-qt6, kwin-decoration-oxygen, libkf6config-bin, plasma-runners-addons (>= 4:6.7.4-1+stereo3d1), plasma-systemmonitor, sparky-stereo-gtk" \
 	"kde-style-oxygen-qt5, sparkyos-artwork, sparky-stereo-look-kubabbar-glass" \
 	"Sparky Stereo OS default look: Oxygen dark" \
 	"The edition's default global theme: Oxygen, whole, in its dark colours:" \
@@ -78,8 +82,11 @@ control "$D" sparky-stereo-look \
 	"Search lists installed applications first, then settings. Power actions and" \
 	"unit conversion remain available. Currency rates refresh only when converting a currency." \
 	"Web search and the online dictionary are off by default." \
-	"Ctrl+Shift+Esc opens System Monitor; existing shortcuts remain available."
-printf '%s\n' /etc/xdg/kdeglobals /etc/xdg/kwinrc /etc/xdg/kde-mimeapps.list /etc/xdg/krunnerrc /etc/xdg/konsolerc >"$D/DEBIAN/conffiles"
+	"Ctrl+Shift+Esc opens System Monitor; existing shortcuts remain available." \
+	"Japanese, Korean and Chinese sessions default to the installed Fcitx5 input" \
+	"method before KWin starts, preserving an existing or explicitly disabled choice."
+printf '%s\n' /etc/xdg/kdeglobals /etc/xdg/kwinrc /etc/xdg/kde-mimeapps.list /etc/xdg/krunnerrc /etc/xdg/konsolerc \
+	/etc/xdg/plasma-workspace/env/10-sparky-stereo-input-method.sh >"$D/DEBIAN/conffiles"
 cat >"$D/usr/share/doc/sparky-stereo-look/copyright" <<'EOF'
 Sparky Stereo OS default look.
 Theme definition and defaults: Copyright 2026 Daniel Ramos (Capitain Jack), GPL-2.0-or-later.
@@ -91,6 +98,7 @@ foreground artwork is inherited; licence texts in /usr/share/plasma/desktoptheme
 On Debian systems the GPL is in /usr/share/common-licenses/GPL-2.
 EOF
 build "$D" sparky-stereo-look
+[ "${1:-all}" != default ] || exit 0
 
 # 2. Sparky black, fixed.
 D=$WORK/sparky-stereo-look-sparkyblack
