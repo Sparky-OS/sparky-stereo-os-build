@@ -1,0 +1,43 @@
+Description: Provide the NetworkManager connectivity-check choice
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: vendor
+Forwarded: not-needed
+Last-Update: 2026-10-26
+Assisted-by: gpt-6.1-sol via Codex
+
+--- a/src/manager.h
++++ b/src/manager.h
+@@ -586,6 +586,13 @@
+ NETWORKMANAGERQT_EXPORT bool isConnectivityCheckEnabled();
+ 
+ /*!
++ * Sets whether NetworkManager checks connectivity.
++ * The pending reply reports authorization and service errors. The cached state changes
++ * only when NetworkManager announces the actual property value.
++ */
++NETWORKMANAGERQT_EXPORT QDBusPendingReply<> setConnectivityCheckEnabled(bool enabled);
++
++/*!
+  * Returns the URI used for connectivity check
+  * \since 6.10.0
+  */
+--- a/src/manager.cpp
++++ b/src/manager.cpp
+@@ -1209,6 +1209,17 @@
+     return globalNetworkManager->isConnectivityCheckAvailable();
+ }
+ 
++QDBusPendingReply<> NetworkManager::setConnectivityCheckEnabled(bool enabled)
++{
++    auto message = QDBusMessage::createMethodCall(NetworkManagerPrivate::DBUS_SERVICE,
++                                                 NetworkManagerPrivate::DBUS_DAEMON_PATH,
++                                                 NetworkManagerPrivate::FDO_DBUS_PROPERTIES,
++                                                 QStringLiteral("Set"));
++    message << NetworkManagerPrivate::DBUS_DAEMON_INTERFACE << QStringLiteral("ConnectivityCheckEnabled")
++            << QVariant::fromValue(QDBusVariant(enabled));
++    return QDBusConnection::systemBus().asyncCall(message);
++}
++
+ bool NetworkManager::isConnectivityCheckEnabled()
+ {
+     return globalNetworkManager->isConnectivityCheckEnabled();

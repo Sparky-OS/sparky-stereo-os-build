@@ -1,0 +1,67 @@
+Description: Provide the NetworkManager connectivity-check choice
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: vendor
+Forwarded: not-needed
+Last-Update: 2026-10-26
+Assisted-by: gpt-6.1-sol via Codex
+
+--- a/kcms/kcm_connections/kcm.cpp
++++ b/kcms/kcm_connections/kcm.cpp
+@@ -39,6 +39,10 @@
+ 
+ // Qt
+ #include <QFileDialog>
++#include <QCheckBox>
++#include <QDBusPendingCallWatcher>
++#include <QDBusPendingReply>
++#include <QSignalBlocker>
+ #include <QMenu>
+ #include <QQmlContext>
+ #include <QQmlEngine>
+@@ -116,6 +120,46 @@
+     m_layout = new QHBoxLayout;
+     l->addLayout(m_layout);
+ 
++    auto connectivityCheck = new QCheckBox(i18nc("@option:check", "Check internet connectivity"), widget());
++    connectivityCheck->setObjectName(QStringLiteral("connectivityCheckEnabled"));
++    connectivityCheck->setToolTip(i18nc("@info:tooltip", "Allow NetworkManager to detect internet access and captive portals."));
++    auto connectivityError = new KMessageWidget(widget());
++    connectivityError->setObjectName(QStringLiteral("connectivityCheckError"));
++    connectivityError->setMessageType(KMessageWidget::Error);
++    connectivityError->hide();
++    auto synchronizeConnectivity = [connectivityCheck] {
++        const QSignalBlocker blocker(connectivityCheck);
++        connectivityCheck->setChecked(NetworkManager::isConnectivityCheckEnabled());
++    };
++    synchronizeConnectivity();
++    connectivityCheck->setEnabled(NetworkManager::isConnectivityCheckAvailable());
++    connect(NetworkManager::notifier(), &NetworkManager::Notifier::isConnectivityCheckEnabledChanged,
++            connectivityCheck, synchronizeConnectivity);
++    connect(NetworkManager::notifier(), &NetworkManager::Notifier::isConnectivityCheckAvailableChanged,
++            connectivityCheck, [connectivityCheck](bool available) {
++        connectivityCheck->setEnabled(available && !connectivityCheck->property("pending").toBool());
++    });
++    connect(connectivityCheck, &QCheckBox::clicked, this, [this, connectivityCheck, connectivityError, synchronizeConnectivity](bool enabled) {
++        synchronizeConnectivity();
++        connectivityCheck->setProperty("pending", true);
++        connectivityCheck->setEnabled(false);
++        connectivityError->hide();
++        auto watcher = new QDBusPendingCallWatcher(NetworkManager::setConnectivityCheckEnabled(enabled), connectivityCheck);
++        connect(watcher, &QDBusPendingCallWatcher::finished, this,
++                [connectivityCheck, connectivityError, synchronizeConnectivity](QDBusPendingCallWatcher *finished) {
++            const QDBusPendingReply<> reply = *finished;
++            synchronizeConnectivity();
++            connectivityCheck->setProperty("pending", false);
++            connectivityCheck->setEnabled(NetworkManager::isConnectivityCheckAvailable());
++            if (reply.isError()) {
++                connectivityError->setText(i18nc("@info", "Could not change connectivity checking: %1", reply.error().message()));
++                connectivityError->show();
++            }
++            finished->deleteLater();
++        });
++    });
++    l->addWidget(connectivityCheck);
++    l->addWidget(connectivityError);
+     l->addWidget(mainWidget);
+ 
+     setButtons(Button::Apply);
