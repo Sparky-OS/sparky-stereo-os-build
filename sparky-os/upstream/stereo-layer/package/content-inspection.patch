@@ -1,0 +1,1816 @@
+Description: Add bounded in-process content inspection to libstereo-av
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+
+diff --git a/.gitignore b/.gitignore
+index 32f96a9..ccbae36 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,2 +1,4 @@
+ /build*/
+ *.user
++
++__pycache__/
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 0e3452a..2ea89c5 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -20,6 +20,39 @@ find_package(PkgConfig REQUIRED)
+ pkg_check_modules(STEREO_DECLARE REQUIRED IMPORTED_TARGET stereo-declare)
+ pkg_check_modules(WAYLAND REQUIRED IMPORTED_TARGET wayland-client)
+ pkg_get_variable(WAYLAND_PROTOCOLS_DIR wayland-protocols pkgdatadir)
++find_package(Python3 REQUIRED COMPONENTS Interpreter)
++add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/content/content-mime-map.inc
++    ${CMAKE_CURRENT_BINARY_DIR}/content/stereo-content.xml ${CMAKE_CURRENT_BINARY_DIR}/content/mime-lists.json
++    COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tools/content-mime.py
++        ${CMAKE_CURRENT_SOURCE_DIR}/data/content/catalogue.json ${CMAKE_CURRENT_BINARY_DIR}/content
++    DEPENDS tools/content-mime.py data/content/catalogue.json VERBATIM)
++add_custom_target(stereo-content-catalogue DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/content/content-mime-map.inc)
++
++# FFmpeg consumers share native multiview pairing without pulling in Qt.
++pkg_check_modules(STEREO_AV REQUIRED IMPORTED_TARGET libavcodec>=63 libavutil>=61 libavformat>=63)
++add_library(StereoAv SHARED src/av/stereo-av.c src/av/stereo-content.c)
++add_dependencies(StereoAv stereo-content-catalogue)
++target_include_directories(StereoAv PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/content)
++set_target_properties(StereoAv PROPERTIES OUTPUT_NAME stereo-av VERSION ${PROJECT_VERSION} SOVERSION 1 EXPORT_NAME Av)
++target_link_libraries(StereoAv PRIVATE PkgConfig::STEREO_AV ZLIB::ZLIB)
++target_include_directories(StereoAv PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/av> $<INSTALL_INTERFACE:${KDE_INSTALL_INCLUDEDIR}/stereo-av>)
++install(TARGETS StereoAv EXPORT StereoLayerTargets LIBRARY DESTINATION ${KDE_INSTALL_LIBDIR})
++install(FILES src/av/stereo-av.h src/av/stereo-content.h DESTINATION ${KDE_INSTALL_INCLUDEDIR}/stereo-av)
++configure_file(src/av/stereo-av.pc.in ${CMAKE_CURRENT_BINARY_DIR}/stereo-av.pc @ONLY)
++install(FILES ${CMAKE_CURRENT_BINARY_DIR}/stereo-av.pc DESTINATION ${KDE_INSTALL_LIBDIR}/pkgconfig)
++
++# The FFmpeg library is independently deployable; its ABI has no Qt dependency.
++option(STEREO_AV_ONLY "Build and test only the FFmpeg consumer library" OFF)
++if(STEREO_AV_ONLY)
++    if(BUILD_TESTING)
++        add_executable(avtest autotests/avtest.c)
++        target_compile_definitions(avtest PRIVATE FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/autotests/mvhevc/labelled.mp4")
++        target_link_libraries(avtest PRIVATE StereoAv PkgConfig::STEREO_AV)
++        add_test(NAME avtest COMMAND avtest)
++    endif()
++    return()
++endif()
++
+ # The policy without Qt, for any program; the Qt layer builds on it
+ add_library(StereoPolicy SHARED src/policy/stereo-policy.c src/policy/stereo-policy-picture.c src/policy/stereo-policy.h)
+ add_library(Stereo::Policy ALIAS StereoPolicy)
+@@ -32,17 +65,6 @@ install(FILES src/policy/stereo-policy.h DESTINATION ${KDE_INSTALL_INCLUDEDIR}/s
+ configure_file(src/policy/stereo-policy.pc.in ${CMAKE_CURRENT_BINARY_DIR}/stereo-policy.pc @ONLY)
+ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/stereo-policy.pc DESTINATION ${KDE_INSTALL_LIBDIR}/pkgconfig)
+ 
+-# FFmpeg consumers share native multiview pairing without pulling in Qt.
+-pkg_check_modules(STEREO_AV REQUIRED IMPORTED_TARGET libavcodec>=63 libavutil>=61)
+-add_library(StereoAv SHARED src/av/stereo-av.c)
+-set_target_properties(StereoAv PROPERTIES OUTPUT_NAME stereo-av VERSION ${PROJECT_VERSION} SOVERSION 1 EXPORT_NAME Av)
+-target_link_libraries(StereoAv PRIVATE PkgConfig::STEREO_AV)
+-target_include_directories(StereoAv PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/av> $<INSTALL_INTERFACE:${KDE_INSTALL_INCLUDEDIR}/stereo-av>)
+-install(TARGETS StereoAv EXPORT StereoLayerTargets LIBRARY DESTINATION ${KDE_INSTALL_LIBDIR})
+-install(FILES src/av/stereo-av.h DESTINATION ${KDE_INSTALL_INCLUDEDIR}/stereo-av)
+-configure_file(src/av/stereo-av.pc.in ${CMAKE_CURRENT_BINARY_DIR}/stereo-av.pc @ONLY)
+-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/stereo-av.pc DESTINATION ${KDE_INSTALL_LIBDIR}/pkgconfig)
+-
+ # Depth-image-based rendering without Qt, for any program that turns a picture and its depth into stereo
+ # The GLSL passes of the DIBR core, built into the library as byte arrays and installed for other programs
+ file(GLOB STEREO_DIBR_GLSL CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/dibr/glsl/*.frag ${CMAKE_CURRENT_SOURCE_DIR}/src/dibr/glsl/*.vert)
+@@ -94,3 +116,30 @@ option(BUILD_EXAMPLES "Build the widget and QML example client" OFF)
+ if(BUILD_EXAMPLES)
+     add_subdirectory(examples)
+ endif()
++
++option(BUILD_CONTENT_ENGINE "Build the desktop content refinement service and probe" OFF)
++if(BUILD_CONTENT_ENGINE)
++add_executable(stereo-content-probe src/content/probe.c)
++target_link_libraries(stereo-content-probe PRIVATE StereoAv)
++install(TARGETS stereo-content-probe RUNTIME DESTINATION ${KDE_INSTALL_BINDIR})
++
++# Application selection clients stay independent of FFmpeg and Qt.
++pkg_check_modules(CONTENT_GIO REQUIRED IMPORTED_TARGET gio-unix-2.0)
++add_library(StereoContentClient SHARED src/content/client.c)
++set_target_properties(StereoContentClient PROPERTIES OUTPUT_NAME stereo-content-client
++    VERSION ${PROJECT_VERSION} SOVERSION 1 C_STANDARD 11 C_VISIBILITY_PRESET hidden)
++target_link_libraries(StereoContentClient PRIVATE PkgConfig::CONTENT_GIO)
++target_include_directories(StereoContentClient PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/content>
++    $<INSTALL_INTERFACE:${KDE_INSTALL_INCLUDEDIR}/stereo-content>)
++install(TARGETS StereoContentClient LIBRARY DESTINATION ${KDE_INSTALL_LIBDIR})
++install(FILES src/content/client.h DESTINATION ${KDE_INSTALL_INCLUDEDIR}/stereo-content)
++add_executable(stereo-content-worker src/content/worker.c)
++target_link_libraries(stereo-content-worker PRIVATE StereoAv)
++add_executable(stereo-contentd src/content/service.c)
++target_include_directories(stereo-contentd PRIVATE src/av)
++target_link_libraries(stereo-contentd PRIVATE PkgConfig::CONTENT_GIO)
++target_compile_definitions(stereo-contentd PRIVATE STEREO_CONTENT_WORKER="${KDE_INSTALL_FULL_LIBEXECDIR}/stereo-content-worker")
++install(TARGETS stereo-content-worker stereo-contentd RUNTIME DESTINATION ${KDE_INSTALL_LIBEXECDIR})
++configure_file(src/content/org.stereo.Content1.service.in org.stereo.Content1.service @ONLY)
++install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.stereo.Content1.service DESTINATION ${KDE_INSTALL_DATADIR}/dbus-1/services)
++endif()
+diff --git a/autotests/content/README.md b/autotests/content/README.md
+new file mode 100644
+index 0000000..1995ed3
+--- /dev/null
++++ b/autotests/content/README.md
+@@ -0,0 +1,55 @@
++# Content inspection tests
++
++These tests exercise the metadata API and its private-session service.
++They do not establish desktop integration or complete format coverage.
++`fixtures.py` authors Matroska StereoMode 0–14 with FFmpeg and CRC-checked PNG sTER chunks with Python.
++`codec-fixtures.py` adds x264-authored AVC marks, explicitly authored HEVC prefix SEI (including reserved-value negatives), and FFmpeg-muxed spherical bounds.
++The HEVC writer uses H.265 D.2.16; the installed x265 need not provide a frame-packing option.
++`spherical-fixture.c` enables FFmpeg's unofficial MP4 metadata writing explicitly, so the resulting file actually contains its requested marks.
++`mp4-fixtures.py` walks sized ISO BMFF boxes, preserves the samples and tests Spherical Video V2 st3d values 0–4, both st3d/vexu orders, reserved values and duplicate rejection.
++Expected results are explicit fixture data, independent of the detector's mapping table.
++
++Run in an isolated build container with FFmpeg 9 development headers, zlib, GLib/GIO, Python, a C compiler, D-Bus and shared-mime-info:
++
++```sh
++sh autotests/content/build-standalone.sh /work/content-test
++cc autotests/content/spherical-fixture.c $(pkg-config --cflags --libs libavformat libavcodec libavutil) -o /work/content-test/spherical-fixture
++python3 autotests/content/fixtures.py /work/content-fixtures
++python3 autotests/content/codec-fixtures.py /work/content-fixtures /work/content-test/spherical-fixture
++python3 autotests/content/mp4-fixtures.py /work/content-fixtures
++python3 autotests/content/check.py /work/content-fixtures --probe /work/content-test/stereo-content-probe
++dbus-run-session -- python3 autotests/content/service-test.py /work/content-test /work/content-fixtures
++python3 autotests/content/catalogue-test.py /work/content-test/content/stereo-content.xml
++```
++
++Without `--probe`, the checker queries the installed GIO engine for the original baseline.
++It deliberately fails until the engine hooks and MIME catalogue are installed.
++The metadata result distinguishes absent marks (`stereo=-1`) from explicit mono (`stereo=0`); both retain the ordinary type.
++Custom stereo packing is `layout=-1`; it is never guessed to be native multiview.
++Repeat the standalone build with `CC=clang` to check both compilers.
++
++The MP4 cases require the demuxer to retain st3d custom/right-first modes and complementary vexu information.
++An unpatched FFmpeg reports the missing metadata or rejects the reversed box order; these are retained failures, not skipped tests.
++Use the owner's coordinated FFmpeg build for release proof.
++A minimal local FFmpeg build is sufficient for parser diagnosis but is not a replacement distribution package.
++
++Timings printed by the service test are information, not pass thresholds.
++This test measures a new client process querying a warm shared cache; it does not measure player startup or window creation.
++
++### Track-local selection regression
++
++`selection-test.c` links against either the installed `libstereo-av` or the
++source under test. Its arguments are FILE MARKED_STREAM SPHERICAL WIDTH HEIGHT.
++For each independently authored file it checks automatic selection and both
++explicit video tracks, including stereo/projection/evidence/conflicts, raster,
++SAR, byte/packet counters, base MIME and preservation of the caller's FD offset.
++
++Use the retained `pact-fixtures/multitrack.mkv` (plain 960x804 then SBS 320x180)
++and its lossless `ffmpeg -map 0:v:1 -map 0:v:0 -c copy` reverse. Pass `1 0 320 180`
++and `0 0 320 180` respectively. `selection-fixture.c` independently writes two
++MP4 video tracks through FFmpeg's muxer, putting spherical metadata on only the
++zero-based stream specified by its third argument. With the synthetic 64x32
++`avc-plain.mp4`, generate both orders and pass `0 1 64 32` and `1 1 64 32`.
++The sealed 1.12.0-2 library fails only automatic selection when the mark is first;
++all twelve cases pass with track-local candidate initialization. The fixture
++writer and test require no display and never write the inspected files.
+diff --git a/autotests/content/build-standalone.sh b/autotests/content/build-standalone.sh
+new file mode 100644
+index 0000000..2ea5f05
+--- /dev/null
++++ b/autotests/content/build-standalone.sh
+@@ -0,0 +1,13 @@
++#!/bin/sh
++# SPDX-License-Identifier: LGPL-2.1-or-later
++# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++set -eu
++src=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
++build=${1:?build directory required}
++mkdir -p "$build"
++python3 "$src/tools/content-mime.py" "$src/data/content/catalogue.json" "$build/content"
++${CC:-cc} -std=c11 -Wall -Wextra -Werror -g -I"$src/src/av" -I"$build/content" "$src/src/av/stereo-av.c" "$src/src/av/stereo-content.c" "$src/src/content/worker.c" $(pkg-config --cflags --libs libavcodec libavformat libavutil) -lz -o "$build/stereo-content-worker"
++${CC:-cc} -std=c11 -Wall -Wextra -Werror -g -I"$src/src/av" -I"$build/content" "-DSTEREO_CONTENT_WORKER=\"$build/stereo-content-worker\"" "$src/src/content/service.c" $(pkg-config --cflags --libs gio-unix-2.0) -o "$build/stereo-contentd"
++${CC:-cc} -std=c11 -Wall -Wextra -Werror -g -I"$src/src/content" "$src/src/content/client.c" "$src/autotests/content/client-test.c" $(pkg-config --cflags --libs gio-unix-2.0) -o "$build/client-test"
++
++${CC:-cc} -std=c11 -Wall -Wextra -Werror -g -I"$src/src/av" -I"$build/content" "$src/src/av/stereo-av.c" "$src/src/av/stereo-content.c" "$src/src/content/probe.c" $(pkg-config --cflags --libs libavcodec libavformat libavutil) -lz -o "$build/stereo-content-probe"
+diff --git a/autotests/content/catalogue-test.py b/autotests/content/catalogue-test.py
+new file mode 100644
+index 0000000..c7aa4de
+--- /dev/null
++++ b/autotests/content/catalogue-test.py
+@@ -0,0 +1,33 @@
++#!/usr/bin/env python3
++# SPDX-License-Identifier: LGPL-2.1-or-later
++import os
++from pathlib import Path
++import subprocess
++import sys
++import tempfile
++import xml.etree.ElementTree as ET
++xml = Path(sys.argv[1])
++root = ET.parse(xml).getroot()
++ns={'m':'http://www.freedesktop.org/standards/shared-mime-info'}
++types={node.attrib['type']:node for node in root}
++assert 'video/x-matroska-3d' in types
++assert 'video/x-mp4-3d-180' in types, 'missing content-refined MP4 type'
++assert not any('sparky' in name for name in types)
++assert {n.attrib['type'] for n in types['video/x-matroska-3d'].findall('m:sub-class-of',ns)} == {'video/x-matroska','application/x-matroska'}
++for name,node in types.items():
++    languages={c.attrib.get('{http://www.w3.org/XML/1998/namespace}lang','en') for c in node.findall('m:comment',ns)}
++    assert languages == {'en','pl','pt_BR','fr','de','ja','ko','zh_CN','zh_TW'}, name
++    assert not node.findall('m:glob',ns), name
++with tempfile.TemporaryDirectory(dir=xml.parent) as scratch:
++    mime=Path(scratch)/'mime'
++    (mime/'packages').mkdir(parents=True)
++    (mime/'packages/content.xml').write_bytes(xml.read_bytes())
++    result=subprocess.run(['update-mime-database',str(mime)],capture_output=True,text=True)
++    assert result.returncode==0,result.stderr
++    edges=(mime/'subclasses').read_text().splitlines()
++    for edge in ['video/x-matroska-3d application/x-matroska',
++                 'video/x-matroska-3d video/x-matroska',
++                 'video/x-mp4-3d-180 video/x-mp4-3d',
++                 'video/x-mp4-3d-180 video/x-mp4-180']:
++        assert edge in edges,edge
++print(f'PASS: {len(types)} types, nine languages, preserved container ancestry, standard MIME compiler')
+diff --git a/autotests/content/check.py b/autotests/content/check.py
+new file mode 100644
+index 0000000..66b8323
+--- /dev/null
++++ b/autotests/content/check.py
+@@ -0,0 +1,29 @@
++#!/usr/bin/env python3
++# SPDX-License-Identifier: GPL-2.0-or-later
++import argparse
++import json
++from pathlib import Path
++import subprocess
++import sys
++
++p = argparse.ArgumentParser()
++p.add_argument('fixtures', type=Path)
++p.add_argument('--probe')
++a = p.parse_args()
++failures = 0
++for row in json.loads((a.fixtures/'manifest.json').read_text()):
++    path = a.fixtures/row['file']
++    if a.probe:
++        result = subprocess.run([a.probe, '--base', row['base'], '--json', str(path)], capture_output=True, text=True)
++        actual = json.loads(result.stdout) if result.returncode == 0 else {'error': result.stderr}
++        expected = {k: row[k] for k in ['stereo', 'layout', 'order', 'coverage', 'projection', 'status'] if k in row}
++        matched = all(actual.get(k) == v for k, v in expected.items())
++    else:
++        result = subprocess.run(['gio', 'info', '-a', 'standard::content-type', str(path)], capture_output=True, text=True)
++        actual = result.stdout.split('standard::content-type: ')[-1].strip()
++        expected = ('video/x-matroska-3d' if row['base'].startswith('video/') else 'image/x-png-3d') if row['stereo'] == 1 else row['base']
++        matched = actual == expected
++    print(('PASS' if matched else 'FAIL'), row['file'], 'expected', expected, 'actual', actual)
++    failures += not matched
++print(f'{failures} failures')
++sys.exit(bool(failures))
+diff --git a/autotests/content/client-test.c b/autotests/content/client-test.c
+new file mode 100644
+index 0000000..05a85a6
+--- /dev/null
++++ b/autotests/content/client-test.c
+@@ -0,0 +1,17 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++#include "client.h"
++#include <fcntl.h>
++#include <stdio.h>
++#include <string.h>
++#include <unistd.h>
++int main(int argc, char **argv)
++{
++    if (argc != 5)
++        return 2;
++    int fd = open(argv[1], O_RDONLY | O_NONBLOCK);
++    char mime[128];
++    int result = stereo_content_refine_fd(fd, argv[2], 400, mime, sizeof(mime));
++    close(fd);
++    printf("%d %s\n", result, mime);
++    return strcmp(mime, argv[3]) || result != (argv[4][0] == '1');
++}
+diff --git a/autotests/content/codec-fixtures.py b/autotests/content/codec-fixtures.py
+new file mode 100644
+index 0000000..6535e81
+--- /dev/null
++++ b/autotests/content/codec-fixtures.py
+@@ -0,0 +1,72 @@
++#!/usr/bin/env python3
++# SPDX-License-Identifier: GPL-2.0-or-later
++import json
++import re
++from pathlib import Path
++import subprocess
++import sys
++from fixtures import run
++root = Path(sys.argv[1])
++rows = json.loads((root/'manifest.json').read_text())
++# H.264 frame-packing SEI types 0..5, authored by the independent encoder.
++for mode, layout in enumerate([6, 5, 4, 1, 2, 8]):
++    file = root / f'avc-sei-{mode}.mp4'
++    run(['ffmpeg', '-nostdin', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=64x32:rate=4',
++         '-frames:v', '4', '-c:v', 'libx264', '-threads', '1', '-x264-params',
++         f'frame-packing={mode}', '-y', str(file)])
++    rows.append(dict(file=file.name, base='video/mp4', stereo=1, layout=layout, order=0,
++                     signal='avc-frame-packing-sei', value=mode))
++# The installed x265 lacks frame-packing. Author H.265 D.2.16 prefix SEI
++# explicitly in an Annex B stream, then remux without re-encoding.
++raw = root/'hevc-plain.hevc'
++run(['ffmpeg', '-nostdin', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=64x32:rate=4',
++     '-frames:v', '4', '-c:v', 'libx265', '-threads', '1', '-x265-params',
++     'pools=none:frame-threads=1:bframes=0', '-y', str(raw)])
++nals = [n for n in re.split(b'\x00\x00(?:\x00)?\x01', raw.read_bytes()) if n]
++def sei(mode, frame0):
++    bits = '1' + '0' + f'{mode:07b}' + '0' + '000001' + '000' + str(frame0) + '00'
++    if mode != 5:
++        bits += '0' * 16
++    bits += '0' * 8 + '1' + '0'  # reserved, persistence, upsampled aspect
++    bits += '1'
++    bits += '0' * (-len(bits) % 8)
++    payload = int(bits, 2).to_bytes(len(bits)//8, 'big')
++    rbsp = bytes([45, len(payload)]) + payload + b'\x80'
++    escaped = bytearray()
++    zeros = 0
++    for byte in rbsp:
++        if zeros >= 2 and byte <= 3:
++            escaped.append(3)
++            zeros = 0
++        escaped.append(byte)
++        zeros = zeros + 1 if byte == 0 else 0
++    return b'\x00\x00\x00\x01\x4e\x01' + escaped
++for mode in range(8):
++    file = root/f'hevc-sei-{mode}.mp4'
++    stream = bytearray()
++    frame = 0
++    for nal in nals:
++        if ((nal[0] >> 1) & 63) <= 31:
++            stream += sei(mode, 1 - frame % 2)
++            frame += 1
++        stream += b'\x00\x00\x00\x01' + nal
++    marked = root/f'hevc-sei-{mode}.hevc'
++    marked.write_bytes(stream)
++    run(['ffmpeg', '-nostdin', '-v', 'error', '-r', '4', '-i', str(marked), '-c', 'copy', '-y', str(file)])
++    valid = mode in (3, 4, 5)
++    rows.append(dict(file=file.name, base='video/mp4', stereo=1 if valid else -1,
++                     layout={3:1, 4:2, 5:8}.get(mode, 0), order=0,
++                     signal='hevc-frame-packing-sei', value=mode))
++plain = root/'avc-plain.mp4'
++run(['ffmpeg', '-nostdin', '-v', 'error', '-i', str(root/'plain.mkv'), '-c:v', 'libx264', '-threads', '1', '-y', str(plain)])
++rows.append(dict(file=plain.name, base='video/mp4', stereo=-1, layout=0, order=0))
++for coverage in [180, 360, 90, 6]:
++    for stereo in [0, 1]:
++        for container in ['mp4', 'mkv']:
++            file = root / f'sphere-{coverage}-{stereo}.{container}'
++            run([sys.argv[2], str(plain), str(file), str(coverage), str(stereo)])
++            rows.append(dict(file=file.name, base='video/mp4' if container=='mp4' else 'video/x-matroska',
++                             stereo=1 if stereo else -1, layout=stereo, order=0,
++                             coverage=360 if coverage == 6 else 0 if coverage == 90 else coverage,
++                             projection=1 if coverage==6 else 0 if coverage==360 else 2))
++(root/'manifest.json').write_text(json.dumps(rows, indent=2)+'\n')
+diff --git a/autotests/content/fixtures.py b/autotests/content/fixtures.py
+new file mode 100644
+index 0000000..aad50a7
+--- /dev/null
++++ b/autotests/content/fixtures.py
+@@ -0,0 +1,54 @@
++#!/usr/bin/env python3
++# SPDX-License-Identifier: GPL-2.0-or-later
++# Independent fixture authoring: RFC 9559 StereoMode, section 5.1.4.1.28.3.
++import hashlib
++import json
++from pathlib import Path
++import struct
++import subprocess
++import sys
++import zlib
++
++MODES = [
++    ('mono', 0, 0), ('left_right', 1, 0), ('bottom_top', 2, 1),
++    ('top_bottom', 2, 0), ('checkerboard_rl', 6, 1), ('checkerboard_lr', 6, 0),
++    ('row_interleaved_rl', 4, 1), ('row_interleaved_lr', 4, 0),
++    ('col_interleaved_rl', 5, 1), ('col_interleaved_lr', 5, 0),
++    ('anaglyph_cyan_red', 0, 0), ('right_left', 1, 1),
++    ('anaglyph_green_magenta', 0, 0), ('block_lr', 9, 0), ('block_rl', 9, 1),
++]
++
++def run(args):
++    subprocess.run(args, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
++
++def generate(root):
++    root.mkdir(parents=True, exist_ok=True)
++    plain = root / 'plain.mkv'
++    run(['ffmpeg', '-nostdin', '-v', 'error', '-f', 'lavfi', '-i',
++         'testsrc2=size=64x32:rate=4', '-frames:v', '2', '-c:v', 'ffv1', '-threads', '1', '-y', str(plain)])
++    records = [dict(file=plain.name, base='video/x-matroska', stereo=-1, layout=0, order=0)]
++    for value, (name, layout, order) in enumerate(MODES):
++        target = root / f'matroska-{value:02}.mkv'
++        run(['ffmpeg', '-nostdin', '-v', 'error', '-i', str(plain), '-map', '0:v',
++             '-c', 'copy', '-metadata:s:v:0', f'stereo_mode={name}', '-y', str(target)])
++        records.append(dict(file=target.name, base='video/x-matroska', stereo=int(value != 0),
++                            layout=layout, order=order, signal='matroska-stereomode', value=value))
++    # A 3D-looking filename is not a mark.
++    (root/'holiday-3D-SBS.mkv').write_bytes(plain.read_bytes())
++    records.append(dict(file='holiday-3D-SBS.mkv', base='video/x-matroska', stereo=-1, layout=0, order=0))
++    def chunk(name, data):
++        return struct.pack('>I', len(data)) + name + data + struct.pack('>I', zlib.crc32(name+data))
++    ihdr = chunk(b'IHDR', struct.pack('>IIBBBBB', 8, 2, 8, 2, 0, 0, 0))
++    pixels = chunk(b'IDAT', zlib.compress((b'\0' + bytes(range(24))) * 2))
++    for name, extra, stereo, order in [('plain.png', b'', -1, 0),
++                                      ('ster-0.png', chunk(b'sTER', b'\0'), 1, 1),
++                                      ('ster-1.png', chunk(b'sTER', b'\1'), 1, 0),
++                                      ('ster-decoy.png', chunk(b'tEXt', b'comment\0sTER\1'), -1, 0)]:
++        (root/name).write_bytes(b'\x89PNG\r\n\x1a\n' + ihdr + extra + pixels + chunk(b'IEND', b''))
++        records.append(dict(file=name, base='image/png', stereo=stereo, layout=int(stereo == 1), order=order))
++    for r in records:
++        r['sha256'] = hashlib.sha256((root/r['file']).read_bytes()).hexdigest()
++    (root/'manifest.json').write_text(json.dumps(records, indent=2)+'\n')
++
++if __name__ == '__main__':
++    generate(Path(sys.argv[1]))
+diff --git a/autotests/content/geometry-test.py b/autotests/content/geometry-test.py
+new file mode 100644
+index 0000000..abfb155
+--- /dev/null
++++ b/autotests/content/geometry-test.py
+@@ -0,0 +1,10 @@
++#!/usr/bin/env python3
++"""A caller needs native samples and sample aspect independently of packing."""
++import json,subprocess,sys
++from pathlib import Path
++probe,fixtures=sys.argv[1:]
++for name,expected in [('case-10',(1920,804,2,1,1,0)),('case-01',(320,180,1,1,1,1)),('case-02',(320,180,1,1,2,0)),('case-11',(960,804,1,1,0,0))]:
++    result=json.loads(subprocess.check_output([probe,'--base','video/x-matroska','--json',str(Path(fixtures)/(name+'.mkv'))]))
++    actual=tuple(result.get(k) for k in ('width','height','sar_num','sar_den','layout','order'))
++    assert actual==expected,(name,actual,expected,result)
++print('native sample dimensions, SAR and packing/order: four cases passed')
+diff --git a/autotests/content/mp4-fixtures.py b/autotests/content/mp4-fixtures.py
+new file mode 100644
+index 0000000..d7f71dc
+--- /dev/null
++++ b/autotests/content/mp4-fixtures.py
+@@ -0,0 +1,53 @@
++#!/usr/bin/env python3
++# SPDX-License-Identifier: GPL-2.0-or-later
++# Spherical Video V2, st3d semantics 0..4; ISO BMFF sized box traversal.
++import hashlib
++import json
++from pathlib import Path
++import struct
++import sys
++root = Path(sys.argv[1])
++rows = json.loads((root/'manifest.json').read_text())
++source = (root/'sphere-360-1.mp4').read_bytes()
++containers = {b'moov':0, b'trak':0, b'mdia':0, b'minf':0, b'stbl':0, b'stsd':8, b'avc1':78}
++def rewrite(data, mode, keep_vexu=False, reverse=False, duplicate=False):
++    boxes=[]
++    offset=0
++    while offset < len(data):
++        size, tag = struct.unpack_from('>I4s', data, offset)
++        assert size >= 8 and offset+size <= len(data)
++        payload=data[offset+8:offset+size]
++        offset+=size
++        if tag in (b'sv3d',) or (tag==b'vexu' and not keep_vexu):
++            continue
++        if tag==b'st3d':
++            assert len(payload)==5
++            payload=payload[:4]+bytes([mode])
++        if tag in containers:
++            skip=containers[tag]
++            payload=payload[:skip]+rewrite(payload[skip:], mode, keep_vexu, reverse, duplicate)
++        boxes.append((tag,struct.pack('>I4s',8+len(payload),tag)+payload))
++        if duplicate and tag==b'st3d':
++            boxes.append(boxes[-1])
++    if reverse and any(tag==b'st3d' for tag,_ in boxes) and any(tag==b'vexu' for tag,_ in boxes):
++        # Place vexu before st3d without changing the sample entry's byte count.
++        a=next(i for i,(tag,_) in enumerate(boxes) if tag==b'st3d')
++        b=next(i for i,(tag,_) in enumerate(boxes) if tag==b'vexu')
++        boxes[a],boxes[b]=boxes[b],boxes[a]
++    return b''.join(box for _,box in boxes)
++for mode,layout,order in [(0,0,0),(1,2,0),(2,1,0),(3,-1,0),(4,1,1)]:
++    file=root/f'st3d-{mode}.mp4'
++    file.write_bytes(rewrite(source,mode))
++    rows.append(dict(file=file.name,base='video/mp4',stereo=int(mode!=0),layout=layout,order=order,projection=-1))
++for reverse in (False,True):
++    file=root/f'st3d-vexu-{int(reverse)}.mp4'
++    file.write_bytes(rewrite(source,2,True,reverse))
++    rows.append(dict(file=file.name,base='video/mp4',stereo=1,layout=1,order=0))
++for name,mode,duplicate in [('st3d-reserved.mp4',255,False),('st3d-duplicate.mp4',2,True)]:
++    file=root/name
++    file.write_bytes(rewrite(source,mode,duplicate=duplicate))
++    rows.append(dict(file=name,base='video/mp4',stereo=-1,layout=0,order=0,projection=-1,
++                     status=3 if duplicate else 0))
++for row in rows:
++    row['sha256']=hashlib.sha256((root/row['file']).read_bytes()).hexdigest()
++(root/'manifest.json').write_text(json.dumps(rows,indent=2)+'\n')
+diff --git a/autotests/content/selection-fixture.c b/autotests/content/selection-fixture.c
+new file mode 100644
+index 0000000..7b007a6
+--- /dev/null
++++ b/autotests/content/selection-fixture.c
+@@ -0,0 +1,51 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/* Independent writer using FFmpeg's public muxer metadata API. */
++#include <libavformat/avformat.h>
++#include <libavutil/spherical.h>
++#include <libavutil/stereo3d.h>
++#include <stdlib.h>
++int main(int argc, char **argv)
++{
++    if (argc != 4)
++        return 2;
++    AVFormatContext *in = NULL, *out = NULL;
++    if (avformat_open_input(&in, argv[1], NULL, NULL) < 0 || avformat_find_stream_info(in, NULL) < 0
++        || avformat_alloc_output_context2(&out, NULL, NULL, argv[2]) < 0)
++        return 1;
++    out->strict_std_compliance = FF_COMPLIANCE_UNOFFICIAL;
++    AVStream *stream = NULL;
++    for (int i = 0; i < 2; ++i) {
++    stream = avformat_new_stream(out, NULL);
++    if (!stream || avcodec_parameters_copy(stream->codecpar, in->streams[0]->codecpar) < 0)
++        return 1;
++    stream->time_base = in->streams[0]->time_base;
++    if (i == atoi(argv[3])) {
++        size_t size;
++        AVSphericalMapping *sphere = av_spherical_alloc(&size);
++        sphere->projection = AV_SPHERICAL_EQUIRECTANGULAR;
++        av_packet_side_data_add(&stream->codecpar->coded_side_data, &stream->codecpar->nb_coded_side_data,
++            AV_PKT_DATA_SPHERICAL, (uint8_t *)sphere, size, 0);
++    }
++    }
++    if (avio_open(&out->pb, argv[2], AVIO_FLAG_WRITE) < 0 || avformat_write_header(out, NULL) < 0)
++        return 1;
++    AVPacket *pkt = av_packet_alloc();
++    while (av_read_frame(in, pkt) >= 0) {
++        for (int i = 0; i < 2; ++i) {
++            AVPacket *copy = av_packet_clone(pkt);
++            if (!copy) return 1;
++            av_packet_rescale_ts(copy, in->streams[0]->time_base, out->streams[i]->time_base);
++            copy->stream_index = i;
++            int ret = av_interleaved_write_frame(out, copy);
++            av_packet_free(&copy);
++            if (ret < 0) return 1;
++        }
++        av_packet_unref(pkt);
++    }
++    int error = av_write_trailer(out);
++    av_packet_free(&pkt);
++    avio_closep(&out->pb);
++    avformat_free_context(out);
++    avformat_close_input(&in);
++    return error < 0;
++}
+diff --git a/autotests/content/selection-test.c b/autotests/content/selection-test.c
+new file mode 100644
+index 0000000..5e46bc1
+--- /dev/null
++++ b/autotests/content/selection-test.c
+@@ -0,0 +1,55 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++#define _POSIX_C_SOURCE 200809L
++#include "stereo-content.h"
++#include <fcntl.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <time.h>
++#include <unistd.h>
++
++/* Arguments describe independently authored fixtures, not detector output. */
++int main(int argc, char **argv)
++{
++    if (argc != 6) return 2;
++    int marked = atoi(argv[2]), spherical = atoi(argv[3]);
++    int width = atoi(argv[4]), height = atoi(argv[5]);
++    int fd = open(argv[1], O_RDONLY | O_CLOEXEC), failed = 0;
++    if (fd < 0) return 2;
++    for (unsigned track = 0; track <= 2; ++track) {
++        struct timespec now;
++        clock_gettime(CLOCK_MONOTONIC, &now);
++        StereoContentRequest request = {.size = sizeof(request), .abi = STEREO_CONTENT_ABI,
++            .fd = fd, .deadline_us = (int64_t)now.tv_sec * 1000000 + now.tv_nsec / 1000 + 5000000,
++            .max_bytes = 16 * 1024 * 1024, .max_packets = 128, .video_track_plus_one = track};
++        snprintf(request.base_mime, sizeof(request.base_mime), "%s", spherical ? "video/mp4" : "video/x-matroska");
++        StereoContentResult result = {.size = sizeof(result)};
++        int ret = stereo_content_inspect(&request, &result);
++        int selected = track ? (int)track - 1 : marked;
++        int has_mark = selected == marked;
++        int expected_width = spherical || has_mark ? width : 960;
++        int expected_height = spherical || has_mark ? height : 804;
++        int ok = !ret && result.status == STEREO_CONTENT_OK
++            && result.stream_index == selected
++            && result.stereo == (!spherical && has_mark ? 1 : -1)
++            && result.layout == (!spherical && has_mark ? 1 : 0)
++            && result.order == 0 && result.anaglyph == 0 && result.conflicts == 0
++            && result.projection == (spherical && has_mark ? 0 : -1)
++            && result.coverage == (spherical && has_mark ? 360 : 0)
++            && !result.bounds[0] && !result.bounds[1] && !result.bounds[2] && !result.bounds[3]
++            && (has_mark ? result.evidence != 0 : result.evidence == 0)
++            && result.width == expected_width && result.height == expected_height
++            && result.sar_num == 1 && result.sar_den == 1
++            && result.bytes > 0 && result.bytes <= request.max_bytes
++            && result.packets > 0 && result.packets <= request.max_packets
++            && !strcmp(result.base_mime, request.base_mime)
++            && lseek(fd, 0, SEEK_CUR) == 0;
++        printf("%s track=%u expected_stream=%d actual_stream=%d stereo=%d layout=%d projection=%d coverage=%d raster=%dx%d evidence=%u conflicts=%u bytes=%llu packets=%u: %s\n",
++            argv[1], track, selected, result.stream_index, result.stereo, result.layout,
++            result.projection, result.coverage, result.width, result.height, result.evidence,
++            result.conflicts, (unsigned long long)result.bytes, result.packets, ok ? "PASS" : "FAIL");
++        failed |= !ok;
++    }
++    close(fd);
++    return failed;
++}
+diff --git a/autotests/content/service-test.py b/autotests/content/service-test.py
+new file mode 100644
+index 0000000..60cd505
+--- /dev/null
++++ b/autotests/content/service-test.py
+@@ -0,0 +1,53 @@
++#!/usr/bin/env python3
++# SPDX-License-Identifier: GPL-2.0-or-later
++import json
++import os
++from pathlib import Path
++import shutil
++import statistics
++import subprocess
++import sys
++import tempfile
++import time
++
++build, fixtures = map(Path, sys.argv[1:])
++def check(file, base, expected, changed):
++    result = subprocess.run([str(build/'client-test'), str(file), base, expected, str(int(changed))],
++                            capture_output=True, text=True, timeout=3)
++    assert result.returncode == 0, result.stdout + result.stderr
++    return result.stdout.strip()
++print('absent:',check(fixtures/'matroska-01.mkv','video/x-matroska','video/x-matroska',False))
++service = subprocess.Popen([str(build/'stereo-contentd')], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
++try:
++    for attempt in range(100):
++        result = subprocess.run(['gdbus','introspect','--session','--dest','org.stereo.Content1',
++                                 '--object-path','/org/stereo/Content1'],capture_output=True)
++        if result.returncode == 0:
++            break
++        time.sleep(.01)
++    else:
++        raise AssertionError('service did not register')
++    print('stereo:',check(fixtures/'matroska-01.mkv','video/x-matroska','video/x-matroska-3d',True))
++    print('plain:',check(fixtures/'plain.mkv','video/x-matroska','video/x-matroska',False))
++    print('png:',check(fixtures/'ster-0.png','image/png','image/x-png-3d',True))
++    with tempfile.TemporaryDirectory(dir=build) as scratch:
++        mutable=Path(scratch)/'file.mkv'
++        shutil.copyfile(fixtures/'matroska-01.mkv',mutable)
++        stat=mutable.stat()
++        check(mutable,'video/x-matroska','video/x-matroska-3d',True)
++        # Keep inode and restore mtime; ctime must invalidate this cached fact.
++        mutable.write_bytes((fixtures/'plain.mkv').read_bytes())
++        os.utime(mutable,ns=(stat.st_atime_ns,stat.st_mtime_ns))
++        check(mutable,'video/x-matroska','video/x-matroska',False)
++        print('rewrite with restored mtime: plain')
++    samples=[]
++    for n in range(25):
++        start=time.monotonic_ns()
++        check(fixtures/'matroska-01.mkv','video/x-matroska','video/x-matroska-3d',True)
++        samples.append((time.monotonic_ns()-start)/1e6)
++    ordered=sorted(samples)
++    print(json.dumps({'warm_client_process_ms':{'p50':statistics.median(samples),'p95':ordered[23],'max':max(samples)}}))
++finally:
++    service.terminate()
++    service.communicate(timeout=3)
++print('PASS: absent, stereo, plain, PNG, identity invalidation and warm queries')
+diff --git a/autotests/content/spherical-fixture.c b/autotests/content/spherical-fixture.c
+new file mode 100644
+index 0000000..b19ea9c
+--- /dev/null
++++ b/autotests/content/spherical-fixture.c
+@@ -0,0 +1,55 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/* Independent writer using FFmpeg's public muxer metadata API. */
++#include <libavformat/avformat.h>
++#include <libavutil/spherical.h>
++#include <libavutil/stereo3d.h>
++#include <stdlib.h>
++int main(int argc, char **argv)
++{
++    if (argc != 5)
++        return 2;
++    AVFormatContext *in = NULL, *out = NULL;
++    if (avformat_open_input(&in, argv[1], NULL, NULL) < 0 || avformat_find_stream_info(in, NULL) < 0
++        || avformat_alloc_output_context2(&out, NULL, NULL, argv[2]) < 0)
++        return 1;
++    out->strict_std_compliance = FF_COMPLIANCE_UNOFFICIAL;
++    AVStream *stream = avformat_new_stream(out, NULL);
++    if (!stream || avcodec_parameters_copy(stream->codecpar, in->streams[0]->codecpar) < 0)
++        return 1;
++    stream->time_base = in->streams[0]->time_base;
++    size_t size;
++    AVSphericalMapping *sphere = av_spherical_alloc(&size);
++    int coverage = atoi(argv[3]);
++    sphere->projection = coverage == 360 ? AV_SPHERICAL_EQUIRECTANGULAR : coverage == 6 ? AV_SPHERICAL_CUBEMAP : AV_SPHERICAL_EQUIRECTANGULAR_TILE;
++    if (coverage == 180) {
++        sphere->bound_left = 0x40000000;
++        sphere->bound_right = 0x40000000;
++    } else if (coverage == 90) {
++        sphere->bound_left = 0x60000000;
++        sphere->bound_right = 0x60000000;
++    }
++    av_packet_side_data_add(&stream->codecpar->coded_side_data, &stream->codecpar->nb_coded_side_data,
++        AV_PKT_DATA_SPHERICAL, (uint8_t *)sphere, size, 0);
++    if (atoi(argv[4])) {
++        AVStereo3D *stereo = av_stereo3d_alloc_size(&size);
++        stereo->type = AV_STEREO3D_SIDEBYSIDE;
++        av_packet_side_data_add(&stream->codecpar->coded_side_data, &stream->codecpar->nb_coded_side_data,
++            AV_PKT_DATA_STEREO3D, (uint8_t *)stereo, size, 0);
++    }
++    if (avio_open(&out->pb, argv[2], AVIO_FLAG_WRITE) < 0 || avformat_write_header(out, NULL) < 0)
++        return 1;
++    AVPacket *pkt = av_packet_alloc();
++    while (av_read_frame(in, pkt) >= 0) {
++        av_packet_rescale_ts(pkt, in->streams[0]->time_base, stream->time_base);
++        pkt->stream_index = 0;
++        if (av_interleaved_write_frame(out, pkt) < 0)
++            return 1;
++        av_packet_unref(pkt);
++    }
++    int error = av_write_trailer(out);
++    av_packet_free(&pkt);
++    avio_closep(&out->pb);
++    avformat_free_context(out);
++    avformat_close_input(&in);
++    return error < 0;
++}
+diff --git a/autotests/content/track-test.c b/autotests/content/track-test.c
+new file mode 100644
+index 0000000..dd737eb
+--- /dev/null
++++ b/autotests/content/track-test.c
+@@ -0,0 +1,33 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++#define _POSIX_C_SOURCE 200809L
++#include "stereo-content.h"
++#include <assert.h>
++#include <fcntl.h>
++#include <stdio.h>
++#include <time.h>
++#include <unistd.h>
++int main(int argc, char **argv)
++{
++    assert(argc == 2);
++    int fd = open(argv[1], O_RDONLY | O_CLOEXEC);
++    assert(fd >= 0);
++    for (unsigned track = 1; track <= 2; ++track) {
++        struct timespec now;
++        clock_gettime(CLOCK_MONOTONIC, &now);
++        StereoContentRequest request = {.size = sizeof(request), .abi = STEREO_CONTENT_ABI,
++            .fd = fd, .deadline_us = (int64_t)now.tv_sec * 1000000 + now.tv_nsec / 1000 + 1000000,
++            .max_bytes = 4 * 1024 * 1024, .max_packets = 128, .video_track_plus_one = track};
++        StereoContentResult result = {.size = sizeof(result)};
++        assert(stereo_content_inspect(&request, &result) == 0);
++        assert(result.status == STEREO_CONTENT_OK);
++        assert(result.stream_index == (int)track - 1);
++        assert(result.stereo == (track == 1 ? -1 : 1));
++        assert(result.layout == (track == 1 ? 0 : 1));
++        assert(result.width == (track == 1 ? 960 : 320));
++        assert(result.height == (track == 1 ? 804 : 180));
++        assert(result.sar_num == 1 && result.sar_den == 1);
++        assert(lseek(fd, 0, SEEK_CUR) == 0);
++    }
++    close(fd);
++    puts("selected mono and stereo tracks, native geometry, preserved FD offset: passed");
++}
+diff --git a/data/content/catalogue.json b/data/content/catalogue.json
+new file mode 100644
+index 0000000..4179436
+--- /dev/null
++++ b/data/content/catalogue.json
+@@ -0,0 +1,216 @@
++{
++  "version": 1,
++  "families": [
++    {
++      "label": "Matroska",
++      "base": "video/x-matroska",
++      "stem": "video/x-matroska",
++      "aliases": [
++        "video/matroska",
++        "video/matroska-3d",
++        "video/x-matroska-3d"
++      ],
++      "kind": "video",
++      "enabled": true
++    },
++    {
++      "label": "WebM",
++      "base": "video/webm",
++      "stem": "video/x-webm",
++      "aliases": [],
++      "kind": "video",
++      "enabled": true
++    },
++    {
++      "label": "MP4",
++      "base": "video/mp4",
++      "stem": "video/x-mp4",
++      "aliases": [],
++      "kind": "video",
++      "enabled": true
++    },
++    {
++      "label": "QuickTime",
++      "base": "video/quicktime",
++      "stem": "video/x-quicktime",
++      "aliases": [],
++      "kind": "video",
++      "enabled": true
++    },
++    {
++      "label": "MPEG",
++      "base": "video/mpeg",
++      "stem": "video/x-mpeg",
++      "aliases": [],
++      "kind": "video",
++      "enabled": true
++    },
++    {
++      "label": "MPEG-TS",
++      "base": "video/mp2t",
++      "stem": "video/x-mp2t",
++      "aliases": [],
++      "kind": "video",
++      "enabled": true
++    },
++    {
++      "label": "AVI",
++      "base": "video/x-msvideo",
++      "stem": "video/x-avi",
++      "aliases": [
++        "video/vnd.avi"
++      ],
++      "kind": "video",
++      "enabled": true
++    },
++    {
++      "label": "Ogg",
++      "base": "video/ogg",
++      "stem": "video/x-ogg",
++      "aliases": [],
++      "kind": "video",
++      "enabled": true
++    },
++    {
++      "label": "PNG",
++      "base": "image/png",
++      "stem": "image/x-png",
++      "kind": "picture",
++      "enabled": true
++    },
++    {
++      "label": "JPEG",
++      "base": "image/jpeg",
++      "stem": "image/x-jpeg",
++      "kind": "picture",
++      "enabled": true
++    },
++    {
++      "label": "HEIF",
++      "base": "image/heif",
++      "stem": "image/x-heif",
++      "kind": "picture",
++      "enabled": false
++    },
++    {
++      "label": "AVIF",
++      "base": "image/avif",
++      "stem": "image/x-avif",
++      "kind": "picture",
++      "enabled": false
++    },
++    {
++      "label": "TIFF",
++      "base": "image/tiff",
++      "stem": "image/x-tiff",
++      "kind": "picture",
++      "enabled": false
++    },
++    {
++      "label": "WebP",
++      "base": "image/webp",
++      "stem": "image/x-webp",
++      "kind": "picture",
++      "enabled": false
++    },
++    {
++      "label": "JPEG XL",
++      "base": "image/jxl",
++      "stem": "image/x-jxl",
++      "kind": "picture",
++      "enabled": false
++    },
++    {
++      "label": "SVG",
++      "base": "image/svg+xml",
++      "stem": "image/x-svg",
++      "kind": "picture",
++      "enabled": false
++    },
++    {
++      "label": "OpenEXR",
++      "base": "image/x-exr",
++      "stem": "image/x-exr",
++      "kind": "picture",
++      "enabled": false
++    }
++  ],
++  "comments": {
++    "video": {
++      "en": {
++        "stereo": "{format} stereoscopic video",
++        "spherical": "{format} spherical video",
++        "stereo_spherical": "{format} stereoscopic spherical video"
++      },
++      "pl": {
++        "stereo": "Stereoskopowy film {format}",
++        "spherical": "Sferyczny film {format}",
++        "stereo_spherical": "Stereoskopowy film sferyczny {format}"
++      },
++      "pt_BR": {
++        "stereo": "Vídeo estereoscópico {format}",
++        "spherical": "Vídeo esférico {format}",
++        "stereo_spherical": "Vídeo esférico estereoscópico {format}"
++      },
++      "fr": {
++        "stereo": "Vidéo stéréoscopique {format}",
++        "spherical": "Vidéo sphérique {format}",
++        "stereo_spherical": "Vidéo sphérique stéréoscopique {format}"
++      },
++      "de": {
++        "stereo": "Stereoskopisches {format}-Video",
++        "spherical": "Sphärisches {format}-Video",
++        "stereo_spherical": "Stereoskopisches sphärisches {format}-Video"
++      },
++      "ja": {
++        "stereo": "{format} 立体映像",
++        "spherical": "{format} 全天球映像",
++        "stereo_spherical": "{format} 立体全天球映像"
++      },
++      "ko": {
++        "stereo": "{format} 입체 동영상",
++        "spherical": "{format} 구면 동영상",
++        "stereo_spherical": "{format} 입체 구면 동영상"
++      },
++      "zh_CN": {
++        "stereo": "{format} 立体视频",
++        "spherical": "{format} 全景视频",
++        "stereo_spherical": "{format} 立体全景视频"
++      },
++      "zh_TW": {
++        "stereo": "{format} 立體影片",
++        "spherical": "{format} 全景影片",
++        "stereo_spherical": "{format} 立體全景影片"
++      }
++    },
++    "picture": {
++      "en": {
++        "stereo": "{format} stereoscopic image"
++      },
++      "pl": {
++        "stereo": "Stereoskopowy obraz {format}"
++      },
++      "pt_BR": {
++        "stereo": "Imagem estereoscópica {format}"
++      },
++      "fr": {
++        "stereo": "Image stéréoscopique {format}"
++      },
++      "de": {
++        "stereo": "Stereoskopisches {format}-Bild"
++      },
++      "ja": {
++        "stereo": "{format} 立体画像"
++      },
++      "ko": {
++        "stereo": "{format} 입체 이미지"
++      },
++      "zh_CN": {
++        "stereo": "{format} 立体图像"
++      },
++      "zh_TW": {
++        "stereo": "{format} 立體影像"
++      }
++    }
++  }
++}
+diff --git a/src/av/stereo-content.c b/src/av/stereo-content.c
+new file mode 100644
+index 0000000..b34d959
+--- /dev/null
++++ b/src/av/stereo-content.c
+@@ -0,0 +1,353 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/* SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com> */
++#define _POSIX_C_SOURCE 200809L
++#include "stereo-content.h"
++#include "stereo-av.h"
++#include <errno.h>
++#include <limits.h>
++#include <stdio.h>
++#include <string.h>
++#include <sys/stat.h>
++#include <time.h>
++#include <unistd.h>
++#include <zlib.h>
++#include <libavcodec/avcodec.h>
++#include <libavformat/avformat.h>
++#include <libavutil/intreadwrite.h>
++#include <libavutil/spherical.h>
++#include <libavutil/stereo3d.h>
++#include <libavutil/opt.h>
++
++typedef struct Reader {
++    const StereoContentRequest *request;
++    StereoContentResult *result;
++    int64_t offset, length;
++    int exhausted;
++} Reader;
++
++static int64_t monotonic_us(void)
++{
++    struct timespec ts;
++    clock_gettime(CLOCK_MONOTONIC, &ts);
++    return (int64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
++}
++
++static int interrupted(void *opaque)
++{
++    Reader *r = opaque;
++    return r->exhausted || monotonic_us() >= r->request->deadline_us;
++}
++
++static int read_at(Reader *r, int64_t offset, unsigned char *buffer, size_t length)
++{
++    if (interrupted(r))
++        return AVERROR_EXIT;
++    if (length > r->request->max_bytes - r->result->bytes)
++        length = r->request->max_bytes - r->result->bytes;
++    if (!length) {
++        r->exhausted = 1;
++        return AVERROR_EXIT;
++    }
++    ssize_t got = pread(r->request->fd, buffer, length, offset);
++    if (got < 0)
++        return AVERROR(errno);
++    r->result->bytes += got;
++    return got ? (int)got : AVERROR_EOF;
++}
++
++static int read_packet(void *opaque, uint8_t *buffer, int length)
++{
++    Reader *r = opaque;
++    int got = read_at(r, r->offset, buffer, length);
++    if (got > 0)
++        r->offset += got;
++    return got;
++}
++
++static int64_t seek_packet(void *opaque, int64_t offset, int whence)
++{
++    Reader *r = opaque;
++    if (whence == AVSEEK_SIZE)
++        return r->length;
++    whence &= ~AVSEEK_FORCE;
++    int64_t base = whence == SEEK_SET ? 0 : whence == SEEK_CUR ? r->offset : whence == SEEK_END ? r->length : -1;
++    if (base < 0 || offset < -base || offset > INT64_MAX - base || base + offset > r->length)
++        return AVERROR(EINVAL);
++    return r->offset = base + offset;
++}
++
++static int deny_open(AVFormatContext *s, AVIOContext **pb, const char *url, int flags, AVDictionary **options)
++{
++    (void)s; (void)pb; (void)url; (void)flags; (void)options;
++    return AVERROR(EACCES);
++}
++
++static void stereo_data(StereoContentResult *out, const AVStereo3D *s, unsigned evidence)
++{
++    /* AVStereo3D is extensible: the caller checks the minimum fields it reads. */
++    static const int layouts[] = {0, 1, 2, 8, 6, 7, 4, 5, -1};
++    if (s->type < 0 || (unsigned)s->type >= sizeof(layouts)/sizeof(layouts[0]))
++        return;
++    int stereo = s->type != AV_STEREO3D_2D;
++    int layout = layouts[s->type];
++    int order = !!(s->flags & AV_STEREO3D_FLAG_INVERT);
++    if (out->stereo >= 0 && (out->stereo != stereo || out->layout != layout || out->order != order))
++        out->conflicts |= evidence;
++    out->stereo = stereo;
++    out->layout = layout;
++    out->order = order;
++    out->evidence |= evidence;
++}
++
++static void spherical_data(StereoContentResult *out, const AVSphericalMapping *s, unsigned evidence)
++{
++    out->projection = s->projection;
++    out->coverage = 0;
++    memset(out->bounds, 0, sizeof(out->bounds));
++    if (s->projection == AV_SPHERICAL_CUBEMAP || s->projection == AV_SPHERICAL_EQUIRECTANGULAR)
++        out->coverage = 360;
++    else if (s->projection == AV_SPHERICAL_HALF_EQUIRECTANGULAR)
++        out->coverage = 180;
++    else if (s->projection == AV_SPHERICAL_EQUIRECTANGULAR_TILE) {
++        out->bounds[0] = s->bound_left;
++        out->bounds[1] = s->bound_top;
++        out->bounds[2] = s->bound_right;
++        out->bounds[3] = s->bound_bottom;
++        uint64_t horizontal = (uint64_t)s->bound_left + s->bound_right;
++        uint64_t vertical = (uint64_t)s->bound_top + s->bound_bottom;
++        if (horizontal >= UINT32_MAX || vertical >= UINT32_MAX)
++            out->status = STEREO_CONTENT_INVALID;
++        else if (!horizontal && !vertical)
++            out->coverage = 360;
++        else if ((horizontal == 0x7fffffff || horizontal == 0x80000000) && !vertical)
++            out->coverage = 180;
++    }
++    out->evidence |= evidence;
++}
++
++static void container_data(StereoContentResult *out, const AVCodecParameters *par)
++{
++    const AVPacketSideData *s = av_packet_side_data_get(par->coded_side_data, par->nb_coded_side_data, AV_PKT_DATA_STEREO3D);
++    if (s && s->size >= offsetof(AVStereo3D, view))
++        stereo_data(out, (const AVStereo3D *)s->data, STEREO_CONTENT_CONTAINER);
++    s = av_packet_side_data_get(par->coded_side_data, par->nb_coded_side_data, AV_PKT_DATA_SPHERICAL);
++    if (s && s->size >= offsetof(AVSphericalMapping, padding))
++        spherical_data(out, (const AVSphericalMapping *)s->data, STEREO_CONTENT_CONTAINER);
++}
++
++/* Matroska exports the original StereoMode as a stream tag, including the
++ * two anaglyph values absent from AVStereo3D and block-laced identity. */
++static void matroska_data(StereoContentResult *out, const AVStream *stream)
++{
++    static const struct { const char *name; int layout, order, anaglyph; } modes[] = {
++        {"mono", 0, 0, 0}, {"left_right", 1, 0, 0}, {"bottom_top", 2, 1, 0},
++        {"top_bottom", 2, 0, 0}, {"checkerboard_rl", 6, 1, 0}, {"checkerboard_lr", 6, 0, 0},
++        {"row_interleaved_rl", 4, 1, 0}, {"row_interleaved_lr", 4, 0, 0},
++        {"col_interleaved_rl", 5, 1, 0}, {"col_interleaved_lr", 5, 0, 0},
++        {"anaglyph_cyan_red", 0, 0, 1}, {"right_left", 1, 1, 0},
++        {"anaglyph_green_magenta", 0, 0, 2}, {"block_lr", 9, 0, 0}, {"block_rl", 9, 1, 0}
++    };
++    const AVDictionaryEntry *tag = av_dict_get(stream->metadata, "stereo_mode", NULL, 0);
++    if (!tag)
++        return;
++    for (size_t i = 0; i < sizeof(modes)/sizeof(modes[0]); ++i)
++        if (!strcmp(tag->value, modes[i].name)) {
++            out->stereo = i != 0;
++            out->layout = modes[i].layout;
++            out->order = modes[i].order;
++            out->anaglyph = modes[i].anaglyph;
++            out->evidence |= STEREO_CONTENT_CONTAINER;
++            return;
++        }
++}
++
++static void frame_data(StereoContentResult *out, const AVFrame *frame)
++{
++    AVFrameSideData *s = av_frame_get_side_data(frame, AV_FRAME_DATA_STEREO3D);
++    if (s && s->size >= offsetof(AVStereo3D, view)) {
++        const AVStereo3D *stereo = (const AVStereo3D *)s->data;
++        /* FFmpeg represents block-laced Matroska as frame sequence on frames. */
++        if (!(out->layout == 9 && stereo->type == AV_STEREO3D_FRAMESEQUENCE))
++            stereo_data(out, stereo, STEREO_CONTENT_FRAME);
++    }
++    s = av_frame_get_side_data(frame, AV_FRAME_DATA_SPHERICAL);
++    if (s && s->size >= offsetof(AVSphericalMapping, padding))
++        spherical_data(out, (const AVSphericalMapping *)s->data, STEREO_CONTENT_FRAME);
++}
++
++/* PNG extension sTER: a typed, CRC-checked chunk, before IDAT, never a byte search. */
++static int png_data(Reader *r)
++{
++    unsigned char head[33];
++    if (read_at(r, 0, head, sizeof(head)) != sizeof(head) || memcmp(head, "\x89PNG\r\n\x1a\n", 8))
++        return 0;
++    if (AV_RB32(head + 8) != 13 || memcmp(head + 12, "IHDR", 4))
++        return -1;
++    int seen = 0;
++    for (int64_t at = 33; at + 12 <= r->length;) {
++        unsigned char h[13];
++        if (read_at(r, at, h, 8) != 8)
++            return -1;
++        uint32_t length = AV_RB32(h);
++        if (length > (uint64_t)(r->length - at - 12))
++            return -1;
++        if (!memcmp(h + 4, "IDAT", 4) || !memcmp(h + 4, "IEND", 4))
++            return 1;
++        if (!memcmp(h + 4, "sTER", 4)) {
++            if (seen++ || length != 1 || read_at(r, at + 8, h + 8, 5) != 5 || h[8] > 1
++                || crc32(0, h + 4, 5) != AV_RB32(h + 9))
++                return -1;
++            r->result->stereo = 1;
++            r->result->layout = 1;
++            r->result->order = h[8] == 0;
++            r->result->evidence |= STEREO_CONTENT_PICTURE;
++        }
++        at += length + 12;
++    }
++    return -1;
++}
++
++static void refine_type(StereoContentResult *out)
++{
++    const char *stem = NULL;
++    const struct { const char *base, *stem; } types[] = {
++#include "content-mime-map.inc"
++    };
++    for (size_t i = 0; i < sizeof(types)/sizeof(types[0]); ++i)
++        if (!strcmp(out->base_mime, types[i].base))
++            stem = types[i].stem;
++    snprintf(out->refined_mime, sizeof(out->refined_mime), "%s", out->base_mime);
++    if (!stem || out->status != STEREO_CONTENT_OK)
++        return;
++    const char *suffix = out->projection < 0 ? "" : out->coverage == 180 ? "-180" : out->coverage == 360 ? "-360" : "-spherical";
++    if (out->stereo == 1 || *suffix)
++        snprintf(out->refined_mime, sizeof(out->refined_mime), "%s%s%s", stem, out->stereo == 1 ? "-3d" : "", suffix);
++}
++
++int stereo_content_inspect(const StereoContentRequest *request, StereoContentResult *out)
++{
++    struct stat initial, final;
++    if (!request || !out || request->size < sizeof(*request) || out->size < sizeof(*out)
++        || request->abi != STEREO_CONTENT_ABI || !memchr(request->base_mime, 0, sizeof(request->base_mime))
++        || !request->max_bytes || !request->max_packets || fstat(request->fd, &initial) || !S_ISREG(initial.st_mode))
++        return AVERROR(EINVAL);
++    int64_t started = monotonic_us();
++    memset(out, 0, sizeof(*out));
++    out->size = sizeof(*out);
++    out->abi = STEREO_CONTENT_ABI;
++    out->stereo = -1;
++    out->projection = -1;
++    out->stream_index = -1;
++    snprintf(out->base_mime, sizeof(out->base_mime), "%s", request->base_mime);
++    Reader reader = {request, out, 0, initial.st_size, 0};
++    int png = png_data(&reader);
++    if (png) {
++        if (png < 0)
++            out->status = interrupted(&reader) ? STEREO_CONTENT_INCOMPLETE : STEREO_CONTENT_INVALID;
++        goto done;
++    }
++    AVFormatContext *format = avformat_alloc_context();
++    unsigned char *buffer = av_malloc(32768);
++    AVIOContext *io = buffer ? avio_alloc_context(buffer, 32768, 0, &reader, read_packet, NULL, seek_packet) : NULL;
++    if (!format || !io) {
++        avformat_free_context(format);
++        av_free(buffer);
++        return AVERROR(ENOMEM);
++    }
++    format->pb = io;
++    format->flags |= AVFMT_FLAG_CUSTOM_IO;
++    format->interrupt_callback = (AVIOInterruptCB){interrupted, &reader};
++    format->io_open = deny_open;
++    format->probesize = request->max_bytes;
++    AVDictionary *options = NULL;
++    av_dict_set(&options, "protocol_whitelist", "", 0);
++    int ret = avformat_open_input(&format, NULL, NULL, &options);
++    av_dict_free(&options);
++    AVCodecContext *decoder = NULL;
++    AVPacket *packet = av_packet_alloc();
++    AVFrame *frame = av_frame_alloc();
++    if (ret < 0 || !packet || !frame) {
++        out->status = interrupted(&reader) ? STEREO_CONTENT_INCOMPLETE : STEREO_CONTENT_UNSUPPORTED;
++        goto close;
++    }
++    int video = -1;
++    unsigned video_track = 0;
++    /* Each track starts with the input state, never another track's marks.
++     * No reader calls occur in this loop, so byte accounting stays intact. */
++    const StereoContentResult input = *out;
++    for (unsigned i = 0; i < format->nb_streams; ++i) {
++        AVStream *stream = format->streams[i];
++        if (stream->codecpar->codec_type != AVMEDIA_TYPE_VIDEO || stream->disposition & AV_DISPOSITION_ATTACHED_PIC)
++            continue;
++        ++video_track;
++        if (request->video_track_plus_one && video_track != request->video_track_plus_one)
++            continue;
++        StereoContentResult candidate = input;
++        container_data(&candidate, stream->codecpar);
++        if (strstr(format->iformat->name, "matroska"))
++            matroska_data(&candidate, stream);
++        if (video < 0 || candidate.stereo == 1 || candidate.projection >= 0) {
++            *out = candidate;
++            out->stream_index = video = i;
++        }
++    }
++    if (video < 0)
++        goto close;
++    const AVCodecParameters *par = format->streams[video]->codecpar;
++    out->width = par->width;
++    out->height = par->height;
++    AVRational sar = format->streams[video]->sample_aspect_ratio;
++    if (sar.num <= 0 || sar.den <= 0)
++        sar = par->sample_aspect_ratio;
++    out->sar_num = sar.num > 0 && sar.den > 0 ? sar.num : 1;
++    out->sar_den = sar.num > 0 && sar.den > 0 ? sar.den : 1;
++    const AVCodec *codec = avcodec_find_decoder(par->codec_id);
++    decoder = codec ? avcodec_alloc_context3(codec) : NULL;
++    if (!decoder || avcodec_parameters_to_context(decoder, par) < 0)
++        goto close;
++    decoder->thread_count = 1;
++    decoder->max_pixels = 32 * 1024 * 1024;
++    stereo_av_decoder_views(decoder);
++    if (avcodec_open2(decoder, codec, NULL) < 0)
++        goto close;
++    unsigned frames = 0;
++    while (!interrupted(&reader) && out->packets < request->max_packets && frames < 8 && av_read_frame(format, packet) >= 0) {
++        ++out->packets;
++        if (packet->stream_index == video && avcodec_send_packet(decoder, packet) >= 0) {
++            while (!interrupted(&reader) && avcodec_receive_frame(decoder, frame) >= 0) {
++                frame_data(out, frame);
++                ++frames;
++                av_frame_unref(frame);
++            }
++        }
++        av_packet_unref(packet);
++    }
++    if (!interrupted(&reader) && avcodec_send_packet(decoder, NULL) >= 0)
++        while (!interrupted(&reader) && avcodec_receive_frame(decoder, frame) >= 0) {
++            frame_data(out, frame);
++            av_frame_unref(frame);
++        }
++    if (out->stereo == 1 && stereo_av_decoder_multiview(decoder)) {
++        out->stereo = 1;
++        out->layout = 3;
++        out->evidence |= STEREO_CONTENT_FRAME;
++    }
++close:
++    avcodec_free_context(&decoder);
++    av_frame_free(&frame);
++    av_packet_free(&packet);
++    avformat_close_input(&format);
++    av_freep(&io->buffer);
++    avio_context_free(&io);
++done:
++    if (interrupted(&reader))
++        out->status = STEREO_CONTENT_INCOMPLETE;
++    if (fstat(request->fd, &final) || initial.st_dev != final.st_dev || initial.st_ino != final.st_ino
++        || initial.st_size != final.st_size || initial.st_mtim.tv_sec != final.st_mtim.tv_sec
++        || initial.st_mtim.tv_nsec != final.st_mtim.tv_nsec || initial.st_ctim.tv_sec != final.st_ctim.tv_sec
++        || initial.st_ctim.tv_nsec != final.st_ctim.tv_nsec)
++        out->status = STEREO_CONTENT_INVALID;
++    out->elapsed_us = monotonic_us() - started;
++    refine_type(out);
++    return 0;
++}
+diff --git a/src/av/stereo-content.h b/src/av/stereo-content.h
+new file mode 100644
+index 0000000..66e1340
+--- /dev/null
++++ b/src/av/stereo-content.h
+@@ -0,0 +1,51 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/* SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com> */
++#ifndef STEREO_CONTENT_H
++#define STEREO_CONTENT_H
++#include <stddef.h>
++#include <stdint.h>
++#ifdef __cplusplus
++extern "C" {
++#endif
++#define STEREO_CONTENT_ABI 1
++/* An absent declaration differs from explicit monoscopic content. */
++enum StereoContentStatus { STEREO_CONTENT_OK, STEREO_CONTENT_INCOMPLETE, STEREO_CONTENT_INVALID, STEREO_CONTENT_UNSUPPORTED };
++enum StereoContentEvidence { STEREO_CONTENT_CONTAINER = 1, STEREO_CONTENT_FRAME = 2, STEREO_CONTENT_PICTURE = 4 };
++typedef struct StereoContentRequest {
++    size_t size;
++    unsigned abi;
++    int fd;                      /* Borrowed read-only regular-file FD; offset is preserved. */
++    int64_t deadline_us;          /* CLOCK_MONOTONIC absolute time, including client startup. */
++    uint64_t max_bytes;
++    unsigned max_packets;
++    char base_mime[128];
++    unsigned video_track_plus_one; /* Zero selects content; otherwise the one-based video track. */
++} StereoContentRequest;
++typedef struct StereoContentResult {
++    size_t size;
++    unsigned abi;
++    int status;
++    int stereo;                  /* -1 absent, 0 explicitly mono, 1 stereo. */
++    int layout;                  /* stereo_policy_layout, without shape/name inference. */
++    int order;                   /* 0 left first, 1 right first. */
++    int anaglyph;                 /* stereo_policy_anaglyph */
++    int projection;              /* -1 absent, otherwise AVSphericalProjection. */
++    int coverage;                /* 0 unknown/partial, 180 or 360. */
++    uint32_t bounds[4];           /* left, top, right, bottom, unsigned 0.32. */
++    unsigned evidence;
++    unsigned conflicts;
++    int width, height;           /* Stored samples, never display dimensions. */
++    int sar_num, sar_den;        /* Width/height of a sample; 1/1 when absent. */
++    int stream_index;
++    uint64_t bytes;
++    unsigned packets;
++    int64_t elapsed_us;
++    char base_mime[128];
++    char refined_mime[128];
++} StereoContentResult;
++/* No path/URL is opened and no media bytes or attributes are written. */
++__attribute__((visibility("default"))) int stereo_content_inspect(const StereoContentRequest *request, StereoContentResult *result);
++#ifdef __cplusplus
++}
++#endif
++#endif
+diff --git a/src/content/client.c b/src/content/client.c
+new file mode 100644
+index 0000000..dc7be37
+--- /dev/null
++++ b/src/content/client.c
+@@ -0,0 +1,49 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/* SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com> */
++#define _POSIX_C_SOURCE 200809L
++#include "client.h"
++#include <gio/gio.h>
++#include <gio/gunixfdlist.h>
++#include <sys/stat.h>
++#include <string.h>
++
++int stereo_content_refine_fd(int fd, const char *base, unsigned timeout_ms, char *mime, unsigned capacity)
++{
++    struct stat before, after;
++    if (!base || !mime || !capacity || fstat(fd, &before) || !S_ISREG(before.st_mode))
++        return 0;
++    g_strlcpy(mime, base, capacity);
++    gint64 deadline = g_get_monotonic_time() + MIN(timeout_ms, 400) * 1000;
++    GError *error = NULL;
++    GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &error);
++    if (!bus) {
++        g_clear_error(&error);
++        return 0;
++    }
++    GUnixFDList *fds = g_unix_fd_list_new();
++    int index = g_unix_fd_list_append(fds, fd, &error);
++    GVariant *reply = NULL;
++    gint64 remaining = deadline - g_get_monotonic_time();
++    if (index >= 0 && (remaining > 0 || timeout_ms == 0))
++        reply = g_dbus_connection_call_with_unix_fd_list_sync(bus, "org.stereo.Content1", "/org/stereo/Content1",
++            "org.stereo.Content1", "Refine", g_variant_new("(hsxb)", index, base, deadline, timeout_ms == 0),
++            G_VARIANT_TYPE("(s)"), timeout_ms ? G_DBUS_CALL_FLAGS_NONE : G_DBUS_CALL_FLAGS_NO_AUTO_START,
++            timeout_ms ? MAX(1, remaining / 1000) : 1, fds, NULL, NULL, &error);
++    int changed = 0;
++    if (reply && !fstat(fd, &after) && before.st_dev == after.st_dev && before.st_ino == after.st_ino
++        && before.st_size == after.st_size && before.st_mtim.tv_sec == after.st_mtim.tv_sec
++        && before.st_mtim.tv_nsec == after.st_mtim.tv_nsec && before.st_ctim.tv_sec == after.st_ctim.tv_sec
++        && before.st_ctim.tv_nsec == after.st_ctim.tv_nsec) {
++        const char *refined;
++        g_variant_get(reply, "(&s)", &refined);
++        if (strlen(refined) < capacity && (!timeout_ms || g_get_monotonic_time() < deadline)) {
++            g_strlcpy(mime, refined, capacity);
++            changed = strcmp(mime, base) != 0;
++        }
++    }
++    g_clear_pointer(&reply, g_variant_unref);
++    g_clear_error(&error);
++    g_object_unref(fds);
++    g_object_unref(bus);
++    return changed;
++}
+diff --git a/src/content/client.h b/src/content/client.h
+new file mode 100644
+index 0000000..6103618
+--- /dev/null
++++ b/src/content/client.h
+@@ -0,0 +1,16 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++#ifndef STEREO_CONTENT_CLIENT_H
++#define STEREO_CONTENT_CLIENT_H
++#ifdef __cplusplus
++extern "C" {
++#endif
++/* Returns 1 only for a validated refinement, 0 for unchanged/unavailable.
++ * The borrowed FD must be regular and read-only. No path is opened by the service.
++ * timeout_ms 0 queries only the shared cache; positive values are capped at 400.
++ * Does not load a decoder or Qt. The output is NUL terminated if capacity > 0. */
++__attribute__((visibility("default"))) int stereo_content_refine_fd(int fd, const char *base,
++    unsigned timeout_ms, char *mime, unsigned capacity);
++#ifdef __cplusplus
++}
++#endif
++#endif
+diff --git a/src/content/org.stereo.Content1.service.in b/src/content/org.stereo.Content1.service.in
+new file mode 100644
+index 0000000..8420277
+--- /dev/null
++++ b/src/content/org.stereo.Content1.service.in
+@@ -0,0 +1,3 @@
++[D-BUS Service]
++Name=org.stereo.Content1
++Exec=@KDE_INSTALL_FULL_LIBEXECDIR@/stereo-contentd
+diff --git a/src/content/probe.c b/src/content/probe.c
+new file mode 100644
+index 0000000..13a1a66
+--- /dev/null
++++ b/src/content/probe.c
+@@ -0,0 +1,38 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/* SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com> */
++#define _POSIX_C_SOURCE 200809L
++#include "stereo-content.h"
++#include <fcntl.h>
++#include <stdio.h>
++#include <string.h>
++#include <time.h>
++#include <unistd.h>
++
++int main(int argc, char **argv)
++{
++    if (argc != 5 || strcmp(argv[1], "--base") || strcmp(argv[3], "--json")) {
++        fprintf(stderr, "Usage: stereo-content-probe --base MIME --json FILE\n");
++        return 2;
++    }
++    struct timespec now;
++    clock_gettime(CLOCK_MONOTONIC, &now);
++    StereoContentRequest request = {.size = sizeof(request), .abi = STEREO_CONTENT_ABI,
++        .fd = open(argv[4], O_RDONLY | O_CLOEXEC | O_NONBLOCK),
++        .deadline_us = (int64_t)now.tv_sec * 1000000 + now.tv_nsec / 1000 + 400000,
++        .max_bytes = 4 * 1024 * 1024, .max_packets = 128};
++    snprintf(request.base_mime, sizeof(request.base_mime), "%s", argv[2]);
++    StereoContentResult result = {.size = sizeof(result)};
++    int error = stereo_content_inspect(&request, &result);
++    close(request.fd);
++    if (error < 0) {
++        fprintf(stderr, "Inspection failed: %d\n", error);
++        return 1;
++    }
++    printf("{\"width\":%d,\"height\":%d,\"sar_num\":%d,\"sar_den\":%d,\"stereo\":%d,\"layout\":%d,\"order\":%d,\"anaglyph\":%d,\"projection\":%d,\"coverage\":%d,"
++           "\"status\":%d,\"evidence\":%u,\"conflicts\":%u,\"stream\":%d,\"bytes\":%llu,\"packets\":%u,\"elapsed_us\":%lld}\n",
++           result.width, result.height, result.sar_num, result.sar_den,
++           result.stereo, result.layout, result.order, result.anaglyph, result.projection, result.coverage,
++           result.status, result.evidence, result.conflicts, result.stream_index,
++           (unsigned long long)result.bytes, result.packets, (long long)result.elapsed_us);
++    return 0;
++}
+diff --git a/src/content/service.c b/src/content/service.c
+new file mode 100644
+index 0000000..4c6ed42
+--- /dev/null
++++ b/src/content/service.c
+@@ -0,0 +1,171 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/* SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com> */
++#define _POSIX_C_SOURCE 200809L
++#include "stereo-content.h"
++#include <gio/gio.h>
++#include <gio/gunixfdlist.h>
++#include <sys/stat.h>
++#include <unistd.h>
++#ifndef STEREO_CONTENT_WORKER
++#define STEREO_CONTENT_WORKER "/usr/libexec/stereo-content-worker"
++#endif
++
++static const char introspection[] =
++    "<node><interface name='org.stereo.Content1'><method name='Refine'>"
++    "<arg type='h' direction='in'/><arg type='s' direction='in'/><arg type='x' direction='in'/>"
++    "<arg type='b' direction='in'/><arg type='s' direction='out'/></method></interface></node>";
++static GHashTable *cache;
++static GQueue order = G_QUEUE_INIT;
++static unsigned running;
++typedef struct Pending {
++    GDBusMethodInvocation *invocation;
++    GSubprocess *process;
++    char *key, *base;
++    struct stat identity;
++    int fd;
++    gint64 deadline;
++    guint timeout;
++} Pending;
++
++static char *identity_key(int fd, const char *base, struct stat *st)
++{
++    if (fstat(fd, st) || !S_ISREG(st->st_mode))
++        return NULL;
++    return g_strdup_printf("1:%llu:%llu:%llu:%lld:%ld:%lld:%ld:%s",
++        (unsigned long long)st->st_dev, (unsigned long long)st->st_ino, (unsigned long long)st->st_size,
++        (long long)st->st_mtim.tv_sec, st->st_mtim.tv_nsec,
++        (long long)st->st_ctim.tv_sec, st->st_ctim.tv_nsec, base);
++}
++
++static gboolean expire(gpointer data)
++{
++    Pending *p = data;
++    p->timeout = 0;
++    g_subprocess_force_exit(p->process);
++    return G_SOURCE_REMOVE;
++}
++
++static void completed(GObject *source, GAsyncResult *async, gpointer data)
++{
++    Pending *p = data;
++    GBytes *bytes = NULL;
++    GError *error = NULL;
++    const char *mime = p->base;
++    StereoContentResult result;
++    gboolean ok = g_subprocess_communicate_finish(G_SUBPROCESS(source), async, &bytes, NULL, &error);
++    if (p->timeout)
++        g_source_remove(p->timeout);
++    if (ok && g_subprocess_get_successful(p->process) && g_get_monotonic_time() < p->deadline) {
++        gsize size;
++        const void *buffer = g_bytes_get_data(bytes, &size);
++        if (size == sizeof(result)) {
++            memcpy(&result, buffer, sizeof(result));
++            struct stat current;
++            char *key = identity_key(p->fd, p->base, &current);
++            if (key && !strcmp(key, p->key) && result.abi == STEREO_CONTENT_ABI && result.size == sizeof(result)
++                && result.status == STEREO_CONTENT_OK && memchr(result.refined_mime, 0, sizeof(result.refined_mime))) {
++                mime = result.refined_mime;
++                if (!g_hash_table_contains(cache, key)) {
++                    while (g_queue_get_length(&order) >= 1024) {
++                        char *old = g_queue_pop_head(&order);
++                        g_hash_table_remove(cache, old);
++                        g_free(old);
++                    }
++                    g_queue_push_tail(&order, g_strdup(key));
++                }
++                g_hash_table_replace(cache, g_strdup(key), g_strdup(mime));
++            }
++            g_free(key);
++        }
++    }
++    g_dbus_method_invocation_return_value(p->invocation, g_variant_new("(s)", mime));
++    g_clear_pointer(&bytes, g_bytes_unref);
++    g_clear_error(&error);
++    g_object_unref(p->invocation);
++    g_object_unref(p->process);
++    close(p->fd);
++    g_free(p->key);
++    g_free(p->base);
++    g_free(p);
++    --running;
++}
++
++static void method_call(GDBusConnection *connection, const gchar *sender, const gchar *object,
++    const gchar *interface, const gchar *method, GVariant *parameters,
++    GDBusMethodInvocation *invocation, gpointer data)
++{
++    (void)connection; (void)sender; (void)object; (void)interface; (void)method; (void)data;
++    gint handle;
++    const char *base;
++    gint64 deadline;
++    gboolean cached_only;
++    g_variant_get(parameters, "(h&sxb)", &handle, &base, &deadline, &cached_only);
++    GUnixFDList *fds = g_dbus_message_get_unix_fd_list(g_dbus_method_invocation_get_message(invocation));
++    int fd = fds ? g_unix_fd_list_get(fds, handle, NULL) : -1;
++    struct stat st;
++    char *key = fd < 0 ? NULL : identity_key(fd, base, &st);
++    const char *cached = key ? g_hash_table_lookup(cache, key) : NULL;
++    gint64 now = g_get_monotonic_time();
++    deadline = MIN(deadline, now + 400000);
++    if (!key || cached || cached_only || running >= 2 || deadline <= now || strlen(base) >= 128) {
++        g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", cached ? cached : base));
++        g_free(key);
++        if (fd >= 0)
++            close(fd);
++        return;
++    }
++    GSubprocessLauncher *launcher = g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_STDOUT_PIPE | G_SUBPROCESS_FLAGS_STDERR_SILENCE);
++    g_subprocess_launcher_take_fd(launcher, dup(fd), 3);
++    char time[32];
++    g_snprintf(time, sizeof(time), "%lld", (long long)deadline);
++    GError *error = NULL;
++    GSubprocess *process = g_subprocess_launcher_spawn(launcher, &error, STEREO_CONTENT_WORKER, base, time, NULL);
++    g_object_unref(launcher);
++    if (!process) {
++        g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", base));
++        g_clear_error(&error);
++        g_free(key);
++        close(fd);
++        return;
++    }
++    Pending *p = g_new0(Pending, 1);
++    p->invocation = g_object_ref(invocation);
++    p->process = process;
++    p->key = key;
++    p->base = g_strdup(base);
++    p->identity = st;
++    p->fd = fd;
++    p->deadline = deadline;
++    ++running;
++    p->timeout = g_timeout_add(MAX(1, (deadline - now) / 1000), expire, p);
++    g_subprocess_communicate_async(process, NULL, NULL, completed, p);
++}
++
++static void acquired(GDBusConnection *connection, const gchar *name, gpointer data)
++{
++    (void)name; (void)data;
++    GDBusNodeInfo *info = g_dbus_node_info_new_for_xml(introspection, NULL);
++    static const GDBusInterfaceVTable vtable = {.method_call = method_call};
++    g_dbus_connection_register_object(connection, "/org/stereo/Content1", info->interfaces[0], &vtable, NULL, NULL, NULL);
++    g_dbus_node_info_unref(info);
++}
++
++static void lost(GDBusConnection *connection, const gchar *name, gpointer data)
++{
++    (void)connection; (void)name;
++    g_main_loop_quit(data);
++}
++
++int main(void)
++{
++    cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
++    GMainLoop *loop = g_main_loop_new(NULL, FALSE);
++    guint owner = g_bus_own_name(G_BUS_TYPE_SESSION, "org.stereo.Content1", G_BUS_NAME_OWNER_FLAGS_DO_NOT_QUEUE,
++        acquired, NULL, lost, loop, NULL);
++    g_main_loop_run(loop);
++    g_bus_unown_name(owner);
++    g_main_loop_unref(loop);
++    g_hash_table_unref(cache);
++    g_queue_clear_full(&order, g_free);
++    return 0;
++}
+diff --git a/src/content/worker.c b/src/content/worker.c
+new file mode 100644
+index 0000000..4e6d04e
+--- /dev/null
++++ b/src/content/worker.c
+@@ -0,0 +1,28 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++#define _POSIX_C_SOURCE 200809L
++#include "stereo-content.h"
++#include <stdlib.h>
++#include <stdio.h>
++#include <string.h>
++#include <sys/resource.h>
++#include <sys/prctl.h>
++#include <signal.h>
++#include <unistd.h>
++int main(int argc, char **argv)
++{
++    if (argc != 3 || strlen(argv[1]) >= 128)
++        return 2;
++    struct rlimit memory = {1024UL * 1024 * 1024, 1024UL * 1024 * 1024};
++    struct rlimit cpu = {1, 1};
++    setrlimit(RLIMIT_AS, &memory);
++    setrlimit(RLIMIT_CPU, &cpu);
++    prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
++    prctl(PR_SET_PDEATHSIG, SIGKILL);
++    StereoContentRequest request = {.size = sizeof(request), .abi = STEREO_CONTENT_ABI,
++        .fd = 3, .deadline_us = strtoll(argv[2], NULL, 10), .max_bytes = 4 * 1024 * 1024, .max_packets = 128};
++    strcpy(request.base_mime, argv[1]);
++    StereoContentResult result = {.size = sizeof(result)};
++    if (stereo_content_inspect(&request, &result) < 0)
++        return 1;
++    return fwrite(&result, sizeof(result), 1, stdout) == 1 ? 0 : 1;
++}
+diff --git a/tools/content-mime.py b/tools/content-mime.py
+new file mode 100644
+index 0000000..0d68052
+--- /dev/null
++++ b/tools/content-mime.py
+@@ -0,0 +1,58 @@
++#!/usr/bin/env python3
++# SPDX-License-Identifier: LGPL-2.1-or-later
++# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++"""Generate the shared MIME catalogue and detector mapping from the same data."""
++import json
++from pathlib import Path
++import sys
++import xml.etree.ElementTree as ET
++
++NS = 'http://www.freedesktop.org/standards/shared-mime-info'
++LANG = '{http://www.w3.org/XML/1998/namespace}lang'
++ET.register_namespace('', NS)
++variants = {
++    '3d': ('stereo', ['']),
++    'spherical': ('spherical', ['']),
++    '360': ('spherical', ['spherical']),
++    '180': ('spherical', ['spherical']),
++    '3d-360': ('stereo_spherical', ['3d','360']),
++    '3d-180': ('stereo_spherical', ['3d','180']),
++    '3d-spherical': ('stereo_spherical', ['3d','spherical']),
++}
++
++def generate(catalogue, output):
++    output.mkdir(parents=True, exist_ok=True)
++    root = ET.Element(f'{{{NS}}}mime-info')
++    mapping = []
++    lists = {'video': [], 'picture': [], 'stereo_video': [], 'stereo_picture': []}
++    for family in catalogue['families']:
++        if not family['enabled']:
++            continue
++        stem, base = family['stem'], family['base']
++        for alias in [base] + family.get('aliases', []):
++            mapping.append(f'    {{"{alias}", "{stem}"}},')
++        for suffix, (label, parents) in variants.items():
++            if family['kind'] == 'picture' and suffix != '3d':
++                continue
++            mime = stem + '-' + suffix
++            node = ET.SubElement(root, f'{{{NS}}}mime-type', {'type': mime})
++            for lang, templates in catalogue['comments'][family['kind']].items():
++                text = templates[label].format(format=family['label'])
++                if suffix.endswith(('180','360')):
++                    text += ' (' + suffix[-3:] + '°)'
++                ET.SubElement(node, f'{{{NS}}}comment', {} if lang == 'en' else {LANG:lang}).text = text
++            direct = [base if parent == '' else stem + '-' + parent for parent in parents]
++            if mime == 'video/x-matroska-3d':
++                direct.insert(0, 'application/x-matroska')
++            for parent in direct:
++                ET.SubElement(node, f'{{{NS}}}sub-class-of', {'type':parent})
++            lists[family['kind']].append(mime)
++            if suffix.startswith('3d'):
++                lists['stereo_' + family['kind']].append(mime)
++    ET.indent(root)
++    ET.ElementTree(root).write(output/'stereo-content.xml', encoding='utf-8', xml_declaration=True)
++    (output/'content-mime-map.inc').write_text('/* Generated from data/content/catalogue.json. */\n' + '\n'.join(mapping) + '\n')
++    (output/'mime-lists.json').write_text(json.dumps(lists, indent=2)+'\n')
++
++if __name__ == '__main__':
++    generate(json.loads(Path(sys.argv[1]).read_text()), Path(sys.argv[2]))
