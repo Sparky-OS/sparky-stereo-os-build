@@ -1,13 +1,7 @@
-Description: list the stereo picture types in Showfoto's desktop entry
- MPO, JPS and PNS are sub-classes of JPEG and PNG (kimageformats-stereo.xml
- in kf6-kimageformats). Showfoto already opens them (stereo-layer.patch adds
- jps, mpo and pns to its file filters and shows the pair in 3D). The edition
- makes Gwenview their default (/etc/xdg/kde-mimeapps.list in
- sparky-stereo-look); naming them in the desktop entry makes Open With and the
- list of applications offer Showfoto for these types directly instead of by
- inheritance only.
- digiKam's own entry (org.kde.digikam.desktop) names no MIME type and its
- command line takes no file, so it is not listed there.
+Description: List stereo picture types in digiKam and Showfoto desktop entries
+ The edition keeps Gwenview as the default. List MPO, JPS and PNS directly so
+ both applications are offered without relying on JPEG or PNG inheritance.
+ digiKam accepts local files through its native preview path.
 Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Forwarded: not-needed
 
@@ -22,3 +16,15 @@ Forwarded: not-needed
  Terminal=false
  Categories=Qt;Graphics;Photography;
  X-DocPath=showfoto/index.html
+--- a/core/app/main/org.kde.digikam.desktop
++++ b/core/app/main/org.kde.digikam.desktop
+@@ -1,7 +1,8 @@
+ [Desktop Entry]
+ Type=Application
++MimeType=image/x-jps;image/x-mpo;image/x-pns;
+ Categories=Qt;Graphics;Photography;
+-Exec=digikam -qwindowtitle %c
++Exec=digikam -qwindowtitle %c %F
+ Icon=digikam
+ X-DocPath=digikam/index.html
+ Name=digiKam

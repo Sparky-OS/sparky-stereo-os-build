@@ -1,9 +1,10 @@
-# Sparky Stereo OS, ORDER 250: digikam +stereo3d3, the published +stereo3d2+lc1 source with Showfoto's MimeType patch added as its own patch, built through Lean Code. Runs as root inside a container of the published set (Debian forky, deb-multimedia and the edition's repository pinned at 1001); mounts: /in the +stereo3d2+lc1 source package, /toolkit sparky-os, /patch the patch, /prev the +stereo3d2+lc1 .deb files for the link and start gate, /out. Created by Daniel Ramos (Capitain Jack) 2026/10/25
+# Sparky Stereo OS, ORDER 250: digikam +stereo3d3, the published +stereo3d2+lc1 source with native file opening and both MimeType lists added as its own patch, built through Lean Code. Runs as root inside a container of the published set (Debian forky, deb-multimedia and the edition's repository pinned at 1001); mounts: /in the +stereo3d2+lc1 source package, /toolkit sparky-os, /patch the patch, /prev the +stereo3d2+lc1 .deb files for the link and start gate, /out. Created by Daniel Ramos (Capitain Jack) 2026/10/25
 # Copyright 2026 under the GNU GPL3 License
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=4 DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 P=stereo-photo-mimetypes.patch
 apt-get -y update >/dev/null 2>&1
+apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold dist-upgrade > /out/upgrade.log 2>&1
 apt-get -y --no-install-recommends install devscripts quilt xz-utils >/dev/null 2>&1
 mkdir -p /out/lc && cd /out/lc && cp /in/* .
 dpkg-source -x digikam_9.1.0-1+stereo3d2+lc1.dsc src >/dev/null 2>&1
@@ -21,10 +22,12 @@ c=open('debian/control').read(); lc='Build-Depends: gcc, node-acorn, nodejs, per
 assert c.count(lc)==1; open('debian/control','w').write(c.replace(lc,'Build-Depends: debhelper-compat',1))
 PY
 rm -rf debian/sparky-lean-toolkit
+cp /patch/digikam-open-files.patch debian/patches/
+echo digikam-open-files.patch >> debian/patches/series
 cp /patch/digikam-stereo-photo-mimetypes.patch debian/patches/$P
 echo $P >> debian/patches/series
 QUILT_PATCHES=debian/patches quilt push -a -q
-dch --newversion 4:9.1.0-1+stereo3d3 --distribution unstable 'List image/x-jps, image/x-mpo and image/x-pns in the MimeType of Showfoto'"'"'s desktop entry, so Open With and the list of applications offer Showfoto for the stereo picture types directly (the sparky-stereo-look 20261024.1 default stays Gwenview). digiKam'"'"'s entry names no MIME type and its command line takes no file, so it is left as it is.'
+dch --newversion 4:9.1.0-1+stereo3d3 --distribution unstable 'Open local files in the native digiKam preview without importing or changing them. List image/x-jps, image/x-mpo and image/x-pns directly in both digiKam and Showfoto desktop entries; retain Gwenview as the edition default.'
 head -14 debian/changelog
 PYTHONPATH=/toolkit python3 -m lean.debian_prepare . 4:9.1.0-1+stereo3d3+lc1 --toolkit /toolkit
 apt-get -y --no-install-recommends build-dep /out/lc/src > /out/build-dep.log 2>&1 || { tail -20 /out/build-dep.log; exit 1; }
@@ -34,6 +37,8 @@ runuser -u builder -- bash -c 'cd /out/lc/src && dpkg-buildpackage -S -us -uc -d
 cd /out/lc && dpkg-source -x digikam_9.1.0-1+stereo3d3+lc1.dsc src2 >/dev/null 2>&1; chown -R builder /out
 cd src2
 runuser -u builder -- env SPARKY_LC_PREVIOUS_DIR=/prev dpkg-buildpackage -us -uc -b -j4 > /out/build.log 2>&1 || { echo BUILD-FAILED; tail -30 /out/build.log; exit 1; }
-cd /out/lc && PYTHONPATH=/toolkit python3 -m lean.release check-debs /out/lc/*+lc1_*.deb
+cd /out/lc
+env -u DISPLAY -u WAYLAND_DISPLAY -u DBUS_SESSION_BUS_ADDRESS PYTHONPATH=/toolkit python3 -m lean.release check-link --previous-dir /prev /out/lc/*+lc1_*.deb > /out/check-link.log 2>&1
+PYTHONPATH=/toolkit python3 -m lean.release check-debs /out/lc/*+lc1_*.deb
 chown -R 1000:1000 /out
 ls /out/lc
