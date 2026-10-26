@@ -1,0 +1,75 @@
+Description: Use hfsprogs for classic HFS and recognize supported HFS+ operations
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: vendor
+Forwarded: not-needed
+Last-Update: 2026-10-26
+Assisted-by: gpt-6.1-sol via Codex
+
+--- a/src/fs/hfs.cpp
++++ b/src/fs/hfs.cpp
+@@ -34,8 +34,8 @@
+ void hfs::init()
+ {
+     m_GetLabel = cmdSupportCore;
+-    m_Create = findExternal(QStringLiteral("hformat")) ? cmdSupportFileSystem : cmdSupportNone;
+-    m_Check = findExternal(QStringLiteral("hfsck")) ? cmdSupportFileSystem : cmdSupportNone;
++    m_Create = findExternal(QStringLiteral("mkfs.hfs")) ? cmdSupportFileSystem : cmdSupportNone;
++    m_Check = findExternal(QStringLiteral("fsck.hfs")) ? cmdSupportFileSystem : cmdSupportNone;
+     m_Move = m_Copy = (m_Check != cmdSupportNone) ? cmdSupportCore : cmdSupportNone;
+     m_Backup = cmdSupportCore;
+ }
+@@ -59,7 +59,7 @@
+ 
+ FileSystem::SupportTool hfs::supportToolName() const
+ {
+-    return SupportTool(QStringLiteral("hfsutils"), QUrl(QStringLiteral("https://www.mars.org/home/rob/proj/hfs/")));
++    return SupportTool(QStringLiteral("hfsprogs"), QUrl(QStringLiteral("https://packages.debian.org/hfsprogs")));
+ }
+ 
+ 
+@@ -75,13 +75,13 @@
+ 
+ bool hfs::check(Report& report, const QString& deviceNode) const
+ {
+-    ExternalCommand cmd(report, QStringLiteral("hfsck"), { QStringLiteral("-v"), deviceNode });
++    ExternalCommand cmd(report, QStringLiteral("fsck.hfs"), { QStringLiteral("-n"), deviceNode });
+     return cmd.run(-1) && cmd.exitCode() == 0;
+ }
+ 
+ bool hfs::create(Report& report, const QString& deviceNode)
+ {
+-    ExternalCommand cmd(report, QStringLiteral("hformat"), { deviceNode });
++    ExternalCommand cmd(report, QStringLiteral("mkfs.hfs"), { QStringLiteral("-h"), deviceNode });
+     return cmd.run(-1) && cmd.exitCode() == 0;
+ }
+ }
+--- a/src/fs/hfsplus.cpp
++++ b/src/fs/hfsplus.cpp
+@@ -51,7 +51,6 @@
+         m_Check != cmdSupportNone &&
+ //          m_UpdateUUID != cmdSupportNone &&
+ //          m_Grow != cmdSupportNone &&
+-        m_Shrink != cmdSupportNone &&
+         m_Copy != cmdSupportNone &&
+         m_Move != cmdSupportNone &&
+         m_Backup != cmdSupportNone;
+@@ -60,7 +59,7 @@
+ 
+ FileSystem::SupportTool hfsplus::supportToolName() const
+ {
+-    return SupportTool(QStringLiteral("diskdev_cmds"), QUrl(QStringLiteral("https://opensource.apple.com/tarballs/diskdev_cmds/")));
++    return SupportTool(QStringLiteral("hfsprogs"), QUrl(QStringLiteral("https://packages.debian.org/hfsprogs")));
+ }
+ 
+ qint64 hfsplus::maxCapacity() const
+--- a/src/util/externalcommand_whitelist.h
++++ b/src/util/externalcommand_whitelist.h
+@@ -59,6 +59,8 @@
+ QStringLiteral("fatresize"),
+ QStringLiteral("hfsck"),
+ QStringLiteral("hformat"),
++QStringLiteral("fsck.hfs"),
++QStringLiteral("mkfs.hfs"),
+ QStringLiteral("fsck.hfsplus"),
+ QStringLiteral("mkfs.hfsplus"),
+ QStringLiteral("jfs_debugfs"),
