@@ -14,7 +14,6 @@ cd src
 python3 - <<'PY'
 s=open('debian/changelog').read(); old='digikam (4:9.1.0-1+stereo3d2+lc1) UNRELEASED;'
 assert s.startswith(old); s=s.replace(old,'digikam (4:9.1.0-1+stereo3d2+lc1) unstable;',1)
-s=s.replace("  * Apply verified native Lean Code before compilation and qualified lc1\n    payload assembly; retain exact authored source and HR companions.\n","",1)
 open('debian/changelog','w').write(s)
 r=open('debian/rules').read(); m='# Distribution-only processing; authored source remains in the source archive.'
 assert r.count(m)==1; open('debian/rules','w').write(r.split(m)[0].rstrip('\n')+'\n')
@@ -34,7 +33,7 @@ chown -R builder /out
 runuser -u builder -- bash -c 'cd /out/lc/src && dpkg-buildpackage -S -us -uc -d > /out/source.log 2>&1'
 cd /out/lc && dpkg-source -x digikam_9.1.0-1+stereo3d3+lc1.dsc src2 >/dev/null 2>&1; chown -R builder /out
 cd src2
-runuser -u builder -- env SPARKY_LC_PREVIOUS_DIR=/prev dpkg-buildpackage -us -uc -b -j4 > /out/build.log 2>&1 || { echo BUILD-FAILED; tail -30 /out/build.log; }
+runuser -u builder -- env SPARKY_LC_PREVIOUS_DIR=/prev dpkg-buildpackage -us -uc -b -j4 > /out/build.log 2>&1 || { echo BUILD-FAILED; tail -30 /out/build.log; exit 1; }
 cd /out/lc && PYTHONPATH=/toolkit python3 -m lean.release check-debs /out/lc/*+lc1_*.deb
 chown -R 1000:1000 /out
 ls /out/lc
