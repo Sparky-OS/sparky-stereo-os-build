@@ -5,6 +5,6 @@ RUN sed -i 's/^Components: main$/Components: main contrib non-free non-free-firm
  && DEBIAN_FRONTEND=noninteractive apt-get -y install --no-install-recommends \
     mmdebstrap debootstrap arch-test squashfs-tools xorriso isolinux syslinux-common syslinux-utils mtools dosfstools \
     shim-signed grub-efi-amd64-signed grub-efi-amd64-bin grub-efi-ia32-bin grub-pc-bin grub-common \
-    sbsigntool pesign rsync dpkg-dev python3 python3-pefile curl ca-certificates gnupg zstd xz-utils \
+    sbsigntool pesign rsync dpkg-dev python3 python3-apt python3-pefile curl ca-certificates gnupg zstd xz-utils \
     gdisk fdisk e2fsprogs ntfs-3g file cpio kmod util-linux procps less \
  && rm -rf /var/lib/apt/lists/*
