@@ -6,6 +6,10 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 TOOLKIT=$(cd "$HERE/../.." && pwd)
+: "${SPARKY_LC_ARCHIVE_CONFIG:?Set an explicit public signed archive configuration}"
+: "${SPARKY_LC_SCRATCH:?Set private archive qualification scratch}"
+: "${LEAN_TOOLKIT:?Set the accepted archive-backed Lean Code toolkit}"
+[ -f "$LEAN_TOOLKIT/lean/archive.py" ] || { echo 'Archive-backed Lean Code toolkit required' >&2; exit 1; }
 : "${SOURCE_DSC:?Set SOURCE_DSC to Debian kpmcore_26.04.0-1.dsc}"
 : "${BUILD_ROOT:?Set BUILD_ROOT to a new disposable directory}"
 : "${OUT:?Set OUT to a new candidate directory}"
@@ -38,10 +42,10 @@ dch --newversion "$VERSION" --distribution mashtabba \
 dpkg-source -b .
 cp "$BUILD_ROOT"/*.dsc "$BUILD_ROOT"/*.debian.tar.* "$BUILD_ROOT"/*.orig.tar.* "$OUT/authored/"
 dpkg-source -x "$BUILD_ROOT/kpmcore_${VERSION}.dsc" "$BUILD_ROOT/lean-source"
-PYTHONPATH="$TOOLKIT" python3 -m lean.debian_prepare "$BUILD_ROOT/lean-source" "$VERSION+lc1" --toolkit "$TOOLKIT"
+PYTHONPATH="$LEAN_TOOLKIT" python3 -m lean.debian_prepare "$BUILD_ROOT/lean-source" "$VERSION+lc1" --toolkit "$LEAN_TOOLKIT"
 cd "$BUILD_ROOT/lean-source"
 dpkg-buildpackage -us -uc -j4
-PYTHONPATH="$TOOLKIT" python3 -m lean.release check-debs "$BUILD_ROOT"/*+lc1_*.deb
+PYTHONPATH="$LEAN_TOOLKIT" python3 -m lean.release check-debs "$BUILD_ROOT"/*+lc1_*.deb
 cp "$BUILD_ROOT"/*+lc1_*.deb "$OUT/"
 cp "$BUILD_ROOT"/*+lc1.dsc "$BUILD_ROOT"/*+lc1.debian.tar.* "$BUILD_ROOT"/*.orig.tar.* "$OUT/source/"
 cp .sparky-lc/source.json "$OUT/native-source.json"
