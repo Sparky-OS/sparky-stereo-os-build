@@ -1,0 +1,183 @@
+Description: Open local images in digiKam without importing or modifying them
+ Reuse the existing DImg preview widget and its shared stereo adapter for files
+ passed on the command line. Keep the ordinary collection startup when no file
+ is given, and destroy preview loading threads before cleaning up their cache.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+
+--- a/core/app/main/main.cpp
++++ b/core/app/main/main.cpp
+@@ -100,6 +100,10 @@
+ #include "databaseserverstarter.h"
+ #include "filesdownloader.h"
+ #include "dfileoperations.h"
++#include "filepreview.h"
++#include "loadingcacheinterface.h"
++#include "dpluginloader.h"
++#include "metaenginesettings.h"
+ 
+ #ifdef Q_OS_WIN
+ #   include <windows.h>
+@@ -266,6 +268,8 @@
+                                         i18n("Start digikam with the configuration file \"config\""),
+                                         QLatin1String("config")));
+ 
++    parser.addPositionalArgument(QLatin1String("files"), i18n("Images"), QLatin1String("[files...]"));
++
+     parser.process(app);
+     aboutData.processCommandLine(&parser);
+ 
+@@ -284,6 +290,17 @@
+     QApplication::setWindowIcon(QIcon::fromTheme(QLatin1String("digikam"), app.windowIcon()));
+ 
+ #endif
++
++    if (!parser.positionalArguments().isEmpty())
++    {
++        LoadingCacheInterface::initialize();
++        MetaEngineSettings::instance();
++        DPluginLoader::instance()->init();
++        const int ret = previewFiles(app, parser.positionalArguments());
++        LoadingCacheInterface::cleanUp();
++        DPluginLoader::instance()->cleanUp();
++        return ret;
++    }
+ 
+     // Check if Qt database plugins are available.
+ 
+--- a/core/app/DigikamTarget.cmake
++++ b/core/app/DigikamTarget.cmake
+@@ -19,6 +19,7 @@
+ 
+ set(digikam_SRCS
+     ${CMAKE_CURRENT_SOURCE_DIR}/main/main.cpp
++    ${CMAKE_CURRENT_SOURCE_DIR}/main/filepreview.cpp
+ )
+ 
+ # Set the application icon on the application
+--- /dev/null
++++ b/core/app/main/filepreview.h
+@@ -0,0 +1,22 @@
++/* ============================================================
++ *
++ * This file is a part of digiKam project
++ * https://www.digikam.org
++ *
++ * SPDX-FileCopyrightText: 2026 by Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ *
++ * ============================================================ */
++
++#pragma once
++
++#include <QStringList>
++
++class QApplication;
++
++namespace Digikam
++{
++
++int previewFiles(QApplication& app, const QStringList& files);
++
++} // namespace Digikam
+--- /dev/null
++++ b/core/app/main/filepreview.cpp
+@@ -0,0 +1,98 @@
++/* ============================================================
++ *
++ * This file is a part of digiKam project
++ * https://www.digikam.org
++ *
++ * SPDX-FileCopyrightText: 2026 by Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ *
++ * ============================================================ */
++
++#include "filepreview.h"
++
++// Qt includes
++
++#include <QAction>
++#include <QApplication>
++#include <QDir>
++#include <QFileInfo>
++#include <QIcon>
++#include <QKeySequence>
++#include <QMainWindow>
++#include <QMenu>
++#include <QMenuBar>
++#include <QToolBar>
++#include <QUrl>
++
++// KDE includes
++
++#include <klocalizedstring.h>
++
++// Local includes
++
++#include "dimgpreviewitem.h"
++#include "graphicsdimgview.h"
++
++namespace Digikam
++{
++
++int previewFiles(QApplication& app, const QStringList& files)
++{
++    QMainWindow window;
++    GraphicsDImgView::prepareStereoWindow(&window);
++    window.resize(1000, 700);
++    QMenu* const viewMenu = window.menuBar()->addMenu(i18n("&View"));
++    viewMenu->setObjectName(QLatin1String("View"));
++
++    GraphicsDImgView* const view = new GraphicsDImgView(&window);
++    DImgPreviewItem* const item  = new DImgPreviewItem();
++    item->setDisplayingWidget(view);
++    view->setItem(item);
++    window.setCentralWidget(view);
++
++    QToolBar* const toolbar = window.addToolBar(QString());
++    toolbar->setObjectName(QLatin1String("filePreviewToolBar"));
++    QAction* const previous = new QAction(QIcon::fromTheme(QLatin1String("go-previous")),
++                                                 i18nc("@action", "Previous Image"), toolbar);
++    QAction* const next     = new QAction(QIcon::fromTheme(QLatin1String("go-next")),
++                                                 i18nc("@action", "Next Image"), toolbar);
++    toolbar->addAction(previous);
++    toolbar->addAction(next);
++    previous->setShortcut(QKeySequence(Qt::Key_Left));
++    next->setShortcut(QKeySequence(Qt::Key_Right));
++
++    int current = 0;
++    const auto load = [&]()
++    {
++        const QUrl url = QUrl::fromUserInput(files.at(current), QDir::currentPath(), QUrl::AssumeLocalFile);
++        window.setWindowTitle(QFileInfo(url.toLocalFile()).fileName() + QLatin1String(" - digiKam"));
++        previous->setEnabled(current > 0);
++        next->setEnabled(current + 1 < files.size());
++        item->setPath(url.toLocalFile());
++    };
++
++    QObject::connect(previous, &QAction::triggered, &window, [&]()
++    {
++        if (current > 0)
++        {
++            --current;
++            load();
++        }
++    });
++    QObject::connect(next, &QAction::triggered, &window, [&]()
++    {
++        if (current + 1 < files.size())
++        {
++            ++current;
++            load();
++        }
++    });
++    QObject::connect(item, &DImgPreviewItem::loaded, view, &GraphicsDImgView::fitToWindow);
++    QObject::connect(view, &GraphicsDImgView::resized, view, &GraphicsDImgView::fitToWindow);
++
++    window.show();
++    load();
++    return app.exec();
++}
++
++} // namespace Digikam
