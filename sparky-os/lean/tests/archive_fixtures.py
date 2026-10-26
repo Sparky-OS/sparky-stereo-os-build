@@ -21,8 +21,8 @@ def deb(base, name, version='1', arch='amd64', depends='', extra='', files=None)
         f'Package: {name}\nVersion: {version}\nArchitecture: {arch}\n'
         'Maintainer: Fixture <fixture@example.invalid>\nDescription: Archive fixture\n' +
         (f'Depends: {depends}\n' if depends else '') + extra)
-    for name, content in (files or {}).items():
-        path = stage / name.lstrip('/')
+    for member, content in (files or {}).items():
+        path = stage / member.lstrip('/')
         path.parent.mkdir(parents=True, exist_ok=True)
         if isinstance(content, Path):
             shutil.copyfile(content, path)
@@ -31,13 +31,13 @@ def deb(base, name, version='1', arch='amd64', depends='', extra='', files=None)
             path.symlink_to(content[0])
         else:
             path.write_bytes(content)
-    out = base / (stage.name + '.deb')
+    out = base / f'{name}_{version.split(":", 1)[-1]}_{arch}.deb'
     subprocess.run(['dpkg-deb', '--build', '--root-owner-group', str(stage), str(out)],
                    check=True, stdout=subprocess.DEVNULL)
     return out
 
 
-def signed_archive(base, additional=()):
+def signed_archive(base, additional=(), transform=None):
     """Minimal amd64 runtime and packages for solver edge cases."""
     base.mkdir(parents=True, exist_ok=True)
     build = base / 'build'
@@ -65,6 +65,8 @@ def signed_archive(base, additional=()):
     index.parent.mkdir(parents=True)
     index.write_bytes(subprocess.check_output(['dpkg-scanpackages', '--multiversion', 'pool', '/dev/null'], cwd=repo,
                                              stderr=subprocess.DEVNULL))
+    if transform:
+        index.write_text(transform(index.read_text()))
     release = repo / 'dists/fixture/Release'
     data = index.read_bytes()
     release.write_text('Origin: Link gate fixture\nLabel: Link gate fixture\nSuite: fixture\nCodename: fixture\n'

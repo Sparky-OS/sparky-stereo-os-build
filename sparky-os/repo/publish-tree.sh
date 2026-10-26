@@ -224,6 +224,7 @@ PYTHONPATH="$HERE/..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release check-s
 # sources and SPARKY_LC_SCRATCH owns the isolated APT state, cache, roots and evidence (lean/archive.md).
 HOST_ARCH=$(dpkg --print-architecture)
 : >"$W/link-debs.txt"
+: >"$W/link-siblings.txt"
 while IFS=$'\t' read -r from to _ _ arch; do
 	case "$arch" in
 		"$HOST_ARCH"|all) ;;
@@ -231,11 +232,12 @@ while IFS=$'\t' read -r from to _ _ arch; do
 		*) echo "lc1 link: unsupported execution gate for $arch on $HOST_ARCH; foreign package not runtime-qualified: $from" >&2; continue ;;
 	esac
 	case $from in *-dbgsym_*|*-lc-hr_*) continue ;; esac
+	echo "$from" >>"$W/link-siblings.txt"
 	[ -f "$DEST/$to" ] || echo "$from" >>"$W/link-debs.txt"
 done <"$W/selection.tsv"
 if [ -s "$W/link-debs.txt" ]; then
 	mapfile -t LINK_DEBS <"$W/link-debs.txt"
-	PYTHONPATH="$HERE/..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release check-link "${LINK_DEBS[@]}" \
+	PYTHONPATH="$HERE/..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release check-link "${LINK_DEBS[@]}" --siblings-file "$W/link-siblings.txt" \
 		${SPARKY_LC_PREVIOUS_DIR:+--previous-dir "$SPARKY_LC_PREVIOUS_DIR"}
 fi
 

@@ -413,7 +413,10 @@ class Packages(unittest.TestCase):
         release.build_tree(arm, out)
         home = self.base / 'test-gnupg'
         home.mkdir(mode=0o700)
-        env = {**os.environ, 'SPARKY_REPO_GNUPGHOME': str(home), 'TMPDIR': str(self.base)}
+        from lean.tests.archive_fixtures import signed_archive
+        env = {**os.environ, 'SPARKY_REPO_GNUPGHOME': str(home), 'TMPDIR': str(self.base),
+               'SPARKY_LC_ARCHIVE_CONFIG': str(signed_archive(self.base / 'link-archive')),
+               'SPARKY_LC_SCRATCH': str(self.base / 'link-scratch')}
         try:
             subprocess.run(['gpg', '--homedir', str(home), '--batch', '--pinentry-mode', 'loopback',
                             '--passphrase', '', '--quick-generate-key', 'LC Test <lc@example.org>',

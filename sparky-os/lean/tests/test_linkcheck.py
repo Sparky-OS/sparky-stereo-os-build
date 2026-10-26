@@ -51,7 +51,7 @@ class LinkGate(unittest.TestCase):
         order = ['-l:libb.so.1', '-la'] if as_needed else ['-la', '-l:libb.so.1']
         self.run_cc(['-o', str(root / 'usr/games/demo'), 'm.c', f'-L{root / LIBDIR}', flag] + order +
                     ['-Wl,--allow-shlib-undefined', f'-Wl,-rpath-link,{root / LIBDIR}'])
-        depends = 'libc6' + (', libxrandr2' if listed else '')
+        depends = 'libc6' + (', libxrandr2' if listed else '') + (', libb' if broken_depends else '')
         (root / 'DEBIAN/control').write_text(
             f'Package: {name}\nVersion: {version}\nArchitecture: amd64\nMaintainer: t <t@example.org>\n'
             f'Description: t\nDepends: {depends}\n')
@@ -131,7 +131,7 @@ class LinkGate(unittest.TestCase):
 
     def test_sibling_library_is_found_and_previous_build_is_chosen(self):
         """A plugin links the library a sibling package ships; the newest older build is the baseline."""
-        client = self.deb('demo', '4+lc1', as_needed=False)
+        client = self.deb('demo', '4+lc1', as_needed=False, broken_depends=True)
         sibling = self.base / 'libb-pkg'
         (sibling / 'usr/lib/x86_64-linux-gnu').mkdir(parents=True)
         (sibling / 'DEBIAN').mkdir()

@@ -15,8 +15,8 @@ Four checks, none installs anything and none needs a display:
   needed   NEEDED libraries and shlib Depends lost against the previous build of the same
            package. Reported; blocks only together with an unresolved symbol (a library
            that is no longer needed because nothing uses it is a legitimate --as-needed result).
-  resolve  `ldd -r` on every ELF of the package, with the package's own library directories
-           on LD_LIBRARY_PATH (the way its launcher sets it). Every "not found" and every
+  resolve  archive-loader tracing equivalent to `ldd -r` on every ELF, with private
+           library directories inside the qualified root. Every "not found" and every
            "undefined symbol" must already exist in the previous build's result; a package
            without a previous build must have no missing library and no undefined symbol in
            an executable (a library alone reports what its program supplies).
@@ -144,6 +144,8 @@ def resolve(root, timeout=20, extra_dirs=(), qualified=None):
     if qualified is None:
         raise package.Invalid('archive-qualified execution context required; use lean.release check-link')
     root = Path(root)
+    # Loader diagnostics are parsed in the C locale even when the invoking desktop
+    # uses another language; static ELF detection does not depend on translated ldd output.
     result = {}
     for path in elf_files(root):
         rel = '/' + str(path.relative_to(root))
@@ -184,17 +186,23 @@ def resolve(root, timeout=20, extra_dirs=(), qualified=None):
 def compare(new_deb, previous_deb=None, extra_dirs=(), qualified=None, previous_qualified=None):
     """Return (findings, notes). A finding blocks the release, a note is informational."""
     findings, notes = [], []
-    with tempfile.TemporaryDirectory(prefix='lc-link-new-') as new_root:
+    with tempfile.TemporaryDirectory(prefix='inspect-new-', dir=qualified.directory) as new_root:
         extract(new_deb, new_root)
         now = resolve(new_root, extra_dirs=extra_dirs, qualified=qualified)
         new_needed = {str(p.relative_to(new_root)): needed(p) for p in elf_files(new_root)}
         new_stereo = {str(p.relative_to(new_root)): stereo_imports(p) for p in elf_files(new_root)}
         if previous_deb:
-            with tempfile.TemporaryDirectory(prefix='lc-link-old-') as old_root:
+            with tempfile.TemporaryDirectory(prefix='inspect-old-', dir=previous_qualified.directory) as old_root:
                 extract(previous_deb, old_root)
                 before = resolve(old_root, qualified=previous_qualified)
                 old_needed = {str(p.relative_to(old_root)): needed(p) for p in elf_files(old_root)}
                 old_stereo = {str(p.relative_to(old_root)): stereo_imports(p) for p in elf_files(old_root)}
+            # An unusable predecessor cannot establish a successful regression
+            # baseline. Library-only imports supplied by a program remain valid.
+            broken_before = [key for key in before if key[1] != 'undefined' or not re.search(r'\.so(\.|$)', key[0])]
+            if broken_before:
+                raise package.Invalid('predecessor failed archive-qualified resolution: ' +
+                                      '; '.join(f'{name}: {kind} {item}' for name, kind, item in broken_before[:5]))
             grouped = {}
             for key in sorted(now):
                 if key not in before:
@@ -245,7 +253,7 @@ def smoke(deb, table, timeout=10, extra_dirs=(), qualified=None):
     findings = []
     rows = [line.split('\t') for line in Path(table).read_text().splitlines()
             if line.strip() and not line.startswith('#')]
-    with tempfile.TemporaryDirectory(prefix='lc-smoke-') as root:
+    with tempfile.TemporaryDirectory(prefix='inspect-smoke-', dir=qualified.directory) as root:
         extract(deb, root)
         for row in rows:
             if row[0] != name:

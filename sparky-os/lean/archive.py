@@ -202,7 +202,8 @@ class Archive:
             if source.get('check_valid_until', True) is False:
                 opts += ' check-valid-until=no'
             lines.append(f'deb [{opts}] {uri} {suite} {" ".join(components)}\n')
-        (self.base / 'etc/sources.list').write_text(''.join(lines))
+        self.public_sources = ''.join(lines)
+        (self.base / 'etc/sources.list').write_text(self.public_sources)
         # APT_CONFIG is read BEFORE apt.conf.d, unlike -c and -o. All paths,
         # including auth, trust, extended status and binary caches, are private.
         options = {
@@ -254,6 +255,7 @@ class Archive:
         directory = Path(tempfile.mkdtemp(prefix='case-', dir=self.base))
         inputs = []
         named = {}
+        origins = {}
         candidate = control(deb)
         for path in [deb] + list(siblings):
             obj = control(path)
@@ -269,16 +271,40 @@ class Archive:
             named[name] = (identity(obj), digest(path))
             target = directory / f'{len(inputs)}.deb'
             shutil.copyfile(path, target)
-            inputs.append((target, obj, digest(target)))
-        # Exact local arguments are requested together; pins forbid replacing them
-        # with stock archive versions when another dependency cannot be satisfied.
+            sha = digest(target)
+            if sha != named[name][1]:
+                raise package.Invalid(f'{path}: supplied bytes changed while copying')
+            origins[sha] = str(Path(path).resolve())
+            inputs.append((target, obj, sha))
+        # A private index makes supplied siblings available to APT without forcing
+        # unrelated packages (and their conflicts/dependencies) into this root.
+        # Only this generated index is trusted locally; public sources still need
+        # their signatures. Public lists remain frozen during this local update.
+        local = self.base / 'local'
+        if local.exists():
+            shutil.rmtree(local)
+        (local / 'pool').mkdir(parents=True)
+        records = []
+        for index, (path, obj, sha) in enumerate(inputs):
+            shutil.copyfile(path, local / 'pool' / f'{index}.deb')
+            records.append(''.join(f'{key}: {value}\n' for key, value in obj.items()) +
+                           f'Filename: pool/{index}.deb\nSize: {path.stat().st_size}\nSHA256: {sha}\n')
+        (local / 'Packages').write_text('\n'.join(records))
+        local_source = f'deb [trusted=yes arch={self.arch}] {local.as_uri()} ./\n'
+        (self.base / 'etc/local.list').write_text(local_source)
+        (self.base / 'etc/sources.list').write_text(local_source + self.public_sources)
+        self.run(['apt-get', '-y', '-o', 'Dir::Etc::sourcelist=local.list', '-o',
+                  'APT::Update::Error-Mode=any', 'update'], directory.name + '-local-index')
+        (directory / 'supplied.Packages').write_bytes((local / 'Packages').read_bytes())
+        # Pins forbid replacing supplied edition versions with stock versions.
+
         preferences = []
         for _, obj, _ in inputs:
             preferences += [f'Package: {obj["Package"]}\nPin: version {obj["Version"]}\nPin-Priority: 1001\n\n',
                             f'Package: {obj["Package"]}\nPin: version *\nPin-Priority: -1\n\n']
         (self.base / 'etc/preferences').write_text(''.join(preferences))
         args = ['apt-get', '-y', '--no-remove', '--no-install-recommends', '--download-only',
-                '--print-uris', 'install'] + [str(path) for path, _, _ in inputs]
+                '--print-uris', 'install', str(inputs[0][0])]
         label = directory.name + '-solve'
         plan = self.run(args, label)
         root = directory / 'root'
@@ -289,19 +315,27 @@ class Archive:
             (root / 'usr' / name).mkdir(parents=True)
             (root / name).symlink_to('usr/' + name)
         packages = []
+        selected_inputs = []
         supplied_hashes = {sha for _, _, sha in inputs}
         for line in plan.splitlines():
             if not line.startswith("'"):
                 continue
             local = re.match(r"'file:([^']+)' ", line)
-            if local and any(Path(unquote(local[1])) == path for path, _, _ in inputs):
-                continue
+            if local:
+                supplied = next((item for item in inputs if Path(unquote(local[1])) == item[0]), None)
+                if supplied:
+                    selected_inputs.append(supplied)
+                    continue
             match = re.fullmatch(r"'([^']+)' (\S+) (\d+) SHA256:([0-9a-f]{64})", line)
             if not match:
                 raise package.Invalid(f'archive solver returned an unverified download: {line}')
             uri, filename, size, sha = match.groups()
             size = int(size)
             if sha in supplied_hashes:
+                supplied = next(item for item in inputs if item[2] == sha)
+                if urlsplit(uri).scheme != 'file' or not Path(unquote(urlsplit(uri).path)).is_relative_to(self.base / 'local'):
+                    raise package.Invalid(f'archive attempted to substitute supplied {supplied[1]["Package"]}')
+                selected_inputs.append(supplied)
                 continue
             if urlsplit(uri).scheme not in ('https', 'file'):
                 raise package.Invalid(f'unsupported archive download URL: {uri}')
@@ -329,21 +363,30 @@ class Archive:
                 raise package.Invalid(f'{uri}: wrong architecture {obj["Architecture"]}; context is {self.arch}')
             if obj['Package'] in named:
                 raise package.Invalid(f'archive attempted to substitute supplied {obj["Package"]}')
-            metadata = self.run(['apt-cache', 'show', f'{obj["Package"]}:{obj["Architecture"]}={obj["Version"]}'],
-                                directory.name + '-' + obj['Package'])
+            try:
+                metadata = self.run(['apt-cache', 'show', f'{obj["Package"]}:{obj["Architecture"]}={obj["Version"]}'],
+                                    directory.name + '-' + obj['Package'])
+            except package.Invalid as exc:
+                raise package.Invalid(f'{uri}: downloaded identity {identity(obj)} is absent from signed index') from exc
             records = [fields(record) for record in metadata.split('\n\n') if record.strip()]
+            relationships = ('Depends', 'Pre-Depends', 'Provides', 'Conflicts', 'Breaks', 'Multi-Arch')
             if not any(identity(record) == identity(obj) and record.get('SHA256') == sha
-                       and record.get('Size') == str(size) for record in records):
+                       and record.get('Size') == str(size)
+                       and all(record.get(key, '') == obj.get(key, '') for key in relationships) for record in records):
                 raise package.Invalid(f'{uri}: downloaded package identity differs from signed index')
             unpack(archive, root)
             packages.append({'identity': identity(obj), 'url': uri, 'size': size, 'sha256': sha,
                              'depends': obj.get('Depends', ''), 'pre_depends': obj.get('Pre-Depends', ''),
                              'provides': obj.get('Provides', ''), 'multi_arch': obj.get('Multi-Arch', '')})
-        for path, obj, sha in inputs:
+        if not any(identity(item[1]) == identity(candidate) for item in selected_inputs):
+            raise package.Invalid('archive solver omitted the requested candidate')
+        for path, obj, sha in selected_inputs:
             unpack(path, root)
         evidence = {'architecture': self.arch, 'candidate': identity(candidate), 'metadata': str(self.base / 'metadata.json'),
                     'solver': str(self.base / (label + '.log')), 'status': 'empty',
+                    'local_index_sha256': digest(directory / 'supplied.Packages'),
                     'inputs': [{'identity': identity(obj), 'sha256': sha, 'size': path.stat().st_size,
+                                'source': origins[sha], 'selected': any(selected[2] == sha for selected in selected_inputs),
                                 'depends': obj.get('Depends', ''), 'pre_depends': obj.get('Pre-Depends', '')}
                                for path, obj, sha in inputs], 'packages': packages}
         (directory / 'resolution.json').write_text(json.dumps(evidence, indent=2) + '\n')
