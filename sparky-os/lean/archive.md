@@ -43,7 +43,9 @@ The scratch local index is trusted only for the explicitly supplied files whose 
 The publisher supplies the selected native and architecture-independent edition packages as that local universe, including libraries already present in the destination pool.
 The optional `--siblings-file` accepts further authoritative edition `.deb` paths, one per line.
 `--previous-siblings-file` supplies the previous edition snapshot, including its unchanged dependencies.
-The publisher generates that file from the existing destination pool before any copying or signing.
+The publisher generates that file from the existing destination indexes and pool before any copying or signing.
+For an indexed destination it checks prior package identities, byte sizes and SHA-256 against those indexes, and binds the indexes to the existing Release hashes.
+Missing or changed prior archives, indexes or Release files block instead of silently omitting a known predecessor.
 `--previous-dir` can instead supply a retained coherent previous cohort and still selects the newest lower candidate version with Debian version ordering.
 Each side offers one authoritative version per sibling package; an ambiguous mixture of historical sibling versions is rejected with a request for a single snapshot.
 Missing or incompatible previous inputs block qualification and are identified as a previous-edition dependency failure.

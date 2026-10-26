@@ -381,3 +381,37 @@ def test_old_wrong_version_is_explicitly_rejected(sources, tmp_path):
     with pytest.raises(package.Invalid, match='previous edition dependency qualification failed'):
         linkcheck.check(programs[1], programs[0], archive_context=context,
                        siblings=[libraries[1], common], previous_siblings=[libraries[1], common])
+
+
+@pytest.mark.parametrize('fault', ['missing', 'wrong-bytes', 'missing-index', 'missing-release', 'wrong-index'])
+def test_known_predecessor_cannot_disappear_silently(publisher_env, tmp_path, fault):
+    programs, libraries, common = edition(tmp_path / 'build')
+    old_out, new_out = tmp_path / 'old', tmp_path / 'new'
+    for i, raw in enumerate((programs[0], libraries[0], common)):
+        qualify_payload(raw, old_out, tmp_path / f'stage-old-{i}')
+    for i, raw in enumerate((programs[1], libraries[1])):
+        qualify_payload(raw, new_out, tmp_path / f'stage-new-{i}')
+    shutil.copyfile(old_out / common.name, new_out / common.name)
+    destination = tmp_path / 'published-fixture'
+    first = publish_fixture(old_out, destination, publisher_env)
+    assert first.returncode == 0, first.stdout + first.stderr
+    old_consumer = next(destination.glob('pool/**/edition-consumer_1_amd64.deb'))
+    if fault == 'missing':
+        old_consumer.unlink()
+        diagnostic = 'previous edition archive missing'
+    elif fault == 'wrong-bytes':
+        old_consumer.write_bytes(old_consumer.read_bytes() + b'changed')
+        diagnostic = 'previous edition archive differs from its index'
+    elif fault == 'missing-index':
+        (destination / 'dists/mashtabba/main/binary-amd64/Packages').unlink()
+        diagnostic = 'previous edition index missing'
+    elif fault == 'missing-release':
+        (destination / 'dists/mashtabba/Release').unlink()
+        diagnostic = 'previous edition Release missing'
+    else:
+        (destination / 'dists/mashtabba/main/binary-amd64/Packages').write_bytes(b'')
+        diagnostic = 'previous edition index differs from its Release'
+    before = tree_hashes(destination)
+    failure = publish_fixture(new_out, destination, publisher_env)
+    assert failure.returncode != 0 and diagnostic in failure.stderr, failure.stdout + failure.stderr
+    assert tree_hashes(destination) == before

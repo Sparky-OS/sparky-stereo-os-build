@@ -238,18 +238,68 @@ done <"$W/selection.tsv"
 # The destination is the previous edition universe. New siblings cannot qualify
 # a predecessor that requires their old exact versions. The optional historical
 # directory adds earlier builds; unchanged packages stay in both snapshots.
-python3 - "$DEST" "$HOST_ARCH" "$W/link-previous.txt" <<'PYOLD'
-from pathlib import Path
-import subprocess
+PYTHONPATH="$HERE/..${PYTHONPATH:+:$PYTHONPATH}" python3 - "$DEST" "$HOST_ARCH" "$W/link-previous.txt" "$CODENAME" <<'PYOLD'
+from pathlib import Path, PurePosixPath
 import sys
-root, native, output = sys.argv[1:]
-with open(output, 'w') as stream:
-    for path in sorted(Path(root).glob('pool/**/*.deb')):
-        if '-dbgsym_' in path.name or '-lc-hr_' in path.name:
+from lean import archive
+root, native, output, codename = sys.argv[1:]
+root = Path(root)
+metadata = root / 'dists' / codename
+previous = {}
+release = metadata / 'Release'
+if not release.is_file() and any((metadata / name).exists() for name in ('InRelease', 'Release.gpg')):
+    raise SystemExit('previous edition Release missing: ' + str(release))
+if release.is_file():
+    # Missing known previous archives must block, rather than making an existing
+    # package appear to have no predecessor. Bind each old input to its index.
+    release_fields = archive.fields(release.read_text())
+    arches = release_fields.get('Architectures', '').split()
+    hashes = {parts[2]: (parts[0], parts[1]) for line in release_fields.get('SHA256', '').splitlines()
+              if len(parts := line.split()) == 3}
+    if not arches:
+        raise SystemExit('previous edition Release has no architectures')
+    for arch in dict.fromkeys((native, 'all')):
+        if arch not in arches:
             continue
-        arch = subprocess.check_output(['dpkg-deb', '-f', str(path), 'Architecture'], text=True).strip()
-        if arch in (native, 'all'):
-            stream.write(str(path) + '\n')
+        index = metadata / 'main' / ('binary-' + arch) / 'Packages'
+        if not index.is_file():
+            raise SystemExit('previous edition index missing: ' + str(index))
+        expected = hashes.get(str(index.relative_to(metadata)))
+        if expected != (archive.digest(index), str(index.stat().st_size)):
+            raise SystemExit('previous edition index differs from its Release: ' + str(index))
+        for stanza in index.read_text().split('\n\n'):
+            obj = archive.fields(stanza)
+            name = obj.get('Package', '')
+            if not name or name.endswith(('-lc-hr', '-dbgsym')):
+                continue
+            if obj.get('Architecture') not in (native, 'all'):
+                raise SystemExit('wrong architecture in previous edition index: ' + name)
+            relative = PurePosixPath(obj.get('Filename', ''))
+            if relative.is_absolute() or '..' in relative.parts or not relative.parts or relative.parts[0] != 'pool':
+                raise SystemExit('unsafe previous edition archive path: ' + str(relative))
+            path = root / relative
+            if not path.is_file():
+                raise SystemExit('previous edition archive missing: ' + str(path))
+            if str(path.stat().st_size) != obj.get('Size') or archive.digest(path) != obj.get('SHA256'):
+                raise SystemExit('previous edition archive differs from its index: ' + str(path))
+            if archive.identity(archive.control(path)) != archive.identity(obj):
+                raise SystemExit('previous edition archive identity differs from its index: ' + str(path))
+            key = (name, obj['Architecture'])
+            if key in previous and previous[key] != path:
+                raise SystemExit('conflicting previous edition index identity: ' + name)
+            previous[key] = path
+else:
+    # A first publication can have an unindexed retained cohort supplied in its
+    # destination. There is no signed publication history to infer missing files.
+    for path in sorted(root.glob('pool/**/*.deb')):
+        obj = archive.control(path)
+        if obj['Package'].endswith(('-lc-hr', '-dbgsym')):
+            continue
+        if obj['Architecture'] in (native, 'all'):
+            previous[(obj['Package'], obj['Architecture'])] = path
+with open(output, 'w') as stream:
+    for path in sorted(previous.values()):
+        stream.write(str(path) + '\n')
 PYOLD
 if [ -s "$W/link-debs.txt" ]; then
 	mapfile -t LINK_DEBS <"$W/link-debs.txt"
