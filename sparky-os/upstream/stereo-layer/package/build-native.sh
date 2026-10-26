@@ -20,12 +20,12 @@ QUILT_PATCHES=debian/patches quilt push
 cp "$recipe/debian.control" debian/control
 cp "$recipe/debian.rules" debian/rules
 rm -rf debian/sparky-lean-toolkit
-dch --newversion 1.12.0-2 --distribution unstable 'Expose bounded read-only content inspection, source sample geometry and codec-first packing metadata through libstereo-av; keep the desktop refinement service opt-in pending its milestone.'
-PYTHONPATH="$toolkit" python3 -m lean.debian_prepare . 1.12.0-2+lc1 --toolkit "$toolkit" \
+dch --newversion 1.12.0-3 --distribution unstable 'Keep inspector stereo and projection metadata local to each video track; preserve automatic marked-track preference and explicit selection.'
+PYTHONPATH="$toolkit" python3 -m lean.debian_prepare . 1.12.0-3+lc1 --toolkit "$toolkit" \
  --preserve-source 'src/*.h' 'Qt moc and QML type registration consume authored declarations.' \
  --preserve-source 'src/*.cpp' 'Qt moc and QML type registration also scan these sources.'
 dpkg-buildpackage -S -us -uc -d
 cd "$work"
-dpkg-source -x stereo-layer_1.12.0-2+lc1.dsc binary-source
+dpkg-source -x stereo-layer_1.12.0-3+lc1.dsc binary-source
 cd binary-source
 dpkg-buildpackage -B -us -uc
