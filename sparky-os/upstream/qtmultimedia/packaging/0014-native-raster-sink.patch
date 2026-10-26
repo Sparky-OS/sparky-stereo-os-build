@@ -1,0 +1,310 @@
+From e63685e24bce6384a91e5b1c521e8ae46d390a95 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 26 Oct 2026 15:21:55 -0300
+Subject: [PATCH] Allow video sinks to request stored rasters and source pixel
+ aspect
+
+An unmarked anamorphic frame may contain views selected by a consumer-side hint or correction. Preserve its native samples on request before FFmpeg converts it, without manufacturing stereo metadata. Keep the existing default consumer path and make the sink request safe to read from the rendering thread.
+
+The published +10 sink reproduction fails before this change. Native delivery passes afterward, the default consumer pixel hash is identical, and 43 buffer/property checks pass.
+
+Assisted-by: gpt-6 (Codex)
+---
+ src/multimedia/video/qvideosink.cpp           |  29 +++++
+ src/multimedia/video/qvideosink.h             |   6 +
+ .../playbackengine/qffmpegvideorenderer.cpp   |   3 +-
+ .../multimedia/ffmpeg/qffmpegvideobuffer.cpp  |   5 +-
+ .../multimedia/ffmpeg/qffmpegvideobuffer_p.h  |   6 +-
+ .../plugins/multimedia/ffmpeg/CMakeLists.txt  |   2 +
+ .../ffmpeg/qffmpegvideobuffer/CMakeLists.txt  |   5 +
+ .../tst_qffmpegvideobuffer.cpp                | 110 ++++++++++++++++++
+ 8 files changed, 160 insertions(+), 6 deletions(-)
+ create mode 100644 tests/auto/unit/plugins/multimedia/ffmpeg/qffmpegvideobuffer/CMakeLists.txt
+ create mode 100644 tests/auto/unit/plugins/multimedia/ffmpeg/qffmpegvideobuffer/tst_qffmpegvideobuffer.cpp
+
+diff --git a/src/multimedia/video/qvideosink.cpp b/src/multimedia/video/qvideosink.cpp
+index 2d35c33..67a94c2 100644
+--- a/src/multimedia/video/qvideosink.cpp
++++ b/src/multimedia/video/qvideosink.cpp
+@@ -12,6 +12,7 @@
+ #include <qpainter.h>
+ #include <qmatrix4x4.h>
+ #include <QDebug>
++#include <atomic>
+ #include <private/qplatformmediaintegration_p.h>
+ #include <private/qplatformvideosink_p.h>
+ 
+@@ -49,6 +50,7 @@ public:
+     QPlatformVideoSink *videoSink = nullptr;
+     QObject *source = nullptr;
+     QRhi *rhi = nullptr;
++    std::atomic_bool preserveNativeSize = false;
+ };
+ 
+ /*!
+@@ -178,6 +180,33 @@ QSize QVideoSink::videoSize() const
+     return d->videoSink ? d->videoSink->nativeSize() : QSize{};
+ }
+ 
++/*!
++    \property QVideoSink::preserveNativeSize
++
++    Requests video frames at their stored raster size, with their source pixel
++    aspect ratio in QVideoFrameFormat::pixelAspectRatio(). The consumer is
++    responsible for applying that aspect ratio when presenting the frame.
++
++    The default is false, retaining the backend's usual aspect-ratio handling.
++    The FFmpeg backend supports this request for software and hardware frames.
++    Other backends may ignore it. Pixel format conversion may still be needed.
++    The request does not change the source's stereo metadata.
++
++    Set this property before starting playback. Changes affect subsequently
++    produced frames, not frames already delivered or queued.
++*/
++bool QVideoSink::preserveNativeSize() const
++{
++    return d->preserveNativeSize.load(std::memory_order_relaxed);
++}
++
++void QVideoSink::setPreserveNativeSize(bool preserve)
++{
++    if (d->preserveNativeSize.exchange(preserve, std::memory_order_relaxed) == preserve)
++        return;
++    emit preserveNativeSizeChanged(preserve);
++}
++
+ void QVideoSink::setSource(QObject *source)
+ {
+     if (d->source == source)
+diff --git a/src/multimedia/video/qvideosink.h b/src/multimedia/video/qvideosink.h
+index 06cd163..083869c 100644
+--- a/src/multimedia/video/qvideosink.h
++++ b/src/multimedia/video/qvideosink.h
+@@ -23,6 +23,8 @@ class Q_MULTIMEDIA_EXPORT QVideoSink : public QObject
+     Q_OBJECT
+     Q_PROPERTY(QString subtitleText READ subtitleText WRITE setSubtitleText NOTIFY subtitleTextChanged)
+     Q_PROPERTY(QSize videoSize READ videoSize NOTIFY videoSizeChanged)
++    Q_PROPERTY(bool preserveNativeSize READ preserveNativeSize WRITE setPreserveNativeSize
++               NOTIFY preserveNativeSizeChanged)
+ public:
+     QVideoSink(QObject *parent = nullptr);
+     ~QVideoSink() override;
+@@ -32,6 +34,9 @@ public:
+ 
+     QSize videoSize() const;
+ 
++    bool preserveNativeSize() const;
++    void setPreserveNativeSize(bool preserve);
++
+     QString subtitleText() const;
+     void setSubtitleText(const QString &subtitle);
+ 
+@@ -43,6 +48,7 @@ Q_SIGNALS:
+     void videoFrameChanged(const QVideoFrame &frame) QT6_ONLY(const);
+     void subtitleTextChanged(const QString &subtitleText) QT6_ONLY(const);
+     void videoSizeChanged();
++    void preserveNativeSizeChanged(bool preserve);
+ 
+ private:
+     friend class QMediaPlayerPrivate;
+diff --git a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegvideorenderer.cpp b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegvideorenderer.cpp
+index 18e67eb..30c049b 100644
+--- a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegvideorenderer.cpp
++++ b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegvideorenderer.cpp
+@@ -65,7 +65,8 @@ VideoRenderer::RenderingResult VideoRenderer::renderInternal(Frame frame)
+ #endif
+ 
+     const auto pixelAspectRatio = codecContext->pixelAspectRatio(frame.avFrame());
+-    auto buffer = std::make_unique<QFFmpegVideoBuffer>(frame.takeAVFrame(), pixelAspectRatio, m_stereoMode);
++    auto buffer = std::make_unique<QFFmpegVideoBuffer>(frame.takeAVFrame(), pixelAspectRatio,
++                                                      m_stereoMode, m_sink->preserveNativeSize());
+     QVideoFrameFormat format(buffer->size(), buffer->pixelFormat());
+     format.setColorSpace(buffer->colorSpace());
+     format.setColorTransfer(buffer->colorTransfer());
+diff --git a/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer.cpp b/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer.cpp
+index 6c436e5..56fce8b 100644
+--- a/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer.cpp
++++ b/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer.cpp
+@@ -75,7 +75,8 @@ static std::optional<QFFmpeg::VideoStereo> stereoFromSideData(const AVFrame &fra
+ }
+ 
+ QFFmpegVideoBuffer::QFFmpegVideoBuffer(AVFrameUPtr frame, AVRational pixelAspectRatio,
+-                                       QVideoFrameFormat::StereoMode stereoMode)
++                                       QVideoFrameFormat::StereoMode stereoMode,
++                                       bool preserveNativeSize)
+     : QHwVideoBuffer(QVideoFrame::NoHandle),
+       m_frame(frame.get()),
+       m_size(qCalculateFrameSize({ frame->width, frame->height },
+@@ -86,7 +87,7 @@ QFFmpegVideoBuffer::QFFmpegVideoBuffer(AVFrameUPtr frame, AVRational pixelAspect
+     // pixels as one picture: the frame stays as it is stored, and the consumer, which takes the views
+     // apart, restores each from the stored samples (QVideoFrameFormat::pixelAspectRatio)
+     const auto mode = m_stereo ? m_stereo->mode : stereoMode;
+-    if ((mode == QVideoFrameFormat::StereoMode::SideBySide
++    if ((preserveNativeSize || mode == QVideoFrameFormat::StereoMode::SideBySide
+          || mode == QVideoFrameFormat::StereoMode::SideBySideQuincunx
+          || mode == QVideoFrameFormat::StereoMode::TopBottom)
+         && pixelAspectRatio.num > 0 && pixelAspectRatio.den > 0
+diff --git a/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer_p.h b/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer_p.h
+index 7992447..224ca04 100644
+--- a/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer_p.h
++++ b/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer_p.h
+@@ -45,7 +45,8 @@ public:
+     // stereoMode is the packing the stream has had until this frame (the frame packing SEI comes
+     // with keyframes only), for a frame that does not carry it
+     QFFmpegVideoBuffer(AVFrameUPtr frame, AVRational pixelAspectRatio = { 1, 1 },
+-                       QVideoFrameFormat::StereoMode stereoMode = QVideoFrameFormat::StereoMode::None);
++                       QVideoFrameFormat::StereoMode stereoMode = QVideoFrameFormat::StereoMode::None,
++                       bool preserveNativeSize = false);
+     ~QFFmpegVideoBuffer() override;
+ 
+     MapData map(QVideoFrame::MapMode mode) override;
+@@ -76,8 +77,7 @@ public:
+     // The frame's own packing of a stereoscopic 3D video, if it carries one
+     std::optional<QFFmpeg::VideoStereo> stereo() const { return m_stereo; }
+ 
+-    // The pixel aspect ratio left to the consumer: 1:1, but for a stereoscopic 3D frame with views
+-    // side by side or on top of each other, which is kept at the size it is stored in
++    // The pixel aspect ratio left to the consumer when the stored raster is preserved.
+     QSize pixelAspectRatio() const { return m_pixelAspectRatio; }
+ 
+ private:
+diff --git a/tests/auto/unit/plugins/multimedia/ffmpeg/CMakeLists.txt b/tests/auto/unit/plugins/multimedia/ffmpeg/CMakeLists.txt
+index 705ce99..cd3b30d 100644
+--- a/tests/auto/unit/plugins/multimedia/ffmpeg/CMakeLists.txt
++++ b/tests/auto/unit/plugins/multimedia/ffmpeg/CMakeLists.txt
+@@ -4,3 +4,5 @@
+ add_subdirectory(qffmpegmath)
+ add_subdirectory(texturebridge)
+ add_subdirectory(qffmpegvideoencoderutils)
++
++add_subdirectory(qffmpegvideobuffer)
+diff --git a/tests/auto/unit/plugins/multimedia/ffmpeg/qffmpegvideobuffer/CMakeLists.txt b/tests/auto/unit/plugins/multimedia/ffmpeg/qffmpegvideobuffer/CMakeLists.txt
+new file mode 100644
+index 0000000..561298a
+--- /dev/null
++++ b/tests/auto/unit/plugins/multimedia/ffmpeg/qffmpegvideobuffer/CMakeLists.txt
+@@ -0,0 +1,5 @@
++# SPDX-License-Identifier: BSD-3-Clause
++qt_internal_add_test(tst_qffmpegvideobuffer
++    SOURCES tst_qffmpegvideobuffer.cpp
++    LIBRARIES Qt::FFmpegMediaPluginImplPrivate Qt::MultimediaPrivate
++)
+diff --git a/tests/auto/unit/plugins/multimedia/ffmpeg/qffmpegvideobuffer/tst_qffmpegvideobuffer.cpp b/tests/auto/unit/plugins/multimedia/ffmpeg/qffmpegvideobuffer/tst_qffmpegvideobuffer.cpp
+new file mode 100644
+index 0000000..375b297
+--- /dev/null
++++ b/tests/auto/unit/plugins/multimedia/ffmpeg/qffmpegvideobuffer/tst_qffmpegvideobuffer.cpp
+@@ -0,0 +1,110 @@
++// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
++#include <QtTest/qtest.h>
++#include <QtTest/qsignalspy.h>
++#include <QtMultimedia/qvideosink.h>
++#include <QtFFmpegMediaPluginImpl/private/qffmpegvideobuffer_p.h>
++extern "C" {
++#include <libavutil/stereo3d.h>
++}
++
++class tst_QFFmpegVideoBuffer : public QObject
++{
++    Q_OBJECT
++private slots:
++    void nativeSize_data();
++    void nativeSize();
++    void sinkProperty();
++};
++
++void tst_QFFmpegVideoBuffer::nativeSize_data()
++{
++    QTest::addColumn<bool>("preserve");
++    QTest::addColumn<int>("mark");
++    QTest::addColumn<bool>("inverted");
++    QTest::addColumn<int>("sar");
++    for (bool preserve : { false, true }) {
++        for (int mark : { -1, int(AV_STEREO3D_2D), int(AV_STEREO3D_SIDEBYSIDE),
++                          int(AV_STEREO3D_TOPBOTTOM), int(AV_STEREO3D_LINES) }) {
++            for (bool inverted : { false, true }) {
++                for (int sar : { 1, 2 }) {
++                    const auto name = QByteArray::number(preserve) + "-" + QByteArray::number(mark)
++                            + "-" + QByteArray::number(inverted) + "-" + QByteArray::number(sar);
++                    QTest::newRow(name.constData()) << preserve << mark << inverted << sar;
++                }
++            }
++        }
++    }
++}
++
++void tst_QFFmpegVideoBuffer::nativeSize()
++{
++    QFETCH(bool, preserve);
++    QFETCH(int, mark);
++    QFETCH(bool, inverted);
++    QFETCH(int, sar);
++    auto frame = QFFmpeg::makeAVFrame();
++    frame->width = 64;
++    frame->height = 32;
++    frame->format = AV_PIX_FMT_BGRA;
++    QCOMPARE(av_frame_get_buffer(frame.get(), 0), 0);
++    for (int y = 0; y < frame->height; ++y) {
++        for (int x = 0; x < frame->width; ++x) {
++            auto *p = frame->data[0] + y * frame->linesize[0] + x * 4;
++            p[0] = x;
++            p[1] = y;
++            p[2] = x >= 32 ? 192 : 64;
++            p[3] = 255;
++        }
++    }
++    if (mark >= 0) {
++        auto *stereo = av_stereo3d_create_side_data(frame.get());
++        QVERIFY(stereo);
++        stereo->type = AVStereo3DType(mark);
++        stereo->flags = inverted ? AV_STEREO3D_FLAG_INVERT : 0;
++    }
++    QFFmpegVideoBuffer buffer(std::move(frame), { sar, 1 },
++                             QVideoFrameFormat::StereoMode::None, preserve);
++    const bool native = preserve || sar == 1 || mark == AV_STEREO3D_SIDEBYSIDE
++            || mark == AV_STEREO3D_TOPBOTTOM;
++    QCOMPARE(buffer.size(), QSize(native ? 64 : 128, 32));
++    QCOMPARE(buffer.pixelAspectRatio(), QSize(native ? sar : 1, 1));
++    QCOMPARE(buffer.stereo().has_value(), mark >= 0);
++    if (mark >= 0) {
++        QCOMPARE(buffer.stereo()->flags.testFlag(QVideoFrameFormat::StereoFlag::RightEyeFirst),
++                 inverted);
++        if (mark == AV_STEREO3D_2D)
++            QCOMPARE(buffer.stereo()->mode, QVideoFrameFormat::StereoMode::None);
++    }
++    const auto data = buffer.map(QVideoFrame::ReadOnly);
++    QVERIFY(data.data[0]);
++    if (native) {
++        for (int y = 0; y < 32; ++y) {
++            for (int x = 0; x < 64; ++x) {
++                const auto *p = data.data[0] + y * data.bytesPerLine[0] + x * 4;
++                QCOMPARE(p[0], x);
++                QCOMPARE(p[1], y);
++                QCOMPARE(p[2], x >= 32 ? 192 : 64);
++                QCOMPARE(p[3], 255);
++            }
++        }
++    }
++    buffer.unmap();
++}
++
++void tst_QFFmpegVideoBuffer::sinkProperty()
++{
++    QVideoSink sink;
++    QVERIFY(!sink.preserveNativeSize());
++    QSignalSpy changed(&sink, &QVideoSink::preserveNativeSizeChanged);
++    sink.setPreserveNativeSize(true);
++    QVERIFY(sink.preserveNativeSize());
++    QCOMPARE(changed.size(), 1);
++    sink.setPreserveNativeSize(true);
++    QCOMPARE(changed.size(), 1);
++    sink.setPreserveNativeSize(false);
++    QVERIFY(!sink.preserveNativeSize());
++    QCOMPARE(changed.size(), 2);
++}
++
++QTEST_GUILESS_MAIN(tst_QFFmpegVideoBuffer)
++#include "tst_qffmpegvideobuffer.moc"
+-- 
+2.53.0
+

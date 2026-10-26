@@ -1,17 +1,19 @@
-# Native strip and metadata regression
+# Native Bino foundation gates
 
-Build both BINO_STEREO_DESKTOP settings.
-The ON build uses libstereo-av's content-inspection API and libstereo-declare 1.7 for native child placement.
-The OFF build retains the upstream output modes and their conversion tests.
+Build the edition with BINO_STEREO_DESKTOP=ON and Qt Multimedia's default-off native-raster sink capability.
+Build OFF against ordinary Qt to retain all upstream output choices and rendering.
 
-Run tests/strip-contract with a new isolated KWin session for each case.
-Keep the ffprobe-absent, previous player, swapped-eye, plain mono, containment, and one-resize controls.
-Use tests/frame-path/source.cpp for source precedence and per-file corrections, buttons.cpp/buttons.py for normal and hovered round backings, and the retained import, fallback and repaint tests.
-Repeat the native source matrix from the installed package.
+Use the exact currently published Bino +stereo3d3 package as the check-link predecessor.
+Do not substitute a locally accepted candidate or add an import-retention allowance.
+Filename and shape helpers must remain live fallback behavior below declared marks and per-file corrections.
 
-Run hint-fixtures.py and hints.cpp for unmarked filename and frame-shape inference, misleading filenames on declared sources, explicit mono, and correction priority.
-Run the native sample and display-shape checks on guessed sources too, including non-unit SAR with a half-view filename hint.
+Run the standalone sink test on the published Qt backend before the new backend.
+An unmarked 1920x804 SAR 2:1 frame must remain 1920x804 SAR 2:1 when requested.
+The default consumer must retain its old pixels and metadata.
+Run the address-coded inference/strip matrix with both eyes checked at the unchanged tolerance, plus declaration geometry and containment as independent checks.
+Include software, imported and mapping fallback paths, mono, explicit mono, both eye orders and per-file correction persistence.
 
-Run Lean Code check-debs and check-link against published bino 2.8-1+stereo3d3+lc1, without an import-retention allowance.
-The shared nameTag, sideBySideByShape, views and matroskaPlane helpers remain live fallback paths below declared metadata.
-Keep the missing-marker, missing-library and swapped-eye negative controls.
+Compare actual F11 and double-click input in both directions on the installed executable, including the overlay route and single-click pause/resume.
+Keep the old executable's failing double-click test and the old Qt native-raster failure as negative controls.
+Retain demand-driven repaint, overlay animation, native raster and source-pixel gates from the earlier milestones.
+Package through Lean Code; check-debs and check-link must reject missing markers and missing libraries.
