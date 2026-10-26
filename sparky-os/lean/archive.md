@@ -10,7 +10,7 @@ export SPARKY_LC_ARCHIVE_CONFIG=/path/to/public-sources.json
 export SPARKY_LC_SCRATCH=/path/to/private-link-scratch
 unset DISPLAY WAYLAND_DISPLAY XAUTHORITY DBUS_SESSION_BUS_ADDRESS
 PYTHONPATH=sparky-os python3 -m lean.release check-link \
-    --previous-dir /path/to/previous \
+    --previous-siblings-file /path/to/previous-edition.txt \
     --smoke sparky-os/lean/smoke.tsv \
     candidate.deb sibling-library.deb
 ```
@@ -42,19 +42,37 @@ Only siblings selected by the dependency solver contribute files, and those sele
 The scratch local index is trusted only for the explicitly supplied files whose identities and hashes are recorded; public archive indexes still require signature verification.
 The publisher supplies the selected native and architecture-independent edition packages as that local universe, including libraries already present in the destination pool.
 The optional `--siblings-file` accepts further authoritative edition `.deb` paths, one per line.
-The candidate replaces a same-name input when checking its predecessor.
+`--previous-siblings-file` supplies the previous edition snapshot, including its unchanged dependencies.
+The publisher generates that file from the existing destination pool before any copying or signing.
+`--previous-dir` can instead supply a retained coherent previous cohort and still selects the newest lower candidate version with Debian version ordering.
+Each side offers one authoritative version per sibling package; an ambiguous mixture of historical sibling versions is rejected with a request for a single snapshot.
+Missing or incompatible previous inputs block qualification and are identified as a previous-edition dependency failure.
+The candidate replaces only its own same-name entry in its side's universe.
+Identical unchanged inputs share their verified content-addressed bytes across both sides.
 A predecessor whose executable or runtime libraries do not resolve in the qualified environment cannot establish a passing baseline.
 
 Each architecture gets separate APT state and one frozen signed-index view for candidate and predecessor comparisons.
 Downloads use APT's selected URL, signed size and SHA-256, then independently check the archive control identity against the signed index before extraction.
-The shared scratch `sha256/` cache is content addressed and reverified on every use.
+Supplied archive identities and hashes are frozen without copying the offered universe.
+A shared immutable local index contains metadata and source links only, and records each offered input in `universes/<hash>/universe.json`.
+The original source files must remain available and unchanged during qualification.
+Only selected archive bytes enter the shared scratch `sha256/` cache, once per hash, and are reverified before extraction.
+Cached copies are read-only and have distinct inodes from source archives; source modes and bytes are never changed.
 A corrupt cache entry blocks the gate and names the entry to remove before retrying.
 Each comparison retains configuration, signature-verification logs, signed metadata and its hashes, solver decisions, dependency controls, exact identities, URLs, byte sizes, hashes and execution commands.
-See `metadata.json`, `case-*-solve.log`, `case-*/resolution.json` and `case-*/execution.jsonl` below the reported scratch directory.
+See `metadata.json`, `case-*-solve.log`, `case-*/resolution.json`, `case-*/execution.jsonl` and `case-*/root-files.jsonl` below the reported scratch directory.
+A comparison has at most two live qualified roots, and releases them after retaining file hashes and symlink inventories, including when a runtime check fails.
+The low-level `Archive.qualify` API returns a qualifier whose `close()` records the inventory and releases its root; a third live qualifier is refused.
 These are qualification evidence, not packages to publish.
 Scratch is persistent and private to the invocation owner; remove completed run directories when their evidence is no longer needed.
-The gate requires 2 GiB free on scratch in addition to the next package download.
-Operators must also preserve their build host's free-space floor and allow for extracted payload size.
+The enforced minimum floors are 2 GiB on scratch and 12 GiB on the root filesystem, with the larger floor applying when they share storage.
+`--min-free-gib` / `SPARKY_LC_MIN_FREE_GIB` and `--root-min-free-gib` / `SPARKY_LC_ROOT_MIN_FREE_GIB` can raise these floors.
+The gate reserves the impending write against both floors conservatively because bind mounts and overlay filesystems can share physical storage despite reporting different devices.
+Checks occur before input caching, index construction, downloads, archive members and each 1 MiB write chunk.
+APT state operations require an additional 256 MiB guard and are monitored while running; initial index refresh also reserves 1 GiB per configured source.
+These are per-invocation guards, not a reservation against concurrent work by other processes.
+Space refusal blocks the gate and leaves prior publication bytes unchanged.
+Metadata grows with the number of comparisons, while offered archive payloads and successful roots do not accumulate per case.
 
 The extractor reads package data only and resolves absolute symlinks relative to the new root.
 It rejects path escapes, differing overlapping files and special files.
@@ -78,11 +96,13 @@ An unavailable namespace runner blocks the check even when the predecessor fails
 
 Focused offline regression tests use a disposable signed fixture archive with explicit compiler-runtime input files.
 Their synthetic signing key is unrelated to release signing.
+The publication regressions invoke the real publisher only on disposable fixture repositories with explicit synthetic keys.
 
 ```sh
 unset DISPLAY WAYLAND_DISPLAY XAUTHORITY DBUS_SESSION_BUS_ADDRESS
 TMPDIR=/path/to/private-test-scratch PYTHONPATH=sparky-os \
-    python3 -m pytest -q sparky-os/lean/tests/test_linkcheck.py sparky-os/lean/tests/test_archive.py
+    python3 -m pytest -q sparky-os/lean/tests/test_linkcheck.py sparky-os/lean/tests/test_archive.py \
+    sparky-os/lean/tests/test_archive_publication.py
 ```
 
 APT configuration loading and scratch path controls follow [apt.conf(5)](https://manpages.debian.org/testing/apt/apt.conf.5.en.html).

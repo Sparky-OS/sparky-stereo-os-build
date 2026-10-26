@@ -414,7 +414,8 @@ class Packages(unittest.TestCase):
         home = self.base / 'test-gnupg'
         home.mkdir(mode=0o700)
         from lean.tests.archive_fixtures import signed_archive
-        env = {**os.environ, 'SPARKY_REPO_GNUPGHOME': str(home), 'TMPDIR': str(self.base),
+        env = {'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'HOME': str(self.base), 'LC_ALL': 'C',
+               'SPARKY_REPO_GNUPGHOME': str(home), 'TMPDIR': str(self.base),
                'SPARKY_LC_ARCHIVE_CONFIG': str(signed_archive(self.base / 'link-archive')),
                'SPARKY_LC_SCRATCH': str(self.base / 'link-scratch')}
         try:

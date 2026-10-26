@@ -235,9 +235,26 @@ while IFS=$'\t' read -r from to _ _ arch; do
 	echo "$from" >>"$W/link-siblings.txt"
 	[ -f "$DEST/$to" ] || echo "$from" >>"$W/link-debs.txt"
 done <"$W/selection.tsv"
+# The destination is the previous edition universe. New siblings cannot qualify
+# a predecessor that requires their old exact versions. The optional historical
+# directory adds earlier builds; unchanged packages stay in both snapshots.
+python3 - "$DEST" "$HOST_ARCH" "$W/link-previous.txt" <<'PYOLD'
+from pathlib import Path
+import subprocess
+import sys
+root, native, output = sys.argv[1:]
+with open(output, 'w') as stream:
+    for path in sorted(Path(root).glob('pool/**/*.deb')):
+        if '-dbgsym_' in path.name or '-lc-hr_' in path.name:
+            continue
+        arch = subprocess.check_output(['dpkg-deb', '-f', str(path), 'Architecture'], text=True).strip()
+        if arch in (native, 'all'):
+            stream.write(str(path) + '\n')
+PYOLD
 if [ -s "$W/link-debs.txt" ]; then
 	mapfile -t LINK_DEBS <"$W/link-debs.txt"
 	PYTHONPATH="$HERE/..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release check-link "${LINK_DEBS[@]}" --siblings-file "$W/link-siblings.txt" \
+		--previous-siblings-file "$W/link-previous.txt" \
 		${SPARKY_LC_PREVIOUS_DIR:+--previous-dir "$SPARKY_LC_PREVIOUS_DIR"}
 fi
 

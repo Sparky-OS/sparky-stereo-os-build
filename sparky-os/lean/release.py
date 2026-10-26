@@ -132,9 +132,11 @@ def check_debs(paths):
     return verified
 
 
-def previous_build(deb, previous_dir):
+def previous_build(deb, previous_dir=None, previous_debs=(), controls=None):
     """The newest build of the same package and architecture below `deb`'s version in previous_dir."""
     def field(path, name):
+        if controls is not None and path in controls:
+            return controls[path][name]
         return subprocess.run(['dpkg-deb', '-f', str(path), name], capture_output=True, text=True,
                               check=True).stdout.strip()
 
@@ -143,8 +145,13 @@ def previous_build(deb, previous_dir):
 
     name, version, arch = (field(deb, key) for key in ('Package', 'Version', 'Architecture'))
     best = None
-    for candidate in sorted(Path(previous_dir).glob(f'{name}_*_{arch}.deb')):
-        if field(candidate, 'Package') != name:
+    candidates = list(map(Path, previous_debs))
+    if previous_dir:
+        if not Path(previous_dir).is_dir():
+            raise package.Invalid(f'{previous_dir}: previous package directory is missing')
+        candidates += list(Path(previous_dir).rglob(f'{name}_*_{arch}.deb'))
+    for candidate in sorted(set(candidates)):
+        if field(candidate, 'Package') != name or field(candidate, 'Architecture') != arch:
             continue
         found = field(candidate, 'Version')
         if less(found, version) and (best is None or less(best[0], found)):
@@ -152,28 +159,42 @@ def previous_build(deb, previous_dir):
     return best[1] if best else None
 
 
-def check_link(debs, previous_dir=None, smoke_table=None, archive_config=None, scratch=None, siblings=()):
-    """Resolve declared dependencies from signed archives, then check isolated ELF/start behavior."""
+def check_link(debs, previous_dir=None, smoke_table=None, archive_config=None, scratch=None, siblings=(),
+               previous_siblings=(), min_free_gib=2, root_min_free_gib=12):
+    """Qualify old/new edition snapshots against the same frozen public indexes."""
     archive_config = archive_config or os.environ.get('SPARKY_LC_ARCHIVE_CONFIG')
     scratch = scratch or os.environ.get('SPARKY_LC_SCRATCH')
     if not archive_config or not scratch:
         raise package.Invalid('check-link needs --archive-config / --scratch (or SPARKY_LC_ARCHIVE_CONFIG / '
                               'SPARKY_LC_SCRATCH); see lean/archive.md')
+    debs = list(map(Path, debs))
+    previous_inputs = list(map(Path, previous_siblings))
+    if previous_dir:
+        if not Path(previous_dir).is_dir():
+            raise package.Invalid(f'{previous_dir}: previous package directory is missing')
+        previous_inputs += sorted(Path(previous_dir).rglob('*.deb'))
+    current_inputs = list(dict.fromkeys(debs + list(map(Path, siblings))))
+    previous_inputs = list(dict.fromkeys(previous_inputs))
+    controls = {path: archive.control(path) for path in dict.fromkeys(current_inputs + previous_inputs)}
     contexts = {}
     native = subprocess.run(['dpkg', '--print-architecture'], capture_output=True, text=True, check=True).stdout.strip()
-    for deb in map(Path, debs):
-        arch = linkcheck.control_field(deb, 'Architecture')
+    for deb in debs:
+        arch = controls[deb]['Architecture']
         if arch == 'all':
             arch = native
         if arch != native:
             raise package.Invalid(f'{deb}: unsupported execution gate for {arch} on {native}; use a native runner')
         if arch not in contexts:
-            contexts[arch] = archive.Archive(archive_config, scratch, arch)
-        previous = previous_build(deb, previous_dir) if previous_dir else None
-        same_arch = [p for p in list(debs) + list(siblings)
-                     if linkcheck.control_field(p, 'Architecture') in (arch, 'all')]
+            contexts[arch] = archive.Archive(archive_config, scratch, arch, min_free_gib, root_min_free_gib)
+        same_arch = [p for p in current_inputs if controls[p]['Architecture'] in (arch, 'all')]
+        old_arch = [p for p in previous_inputs if controls[p]['Architecture'] in (arch, 'all')]
+        for path in dict.fromkeys(same_arch + old_arch):
+            frozen = contexts[arch].input(path)['control']
+            if frozen != controls[path]:
+                raise package.Invalid(f'{path}: control changed before the edition snapshot was frozen')
+        previous = previous_build(deb, previous_debs=old_arch, controls=controls)
         linkcheck.check(deb, previous_deb=previous, smoke_table=smoke_table,
-                        archive_context=contexts[arch], siblings=same_arch)
+                        archive_context=contexts[arch], siblings=same_arch, previous_siblings=old_arch)
     print(f'lc1: archive-qualified link check passed for {len(debs)} packages')
 
 
@@ -191,7 +212,10 @@ def main():
     link.add_argument('--smoke', default=str(Path(__file__).with_name('smoke.tsv')), help='programs to start with LD_BIND_NOW=1')
     link.add_argument('--archive-config', help='JSON signed public archive sources (SPARKY_LC_ARCHIVE_CONFIG)')
     link.add_argument('--scratch', help='private APT state, verified cache and roots (SPARKY_LC_SCRATCH)')
-    link.add_argument('--siblings-file', help='newline-separated authoritative edition .debs')
+    link.add_argument('--siblings-file', help='newline-separated authoritative current edition .debs')
+    link.add_argument('--previous-siblings-file', help='previous edition snapshot .debs, including unchanged dependencies')
+    link.add_argument('--min-free-gib', type=int, default=os.environ.get('SPARKY_LC_MIN_FREE_GIB', '2'), help='scratch floor, at least 2 GiB')
+    link.add_argument('--root-min-free-gib', type=int, default=os.environ.get('SPARKY_LC_ROOT_MIN_FREE_GIB', '12'), help='root filesystem floor, at least 12 GiB')
     selection = commands.add_parser('check-selection')
     selection.add_argument('tsv')
     tree = commands.add_parser('check-tree')
@@ -212,7 +236,9 @@ def main():
             check_debs(args.debs)
         elif args.command == 'check-link':
             check_link(args.debs, args.previous_dir, args.smoke, args.archive_config, args.scratch,
-                       Path(args.siblings_file).read_text().splitlines() if args.siblings_file else ())
+                       Path(args.siblings_file).read_text().splitlines() if args.siblings_file else (),
+                       Path(args.previous_siblings_file).read_text().splitlines() if args.previous_siblings_file else (),
+                       args.min_free_gib, args.root_min_free_gib)
         elif args.command == 'check-selection':
             paths = [line.split('\t')[0] for line in Path(args.tsv).read_text().splitlines()
                      if line.split('\t')[-1] != 'source']

@@ -130,6 +130,7 @@ def test_corrupt_cached_bytes_are_rejected(context, tmp_path):
     q = context.qualify(candidate)
     row = manifest(q)['packages'][0]
     cached = context.cache / (row['sha256'] + '.deb')
+    cached.chmod(0o644)
     cached.write_bytes(b'corrupt')
     with pytest.raises(package.Invalid, match='corrupt cached package'):
         context.qualify(candidate)

@@ -16,6 +16,8 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
+import signal
+import time
 import subprocess
 import tarfile
 import tempfile
@@ -85,8 +87,9 @@ def rooted(root, name, follow=True):
     return root.joinpath(*parts)
 
 
-def unpack(deb, root):
+def unpack(deb, root, check_space=None):
     """Merge data only; reject conflicting paths, traversal and special files."""
+    check_space = check_space or (lambda required: space(root, required))
     proc = subprocess.Popen(['dpkg-deb', '--fsys-tarfile', str(deb)], stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE)
     try:
@@ -94,6 +97,7 @@ def unpack(deb, root):
             for member in tar:
                 if '..' in PurePosixPath(member.name).parts or member.name.startswith('/'):
                     raise package.Invalid(f'{deb}: unsafe archive path: {member.name}')
+                check_space((member.size if member.isreg() else 0) + 16384)
                 path = rooted(root, member.name, follow=False)
                 path.parent.mkdir(parents=True, exist_ok=True)
                 exists = path.exists() or path.is_symlink()
@@ -125,10 +129,11 @@ def unpack(deb, root):
                         if target:
                             if not target.is_file():
                                 raise package.Invalid(f'{deb}: missing hardlink target {member.linkname}')
-                            shutil.copyfile(target, path)
+                            with target.open('rb') as source, path.open('xb') as stream:
+                                copy_stream(source, stream, check_space)
                         else:
                             with path.open('xb') as stream:
-                                shutil.copyfileobj(source, stream)
+                                copy_stream(source, stream, check_space)
                         path.chmod(member.mode & 0o777)
                 else:
                     raise package.Invalid(f'{deb}: unsupported special file {member.name}')
@@ -141,9 +146,43 @@ def unpack(deb, root):
         proc.communicate()
 
 
-def space(path, required=0):
-    if shutil.disk_usage(path).free < (2 << 30) + required:
-        raise package.Invalid(f'{path}: archive gate needs 2 GiB free plus {required} input bytes')
+def space(path, required=0, minimum=2 << 30, root_minimum=12 << 30):
+    """Refuse writes before either the scratch or root filesystem floor is crossed."""
+    path = Path(path)
+    root_free = shutil.disk_usage('/').free
+    if root_free < root_minimum:
+        raise package.Invalid(f'/: free space {root_free} is below root floor {root_minimum}')
+    floor = max(minimum, root_minimum) if path.stat().st_dev == Path('/').stat().st_dev else minimum
+    available = shutil.disk_usage(path).free
+    if available - required < floor:
+        raise package.Invalid(f'{path}: insufficient space: {available} free, {required} requested, floor {floor}')
+    # Bind mounts and overlay roots can report different device IDs while sharing
+    # backing storage. Reserve the same write against the root floor as well.
+    if root_free - required < root_minimum:
+        raise package.Invalid(f'/: insufficient space: {root_free} free, {required} requested, floor {root_minimum}')
+
+
+def copy_stream(source, target, check_space):
+    while True:
+        block = source.read(1 << 20)
+        if not block:
+            break
+        check_space(len(block) + 16384)
+        target.write(block)
+
+
+def inventory(root, output):
+    """Retain hashes and symlink targets before releasing a reconstructable root."""
+    with output.open('w') as stream:
+        for base, dirs, names in os.walk(root, followlinks=False):
+            for name in sorted(dirs + names):
+                path = Path(base) / name
+                relative = str(path.relative_to(root))
+                if path.is_symlink():
+                    stream.write(json.dumps({'path': relative, 'target': os.readlink(path)}) + '\n')
+                elif path.is_file():
+                    stream.write(json.dumps({'path': relative, 'size': path.stat().st_size,
+                                             'sha256': digest(path)}) + '\n')
 
 
 class ExecutionUnavailable(package.Invalid):
@@ -159,11 +198,21 @@ class Archive:
     it never disables signature or hash verification.
     """
 
-    def __init__(self, config, scratch, arch):
+    def __init__(self, config, scratch, arch, min_free_gib=2, root_min_free_gib=12):
         self.arch = arch
         self.scratch = Path(scratch).resolve()
+        if min_free_gib < 2 or root_min_free_gib < 12:
+            raise package.Invalid('space floors cannot be below 2 GiB scratch and 12 GiB root')
+        self.minimum, self.root_minimum = min_free_gib << 30, root_min_free_gib << 30
+        ancestor = self.scratch
+        while not ancestor.exists():
+            ancestor = ancestor.parent
+        space(ancestor, 1 << 20, self.minimum, self.root_minimum)
         self.scratch.mkdir(parents=True, exist_ok=True)
-        space(self.scratch)
+        self.ensure_space(1 << 20)
+        self._inputs, self._indexes, self._active = {}, set(), set()
+        self.universes = self.scratch / 'universes'
+        self.universes.mkdir(exist_ok=True)
         self.base = Path(tempfile.mkdtemp(prefix=f'link-{arch}-', dir=self.scratch))
         self.cache = self.scratch / 'sha256'
         self.cache.mkdir(exist_ok=True)
@@ -230,6 +279,7 @@ class Archive:
                 raise package.Invalid('scratch path contains unsupported APT configuration characters')
         (self.base / 'apt.conf').write_text(''.join(f'{k} "{v}";\n' for k, v in options.items()) +
                                            f'APT::Architectures {{ "{arch}"; }};\n')
+        self.ensure_space(len(self.sources) << 30)
         self.run(['apt-config', 'dump'], 'configuration')
         self.run(['apt-get', '-y', '-o', 'APT::Update::Error-Mode=any', '-o', 'Debug::Acquire::gpgv=true', 'update'], 'update')
         self.metadata = [{'path': str(p.relative_to(self.base)), 'size': p.stat().st_size, 'sha256': digest(p)}
@@ -242,69 +292,163 @@ class Archive:
             'configuration_sha256': digest(self.base / 'apt.conf'),
             'trust': 'APT update succeeded with Signed-By; insecure and unauthenticated inputs disabled'}, indent=2) + '\n')
 
-    def run(self, args, label):
-        run = subprocess.run(args, cwd=self.base, env=self.env, capture_output=True, text=True, timeout=300)
-        (self.base / f'{label}.log').write_text('$ ' + ' '.join(args) + '\n' + run.stdout + run.stderr)
-        if run.returncode:
-            raise package.Invalid(f'archive {label} failed (see {self.base / (label + ".log")}):\n'
-                                  + (run.stdout + run.stderr)[-5000:])
-        return run.stdout
+    def ensure_space(self, required=0):
+        space(self.scratch, required, self.minimum, self.root_minimum)
 
-    def qualify(self, deb, siblings=()):
-        """Resolve exact local inputs, verify every byte, and extract one isolated root."""
-        directory = Path(tempfile.mkdtemp(prefix='case-', dir=self.base))
-        inputs = []
+    def run(self, args, label):
+        # APT writes only private state. Monitor its growth as well as reserving
+        # space before starting; terminate only this command's process group.
+        self.ensure_space(256 << 20)
+        proc = subprocess.Popen(args, cwd=self.base, env=self.env, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True, start_new_session=True)
+        deadline = time.monotonic() + 300
+        try:
+            while True:
+                try:
+                    out, err = proc.communicate(timeout=0.05)
+                    break
+                except subprocess.TimeoutExpired:
+                    self.ensure_space(256 << 20)
+                    if time.monotonic() > deadline:
+                        raise package.Invalid(f'archive {label} timed out')
+        except BaseException:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            out, err = proc.communicate()
+            (self.base / f'{label}.log').write_text('$ ' + ' '.join(args) + '\n' + out + err)
+            raise
+        (self.base / f'{label}.log').write_text('$ ' + ' '.join(args) + '\n' + out + err)
+        if proc.returncode:
+            raise package.Invalid(f'archive {label} failed (see {self.base / (label + ".log")}):\n' + (out + err)[-5000:])
+        return out
+
+    def input(self, path):
+        """Freeze a supplied identity/hash once, without copying unselected bytes."""
+        path = Path(path).resolve()
+        stat = path.stat()
+        stamp = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+        if path in self._inputs:
+            obj = self._inputs[path]
+            if obj['stamp'] != stamp:
+                raise package.Invalid(f'{path}: supplied input changed after its universe was frozen')
+            return obj
+        obj = {'path': path, 'control': control(path), 'sha256': digest(path), 'size': stat.st_size, 'stamp': stamp}
+        current = path.stat()
+        if stamp != (current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns, current.st_ctime_ns):
+            raise package.Invalid(f'{path}: supplied input changed during verification')
+        if obj['control']['Architecture'] not in (self.arch, 'all'):
+            raise package.Invalid(f'{path}: wrong architecture {obj["control"]["Architecture"]}; context is {self.arch}')
+        self._inputs[path] = obj
+        return obj
+
+    def cached_input(self, item):
+        """Copy only selected bytes, once, without hardlinking or modifying a source."""
+        dest = self.cache / (item['sha256'] + '.deb')
+        if dest.exists():
+            if dest.stat().st_size != item['size'] or digest(dest) != item['sha256']:
+                raise package.Invalid(f'{dest}: corrupt cached package; remove it and retry')
+            return dest
+        self.ensure_space(item['size'] + 16384)
+        with tempfile.NamedTemporaryFile(dir=self.cache, prefix='.input-', delete=False) as stream:
+            temporary = Path(stream.name)
+            try:
+                with item['path'].open('rb') as source:
+                    copy_stream(source, stream, self.ensure_space)
+                stream.flush()
+                if digest(temporary) != item['sha256']:
+                    raise package.Invalid(f'{item["path"]}: supplied bytes changed while copying')
+                temporary.chmod(0o444)
+                os.link(temporary, dest)
+            finally:
+                temporary.unlink(missing_ok=True)
+        return dest
+
+    def universe(self, deb, siblings):
+        candidate = self.input(deb)
+        items = {}
         named = {}
-        origins = {}
-        candidate = control(deb)
         for path in [deb] + list(siblings):
-            obj = control(path)
-            if obj['Package'] == candidate['Package'] and Path(path) != Path(deb):
+            item = self.input(path)
+            obj = item['control']
+            if obj['Package'] == candidate['control']['Package'] and identity(obj) != identity(candidate['control']):
                 continue
-            if obj['Architecture'] not in (self.arch, 'all'):
-                raise package.Invalid(f'{path}: wrong architecture {obj["Architecture"]}; context is {self.arch}')
+            key = identity(obj)
+            if key in items and items[key]['sha256'] != item['sha256']:
+                raise package.Invalid(f'conflicting supplied package identity: {key}')
             name = obj['Package']
-            if name in named:
-                if named[name] != (identity(obj), digest(path)):
-                    raise package.Invalid(f'conflicting supplied package: {name}')
-                continue
-            named[name] = (identity(obj), digest(path))
-            target = directory / f'{len(inputs)}.deb'
-            shutil.copyfile(path, target)
-            sha = digest(target)
-            if sha != named[name][1]:
-                raise package.Invalid(f'{path}: supplied bytes changed while copying')
-            origins[sha] = str(Path(path).resolve())
-            inputs.append((target, obj, sha))
-        # A private index makes supplied siblings available to APT without forcing
-        # unrelated packages (and their conflicts/dependencies) into this root.
-        # Only this generated index is trusted locally; public sources still need
-        # their signatures. Public lists remain frozen during this local update.
-        local = self.base / 'local'
-        if local.exists():
-            shutil.rmtree(local)
-        (local / 'pool').mkdir(parents=True)
+            if name in named and named[name] != key:
+                raise package.Invalid(f'conflicting supplied package: {name}; provide one authoritative edition snapshot')
+            items.setdefault(key, item)
+            named[name] = key
+        inputs = sorted(items.values(), key=lambda item: identity(item['control']))
+        token = hashlib.sha256(json.dumps([item['sha256'] for item in inputs]).encode()).hexdigest()
+        local = self.universes / token
         records = []
-        for index, (path, obj, sha) in enumerate(inputs):
-            shutil.copyfile(path, local / 'pool' / f'{index}.deb')
+        for item in inputs:
+            obj, sha = item['control'], item['sha256']
             records.append(''.join(f'{key}: {value}\n' for key, value in obj.items()) +
-                           f'Filename: pool/{index}.deb\nSize: {path.stat().st_size}\nSHA256: {sha}\n')
-        (local / 'Packages').write_text('\n'.join(records))
+                           f'Filename: pool/{sha}.deb\nSize: {item["size"]}\nSHA256: {sha}\n')
+        index = '\n'.join(records).encode()
+        self.ensure_space(len(index) * 3 + (len(inputs) + 10) * 8192)
+        if not local.exists():
+            temporary = Path(tempfile.mkdtemp(prefix='.universe-', dir=self.universes))
+            try:
+                (temporary / 'pool').mkdir()
+                for item in inputs:
+                    # Only metadata and links are offered to APT. Selected bytes
+                    # are subsequently copied and reverified in the immutable cache.
+                    (temporary / 'pool' / (item['sha256'] + '.deb')).symlink_to(item['path'])
+                (temporary / 'Packages').write_bytes(index)
+                (temporary / 'Packages').chmod(0o444)
+                manifest = [{'identity': identity(item['control']), 'sha256': item['sha256'],
+                             'size': item['size'], 'source': str(item['path'])} for item in inputs]
+                (temporary / 'universe.json').write_text(json.dumps(manifest, indent=2) + '\n')
+                (temporary / 'universe.json').chmod(0o444)
+                temporary.rename(local)
+            finally:
+                if temporary.exists():
+                    shutil.rmtree(temporary)
+        elif (local / 'Packages').read_bytes() != index:
+            raise package.Invalid(f'{local}: corrupt immutable local index')
         local_source = f'deb [trusted=yes arch={self.arch}] {local.as_uri()} ./\n'
         (self.base / 'etc/local.list').write_text(local_source)
         (self.base / 'etc/sources.list').write_text(local_source + self.public_sources)
-        self.run(['apt-get', '-y', '-o', 'Dir::Etc::sourcelist=local.list', '-o',
-                  'APT::Update::Error-Mode=any', 'update'], directory.name + '-local-index')
-        (directory / 'supplied.Packages').write_bytes((local / 'Packages').read_bytes())
-        # Pins forbid replacing supplied edition versions with stock versions.
-
+        if token not in self._indexes:
+            self.run(['apt-get', '-y', '-o', 'Dir::Etc::sourcelist=local.list', '-o',
+                      'APT::Update::Error-Mode=any', 'update'], 'local-' + token)
+            self._indexes.add(token)
         preferences = []
-        for _, obj, _ in inputs:
-            preferences += [f'Package: {obj["Package"]}\nPin: version {obj["Version"]}\nPin-Priority: 1001\n\n',
-                            f'Package: {obj["Package"]}\nPin: version *\nPin-Priority: -1\n\n']
+        for item in inputs:
+            obj = item['control']
+            preferences.append(f'Package: {obj["Package"]}\nPin: version {obj["Version"]}\nPin-Priority: 1001\n\n')
+        for name in sorted(named):
+            preferences.append(f'Package: {name}\nPin: version *\nPin-Priority: -1\n\n')
         (self.base / 'etc/preferences').write_text(''.join(preferences))
+        return candidate, inputs, local
+
+    def qualify(self, deb, siblings=()):
+        """At most two live roots; successful callers must close their qualifiers."""
+        if len(self._active) >= 2:
+            raise package.Invalid('two qualified roots are still active; close them before resolving another case')
+        self.ensure_space(1 << 20)
+        directory = Path(tempfile.mkdtemp(prefix='case-', dir=self.base))
+        try:
+            return self._qualify(deb, siblings, directory)
+        except BaseException as exc:
+            (directory / 'failure.txt').write_text(str(exc) + '\n')
+            root = directory / 'root'
+            if root.exists():
+                inventory(root, directory / 'root-files.jsonl')
+                shutil.rmtree(root)
+            raise
+
+    def _qualify(self, deb, siblings, directory):
+        candidate, inputs, local = self.universe(deb, siblings)
+        candidate_bytes = self.cached_input(candidate)
         args = ['apt-get', '-y', '--no-remove', '--no-install-recommends', '--download-only',
-                '--print-uris', 'install', str(inputs[0][0])]
+                '--print-uris', 'install', str(candidate_bytes)]
         label = directory.name + '-solve'
         plan = self.run(args, label)
         root = directory / 'root'
@@ -316,34 +460,34 @@ class Archive:
             (root / name).symlink_to('usr/' + name)
         packages = []
         selected_inputs = []
-        supplied_hashes = {sha for _, _, sha in inputs}
+        by_hash = {item['sha256']: item for item in inputs}
+        named = {item['control']['Package'] for item in inputs}
         for line in plan.splitlines():
             if not line.startswith("'"):
                 continue
-            local = re.match(r"'file:([^']+)' ", line)
-            if local:
-                supplied = next((item for item in inputs if Path(unquote(local[1])) == item[0]), None)
-                if supplied:
-                    selected_inputs.append(supplied)
-                    continue
+            direct = re.match(r"'file:([^']+)' ", line)
+            if direct and Path(unquote(direct[1])) == candidate_bytes:
+                selected_inputs.append(candidate)
+                continue
             match = re.fullmatch(r"'([^']+)' (\S+) (\d+) SHA256:([0-9a-f]{64})", line)
             if not match:
                 raise package.Invalid(f'archive solver returned an unverified download: {line}')
             uri, filename, size, sha = match.groups()
             size = int(size)
-            if sha in supplied_hashes:
-                supplied = next(item for item in inputs if item[2] == sha)
-                if urlsplit(uri).scheme != 'file' or not Path(unquote(urlsplit(uri).path)).is_relative_to(self.base / 'local'):
-                    raise package.Invalid(f'archive attempted to substitute supplied {supplied[1]["Package"]}')
-                selected_inputs.append(supplied)
+            if sha in by_hash:
+                item = by_hash[sha]
+                if (urlsplit(uri).scheme != 'file' or Path(unquote(urlsplit(uri).path)) != local / 'pool' / (sha + '.deb')
+                        or size != item['size']):
+                    raise package.Invalid(f'archive attempted to substitute supplied {item["control"]["Package"]}')
+                selected_inputs.append(item)
                 continue
             if urlsplit(uri).scheme not in ('https', 'file'):
                 raise package.Invalid(f'unsupported archive download URL: {uri}')
             archive = self.cache / (sha + '.deb')
-            space(self.scratch, size)
             if archive.exists() and (archive.stat().st_size != size or digest(archive) != sha):
                 raise package.Invalid(f'{archive}: corrupt cached package; remove it and retry')
             if not archive.exists():
+                self.ensure_space(size + 16384)
                 temporary = directory / 'download.part'
                 with urlopen(uri, timeout=60) as response, temporary.open('xb') as stream:
                     remaining = size
@@ -351,12 +495,14 @@ class Archive:
                         block = response.read(min(1 << 20, remaining))
                         if not block:
                             break
+                        self.ensure_space(len(block) + 16384)
                         stream.write(block)
                         remaining -= len(block)
                     if response.read(1):
                         raise package.Invalid(f'{uri}: exceeds signed package size {size}')
                 if temporary.stat().st_size != size or digest(temporary) != sha:
                     raise package.Invalid(f'{uri}: corrupt download, signed size or SHA-256 differs')
+                temporary.chmod(0o444)
                 temporary.rename(archive)
             obj = control(archive)
             if obj['Architecture'] not in (self.arch, 'all'):
@@ -374,30 +520,42 @@ class Archive:
                        and record.get('Size') == str(size)
                        and all(record.get(key, '') == obj.get(key, '') for key in relationships) for record in records):
                 raise package.Invalid(f'{uri}: downloaded package identity differs from signed index')
-            unpack(archive, root)
+            unpack(archive, root, self.ensure_space)
             packages.append({'identity': identity(obj), 'url': uri, 'size': size, 'sha256': sha,
                              'depends': obj.get('Depends', ''), 'pre_depends': obj.get('Pre-Depends', ''),
                              'provides': obj.get('Provides', ''), 'multi_arch': obj.get('Multi-Arch', '')})
-        if not any(identity(item[1]) == identity(candidate) for item in selected_inputs):
+        if not any(identity(item['control']) == identity(candidate['control']) for item in selected_inputs):
             raise package.Invalid('archive solver omitted the requested candidate')
-        for path, obj, sha in selected_inputs:
-            unpack(path, root)
-        evidence = {'architecture': self.arch, 'candidate': identity(candidate), 'metadata': str(self.base / 'metadata.json'),
-                    'solver': str(self.base / (label + '.log')), 'status': 'empty',
-                    'local_index_sha256': digest(directory / 'supplied.Packages'),
-                    'inputs': [{'identity': identity(obj), 'sha256': sha, 'size': path.stat().st_size,
-                                'source': origins[sha], 'selected': any(selected[2] == sha for selected in selected_inputs),
-                                'depends': obj.get('Depends', ''), 'pre_depends': obj.get('Pre-Depends', '')}
-                               for path, obj, sha in inputs], 'packages': packages}
+        for item in selected_inputs:
+            unpack(self.cached_input(item), root, self.ensure_space)
+        selected = {item['sha256'] for item in selected_inputs}
+        evidence = {'architecture': self.arch, 'candidate': identity(candidate['control']),
+                    'metadata': str(self.base / 'metadata.json'), 'solver': str(self.base / (label + '.log')), 'status': 'empty',
+                    'universe': str(local / 'universe.json'), 'local_index_sha256': digest(local / 'Packages'),
+                    'space_floors': {'scratch': self.minimum, 'root': self.root_minimum},
+                    'inputs': [{'identity': identity(item['control']), 'sha256': item['sha256'], 'size': item['size'],
+                                'source': str(item['path']), 'selected': item['sha256'] in selected,
+                                'depends': item['control'].get('Depends', ''), 'pre_depends': item['control'].get('Pre-Depends', '')}
+                               for item in inputs], 'packages': packages}
         (directory / 'resolution.json').write_text(json.dumps(evidence, indent=2) + '\n')
         if (self.base / 'state/status').stat().st_size:
             raise package.Invalid('isolated solver status unexpectedly changed')
-        return Qualified(root, candidate, directory, self.arch)
+        q = Qualified(root, candidate['control'], directory, self.arch)
+        q.owner = self
+        self._active.add(directory)
+        return q
 
 
 class Qualified:
     def __init__(self, root, candidate, directory, arch):
         self.root, self.candidate, self.directory, self.arch = root, candidate, directory, arch
+
+    def close(self):
+        if self.root.exists():
+            inventory(self.root, self.directory / 'root-files.jsonl')
+            shutil.rmtree(self.root)
+        if hasattr(self, 'owner'):
+            self.owner._active.discard(self.directory)
 
     def run(self, command, env=None, timeout=20):
         native = subprocess.run(['dpkg', '--print-architecture'], capture_output=True, text=True, check=True).stdout.strip()

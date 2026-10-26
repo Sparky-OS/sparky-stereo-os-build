@@ -88,8 +88,8 @@ def stereo_imports(path):
     return found
 
 
-def extract(deb, dest):
-    archive.unpack(deb, Path(dest))
+def extract(deb, dest, check_space=None):
+    archive.unpack(deb, Path(dest), check_space)
 
 
 def control_field(deb, field):
@@ -187,13 +187,13 @@ def compare(new_deb, previous_deb=None, extra_dirs=(), qualified=None, previous_
     """Return (findings, notes). A finding blocks the release, a note is informational."""
     findings, notes = [], []
     with tempfile.TemporaryDirectory(prefix='inspect-new-', dir=qualified.directory) as new_root:
-        extract(new_deb, new_root)
+        extract(new_deb, new_root, qualified.owner.ensure_space)
         now = resolve(new_root, extra_dirs=extra_dirs, qualified=qualified)
         new_needed = {str(p.relative_to(new_root)): needed(p) for p in elf_files(new_root)}
         new_stereo = {str(p.relative_to(new_root)): stereo_imports(p) for p in elf_files(new_root)}
         if previous_deb:
             with tempfile.TemporaryDirectory(prefix='inspect-old-', dir=previous_qualified.directory) as old_root:
-                extract(previous_deb, old_root)
+                extract(previous_deb, old_root, previous_qualified.owner.ensure_space)
                 before = resolve(old_root, qualified=previous_qualified)
                 old_needed = {str(p.relative_to(old_root)): needed(p) for p in elf_files(old_root)}
                 old_stereo = {str(p.relative_to(old_root)): stereo_imports(p) for p in elf_files(old_root)}
@@ -254,7 +254,7 @@ def smoke(deb, table, timeout=10, extra_dirs=(), qualified=None):
     rows = [line.split('\t') for line in Path(table).read_text().splitlines()
             if line.strip() and not line.startswith('#')]
     with tempfile.TemporaryDirectory(prefix='inspect-smoke-', dir=qualified.directory) as root:
-        extract(deb, root)
+        extract(deb, root, qualified.owner.ensure_space)
         for row in rows:
             if row[0] != name:
                 continue
@@ -280,17 +280,30 @@ def smoke(deb, table, timeout=10, extra_dirs=(), qualified=None):
     return findings
 
 
-def check(new_deb, previous_deb=None, smoke_table=None, extra_dirs=(), archive_context=None, siblings=()):
-    """Qualify both builds against the same frozen archive and supplied sibling set."""
+def check(new_deb, previous_deb=None, smoke_table=None, extra_dirs=(), archive_context=None, siblings=(),
+          previous_siblings=None):
+    """Compare correct old/new edition universes against one frozen public archive."""
     if extra_dirs or archive_context is None:
         raise package.Invalid('archive context required; configure --archive-config and --scratch, and supply sibling .debs')
-    qualified = archive_context.qualify(new_deb, siblings)
-    previous_qualified = archive_context.qualify(previous_deb, siblings) if previous_deb else None
-    findings, notes = compare(new_deb, previous_deb, qualified=qualified, previous_qualified=previous_qualified)
-    if smoke_table:
-        findings += smoke(new_deb, smoke_table, qualified=qualified)
-    for note in notes:
-        print(f'lc1 link note: {Path(new_deb).name}: {note}')
-    if findings:
-        raise package.Invalid(f'{Path(new_deb).name}: link check failed:\n  ' + '\n  '.join(findings))
-    return notes
+    qualified = previous_qualified = None
+    try:
+        qualified = archive_context.qualify(new_deb, siblings)
+        if previous_deb:
+            old_inputs = siblings if previous_siblings is None else previous_siblings
+            try:
+                previous_qualified = archive_context.qualify(previous_deb, old_inputs)
+            except (OSError, package.Invalid) as exc:
+                raise package.Invalid(f'{Path(previous_deb).name}: previous edition dependency qualification failed; '
+                                      f'provide the matching previous sibling snapshot:\n{exc}') from exc
+        findings, notes = compare(new_deb, previous_deb, qualified=qualified, previous_qualified=previous_qualified)
+        if smoke_table:
+            findings += smoke(new_deb, smoke_table, qualified=qualified)
+        for note in notes:
+            print(f'lc1 link note: {Path(new_deb).name}: {note}')
+        if findings:
+            raise package.Invalid(f'{Path(new_deb).name}: link check failed:\n  ' + '\n  '.join(findings))
+        return notes
+    finally:
+        for context in (previous_qualified, qualified):
+            if context is not None:
+                context.close()
