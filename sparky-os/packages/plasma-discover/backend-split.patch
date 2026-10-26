@@ -1,0 +1,225 @@
+Description: Default Discover and its notifier to Flatpak and firmware, retaining optional PackageKit
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: vendor
+Forwarded: not-needed
+Last-Update: 2026-10-26
+Assisted-by: gpt-6.1-sol via Codex
+
+--- a/libdiscover/DiscoverBackendsFactory.cpp
++++ b/libdiscover/DiscoverBackendsFactory.cpp
+@@ -98,6 +98,10 @@
+         }
+     }
+ 
++    if (whitelist && !KSharedConfig::openConfig(QStringLiteral("discoverrc"))->group(QStringLiteral("Backends")).readEntry("PackageKitEnabled", false)) {
++        pluginNames.removeAll(QStringLiteral("packagekit-backend"));
++    }
++
+     pluginNames.removeDuplicates(); // will happen when discover is installed twice on the system
+     return pluginNames;
+ }
+--- a/notifier/BackendNotifierFactory.cpp
++++ b/notifier/BackendNotifierFactory.cpp
+@@ -6,6 +6,8 @@
+ 
+ #include "BackendNotifierFactory.h"
+ #include <BackendNotifierModule.h>
++#include <KConfigGroup>
++#include <KSharedConfig>
+ #include <QCoreApplication>
+ #include <QDebug>
+ #include <QDir>
+@@ -24,6 +26,10 @@
+         QDir dir(path + QStringLiteral("/discover-notifier/"));
+         const auto files = dir.entryList(QDir::Files);
+         for (const QString &file : files) {
++            if (file == QStringLiteral("DiscoverPackageKitNotifier.so")
++                && !KSharedConfig::openConfig(QStringLiteral("discoverrc"))->group(QStringLiteral("Backends")).readEntry("PackageKitEnabled", false)) {
++                continue;
++            }
+             QString fullPath = dir.absoluteFilePath(file);
+             QPluginLoader loader(fullPath);
+             loader.load();
+--- a/libdiscover/resources/SourcesModel.h
++++ b/libdiscover/resources/SourcesModel.h
+@@ -15,6 +15,7 @@
+ class DISCOVERCOMMON_EXPORT SourcesModel : public QConcatenateTablesProxyModel
+ {
+     Q_OBJECT
++    Q_PROPERTY(bool packageKitEnabled READ packageKitEnabled WRITE setPackageKitEnabled NOTIFY packageKitEnabledChanged)
+     Q_PROPERTY(QVector<AbstractSourcesBackend *> sources READ sources NOTIFY sourcesChanged)
+ public:
+     enum Roles {
+@@ -29,6 +30,8 @@
+     ~SourcesModel() override;
+ 
+     static SourcesModel *global();
++    bool packageKitEnabled() const;
++    void setPackageKitEnabled(bool enabled);
+     QVariant data(const QModelIndex &index, int role) const override;
+     QHash<int, QByteArray> roleNames() const override;
+ 
+@@ -38,6 +41,7 @@
+     QVector<AbstractSourcesBackend *> sources() const;
+ Q_SIGNALS:
+     void sourcesChanged();
++    void packageKitEnabledChanged();
+     void showingNow();
+ 
+ private:
+--- a/libdiscover/resources/SourcesModel.cpp
++++ b/libdiscover/resources/SourcesModel.cpp
+@@ -9,6 +9,8 @@
+ #include "resources/AbstractResourcesBackend.h"
+ #include "resources/AbstractSourcesBackend.h"
+ #include <QtGlobal>
++#include <KConfigGroup>
++#include <KSharedConfig>
+ #include <utils.h>
+ 
+ Q_GLOBAL_STATIC(SourcesModel, s_sources)
+@@ -22,6 +24,22 @@
+ }
+ 
+ SourcesModel::~SourcesModel() = default;
++
++bool SourcesModel::packageKitEnabled() const
++{
++    return KSharedConfig::openConfig(QStringLiteral("discoverrc"))->group(QStringLiteral("Backends")).readEntry("PackageKitEnabled", false);
++}
++
++void SourcesModel::setPackageKitEnabled(bool enabled)
++{
++    if (enabled == packageKitEnabled()) {
++        return;
++    }
++    auto config = KSharedConfig::openConfig(QStringLiteral("discoverrc"));
++    config->group(QStringLiteral("Backends")).writeEntry("PackageKitEnabled", enabled, KConfigBase::Notify);
++    config->sync();
++    Q_EMIT packageKitEnabledChanged();
++}
+ 
+ SourcesModel *SourcesModel::global()
+ {
+--- a/discover/qml/SourcesPage.qml
++++ b/discover/qml/SourcesPage.qml
+@@ -31,6 +31,20 @@
+     header: ColumnLayout {
+         spacing: Kirigami.Units.smallSpacing
+ 
++        QQC2.CheckBox {
++            objectName: "packageKitEnabled"
++            Layout.fillWidth: true
++            Layout.margins: Kirigami.Units.smallSpacing
++            text: i18nc("@option:check", "Use PackageKit for Debian packages")
++            checked: Discover.SourcesModel.packageKitEnabled
++            onToggled: Discover.SourcesModel.packageKitEnabled = checked
++        }
++        QQC2.Label {
++            Layout.fillWidth: true
++            Layout.margins: Kirigami.Units.smallSpacing
++            wrapMode: Text.WordWrap
++            text: i18nc("@info", "Discover manages Flatpak and firmware by default. Sparky's checker and APTus manage Debian packages. After changing this option, restart Discover and sign in again to restart its notifier.")
++        }
+         Repeater {
+             model: Discover.SourcesModel.sources
+ 
+--- a/libdiscover/backends/FwupdBackend/CMakeLists.txt
++++ b/libdiscover/backends/FwupdBackend/CMakeLists.txt
+@@ -19,3 +19,7 @@
+     target_compile_definitions(fwupd-backend PRIVATE -DFWUPD_EXTERNC_REQUIRED)
+ endif()
+ 
++
++kcoreaddons_add_plugin(FirmwareNotifier SOURCES FirmwareNotifier.cpp INSTALL_NAMESPACE "discover-notifier")
++target_link_libraries(FirmwareNotifier PRIVATE Discover::Notifiers Discover::Common)
++set_target_properties(FirmwareNotifier PROPERTIES INSTALL_RPATH ${CMAKE_INSTALL_FULL_LIBDIR}/plasma-discover)
+--- /dev/null
++++ b/libdiscover/backends/FwupdBackend/FirmwareNotifier.h
+@@ -0,0 +1,28 @@
++/*
++ * SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++ * SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++ */
++#pragma once
++
++#include <BackendNotifierModule.h>
++#include <QPointer>
++#include <QVector>
++#include <QSet>
++#include <resources/AbstractResourcesBackend.h>
++
++class FirmwareNotifier : public BackendNotifierModule
++{
++    Q_OBJECT
++    Q_PLUGIN_METADATA(IID DISCOVER_NOTIFIER_IID)
++    Q_INTERFACES(BackendNotifierModule)
++public:
++    explicit FirmwareNotifier(QObject *parent = nullptr);
++    bool hasUpdates() override;
++    bool hasSecurityUpdates() override { return false; }
++    bool needsReboot() const override;
++    void recheckSystemUpdateNeeded() override;
++
++private:
++    QVector<QPointer<AbstractResourcesBackend>> m_backends;
++    QSet<AbstractResourcesBackend *> m_initialized;
++};
+--- /dev/null
++++ b/libdiscover/backends/FwupdBackend/FirmwareNotifier.cpp
+@@ -0,0 +1,55 @@
++/*
++ * SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++ * SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++ */
++#include "FirmwareNotifier.h"
++#include <DiscoverBackendsFactory.h>
++#include <resources/AbstractBackendUpdater.h>
++#include <utility>
++
++FirmwareNotifier::FirmwareNotifier(QObject *parent)
++    : BackendNotifierModule(parent)
++{
++    // Use Discover's existing firmware consumer and error handling, rather than
++    // routing firmware discovery through PackageKit's Debian package backend.
++    const auto backends = DiscoverBackendsFactory().backend(QStringLiteral("fwupd-backend"));
++    for (auto backend : backends) {
++        m_backends.append(backend);
++        // The firmware client connects asynchronously. Its first contentsChanged
++        // announces a connected client; checking earlier leaves an unfinished fetch.
++        connect(backend, &AbstractResourcesBackend::contentsChanged, this, [this, backend] {
++            m_initialized.insert(backend);
++        });
++        connect(backend->backendUpdater(), &AbstractBackendUpdater::needsRebootChanged, this, &BackendNotifierModule::needsRebootChanged);
++        connect(backend, &AbstractResourcesBackend::updatesCountChanged, this, &BackendNotifierModule::foundUpdates);
++    }
++}
++
++bool FirmwareNotifier::hasUpdates()
++{
++    for (const auto &backend : std::as_const(m_backends)) {
++        if (backend && backend->updatesCount() > 0) {
++            return true;
++        }
++    }
++    return false;
++}
++
++bool FirmwareNotifier::needsReboot() const
++{
++    for (const auto &backend : std::as_const(m_backends)) {
++        if (backend && backend->backendUpdater()->needsReboot()) {
++            return true;
++        }
++    }
++    return false;
++}
++
++void FirmwareNotifier::recheckSystemUpdateNeeded()
++{
++    for (const auto &backend : std::as_const(m_backends)) {
++        if (backend && m_initialized.contains(backend) && backend->isValid()) {
++            backend->checkForUpdates();
++        }
++    }
++}
