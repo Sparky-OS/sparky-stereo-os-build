@@ -66,6 +66,8 @@ def rooted(root, name, follow=True):
     links = 0
     while pending:
         item = pending.pop(0)
+        if item == '//':
+            raise package.Invalid(f'ambiguous double-slash archive anchor: {name}')
         if item in ('/', '.', ''):
             continue
         if item == '..':
@@ -74,6 +76,8 @@ def rooted(root, name, follow=True):
             parts.pop()
             continue
         path = root.joinpath(*parts, item)
+        if not path.is_relative_to(root):
+            raise package.Invalid(f'archive path escapes root: {name}')
         if path.is_symlink() and (pending or follow):
             links += 1
             if links > 40:
@@ -148,7 +152,7 @@ def static_diversions(deb, obj):
     result = []
     for source in match['paths'].split():
         target = source + match['suffix']
-        if any(str(PurePosixPath(path)) != path or '..' in PurePosixPath(path).parts
+        if any(path.startswith('//') or str(PurePosixPath(path)) != path or '..' in PurePosixPath(path).parts
                for path in (source, target)):
             raise package.Invalid(f'{deb}: unsafe diversion path {source}')
         result.append({'source': source, 'target': target, 'owner': obj['Package'],

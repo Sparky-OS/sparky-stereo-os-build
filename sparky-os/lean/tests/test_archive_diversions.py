@@ -3,6 +3,7 @@
 import json
 import io
 import os
+from pathlib import Path
 import subprocess
 import tarfile
 
@@ -77,6 +78,7 @@ def test_undeclared_collision_still_blocks(tmp_path):
     preinst(owner='someone-else'),
     preinst(paths='/usr/share/fixture/../banner'),
     preinst(paths='/usr//share/fixture/banner'),
+    preinst(paths='//usr/share/fixture/banner'),
     preinst(paths='"/usr/share/fixture/banner"'),
     preinst(paths='$(touch /outside-root)'),
     preinst().replace(b'--add', b'--remove'),
@@ -260,3 +262,34 @@ def test_non_shell_whitespace_never_authorizes_a_diversion(tmp_path, separator):
     archive.unpack(old, root, diversions=mappings, package_name='original')
     with pytest.raises(package.Invalid, match='different payloads'):
         archive.unpack(new, root, diversions=mappings, package_name='wrapper')
+
+
+@pytest.mark.parametrize('via_link', [False, True])
+def test_double_slash_anchor_never_probes_outside_root(tmp_path, monkeypatch, via_link):
+    root = tmp_path / 'root'
+    root.mkdir()
+    name = '//usr/share/fixture/banner'
+    if via_link:
+        (root / 'link').symlink_to('//usr/share/fixture')
+        name = 'link/banner'
+    original = Path.is_symlink
+    probes = []
+
+    def confined_probe(path):
+        assert path.is_relative_to(root), f'outside-root filesystem probe: {path}'
+        probes.append(str(path))
+        return original(path)
+
+    monkeypatch.setattr(Path, 'is_symlink', confined_probe)
+    with pytest.raises(package.Invalid, match='double-slash archive anchor'):
+        archive.rooted(root, name)
+    assert probes == ([str(root / 'link')] if via_link else [])
+
+
+def test_double_slash_archive_symlink_target_rejected(tmp_path):
+    candidate = deb(tmp_path, 'badlink', files={'usr/share/link': ('//outside-root',)})
+    root = tmp_path / 'root'
+    root.mkdir()
+    with pytest.raises(package.Invalid, match='double-slash archive anchor'):
+        archive.unpack(candidate, root)
+    assert not (root / 'usr/share/link').exists()
