@@ -1,11 +1,11 @@
-Description: Native per-eye delivery, hardware texture import and demand-driven repainting
+Description: Native eye delivery, anaglyph input and demand-driven repainting
 Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
-Origin: Bino ORDER 242 reviewed source b1e282c99751dd8d32535f9ed679577293058ef5
+Origin: Bino ORDER242 6ab77d59a9a66f890ac3e8c0c7da703edc6dc525
 Forwarded: not-needed
 
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -10,13 +10,14 @@
+@@ -10,15 +10,17 @@
  set(CMAKE_FIND_PACKAGE_SORT_DIRECTION DEC)
  set(CMAKE_AUTOMOC ON)
  
@@ -20,8 +20,22 @@ Forwarded: not-needed
 +include(cmake/StereoDesktop.cmake)
  # Optional: Sparky Stereo OS's stereo layer, the rule that the players of the edition share to tell what a 3D video is
  find_package(StereoLayer 1.5 CONFIG QUIET)
++bino_anaglyph_input()
  if(StereoLayer_FOUND)
-@@ -61,12 +62,15 @@
+     add_definitions(-DHAVE_STEREO_LAYER)
+ endif()
+@@ -54,19 +56,25 @@
+ 	src/urlloader.hpp src/urlloader.cpp
+ 	src/digestiblemedia.hpp src/digestiblemedia.cpp
+ 	src/appicon.rc)
+-qt6_add_translations(bino TS_FILES i18n/bino_de.ts i18n/bino_ja.ts i18n/bino_ka.ts i18n/bino_zh.ts)
++qt6_add_translations(bino TS_FILES
++    i18n/bino_de.ts i18n/bino_fr.ts i18n/bino_ja.ts i18n/bino_ka.ts
++    i18n/bino_ko.ts i18n/bino_pl.ts i18n/bino_pt_BR.ts
++    i18n/bino_zh.ts i18n/bino_zh_CN.ts i18n/bino_zh_TW.ts)
+ qt6_add_resources(bino "misc" PREFIX "/" FILES
+ 	src/shader-color.vert.glsl
+ 	src/shader-color.frag.glsl
  	src/shader-view.vert.glsl
  	src/shader-view.frag.glsl
  	src/shader-display.vert.glsl
@@ -38,7 +52,7 @@ Forwarded: not-needed
  set_target_properties(bino PROPERTIES WIN32_EXECUTABLE TRUE)
  target_link_libraries(bino PRIVATE Qt6::OpenGLWidgets Qt6::Multimedia ${QVR_LIBRARIES})
  if(StereoLayer_FOUND)
-@@ -78,16 +82,16 @@
+@@ -78,16 +86,16 @@
  find_program(PANDOC NAMES pandoc DOC "pandoc executable")
  if(PANDOC)
      add_custom_command(OUTPUT "${CMAKE_BINARY_DIR}/bino-manual.html"
@@ -106,7 +120,7 @@ Forwarded: not-needed
 +endfunction()
 --- /dev/null
 +++ b/cmake/StereoDesktop.cmake
-@@ -0,0 +1,10 @@
+@@ -0,0 +1,28 @@
 +option(BINO_STEREO_DESKTOP "Hand native eye pairs to the stereo desktop compositor" ON)
 +add_compile_definitions(BINO_STEREO_DESKTOP=$<BOOL:${BINO_STEREO_DESKTOP}>)
 +if(BINO_STEREO_DESKTOP)
@@ -117,6 +131,24 @@ Forwarded: not-needed
 +    set(BINO_DISPLAY_SHADER src/shader-display.frag.glsl)
 +    set(BINO_MANUAL "${CMAKE_CURRENT_LIST_DIR}/../doc/bino-manual.md")
 +endif()
++
++# Gate the additive shared anaglyph-input API for builds against older layers.
++function(bino_anaglyph_input)
++    option(BINO_REQUIRE_ANAGLYPH_INPUT "Require the shared anaglyph input conversion API" OFF)
++    if(TARGET Stereo::Layer)
++        include(CheckCXXSourceCompiles)
++        set(CMAKE_REQUIRED_LIBRARIES Stereo::Layer)
++        check_cxx_source_compiles("#include <picture.h>
++int main() { int w[9], d[3]; return !Stereo::Picture::anaglyphTransform(
++Stereo::Picture::AnaglyphColorPair::RedCyan, true, w, d); }" HAVE_ANAGLYPH_INPUT)
++        if(HAVE_ANAGLYPH_INPUT)
++            add_compile_definitions(HAVE_ANAGLYPH_INPUT)
++        endif()
++    endif()
++    if(BINO_REQUIRE_ANAGLYPH_INPUT AND NOT HAVE_ANAGLYPH_INPUT)
++        message(FATAL_ERROR "This build requires Stereo::Picture::anaglyphTransform")
++    endif()
++endfunction()
 --- /dev/null
 +++ b/doc/bino-manual-stereo-desktop.md
 @@ -0,0 +1,448 @@
@@ -568,6 +600,3306 @@ Forwarded: not-needed
 +wait 5
 +quit
 +```
+--- a/i18n/bino_de.ts
++++ b/i18n/bino_de.ts
+@@ -86,6 +86,10 @@
+ <context>
+     <name>Gui</name>
+     <message>
++        <source>Input 3D anaglyph</source>
++        <translation>3D-Anaglypheneingabe</translation>
++    </message>
++    <message>
+         <location filename="../src/gui.cpp" line="80"/>
+         <source>&amp;File</source>
+         <translation>&amp;Datei</translation>
+@@ -656,6 +660,30 @@
+ </context>
+ <context>
+     <name>Mode</name>
++    <message>
++        <source>Input anaglyph red/cyan</source>
++        <translation>Anaglypheneingabe Rot/Cyan</translation>
++    </message>
++    <message>
++        <source>Input anaglyph cyan/red</source>
++        <translation>Anaglypheneingabe Cyan/Rot</translation>
++    </message>
++    <message>
++        <source>Input anaglyph green/magenta</source>
++        <translation>Anaglypheneingabe Grün/Magenta</translation>
++    </message>
++    <message>
++        <source>Input anaglyph magenta/green</source>
++        <translation>Anaglypheneingabe Magenta/Grün</translation>
++    </message>
++    <message>
++        <source>Input anaglyph amber/blue</source>
++        <translation>Anaglypheneingabe Bernstein/Blau</translation>
++    </message>
++    <message>
++        <source>Input anaglyph blue/amber</source>
++        <translation>Anaglypheneingabe Blau/Bernstein</translation>
++    </message>
+     <message>
+         <location filename="../src/modes.cpp" line="73"/>
+         <source>Input autodetection</source>
+--- /dev/null
++++ b/i18n/bino_fr.ts
+@@ -0,0 +1,38 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!DOCTYPE TS>
++<TS version="2.1" language="fr">
++<context>
++    <name>Gui</name>
++    <message>
++        <source>Input 3D anaglyph</source>
++        <translation>Entrée anaglyphe 3D</translation>
++    </message>
++</context>
++<context>
++    <name>Mode</name>
++    <message>
++        <source>Input anaglyph red/cyan</source>
++        <translation>Entrée anaglyphe rouge/cyan</translation>
++    </message>
++    <message>
++        <source>Input anaglyph cyan/red</source>
++        <translation>Entrée anaglyphe cyan/rouge</translation>
++    </message>
++    <message>
++        <source>Input anaglyph green/magenta</source>
++        <translation>Entrée anaglyphe vert/magenta</translation>
++    </message>
++    <message>
++        <source>Input anaglyph magenta/green</source>
++        <translation>Entrée anaglyphe magenta/vert</translation>
++    </message>
++    <message>
++        <source>Input anaglyph amber/blue</source>
++        <translation>Entrée anaglyphe ambre/bleu</translation>
++    </message>
++    <message>
++        <source>Input anaglyph blue/amber</source>
++        <translation>Entrée anaglyphe bleu/ambre</translation>
++    </message>
++</context>
++</TS>
+--- a/i18n/bino_ja.ts
++++ b/i18n/bino_ja.ts
+@@ -86,6 +86,10 @@
+ <context>
+     <name>Gui</name>
+     <message>
++        <source>Input 3D anaglyph</source>
++        <translation>3Dアナグリフ入力</translation>
++    </message>
++    <message>
+         <location filename="../src/gui.cpp" line="80"/>
+         <source>&amp;File</source>
+         <translation>&amp;ファイル</translation>
+@@ -655,6 +659,30 @@
+ </context>
+ <context>
+     <name>Mode</name>
++    <message>
++        <source>Input anaglyph red/cyan</source>
++        <translation>アナグリフ入力 赤/シアン</translation>
++    </message>
++    <message>
++        <source>Input anaglyph cyan/red</source>
++        <translation>アナグリフ入力 シアン/赤</translation>
++    </message>
++    <message>
++        <source>Input anaglyph green/magenta</source>
++        <translation>アナグリフ入力 緑/マゼンタ</translation>
++    </message>
++    <message>
++        <source>Input anaglyph magenta/green</source>
++        <translation>アナグリフ入力 マゼンタ/緑</translation>
++    </message>
++    <message>
++        <source>Input anaglyph amber/blue</source>
++        <translation>アナグリフ入力 アンバー/青</translation>
++    </message>
++    <message>
++        <source>Input anaglyph blue/amber</source>
++        <translation>アナグリフ入力 青/アンバー</translation>
++    </message>
+     <message>
+         <location filename="../src/modes.cpp" line="73"/>
+         <source>Input autodetection</source>
+--- /dev/null
++++ b/i18n/bino_ko.ts
+@@ -0,0 +1,38 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!DOCTYPE TS>
++<TS version="2.1" language="ko">
++<context>
++    <name>Gui</name>
++    <message>
++        <source>Input 3D anaglyph</source>
++        <translation>3D 애너글리프 입력</translation>
++    </message>
++</context>
++<context>
++    <name>Mode</name>
++    <message>
++        <source>Input anaglyph red/cyan</source>
++        <translation>애너글리프 입력 빨강/시안</translation>
++    </message>
++    <message>
++        <source>Input anaglyph cyan/red</source>
++        <translation>애너글리프 입력 시안/빨강</translation>
++    </message>
++    <message>
++        <source>Input anaglyph green/magenta</source>
++        <translation>애너글리프 입력 초록/마젠타</translation>
++    </message>
++    <message>
++        <source>Input anaglyph magenta/green</source>
++        <translation>애너글리프 입력 마젠타/초록</translation>
++    </message>
++    <message>
++        <source>Input anaglyph amber/blue</source>
++        <translation>애너글리프 입력 호박색/파랑</translation>
++    </message>
++    <message>
++        <source>Input anaglyph blue/amber</source>
++        <translation>애너글리프 입력 파랑/호박색</translation>
++    </message>
++</context>
++</TS>
+--- /dev/null
++++ b/i18n/bino_pl.ts
+@@ -0,0 +1,38 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!DOCTYPE TS>
++<TS version="2.1" language="pl">
++<context>
++    <name>Gui</name>
++    <message>
++        <source>Input 3D anaglyph</source>
++        <translation>Wejście anaglifowe 3D</translation>
++    </message>
++</context>
++<context>
++    <name>Mode</name>
++    <message>
++        <source>Input anaglyph red/cyan</source>
++        <translation>Wejście anaglifowe czerwony/cyjan</translation>
++    </message>
++    <message>
++        <source>Input anaglyph cyan/red</source>
++        <translation>Wejście anaglifowe cyjan/czerwony</translation>
++    </message>
++    <message>
++        <source>Input anaglyph green/magenta</source>
++        <translation>Wejście anaglifowe zielony/magenta</translation>
++    </message>
++    <message>
++        <source>Input anaglyph magenta/green</source>
++        <translation>Wejście anaglifowe magenta/zielony</translation>
++    </message>
++    <message>
++        <source>Input anaglyph amber/blue</source>
++        <translation>Wejście anaglifowe bursztynowy/niebieski</translation>
++    </message>
++    <message>
++        <source>Input anaglyph blue/amber</source>
++        <translation>Wejście anaglifowe niebieski/bursztynowy</translation>
++    </message>
++</context>
++</TS>
+--- /dev/null
++++ b/i18n/bino_pt_BR.ts
+@@ -0,0 +1,38 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!DOCTYPE TS>
++<TS version="2.1" language="pt_BR">
++<context>
++    <name>Gui</name>
++    <message>
++        <source>Input 3D anaglyph</source>
++        <translation>Entrada de anáglifo 3D</translation>
++    </message>
++</context>
++<context>
++    <name>Mode</name>
++    <message>
++        <source>Input anaglyph red/cyan</source>
++        <translation>Entrada de anáglifo vermelho/ciano</translation>
++    </message>
++    <message>
++        <source>Input anaglyph cyan/red</source>
++        <translation>Entrada de anáglifo ciano/vermelho</translation>
++    </message>
++    <message>
++        <source>Input anaglyph green/magenta</source>
++        <translation>Entrada de anáglifo verde/magenta</translation>
++    </message>
++    <message>
++        <source>Input anaglyph magenta/green</source>
++        <translation>Entrada de anáglifo magenta/verde</translation>
++    </message>
++    <message>
++        <source>Input anaglyph amber/blue</source>
++        <translation>Entrada de anáglifo âmbar/azul</translation>
++    </message>
++    <message>
++        <source>Input anaglyph blue/amber</source>
++        <translation>Entrada de anáglifo azul/âmbar</translation>
++    </message>
++</context>
++</TS>
+--- /dev/null
++++ b/i18n/bino_zh_CN.ts
+@@ -0,0 +1,1521 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!DOCTYPE TS>
++<TS version="2.1" language="zh_CN">
++<context>
++    <name>Bino</name>
++    <message>
++        <location filename="../src/bino.cpp" line="107"/>
++        <source>Media player error: %1</source>
++        <translation>媒体播放器错误: %1</translation>
++    </message>
++</context>
++<context>
++    <name>CommandInterpreter</name>
++    <message>
++        <location filename="../src/commandinterpreter.cpp" line="59"/>
++        <location filename="../src/commandinterpreter.cpp" line="80"/>
++        <location filename="../src/commandinterpreter.cpp" line="86"/>
++        <location filename="../src/commandinterpreter.cpp" line="90"/>
++        <source>Cannot open %1: %2</source>
++        <oldsource>Cannot open %1: %2)</oldsource>
++        <translation>未能打开 %1: %2</translation>
++    </message>
++    <message>
++        <source>Cannot read command from %1</source>
++        <translation type="vanished">未能从 %1 中读取指令</translation>
++    </message>
++    <message>
++        <location filename="../src/commandinterpreter.cpp" line="90"/>
++        <source>FIFOs are not supported on this system.</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/commandinterpreter.cpp" line="113"/>
++        <source>Cannot listen on %1: %2</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/commandinterpreter.cpp" line="159"/>
++        <source>%1 is not of the form &apos;[nameOrIP]:port&apos;</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/commandinterpreter.cpp" line="163"/>
++        <source>Cannot listen on %1 port %2: %3</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/commandinterpreter.cpp" line="244"/>
++        <location filename="../src/commandinterpreter.cpp" line="258"/>
++        <location filename="../src/commandinterpreter.cpp" line="260"/>
++        <location filename="../src/commandinterpreter.cpp" line="277"/>
++        <location filename="../src/commandinterpreter.cpp" line="284"/>
++        <location filename="../src/commandinterpreter.cpp" line="293"/>
++        <location filename="../src/commandinterpreter.cpp" line="302"/>
++        <location filename="../src/commandinterpreter.cpp" line="321"/>
++        <location filename="../src/commandinterpreter.cpp" line="347"/>
++        <location filename="../src/commandinterpreter.cpp" line="358"/>
++        <location filename="../src/commandinterpreter.cpp" line="368"/>
++        <location filename="../src/commandinterpreter.cpp" line="378"/>
++        <location filename="../src/commandinterpreter.cpp" line="413"/>
++        <location filename="../src/commandinterpreter.cpp" line="423"/>
++        <location filename="../src/commandinterpreter.cpp" line="441"/>
++        <location filename="../src/commandinterpreter.cpp" line="460"/>
++        <location filename="../src/commandinterpreter.cpp" line="468"/>
++        <location filename="../src/commandinterpreter.cpp" line="476"/>
++        <location filename="../src/commandinterpreter.cpp" line="483"/>
++        <location filename="../src/commandinterpreter.cpp" line="492"/>
++        <location filename="../src/commandinterpreter.cpp" line="505"/>
++        <location filename="../src/commandinterpreter.cpp" line="515"/>
++        <location filename="../src/commandinterpreter.cpp" line="523"/>
++        <source>Invalid argument in %1 line %2</source>
++        <translation>参数无效 %1 中第 %2 行</translation>
++    </message>
++    <message>
++        <location filename="../src/commandinterpreter.cpp" line="450"/>
++        <source>%1: %2</source>
++        <translation>%1: %2</translation>
++    </message>
++    <message>
++        <location filename="../src/commandinterpreter.cpp" line="528"/>
++        <source>Invalid command %1 line %2</source>
++        <oldsource>Invalid command %1</oldsource>
++        <translation>指令无效： %1 中第 %2 行</translation>
++    </message>
++</context>
++<context>
++    <name>Gui</name>
++    <message>
++        <source>Input 3D anaglyph</source>
++        <translation>3D 色差立体输入</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="80"/>
++        <source>&amp;File</source>
++        <translation>&amp;文件</translation>
++    </message>
++    <message>
++        <source>&amp;Open file...</source>
++        <translation type="vanished">&amp;打开文件...</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="85"/>
++        <source>Open &amp;URL...</source>
++        <translation>&amp;打开URL...</translation>
++    </message>
++    <message>
++        <source>Open &amp;Camera...</source>
++        <translation type="vanished">&amp;打开摄像头...</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="92"/>
++        <source>&amp;Quit</source>
++        <translation>&amp;退出</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="97"/>
++        <source>&amp;Tracks</source>
++        <translation>&amp;轨道</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="102"/>
++        <source>&amp;Playlist</source>
++        <translation>&amp;播放列表</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="103"/>
++        <source>&amp;Load...</source>
++        <translation>&amp;加载...</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="106"/>
++        <source>&amp;Save...</source>
++        <translation>&amp;保存...</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="109"/>
++        <source>&amp;Edit...</source>
++        <translation>&amp;编辑...</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="113"/>
++        <source>&amp;Next</source>
++        <translation>&amp;下一个</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="117"/>
++        <source>&amp;Previous</source>
++        <translation>&amp;上一个</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="151"/>
++        <source>&amp;3D Modes</source>
++        <translation>&amp;3D模式</translation>
++    </message>
++    <message>
++        <source>360° mode</source>
++        <translation type="vanished">360°模式</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="170"/>
++        <source>Input 2D</source>
++        <translation>输入2D</translation>
++    </message>
++    <message>
++        <source>Input top/bottom</source>
++        <translation type="vanished">输入上/下</translation>
++    </message>
++    <message>
++        <source>Input top/bottom half height</source>
++        <translation type="vanished">输入半高上/下</translation>
++    </message>
++    <message>
++        <source>Input bottom/top</source>
++        <translation type="vanished">输入下/上</translation>
++    </message>
++    <message>
++        <source>Input bottom/top half height</source>
++        <translation type="vanished">输入半高下/上</translation>
++    </message>
++    <message>
++        <source>Input left/right</source>
++        <translation type="vanished">输入左/右</translation>
++    </message>
++    <message>
++        <source>Input left/right half width</source>
++        <translation type="vanished">输入半宽左/右</translation>
++    </message>
++    <message>
++        <source>Input right/left</source>
++        <translation type="vanished">输入右/左</translation>
++    </message>
++    <message>
++        <source>Input right/left half width</source>
++        <translation type="vanished">输入半宽右/左</translation>
++    </message>
++    <message>
++        <source>Input alternating left/right</source>
++        <translation type="vanished">输入左/右交替</translation>
++    </message>
++    <message>
++        <source>Input alternating right/left</source>
++        <translation type="vanished">输入右/左交替</translation>
++    </message>
++    <message>
++        <source>Output left</source>
++        <translation type="vanished">输出左边</translation>
++    </message>
++    <message>
++        <source>Output right</source>
++        <translation type="vanished">输出右边</translation>
++    </message>
++    <message>
++        <source>Output OpenGL Stereo</source>
++        <translation type="vanished">输出OpenGL立体</translation>
++    </message>
++    <message>
++        <source>Output alternating</source>
++        <translation type="vanished">输出交替</translation>
++    </message>
++    <message>
++        <source>Output red/cyan high quality</source>
++        <translation type="vanished">输出高品质红/青</translation>
++    </message>
++    <message>
++        <source>Output red/cyan full color</source>
++        <translation type="vanished">输出全色红/青</translation>
++    </message>
++    <message>
++        <source>Output red/cyan half color</source>
++        <translation type="vanished">输出半色调红/青</translation>
++    </message>
++    <message>
++        <source>Output red/cyan monochrome</source>
++        <translation type="vanished">输出单色红/青</translation>
++    </message>
++    <message>
++        <source>Output green/magenta high quality</source>
++        <translation type="vanished">输出高质量绿/品红</translation>
++    </message>
++    <message>
++        <source>Output green/magenta full color</source>
++        <translation type="vanished">输出全色绿/品红</translation>
++    </message>
++    <message>
++        <source>Output green/magenta half color</source>
++        <translation type="vanished">输出半色调绿/品红</translation>
++    </message>
++    <message>
++        <source>Output green/magenta monochrome</source>
++        <translation type="vanished">输出全色绿/品红</translation>
++    </message>
++    <message>
++        <source>Output amber/blue high quality</source>
++        <translation type="vanished">输出高质量琥珀/蓝</translation>
++    </message>
++    <message>
++        <source>Output amber/blue full color</source>
++        <translation type="vanished">输出全色琥珀/蓝</translation>
++    </message>
++    <message>
++        <source>Output amber/blue half color</source>
++        <translation type="vanished">输出半色调琥珀/蓝</translation>
++    </message>
++    <message>
++        <source>Output amber/blue monochrome</source>
++        <translation type="vanished">输出单色琥珀/蓝</translation>
++    </message>
++    <message>
++        <source>Output red/green monochrome</source>
++        <translation type="vanished">输出单色红/绿</translation>
++    </message>
++    <message>
++        <source>Output red/blue monochrome</source>
++        <translation type="vanished">输出单色红/蓝</translation>
++    </message>
++    <message>
++        <source>Output even/odd rows</source>
++        <translation type="vanished">输出偶/奇行</translation>
++    </message>
++    <message>
++        <source>Output even/odd columns</source>
++        <translation type="vanished">输出偶/奇列</translation>
++    </message>
++    <message>
++        <source>Output checkerboard</source>
++        <translation type="vanished">输出棋盘图案</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="81"/>
++        <source>&amp;Open File(s)...</source>
++        <translation>打开文件[&amp;O]...</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="88"/>
++        <source>Open &amp;Capture Device...</source>
++        <translation>打开捕获设备[&amp;C]...</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="175"/>
++        <source>Input 3D above-below</source>
++        <translation>输入上下3D</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="196"/>
++        <source>Input 3D side-by-side</source>
++        <translation>输入左右3D</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="217"/>
++        <source>Input 3D alternating</source>
++        <translation>输入交替3D</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="255"/>
++        <source>Output 3D side-by-side</source>
++        <translation>输出左右3D</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="276"/>
++        <source>Output 3D above-below</source>
++        <translation>输出上下3D</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="297"/>
++        <source>Output 3D interleaved</source>
++        <translation>输出交替3D</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="313"/>
++        <source>Output 3D anaglyph</source>
++        <translation>输出补色3D</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="385"/>
++        <source>&amp;Media</source>
++        <translation>&amp;多媒体</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="386"/>
++        <source>Mute audio</source>
++        <translation>静音</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="391"/>
++        <source>Increase audio volume</source>
++        <translation>增大音量</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="395"/>
++        <source>Decrease audio volume</source>
++        <translation>减低音量</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="400"/>
++        <source>Pause</source>
++        <translation>暂停</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="405"/>
++        <source>Seek forward 1 second</source>
++        <translation>前进1秒</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="409"/>
++        <source>Seek backwards 1 second</source>
++        <translation>后退一秒</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="413"/>
++        <source>Seek forward 10 seconds</source>
++        <translation>前进10秒</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="417"/>
++        <source>Seek backwards 10 seconds</source>
++        <translation>后退10秒</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="421"/>
++        <source>Seek forward 1 minute</source>
++        <translation>前进1分钟</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="425"/>
++        <source>Seek backwards 1 minute</source>
++        <translation>后退1分钟</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="429"/>
++        <source>Seek forward 10 minutes</source>
++        <translation>前进10分钟</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="433"/>
++        <source>Seek backwards 10 minutes</source>
++        <translation>后退10分钟</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="438"/>
++        <source>&amp;View</source>
++        <translation>&amp;查看</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="439"/>
++        <source>&amp;Fullscreen</source>
++        <translation>&amp;全屏</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="444"/>
++        <source>&amp;Swap eyes</source>
++        <translation>&amp;交换眼睛</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="450"/>
++        <source>Reset surround view</source>
++        <translation>重置环绕视角</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="456"/>
++        <source>VR</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="457"/>
++        <source>&amp;Launch VR...</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="462"/>
++        <source>&amp;Help</source>
++        <translation>&amp;帮助</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="463"/>
++        <source>&amp;About...</source>
++        <translation>&amp;关于...</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="512"/>
++        <location filename="../src/gui.cpp" line="525"/>
++        <location filename="../src/gui.cpp" line="565"/>
++        <location filename="../src/gui.cpp" line="704"/>
++        <location filename="../src/gui.cpp" line="722"/>
++        <location filename="../src/gui.cpp" line="933"/>
++        <location filename="../src/gui.cpp" line="950"/>
++        <location filename="../src/gui.cpp" line="957"/>
++        <location filename="../src/gui.cpp" line="1033"/>
++        <location filename="../src/gui.cpp" line="1063"/>
++        <location filename="../src/gui.cpp" line="1065"/>
++        <location filename="../src/gui.cpp" line="1253"/>
++        <source>Error</source>
++        <translation>错误</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="538"/>
++        <source>Open URL</source>
++        <translation>打开URL</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="539"/>
++        <source>URL:</source>
++        <translation>URL:</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="542"/>
++        <location filename="../src/gui.cpp" line="617"/>
++        <location filename="../src/gui.cpp" line="907"/>
++        <source>Cancel</source>
++        <translation>取消</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="543"/>
++        <location filename="../src/gui.cpp" line="618"/>
++        <location filename="../src/gui.cpp" line="908"/>
++        <source>OK</source>
++        <translation>确定</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="580"/>
++        <source>Open Capture Device</source>
++        <translation>打开捕获设备</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="582"/>
++        <source>Camera Input:</source>
++        <translation>摄像头输入:</translation>
++    </message>
++    <message>
++        <source>Open Camera</source>
++        <translation type="vanished">打开摄像头</translation>
++    </message>
++    <message>
++        <source>Video Input:</source>
++        <translation type="vanished">视频输入:</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="584"/>
++        <location filename="../src/gui.cpp" line="613"/>
++        <source>Default</source>
++        <translation>默认</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="588"/>
++        <source>Screen Input:</source>
++        <translation>屏幕输入:</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="593"/>
++        <source>Window Input:</source>
++        <translation>窗口输入:</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="610"/>
++        <source>Audio Input:</source>
++        <translation>音频输入:</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="612"/>
++        <location filename="../src/gui.cpp" line="1156"/>
++        <source>None</source>
++        <translation>无</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="700"/>
++        <location filename="../src/gui.cpp" line="715"/>
++        <source>Playlists (*.m3u)</source>
++        <translation>播放列表 (*.m3u)</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="884"/>
++        <source>Launch VR</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="886"/>
++        <source>Automatic configuration</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="887"/>
++        <source>Custom configuration:</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="890"/>
++        <source>Set</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="901"/>
++        <source>Show controllers</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="933"/>
++        <source>No configuration selected.</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="950"/>
++        <location filename="../src/gui.cpp" line="957"/>
++        <source>Cannot save playlist: %1</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="950"/>
++        <source>cannot create temporary file</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="1025"/>
++        <source>Running VR mode.</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="1025"/>
++        <source>Quit</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="1026"/>
++        <source>VR mode</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="1033"/>
++        <source>Cannot launch VR mode</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="1063"/>
++        <source>VR mode crashed</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="1065"/>
++        <source>VR mode failed.
++Please check your configuration and setup, or try manual launching from the command line.</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="1080"/>
++        <source>About Bino</source>
++        <translation>关于Bino</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="1082"/>
++        <source>Bino version %1</source>
++        <translation>Bino版本 %1</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="1086"/>
++        <source>Copyright (C) %1 Martin Lambers</source>
++        <translation>Copyright (C) %1 Martin Lambers</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="1088"/>
++        <source>This is free software. You may redistribute copies of it under the terms of the &lt;a href=&quot;http://www.gnu.org/licenses/gpl.html&quot;&gt;GNU General Public License&lt;/a&gt;. There is NO WARRANTY, to the extent permitted by law.</source>
++        <translation>这是免费软件。您可以根据 &lt;a href=&quot;http://www.gnu.org/licenses/gpl.html&quot;&gt;GNU通用公共许可证&lt;/a&gt;在法律允许的范围内复制和使用，作者无任何保证及不承担任何责任。</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="1108"/>
++        <source>Video track %1</source>
++        <translation>视频轨道 %1</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="1111"/>
++        <location filename="../src/gui.cpp" line="1125"/>
++        <source> (%1)</source>
++        <translation> (%1)</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="1122"/>
++        <source>Audio track %1</source>
++        <translation>音频轨道 %1</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="1136"/>
++        <source>No subtitles</source>
++        <translation>无字幕</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="1143"/>
++        <source>Subtitle track %1</source>
++        <translation>字幕轨道 %1</translation>
++    </message>
++</context>
++<context>
++    <name>MetaData</name>
++    <message>
++        <location filename="../src/metadata.cpp" line="108"/>
++        <source>Cannot get meta data from %1: %2</source>
++        <translation>无法从 %1: %2 中获取元数据</translation>
++    </message>
++</context>
++<context>
++    <name>Mode</name>
++    <message>
++        <source>Input anaglyph red/cyan</source>
++        <translation>色差立体输入 红/青</translation>
++    </message>
++    <message>
++        <source>Input anaglyph cyan/red</source>
++        <translation>色差立体输入 青/红</translation>
++    </message>
++    <message>
++        <source>Input anaglyph green/magenta</source>
++        <translation>色差立体输入 绿/品红</translation>
++    </message>
++    <message>
++        <source>Input anaglyph magenta/green</source>
++        <translation>色差立体输入 品红/绿</translation>
++    </message>
++    <message>
++        <source>Input anaglyph amber/blue</source>
++        <translation>色差立体输入 琥珀色/蓝</translation>
++    </message>
++    <message>
++        <source>Input anaglyph blue/amber</source>
++        <translation>色差立体输入 蓝/琥珀色</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="73"/>
++        <source>Input autodetection</source>
++        <translation>输入自动检测</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="76"/>
++        <source>Input 2D</source>
++        <translation>输入2D</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="79"/>
++        <source>Input top/bottom</source>
++        <translation>输入上/下</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="82"/>
++        <source>Input top/bottom half height</source>
++        <translation>输入半高上/下</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="85"/>
++        <source>Input bottom/top</source>
++        <translation>输入下/上</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="88"/>
++        <source>Input bottom/top half height</source>
++        <translation>输入半高下/上</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="91"/>
++        <source>Input left/right</source>
++        <translation>输入左/右</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="94"/>
++        <source>Input left/right half width</source>
++        <translation>输入半宽左/右</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="97"/>
++        <source>Input right/left</source>
++        <translation>输入右/左</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="100"/>
++        <source>Input right/left half width</source>
++        <translation>输入半宽右/左</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="103"/>
++        <source>Input alternating left/right</source>
++        <translation>输入左/右交替</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="106"/>
++        <source>Input alternating right/left</source>
++        <translation>输入右/左交替</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="168"/>
++        <source>Surround autodetection</source>
++        <translation>环绕自动检测</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="171"/>
++        <source>Surround off</source>
++        <translation>环绕关</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="174"/>
++        <source>Surround 180°</source>
++        <translation>环绕180°</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="177"/>
++        <source>Surround 360°</source>
++        <translation>环绕360°</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="301"/>
++        <source>Output 2D left</source>
++        <translation>输出2D左</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="304"/>
++        <source>Output 2D right</source>
++        <translation>输出2D右</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="307"/>
++        <source>Output 3D OpenGL Stereo</source>
++        <translation>输出OpenGL立体3D</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="313"/>
++        <source>Output HDMI frame pack</source>
++        <translation>输出HDMI帧包</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="310"/>
++        <source>Output 3D alternating</source>
++        <translation>输出交替3D</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="316"/>
++        <source>Output left/right</source>
++        <translation>输出左/右</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="319"/>
++        <source>Output left/right half width</source>
++        <translation>输出半宽左/右</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="322"/>
++        <source>Output right/left</source>
++        <translation>输出右/左</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="325"/>
++        <source>Output right/left half width</source>
++        <translation>输出半宽右/左</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="328"/>
++        <source>Output top/bottom</source>
++        <translation>输出上/下</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="331"/>
++        <source>Output top/bottom half height</source>
++        <translation>输出半高上/下</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="334"/>
++        <source>Output bottom/top</source>
++        <translation>输出下/上</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="337"/>
++        <source>Output bottom/top half height</source>
++        <translation>输出半高下/上</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="340"/>
++        <source>Output even/odd rows</source>
++        <translation>输出偶/奇行</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="343"/>
++        <source>Output even/odd columns</source>
++        <translation>输出偶/奇列</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="346"/>
++        <source>Output checkerboard</source>
++        <translation>输出棋盘图案</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="349"/>
++        <source>Output red/cyan high quality</source>
++        <translation>输出高品质红/青</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="352"/>
++        <source>Output red/cyan full color</source>
++        <translation>输出全色红/青</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="355"/>
++        <source>Output red/cyan half color</source>
++        <translation>输出半色调红/青</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="358"/>
++        <source>Output red/cyan monochrome</source>
++        <translation>输出高单色红/青</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="361"/>
++        <source>Output green/magenta high quality</source>
++        <translation>输出高品质绿/品红</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="364"/>
++        <source>Output green/magenta full color</source>
++        <translation>输出全色绿/品红</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="367"/>
++        <source>Output green/magenta half color</source>
++        <translation>输出半色调绿/品红</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="370"/>
++        <source>Output green/magenta monochrome</source>
++        <translation>输出单色绿/品红</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="373"/>
++        <source>Output amber/blue high quality</source>
++        <translation>输出高品质琥珀/蓝</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="376"/>
++        <source>Output amber/blue full color</source>
++        <translation>输出全色琥珀/蓝</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="379"/>
++        <source>Output amber/blue half color</source>
++        <translation>输出半色调琥珀/蓝</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="382"/>
++        <source>Output amber/blue monochrome</source>
++        <translation>输出单色琥珀/蓝</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="385"/>
++        <source>Output red/green monochrome</source>
++        <translation>输出单色红/绿</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="388"/>
++        <source>Output red/blue monochrome</source>
++        <translation>输出单色红/蓝</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="486"/>
++        <source>Loop off</source>
++        <translation>关闭循环</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="489"/>
++        <source>Loop one</source>
++        <translation>循环单个</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="492"/>
++        <source>Loop all</source>
++        <translation>循环所有</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="533"/>
++        <source>Wait off</source>
++        <translation>等待关</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="536"/>
++        <source>Wait on</source>
++        <translation>等待开</translation>
++    </message>
++</context>
++<context>
++    <name>PlaylistEditor</name>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="215"/>
++        <source>Edit Playlist</source>
++        <translation>编辑播放列表</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="222"/>
++        <source>URL</source>
++        <translation>URL</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="223"/>
++        <source>Input Mode</source>
++        <translation>输入模式</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="224"/>
++        <source>Surround Mode</source>
++        <translation>环绕模式</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="225"/>
++        <source>Video Track</source>
++        <translation>视频轨道</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="226"/>
++        <source>Audio Track</source>
++        <translation>音频轨道</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="227"/>
++        <source>Subtitle Track</source>
++        <translation>字幕轨道</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="236"/>
++        <source>Move up</source>
++        <translation>上移</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="239"/>
++        <source>Move down</source>
++        <translation>下移r</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="242"/>
++        <source>Add...</source>
++        <translation>添加...</translation>
++    </message>
++    <message>
++        <source>Add</source>
++        <translation type="vanished">添加</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="245"/>
++        <source>Remove</source>
++        <translation>移除</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="248"/>
++        <source>Edit...</source>
++        <translation>编辑...</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="251"/>
++        <source>Done</source>
++        <translation>完成</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="277"/>
++        <location filename="../src/playlisteditor.cpp" line="280"/>
++        <location filename="../src/playlisteditor.cpp" line="284"/>
++        <source>default</source>
++        <translation>默认</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="283"/>
++        <source>none</source>
++        <translation>无</translation>
++    </message>
++</context>
++<context>
++    <name>PlaylistEntryEditor</name>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="42"/>
++        <source>Edit Playlist Entry</source>
++        <translation>编辑播放列表入口</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="46"/>
++        <location filename="../src/playlisteditor.cpp" line="120"/>
++        <source>URL:</source>
++        <translation>URL:</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="51"/>
++        <source>Set File...</source>
++        <translation>设置文件...</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="54"/>
++        <source>Set URL...</source>
++        <translation>设置URL...</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="58"/>
++        <source>Input Mode:</source>
++        <translation>输出模式:</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="66"/>
++        <source>Surround Mode:</source>
++        <translation>环绕模式:</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="74"/>
++        <source>Video Track:</source>
++        <translation>视频轨道:</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="80"/>
++        <source>Audio Track:</source>
++        <translation>音频轨道:</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="86"/>
++        <source>Subtitle Track:</source>
++        <translation>字幕轨道:</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="92"/>
++        <source>Done</source>
++        <translation>完成</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="119"/>
++        <source>Open URL</source>
++        <translation>打开URL</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="123"/>
++        <source>Cancel</source>
++        <translation>取消</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="124"/>
++        <source>OK</source>
++        <translation>OK</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="167"/>
++        <location filename="../src/playlisteditor.cpp" line="171"/>
++        <location filename="../src/playlisteditor.cpp" line="198"/>
++        <source>default</source>
++        <translation>默认</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="175"/>
++        <source>none</source>
++        <translation>无</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="185"/>
++        <location filename="../src/playlisteditor.cpp" line="193"/>
++        <location filename="../src/playlisteditor.cpp" line="203"/>
++        <source> (%1)</source>
++        <translation> (%1)</translation>
++    </message>
++</context>
++<context>
++    <name>QCommandLineParser</name>
++    <message>
++        <location filename="../src/main.cpp" line="118"/>
++        <source>3D video player -- see https://bino3d.org</source>
++        <translation>3D视频播放器 -- 前往https://bino3d.org</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="119"/>
++        <source>Media to play.</source>
++        <translation>待播放的媒体。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="123"/>
++        <source>Set log level (%1).</source>
++        <translation>设置日志等级 (%1)。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="126"/>
++        <source>Set log file.</source>
++        <translation>设置日志文件。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="129"/>
++        <source>Get control commands from a file.</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="131"/>
++        <source>Get control commands from a named pipe (fifo).</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="133"/>
++        <source>Get control commands from a Unix Domain Socket.</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="135"/>
++        <source>Get control commands by listening on a TCP port.</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="137"/>
++        <source>Enable OpenGL quad-buffered stereo support.</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="139"/>
++        <source>Use OpenGL ES instead of Desktop OpenGL.</source>
++        <translation>使用OpenGL ES而不是桌面OpenGL。</translation>
++    </message>
++    <message>
++        <source>Use OpenGL quad-buffered stereo in GUI mode.</source>
++        <translation type="vanished">在GUI模式下使用OpenGL四重缓冲立体。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="141"/>
++        <source>Start in VR mode instead of GUI mode.</source>
++        <translation>以VR模式而不是GUI模式启动。</translation>
++    </message>
++    <message>
++        <source>Set VR screen geometry, either as a comma-separated list of nine values representing three 3D coordinates that define a planar screen (bottom left, bottom right, top left) or as a name of an OBJ file that contains the screen geometry with texture coordinates.</source>
++        <translation type="vanished">设置VR屏幕几何形状，可以是用逗号分隔的九个值，表示定义平面屏幕（左下角、右下角、左上角）的三个3D坐标，也可以是一个OBJ文件的名称，该文件包含了屏幕几何形状和纹理坐标。</translation>
++    </message>
++    <message>
++        <source>Capture video/audio input from camera and microphone.</source>
++        <oldsource>Capture audio/video input from camera and microphone.</oldsource>
++        <translation type="vanished">从照相机和麦克风捕获音视频输入。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="154"/>
++        <source>List audio outputs.</source>
++        <translation>列出音频输出。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="156"/>
++        <source>List audio inputs.</source>
++        <translation>列出音频输入。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="158"/>
++        <source>List video inputs.</source>
++        <translation>列出视频输入。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="164"/>
++        <source>Choose audio output via its index.</source>
++        <translation>通过索引选择音频输出。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="167"/>
++        <source>Choose audio input via its index. Can be empty.</source>
++        <translation>通过索引选择音频输出，可以为空。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="170"/>
++        <source>Choose video input via its index.</source>
++        <translation>通过索引选择视频输入。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="181"/>
++        <source>Set preferred audio track language (en, de, fr, ...).</source>
++        <translation>设置偏好的音频轨道语言 (英语, 德语, 法语等)。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="184"/>
++        <source>Set preferred subtitle track language (en, de, fr, ...). Can be empty.</source>
++        <translation>设置偏好的字幕轨道语言 (英语, 德语, 法语等)，可以为空。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="179"/>
++        <source>List all video, audio and subtitle tracks in the media.</source>
++        <translation>列出媒体中的所有视频、音频和字幕轨道。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="187"/>
++        <source>Choose video track via its index.</source>
++        <translation>通过索引选择视频轨道。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="189"/>
++        <source>Choose audio track via its index.</source>
++        <translation>通过索引选择音频轨道。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="191"/>
++        <source>Choose subtitle track via its index. Can be empty.</source>
++        <translation>通过索引选择字幕轨道，可以为空。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="226"/>
++        <source>Swap left/right eye.</source>
++        <translation>切换左右眼。</translation>
++    </message>
++    <message>
++        <source>swap-eyes</source>
++        <translation type="vanished">切换眼睛</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="228"/>
++        <source>Start in fullscreen mode.</source>
++        <oldsource>fullscreen</oldsource>
++        <translation>以全屏模式启动。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="203"/>
++        <source>Set input mode (%1).</source>
++        <translation>设置输入模式 (%1)。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="209"/>
++        <source>Set output mode (%1).</source>
++        <translation>设置输出模式 (%1)。</translation>
++    </message>
++    <message>
++        <source>Set 360° mode (%1).</source>
++        <translation type="vanished">设置360°模式 (%1)。</translation>
++    </message>
++    <message>
++        <source>Read commands from a script file.</source>
++        <translation type="vanished">从脚本文件中读取指令。</translation>
++    </message>
++    <message>
++        <source>Disable OpenGL quad-buffered stereo support.</source>
++        <translation type="vanished">关闭OpenGL四重缓冲立体支持。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="143"/>
++        <source>Set VR screen geometry, either as the special values &apos;united&apos; or &apos;intersected&apos;, or as a comma-separated list of nine values representing three 3D coordinates that define a planar screen (bottom left, bottom right, top left), or as a an aspect ratio followed by the name of an OBJ file that contains the screen geometry with texture coordinates (example: &apos;16:9,myscreen.obj&apos;).</source>
++        <translation>设置VR屏幕几何形状，可以设置为特殊值 &apos;united&apos; 或 &apos;intersected&apos;，也可以是用逗号分隔的九个值，表示定义平面屏幕（左下角、右下角、左上角）的三个3D坐标，又可以是一个宽高比后跟一个OBJ文件的名称，该文件包含了屏幕几何形状和纹理坐标 (示例: &apos;16:9,myscreen.obj&apos;)。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="149"/>
++        <source>Set show-devices mode (%1).</source>
++        <translation>设置设备显示模式 (%1)。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="152"/>
++        <source>Capture audio/video input from microphone and camera/screen/window.</source>
++        <translation>从摄像头/屏幕/窗口和麦克风捕获音视频输入。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="160"/>
++        <source>List screen inputs.</source>
++        <translation>列出屏幕输入。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="162"/>
++        <source>List window inputs.</source>
++        <translation>列出窗口输入。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="173"/>
++        <source>Choose screen input via its index.</source>
++        <translation>通过索引选择屏幕输入。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="176"/>
++        <source>Choose window input via its index.</source>
++        <translation>通过索引选择窗口输入。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="194"/>
++        <source>Load playlist.</source>
++        <translation>加载播放列表。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="197"/>
++        <source>Set loop mode (%1).</source>
++        <translation>设置循环模式 (%1)。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="200"/>
++        <source>Set wait mode (%1).</source>
++        <translation>设置等待模式 (%1)。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="220"/>
++        <source>Set surround mode (%1).</source>
++        <translation>设置环绕模式 (%1)。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="223"/>
++        <source>Set surround vertical field of view (default 50, range 5-115).</source>
++        <translation>设置环绕垂直视场角 (默认 50, 范围 5-115).</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="248"/>
++        <location filename="../src/main.cpp" line="271"/>
++        <location filename="../src/main.cpp" line="280"/>
++        <location filename="../src/main.cpp" line="289"/>
++        <location filename="../src/main.cpp" line="301"/>
++        <location filename="../src/main.cpp" line="383"/>
++        <location filename="../src/main.cpp" line="399"/>
++        <location filename="../src/main.cpp" line="411"/>
++        <location filename="../src/main.cpp" line="422"/>
++        <location filename="../src/main.cpp" line="433"/>
++        <location filename="../src/main.cpp" line="444"/>
++        <location filename="../src/main.cpp" line="456"/>
++        <location filename="../src/main.cpp" line="468"/>
++        <location filename="../src/main.cpp" line="477"/>
++        <location filename="../src/main.cpp" line="491"/>
++        <location filename="../src/main.cpp" line="501"/>
++        <location filename="../src/main.cpp" line="514"/>
++        <location filename="../src/main.cpp" line="632"/>
++        <location filename="../src/main.cpp" line="639"/>
++        <location filename="../src/main.cpp" line="651"/>
++        <location filename="../src/commandinterpreter.cpp" line="272"/>
++        <location filename="../src/commandinterpreter.cpp" line="336"/>
++        <source>Invalid argument for option %1</source>
++        <translation>选项 %1 中的参数无效</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="260"/>
++        <source>VR mode unavailable - recompile Bino with QVR support!</source>
++        <translation>VR模式不可用-使用QVR支持重新编译Bino！</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="319"/>
++        <source>No audio outputs available.</source>
++        <translation>无有效音频输出。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="322"/>
++        <source>Audio output %1: %2</source>
++        <translation>音频输出 %1: %2</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="329"/>
++        <source>No audio inputs available.</source>
++        <translation>无有效音频输入。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="332"/>
++        <source>Audio input %1: %2</source>
++        <translation>音频输入 %1: %2</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="339"/>
++        <source>No video inputs available.</source>
++        <translation>无有效视频出入。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="342"/>
++        <source>Video input %1: %2</source>
++        <translation>视频输入 %1: %2</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="349"/>
++        <source>No screen inputs available.</source>
++        <translation>无有效屏幕输入。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="352"/>
++        <source>Screen input %1: %2</source>
++        <translation>屏幕输入 %1: %2</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="359"/>
++        <source>No window inputs available.</source>
++        <translation>无有效窗口输入。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="362"/>
++        <source>Window input %1: %2</source>
++        <translation>窗口输入 %1: %2</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="526"/>
++        <source>File does not exist: %1</source>
++        <translation>文件不存在: %1</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="539"/>
++        <source>%1: %2</source>
++        <translation>%1: %2</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="549"/>
++        <source>Cannot capture and play URL at the same time.</source>
++        <translation>无法同时获取和播放URL。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="567"/>
++        <source>video</source>
++        <translation>视频</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="568"/>
++        <source>audio</source>
++        <translation>音频</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="569"/>
++        <source>subtitle</source>
++        <translation>字幕</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="573"/>
++        <source>no %1 tracks</source>
++        <translation>没有 %1 轨道</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="576"/>
++        <source>%1 track %2</source>
++        <translation>%1 轨道 %2</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="757"/>
++        <source>Cannot initialize QVR manager</source>
++        <translation>无法初始化QVR管理器</translation>
++    </message>
++</context>
++<context>
++    <name>Screen</name>
++    <message>
++        <location filename="../src/screen.cpp" line="102"/>
++        <source>Loading screen from %1</source>
++        <translation>从 %1 中读取屏幕</translation>
++    </message>
++    <message>
++        <location filename="../src/screen.cpp" line="111"/>
++        <source>Warning: %1</source>
++        <oldsource>warning: %1</oldsource>
++        <translation>警告: %1</translation>
++    </message>
++    <message>
++        <location filename="../src/screen.cpp" line="117"/>
++        <source>Error: %1</source>
++        <oldsource>error: %1</oldsource>
++        <translation>错误: %1</translation>
++    </message>
++    <message>
++        <location filename="../src/screen.cpp" line="119"/>
++        <source>Unknown error</source>
++        <oldsource>unknown error</oldsource>
++        <translation>位置错误</translation>
++    </message>
++</context>
++<context>
++    <name>VideoFrame</name>
++    <message>
++        <location filename="../src/videoframe.cpp" line="134"/>
++        <source>Pixel format %1 is not hardware accelerated!</source>
++        <translation>像素格式 %1 没有硬件加速！</translation>
++    </message>
++</context>
++<context>
++    <name>Widget</name>
++    <message>
++        <location filename="../src/widget.cpp" line="111"/>
++        <location filename="../src/widget.cpp" line="112"/>
++        <source>Insufficient OpenGL capabilities.</source>
++        <oldsource>Insufficient OpenGL capabilities</oldsource>
++        <translation>OpenGL功能不足。</translation>
++    </message>
++    <message>
++        <location filename="../src/widget.cpp" line="112"/>
++        <location filename="../src/widget.cpp" line="118"/>
++        <source>Error</source>
++        <translation>错误</translation>
++    </message>
++    <message>
++        <location filename="../src/widget.cpp" line="117"/>
++        <location filename="../src/widget.cpp" line="118"/>
++        <source>OpenGL stereo mode is not available on this system.</source>
++        <oldsource>OpenGL stereo mode is not available on this system</oldsource>
++        <translation>OpenGL立体模式在此系统上不可用。</translation>
++    </message>
++</context>
++</TS>
+--- /dev/null
++++ b/i18n/bino_zh_TW.ts
+@@ -0,0 +1,1521 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!DOCTYPE TS>
++<TS version="2.1" language="zh_TW">
++<context>
++    <name>Bino</name>
++    <message>
++        <location filename="../src/bino.cpp" line="107"/>
++        <source>Media player error: %1</source>
++        <translation>媒体播放器错误: %1</translation>
++    </message>
++</context>
++<context>
++    <name>CommandInterpreter</name>
++    <message>
++        <location filename="../src/commandinterpreter.cpp" line="59"/>
++        <location filename="../src/commandinterpreter.cpp" line="80"/>
++        <location filename="../src/commandinterpreter.cpp" line="86"/>
++        <location filename="../src/commandinterpreter.cpp" line="90"/>
++        <source>Cannot open %1: %2</source>
++        <oldsource>Cannot open %1: %2)</oldsource>
++        <translation>未能打开 %1: %2</translation>
++    </message>
++    <message>
++        <source>Cannot read command from %1</source>
++        <translation type="vanished">未能从 %1 中读取指令</translation>
++    </message>
++    <message>
++        <location filename="../src/commandinterpreter.cpp" line="90"/>
++        <source>FIFOs are not supported on this system.</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/commandinterpreter.cpp" line="113"/>
++        <source>Cannot listen on %1: %2</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/commandinterpreter.cpp" line="159"/>
++        <source>%1 is not of the form &apos;[nameOrIP]:port&apos;</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/commandinterpreter.cpp" line="163"/>
++        <source>Cannot listen on %1 port %2: %3</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/commandinterpreter.cpp" line="244"/>
++        <location filename="../src/commandinterpreter.cpp" line="258"/>
++        <location filename="../src/commandinterpreter.cpp" line="260"/>
++        <location filename="../src/commandinterpreter.cpp" line="277"/>
++        <location filename="../src/commandinterpreter.cpp" line="284"/>
++        <location filename="../src/commandinterpreter.cpp" line="293"/>
++        <location filename="../src/commandinterpreter.cpp" line="302"/>
++        <location filename="../src/commandinterpreter.cpp" line="321"/>
++        <location filename="../src/commandinterpreter.cpp" line="347"/>
++        <location filename="../src/commandinterpreter.cpp" line="358"/>
++        <location filename="../src/commandinterpreter.cpp" line="368"/>
++        <location filename="../src/commandinterpreter.cpp" line="378"/>
++        <location filename="../src/commandinterpreter.cpp" line="413"/>
++        <location filename="../src/commandinterpreter.cpp" line="423"/>
++        <location filename="../src/commandinterpreter.cpp" line="441"/>
++        <location filename="../src/commandinterpreter.cpp" line="460"/>
++        <location filename="../src/commandinterpreter.cpp" line="468"/>
++        <location filename="../src/commandinterpreter.cpp" line="476"/>
++        <location filename="../src/commandinterpreter.cpp" line="483"/>
++        <location filename="../src/commandinterpreter.cpp" line="492"/>
++        <location filename="../src/commandinterpreter.cpp" line="505"/>
++        <location filename="../src/commandinterpreter.cpp" line="515"/>
++        <location filename="../src/commandinterpreter.cpp" line="523"/>
++        <source>Invalid argument in %1 line %2</source>
++        <translation>参数无效 %1 中第 %2 行</translation>
++    </message>
++    <message>
++        <location filename="../src/commandinterpreter.cpp" line="450"/>
++        <source>%1: %2</source>
++        <translation>%1: %2</translation>
++    </message>
++    <message>
++        <location filename="../src/commandinterpreter.cpp" line="528"/>
++        <source>Invalid command %1 line %2</source>
++        <oldsource>Invalid command %1</oldsource>
++        <translation>指令无效： %1 中第 %2 行</translation>
++    </message>
++</context>
++<context>
++    <name>Gui</name>
++    <message>
++        <source>Input 3D anaglyph</source>
++        <translation>3D 色差立體輸入</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="80"/>
++        <source>&amp;File</source>
++        <translation>&amp;文件</translation>
++    </message>
++    <message>
++        <source>&amp;Open file...</source>
++        <translation type="vanished">&amp;打开文件...</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="85"/>
++        <source>Open &amp;URL...</source>
++        <translation>&amp;打开URL...</translation>
++    </message>
++    <message>
++        <source>Open &amp;Camera...</source>
++        <translation type="vanished">&amp;打开摄像头...</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="92"/>
++        <source>&amp;Quit</source>
++        <translation>&amp;退出</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="97"/>
++        <source>&amp;Tracks</source>
++        <translation>&amp;轨道</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="102"/>
++        <source>&amp;Playlist</source>
++        <translation>&amp;播放列表</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="103"/>
++        <source>&amp;Load...</source>
++        <translation>&amp;加载...</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="106"/>
++        <source>&amp;Save...</source>
++        <translation>&amp;保存...</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="109"/>
++        <source>&amp;Edit...</source>
++        <translation>&amp;编辑...</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="113"/>
++        <source>&amp;Next</source>
++        <translation>&amp;下一个</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="117"/>
++        <source>&amp;Previous</source>
++        <translation>&amp;上一个</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="151"/>
++        <source>&amp;3D Modes</source>
++        <translation>&amp;3D模式</translation>
++    </message>
++    <message>
++        <source>360° mode</source>
++        <translation type="vanished">360°模式</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="170"/>
++        <source>Input 2D</source>
++        <translation>输入2D</translation>
++    </message>
++    <message>
++        <source>Input top/bottom</source>
++        <translation type="vanished">输入上/下</translation>
++    </message>
++    <message>
++        <source>Input top/bottom half height</source>
++        <translation type="vanished">输入半高上/下</translation>
++    </message>
++    <message>
++        <source>Input bottom/top</source>
++        <translation type="vanished">输入下/上</translation>
++    </message>
++    <message>
++        <source>Input bottom/top half height</source>
++        <translation type="vanished">输入半高下/上</translation>
++    </message>
++    <message>
++        <source>Input left/right</source>
++        <translation type="vanished">输入左/右</translation>
++    </message>
++    <message>
++        <source>Input left/right half width</source>
++        <translation type="vanished">输入半宽左/右</translation>
++    </message>
++    <message>
++        <source>Input right/left</source>
++        <translation type="vanished">输入右/左</translation>
++    </message>
++    <message>
++        <source>Input right/left half width</source>
++        <translation type="vanished">输入半宽右/左</translation>
++    </message>
++    <message>
++        <source>Input alternating left/right</source>
++        <translation type="vanished">输入左/右交替</translation>
++    </message>
++    <message>
++        <source>Input alternating right/left</source>
++        <translation type="vanished">输入右/左交替</translation>
++    </message>
++    <message>
++        <source>Output left</source>
++        <translation type="vanished">输出左边</translation>
++    </message>
++    <message>
++        <source>Output right</source>
++        <translation type="vanished">输出右边</translation>
++    </message>
++    <message>
++        <source>Output OpenGL Stereo</source>
++        <translation type="vanished">输出OpenGL立体</translation>
++    </message>
++    <message>
++        <source>Output alternating</source>
++        <translation type="vanished">输出交替</translation>
++    </message>
++    <message>
++        <source>Output red/cyan high quality</source>
++        <translation type="vanished">输出高品质红/青</translation>
++    </message>
++    <message>
++        <source>Output red/cyan full color</source>
++        <translation type="vanished">输出全色红/青</translation>
++    </message>
++    <message>
++        <source>Output red/cyan half color</source>
++        <translation type="vanished">输出半色调红/青</translation>
++    </message>
++    <message>
++        <source>Output red/cyan monochrome</source>
++        <translation type="vanished">输出单色红/青</translation>
++    </message>
++    <message>
++        <source>Output green/magenta high quality</source>
++        <translation type="vanished">输出高质量绿/品红</translation>
++    </message>
++    <message>
++        <source>Output green/magenta full color</source>
++        <translation type="vanished">输出全色绿/品红</translation>
++    </message>
++    <message>
++        <source>Output green/magenta half color</source>
++        <translation type="vanished">输出半色调绿/品红</translation>
++    </message>
++    <message>
++        <source>Output green/magenta monochrome</source>
++        <translation type="vanished">输出全色绿/品红</translation>
++    </message>
++    <message>
++        <source>Output amber/blue high quality</source>
++        <translation type="vanished">输出高质量琥珀/蓝</translation>
++    </message>
++    <message>
++        <source>Output amber/blue full color</source>
++        <translation type="vanished">输出全色琥珀/蓝</translation>
++    </message>
++    <message>
++        <source>Output amber/blue half color</source>
++        <translation type="vanished">输出半色调琥珀/蓝</translation>
++    </message>
++    <message>
++        <source>Output amber/blue monochrome</source>
++        <translation type="vanished">输出单色琥珀/蓝</translation>
++    </message>
++    <message>
++        <source>Output red/green monochrome</source>
++        <translation type="vanished">输出单色红/绿</translation>
++    </message>
++    <message>
++        <source>Output red/blue monochrome</source>
++        <translation type="vanished">输出单色红/蓝</translation>
++    </message>
++    <message>
++        <source>Output even/odd rows</source>
++        <translation type="vanished">输出偶/奇行</translation>
++    </message>
++    <message>
++        <source>Output even/odd columns</source>
++        <translation type="vanished">输出偶/奇列</translation>
++    </message>
++    <message>
++        <source>Output checkerboard</source>
++        <translation type="vanished">输出棋盘图案</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="81"/>
++        <source>&amp;Open File(s)...</source>
++        <translation>打开文件[&amp;O]...</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="88"/>
++        <source>Open &amp;Capture Device...</source>
++        <translation>打开捕获设备[&amp;C]...</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="175"/>
++        <source>Input 3D above-below</source>
++        <translation>输入上下3D</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="196"/>
++        <source>Input 3D side-by-side</source>
++        <translation>输入左右3D</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="217"/>
++        <source>Input 3D alternating</source>
++        <translation>输入交替3D</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="255"/>
++        <source>Output 3D side-by-side</source>
++        <translation>输出左右3D</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="276"/>
++        <source>Output 3D above-below</source>
++        <translation>输出上下3D</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="297"/>
++        <source>Output 3D interleaved</source>
++        <translation>输出交替3D</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="313"/>
++        <source>Output 3D anaglyph</source>
++        <translation>输出补色3D</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="385"/>
++        <source>&amp;Media</source>
++        <translation>&amp;多媒体</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="386"/>
++        <source>Mute audio</source>
++        <translation>静音</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="391"/>
++        <source>Increase audio volume</source>
++        <translation>增大音量</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="395"/>
++        <source>Decrease audio volume</source>
++        <translation>减低音量</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="400"/>
++        <source>Pause</source>
++        <translation>暂停</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="405"/>
++        <source>Seek forward 1 second</source>
++        <translation>前进1秒</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="409"/>
++        <source>Seek backwards 1 second</source>
++        <translation>后退一秒</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="413"/>
++        <source>Seek forward 10 seconds</source>
++        <translation>前进10秒</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="417"/>
++        <source>Seek backwards 10 seconds</source>
++        <translation>后退10秒</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="421"/>
++        <source>Seek forward 1 minute</source>
++        <translation>前进1分钟</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="425"/>
++        <source>Seek backwards 1 minute</source>
++        <translation>后退1分钟</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="429"/>
++        <source>Seek forward 10 minutes</source>
++        <translation>前进10分钟</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="433"/>
++        <source>Seek backwards 10 minutes</source>
++        <translation>后退10分钟</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="438"/>
++        <source>&amp;View</source>
++        <translation>&amp;查看</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="439"/>
++        <source>&amp;Fullscreen</source>
++        <translation>&amp;全屏</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="444"/>
++        <source>&amp;Swap eyes</source>
++        <translation>&amp;交换眼睛</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="450"/>
++        <source>Reset surround view</source>
++        <translation>重置环绕视角</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="456"/>
++        <source>VR</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="457"/>
++        <source>&amp;Launch VR...</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="462"/>
++        <source>&amp;Help</source>
++        <translation>&amp;帮助</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="463"/>
++        <source>&amp;About...</source>
++        <translation>&amp;关于...</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="512"/>
++        <location filename="../src/gui.cpp" line="525"/>
++        <location filename="../src/gui.cpp" line="565"/>
++        <location filename="../src/gui.cpp" line="704"/>
++        <location filename="../src/gui.cpp" line="722"/>
++        <location filename="../src/gui.cpp" line="933"/>
++        <location filename="../src/gui.cpp" line="950"/>
++        <location filename="../src/gui.cpp" line="957"/>
++        <location filename="../src/gui.cpp" line="1033"/>
++        <location filename="../src/gui.cpp" line="1063"/>
++        <location filename="../src/gui.cpp" line="1065"/>
++        <location filename="../src/gui.cpp" line="1253"/>
++        <source>Error</source>
++        <translation>错误</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="538"/>
++        <source>Open URL</source>
++        <translation>打开URL</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="539"/>
++        <source>URL:</source>
++        <translation>URL:</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="542"/>
++        <location filename="../src/gui.cpp" line="617"/>
++        <location filename="../src/gui.cpp" line="907"/>
++        <source>Cancel</source>
++        <translation>取消</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="543"/>
++        <location filename="../src/gui.cpp" line="618"/>
++        <location filename="../src/gui.cpp" line="908"/>
++        <source>OK</source>
++        <translation>确定</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="580"/>
++        <source>Open Capture Device</source>
++        <translation>打开捕获设备</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="582"/>
++        <source>Camera Input:</source>
++        <translation>摄像头输入:</translation>
++    </message>
++    <message>
++        <source>Open Camera</source>
++        <translation type="vanished">打开摄像头</translation>
++    </message>
++    <message>
++        <source>Video Input:</source>
++        <translation type="vanished">视频输入:</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="584"/>
++        <location filename="../src/gui.cpp" line="613"/>
++        <source>Default</source>
++        <translation>默认</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="588"/>
++        <source>Screen Input:</source>
++        <translation>屏幕输入:</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="593"/>
++        <source>Window Input:</source>
++        <translation>窗口输入:</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="610"/>
++        <source>Audio Input:</source>
++        <translation>音频输入:</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="612"/>
++        <location filename="../src/gui.cpp" line="1156"/>
++        <source>None</source>
++        <translation>无</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="700"/>
++        <location filename="../src/gui.cpp" line="715"/>
++        <source>Playlists (*.m3u)</source>
++        <translation>播放列表 (*.m3u)</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="884"/>
++        <source>Launch VR</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="886"/>
++        <source>Automatic configuration</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="887"/>
++        <source>Custom configuration:</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="890"/>
++        <source>Set</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="901"/>
++        <source>Show controllers</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="933"/>
++        <source>No configuration selected.</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="950"/>
++        <location filename="../src/gui.cpp" line="957"/>
++        <source>Cannot save playlist: %1</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="950"/>
++        <source>cannot create temporary file</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="1025"/>
++        <source>Running VR mode.</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="1025"/>
++        <source>Quit</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="1026"/>
++        <source>VR mode</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="1033"/>
++        <source>Cannot launch VR mode</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="1063"/>
++        <source>VR mode crashed</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="1065"/>
++        <source>VR mode failed.
++Please check your configuration and setup, or try manual launching from the command line.</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="1080"/>
++        <source>About Bino</source>
++        <translation>关于Bino</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="1082"/>
++        <source>Bino version %1</source>
++        <translation>Bino版本 %1</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="1086"/>
++        <source>Copyright (C) %1 Martin Lambers</source>
++        <translation>Copyright (C) %1 Martin Lambers</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="1088"/>
++        <source>This is free software. You may redistribute copies of it under the terms of the &lt;a href=&quot;http://www.gnu.org/licenses/gpl.html&quot;&gt;GNU General Public License&lt;/a&gt;. There is NO WARRANTY, to the extent permitted by law.</source>
++        <translation>这是免费软件。您可以根据 &lt;a href=&quot;http://www.gnu.org/licenses/gpl.html&quot;&gt;GNU通用公共许可证&lt;/a&gt;在法律允许的范围内复制和使用，作者无任何保证及不承担任何责任。</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="1108"/>
++        <source>Video track %1</source>
++        <translation>视频轨道 %1</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="1111"/>
++        <location filename="../src/gui.cpp" line="1125"/>
++        <source> (%1)</source>
++        <translation> (%1)</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="1122"/>
++        <source>Audio track %1</source>
++        <translation>音频轨道 %1</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="1136"/>
++        <source>No subtitles</source>
++        <translation>无字幕</translation>
++    </message>
++    <message>
++        <location filename="../src/gui.cpp" line="1143"/>
++        <source>Subtitle track %1</source>
++        <translation>字幕轨道 %1</translation>
++    </message>
++</context>
++<context>
++    <name>MetaData</name>
++    <message>
++        <location filename="../src/metadata.cpp" line="108"/>
++        <source>Cannot get meta data from %1: %2</source>
++        <translation>无法从 %1: %2 中获取元数据</translation>
++    </message>
++</context>
++<context>
++    <name>Mode</name>
++    <message>
++        <source>Input anaglyph red/cyan</source>
++        <translation>色差立體輸入 紅/青</translation>
++    </message>
++    <message>
++        <source>Input anaglyph cyan/red</source>
++        <translation>色差立體輸入 青/紅</translation>
++    </message>
++    <message>
++        <source>Input anaglyph green/magenta</source>
++        <translation>色差立體輸入 綠/洋紅</translation>
++    </message>
++    <message>
++        <source>Input anaglyph magenta/green</source>
++        <translation>色差立體輸入 洋紅/綠</translation>
++    </message>
++    <message>
++        <source>Input anaglyph amber/blue</source>
++        <translation>色差立體輸入 琥珀色/藍</translation>
++    </message>
++    <message>
++        <source>Input anaglyph blue/amber</source>
++        <translation>色差立體輸入 藍/琥珀色</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="73"/>
++        <source>Input autodetection</source>
++        <translation>输入自动检测</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="76"/>
++        <source>Input 2D</source>
++        <translation>输入2D</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="79"/>
++        <source>Input top/bottom</source>
++        <translation>输入上/下</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="82"/>
++        <source>Input top/bottom half height</source>
++        <translation>输入半高上/下</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="85"/>
++        <source>Input bottom/top</source>
++        <translation>输入下/上</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="88"/>
++        <source>Input bottom/top half height</source>
++        <translation>输入半高下/上</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="91"/>
++        <source>Input left/right</source>
++        <translation>输入左/右</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="94"/>
++        <source>Input left/right half width</source>
++        <translation>输入半宽左/右</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="97"/>
++        <source>Input right/left</source>
++        <translation>输入右/左</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="100"/>
++        <source>Input right/left half width</source>
++        <translation>输入半宽右/左</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="103"/>
++        <source>Input alternating left/right</source>
++        <translation>输入左/右交替</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="106"/>
++        <source>Input alternating right/left</source>
++        <translation>输入右/左交替</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="168"/>
++        <source>Surround autodetection</source>
++        <translation>环绕自动检测</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="171"/>
++        <source>Surround off</source>
++        <translation>环绕关</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="174"/>
++        <source>Surround 180°</source>
++        <translation>环绕180°</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="177"/>
++        <source>Surround 360°</source>
++        <translation>环绕360°</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="301"/>
++        <source>Output 2D left</source>
++        <translation>输出2D左</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="304"/>
++        <source>Output 2D right</source>
++        <translation>输出2D右</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="307"/>
++        <source>Output 3D OpenGL Stereo</source>
++        <translation>输出OpenGL立体3D</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="313"/>
++        <source>Output HDMI frame pack</source>
++        <translation>输出HDMI帧包</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="310"/>
++        <source>Output 3D alternating</source>
++        <translation>输出交替3D</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="316"/>
++        <source>Output left/right</source>
++        <translation>输出左/右</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="319"/>
++        <source>Output left/right half width</source>
++        <translation>输出半宽左/右</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="322"/>
++        <source>Output right/left</source>
++        <translation>输出右/左</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="325"/>
++        <source>Output right/left half width</source>
++        <translation>输出半宽右/左</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="328"/>
++        <source>Output top/bottom</source>
++        <translation>输出上/下</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="331"/>
++        <source>Output top/bottom half height</source>
++        <translation>输出半高上/下</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="334"/>
++        <source>Output bottom/top</source>
++        <translation>输出下/上</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="337"/>
++        <source>Output bottom/top half height</source>
++        <translation>输出半高下/上</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="340"/>
++        <source>Output even/odd rows</source>
++        <translation>输出偶/奇行</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="343"/>
++        <source>Output even/odd columns</source>
++        <translation>输出偶/奇列</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="346"/>
++        <source>Output checkerboard</source>
++        <translation>输出棋盘图案</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="349"/>
++        <source>Output red/cyan high quality</source>
++        <translation>输出高品质红/青</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="352"/>
++        <source>Output red/cyan full color</source>
++        <translation>输出全色红/青</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="355"/>
++        <source>Output red/cyan half color</source>
++        <translation>输出半色调红/青</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="358"/>
++        <source>Output red/cyan monochrome</source>
++        <translation>输出高单色红/青</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="361"/>
++        <source>Output green/magenta high quality</source>
++        <translation>输出高品质绿/品红</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="364"/>
++        <source>Output green/magenta full color</source>
++        <translation>输出全色绿/品红</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="367"/>
++        <source>Output green/magenta half color</source>
++        <translation>输出半色调绿/品红</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="370"/>
++        <source>Output green/magenta monochrome</source>
++        <translation>输出单色绿/品红</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="373"/>
++        <source>Output amber/blue high quality</source>
++        <translation>输出高品质琥珀/蓝</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="376"/>
++        <source>Output amber/blue full color</source>
++        <translation>输出全色琥珀/蓝</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="379"/>
++        <source>Output amber/blue half color</source>
++        <translation>输出半色调琥珀/蓝</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="382"/>
++        <source>Output amber/blue monochrome</source>
++        <translation>输出单色琥珀/蓝</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="385"/>
++        <source>Output red/green monochrome</source>
++        <translation>输出单色红/绿</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="388"/>
++        <source>Output red/blue monochrome</source>
++        <translation>输出单色红/蓝</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="486"/>
++        <source>Loop off</source>
++        <translation>关闭循环</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="489"/>
++        <source>Loop one</source>
++        <translation>循环单个</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="492"/>
++        <source>Loop all</source>
++        <translation>循环所有</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="533"/>
++        <source>Wait off</source>
++        <translation>等待关</translation>
++    </message>
++    <message>
++        <location filename="../src/modes.cpp" line="536"/>
++        <source>Wait on</source>
++        <translation>等待开</translation>
++    </message>
++</context>
++<context>
++    <name>PlaylistEditor</name>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="215"/>
++        <source>Edit Playlist</source>
++        <translation>编辑播放列表</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="222"/>
++        <source>URL</source>
++        <translation>URL</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="223"/>
++        <source>Input Mode</source>
++        <translation>输入模式</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="224"/>
++        <source>Surround Mode</source>
++        <translation>环绕模式</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="225"/>
++        <source>Video Track</source>
++        <translation>视频轨道</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="226"/>
++        <source>Audio Track</source>
++        <translation>音频轨道</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="227"/>
++        <source>Subtitle Track</source>
++        <translation>字幕轨道</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="236"/>
++        <source>Move up</source>
++        <translation>上移</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="239"/>
++        <source>Move down</source>
++        <translation>下移r</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="242"/>
++        <source>Add...</source>
++        <translation>添加...</translation>
++    </message>
++    <message>
++        <source>Add</source>
++        <translation type="vanished">添加</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="245"/>
++        <source>Remove</source>
++        <translation>移除</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="248"/>
++        <source>Edit...</source>
++        <translation>编辑...</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="251"/>
++        <source>Done</source>
++        <translation>完成</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="277"/>
++        <location filename="../src/playlisteditor.cpp" line="280"/>
++        <location filename="../src/playlisteditor.cpp" line="284"/>
++        <source>default</source>
++        <translation>默认</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="283"/>
++        <source>none</source>
++        <translation>无</translation>
++    </message>
++</context>
++<context>
++    <name>PlaylistEntryEditor</name>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="42"/>
++        <source>Edit Playlist Entry</source>
++        <translation>编辑播放列表入口</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="46"/>
++        <location filename="../src/playlisteditor.cpp" line="120"/>
++        <source>URL:</source>
++        <translation>URL:</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="51"/>
++        <source>Set File...</source>
++        <translation>设置文件...</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="54"/>
++        <source>Set URL...</source>
++        <translation>设置URL...</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="58"/>
++        <source>Input Mode:</source>
++        <translation>输出模式:</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="66"/>
++        <source>Surround Mode:</source>
++        <translation>环绕模式:</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="74"/>
++        <source>Video Track:</source>
++        <translation>视频轨道:</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="80"/>
++        <source>Audio Track:</source>
++        <translation>音频轨道:</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="86"/>
++        <source>Subtitle Track:</source>
++        <translation>字幕轨道:</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="92"/>
++        <source>Done</source>
++        <translation>完成</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="119"/>
++        <source>Open URL</source>
++        <translation>打开URL</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="123"/>
++        <source>Cancel</source>
++        <translation>取消</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="124"/>
++        <source>OK</source>
++        <translation>OK</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="167"/>
++        <location filename="../src/playlisteditor.cpp" line="171"/>
++        <location filename="../src/playlisteditor.cpp" line="198"/>
++        <source>default</source>
++        <translation>默认</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="175"/>
++        <source>none</source>
++        <translation>无</translation>
++    </message>
++    <message>
++        <location filename="../src/playlisteditor.cpp" line="185"/>
++        <location filename="../src/playlisteditor.cpp" line="193"/>
++        <location filename="../src/playlisteditor.cpp" line="203"/>
++        <source> (%1)</source>
++        <translation> (%1)</translation>
++    </message>
++</context>
++<context>
++    <name>QCommandLineParser</name>
++    <message>
++        <location filename="../src/main.cpp" line="118"/>
++        <source>3D video player -- see https://bino3d.org</source>
++        <translation>3D视频播放器 -- 前往https://bino3d.org</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="119"/>
++        <source>Media to play.</source>
++        <translation>待播放的媒体。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="123"/>
++        <source>Set log level (%1).</source>
++        <translation>设置日志等级 (%1)。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="126"/>
++        <source>Set log file.</source>
++        <translation>设置日志文件。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="129"/>
++        <source>Get control commands from a file.</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="131"/>
++        <source>Get control commands from a named pipe (fifo).</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="133"/>
++        <source>Get control commands from a Unix Domain Socket.</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="135"/>
++        <source>Get control commands by listening on a TCP port.</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="137"/>
++        <source>Enable OpenGL quad-buffered stereo support.</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="139"/>
++        <source>Use OpenGL ES instead of Desktop OpenGL.</source>
++        <translation>使用OpenGL ES而不是桌面OpenGL。</translation>
++    </message>
++    <message>
++        <source>Use OpenGL quad-buffered stereo in GUI mode.</source>
++        <translation type="vanished">在GUI模式下使用OpenGL四重缓冲立体。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="141"/>
++        <source>Start in VR mode instead of GUI mode.</source>
++        <translation>以VR模式而不是GUI模式启动。</translation>
++    </message>
++    <message>
++        <source>Set VR screen geometry, either as a comma-separated list of nine values representing three 3D coordinates that define a planar screen (bottom left, bottom right, top left) or as a name of an OBJ file that contains the screen geometry with texture coordinates.</source>
++        <translation type="vanished">设置VR屏幕几何形状，可以是用逗号分隔的九个值，表示定义平面屏幕（左下角、右下角、左上角）的三个3D坐标，也可以是一个OBJ文件的名称，该文件包含了屏幕几何形状和纹理坐标。</translation>
++    </message>
++    <message>
++        <source>Capture video/audio input from camera and microphone.</source>
++        <oldsource>Capture audio/video input from camera and microphone.</oldsource>
++        <translation type="vanished">从照相机和麦克风捕获音视频输入。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="154"/>
++        <source>List audio outputs.</source>
++        <translation>列出音频输出。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="156"/>
++        <source>List audio inputs.</source>
++        <translation>列出音频输入。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="158"/>
++        <source>List video inputs.</source>
++        <translation>列出视频输入。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="164"/>
++        <source>Choose audio output via its index.</source>
++        <translation>通过索引选择音频输出。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="167"/>
++        <source>Choose audio input via its index. Can be empty.</source>
++        <translation>通过索引选择音频输出，可以为空。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="170"/>
++        <source>Choose video input via its index.</source>
++        <translation>通过索引选择视频输入。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="181"/>
++        <source>Set preferred audio track language (en, de, fr, ...).</source>
++        <translation>设置偏好的音频轨道语言 (英语, 德语, 法语等)。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="184"/>
++        <source>Set preferred subtitle track language (en, de, fr, ...). Can be empty.</source>
++        <translation>设置偏好的字幕轨道语言 (英语, 德语, 法语等)，可以为空。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="179"/>
++        <source>List all video, audio and subtitle tracks in the media.</source>
++        <translation>列出媒体中的所有视频、音频和字幕轨道。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="187"/>
++        <source>Choose video track via its index.</source>
++        <translation>通过索引选择视频轨道。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="189"/>
++        <source>Choose audio track via its index.</source>
++        <translation>通过索引选择音频轨道。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="191"/>
++        <source>Choose subtitle track via its index. Can be empty.</source>
++        <translation>通过索引选择字幕轨道，可以为空。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="226"/>
++        <source>Swap left/right eye.</source>
++        <translation>切换左右眼。</translation>
++    </message>
++    <message>
++        <source>swap-eyes</source>
++        <translation type="vanished">切换眼睛</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="228"/>
++        <source>Start in fullscreen mode.</source>
++        <oldsource>fullscreen</oldsource>
++        <translation>以全屏模式启动。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="203"/>
++        <source>Set input mode (%1).</source>
++        <translation>设置输入模式 (%1)。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="209"/>
++        <source>Set output mode (%1).</source>
++        <translation>设置输出模式 (%1)。</translation>
++    </message>
++    <message>
++        <source>Set 360° mode (%1).</source>
++        <translation type="vanished">设置360°模式 (%1)。</translation>
++    </message>
++    <message>
++        <source>Read commands from a script file.</source>
++        <translation type="vanished">从脚本文件中读取指令。</translation>
++    </message>
++    <message>
++        <source>Disable OpenGL quad-buffered stereo support.</source>
++        <translation type="vanished">关闭OpenGL四重缓冲立体支持。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="143"/>
++        <source>Set VR screen geometry, either as the special values &apos;united&apos; or &apos;intersected&apos;, or as a comma-separated list of nine values representing three 3D coordinates that define a planar screen (bottom left, bottom right, top left), or as a an aspect ratio followed by the name of an OBJ file that contains the screen geometry with texture coordinates (example: &apos;16:9,myscreen.obj&apos;).</source>
++        <translation>设置VR屏幕几何形状，可以设置为特殊值 &apos;united&apos; 或 &apos;intersected&apos;，也可以是用逗号分隔的九个值，表示定义平面屏幕（左下角、右下角、左上角）的三个3D坐标，又可以是一个宽高比后跟一个OBJ文件的名称，该文件包含了屏幕几何形状和纹理坐标 (示例: &apos;16:9,myscreen.obj&apos;)。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="149"/>
++        <source>Set show-devices mode (%1).</source>
++        <translation>设置设备显示模式 (%1)。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="152"/>
++        <source>Capture audio/video input from microphone and camera/screen/window.</source>
++        <translation>从摄像头/屏幕/窗口和麦克风捕获音视频输入。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="160"/>
++        <source>List screen inputs.</source>
++        <translation>列出屏幕输入。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="162"/>
++        <source>List window inputs.</source>
++        <translation>列出窗口输入。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="173"/>
++        <source>Choose screen input via its index.</source>
++        <translation>通过索引选择屏幕输入。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="176"/>
++        <source>Choose window input via its index.</source>
++        <translation>通过索引选择窗口输入。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="194"/>
++        <source>Load playlist.</source>
++        <translation>加载播放列表。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="197"/>
++        <source>Set loop mode (%1).</source>
++        <translation>设置循环模式 (%1)。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="200"/>
++        <source>Set wait mode (%1).</source>
++        <translation>设置等待模式 (%1)。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="220"/>
++        <source>Set surround mode (%1).</source>
++        <translation>设置环绕模式 (%1)。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="223"/>
++        <source>Set surround vertical field of view (default 50, range 5-115).</source>
++        <translation>设置环绕垂直视场角 (默认 50, 范围 5-115).</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="248"/>
++        <location filename="../src/main.cpp" line="271"/>
++        <location filename="../src/main.cpp" line="280"/>
++        <location filename="../src/main.cpp" line="289"/>
++        <location filename="../src/main.cpp" line="301"/>
++        <location filename="../src/main.cpp" line="383"/>
++        <location filename="../src/main.cpp" line="399"/>
++        <location filename="../src/main.cpp" line="411"/>
++        <location filename="../src/main.cpp" line="422"/>
++        <location filename="../src/main.cpp" line="433"/>
++        <location filename="../src/main.cpp" line="444"/>
++        <location filename="../src/main.cpp" line="456"/>
++        <location filename="../src/main.cpp" line="468"/>
++        <location filename="../src/main.cpp" line="477"/>
++        <location filename="../src/main.cpp" line="491"/>
++        <location filename="../src/main.cpp" line="501"/>
++        <location filename="../src/main.cpp" line="514"/>
++        <location filename="../src/main.cpp" line="632"/>
++        <location filename="../src/main.cpp" line="639"/>
++        <location filename="../src/main.cpp" line="651"/>
++        <location filename="../src/commandinterpreter.cpp" line="272"/>
++        <location filename="../src/commandinterpreter.cpp" line="336"/>
++        <source>Invalid argument for option %1</source>
++        <translation>选项 %1 中的参数无效</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="260"/>
++        <source>VR mode unavailable - recompile Bino with QVR support!</source>
++        <translation>VR模式不可用-使用QVR支持重新编译Bino！</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="319"/>
++        <source>No audio outputs available.</source>
++        <translation>无有效音频输出。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="322"/>
++        <source>Audio output %1: %2</source>
++        <translation>音频输出 %1: %2</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="329"/>
++        <source>No audio inputs available.</source>
++        <translation>无有效音频输入。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="332"/>
++        <source>Audio input %1: %2</source>
++        <translation>音频输入 %1: %2</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="339"/>
++        <source>No video inputs available.</source>
++        <translation>无有效视频出入。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="342"/>
++        <source>Video input %1: %2</source>
++        <translation>视频输入 %1: %2</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="349"/>
++        <source>No screen inputs available.</source>
++        <translation>无有效屏幕输入。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="352"/>
++        <source>Screen input %1: %2</source>
++        <translation>屏幕输入 %1: %2</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="359"/>
++        <source>No window inputs available.</source>
++        <translation>无有效窗口输入。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="362"/>
++        <source>Window input %1: %2</source>
++        <translation>窗口输入 %1: %2</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="526"/>
++        <source>File does not exist: %1</source>
++        <translation>文件不存在: %1</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="539"/>
++        <source>%1: %2</source>
++        <translation>%1: %2</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="549"/>
++        <source>Cannot capture and play URL at the same time.</source>
++        <translation>无法同时获取和播放URL。</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="567"/>
++        <source>video</source>
++        <translation>视频</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="568"/>
++        <source>audio</source>
++        <translation>音频</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="569"/>
++        <source>subtitle</source>
++        <translation>字幕</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="573"/>
++        <source>no %1 tracks</source>
++        <translation>没有 %1 轨道</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="576"/>
++        <source>%1 track %2</source>
++        <translation>%1 轨道 %2</translation>
++    </message>
++    <message>
++        <location filename="../src/main.cpp" line="757"/>
++        <source>Cannot initialize QVR manager</source>
++        <translation>无法初始化QVR管理器</translation>
++    </message>
++</context>
++<context>
++    <name>Screen</name>
++    <message>
++        <location filename="../src/screen.cpp" line="102"/>
++        <source>Loading screen from %1</source>
++        <translation>从 %1 中读取屏幕</translation>
++    </message>
++    <message>
++        <location filename="../src/screen.cpp" line="111"/>
++        <source>Warning: %1</source>
++        <oldsource>warning: %1</oldsource>
++        <translation>警告: %1</translation>
++    </message>
++    <message>
++        <location filename="../src/screen.cpp" line="117"/>
++        <source>Error: %1</source>
++        <oldsource>error: %1</oldsource>
++        <translation>错误: %1</translation>
++    </message>
++    <message>
++        <location filename="../src/screen.cpp" line="119"/>
++        <source>Unknown error</source>
++        <oldsource>unknown error</oldsource>
++        <translation>位置错误</translation>
++    </message>
++</context>
++<context>
++    <name>VideoFrame</name>
++    <message>
++        <location filename="../src/videoframe.cpp" line="134"/>
++        <source>Pixel format %1 is not hardware accelerated!</source>
++        <translation>像素格式 %1 没有硬件加速！</translation>
++    </message>
++</context>
++<context>
++    <name>Widget</name>
++    <message>
++        <location filename="../src/widget.cpp" line="111"/>
++        <location filename="../src/widget.cpp" line="112"/>
++        <source>Insufficient OpenGL capabilities.</source>
++        <oldsource>Insufficient OpenGL capabilities</oldsource>
++        <translation>OpenGL功能不足。</translation>
++    </message>
++    <message>
++        <location filename="../src/widget.cpp" line="112"/>
++        <location filename="../src/widget.cpp" line="118"/>
++        <source>Error</source>
++        <translation>错误</translation>
++    </message>
++    <message>
++        <location filename="../src/widget.cpp" line="117"/>
++        <location filename="../src/widget.cpp" line="118"/>
++        <source>OpenGL stereo mode is not available on this system.</source>
++        <oldsource>OpenGL stereo mode is not available on this system</oldsource>
++        <translation>OpenGL立体模式在此系统上不可用。</translation>
++    </message>
++</context>
++</TS>
 --- a/res/org.bino3d.bino.desktop
 +++ b/res/org.bino3d.bino.desktop
 @@ -8,7 +8,7 @@
@@ -581,7 +3913,7 @@ Forwarded: not-needed
  MimeType=video/mp4;video/mpeg;video/ogg;video/quicktime;video/webm;video/x-matroska;video/x-mng;video/x-ms-wmv;video/x-msvideo;
 --- a/src/bino.cpp
 +++ b/src/bino.cpp
-@@ -21,7 +21,14 @@
+@@ -21,14 +21,33 @@
  #include <QDateTime>
  
  #include "bino.hpp"
@@ -596,8 +3928,12 @@ Forwarded: not-needed
  #include "tools.hpp"
  #include "digestiblemedia.hpp"
  #include "metadata.hpp"
-@@ -29,6 +36,14 @@
+ #include "commandinterpreter.hpp"
  
++#ifdef HAVE_ANAGLYPH_INPUT
++#include <picture.h>
++#endif
++
  
  static Bino* binoSingleton = nullptr;
 +
@@ -611,7 +3947,7 @@ Forwarded: not-needed
  
  Bino::Bino(ScreenType screenType, const Screen& screen, bool swapEyes) :
      _wantExit(false),
-@@ -50,6 +65,9 @@
+@@ -50,6 +69,9 @@
      _frameIsNew(true),
      _frameWasSerialized(true),
      _swapEyes(swapEyes),
@@ -621,7 +3957,7 @@ Forwarded: not-needed
      _overlayUIShow(false)
  {
      Q_ASSERT(!binoSingleton);
-@@ -132,6 +150,11 @@
+@@ -132,6 +154,11 @@
                  }
              }
              });
@@ -633,7 +3969,7 @@ Forwarded: not-needed
      if (Playlist::instance()->length() > 0) {
          Playlist::instance()->start();
      } else {
-@@ -262,6 +285,13 @@
+@@ -262,6 +289,13 @@
          QGuiApplication::processEvents();
      }
      _playerIgnoreNextStop = false;
@@ -647,7 +3983,7 @@ Forwarded: not-needed
      if (!entry.noMedia()) {
          // Get meta data
          MetaData metaData;
-@@ -412,14 +442,17 @@
+@@ -412,14 +446,17 @@
  {
      if (_swapEyes != s) {
          _swapEyes = s;
@@ -667,7 +4003,7 @@ Forwarded: not-needed
  }
  
  void Bino::setVideoTrack(int i)
-@@ -427,6 +460,14 @@
+@@ -427,6 +464,14 @@
      LOG_DEBUG("changing video track to %d", i);
      if (playlistMode()) {
          _player->setActiveVideoTrack(i);
@@ -682,7 +4018,7 @@ Forwarded: not-needed
          emit stateChanged();
      }
  }
-@@ -451,11 +492,18 @@
+@@ -451,11 +496,18 @@
  
  void Bino::setInputMode(InputMode mode)
  {
@@ -701,7 +4037,7 @@ Forwarded: not-needed
  }
  
  void Bino::setSurroundMode(SurroundMode mode)
-@@ -465,6 +513,7 @@
+@@ -465,6 +517,7 @@
      _frame.reUpdate();
      _frameIsNew = true;
      LOG_DEBUG("setting surround mode to %s", surroundModeToString(mode));
@@ -709,7 +4045,7 @@ Forwarded: not-needed
  }
  
  bool Bino::swapEyes() const
-@@ -528,6 +577,11 @@
+@@ -528,6 +581,11 @@
      else if (playlistMode())
          t = _player->activeSubtitleTrack();
      return t;
@@ -721,7 +4057,7 @@ Forwarded: not-needed
  }
  
  InputMode Bino::inputMode() const
-@@ -877,6 +931,18 @@
+@@ -877,6 +935,18 @@
      }
  }
  
@@ -740,7 +4076,7 @@ Forwarded: not-needed
  void Bino::rebuildColorPrgIfNecessary(int planeFormat, bool colorRangeSmall, int colorSpace, int colorTransfer)
  {
      if (_colorPrg.isLinked()
-@@ -965,168 +1031,198 @@
+@@ -965,196 +1035,270 @@
      return alignment;
  }
  
@@ -1087,9 +4423,24 @@ Forwarded: not-needed
          }
      }
      glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-@@ -1143,18 +1239,38 @@
+     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+     // 2. Convert plane textures into linear RGB in the frame texture
++    const int anaglyph = inputAnaglyphPair(frame.inputMode);
++    const int convertedWidth = anaglyph ? 2 * w : w;
+     glBindTexture(GL_TEXTURE_2D, frameTex);
+     if (OpenGLType == OpenGL_Type_WebGL)
+-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_BGRA, GL_UNSIGNED_SHORT, nullptr);
++        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, convertedWidth, h, 0, GL_BGRA, GL_UNSIGNED_SHORT, nullptr);
+     else if (OpenGLType == OpenGL_Type_OpenGLES)
+-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB10_A2, w, h, 0, GL_RGBA, GL_UNSIGNED_INT_2_10_10_10_REV, nullptr);
++        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB10_A2, convertedWidth, h, 0, GL_RGBA, GL_UNSIGNED_INT_2_10_10_10_REV, nullptr);
+     else
+-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16, w, h, 0, GL_BGRA, GL_UNSIGNED_SHORT, nullptr);
++        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16, convertedWidth, h, 0, GL_BGRA, GL_UNSIGNED_SHORT, nullptr);
+     glBindFramebuffer(GL_FRAMEBUFFER, _frameFbo);
      glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, frameTex, 0);
-     glViewport(0, 0, w, h);
+-    glViewport(0, 0, w, h);
++    glViewport(0, 0, convertedWidth, h);
      glDisable(GL_DEPTH_TEST);
 +    if (!planeCount) {
 +        glClearColor(0, 0, 0, 1);
@@ -1101,6 +4452,28 @@ Forwarded: not-needed
      glUseProgram(_colorPrg.programId());
      _colorPrg.setUniformValue("masteringWhite", frame.masteringWhite);
 +    _colorPrg.setUniformValue("channelOrder", channelOrder);
++    _colorPrg.setUniformValue("anaglyphInput", bool(anaglyph));
++    bool nativeMultiview = false;
++#if BINO_STEREO_DESKTOP
++    nativeMultiview = frame.qframe.surfaceFormat().stereoFlags()
++            .testFlag(QVideoFrameFormat::StereoFlag::Multiview);
++#endif
++    _colorPrg.setUniformValue("nativeMultiview", nativeMultiview);
++#ifdef HAVE_ANAGLYPH_INPUT
++    if (anaglyph) {
++        for (int eye = 0; eye < 2; ++eye) {
++            int weights[9], divisors[3];
++            QMatrix3x3 transform;
++            Stereo::Picture::anaglyphTransform(Stereo::Picture::AnaglyphColorPair(anaglyph),
++                    bool(eye == 0) != inputAnaglyphReversed(frame.inputMode), weights, divisors);
++            for (int row = 0; row < 3; ++row)
++                for (int column = 0; column < 3; ++column)
++                    transform(row, column) = float(weights[3 * row + column]) / divisors[row];
++            _colorPrg.setUniformValue(eye ? "anaglyphRight" : "anaglyphLeft", transform);
++        }
++    }
++#endif
++
 +    // P010/P016 store limited-range codes in the high bits of normalized R16.
 +    // Convert code/65535 to the 8-bit matrix's code/65280 convention.
 +    const bool wideLimited = frame.colorRangeSmall
@@ -1127,7 +4500,7 @@ Forwarded: not-needed
  }
  
  void Bino::overlayToTexture(const QImage& img, unsigned int tex)
-@@ -1166,9 +1282,26 @@
+@@ -1166,9 +1310,26 @@
      glGenerateMipmap(GL_TEXTURE_2D);
  }
  
@@ -1156,7 +4529,7 @@ Forwarded: not-needed
      int viewCount = 2;
      int viewWidth = _frame.width;
      int viewHeight = _frame.height;
-@@ -1192,6 +1325,8 @@
+@@ -1192,6 +1353,8 @@
      case Input_Mono:
          viewCount = 1;
          break;
@@ -1165,7 +4538,7 @@ Forwarded: not-needed
      case Input_Top_Bottom:
      case Input_Bottom_Top:
          frameDisplayAspectRatio *= 2.0f;
-@@ -1200,6 +1335,12 @@
+@@ -1200,6 +1363,12 @@
      case Input_Bottom_Top_Half:
          viewHeight /= 2;
          break;
@@ -1178,7 +4551,21 @@ Forwarded: not-needed
      case Input_Left_Right:
      case Input_Right_Left:
          frameDisplayAspectRatio /= 2.0f;
-@@ -1227,7 +1368,7 @@
+@@ -1208,6 +1377,13 @@
+     case Input_Right_Left_Half:
+         viewWidth /= 2;
+         break;
++    case Input_Red_Cyan:
++    case Input_Cyan_Red:
++    case Input_Green_Magenta:
++    case Input_Magenta_Green:
++    case Input_Amber_Blue:
++    case Input_Blue_Amber:
++        break;
+     case Input_Alternating_LR:
+     case Input_Alternating_RL:
+         break;
+@@ -1227,7 +1403,7 @@
       * we want the screen resolution to determine the view texture size
       * so that overlays (subtitles and/or UI) don't look as crappy as the
       * video. */
@@ -1187,7 +4574,7 @@ Forwarded: not-needed
          if (screenWidth / viewWidth > screenHeight / viewHeight) {
              viewWidth = screenWidth;
              viewHeight = viewWidth / frameDisplayAspectRatio;
-@@ -1266,7 +1407,7 @@
+@@ -1266,7 +1442,7 @@
          }
          // Render the subtitle
          _overlaySubtitle.updateParameters(_frame.subtitle);
@@ -1196,7 +4583,7 @@ Forwarded: not-needed
              overlayToTexture(_overlaySubtitle.image(), _overlayTexs[1]);
          }
          // Done.
-@@ -1274,13 +1415,13 @@
+@@ -1274,13 +1450,13 @@
      }
      // Render the audio overlay
      if (!_frame.isValid()) {
@@ -1212,7 +4599,7 @@ Forwarded: not-needed
              overlayToTexture(_overlayUI.image(), _overlayTexs[2]);
          }
      }
-@@ -1302,6 +1443,8 @@
+@@ -1302,6 +1478,8 @@
          int view, // 0 = left, 1 = right
          int texWidth, int texHeight, unsigned int texture)
  {
@@ -1221,7 +4608,7 @@ Forwarded: not-needed
      // Update screen
      switch (_screenType) {
      case ScreenUnited:
-@@ -1331,9 +1474,32 @@
+@@ -1331,9 +1509,42 @@
      float viewFactorX = 1.0f;
      float viewOffsetY = 0.0f;
      float viewFactorY = 1.0f;
@@ -1251,10 +4638,20 @@ Forwarded: not-needed
 +        viewOffsetX = ((view ^ (_frame.inputMode == Input_Quincunx_RL)) ? 0.5f : 0.0f);
 +        frameAspectRatio /= 2.0f;
 +        break;
++    case Input_Red_Cyan:
++    case Input_Cyan_Red:
++    case Input_Green_Magenta:
++    case Input_Magenta_Green:
++    case Input_Amber_Blue:
++    case Input_Blue_Amber:
++        viewFactorX = 0.5f;
++        viewOffsetX = view ? 0.5f : 0.0f;
++        // The conversion expanded two views; the source aspect belongs to each.
++        break;
      case Input_Unknown: // cannot happen, update() sets a known mode
      case Input_Mono:
          // nothing to do
-@@ -1431,9 +1597,16 @@
+@@ -1431,9 +1642,17 @@
      _viewPrg.setUniformValue("overlayTex0", 1);
      _viewPrg.setUniformValue("overlayTex1", 2);
      _viewPrg.setUniformValue("overlayTex2", 3);
@@ -1264,7 +4661,8 @@ Forwarded: not-needed
 +    _viewPrg.setUniformValue("showOverlayAudio", !_separateOverlays && !_frame.isValid());
 +    _viewPrg.setUniformValue("showOverlaySubtitle", !_separateOverlays && !_frame.subtitle.isEmpty());
 +    _viewPrg.setUniformValue("showOverlayUI", !_separateOverlays && _overlayUIShow);
-+    QSize storedView(qRound(_frame.width * viewFactorX), qRound(_frame.height * viewFactorY));
++    const int textureWidth = _frame.width * (inputAnaglyphPair(_frame.inputMode) ? 2 : 1);
++    QSize storedView(qRound(textureWidth * viewFactorX), qRound(_frame.height * viewFactorY));
 +    if (rotation == 1 || rotation == 3)
 +        storedView.transpose();
 +    _viewPrg.setUniformValue("nativeSamples", !finalRenderingStep
@@ -1274,7 +4672,7 @@ Forwarded: not-needed
      _viewPrg.setUniformValue("rotation", rotation);
      _viewPrg.setUniformValue("view_offset_x", viewOffsetX);
      _viewPrg.setUniformValue("view_factor_x", viewFactorX);
-@@ -1485,8 +1658,10 @@
+@@ -1485,8 +1704,10 @@
  bool Bino::overlayUIPointerPress(const QPointF& pointerInView, bool lockUIEvenIfPointerNotOnBox)
  {
      bool r = _overlayUI.pointerPress(pointerInView);
@@ -1286,7 +4684,7 @@ Forwarded: not-needed
      return r;
  }
  
-@@ -1494,6 +1669,7 @@
+@@ -1494,6 +1715,7 @@
  {
      _overlayUI.pointerRelease(pointerInView);
      _overlayUILocked = false;
@@ -1294,7 +4692,7 @@ Forwarded: not-needed
  }
  
  void Bino::overlayUIPointerMove(const QPointF& pointerInView, bool showPointerInOverlayUI)
-@@ -1501,6 +1677,7 @@
+@@ -1501,6 +1723,7 @@
      _overlayUILastTrigger = QDateTime::currentMSecsSinceEpoch();
      _overlayUIPointerInView = pointerInView;
      _overlayUIPointerShow = showPointerInOverlayUI;
@@ -1539,7 +4937,17 @@ Forwarded: not-needed
 +}
 --- a/src/gui.cpp
 +++ b/src/gui.cpp
-@@ -173,6 +173,7 @@
+@@ -47,6 +47,9 @@
+ #include "metadata.hpp"
+ #include "version.hpp"
+ #include "log.hpp"
++#ifdef HAVE_ANAGLYPH_INPUT
++#include <picture.h>
++#endif
+ 
+ 
+ QMenu* Gui::addBinoMenu(const QString& title)
+@@ -173,6 +176,7 @@
      connect(threeDInMono, SIGNAL(triggered()), this, SLOT(threeDInput()));
      addBinoAction(threeDInMono, threeDMenu);
      QMenu* threeDInputAboveBelowMenu = threeDMenu->addMenu(tr("Input 3D above-below"));
@@ -1547,7 +4955,7 @@ Forwarded: not-needed
      QAction* threeDInTopBottom = new QAction(inputModeToStringUI(Input_Top_Bottom), this);
      threeDInTopBottom->setCheckable(true);
      _3dInputActionGroup->addAction(threeDInTopBottom)->setData(int(Input_Top_Bottom));
-@@ -194,6 +195,7 @@
+@@ -194,6 +198,7 @@
      connect(threeDInBottomTopHalf, SIGNAL(triggered()), this, SLOT(threeDInput()));
      addBinoAction(threeDInBottomTopHalf, threeDInputAboveBelowMenu);
      QMenu* threeDInputSideBySideMenu = threeDMenu->addMenu(tr("Input 3D side-by-side"));
@@ -1555,7 +4963,7 @@ Forwarded: not-needed
      QAction* threeDInLeftRight = new QAction(inputModeToStringUI(Input_Left_Right), this);
      threeDInLeftRight->setCheckable(true);
      _3dInputActionGroup->addAction(threeDInLeftRight)->setData(int(Input_Left_Right));
-@@ -215,6 +217,7 @@
+@@ -215,6 +220,7 @@
      connect(threeDInRightLeftHalf, SIGNAL(triggered()), this, SLOT(threeDInput()));
      addBinoAction(threeDInRightLeftHalf, threeDInputSideBySideMenu);
      QMenu* threeDInputAlternatingMenu = threeDMenu->addMenu(tr("Input 3D alternating"));
@@ -1563,10 +4971,24 @@ Forwarded: not-needed
      QAction* threeDInAlternatingLR = new QAction(inputModeToStringUI(Input_Alternating_LR), this);
      threeDInAlternatingLR->setCheckable(true);
      _3dInputActionGroup->addAction(threeDInAlternatingLR)->setData(int(Input_Alternating_LR));
-@@ -225,7 +228,164 @@
+@@ -225,7 +231,178 @@
      _3dInputActionGroup->addAction(threeDInAlternatingRL)->setData(int(Input_Alternating_RL));
      connect(threeDInAlternatingRL, SIGNAL(triggered()), this, SLOT(threeDInput()));
      addBinoAction(threeDInAlternatingRL, threeDInputAlternatingMenu);
++#ifdef HAVE_ANAGLYPH_INPUT
++    QMenu* anaglyphInputMenu = threeDMenu->addMenu(tr("Input 3D anaglyph"));
++    _3dInputMenus.append(anaglyphInputMenu->menuAction());
++    anaglyphInputMenu->setToolTipsVisible(true);
++    for (int mode = Input_Red_Cyan; mode <= Input_Blue_Amber; ++mode) {
++        QAction* action = new QAction(inputModeToStringUI(InputMode(mode)), this);
++        action->setToolTip(Stereo::Picture::colorDisclaimer());
++        action->setStatusTip(action->toolTip());
++        action->setCheckable(true);
++        _3dInputActionGroup->addAction(action)->setData(mode);
++        connect(action, SIGNAL(triggered()), this, SLOT(threeDInput()));
++        addBinoAction(action, anaglyphInputMenu);
++    }
++#endif
 +#if !BINO_STEREO_DESKTOP
 +    threeDMenu->addSeparator();
      _3dOutputActionGroup = new QActionGroup(this);
@@ -1728,7 +5150,7 @@ Forwarded: not-needed
  
      QMenu* mediaMenu = addBinoMenu(tr("&Media"));
      _mediaToggleVolumeMuteAction = new QAction(tr("Mute audio"), this);
-@@ -617,6 +777,7 @@
+@@ -617,6 +794,7 @@
      }
  }
  
@@ -1736,7 +5158,7 @@ Forwarded: not-needed
  void Gui::threeDOutput()
  {
      QAction* a = _3dOutputActionGroup->checkedAction();
-@@ -627,6 +788,8 @@
+@@ -627,6 +805,8 @@
          _widget->update();
      }
  }
@@ -1745,7 +5167,7 @@ Forwarded: not-needed
  
  void Gui::mediaTogglePause()
  {
-@@ -1026,11 +1189,22 @@
+@@ -1026,11 +1206,22 @@
          QAction* a = _3dSurroundActionGroup->actions()[i];
          a->setChecked(a->data().toInt() == int(surroundMode));
      }
@@ -1769,7 +5191,7 @@ Forwarded: not-needed
      for (int i = 0; i < _3dOutputActionGroup->actions().size(); i++) {
          QAction* a = _3dOutputActionGroup->actions()[i];
          if (Bino::instance()->assumeStereoInputMode()) {
-@@ -1045,6 +1219,7 @@
+@@ -1045,6 +1236,7 @@
          }
      }
  
@@ -1777,7 +5199,7 @@ Forwarded: not-needed
      _mediaTogglePauseAction->setEnabled(Bino::instance()->playlistMode() && !Bino::instance()->stopped());
      _mediaSeekFwd1SecAction->setEnabled(Bino::instance()->playlistMode() && !Bino::instance()->stopped());
      _mediaSeekBwd1SecAction->setEnabled(Bino::instance()->playlistMode() && !Bino::instance()->stopped());
-@@ -1058,12 +1233,13 @@
+@@ -1058,12 +1250,13 @@
      _widget->update();
  }
  
@@ -1793,7 +5215,7 @@ Forwarded: not-needed
  
  void Gui::setSurroundVerticalFieldOfView(float vfov)
  {
-@@ -1113,9 +1289,13 @@
+@@ -1113,9 +1306,13 @@
  
  void Gui::moveEvent(QMoveEvent*)
  {
@@ -2095,14 +5517,38 @@ Forwarded: not-needed
      MetaData();
 --- a/src/modes.cpp
 +++ b/src/modes.cpp
-@@ -23,9 +23,36 @@
+@@ -23,9 +23,69 @@
  #include "modes.hpp"
  
  
++int inputAnaglyphPair(InputMode mode)
++{
++#ifdef HAVE_ANAGLYPH_INPUT
++    return mode >= Input_Red_Cyan && mode <= Input_Blue_Amber
++            ? 1 + (int(mode) - int(Input_Red_Cyan)) / 2 : 0;
++#else
++    (void)mode;
++    return 0;
++#endif
++}
++
++bool inputAnaglyphReversed(InputMode mode)
++{
++    return inputAnaglyphPair(mode) && (int(mode) - int(Input_Red_Cyan)) % 2;
++}
++
 +InputMode inputModeFromPacking(int layout, int order, int anaglyph)
 +{
-+    if (anaglyph)
-+        return Input_Unknown;
++#ifndef HAVE_ANAGLYPH_INPUT
++    if (anaglyph) return Input_Unknown;
++#endif
++    switch (anaglyph) {
++    case 0: break;
++    case 1: return order ? Input_Cyan_Red : Input_Red_Cyan;
++    case 2: return order ? Input_Magenta_Green : Input_Green_Magenta;
++    case 3: return order ? Input_Blue_Amber : Input_Amber_Blue;
++    default: return Input_Mono; // An unknown declared packing is never a shape guess.
++    }
 +    switch (layout) {
 +    case 0: return Input_Mono;
 +    case 1: return order ? Input_Right_Left : Input_Left_Right;
@@ -2113,7 +5559,9 @@ Forwarded: not-needed
 +    case 7: return order ? Input_Quincunx_RL : Input_Quincunx_LR;
 +    case 8:
 +    case 9: return order ? Input_Alternating_RL : Input_Alternating_LR;
-+    default: return Input_Unknown;
++    // A declaration without a supported packing is a base-view fallback.
++    // Only decoded, identified views may promote native multiview to a pair.
++    default: return Input_Mono;
 +    }
 +}
 +
@@ -2128,11 +5576,18 @@ Forwarded: not-needed
 +    case Input_Checkerboard_RL: return "checkerboard-right-left";
 +    case Input_Quincunx_LR: return "quincunx-left-right";
 +    case Input_Quincunx_RL: return "quincunx-right-left";
++    case Input_Red_Cyan: return "anaglyph-red-cyan";
++    case Input_Cyan_Red: return "anaglyph-cyan-red";
++    case Input_Green_Magenta: return "anaglyph-green-magenta";
++    case Input_Magenta_Green: return "anaglyph-magenta-green";
++    case Input_Amber_Blue: return "anaglyph-amber-blue";
++    case Input_Blue_Amber: return "anaglyph-blue-amber";
++
 +
      case Input_Unknown:
          return "unknown";
          break;
-@@ -69,6 +96,15 @@
+@@ -69,6 +129,22 @@
  QString inputModeToStringUI(InputMode mode)
  {
      switch (mode) {
@@ -2144,11 +5599,18 @@ Forwarded: not-needed
 +    case Input_Checkerboard_RL: return QCoreApplication::translate("Mode", "Input checkerboard, right first");
 +    case Input_Quincunx_LR: return QCoreApplication::translate("Mode", "Input side by side quincunx, left first");
 +    case Input_Quincunx_RL: return QCoreApplication::translate("Mode", "Input side by side quincunx, right first");
++    case Input_Red_Cyan: return QCoreApplication::translate("Mode", "Input anaglyph red/cyan");
++    case Input_Cyan_Red: return QCoreApplication::translate("Mode", "Input anaglyph cyan/red");
++    case Input_Green_Magenta: return QCoreApplication::translate("Mode", "Input anaglyph green/magenta");
++    case Input_Magenta_Green: return QCoreApplication::translate("Mode", "Input anaglyph magenta/green");
++    case Input_Amber_Blue: return QCoreApplication::translate("Mode", "Input anaglyph amber/blue");
++    case Input_Blue_Amber: return QCoreApplication::translate("Mode", "Input anaglyph blue/amber");
++
 +
      case Input_Unknown:
          return QCoreApplication::translate("Mode", "Input autodetection");
          break;
-@@ -113,6 +149,14 @@
+@@ -113,6 +189,22 @@
  {
      InputMode mode = Input_Unknown;
      bool r = true;
@@ -2160,10 +5622,18 @@ Forwarded: not-needed
 +    if (s == "checkerboard-right-left") { if (ok) *ok = true; return Input_Checkerboard_RL; }
 +    if (s == "quincunx-left-right") { if (ok) *ok = true; return Input_Quincunx_LR; }
 +    if (s == "quincunx-right-left") { if (ok) *ok = true; return Input_Quincunx_RL; }
++#ifdef HAVE_ANAGLYPH_INPUT
++    if (s == "anaglyph-red-cyan") { if (ok) *ok = true; return Input_Red_Cyan; }
++    if (s == "anaglyph-cyan-red") { if (ok) *ok = true; return Input_Cyan_Red; }
++    if (s == "anaglyph-green-magenta") { if (ok) *ok = true; return Input_Green_Magenta; }
++    if (s == "anaglyph-magenta-green") { if (ok) *ok = true; return Input_Magenta_Green; }
++    if (s == "anaglyph-amber-blue") { if (ok) *ok = true; return Input_Amber_Blue; }
++    if (s == "anaglyph-blue-amber") { if (ok) *ok = true; return Input_Blue_Amber; }
++#endif
      if (s == "mono")
          mode = Input_Mono;
      else if (s == "top-bottom")
-@@ -197,6 +241,12 @@
+@@ -197,6 +289,12 @@
      return mode;
  }
  
@@ -2176,7 +5646,7 @@ Forwarded: not-needed
  const char* outputModeToString(OutputMode mode)
  {
      switch (mode) {
-@@ -246,7 +296,7 @@
+@@ -246,7 +344,7 @@
          return "even-odd-columns";
          break;
      case Output_Checkerboard:
@@ -2185,7 +5655,7 @@ Forwarded: not-needed
          break;
      case Output_Red_Cyan_Dubois:
          return "red-cyan-dubois";
-@@ -425,29 +475,29 @@
+@@ -425,29 +523,29 @@
          mode = Output_Even_Odd_Rows;
      else if (s == "even-odd-columns")
          mode = Output_Even_Odd_Columns;
@@ -2222,7 +5692,7 @@ Forwarded: not-needed
          mode = Output_Amber_Blue_HalfColor;
      else if (s == "amber-blue-monochrome")
          mode = Output_Amber_Blue_Monochrome;
-@@ -461,6 +511,8 @@
+@@ -461,6 +559,8 @@
          *ok = r;
      return mode;
  }
@@ -2233,7 +5703,7 @@ Forwarded: not-needed
  {
 --- a/src/modes.hpp
 +++ b/src/modes.hpp
-@@ -38,7 +38,17 @@
+@@ -38,7 +38,27 @@
      Input_Right_Left_Half = 9, // stereoscopic video, left eye right, right eye left, both half width
      Input_Alternating_LR = 10, // stereoscopic video, alternating frames, left first
      Input_Alternating_RL = 11, // stereoscopic video, alternating frames, right first
@@ -2245,13 +5715,23 @@ Forwarded: not-needed
 +    Input_Checkerboard_RL = 17,
 +    Input_Quincunx_LR = 18,
 +    Input_Quincunx_RL = 19,
++    Input_Red_Cyan = 20,
++    Input_Cyan_Red = 21,
++    Input_Green_Magenta = 22,
++    Input_Magenta_Green = 23,
++    Input_Amber_Blue = 24,
++    Input_Blue_Amber = 25,
++
  };
++
++int inputAnaglyphPair(InputMode mode);
++bool inputAnaglyphReversed(InputMode mode);
 +
 +InputMode inputModeFromPacking(int layout, int order, int anaglyph = 0);
  
  const char* inputModeToString(InputMode mode);
  QString inputModeToStringUI(InputMode mode);
-@@ -56,11 +66,18 @@
+@@ -56,11 +76,18 @@
  QString surroundModeToStringUI(SurroundMode mode);
  SurroundMode surroundModeFromString(const QString& s, bool* ok = nullptr);
  
@@ -2270,7 +5750,7 @@ Forwarded: not-needed
      Output_Right = 1,
      Output_OpenGL_Stereo = 2,
      Output_Alternating = 3,
-@@ -90,11 +107,13 @@
+@@ -90,11 +117,13 @@
      Output_Amber_Blue_Monochrome = 27,
      Output_Red_Green_Monochrome = 28,
      Output_Red_Blue_Monochrome = 29
@@ -2959,33 +6439,95 @@ Forwarded: not-needed
              QRectF iconRect = _boxes[i].marginsAdded(QMarginsF(d, d, d, d));
 --- a/src/shader-color.frag.glsl
 +++ b/src/shader-color.frag.glsl
-@@ -19,6 +19,8 @@
+@@ -19,6 +19,12 @@
   */
  
  uniform sampler2D plane0;
 +uniform int channelOrder;
 +uniform float sampleScale;
++uniform bool anaglyphInput;
++uniform bool nativeMultiview;
++uniform mat3 anaglyphLeft;
++uniform mat3 anaglyphRight;
  uniform sampler2D plane1;
  uniform sampler2D plane2;
  uniform sampler2D plane3;
-@@ -65,7 +67,8 @@
+@@ -60,30 +66,55 @@
+     return vec3(to_linear(rgb.r), to_linear(rgb.g), to_linear(rgb.b));
+ }
+ 
++// Native decoder views are separate source images. Clamp chroma interpolation
++// to the current eye, and interpolate fetched samples in shader precision rather
++// than rounding an R8 filtered result before the YUV-to-RGB conversion.
++vec4 chromaSample(sampler2D plane, vec2 uv)
++{
++    if (!nativeMultiview)
++        return texture(plane, uv);
++    ivec2 size = textureSize(plane, 0);
++    vec2 samplePosition = uv * vec2(size) - 0.5;
++    ivec2 corner = ivec2(floor(samplePosition));
++    vec2 fraction = fract(samplePosition);
++    int halfWidth = size.x / 2;
++    ivec2 first = ivec2(uv.x < 0.5 ? 0 : halfWidth, 0);
++    ivec2 last = first + ivec2(halfWidth, size.y) - 1;
++    vec4 top = mix(texelFetch(plane, clamp(corner, first, last), 0),
++            texelFetch(plane, clamp(corner + ivec2(1, 0), first, last), 0), fraction.x);
++    vec4 bottom = mix(texelFetch(plane, clamp(corner + ivec2(0, 1), first, last), 0),
++            texelFetch(plane, clamp(corner + ivec2(1, 1), first, last), 0), fraction.x);
++    return mix(top, bottom, fraction.y);
++}
++
+ void main(void)
+ {
++    // Each half reads the same encoded sample, never an interpolated resize.
++    vec2 sourceCoord = anaglyphInput ? vec2(fract(2.0 * vtexcoord.x), vtexcoord.y) : vtexcoord;
      vec3 yuv = vec3(1.0, 0.0, 0.0);
      vec3 rgb = vec3(0.0, 1.0, 0.0);
      if (planeFormat == Format_RGB) {
 -        rgb = texture(plane0, vtexcoord).rgb;
-+        vec4 sample0 = texture(plane0, vtexcoord);
++        vec4 sample0 = texture(plane0, sourceCoord);
 +        rgb = channelOrder == 1 ? sample0.gba : channelOrder == 2 ? sample0.abg : sample0.rgb;
      } else if (planeFormat == Format_Y) {
-         rgb = texture(plane0, vtexcoord).rrr;
+-        rgb = texture(plane0, vtexcoord).rrr;
++        rgb = texture(plane0, sourceCoord).rrr;
      } else {
-@@ -84,6 +87,7 @@
-                     texture(plane0, vtexcoord).r,
-                     texture(plane1, vtexcoord).rg);
-         }
+         if (planeFormat == Format_YUVp) {
+             yuv = vec3(
+-                    texture(plane0, vtexcoord).r,
+-                    texture(plane1, vtexcoord).r,
+-                    texture(plane2, vtexcoord).r);
++                    texture(plane0, sourceCoord).r,
++                    chromaSample(plane1, sourceCoord).r,
++                    chromaSample(plane2, sourceCoord).r);
+         } else if (planeFormat == Format_YVUp) {
+             yuv = vec3(
+-                    texture(plane0, vtexcoord).r,
+-                    texture(plane2, vtexcoord).r,
+-                    texture(plane1, vtexcoord).r);
++                    texture(plane0, sourceCoord).r,
++                    chromaSample(plane2, sourceCoord).r,
++                    chromaSample(plane1, sourceCoord).r);
+         } else if (planeFormat == Format_YUVsp) {
+             yuv = vec3(
+-                    texture(plane0, vtexcoord).r,
+-                    texture(plane1, vtexcoord).rg);
+-        }
++                    texture(plane0, sourceCoord).r,
++                    chromaSample(plane1, sourceCoord).rg);
++        }
 +        yuv *= sampleScale;
          mat4 m;
          // The following matrices are the same as used by Qt,
          // see qtmultimedia/src/multimedia/video/qvideotexturehelper.cpp
+@@ -138,6 +169,8 @@
+         }
+         rgb = (m * vec4(yuv, 1.0)).rgb;
+     }
++    if (anaglyphInput)
++        rgb = (vtexcoord.x < 0.5 ? anaglyphLeft : anaglyphRight) * rgb;
+     if (colorTransfer == CT_ST2084 || colorTransfer == CT_STD_B67) {
+         // This code was reconstructed from the mess in qtmultimedia/src/multimedia/video;
+         // it is distributed there over various shaders and C++ files.
 --- /dev/null
 +++ b/src/shader-display-native.frag.glsl
 @@ -0,0 +1,47 @@
@@ -3381,7 +6923,7 @@ Forwarded: not-needed
      if (!frame.isValid() && lastFrameWasValid) {
          // keep showing the last frame of the current media; ignore that QtMultiMedia
          // with the FFmpeg backend gives us an invalid frame as soon as the media stops
-@@ -74,6 +88,53 @@
+@@ -74,6 +88,56 @@
          LOG_FIREHOSE("video sink gets a valid frame");
          lastFrameWasValid = true;
      }
@@ -3391,6 +6933,7 @@ Forwarded: not-needed
 +        const auto format = frame.surfaceFormat();
 +        using Stereo = QVideoFrameFormat::StereoMode;
 +        int layout = 0;
++        int anaglyph = 0;
 +        switch (format.stereoMode()) {
 +        case Stereo::SideBySide: layout = 1; break;
 +        case Stereo::TopBottom: layout = 2; break;
@@ -3399,11 +6942,13 @@ Forwarded: not-needed
 +        case Stereo::Checkerboard: layout = 6; break;
 +        case Stereo::SideBySideQuincunx: layout = 7; break;
 +        case Stereo::FrameSequence: layout = 8; break;
++        case Stereo::AnaglyphCyanRed: anaglyph = 1; break;
++        case Stereo::AnaglyphGreenMagenta: anaglyph = 2; break;
 +        default: break;
 +        }
-+        if (layout) {
++        if (layout || anaglyph) {
 +            const bool inverted = format.stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::RightEyeFirst);
-+            const InputMode declared = inputModeFromPacking(layout, inverted, 0);
++            const InputMode declared = inputModeFromPacking(layout, inverted, anaglyph);
 +            if (declared != inputMode)
 +                needExtFrame = false;
 +            inputMode = declared;
@@ -3435,7 +6980,7 @@ Forwarded: not-needed
  
      bool updateExtFrame;
      if (inputMode == Input_Alternating_LR || inputMode == Input_Alternating_RL) {
-@@ -92,9 +153,9 @@
+@@ -92,9 +156,9 @@
          needExtFrame = false;
      }
      if (updateExtFrame) {
@@ -4209,7 +7754,7 @@ Forwarded: not-needed
  
 --- /dev/null
 +++ b/tests/frame-path/CMakeLists.txt
-@@ -0,0 +1,97 @@
+@@ -0,0 +1,103 @@
 +cmake_minimum_required(VERSION 3.16)
 +project(BinoFramePath LANGUAGES CXX C)
 +set(CMAKE_CXX_STANDARD 17)
@@ -4224,6 +7769,7 @@ Forwarded: not-needed
 +set(CMAKE_AUTOMOC ON)
 +find_package(Qt6 REQUIRED COMPONENTS OpenGLWidgets)
 +find_package(StereoLayer REQUIRED CONFIG)
++bino_anaglyph_input()
 +add_executable(widget-probe widget.cpp native-target.cpp
 +    ../../src/log.cpp ../../src/tools.cpp ../../src/screen.cpp ../../src/modes.cpp
 +    ../../src/metadata.cpp ../../src/playlist.cpp ../../src/videoframe.cpp
@@ -4307,6 +7853,11 @@ Forwarded: not-needed
 +
 +add_library(fullscreen-observer SHARED ../fullscreen/observer.cpp)
 +target_link_libraries(fullscreen-observer PRIVATE Qt6::Widgets)
++
++if(BINO_STEREO_DESKTOP)
++    add_executable(native-input-lifecycle ../native-input/lifecycle.cpp)
++    target_link_libraries(native-input-lifecycle PRIVATE Qt6::Gui Qt6::Multimedia)
++endif()
 --- /dev/null
 +++ b/tests/frame-path/Dockerfile
 @@ -0,0 +1,9 @@
@@ -6703,6 +10254,317 @@ Forwarded: not-needed
 +python3 "$script_dir/drive.py" > "$CASE_DIR/driver.log" 2>&1
 +wait "$player"
 --- /dev/null
++++ b/tests/native-input/README.md
+@@ -0,0 +1,38 @@
++# Native input regression
++
++`fixtures.py DIRECTORY [NATIVE_MV_HEVC]` creates synthetic address-coded RGB
++anaglyph controls, a custom st3d declaration on a wide raster, and optionally
++an MV-HEVC variant with container SAR 2:1. No film bytes or file-name guesses
++supply stereo identity. RGB reference equations are independent of the library.
++
++`check.py CASE FIXTURES COLOUR-PAIR [--swap]` checks both reconstructed eyes at
++source resolution, with the existing tolerance of one 8-bit channel value.
++The original encoded channels survive; other channels use the shared approximate
++reconstruction. This cannot recover lost full-colour views or undo an arbitrary
++anaglyph encoder, clipping, or baked-in cross-talk.
++
++`lifecycle.cpp` runs against installed Qt Multimedia and independently decoded
++raw eye planes. It checks all sampled YUV values, pair size, source aspect,
++view identity, timestamp order, seek, replacement, track changes, cancellation,
++EOF and a two-unrelated-tracks control. Run with both `native` and `default`.
++The latter retains the ordinary consumer's mono SAR behavior.
++
++`check-multiview.py CASE REFERENCES [--swap]` converts each independent decoded
++YUV420P eye using the player's existing centre-sited chroma interpretation and
++the BT.709 limited-range equations. It checks all rendered channels, including
++the seam, at tolerance one. This RGB conversion assertion is separate from the
++exact raw-plane equality in the lifecycle/shared-pair tests; it does not claim
++recovery of pre-encoding RGB or test other chroma-siting interpretations.
++The source fixture declares BT.709; other transfer/range/precision controls stay
++in the retained frame-path suite. Swapping expected eyes must fail.
++
++`declared.cpp` prevents custom, unknown and not-yet-assembled native declarations
++from falling through to a shape guess. Actual decoded pair metadata can promote
++a native source to SBS. Truly unmarked files retain the shared shape policy.
++
++`case.sh` and `session.sh` are bounded, private KWin test sessions using the
++existing native-buffer recorder. They do not change the retained strip/fullscreen
++harness or its proxy. Supply STRIP_BINARY, STRIP_CLIP and optional STRIP_INPUT or
++STRIP_SWAP; CASE_DIR and the private HOME/runtime directories belong to the case.
++Use a fresh container/session and match installed ELF hashes to the archives
++before interpreting a packaged result.
+--- /dev/null
++++ b/tests/native-input/case.sh
+@@ -0,0 +1,10 @@
++#!/bin/bash
++set -eu
++export CASE_DIR=/work/native-input-evidence/$1
++mkdir -p "$CASE_DIR/home" "$CASE_DIR/runtime"
++chmod 700 "$CASE_DIR/runtime"
++export HOME="$CASE_DIR/home" XDG_RUNTIME_DIR="$CASE_DIR/runtime" LANG=C.UTF-8
++export XDG_CONFIG_HOME="$HOME/.config" XDG_CACHE_HOME="$HOME/.cache" XDG_DATA_HOME="$HOME/.local/share"
++export QT_QPA_PLATFORM=offscreen KWIN_COMPOSE=O2 LP_NUM_THREADS=4
++exec dbus-run-session -- kwin_wayland --virtual --width 800 --height 600 --xwayland \
++    --socket bino-native-input --no-global-shortcuts --exit-with-session /work/native-input-bino/tests/native-input/session.sh > "$CASE_DIR/kwin.log" 2>&1
+--- /dev/null
++++ b/tests/native-input/check-multiview.py
+@@ -0,0 +1,44 @@
++#!/usr/bin/env python3
++# SPDX-License-Identifier: GPL-3.0-or-later
++"""Reference decoder samples, centre-sited bilinear chroma, BT.709 equations.
++
++Each decoded view is converted independently. A joined chroma plane may not
++borrow samples from the other eye at its edge. No implementation calls/shaders
++supply the expected image. Pixel tolerance stays at one 8-bit channel value.
++"""
++import json
++import sys
++from pathlib import Path
++import numpy as np
++case,root=map(Path,sys.argv[1:3]);w,h=320,240
++
++def interpolate(a):
++    x=(np.arange(w)+.5)/2-.5;y=(np.arange(h)+.5)/2-.5
++    ix=np.floor(x).astype(int);iy=np.floor(y).astype(int);fx=x-ix;fy=y-iy
++    first=a[:,np.clip(ix,0,w//2-1)]*(1-fx)+a[:,np.clip(ix+1,0,w//2-1)]*fx
++    return first[:, :][np.clip(iy,0,h//2-1)]*(1-fy[:,None])+first[np.clip(iy+1,0,h//2-1)]*fy[:,None]
++
++def expected(data):
++    y=data[:w*h].reshape(h,w).astype(float)
++    u=interpolate(data[w*h:w*h*5//4].reshape(h//2,w//2).astype(float))
++    v=interpolate(data[w*h*5//4:].reshape(h//2,w//2).astype(float))
++    yy=(y-16)/219;cb=(u-128)/224;cr=(v-128)/224
++    kr,kb=.2126,.0722;kg=1-kr-kb
++    rgb=np.stack((yy+2*(1-kr)*cr,yy-2*kb*(1-kb)/kg*cb-2*kr*(1-kr)/kg*cr,yy+2*(1-kb)*cb),axis=-1)
++    return np.rint(np.clip(rgb,0,1)*255).astype('int16')
++refs=[np.fromfile(root/f'view{e}.yuv',dtype='uint8').reshape(96,-1) for e in range(2)]
++frames=[np.concatenate([expected(refs[e][n]) for e in range(2)],axis=1) for n in range(96)]
++if "--swap" in sys.argv[3:]: frames=[np.concatenate((f[:,w:],f[:,:w]),axis=1) for f in frames]
++records=[json.loads(l) for l in (case/'buffers/log.jsonl').read_text().splitlines()]
++checked=0;fail=[]
++for item in records:
++    assert (item['width'],item['height'])==(2*w,h)
++    got=np.fromfile(case/'buffers'/item['file'],dtype='uint8').reshape(h,item['stride'])[:,:8*w].reshape(h,2*w,4)[::-1,:,:3].astype('int16')
++    # Identify one source timestamp from both eyes' interiors, then check ALL
++    # samples against that same pair, including both edges and the centre seam.
++    scores=[np.abs(got[:,8:2*w-8]-f[:,8:2*w-8]).sum() for f in frames]
++    n=int(np.argmin(scores));err=np.abs(got-frames[n]);bad=err>1
++    if bad.any():fail.append({'buffer':item['file'],'source_frame':n,'bad_channels':int(bad.sum()),'max_error':int(err.max()),'bad_columns':np.where(bad.any(axis=(0,2)))[0].tolist()})
++    checked+=got.size
++print(json.dumps({'checked_channels':checked,'frames':len(records),'failures':fail},indent=2))
++raise SystemExit(not records or bool(fail))
+--- /dev/null
++++ b/tests/native-input/check.py
+@@ -0,0 +1,25 @@
++#!/usr/bin/env python3
++"""Require native left-first samples; expectations never use the implementation."""
++import json
++import sys
++from pathlib import Path
++import numpy as np
++from PIL import Image
++case, fixtures, packing = map(Path,sys.argv[1:4])
++swap = "--swap" in sys.argv[4:]
++log = case/'buffers/log.jsonl'
++assert log.exists(), 'missing declared stereo strip (marked input was shown as mono)'
++left = np.array(Image.open(fixtures/(str(packing)+'-left.png')).convert('RGB'))
++right = np.array(Image.open(fixtures/(str(packing)+'-right.png')).convert('RGB'))
++expected = np.concatenate((right,left) if swap else (left,right),axis=1).astype(int)
++checked = 0
++for line in log.read_text().splitlines():
++    item = json.loads(line)
++    assert (item['width'],item['height']) == (expected.shape[1],expected.shape[0]), item
++    got = np.fromfile(case/'buffers'/item['file'],dtype='uint8').reshape(item['height'],item['stride'])
++    got = got[:,:item['width']*4].reshape(item['height'],item['width'],4)[::-1,:,:3].astype(int)
++    error = np.abs(got-expected)
++    assert error.max() <= 1, (item, int(error.max()), int((error>1).sum()))
++    checked += got.size
++assert checked
++print(f'PASS {checked} source-checked channels; both eyes, native raster, tolerance 1')
+--- /dev/null
++++ b/tests/native-input/declared.cpp
+@@ -0,0 +1,24 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#include <QGuiApplication>
++#include "videoframe.hpp"
++#include "modes.hpp"
++#include <cstdio>
++int main(int argc, char **argv)
++{
++    QGuiApplication app(argc,argv);
++    int failures=0;
++    for (int layout : {-1,3,255}) {
++        VideoFrame frame;
++        QVideoFrameFormat fmt(QSize(640,180),QVideoFrameFormat::Format_RGBA8888);
++        frame.update(inputModeFromPacking(layout,0),Surround_Off,QVideoFrame(fmt),true,true);
++        const bool good=frame.inputMode==Input_Mono;
++        std::printf("%s declared layout %d cannot infer a pair from wide shape (mode=%d)\n",good ? "PASS":"FAIL",layout,int(frame.inputMode));
++        failures+=!good;
++    }
++    VideoFrame ordinary;
++    QVideoFrameFormat fmt(QSize(640,180),QVideoFrameFormat::Format_RGBA8888);
++    ordinary.update(Input_Unknown,Surround_Off,QVideoFrame(fmt),true,true);
++    const bool retained=ordinary.inputMode==Input_Left_Right;
++    std::printf("%s unmarked wide-shape inference retained\n",retained ? "PASS":"FAIL");
++    return failures || !retained;
++}
+--- /dev/null
++++ b/tests/native-input/fixtures.py
+@@ -0,0 +1,66 @@
++#!/usr/bin/env python3
++"""Independent encoded-channel fixtures, never photographs or film bytes."""
++import json
++import subprocess
++import sys
++from pathlib import Path
++import numpy as np
++from PIL import Image
++out = Path(sys.argv[1]); out.mkdir(parents=True, exist_ok=True)
++y, x = np.indices((90, 160))
++source = np.stack(((3*x+y)%256, (x+5*y+31)%256, (7*x+3*y+79)%256), axis=-1).astype('uint8')
++Image.fromarray(source).save(out/'encoded.png')
++for name, mark in [('red-cyan',10), ('green-magenta',12), ('mono',0), ('unmarked',None)]:
++    args = ['ffmpeg','-nostdin','-v','error','-y','-loop','1','-framerate','12','-i',str(out/'encoded.png'),
++            '-vf','setsar=2/1','-frames:v','36','-c:v','ffv1','-pix_fmt','bgr0','-threads','4']
++    if mark is not None: args += ['-metadata:s:v','stereo_mode='+str(mark)]
++    subprocess.run(args+[str(out/(name+'.mkv'))],check=True)
++    probe = subprocess.check_output(['ffprobe','-v','error','-show_streams','-of','json',str(out/(name+'.mkv'))])
++    (out/(name+'.json')).write_bytes(probe)
++# Expectations are equations transcribed independently from the accepted policy,
++# not calls to the library or the shader under test. Integer division truncates.
++r,g,b = source.astype('uint16').transpose(2,0,1)
++for name,l,rgt in [('red-cyan',(r,(r+g)//2,(r+b)//2),((r+g)//2,g,b)),
++                   ('green-magenta',((r+g)//2,g,(g+b)//2),(r,(r+g+b)//3,b)),
++                   ('amber-blue',(r,g,(g+b)//2),((r+b)//2,(g+b)//2,b))]:
++    for eye, channels in [('left',l),('right',rgt)]:
++        Image.fromarray(np.stack(channels,axis=-1).astype('uint8')).save(out/(name+'-'+eye+'.png'))
++# An unspecified/custom declaration on a wide raster is NOT a pair. Keep mdat
++# before moov so inserting a visual sample-entry box cannot shift chunk offsets.
++import struct
++wide=np.tile(source,(2,4,1))
++Image.fromarray(wide).save(out/'custom-source.png')
++subprocess.run(['ffmpeg','-nostdin','-v','error','-y','-loop','1','-framerate','12','-i',str(out/'custom-source.png'),
++                '-frames:v','36','-c:v','libx264rgb','-crf','0','-preset','ultrafast','-threads','4',str(out/'wide-unmarked.mp4')],check=True)
++containers={b'moov':0,b'trak':0,b'mdia':0,b'minf':0,b'stbl':0,b'stsd':8,b'avc1':78}
++def custom_boxes(data):
++    offset=0; result=b''
++    while offset<len(data):
++        size,tag=struct.unpack_from('>I4s',data,offset)
++        assert 8<=size<=len(data)-offset
++        payload=data[offset+8:offset+size]; offset+=size
++        if tag in containers:
++            skip=containers[tag];payload=payload[:skip]+custom_boxes(payload[skip:])
++        if tag==b'avc1': payload+=struct.pack('>I4sIB',13,b'st3d',0,3)
++        result+=struct.pack('>I4s',len(payload)+8,tag)+payload
++    return result
++(out/'wide-custom.mp4').write_bytes(custom_boxes((out/'wide-unmarked.mp4').read_bytes()))
++# Container SAR on actual MV-HEVC views; compressed samples and associations stay
++# byte-identical. This fixture has mdat before moov, so chunk offsets stay valid.
++if len(sys.argv)>2:
++    native=Path(sys.argv[2]).read_bytes()
++    assert native.index(b'mdat')<native.index(b'moov')
++    native_containers=dict(containers);native_containers[b'hvc1']=78
++    def native_sar(data):
++        offset=0;result=b''
++        while offset<len(data):
++            size,tag=struct.unpack_from('>I4s',data,offset)
++            assert 8<=size<=len(data)-offset
++            payload=data[offset+8:offset+size];offset+=size
++            if tag==b'pasp':continue
++            if tag in native_containers:
++                skip=native_containers[tag];payload=payload[:skip]+native_sar(payload[skip:])
++            if tag==b'hvc1':payload+=struct.pack('>I4sII',16,b'pasp',2,1)
++            result+=struct.pack('>I4s',len(payload)+8,tag)+payload
++        return result
++    (out/'native-sar2.mp4').write_bytes(native_sar(native))
+--- /dev/null
++++ b/tests/native-input/lifecycle.cpp
+@@ -0,0 +1,68 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++// Installed Qt sink, independently decoded eye planes, and source/seek/track life cycle.
++#include <QGuiApplication>
++#include <QMediaPlayer>
++#include <QVideoSink>
++#include <QVideoFrame>
++#include <QFile>
++#include <QTimer>
++#include <cstdio>
++#include <cstring>
++#include <cmath>
++
++int main(int argc,char **argv)
++{
++    QGuiApplication app(argc,argv);
++    if(argc!=3) return 2;
++    const QString root=argv[1]; const bool native=QByteArray(argv[2])=="native";
++    QByteArray reference[2];
++    for(int eye=0;eye<2;eye++) { QFile f(root+QString("/view%1.yuv").arg(eye));if(!f.open(QIODevice::ReadOnly)) return 2; reference[eye]=f.readAll();if(reference[eye].size()!=96*115200) return 2; }
++    QMediaPlayer player;QVideoSink sink;sink.setPreserveNativeSize(native);player.setVideoSink(&sink);
++    int stage=0,count=0,checks=0; qint64 last=-1;bool changing=false;
++    auto fail=[&](const char *why){std::fprintf(stderr,"FAIL stage=%d %s\n",stage,why);app.exit(1);};
++    auto source=[&](const QString &path){changing=true;QTimer::singleShot(0,&app,[&,path]{player.stop();player.setSource(QUrl::fromLocalFile(path));last=-1;count=0;changing=false;player.play();});};
++    QObject::connect(&sink,&QVideoSink::videoFrameChanged,&app,[&](const QVideoFrame &input){
++        if(!input.isValid()||changing)return;
++        const auto fmt=input.surfaceFormat();
++        if(stage<=1||stage==5){
++            if(input.size()!=QSize(640,240)||fmt.pixelAspectRatio()!=QSize(1,1)||fmt.stereoMode()!=QVideoFrameFormat::StereoMode::SideBySide
++               ||!fmt.stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::Multiview)){fail("native pair identity/raster/aspect");return;}
++            QVideoFrame frame=input;
++            if(fmt.pixelFormat()!=QVideoFrameFormat::Format_YUV420P||!frame.map(QVideoFrame::ReadOnly)){fail("reference plane mapping");return;}
++            const int n=int(std::llround(input.startTime()*24.0/1000000));
++            if(n<0||n>=96){fail("source timestamp range");return;}
++            int offset=n*115200;
++            for(int plane=0;plane<3;plane++){
++                const int w=plane?160:320,h=plane?120:240;
++                for(int y=0;y<h;y++)for(int eye=0;eye<2;eye++){
++                    if(std::memcmp(frame.bits(plane)+y*frame.bytesPerLine(plane)+eye*w,reference[eye].constData()+offset+y*w,w)){
++                        fail("per-eye source sample mismatch");return;
++                    }
++                    checks+=w;
++                }
++                offset+=w*h;
++            }
++            frame.unmap();
++            if(last>=0&&input.startTime()<last){fail("stale/reordered pair after reset");return;}
++            last=input.startTime();
++        } else {
++            const QSize expected=stage==2 ? QSize(native?160:320,90) : stage==3 ? QSize(80,40) : QSize(96,64);
++            if(input.size()!=expected||fmt.stereoMode()!=QVideoFrameFormat::StereoMode::None
++               ||fmt.stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::Multiview)){fail("mono/track transition leaked stereo state");return;}
++        }
++        if(++count<6)return;
++        count=0;
++        if(stage==0){stage=1;changing=true;QTimer::singleShot(0,&app,[&]{player.setPosition(0);last=-1;changing=false;});}
++        else if(stage==1){stage=2;source(root+"/mono.mkv");}
++        else if(stage==2){stage=3;source(root+"/two-tracks.mkv");}
++        else if(stage==3){stage=4;changing=true;QTimer::singleShot(0,&app,[&]{player.setActiveVideoTrack(1);last=-1;changing=false;});}
++        else if(stage==4){stage=5;source(root+"/native.mp4");}
++        // Stage 5 runs to EOF, proving no stray half or duplicate after draining.
++    });
++    QObject::connect(&player,&QMediaPlayer::mediaStatusChanged,&app,[&](QMediaPlayer::MediaStatus status){
++        if(status==QMediaPlayer::EndOfMedia&&stage==5){std::printf("PASS native=%d samples=%d seek/source/track/cancel/end, mono and default consumer controls\n",native,checks);app.exit(0);}
++    });
++    QObject::connect(&player,&QMediaPlayer::errorOccurred,&app,[&]{fail("media error");});
++    QTimer::singleShot(30000,&app,[&]{fail("timeout");});
++    source(root+"/native.mp4");return app.exec();
++}
+--- /dev/null
++++ b/tests/native-input/session.sh
+@@ -0,0 +1,12 @@
++#!/bin/bash
++set -eu
++export QT_QPA_PLATFORM=wayland QT_FFMPEG_DECODING_HW_DEVICE_TYPES=,
++export BINO_FRAME_TRACE="$CASE_DIR/trace.csv"
++mkdir -p "$CASE_DIR/buffers"
++printf 'wait 3\nquit\n' > "$CASE_DIR/control.txt"
++args=()
++if [ -n "${STRIP_SWAP:-}" ]; then args+=(--swap-eyes); fi
++if [ -n "${STRIP_INPUT:-}" ]; then args+=(-i "$STRIP_INPUT"); fi
++WLREC_DIR="$CASE_DIR/buffers" LD_PRELOAD=/work/pact-tools/wlrec.so WAYLAND_DEBUG=client \
++    "${STRIP_BINARY:-/usr/bin/bino}" --log-level debug --control-file "$CASE_DIR/control.txt" \
++    -l one "${args[@]}" "$STRIP_CLIP" > "$CASE_DIR/app.log" 2>&1
+--- /dev/null
 +++ b/tests/strip-contract/README.md
 @@ -0,0 +1,33 @@
 +# Native strip contract regression
@@ -7018,3 +10880,82 @@ Forwarded: not-needed
 +QT_QPA_PLATFORM=offscreen /work/probes/screen-capture screen "$CASE_DIR/screen.png" > "$CASE_DIR/capture.log" 2>&1
 +QT_QPA_PLATFORM=offscreen /work/probes/screen-capture window "$CASE_DIR/window.png" >> "$CASE_DIR/capture.log" 2>&1
 +wait "$player_pid"
+--- /dev/null
++++ b/tests/translations/README.md
+@@ -0,0 +1,17 @@
++# Anaglyph input translations
++
++`python3 tests/translations/check.py` checks the seven input labels in their Gui
++and Mode contexts, finished translations and placeholders. English stays in the
++source. `check.py RECEIPTS` also checks JSON receipts obtained by observing the
++installed application's normal QTranslator loader in each required locale.
++
++The new Chinese catalogs retain every existing Chinese translation. Their seven
++new labels distinguish Simplified and Traditional Chinese explicitly. Existing
++unrelated Chinese translations are preserved verbatim, including Simplified
++wording in the Traditional catalog; this bounded correction does not claim a
++complete Traditional Chinese translation of the older interface. The generic
++Chinese and Georgian catalogs remain unchanged. Languages with no prior catalog
++translate these seven labels and fall back to English for other text.
++
++These labels describe encoded input channels, in the same order as the English
++source. They do not add display output modes or promise original colour recovery.
+--- /dev/null
++++ b/tests/translations/check.py
+@@ -0,0 +1,42 @@
++#!/usr/bin/env python3
++"""Source checks, or check receipts from the installed application's loader."""
++import json
++from pathlib import Path
++import re
++import sys
++import xml.etree.ElementTree as ET
++here = Path(__file__).resolve().parent
++expected = json.loads((here / 'expected.json').read_text())
++locales = dict(en='en_US', pl='pl_PL', pt_BR='pt_BR', fr='fr_FR', de='de_DE',
++               ja='ja_JP', ko='ko_KR', zh_CN='zh_CN', zh_TW='zh_TW')
++failures = []
++for lang, words in expected.items():
++    if len(sys.argv) > 1:
++        row = json.loads((Path(sys.argv[1]) / (locales[lang] + '.json')).read_text())
++        for i, word in enumerate(words):
++            entry = row['strings'][i]
++            if entry['application'] != word:
++                failures.append((lang, i, entry['application'], word))
++            assert entry['context'] == ('Gui' if i == 0 else 'Mode')
++            assert not entry['wrong_context']
++        if lang != 'en' and not row['loaded']:
++            failures.append((lang, 'catalog not loaded'))
++    elif lang != 'en':
++        path = here.parent.parent / 'i18n' / ('bino_' + lang + '.ts')
++        if not path.exists():
++            failures.append((lang, 'missing catalog'))
++            continue
++        root = ET.parse(path).getroot()
++        for i, word in enumerate(words):
++            ctx = 'Gui' if i == 0 else 'Mode'
++            matches = [m for c in root.findall('context') if c.findtext('name') == ctx
++                       for m in c.findall('message') if m.findtext('source') == expected['en'][i]]
++            if len(matches) != 1:
++                failures.append((lang, ctx, expected['en'][i], 'missing or duplicate'))
++                continue
++            tr = matches[0].find('translation')
++            assert tr is not None and not tr.attrib.get('type'), (lang, i)
++            assert tr.text == word and word.strip(), (lang, i)
++            assert re.findall(r'%[Ln]?\d+|%n', word) == re.findall(r'%[Ln]?\d+|%n', expected['en'][i])
++print(json.dumps({'passed': not failures, 'failures': failures}, ensure_ascii=False, indent=2))
++sys.exit(bool(failures))
+--- /dev/null
++++ b/tests/translations/expected.json
+@@ -0,0 +1,11 @@
++{
++  "en": ["Input 3D anaglyph", "Input anaglyph red/cyan", "Input anaglyph cyan/red", "Input anaglyph green/magenta", "Input anaglyph magenta/green", "Input anaglyph amber/blue", "Input anaglyph blue/amber"],
++  "pl": ["Wejście anaglifowe 3D", "Wejście anaglifowe czerwony/cyjan", "Wejście anaglifowe cyjan/czerwony", "Wejście anaglifowe zielony/magenta", "Wejście anaglifowe magenta/zielony", "Wejście anaglifowe bursztynowy/niebieski", "Wejście anaglifowe niebieski/bursztynowy"],
++  "pt_BR": ["Entrada de anáglifo 3D", "Entrada de anáglifo vermelho/ciano", "Entrada de anáglifo ciano/vermelho", "Entrada de anáglifo verde/magenta", "Entrada de anáglifo magenta/verde", "Entrada de anáglifo âmbar/azul", "Entrada de anáglifo azul/âmbar"],
++  "fr": ["Entrée anaglyphe 3D", "Entrée anaglyphe rouge/cyan", "Entrée anaglyphe cyan/rouge", "Entrée anaglyphe vert/magenta", "Entrée anaglyphe magenta/vert", "Entrée anaglyphe ambre/bleu", "Entrée anaglyphe bleu/ambre"],
++  "de": ["3D-Anaglypheneingabe", "Anaglypheneingabe Rot/Cyan", "Anaglypheneingabe Cyan/Rot", "Anaglypheneingabe Grün/Magenta", "Anaglypheneingabe Magenta/Grün", "Anaglypheneingabe Bernstein/Blau", "Anaglypheneingabe Blau/Bernstein"],
++  "ja": ["3Dアナグリフ入力", "アナグリフ入力 赤/シアン", "アナグリフ入力 シアン/赤", "アナグリフ入力 緑/マゼンタ", "アナグリフ入力 マゼンタ/緑", "アナグリフ入力 アンバー/青", "アナグリフ入力 青/アンバー"],
++  "ko": ["3D 애너글리프 입력", "애너글리프 입력 빨강/시안", "애너글리프 입력 시안/빨강", "애너글리프 입력 초록/마젠타", "애너글리프 입력 마젠타/초록", "애너글리프 입력 호박색/파랑", "애너글리프 입력 파랑/호박색"],
++  "zh_CN": ["3D 色差立体输入", "色差立体输入 红/青", "色差立体输入 青/红", "色差立体输入 绿/品红", "色差立体输入 品红/绿", "色差立体输入 琥珀色/蓝", "色差立体输入 蓝/琥珀色"],
++  "zh_TW": ["3D 色差立體輸入", "色差立體輸入 紅/青", "色差立體輸入 青/紅", "色差立體輸入 綠/洋紅", "色差立體輸入 洋紅/綠", "色差立體輸入 琥珀色/藍", "色差立體輸入 藍/琥珀色"]
++}
