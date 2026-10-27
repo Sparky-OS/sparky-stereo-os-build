@@ -122,8 +122,15 @@ def static_diversions(deb, obj):
         proc.communicate()
     if script is None:
         return []
-    lines = [line.strip() for line in script.splitlines()
-             if line.strip() and not line.lstrip().startswith('#')]
+    # Python's splitlines()/strip() accept CR, VT, FF and Unicode separators
+    # which are not shell line delimiters or shell token whitespace. Never
+    # normalize a script that /bin/sh would interpret differently.
+    if any(c not in '\t\n' and not 32 <= ord(c) <= 126 for c in script):
+        if 'dpkg-divert' in script:
+            raise UnmodeledDiversion(f'{deb}: unsupported non-ASCII or non-LF diversion preinst')
+        return []
+    lines = [line.strip(' \t') for line in script.split('\n')
+             if line.strip(' \t') and not line.lstrip(' \t').startswith('#')]
     text = '\n'.join(lines)
     if 'dpkg-divert' not in text:
         return []

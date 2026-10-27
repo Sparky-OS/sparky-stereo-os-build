@@ -241,3 +241,22 @@ def test_ambiguous_or_unusable_preinst_control_member_rejected(tmp_path, variant
         assert (extracted / 'preinst').read_bytes() == b'#!/bin/sh\nexit 0\n'
     with pytest.raises(package.Invalid, match='preinst control member'):
         archive.static_diversions(new, archive.control(new))
+
+
+@pytest.mark.parametrize('separator', [b'\r\n', b'\r', b'\v', b'\f', b'\x1c', b'\x1d', b'\x1e',
+                                    b'\x7f', '\u0085'.encode(), '\u2028'.encode(), '\u2029'.encode(),
+                                    '\u00a0'.encode()])
+def test_non_shell_whitespace_never_authorizes_a_diversion(tmp_path, separator):
+    # Keep a valid shebang, as in the independently reported CRLF counterexample.
+    script = b'#!/bin/sh\n' + preinst().split(b'\n', 1)[1].replace(b'\n', separator)
+    old, new = pair(tmp_path, script=script)
+    with pytest.raises(archive.UnmodeledDiversion, match='non-ASCII or non-LF'):
+        archive.static_diversions(new, archive.control(new))
+    root = tmp_path / 'root'
+    root.mkdir()
+    unmodeled = []
+    mappings = archive.diversion_map([(new, archive.control(new))], root, unmodeled)
+    assert mappings == {} and len(unmodeled) == 1
+    archive.unpack(old, root, diversions=mappings, package_name='original')
+    with pytest.raises(package.Invalid, match='different payloads'):
+        archive.unpack(new, root, diversions=mappings, package_name='wrapper')
