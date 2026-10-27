@@ -51,6 +51,33 @@ edition's wrapper.
 
 ## Prepare retained build inputs
 
+### Repair TMPDIR ownership on an existing prepared source
+
+Debian's `fixes/temporary-directory.patch` adds the shared
+`include/wine/server_tmpdir.h` helper to the Unix client and wineserver.
+When `/run/user/UID` is absent, the helper selects `TMPDIR` and frees its
+borrowed environment pointer, so a fresh Wine prefix can abort before startup.
+The normal unset-TMPDIR case does not exercise that invalid free.
+`patches/wine-tmpdir-ownership.patch` keeps both the environment value and
+constant fallback borrowed; it preserves private-directory and marker modes.
+
+For an already prepared source, use `prepare-tmpdir-fix.py SOURCE NEW_VERSION`.
+It appends only this correction and a new changelog entry, retains the existing
+LC integration and stereo patches, and runs Wine's control consistency guard.
+It refuses to replace an existing correction.
+Create one new descriptor and build its architecture peers from that descriptor.
+Do not rerun the original stereo source preparer or rebuild the old version.
+
+Inside an isolated native container, run
+`python3 tests/test-tmpdir.py PUBLISHED_SOURCE NEW_SCRATCH_DIRECTORY`.
+The test uses the actual helper, tests creation and reopening, checks directory
+mode 0700 and marker mode 0400, and compares an unset environment with three
+explicit temporary paths, including spaces.
+The old code must fail the explicit-path cases under AddressSanitizer; the
+corrected code must pass all cases.
+This source regression complements installed-package fresh-prefix tests; it
+does not qualify a rebuilt loader or replace graphics and prefix rollback checks.
+
 Prepare a disposable source export in this order:
 
 1. Retain and pin the build dependencies described below in `debian/control`.

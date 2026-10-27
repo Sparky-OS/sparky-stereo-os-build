@@ -1,0 +1,40 @@
+Description: Keep the temporary-directory environment value borrowed
+ The Debian wineserver temporary-directory helper frees the pointer returned
+ by secure_getenv when TMPDIR is set and /run/user/UID is absent. Both the
+ Unix client and wineserver include this helper. Keep the selected root
+ borrowed, including the constant fallback, and only free owned strings.
+Author: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Forwarded: no
+
+--- a/include/wine/server_tmpdir.h
++++ b/include/wine/server_tmpdir.h
+@@ -31,19 +31,13 @@
+     if (!tmp_dir)
+     {
+         FILE *stream;
+-        char *root_dir = NULL;
++        const char *root_dir;
+         char *wineserver_file = NULL;
+         mode_t mode = S_IRUSR;
+ 
+         /* determine the temporary directory */
+         root_dir = secure_getenv("TMPDIR");
+-        if (!root_dir)
+-        {
+-            if (asprintf( &root_dir, "%s", tmp_prefix ) < 0)
+-            {
+-                fatal_error("error building root_dir\n");
+-            }
+-        }
++        if (!root_dir) root_dir = tmp_prefix;
+ 
+         /* remove existing wineserver tmpdir file if permissions are wrong */
+         if (asprintf( &wineserver_file, "%s/wineserver", cfg_dir ) < 0)
+@@ -136,7 +130,6 @@
+             }
+             free( tmp_wineserver );
+         }
+-        free( root_dir );
+         free( wineserver_file );
+     }
+ 
