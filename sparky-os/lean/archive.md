@@ -78,6 +78,20 @@ Metadata grows with the number of comparisons, while offered archive payloads an
 
 The extractor reads package data only and resolves absolute symlinks relative to the new root.
 It rejects path escapes, differing overlapping files and special files.
+It also recognizes one bounded static package-diversion form in authenticated `preinst` bytes, without executing the script.
+The complete script must be `/bin/sh`, `set -e`, an install-or-upgrade guard, a loop over literal absolute paths, one `dpkg-divert [--quiet] --package NAME --add --rename --divert "$variable.suffix" "$variable"` command, and `exit 0`.
+The loop variable is lowercase, the suffix is literal, and `NAME` must equal the archive's package identity.
+Blank lines and whole-line comments are allowed; extra commands, dynamic paths and other shell forms cannot authorize a redirection.
+All selected declarations are collected before extraction, so package ordering does not decide which payload wins.
+As in dpkg, the declaring package keeps the original path and other packages' files go to the diversion target.
+Both payloads retain their bytes and modes; hardlinks within another package follow that package's diverted file.
+Duplicate owners, chained mappings, occupied destination paths, traversal and diversions of nonregular files or through new symlink parents are rejected.
+An occupied destination is rejected even when its bytes match, rather than guessing its ownership.
+`diversions.json` records applied declarations with archive/script hashes and unmodeled scripts before extraction, including on a later collision failure; successful `resolution.json` carries the same information.
+Unrecognized scripts remain unexecuted, as before, and grant no collision exception.
+For example, a package's protective `--no-rename` operations and conditional filesystem repair are still unmodeled maintainer effects.
+If such effects are needed to resolve a collision or provide a runtime file, qualification still fails; a separate installed-runtime proof is required.
+The regression oracle uses real `dpkg-divert` with an explicit scratch `--root`, never the workstation's administrative database.
 The filesystem uses the merged `/usr` layout.
 The loader is the interpreter from the qualified packages and uses their matching libc.
 The gate passes `--inhibit-cache`, binds that root alone, clears the environment, drops capabilities, and isolates user, PID and network namespaces.
@@ -90,6 +104,7 @@ Lost stereo imports still block and lost NEEDED entries remain informational whe
 Static ELF files are inspected without requiring a dynamic loader, independently of locale.
 
 The gate does not implement foreign execution, cross-architecture dependency roots, non-glibc loaders, maintainer-script effects, or package configuration services.
+The static diversion form described above is the sole modeled preinst effect.
 An explicit dependency on an unavailable architecture fails resolution; it is never satisfied by a host package.
 Archives with dependencies that require an unprovided edition package fail until its exact `.deb` is supplied.
 Packages whose runtime requires maintainer-script-generated files may need a separately qualified runtime fixture; this extractor does not fabricate those effects.

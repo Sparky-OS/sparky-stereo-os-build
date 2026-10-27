@@ -87,7 +87,90 @@ def rooted(root, name, follow=True):
     return root.joinpath(*parts)
 
 
-def unpack(deb, root, check_space=None):
+class UnmodeledDiversion(package.Invalid):
+    """A preinst outside the bounded grammar cannot authorize a redirect."""
+
+
+def static_diversions(deb, obj):
+    """Read a bounded, complete preinst grammar, never execute shell code.
+
+    Debian Policy's package diversion exempts the declaring package. Only an
+    unconditional install/upgrade loop of literal paths is understood here;
+    arbitrary maintainer-script effects remain outside this data-only root.
+    """
+    proc = subprocess.Popen(['dpkg-deb', '--ctrl-tarfile', str(deb)], stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE)
+    script = None
+    try:
+        with tarfile.open(fileobj=proc.stdout, mode='r|') as tar:
+            for member in tar:
+                if member.name.removeprefix('./') != 'preinst':
+                    continue
+                if script is not None or not member.isreg() or member.size > 65536:
+                    raise package.Invalid(f'{deb}: unsupported preinst control member')
+                script = tar.extractfile(member).read().decode('utf-8')
+        error = proc.stderr.read().decode(errors='replace')
+        if proc.wait():
+            raise package.Invalid(f'{deb}: cannot read control archive: {error}')
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.communicate()
+    if script is None:
+        return []
+    lines = [line.strip() for line in script.splitlines()
+             if line.strip() and not line.lstrip().startswith('#')]
+    text = '\n'.join(lines)
+    if 'dpkg-divert' not in text:
+        return []
+    literal = r'/[A-Za-z0-9_./+-]+'
+    match = re.fullmatch(
+        r'set -e\nif \[ "\$1" = "install" \] \|\| \[ "\$1" = "upgrade" \]; then\n'
+        r'for (?P<var>[a-z][a-z0-9_]*) in (?P<paths>' + literal + r'(?: ' + literal + r')*); do\n'
+        r'dpkg-divert (?:--quiet )?--package (?P<owner>[a-z0-9][a-z0-9+.-]*) --add --rename '
+        r'--divert "\$(?P=var)(?P<suffix>\.[A-Za-z0-9_.+-]+)" "\$(?P=var)"\n'
+        r'done\nfi\nexit 0', text)
+    if not match or not script.startswith('#!/bin/sh\n'):
+        raise UnmodeledDiversion(f'{deb}: unsupported dynamic or unrecognized diversion preinst')
+    if match['owner'] != obj['Package']:
+        raise package.Invalid(f'{deb}: diversion owner differs from package identity')
+    result = []
+    for source in match['paths'].split():
+        target = source + match['suffix']
+        if any(str(PurePosixPath(path)) != path or '..' in PurePosixPath(path).parts
+               for path in (source, target)):
+            raise package.Invalid(f'{deb}: unsafe diversion path {source}')
+        result.append({'source': source, 'target': target, 'owner': obj['Package'],
+                       'archive_sha256': digest(deb),
+                       'preinst_sha256': hashlib.sha256(script.encode()).hexdigest()})
+    return result
+
+
+def diversion_map(archives, root, unmodeled=None):
+    """Bind static declarations to the selected archives before merging data."""
+    result, targets = {}, set()
+    for deb, obj in archives:
+        try:
+            declarations = static_diversions(deb, obj)
+        except UnmodeledDiversion as exc:
+            if unmodeled is None:
+                raise
+            # As before, arbitrary scripts are not part of a data-only root.
+            # This grants no collision exception or filesystem operation.
+            unmodeled.append({'identity': identity(obj), 'archive_sha256': digest(deb), 'reason': str(exc)})
+            continue
+        for row in declarations:
+            source = rooted(root, row['source'], follow=False)
+            target = rooted(root, row['target'], follow=False)
+            if source in result or source in targets or target in result or target in targets:
+                raise package.Invalid(f'{deb}: conflicting or chained diversion at {row["source"]}')
+            row['resolved_target'] = str(target.relative_to(root))
+            result[source] = row
+            targets.add(target)
+    return result
+
+
+def unpack(deb, root, check_space=None, diversions=None, package_name=None):
     """Merge data only; reject conflicting paths, traversal and special files."""
     check_space = check_space or (lambda required: space(root, required))
     proc = subprocess.Popen(['dpkg-deb', '--fsys-tarfile', str(deb)], stdout=subprocess.PIPE,
@@ -99,6 +182,22 @@ def unpack(deb, root, check_space=None):
                     raise package.Invalid(f'{deb}: unsafe archive path: {member.name}')
                 check_space((member.size if member.isreg() else 0) + 16384)
                 path = rooted(root, member.name, follow=False)
+                if diversions:
+                    # A declared path must not acquire a different meaning as
+                    # other packages introduce symlinks during extraction.
+                    for original, row in diversions.items():
+                        if (rooted(root, row['source'], follow=False) != original or
+                                rooted(root, row['target'], follow=False) != root / row['resolved_target']):
+                            raise package.Invalid(f'{deb}: diversion crosses an archive symlink')
+                    targets = {rooted(root, row['target'], follow=False) for row in diversions.values()}
+                    if path in targets:
+                        raise package.Invalid(f'{deb}: diversion destination already supplied: {member.name}')
+                    if path in diversions:
+                        if not member.isreg():
+                            raise package.Invalid(f'{deb}: diversion requires a regular file: {member.name}')
+                        row = diversions[path]
+                        if package_name != row['owner']:
+                            path = rooted(root, row['target'], follow=False)
                 path.parent.mkdir(parents=True, exist_ok=True)
                 exists = path.exists() or path.is_symlink()
                 if member.isdir():
@@ -107,6 +206,9 @@ def unpack(deb, root, check_space=None):
                     if not exists:
                         path.mkdir(mode=member.mode & 0o777)
                 elif member.issym():
+                    if diversions and any(path in source.parents or path in (root / row['resolved_target']).parents
+                                          for source, row in diversions.items()):
+                        raise package.Invalid(f'{deb}: diversion crosses an archive symlink')
                     # Validate even dangling targets; retain their in-root spelling.
                     rooted(root, str(PurePosixPath(member.name).parent / member.linkname)
                            if not member.linkname.startswith('/') else member.linkname)
@@ -118,6 +220,8 @@ def unpack(deb, root, check_space=None):
                 elif member.isreg() or member.islnk():
                     source = tar.extractfile(member) if member.isreg() else None
                     target = rooted(root, member.linkname) if member.islnk() else None
+                    if target and diversions and target in diversions and package_name != diversions[target]['owner']:
+                        target = rooted(root, diversions[target]['target'], follow=False)
                     if exists:
                         if path.is_symlink() or not path.is_file():
                             raise package.Invalid(f'{deb}: file conflicts at {member.name}')
@@ -462,6 +566,7 @@ class Archive:
             (root / 'usr' / name).mkdir(parents=True)
             (root / name).symlink_to('usr/' + name)
         packages = []
+        selected_archives = []
         selected_inputs = []
         by_hash = {item['sha256']: item for item in inputs}
         named = {item['control']['Package'] for item in inputs}
@@ -523,19 +628,26 @@ class Archive:
                        and record.get('Size') == str(size)
                        and all(record.get(key, '') == obj.get(key, '') for key in relationships) for record in records):
                 raise package.Invalid(f'{uri}: downloaded package identity differs from signed index')
-            unpack(archive, root, self.ensure_space)
+            selected_archives.append((archive, obj))
             packages.append({'identity': identity(obj), 'url': uri, 'size': size, 'sha256': sha,
                              'depends': obj.get('Depends', ''), 'pre_depends': obj.get('Pre-Depends', ''),
                              'provides': obj.get('Provides', ''), 'multi_arch': obj.get('Multi-Arch', '')})
         if not any(identity(item['control']) == identity(candidate['control']) for item in selected_inputs):
             raise package.Invalid('archive solver omitted the requested candidate')
-        for item in selected_inputs:
-            unpack(self.cached_input(item), root, self.ensure_space)
+        selected_archives += [(self.cached_input(item), item['control']) for item in selected_inputs]
+        unmodeled = []
+        diversions = diversion_map(selected_archives, root, unmodeled)
+        (directory / 'diversions.json').write_text(json.dumps(
+            {'applied': list(diversions.values()), 'unmodeled_scripts': unmodeled}, indent=2) + '\n')
+        for path, obj in selected_archives:
+            unpack(path, root, self.ensure_space, diversions, obj['Package'])
         selected = {item['sha256'] for item in selected_inputs}
         evidence = {'architecture': self.arch, 'candidate': identity(candidate['control']),
                     'metadata': str(self.base / 'metadata.json'), 'solver': str(self.base / (label + '.log')), 'status': 'empty',
                     'universe': str(local / 'universe.json'), 'local_index_sha256': digest(local / 'Packages'),
                     'space_floors': {'scratch': self.minimum, 'root': self.root_minimum},
+                    'diversions': list(diversions.values()),
+                    'unmodeled_diversion_scripts': unmodeled,
                     'inputs': [{'identity': identity(item['control']), 'sha256': item['sha256'], 'size': item['size'],
                                 'source': str(item['path']), 'selected': item['sha256'] in selected,
                                 'depends': item['control'].get('Depends', ''), 'pre_depends': item['control'].get('Pre-Depends', '')}
