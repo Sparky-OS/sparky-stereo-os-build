@@ -1,8 +1,10 @@
 """Static package diversions, with dpkg-divert as the independent oracle."""
 
 import json
+import io
 import os
 import subprocess
+import tarfile
 
 import pytest
 
@@ -211,3 +213,31 @@ def test_unmodeled_effects_never_authorize_redirection(tmp_path, collision):
             assert not (q.root / 'usr/share/fixture/banner.original').exists()
         finally:
             q.close()
+
+
+@pytest.mark.parametrize('variant', ['alias', 'duplicate-alias', 'not-executable'])
+def test_ambiguous_or_unusable_preinst_control_member_rejected(tmp_path, variant):
+    _, new = pair(tmp_path)
+    raw = subprocess.check_output(['dpkg-deb', '--ctrl-tarfile', str(new)])
+    target = tmp_path / 'control.tar.xz'
+    with tarfile.open(fileobj=io.BytesIO(raw)) as before, tarfile.open(target, 'w:xz') as after:
+        for member in before:
+            data = before.extractfile(member).read() if member.isfile() else None
+            if member.name == './preinst':
+                if variant == 'alias':
+                    member.name = '././preinst'
+                elif variant == 'not-executable':
+                    member.mode = 0o644
+            after.addfile(member, io.BytesIO(data) if data is not None else None)
+        if variant == 'duplicate-alias':
+            data = b'#!/bin/sh\nexit 0\n'
+            member = tarfile.TarInfo('././preinst')
+            member.mode, member.size = 0o755, len(data)
+            after.addfile(member, io.BytesIO(data))
+    subprocess.run(['ar', 'r', str(new), str(target)], check=True, capture_output=True)
+    if variant == 'duplicate-alias':
+        extracted = tmp_path / 'control-oracle'
+        subprocess.run(['dpkg-deb', '--control', str(new), str(extracted)], check=True)
+        assert (extracted / 'preinst').read_bytes() == b'#!/bin/sh\nexit 0\n'
+    with pytest.raises(package.Invalid, match='preinst control member'):
+        archive.static_diversions(new, archive.control(new))

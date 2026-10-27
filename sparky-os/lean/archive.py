@@ -104,9 +104,13 @@ def static_diversions(deb, obj):
     try:
         with tarfile.open(fileobj=proc.stdout, mode='r|') as tar:
             for member in tar:
-                if member.name.removeprefix('./') != 'preinst':
+                name = PurePosixPath(member.name)
+                if name.is_absolute() or '..' in name.parts:
+                    raise package.Invalid(f'{deb}: unsafe control member {member.name}')
+                if name != PurePosixPath('preinst'):
                     continue
-                if script is not None or not member.isreg() or member.size > 65536:
+                if (member.name not in ('preinst', './preinst') or script is not None or not member.isreg()
+                        or not member.mode & 0o111 or member.size > 65536):
                     raise package.Invalid(f'{deb}: unsupported preinst control member')
                 script = tar.extractfile(member).read().decode('utf-8')
         error = proc.stderr.read().decode(errors='replace')
