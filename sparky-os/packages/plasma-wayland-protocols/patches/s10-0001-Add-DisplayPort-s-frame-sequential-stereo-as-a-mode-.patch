@@ -1,0 +1,131 @@
+From c4a077f7ddd49cc7d0acaea511e7c8827a4f84ab Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 29 Oct 2026 15:32:23 -0300
+Subject: [PATCH] Add DisplayPort's frame sequential stereo as a mode flag at
+ version 30
+
+DisplayPort's own stereo transport is frame sequential: the source sends
+one eye per frame of the mode and tells the sink which one in the Main
+Stream Attribute (MISC1 bits 2:1, DisplayPort 1.1a and later). The
+edition's kernel has a mode flag for it, DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL,
+whose frame holds both eyes side by side, left eye first, and lists such
+modes when the display declares them (EDID detailed timings, DisplayID
+stereo blocks); a compositor may also build one from a 2D mode on an
+output whose driver accepts it.
+
+Add stereo_sequential_displayport to kde_output_device_mode_v2's flags,
+and say in the flags event what it means and how it differs from the two
+frame sequential twins the compositor alternates itself: here the eye
+order is fixed and signalled to the display, so there is no right-first
+twin, and the output's swap_eyes still exchanges the pictures. With
+virtual_stereo it is a twin of a 2D mode that the display did not declare.
+
+The contract test checks version 30 and the new entry, and fails on 29.
+
+Assisted-by: Claude Opus 5.5
+---
+ src/protocols/kde-output-device-v2.xml | 22 +++++++++++++++++++---
+ tests/virtual-stereo-contract.py       | 15 +++++++++++++--
+ 2 files changed, 32 insertions(+), 5 deletions(-)
+
+diff --git a/src/protocols/kde-output-device-v2.xml b/src/protocols/kde-output-device-v2.xml
+index b921a70..a9a7741 100644
+--- a/src/protocols/kde-output-device-v2.xml
++++ b/src/protocols/kde-output-device-v2.xml
+@@ -10,7 +10,7 @@
+     SPDX-License-Identifier: MIT-CMU
+     ]]></copyright>
+ 
+-  <interface name="kde_output_device_registry_v2" version="29">
++  <interface name="kde_output_device_registry_v2" version="30">
+     <description summary="output devices">
+       This interface can be used to list output devices.
+ 
+@@ -52,7 +52,7 @@
+     </event>
+   </interface>
+ 
+-  <interface name="kde_output_device_v2" version="29">
++  <interface name="kde_output_device_v2" version="30">
+     <description summary="output configuration representation">
+       An output device describes a display device available to the compositor.
+       output_device is similar to wl_output, but focuses on output
+@@ -709,7 +709,7 @@
+     </event>
+   </interface>
+ 
+-  <interface name="kde_output_device_mode_v2" version="29">
++  <interface name="kde_output_device_mode_v2" version="30">
+     <description summary="output mode">
+       This object describes an output mode.
+ 
+@@ -777,6 +777,7 @@
+       <entry name="stereo_line_alternative" value="0x200000" since="28" summary="HDMI 1.4a 3D, line alternative"/>
+       <entry name="stereo_l_depth" value="0x400000" since="28" summary="HDMI 1.4a 3D, L + depth"/>
+       <entry name="stereo_l_depth_graphics" value="0x800000" since="28" summary="HDMI 1.4a 3D, L + depth + graphics + graphics-depth"/>
++      <entry name="stereo_sequential_displayport" value="0x1000000" since="30" summary="DisplayPort frame sequential stereo, signalled by the source"/>
+ 
+     </enum>
+ 
+@@ -791,6 +792,21 @@
+         The first pixel means the output's top-left device pixel. Left-first
+         selects the left eye on even rows, columns, or x+y parity respectively.
+         Right-first reverses this order. Virtual modes are never preferred.
++
++        stereo_sequential_displayport is DisplayPort's own stereo transport:
++        the mode keeps its 2D timing, the compositor hands over both eyes side
++        by side in one frame twice the mode's width, left eye first, and the
++        source sends one eye per frame of the mode, the left eye first, telling
++        the sink which eye each frame carries (the Main Stream Attribute's MISC1
++        bits 2:1, DisplayPort 1.1a and later). Each eye is shown at half the
++        mode's refresh rate. Without virtual_stereo the display declares the
++        mode (an EDID detailed timing or a DisplayID stereo block); with
++        virtual_stereo it is the twin of a 2D mode on an output whose driver
++        accepts frame sequential stereo, which the display did not declare.
++        Unlike stereo_sequential_left_first and stereo_sequential_right_first,
++        whose eyes the compositor alternates itself with nothing sent to the
++        display, the eye order is fixed and signalled, so it has no right-first
++        twin; the output's swap_eyes still exchanges the pictures.
+       </description>
+       <arg name="flags" type="uint" enum="flags"/>
+     </event>
+diff --git a/tests/virtual-stereo-contract.py b/tests/virtual-stereo-contract.py
+index 9577559..e0b850d 100644
+--- a/tests/virtual-stereo-contract.py
++++ b/tests/virtual-stereo-contract.py
+@@ -40,7 +40,7 @@ class VirtualStereoContract(unittest.TestCase):
+     def test_device(self):
+         protocol = ET.parse(ROOT / 'kde-output-device-v2.xml')
+         for name in ('kde_output_device_registry_v2', 'kde_output_device_v2', 'kde_output_device_mode_v2'):
+-            self.assertEqual(protocol.find(f"interface[@name='{name}']").get('version'), '29')
++            self.assertEqual(protocol.find(f"interface[@name='{name}']").get('version'), '30')
+         capability = protocol.find("interface[@name='kde_output_device_v2']/enum[@name='capability']/entry[@name='virtual_stereo']")
+         self.assertEqual(int(capability.get('value'), 0), 0x20000)
+         self.assertEqual(capability.get('since'), '24')
+@@ -59,7 +59,8 @@ class VirtualStereoContract(unittest.TestCase):
+                     'stereo_sequential_left_first': 262144,
+                     'stereo_sequential_right_first': 524288,
+                     'stereo_field_alternative': 0x100000, 'stereo_line_alternative': 0x200000,
+-                    'stereo_l_depth': 0x400000, 'stereo_l_depth_graphics': 0x800000}
++                    'stereo_l_depth': 0x400000, 'stereo_l_depth_graphics': 0x800000,
++                    'stereo_sequential_displayport': 0x1000000}
+         self.assertEqual(values, expected)
+         pair_event = protocol.find("interface[@name='kde_output_device_v2']/event[@name='stereo_pair']")
+         self.assertEqual(pair_event.get('since'), '24')
+@@ -137,6 +138,16 @@ class VirtualStereoContract(unittest.TestCase):
+         self.assertEqual([(a.get('name'), a.get('type')) for a in glasses.findall('arg')], [('outputdevice', 'object'), ('enabled', 'uint')])
+         self.assertEqual(glasses.find('arg').get('interface'), 'kde_output_device_v2')
+ 
++    def test_sequential_displayport(self):
++        # version 30: DisplayPort's frame sequential stereo, the eyes alternated and signalled by the source
++        protocol = ET.parse(ROOT / 'kde-output-device-v2.xml')
++        entry = protocol.find("interface[@name='kde_output_device_mode_v2']/enum[@name='flags']/entry[@name='stereo_sequential_displayport']")
++        self.assertEqual(int(entry.get('value'), 0), 0x1000000)
++        self.assertEqual(entry.get('since'), '30')
++        flags = protocol.find("interface[@name='kde_output_device_mode_v2']/event[@name='flags']/description").text
++        self.assertIn('stereo_sequential_displayport', flags)
++        self.assertIn('MISC1', flags)
++
+     def test_native_viewport(self):
+         protocol = ET.parse(ROOT / 'kde-output-device-v2.xml')
+         event = protocol.find("interface[@name='kde_output_device_mode_v2']/event[@name='view_size']")

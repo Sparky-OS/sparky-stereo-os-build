@@ -1,0 +1,12 @@
+plasma-wayland-protocols (1.21.0-1+stereo3d10) unstable; urgency=medium
+
+  * kde_output_device_v2 version 30 (s10-0001, the fork's c4a077f, ORDER 257):
+    the mode flag stereo_sequential_displayport (0x1000000) marks DisplayPort
+    frame sequential stereo, where the source sends one eye per frame of the
+    mode, left eye first, and tells the display which eye each frame carries
+    (MISC1 bits 2:1 of the Main Stream Attribute, DisplayPort 1.1a). A mode the
+    display declares is one of its 3D modes; with virtual_stereo it is the
+    twin of a 2D mode that the display did not declare. Its eye order is
+    signalled, so it has no right-first twin, and the output's swap_eyes
+    still exchanges the pictures. The contract test checks version 30 and
+    the new entry.
