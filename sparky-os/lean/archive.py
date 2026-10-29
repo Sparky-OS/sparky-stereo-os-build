@@ -99,7 +99,8 @@ def static_diversions(deb, obj):
     """Read a bounded, complete preinst grammar, never execute shell code.
 
     Debian Policy's package diversion exempts the declaring package. Only an
-    unconditional install/upgrade loop of literal paths is understood here;
+    unconditional install/upgrade loop or direct commands with literal paths
+    are understood here;
     arbitrary maintainer-script effects remain outside this data-only root.
     """
     proc = subprocess.Popen(['dpkg-deb', '--ctrl-tarfile', str(deb)], stdout=subprocess.PIPE,
@@ -126,32 +127,68 @@ def static_diversions(deb, obj):
         proc.communicate()
     if script is None:
         return []
-    # Python's splitlines()/strip() accept CR, VT, FF and Unicode separators
-    # which are not shell line delimiters or shell token whitespace. Never
-    # normalize a script that /bin/sh would interpret differently.
-    if any(c not in '\t\n' and not 32 <= ord(c) <= 126 for c in script):
+    # Only LF delimits shell lines. Full-line comments may contain UTF-8, but
+    # executable tokens remain ASCII. Reject controls even within comments.
+    # Never let removing a comment join an escaped newline to later code.
+    physical = script.split('\n')
+    invalid = any((ord(c) < 32 and c not in '\t\n') or ord(c) == 127 for c in script)
+    lines = []
+    continued = False
+    for line in physical:
+        stripped = line.strip(' \t')
+        comment = line.lstrip(' \t').startswith('#')
+        if continued and (not stripped or comment or not line.startswith((' ', '\t'))):
+            invalid = True
+        if comment:
+            # Conservative: no escaped-line spelling even in a comment.
+            invalid |= line.endswith('\\')
+        elif stripped:
+            invalid |= any(ord(c) > 126 for c in line)
+            if continued:
+                lines[-1] = lines[-1][:-1] + stripped
+            else:
+                lines.append(stripped)
+        continued = not comment and line.endswith('\\')
+        if continued and (not stripped.endswith(' \\') or not lines[-1].startswith('dpkg-divert ')):
+            invalid = True
+    invalid |= continued
+    if invalid:
         if 'dpkg-divert' in script:
-            raise UnmodeledDiversion(f'{deb}: unsupported non-ASCII or non-LF diversion preinst')
+            raise UnmodeledDiversion(f'{deb}: unsupported non-ASCII or non-LF token/control or continuation in diversion preinst')
         return []
-    lines = [line.strip(' \t') for line in script.split('\n')
-             if line.strip(' \t') and not line.lstrip(' \t').startswith('#')]
     text = '\n'.join(lines)
     if 'dpkg-divert' not in text:
         return []
     literal = r'/[A-Za-z0-9_./+-]+'
-    match = re.fullmatch(
+    loop = re.fullmatch(
         r'set -e\nif \[ "\$1" = "install" \] \|\| \[ "\$1" = "upgrade" \]; then\n'
         r'for (?P<var>[a-z][a-z0-9_]*) in (?P<paths>' + literal + r'(?: ' + literal + r')*); do\n'
         r'dpkg-divert (?:--quiet )?--package (?P<owner>[a-z0-9][a-z0-9+.-]*) --add --rename '
         r'--divert "\$(?P=var)(?P<suffix>\.[A-Za-z0-9_.+-]+)" "\$(?P=var)"\n'
         r'done\nfi\nexit 0', text)
-    if not match or not script.startswith('#!/bin/sh\n'):
+    direct = re.fullmatch(
+        r'set -e\nif \[ "\$1" = (?:install|"install") \] \|\| '
+        r'\[ "\$1" = (?:upgrade|"upgrade") \]; then\n'
+        r'(?P<commands>(?:dpkg-divert [^\n]+\n)+)fi\nexit 0', text)
+    declarations = []
+    if loop:
+        declarations = [(loop['owner'], source, source + loop['suffix'])
+                        for source in loop['paths'].split(' ')]
+    elif direct:
+        for command in direct['commands'].splitlines():
+            match = re.fullmatch(
+                r'dpkg-divert (?:--quiet )?--package (?P<owner>[a-z0-9][a-z0-9+.-]*) '
+                r'--add --rename --divert (?P<target>' + literal + r') (?P<source>' + literal + r')'
+                r'(?: >/dev/null)?', command)
+            if not match:
+                raise UnmodeledDiversion(f'{deb}: unsupported direct diversion command')
+            declarations.append((match['owner'], match['source'], match['target']))
+    if not declarations or not script.startswith('#!/bin/sh\n'):
         raise UnmodeledDiversion(f'{deb}: unsupported dynamic or unrecognized diversion preinst')
-    if match['owner'] != obj['Package']:
-        raise package.Invalid(f'{deb}: diversion owner differs from package identity')
     result = []
-    for source in match['paths'].split():
-        target = source + match['suffix']
+    for owner, source, target in declarations:
+        if owner != obj['Package']:
+            raise package.Invalid(f'{deb}: diversion owner differs from package identity')
         if any(path.startswith('//') or str(PurePosixPath(path)) != path or '..' in PurePosixPath(path).parts
                for path in (source, target)):
             raise package.Invalid(f'{deb}: unsafe diversion path {source}')
