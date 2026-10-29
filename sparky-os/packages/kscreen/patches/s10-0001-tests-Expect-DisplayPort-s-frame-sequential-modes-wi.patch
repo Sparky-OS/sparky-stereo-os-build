@@ -1,0 +1,140 @@
+From 2e157c4d2937d02aafd29caf38a5f2cf65ff255f Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 29 Oct 2026 15:51:42 -0300
+Subject: [PATCH 1/2] tests: Expect DisplayPort's frame sequential modes with
+ their own names
+
+libkscreen carries DisplayPort's own frame sequential stereo as
+Mode::Stereo3D::SequentialDisplayPort: the source sends one eye per frame
+and tells the display which eye each frame carries. A display that
+declares it lists it as a 3D mode; elsewhere Stereo KWin offers it as the
+twin of a 2D mode under "Other stereo formats", beside its own two frame
+sequential twins, which alternate the eyes with nothing sent to the
+display. The test expects "(3D frame sequential, DisplayPort)" for the
+display's mode, after the full resolution 3D modes, and "(frame
+sequential, DisplayPort)" for the twin, first among the frame sequential
+twins and named apart from them. It builds against the model as it is and
+fails there, where both show as plain refresh rates.
+
+Assisted-by: Claude Opus 5.5
+---
+ tests/CMakeLists.txt            |  9 ++++
+ tests/sequentialdisplayport.cpp | 92 +++++++++++++++++++++++++++++++++
+ 2 files changed, 101 insertions(+)
+ create mode 100644 tests/sequentialdisplayport.cpp
+
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+index 645a38eb..eda7cda5 100644
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -38,3 +38,12 @@ if(HAVE_KSCREEN_STEREO_DEPTH)
+         LINK_LIBRARIES Qt6::Test Qt6::Gui Qt6::DBus KF6::Screen KF6::I18n KF6::ConfigCore KF6::CoreAddons kscreen_common)
+     target_include_directories(depthstructures PRIVATE ${CMAKE_BINARY_DIR}/kcm)
+ endif()
++
++if(HAVE_KSCREEN_STEREO)
++    ecm_add_test(sequentialdisplayport.cpp
++        ../kcm/output_model.cpp ../kcm/config_handler.cpp
++        ${CMAKE_BINARY_DIR}/kcm/kcm_screen_debug.cpp
++        TEST_NAME sequentialdisplayport
++        LINK_LIBRARIES Qt6::Test Qt6::Gui Qt6::DBus KF6::Screen KF6::I18n KF6::ConfigCore KF6::CoreAddons kscreen_common)
++    target_include_directories(sequentialdisplayport PRIVATE ${CMAKE_BINARY_DIR}/kcm)
++endif()
+diff --git a/tests/sequentialdisplayport.cpp b/tests/sequentialdisplayport.cpp
+new file mode 100644
+index 00000000..88cc5b9f
+--- /dev/null
++++ b/tests/sequentialdisplayport.cpp
+@@ -0,0 +1,92 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++#include "../kcm/config_handler.h"
++#include "../kcm/output_model.h"
++
++#include <KLocalizedString>
++#include <KScreen/Screen>
++#include <QStandardPaths>
++#include <QTest>
++
++using Layout = KScreen::Mode::Stereo3D;
++
++// DisplayPort's frame sequential stereo: a display 3D mode when the display declares it, a twin of a
++// 2D mode under "Other stereo formats" otherwise, each with its own name beside KWin's software twins
++class SequentialDisplayPortTest : public QObject
++{
++    Q_OBJECT
++
++    static KScreen::ModePtr mode(const QString &id, Layout layout, float rate, bool virtualStereo = false)
++    {
++        KScreen::ModePtr m(new KScreen::Mode);
++        m->setId(id);
++        m->setSize(QSize(1920, 1080));
++        m->setRefreshRate(rate);
++        m->setStereo3D(layout);
++        m->setVirtualStereo(virtualStereo);
++        return m;
++    }
++
++    static QStringList rates(const QList<KScreen::ModePtr> &modes)
++    {
++        ConfigHandler handler;
++        KScreen::ConfigPtr config(new KScreen::Config);
++        config->setScreen(KScreen::ScreenPtr(new KScreen::Screen));
++        config->setSupportedFeatures(KScreen::Config::Feature::PerOutputScaling);
++        KScreen::OutputPtr output(new KScreen::Output);
++        output->setId(1);
++        output->setName(QStringLiteral("DP-1"));
++        output->setConnected(true);
++        output->setEnabled(true);
++        KScreen::ModeList list;
++        for (const auto &m : modes) {
++            list.insert(m->id(), m);
++        }
++        output->setModes(list);
++        output->setCurrentModeId(modes.first()->id());
++        output->setSize(modes.first()->size());
++        output->setExplicitLogicalSize(modes.first()->size());
++        config->addOutput(output);
++        handler.setConfig(config);
++        auto model = handler.outputModel();
++        QStringList ret;
++        const auto entries = model->data(model->index(0, 0), OutputModel::RefreshRatesRole).toList();
++        for (const auto &entry : entries) {
++            ret << entry.toString();
++        }
++        return ret;
++    }
++
++private Q_SLOTS:
++    void initTestCase()
++    {
++        QStandardPaths::setTestModeEnabled(true);
++        qputenv("KSCREEN_BACKEND", "Fake");
++        KLocalizedString::setApplicationDomain("kcm_kscreen");
++        KLocalizedString::setLanguages({QStringLiteral("en_US")});
++    }
++
++    void declaredAndTwins()
++    {
++        // the display declares 60 Hz; the 120 Hz twins: the DisplayPort one and KWin's two software ones
++        QCOMPARE(rates({mode("2d120", Layout::None, 120),
++                        mode("2d60", Layout::None, 60),
++                        mode("declared", Layout::SequentialDisplayPort, 60),
++                        mode("fp", Layout::FramePacking, 24),
++                        mode("dp-twin", Layout::SequentialDisplayPort, 120, true),
++                        mode("sw-left", Layout::SequentialLeftFirst, 120, true),
++                        mode("sw-right", Layout::SequentialRightFirst, 120, true)}),
++                 (QStringList{
++                     QStringLiteral("120.00 Hz"),
++                     QStringLiteral("60.00 Hz"),
++                     QStringLiteral("24.00 Hz (3D frame packing, suggested for movies)"),
++                     QStringLiteral("60.00 Hz (3D frame sequential, DisplayPort)"),
++                     // among the twins the signalled one comes first; KWin's own two stay beside it
++                     QStringLiteral("120.00 Hz (frame sequential, DisplayPort)"),
++                     QStringLiteral("120.00 Hz (frame sequential, left eye first)"),
++                     QStringLiteral("120.00 Hz (frame sequential, right eye first)"),
++                 }));
++    }
++};
++
++QTEST_MAIN(SequentialDisplayPortTest)
++#include "sequentialdisplayport.moc"

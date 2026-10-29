@@ -1,0 +1,167 @@
+From 2137ee10e97e1c3415b87d230028e9d49e73c778 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 29 Oct 2026 15:52:37 -0300
+Subject: [PATCH 2/2] Name DisplayPort's frame sequential modes
+
+With libkscreen's Mode::Stereo3D::SequentialDisplayPort (detected at
+configure time, HAVE_KSCREEN_STEREO_SEQUENTIAL_DISPLAYPORT), Display
+Settings names DisplayPort's own frame sequential stereo by itself: the
+source sends one eye per frame of the mode, left eye first, and tells the
+display which eye each frame carries.
+
+- A mode the display declares (an EDID detailed timing or a DisplayID
+  stereo block) is one of its 3D modes, "%1 (3D frame sequential,
+  DisplayPort)", listed with the full resolution 3D modes, since each eye
+  keeps the mode's whole picture.
+- The twin of a 2D mode, which Stereo KWin offers under "Other stereo
+  formats" where the driver accepts it, is "%1 (frame sequential,
+  DisplayPort)", first among the frame sequential twins; KWin's own two,
+  "(frame sequential, left eye first)" and "(..., right eye first)", stay
+  beside it as their own options.
+
+Neither is ever chosen automatically, as for every 3D mode. The test is
+built only where libkscreen has the value.
+
+Assisted-by: Claude Opus 5.5
+---
+ CMakeLists.txt        |  9 +++++++++
+ config-stereo.h.cmake |  1 +
+ kcm/output_model.cpp  | 10 ++++++++++
+ kcm/stereomodes.h     | 16 ++++++++++++++++
+ tests/CMakeLists.txt  |  2 +-
+ tests/stereomodes.cpp | 13 +++++++++++++
+ 6 files changed, 50 insertions(+), 1 deletion(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 914f4f54..df23acc7 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -100,12 +100,21 @@ int main()
+     return output.stereoSwapEyes() || (output.capabilities() & KScreen::Output::Capability::StereoSwapEyes);
+ }
+ " HAVE_KSCREEN_STEREO_SWAP_EYES)
++check_cxx_source_compiles("
++#include <KScreen/Mode>
++int main()
++{
++    KScreen::Mode mode;
++    return mode.stereo3D() == KScreen::Mode::Stereo3D::SequentialDisplayPort;
++}
++" HAVE_KSCREEN_STEREO_SEQUENTIAL_DISPLAYPORT)
+ cmake_pop_check_state()
+ configure_file(config-stereo.h.cmake ${CMAKE_CURRENT_BINARY_DIR}/config-stereo.h)
+ add_feature_info(Stereo HAVE_KSCREEN_STEREO "Stereo output settings from libkscreen")
+ add_feature_info(StereoDepth HAVE_KSCREEN_STEREO_DEPTH "Every HDMI 1.4a 3D structure, the side by side (full) timing and the stereo depth settings from libkscreen")
+ add_feature_info(StereoGlasses HAVE_KSCREEN_STEREO_GLASSES "The USB-C 3D glasses setting from libkscreen")
+ add_feature_info(StereoSwapEyes HAVE_KSCREEN_STEREO_SWAP_EYES "The per-output eye swap from libkscreen")
++add_feature_info(StereoSequentialDisplayPort HAVE_KSCREEN_STEREO_SEQUENTIAL_DISPLAYPORT "DisplayPort's frame sequential stereo modes from libkscreen")
+ find_package(Plasma ${PROJECT_DEP_VERSION} REQUIRED)
+ find_package(PlasmaQuick ${PROJECT_DEP_VERSION} REQUIRED)
+ 
+diff --git a/config-stereo.h.cmake b/config-stereo.h.cmake
+index cdb51a79..9b7f0911 100644
+--- a/config-stereo.h.cmake
++++ b/config-stereo.h.cmake
+@@ -2,3 +2,4 @@
+ #cmakedefine01 HAVE_KSCREEN_STEREO_DEPTH
+ #cmakedefine01 HAVE_KSCREEN_STEREO_GLASSES
+ #cmakedefine01 HAVE_KSCREEN_STEREO_SWAP_EYES
++#cmakedefine01 HAVE_KSCREEN_STEREO_SEQUENTIAL_DISPLAYPORT
+diff --git a/kcm/output_model.cpp b/kcm/output_model.cpp
+index 6c98445d..fefdbd3c 100644
+--- a/kcm/output_model.cpp
++++ b/kcm/output_model.cpp
+@@ -165,6 +165,11 @@ QVariant OutputModel::data(const QModelIndex &index, int role) const
+             case KScreen::Mode::Stereo3D::LDepthGraphics:
+                 ret << depthStructureLabel(entry.stereo3D, rateText, isGameRate(rate));
+                 break;
++#endif
++#if HAVE_KSCREEN_STEREO_SEQUENTIAL_DISPLAYPORT
++            case KScreen::Mode::Stereo3D::SequentialDisplayPort:
++                ret << sequentialDisplayPortLabel(rateText);
++                break;
+ #endif
+             }
+ #else
+@@ -1201,6 +1206,11 @@ QList<OutputModel::RefreshEntry> OutputModel::refreshRates(const KScreen::Output
+             return 7;
+         case KScreen::Mode::Stereo3D::LDepthGraphics:
+             return 8;
++#endif
++#if HAVE_KSCREEN_STEREO_SEQUENTIAL_DISPLAYPORT
++        // each eye at full resolution, one per refresh
++        case KScreen::Mode::Stereo3D::SequentialDisplayPort:
++            return 3;
+ #endif
+         default:
+             return 9 + int(stereo3D);
+diff --git a/kcm/stereomodes.h b/kcm/stereomodes.h
+index c06bc5e7..29eff95e 100644
+--- a/kcm/stereomodes.h
++++ b/kcm/stereomodes.h
+@@ -41,12 +41,28 @@ inline QString virtualStereoModeLabel(KScreen::Mode::Stereo3D layout, const QStr
+         return i18n("%1 (frame sequential, right eye first)", rateText);
+     case KScreen::Mode::Stereo3D::SideBySideFull:
+         return i18n("%1 (3D side by side full, for USB-C 3D glasses)", rateText);
++#if HAVE_KSCREEN_STEREO_SEQUENTIAL_DISPLAYPORT
++    // the twin of a 2D mode the display did not declare: the source still alternates and signals the eyes
++    case KScreen::Mode::Stereo3D::SequentialDisplayPort:
++        return i18n("%1 (frame sequential, DisplayPort)", rateText);
++#endif
+     default:
+         return rateText;
+     }
+ }
+ #endif
+ 
++#if HAVE_KSCREEN_STEREO_SEQUENTIAL_DISPLAYPORT
++/**
++ * The label of DisplayPort's frame sequential stereo when the display declares it (an EDID detailed
++ * timing or a DisplayID stereo block): the source sends one eye per frame and tells the display which.
++ */
++inline QString sequentialDisplayPortLabel(const QString &rateText)
++{
++    return i18nc("@item:inlistbox refresh rate of a DisplayPort 3D mode; %1 is the rate", "%1 (3D frame sequential, DisplayPort)", rateText);
++}
++#endif
++
+ #if HAVE_KSCREEN_STEREO_DEPTH
+ inline bool isPictureAndDepth(KScreen::Mode::Stereo3D layout)
+ {
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+index eda7cda5..e5011829 100644
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -39,7 +39,7 @@ if(HAVE_KSCREEN_STEREO_DEPTH)
+     target_include_directories(depthstructures PRIVATE ${CMAKE_BINARY_DIR}/kcm)
+ endif()
+ 
+-if(HAVE_KSCREEN_STEREO)
++if(HAVE_KSCREEN_STEREO_SEQUENTIAL_DISPLAYPORT)
+     ecm_add_test(sequentialdisplayport.cpp
+         ../kcm/output_model.cpp ../kcm/config_handler.cpp
+         ${CMAKE_BINARY_DIR}/kcm/kcm_screen_debug.cpp
+diff --git a/tests/stereomodes.cpp b/tests/stereomodes.cpp
+index 0fd110d0..5f5f0a09 100644
+--- a/tests/stereomodes.cpp
++++ b/tests/stereomodes.cpp
+@@ -30,6 +30,19 @@ private Q_SLOTS:
+         }
+     }
+ 
++#if HAVE_KSCREEN_STEREO_SEQUENTIAL_DISPLAYPORT
++    void sequentialDisplayPortLabels()
++    {
++        KLocalizedString::setLanguages({QStringLiteral("en_US")});
++        // its own name, apart from the twins KWin alternates itself
++        QCOMPARE(virtualStereoModeLabel(KScreen::Mode::Stereo3D::SequentialDisplayPort, QStringLiteral("120 Hz")),
++                 QStringLiteral("120 Hz (frame sequential, DisplayPort)"));
++        QCOMPARE(sequentialDisplayPortLabel(QStringLiteral("120 Hz")), QStringLiteral("120 Hz (3D frame sequential, DisplayPort)"));
++        QVERIFY(virtualStereoModeLabel(KScreen::Mode::Stereo3D::SequentialDisplayPort, QStringLiteral("120 Hz"))
++                != virtualStereoModeLabel(KScreen::Mode::Stereo3D::SequentialLeftFirst, QStringLiteral("120 Hz")));
++    }
++#endif
++
+ #if HAVE_KSCREEN_STEREO_DEPTH
+     void depthStructureLabels()
+     {

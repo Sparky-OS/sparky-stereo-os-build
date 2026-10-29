@@ -1,0 +1,17 @@
+kscreen (4:6.7.4-1+stereo3d10) unstable; urgency=medium
+
+  * DisplayPort frame sequential stereo by its own name in Display Settings
+    (s10-0001 and s10-0002, the fork's 2e157c4d and 2137ee10, ORDER 257),
+    with libkscreen 4:6.7.4-1+stereo3d10
+    (HAVE_KSCREEN_STEREO_SEQUENTIAL_DISPLAYPORT):
+    a mode the display declares is "%1 (3D frame sequential, DisplayPort)",
+    listed with the full resolution 3D modes; the twin of a 2D mode under
+    Other stereo formats is "%1 (frame sequential, DisplayPort)", first
+    among the frame sequential twins, beside Stereo KWin's own two, which
+    stay. Neither is ever chosen automatically. The stereomodes and
+    sequentialdisplayport tests cover the labels.
+  * The two labels in pl, pt_BR, fr, de, ja, ko, zh_CN and zh_TW
+    (kscreen-dp-frame-sequential.po.patch, after the existing catalogs).
+  * Build-Depends libkscreen-dev (>= 4:6.7.4-1+stereo3d10) and Depends
+    libkf6screen8 (>= 4:6.7.4-1+stereo3d10); the build stops unless
+    SequentialDisplayPort was detected.
