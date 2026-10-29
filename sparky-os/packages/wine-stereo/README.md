@@ -162,3 +162,26 @@ UI stereo mark and a changed pixel in one eye. Property snapshots establish
 the observed state; they do not count every property change or qualify a game's
 stereo renderer. The fixture periodically repaints for capture and clips child
 controls out of its background paint so the test itself cannot erase the combo.
+
+`tests/wgl-child.c` places an address-coded WGL viewport inside an ordinary
+Win32 owner, with a real menu above it. Build both MinGW targets with
+`-O2 -Wall -Wextra -Werror -lopengl32 -lgdi32`. Pass `stereo` or `mono`, then
+send `open`, `menu`, `close-menu`, `resize`, `hide`, `show`, `destroy`, `open`,
+`destroy`, and `exit` on standard input. The viewport starts at 240x140 and
+resizes to 200x120. A missing requested stereo format exits 77.
+
+Each eye encodes `(x, y, eye * 128)` in RGB, with y increasing from the bottom.
+Check every viewport pixel, the unchanged surrounding UI, visibility and exit
+restoration. The parent must remain undeclared; a stereo viewport needs its
+own child surface under the real owner, listed in that owner's stereo children
+property. Record X11 requests before launching the fixture to count exactly
+one declaration per created surface, including the destroyed first surface.
+Final property snapshots alone cannot establish that count.
+
+The offscreen Wine child path can instead create the drawable below a dummy
+window, manually redirect it and copy its pixels into the owner with GDI.
+A correct stereo format or one declaration does not prove that this copy
+preserves both eyes. Keep this failure and ordinary mono resize/show failures
+visible when comparing a driver correction; unchanged failure pixels establish
+non-regression only. Direct-child success does not qualify nested clipping,
+sibling overlap, scaled DPI, native Wayland, or another graphics driver.
