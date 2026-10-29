@@ -185,3 +185,21 @@ preserves both eyes. Keep this failure and ordinary mono resize/show failures
 visible when comparing a driver correction; unchanged failure pixels establish
 non-regression only. Direct-child success does not qualify nested clipping,
 sibling overlap, scaled DPI, native Wayland, or another graphics driver.
+
+For redraw diagnosis, pass an existing Windows-accessible output directory as
+argument two. The fixture logs client size, viewport, frame and paint counters,
+swap start/completion times, and exact address errors in the GL back buffer
+before swapping and front buffer afterwards. `probe` saves bottom-up RGB GL
+readbacks and a top-down BGRA owner-DC readback. The latter is the GDI backing
+surface, which can differ from the X window containing Wine's delivered GL
+copy; compare the actual X window and compositor pixels separately.
+
+An optional third argument containing `step` disables the timer. `redraw`
+presents one frame; `paint` explicitly invalidates and paints the child.
+`step-paint-redraw` also draws after the child's `EndPaint`, and `step-rebind`
+rebinds its WGL context before drawing as a diagnostic control. A `probe`
+acknowledgement on the UI thread supplies a completion barrier for preceding
+commands. Capturing after a fixed delay can precede `SwapBuffers` completion.
+Keep the first returned frame after resize separate from a later good frame.
+These diagnostic modes report pixel errors without turning process exit zero
+into a rendering pass; an external oracle must inspect the readbacks and logs.
