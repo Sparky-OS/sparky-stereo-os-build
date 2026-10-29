@@ -13,7 +13,6 @@ include(KDEInstallDirs)
 include(KDECMakeSettings)
 include(KDECompilerSettings NO_POLICY_SCOPE)
 include(ECMQmlModule)
-include(KDEI18nInstallMacros)
 
 find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Core DBus Quick)
 find_package(KF6 ${KF_MIN_VERSION} REQUIRED COMPONENTS Auth CoreAddons I18n KCMUtils)
