@@ -39,16 +39,42 @@
  
  static struct loader_dri3_buffer *
  dri3_find_back_alloc(struct loader_dri3_drawable *draw);
-@@ -461,6 +471,8 @@
+@@ -371,11 +381,6 @@
+ {
+    int i;
+ 
+-   driDestroyDrawable(draw->dri_drawable);
+-
+-   for (i = 0; i < ARRAY_SIZE(draw->buffers); i++)
+-      dri3_free_render_buffer(draw, i);
+-
+    if (draw->special_event) {
+       xcb_void_cookie_t cookie =
+          xcb_present_select_input_checked(draw->conn, draw->eid, draw->drawable,
+@@ -384,6 +389,11 @@
+       xcb_discard_reply(draw->conn, cookie.sequence);
+       xcb_unregister_for_special_event(draw->conn, draw->special_event);
+    }
++
++   /* XCB must release the stamp pointer before the frontend is destroyed. */
++   driDestroyDrawable(draw->dri_drawable);
++   for (i = 0; i < ARRAY_SIZE(draw->buffers); i++)
++      dri3_free_render_buffer(draw, i);
+ 
+    if (draw->region)
+       xcb_xfixes_destroy_region(draw->conn, draw->region);
+@@ -461,6 +471,10 @@
  
     if (!draw->dri_drawable)
        return 1;
 +
++   /* Validation may poll Present before the first getBuffers call. */
++   draw->stamp = (uint32_t *)&draw->dri_drawable->base.stamp;
 +   draw->dri_drawable->update_drawable_info = dri3_update_drawable_info;
  
     cookie = xcb_get_geometry(draw->conn, draw->drawable);
     reply = xcb_get_geometry_reply(draw->conn, cookie, &error);
-@@ -2214,6 +2226,10 @@
+@@ -2214,6 +2228,10 @@
     buffers->front = NULL;
     buffers->back = NULL;
  
@@ -507,7 +533,7 @@
 +      xcb_get_property(conn, false, window, id, XCB_ATOM_CARDINAL, 0, 1), NULL);
 +   bool declared = property && property->type == XCB_ATOM_CARDINAL &&
 +      property->format == 32 && xcb_get_property_value_length(property) == 4 &&
-+      *(uint32_t *)xcb_get_property_value(property) == 1;
++      *(uint32_t *)xcb_get_property_value(property) == 3;
     free(property);
 +   return declared;
  }
