@@ -138,3 +138,27 @@ The declaration is refreshed before mapping, after the menu's selected child is 
 A dropdown combo list also retains its combo owner when user32 reparents it to the desktop, allowing winex11 to name the application's root window in the transient hint.
 The functional types follow [EWMH 1.5 section 5.6](https://specifications.freedesktop.org/wm/1.5/ar01s05.html).
 The compositor must read override-redirect transient hints to apply popup depth through that owner chain.
+
+`tests/popup-ui.c` exercises those hints with actual Win32 controls. Build it
+with either MinGW target, linking `comctl32` and `gdi32`, and run it with the
+installed Wine in a disposable headless prefix. It accepts newline-separated
+commands on standard input: `combo`, `menubar`, `right`, `select`, `close`,
+`context`, `tooltip`, `dialog`, `resize` and `exit`. Open `menubar`, then send
+`right` to open its submenu and `select` to deliver command 101 to the owner.
+
+Check the X11 properties while each control is visible. The menu bar's popup
+is `DROPDOWN_MENU`; its child and a context menu are `POPUP_MENU`; the combo,
+tooltip and owned dialog use their corresponding EWMH types. The submenu's
+`WM_TRANSIENT_FOR` names the parent menu, while its window group and command
+recipient remain the main window. The other popups name the application's
+root window. None of this ordinary UI declares stereo.
+
+For compositor coverage, use a separate stereo surface to activate the output,
+disable desktop plane depth, and compare the ordinary UI in both captured
+eyes, against the stereo-off capture and against the published Wine. Check
+both PE32 and PE32+, the 40-pixel width/height reduction, and window destruction.
+Reject deliberately flattened submenu ownership, wrong popup types, a spurious
+UI stereo mark and a changed pixel in one eye. Property snapshots establish
+the observed state; they do not count every property change or qualify a game's
+stereo renderer. The fixture periodically repaints for capture and clips child
+controls out of its background paint so the test itself cannot erase the combo.
