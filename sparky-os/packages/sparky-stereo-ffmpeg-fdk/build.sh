@@ -18,12 +18,12 @@
 # 10:9.0.2-dmo1+stereo3d2 (media-on-dmo, 2026-10-08): the time the command tells the user is this divided by the cores.
 # Needs only dpkg-deb.
 # Usage: build.sh   (output goes to $OUT, default ${SPARKY_REPO_DIR})
-# Last update 2026/10/08
+# Last update 2026/10/29
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
-VERSION=${VERSION:-20261008.2~sparky9~0+lc1}
+VERSION=${VERSION:-20261029~sparky9~0+lc1}
 CPU_MINUTES=${CPU_MINUTES:-35}
 PKG=sparky-stereo-ffmpeg-fdk
 W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/fdk-build.XXXXXX")
