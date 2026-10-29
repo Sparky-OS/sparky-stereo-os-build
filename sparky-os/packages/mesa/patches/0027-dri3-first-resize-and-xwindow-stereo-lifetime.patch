@@ -1,0 +1,548 @@
+--- a/src/gallium/frontends/dri/dri_drawable.c
++++ b/src/gallium/frontends/dri/dri_drawable.c
+@@ -65,6 +65,12 @@
+    for (i = 0; i < count; i++)
+       statt_mask |= (1 << statts[i]);
+ 
++   /* The loader's event stamp can change before its geometry/attachment stamp.
++    * Consume those events before deciding that the cached textures are valid.
++    */
++   if (drawable->update_drawable_info)
++      drawable->update_drawable_info(drawable);
++
+    /* record newly allocated textures */
+    new_mask = (statt_mask & ~drawable->texture_mask);
+ 
+--- a/src/gallium/frontends/dri/loader_dri3_helper.c
++++ b/src/gallium/frontends/dri/loader_dri3_helper.c
+@@ -42,6 +42,7 @@
+ #include "util/simple_mtx.h"
+ #include "drm-uapi/drm_fourcc.h"
+ #include "dri_screen.h"
++#include "dri_drawable.h"
+ #include "dri_util.h"
+ 
+ /**
+@@ -61,6 +62,15 @@
+ 
+ static void
+ dri3_flush_present_events(struct loader_dri3_drawable *draw);
++
++static int
++dri3_update_drawable(struct loader_dri3_drawable *draw);
++
++static void
++dri3_update_drawable_info(struct dri_drawable *drawable)
++{
++   dri3_update_drawable(drawable->loaderPrivate);
++}
+ 
+ static struct loader_dri3_buffer *
+ dri3_find_back_alloc(struct loader_dri3_drawable *draw);
+@@ -461,6 +471,8 @@
+ 
+    if (!draw->dri_drawable)
+       return 1;
++
++   draw->dri_drawable->update_drawable_info = dri3_update_drawable_info;
+ 
+    cookie = xcb_get_geometry(draw->conn, draw->drawable);
+    reply = xcb_get_geometry_reply(draw->conn, cookie, &error);
+@@ -2214,6 +2226,10 @@
+    buffers->front = NULL;
+    buffers->back = NULL;
+ 
++   /* Register Present against the frontend stamp before creating its queue.
++    * XCB can then invalidate the state tracker when it receives ConfigureNotify.
++    */
++   draw->stamp = stamp;
+    if (!dri3_update_drawable(draw))
+       return false;
+ 
+--- a/src/glx/dri3_glx.c
++++ b/src/glx/dri3_glx.c
+@@ -220,7 +220,8 @@
+       glx_declare_stereo_version(pdraw->base.psc->dpy, pdraw->base.xDrawable, 4);
+       pdraw->base.dri_drawable->stereo_window_one_eye = true;
+    }
+-   glx_declare_stereo(pdraw->base.psc->dpy, pdraw->base.xDrawable);
++   if (!glx_x11_stereo_content_declared(pdraw->base.psc->dpy, pdraw->base.xDrawable))
++      glx_declare_stereo(pdraw->base.psc->dpy, pdraw->base.xDrawable);
+    glx_x11_declare_stereo_child(pdraw->base.psc->dpy, pdraw->base.xDrawable);
+    if (version < 3)
+       XResizeWindow(pdraw->base.psc->dpy, pdraw->base.xDrawable,
+--- a/src/glx/dri_common.c
++++ b/src/glx/dri_common.c
+@@ -36,6 +36,9 @@
+ #if defined(GLX_DIRECT_RENDERING) && (!defined(GLX_USE_APPLEGL) || defined(GLX_USE_APPLE))
+ 
+ #include <unistd.h>
++#include <errno.h>
++#include <fcntl.h>
++#include <poll.h>
+ #include <dlfcn.h>
+ #include <stdarg.h>
+ #include "glxclient.h"
+@@ -47,22 +50,75 @@
+ #include "pipe-loader/pipe_loader.h"
+ #include "x11/x11_display.h"
+ 
+-/* The X11 window that holds @window: its ancestor whose parent is the root.
+- * Made with XCB requests whose errors come back with their replies, so a
+- * window that is already gone (a program that destroys its window before
+- * its GLX drawable) never reaches Xlib's error handler, which exits.
++/* Track the X windows on a private connection. Selecting StructureNotify here
++ * neither changes the application's event mask nor consumes its events.
++ * Drawable destruction must not destroy this state: Qt recreates drawables
++ * while the content window, declaration and compositor surface remain alive.
+  */
++struct glx_stereo_child {
++   xcb_window_t window, owner;
++   struct glx_stereo_child *next;
++};
++
++struct glx_stereo_watch {
++   xcb_window_t window;
++   bool used;
++   struct glx_stereo_watch *next;
++};
++
++struct glx_stereo_tracker {
++   xcb_connection_t *conn;
++   xcb_atom_t atom;
++   pthread_t thread;
++   pthread_mutex_t mutex;
++   int wake[2];
++   bool stop;
++   struct glx_stereo_child *children;
++   struct glx_stereo_watch *watches;
++};
++
++static void
++stereo_watch(struct glx_stereo_tracker *tracker, xcb_window_t window)
++{
++   struct glx_stereo_watch *watch;
++   for (watch = tracker->watches; watch; watch = watch->next) {
++      if (watch->window == window) {
++         watch->used = true;
++         return;
++      }
++   }
++   watch = calloc(1, sizeof(*watch));
++   if (!watch)
++      return;
++   uint32_t mask = XCB_EVENT_MASK_STRUCTURE_NOTIFY;
++   xcb_generic_error_t *error = xcb_request_check(tracker->conn,
++      xcb_change_window_attributes_checked(tracker->conn, window,
++                                           XCB_CW_EVENT_MASK, &mask));
++   if (error) {
++      free(error);
++      free(watch);
++      return;
++   }
++   watch->window = window;
++   watch->used = true;
++   watch->next = tracker->watches;
++   tracker->watches = watch;
++}
++
+ static xcb_window_t
+-glx_x11_top_level_window(xcb_connection_t *conn, xcb_window_t window)
+-{
+-   while (true) {
+-      xcb_query_tree_reply_t *tree =
+-         xcb_query_tree_reply(conn, xcb_query_tree(conn, window), NULL);
+-      if (!tree)
++stereo_window_owner(struct glx_stereo_tracker *tracker, xcb_window_t window)
++{
++   for (;;) {
++      stereo_watch(tracker, window);
++      xcb_query_tree_reply_t *tree = xcb_query_tree_reply(tracker->conn,
++         xcb_query_tree(tracker->conn, window), NULL);
++      if (!tree) {
++         for (struct glx_stereo_watch *watch = tracker->watches; watch; watch = watch->next)
++            if (watch->window == window)
++               watch->used = false;
+          return XCB_WINDOW_NONE;
+-
+-      const xcb_window_t parent = tree->parent;
+-      const xcb_window_t root = tree->root;
++      }
++      xcb_window_t parent = tree->parent, root = tree->root;
+       free(tree);
+       if (parent == root || parent == XCB_WINDOW_NONE)
+          return window;
+@@ -70,75 +126,276 @@
+    }
+ }
+ 
+-/* _KDE_NET_WM_STEREO_CONTENT_CHILDREN: WINDOW/32 on the X11 window that
+- * holds a child window with stereo content, the children it holds. A child
+- * stays listed while its X11 window lives, not only while its GLX drawable
+- * does: a native window's drawable is destroyed whenever no context is current
+- * on it (a program that draws several windows with one context, as Qt does,
+- * destroys and creates it every frame), and the compositor would take the
+- * child's own surface and give it back each time. Windows that are gone leave
+- * the list when a child is added.
+- */
++static void
++stereo_update_owner(struct glx_stereo_tracker *tracker, xcb_window_t owner,
++                    xcb_window_t child, bool add)
++{
++   if (!owner || owner == child)
++      return;
++   xcb_connection_t *conn = tracker->conn;
++   /* Serialize read/modify/write with other GLX clients sharing an owner. */
++   xcb_grab_server(conn);
++   xcb_get_property_reply_t *property = xcb_get_property_reply(conn,
++      xcb_get_property(conn, false, owner, tracker->atom, XCB_ATOM_WINDOW,
++                       0, UINT32_MAX / 4), NULL);
++   if (!property)
++      goto done;
++   if (property->type != XCB_NONE &&
++       (property->type != XCB_ATOM_WINDOW || property->format != 32))
++      goto free_property;
++   unsigned count = xcb_get_property_value_length(property) / 4;
++   xcb_window_t *old = xcb_get_property_value(property);
++   xcb_window_t *updated = malloc((count + 1) * sizeof(*updated));
++   if (!updated)
++      goto free_property;
++   unsigned n = 0;
++   bool found = false;
++   for (unsigned i = 0; i < count; i++) {
++      if (old[i] == child) {
++         if (!add || found)
++            continue;
++         found = true;
++      }
++      updated[n++] = old[i];
++   }
++   if (add && !found)
++      updated[n++] = child;
++   if (n != count || (n && memcmp(old, updated, n * sizeof(*updated))))
++      free(xcb_request_check(conn, xcb_change_property_checked(conn,
++         XCB_PROP_MODE_REPLACE, owner, tracker->atom, XCB_ATOM_WINDOW,
++         32, n, updated)));
++   free(updated);
++free_property:
++   free(property);
++done:
++   xcb_ungrab_server(conn);
++   xcb_flush(conn);
++}
++
++static void
++stereo_reconcile(struct glx_stereo_tracker *tracker)
++{
++   for (struct glx_stereo_watch *watch = tracker->watches; watch; watch = watch->next)
++      watch->used = false;
++   struct glx_stereo_child **link = &tracker->children;
++   while (*link) {
++      struct glx_stereo_child *child = *link;
++      xcb_window_t owner = stereo_window_owner(tracker, child->window);
++      if (owner != child->owner) {
++         stereo_update_owner(tracker, child->owner, child->window, false);
++         stereo_update_owner(tracker, owner, child->window, true);
++         child->owner = owner;
++      }
++      if (!owner) {
++         *link = child->next;
++         free(child);
++      } else {
++         link = &child->next;
++      }
++   }
++   struct glx_stereo_watch **watch_link = &tracker->watches;
++   while (*watch_link) {
++      struct glx_stereo_watch *watch = *watch_link;
++      if (!watch->used) {
++         uint32_t mask = 0;
++         free(xcb_request_check(tracker->conn,
++            xcb_change_window_attributes_checked(tracker->conn, watch->window,
++                                                 XCB_CW_EVENT_MASK, &mask)));
++         *watch_link = watch->next;
++         free(watch);
++      } else {
++         watch_link = &watch->next;
++      }
++   }
++}
++
++static bool
++stereo_drain_events(struct glx_stereo_tracker *tracker)
++{
++   bool changed = false;
++   xcb_generic_event_t *event;
++   while ((event = xcb_poll_for_event(tracker->conn))) {
++      unsigned type = event->response_type & 0x7f;
++      changed |= type == XCB_REPARENT_NOTIFY || type == XCB_DESTROY_NOTIFY;
++      if (type == XCB_DESTROY_NOTIFY) {
++         xcb_window_t window = ((xcb_destroy_notify_event_t *)event)->window;
++         struct glx_stereo_watch **watch_link = &tracker->watches;
++         while (*watch_link) {
++            struct glx_stereo_watch *watch = *watch_link;
++            if (watch->window == window) {
++               *watch_link = watch->next;
++               free(watch);
++               break;
++            }
++            watch_link = &watch->next;
++         }
++         struct glx_stereo_child **link = &tracker->children;
++         while (*link) {
++            struct glx_stereo_child *child = *link;
++            if (child->window == window) {
++               stereo_update_owner(tracker, child->owner, window, false);
++               *link = child->next;
++               free(child);
++               break;
++            }
++            link = &child->next;
++         }
++      }
++      free(event);
++   }
++   return changed;
++}
++
++static void *
++stereo_event_thread(void *data)
++{
++   struct glx_stereo_tracker *tracker = data;
++   struct pollfd fds[] = {{xcb_get_file_descriptor(tracker->conn), POLLIN, 0},
++                          {tracker->wake[0], POLLIN, 0}};
++   for (;;) {
++      pthread_mutex_lock(&tracker->mutex);
++      if (tracker->stop || xcb_connection_has_error(tracker->conn)) {
++         pthread_mutex_unlock(&tracker->mutex);
++         return NULL;
++      }
++      if (stereo_drain_events(tracker))
++         stereo_reconcile(tracker);
++      pthread_mutex_unlock(&tracker->mutex);
++      /* Replies on this connection can already have queued events in XCB. */
++      if (poll(fds, 2, 100) < 0 && errno != EINTR)
++         return NULL;
++      char bytes[64];
++      while (read(tracker->wake[0], bytes, sizeof(bytes)) > 0) {}
++   }
++}
++
++static struct glx_stereo_tracker *
++stereo_tracker_create(Display *dpy)
++{
++   struct glx_stereo_tracker *tracker = calloc(1, sizeof(*tracker));
++   if (!tracker)
++      return NULL;
++   tracker->conn = xcb_connect(DisplayString(dpy), NULL);
++   if (xcb_connection_has_error(tracker->conn))
++      goto fail;
++   const char name[] = "_KDE_NET_WM_STEREO_CONTENT_CHILDREN";
++   xcb_intern_atom_reply_t *reply = xcb_intern_atom_reply(tracker->conn,
++      xcb_intern_atom(tracker->conn, false, sizeof(name) - 1, name), NULL);
++   if (!reply)
++      goto fail;
++   tracker->atom = reply->atom;
++   free(reply);
++   if (pipe2(tracker->wake, O_CLOEXEC | O_NONBLOCK))
++      goto fail;
++   if (pthread_mutex_init(&tracker->mutex, NULL))
++      goto close_pipe;
++   if (pthread_create(&tracker->thread, NULL, stereo_event_thread, tracker)) {
++      pthread_mutex_destroy(&tracker->mutex);
++      goto close_pipe;
++   }
++   return tracker;
++close_pipe:
++   close(tracker->wake[0]);
++   close(tracker->wake[1]);
++fail:
++   xcb_disconnect(tracker->conn);
++   free(tracker);
++   return NULL;
++}
++
+ void
+ glx_x11_declare_stereo_child(Display *dpy, Window window)
+ {
+-   static const char name[] = "_KDE_NET_WM_STEREO_CONTENT_CHILDREN";
++   struct glx_display *display = __glXInitialize(dpy);
++   if (!display)
++      return;
++   /* Complete the application's window creation before observing it through
++    * another connection. No application events are removed by XSync(False).
++    */
++   XSync(dpy, False);
++   __glXLock();
++   if (!display->stereo_tracker)
++      display->stereo_tracker = stereo_tracker_create(dpy);
++   struct glx_stereo_tracker *tracker = display->stereo_tracker;
++   __glXUnlock();
++   if (!tracker)
++      return;
++   pthread_mutex_lock(&tracker->mutex);
++   /* Order old DestroyNotify events before a possibly reused XID. */
++   free(xcb_get_input_focus_reply(tracker->conn,
++      xcb_get_input_focus(tracker->conn), NULL));
++   stereo_drain_events(tracker);
++   struct glx_stereo_child *child;
++   for (child = tracker->children; child; child = child->next)
++      if (child->window == window)
++         break;
++   if (!child) {
++      child = calloc(1, sizeof(*child));
++      if (child) {
++         child->window = window;
++         child->next = tracker->children;
++         tracker->children = child;
++      }
++   }
++   stereo_reconcile(tracker);
++   pthread_mutex_unlock(&tracker->mutex);
++   char wake = 0;
++   if (write(tracker->wake[1], &wake, 1) < 0 && errno != EAGAIN)
++      glx_message(_LOADER_WARNING, "Failed to wake stereo window observer\n");
++}
++
++void
++glx_x11_destroy_stereo_tracker(struct glx_display *display)
++{
++   struct glx_stereo_tracker *tracker = display->stereo_tracker;
++   if (!tracker)
++      return;
++   pthread_mutex_lock(&tracker->mutex);
++   tracker->stop = true;
++   pthread_mutex_unlock(&tracker->mutex);
++   char wake = 0;
++   if (write(tracker->wake[1], &wake, 1) < 0 && errno != EAGAIN)
++      glx_message(_LOADER_WARNING, "Failed to stop stereo window observer\n");
++   pthread_join(tracker->thread, NULL);
++   /* Closing a GLX display is not permission to undeclare a live X window. */
++   xcb_disconnect(tracker->conn);
++   close(tracker->wake[0]);
++   close(tracker->wake[1]);
++   while (tracker->children) {
++      struct glx_stereo_child *child = tracker->children;
++      tracker->children = child->next;
++      free(child);
++   }
++   while (tracker->watches) {
++      struct glx_stereo_watch *watch = tracker->watches;
++      tracker->watches = watch->next;
++      free(watch);
++   }
++   pthread_mutex_destroy(&tracker->mutex);
++   free(tracker);
++   display->stereo_tracker = NULL;
++}
++
++bool
++glx_x11_stereo_content_declared(Display *dpy, Window window)
++{
+    xcb_connection_t *conn = XGetXCBConnection(dpy);
+-   const xcb_window_t top = glx_x11_top_level_window(conn, window);
+-   if (top == XCB_WINDOW_NONE || top == window)
+-      return;
+-
+-   xcb_intern_atom_reply_t *atom_reply =
+-      xcb_intern_atom_reply(conn, xcb_intern_atom(conn, false, strlen(name), name),
+-                            NULL);
+-   if (!atom_reply)
+-      return;
+-   const xcb_atom_t atom = atom_reply->atom;
+-   free(atom_reply);
+-
+-   xcb_get_property_reply_t *property =
+-      xcb_get_property_reply(conn,
+-                             xcb_get_property(conn, false, top, atom,
+-                                              XCB_ATOM_WINDOW, 0, UINT32_MAX / 4),
+-                             NULL);
+-   if (!property)
+-      return;
+-   if (property->type != XCB_NONE &&
+-       (property->type != XCB_ATOM_WINDOW || property->format != 32)) {
+-      free(property);
+-      return;
+-   }
+-
+-   const xcb_window_t *children = xcb_get_property_value(property);
+-   const unsigned count = property->type == XCB_NONE ? 0 :
+-                          xcb_get_property_value_length(property) / 4;
+-   for (unsigned i = 0; i < count; i++) {
+-      if (children[i] == window) {
+-         free(property);
+-         return;
+-      }
+-   }
+-
+-   xcb_window_t *updated = malloc((count + 1) * sizeof(*updated));
+-   if (updated) {
+-      unsigned updated_count = 0;
+-      for (unsigned i = 0; i < count; i++) {
+-         xcb_get_window_attributes_reply_t *attributes =
+-            xcb_get_window_attributes_reply(conn,
+-                                            xcb_get_window_attributes(conn, children[i]),
+-                                            NULL);
+-         if (attributes)
+-            updated[updated_count++] = children[i];
+-         free(attributes);
+-      }
+-      updated[updated_count++] = window;
+-      free(xcb_request_check(conn,
+-                             xcb_change_property_checked(conn, XCB_PROP_MODE_REPLACE,
+-                                                         top, atom, XCB_ATOM_WINDOW,
+-                                                         32, updated_count, updated)));
+-      free(updated);
+-   }
++   const char name[] = "_KDE_NET_WM_STEREO_CONTENT";
++   xcb_intern_atom_reply_t *atom = xcb_intern_atom_reply(conn,
++      xcb_intern_atom(conn, true, sizeof(name) - 1, name), NULL);
++   if (!atom)
++      return false;
++   xcb_atom_t id = atom->atom;
++   free(atom);
++   if (!id)
++      return false;
++   xcb_get_property_reply_t *property = xcb_get_property_reply(conn,
++      xcb_get_property(conn, false, window, id, XCB_ATOM_CARDINAL, 0, 1), NULL);
++   bool declared = property && property->type == XCB_ATOM_CARDINAL &&
++      property->format == 32 && xcb_get_property_value_length(property) == 4 &&
++      *(uint32_t *)xcb_get_property_value(property) == 1;
+    free(property);
++   return declared;
+ }
+ 
+ #define __ATTRIB(attrib, field) \
+--- a/src/glx/dri_common.h
++++ b/src/glx/dri_common.h
+@@ -119,6 +119,10 @@
+ bool
+ dri_screen_init(struct glx_screen *psc, struct glx_display *priv, int screen, int fd, const __DRIextension **loader_extensions, bool driver_name_is_inferred);
+ 
++bool
++glx_x11_stereo_content_declared(Display *dpy, Window window);
++void
++glx_x11_destroy_stereo_tracker(struct glx_display *display);
+ void
+ glx_x11_declare_stereo_child(Display *dpy, Window window);
+ #endif /* GLX_DIRECT_RENDERING */
+--- a/src/glx/glxclient.h
++++ b/src/glx/glxclient.h
+@@ -591,6 +591,7 @@
+    __glxHashTable *glXDrawHash;
+ 
+ #if defined(GLX_DIRECT_RENDERING) && (!defined(GLX_USE_APPLEGL) || defined(GLX_USE_APPLE))
++   struct glx_stereo_tracker *stereo_tracker;
+    __glxHashTable *drawHash;
+ 
+    /**
+--- a/src/glx/glxext.c
++++ b/src/glx/glxext.c
+@@ -329,6 +329,7 @@
+ 
+    /* Needs to be done before free screen. */
+ #if defined(GLX_DIRECT_RENDERING) && (!defined(GLX_USE_APPLEGL) || defined(GLX_USE_APPLE))
++   glx_x11_destroy_stereo_tracker(priv);
+    _mesa_set_destroy(priv->zombieGLXDrawable, free_zombie_glx_drawable);
+ #endif
+ 
