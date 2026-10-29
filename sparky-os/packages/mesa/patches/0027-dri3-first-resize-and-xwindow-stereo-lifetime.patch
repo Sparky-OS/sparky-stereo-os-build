@@ -572,3 +572,27 @@
     _mesa_set_destroy(priv->zombieGLXDrawable, free_zombie_glx_drawable);
  #endif
  
+--- a/src/mesa/state_tracker/st_util.h
++++ b/src/mesa/state_tracker/st_util.h
+@@ -36,6 +36,7 @@
+ 
+ 
+ #include "state_tracker/st_context.h"
++#include "state_tracker/st_manager.h"
+ #include "main/context.h"
+ 
+ 
+@@ -120,6 +121,13 @@
+ {
+    struct gl_context *ctx = st->ctx;
+ 
++   /* Loader events can change a drawable stamp without a GL state change.
++    * Validate it before filtering dirty atoms, otherwise framebuffer state
++    * can remain clean while rendering still targets the previous allocation.
++    */
++   if (BITSET_TEST(pipeline_state_mask, ST_NEW_FB_STATE))
++      st_manager_validate_framebuffers(st);
++
+    /* Inactive states are shader states not used by shaders at the moment. */
+    st_state_bitset dirty;
+    BITSET_COPY(dirty, pipeline_state_mask);
