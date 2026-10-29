@@ -203,3 +203,23 @@ commands. Capturing after a fixed delay can precede `SwapBuffers` completion.
 Keep the first returned frame after resize separate from a later good frame.
 These diagnostic modes report pixel errors without turning process exit zero
 into a rendering pass; an external oracle must inspect the readbacks and logs.
+
+### Native first-resize control
+
+`tests/native-glx-resize.c` runs the address-coded mono resize sequence directly
+through GLX, without Wine. Compile with `gcc -O2 -Wall -Wextra -Werror
+native-glx-resize.c -lGL -lX11 -lXcomposite -o native-glx-resize` and run in an
+empty writable directory in an isolated X11 session. It uses a manually
+redirected child below a 1x1 parent to match the offscreen route.
+It records initial, first-resize, second-resize and show frames separately.
+Each phase retains raw GL_BACK/GL_FRONT RGB bytes in bottom-up row order and
+XGetImage bytes with the logged stride, masks and byte order, plus requested
+and completed OML swap counters and monotonic timestamps.
+Existing output files cause failure instead of being overwritten.
+
+Exit zero means the diagnostic sequence completed. Pixel error counts must
+be checked independently against `(x, y, 0)` in GL coordinates; an exact second
+frame never qualifies a failing first frame. Native and Wine pixels are
+separate observations. External protocol traces can correlate submitted
+pixmaps and Present events, but do not expose uninstrumented Mesa internals.
+This fixture is not a rendering correction or a package acceptance gate.
