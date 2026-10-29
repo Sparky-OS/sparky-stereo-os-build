@@ -1,0 +1,283 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 29 Oct 2026 14:10:29 -0300
+Subject: [PATCH] drm/vkms: let a DisplayPort connector send frame-sequential
+ stereo
+
+The DRM core lists and accepts frame-sequential modes only on
+connectors whose driver sets stereo_frame_sequential_allowed, because
+only a driver that alternates the eyes and names them can send one.
+VKMS can now do both, so let a connector opt in:
+
+- a stereo_frame_sequential setting in the connector configuration and
+  a configfs attribute of the same name, 0 by default, settable while
+  the device is disabled;
+- only DisplayPort and eDP connectors may set it (the device is not
+  created otherwise): the output models a DisplayPort source, which
+  names the eye of each frame in MSA MISC1 and the VSC SDP, and no other
+  connector type has such a signal;
+- the connector sets stereo_frame_sequential_allowed from it, so its
+  frame-sequential modes (from EDID detailed timings and DisplayID
+  Stereo Display Interface blocks) are listed and can be set, while
+  every other connector still has them pruned and refused, a TEST_ONLY
+  commit included;
+- the writeback connector always accepts such modes: it takes the frames
+  as they are sent, one eye each, at the size of the mode.
+
+Document the attribute, the frame-sequential model and the stereo_link
+file in vkms.rst.
+
+Assisted-by: LLM
+---
+ Documentation/gpu/vkms.rst            | 26 ++++++++++++++++---
+ drivers/gpu/drm/vkms/vkms_config.c    | 31 +++++++++++++++++++++++
+ drivers/gpu/drm/vkms/vkms_config.h    | 30 ++++++++++++++++++++++
+ drivers/gpu/drm/vkms/vkms_configfs.c  | 36 +++++++++++++++++++++++++++
+ drivers/gpu/drm/vkms/vkms_connector.c |  4 +++
+ drivers/gpu/drm/vkms/vkms_writeback.c |  6 +++++
+ 6 files changed, 130 insertions(+), 3 deletions(-)
+
+diff --git a/Documentation/gpu/vkms.rst b/Documentation/gpu/vkms.rst
+index 691cea00d..3a5f98ec5 100644
+--- a/Documentation/gpu/vkms.rst
++++ b/Documentation/gpu/vkms.rst
+@@ -108,7 +108,7 @@ Last but not least, create one or more connectors::
+ 
+   sudo mkdir /config/vkms/my-vkms/connectors/connector0
+ 
+-Connectors have 4 configurable attributes:
++Connectors have 5 configurable attributes:
+ 
+ - status: Connection status: 1 connected, 2 disconnected, 3 unknown (same values
+   as those exposed by the "status" property of a connector)
+@@ -118,8 +118,28 @@ Connectors have 4 configurable attributes:
+ - edid_enabled: 1 to list the modes of the EDID below, 0 (the default) for the
+   default list of modes
+ - edid: The EDID of the sink, written whole in one write
+-
+-The type and the EDID cannot change while the device is enabled.
++- stereo_frame_sequential: 1 to let a DisplayPort or eDP connector send
++  frame-sequential stereo modes (DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL), 0 (the
++  default) to refuse them as every other connector does
++
++The type, the EDID and stereo_frame_sequential cannot change while the device is
++enabled.
++
++In a frame-sequential mode the planes cover both eyes side by side, twice the
++width of the mode, and the CRTC sends the left half and the right half in turn,
++one per frame, the left eye first; a commit that updates the planes takes
++effect at the next left-eye frame, so the two eyes of a pair always come from
++the same planes. The CRC and the writeback connector see each frame as sent,
++one eye at the size of the mode. The debugfs file ``stereo_link`` of each CRTC
++lists its last 256 frames, one per line, the oldest first::
++
++  frame=120 eye=left misc1=0x06 vsc=0x01 db0=0x01 scanout=4 wb=0
++
++with the frame's vblank count, its eye (``none`` outside frame-sequential
++modes), the stereo bits of the MSA MISC1 byte a DisplayPort source would send
++before it (0x06 left, 0x02 right, 0x00 no stereo), the revision of the VSC SDP
++sent with it (0x00 for none) and its stereo interface byte, a number that
++changes when new planes take effect, and whether the frame was written back.
+ 
+ To finish the configuration, link the different pipeline items::
+ 
+diff --git a/drivers/gpu/drm/vkms/vkms_config.c b/drivers/gpu/drm/vkms/vkms_config.c
+index 4f3faea0e..08c42112a 100644
+--- a/drivers/gpu/drm/vkms/vkms_config.c
++++ b/drivers/gpu/drm/vkms/vkms_config.c
+@@ -302,6 +302,32 @@ static bool valid_connector_possible_encoders(const struct vkms_config *config)
+ 	return true;
+ }
+ 
++/*
++ * The output models a DisplayPort source, which names the eye of each frame in the Main
++ * Stream Attribute (MISC1 bits 2:1) and in the VSC SDP: other connector types have no such
++ * signal to send.
++ */
++static bool valid_connector_stereo_frame_sequential(const struct vkms_config *config)
++{
++	struct drm_device *dev = config->dev ? &config->dev->drm : NULL;
++	struct vkms_config_connector *connector_cfg;
++	int type;
++
++	vkms_config_for_each_connector(config, connector_cfg) {
++		if (!vkms_config_connector_get_stereo_frame_sequential(connector_cfg))
++			continue;
++
++		type = vkms_config_connector_get_type(connector_cfg);
++		if (type != DRM_MODE_CONNECTOR_DisplayPort && type != DRM_MODE_CONNECTOR_eDP) {
++			drm_info(dev,
++				 "Only DisplayPort and eDP connectors can send frame-sequential stereo\n");
++			return false;
++		}
++	}
++
++	return true;
++}
++
+ bool vkms_config_is_valid(const struct vkms_config *config)
+ {
+ 	struct vkms_config_crtc *crtc_cfg;
+@@ -332,6 +358,9 @@ bool vkms_config_is_valid(const struct vkms_config *config)
+ 	if (!valid_connector_possible_encoders(config))
+ 		return false;
+ 
++	if (!valid_connector_stereo_frame_sequential(config))
++		return false;
++
+ 	return true;
+ }
+ EXPORT_SYMBOL_IF_KUNIT(vkms_config_is_valid);
+@@ -374,6 +403,8 @@ static int vkms_config_show(struct seq_file *m, void *data)
+ 		seq_printf(m, "\tedid_enabled=%d\n",
+ 			   vkms_config_connector_get_edid_enabled(connector_cfg));
+ 		seq_printf(m, "\tedid_len=%u\n", connector_cfg->edid_len);
++		seq_printf(m, "\tstereo_frame_sequential=%d\n",
++			   vkms_config_connector_get_stereo_frame_sequential(connector_cfg));
+ 	}
+ 
+ 	return 0;
+diff --git a/drivers/gpu/drm/vkms/vkms_config.h b/drivers/gpu/drm/vkms/vkms_config.h
+index 894024f1e..77581584a 100644
+--- a/drivers/gpu/drm/vkms/vkms_config.h
++++ b/drivers/gpu/drm/vkms/vkms_config.h
+@@ -107,6 +107,9 @@ struct vkms_config_encoder {
+  * @edid_enabled: If true, the connector reads its modes from @edid
+  * @edid: The EDID of the sink, ignored if @edid_enabled is false
+  * @edid_len: Length of @edid in bytes
++ * @stereo_frame_sequential: The connector sends frame-sequential stereo modes, as a
++ *			     DisplayPort source does
++ *			     (&drm_connector.stereo_frame_sequential_allowed)
+  * @possible_encoders: Array of encoders that can be used with this connector
+  * @connector: Internal usage. This pointer should never be considered as valid.
+  *             It can be used to store a temporary reference to a VKMS connector
+@@ -122,6 +125,7 @@ struct vkms_config_connector {
+ 	bool edid_enabled;
+ 	u8 *edid;
+ 	unsigned int edid_len;
++	bool stereo_frame_sequential;
+ 	struct xarray possible_encoders;
+ 
+ 	/* Internal usage */
+@@ -568,4 +572,30 @@ vkms_config_connector_get_edid(const struct vkms_config_connector *connector_cfg
+ int vkms_config_connector_set_edid(struct vkms_config_connector *connector_cfg,
+ 				   const u8 *edid, unsigned int len);
+ 
++/**
++ * vkms_config_connector_get_stereo_frame_sequential() - If the connector sends
++ * frame-sequential stereo
++ * @connector_cfg: Connector to check
++ */
++static inline bool
++vkms_config_connector_get_stereo_frame_sequential(const struct vkms_config_connector *connector_cfg)
++{
++	return connector_cfg->stereo_frame_sequential;
++}
++
++/**
++ * vkms_config_connector_set_stereo_frame_sequential() - Let the connector send
++ * frame-sequential stereo
++ * @connector_cfg: Connector to modify
++ * @allowed: If true, the connector lists and accepts frame-sequential stereo modes, and
++ *	     the output sends them one eye per frame; only DisplayPort and eDP connectors
++ *	     can, see vkms_config_is_valid()
++ */
++static inline void
++vkms_config_connector_set_stereo_frame_sequential(struct vkms_config_connector *connector_cfg,
++						  bool allowed)
++{
++	connector_cfg->stereo_frame_sequential = allowed;
++}
++
+ #endif /* _VKMS_CONFIG_H_ */
+diff --git a/drivers/gpu/drm/vkms/vkms_configfs.c b/drivers/gpu/drm/vkms/vkms_configfs.c
+index 99a9169c4..2609dbd81 100644
+--- a/drivers/gpu/drm/vkms/vkms_configfs.c
++++ b/drivers/gpu/drm/vkms/vkms_configfs.c
+@@ -671,15 +671,51 @@ static ssize_t connector_edid_store(struct config_item *item,
+ 	return (ssize_t)count;
+ }
+ 
++static ssize_t connector_stereo_frame_sequential_show(struct config_item *item, char *page)
++{
++	struct vkms_configfs_connector *connector;
++	bool allowed;
++
++	connector = connector_item_to_vkms_configfs_connector(item);
++
++	scoped_guard(mutex, &connector->dev->lock)
++		allowed = vkms_config_connector_get_stereo_frame_sequential(connector->config);
++
++	return sprintf(page, "%d\n", allowed);
++}
++
++static ssize_t connector_stereo_frame_sequential_store(struct config_item *item,
++						       const char *page, size_t count)
++{
++	struct vkms_configfs_connector *connector;
++	bool allowed;
++
++	connector = connector_item_to_vkms_configfs_connector(item);
++
++	if (kstrtobool(page, &allowed))
++		return -EINVAL;
++
++	scoped_guard(mutex, &connector->dev->lock) {
++		if (connector->dev->enabled)
++			return -EBUSY;
++
++		vkms_config_connector_set_stereo_frame_sequential(connector->config, allowed);
++	}
++
++	return (ssize_t)count;
++}
++
+ CONFIGFS_ATTR(connector_, type);
+ CONFIGFS_ATTR(connector_, edid_enabled);
+ CONFIGFS_ATTR(connector_, edid);
++CONFIGFS_ATTR(connector_, stereo_frame_sequential);
+ 
+ static struct configfs_attribute *connector_item_attrs[] = {
+ 	&connector_attr_status,
+ 	&connector_attr_type,
+ 	&connector_attr_edid_enabled,
+ 	&connector_attr_edid,
++	&connector_attr_stereo_frame_sequential,
+ 	NULL,
+ };
+ 
+diff --git a/drivers/gpu/drm/vkms/vkms_connector.c b/drivers/gpu/drm/vkms/vkms_connector.c
+index 2064c2c91..f456c62a8 100644
+--- a/drivers/gpu/drm/vkms/vkms_connector.c
++++ b/drivers/gpu/drm/vkms/vkms_connector.c
+@@ -128,6 +128,10 @@ struct vkms_connector *vkms_connector_init(struct vkms_device *vkmsdev,
+ 
+ 	drm_connector_helper_add(&connector->base, &vkms_conn_helper_funcs);
+ 
++	/* The output alternates the eyes and names them, see vkms_crtc_handle_vblank_timeout() */
++	connector->base.stereo_frame_sequential_allowed =
++		vkms_config_connector_get_stereo_frame_sequential(connector_cfg);
++
+ 	return connector;
+ }
+ 
+diff --git a/drivers/gpu/drm/vkms/vkms_writeback.c b/drivers/gpu/drm/vkms/vkms_writeback.c
+index 19d68c58f..271201667 100644
+--- a/drivers/gpu/drm/vkms/vkms_writeback.c
++++ b/drivers/gpu/drm/vkms/vkms_writeback.c
+@@ -184,6 +184,12 @@ int vkms_enable_writeback_connector(struct vkms_device *vkmsdev,
+ 
+ 	drm_connector_helper_add(&wb->base, &vkms_wb_conn_helper_funcs);
+ 
++	/*
++	 * In a frame-sequential mode the writeback connector takes the frames as they are sent,
++	 * one eye each, the size of the mode.
++	 */
++	wb->base.stereo_frame_sequential_allowed = true;
++
+ 	return drmm_writeback_connector_init(&vkmsdev->drm, wb,
+ 					     &vkms_wb_connector_funcs,
+ 					     &vkms_output->wb_encoder,
+-- 
+2.53.0
+

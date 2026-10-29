@@ -370,3 +370,22 @@
 37-dp-dual-mode-hdmi-3d/0004-drm-nouveau-offer-HDMI-3D-modes-only-on-TMDS-outputs.patch
 37-dp-dual-mode-hdmi-3d/0005-drm-nouveau-attach-the-side-by-side-full-timing-to-D.patch
 37-dp-dual-mode-hdmi-3d/0006-drm-nouveau-test-which-outputs-carry-HDMI-3D.patch
+
+# ==== 38-vkms-dp-frame-sequential: a VKMS model of a DisplayPort source sending frame-sequential stereo: a connector with a type and an EDID, one eye per frame from the side by side frame with flips at the pair boundary, a per-frame log of the eye, MSA MISC1 and VSC SDP, the connector opt-in, KUnit; and a fix of VKMS's composer for back-to-back writeback jobs (ORDER 257 milestone 3; 7 commits)
+#      status: candidate for the next build. Source: lane dp-stereo-257-m3, written on v7.3 plus groups 01-37 (build 13's tree with groups 36 and 37). Plan: queue/dp-stereo-257/PLAN.md sections 6.2 and 7.
+#      needs 36: DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL and its frame (0001), drm_connector.stereo_frame_sequential_allowed (0002), the frame-sequential twins of stereo DTDs (0004) and the VSC SDP stereo byte (0006, packed by drm_dp_vsc_sdp_pack()).
+#      0001 fixes a stock VKMS race, also in drm-misc-next of 2026-10-29: a writeback job's cleanup, run after its fence signals, switched the composer off, so a job committed right after the previous fence was never composed (IGT: the third of back-to-back captures timed out). The composer now counts its users (the CRC source, each writeback job from prepare to cleanup). Independent of stereo; an upstream candidate on its own.
+#      0002 and 0003 give a configfs connector a type, an EDID and an EDID switch (attributes type, edid, edid_enabled), with the names and values of Louis Chauvet's VKMS configfs series (v5, in review; not in v7.3 nor drm-misc-next), stricter in that they change only while the device is disabled. When his series is merged, drop these two and rebase 0004-0007 on it.
+#      0004 the model: planes placed in the frame of both eyes (2W x H), the composer blends only the half a frame sends (left on left-eye frames, right on right-eye ones), the eye from the vblank count from a left first frame; a commit that updates planes before a right-eye frame waits for the next left one (state and event there), others take effect at the next frame; CRC and writeback see each frame as sent, one eye at the mode's size.
+#      0005 debugfs crtc-N/stereo_link: the last 256 frames, "frame= eye= misc1= vsc= db0= scanout= wb=" (MISC1 0x06 left, 0x02 right, 0x00 none; VSC SDP revision 0x01 with DB0 0x01, 0x00 when none is sent). VKMS now selects DRM_DISPLAY_DP_HELPER and DRM_DISPLAY_HELPER (both already on in the shipped configs).
+#      0006 the opt-in: configfs stereo_frame_sequential (default 0), DisplayPort and eDP connectors only; the writeback connector always accepts frame-sequential modes (it takes the frames as sent). Documented in Documentation/gpu/vkms.rst.
+#      0007 KUnit: a vkms-config case, vkms-frame-sequential (listing and atomic check, opted in and not) and vkms-frame-sequential-model (connector types, eye order, MISC1/VSC values).
+#      Tests: kernel/tests/kunit (drm-stereo.kunitconfig runs the VKMS suites), kernel/tests/vkms-frame-sequential (QEMU guest: configfs device with two DisplayPort connectors, IGT's kms_frame_sequential, the negative controls) and kernel/tests/igt (two patches on IGT aa4739436: the frame-sequential layout in IGT's stereo framebuffer helper and mode dumps, and kms_frame_sequential).
+#      Upstream: VKMS (Louis Chauvet; reviewers Haneen Mohammed, Simona Vetter, Melissa Wen) after the core RFC of group 36, 0004-0007 rebased on the configfs series; 0001 may go first, alone. IGT: kms_frame_sequential with the core RFC (its flag is not in the uAPI yet). Nothing sent.
+38-vkms-dp-frame-sequential/0001-drm-vkms-keep-the-composer-running-for-every-writeba.patch
+38-vkms-dp-frame-sequential/0002-drm-vkms-give-a-connector-a-type-and-an-EDID-in-its-.patch
+38-vkms-dp-frame-sequential/0003-drm-vkms-set-a-connector-s-type-and-EDID-through-con.patch
+38-vkms-dp-frame-sequential/0004-drm-vkms-send-frame-sequential-modes-one-eye-per-fra.patch
+38-vkms-dp-frame-sequential/0005-drm-vkms-log-the-eye-MSA-MISC1-and-VSC-SDP-of-each-f.patch
+38-vkms-dp-frame-sequential/0006-drm-vkms-let-a-DisplayPort-connector-send-frame-sequ.patch
+38-vkms-dp-frame-sequential/0007-drm-vkms-test-frame-sequential-stereo.patch

@@ -1,0 +1,78 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 29 Oct 2026 15:11:54 -0300
+Subject: [PATCH 1/2] lib: know the frame-sequential stereo layout
+
+The kernel's frame-sequential stereo series adds
+DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL: the framebuffer holds both eyes side
+by side, left eye first, each the size of the mode, and the driver sends
+one eye per frame of the mode, naming it to the sink. A stereo
+framebuffer for such a mode hit igt_create_stereo_fb()'s assertion on
+unknown layouts, and kmstest_dump_mode() printed no layout for it.
+
+Define the flag until drm_mode.h carries it, give
+stereo_fb_layout_from_mode() its layout (a 2W x H framebuffer, the left
+eye at x 0 and the right eye at x W), and name it "FS" in mode dumps.
+
+Assisted-by: LLM
+---
+ lib/igt_fb.c  | 8 ++++++++
+ lib/igt_kms.c | 2 ++
+ lib/igt_kms.h | 9 +++++++++
+ 3 files changed, 19 insertions(+)
+
+diff --git a/lib/igt_fb.c b/lib/igt_fb.c
+index 6c3b9b0b9..1d386ebf0 100644
+--- a/lib/igt_fb.c
++++ b/lib/igt_fb.c
+@@ -2531,6 +2531,14 @@ static void stereo_fb_layout_from_mode(struct stereo_fb_layout *layout,
+ 		box_init(&layout->right,
+ 			 middle, 0, hdisplay - middle, vdisplay);
+ 		break;
++	case DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL:
++		/* Both eyes side by side, each the size of the mode, one sent per frame */
++		layout->fb_width = 2 * hdisplay;
++		layout->fb_height = vdisplay;
++
++		box_init(&layout->left, 0, 0, hdisplay, vdisplay);
++		box_init(&layout->right, hdisplay, 0, hdisplay, vdisplay);
++		break;
+ 	case DRM_MODE_FLAG_3D_FRAME_PACKING:
+ 	{
+ 		int vactive_space = mode->vtotal - vdisplay;
+diff --git a/lib/igt_kms.c b/lib/igt_kms.c
+index e1adf1b6f..188b54729 100644
+--- a/lib/igt_kms.c
++++ b/lib/igt_kms.c
+@@ -1264,6 +1264,8 @@ static const char *mode_stereo_name(const drmModeModeInfo *mode)
+ 		return "TB";
+ 	case DRM_MODE_FLAG_3D_SIDE_BY_SIDE_HALF:
+ 		return "SBSH";
++	case DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL:
++		return "FS";
+ 	default:
+ 		return NULL;
+ 	}
+diff --git a/lib/igt_kms.h b/lib/igt_kms.h
+index c6081a16a..ab5859a59 100644
+--- a/lib/igt_kms.h
++++ b/lib/igt_kms.h
+@@ -42,6 +42,15 @@
+ #include "igt_fb.h"
+ #include "ioctl_wrappers.h"
+ 
++/*
++ * Frame-sequential stereo: the framebuffer holds both eyes side by side,
++ * left eye first, and the driver sends one eye per frame of the mode. Not
++ * in drm_mode.h yet: proposed with the kernel's frame-sequential series.
++ */
++#ifndef DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL
++#define DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL	(9 << 14)
++#endif
++
+ /* Low-level helpers with kmstest_ prefix */
+ 
+ /**
+-- 
+2.53.0
+

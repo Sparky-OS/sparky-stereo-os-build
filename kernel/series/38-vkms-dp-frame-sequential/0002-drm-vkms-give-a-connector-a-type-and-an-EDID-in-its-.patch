@@ -1,0 +1,395 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 29 Oct 2026 14:02:13 -0300
+Subject: [PATCH] drm/vkms: give a connector a type and an EDID in its
+ configuration
+
+A VKMS connector is always a Virtual connector with DRM's default list
+of modes, so a test cannot model a real sink: a DisplayPort monitor, a
+television that declares 3D, a display that declares frame-sequential
+stereo in its EDID or DisplayID.
+
+Add a type, an EDID and an "EDID enabled" switch to the connector
+configuration, and build the connector from them: its DRM connector type
+is the configured one (Virtual by default, as before), and with the EDID
+enabled the connector lists the modes of that EDID through the EDID
+parser, as a real driver does, an EDID override set through debugfs
+still winning. The connector keeps its own copy of the EDID, because the
+configuration of a connector can go away before the connector does, and
+the configuration frees its copy when it is destroyed.
+
+The fields and their meaning follow Louis Chauvet's VKMS configfs series
+("VKMS: Introduce multiple configFS attributes", v5, in review), so tests
+written for it work here; once that series is merged, this patch and the
+next one give way to it.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/vkms/tests/vkms_config_test.c | 50 +++++++++++
+ drivers/gpu/drm/vkms/vkms_config.c            | 26 ++++++
+ drivers/gpu/drm/vkms/vkms_config.h            | 82 +++++++++++++++++++
+ drivers/gpu/drm/vkms/vkms_connector.c         | 47 ++++++++++-
+ drivers/gpu/drm/vkms/vkms_connector.h         | 14 +++-
+ drivers/gpu/drm/vkms/vkms_output.c            |  2 +-
+ 6 files changed, 216 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/gpu/drm/vkms/tests/vkms_config_test.c b/drivers/gpu/drm/vkms/tests/vkms_config_test.c
+index 1e4ea1863..7818b02af 100644
+--- a/drivers/gpu/drm/vkms/tests/vkms_config_test.c
++++ b/drivers/gpu/drm/vkms/tests/vkms_config_test.c
+@@ -993,6 +993,55 @@ static void vkms_config_test_connector_status(struct kunit *test)
+ 	vkms_config_destroy(config);
+ }
+ 
++static void vkms_config_test_connector_type_and_edid(struct kunit *test)
++{
++	static const u8 edid[256] = { 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00 };
++	struct vkms_config *config;
++	struct vkms_config_connector *connector_cfg;
++	unsigned int len;
++	const u8 *data;
++
++	config = vkms_config_create("test");
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, config);
++
++	connector_cfg = vkms_config_create_connector(config);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, connector_cfg);
++
++	/* The defaults keep the connector as it always was */
++	KUNIT_EXPECT_EQ(test, vkms_config_connector_get_type(connector_cfg),
++			DRM_MODE_CONNECTOR_VIRTUAL);
++	KUNIT_EXPECT_FALSE(test, vkms_config_connector_get_edid_enabled(connector_cfg));
++	KUNIT_EXPECT_NULL(test, vkms_config_connector_get_edid(connector_cfg, &len));
++	KUNIT_EXPECT_EQ(test, len, 0);
++
++	vkms_config_connector_set_type(connector_cfg, DRM_MODE_CONNECTOR_DisplayPort);
++	KUNIT_EXPECT_EQ(test, vkms_config_connector_get_type(connector_cfg),
++			DRM_MODE_CONNECTOR_DisplayPort);
++
++	vkms_config_connector_set_edid_enabled(connector_cfg, true);
++	KUNIT_EXPECT_TRUE(test, vkms_config_connector_get_edid_enabled(connector_cfg));
++
++	/* The EDID is copied */
++	KUNIT_ASSERT_EQ(test, vkms_config_connector_set_edid(connector_cfg, edid, sizeof(edid)), 0);
++	data = vkms_config_connector_get_edid(connector_cfg, &len);
++	KUNIT_ASSERT_NOT_NULL(test, data);
++	KUNIT_EXPECT_PTR_NE(test, data, &edid[0]);
++	KUNIT_EXPECT_EQ(test, len, sizeof(edid));
++	KUNIT_EXPECT_MEMEQ(test, data, edid, sizeof(edid));
++
++	/* A shorter one replaces it, and none removes it */
++	KUNIT_ASSERT_EQ(test, vkms_config_connector_set_edid(connector_cfg, edid, 128), 0);
++	vkms_config_connector_get_edid(connector_cfg, &len);
++	KUNIT_EXPECT_EQ(test, len, 128);
++	KUNIT_ASSERT_EQ(test, vkms_config_connector_set_edid(connector_cfg, NULL, 0), 0);
++	KUNIT_EXPECT_NULL(test, vkms_config_connector_get_edid(connector_cfg, &len));
++	KUNIT_EXPECT_EQ(test, len, 0);
++
++	/* Destroying the configuration frees the EDID too (kmemleak) */
++	KUNIT_ASSERT_EQ(test, vkms_config_connector_set_edid(connector_cfg, edid, sizeof(edid)), 0);
++	vkms_config_destroy(config);
++}
++
+ static struct kunit_case vkms_config_test_cases[] = {
+ 	KUNIT_CASE(vkms_config_test_empty_config),
+ 	KUNIT_CASE_PARAM(vkms_config_test_default_config,
+@@ -1015,6 +1064,7 @@ static struct kunit_case vkms_config_test_cases[] = {
+ 	KUNIT_CASE(vkms_config_test_encoder_get_possible_crtcs),
+ 	KUNIT_CASE(vkms_config_test_connector_get_possible_encoders),
+ 	KUNIT_CASE(vkms_config_test_connector_status),
++	KUNIT_CASE(vkms_config_test_connector_type_and_edid),
+ 	{}
+ };
+ 
+diff --git a/drivers/gpu/drm/vkms/vkms_config.c b/drivers/gpu/drm/vkms/vkms_config.c
+index 5a654d6de..4f3faea0e 100644
+--- a/drivers/gpu/drm/vkms/vkms_config.c
++++ b/drivers/gpu/drm/vkms/vkms_config.c
+@@ -369,6 +369,11 @@ static int vkms_config_show(struct seq_file *m, void *data)
+ 		seq_puts(m, "connector:\n");
+ 		seq_printf(m, "\tstatus=%d\n",
+ 			   vkms_config_connector_get_status(connector_cfg));
++		seq_printf(m, "\ttype=%d\n",
++			   vkms_config_connector_get_type(connector_cfg));
++		seq_printf(m, "\tedid_enabled=%d\n",
++			   vkms_config_connector_get_edid_enabled(connector_cfg));
++		seq_printf(m, "\tedid_len=%u\n", connector_cfg->edid_len);
+ 	}
+ 
+ 	return 0;
+@@ -597,6 +602,7 @@ struct vkms_config_connector *vkms_config_create_connector(struct vkms_config *c
+ 
+ 	connector_cfg->config = config;
+ 	connector_cfg->status = connector_status_connected;
++	connector_cfg->type = DRM_MODE_CONNECTOR_VIRTUAL;
+ 	xa_init_flags(&connector_cfg->possible_encoders, XA_FLAGS_ALLOC);
+ 
+ 	list_add_tail(&connector_cfg->link, &config->connectors);
+@@ -609,10 +615,30 @@ void vkms_config_destroy_connector(struct vkms_config_connector *connector_cfg)
+ {
+ 	xa_destroy(&connector_cfg->possible_encoders);
+ 	list_del(&connector_cfg->link);
++	kfree(connector_cfg->edid);
+ 	kfree(connector_cfg);
+ }
+ EXPORT_SYMBOL_IF_KUNIT(vkms_config_destroy_connector);
+ 
++int vkms_config_connector_set_edid(struct vkms_config_connector *connector_cfg,
++				   const u8 *edid, unsigned int len)
++{
++	u8 *copy = NULL;
++
++	if (len) {
++		copy = kmemdup(edid, len, GFP_KERNEL);
++		if (!copy)
++			return -ENOMEM;
++	}
++
++	kfree(connector_cfg->edid);
++	connector_cfg->edid = copy;
++	connector_cfg->edid_len = len;
++
++	return 0;
++}
++EXPORT_SYMBOL_IF_KUNIT(vkms_config_connector_set_edid);
++
+ int __must_check vkms_config_connector_attach_encoder(struct vkms_config_connector *connector_cfg,
+ 						      struct vkms_config_encoder *encoder_cfg)
+ {
+diff --git a/drivers/gpu/drm/vkms/vkms_config.h b/drivers/gpu/drm/vkms/vkms_config.h
+index 8f7f286a4..894024f1e 100644
+--- a/drivers/gpu/drm/vkms/vkms_config.h
++++ b/drivers/gpu/drm/vkms/vkms_config.h
+@@ -103,6 +103,10 @@ struct vkms_config_encoder {
+  * @link: Link to the others connector in vkms_config
+  * @config: The vkms_config this connector belongs to
+  * @status: Status (connected, disconnected...) of the connector
++ * @type: Type of the connector, a DRM_MODE_CONNECTOR_* value
++ * @edid_enabled: If true, the connector reads its modes from @edid
++ * @edid: The EDID of the sink, ignored if @edid_enabled is false
++ * @edid_len: Length of @edid in bytes
+  * @possible_encoders: Array of encoders that can be used with this connector
+  * @connector: Internal usage. This pointer should never be considered as valid.
+  *             It can be used to store a temporary reference to a VKMS connector
+@@ -114,6 +118,10 @@ struct vkms_config_connector {
+ 	struct vkms_config *config;
+ 
+ 	enum drm_connector_status status;
++	int type;
++	bool edid_enabled;
++	u8 *edid;
++	unsigned int edid_len;
+ 	struct xarray possible_encoders;
+ 
+ 	/* Internal usage */
+@@ -486,4 +494,78 @@ vkms_config_connector_set_status(struct vkms_config_connector *connector_cfg,
+ 	connector_cfg->status = status;
+ }
+ 
++/**
++ * vkms_config_connector_get_type() - Return the type of the connector
++ * @connector_cfg: Connector to get the type from
++ */
++static inline int
++vkms_config_connector_get_type(const struct vkms_config_connector *connector_cfg)
++{
++	return connector_cfg->type;
++}
++
++/**
++ * vkms_config_connector_set_type() - Set the type of the connector
++ * @connector_cfg: Connector to set the type to
++ * @type: A DRM_MODE_CONNECTOR_* value
++ */
++static inline void
++vkms_config_connector_set_type(struct vkms_config_connector *connector_cfg,
++			       int type)
++{
++	connector_cfg->type = type;
++}
++
++/**
++ * vkms_config_connector_get_edid_enabled() - If the connector reads an EDID
++ * @connector_cfg: Connector to check
++ */
++static inline bool
++vkms_config_connector_get_edid_enabled(const struct vkms_config_connector *connector_cfg)
++{
++	return connector_cfg->edid_enabled;
++}
++
++/**
++ * vkms_config_connector_set_edid_enabled() - Make the connector read its EDID
++ * @connector_cfg: Connector to modify
++ * @enabled: If true, the connector lists the modes of its EDID; if false, the
++ *	     default list of modes
++ */
++static inline void
++vkms_config_connector_set_edid_enabled(struct vkms_config_connector *connector_cfg,
++				       bool enabled)
++{
++	connector_cfg->edid_enabled = enabled;
++}
++
++/**
++ * vkms_config_connector_get_edid() - Return the EDID of the connector
++ * @connector_cfg: Connector to get the EDID from
++ * @len: Where to store the length of the EDID in bytes
++ *
++ * Returns:
++ * The EDID, or NULL if none was set.
++ */
++static inline const u8 *
++vkms_config_connector_get_edid(const struct vkms_config_connector *connector_cfg,
++			       unsigned int *len)
++{
++	*len = connector_cfg->edid_len;
++	return connector_cfg->edid;
++}
++
++/**
++ * vkms_config_connector_set_edid() - Set the EDID of the connector
++ * @connector_cfg: Connector to modify
++ * @edid: The EDID, copied
++ * @len: Length of @edid in bytes; 0 removes the EDID
++ *
++ * Returns:
++ * 0 on success, -ENOMEM if the copy could not be allocated (the previous EDID
++ * is kept).
++ */
++int vkms_config_connector_set_edid(struct vkms_config_connector *connector_cfg,
++				   const u8 *edid, unsigned int len);
++
+ #endif /* _VKMS_CONFIG_H_ */
+diff --git a/drivers/gpu/drm/vkms/vkms_connector.c b/drivers/gpu/drm/vkms/vkms_connector.c
+index b0a6b212d..2064c2c91 100644
+--- a/drivers/gpu/drm/vkms/vkms_connector.c
++++ b/drivers/gpu/drm/vkms/vkms_connector.c
+@@ -42,10 +42,36 @@ static const struct drm_connector_funcs vkms_connector_funcs = {
+ 	.atomic_destroy_state = drm_atomic_helper_connector_destroy_state,
+ };
+ 
++static int vkms_connector_read_block(void *context, u8 *buf, unsigned int block,
++				     size_t len)
++{
++	struct vkms_connector *connector = context;
++
++	if ((block + 1) * len > connector->edid_len)
++		return -EINVAL;
++
++	memcpy(buf, connector->edid + block * len, len);
++
++	return 0;
++}
++
+ static int vkms_conn_get_modes(struct drm_connector *connector)
+ {
++	struct vkms_connector *vkms_connector = drm_connector_to_vkms_connector(connector);
++	const struct drm_edid *drm_edid;
+ 	int count;
+ 
++	if (vkms_connector->edid_enabled) {
++		/* An EDID override set through debugfs wins, as on real hardware */
++		drm_edid = drm_edid_read_custom(connector, vkms_connector_read_block,
++						vkms_connector);
++		drm_edid_connector_update(connector, drm_edid);
++		count = drm_edid_connector_add_modes(connector);
++		drm_edid_free(drm_edid);
++
++		return count;
++	}
++
+ 	/* Use the default modes list from DRM */
+ 	count = drm_add_modes_noedid(connector, XRES_MAX, YRES_MAX);
+ 	drm_set_preferred_mode(connector, XRES_DEF, YRES_DEF);
+@@ -68,18 +94,35 @@ static const struct drm_connector_helper_funcs vkms_conn_helper_funcs = {
+ 	.best_encoder = vkms_conn_best_encoder,
+ };
+ 
+-struct vkms_connector *vkms_connector_init(struct vkms_device *vkmsdev)
++struct vkms_connector *vkms_connector_init(struct vkms_device *vkmsdev,
++					   struct vkms_config_connector *connector_cfg)
+ {
+ 	struct drm_device *dev = &vkmsdev->drm;
+ 	struct vkms_connector *connector;
++	const u8 *edid;
++	unsigned int edid_len;
+ 	int ret;
+ 
+ 	connector = drmm_kzalloc(dev, sizeof(*connector), GFP_KERNEL);
+ 	if (!connector)
+ 		return ERR_PTR(-ENOMEM);
+ 
++	/*
++	 * The EDID cannot change while the device exists, so keep a copy: the
++	 * configuration of a connector can go away before the connector does.
++	 */
++	connector->edid_enabled = vkms_config_connector_get_edid_enabled(connector_cfg);
++	edid = vkms_config_connector_get_edid(connector_cfg, &edid_len);
++	if (connector->edid_enabled && edid_len) {
++		connector->edid = drmm_kmalloc(dev, edid_len, GFP_KERNEL);
++		if (!connector->edid)
++			return ERR_PTR(-ENOMEM);
++		memcpy(connector->edid, edid, edid_len);
++		connector->edid_len = edid_len;
++	}
++
+ 	ret = drmm_connector_init(dev, &connector->base, &vkms_connector_funcs,
+-				  DRM_MODE_CONNECTOR_VIRTUAL, NULL);
++				  vkms_config_connector_get_type(connector_cfg), NULL);
+ 	if (ret)
+ 		return ERR_PTR(ret);
+ 
+diff --git a/drivers/gpu/drm/vkms/vkms_connector.h b/drivers/gpu/drm/vkms/vkms_connector.h
+index ed312f4ef..a5dc4b25a 100644
+--- a/drivers/gpu/drm/vkms/vkms_connector.h
++++ b/drivers/gpu/drm/vkms/vkms_connector.h
+@@ -11,20 +11,30 @@
+ /**
+  * struct vkms_connector - VKMS custom type wrapping around the DRM connector
+  *
+- * @drm: Base DRM connector
++ * @base: Base DRM connector
++ * @edid_enabled: The connector reads its modes from @edid
++ * @edid: Copy of the configured EDID, NULL if there is none
++ * @edid_len: Length of @edid in bytes
+  */
+ struct vkms_connector {
+ 	struct drm_connector base;
++	bool edid_enabled;
++	u8 *edid;
++	unsigned int edid_len;
+ };
+ 
++struct vkms_config_connector;
++
+ /**
+  * vkms_connector_init() - Initialize a connector
+  * @vkmsdev: VKMS device containing the connector
++ * @connector_cfg: Configuration of the connector
+  *
+  * Returns:
+  * The connector or an error on failure.
+  */
+-struct vkms_connector *vkms_connector_init(struct vkms_device *vkmsdev);
++struct vkms_connector *vkms_connector_init(struct vkms_device *vkmsdev,
++					   struct vkms_config_connector *connector_cfg);
+ 
+ /**
+  * vkms_trigger_connector_hotplug() - Update the device's connectors status
+diff --git a/drivers/gpu/drm/vkms/vkms_output.c b/drivers/gpu/drm/vkms/vkms_output.c
+index 86ce07a61..1288c8551 100644
+--- a/drivers/gpu/drm/vkms/vkms_output.c
++++ b/drivers/gpu/drm/vkms/vkms_output.c
+@@ -97,7 +97,7 @@ int vkms_output_init(struct vkms_device *vkmsdev)
+ 		struct vkms_config_encoder *possible_encoder;
+ 		unsigned long idx = 0;
+ 
+-		connector_cfg->connector = vkms_connector_init(vkmsdev);
++		connector_cfg->connector = vkms_connector_init(vkmsdev, connector_cfg);
+ 		if (IS_ERR(connector_cfg->connector)) {
+ 			DRM_ERROR("Failed to init connector\n");
+ 			return PTR_ERR(connector_cfg->connector);
+-- 
+2.53.0
+

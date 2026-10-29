@@ -1,0 +1,378 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 29 Oct 2026 14:10:14 -0300
+Subject: [PATCH] drm/vkms: log the eye, MSA MISC1 and VSC SDP of each frame
+
+A DisplayPort source tells the sink which eye each frame of a
+frame-sequential stream carries: in the vertical blanking before the
+frame, the Main Stream Attribute's MISC1 bits 2:1 say 11b for a left
+eye, 01b for a right eye and 00b for no stereo (DisplayPort 1.1a, as
+VESA's public DisplayPort 1.2 overview of December 2010 quotes it, and
+as drm_dp.h defines DP_MSA_MISC_STEREO_*), and since DisplayPort 1.2 a
+VSC SDP whose stereo interface byte, DB0, names the method, here frame
+or field sequential with the eye named by MISC1 (0x01). VKMS has no
+link, so a test could not check what a driver would signal with each
+frame, only the pixels.
+
+Give each CRTC a debugfs file, stereo_link, that lists its last 256
+frames, one per line, the oldest first:
+
+  frame=120 eye=left misc1=0x06 vsc=0x01 db0=0x01 scanout=4 wb=0
+
+the frame's vblank count; its eye (none outside frame-sequential
+modes); the MISC1 stereo bits the frame was announced with; the
+revision of the VSC SDP sent with it, built with drm_dp_vsc_sdp_pack()
+as a driver would (revision 0x1, "3D stereo only"; 0x00 when none is
+sent, as outside frame-sequential modes) and its DB0; a number that
+changes each time a commit that updates the planes takes effect, so a
+test can see that both eyes of a pair show the same planes; and
+whether the composer wrote the frame into a writeback buffer, which
+ties a writeback job to its frame and eye.
+
+VKMS now selects the DisplayPort helpers for the VSC SDP packer.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/vkms/Kconfig         |   2 +
+ drivers/gpu/drm/vkms/vkms_composer.c |   1 +
+ drivers/gpu/drm/vkms/vkms_crtc.c     | 159 +++++++++++++++++++++++++++
+ drivers/gpu/drm/vkms/vkms_drv.h      |  51 +++++++++
+ 4 files changed, 213 insertions(+)
+
+diff --git a/drivers/gpu/drm/vkms/Kconfig b/drivers/gpu/drm/vkms/Kconfig
+index 3977bbb99..66a0b54ff 100644
+--- a/drivers/gpu/drm/vkms/Kconfig
++++ b/drivers/gpu/drm/vkms/Kconfig
+@@ -4,6 +4,8 @@ config DRM_VKMS
+ 	tristate "Virtual KMS (EXPERIMENTAL)"
+ 	depends on DRM && MMU
+ 	select DRM_CLIENT_SELECTION
++	select DRM_DISPLAY_DP_HELPER
++	select DRM_DISPLAY_HELPER
+ 	select DRM_KMS_HELPER
+ 	select DRM_GEM_SHMEM_HELPER
+ 	select CRC32
+diff --git a/drivers/gpu/drm/vkms/vkms_composer.c b/drivers/gpu/drm/vkms/vkms_composer.c
+index 8c4a526e6..8e38e6350 100644
+--- a/drivers/gpu/drm/vkms/vkms_composer.c
++++ b/drivers/gpu/drm/vkms/vkms_composer.c
+@@ -664,6 +664,7 @@ void vkms_composer_worker(struct work_struct *work)
+ 		return;
+ 
+ 	if (wb_pending) {
++		vkms_stereo_link_mark_writeback(out, frame_end);
+ 		drm_writeback_signal_completion(&out->wb_connector, 0);
+ 		spin_lock_irq(&out->composer_lock);
+ 		crtc_state->wb_pending = false;
+diff --git a/drivers/gpu/drm/vkms/vkms_crtc.c b/drivers/gpu/drm/vkms/vkms_crtc.c
+index 0ee49159b..9abaf7547 100644
+--- a/drivers/gpu/drm/vkms/vkms_crtc.c
++++ b/drivers/gpu/drm/vkms/vkms_crtc.c
+@@ -1,7 +1,11 @@
+ // SPDX-License-Identifier: GPL-2.0+
+ 
++#include <linux/debugfs.h>
+ #include <linux/dma-fence.h>
++#include <linux/seq_file.h>
+ 
++#include <drm/display/drm_dp.h>
++#include <drm/display/drm_dp_helper.h>
+ #include <drm/drm_atomic.h>
+ #include <drm/drm_atomic_helper.h>
+ #include <drm/drm_blend.h>
+@@ -11,8 +15,155 @@
+ #include <drm/drm_vblank.h>
+ #include <drm/drm_vblank_helper.h>
+ 
++#include <kunit/visibility.h>
++
+ #include "vkms_drv.h"
+ 
++/**
++ * vkms_stereo_link_frame_info() - What a DisplayPort source sends with a frame
++ * @eye: The eye the frame carries, %VKMS_EYE_NONE outside frame-sequential modes
++ * @info: Filled with @eye, the MSA MISC1 stereo bits and the VSC SDP's revision and DB0
++ *
++ * In the vertical blanking before each frame of a frame-sequential stream the source names
++ * the eye of that frame in MSA MISC1 bits 2:1 (DisplayPort 1.1a: 11b left, 01b right, 00b
++ * no stereo, DP_MSA_MISC_STEREO_*), and sends a VSC SDP of revision 0x1, "3D stereo only"
++ * (DisplayPort 1.2), whose stereo interface byte says frame/field sequential with the eye
++ * named by MISC1. Outside frame-sequential modes MISC1 says no stereo and no VSC SDP is sent.
++ */
++void vkms_stereo_link_frame_info(enum vkms_eye eye, struct vkms_stereo_link_frame *info)
++{
++	struct drm_dp_vsc_sdp vsc = {
++		.sdp_type = DP_SDP_VSC,
++		.revision = 0x1,
++		.length = 0x1,
++		.stereo_interface = DP_VSC_SDP_STEREO_FRAME_SEQUENTIAL |
++				    DP_VSC_SDP_STEREO_FS_MSA_MISC1,
++	};
++	struct dp_sdp sdp;
++
++	info->eye = eye;
++	info->vsc_revision = 0;
++	info->vsc_db0 = 0;
++
++	switch (eye) {
++	case VKMS_EYE_LEFT:
++		info->misc1 = DP_MSA_MISC_STEREO_PROG_LEFT_EYE >> 8;
++		break;
++	case VKMS_EYE_RIGHT:
++		info->misc1 = DP_MSA_MISC_STEREO_PROG_RIGHT_EYE >> 8;
++		break;
++	default:
++		info->misc1 = DP_MSA_MISC_STEREO_NO_3D >> 8;
++		return;
++	}
++
++	if (drm_dp_vsc_sdp_pack(&vsc, &sdp) < 0)
++		return;
++
++	info->vsc_revision = sdp.sdp_header.HB2;
++	info->vsc_db0 = sdp.db[0];
++}
++EXPORT_SYMBOL_IF_KUNIT(vkms_stereo_link_frame_info);
++
++static void vkms_stereo_link_log_frame(struct vkms_output *output, u64 frame,
++				       enum vkms_eye eye, u32 scanout_seq)
++{
++	struct vkms_stereo_link_log *log = &output->stereo_link;
++	struct vkms_stereo_link_frame info = {
++		.frame = frame,
++		.scanout_seq = scanout_seq,
++	};
++	unsigned long flags;
++
++	vkms_stereo_link_frame_info(eye, &info);
++
++	spin_lock_irqsave(&log->lock, flags);
++	log->frames[log->next] = info;
++	log->next = (log->next + 1) % VKMS_STEREO_LINK_FRAMES;
++	log->count = min(log->count + 1, VKMS_STEREO_LINK_FRAMES);
++	spin_unlock_irqrestore(&log->lock, flags);
++}
++
++/**
++ * vkms_stereo_link_mark_writeback() - Note that a frame went into a writeback buffer
++ * @out: The output
++ * @frame: The frame the composer wrote back
++ */
++void vkms_stereo_link_mark_writeback(struct vkms_output *out, u64 frame)
++{
++	struct vkms_stereo_link_log *log = &out->stereo_link;
++	unsigned long flags;
++	unsigned int i;
++
++	spin_lock_irqsave(&log->lock, flags);
++	for (i = 0; i < log->count; i++) {
++		struct vkms_stereo_link_frame *f =
++			&log->frames[(log->next + VKMS_STEREO_LINK_FRAMES - 1 - i) %
++				     VKMS_STEREO_LINK_FRAMES];
++
++		if (f->frame == frame) {
++			f->writeback = true;
++			break;
++		}
++	}
++	spin_unlock_irqrestore(&log->lock, flags);
++}
++
++static const char *vkms_eye_name(enum vkms_eye eye)
++{
++	switch (eye) {
++	case VKMS_EYE_LEFT:
++		return "left";
++	case VKMS_EYE_RIGHT:
++		return "right";
++	default:
++		return "none";
++	}
++}
++
++/*
++ * One line per frame, the oldest first: the frame (its vblank count), the eye, the MISC1 byte
++ * and the VSC SDP (revision 0x00 when none is sent), the planes it shows, and whether it was
++ * written back.
++ */
++static int vkms_stereo_link_show(struct seq_file *m, void *data)
++{
++	struct vkms_output *output = drm_crtc_to_vkms_output(m->private);
++	struct vkms_stereo_link_log *log = &output->stereo_link;
++	struct vkms_stereo_link_frame *frames;
++	unsigned int count, first, i;
++
++	frames = kmalloc_array(VKMS_STEREO_LINK_FRAMES, sizeof(*frames), GFP_KERNEL);
++	if (!frames)
++		return -ENOMEM;
++
++	spin_lock_irq(&log->lock);
++	count = log->count;
++	first = (log->next + VKMS_STEREO_LINK_FRAMES - count) % VKMS_STEREO_LINK_FRAMES;
++	for (i = 0; i < count; i++)
++		frames[i] = log->frames[(first + i) % VKMS_STEREO_LINK_FRAMES];
++	spin_unlock_irq(&log->lock);
++
++	for (i = 0; i < count; i++)
++		seq_printf(m, "frame=%llu eye=%s misc1=0x%02x vsc=0x%02x db0=0x%02x scanout=%u wb=%d\n",
++			   frames[i].frame, vkms_eye_name(frames[i].eye), frames[i].misc1,
++			   frames[i].vsc_revision, frames[i].vsc_db0, frames[i].scanout_seq,
++			   frames[i].writeback);
++
++	kfree(frames);
++
++	return 0;
++}
++DEFINE_SHOW_ATTRIBUTE(vkms_stereo_link);
++
++static int vkms_crtc_late_register(struct drm_crtc *crtc)
++{
++	debugfs_create_file("stereo_link", 0444, crtc->debugfs_entry, crtc,
++			    &vkms_stereo_link_fops);
++
++	return 0;
++}
++
+ /*
+  * A state that waited for the start of a pair takes effect: the composer takes its planes from
+  * this frame on, and its event says so.
+@@ -26,6 +177,7 @@ static void vkms_crtc_latch_pending(struct drm_crtc *crtc, struct vkms_output *o
+ 	output->composer_state = output->fs_pending_state;
+ 	output->fs_pending_state = NULL;
+ 	output->fs_pending_event = NULL;
++	output->scanout_seq++;
+ 
+ 	if (event) {
+ 		spin_lock_irqsave(&crtc->dev->event_lock, flags);
+@@ -72,6 +224,8 @@ static bool vkms_crtc_handle_vblank_timeout(struct drm_crtc *crtc)
+ 	}
+ 
+ 	state = output->composer_state;
++	if (state)
++		vkms_stereo_link_log_frame(output, frame, eye, output->scanout_seq);
+ 	spin_unlock(&output->lock);
+ 
+ 	if (state && output->composer_enabled) {
+@@ -149,6 +303,7 @@ static const struct drm_crtc_funcs vkms_crtc_funcs = {
+ 	.atomic_duplicate_state = vkms_atomic_crtc_duplicate_state,
+ 	.atomic_destroy_state   = vkms_atomic_crtc_destroy_state,
+ 	DRM_CRTC_VBLANK_TIMER_FUNCS,
++	.late_register		= vkms_crtc_late_register,
+ 	.get_crc_sources	= vkms_get_crc_sources,
+ 	.set_crc_source		= vkms_set_crc_source,
+ 	.verify_crc_source	= vkms_verify_crc_source,
+@@ -275,6 +430,9 @@ static void vkms_crtc_atomic_flush(struct drm_crtc *crtc,
+ 	if (drm_atomic_crtc_needs_modeset(crtc->state))
+ 		vkms_output->fs_first_valid = false;
+ 
++	if (crtc->state->planes_changed || drm_atomic_crtc_needs_modeset(crtc->state))
++		vkms_output->scanout_seq++;
++
+ 	vkms_output->composer_state = to_vkms_crtc_state(crtc->state);
+ 
+ 	spin_unlock_irq(&vkms_output->lock);
+@@ -320,6 +478,7 @@ struct vkms_output *vkms_crtc_init(struct drm_device *dev, struct drm_plane *pri
+ 
+ 	spin_lock_init(&vkms_out->lock);
+ 	spin_lock_init(&vkms_out->composer_lock);
++	spin_lock_init(&vkms_out->stereo_link.lock);
+ 
+ 	vkms_out->composer_workq = drmm_alloc_ordered_workqueue(dev, "vkms_composer", 0);
+ 	if (IS_ERR(vkms_out->composer_workq))
+diff --git a/drivers/gpu/drm/vkms/vkms_drv.h b/drivers/gpu/drm/vkms/vkms_drv.h
+index 52c8cad98..4772d39d7 100644
+--- a/drivers/gpu/drm/vkms/vkms_drv.h
++++ b/drivers/gpu/drm/vkms/vkms_drv.h
+@@ -228,6 +228,46 @@ struct vkms_crtc_state {
+ 	enum vkms_eye eye;
+ };
+ 
++#define VKMS_STEREO_LINK_FRAMES 256
++
++/**
++ * struct vkms_stereo_link_frame - What a DisplayPort source would send with one frame
++ *
++ * @frame: The frame, a vblank count of the CRTC
++ * @eye: The eye the frame carries, %VKMS_EYE_NONE outside frame-sequential modes
++ * @misc1: The stereo bits of the Main Stream Attribute's MISC1 byte sent in the vertical
++ *	   blanking before the frame (DP_MSA_MISC_STEREO_* shifted to MISC1); the other bits
++ *	   of the byte are not modelled and read zero
++ * @vsc_revision: The revision (HB2) of the VSC SDP sent with the frame, 0 when none is sent
++ * @vsc_db0: Its stereo interface byte (DB0, DP_VSC_SDP_STEREO_*)
++ * @scanout_seq: &vkms_output.scanout_seq when the frame started: which planes it shows
++ * @writeback: The composer wrote this frame into a writeback buffer
++ */
++struct vkms_stereo_link_frame {
++	u64 frame;
++	enum vkms_eye eye;
++	u8 misc1;
++	u8 vsc_revision;
++	u8 vsc_db0;
++	u32 scanout_seq;
++	bool writeback;
++};
++
++/**
++ * struct vkms_stereo_link_log - The last frames a CRTC sent, for debugfs
++ *
++ * @lock: Protects the other members
++ * @next: Where the next frame goes in @frames
++ * @count: How many entries of @frames are filled
++ * @frames: A ring of the last %VKMS_STEREO_LINK_FRAMES frames
++ */
++struct vkms_stereo_link_log {
++	spinlock_t lock; /* the vblank handler writes, the composer and debugfs read */
++	unsigned int next;
++	unsigned int count;
++	struct vkms_stereo_link_frame frames[VKMS_STEREO_LINK_FRAMES];
++};
++
+ /**
+  * struct vkms_output - Internal representation of all output components in VKMS
+  *
+@@ -248,6 +288,8 @@ struct vkms_crtc_state {
+  *		 file, so the calls never race
+  * @composer_state: Protected by @lock, current state of this VKMS output
+  * @composer_lock: Lock used internally to protect @composer_state members
++ * @scanout_seq: Protected by @lock, counts the planes latched for scanout: it changes when a
++ *		 commit that updates the planes takes effect
+  * @fs_first_valid: Protected by @lock, true once @fs_first_frame holds the first frame of the
+  *		    current mode
+  * @fs_first_frame: Protected by @lock, the first frame of a frame-sequential mode, a left-eye
+@@ -256,6 +298,8 @@ struct vkms_crtc_state {
+  *		      (the start of the next pair) to replace @composer_state
+  * @fs_pending_event: Protected by @lock, the event of @fs_pending_state, sent when it takes
+  *		      effect
++ * @stereo_link: What the output sent with its last frames: the eye, the MSA MISC1 stereo bits
++ *		 and the VSC SDP, as a DisplayPort source would (debugfs "stereo_link")
+  */
+ struct vkms_output {
+ 	struct drm_crtc crtc;
+@@ -271,10 +315,13 @@ struct vkms_output {
+ 
+ 	spinlock_t composer_lock;
+ 
++	u32 scanout_seq;
+ 	bool fs_first_valid;
+ 	u64 fs_first_frame;
+ 	struct vkms_crtc_state *fs_pending_state;
+ 	struct drm_pending_vblank_event *fs_pending_event;
++
++	struct vkms_stereo_link_log stereo_link;
+ };
+ 
+ struct vkms_config;
+@@ -364,6 +411,10 @@ int vkms_set_crc_source(struct drm_crtc *crtc, const char *src_name);
+ int vkms_verify_crc_source(struct drm_crtc *crtc, const char *source_name,
+ 			   size_t *values_cnt);
+ 
++/* Stereo link */
++void vkms_stereo_link_frame_info(enum vkms_eye eye, struct vkms_stereo_link_frame *info);
++void vkms_stereo_link_mark_writeback(struct vkms_output *out, u64 frame);
++
+ /* Composer Support */
+ void vkms_composer_worker(struct work_struct *work);
+ void vkms_set_composer(struct vkms_output *out, bool enabled);
+-- 
+2.53.0
+

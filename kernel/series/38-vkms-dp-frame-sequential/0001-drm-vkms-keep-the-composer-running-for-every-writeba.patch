@@ -1,0 +1,149 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 29 Oct 2026 14:33:03 -0300
+Subject: [PATCH] drm/vkms: keep the composer running for every writeback job
+
+The composer runs while vkms_output.composer_enabled is set: a writeback
+commit sets it in its atomic_commit hook, and the job's cleanup clears
+it. A job is cleaned up from a worker after its completion is signalled,
+so a client that commits the next writeback job as soon as the previous
+fence signals can see its new job queued, then the composer switched off
+by the old job's cleanup: the new job is never composed and its fence
+never signals. Closing the CRC file clears it in the same way while a
+writeback job waits, and opening it while one runs takes a second vblank
+reference that the next disable drops.
+
+IGT's kms_frame_sequential hit it on the third of back-to-back captures:
+the composer stopped after the second job's cleanup, and the third
+fence timed out after a second, the frames after it never written back.
+
+Count the composer's users instead of switching it: the CRC source while
+it is set, and each writeback job from its preparation to its cleanup,
+which every prepared job gets (an unprepared job is never cleaned up).
+Each user holds a vblank reference of its own, and the composer runs
+while there is one.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/vkms/vkms_composer.c  | 30 +++++++++++++++++++++------
+ drivers/gpu/drm/vkms/vkms_drv.h       |  6 ++++++
+ drivers/gpu/drm/vkms/vkms_writeback.c |  8 +++++--
+ 3 files changed, 36 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/gpu/drm/vkms/vkms_composer.c b/drivers/gpu/drm/vkms/vkms_composer.c
+index 83d217085..fe3145681 100644
+--- a/drivers/gpu/drm/vkms/vkms_composer.c
++++ b/drivers/gpu/drm/vkms/vkms_composer.c
+@@ -705,19 +705,31 @@ int vkms_verify_crc_source(struct drm_crtc *crtc, const char *src_name,
+ 	return 0;
+ }
+ 
++/*
++ * The composer runs while it has a user: the CRC source while it is set, and
++ * each writeback job from its preparation to its cleanup. A job is cleaned up
++ * after its completion is signalled, so the job of the next commit can be
++ * prepared before the previous one is cleaned up: each user holds the composer
++ * and a vblank reference of its own.
++ */
+ void vkms_set_composer(struct vkms_output *out, bool enabled)
+ {
+-	bool old_enabled;
++	bool put = false;
+ 
+ 	if (enabled)
+ 		drm_crtc_vblank_get(&out->crtc);
+ 
+ 	spin_lock_irq(&out->lock);
+-	old_enabled = out->composer_enabled;
+-	out->composer_enabled = enabled;
++	if (enabled) {
++		out->composer_users++;
++	} else if (!WARN_ON(!out->composer_users)) {
++		out->composer_users--;
++		put = true;
++	}
++	out->composer_enabled = out->composer_users > 0;
+ 	spin_unlock_irq(&out->lock);
+ 
+-	if (old_enabled)
++	if (put)
+ 		drm_crtc_vblank_put(&out->crtc);
+ }
+ 
+@@ -728,8 +740,14 @@ int vkms_set_crc_source(struct drm_crtc *crtc, const char *src_name)
+ 	int ret = 0;
+ 
+ 	ret = vkms_crc_parse_source(src_name, &enabled);
++	if (ret)
++		return ret;
+ 
+-	vkms_set_composer(out, enabled);
++	/* The core sets a source when the CRC file is opened and none when it is closed */
++	if (enabled != out->crc_enabled) {
++		out->crc_enabled = enabled;
++		vkms_set_composer(out, enabled);
++	}
+ 
+-	return ret;
++	return 0;
+ }
+diff --git a/drivers/gpu/drm/vkms/vkms_drv.h b/drivers/gpu/drm/vkms/vkms_drv.h
+index 0933e4ce0..85ab609ac 100644
+--- a/drivers/gpu/drm/vkms/vkms_drv.h
++++ b/drivers/gpu/drm/vkms/vkms_drv.h
+@@ -212,6 +212,10 @@ struct vkms_crtc_state {
+  * @lock: Lock used to protect concurrent access to the composer
+  * @composer_enabled: Protected by @lock, true when the VKMS composer is active (crc needed or
+  *		      writeback)
++ * @composer_users: Protected by @lock, the CRC source if set and each writeback job between
++ *		    its preparation and its cleanup: the composer runs while there is one
++ * @crc_enabled: The CRC source is set; the core sets it only from the one opener of the CRC
++ *		 file, so the calls never race
+  * @composer_state: Protected by @lock, current state of this VKMS output
+  * @composer_lock: Lock used internally to protect @composer_state members
+  */
+@@ -223,6 +227,8 @@ struct vkms_output {
+ 	spinlock_t lock;
+ 
+ 	bool composer_enabled;
++	unsigned int composer_users;
++	bool crc_enabled;
+ 	struct vkms_crtc_state *composer_state;
+ 
+ 	spinlock_t composer_lock;
+diff --git a/drivers/gpu/drm/vkms/vkms_writeback.c b/drivers/gpu/drm/vkms/vkms_writeback.c
+index ecf29a2c0..19d68c58f 100644
+--- a/drivers/gpu/drm/vkms/vkms_writeback.c
++++ b/drivers/gpu/drm/vkms/vkms_writeback.c
+@@ -75,6 +75,9 @@ static int vkms_wb_connector_get_modes(struct drm_connector *connector)
+ static int vkms_wb_prepare_job(struct drm_writeback_connector *wb_connector,
+ 			       struct drm_writeback_job *job)
+ {
++	struct vkms_output *vkms_output = container_of(wb_connector,
++						       struct vkms_output,
++						       wb_connector);
+ 	struct vkms_writeback_job *vkmsjob;
+ 	int ret;
+ 
+@@ -96,6 +99,9 @@ static int vkms_wb_prepare_job(struct drm_writeback_connector *wb_connector,
+ 
+ 	job->priv = vkmsjob;
+ 
++	/* Released by vkms_wb_cleanup_job(), which every prepared job gets */
++	vkms_set_composer(vkms_output, true);
++
+ 	return 0;
+ 
+ err_kfree:
+@@ -141,8 +147,6 @@ static void vkms_wb_atomic_commit(struct drm_connector *conn,
+ 	if (!conn_state)
+ 		return;
+ 
+-	vkms_set_composer(output, true);
+-
+ 	active_wb = conn_state->writeback_job->priv;
+ 	wb_frame_info = &active_wb->wb_frame_info;
+ 
+-- 
+2.53.0
+

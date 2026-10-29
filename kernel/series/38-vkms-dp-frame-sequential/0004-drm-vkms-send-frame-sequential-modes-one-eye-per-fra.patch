@@ -1,0 +1,466 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 29 Oct 2026 14:09:34 -0300
+Subject: [PATCH] drm/vkms: send frame-sequential modes one eye per frame
+
+The frame of a frame-sequential mode (DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL)
+holds both eyes side by side, twice the mode's width, while the link
+keeps the 2D timing and carries one eye per frame, the left eye first;
+a page flip takes effect only at the start of a left-eye frame, so both
+eyes of a pair come from one framebuffer. Intel's display engine calls
+this "FS HW Auto" (TRANS_STEREO3D_CTL, with PLANE_CTL's "Stereo Surface
+Vblank Mask" holding flips for the left eye), AMD's display core has the
+same with its OTG stereo and HUBP stereo flips, and NVIDIA's with
+PAIR_FLIP: VKMS is how to test that model without such hardware.
+
+Model it in the composer and the CRTC:
+- the planes are placed in the frame of both eyes, as the atomic check
+  already clips them, and the composer blends only the half a frame
+  sends, the left one on left-eye frames and the right one on right-eye
+  frames: the CRC and the writeback connector see each frame as sent,
+  one eye at the size of the mode;
+- the eye of a frame follows from its vblank count, counted from the
+  first frame after the mode was set, a left-eye one;
+- a commit that updates the planes while the next frame is a right-eye
+  one waits for the frame after it: its state replaces the composer's at
+  that left-eye frame, and its event is sent then, so its sequence and
+  timestamp are those of the frame that shows it; a commit that changes
+  no plane, a writeback job alone for instance, and a modeset take effect
+  at the next frame as before;
+- a CRC goes only to the frame the composer composed: when the composer
+  falls behind, the frames it missed carried the other eye.
+
+clamp_line_coordinates() now takes the start of the line in the output
+from blend_line(), which equals the plane's destination x in every mode
+but frame sequential's right-eye frames.
+
+No connector of VKMS accepts frame-sequential modes yet, so nothing
+changes; a later patch lets a connector opt in.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/vkms/vkms_composer.c | 55 +++++++++++------
+ drivers/gpu/drm/vkms/vkms_crtc.c     | 92 +++++++++++++++++++++++++++-
+ drivers/gpu/drm/vkms/vkms_drv.h      | 43 +++++++++++++
+ 3 files changed, 169 insertions(+), 21 deletions(-)
+
+diff --git a/drivers/gpu/drm/vkms/vkms_composer.c b/drivers/gpu/drm/vkms/vkms_composer.c
+index fe3145681..8c4a526e6 100644
+--- a/drivers/gpu/drm/vkms/vkms_composer.c
++++ b/drivers/gpu/drm/vkms/vkms_composer.c
+@@ -288,6 +288,7 @@ static enum pixel_read_direction direction_for_rotation(unsigned int rotation)
+  * @src_line: source line of the reading. Only the top-left coordinate is used. This rectangle
+  * must be rotated and have a shape of 1*pixel_count if @direction is vertical and a shape of
+  * pixel_count*1 if @direction is horizontal.
++ * @dst_x1: x coordinate in the output line where @src_line starts
+  * @src_x_start: x start coordinate for the line reading
+  * @src_y_start: y start coordinate for the line reading
+  * @dst_x_start: x coordinate to blend the read line
+@@ -299,13 +300,13 @@ static enum pixel_read_direction direction_for_rotation(unsigned int rotation)
+  */
+ static void clamp_line_coordinates(enum pixel_read_direction direction,
+ 				   const struct vkms_plane_state *current_plane,
+-				   const struct drm_rect *src_line, int *src_x_start,
++				   const struct drm_rect *src_line, int dst_x1, int *src_x_start,
+ 				   int *src_y_start, int *dst_x_start, int *pixel_count)
+ {
+ 	/* By default the start points are correct */
+ 	*src_x_start = src_line->x1;
+ 	*src_y_start = src_line->y1;
+-	*dst_x_start = current_plane->frame_info->dst.x1;
++	*dst_x_start = dst_x1;
+ 
+ 	/* Get the correct number of pixel to blend, it depends of the direction */
+ 	switch (direction) {
+@@ -356,20 +357,25 @@ static void clamp_line_coordinates(enum pixel_read_direction direction,
+  *
+  * @current_plane: current plane to work on
+  * @y: line to write in the output buffer
++ * @x_offset: x coordinate in the CRTC of the first pixel of the output buffer: the half of a
++ *	      frame-sequential frame a frame sends starts there, the output of any other mode at 0
+  * @crtc_x_limit: width of the output buffer
+  * @stage_buffer: temporary buffer to convert the pixel line from the source buffer
+  * @output_buffer: buffer to blend the read line into.
+  */
+-static void blend_line(struct vkms_plane_state *current_plane, int y,
++static void blend_line(struct vkms_plane_state *current_plane, int y, int x_offset,
+ 		       int crtc_x_limit, struct line_buffer *stage_buffer,
+ 		       struct line_buffer *output_buffer)
+ {
+ 	int src_x_start, src_y_start, dst_x_start, pixel_count;
+-	struct drm_rect dst_line, tmp_src, src_line;
++	struct drm_rect dst, dst_line, tmp_src, src_line;
++
++	/* The plane's place in the output buffer */
++	dst = current_plane->frame_info->dst;
++	drm_rect_translate(&dst, -x_offset, 0);
+ 
+ 	/* Avoid rendering useless lines */
+-	if (y < current_plane->frame_info->dst.y1 ||
+-	    y >= current_plane->frame_info->dst.y2)
++	if (y < dst.y1 || y >= dst.y2)
+ 		return;
+ 
+ 	/*
+@@ -377,9 +383,7 @@ static void blend_line(struct vkms_plane_state *current_plane, int y,
+ 	 * destination framebuffer, and then drm_rect_* helpers are used to
+ 	 * compute the correct position into the source framebuffer.
+ 	 */
+-	dst_line = DRM_RECT_INIT(current_plane->frame_info->dst.x1, y,
+-				 drm_rect_width(&current_plane->frame_info->dst),
+-				 1);
++	dst_line = DRM_RECT_INIT(dst.x1, y, drm_rect_width(&dst), 1);
+ 
+ 	drm_rect_fp_to_int(&tmp_src, &current_plane->frame_info->src);
+ 
+@@ -405,8 +409,7 @@ static void blend_line(struct vkms_plane_state *current_plane, int y,
+ 	 *   same size, but can be rotated).
+ 	 * - Apply the offset of the source rectangle to the coordinate.
+ 	 */
+-	drm_rect_translate(&src_line, -current_plane->frame_info->dst.x1,
+-			   -current_plane->frame_info->dst.y1);
++	drm_rect_translate(&src_line, -dst.x1, -dst.y1);
+ 	drm_rect_rotate_inv(&src_line, drm_rect_width(&tmp_src),
+ 			    drm_rect_height(&tmp_src),
+ 			    current_plane->frame_info->rotation);
+@@ -418,8 +421,8 @@ static void blend_line(struct vkms_plane_state *current_plane, int y,
+ 		direction_for_rotation(current_plane->frame_info->rotation);
+ 
+ 	/* [2]: Compute and clamp the number of pixel to read */
+-	clamp_line_coordinates(direction, current_plane, &src_line, &src_x_start, &src_y_start,
+-			       &dst_x_start, &pixel_count);
++	clamp_line_coordinates(direction, current_plane, &src_line, dst_line.x1, &src_x_start,
++			       &src_y_start, &dst_x_start, &pixel_count);
+ 
+ 	if (pixel_count <= 0) {
+ 		/* Nothing to read, so avoid multiple function calls */
+@@ -459,6 +462,7 @@ static void blend_line(struct vkms_plane_state *current_plane, int y,
+  * blend - blend the pixels from all planes and compute crc
+  * @wb: The writeback frame buffer metadata
+  * @crtc_state: The crtc state
++ * @eye: The eye this frame carries in a frame-sequential mode, or %VKMS_EYE_NONE
+  * @crc32: The crc output of the final frame
+  * @output_buffer: A buffer of a row that will receive the result of the blend(s)
+  * @stage_buffer: The line with the pixels from plane being blend to the output
+@@ -467,9 +471,12 @@ static void blend_line(struct vkms_plane_state *current_plane, int y,
+  * This function blends the pixels (Using the `pre_mul_alpha_blend`)
+  * from all planes, calculates the crc32 of the output from the former step,
+  * and, if necessary, convert and store the output to the writeback buffer.
++ * In a frame-sequential mode the planes are placed in the frame of both eyes
++ * and only the half of @eye is blended, so the output is one eye at the size
++ * of the mode.
+  */
+ static void blend(struct vkms_writeback_job *wb,
+-		  struct vkms_crtc_state *crtc_state,
++		  struct vkms_crtc_state *crtc_state, enum vkms_eye eye,
+ 		  u32 *crc32, struct line_buffer *stage_buffer,
+ 		  struct line_buffer *output_buffer, size_t row_size)
+ {
+@@ -486,6 +493,8 @@ static void blend(struct vkms_writeback_job *wb,
+ 
+ 	int crtc_y_limit = crtc_state->base.mode.vdisplay;
+ 	int crtc_x_limit = crtc_state->base.mode.hdisplay;
++	/* A right-eye frame sends the right half of the frame the planes cover */
++	int x_offset = eye == VKMS_EYE_RIGHT ? crtc_x_limit : 0;
+ 
+ 	/*
+ 	 * The planes are composed line-by-line to avoid heavy memory usage. It is a necessary
+@@ -499,7 +508,8 @@ static void blend(struct vkms_writeback_job *wb,
+ 
+ 		/* The active planes are composed associatively in z-order. */
+ 		for (size_t i = 0; i < n_active_planes; i++) {
+-			blend_line(plane[i], y, crtc_x_limit, stage_buffer, output_buffer);
++			blend_line(plane[i], y, x_offset, crtc_x_limit, stage_buffer,
++				   output_buffer);
+ 		}
+ 
+ 		apply_lut(crtc_state, output_buffer);
+@@ -541,7 +551,7 @@ static int check_iosys_map(struct vkms_crtc_state *crtc_state)
+ 
+ static int compose_active_planes(struct vkms_writeback_job *active_wb,
+ 				 struct vkms_crtc_state *crtc_state,
+-				 u32 *crc32)
++				 enum vkms_eye eye, u32 *crc32)
+ {
+ 	size_t line_width, pixel_size = sizeof(struct pixel_argb_u16);
+ 	struct line_buffer output_buffer, stage_buffer;
+@@ -578,7 +588,7 @@ static int compose_active_planes(struct vkms_writeback_job *active_wb,
+ 		goto free_stage_buffer;
+ 	}
+ 
+-	blend(active_wb, crtc_state, crc32, &stage_buffer,
++	blend(active_wb, crtc_state, eye, crc32, &stage_buffer,
+ 	      &output_buffer, line_width * pixel_size);
+ 
+ 	kvfree(output_buffer.pixels);
+@@ -607,12 +617,14 @@ void vkms_composer_worker(struct work_struct *work)
+ 	struct vkms_output *out = drm_crtc_to_vkms_output(crtc);
+ 	bool crc_pending, wb_pending;
+ 	u64 frame_start, frame_end;
++	enum vkms_eye eye;
+ 	u32 crc32 = 0;
+ 	int ret;
+ 
+ 	spin_lock_irq(&out->composer_lock);
+ 	frame_start = crtc_state->frame_start;
+ 	frame_end = crtc_state->frame_end;
++	eye = crtc_state->eye;
+ 	crc_pending = crtc_state->crc_pending;
+ 	wb_pending = crtc_state->wb_pending;
+ 	crtc_state->frame_start = 0;
+@@ -644,9 +656,9 @@ void vkms_composer_worker(struct work_struct *work)
+ 		return;
+ 
+ 	if (wb_pending)
+-		ret = compose_active_planes(active_wb, crtc_state, &crc32);
++		ret = compose_active_planes(active_wb, crtc_state, eye, &crc32);
+ 	else
+-		ret = compose_active_planes(NULL, crtc_state, &crc32);
++		ret = compose_active_planes(NULL, crtc_state, eye, &crc32);
+ 
+ 	if (ret)
+ 		return;
+@@ -660,7 +672,12 @@ void vkms_composer_worker(struct work_struct *work)
+ 
+ 	/*
+ 	 * The worker can fall behind the vblank hrtimer, make sure we catch up.
++	 * In a frame-sequential mode the frames it missed carried other eyes:
++	 * only the frame it composed gets this CRC.
+ 	 */
++	if (eye != VKMS_EYE_NONE)
++		frame_start = frame_end;
++
+ 	while (frame_start <= frame_end)
+ 		drm_crtc_add_crc_entry(crtc, true, frame_start++, &crc32);
+ }
+diff --git a/drivers/gpu/drm/vkms/vkms_crtc.c b/drivers/gpu/drm/vkms/vkms_crtc.c
+index 079abfba4..0ee49159b 100644
+--- a/drivers/gpu/drm/vkms/vkms_crtc.c
++++ b/drivers/gpu/drm/vkms/vkms_crtc.c
+@@ -13,11 +13,37 @@
+ 
+ #include "vkms_drv.h"
+ 
++/*
++ * A state that waited for the start of a pair takes effect: the composer takes its planes from
++ * this frame on, and its event says so.
++ */
++static void vkms_crtc_latch_pending(struct drm_crtc *crtc, struct vkms_output *output)
++	__must_hold(&output->lock)
++{
++	struct drm_pending_vblank_event *event = output->fs_pending_event;
++	unsigned long flags;
++
++	output->composer_state = output->fs_pending_state;
++	output->fs_pending_state = NULL;
++	output->fs_pending_event = NULL;
++
++	if (event) {
++		spin_lock_irqsave(&crtc->dev->event_lock, flags);
++		drm_crtc_send_vblank_event(crtc, event);
++		spin_unlock_irqrestore(&crtc->dev->event_lock, flags);
++	}
++
++	/* The reference vkms_crtc_wait_for_pair() took */
++	drm_crtc_vblank_put(crtc);
++}
++
+ static bool vkms_crtc_handle_vblank_timeout(struct drm_crtc *crtc)
+ {
+ 	struct vkms_output *output = drm_crtc_to_vkms_output(crtc);
+ 	struct vkms_crtc_state *state;
++	enum vkms_eye eye = VKMS_EYE_NONE;
+ 	bool ret, fence_cookie;
++	u64 frame;
+ 
+ 	fence_cookie = dma_fence_begin_signalling();
+ 
+@@ -26,12 +52,29 @@ static bool vkms_crtc_handle_vblank_timeout(struct drm_crtc *crtc)
+ 	if (!ret)
+ 		DRM_ERROR("vkms failure on handling vblank");
+ 
++	frame = drm_crtc_accurate_vblank_count(crtc);
++
++	/*
++	 * A frame-sequential mode sends the left half of its frame, then the right half, frame
++	 * after frame, starting with the left one; updated planes take effect only at a left-eye
++	 * frame, so both eyes of a pair come from the same planes.
++	 */
++	state = output->composer_state;
++	if (state && drm_mode_is_frame_sequential(&state->base.mode)) {
++		if (!output->fs_first_valid) {
++			output->fs_first_frame = frame;
++			output->fs_first_valid = true;
++		}
++
++		eye = vkms_frame_sequential_eye(frame, output->fs_first_frame);
++		if (eye == VKMS_EYE_LEFT && output->fs_pending_state)
++			vkms_crtc_latch_pending(crtc, output);
++	}
++
+ 	state = output->composer_state;
+ 	spin_unlock(&output->lock);
+ 
+ 	if (state && output->composer_enabled) {
+-		u64 frame = drm_crtc_accurate_vblank_count(crtc);
+-
+ 		/* update frame_start only if a queued vkms_composer_worker()
+ 		 * has read the data
+ 		 */
+@@ -42,6 +85,7 @@ static bool vkms_crtc_handle_vblank_timeout(struct drm_crtc *crtc)
+ 			DRM_DEBUG_DRIVER("crc worker falling behind, frame_start: %llu, frame_end: %llu\n",
+ 					 state->frame_start, frame);
+ 		state->frame_end = frame;
++		state->eye = eye;
+ 		state->crc_pending = true;
+ 		spin_unlock(&output->composer_lock);
+ 
+@@ -168,12 +212,53 @@ static void vkms_crtc_atomic_begin(struct drm_crtc *crtc,
+ 	spin_lock_irq(&vkms_output->lock);
+ }
+ 
++/*
++ * In a frame-sequential mode, a commit that updates the planes takes effect at the start of a
++ * pair, a left-eye frame. Returns true, holding a vblank reference, when the next frame is a
++ * right-eye one and the commit must wait for the frame after it.
++ */
++static bool vkms_crtc_wait_for_pair(struct drm_crtc *crtc, struct vkms_output *output)
++	__must_hold(&output->lock)
++{
++	struct drm_crtc_state *crtc_state = crtc->state;
++	u64 next;
++
++	if (!crtc_state->active || !drm_mode_is_frame_sequential(&crtc_state->mode) ||
++	    drm_atomic_crtc_needs_modeset(crtc_state) || !crtc_state->planes_changed ||
++	    !output->fs_first_valid)
++		return false;
++
++	if (drm_crtc_vblank_get(crtc) != 0)
++		return false;
++
++	next = drm_crtc_accurate_vblank_count(crtc) + 1;
++	if (vkms_frame_sequential_eye(next, output->fs_first_frame) == VKMS_EYE_LEFT) {
++		drm_crtc_vblank_put(crtc);
++		return false;
++	}
++
++	return true;
++}
++
+ static void vkms_crtc_atomic_flush(struct drm_crtc *crtc,
+ 				   struct drm_atomic_commit *state)
+ 	__releases(&vkms_output->lock)
+ {
+ 	struct vkms_output *vkms_output = drm_crtc_to_vkms_output(crtc);
+ 
++	/* The core waits for the previous commit's event, so nothing should still wait here */
++	if (WARN_ON(vkms_output->fs_pending_state))
++		vkms_crtc_latch_pending(crtc, vkms_output);
++
++	if (vkms_crtc_wait_for_pair(crtc, vkms_output)) {
++		vkms_output->fs_pending_state = to_vkms_crtc_state(crtc->state);
++		vkms_output->fs_pending_event = crtc->state->event;
++		crtc->state->event = NULL;
++
++		spin_unlock_irq(&vkms_output->lock);
++		return;
++	}
++
+ 	if (crtc->state->event) {
+ 		spin_lock(&crtc->dev->event_lock);
+ 
+@@ -187,6 +272,9 @@ static void vkms_crtc_atomic_flush(struct drm_crtc *crtc,
+ 		crtc->state->event = NULL;
+ 	}
+ 
++	if (drm_atomic_crtc_needs_modeset(crtc->state))
++		vkms_output->fs_first_valid = false;
++
+ 	vkms_output->composer_state = to_vkms_crtc_state(crtc->state);
+ 
+ 	spin_unlock_irq(&vkms_output->lock);
+diff --git a/drivers/gpu/drm/vkms/vkms_drv.h b/drivers/gpu/drm/vkms/vkms_drv.h
+index 85ab609ac..52c8cad98 100644
+--- a/drivers/gpu/drm/vkms/vkms_drv.h
++++ b/drivers/gpu/drm/vkms/vkms_drv.h
+@@ -104,6 +104,33 @@ enum pixel_read_direction {
+ 
+ struct vkms_plane_state;
+ 
++/**
++ * enum vkms_eye - The eye a frame carries
++ *
++ * @VKMS_EYE_NONE: The mode is not frame sequential
++ * @VKMS_EYE_LEFT: A left-eye frame of a frame-sequential mode, the left half of the frame its
++ *		   planes cover
++ * @VKMS_EYE_RIGHT: A right-eye frame of a frame-sequential mode, the right half
++ */
++enum vkms_eye {
++	VKMS_EYE_NONE,
++	VKMS_EYE_LEFT,
++	VKMS_EYE_RIGHT,
++};
++
++/**
++ * vkms_frame_sequential_eye() - The eye a frame of a frame-sequential mode carries
++ * @frame: The frame, a vblank count of the CRTC
++ * @first: The first frame of the mode
++ *
++ * The eyes take turns, one per frame, the left eye first
++ * (DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL).
++ */
++static inline enum vkms_eye vkms_frame_sequential_eye(u64 frame, u64 first)
++{
++	return (frame - first) & 1 ? VKMS_EYE_RIGHT : VKMS_EYE_LEFT;
++}
++
+ /**
+  * typedef pixel_read_line_t - These functions are used to read a pixel line in the source frame,
+  * convert it to `struct pixel_argb_u16` and write it to @out_pixel.
+@@ -182,6 +209,8 @@ struct vkms_color_lut {
+  *		 of the composition process.
+  * @frame_end: Protected by @vkms_output.composer_lock, saves the last requested frame number.
+  *	       This is used to generate enough CRC entries when the composition worker is too slow.
++ * @eye: Protected by @vkms_output.composer_lock, the eye frame @frame_end carries in a
++ *	 frame-sequential mode, %VKMS_EYE_NONE in any other mode.
+  */
+ struct vkms_crtc_state {
+ 	struct drm_crtc_state base;
+@@ -196,6 +225,7 @@ struct vkms_crtc_state {
+ 	bool wb_pending;
+ 	u64 frame_start;
+ 	u64 frame_end;
++	enum vkms_eye eye;
+ };
+ 
+ /**
+@@ -218,6 +248,14 @@ struct vkms_crtc_state {
+  *		 file, so the calls never race
+  * @composer_state: Protected by @lock, current state of this VKMS output
+  * @composer_lock: Lock used internally to protect @composer_state members
++ * @fs_first_valid: Protected by @lock, true once @fs_first_frame holds the first frame of the
++ *		    current mode
++ * @fs_first_frame: Protected by @lock, the first frame of a frame-sequential mode, a left-eye
++ *		    frame
++ * @fs_pending_state: Protected by @lock, a state whose planes wait for the next left-eye frame
++ *		      (the start of the next pair) to replace @composer_state
++ * @fs_pending_event: Protected by @lock, the event of @fs_pending_state, sent when it takes
++ *		      effect
+  */
+ struct vkms_output {
+ 	struct drm_crtc crtc;
+@@ -232,6 +270,11 @@ struct vkms_output {
+ 	struct vkms_crtc_state *composer_state;
+ 
+ 	spinlock_t composer_lock;
++
++	bool fs_first_valid;
++	u64 fs_first_frame;
++	struct vkms_crtc_state *fs_pending_state;
++	struct drm_pending_vblank_event *fs_pending_event;
+ };
+ 
+ struct vkms_config;
+-- 
+2.53.0
+

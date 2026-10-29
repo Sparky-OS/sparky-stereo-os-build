@@ -1,0 +1,605 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 29 Oct 2026 14:17:30 -0300
+Subject: [PATCH] drm/vkms: test frame-sequential stereo
+
+Add two KUnit suites:
+
+vkms-frame-sequential builds a device whose connector is DisplayPort
+and reads an EDID with two detailed timings, 1024x768 and 640x480 at
+60 Hz, the second declaring field sequential stereo (E-EDID 1.4 Table
+3.22, byte 17 bits 6:5 = 01b; edid-decode's reading is in the test).
+For the connector that opted in, one that did not, and one that opted
+in without an EDID, it checks that:
+- the frame-sequential twin of the 640x480 timing, with that timing,
+  is listed only where the connector opted in, and both 2D modes always;
+- a frame-sequential mode built from the 2D one, as userspace builds a
+  twin, passes the atomic check only there, with or without a writeback
+  job, while the 2D mode passes on both;
+- its frame is twice the mode's width: a plane 1280 pixels wide is
+  clipped to 640 in the 2D mode and not at all in the frame-sequential
+  one;
+- the writeback connector takes one eye per frame, a buffer of the
+  mode's size, and refuses a buffer of both eyes;
+- a connector that opted in without an EDID lists no stereo mode at
+  all, and still accepts the twin of one of DRM's default modes: the
+  opt-in says what the driver can send, the EDID what the sink declares.
+
+vkms-frame-sequential-model checks that only DisplayPort and eDP
+connectors may opt in, that the eyes take turns from a left first
+frame, and what each frame is sent with: MSA MISC1 0x06 before a
+left-eye frame and 0x02 before a right-eye one (bits 2:1, 11b and 01b),
+0x00 without stereo, and a VSC SDP of revision 0x1 with DB0 0x01, none
+without stereo.
+
+Export vkms_output_init() to KUnit and select the DRM KUnit helpers.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/vkms/Kconfig                  |   1 +
+ drivers/gpu/drm/vkms/tests/Makefile           |   3 +-
+ .../vkms/tests/vkms_frame_sequential_test.c   | 509 ++++++++++++++++++
+ drivers/gpu/drm/vkms/vkms_output.c            |   2 +
+ 4 files changed, 514 insertions(+), 1 deletion(-)
+ create mode 100644 drivers/gpu/drm/vkms/tests/vkms_frame_sequential_test.c
+
+diff --git a/drivers/gpu/drm/vkms/Kconfig b/drivers/gpu/drm/vkms/Kconfig
+index 66a0b54ff..b6a3bc6cf 100644
+--- a/drivers/gpu/drm/vkms/Kconfig
++++ b/drivers/gpu/drm/vkms/Kconfig
+@@ -21,6 +21,7 @@ config DRM_VKMS
+ config DRM_VKMS_KUNIT_TEST
+ 	tristate "KUnit tests for VKMS" if !KUNIT_ALL_TESTS
+ 	depends on DRM_VKMS && KUNIT
++	select DRM_KUNIT_TEST_HELPERS
+ 	default KUNIT_ALL_TESTS
+ 	help
+ 	  This builds unit tests for VKMS. This option is not useful for
+diff --git a/drivers/gpu/drm/vkms/tests/Makefile b/drivers/gpu/drm/vkms/tests/Makefile
+index d4d9ba8d4..78a9976c5 100644
+--- a/drivers/gpu/drm/vkms/tests/Makefile
++++ b/drivers/gpu/drm/vkms/tests/Makefile
+@@ -3,6 +3,7 @@
+ vkms-kunit-tests-y := \
+ 	vkms_config_test.o \
+ 	vkms_format_test.o \
+-	vkms_color_test.o
++	vkms_color_test.o \
++	vkms_frame_sequential_test.o
+ 
+ obj-$(CONFIG_DRM_VKMS_KUNIT_TEST) += vkms-kunit-tests.o
+diff --git a/drivers/gpu/drm/vkms/tests/vkms_frame_sequential_test.c b/drivers/gpu/drm/vkms/tests/vkms_frame_sequential_test.c
+new file mode 100644
+index 000000000..734bd2ccf
+--- /dev/null
++++ b/drivers/gpu/drm/vkms/tests/vkms_frame_sequential_test.c
+@@ -0,0 +1,509 @@
++// SPDX-License-Identifier: GPL-2.0+
++
++#include <kunit/test.h>
++
++#include <drm/display/drm_dp.h>
++#include <drm/drm_atomic.h>
++#include <drm/drm_atomic_uapi.h>
++#include <drm/drm_drv.h>
++#include <drm/drm_fourcc.h>
++#include <drm/drm_framebuffer.h>
++#include <drm/drm_kunit_helpers.h>
++#include <drm/drm_modeset_lock.h>
++#include <drm/drm_probe_helper.h>
++#include <drm/drm_rect.h>
++#include <drm/drm_writeback.h>
++
++#include "../vkms_config.h"
++#include "../vkms_connector.h"
++#include "../vkms_drv.h"
++
++MODULE_IMPORT_NS("EXPORTED_FOR_KUNIT_TESTING");
++
++/*
++ * A DisplayPort sink whose second detailed timing, 640x480 at 60 Hz, declares
++ * field sequential stereo (E-EDID 1.4 Table 3.22, byte 17 bits 6:5 = 01b), as
++ * edid-decode reads it:
++ *
++ * edid-decode (hex):
++ *
++ * 00 ff ff ff ff ff ff 00 31 d8 57 02 00 00 00 00
++ * 00 24 01 04 a5 34 20 78 0e ee 91 a3 54 4c 99 26
++ * 0f 50 54 00 00 00 01 01 01 01 01 01 01 01 01 01
++ * 01 01 01 01 01 01 64 19 00 40 41 00 26 30 18 88
++ * 36 00 08 40 21 00 00 18 d5 09 80 a0 20 e0 2d 10
++ * 10 60 a2 00 08 40 21 00 00 38 00 00 00 fc 00 46
++ * 53 20 44 50 20 53 49 4e 4b 0a 20 20 00 00 00 fd
++ * 00 32 4b 1e 3c 07 01 0a 20 20 20 20 20 20 00 91
++ *
++ * ----------------
++ *
++ * Block 0, Base EDID:
++ *   EDID Structure Version & Revision: 1.4
++ *   Vendor & Product Identification:
++ *     Manufacturer: LNX
++ *     Model: 599
++ *     Made in: 2026
++ *   Basic Display Parameters & Features:
++ *     Digital display
++ *     Bits per primary color channel: 8
++ *     DisplayPort interface
++ *     Maximum image size: 52 cm x 32 cm
++ *     Gamma: 2.20
++ *     Supported color formats: RGB 4:4:4, YCrCb 4:4:4
++ *     Default (sRGB) color space is primary color space
++ *     First detailed timing includes the native pixel format and preferred refresh rate
++ *   Color Characteristics:
++ *     Red  : 0.6396, 0.3300
++ *     Green: 0.2998, 0.5996
++ *     Blue : 0.1503, 0.0595
++ *     White: 0.3125, 0.3291
++ *   Established Timings I & II: none
++ *   Standard Timings: none
++ *   Detailed Timing Descriptors:
++ *     DTD 1:  1024x768    60.003840 Hz   4:3     48.363 kHz     65.000000 MHz (520 mm x 320 mm)
++ *                  Hfront   24 Hsync 136 Hback  160 Hpol N
++ *                  Vfront    3 Vsync   6 Vback   29 Vpol N
++ *     DTD 2:   640x480    59.928571 Hz   4:3     31.462 kHz     25.170000 MHz
++ *                  (field sequential L/R, 520 mm x 320 mm)    [wrapped here]
++ *                  Hfront   16 Hsync  96 Hback   48 Hpol N
++ *                  Vfront   10 Vsync   2 Vback   33 Vpol N
++ *     Display Product Name: 'FS DP SINK'
++ *     Display Range Limits:
++ *       Monitor ranges (Bare Limits): 50-75 Hz V, 30-60 kHz H, max dotclock 70 MHz
++ * Checksum: 0x91
++ */
++static const u8 test_edid_dp_fs[] = {
++	0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x31, 0xd8, 0x57, 0x02,
++	0x00, 0x00, 0x00, 0x00, 0x00, 0x24, 0x01, 0x04, 0xa5, 0x34, 0x20, 0x78,
++	0x0e, 0xee, 0x91, 0xa3, 0x54, 0x4c, 0x99, 0x26, 0x0f, 0x50, 0x54, 0x00,
++	0x00, 0x00, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
++	0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x64, 0x19, 0x00, 0x40, 0x41, 0x00,
++	0x26, 0x30, 0x18, 0x88, 0x36, 0x00, 0x08, 0x40, 0x21, 0x00, 0x00, 0x18,
++	0xd5, 0x09, 0x80, 0xa0, 0x20, 0xe0, 0x2d, 0x10, 0x10, 0x60, 0xa2, 0x00,
++	0x08, 0x40, 0x21, 0x00, 0x00, 0x38, 0x00, 0x00, 0x00, 0xfc, 0x00, 0x46,
++	0x53, 0x20, 0x44, 0x50, 0x20, 0x53, 0x49, 0x4e, 0x4b, 0x0a, 0x20, 0x20,
++	0x00, 0x00, 0x00, 0xfd, 0x00, 0x32, 0x4b, 0x1e, 0x3c, 0x07, 0x01, 0x0a,
++	0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x00, 0x91,
++};
++
++struct vkms_fs_test_priv {
++	struct vkms_device *vkmsdev;
++	struct drm_connector *connector;
++	struct drm_writeback_connector *wb_connector;
++	struct drm_crtc *crtc;
++	struct drm_plane *primary;
++};
++
++struct vkms_fs_test_case {
++	const char *name;
++	int type;
++	bool edid;
++	bool allowed;
++};
++
++static const struct vkms_fs_test_case vkms_fs_test_cases[] = {
++	{ "displayport-opted-in", DRM_MODE_CONNECTOR_DisplayPort, true, true },
++	{ "displayport", DRM_MODE_CONNECTOR_DisplayPort, true, false },
++	{ "displayport-opted-in-no-edid", DRM_MODE_CONNECTOR_DisplayPort, false, true },
++};
++
++static void vkms_fs_test_case_desc(const struct vkms_fs_test_case *t, char *desc)
++{
++	strscpy(desc, t->name, KUNIT_PARAM_DESC_SIZE);
++}
++
++KUNIT_ARRAY_PARAM(vkms_fs_test, vkms_fs_test_cases, vkms_fs_test_case_desc);
++
++static void vkms_fs_test_config_destroy(void *config)
++{
++	vkms_config_destroy(config);
++}
++
++static void vkms_fs_test_fb_destroy(struct drm_framebuffer *fb)
++{
++	drm_framebuffer_cleanup(fb);
++}
++
++static const struct drm_framebuffer_funcs vkms_fs_test_fb_funcs = {
++	.destroy = vkms_fs_test_fb_destroy,
++};
++
++static void vkms_fs_test_fb_put(void *fb)
++{
++	drm_framebuffer_put(fb);
++}
++
++static struct drm_framebuffer *vkms_fs_test_create_fb(struct kunit *test, int width, int height)
++{
++	struct vkms_fs_test_priv *priv = test->priv;
++	struct drm_framebuffer *fb;
++	int ret;
++
++	fb = kunit_kzalloc(test, sizeof(*fb), GFP_KERNEL);
++	KUNIT_ASSERT_NOT_NULL(test, fb);
++
++	fb->dev = &priv->vkmsdev->drm;
++	fb->format = drm_format_info(DRM_FORMAT_XRGB8888);
++	fb->width = width;
++	fb->height = height;
++	fb->pitches[0] = width * 4;
++
++	ret = drm_framebuffer_init(fb->dev, fb, &vkms_fs_test_fb_funcs);
++	KUNIT_ASSERT_EQ(test, ret, 0);
++
++	ret = kunit_add_action_or_reset(test, vkms_fs_test_fb_put, fb);
++	KUNIT_ASSERT_EQ(test, ret, 0);
++
++	return fb;
++}
++
++/* A device of one CRTC with a writeback connector and one connector of the case */
++static int vkms_fs_test_init(struct kunit *test)
++{
++	const struct vkms_fs_test_case *t = test->param_value;
++	struct vkms_fs_test_priv *priv;
++	struct vkms_config_connector *connector_cfg;
++	struct vkms_config_plane *plane_cfg;
++	struct vkms_config_crtc *crtc_cfg;
++	struct vkms_config *config;
++	struct device *dev;
++	int ret;
++
++	priv = kunit_kzalloc(test, sizeof(*priv), GFP_KERNEL);
++	KUNIT_ASSERT_NOT_NULL(test, priv);
++	test->priv = priv;
++
++	config = vkms_config_default_create(false, true, false, false);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, config);
++	ret = kunit_add_action_or_reset(test, vkms_fs_test_config_destroy, config);
++	KUNIT_ASSERT_EQ(test, ret, 0);
++
++	vkms_config_for_each_connector(config, connector_cfg) {
++		vkms_config_connector_set_type(connector_cfg, t->type);
++		vkms_config_connector_set_edid_enabled(connector_cfg, t->edid);
++		ret = vkms_config_connector_set_edid(connector_cfg, test_edid_dp_fs,
++						     sizeof(test_edid_dp_fs));
++		KUNIT_ASSERT_EQ(test, ret, 0);
++		vkms_config_connector_set_stereo_frame_sequential(connector_cfg, t->allowed);
++	}
++
++	dev = drm_kunit_helper_alloc_device(test);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, dev);
++
++	priv->vkmsdev = drm_kunit_helper_alloc_drm_device(test, dev, struct vkms_device, drm,
++							  DRIVER_MODESET | DRIVER_ATOMIC);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, priv->vkmsdev);
++
++	priv->vkmsdev->config = config;
++	config->dev = priv->vkmsdev;
++
++	ret = vkms_output_init(priv->vkmsdev);
++	KUNIT_ASSERT_EQ(test, ret, 0);
++
++	vkms_config_for_each_crtc(config, crtc_cfg) {
++		priv->crtc = &crtc_cfg->crtc->crtc;
++		priv->wb_connector = &crtc_cfg->crtc->wb_connector;
++		plane_cfg = vkms_config_crtc_primary_plane(config, crtc_cfg);
++		priv->primary = &plane_cfg->plane->base;
++	}
++
++	vkms_config_for_each_connector(config, connector_cfg)
++		priv->connector = &connector_cfg->connector->base;
++
++	return 0;
++}
++
++static void vkms_fs_test_probe(struct kunit *test)
++{
++	struct vkms_fs_test_priv *priv = test->priv;
++	struct drm_device *drm = &priv->vkmsdev->drm;
++	int count;
++
++	mutex_lock(&drm->mode_config.mutex);
++	count = drm_helper_probe_single_connector_modes(priv->connector, XRES_MAX, YRES_MAX);
++	mutex_unlock(&drm->mode_config.mutex);
++
++	KUNIT_ASSERT_GT(test, count, 0);
++}
++
++static const struct drm_display_mode *vkms_fs_test_find(struct kunit *test, int hdisplay,
++							int vdisplay, u32 layout)
++{
++	struct vkms_fs_test_priv *priv = test->priv;
++	const struct drm_display_mode *mode;
++
++	list_for_each_entry(mode, &priv->connector->modes, head) {
++		if (mode->hdisplay == hdisplay && mode->vdisplay == vdisplay &&
++		    (mode->flags & DRM_MODE_FLAG_3D_MASK) == layout)
++			return mode;
++	}
++
++	return NULL;
++}
++
++/* Only DisplayPort and eDP connectors can send frame-sequential stereo */
++static void vkms_fs_test_connector_types(struct kunit *test)
++{
++	static const struct {
++		int type;
++		bool valid;
++	} cases[] = {
++		{ DRM_MODE_CONNECTOR_DisplayPort, true },
++		{ DRM_MODE_CONNECTOR_eDP, true },
++		{ DRM_MODE_CONNECTOR_HDMIA, false },
++		{ DRM_MODE_CONNECTOR_VIRTUAL, false },
++	};
++	struct vkms_config_connector *connector_cfg;
++	struct vkms_config *config;
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(cases); i++) {
++		config = vkms_config_default_create(false, false, false, false);
++		KUNIT_ASSERT_NOT_ERR_OR_NULL(test, config);
++
++		vkms_config_for_each_connector(config, connector_cfg) {
++			vkms_config_connector_set_type(connector_cfg, cases[i].type);
++			KUNIT_EXPECT_TRUE(test, vkms_config_is_valid(config));
++			vkms_config_connector_set_stereo_frame_sequential(connector_cfg, true);
++		}
++
++		KUNIT_EXPECT_EQ_MSG(test, vkms_config_is_valid(config), cases[i].valid,
++				    "connector type %d", cases[i].type);
++
++		vkms_config_destroy(config);
++	}
++}
++
++/*
++ * The connector reads the EDID: the frame-sequential twin of the 640x480
++ * timing, with the timing of its 2D mode, is listed only where the connector
++ * opted in, and the 2D modes of both timings always. Without an EDID the
++ * connector lists DRM's default modes, none of them stereo.
++ */
++static void vkms_fs_test_modes(struct kunit *test)
++{
++	const struct vkms_fs_test_case *t = test->param_value;
++	struct vkms_fs_test_priv *priv = test->priv;
++	const struct drm_display_mode *mode, *mode_2d;
++	int n_fs = 0;
++
++	vkms_fs_test_probe(test);
++
++	KUNIT_EXPECT_EQ(test, priv->connector->connector_type, t->type);
++	KUNIT_EXPECT_EQ(test, priv->connector->stereo_frame_sequential_allowed, t->allowed);
++
++	if (!t->edid) {
++		list_for_each_entry(mode, &priv->connector->modes, head)
++			KUNIT_EXPECT_FALSE(test, drm_mode_is_stereo(mode));
++		KUNIT_EXPECT_NULL(test, vkms_fs_test_find(test, 640, 480,
++							  DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL));
++		return;
++	}
++
++	KUNIT_EXPECT_NOT_NULL(test, vkms_fs_test_find(test, 1024, 768, 0));
++	mode_2d = vkms_fs_test_find(test, 640, 480, 0);
++	KUNIT_ASSERT_NOT_NULL(test, mode_2d);
++
++	list_for_each_entry(mode, &priv->connector->modes, head) {
++		if (!drm_mode_is_frame_sequential(mode))
++			continue;
++
++		n_fs++;
++		KUNIT_EXPECT_TRUE(test, drm_mode_match(mode, mode_2d,
++						       DRM_MODE_MATCH_TIMINGS |
++						       DRM_MODE_MATCH_CLOCK));
++		KUNIT_EXPECT_EQ(test, drm_mode_vrefresh(mode), 60);
++	}
++
++	KUNIT_EXPECT_EQ(test, n_fs, t->allowed ? 1 : 0);
++}
++
++/*
++ * Checks an update that sets @mode, a primary plane showing a framebuffer of
++ * fb_width x fb_height from the top left corner, and a writeback buffer of
++ * wb_width x wb_height (none if wb_width is 0). On success, @dst_width (if
++ * not NULL) receives the width of the plane once clipped to the frame.
++ */
++static int vkms_fs_test_check(struct kunit *test, const struct drm_display_mode *mode,
++			      int fb_width, int fb_height, int wb_width, int wb_height,
++			      int *dst_width)
++{
++	struct vkms_fs_test_priv *priv = test->priv;
++	struct drm_device *drm = &priv->vkmsdev->drm;
++	struct drm_connector_state *conn_state, *wb_state;
++	struct drm_framebuffer *fb, *wb_fb;
++	struct drm_modeset_acquire_ctx ctx;
++	struct drm_plane_state *plane_state;
++	struct drm_crtc_state *crtc_state;
++	struct drm_atomic_commit *state;
++	int ret;
++
++	fb = vkms_fs_test_create_fb(test, fb_width, fb_height);
++	wb_fb = wb_width ? vkms_fs_test_create_fb(test, wb_width, wb_height) : NULL;
++
++	drm_modeset_acquire_init(&ctx, 0);
++
++	state = drm_kunit_helper_atomic_state_alloc(test, drm, &ctx);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
++
++	crtc_state = drm_atomic_get_crtc_state(state, priv->crtc);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, crtc_state);
++	ret = drm_atomic_set_mode_for_crtc(crtc_state, mode);
++	KUNIT_ASSERT_EQ(test, ret, 0);
++	crtc_state->enable = true;
++	crtc_state->active = true;
++
++	conn_state = drm_atomic_get_connector_state(state, priv->connector);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, conn_state);
++	ret = drm_atomic_set_crtc_for_connector(conn_state, priv->crtc);
++	KUNIT_ASSERT_EQ(test, ret, 0);
++
++	plane_state = drm_atomic_get_plane_state(state, priv->primary);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, plane_state);
++	ret = drm_atomic_set_crtc_for_plane(plane_state, priv->crtc);
++	KUNIT_ASSERT_EQ(test, ret, 0);
++	drm_atomic_set_fb_for_plane(plane_state, fb);
++	plane_state->crtc_w = fb_width;
++	plane_state->crtc_h = fb_height;
++	plane_state->src_w = fb_width << 16;
++	plane_state->src_h = fb_height << 16;
++
++	if (wb_fb) {
++		wb_state = drm_atomic_get_connector_state(state, &priv->wb_connector->base);
++		KUNIT_ASSERT_NOT_ERR_OR_NULL(test, wb_state);
++		ret = drm_atomic_set_crtc_for_connector(wb_state, priv->crtc);
++		KUNIT_ASSERT_EQ(test, ret, 0);
++		ret = drm_writeback_set_fb(wb_state, wb_fb);
++		KUNIT_ASSERT_EQ(test, ret, 0);
++	}
++
++	ret = drm_atomic_check_only(state);
++	if (!ret && dst_width)
++		*dst_width = drm_rect_width(&plane_state->dst);
++
++	drm_modeset_drop_locks(&ctx);
++	drm_modeset_acquire_fini(&ctx);
++
++	return ret;
++}
++
++/*
++ * A frame-sequential mode built from the 2D timing, as userspace builds a
++ * twin: accepted only on the connector that opted in, whether or not its sink
++ * declared the mode (without an EDID, from DRM's default 640x480). Its frame
++ * is both eyes side by side, so a plane twice the mode's width is not
++ * clipped, and the writeback connector takes one eye per frame, at the size
++ * of the mode.
++ */
++static void vkms_fs_test_atomic_check(struct kunit *test)
++{
++	const struct vkms_fs_test_case *t = test->param_value;
++	const struct drm_display_mode *mode_2d;
++	struct drm_display_mode mode;
++	int width;
++
++	vkms_fs_test_probe(test);
++
++	mode_2d = vkms_fs_test_find(test, 640, 480, 0);
++	KUNIT_ASSERT_NOT_NULL(test, mode_2d);
++
++	drm_mode_copy(&mode, mode_2d);
++	mode.flags |= DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL;
++
++	/* The 2D mode is accepted either way, its frame the size of the mode */
++	width = 0;
++	KUNIT_EXPECT_EQ(test, vkms_fs_test_check(test, mode_2d, 1280, 480, 640, 480, &width), 0);
++	KUNIT_EXPECT_EQ(test, width, 640);
++
++	KUNIT_EXPECT_EQ(test, vkms_fs_test_check(test, &mode, 1280, 480, 0, 0, NULL),
++			t->allowed ? 0 : -EINVAL);
++	KUNIT_EXPECT_EQ(test, vkms_fs_test_check(test, &mode, 1280, 480, 640, 480, NULL),
++			t->allowed ? 0 : -EINVAL);
++
++	if (!t->allowed)
++		return;
++
++	width = 0;
++	KUNIT_EXPECT_EQ(test, vkms_fs_test_check(test, &mode, 1280, 480, 0, 0, &width), 0);
++	KUNIT_EXPECT_EQ(test, width, 1280);
++
++	/* A writeback buffer of both eyes is refused: each frame is one eye */
++	KUNIT_EXPECT_EQ(test, vkms_fs_test_check(test, &mode, 1280, 480, 1280, 480, NULL),
++			-EINVAL);
++}
++
++/* The eyes take turns, one per frame, the first frame of the mode a left one */
++static void vkms_fs_test_eye_order(struct kunit *test)
++{
++	static const u64 firsts[] = { 0, 1, 7, U64_MAX };
++	int i, n;
++
++	for (i = 0; i < ARRAY_SIZE(firsts); i++) {
++		for (n = 0; n < 6; n++) {
++			KUNIT_EXPECT_EQ(test, vkms_frame_sequential_eye(firsts[i] + n, firsts[i]),
++					n % 2 ? VKMS_EYE_RIGHT : VKMS_EYE_LEFT);
++		}
++	}
++}
++
++/*
++ * What a frame is sent with: MSA MISC1 bits 2:1, 11b before a left-eye frame,
++ * 01b before a right-eye one, 00b without stereo (DisplayPort 1.1a), and a VSC
++ * SDP of revision 0x1 whose stereo interface byte is 0x01, frame/field
++ * sequential with the eye named by MISC1 (DisplayPort 1.2); no VSC SDP without
++ * stereo.
++ */
++static void vkms_fs_test_link_info(struct kunit *test)
++{
++	static const struct {
++		enum vkms_eye eye;
++		u8 misc1, vsc_revision, vsc_db0;
++	} cases[] = {
++		{ VKMS_EYE_LEFT, 0x06, 0x01, 0x01 },
++		{ VKMS_EYE_RIGHT, 0x02, 0x01, 0x01 },
++		{ VKMS_EYE_NONE, 0x00, 0x00, 0x00 },
++	};
++	struct vkms_stereo_link_frame info;
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(cases); i++) {
++		memset(&info, 0xaa, sizeof(info));
++		vkms_stereo_link_frame_info(cases[i].eye, &info);
++
++		KUNIT_EXPECT_EQ(test, info.eye, cases[i].eye);
++		KUNIT_EXPECT_EQ(test, info.misc1, cases[i].misc1);
++		KUNIT_EXPECT_EQ(test, (info.misc1 >> 1) & 0x3, cases[i].misc1 >> 1);
++		KUNIT_EXPECT_EQ(test, info.vsc_revision, cases[i].vsc_revision);
++		KUNIT_EXPECT_EQ(test, info.vsc_db0, cases[i].vsc_db0);
++	}
++}
++
++static struct kunit_case vkms_fs_test_device_cases[] = {
++	KUNIT_CASE_PARAM(vkms_fs_test_modes, vkms_fs_test_gen_params),
++	KUNIT_CASE_PARAM(vkms_fs_test_atomic_check, vkms_fs_test_gen_params),
++	{}
++};
++
++static struct kunit_suite vkms_fs_test_device_suite = {
++	.name = "vkms-frame-sequential",
++	.init = vkms_fs_test_init,
++	.test_cases = vkms_fs_test_device_cases,
++};
++
++static struct kunit_case vkms_fs_test_model_cases[] = {
++	KUNIT_CASE(vkms_fs_test_connector_types),
++	KUNIT_CASE(vkms_fs_test_eye_order),
++	KUNIT_CASE(vkms_fs_test_link_info),
++	{}
++};
++
++static struct kunit_suite vkms_fs_test_model_suite = {
++	.name = "vkms-frame-sequential-model",
++	.test_cases = vkms_fs_test_model_cases,
++};
++
++kunit_test_suites(&vkms_fs_test_device_suite, &vkms_fs_test_model_suite);
++
++MODULE_LICENSE("GPL");
++MODULE_DESCRIPTION("KUnit tests for frame-sequential stereo in VKMS");
+diff --git a/drivers/gpu/drm/vkms/vkms_output.c b/drivers/gpu/drm/vkms/vkms_output.c
+index 1288c8551..a9fb12b6e 100644
+--- a/drivers/gpu/drm/vkms/vkms_output.c
++++ b/drivers/gpu/drm/vkms/vkms_output.c
+@@ -5,6 +5,7 @@
+ #include "vkms_drv.h"
+ #include <drm/drm_managed.h>
+ #include <drm/drm_print.h>
++#include <kunit/visibility.h>
+ 
+ int vkms_output_init(struct vkms_device *vkmsdev)
+ {
+@@ -119,3 +120,4 @@ int vkms_output_init(struct vkms_device *vkmsdev)
+ 
+ 	return 0;
+ }
++EXPORT_SYMBOL_IF_KUNIT(vkms_output_init);
+-- 
+2.53.0
+

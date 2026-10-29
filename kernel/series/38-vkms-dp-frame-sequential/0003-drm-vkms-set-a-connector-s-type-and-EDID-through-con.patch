@@ -1,0 +1,183 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 29 Oct 2026 14:02:54 -0300
+Subject: [PATCH] drm/vkms: set a connector's type and EDID through configfs
+
+Add three attributes to a configfs connector, for the fields of the
+previous patch:
+- type, a DRM_MODE_CONNECTOR_* value (Virtual by default);
+- edid_enabled, 1 to list the modes of the EDID, 0 for the default list;
+- edid, the EDID itself, written whole in one write() (configfs hands
+  every write to the attribute on its own), at most a page.
+
+All three can change only while the device is disabled, so the
+connector never reads an EDID that is being replaced.
+
+The names and values are those of Louis Chauvet's VKMS configfs series
+(v5, in review), so a script that builds a device for it builds the
+same device here.
+
+Assisted-by: LLM
+---
+ Documentation/gpu/vkms.rst           |  10 ++-
+ drivers/gpu/drm/vkms/vkms_configfs.c | 118 +++++++++++++++++++++++++++
+ 2 files changed, 127 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/gpu/vkms.rst b/Documentation/gpu/vkms.rst
+index 1e79e62a6..691cea00d 100644
+--- a/Documentation/gpu/vkms.rst
++++ b/Documentation/gpu/vkms.rst
+@@ -108,10 +108,18 @@ Last but not least, create one or more connectors::
+ 
+   sudo mkdir /config/vkms/my-vkms/connectors/connector0
+ 
+-Connectors have 1 configurable attribute:
++Connectors have 4 configurable attributes:
+ 
+ - status: Connection status: 1 connected, 2 disconnected, 3 unknown (same values
+   as those exposed by the "status" property of a connector)
++- type: Type of the connector, one of the DRM_MODE_CONNECTOR_* values (the
++  "connector_type" of a connector: 10 DisplayPort, 11 HDMI-A, 15 Virtual, the
++  default)
++- edid_enabled: 1 to list the modes of the EDID below, 0 (the default) for the
++  default list of modes
++- edid: The EDID of the sink, written whole in one write
++
++The type and the EDID cannot change while the device is enabled.
+ 
+ To finish the configuration, link the different pipeline items::
+ 
+diff --git a/drivers/gpu/drm/vkms/vkms_configfs.c b/drivers/gpu/drm/vkms/vkms_configfs.c
+index 601e3f128..99a9169c4 100644
+--- a/drivers/gpu/drm/vkms/vkms_configfs.c
++++ b/drivers/gpu/drm/vkms/vkms_configfs.c
+@@ -560,8 +560,126 @@ static ssize_t connector_status_store(struct config_item *item,
+ 
+ CONFIGFS_ATTR(connector_, status);
+ 
++static ssize_t connector_type_show(struct config_item *item, char *page)
++{
++	struct vkms_configfs_connector *connector;
++	int type;
++
++	connector = connector_item_to_vkms_configfs_connector(item);
++
++	scoped_guard(mutex, &connector->dev->lock)
++		type = vkms_config_connector_get_type(connector->config);
++
++	return sprintf(page, "%d\n", type);
++}
++
++static ssize_t connector_type_store(struct config_item *item,
++				    const char *page, size_t count)
++{
++	struct vkms_configfs_connector *connector;
++	int type;
++
++	connector = connector_item_to_vkms_configfs_connector(item);
++
++	if (kstrtoint(page, 10, &type))
++		return -EINVAL;
++
++	if (type < DRM_MODE_CONNECTOR_Unknown || type > DRM_MODE_CONNECTOR_USB)
++		return -EINVAL;
++
++	scoped_guard(mutex, &connector->dev->lock) {
++		if (connector->dev->enabled)
++			return -EBUSY;
++
++		vkms_config_connector_set_type(connector->config, type);
++	}
++
++	return (ssize_t)count;
++}
++
++static ssize_t connector_edid_enabled_show(struct config_item *item, char *page)
++{
++	struct vkms_configfs_connector *connector;
++	bool enabled;
++
++	connector = connector_item_to_vkms_configfs_connector(item);
++
++	scoped_guard(mutex, &connector->dev->lock)
++		enabled = vkms_config_connector_get_edid_enabled(connector->config);
++
++	return sprintf(page, "%d\n", enabled);
++}
++
++static ssize_t connector_edid_enabled_store(struct config_item *item,
++					    const char *page, size_t count)
++{
++	struct vkms_configfs_connector *connector;
++	bool enabled;
++
++	connector = connector_item_to_vkms_configfs_connector(item);
++
++	if (kstrtobool(page, &enabled))
++		return -EINVAL;
++
++	scoped_guard(mutex, &connector->dev->lock) {
++		if (connector->dev->enabled)
++			return -EBUSY;
++
++		vkms_config_connector_set_edid_enabled(connector->config, enabled);
++	}
++
++	return (ssize_t)count;
++}
++
++static ssize_t connector_edid_show(struct config_item *item, char *page)
++{
++	struct vkms_configfs_connector *connector;
++	unsigned int len;
++	const u8 *edid;
++
++	connector = connector_item_to_vkms_configfs_connector(item);
++
++	scoped_guard(mutex, &connector->dev->lock) {
++		edid = vkms_config_connector_get_edid(connector->config, &len);
++		len = min_t(unsigned int, len, PAGE_SIZE);
++		if (len)
++			memcpy(page, edid, len);
++	}
++
++	return len;
++}
++
++/* configfs hands each write() to the store on its own: write the EDID whole */
++static ssize_t connector_edid_store(struct config_item *item,
++				    const char *page, size_t count)
++{
++	struct vkms_configfs_connector *connector;
++	int ret;
++
++	connector = connector_item_to_vkms_configfs_connector(item);
++
++	scoped_guard(mutex, &connector->dev->lock) {
++		if (connector->dev->enabled)
++			return -EBUSY;
++
++		ret = vkms_config_connector_set_edid(connector->config,
++						     (const u8 *)page, count);
++		if (ret)
++			return ret;
++	}
++
++	return (ssize_t)count;
++}
++
++CONFIGFS_ATTR(connector_, type);
++CONFIGFS_ATTR(connector_, edid_enabled);
++CONFIGFS_ATTR(connector_, edid);
++
+ static struct configfs_attribute *connector_item_attrs[] = {
+ 	&connector_attr_status,
++	&connector_attr_type,
++	&connector_attr_edid_enabled,
++	&connector_attr_edid,
+ 	NULL,
+ };
+ 
+-- 
+2.53.0
+

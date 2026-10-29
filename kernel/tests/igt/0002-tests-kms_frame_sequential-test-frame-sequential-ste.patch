@@ -1,0 +1,1121 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 29 Oct 2026 14:23:43 -0300
+Subject: [PATCH 2/2] tests/kms_frame_sequential: test frame-sequential stereo
+ modes
+
+DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL is a stereo layout in which the
+framebuffer holds both eyes side by side, left eye first, twice the
+mode's width, while the link keeps the mode's 2D timing and carries one
+eye per frame, the left eye first; the driver names each frame's eye to
+the sink (DisplayPort MSA MISC1 bits 2:1 and the VSC SDP stereo byte),
+and page flips take effect only at the start of a left-eye frame. Only
+connectors whose driver opts in list and accept such modes.
+
+Add a test for it, on any driver that offers a connector with such
+modes, a CRTC CRC and a per-CRTC "stereo_link" debugfs log of what each
+frame was sent with (VKMS has all three):
+- mode-listed: the frame-sequential modes have a 2D twin of the same
+  timing, sit on a DisplayPort or eDP connector, and are hidden from
+  clients without DRM_CLIENT_CAP_STEREO_3D; their timings are printed so
+  a bench can compare them with the sink's EDID, and IGT's own stereo
+  framebuffer for such a mode is twice its width;
+- refused-without-opt-in: a TEST_ONLY commit of a frame-sequential mode
+  built from a 2D one fails with -EINVAL on a connector without such
+  modes, while its 2D twin there and the mode on the opted-in connector
+  pass;
+- writeback-eye-order: 32 frames written back one after the other
+  (each capture asked for, without blocking, as soon as the previous one
+  is queued), each buffer holding, sample for sample, exactly the eye the
+  log names for that frame, with MISC1 0x06 for a left eye and 0x02 for a
+  right one and a VSC SDP of revision 0x1 with DB0 0x01; both eyes seen,
+  at least four consecutive frames among them;
+- crc-eye-order: 64 frames, the first frame of the mode a left one, the
+  eyes taking turns frame after frame in the log, each frame's CRC that
+  of its eye shown alone in the 2D twin; a software composer that falls
+  behind leaves a frame without a CRC now and then, so at most two
+  frames may lack one;
+- flip-at-pair-boundary: 16 flips between two framebuffers, asked for
+  both before a right-eye frame and before a left one, each taking
+  effect at a left-eye frame (one or two frames after the request), the
+  log's scanout number changing only there, and every pair of frames
+  showing both eyes of one framebuffer by their CRCs;
+- 2d-control: in the 2D twin no frame carries an eye, MISC1 says no
+  stereo and no VSC SDP is sent.
+
+Samples encode their eye, framebuffer and place, so a frame from the
+wrong eye or offset cannot match. --swap-eyes is the negative control:
+it puts the right eye in the left half and the left eye in the right
+half, and the eye order subtests must then fail.
+
+Assisted-by: LLM
+---
+ tests/kms_frame_sequential.c | 1043 ++++++++++++++++++++++++++++++++++
+ tests/meson.build            |    1 +
+ 2 files changed, 1044 insertions(+)
+ create mode 100644 tests/kms_frame_sequential.c
+
+diff --git a/tests/kms_frame_sequential.c b/tests/kms_frame_sequential.c
+new file mode 100644
+index 000000000..2e4ce84c5
+--- /dev/null
++++ b/tests/kms_frame_sequential.c
+@@ -0,0 +1,1043 @@
++// SPDX-License-Identifier: MIT
++/*
++ * Copyright © 2026 Daniel Campos Ramos
++ */
++
++/**
++ * TEST: kms frame sequential
++ * Category: Display
++ * Description: Tests frame-sequential stereo modes (DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL):
++ *              the framebuffer holds both eyes side by side, left eye first, and the
++ *              driver sends one eye per frame, the left eye first, naming each eye to
++ *              the sink (DisplayPort MSA MISC1 bits 2:1 and the VSC SDP), with page
++ *              flips taking effect only at the start of a left-eye frame.
++ * Driver requirement: vkms
++ * Mega feature: General Display Features
++ */
++
++#include <errno.h>
++#include <inttypes.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include "igt.h"
++#include "igt_sysfs.h"
++#include "sw_sync.h"
++
++/**
++ * SUBTEST: mode-listed
++ * Description: A connector that opted in lists the frame-sequential modes its sink
++ *              declares, each the twin of a 2D mode with the same timing, and hides
++ *              them from clients without DRM_CLIENT_CAP_STEREO_3D; IGT's stereo
++ *              framebuffer for such a mode holds both eyes side by side.
++ *
++ * SUBTEST: refused-without-opt-in
++ * Description: A TEST_ONLY commit of a frame-sequential mode is refused on a connector
++ *              whose driver did not opt in, while the same mode without the flag and the
++ *              opted-in connector are accepted.
++ *
++ * SUBTEST: writeback-eye-order
++ * Description: Frame by frame through writeback and the driver's stereo link log: each
++ *              frame holds exactly the eye the log names, the eyes take turns, and each
++ *              frame is announced with MSA MISC1 and the VSC SDP of its eye.
++ *
++ * SUBTEST: crc-eye-order
++ * Description: 64 frames of a run through the CRTC CRC and the stereo link log: the
++ *              first frame is a left one, the eyes take turns, and each frame's CRC is
++ *              that of its eye.
++ *
++ * SUBTEST: flip-at-pair-boundary
++ * Description: Page flips take effect only at left-eye frames, so both eyes of every pair
++ *              come from the same framebuffer.
++ *
++ * SUBTEST: 2d-control
++ * Description: In the 2D twin of the mode no frame carries an eye, MISC1 says no stereo
++ *              and no VSC SDP is sent.
++ */
++
++IGT_TEST_DESCRIPTION("Tests frame-sequential stereo modes: one eye per frame from a side "
++		     "by side framebuffer, the eye named to the sink, flips at pair boundaries.");
++
++/* MSA MISC1 bits 2:1 (DisplayPort 1.1a): 11b left, 01b right, 00b no stereo */
++#define MISC1_LEFT	0x06
++#define MISC1_RIGHT	0x02
++#define MISC1_NONE	0x00
++/* VSC SDP revision 0x1, DB0 frame/field sequential named by MISC1 (DisplayPort 1.2) */
++#define VSC_REVISION	0x01
++#define VSC_DB0_FS	0x01
++
++#define LOG_FRAMES	256
++
++enum eye {
++	EYE_NONE,
++	EYE_LEFT,
++	EYE_RIGHT,
++};
++
++struct link_frame {
++	uint64_t frame;
++	enum eye eye;
++	unsigned int misc1, vsc, db0, scanout;
++	int wb;
++};
++
++struct pipe {
++	uint32_t conn_id;
++	uint32_t crtc_id;
++	int crtc_index;
++	uint32_t plane_id;
++};
++
++typedef struct {
++	int fd;
++	drmModeRes *res;
++	/* The pipe under test, through the connector that opted in */
++	uint32_t conn_id;
++	uint32_t wb_conn_id;
++	uint32_t crtc_id;
++	int crtc_index;
++	uint32_t plane_id;
++	drmModeModeInfo fs_mode;
++	drmModeModeInfo mode_2d;
++	struct igt_fb sbs[2];
++	struct igt_fb eye_fb[2][2];
++	igt_crc_t ref[2][2];
++	bool have_refs;
++} data_t;
++
++static bool swap_eyes;
++
++static int eye_index(enum eye eye)
++{
++	return eye == EYE_RIGHT;
++}
++
++static const char *eye_name(enum eye eye)
++{
++	return eye == EYE_LEFT ? "left" : eye == EYE_RIGHT ? "right" : "none";
++}
++
++static bool is_frame_sequential(const drmModeModeInfo *mode)
++{
++	return (mode->flags & DRM_MODE_FLAG_3D_MASK) == DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL;
++}
++
++static bool same_timing(const drmModeModeInfo *a, const drmModeModeInfo *b)
++{
++	return a->clock == b->clock &&
++	       a->hdisplay == b->hdisplay && a->hsync_start == b->hsync_start &&
++	       a->hsync_end == b->hsync_end && a->htotal == b->htotal &&
++	       a->vdisplay == b->vdisplay && a->vsync_start == b->vsync_start &&
++	       a->vsync_end == b->vsync_end && a->vtotal == b->vtotal &&
++	       (a->flags & ~DRM_MODE_FLAG_3D_MASK) == (b->flags & ~DRM_MODE_FLAG_3D_MASK);
++}
++
++/*
++ * Each sample names its eye and its place: R = x & 0xff, G = y & 0xff,
++ * B = framebuffer << 7 | eye << 6 | (x >> 8) << 2 | y >> 8, so a sample taken
++ * from the wrong eye, framebuffer or place cannot match.
++ */
++static uint32_t sample(int fb, enum eye eye, int x, int y)
++{
++	uint32_t b = fb << 7 | eye_index(eye) << 6 | ((x >> 8) & 3) << 2 | ((y >> 8) & 3);
++
++	return 0xff000000 | (x & 0xff) << 16 | (y & 0xff) << 8 | b;
++}
++
++static void fill_eye(data_t *data, struct igt_fb *fb, int x0, int n, enum eye eye)
++{
++	uint32_t *ptr = igt_fb_map_buffer(data->fd, fb);
++	int w = data->fs_mode.hdisplay;
++
++	igt_assert(ptr);
++	for (int y = 0; y < fb->height; y++)
++		for (int x = 0; x < w; x++)
++			ptr[y * fb->strides[0] / 4 + x0 + x] = sample(n, eye, x, y);
++	igt_fb_unmap_buffer(fb, ptr);
++}
++
++static void create_fbs(data_t *data)
++{
++	int w = data->fs_mode.hdisplay, h = data->fs_mode.vdisplay;
++
++	for (int n = 0; n < 2; n++) {
++		/* The frame: both eyes side by side, left eye first (swapped for the control) */
++		igt_create_fb(data->fd, 2 * w, h, DRM_FORMAT_XRGB8888,
++			      DRM_FORMAT_MOD_LINEAR, &data->sbs[n]);
++		fill_eye(data, &data->sbs[n], 0, n, swap_eyes ? EYE_RIGHT : EYE_LEFT);
++		fill_eye(data, &data->sbs[n], w, n, swap_eyes ? EYE_LEFT : EYE_RIGHT);
++
++		/* Each eye alone, the picture its frames must show */
++		for (int e = 0; e < 2; e++) {
++			igt_create_fb(data->fd, w, h, DRM_FORMAT_XRGB8888,
++				      DRM_FORMAT_MOD_LINEAR, &data->eye_fb[n][e]);
++			fill_eye(data, &data->eye_fb[n][e], 0, n, e ? EYE_RIGHT : EYE_LEFT);
++		}
++	}
++}
++
++static uint32_t prop(data_t *data, uint32_t obj, uint32_t type, const char *name)
++{
++	uint32_t id;
++
++	igt_assert_f(kmstest_get_property(data->fd, obj, type, name, &id, NULL, NULL),
++		     "no property %s on object %u\n", name, obj);
++
++	return id;
++}
++
++static void add_plane(data_t *data, drmModeAtomicReq *req, const struct pipe *pipe,
++		      struct igt_fb *fb)
++{
++	uint32_t p = pipe->plane_id;
++	uint32_t t = DRM_MODE_OBJECT_PLANE;
++
++	igt_assert(drmModeAtomicAddProperty(req, p, prop(data, p, t, "FB_ID"),
++					    fb->fb_id) >= 0);
++	igt_assert(drmModeAtomicAddProperty(req, p, prop(data, p, t, "CRTC_ID"),
++					    pipe->crtc_id) >= 0);
++	drmModeAtomicAddProperty(req, p, prop(data, p, t, "SRC_X"), 0);
++	drmModeAtomicAddProperty(req, p, prop(data, p, t, "SRC_Y"), 0);
++	drmModeAtomicAddProperty(req, p, prop(data, p, t, "SRC_W"), (uint64_t)fb->width << 16);
++	drmModeAtomicAddProperty(req, p, prop(data, p, t, "SRC_H"), (uint64_t)fb->height << 16);
++	drmModeAtomicAddProperty(req, p, prop(data, p, t, "CRTC_X"), 0);
++	drmModeAtomicAddProperty(req, p, prop(data, p, t, "CRTC_Y"), 0);
++	drmModeAtomicAddProperty(req, p, prop(data, p, t, "CRTC_W"), fb->width);
++	drmModeAtomicAddProperty(req, p, prop(data, p, t, "CRTC_H"), fb->height);
++}
++
++static const struct pipe *main_pipe(data_t *data)
++{
++	static struct pipe pipe;
++
++	pipe = (struct pipe) {
++		.conn_id = data->conn_id,
++		.crtc_id = data->crtc_id,
++		.crtc_index = data->crtc_index,
++		.plane_id = data->plane_id,
++	};
++
++	return &pipe;
++}
++
++/*
++ * Sets @mode on @pipe (and on the writeback connector if @with_wb), the
++ * primary plane showing @fb; TEST_ONLY when @test_only.
++ */
++static int set_mode_on(data_t *data, const struct pipe *pipe, const drmModeModeInfo *mode,
++		       struct igt_fb *fb, bool with_wb, bool test_only)
++{
++	drmModeAtomicReq *req = drmModeAtomicAlloc();
++	uint32_t blob, c = pipe->crtc_id, conn_id = pipe->conn_id;
++	uint32_t flags = DRM_MODE_ATOMIC_ALLOW_MODESET;
++	int ret;
++
++	igt_assert_eq(drmModeCreatePropertyBlob(data->fd, mode, sizeof(*mode), &blob), 0);
++
++	drmModeAtomicAddProperty(req, c, prop(data, c, DRM_MODE_OBJECT_CRTC, "MODE_ID"), blob);
++	drmModeAtomicAddProperty(req, c, prop(data, c, DRM_MODE_OBJECT_CRTC, "ACTIVE"), 1);
++	drmModeAtomicAddProperty(req, conn_id,
++				 prop(data, conn_id, DRM_MODE_OBJECT_CONNECTOR, "CRTC_ID"), c);
++	if (with_wb)
++		drmModeAtomicAddProperty(req, data->wb_conn_id,
++					 prop(data, data->wb_conn_id, DRM_MODE_OBJECT_CONNECTOR,
++					      "CRTC_ID"), c);
++	add_plane(data, req, pipe, fb);
++
++	if (test_only)
++		flags |= DRM_MODE_ATOMIC_TEST_ONLY;
++
++	ret = drmModeAtomicCommit(data->fd, req, flags, NULL);
++	ret = ret ? -errno : 0;
++
++	drmModeAtomicFree(req);
++	drmModeDestroyPropertyBlob(data->fd, blob);
++
++	return ret;
++}
++
++static int set_mode(data_t *data, const drmModeModeInfo *mode, struct igt_fb *fb,
++		    bool with_wb, bool test_only)
++{
++	return set_mode_on(data, main_pipe(data), mode, fb, with_wb, test_only);
++}
++
++static void disable_crtc(data_t *data)
++{
++	drmModeAtomicReq *req = drmModeAtomicAlloc();
++	uint32_t c = data->crtc_id, p = data->plane_id;
++
++	drmModeAtomicAddProperty(req, c, prop(data, c, DRM_MODE_OBJECT_CRTC, "MODE_ID"), 0);
++	drmModeAtomicAddProperty(req, c, prop(data, c, DRM_MODE_OBJECT_CRTC, "ACTIVE"), 0);
++	drmModeAtomicAddProperty(req, data->conn_id,
++				 prop(data, data->conn_id, DRM_MODE_OBJECT_CONNECTOR,
++				      "CRTC_ID"), 0);
++	if (data->wb_conn_id)
++		drmModeAtomicAddProperty(req, data->wb_conn_id,
++					 prop(data, data->wb_conn_id, DRM_MODE_OBJECT_CONNECTOR,
++					      "CRTC_ID"), 0);
++	drmModeAtomicAddProperty(req, p, prop(data, p, DRM_MODE_OBJECT_PLANE, "FB_ID"), 0);
++	drmModeAtomicAddProperty(req, p, prop(data, p, DRM_MODE_OBJECT_PLANE, "CRTC_ID"), 0);
++	drmModeAtomicCommit(data->fd, req, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
++	drmModeAtomicFree(req);
++}
++
++/*
++ * Asks for the next frame to be written back into @fb, with a vblank event
++ * for the commit (the CRTC is in it, unchanged, only to get one), and waits
++ * for that event: the job is then queued, and the next capture can be asked
++ * for while this one is composed. @fence receives its out fence.
++ */
++static void capture(data_t *data, struct igt_fb *fb, int32_t *fence)
++{
++	drmModeAtomicReq *req = drmModeAtomicAlloc();
++	uint32_t w = data->wb_conn_id, c = data->crtc_id;
++
++	*fence = -1;
++	drmModeAtomicAddProperty(req, c, prop(data, c, DRM_MODE_OBJECT_CRTC, "ACTIVE"), 1);
++	drmModeAtomicAddProperty(req, w, prop(data, w, DRM_MODE_OBJECT_CONNECTOR,
++					      "WRITEBACK_FB_ID"), fb->fb_id);
++	drmModeAtomicAddProperty(req, w, prop(data, w, DRM_MODE_OBJECT_CONNECTOR,
++					      "WRITEBACK_OUT_FENCE_PTR"), to_user_pointer(fence));
++	do_or_die(drmModeAtomicCommit(data->fd, req,
++				      DRM_MODE_ATOMIC_NONBLOCK | DRM_MODE_PAGE_FLIP_EVENT, data));
++	drmModeAtomicFree(req);
++	igt_assert(*fence >= 0);
++}
++
++static void flip(data_t *data, struct igt_fb *fb)
++{
++	drmModeAtomicReq *req = drmModeAtomicAlloc();
++	uint32_t p = data->plane_id;
++
++	drmModeAtomicAddProperty(req, p, prop(data, p, DRM_MODE_OBJECT_PLANE, "FB_ID"), fb->fb_id);
++	do_or_die(drmModeAtomicCommit(data->fd, req,
++				      DRM_MODE_ATOMIC_NONBLOCK | DRM_MODE_PAGE_FLIP_EVENT, data));
++	drmModeAtomicFree(req);
++}
++
++static unsigned int event_sequence;
++
++static void flip_handler(int fd, unsigned int sequence, unsigned int tv_sec,
++			 unsigned int tv_usec, unsigned int crtc_id, void *user_data)
++{
++	event_sequence = sequence;
++}
++
++static unsigned int wait_flip(data_t *data)
++{
++	drmEventContext ev = {
++		.version = 3,
++		.page_flip_handler2 = flip_handler,
++	};
++
++	event_sequence = 0;
++	igt_assert_eq(drmHandleEvent(data->fd, &ev), 0);
++
++	return event_sequence;
++}
++
++static unsigned int current_frame(data_t *data, int wait)
++{
++	drmVBlank vbl = {
++		.request.type = DRM_VBLANK_RELATIVE | kmstest_get_vbl_flag(data->crtc_index),
++		.request.sequence = wait,
++	};
++
++	do_or_die(drmWaitVBlank(data->fd, &vbl));
++
++	return vbl.reply.sequence;
++}
++
++/* Reads the driver's stereo link log of the CRTC, the oldest frame first */
++static int read_link_log(data_t *data, struct link_frame *frames)
++{
++	static char buf[LOG_FRAMES * 128];
++	int dir, n = 0;
++	char *line, *save;
++
++	dir = igt_debugfs_crtc_dir(data->fd, data->crtc_index);
++	igt_require_f(dir >= 0, "no debugfs directory for CRTC %d\n", data->crtc_index);
++	igt_require_f(igt_debugfs_simple_read(dir, "stereo_link", buf, sizeof(buf)) > 0,
++		      "the driver has no stereo link log\n");
++	close(dir);
++
++	for (line = strtok_r(buf, "\n", &save); line && n < LOG_FRAMES;
++	     line = strtok_r(NULL, "\n", &save)) {
++		struct link_frame *f = &frames[n];
++		char eye[8];
++
++		igt_assert_f(sscanf(line, "frame=%" SCNu64 " eye=%7s misc1=%x vsc=%x db0=%x scanout=%u wb=%d",
++				    &f->frame, eye, &f->misc1, &f->vsc, &f->db0, &f->scanout,
++				    &f->wb) == 7, "cannot read \"%s\"\n", line);
++		if (!strcmp(eye, "left"))
++			f->eye = EYE_LEFT;
++		else if (!strcmp(eye, "right"))
++			f->eye = EYE_RIGHT;
++		else
++			f->eye = EYE_NONE;
++		n++;
++	}
++
++	return n;
++}
++
++static struct link_frame *find_frame(struct link_frame *frames, int n, uint64_t frame)
++{
++	for (int i = 0; i < n; i++)
++		if (frames[i].frame == frame)
++			return &frames[i];
++
++	return NULL;
++}
++
++/* What the frame was sent with must be what its eye needs */
++static void check_link(const struct link_frame *f)
++{
++	switch (f->eye) {
++	case EYE_LEFT:
++		igt_assert_eq_u32(f->misc1, MISC1_LEFT);
++		break;
++	case EYE_RIGHT:
++		igt_assert_eq_u32(f->misc1, MISC1_RIGHT);
++		break;
++	default:
++		igt_assert_f(false, "frame %" PRIu64 " carries no eye\n", f->frame);
++	}
++	igt_assert_eq_u32(f->vsc, VSC_REVISION);
++	igt_assert_eq_u32(f->db0, VSC_DB0_FS);
++}
++
++/*
++ * The frames of the current frame-sequential mode in the log, from the first
++ * one after the 2D or empty frames before it: that first frame is a left one,
++ * and the eyes take turns frame after frame.
++ */
++static int check_eye_order(struct link_frame *frames, int n)
++{
++	int first = -1, count = 0;
++
++	for (int i = n - 1; i >= 0 && frames[i].eye != EYE_NONE; i--)
++		first = i;
++	igt_assert_f(first >= 0, "no frame-sequential frame in the log\n");
++
++	for (int i = first; i < n; i++) {
++		check_link(&frames[i]);
++		if (i > first) {
++			uint64_t d = frames[i].frame - frames[i - 1].frame;
++
++			igt_assert_lt_u64(0, d);
++			igt_assert_f((frames[i].eye != frames[i - 1].eye) == (d & 1),
++				     "frames %" PRIu64 " and %" PRIu64 " carry the %s and the %s eye\n",
++				     frames[i - 1].frame, frames[i].frame,
++				     eye_name(frames[i - 1].eye), eye_name(frames[i].eye));
++		}
++		count++;
++	}
++
++	/* Only the first frame of the mode is known when the log still holds it */
++	if (first > 0)
++		igt_assert_f(frames[first].eye == EYE_LEFT,
++			     "the first frame of the mode, %" PRIu64 ", is a %s one\n",
++			     frames[first].frame, eye_name(frames[first].eye));
++
++	return count;
++}
++
++/* The writeback buffer must hold exactly @eye of framebuffer @n */
++static int wrong_samples(data_t *data, struct igt_fb *wb, int n, enum eye eye)
++{
++	uint32_t *ptr = igt_fb_map_buffer(data->fd, wb);
++	int wrong = 0;
++
++	igt_assert(ptr);
++	for (int y = 0; y < wb->height; y++)
++		for (int x = 0; x < wb->width; x++)
++			wrong += (ptr[y * wb->strides[0] / 4 + x] | 0xff000000) !=
++				 sample(n, eye, x, y);
++	igt_fb_unmap_buffer(wb, ptr);
++
++	return wrong;
++}
++
++/* The CRC of each eye of each framebuffer, shown alone in the 2D twin */
++static void get_references(data_t *data)
++{
++	igt_pipe_crc_t *pipe_crc;
++
++	if (data->have_refs)
++		return;
++
++	for (int n = 0; n < 2; n++) {
++		for (int e = 0; e < 2; e++) {
++			igt_assert_eq(set_mode(data, &data->mode_2d,
++					       &data->eye_fb[n][e], false, false), 0);
++			pipe_crc = igt_pipe_crc_new(data->fd, data->crtc_index,
++						    IGT_PIPE_CRC_SOURCE_AUTO);
++			igt_pipe_crc_collect_crc(pipe_crc, &data->ref[n][e]);
++			igt_pipe_crc_free(pipe_crc);
++		}
++	}
++
++	for (int a = 0; a < 4; a++)
++		for (int b = a + 1; b < 4; b++)
++			igt_assert_f(!igt_check_crc_equal(&data->ref[a / 2][a % 2],
++							  &data->ref[b / 2][b % 2]),
++				     "two eyes give the same CRC\n");
++
++	data->have_refs = true;
++}
++
++/* Which framebuffer the CRC of a frame carrying @eye shows, or -1 */
++static int crc_fb(data_t *data, const igt_crc_t *crc, enum eye eye)
++{
++	for (int n = 0; n < 2; n++)
++		if (igt_check_crc_equal(crc, &data->ref[n][eye_index(eye)]))
++			return n;
++
++	return -1;
++}
++
++static void test_mode_listed(data_t *data)
++{
++	drmModeConnector *c = drmModeGetConnector(data->fd, data->conn_id);
++	drmModeConnector *plain;
++	drmModeFB2 *fb;
++	unsigned int fb_id;
++	int fd, n_fs = 0;
++
++	igt_assert(c);
++	igt_assert_f(c->connector_type == DRM_MODE_CONNECTOR_DisplayPort ||
++		     c->connector_type == DRM_MODE_CONNECTOR_eDP,
++		     "frame-sequential modes on a connector of type %d\n", c->connector_type);
++
++	for (int i = 0; i < c->count_modes; i++) {
++		bool twin = false;
++
++		if (!is_frame_sequential(&c->modes[i]))
++			continue;
++
++		for (int j = 0; j < c->count_modes; j++)
++			twin |= !(c->modes[j].flags & DRM_MODE_FLAG_3D_MASK) &&
++				same_timing(&c->modes[i], &c->modes[j]);
++
++		igt_info("frame-sequential mode: %dx%d %d Hz clock %d\n",
++			 c->modes[i].hdisplay, c->modes[i].vdisplay, c->modes[i].vrefresh,
++			 c->modes[i].clock);
++		kmstest_dump_mode(&c->modes[i]);
++		igt_assert_f(twin, "%s has no 2D twin\n", c->modes[i].name);
++		n_fs++;
++	}
++	igt_assert_lt(0, n_fs);
++	drmModeFreeConnector(c);
++
++	/* IGT's own stereo framebuffer for the mode holds both eyes side by side */
++	fb_id = igt_create_stereo_fb(data->fd, &data->fs_mode, DRM_FORMAT_XRGB8888,
++				     DRM_FORMAT_MOD_LINEAR);
++	fb = drmModeGetFB2(data->fd, fb_id);
++	igt_assert(fb);
++	igt_assert_eq(fb->width, 2 * data->fs_mode.hdisplay);
++	igt_assert_eq(fb->height, data->fs_mode.vdisplay);
++	drmModeFreeFB2(fb);
++	drmModeRmFB(data->fd, fb_id);
++
++	/* Hidden from clients that do not ask for stereo modes */
++	fd = drm_open_driver(DRIVER_ANY);
++	plain = drmModeGetConnectorCurrent(fd, data->conn_id);
++	igt_assert(plain);
++	for (int i = 0; i < plain->count_modes; i++)
++		igt_assert(!(plain->modes[i].flags & DRM_MODE_FLAG_3D_MASK));
++	drmModeFreeConnector(plain);
++	drm_close_driver(fd);
++}
++
++/* A CRTC @conn_id can drive, other than the one under test, and its primary plane */
++static bool other_pipe(data_t *data, uint32_t conn_id, struct pipe *pipe)
++{
++	drmModeConnector *c = drmModeGetConnector(data->fd, conn_id);
++	drmModePlaneRes *planes;
++	uint32_t crtcs = 0;
++
++	igt_assert(c);
++	for (int e = 0; e < c->count_encoders; e++) {
++		drmModeEncoder *enc = drmModeGetEncoder(data->fd, c->encoders[e]);
++
++		if (enc)
++			crtcs |= enc->possible_crtcs;
++		drmModeFreeEncoder(enc);
++	}
++	drmModeFreeConnector(c);
++
++	crtcs &= ~(1 << data->crtc_index);
++	if (!crtcs)
++		return false;
++
++	pipe->conn_id = conn_id;
++	pipe->crtc_index = ffs(crtcs) - 1;
++	pipe->crtc_id = data->res->crtcs[pipe->crtc_index];
++	pipe->plane_id = 0;
++
++	planes = drmModeGetPlaneResources(data->fd);
++	igt_assert(planes);
++	for (int i = 0; i < planes->count_planes && !pipe->plane_id; i++) {
++		drmModePlane *p = drmModeGetPlane(data->fd, planes->planes[i]);
++		uint64_t type;
++
++		if (p && (p->possible_crtcs & (1 << pipe->crtc_index)) &&
++		    kmstest_get_property(data->fd, p->plane_id, DRM_MODE_OBJECT_PLANE, "type",
++					 NULL, &type, NULL) && type == DRM_PLANE_TYPE_PRIMARY)
++			pipe->plane_id = p->plane_id;
++		drmModeFreePlane(p);
++	}
++	drmModeFreePlaneResources(planes);
++
++	return pipe->plane_id;
++}
++
++static void test_refused(data_t *data)
++{
++	drmModeModeInfo mode;
++	struct pipe pipe;
++	int others = 0;
++
++	/* The opted-in connector takes the mode */
++	igt_assert_eq(set_mode(data, &data->fs_mode, &data->sbs[0], false, true), 0);
++
++	for (int i = 0; i < data->res->count_connectors; i++) {
++		drmModeConnector *c = drmModeGetConnector(data->fd, data->res->connectors[i]);
++		bool listed = false;
++
++		igt_assert(c);
++		if (c->connector_id == data->conn_id ||
++		    c->connector_type == DRM_MODE_CONNECTOR_WRITEBACK ||
++		    c->connection != DRM_MODE_CONNECTED || !c->count_modes) {
++			drmModeFreeConnector(c);
++			continue;
++		}
++
++		for (int j = 0; j < c->count_modes; j++)
++			listed |= is_frame_sequential(&c->modes[j]);
++		if (listed || !other_pipe(data, c->connector_id, &pipe)) {
++			drmModeFreeConnector(c);
++			continue;
++		}
++
++		mode = data->mode_2d;
++		for (int j = 0; j < c->count_modes; j++)
++			if (same_timing(&c->modes[j], &data->mode_2d))
++				mode = c->modes[j];
++
++		/* The 2D mode is accepted: only the flag makes the difference */
++		igt_assert_eq(set_mode_on(data, &pipe, &mode, &data->eye_fb[0][0], false, true), 0);
++
++		mode.flags |= DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL;
++		igt_assert_eq(set_mode_on(data, &pipe, &mode, &data->sbs[0], false, true), -EINVAL);
++		igt_info("connector %u (type %d), CRTC %d: frame-sequential %s refused, "
++			 "its 2D twin accepted\n", c->connector_id, c->connector_type,
++			 pipe.crtc_index, mode.name);
++		others++;
++		drmModeFreeConnector(c);
++	}
++
++	igt_require_f(others, "no connected connector without frame-sequential modes\n");
++}
++
++#define CAPTURES 32
++
++/*
++ * Captures CAPTURES frames back to back, each into a buffer of its own, and
++ * checks them afterwards: each capture is asked for as soon as the previous
++ * one is queued, so they follow each other frame after frame when the driver
++ * keeps up. The jobs complete in order, so the n-th frame the log marks as
++ * written back is the n-th capture.
++ */
++static void test_writeback_eye_order(data_t *data)
++{
++	struct link_frame frames[LOG_FRAMES], *f[CAPTURES];
++	struct igt_fb wb[CAPTURES];
++	int32_t fences[CAPTURES];
++	int counted[2] = {}, run = 1, longest = 1, n, k = 0, total;
++
++	igt_require_f(data->wb_conn_id, "no writeback connector on the CRTC\n");
++
++	for (int i = 0; i < CAPTURES; i++)
++		igt_create_fb(data->fd, data->fs_mode.hdisplay, data->fs_mode.vdisplay,
++			      DRM_FORMAT_XRGB8888, DRM_FORMAT_MOD_LINEAR, &wb[i]);
++
++	igt_assert_eq(set_mode(data, &data->fs_mode, &data->sbs[0], true, false), 0);
++
++	for (int i = 0; i < CAPTURES; i++) {
++		capture(data, &wb[i], &fences[i]);
++		wait_flip(data);
++	}
++	for (int i = 0; i < CAPTURES; i++) {
++		igt_assert_eq(sync_fence_wait(fences[i], 1000), 0);
++		close(fences[i]);
++	}
++
++	n = read_link_log(data, frames);
++	total = check_eye_order(frames, n);
++	/* The last CAPTURES frames written back are the captures, in order */
++	for (int j = n - 1; j >= 0 && k < CAPTURES; j--)
++		if (frames[j].wb)
++			f[CAPTURES - 1 - k++] = &frames[j];
++	igt_assert_f(k == CAPTURES, "%d frames written back in the log, %d captures\n",
++		     k, CAPTURES);
++	for (int i = 0; i < CAPTURES; i++)
++		check_link(f[i]);
++
++	for (int i = 0; i < CAPTURES; i++) {
++		int wrong = wrong_samples(data, &wb[i], 0, f[i]->eye);
++
++		igt_debug("capture %d: frame %" PRIu64 " %s eye, %d wrong samples\n",
++			  i, f[i]->frame, eye_name(f[i]->eye), wrong);
++		igt_assert_f(!wrong, "frame %" PRIu64 " (%s eye): %d of %d samples are not the %s eye's\n",
++			     f[i]->frame, eye_name(f[i]->eye), wrong,
++			     data->fs_mode.hdisplay * data->fs_mode.vdisplay, eye_name(f[i]->eye));
++		counted[eye_index(f[i]->eye)]++;
++
++		if (i && f[i]->frame == f[i - 1]->frame + 1)
++			longest = max(longest, ++run);
++		else
++			run = 1;
++	}
++
++	igt_info("%d frames written back: %d left, %d right, the longest run %d consecutive "
++		 "frames; %d frames in the log alternate\n",
++		 CAPTURES, counted[0], counted[1], longest, total);
++	igt_assert_lt(0, counted[0]);
++	igt_assert_lt(0, counted[1]);
++	igt_assert_lte(4, longest);
++
++	for (int i = 0; i < CAPTURES; i++)
++		igt_remove_fb(data->fd, &wb[i]);
++}
++
++static void test_crc_eye_order(data_t *data)
++{
++	struct link_frame frames[LOG_FRAMES];
++	igt_pipe_crc_t *pipe_crc;
++	igt_crc_t *crcs = NULL;
++	int n, got, counted[2] = {}, missed = 0;
++
++	get_references(data);
++
++	pipe_crc = igt_pipe_crc_new(data->fd, data->crtc_index, IGT_PIPE_CRC_SOURCE_AUTO);
++	igt_assert_eq(set_mode(data, &data->fs_mode, &data->sbs[0], false, false), 0);
++	igt_pipe_crc_start(pipe_crc);
++	got = igt_pipe_crc_get_crcs(pipe_crc, 64, &crcs);
++	igt_pipe_crc_stop(pipe_crc);
++	igt_assert_eq(got, 64);
++
++	n = read_link_log(data, frames);
++	check_eye_order(frames, n);
++
++	for (int i = 0; i < got; i++) {
++		struct link_frame *f = find_frame(frames, n, crcs[i].frame);
++		int fb;
++
++		igt_assert(crcs[i].has_valid_frame);
++		igt_assert_f(f, "frame %u of the CRC is not in the log\n", crcs[i].frame);
++		if (i) {
++			igt_assert_lt_u32(crcs[i - 1].frame, crcs[i].frame);
++			missed += crcs[i].frame - crcs[i - 1].frame - 1;
++		}
++
++		fb = crc_fb(data, &crcs[i], f->eye);
++		igt_assert_f(fb == 0, "frame %u (%s eye): its CRC is not the %s eye's\n",
++			     crcs[i].frame, eye_name(f->eye), eye_name(f->eye));
++		counted[eye_index(f->eye)]++;
++	}
++
++	/*
++	 * A software composer that falls behind composes only the last frame
++	 * it missed, so a busy machine can leave a frame without a CRC; the
++	 * log still holds every frame, and their eye order is checked above.
++	 */
++	igt_info("%d frames with a CRC, each the CRC of its eye: %d left, %d right; "
++		 "%d frames without one in between\n", got, counted[0], counted[1], missed);
++	igt_assert_lte(missed, 2);
++	igt_assert_lte(abs(counted[0] - counted[1]), 2);
++
++	free(crcs);
++	igt_pipe_crc_free(pipe_crc);
++}
++
++static void test_flip_at_pair_boundary(data_t *data)
++{
++	struct link_frame frames[LOG_FRAMES];
++	igt_pipe_crc_t *pipe_crc;
++	igt_crc_t *crcs = NULL;
++	int n, got, latency[4] = {}, pairs = 0, changes = 0;
++	unsigned int seq[16];
++
++	get_references(data);
++
++	pipe_crc = igt_pipe_crc_new_nonblock(data->fd, data->crtc_index, IGT_PIPE_CRC_SOURCE_AUTO);
++	igt_assert_eq(set_mode(data, &data->fs_mode, &data->sbs[0], false, false), 0);
++	igt_pipe_crc_start(pipe_crc);
++
++	current_frame(data, 2);
++	for (int i = 0; i < 16; i++) {
++		unsigned int now;
++
++		/*
++		 * A flip asked for right after the previous one took effect,
++		 * at the start of a left-eye frame, has a right-eye frame next
++		 * and waits for the one after it; every other flip waits one
++		 * frame more first, so it has a left-eye frame next.
++		 */
++		if (i % 2)
++			current_frame(data, 1);
++		now = current_frame(data, 0);
++		flip(data, &data->sbs[(i + 1) % 2]);
++		seq[i] = wait_flip(data);
++		igt_assert_lt(0, seq[i] - now);
++		igt_assert_lt(seq[i] - now, 4);
++		latency[seq[i] - now]++;
++	}
++	current_frame(data, 2);
++
++	got = igt_pipe_crc_get_crcs(pipe_crc, 128, &crcs);
++	igt_pipe_crc_stop(pipe_crc);
++	n = read_link_log(data, frames);
++	check_eye_order(frames, n);
++
++	/* Each flip took effect at a left-eye frame, which shows new planes */
++	for (int i = 0; i < 16; i++) {
++		struct link_frame *f = find_frame(frames, n, seq[i]);
++
++		igt_assert_f(f, "the frame of flip %d, %u, is not in the log\n", i, seq[i]);
++		igt_assert_f(f->eye == EYE_LEFT, "flip %d took effect at frame %u, a %s one\n",
++			     i, seq[i], eye_name(f->eye));
++		igt_assert(f > frames && f[-1].scanout != f->scanout);
++	}
++
++	/* New planes appear only at left-eye frames: a pair shows one scanout */
++	for (int i = 1; i < n; i++)
++		if (frames[i].eye == EYE_RIGHT && frames[i].frame == frames[i - 1].frame + 1)
++			igt_assert_eq_u32(frames[i].scanout, frames[i - 1].scanout);
++
++	/* The pixels: each frame its eye of one framebuffer, both eyes of a pair the same one */
++	for (int i = 0; i < got; i++) {
++		struct link_frame *f = find_frame(frames, n, crcs[i].frame);
++		int fb;
++
++		igt_assert_f(f, "frame %u of the CRC is not in the log\n", crcs[i].frame);
++		fb = crc_fb(data, &crcs[i], f->eye);
++		igt_assert_f(fb >= 0, "frame %u (%s eye) shows neither framebuffer's %s eye\n",
++			     crcs[i].frame, eye_name(f->eye), eye_name(f->eye));
++
++		if (!i || crcs[i - 1].frame + 1 != crcs[i].frame)
++			continue;
++
++		if (f->eye == EYE_RIGHT) {
++			igt_assert_f(crc_fb(data, &crcs[i - 1], EYE_LEFT) == fb,
++				     "the pair of frames %u and %u shows two framebuffers\n",
++				     crcs[i - 1].frame, crcs[i].frame);
++			pairs++;
++		} else if (crc_fb(data, &crcs[i - 1], EYE_RIGHT) != fb) {
++			changes++;
++		}
++	}
++
++	igt_info("16 flips at left-eye frames, %d one frame after the request, %d two frames; "
++		 "%d frames: %d pairs each from one framebuffer, %d changes of framebuffer\n",
++		 latency[1], latency[2], got, pairs, changes);
++	igt_assert_lt(0, latency[1]);
++	igt_assert_lt(0, latency[2]);
++	igt_assert_lt(0, pairs);
++	igt_assert_lt(0, changes);
++
++	free(crcs);
++	igt_pipe_crc_free(pipe_crc);
++}
++
++static void test_2d_control(data_t *data)
++{
++	struct link_frame frames[LOG_FRAMES];
++	int n, counted = 0;
++
++	igt_assert_eq(set_mode(data, &data->mode_2d, &data->eye_fb[0][0],
++			       false, false), 0);
++	current_frame(data, 8);
++
++	n = read_link_log(data, frames);
++	for (int i = n - 1; i >= 0 && n - i <= 6; i--) {
++		igt_assert_f(frames[i].eye == EYE_NONE, "2D frame %" PRIu64 " carries the %s eye\n",
++			     frames[i].frame, eye_name(frames[i].eye));
++		igt_assert_eq_u32(frames[i].misc1, MISC1_NONE);
++		igt_assert_eq_u32(frames[i].vsc, 0);
++		igt_assert_eq_u32(frames[i].db0, 0);
++		counted++;
++	}
++	igt_assert_eq(counted, 6);
++}
++
++static bool find_pipe(data_t *data)
++{
++	drmModePlaneRes *planes;
++
++	for (int i = 0; i < data->res->count_connectors; i++) {
++		drmModeConnector *c = drmModeGetConnector(data->fd, data->res->connectors[i]);
++
++		if (!c)
++			continue;
++
++		for (int j = 0; j < c->count_modes && !data->conn_id; j++) {
++			if (c->connection != DRM_MODE_CONNECTED ||
++			    !is_frame_sequential(&c->modes[j]))
++				continue;
++
++			for (int k = 0; k < c->count_modes; k++) {
++				if (!(c->modes[k].flags & DRM_MODE_FLAG_3D_MASK) &&
++				    same_timing(&c->modes[k], &c->modes[j])) {
++					data->conn_id = c->connector_id;
++					data->fs_mode = c->modes[j];
++					data->mode_2d = c->modes[k];
++				}
++			}
++		}
++		drmModeFreeConnector(c);
++	}
++
++	if (!data->conn_id)
++		return false;
++
++	/* The first CRTC the connector can use, with a writeback connector if one can */
++	for (int i = 0; i < data->res->count_crtcs && !data->crtc_id; i++) {
++		drmModeConnector *c = drmModeGetConnector(data->fd, data->conn_id);
++		bool usable = false;
++
++		for (int e = 0; e < c->count_encoders; e++) {
++			drmModeEncoder *enc = drmModeGetEncoder(data->fd, c->encoders[e]);
++
++			usable |= enc && (enc->possible_crtcs & (1 << i));
++			drmModeFreeEncoder(enc);
++		}
++		drmModeFreeConnector(c);
++
++		if (usable) {
++			data->crtc_id = data->res->crtcs[i];
++			data->crtc_index = i;
++		}
++	}
++	igt_assert(data->crtc_id);
++
++	for (int i = 0; i < data->res->count_connectors && !data->wb_conn_id; i++) {
++		drmModeConnector *c = drmModeGetConnector(data->fd, data->res->connectors[i]);
++
++		if (c && c->connector_type == DRM_MODE_CONNECTOR_WRITEBACK) {
++			for (int e = 0; e < c->count_encoders; e++) {
++				drmModeEncoder *enc = drmModeGetEncoder(data->fd, c->encoders[e]);
++
++				if (enc && (enc->possible_crtcs & (1 << data->crtc_index)))
++					data->wb_conn_id = c->connector_id;
++				drmModeFreeEncoder(enc);
++			}
++		}
++		drmModeFreeConnector(c);
++	}
++
++	planes = drmModeGetPlaneResources(data->fd);
++	igt_assert(planes);
++	for (int i = 0; i < planes->count_planes && !data->plane_id; i++) {
++		drmModePlane *p = drmModeGetPlane(data->fd, planes->planes[i]);
++		uint64_t type;
++
++		if (p && (p->possible_crtcs & (1 << data->crtc_index)) &&
++		    kmstest_get_property(data->fd, p->plane_id, DRM_MODE_OBJECT_PLANE, "type",
++					 NULL, &type, NULL) && type == DRM_PLANE_TYPE_PRIMARY)
++			data->plane_id = p->plane_id;
++		drmModeFreePlane(p);
++	}
++	drmModeFreePlaneResources(planes);
++	igt_assert(data->plane_id);
++
++	igt_info("connector %u, CRTC %d, plane %u, writeback connector %u, mode %s %dx%d@%d\n",
++		 data->conn_id, data->crtc_index, data->plane_id, data->wb_conn_id,
++		 data->fs_mode.name, data->fs_mode.hdisplay, data->fs_mode.vdisplay,
++		 data->fs_mode.vrefresh);
++
++	return true;
++}
++
++static int opt_handler(int opt, int opt_index, void *_data)
++{
++	switch (opt) {
++	case 's':
++		swap_eyes = true;
++		igt_info("Negative control: the framebuffers hold the eyes swapped, "
++			 "the checks of the eye order must fail\n");
++		break;
++	default:
++		return IGT_OPT_HANDLER_ERROR;
++	}
++
++	return IGT_OPT_HANDLER_SUCCESS;
++}
++
++static const struct option long_opts[] = {
++	{ .name = "swap-eyes", .has_arg = false, .val = 's', },
++	{}
++};
++
++static const char help_str[] =
++	"  --swap-eyes\tNegative control: put the right eye in the left half of the\n"
++	"\t\tframebuffers and the left eye in the right half; the eye order tests\n"
++	"\t\tmust then fail.\n";
++
++int igt_main_args("s", long_opts, help_str, opt_handler, NULL)
++{
++	data_t data = {};
++
++	igt_fixture() {
++		data.fd = drm_open_driver_master(DRIVER_ANY);
++
++		igt_require(drmSetClientCap(data.fd, DRM_CLIENT_CAP_ATOMIC, 1) == 0);
++		igt_require(drmSetClientCap(data.fd, DRM_CLIENT_CAP_STEREO_3D, 1) == 0);
++		drmSetClientCap(data.fd, DRM_CLIENT_CAP_WRITEBACK_CONNECTORS, 1);
++
++		data.res = drmModeGetResources(data.fd);
++		igt_require(data.res);
++		igt_require_f(find_pipe(&data), "no connector lists a frame-sequential mode\n");
++
++		create_fbs(&data);
++	}
++
++	igt_describe("A connector that opted in lists the frame-sequential modes of its sink, "
++		     "each with a 2D twin, hidden from clients without stereo.");
++	igt_subtest("mode-listed")
++		test_mode_listed(&data);
++
++	igt_describe("TEST_ONLY refuses a frame-sequential mode on a connector without opt-in.");
++	igt_subtest("refused-without-opt-in")
++		test_refused(&data);
++
++	igt_describe("Frame by frame through writeback and the stereo link log.");
++	igt_subtest("writeback-eye-order")
++		test_writeback_eye_order(&data);
++
++	igt_describe("Every frame of a run through the CRC and the stereo link log.");
++	igt_subtest("crc-eye-order")
++		test_crc_eye_order(&data);
++
++	igt_describe("Page flips take effect only at left-eye frames.");
++	igt_subtest("flip-at-pair-boundary")
++		test_flip_at_pair_boundary(&data);
++
++	igt_describe("No eye, no stereo MISC1 and no VSC SDP in the 2D twin.");
++	igt_subtest("2d-control")
++		test_2d_control(&data);
++
++	igt_fixture() {
++		disable_crtc(&data);
++		for (int n = 0; n < 2; n++) {
++			igt_remove_fb(data.fd, &data.sbs[n]);
++			for (int e = 0; e < 2; e++)
++				igt_remove_fb(data.fd, &data.eye_fb[n][e]);
++		}
++		drmModeFreeResources(data.res);
++		drm_close_driver(data.fd);
++	}
++}
+diff --git a/tests/meson.build b/tests/meson.build
+index 519a9e727..7b01a7928 100644
+--- a/tests/meson.build
++++ b/tests/meson.build
+@@ -41,6 +41,7 @@ test_progs = [
+ 	'kms_flip',
+ 	'kms_flip_event_leak',
+ 	'kms_force_connector_basic',
++	'kms_frame_sequential',
+ 	'kms_getfb',
+ 	'kms_hdmi_inject',
+ 	'kms_hdr',
+-- 
+2.53.0
+

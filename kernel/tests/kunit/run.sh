@@ -3,7 +3,8 @@
 # run.sh SRC BUILD_DIR KUNITCONFIG LOG : one kunit.py run on x86_64 QEMU, in the kernel build image, as the invoking user.
 #   drm-stereo.kunitconfig  DRM core and helper tests (series group 34's drm_edid_hdmi_3d, hdmi_vendor_infoframe_3d,
 #                           drm_modes_stereo, the HDMI state helper; group 36's drm_frame_sequential, drm_edid_stereo
-#                           and the DisplayPort SDP suites) and vkms (build 10's set)
+#                           and the DisplayPort SDP suites) and vkms (build 10's set, group 38's vkms-frame-sequential
+#                           and vkms-frame-sequential-model, and its vkms-config case)
 #   amdgpu-dm.kunitconfig   the AMD display core's own suites (amdgpu_dm/tests/.kunitconfig without the UML-only
 #                           coverage lines), the amdgpu path a machine without an AMD GPU can run
 #   nouveau.kunitconfig     nouveau's own suites (DRM_NOUVEAU_KUNIT_TEST, series group 37), built into the driver
