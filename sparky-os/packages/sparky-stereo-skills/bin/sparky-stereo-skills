@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/23
+# Last update 2026/10/29
 # Gives the person's AI assistants the public skills of Sparky Stereo OS: links each skill in
 # /usr/share/sparky-stereo-os/skills into the folders where the assistants read skills. Run by the person
 # (the package never writes into home directories); offered once at login by its autostart entry.
@@ -63,12 +63,14 @@ requires_packages() {
 }
 
 package_allowed() {
-	local p
+	local p s
 	if [ -n "${SPARKY_STEREO_PACKAGES:-}" ]; then
 		for p in $SPARKY_STEREO_PACKAGES; do [ "$p" = "$1" ] && return 0; done
 		return 1
 	fi
-	dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -qx 'ok installed'
+	# one status word per architecture: a Multi-Arch: same package can be installed more than once
+	s=$(dpkg-query -W -f='${db:Status-Status}\n' "$1" 2>/dev/null) || true
+	grep -qx installed <<<"$s"
 }
 
 packages_allowed() {

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/16
+# Last update 2026/10/29
 # Checks sparky-stereo-skills as installed (or the one named by HELPER), in a throwaway home: what it links, what it
 # leaves alone, what it skips, how it follows an upgrade, what it removes, its archive, its languages and its refusal
 # to run as root. Run as an ordinary user inside a container; prints ok or FAIL per check and exits 1 on any FAIL.
@@ -94,6 +94,32 @@ check "and the state forgets claude" 'grep -qx "LINKED=agents" "$XDG_CONFIG_HOME
 "$HELPER" unlink >/dev/null
 check "unlink with no name removes every link of ours" '[ -z "$(find "$HOME" -type l)" ]'
 check "the person's own skill is still there" '[ -f "$HOME/.claude/skills/audio/SKILL.md" ]'
+
+# The package gate with dpkg's own database (no SPARKY_STEREO_PACKAGES): dpkg is installed on every system
+mkdir "$F/zz-dpkg" "$F/zz-dpkg-absent"
+printf -- '---\nname: zz-dpkg\ndescription: A skill gated by dpkg itself.\n  requires-packages: zz-absent-package | dpkg\n---\n\n# Dpkg\n' >"$F/zz-dpkg/SKILL.md"
+printf -- '---\nname: zz-dpkg-absent\ndescription: A skill gated by a package that does not exist.\n  requires-packages: zz-absent-package\n---\n\n# Absent\n' >"$F/zz-dpkg-absent/SKILL.md"
+env -u SPARKY_STEREO_PACKAGES "$HELPER" link >/dev/null 2>&1
+check "with dpkg's database, a skill whose package is installed is linked" '[ -L "$HOME/.agents/skills/zz-dpkg" ] && [ -L "$HOME/.claude/skills/zz-dpkg" ]'
+check "with dpkg's database, a skill whose package is absent is not linked" '[ ! -e "$HOME/.agents/skills/zz-dpkg-absent" ] && [ ! -e "$HOME/.claude/skills/zz-dpkg-absent" ]'
+"$HELPER" unlink >/dev/null
+# dpkg's states, from a database of our own (DPKG_ADMINDIR): one package installed for two architectures, one held,
+# one removed with its configuration kept
+mkdir -p "$T/dpkg" "$F/zz-multi" "$F/zz-held" "$F/zz-config"
+for arch in amd64 i386; do
+	printf 'Package: zz-multi\nStatus: install ok installed\nArchitecture: %s\nMulti-Arch: same\nVersion: 1\nDescription: test\n\n' "$arch"
+done >"$T/dpkg/status"
+printf 'Package: zz-held\nStatus: hold ok installed\nArchitecture: all\nVersion: 1\nDescription: test\n\n' >>"$T/dpkg/status"
+printf 'Package: zz-config-only\nStatus: deinstall ok config-files\nArchitecture: all\nVersion: 1\nDescription: test\n\n' >>"$T/dpkg/status"
+for s in zz-multi zz-held; do
+	printf -- '---\nname: %s\ndescription: A skill gated by a package in a test database.\n  requires-packages: %s\n---\n\n# Test\n' "$s" "$s" >"$F/$s/SKILL.md"
+done
+printf -- '---\nname: zz-config\ndescription: A skill gated by a removed package.\n  requires-packages: zz-config-only\n---\n\n# Test\n' >"$F/zz-config/SKILL.md"
+env -u SPARKY_STEREO_PACKAGES DPKG_ADMINDIR="$T/dpkg" "$HELPER" link >/dev/null 2>&1
+check "a package installed for two architectures opens its gate" '[ -L "$HOME/.agents/skills/zz-multi" ]'
+check "a held package opens its gate" '[ -L "$HOME/.agents/skills/zz-held" ]'
+check "a package removed with its configuration kept does not" '[ ! -e "$HOME/.agents/skills/zz-config" ]'
+"$HELPER" unlink >/dev/null
 
 check "Polish for pl_PL" 'says LANG=pl_PL.UTF-8 "Dowiązane:"'
 check "French for fr_CA (the bare language)" 'says LANG=fr_CA.UTF-8 "compétences liées sur"'

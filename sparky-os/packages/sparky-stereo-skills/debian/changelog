@@ -31,8 +31,15 @@ sparky-stereo-skills (0.2.14~dev20261029) unstable; urgency=medium
       AWK, and the message for a skipped skill is in the nine languages;
     - the package gates were corrected in review, and writing-front-pages is
       a core skill.
+  * The package gate reads dpkg's status word (db:Status-Status in
+    dpkg-query(1)), one per architecture. The helper recorded in 0.2.11
+    compared the whole Status field, "install ok installed", with
+    "ok installed", so on a real system it skipped every domain skill and
+    removed its link; tests/helper.sh now checks the gate against dpkg's own
+    database and a test database with a package installed for two
+    architectures, a held one and one removed with its configuration kept.
 
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Thu, 29 Oct 2026 10:25:00 -0300
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Thu, 29 Oct 2026 11:45:00 -0300
 
 sparky-stereo-skills (0.2.13~dev20261024) unstable; urgency=medium
 
