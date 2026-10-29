@@ -49,10 +49,16 @@ done
 sh debian/kernel-recipe/headers-postinst.sh "$RELEASE" > "$headers/DEBIAN/postinst"
 chmod 0755 "$headers/DEBIAN/postinst"
 
-# linux-libc-dev, base flavour only (build.sh made it): the userspace API headers of this very tree.
+# linux-libc-dev, base flavour only (build.sh made it): the userspace API headers of this very tree, and the
+# linux-libc-dev-ARCH-cross packages, links into them.
 if [ -d build/libc-dev ]; then
     mkdir -p debian/linux-libc-dev
     cp -a build/libc-dev/. debian/linux-libc-dev/
+    test -d build/libc-dev-cross
+    for cross in build/libc-dev-cross/*; do
+        mkdir -p "debian/${cross##*/}"
+        cp -a "$cross/." "debian/${cross##*/}/"
+    done
 fi
 
 # dh_installdeb merges helper fragments with debian/package.script templates.

@@ -7,6 +7,7 @@ SOURCE.edition.json. This does not operate on a development checkout.
 """
 import argparse
 import email.utils
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -20,6 +21,13 @@ sys.path.insert(0, str(HERE.parents[1] / 'sparky-os'))
 from lean.debian_prepare import prepare
 sys.path.insert(0, str(HERE))
 import upstream
+
+
+def libc_dev_module():
+    spec = importlib.util.spec_from_file_location('libc_dev', HERE / 'libc-dev.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def main(root, recipe, counter, smoke, packaging_revision=None):
@@ -86,6 +94,26 @@ def main(root, recipe, counter, smoke, packaging_revision=None):
                     ' patches (the HDMI 3D metadata of drm_mode.h). These files are going to be installed\n'
                     ' into /usr/include, and are used by the installed headers for GNU libc and other\n'
                     ' system libraries.\n\n')
+        # Debian's linux-libc-dev-ARCH-cross set (ORDER 256), as src:linux builds it (debian/templates/libc-dev-cross.*):
+        # one package per Debian architecture, links into linux-libc-dev in the sysroot layout cross compilers search,
+        # Depends linux-libc-dev (= ${binary:Version}), the documentation directory a link to linux-libc-dev's
+        # (dh_installdocs --link-doc, Debian Policy 12.3: same source, Depends) and Debian's lintian override.
+        # dir_to_symlink turns the directory of an earlier package (cross-toolchain-base's, or the separately built
+        # linux-stereo-libc-dev-cross ones) into that link; Debian's own entry names 6.18-1~exp1~, this version covers both.
+        for debian_arch, (gnu_type, _kernel_arch) in sorted(libc_dev_module().CROSS.items()):
+            package = f'linux-libc-dev-{debian_arch}-cross'
+            control += (f'Package: {package}\nSection: devel\nArchitecture: all\nMulti-Arch: foreign\n'
+                        'Depends: linux-libc-dev (= ${binary:Version}), ${misc:Depends}\n'
+                        'Description: Linux support headers for userspace development (for cross-compiling)\n'
+                        ' This package provides the userspace headers of the Linux kernel of Sparky Stereo OS\n'
+                        f' in the layout cross compilers search, /usr/{gnu_type}/include, as links to the\n'
+                        ' files of linux-libc-dev: a cross toolchain sees the UAPI of the edition\'s patches\n'
+                        ' (the HDMI 3D metadata of drm_mode.h). These files are used by the installed\n'
+                        ' headers for GNU libc and other system libraries.\n\n')
+            (debian / f'{package}.lintian-overrides').write_text(
+                f'# The -cross packages use the sysroot layout\n{package}: non-standard-dir-in-usr [usr/{gnu_type}]\n')
+            (debian / f'{package}.maintscript').write_text(
+                f'dir_to_symlink /usr/share/doc/{package} linux-libc-dev {version}+lc1~ {package}\n')
     (debian / 'control').write_text(control)
     (debian / 'changelog').write_text(
         f'{name} ({version}) unstable; urgency=medium\n\n'
@@ -137,6 +165,15 @@ override_dh_auto_clean:
 \trm -rf build
 \trm -f linux-*.deb linux-*.buildinfo linux-*.changes debian/built.config
 ''')
+    if flavour == 'base':
+        cross = ' '.join(f'linux-libc-dev-{arch}-cross' for arch in sorted(libc_dev_module().CROSS))
+        with (debian / 'rules').open('a') as rules:
+            rules.write('\n# The cross packages share linux-libc-dev\'s documentation, as Debian\'s (INSTALLDOCS_LINK_DOC).\n'
+                        f'CROSS_PACKAGES = {cross}\n\n'
+                        'override_dh_installdocs:\n'
+                        '\tdh_installdocs $(addprefix -N,$(CROSS_PACKAGES))\n'
+                        '\t$(if $(filter linux-libc-dev,$(shell dh_listpackages)),'
+                        'dh_installdocs --link-doc=linux-libc-dev $(addprefix -p,$(CROSS_PACKAGES)))\n')
     (debian / 'rules').chmod(0o755)
     preserve = [
         ('tools/*', 'Tools including objtool have separate build rules and textual consumers; their source projection needs separate qualification'),
