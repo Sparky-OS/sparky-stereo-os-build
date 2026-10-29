@@ -1,5 +1,5 @@
 Dolphin menu to mark a Matroska file as 3D
-Adds "Mark as 3D" to Dolphin's right click menu on Matroska and WebM files: every StereoMode value of RFC 9559, both eye orders,
+Adds "Mark as 3D" to Dolphin's right click menu on Matroska and WebM files: every StereoMode value 0 to 20, both eye orders,
 written with mkvpropedit to the file the person chose it for, and "Remove the 3D mark".
 
 Copyright (C) 2026 Paweł Pijanowski, Daniel Ramos (Capitain Jack), see copyright file.

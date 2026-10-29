@@ -7,7 +7,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the output directory}
-VERSION=0.1.0+lc1
+VERSION=0.2.0+lc1
 PKG=sparky-stereo-mkv-mark
 mkdir -p "$OUT"
 W=$(mktemp -d "$OUT/.$PKG.XXXXXX")
@@ -33,7 +33,7 @@ Section: Utilities
 Priority: optional
 Homepage: https://sparkylinux.org
 Description: Dolphin menu to mark a Matroska file as 3D
-  Adds "Mark as 3D" to Dolphin's right click menu on Matroska and WebM files: every StereoMode value of RFC 9559, both eye orders,
+  Adds "Mark as 3D" to Dolphin's right click menu on Matroska and WebM files: every StereoMode value 0 to 20, both eye orders,
   written with mkvpropedit to the file the person chose it for, and "Remove the 3D mark".
 X
 (cd "$D" && find usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
