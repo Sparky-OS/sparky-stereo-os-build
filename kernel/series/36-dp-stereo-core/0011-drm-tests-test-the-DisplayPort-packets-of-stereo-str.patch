@@ -1,0 +1,350 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 29 Oct 2026 12:48:55 -0300
+Subject: [PATCH] drm/tests: test the DisplayPort packets of stereo streams
+
+Test drm_dp_vsc_sdp_pack() with the stereo interface byte: every method
+and parameter of the DP 1.2 table (as AMD's Display Core quotes it) in
+revision 0x1, frame sequential in each of the revisions 0x2 to 0x5 (0x5
+keeping its colorimetry bytes), and -EINVAL for every reserved method or
+parameter, for revision 0, and for the Panel Replay revisions 0x6 and 0x7,
+whose packet without stereo stays as it was (DB0 and DB3 set).
+
+Test drm_dp_infoframe_sdp_pack() against bytes worked out by hand: the
+HDMI 1.4 vendor InfoFrame of frame packing and of side by side (half),
+whose payloads are those of awesome-stereoscopy's worked packets
+(81 01 05 2A 03 0C 00 40 00 and 81 01 06 A9 03 0C 00 40 80 00), and, as a
+regression control, the Dynamic Range and Mastering InfoFrame in the
+layout i915 and amdgpu send today (00 87 1d 4c, version 1, length 26,
+32 bytes); the audio InfoFrame is refused.
+
+Test drm_dp_downstream_frame_seq_to_frame_pack() on HDMI, DP++, DVI and
+DisplayPort downstream ports, without detailed capabilities and on a
+sink that is not a branch device.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/tests/Makefile                |   1 +
+ .../gpu/drm/tests/drm_dp_stereo_sdp_test.c    | 298 ++++++++++++++++++
+ 2 files changed, 299 insertions(+)
+ create mode 100644 drivers/gpu/drm/tests/drm_dp_stereo_sdp_test.c
+
+diff --git a/drivers/gpu/drm/tests/Makefile b/drivers/gpu/drm/tests/Makefile
+index 961402d5b..0df5c4845 100644
+--- a/drivers/gpu/drm/tests/Makefile
++++ b/drivers/gpu/drm/tests/Makefile
+@@ -11,6 +11,7 @@ obj-$(CONFIG_DRM_KUNIT_TEST) += \
+ 	drm_connector_test.o \
+ 	drm_damage_helper_test.o \
+ 	drm_dp_mst_helper_test.o \
++	drm_dp_stereo_sdp_test.o \
+ 	drm_edid_3d_test.o \
+ 	drm_exec_test.o \
+ 	drm_format_helper_test.o \
+diff --git a/drivers/gpu/drm/tests/drm_dp_stereo_sdp_test.c b/drivers/gpu/drm/tests/drm_dp_stereo_sdp_test.c
+new file mode 100644
+index 000000000..450b72ab8
+--- /dev/null
++++ b/drivers/gpu/drm/tests/drm_dp_stereo_sdp_test.c
+@@ -0,0 +1,298 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Kunit test for the DisplayPort secondary data packets of stereo streams
++ */
++
++#include <drm/display/drm_dp.h>
++#include <drm/display/drm_dp_helper.h>
++
++#include <linux/hdmi.h>
++
++#include <kunit/test.h>
++
++struct drm_dp_vsc_stereo_test {
++	const char *name;
++	u8 revision;
++	u8 length;
++	u8 stereo;
++	ssize_t ret;
++};
++
++/*
++ * The stereo interface byte of the VSC SDP, DB0 (DP 1.2, as AMD's Display Core
++ * quotes the table): every method with every parameter it defines, each
++ * revision that carries the byte, and the values that must be refused.
++ */
++static const struct drm_dp_vsc_stereo_test drm_dp_vsc_stereo_tests[] = {
++	{ "none", 0x1, 0x01, 0x00, sizeof(struct dp_sdp) },
++	{ "frame-sequential-misc1", 0x1, 0x01, 0x01, sizeof(struct dp_sdp) },
++	{ "frame-sequential-right-on-signal", 0x1, 0x01, 0x11, sizeof(struct dp_sdp) },
++	{ "frame-sequential-left-on-signal", 0x1, 0x01, 0x21, sizeof(struct dp_sdp) },
++	{ "stacked-frame-left-top", 0x1, 0x01, 0x02, sizeof(struct dp_sdp) },
++	{ "rows-right-even", 0x1, 0x01, 0x03, sizeof(struct dp_sdp) },
++	{ "rows-right-odd", 0x1, 0x01, 0x13, sizeof(struct dp_sdp) },
++	{ "checkerboard-left-first", 0x1, 0x01, 0x23, sizeof(struct dp_sdp) },
++	{ "columns-left-first", 0x1, 0x01, 0x33, sizeof(struct dp_sdp) },
++	{ "columns-right-first", 0x1, 0x01, 0x43, sizeof(struct dp_sdp) },
++	{ "side-by-side-left-half-left", 0x1, 0x01, 0x04, sizeof(struct dp_sdp) },
++	{ "side-by-side-left-half-right", 0x1, 0x01, 0x14, sizeof(struct dp_sdp) },
++	{ "revision-2-psr", 0x2, 0x08, 0x01, sizeof(struct dp_sdp) },
++	{ "revision-3-psr2", 0x3, 0x08, 0x01, sizeof(struct dp_sdp) },
++	{ "revision-4-psr2-y", 0x4, 0x0e, 0x01, sizeof(struct dp_sdp) },
++	{ "revision-5-colorimetry", 0x5, 0x13, 0x01, sizeof(struct dp_sdp) },
++	{ "reserved-none-parameter", 0x1, 0x01, 0x10, -EINVAL },
++	{ "reserved-frame-sequential-parameter", 0x1, 0x01, 0x31, -EINVAL },
++	{ "reserved-stacked-frame-parameter", 0x1, 0x01, 0x12, -EINVAL },
++	{ "reserved-pixel-interleaved-parameter", 0x1, 0x01, 0x53, -EINVAL },
++	{ "reserved-side-by-side-parameter", 0x1, 0x01, 0x24, -EINVAL },
++	{ "reserved-method-5", 0x1, 0x01, 0x05, -EINVAL },
++	{ "reserved-method-15", 0x1, 0x01, 0x0f, -EINVAL },
++	{ "revision-0", 0x0, 0x00, 0x01, -EINVAL },
++	{ "panel-replay-revision-6", 0x6, 0x10, 0x01, -EINVAL },
++	{ "panel-replay-revision-7", 0x7, 0x13, 0x01, -EINVAL },
++};
++
++static void drm_dp_vsc_stereo_desc(const struct drm_dp_vsc_stereo_test *t,
++				   char *desc)
++{
++	strscpy(desc, t->name, KUNIT_PARAM_DESC_SIZE);
++}
++
++KUNIT_ARRAY_PARAM(drm_dp_vsc_stereo, drm_dp_vsc_stereo_tests,
++		  drm_dp_vsc_stereo_desc);
++
++static void drm_test_dp_vsc_sdp_stereo(struct kunit *test)
++{
++	const struct drm_dp_vsc_stereo_test *t = test->param_value;
++	struct drm_dp_vsc_sdp vsc = {
++		.sdp_type = DP_SDP_VSC,
++		.revision = t->revision,
++		.length = t->length,
++		.pixelformat = DP_PIXELFORMAT_RGB,
++		.colorimetry = DP_COLORIMETRY_DEFAULT,
++		.bpc = 10,
++		.dynamic_range = DP_DYNAMIC_RANGE_CTA,
++		.content_type = DP_CONTENT_TYPE_GAME,
++		.stereo_interface = t->stereo,
++	};
++	struct dp_sdp sdp;
++	ssize_t ret;
++	int i;
++
++	ret = drm_dp_vsc_sdp_pack(&vsc, &sdp);
++	KUNIT_EXPECT_EQ(test, ret, t->ret);
++	if (ret < 0)
++		return;
++
++	KUNIT_EXPECT_EQ(test, sdp.sdp_header.HB0, 0x00);
++	KUNIT_EXPECT_EQ(test, sdp.sdp_header.HB1, DP_SDP_VSC);
++	KUNIT_EXPECT_EQ(test, sdp.sdp_header.HB2, t->revision);
++	KUNIT_EXPECT_EQ(test, sdp.sdp_header.HB3, t->length);
++	KUNIT_EXPECT_EQ(test, sdp.db[0], t->stereo);
++
++	/* revision 5 still carries the colorimetry, DB16 to DB18 */
++	if (t->revision == 0x5) {
++		KUNIT_EXPECT_EQ(test, sdp.db[16], 0x00);
++		KUNIT_EXPECT_EQ(test, sdp.db[17], 0x82);
++		KUNIT_EXPECT_EQ(test, sdp.db[18], DP_CONTENT_TYPE_GAME);
++		return;
++	}
++
++	for (i = 1; i < sizeof(sdp.db); i++)
++		KUNIT_EXPECT_EQ_MSG(test, sdp.db[i], 0, "DB%d", i);
++}
++
++/* the Panel Replay packet is left as it was: DB0 and DB3 set */
++static void drm_test_dp_vsc_sdp_panel_replay_unchanged(struct kunit *test)
++{
++	struct drm_dp_vsc_sdp vsc = {
++		.sdp_type = DP_SDP_VSC,
++		.revision = 0x6,
++		.length = 0x10,
++	};
++	struct dp_sdp sdp;
++
++	KUNIT_EXPECT_EQ(test, drm_dp_vsc_sdp_pack(&vsc, &sdp), sizeof(struct dp_sdp));
++	KUNIT_EXPECT_EQ(test, sdp.db[0], 1);
++	KUNIT_EXPECT_EQ(test, sdp.db[3], 1);
++}
++
++static struct kunit_case drm_dp_vsc_sdp_stereo_tests[] = {
++	KUNIT_CASE_PARAM(drm_test_dp_vsc_sdp_stereo, drm_dp_vsc_stereo_gen_params),
++	KUNIT_CASE(drm_test_dp_vsc_sdp_panel_replay_unchanged),
++	{ }
++};
++
++static struct kunit_suite drm_dp_vsc_sdp_stereo_test_suite = {
++	.name = "drm_dp_vsc_sdp_stereo",
++	.test_cases = drm_dp_vsc_sdp_stereo_tests,
++};
++
++static void drm_dp_infoframe_sdp_expect(struct kunit *test, const struct dp_sdp *sdp,
++					u8 type, u8 version, const u8 *payload,
++					size_t len)
++{
++	int i;
++
++	KUNIT_EXPECT_EQ(test, sdp->sdp_header.HB0, 0x00);
++	KUNIT_EXPECT_EQ(test, sdp->sdp_header.HB1, type);
++	KUNIT_EXPECT_EQ(test, sdp->sdp_header.HB2, 0x1d);
++	KUNIT_EXPECT_EQ(test, sdp->sdp_header.HB3, 0x13 << 2);
++	KUNIT_EXPECT_EQ(test, sdp->db[0], version);
++	KUNIT_EXPECT_EQ(test, sdp->db[1], len);
++	KUNIT_EXPECT_MEMEQ(test, &sdp->db[2], payload, len);
++	for (i = 2 + len; i < sizeof(sdp->db); i++)
++		KUNIT_EXPECT_EQ_MSG(test, sdp->db[i], 0, "DB%d", i);
++}
++
++/*
++ * The HDMI 1.4 vendor InfoFrame of a 3D structure, without its checksum, after
++ * the version and length bytes: the worked packets of awesome-stereoscopy's
++ * frame-packing-and-hdmi-timings.md, section 4.1 (frame packing
++ * 81 01 05 2A 03 0C 00 40 00, side by side (half)
++ * 81 01 06 A9 03 0C 00 40 80 00).
++ */
++static void drm_test_dp_infoframe_sdp_hdmi_vendor(struct kunit *test)
++{
++	static const u8 frame_packing[] = { 0x03, 0x0c, 0x00, 0x40, 0x00 };
++	static const u8 side_by_side_half[] = { 0x03, 0x0c, 0x00, 0x40, 0x80, 0x00 };
++	union hdmi_infoframe frame;
++	struct dp_sdp sdp;
++
++	KUNIT_ASSERT_EQ(test, hdmi_vendor_infoframe_init(&frame.vendor.hdmi), 0);
++	frame.vendor.hdmi.s3d_struct = HDMI_3D_STRUCTURE_FRAME_PACKING;
++	KUNIT_ASSERT_EQ(test, hdmi_vendor_infoframe_check(&frame.vendor.hdmi), 0);
++
++	KUNIT_EXPECT_EQ(test, drm_dp_infoframe_sdp_pack(&frame, &sdp),
++			sizeof(sdp.sdp_header) + 2 + sizeof(frame_packing));
++	drm_dp_infoframe_sdp_expect(test, &sdp, 0x81, 0x01, frame_packing,
++				    sizeof(frame_packing));
++
++	KUNIT_ASSERT_EQ(test, hdmi_vendor_infoframe_init(&frame.vendor.hdmi), 0);
++	frame.vendor.hdmi.s3d_struct = HDMI_3D_STRUCTURE_SIDE_BY_SIDE_HALF;
++	frame.vendor.hdmi.s3d_ext_data = 0;	/* horizontal sub-sampling */
++	KUNIT_ASSERT_EQ(test, hdmi_vendor_infoframe_check(&frame.vendor.hdmi), 0);
++
++	KUNIT_EXPECT_EQ(test, drm_dp_infoframe_sdp_pack(&frame, &sdp),
++			sizeof(sdp.sdp_header) + 2 + sizeof(side_by_side_half));
++	drm_dp_infoframe_sdp_expect(test, &sdp, 0x81, 0x01, side_by_side_half,
++				    sizeof(side_by_side_half));
++}
++
++/*
++ * The Dynamic Range and Mastering InfoFrame packs to the bytes i915
++ * (intel_dp_hdr_metadata_infoframe_sdp_pack()) and amdgpu
++ * (amdgpu_dm_fill_hdr_info_packet()) send on DisplayPort: header 00 87 1d 4c,
++ * version 1, length 26, then CTA-861-G Table 44 with little-endian values.
++ */
++static void drm_test_dp_infoframe_sdp_hdr(struct kunit *test)
++{
++	static const u8 payload[] = {
++		0x02, 0x00,
++		0x01, 0x00, 0x02, 0x00, 0x03, 0x00, 0x04, 0x00, 0x05, 0x00, 0x06, 0x00,
++		0x07, 0x00, 0x08, 0x00,
++		0x09, 0x00, 0x0a, 0x00, 0x0b, 0x00, 0x0c, 0x00,
++	};
++	union hdmi_infoframe frame;
++	struct dp_sdp sdp;
++	int i;
++
++	KUNIT_ASSERT_EQ(test, hdmi_drm_infoframe_init(&frame.drm), 0);
++	frame.drm.eotf = HDMI_EOTF_SMPTE_ST2084;
++	frame.drm.metadata_type = HDMI_STATIC_METADATA_TYPE1;
++	for (i = 0; i < 3; i++) {
++		frame.drm.display_primaries[i].x = 2 * i + 1;
++		frame.drm.display_primaries[i].y = 2 * i + 2;
++	}
++	frame.drm.white_point.x = 7;
++	frame.drm.white_point.y = 8;
++	frame.drm.max_display_mastering_luminance = 9;
++	frame.drm.min_display_mastering_luminance = 10;
++	frame.drm.max_cll = 11;
++	frame.drm.max_fall = 12;
++
++	KUNIT_EXPECT_EQ(test, drm_dp_infoframe_sdp_pack(&frame, &sdp), 32);
++	drm_dp_infoframe_sdp_expect(test, &sdp, 0x87, 0x01, payload, sizeof(payload));
++}
++
++/* the audio InfoFrame has a packet layout of its own */
++static void drm_test_dp_infoframe_sdp_audio_refused(struct kunit *test)
++{
++	union hdmi_infoframe frame;
++	struct dp_sdp sdp;
++
++	KUNIT_ASSERT_EQ(test, hdmi_audio_infoframe_init(&frame.audio), 0);
++	KUNIT_EXPECT_EQ(test, drm_dp_infoframe_sdp_pack(&frame, &sdp), -EINVAL);
++}
++
++static struct kunit_case drm_dp_infoframe_sdp_tests[] = {
++	KUNIT_CASE(drm_test_dp_infoframe_sdp_hdmi_vendor),
++	KUNIT_CASE(drm_test_dp_infoframe_sdp_hdr),
++	KUNIT_CASE(drm_test_dp_infoframe_sdp_audio_refused),
++	{ }
++};
++
++static struct kunit_suite drm_dp_infoframe_sdp_test_suite = {
++	.name = "drm_dp_infoframe_sdp",
++	.test_cases = drm_dp_infoframe_sdp_tests,
++};
++
++struct drm_dp_frame_seq_conv_test {
++	const char *name;
++	u8 downstreamport_present;
++	u8 port_cap[4];
++	bool expected;
++};
++
++#define DFP_PRESENT	DP_DWN_STRM_PORT_PRESENT
++#define DFP_DETAILED	(DP_DWN_STRM_PORT_PRESENT | DP_DETAILED_CAP_INFO_AVAILABLE)
++
++/* byte 3, bit 0 of the detailed capabilities of an HDMI or DP++ port */
++static const struct drm_dp_frame_seq_conv_test drm_dp_frame_seq_conv_tests[] = {
++	{ "hdmi", DFP_DETAILED, { DP_DS_PORT_TYPE_HDMI, 0x78, 0x00, 0x01 }, true },
++	{ "hdmi-without", DFP_DETAILED, { DP_DS_PORT_TYPE_HDMI, 0x78, 0x00, 0x1e }, false },
++	{ "dual-mode", DFP_DETAILED, { DP_DS_PORT_TYPE_DP_DUALMODE, 0x78, 0x00, 0x01 }, true },
++	{ "dvi", DFP_DETAILED, { DP_DS_PORT_TYPE_DVI, 0x42, 0x00, 0x01 }, false },
++	{ "dp", DFP_DETAILED, { DP_DS_PORT_TYPE_DP, 0x00, 0x00, 0x01 }, false },
++	{ "no-detailed-caps", DFP_PRESENT, { DP_DS_PORT_TYPE_HDMI, 0x78, 0x00, 0x01 }, false },
++	{ "not-a-branch", 0x00, { DP_DS_PORT_TYPE_HDMI, 0x78, 0x00, 0x01 }, false },
++};
++
++static void drm_dp_frame_seq_conv_desc(const struct drm_dp_frame_seq_conv_test *t,
++				       char *desc)
++{
++	strscpy(desc, t->name, KUNIT_PARAM_DESC_SIZE);
++}
++
++KUNIT_ARRAY_PARAM(drm_dp_frame_seq_conv, drm_dp_frame_seq_conv_tests,
++		  drm_dp_frame_seq_conv_desc);
++
++static void drm_test_dp_downstream_frame_seq_to_frame_pack(struct kunit *test)
++{
++	const struct drm_dp_frame_seq_conv_test *t = test->param_value;
++	u8 dpcd[DP_RECEIVER_CAP_SIZE] = { };
++
++	dpcd[DP_DPCD_REV] = 0x14;
++	dpcd[DP_DOWNSTREAMPORT_PRESENT] = t->downstreamport_present;
++
++	KUNIT_EXPECT_EQ(test, drm_dp_downstream_frame_seq_to_frame_pack(dpcd, t->port_cap),
++			t->expected);
++}
++
++static struct kunit_case drm_dp_downstream_frame_seq_tests[] = {
++	KUNIT_CASE_PARAM(drm_test_dp_downstream_frame_seq_to_frame_pack,
++			 drm_dp_frame_seq_conv_gen_params),
++	{ }
++};
++
++static struct kunit_suite drm_dp_downstream_frame_seq_test_suite = {
++	.name = "drm_dp_downstream_frame_seq",
++	.test_cases = drm_dp_downstream_frame_seq_tests,
++};
++
++kunit_test_suites(&drm_dp_vsc_sdp_stereo_test_suite,
++		  &drm_dp_infoframe_sdp_test_suite,
++		  &drm_dp_downstream_frame_seq_test_suite);
++
++MODULE_DESCRIPTION("Kunit test for the DisplayPort secondary data packets of stereo streams");
++MODULE_LICENSE("GPL");
+-- 
+2.53.0
+

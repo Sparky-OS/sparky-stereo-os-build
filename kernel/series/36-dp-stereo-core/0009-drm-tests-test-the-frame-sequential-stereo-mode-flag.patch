@@ -1,0 +1,353 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 29 Oct 2026 12:48:54 -0300
+Subject: [PATCH] drm/tests: test the frame-sequential stereo mode flag
+
+Test the frame of DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL with two CTA-861
+formats, 1080p60 (VIC 16) and 720p120 (VIC 47): the link keeps the 2D
+timing and clock through drm_mode_set_crtcinfo() and
+drm_mode_stereo_clock(), drm_mode_get_hv_timing() gives twice the width
+for the side by side buffer, and drm_mode_validate_driver() accepts the
+layout while still refusing the next value.
+
+Test the connector opt-in on a pipeline of a DisplayPort connector whose
+modes are VIC 16 in 2D, in frame packing and in frame sequential, for the
+four combinations of stereo_allowed and stereo_frame_sequential_allowed:
+the probe helper keeps frame packing only with stereo_allowed and frame
+sequential only with stereo_frame_sequential_allowed, and an atomic
+commit of the frame-sequential mode fails with -EINVAL unless the
+connector opted in, while the 2D mode always commits.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/tests/Makefile                |   1 +
+ .../gpu/drm/tests/drm_frame_sequential_test.c | 235 ++++++++++++++++++
+ drivers/gpu/drm/tests/drm_modes_test.c        |  55 ++++
+ 3 files changed, 291 insertions(+)
+ create mode 100644 drivers/gpu/drm/tests/drm_frame_sequential_test.c
+
+diff --git a/drivers/gpu/drm/tests/Makefile b/drivers/gpu/drm/tests/Makefile
+index a229b7f1e..961402d5b 100644
+--- a/drivers/gpu/drm/tests/Makefile
++++ b/drivers/gpu/drm/tests/Makefile
+@@ -15,6 +15,7 @@ obj-$(CONFIG_DRM_KUNIT_TEST) += \
+ 	drm_exec_test.o \
+ 	drm_format_helper_test.o \
+ 	drm_format_test.o \
++	drm_frame_sequential_test.o \
+ 	drm_framebuffer_test.o \
+ 	drm_gem_shmem_test.o \
+ 	drm_hdmi_state_helper_test.o \
+diff --git a/drivers/gpu/drm/tests/drm_frame_sequential_test.c b/drivers/gpu/drm/tests/drm_frame_sequential_test.c
+new file mode 100644
+index 000000000..5035d646c
+--- /dev/null
++++ b/drivers/gpu/drm/tests/drm_frame_sequential_test.c
+@@ -0,0 +1,235 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Kunit test for the connectors that may list and drive frame-sequential
++ * stereo modes
++ */
++
++#include <drm/drm_atomic.h>
++#include <drm/drm_atomic_state_helper.h>
++#include <drm/drm_atomic_uapi.h>
++#include <drm/drm_connector.h>
++#include <drm/drm_drv.h>
++#include <drm/drm_edid.h>
++#include <drm/drm_encoder.h>
++#include <drm/drm_kunit_helpers.h>
++#include <drm/drm_modes.h>
++#include <drm/drm_modeset_helper_vtables.h>
++#include <drm/drm_probe_helper.h>
++
++#include <kunit/test.h>
++
++struct drm_frame_sequential_priv {
++	struct drm_device drm;
++	struct drm_plane *plane;
++	struct drm_crtc *crtc;
++	struct drm_encoder encoder;
++	struct drm_connector connector;
++};
++
++/* VIC 16 (1080p60) three times: 2D, frame packing, frame sequential */
++static int drm_frame_sequential_get_modes(struct drm_connector *connector)
++{
++	static const u32 layouts[] = {
++		DRM_MODE_FLAG_3D_NONE,
++		DRM_MODE_FLAG_3D_FRAME_PACKING,
++		DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL,
++	};
++	struct drm_display_mode *mode;
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(layouts); i++) {
++		mode = drm_display_mode_from_cea_vic(connector->dev, 16);
++		if (!mode)
++			return i;
++
++		mode->flags |= layouts[i];
++		drm_mode_probed_add(connector, mode);
++	}
++
++	return i;
++}
++
++static const struct drm_connector_helper_funcs drm_frame_sequential_connector_helper_funcs = {
++	.get_modes = drm_frame_sequential_get_modes,
++};
++
++static const struct drm_connector_funcs drm_frame_sequential_connector_funcs = {
++	.atomic_destroy_state	= drm_atomic_helper_connector_destroy_state,
++	.atomic_duplicate_state	= drm_atomic_helper_connector_duplicate_state,
++	.fill_modes		= drm_helper_probe_single_connector_modes,
++	.reset			= drm_atomic_helper_connector_reset,
++};
++
++static int drm_frame_sequential_init(struct kunit *test)
++{
++	struct drm_frame_sequential_priv *priv;
++	struct drm_device *drm;
++	struct device *dev;
++	int ret;
++
++	dev = drm_kunit_helper_alloc_device(test);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, dev);
++
++	priv = drm_kunit_helper_alloc_drm_device(test, dev,
++						 struct drm_frame_sequential_priv, drm,
++						 DRIVER_MODESET | DRIVER_ATOMIC);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, priv);
++	drm = &priv->drm;
++
++	priv->plane = drm_kunit_helper_create_primary_plane(test, drm, NULL, NULL,
++							    NULL, 0, NULL);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, priv->plane);
++
++	priv->crtc = drm_kunit_helper_create_crtc(test, drm, priv->plane, NULL,
++						  NULL, NULL);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, priv->crtc);
++
++	ret = drmm_encoder_init(drm, &priv->encoder, NULL,
++				DRM_MODE_ENCODER_TMDS, NULL);
++	KUNIT_ASSERT_EQ(test, ret, 0);
++	priv->encoder.possible_crtcs = drm_crtc_mask(priv->crtc);
++
++	ret = drmm_connector_init(drm, &priv->connector,
++				  &drm_frame_sequential_connector_funcs,
++				  DRM_MODE_CONNECTOR_DisplayPort, NULL);
++	KUNIT_ASSERT_EQ(test, ret, 0);
++	drm_connector_helper_add(&priv->connector,
++				 &drm_frame_sequential_connector_helper_funcs);
++	drm_connector_attach_encoder(&priv->connector, &priv->encoder);
++
++	drm_mode_config_reset(drm);
++
++	test->priv = priv;
++
++	return 0;
++}
++
++struct drm_frame_sequential_test {
++	const char *name;
++	bool stereo_allowed;
++	bool frame_sequential_allowed;
++};
++
++static const struct drm_frame_sequential_test drm_frame_sequential_tests[] = {
++	{ "no-stereo", false, false },
++	{ "stereo", true, false },
++	{ "frame-sequential", false, true },
++	{ "both", true, true },
++};
++
++static void drm_frame_sequential_desc(const struct drm_frame_sequential_test *t,
++				      char *desc)
++{
++	strscpy(desc, t->name, KUNIT_PARAM_DESC_SIZE);
++}
++
++KUNIT_ARRAY_PARAM(drm_frame_sequential, drm_frame_sequential_tests,
++		  drm_frame_sequential_desc);
++
++static int drm_frame_sequential_count(struct drm_connector *connector, u32 layout)
++{
++	struct drm_display_mode *mode;
++	int n = 0;
++
++	list_for_each_entry(mode, &connector->modes, head)
++		if ((mode->flags & DRM_MODE_FLAG_3D_MASK) == layout)
++			n++;
++
++	return n;
++}
++
++/*
++ * The probe helper keeps a frame-sequential mode only on a connector that
++ * accepts frame sequential, whatever stereo_allowed says, and the other
++ * stereo layouts only with stereo_allowed.
++ */
++static void drm_test_frame_sequential_probe(struct kunit *test)
++{
++	const struct drm_frame_sequential_test *t = test->param_value;
++	struct drm_frame_sequential_priv *priv = test->priv;
++	struct drm_connector *connector = &priv->connector;
++
++	connector->stereo_allowed = t->stereo_allowed;
++	connector->stereo_frame_sequential_allowed = t->frame_sequential_allowed;
++
++	mutex_lock(&priv->drm.mode_config.mutex);
++	drm_helper_probe_single_connector_modes(connector, 0, 0);
++	mutex_unlock(&priv->drm.mode_config.mutex);
++
++	KUNIT_EXPECT_EQ(test,
++			drm_frame_sequential_count(connector, DRM_MODE_FLAG_3D_NONE), 1);
++	KUNIT_EXPECT_EQ(test,
++			drm_frame_sequential_count(connector, DRM_MODE_FLAG_3D_FRAME_PACKING),
++			t->stereo_allowed);
++	KUNIT_EXPECT_EQ(test,
++			drm_frame_sequential_count(connector,
++						   DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL),
++			t->frame_sequential_allowed);
++}
++
++static int drm_frame_sequential_enable(struct kunit *test, u32 layout)
++{
++	struct drm_frame_sequential_priv *priv = test->priv;
++	struct drm_modeset_acquire_ctx ctx;
++	struct drm_display_mode *mode;
++	int ret;
++
++	mode = drm_kunit_display_mode_from_cea_vic(test, &priv->drm, 16);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, mode);
++	mode->flags |= layout;
++
++	drm_modeset_acquire_init(&ctx, 0);
++
++retry:
++	ret = drm_kunit_helper_enable_crtc_connector(test, &priv->drm, priv->crtc,
++						     &priv->connector, mode, &ctx);
++	if (ret == -EDEADLK) {
++		ret = drm_modeset_backoff(&ctx);
++		if (!ret)
++			goto retry;
++	}
++
++	drm_modeset_drop_locks(&ctx);
++	drm_modeset_acquire_fini(&ctx);
++
++	return ret;
++}
++
++/*
++ * A frame-sequential mode is refused on a connector that does not accept frame
++ * sequential, so that a TEST_ONLY commit tells userspace whether it can use
++ * one; stereo_allowed does not change that, and a 2D mode always passes.
++ */
++static void drm_test_frame_sequential_atomic(struct kunit *test)
++{
++	const struct drm_frame_sequential_test *t = test->param_value;
++	struct drm_frame_sequential_priv *priv = test->priv;
++
++	priv->connector.stereo_allowed = t->stereo_allowed;
++	priv->connector.stereo_frame_sequential_allowed = t->frame_sequential_allowed;
++
++	KUNIT_EXPECT_EQ(test,
++			drm_frame_sequential_enable(test, DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL),
++			t->frame_sequential_allowed ? 0 : -EINVAL);
++	KUNIT_EXPECT_EQ(test,
++			drm_frame_sequential_enable(test, DRM_MODE_FLAG_3D_NONE), 0);
++}
++
++static struct kunit_case drm_frame_sequential_cases[] = {
++	KUNIT_CASE_PARAM(drm_test_frame_sequential_probe,
++			 drm_frame_sequential_gen_params),
++	KUNIT_CASE_PARAM(drm_test_frame_sequential_atomic,
++			 drm_frame_sequential_gen_params),
++	{ }
++};
++
++static struct kunit_suite drm_frame_sequential_test_suite = {
++	.name = "drm_frame_sequential",
++	.init = drm_frame_sequential_init,
++	.test_cases = drm_frame_sequential_cases,
++};
++
++kunit_test_suite(drm_frame_sequential_test_suite);
++
++MODULE_DESCRIPTION("Kunit test for frame-sequential stereo connectors");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/gpu/drm/tests/drm_modes_test.c b/drivers/gpu/drm/tests/drm_modes_test.c
+index 22407e0bf..44c7cb89d 100644
+--- a/drivers/gpu/drm/tests/drm_modes_test.c
++++ b/drivers/gpu/drm/tests/drm_modes_test.c
+@@ -286,9 +286,64 @@ static void drm_test_modes_stereo_crtcinfo(struct kunit *test)
+ 		KUNIT_EXPECT_GT(test, drm_mode_stereo_clock(mode), t->clock);
+ }
+ 
++/*
++ * Frame sequential keeps the 2D timing on the link, one eye per frame, while
++ * the buffer holds both eyes side by side: VIC 16 (1080p60) and VIC 47
++ * (720p120), CTA-861 timings.
++ */
++static const struct drm_modes_stereo_test drm_modes_frame_sequential_tests[] = {
++	{ "frame-sequential-1080p60", 16, DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL, 0,
++	  148500, 1920, 2008, 2052, 2200, 1080, 1084, 1089, 1125 },
++	{ "frame-sequential-720p120", 47, DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL, 0,
++	  148500, 1280, 1390, 1430, 1650, 720, 725, 730, 750 },
++};
++
++KUNIT_ARRAY_PARAM(drm_modes_frame_sequential, drm_modes_frame_sequential_tests,
++		  drm_test_modes_stereo_desc);
++
++static void drm_test_modes_stereo_frame_sequential(struct kunit *test)
++{
++	struct drm_test_modes_priv *priv = test->priv;
++	const struct drm_modes_stereo_test *t = test->param_value;
++	struct drm_display_mode *mode;
++	int hdisplay, vdisplay;
++
++	mode = drm_display_mode_from_cea_vic(priv->drm, t->vic);
++	KUNIT_ASSERT_NOT_NULL(test, mode);
++	mode->flags |= t->layout;
++
++	KUNIT_EXPECT_TRUE(test, drm_mode_is_stereo(mode));
++	KUNIT_EXPECT_TRUE(test, drm_mode_is_frame_sequential(mode));
++
++	/* the link: the 2D timing, and its clock */
++	drm_mode_set_crtcinfo(mode, CRTC_STEREO_DOUBLE_ONLY);
++	KUNIT_EXPECT_EQ(test, mode->crtc_clock, t->clock);
++	KUNIT_EXPECT_EQ(test, mode->crtc_hdisplay, t->hdisplay);
++	KUNIT_EXPECT_EQ(test, mode->crtc_hsync_start, t->hsync_start);
++	KUNIT_EXPECT_EQ(test, mode->crtc_hsync_end, t->hsync_end);
++	KUNIT_EXPECT_EQ(test, mode->crtc_htotal, t->htotal);
++	KUNIT_EXPECT_EQ(test, mode->crtc_vdisplay, t->vdisplay);
++	KUNIT_EXPECT_EQ(test, mode->crtc_vsync_start, t->vsync_start);
++	KUNIT_EXPECT_EQ(test, mode->crtc_vsync_end, t->vsync_end);
++	KUNIT_EXPECT_EQ(test, mode->crtc_vtotal, t->vtotal);
++	KUNIT_EXPECT_EQ(test, drm_mode_stereo_clock(mode), t->clock);
++
++	/* the buffer: both eyes side by side */
++	drm_mode_get_hv_timing(mode, &hdisplay, &vdisplay);
++	KUNIT_EXPECT_EQ(test, hdisplay, 2 * t->hdisplay);
++	KUNIT_EXPECT_EQ(test, vdisplay, t->vdisplay);
++
++	/* a valid layout, the last one: the next value is still refused */
++	KUNIT_EXPECT_EQ(test, drm_mode_validate_driver(priv->drm, mode), MODE_OK);
++	mode->flags += 1 << 14;
++	KUNIT_EXPECT_EQ(test, drm_mode_validate_driver(priv->drm, mode), MODE_BAD);
++}
++
+ static struct kunit_case drm_modes_stereo_cases[] = {
+ 	KUNIT_CASE_PARAM(drm_test_modes_stereo_crtcinfo,
+ 			 drm_modes_stereo_gen_params),
++	KUNIT_CASE_PARAM(drm_test_modes_stereo_frame_sequential,
++			 drm_modes_frame_sequential_gen_params),
+ 	{ }
+ };
+ 
+-- 
+2.53.0
+

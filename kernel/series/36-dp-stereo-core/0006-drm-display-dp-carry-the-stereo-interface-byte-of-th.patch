@@ -1,0 +1,180 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 29 Oct 2026 12:34:41 -0300
+Subject: [PATCH] drm/display/dp: carry the stereo interface byte of the VSC
+ SDP
+
+DisplayPort 1.2 added the Video Stream Configuration SDP, whose first data
+byte names the stereo interface of the stream: a method in bits 3:0 and a
+parameter of that method in bits 7:4. AMD's Display Core quotes the table
+("VSC Payload (1 byte) From DP1.2 spec", mod_build_vsc_infopacket()):
+  0 non stereo video, parameter 0
+  1 frame/field sequential: 0 the eye named by MSA MISC1 bits 2:1,
+    1 right when the stereo signal is 1, 2 left when it is 1
+  2 stacked frame: 0 left view on top
+  3 pixel interleaved: 0 rows with the right view on even lines,
+    1 on odd lines, 2 checkerboard starting with a left view pixel,
+    3 columns starting with the left view, 4 starting with the right
+  4 side by side: 0 left half is the left eye, 1 left half is the right
+    eye
+VESA's public DisplayPort 1.2 overview (DevCon, December 2010, slide 25)
+lists the stacked, side by side, line and pixel interleaved transports
+the VSC SDP added. struct drm_dp_vsc_sdp has no field for the byte, so no
+driver using the helper can tell a sink that a stream is stereo.
+
+Add the byte to struct drm_dp_vsc_sdp, name every method and parameter
+in drm_dp.h, and write it in drm_dp_vsc_sdp_pack() for the revisions that
+carry it, 0x1 to 0x5: AMD and i915 name each "3D stereo only", "3D
+stereo + PSR" and so on (i915 citing DP 1.4 Table 2-118 for 0x2 and eDP
+1.4 Table 6-11 for 0x4), and NVIDIA's names agree but for 0x4
+(SDP_VSC_REVNUM_PSR2_EXTN), whose DB0 its descriptor still calls
+stereoInterface. Reserved methods and parameters are
+refused with -EINVAL, and so is stereo in a revision without the byte.
+drm_dp_vsc_sdp_log() prints it.
+
+The Panel Replay revisions 0x6 and 0x7 are left as they are, and stereo
+is refused with them: they are named "3D stereo + PR" too, and AMD's DC
+(which clears DB0 unless the stream is stereo) and NVIDIA's
+DPSDP_DP_PR_VSC_SDP_DESCRIPTOR (stereoInterface in DB0, prState in DB1)
+treat DB0 as the stereo byte in them, but drm_dp_vsc_sdp_pack() sets
+DB0 = 1 and DB3 = 1 for revision 0x6, which i915 sends for Panel Replay
+(i915 citing DP 2.0 Table 2-223). If DB0 is the stereo byte there, that
+packet announces frame-sequential stereo from MSA MISC1. Table 2-223 was
+not available to check, so the Panel Replay packet is not changed here.
+
+Every caller zeroes the structure, so no packet changes.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/display/drm_dp_helper.c | 43 +++++++++++++++++++++++++
+ include/drm/display/drm_dp.h            | 24 ++++++++++++++
+ include/drm/display/drm_dp_helper.h     |  3 ++
+ 3 files changed, 70 insertions(+)
+
+diff --git a/drivers/gpu/drm/display/drm_dp_helper.c b/drivers/gpu/drm/display/drm_dp_helper.c
+index 488fd123a..698327dd0 100644
+--- a/drivers/gpu/drm/display/drm_dp_helper.c
++++ b/drivers/gpu/drm/display/drm_dp_helper.c
+@@ -3531,6 +3531,8 @@ void drm_dp_vsc_sdp_log(struct drm_printer *p, const struct drm_dp_vsc_sdp *vsc)
+ 			  dp_dynamic_range_get_name(vsc->dynamic_range));
+ 	drm_printf_indent(p, 1, "content type: %s\n",
+ 			  dp_content_type_get_name(vsc->content_type));
++	drm_printf_indent(p, 1, "stereo interface: 0x%02x\n",
++			  vsc->stereo_interface);
+ }
+ EXPORT_SYMBOL(drm_dp_vsc_sdp_log);
+ 
+@@ -3606,6 +3608,30 @@ EXPORT_SYMBOL(drm_dp_vsc_sdp_supported);
+  *
+  * Returns length of sdp on success and error code on failure
+  */
++/*
++ * The stereo interface methods and their parameters (DP 1.2), as AMD's
++ * Display Core quotes the table in mod_build_vsc_infopacket(); reserved values
++ * are refused.
++ */
++static bool drm_dp_vsc_sdp_stereo_valid(u8 stereo)
++{
++	u8 param = (stereo & DP_VSC_SDP_STEREO_PARAM_MASK) >> 4;
++
++	switch (stereo & DP_VSC_SDP_STEREO_METHOD_MASK) {
++	case DP_VSC_SDP_STEREO_NONE:
++	case DP_VSC_SDP_STEREO_STACKED_FRAME:
++		return param == 0;
++	case DP_VSC_SDP_STEREO_FRAME_SEQUENTIAL:
++		return param <= 2;
++	case DP_VSC_SDP_STEREO_PIXEL_INTERLEAVED:
++		return param <= 4;
++	case DP_VSC_SDP_STEREO_SIDE_BY_SIDE:
++		return param <= 1;
++	default:
++		return false;
++	}
++}
++
+ ssize_t drm_dp_vsc_sdp_pack(const struct drm_dp_vsc_sdp *vsc,
+ 			    struct dp_sdp *sdp)
+ {
+@@ -3613,6 +3639,23 @@ ssize_t drm_dp_vsc_sdp_pack(const struct drm_dp_vsc_sdp *vsc,
+ 
+ 	memset(sdp, 0, sizeof(struct dp_sdp));
+ 
++	/*
++	 * DB0 is the stereo interface in revisions 0x1 to 0x5, each of them a
++	 * "3D stereo" packet (revision 0x2: DP 1.4 Table 2-118, 0x4: eDP 1.4
++	 * Table 6-11). The Panel Replay revisions 0x6 and 0x7 are named "3D
++	 * stereo" too, and AMD's and NVIDIA's drivers keep DB0 as the stereo
++	 * byte in them, but the revision 0x6 packet below sets DB0 to 1 for
++	 * Panel Replay. Until DP 2.0 Table 2-223 settles what DB0 is there,
++	 * stereo is refused with those revisions.
++	 */
++	if (vsc->stereo_interface) {
++		if (vsc->revision < 0x1 || vsc->revision > 0x5 ||
++		    !drm_dp_vsc_sdp_stereo_valid(vsc->stereo_interface))
++			return -EINVAL;
++
++		sdp->db[0] = vsc->stereo_interface;
++	}
++
+ 	/*
+ 	 * Prepare VSC Header for SU as per DP 1.4a spec, Table 2-119
+ 	 * VSC SDP Header Bytes
+diff --git a/include/drm/display/drm_dp.h b/include/drm/display/drm_dp.h
+index 8b0ca3608..ac74756bc 100644
+--- a/include/drm/display/drm_dp.h
++++ b/include/drm/display/drm_dp.h
+@@ -1734,6 +1734,30 @@ enum drm_dp_phy {
+ #define DP_SDP_VSC_EXT_VESA		0x20 /* DP 1.4 */
+ #define DP_SDP_VSC_EXT_CEA		0x21 /* DP 1.4 */
+ 
++/* VSC SDP DB0, the stereo interface: a method and its parameter (DP 1.2) */
++#define DP_VSC_SDP_STEREO_METHOD_MASK		(0xf << 0)
++# define DP_VSC_SDP_STEREO_NONE			(0 << 0)
++# define DP_VSC_SDP_STEREO_FRAME_SEQUENTIAL	(1 << 0)
++# define DP_VSC_SDP_STEREO_STACKED_FRAME	(2 << 0)
++# define DP_VSC_SDP_STEREO_PIXEL_INTERLEAVED	(3 << 0)
++# define DP_VSC_SDP_STEREO_SIDE_BY_SIDE		(4 << 0)
++#define DP_VSC_SDP_STEREO_PARAM_MASK		(0xf << 4)
++/* frame/field sequential: which frame is which eye */
++# define DP_VSC_SDP_STEREO_FS_MSA_MISC1		(0 << 4) /* MSA MISC1 bits 2:1 */
++# define DP_VSC_SDP_STEREO_FS_RIGHT_ON_SIGNAL	(1 << 4) /* right when stereo signal is 1 */
++# define DP_VSC_SDP_STEREO_FS_LEFT_ON_SIGNAL	(2 << 4) /* left when stereo signal is 1 */
++/* stacked frame */
++# define DP_VSC_SDP_STEREO_STACKED_LEFT_TOP	(0 << 4)
++/* pixel interleaved */
++# define DP_VSC_SDP_STEREO_PI_RIGHT_EVEN_LINES	(0 << 4) /* rows, right view on even lines */
++# define DP_VSC_SDP_STEREO_PI_RIGHT_ODD_LINES	(1 << 4) /* rows, right view on odd lines */
++# define DP_VSC_SDP_STEREO_PI_CHECKERBOARD	(2 << 4) /* left view pixel first */
++# define DP_VSC_SDP_STEREO_PI_COLUMNS_LEFT	(3 << 4) /* columns, left view first */
++# define DP_VSC_SDP_STEREO_PI_COLUMNS_RIGHT	(4 << 4) /* columns, right view first */
++/* side by side */
++# define DP_VSC_SDP_STEREO_SBS_LEFT_HALF_LEFT	(0 << 4)
++# define DP_VSC_SDP_STEREO_SBS_LEFT_HALF_RIGHT	(1 << 4)
++
+ /* 0x80+ CEA-861 infoframe types */
+ 
+ #define DP_SDP_AUDIO_INFOFRAME_HB2	0x1b
+diff --git a/include/drm/display/drm_dp_helper.h b/include/drm/display/drm_dp_helper.h
+index ab16c1be3..593b4970c 100644
+--- a/include/drm/display/drm_dp_helper.h
++++ b/include/drm/display/drm_dp_helper.h
+@@ -87,6 +87,8 @@ const char *drm_dp_phy_name(enum drm_dp_phy dp_phy);
+  * @bpc: bit per color
+  * @dynamic_range: dynamic range information
+  * @content_type: CTA-861-G defines content types and expected processing by a sink device
++ * @stereo_interface: stereo interface method and parameter, DB0
++ *	(DP_VSC_SDP_STEREO_*), zero for no stereo
+  */
+ struct drm_dp_vsc_sdp {
+ 	unsigned char sdp_type;
+@@ -97,6 +99,7 @@ struct drm_dp_vsc_sdp {
+ 	int bpc;
+ 	enum dp_dynamic_range dynamic_range;
+ 	enum dp_content_type content_type;
++	u8 stereo_interface;
+ };
+ 
+ /**
+-- 
+2.53.0
+

@@ -1,0 +1,157 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 29 Oct 2026 12:26:46 -0300
+Subject: [PATCH] drm: add the frame-sequential stereo mode flag
+
+DisplayPort's own stereo transport is frame sequential: the source sends
+one eye per frame and, since DisplayPort 1.1a, tells the sink in the Main
+Stream Attribute which eye the next frame carries (MISC1 bits 2:1, 01b
+right, 11b left, 00b no stereo; include/drm/display/drm_dp.h already
+defines them as DP_MSA_MISC_STEREO_*). DisplayID's Stereo Display
+Interface data block and EDID detailed timings declare the same layout for
+a sink. DRM has a flag for every HDMI 1.4a 3D structure, but none for
+this one, so a driver cannot be asked for it and userspace that needs it
+alternates the eyes itself, one atomic commit per refresh, with no way to
+tell the sink which eye it is seeing.
+
+Add DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL and define its frame the way DRM
+already defines frame packing and side by side (full): one framebuffer
+holds both eyes, side by side, left eye first, and the plane covers all
+of it. The link keeps the mode's 2D timing and carries one eye per
+frame, the left eye first; drm_mode_get_hv_timing() returns twice the
+mode's width so the core checks the plane against the whole frame, and
+drm_mode_set_crtcinfo() and drm_mode_stereo_clock() leave the timing
+unchanged. Page flips take effect only at the start of a left-eye frame,
+so a frame's two eyes always come from one framebuffer, while vblank
+counting and events stay per frame of the mode.
+
+The flag is uAPI, visible only to clients that set
+DRM_CLIENT_CAP_STEREO_3D, like the other stereo layouts.
+drm_mode_validate_basic() still refuses it: the next patch makes it a
+driver opt-in per connector before raising DRM_MODE_FLAG_3D_MAX.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/drm_modes.c | 17 ++++++++++++-----
+ include/drm/drm_modes.h     | 32 ++++++++++++++++++++++++++++++++
+ include/uapi/drm/drm_mode.h |  5 +++++
+ 3 files changed, 49 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/gpu/drm/drm_modes.c b/drivers/gpu/drm/drm_modes.c
+index b93dc2d2b..844b87a77 100644
+--- a/drivers/gpu/drm/drm_modes.c
++++ b/drivers/gpu/drm/drm_modes.c
+@@ -1318,7 +1318,9 @@ EXPORT_SYMBOL(drm_mode_vrefresh);
+  * (HDMI 1.4a, section 8.2.3.2 and Appendix H): the vdisplay value grows by
+  * one vtotal for frame packing, field alternative and L + depth, by three for
+  * L + depth + graphics + graphics-depth, and doubles for line alternative; the
+- * hdisplay value doubles for side by side (full).
++ * hdisplay value doubles for side by side (full). It also doubles for frame
++ * sequential, whose buffer holds both eyes side by side while the link keeps
++ * the 2D timing and sends one eye per frame.
+  */
+ void drm_mode_get_hv_timing(const struct drm_display_mode *mode,
+ 			    int *hdisplay, int *vdisplay)
+@@ -1330,6 +1332,9 @@ void drm_mode_get_hv_timing(const struct drm_display_mode *mode,
+ 	drm_mode_set_crtcinfo(&adjusted, CRTC_STEREO_DOUBLE_ONLY);
+ 	*hdisplay = adjusted.crtc_hdisplay;
+ 	*vdisplay = adjusted.crtc_vdisplay;
++
++	if (drm_mode_is_frame_sequential(mode))
++		*hdisplay *= 2;
+ }
+ EXPORT_SYMBOL(drm_mode_get_hv_timing);
+ 
+@@ -1346,7 +1351,8 @@ EXPORT_SYMBOL(drm_mode_get_hv_timing);
+  *   frame of a stereo mode, for buffers containing both eyes (and, for the
+  *   picture plus depth structures, the depth and graphics pictures): the
+  *   timings of HDMI 1.4a, section 8.2.3.2 and Appendix H, Figures H-2 to H-6.
+- *   Top and bottom and side by side (half) keep the 2D timings.
++ *   Top and bottom, side by side (half) and frame sequential keep the 2D
++ *   timings.
+  * - The CRTC_STEREO_KEEP_HBLANK flag, with CRTC_STEREO_DOUBLE, times side by
+  *   side (full) with the 2D horizontal blanking kept and only the active width
+  *   doubled, as NVIDIA's driver does, instead of the whole line doubled.
+@@ -1490,9 +1496,10 @@ EXPORT_SYMBOL(drm_mode_set_crtcinfo);
+  * The pixel clock in kHz of @mode as it goes out on the link, with its stereo
+  * layout: doubled for frame packing, field alternative, line alternative, side
+  * by side (full) and L + depth, four times for L + depth + graphics +
+- * graphics-depth, unchanged for top and bottom, side by side (half) and 2D
+- * modes. Drivers use it to check a stereo mode against their clock limits;
+- * side by side (full) with CRTC_STEREO_KEEP_HBLANK needs less than this.
++ * graphics-depth, unchanged for top and bottom, side by side (half), frame
++ * sequential and 2D modes. Drivers use it to check a stereo mode against their
++ * clock limits; side by side (full) with CRTC_STEREO_KEEP_HBLANK needs less
++ * than this.
+  */
+ int drm_mode_stereo_clock(const struct drm_display_mode *mode)
+ {
+diff --git a/include/drm/drm_modes.h b/include/drm/drm_modes.h
+index 5890c0753..46d2a0c15 100644
+--- a/include/drm/drm_modes.h
++++ b/include/drm/drm_modes.h
+@@ -301,6 +301,23 @@ struct drm_display_mode {
+ 	 *    parts.
+ 	 *  - DRM_MODE_FLAG_3D_SIDE_BY_SIDE_HALF: frame split into left and
+ 	 *    right parts.
++	 *  - DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL: the eyes in turn, one per
++	 *    frame of the mode.
++	 *
++	 * A frame-sequential mode is sent with its own (2D) timing, and each
++	 * frame of it carries one eye, the left eye first, so each eye is shown
++	 * at half the mode's refresh rate. The framebuffer holds the two eyes
++	 * side by side, the left eye in the left half, so it is twice as wide
++	 * as the mode (drm_mode_get_hv_timing()), and the plane covers all of
++	 * it. The driver scans out the left half on left-eye frames and the
++	 * right half on right-eye frames, and tells the sink which eye each
++	 * frame carries (DisplayPort 1.1a and later: the MSA MISC1 field, bits
++	 * 2:1). A page flip takes effect only at the start of a left-eye frame,
++	 * so the two eyes of a frame are never taken from different
++	 * framebuffers; vblank counting and vblank events stay per frame of
++	 * the mode. Only connectors whose driver sets
++	 * &drm_connector.stereo_frame_sequential_allowed list and accept such
++	 * modes.
+ 	 */
+ 	u32 flags;
+ 
+@@ -461,6 +478,21 @@ static inline bool drm_mode_is_stereo(const struct drm_display_mode *mode)
+ 	return mode->flags & DRM_MODE_FLAG_3D_MASK;
+ }
+ 
++/**
++ * drm_mode_is_frame_sequential - check for the frame-sequential stereo layout
++ * @mode: drm_display_mode to check
++ *
++ * Returns:
++ * True if the eyes of @mode take turns, one per frame
++ * (DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL), false if not.
++ */
++static inline bool
++drm_mode_is_frame_sequential(const struct drm_display_mode *mode)
++{
++	return (mode->flags & DRM_MODE_FLAG_3D_MASK) ==
++		DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL;
++}
++
+ struct drm_connector;
+ struct drm_cmdline_mode;
+ 
+diff --git a/include/uapi/drm/drm_mode.h b/include/uapi/drm/drm_mode.h
+index 7c3683b9d..caba360be 100644
+--- a/include/uapi/drm/drm_mode.h
++++ b/include/uapi/drm/drm_mode.h
+@@ -82,6 +82,11 @@ extern "C" {
+ #define  DRM_MODE_FLAG_3D_L_DEPTH_GFX_GFX_DEPTH	(6<<14)
+ #define  DRM_MODE_FLAG_3D_TOP_AND_BOTTOM	(7<<14)
+ #define  DRM_MODE_FLAG_3D_SIDE_BY_SIDE_HALF	(8<<14)
++/*
++ * The eyes take turns, one per frame of the mode, left eye first, from a
++ * framebuffer that holds both side by side (twice the mode's width).
++ */
++#define  DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL	(9<<14)
+ 
+ /* Picture aspect ratio options */
+ #define DRM_MODE_PICTURE_ASPECT_NONE		0
+-- 
+2.53.0
+

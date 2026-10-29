@@ -1,0 +1,44 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 29 Oct 2026 12:54:12 -0300
+Subject: [PATCH] drm/nouveau: attach the side by side (full) timing to DP
+ connectors
+
+The "side by side full timing" connector property chooses how an HDMI
+side by side (full) mode is timed. It was attached to HDMI connectors
+only, while nouveau also drives HDMI through DisplayPort connectors with a
+DP++ adaptor (the connector's TMDS encoder, found by DDC), where the same
+modes are offered. Attach it to the DisplayPort connectors that allow
+stereo too. The "HDMI 3D metadata" property stays off: nouveau's vendor
+InfoFrame registers take PB0 to PB6 only.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/nouveau/nouveau_connector.c | 10 +++++++---
+ 1 file changed, 7 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/nouveau/nouveau_connector.c b/drivers/gpu/drm/nouveau/nouveau_connector.c
+index 32e8df40f..d2b908a49 100644
+--- a/drivers/gpu/drm/nouveau/nouveau_connector.c
++++ b/drivers/gpu/drm/nouveau/nouveau_connector.c
+@@ -1519,10 +1519,14 @@ nouveau_connector_create(struct drm_device *dev, int index)
+ 		connector->stereo_allowed = true;
+ 
+ 	/*
+-	 * The vendor InfoFrame registers take PB0 to PB6 only, so the 3D
+-	 * metadata, which starts at PB6 or PB7, cannot be sent.
++	 * HDMI is driven through HDMI connectors, and through DisplayPort ones
++	 * with a DP++ adaptor, the TMDS encoder found by DDC. The vendor
++	 * InfoFrame registers take PB0 to PB6 only, so the 3D metadata, which
++	 * starts at PB6 or PB7, cannot be sent.
+ 	 */
+-	if (connector->stereo_allowed && type == DRM_MODE_CONNECTOR_HDMIA)
++	if (connector->stereo_allowed &&
++	    (type == DRM_MODE_CONNECTOR_HDMIA ||
++	     type == DRM_MODE_CONNECTOR_DisplayPort))
+ 		drm_connector_attach_sbs_full_timing_property(connector);
+ 
+ 	/* defaults, will get overridden in detect() */
+-- 
+2.53.0
+

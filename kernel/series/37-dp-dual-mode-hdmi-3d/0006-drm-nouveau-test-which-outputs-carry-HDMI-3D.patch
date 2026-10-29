@@ -1,0 +1,153 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 29 Oct 2026 12:55:21 -0300
+Subject: [PATCH] drm/nouveau: test which outputs carry HDMI 3D
+
+Add a KUnit option for nouveau, DRM_NOUVEAU_KUNIT_TEST, whose tests are
+built into the driver, and test the two checks the HDMI 3D mode filter is
+made of: nouveau_connector_hdmi_3d_signalled() is true only for a SOR
+driving TMDS to an HDMI sink, not for a DVI sink, a PIOR, a DisplayPort
+output or no encoder; nouveau_mode_is_hdmi_3d() is true for each of the
+eight HDMI 1.4a 3D layouts and false for 2D and frame sequential.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/nouveau/Kbuild                |  1 +
+ drivers/gpu/drm/nouveau/Kconfig               | 14 +++
+ .../nouveau/tests/nouveau_connector_test.c    | 87 +++++++++++++++++++
+ 3 files changed, 102 insertions(+)
+ create mode 100644 drivers/gpu/drm/nouveau/tests/nouveau_connector_test.c
+
+diff --git a/drivers/gpu/drm/nouveau/Kbuild b/drivers/gpu/drm/nouveau/Kbuild
+index 385d24530..522dbd654 100644
+--- a/drivers/gpu/drm/nouveau/Kbuild
++++ b/drivers/gpu/drm/nouveau/Kbuild
+@@ -57,6 +57,7 @@ nouveau-y += nouveau_display.o
+ nouveau-y += nouveau_dp.o
+ include $(src)/dispnv04/Kbuild
+ include $(src)/dispnv50/Kbuild
++nouveau-$(CONFIG_DRM_NOUVEAU_KUNIT_TEST) += tests/nouveau_connector_test.o
+ 
+ # DRM - command submission
+ nouveau-y += nouveau_abi16.o
+diff --git a/drivers/gpu/drm/nouveau/Kconfig b/drivers/gpu/drm/nouveau/Kconfig
+index 3b5757aed..727a03ccb 100644
+--- a/drivers/gpu/drm/nouveau/Kconfig
++++ b/drivers/gpu/drm/nouveau/Kconfig
+@@ -103,6 +103,20 @@ config DRM_NOUVEAU_SVM
+ 	  Say Y here if you want to enable experimental support for
+ 	  Shared Virtual Memory (SVM).
+ 
++config DRM_NOUVEAU_KUNIT_TEST
++	bool "KUnit tests for nouveau" if !KUNIT_ALL_TESTS
++	depends on DRM_NOUVEAU=y && KUNIT=y
++	default KUNIT_ALL_TESTS
++	help
++	  This option builds KUnit tests for nouveau's display code into the
++	  driver. They are not useful for distributions or general kernels,
++	  only for developers working on nouveau.
++
++	  For more information on KUnit and unit tests in general, please
++	  refer to the KUnit documentation in Documentation/dev-tools/kunit/.
++
++	  If in doubt, say "N".
++
+ config DRM_NOUVEAU_CH7006
+ 	tristate "Chrontel ch7006 TV encoder"
+ 	depends on DRM_NOUVEAU
+diff --git a/drivers/gpu/drm/nouveau/tests/nouveau_connector_test.c b/drivers/gpu/drm/nouveau/tests/nouveau_connector_test.c
+new file mode 100644
+index 000000000..d29324fd1
+--- /dev/null
++++ b/drivers/gpu/drm/nouveau/tests/nouveau_connector_test.c
+@@ -0,0 +1,87 @@
++// SPDX-License-Identifier: MIT
++/*
++ * KUnit tests for the connectors of nouveau's display
++ */
++
++#include <kunit/test.h>
++
++#include <drm/drm_connector.h>
++#include <drm/drm_modes.h>
++
++#include "nouveau_drv.h"
++#include "nouveau_connector.h"
++#include "nouveau_encoder.h"
++
++/*
++ * The HDMI vendor InfoFrame, which signals the HDMI 1.4a 3D structures, goes
++ * out from a SOR driving TMDS to an HDMI sink only: not to a DVI sink, not
++ * over DisplayPort, not from an external TMDS transmitter (PIOR).
++ */
++static void nouveau_test_hdmi_3d_signalled(struct kunit *test)
++{
++	struct drm_display_info hdmi = { .is_hdmi = true };
++	struct drm_display_info dvi = { .is_hdmi = false };
++	struct nouveau_encoder *nv_encoder;
++	struct dcb_output *dcb;
++
++	nv_encoder = kunit_kzalloc(test, sizeof(*nv_encoder), GFP_KERNEL);
++	KUNIT_ASSERT_NOT_NULL(test, nv_encoder);
++	dcb = kunit_kzalloc(test, sizeof(*dcb), GFP_KERNEL);
++	KUNIT_ASSERT_NOT_NULL(test, dcb);
++	nv_encoder->dcb = dcb;
++
++	dcb->type = DCB_OUTPUT_TMDS;
++	nv_encoder->outp.info.type = NVIF_OUTP_SOR;
++	KUNIT_EXPECT_TRUE(test, nouveau_connector_hdmi_3d_signalled(nv_encoder, &hdmi));
++	KUNIT_EXPECT_FALSE(test, nouveau_connector_hdmi_3d_signalled(nv_encoder, &dvi));
++
++	nv_encoder->outp.info.type = NVIF_OUTP_PIOR;
++	KUNIT_EXPECT_FALSE(test, nouveau_connector_hdmi_3d_signalled(nv_encoder, &hdmi));
++
++	dcb->type = DCB_OUTPUT_DP;
++	nv_encoder->outp.info.type = NVIF_OUTP_SOR;
++	KUNIT_EXPECT_FALSE(test, nouveau_connector_hdmi_3d_signalled(nv_encoder, &hdmi));
++
++	KUNIT_EXPECT_FALSE(test, nouveau_connector_hdmi_3d_signalled(NULL, &hdmi));
++}
++
++/* every stereo layout but frame sequential is an HDMI 3D structure */
++static void nouveau_test_mode_is_hdmi_3d(struct kunit *test)
++{
++	static const u32 hdmi_layouts[] = {
++		DRM_MODE_FLAG_3D_FRAME_PACKING,
++		DRM_MODE_FLAG_3D_FIELD_ALTERNATIVE,
++		DRM_MODE_FLAG_3D_LINE_ALTERNATIVE,
++		DRM_MODE_FLAG_3D_SIDE_BY_SIDE_FULL,
++		DRM_MODE_FLAG_3D_L_DEPTH,
++		DRM_MODE_FLAG_3D_L_DEPTH_GFX_GFX_DEPTH,
++		DRM_MODE_FLAG_3D_TOP_AND_BOTTOM,
++		DRM_MODE_FLAG_3D_SIDE_BY_SIDE_HALF,
++	};
++	struct drm_display_mode mode = { };
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(hdmi_layouts); i++) {
++		mode.flags = hdmi_layouts[i];
++		KUNIT_EXPECT_TRUE_MSG(test, nouveau_mode_is_hdmi_3d(&mode),
++				      "layout 0x%x", hdmi_layouts[i]);
++	}
++
++	mode.flags = DRM_MODE_FLAG_3D_NONE;
++	KUNIT_EXPECT_FALSE(test, nouveau_mode_is_hdmi_3d(&mode));
++	mode.flags = DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL;
++	KUNIT_EXPECT_FALSE(test, nouveau_mode_is_hdmi_3d(&mode));
++}
++
++static struct kunit_case nouveau_connector_tests[] = {
++	KUNIT_CASE(nouveau_test_hdmi_3d_signalled),
++	KUNIT_CASE(nouveau_test_mode_is_hdmi_3d),
++	{ }
++};
++
++static struct kunit_suite nouveau_connector_test_suite = {
++	.name = "nouveau_connector",
++	.test_cases = nouveau_connector_tests,
++};
++
++kunit_test_suite(nouveau_connector_test_suite);
+-- 
+2.53.0
+

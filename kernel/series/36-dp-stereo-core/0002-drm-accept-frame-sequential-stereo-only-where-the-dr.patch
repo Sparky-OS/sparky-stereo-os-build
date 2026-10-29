@@ -1,0 +1,217 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 29 Oct 2026 12:27:54 -0300
+Subject: [PATCH] drm: accept frame-sequential stereo only where the driver
+ opts in
+
+A frame-sequential mode is only correct when the driver alternates the
+two halves of the frame in hardware and tells the sink which eye each
+frame carries. Every driver today would take such a mode as a plain 2D
+mode: the core checks the plane against the doubled width, so a driver
+that does not know the layout scans out or scales a side by side frame
+with no stereo signalled at all. Raising DRM_MODE_FLAG_3D_MAX alone
+would therefore make every driver accept a mode it cannot send.
+
+Add drm_connector.stereo_frame_sequential_allowed, separate from
+stereo_allowed (which keeps meaning the HDMI 1.4a 3D structures, and is
+set on connectors that can send none of this), and enforce it in the
+core:
+- the probe helper prunes frame-sequential modes with MODE_NO_STEREO on
+  connectors that did not opt in, as it prunes the other stereo layouts
+  with stereo_allowed (drm_mode_validate_stereo());
+- the atomic check refuses a CRTC that drives such a connector with a
+  frame-sequential mode, and so does the legacy SETCRTC ioctl.
+Then raise DRM_MODE_FLAG_3D_MAX to the new flag.
+
+No driver sets the field yet, so nothing changes for any connector: the
+modes are pruned and the commits refused, as before. The atomic check is
+what lets userspace probe for the capability with a TEST_ONLY commit of a
+frame-sequential mode built from a 2D one.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/drm_atomic.c       | 39 +++++++++++++++++++++++++++++-
+ drivers/gpu/drm/drm_crtc.c         |  9 +++++++
+ drivers/gpu/drm/drm_probe_helper.c | 24 ++++++++++++++----
+ include/drm/drm_connector.h        | 16 ++++++++++--
+ include/drm/drm_modes.h            |  2 +-
+ 5 files changed, 81 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/gpu/drm/drm_atomic.c b/drivers/gpu/drm/drm_atomic.c
+index 5f8d3de82..f4a64614d 100644
+--- a/drivers/gpu/drm/drm_atomic.c
++++ b/drivers/gpu/drm/drm_atomic.c
+@@ -476,6 +476,43 @@ drm_atomic_get_crtc_state(struct drm_atomic_commit *state,
+ }
+ EXPORT_SYMBOL(drm_atomic_get_crtc_state);
+ 
++/*
++ * A frame-sequential mode needs a driver that alternates the eyes in hardware
++ * and tells the sink which eye each frame carries. A driver that does not know
++ * the layout would send it as a plain 2D mode, so the mode is refused unless
++ * every connector it drives opted in.
++ */
++static int
++drm_atomic_crtc_check_frame_sequential(const struct drm_crtc_state *new_crtc_state)
++{
++	struct drm_crtc *crtc = new_crtc_state->crtc;
++	struct drm_connector_list_iter conn_iter;
++	struct drm_connector *connector;
++	int ret = 0;
++
++	if (!new_crtc_state->enable ||
++	    !drm_mode_is_frame_sequential(&new_crtc_state->mode))
++		return 0;
++
++	drm_connector_list_iter_begin(crtc->dev, &conn_iter);
++	drm_for_each_connector_iter(connector, &conn_iter) {
++		if (!(new_crtc_state->connector_mask & drm_connector_mask(connector)))
++			continue;
++
++		if (!connector->stereo_frame_sequential_allowed) {
++			drm_dbg_atomic(crtc->dev,
++				       "[CRTC:%d:%s] [CONNECTOR:%d:%s] cannot send frame-sequential stereo\n",
++				       crtc->base.id, crtc->name,
++				       connector->base.id, connector->name);
++			ret = -EINVAL;
++			break;
++		}
++	}
++	drm_connector_list_iter_end(&conn_iter);
++
++	return ret;
++}
++
+ static int drm_atomic_crtc_check(const struct drm_crtc_state *old_crtc_state,
+ 				 const struct drm_crtc_state *new_crtc_state)
+ {
+@@ -534,7 +571,7 @@ static int drm_atomic_crtc_check(const struct drm_crtc_state *old_crtc_state,
+ 		return -EINVAL;
+ 	}
+ 
+-	return 0;
++	return drm_atomic_crtc_check_frame_sequential(new_crtc_state);
+ }
+ 
+ static void drm_atomic_crtc_print_state(struct drm_printer *p,
+diff --git a/drivers/gpu/drm/drm_crtc.c b/drivers/gpu/drm/drm_crtc.c
+index bd666dbc3..b941ba534 100644
+--- a/drivers/gpu/drm/drm_crtc.c
++++ b/drivers/gpu/drm/drm_crtc.c
+@@ -872,6 +872,15 @@ int drm_mode_setcrtc(struct drm_device *dev, void *data,
+ 
+ 			connector_set[i] = connector;
+ 			num_connectors++;
++
++			if (drm_mode_is_frame_sequential(mode) &&
++			    !connector->stereo_frame_sequential_allowed) {
++				drm_dbg_kms(dev,
++					    "[CONNECTOR:%d:%s] cannot send frame-sequential stereo\n",
++					    connector->base.id, connector->name);
++				ret = -EINVAL;
++				goto out;
++			}
+ 		}
+ 	}
+ 
+diff --git a/drivers/gpu/drm/drm_probe_helper.c b/drivers/gpu/drm/drm_probe_helper.c
+index e26ead5b5..91fa502e9 100644
+--- a/drivers/gpu/drm/drm_probe_helper.c
++++ b/drivers/gpu/drm/drm_probe_helper.c
+@@ -79,8 +79,18 @@ drm_mode_validate_flag(const struct drm_display_mode *mode,
+ 	    !(flags & DRM_MODE_FLAG_DBLSCAN))
+ 		return MODE_NO_DBLESCAN;
+ 
+-	if ((mode->flags & DRM_MODE_FLAG_3D_MASK) &&
+-	    !(flags & DRM_MODE_FLAG_3D_MASK))
++	return MODE_OK;
++}
++
++static enum drm_mode_status
++drm_mode_validate_stereo(const struct drm_display_mode *mode,
++			 const struct drm_connector *connector)
++{
++	if (drm_mode_is_frame_sequential(mode))
++		return connector->stereo_frame_sequential_allowed ?
++			MODE_OK : MODE_NO_STEREO;
++
++	if (drm_mode_is_stereo(mode) && !connector->stereo_allowed)
+ 		return MODE_NO_STEREO;
+ 
+ 	return MODE_OK;
+@@ -457,8 +467,6 @@ static int __drm_helper_update_and_validate(struct drm_connector *connector,
+ 		mode_flags |= DRM_MODE_FLAG_INTERLACE;
+ 	if (connector->doublescan_allowed)
+ 		mode_flags |= DRM_MODE_FLAG_DBLSCAN;
+-	if (connector->stereo_allowed)
+-		mode_flags |= DRM_MODE_FLAG_3D_MASK;
+ 
+ 	list_for_each_entry(mode, &connector->modes, head) {
+ 		if (mode->status != MODE_OK)
+@@ -476,6 +484,10 @@ static int __drm_helper_update_and_validate(struct drm_connector *connector,
+ 		if (mode->status != MODE_OK)
+ 			continue;
+ 
++		mode->status = drm_mode_validate_stereo(mode, connector);
++		if (mode->status != MODE_OK)
++			continue;
++
+ 		mode->status = drm_mode_validate_ycbcr420(mode, connector);
+ 		if (mode->status != MODE_OK)
+ 			continue;
+@@ -540,7 +552,9 @@ static int __drm_helper_update_and_validate(struct drm_connector *connector,
+  *    - drm_mode_validate_size() filters out modes larger than @maxX and @maxY
+  *      (if specified)
+  *    - drm_mode_validate_flag() checks the modes against basic connector
+- *      capabilities (interlace_allowed,doublescan_allowed,stereo_allowed)
++ *      capabilities (interlace_allowed,doublescan_allowed), and
++ *      drm_mode_validate_stereo() their stereo layout against stereo_allowed
++ *      and stereo_frame_sequential_allowed
+  *    - the optional &drm_connector_helper_funcs.mode_valid or
+  *      &drm_connector_helper_funcs.mode_valid_ctx helpers can perform driver
+  *      and/or sink specific checks
+diff --git a/include/drm/drm_connector.h b/include/drm/drm_connector.h
+index f62140eed..007e11f43 100644
+--- a/include/drm/drm_connector.h
++++ b/include/drm/drm_connector.h
+@@ -2263,10 +2263,22 @@ struct drm_connector {
+ 	bool doublescan_allowed;
+ 	/**
+ 	 * @stereo_allowed:
+-	 * Can this connector handle stereo modes? Only used by
+-	 * drm_helper_probe_single_connector_modes() for mode filtering.
++	 * Can this connector handle stereo modes other than frame sequential?
++	 * Only used by drm_helper_probe_single_connector_modes() for mode
++	 * filtering.
+ 	 */
+ 	bool stereo_allowed;
++	/**
++	 * @stereo_frame_sequential_allowed:
++	 * Can this connector send frame-sequential stereo modes
++	 * (DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL), alternating the eyes in
++	 * hardware and telling the sink which eye each frame carries?
++	 * Independent of @stereo_allowed. Used for mode filtering by
++	 * drm_helper_probe_single_connector_modes(), and atomic and legacy
++	 * modesets that drive this connector with such a mode are refused when
++	 * it is false.
++	 */
++	bool stereo_frame_sequential_allowed;
+ 
+ 	/**
+ 	 * @ycbcr_420_allowed : This bool indicates if this connector is
+diff --git a/include/drm/drm_modes.h b/include/drm/drm_modes.h
+index 46d2a0c15..589291fc3 100644
+--- a/include/drm/drm_modes.h
++++ b/include/drm/drm_modes.h
+@@ -187,7 +187,7 @@ enum drm_mode_status {
+ #define CRTC_STEREO_DOUBLE_ONLY	(CRTC_STEREO_DOUBLE | CRTC_NO_DBLSCAN | CRTC_NO_VSCAN)
+ #define CRTC_STEREO_KEEP_HBLANK	(1 << 4) /* side by side (full): keep the 2D horizontal blanking */
+ 
+-#define DRM_MODE_FLAG_3D_MAX	DRM_MODE_FLAG_3D_SIDE_BY_SIDE_HALF
++#define DRM_MODE_FLAG_3D_MAX	DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL
+ 
+ #define DRM_MODE_MATCH_TIMINGS (1 << 0)
+ #define DRM_MODE_MATCH_CLOCK (1 << 1)
+-- 
+2.53.0
+

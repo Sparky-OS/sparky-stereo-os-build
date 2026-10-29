@@ -1,0 +1,107 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 29 Oct 2026 12:54:12 -0300
+Subject: [PATCH] drm/nouveau: offer HDMI 3D modes only on TMDS outputs to HDMI
+ sinks
+
+The HDMI 1.4a 3D structures are signalled by the HDMI vendor InfoFrame
+(HDMI 1.4a, section 8.2.3), which nv50_hdmi_enable() sends only from a SOR
+driving TMDS to a sink whose EDID makes it HDMI. Stereo has been allowed
+on DisplayPort connectors since commit 0f18d2765ab1 ("drm/nouveau: Enable
+stereoscopic 3D output over HDMI"), so that a DP++ adaptor, which nouveau
+drives through the connector's TMDS encoder, gets HDMI 3D. But the 3D
+modes of a sink's HDMI VSDB were then listed whatever the connector
+drove: a native DisplayPort sink with an HDMI VSDB, and the HDMI sink
+behind a DP-to-HDMI protocol converter, got HDMI 3D modes checked against
+the DisplayPort link (nv50_dp_mode_valid()) and sent with nothing to tell
+the sink, as nouveau sends no DisplayPort SDP at all. A DVI sink, which
+takes no InfoFrame, was in the same place on any connector.
+
+Refuse the HDMI 3D layouts, every stereo layout but frame sequential,
+unless the detected encoder is a SOR driving TMDS and the sink is HDMI:
+nouveau_connector_mode_valid() returns MODE_NO_STEREO, so the modes are
+no longer listed, and nv50_outp_atomic_check() returns -EINVAL, so an
+atomic commit of such a mode fails too. External TMDS transmitters
+(PIORs) get no InfoFrame either and are refused the same way. Frame
+sequential is DisplayPort's own stereo and is refused by the DRM core
+until nouveau opts in.
+
+The DP++ case that commit 0f18d2765ab1 enabled keeps its 3D modes; the
+others never switched a sink into 3D.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/nouveau/dispnv50/disp.c     |  5 +++++
+ drivers/gpu/drm/nouveau/nouveau_connector.c |  4 ++++
+ drivers/gpu/drm/nouveau/nouveau_connector.h | 24 +++++++++++++++++++++
+ 3 files changed, 33 insertions(+)
+
+diff --git a/drivers/gpu/drm/nouveau/dispnv50/disp.c b/drivers/gpu/drm/nouveau/dispnv50/disp.c
+index 1771a08aa..1358b8d41 100644
+--- a/drivers/gpu/drm/nouveau/dispnv50/disp.c
++++ b/drivers/gpu/drm/nouveau/dispnv50/disp.c
+@@ -530,6 +530,11 @@ nv50_outp_atomic_check(struct drm_encoder *encoder,
+ 	struct nv50_head_atom *asyh = nv50_head_atom(crtc_state);
+ 	int ret;
+ 
++	if (nouveau_mode_is_hdmi_3d(&crtc_state->mode) &&
++	    !nouveau_connector_hdmi_3d_signalled(nouveau_encoder(encoder),
++						 &connector->display_info))
++		return -EINVAL;
++
+ 	ret = nv50_outp_atomic_check_view(encoder, crtc_state, conn_state,
+ 					  nv_connector->native_mode);
+ 	if (ret)
+diff --git a/drivers/gpu/drm/nouveau/nouveau_connector.c b/drivers/gpu/drm/nouveau/nouveau_connector.c
+index 5128a6a69..32e8df40f 100644
+--- a/drivers/gpu/drm/nouveau/nouveau_connector.c
++++ b/drivers/gpu/drm/nouveau/nouveau_connector.c
+@@ -1114,6 +1114,10 @@ nouveau_connector_mode_valid(struct drm_connector *connector,
+ 	struct drm_encoder *encoder = to_drm_encoder(nv_encoder);
+ 	unsigned int min_clock = 25000, max_clock = min_clock, clock = mode->clock;
+ 
++	if (nouveau_mode_is_hdmi_3d(mode) &&
++	    !nouveau_connector_hdmi_3d_signalled(nv_encoder, &connector->display_info))
++		return MODE_NO_STEREO;
++
+ 	/* Reject modes exceeding the postcomp viewport limit where scaler
+ 	 * limits are enforced. Atomic check applies the same limit.
+ 	 */
+diff --git a/drivers/gpu/drm/nouveau/nouveau_connector.h b/drivers/gpu/drm/nouveau/nouveau_connector.h
+index 742d00f49..8ca5eb106 100644
+--- a/drivers/gpu/drm/nouveau/nouveau_connector.h
++++ b/drivers/gpu/drm/nouveau/nouveau_connector.h
+@@ -173,6 +173,30 @@ nouveau_connector_is_mst(struct drm_connector *connector)
+ 	return encoder->encoder_type == DRM_MODE_ENCODER_DPMST;
+ }
+ 
++/*
++ * The HDMI 1.4a 3D structures are signalled by the HDMI vendor InfoFrame
++ * (section 8.2.3), which nv50_hdmi_enable() sends from an on-chip TMDS output
++ * (a SOR) to an HDMI sink only: on an HDMI connector, or on a DisplayPort
++ * connector through a DP++ adaptor. A DisplayPort sink, a DVI sink, or an
++ * external TMDS transmitter (a PIOR) would get the 3D timing with nothing to
++ * tell the sink.
++ */
++static inline bool
++nouveau_connector_hdmi_3d_signalled(const struct nouveau_encoder *nv_encoder,
++				    const struct drm_display_info *info)
++{
++	return nv_encoder && nv_encoder->dcb &&
++	       nv_encoder->dcb->type == DCB_OUTPUT_TMDS &&
++	       nv_encoder->outp.info.type == NVIF_OUTP_SOR && info->is_hdmi;
++}
++
++/* the HDMI 3D layouts: every stereo layout but frame sequential */
++static inline bool
++nouveau_mode_is_hdmi_3d(const struct drm_display_mode *mode)
++{
++	return drm_mode_is_stereo(mode) && !drm_mode_is_frame_sequential(mode);
++}
++
+ #define nouveau_for_each_non_mst_connector_iter(connector, iter) \
+ 	drm_for_each_connector_iter(connector, iter) \
+ 		for_each_if(!nouveau_connector_is_mst(connector))
+-- 
+2.53.0
+

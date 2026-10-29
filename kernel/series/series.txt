@@ -333,3 +333,40 @@
 #      status: this build (build 12, all three flavours: 7.3.0~rc6-12+lc1). Source: lane efi-mixed-kaslr-246, written on upstream master 5b0764a53235; kaslr.c is the same file in v7.3-rc6 + groups 01-34, so it applies unchanged. Upstream: drafted for the x86 and EFI maintainers, not sent.
 #      32-bit firmware returns from every runtime call through __efi64_thunk_ret_tramp at a 32-bit address. GRUB's i386-efi linux command enters through the boot protocol, so the decompressor's physical KASLR chose the address, anywhere in EFI conventional memory: above 4 GiB the address was truncated and SetVirtualAddressMap() returned into RAM mapped non-executable (24 of 50 boots of build 11 in the 32-bit OVMF rig, every one with the trampoline above 4 GiB). The EFI stub already limits itself to 4 GiB there (EFI_ALLOC_LIMIT). Independent of the other groups.
 35-efi-mixed-kaslr-4g/0001-x86-kaslr-Keep-the-kernel-below-4-GiB-for-32-bit-EFI.patch
+
+# ==== 36-dp-stereo-core: DisplayPort stereo in the DRM core: the frame-sequential mode flag and its frame, the connector opt-in, the stereo modes EDID detailed timings and DisplayID declare, the VSC SDP stereo byte, InfoFrame SDPs, the converters' frame sequential to frame packing bit (ORDER 257 milestone 1; 11 commits)
+#      status: candidate for the next build. Source: lane dp-stereo-257-m1, written on v7.3 plus groups 01-35 (build 13's tree). Plan: queue/dp-stereo-257/PLAN.md section 7, with its three decisions (one side by side frame, the right eye's address derived by the driver; TEST_ONLY as the capability check; flips at the pair boundary, one vblank event per refresh).
+#      needs 34 and 02 for context: drm_mode_get_hv_timing()'s and drm_mode_set_crtcinfo()'s stereo text and cases come from 02/0005, 34/0003 and 34/0004, and 0010 extends 34/0010's drm_edid_3d_test.c.
+#      0001 is new uAPI: DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL (9<<14), the frame both eyes side by side, left eye first, the link at the 2D timing, one eye per frame (DisplayPort MSA MISC1 bits 2:1 name it). RFC, Stereo KWin's "frame sequential, DisplayPort" output is its userspace (milestone 4).
+#      0002 adds drm_connector.stereo_frame_sequential_allowed: the probe helper prunes and the atomic check and SETCRTC refuse the flag unless the driver opted in; no driver does yet (amdgpu milestone 5, i915 7, nouveau 8, VKMS 3), so nothing changes on any connector.
+#      0003 fixes build 13's drop of detailed timings with bit 5 of the stereo flags (E-EDID 1.4 Table 3.22): 0x20, 0x21, 0x60 and 0x61 lost their mode while 0x40 and 0x41 kept theirs; every value now keeps its 2D mode. A sink whose first DTD has bit 5 set gets its real preferred mode back.
+#      0004 lists field sequential DTDs (0x20, 0x40) also as frame-sequential modes; 0005 parses DisplayID's Stereo Display Interface block (0x10, 0x27) as edid-decode does, and lists its field sequential method over the timings and codes it names. Side by side and stacked frame are decoded but listed in milestone 9, with their VSC signal.
+#      0006: the VSC SDP stereo interface byte for revisions 0x1 to 0x5; refused with Panel Replay (0x6, 0x7) until DP 2.0 Table 2-223 settles DB0 there (drm_dp_vsc_sdp_pack() writes DB0 = 1 for revision 0x6, where AMD and NVIDIA read DB0 as stereo); the Panel Replay packet is unchanged.
+#      0007: drm_dp_infoframe_sdp_pack(), any non-audio InfoFrame as an INFOFRAME SDP 1.3 (HB1 0x81 for the HDMI vendor InfoFrame), the layout i915, amdgpu and NVIDIA use for the HDR InfoFrame; 0008: drm_dp_downstream_frame_seq_to_frame_pack().
+#      0009 to 0011: KUnit, 5 new suites (drm_frame_sequential, drm_edid_stereo, drm_dp_vsc_sdp_stereo, drm_dp_infoframe_sdp, drm_dp_downstream_frame_seq) and a case in drm_modes_stereo; the fixture EDIDs pass edid-decode --check. Upstream: the core RFC to dri-devel after ORDER 166's HDMI 3D core, never cold.
+36-dp-stereo-core/0001-drm-add-the-frame-sequential-stereo-mode-flag.patch
+36-dp-stereo-core/0002-drm-accept-frame-sequential-stereo-only-where-the-dr.patch
+36-dp-stereo-core/0003-drm-edid-keep-the-2D-mode-of-a-detailed-timing-with-.patch
+36-dp-stereo-core/0004-drm-edid-list-frame-sequential-modes-from-stereo-det.patch
+36-dp-stereo-core/0005-drm-edid-list-the-stereo-modes-of-a-DisplayID-Stereo.patch
+36-dp-stereo-core/0006-drm-display-dp-carry-the-stereo-interface-byte-of-th.patch
+36-dp-stereo-core/0007-drm-display-dp-pack-CTA-861-InfoFrames-into-DisplayP.patch
+36-dp-stereo-core/0008-drm-display-dp-read-a-converter-s-frame-sequential-t.patch
+36-dp-stereo-core/0009-drm-tests-test-the-frame-sequential-stereo-mode-flag.patch
+36-dp-stereo-core/0010-drm-tests-test-the-stereo-modes-of-detailed-timings-.patch
+36-dp-stereo-core/0011-drm-tests-test-the-DisplayPort-packets-of-stereo-str.patch
+
+# ==== 37-dp-dual-mode-hdmi-3d: HDMI 3D through DisplayPort made correct: HDMI 3D modes only where the signal is HDMI (a DP++ adaptor in HDMI mode), the HDMI 3D properties wherever HDMI can be driven, amdgpu and nouveau (ORDER 257 milestone 2; 6 commits)
+#      status: candidate for the next build. Source: lane dp-stereo-257-m1, on group 36. Needs 36 (drm_mode_is_frame_sequential()), 02/0002 (amdgpu's stereo_allowed on every connector) and 34/0005 (the two HDMI 3D connector properties).
+#      0001: amdgpu refuses the HDMI 3D layouts (every stereo layout but frame sequential) unless the sink signal is HDMI (TMDS or FRL): DisplayPort, MST, eDP and DVI-mode sinks, and the HDMI sink behind a DP-to-HDMI converter (no InfoFrame SDP yet, milestone 6), stop listing 3D modes that nothing signalled, and frame packing no longer gets its tall timing on a DisplayPort link. A passive DP++ adaptor in HDMI mode keeps its 3D modes.
+#      0002: amdgpu attaches "side by side full timing" and "HDMI 3D metadata" to every connector DC can drive HDMI through (HDMI; DisplayPort with HDMI audio on dongles or native, not MST, USB4 tunnels or external bridges; DVI with native HDMI audio), not HDMI-A only.
+#      0004: nouveau refuses the HDMI 3D layouts unless the output is a SOR driving TMDS to an HDMI sink (nv50_hdmi_enable() sends the vendor InfoFrame there only), in mode_valid and in nv50_outp_atomic_check(); 0005 attaches the side by side (full) timing property to DisplayPort connectors too (the metadata property stays off: PB0 to PB6 only).
+#      0003 and 0006: KUnit (3 new amdgpu_dm_connector cases; a new DRM_NOUVEAU_KUNIT_TEST option and nouveau_connector suite).
+#      i915 is unchanged and needs nothing here: its DP connectors never allow stereo, and DP++ ports get their own HDMI connector with HDMI 3D already; LSPCON ports (DP connectors) have no 3D and are left to their own milestone, with the InfoFrame SDP path of milestone 6.
+#      nouveau stays ours (its community statement asks for human-written code); amdgpu goes upstream after the core is agreed (layers: kernel first, then drivers).
+37-dp-dual-mode-hdmi-3d/0001-drm-amd-display-offer-HDMI-3D-modes-only-on-HDMI-sig.patch
+37-dp-dual-mode-hdmi-3d/0002-drm-amd-display-attach-the-HDMI-3D-properties-wherev.patch
+37-dp-dual-mode-hdmi-3d/0003-drm-amd-display-test-the-HDMI-3D-mode-filter-and-pro.patch
+37-dp-dual-mode-hdmi-3d/0004-drm-nouveau-offer-HDMI-3D-modes-only-on-TMDS-outputs.patch
+37-dp-dual-mode-hdmi-3d/0005-drm-nouveau-attach-the-side-by-side-full-timing-to-D.patch
+37-dp-dual-mode-hdmi-3d/0006-drm-nouveau-test-which-outputs-carry-HDMI-3D.patch

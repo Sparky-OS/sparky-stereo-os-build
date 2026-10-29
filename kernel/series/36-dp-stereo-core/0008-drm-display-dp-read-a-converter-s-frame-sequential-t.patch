@@ -1,0 +1,88 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 29 Oct 2026 12:36:15 -0300
+Subject: [PATCH] drm/display/dp: read a converter's frame sequential to frame
+ packing capability
+
+The detailed capabilities of an HDMI downstream facing port carry, in
+byte 3, bit 0, DP_DS_HDMI_FRAME_SEQ_TO_FRAME_PACK (drm_dp.h): the
+protocol converter can turn a DisplayPort frame-sequential stereo stream,
+whose eyes MSA MISC1 names, into HDMI frame packing. AMD's Display Core
+reads it into is_dp_hdmi_s3d_converter for HDMI and DP++ downstream ports
+alike ("process DP++ case as HDMI case according DP1.4 spec",
+link_dp_capability.c) and names the stream format
+TIMING_3D_FORMAT_DP_HDMI_INBAND_FA, "Inband FA to HDMI Frame Pack ... for
+active DP-HDMI dongle"; NVIDIA defines the same bit as
+NV_DPCD_DETAILED_CAP_INFO_FRAME_SEQ_TO_FRAME_PACK. No helper reads it.
+
+Add drm_dp_downstream_frame_seq_to_frame_pack(), shaped like
+drm_dp_downstream_420_passthrough(): a branch device with detailed
+capability information, an HDMI or DP++ downstream port, and the bit.
+Drivers can then offer the converter's frame packing for
+frame-sequential streams where the converter declares it.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/display/drm_dp_helper.c | 32 +++++++++++++++++++++++++
+ include/drm/display/drm_dp_helper.h     |  2 ++
+ 2 files changed, 34 insertions(+)
+
+diff --git a/drivers/gpu/drm/display/drm_dp_helper.c b/drivers/gpu/drm/display/drm_dp_helper.c
+index 6db2cbe56..912cbfea0 100644
+--- a/drivers/gpu/drm/display/drm_dp_helper.c
++++ b/drivers/gpu/drm/display/drm_dp_helper.c
+@@ -1558,6 +1558,38 @@ bool drm_dp_downstream_444_to_420_conversion(const u8 dpcd[DP_RECEIVER_CAP_SIZE]
+ }
+ EXPORT_SYMBOL(drm_dp_downstream_444_to_420_conversion);
+ 
++/**
++ * drm_dp_downstream_frame_seq_to_frame_pack() - determine downstream facing port
++ *                                               frame sequential to frame
++ *                                               packing conversion capability
++ * @dpcd: DisplayPort configuration data
++ * @port_cap: downstream facing port capabilities
++ *
++ * An HDMI downstream facing port (or a DP++ one, read the same way) may turn a
++ * frame-sequential stereo stream, the eye of each frame named by MSA MISC1,
++ * into HDMI frame packing.
++ *
++ * Returns: whether the downstream facing port declares that conversion
++ */
++bool drm_dp_downstream_frame_seq_to_frame_pack(const u8 dpcd[DP_RECEIVER_CAP_SIZE],
++					       const u8 port_cap[4])
++{
++	if (!drm_dp_is_branch(dpcd))
++		return false;
++
++	if ((dpcd[DP_DOWNSTREAMPORT_PRESENT] & DP_DETAILED_CAP_INFO_AVAILABLE) == 0)
++		return false;
++
++	switch (port_cap[0] & DP_DS_PORT_TYPE_MASK) {
++	case DP_DS_PORT_TYPE_HDMI:
++	case DP_DS_PORT_TYPE_DP_DUALMODE:
++		return port_cap[3] & DP_DS_HDMI_FRAME_SEQ_TO_FRAME_PACK;
++	default:
++		return false;
++	}
++}
++EXPORT_SYMBOL(drm_dp_downstream_frame_seq_to_frame_pack);
++
+ /**
+  * drm_dp_downstream_rgb_to_ycbcr_conversion() - determine downstream facing port
+  *                                               RGB->YCbCr conversion capability
+diff --git a/include/drm/display/drm_dp_helper.h b/include/drm/display/drm_dp_helper.h
+index 27bf28575..df89ff648 100644
+--- a/include/drm/display/drm_dp_helper.h
++++ b/include/drm/display/drm_dp_helper.h
+@@ -738,6 +738,8 @@ bool drm_dp_downstream_420_passthrough(const u8 dpcd[DP_RECEIVER_CAP_SIZE],
+ 				       const u8 port_cap[4]);
+ bool drm_dp_downstream_444_to_420_conversion(const u8 dpcd[DP_RECEIVER_CAP_SIZE],
+ 					     const u8 port_cap[4]);
++bool drm_dp_downstream_frame_seq_to_frame_pack(const u8 dpcd[DP_RECEIVER_CAP_SIZE],
++					       const u8 port_cap[4]);
+ struct drm_display_mode *drm_dp_downstream_mode(struct drm_device *dev,
+ 						const u8 dpcd[DP_RECEIVER_CAP_SIZE],
+ 						const u8 port_cap[4]);
+-- 
+2.53.0
+

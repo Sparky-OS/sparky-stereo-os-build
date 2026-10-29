@@ -1,0 +1,373 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 29 Oct 2026 12:34:26 -0300
+Subject: [PATCH] drm/edid: list the stereo modes of a DisplayID Stereo Display
+ Interface block
+
+A DisplayID sink declares its stereo support in the Stereo Display
+Interface data block (tag 0x10 in DisplayID 1.x, 0x27 in 2.x): a stereo
+interface method, its parameters and the timings it applies to. The
+kernel names both tags (drm_displayid_internal.h) but parses neither, so
+no stereo mode of such a sink was ever listed.
+
+Parse the block as edid-decode does (parse_displayid_stereo_display_intf()
+and the timing parsers of its displayid.cpp; the DisplayID texts are not
+public):
+- the revision byte, bits 7:6, says which timings the method applies to:
+  0 the timings that report stereo support themselves, 1 those and the
+  timing codes listed in the block, 2 every listed timing, 3 only the
+  codes listed;
+- the payload starts with the number of bytes of the method and its
+  parameters, then the method: 0x00 field sequential, 0x01 side by side,
+  0x02 pixel interleaved, 0x03 dual interface, 0x04 multi-view, 0x05
+  stacked frame, 0xff proprietary;
+- then groups of timing codes, each with a type in bits 7:6 (0 DMT ID,
+  1 CTA VIC, 2 HDMI VIC) and a count in bits 4:0;
+- a Type I, VII, IX or X timing reports its own stereo support in bits
+  6:5 of its flags: 0 mono only, 1 always stereo, 2 mono or stereo by
+  user action.
+
+For each block, add a copy of the 2D mode of every timing it applies to,
+with the method's layout: the DisplayID Type I and VII detailed timings
+and Type IX and X formula timings the parser already lists (all of them,
+or those whose flags report stereo), and the modes of the listed DMT IDs,
+VICs and HDMI VICs. drm_dmt_ids[] gives the DMT ID of each entry of
+drm_dmt_modes[], which is not in ID order. The copies are never
+preferred, and the 2D modes stay.
+
+Only field sequential is listed for now, as the frame-sequential layout,
+whatever the polarity of its stereo sync signal (DisplayPort sends the
+eye in-band). Side by side and stacked frame have DRM layouts, but no
+DisplayPort driver tells the sink about them yet (the VSC SDP stereo
+interface byte, which comes next); pixel interleaved, multi-view and
+proprietary have no DRM layout, and dual interface is two connectors.
+The DisplayID timing types the parser does not list as 2D modes (II, III,
+V, VI, VIII) get no stereo copy either.
+
+Every stereo block applies to the timings of every DisplayID structure of
+the EDID; sinks with more than one structure and conflicting stereo
+blocks would need the block scoped to its own structure.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/drm_displayid_internal.h |  42 ++++
+ drivers/gpu/drm/drm_edid.c               | 236 +++++++++++++++++++++++
+ 2 files changed, 278 insertions(+)
+
+diff --git a/drivers/gpu/drm/drm_displayid_internal.h b/drivers/gpu/drm/drm_displayid_internal.h
+index 4b87fcd28..8361047d7 100644
+--- a/drivers/gpu/drm/drm_displayid_internal.h
++++ b/drivers/gpu/drm/drm_displayid_internal.h
+@@ -145,6 +145,48 @@ struct displayid_formula_timing_block {
+ 	struct displayid_formula_timings_9 timings[];
+ } __packed;
+ 
++/*
++ * Stereo support of a Type I, VII, IX or X timing, in its flags byte: 0 mono
++ * only, 1 always stereo, 2 mono or stereo by user action, 3 reserved.
++ */
++#define DISPLAYID_TIMING_STEREO			GENMASK(6, 5)
++#define DISPLAYID_TIMING_STEREO_NEVER		0
++#define DISPLAYID_TIMING_STEREO_ALWAYS		1
++#define DISPLAYID_TIMING_STEREO_USER		2
++
++/*
++ * Stereo Display Interface data block (tag 0x10 in DisplayID 1.x, 0x27 in
++ * 2.x): which timings the stereo method applies to (block revision byte, bits
++ * 7:6), the stereo interface method and its parameters, then, for the scopes
++ * that list them, groups of timing codes.
++ */
++#define DISPLAYID_STEREO_TIMINGS		GENMASK(7, 6)
++#define DISPLAYID_STEREO_TIMINGS_3D		0 /* timings that report 3D */
++#define DISPLAYID_STEREO_TIMINGS_3D_AND_CODES	1 /* those, and the codes */
++#define DISPLAYID_STEREO_TIMINGS_ALL		2 /* every listed timing */
++#define DISPLAYID_STEREO_TIMINGS_CODES		3 /* only the codes */
++
++#define DISPLAYID_STEREO_FIELD_SEQUENTIAL	0x00
++#define DISPLAYID_STEREO_SIDE_BY_SIDE		0x01
++#define DISPLAYID_STEREO_PIXEL_INTERLEAVED	0x02
++#define DISPLAYID_STEREO_DUAL_INTERFACE		0x03
++#define DISPLAYID_STEREO_MULTI_VIEW		0x04
++#define DISPLAYID_STEREO_STACKED_FRAME		0x05
++#define DISPLAYID_STEREO_PROPRIETARY		0xff
++
++#define DISPLAYID_STEREO_CODE_TYPE		GENMASK(7, 6)
++#define DISPLAYID_STEREO_CODE_COUNT		GENMASK(4, 0)
++#define DISPLAYID_STEREO_CODE_DMT		0
++#define DISPLAYID_STEREO_CODE_CTA_VIC		1
++#define DISPLAYID_STEREO_CODE_HDMI_VIC		2
++
++struct displayid_stereo_display_interface_block {
++	struct displayid_block base;
++	u8 method_bytes;	/* the method code and its parameters */
++	u8 method;
++	u8 data[];		/* the parameters, then the timing codes */
++} __packed;
++
+ #define DISPLAYID_DEVICE_TECH_UNSPECIFIED	0
+ #define DISPLAYID_DEVICE_TECH_LCD		1
+ #define DISPLAYID_DEVICE_TECH_OLED		2
+diff --git a/drivers/gpu/drm/drm_edid.c b/drivers/gpu/drm/drm_edid.c
+index c791a38e2..6bb0f9bb8 100644
+--- a/drivers/gpu/drm/drm_edid.c
++++ b/drivers/gpu/drm/drm_edid.c
+@@ -646,6 +646,34 @@ static const struct drm_display_mode drm_dmt_modes[] = {
+ 		   DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_NVSYNC) },
+ };
+ 
++/* The DMT ID of each mode of drm_dmt_modes[], which is not in ID order. */
++static const u8 drm_dmt_ids[] = {
++	0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
++	0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
++	0x11, 0x12, 0x13, 0x14, 0x15, 0x55, 0x16, 0x17,
++	0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
++	0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
++	0x28, 0x51, 0x56, 0x29, 0x2a, 0x2b, 0x2c, 0x2d,
++	0x2e, 0x2f, 0x30, 0x31, 0x32, 0x53, 0x33, 0x34,
++	0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b, 0x3c,
++	0x3d, 0x3e, 0x3f, 0x40, 0x41, 0x42, 0x43, 0x52,
++	0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4a, 0x4b,
++	0x54, 0x4c, 0x4d, 0x4e, 0x4f, 0x50, 0x57, 0x58,
++};
++
++static const struct drm_display_mode *drm_dmt_mode_from_id(u8 id)
++{
++	int i;
++
++	BUILD_BUG_ON(ARRAY_SIZE(drm_dmt_ids) != ARRAY_SIZE(drm_dmt_modes));
++
++	for (i = 0; i < ARRAY_SIZE(drm_dmt_ids); i++)
++		if (drm_dmt_ids[i] == id)
++			return &drm_dmt_modes[i];
++
++	return NULL;
++}
++
+ /*
+  * These more or less come from the DMT spec.  The 720x400 modes are
+  * inferred from historical 80x25 practice.  The 640x480@67 and 832x624@75
+@@ -7196,6 +7224,213 @@ static int add_displayid_detailed_modes(struct drm_connector *connector,
+ 	return num_modes;
+ }
+ 
++/*
++ * The DRM layout of a DisplayID stereo interface method. Field sequential is
++ * frame sequential, whatever the polarity of its stereo sync signal. The other
++ * methods are not listed yet: side by side and stacked frame have DRM layouts,
++ * but no DisplayPort driver tells the sink about them yet (VSC SDP), pixel
++ * interleaved, multi-view and proprietary have none, and dual interface is two
++ * connectors.
++ */
++static u32
++displayid_stereo_layout(const struct displayid_stereo_display_interface_block *stereo)
++{
++	switch (stereo->method) {
++	case DISPLAYID_STEREO_FIELD_SEQUENTIAL:
++		return DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL;
++	default:
++		return DRM_MODE_FLAG_3D_NONE;
++	}
++}
++
++static int add_displayid_stereo_mode(struct drm_connector *connector,
++				     struct drm_display_mode *mode, u32 layout)
++{
++	if (!mode)
++		return 0;
++
++	mode->type &= ~DRM_MODE_TYPE_PREFERRED;
++	mode->flags &= ~DRM_MODE_FLAG_3D_MASK;
++	mode->flags |= layout;
++	drm_mode_probed_add(connector, mode);
++
++	return 1;
++}
++
++/*
++ * The stereo copies of the Type I, VII, IX and X timings of the DisplayID
++ * structures: of all of them, or only of those whose own flags say they can be
++ * shown in stereo.
++ */
++static int add_displayid_stereo_timing_modes(struct drm_connector *connector,
++					     const struct drm_edid *drm_edid,
++					     u32 layout, bool all)
++{
++	struct drm_device *dev = connector->dev;
++	const struct displayid_block *block;
++	struct drm_display_mode *mode;
++	struct displayid_iter iter;
++	int num_modes = 0;
++	int i;
++
++	displayid_iter_edid_begin(drm_edid, &iter);
++	displayid_iter_for_each(block, &iter) {
++		if (block->tag == DATA_BLOCK_TYPE_1_DETAILED_TIMING ||
++		    block->tag == DATA_BLOCK_2_TYPE_7_DETAILED_TIMING) {
++			const struct displayid_detailed_timing_block *det =
++				(const struct displayid_detailed_timing_block *)block;
++
++			if (block->num_bytes % 20)
++				continue;
++
++			for (i = 0; i < block->num_bytes / 20; i++) {
++				const struct displayid_detailed_timings_1 *t = &det->timings[i];
++
++				if (!all && FIELD_GET(DISPLAYID_TIMING_STEREO, t->flags) ==
++				    DISPLAYID_TIMING_STEREO_NEVER)
++					continue;
++
++				mode = drm_mode_displayid_detailed(dev, block, t);
++				num_modes += add_displayid_stereo_mode(connector, mode, layout);
++			}
++		} else if (block->tag == DATA_BLOCK_2_TYPE_9_FORMULA_TIMING ||
++			   block->tag == DATA_BLOCK_2_TYPE_10_FORMULA_TIMING) {
++			const struct displayid_formula_timing_block *formula =
++				(const struct displayid_formula_timing_block *)block;
++			bool type_10 = block->tag == DATA_BLOCK_2_TYPE_10_FORMULA_TIMING;
++
++			if (FIELD_GET(DISPLAYID_BLOCK_DESCRIPTOR_PAYLOAD_BYTES, block->rev) ||
++			    block->num_bytes % 6)
++				continue;
++
++			for (i = 0; i < block->num_bytes / 6; i++) {
++				const struct displayid_formula_timings_9 *t = &formula->timings[i];
++
++				if (!all && FIELD_GET(DISPLAYID_TIMING_STEREO, t->flags) ==
++				    DISPLAYID_TIMING_STEREO_NEVER)
++					continue;
++
++				mode = drm_mode_displayid_formula(dev, t, type_10);
++				num_modes += add_displayid_stereo_mode(connector, mode, layout);
++			}
++		}
++	}
++	displayid_iter_end(&iter);
++
++	return num_modes;
++}
++
++static struct drm_display_mode *
++displayid_stereo_code_mode(struct drm_device *dev, u8 type, u8 code)
++{
++	const struct drm_display_mode *mode;
++
++	switch (type) {
++	case DISPLAYID_STEREO_CODE_DMT:
++		mode = drm_dmt_mode_from_id(code);
++		return mode ? drm_mode_duplicate(dev, mode) : NULL;
++	case DISPLAYID_STEREO_CODE_CTA_VIC:
++		return drm_display_mode_from_cea_vic(dev, code);
++	case DISPLAYID_STEREO_CODE_HDMI_VIC:
++		if (!drm_valid_hdmi_vic(code))
++			return NULL;
++		return drm_mode_duplicate(dev, &edid_4k_modes[code]);
++	default:
++		return NULL;
++	}
++}
++
++/* the stereo modes of the timing codes a Stereo Display Interface block lists */
++static int
++add_displayid_stereo_code_modes(struct drm_connector *connector,
++				const struct displayid_stereo_display_interface_block *stereo,
++				u32 layout)
++{
++	const u8 *codes = stereo->data + stereo->method_bytes - 1;
++	int len = stereo->base.num_bytes - 1 - stereo->method_bytes;
++	int num_modes = 0;
++
++	while (len > 0) {
++		u8 type = FIELD_GET(DISPLAYID_STEREO_CODE_TYPE, codes[0]);
++		u8 count = FIELD_GET(DISPLAYID_STEREO_CODE_COUNT, codes[0]);
++		int i;
++
++		if (1 + count > len)
++			break;
++
++		for (i = 1; i <= count; i++) {
++			struct drm_display_mode *mode =
++				displayid_stereo_code_mode(connector->dev, type, codes[i]);
++
++			num_modes += add_displayid_stereo_mode(connector, mode, layout);
++		}
++
++		len -= 1 + count;
++		codes += 1 + count;
++	}
++
++	return num_modes;
++}
++
++static int add_displayid_stereo_block_modes(struct drm_connector *connector,
++					    const struct drm_edid *drm_edid,
++					    const struct displayid_block *block)
++{
++	const struct displayid_stereo_display_interface_block *stereo =
++		(const struct displayid_stereo_display_interface_block *)block;
++	u8 scope = FIELD_GET(DISPLAYID_STEREO_TIMINGS, block->rev);
++	int num_modes = 0;
++	u32 layout;
++
++	if (block->num_bytes < 2 || !stereo->method_bytes ||
++	    1 + stereo->method_bytes > block->num_bytes)
++		return 0;
++
++	layout = displayid_stereo_layout(stereo);
++	if (layout == DRM_MODE_FLAG_3D_NONE) {
++		drm_dbg_kms(connector->dev,
++			    "[CONNECTOR:%d:%s] DisplayID stereo interface method 0x%02x not listed\n",
++			    connector->base.id, connector->name, stereo->method);
++		return 0;
++	}
++
++	if (scope != DISPLAYID_STEREO_TIMINGS_CODES) {
++		bool all = scope == DISPLAYID_STEREO_TIMINGS_ALL;
++
++		num_modes += add_displayid_stereo_timing_modes(connector, drm_edid,
++							       layout, all);
++	}
++
++	if (scope == DISPLAYID_STEREO_TIMINGS_3D_AND_CODES ||
++	    scope == DISPLAYID_STEREO_TIMINGS_CODES)
++		num_modes += add_displayid_stereo_code_modes(connector, stereo, layout);
++
++	return num_modes;
++}
++
++/*
++ * The stereo modes a DisplayID Stereo Display Interface data block declares.
++ * They are added after the 2D modes of the same timings, never preferred.
++ */
++static int add_displayid_stereo_modes(struct drm_connector *connector,
++				      const struct drm_edid *drm_edid)
++{
++	const struct displayid_block *block;
++	struct displayid_iter iter;
++	int num_modes = 0;
++
++	displayid_iter_edid_begin(drm_edid, &iter);
++	displayid_iter_for_each(block, &iter) {
++		if (block->tag == DATA_BLOCK_STEREO_DISPLAY_INTERFACE ||
++		    block->tag == DATA_BLOCK_2_STEREO_DISPLAY_INTERFACE)
++			num_modes += add_displayid_stereo_block_modes(connector, drm_edid,
++								      block);
++	}
++	displayid_iter_end(&iter);
++
++	return num_modes;
++}
++
+ static int _drm_edid_connector_add_modes(struct drm_connector *connector,
+ 					 const struct drm_edid *drm_edid)
+ {
+@@ -7225,6 +7460,7 @@ static int _drm_edid_connector_add_modes(struct drm_connector *connector,
+ 	num_modes += add_cea_modes(connector, drm_edid);
+ 	num_modes += add_alternate_cea_modes(connector, drm_edid);
+ 	num_modes += add_displayid_detailed_modes(connector, drm_edid);
++	num_modes += add_displayid_stereo_modes(connector, drm_edid);
+ 	if (drm_edid->edid->features & DRM_EDID_FEATURE_CONTINUOUS_FREQ)
+ 		num_modes += add_inferred_modes(connector, drm_edid);
+ 
+-- 
+2.53.0
+

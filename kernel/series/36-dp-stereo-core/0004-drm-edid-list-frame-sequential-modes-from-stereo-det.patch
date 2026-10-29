@@ -1,0 +1,87 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 29 Oct 2026 12:29:33 -0300
+Subject: [PATCH] drm/edid: list frame-sequential modes from stereo detailed
+ timings
+
+A detailed timing whose stereo flags say field sequential (E-EDID 1.4,
+section 3.10.2, Table 3.22: bits 6:5 = 01b with the right image, or 10b
+with the left image, while the stereo sync signal is 1, bit 0 clear) is a
+timing the sink shows in stereo, one eye per frame. That is the
+frame-sequential layout DRM can now describe, so add a copy of such a
+timing's mode with DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL, next to its 2D
+mode, never preferred.
+
+The sync polarity belongs to the sideband stereo sync signal; on
+DisplayPort the source names the eye of each frame in-band (MSA MISC1),
+so both values give the same mode. Interlaced timings are left out: the
+table speaks of fields, and a field of an interlaced timing is half a
+frame. The 2-way, 4-way and side by side interleaved values have no DRM
+layout yet and add no stereo mode.
+
+The mode is listed only on connectors whose driver accepts frame
+sequential stereo; there are none yet.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/drm_edid.c | 37 +++++++++++++++++++++++++++++++++++++
+ 1 file changed, 37 insertions(+)
+
+diff --git a/drivers/gpu/drm/drm_edid.c b/drivers/gpu/drm/drm_edid.c
+index 74b069391..c791a38e2 100644
+--- a/drivers/gpu/drm/drm_edid.c
++++ b/drivers/gpu/drm/drm_edid.c
+@@ -4126,6 +4126,40 @@ add_cvt_modes(struct drm_connector *connector, const struct drm_edid *drm_edid)
+ static void fixup_detailed_cea_mode_clock(struct drm_connector *connector,
+ 					  struct drm_display_mode *mode);
+ 
++/*
++ * A detailed timing whose stereo flags say field sequential, with either
++ * polarity of the stereo sync signal (E-EDID 1.4, Table 3.22), is also a
++ * frame-sequential mode: the sink takes the eyes in turn, one per frame of the
++ * timing. Interlaced timings are left out, as a field there is half a frame.
++ * The interleaved values have no DRM layout yet.
++ */
++static int
++add_detailed_stereo_mode(struct drm_connector *connector,
++			 const struct detailed_timing *timing,
++			 const struct drm_display_mode *mode)
++{
++	const struct detailed_pixel_timing *pt = &timing->data.pixel_data;
++	u8 stereo = pt->misc & DRM_EDID_PT_STEREO_MASK;
++	struct drm_display_mode *newmode;
++
++	if (stereo != DRM_EDID_PT_STEREO_FIELD_SEQ_RIGHT &&
++	    stereo != DRM_EDID_PT_STEREO_FIELD_SEQ_LEFT)
++		return 0;
++
++	if (mode->flags & DRM_MODE_FLAG_INTERLACE)
++		return 0;
++
++	newmode = drm_mode_duplicate(connector->dev, mode);
++	if (!newmode)
++		return 0;
++
++	newmode->type &= ~DRM_MODE_TYPE_PREFERRED;
++	newmode->flags |= DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL;
++	drm_mode_probed_add(connector, newmode);
++
++	return 1;
++}
++
+ static void
+ do_detailed_mode(const struct detailed_timing *timing, void *c)
+ {
+@@ -4153,6 +4187,9 @@ do_detailed_mode(const struct detailed_timing *timing, void *c)
+ 	drm_mode_probed_add(closure->connector, newmode);
+ 	closure->modes++;
+ 	closure->preferred = false;
++
++	closure->modes += add_detailed_stereo_mode(closure->connector, timing,
++						   newmode);
+ }
+ 
+ /*
+-- 
+2.53.0
+

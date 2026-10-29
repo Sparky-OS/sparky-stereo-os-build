@@ -1,0 +1,222 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 29 Oct 2026 12:52:50 -0300
+Subject: [PATCH] drm/amd/display: test the HDMI 3D mode filter and property
+ placement
+
+Test dm_sink_signals_hdmi_3d() for every sink signal: HDMI TMDS and FRL
+carry the vendor InfoFrame, DVI, DisplayPort, MST, eDP and virtual sinks
+do not, nor does a missing sink.
+
+Test amdgpu_dm_connector_mode_valid() with each of the eight HDMI 1.4a 3D
+layouts on DisplayPort and DVI sinks (MODE_NO_STEREO, before any stream
+is built) and on an HDMI sink, and with a 2D and a frame-sequential mode
+on a DisplayPort sink, which the stereo check lets through to stream
+validation.
+
+Test dm_connector_can_carry_hdmi() for HDMI, DisplayPort, DVI-D, DVI-I,
+eDP and VGA connectors with no HDMI audio, HDMI audio on dongles and
+native HDMI audio, and for the DisplayPort-only links: a USB4 tunnel, an
+external bridge and an MST port.
+
+Assisted-by: LLM
+---
+ .../tests/amdgpu_dm_connector_test.c          | 168 ++++++++++++++++++
+ 1 file changed, 168 insertions(+)
+
+diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/tests/amdgpu_dm_connector_test.c b/drivers/gpu/drm/amd/display/amdgpu_dm/tests/amdgpu_dm_connector_test.c
+index b61771749..f4d294524 100644
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/tests/amdgpu_dm_connector_test.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/tests/amdgpu_dm_connector_test.c
+@@ -28,6 +28,7 @@
+ #include "amdgpu_dm_connector.h"
+ #include "amdgpu_dm_backlight.h"
+ #include "include/grph_object_id.h"
++#include "inc/core_types.h"
+ #include "amdgpu_dm_kunit_test_helpers.h"
+ 
+ /* Tests for get_subconnector_type() */
+@@ -5258,6 +5259,168 @@ static void dm_test_mode_valid_dblscan_rejected(struct kunit *test)
+ 			MODE_ERROR);
+ }
+ 
++/**
++ * dm_test_sink_signals_hdmi_3d - Test which sink signals carry HDMI 3D
++ * @test: The KUnit test context
++ *
++ * The HDMI vendor InfoFrame that signals the HDMI 1.4a 3D structures goes out
++ * on HDMI signals only, TMDS or FRL; DVI, DisplayPort, MST, eDP and virtual
++ * sinks, and no sink at all, get none.
++ */
++static void dm_test_sink_signals_hdmi_3d(struct kunit *test)
++{
++	static const struct {
++		enum signal_type signal;
++		bool hdmi;
++	} cases[] = {
++		{ SIGNAL_TYPE_HDMI_TYPE_A, true },
++		{ SIGNAL_TYPE_HDMI_FRL, true },
++		{ SIGNAL_TYPE_DVI_SINGLE_LINK, false },
++		{ SIGNAL_TYPE_DVI_DUAL_LINK, false },
++		{ SIGNAL_TYPE_DISPLAY_PORT, false },
++		{ SIGNAL_TYPE_DISPLAY_PORT_MST, false },
++		{ SIGNAL_TYPE_EDP, false },
++		{ SIGNAL_TYPE_VIRTUAL, false },
++	};
++	struct dc_sink *sink = kunit_kzalloc(test, sizeof(*sink), GFP_KERNEL);
++	int i;
++
++	KUNIT_ASSERT_NOT_NULL(test, sink);
++
++	for (i = 0; i < ARRAY_SIZE(cases); i++) {
++		sink->sink_signal = cases[i].signal;
++		KUNIT_EXPECT_EQ_MSG(test, dm_sink_signals_hdmi_3d(sink), cases[i].hdmi,
++				    "signal %d", cases[i].signal);
++	}
++
++	KUNIT_EXPECT_FALSE(test, dm_sink_signals_hdmi_3d(NULL));
++}
++
++/**
++ * dm_test_mode_valid_hdmi_3d_needs_hdmi_signal - Test HDMI 3D modes on other signals
++ * @test: The KUnit test context
++ *
++ * Every HDMI 3D layout is refused with MODE_NO_STEREO on a DisplayPort or DVI
++ * sink, before any stream is built. On an HDMI sink, and for a 2D mode or a
++ * frame-sequential one, the stereo check lets the mode through to stream
++ * validation (which fails here, MODE_ERROR, as the test has no device).
++ */
++static void dm_test_mode_valid_hdmi_3d_needs_hdmi_signal(struct kunit *test)
++{
++	static const u32 hdmi_layouts[] = {
++		DRM_MODE_FLAG_3D_FRAME_PACKING,
++		DRM_MODE_FLAG_3D_FIELD_ALTERNATIVE,
++		DRM_MODE_FLAG_3D_LINE_ALTERNATIVE,
++		DRM_MODE_FLAG_3D_SIDE_BY_SIDE_FULL,
++		DRM_MODE_FLAG_3D_L_DEPTH,
++		DRM_MODE_FLAG_3D_L_DEPTH_GFX_GFX_DEPTH,
++		DRM_MODE_FLAG_3D_TOP_AND_BOTTOM,
++		DRM_MODE_FLAG_3D_SIDE_BY_SIDE_HALF,
++	};
++	struct amdgpu_dm_connector *aconnector;
++	struct drm_display_mode *mode;
++	struct dc_sink *sink;
++	int i;
++
++	aconnector = kunit_kzalloc(test, sizeof(*aconnector), GFP_KERNEL);
++	KUNIT_ASSERT_NOT_NULL(test, aconnector);
++	sink = kunit_kzalloc(test, sizeof(*sink), GFP_KERNEL);
++	KUNIT_ASSERT_NOT_NULL(test, sink);
++	mode = kunit_kzalloc(test, sizeof(*mode), GFP_KERNEL);
++	KUNIT_ASSERT_NOT_NULL(test, mode);
++	aconnector->dc_sink = sink;
++
++	for (i = 0; i < ARRAY_SIZE(hdmi_layouts); i++) {
++		mode->flags = hdmi_layouts[i];
++
++		sink->sink_signal = SIGNAL_TYPE_DISPLAY_PORT;
++		KUNIT_EXPECT_EQ_MSG(test, amdgpu_dm_connector_mode_valid(&aconnector->base, mode),
++				    MODE_NO_STEREO, "DisplayPort, layout 0x%x", hdmi_layouts[i]);
++
++		sink->sink_signal = SIGNAL_TYPE_DVI_SINGLE_LINK;
++		KUNIT_EXPECT_EQ_MSG(test, amdgpu_dm_connector_mode_valid(&aconnector->base, mode),
++				    MODE_NO_STEREO, "DVI, layout 0x%x", hdmi_layouts[i]);
++
++		sink->sink_signal = SIGNAL_TYPE_HDMI_TYPE_A;
++		KUNIT_EXPECT_EQ_MSG(test, amdgpu_dm_connector_mode_valid(&aconnector->base, mode),
++				    MODE_ERROR, "HDMI, layout 0x%x", hdmi_layouts[i]);
++	}
++
++	sink->sink_signal = SIGNAL_TYPE_DISPLAY_PORT;
++	mode->flags = 0;
++	KUNIT_EXPECT_EQ(test, amdgpu_dm_connector_mode_valid(&aconnector->base, mode),
++			MODE_ERROR);
++	mode->flags = DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL;
++	KUNIT_EXPECT_EQ(test, amdgpu_dm_connector_mode_valid(&aconnector->base, mode),
++			MODE_ERROR);
++}
++
++/**
++ * dm_test_connector_can_carry_hdmi - Test where the HDMI 3D properties go
++ * @test: The KUnit test context
++ *
++ * HDMI connectors always; DisplayPort connectors with a physical endpoint and
++ * HDMI audio on dongles or native, not MST ports, USB4 tunnels or external
++ * bridges; DVI connectors with native HDMI audio; no other type.
++ */
++#define CAN_CARRY_HDMI(type) \
++	dm_connector_can_carry_hdmi(aconnector, DRM_MODE_CONNECTOR_##type)
++
++static void dm_test_connector_can_carry_hdmi(struct kunit *test)
++{
++	struct amdgpu_dm_connector *aconnector;
++	struct resource_pool *pool;
++	struct dc_link *link;
++	struct dc *dc;
++	struct audio_support *audio;
++
++	aconnector = kunit_kzalloc(test, sizeof(*aconnector), GFP_KERNEL);
++	KUNIT_ASSERT_NOT_NULL(test, aconnector);
++	link = kunit_kzalloc(test, sizeof(*link), GFP_KERNEL);
++	KUNIT_ASSERT_NOT_NULL(test, link);
++	dc = kunit_kzalloc(test, sizeof(*dc), GFP_KERNEL);
++	KUNIT_ASSERT_NOT_NULL(test, dc);
++	pool = kunit_kzalloc(test, sizeof(*pool), GFP_KERNEL);
++	KUNIT_ASSERT_NOT_NULL(test, pool);
++
++	dc->res_pool = pool;
++	link->dc = dc;
++	link->ep_type = DISPLAY_ENDPOINT_PHY;
++	aconnector->dc_link = link;
++	audio = &pool->audio_support;
++
++	/* no HDMI audio at all: only HDMI connectors */
++	KUNIT_EXPECT_TRUE(test, CAN_CARRY_HDMI(HDMIA));
++	KUNIT_EXPECT_FALSE(test, CAN_CARRY_HDMI(DisplayPort));
++	KUNIT_EXPECT_FALSE(test, CAN_CARRY_HDMI(DVID));
++
++	/* HDMI audio on dongles: DisplayPort through DP++, not DVI */
++	audio->hdmi_audio_on_dongle = true;
++	KUNIT_EXPECT_TRUE(test, CAN_CARRY_HDMI(DisplayPort));
++	KUNIT_EXPECT_FALSE(test, CAN_CARRY_HDMI(DVII));
++
++	/* native HDMI audio: DisplayPort and both DVI types */
++	audio->hdmi_audio_on_dongle = false;
++	audio->hdmi_audio_native = true;
++	KUNIT_EXPECT_TRUE(test, CAN_CARRY_HDMI(DisplayPort));
++	KUNIT_EXPECT_TRUE(test, CAN_CARRY_HDMI(DVID));
++	KUNIT_EXPECT_TRUE(test, CAN_CARRY_HDMI(DVII));
++	KUNIT_EXPECT_FALSE(test, CAN_CARRY_HDMI(eDP));
++	KUNIT_EXPECT_FALSE(test, CAN_CARRY_HDMI(VGA));
++
++	/* DisplayPort only: a USB4 tunnel, an external bridge, an MST port */
++	link->ep_type = DISPLAY_ENDPOINT_USB4_DPIA;
++	KUNIT_EXPECT_FALSE(test, CAN_CARRY_HDMI(DisplayPort));
++	link->ep_type = DISPLAY_ENDPOINT_PHY;
++	link->ext_enc_id.id = ENCODER_ID_EXTERNAL_TRAVIS;
++	KUNIT_EXPECT_FALSE(test, CAN_CARRY_HDMI(DisplayPort));
++	link->ext_enc_id.id = 0;
++	aconnector->mst_root = aconnector;
++	KUNIT_EXPECT_FALSE(test, CAN_CARRY_HDMI(DisplayPort));
++}
++
++#undef CAN_CARRY_HDMI
++
+ /**
+  * dm_test_hdmi_cec_set_edid_no_notifier - Test the no-notifier no-op path
+  * @test: The KUnit test context
+@@ -5854,6 +6017,11 @@ static struct kunit_case amdgpu_dm_connector_tests[] = {
+ 	/* amdgpu_dm_connector_mode_valid */
+ 	KUNIT_CASE(dm_test_mode_valid_interlace_rejected),
+ 	KUNIT_CASE(dm_test_mode_valid_dblscan_rejected),
++	KUNIT_CASE(dm_test_mode_valid_hdmi_3d_needs_hdmi_signal),
++	/* dm_sink_signals_hdmi_3d */
++	KUNIT_CASE(dm_test_sink_signals_hdmi_3d),
++	/* dm_connector_can_carry_hdmi */
++	KUNIT_CASE(dm_test_connector_can_carry_hdmi),
+ 	/* amdgpu_dm_hdmi_cec_set_edid */
+ 	KUNIT_CASE(dm_test_hdmi_cec_set_edid_no_notifier),
+ 	/* amdgpu_dm_s3_handle_hdmi_cec */
+-- 
+2.53.0
+

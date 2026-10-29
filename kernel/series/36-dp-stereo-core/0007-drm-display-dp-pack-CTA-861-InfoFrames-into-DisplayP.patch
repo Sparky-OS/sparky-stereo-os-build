@@ -1,0 +1,139 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 29 Oct 2026 12:35:58 -0300
+Subject: [PATCH] drm/display/dp: pack CTA-861 InfoFrames into DisplayPort
+ InfoFrame SDPs
+
+A DisplayPort source sends a CTA-861 InfoFrame to the sink as an INFOFRAME
+SDP. i915 and amdgpu build one for the Dynamic Range and Mastering
+InfoFrame only, each with its own code
+(intel_dp_hdr_metadata_infoframe_sdp_pack(), which cites DP 1.4a Tables
+2-100 and 2-101, and amdgpu_dm_fill_hdr_info_packet()), and NVIDIA's
+driver does the same (ConstructHdrInfoFrameSdp(), with
+DP_INFOFRAME_SDP_V1_3_NON_AUDIO_SIZE 30 in dpsdp.h). All three use one
+layout, version 1.3 of the SDP:
+  HB0  0, the Secondary-Data Packet ID of a non-audio InfoFrame
+  HB1  the InfoFrame type, 0x80 plus the CTA-861 type
+  HB2  0x1d, the data byte count (30) less one
+  HB3  the SDP version, 0x13, in bits 7:2
+  DB0  the InfoFrame version, DB1 its length, then the payload without
+       its checksum, the rest zero
+No helper packs any other InfoFrame this way, and no driver sends the
+HDMI vendor InfoFrame (HB1 0x81) across DisplayPort, which a protocol
+converter needs to switch an HDMI sink into 3D.
+
+Add drm_dp_infoframe_sdp_pack(), which packs any InfoFrame but the audio
+one (that has its own layout, hdmi_audio_infoframe_pack_for_dp()) in that
+layout, with hdmi_infoframe_pack_only() doing the checks, and returns the
+length up to the last payload byte, as i915's packer does. A payload over
+the 28 bytes the packet holds after the version and length is refused.
+Its first users are the HDMI vendor InfoFrame through DP-to-HDMI
+converters; the Dynamic Range and Mastering InfoFrame packs to the bytes
+i915 and amdgpu send today.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/display/drm_dp_helper.c | 48 +++++++++++++++++++++++++
+ include/drm/display/drm_dp.h            |  5 +++
+ include/drm/display/drm_dp_helper.h     |  3 ++
+ 3 files changed, 56 insertions(+)
+
+diff --git a/drivers/gpu/drm/display/drm_dp_helper.c b/drivers/gpu/drm/display/drm_dp_helper.c
+index 698327dd0..6db2cbe56 100644
+--- a/drivers/gpu/drm/display/drm_dp_helper.c
++++ b/drivers/gpu/drm/display/drm_dp_helper.c
+@@ -3715,6 +3715,54 @@ ssize_t drm_dp_vsc_sdp_pack(const struct drm_dp_vsc_sdp *vsc,
+ }
+ EXPORT_SYMBOL(drm_dp_vsc_sdp_pack);
+ 
++/**
++ * drm_dp_infoframe_sdp_pack() - pack a CTA-861 InfoFrame into a DP SDP
++ * @frame: the InfoFrame, any type but audio, with its length set (as the
++ *	hdmi_*_infoframe_check() functions set it)
++ * @sdp: the secondary data packet to fill
++ *
++ * Packs @frame as a DisplayPort INFOFRAME SDP of version 1.3, the layout
++ * i915, amdgpu and NVIDIA's driver send the Dynamic Range and Mastering
++ * InfoFrame in: HB0 is 0, HB1 the InfoFrame type (0x80 plus the CTA-861
++ * type, so 0x81 for the HDMI vendor InfoFrame), HB2 0x1d (30 data bytes, less
++ * one) and HB3 the SDP version in bits 7:2; DB0 is the InfoFrame version, DB1
++ * its length, then comes its payload without the checksum, and the rest is
++ * zero. The audio InfoFrame has a layout of its own, see
++ * hdmi_audio_infoframe_pack_for_dp().
++ *
++ * Returns:
++ * The number of bytes of @sdp up to the last payload byte, -EINVAL for an
++ * audio or invalid InfoFrame, -ENOSPC for a payload that does not fit.
++ */
++ssize_t drm_dp_infoframe_sdp_pack(const union hdmi_infoframe *frame,
++				  struct dp_sdp *sdp)
++{
++	u8 buf[HDMI_INFOFRAME_HEADER_SIZE + DP_INFOFRAME_SDP_V1_3_PAYLOAD];
++	ssize_t len;
++
++	memset(sdp, 0, sizeof(*sdp));
++
++	if (frame->any.type == HDMI_INFOFRAME_TYPE_AUDIO)
++		return -EINVAL;
++
++	len = hdmi_infoframe_pack_only(frame, buf, sizeof(buf));
++	if (len < 0)
++		return len;
++
++	len -= HDMI_INFOFRAME_HEADER_SIZE;
++
++	sdp->sdp_header.HB0 = 0;
++	sdp->sdp_header.HB1 = buf[0];
++	sdp->sdp_header.HB2 = DP_INFOFRAME_SDP_V1_3_HB2;
++	sdp->sdp_header.HB3 = DP_INFOFRAME_SDP_VERSION_1_3 << 2;
++	sdp->db[0] = buf[1];
++	sdp->db[1] = buf[2];
++	memcpy(&sdp->db[2], &buf[HDMI_INFOFRAME_HEADER_SIZE], len);
++
++	return sizeof(sdp->sdp_header) + 2 + len;
++}
++EXPORT_SYMBOL(drm_dp_infoframe_sdp_pack);
++
+ /**
+  * drm_dp_get_pcon_max_frl_bw() - maximum frl supported by PCON
+  * @dpcd: DisplayPort configuration data
+diff --git a/include/drm/display/drm_dp.h b/include/drm/display/drm_dp.h
+index ac74756bc..64dcd85e4 100644
+--- a/include/drm/display/drm_dp.h
++++ b/include/drm/display/drm_dp.h
+@@ -1762,6 +1762,11 @@ enum drm_dp_phy {
+ 
+ #define DP_SDP_AUDIO_INFOFRAME_HB2	0x1b
+ 
++/* INFOFRAME SDP version 1.3 of a non-audio InfoFrame (DP 1.4a) */
++#define DP_INFOFRAME_SDP_VERSION_1_3	0x13
++#define DP_INFOFRAME_SDP_V1_3_HB2	0x1d /* 30 data bytes, less one */
++#define DP_INFOFRAME_SDP_V1_3_PAYLOAD	28   /* after the version and length */
++
+ /**
+  * struct dp_sdp_header - DP secondary data packet header
+  * @HB0: Secondary Data Packet ID
+diff --git a/include/drm/display/drm_dp_helper.h b/include/drm/display/drm_dp_helper.h
+index 593b4970c..27bf28575 100644
+--- a/include/drm/display/drm_dp_helper.h
++++ b/include/drm/display/drm_dp_helper.h
+@@ -32,6 +32,7 @@
+ struct drm_device;
+ struct drm_dp_aux;
+ struct drm_panel;
++union hdmi_infoframe;
+ 
+ bool drm_dp_channel_eq_ok(const u8 link_status[DP_LINK_STATUS_SIZE],
+ 			  int lane_count);
+@@ -1032,6 +1033,8 @@ int drm_dp_bw_channel_coding_efficiency(bool is_uhbr);
+ int drm_dp_max_dprx_data_rate(int max_link_rate, int max_lanes);
+ 
+ ssize_t drm_dp_vsc_sdp_pack(const struct drm_dp_vsc_sdp *vsc, struct dp_sdp *sdp);
++ssize_t drm_dp_infoframe_sdp_pack(const union hdmi_infoframe *frame,
++				  struct dp_sdp *sdp);
+ int drm_dp_link_symbol_cycles(int lane_count, int pixels, int dsc_slice_count,
+ 			      int bpp_x16, int symbol_size, bool is_mst);
+ 
+-- 
+2.53.0
+

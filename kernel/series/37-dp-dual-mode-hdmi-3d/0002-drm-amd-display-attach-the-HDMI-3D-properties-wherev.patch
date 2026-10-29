@@ -1,0 +1,100 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 29 Oct 2026 12:51:45 -0300
+Subject: [PATCH] drm/amd/display: attach the HDMI 3D properties wherever HDMI
+ can be driven
+
+The "side by side full timing" and "HDMI 3D metadata" connector
+properties choose how an HDMI 3D mode is timed and what the vendor
+InfoFrame carries. They were attached to HDMI connectors only, while DC
+also drives HDMI through other connectors: a DisplayPort connector with a
+passive DP++ adaptor in HDMI mode
+(decide_signal_from_strap_and_dongle_type() in link_detection.c), and a
+DVI connector driving an HDMI sink (the HDMI-DVI rule of
+detect_link_and_local_sink()). HDMI 3D modes are offered there, but
+userspace could not choose their timing or metadata.
+
+Attach both properties to every connector DC can drive HDMI through, as
+it decides the signal at detection: HDMI connectors as before;
+DisplayPort connectors, but not MST ports, USB4 tunnels or external DP
+bridges, where the board has HDMI audio on dongles or natively; DVI
+connectors where it has native HDMI audio.
+
+Assisted-by: LLM
+---
+ .../display/amdgpu_dm/amdgpu_dm_connector.c   | 38 ++++++++++++++++++-
+ .../display/amdgpu_dm/amdgpu_dm_connector.h   |  2 +
+ 2 files changed, 39 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.c b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.c
+index 91ddd315d..ad2d45272 100644
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.c
+@@ -3290,6 +3290,42 @@ static void hdmi_frl_status_polling_work(struct work_struct *work)
+ 			   msecs_to_jiffies(dm->hdmi_frl_status_polling_delay_ms));
+ }
+ 
++/*
++ * Whether DC can drive an HDMI signal through this connector, as it chooses the
++ * signal at detection (link_detection.c: link_detect_sink_signal_type(),
++ * decide_signal_from_strap_and_dongle_type(), and the HDMI-DVI rule of
++ * detect_link_and_local_sink()): an HDMI connector; a DisplayPort connector,
++ * through a passive DP++ adaptor, where the board has HDMI audio on dongles or
++ * natively; a DVI connector driving an HDMI sink, with native HDMI audio. An
++ * MST port, a USB4 tunnel and an external DP bridge are DisplayPort only.
++ */
++STATIC_IFN_KUNIT bool dm_connector_can_carry_hdmi(const struct amdgpu_dm_connector *aconnector,
++						  int connector_type)
++{
++	const struct dc_link *link = aconnector->dc_link;
++	const struct audio_support *audio;
++
++	if (connector_type == DRM_MODE_CONNECTOR_HDMIA)
++		return true;
++
++	if (aconnector->mst_root || !link || !link->dc || !link->dc->res_pool)
++		return false;
++
++	audio = &link->dc->res_pool->audio_support;
++
++	switch (connector_type) {
++	case DRM_MODE_CONNECTOR_DisplayPort:
++		if (link->ep_type != DISPLAY_ENDPOINT_PHY || link->ext_enc_id.id)
++			return false;
++		return audio->hdmi_audio_on_dongle || audio->hdmi_audio_native;
++	case DRM_MODE_CONNECTOR_DVID:
++	case DRM_MODE_CONNECTOR_DVII:
++		return audio->hdmi_audio_native;
++	default:
++		return false;
++	}
++}
++
+ void amdgpu_dm_connector_init_helper(struct amdgpu_display_manager *dm,
+ 				     struct amdgpu_dm_connector *aconnector,
+ 				     int connector_type,
+@@ -3373,7 +3409,7 @@ void amdgpu_dm_connector_init_helper(struct amdgpu_display_manager *dm,
+ 		|| (connector_type == DRM_MODE_CONNECTOR_DisplayPort && !aconnector->mst_root))
+ 		drm_connector_attach_broadcast_rgb_property(&aconnector->base);
+ 
+-	if (connector_type == DRM_MODE_CONNECTOR_HDMIA) {
++	if (dm_connector_can_carry_hdmi(aconnector, connector_type)) {
+ 		drm_connector_attach_sbs_full_timing_property(&aconnector->base);
+ 		drm_connector_attach_hdmi_3d_metadata_property(&aconnector->base);
+ 	}
+diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.h b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.h
+index 566478501..bb739ea26 100644
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.h
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.h
+@@ -180,6 +180,8 @@ int dm_encoder_helper_atomic_check(struct drm_encoder *encoder,
+ 				   struct drm_connector_state *conn_state);
+ enum drm_mode_subconnector get_subconnector_type(struct dc_link *link);
+ bool dm_sink_signals_hdmi_3d(const struct dc_sink *sink);
++bool dm_connector_can_carry_hdmi(const struct amdgpu_dm_connector *aconnector,
++				 int connector_type);
+ void update_subconnector_property(struct amdgpu_dm_connector *aconnector);
+ void amdgpu_dm_fbc_init(struct drm_connector *connector);
+ void amdgpu_dm_set_panel_type(struct amdgpu_dm_connector *aconnector);
+-- 
+2.53.0
+
