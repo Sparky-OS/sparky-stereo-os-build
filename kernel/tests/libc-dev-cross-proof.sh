@@ -20,7 +20,10 @@
 # sparky-stereo-keyring and deb-multimedia-keyring give the sources, key and pins, as an edition system has them); IMAGE is a
 # Debian testing amd64 image pinned by digest. REPO_HOST, when set (a LAN address of repo.sparkyos.org), is passed as
 # --add-host. START, when set, is a directory of Debian .debs installed first in case C (Debian's linux-libc-dev and
-# linux-libc-dev-armhf-cross at the workstation's version, 7.2.11-1, from snapshot.debian.org). Prints the log; exit status 1 on any failure.
+# linux-libc-dev-armhf-cross at the workstation's version, 7.2.11-1, from snapshot.debian.org). NEXT, when set, is a directory with a
+# later kernel build's linux-libc-dev and linux-libc-dev-*-cross .debs: case D installs the candidates (CANDIDATE-DIR) with the armhf
+# toolchain, then upgrades to NEXT, where the documentation directory becomes Debian's link again (dir_to_symlink).
+# Prints the log; exit status 1 on any failure.
 set -eu
 CAND=$(readlink -f "${1:?usage: libc-dev-cross-proof.sh candidate-dir pool image}")
 POOL=$(readlink -f "${2:?pool}")
@@ -30,7 +33,7 @@ run() {
 	name=$1; shift
 	# shellcheck disable=SC2086
 	docker run --rm --name "libc-dev-cross-proof-$name" --platform linux/amd64 --cpus 4 --memory 3g $HOST \
-		-v "$CAND":/proof/candidate:ro -v "$POOL":/proof/pool:ro ${START:+-v "$START":/proof/start:ro} -e CASE="$name" "$IMAGE" sh -eu -c "$INNER"
+		-v "$CAND":/proof/candidate:ro -v "$POOL":/proof/pool:ro ${START:+-v "$START":/proof/start:ro} ${NEXT:+-v "$NEXT":/proof/next:ro} -e CASE="$name" "$IMAGE" sh -eu -c "$INNER"
 }
 INNER='
 export DEBIAN_FRONTEND=noninteractive LC_ALL=C.UTF-8
@@ -45,13 +48,14 @@ edition() {
 	ls /etc/apt/sources.list.d /etc/apt/preferences.d | tr "\n" " "; echo
 }
 candidates() {
-	mkdir -p /srv/candidate
-	cp /proof/candidate/*.deb /srv/candidate/
-	(cd /srv/candidate && apt-ftparchive packages . > Packages &&
+	from=${1:-/proof/candidate}; name=${2:-candidate}
+	mkdir -p /srv/$name
+	cp $from/*.deb /srv/$name/
+	(cd /srv/$name && apt-ftparchive packages . > Packages &&
 	 apt-ftparchive -o APT::FTPArchive::Release::Origin="Sparky Stereo OS" -o APT::FTPArchive::Release::Label="Sparky Stereo OS candidate" \
 		-o APT::FTPArchive::Release::Suite=mashtabba -o APT::FTPArchive::Release::Codename=mashtabba release . > Release)
-	printf "Types: deb\nURIs: file:/srv/candidate\nSuites: ./\nTrusted: yes\n" > /etc/apt/sources.list.d/candidate.sources
-	echo "candidates (unsigned, Origin Sparky Stereo OS as published): $(ls /srv/candidate/*.deb | wc -l) packages"
+	printf "Types: deb\nURIs: file:/srv/$name\nSuites: ./\nTrusted: yes\n" > /etc/apt/sources.list.d/$name.sources
+	echo "$name (unsigned, Origin Sparky Stereo OS as published): $(ls /srv/$name/*.deb | wc -l) packages"
 }
 summary() {
 	sed -n "/^The following packages will be upgraded:/,/^[0-9]/p" "$1" | sed "\$d" | tr -s " \n" " "; echo
@@ -174,10 +178,30 @@ upgrade)
 	apt-get -y -qq remove linux-libc-dev-armhf-cross libc6-dev-armhf-cross crossbuild-essential-armhf > /proof/c2.log 2>&1
 	dpkg-query -W -f "\${Package} \${Version} \${db:Status-Abbrev}\n" linux-libc-dev; test ! -e /usr/share/doc/linux-libc-dev-armhf-cross || fail "doc left behind"
 	echo "PASS: upgrade";;
+transition)
+	echo "== D. the candidates, then a later kernel build that makes the cross packages itself"
+	edition; candidates; apt-get -qq update
+	apt-get -y -qq install --no-install-recommends linux-libc-dev crossbuild-essential-armhf libc6-dev-armhf-cross qemu-user > /proof/d0.log 2>&1 || { tail /proof/d0.log; fail "candidates"; }
+	dpkg-query -W -f "before: \${Package} \${Version}\n" linux-libc-dev linux-libc-dev-armhf-cross
+	ls -ld /usr/share/doc/linux-libc-dev-armhf-cross
+	candidates /proof/next next; apt-get -qq update
+	echo "-- D1. apt-get full-upgrade to the later build"
+	apt-get -y full-upgrade --no-install-recommends > /proof/d1.log 2>&1 || { tail -20 /proof/d1.log; fail "upgrade"; }
+	summary /proof/d1.log; clean_transaction /proof/d1.log
+	dpkg-query -W -f "after: \${Package} \${Version} \${Source}\n" linux-libc-dev linux-libc-dev-armhf-cross
+	test "$(dpkg-query -W -f "\${Version}" linux-libc-dev-armhf-cross)" = "$(dpkg-deb -f /srv/next/linux-libc-dev-armhf-cross_*_all.deb Version)" || fail "cross not upgraded"
+	ls -ld /usr/share/doc/linux-libc-dev-armhf-cross
+	test "$(readlink /usr/share/doc/linux-libc-dev-armhf-cross)" = linux-libc-dev || fail "doc is not the link to linux-libc-dev"
+	test -f /usr/share/doc/linux-libc-dev/copyright || fail "linux-libc-dev documentation lost"
+	dpkg --audit; echo "dpkg --audit: empty above means clean"
+	arm-linux-gnueabihf-gcc /proof/t.c -o /proof/t; out=$(qemu-arm -L /usr/arm-linux-gnueabihf /proof/t); echo "qemu-arm: $out"
+	test "$out" = "sizeof=32 type@0 length@1 data@2 NR_write=4" || fail "armhf layout"
+	echo "PASS: transition";;
 esac
 '
 case=${CASE:-all}
-for c in control fresh upgrade; do
+for c in control fresh upgrade transition; do
+	[ "$c" != transition ] || [ -n "${NEXT:-}" ] || continue
 	[ "$case" = all ] || [ "$case" = "$c" ] || continue
 	run "$c"
 done
