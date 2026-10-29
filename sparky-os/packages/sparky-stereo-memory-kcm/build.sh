@@ -1,11 +1,11 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/10
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/12
+# Last update 2026/10/29
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.1.1
+VERSION=0.1.2
 PACKAGE=sparky-stereo-memory-kcm
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.memory-kcm.XXXXXX")
@@ -63,6 +63,13 @@ Description: Memory page for System Settings
 EOF
 cat >"$S/debian/changelog" <<EOF
 $PACKAGE ($VERSION) unstable; urgency=medium
+
+  * German, Japanese, Korean, Polish, Brazilian Portuguese, Simplified
+    Chinese and Traditional Chinese strings for the page.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Thu, 29 Oct 2026 19:30:00 -0300
+
+$PACKAGE (0.1.1) unstable; urgency=medium
 
   * French strings for the page and the KAuth actions.
 
