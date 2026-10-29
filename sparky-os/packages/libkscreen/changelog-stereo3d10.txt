@@ -1,0 +1,12 @@
+libkscreen (4:6.7.4-1+stereo3d10) unstable; urgency=medium
+
+  * DisplayPort frame sequential stereo of kde_output_device_v2 version 30
+    (s10-0001, the fork's 391b8c2, ORDER 257): the mode flag maps to
+    ModeInfo::Flag::Stereo3DSequentialDisplayPort and to a new value,
+    Mode::Stereo3D::SequentialDisplayPort, added after the others so the
+    earlier values keep their numbers. The Wayland backend binds the output
+    devices at version 30; kscreen-doctor shows a mode the display declares
+    as (3D-FS-DP) and its twin under Other stereo formats as
+    (virtual-3D:19). The serializer test round-trips the new value.
+  * Build against plasma-wayland-protocols 1.21.0-1+stereo3d10 and stop the
+    build when the installed protocol lacks stereo_sequential_displayport.

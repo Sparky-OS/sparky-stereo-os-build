@@ -1,0 +1,136 @@
+From 391b8c28994737dd4720f2429fd17c872c8bd990 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 29 Oct 2026 15:51:16 -0300
+Subject: [PATCH] Carry DisplayPort's frame sequential stereo of
+ kde_output_device_v2 version 30
+
+Version 30 of the output device protocol adds stereo_sequential_displayport
+to the mode flags: DisplayPort's own stereo transport, where the source
+sends one eye per frame of the mode's 2D timing, left eye first, and tells
+the display which eye each frame carries (the Main Stream Attribute's MISC1
+bits 2:1). The compositor lists it as a display 3D mode when the display
+declares it, and with virtual_stereo as the twin of a 2D mode on an output
+whose driver accepts it.
+
+Map the flag to ModeInfo::Flag::Stereo3DSequentialDisplayPort and to a new
+Mode::Stereo3D value, SequentialDisplayPort, added after the others so the
+earlier values keep their numbers. The Wayland backend binds the output
+device registry at version 30 when the protocol has it, and kscreen-doctor
+shows a declared mode as (3D-FS-DP); a twin shows as (virtual-3D:19), as
+the other twins show their layout's number. The serializer test round-trips
+the new value.
+
+Assisted-by: Claude Opus 5.5
+---
+ autotests/testconfigserializer.cpp            | 3 ++-
+ backends/kwayland/waylandoutputdevice.cpp     | 6 +++++-
+ backends/kwayland/waylandoutputdevicemode.cpp | 6 ++++++
+ src/doctor/doctor.cpp                         | 2 ++
+ src/mode.h                                    | 4 ++++
+ src/output.h                                  | 3 +++
+ 6 files changed, 22 insertions(+), 2 deletions(-)
+
+diff --git a/autotests/testconfigserializer.cpp b/autotests/testconfigserializer.cpp
+index be9c2ad..acd8518 100644
+--- a/autotests/testconfigserializer.cpp
++++ b/autotests/testconfigserializer.cpp
+@@ -172,7 +172,8 @@ private Q_SLOTS:
+         for (const auto structure : {KScreen::Mode::Stereo3D::FieldAlternative,
+                                      KScreen::Mode::Stereo3D::LineAlternative,
+                                      KScreen::Mode::Stereo3D::LDepth,
+-                                     KScreen::Mode::Stereo3D::LDepthGraphics}) {
++                                     KScreen::Mode::Stereo3D::LDepthGraphics,
++                                     KScreen::Mode::Stereo3D::SequentialDisplayPort}) {
+             KScreen::ModePtr mode(new KScreen::Mode);
+             mode->setId(QStringLiteral("3"));
+             mode->setSize(QSize(1920, 1080));
+diff --git a/backends/kwayland/waylandoutputdevice.cpp b/backends/kwayland/waylandoutputdevice.cpp
+index 11c1435..f336772 100644
+--- a/backends/kwayland/waylandoutputdevice.cpp
++++ b/backends/kwayland/waylandoutputdevice.cpp
+@@ -23,7 +23,9 @@
+ using namespace KScreen;
+ 
+ WaylandOutputDeviceRegistry::WaylandOutputDeviceRegistry()
+-#if defined(KDE_OUTPUT_DEVICE_V2_STEREO_GLASSES_SINCE_VERSION)
++#if defined(KDE_OUTPUT_DEVICE_MODE_V2_FLAGS_STEREO_SEQUENTIAL_DISPLAYPORT_SINCE_VERSION)
++    : QWaylandClientExtensionTemplate<WaylandOutputDeviceRegistry>(30)
++#elif defined(KDE_OUTPUT_DEVICE_V2_STEREO_GLASSES_SINCE_VERSION)
+     : QWaylandClientExtensionTemplate<WaylandOutputDeviceRegistry>(29)
+ #elif defined(KDE_OUTPUT_DEVICE_V2_STEREO_DEPTH_SINCE_VERSION)
+     : QWaylandClientExtensionTemplate<WaylandOutputDeviceRegistry>(28)
+@@ -217,6 +219,8 @@ void KScreen::WaylandOutputDevice::updateKScreenModes(OutputPtr &output)
+             mode->setStereo3D(Mode::Stereo3D::LDepth);
+         } else if (wlMode->flags() & ModeInfo::Flag::Stereo3DLDepthGraphics) {
+             mode->setStereo3D(Mode::Stereo3D::LDepthGraphics);
++        } else if (wlMode->flags() & ModeInfo::Flag::Stereo3DSequentialDisplayPort) {
++            mode->setStereo3D(Mode::Stereo3D::SequentialDisplayPort);
+         }
+ 
+         if (wlMode->flags() & ModeInfo::Flag::Stereo3DAnaglyphModern) {
+diff --git a/backends/kwayland/waylandoutputdevicemode.cpp b/backends/kwayland/waylandoutputdevicemode.cpp
+index fee5f61..862eb2a 100644
+--- a/backends/kwayland/waylandoutputdevicemode.cpp
++++ b/backends/kwayland/waylandoutputdevicemode.cpp
+@@ -111,6 +111,12 @@ void WaylandOutputDeviceMode::kde_output_device_mode_v2_flags(uint32_t flags)
+         m_flags |= ModeInfo::Flag::Stereo3DLDepthGraphics;
+     }
+ #endif
++#ifdef KDE_OUTPUT_DEVICE_MODE_V2_FLAGS_STEREO_SEQUENTIAL_DISPLAYPORT_SINCE_VERSION
++    // DisplayPort's frame sequential stereo, since version 30
++    if (flags & KDE_OUTPUT_DEVICE_MODE_V2_FLAGS_STEREO_SEQUENTIAL_DISPLAYPORT) {
++        m_flags |= ModeInfo::Flag::Stereo3DSequentialDisplayPort;
++    }
++#endif
+ 
+     if (flags & KDE_OUTPUT_DEVICE_MODE_V2_FLAGS_CUSTOM) {
+         m_flags |= ModeInfo::Flag::Custom;
+diff --git a/src/doctor/doctor.cpp b/src/doctor/doctor.cpp
+index 2c9ffd8..1a93ecf 100644
+--- a/src/doctor/doctor.cpp
++++ b/src/doctor/doctor.cpp
+@@ -806,6 +806,8 @@ void Doctor::showOutputs() const
+                 name = name + QStringLiteral("(3D-L+depth)");
+             } else if (mode->stereo3D() == Mode::Stereo3D::LDepthGraphics) {
+                 name = name + QStringLiteral("(3D-L+depth+gfx)");
++            } else if (mode->stereo3D() == Mode::Stereo3D::SequentialDisplayPort && !mode->virtualStereo()) {
++                name = name + QStringLiteral("(3D-FS-DP)");
+             }
+             if (mode->virtualStereo()) {
+                 name += QStringLiteral("(virtual-3D:%1)").arg(int(mode->stereo3D()));
+diff --git a/src/mode.h b/src/mode.h
+index 60e48f8..1539c6c 100644
+--- a/src/mode.h
++++ b/src/mode.h
+@@ -32,6 +32,9 @@ public:
+     /**
+      * The HDMI 3D structure the mode is sent in: a 3D mode repeats a 2D mode's size and
+      * refresh rate, and choosing it turns the display's 3D on. Never chosen automatically.
++     * SequentialDisplayPort is DisplayPort's own frame sequential stereo: the source sends one
++     * eye per frame of the mode, left eye first, and tells the display which eye each frame
++     * carries; with virtualStereo() it is the twin of a 2D mode that the display did not declare.
+      */
+     enum class Stereo3D {
+         None,
+@@ -53,6 +56,7 @@ public:
+         LineAlternative,
+         LDepth,
+         LDepthGraphics,
++        SequentialDisplayPort,
+     };
+     Q_ENUM(Stereo3D)
+ 
+diff --git a/src/output.h b/src/output.h
+index 3e16668..84c6ca9 100755
+--- a/src/output.h
++++ b/src/output.h
+@@ -51,6 +51,9 @@ public:
+         Stereo3DLineAlternative = 0x200000,
+         Stereo3DLDepth = 0x400000,
+         Stereo3DLDepthGraphics = 0x800000,
++        // DisplayPort's frame sequential stereo, the eyes alternated and signalled by the source
++        // (kde_output_device_mode_v2.flags since version 30)
++        Stereo3DSequentialDisplayPort = 0x1000000,
+     };
+     Q_ENUM(Flag);
+     Q_DECLARE_FLAGS(Flags, Flag)
