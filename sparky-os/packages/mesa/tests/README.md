@@ -27,7 +27,7 @@ Set `LIFETIME_CAPTURE=1` to pause at each of the nine lifecycle stages. The
 fixture prints `CAPTURE <stage>` and waits for one newline on stdin; it does
 not render or swap while waiting. Capture the full side-by-side virtual output
 and record actual X geometry while paused. USPosition hints keep the two owner
-windows apart. The multisample control is a separate four-sample variant of the fixture.
+windows apart. Set `LIFETIME_MSAA=1` to request a four-sample visual in the same fixture. Each draw records `GL_SAMPLES` and requires at least four samples; capture mode may be combined with it.
 
 `check-window-lifetime-capture.py CASE OUTPUT --require-pass` checks all 144,000
 raw GL front pixels, all 336,000 captured child-eye pixels, ordinary owner
@@ -40,3 +40,12 @@ monotonic timestamps), and `captures.json` (stage, observed geometry, capture
 metadata) plus `<stage>.png`. A completed process alone is not a pass. Preserve
 old failing rows; do not replace the first frame with a later one. This bounded
 fixture does not certify overlap, clipping, input, DPI or other GPU routes.
+
+
+Build `egl-surfaceless-mono.c` with `cc -O2 -Wall -Wextra -Werror -lEGL -lGL`.
+It uses the surfaceless EGL platform without a native window, creates ordinary
+pbuffers of 64x48, 32x24 and 64x48, and compares every RGB pixel with four
+constant quadrant colours. It requires a mono context, reports the renderer
+and mapped providers, and returns failure on any mismatch or EGL operation
+error. Run against installed predecessor and candidate libraries. This is an
+ordinary EGL pbuffer control, not a Wayland window or stereo declaration test.

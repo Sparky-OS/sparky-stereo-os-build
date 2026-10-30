@@ -65,6 +65,7 @@ static void snapshot(const char *stage)
 }
 static void draw(GLXWindow glx,int index)
 {
+    if(getenv("LIFETIME_MSAA")){GLint samples=0;glGetIntegerv(GL_SAMPLES,&samples);printf("SAMPLES %d\n",samples);if(samples<4)exit(78);}
     GLboolean stereo=False;glGetBooleanv(GL_STEREO,&stereo);if(!stereo)exit(77);
     glDrawBuffer(GL_BACK_LEFT);glClearColor(1,index*.25f,0,1);glClear(GL_COLOR_BUFFER_BIT);
     glDrawBuffer(GL_BACK_RIGHT);glClearColor(0,index*.25f,1,1);glClear(GL_COLOR_BUFFER_BIT);
@@ -84,7 +85,7 @@ int main(void)
 {
     int count;d=XOpenDisplay(NULL);if(!d)return 1;XSetErrorHandler(record_error);
     printf("ATOMS content=%lu children=%lu\n",XInternAtom(d,"_KDE_NET_WM_STEREO_CONTENT",False),XInternAtom(d,"_KDE_NET_WM_STEREO_CONTENT_CHILDREN",False));
-    int attr[]={GLX_X_RENDERABLE,True,GLX_DRAWABLE_TYPE,GLX_WINDOW_BIT,GLX_RENDER_TYPE,GLX_RGBA_BIT,GLX_DOUBLEBUFFER,True,GLX_STEREO,True,None};
+    int attr[]={GLX_X_RENDERABLE,True,GLX_DRAWABLE_TYPE,GLX_WINDOW_BIT,GLX_RENDER_TYPE,GLX_RGBA_BIT,GLX_DOUBLEBUFFER,True,GLX_STEREO,True,GLX_SAMPLE_BUFFERS,getenv("LIFETIME_MSAA")?1:0,GLX_SAMPLES,getenv("LIFETIME_MSAA")?4:0,None};
     GLXFBConfig *configs=glXChooseFBConfig(d,DefaultScreen(d),attr,&count);if(!configs||!count)return 77;
     XVisualInfo *v=glXGetVisualFromFBConfig(d,configs[0]);if(!v)return 2;
     XSetWindowAttributes a={0};a.colormap=XCreateColormap(d,DefaultRootWindow(d),v->visual,AllocNone);
