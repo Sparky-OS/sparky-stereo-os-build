@@ -12,7 +12,7 @@
 # grub.mo becomes Debian's messages plus the missing ones (Debian's win where both have one).
 # Needs dpkg-deb, gettext (msggrep, msgattrib, msgfmt) and xz; the GRUB release tarball is GRUB_TARBALL
 # (downloaded from ftp.gnu.org when absent, checked against its SHA-256).
-# Last update 2026/10/16
+# Last update 2026/10/30
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -65,9 +65,24 @@ merge() {
 		/usr/lib/$PKG/merge-mo "$f.debian" "$S/$l.mo" "$f" >/dev/null
 	done
 }
+# GRUB's menu written again with the merged messages, so a translation reaches it at once rather than at the next
+# update-grub of another package; never in a live session, a chroot or a container (as sparky-stereo-boot's kernel
+# keeping), where an image build or the installer writes the menu itself
+menu() {
+	[ -x /usr/sbin/update-grub ] && [ -e /boot/grub/grub.cfg ] || return 0
+	if [ "${SPARKY_STEREO_GRUB_L10N_TEST:-}" != 1 ]; then
+		if grep -qw boot=live /proc/cmdline 2>/dev/null || [ -d /run/live ]; then return 0; fi
+		if command -v systemd-detect-virt >/dev/null; then
+			if systemd-detect-virt --quiet --chroot || systemd-detect-virt --quiet --container; then return 0; fi
+		fi
+		if [ -e /.dockerenv ] || [ -e /run/.containerenv ] || [ ! -d /run/systemd/system ]; then return 0; fi
+	fi
+	update-grub || true
+}
 case "$1" in
 	configure|triggered)
 		merge
+		menu
 	;;
 esac
 exit 0
@@ -130,7 +145,8 @@ Description: GRUB's menu in the system's language
   scripts, so the menu that grub-mkconfig writes ("Advanced options for
   ...", "UEFI Firmware Settings" and the others) stays in English. This
   package adds those messages from GNU GRUB's own translations to
-  Debian's catalogues, and adds them again whenever GRUB updates.
+  Debian's catalogues, and adds them again whenever GRUB updates; GRUB's
+  menu is then written again, so the translation reaches it at once.
 EOS
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT"

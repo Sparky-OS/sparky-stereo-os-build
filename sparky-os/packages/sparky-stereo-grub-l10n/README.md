@@ -20,6 +20,8 @@ How:
 The package carries those messages, and only those, from GNU GRUB 2.14's translations, for every language upstream translates (usr/share/sparky-stereo-grub-l10n/LANG.mo).
 At install, and whenever grub2-common updates a catalogue (a dpkg trigger), Debian's grub.mo is diverted to grub.mo.debian and grub.mo becomes Debian's messages plus the missing ones; Debian's translation wins where both have one.
 Removing the package gives Debian's files back.
-The menu changes at the next update-grub.
+
+After every merge, at install and whenever grub2-common updates a catalogue, the package runs update-grub where /boot/grub/grub.cfg exists, so the translated entries reach the menu at once.
+It does not in a live session, a chroot or a container, where the image build or the installer writes the menu.
 
 Build: OUT=/path/to/output ./build.sh (dpkg-deb, gettext; GRUB_TARBALL=/path/to/grub-2.14.tar.xz, else it is downloaded and checked)
