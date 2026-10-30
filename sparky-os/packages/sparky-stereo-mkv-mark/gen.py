@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/24
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/24
+# Last update 2026/10/29
 # Writes pack.json (for ../sparky-stereo-integration/make-pack.py) and lang/<code> (for the worker) from the one
 # table below, so the menu and the worker's messages say the same words. Usage: gen.py OUT-DIR
 # StereoMode values: RFC 9559 section 5.1.4.1.28.3 and IANA records 15 to 20 (Matroska element StereoMode, ID 0x53B8).

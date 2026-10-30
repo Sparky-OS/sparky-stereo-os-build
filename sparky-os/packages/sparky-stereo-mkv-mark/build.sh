@@ -3,7 +3,7 @@
 # Copyright 2026 under the GNU GPL3 License
 # Builds sparky-stereo-mkv-mark (hand-assembled .deb, Paweł's formula): an integration pack, a data pack in the stereo-integrations skill's sense.
 # The strings, the pack definition and the Dolphin menu come from gen.py and ../sparky-stereo-integration/make-pack.py.
-# Last update 2026/10/24
+# Last update 2026/10/29
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the output directory}
