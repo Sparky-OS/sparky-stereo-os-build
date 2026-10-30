@@ -1,7 +1,8 @@
 kwin (4:6.7.4-2+stereo3d39) unstable; urgency=medium
 
-  * Sparky-OS/kwin stereo3d39 is stereo3d38 plus the five commits of
-    ORDER 294 and 294b and the one of ORDER 254 (s39-0001 to s39-0006).
+  * Sparky-OS/kwin stereo3d39 is stereo3d38 plus the six commits of
+    ORDER 294, 294b and 294d and the one of ORDER 254 (s39-0001 to
+    s39-0007).
   * A configuration the driver refuses with the buffers the renderer chose
     is tested again with linear buffers on one output, then on all of them,
     before it is given up (s39-0001): amdgpu shows DisplayPort's frame
@@ -24,3 +25,10 @@ kwin (4:6.7.4-2+stereo3d39) unstable; urgency=medium
     and the ordinary interface beside them is never covered (s39-0006, the
     declaration version 9). Tests: testX11Window's testStereoChildShape and
     testOrdinaryX11Shape.
+  * KWin no longer crashes now and then when it exits with two outputs or
+    more (s39-0007). The workspace removed its outputs at exit while it
+    still listed the ones it had already freed, and ORDER 292's StereoDepth
+    D-Bus interface (s38-0001), which answers a removed output by walking
+    the outputs, read a freed one. The outputs are now removed at exit as
+    at run time. Test: testWorkspaceTeardown; testScreenshotStereo no
+    longer ends with a segmentation fault after its tests pass.

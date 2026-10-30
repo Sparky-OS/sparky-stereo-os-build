@@ -1,0 +1,219 @@
+From 790bfbe16a977ead6db5b8c127a45fdc32d2f9ee Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 30 Oct 2026 15:21:55 -0300
+Subject: [PATCH] workspace: Remove the outputs at teardown as at run time
+
+~Workspace emitted outputRemoved for each output while outputs() and
+outputOrder() still listed every output, and unreferenced each output
+right after its own signal. A listener that answers by walking the
+workspace's outputs, as the StereoDepth D-Bus interface does since
+18e9430, read at the second signal an output already freed, and KWin
+crashed at exit now and then: testScreenshotStereo ended with a
+segmentation fault after all its tests passed in 3 of 55 runs of the
++stereo3d39 test build.
+
+The outputs are now taken out of the list first and out of the output
+order, and unreferenced only after the last outputRemoved, as
+updateOutputs() does for an output that went away.
+
+testWorkspaceTeardown watches outputRemoved while the workspace of two
+outputs is destroyed: the removed output is listed by neither
+outputs() nor outputOrder(), and no output is freed before the last
+signal.
+
+Assisted-by: Claude Opus 5.5
+---
+ autotests/integration/CMakeLists.txt          |   1 +
+ .../integration/workspace_teardown_test.cpp   | 145 ++++++++++++++++++
+ src/workspace.cpp                             |  10 +-
+ 3 files changed, 155 insertions(+), 1 deletion(-)
+ create mode 100644 autotests/integration/workspace_teardown_test.cpp
+
+diff --git a/autotests/integration/CMakeLists.txt b/autotests/integration/CMakeLists.txt
+index 7377920..8a10db5 100644
+--- a/autotests/integration/CMakeLists.txt
++++ b/autotests/integration/CMakeLists.txt
+@@ -170,6 +170,7 @@ integrationTest(NAME testStereoDepthPopups SRCS stereo_depth_popups_test.cpp LIB
+ integrationTest(NAME testStereoDepthMotion SRCS stereo_depth_motion_test.cpp LIBS screenshot_test_support)
+ integrationTest(NAME testStereoDepthWallpaper SRCS stereo_depth_wallpaper_test.cpp LIBS screenshot_test_support)
+ integrationTest(NAME testStereoDepthWallpaperCuts SRCS stereo_depth_wallpaper_cuts_test.cpp)
++integrationTest(NAME testWorkspaceTeardown SRCS workspace_teardown_test.cpp)
+ integrationTest(NAME testStereoOutputRepaint SRCS stereo_output_repaint_test.cpp)
+ integrationTest(NAME testDmabufFormatSwitch SRCS dmabuf_formatswitch_test.cpp LIBS screenshot_test_support)
+ integrationTest(NAME testKeyboardInput SRCS keyboard_input_test.cpp)
+diff --git a/autotests/integration/workspace_teardown_test.cpp b/autotests/integration/workspace_teardown_test.cpp
+new file mode 100644
+index 0000000..b66f4e6
+--- /dev/null
++++ b/autotests/integration/workspace_teardown_test.cpp
+@@ -0,0 +1,145 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++    SPDX-License-Identifier: GPL-2.0-or-later
++*/
++
++#include "kwin_wayland_test.h"
++
++#include "core/output.h"
++#include "wayland_server.h"
++#include "workspace.h"
++
++#include <QSet>
++
++#include <cstdio>
++
++namespace KWin
++{
++
++/**
++ * What the workspace showed to the listeners of outputRemoved while it was destroyed. The workspace
++ * is destroyed with the test application, after QTest::qExec() has returned, so this is collected
++ * then and reported by main() below.
++ */
++struct Teardown
++{
++    bool watching = false;
++    QSet<const QObject *> freed;
++    int removed = 0;
++    QStringList failures;
++};
++
++static Teardown s_teardown;
++
++/**
++ * ~Workspace removes each output the way updateOutputs() removes an output that went away:
++ * outputRemoved is emitted for an output that is no longer in outputs() and outputOrder(), and no
++ * output is freed before the last outputRemoved has been emitted. A listener that answers by walking
++ * the workspace's outputs, as the StereoDepth D-Bus interface does, meets only live outputs.
++ */
++class WorkspaceTeardownTest : public QObject
++{
++    Q_OBJECT
++
++private Q_SLOTS:
++    void initTestCase();
++    void testWatchTheTeardown();
++};
++
++void WorkspaceTeardownTest::initTestCase()
++{
++    QVERIFY(waylandServer()->init(qAppName()));
++    kwinApp()->start();
++    Test::setOutputConfig({
++        Rect(0, 0, 1280, 1024),
++        Rect(1280, 0, 1280, 1024),
++    });
++}
++
++void WorkspaceTeardownTest::testWatchTheTeardown()
++{
++    const QList<LogicalOutput *> outputs = workspace()->outputs();
++    QCOMPARE(outputs.size(), 2);
++
++    // The outputs and the workspace are the contexts, since the test object is destroyed before the
++    // application.
++    for (LogicalOutput *output : outputs) {
++        connect(output, &QObject::destroyed, output, [](QObject *object) {
++            s_teardown.freed.insert(object);
++        });
++    }
++    // Only pointers are compared here; nothing that may have been freed is read.
++    connect(workspace(), &Workspace::outputRemoved, workspace(), [](LogicalOutput *output) {
++        if (!s_teardown.watching) {
++            return;
++        }
++        ++s_teardown.removed;
++        const QString when = QStringLiteral("at outputRemoved %1: ").arg(s_teardown.removed);
++        const QList<LogicalOutput *> listed = workspace()->outputs();
++        const QList<LogicalOutput *> ordered = workspace()->outputOrder();
++        if (listed.contains(output)) {
++            s_teardown.failures.append(when + QStringLiteral("the removed output is still in outputs()"));
++        }
++        if (ordered.contains(output)) {
++            s_teardown.failures.append(when + QStringLiteral("the removed output is still in outputOrder()"));
++        }
++        for (const LogicalOutput *other : listed) {
++            if (s_teardown.freed.contains(other)) {
++                s_teardown.failures.append(when + QStringLiteral("outputs() lists an output that has been freed"));
++            }
++        }
++        for (const LogicalOutput *other : ordered) {
++            if (s_teardown.freed.contains(other)) {
++                s_teardown.failures.append(when + QStringLiteral("outputOrder() lists an output that has been freed"));
++            }
++        }
++        if (!s_teardown.freed.isEmpty()) {
++            s_teardown.failures.append(when + QStringLiteral("%1 output(s) freed before the last outputRemoved").arg(s_teardown.freed.size()));
++        }
++    });
++}
++
++} // namespace KWin
++
++// WAYLANDTEST_MAIN, with the application in a scope of its own: the workspace is destroyed with it,
++// after the test functions, and what the teardown showed is reported once it is gone.
++int main(int argc, char *argv[])
++{
++    setenv("QT_QPA_PLATFORM", "wayland-org.kde.kwin.qpa", true);
++    setenv("QT_QPA_PLATFORM_PLUGIN_PATH", QFileInfo(QString::fromLocal8Bit(argv[0])).absolutePath().toLocal8Bit().constData(), true);
++    setenv("KWIN_FORCE_OWN_QPA", "1", true);
++    qunsetenv("KDE_FULL_SESSION");
++    qunsetenv("KDE_SESSION_VERSION");
++    qunsetenv("XDG_SESSION_DESKTOP");
++    qunsetenv("XDG_CURRENT_DESKTOP");
++    int result = 0;
++    {
++        KWin::WaylandTestApplication app(argc, argv, false);
++        qunsetenv("QT_QPA_PLATFORM");
++        qunsetenv("QT_QPA_PLATFORM_PLUGIN_PATH");
++        qunsetenv("KWIN_FORCE_OWN_QPA");
++        app.setAttribute(Qt::AA_Use96Dpi, true);
++        KWin::WorkspaceTeardownTest tc;
++        result = QTest::qExec(&tc, argc, argv);
++        KWin::s_teardown.watching = true;
++    }
++
++    const KWin::Teardown &teardown = KWin::s_teardown;
++    QStringList failures = teardown.failures;
++    if (result == 0 && teardown.removed != 2) {
++        failures.append(QStringLiteral("outputRemoved was emitted %1 times for 2 outputs").arg(teardown.removed));
++    }
++    if (failures.isEmpty()) {
++        std::printf("PASS   : KWin::WorkspaceTeardownTest::~Workspace() %d outputs removed, none freed before the last outputRemoved\n", teardown.removed);
++    } else {
++        for (const QString &failure : std::as_const(failures)) {
++            std::printf("FAIL!  : KWin::WorkspaceTeardownTest::~Workspace() %s\n", qPrintable(failure));
++        }
++        result = 1;
++    }
++    std::fflush(stdout);
++    return result;
++}
++
++#include "workspace_teardown_test.moc"
+diff --git a/src/workspace.cpp b/src/workspace.cpp
+index 8155dee..60f9f08 100644
+--- a/src/workspace.cpp
++++ b/src/workspace.cpp
+@@ -501,8 +501,16 @@ Workspace::~Workspace()
+     }
+     m_tileManagers.clear();
+ 
+-    for (LogicalOutput *output : std::as_const(m_outputs)) {
++    // Remove the outputs the way updateOutputs() removes an output that went away: outputRemoved is
++    // emitted for an output that outputs() and outputOrder() no longer list, and the outputs are
++    // unreferenced only after the last outputRemoved, so a listener that walks the outputs in its
++    // answer meets no freed output.
++    const QList<LogicalOutput *> outputs = std::exchange(m_outputs, {});
++    m_outputOrder.clear();
++    for (LogicalOutput *output : outputs) {
+         Q_EMIT outputRemoved(output);
++    }
++    for (LogicalOutput *output : outputs) {
+         output->backendOutput()->unref();
+         output->unref();
+     }
+-- 
+2.53.0
+
