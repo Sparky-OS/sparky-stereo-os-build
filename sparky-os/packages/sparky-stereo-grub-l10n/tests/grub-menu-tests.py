@@ -6,7 +6,8 @@
 #   grub-menu-tests.py CASE PACKAGE.deb
 # CASE: old (the version before 0.1.1: the catalogue is merged, the menu is not written), new (the menu is written at
 # configure and when grub2-common's catalogue triggers it), guard (no test variable: nothing written in a container),
-# no-menu (no /boot/grub/grub.cfg: nothing written, no failure). The menu is in German (LANG=de_DE.UTF-8, generated in the
+# no-menu (no /boot/grub/grub.cfg: nothing written, no failure), remove and purge (0.1.2: the menu back in Debian's words
+# at once), remove-old (the version before 0.1.2: the menu keeps the merged words after removal). The menu is in German (LANG=de_DE.UTF-8, generated in the
 # bench: gettext translates nothing in the C locales); one kernel in /boot
 # gives GRUB's "Advanced options for ..." submenu, a message Debian's catalogue lacks. GRUB's device probe is a stub,
 # as there is no disk in a container.
@@ -71,6 +72,19 @@ def main():
         check(translated and submenu() == english, "right after configure GRUB's menu still says %r" % submenu())
         sh('update-grub')
         check(translated and submenu() == german, "only another update-grub brings it: %r" % submenu())
+        if CASE == 'guard':
+            sh(['dpkg', '-r', 'sparky-stereo-grub-l10n'])
+            check(submenu() == german and not os.path.exists(CAT + '.debian'), 'removed in a container: the catalogue is Debian\'s again and no menu is written (%r)' % submenu())
+    elif CASE in ('remove', 'remove-old', 'purge'):
+        check(translated and submenu() == german, "right after configure GRUB's menu says %r" % submenu())
+        sh(['dpkg', '-P' if CASE == 'purge' else '-r', 'sparky-stereo-grub-l10n'])
+        back = sh(['gettext', '-d', 'grub', MSG]).stdout == MSG and not os.path.exists(CAT + '.debian')
+        want = german if CASE == 'remove-old' else english
+        check(back and submenu() == want, 'after %s Debian\'s catalogue is back and GRUB\'s menu says %r (expected %r)'
+              % ('purge' if CASE == 'purge' else 'removal', submenu(), want))
+        if CASE == 'remove':
+            sh(['dpkg', '-P', 'sparky-stereo-grub-l10n'])
+            check(submenu() == english, "after the purge that follows, still Debian's words: %r" % submenu())
     else:
         check(translated and submenu() == german, "right after configure GRUB's menu says %r" % submenu())
         # grub2-common's catalogue updated: the trigger merges again and writes the menu again

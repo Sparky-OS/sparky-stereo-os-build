@@ -21,7 +21,7 @@ The package carries those messages, and only those, from GNU GRUB 2.14's transla
 At install, and whenever grub2-common updates a catalogue (a dpkg trigger), Debian's grub.mo is diverted to grub.mo.debian and grub.mo becomes Debian's messages plus the missing ones; Debian's translation wins where both have one.
 Removing the package gives Debian's files back.
 
-After every merge, at install and whenever grub2-common updates a catalogue, the package runs update-grub where /boot/grub/grub.cfg exists, so the translated entries reach the menu at once.
+After every merge, at install and whenever grub2-common updates a catalogue, and again when the package is removed or purged, the package runs update-grub where /boot/grub/grub.cfg exists, so the menu follows the catalogues at once.
 It does not in a live session, a chroot or a container, where the image build or the installer writes the menu.
 
 Build: OUT=/path/to/output ./build.sh (dpkg-deb, gettext; GRUB_TARBALL=/path/to/grub-2.14.tar.xz, else it is downloaded and checked)
