@@ -307,15 +307,15 @@ def space(path, required=0, minimum=2 << 30, root_minimum=12 << 30):
     path = Path(path)
     root_free = shutil.disk_usage('/').free
     if root_free < root_minimum:
-        raise package.Invalid(f'/: free space {root_free} is below root floor {root_minimum}')
+        raise package.NoSpace(f'/: free space {root_free} is below root floor {root_minimum}')
     floor = max(minimum, root_minimum) if path.stat().st_dev == Path('/').stat().st_dev else minimum
     available = shutil.disk_usage(path).free
     if available - required < floor:
-        raise package.Invalid(f'{path}: insufficient space: {available} free, {required} requested, floor {floor}')
+        raise package.NoSpace(f'{path}: insufficient space: {available} free, {required} requested, floor {floor}')
     # Bind mounts and overlay roots can report different device IDs while sharing
     # backing storage. Reserve the same write against the root floor as well.
     if root_free - required < root_minimum:
-        raise package.Invalid(f'/: insufficient space: {root_free} free, {required} requested, floor {root_minimum}')
+        raise package.NoSpace(f'/: insufficient space: {root_free} free, {required} requested, floor {root_minimum}')
 
 
 def copy_stream(source, target, check_space):
@@ -672,6 +672,9 @@ class Archive:
             try:
                 metadata = self.run(['apt-cache', 'show', f'{obj["Package"]}:{obj["Architecture"]}={obj["Version"]}'],
                                     directory.name + '-' + obj['Package'])
+            except package.NoSpace:
+                # a disk floor reached while asking APT is not a missing record
+                raise
             except package.Invalid as exc:
                 raise package.Invalid(f'{uri}: downloaded identity {identity(obj)} is absent from signed index') from exc
             records = [fields(record) for record in metadata.split('\n\n') if record.strip()]

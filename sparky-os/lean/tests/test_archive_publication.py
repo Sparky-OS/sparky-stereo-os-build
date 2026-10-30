@@ -226,6 +226,24 @@ def test_low_space_refuses_extraction_before_payload_write(sources, tmp_path):
     assert not (root / 'usr/share/blob').exists()
 
 
+def test_low_space_while_checking_a_download_is_reported_as_space(sources, tmp_path):
+    # the identity check asks APT for the downloaded record; a disk floor reached there
+    # must not be reported as a record absent from the signed index
+    context = archive.Archive(sources, tmp_path / 'scratch', 'amd64')
+    candidate = deb(tmp_path, 'consumer', depends='libxrandr2')
+    original = archive.Archive.run
+
+    def run(self, args, label):
+        if args[:2] == ['apt-cache', 'show']:
+            raise package.NoSpace('/: free space 1 is below root floor 12884901888')
+        return original(self, args, label)
+
+    with patch.object(archive.Archive, 'run', run):
+        with pytest.raises(package.NoSpace, match='below root floor') as raised:
+            context.qualify(candidate)
+    assert 'absent from signed index' not in str(raised.value)
+
+
 def test_raised_scratch_floor_and_minimum_configuration(sources, tmp_path):
     with patch('lean.archive.shutil.disk_usage', return_value=disk_free(13 << 30)):
         with pytest.raises(package.Invalid, match='insufficient space'):

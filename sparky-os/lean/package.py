@@ -35,6 +35,10 @@ class Invalid(ValueError):
     pass
 
 
+class NoSpace(Invalid):
+    """A write refused at a disk floor: the machine's state, not a property of the input."""
+
+
 def digest(data):
     return hashlib.sha256(data).hexdigest()
 
