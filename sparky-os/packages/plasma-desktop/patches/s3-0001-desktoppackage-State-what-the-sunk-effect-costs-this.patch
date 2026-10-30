@@ -1,0 +1,82 @@
+From 974cdb5fd522a64142158f4e23d67b989b3815b1 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 30 Oct 2026 04:00:00 -0300
+Subject: [PATCH] desktoppackage: State what the sunk effect costs this
+ screen's wallpaper
+
+On a screen in one of Stereo KWin's 3D modes the wallpaper lies behind
+the screen and keeps its size, so the columns only one eye would see are
+cut at both sides. Under the wallpaper type the desktop's wallpaper page
+now says how many pixels of the wallpaper's width are lost on this
+desktop's screen and how many at each side, and that videos with pop
+effects are not expected to be comfortable with widgets or other things
+over them.
+
+The number is KWin's, read from WallpaperCuts on org.kde.KWin.StereoDepth
+for the screen whose geometry the containment has, so it follows the
+user's Background depth and the screen's own width and mode at once. On
+a 2D screen, at a depth of 0 or with a KWin that publishes nothing,
+nothing is lost and nothing is said.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ .../ConfigurationContainmentAppearance.qml    | 36 +++++++++++++++++++
+ 1 file changed, 36 insertions(+)
+
+diff --git a/desktoppackage/contents/configuration/ConfigurationContainmentAppearance.qml b/desktoppackage/contents/configuration/ConfigurationContainmentAppearance.qml
+index 29fa866..8a51a82 100644
+--- a/desktoppackage/contents/configuration/ConfigurationContainmentAppearance.qml
++++ b/desktoppackage/contents/configuration/ConfigurationContainmentAppearance.qml
+@@ -14,6 +14,7 @@ import org.kde.kirigami as Kirigami
+ import org.kde.kcmutils
+ import org.kde.plasma.plasmoid
+ import org.kde.plasma.configuration
++import org.kde.plasma.workspace.dbus as DBus
+ 
+ SimpleKCM {
+     id: appearanceRoot
+@@ -155,6 +156,41 @@ SimpleKCM {
+                     Layout.preferredHeight: wallpaperComboBox.height
+                 }
+             }
++
++            QQC2.Label {
++                id: sunkCostLabel
++                // On a screen in a 3D mode the wallpaper lies behind the screen and keeps its size,
++                // so the columns only one eye would see are cut at both sides. KWin says how many
++                // for each screen, from the Background depth and the screen's width.
++                readonly property string screenName: {
++                    const geometry = Plasmoid.screenGeometry
++                    const screens = Qt.application.screens
++                    for (let i = 0; i < screens.length; ++i) {
++                        if (screens[i].virtualX === geometry.x && screens[i].virtualY === geometry.y) {
++                            return screens[i].name
++                        }
++                    }
++                    return ""
++                }
++                readonly property int cut: Number(stereoDepth.properties.WallpaperCuts?.[screenName] ?? 0)
++                visible: cut > 0
++                Layout.fillWidth: true
++                Layout.maximumWidth: Kirigami.Units.gridUnit * 25
++                wrapMode: Text.Wrap
++                text: i18ndcp("plasma_shell_org.kde.plasma.desktop", "@info %1 is a number of pixels, %2 how many of them at each side",
++                              "%1 pixel of the wallpaper's width will be lost to the sunk effect, %2 at each side.",
++                              "%1 pixels of the wallpaper's width will be lost to the sunk effect, %2 at each side.",
++                              2 * cut, cut)
++                      + "\n" + i18ndc("plasma_shell_org.kde.plasma.desktop", "@info", "Videos with pop effects are not expected to be comfortable with widgets or other things over it.")
++
++                DBus.Properties {
++                    id: stereoDepth
++                    busType: DBus.BusType.Session
++                    service: "org.kde.KWin"
++                    path: "/org/kde/KWin/StereoDepth"
++                    iface: "org.kde.KWin.StereoDepth"
++                }
++            }
+         }
+ 
+         Item {
+-- 
+2.53.0
+

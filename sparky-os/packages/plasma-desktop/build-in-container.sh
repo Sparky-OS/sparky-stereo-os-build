@@ -1,8 +1,9 @@
 #!/bin/bash
-# Sparky Stereo OS: plasma-desktop 4:6.7.4-1+stereo3d2, the +stereo3d1 source package plus patches/s2-*, built with Lean Code.
+# Sparky Stereo OS: plasma-desktop 4:6.7.4-1+stereo3d3, the +stereo3d2 source package plus patches/s3-* and
+# sparky-os/translations/plasma-desktop-wallpaper-cost.po.patch, built with Lean Code.
 # Created by Daniel Ramos (Capitain Jack) 2026/10/30
 # Copyright 2026 under the GNU GPL3 License
-# Runs inside the Lean Code migration container; build.sh starts it. /work is the job folder, /src the plain +stereo3d1 source
+# Runs inside the Lean Code migration container; build.sh starts it. /work is the job folder, /src the plain +stereo3d2 source
 # package, /prev the earlier +lc1 builds, /patches this folder's patches.
 trap 'chown -R 1000:1000 /work' EXIT
 set -euo pipefail
@@ -13,23 +14,26 @@ printf 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://w
 printf 'deb http://deb.debian.org/debian testing contrib non-free non-free-firmware\n' > /etc/apt/sources.list.d/debian-extra-components.list
 printf 'Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n' > /etc/apt/preferences.d/edition
 cd /work
-mkdir s2 && cd s2
-# the plain +stereo3d1 source package: sparky-os/repo/plain-from-lc.py --no-build-depends on the published +stereo3d1+lc1
-# source (the same bytes each time it is made); its .dsc pins the files
-echo '35a185600943e936968aa8caafc6fa0cc6544d4742c5412380a7e1f15eca1dae  /src/plasma-desktop_6.7.4-1+stereo3d1.dsc' | sha256sum -c
-cp /src/plasma-desktop_6.7.4-1+stereo3d1.dsc /src/plasma-desktop_6.7.4-1+stereo3d1.debian.tar.xz /src/plasma-desktop_6.7.4.orig.tar.xz /src/plasma-desktop_6.7.4.orig.tar.xz.asc .
-dpkg-source -x plasma-desktop_6.7.4-1+stereo3d1.dsc t >/dev/null
+mkdir s3 && cd s3
+# the plain +stereo3d2 source package, the one the +stereo3d2+lc1 build was made from (ORDER 291, source-plain); its .dsc
+# pins the files
+echo '316a0d3ef5bb6c3a5477d4076dbf87fba2623ad348b4c1ec0e1685daf331f3d6  /src/plasma-desktop_6.7.4-1+stereo3d2.dsc' | sha256sum -c
+cp /src/plasma-desktop_6.7.4-1+stereo3d2.dsc /src/plasma-desktop_6.7.4-1+stereo3d2.debian.tar.xz /src/plasma-desktop_6.7.4.orig.tar.xz /src/plasma-desktop_6.7.4.orig.tar.xz.asc .
+dpkg-source -x plasma-desktop_6.7.4-1+stereo3d2.dsc t >/dev/null
 cd t
-for p in /patches/s2-*.patch; do
+for p in /patches/s3-*.patch; do
     cp "$p" debian/patches/
     basename "$p" >> debian/patches/series
 done
+# the new strings in the eight languages, on the 6.7.4 tarball's catalogs; last in the series
+cp /toolkit/translations/plasma-desktop-wallpaper-cost.po.patch debian/patches/
+echo plasma-desktop-wallpaper-cost.po.patch >> debian/patches/series
 python3 - <<'CHANGELOG'
 from pathlib import Path
 import email.utils
 p = Path('debian/changelog')
-entry = Path('/tools/changelog-stereo3d2.txt').read_text()
-assert entry.startswith('plasma-desktop (4:6.7.4-1+stereo3d2) unstable;'), entry[:60]
+entry = Path('/tools/changelog-stereo3d3.txt').read_text()
+assert entry.startswith('plasma-desktop (4:6.7.4-1+stereo3d3) unstable;'), entry[:60]
 p.write_text(entry.rstrip('\n') + '\n\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + email.utils.formatdate(localtime=True) + '\n\n' + p.read_text())
 CHANGELOG
 head -30 debian/changelog
@@ -38,10 +42,10 @@ dpkg-source -b t >/dev/null
 rm -rf t
 ls
 mkdir -p /work/lc && cd /work/lc
-cp ../s2/plasma-desktop_6.7.4-1+stereo3d2.dsc ../s2/plasma-desktop_6.7.4-1+stereo3d2.debian.tar.xz ../s2/plasma-desktop_6.7.4.orig.tar.xz ../s2/plasma-desktop_6.7.4.orig.tar.xz.asc .
-dpkg-source -x plasma-desktop_6.7.4-1+stereo3d2.dsc /work/lc/source >/dev/null
+cp ../s3/plasma-desktop_6.7.4-1+stereo3d3.dsc ../s3/plasma-desktop_6.7.4-1+stereo3d3.debian.tar.xz ../s3/plasma-desktop_6.7.4.orig.tar.xz ../s3/plasma-desktop_6.7.4.orig.tar.xz.asc .
+dpkg-source -x plasma-desktop_6.7.4-1+stereo3d3.dsc /work/lc/source >/dev/null
 cd /work/lc/source
-PYTHONPATH=/toolkit python3 -m lean.debian_prepare /work/lc/source 4:6.7.4-1+stereo3d2+lc1 --toolkit /toolkit
+PYTHONPATH=/toolkit python3 -m lean.debian_prepare /work/lc/source 4:6.7.4-1+stereo3d3+lc1 --toolkit /toolkit
 apt-get -y update >/dev/null 2>&1
 apt-get -y --no-install-recommends build-dep /work/lc/source >/work/build-dep.log 2>&1
 # the link and start gate of lean.debhelper runs the rebuilt programs in a bubblewrap root
@@ -54,6 +58,6 @@ runuser -u builder -- env SPARKY_LC_PREVIOUS_DIR=/prev SPARKY_LC_ARCHIVE_CONFIG=
 cd /work/lc
 PYTHONPATH=/toolkit python3 -m lean.release check-debs /work/lc/*+lc1_*.deb
 # the lock screen's fader goes with the wallpaper layer
-mkdir -p /work/qml-check && dpkg-deb -x /work/lc/plasma-desktop-data_6.7.4-1+stereo3d2+lc1_all.deb /work/qml-check
+mkdir -p /work/qml-check && dpkg-deb -x /work/lc/plasma-desktop-data_6.7.4-1+stereo3d3+lc1_all.deb /work/qml-check
 grep -F 'wallpaperLayer' /work/qml-check/usr/share/plasma/shells/org.kde.plasma.desktop/contents/lockscreen/LockScreenUi.qml
 rm -rf /work/qml-check
