@@ -1,0 +1,273 @@
+From f6cc5d41bbb4a729fdcb30d6dc08d883dcfe900a Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 30 Oct 2026 02:50:57 -0300
+Subject: [PATCH] greeter: Draw the wallpaper below the interface where it
+ shows depth
+
+The lock screen's wallpaper is a wallpaper: on a stereo screen that
+shows depth it lies behind the screen as the desktop's does, while the
+clock, the password field and the rest of the interface stay at the
+screen. Stereo KWin can only place it there when the wallpaper is a
+surface of its own; the greeter drew it into the interface's window,
+under the interface (z -1000).
+
+On Wayland each screen's view gets a child QQuickWindow for the
+wallpaper: frameless, transparent for input, with an alpha channel (a
+video wallpaper's stereo layer lies below it), black, the view's size,
+and Qt::WindowStaysOnBottomHint, which the edition's Qt Wayland turns
+into a subsurface below the view's surface and confirms on the window
+(_q_wayland_below_parent). A Qt that does not confirm it would put the
+window above the interface and hide the password field, so there the
+wallpaper stays in the interface's window and the greeter warns once.
+updateWallpaperLayer() moves
+the wallpaper there, makes the view transparent and offers the window's
+content item as wallpaperLayer, for the lock screen's fader, which
+draws a copy of the wallpaper (its blur samples the wallpaper item; an
+item belongs to one window at a time, so the wallpaper leaves its window
+before the fader moves and joins the fader's window after it), while:
+- the compositor says the view is awake (kde_stereo_depth_v1, through
+  libstereo-declare 1.5): it is on a stereo screen;
+- the user's Background depth is above zero (kwinrc [StereoDepth]
+  SunkLimit, 10 by default as in KWin; read once, since it cannot
+  change while the screen is locked and the greeter starts at each
+  lock);
+- the stereo show is not on.
+Otherwise the wallpaper stays in the interface's window, drawn exactly
+as before: on a 2D screen and with a Background depth of 0 nothing
+changes (an interface drawn over a transparent window loses its
+subpixel text and blends its edges in the compositor, so the layer is
+only used where the wallpaper does move). On X11 nothing changes.
+
+Assisted-by: Claude Opus 5.5
+---
+ greeter/CMakeLists.txt |   6 ++
+ greeter/greeterapp.cpp | 123 ++++++++++++++++++++++++++++++++++++++++-
+ greeter/greeterapp.h   |   4 ++
+ 3 files changed, 132 insertions(+), 1 deletion(-)
+
+diff --git a/greeter/CMakeLists.txt b/greeter/CMakeLists.txt
+index f2344300..dc452b3a 100644
+--- a/greeter/CMakeLists.txt
++++ b/greeter/CMakeLists.txt
+@@ -58,6 +58,12 @@ if (StereoShow_FOUND)
+     target_link_libraries(kscreenlocker_greet StereoShow::stereoshow)
+     target_compile_definitions(kscreenlocker_greet PRIVATE HAVE_STEREO_SHOW)
+ endif()
++# whether the lock screen is on a stereo screen that shows depth (kde_stereo_depth_v1), for its wallpaper
++find_package(StereoDeclare 1.5 QUIET CONFIG)
++if (StereoDeclare_FOUND)
++    target_link_libraries(kscreenlocker_greet StereoDeclare::stereo-declare)
++    target_compile_definitions(kscreenlocker_greet PRIVATE HAVE_STEREO_DECLARE)
++endif()
+ 
+ target_link_libraries(kscreenlocker_greet
+     settings
+diff --git a/greeter/greeterapp.cpp b/greeter/greeterapp.cpp
+index fb7e4bab..a405cdee 100644
+--- a/greeter/greeterapp.cpp
++++ b/greeter/greeterapp.cpp
+@@ -25,6 +25,8 @@ SPDX-License-Identifier: GPL-2.0-or-later
+ 
+ // KDE
+ #include <KAuthorized>
++#include <KConfigGroup>
++#include <KSharedConfig>
+ #include <KConfigLoader>
+ #include <KConfigPropertyMap>
+ #include <KCrash>
+@@ -43,6 +45,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
+ 
+ // Qt
+ #include <QAbstractNativeEventFilter>
++#include <QtGui/qguiapplication_platform.h>
+ #include <QClipboard>
+ #include <QDBusConnection>
+ #include <QFile>
+@@ -63,6 +66,9 @@ SPDX-License-Identifier: GPL-2.0-or-later
+ // Wayland
+ #include <wayland-client.h>
+ #include <wayland-ksld-client-protocol.h>
++#ifdef HAVE_STEREO_DECLARE
++#include <stereo-declare.h>
++#endif
+ // X11
+ #include <X11/Xatom.h>
+ #include <X11/Xlib.h>
+@@ -259,10 +265,103 @@ void UnlockApp::setWallpaperItemProperties(PlasmaQuick::SharedQmlEngine *wallpap
+     QQmlExpression expr(wallpaperObject->engine()->rootContext(), item, QStringLiteral("parent"));
+     QQmlProperty prop(item, QStringLiteral("anchors.fill"));
+     prop.write(expr.evaluate());
++
++    updateWallpaperLayer(view);
++}
++
++// The lock screen's wallpaper is a wallpaper: on a stereo screen that shows depth, Stereo KWin draws it behind the
++// screen, as it draws the desktop's, while the clock, the password field and the rest of the interface stay at the
++// screen. It can only do that when the wallpaper is a surface of its own, below the interface's: the wallpaper's
++// window (createViewForScreen()), which the edition's Qt Wayland places below its parent for
++// Qt::WindowStaysOnBottomHint, and says so (_q_wayland_below_parent). The wallpaper goes there while the view is on
++// such a screen (the compositor says the view is awake, kde_stereo_depth_v1) and the user's Background depth (kwinrc
++// [StereoDepth] SunkLimit, 10 by default in KWin) is above zero, and the stereo show is not on; otherwise it stays in
++// the interface's window, drawn exactly as before. The lock screen's fader draws a copy of the wallpaper and goes with
++// it (wallpaperLayer).
++void UnlockApp::updateWallpaperLayer(PlasmaQuick::QuickViewSharedEngine *view)
++{
++    auto *wallpaperWindow = view->property("wallpaperWindow").value<QQuickWindow *>();
++    auto *object = view->property("wallpaperGraphicsObject").value<PlasmaQuick::SharedQmlEngine *>();
++    auto *item = object ? qobject_cast<QQuickItem *>(object->rootObject()) : nullptr;
++    if (!wallpaperWindow || !item) {
++        return;
++    }
++    bool layered = view->property("stereoDepthAwake").toBool() && m_sunkLimit > 0 && !wallpaperWindow->property("wallpaperLayerRefused").toBool();
++#ifdef HAVE_STEREO_SHOW
++    if (auto *stereoBackground = view->property("stereoBackground").value<StereoBackground *>()) {
++        layered = layered && !stereoBackground->active();
++    }
++#endif
++    if (layered == view->property("wallpaperLayered").toBool()) {
++        return;
++    }
++    if (layered) {
++        // only a Qt that places the window below its parent says so; elsewhere it would cover the interface
++        wallpaperWindow->setVisible(true);
++        if (!wallpaperWindow->property("_q_wayland_below_parent").toBool()) {
++            qCWarning(KSCREENLOCKER_GREET) << "This Qt cannot place the wallpaper below the lock screen; it stays in the lock screen's window";
++            wallpaperWindow->setVisible(false);
++            wallpaperWindow->setProperty("wallpaperLayerRefused", true);
++            return;
++        }
++    }
++    view->setProperty("wallpaperLayered", layered);
++    // An item belongs to one window at a time, and the fader's blur samples the wallpaper from the fader's window:
++    // take the wallpaper out of its window, move the fader, then put the wallpaper into the fader's window, so that
++    // nothing refers to it from the other window while it moves.
++    item->setParentItem(nullptr);
++    view->rootContext()->setContextProperty(QStringLiteral("wallpaperLayer"), layered ? wallpaperWindow->contentItem() : nullptr);
++    item->setParentItem(layered ? wallpaperWindow->contentItem() : view->rootObject());
++    QQmlExpression expr(object->engine()->rootContext(), item, QStringLiteral("parent"));
++    QQmlProperty(item, QStringLiteral("anchors.fill")).write(expr.evaluate());
++    view->setColor(layered ? Qt::transparent : Qt::black);
++    wallpaperWindow->setVisible(layered);
++}
++
++#ifdef HAVE_STEREO_DECLARE
++static void stereoDepthChanged(void *data, struct wl_surface *, const struct stereo_depth_state *state)
++{
++    auto *view = static_cast<PlasmaQuick::QuickViewSharedEngine *>(data);
++    view->setProperty("stereoDepthAwake", state->awake != 0);
++    QMetaObject::invokeMethod(qApp, [view] {
++        static_cast<UnlockApp *>(qApp)->updateWallpaperLayer(view);
++    }, Qt::QueuedConnection);
++}
++#endif
++
++// Hears from the compositor whether the view is on a stereo screen that shows depth.
++void UnlockApp::followStereoDepth(PlasmaQuick::QuickViewSharedEngine *view)
++{
++#ifdef HAVE_STEREO_DECLARE
++    auto *application = nativeInterface<QNativeInterface::QWaylandApplication>();
++    // on Wayland a window's id is its wl_surface
++    auto *surface = reinterpret_cast<wl_surface *>(view->winId());
++    if (!application || !surface) {
++        return;
++    }
++    static bool initialized = false;
++    if (!initialized) {
++        initialized = true;
++        // once on this thread; Qt's event loop dispatches the default queue (-EBUSY: another part already started it)
++        stereo_declare_wayland_init(application->display(), nullptr);
++        wl_display_roundtrip(application->display());
++    }
++    if (stereo_depth_wayland_watch(surface, stereoDepthChanged, view) == 0) {
++        connect(view, &QObject::destroyed, this, [surface] {
++            stereo_depth_wayland_unwatch(surface);
++        });
++    }
++#else
++    Q_UNUSED(view)
++#endif
+ }
+ 
+ void UnlockApp::initialViewSetup()
+ {
++    // the user's Background depth (System Settings, 3D Depth), which KWin reads from kwinrc; 10 is KWin's default.
++    // It cannot change while the screen is locked, and the greeter starts again at each lock.
++    m_sunkLimit = KConfigGroup(KSharedConfig::openConfig(QStringLiteral("kwinrc")), QStringLiteral("StereoDepth")).readEntry("SunkLimit", 10);
++
+     qmlRegisterUncreatableType<PamAuthenticator>("org.kde.kscreenlocker",
+                                                  1,
+                                                  0,
+@@ -326,6 +425,25 @@ PlasmaQuick::QuickViewSharedEngine *UnlockApp::createViewForScreen(QScreen *scre
+         }
+     }
+ 
++    // the wallpaper's own window, below the interface's (updateWallpaperLayer())
++    if (KWindowSystem::isPlatformWayland()) {
++        auto *wallpaperWindow = new QQuickWindow();
++        wallpaperWindow->setParent(view);
++        wallpaperWindow->setFlags(Qt::FramelessWindowHint | Qt::WindowTransparentForInput | Qt::WindowStaysOnBottomHint);
++        auto wallpaperFormat = wallpaperWindow->format();
++        wallpaperFormat.setAlphaBufferSize(8);
++        wallpaperWindow->setFormat(wallpaperFormat);
++        wallpaperWindow->setColor(Qt::black);
++        wallpaperWindow->setGeometry(QRect(QPoint(0, 0), view->size()));
++        connect(view, &QWindow::widthChanged, wallpaperWindow, [view, wallpaperWindow] {
++            wallpaperWindow->resize(view->size());
++        });
++        connect(view, &QWindow::heightChanged, wallpaperWindow, [view, wallpaperWindow] {
++            wallpaperWindow->resize(view->size());
++        });
++        view->setProperty("wallpaperWindow", QVariant::fromValue(wallpaperWindow));
++    }
++
+     if (m_ksldInterface) {
+         view->create();
+         org_kde_ksld_x11window(m_ksldInterface, view->winId());
+@@ -400,11 +518,13 @@ PlasmaQuick::QuickViewSharedEngine *UnlockApp::createViewForScreen(QScreen *scre
+     }
+     auto *stereoBackground = new StereoBackground(view, session->client());
+     view->rootContext()->setContextProperty(QStringLiteral("stereoBackground"), stereoBackground);
++    view->setProperty("stereoBackground", QVariant::fromValue(stereoBackground));
+     if (wallpaperObj) {
+         auto *item = qobject_cast<QQuickItem *>(wallpaperObj->rootObject());
+         if (item) {
+-            connect(stereoBackground, &StereoBackground::activeChanged, item, [item, stereoBackground] {
++            connect(stereoBackground, &StereoBackground::activeChanged, item, [this, view, item, stereoBackground] {
+                 item->setVisible(!stereoBackground->active());
++                updateWallpaperLayer(view);
+             });
+         }
+     }
+@@ -454,6 +574,7 @@ PlasmaQuick::QuickViewSharedEngine *UnlockApp::createViewForScreen(QScreen *scre
+     // showFullScreen is implicit on X11 (through geometry and hints) and Wayland (layer-shell)
+     view->show();
+     view->raise();
++    followStereoDepth(view);
+ 
+     auto onFrameSwapped = [this, view] {
+         markViewsAsVisible(view);
+diff --git a/greeter/greeterapp.h b/greeter/greeterapp.h
+index 65499790..b25307db 100644
+--- a/greeter/greeterapp.h
++++ b/greeter/greeterapp.h
+@@ -56,6 +56,8 @@ public:
+     void updateCanSuspend();
+     void updateCanHibernate();
+ 
++    void updateWallpaperLayer(PlasmaQuick::QuickViewSharedEngine *view);
++
+ public Q_SLOTS:
+     void osdProgress(const QString &icon, int percent, const int maximumPercent, const QString &additionalText);
+     void osdText(const QString &icon, const QString &additionalText);
+@@ -74,6 +76,8 @@ private:
+     void initialize();
+     PlasmaQuick::SharedQmlEngine *loadWallpaperPlugin(PlasmaQuick::QuickViewSharedEngine *view);
+     void setWallpaperItemProperties(PlasmaQuick::SharedQmlEngine *wallpaperObject, PlasmaQuick::QuickViewSharedEngine *view);
++    void followStereoDepth(PlasmaQuick::QuickViewSharedEngine *view);
++    int m_sunkLimit = 10;
+     void screenGeometryChanged(QScreen *screen, const QRect &geo);
+     QWindow *getActiveScreen();
+ 
+-- 
+2.53.0
+
