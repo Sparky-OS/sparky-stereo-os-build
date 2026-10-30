@@ -128,6 +128,12 @@ def main(root, recipe, counter, smoke, packaging_revision=None):
         shutil.copy2(recipe / filename, target / filename)
     shutil.copytree(HERE / 'maint', target / 'maint')
     shutil.copy2(HERE / 'libc-dev.py', target / 'libc-dev.py')
+    # The recipe's test fixtures include binary files (group 38's EDID, tests/vkms-frame-sequential/dp-fs.bin): the
+    # 3.0 (quilt) Debian tarball carries them only when debian/source/include-binaries lists them.
+    binaries = sorted(path.relative_to(root).as_posix() for path in target.rglob('*')
+                      if path.is_file() and not path.is_symlink() and b'\0' in path.read_bytes())
+    if binaries:
+        (debian / 'source/include-binaries').write_text(''.join(path + '\n' for path in binaries))
     for filename in ['build.sh', 'stage.sh', 'check-module-signature.py', 'check-source-consumers.py']:
         shutil.copy2(HERE / filename, debian / filename)
     subprocess.run([sys.executable, str(debian / 'check-source-consumers.py'),
