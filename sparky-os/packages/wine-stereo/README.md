@@ -223,3 +223,21 @@ frame never qualifies a failing first frame. Native and Wine pixels are
 separate observations. External protocol traces can correlate submitted
 pixmaps and Present events, but do not expose uninstrumented Mesa internals.
 This fixture is not a rendering correction or a package acceptance gate.
+
+### Packed Direct3D 9 pixel control
+
+`tests/d3d9-pair.c` writes address-coded pixels into a D3D9 back buffer, presents,
+then resets from 320x200 to 256x160. Its `stereo` argument puts the two eyes in
+halves of that same buffer; `mono` uses the whole buffer for one image.
+It does not declare a native stereo window. That is the runtime producer's job.
+
+Run `tests/check-d3d9-pair.py IMAGE --phase 0 --mode stereo` on the raw 320x200
+X11 image, or `--phase 1` on the resized 256x160 image. The checker requires
+Python 3, NumPy and Pillow, checks every channel without a tolerance, and exits
+nonzero on any wrong pixel. Use `--mode mono` for the ordinary control.
+Do not apply the WGL quad-buffer oracle: this fixture's eye is half the buffer
+width, whereas the WGL fixture draws each eye at the full logical width.
+
+This raw-image check does not prove compositor declaration, eye separation or
+surface lifetime. Record actual declaration requests and separate ScreenShot2
+captures for those gates, including the published runtime as a negative control.
