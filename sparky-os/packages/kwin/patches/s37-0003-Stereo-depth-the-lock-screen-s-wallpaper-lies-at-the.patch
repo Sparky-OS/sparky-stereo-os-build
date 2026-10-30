@@ -1,0 +1,499 @@
+From e9df35fcbc74b428a032a873e7c0d41b274d0808 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 30 Oct 2026 00:53:45 -0300
+Subject: [PATCH 3/5] Stereo depth: the lock screen's wallpaper lies at the
+ desktop's level
+
+The lock screen's wallpaper is a wallpaper: it sinks to the same level
+as the desktop's, while the greeter's clock and password field stay at
+the screen. The whole greeter was at the screen's level (Role::Fixed).
+
+The greeter's wallpaper is the surface it places below its own: Qt
+Multimedia's stereo layer puts a stereo video wallpaper there, below the
+greeter's window (wl_subsurface.place_below), while the interface is the
+greeter's own surface and anything Qt puts above it. On a stereo output
+with a sunk limit, WorkspaceScene::finalDrawWindow() now draws those
+surfaces of a lock screen window at the sunk limit's parallax, cut at the
+sides as the desktop is, and the rest of the window at its own level, the
+screen's (drawWindowPart() draws a part of a window where it lies, with
+the window's paint data). The depth picture of the L + depth outputs puts
+them at the same depth. Such a window is drawn per eye, so its opaque
+region no longer hides the columns that are cut.
+
+A 2D wallpaper that the greeter draws into its own surface, with the
+interface, is not told apart here and stays at the screen's level.
+
+The screen locker's connection can now be made by the tests
+(WaylandServer::createScreenLockerConnection() is public), and
+Test::setupWaylandConnection() takes the client's end of it.
+testStereoDepthWallpaper checks a lock screen with a stereo and with a
+flat wallpaper below its interface: the wallpaper's columns moved by each
+eye's shift and cut, and the interface at the same place in both eyes.
+
+Assisted-by: Claude Opus 5.5
+---
+ autotests/integration/kwin_wayland_test.h     |   8 +-
+ .../stereo_depth_wallpaper_test.cpp           | 125 +++++++++++++++++-
+ autotests/integration/test_helpers.cpp        |  16 ++-
+ src/scene/stereodepth.cpp                     |   5 +
+ src/scene/stereodepth.h                       |   7 +
+ src/scene/workspacescene.cpp                  |  90 +++++++++++--
+ src/scene/workspacescene.h                    |   4 +
+ src/wayland_server.h                          |   7 +-
+ 8 files changed, 241 insertions(+), 21 deletions(-)
+
+diff --git a/autotests/integration/kwin_wayland_test.h b/autotests/integration/kwin_wayland_test.h
+index f9240b9..f35f7dc 100644
+--- a/autotests/integration/kwin_wayland_test.h
++++ b/autotests/integration/kwin_wayland_test.h
+@@ -1191,7 +1191,11 @@ public:
+ 
+ struct Connection
+ {
+-    static std::unique_ptr<Connection> setup(AdditionalWaylandInterfaces interfaces = AdditionalWaylandInterfaces());
++    /**
++     * Connects to the compositor, through @a socket when it is given (the client's end of a
++     * connection the compositor made, such as the screen locker's).
++     */
++    static std::unique_ptr<Connection> setup(AdditionalWaylandInterfaces interfaces = AdditionalWaylandInterfaces(), int socket = -1);
+     ~Connection();
+ 
+     bool sync();
+@@ -1282,7 +1286,7 @@ void tabletToolTipEvent(const QPointF &pos, qreal pressure, qreal xTilt, qreal y
+  * @returns @c true if created successfully, @c false if there was an error
+  * @see destroyWaylandConnection
+  */
+-bool setupWaylandConnection(AdditionalWaylandInterfaces flags = AdditionalWaylandInterfaces());
++bool setupWaylandConnection(AdditionalWaylandInterfaces flags = AdditionalWaylandInterfaces(), int socket = -1);
+ 
+ /**
+  * Destroys the Wayland Connection created with @link{setupWaylandConnection}.
+diff --git a/autotests/integration/stereo_depth_wallpaper_test.cpp b/autotests/integration/stereo_depth_wallpaper_test.cpp
+index d1c0f5c..4ed4f93 100644
+--- a/autotests/integration/stereo_depth_wallpaper_test.cpp
++++ b/autotests/integration/stereo_depth_wallpaper_test.cpp
+@@ -13,14 +13,18 @@
+ #include "plugins/screenshot/screenshot.h"
+ #include "scene/stereodepth.h"
+ #include "scene/workspacescene.h"
++#include "wayland-client/viewporter.h"
+ #include "wayland_server.h"
+ #include "window.h"
+ #include "workspace.h"
+ 
+ #include <KConfigGroup>
+ #include <KSharedConfig>
++#include <KWayland/Client/subsurface.h>
+ #include <KWayland/Client/surface.h>
+ 
++#include <QPainter>
++
+ namespace KWin
+ {
+ 
+@@ -47,6 +51,10 @@ private Q_SLOTS:
+     void testDesktopKeepsItsSize();
+     void testNoSunkLimitNoCut();
+     void testTwoDimensionalOutputIsUnchanged();
++    // last: the screen locker's connection is the test's own from here on
++    void testLockScreenWallpaperSinks_data();
++    void testLockScreenWallpaperSinks();
++    void testLockScreenNoSunkLimit();
+ };
+ 
+ static const QSize s_outputSize(320, 240);
+@@ -136,9 +144,70 @@ static Desktop createDesktop()
+     return result;
+ }
+ 
++// the greeter's own interface on the lock screen, at the screen's level: an opaque block, its clock
++static const Rect s_clock(140, 100, 40, 40);
++
++struct LockScreen
++{
++    std::unique_ptr<KWayland::Client::Surface> surface;
++    std::unique_ptr<Test::LayerSurfaceV1> shellSurface;
++    std::unique_ptr<KWayland::Client::Surface> wallpaper;
++    std::unique_ptr<KWayland::Client::SubSurface> subsurface;
++    std::unique_ptr<WaylandClient::Viewport> viewport;
++    std::unique_ptr<Test::StereoContentV1> declaration;
++    Window *window = nullptr;
++};
++
++// The lock screen as the greeter makes it: a layer surface over the output with its interface, and
++// its wallpaper in a surface placed below it, full side by side for a stereo wallpaper
++static LockScreen createLockScreen(bool stereo)
++{
++    LockScreen result;
++    result.surface = Test::createSurface();
++    result.shellSurface = Test::createLayerSurfaceV1(result.surface.get(), QStringLiteral("lockscreen"));
++    result.shellSurface->set_size(0, 0);
++    result.shellSurface->set_exclusive_zone(-1);
++    result.shellSurface->set_keyboard_interactivity(1);
++    result.shellSurface->set_anchor(Test::LayerSurfaceV1::anchor_bottom | Test::LayerSurfaceV1::anchor_top
++                                    | Test::LayerSurfaceV1::anchor_left | Test::LayerSurfaceV1::anchor_right);
++    QSignalSpy configured(result.shellSurface.get(), &Test::LayerSurfaceV1::configureRequested);
++    result.surface->commit(KWayland::Client::Surface::CommitFlag::None);
++    if (!configured.wait()) {
++        return result;
++    }
++    result.shellSurface->ack_configure(configured.last().at(0).value<quint32>());
++    const QSize size = configured.last().at(1).toSize();
++
++    result.wallpaper = Test::createSurface();
++    result.subsurface = Test::createSubSurface(result.wallpaper.get(), result.surface.get());
++    result.subsurface->placeBelow(result.surface.get());
++    if (stereo) {
++        QImage pair(QSize(2 * size.width(), size.height()), QImage::Format_ARGB32_Premultiplied);
++        QPainter painter(&pair);
++        painter.drawImage(0, 0, wallpaperImage(size, 0));
++        painter.drawImage(size.width(), 0, wallpaperImage(size, 1));
++        painter.end();
++        result.viewport = Test::viewporter()->createViewport(*result.wallpaper);
++        result.viewport->setDestination(size);
++        result.declaration = std::make_unique<Test::StereoContentV1>(Test::stereoContentManager()->create(*result.wallpaper));
++        result.declaration->set_content(Test::StereoContentV1::content_side_by_side_full);
++        Test::render(result.wallpaper.get(), pair);
++    } else {
++        Test::render(result.wallpaper.get(), wallpaperImage(size));
++    }
++
++    QImage interface(size, QImage::Format_ARGB32_Premultiplied);
++    interface.fill(Qt::transparent);
++    QPainter painter(&interface);
++    painter.fillRect(s_clock, Qt::white);
++    painter.end();
++    result.window = Test::renderAndWaitForShown(result.surface.get(), interface);
++    return result;
++}
++
+ // Compares each eye of @a image, column by column on three rows, with the wallpaper's columns moved
+ // by that eye's shift, and black in the columns cut from each side. Says where they differ.
+-static QString compareEyes(const QImage &image, int cut, int leftShift, int rightShift, int leftView = 0, int rightView = 0)
++static QString compareEyes(const QImage &image, int cut, int leftShift, int rightShift, int leftView = 0, int rightView = 0, const Rect &interface = Rect())
+ {
+     const int width = s_outputSize.width();
+     const struct {
+@@ -149,7 +218,11 @@ static QString compareEyes(const QImage &image, int cut, int leftShift, int righ
+     for (const auto &eye : eyes) {
+         for (int y : {0, s_outputSize.height() / 2, s_outputSize.height() - 1}) {
+             for (int x = 0; x < width; ++x) {
+-                const QRgb expected = x < cut || x >= width - cut ? qRgb(0, 0, 0) : columnColor(x - eye.shift, eye.view);
++                QRgb expected = x < cut || x >= width - cut ? qRgb(0, 0, 0) : columnColor(x - eye.shift, eye.view);
++                if (interface.contains(QPoint(x, y))) {
++                    // the interface over the wallpaper, at the same place in both eyes
++                    expected = qRgb(255, 255, 255);
++                }
+                 const QRgb pixel = image.pixel(eye.offset + x, y);
+                 if (pixel != expected) {
+                     return QStringLiteral("eye at %1, column %2, row %3: %4, expected %5").arg(eye.offset).arg(x).arg(y).arg(QColor(pixel).name(), QColor(expected).name());
+@@ -189,7 +262,13 @@ void StereoDepthWallpaperTest::init()
+         .geometry = Rect(QPoint(), s_outputSize),
+         .modes = {plainMode(), stereoMode()},
+     }});
+-    QVERIFY(Test::setupWaylandConnection(Test::AdditionalWaylandInterface::LayerShellV1));
++    // the lock screen's cases connect as the screen locker's greeter does
++    const bool lockScreen = QByteArray(QTest::currentTestFunction()).startsWith("testLockScreen");
++    const int socket = lockScreen ? waylandServer()->createScreenLockerConnection() : -1;
++    QVERIFY(!lockScreen || socket >= 0);
++    QVERIFY(Test::setupWaylandConnection(Test::AdditionalWaylandInterface::LayerShellV1 | Test::AdditionalWaylandInterface::Viewporter
++                                             | Test::AdditionalWaylandInterface::StereoContentV1,
++                                         socket));
+     QVERIFY(stereoOutput(true));
+     options->setStereoPoppedLimit(s_poppedLimit);
+ }
+@@ -261,6 +340,46 @@ void StereoDepthWallpaperTest::testTwoDimensionalOutputIsUnchanged()
+     QCOMPARE(*image, wallpaperImage(s_outputSize).convertToFormat(QImage::Format_RGB32));
+ }
+ 
++void StereoDepthWallpaperTest::testLockScreenWallpaperSinks_data()
++{
++    QTest::addColumn<bool>("stereo");
++
++    QTest::addRow("stereo wallpaper") << true;
++    QTest::addRow("flat wallpaper") << false;
++}
++
++// The lock screen's wallpaper is a wallpaper: at the desktop's level and cut as the desktop's is,
++// while the greeter's interface stays at the screen's level, the same place in both eyes.
++void StereoDepthWallpaperTest::testLockScreenWallpaperSinks()
++{
++    QFETCH(bool, stereo);
++
++    options->setStereoSunkLimit(96);
++    const LockScreen lockScreen = createLockScreen(stereo);
++    QVERIFY(lockScreen.window && lockScreen.window->isLockScreen());
++    QCOMPARE(StereoDepth::parallax(lockScreen.window, s_outputSize.width()), 0);
++
++    const auto image = capture();
++    QVERIFY(image);
++    QCOMPARE(image->size(), QSize(2 * s_outputSize.width(), s_outputSize.height()));
++    const QString difference = compareEyes(*image, 8, -8, 8, 0, stereo ? 1 : 0, s_clock);
++    QVERIFY2(difference.isEmpty(), qPrintable(difference));
++}
++
++// With no sunk limit the lock screen is drawn as it is.
++void StereoDepthWallpaperTest::testLockScreenNoSunkLimit()
++{
++    options->setStereoSunkLimit(0);
++    QVERIFY(StereoDepth::isEnabled());
++    const LockScreen lockScreen = createLockScreen(true);
++    QVERIFY(lockScreen.window && lockScreen.window->isLockScreen());
++
++    const auto image = capture();
++    QVERIFY(image);
++    const QString difference = compareEyes(*image, 0, 0, 0, 0, 1, s_clock);
++    QVERIFY2(difference.isEmpty(), qPrintable(difference));
++}
++
+ }
+ 
+ WAYLANDTEST_MAIN(KWin::StereoDepthWallpaperTest)
+diff --git a/autotests/integration/test_helpers.cpp b/autotests/integration/test_helpers.cpp
+index 932c339..685842f 100644
+--- a/autotests/integration/test_helpers.cpp
++++ b/autotests/integration/test_helpers.cpp
+@@ -359,12 +359,12 @@ void MockInputMethod::zwp_input_method_v1_deactivate(struct ::zwp_input_method_c
+     }
+ }
+ 
+-bool setupWaylandConnection(AdditionalWaylandInterfaces flags)
++bool setupWaylandConnection(AdditionalWaylandInterfaces flags, int socket)
+ {
+     if (s_waylandConnection) {
+         return false;
+     }
+-    s_waylandConnection = Connection::setup(flags);
++    s_waylandConnection = Connection::setup(flags, socket);
+     return bool(s_waylandConnection);
+ }
+ 
+@@ -380,13 +380,15 @@ static std::unique_ptr<Connection> failedAt(int line)
+     return nullptr;
+ }
+ 
+-std::unique_ptr<Connection> Connection::setup(AdditionalWaylandInterfaces flags)
++std::unique_ptr<Connection> Connection::setup(AdditionalWaylandInterfaces flags, int socket)
+ {
+-    int sx[2];
+-    if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sx) < 0) {
+-        return failedAt(__LINE__);
++    int sx[2] = {-1, socket};
++    if (socket < 0) {
++        if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sx) < 0) {
++            return failedAt(__LINE__);
++        }
++        KWin::waylandServer()->display()->createClient(sx[0]);
+     }
+-    KWin::waylandServer()->display()->createClient(sx[0]);
+     // setup connection
+     auto connection = std::make_unique<Connection>();
+     connection->connection = new KWayland::Client::ConnectionThread;
+diff --git a/src/scene/stereodepth.cpp b/src/scene/stereodepth.cpp
+index 6a8d987..aa0d025 100644
+--- a/src/scene/stereodepth.cpp
++++ b/src/scene/stereodepth.cpp
+@@ -355,6 +355,11 @@ int StereoDepth::maxEyeShift(int viewWidth)
+     return (std::lround(limit * viewWidth / s_referenceWidth) + 1) / 2;
+ }
+ 
++qreal StereoDepth::wallpaperDepth()
++{
++    return -options->stereoSunkLimit();
++}
++
+ int StereoDepth::wallpaperCut(int parallax)
+ {
+     return (std::abs(parallax) + 1) / 2;
+diff --git a/src/scene/stereodepth.h b/src/scene/stereodepth.h
+index 0d9425e..e7ab845 100644
+--- a/src/scene/stereodepth.h
++++ b/src/scene/stereodepth.h
+@@ -162,6 +162,13 @@ public:
+      */
+     static int maxEyeShift(int viewWidth);
+ 
++    /**
++     * The depth of a wallpaper in pixels of a view 1920 wide: the sunk limit, the deepest layer,
++     * behind every window. The desktop's level puts it there, and the lock screen's wallpaper lies
++     * there too.
++     */
++    static qreal wallpaperDepth();
++
+     /**
+      * How many columns are cut from each side of a wallpaper whose copies are @a parallax pixels
+      * apart: the same columns in both eyes, as many as the farther of the two copies moves. The
+diff --git a/src/scene/workspacescene.cpp b/src/scene/workspacescene.cpp
+index 6c4292e..cd32af4 100644
+--- a/src/scene/workspacescene.cpp
++++ b/src/scene/workspacescene.cpp
+@@ -637,6 +637,25 @@ static Region wallpaperPlace(const RenderViewport &viewport, const Window *windo
+     return Region(viewport.mapToDeviceCoordinatesAligned(window->frameGeometry()).adjusted(cut, 0, -cut, 0));
+ }
+ 
++// The wallpaper of the lock screen: the surfaces the greeter places below its own, as the layer of a
++// stereo wallpaper is. A wallpaper is a wallpaper on the lock screen too, at the desktop's level,
++// while the greeter's own surface, its clock and password field, stays at the screen's level.
++static QList<Item *> lockScreenWallpaper(const WindowItem *item)
++{
++    QList<Item *> parts;
++    if (!item->window()->isLockScreen() || !item->surfaceItem()) {
++        return parts;
++    }
++    const QList<Item *> children = item->surfaceItem()->sortedChildItems();
++    for (Item *child : children) {
++        if (child->z() >= 0) {
++            break;
++        }
++        parts.append(child);
++    }
++    return parts;
++}
++
+ static void addOpaqueRegionRecursive(SceneView *view, Item *item, const std::optional<ClipCorner> &parentCorner, Region &ret)
+ {
+     const std::optional<ClipCorner> corner = calculateClipCorner(item, parentCorner);
+@@ -664,8 +683,9 @@ void WorkspaceScene::preparePaintSimpleScreen()
+         effects->prePaintWindow(painted_delegate, windowItem->effectWindow(), data);
+         const bool transformedByEffect = data.mask & PAINT_WINDOW_TRANSFORMED;
+ 
+-        if (stereoDepthPainted(window)) {
+-            // each eye shows the window at its own place, and its shadow at the places of what it falls on
++        if (stereoDepthPainted(window) || (wallpaperParallax() && !lockScreenWallpaper(windowItem).isEmpty())) {
++            // each eye shows the window at its own place, and its shadow at the places of what it
++            // falls on; the lock screen shows its wallpaper at the desktop's level
+             data.mask |= PAINT_WINDOW_TRANSFORMED;
+         }
+ 
+@@ -1015,7 +1035,19 @@ bool WorkspaceScene::paintStereoDepth(const RenderTarget &renderTarget, const QP
+                 data.translate(shift / viewport.scale());
+             }
+             const Region place = parallax && window->isDesktop() ? wallpaperPlace(viewport, window, parallax) : Region::infinite();
+-            m_renderer->renderItem(desktopTarget, viewport, paintData.item, paintData.mask, place, data, filter, holeFilter);
++            // the lock screen's wallpaper at the desktop's level, as finalDrawWindow() puts it
++            const int sunk = wallpaperParallax();
++            const QList<Item *> wallpaper = sunk ? lockScreenWallpaper(paintData.item) : QList<Item *>();
++            if (!wallpaper.isEmpty()) {
++                m_renderer->setDepthColor(content ? estimatedAt(sunk) : colorOf(sunk));
++                for (Item *part : wallpaper) {
++                    drawWindowPart(desktopTarget, viewport, paintData.item, part, paintData.mask, wallpaperPlace(viewport, window, sunk), data, StereoDepth::eyeShift(sunk, pass.pictureEye), filter, holeFilter);
++                }
++                m_renderer->setDepthColor(content ? estimatedAt(parallax) : colorOf(parallax));
++            }
++            m_renderer->renderItem(desktopTarget, viewport, paintData.item, paintData.mask, place, data, [&filter, &wallpaper](Item *item) {
++                return wallpaper.contains(item) || filter(item);
++            }, holeFilter);
+         }
+         if (showsOverlayInStereoPlane()) {
+             const int parallax = StereoDepth::isEnabled() && painted_screen && painted_screen->hasStereoEyes() ? pointerParallax() : 0;
+@@ -1150,13 +1182,55 @@ void WorkspaceScene::finalDrawWindow(const RenderTarget &renderTarget, const Ren
+     if (ownShadow) {
+         drawStereoShadow(renderTarget, viewport, windowItem, mask, deviceRegion, data);
+     }
++    const auto holeFilter = [this](Item *item) {
++        return painted_delegate && painted_delegate->shouldRenderHole(item);
++    };
++    // the lock screen's wallpaper lies at the desktop's level, cut at the sides as the desktop's is
++    QList<Item *> wallpaper;
++    const int parallax = m_renderer->stereoEye() == StereoEye::None ? 0 : wallpaperParallax();
++    if (parallax && data.rotationAngle() == 0) {
++        wallpaper = lockScreenWallpaper(windowItem);
++        const Region place = deviceRegion & wallpaperPlace(viewport, w->window(), parallax);
++        const int shift = StereoDepth::eyeShift(parallax, m_renderer->stereoEye());
++        for (Item *part : std::as_const(wallpaper)) {
++            drawWindowPart(renderTarget, viewport, windowItem, part, mask, place, data, shift, [this](Item *item) {
++                return painted_delegate && !painted_delegate->shouldRenderItem(item);
++            }, holeFilter);
++        }
++    }
+     // TODO: Reconsider how the CrossFadeEffect captures the initial window contents to remove
+     // null pointer delegate checks in "should render item" and "should render hole" checks.
+-    m_renderer->renderItem(renderTarget, viewport, windowItem, mask, deviceRegion, data, [this, shadow, ownShadow](Item *item) {
+-        return (ownShadow && item == shadow) || (painted_delegate && !painted_delegate->shouldRenderItem(item));
+-    }, [this](Item *item) {
+-        return painted_delegate && painted_delegate->shouldRenderHole(item);
+-    });
++    m_renderer->renderItem(renderTarget, viewport, windowItem, mask, deviceRegion, data, [this, shadow, ownShadow, &wallpaper](Item *item) {
++        return (ownShadow && item == shadow) || wallpaper.contains(item) || (painted_delegate && !painted_delegate->shouldRenderItem(item));
++    }, holeFilter);
++}
++
++// The parallax of a wallpaper on the output being painted: that of the sunk limit
++int WorkspaceScene::wallpaperParallax() const
++{
++    if (!painted_screen || !painted_screen->hasStereoEyes() || !StereoDepth::isEnabled()) {
++        return 0;
++    }
++    return StereoDepth::parallax(StereoDepth::wallpaperDepth(), painted_delegate->deviceRect().width());
++}
++
++// Draws @a part of @a windowItem's items on its own, where it lies in the window, with the window's
++// paint data and @a shift device pixels more. The paint data apply in the window's own coordinates,
++// so the part's place in the window comes into their translation, scaled as they scale.
++void WorkspaceScene::drawWindowPart(const RenderTarget &renderTarget, const RenderViewport &viewport, WindowItem *windowItem, Item *part, int mask, const Region &deviceRegion, const WindowPaintData &data, int shift, const std::function<bool(Item *)> &filter, const std::function<bool(Item *)> &holeFilter)
++{
++    QPointF offset;
++    qreal opacity = windowItem->opacity();
++    for (const Item *item = part->parentItem(); item && item != windowItem; item = item->parentItem()) {
++        offset += item->position();
++        opacity *= item->opacity();
++    }
++    const QPointF position = part->position();
++    WindowPaintData partData(data);
++    partData.setXTranslation(data.xTranslation() + windowItem->position().x() + data.xScale() * (offset.x() + position.x()) - position.x() + shift / viewport.scale());
++    partData.setYTranslation(data.yTranslation() + windowItem->position().y() + data.yScale() * (offset.y() + position.y()) - position.y());
++    partData.multiplyOpacity(opacity);
++    m_renderer->renderItem(renderTarget, viewport, part, mask, deviceRegion, partData, filter, holeFilter);
+ }
+ 
+ EglContext *WorkspaceScene::openglContext() const
+diff --git a/src/scene/workspacescene.h b/src/scene/workspacescene.h
+index 18783cf..585472d 100644
+--- a/src/scene/workspacescene.h
++++ b/src/scene/workspacescene.h
+@@ -16,6 +16,8 @@
+ 
+ #include <QHash>
+ 
++#include <functional>
++
+ namespace KWin
+ {
+ 
+@@ -160,6 +162,8 @@ private:
+     int stereoParallax(const Window *window) const;
+     int pointerParallax() const;
+     void drawStereoShadow(const RenderTarget &renderTarget, const RenderViewport &viewport, WindowItem *caster, int mask, const Region &deviceRegion, const WindowPaintData &data);
++    int wallpaperParallax() const;
++    void drawWindowPart(const RenderTarget &renderTarget, const RenderViewport &viewport, WindowItem *windowItem, Item *part, int mask, const Region &deviceRegion, const WindowPaintData &data, int shift, const std::function<bool(Item *)> &filter, const std::function<bool(Item *)> &holeFilter);
+     void createDndIconItem();
+     void destroyDndIconItem();
+     void updateCursor();
+diff --git a/src/wayland_server.h b/src/wayland_server.h
+index f0fa218..94de58c 100644
+--- a/src/wayland_server.h
++++ b/src/wayland_server.h
+@@ -210,6 +210,12 @@ public:
+      */
+     SocketPairConnection createConnection();
+ 
++    /**
++     * Creates the connection of the screen locker's greeter and returns the client's end of it:
++     * the windows of that client are the lock screen.
++     */
++    int createScreenLockerConnection();
++
+     /**
+      * Returns the first socket name that can be used to connect to this server.
+      * For a full list, use display()->socketNames()
+@@ -237,7 +243,6 @@ Q_SIGNALS:
+     void lockStateChanged();
+ 
+ private:
+-    int createScreenLockerConnection();
+     void initScreenLocker();
+     void registerXdgGenericWindow(Window *window);
+     void registerXdgToplevelWindow(XdgToplevelWindow *window);
+-- 
+2.53.0
+

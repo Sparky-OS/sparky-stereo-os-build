@@ -1,0 +1,39 @@
+From 3670b0baf4045af0af79d1f4996b274965cff372 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 30 Oct 2026 01:46:03 -0300
+Subject: [PATCH] lockscreen: Draw the wallpaper fader with the wallpaper
+
+WallpaperFader draws a copy of the wallpaper, blurred and dimmed while
+the interface shows. It is wallpaper, so when the greeter offers a
+wallpaper layer (a surface of its own below the interface's), the fader
+lies there, above the wallpaper, and the compositor places it with the
+wallpaper; the interface stays in its own window. It keeps the fade of
+the lock screen's root and its colours (Complementary, not inherited, as
+the lock screen's root sets them). Without a wallpaper layer it stays
+where it was.
+
+Assisted-by: Claude Opus 5.5
+---
+ desktoppackage/contents/lockscreen/LockScreenUi.qml | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/desktoppackage/contents/lockscreen/LockScreenUi.qml b/desktoppackage/contents/lockscreen/LockScreenUi.qml
+index 437d33d..d262179 100644
+--- a/desktoppackage/contents/lockscreen/LockScreenUi.qml
++++ b/desktoppackage/contents/lockscreen/LockScreenUi.qml
+@@ -197,6 +197,12 @@ Item {
+         Component.onCompleted: launchAnimation.start();
+ 
+         WallpaperFader {
++            // a copy of the wallpaper is wallpaper: it lies with the wallpaper, in the greeter's wallpaper
++            // layer when it has one (a surface of its own below this one), and keeps this item's fade and colors
++            parent: typeof wallpaperLayer !== "undefined" && wallpaperLayer ? wallpaperLayer : lockScreenRoot
++            opacity: parent === lockScreenRoot ? 1 : lockScreenRoot.opacity
++            Kirigami.Theme.inherit: false
++            Kirigami.Theme.colorSet: Kirigami.Theme.Complementary
+             visible: typeof stereoBackground === "undefined" || !stereoBackground.active
+             anchors.fill: parent
+             state: lockScreenRoot.uiVisible ? "on" : "off"
+-- 
+2.53.0
+
