@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack)
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.22)
-project(sparky-stereo-cec VERSION 0.1.3 LANGUAGES C CXX)
+project(sparky-stereo-cec VERSION 0.1.4 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_AUTOMOC ON)
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core DBus Gui)

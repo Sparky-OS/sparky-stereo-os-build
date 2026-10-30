@@ -1,11 +1,11 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/08
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/13
+# Last update 2026/10/30
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.1.3
+VERSION=0.1.4
 PACKAGE=sparky-stereo-cec
 ARCH=$(dpkg --print-architecture)
 mkdir -p "$OUT"
@@ -64,6 +64,13 @@ Description: TV power follows Plasma output power
 CONTROL
 cat >"$S/debian/changelog" <<CHANGELOG
 $PACKAGE ($VERSION) unstable; urgency=medium
+
+  * The autostart entry's name in German, French, Japanese, Korean,
+    Simplified Chinese and Traditional Chinese.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Fri, 30 Oct 2026 01:50:00 +0000
+
+$PACKAGE (0.1.1) unstable; urgency=medium
 
   * Follow native Plasma output power for matched CEC televisions.
 
