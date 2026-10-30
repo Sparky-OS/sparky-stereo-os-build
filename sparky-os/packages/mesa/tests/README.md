@@ -49,3 +49,50 @@ constant quadrant colours. It requires a mono context, reports the renderer
 and mapped providers, and returns failure on any mismatch or EGL operation
 error. Run against installed predecessor and candidate libraries. This is an
 ordinary EGL pbuffer control, not a Wayland window or stereo declaration test.
+
+## Native Wayland EGL windows
+
+`egl-wayland-window.c` checks ordinary windows, two-view windows drawing only
+left, and two-view windows drawing both eyes. It binds only `wl_compositor`
+and `xdg_wm_base`; Mesa owns all stereo declarations. Generate the xdg-shell
+client glue from the installed public protocol and build in a disposable SDK:
+
+```sh
+xml=$(pkg-config --variable=pkgdatadir wayland-protocols)/stable/xdg-shell/xdg-shell.xml
+wayland-scanner client-header "$xml" xdg-shell-client-protocol.h
+wayland-scanner private-code "$xml" xdg-shell-protocol.c
+cc -O2 -Wall -Wextra -Werror -I. egl-wayland-window.c xdg-shell-protocol.c \
+  $(pkg-config --cflags --libs wayland-client wayland-egl egl gl) -o egl-wayland-window
+```
+
+Run `egl-wayland-window MODE OUTPUT`, where MODE is `mono`, `left-only` or
+`stereo`, in a fresh isolated Wayland compositor for each case, with
+`WAYLAND_DEBUG=client`. Do not set DISPLAY or override the installed providers.
+The fixture requires the edition's `EGL_EXT_multiview_window`, including for
+the ordinary-window control. It checks every drawn GL back pixel and retains
+bottom-up RGB arrays. At each `FRAME` line it waits for `next` followed by a
+newline, without drawing another frame. Capture before releasing that barrier.
+The four stages are first 96x64, first resized 80x48, repeated 80x48 and a new
+96x64 native/EGL surface after destruction. An outer runner must bound waits
+and preserve failed runs.
+
+`check-egl-wayland.py ROOT --output RESULT` expects `mono`, `left-only` and
+`stereo` subdirectories. Each contains `client.stdout`, `protocol.log`, the raw
+`STAGE-eyeN.rgb` files, `STAGE.png`, `exit.png`, and a runner `result.json` with
+`returncode`, `failure`, `environment`, and `mapped` provider records (each has
+`elf_class`). Captures use one 800x600 virtual output, zero stereo depth, no
+window decorations or cursor, and full side-by-side screenshots when stereo
+is active. The first two cases remain ordinary and byte-identical. Stereo's
+left capture must match them, with the right eye exactly 800 pixels to its
+right; each eye retains the requested window dimensions. Exit restores black.
+
+The checker independently compares 79,872 raw pixels and 79,872 captured
+pixels. It checks actual buffer dimensions and requests: zero declarations
+for mono/left-only, one full-SBS declaration for each of the two stereo
+surfaces before its first buffer commit, no repeat/resize declaration, two
+content destructions, and no viewport writes on the version-2 protocol.
+Object numbers may be reused after destruction. Its negative controls reject
+missing/changed/duplicate declarations, wrong buffer width, a changed pixel,
+swapped eyes and a frozen right eye. This gate covers those native Wayland EGL
+behaviors only; it does not establish input/DPI, clipping/overlap, NVIDIA,
+Wine or Vulkan behavior.
