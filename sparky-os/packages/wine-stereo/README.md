@@ -241,3 +241,8 @@ width, whereas the WGL fixture draws each eye at the full logical width.
 This raw-image check does not prove compositor declaration, eye separation or
 surface lifetime. Record actual declaration requests and separate ScreenShot2
 captures for those gates, including the published runtime as a negative control.
+
+The matching `tests/d3d11-pair.c` fixture uses a D3D11 BGRA8 backbuffer and
+`ResizeBuffers`; its raw image uses the same `check-d3d9-pair.py` oracle. Both
+D3D fixtures signal capture after their eleventh Present, not their first.
+They never write native stereo declaration properties.

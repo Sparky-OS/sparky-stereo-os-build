@@ -1,0 +1,48 @@
+--- a/src/dxvk/dxvk_swapchain_blitter.h
++++ b/src/dxvk/dxvk_swapchain_blitter.h
+@@ -207,6 +207,7 @@
+       VkOffset2D srcOffset;
+       VkExtent2D srcExtent;
+       VkOffset2D dstOffset;
++      VkExtent2D dstExtent;
+       VkOffset2D cursorOffset;
+       VkExtent2D cursorExtent;
+       uint32_t   samplerGamma;
+--- a/src/dxvk/dxvk_swapchain_blitter.cpp
++++ b/src/dxvk/dxvk_swapchain_blitter.cpp
+@@ -388,6 +388,7 @@
+     args.srcOffset = srcRect.offset;
+     args.srcExtent = srcRect.extent;
+     args.dstOffset = dstRect.offset;
++    args.dstExtent = dstRect.extent;
+     args.cursorOffset = m_cursorRect.offset;
+     args.cursorExtent = m_cursorRect.extent;
+     args.samplerGamma = m_samplerGamma->getDescriptor().samplerIndex;
+--- a/src/dxvk/shaders/dxvk_present_common.glsl
++++ b/src/dxvk/shaders/dxvk_present_common.glsl
+@@ -42,6 +42,7 @@
+   ivec2 src_offset;
+   ivec2 src_extent;
+   ivec2 dst_offset;
++  ivec2 dst_extent;
+   ivec2 cursor_offset;
+   ivec2 cursor_extent;
+   uint sampler_gamma;
+--- a/src/dxvk/shaders/dxvk_present_frag_blit.frag
++++ b/src/dxvk/shaders/dxvk_present_frag_blit.frag
+@@ -72,6 +72,15 @@
+    || c_stereo_input == STEREO_TOP_AND_BOTTOM) {
+     vec2 lo, hi;
+     stereo_region(place, lo, hi);
++    // At one source texel per output pixel, interpolated coordinates can
++    // straddle a texel boundary by a rounding error. Address the texel with
++    // integer framebuffer coordinates so this path is an exact copy.
++    ivec2 eye_extent = ivec2(dst_extent.x / 2, dst_extent.y);
++    if ((dst_extent.x & 1) == 0 && all(equal(hi - lo, vec2(eye_extent)))) {
++      ivec2 pixel = ivec2(gl_FragCoord.xy) - dst_offset;
++      pixel.x %= eye_extent.x;
++      return input_to_sc_rgb(texelFetch(s_image, ivec2(lo) + pixel, 0));
++    }
+     return sample_eye(lo + eye_coord * (hi - lo), lo, hi);
+   }
+ 
