@@ -30,8 +30,7 @@
    uint sampler_gamma;
 --- a/src/dxvk/shaders/dxvk_present_frag_blit.frag
 +++ b/src/dxvk/shaders/dxvk_present_frag_blit.frag
-@@ -72,6 +72,15 @@
-    || c_stereo_input == STEREO_TOP_AND_BOTTOM) {
+@@ -73,4 +73,13 @@
      vec2 lo, hi;
      stereo_region(place, lo, hi);
 +    // At one source texel per output pixel, interpolated coordinates can
@@ -45,4 +44,3 @@
 +    }
      return sample_eye(lo + eye_coord * (hi - lo), lo, hi);
    }
- 
