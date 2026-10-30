@@ -1,0 +1,26 @@
+kwin (4:6.7.4-2+stereo3d39) unstable; urgency=medium
+
+  * Sparky-OS/kwin stereo3d39 is stereo3d38 plus the five commits of
+    ORDER 294 and 294b and the one of ORDER 254 (s39-0001 to s39-0006).
+  * A configuration the driver refuses with the buffers the renderer chose
+    is tested again with linear buffers on one output, then on all of them,
+    before it is given up (s39-0001): amdgpu shows DisplayPort's frame
+    sequential stereo only from a linear framebuffer. Configurations that
+    pass today are unchanged. Test: testMockDrmDisplayPortSequential.
+  * KWin's software frame sequential twin gives a frame the eye of the
+    refresh it targets (s39-0002), and a commit the eye of the refresh it
+    reaches when it is submitted (s39-0004), so a late flip event or a late
+    commit no longer shows the wrong eye on the refresh it lands on. Tests:
+    testMockDrmFrameSequential, testFrameSequential, testDrmCommitThread.
+  * The DRM commit thread checks for its stop request under its mutex, so
+    stopping it no longer waits forever when the request comes between the
+    check and the wait (s39-0003); testMockDrmFrameSequential hung this way
+    in about one run of twenty. Test: testDrmCommitThread.
+  * KWin's own copy of kde-output-device-v2 is at version 30 and is used
+    whenever the installed one lacks DisplayPort's frame sequential flag
+    (s39-0005).
+  * Stereo Xwayland children keep their native bounding shapes: each eye
+    is built from its own clipped region, through independent placement,
+    and the ordinary interface beside them is never covered (s39-0006, the
+    declaration version 9). Tests: testX11Window's testStereoChildShape and
+    testOrdinaryX11Shape.

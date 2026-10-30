@@ -1,0 +1,104 @@
+From 3985372e933afb9eee25f967e1b2da554d118b45 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 30 Oct 2026 11:59:21 -0300
+Subject: [PATCH] wayland: Carry kde-output-device-v2 version 30 in the tree
+
+The in-tree copy of kde-output-device-v2.xml, used while the installed
+PlasmaWaylandProtocols lacks the stereo additions, was still version
+29, and the selection took an installed version 29 file as complete.
+A KWin built against such a PlasmaWaylandProtocols, such as the
+edition's +stereo3d9, then offered no DisplayPort frame sequential
+mode.
+
+The copy is now version 30, byte for byte the file of the stereo3d
+branch of plasma-wayland-protocols that the edition ships as
++stereo3d10, and an installed file is used only when it also has
+stereo_sequential_displayport, the version 30 flag.
+
+Assisted-by: Claude Opus 5.5
+---
+ CMakeLists.txt                                |  6 +++--
+ .../protocols/stereo/kde-output-device-v2.xml | 22 ++++++++++++++++---
+ 2 files changed, 23 insertions(+), 5 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index af2fdc9..f8d0d3a 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -232,8 +232,10 @@ if(EXISTS ${PLASMA_WAYLAND_PROTOCOLS_DIR}/kde-stereo-content-v1.xml)
+     file(READ ${PLASMA_WAYLAND_PROTOCOLS_DIR}/kde-output-device-v2.xml _kwin_output_device_xml)
+     file(READ ${PLASMA_WAYLAND_PROTOCOLS_DIR}/kde-stereo-content-v1.xml _kwin_stereo_content_xml)
+ endif()
+-# kde_stereo_depth_v1 came with version 3 of kde-stereo-content-v1; stereo_glasses with version 29 of kde-output-device-v2
+-if(NOT _kwin_output_device_xml MATCHES "stereo_l_depth_graphics" OR NOT _kwin_output_device_xml MATCHES "stereo_glasses" OR NOT _kwin_stereo_content_xml MATCHES "kde_stereo_depth_v1")
++# kde_stereo_depth_v1 came with version 3 of kde-stereo-content-v1; stereo_glasses with version 29 of kde-output-device-v2,
++# stereo_sequential_displayport with version 30
++if(NOT _kwin_output_device_xml MATCHES "stereo_l_depth_graphics" OR NOT _kwin_output_device_xml MATCHES "stereo_glasses"
++   OR NOT _kwin_output_device_xml MATCHES "stereo_sequential_displayport" OR NOT _kwin_stereo_content_xml MATCHES "kde_stereo_depth_v1")
+     set(KWIN_STEREO_PROTOCOLS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/wayland/protocols/stereo)
+     set(KWIN_STEREO_PROTOCOLS_IN_TREE TRUE)
+ endif()
+diff --git a/src/wayland/protocols/stereo/kde-output-device-v2.xml b/src/wayland/protocols/stereo/kde-output-device-v2.xml
+index b921a70..a9a7741 100644
+--- a/src/wayland/protocols/stereo/kde-output-device-v2.xml
++++ b/src/wayland/protocols/stereo/kde-output-device-v2.xml
+@@ -10,7 +10,7 @@
+     SPDX-License-Identifier: MIT-CMU
+     ]]></copyright>
+ 
+-  <interface name="kde_output_device_registry_v2" version="29">
++  <interface name="kde_output_device_registry_v2" version="30">
+     <description summary="output devices">
+       This interface can be used to list output devices.
+ 
+@@ -52,7 +52,7 @@
+     </event>
+   </interface>
+ 
+-  <interface name="kde_output_device_v2" version="29">
++  <interface name="kde_output_device_v2" version="30">
+     <description summary="output configuration representation">
+       An output device describes a display device available to the compositor.
+       output_device is similar to wl_output, but focuses on output
+@@ -709,7 +709,7 @@
+     </event>
+   </interface>
+ 
+-  <interface name="kde_output_device_mode_v2" version="29">
++  <interface name="kde_output_device_mode_v2" version="30">
+     <description summary="output mode">
+       This object describes an output mode.
+ 
+@@ -777,6 +777,7 @@
+       <entry name="stereo_line_alternative" value="0x200000" since="28" summary="HDMI 1.4a 3D, line alternative"/>
+       <entry name="stereo_l_depth" value="0x400000" since="28" summary="HDMI 1.4a 3D, L + depth"/>
+       <entry name="stereo_l_depth_graphics" value="0x800000" since="28" summary="HDMI 1.4a 3D, L + depth + graphics + graphics-depth"/>
++      <entry name="stereo_sequential_displayport" value="0x1000000" since="30" summary="DisplayPort frame sequential stereo, signalled by the source"/>
+ 
+     </enum>
+ 
+@@ -791,6 +792,21 @@
+         The first pixel means the output's top-left device pixel. Left-first
+         selects the left eye on even rows, columns, or x+y parity respectively.
+         Right-first reverses this order. Virtual modes are never preferred.
++
++        stereo_sequential_displayport is DisplayPort's own stereo transport:
++        the mode keeps its 2D timing, the compositor hands over both eyes side
++        by side in one frame twice the mode's width, left eye first, and the
++        source sends one eye per frame of the mode, the left eye first, telling
++        the sink which eye each frame carries (the Main Stream Attribute's MISC1
++        bits 2:1, DisplayPort 1.1a and later). Each eye is shown at half the
++        mode's refresh rate. Without virtual_stereo the display declares the
++        mode (an EDID detailed timing or a DisplayID stereo block); with
++        virtual_stereo it is the twin of a 2D mode on an output whose driver
++        accepts frame sequential stereo, which the display did not declare.
++        Unlike stereo_sequential_left_first and stereo_sequential_right_first,
++        whose eyes the compositor alternates itself with nothing sent to the
++        display, the eye order is fixed and signalled, so it has no right-first
++        twin; the output's swap_eyes still exchanges the pictures.
+       </description>
+       <arg name="flags" type="uint" enum="flags"/>
+     </event>
+-- 
+2.53.0
+
