@@ -24,9 +24,12 @@ chown -R builder:builder /t
 cd /t/build
 TARGETS="testStereoOutputRepaint testColorConversion testMockDrm testMockDrmFrameSequential testMockDrmDisplayPortSequential testMockDrmGlasses testVirtualStereo testStereoPair testMockDrmStereoPair testMockDrmDepthStructures testFrameSequential testStereoDownscale testX11Window testDmabufFormatSwitch testStereoDepthExchange testStereoContent testScreenshotStereo testStereoDepthPinned testStereoDepthPopups testStereoDepthMotion testVirtualStereoProtocol testQuickStereo testFallApartStereo testTabBoxStereo testStereoDepthCoding testStereoDepthEstimate testStereoPattern testVirtualOutputProperties testStereoDepthWallpaper testStereoDepthWallpaperCuts"
 [ "$REUSE" = 1 ] || runuser -u builder -- env HOME=/t sh -c "cmake -G Ninja /work/lc/source -DBUILD_TESTING=ON -DKWIN_BUILD_KCMS=ON -DQTWAYLANDSCANNER_KDE_EXECUTABLE=/usr/lib/qt6/libexec/qtwaylandscanner -DCMAKE_BUILD_TYPE=RelWithDebInfo > /t/cmake.log 2>&1 && nice ninja -j4 $TARGETS > /t/ninja.log 2>&1" || { tail -n 30 /t/cmake.log; tail -n 30 /t/ninja.log; echo BUILD FAILED; exit 1; }
+# the tests that read KWin's D-Bus objects run in a session bus of their own
+DBUS_TARGETS="testStereoDepthWallpaperCuts"
 for t in $TARGETS; do
+    bus=; case " $DBUS_TARGETS " in *" $t "*) bus="dbus-run-session --" ;; esac
     # testStereoDownscale opens EGL's default display, which has no platform without a display server
-    out=$(setpriv --reuid=1000 --regid=1000 --groups=$(stat -c %g /dev/dri/renderD128)$([ -c /dev/udmabuf ] && echo ,$(stat -c %g /dev/udmabuf)) env HOME=/t LANG=C.UTF-8 QT_QPA_PLATFORM=offscreen EGL_PLATFORM=surfaceless XDG_RUNTIME_DIR=/t timeout 300 bin/$t 2>&1); rc=$?
+    out=$(setpriv --reuid=1000 --regid=1000 --groups=$(stat -c %g /dev/dri/renderD128)$([ -c /dev/udmabuf ] && echo ,$(stat -c %g /dev/udmabuf)) env HOME=/t LANG=C.UTF-8 QT_QPA_PLATFORM=offscreen EGL_PLATFORM=surfaceless XDG_RUNTIME_DIR=/t timeout 300 $bus bin/$t 2>&1); rc=$?
     echo "$out" > /t/$t.log
     echo "$t exit $rc $(echo "$out" | grep -E '^Totals')"
 done
