@@ -190,8 +190,12 @@ They never write native stereo declaration properties.
 
 ### Vulkan child lifecycle candidate
 
-`patches/wine-vulkan-child-lifecycle.patch` is an unapplied source candidate against Wine `10.0~repack-12+stereo3d6+lc1` with its existing patches.
-It is not yet added to `prepare-source.py` or a source package.
+`prepare-lifecycle.py SOURCE --toolkit TOOLKIT` applies `patches/wine-vulkan-child-lifecycle.patch` to a fresh extraction of Wine `10.0~repack-12+stereo3d6+lc1`.
+It creates the +7 source with the retained patches, WIDL/WRC header preservation, control generator and native-i386/WoW64 configuration.
+The explicit current toolkit supplies the checked plain-source conversion and standard Lean Code preparation.
+Build each architecture from the resulting single descriptor; never rerun preparation on a configured tree.
+The runtime and build dependencies require libstereo-declare 1.8, while the producer protocol still falls back on older runtimes or consumers.
+Package and installed-cohort qualification remains separate from the accepted private-module evidence.
 The paired producer is DXVK's `wine-wsi-v1-request.patch`.
 
 The version-1 request is a temporary, thread-named Win32 property scoped to native surface creation.

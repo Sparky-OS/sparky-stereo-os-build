@@ -25,7 +25,10 @@ Other packed layouts, scaled rectangles, HDR, native DXVK and NVIDIA still requi
 
 `patches/wine-wsi-v1-request.patch` applies after the published DXVK `2.7.1-4+stereo3d3+lc1` patches.
 It is independent of the exact-copy patch above.
-It is retained for source review and is not added to a package recipe yet.
+`prepare-source.py SOURCE --toolkit TOOLKIT` appends this patch and the exact-copy patch to a fresh extraction of that descriptor and prepares version `2.7.1-4+stereo3d4+lc1`.
+It normalizes the older descriptor's trailing Lean Code build-dependency list before the current toolkit's checked plain-source conversion.
+It preserves the native and Windows build targets, symbols, package set and ordinary fallback.
+Create one descriptor, then build every architecture from it; source preparation alone is not package qualification.
 
 D3D9 and the packed-input DXGI surface factory scope a version-1 request to the Windows thread creating the Vulkan surface.
 The Wine runtime owns the native content declaration and acknowledges a complete child-surface contract.
