@@ -1,14 +1,17 @@
 #!/bin/sh
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/25
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/25
+# Last update 2026/10/30
 # Checks a packed ISO against the recipe: the live kernel is the edition's and the only one (/live and the image's /boot),
 # the boot menus have no second kernel and offer the Secure Boot enrolment, the EFI image carries Debian's signed shim,
 # GRUB and MokManager (the same files as the root file system's packages) and the edition's certificate, the edition's
 # kernel is signed with that certificate's key, the default boot splash is the Stereo one (in the image and in the live
-# boot image), and command-not-found's index is filled. Runs as root in the build image (privileged, for the loop
-# mount and the chroot), with the root file system at /rootfs and the build tree at /build. The ISO is mounted read-only
-# and only a few small files are copied out, into the container's own /tmp. Prints a report; exits 1 on any failed check.
+# boot image), command-not-found's index is filled, and every kernel the ISO boots or installs carries the security
+# fixes kernel-fixes.py lists, with no older kernel left (the ISO's kernels, initrds and menus; the image's /boot,
+# module trees, DKMS builds and kernel packages, linux-libc-dev included). Runs as root in the build image (privileged,
+# for the loop mounts and the chroot), with the root file system at /rootfs and the build tree at /build. The ISO and
+# its filesystem.squashfs are mounted read-only and only a few small files are copied out, into the container's own
+# /tmp. Prints a report; exits 1 on any failed check.
 #   check-iso.sh ISO [CERT.der]
 set -u
 ISO=$1; CERT=${2:-/rootfs/usr/lib/sparkybackup/stereo/secureboot/sparky-stereo-secureboot-2026.der}
@@ -18,7 +21,7 @@ mkdir -p "$I" /rootfs/tmp/check-iso
 for i in $(seq 0 63); do [ -e /dev/loop$i ] || mknod /dev/loop$i b 7 $i; done
 mount -o loop,ro "$ISO" "$I" || { echo "FAIL  cannot mount $ISO"; exit 1; }
 mount --bind -o ro "$I/live" /rootfs/tmp/check-iso
-trap 'umount /rootfs/tmp/check-iso; rmdir /rootfs/tmp/check-iso; umount "$I"; rm -rf "$T"' EXIT
+trap 'mountpoint -q "$T/image" && umount "$T/image"; umount /rootfs/tmp/check-iso; rmdir /rootfs/tmp/check-iso; umount "$I"; rm -rf "$T"' EXIT
 fails=0
 ok() { echo "PASS  $*"; }
 no() { echo "FAIL  $*"; fails=$((fails + 1)); }
@@ -95,6 +98,20 @@ sys.exit(1 if bad or n < 1000 else 0)
 PY
 else
 	no "command-not-found's index is empty"
+fi
+
+echo "-- the kernels and their security fixes (kernel-fixes.py, the image mounted read-only)"
+mkdir -p "$T/image"
+if mount -o loop,ro "$I/live/filesystem.squashfs" "$T/image"; then
+	python3 /build/kernel-fixes.py "$I" "$T/image" > "$T/kernel-fixes.txt" 2>&1; r=$?
+	cat "$T/kernel-fixes.txt"
+	if [ $r != 0 ]; then
+		n=$(grep -c '^FAIL' "$T/kernel-fixes.txt"); [ "$n" -gt 0 ] || { n=1; echo "FAIL  kernel-fixes.py stopped (exit $r)"; }
+		fails=$((fails + n))
+	fi
+	umount "$T/image"
+else
+	no "cannot mount the image's filesystem.squashfs"
 fi
 echo "== $( [ $fails = 0 ] && echo "ALL PASS" || echo "$fails FAILED")"
 [ $fails = 0 ]
