@@ -1,0 +1,223 @@
+--- a/hw/xwayland/xwayland-glamor-gbm.c
++++ b/hw/xwayland/xwayland-glamor-gbm.c
+@@ -53,6 +53,7 @@
+ #include <glamor.h>
+ #include <glamor_context.h>
+ #include <dri3.h>
++#include "xwayland-present.h"
+ #include "drm-client-protocol.h"
+ 
+ #include "xwayland-glamor.h"
+@@ -432,13 +433,24 @@
+     struct xwl_screen *xwl_screen = xwl_window->xwl_screen;
+     WindowPtr window = xwl_window->surface_window;
+     unsigned border_width = 2 * window->borderWidth;
++    PixmapPtr pixmap = xwl_screen->screen->GetWindowPixmap(window);
++    unsigned width = window->drawable.width + border_width;
++
++    /* A declared stereo child's backing pixmap contains both views even
++     * though its X geometry remains one view wide. Buffer recycling must
++     * preserve that storage geometry, just as the Present flip path does.
++     */
++    if (pixmap->drawable.width == 2 * window->drawable.width &&
++        pixmap->drawable.height == window->drawable.height &&
++        xwl_present_window_holds_two_eyes(window))
++        width = pixmap->drawable.width;
+ 
+     if (!xwl_screen->glamor)
+         return NullPixmap;
+ 
+     return xwl_glamor_gbm_create_pixmap_internal(xwl_screen,
+                                                  &window->drawable,
+-                                                 window->drawable.width + border_width,
++                                                 width,
+                                                  window->drawable.height + border_width,
+                                                  window->drawable.depth,
+                                                  CREATE_PIXMAP_USAGE_BACKING_PIXMAP,
+--- a/hw/xwayland/xwayland-present.c
++++ b/hw/xwayland/xwayland-present.c
+@@ -30,6 +30,7 @@
+ #include <glamor.h>
+ #endif
+ #include <windowstr.h>
++#include <gcstruct.h>
+ #include <present.h>
+ #include <propertyst.h>
+ #include <X11/Xatom.h>
+@@ -498,6 +499,8 @@
+                   &xwl_present_window_private_key,
+                   NULL);
+ 
++    if (xwl_present_window->stereo_snapshot)
++        dixDestroyPixmap(xwl_present_window->stereo_snapshot, 0);
+     free(xwl_present_window);
+ }
+ 
+@@ -751,7 +754,7 @@
+  * (_KDE_NET_WM_STEREO_CONTENT 3, _KDE_NET_WM_STEREO_CONTENT_VERSION 4) is one
+  * eye wide, and the pixmaps it presents are twice its width: both eyes.
+  */
+-static Bool
++Bool
+ xwl_present_window_holds_two_eyes(WindowPtr window)
+ {
+     CARD32 content, version;
+@@ -760,6 +763,74 @@
+            content == 3 &&
+            xwl_present_window_cardinal_property(window, "_KDE_NET_WM_STEREO_CONTENT_VERSION", &version) &&
+            version >= 4;
++}
++
++/* A copy to a one-view X window cannot retain the second view. Keep an
++ * owned copy until a compositor creates the child's independent surface.
++ * The Present source may be reused by its client after idle notification.
++ */
++void
++xwl_present_save_stereo(WindowPtr window, PixmapPtr pixmap)
++{
++    ScreenPtr screen = window->drawable.pScreen;
++    struct xwl_present_window *present;
++    PixmapPtr snapshot;
++    GCPtr gc;
++
++    if (!window->parent || window->parent == screen->root || !pixmap ||
++        pixmap->drawable.width != 2 * window->drawable.width ||
++        pixmap->drawable.height != window->drawable.height ||
++        !xwl_present_window_holds_two_eyes(window))
++        return;
++
++    snapshot = screen->CreatePixmap(screen, pixmap->drawable.width,
++                                    pixmap->drawable.height,
++                                    pixmap->drawable.depth, CREATE_PIXMAP_USAGE_BACKING_PIXMAP);
++    if (!snapshot)
++        return;
++    gc = GetScratchGC(pixmap->drawable.depth, screen);
++    if (!gc) {
++        dixDestroyPixmap(snapshot, 0);
++        return;
++    }
++    ValidateGC(&snapshot->drawable, gc);
++    gc->ops->CopyArea(&pixmap->drawable, &snapshot->drawable, gc,
++                      0, 0, pixmap->drawable.width, pixmap->drawable.height, 0, 0);
++    FreeScratchGC(gc);
++
++    present = xwl_present_window_get_priv(window);
++    if (!present) {
++        dixDestroyPixmap(snapshot, 0);
++        return;
++    }
++    if (present->stereo_snapshot)
++        dixDestroyPixmap(present->stereo_snapshot, 0);
++    present->stereo_snapshot = snapshot;
++}
++
++Bool
++xwl_present_restore_stereo(WindowPtr window)
++{
++    struct xwl_present_window *present = xwl_present_window_priv(window);
++    ScreenPtr screen = window->drawable.pScreen;
++    PixmapPtr snapshot, old;
++
++    if (!present || !present->stereo_snapshot)
++        return FALSE;
++    snapshot = present->stereo_snapshot;
++    present->stereo_snapshot = NULL;
++    if (snapshot->drawable.width != 2 * window->drawable.width ||
++        snapshot->drawable.height != window->drawable.height ||
++        !xwl_present_window_holds_two_eyes(window)) {
++        dixDestroyPixmap(snapshot, 0);
++        return FALSE;
++    }
++    old = screen->GetWindowPixmap(window);
++    snapshot->screen_x = old->screen_x;
++    snapshot->screen_y = old->screen_y;
++    present_set_tree_pixmap(window, old, snapshot);
++    dixDestroyPixmap(old, old->drawable.id);
++    return TRUE;
+ }
+ 
+ static Bool
+@@ -1145,6 +1216,9 @@
+     if (!notify_only && !event->copy_executed) {
+         ScreenPtr screen = window->drawable.pScreen;
+         int ret;
++
++        if (!vblank->flip)
++            xwl_present_save_stereo(window, vblank->pixmap);
+ 
+         if (vblank->flip) {
+             RegionPtr damage;
+--- a/hw/xwayland/xwayland-window.c
++++ b/hw/xwayland/xwayland-window.c
+@@ -1789,6 +1789,11 @@
+     struct xwl_window *xwl_window = xwl_window_from_window(window);
+     Bool ret;
+ 
++#ifdef XWL_HAS_GLAMOR
++    if (xwl_screen->present && xwl_window_redirected_by_client(window))
++        xwl_present_save_stereo(window, screen->GetWindowPixmap(window));
++#endif
++
+     screen->UnrealizeWindow = xwl_screen->UnrealizeWindow;
+     ret = (*screen->UnrealizeWindow) (window);
+     xwl_screen->UnrealizeWindow = screen->UnrealizeWindow;
+@@ -1826,9 +1831,18 @@
+         window->parent == window->drawable.pScreen->root)
+         return TRUE;
+ 
+-    if (xwl_window_redirected_by_client(window) && window->realized &&
+-        !window_get_damage(window) && register_damage(window))
+-        DamageDamageRegion(&window->drawable, &window->winSize);
++    if (xwl_window_redirected_by_client(window) && window->realized) {
++        Bool changed = !window_get_damage(window);
++
++        if (changed && !register_damage(window))
++            return TRUE;
++#ifdef XWL_HAS_GLAMOR
++        if (xwl_window->xwl_screen->present && xwl_present_restore_stereo(window))
++            changed = TRUE;
++#endif
++        if (changed)
++            DamageDamageRegion(&window->drawable, &window->winSize);
++    }
+ 
+     return TRUE;
+ }
+@@ -1844,6 +1858,18 @@
+ 
+     old_pixmap = (*screen->GetWindowPixmap) (window);
+     xwl_screen = xwl_screen_get(screen);
++
++#ifdef XWL_HAS_GLAMOR
++    /* Composite may detach a redirected child before UnrealizeWindow runs.
++     * Preserve its last pair while the old pixmap still belongs to it.
++     */
++    if (xwl_screen->present && window->parent && old_pixmap != pixmap &&
++        pixmap == screen->GetWindowPixmap(window->parent) &&
++        old_pixmap->drawable.width == 2 * window->drawable.width &&
++        (pixmap->drawable.width != old_pixmap->drawable.width ||
++         pixmap->drawable.height != old_pixmap->drawable.height))
++        xwl_present_save_stereo(window, old_pixmap);
++#endif
+ 
+     screen->SetWindowPixmap = xwl_screen->SetWindowPixmap;
+     (*screen->SetWindowPixmap) (window, pixmap);
+--- a/hw/xwayland/xwayland-present.h
++++ b/hw/xwayland/xwayland-present.h
+@@ -58,6 +58,7 @@
+     OsTimerPtr unredirect_timer;
+     Bool redirected;
+     Bool redirect_failed;
++    PixmapPtr stereo_snapshot;
+ };
+ 
+ struct xwl_present_event {
+@@ -84,5 +85,8 @@
+ Bool xwl_present_maybe_redirect_window(WindowPtr window, PixmapPtr pixmap);
+ Bool xwl_present_maybe_unredirect_window(WindowPtr window);
+ void xwl_present_stop_flips(WindowPtr window);
++Bool xwl_present_window_holds_two_eyes(WindowPtr window);
++void xwl_present_save_stereo(WindowPtr window, PixmapPtr pixmap);
++Bool xwl_present_restore_stereo(WindowPtr window);
+ 
+ #endif /* XWAYLAND_PRESENT_H */
