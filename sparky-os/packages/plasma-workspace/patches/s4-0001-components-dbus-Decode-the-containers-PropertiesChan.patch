@@ -1,0 +1,131 @@
+From 285a8d98ab5c7e34cc87e27427bb4f557129eda9 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 30 Oct 2026 05:15:58 -0300
+Subject: [PATCH 1/2] components/dbus: Decode the containers PropertiesChanged
+ brings
+
+DBus.Properties decodes every value of a refresh (GetAll) into what QML
+reads, but put the values of a PropertiesChanged signal into its map as
+they came. QtDBus delivers a container inside a variant (an array, a
+struct, a map such as a{si}) as a QDBusArgument, which QML cannot read,
+so such a property read as undefined after its first change: indexing
+the map gave nothing and Number() gave NaN.
+
+Decode a value that comes as a QDBusArgument the way a refresh does.
+Basic values stay as they come, so nothing changes for them.
+
+dbuspropertiestest gets a map property that the service changes with a
+PropertiesChanged signal; the test reads NaN without this change and
+the new value with it.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ .../dbus/autotests/dbuspropertiestest.qml       | 17 +++++++++++++++++
+ components/dbus/autotests/dbusservice.py        | 12 ++++++++++++
+ components/dbus/dbusproperties.cpp              | 11 ++++++++++-
+ 3 files changed, 39 insertions(+), 1 deletion(-)
+
+diff --git a/components/dbus/autotests/dbuspropertiestest.qml b/components/dbus/autotests/dbuspropertiestest.qml
+index 9fefe12..2fbd752 100644
+--- a/components/dbus/autotests/dbuspropertiestest.qml
++++ b/components/dbus/autotests/dbuspropertiestest.qml
+@@ -118,6 +118,23 @@ TestCase {
+         compare(props.readWriteProp, oldValue + 1);
+     }
+ 
++    // A container that PropertiesChanged brings is readable as one that a refresh brings
++    function test_containerPropertyChanged() {
++        const oldValue = Number(props.properties.mapProp["one"]);
++        verify(oldValue > 0);
++        const lastCount = propertiesChangedSpy.count;
++        const pendingReply = DBus.SessionBus.asyncCall({
++            "service": root.service,
++            "path": root.path,
++            "iface": root.iface,
++            "member": "changeMap",
++        });
++        verify(pendingReply);
++        tryVerify(() => pendingReply.isFinished);
++        tryVerify(() => propertiesChangedSpy.count > lastCount);
++        compare(Number(props.properties.mapProp["one"]), oldValue + 1);
++    }
++
+     function test_updateAllProperties() {
+         const oldValue = props.readWriteProp;
+         updatePropertySilently();
+diff --git a/components/dbus/autotests/dbusservice.py b/components/dbus/autotests/dbusservice.py
+index ec3d692..d31d055 100755
+--- a/components/dbus/autotests/dbusservice.py
++++ b/components/dbus/autotests/dbusservice.py
+@@ -68,6 +68,7 @@ class OrgKdeKSplash:
+             GLib.Variant("s", "variant"),
+         ])
+         self.read_write_prop = 1
++        self.map_prop = {"one": 1}
+ 
+     def quit(self) -> None:
+         self.connection.unregister_object(self.reg_id)
+@@ -87,6 +88,8 @@ class OrgKdeKSplash:
+   <interface name="org.kde.KSplash">
+     <property name="readOnlyProp" type="(bnixqutdysgoa{sv}v)" access="read"/>
+     <property name="readWriteProp" type="i" access="readwrite"/>
++    <property name="mapProp" type="a{si}" access="read"/>
++    <method name="changeMap"/>
+     <method name="setStage">
+       <arg name="stage" type="s" direction="in"/>
+     </method>
+@@ -164,6 +167,13 @@ class OrgKdeKSplash:
+             self.stage = parameters.unpack()[0]
+             self.stage_set_event.set()
+             invocation.return_value(None)
++        elif method_name == "changeMap":
++            self.map_prop = {"one": self.map_prop["one"] + 1}
++            changed_properties = GLib.Variant('a{sv}', {
++                "mapProp": GLib.Variant("a{si}", self.map_prop),
++            })
++            Gio.DBusConnection.emit_signal(connection, None, object_path, "org.freedesktop.DBus.Properties", "PropertiesChanged", GLib.Variant.new_tuple(GLib.Variant("s", interface_name), changed_properties, GLib.Variant('as', ())))
++            invocation.return_value(None)
+         elif method_name == "updatePropertySilently":
+             self.read_write_prop += 1
+             invocation.return_value(None)
+@@ -217,6 +227,8 @@ class OrgKdeKSplash:
+             return self.default_variant
+         if value == "readWriteProp":
+             return GLib.Variant("i", self.read_write_prop)
++        if value == "mapProp":
++            return GLib.Variant("a{si}", self.map_prop)
+         return None
+ 
+     def handle_set_property(self, connection: Gio.DBusConnection, sender: str, object_path: str, interface_name: str, key: str, value: Any) -> bool:
+diff --git a/components/dbus/dbusproperties.cpp b/components/dbus/dbusproperties.cpp
+index f083fe2..e323ca2 100644
+--- a/components/dbus/dbusproperties.cpp
++++ b/components/dbus/dbusproperties.cpp
+@@ -6,6 +6,7 @@
+ 
+ #include "dbusproperties.h"
+ 
++#include <QDBusArgument>
+ #include <QDBusConnection>
+ #include <QDBusPendingCall>
+ #include <QDBusPendingCallWatcher>
+@@ -115,7 +116,15 @@ void DBusPropertyMap::updateProperties(const QString &interfaceName, const QVari
+     }
+ 
+     if (!changedProperties.empty()) {
+-        insert(QVariantHash(changedProperties.begin(), changedProperties.end()));
++        QVariantHash values(changedProperties.begin(), changedProperties.end());
++        for (QVariant &value : values) {
++            // a container comes from PropertiesChanged as a QDBusArgument, which QML cannot read:
++            // decode it as a refresh does
++            if (value.metaType() == QMetaType::fromType<QDBusArgument>()) {
++                value = Decoder::dbusToVariant(value);
++            }
++        }
++        insert(values);
+     }
+ 
+     for (const QString &invalidKey : invalidatedProperties) {
+-- 
+2.53.0
+

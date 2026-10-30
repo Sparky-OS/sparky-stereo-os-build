@@ -1,0 +1,16 @@
+plasma-workspace (4:6.7.4-2+stereo3d4) unstable; urgency=medium
+
+  * components/dbus: decode the containers PropertiesChanged brings
+    (s4-0001, invent danielcamposramos/plasma-workspace
+    wallpaper-cost-292 285a8d98). A map or list that changed reached QML
+    as an undecoded QDBusArgument; it is now decoded as a refresh does.
+    Test: dbuspropertiestest test_containerPropertyChanged.
+  * kcms/wallpaper: state what the sunk effect costs the wallpaper
+    (s4-0002, d9d58069). System Settings' Wallpaper page reads KWin's
+    live WallpaperCuts (org.kde.KWin.StereoDepth, kwin +stereo3d38) and
+    says, for the selected screen or for every screen by name with "Set
+    for all screens", "10 pixels of the wallpaper's width will be lost to
+    the sunk effect, 5 at each side", and that videos with pop effects
+    are not expected to be comfortable with widgets or other things over
+    them. Translated into the eight languages
+    (plasma-workspace-wallpaper-cost.po.patch).

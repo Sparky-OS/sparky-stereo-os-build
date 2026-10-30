@@ -1,0 +1,90 @@
+From d9d58069440b9d23b2413dd6dfcd0ccad586d290 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 30 Oct 2026 04:00:00 -0300
+Subject: [PATCH 2/2] kcms/wallpaper: State what the sunk effect costs the
+ wallpaper
+
+On a screen in one of Stereo KWin's 3D modes the wallpaper lies behind
+the screen and keeps its size, so the columns only one eye would see are
+cut at both sides. Under the wallpaper type the Wallpaper page now says
+how many pixels of the wallpaper's width are lost and how many at each
+side, for the selected screen, or for each screen by name when the
+wallpaper is set for all of them, and that videos with pop effects are
+not expected to be comfortable with widgets or other things over them.
+
+The number is KWin's, read from WallpaperCuts on org.kde.KWin.StereoDepth,
+so it follows the user's Background depth and each screen's own width and
+mode at once. On a 2D screen, at a depth of 0 or with a KWin that
+publishes nothing, nothing is lost and nothing is said.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ kcms/wallpaper/ui/main.qml | 45 ++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 45 insertions(+)
+
+diff --git a/kcms/wallpaper/ui/main.qml b/kcms/wallpaper/ui/main.qml
+index 4a45b0f..6c30e46 100644
+--- a/kcms/wallpaper/ui/main.qml
++++ b/kcms/wallpaper/ui/main.qml
+@@ -19,6 +19,7 @@ import org.kde.kcmutils as KCM
+ 
+ import org.kde.plasma.kcm.wallpaper
+ import org.kde.plasma.configuration
++import org.kde.plasma.workspace.dbus as DBus
+ 
+ // Not using AbstractKCM because we're not using any of it features, not even one
+ Kirigami.ScrollablePage {
+@@ -112,6 +113,50 @@ Kirigami.ScrollablePage {
+                     Layout.preferredHeight: wallpaperComboBox.height
+                 }
+             }
++
++            QQC2.Label {
++                id: sunkCostLabel
++                // On a screen in a 3D mode the wallpaper lies behind the screen and keeps its size,
++                // so the columns only one eye would see are cut at both sides. KWin says how many
++                // for each screen, from the Background depth and the screen's width: here for the
++                // selected screen, or for each screen when the wallpaper is set for all of them.
++                readonly property bool named: kcm.allScreens && kcm.screens.length > 1
++                readonly property var lost: {
++                    const cuts = stereoDepth.properties.WallpaperCuts ?? {}
++                    const screens = kcm.allScreens ? kcm.screens : [kcm.selectedScreen]
++                    const result = []
++                    for (let i = 0; i < screens.length; ++i) {
++                        const name = screens[i]?.name ?? ""
++                        const cut = Number(cuts[name] ?? 0)
++                        if (cut > 0) {
++                            result.push({name, cut})
++                        }
++                    }
++                    return result
++                }
++                visible: lost.length > 0
++                Layout.fillWidth: true
++                Layout.maximumWidth: Kirigami.Units.gridUnit * 25
++                wrapMode: Text.Wrap
++                text: lost.map(screen => named
++                               ? i18ncp("@info %1 is a number of pixels, %2 how many of them at each side, %3 a screen's name",
++                                        "%3: %1 pixel of the wallpaper's width will be lost to the sunk effect, %2 at each side.",
++                                        "%3: %1 pixels of the wallpaper's width will be lost to the sunk effect, %2 at each side.",
++                                        2 * screen.cut, screen.cut, screen.name)
++                               : i18ncp("@info %1 is a number of pixels, %2 how many of them at each side",
++                                        "%1 pixel of the wallpaper's width will be lost to the sunk effect, %2 at each side.",
++                                        "%1 pixels of the wallpaper's width will be lost to the sunk effect, %2 at each side.",
++                                        2 * screen.cut, screen.cut)).join("\n")
++                      + "\n" + i18nc("@info", "Videos with pop effects are not expected to be comfortable with widgets or other things over it.")
++
++                DBus.Properties {
++                    id: stereoDepth
++                    busType: DBus.BusType.Session
++                    service: "org.kde.KWin"
++                    path: "/org/kde/KWin/StereoDepth"
++                    iface: "org.kde.KWin.StereoDepth"
++                }
++            }
+         }
+ 
+         Item {
+-- 
+2.53.0
+
