@@ -1,0 +1,1000 @@
+From 23d6a15dbe003190152c2fa35dbadbc0bf967414 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 29 Oct 2026 16:11:34 -0300
+Subject: [PATCH 1/3] drm: Offer DisplayPort's frame sequential stereo as an
+ output filter
+
+DisplayPort's own 3D is frame sequential: the source sends one eye per
+frame of the mode's 2D timing and tells the display which eye each frame
+carries (the Main Stream Attribute's MISC1 bits 2:1, DisplayPort 1.1a). The
+edition's kernel has a mode flag for it, DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL
+(9 << 14, kernel series 36; defined here until libdrm has it), whose frame
+is the two eyes side by side, left eye first, twice the mode's width: the
+full side by side strip KWin already builds for its software frame
+sequential twin. The kernel alternates the halves, signals the eye and
+lands page flips only at the start of a left-eye frame, and it takes the
+layout only on connectors whose driver opted in.
+
+- A mode the display declares (an EDID detailed timing, a DisplayID stereo
+  block) comes from the kernel with the flag and is listed as one of the
+  display's 3D modes, Stereo3DSequentialDisplayPort; until now KWin left
+  out a 3D flag it did not know.
+- Elsewhere each 2D mode at 100 Hz or more gets a twin under "Other stereo
+  formats", where a TEST_ONLY commit of the mode with the flag succeeds:
+  DrmGpu::probeFrameSequential() tests each such mode once per mode list,
+  on the connector's CRTC or a free one, with a dumb buffer as the primary
+  plane covering the whole frame, and changes nothing. The twin is a mode of
+  its own (its blob carries the flag), not the 2D mode KWin packs into; it
+  is left out where the display declares the same timing.
+- The frame is committed whole, as for side by side (full), and the eyes
+  are composed into its halves with the output's eye swap, as for every 3D
+  mode. There is no right-first twin: the eye order is signalled.
+- Pacing: a flip's event comes one or two refreshes after the commit and
+  only at a pair boundary, so the commit thread and the render loop run at
+  half the refresh (stereoPresentationRate()), presentation stays vsync,
+  and nothing assumes an event per eye; the software twin's scheduler is
+  not involved.
+- The output device interface sends the new mode flag from version 30.
+
+The software frame sequential twins stay as their own options, and
+neither kind is ever chosen automatically.
+
+testMockDrmDisplayPortSequential covers the flag mapping and the frame,
+the declared mode, the twin and its gating, the TEST_ONLY probe on a
+connector with and without the opt-in (the mock refuses the layout where
+the connector did not opt in, as the kernel core does), and the scanout of
+the whole frame with the flagged mode.
+
+Assisted-by: Claude Opus 5.5
+---
+ autotests/drm/CMakeLists.txt                  |   5 +
+ .../drm/mockDisplayPortSequentialTest.cpp     | 398 ++++++++++++++++++
+ autotests/drm/mock_drm.cpp                    |   6 +
+ autotests/drm/mock_drm.h                      |   2 +
+ src/backends/drm/drm_connector.cpp            |  53 ++-
+ src/backends/drm/drm_connector.h              |  14 +
+ src/backends/drm/drm_egl_layer_surface.cpp    |   1 +
+ src/backends/drm/drm_gpu.cpp                  |  83 ++++
+ src/backends/drm/drm_gpu.h                    |   1 +
+ src/backends/drm/drm_output.cpp               |   6 +-
+ src/backends/drm/drm_pipeline.cpp             |   7 +-
+ src/backends/drm/drm_stereo.h                 |  40 +-
+ src/core/output.h                             |   7 +-
+ src/wayland/outputdevice_v2.cpp               |   7 +
+ 14 files changed, 621 insertions(+), 9 deletions(-)
+ create mode 100644 autotests/drm/mockDisplayPortSequentialTest.cpp
+
+diff --git a/autotests/drm/CMakeLists.txt b/autotests/drm/CMakeLists.txt
+index 6170e5bc91..9ab8e3838e 100644
+--- a/autotests/drm/CMakeLists.txt
++++ b/autotests/drm/CMakeLists.txt
+@@ -72,6 +72,11 @@ target_link_libraries(testMockDrmFrameSequential LibDrmTest Qt::Test)
+ add_test(NAME kwin-testMockDrmFrameSequential COMMAND testMockDrmFrameSequential)
+ ecm_mark_as_test(testMockDrmFrameSequential)
+ 
++add_executable(testMockDrmDisplayPortSequential mockDisplayPortSequentialTest.cpp)
++target_link_libraries(testMockDrmDisplayPortSequential LibDrmTest Qt::Test)
++add_test(NAME kwin-testMockDrmDisplayPortSequential COMMAND testMockDrmDisplayPortSequential)
++ecm_mark_as_test(testMockDrmDisplayPortSequential)
++
+ add_executable(testVirtualStereo virtualStereoTest.cpp)
+ target_link_libraries(testVirtualStereo LibDrmTest Qt::Test)
+ add_test(NAME kwin-testVirtualStereo COMMAND testVirtualStereo)
+diff --git a/autotests/drm/mockDisplayPortSequentialTest.cpp b/autotests/drm/mockDisplayPortSequentialTest.cpp
+new file mode 100644
+index 0000000000..bfb7cfa85f
+--- /dev/null
++++ b/autotests/drm/mockDisplayPortSequentialTest.cpp
+@@ -0,0 +1,398 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++
++#include "mock_drm.h"
++
++#include "core/gpumanager.h"
++#include "core/session.h"
++#include "drm_backend.h"
++#include "drm_buffer.h"
++#include "drm_connector.h"
++#include "drm_crtc.h"
++#include "drm_gpu.h"
++#include "drm_layer.h"
++#include "drm_pipeline.h"
++#include "drm_plane.h"
++#include "drm_stereo.h"
++
++#include <QScopeGuard>
++#include <QTest>
++
++#include <fcntl.h>
++
++using namespace KWin;
++
++static std::unique_ptr<MockGpu> findRenderDevice(int crtcCount)
++{
++    const int deviceCount = drmGetDevices2(0, nullptr, 0);
++    if (deviceCount <= 0) {
++        return nullptr;
++    }
++    QList<drmDevice *> devices(deviceCount);
++    if (drmGetDevices2(0, devices.data(), devices.size()) < 0) {
++        return nullptr;
++    }
++    auto cleanup = qScopeGuard([&devices]() {
++        drmFreeDevices(devices.data(), devices.size());
++    });
++    for (drmDevice *device : std::as_const(devices)) {
++        if (device->available_nodes & (1 << DRM_NODE_RENDER)) {
++            const int fd = open(device->nodes[DRM_NODE_RENDER], O_RDWR | O_CLOEXEC);
++            if (fd != -1) {
++                return std::make_unique<MockGpu>(fd, device->nodes[DRM_NODE_RENDER], crtcCount);
++            }
++        }
++    }
++    return nullptr;
++}
++
++class TestLayer : public DrmPipelineLayer
++{
++public:
++    TestLayer(DrmPlane *plane, std::shared_ptr<DrmFramebuffer> framebuffer)
++        : DrmPipelineLayer(plane)
++        , m_framebuffer(std::move(framebuffer))
++    {
++    }
++
++    std::shared_ptr<DrmFramebuffer> currentBuffer() const override
++    {
++        return m_framebuffer;
++    }
++
++    void releaseBuffers() override
++    {
++    }
++
++protected:
++    std::optional<OutputLayerBeginFrameInfo> doBeginFrame() override
++    {
++        return std::nullopt;
++    }
++
++    bool doEndFrame(const Region &, const Region &, OutputFrame *) override
++    {
++        return true;
++    }
++
++private:
++    std::shared_ptr<DrmFramebuffer> m_framebuffer;
++};
++
++/**
++ * DisplayPort's own frame sequential stereo (DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL of the edition kernel):
++ * the kernel alternates the halves of one frame of both eyes and signals the eye, so KWin lists the
++ * mode, offers the twin of a 2D mode only where a TEST_ONLY commit takes it, commits the whole frame
++ * every time and paces pairs at half the refresh.
++ */
++class MockDisplayPortSequentialTest : public QObject
++{
++    Q_OBJECT
++
++private Q_SLOTS:
++    void init();
++    void cleanup();
++    void testLayout();
++    void testDeclaredMode();
++    void testTwin();
++    void testProbe_data();
++    void testProbe();
++    void testScanout();
++
++private:
++    struct Rig
++    {
++        std::unique_ptr<MockGpu> mockGpu;
++        std::shared_ptr<MockConnector> mockConnector;
++        std::unique_ptr<Session> session;
++        std::unique_ptr<DrmBackend> backend;
++        std::unique_ptr<DrmGpu> gpu;
++        std::shared_ptr<DrmConnector> connector;
++        std::unique_ptr<DrmPlane> plane;
++        std::unique_ptr<DrmCrtc> crtc;
++    };
++    std::unique_ptr<Rig> makeRig(const std::function<void(MockConnector *)> &modes, bool allowed);
++    std::shared_ptr<DrmFramebuffer> makeFramebuffer(Rig *rig, uint32_t width, uint32_t height);
++    std::optional<drmModeModeInfo> committedMode(Rig *rig) const;
++    std::optional<uint64_t> committedPlaneProperty(Rig *rig, const QString &name) const;
++};
++
++void MockDisplayPortSequentialTest::init()
++{
++    GpuManager::s_self = std::make_unique<GpuManager>();
++}
++
++void MockDisplayPortSequentialTest::cleanup()
++{
++    GpuManager::s_self.reset();
++}
++
++std::unique_ptr<MockDisplayPortSequentialTest::Rig> MockDisplayPortSequentialTest::makeRig(const std::function<void(MockConnector *)> &modes, bool allowed)
++{
++    auto rig = std::make_unique<Rig>();
++    rig->mockGpu = findRenderDevice(1);
++    if (!rig->mockGpu) {
++        return nullptr;
++    }
++    rig->mockConnector = std::make_shared<MockConnector>(rig->mockGpu.get());
++    rig->mockConnector->modes.clear();
++    modes(rig->mockConnector.get());
++    rig->mockConnector->frameSequentialAllowed = allowed;
++    rig->mockGpu->connectors.push_back(rig->mockConnector);
++    rig->session = Session::create(Session::Type::Noop);
++    rig->backend = std::make_unique<DrmBackend>(rig->session.get());
++    rig->gpu = std::make_unique<DrmGpu>(rig->backend.get(), rig->mockGpu->fd, DrmDevice::open(rig->mockGpu->devNode));
++    rig->connector = std::make_shared<DrmConnector>(rig->gpu.get(), rig->mockConnector->id);
++    if (!rig->connector->init()) {
++        return nullptr;
++    }
++    rig->plane = std::make_unique<DrmPlane>(rig->gpu.get(), rig->mockGpu->planes.front()->id);
++    if (!rig->plane->init()) {
++        return nullptr;
++    }
++    rig->crtc = std::make_unique<DrmCrtc>(rig->gpu.get(), rig->mockGpu->crtcs.front()->id, 0, rig->plane.get());
++    if (!rig->crtc->init()) {
++        return nullptr;
++    }
++    return rig;
++}
++
++std::shared_ptr<DrmFramebuffer> MockDisplayPortSequentialTest::makeFramebuffer(Rig *rig, uint32_t width, uint32_t height)
++{
++    auto *const mockFb = new MockFb(rig->mockGpu.get(), width, height);
++    auto data = std::make_shared<DrmFramebufferData>(rig->gpu.get(), mockFb->id, nullptr);
++    return std::make_shared<DrmFramebuffer>(data, nullptr, FileDescriptor{});
++}
++
++std::optional<drmModeModeInfo> MockDisplayPortSequentialTest::committedMode(Rig *rig) const
++{
++    if (rig->mockGpu->atomicCommits.isEmpty()) {
++        return std::nullopt;
++    }
++    const auto mockCrtc = rig->mockGpu->findCrtc(rig->crtc->id());
++    const auto modeId = mockCrtc->getPropId(QStringLiteral("MODE_ID"));
++    for (const Prop &property : rig->mockGpu->atomicCommits.constLast()) {
++        if (property.obj == mockCrtc->id && property.prop == modeId) {
++            const QByteArray bytes = rig->mockGpu->blobContents.value(property.value);
++            if (bytes.size() != sizeof(drmModeModeInfo)) {
++                return std::nullopt;
++            }
++            drmModeModeInfo info;
++            memcpy(&info, bytes.constData(), sizeof(info));
++            return info;
++        }
++    }
++    return std::nullopt;
++}
++
++std::optional<uint64_t> MockDisplayPortSequentialTest::committedPlaneProperty(Rig *rig, const QString &name) const
++{
++    if (rig->mockGpu->atomicCommits.isEmpty()) {
++        return std::nullopt;
++    }
++    const auto mockPlane = rig->mockGpu->findPlane(rig->plane->id());
++    const auto id = mockPlane->getPropId(name);
++    for (const Prop &property : rig->mockGpu->atomicCommits.constLast()) {
++        if (property.obj == mockPlane->id && property.prop == id) {
++            return property.value;
++        }
++    }
++    return std::nullopt;
++}
++
++void MockDisplayPortSequentialTest::testLayout()
++{
++    // the kernel's layout is its own 3D mode, never one of the twins KWin alternates itself
++    QCOMPARE(stereoFlagsForDrmMode(DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL), OutputModeline::Flags(OutputModeline::Flag::Stereo3DSequentialDisplayPort));
++    QCOMPARE(DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL, 9 << 14);
++    QVERIFY(OutputModeline::AllStereo3D.testFlag(OutputModeline::Flag::Stereo3DSequentialDisplayPort));
++    QCOMPARE(stereoLayoutForMode(OutputModeline::Flag::Stereo3DSequentialDisplayPort), StereoLayout::SequentialDisplayPort);
++    QCOMPARE(stereoLayoutForMode(OutputModeline::Flag::Stereo3DSequentialDisplayPort | OutputModeline::Flag::VirtualStereo), StereoLayout::SequentialDisplayPort);
++    QVERIFY(isDisplayPortFrameSequential(StereoLayout::SequentialDisplayPort));
++    QVERIFY(!isFrameSequential(StereoLayout::SequentialDisplayPort));
++    QVERIFY(!isDisplayPortFrameSequential(StereoLayout::SequentialLeftFirst));
++    QVERIFY(isFullFrameStereo(StereoLayout::SequentialDisplayPort));
++
++    drmModeModeInfo mode{};
++    mode.hdisplay = 1920;
++    mode.vdisplay = 1080;
++    mode.vtotal = 1125;
++    // the frame of both eyes, side by side, as drm_mode_get_hv_timing() sizes it for this layout
++    QCOMPARE(stereoFrameSize(mode, StereoLayout::SequentialDisplayPort, OutputModeline::Flag::Stereo3DSequentialDisplayPort), QSize(3840, 1080));
++    QCOMPARE(stereoRightEyeOffset(mode, StereoLayout::SequentialDisplayPort), QPoint(1920, 0));
++    QCOMPARE(stereoEyeSize(mode, OutputModeline::Flag::Stereo3DSequentialDisplayPort | OutputModeline::Flag::VirtualStereo), QSize(1920, 1080));
++
++    // a pair per two refreshes; every other layout presents once per refresh
++    QCOMPARE(stereoPresentationRate(120000, StereoLayout::SequentialDisplayPort), 60000u);
++    QCOMPARE(stereoPresentationRate(119880, StereoLayout::SequentialDisplayPort), 59940u);
++    QCOMPARE(stereoPresentationRate(120000, StereoLayout::SequentialLeftFirst), 120000u);
++    QCOMPARE(stereoPresentationRate(60000, StereoLayout::None), 60000u);
++}
++
++void MockDisplayPortSequentialTest::testDeclaredMode()
++{
++    // a display that declares frame sequential stereo: the kernel lists the 2D mode and its copy with the flag
++    const auto rig = makeRig([](MockConnector *connector) {
++        connector->addMode(1920, 1080, 120, true);
++        drmModeModeInfo sequential = connector->modes.constLast();
++        sequential.flags |= DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL;
++        sequential.type &= ~DRM_MODE_TYPE_PREFERRED;
++        connector->modes.push_back(sequential);
++    }, true);
++    QVERIFY(rig);
++    const auto modes = rig->connector->modes();
++    QCOMPARE(modes.size(), 2);
++    QCOMPARE(stereoLayoutForMode(modes[0]->flags()), StereoLayout::None);
++    QCOMPARE(stereoLayoutForMode(modes[1]->flags()), StereoLayout::SequentialDisplayPort);
++    QVERIFY(!(modes[1]->flags() & OutputModeline::Flag::VirtualStereo));
++    QVERIFY(!(modes[1]->flags() & OutputModeline::Flag::Preferred));
++    QCOMPARE(modes[1]->size(), QSize(1920, 1080));
++
++    // the display's own 3D mode stands in for the twin of the same timing
++    modes[0]->setFrameSequentialAccepted(true);
++    const QList<std::shared_ptr<OutputMode>> base{modes[0], modes[1]};
++    const auto listed = DrmConnector::withVirtualStereoModes(base, {}, false, true);
++    const auto sequentialTwins = std::ranges::count_if(listed, [](const auto &mode) {
++        return stereoLayoutForMode(mode->flags()) == StereoLayout::SequentialDisplayPort && (mode->flags() & OutputModeline::Flag::VirtualStereo);
++    });
++    QCOMPARE(sequentialTwins, 0);
++}
++
++void MockDisplayPortSequentialTest::testTwin()
++{
++    const auto rig = makeRig([](MockConnector *connector) {
++        connector->addMode(1920, 1080, 60, true);
++        connector->addMode(1920, 1080, 120);
++    }, true);
++    QVERIFY(rig);
++    const auto modes = rig->connector->modes();
++    QCOMPARE(modes.size(), 2);
++    const auto sixty = modes[0]->refreshRate() < modes[1]->refreshRate() ? modes[0] : modes[1];
++    const auto hundredTwenty = sixty == modes[0] ? modes[1] : modes[0];
++    const QList<std::shared_ptr<OutputMode>> base{modes[0], modes[1]};
++    const auto countTwins = [](const QList<std::shared_ptr<OutputMode>> &listed) -> std::optional<std::shared_ptr<DrmConnectorMode>> {
++        std::optional<std::shared_ptr<DrmConnectorMode>> found;
++        for (const auto &mode : listed) {
++            if (stereoLayoutForMode(mode->flags()) == StereoLayout::SequentialDisplayPort) {
++                if (found) {
++                    return std::nullopt;
++                }
++                found = std::static_pointer_cast<DrmConnectorMode>(mode);
++            }
++        }
++        return found;
++    };
++
++    // untested and refused modes have no twin, nor does any mode with "Other stereo formats" off
++    QVERIFY(!countTwins(DrmConnector::withVirtualStereoModes(base, {}, false, true)));
++    hundredTwenty->setFrameSequentialAccepted(false);
++    QVERIFY(!countTwins(DrmConnector::withVirtualStereoModes(base, {}, false, true)));
++    hundredTwenty->setFrameSequentialAccepted(true);
++    QVERIFY(!countTwins(DrmConnector::withVirtualStereoModes(base, {}, true, false)));
++    // the software twins stay, as their own options
++    const auto listed = DrmConnector::withVirtualStereoModes(base, {}, false, true);
++    QVERIFY(std::ranges::any_of(listed, [](const auto &mode) {
++        return mode->flags() & OutputModeline::Flag::Stereo3DSequentialLeftFirst;
++    }));
++    QVERIFY(std::ranges::any_of(listed, [](const auto &mode) {
++        return mode->flags() & OutputModeline::Flag::Stereo3DSequentialRightFirst;
++    }));
++
++    const auto twin = countTwins(listed);
++    QVERIFY(twin);
++    QCOMPARE((*twin)->refreshRate(), hundredTwenty->refreshRate());
++    QCOMPARE((*twin)->flags() & ~OutputModeline::Flags(OutputModeline::Flag::Generated),
++             OutputModeline::Flags(OutputModeline::Flag::VirtualStereo | OutputModeline::Flag::Stereo3DSequentialDisplayPort));
++    QCOMPARE((*twin)->virtualBase(), hundredTwenty);
++    // the kernel sends this twin: the base's 2D timing with the frame sequential flag, as a blob of its own
++    QCOMPARE((*twin)->nativeMode()->flags & DRM_MODE_FLAG_3D_MASK, uint32_t(DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL));
++    QCOMPARE((*twin)->nativeMode()->hdisplay, hundredTwenty->nativeMode()->hdisplay);
++    QCOMPARE((*twin)->nativeMode()->clock, hundredTwenty->nativeMode()->clock);
++    QCOMPARE(hundredTwenty->nativeMode()->flags & DRM_MODE_FLAG_3D_MASK, 0u);
++    QVERIFY((*twin)->blob() != hundredTwenty->blob());
++    // KWin's own twins are sent as their 2D mode
++    const auto softwareTwin = std::make_shared<DrmConnectorMode>(hundredTwenty, OutputModeline::Flag::Stereo3DSequentialLeftFirst);
++    QCOMPARE(softwareTwin->blob(), hundredTwenty->blob());
++    // a 60 Hz mode gets no frame sequential twin of either kind: each eye would be at 30 Hz
++    sixty->setFrameSequentialAccepted(true);
++    QVERIFY(!std::ranges::any_of(DrmConnector::withVirtualStereoModes(base, {}, false, true), [&sixty](const auto &mode) {
++        return mode->refreshRate() == sixty->refreshRate() && stereoLayoutForMode(mode->flags()) != StereoLayout::None
++            && (mode->flags() & (OutputModeline::Flag::Stereo3DSequentialDisplayPort | OutputModeline::Flag::Stereo3DSequentialLeftFirst));
++    }));
++}
++
++void MockDisplayPortSequentialTest::testProbe_data()
++{
++    QTest::addColumn<bool>("allowed");
++    QTest::addRow("connector opted in") << true;
++    QTest::addRow("connector without opt-in") << false;
++}
++
++void MockDisplayPortSequentialTest::testProbe()
++{
++    QFETCH(bool, allowed);
++    const auto rig = makeRig([](MockConnector *connector) {
++        connector->addMode(1920, 1080, 120, true);
++    }, allowed);
++    QVERIFY(rig);
++    const auto base = rig->connector->modes().front();
++    const auto twin = std::make_shared<DrmConnectorMode>(base, OutputModeline::Flag::Stereo3DSequentialDisplayPort);
++    const auto frame = makeFramebuffer(rig.get(), 3840, 1080);
++    rig->mockGpu->atomicCommits.clear();
++    QCOMPARE(rig->connector->testFrameSequential(rig->crtc.get(), twin, frame), allowed);
++    QCOMPARE(rig->mockGpu->atomicCommits.size(), 1);
++    // the test carried the flagged mode and a plane over the frame of both eyes
++    const auto mode = committedMode(rig.get());
++    QVERIFY(mode);
++    QCOMPARE(mode->flags & DRM_MODE_FLAG_3D_MASK, uint32_t(DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL));
++    QCOMPARE(mode->hdisplay, 1920);
++    QCOMPARE(committedPlaneProperty(rig.get(), QStringLiteral("SRC_W")), std::optional<uint64_t>(uint64_t(3840) << 16));
++    QCOMPARE(committedPlaneProperty(rig.get(), QStringLiteral("CRTC_W")), std::optional<uint64_t>(3840));
++    QCOMPARE(committedPlaneProperty(rig.get(), QStringLiteral("CRTC_H")), std::optional<uint64_t>(1080));
++    // nothing was applied
++    QVERIFY(!rig->mockGpu->findCrtc(rig->crtc->id())->getProp(QStringLiteral("ACTIVE")));
++    // a 2D mode is never sent through the frame sequential test
++    QVERIFY(!rig->connector->testFrameSequential(rig->crtc.get(), base, frame));
++}
++
++void MockDisplayPortSequentialTest::testScanout()
++{
++    const auto rig = makeRig([](MockConnector *connector) {
++        connector->addMode(1920, 1080, 120, true);
++    }, true);
++    QVERIFY(rig);
++    const auto base = rig->connector->modes().front();
++    const auto twin = std::make_shared<DrmConnectorMode>(base, OutputModeline::Flag::Stereo3DSequentialDisplayPort);
++    auto pipeline = std::make_unique<DrmPipeline>(rig->connector.get());
++    pipeline->setCrtc(rig->crtc.get());
++    pipeline->setMode(twin);
++    pipeline->setEnable(true);
++    pipeline->setActive(true);
++    const auto frame = makeFramebuffer(rig.get(), 3840, 1080);
++    auto layer = std::make_unique<TestLayer>(rig->plane.get(), frame);
++    layer->setEnabled(true);
++    layer->setTargetRect(Rect(QPoint(0, 0), QSize(1920, 1080)));
++    layer->setSourceRect(Rect(QPoint(0, 0), QSize(1920, 1080)));
++    pipeline->setLayers({layer.get()});
++
++    // every commit hands the kernel the whole frame of both eyes; the kernel picks the half per refresh
++    for (int i = 0; i < 4; i++) {
++        rig->mockGpu->atomicCommits.clear();
++        QCOMPARE(DrmPipeline::commitPipelines({pipeline.get()}, rig->gpu.get(), DrmPipeline::CommitMode::CommitModeset), DrmPipeline::Error::None);
++        QCOMPARE(committedPlaneProperty(rig.get(), QStringLiteral("SRC_X")), std::optional<uint64_t>(0));
++        QCOMPARE(committedPlaneProperty(rig.get(), QStringLiteral("SRC_W")), std::optional<uint64_t>(uint64_t(3840) << 16));
++        QCOMPARE(committedPlaneProperty(rig.get(), QStringLiteral("CRTC_W")), std::optional<uint64_t>(3840));
++        const auto mode = committedMode(rig.get());
++        QVERIFY(mode);
++        QCOMPARE(mode->flags & DRM_MODE_FLAG_3D_MASK, uint32_t(DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL));
++        // flip events come only at pair boundaries, so each one is a new pair, never an eye to toggle
++        pipeline->pageFlipped(std::chrono::nanoseconds(i + 1), 100 + 2 * i, std::nullopt);
++        QVERIFY(pipeline->frameSequentialNeedsNewFrame());
++    }
++
++    // the same mode on a connector that never opted in is refused
++    rig->mockConnector->frameSequentialAllowed = false;
++    QVERIFY(DrmPipeline::commitPipelines({pipeline.get()}, rig->gpu.get(), DrmPipeline::CommitMode::TestAllowModeset) != DrmPipeline::Error::None);
++}
++
++QTEST_GUILESS_MAIN(MockDisplayPortSequentialTest)
++#include "mockDisplayPortSequentialTest.moc"
+diff --git a/autotests/drm/mock_drm.cpp b/autotests/drm/mock_drm.cpp
+index 67e469dc9e..aebaeb8cf8 100644
+--- a/autotests/drm/mock_drm.cpp
++++ b/autotests/drm/mock_drm.cpp
+@@ -1151,6 +1151,12 @@ int drmModeAtomicCommit(int fd, drmModeAtomicReqPtr req, uint32_t flags, void *u
+                     qWarning("mode on crtc %u is incompatible with connector %u", p.crtc->id, conn->id);
+                     return -(errno = EINVAL);
+                 }
++                // the edition kernel's core check: frame sequential stereo only where the driver opted in
++                constexpr uint32_t frameSequential = 9 << 14;
++                if ((mode.flags & DRM_MODE_FLAG_3D_MASK) == frameSequential && !conn->frameSequentialAllowed) {
++                    qWarning("connector %u cannot send frame-sequential stereo", conn->id);
++                    return -(errno = EINVAL);
++                }
+             }
+         }
+     }
+diff --git a/autotests/drm/mock_drm.h b/autotests/drm/mock_drm.h
+index f500b469c1..b4ba48ca22 100644
+--- a/autotests/drm/mock_drm.h
++++ b/autotests/drm/mock_drm.h
+@@ -82,6 +82,8 @@ public:
+     uint32_t type;
+     std::shared_ptr<MockEncoder> encoder;
+     QList<drmModeModeInfo> modes;
++    // the driver opted in to DisplayPort frame sequential stereo (stereo_frame_sequential_allowed)
++    bool frameSequentialAllowed = false;
+ };
+ 
+ class MockEncoder : public MockObject
+diff --git a/src/backends/drm/drm_connector.cpp b/src/backends/drm/drm_connector.cpp
+index ff068e5a16..c39dc09a97 100644
+--- a/src/backends/drm/drm_connector.cpp
++++ b/src/backends/drm/drm_connector.cpp
+@@ -9,12 +9,14 @@
+ */
+ #include "drm_connector.h"
+ #include "drm_stereo.h"
++#include "drm_buffer.h"
+ #include "drm_commit.h"
+ #include "drm_crtc.h"
+ #include "drm_gpu.h"
+ #include "drm_logging.h"
+ #include "drm_output.h"
+ #include "drm_pipeline.h"
++#include "drm_plane.h"
+ #include "drm_pointer.h"
+ 
+ #include <cerrno>
+@@ -70,6 +72,11 @@ DrmConnectorMode::DrmConnectorMode(const std::shared_ptr<DrmConnectorMode> &base
+     , m_nativeMode(*base->nativeMode())
+     , m_ycbcr420Only(base->requiresYcbcr420())
+ {
++    if (layout == OutputModeline::Flag::Stereo3DSequentialDisplayPort) {
++        // the kernel sends this one: the 2D timing with the frame sequential layout, a mode of its own
++        m_nativeMode.flags = (m_nativeMode.flags & ~DRM_MODE_FLAG_3D_MASK) | DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL;
++        m_nativeMode.type &= ~DRM_MODE_TYPE_PREFERRED;
++    }
+ }
+ 
+ std::shared_ptr<OutputMode> DrmConnectorMode::resolveVirtualMode(const std::shared_ptr<OutputMode> &current, const QList<std::shared_ptr<OutputMode>> &modes)
+@@ -90,9 +97,20 @@ std::shared_ptr<DrmConnectorMode> DrmConnectorMode::virtualBase() const
+     return m_virtualBase;
+ }
+ 
++std::optional<bool> DrmConnectorMode::frameSequentialAccepted() const
++{
++    return m_frameSequentialAccepted;
++}
++
++void DrmConnectorMode::setFrameSequentialAccepted(bool accepted)
++{
++    m_frameSequentialAccepted = accepted;
++}
++
+ std::shared_ptr<DrmBlob> DrmConnectorMode::blob()
+ {
+-    if (m_virtualBase) {
++    // a twin KWin packs is sent as its 2D mode; one the kernel sends carries its own 3D layout
++    if (m_virtualBase && !(m_nativeMode.flags & DRM_MODE_FLAG_3D_MASK)) {
+         return m_virtualBase->blob();
+     }
+     if (!m_blob) {
+@@ -297,6 +315,17 @@ QList<std::shared_ptr<OutputMode>> DrmConnector::withVirtualStereoModes(const QL
+             if (mode->refreshRate() >= 100000) {
+                 layouts << OutputModeline::Flag::Stereo3DSequentialLeftFirst;
+                 layouts << OutputModeline::Flag::Stereo3DSequentialRightFirst;
++                // DisplayPort's own frame sequential stereo, where the kernel alternates the eyes and tells
++                // the display which one each frame carries: where a TEST_ONLY commit took it, and the
++                // display does not declare it itself (then it is one of its 3D modes)
++                const bool declared = std::ranges::any_of(baseModes, [&mode](const auto &other) {
++                    return stereoLayoutForMode(other->flags()) == StereoLayout::SequentialDisplayPort
++                        && !(other->flags() & OutputModeline::Flag::VirtualStereo)
++                        && other->size() == mode->size() && other->refreshRate() == mode->refreshRate();
++                });
++                if (base->frameSequentialAccepted().value_or(false) && !declared) {
++                    layouts << OutputModeline::Flag::Stereo3DSequentialDisplayPort;
++                }
+             }
+             if (mode->size() == nativeSize && !base->requiresYcbcr420()) {
+                 layouts << OutputModeline::Flag::Stereo3DRowsLeftFirst;
+@@ -524,6 +553,28 @@ QList<std::shared_ptr<DrmConnectorMode>> DrmConnector::generateCommonModes()
+     return ret;
+ }
+ 
++bool DrmConnector::testFrameSequential(DrmCrtc *crtc, const std::shared_ptr<DrmConnectorMode> &mode, const std::shared_ptr<DrmFramebuffer> &frame)
++{
++    const drmModeModeInfo *info = mode->nativeMode();
++    if (!crtc || !frame || !crtc->primaryPlane() || !(info->flags & DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL)) {
++        return false;
++    }
++    // the plane covers the frame of both eyes, as drm_mode_get_hv_timing() sizes it
++    const QSize frameSize = stereoFrameSize(*info, StereoLayout::SequentialDisplayPort, mode->flags());
++    if (frame->buffer() && (frame->buffer()->size().width() < frameSize.width() || frame->buffer()->size().height() < frameSize.height())) {
++        return false;
++    }
++    DrmPlane *plane = crtc->primaryPlane();
++    DrmAtomicCommit commit(gpu());
++    commit.addProperty(crtcId, crtc->id());
++    commit.addBlob(crtc->modeId, mode->blob());
++    commit.addProperty(crtc->active, 1);
++    commit.addProperty(plane->crtcId, crtc->id());
++    commit.addBuffer(plane, frame, nullptr);
++    plane->set(&commit, Rect(QPoint(0, 0), frameSize), Rect(QPoint(0, 0), frameSize));
++    return commit.testAllowModeset();
++}
++
+ std::shared_ptr<DrmConnectorMode> DrmConnector::generateMode(const QSize &size, float refreshRate, OutputModeline::Flags flags)
+ {
+     auto modeInfo = libxcvt_gen_mode_info(size.width(), size.height(), refreshRate, flags & OutputModeline::Flag::ReducedBlanking, false);
+diff --git a/src/backends/drm/drm_connector.h b/src/backends/drm/drm_connector.h
+index ff18c0e129..e3a678dc69 100644
+--- a/src/backends/drm/drm_connector.h
++++ b/src/backends/drm/drm_connector.h
+@@ -25,6 +25,7 @@ namespace KWin
+ 
+ class DrmConnector;
+ class DrmCrtc;
++class DrmFramebuffer;
+ 
+ /**
+  * The DrmConnectorMode class represents a native mode and the associated blob.
+@@ -37,6 +38,12 @@ public:
+     DrmConnectorMode(const std::shared_ptr<DrmConnectorMode> &base, OutputModeline::Flag layout);
+     std::shared_ptr<DrmConnectorMode> virtualBase() const;
+     bool requiresYcbcr420() const;
++    /**
++     * Whether the kernel takes this 2D mode in DisplayPort's frame sequential stereo on its connector,
++     * as a TEST_ONLY commit found (DrmGpu::probeFrameSequential()); nullopt before the test.
++     */
++    std::optional<bool> frameSequentialAccepted() const;
++    void setFrameSequentialAccepted(bool accepted);
+     static std::shared_ptr<OutputMode> resolveVirtualMode(const std::shared_ptr<OutputMode> &current, const QList<std::shared_ptr<OutputMode>> &modes);
+ 
+     drmModeModeInfo *nativeMode();
+@@ -52,6 +59,7 @@ private:
+     drmModeModeInfo m_nativeMode;
+     std::shared_ptr<DrmBlob> m_blob;
+     bool m_ycbcr420Only = false;
++    std::optional<bool> m_frameSequentialAccepted;
+ };
+ 
+ class KWIN_EXPORT DrmConnector : public DrmObject
+@@ -83,6 +91,12 @@ public:
+                                                                  const QList<std::shared_ptr<OutputMode>> &previousModes,
+                                                                  bool anaglyph, bool otherStereoFormats);
+     std::shared_ptr<DrmConnectorMode> generateMode(const QSize &size, float refreshRate, OutputModeline::Flags flags);
++    /**
++     * A TEST_ONLY commit of @p mode, a mode with DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL, on @p crtc with its
++     * primary plane covering the whole frame of both eyes from @p frame: the kernel accepts it only on
++     * connectors whose driver alternates the eyes and signals them.
++     */
++    bool testFrameSequential(DrmCrtc *crtc, const std::shared_ptr<DrmConnectorMode> &mode, const std::shared_ptr<DrmFramebuffer> &frame);
+ 
+     BackendOutput::SubPixel subpixel() const;
+ 
+diff --git a/src/backends/drm/drm_egl_layer_surface.cpp b/src/backends/drm/drm_egl_layer_surface.cpp
+index 869bd2faf0..4f2fed1d22 100644
+--- a/src/backends/drm/drm_egl_layer_surface.cpp
++++ b/src/backends/drm/drm_egl_layer_surface.cpp
+@@ -661,6 +661,7 @@ bool EglGbmLayerSurface::endRendering(const Region &damagedDeviceRegion, OutputF
+             std::array<Rect, 2> deviceEyes;
+             switch (m_stereoLayout) {
+             case StereoLayout::SideBySideHalf:
++            case StereoLayout::SequentialDisplayPort:
+             case StereoLayout::SequentialLeftFirst:
+             case StereoLayout::SequentialRightFirst:
+             case StereoLayout::SideBySideFull:
+diff --git a/src/backends/drm/drm_gpu.cpp b/src/backends/drm/drm_gpu.cpp
+index b8fa916ca3..684c216f00 100644
+--- a/src/backends/drm/drm_gpu.cpp
++++ b/src/backends/drm/drm_gpu.cpp
+@@ -25,6 +25,7 @@
+ #include "drm_output.h"
+ #include "drm_pipeline.h"
+ #include "drm_plane.h"
++#include "drm_stereo.h"
+ #include "drm_virtual_output.h"
+ #include "utils/envvar.h"
+ 
+@@ -308,6 +309,12 @@ bool DrmGpu::updateOutputs()
+             existing.push_back(it->get());
+         }
+     }
++    // before the outputs list their modes: which 2D modes the kernel takes in DisplayPort frame sequential
++    for (DrmConnector *conn : std::as_const(existing)) {
++        if (conn->isConnected()) {
++            probeFrameSequential(conn);
++        }
++    }
+     for (auto it = m_connectors.begin(); it != m_connectors.end();) {
+         DrmConnector *conn = it->get();
+         const auto output = findOutput(conn->id());
+@@ -347,6 +354,82 @@ bool DrmGpu::updateOutputs()
+     return true;
+ }
+ 
++/**
++ * DisplayPort's frame sequential stereo is offered as a twin of a 2D mode only where the kernel takes it:
++ * the driver alternates the eyes and signals them on connectors that opted in, and refuses the layout
++ * everywhere else. So each 2D mode at 100 Hz or more (the rate per eye is half the refresh) is tested once
++ * per mode list with a TEST_ONLY commit, on the connector's CRTC or a free one, with a primary plane
++ * covering the frame of both eyes; nothing is shown or changed.
++ */
++void DrmGpu::probeFrameSequential(DrmConnector *connector)
++{
++    QList<std::shared_ptr<DrmConnectorMode>> candidates;
++    QSize frame;
++    for (const auto &mode : connector->modes()) {
++        if (mode->frameSequentialAccepted().has_value()) {
++            continue;
++        }
++        if (stereoLayoutForMode(mode->flags()) != StereoLayout::None || mode->refreshRate() < 100000
++            || (mode->flags() & OutputModeline::Flag::Generated) || mode->requiresYcbcr420()) {
++            mode->setFrameSequentialAccepted(false);
++            continue;
++        }
++        candidates.push_back(mode);
++        frame = frame.expandedTo(QSize(2 * mode->size().width(), mode->size().height()));
++    }
++    // untested modes are tried again at the next update, when a CRTC or a buffer may be there
++    if (candidates.isEmpty() || !m_atomicModeSetting || !m_isActive) {
++        return;
++    }
++    DrmCrtc *crtc = nullptr;
++    const uint32_t currentCrtc = connector->crtcId.value();
++    for (const auto &candidate : m_crtcs) {
++        if (candidate->id() == currentCrtc) {
++            crtc = candidate.get();
++            break;
++        }
++    }
++    if (!crtc) {
++        for (const auto &candidate : m_crtcs) {
++            const bool held = candidate->active.value() || std::ranges::any_of(m_pipelines, [&candidate](DrmPipeline *pipeline) {
++                return pipeline->crtc() == candidate.get();
++            });
++            if (connector->isCrtcSupported(candidate.get()) && !held) {
++                crtc = candidate.get();
++                break;
++            }
++        }
++    }
++    if (!crtc) {
++        qCDebug(KWIN_DRM) << "No free CRTC to test frame sequential stereo on" << connector->connectorName();
++        return;
++    }
++    // a dumb buffer, linear, which every driver that scans out takes
++    GraphicsBuffer *buffer = m_drmDevice->allocator()->allocate(GraphicsBufferOptions{
++        .size = frame,
++        .format = DRM_FORMAT_XRGB8888,
++        .software = true,
++    });
++    if (!buffer) {
++        qCDebug(KWIN_DRM) << "No buffer to test frame sequential stereo on" << connector->connectorName();
++        return;
++    }
++    const auto dropBuffer = qScopeGuard([buffer]() {
++        buffer->drop();
++    });
++    const auto framebuffer = importBuffer(buffer, FileDescriptor{});
++    if (!framebuffer) {
++        return;
++    }
++    for (const auto &mode : std::as_const(candidates)) {
++        const auto twin = std::make_shared<DrmConnectorMode>(mode, OutputModeline::Flag::Stereo3DSequentialDisplayPort);
++        const bool accepted = connector->testFrameSequential(crtc, twin, framebuffer);
++        mode->setFrameSequentialAccepted(accepted);
++        qCDebug(KWIN_DRM) << "Frame sequential stereo on" << connector->connectorName() << mode->size() << mode->refreshRate()
++                          << (accepted ? "accepted" : "refused");
++    }
++}
++
+ void DrmGpu::removeOutputs()
+ {
+     const auto outputs = m_drmOutputs;
+diff --git a/src/backends/drm/drm_gpu.h b/src/backends/drm/drm_gpu.h
+index 8c6f98fd54..8ed00077a7 100644
+--- a/src/backends/drm/drm_gpu.h
++++ b/src/backends/drm/drm_gpu.h
+@@ -147,6 +147,7 @@ private:
+     void setRenderDevice(RenderDevice *device);
+     void updateRenderDevice();
+ 
++    void probeFrameSequential(DrmConnector *connector);
+     DrmPipeline::Error checkCrtcAssignment(QList<DrmConnector *> connectors, const QList<DrmCrtc *> &crtcs, std::chrono::steady_clock::time_point deadline);
+     DrmPipeline::Error testPipelines();
+     QList<DrmObject *> unusedModesetObjects() const;
+diff --git a/src/backends/drm/drm_output.cpp b/src/backends/drm/drm_output.cpp
+index 3163f58743..a96b7d39f8 100644
+--- a/src/backends/drm/drm_output.cpp
++++ b/src/backends/drm/drm_output.cpp
+@@ -372,6 +372,8 @@ bool DrmOutput::testPresentation(const std::shared_ptr<OutputFrame> &frame)
+         // The legacy page-flip API cannot crop the side-by-side framebuffer.
+         return false;
+     }
++    // a pair is shown over two refreshes, so it is never torn or held for a variable refresh
++    const bool vsyncOnly = frameSequential || isDisplayPortFrameSequential(activeStereoLayout());
+     const auto layers = m_pipeline->layers();
+     const bool nonPrimaryEnabled = std::ranges::any_of(layers, [](OutputLayer *layer) {
+         return layer->isEnabled() && layer->type() != OutputLayerType::Primary;
+@@ -386,7 +388,7 @@ bool DrmOutput::testPresentation(const std::shared_ptr<OutputFrame> &frame)
+         // so testing again isn't super useful
+         return true;
+     }
+-    m_pipeline->setPresentationMode(frameSequential ? PresentationMode::VSync : frame->presentationMode());
++    m_pipeline->setPresentationMode(vsyncOnly ? PresentationMode::VSync : frame->presentationMode());
+     if (nonPrimaryEnabled) {
+         // the cursor plane needs to be disabled before we enable tearing; see DrmOutput::presentAsync
+         if (frame->presentationMode() == PresentationMode::AdaptiveAsync) {
+@@ -793,7 +795,7 @@ void DrmOutput::applyQueuedChanges(const std::shared_ptr<OutputChangeSet> &props
+         m_gpu->maybeModeset(nullptr, nullptr);
+     }
+ 
+-    m_renderLoop->setRefreshRate(refreshRate());
++    m_renderLoop->setRefreshRate(stereoPresentationRate(refreshRate(), activeStereoLayout()));
+ 
+     if (m_state.brightnessDevice && m_state.highDynamicRange && isInternal()) {
+         // This is usually not necessary with external monitors, as they default to 100% in HDR mode on their own,
+diff --git a/src/backends/drm/drm_pipeline.cpp b/src/backends/drm/drm_pipeline.cpp
+index 1bf2752c90..aa12719e3e 100644
+--- a/src/backends/drm/drm_pipeline.cpp
++++ b/src/backends/drm/drm_pipeline.cpp
+@@ -551,9 +551,12 @@ void DrmPipeline::applyPendingChanges()
+         m_frameSequentialScheduler = FrameSequentialScheduler(newLayout);
+     }
+     m_next = m_pending;
+-    m_commitThread->setModeInfo(m_pending.mode->refreshRate(), m_pending.mode->vblankTime());
++    // when the kernel alternates the eyes, a page flip lands only at the start of a left-eye frame and
++    // its event comes one or two refreshes after the commit, so pairs are committed at half the refresh
++    const uint32_t presentationRate = stereoPresentationRate(m_pending.mode->refreshRate(), newLayout);
++    m_commitThread->setModeInfo(presentationRate, m_pending.mode->vblankTime());
+     m_output->renderLoop()->setPresentationSafetyMargin(m_commitThread->safetyMargin());
+-    m_output->renderLoop()->setRefreshRate(m_pending.mode->refreshRate());
++    m_output->renderLoop()->setRefreshRate(presentationRate);
+ }
+ 
+ DrmConnector *DrmPipeline::connector() const
+diff --git a/src/backends/drm/drm_stereo.h b/src/backends/drm/drm_stereo.h
+index 2a77ffb939..a560009b56 100644
+--- a/src/backends/drm/drm_stereo.h
++++ b/src/backends/drm/drm_stereo.h
+@@ -17,6 +17,13 @@
+ 
+ #include <algorithm>
+ 
++// The edition kernel's frame sequential stereo layout (include/uapi/drm/drm_mode.h, kernel series 36), which
++// libdrm doesn't have yet: the eyes take turns, one per frame of the mode, left eye first, from a framebuffer
++// that holds both side by side (twice the mode's width); connectors whose driver opts in list and accept it
++#ifndef DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL
++#define DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL (9 << 14)
++#endif
++
+ namespace KWin
+ {
+ 
+@@ -34,6 +41,13 @@ namespace KWin
+  * a side by side (full) twin, for USB-C 3D glasses that show its left half to the left eye
+  * and its right half to the right eye: the mode is the whole frame and each eye is one half,
+  * where the HDMI structure is the mode per eye and the frame twice as wide.
++ *
++ * SequentialDisplayPort is DisplayPort's own stereo transport (DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL): the
++ * scanout buffer is both eyes side by side, as for side by side (full), and the kernel sends one eye per
++ * frame of the mode's 2D timing, left eye first, and tells the display which eye each frame carries (the
++ * MSA's MISC1 bits 2:1). Page flips land only at the start of a left-eye frame, so the pair is rendered
++ * and committed once per two refreshes. SequentialLeftFirst and SequentialRightFirst are its software
++ * twins, which alternate the eyes in KWin and tell the display nothing.
+  */
+ enum class StereoLayout {
+     None,
+@@ -55,6 +69,7 @@ enum class StereoLayout {
+     LineAlternative,
+     LDepth,
+     LDepthGraphics,
++    SequentialDisplayPort,
+ };
+ 
+ // the side by side (full) twin of a 2D mode two eyes wide: the mode is the frame, not an eye
+@@ -79,6 +94,18 @@ inline bool isFrameSequential(StereoLayout layout)
+     return layout == StereoLayout::SequentialLeftFirst || layout == StereoLayout::SequentialRightFirst;
+ }
+ 
++// the kernel alternates the eyes and signals them: the pair is committed whole, once per two refreshes
++inline bool isDisplayPortFrameSequential(StereoLayout layout)
++{
++    return layout == StereoLayout::SequentialDisplayPort;
++}
++
++// the rate pictures are presented at: one pair per two refreshes when the kernel alternates the eyes
++inline uint32_t stereoPresentationRate(uint32_t refreshRate, StereoLayout layout)
++{
++    return isDisplayPortFrameSequential(layout) ? refreshRate / 2 : refreshRate;
++}
++
+ // the picture and depth structures: the left eye's picture with its depth (Figure H-5), and
+ // also with graphics and the graphics' depth (Figure H-6)
+ inline bool isPictureAndDepth(StereoLayout layout)
+@@ -88,7 +115,7 @@ inline bool isPictureAndDepth(StereoLayout layout)
+ 
+ /**
+  * The mode flag for a DRM mode's 3D structure, empty for 2D modes: every structure of HDMI
+- * 1.4a, Appendix H, Table H-2.
++ * 1.4a, Appendix H, Table H-2, and DisplayPort's frame sequential stereo.
+  */
+ inline OutputModeline::Flags stereoFlagsForDrmMode(uint32_t drmFlags)
+ {
+@@ -109,6 +136,8 @@ inline OutputModeline::Flags stereoFlagsForDrmMode(uint32_t drmFlags)
+         return OutputModeline::Flag::Stereo3DLDepth;
+     case DRM_MODE_FLAG_3D_L_DEPTH_GFX_GFX_DEPTH:
+         return OutputModeline::Flag::Stereo3DLDepthGraphics;
++    case DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL:
++        return OutputModeline::Flag::Stereo3DSequentialDisplayPort;
+     default:
+         return {};
+     }
+@@ -141,6 +170,9 @@ inline StereoLayout stereoLayoutForMode(OutputModeline::Flags flags)
+         return StereoLayout::CheckerboardRightFirst;
+     }
+ 
++    if (flags & OutputModeline::Flag::Stereo3DSequentialDisplayPort) {
++        return StereoLayout::SequentialDisplayPort;
++    }
+     if (flags & OutputModeline::Flag::Stereo3DSequentialLeftFirst) {
+         return StereoLayout::SequentialLeftFirst;
+     }
+@@ -183,14 +215,15 @@ inline StereoLayout stereoLayoutForMode(OutputModeline::Flags flags)
+  * graphics-depth (four pictures one vtotal apart, Figure H-6), line alternative (the eyes
+  * line by line, left first, Figure H-3), side by side full (the right eye from column hdisplay
+  * on, Figure H-4), and frame sequential (the two eyes from column hdisplay on, selected one
+- * refresh at a time). The scanout buffer is that whole frame, as drm_mode_get_hv_timing()
+- * sizes it.
++ * refresh at a time, by KWin's plane source or by the kernel). The scanout buffer is that
++ * whole frame, as drm_mode_get_hv_timing() sizes it.
+  */
+ inline bool isFullFrameStereo(StereoLayout layout)
+ {
+     switch (layout) {
+     case StereoLayout::FramePacking:
+     case StereoLayout::SideBySideFull:
++    case StereoLayout::SequentialDisplayPort:
+     case StereoLayout::SequentialLeftFirst:
+     case StereoLayout::SequentialRightFirst:
+     case StereoLayout::FieldAlternative:
+@@ -218,6 +251,7 @@ inline QSize stereoFrameSize(const drmModeModeInfo &mode, StereoLayout layout, O
+     case StereoLayout::LineAlternative:
+         return QSize(mode.hdisplay, 2 * mode.vdisplay);
+     case StereoLayout::SideBySideFull:
++    case StereoLayout::SequentialDisplayPort:
+     case StereoLayout::SequentialLeftFirst:
+     case StereoLayout::SequentialRightFirst:
+         return QSize(2 * mode.hdisplay, mode.vdisplay);
+diff --git a/src/core/output.h b/src/core/output.h
+index c3d9daa551..846d64e3a4 100644
+--- a/src/core/output.h
++++ b/src/core/output.h
+@@ -143,6 +143,10 @@ public:
+         Stereo3DLineAlternative = 0x200000,
+         Stereo3DLDepth = 0x400000,
+         Stereo3DLDepthGraphics = 0x800000,
++        // DisplayPort's own frame sequential stereo: the kernel sends one eye per frame of the
++        // mode's 2D timing, left eye first, and tells the display which eye each frame carries;
++        // a display 3D mode when the display declares it, else a twin of a 2D mode at 100 Hz or more
++        Stereo3DSequentialDisplayPort = 0x1000000,
+     };
+     Q_DECLARE_FLAGS(Flags, Flag)
+ 
+@@ -163,7 +167,8 @@ public:
+         | Flag::Stereo3DFieldAlternative
+         | Flag::Stereo3DLineAlternative
+         | Flag::Stereo3DLDepth
+-        | Flag::Stereo3DLDepthGraphics;
++        | Flag::Stereo3DLDepthGraphics
++        | Flag::Stereo3DSequentialDisplayPort;
+ 
+     OutputModeline();
+     OutputModeline(const QSize &size, uint32_t refreshRate, Flags flags = {});
+diff --git a/src/wayland/outputdevice_v2.cpp b/src/wayland/outputdevice_v2.cpp
+index f5aa43f24b..b1407e9bbb 100644
+--- a/src/wayland/outputdevice_v2.cpp
++++ b/src/wayland/outputdevice_v2.cpp
+@@ -1600,6 +1600,13 @@ void OutputDeviceModeV2InterfacePrivate::bindResource(Resource *resource)
+                 flags |= KDE_OUTPUT_DEVICE_MODE_V2_FLAGS_STEREO_L_DEPTH_GRAPHICS;
+             }
+         }
++#ifdef KDE_OUTPUT_DEVICE_MODE_V2_FLAGS_STEREO_SEQUENTIAL_DISPLAYPORT_SINCE_VERSION
++        // DisplayPort's frame sequential stereo, since version 30; an older client sees no 3D flag on such a mode
++        if (resource->version() >= KDE_OUTPUT_DEVICE_MODE_V2_FLAGS_STEREO_SEQUENTIAL_DISPLAYPORT_SINCE_VERSION
++            && (m_flags & OutputModeline::Flag::Stereo3DSequentialDisplayPort)) {
++            flags |= KDE_OUTPUT_DEVICE_MODE_V2_FLAGS_STEREO_SEQUENTIAL_DISPLAYPORT;
++        }
++#endif
+         send_flags(resource->handle, flags);
+     }
+ }
