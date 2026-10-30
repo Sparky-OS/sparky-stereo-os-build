@@ -12,14 +12,17 @@ printf 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://w
 printf 'deb http://deb.debian.org/debian testing contrib non-free non-free-firmware\n' > /etc/apt/sources.list.d/debian-extra-components.list
 printf 'Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n' > /etc/apt/preferences.d/edition
 apt-get -y update >/dev/null 2>&1
-apt-get -y --no-install-recommends install /extra/*.deb >/t/build-dep.log 2>&1 || { echo extra install failed; exit 1; }
+# this round's builds that the repository does not have yet (none once it has them)
+if ls /extra/*.deb >/dev/null 2>&1; then
+    apt-get -y --no-install-recommends install /extra/*.deb >/t/build-dep.log 2>&1 || { echo extra install failed; exit 1; }
+fi
 apt-get -y --no-install-recommends build-dep /work/lc/source >>/t/build-dep.log 2>&1 || { echo build-dep failed; exit 1; }
 apt-get -y --no-install-recommends install ninja-build xauth xvfb xwayland dbus libei-dev libeis-dev breeze mesa-utils >>/t/build-dep.log 2>&1
 [ -x /t/build/bin/testMockDrmStereoPair ] && REUSE=1 || { REUSE=0; rm -rf /t/build; mkdir -p /t/build; }
 useradd --create-home --uid 1000 builder 2>/dev/null
 chown -R builder:builder /t
 cd /t/build
-TARGETS="testStereoOutputRepaint testColorConversion testMockDrm testMockDrmFrameSequential testMockDrmDisplayPortSequential testMockDrmGlasses testVirtualStereo testStereoPair testMockDrmStereoPair testMockDrmDepthStructures testFrameSequential testStereoDownscale testX11Window testDmabufFormatSwitch testStereoDepthExchange testStereoContent testScreenshotStereo testStereoDepthPinned testStereoDepthPopups testStereoDepthMotion testVirtualStereoProtocol testQuickStereo testFallApartStereo testTabBoxStereo testStereoDepthCoding testStereoDepthEstimate testStereoPattern testVirtualOutputProperties testStereoDepthWallpaper"
+TARGETS="testStereoOutputRepaint testColorConversion testMockDrm testMockDrmFrameSequential testMockDrmDisplayPortSequential testMockDrmGlasses testVirtualStereo testStereoPair testMockDrmStereoPair testMockDrmDepthStructures testFrameSequential testStereoDownscale testX11Window testDmabufFormatSwitch testStereoDepthExchange testStereoContent testScreenshotStereo testStereoDepthPinned testStereoDepthPopups testStereoDepthMotion testVirtualStereoProtocol testQuickStereo testFallApartStereo testTabBoxStereo testStereoDepthCoding testStereoDepthEstimate testStereoPattern testVirtualOutputProperties testStereoDepthWallpaper testStereoDepthWallpaperCuts"
 [ "$REUSE" = 1 ] || runuser -u builder -- env HOME=/t sh -c "cmake -G Ninja /work/lc/source -DBUILD_TESTING=ON -DKWIN_BUILD_KCMS=ON -DQTWAYLANDSCANNER_KDE_EXECUTABLE=/usr/lib/qt6/libexec/qtwaylandscanner -DCMAKE_BUILD_TYPE=RelWithDebInfo > /t/cmake.log 2>&1 && nice ninja -j4 $TARGETS > /t/ninja.log 2>&1" || { tail -n 30 /t/cmake.log; tail -n 30 /t/ninja.log; echo BUILD FAILED; exit 1; }
 for t in $TARGETS; do
     # testStereoDownscale opens EGL's default display, which has no platform without a display server

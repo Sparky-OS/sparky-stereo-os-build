@@ -1,0 +1,21 @@
+kwin (4:6.7.4-2+stereo3d38) unstable; urgency=medium
+
+  * Sparky-OS/kwin stereo3d38 is stereo3d37 plus the three commits of
+    ORDER 292 (s38-0001 to s38-0003).
+  * KWin says what each output's wallpaper loses at the sides (s38-0001):
+    org.kde.KWin.StereoDepth at /org/kde/KWin/StereoDepth publishes
+    WallpaperCuts (each enabled output by name, with the columns its sunk
+    wallpaper loses at each side now, from the same code the scene cuts
+    with; 0 on a 2D output and at a Background depth of 0) with
+    PropertiesChanged, WallpaperCutsAt(depth) for a depth not applied yet,
+    and OutputsChanged. Test: testStereoDepthWallpaperCuts.
+  * The 3D Depth page states the cost under Background depth (s38-0002):
+    "10 pixels of the wallpaper's width will be lost to the sunk effect, 5
+    at each side", for the slider's value, with the outputs named when
+    there are several, and that videos with pop effects are not expected
+    to be comfortable with widgets or other things over them. Nothing is
+    said on 2D outputs or at a Background depth of 0. Translated into the
+    eight languages (kwin-wallpaper-cost.po.patch, after
+    kwin-stereo-depth.po.patch).
+  * STEREO3D.md says where the pages that set a wallpaper read its cost
+    (s38-0003).

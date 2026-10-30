@@ -1,0 +1,151 @@
+From 0f36273095332c31b75c3454887e647f765cacf9 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 30 Oct 2026 03:59:28 -0300
+Subject: [PATCH 2/3] kcms/stereodepth: State what the wallpaper loses, under
+ Background depth
+
+Below Background depth the page now says, for each screen in a 3D mode,
+how many pixels of the wallpaper's width the sunk effect costs and how
+many at each side, with the number for the depth on the slider, and that
+videos with pop effects are not expected to be comfortable with widgets
+or other things over them. The number is KWin's (WallpaperCutsAt on
+org.kde.KWin.StereoDepth), asked again when the slider moves and when the
+screens change. Screens are named when there are several. On a 2D screen
+and at a depth of 0 nothing is lost, and nothing is said.
+
+Assisted-by: Claude Opus 5.5
+---
+ src/kcms/stereodepth/kcmkwinstereodepth.cpp | 34 +++++++++++++++++++++
+ src/kcms/stereodepth/kcmkwinstereodepth.h   | 18 +++++++++++
+ src/kcms/stereodepth/ui/main.qml            | 20 ++++++++++++
+ 3 files changed, 72 insertions(+)
+
+diff --git a/src/kcms/stereodepth/kcmkwinstereodepth.cpp b/src/kcms/stereodepth/kcmkwinstereodepth.cpp
+index 186e42c..e14264f 100644
+--- a/src/kcms/stereodepth/kcmkwinstereodepth.cpp
++++ b/src/kcms/stereodepth/kcmkwinstereodepth.cpp
+@@ -13,6 +13,9 @@
+ 
+ #include <QDBusConnection>
+ #include <QDBusMessage>
++#include <QDBusMetaType>
++#include <QDBusPendingCallWatcher>
++#include <QDBusPendingReply>
+ 
+ #include <kwinstereodepthdata.h>
+ 
+@@ -25,6 +28,13 @@ KcmStereoDepth::KcmStereoDepth(QObject *parent, const KPluginMetaData &metaData)
+ {
+     registerSettings(m_settings);
+     qmlRegisterAnonymousType<KWinStereoDepthSettings>("org.kde.kwin.kwinstereodepthsettings", 1);
++
++    // the wallpaper's cost follows the slider, and the screens as they change
++    qDBusRegisterMetaType<QMap<QString, int>>();
++    connect(m_settings, &KWinStereoDepthSettings::SunkLimitChanged, this, &KcmStereoDepth::updateWallpaperCuts);
++    QDBusConnection::sessionBus().connect(QStringLiteral("org.kde.KWin"), QStringLiteral("/org/kde/KWin/StereoDepth"), QStringLiteral("org.kde.KWin.StereoDepth"),
++                                          QStringLiteral("OutputsChanged"), this, SLOT(updateWallpaperCuts()));
++    updateWallpaperCuts();
+ }
+ 
+ KcmStereoDepth::~KcmStereoDepth() = default;
+@@ -37,5 +47,29 @@ void KcmStereoDepth::save()
+     QDBusConnection::sessionBus().send(message);
+ }
+ 
++// KWin works out what each screen's wallpaper loses, from the screen's own width, so the page states
++// KWin's number for the Background depth on the slider rather than a formula of its own
++void KcmStereoDepth::updateWallpaperCuts()
++{
++    QDBusMessage message = QDBusMessage::createMethodCall(QStringLiteral("org.kde.KWin"), QStringLiteral("/org/kde/KWin/StereoDepth"), QStringLiteral("org.kde.KWin.StereoDepth"), QStringLiteral("WallpaperCutsAt"));
++    message << m_settings->sunkLimit();
++    auto watcher = new QDBusPendingCallWatcher(QDBusConnection::sessionBus().asyncCall(message), this);
++    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *watcher) {
++        watcher->deleteLater();
++        const QDBusPendingReply<QMap<QString, int>> reply = *watcher;
++        QVariantList cuts;
++        if (!reply.isError()) {
++            const QMap<QString, int> outputs = reply.value();
++            for (auto it = outputs.cbegin(); it != outputs.cend(); ++it) {
++                cuts.append(QVariantMap{{QStringLiteral("name"), it.key()}, {QStringLiteral("cut"), it.value()}});
++            }
++        }
++        if (cuts != m_wallpaperCuts) {
++            m_wallpaperCuts = cuts;
++            Q_EMIT wallpaperCutsChanged();
++        }
++    });
++}
++
+ #include "kcmkwinstereodepth.moc"
+ #include "moc_kcmkwinstereodepth.cpp"
+diff --git a/src/kcms/stereodepth/kcmkwinstereodepth.h b/src/kcms/stereodepth/kcmkwinstereodepth.h
+index 8c64b19..ad27236 100644
+--- a/src/kcms/stereodepth/kcmkwinstereodepth.h
++++ b/src/kcms/stereodepth/kcmkwinstereodepth.h
+@@ -16,6 +16,12 @@ class KcmStereoDepth : public KQuickManagedConfigModule
+ {
+     Q_OBJECT
+     Q_PROPERTY(KWinStereoDepthSettings *settings READ settings CONSTANT)
++    /**
++     * How many columns each screen's wallpaper loses at each side to the sunk effect with the
++     * Background depth shown on the page, as KWin works it out from the screen's own width and
++     * mode: a list of maps with the screen's "name" and the "cut", 0 on a screen in 2D.
++     */
++    Q_PROPERTY(QVariantList wallpaperCuts READ wallpaperCuts NOTIFY wallpaperCutsChanged)
+ 
+ public:
+     explicit KcmStereoDepth(QObject *parent, const KPluginMetaData &metaData);
+@@ -28,7 +34,19 @@ public:
+ 
+     void save() override;
+ 
++    QVariantList wallpaperCuts() const
++    {
++        return m_wallpaperCuts;
++    }
++
++Q_SIGNALS:
++    void wallpaperCutsChanged();
++
++private Q_SLOTS:
++    void updateWallpaperCuts();
++
+ private:
+     KWinStereoDepthData *const m_data;
+     KWinStereoDepthSettings *const m_settings;
++    QVariantList m_wallpaperCuts;
+ };
+diff --git a/src/kcms/stereodepth/ui/main.qml b/src/kcms/stereodepth/ui/main.qml
+index f780aa0..b8771c6 100644
+--- a/src/kcms/stereodepth/ui/main.qml
++++ b/src/kcms/stereodepth/ui/main.qml
+@@ -53,6 +53,26 @@ KCM.SimpleKCM {
+             font: Kirigami.Theme.smallFont
+             text: i18n("Inactive windows and the wallpaper sink behind the screen by up to this much. More depth: the background drifts further apart.")
+         }
++        QQC2.Label {
++            // what the wallpaper loses on each screen in a 3D mode, in KWin's own numbers; the
++            // screens are named when there are several
++            readonly property var lost: kcm.wallpaperCuts.filter(screen => screen.cut > 0)
++            visible: lost.length > 0
++            Layout.fillWidth: true
++            Layout.maximumWidth: Kirigami.Units.gridUnit * 30
++            wrapMode: Text.Wrap
++            font: Kirigami.Theme.smallFont
++            text: lost.map(screen => kcm.wallpaperCuts.length > 1
++                           ? i18ncp("@info %1 is a number of pixels, %2 how many of them at each side, %3 a screen's name",
++                                    "%3: %1 pixel of the wallpaper's width will be lost to the sunk effect, %2 at each side.",
++                                    "%3: %1 pixels of the wallpaper's width will be lost to the sunk effect, %2 at each side.",
++                                    2 * screen.cut, screen.cut, screen.name)
++                           : i18ncp("@info %1 is a number of pixels, %2 how many of them at each side",
++                                    "%1 pixel of the wallpaper's width will be lost to the sunk effect, %2 at each side.",
++                                    "%1 pixels of the wallpaper's width will be lost to the sunk effect, %2 at each side.",
++                                    2 * screen.cut, screen.cut)).join("\n")
++                  + "\n" + i18nc("@info", "Videos with pop effects are not expected to be comfortable with widgets or other things over it.")
++        }
+ 
+         RowLayout {
+             Kirigami.FormData.label: i18nc("@label:slider", "Pop-out:")
+-- 
+2.53.0
+
