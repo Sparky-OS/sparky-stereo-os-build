@@ -42,9 +42,12 @@ BOOT_FILE = re.compile(r'^(?:vmlinuz|vmlinux|initrd\.img|config|System\.map)-(.+
 KERNEL_NAME = re.compile(r'^(?:vmlinuz|vmlinux|bzImage)')
 INITRD_NAME = re.compile(r'^(?:initrd|initramfs)')
 MODULES = re.compile(r'^(?:\./)?(?:usr/)?lib/modules/([^/]+)(?:/|$)')
+# the initramfs buffer (Linux's Documentation/driver-api/early-userspace/buffer-format.rst): newc or crc cpio archives,
+# each plain or compressed with one of the seven compressors it lists, with any number of zero bytes between them
 CPIO_MAGIC = (b'070701', b'070702')
 COMPRESSORS = [(b'\x28\xb5\x2f\xfd', ['zstd', '-dcq']), (b'\x1f\x8b', ['gzip', '-dc']), (b'\xfd7zXZ\x00', ['xz', '-dc']),
-               (b'\x02\x21\x4c\x18', ['lz4', '-dc']), (b'BZh', ['bzip2', '-dc']), (b'\x5d\x00\x00', ['xz', '--format=lzma', '-dc'])]
+               (b'\x02\x21\x4c\x18', ['lz4', '-dc']), (b'BZh', ['bzip2', '-dc']), (b'\x5d\x00\x00', ['xz', '--format=lzma', '-dc']),
+               (b'\x89LZO\x00', ['lzop', '-dc'])]
 
 
 def ge(a, b):
@@ -60,7 +63,8 @@ def upstream(release):
 
 
 def bzimage_release(path):
-    """The release in a kernel's boot header (Linux boot protocol: 'HdrS' at 0x202, kernel_version at 0x20e, +0x200)."""
+    """The release in a kernel's boot header (Documentation/arch/x86/boot.rst: "HdrS" at 0x202; kernel_version at 0x20e,
+    a pointer to the NUL-terminated version string "less 0x200"); the release is the string's first word."""
     with open(path, 'rb') as f:
         head = f.read(0x210)
         if len(head) < 0x210 or head[0x202:0x206] != b'HdrS':
