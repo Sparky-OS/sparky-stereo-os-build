@@ -1,0 +1,30 @@
+kwin (4:6.7.4-2+stereo3d37) unstable; urgency=medium
+
+  * Sparky-OS/kwin stereo3d37 is stereo3d36 plus the five commits of
+    ORDER 291 (s37-0001 to s37-0005).
+  * The wallpaper keeps its size and is cut at the sides (s37-0002): the
+    wallpaper lies at the sunk limit, behind every window, and its copy
+    moves in each eye. The desktop window is no longer drawn wider to reach
+    both edges, which stretched each eye (by 0.625 % at 1280 wide with the
+    default Background depth) and scaled a stereo wallpaper's own
+    disparity. The columns either eye's copy leaves open are cut from both
+    sides, the same columns in both eyes: half the level's parallax per
+    side, rounded up, from the user's Background depth and each output's
+    own width (5 columns at 1920 wide with the default of 10, 4 at 1280).
+    The wallpaper's fill mode still lays the picture over the whole screen.
+    With a Background depth of 0, and on 2D outputs, nothing changes.
+    Test: testStereoDepthWallpaper.
+  * The lock screen's wallpaper lies at the desktop's level (s37-0003): the
+    surfaces the greeter places below its own, as the layer of a stereo
+    video wallpaper is, are drawn at the sunk limit and cut as the
+    desktop's are; the clock, the password field and the rest of the
+    greeter stay at the screen. The depth picture of the L + depth outputs
+    follows. Test: testStereoDepthWallpaper (lock screen cases).
+  * A stereo capture through ScreenShot2 copies each eye as it is
+    (s37-0001): where nothing covers the output (the frame is transparent
+    black there, as in the columns cut from a wallpaper), the joined picture
+    kept whatever its new memory held. Test:
+    testScreenshotStereo::testUncoveredPixelsAreTransparentInBothEyes.
+  * KWIN_VIRTUAL_OUTPUT_SIZES gives virtual outputs their own sizes for
+    headless proofs (s37-0004); STEREO3D.md says where the wallpaper lies
+    and what is cut (s37-0005).
