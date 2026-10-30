@@ -1,0 +1,203 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 30 Oct 2026 06:56:27 -0300
+Subject: [PATCH] drm/amd/display: let DisplayPort connectors send
+ frame-sequential stereo
+
+With the stream and plane in place, opt the connectors in where DC can
+send frame-sequential stereo, and refuse the modes where the plugged-in
+sink cannot get it.
+
+drm_connector.stereo_frame_sequential_allowed is set on DisplayPort
+connectors whose DC has hwss.setup_stereo, which is every DCN; DCE sets
+it to NULL (dce110_hwseq.c), so DCE connectors never list or accept a
+frame-sequential mode. MST ports are connectors of their own and stay
+off, as do eDP and every other connector type. The core then lists the
+frame-sequential modes the sink declares and accepts the flag in atomic
+and legacy modesets on those connectors only.
+
+Per mode, amdgpu_dm_connector_mode_valid() returns MODE_NO_STEREO and
+amdgpu_dm_create_validate_stream_for_sink() builds no stream unless the
+link can send it, dm_link_sends_frame_sequential():
+- the sink signal is SIGNAL_TYPE_DISPLAY_PORT: an MST stream, eDP and
+  the HDMI or DVI sink of a passive DP++ adaptor are refused;
+- no protocol converter (a VGA, DVI or HDMI downstream port,
+  dpcd_caps.dongle_type) sits in front of the sink: MISC1 means nothing
+  to the converter's sink. dcn10_config_stereo_parameters() means to
+  turn the DP stereo sync off for converters, but reads
+  ddc->dongle_type, which only set_dongle_type() writes, and only when
+  no downstream port is present. Converters get their own route with
+  the HDMI vendor InfoFrame in an InfoFrame SDP;
+- the link uses 8b/10b: on 128b/132b links the HPO stream encoder takes
+  no stereo sync (link_hwss_hpo_dp.c has no setup_stereo_sync call) and
+  writes "MISC1[2:1] = 0" (dcn31_hpo_dp_stream_encoder.c);
+- Panel Replay is off: VSC SDP revisions 6 and 7 carry no settled stereo
+  byte; the DRM core refuses the stereo byte there as well
+  (drm_dp_vsc_sdp_pack()).
+
+A TEST_ONLY commit is the capability check userspace uses: Stereo KWin
+offers its frame-sequential DisplayPort twin of a 2D mode only where one
+passes.
+
+The HDMI 3D mode filter test expected a frame-sequential mode on a
+connector without a link to reach stream validation; it is now refused
+first, with MODE_NO_STEREO.
+
+Assisted-by: LLM
+---
+ .../display/amdgpu_dm/amdgpu_dm_connector.c   | 66 +++++++++++++++++++
+ .../display/amdgpu_dm/amdgpu_dm_connector.h   |  4 ++
+ .../tests/amdgpu_dm_connector_test.c          | 10 +--
+ 3 files changed, 76 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.c b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.c
+index 0d35cdd7a..36ad07f24 100644
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.c
+@@ -2358,6 +2358,44 @@ static bool dm_mode_is_hdmi_3d(const struct drm_display_mode *mode)
+ 	return drm_mode_is_stereo(mode) && !drm_mode_is_frame_sequential(mode);
+ }
+ 
++/*
++ * Frame-sequential stereo is DisplayPort's own: one eye per frame, named to
++ * the sink in MSA MISC1 bits 2:1 (DP 1.1a) and in the VSC SDP (DP 1.2), see
++ * fill_stream_properties_from_drm_display_mode(). The link sends it when:
++ * - DC can alternate the eyes: every DCN has hwss.setup_stereo, DCE has none;
++ * - the sink is a single-stream DisplayPort sink: not an MST stream, not eDP,
++ *   not the HDMI or DVI sink of a passive DP++ adaptor (an HDMI or DVI signal);
++ * - no protocol converter sits in front of it (a DFP of type VGA, DVI or
++ *   HDMI): MISC1 means nothing to the converter's sink, whose own 3D
++ *   signalling goes in InfoFrames;
++ * - the link runs 8b/10b: the 128b/132b stream encoder takes no stereo sync
++ *   (link_hwss_hpo_dp.c) and writes MISC1 bits 2:1 as 0;
++ * - Panel Replay is off: its VSC SDP revisions (6 and 7) have no settled
++ *   stereo byte (drm_dp_vsc_sdp_pack() writes DB0 = 1 there for another
++ *   meaning).
++ */
++STATIC_IFN_KUNIT bool dm_link_sends_frame_sequential(const struct dc_link *link,
++						     const struct dc_sink *sink)
++{
++	const struct dc *dc = link ? link->dc : NULL;
++
++	if (!dc || !dc->hwss.setup_stereo || !dc->link_srv)
++		return false;
++
++	if (!sink || sink->sink_signal != SIGNAL_TYPE_DISPLAY_PORT)
++		return false;
++
++	if (link->dpcd_caps.dongle_type != DISPLAY_DONGLE_NONE)
++		return false;
++
++	if (dc->link_srv->dp_get_encoding_format(&link->verified_link_cap) ==
++	    DP_128b_132b_ENCODING)
++		return false;
++
++	return link->replay_settings.config.replay_version != DC_VESA_PANEL_REPLAY;
++}
++EXPORT_IF_KUNIT(dm_link_sends_frame_sequential);
++
+ struct dc_stream_state *
+ amdgpu_dm_create_validate_stream_for_sink(struct drm_connector *connector,
+ 					  const struct drm_display_mode *drm_mode,
+@@ -2416,6 +2454,10 @@ amdgpu_dm_create_validate_stream_for_sink(struct drm_connector *connector,
+ 	    !dm_sink_signals_hdmi_3d(aconnector->dc_sink))
+ 		return NULL;
+ 
++	if (drm_mode_is_frame_sequential(drm_mode) &&
++	    !dm_link_sends_frame_sequential(aconnector->dc_link, aconnector->dc_sink))
++		return NULL;
++
+ 	signal = aconnector->dc_link->connector_signal;
+ 
+ 	/*
+@@ -2615,6 +2657,10 @@ enum drm_mode_status amdgpu_dm_connector_mode_valid(struct drm_connector *connec
+ 	if (dm_mode_is_hdmi_3d(mode) && !dm_sink_signals_hdmi_3d(dc_sink))
+ 		return MODE_NO_STEREO;
+ 
++	if (drm_mode_is_frame_sequential(mode) &&
++	    !dm_link_sends_frame_sequential(aconnector->dc_link, dc_sink))
++		return MODE_NO_STEREO;
++
+ 	test_mode = drm_mode_duplicate(connector->dev, mode);
+ 	if (!test_mode)
+ 		goto fail;
+@@ -3343,6 +3389,24 @@ STATIC_IFN_KUNIT bool dm_connector_can_carry_hdmi(const struct amdgpu_dm_connect
+ 	}
+ }
+ 
++/*
++ * Frame-sequential modes are offered on the DisplayPort connectors of a DC that
++ * can alternate the eyes (every DCN). Not on an MST port, a connector of its
++ * own that shares the link with other streams, and not on eDP. Whether the
++ * sink plugged in can take them is checked per mode, by
++ * dm_link_sends_frame_sequential().
++ */
++STATIC_IFN_KUNIT bool
++dm_connector_can_send_frame_sequential(const struct amdgpu_dm_connector *aconnector,
++				       int connector_type)
++{
++	const struct dc_link *link = aconnector->dc_link;
++
++	return connector_type == DRM_MODE_CONNECTOR_DisplayPort &&
++	       !aconnector->mst_root && link && link->dc && link->dc->hwss.setup_stereo;
++}
++EXPORT_IF_KUNIT(dm_connector_can_send_frame_sequential);
++
+ void amdgpu_dm_connector_init_helper(struct amdgpu_display_manager *dm,
+ 				     struct amdgpu_dm_connector *aconnector,
+ 				     int connector_type,
+@@ -3364,6 +3428,8 @@ void amdgpu_dm_connector_init_helper(struct amdgpu_display_manager *dm,
+ 	aconnector->base.interlace_allowed = false;
+ 	aconnector->base.doublescan_allowed = false;
+ 	aconnector->base.stereo_allowed = true;
++	aconnector->base.stereo_frame_sequential_allowed =
++		dm_connector_can_send_frame_sequential(aconnector, connector_type);
+ 	aconnector->base.dpms = DRM_MODE_DPMS_OFF;
+ 	aconnector->hpd.hpd = AMDGPU_HPD_NONE; /* not used */
+ 	aconnector->audio_inst = -1;
+diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.h b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.h
+index bb739ea26..7613ed4ed 100644
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.h
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.h
+@@ -182,6 +182,10 @@ enum drm_mode_subconnector get_subconnector_type(struct dc_link *link);
+ bool dm_sink_signals_hdmi_3d(const struct dc_sink *sink);
+ bool dm_connector_can_carry_hdmi(const struct amdgpu_dm_connector *aconnector,
+ 				 int connector_type);
++bool dm_link_sends_frame_sequential(const struct dc_link *link,
++				    const struct dc_sink *sink);
++bool dm_connector_can_send_frame_sequential(const struct amdgpu_dm_connector *aconnector,
++					    int connector_type);
+ void update_subconnector_property(struct amdgpu_dm_connector *aconnector);
+ void amdgpu_dm_fbc_init(struct drm_connector *connector);
+ void amdgpu_dm_set_panel_type(struct amdgpu_dm_connector *aconnector);
+diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/tests/amdgpu_dm_connector_test.c b/drivers/gpu/drm/amd/display/amdgpu_dm/tests/amdgpu_dm_connector_test.c
+index f4d294524..b853ac866 100644
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/tests/amdgpu_dm_connector_test.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/tests/amdgpu_dm_connector_test.c
+@@ -5301,9 +5301,11 @@ static void dm_test_sink_signals_hdmi_3d(struct kunit *test)
+  * @test: The KUnit test context
+  *
+  * Every HDMI 3D layout is refused with MODE_NO_STEREO on a DisplayPort or DVI
+- * sink, before any stream is built. On an HDMI sink, and for a 2D mode or a
+- * frame-sequential one, the stereo check lets the mode through to stream
+- * validation (which fails here, MODE_ERROR, as the test has no device).
++ * sink, before any stream is built. On an HDMI sink, and for a 2D mode, the
++ * stereo check lets the mode through to stream validation (which fails here,
++ * MODE_ERROR, as the test has no device). A frame-sequential mode is not an
++ * HDMI 3D layout; it is refused here because the connector has no link that
++ * can send it (dm_link_sends_frame_sequential()).
+  */
+ static void dm_test_mode_valid_hdmi_3d_needs_hdmi_signal(struct kunit *test)
+ {
+@@ -5352,7 +5354,7 @@ static void dm_test_mode_valid_hdmi_3d_needs_hdmi_signal(struct kunit *test)
+ 			MODE_ERROR);
+ 	mode->flags = DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL;
+ 	KUNIT_EXPECT_EQ(test, amdgpu_dm_connector_mode_valid(&aconnector->base, mode),
+-			MODE_ERROR);
++			MODE_NO_STEREO);
+ }
+ 
+ /**
+-- 
+2.53.0
+

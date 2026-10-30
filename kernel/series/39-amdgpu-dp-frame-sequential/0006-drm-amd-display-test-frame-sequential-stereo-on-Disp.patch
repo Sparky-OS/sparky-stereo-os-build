@@ -1,0 +1,802 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 30 Oct 2026 07:11:02 -0300
+Subject: [PATCH] drm/amd/display: test frame-sequential stereo on DisplayPort
+
+Stream (amdgpu_dm_connector suite):
+- a frame-sequential 1920x1080 mode at 120 Hz on a DisplayPort stream gets
+  TIMING_3D_FORMAT_INBAND_FA and VIEW_3D_FORMAT_FRAME_SEQUENTIAL and keeps
+  its 2D link timing (1920 by 1080 active, 2200 by 1125 total, 297 MHz);
+- the same mode on an MST, eDP, DVI or HDMI stream, and a 2D mode or an
+  HDMI 3D layout on a DisplayPort stream, get neither;
+- mod_build_vsc_infopacket() on the stream of the frame-sequential mode
+  builds VSC SDP revision 1 (HB0 00h, HB1 07h, HB2 01h, HB3 01h) with DB0
+  0x01, and revision 5 (HB2 05h, HB3 13h) with the same DB0 when VSC
+  colorimetry is in use; the 2D mode builds none;
+- dm_link_sends_frame_sequential(): a DCN link at HBR2 to a single-stream
+  DisplayPort sink sends it; DCE, the MST, eDP, HDMI, DVI and virtual
+  signals, no sink, no link, VGA, DVI and HDMI protocol converters, a
+  128b/132b link, Panel Replay and a DC without a link service do not;
+- dm_connector_can_send_frame_sequential(): DisplayPort connectors of a DCN
+  opt in; DCE, MST ports, connectors without a link, eDP, HDMI, DVI and VGA
+  connectors do not;
+- amdgpu_dm_connector_mode_valid() lets the mode through to stream
+  validation on the DCN DisplayPort link and returns MODE_NO_STEREO on DCE,
+  MST, eDP and HDMI sinks and behind an HDMI converter.
+
+Plane (amdgpu_dm_plane suite):
+- amdgpu_dm_plane_check_frame_sequential() accepts the primary plane
+  covering the 3840x1080 frame from a linear XRGB8888 framebuffer, and a
+  2560x1440 eye in ARGB16161616F; it refuses an overlay and a cursor plane,
+  a plane covering one eye or off the origin, a scaled or rotated plane, a
+  tiled framebuffer (GFX9 64K_S_X), NV12, a 1366-pixel eye (5464 bytes, not
+  a multiple of 256) and an asynchronous flip; it does not limit planes
+  on 2D CRTCs, HDMI 3D layouts, disabled CRTCs or planes without a
+  framebuffer;
+- amdgpu_dm_plane_atomic_check() refuses a plane without a DC plane state
+  (as the cursor is) on a frame-sequential CRTC and accepts it on a 2D one;
+- amdgpu_dm_plane_fill_frame_sequential_scaling() and _address() turn the
+  plane on a frame-sequential stream into a stereo surface, frame
+  alternate, left eye at the framebuffer's address and right eye 7680 bytes
+  further, each eye 1920 wide; a 2D stream keeps its graphics address and
+  rectangles.
+
+Each of these cases fails when the behaviour it tests is taken out
+behind the same functions.
+
+Assisted-by: LLM
+---
+ .../tests/amdgpu_dm_connector_test.c          | 403 ++++++++++++++++++
+ .../amdgpu_dm/tests/amdgpu_dm_plane_test.c    | 301 +++++++++++++
+ 2 files changed, 704 insertions(+)
+
+diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/tests/amdgpu_dm_connector_test.c b/drivers/gpu/drm/amd/display/amdgpu_dm/tests/amdgpu_dm_connector_test.c
+index b853ac866..43eb4aaf2 100644
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/tests/amdgpu_dm_connector_test.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/tests/amdgpu_dm_connector_test.c
+@@ -29,6 +29,8 @@
+ #include "amdgpu_dm_backlight.h"
+ #include "include/grph_object_id.h"
+ #include "inc/core_types.h"
++#include "inc/link_service.h"
++#include "mod_info_packet.h"
+ #include "amdgpu_dm_kunit_test_helpers.h"
+ 
+ /* Tests for get_subconnector_type() */
+@@ -5423,6 +5425,399 @@ static void dm_test_connector_can_carry_hdmi(struct kunit *test)
+ 
+ #undef CAN_CARRY_HDMI
+ 
++/* Frame-sequential stereo on DisplayPort */
++
++/* A 1920x1080 mode at 120 Hz (CTA-861 VIC 63's timing), with @flags */
++static void dm_test_fill_fs_mode(struct drm_display_mode *mode, u32 flags)
++{
++	memset(mode, 0, sizeof(*mode));
++	mode->clock = 297000;
++	mode->hdisplay = 1920;
++	mode->hsync_start = 2008;
++	mode->hsync_end = 2052;
++	mode->htotal = 2200;
++	mode->vdisplay = 1080;
++	mode->vsync_start = 1084;
++	mode->vsync_end = 1089;
++	mode->vtotal = 1125;
++	mode->flags = DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_PVSYNC | flags;
++	/* as create_stream_for_sink() times every stereo mode */
++	drm_mode_set_crtcinfo(mode, CRTC_STEREO_DOUBLE);
++}
++
++/**
++ * dm_test_fill_stream_frame_sequential - Test the stream of a frame-sequential mode
++ * @test: The KUnit test context
++ *
++ * On a DisplayPort stream a frame-sequential mode gets in-band frame
++ * alternate stereo (TIMING_3D_FORMAT_INBAND_FA) and a frame-sequential view,
++ * and keeps its 2D link timing: 1920 active pixels, 2200 total, 1125 lines,
++ * 297 MHz.
++ */
++static void dm_test_fill_stream_frame_sequential(struct kunit *test)
++{
++	struct dm_test_fill_ctx *ctx = dm_test_fill_ctx_alloc(test);
++	struct dc_crtc_timing *timing = &ctx->stream->timing;
++
++	dm_test_fill_fs_mode(ctx->mode, DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL);
++	fill_stream_properties_from_drm_display_mode(ctx->stream, ctx->mode,
++		&ctx->aconnector->base, ctx->conn_state, NULL, 8,
++		PIXEL_ENCODING_RGB, false);
++
++	KUNIT_EXPECT_EQ(test, (int)timing->timing_3d_format,
++			(int)TIMING_3D_FORMAT_INBAND_FA);
++	KUNIT_EXPECT_EQ(test, (int)ctx->stream->view_format,
++			(int)VIEW_3D_FORMAT_FRAME_SEQUENTIAL);
++	KUNIT_EXPECT_EQ(test, timing->h_addressable, 1920);
++	KUNIT_EXPECT_EQ(test, timing->h_total, 2200);
++	KUNIT_EXPECT_EQ(test, timing->v_addressable, 1080);
++	KUNIT_EXPECT_EQ(test, timing->v_total, 1125);
++	KUNIT_EXPECT_EQ(test, timing->pix_clk_100hz, 2970000);
++}
++
++/**
++ * dm_test_fill_stream_frame_sequential_dp_only - Test frame sequential on other signals
++ * @test: The KUnit test context
++ *
++ * MSA MISC1 exists only on single-stream DisplayPort here: the mode that gets
++ * in-band frame alternate stereo on a DisplayPort stream gets no stereo format
++ * and no stereo view on an MST, eDP, DVI or HDMI stream.
++ */
++static void dm_test_fill_stream_frame_sequential_dp_only(struct kunit *test)
++{
++	static const struct {
++		enum signal_type signal;
++		bool stereo;
++	} cases[] = {
++		{ SIGNAL_TYPE_DISPLAY_PORT, true },
++		{ SIGNAL_TYPE_DISPLAY_PORT_MST, false },
++		{ SIGNAL_TYPE_EDP, false },
++		{ SIGNAL_TYPE_DVI_SINGLE_LINK, false },
++		{ SIGNAL_TYPE_HDMI_TYPE_A, false },
++	};
++	struct dm_test_fill_ctx *ctx = dm_test_fill_ctx_alloc(test);
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(cases); i++) {
++		bool stereo = cases[i].stereo;
++		int format = stereo ? TIMING_3D_FORMAT_INBAND_FA : TIMING_3D_FORMAT_NONE;
++		int view = stereo ? VIEW_3D_FORMAT_FRAME_SEQUENTIAL : VIEW_3D_FORMAT_NONE;
++
++		memset(ctx->stream, 0, sizeof(*ctx->stream));
++		ctx->stream->signal = cases[i].signal;
++		dm_test_fill_fs_mode(ctx->mode, DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL);
++		fill_stream_properties_from_drm_display_mode(ctx->stream, ctx->mode,
++			&ctx->aconnector->base, ctx->conn_state, NULL, 8,
++			PIXEL_ENCODING_RGB, false);
++
++		KUNIT_EXPECT_EQ_MSG(test, (int)ctx->stream->timing.timing_3d_format, format,
++				    "signal %d", cases[i].signal);
++		KUNIT_EXPECT_EQ_MSG(test, (int)ctx->stream->view_format, view,
++				    "signal %d", cases[i].signal);
++	}
++}
++
++/**
++ * dm_test_fill_stream_frame_sequential_other_layouts - Test 2D and HDMI 3D modes
++ * @test: The KUnit test context
++ *
++ * On a DisplayPort stream only the frame-sequential layout is stereo to DC; a
++ * 2D mode and the HDMI 3D layouts build the stream they built before: no
++ * stereo format, no stereo view.
++ */
++static void dm_test_fill_stream_frame_sequential_other_layouts(struct kunit *test)
++{
++	static const u32 layouts[] = {
++		0,
++		DRM_MODE_FLAG_3D_FRAME_PACKING,
++		DRM_MODE_FLAG_3D_SIDE_BY_SIDE_FULL,
++		DRM_MODE_FLAG_3D_TOP_AND_BOTTOM,
++		DRM_MODE_FLAG_3D_SIDE_BY_SIDE_HALF,
++		DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL,
++	};
++	struct dm_test_fill_ctx *ctx = dm_test_fill_ctx_alloc(test);
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(layouts); i++) {
++		bool fs = layouts[i] == DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL;
++		int format = fs ? TIMING_3D_FORMAT_INBAND_FA : TIMING_3D_FORMAT_NONE;
++		int view = fs ? VIEW_3D_FORMAT_FRAME_SEQUENTIAL : VIEW_3D_FORMAT_NONE;
++
++		memset(ctx->stream, 0, sizeof(*ctx->stream));
++		ctx->stream->signal = SIGNAL_TYPE_DISPLAY_PORT;
++		dm_test_fill_fs_mode(ctx->mode, layouts[i]);
++		fill_stream_properties_from_drm_display_mode(ctx->stream, ctx->mode,
++			&ctx->aconnector->base, ctx->conn_state, NULL, 8,
++			PIXEL_ENCODING_RGB, false);
++
++		KUNIT_EXPECT_EQ_MSG(test, (int)ctx->stream->timing.timing_3d_format, format,
++				    "layout 0x%x", layouts[i]);
++		KUNIT_EXPECT_EQ_MSG(test, (int)ctx->stream->view_format, view,
++				    "layout 0x%x", layouts[i]);
++	}
++}
++
++/**
++ * dm_test_vsc_sdp_frame_sequential - Test the VSC SDP of a frame-sequential stream
++ * @test: The KUnit test context
++ *
++ * mod_build_vsc_infopacket() on the stream of a frame-sequential mode sends
++ * VSC SDP revision 1 (HB0 00h, HB1 07h, HB2 01h, HB3 01h) with DB0 0x01,
++ * "Frame/Field Sequential, L + R view indication based on MISC1 bit 2:1" (DP
++ * 1.2, as info_packet.c quotes it); with VSC colorimetry, revision 5 (HB2 05h,
++ * HB3 13h) with the same DB0. The stream of the 2D mode sends no VSC SDP.
++ */
++static void dm_test_vsc_sdp_frame_sequential(struct kunit *test)
++{
++	struct dm_test_fill_ctx *ctx = dm_test_fill_ctx_alloc(test);
++	struct dc_info_packet *packet;
++	struct dc_link *link;
++	int colorimetry;
++
++	link = kunit_kzalloc(test, sizeof(*link), GFP_KERNEL);
++	packet = kunit_kzalloc(test, sizeof(*packet), GFP_KERNEL);
++	KUNIT_ASSERT_NOT_NULL(test, link);
++	KUNIT_ASSERT_NOT_NULL(test, packet);
++	/* a DisplayPort link as link_factory.c constructs it: no PSR, no replay */
++	link->psr_settings.psr_version = DC_PSR_VERSION_UNSUPPORTED;
++	link->replay_settings.config.replay_version = DC_REPLAY_VERSION_UNSUPPORTED;
++
++	for (colorimetry = 0; colorimetry < 2; colorimetry++) {
++		memset(ctx->stream, 0, sizeof(*ctx->stream));
++		ctx->stream->signal = SIGNAL_TYPE_DISPLAY_PORT;
++		ctx->stream->link = link;
++		ctx->stream->use_vsc_sdp_for_colorimetry = colorimetry;
++		dm_test_fill_fs_mode(ctx->mode, DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL);
++		fill_stream_properties_from_drm_display_mode(ctx->stream, ctx->mode,
++			&ctx->aconnector->base, ctx->conn_state, NULL, 8,
++			PIXEL_ENCODING_RGB, false);
++
++		memset(packet, 0, sizeof(*packet));
++		mod_build_vsc_infopacket(ctx->stream, packet, ctx->stream->output_color_space,
++					 TRANSFER_FUNC_UNKNOWN);
++
++		KUNIT_EXPECT_TRUE(test, packet->valid);
++		KUNIT_EXPECT_EQ(test, packet->hb0, 0x00);
++		KUNIT_EXPECT_EQ(test, packet->hb1, 0x07);
++		KUNIT_EXPECT_EQ(test, packet->hb2, colorimetry ? 0x05 : 0x01);
++		KUNIT_EXPECT_EQ(test, packet->hb3, colorimetry ? 0x13 : 0x01);
++		KUNIT_EXPECT_EQ_MSG(test, packet->sb[0], 0x01, "colorimetry %d", colorimetry);
++	}
++
++	memset(ctx->stream, 0, sizeof(*ctx->stream));
++	ctx->stream->signal = SIGNAL_TYPE_DISPLAY_PORT;
++	ctx->stream->link = link;
++	dm_test_fill_fs_mode(ctx->mode, 0);
++	fill_stream_properties_from_drm_display_mode(ctx->stream, ctx->mode,
++		&ctx->aconnector->base, ctx->conn_state, NULL, 8,
++		PIXEL_ENCODING_RGB, false);
++	memset(packet, 0, sizeof(*packet));
++	mod_build_vsc_infopacket(ctx->stream, packet, ctx->stream->output_color_space,
++				 TRANSFER_FUNC_UNKNOWN);
++	KUNIT_EXPECT_FALSE(test, packet->valid);
++	KUNIT_EXPECT_EQ(test, packet->sb[0], 0x00);
++}
++
++static void dm_test_setup_stereo(struct pipe_ctx *pipe_ctx, struct dc *dc)
++{
++}
++
++static enum dp_link_encoding dm_test_encoding_format(const struct dc_link_settings *settings)
++{
++	return settings->link_rate >= LINK_RATE_UHBR10 ?
++		DP_128b_132b_ENCODING : DP_8b_10b_ENCODING;
++}
++
++struct dm_test_fs_link {
++	struct dc *dc;
++	struct link_service *link_srv;
++	struct dc_link *link;
++	struct dc_sink *sink;
++};
++
++/* A DCN link at HBR2 to a single-stream DisplayPort sink, no converter */
++static struct dm_test_fs_link *dm_test_fs_link_alloc(struct kunit *test)
++{
++	struct dm_test_fs_link *fs = kunit_kzalloc(test, sizeof(*fs), GFP_KERNEL);
++
++	KUNIT_ASSERT_NOT_NULL(test, fs);
++	fs->dc = kunit_kzalloc(test, sizeof(*fs->dc), GFP_KERNEL);
++	fs->link_srv = kunit_kzalloc(test, sizeof(*fs->link_srv), GFP_KERNEL);
++	fs->link = kunit_kzalloc(test, sizeof(*fs->link), GFP_KERNEL);
++	fs->sink = kunit_kzalloc(test, sizeof(*fs->sink), GFP_KERNEL);
++	KUNIT_ASSERT_NOT_NULL(test, fs->dc);
++	KUNIT_ASSERT_NOT_NULL(test, fs->link_srv);
++	KUNIT_ASSERT_NOT_NULL(test, fs->link);
++	KUNIT_ASSERT_NOT_NULL(test, fs->sink);
++
++	fs->dc->hwss.setup_stereo = dm_test_setup_stereo;
++	fs->link_srv->dp_get_encoding_format = dm_test_encoding_format;
++	fs->dc->link_srv = fs->link_srv;
++	fs->link->dc = fs->dc;
++	fs->link->verified_link_cap.link_rate = LINK_RATE_HIGH2;
++	fs->link->dpcd_caps.dongle_type = DISPLAY_DONGLE_NONE;
++	fs->link->psr_settings.psr_version = DC_PSR_VERSION_UNSUPPORTED;
++	fs->link->replay_settings.config.replay_version = DC_REPLAY_VERSION_UNSUPPORTED;
++	fs->sink->sink_signal = SIGNAL_TYPE_DISPLAY_PORT;
++
++	return fs;
++}
++
++/**
++ * dm_test_link_sends_frame_sequential - Test which links send frame-sequential stereo
++ * @test: The KUnit test context
++ *
++ * A DCN link at HBR2 to a single-stream DisplayPort sink sends it. Refused:
++ * DCE (no setup_stereo), the MST, eDP, HDMI (a DP++ adaptor) and DVI signals,
++ * no sink, no link, a VGA, DVI or HDMI protocol converter, a 128b/132b link,
++ * Panel Replay, and a DC without its link service.
++ */
++static void dm_test_link_sends_frame_sequential(struct kunit *test)
++{
++	static const enum signal_type refused_signals[] = {
++		SIGNAL_TYPE_DISPLAY_PORT_MST,
++		SIGNAL_TYPE_EDP,
++		SIGNAL_TYPE_HDMI_TYPE_A,
++		SIGNAL_TYPE_DVI_SINGLE_LINK,
++		SIGNAL_TYPE_VIRTUAL,
++	};
++	static const enum display_dongle_type converters[] = {
++		DISPLAY_DONGLE_DP_VGA_CONVERTER,
++		DISPLAY_DONGLE_DP_DVI_CONVERTER,
++		DISPLAY_DONGLE_DP_HDMI_CONVERTER,
++	};
++	struct dm_test_fs_link *fs = dm_test_fs_link_alloc(test);
++	int i;
++
++	KUNIT_EXPECT_TRUE(test, dm_link_sends_frame_sequential(fs->link, fs->sink));
++
++	fs->dc->hwss.setup_stereo = NULL;
++	KUNIT_EXPECT_FALSE(test, dm_link_sends_frame_sequential(fs->link, fs->sink));
++	fs->dc->hwss.setup_stereo = dm_test_setup_stereo;
++
++	for (i = 0; i < ARRAY_SIZE(refused_signals); i++) {
++		fs->sink->sink_signal = refused_signals[i];
++		KUNIT_EXPECT_FALSE_MSG(test, dm_link_sends_frame_sequential(fs->link, fs->sink),
++				       "signal %d", refused_signals[i]);
++	}
++	fs->sink->sink_signal = SIGNAL_TYPE_DISPLAY_PORT;
++
++	KUNIT_EXPECT_FALSE(test, dm_link_sends_frame_sequential(fs->link, NULL));
++	KUNIT_EXPECT_FALSE(test, dm_link_sends_frame_sequential(NULL, fs->sink));
++
++	for (i = 0; i < ARRAY_SIZE(converters); i++) {
++		fs->link->dpcd_caps.dongle_type = converters[i];
++		KUNIT_EXPECT_FALSE_MSG(test, dm_link_sends_frame_sequential(fs->link, fs->sink),
++				       "dongle %d", converters[i]);
++	}
++	fs->link->dpcd_caps.dongle_type = DISPLAY_DONGLE_NONE;
++
++	fs->link->verified_link_cap.link_rate = LINK_RATE_UHBR10;
++	KUNIT_EXPECT_FALSE(test, dm_link_sends_frame_sequential(fs->link, fs->sink));
++	fs->link->verified_link_cap.link_rate = LINK_RATE_HIGH2;
++
++	fs->link->replay_settings.config.replay_version = DC_VESA_PANEL_REPLAY;
++	KUNIT_EXPECT_FALSE(test, dm_link_sends_frame_sequential(fs->link, fs->sink));
++	fs->link->replay_settings.config.replay_version = DC_REPLAY_VERSION_UNSUPPORTED;
++	KUNIT_EXPECT_TRUE(test, dm_link_sends_frame_sequential(fs->link, fs->sink));
++
++	fs->dc->link_srv = NULL;
++	KUNIT_EXPECT_FALSE(test, dm_link_sends_frame_sequential(fs->link, fs->sink));
++}
++
++/**
++ * dm_test_connector_can_send_frame_sequential - Test which connectors opt in
++ * @test: The KUnit test context
++ *
++ * A DisplayPort connector of a DCN opts in to frame-sequential modes; one of
++ * a DCE, an MST port, a connector without a link, and eDP, HDMI, DVI and VGA
++ * connectors do not.
++ */
++static void dm_test_connector_can_send_frame_sequential(struct kunit *test)
++{
++	struct amdgpu_dm_connector *aconnector;
++	struct dm_test_fs_link *fs = dm_test_fs_link_alloc(test);
++
++	aconnector = kunit_kzalloc(test, sizeof(*aconnector), GFP_KERNEL);
++	KUNIT_ASSERT_NOT_NULL(test, aconnector);
++	aconnector->dc_link = fs->link;
++
++	KUNIT_EXPECT_TRUE(test, dm_connector_can_send_frame_sequential(aconnector,
++							DRM_MODE_CONNECTOR_DisplayPort));
++	KUNIT_EXPECT_FALSE(test, dm_connector_can_send_frame_sequential(aconnector,
++							DRM_MODE_CONNECTOR_eDP));
++	KUNIT_EXPECT_FALSE(test, dm_connector_can_send_frame_sequential(aconnector,
++							DRM_MODE_CONNECTOR_HDMIA));
++	KUNIT_EXPECT_FALSE(test, dm_connector_can_send_frame_sequential(aconnector,
++							DRM_MODE_CONNECTOR_DVID));
++	KUNIT_EXPECT_FALSE(test, dm_connector_can_send_frame_sequential(aconnector,
++							DRM_MODE_CONNECTOR_VGA));
++
++	fs->dc->hwss.setup_stereo = NULL;
++	KUNIT_EXPECT_FALSE(test, dm_connector_can_send_frame_sequential(aconnector,
++							DRM_MODE_CONNECTOR_DisplayPort));
++	fs->dc->hwss.setup_stereo = dm_test_setup_stereo;
++
++	aconnector->mst_root = aconnector;
++	KUNIT_EXPECT_FALSE(test, dm_connector_can_send_frame_sequential(aconnector,
++							DRM_MODE_CONNECTOR_DisplayPort));
++	aconnector->mst_root = NULL;
++
++	aconnector->dc_link = NULL;
++	KUNIT_EXPECT_FALSE(test, dm_connector_can_send_frame_sequential(aconnector,
++							DRM_MODE_CONNECTOR_DisplayPort));
++}
++
++/**
++ * dm_test_mode_valid_frame_sequential - Test the frame-sequential mode filter
++ * @test: The KUnit test context
++ *
++ * A frame-sequential mode passes the stereo check on a DCN link to a
++ * DisplayPort sink and goes on to stream validation (which fails here,
++ * MODE_ERROR, as the test has no device); on DCE, an MST, eDP or HDMI sink and
++ * behind an HDMI protocol converter it is refused with MODE_NO_STEREO before
++ * any stream is built.
++ */
++static void dm_test_mode_valid_frame_sequential(struct kunit *test)
++{
++	static const enum signal_type refused_signals[] = {
++		SIGNAL_TYPE_DISPLAY_PORT_MST,
++		SIGNAL_TYPE_EDP,
++		SIGNAL_TYPE_HDMI_TYPE_A,
++	};
++	struct dm_test_fs_link *fs = dm_test_fs_link_alloc(test);
++	struct amdgpu_dm_connector *aconnector;
++	struct drm_display_mode *mode;
++	int i;
++
++	aconnector = kunit_kzalloc(test, sizeof(*aconnector), GFP_KERNEL);
++	mode = kunit_kzalloc(test, sizeof(*mode), GFP_KERNEL);
++	KUNIT_ASSERT_NOT_NULL(test, aconnector);
++	KUNIT_ASSERT_NOT_NULL(test, mode);
++	aconnector->dc_link = fs->link;
++	aconnector->dc_sink = fs->sink;
++	dm_test_fill_fs_mode(mode, DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL);
++
++	KUNIT_EXPECT_EQ(test, amdgpu_dm_connector_mode_valid(&aconnector->base, mode),
++			MODE_ERROR);
++
++	fs->dc->hwss.setup_stereo = NULL;
++	KUNIT_EXPECT_EQ(test, amdgpu_dm_connector_mode_valid(&aconnector->base, mode),
++			MODE_NO_STEREO);
++	fs->dc->hwss.setup_stereo = dm_test_setup_stereo;
++
++	for (i = 0; i < ARRAY_SIZE(refused_signals); i++) {
++		fs->sink->sink_signal = refused_signals[i];
++		KUNIT_EXPECT_EQ_MSG(test, amdgpu_dm_connector_mode_valid(&aconnector->base, mode),
++				    MODE_NO_STEREO, "signal %d", refused_signals[i]);
++	}
++	fs->sink->sink_signal = SIGNAL_TYPE_DISPLAY_PORT;
++
++	fs->link->dpcd_caps.dongle_type = DISPLAY_DONGLE_DP_HDMI_CONVERTER;
++	KUNIT_EXPECT_EQ(test, amdgpu_dm_connector_mode_valid(&aconnector->base, mode),
++			MODE_NO_STEREO);
++}
++
+ /**
+  * dm_test_hdmi_cec_set_edid_no_notifier - Test the no-notifier no-op path
+  * @test: The KUnit test context
+@@ -6024,6 +6419,14 @@ static struct kunit_case amdgpu_dm_connector_tests[] = {
+ 	KUNIT_CASE(dm_test_sink_signals_hdmi_3d),
+ 	/* dm_connector_can_carry_hdmi */
+ 	KUNIT_CASE(dm_test_connector_can_carry_hdmi),
++	/* frame-sequential stereo on DisplayPort */
++	KUNIT_CASE(dm_test_fill_stream_frame_sequential),
++	KUNIT_CASE(dm_test_fill_stream_frame_sequential_dp_only),
++	KUNIT_CASE(dm_test_fill_stream_frame_sequential_other_layouts),
++	KUNIT_CASE(dm_test_vsc_sdp_frame_sequential),
++	KUNIT_CASE(dm_test_link_sends_frame_sequential),
++	KUNIT_CASE(dm_test_connector_can_send_frame_sequential),
++	KUNIT_CASE(dm_test_mode_valid_frame_sequential),
+ 	/* amdgpu_dm_hdmi_cec_set_edid */
+ 	KUNIT_CASE(dm_test_hdmi_cec_set_edid_no_notifier),
+ 	/* amdgpu_dm_s3_handle_hdmi_cec */
+diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/tests/amdgpu_dm_plane_test.c b/drivers/gpu/drm/amd/display/amdgpu_dm/tests/amdgpu_dm_plane_test.c
+index 23ac8ae41..8c859bee5 100644
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/tests/amdgpu_dm_plane_test.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/tests/amdgpu_dm_plane_test.c
+@@ -3024,6 +3024,301 @@ static void dm_test_plane_destroy_state_minimal(struct kunit *test)
+ 	amdgpu_dm_plane_drm_plane_destroy_state(plane, &dm_plane_state->base);
+ }
+ 
++/* Frame-sequential stereo: one eye per frame from a side by side frame */
++
++struct dm_test_fs_ctx {
++	struct drm_plane *plane;
++	struct drm_framebuffer *fb;
++	struct drm_plane_state *state;
++	struct drm_crtc_state *crtc_state;
++};
++
++/*
++ * A 1920x1080 frame-sequential CRTC and its primary plane covering the
++ * 3840x1080 frame of both eyes from a linear XRGB8888 framebuffer: the plane
++ * amdgpu_dm_plane_check_frame_sequential() accepts.
++ */
++static struct dm_test_fs_ctx *dm_test_fs_ctx_alloc(struct kunit *test)
++{
++	struct dm_test_fs_ctx *ctx = kunit_kzalloc(test, sizeof(*ctx), GFP_KERNEL);
++
++	KUNIT_ASSERT_NOT_NULL(test, ctx);
++	ctx->plane = kunit_kzalloc(test, sizeof(*ctx->plane), GFP_KERNEL);
++	ctx->fb = kunit_kzalloc(test, sizeof(*ctx->fb), GFP_KERNEL);
++	ctx->state = kunit_kzalloc(test, sizeof(*ctx->state), GFP_KERNEL);
++	ctx->crtc_state = kunit_kzalloc(test, sizeof(*ctx->crtc_state), GFP_KERNEL);
++	KUNIT_ASSERT_NOT_NULL(test, ctx->plane);
++	KUNIT_ASSERT_NOT_NULL(test, ctx->fb);
++	KUNIT_ASSERT_NOT_NULL(test, ctx->state);
++	KUNIT_ASSERT_NOT_NULL(test, ctx->crtc_state);
++
++	ctx->plane->type = DRM_PLANE_TYPE_PRIMARY;
++	ctx->plane->name = "kunit-primary";
++
++	ctx->fb->format = drm_format_info(DRM_FORMAT_XRGB8888);
++	KUNIT_ASSERT_NOT_NULL(test, ctx->fb->format);
++	ctx->fb->modifier = DRM_FORMAT_MOD_LINEAR;
++	ctx->fb->width = 3840;
++	ctx->fb->height = 1080;
++
++	ctx->crtc_state->enable = true;
++	ctx->crtc_state->mode.hdisplay = 1920;
++	ctx->crtc_state->mode.vdisplay = 1080;
++	ctx->crtc_state->mode.flags = DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL;
++
++	ctx->state->plane = ctx->plane;
++	ctx->state->fb = ctx->fb;
++	ctx->state->rotation = DRM_MODE_ROTATE_0;
++	ctx->state->src_w = 3840 << 16;
++	ctx->state->src_h = 1080 << 16;
++	ctx->state->crtc_w = 3840;
++	ctx->state->crtc_h = 1080;
++
++	return ctx;
++}
++
++/**
++ * dm_test_plane_check_frame_sequential - Test the plane a frame-sequential CRTC takes
++ * @test: The KUnit test context
++ *
++ * The primary plane covering the whole frame of both eyes, unscaled, from a
++ * linear XRGB8888 framebuffer is accepted; so is it with a 2560-wide eye in
++ * ARGB16161616F (an eye of 20480 bytes, 80 times 256). Each departure from it
++ * is refused: an overlay or cursor plane, a plane covering one eye or placed
++ * off the origin, a scaled or rotated one, a tiled framebuffer, a two-plane
++ * YUV framebuffer, an eye whose width in bytes is not a multiple of 256 (1366
++ * XRGB8888 pixels, 5464 bytes), and an asynchronous flip.
++ */
++static void dm_test_plane_check_frame_sequential(struct kunit *test)
++{
++	struct dm_test_fs_ctx *ctx = dm_test_fs_ctx_alloc(test);
++
++	KUNIT_EXPECT_EQ(test, amdgpu_dm_plane_check_frame_sequential(ctx->state,
++								     ctx->crtc_state), 0);
++
++	ctx->fb->format = drm_format_info(DRM_FORMAT_ARGB16161616F);
++	KUNIT_ASSERT_NOT_NULL(test, ctx->fb->format);
++	ctx->crtc_state->mode.hdisplay = 2560;
++	ctx->crtc_state->mode.vdisplay = 1440;
++	ctx->state->src_w = 5120 << 16;
++	ctx->state->src_h = 1440 << 16;
++	ctx->state->crtc_w = 5120;
++	ctx->state->crtc_h = 1440;
++	KUNIT_EXPECT_EQ(test, amdgpu_dm_plane_check_frame_sequential(ctx->state,
++								     ctx->crtc_state), 0);
++
++	ctx = dm_test_fs_ctx_alloc(test);
++	ctx->plane->type = DRM_PLANE_TYPE_OVERLAY;
++	KUNIT_EXPECT_EQ(test, amdgpu_dm_plane_check_frame_sequential(ctx->state,
++								     ctx->crtc_state), -EINVAL);
++	ctx->plane->type = DRM_PLANE_TYPE_CURSOR;
++	KUNIT_EXPECT_EQ(test, amdgpu_dm_plane_check_frame_sequential(ctx->state,
++								     ctx->crtc_state), -EINVAL);
++
++	ctx = dm_test_fs_ctx_alloc(test);
++	ctx->state->src_w = 1920 << 16;
++	ctx->state->crtc_w = 1920;
++	KUNIT_EXPECT_EQ(test, amdgpu_dm_plane_check_frame_sequential(ctx->state,
++								     ctx->crtc_state), -EINVAL);
++
++	ctx = dm_test_fs_ctx_alloc(test);
++	ctx->state->crtc_x = 16;
++	KUNIT_EXPECT_EQ(test, amdgpu_dm_plane_check_frame_sequential(ctx->state,
++								     ctx->crtc_state), -EINVAL);
++
++	ctx = dm_test_fs_ctx_alloc(test);
++	ctx->state->src_w = 1920 << 16;
++	ctx->state->src_h = 540 << 16;
++	KUNIT_EXPECT_EQ(test, amdgpu_dm_plane_check_frame_sequential(ctx->state,
++								     ctx->crtc_state), -EINVAL);
++
++	ctx = dm_test_fs_ctx_alloc(test);
++	ctx->state->rotation = DRM_MODE_ROTATE_180;
++	KUNIT_EXPECT_EQ(test, amdgpu_dm_plane_check_frame_sequential(ctx->state,
++								     ctx->crtc_state), -EINVAL);
++
++	ctx = dm_test_fs_ctx_alloc(test);
++	ctx->fb->modifier = AMD_FMT_MOD |
++		AMD_FMT_MOD_SET(TILE_VERSION, AMD_FMT_MOD_TILE_VER_GFX9) |
++		AMD_FMT_MOD_SET(TILE, AMD_FMT_MOD_TILE_GFX9_64K_S_X);
++	KUNIT_EXPECT_EQ(test, amdgpu_dm_plane_check_frame_sequential(ctx->state,
++								     ctx->crtc_state), -EINVAL);
++
++	ctx = dm_test_fs_ctx_alloc(test);
++	ctx->fb->format = drm_format_info(DRM_FORMAT_NV12);
++	KUNIT_ASSERT_NOT_NULL(test, ctx->fb->format);
++	KUNIT_EXPECT_EQ(test, amdgpu_dm_plane_check_frame_sequential(ctx->state,
++								     ctx->crtc_state), -EINVAL);
++
++	ctx = dm_test_fs_ctx_alloc(test);
++	ctx->crtc_state->mode.hdisplay = 1366;
++	ctx->crtc_state->mode.vdisplay = 768;
++	ctx->state->src_w = 2732 << 16;
++	ctx->state->src_h = 768 << 16;
++	ctx->state->crtc_w = 2732;
++	ctx->state->crtc_h = 768;
++	KUNIT_EXPECT_EQ(test, amdgpu_dm_plane_check_frame_sequential(ctx->state,
++								     ctx->crtc_state), -EINVAL);
++
++	ctx = dm_test_fs_ctx_alloc(test);
++	ctx->crtc_state->async_flip = true;
++	KUNIT_EXPECT_EQ(test, amdgpu_dm_plane_check_frame_sequential(ctx->state,
++								     ctx->crtc_state), -EINVAL);
++}
++
++/**
++ * dm_test_plane_check_frame_sequential_other_crtcs - Only frame-sequential CRTCs are limited
++ * @test: The KUnit test context
++ *
++ * An overlay plane covering one eye's width, tiled, which a frame-sequential
++ * CRTC refuses, is accepted on a 2D CRTC, on a CRTC with an HDMI 3D layout and
++ * on a disabled frame-sequential CRTC, and a plane without a framebuffer is
++ * never checked.
++ */
++static void dm_test_plane_check_frame_sequential_other_crtcs(struct kunit *test)
++{
++	struct dm_test_fs_ctx *ctx = dm_test_fs_ctx_alloc(test);
++
++	ctx->plane->type = DRM_PLANE_TYPE_OVERLAY;
++	ctx->state->src_w = 1920 << 16;
++	ctx->state->crtc_w = 1920;
++	ctx->fb->modifier = AMD_FMT_MOD |
++		AMD_FMT_MOD_SET(TILE_VERSION, AMD_FMT_MOD_TILE_VER_GFX9) |
++		AMD_FMT_MOD_SET(TILE, AMD_FMT_MOD_TILE_GFX9_64K_S_X);
++
++	KUNIT_EXPECT_EQ(test, amdgpu_dm_plane_check_frame_sequential(ctx->state,
++								     ctx->crtc_state), -EINVAL);
++	ctx->crtc_state->mode.flags = 0;
++	KUNIT_EXPECT_EQ(test, amdgpu_dm_plane_check_frame_sequential(ctx->state,
++								     ctx->crtc_state), 0);
++	ctx->crtc_state->mode.flags = DRM_MODE_FLAG_3D_SIDE_BY_SIDE_HALF;
++	KUNIT_EXPECT_EQ(test, amdgpu_dm_plane_check_frame_sequential(ctx->state,
++								     ctx->crtc_state), 0);
++	ctx->crtc_state->mode.flags = DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL;
++	ctx->crtc_state->enable = false;
++	KUNIT_EXPECT_EQ(test, amdgpu_dm_plane_check_frame_sequential(ctx->state,
++								     ctx->crtc_state), 0);
++	ctx->crtc_state->enable = true;
++	ctx->state->fb = NULL;
++	KUNIT_EXPECT_EQ(test, amdgpu_dm_plane_check_frame_sequential(ctx->state,
++								     ctx->crtc_state), 0);
++}
++
++/**
++ * dm_test_atomic_check_frame_sequential_cursor - Test the check runs in atomic_check
++ * @test: KUnit test context.
++ *
++ * A plane without a DC plane state, as the cursor plane is, passes atomic_check
++ * on a 2D CRTC and is refused on a frame-sequential one, before DC is asked.
++ */
++static void dm_test_atomic_check_frame_sequential_cursor(struct kunit *test)
++{
++	struct amdgpu_device *adev;
++	struct drm_atomic_commit *state;
++	struct drm_plane *plane;
++	struct dm_plane_state *dm_plane_state;
++	struct drm_crtc_state *new_crtc_state;
++	struct drm_framebuffer *fb;
++
++	adev = dm_test_init_atomic_check_state(test, &state, &plane, &dm_plane_state,
++					       &new_crtc_state, &fb);
++	KUNIT_ASSERT_NOT_NULL(test, adev);
++	plane->type = DRM_PLANE_TYPE_CURSOR;
++	dm_plane_state->dc_state = NULL;
++
++	KUNIT_EXPECT_EQ(test, amdgpu_dm_plane_atomic_check(plane, state), 0);
++
++	new_crtc_state->mode.hdisplay = 1920;
++	new_crtc_state->mode.vdisplay = 1080;
++	new_crtc_state->mode.flags = DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL;
++	KUNIT_EXPECT_EQ(test, amdgpu_dm_plane_atomic_check(plane, state), -EINVAL);
++}
++
++/**
++ * dm_test_plane_fill_frame_sequential - Test the stereo surface of a frame-sequential stream
++ * @test: The KUnit test context
++ *
++ * On a frame-sequential stream the plane's rectangles become the left half of
++ * the frame, and its address a stereo surface: the left eye at the
++ * framebuffer's address, the right eye 1920 XRGB8888 pixels (7680 bytes)
++ * further, frame alternate, each eye 1920 wide. A 2D stream keeps the
++ * graphics address and the whole rectangles.
++ */
++static void dm_test_plane_fill_frame_sequential(struct kunit *test)
++{
++	const u64 base = 0x812340000ULL;
++	struct dc_stream_state *stream;
++	struct dc_scaling_info *scaling;
++	struct dc_plane_info *info;
++	struct dc_plane_address *address;
++	struct drm_framebuffer *fb;
++	int pass;
++
++	stream = kunit_kzalloc(test, sizeof(*stream), GFP_KERNEL);
++	scaling = kunit_kzalloc(test, sizeof(*scaling), GFP_KERNEL);
++	info = kunit_kzalloc(test, sizeof(*info), GFP_KERNEL);
++	address = kunit_kzalloc(test, sizeof(*address), GFP_KERNEL);
++	fb = kunit_kzalloc(test, sizeof(*fb), GFP_KERNEL);
++	KUNIT_ASSERT_NOT_NULL(test, stream);
++	KUNIT_ASSERT_NOT_NULL(test, scaling);
++	KUNIT_ASSERT_NOT_NULL(test, info);
++	KUNIT_ASSERT_NOT_NULL(test, address);
++	KUNIT_ASSERT_NOT_NULL(test, fb);
++	fb->format = drm_format_info(DRM_FORMAT_XRGB8888);
++	KUNIT_ASSERT_NOT_NULL(test, fb->format);
++	stream->src.width = 1920;
++	stream->src.height = 1080;
++
++	for (pass = 0; pass < 2; pass++) {
++		bool fs = pass == 1;
++
++		stream->view_format = fs ? VIEW_3D_FORMAT_FRAME_SEQUENTIAL : VIEW_3D_FORMAT_NONE;
++		memset(scaling, 0, sizeof(*scaling));
++		scaling->src_rect.width = 3840;
++		scaling->src_rect.height = 1080;
++		scaling->dst_rect = scaling->src_rect;
++		scaling->clip_rect = scaling->src_rect;
++		memset(info, 0, sizeof(*info));
++		info->plane_size.surface_size.width = 3840;
++		info->plane_size.surface_size.height = 1080;
++		info->plane_size.surface_pitch = 3840;
++		memset(address, 0, sizeof(*address));
++		address->type = PLN_ADDR_TYPE_GRAPHICS;
++		address->grph.addr.quad_part = base;
++
++		amdgpu_dm_plane_fill_frame_sequential_scaling(stream, scaling);
++		amdgpu_dm_plane_fill_frame_sequential_address(stream, fb, info, address);
++
++		KUNIT_EXPECT_EQ_MSG(test, scaling->src_rect.width, fs ? 1920 : 3840,
++				    "pass %d", pass);
++		KUNIT_EXPECT_EQ(test, scaling->src_rect.height, 1080);
++		KUNIT_EXPECT_EQ(test, scaling->dst_rect.width, fs ? 1920 : 3840);
++		KUNIT_EXPECT_EQ(test, scaling->clip_rect.width, fs ? 1920 : 3840);
++		KUNIT_EXPECT_EQ(test, info->plane_size.surface_size.width, fs ? 1920 : 3840);
++		KUNIT_EXPECT_EQ(test, info->plane_size.surface_pitch, 3840);
++
++		if (fs) {
++			KUNIT_EXPECT_EQ(test, address->type, PLN_ADDR_TYPE_GRPH_STEREO);
++			KUNIT_EXPECT_EQ(test, info->stereo_format,
++					PLANE_STEREO_FORMAT_FRAME_ALTERNATE);
++			KUNIT_EXPECT_EQ(test, address->grph_stereo.left_addr.quad_part, base);
++			KUNIT_EXPECT_EQ(test, address->grph_stereo.right_addr.quad_part,
++					base + 1920 * 4);
++			KUNIT_EXPECT_EQ(test, address->grph_stereo.left_meta_addr.quad_part, 0);
++			KUNIT_EXPECT_EQ(test, address->grph_stereo.right_meta_addr.quad_part, 0);
++		} else {
++			KUNIT_EXPECT_EQ(test, address->type, PLN_ADDR_TYPE_GRAPHICS);
++			KUNIT_EXPECT_EQ(test, info->stereo_format, PLANE_STEREO_FORMAT_NONE);
++			KUNIT_EXPECT_EQ(test, address->grph.addr.quad_part, base);
++		}
++	}
++
++	/* no stream: nothing changes */
++	scaling->src_rect.width = 3840;
++	amdgpu_dm_plane_fill_frame_sequential_scaling(NULL, scaling);
++	KUNIT_EXPECT_EQ(test, scaling->src_rect.width, 3840);
++}
++
+ static struct kunit_case amdgpu_dm_plane_test_cases[] = {
+ 	/* amdgpu_dm_plane_is_video_format() */
+ 	KUNIT_CASE(dm_test_plane_is_video_format_known_video),
+@@ -3096,6 +3391,12 @@ static struct kunit_case amdgpu_dm_plane_test_cases[] = {
+ 	KUNIT_CASE(dm_test_atomic_check_helper_failure),
+ 	KUNIT_CASE(dm_test_atomic_check_color_pipeline_conflict),
+ 	KUNIT_CASE(dm_test_atomic_check_scaling_failure),
++	KUNIT_CASE(dm_test_atomic_check_frame_sequential_cursor),
++	/* amdgpu_dm_plane_check_frame_sequential() */
++	KUNIT_CASE(dm_test_plane_check_frame_sequential),
++	KUNIT_CASE(dm_test_plane_check_frame_sequential_other_crtcs),
++	/* amdgpu_dm_plane_fill_frame_sequential_scaling() and _address() */
++	KUNIT_CASE(dm_test_plane_fill_frame_sequential),
+ 	/* amdgpu_dm_plane_panic_flush() */
+ 	KUNIT_CASE(dm_test_panic_flush_no_dc_state),
+ 	/* amdgpu_dm_plane_drm_plane_reset() */
+-- 
+2.53.0
+
