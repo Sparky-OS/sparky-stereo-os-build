@@ -41,3 +41,13 @@ Dependencies:
 - grub-common
 - systemd
 - plymouth (>= 26.134.222-1+stereo3d1), recommended, for the boot splash in 3D
+
+Old kernels: after a new kernel has installed successfully (its image, its boot image and its GRUB entry written), each kernel flavour keeps two kernels, the running one and the newest, or the one before the newest when the newest is running.
+The others go: their packages only (image, binary, modules, headers, the per-release base package, their -dbg and -lc-hr companions, and the kbuild and headers-common packages that nothing else needs), purged after apt's simulation shows exactly that set, then their module folders that no package owns and their DKMS records.
+A general autoremove never runs.
+The kernel hook /etc/kernel/postinst.d/zz-sparky-stereo-kernel-keep only records the install, because apt and dpkg hold their lock while it runs; sparky-stereo-kernel-keep.service waits until they are done, does the work and writes one line per removed kernel to the journal (journalctl -u sparky-stereo-kernel-keep).
+Nothing happens in a live session, a chroot or a container.
+To see the plan: sudo /usr/lib/sparky-stereo-boot/kernel-keep.py --dry-run
+
+Boot images: every update-initramfs -u writes the boot image of every installed kernel, not only the newest's (update_initramfs=all in /etc/initramfs-tools/update-initramfs.conf.sparky-stereo; initramfs-tools' own file is kept as update-initramfs.conf.debian and comes back when the package is removed).
+So a boot splash, firmware or module change reaches the older kernel too, and after every kernel removal every kept kernel's boot image and GRUB's menu are written again.
