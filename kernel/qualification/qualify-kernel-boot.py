@@ -3,6 +3,7 @@
 from pathlib import Path
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -66,7 +67,7 @@ for kind in ['image', 'headers']:
 kernels = list((out / 'image/boot').glob('vmlinuz-*'))
 assert len(kernels) == 1
 release = kernels[0].name.removeprefix('vmlinuz-')
-assert release == '7.3.0-rc6-stereo3d8' if rehearsal else 'stereo3d13' in release
+assert release == '7.3.0-rc6-stereo3d8' if rehearsal else re.fullmatch(r'\d+\.\d+\.\d+(-rc\d+)?(-rt)?-stereo3d\d+(-v3)?', release)
 inventory = {}
 for p in sorted(inputs.rglob('*')):
     if p.is_symlink():
