@@ -1,0 +1,302 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 30 Oct 2026 06:53:14 -0300
+Subject: [PATCH] drm/amd/display: read back the OTG and DIG stereo state
+
+DC programs frame-sequential stereo in three places: the OTG alternates
+the eyes (OTG_STEREO_CONTROL, with the current eye in OTG_STEREO_STATUS;
+optc1_enable_stereo()), the DIG front end takes the OTG's stereo sync
+and drives MSA MISC1 bits 2:1 on DisplayPort (DIG_FE_CNTL
+DIG_STEREOSYNC_SELECT and DIG_STEREOSYNC_GATE_EN;
+enc1_setup_stereo_sync()), and the VSC SDP that names the stereo method
+is sent as generic packet 0 (DP_SEC_CNTL DP_SEC_GSP0_ENABLE;
+enc1_stream_encoder_update_dp_info_packets()).
+None of these registers is read back anywhere, and the DTN log prints
+none of them, so nothing shows what the hardware was told.
+
+- struct dcn_otg_state gains OTG_STEREO_CONTROL, OTG_STEREO_STATUS and
+  OTG_3D_STRUCTURE_CONTROL, read by optc1_read_otg_state() and
+  optc31_read_otg_state(), the read_otg_state hook of every DCN OTG.
+  Their existing users (the DTN log, optc1_get_hw_timing()) ignore them.
+- A new stream encoder hook, read_stereo_state, implemented once as
+  enc1_read_stereo_state() for every DIO stream encoder (DCN 1.0 to 6.0
+  use struct dcn10_stream_encoder): the DIG stereo sync fields,
+  DP_SEC_CNTL with its stream and GSP0 enables, DP_MSA_MISC and, on
+  DCN 1.x and 2.x whose generic packets sit behind the AFMT_GENERIC
+  registers, the header and data of GSP0, read through the window
+  enc1_update_generic_info_packet() writes them through. DCN 3.0 and
+  later keep generic packets in the VPG; GSP0 is not read there
+  (gsp0_read is false). The virtual and HPO encoders have no hook.
+
+amdgpu_dm's stereo debugfs file is the first user. Reading GSP0 selects
+generic packet 0 in AFMT_VBI_PACKET_CONTROL, as every write of a generic
+packet does first, so callers hold the same lock as DC's programming.
+
+Assisted-by: LLM
+---
+ .../dc/dio/dcn10/dcn10_stream_encoder.c       | 37 +++++++++++++++++++
+ .../dc/dio/dcn10/dcn10_stream_encoder.h       |  4 ++
+ .../dc/dio/dcn20/dcn20_stream_encoder.c       |  1 +
+ .../dc/dio/dcn30/dcn30_dio_stream_encoder.c   |  1 +
+ .../dc/dio/dcn314/dcn314_dio_stream_encoder.c |  1 +
+ .../dc/dio/dcn32/dcn32_dio_stream_encoder.c   |  1 +
+ .../dc/dio/dcn35/dcn35_dio_stream_encoder.c   |  1 +
+ .../dc/dio/dcn401/dcn401_dio_stream_encoder.c |  1 +
+ .../dc/dio/dcn42/dcn42_dio_stream_encoder.c   |  1 +
+ .../dc/dio/dcn60/dcn60_dio_stream_encoder.c   |  1 +
+ .../amd/display/dc/inc/hw/stream_encoder.h    | 21 +++++++++++
+ .../amd/display/dc/inc/hw/timing_generator.h  |  3 ++
+ .../amd/display/dc/optc/dcn10/dcn10_optc.c    |  3 ++
+ .../amd/display/dc/optc/dcn31/dcn31_optc.c    |  3 ++
+ 14 files changed, 79 insertions(+)
+
+diff --git a/drivers/gpu/drm/amd/display/dc/dio/dcn10/dcn10_stream_encoder.c b/drivers/gpu/drm/amd/display/dc/dio/dcn10/dcn10_stream_encoder.c
+index d913f065e..408a1e976 100644
+--- a/drivers/gpu/drm/amd/display/dc/dio/dcn10/dcn10_stream_encoder.c
++++ b/drivers/gpu/drm/amd/display/dc/dio/dcn10/dcn10_stream_encoder.c
+@@ -1488,6 +1488,42 @@ void enc1_setup_stereo_sync(
+ 	REG_UPDATE(DIG_FE_CNTL, DIG_STEREOSYNC_GATE_EN, !enable);
+ }
+ 
++/*
++ * GSP0 is read through the same AFMT_GENERIC window that
++ * enc1_update_generic_info_packet() writes it through. DCN 3.0 and later keep
++ * the generic packets in the VPG instead, and have no AFMT_GENERIC registers.
++ */
++void enc1_read_stereo_state(
++	struct stream_encoder *enc,
++	struct enc_stereo_state *s)
++{
++	struct dcn10_stream_encoder *enc1 = DCN10STRENC_FROM_STRENC(enc);
++
++	REG_GET_2(DIG_FE_CNTL,
++			DIG_STEREOSYNC_SELECT, &s->dig_stereosync_select,
++			DIG_STEREOSYNC_GATE_EN, &s->dig_stereosync_gate_en);
++	s->dp_sec_cntl = REG_READ(DP_SEC_CNTL);
++	REG_GET_2(DP_SEC_CNTL,
++			DP_SEC_STREAM_ENABLE, &s->dp_sec_stream_enable,
++			DP_SEC_GSP0_ENABLE, &s->dp_sec_gsp0_enable);
++	s->dp_msa_misc = REG_READ(DP_MSA_MISC);
++
++	s->gsp0_read = REG(AFMT_GENERIC_HDR) != 0;
++	if (!s->gsp0_read)
++		return;
++
++	REG_UPDATE(AFMT_VBI_PACKET_CONTROL, AFMT_GENERIC_INDEX, 0);
++	s->gsp0_header = REG_READ(AFMT_GENERIC_HDR);
++	s->gsp0_data[0] = REG_READ(AFMT_GENERIC_0);
++	s->gsp0_data[1] = REG_READ(AFMT_GENERIC_1);
++	s->gsp0_data[2] = REG_READ(AFMT_GENERIC_2);
++	s->gsp0_data[3] = REG_READ(AFMT_GENERIC_3);
++	s->gsp0_data[4] = REG_READ(AFMT_GENERIC_4);
++	s->gsp0_data[5] = REG_READ(AFMT_GENERIC_5);
++	s->gsp0_data[6] = REG_READ(AFMT_GENERIC_6);
++	s->gsp0_data[7] = REG_READ(AFMT_GENERIC_7);
++}
++
+ void enc1_dig_connect_to_otg(
+ 	struct stream_encoder *enc,
+ 	int tg_inst)
+@@ -1600,6 +1636,7 @@ static const struct stream_encoder_funcs dcn10_str_enc_funcs = {
+ 	.hdmi_audio_setup = enc1_se_hdmi_audio_setup,
+ 	.hdmi_audio_disable = enc1_se_hdmi_audio_disable,
+ 	.setup_stereo_sync  = enc1_setup_stereo_sync,
++	.read_stereo_state = enc1_read_stereo_state,
+ 	.set_avmute = enc1_stream_encoder_set_avmute,
+ 	.dig_connect_to_otg  = enc1_dig_connect_to_otg,
+ 	.hdmi_reset_stream_attribute = enc1_reset_hdmi_stream_attribute,
+diff --git a/drivers/gpu/drm/amd/display/dc/dio/dcn10/dcn10_stream_encoder.h b/drivers/gpu/drm/amd/display/dc/dio/dcn10/dcn10_stream_encoder.h
+index 755367506..bc15bd6a3 100644
+--- a/drivers/gpu/drm/amd/display/dc/dio/dcn10/dcn10_stream_encoder.h
++++ b/drivers/gpu/drm/amd/display/dc/dio/dcn10/dcn10_stream_encoder.h
+@@ -694,6 +694,10 @@ void enc1_setup_stereo_sync(
+ 	struct stream_encoder *enc,
+ 	int tg_inst, bool enable);
+ 
++void enc1_read_stereo_state(
++	struct stream_encoder *enc,
++	struct enc_stereo_state *s);
++
+ void enc1_stream_encoder_set_avmute(
+ 	struct stream_encoder *enc,
+ 	bool enable);
+diff --git a/drivers/gpu/drm/amd/display/dc/dio/dcn20/dcn20_stream_encoder.c b/drivers/gpu/drm/amd/display/dc/dio/dcn20/dcn20_stream_encoder.c
+index bec0b4aae..4dc7c05eb 100644
+--- a/drivers/gpu/drm/amd/display/dc/dio/dcn20/dcn20_stream_encoder.c
++++ b/drivers/gpu/drm/amd/display/dc/dio/dcn20/dcn20_stream_encoder.c
+@@ -625,6 +625,7 @@ static const struct stream_encoder_funcs dcn20_str_enc_funcs = {
+ 	.hdmi_audio_setup = enc1_se_hdmi_audio_setup,
+ 	.hdmi_audio_disable = enc1_se_hdmi_audio_disable,
+ 	.setup_stereo_sync  = enc1_setup_stereo_sync,
++	.read_stereo_state = enc1_read_stereo_state,
+ 	.set_avmute = enc1_stream_encoder_set_avmute,
+ 	.dig_connect_to_otg  = enc1_dig_connect_to_otg,
+ 	.dig_source_otg = enc1_dig_source_otg,
+diff --git a/drivers/gpu/drm/amd/display/dc/dio/dcn30/dcn30_dio_stream_encoder.c b/drivers/gpu/drm/amd/display/dc/dio/dcn30/dcn30_dio_stream_encoder.c
+index c14fb51c2..d23c836c9 100644
+--- a/drivers/gpu/drm/amd/display/dc/dio/dcn30/dcn30_dio_stream_encoder.c
++++ b/drivers/gpu/drm/amd/display/dc/dio/dcn30/dcn30_dio_stream_encoder.c
+@@ -863,6 +863,7 @@ static const struct stream_encoder_funcs dcn30_str_enc_funcs = {
+ 	.hdmi_audio_setup = enc3_se_hdmi_audio_setup,
+ 	.hdmi_audio_disable = enc1_se_hdmi_audio_disable,
+ 	.setup_stereo_sync  = enc1_setup_stereo_sync,
++	.read_stereo_state = enc1_read_stereo_state,
+ 	.set_avmute = enc1_stream_encoder_set_avmute,
+ 	.dig_connect_to_otg = enc1_dig_connect_to_otg,
+ 	.dig_source_otg = enc1_dig_source_otg,
+diff --git a/drivers/gpu/drm/amd/display/dc/dio/dcn314/dcn314_dio_stream_encoder.c b/drivers/gpu/drm/amd/display/dc/dio/dcn314/dcn314_dio_stream_encoder.c
+index d1fd5462d..ba8f322d9 100644
+--- a/drivers/gpu/drm/amd/display/dc/dio/dcn314/dcn314_dio_stream_encoder.c
++++ b/drivers/gpu/drm/amd/display/dc/dio/dcn314/dcn314_dio_stream_encoder.c
+@@ -465,6 +465,7 @@ static const struct stream_encoder_funcs dcn314_str_enc_funcs = {
+ 	.hdmi_audio_setup = enc3_se_hdmi_audio_setup,
+ 	.hdmi_audio_disable = enc1_se_hdmi_audio_disable,
+ 	.setup_stereo_sync  = enc1_setup_stereo_sync,
++	.read_stereo_state = enc1_read_stereo_state,
+ 	.set_avmute = enc1_stream_encoder_set_avmute,
+ 	.dig_connect_to_otg = enc1_dig_connect_to_otg,
+ 	.dig_source_otg = enc1_dig_source_otg,
+diff --git a/drivers/gpu/drm/amd/display/dc/dio/dcn32/dcn32_dio_stream_encoder.c b/drivers/gpu/drm/amd/display/dc/dio/dcn32/dcn32_dio_stream_encoder.c
+index edafa3808..e0b7a8ff2 100644
+--- a/drivers/gpu/drm/amd/display/dc/dio/dcn32/dcn32_dio_stream_encoder.c
++++ b/drivers/gpu/drm/amd/display/dc/dio/dcn32/dcn32_dio_stream_encoder.c
+@@ -454,6 +454,7 @@ static const struct stream_encoder_funcs dcn32_str_enc_funcs = {
+ 	.hdmi_audio_setup = enc3_se_hdmi_audio_setup,
+ 	.hdmi_audio_disable = enc1_se_hdmi_audio_disable,
+ 	.setup_stereo_sync  = enc1_setup_stereo_sync,
++	.read_stereo_state = enc1_read_stereo_state,
+ 	.set_avmute = enc1_stream_encoder_set_avmute,
+ 	.dig_connect_to_otg = enc1_dig_connect_to_otg,
+ 	.dig_source_otg = enc1_dig_source_otg,
+diff --git a/drivers/gpu/drm/amd/display/dc/dio/dcn35/dcn35_dio_stream_encoder.c b/drivers/gpu/drm/amd/display/dc/dio/dcn35/dcn35_dio_stream_encoder.c
+index de24dcd27..0b21e7a9d 100644
+--- a/drivers/gpu/drm/amd/display/dc/dio/dcn35/dcn35_dio_stream_encoder.c
++++ b/drivers/gpu/drm/amd/display/dc/dio/dcn35/dcn35_dio_stream_encoder.c
+@@ -475,6 +475,7 @@ static const struct stream_encoder_funcs dcn35_str_enc_funcs = {
+ 	.hdmi_audio_setup = enc3_se_hdmi_audio_setup,
+ 	.hdmi_audio_disable = enc1_se_hdmi_audio_disable,
+ 	.setup_stereo_sync  = enc1_setup_stereo_sync,
++	.read_stereo_state = enc1_read_stereo_state,
+ 	.set_avmute = enc1_stream_encoder_set_avmute,
+ 	.dig_connect_to_otg = enc1_dig_connect_to_otg,
+ 	.dig_source_otg = enc1_dig_source_otg,
+diff --git a/drivers/gpu/drm/amd/display/dc/dio/dcn401/dcn401_dio_stream_encoder.c b/drivers/gpu/drm/amd/display/dc/dio/dcn401/dcn401_dio_stream_encoder.c
+index 79d0c2896..3c7f03aa5 100644
+--- a/drivers/gpu/drm/amd/display/dc/dio/dcn401/dcn401_dio_stream_encoder.c
++++ b/drivers/gpu/drm/amd/display/dc/dio/dcn401/dcn401_dio_stream_encoder.c
+@@ -753,6 +753,7 @@ static const struct stream_encoder_funcs dcn401_str_enc_funcs = {
+ 	.hdmi_audio_setup = enc3_se_hdmi_audio_setup,
+ 	.hdmi_audio_disable = enc1_se_hdmi_audio_disable,
+ 	.setup_stereo_sync  = enc1_setup_stereo_sync,
++	.read_stereo_state = enc1_read_stereo_state,
+ 	.set_avmute = enc1_stream_encoder_set_avmute,
+ 	.dig_connect_to_otg = enc1_dig_connect_to_otg,
+ 	.dig_source_otg = enc1_dig_source_otg,
+diff --git a/drivers/gpu/drm/amd/display/dc/dio/dcn42/dcn42_dio_stream_encoder.c b/drivers/gpu/drm/amd/display/dc/dio/dcn42/dcn42_dio_stream_encoder.c
+index 35845e6dd..3bcafbedb 100644
+--- a/drivers/gpu/drm/amd/display/dc/dio/dcn42/dcn42_dio_stream_encoder.c
++++ b/drivers/gpu/drm/amd/display/dc/dio/dcn42/dcn42_dio_stream_encoder.c
+@@ -541,6 +541,7 @@ static const struct stream_encoder_funcs dcn42_str_enc_funcs = {
+ 	.hdmi_audio_setup = enc42_se_hdmi_audio_setup,
+ 	.hdmi_audio_disable = enc42_se_hdmi_audio_disable,
+ 	.setup_stereo_sync  = enc1_setup_stereo_sync,
++	.read_stereo_state = enc1_read_stereo_state,
+ 	.set_avmute = enc1_stream_encoder_set_avmute,
+ 	.dig_connect_to_otg = enc1_dig_connect_to_otg,
+ 	.dig_source_otg = enc1_dig_source_otg,
+diff --git a/drivers/gpu/drm/amd/display/dc/dio/dcn60/dcn60_dio_stream_encoder.c b/drivers/gpu/drm/amd/display/dc/dio/dcn60/dcn60_dio_stream_encoder.c
+index b76cc8918..bbbe01987 100644
+--- a/drivers/gpu/drm/amd/display/dc/dio/dcn60/dcn60_dio_stream_encoder.c
++++ b/drivers/gpu/drm/amd/display/dc/dio/dcn60/dcn60_dio_stream_encoder.c
+@@ -495,6 +495,7 @@ static const struct stream_encoder_funcs dcn60_str_enc_funcs = {
+ 	.hdmi_audio_setup = enc60_se_hdmi_audio_setup,
+ 	.hdmi_audio_disable = enc60_se_hdmi_audio_disable,
+ 	.setup_stereo_sync  = enc1_setup_stereo_sync,
++	.read_stereo_state = enc1_read_stereo_state,
+ 	.set_avmute = enc1_stream_encoder_set_avmute,
+ 	.dig_connect_to_otg = enc1_dig_connect_to_otg,
+ 	.dig_source_otg = enc1_dig_source_otg,
+diff --git a/drivers/gpu/drm/amd/display/dc/inc/hw/stream_encoder.h b/drivers/gpu/drm/amd/display/dc/inc/hw/stream_encoder.h
+index 2b95cb11e..5ef058686 100644
+--- a/drivers/gpu/drm/amd/display/dc/inc/hw/stream_encoder.h
++++ b/drivers/gpu/drm/amd/display/dc/inc/hw/stream_encoder.h
+@@ -141,6 +141,23 @@ struct enc_state {
+ 	uint32_t sec_stream_enable;
+ };
+ 
++/*
++ * What the DIG front end sends for stereo: its stereo sync (which drives MSA
++ * MISC1 bits 2:1 on DisplayPort), the generic packet enables, the MSA MISC
++ * register and, where the generic packets live in the AFMT, GSP0 (the VSC SDP).
++ */
++struct enc_stereo_state {
++	uint32_t dig_stereosync_select;
++	uint32_t dig_stereosync_gate_en;
++	uint32_t dp_sec_cntl;
++	uint32_t dp_sec_stream_enable;
++	uint32_t dp_sec_gsp0_enable;
++	uint32_t dp_msa_misc;
++	bool gsp0_read;
++	uint32_t gsp0_header;
++	uint32_t gsp0_data[8];
++};
++
+ struct stream_encoder_funcs {
+ 	void (*dp_set_stream_attribute)(
+ 		struct stream_encoder *enc,
+@@ -228,6 +245,10 @@ struct stream_encoder_funcs {
+ 			int tg_inst,
+ 			bool enable);
+ 
++	void (*read_stereo_state)(
++			struct stream_encoder *enc,
++			struct enc_stereo_state *s);
++
+ 	void (*set_avmute)(
+ 		struct stream_encoder *enc, bool enable);
+ 
+diff --git a/drivers/gpu/drm/amd/display/dc/inc/hw/timing_generator.h b/drivers/gpu/drm/amd/display/dc/inc/hw/timing_generator.h
+index 2eaba6589..ef37fbe83 100644
+--- a/drivers/gpu/drm/amd/display/dc/inc/hw/timing_generator.h
++++ b/drivers/gpu/drm/amd/display/dc/inc/hw/timing_generator.h
+@@ -181,6 +181,9 @@ struct dcn_otg_state {
+ 	uint32_t vertical_interrupt2_dest;
+ 	uint32_t otg_master_update_lock;
+ 	uint32_t otg_double_buffer_control;
++	uint32_t otg_stereo_control;
++	uint32_t otg_stereo_status;
++	uint32_t otg_3d_structure_control;
+ };
+ 
+ struct dcn_optc_reg_state {
+diff --git a/drivers/gpu/drm/amd/display/dc/optc/dcn10/dcn10_optc.c b/drivers/gpu/drm/amd/display/dc/optc/dcn10/dcn10_optc.c
+index 844705a0e..efab1992c 100644
+--- a/drivers/gpu/drm/amd/display/dc/optc/dcn10/dcn10_optc.c
++++ b/drivers/gpu/drm/amd/display/dc/optc/dcn10/dcn10_optc.c
+@@ -1392,6 +1392,9 @@ void optc1_read_otg_state(struct timing_generator *optc,
+ 
+ 	s->otg_master_update_lock = REG_READ(OTG_MASTER_UPDATE_LOCK);
+ 	s->otg_double_buffer_control = REG_READ(OTG_DOUBLE_BUFFER_CONTROL);
++	s->otg_stereo_control = REG_READ(OTG_STEREO_CONTROL);
++	s->otg_stereo_status = REG_READ(OTG_STEREO_STATUS);
++	s->otg_3d_structure_control = REG_READ(OTG_3D_STRUCTURE_CONTROL);
+ }
+ 
+ bool optc1_get_otg_active_size(struct timing_generator *optc,
+diff --git a/drivers/gpu/drm/amd/display/dc/optc/dcn31/dcn31_optc.c b/drivers/gpu/drm/amd/display/dc/optc/dcn31/dcn31_optc.c
+index 3ace83e1b..1d2e447fd 100644
+--- a/drivers/gpu/drm/amd/display/dc/optc/dcn31/dcn31_optc.c
++++ b/drivers/gpu/drm/amd/display/dc/optc/dcn31/dcn31_optc.c
+@@ -309,6 +309,9 @@ void optc31_read_otg_state(struct timing_generator *optc,
+ 
+ 	s->otg_master_update_lock = REG_READ(OTG_MASTER_UPDATE_LOCK);
+ 	s->otg_double_buffer_control = REG_READ(OTG_DOUBLE_BUFFER_CONTROL);
++	s->otg_stereo_control = REG_READ(OTG_STEREO_CONTROL);
++	s->otg_stereo_status = REG_READ(OTG_STEREO_STATUS);
++	s->otg_3d_structure_control = REG_READ(OTG_3D_STRUCTURE_CONTROL);
+ }
+ 
+ void optc31_read_reg_state(struct timing_generator *optc, struct dcn_optc_reg_state *optc_reg_state)
+-- 
+2.53.0
+
