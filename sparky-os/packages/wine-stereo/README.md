@@ -208,7 +208,8 @@ This adds an optional callback to the internal Vulkan driver interface and incre
 
 The source has targeted-module evidence for first repaint, ancestor recreation, two overlapping children, clipping, move, detach and destruction.
 DPI-aware 192-DPI input and both captured eyes are measured separately from DPI-unaware behavior.
-Broad concurrent lifetime, error-path injection, native i386 and the new package cohort remain qualification gates.
+The surface-only concurrent lifetime and acknowledgement error controls are described below.
+Swapchain and Present concurrency, native i386 and the new package cohort remain qualification gates.
 The private module tests do not qualify Wine on NVIDIA, Wayland, arbitrary games or a production transition.
 
 The two-child mono capture control must service its UI event loop while the observer reads the first frame.
@@ -230,3 +231,37 @@ Leaving the variable unset retains the blocking handshake as a timing negative.
 Its input directories contain `result.json`, `atoms.json`, `client.stdout`, `wire.jsonl`, `phaseN-screen.png` and the native window PNGs from the observer.
 The checker requires zero stereo declarations, five correct input assertions and unchanged Present counts, and rejects the retained blocking-capture negatives.
 Delivered XRecord GenericEvents may contain only their first 32 bytes; the checker uses window and serial and does not infer a missing MSC field.
+
+### Acknowledgement transaction and surface lifetime controls
+
+The Wine candidate checks the acknowledgement-property write before reparenting or declaring the native surface.
+If the declaration API rejects the surface, Wine removes the temporary acknowledgement and restores the original native parent.
+The producer observes the acknowledgement after synchronous surface creation and restores the caller's original property when its request scope ends.
+Content declaration and membership maintenance remain separate operations.
+
+`tests/fail-stereo-ack.c` interposes the actual Unix `NtUserSetProp` import in an isolated amd64 Wine client.
+Compile it with `cc -shared -fPIC -O2 -Wall tests/fail-stereo-ack.c -o fail-stereo-ack.so -ldl`.
+Wine's Unix library imports use the native Unix calling convention, including on amd64.
+Set `WINE254_FAIL_ACK=fail` and preload that library for the client only to reject the version-1 acknowledgement write.
+`observe` forwards the write and records its actual return value.
+`fail-declare` forwards the acknowledgement write but intercepts the driver's resolved `stereo_declare_x11_child` function and returns `-ENOTSUP` before any native property writes.
+Every injection must have its call receipt in stderr; a preload variable alone is not evidence that the call ran.
+
+`tests/check-stereo-ack.py CAPTURE LABEL` correlates that receipt with the real DXVK acknowledgement or fallback log and the XRecord content and membership writes.
+The retained old-module control rejects the write but still declares content, so the checker rejects it.
+Both corrected failure routes produce no native declarations or membership writes, and their six captures match the unchanged Wine runtime exactly.
+The forwarding control retains the exact first-paint and subsequent visibility and reparent checks.
+These are private targeted-module results, not installed-package acceptance.
+
+`tests/vulkan-surface-lifetime.cpp` includes the actual DXVK `wsi/wsi_wine_stereo.h` helper and links the matching DXVK utility archive.
+Compile with the retained DXVK build's Vulkan and Win32 definitions and include directories; do not substitute a local implementation of the request helper.
+It requires a private Wine prefix, the matching version-1 DXVK helper, Vulkan loader and capture rig.
+Its observer protocol prints `phase=N logical=320x200 frame=ready` and waits for a newline while the window thread pumps messages.
+The worker thread alone creates and destroys Vulkan surfaces; the window thread reparents and moves a valid Win32 child concurrently.
+It creates no swapchain and makes no Present calls.
+
+The control checks nested property restoration, a destroyed HWND rejected by the request helper without an invalid Vulkan call, reparenting, a detached native surface surviving HWND destruction until its real Vulkan destruction, and recreation.
+Seventeen surfaces each declare content once, owner lists contain no duplicate entries and end empty, and actual XDestroyWindow requests remove all seventeen native windows.
+Membership write and delete counts vary with the overlapping window operations and are not a fixed contract.
+`tests/check-vulkan-surface-lifetime.py CAPTURE` checks those requests, snapshots and helper receipts, and requires measured overlap between surface-destruction intervals and window-operation intervals.
+This is a legal bounded concurrency control, not sanitizer coverage or proof of arbitrary races, swapchain concurrency or rendered pixels.
