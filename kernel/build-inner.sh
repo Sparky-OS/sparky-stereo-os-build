@@ -15,7 +15,7 @@ echo "== tools: $(gcc --version | head -1) | $(rustc --version) | $(bindgen --ve
 echo "== source: $TAG"
 if [ -n "${HAVE_KERNEL_GIT:-}" ]; then G=/kernel-git
 else
-    git clone --quiet --depth 1 --branch "$TAG" https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git /work/linux-git
+    git clone --quiet --depth 1 --branch "$TAG" https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git /work/linux-git
     G=/work/linux-git
 fi
 got=$(git -C "$G" rev-parse "$TAG^{commit}")
