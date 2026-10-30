@@ -13,7 +13,14 @@
 #   case C, the workstation's way: Debian's armhf toolchain installed first (the edition's pins already block Debian's builds of
 #     what the edition ships, qemu-user among them, so qemu-user comes later from the edition), then the edition's repository
 #     and the candidates:
-#     an ordinary upgrade replaces linux-libc-dev and linux-libc-dev-armhf-cross, removes nothing, and the program compiles.
+#     an ordinary upgrade replaces linux-libc-dev and linux-libc-dev-armhf-cross, removes nothing, and the program compiles;
+#   control nocross, for a kernel build that makes the cross packages itself (CANDIDATE-DIR holds its linux-libc-dev too, build 14
+#     on): the published repository with the armhf toolchain installed, plus that linux-libc-dev alone, without its 30 cross
+#     packages: the cross packages already installed (Debian's, or the interim linux-stereo-libc-dev-cross ones) depend on their
+#     own linux-libc-dev version, so the upgrade keeps linux-libc-dev back and installing it removes the toolchain.
+# The linux-libc-dev version the cases expect is the candidate's when CANDIDATE-DIR has one, otherwise the newest in POOL; the
+# documentation directory a cross package must leave is the form the candidate ships (its own directory for the interim packages,
+# the link to linux-libc-dev for the kernel's own, as Debian's).
 #
 #   kernel/tests/libc-dev-cross-proof.sh CANDIDATE-DIR POOL IMAGE
 # CANDIDATE-DIR holds the linux-libc-dev-*-cross .debs; POOL is a copy of the published pool (its sparky-stereo-apt,
@@ -38,6 +45,12 @@ run() {
 INNER='
 export DEBIAN_FRONTEND=noninteractive LC_ALL=C.UTF-8
 fail() { echo "FAIL: $*"; exit 1; }
+cand_libc=$(ls /proof/candidate/linux-libc-dev_*_all.deb 2>/dev/null | head -n 1)
+if [ -n "$cand_libc" ]; then WANT=$(dpkg-deb -f "$cand_libc" Version)
+else WANT=$(dpkg-deb -f "$(ls /proof/pool/main/*/*/linux-libc-dev_*_all.deb | sort -V | tail -n 1)" Version); fi
+if dpkg-deb -c /proof/candidate/linux-libc-dev-armhf-cross_*_all.deb 2>/dev/null | grep -q "^l.* \./usr/share/doc/linux-libc-dev-armhf-cross -> linux-libc-dev$"; then
+	DOC=link; else DOC=dir; fi
+echo "expected linux-libc-dev $WANT; candidate documentation form: $DOC"
 edition() {
 	# the published sparky-stereo-apt payload (sources and pins) and keyrings, as an edition system has them
 	for p in sparky-stereo-keyring deb-multimedia-keyring sparky-stereo-apt; do
@@ -124,7 +137,7 @@ fresh)
 	apt-get -y install --no-install-recommends linux-libc-dev $TOOLS $CROSS > /proof/b1.log 2>&1 || { tail -20 /proof/b1.log; fail "install"; }
 	summary /proof/b1.log; clean_transaction /proof/b1.log
 	dpkg-query -W -f "\${Package} \${Version}\n" linux-libc-dev linux-libc-dev-armhf-cross linux-libc-dev-i386-cross linux-libc-dev-x32-cross libc6-dev-armhf-cross crossbuild-essential-armhf gcc-14-arm-linux-gnueabihf gcc-15-arm-linux-gnueabihf gcc-16-arm-linux-gnueabihf gcc-x86-64-linux-gnux32 gcc-i686-linux-gnu
-	test "$(dpkg-query -W -f "\${Version}" linux-libc-dev)" = 7.3.0-13+lc1 || fail "not the edition linux-libc-dev"
+	test "$(dpkg-query -W -f "\${Version}" linux-libc-dev)" = "$WANT" || fail "not the edition linux-libc-dev"
 	test "$(dpkg -l "linux-libc-dev*-cross" | grep -c "^ii")" = 30 || fail "not all 30 cross packages"
 	dpkg --audit; echo "dpkg --audit: empty above means clean"
 	echo "-- B2. every other crossbuild-essential set resolves beside them (simulated)"
@@ -165,10 +178,15 @@ upgrade)
 	summary /proof/c1.log; clean_transaction /proof/c1.log
 	grep -E "^(Unpacking|Setting up) linux-libc-dev" /proof/c1.log
 	dpkg-query -W -f "after: \${Package} \${Version}\n" linux-libc-dev linux-libc-dev-armhf-cross libc6-dev-armhf-cross crossbuild-essential-armhf
-	test "$(dpkg-query -W -f "\${Version}" linux-libc-dev)" = 7.3.0-13+lc1 || fail "linux-libc-dev not upgraded"
+	test "$(dpkg-query -W -f "\${Version}" linux-libc-dev)" = "$WANT" || fail "linux-libc-dev not upgraded"
 	test "$(dpkg-query -W -f "\${Version}" linux-libc-dev-armhf-cross)" = "$(dpkg-deb -f /srv/candidate/linux-libc-dev-armhf-cross_*_all.deb Version)" || fail "cross not upgraded"
-	ls -ld /usr/share/doc/linux-libc-dev-armhf-cross; test -d /usr/share/doc/linux-libc-dev-armhf-cross -a ! -L /usr/share/doc/linux-libc-dev-armhf-cross || fail "doc is not a directory"
-	test -f /usr/share/doc/linux-libc-dev-armhf-cross/copyright || fail "no copyright of its own"
+	ls -ld /usr/share/doc/linux-libc-dev-armhf-cross
+	if [ "$DOC" = link ]; then
+		test "$(readlink /usr/share/doc/linux-libc-dev-armhf-cross)" = linux-libc-dev || fail "doc is not the link to linux-libc-dev"
+	else
+		test -d /usr/share/doc/linux-libc-dev-armhf-cross -a ! -L /usr/share/doc/linux-libc-dev-armhf-cross || fail "doc is not a directory"
+		test -f /usr/share/doc/linux-libc-dev-armhf-cross/copyright || fail "no copyright of its own"
+	fi
 	test -f /usr/share/doc/linux-libc-dev/copyright -a -f /usr/share/doc/linux-libc-dev/changelog.Debian.gz || fail "linux-libc-dev documentation lost"
 	dpkg --audit; echo "dpkg --audit: empty above means clean"
 	apt-get -y -qq install --no-install-recommends qemu-user > /proof/c1q.log 2>&1 || { tail /proof/c1q.log; fail "qemu-user"; }
@@ -178,6 +196,25 @@ upgrade)
 	apt-get -y -qq remove linux-libc-dev-armhf-cross libc6-dev-armhf-cross crossbuild-essential-armhf > /proof/c2.log 2>&1
 	dpkg-query -W -f "\${Package} \${Version} \${db:Status-Abbrev}\n" linux-libc-dev; test ! -e /usr/share/doc/linux-libc-dev-armhf-cross || fail "doc left behind"
 	echo "PASS: upgrade";;
+nocross)
+	echo "== control nocross: the published repository and the armhf toolchain, plus the candidate linux-libc-dev without its cross packages"
+	test -n "$cand_libc" || fail "no linux-libc-dev among the candidates"
+	edition; apt-get -qq update
+	apt-get -y -qq install --no-install-recommends crossbuild-essential-armhf libc6-dev-armhf-cross linux-libc-dev > /proof/n0.log 2>&1 || { tail /proof/n0.log; fail "toolchain from the published repository"; }
+	dpkg-query -W -f "before: \${Package} \${Version}\n" linux-libc-dev linux-libc-dev-armhf-cross libc6-dev-armhf-cross
+	mkdir -p /tmp/nocross && cp "$cand_libc" /tmp/nocross/ && candidates /tmp/nocross nocross; apt-get -qq update
+	apt-cache policy linux-libc-dev | grep -E "^[a-z]|Candidate"
+	echo "-- N1. apt-get -s full-upgrade"
+	apt-get -s full-upgrade > /proof/n1.log 2>&1 || true
+	grep -E "^(Inst|Remv) (linux-libc-dev|libc6-dev-armhf|crossbuild|gcc-|g\+\+-)" /proof/n1.log || echo "(no line for linux-libc-dev: it is kept back)"
+	grep -E "^[0-9]+ upgraded|kept back" /proof/n1.log
+	if grep -Eq "^Inst linux-libc-dev .*\($WANT " /proof/n1.log && ! grep -q "^Remv" /proof/n1.log; then
+		fail "the upgrade takes the candidate linux-libc-dev and keeps the toolchain without its cross packages"; fi
+	echo "-- N2. apt-get -s install linux-libc-dev=$WANT"
+	apt-get -s install "linux-libc-dev=$WANT" > /proof/n2.log 2>&1 || true
+	grep -E "^Remv|^Inst linux-libc-dev|^[0-9]+ upgraded|^E:" /proof/n2.log
+	grep -Eq "^Remv (linux-libc-dev-armhf-cross|libc6-dev-armhf-cross)" /proof/n2.log || grep -q "^E:" /proof/n2.log || fail "installed it without removing the toolchain"
+	echo "CONTROL REPRODUCED: without its cross packages the candidate linux-libc-dev and the armhf cross toolchain exclude each other";;
 transition)
 	echo "== D. the candidates, then a later kernel build that makes the cross packages itself"
 	edition; candidates; apt-get -qq update
@@ -190,6 +227,10 @@ transition)
 	summary /proof/d1.log; clean_transaction /proof/d1.log
 	dpkg-query -W -f "after: \${Package} \${Version} \${Source}\n" linux-libc-dev linux-libc-dev-armhf-cross
 	test "$(dpkg-query -W -f "\${Version}" linux-libc-dev-armhf-cross)" = "$(dpkg-deb -f /srv/next/linux-libc-dev-armhf-cross_*_all.deb Version)" || fail "cross not upgraded"
+	if ls /srv/next/linux-libc-dev_*_all.deb >/dev/null 2>&1; then
+		test "$(dpkg-query -W -f "\${Version}" linux-libc-dev)" = "$(dpkg-deb -f /srv/next/linux-libc-dev_*_all.deb Version)" || fail "linux-libc-dev not upgraded with them"
+		test "$(dpkg -l "linux-libc-dev*-cross" | grep -c "^ii")" = "$(ls /srv/next/linux-libc-dev-*-cross_*_all.deb | wc -l)" || fail "not every cross package at the later build"
+	fi
 	ls -ld /usr/share/doc/linux-libc-dev-armhf-cross
 	test "$(readlink /usr/share/doc/linux-libc-dev-armhf-cross)" = linux-libc-dev || fail "doc is not the link to linux-libc-dev"
 	test -f /usr/share/doc/linux-libc-dev/copyright || fail "linux-libc-dev documentation lost"
@@ -200,8 +241,9 @@ transition)
 esac
 '
 case=${CASE:-all}
-for c in control fresh upgrade transition; do
+for c in control nocross fresh upgrade transition; do
 	[ "$c" != transition ] || [ -n "${NEXT:-}" ] || continue
+	[ "$c" != nocross ] || ls "$CAND"/linux-libc-dev_*_all.deb >/dev/null 2>&1 || continue
 	[ "$case" = all ] || [ "$case" = "$c" ] || continue
 	run "$c"
 done
