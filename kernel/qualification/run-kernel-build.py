@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Build one prepared Lean Code kernel source package unsigned, in a disposable container.
 
-    run-kernel-build.py FLAVOUR --counter N [--memory 16g]
+    run-kernel-build.py FLAVOUR --counter N [--memory 16g] [--floor-gb G]
 
 prepare-kernel-source.py has already written SPARKY_MIGRATION_WORK/kernel-sources/FLAVOUR. The packages stay unsigned
 (no SPARKY_SIGNING_KEY_DIR is mounted): the release coordinator signs the image afterwards (kernel/qualification/sign-kernel-image.py).
 Module signing uses Kbuild's own key, which exists only during the build. The tree of a finished build is pruned by
-the caller once its packages are retained.
+the caller once its packages are retained. The build stops when SPARKY_MIGRATION_WORK has less than --floor-gb free (default 12,
+the root file system's floor; a scratch disk takes its own).
 """
 from pathlib import Path
 import argparse
@@ -26,6 +27,7 @@ parser.add_argument('flavour', choices=['base', 'v3', 'rt'])
 parser.add_argument('--counter', required=True)
 parser.add_argument('--packaging-revision')
 parser.add_argument('--memory', default='16g')
+parser.add_argument('--floor-gb', type=float, default=12)
 args = parser.parse_args()
 base = cfg.path('SPARKY_MIGRATION_WORK')
 kit = cfg.TREE
@@ -93,7 +95,7 @@ with (work / 'build.log').open('w') as log:
     (work / 'status.json').write_text(json.dumps(status, indent=2) + '\n')
     start, stopped = time.time(), False
     while process.poll() is None:
-        if shutil.disk_usage(base).free < 12 * 1024**3:
+        if shutil.disk_usage(base).free < args.floor_gb * 1024**3:
             subprocess.run(['docker', 'stop', '-t', '20', container], check=False)
             stopped = True
             break

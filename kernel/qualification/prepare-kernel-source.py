@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Export an accepted, patched feature set into a retained Lean Code kernel source package.
 
-    prepare-kernel-source.py FLAVOUR [--counter N] [--source-dir DIR] [--manifest FILE] [--packaging-revision R]
+    prepare-kernel-source.py FLAVOUR [--counter N] [--source-dir DIR] [--manifest FILE] [--packaging-revision R] [--min-free-gb G]
 
 Without --source-dir the tree named by the manifest is exported from the kernel-soul repository (build 9).
 With it, DIR is the already patched export (tag plus the manifest's patches, no .git) and is copied as it is.
+--min-free-gb is the space SPARKY_MIGRATION_WORK must have free (default 26, for work on the root file system; a scratch
+disk with a lower floor takes the floor plus the size of the source, about 4).
 """
 import argparse
 from pathlib import Path
@@ -25,6 +27,7 @@ parser.add_argument('--counter', default='9')
 parser.add_argument('--source-dir', type=Path)
 parser.add_argument('--manifest', type=Path)
 parser.add_argument('--packaging-revision')
+parser.add_argument('--min-free-gb', type=float, default=26)
 args = parser.parse_args()
 base = cfg.path('SPARKY_MIGRATION_WORK')
 flavour = args.flavour
@@ -36,8 +39,8 @@ upstream_version = upstream.versions(manifest['tag'])[1]
 version = upstream_version + '-' + args.counter + ('.' + args.packaging_revision if args.packaging_revision else '') + '+lc1'
 repo = (cfg.path('SPARKY_INPUTS_DIR') / 'kernel-soul/work/kt')
 series = cfg.TREE / 'kernel/series'
-if shutil.disk_usage(base).free < 26 * 1024**3:
-    raise SystemExit('Kernel source preparation waits for 26 GiB root free')
+if shutil.disk_usage(base).free < args.min_free_gb * 1024**3:
+    raise SystemExit(f'Kernel source preparation waits for {args.min_free_gb:g} GiB free on {base}')
 for row in manifest['patches']:
     assert hashlib.sha256((series / row['path']).read_bytes()).hexdigest() == row['sha256']
 work = base / 'kernel-sources' / flavour
