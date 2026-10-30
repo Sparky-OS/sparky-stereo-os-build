@@ -1,12 +1,12 @@
 #!/bin/bash
-# Sparky Stereo OS: builds kscreenlocker 6.7.4-1+stereo3d2+lc1 from the +stereo3d1 source package.
+# Sparky Stereo OS: builds kscreenlocker 6.7.4-1+stereo3d3+lc1 from the +stereo3d2 source package.
 # Created by Daniel Ramos (Capitain Jack) 2026/10/30
 # Copyright 2026 under the GNU GPL3 License
-# Source package once (the s2 patches after the series, changelog entry, the libstereo-declare build dependency), then the Lean Code source, then the
+# Source package once (the s3 patches and the wallpaper-cost translations after the series, changelog entry), then the Lean Code source, then the
 # build with the link and start gate against the earlier +lc1 builds. Candidates stay in WORK.
-# Usage: build.sh WORK PREVIOUS_DIR SOURCE_DIR   (PREVIOUS_DIR: a folder holding the +stereo3d1+lc1 .deb files;
-#   SOURCE_DIR: the folder holding kscreenlocker_6.7.4-1+stereo3d1.dsc, its debian.tar.xz and the orig tarball with its .asc,
-#   the plain source that sparky-os/repo/plain-from-lc.py --no-build-depends makes from the published +lc1 source)
+# Usage: build.sh WORK PREVIOUS_DIR SOURCE_DIR   (PREVIOUS_DIR: a folder holding the +stereo3d2+lc1 .deb files;
+#   SOURCE_DIR: the folder holding kscreenlocker_6.7.4-1+stereo3d2.dsc, its debian.tar.xz and the orig tarball with its .asc,
+#   the plain source the +stereo3d2 build left beside its +lc1 one)
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)

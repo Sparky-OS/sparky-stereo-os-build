@@ -1,0 +1,13 @@
+kscreenlocker (6.7.4-1+stereo3d3) unstable; urgency=medium
+
+  * kcm: state what the sunk effect costs the lock screen's wallpaper
+    (s3-0001, invent danielcamposramos/kscreenlocker wallpaper-cost-292
+    dd0c768). The lock screen's Appearance page reads KWin's live
+    WallpaperCuts (org.kde.KWin.StereoDepth, kwin +stereo3d38) and says,
+    for each screen in a 3D mode, "10 pixels of the wallpaper's width
+    will be lost to the sunk effect, 5 at each side", naming the screens
+    when there are several, and that videos with pop effects are not
+    expected to be comfortable with widgets or other things over them.
+    Nothing is said on 2D screens, at a Background depth of 0 or with a
+    KWin that does not publish the number. Translated into the eight
+    languages (kscreenlocker-wallpaper-cost.po.patch).
