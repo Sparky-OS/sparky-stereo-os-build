@@ -21,3 +21,22 @@ The probe preserves the X error from explicitly destroying a GLX drawable after 
 It also retains raw front-eye planes and mapped module paths.
 Exit zero means the probe completed; the printed property assertions and independent request/pixel checkers determine acceptance.
 Owner-lifetime success does not establish stereo pixel, clipping, overlap, input or DPI correctness.
+
+
+Set `LIFETIME_CAPTURE=1` to pause at each of the nine lifecycle stages. The
+fixture prints `CAPTURE <stage>` and waits for one newline on stdin; it does
+not render or swap while waiting. Capture the full side-by-side virtual output
+and record actual X geometry while paused. USPosition hints keep the two owner
+windows apart. The multisample control is a separate four-sample variant of the fixture.
+
+`check-window-lifetime-capture.py CASE OUTPUT --require-pass` checks all 144,000
+raw GL front pixels, all 336,000 captured child-eye pixels, ordinary owner
+background pixels, nine lifetime observations, declaration counts and the
+actual declaration-before-Present order. Its capture contract is an 800x600
+virtual output, side-by-side screen captures, the fixture's requested window
+positions, zero stereo depth and no decorations. CASE contains `client.stdout`,
+`frameN-eyeE.rgb`, `wire.jsonl` (XRECORD requests with extension metadata and
+monotonic timestamps), and `captures.json` (stage, observed geometry, capture
+metadata) plus `<stage>.png`. A completed process alone is not a pass. Preserve
+old failing rows; do not replace the first frame with a later one. This bounded
+fixture does not certify overlap, clipping, input, DPI or other GPU routes.

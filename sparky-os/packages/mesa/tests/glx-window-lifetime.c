@@ -2,6 +2,7 @@
 /* Exercise the installed Mesa declaration writer; never write stereo properties. */
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
+#include <X11/Xutil.h>
 #include <GL/gl.h>
 #include <GL/glx.h>
 #include <GL/glxext.h>
@@ -57,6 +58,10 @@ static void snapshot(const char *stage)
     printf("STAGE %s\n",stage);
     for(int i=0;i<2;i++) {property(owners[i],"_KDE_NET_WM_STEREO_CONTENT");property(owners[i],"_KDE_NET_WM_STEREO_CONTENT_CHILDREN");}
     fflush(stdout);
+    if (getenv("LIFETIME_CAPTURE")) {
+        printf("CAPTURE %s\n",stage);fflush(stdout);
+        if(getchar()!='\n')exit(10);
+    }
 }
 static void draw(GLXWindow glx,int index)
 {
@@ -85,6 +90,7 @@ int main(void)
     XSetWindowAttributes a={0};a.colormap=XCreateColormap(d,DefaultRootWindow(d),v->visual,AllocNone);
     for(int i=0;i<2;i++) {
         owners[i]=XCreateSimpleWindow(d,DefaultRootWindow(d),20+i*350,20,320,260,0,0,0x204060);
+        XSizeHints hints={0};hints.flags=USPosition;hints.x=20+i*350;hints.y=20;XSetWMNormalHints(d,owners[i],&hints);
         XStoreName(d,owners[i],i?"Native owner B":"Native owner A");XMapWindow(d,owners[i]);
         children[i]=XCreateWindow(d,owners[0],10+i*140,50,120,100,0,v->depth,InputOutput,v->visual,CWColormap,&a);XMapWindow(d,children[i]);
     }
