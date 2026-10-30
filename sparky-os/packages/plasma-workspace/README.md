@@ -10,7 +10,7 @@ The patch is from the owning v6.7.4 clone, branch
 `partner/kde-desktop-defaults`, commit `398f332ed4`. KDE's package, components
 and greeter own the interface; no separate helper is added to the desktop.
 
-Run `build.sh` inside a freshly updated Debian testing container, as the
+Run `build-stereo3d2-from-debian.sh` inside a freshly updated Debian testing container, as the
 invoking user. Set `OUT` to the pending package directory and `BUILD_ROOT` to
 scratch. Debian's control, rules and existing patches are retained. It builds
 source archives and all binaries at `4:6.7.4-2+stereo3d2`. Its nocheck profile
@@ -34,3 +34,14 @@ The third patch is Tobias Fella's exact QFileInfo include from upstream
 08383f4b1df0451480ec68ccf78713bc56507ad4 (bug 526210). The Qt 6.13 control
 fails in unchanged iconsmodel.cpp without this include. It is shared by
 the control and recovery branches.
+
+## 4:6.7.4-2+stereo3d3 (ORDER 291)
+
+`build.sh WORK PREVIOUS_DIR SOURCE_DIR` builds 4:6.7.4-2+stereo3d3+lc1 through Lean Code, as the kwin recipe does:
+the plain +stereo3d2 source (`sparky-os/repo/plain-from-lc.py --no-build-depends --edition-entry` on the published
++stereo3d2+lc1 source, whose single changelog entry also lists the edition's changes) plus `patches/s3-*`, then the
+link and start gate against the published +stereo3d2+lc1 builds. The three patches above are in that source already.
+
+`patches/s3-0001` is invent danielcamposramos/plasma-workspace `lock-wallpaper-below-291` (on v6.7.4): the image
+wallpaper's TransientImage reads its image again when its texture is released, so that it shows in a new window (the
+lock screen moves its wallpaper into a window of its own below the prompt). Test: `testtransientimage`.

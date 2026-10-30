@@ -1,0 +1,11 @@
+plasma-workspace (4:6.7.4-2+stereo3d3) unstable; urgency=medium
+
+  * wallpapers/image: read a transient image again for a new window
+    (s3-0001, invent danielcamposramos/plasma-workspace
+    lock-wallpaper-below-291). The image wallpaper drops its image once it
+    is a texture, and the texture belongs to the window it was made for;
+    moved into another window it drew nothing there. The lock screen moves
+    its wallpaper into a window of its own below the prompt (kscreenlocker
+    +stereo3d2), so that Stereo KWin can place it behind the screen: the
+    image now shows there whenever the move comes after it loaded. Test:
+    testtransientimage.
