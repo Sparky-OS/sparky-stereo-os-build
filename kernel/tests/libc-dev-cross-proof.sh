@@ -229,7 +229,9 @@ transition)
 	test "$(dpkg-query -W -f "\${Version}" linux-libc-dev-armhf-cross)" = "$(dpkg-deb -f /srv/next/linux-libc-dev-armhf-cross_*_all.deb Version)" || fail "cross not upgraded"
 	if ls /srv/next/linux-libc-dev_*_all.deb >/dev/null 2>&1; then
 		test "$(dpkg-query -W -f "\${Version}" linux-libc-dev)" = "$(dpkg-deb -f /srv/next/linux-libc-dev_*_all.deb Version)" || fail "linux-libc-dev not upgraded with them"
-		test "$(dpkg -l "linux-libc-dev*-cross" | grep -c "^ii")" = "$(ls /srv/next/linux-libc-dev-*-cross_*_all.deb | wc -l)" || fail "not every cross package at the later build"
+		for c in $(dpkg-query -W -f "\${Package} \${db:Status-Abbrev}\n" "linux-libc-dev*-cross" 2>/dev/null | awk "\$2 == \"ii\" {print \$1}"); do
+			test "$(dpkg-query -W -f "\${Version}" $c)" = "$(dpkg-deb -f /srv/next/${c}_*_all.deb Version)" || fail "$c not at the later build"
+		done
 	fi
 	ls -ld /usr/share/doc/linux-libc-dev-armhf-cross
 	test "$(readlink /usr/share/doc/linux-libc-dev-armhf-cross)" = linux-libc-dev || fail "doc is not the link to linux-libc-dev"
