@@ -211,6 +211,22 @@ DPI-aware 192-DPI input and both captured eyes are measured separately from DPI-
 Broad concurrent lifetime, error-path injection, native i386 and the new package cohort remain qualification gates.
 The private module tests do not qualify Wine on NVIDIA, Wayland, arbitrary games or a production transition.
 
-The two-child mono control still has differing first captures at ordinary window transitions, and the DPI-unaware 192-DPI input control also fails on the unchanged runtime.
-Neither negative is waived by the stereo or DPI-aware pass.
-They must be localized before this candidate enters the package recipe.
+The two-child mono capture control must service its UI event loop while the observer reads the first frame.
+Blocking that thread can delay the ordinary GDI CopyArea even after the native Present has completed.
+With a responsive capture handshake, the original and candidate modules match across all nine phases, and the restacked native images and ordinary owner pixels match the fixture's pattern without another Present.
+The retained blocking-capture negatives remain useful controls; this parity result does not assert that every original-Wine frame is correct.
+The DPI-unaware 192-DPI input failure also occurs on the unchanged runtime and remains a separate Wine follow-up.
+Candidate input mapping must still match original mono Wine in each DPI mode before packaging.
+
+### Two-child capture timing control
+
+`tests/d3d9-multiple-capture.c` exercises restacking, ancestor visibility, move, child destruction and input with two overlapping D3D9 children and an ordinary panel.
+Compile it with `x86_64-w64-mingw32-gcc -O2 -Wall tests/d3d9-multiple-capture.c -o multiple64.exe -ld3d9 -lgdi32` and run it only inside the isolated capture rig with a private Wine prefix.
+Set `WINE254_CAPTURE_PUMP=1` for the responsive handshake: a reader thread waits for the observer's stdin reply while the window thread services messages.
+Only the window thread calls D3D9, and its Present counters must remain unchanged throughout each capture.
+Leaving the variable unset retains the blocking handshake as a timing negative.
+
+`tests/check-d3d9-multiple-parity.py REFERENCE CANDIDATE` compares the nine mono captures, checks the restacked raster and panel against the pattern, and correlates actual Present requests with delivered completion events by window and serial.
+Its input directories contain `result.json`, `atoms.json`, `client.stdout`, `wire.jsonl`, `phaseN-screen.png` and the native window PNGs from the observer.
+The checker requires zero stereo declarations, five correct input assertions and unchanged Present counts, and rejects the retained blocking-capture negatives.
+Delivered XRecord GenericEvents may contain only their first 32 bytes; the checker uses window and serial and does not infer a missing MSC field.
