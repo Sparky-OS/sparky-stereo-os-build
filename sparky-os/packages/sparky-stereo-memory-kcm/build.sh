@@ -5,7 +5,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.1.2
+VERSION=0.1.3
 PACKAGE=sparky-stereo-memory-kcm
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.memory-kcm.XXXXXX")
@@ -63,6 +63,14 @@ Description: Memory page for System Settings
 EOF
 cat >"$S/debian/changelog" <<EOF
 $PACKAGE ($VERSION) unstable; urgency=medium
+
+  * German, Japanese, Korean, Polish, Brazilian Portuguese, Simplified
+    Chinese and Traditional Chinese strings for the page metadata and
+    the KAuth action.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Thu, 29 Oct 2026 22:00:00 -0300
+
+$PACKAGE (0.1.2) unstable; urgency=medium
 
   * German, Japanese, Korean, Polish, Brazilian Portuguese, Simplified
     Chinese and Traditional Chinese strings for the page.
