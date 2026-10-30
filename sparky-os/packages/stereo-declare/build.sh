@@ -1,17 +1,32 @@
 #!/bin/bash
-# Sparky Stereo OS: builds stereo-declare 1.6.0-1+lc1 (libstereo-declare1, libstereo-declare-dev, python3-stereo-declare)
-# from a release clone of Sparky-OS/libstereo-declare, through Lean Code.
-# Created by Daniel Ramos (Capitain Jack) 2026/10/22, 1.5.0 on 2026/10/23, 1.6.0 on 2026/10/24
-# Copyright 2026 under the GNU GPL3 License
-# The plain source package is made from the release commit (orig tarball without debian/, dated by the commit), then the
-# Lean Code source, then the build with the link and start gate against the earlier +lc1 builds. Candidates stay in WORK.
-# Usage: build.sh WORK PREVIOUS_DIR CLONE   (PREVIOUS_DIR: the earlier +lc1 .deb files; CLONE: a clone holding REV)
+# Prepare source once, then build both native architectures from that descriptor.
+# Usage: build.sh source WORK CLONE IMAGE
+#        build.sh binary WORK SOURCE_DIR PREVIOUS_DIR IMAGE amd64|i386
+# IMAGE is an existing prepared SDK. Archive configuration/keyring paths must be
+# container paths beneath /archive. The coordinator supplies its resource guard.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-WORK=$(mkdir -p "$1" && cd "$1" && pwd)
-PREV=$(cd "$2" && pwd)
-CLONE=$(cd "$3" && pwd)
-[ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
-docker run --rm --cpus 4 --platform linux/amd64 -v "$WORK":/work -v "$PREV":/prev:ro \
-	-v "$CLONE":/fork:ro -v "$HERE/../..":/toolkit:ro -v "$HERE":/tools:ro \
-	sparky-lc-migration:20261020 bash -c 'bash /tools/build-in-container.sh > /work/build.log 2>&1'
+mode=$1
+WORK=$(realpath -m "$2")
+[ ! -e "$WORK" ] || { echo "$WORK already exists" >&2; exit 1; }
+mkdir -p "$WORK"
+if [ "$mode" = source ]; then
+    CLONE=$(realpath "$3")
+    : "${SPARKY_LC_TOOLKIT:?the reviewed current toolkit directory}"
+    docker run --rm --cpus 4 --platform linux/amd64 --user "$(id -u):$(id -g)" \
+        -v "$WORK":/work -v "$CLONE":/fork:ro -v "$SPARKY_LC_TOOLKIT":/toolkit:ro -v "$HERE":/tools:ro \
+        "$4" bash -c 'mkdir /work/tmp; TMPDIR=/work/tmp bash /tools/prepare-source.sh /work/source /fork /toolkit'
+elif [ "$mode" = binary ]; then
+    SRC=$(realpath "$3")
+    PREV=$(realpath "$4")
+    case "$6" in amd64) platform=linux/amd64 ;; i386) platform=linux/386 ;; *) exit 1 ;; esac
+    : "${SPARKY_LC_ARCHIVE_DIR:?public sources.json and public keyrings}"
+    docker run --rm --cpus 4 --platform "$platform" --user "$(id -u):$(id -g)" \
+        --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
+        -v "$WORK":/work -v "$SRC":/src:ro -v "$PREV":/prev:ro -v "$HERE":/tools:ro \
+        -v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro "$5" \
+        bash /tools/build-in-container.sh /work/build /src/stereo-declare_1.8.0-1+lc1.dsc /prev /archive/sources.json
+else
+    echo 'Expected source or binary' >&2
+    exit 1
+fi
