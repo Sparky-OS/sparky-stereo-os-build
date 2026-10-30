@@ -1,0 +1,716 @@
+--- a/dlls/winex11.drv/vulkan.c
++++ b/dlls/winex11.drv/vulkan.c
+@@ -29,6 +29,7 @@
+ #include <stdarg.h>
+ #include <stdio.h>
+ #include <dlfcn.h>
++#include <pthread.h>
+ 
+ #include "ntstatus.h"
+ #define WIN32_NO_STATUS
+@@ -37,7 +38,14 @@
+ 
+ #include "wine/debug.h"
+ #include "x11drv.h"
++#ifdef HAVE_LIBXSHAPE
++#include <X11/extensions/shape.h>
++#endif
++
+ #include "xcomposite.h"
++#include <stereo-declare.h>
++#include <limits.h>
++#include <poll.h>
+ 
+ #include "wine/vulkan.h"
+ #include "wine/vulkan_driver.h"
+@@ -61,10 +69,37 @@
+ static VkBool32 (*pvkGetPhysicalDeviceXlibPresentationSupportKHR)(VkPhysicalDevice, uint32_t, Display *, VisualID);
+ 
+ static const struct vulkan_driver_funcs x11drv_vulkan_driver_funcs;
++static int (*p_stereo_declare_x11_child)(Display *, Window, Window, enum stereo_layout,
++                                       enum stereo_class, unsigned, unsigned, unsigned);
++static unsigned (*p_stereo_supported_x11)(Display *);
++static int (*p_stereo_move_x11_child)(Display *, Window, Window, Window);
++static int (*p_stereo_declare_x11_child_place)(Display *, Window, const struct stereo_x11_child_place *);
++static int (*p_stereo_declare_x11_one_view_size)(Display *, Window, unsigned, unsigned);
++static pthread_once_t stereo_once = PTHREAD_ONCE_INIT;
++
++static void load_stereo_declaration(void)
++{
++    void *library = dlopen("libstereo-declare.so.1", RTLD_NOW | RTLD_LOCAL);
++    if (!library) return;
++    p_stereo_supported_x11 = dlsym(library, "stereo_supported_x11");
++    p_stereo_declare_x11_child = dlsym(library, "stereo_declare_x11_child");
++    p_stereo_move_x11_child = dlsym(library, "stereo_move_x11_child");
++    p_stereo_declare_x11_child_place = dlsym(library, "stereo_declare_x11_child_place");
++    p_stereo_declare_x11_one_view_size = dlsym(library, "stereo_declare_x11_one_view_size");
++}
++
+ 
+ struct x11drv_vulkan_surface
+ {
++    struct list entry;
++    HWND hwnd, owner_hwnd;
++    LONG refs;
++    unsigned int generation, next_update, applied_update;
++    BOOL visible, present_ready;
+     Window window;
++    Window stereo_owner;
++    BOOL stereo;
++    struct stereo_x11_child_place stereo_place;
+     RECT rect;
+ 
+     BOOL offscreen;
+@@ -72,12 +107,31 @@
+     HDC hdc_dst;
+ };
+ 
++/* The list contains live, attached native stereo surfaces only. Window
++ * callbacks call this after releasing win_data_mutex. Presentation and detach
++ * serialize with those callbacks so an HWND destruction cannot leave a stale
++ * list entry or a placement update using freed surface storage. */
++static struct list stereo_surfaces = LIST_INIT(stereo_surfaces);
++static pthread_mutex_t stereo_mutex = PTHREAD_MUTEX_INITIALIZER;
++
+ static void vulkan_surface_destroy( HWND hwnd, struct x11drv_vulkan_surface *surface )
+ {
+-    destroy_client_window( hwnd, surface->window );
+-    if (surface->hdc_dst) NtGdiDeleteObjectApp( surface->hdc_dst );
+-    if (surface->hdc_src) NtGdiDeleteObjectApp( surface->hdc_src );
+-    free( surface );
++    Window window;
++    pthread_mutex_lock(&stereo_mutex);
++    list_remove(&surface->entry);
++    list_init(&surface->entry);
++    window = surface->window;
++    surface->window = None;
++    surface->hwnd = NULL;
++    ++surface->generation;
++    if (surface->stereo_owner)
++        p_stereo_move_x11_child(gdi_display, surface->stereo_owner, None, window);
++    surface->stereo_owner = None;
++    pthread_mutex_unlock(&stereo_mutex);
++    if (window) destroy_client_window(hwnd, window);
++    if (surface->hdc_dst) NtGdiDeleteObjectApp(surface->hdc_dst);
++    if (surface->hdc_src) NtGdiDeleteObjectApp(surface->hdc_src);
++    if (!InterlockedDecrement(&surface->refs)) free(surface);
+ }
+ 
+ static void vulkan_surface_update_size( HWND hwnd, struct x11drv_vulkan_surface *surface );
+@@ -90,6 +144,14 @@
+         .dpy = gdi_display,
+     };
+     struct x11drv_vulkan_surface *surface;
++    WCHAR stereo_property[64];
++    char property_name[64];
++    unsigned int i;
++    Window owner;
++    BOOL supported = FALSE;
++#ifdef HAVE_LIBXSHAPE
++    int event, error;
++#endif
+ 
+     TRACE( "%p %p %p %p\n", hwnd, instance, handle, private );
+ 
+@@ -98,6 +160,9 @@
+         ERR("Failed to allocate vulkan surface for hwnd=%p\n", hwnd);
+         return VK_ERROR_OUT_OF_HOST_MEMORY;
+     }
++    list_init(&surface->entry);
++    surface->hwnd = hwnd;
++    surface->refs = 1;
+     if (!(surface->window = create_client_window( hwnd, &default_visual, default_colormap )))
+     {
+         ERR("Failed to allocate client window for hwnd=%p\n", hwnd);
+@@ -117,6 +182,53 @@
+         return VK_ERROR_OUT_OF_HOST_MEMORY;
+     }
+ 
++    /* This version is acknowledged only when the complete child contract is
++     * available. Older runtimes and compositors keep the ordinary WSI path. */
++    snprintf(property_name, sizeof(property_name),
++             "__wine_vulkan_stereo_v1_%08x", GetCurrentThreadId());
++    for (i = 0; (stereo_property[i] = property_name[i]); ++i) {}
++    if ((ULONG_PTR)NtUserGetProp(hwnd, stereo_property) == 0x10003)
++    {
++        pthread_once(&stereo_once, load_stereo_declaration);
++#ifdef HAVE_LIBXSHAPE
++        supported = p_stereo_supported_x11 && p_stereo_supported_x11(gdi_display) >= 9
++            && XShapeQueryExtension(gdi_display, &event, &error);
++#endif
++        owner = X11DRV_get_whole_window(NtUserGetAncestor(hwnd, GA_ROOT));
++        if (supported && p_stereo_declare_x11_child && p_stereo_move_x11_child
++            && p_stereo_declare_x11_child_place && p_stereo_declare_x11_one_view_size && owner
++            && surface->rect.right >= 2 && !(surface->rect.right & 1) && surface->rect.right <= 32767
++            && surface->rect.bottom > 0 && surface->rect.bottom <= 32767)
++        {
++            Window root, parent, *children = NULL;
++            unsigned int count;
++            XWindowAttributes attrs;
++            if (XGetWindowAttributes(gdi_display, surface->window, &attrs)
++                && XQueryTree(gdi_display, surface->window, &root, &parent, &children, &count))
++            {
++                /* Consumers validate ancestry when the owner list changes. */
++                XReparentWindow(gdi_display, surface->window, owner, 0, 0);
++                if (!p_stereo_declare_x11_child(gdi_display, owner, surface->window,
++                                               STEREO_SBS_FULL, STEREO_CLASS_GAME, STEREO_GAME_3D,
++                                               surface->rect.right, surface->rect.bottom))
++                {
++                    surface->stereo_owner = owner;
++                    surface->stereo = TRUE;
++                    surface->owner_hwnd = NtUserGetAncestor(hwnd, GA_ROOT);
++                    NtUserSetProp(hwnd, stereo_property, (HANDLE)(ULONG_PTR)0x18003);
++                }
++                else XReparentWindow(gdi_display, surface->window, parent, attrs.x, attrs.y);
++            }
++            if (children) XFree(children);
++        }
++    }
++
++    if (surface->stereo)
++    {
++        pthread_mutex_lock(&stereo_mutex);
++        list_add_tail(&stereo_surfaces, &surface->entry);
++        pthread_mutex_unlock(&stereo_mutex);
++    }
+     *private = (void *)surface;
+ 
+     TRACE("Created surface 0x%s, private %p\n", wine_dbgstr_longlong(*handle), *private);
+@@ -135,15 +247,27 @@
+ static void X11DRV_vulkan_surface_detach( HWND hwnd, void *private )
+ {
+     struct x11drv_vulkan_surface *surface = private;
+-    Window client_window = surface->window;
+     struct x11drv_win_data *data;
+-
+-    TRACE( "%p %p\n", hwnd, private );
+-
+-    if ((data = get_win_data( hwnd )))
+-    {
+-        detach_client_window( data, client_window );
+-        release_win_data( data );
++    Window window;
++    pthread_mutex_lock(&stereo_mutex);
++    list_remove(&surface->entry);
++    list_init(&surface->entry);
++    surface->hwnd = NULL;
++    ++surface->generation;
++    window = surface->window;
++    if (window && surface->stereo)
++    {
++        XUnmapWindow(gdi_display, window);
++        if (surface->stereo_owner)
++            p_stereo_move_x11_child(gdi_display, surface->stereo_owner, None, window);
++        XReparentWindow(gdi_display, window, get_dummy_parent(), 0, 0);
++    }
++    surface->stereo_owner = None;
++    pthread_mutex_unlock(&stereo_mutex);
++    if (window && (data = get_win_data(hwnd)))
++    {
++        detach_client_window(data, window);
++        release_win_data(data);
+     }
+ }
+ 
+@@ -159,6 +283,300 @@
+     changes.height = min( max( 1, rect.bottom ), 65535 );
+     XConfigureWindow( gdi_display, surface->window, CWWidth | CWHeight, &changes );
+     surface->rect = rect;
++    if (surface->stereo_owner)
++        p_stereo_declare_x11_one_view_size(gdi_display, surface->window,
++                                          changes.width, changes.height);
++}
++
++struct stereo_update
++{
++    HWND hwnd, owner_hwnd;
++    Window window, owner;
++    unsigned int generation, number;
++    RECT native_rect;
++    struct stereo_x11_child_place place;
++    XRectangle *shape;
++    int shape_count;
++    BOOL visible;
++};
++
++/* No user/GDI or win_data calls are made while stereo_mutex is held. The
++ * window owner can therefore park its native descendants while holding
++ * win_data_mutex, before destroying or replacing their X parent. */
++static BOOL prepare_stereo_update(struct stereo_update *update)
++{
++    struct x11drv_win_data *data;
++    UINT dpi = NtUserGetWinMonitorDpi(update->hwnd, MDT_RAW_DPI);
++    RECT rect, client;
++    HDC hdc;
++    HRGN region;
++    RGNDATA *rd = NULL;
++    DWORD bytes;
++    unsigned int i, eye, count = 0;
++    int width = update->native_rect.right / 2, height = update->native_rect.bottom;
++
++    if (!NtUserGetClientRect(update->hwnd, &client, dpi)) return FALSE;
++    update->owner_hwnd = NtUserGetAncestor(update->hwnd, GA_ROOT);
++    update->owner = X11DRV_get_whole_window(update->owner_hwnd);
++    if (!update->owner) return FALSE;
++    rect = client;
++    NtUserMapWindowPoints(update->hwnd, update->owner_hwnd, (POINT *)&rect, 2, dpi);
++    if ((data = get_win_data(update->owner_hwnd)))
++    {
++        OffsetRect(&rect, data->rects.client.left - data->rects.visible.left,
++                   data->rects.client.top - data->rects.visible.top);
++        release_win_data(data);
++    }
++    update->place = (struct stereo_x11_child_place){rect.left, rect.top,
++        rect.right - rect.left, rect.bottom - rect.top, 0};
++    if (!NtUserIsWindowVisible(update->hwnd) || IsRectEmpty(&client)) return TRUE;
++    if (width < 1 || height < 1 || update->native_rect.right > 32767 || height > 32767) return TRUE;
++
++#ifdef HAVE_LIBXSHAPE
++    hdc = NtUserGetDCEx(update->hwnd, 0, DCX_CACHE | DCX_USESTYLE);
++    region = hdc ? get_dc_monitor_region(update->hwnd, hdc) : 0;
++    if (region)
++    {
++        bytes = NtGdiGetRegionData(region, 0, NULL);
++        if (bytes >= offsetof(RGNDATA, Buffer) && (rd = malloc(bytes))
++            && NtGdiGetRegionData(region, bytes, rd)
++            && rd->rdh.nCount <= (bytes - offsetof(RGNDATA, Buffer)) / sizeof(RECT)
++            && rd->rdh.nCount <= (INT_MAX - 1) / 2
++            && (update->shape = calloc(rd->rdh.nCount * 2 + 1, sizeof(*update->shape))))
++        {
++            const RECT *rectangles = (const RECT *)rd->Buffer;
++            for (i = 0; i < rd->rdh.nCount; ++i)
++            {
++                RECT clip;
++                int x1, x2, y1, y2;
++                if (!intersect_rect(&clip, &rectangles[i], &client)) continue;
++                x1 = ((ULONGLONG)(clip.left - client.left) * width + update->place.width / 2) / update->place.width;
++                x2 = ((ULONGLONG)(clip.right - client.left) * width + update->place.width / 2) / update->place.width;
++                y1 = ((ULONGLONG)(clip.top - client.top) * height + update->place.height / 2) / update->place.height;
++                y2 = ((ULONGLONG)(clip.bottom - client.top) * height + update->place.height / 2) / update->place.height;
++                if (x2 <= x1 || y2 <= y1) continue;
++                for (eye = 0; eye < 2; ++eye)
++                    update->shape[count++] = (XRectangle){x1 + eye * width, y1, x2 - x1, y2 - y1};
++            }
++            update->shape_count = count;
++            update->visible = TRUE;
++        }
++        free(rd);
++        NtGdiDeleteObjectApp(region);
++    }
++    if (hdc) NtUserReleaseDC(update->hwnd, hdc);
++#endif
++    return TRUE;
++}
++
++static void apply_stereo_update(struct x11drv_vulkan_surface *surface, const struct stereo_update *update)
++{
++    if (!update->owner)
++    {
++        XUnmapWindow(gdi_display, surface->window);
++        surface->visible = FALSE;
++        surface->present_ready = FALSE;
++        return;
++    }
++    if (surface->stereo_owner != update->owner)
++    {
++        ++surface->generation;
++        surface->present_ready = FALSE;
++        XReparentWindow(gdi_display, surface->window, update->owner, update->place.x, update->place.y);
++        if (p_stereo_move_x11_child(gdi_display, surface->stereo_owner, update->owner, surface->window))
++        {
++            XUnmapWindow(gdi_display, surface->window);
++            surface->visible = FALSE;
++            return;
++        }
++        surface->stereo_owner = update->owner;
++    }
++    else if (surface->stereo_place.x != update->place.x || surface->stereo_place.y != update->place.y)
++        XMoveWindow(gdi_display, surface->window, update->place.x, update->place.y);
++    surface->owner_hwnd = update->owner_hwnd;
++    if (memcmp(&surface->stereo_place, &update->place, sizeof(update->place)))
++    {
++        p_stereo_declare_x11_child_place(gdi_display, surface->window, &update->place);
++        surface->stereo_place = update->place;
++    }
++#ifdef HAVE_LIBXSHAPE
++    XShapeCombineRectangles(gdi_display, surface->window, ShapeInput, 0, 0, NULL, 0, ShapeSet, Unsorted);
++    XShapeCombineRectangles(gdi_display, surface->window, ShapeBounding, 0, 0,
++                           update->shape, update->shape_count, ShapeSet, Unsorted);
++#endif
++    if (surface->visible != update->visible) ++surface->generation;
++    if (!surface->visible || !update->visible) surface->present_ready = FALSE;
++    surface->visible = update->visible;
++    if (surface->visible) XMapWindow(gdi_display, surface->window);
++    else XUnmapWindow(gdi_display, surface->window);
++    XFlush(gdi_display);
++}
++
++static void refresh_stereo_surface(struct x11drv_vulkan_surface *surface, BOOL resize)
++{
++    struct stereo_update update = {0};
++    RECT rect;
++    pthread_mutex_lock(&stereo_mutex);
++    update.hwnd = surface->hwnd;
++    update.window = surface->window;
++    update.generation = surface->generation;
++    update.number = ++surface->next_update;
++    update.native_rect = surface->rect;
++    pthread_mutex_unlock(&stereo_mutex);
++    if (!update.hwnd || !update.window) return;
++    if (resize)
++    {
++        get_client_window_rect(update.hwnd, &rect);
++        if (rect.right > 0 && rect.bottom > 0) update.native_rect = rect;
++    }
++    prepare_stereo_update(&update);
++    pthread_mutex_lock(&stereo_mutex);
++    if (surface->hwnd == update.hwnd && surface->window == update.window
++        && surface->generation == update.generation && surface->applied_update < update.number)
++    {
++        if (resize && !EqualRect(&surface->rect, &update.native_rect))
++        {
++            XResizeWindow(gdi_display, surface->window, min(max(1, update.native_rect.right), 65535),
++                          min(max(1, update.native_rect.bottom), 65535));
++            surface->rect = update.native_rect;
++            p_stereo_declare_x11_one_view_size(gdi_display, surface->window,
++                                              surface->rect.right, surface->rect.bottom);
++        }
++        surface->applied_update = update.number;
++        apply_stereo_update(surface, &update);
++    }
++    pthread_mutex_unlock(&stereo_mutex);
++    free(update.shape);
++}
++
++void sync_vulkan_stereo_surfaces(void)
++{
++    struct x11drv_vulkan_surface *surface, **surfaces;
++    unsigned int count = 0, i = 0;
++    pthread_mutex_lock(&stereo_mutex);
++    LIST_FOR_EACH_ENTRY(surface, &stereo_surfaces, struct x11drv_vulkan_surface, entry) ++count;
++    surfaces = count ? calloc(count, sizeof(*surfaces)) : NULL;
++    if (surfaces)
++        LIST_FOR_EACH_ENTRY(surface, &stereo_surfaces, struct x11drv_vulkan_surface, entry)
++        {
++            InterlockedIncrement(&surface->refs);
++            surfaces[i++] = surface;
++        }
++    pthread_mutex_unlock(&stereo_mutex);
++    for (unsigned int n = 0; n < i; ++n)
++    {
++        refresh_stereo_surface(surfaces[n], FALSE);
++        if (!InterlockedDecrement(&surfaces[n]->refs)) free(surfaces[n]);
++    }
++    free(surfaces);
++}
++
++void park_vulkan_stereo_owner(Window owner, BOOL destroyed)
++{
++    struct x11drv_vulkan_surface *surface;
++    BOOL moved = FALSE;
++    if (!owner) return;
++    pthread_mutex_lock(&stereo_mutex);
++    LIST_FOR_EACH_ENTRY(surface, &stereo_surfaces, struct x11drv_vulkan_surface, entry)
++    {
++        if (surface->stereo_owner != owner) continue;
++        if (!destroyed)
++        {
++            moved = TRUE;
++            XUnmapWindow(gdi_display, surface->window);
++            p_stereo_move_x11_child(gdi_display, owner, None, surface->window);
++            XReparentWindow(gdi_display, surface->window, get_dummy_parent(), 0, 0);
++        }
++        else surface->window = None;
++        surface->stereo_owner = None;
++        surface->present_ready = FALSE;
++        ++surface->generation;
++    }
++    /* The parent can be destroyed on a different X connection next. */
++    if (moved) XSync(gdi_display, False);
++    pthread_mutex_unlock(&stereo_mutex);
++}
++
++void restore_vulkan_stereo_owner(HWND hwnd, Window owner, Display *owner_display)
++{
++    struct x11drv_vulkan_surface *surface;
++    BOOL moved = FALSE;
++    if (!owner) return;
++    pthread_mutex_lock(&stereo_mutex);
++    LIST_FOR_EACH_ENTRY(surface, &stereo_surfaces, struct x11drv_vulkan_surface, entry)
++    {
++        if (!surface->window || !surface->hwnd || surface->owner_hwnd != hwnd || surface->stereo_owner) continue;
++        XSync(owner_display, False);
++        moved = TRUE;
++        XReparentWindow(gdi_display, surface->window, owner, surface->stereo_place.x, surface->stereo_place.y);
++        if (p_stereo_move_x11_child(gdi_display, None, owner, surface->window)) continue;
++        surface->stereo_owner = owner;
++        ++surface->generation;
++        if (surface->visible) XMapWindow(gdi_display, surface->window);
++    }
++    if (moved) XFlush(gdi_display);
++    pthread_mutex_unlock(&stereo_mutex);
++}
++
++/* A mapped child can still be unviewable while its managed ancestor's
++ * MapRequest is pending. Presenting then loses the first image when the WM
++ * maps the owner. Wait only across that transition, without holding Wine's
++ * window/surface locks or taking events from another thread's connection. */
++static int stereo_window_error(Display *display, XErrorEvent *event, void *arg)
++{
++    return event->error_code == BadWindow;
++}
++
++static VkResult X11DRV_vulkan_surface_prepare_present(HWND hwnd, void *private)
++{
++    struct x11drv_vulkan_surface *surface = private;
++    DWORD start = NtGetTickCount();
++    if (!surface->stereo) return VK_SUCCESS;
++    refresh_stereo_surface(surface, FALSE);
++    for (;;)
++    {
++        Window window;
++        unsigned int generation;
++        XWindowAttributes attrs;
++        BOOL queried;
++        int error;
++        pthread_mutex_lock(&stereo_mutex);
++        window = surface->window;
++        generation = surface->generation;
++        if (!window || !surface->hwnd)
++        {
++            pthread_mutex_unlock(&stereo_mutex);
++            return VK_ERROR_SURFACE_LOST_KHR;
++        }
++        if (!surface->visible || surface->present_ready)
++        {
++            pthread_mutex_unlock(&stereo_mutex);
++            return VK_SUCCESS;
++        }
++        pthread_mutex_unlock(&stereo_mutex);
++
++        X11DRV_expect_error(gdi_display, stereo_window_error, NULL);
++        queried = XGetWindowAttributes(gdi_display, window, &attrs);
++        error = X11DRV_check_error();
++        pthread_mutex_lock(&stereo_mutex);
++        if (surface->window == window && surface->generation == generation)
++        {
++            if (queried && !error && attrs.map_state == IsViewable) surface->present_ready = TRUE;
++            if (surface->present_ready)
++            {
++                pthread_mutex_unlock(&stereo_mutex);
++                return VK_SUCCESS;
++            }
++        }
++        pthread_mutex_unlock(&stereo_mutex);
++        if (error || !queried) return VK_ERROR_SURFACE_LOST_KHR;
++        if ((DWORD)(NtGetTickCount() - start) >= 1000)
++        {
++            WARN("Timed out waiting for stereo surface %#lx to become viewable\n", window);
++            return VK_ERROR_OUT_OF_DATE_KHR;
++        }
++        poll(NULL, 0, 1);
++    }
+ }
+ 
+ static void vulkan_surface_update_offscreen( HWND hwnd, struct x11drv_vulkan_surface *surface )
+@@ -211,6 +629,11 @@
+ 
+     TRACE( "%p %p\n", hwnd, private );
+ 
++    if (surface->stereo)
++    {
++        refresh_stereo_surface(surface, TRUE);
++        return;
++    }
+     vulkan_surface_update_size( hwnd, surface );
+     vulkan_surface_update_offscreen( hwnd, surface );
+ }
+@@ -225,6 +648,11 @@
+     HRGN region;
+     HDC hdc;
+ 
++    if (surface->stereo)
++    {
++        refresh_stereo_surface(surface, TRUE);
++        return;
++    }
+     vulkan_surface_update_size( hwnd, surface );
+     vulkan_surface_update_offscreen( hwnd, surface );
+ 
+@@ -276,6 +704,7 @@
+     .p_vulkan_surface_update = X11DRV_vulkan_surface_update,
+     .p_vulkan_get_client_rect = get_client_window_rect,
+     .p_vulkan_surface_presented = X11DRV_vulkan_surface_presented,
++    .p_vulkan_surface_prepare_present = X11DRV_vulkan_surface_prepare_present,
+ 
+     .p_vkGetPhysicalDeviceWin32PresentationSupportKHR = X11DRV_vkGetPhysicalDeviceWin32PresentationSupportKHR,
+     .p_get_host_surface_extension = X11DRV_get_host_surface_extension,
+@@ -300,6 +729,15 @@
+ 
+ #else /* No vulkan */
+ 
++void park_vulkan_stereo_owner(Window owner, BOOL destroyed) {}
++void restore_vulkan_stereo_owner(HWND hwnd, Window owner, Display *owner_display) {}
++
++
++void sync_vulkan_stereo_surfaces(void)
++{
++}
++
++
+ UINT X11DRV_VulkanInit( UINT version, void *vulkan_handle, const struct vulkan_driver_funcs **driver_funcs )
+ {
+     ERR( "Wine was built without Vulkan support.\n" );
+--- a/dlls/winex11.drv/window.c
++++ b/dlls/winex11.drv/window.c
+@@ -2310,6 +2310,7 @@
+     XFlush( data->display );  /* make sure the window exists before we start painting to it */
+ 
+ done:
++    if (data->whole_window) restore_vulkan_stereo_owner(data->hwnd, data->whole_window, data->display);
+     if (win_rgn) NtGdiDeleteObjectApp( win_rgn );
+ }
+ 
+@@ -2321,6 +2322,7 @@
+  */
+ static void destroy_whole_window( struct x11drv_win_data *data, BOOL already_destroyed )
+ {
++    park_vulkan_stereo_owner(data->whole_window, already_destroyed);
+     TRACE( "win %p xwin %lx/%lx\n", data->hwnd, data->whole_window, data->client_window );
+ 
+     if (!data->whole_window)
+@@ -2461,6 +2463,7 @@
+     release_win_data( data );
+     free( data );
+     destroy_gl_drawable( hwnd );
++    sync_vulkan_stereo_surfaces();
+ }
+ 
+ 
+@@ -3004,6 +3007,7 @@
+     sync_gl_drawable( parent, TRUE );
+ 
+     fetch_icon_data( hwnd, 0, 0 );
++    sync_vulkan_stereo_surfaces();
+ }
+ 
+ 
+@@ -3091,7 +3095,7 @@
+ /***********************************************************************
+  *		WindowPosChanged   (X11DRV.@)
+  */
+-void X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, HWND owner_hint, UINT swp_flags, BOOL fullscreen,
++static void window_pos_changed( HWND hwnd, HWND insert_after, HWND owner_hint, UINT swp_flags, BOOL fullscreen,
+                               const struct window_rects *new_rects, struct window_surface *surface )
+ {
+     struct x11drv_win_data *data;
+@@ -3190,6 +3194,13 @@
+     release_win_data( data );
+ }
+ 
++void X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, HWND owner_hint, UINT swp_flags, BOOL fullscreen,
++                              const struct window_rects *rects, struct window_surface *surface )
++{
++    window_pos_changed(hwnd, insert_after, owner_hint, swp_flags, fullscreen, rects, surface);
++    sync_vulkan_stereo_surfaces();
++}
++
+ /* check if the window icon should be hidden (i.e. moved off-screen) */
+ static BOOL hide_icon( struct x11drv_win_data *data )
+ {
+@@ -3296,8 +3307,8 @@
+     {
+         send_message( hwnd, WM_X11DRV_SET_WIN_REGION, 0, 0 );
+     }
+-}
+-
++    sync_vulkan_stereo_surfaces();
++}
+ 
+ /***********************************************************************
+  *		SetLayeredWindowAttributes  (X11DRV.@)
+--- a/dlls/winex11.drv/x11drv.h
++++ b/dlls/winex11.drv/x11drv.h
+@@ -662,6 +662,9 @@
+ extern Window X11DRV_get_whole_window( HWND hwnd );
+ extern Window get_dummy_parent(void);
+ 
++extern void sync_vulkan_stereo_surfaces(void);
++extern void park_vulkan_stereo_owner(Window owner, BOOL destroyed);
++extern void restore_vulkan_stereo_owner(HWND hwnd, Window owner, Display *owner_display);
+ extern void sync_gl_drawable( HWND hwnd, BOOL known_child );
+ extern void set_gl_drawable_parent( HWND hwnd, HWND parent );
+ extern void destroy_gl_drawable( HWND hwnd );
+--- a/dlls/win32u/vulkan.c
++++ b/dlls/win32u/vulkan.c
+@@ -461,6 +461,7 @@
+     VkSwapchainKHR swapchains_buffer[16], *swapchains = swapchains_buffer;
+     VkPresentInfoKHR present_info_host = *present_info;
+     struct vulkan_device *device = queue->device;
++    VkResult prepare_buffer[16], *prepare = prepare_buffer;
+     VkResult res;
+     UINT i;
+ 
+@@ -470,10 +471,20 @@
+         !(swapchains = malloc( present_info->swapchainCount * sizeof(*swapchains) )))
+         return VK_ERROR_OUT_OF_HOST_MEMORY;
+ 
++    if (present_info->swapchainCount > ARRAY_SIZE(prepare_buffer) &&
++        !(prepare = malloc(present_info->swapchainCount * sizeof(*prepare))))
++    {
++        if (swapchains != swapchains_buffer) free(swapchains);
++        return VK_ERROR_OUT_OF_HOST_MEMORY;
++    }
++
+     for (i = 0; i < present_info->swapchainCount; i++)
+     {
+         struct swapchain *swapchain = swapchain_from_handle( present_info->pSwapchains[i] );
++        struct surface *surface = swapchain->surface;
+         swapchains[i] = swapchain->obj.host.swapchain;
++        prepare[i] = driver_funcs->p_vulkan_surface_prepare_present ?
++            driver_funcs->p_vulkan_surface_prepare_present(surface->hwnd, surface->driver_private) : VK_SUCCESS;
+     }
+ 
+     present_info_host.pSwapchains = swapchains;
+@@ -487,6 +498,14 @@
+         struct surface *surface = swapchain->surface;
+         RECT client_rect;
+ 
++        /* Queue the host operation even on a preparation failure, so the
++         * application's present wait semaphores are consumed normally. */
++        if (swapchain_res >= VK_SUCCESS && prepare[i] < VK_SUCCESS)
++        {
++            swapchain_res = prepare[i];
++            if (present_info->pResults) present_info->pResults[i] = swapchain_res;
++            if (res >= VK_SUCCESS) res = swapchain_res;
++        }
+         driver_funcs->p_vulkan_surface_presented( surface->hwnd, surface->driver_private, swapchain_res );
+ 
+         if (swapchain_res < VK_SUCCESS) continue;
+@@ -507,6 +526,7 @@
+         }
+     }
+ 
++    if (prepare != prepare_buffer) free(prepare);
+     if (swapchains != swapchains_buffer) free( swapchains );
+ 
+     if (TRACE_ON( fps ))
+--- a/include/wine/vulkan_driver.h
++++ b/include/wine/vulkan_driver.h
+@@ -46,7 +46,7 @@
+ #include "wine/rbtree.h"
+ 
+ /* Wine internal vulkan driver version, needs to be bumped upon vulkan_funcs changes. */
+-#define WINE_VULKAN_DRIVER_VERSION 36
++#define WINE_VULKAN_DRIVER_VERSION 37
+ 
+ struct vulkan_object
+ {
+@@ -180,6 +180,7 @@
+     void (*p_vulkan_surface_detach)(HWND, void *);
+     void (*p_vulkan_surface_update)(HWND, void *);
+     void (*p_vulkan_surface_presented)(HWND, void *, VkResult);
++    VkResult (*p_vulkan_surface_prepare_present)(HWND, void *);
+     void (*p_vulkan_get_client_rect)(HWND, RECT *);
+ 
+     VkBool32 (*p_vkGetPhysicalDeviceWin32PresentationSupportKHR)(VkPhysicalDevice, uint32_t);

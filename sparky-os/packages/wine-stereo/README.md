@@ -246,3 +246,39 @@ The matching `tests/d3d11-pair.c` fixture uses a D3D11 BGRA8 backbuffer and
 `ResizeBuffers`; its raw image uses the same `check-d3d9-pair.py` oracle. Both
 D3D fixtures signal capture after their eleventh Present, not their first.
 They never write native stereo declaration properties.
+
+### Vulkan child lifecycle candidate
+
+`patches/wine-vulkan-child-lifecycle.patch` is an unapplied source candidate
+against Wine `10.0~repack-12+stereo3d6+lc1` with its existing patches.
+It is not yet added to `prepare-source.py` or a source package.
+The paired producer is DXVK's `wine-wsi-v1-request.patch`.
+
+The version-1 request is a temporary, thread-named Win32 property scoped to
+native surface creation. Wine acknowledges it only with the version-9 X11
+consumer, Shape support and the membership API from libstereo-declare 1.8.
+A live native X window owns its content declaration. Reparenting and ancestor
+recreation maintain owner membership without declaring that content again.
+Ordinary owners remain undeclared, and packed pixels bypass the mono GDI copy.
+A referenced surface snapshot separates geometry calculation from the registry
+lock. An actual native reparent completes before another X connection destroys
+the old owner.
+
+The first Present after an owner map waits for actual X viewability, with a
+one-second bound and without the Wine window or registry lock held. A timeout
+still submits the host Present so its wait semaphores are consumed, then reports
+an out-of-date surface. This adds an optional callback to the internal Vulkan
+driver interface and increments its version to 37; all consumers of that
+internal header must be rebuilt together before packaging.
+
+The source has targeted-module evidence for first repaint, ancestor recreation,
+two overlapping children, clipping, move, detach and destruction. DPI-aware
+192-DPI input and both captured eyes are measured separately from DPI-unaware
+behavior. Broad concurrent lifetime, error-path injection, native i386 and the
+new package cohort remain qualification gates. The private module tests do not
+qualify Wine on NVIDIA, Wayland, arbitrary games or a production transition.
+
+The two-child mono control still has differing first captures at ordinary
+window transitions, and the DPI-unaware 192-DPI input control also fails on the
+unchanged runtime. Neither negative is waived by the stereo or DPI-aware pass.
+They must be localized before this candidate enters the package recipe.

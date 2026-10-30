@@ -28,3 +28,24 @@ Do not treat this patch, a private module substitution, or these bounded pixel
 controls as a complete DXVK package/release qualification. Other packed layouts,
 scaled rectangles, HDR, native DXVK and NVIDIA still require their applicable
 controls before release.
+
+### Versioned Wine surface request candidate
+
+`patches/wine-wsi-v1-request.patch` applies after the published DXVK
+`2.7.1-4+stereo3d3+lc1` patches. It is independent of the exact-copy patch above.
+It is retained for source review and is not added to a package recipe yet.
+
+D3D9 and the packed-input DXGI surface factory scope a version-1 request to the
+Windows thread creating the Vulkan surface. The Wine runtime owns the native
+content declaration and acknowledges a complete child-surface contract.
+The producer restores any previous Win32 property value after the call.
+Failure to set the hint, an old runtime or an old compositor retains ordinary
+surface creation instead of turning an optional hint failure into allocation
+failure. Native stereo array swapchains remain on their existing path.
+
+The matching Wine patch requires libstereo-declare 1.8 and the compositor's
+version-9 child-shape consumer. PE32 and PE64 D3D9 acknowledgement, old-runtime
+and old-compositor fallback have private-module evidence. D3D11's versioned
+path, injected property failures and restoration, native DXVK, packaging and
+GPU coverage still need their own gates; the earlier unversioned D3D11 proof
+is not a proof of this new handshake.
