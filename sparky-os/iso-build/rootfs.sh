@@ -85,6 +85,13 @@ if [ "$STEP" = packages ] || [ "$STEP" = all ]; then
 	inr dpkg --purge zfs-zed zfsutils-linux zfs-dkms 2>/dev/null || true
 	inr apt-get update
 	inr dpkg --configure -a
+	# sparky-stereo-nvidia-driver-lock before any other package: its pin keeps NVIDIA's whole driver at the version the
+	# edition's open module is built for (NVIDIA's CUDA repository moves ahead: 615.71.10-1 on 2026-10-25, while the
+	# module is 615.71.09-2). Sparky KDE's set already brings NVIDIA's user space (libhwloc-plugins depends on
+	# libxnvctrl0), and the hardware meta brings nvidia-detect: installed before the lock, they came at CUDA's newest
+	# version, and the image's first full upgrade downgraded libxnvctrl0 to the locked one.
+	echo "== $(date -u +%T) the NVIDIA driver lock, before anything that brings NVIDIA's user space"
+	apt_in install sparky-stereo-nvidia-driver-lock
 	echo "== $(date -u +%T) Sparky KDE 2026.09's package set"
 	cp /build/base-list.sh /build/sparky-kde-2026.09.names /edition-lists/base-remove.list $R/tmp/
 	inr env NAMES=/tmp/sparky-kde-2026.09.names REMOVE=/tmp/base-remove.list sh /tmp/base-list.sh > /tmp/base
@@ -104,9 +111,7 @@ if [ "$STEP" = packages ] || [ "$STEP" = all ]; then
 	apt_in install --no-install-recommends sparky-stereo
 	echo "== $(date -u +%T) kernels: the edition's kernel and its headers, no other; NVIDIA 615 with the edition's open modules"
 	apt_in install linux-image-sparky-stereo linux-headers-sparky-stereo
-	# sparky-stereo-nvidia-driver-lock first: its pin keeps NVIDIA's whole driver at the version the edition's open
-	# module is built for (NVIDIA's CUDA repository moves ahead: 615.71.10-1 on 2026-10-25, while the module is 615.71.09-2)
-	apt_in install sparky-stereo-nvidia-driver-lock
+	# at the versions sparky-stereo-nvidia-driver-lock holds: it was installed before the first package set
 	apt_in install nvidia-driver nvidia-kernel-open-dkms-stereo3d libnvcuvid1 nvidia-vaapi-driver
 	cp /build/boot-kernels.py $R/tmp/
 	inr python3 /tmp/boot-kernels.py / || { echo "rootfs: a kernel that is not the edition's is in the tree" >&2; exit 1; }
@@ -131,6 +136,20 @@ if [ "$STEP" = packages ] || [ "$STEP" = all ]; then
 	cp /build/cnf-check.py $R/tmp/
 	inr python3 /tmp/cnf-check.py align_image_stack vlc-stereo || { echo "rootfs: command-not-found's index lacks a program of one of the three sources" >&2; exit 1; }
 	rm -f $R/tmp/cnf-check.py
+	# the image's first full upgrade neither downgrades nor removes anything: a package installed before the pin that
+	# holds it is downgraded there (apt_preferences(5): P >= 1000 installs a version even as a downgrade), as
+	# libxnvctrl0 was in the developer ISO of 2026-10-25
+	echo "== $(date -u +%T) the image's first full upgrade, simulated: no downgrade, no removal"
+	inr apt-get -s full-upgrade > /tmp/full-upgrade.sim
+	sed -n 's/^Inst \([^ ]*\) \[\([^]]*\)\] (\([^ ]*\) .*/\1 \2 \3/p' /tmp/full-upgrade.sim | while read -r p old new; do
+		if dpkg --compare-versions "$new" lt "$old"; then echo "downgrade: $p $old to $new"; fi
+	done > /tmp/full-upgrade.bad
+	sed -n 's/^Remv /removal: /p' /tmp/full-upgrade.sim >> /tmp/full-upgrade.bad
+	if [ -s /tmp/full-upgrade.bad ]; then
+		cat /tmp/full-upgrade.bad >&2
+		echo "rootfs: the image's first full upgrade would downgrade or remove packages" >&2; exit 1
+	fi
+	echo "   $(grep -c '^Inst ' /tmp/full-upgrade.sim) installs or upgrades, no downgrade, no removal"
 	apt_in clean
 fi
 echo "== $(date -u +%T) installed: $(inr dpkg-query -f '${binary:Package}\n' -W | wc -l) packages, $(du -sxh $R | cut -f1)"
