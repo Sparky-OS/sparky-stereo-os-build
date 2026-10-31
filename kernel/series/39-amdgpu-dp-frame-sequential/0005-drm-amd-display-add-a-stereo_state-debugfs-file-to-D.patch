@@ -1,0 +1,172 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 30 Oct 2026 06:59:10 -0300
+Subject: [PATCH] drm/amd/display: add a stereo_state debugfs file to
+ DisplayPort connectors
+
+Frame-sequential stereo on DisplayPort is set up across DM and DC, and
+the only outside sign of it is the picture: with a 2D monitor on the
+port, or none that reacts, nothing says whether the OTG alternates the
+eyes, whether the DIG takes the stereo sync that drives MSA MISC1 bits
+2:1, or whether the VSC SDP goes out.
+
+Add stereo_state next to the other DisplayPort connector files. It
+prints, for the connector's stream:
+- what DM gave DC: timing_3d_format, view_format, the plane's stereo
+  format and address type, and both eye addresses of a stereo surface;
+- the OTG: OTG_STEREO_CONTROL, OTG_STEREO_STATUS and
+  OTG_3D_STRUCTURE_CONTROL (read_otg_state), the frame count and the
+  current eye (is_stereo_left_eye), so that reading it a few times shows
+  the eye following the frame count;
+- the DIG front end (read_stereo_state): DIG_STEREOSYNC_SELECT and
+  DIG_STEREOSYNC_GATE_EN, DP_SEC_CNTL with the stream and GSP0 enables,
+  DP_MSA_MISC and, on DCN 1.x and 2.x, GSP0's header and data;
+- the VSC SDP DC built for GSP0: its header and DB0.
+
+The registers are read under dc_lock with idle optimizations held off,
+as the replay state file reads its registers. Register values are raw,
+with the fields of the ASIC's register headers.
+
+Example usage: cat /sys/kernel/debug/dri/0/DP-1/stereo_state
+
+Assisted-by: LLM
+---
+ .../amd/display/amdgpu_dm/amdgpu_dm_debugfs.c | 115 +++++++++++++++++-
+ 1 file changed, 114 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_debugfs.c b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_debugfs.c
+index 2a6b48e24..dc1fcb965 100644
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_debugfs.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_debugfs.c
+@@ -3158,6 +3158,118 @@ static const struct file_operations hdmi_automation_debugfs_fops = {
+ 	.llseek = default_llseek
+ };
+ 
++/*
++ * The frame-sequential stereo state of the connector's stream: what DM gave
++ * DC, the plane's two eye addresses, the OTG's stereo registers and current
++ * eye, the DIG front end's stereo sync, the generic packet enables, DP_MSA_MISC
++ * and GSP0 as the hardware reads them back, and the VSC SDP DC built for GSP0.
++ * Register values are raw; their fields are those of the ASIC's register
++ * headers.
++ *
++ * Example usage: cat /sys/kernel/debug/dri/0/DP-1/stereo_state
++ */
++static int dp_stereo_state_show(struct seq_file *m, void *unused)
++{
++	struct amdgpu_dm_connector *aconnector = m->private;
++	struct amdgpu_device *adev = drm_to_adev(aconnector->base.dev);
++	struct dc *dc = adev->dm.dc;
++	struct pipe_ctx *pipe_ctx = NULL;
++	const struct dc_plane_address *address;
++	const struct dc_info_packet *vsc;
++	struct enc_stereo_state enc_state = {0};
++	struct dcn_otg_state otg_state = {0};
++	struct stream_encoder *stream_enc;
++	struct timing_generator *tg;
++	bool reallow_idle = false;
++	int i;
++
++	mutex_lock(&adev->dm.dc_lock);
++
++	for (i = 0; i < MAX_PIPES; i++) {
++		struct pipe_ctx *pipe = &dc->current_state->res_ctx.pipe_ctx[i];
++
++		if (pipe->stream && pipe->stream->dm_stream_context == aconnector &&
++		    !pipe->top_pipe && !pipe->prev_odm_pipe) {
++			pipe_ctx = pipe;
++			break;
++		}
++	}
++
++	if (!pipe_ctx) {
++		seq_puts(m, "stream: none\n");
++		goto unlock;
++	}
++
++	seq_printf(m, "timing_3d_format: %d\n", pipe_ctx->stream->timing.timing_3d_format);
++	seq_printf(m, "view_format: %d\n", pipe_ctx->stream->view_format);
++
++	if (pipe_ctx->plane_state) {
++		address = &pipe_ctx->plane_state->address;
++		seq_printf(m, "plane_stereo_format: %d\n", pipe_ctx->plane_state->stereo_format);
++		seq_printf(m, "plane_address_type: %d\n", address->type);
++		if (address->type == PLN_ADDR_TYPE_GRPH_STEREO) {
++			seq_printf(m, "left_eye_address: 0x%llx\n",
++				   address->grph_stereo.left_addr.quad_part);
++			seq_printf(m, "right_eye_address: 0x%llx\n",
++				   address->grph_stereo.right_addr.quad_part);
++		}
++	}
++
++	if (dc->idle_optimizations_allowed) {
++		dc_allow_idle_optimizations(dc, false);
++		reallow_idle = true;
++	}
++
++	tg = pipe_ctx->stream_res.tg;
++	seq_printf(m, "otg_instance: %d\n", tg->inst);
++	if (tg->funcs->read_otg_state) {
++		tg->funcs->read_otg_state(tg, &otg_state);
++		seq_printf(m, "otg_stereo_control: 0x%08x\n", otg_state.otg_stereo_control);
++		seq_printf(m, "otg_stereo_status: 0x%08x\n", otg_state.otg_stereo_status);
++		seq_printf(m, "otg_3d_structure_control: 0x%08x\n",
++			   otg_state.otg_3d_structure_control);
++	}
++	if (tg->funcs->get_frame_count)
++		seq_printf(m, "otg_frame_count: %u\n", tg->funcs->get_frame_count(tg));
++	if (tg->funcs->is_stereo_left_eye)
++		seq_printf(m, "otg_current_eye: %s\n",
++			   tg->funcs->is_stereo_left_eye(tg) ? "left" : "right");
++
++	stream_enc = pipe_ctx->stream_res.stream_enc;
++	if (stream_enc && stream_enc->funcs->read_stereo_state) {
++		stream_enc->funcs->read_stereo_state(stream_enc, &enc_state);
++		seq_printf(m, "dig_stereosync_select: %u\n", enc_state.dig_stereosync_select);
++		seq_printf(m, "dig_stereosync_gate_en: %u\n", enc_state.dig_stereosync_gate_en);
++		seq_printf(m, "dp_sec_cntl: 0x%08x\n", enc_state.dp_sec_cntl);
++		seq_printf(m, "dp_sec_stream_enable: %u\n", enc_state.dp_sec_stream_enable);
++		seq_printf(m, "dp_sec_gsp0_enable: %u\n", enc_state.dp_sec_gsp0_enable);
++		seq_printf(m, "dp_msa_misc: 0x%08x\n", enc_state.dp_msa_misc);
++		if (enc_state.gsp0_read) {
++			seq_printf(m, "gsp0_header: 0x%08x\n", enc_state.gsp0_header);
++			seq_printf(m, "gsp0_data: %*ph\n",
++				   (int)sizeof(enc_state.gsp0_data), enc_state.gsp0_data);
++		} else {
++			seq_puts(m, "gsp0: not read (generic packets in the VPG)\n");
++		}
++	} else {
++		seq_puts(m, "stream_encoder: not read\n");
++	}
++
++	if (reallow_idle)
++		dc_allow_idle_optimizations(dc, true);
++
++	vsc = &pipe_ctx->stream_res.encoder_info_frame.vsc;
++	seq_printf(m, "vsc_sdp_built: %d\n", vsc->valid);
++	if (vsc->valid)
++		seq_printf(m, "vsc_sdp_header: %02x %02x %02x %02x\nvsc_sdp_db0: 0x%02x\n",
++			   vsc->hb0, vsc->hb1, vsc->hb2, vsc->hb3, vsc->sb[0]);
++
++unlock:
++	mutex_unlock(&adev->dm.dc_lock);
++	return 0;
++}
++DEFINE_SHOW_ATTRIBUTE(dp_stereo_state);
++
+ static const struct {
+ 	char *name;
+ 	const struct file_operations *fops;
+@@ -3182,7 +3294,8 @@ static const struct {
+ 		{"is_mst_connector", &dp_is_mst_connector_fops},
+ 		{"mst_progress_status", &dp_mst_progress_status_fops},
+ 		{"is_dpia_link", &is_dpia_link_fops},
+-		{"mst_link_settings", &dp_mst_link_settings_debugfs_fops}
++		{"mst_link_settings", &dp_mst_link_settings_debugfs_fops},
++		{"stereo_state", &dp_stereo_state_fops}
+ };
+ 
+ static const struct {
+-- 
+2.53.0
+

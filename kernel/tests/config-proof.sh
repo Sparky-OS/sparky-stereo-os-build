@@ -15,8 +15,8 @@ HERE=$(cd "$(dirname "$0")/.." && pwd)
 OUT=${1:-${SPARKY_SCRATCH:?}/linux-stereo3d-config-proof}
 [ $# -gt 0 ] && shift
 FLAVOURS=${*:-base v3 rt}
-TAG=${TAG:-v7.3}
-TAG_COMMIT=${TAG_COMMIT:-c03c1a14507dfaf8b856c2608f9ac216021fc222}
+TAG=${TAG:-v7.3.1}
+TAG_COMMIT=${TAG_COMMIT:-79a907609d53d5cd645b42c11550d295d43abf99}
 SERIES=${SERIES:-$HERE/series}
 IMAGE=${IMAGE:-sparky-kernel-build:1}
 docker image inspect "$IMAGE" >/dev/null 2>&1 || docker build --platform linux/amd64 -t "$IMAGE" "$HERE/docker"
@@ -28,7 +28,7 @@ docker run --rm --platform linux/amd64 --cpus "${CPUS:-2}" --memory "${MEM:-8g}"
     -e TAG="$TAG" -e TAG_COMMIT="$TAG_COMMIT" -e FLAVOURS="$FLAVOURS" -e HAVE_KERNEL_GIT="${KERNEL_GIT:+1}" \
     "$IMAGE" sh -eu -c '
 G=/kernel-git
-if [ -z "${HAVE_KERNEL_GIT:-}" ]; then git clone --quiet --depth 1 --branch "$TAG" https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git /tmp/linux-git; G=/tmp/linux-git; fi
+if [ -z "${HAVE_KERNEL_GIT:-}" ]; then git clone --quiet --depth 1 --branch "$TAG" https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git /tmp/linux-git; G=/tmp/linux-git; fi
 [ "$(git -C "$G" rev-parse "$TAG^{commit}")" = "$TAG_COMMIT" ] || { echo "tag $TAG is not $TAG_COMMIT"; exit 2; }
 mkdir -p /tmp/src && git -C "$G" archive --format=tar "$TAG" | tar -x -C /tmp/src
 cd /tmp/src

@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """Build one prepared Lean Code kernel source package unsigned, in a disposable container.
 
-    run-kernel-build.py FLAVOUR --counter N [--memory 16g]
+    run-kernel-build.py FLAVOUR --counter N [--memory 16g] [--floor-gb G] [--archive-config FILE]
 
 prepare-kernel-source.py has already written SPARKY_MIGRATION_WORK/kernel-sources/FLAVOUR. The packages stay unsigned
 (no SPARKY_SIGNING_KEY_DIR is mounted): the release coordinator signs the image afterwards (kernel/qualification/sign-kernel-image.py).
 Module signing uses Kbuild's own key, which exists only during the build. The tree of a finished build is pruned by
-the caller once its packages are retained.
+the caller once its packages are retained. The build stops when SPARKY_MIGRATION_WORK has less than --floor-gb free (default 12,
+the root file system's floor; a scratch disk takes its own).
+The Lean Code link gate (lean.debhelper, ORDER 198) runs inside the package build: it resolves the packages' runtime
+dependencies from the public archives of --archive-config (default sparky-os/lean/archive.example.json, Debian forky main)
+and starts their programs in bubblewrap, so the container has bubblewrap and unconfined seccomp, AppArmor and system paths.
+The gate also keeps 12 GiB free on the root file system, which inside the container is the host's.
 """
 from pathlib import Path
 import argparse
@@ -26,6 +31,8 @@ parser.add_argument('flavour', choices=['base', 'v3', 'rt'])
 parser.add_argument('--counter', required=True)
 parser.add_argument('--packaging-revision')
 parser.add_argument('--memory', default='16g')
+parser.add_argument('--floor-gb', type=float, default=12)
+parser.add_argument('--archive-config', type=Path)
 args = parser.parse_args()
 base = cfg.path('SPARKY_MIGRATION_WORK')
 kit = cfg.TREE
@@ -63,15 +70,19 @@ for row in fields['checksums-sha256'].splitlines():
         assert hashlib.file_digest(stream, 'sha256').hexdigest() == expected_sha
     (work / filename).hardlink_to(archive)
 shutil.move(source, work / 'source')
+shutil.copy2(args.archive_config or kit / 'sparky-os/lean/archive.example.json', work / 'archives.json')
 recipe = '''#!/bin/bash
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=4
 apt-get -y update
 apt-get -y --no-install-recommends build-dep /work/source
+apt-get -y --no-install-recommends install bubblewrap
 useradd --create-home --uid 1000 builder
+mkdir -p /work/lc-scratch
 chown -R builder:builder /work
 cd /work/source
-runuser -u builder -- dpkg-buildpackage -us -uc -b -j4
+runuser -u builder -- env SPARKY_LC_ARCHIVE_CONFIG=/work/archives.json SPARKY_LC_SCRATCH=/work/lc-scratch \
+    dpkg-buildpackage -us -uc -b -j4
 cp .sparky-lc/source.json /work/native-source.json
 tar -cJf /work/native-authored-evidence.tar.xz .sparky-lc
 PYTHONPATH=/toolkit python3 -m lean.release check-debs /work/*+lc1_*.deb
@@ -84,7 +95,9 @@ status = dict(source=name, version=version, architecture='amd64', state='queued'
 (work / 'status.json').write_text(json.dumps(status, indent=2) + '\n')
 container = 'sparky-lc-kernel-' + flavour
 command = ['docker', 'run', '--rm', '--platform', 'linux/amd64', '--name', container,
-           '--cpus', '4', '--memory', args.memory, '-v', str(work) + ':/work',
+           '--cpus', '4', '--memory', args.memory, '--security-opt', 'seccomp=unconfined',
+           '--security-opt', 'apparmor=unconfined', '--security-opt', 'systempaths=unconfined',
+           '-v', str(work) + ':/work',
            '-v', str(kit / 'sparky-os') + ':/toolkit:ro',
            'sparky-lc-migration:20261020', 'bash', '/work/run.sh']
 with (work / 'build.log').open('w') as log:
@@ -93,7 +106,7 @@ with (work / 'build.log').open('w') as log:
     (work / 'status.json').write_text(json.dumps(status, indent=2) + '\n')
     start, stopped = time.time(), False
     while process.poll() is None:
-        if shutil.disk_usage(base).free < 12 * 1024**3:
+        if shutil.disk_usage(base).free < args.floor_gb * 1024**3:
             subprocess.run(['docker', 'stop', '-t', '20', container], check=False)
             stopped = True
             break

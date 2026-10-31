@@ -15,7 +15,7 @@ echo "== tools: $(gcc --version | head -1) | $(rustc --version) | $(bindgen --ve
 echo "== source: $TAG"
 if [ -n "${HAVE_KERNEL_GIT:-}" ]; then G=/kernel-git
 else
-    git clone --quiet --depth 1 --branch "$TAG" https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git /work/linux-git
+    git clone --quiet --depth 1 --branch "$TAG" https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git /work/linux-git
     G=/work/linux-git
 fi
 got=$(git -C "$G" rev-parse "$TAG^{commit}")
@@ -94,7 +94,8 @@ m=$(dpkg-deb -c "$I" | awk '{print $6}' | grep '\.ko\.xz$' | head -1)
 dpkg-deb --fsys-tarfile "$I" | tar -xO "$m" | xz -dc | tail -c 28 | grep -q '~Module signature appended~' || fail "module $m is not signed"
 dpkg-deb -c "$H" | grep -q "usr/src/linux-headers-$RELEASE/Module.symvers" || fail "no Module.symvers in the headers"
 dpkg-deb -c "$H" | grep -q "usr/src/linux-headers-$RELEASE/vmlinux" || fail "no vmlinux in the headers"
-dpkg-deb --ctrl-tarfile "$H" | tar -xO ./postinst | grep -q 'header_postinst.d' || fail "the headers package does not run the header_postinst.d hooks"
+# Debian's headers postinst since build 11 (headers-postinst.sh): linux-base's linux-run-hooks runs /etc/kernel/header_postinst.d
+dpkg-deb --ctrl-tarfile "$H" | tar -xO ./postinst | grep -q '^linux-run-hooks headers postinst ' || fail "the headers package does not run the header_postinst.d hooks"
 
 # the key that signed the modules must not outlive the build
 for k in certs/signing_key.pem certs/signing_key.x509 certs/x509.genkey; do [ -f "$k" ] && shred -u "$k" 2>/dev/null || true; done

@@ -1,0 +1,326 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 30 Oct 2026 06:55:10 -0300
+Subject: [PATCH] drm/amd/display: scan out frame-sequential stereo one eye per
+ frame
+
+A frame-sequential mode (DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL) is sent with
+its 2D timing, one eye per frame, the left eye first, each frame named to
+the sink: on DisplayPort in MSA MISC1 bits 2:1 ("01: The next (upcoming)
+video frame is RIGHT eye", "11: The next (upcoming) frame is LEFT eye",
+DP 1.1a, as VESA's DP 1.2 overview quotes it, slide 25) and in the VSC
+SDP's stereo interface byte (DP 1.2). Its framebuffer holds both eyes
+side by side, left eye first, and the plane covers it whole.
+
+DC has every piece of this and amdgpu_dm reaches none of them: the OTG
+alternates the eyes when the stream's view is frame sequential
+(dcn10_setup_stereo(), optc1_enable_stereo()), the DIG front end drives
+MISC1 bits 2:1 from the OTG's stereo sync whenever the timing is stereo
+(setup_dio_stream_attribute(), enc1_setup_stereo_sync()),
+mod_build_vsc_infopacket() writes DB0 = 0x01, "L + R view indication
+based on MISC1 bit 2:1", for TIMING_3D_FORMAT_INBAND_FA, and the HUBP
+fetches a stereo surface's left eye from the primary address and its
+right eye from the secondary one, taking new addresses at the stereo
+sync (hubp*_program_surface_flip_and_addr()).
+
+So, for a frame-sequential mode on a DisplayPort stream:
+- the stream gets TIMING_3D_FORMAT_INBAND_FA and
+  VIEW_3D_FORMAT_FRAME_SEQUENTIAL, and keeps the mode's 2D link timing;
+  a freesync video timing does not replace such a mode, as it would drop
+  its stereo flag with the rest of the mode;
+- the plane becomes PLN_ADDR_TYPE_GRPH_STEREO with
+  PLANE_STEREO_FORMAT_FRAME_ALTERNATE: the left eye at the framebuffer's
+  address, the right eye one eye's width further, both with the left
+  half's rectangle, on the full update path (fill_dc_plane_attributes())
+  and on the flip path (amdgpu_dm_commit_planes()) alike;
+- amdgpu_dm_plane_atomic_check() states what that needs: only the primary
+  plane on the CRTC (a cursor or overlay plane would show in both eyes),
+  covering the whole frame unscaled and unrotated, from a linear
+  single-plane RGB framebuffer whose right half starts on a 256-byte
+  boundary (the offset alignment amdgpu_display_verify_plane() asks of
+  every linear plane), and no asynchronous flip.
+
+Linear only, because the secondary address shares the primary's pitch,
+viewport and swizzle: a byte offset of one eye's width moves a linear
+surface by exactly that many pixels, not a tiled or compressed one.
+Userspace that needs tiling gets -EINVAL from a TEST_ONLY commit and
+can try linear.
+
+Nothing changes yet: the DRM core refuses frame-sequential modes on
+connectors that did not opt in, and no amdgpu connector does until the
+next patch. 2D modes and the HDMI 3D layouts build the same stream and
+plane as before.
+
+Assisted-by: LLM
+---
+ .../gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c |  10 ++
+ .../display/amdgpu_dm/amdgpu_dm_connector.c   |  17 +++
+ .../amd/display/amdgpu_dm/amdgpu_dm_plane.c   | 144 ++++++++++++++++++
+ .../amd/display/amdgpu_dm/amdgpu_dm_plane.h   |  11 ++
+ 4 files changed, 182 insertions(+)
+
+diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
+index 4b645e112..d0a5b959e 100644
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
+@@ -3072,6 +3072,8 @@ static int fill_dc_plane_attributes(struct amdgpu_device *adev,
+ 	if (ret)
+ 		return ret;
+ 
++	amdgpu_dm_plane_fill_frame_sequential_scaling(dm_crtc_state->stream, &scaling_info);
++
+ 	dc_plane_state->src_rect = scaling_info.src_rect;
+ 	dc_plane_state->dst_rect = scaling_info.dst_rect;
+ 	dc_plane_state->clip_rect = scaling_info.clip_rect;
+@@ -3084,6 +3086,9 @@ static int fill_dc_plane_attributes(struct amdgpu_device *adev,
+ 	if (ret)
+ 		return ret;
+ 
++	amdgpu_dm_plane_fill_frame_sequential_address(dm_crtc_state->stream, plane_state->fb,
++						      &plane_info, &dc_plane_state->address);
++
+ 	dc_plane_state->format = plane_info.format;
+ 	dc_plane_state->color_space = plane_info.color_space;
+ 	dc_plane_state->format = plane_info.format;
+@@ -3907,6 +3912,8 @@ static void amdgpu_dm_commit_planes(struct drm_atomic_commit *state,
+ 
+ 		amdgpu_dm_plane_fill_dc_scaling_info(dm->adev, new_plane_state,
+ 				     &bundle->scaling_infos[planes_count]);
++		amdgpu_dm_plane_fill_frame_sequential_scaling(acrtc_state->stream,
++							      &bundle->scaling_infos[planes_count]);
+ 
+ 		bundle->surface_updates[planes_count].scaling_info =
+ 			&bundle->scaling_infos[planes_count];
+@@ -3925,6 +3932,9 @@ static void amdgpu_dm_commit_planes(struct drm_atomic_commit *state,
+ 			&bundle->plane_infos[planes_count],
+ 			&bundle->flip_addrs[planes_count].address,
+ 			afb->tmz_surface);
++		amdgpu_dm_plane_fill_frame_sequential_address(
++			acrtc_state->stream, fb, &bundle->plane_infos[planes_count],
++			&bundle->flip_addrs[planes_count].address);
+ 
+ 		drm_dbg_state(state->dev, "plane: id=%d dcc_en=%d\n",
+ 				 new_plane_state->plane->index,
+diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.c b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.c
+index ad2d45272..0d35cdd7a 100644
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.c
+@@ -970,6 +970,21 @@ STATIC_IFN_KUNIT void fill_stream_properties_from_drm_display_mode(
+ 		}
+ 	}
+ 
++	/*
++	 * DisplayPort's own stereo: the eyes in turn, one per frame of the 2D
++	 * timing, each frame named to the sink in MSA MISC1 bits 2:1 (DP 1.1a),
++	 * which the DIG drives from the OTG's stereo sync once the timing is
++	 * stereo (setup_dio_stream_attribute()), and in the VSC SDP (DP 1.2),
++	 * whose stereo byte mod_build_vsc_infopacket() sets to 0x01, "L + R view
++	 * indication based on MISC1 bit 2:1". dcn10_setup_stereo() alternates
++	 * the eyes for a frame-sequential view. The link timing stays 2D.
++	 */
++	if (drm_mode_is_frame_sequential(mode_in) &&
++	    stream->signal == SIGNAL_TYPE_DISPLAY_PORT) {
++		timing_out->timing_3d_format = TIMING_3D_FORMAT_INBAND_FA;
++		stream->view_format = VIEW_3D_FORMAT_FRAME_SEQUENTIAL;
++	}
++
+ 	if (aconnector && amdgpu_dm_is_freesync_video_mode(mode_in, aconnector)) {
+ 		timing_out->h_addressable = mode_in->hdisplay;
+ 		timing_out->h_total = mode_in->htotal;
+@@ -1568,7 +1583,9 @@ create_stream_for_sink(struct drm_connector *connector,
+ 		 */
+ 		drm_dbg_driver(dev, "No preferred mode found\n");
+ 	} else if (aconnector) {
++		/* the freesync video timing would replace the mode, stereo flag included */
+ 		recalculate_timing = amdgpu_freesync_vid_mode &&
++				 !drm_mode_is_frame_sequential(&mode) &&
+ 				 amdgpu_dm_is_freesync_video_mode(&mode, aconnector);
+ 		if (recalculate_timing) {
+ 			freesync_mode = amdgpu_dm_get_highest_refresh_rate_mode(aconnector, false);
+diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_plane.c b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_plane.c
+index a2b8f7033..78c238ea1 100644
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_plane.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_plane.c
+@@ -1506,6 +1506,140 @@ int amdgpu_dm_plane_fill_dc_scaling_info(struct amdgpu_device *adev,
+ }
+ EXPORT_IF_KUNIT(amdgpu_dm_plane_fill_dc_scaling_info);
+ 
++/**
++ * amdgpu_dm_plane_check_frame_sequential - check a plane on a frame-sequential CRTC
++ * @state: the new plane state
++ * @crtc_state: the new state of its CRTC
++ *
++ * A frame-sequential mode (DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL) scans out one
++ * frame holding both eyes side by side, the left eye in the left half
++ * (drm_mode_get_hv_timing() gives its size), one eye per frame of the mode. DC
++ * fetches the left eye from the primary surface address and the right eye
++ * from the secondary one, with one pitch, viewport and tiling for both
++ * (PLN_ADDR_TYPE_GRPH_STEREO), and swaps them at the OTG's stereo sync. So, on
++ * such a CRTC:
++ *
++ * - only the primary plane is on, and it covers the whole frame, unscaled,
++ *   unrotated and unreflected: a cursor or overlay plane would show in both
++ *   eyes whichever half it was placed in;
++ * - its framebuffer is linear single-plane RGB: the right eye is the left
++ *   eye moved by one eye's width, a plain byte offset in a linear surface
++ *   but not across the blocks of a tiled or compressed one;
++ * - that offset is a multiple of 256 bytes, the alignment
++ *   amdgpu_display_verify_plane() requires of every linear plane offset;
++ * - flips are not asynchronous, so a new frame starts with its left eye.
++ *
++ * Return: 0 if the plane can be shown, -EINVAL if not.
++ */
++int amdgpu_dm_plane_check_frame_sequential(const struct drm_plane_state *state,
++					   const struct drm_crtc_state *crtc_state)
++{
++	const struct drm_framebuffer *fb = state->fb;
++	const struct drm_display_mode *mode = &crtc_state->mode;
++	struct drm_plane *plane = state->plane;
++	int width, height;
++
++	if (!fb || !crtc_state->enable || !drm_mode_is_frame_sequential(mode))
++		return 0;
++
++	if (plane->type != DRM_PLANE_TYPE_PRIMARY) {
++		drm_dbg_atomic(plane->dev,
++			       "[PLANE:%d:%s] only the primary plane can show frame-sequential stereo\n",
++			       plane->base.id, plane->name);
++		return -EINVAL;
++	}
++
++	drm_mode_get_hv_timing(mode, &width, &height);
++
++	if (state->crtc_x || state->crtc_y ||
++	    state->crtc_w != width || state->crtc_h != height ||
++	    state->src_x || state->src_y ||
++	    state->src_w != (width << 16) || state->src_h != (height << 16) ||
++	    state->rotation != DRM_MODE_ROTATE_0) {
++		drm_dbg_atomic(plane->dev,
++			       "[PLANE:%d:%s] a frame-sequential plane covers the %dx%d frame, unscaled and unrotated\n",
++			       plane->base.id, plane->name, width, height);
++		return -EINVAL;
++	}
++
++	if (fb->modifier != DRM_FORMAT_MOD_LINEAR ||
++	    fb->format->num_planes != 1 || fb->format->is_yuv ||
++	    (mode->hdisplay * fb->format->cpp[0]) % 256) {
++		drm_dbg_atomic(plane->dev,
++			       "[PLANE:%d:%s] the right eye of %p4cc 0x%llx is not a 256-byte offset in a linear RGB surface\n",
++			       plane->base.id, plane->name, &fb->format->format, fb->modifier);
++		return -EINVAL;
++	}
++
++	if (crtc_state->async_flip) {
++		drm_dbg_atomic(plane->dev,
++			       "[PLANE:%d:%s] frame-sequential stereo flips at the start of a left-eye frame only\n",
++			       plane->base.id, plane->name);
++		return -EINVAL;
++	}
++
++	return 0;
++}
++EXPORT_IF_KUNIT(amdgpu_dm_plane_check_frame_sequential);
++
++/**
++ * amdgpu_dm_plane_fill_frame_sequential_scaling - one eye of the frame
++ * @stream: the plane's stream
++ * @scaling_info: the plane's rectangles, filled for the whole frame
++ *
++ * On a frame-sequential stream DC scans out one eye per frame: the plane's
++ * source and destination become the left half of the frame, the left eye,
++ * and the secondary surface address gives the right eye the same rectangle.
++ */
++void amdgpu_dm_plane_fill_frame_sequential_scaling(const struct dc_stream_state *stream,
++						   struct dc_scaling_info *scaling_info)
++{
++	if (!stream || stream->view_format != VIEW_3D_FORMAT_FRAME_SEQUENTIAL)
++		return;
++
++	scaling_info->src_rect.width /= 2;
++	scaling_info->dst_rect.width /= 2;
++	scaling_info->clip_rect = scaling_info->dst_rect;
++}
++EXPORT_IF_KUNIT(amdgpu_dm_plane_fill_frame_sequential_scaling);
++
++/**
++ * amdgpu_dm_plane_fill_frame_sequential_address - both eyes of the frame
++ * @stream: the plane's stream
++ * @fb: the plane's framebuffer
++ * @plane_info: the plane's DC description
++ * @address: the plane's address, filled for a graphics surface
++ *
++ * On a frame-sequential stream the plane becomes a stereo surface: the left
++ * eye at the framebuffer's address, the right eye one eye's width further, as
++ * amdgpu_dm_plane_check_frame_sequential() requires the framebuffer to allow;
++ * DC alternates them frame by frame (PLANE_STEREO_FORMAT_FRAME_ALTERNATE).
++ */
++void amdgpu_dm_plane_fill_frame_sequential_address(const struct dc_stream_state *stream,
++						   const struct drm_framebuffer *fb,
++						   struct dc_plane_info *plane_info,
++						   struct dc_plane_address *address)
++{
++	PHYSICAL_ADDRESS_LOC left;
++	u64 eye_offset;
++
++	if (!stream || stream->view_format != VIEW_3D_FORMAT_FRAME_SEQUENTIAL ||
++	    address->type != PLN_ADDR_TYPE_GRAPHICS)
++		return;
++
++	left = address->grph.addr;
++	eye_offset = (u64)stream->src.width * fb->format->cpp[0];
++
++	memset(&address->grph_stereo, 0, sizeof(address->grph_stereo));
++	address->type = PLN_ADDR_TYPE_GRPH_STEREO;
++	address->grph_stereo.left_addr = left;
++	address->grph_stereo.right_addr.quad_part = left.quad_part + eye_offset;
++
++	plane_info->stereo_format = PLANE_STEREO_FORMAT_FRAME_ALTERNATE;
++	plane_info->plane_size.surface_size.width = stream->src.width;
++}
++EXPORT_IF_KUNIT(amdgpu_dm_plane_fill_frame_sequential_address);
++
+ STATIC_IFN_KUNIT int amdgpu_dm_plane_atomic_check(struct drm_plane *plane,
+ 						  struct drm_atomic_commit *state)
+ {
+@@ -1522,6 +1656,16 @@ STATIC_IFN_KUNIT int amdgpu_dm_plane_atomic_check(struct drm_plane *plane,
+ 
+ 	dm_plane_state = to_dm_plane_state(new_plane_state);
+ 
++	if (new_plane_state->crtc) {
++		new_crtc_state = drm_atomic_get_new_crtc_state(state, new_plane_state->crtc);
++		if (new_crtc_state) {
++			ret = amdgpu_dm_plane_check_frame_sequential(new_plane_state,
++								     new_crtc_state);
++			if (ret)
++				return ret;
++		}
++	}
++
+ 	if (!dm_plane_state->dc_state)
+ 		return 0;
+ 
+diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_plane.h b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_plane.h
+index 092ade738..cb36f1954 100644
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_plane.h
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_plane.h
+@@ -44,6 +44,17 @@ int amdgpu_dm_plane_fill_dc_scaling_info(struct amdgpu_device *adev,
+ int amdgpu_dm_plane_helper_check_state(struct drm_plane_state *state,
+ 				struct drm_crtc_state *new_crtc_state);
+ 
++int amdgpu_dm_plane_check_frame_sequential(const struct drm_plane_state *state,
++					   const struct drm_crtc_state *crtc_state);
++
++void amdgpu_dm_plane_fill_frame_sequential_scaling(const struct dc_stream_state *stream,
++						   struct dc_scaling_info *scaling_info);
++
++void amdgpu_dm_plane_fill_frame_sequential_address(const struct dc_stream_state *stream,
++						   const struct drm_framebuffer *fb,
++						   struct dc_plane_info *plane_info,
++						   struct dc_plane_address *address);
++
+ int amdgpu_dm_plane_fill_plane_buffer_attributes(struct amdgpu_device *adev,
+ 				 const struct amdgpu_framebuffer *afb,
+ 				 const enum surface_pixel_format format,
+-- 
+2.53.0
+

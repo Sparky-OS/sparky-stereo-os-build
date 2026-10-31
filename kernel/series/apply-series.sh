@@ -1,7 +1,7 @@
 #!/bin/sh
 # apply-series.sh SOURCE_DIR [FLAVOUR]
 #
-# Applies the patch series of this directory to an unpacked vanilla kernel tree (v7.3), in the
+# Applies the patch series of this directory to an unpacked vanilla kernel tree (v7.3.1), in the
 # order of series.txt, then series-FLAVOUR.txt if FLAVOUR is given (v3 adds one patch, rt adds none; every flavour has a list).
 # Works on a plain tree (no .git needed): every file is applied with `git apply`, which is atomic per file.
 #
