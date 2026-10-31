@@ -204,10 +204,30 @@ def load(marker, raw, package, version, arch):
     return obj
 
 
+def dpkg_records(P):
+    """dpkg's package records as dpkg reads them: the status file, then each entry of its journal
+    (/var/lib/dpkg/updates: names of digits, in sorted order). dpkg folds the journal into the status file
+    only at a checkpoint, so inside a dpkg run the status file alone is out of date (ORDER 315)."""
+    texts = [Path(P.real('/var/lib/dpkg/status')).read_text()]
+    updates = Path(P.real('/var/lib/dpkg/updates'))
+    if updates.is_dir():
+        for n in sorted(os.listdir(updates)):
+            if n.isascii() and n.isdigit():
+                try:
+                    texts.append((updates / n).read_text())
+                except FileNotFoundError:      # a dpkg checkpoint removed it meanwhile (another dpkg run)
+                    pass
+    rows = {}
+    for text in texts:
+        for row in stanzas(text):
+            rows[(row.get('package'), row.get('architecture'))] = row
+    return list(rows.values())
+
+
 def installed(P, names=None):
     """Only read markers in dpkg's installed control records; never trust a loose JSON file."""
     out = {}
-    for row in stanzas(Path(P.real('/var/lib/dpkg/status')).read_text()):
+    for row in dpkg_records(P):
         if row.get('status') != 'install ok installed' or FIELD.lower() not in row:
             continue
         p, v, a = identity(row)

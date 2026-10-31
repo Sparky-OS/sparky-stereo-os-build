@@ -218,53 +218,81 @@ def write_table(path, cols, rows):
     os.replace(tmp, path)
 
 
-def dpkg_packages(P):
-    """{package: (version, arch-qualified info name)} from dpkg's status file."""
+DB_FIELDS = ('Package', 'Version', 'Architecture', 'Status', 'Multi-Arch')
+
+
+def _db_stanzas(f):
+    """The fields dpkg-stereo reads from each stanza of a dpkg database file, Conffiles as {path: hash}."""
+    rec, conf = {}, None
+    for line in f:
+        if line == '\n':
+            if rec:
+                yield rec
+            rec, conf = {}, None
+            continue
+        if line[0] in ' \t':
+            if conf is not None:
+                parts = line.split()
+                if len(parts) >= 2:
+                    conf[parts[0]] = parts[1]
+            continue
+        conf = None
+        key, _, value = line.partition(':')
+        if key in DB_FIELDS:
+            rec[key] = value.strip()
+        elif key == 'Conffiles':
+            conf = rec['Conffiles'] = {}
+    if rec:
+        yield rec
+
+
+def dpkg_db(P):
+    """dpkg's database as dpkg itself reads it: the status file, then every entry of its journal,
+    /var/lib/dpkg/updates, in order. dpkg writes each change to the journal first and folds the journal into
+    the status file only at a checkpoint, so inside a dpkg run (in a maintainer script) the status file alone
+    is out of date: on a first install, dpkg-stereo's postinst found packages configured earlier in the same
+    run still "unpacked" there (ORDER 315). {(package, architecture): fields}."""
+    db = {}
+    names = [P.real('/var/lib/dpkg/status')]
+    updates = P.real('/var/lib/dpkg/updates')
+    try:
+        # dpkg reads only the names made of digits, all of one length, in sorted order (lib/dpkg/dbmodify.c)
+        names += [os.path.join(updates, n) for n in sorted(os.listdir(updates)) if n.isascii() and n.isdigit()]
+    except FileNotFoundError:
+        pass
+    for name in names:
+        try:
+            with open(name, encoding='utf-8', errors='surrogateescape') as f:
+                for rec in _db_stanzas(f):
+                    if 'Package' in rec:
+                        db[(rec['Package'], rec.get('Architecture', ''))] = rec
+        except FileNotFoundError:
+            pass
+    return db
+
+
+def dpkg_packages(P, db=None):
+    """{package: (version, arch-qualified info name)} of the installed packages, from dpkg's database."""
     out = {}
     try:
         lists = set(os.listdir(P.real('/var/lib/dpkg/info')))
     except FileNotFoundError:
         lists = set()
-    pkg = ver = arch = status = None
-    multi = None
-    with open(P.real('/var/lib/dpkg/status'), encoding='utf-8', errors='surrogateescape') as f:
-        for line in f.read().split('\n') + ['']:
-            if not line:
-                if pkg and status and status.endswith(' installed'):
-                    name = pkg
-                    if multi == 'same' or f'{pkg}:{arch}.list' in lists:
-                        name = f'{pkg}:{arch}'
-                    out[pkg if name == pkg else name] = (ver, name)
-                pkg = ver = arch = status = multi = None
-                continue
-            if line.startswith('Package: '):
-                pkg = line[9:]
-            elif line.startswith('Version: '):
-                ver = line[9:]
-            elif line.startswith('Architecture: '):
-                arch = line[14:]
-            elif line.startswith('Status: '):
-                status = line[8:]
-            elif line.startswith('Multi-Arch: '):
-                multi = line[12:]
+    for (pkg, arch), rec in (dpkg_db(P) if db is None else db).items():
+        if not rec.get('Status', '').endswith(' installed'):
+            continue
+        name = pkg
+        if rec.get('Multi-Arch') == 'same' or f'{pkg}:{arch}.list' in lists:
+            name = f'{pkg}:{arch}'
+        out[name] = (rec.get('Version'), name)
     return out
 
 
-def conffiles(P):
-    """{path: md5} of every installed conffile (dpkg's status, Conffiles field)."""
+def conffiles(P, db=None):
+    """{path: md5} of every conffile dpkg's database records (the Conffiles field)."""
     out = {}
-    cur = False
-    with open(P.real('/var/lib/dpkg/status'), encoding='utf-8', errors='surrogateescape') as f:
-        for line in f:
-            if line.startswith('Conffiles:'):
-                cur = True
-                continue
-            if cur and line.startswith(' '):
-                parts = line.split()
-                if len(parts) >= 2:
-                    out[parts[0]] = parts[1]
-                continue
-            cur = False
+    for rec in (dpkg_db(P) if db is None else db).values():
+        out.update(rec.get('Conffiles', ()))
     return out
 
 
@@ -408,10 +436,14 @@ class _NoPool:
         return False
 
 
-def project_packages(P, names, jobs, image=False, log=print, only=None, known=None, repair=True):
+def project_packages(P, names, jobs, image=False, log=print, only=None, known=None, repair=True, record=True):
+    """Project the installed files of these packages (every installed package without names). With `only`,
+    just those paths. `record=False` leaves packages.tsv as it is: a migration inside a dpkg run must not mark
+    the packages that run changed as seen, or post-invoke would never project them."""
+    db = dpkg_db(P)
     if repair:
         repair_consumers(P, jobs)
-    pkgs = dpkg_packages(P)
+    pkgs = dpkg_packages(P, db)
     if names:
         sel = {}
         for n in names:
@@ -420,7 +452,7 @@ def project_packages(P, names, jobs, image=False, log=print, only=None, known=No
                     sel[k] = v
         pkgs = sel
     held = set(read_hold(P))
-    conf = conffiles(P)
+    conf = conffiles(P, db)
     div = diversions(P)
     files = Records(P, 'records', pkgs.keys() if names else None)
     left = Records(P, 'left', pkgs.keys() if names else None)
@@ -505,7 +537,8 @@ def project_packages(P, names, jobs, image=False, log=print, only=None, known=No
             os.unlink(P.state('hr-fetched'))
         except FileNotFoundError:
             pass
-    write_packages(P)
+    if record:
+        write_packages(P)
     with open(P.state('identity'), 'w') as f:
         f.write(project.IDENTITY + '\n')
     log(f'dpkg-stereo: {done} files projected ({same} of them already checked in these bytes), {skipped} left '
@@ -642,9 +675,11 @@ def post_invoke(P, jobs):
     for path in [p for p, r in files.items() if r['package'] in ch]:
         rec = files[path]
         known[path] = (rec['sha_orig'], rec['sha_lean'])
-        if rec['package'] in same_version:
+        if rec['package'] in same_version or rec['version'] == pkgs[rec['package']][0]:
             # dpkg rewrote the package's file list (a reinstall), or the list only looks different (an
-            # image unpacked elsewhere): the files themselves say which of them dpkg replaced
+            # image unpacked elsewhere), or this record was made from the installed version after dpkg
+            # installed it (a migration earlier in this hook, which leaves packages.tsv as it was): the files
+            # themselves say which of them dpkg replaced
             try:
                 with open(P.real(path), 'rb') as f:
                     cur = sha256(f.read())
@@ -652,8 +687,8 @@ def post_invoke(P, jobs):
                 cur = None
             if cur == rec['sha_lean']:
                 continue
-            if cur == rec['sha_orig']:
-                again.add(path)
+            if cur == rec['sha_orig'] and rec['package'] in same_version:
+                again.add(path)      # (a package whose version changed is projected whole below)
         del files[path]
         dirty = True
     for path in restored:
@@ -795,8 +830,9 @@ def verify(P, names, deep=False):
     With --deep, every other file's original is taken from its .deb (APT's cache) and checked against
     dpkg's md5sums and rendered again."""
     files = Records(P, 'records')
-    conf = conffiles(P)
-    pkgs = dpkg_packages(P)
+    db = dpkg_db(P)
+    conf = conffiles(P, db)
+    pkgs = dpkg_packages(P, db)
     bad = back = 0
     built_count = 0
     for name, obj in lc_package.installed(P, names or None).items():
@@ -986,7 +1022,7 @@ def migrate_c_line_breaks(P, jobs=4):
         stuck = {path: {'path': path, 'sha_lean': kept[path]['sha_lean']} for path in old if path in kept}
         if again:
             project_packages(P, sorted({old[path]['package'] for path in again}), jobs, log=lambda m: None,
-                             only=again, repair=False)
+                             only=again, repair=False, record=False)
     os.makedirs(P.state(), exist_ok=True)
     if stuck:
         write_table(pending_file, ('path', 'sha_lean'), stuck)

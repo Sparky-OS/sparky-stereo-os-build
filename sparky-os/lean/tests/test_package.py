@@ -440,6 +440,94 @@ class Packages(unittest.TestCase):
             self.assertEqual(client.resolve(P, f'{self.C_PATH}:3:1'), 0)
         self.assertEqual(output.getvalue().split()[0], f'/usr/share/doc/lc-demo/hr{self.C_PATH}:3:1')
 
+    def test_migration_inside_post_invoke_still_projects_what_the_run_changed(self):
+        """The migration's own projection must not mark the packages this dpkg run changed as seen
+        (0.1.17 wrote every package's version to packages.tsv there, so post-invoke skipped them)."""
+        root, P, raw, _ = self.old_c_header()
+
+        def other(version):
+            tree = self.base / f'lc-other-{version}'
+            (tree / 'DEBIAN').mkdir(parents=True)
+            (tree / 'DEBIAN/control').write_text(f'Package: lc-other\nVersion: {version}\nArchitecture: all\n'
+                                                 'Maintainer: Example <dev@example.org>\nDescription: Test package\n')
+            (tree / 'usr/bin').mkdir(parents=True)
+            (tree / 'usr/bin/lc-other').write_text(SCRIPT.replace('hello', 'other ' + version))
+            (tree / 'usr/bin/lc-other').chmod(0o755)
+            deb = self.base / f'lc-other_{version}_all.deb'
+            subprocess.run(['dpkg-deb', '--root-owner-group', '-b', str(tree), str(deb)], check=True, stdout=subprocess.DEVNULL)
+            return deb
+        self.dpkg(root, '-i', str(other('1')))
+        client.write_packages(P)
+        cache = root / 'var/cache/apt/archives'
+        cache.mkdir(parents=True)
+        shutil.copy2(raw, cache)
+        self.dpkg(root, '-i', str(other('2')))
+        with contextlib.redirect_stdout(io.StringIO()):
+            client.post_invoke(P, 1)
+        records = client.Records(P)
+        self.assertEqual((root / self.C_PATH[1:]).read_bytes(), self.new_form())
+        self.assertEqual(records[self.C_PATH]['version'], '0')
+        self.assertEqual({r['version'] for r in records.values() if r['package'] == 'lc-other'}, {'2'})
+        self.assertTrue(any(r['package'] == 'lc-other' for r in records.values()))
+
+    def test_dpkg_database_includes_its_journal(self):
+        """Inside a dpkg run the status file is out of date until dpkg's checkpoint; a maintainer script
+        sees the journal too (ORDER 315: the first install's projection missed packages configured earlier)."""
+        root, P = self.system()
+        probe = self.base / 'probe.py'
+        probe.write_text('import importlib.machinery, importlib.util, sys\n'
+                         'l = importlib.machinery.SourceFileLoader("d", sys.argv[1])\n'
+                         's = importlib.util.spec_from_loader(l.name, l)\nm = importlib.util.module_from_spec(s)\n'
+                         'l.exec_module(m)\nP = m.Paths(sys.argv[2])\n'
+                         'print(" ".join(sorted(m.dpkg_packages(P))))\n'
+                         'print(m.conffiles(P).get("/etc/lc-early.conf"))\n')
+        seen = self.base / 'seen.txt'
+        early = self.base / 'early'
+        (early / 'DEBIAN').mkdir(parents=True)
+        (early / 'etc').mkdir()
+        (early / 'etc/lc-early.conf').write_text('# a setting\nkey=1\n')
+        (early / 'DEBIAN/conffiles').write_text('/etc/lc-early.conf\n')
+        (early / 'DEBIAN/control').write_text('Package: lc-early\nVersion: 1\nArchitecture: all\n'
+                                              'Maintainer: Example <dev@example.org>\nDescription: configured first\n')
+        late = self.base / 'late'
+        (late / 'DEBIAN').mkdir(parents=True)
+        (late / 'DEBIAN/control').write_text('Package: lc-late\nVersion: 1\nArchitecture: all\nDepends: lc-early\n'
+                                             'Maintainer: Example <dev@example.org>\nDescription: configured second\n')
+        (late / 'DEBIAN/postinst').write_text(f'#!/bin/sh\n[ "$1" = configure ] || exit 0\n'
+                                              f'ls "$DPKG_ROOT/var/lib/dpkg/updates" | grep -c "^[0-9]" > {seen}.journal\n'
+                                              f'{sys.executable} {probe} {BIN} "$DPKG_ROOT" > {seen}\n')
+        (late / 'DEBIAN/postinst').chmod(0o755)
+        debs = []
+        for tree in (early, late):
+            deb = self.base / (tree.name + '.deb')
+            subprocess.run(['dpkg-deb', '--root-owner-group', '-b', str(tree), str(deb)], check=True, stdout=subprocess.DEVNULL)
+            debs.append(str(deb))
+        self.dpkg(root, '-i', *debs)
+        self.assertGreater(int(Path(f'{seen}.journal').read_text()), 0)
+        installed, conf = seen.read_text().splitlines()
+        self.assertIn('lc-early', installed.split())
+        self.assertEqual(conf, hashlib.md5(b'# a setting\nkey=1\n').hexdigest())
+        # after the run, the checkpoint folded the journal into the status file: the same answer
+        self.assertIn('lc-early', client.dpkg_packages(P))
+        self.assertIn('lc-late', client.dpkg_packages(P))
+
+    def test_lc1_markers_are_read_with_dpkg_journal(self):
+        """lean.package.installed reads dpkg's database as dpkg-stereo does: inside a dpkg run an lc1
+        package configured earlier is in the journal, not yet in the status file (ORDER 315)."""
+        _, _, deb = self.build()
+        root, P = self.system()
+        self.dpkg(root, '-i', str(deb))
+        status = (root / 'var/lib/dpkg/status').read_text()
+        self.assertIn('Status: install ok installed', status)
+        (root / 'var/lib/dpkg/updates').mkdir(exist_ok=True)
+        (root / 'var/lib/dpkg/updates/0000').write_text(status)
+        (root / 'var/lib/dpkg/status').write_text(status.replace('Status: install ok installed', 'Status: install ok unpacked'))
+        self.assertIsInstance(package.installed(P)['lc-demo'], dict)
+        self.assertIn('lc-demo', client.dpkg_packages(P))
+        os.unlink(root / 'var/lib/dpkg/updates/0000')
+        self.assertNotIn('lc-demo', package.installed(P))
+        self.assertNotIn('lc-demo', client.dpkg_packages(P))
+
     def test_architecture_specific_manifests(self):
         a = package.prepare(self.stage('1', 'amd64'), self.base / 'hr-a')
         b = package.prepare(self.stage('1', 'i386'), self.base / 'hr-b')

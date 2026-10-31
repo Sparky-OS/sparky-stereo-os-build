@@ -36,14 +36,22 @@ cat >"$D/DEBIAN/postinst" <<'EOS'
 set -e
 if [ "$1" = "configure" ] && [ -z "${DPKG_STEREO_NO_PROJECT:-}" ]; then
 	/usr/sbin/dpkg-stereo --repair-consumers || true
-	# dpkg read its hooks before this run, so the first projection of the installed packages is made here;
-	# an upgrade finds them recorded already, and its own post-invoke run takes only what it changed
+	# dpkg read its hooks before this run, and this package's hook file is a conffile that arrives only now,
+	# so the first projection of the installed packages is made here; an upgrade finds them recorded already,
+	# and its own post-invoke run takes only what it changed
 	if [ -z "${2:-}" ] || [ ! -e /var/lib/dpkg-stereo/packages.tsv ]; then
 		/usr/sbin/dpkg-stereo --project || true
+		# what this dpkg run configures after this package is projected when dpkg processes this trigger,
+		# at the end of its run (deb-triggers(5), interest-noawait)
+		dpkg-trigger --no-await dpkg-stereo-first-projection || true
 	fi
+fi
+if [ "$1" = "triggered" ] && [ -z "${DPKG_STEREO_NO_PROJECT:-}" ]; then
+	/usr/sbin/dpkg-stereo --post-invoke || true
 fi
 exit 0
 EOS
+printf 'interest-noawait dpkg-stereo-first-projection\n' >"$D/DEBIAN/triggers"
 cat >"$D/DEBIAN/prerm" <<'EOS'
 #!/bin/sh
 # prerm script
