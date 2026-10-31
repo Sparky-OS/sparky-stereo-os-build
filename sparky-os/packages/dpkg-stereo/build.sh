@@ -35,7 +35,7 @@ cat >"$D/DEBIAN/postinst" <<'EOS'
 # postinst script
 set -e
 if [ "$1" = "configure" ] && [ -z "${DPKG_STEREO_NO_PROJECT:-}" ]; then
-	/usr/sbin/dpkg-stereo --repair-consumers || true
+	/usr/sbin/dpkg-stereo --repair-consumers --if-changed || true
 	# dpkg read its hooks before this run, and this package's hook file is a conffile that arrives only now,
 	# so the first projection of the installed packages is made here; an upgrade finds them recorded already,
 	# and its own post-invoke run takes only what it changed
