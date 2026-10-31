@@ -18,7 +18,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
-VERSION=${VERSION:-20261030~sparky9~0+lc1}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
+VERSION=${VERSION:-20261031~sparky9~0+lc1}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
 case ${1:-all} in all|default) ;; *) echo 'Usage: build.sh [all|default]' >&2; exit 2 ;; esac
 WORK=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}/sparky-os}/look-build.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
@@ -64,30 +64,31 @@ cp "$HERE/default/org.sparkystereo.desktop/contents/defaults" "$T/contents/"
 cp -a "$OXYGEN/contents/splash" "$OXYGEN/contents/previews" "$T/contents/"
 # Oxygen's Splash.qml animates a bottomRect that does not exist: our fixed copy (see upstream-patches/)
 cp "$HERE/default/splash/Splash.qml" "$T/contents/splash/Splash.qml"
-cp "$HERE/default/xdg/kdeglobals" "$HERE/default/xdg/kwinrc" "$HERE/default/xdg/kde-mimeapps.list" "$HERE/default/xdg/krunnerrc" "$HERE/default/xdg/konsolerc" "$D/etc/xdg/"
+cp "$HERE/default/xdg/kdeglobals" "$HERE/default/xdg/kwinrc" "$HERE/default/xdg/kde-mimeapps.list" "$HERE/default/xdg/krunnerrc" "$HERE/default/xdg/konsolerc" "$HERE/default/xdg/dolphinrc" "$D/etc/xdg/"
 install -D -m 755 "$HERE/default/first-login-input-method" "$D/usr/lib/sparky-stereo-look/first-login-input-method"
 install -D -m 644 "$HERE/default/xdg/plasma-workspace/env/10-sparky-stereo-input-method.sh" \
 	"$D/etc/xdg/plasma-workspace/env/10-sparky-stereo-input-method.sh"
 install -D -m 644 "$HERE/default/needrestart.conf" "$D/etc/needrestart/conf.d/90-sparky-stereo.conf"
 install -D -m 644 "$HERE/default/flathub.flatpakrepo" "$D/usr/share/flatpak/remotes.d/flathub.flatpakrepo"
 control "$D" sparky-stereo-look \
-	"plasma-theme-oxygen, oxygen-icon-theme, oxygencursors, kde-style-oxygen-qt6, kwin-decoration-oxygen, libkf6config-bin, plasma-runners-addons (>= 4:6.7.4-1+stereo3d1), plasma-systemmonitor, sparky-stereo-gtk" \
+	"plasma-theme-oxygen, oxygen-icon-theme, oxygencursors, kde-style-oxygen-qt6, kwin-decoration-oxygen, kwin-style-aurorae, libkf6config-bin, plasma-runners-addons (>= 4:6.7.4-1+stereo3d1), plasma-systemmonitor, sparky-stereo-gtk" \
 	"kde-style-oxygen-qt5, sparkyos-artwork, sparky-stereo-look-kubabbar-glass" \
 	"Sparky Stereo OS default look: Oxygen dark" \
 	"The edition's default global theme: Oxygen, whole, in its dark colours:" \
 	"Plasma style (Sparky Stereo Oxygen: Oxygen's, with widget, panel, tooltip and" \
 	"dialog backgrounds at 91 % alpha, the background only, blur and contrast off)," \
-	"Plasma style, icons, cursor, splash, the Oxygen application style and the" \
-	"Oxygen window decoration. Also sets the default KWin effects: translucency" \
+	"Plasma style, icons, cursor, splash and the Oxygen application style, with" \
+	"Plastik's square, Windows-like window buttons. Also sets the default KWin effects: translucency" \
 	"with Daniel Ramos's values, glide and wobbly windows, and makes VLC Stereo the" \
 	"default video player (/etc/xdg/kde-mimeapps.list; a user's own choice still wins)." \
+	"In Dolphin's split view the inactive pane's background is translucent." \
 	"Search lists installed applications first, then settings. Power actions and" \
 	"unit conversion remain available. Currency rates refresh only when converting a currency." \
 	"Web search and the online dictionary are off by default." \
 	"Ctrl+Shift+Esc opens System Monitor; existing shortcuts remain available." \
 	"Japanese, Korean and Chinese sessions default to the installed Fcitx5 input" \
 	"method before KWin starts, preserving an existing or explicitly disabled choice."
-printf '%s\n' /etc/xdg/kdeglobals /etc/xdg/kwinrc /etc/xdg/kde-mimeapps.list /etc/xdg/krunnerrc /etc/xdg/konsolerc \
+printf '%s\n' /etc/xdg/kdeglobals /etc/xdg/kwinrc /etc/xdg/kde-mimeapps.list /etc/xdg/krunnerrc /etc/xdg/konsolerc /etc/xdg/dolphinrc \
 	/etc/xdg/plasma-workspace/env/10-sparky-stereo-input-method.sh \
 	/etc/needrestart/conf.d/90-sparky-stereo.conf >"$D/DEBIAN/conffiles"
 cat >"$D/usr/share/doc/sparky-stereo-look/copyright" <<'EOF'
