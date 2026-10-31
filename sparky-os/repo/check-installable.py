@@ -399,7 +399,8 @@ class Pins:
     """The negative records of the edition's apt policy, for the static engine and dose.
     apt applies the whole policy itself; these two engines only leave out what apt would never install."""
 
-    def __init__(self, prefs):
+    def __init__(self, prefs, native):
+        self.native = native
         self.records = []
         for fname in sorted(prefs):
             for fields, _ in stanzas(prefs[fname][0]):
@@ -412,12 +413,27 @@ class Pins:
                 self.records.append((fields['Package'].split(), fields['Pin'].strip(), prio))
 
     @staticmethod
-    def _name(patterns, name):
+    def _name(patterns, entry, native):
+        # apt_preferences(5): "By default, only packages of the native architecture are matched"; ":any" matches
+        # every architecture, ":ARCH" that one; "src:NAME" names the source package.
+        name, arch = entry['Package'], entry.get('Architecture', native)
+        source = entry.get('Source', name).split()[0]
         for p in patterns:
+            target = name
+            if p.startswith('src:'):
+                p, target = p[4:], source
+            qual = None
+            if ':' in p and not (p.startswith('/') and p.endswith('/')):
+                p, qual = p.rsplit(':', 1)
+            if qual is None or qual == 'native':
+                if arch not in (native, 'all'):
+                    continue
+            elif qual != 'any' and qual != arch:
+                continue
             if p.startswith('/') and p.endswith('/') and len(p) > 1:
-                if re.search(p[1:-1], name):
+                if re.search(p[1:-1], target):
                     return True
-            elif fnmatch.fnmatchcase(name, p):
+            elif fnmatch.fnmatchcase(target, p):
                 return True
         return False
 
@@ -446,7 +462,7 @@ class Pins:
         specific = [r for r in self.records if r[0] != ['*']]
         general = [r for r in self.records if r[0] == ['*']]
         for names, pin, prio in specific:
-            if self._name(names, entry['Package']) and self._pin(pin, entry):
+            if self._name(names, entry, self.native) and self._pin(pin, entry):
                 return prio < 0
         for names, pin, prio in general:
             if self._pin(pin, entry):
@@ -670,7 +686,7 @@ def main():
             'apt': run(['apt-get', '--version']).stdout.splitlines()[0],
             'dose': run(['dose-debcheck', '--version']).stdout.strip() if 'dose' in engines else None,
             'started': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
-    rows, failures, checked, failed_in = [], {}, {}, {}
+    rows, failures, checked, failed_in, not_candidate = [], {}, {}, {}, []
     sparky_apt = None
     for profile in profiles:
         arches = ['arm64'] if profile == 'arm64' else [x for x in ('amd64', 'i386') if x in tree_arches or x == 'amd64']
@@ -712,7 +728,7 @@ def main():
             p_prefs.update(sparky_apt)
             u.apt(['apt-cache', 'gencaches'])
         lists = u.targets()
-        pins = Pins(p_prefs)
+        pins = Pins(p_prefs, arches[0])
         index = Index(u.native, arches[1:])
         bg_files = []
         tree_text = {}
@@ -723,7 +739,8 @@ def main():
             for fields, text in stanzas(read_list(path)):
                 if 'Package' not in fields:
                     continue
-                e = {'Package': fields['Package'], 'Version': fields['Version'], '_origin': origin, '_host': host}
+                e = {'Package': fields['Package'], 'Version': fields['Version'], 'Architecture': fields.get('Architecture', ''),
+                     'Source': fields.get('Source', fields['Package']), '_origin': origin, '_host': host}
                 if not from_tree and pins.blocked(e):
                     index.blocked.setdefault(fields['Package'], set()).add(
                         '%s %s (%s)' % (fields['Version'], fields.get('Architecture', '?'), origin or '?'))
@@ -789,8 +806,39 @@ def main():
                     if not ok:
                         name = '%s_%s_%s.log' % (profile, e['Package'], e['Architecture'])
                         (report / 'apt' / name).write_text(text)
-            for key, parent in derived.items():
-                results[key] = results[parent]
+        if 'apt' in engines:
+            # Installable when asked by version is not enough: apt must also choose our build by itself. A pin that
+            # names a package without :any applies to the native architecture only (apt_preferences(5)), so another
+            # archive's build can be the candidate on the other one (NVIDIA's i386 egl-wayland at 1002, 31 Oct 2026).
+            names = [e for e in want if not e['Package'].endswith(COMPANIONS)]
+            for i in range(0, len(names), 200):
+                batch = names[i:i + 200]
+                specs = [x['Package'] if x['Architecture'] == 'all' else '%s:%s' % (x['Package'], x['Architecture']) for x in batch]
+                text = u.apt(['apt-cache', 'policy'] + specs, check=False).stdout
+                found, header = {}, None
+                for line in text.splitlines():
+                    m = re.match(r'^(\S+):$', line)
+                    if m:
+                        header = m.group(1)
+                        continue
+                    m = re.match(r'^  Candidate: (\S+)$', line)
+                    if m and header:
+                        found[header] = m.group(1)
+                for x, spec in zip(batch, specs):
+                    cand = found.get(spec) or found.get(spec.split(':')[0])
+                    if cand != x['Version']:
+                        not_candidate.append((profile, x['Package'], x['Version'], x['Architecture'], cand or '(none)'))
+            # A companion follows its package only where apt also chooses that package by itself; otherwise it is asked.
+            others = {(c[1], c[3], c[2]) for c in not_candidate if c[0] == profile}
+            for key, parent in list(derived.items()):
+                if results.get(parent) and parent in others:
+                    ok, text = u.simulate(*key)
+                    results[key] = ok
+                    if not ok:
+                        (report / 'apt' / ('%s_%s_%s.log' % (profile, key[0], key[1]))).write_text(text)
+                    del derived[key]
+                else:
+                    results[key] = results[parent]
         dose = {}
         if 'dose' in engines:
             fg = []
@@ -829,7 +877,7 @@ def main():
             rows.append({'profile': profile, 'package': e['Package'], 'version': e['Version'],
                          'architecture': e['Architecture'], 'source': e.get('Source', e['Package']).split()[0],
                          'companion': companion,
-                         'apt': {True: 'ok', False: 'FAIL', None: '-'}[apt_ok] + (' (as %s)' % derived[key][0] if key in derived else ''),
+                         'apt': {True: 'ok', False: 'FAIL', None: '-'}[apt_ok] + (' (as %s)' % derived[key][0] if key in derived and apt_ok is not None else ''),
                          'static': {True: 'ok', False: 'FAIL', None: '-'}[static_ok],
                          'dose': {True: 'ok', False: 'FAIL', None: '-'}[dose_ok],
                          'dose_reasons': dose.get(dose_key, [])[:8] if dose_key else [],
@@ -887,6 +935,13 @@ def main():
         lines += ['', 'engines that disagree (profile package version arch apt static dose):']
         lines += ['  %s %s %s %s %s %s %s' % (r['profile'], r['package'], r['version'], r['architecture'], r['apt'], r['static'], r['dose'])
                   for r in disagree]
+    if not_candidate:
+        lines += ['', "packages of ours that apt would not choose by itself (another build is the candidate; report only):"]
+        lines += ['  %s %s %s %s: candidate %s' % c for c in not_candidate]
+    with open(report / 'candidates.tsv', 'w') as out:
+        out.write('profile\tpackage\tversion\tarchitecture\tcandidate\n')
+        for c in not_candidate:
+            out.write('\t'.join(c) + '\n')
     if a.mode == 'refuse':
         lines += ['', 'not in the known list (%s): %d' % (a.known or 'none', len(unexplained))]
         lines += ['  %s %s' % k for k in unexplained]
