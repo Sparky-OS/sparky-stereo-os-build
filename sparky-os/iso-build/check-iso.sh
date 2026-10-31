@@ -40,7 +40,7 @@ echo "   .disk/info: $(cat "$T/.disk_info")"
 
 echo "-- menus"
 grep -q 'vmlinuz2\|initrd2' "$T/boot_grub_grub.cfg" "$T/isolinux_isolinux.cfg" && no "a menu names a second kernel" || ok "no menu names a second kernel"
-grep -q 'nokaslr' "$T/boot_grub_grub.cfg" && no "GRUB's menu still adds nokaslr" || ok "no nokaslr (kernel build 12 keeps KASLR on 32-bit UEFI)"
+grep -q 'nokaslr' "$T/boot_grub_grub.cfg" && no "GRUB's menu still adds nokaslr" || ok "no nokaslr (the edition's kernel keeps KASLR on 32-bit UEFI)"
 grep -q 'menuentry "Secure Boot: enroll the Sparky Stereo OS key" --id sparky-enroll' "$T/boot_grub_grub.cfg" && grep -q 'chainloader /EFI/boot/mmx64.efi' "$T/boot_grub_grub.cfg" \
 	&& ok "the enrolment entry starts /EFI/boot/mmx64.efi" || no "no enrolment entry"
 n=$(grep -c 'sparky_no_key$' "$T/boot_grub_grub.cfg"); l=$(grep -c 'if linux /live/vmlinuz' "$T/boot_grub_grub.cfg")
