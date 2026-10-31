@@ -1,3 +1,36 @@
+sparky-stereo-hardware (0.1.14) unstable; urgency=medium
+
+  * Name the Multi-Arch: same libraries in sparky-stereo-gpu-nvidia with
+    :any (libnvidia-container1, libnvidia-egl-wayland1,
+    libnvidia-egl-wayland-dev). apt matches a plain name on the native
+    architecture only (apt_preferences(5)), so NVIDIA's i386 egl-wayland
+    1:1.1.21-1 kept the CUDA repository's 1002 and won over ours where
+    NVIDIA's repository is read for i386 too, and the two architectures of
+    one library had different versions. ORDER 318, found by ORDER 317's
+    installability check.
+  * Complete this changelog with versions 0.1.12 and 0.1.13.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 31 Oct 2026 18:00:00 -0300
+
+sparky-stereo-hardware (0.1.13) unstable; urgency=medium
+
+  * The German, Japanese, Korean, Simplified Chinese and Traditional
+    Chinese name and comment of the hardware setup entry.
+  * The live session graphics entry's name and comment in Polish,
+    Brazilian Portuguese, French, German, Japanese, Korean, Simplified
+    Chinese and Traditional Chinese.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Fri, 30 Oct 2026 12:00:00 -0300
+
+sparky-stereo-hardware (0.1.12) unstable; urgency=medium
+
+  * NVIDIA's services (nvidia-persistenced, nvidia-powerd) run only while
+    NVIDIA's driver is loaded, decided at every boot: a machine without an
+    NVIDIA card skips them and is no longer "degraded"; a card added later
+    starts them with no step, when udev loads the driver for it.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 25 Oct 2026 12:00:00 -0300
+
 sparky-stereo-hardware (0.1.11) unstable; urgency=medium
 
   * Install libnvcuvid1 at the NVIDIA graphics module version and the
