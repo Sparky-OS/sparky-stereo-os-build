@@ -19,6 +19,14 @@ included) it asks:
           same indexes, with its own explanation (apt's solver can give up where a solution exists).
 The engines run in that order; dose is used when dose-debcheck is on PATH, unless --engines says otherwise.
 
+It also asks the same of Debian's and deb-multimedia's packages that the edition's policy can break without any
+package of ours depending on them (ORDER 321): those that depend at an exact version on an Architecture: all package
+the tree ships (or the policy blocks) at a version the tree does not have. The policy decides which build of such a
+name is the candidate, and apt's solver takes only the candidate for an exact dependency, so blocking or outranking
+Debian's build of a -data package can leave Debian's library unable to install (krdc arm64's kio6, libkf6screen8 and
+their -data packages, ORDER 318). Each such package is asked of apt (and the static engine names the cause), on every
+profile; with --only, only the relations on the names it lists.
+
 Archives: the signed public sources of SPARKY_LC_ARCHIVE_CONFIG (Debian forky, deb-multimedia forky,
 SparkyLinux core and tiamat; sparky-os/lean/archive.md describes the file), and, in the nvidia profile,
 NVIDIA's CUDA repository as sparky-stereo-hardware sets it up (its URL, key checksum and pin are read
@@ -34,11 +42,13 @@ adds on a machine with an NVIDIA card), arm64 (the arm64 packages, in an arm64 u
 A package fails a profile when the apt engine says it cannot be installed there.
 
 Output (--report DIR): installable.tsv (one row per package and profile that fails), summary.txt,
-apt/ (the solver's words for each failure), dose-PROFILE.yaml, metadata.json (sources, signed index
+apt/ (the solver's words for each failure), dose-PROFILE.yaml, collateral.tsv (the Debian and deb-multimedia
+packages above that cannot be installed, one row per profile), metadata.json (sources, signed index
 hashes, policy files and their hashes, versions of apt and dose).
 Exit status: 0 in --mode report (the publication's report); in --mode refuse, 1 when a failing
-package is not listed in --known (package<TAB>version or *<TAB>reason), so a known, explained failure
-does not stop every publication while it waits for its rebuild.
+package, ours or one of those Debian and deb-multimedia packages, is not listed in --known
+(package<TAB>version or *<TAB>reason), so a known, explained failure does not stop every publication
+while it waits for its rebuild.
 
 Usage: check-installable.py TREE [--codename mashtabba] [--archive-config JSON] [--scratch DIR]
          [--report DIR] [--profiles base,nvidia,arm64] [--engines apt,static,dose] [--jobs 4]
@@ -69,6 +79,8 @@ HARDWARE = SPARKY_OS / 'packages' / 'sparky-stereo-hardware'
 POLICY_PACKAGES = ('sparky-stereo-apt', 'sparky-stereo-hardware', 'sparky-stereo-nvidia-driver-lock')
 COMPANIONS = ('-dbgsym', '-lc-hr')
 ORIGIN = 'Sparky Stereo OS'
+# The archives whose builds of our packages the policy blocks (sparky-stereo-only-ours)
+UPSTREAM_ORIGINS = ('Debian', 'Unofficial Multimedia Packages')
 CUDA_BASE = None
 
 
@@ -580,9 +592,42 @@ def classify(index, alts):
                        for e in index.by_name.get(n, ())})
         prov = sorted({'%s provides %s' % (e['Package'], v or 'unversioned') for e, v in index.provides.get(n, ())})
         have.append('%s: %s' % (n, '; '.join(vers + prov) or 'blocked by the policy'))
+    held = ['%s (= %s): %s' % (a[0], a[3], ', '.join(sorted(d for d in index.blocked[a[0]] if d.startswith(a[3] + ' '))))
+            for a in alts if a[2] == '=' and any(d.startswith(a[3] + ' ') for d in index.blocked.get(a[0], ()))]
+    if held:
+        return 'blocked by the policy', 'the edition blocks %s; available: %s' % ('; '.join(held), ' / '.join(have))
     if any(a[2] == '=' for a in alts):
         return 'exact version gone', ' / '.join(have)
     return 'version or architecture unavailable', ' / '.join(have)
+
+
+def collateral_candidates(index, arches, only):
+    """Debian's and deb-multimedia's packages, not blocked themselves, that depend at an exact version on an
+    Architecture: all name whose candidate the edition's policy decides (one the tree ships, or one the policy blocks),
+    at a version the tree does not have: [(entry, [relation, ...])]. apt files an Architecture: all package under the
+    native architecture and its solver takes only the candidate for an exact dependency (measured with apt 3.3.3 for
+    ORDER 318), so such a package installs only if the policy leaves the other archive's build the candidate."""
+    ours = {}
+    for e in index.entries:
+        if e['_tree'] and e.get('Architecture') == 'all':
+            ours.setdefault(e['Package'], set()).add(e['Version'])
+    decided = set(ours) | {n for n, found in index.blocked.items() if any(' all (' in d for d in found)}
+    if only:
+        decided &= only
+    out = []
+    for e in index.entries:
+        if e['_tree'] or e['_origin'] not in UPSTREAM_ORIGINS or e.get('Architecture') not in arches + ['all']:
+            continue
+        rels = []
+        for field in ('Pre-Depends', 'Depends'):
+            text = e.get(field, '')
+            if '=' not in text:
+                continue
+            for alts in relations(text):
+                rels += [rel for rel in alts if rel[2] == '=' and rel[0] in decided and rel[3] not in ours.get(rel[0], ())]
+        if rels:
+            out.append((e, rels))
+    return out
 
 
 def dose_run(native, foreign, fg, bg, out, only):
@@ -691,6 +736,7 @@ def main():
             'dose': run(['dose-debcheck', '--version']).stdout.strip() if 'dose' in engines else None,
             'started': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
     rows, failures, checked, failed_in, not_candidate = [], {}, {}, {}, []
+    collateral, collateral_checked = [], {}
     sparky_apt = None
     for profile in profiles:
         arches = ['arm64'] if profile == 'arm64' else [x for x in ('amd64', 'i386') if x in tree_arches or x == 'amd64']
@@ -843,6 +889,40 @@ def main():
                     del derived[key]
                 else:
                     results[key] = results[parent]
+        # Debian's and deb-multimedia's packages the policy can leave uninstallable with no package of ours depending on
+        # them: an exact dependency on an Architecture: all name whose candidate the policy decides (ORDER 321).
+        coll = collateral_candidates(index, arches, only)
+        collateral_checked[profile] = len(coll)
+        print('[%s] %d Debian and deb-multimedia packages depend at an exact version on an Architecture: all name the '
+              'policy decides; asked of apt' % (profile, len(coll)), flush=True)
+        coll_results = {}
+        if 'apt' in engines and coll:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, a.jobs)) as pool:
+                futs = {pool.submit(u.simulate, e['Package'], e['Architecture'], e['Version']): e for e, _ in coll}
+                for fut in concurrent.futures.as_completed(futs):
+                    e = futs[fut]
+                    coll_results[(e['Package'], e['Architecture'], e['Version'], e['_origin'])] = fut.result()
+        for e, rels in sorted(coll, key=lambda x: (x[0]['Package'], x[0]['Architecture'], x[0]['Version'], x[0]['_origin'])):
+            ok, text = coll_results.get((e['Package'], e['Architecture'], e['Version'], e['_origin']), (None, ''))
+            missing = index.missing(e) if 'static' in engines else []
+            static_ok = None if 'static' not in engines else not missing
+            if ok is not False and not (ok is None and static_ok is False):
+                continue
+            causes = []
+            for path, field, rel, alts in missing:
+                cls, detail = classify(index, alts)
+                causes.append('%s: %s %s [%s: %s]' % (' > '.join(path), field, rel, cls, detail))
+            if ok is False:
+                (report / 'apt' / ('collateral_%s_%s_%s.log' % (profile, e['Package'], e['Architecture']))).write_text(text)
+                if not causes:
+                    causes.append('apt: ' + ' / '.join([ln.strip() for ln in text.splitlines()
+                                                        if ' : ' in ln or ln.startswith(('E:', 'Error:'))][:6]))
+            collateral.append({'profile': profile, 'package': e['Package'], 'version': e['Version'],
+                               'architecture': e['Architecture'], 'origin': e['_origin'],
+                               'source': e.get('Source', e['Package']).split()[0],
+                               'relations': ', '.join(sorted({show(r) for r in rels})),
+                               'apt': {True: 'ok', False: 'FAIL', None: '-'}[ok],
+                               'static': {True: 'ok', False: 'FAIL', None: '-'}[static_ok], 'causes': causes})
         dose = {}
         if 'dose' in engines:
             fg = []
@@ -897,6 +977,8 @@ def main():
                 parts = line.split('\t')
                 known[(parts[0], parts[1] if len(parts) > 1 else '*')] = parts[2] if len(parts) > 2 else ''
     unexplained = sorted(k for k in failures if k not in known and (k[0], '*') not in known)
+    unexplained += sorted({(r['package'], r['version']) for r in collateral
+                           if (r['package'], r['version']) not in known and (r['package'], '*') not in known})
 
     with open(report / 'installable.tsv', 'w') as out:
         out.write('profile\tpackage\tversion\tarchitecture\tsource\tcompanion\tapt\tstatic\tdose\tcauses\tdose_reasons\n')
@@ -909,7 +991,10 @@ def main():
              'engines: %s; profiles: %s' % (','.join(engines), ','.join(profiles)),
              'packages that cannot be installed: %d (%d without their dbgsym and lc-hr companions)' % (
                  len(failures), len([k for k in failures if not k[0].endswith(COMPANIONS)])),
-             'engines that disagree: %d' % len(disagree), '']
+             'engines that disagree: %d' % len(disagree),
+             "Debian's and deb-multimedia's packages the policy leaves uninstallable: %d of %s asked" % (
+                 len({(r['package'], r['version'], r['architecture']) for r in collateral}),
+                 '+'.join('%d (%s)' % (n, p) for p, n in collateral_checked.items()) or '0'), '']
     def category(key):
         bad, all_ = failed_in.get(key, set()), checked.get(key, set())
         if bad == all_:
@@ -946,12 +1031,29 @@ def main():
         out.write('profile\tpackage\tversion\tarchitecture\tcandidate\n')
         for c in not_candidate:
             out.write('\t'.join(c) + '\n')
+    if collateral:
+        lines += ['', "Debian's and deb-multimedia's packages the policy leaves uninstallable: each depends at an exact version on "
+                  "an Architecture: all package whose candidate the policy decides (no package of ours needs them):"]
+        by_source = {}
+        for r in collateral:
+            by_source.setdefault((r['origin'], r['source']), []).append(r)
+        for (origin, src), rs in sorted(by_source.items()):
+            lines.append('source %s (%s)' % (src, origin))
+            for r in rs:
+                lines.append('  %s %s %s [%s]: needs %s' % (r['package'], r['version'], r['architecture'], r['profile'], r['relations']))
+                lines += ['    ' + c for c in r['causes'][:2]]
+    with open(report / 'collateral.tsv', 'w') as out:
+        out.write('profile\tpackage\tversion\tarchitecture\torigin\tsource\trelations\tapt\tstatic\tcauses\n')
+        for r in collateral:
+            out.write('\t'.join([r['profile'], r['package'], r['version'], r['architecture'], r['origin'], r['source'],
+                                 r['relations'], r['apt'], r['static'], ' || '.join(r['causes'])]) + '\n')
     if a.mode == 'refuse':
         lines += ['', 'not in the known list (%s): %d' % (a.known or 'none', len(unexplained))]
         lines += ['  %s %s' % k for k in unexplained]
     (report / 'summary.txt').write_text('\n'.join(lines) + '\n')
     meta['finished'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
     meta['failures'] = len(failures)
+    meta['collateral'] = {'asked': collateral_checked, 'uninstallable': len(collateral)}
     (report / 'metadata.json').write_text(json.dumps(meta, indent=2, default=str) + '\n')
     print('\n'.join(lines))
     print('report: ' + str(report))
