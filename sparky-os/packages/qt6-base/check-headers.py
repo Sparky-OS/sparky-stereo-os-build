@@ -95,7 +95,10 @@ version_dirs = []
 for module in sorted(d for d in qtinc.iterdir() if d.is_dir()):
     for v in sorted(p for p in module.iterdir() if p.is_dir() and re.fullmatch(r'\d+\.\d+\.\d+', p.name)):
         version_dirs += ['-I', str(v), '-I', str(v / module.name)]
-platform = subprocess.run(['pkg-config', '--cflags-only-I', 'Qt6Platform'], capture_output=True, text=True, check=True).stdout.split()
+# Qt6Platform names the mkspecs folder (qplatformdefs.h); the libraries the private headers include from a folder of
+# their own are found as their own pkg-config files say (test-in-container.sh installs their development packages)
+platform = subprocess.run(['pkg-config', '--cflags-only-I', 'Qt6Platform', 'atspi-2', 'freetype2', 'libdrm'],
+                          capture_output=True, text=True, check=True).stdout.split()
 search = ['-I', str(qtinc)] + [x for m in sorted(d for d in qtinc.iterdir() if d.is_dir()) for x in ('-I', str(m))] + version_dirs + platform
 
 
@@ -138,6 +141,10 @@ covered = 0
 for header, errors in sorted(stopped.items()):
     if os.path.realpath(header) in reached:
         covered += 1
+        continue
+    if (header, '#error') in known:
+        seen_known.add((header, '#error'))
+        say(f'  KNOWN {header} stops on its own #error and no installed header includes it: {known[(header, "#error")]}')
         continue
     say(f'  FAIL {header} ({owner[header]}) does not preprocess on its own and no installed header reaches it: {" | ".join(errors)}')
     bad += 1

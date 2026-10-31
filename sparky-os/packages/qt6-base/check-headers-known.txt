@@ -1,6 +1,7 @@
 # Unresolved includes of Qt 6.11.2's own installed private headers, the same in Debian's qt6-base 6.11.2+dfsg-5 (measured
 # with test.sh debian, ORDER 308): check-headers.py reports these as KNOWN and fails on any other.
-# Each line: the including header (below /usr/include/<multiarch>/qt6), a tab, the include as written, a tab, the reason.
+# Each line: the including header (below /usr/include/<multiarch>/qt6), a tab, the include as written (or #error for a header
+# that stops on its own #error and that no installed header includes), a tab, the reason.
 QtCore/6.11.2/QtCore/private/qcborcommon_p.h	cbor.h	Qt's bundled TinyCBOR (src/3rdparty/tinycbor), not installed
 QtPrintSupport/6.11.2/QtPrintSupport/private/qpagesetupdialog_unix_p.h	kernel/qprint_p.h	a path inside src/printsupport; installed as QtPrintSupport/private/qprint_p.h
 QtPrintSupport/6.11.2/QtPrintSupport/private/qpagesetupdialog_unix_p.h	ui_qpagesetupwidget.h	uic output of the build, not installed
@@ -9,3 +10,4 @@ QtWaylandClient/6.11.2/QtWaylandClient/private/qwaylanddatadevice_p.h	qtwaylandc
 QtWaylandClient/6.11.2/QtWaylandClient/private/qwaylandinputcontext_p.h	qtwaylandclientglobal_p.h	an angle include of a header in its own private folder, which no include path names
 QtWaylandClient/6.11.2/QtWaylandClient/private/qwaylandtextinputv1_p.h	qwaylandinputmethodeventbuilder_p.h	an angle include of a header in its own private folder, which no include path names
 QtWaylandClient/6.11.2/QtWaylandClient/private/qwaylandtextinputv2_p.h	qwaylandinputmethodeventbuilder_p.h	an angle include of a header in its own private folder, which no include path names
+QtCore/6.11.2/QtCore/private/qmetaobject_moc_p.h	#error	needs qmetaobject_p.h or moc's utils.h before it; only moc's own sources include it
