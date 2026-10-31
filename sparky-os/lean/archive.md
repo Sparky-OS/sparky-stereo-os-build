@@ -55,6 +55,12 @@ A predecessor whose executable or runtime libraries do not resolve in the qualif
 
 Each architecture gets separate APT state and one frozen signed-index view for candidate and predecessor comparisons.
 Downloads use APT's selected URL, signed size and SHA-256, then independently check the archive control identity against the signed index before extraction.
+Each case asks APT for the signed records of all its downloaded identities together, `apt-cache show NAME:ARCH=VERSION ...`, at most 1024 identities and 128 KiB of arguments per call.
+A record already read is reused for the rest of the run for the same identity and SHA-256 under the same local index digest: the public indexes are frozen for the architecture's context, and the local index is the only other source APT reads.
+With several arguments apt-cache skips an absent one silently and exits 0 unless it finds none (exit 100, `E: No packages found`), and it retries an absent name containing `.` as an unanchored regular expression that prints other packages' records.
+So every record is matched to its own Package, Version and Architecture, never by its position in the output, and only that exit 100 with no output counts as nothing found.
+A download without a record of its identity is refused by name; a record whose SHA256, Size, Depends, Pre-Depends, Provides, Conflicts, Breaks or Multi-Arch differs from the downloaded control is refused; a disk floor reached while asking APT remains a space refusal.
+When a later solver line fails, the downloads before it are checked first, so the refusal reported is the first one in solver order.
 Supplied archive identities and hashes are frozen without copying the offered universe.
 A shared immutable local index contains metadata and source links only, and records each offered input in `universes/<hash>/universe.json`.
 The original source files must remain available and unchanged during qualification.
@@ -62,7 +68,7 @@ Only selected archive bytes enter the shared scratch `sha256/` cache, once per h
 Cached copies are read-only and have distinct inodes from source archives; source modes and bytes are never changed.
 A corrupt cache entry blocks the gate and names the entry to remove before retrying.
 Each comparison retains configuration, signature-verification logs, signed metadata and its hashes, solver decisions, dependency controls, exact identities, URLs, byte sizes, hashes and execution commands.
-See `metadata.json`, `case-*-solve.log`, `case-*/resolution.json`, `case-*/execution.jsonl` and `case-*/root-files.jsonl` below the reported scratch directory.
+See `metadata.json`, `case-*-solve.log`, `case-*-signed-index-N.log`, `case-*/signed-index.json` (the log holding the record each download matched), `case-*/resolution.json`, `case-*/execution.jsonl` and `case-*/root-files.jsonl` below the reported scratch directory.
 A comparison has at most two live qualified roots, and releases them after retaining file hashes and symlink inventories, including when a runtime check fails.
 The low-level `Archive.qualify` API returns a qualifier whose `close()` records the inventory and releases its root; a third live qualifier is refused.
 These are qualification evidence, not packages to publish.
