@@ -1,4 +1,37 @@
 -------------------------------------------------------------------------------
+  Version 0.1.18 (2026-10-31)
+-------------------------------------------------------------------------------
+  * The C and C++ migration is paid once (ORDER 315, from what ORDER 310
+    measured with 0.1.17). restore() tests the names it is given as a set:
+    with the list the migration passed, its filter took 68.9 s on the
+    station's 90,217 records and 47,360 C and C++ names (55.1 s on a
+    synthetic install of that size; 0.55 s now).
+  * A C or C++ file whose package version neither APT's cache nor its
+    lists hold waits: its version is remembered with the lists and the
+    cache as they were when it was tried, and it is tried again only when
+    its package, the lists or the cache change. With 38 such versions
+    (13,239 files, the station's), every dpkg run read all records and made
+    38 failing downloads, about 80 s a run on the station (2.4 s and 38
+    attempts a run on the synthetic install); now a dpkg run reads one
+    small table (0.001 s, no attempt). One apt-cache madison call says
+    which versions the lists still offer, so no download is tried for one
+    they lack. --repair-consumers tries them all now; --verify names them
+    (PENDING), and they are not problems: their line numbers are the
+    authored ones.
+  * Progress lines on the terminal apt shows: before the long restore and
+    projection, and every 1,000 files; standard output is line-buffered.
+  * dpkg's database is read with its journal (/var/lib/dpkg/updates), as
+    dpkg reads it. Inside a dpkg run the status file alone is out of date:
+    during a first install it listed 81 packages as installed where dpkg's
+    database (dpkg-query) listed 154, and the postinst recorded those 81,
+    without libstdc++-16-dev. The hooks are not active in the run
+    that installs this package (their file is a conffile, in place only at
+    its configure), so a trigger (interest-noawait) projects what the run
+    configures after it, at the end of the run.
+  * A migration inside a dpkg hook leaves packages.tsv as it was, so the
+    packages that same run changed are still projected by post-invoke
+    (0.1.17 marked them all as seen when it projected again).
+-------------------------------------------------------------------------------
   Version 0.1.17 (2026-10-31)
 -------------------------------------------------------------------------------
   * C and C++ keep each removed comment's line breaks instead of writing #line

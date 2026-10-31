@@ -16,7 +16,7 @@ umask 022
 HERE=$(cd "$(dirname "$0")" && pwd)
 LEAN=$(cd "$HERE/../../lean" && pwd)
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
-VERSION=0.1.17
+VERSION=0.1.18
 PKG=dpkg-stereo
 W=$(mktemp -d "${TMPDIR:-/tmp}/dpkg-stereo-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT

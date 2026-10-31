@@ -37,14 +37,16 @@ EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
 
-  * Development release: C and C++ keep each removed comment's line breaks
-    instead of #line, with the same authored line numbers; the GCC check
-    compares lines too; installed #line projections are projected again on
-    upgrade, keeping user edits; the renderer identity carries its code
-    digest. Retain the source layouts, GLSL recovery, Wine header and
-    dependency parser safeguards of 0.1.16.
+  * The C and C++ migration is paid once (ORDER 315): restore() tests its
+    names as a set (55.1 s to 0.55 s on an install of the station's size,
+    90,217 records and 47,360 C and C++ names); versions whose
+    .deb is nowhere wait until their package, APT's lists or its cache
+    change (one small table per dpkg run, one apt-cache call when the lists
+    change); progress lines on apt's terminal; dpkg's journal is read as
+    dpkg reads it, and a trigger ends a first install's projection. Retain
+    0.1.17's line-break form for C and C++ and its migration.
 
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 31 Oct 2026 12:00:00 -0300
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 31 Oct 2026 15:00:00 -0300
 EOF
 cat > "$S/debian/rules" <<'EOF'
 #!/usr/bin/make -f
