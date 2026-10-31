@@ -55,9 +55,9 @@ shift 2
 EXTRA=("$@")
 : "${SPARKY_REPO_KEY:?set SPARKY_REPO_KEY to the signing key fingerprint}"
 : "${SPARKY_REPO_GNUPGHOME:?set SPARKY_REPO_GNUPGHOME to the GnuPG home that holds the key}"
-case ${SPARKY_APPSTREAM-un} in
-    1) ;;
-    '') ;;
+SPARKY_APPSTREAM=${SPARKY_APPSTREAM-}
+case "$SPARKY_APPSTREAM" in
+    1|'') ;;
     *) echo "SPARKY_APPSTREAM must be 1 when set" >&2; exit 2 ;;
 esac
 if [ "$SPARKY_APPSTREAM" = 1 ]; then
