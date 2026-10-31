@@ -109,6 +109,7 @@ group('image', 'On the image from first boot (our stereo programs everyone uses)
     'sparky-stereo-browser', 'plasmatube', 'marble', 'stereo3ddemo', 'haruna',
     'blender', 'kdenlive', 'krita', 'showfoto', 'kolourpaint',
     'digikam', 'ums', 'kcm-ums', 'openrgb',
+    'simple-scan',   # scanning, Daniel 2026-10-31: "simple-scan is a must in our distro"
     'kubrick',
     # ours, for everyone: the Graphics page in System Settings (which GPU each program uses) and the locale tool
     'sparky-stereo-graphics', 'sparky-stereo-locales',
