@@ -310,6 +310,100 @@ def tree_hashes(root):
     return {str(path.relative_to(root)): archive.digest(path) for path in root.rglob('*') if path.is_file()}
 
 
+def deterministic_gzip(path, data):
+    with path.open('wb') as output:
+        with gzip.GzipFile(filename='', mode='wb', fileobj=output, mtime=0) as compressed:
+            compressed.write(data)
+
+
+def deterministic_tar(path, members):
+    with path.open('wb') as output:
+        with gzip.GzipFile(filename='', mode='wb', fileobj=output, mtime=0) as compressed:
+            with tarfile.open(fileobj=compressed, mode='w', format=tarfile.PAX_FORMAT) as archive:
+                for name, data in members:
+                    info = tarfile.TarInfo(name)
+                    info.size = len(data)
+                    info.mtime = 0
+                    info.mode = 0o644
+                    info.type = tarfile.REGTYPE
+                    info.uid = 0
+                    info.gid = 0
+                    info.uname = ''
+                    info.gname = ''
+                    archive.addfile(info, io.BytesIO(data))
+
+
+def fake_docker(path):
+    path.mkdir(parents=True)
+    executable = path / 'docker'
+    executable.write_text('''#!/usr/bin/env python3
+import gzip
+import io
+import sys
+import tarfile
+from pathlib import Path
+
+def deterministic_tar(path, members):
+    with path.open('wb') as output:
+        with gzip.GzipFile(filename='', mode='wb', fileobj=output, mtime=0) as compressed:
+            with tarfile.open(fileobj=compressed, mode='w', format=tarfile.PAX_FORMAT) as archive:
+                for name, data in members:
+                    info = tarfile.TarInfo(name)
+                    info.size = len(data)
+                    info.mtime = 0
+                    info.mode = 0o644
+                    info.type = tarfile.REGTYPE
+                    info.uid = 0
+                    info.gid = 0
+                    info.uname = ''
+                    info.gname = ''
+                    archive.addfile(info, io.BytesIO(data))
+
+dep11 = None
+arguments = sys.argv[1:]
+while arguments:
+    if arguments[0] == '-v' and len(arguments) > 1:
+        source, target = arguments[1].split(':', 1)
+        if target == '/dep11':
+            dep11 = Path(source)
+        arguments = arguments[2:]
+        continue
+    arguments.pop(0)
+if dep11 is None:
+    raise SystemExit('fake Docker did not receive /dep11')
+(dep11 / 'workspace/export/data/mashtabba/main').mkdir(parents=True, exist_ok=True)
+data = dep11 / 'workspace/export/data/mashtabba/main'
+(data / 'Components-amd64.yml').write_bytes(b'File: DEP-11\\n---\\n- Type: generic\\n  ID: edition-consumer.desktop\\n')
+with (data / 'Components-amd64.yml.gz').open('wb') as output:
+    import gzip
+    with gzip.GzipFile(filename='', mode='wb', fileobj=output, mtime=0) as compressed:
+        compressed.write((data / 'Components-amd64.yml').read_bytes())
+for size in (48, 64, 128):
+    deterministic_tar(
+        data / f'icons-{size}x{size}.tar.gz',
+        [(f'{size}x{size}/app.png', b'fake icon\\n')],
+    )
+''')
+    executable.chmod(0o755)
+    return executable
+
+
+def normalized_release(path, env):
+    if path.name == 'InRelease':
+        result = subprocess.run(['gpg', '--batch', '--decrypt', str(path)], env=env,
+                                capture_output=True, text=True, check=True)
+        text = result.stdout
+    else:
+        text = path.read_text()
+    return '\n'.join(line for line in text.splitlines() if not line.startswith('Date: '))
+
+
+def appstream_release_entries(root):
+    release = root / 'dists/mashtabba/Release'
+    return {line.rsplit(' ', 1)[1] for line in release.read_text().splitlines()
+            if '/dep11/' in line}
+
+
 def test_actual_publisher_wires_destination_previous_snapshot(publisher_env, tmp_path):
     programs, libraries, common = edition(tmp_path / 'build')
     old_out, new_out = tmp_path / 'old-out', tmp_path / 'new-out'
@@ -348,6 +442,80 @@ def test_actual_publisher_wires_destination_previous_snapshot(publisher_env, tmp
         shutil.copyfile(new_out / name, broken_out / name)
     failure = publish_fixture(broken_out, destination, publisher_env)
     assert failure.returncode != 0 and 'solve failed' in failure.stderr, failure.stdout + failure.stderr
+    assert tree_hashes(destination) == before
+
+
+def test_appstream_is_off_by_default_and_matches_main(publisher_env, tmp_path):
+    programs, libraries, common = edition(tmp_path / 'build')
+    source = tmp_path / 'source'
+    for i, raw in enumerate((programs[0], libraries[0], common)):
+        qualify_payload(raw, source, tmp_path / f'stage-{i}')
+    current = tmp_path / 'current-out'
+    baseline = tmp_path / 'main-out'
+    current_result = publish_fixture(source, current, publisher_env)
+    assert current_result.returncode == 0, current_result.stdout + current_result.stderr
+    main_publisher = tmp_path / 'publish-tree-main.sh'
+    main_publisher.write_bytes(subprocess.check_output(
+        ['git', 'show', 'b9bf64f:sparky-os/repo/publish-tree.sh'], cwd=Path(__file__).resolve().parents[3]))
+    main_make_contents = tmp_path / 'make-contents.py'
+    main_make_contents.write_bytes(subprocess.check_output(
+        ['git', 'show', 'b9bf64f:sparky-os/repo/make-contents.py'], cwd=Path(__file__).resolve().parents[3]))
+    (tmp_path / 'index.html').write_bytes(subprocess.check_output(
+        ['git', 'show', 'b9bf64f:sparky-os/repo/index.html'], cwd=Path(__file__).resolve().parents[3]))
+    main_env = dict(publisher_env)
+    main_env['SPARKY_LC_SCRATCH'] = str(tmp_path / 'main-link-scratch')
+    main_env['PYTHONPATH'] = str(Path(__file__).resolve().parents[3] / 'sparky-os')
+    main_result = subprocess.run(['bash', str(main_publisher), str(source), str(baseline)], env=main_env,
+                                capture_output=True, text=True, timeout=180,
+                                cwd=Path(__file__).resolve().parents[3])
+    assert main_result.returncode == 0, main_result.stdout + main_result.stderr
+    assert not (current / 'dists/mashtabba/main/dep11').exists()
+    current_hashes = tree_hashes(current)
+    baseline_hashes = tree_hashes(baseline)
+    for name in ('dists/mashtabba/InRelease', 'dists/mashtabba/Release.gpg',
+                  'dists/mashtabba/Release'):
+        current_hashes.pop(name)
+        baseline_hashes.pop(name)
+    assert current_hashes == baseline_hashes
+    for name in ('dists/mashtabba/Release', 'dists/mashtabba/InRelease'):
+        assert normalized_release(current / name, publisher_env) == normalized_release(
+            baseline / name, {**publisher_env, 'SPARKY_LC_SCRATCH': main_env['SPARKY_LC_SCRATCH']})
+
+
+def test_appstream_flag_publishes_catalogues_and_icons_idempotently(publisher_env, tmp_path):
+    programs, libraries, common = edition(tmp_path / 'build')
+    source = tmp_path / 'source'
+    for i, raw in enumerate((programs[0], libraries[0], common)):
+        qualify_payload(raw, source, tmp_path / f'stage-{i}')
+    docker = fake_docker(tmp_path / 'fake-bin')
+    destination = tmp_path / 'published-fixture'
+    env = dict(publisher_env)
+    env.update({
+        'PATH': f'{docker.parent}:{publisher_env["PATH"]}',
+        'SPARKY_APPSTREAM': '1',
+        'SPARKY_APPSTREAM_IMAGE': 'fake-appstream-generator',
+        'SPARKY_APPSTREAM_USER': '1000:1000',
+    })
+    first = publish_fixture(source, destination, env)
+    assert first.returncode == 0, first.stdout + first.stderr
+    dep11 = destination / 'dists/mashtabba/main/dep11'
+    expected = {
+        'Components-amd64.yml', 'Components-amd64.yml.gz',
+        'icons-48x48.tar.gz', 'icons-64x64.tar.gz', 'icons-128x128.tar.gz',
+    }
+    assert {path.name for path in dep11.iterdir() if path.is_file()} == expected
+    entries = appstream_release_entries(destination)
+    assert {f'main/dep11/{name}' for name in expected} <= entries
+    release_hashes = {}
+    for line in (destination / 'dists/mashtabba/Release').read_text().splitlines():
+        if '/dep11/' in line:
+            digest, size, name = line.split()
+            release_hashes[name] = digest
+    for name in expected:
+        assert (dep11 / 'by-hash/SHA256' / release_hashes[f'main/dep11/{name}']).is_file()
+    before = tree_hashes(destination)
+    second = publish_fixture(source, destination, env)
+    assert second.returncode == 0, second.stdout + second.stderr
     assert tree_hashes(destination) == before
 
 

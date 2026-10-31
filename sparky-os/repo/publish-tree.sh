@@ -51,6 +51,8 @@ KEEP_BYHASH_DAYS=3
 
 [ $# -ge 2 ] || { sed -n '/^# Usage/,/^# Last/p' "$0" | sed 's/^# \?//' >&2; exit 2; }
 SRC=$(cd "$1" && pwd)
+mkdir -p "$2"
+DEST=$(cd "$2" && pwd)
 shift 2
 EXTRA=("$@")
 : "${SPARKY_REPO_KEY:?set SPARKY_REPO_KEY to the signing key fingerprint}"
@@ -67,8 +69,6 @@ if [ "$SPARKY_APPSTREAM" = 1 ]; then
 fi
 SCRATCH=${TMPDIR:-${SPARKY_SCRATCH:?}}
 [ -d "$SCRATCH" ] || { echo "scratch directory is missing: $SCRATCH" >&2; exit 2; }
-mkdir -p "$2"
-DEST=$(cd "$2" && pwd)
 [ -n "$DEST" ] && [ "$DEST" != / ] || { echo "bad DEST" >&2; exit 2; }
 [ "$SRC" != "$DEST" ] || { echo "SRC and DEST must differ" >&2; exit 2; }
 case "$DEST/" in "$SRC"/*) echo "DEST must not be inside SRC" >&2; exit 2 ;; esac
