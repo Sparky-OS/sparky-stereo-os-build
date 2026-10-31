@@ -22,25 +22,30 @@ usage: dpkg-stereo [--root DIR] [--map /etc=DIR ...] COMMAND
   --verify [PACKAGE...]    projected files against their lean hashes, pristine records against dpkg's
   --restore [PACKAGE...]   the original files back (all packages without a name), records dropped
   --repair-consumers       restore projections whose old consumer check was withdrawn, and project
-                           again the C and C++ files an older renderer gave #line directives
+                           again the C and C++ files an older renderer gave #line directives (those
+                           whose .deb is nowhere wait; this tries them again now)
   --hold PACKAGE|PATH      never project it again (restores it first); --unhold undoes that
   --hr PATH                write the full HR copy of an installed file to /usr/share/doc/PKG/hr/PATH
   --fetch-hr               write the HR copies of every projected setting (after the first online update)
   --resolve PATH:LINE[:COL]  an error location in a lean file -> the authored line
   --manifest FILE          the coverage manifest of every comment-bearing text file, with reasons
   --status                 what is projected, held, and left alone
-Options: --jobs N (parallel checks, default 4), --image (building an image).
+Options: --jobs N (parallel checks, default 4), --image (building an image), --if-changed (with
+--repair-consumers: try a waiting C or C++ file again only when its package, APT's lists or APT's cache
+changed since the last try, as the dpkg hooks do; the postinst uses it).
 Environment: DPKG_STEREO_DISABLE=1 makes the dpkg hooks do nothing (an image build that projects in its
 own step); DPKG_STEREO_NO_PROJECT=1 skips the first projection when the package is installed.
 """
 
 import argparse
+import bisect
 import fcntl
 import hashlib
 import io
 import lzma
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -218,53 +223,81 @@ def write_table(path, cols, rows):
     os.replace(tmp, path)
 
 
-def dpkg_packages(P):
-    """{package: (version, arch-qualified info name)} from dpkg's status file."""
+DB_FIELDS = ('Package', 'Version', 'Architecture', 'Status', 'Multi-Arch')
+
+
+def _db_stanzas(f):
+    """The fields dpkg-stereo reads from each stanza of a dpkg database file, Conffiles as {path: hash}."""
+    rec, conf = {}, None
+    for line in f:
+        if line == '\n':
+            if rec:
+                yield rec
+            rec, conf = {}, None
+            continue
+        if line[0] in ' \t':
+            if conf is not None:
+                parts = line.split()
+                if len(parts) >= 2:
+                    conf[parts[0]] = parts[1]
+            continue
+        conf = None
+        key, _, value = line.partition(':')
+        if key in DB_FIELDS:
+            rec[key] = value.strip()
+        elif key == 'Conffiles':
+            conf = rec['Conffiles'] = {}
+    if rec:
+        yield rec
+
+
+def dpkg_db(P):
+    """dpkg's database as dpkg itself reads it: the status file, then every entry of its journal,
+    /var/lib/dpkg/updates, in order. dpkg writes each change to the journal first and folds the journal into
+    the status file only at a checkpoint, so inside a dpkg run (in a maintainer script) the status file alone
+    is out of date: on a first install, dpkg-stereo's postinst found packages configured earlier in the same
+    run still "unpacked" there (ORDER 315). {(package, architecture): fields}."""
+    db = {}
+    names = [P.real('/var/lib/dpkg/status')]
+    updates = P.real('/var/lib/dpkg/updates')
+    try:
+        # dpkg reads only the names made of digits, all of one length, in sorted order (lib/dpkg/dbmodify.c)
+        names += [os.path.join(updates, n) for n in sorted(os.listdir(updates)) if n.isascii() and n.isdigit()]
+    except FileNotFoundError:
+        pass
+    for name in names:
+        try:
+            with open(name, encoding='utf-8', errors='surrogateescape') as f:
+                for rec in _db_stanzas(f):
+                    if 'Package' in rec:
+                        db[(rec['Package'], rec.get('Architecture', ''))] = rec
+        except FileNotFoundError:
+            pass
+    return db
+
+
+def dpkg_packages(P, db=None):
+    """{package: (version, arch-qualified info name)} of the installed packages, from dpkg's database."""
     out = {}
     try:
         lists = set(os.listdir(P.real('/var/lib/dpkg/info')))
     except FileNotFoundError:
         lists = set()
-    pkg = ver = arch = status = None
-    multi = None
-    with open(P.real('/var/lib/dpkg/status'), encoding='utf-8', errors='surrogateescape') as f:
-        for line in f.read().split('\n') + ['']:
-            if not line:
-                if pkg and status and status.endswith(' installed'):
-                    name = pkg
-                    if multi == 'same' or f'{pkg}:{arch}.list' in lists:
-                        name = f'{pkg}:{arch}'
-                    out[pkg if name == pkg else name] = (ver, name)
-                pkg = ver = arch = status = multi = None
-                continue
-            if line.startswith('Package: '):
-                pkg = line[9:]
-            elif line.startswith('Version: '):
-                ver = line[9:]
-            elif line.startswith('Architecture: '):
-                arch = line[14:]
-            elif line.startswith('Status: '):
-                status = line[8:]
-            elif line.startswith('Multi-Arch: '):
-                multi = line[12:]
+    for (pkg, arch), rec in (dpkg_db(P) if db is None else db).items():
+        if not rec.get('Status', '').endswith(' installed'):
+            continue
+        name = pkg
+        if rec.get('Multi-Arch') == 'same' or f'{pkg}:{arch}.list' in lists:
+            name = f'{pkg}:{arch}'
+        out[name] = (rec.get('Version'), name)
     return out
 
 
-def conffiles(P):
-    """{path: md5} of every installed conffile (dpkg's status, Conffiles field)."""
+def conffiles(P, db=None):
+    """{path: md5} of every conffile dpkg's database records (the Conffiles field)."""
     out = {}
-    cur = False
-    with open(P.real('/var/lib/dpkg/status'), encoding='utf-8', errors='surrogateescape') as f:
-        for line in f:
-            if line.startswith('Conffiles:'):
-                cur = True
-                continue
-            if cur and line.startswith(' '):
-                parts = line.split()
-                if len(parts) >= 2:
-                    out[parts[0]] = parts[1]
-                continue
-            cur = False
+    for rec in (dpkg_db(P) if db is None else db).values():
+        out.update(rec.get('Conffiles', ()))
     return out
 
 
@@ -408,19 +441,28 @@ class _NoPool:
         return False
 
 
-def project_packages(P, names, jobs, image=False, log=print, only=None, known=None, repair=True):
+PROGRESS_EVERY = 1000      # files between two progress lines of a long migration,
+PROGRESS_SECONDS = 60      # and a line at least this often (some headers take GCC seconds each: ORDER 315 saw 8 minutes
+                           # between two lines 1,000 files apart)
+
+
+def project_packages(P, names, jobs, image=False, log=print, only=None, known=None, repair=True, record=True,
+                     progress=None):
+    """Project the installed files of these packages (every installed package without names). With `only`,
+    just those paths. `record=False` leaves packages.tsv as it is: a migration inside a dpkg run must not mark
+    the packages that run changed as seen, or post-invoke would never project them. `progress` gets a line
+    every PROGRESS_EVERY files, and at least every PROGRESS_SECONDS."""
+    db = dpkg_db(P)
     if repair:
-        repair_consumers(P, jobs)
-    pkgs = dpkg_packages(P)
+        repair_consumers(P, jobs, pkgs=dpkg_packages(P, db))
+    pkgs = dpkg_packages(P, db)
     if names:
-        sel = {}
-        for n in names:
-            for k, v in pkgs.items():
-                if k == n or k.split(':')[0] == n:
-                    sel[k] = v
-        pkgs = sel
+        want = set(names)
+        pkgs = {k: v for k, v in pkgs.items() if k in want or k.split(':')[0] in want}
+    if only is not None:
+        only = set(only)
     held = set(read_hold(P))
-    conf = conffiles(P)
+    conf = conffiles(P, db)
     div = diversions(P)
     files = Records(P, 'records', pkgs.keys() if names else None)
     left = Records(P, 'left', pkgs.keys() if names else None)
@@ -428,6 +470,7 @@ def project_packages(P, names, jobs, image=False, log=print, only=None, known=No
     sums = {}
     built = lc_package.installed(P, pkgs)
     prebuilt = 0
+    owned = None           # package -> its paths in each table, made once and only if an lc1 package needs it
     for name, (ver, info) in sorted(pkgs.items()):
         if name in held or name.split(':')[0] in held:
             continue
@@ -435,8 +478,13 @@ def project_packages(P, names, jobs, image=False, log=print, only=None, known=No
         if isinstance(proof, dict):
             # These MR bytes ARE dpkg's baseline. Importing them into local records
             # would wrongly restore HR before an upgrade and provoke conffile prompts.
-            for table in (files, left):
-                for path in [p for p, row in table.items() if row['package'] == name]:
+            if owned is None:
+                owned = [{}, {}]
+                for table, by in zip((files, left), owned):
+                    for p, row in table.items():
+                        by.setdefault(row['package'], []).append(p)
+            for table, by in zip((files, left), owned):
+                for path in by.get(name, ()):
                     del table[path]
             prebuilt += 1
             continue
@@ -459,8 +507,14 @@ def project_packages(P, names, jobs, image=False, log=print, only=None, known=No
     # a handful of files (a package or two after an upgrade) is quicker in this process than in a pool
     pool = ProcessPoolExecutor(max_workers=jobs) if len(tasks) > 200 and jobs > 1 else None
     results = pool.map(_work, tasks, chunksize=16) if pool else map(_work, tasks)
+    if progress and tasks:
+        progress(f'dpkg-stereo: projecting and checking {len(tasks)} files')
+    said = time.time()
     with (pool or _NoPool()):
-        for (path, r, reason, data), (_, real, name, _seen) in zip(results, tasks):
+        for n, ((path, r, reason, data), (_, real, name, _seen)) in enumerate(zip(results, tasks), 1):
+            if progress and n < len(tasks) and (n % PROGRESS_EVERY == 0 or time.time() - said >= PROGRESS_SECONDS):
+                progress(f'dpkg-stereo: {n} of {len(tasks)} files projected and checked ({time.time() - t0:.0f} s)')
+                said = time.time()
             if r is None:
                 continue
             ver = pkgs[name][0]
@@ -505,7 +559,8 @@ def project_packages(P, names, jobs, image=False, log=print, only=None, known=No
             os.unlink(P.state('hr-fetched'))
         except FileNotFoundError:
             pass
-    write_packages(P)
+    if record:
+        write_packages(P)
     with open(P.state('identity'), 'w') as f:
         f.write(project.IDENTITY + '\n')
     log(f'dpkg-stereo: {done} files projected ({same} of them already checked in these bytes), {skipped} left '
@@ -573,6 +628,7 @@ def pre_invoke(P):
             restored = [l.rstrip('\n') for l in f if l.strip()]
     except FileNotFoundError:
         restored = []
+    listed = set(restored)
     for path, rec in files.items():
         if rec.get('conffile') != '1':
             continue
@@ -588,8 +644,9 @@ def pre_invoke(P):
         if orig is None or sha256(orig) != rec['sha_orig']:
             continue
         write_lean(real, data, orig, os.lstat(real))
-        if path not in restored:
+        if path not in listed:
             restored.append(path)
+            listed.add(path)
         n += 1
     tmp = P.state('restored-for-dpkg.new')
     with open(tmp, 'w', encoding='utf-8', errors='surrogateescape') as f:
@@ -604,8 +661,8 @@ def post_invoke(P, jobs):
     in its package's bytes, are projected again (the same render as before, so no new check); records of
     removed packages go. Beyond the conffiles, nothing else is read."""
     _migrate(P)
-    repair_consumers(P, jobs)
     pkgs = dpkg_packages(P)
+    repair_consumers(P, jobs, pkgs=pkgs)
     recorded = read_table(P.state(PKGS), PKG_COLS)
     changed = sorted(k for k, v in pkgs.items()
                      if recorded.get(k, {}).get('version') != v[0]
@@ -642,9 +699,11 @@ def post_invoke(P, jobs):
     for path in [p for p, r in files.items() if r['package'] in ch]:
         rec = files[path]
         known[path] = (rec['sha_orig'], rec['sha_lean'])
-        if rec['package'] in same_version:
+        if rec['package'] in same_version or rec['version'] == pkgs[rec['package']][0]:
             # dpkg rewrote the package's file list (a reinstall), or the list only looks different (an
-            # image unpacked elsewhere): the files themselves say which of them dpkg replaced
+            # image unpacked elsewhere), or this record was made from the installed version after dpkg
+            # installed it (a migration earlier in this hook, which leaves packages.tsv as it was): the files
+            # themselves say which of them dpkg replaced
             try:
                 with open(P.real(path), 'rb') as f:
                     cur = sha256(f.read())
@@ -652,8 +711,8 @@ def post_invoke(P, jobs):
                 cur = None
             if cur == rec['sha_lean']:
                 continue
-            if cur == rec['sha_orig']:
-                again.add(path)
+            if cur == rec['sha_orig'] and rec['package'] in same_version:
+                again.add(path)      # (a package whose version changed is projected whole below)
         del files[path]
         dirty = True
     for path in restored:
@@ -697,9 +756,70 @@ def post_invoke(P, jobs):
         write_packages(P, pkgs)
 
 
-def deb_members(P, package, version, wanted):
+def cached_debs(P):
+    """The names of the .deb files in APT's cache, sorted."""
+    try:
+        return sorted(n for n in os.listdir(P.real('/var/cache/apt/archives')) if n.endswith('.deb'))
+    except FileNotFoundError:
+        return []
+
+
+def in_cache(debs, package, version):
+    """Whether APT's cache (the sorted names cached_debs gives) holds this package version's .deb."""
+    prefix = f"{package.split(':')[0]}_{version.replace(':', '%3a')}_"
+    i = bisect.bisect_left(debs, prefix)
+    return i < len(debs) and debs[i].startswith(prefix)
+
+
+def archive_versions(P, packages):
+    """{(name, version)} of what APT's lists offer for these packages, from one apt-cache call: `apt-cache
+    madison` lists the versions the sources hold, never dpkg's own record of an installed one (one call for
+    38 packages took 0.63 s in ORDER 315's probe, where each failing `apt-get download` took 0.71 s). None when
+    APT cannot be asked (another root, no apt-cache, an error): every download is then tried, as before."""
+    if P.root != '' or not packages or not shutil.which('apt-cache'):
+        return None
+    try:
+        proc = subprocess.run(['apt-cache', 'madison', *sorted(set(packages))], capture_output=True, text=True,
+                              errors='surrogateescape', timeout=900)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    out = set()
+    for line in proc.stdout.splitlines():
+        fields = [x.strip() for x in line.split('|')]
+        if len(fields) >= 3 and fields[0] and fields[1]:
+            out.add((fields[0], fields[1]))
+    return out
+
+
+def apt_state(P):
+    """What decides whether a missing .deb can come back, as two short digests: APT's lists (the name, size
+    and time of every index in /var/lib/apt/lists) and the .deb files in APT's cache."""
+    def digest(items):
+        return hashlib.sha256('\n'.join(items).encode('utf-8', 'surrogateescape')).hexdigest()[:16]
+    lists = []
+    d = P.real('/var/lib/apt/lists')
+    try:
+        names = sorted(os.listdir(d))
+    except FileNotFoundError:
+        names = []
+    for n in names:
+        if n == 'lock':
+            continue
+        try:
+            st = os.stat(os.path.join(d, n))
+        except OSError:
+            continue
+        if stat.S_ISREG(st.st_mode):
+            lists.append(f'{n} {st.st_size} {st.st_mtime_ns}')
+    return digest(lists), digest(cached_debs(P))
+
+
+def deb_members(P, package, version, wanted, download=True):
     """The pristine bytes of these files from the package's .deb, read in one pass of its archive: APT's
-    cache first, then one download. Files the archive does not hold are missing from the answer."""
+    cache first, then one download (unless `download` is false: APT's lists hold no such version). Files the
+    archive does not hold are missing from the answer."""
     name = package.split(':')[0]
     arch_q = package.split(':')[1] if ':' in package else None
     cands = []
@@ -708,7 +828,7 @@ def deb_members(P, package, version, wanted):
         ev = version.replace(':', '%3a')
         cands = [os.path.join(cache, f) for f in os.listdir(cache) if f.startswith(f'{name}_{ev}_')]
     tmp = None
-    if not cands and P.root == '':
+    if not cands and P.root == '' and download:
         tmp = tempfile.mkdtemp(prefix='dpkg-stereo-')
         spec = f'{name}:{arch_q}={version}' if arch_q else f'{name}={version}'
         subprocess.run(['apt-get', 'download', spec], cwd=tmp, capture_output=True)
@@ -794,9 +914,11 @@ def verify(P, names, deep=False):
     for conffiles dpkg's own conffile hash and the pristine copy rendering to the installed lean bytes).
     With --deep, every other file's original is taken from its .deb (APT's cache) and checked against
     dpkg's md5sums and rendered again."""
+    names = set(names or ())
     files = Records(P, 'records')
-    conf = conffiles(P)
-    pkgs = dpkg_packages(P)
+    db = dpkg_db(P)
+    conf = conffiles(P, db)
+    pkgs = dpkg_packages(P, db)
     bad = back = 0
     built_count = 0
     for name, obj in lc_package.installed(P, names or None).items():
@@ -892,14 +1014,33 @@ def verify(P, names, deep=False):
             continue
         if 'changed by the person' in rec['reason']:
             print(f'EDITED    {path} (changed by the person: left as they made it)')
+    # the C and C++ files whose original was at hand nowhere when the migration tried: checked above like any
+    # other projection, in the older form (#line, the authored line numbers), and named here, not problems
+    waiting = {}
+    for path in pending_c_paths(P):
+        rec = files.get(path)
+        if rec and (not names or rec['package'] in names or rec['package'].split(':')[0] in names):
+            waiting.setdefault((rec['package'], rec['version']), []).append(path)
+    for (package, version), paths in sorted(waiting.items()):
+        print(f'PENDING   {package} {version}: {len(paths)} C and C++ files keep the older #line form (their line '
+              f'numbers are the authored ones); no .deb of this version in APT\'s cache or lists. They are projected '
+              f'again when it comes back, or when {package.split(":")[0]} is upgraded or reinstalled')
     print(f'dpkg-stereo: {len(files)} projected files checked, {bad} problems'
           + (f', {back} in their package\'s own bytes (restored, not projected)' if back else '')
-          + f', {built_count} lc1 package manifests checked')
+          + f', {built_count} lc1 package manifests checked'
+          + (f', {sum(map(len, waiting.values()))} C and C++ files of {len(waiting)} package versions waiting for '
+             f'their .deb (PENDING)' if waiting else ''))
     return 1 if bad else 0
 
 
-def restore(P, names, drop_hold=False):
-    files = Records(P, 'records')
+def restore(P, names, drop_hold=False, pkgs=None, log=print, progress=None):
+    """The original files back, records dropped: every record, or the packages and paths `names` lists.
+    `pkgs` limits the records read to those packages (a caller that knows them); `progress` gets a line
+    every PROGRESS_EVERY files, and at least every PROGRESS_SECONDS."""
+    # a set: with the list migrate_c_line_breaks passed, this test cost 68.9 s on the station's 90,217 records
+    # and 47,360 C and C++ names (ORDER 310), 0.05 s with a set
+    names = set(names or ())
+    files = Records(P, 'records', pkgs)
     ok = fail = 0
     todo = {}
     for path, rec in sorted(files.items()):
@@ -908,8 +1049,22 @@ def restore(P, names, drop_hold=False):
         todo.setdefault((rec['package'], rec['version']), []).append(path)
     pys = []
     missing = {}
+    # the package versions that need their .deb and are not in APT's cache: one apt-cache call says which of
+    # them APT's lists still offer, and only those are downloaded
+    debs = cached_debs(P)
+    need = [k for k, paths in todo.items() if not in_cache(debs, *k)
+            and any(not has_pristine(P, files[p]['sha_orig']) for p in paths)]
+    listed = archive_versions(P, [package for package, _ in need]) if need else None
+    offline = set() if listed is None else {(package, version) for package, version in need
+                                            if (package.split(':')[0], version) not in listed}
+    total = sum(map(len, todo.values()))
+    if progress and total:
+        progress(f'dpkg-stereo: putting back the originals of {total} files of {len(todo)} package versions '
+                 f'({len(offline)} of them in no APT list or cache)')
+    t0 = said = time.time()
+    seen = 0
     # package by package: the originals without a pristine copy come from one pass of the package's .deb
-    for (package, version), paths in sorted(todo.items()):
+    for i, ((package, version), paths) in enumerate(sorted(todo.items()), 1):
         from_deb = None
         for path in paths:
             rec = files[path]
@@ -925,7 +1080,8 @@ def restore(P, names, drop_hold=False):
                 continue
             if from_deb is None and not has_pristine(P, rec['sha_orig']):
                 from_deb = deb_members(P, package, version,
-                                       {p for p in paths if p in files and not has_pristine(P, files[p]['sha_orig'])})
+                                       {p for p in paths if p in files and not has_pristine(P, files[p]['sha_orig'])},
+                                       download=(package, version) not in offline)
             orig = original_bytes(P, rec, from_deb if from_deb is not None else {})
             if orig is None:
                 missing[(package, version)] = missing.get((package, version), 0) + 1
@@ -936,66 +1092,155 @@ def restore(P, names, drop_hold=False):
                 pys.append(real)
             del files[path]
             ok += 1
+        if progress and seen + len(paths) < total and (seen // PROGRESS_EVERY != (seen + len(paths)) // PROGRESS_EVERY
+                                                       or time.time() - said >= PROGRESS_SECONDS):
+            progress(f'dpkg-stereo: originals: {seen + len(paths)} of {total} files, {i} of {len(todo)} package '
+                     f'versions ({time.time() - t0:.0f} s)')
+            said = time.time()
+        seen += len(paths)
     recompile_pyc(pys)
     files.save()
     for (package, version), n in sorted(missing.items()):
         # the .deb of that version is neither in APT's cache nor in the archive any more: the files stay
         # lean (and recorded) until the package is reinstalled or upgraded
-        print(f'dpkg-stereo: {package} {version}: {n} files stay lean, its .deb is neither in APT\'s cache nor '
-              f'in the archive; apt-get install --reinstall {package.split(":")[0]} brings them back')
-    print(f'dpkg-stereo: {ok} files restored, {fail} need their package reinstalled')
-    if any(isinstance(obj, dict) and (not names or name in names or name.split(':')[0] in names)
-           for name, obj in lc_package.installed(P).items()):
-        print('dpkg-stereo: lc1 build-time files remain at their distribution baseline; --hr retrieves their authored text')
+        log(f'dpkg-stereo: {package} {version}: {n} files stay lean, its .deb is neither in APT\'s cache nor '
+            f'in the archive; apt-get install --reinstall {package.split(":")[0]} brings them back')
+    log(f'dpkg-stereo: {ok} files restored, {fail} need their package reinstalled')
+    # the note is for a person's --restore; a migration (its own log) skips reading every lc1 manifest
+    if log is print and any(isinstance(obj, dict) and (not names or name in names or name.split(':')[0] in names)
+                            for name, obj in lc_package.installed(P).items()):
+        log('dpkg-stereo: lc1 build-time files remain at their distribution baseline; --hr retrieves their authored text')
     return 1 if fail else 0
 
 
-def repair_consumers(P, jobs=4):
+def repair_consumers(P, jobs=4, pkgs=None, force=False):
     """The migrations of earlier local projections: GLSL shaders back to their authored bytes, then C and
     C++ files projected again in the form that keeps their line breaks. Each one reads the small record
-    index, not every installed payload, and a marker makes later hooks a single existence check."""
+    index, not every installed payload, and a marker makes later hooks a single existence check. `pkgs`:
+    the installed packages, when the caller has them. `force` (a person's --repair-consumers) tries every
+    waiting C and C++ file again now; the dpkg hooks and the postinst try one only when its package, APT's
+    lists or APT's cache changed since the last try."""
     rc = repair_glsl(P)
-    return migrate_c_line_breaks(P, jobs) or rc
+    return migrate_c_line_breaks(P, jobs, pkgs=pkgs, force=force) or rc
 
 
-def migrate_c_line_breaks(P, jobs=4):
+C_MIGRATION = 'renderer-migration-c-line-breaks-v1'
+PENDING_COLS = ('path', 'sha_lean', 'package', 'version')         # .pending: the files still in the #line form
+WAITING_COLS = ('package', 'version', 'files', 'lists', 'cache')   # .waiting: their versions, and APT's state when tried
+
+
+def pending_c_paths(P):
+    """{path: row} of the C and C++ files the line-break migration still waits on (none once it is done)."""
+    marker = P.state(C_MIGRATION)
+    if os.path.exists(marker):
+        return {}
+    return read_table(marker + '.pending', PENDING_COLS)
+
+
+def migrate_c_line_breaks(P, jobs=4, pkgs=None, force=False):
     """Project again, in the form that keeps their line breaks, the C and C++ files an earlier renderer
     (lean 0.1.15 and older) projected with `#line` directives after every removed run; GCC paid more for
     those directives than the comments cost (ORDER 303). Each such file gets its exact original back (its
     pristine copy, or its package's .deb at the recorded version), then the current renderer projects and
     checks it like any other file. A file the person changed is theirs: restore drops its record and the
-    projection leaves it as it is. A file whose original is missing keeps its old form (its line numbers
-    are still the authored ones) and its record; it is named in the pending list, and only those are tried
-    again at the next run. An upgrade or reinstall of its package projects it in the new form anyway."""
-    marker = P.state('renderer-migration-c-line-breaks-v1')
+    projection leaves it as it is.
+
+    A file whose original is nowhere keeps its old form (its line numbers are still the authored ones) and
+    its record; it is listed in .pending, and its package version in .waiting with APT's lists and cache as
+    they were at that try (ORDER 315: on the station 38 versions, 13,239 files, are in no archive at all, and
+    trying them at every dpkg run cost about 80 s per run). A later run tries a version again only when its
+    package's installed version, APT's lists or APT's cache changed, or when `force` says so; until then a
+    dpkg run reads one small table. An upgrade or reinstall projects the package in the new form anyway."""
+    marker = P.state(C_MIGRATION)
     if os.path.exists(marker):
         return 0
-    pending_file = marker + '.pending'
-    files = Records(P, 'records')
-    pending = read_table(pending_file, ('path', 'sha_lean'))
+    pending_file, waiting_file = marker + '.pending', marker + '.waiting'
+    first = not os.path.exists(pending_file)
+    lists, cache = apt_state(P)
+    waiting = {} if first else read_table(waiting_file, WAITING_COLS)
+    due = None             # None: every recorded C and C++ file (the first run) or every pending one (0.1.17's list)
+    if waiting:
+        if pkgs is None:
+            pkgs = dpkg_packages(P)
+        due = {k for k, w in waiting.items() if force or pkgs.get(k, (None,))[0] != w['version']
+               or w['lists'] != lists or w['cache'] != cache}
+        if not due:
+            return 1       # nothing that could bring an original back has changed: no record is read
+    t0 = time.time()
+    pending = {} if first else read_table(pending_file, PENDING_COLS)
+    retry = set()
+    if due is not None:
+        if pkgs is None:
+            pkgs = dpkg_packages(P)
+        # a version dpkg replaced or removed is post-invoke's: its files are projected from the new package
+        gone = {k for k in due if pkgs.get(k, (None,))[0] != waiting[k]['version']}
+        maybe = due - gone
+        debs = cached_debs(P)
+        need = [k for k in maybe if not in_cache(debs, k, waiting[k]['version'])]
+        listed = archive_versions(P, need) if need else set()
+        retry = {k for k in maybe if k not in need or listed is None
+                 or (k.split(':')[0], waiting[k]['version']) in listed}
+        files = Records(P, 'records', retry)
+    else:
+        gone, maybe = set(), set()
+        files = Records(P, 'records')
     from lean.lang_c import GLSL_EXTS     # shaders are repair_glsl's: restored, never projected again
     old = {path: rec for path, rec in files.items()
            if rec['handler'] == 'c' and os.path.splitext(path)[1].lower() not in GLSL_EXTS
-           and (not os.path.exists(pending_file) or pending.get(path, {}).get('sha_lean') == rec['sha_lean'])}
+           and (first or pending.get(path, {}).get('sha_lean') == rec['sha_lean'])
+           and (due is None or rec['package'] in retry)}
     stuck = {}
+    done = 0
+    quiet = lambda m: None
+    say = print if due is None or old else quiet
     if old:
-        print(f'dpkg-stereo: projecting {len(old)} C and C++ files again, line breaks kept instead of #line')
-        restore(P, sorted(old))
-        kept = Records(P, 'records')
+        versions = {(r['package'], r['version']) for r in old.values()}
+        say(f'dpkg-stereo: projecting {len(old)} C and C++ files again ({len(versions)} package versions), line '
+            f'breaks kept instead of #line')
+        names = {r['package'] for r in old.values()}
+        restore(P, set(old), pkgs=names, log=quiet, progress=say)
+        kept = Records(P, 'records', names)
         again = {path for path in old if path not in kept}
-        stuck = {path: {'path': path, 'sha_lean': kept[path]['sha_lean']} for path in old if path in kept}
+        stuck = {path: {'path': path, 'sha_lean': kept[path]['sha_lean'], 'package': kept[path]['package'],
+                        'version': kept[path]['version']} for path in old if path in kept}
         if again:
-            project_packages(P, sorted({old[path]['package'] for path in again}), jobs, log=lambda m: None,
-                             only=again, repair=False)
+            done = project_packages(P, sorted({old[path]['package'] for path in again}), jobs, log=quiet, only=again,
+                                    repair=False, record=False, progress=say)
+    # the files still waiting: those of versions not tried now, and those whose original was again nowhere
+    keep = {path: row for path, row in pending.items()
+            if due is not None and row.get('package') and row['package'] not in gone and row['package'] not in retry}
+    keep.update(stuck)
     os.makedirs(P.state(), exist_ok=True)
-    if stuck:
-        write_table(pending_file, ('path', 'sha_lean'), stuck)
+    if keep:
+        by = {}
+        for row in keep.values():
+            by.setdefault(row['package'], [row['version'], 0])[1] += 1
+        table = {}
+        for package, (version, n) in by.items():
+            w = waiting.get(package)
+            tried_now = due is None or package in maybe or w is None or w['version'] != version
+            table[package] = {'package': package, 'version': version, 'files': n,
+                              'lists': lists if tried_now else w['lists'], 'cache': cache if tried_now else w['cache']}
+        if keep != pending:
+            # .waiting is trusted only once .pending is complete: it goes first and comes back last, so a run
+            # cut short in between leaves no .waiting, and the next run tries every pending file once (as 0.1.17)
+            if os.path.exists(waiting_file):
+                os.unlink(waiting_file)
+            write_table(pending_file, PENDING_COLS, keep)
+        write_table(waiting_file, WAITING_COLS, table)
+        if old or due is None:
+            say(f'dpkg-stereo: C and C++ files in the new form: {done}; {len(keep)} files of '
+                f'{len(table)} package versions keep the #line form until their .deb is at hand (dpkg-stereo --verify '
+                f'lists them; tried again when the package, APT\'s lists or its cache change); {time.time() - t0:.0f} s')
         return 1
     with open(marker + '.new', 'w', encoding='utf-8') as stream:
         stream.write('C and C++ projections made with #line directives projected again with their line breaks.\n')
     os.replace(marker + '.new', marker)
-    if os.path.exists(pending_file):
-        os.unlink(pending_file)
+    for f in (pending_file, waiting_file):
+        if os.path.exists(f):
+            os.unlink(f)
+    if old:
+        say(f'dpkg-stereo: C and C++ files in the new form: {done}, none left with #line; {time.time() - t0:.0f} s')
     return 0
 
 
@@ -1242,6 +1487,8 @@ def main():
     ap.add_argument('--map', action='append', default=[], help='/etc=DIR: where an image folder really is')
     ap.add_argument('--jobs', type=int, default=4)
     ap.add_argument('--image', action='store_true')
+    ap.add_argument('--if-changed', action='store_true',
+                    help='with --repair-consumers: retry waiting files only when what decides it changed')
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument('--project', nargs='*')
     g.add_argument('--pre-invoke', action='store_true')
@@ -1258,6 +1505,8 @@ def main():
     g.add_argument('--manifest')
     g.add_argument('--status', action='store_true')
     a = ap.parse_args()
+    # every line as it is written, even through a pipe: apt shows a long migration as it goes (ORDER 315)
+    sys.stdout.reconfigure(line_buffering=True)
     P = Paths(a.root, [m.split('=', 1) for m in a.map])
     if (a.pre_invoke or a.post_invoke) and os.environ.get('DPKG_STEREO_DISABLE'):
         return 0      # an image build turns the hooks off until its own Lean Code step
@@ -1293,7 +1542,7 @@ def main():
         if a.restore is not None:
             return restore(P, a.restore)
         if a.repair_consumers:
-            return repair_consumers(P, a.jobs)
+            return repair_consumers(P, a.jobs, force=not a.if_changed)
         if a.hold:
             restore(P, [a.hold])
             with open(P.state(HOLD), 'a', encoding='utf-8') as f:

@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -27,6 +28,30 @@ loader.exec_module(client)
 
 SCRIPT = '#!/bin/sh\n' + '# A long explanatory comment for the developer, retained in HR.\n' * 12 + 'printf "hello\\n"\n'
 UNIT = '# How to configure this service, kept in the separate documentation.\n' * 12 + '[Service]\nExecStart=/usr/bin/lc-demo\n'
+
+
+def synthetic_records(P, records, c_files, per_package=45):
+    """dpkg-stereo records of a big install, written as its tables: `records` rows in packages of
+    `per_package` files, the first `c_files` of them C headers (their files absent: restore drops those
+    records). Returns the C paths."""
+    rows, c = {}, []
+    for i in range(records):
+        pkg = f'syn-{i // per_package:05d}'
+        if i < c_files:
+            path = f'/usr/include/{pkg}/f{i}.h'
+            c.append(path)
+            handler, variant = 'c', 'c'
+        else:
+            path = f'/usr/share/{pkg}/f{i}.py'
+            handler, variant = 'python', ''
+        rows.setdefault(pkg, {})[path] = dict(path=path, package=pkg, version='1', conffile='0', sha_orig='0' * 64,
+                                              md5_orig='', sha_lean='1' * 64, handler=handler, variant=variant,
+                                              bytes_orig=100, bytes_lean=90)
+    d = P.state('records')
+    os.makedirs(d, exist_ok=True)
+    for pkg, table in rows.items():
+        client.write_table(os.path.join(d, pkg + '.tsv'), client.FILE_COLS, table)
+    return c
 
 
 class Packages(unittest.TestCase):
@@ -384,9 +409,9 @@ class Packages(unittest.TestCase):
         tried = []
         real_restore = client.restore
 
-        def spy(P_, names, *args):
+        def spy(P_, names, *args, **kwargs):
             tried.append(sorted(names))
-            return real_restore(P_, names, *args)
+            return real_restore(P_, names, *args, **kwargs)
         # the first run finds no original for demo.h, then projects other.h in the current form
         with patch.object(client, 'deb_members', return_value={}), patch.object(client, 'restore', spy):
             self.run_project(P)
@@ -399,9 +424,10 @@ class Packages(unittest.TestCase):
         self.assertEqual(sorted(client.read_table(P.state('renderer-migration-c-line-breaks-v1.pending'),
                                                   ('path', 'sha_lean'))), [self.C_PATH])
         tried.clear()
+        # a person's --repair-consumers tries the waiting file now (the hooks wait for a change: ORDER 315)
         with patch.object(client, 'deb_members', return_value={self.C_PATH: self.C_AUTHORED}), \
                 patch.object(client, 'restore', spy), contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(client.repair_consumers(P), 0)
+            self.assertEqual(client.repair_consumers(P, force=True), 0)
         self.assertEqual(tried, [[self.C_PATH]])          # the pending file only, not the new projection
         self.assertEqual((root / self.C_PATH[1:]).read_bytes(), self.new_form())
         self.assertEqual(client.Records(P)[second]['sha_lean'], new_other)
@@ -439,6 +465,257 @@ class Packages(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertEqual(client.resolve(P, f'{self.C_PATH}:3:1'), 0)
         self.assertEqual(output.getvalue().split()[0], f'/usr/share/doc/lc-demo/hr{self.C_PATH}:3:1')
+
+    def stuck_c_header(self):
+        """ORDER 315: the station's case: an old-form C header whose package version no cache or archive holds,
+        after the migration's first try (pending and waiting written, packages.tsv current)."""
+        root, P, raw, old = self.old_c_header()
+        with patch.object(client, 'deb_members', return_value={}), contextlib.redirect_stdout(io.StringIO()):
+            self.run_project(P)
+        marker = P.state('renderer-migration-c-line-breaks-v1')
+        self.assertFalse(Path(marker).exists())
+        self.assertEqual(list(client.read_table(marker + '.pending', client.PENDING_COLS)), [self.C_PATH])
+        self.assertEqual([(w['package'], w['version'], w['files']) for w in
+                          client.read_table(marker + '.waiting', client.WAITING_COLS).values()], [('lc-demo', '0', '1')])
+        return root, P, raw, old
+
+    def test_c_migration_waiting_version_costs_nothing_until_its_deb_comes_back(self):
+        root, P, raw, old = self.stuck_c_header()
+        nothing = AssertionError('a dpkg run with nothing changed read records or asked APT')
+        # the hooks and the postinst: a no-op dpkg run reads the small table and stops
+        with patch.object(client, 'Records', side_effect=nothing), patch.object(client, 'restore', side_effect=nothing), \
+                patch.object(client, 'deb_members', side_effect=nothing), \
+                patch.object(client, 'archive_versions', side_effect=nothing):
+            self.assertEqual(client.repair_consumers(P), 1)
+            self.assertEqual(client.migrate_c_line_breaks(P, pkgs=client.dpkg_packages(P)), 1)
+        with patch.object(client, 'deb_members', side_effect=nothing), contextlib.redirect_stdout(io.StringIO()) as output:
+            client.post_invoke(P, 1)
+        self.assertEqual(output.getvalue(), '')
+        self.assertEqual((root / self.C_PATH[1:]).read_bytes(), old)
+        # its .deb arrives in APT's cache: the next hook tries it, and the migration ends
+        cache = root / 'var/cache/apt/archives'
+        cache.mkdir(parents=True)
+        shutil.copy2(raw, cache)
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            client.post_invoke(P, 1)
+        self.assertIn('line breaks kept instead of #line', output.getvalue())
+        self.assertEqual((root / self.C_PATH[1:]).read_bytes(), self.new_form())
+        self.assertTrue(Path(P.state('renderer-migration-c-line-breaks-v1')).exists())
+        self.assertFalse(Path(P.state('renderer-migration-c-line-breaks-v1.waiting')).exists())
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(client.verify(P, [], True), 0)
+
+    def test_c_migration_new_lists_ask_apt_once_and_download_nothing_they_lack(self):
+        root, P, raw, old = self.stuck_c_header()
+        lists = root / 'var/lib/apt/lists'
+        lists.mkdir(parents=True)
+        (lists / 'example_dists_testing_main_binary-amd64_Packages').write_text('Package: other\n')
+        asked = []
+
+        def madison(P_, packages):
+            asked.append(sorted(packages))
+            return {('lc-demo', '1')}          # the lists offer another version, not the recorded one
+        nothing = AssertionError('downloaded or restored a version APT does not offer')
+        with patch.object(client, 'archive_versions', madison), patch.object(client, 'restore', side_effect=nothing), \
+                patch.object(client, 'deb_members', side_effect=nothing), contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(client.repair_consumers(P), 1)
+        self.assertEqual(asked, [['lc-demo']])
+        self.assertEqual(output.getvalue(), '')
+        # tried against these lists: the next run asks nothing
+        with patch.object(client, 'archive_versions', side_effect=AssertionError('asked APT twice')):
+            self.assertEqual(client.repair_consumers(P), 1)
+        # lists that offer the version: tried, and with the .deb downloaded the migration ends
+        os.utime(lists / 'example_dists_testing_main_binary-amd64_Packages', ns=(1, 1))
+        with patch.object(client, 'archive_versions', return_value={('lc-demo', '0')}), \
+                patch.object(client, 'deb_members', return_value={self.C_PATH: self.C_AUTHORED}), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(client.repair_consumers(P), 0)
+        self.assertEqual((root / self.C_PATH[1:]).read_bytes(), self.new_form())
+
+    def test_c_migration_drops_a_waiting_version_dpkg_replaced(self):
+        root, P, raw, old = self.stuck_c_header()
+        upgrade = self.stage('1')
+        (upgrade / self.C_PATH[1:]).parent.mkdir(parents=True)
+        (upgrade / self.C_PATH[1:]).write_bytes(self.C_AUTHORED)
+        deb = self.base / 'lc-demo_1_all.deb'
+        subprocess.run(['dpkg-deb', '--root-owner-group', '-b', str(upgrade), str(deb)], check=True, stdout=subprocess.DEVNULL)
+        client.pre_invoke(P)
+        self.dpkg(root, '-i', str(deb))
+        with patch.object(client, 'deb_members', side_effect=AssertionError('fetched the replaced version')), \
+                contextlib.redirect_stdout(io.StringIO()):
+            client.post_invoke(P, 1)
+        self.assertTrue(Path(P.state('renderer-migration-c-line-breaks-v1')).exists())
+        rec = client.Records(P)[self.C_PATH]
+        self.assertEqual(rec['version'], '1')
+        self.assertEqual((root / self.C_PATH[1:]).read_bytes(), self.new_form())
+
+    def test_verify_names_the_waiting_versions(self):
+        root, P, raw, old = self.stuck_c_header()
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(client.verify(P, []), 0)
+        lines = output.getvalue().splitlines()
+        self.assertIn('PENDING   lc-demo 0: 1 C and C++ files keep the older #line form', '\n'.join(lines))
+        self.assertTrue(lines[-1].endswith('1 C and C++ files of 1 package versions waiting for their .deb (PENDING)'), lines[-1])
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(client.verify(P, ['lc-other']), 0)
+        self.assertNotIn('PENDING', output.getvalue())
+
+    def test_old_pending_list_is_tried_once_then_remembered_by_version(self):
+        root, P, raw, old = self.stuck_c_header()
+        marker = P.state('renderer-migration-c-line-breaks-v1')
+        # 0.1.17's list: paths and lean hashes, no version and no .waiting
+        client.write_table(marker + '.pending', ('path', 'sha_lean'), {self.C_PATH: {'path': self.C_PATH, 'sha_lean': client.sha256(old)}})
+        os.unlink(marker + '.waiting')
+        tried = []
+        real_restore = client.restore
+
+        def spy(P_, names, *args, **kwargs):
+            tried.append(sorted(names))
+            return real_restore(P_, names, *args, **kwargs)
+        with patch.object(client, 'deb_members', return_value={}), patch.object(client, 'restore', spy), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(client.repair_consumers(P), 1)
+            self.assertEqual(client.repair_consumers(P), 1)
+        self.assertEqual(tried, [[self.C_PATH]])
+        self.assertEqual(client.read_table(marker + '.pending', client.PENDING_COLS)[self.C_PATH]['version'], '0')
+
+    def four_old_headers(self):
+        extra = {f'/usr/include/lc-demo/more{i}.h': self.C_AUTHORED.replace(b'demo', b'demo%d' % i) for i in range(3)}
+        root, P, raw, _ = self.old_c_header(extra)
+        records = client.Records(P)
+        for path, data in extra.items():       # recorded as projections whose lean bytes are what is installed
+            records[path] = dict(records[self.C_PATH], path=path, sha_orig=client.sha256(data), sha_lean=client.sha256(data))
+        records.save()
+        return P, {self.C_PATH: self.C_AUTHORED, **extra}
+
+    def migration_lines(self, every, seconds):
+        P, originals = self.four_old_headers()
+        with patch.object(client, 'PROGRESS_EVERY', every), patch.object(client, 'PROGRESS_SECONDS', seconds), \
+                patch.object(client, 'deb_members', return_value=originals), contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(client.repair_consumers(P), 0)
+        return output.getvalue().splitlines()
+
+    def test_c_migration_prints_progress_at_least_once_a_minute(self):
+        # 1,000 files apart, but at least every PROGRESS_SECONDS (0 here): a line after every file
+        lines = self.migration_lines(1000, 0)
+        self.assertEqual([l.split(' (')[0] for l in lines if 'projected and checked' in l],
+                         [f'dpkg-stereo: {n} of 4 files projected and checked' for n in (1, 2, 3)])
+
+    def test_c_migration_progress_stays_quiet_below_both_thresholds(self):
+        lines = self.migration_lines(1000, 3600)
+        self.assertEqual([l for l in lines if 'projected and checked' in l], [])
+        self.assertTrue(lines[-1].startswith('dpkg-stereo: C and C++ files in the new form: 4, none left with #line'), lines)
+
+    def test_c_migration_prints_progress_before_the_long_steps(self):
+        lines = self.migration_lines(1, 3600)
+        self.assertTrue(lines[0].startswith('dpkg-stereo: projecting 4 C and C++ files again (1 package versions)'), lines)
+        self.assertTrue(lines[1].startswith('dpkg-stereo: putting back the originals of 4 files of 1 package versions'), lines)
+        self.assertEqual(lines[2], 'dpkg-stereo: projecting and checking 4 files')
+        self.assertEqual([l.split(' (')[0] for l in lines[3:6]],
+                         [f'dpkg-stereo: {n} of 4 files projected and checked' for n in (1, 2, 3)])
+        self.assertTrue(lines[-1].startswith('dpkg-stereo: C and C++ files in the new form: 4, none left with #line'), lines)
+
+    def test_migration_inside_post_invoke_still_projects_what_the_run_changed(self):
+        """The migration's own projection must not mark the packages this dpkg run changed as seen
+        (0.1.17 wrote every package's version to packages.tsv there, so post-invoke skipped them)."""
+        root, P, raw, _ = self.old_c_header()
+
+        def other(version):
+            tree = self.base / f'lc-other-{version}'
+            (tree / 'DEBIAN').mkdir(parents=True)
+            (tree / 'DEBIAN/control').write_text(f'Package: lc-other\nVersion: {version}\nArchitecture: all\n'
+                                                 'Maintainer: Example <dev@example.org>\nDescription: Test package\n')
+            (tree / 'usr/bin').mkdir(parents=True)
+            (tree / 'usr/bin/lc-other').write_text(SCRIPT.replace('hello', 'other ' + version))
+            (tree / 'usr/bin/lc-other').chmod(0o755)
+            deb = self.base / f'lc-other_{version}_all.deb'
+            subprocess.run(['dpkg-deb', '--root-owner-group', '-b', str(tree), str(deb)], check=True, stdout=subprocess.DEVNULL)
+            return deb
+        self.dpkg(root, '-i', str(other('1')))
+        client.write_packages(P)
+        cache = root / 'var/cache/apt/archives'
+        cache.mkdir(parents=True)
+        shutil.copy2(raw, cache)
+        self.dpkg(root, '-i', str(other('2')))
+        with contextlib.redirect_stdout(io.StringIO()):
+            client.post_invoke(P, 1)
+        records = client.Records(P)
+        self.assertEqual((root / self.C_PATH[1:]).read_bytes(), self.new_form())
+        self.assertEqual(records[self.C_PATH]['version'], '0')
+        self.assertEqual({r['version'] for r in records.values() if r['package'] == 'lc-other'}, {'2'})
+        self.assertTrue(any(r['package'] == 'lc-other' for r in records.values()))
+
+    def test_dpkg_database_includes_its_journal(self):
+        """Inside a dpkg run the status file is out of date until dpkg's checkpoint; a maintainer script
+        sees the journal too (ORDER 315: the first install's projection missed packages configured earlier)."""
+        root, P = self.system()
+        probe = self.base / 'probe.py'
+        probe.write_text('import importlib.machinery, importlib.util, sys\n'
+                         'l = importlib.machinery.SourceFileLoader("d", sys.argv[1])\n'
+                         's = importlib.util.spec_from_loader(l.name, l)\nm = importlib.util.module_from_spec(s)\n'
+                         'l.exec_module(m)\nP = m.Paths(sys.argv[2])\n'
+                         'print(" ".join(sorted(m.dpkg_packages(P))))\n'
+                         'print(m.conffiles(P).get("/etc/lc-early.conf"))\n')
+        seen = self.base / 'seen.txt'
+        early = self.base / 'early'
+        (early / 'DEBIAN').mkdir(parents=True)
+        (early / 'etc').mkdir()
+        (early / 'etc/lc-early.conf').write_text('# a setting\nkey=1\n')
+        (early / 'DEBIAN/conffiles').write_text('/etc/lc-early.conf\n')
+        (early / 'DEBIAN/control').write_text('Package: lc-early\nVersion: 1\nArchitecture: all\n'
+                                              'Maintainer: Example <dev@example.org>\nDescription: configured first\n')
+        late = self.base / 'late'
+        (late / 'DEBIAN').mkdir(parents=True)
+        (late / 'DEBIAN/control').write_text('Package: lc-late\nVersion: 1\nArchitecture: all\nDepends: lc-early\n'
+                                             'Maintainer: Example <dev@example.org>\nDescription: configured second\n')
+        (late / 'DEBIAN/postinst').write_text(f'#!/bin/sh\n[ "$1" = configure ] || exit 0\n'
+                                              f'ls "$DPKG_ROOT/var/lib/dpkg/updates" | grep -c "^[0-9]" > {seen}.journal\n'
+                                              f'{sys.executable} {probe} {BIN} "$DPKG_ROOT" > {seen}\n')
+        (late / 'DEBIAN/postinst').chmod(0o755)
+        debs = []
+        for tree in (early, late):
+            deb = self.base / (tree.name + '.deb')
+            subprocess.run(['dpkg-deb', '--root-owner-group', '-b', str(tree), str(deb)], check=True, stdout=subprocess.DEVNULL)
+            debs.append(str(deb))
+        self.dpkg(root, '-i', *debs)
+        self.assertGreater(int(Path(f'{seen}.journal').read_text()), 0)
+        installed, conf = seen.read_text().splitlines()
+        self.assertIn('lc-early', installed.split())
+        self.assertEqual(conf, hashlib.md5(b'# a setting\nkey=1\n').hexdigest())
+        # after the run, the checkpoint folded the journal into the status file: the same answer
+        self.assertIn('lc-early', client.dpkg_packages(P))
+        self.assertIn('lc-late', client.dpkg_packages(P))
+
+    def test_lc1_markers_are_read_with_dpkg_journal(self):
+        """lean.package.installed reads dpkg's database as dpkg-stereo does: inside a dpkg run an lc1
+        package configured earlier is in the journal, not yet in the status file (ORDER 315)."""
+        _, _, deb = self.build()
+        root, P = self.system()
+        self.dpkg(root, '-i', str(deb))
+        status = (root / 'var/lib/dpkg/status').read_text()
+        self.assertIn('Status: install ok installed', status)
+        (root / 'var/lib/dpkg/updates').mkdir(exist_ok=True)
+        (root / 'var/lib/dpkg/updates/0000').write_text(status)
+        (root / 'var/lib/dpkg/status').write_text(status.replace('Status: install ok installed', 'Status: install ok unpacked'))
+        self.assertIsInstance(package.installed(P)['lc-demo'], dict)
+        self.assertIn('lc-demo', client.dpkg_packages(P))
+        os.unlink(root / 'var/lib/dpkg/updates/0000')
+        self.assertNotIn('lc-demo', package.installed(P))
+        self.assertNotIn('lc-demo', client.dpkg_packages(P))
+
+    def test_restore_names_scale_to_the_station(self):
+        """ORDER 310 measured 68.9 s for restore's filter on the station's 90,217 records with the 47,360
+        C and C++ names migrate_c_line_breaks passed as a list; a set makes it linear (ORDER 315)."""
+        root, P = self.system()
+        names = synthetic_records(P, records=90217, c_files=47360)
+        t0 = time.monotonic()
+        with contextlib.redirect_stdout(io.StringIO()):
+            client.restore(P, sorted(names), log=lambda m: None)    # the list 0.1.17's migration passed
+        took = time.monotonic() - t0
+        self.assertLess(took, 20, f'restore took {took:.1f} s')
+        left = client.Records(P)
+        self.assertEqual(len(left), 90217 - 47360)
+        self.assertFalse(any(r['handler'] == 'c' for r in left.values()))
 
     def test_architecture_specific_manifests(self):
         a = package.prepare(self.stage('1', 'amd64'), self.base / 'hr-a')
