@@ -1,4 +1,21 @@
 -------------------------------------------------------------------------------
+  Version 0.1.17 (2026-10-31)
+-------------------------------------------------------------------------------
+  * C and C++ keep each removed comment's line breaks instead of writing #line
+    after every removed run: every authored line keeps its number, and GCC no
+    longer pays for the directives (ORDER 303; with #line, preprocessing
+    Debian's libstdc++ headers took 24.8% more instructions than the
+    originals). The pointer takes a line a removed comment emptied.
+  * The GCC check also compares where every logical line starts, the lines
+    of every fully preprocessed token, and refuses any added line control.
+  * On upgrade, --repair-consumers and the dpkg hooks project again the C and
+    C++ files an older renderer projected with #line: exact originals first,
+    files the person changed left as they are; a file whose original is
+    missing keeps its old form and is the only one tried again.
+  * --resolve maps C and C++ columns through the renderer's map.
+  * The renderer identity names the form and carries its code's digest
+    (lean 0.1.17); it changes whenever the renderer's code does.
+-------------------------------------------------------------------------------
   Version 0.1.16 (2026-10-20)
   * Locate the actual Source stanza when adding build dependencies. Preserve
     leading licence-comment paragraphs, as used by Abseil's Debian packaging.

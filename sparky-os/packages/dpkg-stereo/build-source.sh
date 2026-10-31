@@ -37,16 +37,14 @@ EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
 
-  * Development release: explicit source layouts for copied package headers.
-    Distinguish unchanged/generated files from coincidentally identical native
-    projections. Retain GLSL recovery and dependency parser safeguards.
-    Preserve shell inputs rejected by their declared interpreter before any
-    transformation; a newly introduced parse failure still rejects the build.
-    Preserve Wine headers shared by its C and IDL/resource preprocessors.
-    Add build prerequisites to the Source stanza while preserving leading
-    licence-comment paragraphs and existing dependency continuations.
+  * Development release: C and C++ keep each removed comment's line breaks
+    instead of #line, with the same authored line numbers; the GCC check
+    compares lines too; installed #line projections are projected again on
+    upgrade, keeping user edits; the renderer identity carries its code
+    digest. Retain the source layouts, GLSL recovery, Wine header and
+    dependency parser safeguards of 0.1.16.
 
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 20 Oct 2026 12:00:00 -0300
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 31 Oct 2026 12:00:00 -0300
 EOF
 cat > "$S/debian/rules" <<'EOF'
 #!/usr/bin/make -f

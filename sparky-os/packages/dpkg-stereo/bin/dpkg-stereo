@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the MIT License
-# Last update 2026/10/16
+# Last update 2026/10/31
 # SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 # SPDX-License-Identifier: MIT
 """dpkg-stereo: Lean Code for installed packages (Sparky Stereo OS Lean Code policy, "Install-time
@@ -21,7 +21,8 @@ usage: dpkg-stereo [--root DIR] [--map /etc=DIR ...] COMMAND
   --post-invoke            after dpkg (dpkg's post-invoke hook): project what changed, reproject conffiles
   --verify [PACKAGE...]    projected files against their lean hashes, pristine records against dpkg's
   --restore [PACKAGE...]   the original files back (all packages without a name), records dropped
-  --repair-consumers       restore projections whose old consumer check was withdrawn
+  --repair-consumers       restore projections whose old consumer check was withdrawn, and project
+                           again the C and C++ files an older renderer gave #line directives
   --hold PACKAGE|PATH      never project it again (restores it first); --unhold undoes that
   --hr PATH                write the full HR copy of an installed file to /usr/share/doc/PKG/hr/PATH
   --fetch-hr               write the HR copies of every projected setting (after the first online update)
@@ -407,8 +408,9 @@ class _NoPool:
         return False
 
 
-def project_packages(P, names, jobs, image=False, log=print, only=None, known=None):
-    repair_consumers(P)
+def project_packages(P, names, jobs, image=False, log=print, only=None, known=None, repair=True):
+    if repair:
+        repair_consumers(P, jobs)
     pkgs = dpkg_packages(P)
     if names:
         sel = {}
@@ -602,7 +604,7 @@ def post_invoke(P, jobs):
     in its package's bytes, are projected again (the same render as before, so no new check); records of
     removed packages go. Beyond the conffiles, nothing else is read."""
     _migrate(P)
-    repair_consumers(P)
+    repair_consumers(P, jobs)
     pkgs = dpkg_packages(P)
     recorded = read_table(P.state(PKGS), PKG_COLS)
     changed = sorted(k for k, v in pkgs.items()
@@ -947,7 +949,56 @@ def restore(P, names, drop_hold=False):
     return 1 if fail else 0
 
 
-def repair_consumers(P):
+def repair_consumers(P, jobs=4):
+    """The migrations of earlier local projections: GLSL shaders back to their authored bytes, then C and
+    C++ files projected again in the form that keeps their line breaks. Each one reads the small record
+    index, not every installed payload, and a marker makes later hooks a single existence check."""
+    rc = repair_glsl(P)
+    return migrate_c_line_breaks(P, jobs) or rc
+
+
+def migrate_c_line_breaks(P, jobs=4):
+    """Project again, in the form that keeps their line breaks, the C and C++ files an earlier renderer
+    (lean 0.1.15 and older) projected with `#line` directives after every removed run; GCC paid more for
+    those directives than the comments cost (ORDER 303). Each such file gets its exact original back (its
+    pristine copy, or its package's .deb at the recorded version), then the current renderer projects and
+    checks it like any other file. A file the person changed is theirs: restore drops its record and the
+    projection leaves it as it is. A file whose original is missing keeps its old form (its line numbers
+    are still the authored ones) and its record; it is named in the pending list, and only those are tried
+    again at the next run. An upgrade or reinstall of its package projects it in the new form anyway."""
+    marker = P.state('renderer-migration-c-line-breaks-v1')
+    if os.path.exists(marker):
+        return 0
+    pending_file = marker + '.pending'
+    files = Records(P, 'records')
+    pending = read_table(pending_file, ('path', 'sha_lean'))
+    from lean.lang_c import GLSL_EXTS     # shaders are repair_glsl's: restored, never projected again
+    old = {path: rec for path, rec in files.items()
+           if rec['handler'] == 'c' and os.path.splitext(path)[1].lower() not in GLSL_EXTS
+           and (not os.path.exists(pending_file) or pending.get(path, {}).get('sha_lean') == rec['sha_lean'])}
+    stuck = {}
+    if old:
+        print(f'dpkg-stereo: projecting {len(old)} C and C++ files again, line breaks kept instead of #line')
+        restore(P, sorted(old))
+        kept = Records(P, 'records')
+        again = {path for path in old if path not in kept}
+        stuck = {path: {'path': path, 'sha_lean': kept[path]['sha_lean']} for path in old if path in kept}
+        if again:
+            project_packages(P, sorted({old[path]['package'] for path in again}), jobs, log=lambda m: None,
+                             only=again, repair=False)
+    os.makedirs(P.state(), exist_ok=True)
+    if stuck:
+        write_table(pending_file, ('path', 'sha_lean'), stuck)
+        return 1
+    with open(marker + '.new', 'w', encoding='utf-8') as stream:
+        stream.write('C and C++ projections made with #line directives projected again with their line breaks.\n')
+    os.replace(marker + '.new', marker)
+    if os.path.exists(pending_file):
+        os.unlink(pending_file)
+    return 0
+
+
+def repair_glsl(P):
     """Undo the old C-checker projections of GLSL, once their originals are available.
 
     This migration reads the small record index, not every installed payload. A
@@ -1071,10 +1122,13 @@ def resolve(P, spec):
             print(f'{path}:{line}' + (f':{col}' if col else '') + ' (not projected: the location is already the authored one)')
             return 0
         rec = dict(row, package=obj['package'])
-    if rec['handler'] == 'c' and rec['variant'] in ('c', 'c++'):
-        print(f'{path}:{line}' + (f':{col}' if col else '') + ' (C and C++ keep authored line numbers through #line)')
-        return 0
+    is_c = rec['handler'] == 'c' and rec['variant'] in ('c', 'c++')
     orig = build_original(P, obj, row) if obj is not None else original_bytes(P, rec)
+    if is_c and orig is None:
+        # every line of a lean C or C++ file is its authored line (an older renderer kept them with #line)
+        print(f'{path}:{line}' + (f':{col}' if col else '') + ' (C and C++ keep authored line numbers; '
+              'the column is the lean file\'s: no authored copy at hand to map it)')
+        return 0
     if orig is None:
         print('dpkg-stereo: unresolved: no pristine copy of the authored file')
         return 1
@@ -1082,6 +1136,14 @@ def resolve(P, spec):
         mr = f.read()
     try:
         sl, sc = project.resolve(orig, mr, path, rec['package'].split(':')[0], int(line), int(col) if col else None)
+    except project.StaleMr as e:
+        if not is_c:
+            print(f'dpkg-stereo: unresolved: {e}')
+            return 1
+        # an older renderer's form (#line after every removed run): its line numbers are the authored ones
+        print(f'{path}:{line}' + (f':{col}' if col else '') + ' (C and C++ keep authored line numbers; '
+              'this file is in an older renderer\'s form, so the column is the lean file\'s)')
+        return 0
     except Exception as e:
         print(f'dpkg-stereo: unresolved: {e}')
         return 1
@@ -1230,7 +1292,7 @@ def main():
         if a.restore is not None:
             return restore(P, a.restore)
         if a.repair_consumers:
-            return repair_consumers(P)
+            return repair_consumers(P, a.jobs)
         if a.hold:
             restore(P, [a.hold])
             with open(P.state(HOLD), 'a', encoding='utf-8') as f:

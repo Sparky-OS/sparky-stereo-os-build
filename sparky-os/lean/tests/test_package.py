@@ -323,6 +323,123 @@ class Packages(unittest.TestCase):
         self.assertEqual((root / path[1:]).read_bytes(), edited)
         self.assertNotIn(path, client.Records(P))
 
+    C_PATH = '/usr/include/lc-demo/demo.h'
+    C_AUTHORED = (b'// This header is explained here at length, for the people who read it, not GCC.\n'
+                  b'// A second line of the same explanation, also removed from the lean form.\n'
+                  b'int demo(void); /* trailing */\n'
+                  b'int demo_line = __LINE__;\n')
+
+    def old_c_header(self, extra=None):
+        """Install a real unmarked archive and emulate the record and file lean 0.1.15 made: the pointer
+        on a new first line and #line after it (the form ORDER 303 replaces)."""
+        original = self.stage('0')
+        files = {self.C_PATH: self.C_AUTHORED, **(extra or {})}
+        for path, data in files.items():
+            (original / path[1:]).parent.mkdir(parents=True, exist_ok=True)
+            (original / path[1:]).write_bytes(data)
+        raw = self.base / 'lc-demo_0_all.deb'
+        subprocess.run(['dpkg-deb', '--root-owner-group', '-b', str(original), str(raw)],
+                       check=True, stdout=subprocess.DEVNULL)
+        root, P = self.system()
+        self.dpkg(root, '-i', str(raw))
+        old = (b'// Lean Code: HR in /usr/share/doc/lc-demo/hr/, repo.sparkyos.org/lean-code\n'
+               b'#line 3\nint demo(void);\nint demo_line = __LINE__;\n')
+        (root / self.C_PATH[1:]).write_bytes(old)
+        records = client.Records(P)
+        records[self.C_PATH] = dict(path=self.C_PATH, package='lc-demo', version='0', conffile='0',
+                                    sha_orig=client.sha256(self.C_AUTHORED), md5_orig='', sha_lean=client.sha256(old),
+                                    handler='c', variant='c', bytes_orig=len(self.C_AUTHORED), bytes_lean=len(old))
+        records.save()
+        return root, P, raw, old
+
+    def new_form(self):
+        r = project.project(self.C_PATH, self.C_AUTHORED, 'lc-demo')
+        self.assertEqual(r.status, 'projected', r.reason)
+        self.assertNotIn(b'#line', r.lean)
+        return r.lean
+
+    def test_c_migration_projects_again_with_line_breaks_then_stays_idle(self):
+        root, P, raw, _ = self.old_c_header()
+        cache = root / 'var/cache/apt/archives'
+        cache.mkdir(parents=True)
+        shutil.copy2(raw, cache)
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            client.post_invoke(P, 1)
+        self.assertIn('line breaks kept instead of #line', output.getvalue())
+        lean = (root / self.C_PATH[1:]).read_bytes()
+        self.assertEqual(lean, self.new_form())
+        self.assertEqual(lean.count(b'\n'), self.C_AUTHORED.count(b'\n'))
+        rec = client.Records(P)[self.C_PATH]
+        self.assertEqual((rec['sha_orig'], rec['sha_lean']), (client.sha256(self.C_AUTHORED), client.sha256(lean)))
+        self.assertTrue(Path(P.state('renderer-migration-c-line-breaks-v1')).exists())
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(client.verify(P, [], True), 0)
+        with patch.object(client, 'Records', side_effect=AssertionError('migration rescanned records')):
+            self.assertEqual(client.repair_consumers(P), 0)
+
+    def test_c_migration_retries_only_the_files_whose_original_is_missing(self):
+        second = '/usr/include/lc-demo/other.h'
+        authored = b'// Another explanation for people, long enough to be worth its own projection here.\nint other;\n'
+        root, P, raw, old = self.old_c_header({second: authored})
+        tried = []
+        real_restore = client.restore
+
+        def spy(P_, names, *args):
+            tried.append(sorted(names))
+            return real_restore(P_, names, *args)
+        # the first run finds no original for demo.h, then projects other.h in the current form
+        with patch.object(client, 'deb_members', return_value={}), patch.object(client, 'restore', spy):
+            self.run_project(P)
+        self.assertEqual(tried, [[self.C_PATH]])
+        new_other = client.Records(P)[second]['sha_lean']
+        self.assertNotIn(b'#line', (root / second[1:]).read_bytes())
+        self.assertEqual((root / self.C_PATH[1:]).read_bytes(), old)
+        self.assertIn(self.C_PATH, client.Records(P))
+        self.assertFalse(Path(P.state('renderer-migration-c-line-breaks-v1')).exists())
+        self.assertEqual(sorted(client.read_table(P.state('renderer-migration-c-line-breaks-v1.pending'),
+                                                  ('path', 'sha_lean'))), [self.C_PATH])
+        tried.clear()
+        with patch.object(client, 'deb_members', return_value={self.C_PATH: self.C_AUTHORED}), \
+                patch.object(client, 'restore', spy), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(client.repair_consumers(P), 0)
+        self.assertEqual(tried, [[self.C_PATH]])          # the pending file only, not the new projection
+        self.assertEqual((root / self.C_PATH[1:]).read_bytes(), self.new_form())
+        self.assertEqual(client.Records(P)[second]['sha_lean'], new_other)
+        self.assertTrue(Path(P.state('renderer-migration-c-line-breaks-v1')).exists())
+        self.assertFalse(Path(P.state('renderer-migration-c-line-breaks-v1.pending')).exists())
+
+    def test_c_migration_preserves_user_edits(self):
+        root, P, _, _ = self.old_c_header()
+        edited = b'int demo(void);\nint demo_line = 2; /* my own change */\n'
+        (root / self.C_PATH[1:]).write_bytes(edited)
+        with patch.object(client, 'deb_members', side_effect=AssertionError('downloaded for an edited file')):
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(client.repair_consumers(P), 0)
+        self.assertEqual((root / self.C_PATH[1:]).read_bytes(), edited)
+        self.assertNotIn(self.C_PATH, client.Records(P))
+
+    def test_c_resolve_maps_line_and_column(self):
+        root, P, raw, old = self.old_c_header()
+        with contextlib.redirect_stdout(io.StringIO()) as output:   # old form, no original: the line as it is
+            self.assertEqual(client.resolve(P, f'{self.C_PATH}:4:5'), 0)
+        self.assertIn(f'{self.C_PATH}:4:5 (C and C++ keep authored line numbers', output.getvalue())
+        cache = root / 'var/cache/apt/archives'
+        cache.mkdir(parents=True)
+        shutil.copy2(raw, cache)
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(client.resolve(P, f'{self.C_PATH}:4:5'), 0)   # old form, original at hand
+        self.assertIn("older renderer's form", output.getvalue())
+        with contextlib.redirect_stdout(io.StringIO()):
+            client.repair_consumers(P)
+        lean = (root / self.C_PATH[1:]).read_bytes().decode().split('\n')
+        self.assertEqual(lean[3], 'int demo_line = __LINE__;')
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(client.resolve(P, f'{self.C_PATH}:4:17'), 0)
+        self.assertEqual(output.getvalue().split()[0], f'/usr/share/doc/lc-demo/hr{self.C_PATH}:4:17')
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(client.resolve(P, f'{self.C_PATH}:3:1'), 0)
+        self.assertEqual(output.getvalue().split()[0], f'/usr/share/doc/lc-demo/hr{self.C_PATH}:3:1')
+
     def test_architecture_specific_manifests(self):
         a = package.prepare(self.stage('1', 'amd64'), self.base / 'hr-a')
         b = package.prepare(self.stage('1', 'i386'), self.base / 'hr-b')
