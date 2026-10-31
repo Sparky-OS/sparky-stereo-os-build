@@ -1,0 +1,691 @@
+From 51c3d320830c2fe825e6c2256c3027b590fe2765 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 30 Oct 2026 09:27:04 -0300
+Subject: [PATCH] drm: Test a refused output configuration again with linear
+ buffers
+
+Some layouts are scanned out only from linear buffers. amdgpu shows
+DisplayPort's frame sequential stereo only from a linear, single-plane
+RGB framebuffer (edition kernel series 39): the right eye is the left
+one moved by an eye's width, a plain byte offset in a linear buffer
+but not across the blocks of a tiled or compressed one. KWin's probe of
+the mode passes, because it tests with a dumb buffer, which is linear,
+but the renderer then picks a tiled buffer for the output, and the
+configuration with the mode is refused.
+
+When a configuration fails with the buffers the renderer chose and
+then with the low bandwidth formats, it is now tested again with only
+linear buffers on the primary plane: on each enabled output on its own
+first, so that the others keep their buffers, then on all of them. An
+output keeps linear buffers for as long as it keeps that mode; a new
+mode is tested with the renderer's choice first. A surface made linear
+for such a configuration gives way to the renderer's choice again when
+other modifiers are allowed.
+
+Configurations that pass today never reach the new tests, so nothing
+changes for them, and when no linear buffer passes either, the
+configuration is refused as before.
+
+testMockDrmDisplayPortSequential::testLinearFallback gives the mock
+planes IN_FORMATS with a tiled and the linear modifier and makes the
+mock refuse frame sequential stereo from anything but a linear
+framebuffer, as amdgpu does. The twin of a 120 Hz mode is accepted with
+a linear buffer on its output while the other output keeps its tiled
+one, the 2D mode gets the tiled buffer back, and without a linear
+modifier on the plane the mode stays refused.
+
+Assisted-by: Claude Opus 5.5
+---
+ .../drm/mockDisplayPortSequentialTest.cpp     | 169 ++++++++++++++++++
+ autotests/drm/mock_drm.cpp                    |  67 ++++++-
+ autotests/drm/mock_drm.h                      |  10 +-
+ src/backends/drm/drm_egl_layer_surface.cpp    |  18 +-
+ src/backends/drm/drm_egl_layer_surface.h      |   2 +
+ src/backends/drm/drm_gpu.cpp                  |  55 +++++-
+ src/backends/drm/drm_gpu.h                    |   1 +
+ src/backends/drm/drm_layer.cpp                |   4 +-
+ src/backends/drm/drm_pipeline.cpp             |  14 ++
+ src/backends/drm/drm_pipeline.h               |   7 +
+ src/backends/drm/drm_plane.cpp                |   9 +
+ src/backends/drm/drm_plane.h                  |   5 +
+ 12 files changed, 355 insertions(+), 6 deletions(-)
+
+diff --git a/autotests/drm/mockDisplayPortSequentialTest.cpp b/autotests/drm/mockDisplayPortSequentialTest.cpp
+index bfb7cfa..b49dd4d 100644
+--- a/autotests/drm/mockDisplayPortSequentialTest.cpp
++++ b/autotests/drm/mockDisplayPortSequentialTest.cpp
+@@ -10,8 +10,10 @@
+ #include "drm_crtc.h"
+ #include "drm_gpu.h"
+ #include "drm_layer.h"
++#include "drm_output.h"
+ #include "drm_pipeline.h"
+ #include "drm_plane.h"
++#include "drm_render_backend.h"
+ #include "drm_stereo.h"
+ 
+ #include <QScopeGuard>
+@@ -78,6 +80,90 @@ private:
+     std::shared_ptr<DrmFramebuffer> m_framebuffer;
+ };
+ 
++// a primary plane's layer whose renderer, like Mesa's, picks a tiled modifier wherever the layer allows one
++class AllocatingLayer : public DrmPipelineLayer
++{
++public:
++    AllocatingLayer(DrmPlane *plane, MockGpu *mockGpu)
++        : DrmPipelineLayer(plane)
++        , m_mockGpu(mockGpu)
++    {
++    }
++
++    bool preparePresentationTest() override
++    {
++        const ModifierList modifiers = supportedDrmFormats().value(DRM_FORMAT_XRGB8888);
++        if (modifiers.isEmpty()) {
++            return false;
++        }
++        const auto tiled = std::ranges::find_if(modifiers, [](uint64_t modifier) {
++            return modifier != DRM_FORMAT_MOD_LINEAR;
++        });
++        m_modifier = tiled != modifiers.end() ? *tiled : modifiers.front();
++        auto *const mockFb = new MockFb(m_mockGpu, 3840, 1080, m_modifier);
++        m_framebuffer = std::make_shared<DrmFramebuffer>(std::make_shared<DrmFramebufferData>(m_plane->gpu(), mockFb->id, nullptr), nullptr, FileDescriptor{});
++        return true;
++    }
++
++    std::shared_ptr<DrmFramebuffer> currentBuffer() const override
++    {
++        return m_framebuffer;
++    }
++
++    void releaseBuffers() override
++    {
++        m_framebuffer.reset();
++    }
++
++    uint64_t modifier() const
++    {
++        return m_modifier;
++    }
++
++protected:
++    std::optional<OutputLayerBeginFrameInfo> doBeginFrame() override
++    {
++        return std::nullopt;
++    }
++
++    bool doEndFrame(const Region &, const Region &, OutputFrame *) override
++    {
++        return true;
++    }
++
++private:
++    MockGpu *const m_mockGpu;
++    std::shared_ptr<DrmFramebuffer> m_framebuffer;
++    uint64_t m_modifier = DRM_FORMAT_MOD_INVALID;
++};
++
++class AllocatingRenderBackend : public DrmRenderBackend
++{
++public:
++    explicit AllocatingRenderBackend(MockGpu *mockGpu)
++        : m_mockGpu(mockGpu)
++    {
++    }
++
++    std::unique_ptr<DrmPipelineLayer> createDrmPlaneLayer(DrmPlane *plane) override
++    {
++        return std::make_unique<AllocatingLayer>(plane, m_mockGpu);
++    }
++
++    std::unique_ptr<DrmPipelineLayer> createDrmPlaneLayer(DrmGpu *, DrmPlane::TypeIndex) override
++    {
++        return nullptr;
++    }
++
++    std::unique_ptr<DrmOutputLayer> createLayer(DrmVirtualOutput *) override
++    {
++        return nullptr;
++    }
++
++private:
++    MockGpu *const m_mockGpu;
++};
++
+ /**
+  * DisplayPort's own frame sequential stereo (DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL of the edition kernel):
+  * the kernel alternates the halves of one frame of both eyes and signals the eye, so KWin lists the
+@@ -97,6 +183,8 @@ private Q_SLOTS:
+     void testProbe_data();
+     void testProbe();
+     void testScanout();
++    void testLinearFallback_data();
++    void testLinearFallback();
+ 
+ private:
+     struct Rig
+@@ -394,5 +482,86 @@ void MockDisplayPortSequentialTest::testScanout()
+     QVERIFY(DrmPipeline::commitPipelines({pipeline.get()}, rig->gpu.get(), DrmPipeline::CommitMode::TestAllowModeset) != DrmPipeline::Error::None);
+ }
+ 
++void MockDisplayPortSequentialTest::testLinearFallback_data()
++{
++    QTest::addColumn<bool>("linearOffered");
++    QTest::addRow("plane offers linear") << true;
++    QTest::addRow("plane offers no linear") << false;
++}
++
++void MockDisplayPortSequentialTest::testLinearFallback()
++{
++    // amdgpu shows DisplayPort's frame sequential stereo only from a linear framebuffer (edition kernel
++    // series 39), and its probe passes with a dumb buffer, which is linear, while the renderer picks a
++    // tiled buffer for the output. The configuration's test fails with that buffer, so it is tested
++    // again with linear buffers on that output before the mode is given up. A 2D mode on the same
++    // output, and the other output, keep the renderer's tiled buffers.
++    QFETCH(bool, linearOffered);
++    const auto mockGpu = findRenderDevice(2);
++    QVERIFY(mockGpu);
++    mockGpu->frameSequentialNeedsLinear = true;
++    const uint64_t tiled = AMD_FMT_MOD | AMD_FMT_MOD_SET(TILE_VERSION, AMD_FMT_MOD_TILE_VER_GFX9) | AMD_FMT_MOD_SET(TILE, AMD_FMT_MOD_TILE_GFX9_64K_S_X);
++    const QList<uint64_t> modifiers = linearOffered ? QList<uint64_t>{tiled, DRM_FORMAT_MOD_LINEAR} : QList<uint64_t>{tiled};
++    for (const auto &plane : std::as_const(mockGpu->planes)) {
++        plane->setFormats({{DRM_FORMAT_XRGB8888, modifiers}});
++    }
++    const auto sequentialConnector = std::make_shared<MockConnector>(mockGpu.get());
++    sequentialConnector->modes.clear();
++    sequentialConnector->addMode(1920, 1080, 120, true);
++    sequentialConnector->frameSequentialAllowed = true;
++    const auto flatConnector = std::make_shared<MockConnector>(mockGpu.get());
++    mockGpu->connectors.push_back(sequentialConnector);
++    mockGpu->connectors.push_back(flatConnector);
++
++    AllocatingRenderBackend renderBackend(mockGpu.get());
++    const auto session = Session::create(Session::Type::Noop);
++    const auto backend = std::make_unique<DrmBackend>(session.get());
++    backend->setRenderBackend(&renderBackend);
++    auto gpu = std::make_unique<DrmGpu>(backend.get(), mockGpu->fd, DrmDevice::open(mockGpu->devNode));
++    QVERIFY(gpu->atomicModeSetting());
++    QVERIFY(gpu->updateOutputs());
++    gpu->createLayers();
++    QCOMPARE(gpu->drmOutputs().size(), 2);
++    DrmPipeline *sequential = nullptr;
++    DrmPipeline *flat = nullptr;
++    for (DrmOutput *output : gpu->drmOutputs()) {
++        (output->connector()->id() == sequentialConnector->id ? sequential : flat) = output->pipeline();
++    }
++    QVERIFY(sequential && flat);
++    const auto primaryModifier = [](DrmPipeline *pipeline) {
++        return static_cast<AllocatingLayer *>(pipeline->layers().front())->modifier();
++    };
++
++    const auto base = sequential->connector()->modes().front();
++    const auto twin = std::make_shared<DrmConnectorMode>(base, OutputModeline::Flag::Stereo3DSequentialDisplayPort);
++    for (DrmPipeline *pipeline : {sequential, flat}) {
++        pipeline->setEnable(true);
++        pipeline->setActive(true);
++    }
++    // both outputs in 2D: the renderer's tiled buffers
++    QCOMPARE(gpu->testPendingConfiguration(), DrmPipeline::Error::None);
++    QCOMPARE(primaryModifier(sequential), tiled);
++    QCOMPARE(primaryModifier(flat), tiled);
++
++    sequential->setMode(twin);
++    if (!linearOffered) {
++        // nothing the plane offers can show it: the mode is refused, as the kernel refuses it
++        QVERIFY(gpu->testPendingConfiguration() != DrmPipeline::Error::None);
++        gpu.reset();
++        return;
++    }
++    QCOMPARE(gpu->testPendingConfiguration(), DrmPipeline::Error::None);
++    QCOMPARE(primaryModifier(sequential), uint64_t(DRM_FORMAT_MOD_LINEAR));
++    QCOMPARE(primaryModifier(flat), tiled);
++    QCOMPARE(stereoLayoutForMode(sequential->mode()->flags()), StereoLayout::SequentialDisplayPort);
++
++    // back in 2D the output gets the renderer's choice again
++    sequential->setMode(base);
++    QCOMPARE(gpu->testPendingConfiguration(), DrmPipeline::Error::None);
++    QCOMPARE(primaryModifier(sequential), tiled);
++    QCOMPARE(primaryModifier(flat), tiled);
++    gpu.reset();
++}
++
+ QTEST_GUILESS_MAIN(MockDisplayPortSequentialTest)
+ #include "mockDisplayPortSequentialTest.moc"
+diff --git a/autotests/drm/mock_drm.cpp b/autotests/drm/mock_drm.cpp
+index aebaeb8..778b799 100644
+--- a/autotests/drm/mock_drm.cpp
++++ b/autotests/drm/mock_drm.cpp
+@@ -263,6 +263,45 @@ MockPlane::MockPlane(MockGpu *gpu, PlaneType type, int crtcIndex)
+     addProp("SRC_H", 0, DRM_MODE_PROP_ATOMIC);
+ }
+ 
++void MockPlane::setFormats(const QMap<uint32_t, QList<uint64_t>> &formats)
++{
++    // the layout of the kernel's IN_FORMATS blob: a header, the formats, then each modifier
++    // with the formats it applies to as a bit mask of their indices
++    QList<uint64_t> modifiers;
++    for (const auto &list : formats) {
++        for (uint64_t modifier : list) {
++            if (!modifiers.contains(modifier)) {
++                modifiers.push_back(modifier);
++            }
++        }
++    }
++    const QList<uint32_t> formatList = formats.keys();
++    Q_ASSERT(formatList.size() <= 64);
++    drm_format_modifier_blob header{
++        .version = FORMAT_BLOB_CURRENT,
++        .flags = 0,
++        .count_formats = uint32_t(formatList.size()),
++        .formats_offset = sizeof(drm_format_modifier_blob),
++        .count_modifiers = uint32_t(modifiers.size()),
++        .modifiers_offset = uint32_t(sizeof(drm_format_modifier_blob) + formatList.size() * sizeof(uint32_t)),
++    };
++    QByteArray data(reinterpret_cast<const char *>(&header), sizeof(header));
++    data.append(reinterpret_cast<const char *>(formatList.constData()), formatList.size() * sizeof(uint32_t));
++    for (uint64_t modifier : std::as_const(modifiers)) {
++        drm_format_modifier entry{};
++        entry.modifier = modifier;
++        for (int i = 0; i < formatList.size(); i++) {
++            if (formats[formatList[i]].contains(modifier)) {
++                entry.formats |= uint64_t(1) << i;
++            }
++        }
++        data.append(reinterpret_cast<const char *>(&entry), sizeof(entry));
++    }
++    auto blob = std::make_unique<MockPropertyBlob>(gpu, data.constData(), data.size());
++    addProp("IN_FORMATS", blob->id, DRM_MODE_PROP_BLOB | DRM_MODE_PROP_IMMUTABLE);
++    gpu->propertyBlobs.push_back(std::move(blob));
++}
++
+ //
+ 
+ MockEncoder::MockEncoder(MockGpu *gpu, uint32_t possible_crtcs)
+@@ -273,10 +312,11 @@ MockEncoder::MockEncoder(MockGpu *gpu, uint32_t possible_crtcs)
+ 
+ //
+ 
+-MockFb::MockFb(MockGpu *gpu, uint32_t width, uint32_t height)
++MockFb::MockFb(MockGpu *gpu, uint32_t width, uint32_t height, uint64_t modifier)
+     : id(gpu->idCounter++)
+     , width(width)
+     , height(height)
++    , modifier(modifier)
+     , gpu(gpu)
+ {
+     gpu->fbs << this;
+@@ -454,7 +494,7 @@ int drmModeAddFB2WithModifiers(int fd, uint32_t width, uint32_t height,
+     if (!gpu->deviceCaps.contains(DRM_CAP_ADDFB2_MODIFIERS)) {
+         return -(errno = ENOTSUP);
+     }
+-    auto fb = new MockFb(gpu, width, height);
++    auto fb = new MockFb(gpu, width, height, (flags & DRM_MODE_FB_MODIFIERS) ? modifier[0] : DRM_FORMAT_MOD_INVALID);
+     *buf_id = fb->id;
+     return 0;
+ }
+@@ -1157,6 +1197,12 @@ int drmModeAtomicCommit(int fd, drmModeAtomicReqPtr req, uint32_t flags, void *u
+                     qWarning("connector %u cannot send frame-sequential stereo", conn->id);
+                     return -(errno = EINVAL);
+                 }
++                // amdgpu's check: the right eye is the left one moved by an eye's width, a byte offset only in a linear buffer
++                if ((mode.flags & DRM_MODE_FLAG_3D_MASK) == frameSequential && gpu->frameSequentialNeedsLinear
++                    && (!p.primaryPlane->nextFb || p.primaryPlane->nextFb->modifier != DRM_FORMAT_MOD_LINEAR)) {
++                    qWarning("crtc %u shows frame-sequential stereo only from a linear framebuffer", p.crtc->id);
++                    return -(errno = EINVAL);
++                }
+             }
+         }
+     }
+@@ -1355,6 +1401,23 @@ void drmModeFreeConnector(drmModeConnectorPtr ptr)
+     Q_UNREACHABLE();
+ }
+ 
++uint32_t drmModeConnectorGetPossibleCrtcs(int fd, const drmModeConnector *connector)
++{
++    GPU(fd, 0);
++    uint32_t possibleCrtcs = 0;
++    for (int i = 0; i < connector->count_encoders; i++) {
++        const auto it = std::find_if(gpu->encoders.constBegin(), gpu->encoders.constEnd(), [id = connector->encoders[i]](const auto &e) {
++            return e->id == id;
++        });
++        if (it == gpu->encoders.constEnd()) {
++            errno = ENOENT;
++            return 0;
++        }
++        possibleCrtcs |= (*it)->possible_crtcs;
++    }
++    return possibleCrtcs;
++}
++
+ void drmModeFreeEncoder(drmModeEncoderPtr ptr)
+ {
+     for (const auto &gpu : std::as_const(s_gpus)) {
+diff --git a/autotests/drm/mock_drm.h b/autotests/drm/mock_drm.h
+index b4ba48c..52b2c65 100644
+--- a/autotests/drm/mock_drm.h
++++ b/autotests/drm/mock_drm.h
+@@ -8,6 +8,7 @@
+ */
+ #pragma once
+ 
++#include <drm_fourcc.h>
+ #include <xf86drm.h>
+ #include <xf86drmMode.h>
+ 
+@@ -128,6 +129,9 @@ public:
+     MockPlane(const MockPlane &obj) = default;
+     ~MockPlane() = default;
+ 
++    // advertises @p formats with their modifiers in an IN_FORMATS blob, as drivers with modifiers do
++    void setFormats(const QMap<uint32_t, QList<uint64_t>> &formats);
++
+     MockFb *currentFb = nullptr;
+     MockFb *nextFb = nullptr;
+     int possibleCrtcs;
+@@ -137,11 +141,13 @@ public:
+ class MockFb
+ {
+ public:
+-    MockFb(MockGpu *gpu, uint32_t width, uint32_t height);
++    MockFb(MockGpu *gpu, uint32_t width, uint32_t height, uint64_t modifier = DRM_FORMAT_MOD_INVALID);
+     ~MockFb();
+ 
+     uint32_t id;
+     uint32_t width, height;
++    // the modifier the framebuffer was added with, DRM_FORMAT_MOD_INVALID without one
++    uint64_t modifier;
+     MockGpu *gpu;
+ };
+ 
+@@ -212,5 +218,7 @@ public:
+     QList<drmModeObjectPropertiesPtr> drmObjectProperties;
+     QList<drmModePlaneResPtr> drmPlaneRes;
+     QList<MockLease> leases;
++    // like amdgpu (edition kernel series 39): frame sequential stereo only from a linear framebuffer
++    bool frameSequentialNeedsLinear = false;
+     std::mutex m_mutex;
+ };
+diff --git a/src/backends/drm/drm_egl_layer_surface.cpp b/src/backends/drm/drm_egl_layer_surface.cpp
+index 4f2fed1..b4becfd 100644
+--- a/src/backends/drm/drm_egl_layer_surface.cpp
++++ b/src/backends/drm/drm_egl_layer_surface.cpp
+@@ -43,6 +43,15 @@ static const bool bufferAgeEnabled = environmentVariableBoolValue("KWIN_USE_BUFF
+ static const bool s_forceMGPUSync = environmentVariableBoolValue("KWIN_DRM_FORCE_GL_FINISH_MGPU_COPY").value_or(false);
+ static const bool s_forcePresentSync = environmentVariableBoolValue("KWIN_DRM_FORCE_GL_FINISH_PRESENT").value_or(false);
+ 
++static bool allowsOnlyLinear(const FormatModifierMap &formats)
++{
++    return !formats.isEmpty() && std::ranges::all_of(formats, [](const ModifierList &modifiers) {
++        return std::ranges::all_of(modifiers, [](uint64_t modifier) {
++            return modifier == DRM_FORMAT_MOD_LINEAR;
++        });
++    });
++}
++
+ static gbm_format_name_desc formatName(uint32_t format)
+ {
+     gbm_format_name_desc ret;
+@@ -840,6 +849,11 @@ bool EglGbmLayerSurface::doesSurfaceFit(Surface *surface, const QSize &size, con
+         // TODO requiredAlphaBits could be a bit more conservative with reallocations?
+         return false;
+     }
++    if (surface->linearOnly && !allowsOnlyLinear(formats)) {
++        // linear buffers were what a configuration needed; when other modifiers are allowed again,
++        // the renderer chooses again
++        return false;
++    }
+     if (surface->bufferTarget == BufferTarget::Dumb) {
+         return formats.contains(surface->importDumbSwapchain->format());
+     }
+@@ -879,10 +893,12 @@ std::unique_ptr<EglGbmLayerSurface::Surface> EglGbmLayerSurface::createSurface(c
+         }
+     }
+ 
+-    const auto doTestFormats = [this, &size, &formats, bufferTarget, tradeoff, requiredAlphaBits](const QList<FormatInfo> &gbmFormats, MultiGpuImportMode importMode) -> std::unique_ptr<Surface> {
++    const bool linearOnly = allowsOnlyLinear(formats);
++    const auto doTestFormats = [this, &size, &formats, bufferTarget, tradeoff, requiredAlphaBits, linearOnly](const QList<FormatInfo> &gbmFormats, MultiGpuImportMode importMode) -> std::unique_ptr<Surface> {
+         for (const auto &format : gbmFormats) {
+             auto surface = createSurface(size, format.drmFormat, formats[format.drmFormat], importMode, bufferTarget, tradeoff, requiredAlphaBits);
+             if (surface) {
++                surface->linearOnly = linearOnly;
+                 return surface;
+             }
+         }
+diff --git a/src/backends/drm/drm_egl_layer_surface.h b/src/backends/drm/drm_egl_layer_surface.h
+index de2fb9d..f7101f9 100644
+--- a/src/backends/drm/drm_egl_layer_surface.h
++++ b/src/backends/drm/drm_egl_layer_surface.h
+@@ -125,6 +125,8 @@ private:
+         BufferTarget bufferTarget;
+         double scale = 1;
+         uint32_t requiredAlphaBits = 0;
++        // made for formats that allow only linear buffers
++        bool linearOnly = false;
+ 
+         // for color management
+         bool needsShadowBuffer = false;
+diff --git a/src/backends/drm/drm_gpu.cpp b/src/backends/drm/drm_gpu.cpp
+index 684c216..2bac2bd 100644
+--- a/src/backends/drm/drm_gpu.cpp
++++ b/src/backends/drm/drm_gpu.cpp
+@@ -404,7 +404,8 @@ void DrmGpu::probeFrameSequential(DrmConnector *connector)
+         qCDebug(KWIN_DRM) << "No free CRTC to test frame sequential stereo on" << connector->connectorName();
+         return;
+     }
+-    // a dumb buffer, linear, which every driver that scans out takes
++    // a dumb buffer, linear, which every driver that scans out takes; where the driver takes the layout
++    // only from linear buffers, the output's configuration test falls back to them (testLinearScanout())
+     GraphicsBuffer *buffer = m_drmDevice->allocator()->allocate(GraphicsBufferOptions{
+         .size = frame,
+         .format = DRM_FORMAT_XRGB8888,
+@@ -540,6 +541,58 @@ DrmPipeline::Error DrmGpu::testPendingConfiguration()
+         m_forceLowBandwidthMode = true;
+         err = checkCrtcAssignment(connectors, crtcs, std::chrono::steady_clock::now() + s_checkCrtcTimeout);
+     }
++    if (m_addFB2ModifiersSupported && (err == DrmPipeline::Error::InvalidArguments || err == DrmPipeline::Error::TestBufferFailed || err == DrmPipeline::Error::Unknown)) {
++        // another possibility is a layout the driver only scans out of linear buffers,
++        // like amdgpu with DisplayPort's frame sequential stereo
++        const bool lowBandwidth = m_forceLowBandwidthMode;
++        m_forceLowBandwidthMode = false;
++        if (testLinearScanout(connectors, crtcs) == DrmPipeline::Error::None) {
++            return DrmPipeline::Error::None;
++        }
++        m_forceLowBandwidthMode = lowBandwidth;
++    }
++    return err;
++}
++
++/**
++ * Tests the pending configuration again with linear buffers on the primary planes: each enabled
++ * output on its own first, so that the others keep the buffers they have, then all of them.
++ * What passes is kept for the output's mode (DrmPipeline::setLinearScanout()); otherwise nothing changes.
++ */
++DrmPipeline::Error DrmGpu::testLinearScanout(const QList<DrmConnector *> &connectors, const QList<DrmCrtc *> &crtcs)
++{
++    QList<DrmPipeline *> candidates;
++    for (DrmPipeline *pipeline : std::as_const(m_pipelines)) {
++        if (pipeline->enabled() && !pipeline->linearScanout() && !pipeline->output()->lease()) {
++            candidates.push_back(pipeline);
++        }
++    }
++    DrmPipeline::Error err = DrmPipeline::Error::InvalidArguments;
++    const auto testWithLinear = [&](const QList<DrmPipeline *> &linear) {
++        for (DrmPipeline *pipeline : linear) {
++            pipeline->setLinearScanout(true);
++        }
++        err = checkCrtcAssignment(connectors, crtcs, std::chrono::steady_clock::now() + s_checkCrtcTimeout);
++        if (err == DrmPipeline::Error::None) {
++            qCDebug(KWIN_DRM) << "The output configuration needs linear buffers on" << linear.size() << "output(s)";
++            return true;
++        }
++        for (DrmPipeline *pipeline : linear) {
++            pipeline->setLinearScanout(false);
++        }
++        return false;
++    };
++    for (DrmPipeline *pipeline : std::as_const(candidates)) {
++        if (testWithLinear({pipeline})) {
++            return err;
++        }
++        if (err == DrmPipeline::Error::NoPermission || err == DrmPipeline::Error::FramePending || err == DrmPipeline::Error::Timeout) {
++            return err;
++        }
++    }
++    if (candidates.size() > 1) {
++        testWithLinear(candidates);
++    }
+     return err;
+ }
+ 
+diff --git a/src/backends/drm/drm_gpu.h b/src/backends/drm/drm_gpu.h
+index 8ed0007..d9ea435 100644
+--- a/src/backends/drm/drm_gpu.h
++++ b/src/backends/drm/drm_gpu.h
+@@ -150,6 +150,7 @@ private:
+     void probeFrameSequential(DrmConnector *connector);
+     DrmPipeline::Error checkCrtcAssignment(QList<DrmConnector *> connectors, const QList<DrmCrtc *> &crtcs, std::chrono::steady_clock::time_point deadline);
+     DrmPipeline::Error testPipelines();
++    DrmPipeline::Error testLinearScanout(const QList<DrmConnector *> &connectors, const QList<DrmCrtc *> &crtcs);
+     QList<DrmObject *> unusedModesetObjects() const;
+     void assignOutputLayers();
+ 
+diff --git a/src/backends/drm/drm_layer.cpp b/src/backends/drm/drm_layer.cpp
+index 925152c..5fb6635 100644
+--- a/src/backends/drm/drm_layer.cpp
++++ b/src/backends/drm/drm_layer.cpp
+@@ -135,7 +135,9 @@ static const FormatModifierMap s_legacyCursorFormats = {{DRM_FORMAT_ARGB8888, {D
+ FormatModifierMap DrmPipelineLayer::supportedDrmFormats() const
+ {
+     if (m_plane) {
+-        if (m_plane->gpu()->forceLowBandwidthMode() && m_type == OutputLayerType::Primary) {
++        if (m_type == OutputLayerType::Primary && m_output && pipeline() && pipeline()->linearScanout()) {
++            return m_plane->linearFormats();
++        } else if (m_plane->gpu()->forceLowBandwidthMode() && m_type == OutputLayerType::Primary) {
+             return m_plane->lowBandwidthFormats();
+         } else {
+             return m_plane->formats();
+diff --git a/src/backends/drm/drm_pipeline.cpp b/src/backends/drm/drm_pipeline.cpp
+index ce810a0..1889f54 100644
+--- a/src/backends/drm/drm_pipeline.cpp
++++ b/src/backends/drm/drm_pipeline.cpp
+@@ -716,6 +716,10 @@ void DrmPipeline::setMode(const std::shared_ptr<DrmConnectorMode> &mode)
+     if (oldLayout != newLayout) {
+         m_frameSequentialScheduler = FrameSequentialScheduler(newLayout);
+     }
++    if (mode != m_pending.mode) {
++        // linear buffers were what the old mode needed; the new one is tested with the renderer's choice first
++        m_pending.linearScanout = false;
++    }
+     m_pending.mode = mode;
+ }
+ 
+@@ -782,6 +786,16 @@ void DrmPipeline::setStereoDepthCoding(const std::optional<StereoDepthCoding> &c
+     m_pending.stereoDepthCoding = coding;
+ }
+ 
++void DrmPipeline::setLinearScanout(bool linear)
++{
++    m_pending.linearScanout = linear;
++}
++
++bool DrmPipeline::linearScanout() const
++{
++    return m_pending.linearScanout;
++}
++
+ void DrmPipeline::setContentType(DrmConnector::DrmContentType type)
+ {
+     m_pending.contentType = type;
+diff --git a/src/backends/drm/drm_pipeline.h b/src/backends/drm/drm_pipeline.h
+index a28324e..6963e73 100644
+--- a/src/backends/drm/drm_pipeline.h
++++ b/src/backends/drm/drm_pipeline.h
+@@ -98,6 +98,7 @@ public:
+     BackendOutput::RgbRange rgbRange() const;
+     DrmConnector::DrmContentType contentType() const;
+     const std::shared_ptr<IccProfile> &iccProfile() const;
++    bool linearScanout() const;
+ 
+     void setCrtc(DrmCrtc *crtc);
+     void setMode(const std::shared_ptr<DrmConnectorMode> &mode);
+@@ -114,6 +115,11 @@ public:
+     void setMaxBpc(uint32_t max);
+     void setSideBySideFullTiming(SideBySideFullTiming timing);
+     void setStereoDepthCoding(const std::optional<StereoDepthCoding> &coding);
++    /**
++     * Whether the primary plane scans out linear buffers only, for a configuration the
++     * driver refused with the buffers the renderer prefers (DrmGpu::testPendingConfiguration())
++     */
++    void setLinearScanout(bool linear);
+ 
+     enum class CommitMode {
+         Test,
+@@ -174,6 +180,7 @@ private:
+         SideBySideFullTiming sideBySideFullTiming = SideBySideFullTiming::WholeLineDoubled;
+         // how the depth of a picture and depth mode is coded, for its 3D metadata
+         std::optional<StereoDepthCoding> stereoDepthCoding;
++        bool linearScanout = false;
+ 
+         QList<DrmPipelineLayer *> layers;
+     };
+diff --git a/src/backends/drm/drm_plane.cpp b/src/backends/drm/drm_plane.cpp
+index ca2104a..7ac175d 100644
+--- a/src/backends/drm/drm_plane.cpp
++++ b/src/backends/drm/drm_plane.cpp
+@@ -143,6 +143,7 @@ bool DrmPlane::updateProperties()
+         }
+     }
+     m_lowBandwidthFormats.clear();
++    m_linearFormats.clear();
+     for (auto it = m_supportedFormats.begin(); it != m_supportedFormats.end(); it++) {
+         const auto info = FormatInfo::get(it.key());
+         if (info && info->bitsPerPixel <= 32) {
+@@ -150,6 +151,9 @@ bool DrmPlane::updateProperties()
+             // so prefer implicit modifiers for low bandwidth if supported
+             m_lowBandwidthFormats.insert(it.key(), {DRM_FORMAT_MOD_INVALID});
+         }
++        if (it->contains(DRM_FORMAT_MOD_LINEAR)) {
++            m_linearFormats.insert(it.key(), {DRM_FORMAT_MOD_LINEAR});
++        }
+     }
+ 
+     m_sizeHints.clear();
+@@ -227,6 +231,11 @@ FormatModifierMap DrmPlane::lowBandwidthFormats() const
+     return m_lowBandwidthFormats;
+ }
+ 
++FormatModifierMap DrmPlane::linearFormats() const
++{
++    return m_linearFormats;
++}
++
+ FormatModifierMap DrmPlane::formats() const
+ {
+     return m_supportedFormats;
+diff --git a/src/backends/drm/drm_plane.h b/src/backends/drm/drm_plane.h
+index 80f5602..e4c6df6 100644
+--- a/src/backends/drm/drm_plane.h
++++ b/src/backends/drm/drm_plane.h
+@@ -42,6 +42,10 @@ public:
+ 
+     bool isCrtcSupported(int pipeIndex) const;
+     FormatModifierMap lowBandwidthFormats() const;
++    /**
++     * the formats this plane scans out from linear buffers, with only the linear modifier
++     */
++    FormatModifierMap linearFormats() const;
+     FormatModifierMap formats() const;
+     FormatModifierMap tearingFormats() const;
+     bool supportsTransformation(OutputTransform transform) const;
+@@ -118,6 +122,7 @@ private:
+ 
+     FormatModifierMap m_supportedFormats;
+     FormatModifierMap m_lowBandwidthFormats;
++    FormatModifierMap m_linearFormats;
+     FormatModifierMap m_supportedTearingFormats;
+     uint32_t m_possibleCrtcs = 0;
+     QList<QSize> m_sizeHints;
+-- 
+2.53.0
+

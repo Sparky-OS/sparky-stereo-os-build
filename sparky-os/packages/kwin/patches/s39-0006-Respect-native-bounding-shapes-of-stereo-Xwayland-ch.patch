@@ -1,0 +1,440 @@
+From 681a77b1598ff0a9d5ec8c1470e8c5057ab73293 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 30 Oct 2026 09:31:44 -0300
+Subject: [PATCH] Respect native bounding shapes of stereo Xwayland children
+
+Track ShapeNotify and retain native regions through independent child placement. Build each eye from its own clipped source region, including the one-eye X geometry used by GLX, and repaint changes without occluding ordinary UI through the other eye.
+
+Advertise declaration version 9 for child-shape consumption. Add asymmetric, empty/reset, placement and ordinary X11 controls at normal and doubled scale. The new regression fails on the base and passes with this consumer; installed private-module captures preserve the ordinary sibling panel in both eyes.
+
+Assisted-by: gpt-6-astra via Codex
+---
+ STEREO3D.md                               |  13 +++
+ autotests/integration/x11_window_test.cpp | 108 +++++++++++++++++++++-
+ src/netinfo.cpp                           |   3 +-
+ src/scene/surfaceitem.cpp                 |   7 +-
+ src/scene/surfaceitem.h                   |   1 +
+ src/scene/surfaceitem_wayland.cpp         |  49 ++++++++++
+ src/scene/surfaceitem_wayland.h           |   7 ++
+ src/x11stereochildren.cpp                 |  41 ++++++++
+ src/x11stereochildren.h                   |   5 +
+ 9 files changed, 231 insertions(+), 3 deletions(-)
+
+diff --git a/STEREO3D.md b/STEREO3D.md
+index 9f4991b..a2ef36a 100644
+--- a/STEREO3D.md
++++ b/STEREO3D.md
+@@ -275,3 +275,16 @@ A malformed property, or one of another type, counts as absent.
+ **Precedence:** the child's `CHILD_PLACE`, else its position at the size of one view of its `ONE_VIEW_SIZE` (only while it holds stereo content), else its X11 window's rectangle.
+ X11 input geometry does not change: a child shown elsewhere makes its input shape empty and handles input in the logical area of the parent.
+ libstereo-declare 1.7.0 writes it with `stereo_declare_x11_child_place()`.
++
++## X11 child bounding shapes (version 9)
++
++Version 9 of `_KDE_NET_WM_STEREO_CONTENT_SUPPORTED` also consumes a declared child's X11 `ShapeBounding` region, including changes notified by `ShapeNotify`.
++The region uses native X window coordinates, independently of `CHILD_PLACE` and `ONE_VIEW_SIZE`.
++For a packed-raster X window each eye uses the part of that region inside its own half of the backing image, mapped once to the child's destination.
++For the version-4 GLX route, whose backing image is exactly twice the native window width at the same height, the native one-eye shape applies to both eyes.
++Holes stay transparent to the ordinary owner; the compositor does not paint either eye into its UI.
++An empty bounding shape hides the child image, and resetting the shape restores the native rectangle.
++Input-only shapes do not change rendering or the existing X input geometry.
++The compositor reads shapes but writes no content declaration or owner membership property.
++Clients that require clipped children must check version 9 rather than treating version 8 placement support as clipping support.
++See the [X11 SHAPE 1.1 protocol](https://www.x.org/releases/X11R7.7/doc/xextproto/shape.html), chapters 2, 4 and 5.
+diff --git a/autotests/integration/x11_window_test.cpp b/autotests/integration/x11_window_test.cpp
+index 82a4e11..b9acc06 100644
+--- a/autotests/integration/x11_window_test.cpp
++++ b/autotests/integration/x11_window_test.cpp
+@@ -34,6 +34,7 @@
+ #include <linux/input-event-codes.h>
+ #include <netwm.h>
+ #include <xcb/present.h>
++#include <xcb/shape.h>
+ #include <xcb/xcb_event.h>
+ #include <xcb/xcb_icccm.h>
+ 
+@@ -152,6 +153,8 @@ private Q_SLOTS:
+     void testStereoOneViewNativeConfigure();
+     void testStereoContentDeclarationRulePrecedence();
+     void testStereoChildWindow();
++    void testStereoChildShape();
++    void testOrdinaryX11Shape();
+     void testStereoChildWindowListedBeforeMapping();
+     void testStereoChildWindowOtherVisual();
+     void testStereoChildWindowOneViewSize();
+@@ -4065,7 +4068,7 @@ void X11WindowTest::testStereoContentDeclaration()
+     std::unique_ptr<xcb_get_property_reply_t> supportReply(xcb_get_property_reply(c.get(), supportCookie, nullptr));
+     QVERIFY(supportReply);
+     QCOMPARE(supportReply->value_len, 1u);
+-    QCOMPARE(*reinterpret_cast<uint32_t *>(xcb_get_property_value(supportReply.get())), 8u);
++    QCOMPARE(*reinterpret_cast<uint32_t *>(xcb_get_property_value(supportReply.get())), 9u);
+ 
+     const uint32_t value = StereoContentSideBySideFull;
+     X11Window *window = createWindow(c.get(), Rect(0, 0, 100, 100), [&c, &value](xcb_window_t windowId) {
+@@ -4488,6 +4491,109 @@ void X11WindowTest::testStereoContentDeclarationRulePrecedence()
+     workspace()->slotReconfigure();
+ }
+ 
++void X11WindowTest::testOrdinaryX11Shape()
++{
++    Test::XcbConnectionPtr c = Test::createX11Connection();
++    QVERIFY(!xcb_connection_has_error(c.get()));
++    X11Window *window = createWindow(c.get(), Rect(0, 0, 100, 80));
++    QVERIFY(window);
++    const xcb_rectangle_t rectangles[] = {{0, 0, 100, 20}, {0, 20, 40, 60}};
++    xcb_shape_rectangles(c.get(), XCB_SHAPE_SO_SET, XCB_SHAPE_SK_BOUNDING, XCB_CLIP_ORDERING_UNSORTED,
++                         window->window(), 0, 0, 2, rectangles);
++    xcb_flush(c.get());
++    const RegionF expected = RegionF(Xcb::fromXNative(Rect(0, 0, 100, 20))) | Xcb::fromXNative(Rect(0, 20, 40, 60));
++    QTRY_COMPARE(window->shapeRegion(), expected);
++    QTRY_COMPARE(window->surfaceItem()->shape(), expected);
++    QCOMPARE(window->stereoContent(), StereoContentNone);
++    xcb_shape_rectangles(c.get(), XCB_SHAPE_SO_SET, XCB_SHAPE_SK_INPUT, XCB_CLIP_ORDERING_UNSORTED,
++                         window->window(), 0, 0, 0, nullptr);
++    xcb_shape_mask(c.get(), XCB_SHAPE_SO_SET, XCB_SHAPE_SK_BOUNDING, window->window(), 0, 0, XCB_PIXMAP_NONE);
++    xcb_flush(c.get());
++    QTRY_COMPARE(window->surfaceItem()->shape(), RegionF(Xcb::fromXNative(Rect(0, 0, 100, 80))));
++    xcb_destroy_window(c.get(), window->window());
++    xcb_flush(c.get());
++}
++
++void X11WindowTest::testStereoChildShape()
++{
++    Test::XcbConnectionPtr c = Test::createX11Connection();
++    QVERIFY(!xcb_connection_has_error(c.get()));
++    X11Window *window = createWindow(c.get(), Rect(0, 0, 300, 200));
++    QVERIFY(window);
++    const xcb_window_t child = xcb_generate_id(c.get());
++    const uint32_t background = 0x00ff0000;
++    xcb_create_window(c.get(), XCB_COPY_FROM_PARENT, child, window->window(), 10, 20, 100, 80, 0,
++                      XCB_WINDOW_CLASS_INPUT_OUTPUT, XCB_COPY_FROM_PARENT, XCB_CW_BACK_PIXEL, &background);
++    const uint32_t stereo = StereoContentSideBySideFull;
++    xcb_change_property(c.get(), XCB_PROP_MODE_REPLACE, child, atoms->kde_net_wm_stereo_content,
++                        XCB_ATOM_CARDINAL, 32, 1, &stereo);
++    xcb_change_property(c.get(), XCB_PROP_MODE_REPLACE, window->window(), atoms->kde_net_wm_stereo_content_children,
++                        XCB_ATOM_WINDOW, 32, 1, &child);
++    // Different, nonrectangular clips in the two native packed halves.
++    const xcb_rectangle_t rectangles[] = {{0, 0, 50, 20}, {0, 20, 20, 60}, {75, 10, 25, 70}};
++    xcb_shape_rectangles(c.get(), XCB_SHAPE_SO_SET, XCB_SHAPE_SK_BOUNDING, XCB_CLIP_ORDERING_UNSORTED,
++                         child, 0, 0, 3, rectangles);
++    xcb_map_window(c.get(), child);
++    xcb_flush(c.get());
++    QTRY_COMPARE(window->stereoChildren()->children().size(), 1u);
++    const auto *tracked = window->stereoChildren()->children().front().get();
++    KWIN_WAIT_FOR_STEREO_CHILD_SURFACE(tracked);
++    SurfaceItemXwaylandChild *item = nullptr;
++    QTRY_VERIFY([&]() {
++        for (Item *candidate : window->surfaceItem()->childItems()) {
++            if (auto surface = qobject_cast<SurfaceItemXwaylandChild *>(candidate)) {
++                item = surface;
++            }
++        }
++        return item != nullptr;
++    }());
++    auto coverage = [item](StereoEye eye) {
++        RegionF region;
++        for (const auto &quad : item->eyeQuads(eye)) {
++            region |= quad.bounds();
++        }
++        return region;
++    };
++    const RegionF left = RegionF(Xcb::fromXNative(Rect(0, 0, 100, 20))) | Xcb::fromXNative(Rect(0, 20, 40, 60));
++    const RegionF right = RegionF(Xcb::fromXNative(Rect(50, 10, 50, 70)));
++    QTRY_COMPARE(coverage(StereoEye::Left), left);
++    QTRY_COMPARE(coverage(StereoEye::Right), right);
++    QCOMPARE(window->stereoContent(), StereoContentNone);
++
++    // Input-only shape changes cannot change what is painted.
++    xcb_shape_rectangles(c.get(), XCB_SHAPE_SO_SET, XCB_SHAPE_SK_INPUT, XCB_CLIP_ORDERING_UNSORTED,
++                         child, 0, 0, 0, nullptr);
++    xcb_flush(c.get());
++    Test::flushWaylandConnection();
++    QCOMPARE(coverage(StereoEye::Left), left);
++    QCOMPARE(coverage(StereoEye::Right), right);
++
++    // Placement changes scale the native clip once, without changing either native eye.
++    const uint32_t place[] = {5, 6, 200, 120, 0};
++    xcb_change_property(c.get(), XCB_PROP_MODE_REPLACE, child, atoms->kde_net_wm_stereo_content_child_place,
++                        XCB_ATOM_CARDINAL, 32, 5, place);
++    xcb_flush(c.get());
++    QTRY_COMPARE(coverage(StereoEye::Left), left.scaled(2.0, 1.5));
++    QTRY_COMPARE(coverage(StereoEye::Right), right.scaled(2.0, 1.5));
++    xcb_delete_property(c.get(), child, atoms->kde_net_wm_stereo_content_child_place);
++    xcb_flush(c.get());
++    QTRY_COMPARE(coverage(StereoEye::Left), left);
++    QTRY_COMPARE(coverage(StereoEye::Right), right);
++
++    // An empty bounding shape hides every sample, and resetting it restores both eyes.
++    xcb_shape_rectangles(c.get(), XCB_SHAPE_SO_SET, XCB_SHAPE_SK_BOUNDING, XCB_CLIP_ORDERING_UNSORTED,
++                         child, 0, 0, 0, nullptr);
++    xcb_flush(c.get());
++    QTRY_VERIFY(coverage(StereoEye::Left).isEmpty());
++    QTRY_VERIFY(coverage(StereoEye::Right).isEmpty());
++    xcb_shape_mask(c.get(), XCB_SHAPE_SO_SET, XCB_SHAPE_SK_BOUNDING, child, 0, 0, XCB_PIXMAP_NONE);
++    xcb_flush(c.get());
++    QTRY_COMPARE(coverage(StereoEye::Left), RegionF(item->rect()));
++    QTRY_COMPARE(coverage(StereoEye::Right), RegionF(item->rect()));
++    xcb_destroy_window(c.get(), window->window());
++    xcb_flush(c.get());
++}
++
+ void X11WindowTest::testStereoChildWindow()
+ {
+     // This test verifies that a child window that an X11 window declares in
+diff --git a/src/netinfo.cpp b/src/netinfo.cpp
+index 42c1b89..1b8cf10 100644
+--- a/src/netinfo.cpp
++++ b/src/netinfo.cpp
+@@ -136,7 +136,8 @@ RootInfo *RootInfo::create()
+     // below the parent's own surface) or from the size one view is shown at in its own
+     // _KDE_NET_WM_STEREO_CONTENT_ONE_VIEW_SIZE, so a child may hold both views at full width or
+     // the native raster of a video while the ordinary window paints its controls above it.
+-    const uint32_t stereoContentSupported = 8;
++    // 9 also consumes child bounding shapes, independently for each packed eye.
++    const uint32_t stereoContentSupported = 9;
+     xcb_change_property(kwinApp()->x11Connection(), XCB_PROP_MODE_REPLACE, kwinApp()->x11RootWindow(),
+                         atoms->kde_net_wm_stereo_content_supported, XCB_ATOM_CARDINAL, 32, 1, &stereoContentSupported);
+ 
+diff --git a/src/scene/surfaceitem.cpp b/src/scene/surfaceitem.cpp
+index c2b594e..d9da134 100644
+--- a/src/scene/surfaceitem.cpp
++++ b/src/scene/surfaceitem.cpp
+@@ -243,9 +243,14 @@ WindowQuadList SurfaceItem::buildQuads() const
+     return buildSourceQuads(m_bufferSourceBox);
+ }
+ 
++RegionF SurfaceItem::shapeForSourceBox(const RectF &bufferSourceBox) const
++{
++    return shape();
++}
++
+ WindowQuadList SurfaceItem::buildSourceQuads(const RectF &bufferSourceBox) const
+ {
+-    const RegionF region = shape();
++    const RegionF region = shapeForSourceBox(bufferSourceBox);
+     WindowQuadList quads;
+     quads.reserve(region.rects().size());
+ 
+diff --git a/src/scene/surfaceitem.h b/src/scene/surfaceitem.h
+index 5d1c3a9..bf0fddd 100644
+--- a/src/scene/surfaceitem.h
++++ b/src/scene/surfaceitem.h
+@@ -89,6 +89,7 @@ protected:
+     void preprocess() override;
+     WindowQuadList buildQuads() const override;
+     WindowQuadList buildSourceQuads(const RectF &bufferSourceBox) const;
++    virtual RegionF shapeForSourceBox(const RectF &bufferSourceBox) const;
+     void releaseResources() override;
+ 
+     Region m_damage;
+diff --git a/src/scene/surfaceitem_wayland.cpp b/src/scene/surfaceitem_wayland.cpp
+index 3b34168..97c9c32 100644
+--- a/src/scene/surfaceitem_wayland.cpp
++++ b/src/scene/surfaceitem_wayland.cpp
+@@ -277,6 +277,54 @@ void SurfaceItemXwaylandChild::setChildGeometry(const RectF &geometry)
+     updateDestinationSize();
+ }
+ 
++void SurfaceItemXwaylandChild::setChildShape(const RegionF &shape, const QSize &nativeSize)
++{
++    if (m_nativeShape == shape && m_nativeSize == nativeSize) {
++        return;
++    }
++    m_nativeShape = shape;
++    m_nativeSize = nativeSize;
++    discardQuads();
++    // Both the uncovered ordinary UI and the new shape need repainting.
++    scheduleRepaint(rect());
++}
++
++RegionF SurfaceItemXwaylandChild::shapeForSourceBox(const RectF &sourceBox) const
++{
++    if (sourceBox.isEmpty() || m_nativeSize.isEmpty()) {
++        return {};
++    }
++    RegionF nativeShape = m_nativeShape;
++    // The GLX version-4 route keeps a one-eye X window and a twice-wide backing
++    // pixmap. Its X shape applies to both views. A packed-raster child instead
++    // has native coordinates spanning both eyes, including independent holes.
++    if (stereoContent() != StereoContentNone
++        && bufferSize() == QSize(2 * m_nativeSize.width(), m_nativeSize.height())) {
++        nativeShape |= m_nativeShape.translated(m_nativeSize.width(), 0);
++    }
++    return nativeShape.intersected(sourceBox)
++        .translated(-sourceBox.topLeft())
++        .scaled(destinationSize().width() / sourceBox.width(), destinationSize().height() / sourceBox.height());
++}
++
++RegionF SurfaceItemXwaylandChild::shape() const
++{
++    if (stereoContent() == StereoContentNone) {
++        return shapeForSourceBox(bufferSourceBox());
++    }
++    RectF left = bufferSourceBox();
++    left.setWidth(left.width() / 2);
++    const RectF right = left.translated(left.width(), 0);
++    return shapeForSourceBox(left) | shapeForSourceBox(right);
++}
++
++RegionF SurfaceItemXwaylandChild::opaque() const
++{
++    // Coverage may differ between eyes. Do not occlude the ordinary owner
++    // behind a hole using the other eye's opaque region.
++    return {};
++}
++
+ void SurfaceItemXwaylandChild::setMapped(bool mapped)
+ {
+     m_mapped = mapped;
+@@ -329,6 +377,7 @@ void SurfaceItemXwayland::updateStereoChildren()
+             }
+             item->setChildGeometry(child->place());
+             item->setStereoContent(child->content);
++            item->setChildShape(child->shape, child->nativeSize);
+             item->setMapped(child->mapped);
+             item->setZ(child->belowParent ? int(items.size()) - int(children->children().size()) : int(items.size()) + 1);
+             items.push_back(std::move(item));
+diff --git a/src/scene/surfaceitem_wayland.h b/src/scene/surfaceitem_wayland.h
+index f0ee302..a2ea075 100644
+--- a/src/scene/surfaceitem_wayland.h
++++ b/src/scene/surfaceitem_wayland.h
+@@ -80,12 +80,19 @@ public:
+     explicit SurfaceItemXwaylandChild(SurfaceInterface *surface, Item *parent = nullptr);
+ 
+     void setChildGeometry(const RectF &geometry);
++    void setChildShape(const RegionF &shape, const QSize &nativeSize);
++    RegionF shape() const override;
++    RegionF opaque() const override;
+     void setMapped(bool mapped);
+ 
+ private:
+     void updateDestinationSize();
+     void updateVisibility();
+ 
++    RegionF shapeForSourceBox(const RectF &bufferSourceBox) const override;
++
++    RegionF m_nativeShape;
++    QSize m_nativeSize;
+     QSizeF m_childSize;
+     bool m_mapped = false;
+ };
+diff --git a/src/x11stereochildren.cpp b/src/x11stereochildren.cpp
+index 69b406a..aac7e86 100644
+--- a/src/x11stereochildren.cpp
++++ b/src/x11stereochildren.cpp
+@@ -17,6 +17,7 @@
+ #include "x11window.h"
+ 
+ #include <xcb/composite.h>
++#include <xcb/shape.h>
+ 
+ namespace KWin
+ {
+@@ -138,6 +139,9 @@ std::unique_ptr<X11StereoChild> X11StereoChildren::watch(xcb_window_t window)
+     xcb_connection_t *connection = kwinApp()->x11Connection();
+     const uint32_t childEvents = XCB_EVENT_MASK_STRUCTURE_NOTIFY | XCB_EVENT_MASK_PROPERTY_CHANGE;
+     xcb_change_window_attributes(connection, window, XCB_CW_EVENT_MASK, &childEvents);
++    if (Xcb::Extensions::self()->isShapeAvailable()) {
++        xcb_shape_select_input(connection, window, true);
++    }
+     const uint32_t ancestorEvents = XCB_EVENT_MASK_STRUCTURE_NOTIFY;
+     for (const xcb_window_t ancestor : std::as_const(child->ancestors)) {
+         xcb_change_window_attributes(connection, ancestor, XCB_CW_EVENT_MASK, &ancestorEvents);
+@@ -156,6 +160,9 @@ void X11StereoChildren::unwatch(X11StereoChild *child)
+     xcb_connection_t *connection = kwinApp()->x11Connection();
+     // the child may be gone already, with its X11 window destroyed: that is no error to report
+     xcb_discard_reply(connection, xcb_composite_unredirect_window_checked(connection, child->window, XCB_COMPOSITE_REDIRECT_MANUAL).sequence);
++    if (Xcb::Extensions::self()->isShapeAvailable()) {
++        xcb_shape_select_input(connection, child->window, false);
++    }
+     const uint32_t noEvents = XCB_EVENT_MASK_NO_EVENT;
+     xcb_change_window_attributes(connection, child->window, XCB_CW_EVENT_MASK, &noEvents);
+     for (const xcb_window_t ancestor : std::as_const(child->ancestors)) {
+@@ -186,6 +193,8 @@ void X11StereoChildren::updateGeometry(X11StereoChild *child)
+     if (geometry.isNull() || !position) {
+         return;
+     }
++    child->nativeSize = QSize(geometry->width, geometry->height);
++    updateShape(child);
+     child->geometry = Xcb::fromXNative(Rect(position->dst_x, position->dst_y, geometry->width, geometry->height));
+     child->belowParent = false;
+     child->declaredPlace.reset();
+@@ -217,6 +226,28 @@ void X11StereoChildren::updateGeometry(X11StereoChild *child)
+     }
+ }
+ 
++void X11StereoChildren::updateShape(X11StereoChild *child)
++{
++    const RectF bounds(QPointF(), child->nativeSize);
++    child->shape = bounds;
++    if (!Xcb::Extensions::self()->isShapeAvailable()) {
++        return;
++    }
++    xcb_connection_t *connection = kwinApp()->x11Connection();
++    const auto cookie = xcb_shape_get_rectangles(connection, child->window, XCB_SHAPE_SK_BOUNDING);
++    UniqueCPtr<xcb_shape_get_rectangles_reply_t> reply(xcb_shape_get_rectangles_reply(connection, cookie, nullptr));
++    if (!reply) {
++        return;
++    }
++    RegionF shape;
++    const std::span rectangles(xcb_shape_get_rectangles_rectangles(reply.get()),
++                              xcb_shape_get_rectangles_rectangles_length(reply.get()));
++    for (const auto &rect : rectangles) {
++        shape |= RectF(rect.x, rect.y, rect.width, rect.height);
++    }
++    child->shape = shape.intersected(bounds);
++}
++
+ void X11StereoChildren::updateContent(X11StereoChild *child)
+ {
+     // the child's own _KDE_NET_WM_STEREO_CONTENT, read as for an X11 window: absent, malformed
+@@ -271,6 +302,16 @@ void X11StereoChildren::associate(XwaylandSurfaceV1Interface *surface)
+ void X11StereoChildren::handleEvent(xcb_generic_event_t *event)
+ {
+     const uint8_t eventType = event->response_type & ~0x80;
++    if (eventType == Xcb::Extensions::self()->shapeNotifyEvent()) {
++        const auto *shape = reinterpret_cast<xcb_shape_notify_event_t *>(event);
++        if (shape->shape_kind == XCB_SHAPE_SK_BOUNDING) {
++            if (X11StereoChild *child = findChild(shape->affected_window)) {
++                updateShape(child);
++                Q_EMIT changed();
++            }
++        }
++        return;
++    }
+     switch (eventType) {
+     case XCB_CONFIGURE_NOTIFY:
+     case XCB_MAP_NOTIFY:
+diff --git a/src/x11stereochildren.h b/src/x11stereochildren.h
+index fb24dbc..b342dba 100644
+--- a/src/x11stereochildren.h
++++ b/src/x11stereochildren.h
+@@ -9,6 +9,7 @@
+ #pragma once
+ 
+ #include "core/rect.h"
++#include "core/region.h"
+ #include "effect/globals.h"
+ #include "kwin_export.h"
+ 
+@@ -42,6 +43,9 @@ struct KWIN_EXPORT X11StereoChild
+     QPointer<SurfaceInterface> surface;
+     // the child's place in the X11 window
+     RectF geometry;
++    // Bounding shape in native X pixels, independent of the displayed place.
++    RegionF shape;
++    QSize nativeSize;
+     // the child and the windows between it and the X11 window are mapped, so the child is
+     // shown with the X11 window
+     bool mapped = false;
+@@ -122,6 +126,7 @@ private:
+     void unwatch(X11StereoChild *child);
+     void updateGeometry(X11StereoChild *child);
+     void updateContent(X11StereoChild *child);
++    void updateShape(X11StereoChild *child);
+     void setSurface(X11StereoChild *child, SurfaceInterface *surface);
+     X11StereoChild *findChild(xcb_window_t window) const;
+ 
+-- 
+2.53.0
+

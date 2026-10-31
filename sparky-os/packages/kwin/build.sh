@@ -1,12 +1,12 @@
 #!/bin/bash
-# Sparky Stereo OS: builds kwin 4:6.7.4-2+stereo3d38+lc1 from the +stereo3d37 source package.
-# Created by Daniel Ramos (Capitain Jack) 2026/10/22, +stereo3d36 2026/10/29, +stereo3d37 and +stereo3d38 2026/10/30
+# Sparky Stereo OS: builds kwin 4:6.7.4-2+stereo3d39+lc1 from the +stereo3d38 source package.
+# Created by Daniel Ramos (Capitain Jack) 2026/10/22, +stereo3d36 2026/10/29, +stereo3d37 to +stereo3d39 2026/10/30
 # Copyright 2026 under the GNU GPL3 License
-# Source package once (the s38 patches and the wallpaper-cost translations after the series, changelog entry), then the Lean Code source, then the
+# Source package once (the s39 patches after the series, changelog entry), then the Lean Code source, then the
 # build with the link and start gate against the earlier +lc1 builds. Candidates stay in WORK.
-# Usage: build.sh WORK PREVIOUS_DIR SOURCE_DIR EXTRA_DIR   (PREVIOUS_DIR: a folder holding the +stereo3d37+lc1 .deb files;
-#   SOURCE_DIR: the folder holding kwin_6.7.4-2+stereo3d37.dsc, its debian.tar.xz and the orig tarball with its .asc,
-#   the plain source the +stereo3d37 build left beside its +lc1 one (or plain-from-lc.py's from the published +lc1 source);
+# Usage: build.sh WORK PREVIOUS_DIR SOURCE_DIR EXTRA_DIR   (PREVIOUS_DIR: a folder holding the +stereo3d38+lc1 .deb files;
+#   SOURCE_DIR: the folder holding kwin_6.7.4-2+stereo3d38.dsc, its debian.tar.xz and the orig tarball with its .asc,
+#   the plain source the +stereo3d38 build left beside its +lc1 one (or plain-from-lc.py's from the published +lc1 source);
 #   EXTRA_DIR: the plasma-wayland-protocols 1.21.0-1+stereo3d10+lc1 .deb this build needs, installed before its
 #   build dependencies while the repository does not have it yet; an empty folder once it does)
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.

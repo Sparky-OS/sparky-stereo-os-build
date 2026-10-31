@@ -1,0 +1,362 @@
+From 0e0122eedd168ef80e89a494e9946b893771ba22 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 30 Oct 2026 09:27:04 -0300
+Subject: [PATCH] drm: Choose a frame sequential frame's eye from the refresh
+ it targets
+
+KWin's software frame sequential twins chose the eye of a commit for
+the refresh right after the last completed one. When a page-flip event
+is handled after the next refresh has already passed, the render loop
+targets the refresh after that one, and the frame landed there with
+the other eye: the refresh that passed showed the wrong eye, and so did
+the one the frame landed on, before the order relocked.
+
+The scheduler now also keeps the timestamp of the last completion, and
+a frame gets the eye of the refresh its targetPageflipTime is for,
+counted in refreshes of the mode from that completion. Whether a new
+pair starts is decided the same way, from the render loop's next
+presentation, which is the target of the frame being prepared. A
+commit without a frame, such as a modeset, and a completion without a
+timestamp keep the eye after the last completed refresh.
+
+testMockDrmFrameSequential::testEyeOfTargetedRefresh hands the
+pipeline a completion on refresh 100 a refresh and a quarter late; the
+next frame targets refresh 102 and must show the left eye and start a
+new pair, then relock on time with the right eye for 103.
+frameSequentialTest covers the scheduler's arithmetic.
+
+Assisted-by: Claude Opus 5.5
+---
+ autotests/drm/frameSequentialTest.cpp     |  32 +++++++
+ autotests/drm/mockFrameSequentialTest.cpp | 100 ++++++++++++++++++++++
+ src/backends/drm/drm_frame_sequential.h   |  36 ++++++--
+ src/backends/drm/drm_pipeline.cpp         |  19 +++-
+ src/backends/drm/drm_pipeline.h           |   1 +
+ 5 files changed, 179 insertions(+), 9 deletions(-)
+
+diff --git a/autotests/drm/frameSequentialTest.cpp b/autotests/drm/frameSequentialTest.cpp
+index 9811908..2808576 100644
+--- a/autotests/drm/frameSequentialTest.cpp
++++ b/autotests/drm/frameSequentialTest.cpp
+@@ -166,6 +166,38 @@ private Q_SLOTS:
+         QCOMPARE(rightFirst.firstEye(), StereoEye::Right);
+         QCOMPARE(rightFirst.nextEye(), StereoEye::Right);
+     }
++
++    void eyeOfTargetedRefresh()
++    {
++        using namespace std::chrono_literals;
++        const std::chrono::nanoseconds refresh = 8'333'333ns;
++        FrameSequentialScheduler scheduler;
++        scheduler.reset(100);
++        // before any completion, the target says nothing: the first eye
++        QCOMPARE(scheduler.eyeForTarget(1s, refresh), StereoEye::Left);
++        scheduler.noteCompletion(100, StereoEye::Left, 1s);
++        QCOMPARE(scheduler.eyeForTarget(1s + refresh, refresh), StereoEye::Right);
++        // an event handled late: the frame is for 102, a left eye's, where last + 1 would give the right
++        QCOMPARE(scheduler.eyeForTarget(1s + 2 * refresh, refresh), StereoEye::Left);
++        QCOMPARE(scheduler.eyeForTarget(1s + 3 * refresh, refresh), StereoEye::Right);
++        // timestamps a little off the refresh still count whole refreshes
++        QCOMPARE(scheduler.eyeForTarget(1s + 2 * refresh + 300us, refresh), StereoEye::Left);
++        // a target at or before the completed refresh is for the next one
++        QCOMPARE(scheduler.eyeForTarget(1s, refresh), StereoEye::Right);
++        QCOMPARE(scheduler.eyeForTarget(1s - 5 * refresh, refresh), StereoEye::Right);
++        // a completion without a timestamp leaves the eye after it
++        scheduler.noteCompletion(102, StereoEye::Left);
++        QCOMPARE(scheduler.eyeForTarget(1s + 4 * refresh, refresh), scheduler.nextEye());
++        QCOMPARE(scheduler.nextEye(), StereoEye::Right);
++        // a target-chosen eye that lands where it was due is no wrong-eye slot
++        scheduler.reset(200);
++        scheduler.noteCompletion(200, StereoEye::Left, 2s);
++        const StereoEye late = scheduler.eyeForTarget(2s + 2 * refresh, refresh);
++        scheduler.noteCompletion(202, late, 2s + 2 * refresh);
++        // only refresh 201, which showed the left eye again, was wrong
++        QCOMPARE(scheduler.missedRefreshes(), 1u);
++        QCOMPARE(scheduler.wrongEyeSlots(), 1u);
++    }
+ };
+ 
+ QTEST_GUILESS_MAIN(FrameSequentialTest)
+diff --git a/autotests/drm/mockFrameSequentialTest.cpp b/autotests/drm/mockFrameSequentialTest.cpp
+index 3210bf7..391b134 100644
+--- a/autotests/drm/mockFrameSequentialTest.cpp
++++ b/autotests/drm/mockFrameSequentialTest.cpp
+@@ -4,6 +4,7 @@
+ 
+ #include "core/gpumanager.h"
+ #include "core/outputconfiguration.h"
++#include "core/renderbackend.h"
+ #include "core/renderloop.h"
+ #include "core/renderloop_p.h"
+ #include "core/session.h"
+@@ -106,6 +107,7 @@ private Q_SLOTS:
+     void testScanout_data();
+     void testScanout();
+     void testHeldPairTargetsNextRefresh();
++    void testEyeOfTargetedRefresh();
+ };
+ 
+ void MockFrameSequentialTest::testScanout_data()
+@@ -325,6 +327,104 @@ void MockFrameSequentialTest::testHeldPairTargetsNextRefresh()
+     loopPrivate->compositeTimer.stop();
+ }
+ 
++void MockFrameSequentialTest::testEyeOfTargetedRefresh()
++{
++    // A page-flip event handled after the next refresh has passed: the frame that follows is for
++    // the refresh after that one, and carries its eye. Choosing the eye of the refresh right after
++    // the completed one would show the wrong eye on the refresh that passed and again on the one
++    // the frame lands on.
++    GpuManager::s_self = std::make_unique<GpuManager>();
++    const auto mockGpu = findRenderDevice(1);
++    QVERIFY(mockGpu);
++    const auto mockConnector = std::make_shared<MockConnector>(mockGpu.get());
++    mockConnector->addMode(1920, 1080, 120);
++    mockGpu->connectors.push_back(mockConnector);
++
++    const auto session = Session::create(Session::Type::Noop);
++    const auto backend = std::make_unique<DrmBackend>(session.get());
++    const auto renderBackend = backend->createQPainterBackend();
++    Q_UNUSED(renderBackend);
++    const auto resetManager = qScopeGuard([] {
++        GpuManager::s_self.reset();
++    });
++    auto gpu = std::make_unique<DrmGpu>(backend.get(), mockGpu->fd, DrmDevice::open(mockGpu->devNode));
++    const auto connector = std::make_shared<DrmConnector>(gpu.get(), mockConnector->id);
++    QVERIFY(connector->init());
++    const auto sequentialMode = std::make_shared<DrmConnectorMode>(connector->modes().front(), OutputModeline::Flag::Stereo3DSequentialLeftFirst);
++    auto plane = std::make_unique<DrmPlane>(gpu.get(), mockGpu->planes.front()->id);
++    QVERIFY(plane->init());
++    auto crtc = std::make_unique<DrmCrtc>(gpu.get(), mockGpu->crtcs.front()->id, 0, plane.get());
++    QVERIFY(crtc->init());
++    auto pipeline = std::make_unique<DrmPipeline>(connector.get());
++    auto output = std::make_unique<DrmOutput>(connector, pipeline.get());
++    pipeline->setCrtc(crtc.get());
++    pipeline->setMode(sequentialMode);
++    pipeline->setEnable(true);
++    pipeline->setActive(true);
++    auto *const mockFb = new MockFb(mockGpu.get(), 3840, 1080);
++    auto layer = std::make_unique<TestLayer>(plane.get(), std::make_shared<DrmFramebuffer>(std::make_shared<DrmFramebufferData>(gpu.get(), mockFb->id, nullptr), nullptr, FileDescriptor{}));
++    layer->setEnabled(true);
++    layer->setTargetRect(Rect(QPoint(0, 0), QSize(1920, 1080)));
++    layer->setSourceRect(Rect(QPoint(0, 0), QSize(1920, 1080)));
++    pipeline->setLayers({layer.get()});
++    QCOMPARE(DrmPipeline::commitPipelines({pipeline.get()}, gpu.get(), DrmPipeline::CommitMode::CommitModeset), DrmPipeline::Error::None);
++    pipeline->applyPendingChanges();
++
++    RenderLoop *loop = output->renderLoop();
++    RenderLoopPrivate *const loopPrivate = RenderLoopPrivate::get(loop);
++    loopPrivate->compositeTimer.stop();
++    const std::chrono::nanoseconds refresh(1'000'000'000'000ull / loop->refreshRate());
++    const auto now = []() {
++        return std::chrono::nanoseconds(std::chrono::steady_clock::now().time_since_epoch());
++    };
++    const auto mockPlane = mockGpu->findPlane(plane->id());
++    const auto sourceX = mockPlane->getPropId(QStringLiteral("SRC_X"));
++    const auto committedEye = [&]() -> std::optional<StereoEye> {
++        for (const Prop &property : mockGpu->atomicCommits.constLast()) {
++            if (property.obj == mockPlane->id && property.prop == sourceX) {
++                return property.value == 0 ? StereoEye::Left : StereoEye::Right;
++            }
++        }
++        return std::nullopt;
++    };
++
++    // the left eye of a pair landed on refresh 100; its event is handled a refresh and a quarter later
++    // (after the modeset's own completion, which the render loop also took as a vblank)
++    QTest::qSleep(20);
++    const auto vblank = now() - refresh * 5 / 4;
++    pipeline->pageFlipped(vblank, 100, StereoEye::Left);
++    loopPrivate->compositeTimer.stop();
++    loop->prepareNewFrame();
++    auto frame = std::make_shared<OutputFrame>(loop, refresh);
++    loop->newFramePrepared();
++    const auto target = frame->targetPageflipTime().time_since_epoch();
++    QCOMPARE(std::llround((target - vblank).count() / double(refresh.count())), 2ll);
++    // refresh 102 is a left eye's: a new pair starts there, and its frame shows the left eye
++    QVERIFY(pipeline->frameSequentialNeedsNewFrame());
++    mockGpu->atomicCommits.clear();
++    QCOMPARE(pipeline->testPresent(frame), DrmPipeline::Error::None);
++    QCOMPARE(committedEye(), std::optional(StereoEye::Left));
++    frame.reset();
++
++    // landing there, it relocks the order: the next frame, on time, is for 103, a right eye's
++    pipeline->pageFlipped(target, 102, StereoEye::Left);
++    loopPrivate->compositeTimer.stop();
++    loop->prepareNewFrame();
++    auto next = std::make_shared<OutputFrame>(loop, refresh);
++    loop->newFramePrepared();
++    QCOMPARE(std::llround((next->targetPageflipTime().time_since_epoch() - target).count() / double(refresh.count())), 1ll);
++    QVERIFY(!pipeline->frameSequentialNeedsNewFrame());
++    mockGpu->atomicCommits.clear();
++    QCOMPARE(pipeline->testPresent(next), DrmPipeline::Error::None);
++    QCOMPARE(committedEye(), std::optional(StereoEye::Right));
++    next.reset();
++
++    // a commit without a frame (a modeset) keeps the eye after the last completed refresh
++    mockGpu->atomicCommits.clear();
++    QCOMPARE(DrmPipeline::commitPipelines({pipeline.get()}, gpu.get(), DrmPipeline::CommitMode::CommitModeset), DrmPipeline::Error::None);
++    QCOMPARE(committedEye(), std::optional(StereoEye::Right));
++}
++
+ int main(int argc, char **argv)
+ {
+     TestApplication app(argc, argv);
+diff --git a/src/backends/drm/drm_frame_sequential.h b/src/backends/drm/drm_frame_sequential.h
+index 69ddcaf..1b57246 100644
+--- a/src/backends/drm/drm_frame_sequential.h
++++ b/src/backends/drm/drm_frame_sequential.h
+@@ -9,6 +9,9 @@
+ #include "drm_stereo.h"
+ #include "effect/globals.h"
+ 
++#include <algorithm>
++#include <chrono>
++#include <cmath>
+ #include <cstdint>
+ #include <optional>
+ 
+@@ -30,10 +33,12 @@ inline StereoEye operator!(StereoEye eye)
+  * display alternates, stays the robust path.
+  *
+  * The pipeline submits both eyes once per pair of refreshes; when nothing has changed,
+- * the previous pair is alternated again, so the glasses never lose sync. Every frame is for
+- * the refresh right after the last completed one, and the render loop keeps no frame queued
+- * ahead (DrmOutput::maxPendingFrames()): a held pair's re-commit, for which nothing is
+- * rendered, lands on the next refresh however long rendering is predicted to take.
++ * the previous pair is alternated again, so the glasses never lose sync. The render loop keeps
++ * no frame queued ahead (DrmOutput::maxPendingFrames()): a held pair's re-commit, for which
++ * nothing is rendered, lands on the next refresh however long rendering is predicted to take.
++ * A frame carries the eye of the refresh it targets, counted in refreshes from the last
++ * completed one: when a page-flip event is handled after the next refresh has passed, the
++ * frame is for the one after it, and only the refresh that passed shows the wrong eye.
+  */
+ class FrameSequentialScheduler
+ {
+@@ -59,6 +64,20 @@ public:
+         return eyeForSequence(m_lastCompleted.value_or(*m_phase - 1) + 1);
+     }
+ 
++    /**
++     * the eye of the refresh at @p target, the presentation time a frame is rendered for, counted
++     * in refreshes of @p refreshDuration from the last completed one; the refresh after it when
++     * no completion has been seen or the target is not after it
++     */
++    StereoEye eyeForTarget(std::chrono::nanoseconds target, std::chrono::nanoseconds refreshDuration) const
++    {
++        if (!m_phase || !m_lastCompleted || !m_lastCompletedTimestamp || refreshDuration <= std::chrono::nanoseconds::zero()) {
++            return nextEye();
++        }
++        const int64_t refreshes = std::llround(double((target - *m_lastCompletedTimestamp).count()) / double(refreshDuration.count()));
++        return eyeForSequence(*m_lastCompleted + uint32_t(std::max<int64_t>(refreshes, 1)));
++    }
++
+     StereoEye firstEye() const
+     {
+         return m_leftFirst ? StereoEye::Left : StereoEye::Right;
+@@ -72,6 +91,7 @@ public:
+     {
+         m_phase = nextSequence;
+         m_lastCompleted.reset();
++        m_lastCompletedTimestamp.reset();
+         m_lastShownEye.reset();
+         m_missedRefreshes = 0;
+         m_wrongEyeSlots = 0;
+@@ -81,18 +101,20 @@ public:
+     {
+         m_phase.reset();
+         m_lastCompleted.reset();
++        m_lastCompletedTimestamp.reset();
+         m_lastShownEye.reset();
+         m_missedRefreshes = 0;
+         m_wrongEyeSlots = 0;
+     }
+ 
+     /**
+-     * a page-flip event: @p sequence is the vblank sequence the submitted frame took.
++     * a page-flip event: @p sequence is the vblank sequence the submitted frame took, at
++     * @p timestamp when the event carries one.
+      * Counts the refreshes between this and the last completion (missed: the previous
+      * buffer stayed on screen, showing the wrong eye on every second one of them) and
+      * whether the submitted frame was the wrong eye for the refresh it landed on.
+      */
+-    void noteCompletion(uint32_t sequence, StereoEye submittedEye)
++    void noteCompletion(uint32_t sequence, StereoEye submittedEye, std::optional<std::chrono::nanoseconds> timestamp = std::nullopt)
+     {
+         if (!m_phase) {
+             // The first event after a modeset supplies the sequence that the
+@@ -113,6 +135,7 @@ public:
+             }
+         }
+         m_lastCompleted = sequence;
++        m_lastCompletedTimestamp = timestamp;
+         m_lastShownEye = submittedEye;
+     }
+ 
+@@ -135,6 +158,7 @@ private:
+     bool m_leftFirst;
+     std::optional<uint32_t> m_phase;
+     std::optional<uint32_t> m_lastCompleted;
++    std::optional<std::chrono::nanoseconds> m_lastCompletedTimestamp;
+     std::optional<StereoEye> m_lastShownEye;
+     uint64_t m_missedRefreshes = 0;
+     uint64_t m_wrongEyeSlots = 0;
+diff --git a/src/backends/drm/drm_pipeline.cpp b/src/backends/drm/drm_pipeline.cpp
+index 1889f54..666ad3f 100644
+--- a/src/backends/drm/drm_pipeline.cpp
++++ b/src/backends/drm/drm_pipeline.cpp
+@@ -271,7 +271,7 @@ DrmPipeline::Error DrmPipeline::prepareAtomicPlane(DrmAtomicCommit *commit, DrmP
+     } else if (layer->type() == OutputLayerType::Primary && isFullFrameStereo(stereoLayout)) {
+         const drmModeModeInfo &mode = *m_pending.mode->nativeMode();
+         if (isFrameSequential(stereoLayout)) {
+-            const StereoEye eye = m_frameSequentialScheduler.nextEye();
++            const StereoEye eye = frameSequentialEye(frame ? std::optional(frame->targetPageflipTime()) : std::nullopt);
+             commit->setFrameSequentialEye(this, eye);
+             sourceRect = frameSequentialSourceRect(mode, eye);
+             targetRect = Rect(QPoint(0, 0), m_pending.mode->size());
+@@ -574,7 +574,7 @@ void DrmPipeline::pageFlipped(std::chrono::nanoseconds timestamp, std::optional<
+ {
+     const StereoLayout stereoLayout = m_pending.mode ? stereoLayoutForMode(m_pending.mode->flags()) : StereoLayout::None;
+     if (sequence && submittedEye && isFrameSequential(stereoLayout)) {
+-        m_frameSequentialScheduler.noteCompletion(*sequence, *submittedEye);
++        m_frameSequentialScheduler.noteCompletion(*sequence, *submittedEye, timestamp);
+         if (m_frameSequentialScheduler.wrongEyeSlots() > 0) {
+             qCDebug(KWIN_DRM) << "Frame-sequential output" << m_connector->connectorName()
+                               << "showed" << m_frameSequentialScheduler.wrongEyeSlots()
+@@ -608,7 +608,20 @@ bool DrmPipeline::frameSequentialNeedsNewFrame() const
+     if (!isFrameSequential(layout)) {
+         return true;
+     }
+-    return m_frameSequentialScheduler.nextEye() == (layout == StereoLayout::SequentialRightFirst ? StereoEye::Right : StereoEye::Left);
++    // asked while a frame is prepared, which targets the render loop's next presentation
++    const auto target = m_output ? std::optional(std::chrono::steady_clock::time_point(m_output->renderLoop()->nextPresentationTimestamp())) : std::nullopt;
++    return frameSequentialEye(target) == m_frameSequentialScheduler.firstEye();
++}
++
++StereoEye DrmPipeline::frameSequentialEye(std::optional<std::chrono::steady_clock::time_point> target) const
++{
++    // the eye of the refresh the frame is for, not of the one after the last completed refresh:
++    // when a page-flip event is handled late, the frame targets a later refresh
++    if (!target || !m_pending.mode || m_pending.mode->refreshRate() == 0) {
++        return m_frameSequentialScheduler.nextEye();
++    }
++    const std::chrono::nanoseconds refreshDuration(1'000'000'000'000ull / m_pending.mode->refreshRate());
++    return m_frameSequentialScheduler.eyeForTarget(target->time_since_epoch(), refreshDuration);
+ }
+ 
+ void DrmPipeline::setOutput(DrmOutput *output)
+diff --git a/src/backends/drm/drm_pipeline.h b/src/backends/drm/drm_pipeline.h
+index 6963e73..890f8f9 100644
+--- a/src/backends/drm/drm_pipeline.h
++++ b/src/backends/drm/drm_pipeline.h
+@@ -132,6 +132,7 @@ public:
+ private:
+     friend class DrmGpu;
+     bool isBufferForDirectScanout() const;
++    StereoEye frameSequentialEye(std::optional<std::chrono::steady_clock::time_point> target) const;
+     uint32_t calculateUnderscan();
+     static Error errnoToError();
+     std::shared_ptr<DrmBlob> createHdrMetadata(TransferFunction::Type transferFunction) const;
+-- 
+2.53.0
+

@@ -1,0 +1,403 @@
+From b23849aa44c96aeecb0bf864185718091f3f7047 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 30 Oct 2026 11:59:21 -0300
+Subject: [PATCH] drm: Show a frame sequential commit's eye for the refresh it
+ reaches
+
+KWin's software frame sequential twins choose a commit's eye for the
+refresh its frame targets. A commit that reaches the commit thread
+late, or that the thread submits late, lands on a later refresh, and
+when that refresh is an odd number later it showed the wrong eye. On
+the VKMS bench such late commits, not late page-flip events, are where
+most of the wrong-eye slots come from.
+
+The commit now carries, with the eye chosen for its frame, the refresh
+it was chosen for and the primary plane's source x for either eye. Just
+before the commit thread submits it, the eye is set for the refresh
+the submission reaches, the first one whose vblank starts after now,
+counted in refreshes from the one it was chosen for: an odd number
+later shows the other eye. The eye reported to the pipeline when the
+flip completes is the one committed. Held pairs are re-committed the
+same way, so their eye order follows the refreshes they land on.
+Commits without a frame keep their eye, and nothing changes for other
+layouts, 2D included, or for DisplayPort's frame sequential stereo,
+where the display engine alternates the eyes.
+
+testMockDrmFrameSequential::testLateCommitShowsItsRefreshEye presents a
+frame for refresh 101, a right eye's, after refresh 101 has begun; the
+commit must reach the kernel with refresh 102's left eye.
+testDrmCommitThread::testRetargetedEyeIsTheCommittedOne covers the
+counting and that the reported eye is the committed one.
+
+Assisted-by: Claude Opus 5.5
+---
+ autotests/drm/drmCommitThreadTest.cpp     | 62 ++++++++++++++++
+ autotests/drm/mockFrameSequentialTest.cpp | 88 +++++++++++++++++++++++
+ src/backends/drm/drm_commit.cpp           | 33 ++++++++-
+ src/backends/drm/drm_commit.h             | 25 ++++++-
+ src/backends/drm/drm_commit_thread.cpp    |  4 ++
+ src/backends/drm/drm_commit_thread.h      |  1 +
+ src/backends/drm/drm_pipeline.cpp         |  7 +-
+ 7 files changed, 213 insertions(+), 7 deletions(-)
+
+diff --git a/autotests/drm/drmCommitThreadTest.cpp b/autotests/drm/drmCommitThreadTest.cpp
+index f00f7a6..cf4d80e 100644
+--- a/autotests/drm/drmCommitThreadTest.cpp
++++ b/autotests/drm/drmCommitThreadTest.cpp
+@@ -7,7 +7,10 @@
+ #include "drm_backend.h"
+ #include "drm_commit.h"
+ #include "drm_commit_thread.h"
++#include "drm_connector.h"
+ #include "drm_gpu.h"
++#include "drm_pipeline.h"
++#include "drm_plane.h"
+ 
+ #include <QLoggingCategory>
+ #include <QScopeGuard>
+@@ -51,6 +54,7 @@ class DrmCommitThreadTest : public QObject
+ 
+ private Q_SLOTS:
+     void testStopWhileCommitting();
++    void testRetargetedEyeIsTheCommittedOne();
+ };
+ 
+ void DrmCommitThreadTest::testStopWhileCommitting()
+@@ -115,5 +119,63 @@ void DrmCommitThreadTest::testStopWhileCommitting()
+     QCOMPARE(stopped, rounds);
+ }
+ 
++void DrmCommitThreadTest::testRetargetedEyeIsTheCommittedOne()
++{
++    // A frame sequential commit submitted for a later refresh than its frame's shows that refresh's
++    // eye, counted from the refresh it was chosen for, and reports that eye to its pipeline.
++    GpuManager::s_self = std::make_unique<GpuManager>();
++    const auto resetManager = qScopeGuard([] {
++        GpuManager::s_self.reset();
++    });
++    const auto mockGpu = findRenderDevice(1);
++    QVERIFY(mockGpu);
++    const auto mockConnector = std::make_shared<MockConnector>(mockGpu.get());
++    mockGpu->connectors.push_back(mockConnector);
++    const auto session = Session::create(Session::Type::Noop);
++    const auto backend = std::make_unique<DrmBackend>(session.get());
++    auto gpu = std::make_unique<DrmGpu>(backend.get(), mockGpu->fd, DrmDevice::open(mockGpu->devNode));
++    const auto connector = std::make_shared<DrmConnector>(gpu.get(), mockConnector->id);
++    QVERIFY(connector->init());
++    auto plane = std::make_unique<DrmPlane>(gpu.get(), mockGpu->planes.front()->id);
++    QVERIFY(plane->init());
++    auto pipeline = std::make_unique<DrmPipeline>(connector.get());
++
++    const std::chrono::nanoseconds refresh = 8'333'333ns;
++    const auto target = std::chrono::steady_clock::now();
++    DrmAtomicCommit commit(QList<DrmPipeline *>{pipeline.get()});
++    commit.addProperty(plane->srcX, uint64_t(1920) << 16);
++    commit.setFrameSequentialEye(pipeline.get(), StereoEye::Right, plane.get(), {0, 1920}, target);
++    QCOMPARE(commit.frameSequentialEye(pipeline.get()), std::optional(StereoEye::Right));
++    // on time, and an even number of refreshes late, the chosen eye stays
++    commit.retargetFrameSequentialEyes(target + 300us, refresh);
++    QCOMPARE(commit.frameSequentialEye(pipeline.get()), std::optional(StereoEye::Right));
++    commit.retargetFrameSequentialEyes(target + 2 * refresh, refresh);
++    QCOMPARE(commit.frameSequentialEye(pipeline.get()), std::optional(StereoEye::Right));
++    // an odd number late, the other one, counted from the chosen eye however often it is retargeted
++    commit.retargetFrameSequentialEyes(target + refresh, refresh);
++    QCOMPARE(commit.frameSequentialEye(pipeline.get()), std::optional(StereoEye::Left));
++    commit.retargetFrameSequentialEyes(target + 3 * refresh - 500us, refresh);
++    QCOMPARE(commit.frameSequentialEye(pipeline.get()), std::optional(StereoEye::Left));
++
++    // what reaches the kernel is that eye's source
++    const auto mockPlane = mockGpu->findPlane(plane->id());
++    const auto sourceX = mockPlane->getPropId(QStringLiteral("SRC_X"));
++    mockGpu->atomicCommits.clear();
++    QVERIFY(commit.test());
++    std::optional<uint64_t> committedX;
++    for (const Prop &property : mockGpu->atomicCommits.constLast()) {
++        if (property.obj == mockPlane->id && property.prop == sourceX) {
++            committedX = property.value;
++        }
++    }
++    QCOMPARE(committedX, std::optional<uint64_t>(0));
++
++    // a commit whose eye has no frame to count from, such as a modeset, keeps it
++    DrmAtomicCommit modeset(QList<DrmPipeline *>{pipeline.get()});
++    modeset.setFrameSequentialEye(pipeline.get(), StereoEye::Right);
++    modeset.retargetFrameSequentialEyes(target + refresh, refresh);
++    QCOMPARE(modeset.frameSequentialEye(pipeline.get()), std::optional(StereoEye::Right));
++}
++
+ QTEST_GUILESS_MAIN(DrmCommitThreadTest)
+ #include "drmCommitThreadTest.moc"
+diff --git a/autotests/drm/mockFrameSequentialTest.cpp b/autotests/drm/mockFrameSequentialTest.cpp
+index 391b134..6b1c6ff 100644
+--- a/autotests/drm/mockFrameSequentialTest.cpp
++++ b/autotests/drm/mockFrameSequentialTest.cpp
+@@ -108,6 +108,7 @@ private Q_SLOTS:
+     void testScanout();
+     void testHeldPairTargetsNextRefresh();
+     void testEyeOfTargetedRefresh();
++    void testLateCommitShowsItsRefreshEye();
+ };
+ 
+ void MockFrameSequentialTest::testScanout_data()
+@@ -425,6 +426,93 @@ void MockFrameSequentialTest::testEyeOfTargetedRefresh()
+     QCOMPARE(committedEye(), std::optional(StereoEye::Right));
+ }
+ 
++void MockFrameSequentialTest::testLateCommitShowsItsRefreshEye()
++{
++    // A frame for refresh 101, a right eye's, that reaches the commit thread only after refresh 101
++    // has begun: the thread submits it for refresh 102, and the commit must show 102's eye, the left
++    // one, not the eye of the refresh its frame was for.
++    GpuManager::s_self = std::make_unique<GpuManager>();
++    const auto mockGpu = findRenderDevice(1);
++    QVERIFY(mockGpu);
++    const auto mockConnector = std::make_shared<MockConnector>(mockGpu.get());
++    mockConnector->addMode(1920, 1080, 120);
++    mockGpu->connectors.push_back(mockConnector);
++
++    const auto session = Session::create(Session::Type::Noop);
++    const auto backend = std::make_unique<DrmBackend>(session.get());
++    const auto renderBackend = backend->createQPainterBackend();
++    Q_UNUSED(renderBackend);
++    const auto resetManager = qScopeGuard([] {
++        GpuManager::s_self.reset();
++    });
++    auto gpu = std::make_unique<DrmGpu>(backend.get(), mockGpu->fd, DrmDevice::open(mockGpu->devNode));
++    const auto connector = std::make_shared<DrmConnector>(gpu.get(), mockConnector->id);
++    QVERIFY(connector->init());
++    const auto sequentialMode = std::make_shared<DrmConnectorMode>(connector->modes().front(), OutputModeline::Flag::Stereo3DSequentialLeftFirst);
++    auto plane = std::make_unique<DrmPlane>(gpu.get(), mockGpu->planes.front()->id);
++    QVERIFY(plane->init());
++    auto crtc = std::make_unique<DrmCrtc>(gpu.get(), mockGpu->crtcs.front()->id, 0, plane.get());
++    QVERIFY(crtc->init());
++    auto pipeline = std::make_unique<DrmPipeline>(connector.get());
++    auto output = std::make_unique<DrmOutput>(connector, pipeline.get());
++    pipeline->setCrtc(crtc.get());
++    pipeline->setMode(sequentialMode);
++    pipeline->setEnable(true);
++    pipeline->setActive(true);
++    auto *const mockFb = new MockFb(mockGpu.get(), 3840, 1080);
++    auto layer = std::make_unique<TestLayer>(plane.get(), std::make_shared<DrmFramebuffer>(std::make_shared<DrmFramebufferData>(gpu.get(), mockFb->id, nullptr), nullptr, FileDescriptor{}));
++    layer->setEnabled(true);
++    layer->setTargetRect(Rect(QPoint(0, 0), QSize(1920, 1080)));
++    layer->setSourceRect(Rect(QPoint(0, 0), QSize(1920, 1080)));
++    pipeline->setLayers({layer.get()});
++    QCOMPARE(DrmPipeline::commitPipelines({pipeline.get()}, gpu.get(), DrmPipeline::CommitMode::CommitModeset), DrmPipeline::Error::None);
++    pipeline->applyPendingChanges();
++
++    RenderLoop *loop = output->renderLoop();
++    RenderLoopPrivate *const loopPrivate = RenderLoopPrivate::get(loop);
++    loopPrivate->compositeTimer.stop();
++    const std::chrono::nanoseconds refresh(1'000'000'000'000ull / loop->refreshRate());
++    const auto now = []() {
++        return std::chrono::nanoseconds(std::chrono::steady_clock::now().time_since_epoch());
++    };
++    const auto mockPlane = mockGpu->findPlane(plane->id());
++    const auto sourceX = mockPlane->getPropId(QStringLiteral("SRC_X"));
++    const auto commits = [&mockGpu]() {
++        std::scoped_lock lock(mockGpu->m_mutex);
++        return mockGpu->atomicCommits;
++    };
++
++    // the left eye of a pair landed on refresh 100, a quarter of a refresh ago (after the modeset's
++    // own completion, which the render loop also took as a vblank)
++    QTest::qSleep(20);
++    const auto vblank = now() - refresh / 4;
++    pipeline->pageFlipped(vblank, 100, StereoEye::Left);
++    loopPrivate->compositeTimer.stop();
++    loop->prepareNewFrame();
++    auto frame = std::make_shared<OutputFrame>(loop, refresh);
++    loop->newFramePrepared();
++    QCOMPARE(std::llround((frame->targetPageflipTime().time_since_epoch() - vblank).count() / double(refresh.count())), 1ll);
++    // the frame reaches the commit thread when refresh 101 has begun
++    while (now() < vblank + refresh * 13 / 10) {
++        QTest::qSleep(1);
++    }
++    const auto before = commits().size();
++    QCOMPARE(pipeline->present({layer.get()}, frame), DrmPipeline::Error::None);
++    const auto deadline = std::chrono::steady_clock::now() + 2s;
++    while (commits().size() == before) {
++        QVERIFY(std::chrono::steady_clock::now() < deadline);
++        QTest::qSleep(1);
++    }
++    std::optional<StereoEye> shown;
++    for (const Prop &property : commits().constLast()) {
++        if (property.obj == mockPlane->id && property.prop == sourceX) {
++            shown = property.value == 0 ? StereoEye::Left : StereoEye::Right;
++        }
++    }
++    QCOMPARE(shown, std::optional(StereoEye::Left));
++    frame.reset();
++}
++
+ int main(int argc, char **argv)
+ {
+     TestApplication app(argc, argv);
+diff --git a/src/backends/drm/drm_commit.cpp b/src/backends/drm/drm_commit.cpp
+index 2de97fc..e8d94b2 100644
+--- a/src/backends/drm/drm_commit.cpp
++++ b/src/backends/drm/drm_commit.cpp
+@@ -14,10 +14,12 @@
+ #include "drm_crtc.h"
+ #include "drm_gpu.h"
+ #include "drm_object.h"
++#include "drm_plane.h"
+ #include "drm_property.h"
+ 
+ #include <QCoreApplication>
+ #include <QThread>
++#include <cmath>
+ #include <set>
+ 
+ using namespace std::chrono_literals;
+@@ -92,9 +94,34 @@ void DrmAtomicCommit::addBuffer(DrmPlane *plane, const std::shared_ptr<DrmFrameb
+     }
+ }
+ 
+-void DrmAtomicCommit::setFrameSequentialEye(DrmPipeline *pipeline, StereoEye eye)
++void DrmAtomicCommit::setFrameSequentialEye(DrmPipeline *pipeline, StereoEye eye, DrmPlane *plane, std::array<uint32_t, 2> sourceX,
++                                            std::optional<std::chrono::steady_clock::time_point> target)
+ {
+-    m_frameSequentialEyes[pipeline] = eye;
++    m_frameSequentialEyes[pipeline] = FrameSequentialEye{
++        .chosen = eye,
++        .committed = eye,
++        .plane = plane,
++        .sourceX = sourceX,
++        .target = target,
++    };
++}
++
++void DrmAtomicCommit::retargetFrameSequentialEyes(std::chrono::steady_clock::time_point landing, std::chrono::nanoseconds refreshDuration)
++{
++    if (refreshDuration <= std::chrono::nanoseconds::zero()) {
++        return;
++    }
++    for (auto &[pipeline, eye] : m_frameSequentialEyes) {
++        if (!eye.plane || !eye.target) {
++            continue;
++        }
++        const int64_t later = std::llround(double((landing - *eye.target).count()) / double(refreshDuration.count()));
++        const StereoEye shown = (later % 2) ? (eye.chosen == StereoEye::Left ? StereoEye::Right : StereoEye::Left) : eye.chosen;
++        if (shown != eye.committed) {
++            addProperty(eye.plane->srcX, uint64_t(eye.sourceX[shown == StereoEye::Left ? 0 : 1]) << 16);
++            eye.committed = shown;
++        }
++    }
+ }
+ 
+ void DrmAtomicCommit::setVrr(DrmCrtc *crtc, bool vrr)
+@@ -225,7 +252,7 @@ void DrmAtomicCommit::pageFlipped(std::chrono::nanoseconds timestamp, std::optio
+ std::optional<StereoEye> DrmAtomicCommit::frameSequentialEye(DrmPipeline *pipeline) const
+ {
+     if (const auto it = m_frameSequentialEyes.find(pipeline); it != m_frameSequentialEyes.end()) {
+-        return it->second;
++        return it->second.committed;
+     }
+     return std::nullopt;
+ }
+diff --git a/src/backends/drm/drm_commit.h b/src/backends/drm/drm_commit.h
+index 8859a94..52ef9e3 100644
+--- a/src/backends/drm/drm_commit.h
++++ b/src/backends/drm/drm_commit.h
+@@ -12,6 +12,7 @@
+ #include <xf86drmMode.h>
+ 
+ #include <QHash>
++#include <array>
+ #include <chrono>
+ #include <unordered_map>
+ #include <unordered_set>
+@@ -66,7 +67,19 @@ public:
+     }
+     void addBlob(const DrmProperty &prop, const std::shared_ptr<DrmBlob> &blob);
+     void addBuffer(DrmPlane *plane, const std::shared_ptr<DrmFramebuffer> &buffer, const std::shared_ptr<OutputFrame> &frame);
+-    void setFrameSequentialEye(DrmPipeline *pipeline, StereoEye eye);
++    /**
++     * The eye a commit of KWin's frame sequential twin shows on @p pipeline's primary @p plane, chosen for
++     * @p target, the refresh its frame is for; @p sourceX is the plane's source x of the left and of the
++     * right eye. When the commit is submitted for a later refresh, retargetFrameSequentialEyes() shows the
++     * eye of that one instead.
++     */
++    void setFrameSequentialEye(DrmPipeline *pipeline, StereoEye eye, DrmPlane *plane = nullptr, std::array<uint32_t, 2> sourceX = {},
++                               std::optional<std::chrono::steady_clock::time_point> target = std::nullopt);
++    /**
++     * Sets every frame sequential eye of this commit for the refresh at @p landing, counted in refreshes of
++     * @p refreshDuration from the refresh it was chosen for: an odd number of refreshes later is the other eye.
++     */
++    void retargetFrameSequentialEyes(std::chrono::steady_clock::time_point landing, std::chrono::nanoseconds refreshDuration);
+     void setVrr(DrmCrtc *crtc, bool vrr);
+     void setPresentationMode(PresentationMode mode);
+ 
+@@ -101,7 +114,15 @@ private:
+     std::unordered_map<const DrmProperty *, std::shared_ptr<DrmBlob>> m_blobs;
+     std::unordered_map<DrmPlane *, std::shared_ptr<DrmFramebuffer>> m_buffers;
+     std::unordered_map<DrmPlane *, std::shared_ptr<OutputFrame>> m_frames;
+-    std::unordered_map<DrmPipeline *, StereoEye> m_frameSequentialEyes;
++    struct FrameSequentialEye
++    {
++        StereoEye chosen;
++        StereoEye committed;
++        DrmPlane *plane = nullptr;
++        std::array<uint32_t, 2> sourceX;
++        std::optional<std::chrono::steady_clock::time_point> target;
++    };
++    std::unordered_map<DrmPipeline *, FrameSequentialEye> m_frameSequentialEyes;
+     std::unordered_set<DrmPlane *> m_planes;
+     std::optional<bool> m_vrr;
+     std::unordered_map<uint32_t /* object */, std::unordered_map<uint32_t /* property */, uint64_t /* value */>> m_properties;
+diff --git a/src/backends/drm/drm_commit_thread.cpp b/src/backends/drm/drm_commit_thread.cpp
+index b5dc185..b358bf6 100644
+--- a/src/backends/drm/drm_commit_thread.cpp
++++ b/src/backends/drm/drm_commit_thread.cpp
+@@ -156,6 +156,9 @@ void DrmCommitThread::submit()
+ {
+     DrmAtomicCommit *commit = m_commits.front().get();
+     const auto vrr = commit->isVrr();
++    // a frame sequential commit shows the eye of the refresh it reaches, the first one whose vblank
++    // starts after now, which is later than the refresh its frame was for when it is submitted late
++    commit->retargetFrameSequentialEyes(estimateNextVblank(std::chrono::steady_clock::now() + m_vblankTime), m_minVblankInterval);
+     const bool success = commit->commit();
+     if (success) {
+         m_vrr = vrr.value_or(m_vrr);
+@@ -370,6 +373,7 @@ void DrmCommitThread::setModeInfo(uint32_t maximum, std::chrono::nanoseconds vbl
+ {
+     std::unique_lock lock(m_mutex);
+     m_minVblankInterval = std::chrono::nanoseconds(1'000'000'000'000ull / maximum);
++    m_vblankTime = vblankTime;
+     // the kernel rejects commits that happen during vblank
+     // the 1.5ms on top of that was chosen experimentally, for the time it takes to commit + scheduling inaccuracies
+     m_baseSafetyMargin = vblankTime + s_safetyMarginMinimum;
+diff --git a/src/backends/drm/drm_commit_thread.h b/src/backends/drm/drm_commit_thread.h
+index d598e6a..d23e272 100644
+--- a/src/backends/drm/drm_commit_thread.h
++++ b/src/backends/drm/drm_commit_thread.h
+@@ -62,6 +62,7 @@ private:
+     TimePoint m_targetPageflipTime;
+     TimePoint m_lastCommitTime;
+     std::chrono::nanoseconds m_minVblankInterval;
++    std::chrono::nanoseconds m_vblankTime{0};
+     std::vector<std::unique_ptr<DrmAtomicCommit>> m_commitsToDelete;
+     bool m_vrr = false;
+     bool m_tearing = false;
+diff --git a/src/backends/drm/drm_pipeline.cpp b/src/backends/drm/drm_pipeline.cpp
+index 666ad3f..0f6458d 100644
+--- a/src/backends/drm/drm_pipeline.cpp
++++ b/src/backends/drm/drm_pipeline.cpp
+@@ -271,8 +271,11 @@ DrmPipeline::Error DrmPipeline::prepareAtomicPlane(DrmAtomicCommit *commit, DrmP
+     } else if (layer->type() == OutputLayerType::Primary && isFullFrameStereo(stereoLayout)) {
+         const drmModeModeInfo &mode = *m_pending.mode->nativeMode();
+         if (isFrameSequential(stereoLayout)) {
+-            const StereoEye eye = frameSequentialEye(frame ? std::optional(frame->targetPageflipTime()) : std::nullopt);
+-            commit->setFrameSequentialEye(this, eye);
++            const auto target = frame ? std::optional(frame->targetPageflipTime()) : std::nullopt;
++            const StereoEye eye = frameSequentialEye(target);
++            const std::array<uint32_t, 2> sourceX{uint32_t(frameSequentialSourceRect(mode, StereoEye::Left).x()),
++                                                  uint32_t(frameSequentialSourceRect(mode, StereoEye::Right).x())};
++            commit->setFrameSequentialEye(this, eye, plane, sourceX, target);
+             sourceRect = frameSequentialSourceRect(mode, eye);
+             targetRect = Rect(QPoint(0, 0), m_pending.mode->size());
+         } else {
+-- 
+2.53.0
+
