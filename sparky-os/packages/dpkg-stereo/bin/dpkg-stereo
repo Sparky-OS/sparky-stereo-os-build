@@ -441,7 +441,9 @@ class _NoPool:
         return False
 
 
-PROGRESS_EVERY = 1000      # files between two progress lines of a long migration
+PROGRESS_EVERY = 1000      # files between two progress lines of a long migration,
+PROGRESS_SECONDS = 60      # and a line at least this often (some headers take GCC seconds each: ORDER 315 saw 8 minutes
+                           # between two lines 1,000 files apart)
 
 
 def project_packages(P, names, jobs, image=False, log=print, only=None, known=None, repair=True, record=True,
@@ -449,7 +451,7 @@ def project_packages(P, names, jobs, image=False, log=print, only=None, known=No
     """Project the installed files of these packages (every installed package without names). With `only`,
     just those paths. `record=False` leaves packages.tsv as it is: a migration inside a dpkg run must not mark
     the packages that run changed as seen, or post-invoke would never project them. `progress` gets a line
-    every PROGRESS_EVERY files."""
+    every PROGRESS_EVERY files, and at least every PROGRESS_SECONDS."""
     db = dpkg_db(P)
     if repair:
         repair_consumers(P, jobs, pkgs=dpkg_packages(P, db))
@@ -507,10 +509,12 @@ def project_packages(P, names, jobs, image=False, log=print, only=None, known=No
     results = pool.map(_work, tasks, chunksize=16) if pool else map(_work, tasks)
     if progress and tasks:
         progress(f'dpkg-stereo: projecting and checking {len(tasks)} files')
+    said = time.time()
     with (pool or _NoPool()):
         for n, ((path, r, reason, data), (_, real, name, _seen)) in enumerate(zip(results, tasks), 1):
-            if progress and n % PROGRESS_EVERY == 0 and n < len(tasks):
+            if progress and n < len(tasks) and (n % PROGRESS_EVERY == 0 or time.time() - said >= PROGRESS_SECONDS):
                 progress(f'dpkg-stereo: {n} of {len(tasks)} files projected and checked ({time.time() - t0:.0f} s)')
+                said = time.time()
             if r is None:
                 continue
             ver = pkgs[name][0]
@@ -1032,7 +1036,7 @@ def verify(P, names, deep=False):
 def restore(P, names, drop_hold=False, pkgs=None, log=print, progress=None):
     """The original files back, records dropped: every record, or the packages and paths `names` lists.
     `pkgs` limits the records read to those packages (a caller that knows them); `progress` gets a line
-    every PROGRESS_EVERY files."""
+    every PROGRESS_EVERY files, and at least every PROGRESS_SECONDS."""
     # a set: with the list migrate_c_line_breaks passed, this test cost 68.9 s on the station's 90,217 records
     # and 47,360 C and C++ names (ORDER 310), 0.05 s with a set
     names = set(names or ())
@@ -1057,7 +1061,7 @@ def restore(P, names, drop_hold=False, pkgs=None, log=print, progress=None):
     if progress and total:
         progress(f'dpkg-stereo: putting back the originals of {total} files of {len(todo)} package versions '
                  f'({len(offline)} of them in no APT list or cache)')
-    t0 = time.time()
+    t0 = said = time.time()
     seen = 0
     # package by package: the originals without a pristine copy come from one pass of the package's .deb
     for i, ((package, version), paths) in enumerate(sorted(todo.items()), 1):
@@ -1088,9 +1092,11 @@ def restore(P, names, drop_hold=False, pkgs=None, log=print, progress=None):
                 pys.append(real)
             del files[path]
             ok += 1
-        if progress and seen // PROGRESS_EVERY != (seen + len(paths)) // PROGRESS_EVERY and seen + len(paths) < total:
+        if progress and seen + len(paths) < total and (seen // PROGRESS_EVERY != (seen + len(paths)) // PROGRESS_EVERY
+                                                       or time.time() - said >= PROGRESS_SECONDS):
             progress(f'dpkg-stereo: originals: {seen + len(paths)} of {total} files, {i} of {len(todo)} package '
                      f'versions ({time.time() - t0:.0f} s)')
+            said = time.time()
         seen += len(paths)
     recompile_pyc(pys)
     files.save()

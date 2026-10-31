@@ -19,7 +19,9 @@
     (PENDING), and they are not problems: their line numbers are the
     authored ones.
   * Progress lines on the terminal apt shows: before the long restore and
-    projection, and every 1,000 files; standard output is line-buffered.
+    projection, every 1,000 files, and at least once a minute as files are
+    done (in the large proof, 1,000 heavy headers took 8 minutes); standard
+    output is line-buffered.
   * dpkg's database is read with its journal (/var/lib/dpkg/updates), as
     dpkg reads it. Inside a dpkg run the status file alone is out of date:
     during a first install it listed 81 packages as installed where dpkg's

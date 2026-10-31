@@ -579,18 +579,35 @@ class Packages(unittest.TestCase):
         self.assertEqual(tried, [[self.C_PATH]])
         self.assertEqual(client.read_table(marker + '.pending', client.PENDING_COLS)[self.C_PATH]['version'], '0')
 
-    def test_c_migration_prints_progress_before_the_long_steps(self):
+    def four_old_headers(self):
         extra = {f'/usr/include/lc-demo/more{i}.h': self.C_AUTHORED.replace(b'demo', b'demo%d' % i) for i in range(3)}
         root, P, raw, _ = self.old_c_header(extra)
         records = client.Records(P)
         for path, data in extra.items():       # recorded as projections whose lean bytes are what is installed
             records[path] = dict(records[self.C_PATH], path=path, sha_orig=client.sha256(data), sha_lean=client.sha256(data))
         records.save()
-        originals = {self.C_PATH: self.C_AUTHORED, **extra}
-        with patch.object(client, 'PROGRESS_EVERY', 1), patch.object(client, 'deb_members', return_value=originals), \
-                contextlib.redirect_stdout(io.StringIO()) as output:
+        return P, {self.C_PATH: self.C_AUTHORED, **extra}
+
+    def migration_lines(self, every, seconds):
+        P, originals = self.four_old_headers()
+        with patch.object(client, 'PROGRESS_EVERY', every), patch.object(client, 'PROGRESS_SECONDS', seconds), \
+                patch.object(client, 'deb_members', return_value=originals), contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertEqual(client.repair_consumers(P), 0)
-        lines = output.getvalue().splitlines()
+        return output.getvalue().splitlines()
+
+    def test_c_migration_prints_progress_at_least_once_a_minute(self):
+        # 1,000 files apart, but at least every PROGRESS_SECONDS (0 here): a line after every file
+        lines = self.migration_lines(1000, 0)
+        self.assertEqual([l.split(' (')[0] for l in lines if 'projected and checked' in l],
+                         [f'dpkg-stereo: {n} of 4 files projected and checked' for n in (1, 2, 3)])
+
+    def test_c_migration_progress_stays_quiet_below_both_thresholds(self):
+        lines = self.migration_lines(1000, 3600)
+        self.assertEqual([l for l in lines if 'projected and checked' in l], [])
+        self.assertTrue(lines[-1].startswith('dpkg-stereo: C and C++ files in the new form: 4, none left with #line'), lines)
+
+    def test_c_migration_prints_progress_before_the_long_steps(self):
+        lines = self.migration_lines(1, 3600)
         self.assertTrue(lines[0].startswith('dpkg-stereo: projecting 4 C and C++ files again (1 package versions)'), lines)
         self.assertTrue(lines[1].startswith('dpkg-stereo: putting back the originals of 4 files of 1 package versions'), lines)
         self.assertEqual(lines[2], 'dpkg-stereo: projecting and checking 4 files')
