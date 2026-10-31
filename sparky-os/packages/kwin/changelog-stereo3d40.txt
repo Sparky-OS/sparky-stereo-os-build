@@ -1,0 +1,19 @@
+kwin (4:6.7.4-2+stereo3d40) unstable; urgency=medium
+
+  * Sparky-OS/kwin stereo3d40 is stereo3d39 plus the commit of ORDER 319
+    (s40-0001).
+  * A 2D window whose surface says it is opaque where its pixels carry
+    alpha is the same picture in both eyes (s40-0001). Occlusion culling
+    leaves what lies below an opaque region undrawn, and such a surface
+    ("marking transparent content as opaque will result in repaint
+    artifacts", wl_surface.set_opaque_region) blended over whatever the
+    eye's target held there: in a stereo capture the right eye over the
+    left eye's picture, on a 3D output each eye over its own earlier
+    frames. In each eye of a stereo frame the background is now drawn
+    below every window whose content blends, so both eyes show it over
+    the same transparent black as a 2D capture; what lies below such a
+    window is still not drawn, surfaces without an alpha channel keep
+    the whole saving, and 2D frames are drawn as before. ORDER 296 found
+    it in IngeTrazo's main window. Tests: testScreenshotStereo's
+    testTranslucentPixelsUnderOpaqueRegion and
+    testEyePassOverEarlierPicture.

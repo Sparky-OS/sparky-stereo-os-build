@@ -1,8 +1,8 @@
-# Sparky Stereo OS: kwin 4:6.7.4-2+stereo3d39, the +stereo3d38 source package plus patches/s39-*, built with Lean Code.
-# Created by Daniel Ramos (Capitain Jack) 2026/10/22, +stereo3d36 2026/10/29, +stereo3d37 to +stereo3d39 2026/10/30
+# Sparky Stereo OS: kwin 4:6.7.4-2+stereo3d40, the +stereo3d39 source package plus patches/s40-*, built with Lean Code.
+# Created by Daniel Ramos (Capitain Jack) 2026/10/22, +stereo3d36 2026/10/29, +stereo3d37 to +stereo3d39 2026/10/30, +stereo3d40 2026/10/31
 # Copyright 2026 under the GNU GPL3 License
-# Runs inside the Lean Code migration container; build.sh starts it. /work is the job folder, /src the +stereo3d38 source package,
-# /extra the plasma-wayland-protocols +stereo3d10 build (or nothing once the repository has it), /prev the earlier +lc1 builds,
+# Runs inside the Lean Code migration container; build.sh starts it. /work is the job folder, /src the +stereo3d39 source package,
+# /extra the builds the repository does not have yet (nothing for +stereo3d40), /prev the earlier +lc1 builds,
 # /patches this folder's patches, /toolkit the build tree's sparky-os folder.
 trap 'chown -R 1000:1000 /work' EXIT
 set -euo pipefail
@@ -13,16 +13,18 @@ printf 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://w
 printf 'deb http://deb.debian.org/debian testing contrib non-free non-free-firmware\n' > /etc/apt/sources.list.d/debian-extra-components.list
 printf 'Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n' > /etc/apt/preferences.d/edition
 cd /work
-mkdir s39 && cd s39
-# the plain +stereo3d38 source package, the one the +stereo3d38+lc1 build was made from (ORDER 293, source-plain);
-# its .dsc pins the files
-echo '8446138a3d8709deffc38158ec479cc6dd14ff629fe629f2da9f89d70c35d9bb  /src/kwin_6.7.4-2+stereo3d38.dsc' | sha256sum -c
-cp /src/kwin_6.7.4-2+stereo3d38.dsc /src/kwin_6.7.4-2+stereo3d38.debian.tar.xz /src/kwin_6.7.4.orig.tar.xz /src/kwin_6.7.4.orig.tar.xz.asc .
-dpkg-source -x kwin_6.7.4-2+stereo3d38.dsc t >/dev/null
+mkdir s40 && cd s40
+# the plain +stereo3d39 source package, plain-from-lc.py's from the published +stereo3d39+lc1 source (ORDER 319,
+# source-plain-39); its .dsc pins the files
+echo '14f35d713652a65b6dd44650a039625891674e86c62fa3da05ed94908cdc750c  /src/kwin_6.7.4-2+stereo3d39.dsc' | sha256sum -c
+cp /src/kwin_6.7.4-2+stereo3d39.dsc /src/kwin_6.7.4-2+stereo3d39.debian.tar.xz /src/kwin_6.7.4.orig.tar.xz /src/kwin_6.7.4.orig.tar.xz.asc .
+dpkg-source -x kwin_6.7.4-2+stereo3d39.dsc t >/dev/null
 cd t
-# the translations stay as +stereo3d38 carries them (kwin-wallpaper-cost.po.patch last); the s39 patches add no strings
+# the translations stay as +stereo3d38 carries them (kwin-wallpaper-cost.po.patch before the s39 patches); the s40 patch adds
+# no strings
 grep -qx kwin-wallpaper-cost.po.patch debian/patches/series
-for p in /patches/s39-*.patch; do
+grep -qx s39-0007-workspace-Remove-the-outputs-at-teardown-as-at-run-t.patch debian/patches/series
+for p in /patches/s40-*.patch; do
     cp "$p" debian/patches/
     basename "$p" >> debian/patches/series
 done
@@ -30,23 +32,24 @@ python3 - <<'CHANGELOG'
 from pathlib import Path
 import email.utils
 p = Path('debian/changelog')
-entry = Path('/tools/changelog-stereo3d39.txt').read_text()
-assert entry.startswith('kwin (4:6.7.4-2+stereo3d39) unstable;'), entry[:60]
+entry = Path('/tools/changelog-stereo3d40.txt').read_text()
+assert entry.startswith('kwin (4:6.7.4-2+stereo3d40) unstable;'), entry[:60]
+assert p.read_text().startswith('kwin (4:6.7.4-2+stereo3d39) unstable;')
 p.write_text(entry.rstrip('\n') + '\n\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + email.utils.formatdate(localtime=True) + '\n\n' + p.read_text())
 # the source already asks for plasma-wayland-protocols +stereo3d10 and stops on a protocol without DisplayPort's flag
 assert 'plasma-wayland-protocols (>= 1.21.0-1+stereo3d10~)' in Path('debian/control').read_text()
 assert 'stereo_sequential_displayport' in Path('debian/rules').read_text()
 CHANGELOG
-head -40 debian/changelog
+head -30 debian/changelog
 cd ..
 dpkg-source -b t >/dev/null
 rm -rf t
 ls
 mkdir -p /work/lc && cd /work/lc
-cp ../s39/kwin_6.7.4-2+stereo3d39.dsc ../s39/kwin_6.7.4-2+stereo3d39.debian.tar.xz ../s39/kwin_6.7.4.orig.tar.xz ../s39/kwin_6.7.4.orig.tar.xz.asc .
-dpkg-source -x kwin_6.7.4-2+stereo3d39.dsc /work/lc/source >/dev/null
+cp ../s40/kwin_6.7.4-2+stereo3d40.dsc ../s40/kwin_6.7.4-2+stereo3d40.debian.tar.xz ../s40/kwin_6.7.4.orig.tar.xz ../s40/kwin_6.7.4.orig.tar.xz.asc .
+dpkg-source -x kwin_6.7.4-2+stereo3d40.dsc /work/lc/source >/dev/null
 cd /work/lc/source
-PYTHONPATH=/toolkit python3 -m lean.debian_prepare /work/lc/source 4:6.7.4-2+stereo3d39+lc1 --toolkit /toolkit
+PYTHONPATH=/toolkit python3 -m lean.debian_prepare /work/lc/source 4:6.7.4-2+stereo3d40+lc1 --toolkit /toolkit
 apt-get -y update >/dev/null 2>&1
 echo "== installing this round's builds first"
 if ls /extra/*.deb >/dev/null 2>&1; then
