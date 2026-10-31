@@ -688,10 +688,11 @@ def post_invoke(P, jobs):
     os.unlink(P.state('restored-for-dpkg')) if os.path.exists(P.state('restored-for-dpkg')) else None
     files.save()
     full = sorted(ch - same_version)
+    # repair_consumers ran at the start of this hook: once per dpkg run is enough
     if full:
-        project_packages(P, full, jobs, log=lambda m: None, known=known)
+        project_packages(P, full, jobs, log=lambda m: None, known=known, repair=False)
     if again:
-        project_packages(P, sorted(same_version), jobs, log=lambda m: None, only=again, known=known)
+        project_packages(P, sorted(same_version), jobs, log=lambda m: None, only=again, known=known, repair=False)
     if not full and not again and (gone or ch):
         write_packages(P, pkgs)
 
