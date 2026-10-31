@@ -107,7 +107,8 @@ def project_tree(root):
             raise ValueError(f'{rel}: {result.reason}')
     report.write_text(json.dumps({'engine': VERSION, 'qualified': True,
                                  'preserve': plan, 'languages': languages,
-                                 'options': 'collapse-blank,no-pointer,C/C++ line directives',
+                                 'options': 'collapse-blank,no-pointer,C/C++ line breaks kept',
+                                 'renderer': project.IDENTITY,
                                  'stage': 'before compilation', 'files': records}, indent=2) + '\n')
     print(f'Build-input Lean Code: {sum(r["status"] == "projected" for r in records.values())}/{len(records)} files projected')
 

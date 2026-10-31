@@ -19,4 +19,4 @@ Ported by Claude Opus 5.5 (Claude Code) for Daniel Campos Ramos, 2026-10-16. MIT
 shipped inside dpkg-stereo (Daniel, 2026-10-16: "Yes, ship it").
 """
 
-VERSION = '0.1.15'
+VERSION = '0.1.17'

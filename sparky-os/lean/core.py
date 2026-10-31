@@ -116,6 +116,10 @@ def build_line_map(src: str, text: str, origin: list) -> LineMap:
         mr_line += 1
         if end > pos:
             anchor = origin[pos]
+            if anchor < 0 and end < n:
+                # a rendered comment (the pointer) on a line that keeps its authored line break: the line
+                # is the authored one (C and C++ keep every line), so its break says where it came from
+                anchor = origin[end]
         elif end < n:
             anchor = origin[end]
         else:
@@ -147,7 +151,8 @@ def blank(ch: str) -> bool:
     return ch in ' \t\f\v'
 
 
-def render(src: str, spans: list, joiner, *, keep_empty_after=None, collapse_blank=True) -> Rendered:
+def render(src: str, spans: list, joiner, *, keep_empty_after=None, collapse_blank=True,
+           keep_lines=False) -> Rendered:
     """Remove the COMMENT spans of `src` and return the MR, its origin record and its line map.
 
     joiner(src, start, end) -> str: what replaces a removed comment that has code after it on its line
@@ -159,6 +164,12 @@ def render(src: str, spans: list, joiner, *, keep_empty_after=None, collapse_bla
         being deleted; None for formats whose parser skips comment lines inside a continuation (systemd,
         udev).
     collapse_blank: runs of more than one empty line outside literals become one (CGM's MR shape).
+    keep_lines: every authored line keeps its number (C and C++, whose compiler reads line numbers:
+        `__LINE__`, `assert`, diagnostics and debug line tables). A removed comment that ends its line
+        leaves the line breaks it held, each as it was (held_breaks); one with code after it is what the
+        joiner gives (it keeps the same line breaks too); no line is deleted and no run of empty lines is
+        collapsed, so no `#line` is needed. Each line break a removal leaves keeps the origin of the
+        authored line break it stands for, so the line map stays exact.
     """
     n = len(src)
     lit = [(sp.start, sp.end) for sp in spans if sp.kind in (LITERAL, KEEP)]
@@ -181,19 +192,25 @@ def render(src: str, spans: list, joiner, *, keep_empty_after=None, collapse_bla
         if sp.kind == COMMENT:
             nl = src.find('\n', sp.end)
             tail = src[sp.end: nl if nl >= 0 else n]
-            if tail.strip(' \t\f\v') == '':
+            ends_line = tail.strip(' \t\f\v') == ''
+            if ends_line:
+                rep = held_breaks(src, sp.start, sp.end) if keep_lines else ''
+            else:
+                rep = joiner(src, sp.start, sp.end)
+            if ends_line or (keep_lines and rep.startswith('\n')):
+                # the line ends where the comment began: the blanks before it go with it
                 j = len(buf)
                 while (j > 0 and blank(buf[j - 1]) and not (j >= 2 and buf[j - 2] == '\\')
                        and not src_in_literal(origin[j - 1])):
                     j -= 1
                 del buf[j:]
                 del origin[j:]
-                rep = ''
-            else:
-                rep = joiner(src, sp.start, sp.end)
             removed_at.append(len(buf))
             buf.extend(rep)
-            origin.extend([sp.start] * len(rep))
+            if keep_lines:
+                origin.extend(break_origins(src, sp.start, sp.end, rep))
+            else:
+                origin.extend([sp.start] * len(rep))
             removed += 1
         else:
             buf.extend(src[sp.start:sp.end])
@@ -206,6 +223,10 @@ def render(src: str, spans: list, joiner, *, keep_empty_after=None, collapse_bla
         origin.extend(range(i, n))
     text = ''.join(buf)
     assert len(text) == len(origin)
+    if keep_lines:
+        if text.count('\n') != src.count('\n'):
+            raise ValueError('a replacement changed the number of lines')
+        return Rendered(text, origin, build_line_map(src, text, origin), removed, kept)
 
     # lines a removal left empty (only blanks) go, newline included
     dels = []
@@ -246,6 +267,29 @@ def render(src: str, spans: list, joiner, *, keep_empty_after=None, collapse_bla
             p = q
         text, origin = apply_deletions(text, origin, dels)
     return Rendered(text, origin, build_line_map(src, text, origin), removed, kept)
+
+
+def held_breaks(src: str, start: int, end: int) -> str:
+    """The line breaks src[start:end] holds, each as it was: a backslash-newline (one that translation
+    phase 2 splices, C23 5.1.1.2) stays one, so the lines it joined stay one logical line."""
+    return ''.join('\\\n' if k > start and src[k - 1] == '\\' else '\n'
+                   for k in range(start, end) if src[k] == '\n')
+
+
+def break_origins(src: str, start: int, end: int, rep: str) -> list:
+    """Origins for a removed comment's replacement when lines are kept: each line break stands for the
+    authored line break at the same place in the comment, and every other character for the start of the
+    authored line it lies on, so the line map gives each MR line its own authored line."""
+    breaks = [k for k in range(start, end) if src[k] == '\n']
+    out, at, cur = [], 0, start
+    for ch in rep:
+        if ch == '\n' and at < len(breaks):
+            out.append(breaks[at])
+            cur = breaks[at] + 1
+            at += 1
+        else:
+            out.append(cur)
+    return out
 
 
 def apply_deletions(text: str, origin: list, dels: list):

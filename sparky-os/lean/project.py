@@ -12,13 +12,31 @@ file as its package ships it (the HR), which dpkg-stereo restores from its recor
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from . import VERSION, consumers, core, lang_c
 
-OPTIONS = 'collapse-blank,pointer'
-IDENTITY = f'lean {VERSION} ({OPTIONS})'
+# The files whose code decides what a render gives. The identity carries their digest, so it changes
+# whenever that code does (ORDER 297: two renderers that differed both reported "lean 0.1.15
+# (collapse-blank,pointer)", and an image sealed by one was refused by the other).
+RENDERER_FILES = ('__init__.py', 'project.py', 'core.py', 'consumers.py', 'JvmLexer.java')
+
+
+def code_sha256() -> str:
+    root = Path(__file__).parent
+    names = list(RENDERER_FILES) + sorted(p.name for p in root.glob('lang_*.py'))
+    files = {n: hashlib.sha256((root / n).read_bytes()).hexdigest() for n in names}
+    return hashlib.sha256((json.dumps(files, sort_keys=True, separators=(',', ':'), ensure_ascii=True)
+                           + '\n').encode()).hexdigest()
+
+
+CODE_SHA256 = code_sha256()
+# c-line-breaks: C and C++ keep every authored line (a removed comment leaves its line breaks), with no #line
+OPTIONS = 'collapse-blank,pointer,c-line-breaks'
+IDENTITY = f'lean {VERSION} ({OPTIONS}) code {CODE_SHA256[:16]}'
 
 
 @dataclass
@@ -86,16 +104,23 @@ def pointer_position(text: str) -> int:
 
 
 def render_text(text: str, key: str, variant: str | None, package: str | None, path: str | None, pointer=True):
-    """The render alone: (lean text, Rendered, comment spans). Deterministic for fixed inputs."""
+    """The render alone: (lean text, Rendered, comment spans). Deterministic for fixed inputs.
+    C and C++ keep every authored line: a removed comment leaves its line breaks, and the pointer takes a
+    line a removed comment emptied, so the compiler sees the authored line numbers with no #line."""
     mod = consumers.HANDLERS[key]
     spans = _lex(key, mod, text, variant)
-    rendered = core.render(text, spans, mod.joiner, keep_empty_after=_keep_empty(key, mod, variant))
-    out, origin = rendered.text, rendered.origin
-    if pointer and mod.MARKER and rendered.removed:
-        ptr = core.pointer_text(mod.MARKER, package, path)
-        out, origin = core.insert_line(out, origin, pointer_position(out), ptr)
     if key == 'c' and variant in ('c', 'c++'):
-        out, origin = lang_c.line_directives(out, origin, text)
+        rendered = core.render(text, spans, lang_c.joiner_for(text, spans), keep_lines=True)
+        out, origin = rendered.text, rendered.origin
+        if pointer and rendered.removed:
+            out, origin = lang_c.place_pointer(out, origin, text, spans,
+                                               core.pointer_text(mod.MARKER, package, path))
+    else:
+        rendered = core.render(text, spans, mod.joiner, keep_empty_after=_keep_empty(key, mod, variant))
+        out, origin = rendered.text, rendered.origin
+        if pointer and mod.MARKER and rendered.removed:
+            ptr = core.pointer_text(mod.MARKER, package, path)
+            out, origin = core.insert_line(out, origin, pointer_position(out), ptr)
     line_map = core.build_line_map(text, out, origin)
     rendered.text, rendered.origin, rendered.line_map = out, origin, line_map
     return out, rendered, spans
@@ -157,7 +182,8 @@ def project(path: str, data: bytes, package: str | None = None, *, pointer=True,
 
 def resolve(hr: bytes, mr: bytes, path: str, package: str | None, line: int, col: int | None = None, *, pointer=True):
     """An MR location -> the authored (HR) location, rendering the HR again and refusing a stale MR.
-    C and C++ need no map: their `#line` directives already make the compiler report authored lines."""
+    In C and C++ the line is the authored one already (every line keeps its number); the map gives the
+    authored column where a removed comment shortened the line."""
     key, variant, why = consumers.choose(path, hr)
     if key is None:
         raise StaleMr(f'{path}: no handler ({why})')

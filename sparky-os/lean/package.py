@@ -132,10 +132,8 @@ def metadata_target(root, path):
 
 @functools.lru_cache(maxsize=1)
 def renderer():
-    root = Path(__file__).parent
-    names = ['__init__.py', 'project.py', 'core.py', 'consumers.py', 'JvmLexer.java']
-    names += sorted(p.name for p in root.glob('lang_*.py'))
-    return {'identity': project.IDENTITY, 'sha256': digest(encode({n: file_hash(root / n) for n in names}))}
+    # the same digest the identity carries (project.RENDERER_FILES and every lang_*.py)
+    return {'identity': project.IDENTITY, 'sha256': project.CODE_SHA256}
 
 
 def entries(root):
