@@ -1,0 +1,18 @@
+qt6-base (6.11.2+dfsg-5+stereo3d14) unstable; urgency=medium
+
+  * Build: the documentation's header scan waits for the module header
+    syncs (ORDER 308). The QtCore module header of +stereo3d13 included
+    QtCore/qconfig-bootstrapped.h, qjniarray.h, qjnienvironment.h,
+    qjniobject.h and qjnitypes.h, which no package ships, so every
+    program that includes <QtCore>, <QtDBus>, <QtGui> or <QtWidgets>
+    stopped with "No such file or directory". In a build of both package
+    sets, the documentation build comes first, and in it syncqt -all
+    (sync_all_public_headers, a scan of every header in the source tree
+    for qdoc) and the module's own syncqt wrote the same
+    include/QtCore/QtCore at the same time; the module run staged the
+    scan's file, and the staged file is the one installed. The
+    documentation build now runs sync_headers before docs, so the module
+    syncs and their staged copies are done before the scan starts.
+    Nothing else changes. Test: the recipe's test.sh compiles each public
+    module header against the installed packages, alone and together,
+    and checks that every #include in every installed header resolves.
