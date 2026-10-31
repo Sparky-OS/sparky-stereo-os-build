@@ -1,5 +1,16 @@
 
 -------------------------------------------------------------------------------
+  Version 20261031.1~sparky9~0 (2026-10-31)
+-------------------------------------------------------------------------------
+  * The four files under /etc are conffiles (DEBIAN/conffiles), as Debian Policy 10.7.3 asks: "local changes must be preserved during a package upgrade". Before, dpkg replaced them at every upgrade, a person's edits included (ORDER 321, ORDER 318's finding)
+  * A preinst lets the first upgrade that makes them conffiles replace a file nobody changed without a question: a file still as the installed version shipped it (its md5sums) is set aside as FILE.dpkg-remove, so dpkg installs the new one, and the postinst removes the old copy; a changed file stays, and dpkg asks about it, keeping the person's file by default. The postrm puts the set-aside files back if the upgrade stops
+  * deb-multimedia's own deb-multimedia-keyring is no longer blocked: make-only-ours.py skips the packages that are not ours by an explicit list (NOT_OURS), with its reason for each, instead of by the pool path carried/, which the published tree no longer has. Ours ranks at 400 under deb-multimedia's 500, so a new keyring from deb-multimedia, after a key rotation, reaches the edition (ORDER 321, ORDER 318's finding)
+  * The list also holds Debian's libunibreak 7.0-2 (libunibreak7, its dbgsym, -dev and -doc), carried only through Lean Code: Debian's libunibreak-dev and libunibreak-doc 8.0-2 are no longer blocked or outranked. Every other name in sparky-stereo-only-ours is a build of ours (checked against Debian forky and deb-multimedia forky)
+  * sparky-stereo-only-ours regenerated from the published repository (InRelease 6ea88846, 31 Oct 2026): 1116 packages blocked, as 1278 names; 210 Architecture: all names at 100 where their source is not built; 5 packages that are not ours at 400
+  * README.md, also in /usr/share/doc/sparky-stereo-apt: what an upgrade does with a changed file, and how to keep pins of one's own without editing these files (a file that sorts before sparky-stereo-only-ours: apt_preferences(5) takes the first specific record that matches)
+  * Supersedes 20261031~sparky9~0 (ORDER 318), which was not published; its changes are in this version
+
+-------------------------------------------------------------------------------
   Version 20261031~sparky9~0 (2026-10-31)
 -------------------------------------------------------------------------------
   * sparky-stereo-only-ours names each package with the architectures the repository ships it for (krdc:amd64 krdc:arm64, wine32:i386): apt matches a plain name on the native architecture only (apt_preferences(5)), so on arm64 the file blocked Debian's arm64 kio6, libkf6kiowidgets6, libkf6screen8 and libkscreen-bin, which we ship for amd64 only, and krdc could not be installed there; on amd64 it never blocked Debian's i386 builds of what we ship for i386 (ORDER 318, found by ORDER 317's installability check)
