@@ -361,3 +361,148 @@ def test_lost_unneeded_library_remains_informational(context, tmp_path):
     assert 'libunused.so.1' not in linkcheck.needed(after_binary)
     notes = linkcheck.check(after, before, archive_context=context)
     assert any('NEEDED no longer lists libunused.so.1' in note for note in notes)
+
+
+def recorded_shows(monkeypatch, rewrite=None):
+    """Every apt-cache show call the gate makes, optionally with its records rewritten."""
+    calls = []
+    original = archive.Archive.run
+
+    def run(self, args, label, **options):
+        out = original(self, args, label, **options)
+        if args[:2] == ['apt-cache', 'show']:
+            calls.append(args[2:])
+            if rewrite:
+                out = '\n\n'.join(rewrite(record) for record in out.split('\n\n'))
+        return out
+
+    monkeypatch.setattr(archive.Archive, 'run', run)
+    return calls
+
+
+def test_one_signed_index_call_per_case_and_reuse_across_cases(context, tmp_path, monkeypatch):
+    calls = recorded_shows(monkeypatch)
+    # two candidates of one edition snapshot share one local index, as in a publication
+    first = deb(tmp_path, 'consumer', depends='chosen, libxrandr2, foreign-helper')
+    second = deb(tmp_path, 'other-consumer', depends='chosen, libxrandr2')
+    q = context.qualify(first, [second])
+    assert len(calls) == 1
+    assert sorted(calls[0]) == ['chosen:amd64=2:1.0-3', 'foreign-helper:amd64=1', 'leaf:all=1', 'libxrandr2:amd64=1']
+    rows = json.loads((q.directory / 'signed-index.json').read_text())
+    assert [tuple(row['identity']) for row in rows] == [tuple(r['identity']) for r in manifest(q)['packages']]
+    assert {row['record'] for row in rows} == {q.directory.name + '-signed-index-1.log'}
+    q.close()
+    # the same local index: every record is reused, APT is not asked again
+    q = context.qualify(second, [first])
+    assert len(calls) == 1
+    reused = json.loads((q.directory / 'signed-index.json').read_text())
+    assert {row['record'] for row in reused} == {row['record'] for row in rows}
+    assert len(manifest(q)['packages']) == 3
+    q.close()
+    # another local index digest: asked again
+    q = context.qualify(first, [second, deb(tmp_path, 'unrelated')])
+    assert len(calls) == 2
+    q.close()
+
+
+def test_batches_are_bounded(monkeypatch):
+    monkeypatch.setattr(archive, 'SHOW_ARGUMENTS', 3)
+    names = [(f'p{i}', '1', 'amd64') for i in range(7)]
+    assert [len(b) for b in archive.show_batches(names)] == [3, 3, 1]
+    monkeypatch.setattr(archive, 'SHOW_ARGUMENTS', 1024)
+    monkeypatch.setattr(archive, 'SHOW_BYTES', 30)
+    assert [b for b in archive.show_batches(names)] == [['p0:amd64=1', 'p1:amd64=1'], ['p2:amd64=1', 'p3:amd64=1'],
+                                                        ['p4:amd64=1', 'p5:amd64=1'], ['p6:amd64=1']]
+
+
+@pytest.mark.parametrize('field,value', [('SHA256', '0' * 64), ('Size', '1'), ('Depends', 'libc6')])
+def test_record_differing_from_download_is_refused(context, tmp_path, monkeypatch, field, value):
+    def rewrite(record):
+        if 'Package: chosen\n' not in record + '\n':
+            return record
+        lines = [line for line in record.split('\n') if not line.startswith(field + ':')]
+        return '\n'.join(lines + [f'{field}: {value}'])
+
+    recorded_shows(monkeypatch, rewrite)
+    candidate = deb(tmp_path, 'consumer', depends='libxrandr2, chosen, foreign-helper')
+    with pytest.raises(package.Invalid, match=r"chosen_1.0-3_amd64.deb: downloaded package identity differs from signed index"):
+        context.qualify(candidate)
+
+
+def test_absent_identity_in_a_mixed_batch_is_named(tmp_path, monkeypatch):
+    config = signed_archive(tmp_path / 'repository', transform=lambda text: text.replace('Package: leaf\n', 'Package: advertised-leaf\n'))
+    context = archive.Archive(config, tmp_path / 'scratch', 'amd64')
+    calls = recorded_shows(monkeypatch)
+    candidate = deb(tmp_path, 'consumer', depends='libxrandr2, advertised-leaf, foreign-helper')
+    with pytest.raises(package.Invalid, match=r"leaf_1_all.deb: downloaded identity \('leaf', '1', 'all'\) is absent from signed index"):
+        context.qualify(candidate)
+    assert len(calls) == 1 and 'leaf:all=1' in calls[0] and len(calls[0]) == 3
+
+
+@pytest.mark.parametrize('name,status', [('libxrandr2', 'E: No packages found\n'), ('leaf', '')])
+def test_only_absent_identities_are_named(tmp_path, name, status):
+    # a name APT has never seen: exit 100, "No packages found"; a name another package
+    # depends on (chosen: Depends: leaf) but with no record: exit 0, no output
+    config = signed_archive(tmp_path / 'repository', transform=lambda text: text.replace(f'Package: {name}\n', 'Package: advertised\n'))
+    context = archive.Archive(config, tmp_path / 'scratch', 'amd64')
+    candidate = deb(tmp_path, 'consumer', depends='advertised')
+    arch = 'all' if name == 'leaf' else 'amd64'
+    with pytest.raises(package.Invalid, match=rf"downloaded identity \('{name}', '1', '{arch}'\) is absent from signed index"):
+        context.qualify(candidate)
+    log = next(context.base.glob('case-*-signed-index-1.log')).read_text()
+    assert log == f'$ apt-cache show {name}:{arch}=1\n' + status
+
+
+def test_regular_expression_fallback_cannot_answer_for_an_absent_name(tmp_path, monkeypatch):
+    # apt-cache retries an absent name containing '.' as an unanchored regular expression:
+    # "pick.d" prints the record of "picked"; that record must not answer for "pick.d"
+    work = tmp_path / 'extra'
+    work.mkdir()
+    extra = [deb(work, 'pick.d')]
+    config = signed_archive(tmp_path / 'repository', additional=extra,
+                            transform=lambda text: text.replace('Package: pick.d\n', 'Package: picked\n'))
+    context = archive.Archive(config, tmp_path / 'scratch', 'amd64')
+    calls = recorded_shows(monkeypatch)
+    candidate = deb(tmp_path, 'consumer', depends='chosen, picked')
+    with pytest.raises(package.Invalid, match=r"downloaded identity \('pick.d', '1', 'amd64'\) is absent from signed index"):
+        context.qualify(candidate)
+    assert len(calls) == 1 and 'pick.d:amd64=1' in calls[0]
+    log = next(context.base.glob('case-*-signed-index-1.log')).read_text()
+    assert 'Package: picked\n' in log
+
+
+def test_apt_failure_other_than_nothing_found_is_not_taken_for_absence(context):
+    with pytest.raises(package.Invalid, match='archive refused-probe failed'):
+        context.run(['sh', '-c', 'echo "E: The package lists or status file could not be parsed" >&2; exit 100'],
+                    'refused-probe', nothing_found=True)
+    with pytest.raises(package.Invalid, match='archive output-probe failed'):
+        context.run(['sh', '-c', 'echo "Package: x"; echo "E: No packages found" >&2; exit 100'],
+                    'output-probe', nothing_found=True)
+    assert context.run(['sh', '-c', 'echo "E: No packages found" >&2; exit 100'], 'empty-probe', nothing_found=True) == ''
+    with pytest.raises(package.Invalid, match='archive plain-probe failed'):
+        context.run(['sh', '-c', 'echo "E: No packages found" >&2; exit 100'], 'plain-probe')
+
+
+def test_earlier_identity_refusal_precedes_a_later_solver_line_failure(tmp_path, monkeypatch):
+    # one by one, the gate refused the first download in solver order; batched, a later
+    # line's failure waits until the downloads before it are checked
+    config = signed_archive(tmp_path / 'repository', transform=lambda text: text.replace('Package: leaf\n', 'Package: advertised-leaf\n'))
+    context = archive.Archive(config, tmp_path / 'scratch', 'amd64')
+    original = archive.Archive.run
+
+    def run(self, args, label, **options):
+        out = original(self, args, label, **options)
+        if label.endswith('-solve'):
+            lines = out.splitlines()
+            last = max(i for i, line in enumerate(lines) if line.startswith("'"))
+            lines.insert(last + 1, "'https://example.invalid/unverified.deb' unverified.deb 1 MD5Sum:0")
+            out = '\n'.join(lines) + '\n'
+        return out
+
+    monkeypatch.setattr(archive.Archive, 'run', run)
+    candidate = deb(tmp_path, 'consumer', depends='advertised-leaf')
+    with pytest.raises(package.Invalid, match=r"\('leaf', '1', 'all'\) is absent from signed index"):
+        context.qualify(candidate)
+    good = deb(tmp_path / 'good', 'consumer', depends='libxrandr2')
+    with pytest.raises(package.Invalid, match='archive solver returned an unverified download'):
+        context.qualify(good)

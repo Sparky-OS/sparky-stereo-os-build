@@ -26,6 +26,13 @@ from urllib.request import urlopen
 
 from . import package
 
+# The control fields a downloaded archive must share with its signed index record.
+RELATIONSHIPS = ('Depends', 'Pre-Depends', 'Provides', 'Conflicts', 'Breaks', 'Multi-Arch')
+# One apt-cache show call asks for at most this many identities and argument bytes,
+# far below the kernel's argument limit.
+SHOW_ARGUMENTS = 1024
+SHOW_BYTES = 128 << 10
+
 
 def digest(path):
     with Path(path).open('rb') as stream:
@@ -57,6 +64,20 @@ def control(deb):
 
 def identity(obj):
     return tuple(obj[k] for k in ('Package', 'Version', 'Architecture'))
+
+
+def show_batches(identities):
+    """Exact NAME:ARCH=VERSION arguments for apt-cache show, in bounded calls."""
+    batch, size = [], 0
+    for name, version, arch in identities:
+        argument = f'{name}:{arch}={version}'
+        if batch and (len(batch) == SHOW_ARGUMENTS or size + len(argument) + 1 > SHOW_BYTES):
+            yield batch
+            batch, size = [], 0
+        batch.append(argument)
+        size += len(argument) + 1
+    if batch:
+        yield batch
 
 
 def rooted(root, name, follow=True):
@@ -371,7 +392,7 @@ class Archive:
         space(ancestor, 1 << 20, self.minimum, self.root_minimum)
         self.scratch.mkdir(parents=True, exist_ok=True)
         self.ensure_space(1 << 20)
-        self._inputs, self._indexes, self._active = {}, set(), set()
+        self._inputs, self._indexes, self._active, self._records = {}, set(), set(), {}
         self.universes = self.scratch / 'universes'
         self.universes.mkdir(exist_ok=True)
         self.base = Path(tempfile.mkdtemp(prefix=f'link-{arch}-', dir=self.scratch))
@@ -459,9 +480,11 @@ class Archive:
     def ensure_space(self, required=0):
         space(self.scratch, required, self.minimum, self.root_minimum)
 
-    def run(self, args, label):
+    def run(self, args, label, nothing_found=False):
         # APT writes only private state. Monitor its growth as well as reserving
         # space before starting; terminate only this command's process group.
+        # nothing_found accepts only apt-cache's own exit 100 with no output and
+        # "E: No packages found": every argument absent, refused by the caller.
         self.ensure_space(256 << 20)
         proc = subprocess.Popen(args, cwd=self.base, env=self.env, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, text=True, start_new_session=True)
@@ -484,6 +507,8 @@ class Archive:
             (self.base / f'{label}.log').write_text('$ ' + ' '.join(args) + '\n' + out + err)
             raise
         (self.base / f'{label}.log').write_text('$ ' + ' '.join(args) + '\n' + out + err)
+        if nothing_found and proc.returncode == 100 and not out and err == 'E: No packages found\n':
+            return out
         if proc.returncode:
             raise package.Invalid(f'archive {label} failed (see {self.base / (label + ".log")}):\n' + (out + err)[-5000:])
         return out
@@ -592,6 +617,45 @@ class Archive:
         (self.base / 'etc/preferences').write_text(''.join(preferences))
         return candidate, inputs, local
 
+    def signed(self, directory, local, downloads):
+        """Check every downloaded identity against its own record in the signed index.
+
+        apt-cache show prints the records of each argument it finds and skips an absent
+        one silently: it exits 0 unless it finds nothing at all (exit 100, "No packages
+        found"), and an absent name with '.' or '+' is retried as an unanchored regular
+        expression that prints other packages. So a record is matched to its own Package,
+        Version and Architecture, never by its position in the output. A record read once
+        is reused for the same identity and SHA-256 under the same local index digest: the
+        public indexes are frozen for this context, and the local index is the only other
+        source APT reads.
+        """
+        token = digest(local / 'Packages')
+        wanted = list(dict.fromkeys(identity(obj) for uri, size, sha, archive, obj in downloads
+                                    if (token, identity(obj), sha) not in self._records))
+        asked, found = set(wanted), {}
+        for number, arguments in enumerate(show_batches(wanted), 1):
+            label = f'{directory.name}-signed-index-{number}'
+            out = self.run(['apt-cache', 'show'] + arguments, label, nothing_found=True)
+            for text in out.split('\n\n'):
+                record = fields(text)
+                key = tuple(record.get(k) for k in ('Package', 'Version', 'Architecture'))
+                if key in asked:
+                    found.setdefault(key, (label + '.log', []))[1].append(record)
+        provenance = []
+        for uri, size, sha, archive, obj in downloads:
+            key = (token, identity(obj), sha)
+            if key not in self._records and identity(obj) in found:
+                self._records[key] = found[identity(obj)]
+            log, records = self._records.get(key, (None, []))
+            if not records:
+                raise package.Invalid(f'{uri}: downloaded identity {identity(obj)} is absent from signed index')
+            if not any(record.get('SHA256') == sha and record.get('Size') == str(size)
+                       and all(record.get(k, '') == obj.get(k, '') for k in RELATIONSHIPS) for record in records):
+                raise package.Invalid(f'{uri}: downloaded package identity differs from signed index')
+            provenance.append({'identity': identity(obj), 'sha256': sha, 'record': log})
+        (directory / 'signed-index.json').write_text(json.dumps(provenance, indent=2) + '\n')
+        return downloads
+
     def qualify(self, deb, siblings=()):
         """At most two live roots; successful callers must close their qualifiers."""
         if len(self._active) >= 2:
@@ -627,71 +691,68 @@ class Archive:
         selected_inputs = []
         by_hash = {item['sha256']: item for item in inputs}
         named = {item['control']['Package'] for item in inputs}
-        for line in plan.splitlines():
-            if not line.startswith("'"):
-                continue
-            direct = re.match(r"'file:([^']+)' ", line)
-            if direct and Path(unquote(direct[1])) == candidate_bytes:
-                selected_inputs.append(candidate)
-                continue
-            match = re.fullmatch(r"'([^']+)' (\S+) (\d+) SHA256:([0-9a-f]{64})", line)
-            if not match:
-                raise package.Invalid(f'archive solver returned an unverified download: {line}')
-            uri, filename, size, sha = match.groups()
-            size = int(size)
-            if sha in by_hash:
-                item = by_hash[sha]
-                if (urlsplit(uri).scheme != 'file' or Path(unquote(urlsplit(uri).path)) != local / 'pool' / (sha + '.deb')
-                        or size != item['size']):
-                    raise package.Invalid(f'archive attempted to substitute supplied {item["control"]["Package"]}')
-                selected_inputs.append(item)
-                continue
-            if urlsplit(uri).scheme not in ('https', 'file'):
-                raise package.Invalid(f'unsupported archive download URL: {uri}')
-            archive = self.cache / (sha + '.deb')
-            if archive.exists() and (archive.stat().st_size != size or digest(archive) != sha):
-                raise package.Invalid(f'{archive}: corrupt cached package; remove it and retry')
-            if not archive.exists():
-                self.ensure_space(size + 16384)
-                temporary = directory / 'download.part'
-                with urlopen(uri, timeout=60) as response, temporary.open('xb') as stream:
-                    remaining = size
-                    while remaining:
-                        block = response.read(min(1 << 20, remaining))
-                        if not block:
-                            break
-                        self.ensure_space(len(block) + 16384)
-                        stream.write(block)
-                        remaining -= len(block)
-                    if response.read(1):
-                        raise package.Invalid(f'{uri}: exceeds signed package size {size}')
-                if temporary.stat().st_size != size or digest(temporary) != sha:
-                    raise package.Invalid(f'{uri}: corrupt download, signed size or SHA-256 differs')
-                temporary.chmod(0o444)
-                temporary.rename(archive)
-            obj = control(archive)
-            if obj['Architecture'] not in (self.arch, 'all'):
-                raise package.Invalid(f'{uri}: wrong architecture {obj["Architecture"]}; context is {self.arch}')
-            if obj['Package'] in named:
-                raise package.Invalid(f'archive attempted to substitute supplied {obj["Package"]}')
-            try:
-                metadata = self.run(['apt-cache', 'show', f'{obj["Package"]}:{obj["Architecture"]}={obj["Version"]}'],
-                                    directory.name + '-' + obj['Package'])
-            except package.NoSpace:
-                # a disk floor reached while asking APT is not a missing record
-                raise
-            except package.Invalid as exc:
-                raise package.Invalid(f'{uri}: downloaded identity {identity(obj)} is absent from signed index') from exc
-            records = [fields(record) for record in metadata.split('\n\n') if record.strip()]
-            relationships = ('Depends', 'Pre-Depends', 'Provides', 'Conflicts', 'Breaks', 'Multi-Arch')
-            if not any(identity(record) == identity(obj) and record.get('SHA256') == sha
-                       and record.get('Size') == str(size)
-                       and all(record.get(key, '') == obj.get(key, '') for key in relationships) for record in records):
-                raise package.Invalid(f'{uri}: downloaded package identity differs from signed index')
+        downloads = []
+        deferred = None
+        try:
+            for line in plan.splitlines():
+                if not line.startswith("'"):
+                    continue
+                direct = re.match(r"'file:([^']+)' ", line)
+                if direct and Path(unquote(direct[1])) == candidate_bytes:
+                    selected_inputs.append(candidate)
+                    continue
+                match = re.fullmatch(r"'([^']+)' (\S+) (\d+) SHA256:([0-9a-f]{64})", line)
+                if not match:
+                    raise package.Invalid(f'archive solver returned an unverified download: {line}')
+                uri, filename, size, sha = match.groups()
+                size = int(size)
+                if sha in by_hash:
+                    item = by_hash[sha]
+                    if (urlsplit(uri).scheme != 'file' or Path(unquote(urlsplit(uri).path)) != local / 'pool' / (sha + '.deb')
+                            or size != item['size']):
+                        raise package.Invalid(f'archive attempted to substitute supplied {item["control"]["Package"]}')
+                    selected_inputs.append(item)
+                    continue
+                if urlsplit(uri).scheme not in ('https', 'file'):
+                    raise package.Invalid(f'unsupported archive download URL: {uri}')
+                archive = self.cache / (sha + '.deb')
+                if archive.exists() and (archive.stat().st_size != size or digest(archive) != sha):
+                    raise package.Invalid(f'{archive}: corrupt cached package; remove it and retry')
+                if not archive.exists():
+                    self.ensure_space(size + 16384)
+                    temporary = directory / 'download.part'
+                    with urlopen(uri, timeout=60) as response, temporary.open('xb') as stream:
+                        remaining = size
+                        while remaining:
+                            block = response.read(min(1 << 20, remaining))
+                            if not block:
+                                break
+                            self.ensure_space(len(block) + 16384)
+                            stream.write(block)
+                            remaining -= len(block)
+                        if response.read(1):
+                            raise package.Invalid(f'{uri}: exceeds signed package size {size}')
+                    if temporary.stat().st_size != size or digest(temporary) != sha:
+                        raise package.Invalid(f'{uri}: corrupt download, signed size or SHA-256 differs')
+                    temporary.chmod(0o444)
+                    temporary.rename(archive)
+                obj = control(archive)
+                if obj['Architecture'] not in (self.arch, 'all'):
+                    raise package.Invalid(f'{uri}: wrong architecture {obj["Architecture"]}; context is {self.arch}')
+                if obj['Package'] in named:
+                    raise package.Invalid(f'archive attempted to substitute supplied {obj["Package"]}')
+                downloads.append((uri, size, sha, archive, obj))
+        except Exception as exc:
+            # The downloads before this solver line are checked against the signed index
+            # first, so the refusal is the first one in solver order, as it was one by one.
+            deferred = exc
+        for uri, size, sha, archive, obj in self.signed(directory, local, downloads):
             selected_archives.append((archive, obj))
             packages.append({'identity': identity(obj), 'url': uri, 'size': size, 'sha256': sha,
                              'depends': obj.get('Depends', ''), 'pre_depends': obj.get('Pre-Depends', ''),
                              'provides': obj.get('Provides', ''), 'multi_arch': obj.get('Multi-Arch', '')})
+        if deferred is not None:
+            raise deferred
         if not any(identity(item['control']) == identity(candidate['control']) for item in selected_inputs):
             raise package.Invalid('archive solver omitted the requested candidate')
         selected_archives += [(self.cached_input(item), item['control']) for item in selected_inputs]
