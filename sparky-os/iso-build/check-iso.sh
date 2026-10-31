@@ -1,7 +1,7 @@
 #!/bin/sh
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/25
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/30
+# Last update 2026/10/31
 # Checks a packed ISO against the recipe: the live kernel is the edition's and the only one (/live and the image's /boot),
 # the boot menus have no second kernel and offer the Secure Boot enrolment, the EFI image carries Debian's signed shim,
 # GRUB and MokManager (the same files as the root file system's packages) and the edition's certificate, the edition's
@@ -72,13 +72,17 @@ sbverify --cert "$T/cert.pem" "$T/live_vmlinuz" >/dev/null 2>&1 && ok "the live 
 
 echo "-- the image (filesystem.squashfs)"
 unsquashfs -n -d "$T/sq" "$I/live/filesystem.squashfs" var/lib/dpkg/status etc/plymouth/plymouthd.conf \
-	var/lib/command-not-found/commands.db >/dev/null 2>&1
+	usr/share/plymouth/plymouthd.defaults var/lib/command-not-found/commands.db >/dev/null 2>&1
 # /boot by name only (its boot image is hundreds of MB): empty files of the same names for boot-kernels.py
 mkdir -p "$T/sq/boot"
 unsquashfs -n -lc "$I/live/filesystem.squashfs" boot 2>/dev/null | sed -n 's|^squashfs-root/boot/\([^/]*\)$|\1|p' | while read -r f; do : > "$T/sq/boot/$f"; done
 python3 /build/boot-kernels.py "$T/sq" && ok "the image's /boot and packages hold only the edition's kernel" || no "the image holds a kernel that is not the edition's"
-t=$(sed -n 's/^Theme=//p' "$T/sq/etc/plymouth/plymouthd.conf" 2>/dev/null)
-[ "$t" = sparky-stereo-lines ] && ok "default boot splash: $t" || no "default boot splash: ${t:-none}"
+# the default splash as Plymouth's own plymouth-set-default-theme reads it (get_default_theme): plymouthd.conf's Theme,
+# else plymouthd.defaults' (sparky-stereo-plymouth diverts it to name sparky-stereo-lines and clears package-written
+# choices from plymouthd.conf)
+t=$(sed -n 's/^Theme=//p' "$T/sq/etc/plymouth/plymouthd.conf" 2>/dev/null); w=plymouthd.conf
+[ -n "$t" ] || { t=$(sed -n 's/^Theme=//p' "$T/sq/usr/share/plymouth/plymouthd.defaults" 2>/dev/null); w=plymouthd.defaults; }
+[ "$t" = sparky-stereo-lines ] && ok "default boot splash: $t ($w)" || no "default boot splash: ${t:-none}"
 chroot /rootfs lsinitramfs /tmp/check-iso/initrd.img 2>/dev/null | grep -E 'plymouth/themes/[^/]+/[^/]+\.plymouth$|plymouthd.conf' | sed "s/^/   initrd: /"
 chroot /rootfs lsinitramfs /tmp/check-iso/initrd.img 2>/dev/null | grep -q 'plymouth/themes/sparky-stereo-lines/sparky-stereo-lines.script' \
 	&& ok "the live boot image carries sparky-stereo-lines" || no "the live boot image lacks sparky-stereo-lines"
