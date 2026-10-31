@@ -1,0 +1,18 @@
+[Unit]
+Description=Temporary fwupd ESP and UDisks diagnostic trace (order 314)
+After=dbus.service local-fs.target
+Before=fwupd.service fwupd-refresh.service display-manager.service
+
+[Service]
+Type=notify
+NotifyAccess=main
+ExecStart=/usr/bin/python3 /usr/local/libexec/fwupd-esp-unmount-314-trace.py
+TimeoutStartSec=10
+TimeoutStopSec=5
+UMask=0077
+NoNewPrivileges=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
