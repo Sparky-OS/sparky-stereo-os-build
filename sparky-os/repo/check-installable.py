@@ -378,6 +378,16 @@ class Universe:
         return p.returncode == 0, (p.stdout + p.stderr)
 
 
+DOSE_FIELDS = ('Package', 'Version', 'Architecture', 'Multi-Arch', 'Essential', 'Source',
+               'Pre-Depends', 'Depends', 'Conflicts', 'Breaks', 'Provides')
+
+
+def dose_stanza(fields):
+    # Only what installability reads, each on one line: dose-debcheck refuses a relation folded over several lines
+    # (SparkyLinux's sunflower) and an Installed-Size with a unit (both on 31 Oct 2026), which apt accepts.
+    return '\n'.join('%s: %s' % (k, ' '.join(fields[k].split())) for k in DOSE_FIELDS if k in fields)
+
+
 def read_list(path):
     name = str(path)
     if name.endswith(('.xz', '.lz4', '.gz', '.zst', '.bz2')):
@@ -450,6 +460,7 @@ class Index:
         self.by_name, self.provides = {}, {}
         self.entries = []
         self._cache = {}
+        self.blocked = {}
 
     def add(self, fields, origin, host, from_tree, text):
         e = dict(fields)
@@ -534,6 +545,10 @@ class Index:
 def classify(index, alts):
     names = [a[0] for a in alts]
     present = [n for n in names if n in index.by_name or n in index.provides]
+    if not present and any(n in index.blocked for n in names):
+        return 'blocked by the policy', '; '.join(
+            '%s: the edition blocks %s, and the tree has no build of it for this architecture' % (
+                n, ', '.join(sorted(index.blocked[n])[:4])) for n in names if n in index.blocked)
     if not present:
         succ = [s for n in names for s in index.successor(n)]
         if succ:
@@ -655,7 +670,7 @@ def main():
             'apt': run(['apt-get', '--version']).stdout.splitlines()[0],
             'dose': run(['dose-debcheck', '--version']).stdout.strip() if 'dose' in engines else None,
             'started': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
-    rows, failures = [], {}
+    rows, failures, checked, failed_in = [], {}, {}, {}
     sparky_apt = None
     for profile in profiles:
         arches = ['arm64'] if profile == 'arm64' else [x for x in ('amd64', 'i386') if x in tree_arches or x == 'amd64']
@@ -710,9 +725,11 @@ def main():
                     continue
                 e = {'Package': fields['Package'], 'Version': fields['Version'], '_origin': origin, '_host': host}
                 if not from_tree and pins.blocked(e):
+                    index.blocked.setdefault(fields['Package'], set()).add(
+                        '%s %s (%s)' % (fields['Version'], fields.get('Architecture', '?'), origin or '?'))
                     continue
                 index.add(fields, origin, host, from_tree, text)
-                kept.append(text)
+                kept.append(dose_stanza(fields))
             if from_tree:
                 tree_text.setdefault(arch, []).extend(kept)
             else:
@@ -729,12 +746,42 @@ def main():
             want = [e for e in want if e['Architecture'] == 'arm64']
         if only:
             want = [e for e in want if e['Package'] in only]
+        for e in want:
+            checked.setdefault((e['Package'], e['Version'], e['Architecture']), set()).add(profile)
         print('[%s] %d archives indexed, %d packages of the tree to check' % (profile, len(lists), len(want)), flush=True)
 
-        results = {}
+        results, derived = {}, {}
+        keys = {(e['Package'], e['Architecture'], e['Version']) for e in want}
+
+        def parent_of(e):
+            # A dbgsym or lc-hr companion whose one dependency is its own package at its own version installs
+            # exactly when that package does: apt is asked once, for the package.
+            if not e['Package'].endswith(COMPANIONS) or e.get('Pre-Depends'):
+                return None
+            rels = relations(e.get('Depends', ''))
+            if len(rels) != 1 or len(rels[0]) != 1:
+                return None
+            name, qual, op, ver = rels[0][0]
+            if op != '=' or ver != e['Version'] or qual:
+                return None
+            arch = e['Architecture']
+            for cand in index.by_name.get(name, ()):
+                key = (cand['Package'], cand['Architecture'], cand['Version'])
+                if (cand['_tree'] and cand['Version'] == ver and key in keys
+                        and cand['Architecture'] in (arch, 'all', u.native if arch == 'all' else arch)):
+                    return key
+            return None
+        for e in want:
+            parent = parent_of(e)
+            if parent:
+                derived[(e['Package'], e['Architecture'], e['Version'])] = parent
+        direct = [e for e in want if (e['Package'], e['Architecture'], e['Version']) not in derived]
+        if 'apt' in engines:
+            print('[%s] apt asked for %d packages; %d dbgsym and lc-hr companions follow their package' % (
+                profile, len(direct), len(derived)), flush=True)
         if 'apt' in engines:
             with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, a.jobs)) as pool:
-                futs = {pool.submit(u.simulate, e['Package'], e['Architecture'], e['Version']): e for e in want}
+                futs = {pool.submit(u.simulate, e['Package'], e['Architecture'], e['Version']): e for e in direct}
                 for fut in concurrent.futures.as_completed(futs):
                     e = futs[fut]
                     ok, text = fut.result()
@@ -742,6 +789,8 @@ def main():
                     if not ok:
                         name = '%s_%s_%s.log' % (profile, e['Package'], e['Architecture'])
                         (report / 'apt' / name).write_text(text)
+            for key, parent in derived.items():
+                results[key] = results[parent]
         dose = {}
         if 'dose' in engines:
             fg = []
@@ -749,9 +798,9 @@ def main():
                 f = report / ('fg-%s-%s.Packages' % (profile, arch))
                 f.write_text('\n\n'.join(texts) + '\n')
                 fg.append(f)
-            dose, _ = dose_run(u.native, arches[1:], fg, bg_files, report / ('dose-%s.yaml' % profile),
-                               sorted({'%s:%s' % (e['Package'], e['Architecture']) if e['Architecture'] != 'all'
-                                       else e['Package'] for e in want}) if only else None)
+            # dose checks the whole foreground in seconds; --only filters its answer, as --checkonly misses
+            # Architecture: all packages named without an architecture.
+            dose, _ = dose_run(u.native, arches[1:], fg, bg_files, report / ('dose-%s.yaml' % profile), None)
         for f in bg_files + list(report.glob('fg-%s-*.Packages' % profile)):
             f.unlink()
         for e in sorted(want, key=lambda x: (x['Package'], x['Architecture'])):
@@ -769,7 +818,9 @@ def main():
             for path, field, rel, alts in missing:
                 cls, detail = classify(index, alts)
                 causes.append('%s: %s %s [%s: %s]' % (' > '.join(path), field, rel, cls, detail))
-            if not causes and apt_ok is False:
+            if not causes and apt_ok is False and key in derived:
+                causes.append('apt: installs only with %s %s %s, which fails' % derived[key])
+            elif not causes and apt_ok is False:
                 text = (report / 'apt' / ('%s_%s_%s.log' % (profile, e['Package'], e['Architecture']))).read_text()
                 lines = [ln.strip() for ln in text.splitlines()
                          if ' : ' in ln or ln.startswith(('E:', 'Error:')) or 'conflict' in ln.lower()]
@@ -778,13 +829,14 @@ def main():
             rows.append({'profile': profile, 'package': e['Package'], 'version': e['Version'],
                          'architecture': e['Architecture'], 'source': e.get('Source', e['Package']).split()[0],
                          'companion': companion,
-                         'apt': {True: 'ok', False: 'FAIL', None: '-'}[apt_ok],
+                         'apt': {True: 'ok', False: 'FAIL', None: '-'}[apt_ok] + (' (as %s)' % derived[key][0] if key in derived else ''),
                          'static': {True: 'ok', False: 'FAIL', None: '-'}[static_ok],
                          'dose': {True: 'ok', False: 'FAIL', None: '-'}[dose_ok],
                          'dose_reasons': dose.get(dose_key, [])[:8] if dose_key else [],
                          'causes': causes})
             if failed:
                 failures.setdefault((e['Package'], e['Version']), []).append(profile)
+                failed_in.setdefault((e['Package'], e['Version'], e['Architecture']), set()).add(profile)
 
     known = {}
     if a.known:
@@ -800,12 +852,25 @@ def main():
             out.write('\t'.join([r['profile'], r['package'], r['version'], r['architecture'], r['source'],
                                  'yes' if r['companion'] else 'no', r['apt'], r['static'], r['dose'],
                                  ' || '.join(r['causes']), ' | '.join(r['dose_reasons'])]) + '\n')
-    disagree = [r for r in rows if len({r['apt'], r['static'], r['dose']} - {'-'}) > 1]
+    disagree = [r for r in rows if len({r['apt'].split()[0], r['static'], r['dose']} - {'-'}) > 1]
     lines = ['Installability of %s (%s), %s' % (tree, tree_fields.get('Date', 'unsigned'), meta['started']),
              'engines: %s; profiles: %s' % (','.join(engines), ','.join(profiles)),
              'packages that cannot be installed: %d (%d without their dbgsym and lc-hr companions)' % (
                  len(failures), len([k for k in failures if not k[0].endswith(COMPANIONS)])),
              'engines that disagree: %d' % len(disagree), '']
+    def category(key):
+        bad, all_ = failed_in.get(key, set()), checked.get(key, set())
+        if bad == all_:
+            return 'fails everywhere it applies'
+        if bad == {'base'} and 'nvidia' in all_:
+            return "installs only with NVIDIA's CUDA repository (the hardware setup adds it on NVIDIA machines)"
+        if bad == {'nvidia'}:
+            return "breaks with NVIDIA's CUDA repository and its pin"
+        return 'fails in ' + ','.join(sorted(bad))
+    counts = {}
+    for key in failed_in:
+        counts[category(key)] = counts.get(category(key), 0) + 1
+    lines[3:3] = ['  %d: %s' % (n, c) for c, n in sorted(counts.items())]
     by_source = {}
     for r in rows:
         if (r['package'], r['version']) in failures:
@@ -813,8 +878,8 @@ def main():
     for src in sorted(by_source):
         lines.append('source %s' % src)
         for (pkg, ver, arch), rs in sorted(by_source[src].items()):
-            profs = ','.join(sorted({x['profile'] for x in rs}))
-            lines.append('  %s %s %s [%s]%s' % (pkg, ver, arch, profs, ' (companion)' if pkg.endswith(COMPANIONS) else ''))
+            key = (pkg, ver, arch)
+            lines.append('  %s %s %s: %s%s' % (pkg, ver, arch, category(key), ' (companion)' if pkg.endswith(COMPANIONS) else ''))
             if not pkg.endswith(COMPANIONS):
                 for c in rs[0]['causes'][:4]:
                     lines.append('    ' + c)
