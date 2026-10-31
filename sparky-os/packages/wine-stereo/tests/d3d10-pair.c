@@ -1,0 +1,37 @@
+/* SPDX-License-Identifier: MIT */
+#define COBJMACROS
+#define INITGUID
+#include <windows.h>
+#include <d3d10.h>
+#include <dxgi.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+static LRESULT CALLBACK proc(HWND w, UINT m, WPARAM a, LPARAM b) { return DefWindowProcA(w,m,a,b); }
+#define CHECK(call) do { HRESULT hr=(call); if(FAILED(hr)) { printf("FAIL line=%d hr=%08lx\n",__LINE__,(unsigned long)hr); return 2; } } while(0)
+int main(int argc,char **argv) {
+    WNDCLASSA cls={0};cls.style=CS_OWNDC;cls.lpfnWndProc=proc;cls.hInstance=GetModuleHandleA(NULL);cls.lpszClassName="D3D10Pair";
+    if(!RegisterClassA(&cls))return 3;
+    HWND w=CreateWindowA(cls.lpszClassName,"Wine D3D10 pair fixture",WS_POPUP|WS_VISIBLE,24,24,320,200,NULL,NULL,cls.hInstance,NULL);
+    if(!w)return 4;
+    DXGI_SWAP_CHAIN_DESC desc={0};desc.BufferDesc.Width=320;desc.BufferDesc.Height=200;desc.BufferDesc.Format=DXGI_FORMAT_B8G8R8A8_UNORM;desc.SampleDesc.Count=1;desc.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT;desc.BufferCount=1;desc.OutputWindow=w;desc.Windowed=TRUE;desc.SwapEffect=DXGI_SWAP_EFFECT_DISCARD;
+    ID3D10Device *dev=NULL;IDXGISwapChain *swap=NULL;
+    CHECK(D3D10CreateDeviceAndSwapChain(NULL,D3D10_DRIVER_TYPE_HARDWARE,NULL,0,D3D10_SDK_VERSION,&desc,&swap,&dev));
+    printf("pointer_bits=%u d3d10=ready\n",(unsigned)(8*sizeof(void*)));fflush(stdout);
+    int pair=argc>1&&!strcmp(argv[1],"stereo");
+    for(int phase=0;phase<2;phase++) {
+        unsigned width=phase?256:320,height=phase?160:200;
+        if(phase){SetWindowPos(w,NULL,0,0,width,height,SWP_NOMOVE|SWP_NOZORDER);ID3D10Device_ClearState(dev);CHECK(IDXGISwapChain_ResizeBuffers(swap,1,width,height,DXGI_FORMAT_B8G8R8A8_UNORM,0));}
+        ID3D10Texture2D *back=NULL;CHECK(IDXGISwapChain_GetBuffer(swap,0,&IID_ID3D10Texture2D,(void**)&back));
+        DWORD *pixels=malloc(width*height*sizeof(*pixels));if(!pixels)return 5;
+        for(unsigned y=0;y<height;y++)for(unsigned x=0;x<width;x++){unsigned eye=pair&&x>=width/2,xx=pair?x%(width/2):x;pixels[y*width+x]=0xff000000u|((xx&255)<<16)|((height-1-y)<<8)|(eye<<7)|((xx>>8)<<3);}
+        for(int frame=0;frame<80;frame++){
+            MSG msg;while(PeekMessageA(&msg,NULL,0,0,PM_REMOVE)){TranslateMessage(&msg);DispatchMessageA(&msg);}
+            ID3D10Device_UpdateSubresource(dev,(ID3D10Resource*)back,0,NULL,pixels,width*sizeof(*pixels),0);
+            CHECK(IDXGISwapChain_Present(swap,0,0));
+            if(frame==10){printf("phase=%d logical=%ux%u frame=ready\n",phase,width,height);fflush(stdout);}Sleep(50);
+        }
+        free(pixels);ID3D10Texture2D_Release(back);
+    }
+    ID3D10Device_ClearState(dev);IDXGISwapChain_Release(swap);ID3D10Device_Release(dev);DestroyWindow(w);puts("PASS resize and exit");return 0;
+}

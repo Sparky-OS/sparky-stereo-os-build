@@ -185,7 +185,10 @@ This raw-image check does not prove compositor declaration, eye separation or su
 Record actual declaration requests and separate ScreenShot2 captures for those gates, including the published runtime as a negative control.
 
 The matching `tests/d3d11-pair.c` fixture uses a D3D11 BGRA8 backbuffer and `ResizeBuffers`; its raw image uses the same `check-d3d9-pair.py` oracle.
-Both D3D fixtures signal capture after their eleventh Present, not their first.
+The matching `tests/d3d10-pair.c` fixture calls `D3D10CreateDeviceAndSwapChain` and updates the BGRA8 backbuffer through `ID3D10Device`; it uses the same raw-image oracle.
+Compile it with `x86_64-w64-mingw32-gcc -O2 -Wall tests/d3d10-pair.c -o d3d10-pair.exe -ld3d10 -ldxgi -ldxguid -lgdi32 -luser32`, or use `i686-w64-mingw32-gcc` for PE32.
+With DXVK, keep Wine's builtin `d3d10` API entry point and select the installed DXVK `d3d10core`, `d3d11` and `dxgi` DLLs explicitly; verify the loaded paths and hashes.
+All three D3D fixtures signal capture after their eleventh Present, not their first.
 They never write native stereo declaration properties.
 
 ### Vulkan child lifecycle candidate
