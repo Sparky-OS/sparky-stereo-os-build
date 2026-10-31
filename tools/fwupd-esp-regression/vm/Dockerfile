@@ -1,0 +1,2 @@
+FROM fwupd-esp-unmount-314-test:1
+RUN DEBIAN_FRONTEND=noninteractive apt-get -y update && DEBIAN_FRONTEND=noninteractive apt-get -y install --no-install-recommends qemu-system-x86 qemu-utils ovmf meson ninja-build libxmlb-dev libgnutls28-dev libcurl4-gnutls-dev libjson-glib-dev libsqlite3-dev libusb-1.0-0-dev libsystemd-dev libarchive-dev liblzma-dev libzstd-dev libpolkit-gobject-1-dev python3-jinja2 python3-packaging gettext patch systemd-dev hwdata && rm -rf /var/lib/apt/lists/*

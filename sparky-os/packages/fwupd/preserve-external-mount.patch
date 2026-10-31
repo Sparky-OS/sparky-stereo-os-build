@@ -1,0 +1,30 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Subject: [PATCH] Do not unmount a volume after failing to mount it
+
+The cached MountPoints property may lag behind an external mount.
+If Mount then returns AlreadyMounted, unmounting destroys that external
+mount. Only the successful Mount path establishes locker ownership.
+Preserve the original mount error without attempting unowned cleanup.
+
+Assisted-by: gpt-6-astra via Codex
+
+--- a/libfwupdplugin/fu-volume-locker.c
++++ b/libfwupdplugin/fu-volume-locker.c
+@@ -116,16 +116,8 @@
+ 		return g_steal_pointer(&self);
+ 
+ 	/* open volume */
+-	if (!fu_volume_mount(volume, error)) {
+-		g_autoptr(GError) error_local = NULL;
+-		if (!fu_volume_unmount(volume, &error_local)) {
+-			if (!g_error_matches(error_local, FWUPD_ERROR, FWUPD_ERROR_NOTHING_TO_DO)) {
+-				g_debug("ignoring unmount error on aborted mount: %s",
+-					error_local->message);
+-			}
+-		}
++	if (!fu_volume_mount(volume, error))
+ 		return NULL;
+-	}
+ 
+ 	/* success */
+ 	self->is_open = TRUE;
