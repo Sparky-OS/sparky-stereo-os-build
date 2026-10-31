@@ -147,6 +147,38 @@ def test_diversion_does_not_hide_nonregular_paths(tmp_path, kind):
         extract(paths, tmp_path / 'root')
 
 
+def test_declaring_package_may_place_a_symlink_at_its_own_diverted_path(tmp_path):
+    # The conffile displacement shape (sparky-stereo-boot 0.1.4's update-initramfs.conf): the declaring package
+    # ships a link at the original name to a file of its own; the original package's file is diverted.
+    name = 'usr/share/fixture/banner'
+    old = deb(tmp_path, 'original', files={name: b'original'})
+    new = deb(tmp_path, 'wrapper', depends='original', files={
+        name: ('banner.wrapper',), name + '.wrapper': b'replacement', 'DEBIAN/preinst': preinst()})
+    oracle = tmp_path / 'dpkg-root'
+    oracle.mkdir()
+    (oracle / 'var/lib/dpkg').mkdir(parents=True)
+    archive.unpack(old, oracle)
+    subprocess.run(['dpkg-divert', '--root', str(oracle), '--package', 'wrapper', '--add', '--rename',
+                    '--divert', '/usr/share/fixture/banner.original', '/usr/share/fixture/banner'],
+                   env={'PATH': '/usr/bin:/bin', 'LC_ALL': 'C'}, check=True, capture_output=True)
+    archive.unpack(new, oracle)
+    for order in ([old, new], [new, old]):
+        root = tmp_path / ('root-' + archive.control(order[0])['Package'])
+        extract(order, root)
+        assert os.readlink(root / name) == os.readlink(oracle / name) == 'banner.wrapper'
+        assert (root / name).read_bytes() == b'replacement'
+        assert (root / (name + '.original')).read_bytes() == (oracle / (name + '.original')).read_bytes() == b'original'
+
+
+def test_other_packages_still_need_a_regular_file_at_a_diverted_path(tmp_path):
+    name = 'usr/share/fixture/banner'
+    old = deb(tmp_path, 'original', files={name: ('banner.elsewhere',)})
+    new = deb(tmp_path, 'wrapper', depends='original', files={
+        name: ('banner.wrapper',), name + '.wrapper': b'replacement', 'DEBIAN/preinst': preinst()})
+    with pytest.raises(package.Invalid, match='diversion requires a regular file'):
+        extract([old, new], tmp_path / 'root')
+
+
 def test_real_solver_and_elf_run_after_diversion(tmp_path):
     source = tmp_path / 'probe.c'
     source.write_text('#include <stdio.h>\nint main(void) { FILE *f=fopen("/usr/share/fixture/banner.original","r"); '

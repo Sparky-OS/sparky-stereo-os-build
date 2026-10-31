@@ -245,10 +245,15 @@ def unpack(deb, root, check_space=None, diversions=None, package_name=None):
                     if path in targets:
                         raise package.Invalid(f'{deb}: diversion destination already supplied: {member.name}')
                     if path in diversions:
-                        if not member.isreg():
-                            raise package.Invalid(f'{deb}: diversion requires a regular file: {member.name}')
                         row = diversions[path]
-                        if package_name != row['owner']:
+                        # dpkg installs the declaring package's own file at the original path, whatever
+                        # its type: a symbolic link there is how a package displaces a conffile
+                        # (Debian Policy: "Do not attempt to divert a conffile"). Every other
+                        # package's file goes to the diverted path and must be a regular file.
+                        owner = package_name == row['owner']
+                        if not member.isreg() and not (owner and member.issym()):
+                            raise package.Invalid(f'{deb}: diversion requires a regular file: {member.name}')
+                        if not owner:
                             path = rooted(root, row['target'], follow=False)
                 path.parent.mkdir(parents=True, exist_ok=True)
                 exists = path.exists() or path.is_symlink()
