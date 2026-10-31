@@ -10,26 +10,31 @@
 #                                                     package, deb-multimedia-keyring, which the Sparky Stereo OS
 #                                                     repository carries unmodified in carried/)
 #   /etc/apt/preferences.d/sparky-stereo-only-ours   (Debian's and deb-multimedia's builds of our
-#                                                     packages and Debian's tasks at -1; apt/make-only-ours.py)
+#                                                     packages and Debian's tasks at -1; apt/make-only-ours.py,
+#                                                     each name with the architectures we ship it for)
 #   /etc/apt/preferences.d/sparky-stereo             (o=Sparky Stereo OS at 1001; the file is
 #                                                     ../../apt/sparky-stereo, its one source)
 # It depends on sparky-stereo-keyring and on sparky-apt: the edition is built on SparkyLinux
 # testing and uses its repository and key too (sparky-apt brings sparky-keyring); we never copy
 # their key or files. Likewise deb-multimedia: the package deb-multimedia-keyring brings its key
 # (Daniel, 2026-10-08: "we are not debian purists"). Only one package ships the pin for our origin.
-# DEB_SRC=1 makes the source "Types: deb deb-src" (only once the repository publishes a
-# source index for everything it carries; apt must not be sent to files that do not exist).
+# The source is "Types: deb deb-src": the repository publishes main/source/Sources, and the published
+# 20261008.1~sparky9~0+lc1 was built that way. DEB_SRC=0 leaves deb-src out, for a repository without a
+# source index (apt must not be sent to files that do not exist).
 # Needs only dpkg-deb.
+# REPO names what make-only-ours.py reads: a flat repository, a published tree (its dists) or a Packages file.
 # Usage: build.sh   (output goes to $OUT, default the current folder)
-# Last update 2026/10/08
+# Last update 2026/10/31
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-$PWD}
-VERSION=${VERSION:-20261008.1~sparky9~0+lc1}
+VERSION=${VERSION:-20261031~sparky9~0+lc1}
+# the oldest sparky-stereo-keyring with the repository's one key (the key has not changed since; 20261016 is published)
+KEYRING_VERSION=${KEYRING_VERSION:-20261008.1~sparky9~0+lc1}
 PKG=sparky-stereo-apt
 TYPES=deb
-[ "${DEB_SRC:-0}" = 1 ] && TYPES="deb deb-src"
+[ "${DEB_SRC:-1}" = 1 ] && TYPES="deb deb-src"
 W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/apt-build.XXXXXX")
 trap 'rm -rf "${W:?}"' EXIT
 D=$W/$PKG
@@ -98,7 +103,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: apt (>= 2.9.26), sparky-apt, sparky-stereo-keyring (>= $VERSION), deb-multimedia-keyring
+Depends: apt (>= 2.9.26), sparky-apt, sparky-stereo-keyring (>= $KEYRING_VERSION), deb-multimedia-keyring
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org
