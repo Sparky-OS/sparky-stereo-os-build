@@ -97,6 +97,23 @@ group('apps', "Applications beyond the KDE edition (Daniel's, deduplicated)", ap
     'handbrake',   # the video transcoder (Daniel, 2026-10-11: "it will be included, of course"); deb-multimedia's, stereo version planned
 ])
 
+# 1a. On the image from first boot, whatever their roles say: our stereo builds of the programs everyone uses
+# (Daniel, 2026-10-31: "are you kidding we're not shipping our stereo software?"; "if Lutz has to discover how to install
+# anything before looking and demoing, we lost him"; "this is human centric, not machine centric"). Seeing 3D (our browser,
+# PlasmaTube, Marble, the KDAB demonstrator, Haruna), making it (Blender, Kdenlive, Krita, Showfoto, KolourPaint), everyone's
+# photo library (digiKam), serving one's own files (UMS), the hardware's lights (OpenRGB) and KDE's own 3D games (Kubrick;
+# KDE first: the light ones, on KDE's frameworks; other games stay optional on the shipped OpenGL, Wine and DXVK), and our
+# own System Settings pages.
+# make-meta.py puts this list in sparky-stereo-desktop; the role tasks keep their own entries.
+group('image', 'On the image from first boot (our stereo programs everyone uses)', [
+    'sparky-stereo-browser', 'plasmatube', 'marble', 'stereo3ddemo', 'haruna',
+    'blender', 'kdenlive', 'krita', 'showfoto', 'kolourpaint',
+    'digikam', 'ums', 'kcm-ums', 'openrgb',
+    'kubrick',
+    # ours, for everyone: the Graphics page in System Settings (which GPU each program uses) and the locale tool
+    'sparky-stereo-graphics', 'sparky-stereo-locales',
+])
+
 # 1b. Film and visual effects: the studios' own open projects (Daniel, 2026-10-14: "follow those that have repos, orgs
 # and star the open initiatives - map and add to our to include in the distro"). Disney Animation (Ptex, Partio, SeExpr via
 # Krita's KSeExpr), Pixar (OpenUSD, OpenSubdiv) and the Academy Software Foundation (OpenEXR, OpenColorIO, OpenImageIO,

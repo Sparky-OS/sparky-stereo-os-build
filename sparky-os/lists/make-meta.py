@@ -259,7 +259,7 @@ META = {
         'Sparky Stereo desktop',
         'This meta package installs the desktop of Sparky Stereo OS: the look, console and system information of the edition, the Memory page in System Settings, time synchronisation, the Dolphin menus (convert audio, and the stereo integration packs), VLC Stereo as the video player, and the applications beyond the KDE edition.',
         ['sparky-stereo-audio-convert', 'sparky-stereo-cec', 'sparky-stereo-console', 'sparky-stereo-info', 'sparky-stereo-integrations', 'sparky-stereo-look', 'sparky-stereo-memory-kcm', 'sparky-stereo-power-profiles', 'sparky-stereo-time'] + lst('look') + OURS_PLAYER,
-        [p for p in lst('apps') if p not in ROLED] + OURS_PLAYER_OUTPUT),
+        [p for p in lst('apps') if p not in ROLED] + lst('image') + OURS_PLAYER_OUTPUT),
     'sparky-stereo-integrations': (
         'Sparky Stereo integrations',
         'This meta package installs the stereo integration packs of Sparky Stereo OS: the Dolphin right click menus and other data that serve programs such as Hugin and MKVToolNix. Each pack waits inert until its program is installed, and offers the program when the person uses it without; the programs themselves come with the role tasks or the APTus Stereo AppCenter.',
