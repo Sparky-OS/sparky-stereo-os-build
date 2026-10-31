@@ -443,6 +443,16 @@ int big = 1'000'000; // digit separators
         self.assertEqual(r.status, 'projected', r.reason)
         self.assertIn('int f = TWO; /*\n*/ # define NOT_A_DIRECTIVE', mr)
 
+    def test_cxx_module_and_import_lines_keep_their_line_structure(self):
+        """C++20 import and module lines end at a line break like # directives ([cpp.pre])."""
+        src = ('export module demo; /* the module line, then a comment\n   over two lines */ int x = 1;\n'
+               'int y; /* the next word starts no import line in the authored text\n   */ import other;\n'
+               'int z = 2; /* this one may become line breaks:\n   */ int w = 3;\n')
+        r, mr = P('/usr/src/x/m.cc', src)
+        self.assertIn('export module demo; /*\n*/ int x = 1;', mr)
+        self.assertIn('int y; /*\n*/ import other;', mr)
+        self.assertIn('int z = 2;\n int w = 3;', mr)
+
     def test_the_check_refuses_a_moved_line_or_added_line_control(self):
         """The check can fail: the lean text with a line deleted, or with a #line it did not need."""
         from lean import lang_c

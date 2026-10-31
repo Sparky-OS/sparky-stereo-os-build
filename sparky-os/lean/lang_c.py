@@ -47,9 +47,12 @@ HEADER_NAME = re.compile(r'#[ \t]*(?:include(?:_next)?|import|embed)[ \t]*<[^>\n
 # an empty comment that only holds line breaks: what a removed comment leaves where its line breaks would
 # otherwise end or start a directive
 BREAKS_ONLY = re.compile(r'/\*[ \t]*(?:\\?\n[ \t]*)+\*/\Z')
-# line control (C23 6.10.6) and GCC's line markers: the lean text must hold none the authored text lacks
+# line control (`#line`, C17 6.10.4) and GCC's line markers: the lean text must hold none the authored text lacks
 LINE_CONTROL = re.compile(r'^[ \t]*(?:#|%:)[ \t]*(?:line\b|[0-9])', re.M)
 LINE_MARKER = re.compile(r'#[ \t]*([0-9]+)[ \t]+"((?:[^"\\]|\\.)*)"')
+# C++20 module and import lines are directives too ([cpp.pre], [cpp.module], [cpp.import]): line breaks end them
+WORD = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
+LINE_WORDS = frozenset({'import', 'module', 'export'})
 
 
 def keep_empty_after(line: str) -> bool:
@@ -84,11 +87,13 @@ def joiner_for(src: str, spans: list):
 
 def break_holders(src: str, spans: list) -> set:
     """Starts of the removable comments whose line breaks must stay inside a comment. A preprocessing
-    directive is one logical line, opened by a `#` (or `%:`) that is its first token (C23 6.10): a line
+    directive is one logical line, opened by a `#` (or `%:`) that is its first token (C23 6.10; in C++20
+    also `import`, `module` and `export` lines, taken as directives here whatever follows them): a line
     break ends it, a comment's line breaks do not (a backslash-newline joins lines before either). So a
     comment that holds a line break no backslash splices, lies in an open directive and has code after it
-    on its last line, or follows code and is followed by a `#` on its last line (that `#` is no directive
-    in the authored text), keeps its line breaks in an empty comment."""
+    on its last line, or follows code and is followed by a `#` (or one of those words) on its last line
+    (that is no directive in the authored text), keeps its line breaks in an empty comment, which is
+    always the same to the compiler as the comment it replaces."""
     out = set()
     n = len(src)
     at_span = {sp.start: sp for sp in spans}
@@ -114,11 +119,18 @@ def break_holders(src: str, spans: list) -> set:
         if c == '\n':
             in_dir = has_tok = False
         elif c not in ' \t\f\v\r':
-            if not has_tok and (c == '#' or src.startswith('%:', i)):
+            if not has_tok and _opens_directive(src, i):
                 in_dir = True
             has_tok = True
         i += 1
     return out
+
+
+def _opens_directive(src: str, i: int) -> bool:
+    if src[i] == '#' or src.startswith('%:', i):
+        return True
+    m = WORD.match(src, i)
+    return bool(m) and m.group() in LINE_WORDS
 
 
 def _blank_tail(src: str, end: int) -> bool:
@@ -127,7 +139,7 @@ def _blank_tail(src: str, end: int) -> bool:
 
 
 def _directive_after(src: str, end: int, at_span: dict) -> bool:
-    """True when the first token after `end` on its logical line is `#` or `%:`."""
+    """True when the first token after `end` on its logical line could open a directive."""
     i, n = end, len(src)
     while i < n:
         sp = at_span.get(i)
@@ -141,7 +153,7 @@ def _directive_after(src: str, end: int, at_span: dict) -> bool:
         if c in ' \t\f\v\r':
             i += 1
             continue
-        return c == '#' or src.startswith('%:', i)
+        return _opens_directive(src, i)
     return False
 
 
