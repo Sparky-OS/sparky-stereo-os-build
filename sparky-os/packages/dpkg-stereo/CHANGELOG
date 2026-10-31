@@ -1,4 +1,26 @@
 -------------------------------------------------------------------------------
+  Version 0.1.19 (2026-10-31)
+-------------------------------------------------------------------------------
+  * The lean toolkit's link gate (archive.py, carried here with the rest of
+    the toolkit; dpkg-stereo itself does not run it) asks APT for all the
+    archives a case downloaded in one bounded apt-cache show call, and
+    reuses a record already read for the same identity and SHA-256 under
+    the same local index for the rest of the run (ORDER 320). The first
+    case of round 316 asked APT 1,047 times, one package at a time; now 2
+    calls, and a later case of the same edition snapshot 0 or 1. For 600
+    identities of Debian forky's index, one call took 0.47 s and 600 single
+    calls 278 s, with the same records.
+  * Each record is matched to its own Package, Version and Architecture:
+    with several arguments apt-cache skips an absent one silently (exit 0),
+    and retries an absent name containing '.' as an unanchored regular
+    expression that prints other packages. The checks are unchanged
+    (SHA256, Size, Depends, Pre-Depends, Provides, Conflicts, Breaks,
+    Multi-Arch). A download without a record of its identity is refused
+    by name, also where 0.1.18 said "differs" (a name APT knows, without
+    that version); a disk floor stays a space refusal.
+  * Projection, restore and the dpkg hooks are the same code as in 0.1.18;
+    the renderer identity names lean 0.1.19.
+-------------------------------------------------------------------------------
   Version 0.1.18 (2026-10-31)
 -------------------------------------------------------------------------------
   * The C and C++ migration is paid once (ORDER 315, from what ORDER 310

@@ -37,16 +37,13 @@ EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
 
-  * The C and C++ migration is paid once (ORDER 315): restore() tests its
-    names as a set (55.1 s to 0.55 s on an install of the station's size,
-    90,217 records and 47,360 C and C++ names); versions whose
-    .deb is nowhere wait until their package, APT's lists or its cache
-    change (one small table per dpkg run, one apt-cache call when the lists
-    change); progress lines on apt's terminal; dpkg's journal is read as
-    dpkg reads it, and a trigger ends a first install's projection. Retain
-    0.1.17's line-break form for C and C++ and its migration.
+  * The lean toolkit's link gate asks APT once per case for the signed
+    records of the archives it downloaded, and reuses a record read for
+    the same identity and SHA-256 under the same local index (ORDER 320);
+    each record is matched to its own identity, never by its position.
+    Projection, restore and the dpkg hooks are unchanged from 0.1.18.
 
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 31 Oct 2026 15:00:00 -0300
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 31 Oct 2026 18:00:00 -0300
 EOF
 cat > "$S/debian/rules" <<'EOF'
 #!/usr/bin/make -f
