@@ -415,8 +415,12 @@ class Pins:
     @staticmethod
     def _name(patterns, entry, native):
         # apt_preferences(5): "By default, only packages of the native architecture are matched"; ":any" matches
-        # every architecture, ":ARCH" that one; "src:NAME" names the source package.
+        # every architecture, ":ARCH" that one; "src:NAME" names the source package. apt files an Architecture: all
+        # package under the native architecture, so "NAME:amd64" matches it on amd64 and not on arm64 (apt 3.3.3,
+        # measured for ORDER 318).
         name, arch = entry['Package'], entry.get('Architecture', native)
+        if arch == 'all':
+            arch = native
         source = entry.get('Source', name).split()[0]
         for p in patterns:
             target = name
