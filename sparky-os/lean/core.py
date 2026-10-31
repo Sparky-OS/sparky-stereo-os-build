@@ -166,10 +166,11 @@ def render(src: str, spans: list, joiner, *, keep_empty_after=None, collapse_bla
     collapse_blank: runs of more than one empty line outside literals become one (CGM's MR shape).
     keep_lines: every authored line keeps its number (C and C++, whose compiler reads line numbers:
         `__LINE__`, `assert`, diagnostics and debug line tables). A removed comment that ends its line
-        leaves the line breaks it held, each as it was (held_breaks); one with code after it is what the
-        joiner gives (it keeps the same line breaks too); no line is deleted and no run of empty lines is
-        collapsed, so no `#line` is needed. Each line break a removal leaves keeps the origin of the
-        authored line break it stands for, so the line map stays exact.
+        leaves as many line breaks as it held (its logical line ends there, and nothing stands between);
+        one with code after it is what the joiner gives (the same line breaks, each as it was:
+        held_breaks); no line is deleted and no run of empty lines is collapsed, so no `#line` is
+        needed. Each line break a removal leaves keeps the origin of the authored line break it stands
+        for, so the line map stays exact.
     """
     n = len(src)
     lit = [(sp.start, sp.end) for sp in spans if sp.kind in (LITERAL, KEEP)]
@@ -194,7 +195,7 @@ def render(src: str, spans: list, joiner, *, keep_empty_after=None, collapse_bla
             tail = src[sp.end: nl if nl >= 0 else n]
             ends_line = tail.strip(' \t\f\v') == ''
             if ends_line:
-                rep = held_breaks(src, sp.start, sp.end) if keep_lines else ''
+                rep = '\n' * src.count('\n', sp.start, sp.end) if keep_lines else ''
             else:
                 rep = joiner(src, sp.start, sp.end)
             if ends_line or (keep_lines and rep.startswith('\n')):
