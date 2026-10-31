@@ -8,12 +8,17 @@
 #   /etc/apt/sources.list.d/sparky-stereo-deb-multimedia.sources   (deb-multimedia, forky: the edition's FFmpeg, mpv, x264 and
 #                                                     x265 are built on its packages; Signed-By the keyring of its own
 #                                                     package, deb-multimedia-keyring, which the Sparky Stereo OS
-#                                                     repository carries unmodified in carried/)
+#                                                     repository carries as deb-multimedia ships it, plus Lean Code's
+#                                                     record; it is not blocked, see NOT_OURS in apt/make-only-ours.py)
 #   /etc/apt/preferences.d/sparky-stereo-only-ours   (Debian's and deb-multimedia's builds of our
 #                                                     packages and Debian's tasks at -1; apt/make-only-ours.py,
 #                                                     each name with the architectures we ship it for)
 #   /etc/apt/preferences.d/sparky-stereo             (o=Sparky Stereo OS at 1001; the file is
 #                                                     ../../apt/sparky-stereo, its one source)
+# All four are conffiles (DEBIAN/conffiles, since 20261031.1~sparky9~0; Debian Policy 10.7.3: "local changes must be
+# preserved during a package upgrade"); the preinst lets the first upgrade that makes them conffiles replace the files
+# nobody changed without a question (debian-scripts/preinst). README.md, shipped in /usr/share/doc, says how a person keeps
+# pins of their own without editing these files.
 # It depends on sparky-stereo-keyring and on sparky-apt: the edition is built on SparkyLinux
 # testing and uses its repository and key too (sparky-apt brings sparky-keyring); we never copy
 # their key or files. Likewise deb-multimedia: the package deb-multimedia-keyring brings its key
@@ -21,7 +26,7 @@
 # The source is "Types: deb deb-src": the repository publishes main/source/Sources, and the published
 # 20261008.1~sparky9~0+lc1 was built that way. DEB_SRC=0 leaves deb-src out, for a repository without a
 # source index (apt must not be sent to files that do not exist).
-# Needs only dpkg-deb.
+# Needs dpkg-deb and python3.
 # REPO names what make-only-ours.py reads: a flat repository, a published tree (its dists) or a Packages file.
 # Usage: build.sh   (output goes to $OUT, default the current folder)
 # Last update 2026/10/31
@@ -29,7 +34,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-$PWD}
-VERSION=${VERSION:-20261031~sparky9~0+lc1}
+VERSION=${VERSION:-20261031.1~sparky9~0+lc1}
 # the oldest sparky-stereo-keyring with the repository's one key (the key has not changed since; 20261016 is published)
 KEYRING_VERSION=${KEYRING_VERSION:-20261008.1~sparky9~0+lc1}
 PKG=sparky-stereo-apt
@@ -93,6 +98,7 @@ License:
 On Debian systems, the complete text of the GNU General Public License
 version 3 can be found in "/usr/share/common-licenses/GPL-3".
 EOS
+install -m644 "$HERE/README.md" "$D/usr/share/doc/$PKG/README.md"
 chmod 644 "$D/usr/share/doc/$PKG/copyright"
 find "$D" -type d -exec chmod 755 {} +
 
@@ -113,6 +119,9 @@ Description: Sparky Stereo OS apt source
   SparkyLinux testing, so SparkyLinux's own repository comes with it, and on
   deb-multimedia's FFmpeg and mpv sources, so deb-multimedia's repository too.
 EOS
+printf '%s\n' /etc/apt/sources.list.d/sparky-stereo.sources /etc/apt/sources.list.d/sparky-stereo-deb-multimedia.sources \
+	/etc/apt/preferences.d/sparky-stereo /etc/apt/preferences.d/sparky-stereo-only-ours >"$D/DEBIAN/conffiles"
+install -m755 "$HERE/debian-scripts/preinst" "$HERE/debian-scripts/postinst" "$HERE/debian-scripts/postrm" "$D/DEBIAN/"
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT"
 mkdir -p "$W/authoring"

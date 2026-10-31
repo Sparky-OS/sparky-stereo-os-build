@@ -6,7 +6,8 @@
 # never listed (Daniel, 2026-10-07: "block the correspondent packages and tasks from debian as
 # well - they shall not be listed"), the rule Bino already followed. Debian's task-* and the
 # multimedia blend's packages are blocked too: the role tasks are task-sparky-*.
-# Packages the repository only carries (carried/, unmodified Debian or deb-multimedia packages) are not blocked.
+# Packages the repository carries that are not ours are listed in NOT_OURS below, each with its reason: their own
+# archive's builds are never blocked, and ours ranks under them (see NOT_OURS).
 # FFmpeg and mpv are in it since our builds on deb-multimedia's source packages replaced the
 # Debian-based ones (Daniel: "we should patch multimedia-deb ffmpeg, not debian's"), so
 # deb-multimedia's own ffmpeg and mpv never install on the edition: the stereo patches are in ours.
@@ -36,6 +37,26 @@ else:
     import local_config
     repos = [local_config.get('SPARKY_REPO_DIR')]
 PENDING_DMO = set()          # source packages still on their way to dmo's packaging (none: ffmpeg and mpv are on it now)
+# Packages the repository carries but that are not ours: another archive's package, only repackaged or rebuilt through
+# Lean Code (its version is the other archive's plus +lc1), which that archive must keep updating. Their builds in Debian and
+# deb-multimedia are not blocked, and ours ranks at 400, under the 500 of an archive with no pin (apt_preferences(5): "100 <=
+# P < 500 causes a version to be installed unless there is a version available belonging to some other distribution or the
+# installed version is more recent"), so the other archive's newer version wins and ours is only the way in. Until
+# ORDER 321 the rule was the pool path carried/; the published tree has no carried/ folder any more, so deb-multimedia's own
+# keyring was blocked (ORDER 318's finding). Every other name the generator blocks is a build of ours (a +stereo3dN or
+# +sparkyN version, or a package of ours with no build in either archive): ORDER 321 checked each against Debian forky and
+# deb-multimedia forky.
+NOT_OURS = {
+    'deb-multimedia-keyring': "deb-multimedia's own keyring, 2024.9.1 in deb-multimedia (2024.9.1+lc1 here). The repository carries "
+                              "it so that sparky-stereo-apt can depend on it before deb-multimedia is in the sources; when deb-multimedia "
+                              "rotates its key, its new keyring package must reach the edition, or the edition's deb-multimedia source breaks.",
+    'libunibreak7': "Debian's libunibreak 7.0-2, rebuilt only through Lean Code, carried when Debian testing moved to libunibreak8 on 2026-10-16 while deb-multimedia's "
+                    "libass9 still needed libunibreak7; Debian's source is at 8.0-2 now (and deb-multimedia's libass9 2:0.17.5-dmo3 needs "
+                    "libunibreak8).",
+    'libunibreak7-dbgsym': "the debug symbols of the carried libunibreak7 (Debian's are in its debug archive).",
+    'libunibreak-dev': "Debian's libunibreak 7.0-2, as libunibreak7; Debian's libunibreak-dev 8.0-2 must not be blocked or outranked.",
+    'libunibreak-doc': "Debian's libunibreak 7.0-2, as libunibreak7; Debian's libunibreak-doc 8.0-2 must not be blocked or outranked.",
+}
 
 
 def indexes(repo):
@@ -49,7 +70,7 @@ def indexes(repo):
     return found
 
 
-arches, source, built = {}, {}, {}
+arches, source, built, not_ours = {}, {}, {}, set()
 for path in (p for repo in repos for p in indexes(repo)):
     for st in open(path, errors='replace').read().split('\n\n'):
         f = dict(l.split(': ', 1) for l in st.split('\n') if ': ' in l and not l.startswith(' '))
@@ -58,8 +79,9 @@ for path in (p for repo in repos for p in indexes(repo)):
         src = f.get('Source', f['Package']).split()[0]
         if src in PENDING_DMO or f['Package'].startswith(('sparky-stereo', 'task-sparky-')):
             continue
-        if '/carried/' in f.get('Filename', ''):
-            continue          # carried unmodified from Debian or deb-multimedia (libcapi20-3t64, deb-multimedia-keyring): not our build, not blocked
+        if f['Package'] in NOT_OURS:
+            not_ours.add(f['Package'])
+            continue
         arch = f.get('Architecture', 'all')
         arches.setdefault(f['Package'], set()).add(arch)
         source.setdefault(f['Package'], src)
@@ -86,8 +108,17 @@ if elsewhere:
     out += ['# Our Architecture: all builds of a source we ship for some architectures only, on the others: Debian\'s packages',
             '# of that source need Debian\'s build at its exact version there, so ours is not the candidate',
             'Package: ' + ' '.join(elsewhere), 'Pin: release o=Sparky Stereo OS', 'Pin-Priority: 100', '']
+if not_ours:
+    out += ['# Packages the repository carries that are not ours (NOT_OURS in apt/make-only-ours.py): another archive\'s package,',
+            '# only repackaged or rebuilt through Lean Code, which that archive keeps updating. Its builds are not blocked, and ours ranks',
+            '# under them, so the newer one from that archive wins; ours is only the way in.']
+    out += ['#   %s: %s' % (name, NOT_OURS[name]) for name in sorted(not_ours)]
+    out += ['Package: ' + ' '.join(name + ':any' for name in sorted(not_ours)), 'Pin: release o=Sparky Stereo OS', 'Pin-Priority: 400', '']
 out += ['# Debian\'s tasks and the multimedia blend: the edition\'s tasks are task-sparky-*', 'Package: task-* multimedia-*',
         'Pin: release o=Debian', 'Pin-Priority: -1', '']
 open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sparky-stereo-only-ours'), 'w').write('\n'.join(out))
 print(len(arches), 'packages blocked from Debian and deb-multimedia, as', len(specs), 'architecture-qualified names;',
-      len(elsewhere), 'Architecture: all names of ours at 100 on the architectures their source is not built for')
+      len(elsewhere), 'Architecture: all names of ours at 100 on the architectures their source is not built for;',
+      len(not_ours), 'packages that are not ours at 400')
+for name in sorted(set(NOT_OURS) - not_ours):
+    print('make-only-ours.py: NOT_OURS lists %s, which no index carries any more: remove it from the list' % name, file=sys.stderr)
