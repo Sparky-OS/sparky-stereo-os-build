@@ -55,7 +55,8 @@ build() { # dir package
 # 1. The default look.
 D=$WORK/sparky-stereo-look
 T=$D/$LNF/org.sparkystereo.desktop
-mkdir -p "$T/contents" "$D/etc/xdg" "$D/usr/share/kglobalaccel" "$D/usr/share/plasma/desktoptheme"
+mkdir -p "$T/contents" "$D/etc/xdg" "$D/usr/share/kglobalaccel" "$D/usr/share/plasma/desktoptheme" "$D/usr/share/color-schemes"
+cp "$HERE/default/color-schemes/SparkyStereoOxygenDark.colors" "$D/usr/share/color-schemes/"   # Oxygen Dark with a readable active title
 # Sparky Stereo Oxygen: Oxygen's Plasma style with every background at 91 % alpha, foreground inherited from Oxygen
 cp -a "$HERE/default/desktoptheme/sparky-stereo-oxygen" "$D/usr/share/plasma/desktoptheme/"
 cp "$HERE/default/kglobalaccel/org.sparkystereo.systemmonitor.desktop" "$D/usr/share/kglobalaccel/"
@@ -81,7 +82,8 @@ control "$D" sparky-stereo-look \
 	"Plastik's square, Windows-like window buttons. Also sets the default KWin effects: translucency" \
 	"with Daniel Ramos's values, glide and wobbly windows, and makes VLC Stereo the" \
 	"default video player (/etc/xdg/kde-mimeapps.list; a user's own choice still wins)." \
-	"In Dolphin's split view the inactive pane's background is translucent." \
+	"In Dolphin's split view the inactive pane's background is translucent. The colours are" \
+	"Oxygen Dark with a readable active window title (Sparky Stereo Oxygen Dark)." \
 	"Search lists installed applications first, then settings. Power actions and" \
 	"unit conversion remain available. Currency rates refresh only when converting a currency." \
 	"Web search and the online dictionary are off by default." \
