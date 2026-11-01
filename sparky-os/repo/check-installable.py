@@ -29,6 +29,11 @@ profile; with --only, only the relations on the names it lists. A failure counts
 policy shows the wanted version blocked or our build as the candidate; when another archive's build is the candidate
 (deb-multimedia's kdenlive-data, with its epoch, over Debian's on arm64), it is reported apart.
 
+It also asks, for every Multi-Arch: same package the tree ships for more than one architecture of a profile (amd64 and
+i386), whether its architectures install together, each at the tree's version (ORDER 333). Debian Policy 5.6.34.3: "other
+packages with the exact same name and version, but different architectures, can be installed concurrently", so a twin
+left at an older version installs alone and never beside the other (libplacebo360 amd64 +stereo3d2, i386 +stereo3d1).
+
 Archives: the signed public sources of SPARKY_LC_ARCHIVE_CONFIG (Debian forky, deb-multimedia forky,
 SparkyLinux core and tiamat; sparky-os/lean/archive.md describes the file), and, in the nvidia profile,
 NVIDIA's CUDA repository as sparky-stereo-hardware sets it up (its URL, key checksum and pin are read
@@ -47,12 +52,13 @@ A package fails a profile when the apt engine says it cannot be installed there.
 
 Output (--report DIR): installable.tsv (one row per package and profile that fails), summary.txt,
 apt/ (the solver's words for each failure), dose-PROFILE.yaml, collateral.tsv (the Debian and deb-multimedia
-packages above that cannot be installed, one row per profile), metadata.json (sources, signed index
-hashes, policy files and their hashes, versions of apt and dose).
+packages above that cannot be installed, one row per profile), twins.tsv (the Multi-Arch: same packages
+of ours whose architectures cannot be installed together, one row per profile), metadata.json (sources,
+signed index hashes, policy files and their hashes, versions of apt and dose).
 Exit status: 0 in --mode report (the publication's report); in --mode refuse, 1 when a failing
-package, ours or one of those Debian and deb-multimedia packages, is not listed in --known
-(package<TAB>version or *<TAB>reason), so a known, explained failure does not stop every publication
-while it waits for its rebuild.
+package, ours or one of those Debian and deb-multimedia packages, or a twin pair is not listed in --known
+(package<TAB>version or *<TAB>reason; a pair by the version that is behind), so a known, explained
+failure does not stop every publication while it waits for its rebuild.
 
 Usage: check-installable.py TREE [--codename mashtabba] [--archive-config JSON] [--scratch DIR]
          [--report DIR] [--profiles base,nvidia,arm64] [--engines apt,static,dose] [--jobs 4]
@@ -399,7 +405,10 @@ class Universe:
 
     def simulate(self, name, arch, version):
         spec = '%s=%s' % (name, version) if arch == 'all' else '%s:%s=%s' % (name, arch, version)
-        p = self.apt(['apt-get', '--simulate', '-q', '--no-install-recommends', 'install', spec], check=False, timeout=300)
+        return self.simulate_specs([spec])
+
+    def simulate_specs(self, specs):
+        p = self.apt(['apt-get', '--simulate', '-q', '--no-install-recommends', 'install'] + list(specs), check=False, timeout=300)
         return p.returncode == 0, (p.stdout + p.stderr)
 
 
@@ -614,6 +623,22 @@ def classify(index, alts):
     return 'version or architecture unavailable', ' / '.join(have)
 
 
+def twins_of(want, arches):
+    """The tree's Multi-Arch: same packages built for more than one architecture of the profile: {name: {arch: entry}},
+    each architecture's newest version. Debian Policy 5.6.34.3: "This means that other packages with the exact same name
+    and version, but different architectures, can be installed concurrently", so two architectures of such a package at
+    different versions can never be installed together, though each installs alone (libplacebo360 amd64 +stereo3d2 and
+    i386 +stereo3d1, ORDER 333)."""
+    out = {}
+    for e in want:
+        if e.get('Multi-Arch', 'no') != 'same' or e['Architecture'] not in arches:
+            continue
+        have = out.setdefault(e['Package'], {}).get(e['Architecture'])
+        if have is None or vercmp(have['Version'], e['Version']) < 0:
+            out[e['Package']][e['Architecture']] = e
+    return {name: by_arch for name, by_arch in out.items() if len(by_arch) > 1}
+
+
 def collateral_candidates(index, arches, only):
     """Debian's and deb-multimedia's packages, not blocked themselves, that depend at an exact version on an
     Architecture: all name whose candidate the edition's policy decides (one the tree ships, or one the policy blocks),
@@ -772,6 +797,7 @@ def main():
             'started': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
     rows, failures, checked, failed_in, not_candidate = [], {}, {}, {}, []
     collateral, collateral_checked = [], {}
+    twins, twins_checked = [], {}
     sparky_apt = None
     for profile in profiles:
         arches = ['arm64'] if profile == 'arm64' else [x for x in ('amd64', 'i386') if x in tree_arches or x == 'amd64']
@@ -924,6 +950,47 @@ def main():
                     del derived[key]
                 else:
                     results[key] = results[parent]
+        # Each Multi-Arch: same package of the tree beside its other architectures (ORDER 333): apt is asked for all of them
+        # together, each at the tree's version, and the static engine compares the versions. A pair fails only where its
+        # packages install alone; a package that cannot install even alone has its own row above.
+        pairs = twins_of(want, arches)
+        twins_checked[profile] = len(pairs)
+        twin_results = {}
+        if 'apt' in engines and pairs:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, a.jobs)) as pool:
+                futs = {pool.submit(u.simulate_specs, ['%s:%s=%s' % (name, arch, e['Version']) for arch, e in sorted(by_arch.items())]): name
+                        for name, by_arch in pairs.items()}
+                for fut in concurrent.futures.as_completed(futs):
+                    twin_results[futs[fut]] = fut.result()
+        for name, by_arch in sorted(pairs.items()):
+            versions = {arch: e['Version'] for arch, e in by_arch.items()}
+            ok, text = twin_results.get(name, (None, ''))
+            static_ok = None if 'static' not in engines else len(set(versions.values())) == 1
+            if ok is not False and static_ok is not False:
+                continue
+            if static_ok is not False and False in [results.get((name, arch, v)) for arch, v in versions.items()]:
+                continue
+            if ok is False:
+                (report / 'apt' / ('twins_%s_%s.log' % (profile, name))).write_text(text)
+            newest = max(versions.values(), key=_Key)
+            behind = {arch: v for arch, v in sorted(versions.items()) if v != newest}
+            if static_ok is False:
+                causes = ['Multi-Arch: same at different versions (%s): only the exact same version of every architecture installs '
+                          'together (Debian Policy 5.6.34.3); %s behind %s' % (
+                              ', '.join('%s %s' % x for x in sorted(versions.items())), '+'.join(behind), newest)]
+            else:
+                # the versions match: a dependency of the pair cannot be installed for both architectures (another twin at
+                # different versions, or another archive's package without Multi-Arch: same, Debian Policy 5.6.34.1)
+                causes = ['the versions match (%s); apt cannot install them together: %s' % (newest, ' / '.join(
+                    [ln.strip() for ln in text.splitlines() if ' : ' in ln or ln.startswith(('E:', 'Error:', '   1.', '   2.'))][:8]))]
+            first = next(iter(by_arch.values()))
+            twins.append({'profile': profile, 'package': name, 'source': first.get('Source', name).split()[0],
+                          'companion': name.endswith(COMPANIONS), 'versions': versions, 'behind': behind,
+                          'apt': {True: 'ok', False: 'FAIL', None: '-'}[ok],
+                          'static': {True: 'ok', False: 'FAIL', None: '-'}[static_ok], 'causes': causes})
+        print('[%s] %d Multi-Arch: same packages of the tree built for %s, asked of apt beside their other architectures; '
+              '%d cannot be installed together' % (profile, len(pairs), '+'.join(arches),
+                                                   len([t for t in twins if t['profile'] == profile])), flush=True)
         # Debian's and deb-multimedia's packages the policy can leave uninstallable with no package of ours depending on
         # them: an exact dependency on an Architecture: all name whose candidate the policy decides (ORDER 321).
         coll, ours_all = collateral_candidates(index, arches, only)
@@ -1027,6 +1094,11 @@ def main():
     unexplained = sorted(k for k in failures if k not in known and (k[0], '*') not in known)
     unexplained += sorted({(r['package'], r['version']) for r in collateral if r['policy']
                            and (r['package'], r['version']) not in known and (r['package'], '*') not in known})
+    # A pair at different versions is known by the version that is behind (the build waiting for its rebuild).
+    for t in twins:
+        keys = [(t['package'], v) for v in t['behind'].values()] or [(t['package'], v) for v in t['versions'].values()]
+        if (t['package'], '*') not in known and not all(k in known for k in keys):
+            unexplained += [k for k in keys if k not in known and k not in unexplained]
 
     with open(report / 'installable.tsv', 'w') as out:
         out.write('profile\tpackage\tversion\tarchitecture\tsource\tcompanion\tapt\tstatic\tdose\tcauses\tdose_reasons\n')
@@ -1045,7 +1117,9 @@ def main():
                  '+'.join('%d (%s)' % (n, p) for p, n in collateral_checked.items()) or '0',
                  '; %d more fail for another archive\'s build' % len({(r['package'], r['version'], r['architecture'])
                                                                     for r in collateral if not r['policy']})
-                 if any(not r['policy'] for r in collateral) else ''), '']
+                 if any(not r['policy'] for r in collateral) else ''),
+             'Multi-Arch: same packages of ours that cannot be installed beside their other architectures: %d of %s asked' % (
+                 len({t['package'] for t in twins}), '+'.join('%d (%s)' % (n, p) for p, n in twins_checked.items()) or '0'), '']
     def category(key):
         bad, all_ = failed_in.get(key, set()), checked.get(key, set())
         if bad == all_:
@@ -1099,6 +1173,27 @@ def main():
                 lines.append('  %s %s %s [%s]: needs %s%s' % (r['package'], r['version'], r['architecture'], r['profile'],
                                                              r['relations'], ' (%s)' % r['policy'] if r['policy'] else ''))
                 lines += ['    ' + c for c in r['causes'][:2]]
+    if twins:
+        lines += ['', 'Multi-Arch: same packages of ours that cannot be installed beside their other architectures (each installs '
+                  'alone; Debian Policy 5.6.34.3 lets only the exact same version of every architecture install together):']
+        by_source = {}
+        for t in twins:
+            by_source.setdefault(t['source'], {}).setdefault(t['package'], []).append(t)
+        for src in sorted(by_source):
+            lines.append('source %s' % src)
+            for name, ts in sorted(by_source[src].items()):
+                lines.append('  %s [%s]: %s%s' % (name, ','.join(t['profile'] for t in ts),
+                                                 ', '.join('%s %s' % x for x in sorted(ts[0]['versions'].items())),
+                                                 ' (companion)' if ts[0]['companion'] else ''))
+                if not ts[0]['companion']:
+                    lines += ['    ' + c for c in ts[0]['causes'][:2]]
+    with open(report / 'twins.tsv', 'w') as out:
+        out.write('profile\tpackage\tsource\tcompanion\tversions\tbehind\tapt\tstatic\tcauses\n')
+        for t in twins:
+            out.write('\t'.join([t['profile'], t['package'], t['source'], 'yes' if t['companion'] else 'no',
+                                 ' '.join('%s=%s' % x for x in sorted(t['versions'].items())),
+                                 ' '.join('%s=%s' % x for x in sorted(t['behind'].items())),
+                                 t['apt'], t['static'], ' || '.join(t['causes'])]) + '\n')
     with open(report / 'collateral.tsv', 'w') as out:
         out.write('profile\tpackage\tversion\tarchitecture\torigin\tsource\trelations\tapt\tstatic\tdecided by the policy\tcauses\n')
         for r in collateral:
@@ -1112,6 +1207,7 @@ def main():
     meta['failures'] = len(failures)
     meta['collateral'] = {'asked': collateral_checked, 'uninstallable': len([r for r in collateral if r['policy']]),
                           'another archive': len([r for r in collateral if not r['policy']])}
+    meta['twins'] = {'asked': twins_checked, 'cannot be installed together': len({t['package'] for t in twins})}
     (report / 'metadata.json').write_text(json.dumps(meta, indent=2, default=str) + '\n')
     print('\n'.join(lines))
     print('report: ' + str(report))
