@@ -1116,5 +1116,85 @@ class Packages(unittest.TestCase):
             subprocess.run(['gpgconf', '--homedir', str(home), '--kill', 'gpg-agent'], capture_output=True)
 
 
+
+class Status(unittest.TestCase):
+    def test_status_names_the_version_as_the_lean_toolkits(self):
+        """--status prints the version of the lean toolkit dpkg-stereo carries (lean/__init__.py), so it says
+        "lean", not "dpkg-stereo" (ORDER 339); the renderer identity is not touched."""
+        import lean
+        with tempfile.TemporaryDirectory(prefix='test-lc-status-') as d:
+            root = Path(d)
+            (root / 'var/lib/dpkg/info').mkdir(parents=True)
+            (root / 'var/lib/dpkg/status').touch()
+            P = client.Paths(str(root))
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(client.status(P), 0)
+        first = out.getvalue().splitlines()[0]
+        self.assertTrue(first.startswith(f'lean {lean.VERSION}: 0 files projected, 0 left alone, 0 held'), first)
+        self.assertFalse(first.startswith('dpkg-stereo '), first)
+
+
+@unittest.skipUnless(shutil.which('git') and shutil.which('dpkg-source'), 'needs git and dpkg-source')
+class SourcePackage(unittest.TestCase):
+    """build-source.sh puts dpkg-stereo's recipe folder in the source package as git tracks it, so the
+    __pycache__ and *.pyc that running bin/dpkg-stereo in a working checkout leaves never ship (ORDER 339)."""
+
+    REPO = Path(__file__).resolve().parents[2]
+
+    def tree(self, base):
+        """A copy of the files build-source.sh reads, in their layout, with caches planted beside them."""
+        root = base / 'checkout'
+        recipe = root / 'sparky-os/packages/dpkg-stereo'
+        shutil.copytree(self.REPO / 'packages/dpkg-stereo', recipe,
+                        ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+        (root / 'sparky-os/lean').mkdir(parents=True)
+        for f in list((self.REPO / 'lean').glob('*.py')) + [self.REPO / 'lean/JvmLexer.java']:
+            shutil.copy2(f, root / 'sparky-os/lean')
+        (root / 'sparky-os/repo').mkdir(parents=True)
+        shutil.copy2(self.REPO / 'repo/provenance.sh', root / 'sparky-os/repo')
+        return root, recipe
+
+    def plant(self, recipe):
+        planted = [recipe / 'bin/__pycache__/dpkg-stereo.cpython-313.pyc', recipe / 'test/__pycache__/x.cpython-313.pyc',
+                   recipe / 'lib/stray.pyc']
+        for f in planted:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_bytes(b'\x00\x00 not source')
+        return planted
+
+    def members(self, root, out, env):
+        proc = subprocess.run(['bash', str(root / 'sparky-os/packages/dpkg-stereo/build-source.sh')],
+                              env={**env, 'OUT': str(out)}, capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        tars = list(out.glob('dpkg-stereo_*.tar.xz'))
+        self.assertEqual(len(tars), 1, tars)
+        names = subprocess.run(['tar', '-tJf', str(tars[0])], capture_output=True, text=True, check=True).stdout
+        top = tars[0].name[:-len('.tar.xz')].replace('_', '-', 1) + '/sparky-os/packages/dpkg-stereo/'
+        return proc.stdout, {n[len(top):] for n in names.splitlines() if n.startswith(top) and not n.endswith('/')}
+
+    def test_a_planted_pycache_stays_out_of_the_source_package(self):
+        with tempfile.TemporaryDirectory(prefix='test-lc-source-') as d:
+            base = Path(d)
+            root, recipe = self.tree(base)
+            env = {**os.environ, 'GIT_CEILING_DIRECTORIES': str(base), 'PYTHONDONTWRITEBYTECODE': '1',
+                   'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1'}
+            subprocess.run(['git', 'init', '-q', str(root)], env=env, check=True)
+            subprocess.run(['git', '-C', str(root), 'add', '-A'], env=env, check=True)
+            tracked = {str(p.relative_to(recipe)) for p in recipe.rglob('*') if p.is_file()}
+            self.assertIn('bin/dpkg-stereo', tracked)
+            self.plant(recipe)
+            (recipe / 'bin/notes.txt').write_text('an untracked file beside the recipe\n')
+            said, got = self.members(root, base / 'out-git', env)
+            self.assertFalse({n for n in got if '__pycache__' in n or n.endswith('.pyc')}, got)
+            self.assertEqual(got, tracked)
+            self.assertIn('as git tracks them', said)
+            # without a git work tree (an unpacked source package): the folder, caches left out
+            shutil.rmtree(root / '.git')
+            said, got = self.members(root, base / 'out-plain', env)
+            self.assertFalse({n for n in got if '__pycache__' in n or n.endswith('.pyc')}, got)
+            self.assertLessEqual(tracked, got)
+            self.assertIn('no git work tree', said)
+
+
 if __name__ == '__main__':
     unittest.main()

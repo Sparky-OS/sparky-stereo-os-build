@@ -25,6 +25,15 @@ Four checks, none installs anything and none needs a display:
            at load, which is exactly what failed for torcs) and no display; a dynamic-loader
            error in the output blocks.
 
+Recommends, narrowly (ORDER 311 step 4, fltk1.4's flpuzzle): Depends-only resolution is the rule. Where an ELF's
+missing library is shipped by a package that the supplied package's own Recommends names, that ELF is resolved again
+with those Recommends installed, and the result is a note naming them; the predecessor is treated the same way. Debian
+Policy 7.2: Recommends "declares a strong, but not absolute, dependency" and "should list packages that would be found
+together with this one in all but unusual installations"; dpkg-shlibdeps(1) -ddependency-field puts a program's library
+dependencies in that field ("The default dependency-field is Depends"), and Debian's fltk1.4 sends flpuzzle's there
+(-dRecommends). The edition installs Recommends by default, so its systems have them. A library that no Depends and no
+such Recommends provides still fails.
+
 Runtime dependencies come from explicit signed archives through lean.archive.
 The loader and smoke programs run in a bubblewrap root containing only qualified
 inputs, without workstation library paths, cache, configuration or environment.
@@ -221,20 +230,108 @@ def resolve(root, timeout=20, extra_dirs=(), qualified=None, notes=None):
     return result
 
 
-def compare(new_deb, previous_deb=None, extra_dirs=(), qualified=None, previous_qualified=None):
-    """Return (findings, notes). A finding blocks the release, a note is informational."""
+def recommends_of(deb):
+    """The package's Recommends: one list of alternative package names per relation."""
+    fields = control_field(deb, 'Recommends')
+    return [[re.split(r'[ (:]', alt.strip())[0] for alt in part.split('|') if alt.strip()]
+            for part in fields.split(',') if part.strip()]
+
+
+def deb_basenames(deb):
+    """The names (last path component) of the files a package ships."""
+    listing = subprocess.run(['dpkg-deb', '--fsys-tarfile', str(deb)], capture_output=True, check=True).stdout
+    import io
+    import tarfile
+    with tarfile.open(fileobj=io.BytesIO(listing)) as tar:
+        return {Path(m.name).name for m in tar.getmembers() if not m.isdir()}
+
+
+def selected_debs(qualified):
+    """{package name: .deb} of what a qualified case installed: the archives it downloaded and the inputs it selected."""
+    import json
+    evidence = json.loads((qualified.directory / 'resolution.json').read_text())
+    out = {}
+    for item in evidence['packages']:
+        out[item['identity'][0]] = qualified.owner.cache / (item['sha256'] + '.deb')
+    for item in evidence['inputs']:
+        if item['selected']:
+            out[item['identity'][0]] = Path(item['source'])
+    return out
+
+
+def with_recommends(deb, siblings, root, result, archive_context, notes, whose):
+    """The narrow Recommends case (module docstring): `result` with each ELF whose every missing library a package
+    named in the supplied package's own Recommends ships resolved again with those Recommends installed."""
+    missing = {}
+    for name, kind, item in result:
+        if kind == 'not found':
+            missing.setdefault(name, set()).add(item)
+    groups = recommends_of(deb)
+    if not missing or not groups:
+        return result
+    names = [alts[0] for alts in groups]
+    try:
+        rq = archive_context.qualify(deb, siblings, recommends=names)
+    except (OSError, package.Invalid) as exc:
+        notes.append(f'{whose}: its Recommends ({", ".join(names)}) could not be installed with it, so the missing '
+                     f'libraries stay missing: {str(exc).splitlines()[0][:200]}')
+        return result
+    try:
+        again = resolve(root, qualified=rq)
+        debs = selected_debs(rq)
+        shipped = {alt: deb_basenames(debs[alt]) for alts in groups for alt in alts if alt in debs}
+    finally:
+        rq.close()
+    out = dict(result)
+    for rel, libs in sorted(missing.items()):
+        providers = {lib: sorted(alt for alt, files in shipped.items() if lib in files) for lib in libs}
+        if not all(providers.values()):
+            continue
+        for key in [k for k in out if k[0] == rel]:
+            del out[key]
+        out.update({k: v for k, v in again.items() if k[0] == rel})
+        named = ', '.join(f'{lib} from {" | ".join(p)}' for lib, p in sorted(providers.items()))
+        notes.append(f'{rel} ({whose}): resolved with its Recommends installed, which ship its libraries ({named}); '
+                     f'Depends alone leave them out (Debian Policy 7.2: "all but unusual installations")')
+    return out
+
+
+def compare(new_deb, previous_deb=None, extra_dirs=(), qualified=None, previous_qualified=None,
+            archive_context=None, siblings=(), previous_siblings=None):
+    """Return (findings, notes). A finding blocks the release, a note is informational.
+    With `archive_context`, the predecessor is qualified here (after this build's narrow Recommends case, so that
+    at most two roots are live), and both builds get the narrow Recommends case."""
     findings, notes = [], []
     with tempfile.TemporaryDirectory(prefix='inspect-new-', dir=qualified.directory) as new_root:
         extract(new_deb, new_root, qualified.owner.ensure_space)
         now = resolve(new_root, extra_dirs=extra_dirs, qualified=qualified, notes=notes)
+        if archive_context is not None:
+            now = with_recommends(new_deb, siblings, new_root, now, archive_context, notes, 'this build')
         new_needed = {str(p.relative_to(new_root)): needed(p) for p in elf_files(new_root)}
         new_stereo = {str(p.relative_to(new_root)): stereo_imports(p) for p in elf_files(new_root)}
         if previous_deb:
-            with tempfile.TemporaryDirectory(prefix='inspect-old-', dir=previous_qualified.directory) as old_root:
-                extract(previous_deb, old_root, previous_qualified.owner.ensure_space)
-                before = resolve(old_root, qualified=previous_qualified)
-                old_needed = {str(p.relative_to(old_root)): needed(p) for p in elf_files(old_root)}
-                old_stereo = {str(p.relative_to(old_root)): stereo_imports(p) for p in elf_files(old_root)}
+            own_previous = previous_qualified is None
+            old_inputs = siblings if previous_siblings is None else previous_siblings
+            if own_previous:
+                try:
+                    previous_qualified = archive_context.qualify(previous_deb, old_inputs)
+                except (OSError, package.Invalid) as exc:
+                    raise package.Invalid(f'{Path(previous_deb).name}: previous edition dependency qualification '
+                                          f'failed; provide the matching previous sibling snapshot:\n{exc}') from exc
+            try:
+                with tempfile.TemporaryDirectory(prefix='inspect-old-', dir=previous_qualified.directory) as old_root:
+                    extract(previous_deb, old_root, previous_qualified.owner.ensure_space)
+                    before = resolve(old_root, qualified=previous_qualified)
+                    if own_previous:
+                        previous_qualified.close()
+                    if archive_context is not None:
+                        before = with_recommends(previous_deb, old_inputs, old_root, before, archive_context, notes,
+                                                 'the previous build')
+                    old_needed = {str(p.relative_to(old_root)): needed(p) for p in elf_files(old_root)}
+                    old_stereo = {str(p.relative_to(old_root)): stereo_imports(p) for p in elf_files(old_root)}
+            finally:
+                if own_previous:
+                    previous_qualified.close()
             # An unusable predecessor cannot establish a successful regression
             # baseline. Library-only imports supplied by a program remain valid.
             broken_before = [key for key in before if key[1] != 'undefined' or not re.search(r'\.so(\.|$)', key[0])]
@@ -326,14 +423,9 @@ def check(new_deb, previous_deb=None, smoke_table=None, extra_dirs=(), archive_c
     qualified = previous_qualified = None
     try:
         qualified = archive_context.qualify(new_deb, siblings)
-        if previous_deb:
-            old_inputs = siblings if previous_siblings is None else previous_siblings
-            try:
-                previous_qualified = archive_context.qualify(previous_deb, old_inputs)
-            except (OSError, package.Invalid) as exc:
-                raise package.Invalid(f'{Path(previous_deb).name}: previous edition dependency qualification failed; '
-                                      f'provide the matching previous sibling snapshot:\n{exc}') from exc
-        findings, notes = compare(new_deb, previous_deb, qualified=qualified, previous_qualified=previous_qualified)
+        # the predecessor is qualified inside compare, after this build's narrow Recommends case (two live roots)
+        findings, notes = compare(new_deb, previous_deb, qualified=qualified, archive_context=archive_context,
+                                  siblings=siblings, previous_siblings=previous_siblings)
         if smoke_table:
             findings += smoke(new_deb, smoke_table, qualified=qualified)
         for note in notes:

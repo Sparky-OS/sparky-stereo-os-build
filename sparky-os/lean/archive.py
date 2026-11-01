@@ -801,14 +801,15 @@ class Archive:
         (directory / 'signed-index.json').write_text(json.dumps(provenance, indent=2) + '\n')
         return downloads
 
-    def qualify(self, deb, siblings=()):
-        """At most two live roots; successful callers must close their qualifiers."""
+    def qualify(self, deb, siblings=(), recommends=()):
+        """At most two live roots; successful callers must close their qualifiers. `recommends`: package names of
+        the candidate's own Recommends to install with it (the link gate's narrow Recommends case, linkcheck)."""
         if len(self._active) >= 2:
             raise package.Invalid('two qualified roots are still active; close them before resolving another case')
         self.ensure_space(1 << 20)
         directory = Path(tempfile.mkdtemp(prefix='case-', dir=self.base))
         try:
-            return self._qualify(deb, siblings, directory)
+            return self._qualify(deb, siblings, directory, tuple(recommends))
         except BaseException as exc:
             (directory / 'failure.txt').write_text(str(exc) + '\n')
             root = directory / 'root'
@@ -817,12 +818,12 @@ class Archive:
                 shutil.rmtree(root)
             raise
 
-    def _qualify(self, deb, siblings, directory):
+    def _qualify(self, deb, siblings, directory, recommends=()):
         candidate, inputs, local = self.universe(deb, siblings)
         (directory / 'preferences.json').write_text(json.dumps(self.policy, indent=2) + '\n')
         candidate_bytes = self.cached_input(candidate)
         args = ['apt-get', '-y', '--no-remove', '--no-install-recommends', '--download-only',
-                '--print-uris', 'install', str(candidate_bytes)]
+                '--print-uris', 'install', str(candidate_bytes)] + list(recommends)
         label = directory.name + '-solve'
         plan = self.run(args, label)
         root = directory / 'root'
@@ -909,7 +910,7 @@ class Archive:
         for path, obj in selected_archives:
             unpack(path, root, self.ensure_space, diversions, obj['Package'])
         selected = {item['sha256'] for item in selected_inputs}
-        evidence = {'architecture': self.arch, 'candidate': identity(candidate['control']),
+        evidence = {'architecture': self.arch, 'candidate': identity(candidate['control']), 'recommends': list(recommends),
                     'metadata': str(self.base / 'metadata.json'), 'solver': str(self.base / (label + '.log')), 'status': 'empty',
                     'universe': str(local / 'universe.json'), 'local_index_sha256': digest(local / 'Packages'),
                     'space_floors': {'scratch': self.minimum, 'root': self.root_minimum},

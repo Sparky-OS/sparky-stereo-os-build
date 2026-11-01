@@ -1580,7 +1580,8 @@ def status(P):
         t[0] += 1
         t[1] += int(rec['bytes_orig'])
         t[2] += int(rec['bytes_lean'])
-    print(f'dpkg-stereo {lean_pkg.VERSION}: {len(files)} files projected, {len(left)} left alone, {len(read_hold(P))} held')
+    # the version is the lean toolkit's, which this package carries (lean/__init__.py), not dpkg-stereo's own
+    print(f'lean {lean_pkg.VERSION}: {len(files)} files projected, {len(left)} left alone, {len(read_hold(P))} held')
     for k, (n, a, b) in sorted(by.items(), key=lambda x: -(x[1][1] - x[1][2])):
         print(f'  {k:<20} {n:>7} files {a:>12} -> {b:>12} bytes ({a - b} fewer)')
     reasons = {}
