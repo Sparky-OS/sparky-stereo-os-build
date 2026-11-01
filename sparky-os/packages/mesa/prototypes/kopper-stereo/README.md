@@ -30,7 +30,7 @@ The fixture intentionally retains the X error from deleting a GLX drawable after
 Mono presentation without front readback matched the installed predecessor pixel for pixel.
 The predecessor and this series both retain mono front-readback failures.
 
-Wine testing produced exact packed pixmaps but exposed the existing whole-window declaration copy in `winex11.drv` and stereo processes that did not exit within the fixture deadline.
+Wine testing produced exact packed pixmaps but exposed the existing whole-window declaration copy in `winex11.drv` and stereo processes that ended with SIGKILL after printing their success line.
 This series therefore does not qualify the complete Wine route.
 No proprietary NVIDIA GLX stereo, AMD, Wayland, Vulkan API, package or release acceptance is implied.
 Clipping, overlap, input and DPI remain separate gates.
