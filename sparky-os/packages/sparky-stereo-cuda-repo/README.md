@@ -20,7 +20,7 @@ The pins say it in apt's terms:
 - CUDA, the CUDA-X libraries and GPUDirect Storage come from NVIDIA and keep updating (1002).
 - NVIDIA's EGL platform libraries come from NVIDIA too (1002): NVIDIA's driver needs NVIDIA's versions of them.
 - NVIDIA's driver stays at the version of the edition's stereo 3D module: sparky-stereo-nvidia-driver-lock decides it, and this package depends on it.
-- Everything else NVIDIA publishes there is never chosen over another archive's build (100). NVIDIA also publishes its own builds of some of Debian's tools, dkms among them; Debian's stay the ones installed.
+- Everything else NVIDIA publishes there is never chosen over another archive's build (100). NVIDIA also publishes its own builds of some of Debian's tools, dkms among them; the edition's own dkms (with the overlay from /etc/dkms/<module>/ that sparky-stereo-dkms-compat needs) and Debian's other tools stay the ones installed.
   A package that only NVIDIA publishes still installs from there, and a package installed from there keeps getting NVIDIA's newer versions, as Debian's backports do.
 
 Both /etc files are conffiles: an upgrade keeps your changes to them and asks what to do.
@@ -35,18 +35,16 @@ Remove NVIDIA's repository:
 Purge, not remove: a removed package's conffiles stay, so apt would keep reading the source.
 The driver lock stays with the NVIDIA module that needs it.
 
-Use NVIDIA's dkms instead of Debian's (for instance for sparky-stereo-dkms-compat, which needs dkms 3.4.3 or later):
-put these lines in a file of your own, such as /etc/apt/preferences.d/00-local, then run apt install dkms.
+Use NVIDIA's dkms instead of the edition's: the edition's own dkms comes from its repository at 1001, so put these lines in a file of your own, such as /etc/apt/preferences.d/00-local, then run apt install dkms.
 
     Package: dkms dh-dkms
     Pin: origin developer.download.nvidia.com
-    Pin-Priority: 990
+    Pin-Priority: 1002
 
 Any file name works, since this package names no record for dkms: apt_preferences(5) says "The first specific-form record matching an available package version determines the priority of the package version", and a record naming packages comes before the Package: * records.
-Installing NVIDIA's version once by its number does the same without a file (apt install dkms=VERSION; apt-cache policy dkms lists the versions): from then on apt follows NVIDIA's newer versions.
-A system that already had NVIDIA's dkms before this package keeps it, and keeps getting NVIDIA's updates; nothing is downgraded.
-To go back to Debian's, delete your file and install Debian's version by its number (apt install --allow-downgrades dkms=VERSION).
-The same works for any other package of NVIDIA's repository that this package does not name.
+A priority of 1000 or more installs NVIDIA's version even where it is lower than the edition's ("P >= 1000 causes a version to be installed even if this constitutes a downgrade of the package").
+Delete your file to go back to the edition's dkms: apt then installs it at the next upgrade.
+For another package of NVIDIA's repository that this package does not name and that another archive also has, a record of your own at 990 gives you NVIDIA's build (apt-cache policy NAME shows the priorities).
 
 NVIDIA's own cuda-keyring:
 -------------

@@ -23,7 +23,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-$PWD}
-VERSION=${VERSION:-20261101~sparky9~0+lc1}
+VERSION=${VERSION:-20261101.1~sparky9~0+lc1}
 PKG=sparky-stereo-cuda-repo
 # shellcheck source=cuda-key.sh
 . "$HERE/cuda-key.sh"

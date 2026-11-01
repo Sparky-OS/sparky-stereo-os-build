@@ -1,4 +1,10 @@
 -------------------------------------------------------------------------------
+  Version 20261101.1~sparky9~0 (2026-11-01)
+-------------------------------------------------------------------------------
+  * README: the edition now ships its own dkms (3.4.4-1+sparky1, at 1001 from its repository, with the overlay sparky-stereo-dkms-compat needs), so choosing NVIDIA's dkms takes a record at 1002, not 990; the pins are unchanged (ORDER 342)
+  * Supersedes 20261101~sparky9~0 (ORDER 338), which was not published; its changes are in this version
+
+-------------------------------------------------------------------------------
   Version 20261101~sparky9~0 (2026-11-01)
 -------------------------------------------------------------------------------
   * First version: NVIDIA's CUDA repository (Debian 13, amd64, flat), its key and its pins in one package, so the image, the hardware setup, the publication's link gate and check-installable all read the same files. Before, the image (iso-build/apt-setup.sh) and the hardware setup (sparky-stereo-hardware's setup_nvidia) wrote them by hand, and the gate and the checker never saw the pin (ORDER 338, ORDER 329's finding)
