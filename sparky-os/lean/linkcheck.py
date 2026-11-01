@@ -15,11 +15,12 @@ Four checks, none installs anything and none needs a display:
   needed   NEEDED libraries and shlib Depends lost against the previous build of the same
            package. Reported; blocks only together with an unresolved symbol (a library
            that is no longer needed because nothing uses it is a legitimate --as-needed result).
-  resolve  archive-loader tracing equivalent to `ldd -r` on every ELF, with private
-           library directories inside the qualified root. Every "not found" and every
+  resolve  archive-loader tracing equivalent to `ldd -r` on every ELF the host loads, with
+           private library directories inside the qualified root. Every "not found" and every
            "undefined symbol" must already exist in the previous build's result; a package
            without a previous build must have no missing library and no undefined symbol in
-           an executable (a library alone reports what its program supplies).
+           an executable (a library alone reports what its program supplies). An ELF file of
+           another machine is guest data only where Debian keeps it (GUEST_DATA); it is noted.
   smoke    start the programs named in a smoke table with LD_BIND_NOW=1 (every symbol is bound
            at load, which is exactly what failed for torcs) and no display; a dynamic-loader
            error in the output blocks.
@@ -114,6 +115,33 @@ LOADERS = {'amd64': '/lib64/ld-linux-x86-64.so.2', 'i386': '/lib/ld-linux.so.2',
 MACHINES = {'amd64': 'Advanced Micro Devices X86-64', 'i386': 'Intel 80386', 'arm64': 'AArch64'}
 
 
+# An ELF file of another machine that no host loader loads (ORDER 340): QEMU's guest firmware, which
+# qemu-system-data ships in /usr/share/qemu and its machine models read with load_elf(). Debian's rule:
+# Lintian's binary-from-other-architecture compares each ELF with its package's architecture and has none
+# to compare in an Architecture: all package (lib/Lintian/Check/Binaries/Architecture/Other.pm); such a
+# package's "binary blobs for other purposes independent of the host architecture (such as BIOS updates or
+# firmware)" take an override (arch-independent-package-contains-binary-or-object), and /usr/share is
+# reserved for architecture-independent files (arch-dependent-file-in-usr-share; FHS 3.0, 4.11), which is
+# where Debian's qemu-system-data overrides both. Neither the dynamic loader nor dpkg-shlibdeps looks for
+# libraries there (Dpkg::Shlibs: /lib, /usr/lib, ld.so.conf, the multilib directories), while /usr/lib may
+# hold both kinds (Debian Policy 9.1.1) and its plugins are loaded by path. An ELF file of the host's
+# machine is traced wherever it is, and a foreign one anywhere else still fails the machine check.
+GUEST_DATA = {'architecture': 'all', 'under': ('/usr/share/',)}
+
+
+def guest_data(path, rel, qualified):
+    """The machine of an ELF file another consumer loads, or None when it is the host's to load."""
+    if (qualified.candidate.get('Architecture') != GUEST_DATA['architecture']
+            or not rel.startswith(GUEST_DATA['under'])):
+        return None
+    run = subprocess.run(['readelf', '-h', '-W', str(path)], capture_output=True, text=True, timeout=30,
+                         env={'PATH': '/usr/bin:/bin', 'LC_ALL': 'C'})
+    machine = re.search(r'Machine:\s*(.+)', run.stdout)
+    if run.returncode or not machine or machine[1].strip() == MACHINES.get(qualified.arch):
+        return None
+    return machine[1].strip()
+
+
 def loader_command(path, root, qualified):
     """Use the matching archive loader and libc inside the qualified filesystem."""
     run = subprocess.run(['readelf', '-h', '-l', '-d', '-W', str(path)], capture_output=True,
@@ -137,8 +165,8 @@ def loader_command(path, root, qualified):
     return [loader, '--inhibit-cache', '--library-path', search, rel], False
 
 
-def resolve(root, timeout=20, extra_dirs=(), qualified=None):
-    """{(relative file, kind, item): True}, confined to the qualified archive root."""
+def resolve(root, timeout=20, extra_dirs=(), qualified=None, notes=None):
+    """{(relative file, kind, item): True}, confined to the qualified archive root; guest data goes to notes."""
     if extra_dirs:
         raise package.Invalid('unqualified library directories are forbidden; supply sibling .debs')
     if qualified is None:
@@ -149,6 +177,12 @@ def resolve(root, timeout=20, extra_dirs=(), qualified=None):
     result = {}
     for path in elf_files(root):
         rel = '/' + str(path.relative_to(root))
+        machine = guest_data(path, rel, qualified)
+        if machine:
+            if notes is not None:
+                notes.append(f'{rel}: {machine} ELF in an Architecture: all package under /usr/share, '
+                             'data for another consumer, never loaded by the host')
+            continue
         try:
             command, static = loader_command(path, root, qualified)
             if static:
@@ -188,7 +222,7 @@ def compare(new_deb, previous_deb=None, extra_dirs=(), qualified=None, previous_
     findings, notes = [], []
     with tempfile.TemporaryDirectory(prefix='inspect-new-', dir=qualified.directory) as new_root:
         extract(new_deb, new_root, qualified.owner.ensure_space)
-        now = resolve(new_root, extra_dirs=extra_dirs, qualified=qualified)
+        now = resolve(new_root, extra_dirs=extra_dirs, qualified=qualified, notes=notes)
         new_needed = {str(p.relative_to(new_root)): needed(p) for p in elf_files(new_root)}
         new_stereo = {str(p.relative_to(new_root)): stereo_imports(p) for p in elf_files(new_root)}
         if previous_deb:

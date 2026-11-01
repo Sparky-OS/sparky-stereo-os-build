@@ -8,6 +8,8 @@ import sys
 import tempfile
 import unittest
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from lean import archive, linkcheck, package, release
 from lean.tests.archive_fixtures import signed_archive
@@ -175,3 +177,157 @@ def test_static_elf_passes_in_any_locale(tmp_path, monkeypatch):
     binary = deb(tmp_path / 'pkg', 'static-fixture', files={'usr/bin/static-tool': exe})
     context = archive.Archive(signed_archive(tmp_path / 'archive'), tmp_path / 'scratch', 'amd64')
     assert linkcheck.resolve(root, qualified=context.qualify(binary)) == {}
+
+
+# ORDER 340: an ELF file the host's dynamic loader never loads. qemu-system-data (Architecture: all) ships
+# QEMU's guest firmware in /usr/share/qemu, and QEMU's machine models read it with load_elf() into the guest
+# (hw/hppa/machine.c, hw/ppc/mac_newworld.c, hw/sparc/sun4m.c, hw/sparc64/sun4u.c). Each shape below is the
+# readelf -h -l -d of one such file in qemu-system-data 1:11.1.2+ds-3+stereo3d6+lc1 and +stereo3d7+lc1: its
+# class, byte order, e_type, e_machine, and PT_INTERP and PT_DYNAMIC where it has them.
+GUEST_FIRMWARE = {
+    'hppa-firmware.img': dict(machine=15),
+    'hppa-firmware64.img': dict(machine=15, bits=64, interp='/usr/lib/pa20_64/dld.sl', dynamic=True),
+    'openbios-ppc': dict(machine=20),
+    'openbios-sparc32': dict(machine=2),
+    'openbios-sparc64': dict(machine=43, bits=64),
+    'palcode-clipper': dict(machine=0x9026, bits=64, big=False),
+    's390-ccw.img': dict(machine=22, bits=64, kind=3, dynamic=True),
+    'u-boot.e500': dict(machine=20),
+}
+
+
+def foreign_elf(machine, bits=32, big=True, kind=2, interp=None, dynamic=False):
+    """A minimal ELF file: its header, and a PT_INTERP and a PT_DYNAMIC segment when asked for."""
+    import struct
+    e, word = ('>' if big else '<'), ('Q' if bits == 64 else 'I')
+    ehsize, phentsize = (64, 56) if bits == 64 else (52, 32)
+    count = bool(interp) + bool(dynamic)
+    segments, payload, base = [], b'', ehsize + phentsize * count
+    for kind_, data in ((3, (interp or '').encode() + b'\0'), (2, struct.pack(e + word * 2, 0, 0))):
+        if (kind_ == 3 and interp) or (kind_ == 2 and dynamic):
+            segments.append((kind_, base + len(payload), len(data)))
+            payload += data
+    header = b'\x7fELF' + bytes([2 if bits == 64 else 1, 2 if big else 1, 1]) + bytes(9)
+    header += struct.pack(e + 'HHI' + word * 3 + 'IHHHHHH', kind, machine, 1, 0x10000, ehsize if count else 0, 0,
+                          0, ehsize, phentsize, count, 0, 0, 0)
+    for kind_, offset, size in segments:
+        header += (struct.pack(e + 'IIQQQQQQ', kind_, 4, offset, offset, offset, size, size, 1) if bits == 64 else
+                   struct.pack(e + 'IIIIIIII', kind_, offset, offset, offset, size, size, 4, 1))
+    return header + payload
+
+
+def with_machine(path, machine):
+    """The bytes of an ELF file built here, with another e_machine (the foreign-dynamic negative of lane 255)."""
+    import struct
+    data = bytearray(Path(path).read_bytes())
+    struct.pack_into('<H' if data[5] == 1 else '>H', data, 18, machine)
+    return bytes(data)
+
+
+def gate_resolve(tmp_path, context, deb, notes=None):
+    root = tmp_path / ('root-' + deb.name)
+    root.mkdir()
+    linkcheck.extract(deb, root)
+    qualified = context.qualify(deb)
+    try:
+        return linkcheck.resolve(root, qualified=qualified, **({} if notes is None else {'notes': notes}))
+    finally:
+        qualified.close()
+
+
+needs_tools = pytest.mark.skipif(not (shutil.which('gcc') and shutil.which('dpkg-deb') and shutil.which('bwrap')),
+                                 reason='needs gcc, dpkg-deb, bwrap')
+
+
+@needs_tools
+def test_guest_firmware_is_data_not_a_host_object(tmp_path):
+    """The published and the rebuilt qemu-system-data pass: their guest firmware is noted, never loaded."""
+    from lean.tests.archive_fixtures import signed_archive, deb
+    files = {f'usr/share/qemu/{name}': foreign_elf(**shape) for name, shape in GUEST_FIRMWARE.items()}
+    old = deb(tmp_path / 'old', 'qemu-system-data', '1:11.1.2+ds-3+stereo3d6+lc1', arch='all', files=files)
+    new = deb(tmp_path / 'new', 'qemu-system-data', '1:11.1.2+ds-3+stereo3d7+lc1', arch='all', files=files)
+    context = archive.Archive(signed_archive(tmp_path / 'archive'), tmp_path / 'scratch', 'amd64')
+    noted = linkcheck.check(new, previous_deb=old, archive_context=context)
+    assert len([note for note in noted if 'another consumer' in note]) == len(GUEST_FIRMWARE), noted
+    assert any(note.startswith('/usr/share/qemu/hppa-firmware64.img: HPPA ELF') for note in noted), noted
+    notes = []
+    assert gate_resolve(tmp_path, context, old, notes) == {}
+    assert sorted(note.split(':', 1)[0] for note in notes) == sorted(f'/{path}' for path in files)
+    assert all('another consumer' in note for note in notes), notes
+
+
+@needs_tools
+def test_foreign_elf_the_host_may_load_still_fails(tmp_path):
+    """A foreign library in a library directory, a foreign module, a foreign program, or guest firmware in an
+    architecture-dependent package is the host's: each still fails the machine check."""
+    from lean.tests.archive_fixtures import signed_archive, deb
+    (tmp_path / 'lib.c').write_text('int foreign(void) { return 1; }\n')
+    (tmp_path / 'main.c').write_text('int main(void) { return 0; }\n')
+    subprocess.run(['gcc', '-shared', '-fPIC', '-o', str(tmp_path / 'libforeign.so.1'), str(tmp_path / 'lib.c')], check=True)
+    subprocess.run(['gcc', '-o', str(tmp_path / 'tool'), str(tmp_path / 'main.c')], check=True)
+    library = with_machine(tmp_path / 'libforeign.so.1', 183)
+    program = with_machine(tmp_path / 'tool', 40)
+    firmware = foreign_elf(**GUEST_FIRMWARE['hppa-firmware64.img'])
+    context = archive.Archive(signed_archive(tmp_path / 'archive'), tmp_path / 'scratch', 'amd64')
+    independent = deb(tmp_path / 'all', 'foreign-all', arch='all', files={
+        'usr/lib/x86_64-linux-gnu/libforeign.so.1': library,
+        'usr/lib/x86_64-linux-gnu/qemu/block-foreign.so': library,
+        'usr/bin/foreign-tool': program,
+        'usr/share/qemu/hppa-firmware64.img': firmware})
+    dependent = deb(tmp_path / 'any', 'foreign-any', arch='amd64', files={
+        'usr/lib/x86_64-linux-gnu/libforeign.so.1': library,
+        'usr/share/qemu/hppa-firmware64.img': firmware,
+        'usr/share/qemu/openbios-ppc': foreign_elf(**GUEST_FIRMWARE['openbios-ppc'])})
+    refused = ('loader error', 'ELF machine does not match amd64')
+    assert gate_resolve(tmp_path, context, independent) == {
+        ('/usr/bin/foreign-tool',) + refused: True,
+        ('/usr/lib/x86_64-linux-gnu/libforeign.so.1',) + refused: True,
+        ('/usr/lib/x86_64-linux-gnu/qemu/block-foreign.so',) + refused: True}
+    assert gate_resolve(tmp_path, context, dependent) == {
+        ('/usr/lib/x86_64-linux-gnu/libforeign.so.1',) + refused: True,
+        ('/usr/share/qemu/hppa-firmware64.img',) + refused: True,
+        ('/usr/share/qemu/openbios-ppc',) + refused: True}
+    for candidate in (independent, dependent):
+        with pytest.raises(package.Invalid, match='ELF machine does not match amd64'):
+            linkcheck.check(candidate, archive_context=context)
+
+
+@needs_tools
+def test_usr_share_is_no_blanket_skip(tmp_path):
+    """Under /usr/share of an Architecture: all package, an ELF of the host's machine is still traced, and a
+    file that only starts like ELF is still unusable: the rule is the foreign machine, not the place."""
+    from lean.tests.archive_fixtures import signed_archive, deb
+    (tmp_path / 'missing.c').write_text('int missing(void) { return 1; }\n')
+    (tmp_path / 'main.c').write_text('int missing(void);\nint main(void) { return missing(); }\n')
+    subprocess.run(['gcc', '-shared', '-fPIC', '-o', str(tmp_path / 'libmissing.so.1'), '-Wl,-soname,libmissing.so.1',
+                    str(tmp_path / 'missing.c')], check=True)
+    subprocess.run(['gcc', '-o', str(tmp_path / 'tool'), str(tmp_path / 'main.c'), str(tmp_path / 'libmissing.so.1')],
+                   check=True)
+    context = archive.Archive(signed_archive(tmp_path / 'archive'), tmp_path / 'scratch', 'amd64')
+    candidate = deb(tmp_path / 'all', 'share-all', arch='all', depends='libc6', files={
+        'usr/share/demo/tool': tmp_path / 'tool',
+        'usr/share/qemu/truncated.img': b'\x7fELF\x01\x02\x01' + bytes(9)})
+    found = gate_resolve(tmp_path, context, candidate)
+    assert found.pop(('/usr/share/demo/tool', 'not found', 'libmissing.so.1')) is True
+    assert found.pop(('/usr/share/demo/tool', 'undefined', 'missing')) is True
+    assert [key[:2] for key in found] == [('/usr/share/qemu/truncated.img', 'loader error')], found
+    assert next(iter(found))[2].startswith('unusable ELF: ')
+
+
+def test_lane_255_probe_controls_unchanged(tmp_path):
+    """Lane 255's probe: loader_command accepts a native static program as static and refuses a foreign dynamic one."""
+    import types
+    cc = shutil.which('gcc')
+    if not cc:
+        pytest.skip('no C compiler')
+    (tmp_path / 'control.c').write_text('int main(void) { return 0; }\n')
+    exe = tmp_path / 'native-static'
+    if subprocess.run([cc, '-static', '-O2', '-o', str(exe), str(tmp_path / 'control.c')]).returncode:
+        pytest.skip('no static libc')
+    qualified = types.SimpleNamespace(arch='amd64', root=tmp_path)
+    command, static = linkcheck.loader_command(exe, tmp_path, qualified)
+    assert static and command == ['/native-static']
+    mutant = tmp_path / 'foreign-dynamic-negative'
+    mutant.write_bytes(with_machine('/usr/bin/true', 40))
+    with pytest.raises(package.Invalid, match='^ELF machine does not match amd64$'):
+        linkcheck.loader_command(mutant, tmp_path, qualified)
