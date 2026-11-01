@@ -12,8 +12,18 @@ OUT=$(cd "$OUT" && pwd)
 W=$(mktemp -d "$OUT/.dpkg-stereo-source.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 S=$W/dpkg-stereo-$VERSION
-mkdir -p "$S/sparky-os/packages" "$S/sparky-os/lean" "$S/sparky-os/repo" "$S/debian/source"
-cp -a "$HERE" "$S/sparky-os/packages/dpkg-stereo"
+P=$S/sparky-os/packages/dpkg-stereo
+mkdir -p "$P" "$S/sparky-os/lean" "$S/sparky-os/repo" "$S/debian/source"
+# The recipe folder as git tracks it, so what a working checkout made beside it (bin/__pycache__ and *.pyc from
+# running bin/dpkg-stereo there, editor and test leftovers) never ships in the source package. Outside a git work
+# tree (an unpacked source package, an export) the folder is copied without __pycache__ folders and *.pyc files.
+if git -C "$HERE" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+	echo "build-source: the recipe's files as git tracks them"
+	(cd "$HERE" && git ls-files -z -- . | xargs -0r cp -a --parents -t "$P")
+else
+	echo "build-source: no git work tree; the recipe folder without __pycache__ and *.pyc"
+	(cd "$HERE" && find . -name __pycache__ -prune -o ! -type d ! -name '*.pyc' -print0 | xargs -0r cp -a --parents -t "$P")
+fi
 cp "$ROOT/lean/"*.py "$ROOT/lean/JvmLexer.java" "$S/sparky-os/lean/"
 cp "$ROOT/repo/provenance.sh" "$S/sparky-os/repo/"
 cp "$HERE/copyright" "$S/debian/copyright"
@@ -46,7 +56,13 @@ dpkg-stereo ($VERSION) unstable; urgency=medium
     in all but unusual installations". The previous build is treated the
     same way; Depends-only resolution stays the rule for everything else,
     and a library no Depends and no such Recommends provides still fails.
-  * dpkg-stereo itself is 0.1.23's, unchanged.
+  * dpkg-stereo --status labels the version it prints as the lean
+    toolkit's ("lean 0.1.23"), which it is (ORDER 339); the renderer
+    identity stays as it was.
+  * The source package carries the recipe folder as git tracks it, so an
+    untracked bin/__pycache__ or *.pyc in a working checkout never ships
+    in it; outside a git work tree the folder is copied without them
+    (ORDER 339).
 
  -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 01 Nov 2026 18:00:00 -0300
 EOF

@@ -24,8 +24,15 @@
     naming the Recommends; the previous build is treated the same way.
     Depends-only resolution stays the rule for everything else, and a
     library that no Depends and no such Recommends provides still fails.
-  * dpkg-stereo itself is 0.1.23's, unchanged; the renderer identity names
-    lean 0.1.23.
+  * dpkg-stereo --status labels the version it prints as the lean
+    toolkit's ("lean 0.1.23: ... files projected"), which it is; it said
+    "dpkg-stereo" before that number (ORDER 339). The renderer identity
+    stays as it was: lean 0.1.23 (collapse-blank,pointer,c-drop-lines).
+  * The source package carries the recipe folder as git tracks it
+    (build-source.sh), so an untracked bin/__pycache__ or *.pyc in a
+    working checkout no longer ships in it; outside a git work tree the
+    folder is copied without __pycache__ folders and *.pyc files
+    (ORDER 339).
 
 -------------------------------------------------------------------------------
   Version 0.1.23 (2026-11-01)
