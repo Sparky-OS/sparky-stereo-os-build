@@ -8,6 +8,11 @@ says why (no source change), lean.debian_prepare adds this toolkit at NEXT+lc1 w
 published source retained, and dpkg-source -b packs it next to the same orig tarball.
 The kernel recipe also records its package version in debian/kernel-build.env (kernel/lean/prepare.py); that line
 follows. Any other difference between the published and the new source stops the tool.
+--in-place: for a published source whose shape plain-from-lc.py does not know (the six lc1 build dependencies inside a
+folded Build-Depends, an edition entry that is also the Lean Code entry, the 19 October adapter's debian/sparky-lean):
+the published debian/ directory stays as it is but for its toolkit, replaced by this tree's (the files debian_prepare
+copies), and its changelog, which gains the plain entry for NEXT and the Lean Code entry for NEXT+lc1 on top (one entry,
+NEXT, for a source whose versions carry no +lc1). Only the changelog and the toolkit may differ.
 --recipe DIR: the next version carries a recipe change: DIR is the recipe's debian/ directory, whose changelog is the
 published plain changelog with the new version's entry (or entries) on top; it replaces the plain debian/ directory, and
 the new version is its top entry. Only debian/ may differ then; the tool lists what did.
@@ -64,16 +69,80 @@ def tree_diff(a, b, rel=Path('.')):
     return out
 
 
+LEAN_ITEM = ('  * Apply verified native Lean Code before compilation and qualified lc1\n'
+             '    payload assembly; retain exact authored source and HR companions.')
+
+
+def toolkit_files(sparky_os):
+    """The files lean.debian_prepare copies into debian/sparky-lean-toolkit, by their place in the source."""
+    files = {f'lean/{p.name}': p for p in (sparky_os / 'lean').glob('*.py')}
+    files.update({'lean/JvmLexer.java': sparky_os / 'lean/JvmLexer.java', 'lean/smoke.tsv': sparky_os / 'lean/smoke.tsv',
+                  'provenance.sh': sparky_os / 'repo/provenance.sh', 'LICENSE': sparky_os / 'packages/dpkg-stereo/LICENSE'})
+    return files
+
+
+def in_place(old, new, name, version, nxt, items):
+    """--in-place: the published debian/ with this tree's toolkit and two new changelog entries; nothing else."""
+    shutil.copytree(old, new, symlinks=True, copy_function=os.link, ignore=lambda d, names: ['debian'] if Path(d) == old else [])
+    shutil.copytree(old / 'debian', new / 'debian', symlinks=True)
+    rules = (new / 'debian/rules').read_text()
+    dirs = set(re.findall(r'PYTHONPATH=\$\(CURDIR\)/debian/([A-Za-z0-9_.-]+) python3 -m lean\.', rules))
+    if len(dirs) != 1 or not (new / 'debian' / next(iter(dirs)) / 'lean/__init__.py').is_file():
+        raise ValueError(f'debian/rules names no single bundled toolkit: {sorted(dirs)}')
+    kit = new / 'debian' / dirs.pop()
+    shutil.rmtree(kit)
+    for rel, src in toolkit_files(HERE.parent).items():
+        (kit / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, kit / rel)
+    lc = version.endswith('+lc1')
+    plain = version[:-len('+lc1')] if lc else version
+    if subprocess.run(['dpkg', '--compare-versions', nxt, 'gt', plain]).returncode:
+        raise ValueError(f'{nxt} does not advance {plain}')
+    changelog = new / 'debian/changelog'
+    text = entry(name, nxt, items) + changelog.read_text()
+    if lc:
+        text = (f'{name} ({nxt}+lc1) UNRELEASED; urgency=medium\n\n{LEAN_ITEM}\n\n'
+                f' -- {NAME} <{MAIL}>  {email.utils.formatdate(localtime=True)}\n\n') + text
+    changelog.write_text(text)
+    changed = sorted(tree_diff(old, new))
+    kit_rel = str(kit.relative_to(new)) + '/'
+    toolkit = [p for p in changed if p.startswith(kit_rel)]
+    other = [p for p in changed if p != 'debian/changelog' and p not in toolkit]
+    if other:
+        raise ValueError(f'the new source differs beyond its changelog and toolkit: {other}')
+    return {'source': name, 'old': version, 'new': nxt + '+lc1' if lc else nxt, 'mode': 'in-place', 'toolkit_dir': kit_rel,
+            'changed': [p for p in changed if p not in toolkit], 'toolkit_files_changed': len(toolkit)}
+
+
+def finish(work, dsc, name, version, new_version, old, out, report):
+    """dpkg-source -b next to the published orig tarball; the new .dsc, Debian tarball, both changelogs and the report."""
+    for f in dsc.parent.glob(f'{name}_*.orig*'):
+        os.symlink(f, work / f.name)
+    subprocess.run(['dpkg-source', '-b', 'new'], cwd=work, check=True, stdout=subprocess.DEVNULL)
+    stem = f'{name}_{new_version.split(":", 1)[-1]}'
+    made = sorted(p.name for p in work.glob(stem + '.*'))
+    for n in made:
+        if (out / n).exists():
+            raise ValueError(f'{out / n} exists')
+        shutil.copyfile(work / n, out / n)
+    shutil.copyfile(work / 'new/debian/changelog', out / f'{stem}.changelog')
+    shutil.copyfile(old / 'debian/changelog', out / f'{name}_{version.split(":", 1)[-1]}.changelog')
+    report['files'] = made
+    (out / f'{stem}.successor.json').write_text(json.dumps(report, indent=1) + '\n')
+    print(json.dumps(report))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--next')
     ap.add_argument('--item', action='append')
     ap.add_argument('--recipe', type=Path, help="the recipe's debian/ directory for the next version")
+    ap.add_argument('--in-place', action='store_true', help='keep the published debian/ but for its toolkit and changelog')
     ap.add_argument('--work', type=Path)
     ap.add_argument('dsc', type=Path)
     ap.add_argument('out', type=Path)
     args = ap.parse_args()
-    if not ((args.recipe and not args.next and not args.item) or (not args.recipe and args.next and args.item)):
+    if not ((args.recipe and not args.next and not args.item and not args.in_place) or (not args.recipe and args.next and args.item)):
         ap.error('either --next and --item (no source change), or --recipe DIR')
     if args.recipe and args.recipe.resolve().name != 'debian':
         ap.error("--recipe names a recipe's debian/ directory")
@@ -87,6 +156,12 @@ def main():
                        stdout=subprocess.DEVNULL)
         old, new = work / 'old', work / 'new'
         name, version = parse(old, 'Source'), parse(old, 'Version')
+        if args.in_place:
+            if args.recipe:
+                raise ValueError('--in-place and --recipe exclude each other')
+            report = in_place(old, work / 'new', name, version, args.next, args.item)
+            finish(work, dsc, name, version, report['new'], old, out, report)
+            return
         if not version.endswith('+lc1'):
             raise ValueError(f'{version}: not a +lc1 source')
         # the upstream files are only read from here on: linked, not copied (a kernel tree is 1.5 GB); debian/ is written
@@ -148,24 +223,10 @@ def main():
             other = [p for p in other if not p.startswith('debian/')]
         if other:
             raise ValueError(f'the new source differs beyond its changelog and toolkit: {other}')
-        # the orig tarball (and its signature) beside the new tree, as dpkg-source -b wants them
-        for f in dsc.parent.glob(f'{name}_*.orig*'):
-            os.symlink(f, work / f.name)
-        subprocess.run(['dpkg-source', '-b', 'new'], cwd=work, check=True, stdout=subprocess.DEVNULL)
-        new_version = args.next + '+lc1'
-        stem = f'{name}_{new_version.split(":", 1)[-1]}'
-        made = sorted(p.name for p in work.glob(stem + '.*'))
-        for n in made:
-            if (out / n).exists():
-                raise ValueError(f'{out / n} exists')
-            shutil.copyfile(work / n, out / n)
-        shutil.copyfile(changelog, out / f'{stem}.changelog')
-        shutil.copyfile(old / 'debian/changelog', out / f'{name}_{version.split(":", 1)[-1]}.changelog')
-        report = {'source': name, 'old': version, 'new': new_version, 'files': made, 'recipe': str(args.recipe or ''),
+        report = {'source': name, 'old': version, 'new': args.next + '+lc1', 'recipe': str(args.recipe or ''),
                   'changed': [p for p in changed if p not in toolkit], 'toolkit_files_changed': len(toolkit),
                   'preserve_patterns': len(preserve), 'plain_from_lc': mode}
-        (out / f'{stem}.successor.json').write_text(json.dumps(report, indent=1) + '\n')
-        print(json.dumps(report))
+        finish(work, dsc, name, version, args.next + '+lc1', old, out, report)
 
 
 if __name__ == '__main__':
