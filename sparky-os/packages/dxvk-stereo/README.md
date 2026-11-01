@@ -39,3 +39,11 @@ Native stereo array swapchains remain on their existing path.
 The matching Wine patch requires libstereo-declare 1.8 and the compositor's version-9 child-shape consumer.
 PE32 and PE64 D3D9 acknowledgement, old-runtime and old-compositor fallback have private-module evidence.
 D3D11's versioned path, injected property failures and restoration, native DXVK, packaging and GPU coverage still need their own gates; the earlier unversioned D3D11 proof is not a proof of this new handshake.
+
+### Windows debug companion check
+
+`tests/check-pe-debug.py DLL_DIRECTORY DEBUG_BUILD_ID_DIRECTORY` checks all five Windows DLLs after the original debug split.
+It requires a distinct CodeView build ID for each DLL, the corresponding debug filename, and a matching GNU debug-link CRC.
+Pass `--objdump i686-w64-mingw32-objdump` for PE32.
+An empty build ID can otherwise make the stripping helper overwrite several modules at the same `.debug` path.
+Run the source package through `debian/rules build` so debhelper exports its build flags before the configuration hooks; invoking those hooks directly does not reproduce that environment.
