@@ -1,3 +1,23 @@
+sparky-stereo-hardware (0.1.15) unstable; urgency=medium
+
+  * NVIDIA's CUDA repository comes from the edition's package
+    sparky-stereo-cuda-repo (its source, NVIDIA's key and the edition's
+    pins), installed with sparky-stereo-nvidia-driver-lock in a transaction
+    of their own before the driver, so the lock and the pins are in force
+    when apt chooses NVIDIA's user space. Before, the setup downloaded
+    NVIDIA's cuda-keyring, wrote the source and a pin of every NVIDIA
+    package at 1002 itself, and the lock came only as the module's
+    dependency, in the driver's own transaction. ORDER 338, ORDER 329's
+    findings.
+  * Keep a CUDA repository the person set up already, such as NVIDIA's own
+    cuda-keyring, and add only the lock: two sources for NVIDIA's URI with
+    different key files stop apt.
+  * Purge what the run installed when the repository package cannot be
+    installed or the preflight fails.
+  * share/cuda-key.sh moved to sparky-stereo-cuda-repo's recipe.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 01 Nov 2026 18:00:00 -0300
+
 sparky-stereo-hardware (0.1.14) unstable; urgency=medium
 
   * Name the Multi-Arch: same libraries in sparky-stereo-gpu-nvidia with
