@@ -119,6 +119,7 @@ Smoke programs also use immediate binding.
 Library-only imports legitimately supplied by their application remain informational without a predecessor.
 Lost stereo imports still block and lost NEEDED entries remain informational when resolution succeeds.
 Static ELF files are inspected without requiring a dynamic loader, independently of locale.
+A static-pie executable (no interpreter, no NEEDED, `DF_1_PIE`; qemu-user's programs) is static too; a library without NEEDED is still traced.
 An ELF file of another machine in an `Architecture: all` package under `/usr/share` is guest data (QEMU's firmware), recorded as a note and never traced (ORDER 340).
 Every other ELF file of another machine fails with "ELF machine does not match", as before.
 

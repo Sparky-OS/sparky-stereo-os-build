@@ -153,7 +153,11 @@ def loader_command(path, root, qualified):
         raise package.Invalid(f'ELF machine does not match {qualified.arch}')
     rel = '/' + str(path.relative_to(root))
     interp = re.search(r'Requesting program interpreter: ([^]]+)', run.stdout)
-    if not interp and '(NEEDED)' not in run.stdout and 'There is no dynamic section' in run.stdout:
+    # A static-pie executable (no interpreter, no NEEDED, DF_1_PIE) starts with no loader at all, as file(1)
+    # ("static-pie linked"), glibc's ldd ("statically linked") and Lintian's statically-linked-binary
+    # (#1068304) see it: Debian builds qemu-user's programs so. A library without NEEDED is still traced.
+    pie = re.search(r'\(FLAGS_1\)\s+Flags:.*\bPIE\b', run.stdout)
+    if not interp and '(NEEDED)' not in run.stdout and ('There is no dynamic section' in run.stdout or pie):
         return [rel], True
     loader = interp[1] if interp else LOADERS.get(qualified.arch)
     if not loader or not archive.rooted(qualified.root, loader).is_file():

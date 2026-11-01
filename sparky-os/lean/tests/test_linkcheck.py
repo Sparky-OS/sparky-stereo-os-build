@@ -331,3 +331,25 @@ def test_lane_255_probe_controls_unchanged(tmp_path):
     mutant.write_bytes(with_machine('/usr/bin/true', 40))
     with pytest.raises(package.Invalid, match='^ELF machine does not match amd64$'):
         linkcheck.loader_command(mutant, tmp_path, qualified)
+
+
+@needs_tools
+def test_static_pie_program_needs_no_loader(tmp_path):
+    """qemu-user's programs are static-pie (ET_DYN, DF_1_PIE, no interpreter, no NEEDED) and its package depends
+    on no libc: they start with no loader, like any static program. A library without NEEDED is still traced."""
+    from lean.tests.archive_fixtures import signed_archive, deb
+    (tmp_path / 'main.c').write_text('int main(void) { return 0; }\n')
+    (tmp_path / 'lib.c').write_text('int ext(void);\nint f(void) { return ext(); }\n')
+    if subprocess.run(['gcc', '-static-pie', '-o', str(tmp_path / 'qemu-demo'), str(tmp_path / 'main.c')]).returncode:
+        pytest.skip('no static-pie libc')
+    subprocess.run(['gcc', '-shared', '-fPIC', '-nostdlib', '-o', str(tmp_path / 'libnoneeded.so'),
+                    str(tmp_path / 'lib.c')], check=True)
+    assert 'Flags: PIE' in subprocess.run(['readelf', '-d', '-W', str(tmp_path / 'qemu-demo')], capture_output=True,
+                                          text=True, env={'PATH': '/usr/bin:/bin', 'LC_ALL': 'C'}).stdout
+    context = archive.Archive(signed_archive(tmp_path / 'archive'), tmp_path / 'scratch', 'amd64')
+    static = deb(tmp_path / 'user', 'qemu-user-demo', files={'usr/bin/qemu-demo': tmp_path / 'qemu-demo'})
+    library = deb(tmp_path / 'lib', 'noneeded-demo', depends='libc6',
+                  files={'usr/lib/x86_64-linux-gnu/libnoneeded.so': tmp_path / 'libnoneeded.so'})
+    assert gate_resolve(tmp_path, context, static) == {}
+    assert linkcheck.check(static, previous_deb=static, archive_context=context) == []
+    assert gate_resolve(tmp_path, context, library) == {('/usr/lib/x86_64-linux-gnu/libnoneeded.so', 'undefined', 'ext'): True}
