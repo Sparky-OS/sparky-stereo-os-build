@@ -1,0 +1,21 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/01
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/11/01
+# Before this package, the image (iso-build/apt-setup.sh) and the hardware setup (sparky-stereo-hardware's setup_nvidia,
+# up to 0.1.14) wrote NVIDIA's CUDA source and its pin themselves, under the names this package ships. On the first
+# install dpkg would ask about each of them, as a file created locally, and stop there without a terminal. A file still
+# byte for byte as those tools wrote it, and owned by no package, is moved aside here, so dpkg installs the package's file
+# without asking, and postinst removes the old copy. A file a person changed stays where it is, and dpkg asks about it (its
+# default keeps the person's file). dpkg-maintscript-helper's rm_conffile moves a file aside the same way (FILE.dpkg-remove).
+set -e
+take() {
+	[ -f "$1" ] && [ ! -L "$1" ] || return 0
+	! dpkg-query -S "$1" >/dev/null 2>&1 || return 0
+	[ "$(md5sum <"$1" | cut -d' ' -f1)" = "$2" ] || return 0
+	mv -f "$1" "$1.dpkg-remove"
+}
+if [ "$1" = install ] && [ -z "${2:-}" ]; then
+	take /etc/apt/sources.list.d/sparky-stereo-cuda.sources 4abd712910958234d3642f537286ec8f
+	take /etc/apt/preferences.d/91sparky-stereo-cuda a1933e8737ed1dcdb105f6a6da42d36c
+fi
