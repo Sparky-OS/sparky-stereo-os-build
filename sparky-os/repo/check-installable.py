@@ -1096,7 +1096,8 @@ def main():
                            and (r['package'], r['version']) not in known and (r['package'], '*') not in known})
     # A pair at different versions is known by the version that is behind (the build waiting for its rebuild).
     for t in twins:
-        keys = [(t['package'], v) for v in t['behind'].values()] or [(t['package'], v) for v in t['versions'].values()]
+        keys = list(dict.fromkeys([(t['package'], v) for v in t['behind'].values()]
+                                  or [(t['package'], v) for v in t['versions'].values()]))
         if (t['package'], '*') not in known and not all(k in known for k in keys):
             unexplained += [k for k in keys if k not in known and k not in unexplained]
 
