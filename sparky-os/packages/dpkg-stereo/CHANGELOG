@@ -1,4 +1,48 @@
 -------------------------------------------------------------------------------
+  Version 0.1.23 (2026-11-01)
+-------------------------------------------------------------------------------
+  * The lean toolkit's link gate (linkcheck.py, carried here with the rest
+    of the toolkit; dpkg-stereo itself does not run it) asks first whether
+    an ELF file is the host's (ORDER 340). qemu-system-data
+    (Architecture: all) ships QEMU's guest firmware in /usr/share/qemu,
+    and QEMU's machine models read it with load_elf() into the guest; the
+    gate ran its machine check before deciding how a file is consumed, so
+    the published 1:11.1.2+ds-3+stereo3d6+lc1 failed as a predecessor
+    ("ELF machine does not match amd64") and stopped the build of
+    +stereo3d7. Eight files are foreign: hppa-firmware.img,
+    hppa-firmware64.img (with PT_INTERP /usr/lib/pa20_64/dld.sl and a
+    dynamic section), openbios-ppc, openbios-sparc32, openbios-sparc64,
+    palcode-clipper, s390-ccw.img and u-boot.e500; the message showed
+    five.
+  * An ELF file of another machine, in an Architecture: all package, under
+    /usr/share, is guest data: the gate prints it as a note and never
+    traces it. That is Debian's own line: Lintian's
+    binary-from-other-architecture has no package architecture to compare
+    in an Architecture: all package, arch-independent-package-contains-
+    binary-or-object asks for an override for "binary blobs for other
+    purposes independent of the host architecture (such as BIOS updates or
+    firmware)", /usr/share is for architecture-independent files
+    (arch-dependent-file-in-usr-share), and Debian's qemu-system-data
+    overrides both for usr/share/qemu. Neither the dynamic loader nor
+    dpkg-shlibdeps searches /usr/share for libraries.
+  * An ELF file of the host's machine is still traced wherever it is, an
+    unreadable one is still unusable, and a foreign one in a library,
+    module or program directory, or in an architecture-dependent package,
+    still fails the machine check.
+  * A static-pie program (ET_DYN with DF_1_PIE, no PT_INTERP, no NEEDED)
+    is static to the gate, as it is to file(1), glibc's ldd and Lintian's
+    statically-linked-binary (#1068304). Debian builds qemu-user's 33
+    programs so and the package depends on no libc, so the gate asked for
+    a loader they never name ("qualified interpreter missing:
+    /lib64/ld-linux-x86-64.so.2"); the published +stereo3d6 failed as a
+    predecessor once qemu-system-data passed. A shared library without
+    NEEDED has no DF_1_PIE and is still traced.
+  * With both, the gate passes the 20 archives of QEMU
+    1:11.1.2+ds-3+stereo3d7+lc1 against the published +stereo3d6.
+  * dpkg-stereo, the renderer, projection, restore, --resolve and the dpkg
+    hooks are 0.1.22's, unchanged; the renderer identity names lean
+    0.1.22.
+-------------------------------------------------------------------------------
   Version 0.1.22 (2026-11-01)
 -------------------------------------------------------------------------------
   * A conffile in its package's own bytes is never called changed by the
