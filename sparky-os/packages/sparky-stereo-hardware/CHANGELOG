@@ -4,6 +4,7 @@
   * NVIDIA's CUDA repository comes from the edition's package sparky-stereo-cuda-repo (its source, NVIDIA's key and the edition's pins), installed with sparky-stereo-nvidia-driver-lock in a transaction of their own before the driver, so the lock and the pins are in force when apt chooses NVIDIA's user space. Before, the setup downloaded NVIDIA's cuda-keyring, wrote the source and a pin of every NVIDIA package at 1002 itself, and the lock came only as the module's dependency, in the driver's own transaction (ORDER 338, ORDER 329's findings)
   * A CUDA repository the person set up already, such as NVIDIA's own cuda-keyring, is kept as it is, and only the lock is added: two sources for NVIDIA's URI with different key files stop apt
   * A failed install of the repository package or a failed preflight purges what the run installed
+  * The NVIDIA driver version is read from a module built through Lean Code too: the published nvidia-kernel-open-dkms-stereo3d is 615.71.09-2+stereo3d7+lc1, which the old pattern (+stereo3dN at the end) did not match, so the setup fell back to nouveau with "edition NVIDIA module has no NVIDIA version" and the dry run printed no version
   * share/cuda-key.sh moved to sparky-stereo-cuda-repo's recipe
 
 -------------------------------------------------------------------------------

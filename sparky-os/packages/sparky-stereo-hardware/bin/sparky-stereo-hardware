@@ -97,7 +97,7 @@ if $dry; then
 	fi
 	if grep -Fxq $'action\tnvidia-open' "$WORK/plan"; then
 		log "Would install sparky-stereo-nvidia-driver-lock and sparky-stereo-cuda-repo (NVIDIA's CUDA repository and its pins) first, the repository only where none is configured for NVIDIA's URI"
-		nvidia_version=$(apt-cache show --no-all-versions nvidia-kernel-open-dkms-stereo3d 2>/dev/null | sed -n 's/^Version: \(.*\)+stereo3d[0-9]*$/\1/p' | head -n1)
+		nvidia_version=$(apt-cache show --no-all-versions nvidia-kernel-open-dkms-stereo3d 2>/dev/null | sed -n 's/^Version: \(.*\)+stereo3d[0-9]*\(+lc[0-9]*\)\{0,1\}$/\1/p' | head -n1)
 		log "Would install nvidia-driver=${nvidia_version:-<module version>} nvidia-kernel-open-dkms-stereo3d libnvcuvid1=${nvidia_version:-<module version>} nvidia-vaapi-driver by name"
 	fi
 	exit 0

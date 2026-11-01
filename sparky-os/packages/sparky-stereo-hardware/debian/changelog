@@ -14,6 +14,11 @@ sparky-stereo-hardware (0.1.15) unstable; urgency=medium
     different key files stop apt.
   * Purge what the run installed when the repository package cannot be
     installed or the preflight fails.
+  * Read the NVIDIA driver version from a module built through Lean Code
+    too: the published nvidia-kernel-open-dkms-stereo3d is
+    615.71.09-2+stereo3d7+lc1, which the old pattern (+stereo3dN at the
+    end) did not match, so the setup fell back to nouveau ("edition
+    NVIDIA module has no NVIDIA version").
   * share/cuda-key.sh moved to sparky-stereo-cuda-repo's recipe.
 
  -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 01 Nov 2026 18:00:00 -0300

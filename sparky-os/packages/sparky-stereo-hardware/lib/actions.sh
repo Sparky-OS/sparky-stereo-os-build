@@ -136,8 +136,9 @@ setup_nvidia() {
 		return 0
 	fi
 	# The userspace driver is NVIDIA's version the module is built for: the module's version
-	# without our +stereo3d suffix (615.71.09-2+stereo3d4 -> 615.71.09-2), so the two cannot drift.
-	nvidia_version=$(sed -n 's/^Version: \(.*\)+stereo3d[0-9]*$/\1/p' "$WORK/nvidia-module" | head -n1)
+	# without our +stereo3d suffix and Lean Code's +lc mark after it (615.71.09-2+stereo3d7+lc1 -> 615.71.09-2),
+	# so the two cannot drift.
+	nvidia_version=$(sed -n 's/^Version: \(.*\)+stereo3d[0-9]*\(+lc[0-9]*\)\{0,1\}$/\1/p' "$WORK/nvidia-module" | head -n1)
 	if [[ -z $nvidia_version ]]; then
 		log 'FALLBACK edition NVIDIA module has no NVIDIA version; nouveau firmware installed'
 		return 0

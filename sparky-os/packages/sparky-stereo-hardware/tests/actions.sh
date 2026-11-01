@@ -141,12 +141,21 @@ echo 'PASS NVIDIA: a failed policy install or preflight purges what this run ins
 module_version=620.10.01-1+stereo3d1
 setup_nvidia
 grep -Fxq 'DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install nvidia-driver=620.10.01-1 nvidia-kernel-open-dkms-stereo3d libnvcuvid1=620.10.01-1 nvidia-vaapi-driver' "$calls"
+# The published module carries Lean Code's mark after ours (615.71.09-2+stereo3d7+lc1).
+: >"$calls"
+module_version=615.71.09-2+stereo3d7+lc1
+setup_nvidia
+grep -Fxq "$DRIVER_LINE" "$calls"
 module_version=615.71.09-2
 : >"$calls"
 setup_nvidia
 refute grep -q 'install nvidia-driver' "$calls"
+module_version=615.71.09-2+lc1
+: >"$calls"
+setup_nvidia
+refute grep -q 'install nvidia-driver' "$calls"
 module_version=615.71.09-2+stereo3d4
-echo 'PASS NVIDIA driver version follows the module (a new version, and a module without the suffix is refused)'
+echo 'PASS NVIDIA driver version follows the module (a new version, a Lean Code build, and a module without our suffix is refused)'
 fail_install=1
 if setup_nvidia; then echo 'FAIL NVIDIA transaction failure hidden'; exit 1; fi
 echo 'PASS missing module, policy install, preflight rollback and transaction error paths'
