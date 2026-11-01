@@ -506,3 +506,34 @@ def test_earlier_identity_refusal_precedes_a_later_solver_line_failure(tmp_path,
     good = deb(tmp_path / 'good', 'consumer', depends='libxrandr2')
     with pytest.raises(package.Invalid, match='archive solver returned an unverified download'):
         context.qualify(good)
+
+
+def test_flat_source_and_source_architectures(tmp_path):
+    # NVIDIA publishes its CUDA repository flat: sources.list(5) says a suite ending in "/"
+    # is an exact path, with the components omitted
+    config = signed_archive(tmp_path / 'flat', flat=True)
+    flat = json.loads(config.read_text())[0]
+    context = archive.Archive(config, tmp_path / 'scratch', 'amd64')
+    assert context.public_sources.endswith(flat['uri'].rstrip('/') + '/ /\n')
+    q = context.qualify(deb(tmp_path, 'consumer', depends='chosen (= 2:1.0-3)'))
+    assert ('chosen', '2:1.0-3', 'amd64') in [tuple(r['identity']) for r in manifest(q)['packages']]
+    q.close()
+    # a source for other architectures is left out of this context, like sources.list's Architectures
+    both = tmp_path / 'both.json'
+    both.write_text(json.dumps([flat, dict(flat, architectures=['arm64', 'i386'])]))
+    context = archive.Archive(both, tmp_path / 'scratch-both', 'amd64')
+    assert context.skipped_sources == [1] and context.public_sources.count('deb ') == 1
+    assert json.loads((context.base / 'metadata.json').read_text())['skipped_sources'] == [1]
+    for sources, message in (([dict(flat, architectures=['arm64'])], 'no source for amd64'),
+                             ([dict(flat, architectures=[])], 'invalid archive architectures'),
+                             ([dict(flat, components=['main'])], 'invalid archive suite or components'),
+                             ([dict(flat, suite='fixture')], 'invalid archive suite or components'),
+                             ([{k: v for k, v in flat.items() if k != 'components'}], None)):
+        bad = tmp_path / 'bad.json'
+        bad.write_text(json.dumps(sources))
+        if message is None:
+            archive.Archive(bad, tmp_path / 'scratch-omitted', 'amd64')
+        else:
+            with pytest.raises(package.Invalid, match=message):
+                archive.Archive(bad, tmp_path / 'scratch-bad', 'amd64')
+

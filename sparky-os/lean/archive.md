@@ -27,6 +27,8 @@ That message does not certify their runtime behavior.
 
 The JSON file is a nonempty list of objects with `uri`, `suite`, `components` and `keyring`.
 HTTPS public sources and explicit `file:` fixture archives are accepted.
+A `suite` ending in `/` is an exact path, a flat repository such as NVIDIA's CUDA repository, and its `components` are empty, as [sources.list(5)](https://manpages.debian.org/testing/apt/sources.list.5.en.html) says; any other suite needs at least one component.
+The optional `architectures` list limits a source to those architectures, as the Architectures option of sources.list does; a context with no source left is refused.
 Credentials in URLs and arbitrary APT configuration directives are rejected.
 For an immutable Debian snapshot use its timestamped URI, for example `https://snapshot.debian.org/archive/debian/20261025T000000Z`, the intended suite and `"check_valid_until": false` when the Release date has expired.
 This option changes Release freshness checking only.

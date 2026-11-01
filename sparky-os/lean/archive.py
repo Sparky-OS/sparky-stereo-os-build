@@ -375,9 +375,12 @@ class Archive:
     """One architecture and one frozen set of signed indexes per comparison.
 
     Configuration is a JSON list of {uri, suite, components, keyring} sources.
-    HTTPS archives and explicit file: fixture archives are accepted. The optional
-    check_valid_until=false is for immutable snapshots with expired Release dates;
-    it never disables signature or hash verification.
+    HTTPS archives and explicit file: fixture archives are accepted. A suite ending
+    in "/" is an exact path (a flat repository) with no components (sources.list(5)).
+    The optional architectures list limits a source to those architectures, like
+    sources.list's Architectures option. The optional check_valid_until=false is for
+    immutable snapshots with expired Release dates; it never disables signature or
+    hash verification.
     """
 
     def __init__(self, config, scratch, arch, min_free_gib=2, root_min_free_gib=12):
@@ -410,9 +413,9 @@ class Archive:
         (self.base / 'state/status').touch()
         (self.base / 'etc/apt.conf').touch()
         (self.base / 'etc/preferences').touch()
-        lines = []
+        lines, self.skipped_sources = [], []
         for index, source in enumerate(self.sources):
-            if set(source) - {'uri', 'suite', 'components', 'keyring', 'check_valid_until'}:
+            if set(source) - {'uri', 'suite', 'components', 'keyring', 'check_valid_until', 'architectures'}:
                 raise package.Invalid('unknown archive source configuration field')
             uri = source['uri'].rstrip('/')
             parsed = urlsplit(uri)
@@ -422,11 +425,23 @@ class Archive:
                     or (parsed.scheme == 'file' and parsed.netloc)):
                 raise package.Invalid(f'archive requires an explicit public HTTPS or file URI: {uri}')
             suite = source['suite']
-            components = source['components']
-            if not re.fullmatch(r'[a-zA-Z0-9._/-]+', suite) or not components:
+            components = source.get('components', [])
+            # sources.list(5): a suite that ends with "/" is an exact path and takes no
+            # components; any other suite needs at least one.
+            flat = isinstance(suite, str) and suite.endswith('/')
+            if (not isinstance(suite, str) or not re.fullmatch(r'[a-zA-Z0-9._/-]+', suite)
+                    or not isinstance(components, list) or bool(components) == flat):
                 raise package.Invalid('invalid archive suite or components')
-            if any(not re.fullmatch(r'[a-zA-Z0-9._/-]+', c) for c in components):
+            if any(not isinstance(c, str) or not re.fullmatch(r'[a-zA-Z0-9._/-]+', c) for c in components):
                 raise package.Invalid('invalid archive component')
+            architectures = source.get('architectures')
+            if architectures is not None:
+                if (not isinstance(architectures, list) or not architectures
+                        or any(not isinstance(a, str) or not re.fullmatch(r'[a-z0-9-]+', a) for a in architectures)):
+                    raise package.Invalid('invalid archive architectures')
+                if arch not in architectures:
+                    self.skipped_sources.append(index)
+                    continue
             key = self.base / f'etc/key-{index}.gpg'
             key_source = Path(source['keyring'])
             self.ensure_space(key_source.stat().st_size + 16384)
@@ -435,7 +450,12 @@ class Archive:
             opts = f'arch={arch} signed-by={key}'
             if source.get('check_valid_until', True) is False:
                 opts += ' check-valid-until=no'
-            lines.append(f'deb [{opts}] {uri} {suite} {" ".join(components)}\n')
+            if flat:
+                lines.append(f'deb [{opts}] {uri}/ {suite}\n')
+            else:
+                lines.append(f'deb [{opts}] {uri} {suite} {" ".join(components)}\n')
+        if not lines:
+            raise package.Invalid(f'archive configuration has no source for {arch}')
         self.public_sources = ''.join(lines)
         (self.base / 'etc/sources.list').write_text(self.public_sources)
         # APT_CONFIG is read BEFORE apt.conf.d, unlike -c and -o. All paths,
@@ -464,14 +484,15 @@ class Archive:
                 raise package.Invalid('scratch path contains unsupported APT configuration characters')
         (self.base / 'apt.conf').write_text(''.join(f'{k} "{v}";\n' for k, v in options.items()) +
                                            f'APT::Architectures {{ "{arch}"; }};\n')
-        self.ensure_space(len(self.sources) << 30)
+        self.ensure_space(len(lines) << 30)
         self.run(['apt-config', 'dump'], 'configuration')
         self.run(['apt-get', '-y', '-o', 'APT::Update::Error-Mode=any', '-o', 'Debug::Acquire::gpgv=true', 'update'], 'update')
         self.metadata = [{'path': str(p.relative_to(self.base)), 'size': p.stat().st_size, 'sha256': digest(p)}
                          for p in sorted((self.base / 'state/lists').iterdir()) if p.is_file() and p.name != 'lock']
         if not any(p['path'].endswith('InRelease') or p['path'].endswith('Release.gpg') for p in self.metadata):
             raise package.Invalid('archive update produced no verified signed Release metadata')
-        (self.base / 'metadata.json').write_text(json.dumps({'sources': self.sources, 'metadata': self.metadata,
+        (self.base / 'metadata.json').write_text(json.dumps({'sources': self.sources,
+            'skipped_sources': self.skipped_sources, 'metadata': self.metadata,
             'keys': [{'path': str(p.relative_to(self.base)), 'sha256': digest(p)}
                      for p in sorted((self.base / 'etc').glob('key-*.gpg'))],
             'configuration_sha256': digest(self.base / 'apt.conf'),
