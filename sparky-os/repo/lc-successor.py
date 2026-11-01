@@ -8,7 +8,11 @@ says why (no source change), lean.debian_prepare adds this toolkit at NEXT+lc1 w
 published source retained, and dpkg-source -b packs it next to the same orig tarball.
 The kernel recipe also records its package version in debian/kernel-build.env (kernel/lean/prepare.py); that line
 follows. Any other difference between the published and the new source stops the tool.
+--recipe DIR: the next version carries a recipe change: DIR is the recipe's debian/ directory, whose changelog is the
+published plain changelog with the new version's entry (or entries) on top; it replaces the plain debian/ directory, and
+the new version is its top entry. Only debian/ may differ then; the tool lists what did.
 Usage: lc-successor.py --next NEXT --item TEXT [--item TEXT...] OLD.dsc OUT
+       lc-successor.py --recipe DIR OLD.dsc OUT
   NEXT: the plain version (7.3.1-14.1, 615.71.09-2+stereo3d7); the source becomes NEXT+lc1.
   OUT: receives the new .dsc and Debian tarball (the orig tarball is the published one, unchanged).
 """
@@ -62,12 +66,17 @@ def tree_diff(a, b, rel=Path('.')):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--next', required=True)
-    ap.add_argument('--item', action='append', required=True)
+    ap.add_argument('--next')
+    ap.add_argument('--item', action='append')
+    ap.add_argument('--recipe', type=Path, help="the recipe's debian/ directory for the next version")
     ap.add_argument('--work', type=Path)
     ap.add_argument('dsc', type=Path)
     ap.add_argument('out', type=Path)
     args = ap.parse_args()
+    if not ((args.recipe and not args.next and not args.item) or (not args.recipe and args.next and args.item)):
+        ap.error('either --next and --item (no source change), or --recipe DIR')
+    if args.recipe and args.recipe.resolve().name != 'debian':
+        ap.error("--recipe names a recipe's debian/ directory")
     dsc = args.dsc.resolve()
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -99,12 +108,25 @@ def main():
         plain = parse(new, 'Version')
         if plain != version[:-len('+lc1')]:
             raise ValueError(f'plain-from-lc gave {plain}, not {version[:-4]}')
+        changelog = new / 'debian/changelog'
+        if args.recipe:
+            recipe = args.recipe.resolve()
+            published = changelog.read_text()
+            mine = (recipe / 'changelog').read_text()
+            if not mine.endswith('\n\n' + published) or parse(recipe.parent, 'Source') != name:
+                raise ValueError("the recipe's changelog does not extend the published plain changelog of this source")
+            if (recipe / 'sparky-lean-toolkit').exists() or (recipe / 'sparky-lean-preserve.json').exists():
+                raise ValueError('a recipe holds the plain debian/ directory; Lean Code adds the toolkit and the plan')
+            args.next = subprocess.check_output(['dpkg-parsechangelog', '-l', str(recipe / 'changelog'), '-S', 'Version'],
+                                                text=True).strip()
+            shutil.rmtree(new / 'debian')
+            shutil.copytree(recipe, new / 'debian', symlinks=True)
         if subprocess.run(['dpkg', '--compare-versions', args.next, 'gt', plain]).returncode:
             raise ValueError(f'{args.next} does not advance {plain}')
-        changelog = new / 'debian/changelog'
-        changelog.write_text(entry(name, args.next, args.item) + changelog.read_text())
+        if not args.recipe:
+            changelog.write_text(entry(name, args.next, args.item) + changelog.read_text())
         env = new / 'debian/kernel-build.env'
-        if env.exists():
+        if env.exists() and not args.recipe:
             text = env.read_text()
             line = f'PACKAGE_VERSION={version}\n'
             if text.count(line) != 1:
@@ -122,6 +144,8 @@ def main():
             allowed.add('debian/control')
         toolkit = [p for p in changed if p.startswith('debian/sparky-lean-toolkit/')]
         other = [p for p in changed if p not in allowed and p not in toolkit]
+        if args.recipe:
+            other = [p for p in other if not p.startswith('debian/')]
         if other:
             raise ValueError(f'the new source differs beyond its changelog and toolkit: {other}')
         # the orig tarball (and its signature) beside the new tree, as dpkg-source -b wants them
@@ -137,7 +161,7 @@ def main():
             shutil.copyfile(work / n, out / n)
         shutil.copyfile(changelog, out / f'{stem}.changelog')
         shutil.copyfile(old / 'debian/changelog', out / f'{name}_{version.split(":", 1)[-1]}.changelog')
-        report = {'source': name, 'old': version, 'new': new_version, 'files': made,
+        report = {'source': name, 'old': version, 'new': new_version, 'files': made, 'recipe': str(args.recipe or ''),
                   'changed': [p for p in changed if p not in toolkit], 'toolkit_files_changed': len(toolkit),
                   'preserve_patterns': len(preserve), 'plain_from_lc': mode}
         (out / f'{stem}.successor.json').write_text(json.dumps(report, indent=1) + '\n')

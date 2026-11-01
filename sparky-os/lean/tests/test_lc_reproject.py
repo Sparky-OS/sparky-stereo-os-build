@@ -269,6 +269,36 @@ class Successor(unittest.TestCase):
         self.assertIn('Build-Depends: gcc, node-acorn, nodejs, perl, python3, python3-yaml, debhelper-compat (= 13)\n',
                       (tree / 'debian/control').read_text())
 
+    def recipe(self, extend=True):
+        recipe = self.tmp / 'recipe/debian'
+        plain = self.tmp / 'plain'
+        plain_source(plain)
+        shutil.copytree(plain / 'debian', recipe)
+        (recipe / 'rules').write_text('#!/usr/bin/make -f\n%:\n\tdh $@\n\noverride_dh_auto_install:\n\ttrue\n')
+        base = (recipe / 'changelog').read_text() if extend else 'demo (0.9-1) unstable; urgency=medium\n\n  * Other.\n\n -- x  Fri, 30 Oct 2026 15:00:00 -0300\n'
+        (recipe / 'changelog').write_text(f'demo (1.0-2) unstable; urgency=medium\n\n  * A recipe change (ORDER 311).\n\n -- {ME}  Sat, 31 Oct 2026 20:00:00 -0300\n\n' + base)
+        return recipe
+
+    def test_a_recipe_gives_the_next_version_and_its_debian_changes(self):
+        dsc = self.published()
+        r = subprocess.run([sys.executable, str(REPO / 'lc-successor.py'), '--recipe', str(self.recipe()), '--work', str(self.tmp),
+                            str(dsc), str(self.tmp / 'out')], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        report = json.loads(r.stdout.splitlines()[-1])
+        self.assertEqual(report['new'], '1.0-2+lc1')
+        self.assertEqual(report['changed'], ['debian/changelog', 'debian/rules'])
+        tree = self.unpack(self.tmp / 'out/demo_1.0-2+lc1.dsc')
+        self.assertIn('override_dh_auto_install', (tree / 'debian/rules').read_text())
+        self.assertIn('sparky-lean-toolkit', (tree / 'debian/rules').read_text())
+        self.assertTrue((tree / 'debian/sparky-lean-preserve.json').exists())
+
+    def test_a_recipe_that_does_not_extend_the_published_changelog_stops(self):
+        dsc = self.published()
+        r = subprocess.run([sys.executable, str(REPO / 'lc-successor.py'), '--recipe', str(self.recipe(extend=False)),
+                            '--work', str(self.tmp), str(dsc), str(self.tmp / 'out')], capture_output=True, text=True)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('does not extend', r.stderr)
+
     def test_a_version_that_does_not_advance_stops(self):
         dsc = self.published()
         r = subprocess.run([sys.executable, str(REPO / 'lc-successor.py'), '--next', '1.0-1', '--item', 'x',
