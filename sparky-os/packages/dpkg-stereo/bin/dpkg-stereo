@@ -261,8 +261,12 @@ def _db_stanzas(f):
         if line[0] in ' \t':
             if conf is not None:
                 entry = conffile_entry(line)
+                # a path the package's conffiles list twice has two entries, and only the first one is dpkg's:
+                # its lookups stop at the first match (src/main/unpack.c), and configuring skips the second, whose
+                # .dpkg-new the first one used, so it keeps "newconffile" or an older version's hash
+                # (src/main/configure.c; libcufile-13-4's /etc/ld.so.conf.d/gds-13-4.conf, nis's /etc/default/nis)
                 if entry and 'remove-on-upgrade' not in entry[2]:
-                    conf[entry[0]] = entry[1]
+                    conf.setdefault(entry[0], entry[1])
             continue
         conf = None
         key, _, value = line.partition(':')
@@ -1168,10 +1172,11 @@ CONFFILE_MIGRATION = 'conffile-owner-v1'
 
 
 def repair_conffile_owners(P, jobs=4, pkgs=None):
-    """The conffiles dpkg-stereo 0.1.21 and older called "changed by the person" from another package's
-    entry for the same path: one map of every package's Conffiles entries gave a moved conffile the hash of
-    the package it left (binutils-common's "newconffile remove-on-upgrade" for binutils' /etc/gprofng.rc,
-    ORDER 325). Each such record is checked once against its own package's entry: a file in the bytes that
+    """The conffiles dpkg-stereo 0.1.21 and older called "changed by the person" from a Conffiles entry dpkg
+    does not use for them: one map of every package's entries gave a moved conffile the hash of the package it
+    left (binutils-common's "newconffile remove-on-upgrade" for binutils' /etc/gprofng.rc, ORDER 325), and a
+    path a package lists twice got its second entry's hash (nis's /etc/default/nis). Each such record is
+    checked once against its own package's first entry: a file in the bytes that
     entry records, or one that package does not record as a conffile, was never the person's, so its record
     goes and the file is examined again like any other; a file whose bytes differ from its package's own
     hash stays the person's, as it was. Records of packages that are not installed stay as they are. Reads
@@ -1200,7 +1205,7 @@ def repair_conffile_owners(P, jobs=4, pkgs=None):
             del left[path]
         left.save()
         print(f'dpkg-stereo: {len(again)} conffiles in their package\'s own bytes were recorded as changed by the '
-              f'person (another package\'s Conffiles entry for the same path); examined again')
+              f'person (from a Conffiles entry dpkg does not use for them); examined again')
         project_packages(P, sorted(set(again.values())), jobs, log=lambda m: None, only=set(again), repair=False,
                          record=False)
     os.makedirs(P.state(), exist_ok=True)

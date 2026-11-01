@@ -744,9 +744,9 @@ class Packages(unittest.TestCase):
         self.assertNotIn('lc-demo', package.installed(P))
         self.assertNotIn('lc-demo', client.dpkg_packages(P))
 
-    def plain_deb(self, name, files, conffiles=(), control=''):
+    def plain_deb(self, name, files, conffiles=(), control='', version='1'):
         """A package of another distribution (no lc1 mark), with an md5sums of every file it ships."""
-        tree = self.base / f'tree-{name}'
+        tree = self.base / f'tree-{name}-{version}'
         (tree / 'DEBIAN').mkdir(parents=True)
         sums = []
         for path, text in files.items():
@@ -758,9 +758,9 @@ class Packages(unittest.TestCase):
         (tree / 'DEBIAN/md5sums').write_text(''.join(sums))
         if conffiles:
             (tree / 'DEBIAN/conffiles').write_text(''.join(c + '\n' for c in conffiles))
-        (tree / 'DEBIAN/control').write_text(f'Package: {name}\nVersion: 1\nArchitecture: all\n{control}'
+        (tree / 'DEBIAN/control').write_text(f'Package: {name}\nVersion: {version}\nArchitecture: all\n{control}'
                                             'Maintainer: Example <dev@example.org>\nDescription: fixture\n')
-        deb = self.base / f'{name}.deb'
+        deb = self.base / f'{name}_{version}.deb'
         subprocess.run(['dpkg-deb', '--root-owner-group', '-b', str(tree), str(deb)], check=True,
                        stdout=subprocess.DEVNULL)
         return deb
@@ -802,6 +802,11 @@ class Packages(unittest.TestCase):
         rec, = client._db_stanzas(io.StringIO(stanza))
         self.assertEqual(rec['Conffiles'], {'/etc/a b.conf': '0123', '/etc/gone': '4567'})
         self.assertEqual(rec['Version'], '1')
+        # a path listed twice: the first entry is dpkg's (nis 4.5's /etc/default/nis on the station)
+        stanza = ('Package: nis\nStatus: install ok installed\nArchitecture: all\nConffiles:\n'
+                  ' /etc/default/nis 898c015bd0f4c11c721e40021ceed095\n /etc/default/nis 27b3e5f9d0c37dc01b02dbbeb5100775\n\n')
+        rec, = client._db_stanzas(io.StringIO(stanza))
+        self.assertEqual(rec['Conffiles'], {'/etc/default/nis': '898c015bd0f4c11c721e40021ceed095'})
 
     def test_a_moved_conffile_in_its_package_bytes_is_never_edited(self):
         """ORDER 325: binutils owns /etc/gprofng.rc in Debian's bytes, binutils-common records it as
@@ -850,6 +855,34 @@ class Packages(unittest.TestCase):
             self.assertNotIn(path, records)
             self.assertEqual((root / path.lstrip('/')).read_text(), text)
             self.assertIn(f'EDITED    {path} (changed by the person: left as they made it)\n', out)
+
+    def test_a_conffile_listed_twice_is_judged_by_its_first_entry(self):
+        """A package whose conffiles list a path twice gets two Conffiles entries: on a fresh install the
+        second is "newconffile" (libcufile-13-4's /etc/ld.so.conf.d/gds-13-4.conf on the station), after an
+        upgrade it keeps the old version's hash (nis's /etc/default/nis); dpkg's own entry is the first."""
+        root, P = self.system()
+        text = {v: '# A setting explained for people, kept in the HR copy.\n' * 3 + f'KEY={v}\n' for v in ('1', '2')}
+        debs = {v: self.plain_deb('lc-dup', {'/etc/default/lc-dup': text[v]}, conffiles=['/etc/default/lc-dup'] * 2,
+                                  version=v) for v in ('1', '2')}
+        self.dpkg(root, '-i', str(debs['1']))
+        status = (root / 'var/lib/dpkg/status').read_text()
+        self.assertIn(f' /etc/default/lc-dup {hashlib.md5(text["1"].encode()).hexdigest()}\n'
+                      ' /etc/default/lc-dup newconffile\n', status)
+        self.run_project(P)
+        self.assertNotIn('/etc/default/lc-dup', client.Records(P, 'left'))
+        self.assertEqual(client.Records(P)['/etc/default/lc-dup']['conffile'], '1')
+        client.pre_invoke(P)
+        self.dpkg(root, '-i', str(debs['2']))
+        status = (root / 'var/lib/dpkg/status').read_text()
+        self.assertIn(f' /etc/default/lc-dup {hashlib.md5(text["2"].encode()).hexdigest()}\n'
+                      f' /etc/default/lc-dup {hashlib.md5(text["1"].encode()).hexdigest()}\n', status)
+        client.post_invoke(P, 1)
+        rec = client.Records(P)['/etc/default/lc-dup']
+        self.assertEqual((rec['version'], rec['md5_orig']), ('2', hashlib.md5(text['2'].encode()).hexdigest()))
+        self.assertNotIn('/etc/default/lc-dup', client.Records(P, 'left'))
+        rc, out = self.verify_output(P)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn('EDITED', out)
 
     def test_a_file_taken_over_through_replaces_is_judged_by_its_new_owner(self):
         """dpkg takes a replaced file out of the old package's file list and leaves its md5sums as they
