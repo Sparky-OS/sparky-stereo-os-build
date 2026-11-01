@@ -1,0 +1,11 @@
+# Sparky Stereo OS, an edition of SparkyLinux.
+# hid-tmff2 (Kimplul/hid-tmff2, revision d890a93) ships no rules for its sysfs
+# files: its README names a "make udev-rules" target that the Makefile does not
+# have. The files are created root:root with mode 0644 (DEVICE_ATTR_RW), so a
+# user could read the wheel's range, gain and effect levels but never set them.
+# This edition rule gives them the convention hid-fanatecff's own rules use:
+# group "games", group-writable. Nothing is opened to other users. The hidraw
+# node comes from sparky-sim-hidraw (uaccess). See README.Debian.
+ACTION!="add|change|bind", GOTO="sparky_tmff2_end"
+SUBSYSTEM=="hid", DRIVER=="tmff2", RUN+="/bin/sh -c 'cd %S%p && (chown -f :games alternate_modes damper_level friction_level gain range spring_level; chmod -f g+w alternate_modes damper_level friction_level gain range spring_level) || true'"
+LABEL="sparky_tmff2_end"

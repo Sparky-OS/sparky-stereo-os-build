@@ -1,0 +1,41 @@
+hid-tmff2-dkms (0.83+git20261010.d890a93-1+stereo3d4) unstable; urgency=medium
+
+  * Leave the build's Lean Code records out of /usr/src: the source tree is
+    copied with .sparky-lc excluded, as nvidia-kmod-open does. The earlier
+    builds shipped the folder (the native pass's source report and authored
+    copies, 9 to 20 files), whose report named the toolkit of that build (ORDER
+    311).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 01 Nov 2026 00:31:32 -0300
+
+hid-tmff2-dkms (0.83+git20261010.d890a93-1+stereo3d3) unstable; urgency=medium
+
+  * No-change rebuild of 0.83+git20261010.d890a93-1+stereo3d2 for the Lean Code
+    toolkit 0.1.18 of build-repo main 9a1a331: C and C++ files keep every
+    authored line with no #line directive, a removed comment leaving the line
+    breaks it held (ORDER 303).
+  * The binary packages of this version are the published
+    0.83+git20261010.d890a93-1+stereo3d2+lc1 payload, its authored files taken
+    back from the HR companion and projected again with toolkit 0.1.18, nothing
+    recompiled (ORDER 311).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 31 Oct 2026 21:28:41 -0300
+
+hid-tmff2-dkms (0.83+git20261010.d890a93-1+stereo3d2) unstable; urgency=medium
+
+  * Install an edition udev rule (rules/70-sparky-*.rules) so the driver's
+    sysfs controls are usable by the person at the wheel and no device node
+    is made world-writable. Upstream fanatec.rules sets MODE="0666" on every
+    0eb7 USB device; the edition rule uses uaccess instead and otherwise
+    keeps the upstream file. hid-tmff2 and new-lg4ff ship no rules, their
+    sysfs files were root-only; the edition rule gives them the group
+    "games" convention of hid-fanatecff. Reasons in README.Debian.
+  * Test: study/packages/rigs/check-wheel-udev.py fails on the previous build.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 10 Oct 2026 17:30:00 -0300
+
+hid-tmff2-dkms (0.83+git20261010.d890a93-1+stereo3d1) unstable; urgency=medium
+
+  * Package pinned upstream sources for the edition's simulation rigs.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 10 Oct 2026 10:00:00 -0300

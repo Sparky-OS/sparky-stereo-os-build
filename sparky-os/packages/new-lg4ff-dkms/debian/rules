@@ -1,0 +1,13 @@
+#!/usr/bin/make -f
+%:
+	dh $@ --with dkms
+override_dh_auto_build:
+override_dh_auto_test:
+override_dh_auto_clean:
+override_dh_auto_install:
+	mkdir -p debian/new-lg4ff-dkms/usr/src/new-lg4ff-0.5.0+git20261010.2092db1
+	tar --exclude=debian --exclude=.git --exclude=.sparky-lc -cf - . | tar -xf - -C debian/new-lg4ff-dkms/usr/src/new-lg4ff-0.5.0+git20261010.2092db1
+	install -m644 debian/dkms.conf debian/new-lg4ff-dkms/usr/src/new-lg4ff-0.5.0+git20261010.2092db1/dkms.conf
+	install -Dm644 debian/70-sparky-new-lg4ff.rules debian/new-lg4ff-dkms/usr/lib/udev/rules.d/70-sparky-new-lg4ff.rules
+override_dh_dkms:
+	dh_dkms -V 0.5.0+git20261010.2092db1
