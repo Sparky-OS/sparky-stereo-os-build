@@ -2,6 +2,7 @@
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL3 License
 # Last update 2026/10/16
+. "$(dirname "$0")/installer-common"
 # Runs during installation (Calamares, shellprocess@efifallback) in the live system, with ESP set to the
 # installed system's EFI partition (${ROOT}/boot/efi), after the bootloader step, which no longer writes
 # the EFI fallback path itself (installEFIFallback: false). It runs outside the installed system because
@@ -21,48 +22,69 @@ ESP=${ESP:-/boot/efi}
 OS_PROBER=${OS_PROBER:-os-prober}
 EFI_FIRMWARE=${EFI_FIRMWARE:-/sys/firmware/efi}
 [ -d "$EFI_FIRMWARE" ] || exit 0
-[ -d "$ESP/EFI" ] || exit 0
-# names on the EFI partition (FAT) are found whatever their case
-efi_dir() { find "$ESP/EFI" -mindepth 1 -maxdepth 1 -type d -iname "$1" 2>/dev/null | head -n 1; }
-efi_file() { [ -n "$1" ] && find "$1" -mindepth 1 -maxdepth 1 -type f -iname "$2" 2>/dev/null | head -n 1; }
-SRC=$(efi_dir sparky)
-for f in shimx64.efi grubx64.efi mmx64.efi; do
-	if [ -z "$(efi_file "$SRC" "$f")" ]; then
-		echo "efi-fallback: no $f in $ESP/EFI/sparky, the fallback path is left as it is"
-		exit 0
-	fi
+# A directory left on the root filesystem is not a mounted ESP.
+if fs=$(findmnt -n -o FSTYPE --mountpoint "$ESP"); then :; else
+	status=$?
+	fail esp "$ESP: findmnt (exit $status)"
+fi
+[ "$fs" = vfat ] && [ -d "$ESP/EFI" ] || fail esp "$ESP (FSTYPE=$fs)"
+# FAT names are case insensitive. Keep find's status, including read failures.
+efi_dir() { find "$1" -mindepth 1 -maxdepth 1 -type d -iname "$2" -print -quit; }
+efi_file() {
+	[ -n "$1" ] || return 0
+	find "$1" -mindepth 1 -maxdepth 1 -type f -iname "$2" -print -quit
+}
+SRC=$(efi_dir "$ESP/EFI" sparky) || fail loader "$ESP/EFI"
+[ -n "$SRC" ] || fail loader "$ESP/EFI/sparky"
+for f in shimx64.efi grubx64.efi mmx64.efi grub.cfg; do
+	file=$(efi_file "$SRC" "$f") || fail loader "$SRC/$f"
+	[ -n "$file" ] && [ -r "$file" ] && [ -s "$file" ] || fail loader "$SRC/$f"
 done
 TARGET=${TARGET:-}
-# from the installer: the installed system's root device, from its mount point (ROOT)
 if [ -z "$TARGET" ] && [ -n "${ROOT:-}" ]; then
-	TARGET=$(findmnt -n -o SOURCE "$ROOT" 2>/dev/null)
+	if TARGET=$(findmnt -n -o SOURCE --mountpoint "$ROOT"); then :; else
+		status=$?
+		fail probe "$ROOT: findmnt (exit $status)"
+	fi
+	[ -n "$TARGET" ] || fail probe "$ROOT: findmnt returned no device"
 fi
-OTHERS=$($OS_PROBER 2>/dev/null | grep -v -e "^${TARGET:-//none//}[:@]")
-if [ -n "$(efi_file "$(efi_dir Microsoft)/Boot" bootmgfw.efi 2>/dev/null)" ] || echo "$OTHERS" | grep -qi ':windows:'; then
-	echo "efi-fallback: Windows is on this machine, its fallback loader stays as it is"
+if systems=$("$OS_PROBER"); then :; else
+	status=$?
+	fail probe "$OS_PROBER (exit $status)"
+fi
+# Compare device names literally, including a possible @/EFI/... suffix.
+OTHERS=$(printf '%s\n' "$systems" | awk -F '[:@]' -v target="$TARGET" 'NF && $1 != target') || fail probe os-prober
+microsoft=$(efi_dir "$ESP/EFI" Microsoft) || fail loader "$ESP/EFI"
+windows=
+if [ -n "$microsoft" ]; then
+	boot=$(efi_dir "$microsoft" Boot) || fail loader "$microsoft"
+	windows=$(efi_file "$boot" bootmgfw.efi) || fail loader "$boot"
+fi
+case "$OTHERS" in *:[Ww][Ii][Nn][Dd][Oo][Ww][Ss]:*) windows=detected;; esac
+if [ -n "$windows" ]; then
 	exit 0
 fi
-DST=$(efi_dir boot)
-if [ -n "$OTHERS" ] && [ -n "$(efi_file "$DST" bootx64.efi)" ]; then
-	echo "efi-fallback: another system is on this machine, its fallback loader stays as it is"
+DST=$(efi_dir "$ESP/EFI" boot) || fail loader "$ESP/EFI"
+old=$(efi_file "$DST" bootx64.efi) || fail loader "$DST"
+if [ -n "$OTHERS" ] && [ -n "$old" ]; then
 	exit 0
 fi
 [ -n "$DST" ] || DST=$ESP/EFI/BOOT
-mkdir -p "$DST"
-# replace an existing BOOTX64.EFI whatever the case of its name
-old=$(efi_file "$DST" bootx64.efi)
-[ -n "$old" ] && rm -f "$old"
-cp "$(efi_file "$SRC" shimx64.efi)" "$DST/BOOTX64.EFI"
-for f in grubx64.efi mmx64.efi; do
-	old=$(efi_file "$DST" $f)
-	[ -n "$old" ] && rm -f "$old"
-	cp "$(efi_file "$SRC" $f)" "$DST/$f"
+checked mkdir -p "$DST"
+# Prepare and verify the complete chain before replacing any existing file.
+STAGE=$(mktemp -d "$DST/.sparky-efi.XXXXXX") || fail write "$DST"
+trap 'status=$?; rm -rf "$STAGE" || { printf "%s\n%s\n" "$WRITE" "$STAGE" >&2; exit 1; }; exit "$status"' EXIT
+for f in shimx64.efi grubx64.efi mmx64.efi grub.cfg; do
+	src=$(efi_file "$SRC" "$f") || fail loader "$SRC/$f"
+	name=$f
+	[ "$f" != shimx64.efi ] || name=BOOTX64.EFI
+	checked cp "$src" "$STAGE/$name"
+	checked cmp "$src" "$STAGE/$name"
 done
-cfg=$(efi_file "$SRC" grub.cfg)
-if [ -n "$cfg" ]; then
-	old=$(efi_file "$DST" grub.cfg)
-	[ -n "$old" ] && rm -f "$old"
-	cp "$cfg" "$DST/grub.cfg"
-fi
-echo "efi-fallback: $DST holds shim, GRUB and MokManager from $SRC"
+for f in grubx64.efi mmx64.efi grub.cfg BOOTX64.EFI; do
+	old=$(efi_file "$DST" "$f") || fail loader "$DST/$f"
+	# Reuse an existing spelling: FAT resolves it to the same file.
+	checked mv -f "$STAGE/$f" "${old:-$DST/$f}"
+done
+checked sync -f "$DST"
 exit 0

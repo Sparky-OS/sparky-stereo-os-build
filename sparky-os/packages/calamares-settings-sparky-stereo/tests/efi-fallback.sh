@@ -17,6 +17,10 @@ esp() { # a partition with our chain in EFI/sparky (lower case, as the installer
 run() { ESP=$T/$1 OS_PROBER=$T/os-prober EFI_FIRMWARE=${2:-$T/fw} TARGET=${TARGET:-} ROOT=${ROOT:-} PATH=$T/bin:$PATH "$HERE/lib/efi-fallback" >/dev/null; }
 same() { cmp -s "$1" "$2" && echo same || echo different; }
 
+mkdir -p "$T/bin"
+printf '#!/bin/sh\ncase "$*" in *FSTYPE*) echo vfat;; *) echo /dev/vdb3;; esac\n' > "$T/bin/findmnt"
+chmod 755 "$T/bin/findmnt"
+
 esp w; mkdir -p $T/w/EFI/Microsoft/Boot $T/w/EFI/Boot
 echo "Windows' boot manager" > $T/w/EFI/Microsoft/Boot/bootmgfw.efi; echo "Windows' fallback" > $T/w/EFI/Boot/bootx64.efi
 probe '/dev/vda1@/EFI/Microsoft/Boot/bootmgfw.efi:Windows Boot Manager:Windows:efi\n'; run w
@@ -45,14 +49,14 @@ check "alone: the four files, no fallback.efi" "$(ls $T/a/EFI/BOOT | tr '\n' ' '
 esp s; mkdir -p $T/s/EFI/Boot; echo "bare GRUB" > $T/s/EFI/Boot/bootx64.efi; echo "old grub" > $T/s/EFI/Boot/grubx64.efi
 probe ''; run s
 check "alone over a bare GRUB: one BOOTX64, now shim" "$(ls $T/s/EFI/Boot | grep -ci bootx64.efi)" 1
-check "alone over a bare GRUB: shim" "$(same $T/s/EFI/Boot/BOOTX64.EFI $T/s/EFI/sparky/shimx64.efi)" same
+check "alone over a bare GRUB: shim" "$(same $T/s/EFI/Boot/bootx64.efi $T/s/EFI/sparky/shimx64.efi)" same
 check "alone over a bare GRUB: GRUB replaced" "$(same $T/s/EFI/Boot/grubx64.efi $T/s/EFI/sparky/grubx64.efi)" same
 
 esp t; mkdir -p $T/t/EFI/BOOT; echo "an old bare GRUB" > $T/t/EFI/BOOT/BOOTX64.EFI
 probe '/dev/vda2:Sparky Stereo OS 9 (Mashtabba):Sparky:linux\n'; TARGET=/dev/vda2 run t
 check "os-prober lists only the new system itself: shim written" "$(same $T/t/EFI/BOOT/BOOTX64.EFI $T/t/EFI/sparky/shimx64.efi)" same
 
-esp r; mkdir -p $T/bin; printf '#!/bin/sh\necho /dev/vdb3\n' > $T/bin/findmnt; chmod 755 $T/bin/findmnt
+esp r; mkdir -p $T/bin; printf '#!/bin/sh\ncase "$*" in *FSTYPE*) echo vfat;; *) echo /dev/vdb3;; esac\n' > $T/bin/findmnt; chmod 755 $T/bin/findmnt
 probe '/dev/vdb3:Sparky Stereo OS 9 (Mashtabba):Sparky:linux\n'; ROOT=/tmp/calamares-root-x run r
 check "the root device found from ROOT is not another system: shim written" "$(same $T/r/EFI/BOOT/BOOTX64.EFI $T/r/EFI/sparky/shimx64.efi)" same
 
@@ -60,6 +64,7 @@ esp b; probe ''; run b $T/no-efi-firmware
 check "BIOS machine: nothing written" "$(ls $T/b/EFI)" sparky
 
 mkdir -p $T/n/EFI/sparky; echo grub > $T/n/EFI/sparky/grubx64.efi; probe ''; run n
+check "no shim: failure status" "$?" 1
 check "no shim in EFI/sparky: nothing written" "$(ls $T/n/EFI)" sparky
 
 echo "efi-fallback: $pass passed, $fail failed"

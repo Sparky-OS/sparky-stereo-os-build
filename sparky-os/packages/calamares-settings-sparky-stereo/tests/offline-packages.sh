@@ -12,6 +12,7 @@ check() { if [ "$2" = "$3" ]; then pass=$((pass + 1)); else fail=$((fail + 1)); 
 run() { OFFLINE=$T/offline APT_DIR=$T/apt LISTS=$T/lists "$HERE/lib/offline-packages" "$1"; }
 mkdir -p $T/lists
 run on
+check "no local repository: failure status" "$?" 1
 check "no local repository: no source" "$(ls $T/apt/sources.list.d 2>/dev/null)" ""
 mkdir -p $T/offline; echo "Package: grub-efi-amd64" > $T/offline/Packages; touch $T/offline/grub-efi-amd64_2.14-4_amd64.deb
 run on
