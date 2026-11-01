@@ -91,11 +91,28 @@ def shipped_paths(deb):
                     paths.append('/' + line.split(None, 1)[1].lstrip('/'))
             md5sums = md5sums or name == 'md5sums'
     if not md5sums:
-        proc = subprocess.run(['dpkg-deb', '--fsys-tarfile', str(deb)], capture_output=True)
-        if proc.returncode:
-            raise package.Invalid(f'{deb}: invalid Debian archive: {proc.stderr.decode(errors="replace").strip()}')
-        with tarfile.open(fileobj=io.BytesIO(proc.stdout)) as tar:
-            paths += ['/' + os.path.normpath(m.name).lstrip('/') for m in tar if not m.isdir()]
+        paths += data_paths(deb)
+    return paths
+
+
+def data_paths(deb):
+    """Every non-directory path of a package's data, read as a stream (the data can be large)."""
+    proc = subprocess.Popen(['dpkg-deb', '--fsys-tarfile', str(deb)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        with tarfile.open(fileobj=proc.stdout, mode='r|*') as tar:
+            paths = ['/' + os.path.normpath(m.name).lstrip('/') for m in tar if not m.isdir()]
+        while proc.stdout.read(1 << 20):
+            pass
+    except BaseException:
+        proc.kill()
+        raise
+    finally:
+        proc.stdout.close()
+        err = proc.stderr.read()
+        proc.stderr.close()
+        proc.wait()
+    if proc.returncode:
+        raise package.Invalid(f'{deb}: invalid Debian archive: {err.decode(errors="replace").strip()}')
     return paths
 
 
