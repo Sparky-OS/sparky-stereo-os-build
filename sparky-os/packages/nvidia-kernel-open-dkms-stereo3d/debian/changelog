@@ -1,3 +1,34 @@
+nvidia-kmod-open (615.71.09-2+stereo3d8) unstable; urgency=medium
+
+  * debian/sparky-lean-payload-sources.json maps /usr/src/nvidia-615.71.09 to
+    the source tree, so lean.debhelper restores the authored text of the
+    installed copy by path, not by content hash (ORDER 311). Without it, the
+    toolkit 0.1.15 build of +stereo3d6 filled three files the source ships
+    empty (src/nvidia/interface/nvRmReg.h,
+    src/nvidia/generated/g_kern_hwpm_power_nvoc.c,
+    g_kern_hwpm_common_defs_nvoc.c) with the comment of other generated files:
+    a content-hash restore cannot tell an originally empty file from a comment-
+    only one the native pass made empty. tests/payload-map-proof.sh shows it.
+  * Correction to +stereo3d7's second item: its binary packages were built
+    fresh from that source (nothing compiles in this DKMS package), not re-
+    projected from the +stereo3d6 HR companion; the fresh build is what left
+    those three files empty, as the source has them (ORDER 311).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 01 Nov 2026 00:37:01 -0300
+
+nvidia-kmod-open (615.71.09-2+stereo3d7) unstable; urgency=medium
+
+  * No-change rebuild of 615.71.09-2+stereo3d6 for the Lean Code toolkit 0.1.18
+    of build-repo main 9a1a331: C and C++ files keep every authored line with
+    no #line directive, a removed comment leaving the line breaks it held
+    (ORDER 303).
+  * The binary packages of this version are the published
+    615.71.09-2+stereo3d6+lc1 payload, its authored files taken back from the
+    HR companion and projected again with toolkit 0.1.18, nothing recompiled
+    (ORDER 311).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 31 Oct 2026 21:28:37 -0300
+
 nvidia-kmod-open (615.71.09-2+stereo3d6) unstable; urgency=medium
 
   * 0012: dmem_cgroup_register_region() takes a struct dmem_cgroup_init on

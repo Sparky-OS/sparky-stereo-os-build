@@ -15,7 +15,7 @@ override_dh_auto_configure override_dh_auto_build override_dh_auto_test override
 
 override_dh_auto_install:
 	mkdir -p $(MOD)/usr/src/nvidia-$(NV_UPSTREAM)
-	tar --exclude=./debian --exclude=./.pc -cf - . | tar -xf - -C $(MOD)/usr/src/nvidia-$(NV_UPSTREAM)
+	tar --exclude=./debian --exclude=./.pc --exclude=./.sparky-lc -cf - . | tar -xf - -C $(MOD)/usr/src/nvidia-$(NV_UPSTREAM)
 	mkdir -p $(LOCK)/etc/apt/preferences.d
 	sed 's/@NV_VERSION@/$(NV_VERSION)/g' debian/nvidia-driver-lock.in >$(LOCK)/etc/apt/preferences.d/10sparky-stereo-nvidia-driver-lock
 

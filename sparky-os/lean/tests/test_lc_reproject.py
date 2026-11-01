@@ -269,6 +269,62 @@ class Successor(unittest.TestCase):
         self.assertIn('Build-Depends: gcc, node-acorn, nodejs, perl, python3, python3-yaml, debhelper-compat (= 13)\n',
                       (tree / 'debian/control').read_text())
 
+    def recipe(self, extend=True):
+        recipe = self.tmp / 'recipe/debian'
+        plain = self.tmp / 'plain'
+        plain_source(plain)
+        shutil.copytree(plain / 'debian', recipe)
+        (recipe / 'rules').write_text('#!/usr/bin/make -f\n%:\n\tdh $@\n\noverride_dh_auto_install:\n\ttrue\n')
+        base = (recipe / 'changelog').read_text() if extend else 'demo (0.9-1) unstable; urgency=medium\n\n  * Other.\n\n -- x  Fri, 30 Oct 2026 15:00:00 -0300\n'
+        (recipe / 'changelog').write_text(f'demo (1.0-2) unstable; urgency=medium\n\n  * A recipe change (ORDER 311).\n\n -- {ME}  Sat, 31 Oct 2026 20:00:00 -0300\n\n' + base)
+        return recipe
+
+    def test_a_recipe_gives_the_next_version_and_its_debian_changes(self):
+        dsc = self.published()
+        r = subprocess.run([sys.executable, str(REPO / 'lc-successor.py'), '--recipe', str(self.recipe()), '--work', str(self.tmp),
+                            str(dsc), str(self.tmp / 'out')], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        report = json.loads(r.stdout.splitlines()[-1])
+        self.assertEqual(report['new'], '1.0-2+lc1')
+        self.assertEqual(report['changed'], ['debian/changelog', 'debian/rules'])
+        tree = self.unpack(self.tmp / 'out/demo_1.0-2+lc1.dsc')
+        self.assertIn('override_dh_auto_install', (tree / 'debian/rules').read_text())
+        self.assertIn('sparky-lean-toolkit', (tree / 'debian/rules').read_text())
+        self.assertTrue((tree / 'debian/sparky-lean-preserve.json').exists())
+
+    def test_a_recipe_that_does_not_extend_the_published_changelog_stops(self):
+        dsc = self.published()
+        r = subprocess.run([sys.executable, str(REPO / 'lc-successor.py'), '--recipe', str(self.recipe(extend=False)),
+                            '--work', str(self.tmp), str(dsc), str(self.tmp / 'out')], capture_output=True, text=True)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('does not extend', r.stderr)
+
+    def test_in_place_keeps_a_shape_plain_from_lc_does_not_know(self):
+        dsc = self.published(at_end=True)
+        tree = self.tmp / 'pub/demo-1.0'
+        control = (tree / 'debian/control').read_text()
+        six = 'gcc, node-acorn, nodejs, perl, python3, python3-yaml'
+        # the six inside a folded Build-Depends, as the 20 October native batch left some sources
+        (tree / 'debian/control').write_text(control.replace(f'Build-Depends: debhelper-compat (= 13), {six}',
+                                                             f'Build-Depends: debhelper-compat (= 13),\n               {six}'))
+        (self.tmp / 'pub' / dsc.name).unlink()
+        for f in (self.tmp / 'pub').glob('demo_1.0-1+lc1.debian.tar.*'):
+            f.unlink()
+        subprocess.run(['dpkg-source', '-b', 'demo-1.0'], cwd=self.tmp / 'pub', check=True, stdout=subprocess.DEVNULL)
+        r = subprocess.run([sys.executable, str(REPO / 'lc-successor.py'), '--next', '1.0-2', '--item', 'x', '--work', str(self.tmp),
+                            str(dsc), str(self.tmp / 'out0')], capture_output=True, text=True)
+        self.assertNotEqual(r.returncode, 0)
+        r = subprocess.run([sys.executable, str(REPO / 'lc-successor.py'), '--in-place', '--next', '1.0-2', '--item',
+                            'No-change rebuild (ORDER 311).', '--work', str(self.tmp), str(dsc), str(self.tmp / 'out')],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        report = json.loads(r.stdout.splitlines()[-1])
+        self.assertEqual((report['new'], report['changed'], report['toolkit_files_changed']), ('1.0-2+lc1', ['debian/changelog'], 0))
+        new = self.unpack(self.tmp / 'out/demo_1.0-2+lc1.dsc')
+        heads = re.findall(r'^demo \((\S+)\) (\S+);', (new / 'debian/changelog').read_text(), re.M)
+        self.assertEqual(heads, [('1.0-2+lc1', 'UNRELEASED'), ('1.0-2', 'unstable'), ('1.0-1+lc1', 'UNRELEASED'), ('1.0-1', 'unstable')])
+        self.assertEqual((new / 'debian/control').read_text(), (tree / 'debian/control').read_text())
+
     def test_a_version_that_does_not_advance_stops(self):
         dsc = self.published()
         r = subprocess.run([sys.executable, str(REPO / 'lc-successor.py'), '--next', '1.0-1', '--item', 'x',

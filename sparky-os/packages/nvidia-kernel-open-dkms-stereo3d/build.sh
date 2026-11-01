@@ -24,7 +24,9 @@
 # because NVIDIA's nvidia-driver depends on exactly that version) and sparky-stereo-nvidia-driver-lock
 # (the APT lock generated from the same version, see debian/sparky-stereo-nvidia-driver-lock.README.Debian).
 # To move to a new NVIDIA version: rebase the patches, add a changelog entry with the new version
-# (for example 620.10.01-1+stereo3d1), run this; the control fields and the lock follow the changelog.
+# (for example 620.10.01-1+stereo3d1) and the new /usr/src/nvidia-VERSION in debian/sparky-lean-payload-sources.json
+# (the payload map Lean Code restores the installed source copy by; this script refuses a map of another version), run
+# this; the control fields and the lock follow the changelog.
 # Usage: build.sh   (OUT, default ${SPARKY_STAGING_DIR}/nvidia-kmod-open;
 #                    SRCDEB, default: apt-get download of NVIDIA's package, signature checked by apt)
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
@@ -34,6 +36,9 @@ OUT=${OUT:-${SPARKY_STAGING_DIR:?}/nvidia-kmod-open}
 DEBV=$(dpkg-parsechangelog -l "$HERE/debian/changelog" -S Version)
 NV=${DEBV%%+stereo3d*}
 UPV=${NV%-*}
+python3 -c 'import json, sys; sys.exit(json.load(open(sys.argv[1])) != {sys.argv[2]: "."})' \
+	"$HERE/debian/sparky-lean-payload-sources.json" "/usr/src/nvidia-$UPV" ||
+	{ echo "debian/sparky-lean-payload-sources.json does not map /usr/src/nvidia-$UPV" >&2; exit 1; }
 WORK=$(mktemp -d ${SPARKY_SCRATCH:?}/sparky-os/nvidia-kmod-open.XXXXXX)
 trap 'docker run --rm -v "$WORK":/w debian:testing chown -R "$(id -u):$(id -g)" /w >/dev/null 2>&1; rm -rf "$WORK"' EXIT
 SRCDEB=${SRCDEB:-}
