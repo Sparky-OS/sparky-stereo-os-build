@@ -12,7 +12,8 @@
 #                                                     record; it is not blocked, see NOT_OURS in apt/make-only-ours.py)
 #   /etc/apt/preferences.d/sparky-stereo-only-ours   (Debian's and deb-multimedia's builds of our
 #                                                     packages and Debian's tasks at -1; apt/make-only-ours.py,
-#                                                     each name with the architectures we ship it for)
+#                                                     each name with the architectures we ship it for, and the i386
+#                                                     builds of what we ship for amd64 only)
 #   /etc/apt/preferences.d/sparky-stereo             (o=Sparky Stereo OS at 1001; the file is
 #                                                     ../../apt/sparky-stereo, its one source)
 # All four are conffiles (DEBIAN/conffiles, since 20261031.1~sparky9~0; Debian Policy 10.7.3: "local changes must be
@@ -29,12 +30,12 @@
 # Needs dpkg-deb and python3.
 # REPO names what make-only-ours.py reads: a flat repository, a published tree (its dists) or a Packages file.
 # Usage: build.sh   (output goes to $OUT, default the current folder)
-# Last update 2026/10/31
+# Last update 2026/11/01
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-$PWD}
-VERSION=${VERSION:-20261031.1~sparky9~0+lc1}
+VERSION=${VERSION:-20261031.2~sparky9~0+lc1}
 # the oldest sparky-stereo-keyring with the repository's one key (the key has not changed since; 20261016 is published)
 KEYRING_VERSION=${KEYRING_VERSION:-20261008.1~sparky9~0+lc1}
 PKG=sparky-stereo-apt

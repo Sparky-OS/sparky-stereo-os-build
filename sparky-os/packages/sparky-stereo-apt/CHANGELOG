@@ -1,5 +1,14 @@
 
 -------------------------------------------------------------------------------
+  Version 20261031.2~sparky9~0 (2026-11-01)
+-------------------------------------------------------------------------------
+  * A program or library we ship for amd64 and not for i386 has its Debian and deb-multimedia i386 builds blocked too (NAME:i386 at -1; apt_preferences(5): a plain name matches the native architecture only), so apt never lists them. Daniel, 2026-11-01: "32 bit builds we need? why are you even asking if we have 64 bit versions?" (ORDER 321b)
+  * They could never be installed beside ours: ORDER 321's check found 29 of them, of 17 sources (dolphin, digikam, kalgebra, kdenlive, kdeplasma-addons, kf6-kfilemetadata, kf6-kiconthemes, kio-extras, koko, kpipewire, kwin, libkscreen, octave, plasma-desktop, plasma-discover, powerdevil, and deb-multimedia's kdenlive-dmo), listed but needing Debian's Architecture: all -data package at its exact version, which ours replaces
+  * The i386 packages that stay are the libraries Steam, 32-bit Wine and 32-bit games need, and ours where we replace them (Mesa, FFmpeg, SDL 3, wine32, dxvk-wine32 and the rest): steam-installer, wine32, dxvk-wine32 and lutris pull 320 i386 packages, none of them a name we ship for amd64 only
+  * sparky-stereo-only-ours regenerated from the published repository (InRelease 39f06de4, 1 Nov 2026): 1116 packages blocked, as 2088 names, 810 of them the i386 builds of names we ship for amd64 only; 210 Architecture: all names at 100 where their source is not built; 5 packages that are not ours at 400
+  * Supersedes 20261031.1~sparky9~0 (ORDER 321), which was not published; its changes are in this version
+
+-------------------------------------------------------------------------------
   Version 20261031.1~sparky9~0 (2026-10-31)
 -------------------------------------------------------------------------------
   * The four files under /etc are conffiles (DEBIAN/conffiles), as Debian Policy 10.7.3 asks: "local changes must be preserved during a package upgrade". Before, dpkg replaced them at every upgrade, a person's edits included (ORDER 321, ORDER 318's finding)
