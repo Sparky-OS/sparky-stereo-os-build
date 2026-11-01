@@ -1,0 +1,279 @@
+Description: Present Kopper stereo eyes through the packed X11 pixmap route
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, Sparky Stereo OS
+Forwarded: no
+Last-Update: 2026-11-01
+
+Keep GPU eye resources separate from the native-window Vulkan swapchain.
+Pack and upload both eyes through the existing X11 Present loader, declaring
+only the resulting stereo image. Invalidate offscreen attachments on viewport
+resize and preserve the declaration across GLX-only drawable recreation.
+
+Assisted-by: gpt-6-astra via Codex
+
+--- a/src/gallium/frontends/dri/kopper.c
++++ b/src/gallium/frontends/dri/kopper.c
+@@ -168,6 +168,125 @@
+ }
+ #endif //VK_USE_PLATFORM_XCB_KHR
+ 
++/* X11 Present can carry a packed pixmap wider than its window. Vulkan WSI
++ * cannot: its swapchain extent is the native window extent. Keep stereo eyes
++ * offscreen and use the loader's pixmap upload for this route.
++ */
++static bool
++kopper_stereo_pixmap(const struct dri_drawable *drawable)
++{
++   return drawable->is_window && drawable->screen->swrast_loader &&
++          drawable->screen->swrast_loader->putImage2 &&
++          drawable->info.bos.sType == VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR &&
++          dri_drawable_has_stereo_buffers(drawable);
++}
++
++static void
++kopper_allocate_stereo(struct dri_context *ctx, struct dri_drawable *drawable,
++                       const enum st_attachment_type *statts, unsigned count)
++{
++   struct pipe_screen *screen = drawable->screen->base.screen;
++   struct pipe_context *pipe = ctx->st->pipe;
++   struct pipe_resource templ = {0};
++
++   /* Offscreen eyes have no WSI acquire to notice a native window resize. */
++   ctx->st->ctx->invalidate_on_gl_viewport = true;
++
++   const bool converting = !drawable->stereo_buffers;
++   const bool resized = drawable->old_w != drawable->w ||
++                        drawable->old_h != drawable->h;
++   unsigned attachments = ST_ATTACHMENT_FRONT_LEFT_MASK |
++                          ST_ATTACHMENT_BACK_LEFT_MASK |
++                          ST_ATTACHMENT_FRONT_RIGHT_MASK |
++                          ST_ATTACHMENT_BACK_RIGHT_MASK;
++
++   for (unsigned i = 0; i < count; i++)
++      attachments |= BITFIELD_BIT(statts[i]);
++
++   templ.target = drawable->screen->target;
++   templ.width0 = drawable->w;
++   templ.height0 = drawable->h;
++   templ.depth0 = templ.array_size = 1;
++   if (resized)
++      pipe_resource_reference(&drawable->stereo_target, NULL);
++
++   for (unsigned i = 0; i < ST_ATTACHMENT_COUNT; i++) {
++      unsigned bind;
++      struct pipe_resource *previous = NULL;
++      if (!(attachments & BITFIELD_BIT(i)))
++         continue;
++      enum pipe_format format;
++      dri_drawable_get_format(drawable, i, &format, &bind);
++      templ.format = format;
++      if (templ.format == PIPE_FORMAT_NONE)
++         continue;
++      if (resized || (converting && i < ST_ATTACHMENT_DEPTH_STENCIL)) {
++         if (converting && !resized)
++            pipe_resource_reference(&previous, drawable->textures[i]);
++         pipe_resource_reference(&drawable->textures[i], NULL);
++         if (resized)
++            pipe_resource_reference(&drawable->msaa_textures[i], NULL);
++      }
++      templ.bind = bind & ~(PIPE_BIND_DISPLAY_TARGET | PIPE_BIND_SCANOUT | PIPE_BIND_SHARED);
++      templ.nr_samples = templ.nr_storage_samples = 0;
++      if (!drawable->textures[i])
++         drawable->textures[i] = screen->resource_create(screen, &templ);
++      if (previous && drawable->textures[i])
++         dri_pipe_blit(pipe, drawable->textures[i], previous);
++      pipe_resource_reference(&previous, NULL);
++      if (drawable->stvis.samples > 1 && !drawable->msaa_textures[i]) {
++         templ.nr_samples = templ.nr_storage_samples = drawable->stvis.samples;
++         drawable->msaa_textures[i] = screen->resource_create(screen, &templ);
++         if (drawable->msaa_textures[i] && drawable->textures[i])
++            dri_pipe_blit(pipe, drawable->msaa_textures[i], drawable->textures[i]);
++      }
++   }
++   if (!drawable->stereo_target && drawable->textures[ST_ATTACHMENT_BACK_LEFT]) {
++      templ = *drawable->textures[ST_ATTACHMENT_BACK_LEFT];
++      templ.width0 *= 2;
++      templ.bind = PIPE_BIND_RENDER_TARGET | PIPE_BIND_SAMPLER_VIEW;
++      templ.nr_samples = templ.nr_storage_samples = 0;
++      drawable->stereo_target = screen->resource_create(screen, &templ);
++   }
++   drawable->stereo_buffers = true;
++   drawable->old_w = drawable->w;
++   drawable->old_h = drawable->h;
++   if (converting || resized)
++      p_atomic_inc(&drawable->base.stamp);
++}
++
++static bool
++kopper_present_stereo(struct dri_context *ctx, struct dri_drawable *drawable,
++                      bool front)
++{
++   struct pipe_context *pipe = ctx->st->pipe;
++   struct pipe_resource *target = drawable->stereo_target;
++   const unsigned left = front ? ST_ATTACHMENT_FRONT_LEFT : ST_ATTACHMENT_BACK_LEFT;
++   const unsigned right = front ? ST_ATTACHMENT_FRONT_RIGHT : ST_ATTACHMENT_BACK_RIGHT;
++   struct pipe_transfer *transfer = NULL;
++   struct pipe_box box;
++
++   if (!target || !drawable->textures[left] || !drawable->textures[right])
++      return false;
++   for (unsigned eye = 0; eye < 2; eye++) {
++      unsigned att = eye ? right : left;
++      if (front && drawable->stvis.samples > 1)
++         dri_pipe_blit(pipe, drawable->textures[att], drawable->msaa_textures[att]);
++      u_box_2d(0, 0, drawable->w, drawable->h, &box);
++      pipe->resource_copy_region(pipe, target, 0, eye * drawable->w, 0, 0,
++                                 drawable->textures[att], 0, &box);
++   }
++   u_box_2d(0, 0, target->width0, target->height0, &box);
++   void *map = pipe->texture_map(pipe, target, 0, PIPE_MAP_READ, &box, &transfer);
++   if (!map)
++      return false;
++   drawable->screen->swrast_loader->putImage2(drawable, __DRI_SWRAST_IMAGE_OP_SWAP,
++      0, 0, target->width0, target->height0, transfer->stride, map,
++      drawable->loaderPrivate);
++   pipe->texture_unmap(pipe, transfer);
++   return true;
++}
++
+ static void
+ kopper_allocate_textures(struct dri_context *ctx,
+                          struct dri_drawable *drawable,
+@@ -189,6 +308,11 @@
+     * multiple threads.
+     */
+    _mesa_glthread_finish(ctx->st->ctx);
++
++   if (kopper_stereo_pixmap(drawable)) {
++      kopper_allocate_stereo(ctx, drawable, statts, statts_count);
++      return;
++   }
+ 
+    /* First get the buffers from the loader */
+    if (image) {
+@@ -364,6 +488,15 @@
+                                 drawable->textures[ST_ATTACHMENT_BACK_LEFT] :
+                                 drawable->textures[ST_ATTACHMENT_FRONT_LEFT];
+ 
++   if (kopper_stereo_pixmap(drawable)) {
++      const unsigned old_w = drawable->w, old_h = drawable->h;
++      get_drawable_info(drawable, &drawable->w, &drawable->h);
++      drawable->w = dri_drawable_stereo_buffer_width(drawable, drawable->w) / 2;
++      if (drawable->w != old_w || drawable->h != old_h)
++         drawable->lastStamp++;
++      return;
++   }
++
+    bool do_kopper_update = is_window && ptex && screen->fd == -1;
+    if (drawable->info.bos.sType == VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR && do_kopper_update)
+       zink_kopper_update(kopper_get_zink_screen(screen->base.screen), ptex, &drawable->w, &drawable->h);
+@@ -399,6 +532,18 @@
+                          enum st_attachment_type statt)
+ {
+    struct pipe_resource *ptex;
++
++   if (ctx && kopper_stereo_pixmap(drawable)) {
++      if (statt != ST_ATTACHMENT_FRONT_LEFT && statt != ST_ATTACHMENT_FRONT_RIGHT)
++         return false;
++      _mesa_glthread_finish(ctx->st->ctx);
++      if (drawable->flushing)
++         return true;
++      drawable->flushing = true;
++      bool result = kopper_present_stereo(ctx, drawable, true);
++      drawable->flushing = false;
++      return result;
++   }
+ 
+    if (!ctx || statt != ST_ATTACHMENT_FRONT_LEFT)
+       return false;
+@@ -524,6 +669,9 @@
+    if (!ctx)
+       return 0;
+ 
++   if (drawable->stereo_on_demand || dri_drawable_has_stereo_buffers(drawable))
++      _mesa_glthread_finish(ctx->st->ctx);
++
+    ptex = drawable->textures[ST_ATTACHMENT_BACK_LEFT];
+    if (!ptex)
+       return 0;
+@@ -537,6 +685,27 @@
+    dri_flush(ctx, drawable,
+              __DRI2_FLUSH_DRAWABLE | flush_flags,
+              __DRI2_THROTTLE_SWAPBUFFER);
++
++   if (kopper_stereo_pixmap(drawable)) {
++      if (!kopper_present_stereo(ctx, drawable, false))
++         return -1;
++      for (unsigned eye = 0; eye < 2; eye++) {
++         unsigned back = eye ? ST_ATTACHMENT_BACK_RIGHT : ST_ATTACHMENT_BACK_LEFT;
++         unsigned front = eye ? ST_ATTACHMENT_FRONT_RIGHT : ST_ATTACHMENT_FRONT_LEFT;
++         struct pipe_resource *tmp = drawable->textures[front];
++         drawable->textures[front] = drawable->textures[back];
++         drawable->textures[back] = tmp;
++      }
++      /* dri_flush exchanges the left MSAA pair; keep the right in step. */
++      if (drawable->stvis.samples > 1) {
++         struct pipe_resource *tmp = drawable->msaa_textures[ST_ATTACHMENT_FRONT_RIGHT];
++         drawable->msaa_textures[ST_ATTACHMENT_FRONT_RIGHT] = drawable->msaa_textures[ST_ATTACHMENT_BACK_RIGHT];
++         drawable->msaa_textures[ST_ATTACHMENT_BACK_RIGHT] = tmp;
++      }
++      drawable->lastStamp++;
++      p_atomic_inc(&drawable->base.stamp);
++      return 0;
++   }
+ 
+    struct pipe_box stack_boxes[64];
+    if (nrects > ARRAY_SIZE(stack_boxes))
+@@ -592,7 +761,7 @@
+ 
+    drawable->info.initial_swap_interval = interval;
+    /* can't set swap interval on non-windows */
+-   if (!drawable->window_valid)
++   if (!drawable->window_valid || kopper_stereo_pixmap(drawable))
+       return;
+    /* the conditional is because we can be called before buffer allocation.  If
+     * we're before allocation, then the initial_swap_interval will be used when
+@@ -613,7 +782,7 @@
+                                 drawable->textures[ST_ATTACHMENT_FRONT_LEFT];
+ 
+    /* can't get buffer age from non-window swapchain */
+-   if (!drawable->window_valid)
++   if (!drawable->window_valid || kopper_stereo_pixmap(drawable))
+       return 0;
+ 
+    /* Wait for glthread to finish because we can't use pipe_context from
+--- a/src/glx/drisw_glx.c
++++ b/src/glx/drisw_glx.c
+@@ -52,6 +52,8 @@
+ #include "dispatch.h"
+ #include "x11_display.h"
+ 
++static void drisw_activate_stereo(struct drisw_drawable *pdraw);
++
+ static int xshm_error = 0;
+ static int xshm_opcode = -1;
+ 
+@@ -217,6 +219,11 @@
+          return;
+    }
+ 
++   /* Kopper reaches here only after both eyes have been packed and mapped.
++    * Declare before presenting, never on its ordinary mono WSI path.
++    */
++   if (((struct drisw_screen *)pdraw->psc)->kopper)
++      drisw_activate_stereo(pdp);
+    drawable = pdraw->xDrawable;
+ #ifdef HAVE_LIBDRM
+    /* A stereo window that stays one eye wide shows a buffer twice its width:
+@@ -548,8 +555,9 @@
+ 
+    unsigned long layout = 3;
+    Atom atom = XInternAtom(dpy, "_KDE_NET_WM_STEREO_CONTENT", False);
+-   XChangeProperty(dpy, pdraw->base.xDrawable, atom, XA_CARDINAL, 32,
+-                   PropModeReplace, (unsigned char *)&layout, 1);
++   if (!glx_x11_stereo_content_declared(dpy, pdraw->base.xDrawable))
++      XChangeProperty(dpy, pdraw->base.xDrawable, atom, XA_CARDINAL, 32,
++                      PropModeReplace, (unsigned char *)&layout, 1);
+    glx_x11_declare_stereo_child(dpy, pdraw->base.xDrawable);
+    if (version < 3)
+       XResizeWindow(dpy, pdraw->base.xDrawable, 2 * attributes.width,
