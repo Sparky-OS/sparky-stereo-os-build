@@ -1,0 +1,22 @@
+Description: ui/spice: check bitmap allocation size for full refreshes
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, downstream commit c1aec2d02dddb2804e245e83e744b210ccb99f72
+Forwarded: not-needed
+Last-Update: 2026-11-01
+Assisted-by: gpt-6-astra via Codex
+
+diff --git a/ui/spice-display.c b/ui/spice-display.c
+index 29efbd0..bb435b3 100644
+--- a/ui/spice-display.c
++++ b/ui/spice-display.c
+@@ -145,7 +145,9 @@ static void qemu_spice_create_one_update(SimpleSpiceDisplay *ssd,
+ 
+     bw       = rect->right - rect->left;
+     bh       = rect->bottom - rect->top;
+-    update->bitmap = g_malloc(bw * bh * 4);
++    g_assert(bw > 0 && bh > 0 &&
++             (size_t)bw <= SIZE_MAX / bh / sizeof(uint32_t));
++    update->bitmap = g_malloc_n((size_t)bw * bh, sizeof(uint32_t));
+ 
+     drawable->bbox            = *rect;
+     drawable->clip.type       = SPICE_CLIP_TYPE_NONE;
