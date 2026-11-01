@@ -248,6 +248,25 @@ class Successor(unittest.TestCase):
                        stderr=subprocess.DEVNULL)
         return target
 
+    def test_changelog_items_wrap_at_spaces_only(self):
+        """ORDER 311: textwrap broke "dpkg-stereo" after its hyphen at the end of a line; names stay whole."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('lc_successor', REPO / 'lc-successor.py')
+        tool = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tool)
+        item = ('No-change rebuild of 5.73.0+git20260320.d106f1c-1 for the Lean Code toolkit 0.1.20 of build-repo main '
+                '29f2ebc: C and C++ files lose their comment-only lines, with no #line directive and no empty line where a '
+                'comment was; dpkg-stereo --resolve finds a lean line\'s authored line by its content (ORDER 334).')
+        def body(items):
+            text = tool.entry('kcgroups', '5.73.0+git20260320.d106f1c-2', items)
+            return [line for line in text.split('\n') if line.startswith(('  * ', '    '))]
+        lines = body([item])
+        self.assertFalse(any(line.endswith('-') for line in lines), lines)
+        self.assertEqual(' '.join(line[4:] for line in lines), item)
+        self.assertTrue(all(len(line) <= 79 for line in lines))
+        long = '/usr/share/doc/' + 'x' * 90
+        self.assertIn('    ' + long, body(['see ' + long]))
+
     def test_the_next_source_differs_only_in_its_changelog(self):
         report = self.successor(self.published())
         self.assertEqual(report['new'], '1.0-2+lc1')

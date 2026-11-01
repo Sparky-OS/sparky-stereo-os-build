@@ -47,7 +47,9 @@ def parse(root, field):
 
 
 def entry(name, version, items):
-    body = '\n'.join(textwrap.fill(i, width=79, initial_indent='  * ', subsequent_indent='    ') for i in items)
+    # whole words only: a name such as dpkg-stereo or a long path is never split across lines
+    body = '\n'.join(textwrap.fill(i, width=79, initial_indent='  * ', subsequent_indent='    ',
+                                   break_on_hyphens=False, break_long_words=False) for i in items)
     return (f'{name} ({version}) unstable; urgency=medium\n\n{body}\n\n'
             f' -- {NAME} <{MAIL}>  {email.utils.formatdate(localtime=True)}\n\n')
 
