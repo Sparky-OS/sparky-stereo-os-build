@@ -18,6 +18,8 @@ sparky-stereo-skills link [NAME...]  link every skill into the folders of the as
 sparky-stereo-skills unlink [NAME...] remove only the links this tool made
 sparky-stereo-skills list            the skills and what each is for
 sparky-stereo-skills tools           the folder names: agents, claude, cline, gemini, opencode, copilot, cursor
+sparky-stereo-skills find a SPICE migration that loses the cache
+                                    the skills that best fit a task or symptom (by name, description and the skills index), offline, each with its path and the context command to run next
 sparky-stereo-skills context native-linux --output /tmp/native-linux-context.txt
                                     selected instructions, identity and file hashes, with a character budget
 sparky-stereo-skills context --help  section/reference selection and context limits
@@ -56,7 +58,8 @@ Test:
 tests/helper.sh   (as an ordinary user, with the package installed, in a container)
 python3 /usr/share/sparky-stereo-os/tools/check-skills.py
 python3 /usr/share/sparky-stereo-os/tools/tests/test-skills-context.py
-The context and complete reference bundle require no model, account or network. Skill-import ZIPs may not carry references outside each skill folder; use bundle for the whole tree.
+python3 /usr/share/sparky-stereo-os/tools/tests/test-skills-find.py
+The find and context commands and the complete reference bundle require no model, account or network. Skill-import ZIPs may not carry references outside each skill folder; use bundle for the whole tree.
 
 Install:
 -------------
