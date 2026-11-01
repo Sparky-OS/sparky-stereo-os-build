@@ -9,10 +9,13 @@ Every step checks that the text it removes is the text debian_prepare writes; an
 The published repository holds only +lc1 sources, and the next version of a package starts from
 its plain source: unpack the published .dsc (dpkg-source -x), run this on the tree, then pack it
 with dpkg-source -b next to the orig tarball and its .asc.
-  plain-from-lc.py [--no-build-depends] [--edition-entry | --lc-successor] LC_SOURCE_DIR
+  plain-from-lc.py [--no-build-depends | --build-depends-at-end] [--edition-entry | --lc-successor] LC_SOURCE_DIR
 --no-build-depends: the +lc1 source was prepared before debian_prepare added the build dependencies
 (the native batch of 20 October 2026, kscreenlocker and plasma-desktop +stereo3d1+lc1 among them); the
 tool then checks that Build-Depends does not start with them and leaves it as it is.
+--build-depends-at-end: the +lc1 source was prepared when debian_prepare appended the six build dependencies at the
+end of Build-Depends (the wheel DKMS sources of 20 October 2026, hid-tmff2-dkms 0.83+git20261010.d890a93-1+stereo3d2+lc1
+among them); the tool removes them from there.
 --edition-entry: the +lc1 entry also lists the edition's own changes, with no plain entry of its own
 below it (the same batch, plasma-workspace +stereo3d2+lc1); the entry becomes the plain version's,
 for unstable, with its other items and its signature, and only the Lean Code item removed.
@@ -30,10 +33,11 @@ from pathlib import Path
 
 args = sys.argv[1:]
 no_build_depends = '--no-build-depends' in args
+at_end = '--build-depends-at-end' in args
 edition_entry = '--edition-entry' in args
 lc_successor = '--lc-successor' in args
-assert not (edition_entry and lc_successor), __doc__
-args = [a for a in args if a not in ('--no-build-depends', '--edition-entry', '--lc-successor')]
+assert not (edition_entry and lc_successor) and not (no_build_depends and at_end), __doc__
+args = [a for a in args if a not in ('--no-build-depends', '--build-depends-at-end', '--edition-entry', '--lc-successor')]
 assert len(args) == 1 and not args[0].startswith('--'), __doc__
 root = Path(args[0])
 deb = root / 'debian'
@@ -47,6 +51,11 @@ control = (deb / 'control').read_text()
 prefix = 'Build-Depends: gcc, node-acorn, nodejs, perl, python3, python3-yaml,'
 if no_build_depends:
     assert prefix not in control and re.search(r'^Build-Depends: ', control, re.M), 'Build-Depends starts with the lc1 build dependencies'
+elif at_end:
+    suffix = ', gcc, node-acorn, nodejs, perl, python3, python3-yaml\n'
+    assert prefix not in control and len(re.findall(r'^Build-Depends: .*' + re.escape(suffix), control, re.M)) == 1, \
+        'Build-Depends does not end with the lc1 build dependencies'
+    (deb / 'control').write_text(re.sub(r'^(Build-Depends: .*)' + re.escape(suffix), lambda m: m.group(1) + '\n', control, flags=re.M))
 else:
     assert control.count(prefix) == 1, 'the lc1 build dependencies are not where debian_prepare puts them'
     (deb / 'control').write_text(control.replace(prefix, 'Build-Depends:'))
