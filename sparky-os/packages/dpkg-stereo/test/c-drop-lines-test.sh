@@ -98,9 +98,10 @@ mv "$R/root/var/cache/apt/archives/${HELD}_"*.deb "$R/held/"
 
 echo "== the new dpkg-stereo's postinst action, with $HELD's .deb missing"
 t0=$(date +%s%N); ds "$NEW" --repair-consumers > "$R/new1.log" 2>&1; rc=$?; t1=$(date +%s%N)
-[ $rc = 1 ] && ok "returns 1 while $HELD's originals are missing ($(( (t1 - t0) / 1000000 )) ms): $(grep 'need their package' "$R/new1.log")" || bad "first run rc=$rc: $(tail -3 "$R/new1.log")"
+[ $rc = 1 ] && ok "returns 1 while $HELD's originals are missing ($(( (t1 - t0) / 1000000 )) ms): $(grep 'keep an older form' "$R/new1.log")" || bad "first run rc=$rc: $(tail -3 "$R/new1.log")"
 pending=$(grep -vc '^#' "$R/root/var/lib/dpkg-stereo/renderer-migration-c-drop-lines-v2.pending")
-held_records=$(cat "$R"/root/var/lib/dpkg-stereo/records/*.tsv | awk -F'\t' -v p="$HELD" '$8 == "c" && $2 == p' | wc -l)
+# a Multi-Arch: same package is recorded with its architecture (libexpat1-dev:amd64)
+held_records=$(cat "$R"/root/var/lib/dpkg-stereo/records/*.tsv | awk -F'\t' -v p="$HELD" '$8 == "c" && ($2 == p || index($2, p ":") == 1)' | wc -l)
 [ "$pending" -gt 0 ] && [ "$pending" = "$held_records" ] && ok "pending: the $pending files of $HELD, no other" || bad "pending $pending, $HELD records $held_records"
 [ "$(sha256sum "$R/root$edited" | cut -d' ' -f1)" = "$edited_sha" ] && ok "the edited header stays as the person left it" || bad "the edited header changed"
 grep -q "$edited" "$R"/root/var/lib/dpkg-stereo/records/*.tsv && bad "the edited header is still recorded" || ok "the edited header is no longer recorded"
