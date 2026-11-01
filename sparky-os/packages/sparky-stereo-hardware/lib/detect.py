@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/10
+# Last update 2026/11/01
 """Turn captured hardware facts into a deterministic installation plan."""
 import pathlib
 import json
@@ -80,7 +80,9 @@ if gpus:
         if laptop == "0":
             emit("action", "nvidia-runtime-pm")
     else:
-        emit("found", "NVIDIA nouveau: older, unknown, mixed or non-amd64 hardware")
+        emit("found", "NVIDIA " + ", ".join(gpu[0] for gpu in gpus) + ": not supported by the edition's NVIDIA driver with "
+             "HDMI 3D, which needs a Turing card or newer for every NVIDIA card of the machine, on amd64; nothing is installed "
+             "for it, and the card keeps nouveau")
 else:
     emit("found", "No NVIDIA display controller")
 

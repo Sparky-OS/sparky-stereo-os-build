@@ -2,19 +2,88 @@
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
 # Last update 2026/11/01
+# Nothing here falls back to something else on its own: a step that cannot do what it is for says what failed, why and
+# what to do on an ERROR line and returns non-zero, and another path (nouveau for an NVIDIA card) is only ever the
+# person's own choice (Daniel, 2026-11-01: "either it works or not and the user must know").
 
-log() { printf '%s\n' "$*"; }
+# log MESSAGE: to the output (and the run's log); an ERROR line is also kept in WORK/errors for the run's last word
+log() {
+	printf '%s\n' "$*"
+	if [[ $* == ERROR* && -n ${WORK:-} && -d $WORK ]]; then printf '%s\n' "$*" >>"$WORK/errors"; fi
+}
+
+# load_strings: the window strings in the language of /etc/default/locale (Paweł's way: the whole LANG first, then the
+# bare language; English otherwise), from SHARE
+load_strings() {
+	source "$SHARE/en"
+	local locale_code
+	locale_code=$(sed -nE 's/^LANG=["\x27]?([a-z]{2}_[A-Z]{2})(\.[^"\x27]*)?["\x27]?$/\1/p' "${LOCALE_FILE:-/etc/default/locale}" 2>/dev/null || true)
+	case "$locale_code" in
+		pl_PL) source "$SHARE/pl" ;;
+		pt_BR) source "$SHARE/pt_BR" ;;
+		zh_CN) source "$SHARE/zh_CN" ;;
+		zh_TW) source "$SHARE/zh_TW" ;;
+		fr_*) source "$SHARE/fr" ;;
+		de_*) source "$SHARE/de" ;;
+		ja_*) source "$SHARE/ja" ;;
+		ko_*) source "$SHARE/ko" ;;
+	esac
+}
+
+# plan_answer CODE: what the plan window's exit code means. yad gives the number of the button pressed (0 install, 2
+# install but keep nouveau, 1 Cancel) and 252 for a closed window; any other code is the window's own failure, never an
+# answer of the person's.
+plan_answer() {
+	case $1 in
+		0) echo edition ;;
+		2) echo nouveau ;;
+		1|252) echo cancel ;;
+		*) echo window-failed ;;
+	esac
+}
+
+# finish_run LOG FAILED: the end of a run. No errors, or the list of the run's ERROR lines (WORK/errors), and the same list in a window
+# when the menu started the run (SPARKY_STEREO_HARDWARE_GUI=1 and a display), before its terminal closes. Returns the
+# run's exit status: 0, or 1 with errors.
+finish_run() {
+	if (("$2" == 0)); then
+		log 'Hardware Setup finished with no errors. Firmware and driver changes may need a reboot.'
+		return 0
+	fi
+	log 'Hardware Setup finished with errors: these steps were not done, and nothing was put in their place:'
+	[[ -s $WORK/errors ]] || log "ERROR a step failed without an ERROR line of its own; the output above and the log $1 show which"
+	cat "$WORK/errors"
+	if [[ ${SPARKY_STEREO_HARDWARE_GUI:-} == 1 && ( -n ${DISPLAY:-} || -n ${WAYLAND_DISPLAY:-} ) ]]; then
+		load_strings
+		{ printf '%s\n\n' "$LOCAL6"; cat "$WORK/errors"; } >"$WORK/errors-window"
+		yad --text-info --wrap --title="$LOCAL5" --filename="$WORK/errors-window" --width=760 --height=420 --button="$LOCAL7:0" ||
+			log "NOTE the window with these errors could not be shown; they are above and in $1"
+	fi
+	return 1
+}
 run() { printf 'RUN'; printf ' %q' "$@"; printf '\n'; "$@"; }
 apt_install() { run env DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install "$@"; }
 
 setup_rig_driver() {
 	local package=$1 kernel headers
-	case "$package" in hid-tmff2-dkms|hid-fanatecff-dkms|new-lg4ff-dkms) ;; *) return 1 ;; esac
+	case "$package" in
+		hid-tmff2-dkms|hid-fanatecff-dkms|new-lg4ff-dkms) ;;
+		*) log "ERROR rig driver $package: not one of the wheel drivers this setup installs (hid-tmff2-dkms, hid-fanatecff-dkms, new-lg4ff-dkms)"; return 1 ;;
+	esac
 	kernel=$(uname -r)
-	[[ $kernel =~ ^[a-zA-Z0-9][a-zA-Z0-9.+_-]*$ ]] || return 1
+	if [[ ! $kernel =~ ^[a-zA-Z0-9][a-zA-Z0-9.+_-]*$ ]]; then
+		log "ERROR rig driver $package: the running kernel's name ($kernel) is not a package name, so its headers cannot be installed; nothing was installed"
+		return 1
+	fi
 	headers="linux-headers-$kernel"
-	apt_install --simulate "$headers" "$package" || return 1
-	apt_install "$headers" "$package"
+	if ! apt_install --simulate "$headers" "$package"; then
+		log "ERROR rig driver $package: apt cannot install it with $headers (the simulated install above says why); nothing was installed. Boot the edition's kernel, whose headers the repository has, and run Hardware Setup again"
+		return 1
+	fi
+	if ! apt_install "$headers" "$package"; then
+		log "ERROR rig driver $package: the installation failed (see above); run dpkg --configure -a and apt -f install, then Hardware Setup again"
+		return 1
+	fi
 }
 
 sensor_modules() {
@@ -81,11 +150,15 @@ ppd_action_enabled() {
 }
 
 setup_amdgpu() {
-	local action
-	run powerprofilesctl list-actions >"$WORK/power-actions" || return 1
+	local action failed=0
+	if ! run powerprofilesctl list-actions >"$WORK/power-actions"; then
+		log "ERROR AMD power: powerprofilesctl could not list power-profiles-daemon's actions (see above), so ${*} were not enabled. Check that power-profiles-daemon runs (systemctl status power-profiles-daemon), then run Hardware Setup again"
+		return 1
+	fi
 	for action in "$@"; do
 		if ! grep -Fxq "Name: $action" "$WORK/power-actions"; then
-			log "UNSUPPORTED PPD action $action is not exposed; no replacement GPU tuning applied"
+			log "ERROR AMD power: power-profiles-daemon offers no action $action on this machine, so it was not enabled and nothing else was set in its place (powerprofilesctl list-actions shows what it offers; the action needs the amdgpu driver's support for this card)"
+			failed=1
 			continue
 		fi
 		if ! ppd_action_enabled "$action" "$WORK/power-actions"; then
@@ -95,6 +168,7 @@ setup_amdgpu() {
 		ppd_action_enabled "$action" "$WORK/power-actions" || { log "ERROR PPD action $action not enabled"; return 1; }
 		log "VERIFIED PPD action $action enabled"
 	done
+	return "$failed"
 }
 
 setup_nvidia_runtime_pm() {
@@ -125,23 +199,40 @@ package_installed() {
 	[[ $(dpkg-query -W -f '${db:Status-Abbrev}' "$1" 2>/dev/null) == ii* ]]
 }
 
+# nvidia_version_of MODULE_VERSION: NVIDIA's driver version the edition's module is built for, the module's version
+# without our +stereo3d suffix and Lean Code's +lc mark after it (615.71.09-2+stereo3d7+lc1 -> 615.71.09-2), so the two
+# cannot drift; nothing for a version without our suffix.
+nvidia_version_of() {
+	printf '%s\n' "$1" | sed -n 's/^\(.*\)+stereo3d[0-9]*\(+lc[0-9]*\)\{0,1\}$/\1/p'
+}
+
+NOUVEAU_CHOICE='or keep nouveau, without HDMI 3D, as your own choice: sparky-stereo-hardware --nvidia nouveau'
+
+# purge_added PACKAGE...: what this run installed for the NVIDIA setup goes again (a removed package's conffiles, the
+# CUDA source among them, would stay)
+purge_added() {
+	(($#)) || return 0
+	if ! run dpkg --purge "$@"; then
+		log "ERROR NVIDIA: purging $* again failed too (see above); run dpkg --audit and remove them by hand before anything else"
+		return 1
+	fi
+}
+
 setup_nvidia() {
 	local uri=developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64
-	local driver decoder nvidia_version other package
+	local driver decoder nvidia_version found_version other package
 	local module=nvidia-kernel-open-dkms-stereo3d
 	local -a policy=(sparky-stereo-nvidia-driver-lock sparky-stereo-cuda-repo) added=()
-	# Do not start a repository change if the edition's module is unavailable.
+	# Nothing is changed when the edition's module is not there: the setup stops and says so.
 	if ! apt-cache show --no-all-versions "$module" >"$WORK/nvidia-module" 2>&1 || ! grep -q '^Package:' "$WORK/nvidia-module"; then
-		log 'FALLBACK edition NVIDIA module unavailable; nouveau firmware installed'
-		return 0
+		log "ERROR NVIDIA: apt finds no $module, the edition's NVIDIA module with HDMI 3D, in the configured repositories, so NVIDIA's driver was not installed and nothing was changed for it. Check the edition's repository (/etc/apt/sources.list.d/sparky-stereo.sources), run apt update and Hardware Setup again; $NOUVEAU_CHOICE"
+		return 1
 	fi
-	# The userspace driver is NVIDIA's version the module is built for: the module's version
-	# without our +stereo3d suffix and Lean Code's +lc mark after it (615.71.09-2+stereo3d7+lc1 -> 615.71.09-2),
-	# so the two cannot drift.
-	nvidia_version=$(sed -n 's/^Version: \(.*\)+stereo3d[0-9]*\(+lc[0-9]*\)\{0,1\}$/\1/p' "$WORK/nvidia-module" | head -n1)
+	found_version=$(sed -n 's/^Version: //p' "$WORK/nvidia-module" | head -n1)
+	nvidia_version=$(nvidia_version_of "$found_version")
 	if [[ -z $nvidia_version ]]; then
-		log 'FALLBACK edition NVIDIA module has no NVIDIA version; nouveau firmware installed'
-		return 0
+		log "ERROR NVIDIA: the module's version $found_version has no +stereo3dN suffix, so the NVIDIA driver version it is built for is unknown and nothing was installed. Report it at https://github.com/Sparky-OS/sparky-stereo-os/issues; $NOUVEAU_CHOICE"
+		return 1
 	fi
 	driver=nvidia-driver=$nvidia_version
 	decoder=libnvcuvid1=$nvidia_version
@@ -161,20 +252,22 @@ setup_nvidia() {
 	done
 	# On a failure below, what this run installed is purged (a removed package's conffiles, the source among them, stay).
 	if ((${#added[@]})) && ! apt_install "${added[@]}"; then
-		run dpkg --purge "${added[@]}" || return 1
-		log "FALLBACK the edition's NVIDIA repository and driver lock could not be installed; nouveau firmware installed"
-		return 0
+		purge_added "${added[@]}" || return 1
+		log "ERROR NVIDIA: ${added[*]} could not be installed (apt failed, see above), so NVIDIA's driver was not installed; what this run installed was purged. Fix the apt error and run Hardware Setup again; $NOUVEAU_CHOICE"
+		return 1
 	fi
-	if ! run env DEBIAN_FRONTEND=noninteractive apt-get -y update ||
-		! run env DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests --simulate install "$driver" "$module" "$decoder" nvidia-vaapi-driver; then
-		if ((${#added[@]})); then
-			run dpkg --purge "${added[@]}" || return 1
-		fi
-		log 'FALLBACK NVIDIA preflight failed; previous repository policy restored; nouveau firmware installed'
-		return 0
+	if ! run env DEBIAN_FRONTEND=noninteractive apt-get -y update; then
+		purge_added "${added[@]}" || return 1
+		log "ERROR NVIDIA: apt could not read the repositories (apt-get update failed, see above), so NVIDIA's driver was not installed; what this run installed was purged. Fix the repository error and run Hardware Setup again; $NOUVEAU_CHOICE"
+		return 1
+	fi
+	if ! run env DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests --simulate install "$driver" "$module" "$decoder" nvidia-vaapi-driver; then
+		purge_added "${added[@]}" || return 1
+		log "ERROR NVIDIA: apt cannot install NVIDIA's driver $nvidia_version with the edition's module (the simulated install above names the package it cannot get), so nothing was installed; what this run installed was purged. Fix that and run Hardware Setup again; $NOUVEAU_CHOICE"
+		return 1
 	fi
 	if ! apt_install "$driver" "$module" "$decoder" nvidia-vaapi-driver; then
-		log 'ERROR NVIDIA transaction failed; inspect apt/dpkg state before reboot; nouveau firmware is present'
+		log "ERROR NVIDIA: the driver's installation stopped part way (see above), so apt and dpkg may be half done. Run dpkg --configure -a and apt -f install, then Hardware Setup again. Until NVIDIA's driver is installed the graphics run on nouveau, whose firmware is installed"
 		return 1
 	fi
 	if grep -Fxq $'action\tnvidia-runtime-pm' "$WORK/plan"; then
