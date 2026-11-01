@@ -537,3 +537,69 @@ def test_flat_source_and_source_architectures(tmp_path):
             with pytest.raises(package.Invalid, match=message):
                 archive.Archive(bad, tmp_path / 'scratch-bad', 'amd64')
 
+
+LOCK_TEXT = b'Package: firmware\nPin: version 1\nPin-Priority: 1005\n\nPackage: firmware\nPin: version *\nPin-Priority: 100\n'
+
+
+def policy_package(base, name='fixture-lock', file='10fixture-lock', text=LOCK_TEXT, version='1'):
+    return deb(base, name, version, arch='all', files={
+        f'/etc/apt/preferences.d/{file}': text, 'DEBIAN/conffiles': f'/etc/apt/preferences.d/{file}\n'.encode()})
+
+
+@pytest.fixture(scope='module')
+def two_firmwares(tmp_path_factory):
+    base = tmp_path_factory.mktemp('two-firmwares')
+    extra = base / 'extra'
+    extra.mkdir()
+    return signed_archive(base, additional=[deb(extra, 'firmware', '1', arch='all'), deb(extra, 'firmware', '2', arch='all')])
+
+
+def test_exact_dependency_on_an_older_version_resolves_with_the_supplied_lock(two_firmwares, tmp_path):
+    # The NVIDIA trap in miniature: the archive's newer firmware is APT's candidate, and APT's solver
+    # never takes a non-candidate version for an exact dependency (apt 2.9.17, "Reject all
+    # non-candidates outright for strict pinning"); the edition's lock, installed first on every
+    # edition system, makes the locked version the candidate.
+    context = archive.Archive(two_firmwares, tmp_path / 'scratch', 'amd64')
+    module = deb(tmp_path, 'module', depends='firmware (= 1)')
+    with pytest.raises(package.Invalid, match='solve failed'):
+        context.qualify(module, [deb(tmp_path, 'unrelated')])
+    lock = policy_package(tmp_path)
+    q = context.qualify(module, [lock])
+    assert ('firmware', '1', 'all') in [tuple(r['identity']) for r in manifest(q)['packages']]
+    applied = [{'path': '/etc/apt/preferences.d/10fixture-lock', 'package': ['fixture-lock', '1', 'all'],
+                'sha256': hashlib.sha256(LOCK_TEXT).hexdigest()}]
+    assert manifest(q)['preferences'] == applied
+    assert json.loads((q.directory / 'preferences.json').read_text()) == applied
+    assert (context.base / 'etc/preferences.d/10fixture-lock').read_bytes() == LOCK_TEXT
+    q.close()
+    # a later universe without the lock has no preferences file
+    with pytest.raises(package.Invalid, match='solve failed'):
+        context.qualify(module, [deb(tmp_path / 'again', 'unrelated')])
+    assert not any((context.base / 'etc/preferences.d').iterdir())
+
+
+def test_supplied_policy_cannot_replace_an_exact_edition_input(context, tmp_path):
+    # the gate's own pins come first (/etc/apt/preferences, then preferences.d), and the first specific
+    # record that matches a version decides its priority (apt_preferences(5))
+    local = deb(tmp_path, 'chosen', '1', files={'usr/lib/edition-identity': b'local edition'})
+    policy = policy_package(tmp_path, text=b'Package: chosen\nPin: version 2:1.0-3\nPin-Priority: 1005\n')
+    consumer = deb(tmp_path, 'consumer', depends='chosen')
+    q = context.qualify(consumer, [local, policy])
+    assert (q.root / 'usr/lib/edition-identity').read_bytes() == b'local edition'
+    assert 'chosen' not in [r['identity'][0] for r in manifest(q)['packages']]
+    q.close()
+
+
+def test_two_supplied_packages_cannot_ship_one_preferences_file(context, tmp_path):
+    first = policy_package(tmp_path, name='first-policy')
+    second = policy_package(tmp_path, name='second-policy')
+    with pytest.raises(package.Invalid, match='two supplied packages ship /etc/apt/preferences.d/10fixture-lock'):
+        context.qualify(deb(tmp_path, 'consumer'), [first, second])
+
+
+def test_preferences_are_read_from_declared_conffiles_only(tmp_path):
+    shipped = deb(tmp_path, 'policy', arch='all', files={
+        'etc/apt/preferences.d/a': b'x', 'etc/apt/preferences.d/sub/b': b'y', 'etc/apt/other': b'z',
+        'DEBIAN/conffiles': b'/etc/apt/preferences.d/a\n/etc/apt/preferences.d/sub/b\n/etc/apt/other\n'})
+    assert archive.preference_names(archive.conffiles(shipped)) == ['a']
+    assert archive.conffiles(deb(tmp_path, 'plain')) == []

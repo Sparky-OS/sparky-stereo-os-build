@@ -11,6 +11,7 @@ can contribute files to the execution root. No maintainer scripts are run.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -32,6 +33,10 @@ RELATIONSHIPS = ('Depends', 'Pre-Depends', 'Provides', 'Conflicts', 'Breaks', 'M
 # far below the kernel's argument limit.
 SHOW_ARGUMENTS = 1024
 SHOW_BYTES = 128 << 10
+# The APT preferences a supplied package ships: its conffiles in this folder (Policy 10.7.3 makes every
+# file a package ships in /etc a conffile), at most this many bytes each.
+PREFERENCES_PARTS = PurePosixPath('/etc/apt/preferences.d')
+PREFERENCES_MAX = 1 << 20
 
 
 def digest(path):
@@ -60,6 +65,29 @@ def control(deb):
         if not obj.get(key):
             raise package.Invalid(f'{deb}: missing {key}')
     return obj
+
+
+def conffiles(deb):
+    """The conffiles a package ships (deb-conffiles(5)); a remove-on-upgrade entry is not shipped."""
+    run = subprocess.run(['dpkg-deb', '--ctrl-tarfile', str(deb)], capture_output=True)
+    if run.returncode:
+        raise package.Invalid(f'{deb}: invalid Debian archive: {run.stderr.decode(errors="replace").strip()}')
+    with tarfile.open(fileobj=io.BytesIO(run.stdout)) as tar:
+        for member in tar:
+            if os.path.normpath(member.name) == 'conffiles' and member.isfile():
+                text = tar.extractfile(member).read().decode(errors='replace')
+                return [line.split()[-1] for line in text.splitlines()
+                        if line.split() and 'remove-on-upgrade' not in line.split()[:-1]]
+    return []
+
+
+def preference_names(paths):
+    """Names of the files a package ships directly in /etc/apt/preferences.d, the folder APT reads."""
+    names = []
+    for path in map(PurePosixPath, paths):
+        if path.parent == PREFERENCES_PARTS and path.name not in ('', '.', '..') and '\n' not in path.name:
+            names.append(path.name)
+    return names
 
 
 def identity(obj):
@@ -380,7 +408,8 @@ class Archive:
     The optional architectures list limits a source to those architectures, like
     sources.list's Architectures option. The optional check_valid_until=false is for
     immutable snapshots with expired Release dates; it never disables signature or
-    hash verification.
+    hash verification. The APT preferences that the supplied edition packages ship
+    apply after the gate's own exact pins, as on a system that has them installed.
     """
 
     def __init__(self, config, scratch, arch, min_free_gib=2, root_min_free_gib=12):
@@ -396,6 +425,7 @@ class Archive:
         self.scratch.mkdir(parents=True, exist_ok=True)
         self.ensure_space(1 << 20)
         self._inputs, self._indexes, self._active, self._records = {}, set(), set(), {}
+        self._preferences, self.policy = {}, []
         self.universes = self.scratch / 'universes'
         self.universes.mkdir(exist_ok=True)
         self.base = Path(tempfile.mkdtemp(prefix=f'link-{arch}-', dir=self.scratch))
@@ -544,7 +574,8 @@ class Archive:
             if obj['stamp'] != stamp:
                 raise package.Invalid(f'{path}: supplied input changed after its universe was frozen')
             return obj
-        obj = {'path': path, 'control': control(path), 'sha256': digest(path), 'size': stat.st_size, 'stamp': stamp}
+        obj = {'path': path, 'control': control(path), 'sha256': digest(path), 'size': stat.st_size, 'stamp': stamp,
+               'preferences': preference_names(conffiles(path))}
         current = path.stat()
         if stamp != (current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns, current.st_ctime_ns):
             raise package.Invalid(f'{path}: supplied input changed during verification')
@@ -552,6 +583,43 @@ class Archive:
             raise package.Invalid(f'{path}: wrong architecture {obj["control"]["Architecture"]}; context is {self.arch}')
         self._inputs[path] = obj
         return obj
+
+    def preferences(self, item):
+        """{name: bytes} of the files a supplied package ships in /etc/apt/preferences.d, read once per hash."""
+        if not item['preferences']:
+            return {}
+        if item['sha256'] in self._preferences:
+            return self._preferences[item['sha256']]
+        wanted, found = set(item['preferences']), {}
+        proc = subprocess.Popen(['dpkg-deb', '--fsys-tarfile', str(item['path'])], stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE)
+        try:
+            with tarfile.open(fileobj=proc.stdout, mode='r|*') as tar:
+                for member in tar:
+                    path = PurePosixPath('/' + os.path.normpath(member.name).lstrip('/'))
+                    if path.parent != PREFERENCES_PARTS or path.name not in wanted:
+                        continue
+                    if not member.isfile():
+                        raise package.Invalid(f'{item["path"]}: {path} is not a regular file')
+                    if member.size > PREFERENCES_MAX:
+                        raise package.Invalid(f'{item["path"]}: {path} exceeds {PREFERENCES_MAX} bytes')
+                    found[path.name] = tar.extractfile(member).read()
+            while proc.stdout.read(1 << 20):
+                pass
+        except BaseException:
+            proc.kill()
+            raise
+        finally:
+            proc.stdout.close()
+            err = proc.stderr.read()
+            proc.stderr.close()
+            proc.wait()
+        if proc.returncode:
+            raise package.Invalid(f'{item["path"]}: invalid Debian archive: {err.decode(errors="replace").strip()}')
+        if wanted - set(found):
+            raise package.Invalid(f'{item["path"]}: conffile {PREFERENCES_PARTS / sorted(wanted - set(found))[0]} is not in its data')
+        self._preferences[item['sha256']] = found
+        return found
 
     def cached_input(self, item):
         """Copy only selected bytes, once, without hardlinking or modifying a source."""
@@ -636,6 +704,26 @@ class Archive:
         for name in sorted(named):
             preferences.append(f'Package: {name}\nPin: version *\nPin-Priority: -1\n\n')
         (self.base / 'etc/preferences').write_text(''.join(preferences))
+        # The edition's own APT policy (sparky-stereo-apt's pins, the NVIDIA driver lock) is part
+        # of every installed edition before its other packages. APT parses /etc/apt/preferences
+        # first, then preferences.d in lexicographic order, and the first specific record that
+        # matches a version decides it (apt_preferences(5)), so the exact pins above still win
+        # for supplied packages; APT itself ignores a name outside its naming convention.
+        policy = {}
+        for item in inputs:
+            for name, data in self.preferences(item).items():
+                if name in policy:
+                    raise package.Invalid(f'two supplied packages ship {PREFERENCES_PARTS / name}: '
+                                          f'{policy[name][0][0]} and {item["control"]["Package"]}')
+                policy[name] = (identity(item['control']), data)
+        parts = self.base / 'etc/preferences.d'
+        self.ensure_space(sum(len(data) for _, data in policy.values()) + (len(policy) + 1) * 4096)
+        for old in parts.iterdir():
+            old.unlink()
+        for name, (owner, data) in sorted(policy.items()):
+            (parts / name).write_bytes(data)
+        self.policy = [{'path': str(PREFERENCES_PARTS / name), 'package': owner,
+                        'sha256': hashlib.sha256(data).hexdigest()} for name, (owner, data) in sorted(policy.items())]
         return candidate, inputs, local
 
     def signed(self, directory, local, downloads):
@@ -695,6 +783,7 @@ class Archive:
 
     def _qualify(self, deb, siblings, directory):
         candidate, inputs, local = self.universe(deb, siblings)
+        (directory / 'preferences.json').write_text(json.dumps(self.policy, indent=2) + '\n')
         candidate_bytes = self.cached_input(candidate)
         args = ['apt-get', '-y', '--no-remove', '--no-install-recommends', '--download-only',
                 '--print-uris', 'install', str(candidate_bytes)]
@@ -788,6 +877,7 @@ class Archive:
                     'metadata': str(self.base / 'metadata.json'), 'solver': str(self.base / (label + '.log')), 'status': 'empty',
                     'universe': str(local / 'universe.json'), 'local_index_sha256': digest(local / 'Packages'),
                     'space_floors': {'scratch': self.minimum, 'root': self.root_minimum},
+                    'preferences': self.policy,
                     'diversions': list(diversions.values()),
                     'unmodeled_diversion_scripts': unmodeled,
                     'inputs': [{'identity': identity(item['control']), 'sha256': item['sha256'], 'size': item['size'],

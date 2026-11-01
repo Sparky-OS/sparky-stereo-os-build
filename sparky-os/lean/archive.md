@@ -40,6 +40,14 @@ APT starts from an empty scratch status database and solves the exact candidate 
 Its solver handles alternatives, epochs, Debian revisions, versioned Provides, architecture qualifiers, Architecture all, conflicts and Multi-Arch rules within the selected architecture.
 Recommends and Suggests are excluded.
 Local package versions are pinned and the candidate file is requested exactly, so archive packages cannot silently replace edition inputs.
+The APT preferences that the supplied edition packages ship then apply, as on an installed edition, which has its policy packages before any other edition package (the image installs the NVIDIA driver lock first).
+They are the files each supplied package declares as conffiles directly in `/etc/apt/preferences.d`: Debian Policy 10.7.3 makes every file a package ships in `/etc` a conffile, so the gate reads the small control member and opens the data of only those packages.
+APT parses `/etc/apt/preferences` first and then `preferences.d` in lexicographic order, and the first specific record that matches a version decides its priority ([apt_preferences(5)](https://manpages.debian.org/testing/apt/apt_preferences.5.en.html)), so the gate's exact pins, in the first file, still decide every supplied package.
+The shipped files are copied under their own names, and APT ignores a name outside its naming convention, as it does on an installed system.
+Two supplied packages shipping one file name are refused, as dpkg refuses the second.
+This is what lets an exact dependency take an archive version that is not the newest: APT's solver takes only the candidate for an exact dependency (apt 2.9.17, "Reject all non-candidates outright for strict pinning"), so `nvidia-kernel-open-dkms-stereo3d`'s `firmware-nvidia-gsp (= 615.71.09-2)` resolves from the CUDA repository only with sparky-stereo-nvidia-driver-lock's pin, as on an installed edition (ORDER 329).
+APT's `--no-strict-pinning` would solve it without the lock, but an installed system does not, so the gate would pass what a person's APT refuses.
+Each case records the files it applied, their packages and hashes, in `case-*/preferences.json` and in `resolution.json`.
 Only siblings selected by the dependency solver contribute files, and those selected packages must be coinstallable and dependency-valid.
 The scratch local index is trusted only for the explicitly supplied files whose identities and hashes are recorded; public archive indexes still require signature verification.
 The publisher supplies the selected native and architecture-independent edition packages as that local universe, including libraries already present in the destination pool.
