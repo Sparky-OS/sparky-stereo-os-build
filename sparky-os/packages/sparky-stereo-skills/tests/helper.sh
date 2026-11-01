@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/29
+# Last update 2026/11/01
 # Checks sparky-stereo-skills as installed (or the one named by HELPER), in a throwaway home: what it links, what it
 # leaves alone, what it skips, how it follows an upgrade, what it removes, its archive, its languages and its refusal
 # to run as root. Run as an ordinary user inside a container; prints ok or FAIL per check and exits 1 on any FAIL.
@@ -132,4 +132,10 @@ check "Traditional Chinese for zh_TW" 'says LANG=zh_TW.UTF-8 "已連結"'
 check "English for zh_HK (Chinese keeps its territory)" 'says LANG=zh_HK.UTF-8 "skills linked"'
 check "LC_ALL wins over LANG" 'out=$(LANG=pl_PL.UTF-8 LC_ALL=fr_FR.UTF-8 "$HELPER" status 2>/dev/null); grep -q "compétences liées sur" <<<"$out"'
 check "an unknown folder name is refused" '! "$HELPER" link nowhere 2>/dev/null'
+
+# find: a symptom in the person's words, answered offline from the installed reference tree
+REF=$(dirname "$SYSTEM")
+check "find ranks the skill for a symptom first, with the context command to run next" 'out=$(SPARKY_STEREO_REFERENCE=$REF "$HELPER" find --limit 1 an apt pin that ignores i386 2>&1); grep -q "^1\. edition-packaging " <<<"$out" && grep -q "Next: sparky-stereo-skills context edition-packaging" <<<"$out" && ! grep -q "^2\. " <<<"$out"'
+check "find without words is refused" '! SPARKY_STEREO_REFERENCE=$REF "$HELPER" find >/dev/null 2>&1'
+check "the help names find in all nine languages" '(for l in en_US pl_PL pt_BR fr_FR de_DE ja_JP ko_KR zh_CN zh_TW; do out=$(LANG=$l.UTF-8 "$HELPER" --help); grep -q "^  find \[--limit N\] " <<<"$out" || exit 1; done)'
 exit $fail
