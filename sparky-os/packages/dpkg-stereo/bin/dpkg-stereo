@@ -90,6 +90,7 @@ FILE_COLS = ('path', 'package', 'version', 'conffile', 'sha_orig', 'md5_orig', '
              'bytes_orig', 'bytes_lean')
 PKG_COLS = ('package', 'version', 'list_mtime', 'written')
 TEXT_SIZE_MAX = 4 << 20
+PERSON_CHANGED = 'conffile changed by the person (dpkg rules apply, never projected)'
 
 
 class Paths:
@@ -231,8 +232,25 @@ def write_table(path, cols, rows):
 DB_FIELDS = ('Package', 'Version', 'Architecture', 'Status', 'Multi-Arch')
 
 
+def conffile_entry(line):
+    """One line of a Conffiles field read the way dpkg reads it (lib/dpkg/fields.c, f_conffiles): from the end
+    of the line, the flag remove-on-upgrade, then the flag obsolete, then the hash, and the path is what is
+    left, spaces included. (path, hash, flags), or None for a line without a path and a hash."""
+    rest, flags = line.strip(), set()
+    for flag in ('remove-on-upgrade', 'obsolete'):
+        words = rest.rsplit(None, 1)
+        if len(words) == 2 and words[1] == flag:
+            flags.add(flag)
+            rest = words[0]
+    words = rest.rsplit(None, 1)
+    return (words[0], words[1], flags) if len(words) == 2 else None
+
+
 def _db_stanzas(f):
-    """The fields dpkg-stereo reads from each stanza of a dpkg database file, Conffiles as {path: hash}."""
+    """The fields dpkg-stereo reads from each stanza of a dpkg database file, Conffiles as {path: hash}.
+    A remove-on-upgrade entry is left out: it names a conffile the package no longer ships (deb-conffiles(5):
+    "These files must not exist in the binary package"), and its hash is the word newconffile when the
+    package was installed without ever shipping the file (binutils-common's /etc/gprofng.rc, ORDER 325)."""
     rec, conf = {}, None
     for line in f:
         if line == '\n':
@@ -242,9 +260,9 @@ def _db_stanzas(f):
             continue
         if line[0] in ' \t':
             if conf is not None:
-                parts = line.split()
-                if len(parts) >= 2:
-                    conf[parts[0]] = parts[1]
+                entry = conffile_entry(line)
+                if entry and 'remove-on-upgrade' not in entry[2]:
+                    conf[entry[0]] = entry[1]
             continue
         conf = None
         key, _, value = line.partition(':')
@@ -281,9 +299,9 @@ def dpkg_db(P):
     return db
 
 
-def dpkg_packages(P, db=None):
-    """{package: (version, arch-qualified info name)} of the installed packages, from dpkg's database."""
-    out = {}
+def _installed(P, db):
+    """(name, fields) of each installed package in dpkg's database, named as its file list is: package:arch
+    for a Multi-Arch: same package or one whose list carries the architecture, the package alone otherwise."""
     try:
         lists = set(os.listdir(P.real('/var/lib/dpkg/info')))
     except FileNotFoundError:
@@ -294,16 +312,23 @@ def dpkg_packages(P, db=None):
         name = pkg
         if rec.get('Multi-Arch') == 'same' or f'{pkg}:{arch}.list' in lists:
             name = f'{pkg}:{arch}'
-        out[name] = (rec.get('Version'), name)
-    return out
+        yield name, rec
+
+
+def dpkg_packages(P, db=None):
+    """{package: (version, arch-qualified info name)} of the installed packages, from dpkg's database."""
+    return {name: (rec.get('Version'), name) for name, rec in _installed(P, db)}
 
 
 def conffiles(P, db=None):
-    """{path: md5} of every conffile dpkg's database records (the Conffiles field)."""
-    out = {}
-    for rec in (dpkg_db(P) if db is None else db).values():
-        out.update(rec.get('Conffiles', ()))
-    return out
+    """{package: {path: md5}}: each installed package's own conffiles as dpkg's database records them (the
+    Conffiles field), named as dpkg_packages names the package. A path's hash is always asked of the package
+    whose file list holds the path, never of another package that once had it: dpkg ignores "the 'conffiles'
+    data in the status file ... when a package is not also listed in the file ownership database as having
+    that file" (src/main/unpack.c). A conffile that moved leaves an entry in the package it left: on a fresh
+    install binutils-common records /etc/gprofng.rc as "newconffile remove-on-upgrade" while binutils owns
+    the file, and one map of every package's entries took that word for the file's hash (ORDER 325)."""
+    return {name: rec.get('Conffiles', {}) for name, rec in _installed(P, db)}
 
 
 def package_files(P, info):
@@ -467,7 +492,9 @@ def project_packages(P, names, jobs, image=False, log=print, only=None, known=No
     if only is not None:
         only = set(only)
     held = set(read_hold(P))
-    conf = conffiles(P, db)
+    # a path is judged by the conffiles of the package whose file list holds it (dpkg -S), never by another
+    # package's entry for the same path (src/main/unpack.c)
+    confs = conffiles(P, db)
     div = diversions(P)
     files = Records(P, 'records', pkgs.keys() if names else None)
     left = Records(P, 'left', pkgs.keys() if names else None)
@@ -523,23 +550,26 @@ def project_packages(P, names, jobs, image=False, log=print, only=None, known=No
             if r is None:
                 continue
             ver = pkgs[name][0]
+            conf = confs.get(name, {})
             if path not in conf and path in sums and md5(data) != sums[path]:
                 left[path] = {'path': path, 'package': name, 'handler': r.handler,
                               'reason': 'changed since its package installed it (not the package\'s bytes)'}
                 continue
             if path in conf and md5(data) != conf[path]:
                 left[path] = {'path': path, 'package': name, 'handler': r.handler,
-                              'reason': 'conffile changed by the person (dpkg rules apply, never projected)'}
+                              'reason': PERSON_CHANGED}
                 continue
             if r.status != 'projected':
                 if r.handler or r.reason not in ('no qualified adapter for this consumer',):
                     left[path] = {'path': path, 'package': name, 'handler': r.handler, 'reason': r.reason}
+                else:
+                    left.pop(path, None)     # an earlier reason no longer holds (a false "changed by the person")
                 skipped += 1
                 continue
             is_conf = path in conf
             if is_conf and md5(data) != conf[path]:
                 left[path] = {'path': path, 'package': name, 'handler': r.handler,
-                              'reason': 'conffile changed by the person (dpkg rules apply, never projected)'}
+                              'reason': PERSON_CHANGED}
                 continue
             st = os.lstat(real)
             if is_conf:
@@ -983,7 +1013,7 @@ def verify(P, names, deep=False):
             continue
         orig = None
         if rec.get('conffile') == '1':
-            if conf.get(path) != rec['md5_orig']:
+            if conf.get(rec['package'], {}).get(path) != rec['md5_orig']:
                 print(f'STALE     {path} (dpkg records another conffile version)')
                 bad += 1
                 continue
@@ -1325,10 +1355,10 @@ def fetch_hr(P):
             f.write(orig)
         n += 1
     conf = conffiles(P)
-    for obj in lc_package.installed(P).values():
+    for info, obj in lc_package.installed(P).items():
         if not isinstance(obj, dict) or not obj['hr_package']:
             continue
-        rows = [row for row in obj['files'] if row['status'] == 'projected' and row['path'] in conf]
+        rows = [row for row in obj['files'] if row['status'] == 'projected' and row['path'] in conf.get(info, {})]
         pending = []
         for row in rows:
             dest = P.real(f'/usr/share/doc/{obj["package"]}/hr{row["path"]}')

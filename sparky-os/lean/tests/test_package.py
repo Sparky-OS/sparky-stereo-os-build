@@ -28,6 +28,12 @@ loader.exec_module(client)
 
 SCRIPT = '#!/bin/sh\n' + '# A long explanatory comment for the developer, retained in HR.\n' * 12 + 'printf "hello\\n"\n'
 UNIT = '# How to configure this service, kept in the separate documentation.\n' * 12 + '[Service]\nExecStart=/usr/bin/lc-demo\n'
+# Debian's /etc/gprofng.rc in miniature (no qualified adapter reads it) and two settings that do have one
+TOOLS_RC = '# gprofng-style settings; this explanation is for people.\n' * 3 + 'scc all\ndcc all:src\n'
+TOOLS_SYSCTL = '# A setting that moved with the tools; the kernel reads only the line below.\n' * 4 + 'vm.swappiness = 10\n'
+TOOLS_UNIT = UNIT.replace('lc-demo', 'lc-tools')
+TOOLS_FILES = {'/etc/lc-tools.rc': TOOLS_RC, '/etc/sysctl.d/90-lc-tools.conf': TOOLS_SYSCTL,
+               '/etc/systemd/system/lc-tools.service': TOOLS_UNIT}
 
 
 def synthetic_records(P, records, c_files, per_package=45):
@@ -84,8 +90,8 @@ class Packages(unittest.TestCase):
         release.build_tree(root, out)
         return root, out, out / f'lc-demo_{version}_{arch}.deb'
 
-    def system(self):
-        root = self.base / 'system'
+    def system(self, name='system'):
+        root = self.base / name
         (root / 'var/lib/dpkg/info').mkdir(parents=True)
         (root / 'var/lib/dpkg/status').touch()
         return root, client.Paths(str(root))
@@ -216,7 +222,8 @@ class Packages(unittest.TestCase):
             self.assertIn('1 lc1 packages', self.run_project(P))
         self.assertFalse(client.Records(P))
         conf = root / 'etc/systemd/system/lc-demo.service'
-        self.assertEqual(client.conffiles(P)['/etc/systemd/system/lc-demo.service'], hashlib.md5(conf.read_bytes()).hexdigest())
+        self.assertEqual(client.conffiles(P)['lc-demo']['/etc/systemd/system/lc-demo.service'],
+                         hashlib.md5(conf.read_bytes()).hexdigest())
         before = conf.read_bytes()
         client.pre_invoke(P)
         self.assertEqual(conf.read_bytes(), before)
@@ -689,7 +696,7 @@ class Packages(unittest.TestCase):
                          's = importlib.util.spec_from_loader(l.name, l)\nm = importlib.util.module_from_spec(s)\n'
                          'l.exec_module(m)\nP = m.Paths(sys.argv[2])\n'
                          'print(" ".join(sorted(m.dpkg_packages(P))))\n'
-                         'print(m.conffiles(P).get("/etc/lc-early.conf"))\n')
+                         'print(m.conffiles(P).get("lc-early", {}).get("/etc/lc-early.conf"))\n')
         seen = self.base / 'seen.txt'
         early = self.base / 'early'
         (early / 'DEBIAN').mkdir(parents=True)
@@ -736,6 +743,113 @@ class Packages(unittest.TestCase):
         os.unlink(root / 'var/lib/dpkg/updates/0000')
         self.assertNotIn('lc-demo', package.installed(P))
         self.assertNotIn('lc-demo', client.dpkg_packages(P))
+
+    def plain_deb(self, name, files, conffiles=(), control=''):
+        """A package of another distribution (no lc1 mark), with an md5sums of every file it ships."""
+        tree = self.base / f'tree-{name}'
+        (tree / 'DEBIAN').mkdir(parents=True)
+        sums = []
+        for path, text in files.items():
+            f = tree / path.lstrip('/')
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(text)
+            f.chmod(0o755 if text.startswith('#!') else 0o644)
+            sums.append(f'{hashlib.md5(text.encode()).hexdigest()}  {path.lstrip("/")}\n')
+        (tree / 'DEBIAN/md5sums').write_text(''.join(sums))
+        if conffiles:
+            (tree / 'DEBIAN/conffiles').write_text(''.join(c + '\n' for c in conffiles))
+        (tree / 'DEBIAN/control').write_text(f'Package: {name}\nVersion: 1\nArchitecture: all\n{control}'
+                                            'Maintainer: Example <dev@example.org>\nDescription: fixture\n')
+        deb = self.base / f'{name}.deb'
+        subprocess.run(['dpkg-deb', '--root-owner-group', '-b', str(tree), str(deb)], check=True,
+                       stdout=subprocess.DEVNULL)
+        return deb
+
+    def moved_conffiles(self, owner='lc-tools', moved_from='lc-tools-common', name='system'):
+        """Debian's binutils since 2.43.90 (bug #1093594): `owner` ships the conffiles, and `moved_from`, the
+        package they moved from, keeps them in its conffiles as remove-on-upgrade entries, which dpkg records
+        as "newconffile remove-on-upgrade" on a fresh install (binutils-common's /etc/gprofng.rc)."""
+        root, P = self.system(name)
+        a = self.plain_deb(owner, TOOLS_FILES, conffiles=list(TOOLS_FILES))
+        b = self.plain_deb(moved_from, {'/usr/share/doc/lc-tools-common/README': 'data\n'},
+                           conffiles=['remove-on-upgrade ' + path for path in TOOLS_FILES])
+        self.dpkg(root, '-i', str(a), str(b))
+        status = (root / 'var/lib/dpkg/status').read_text()
+        for path in TOOLS_FILES:
+            self.assertIn(f' {path} newconffile remove-on-upgrade\n', status)
+            self.assertIn(f' {path} {hashlib.md5(TOOLS_FILES[path].encode()).hexdigest()}\n', status)
+        return root, P
+
+    def verify_output(self, P):
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            rc = client.verify(P, [])
+        return rc, out.getvalue()
+
+    def test_conffiles_are_read_as_dpkg_reads_them(self):
+        """lib/dpkg/fields.c (f_conffiles) reads each line from its end: remove-on-upgrade, then obsolete,
+        then the hash; the path is the rest, spaces included."""
+        entry = client.conffile_entry
+        self.assertEqual(entry(' /etc/a.conf 0123\n'), ('/etc/a.conf', '0123', set()))
+        self.assertEqual(entry(' /etc/a b.conf 0123\n'), ('/etc/a b.conf', '0123', set()))
+        self.assertEqual(entry(' /etc/gone 0123 obsolete\n'), ('/etc/gone', '0123', {'obsolete'}))
+        self.assertEqual(entry(' /etc/gprofng.rc newconffile remove-on-upgrade\n'),
+                         ('/etc/gprofng.rc', 'newconffile', {'remove-on-upgrade'}))
+        self.assertEqual(entry(' /etc/x 0123 obsolete remove-on-upgrade\n'),
+                         ('/etc/x', '0123', {'obsolete', 'remove-on-upgrade'}))
+        self.assertIsNone(entry(' /etc/x\n'))
+        stanza = ('Package: p\nStatus: install ok installed\nArchitecture: all\nConffiles:\n /etc/a b.conf 0123\n'
+                  ' /etc/gone 4567 obsolete\n /etc/gprofng.rc newconffile remove-on-upgrade\nVersion: 1\n\n')
+        rec, = client._db_stanzas(io.StringIO(stanza))
+        self.assertEqual(rec['Conffiles'], {'/etc/a b.conf': '0123', '/etc/gone': '4567'})
+        self.assertEqual(rec['Version'], '1')
+
+    def test_a_moved_conffile_in_its_package_bytes_is_never_edited(self):
+        """ORDER 325: binutils owns /etc/gprofng.rc in Debian's bytes, binutils-common records it as
+        "newconffile remove-on-upgrade", and dpkg-stereo 0.1.21 took that word for the file's hash and called
+        the file changed by the person. Each path is judged by the package whose file list holds it, in
+        whichever order the status file lists the two."""
+        for owner, moved_from in (('lc-tools', 'lc-tools-common'), ('lc-zz-tools', 'lc-aa-common')):
+            with self.subTest(owner=owner, moved_from=moved_from):
+                root, P = self.moved_conffiles(owner, moved_from, name='system-' + owner)
+                self.run_project(P)
+                left = client.Records(P, 'left')
+                self.assertNotIn('/etc/lc-tools.rc', left)
+                records = client.Records(P)
+                for path in ('/etc/sysctl.d/90-lc-tools.conf', '/etc/systemd/system/lc-tools.service'):
+                    self.assertNotIn(path, left)
+                    self.assertEqual((records[path]['package'], records[path]['conffile']), (owner, '1'))
+                    self.assertEqual(records[path]['md5_orig'], hashlib.md5(TOOLS_FILES[path].encode()).hexdigest())
+                self.assertEqual((root / 'etc/lc-tools.rc').read_text(), TOOLS_RC)
+                rc, out = self.verify_output(P)
+                self.assertEqual(rc, 0, out)
+                self.assertNotIn('EDITED', out)
+                # the dpkg run after: pre-invoke gives dpkg its own bytes back, post-invoke projects them again
+                self.assertEqual(client.pre_invoke(P), 2)
+                for path, text in TOOLS_FILES.items():
+                    self.assertEqual((root / path.lstrip('/')).read_text(), text)
+                client.post_invoke(P, 1)
+                rc, out = self.verify_output(P)
+                self.assertEqual(rc, 0, out)
+                self.assertNotIn('EDITED', out)
+
+    def test_a_person_edit_of_a_moved_conffile_stays_edited(self):
+        """The control: the person changes a setting in each conffile; dpkg-stereo leaves them as they made
+        them and verify says EDITED, as before ORDER 325."""
+        root, P = self.moved_conffiles()
+        edits = {'/etc/lc-tools.rc': TOOLS_RC.replace('scc all\n', 'scc all:src\n'),
+                 '/etc/sysctl.d/90-lc-tools.conf': TOOLS_SYSCTL.replace('= 10', '= 60'),
+                 '/etc/systemd/system/lc-tools.service': TOOLS_UNIT.replace('ExecStart=', 'Nice=5\nExecStart=')}
+        for path, text in edits.items():
+            (root / path.lstrip('/')).write_text(text)
+        self.run_project(P)
+        left = client.Records(P, 'left')
+        records = client.Records(P)
+        rc, out = self.verify_output(P)
+        for path, text in edits.items():
+            self.assertEqual((left[path]['package'], left[path]['reason']), ('lc-tools', client.PERSON_CHANGED))
+            self.assertNotIn(path, records)
+            self.assertEqual((root / path.lstrip('/')).read_text(), text)
+            self.assertIn(f'EDITED    {path} (changed by the person: left as they made it)\n', out)
 
     def test_restore_names_scale_to_the_station(self):
         """ORDER 310 measured 68.9 s for restore's filter on the station's 90,217 records with the 47,360
