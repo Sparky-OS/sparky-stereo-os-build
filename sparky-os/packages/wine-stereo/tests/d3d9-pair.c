@@ -3,6 +3,8 @@
 #include <d3d9.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
+#include "d3d-pair-capture.h"
 static LRESULT CALLBACK proc(HWND w,UINT m,WPARAM a,LPARAM b) { return DefWindowProcA(w,m,a,b); }
 #define CHECK(call) do { HRESULT hr=(call); if(FAILED(hr)) { printf("FAIL line=%d hr=%08lx\n",__LINE__,(unsigned long)hr); return 2; } } while(0)
 int main(int argc,char **argv) {
@@ -14,6 +16,7 @@ int main(int argc,char **argv) {
     D3DPRESENT_PARAMETERS pp={0};pp.Windowed=TRUE;pp.SwapEffect=D3DSWAPEFFECT_DISCARD;pp.hDeviceWindow=w;pp.BackBufferWidth=320;pp.BackBufferHeight=200;pp.BackBufferFormat=D3DFMT_X8R8G8B8;pp.PresentationInterval=D3DPRESENT_INTERVAL_IMMEDIATE;
     CHECK(IDirect3D9_CreateDevice(api,0,D3DDEVTYPE_HAL,w,D3DCREATE_SOFTWARE_VERTEXPROCESSING,&pp,&dev));
     printf("pointer_bits=%u d3d9=ready\n",(unsigned)(8*sizeof(void*)));fflush(stdout);
+    int capture_frames = getenv("WINE254_CAPTURE_FIRST") != NULL;
     int pair=argc>1&&!strcmp(argv[1],"stereo");
     for(int phase=0;phase<2;++phase) {
         int width=phase?256:320,height=phase?160:200;
@@ -23,12 +26,21 @@ int main(int argc,char **argv) {
         CHECK(IDirect3DSurface9_LockRect(src,&lock,NULL,0));
         for(int y=0;y<height;y++)for(int x=0;x<width;x++){int eye=pair&&x>=width/2,xx=pair?x%(width/2):x;((DWORD*)((char*)lock.pBits+y*lock.Pitch))[x]=0xff000000u|((xx&255)<<16)|((height-1-y)<<8)|(eye<<7)|((xx>>8)<<3);}
         CHECK(IDirect3DSurface9_UnlockRect(src));
-        for(int frame=0;frame<80;frame++) {
+        for(int frame=0;frame<(capture_frames ? 2 : 80);frame++) {
             MSG msg;while(PeekMessageA(&msg,NULL,0,0,PM_REMOVE)){TranslateMessage(&msg);DispatchMessageA(&msg);}
+            if (capture_frames) {
+                CHECK(IDirect3DSurface9_LockRect(src,&lock,NULL,0));
+                for(int y=0;y<height;y++)for(int x=0;x<width;x++) {
+                    DWORD *pixel=&((DWORD*)((char*)lock.pBits+y*lock.Pitch))[x];
+                    *pixel=(*pixel & ~3u) | (phase*2+frame);
+                }
+                CHECK(IDirect3DSurface9_UnlockRect(src));
+            }
             CHECK(IDirect3DDevice9_GetBackBuffer(dev,0,0,D3DBACKBUFFER_TYPE_MONO,&dst));
             CHECK(IDirect3DDevice9_UpdateSurface(dev,src,NULL,dst,NULL));IDirect3DSurface9_Release(dst);
             CHECK(IDirect3DDevice9_Present(dev,NULL,NULL,NULL,NULL));
-            if(frame==10){printf("phase=%d logical=%dx%d frame=ready\n",phase,width,height);fflush(stdout);}Sleep(50);
+            if (capture_frames) pair_capture(phase*2+frame,width,height);
+            else if(frame==10){printf("phase=%d logical=%dx%d frame=ready\n",phase,width,height);fflush(stdout);}Sleep(50);
         }
         IDirect3DSurface9_Release(src);
     }
