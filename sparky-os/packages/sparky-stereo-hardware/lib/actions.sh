@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/10
+# Last update 2026/11/01
 
 log() { printf '%s\n' "$*"; }
 run() { printf 'RUN'; printf ' %q' "$@"; printf '\n'; "$@"; }
@@ -109,67 +109,67 @@ EOF
 	log 'NVIDIA laptop runtime PM configured for next driver bind/reboot; actual RTD3 support is hardware-dependent'
 }
 
+# Files of apt's sources, other than the one sparky-stereo-cuda-repo ships, that name NVIDIA's CUDA repository (outside a
+# comment): a repository the person set up themselves, such as NVIDIA's own cuda-keyring.
+cuda_sources_elsewhere() {
+	local file own="$ROOT/etc/apt/sources.list.d/sparky-stereo-cuda.sources"
+	local -a found=()
+	for file in "$ROOT/etc/apt/sources.list" "$ROOT"/etc/apt/sources.list.d/*.list "$ROOT"/etc/apt/sources.list.d/*.sources; do
+		[[ -f $file && $file != "$own" ]] || continue
+		if sed 's/#.*//' "$file" | grep -Fq "$1"; then found+=("${file#"$ROOT"}"); fi
+	done
+	printf '%s\n' "${found[*]}"
+}
+
+package_installed() {
+	[[ $(dpkg-query -W -f '${db:Status-Abbrev}' "$1" 2>/dev/null) == ii* ]]
+}
+
 setup_nvidia() {
-	local base=https://developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64
-	local key="$ROOT/etc/apt/keyrings/sparky-stereo-cuda.gpg"
-	local source="$ROOT/etc/apt/sources.list.d/sparky-stereo-cuda.sources"
-	local pin="$ROOT/etc/apt/preferences.d/91sparky-stereo-cuda"
-	local driver decoder nvidia_version
+	local uri=developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64
+	local driver decoder nvidia_version other package
 	local module=nvidia-kernel-open-dkms-stereo3d
-	local file
+	local -a policy=(sparky-stereo-nvidia-driver-lock sparky-stereo-cuda-repo) added=()
 	# Do not start a repository change if the edition's module is unavailable.
 	if ! apt-cache show --no-all-versions "$module" >"$WORK/nvidia-module" 2>&1 || ! grep -q '^Package:' "$WORK/nvidia-module"; then
 		log 'FALLBACK edition NVIDIA module unavailable; nouveau firmware installed'
 		return 0
 	fi
 	# The userspace driver is NVIDIA's version the module is built for: the module's version
-	# without our +stereo3d suffix (615.71.09-2+stereo3d4 -> 615.71.09-2), so the two cannot drift.
-	nvidia_version=$(sed -n 's/^Version: \(.*\)+stereo3d[0-9]*$/\1/p' "$WORK/nvidia-module" | head -n1)
+	# without our +stereo3d suffix and Lean Code's +lc mark after it (615.71.09-2+stereo3d7+lc1 -> 615.71.09-2),
+	# so the two cannot drift.
+	nvidia_version=$(sed -n 's/^Version: \(.*\)+stereo3d[0-9]*\(+lc[0-9]*\)\{0,1\}$/\1/p' "$WORK/nvidia-module" | head -n1)
 	if [[ -z $nvidia_version ]]; then
 		log 'FALLBACK edition NVIDIA module has no NVIDIA version; nouveau firmware installed'
 		return 0
 	fi
 	driver=nvidia-driver=$nvidia_version
 	decoder=libnvcuvid1=$nvidia_version
-	if ! run curl --fail --location --max-time 60 "$base/cuda-keyring_1.1-1_all.deb" -o "$WORK/cuda-keyring.deb"; then
-		log 'FALLBACK CUDA key download failed; nouveau firmware installed'
-		return 0
+	# NVIDIA's CUDA repository comes from the edition's package sparky-stereo-cuda-repo (its source, NVIDIA's key and the
+	# edition's pins: CUDA updates, NVIDIA's driver stays at the module's version, Debian's own tools stay Debian's), with
+	# the driver lock it depends on. Both go in a transaction of their own, so the lock and the pins are in force before
+	# apt chooses any NVIDIA package; installed together with the driver, the lock came too late for NVIDIA's user space.
+	# A repository the person set up for NVIDIA's URI is kept as it is (a second source for it with another key file stops
+	# apt); the lock comes either way.
+	other=$(cuda_sources_elsewhere "$uri")
+	if [[ -n $other ]]; then
+		log "NVIDIA's CUDA repository is already configured in $other; kept as it is"
+		policy=(sparky-stereo-nvidia-driver-lock)
 	fi
-	if ! printf '%s  %s\n' "$CUDA_KEY_SHA256" "$WORK/cuda-keyring.deb" | sha256sum -c -; then
-		log 'FALLBACK CUDA key checksum mismatch; nouveau firmware installed'
-		return 0
-	fi
-	if ! dpkg-deb --fsys-tarfile "$WORK/cuda-keyring.deb" | tar -xO ./usr/share/keyrings/cuda-archive-keyring.gpg >"$WORK/cuda.gpg"; then
-		log 'FALLBACK CUDA key extraction failed; nouveau firmware installed'
-		return 0
-	fi
-	mkdir -p "${key%/*}" "${source%/*}" "${pin%/*}" || return 1
-	# Back up our previous files so a failed preflight restores the previous policy.
-	for file in "$key" "$source" "$pin"; do
-		[[ ! -e "$file" ]] || cp -p "$file" "$WORK/${file##*/}.previous" || return 1
+	for package in "${policy[@]}"; do
+		package_installed "$package" || added+=("$package")
 	done
-	install -m644 "$WORK/cuda.gpg" "$key" || return 1
-	cat >"$source" <<EOF || return 1
-Types: deb
-URIs: $base/
-Suites: /
-Architectures: amd64
-Signed-By: /etc/apt/keyrings/sparky-stereo-cuda.gpg
-EOF
-	cat >"$pin" <<'EOF' || return 1
-Package: *
-Pin: origin developer.download.nvidia.com
-Pin-Priority: 1002
-EOF
+	# On a failure below, what this run installed is purged (a removed package's conffiles, the source among them, stay).
+	if ((${#added[@]})) && ! apt_install "${added[@]}"; then
+		run dpkg --purge "${added[@]}" || return 1
+		log "FALLBACK the edition's NVIDIA repository and driver lock could not be installed; nouveau firmware installed"
+		return 0
+	fi
 	if ! run env DEBIAN_FRONTEND=noninteractive apt-get -y update ||
 		! run env DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests --simulate install "$driver" "$module" "$decoder" nvidia-vaapi-driver; then
-		for file in "$key" "$source" "$pin"; do
-			if [[ -e "$WORK/${file##*/}.previous" ]]; then
-				cp -p "$WORK/${file##*/}.previous" "$file" || return 1
-			else
-				rm -f "$file" || return 1
-			fi
-		done
+		if ((${#added[@]})); then
+			run dpkg --purge "${added[@]}" || return 1
+		fi
 		log 'FALLBACK NVIDIA preflight failed; previous repository policy restored; nouveau firmware installed'
 		return 0
 	fi

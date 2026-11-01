@@ -48,6 +48,11 @@ def version_record(cache, records, name, version):
     raise ValueError(f'missing exact metadata: {name}={version}')
 
 
+# The packages rootfs.sh installs first whose pins take effect before the NVIDIA install: the driver lock, and
+# NVIDIA's CUDA repository with its pins (size-probe.sh puts that package's source in place, as the image has it).
+POLICY_PACKAGES = ('sparky-stereo-nvidia-driver-lock', 'sparky-stereo-cuda-repo')
+
+
 def apply_preferences(record, out):
     # This package's conffile takes effect before the NVIDIA install in rootfs.sh.
     # Extract only that conffile, never run package scripts or alter the probe host.
@@ -64,7 +69,7 @@ def apply_preferences(record, out):
                     (out / 'preferences.d' / Path(name).name).write_bytes(payload.extractfile(member).read())
                     count += 1
         if archive.wait() or not count:
-            raise ValueError('NVIDIA driver lock has no readable preferences')
+            raise ValueError(record['Package'] + ' has no readable preferences')
 
 
 def main():
@@ -132,7 +137,7 @@ def main():
                                      'installed_kib': int(removed['Installed-Size']), 'reason': reason})
         for record in selected:
             installed[identity(record)] = str(record).rstrip() + '\nStatus: install ok installed\n'
-            if record['Package'] == 'sparky-stereo-nvidia-driver-lock':
+            if record['Package'] in POLICY_PACKAGES:
                 apply_preferences(record, out)
     (out / 'status').write_text('\n\n'.join(installed.values()) + '\n\n')
     final = {key: apt_pkg.TagSection(value) for key, value in installed.items()}

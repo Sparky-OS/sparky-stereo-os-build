@@ -144,7 +144,7 @@ if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
 	done
 	(cd $R$O && dpkg-scanpackages -m . 2>/dev/null > Packages && ls)
 	apt_in clean
-	echo "== $(date -u +%T) the image's apt sources: the build's own sources go; Debian, SparkyLinux (sparky-apt), deb-multimedia and NVIDIA's CUDA repository stay"
+	echo "== $(date -u +%T) the image's apt sources: the build's own sources go; Debian, SparkyLinux (sparky-apt), deb-multimedia and NVIDIA's CUDA repository (sparky-stereo-cuda-repo) stay"
 	rm -f $R/etc/apt/sources.list.d/beta-build-*.sources $R/etc/apt/sources.list.d/sparky-stereo-build.sources $R/etc/apt/preferences.d/beta-build-*
 	rm -f $R/usr/sbin/policy-rc.d $R/etc/dkms/framework.conf.d/beta-build.conf
 	# the real os-prober and grub-mkconfig, stubs while the tree was built (rootfs.sh)

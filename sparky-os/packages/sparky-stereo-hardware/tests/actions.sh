@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/03
+# Last update 2026/11/01
 set -euo pipefail
 [[ -e /.dockerenv ]] || exit 1
 source "${HARDWARE_ACTIONS:-/usr/lib/sparky-stereo-hardware/actions.sh}"
@@ -58,65 +58,107 @@ grep -Fxq 'options snd_hda_intel enable_msi=1' "$ROOT/etc/modprobe.d/sparky-ster
 echo 'PASS Creative requires four blobs and writes the real kernel parameter'
 
 # The commands below are doubles. No actual repository or driver is changed.
-mkdir -p "$T/key/DEBIAN" "$T/key/usr/share/keyrings"
-printf 'Package: test-cuda-key\nVersion: 1\nArchitecture: all\nMaintainer: Test <test@example.invalid>\nDescription: Fixture\n' >"$T/key/DEBIAN/control"
-printf 'fixture public key\n' >"$T/key/usr/share/keyrings/cuda-archive-keyring.gpg"
-dpkg-deb --root-owner-group -b "$T/key" "$T/key.deb" >/dev/null
-CUDA_KEY_SHA256=$(sha256sum "$T/key.deb" | cut -d' ' -f1)
+LOCK=sparky-stereo-nvidia-driver-lock
+REPO=sparky-stereo-cuda-repo
+DRIVER_LINE='DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install nvidia-driver=615.71.09-2 nvidia-kernel-open-dkms-stereo3d libnvcuvid1=615.71.09-2 nvidia-vaapi-driver'
+installed_packages=
 apt-cache() { [[ ${missing_module:-0} == 0 ]] || return 1; printf '%s\n' 'Package: nvidia-kernel-open-dkms-stereo3d' "Version: ${module_version:-615.71.09-2+stereo3d4}"; }
-curl() {
-	[[ ${bad_download:-0} == 0 ]] || return 22
-	[[ $* == *cuda-keyring_1.1-1_all.deb* ]] || return 1
-	cp "$T/key.deb" "${@: -1}"
-}
+curl() { echo "curl $*" >>"$calls"; return 1; }
+dpkg-query() { [[ " $installed_packages " != *" ${*: -1} "* ]] || printf 'ii '; }
+dpkg() { echo "dpkg $*" >>"$calls"; }
 env() {
 	echo "$*" >>"$calls"
+	[[ $* != *"install $LOCK"* || ${fail_policy:-0} == 0 ]] || return 1
 	[[ $* != *--simulate* || ${fail_preflight:-0} == 0 ]] || return 1
-	[[ $* != *install* || $* == *--simulate* || ${fail_install:-0} == 0 ]] || return 1
+	[[ $* != *install\ nvidia-driver=* || $* == *--simulate* || ${fail_install:-0} == 0 ]] || return 1
 }
+# a check that fails the test when the command succeeds (bash's set -e ignores a command inverted with !)
+refute() { if "$@"; then echo "FAIL: $*"; exit 1; fi; }
+line_of() { grep -nFx "$1" "$calls" | head -n1 | cut -d: -f1; }
+no_hand_files() { [[ ! -e "$ROOT/etc/apt/sources.list.d/sparky-stereo-cuda.sources" && ! -e "$ROOT/etc/apt/preferences.d/91sparky-stereo-cuda" && ! -e "$ROOT/etc/apt/keyrings/sparky-stereo-cuda.gpg" ]]; }
 missing_module=1
+: >"$calls"
 setup_nvidia
-[[ ! -e "$ROOT/etc/apt/sources.list.d/sparky-stereo-cuda.sources" ]]
+refute grep -q install "$calls"
 missing_module=0
-bad_download=1
+: >"$calls"
 setup_nvidia
-[[ ! -e "$ROOT/etc/apt/sources.list.d/sparky-stereo-cuda.sources" ]]
-bad_download=0
-saved=$CUDA_KEY_SHA256
-CUDA_KEY_SHA256=0000000000000000000000000000000000000000000000000000000000000000
+policy_line=$(line_of "DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install $LOCK $REPO")
+update_line=$(line_of 'DEBIAN_FRONTEND=noninteractive apt-get -y update')
+simulate_line=$(line_of "${DRIVER_LINE/ install / --simulate install }")
+driver_line=$(line_of "$DRIVER_LINE")
+[[ -n $policy_line && -n $update_line && -n $simulate_line && -n $driver_line ]]
+((policy_line < update_line && update_line < simulate_line && simulate_line < driver_line))
+refute grep -q '^curl' "$calls"
+no_hand_files
+echo 'PASS NVIDIA: the driver lock and the CUDA repository package first, in their own transaction, then the index, the preflight and the exact driver; no file written by hand, no download'
+: >"$calls"
+installed_packages="$LOCK $REPO"
 setup_nvidia
-[[ ! -e "$ROOT/etc/apt/sources.list.d/sparky-stereo-cuda.sources" ]]
-CUDA_KEY_SHA256=$saved
+refute grep -q "install $LOCK" "$calls"
+grep -Fxq "$DRIVER_LINE" "$calls"
+installed_packages=
+echo 'PASS NVIDIA: an installed lock and repository package are not installed again'
+mkdir -p "$ROOT/etc/apt/sources.list.d"
+printf 'Types: deb\nURIs: https://developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64/\nSuites: /\nArchitectures: amd64\nSigned-By: /etc/apt/keyrings/sparky-stereo-cuda.gpg\n' >"$ROOT/etc/apt/sources.list.d/sparky-stereo-cuda.sources"
+printf '# deb [signed-by=/usr/share/keyrings/cuda-archive-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64/ /\n' >"$ROOT/etc/apt/sources.list.d/commented.list"
+: >"$calls"
+setup_nvidia >"$T/log"
+grep -Fxq "DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install $LOCK $REPO" "$calls"
+refute grep -q 'already configured' "$T/log"
+echo 'PASS NVIDIA: the source the image or an older setup wrote, and a commented line, are not a repository of the person'"'"'s'
+printf 'deb [signed-by=/usr/share/keyrings/cuda-archive-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64/ /\n' >"$ROOT/etc/apt/sources.list.d/cuda-debian13-x86_64.list"
+: >"$calls"
+setup_nvidia >"$T/log"
+grep -Fxq "DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install $LOCK" "$calls"
+refute grep -q "install $LOCK $REPO" "$calls"
+grep -Fq "NVIDIA's CUDA repository is already configured in /etc/apt/sources.list.d/cuda-debian13-x86_64.list; kept as it is" "$T/log"
+grep -Fxq "$DRIVER_LINE" "$calls"
+rm -f "$ROOT/etc/apt/sources.list.d/cuda-debian13-x86_64.list" "$ROOT/etc/apt/sources.list.d/commented.list" "$ROOT/etc/apt/sources.list.d/sparky-stereo-cuda.sources"
+echo 'PASS NVIDIA: a CUDA repository the person set up is kept; only the driver lock is added before the driver'
+fail_policy=1
+: >"$calls"
+setup_nvidia >"$T/log"
+grep -Fxq "dpkg --purge $LOCK $REPO" "$calls"
+refute grep -q -- '--simulate' "$calls"
+grep -q '^FALLBACK' "$T/log"
+fail_policy=0
 fail_preflight=1
-setup_nvidia
-[[ ! -e "$ROOT/etc/apt/sources.list.d/sparky-stereo-cuda.sources" ]]
+: >"$calls"
+setup_nvidia >"$T/log"
+grep -Fxq "dpkg --purge $LOCK $REPO" "$calls"
+refute grep -Fxq "$DRIVER_LINE" "$calls"
+grep -q 'FALLBACK NVIDIA preflight failed' "$T/log"
+installed_packages="$LOCK $REPO"
+: >"$calls"
+setup_nvidia >"$T/log"
+refute grep -q 'dpkg --purge' "$calls"
+installed_packages=
 fail_preflight=0
-setup_nvidia
-grep -Fxq 'Pin-Priority: 1002' "$ROOT/etc/apt/preferences.d/91sparky-stereo-cuda"
-grep -Fxq 'Pin: origin developer.download.nvidia.com' "$ROOT/etc/apt/preferences.d/91sparky-stereo-cuda"
-grep -Fxq 'Signed-By: /etc/apt/keyrings/sparky-stereo-cuda.gpg' "$ROOT/etc/apt/sources.list.d/sparky-stereo-cuda.sources"
-cmp "$T/key/usr/share/keyrings/cuda-archive-keyring.gpg" "$ROOT/etc/apt/keyrings/sparky-stereo-cuda.gpg"
-grep -Fxq 'DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install nvidia-driver=615.71.09-2 nvidia-kernel-open-dkms-stereo3d libnvcuvid1=615.71.09-2 nvidia-vaapi-driver' "$calls"
-echo 'PASS NVIDIA exact userspace, explicit edition module, key archive verification, Signed-By and origin pin'
+echo 'PASS NVIDIA: a failed policy install or preflight purges what this run installed and nothing else'
 # The userspace driver follows the module's version, whatever NVIDIA version that is.
 : >"$calls"
 module_version=620.10.01-1+stereo3d1
 setup_nvidia
 grep -Fxq 'DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install nvidia-driver=620.10.01-1 nvidia-kernel-open-dkms-stereo3d libnvcuvid1=620.10.01-1 nvidia-vaapi-driver' "$calls"
+# The published module carries Lean Code's mark after ours (615.71.09-2+stereo3d7+lc1).
+: >"$calls"
+module_version=615.71.09-2+stereo3d7+lc1
+setup_nvidia
+grep -Fxq "$DRIVER_LINE" "$calls"
 module_version=615.71.09-2
 : >"$calls"
 setup_nvidia
-! grep -q 'install nvidia-driver' "$calls"
-module_version=615.71.09-2+stereo3d4
-echo 'PASS NVIDIA driver version follows the module (a new version, and a module without the suffix is refused)'
-printf 'previous policy\n' >"$ROOT/etc/apt/preferences.d/91sparky-stereo-cuda"
-fail_preflight=1
+refute grep -q 'install nvidia-driver' "$calls"
+module_version=615.71.09-2+lc1
+: >"$calls"
 setup_nvidia
-grep -Fxq 'previous policy' "$ROOT/etc/apt/preferences.d/91sparky-stereo-cuda"
-fail_preflight=0
+refute grep -q 'install nvidia-driver' "$calls"
+module_version=615.71.09-2+stereo3d4
+echo 'PASS NVIDIA driver version follows the module (a new version, a Lean Code build, and a module without our suffix is refused)'
 fail_install=1
 if setup_nvidia; then echo 'FAIL NVIDIA transaction failure hidden'; exit 1; fi
-echo 'PASS missing module, network, checksum, preflight rollback and transaction error paths'
+echo 'PASS missing module, policy install, preflight rollback and transaction error paths'
 
 printf 'action\tnvidia-runtime-pm\n' >"$WORK/plan"
 if setup_nvidia; then echo 'FAIL NVIDIA failed transaction accepted for laptop'; exit 1; fi

@@ -7,6 +7,14 @@ HERE=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 if [ "${SKIP_APT_SETUP:-0}" != 1 ]; then
 	"$HERE/apt-setup.sh" /
 	apt-get update -o APT::Update::Error-Mode=any
+	# NVIDIA's CUDA repository as the image has it: the source and key of sparky-stereo-cuda-repo, which rootfs.sh installs
+	# with the driver lock before any other package (simulate-image.py applies both packages' pins after that install)
+	W=$(mktemp -d)
+	(cd "$W" && apt-get download -qq sparky-stereo-cuda-repo)
+	dpkg-deb --fsys-tarfile "$W"/sparky-stereo-cuda-repo_*_all.deb |
+		tar -x -C / ./etc/apt/sources.list.d/sparky-stereo-cuda.sources ./usr/share/keyrings/cuda-archive-keyring.gpg
+	rm -rf "$W"
+	apt-get update -o APT::Update::Error-Mode=any
 fi
 : "${OUT:?Set OUT to a new directory for the probe results}"
 "$HERE/base-list.sh" > "$OUT.base.names"

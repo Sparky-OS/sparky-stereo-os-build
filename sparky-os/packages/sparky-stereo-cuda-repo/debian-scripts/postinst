@@ -1,0 +1,17 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/01
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/11/01
+# The files preinst moved aside go. So does the key the image and the hardware setup wrote, in the folder apt keeps for the
+# system operator's own keys (sources.list(5)): only while it is still NVIDIA's key byte for byte, no package owns it and
+# no source names it any more; this package ships the same key where packages keep theirs.
+set -e
+OLD_KEY=/etc/apt/keyrings/sparky-stereo-cuda.gpg
+if [ "$1" = configure ]; then
+	rm -f /etc/apt/sources.list.d/sparky-stereo-cuda.sources.dpkg-remove /etc/apt/preferences.d/91sparky-stereo-cuda.dpkg-remove
+	if [ -f "$OLD_KEY" ] && [ ! -L "$OLD_KEY" ] && ! dpkg-query -S "$OLD_KEY" >/dev/null 2>&1 &&
+		[ "$(md5sum <"$OLD_KEY" | cut -d' ' -f1)" = 672a16cb3b8c6e53844563ae8c441557 ] &&
+		! grep -rqsF "$OLD_KEY" /etc/apt/sources.list /etc/apt/sources.list.d; then
+		rm -f "$OLD_KEY"
+	fi
+fi

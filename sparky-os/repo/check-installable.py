@@ -36,18 +36,19 @@ left at an older version installs alone and never beside the other (libplacebo36
 
 Archives: the signed public sources of SPARKY_LC_ARCHIVE_CONFIG (Debian forky, deb-multimedia forky,
 SparkyLinux core and tiamat; sparky-os/lean/archive.md describes the file), and, in the nvidia profile,
-NVIDIA's CUDA repository as sparky-stereo-hardware sets it up (its URL, key checksum and pin are read
-from that package's sources). An entry of the file for that repository (the link gate's, ORDER 329) is set
-aside: only the nvidia profile has the repository, added the hardware setup's way. A source's architectures
+NVIDIA's CUDA repository as the tree's sparky-stereo-cuda-repo ships it (its source, its key and its pins,
+read from the package itself; ORDER 338). An entry of the file for that repository (the link gate's, ORDER 329)
+is set aside: only the nvidia profile has the repository, added the package's way. A source's architectures
 limit it as sources.list's Architectures does. The tree itself is read through its dists only: its Release
 is checked against its own InRelease and key (sparky-stereo-repo.asc in the tree), its indexes against the
 Release, and a copy of the indexes in scratch is what apt reads (nothing in pool/ is copied or linked).
 Policy: the preferences.d files of the tree's sparky-stereo-apt, sparky-stereo-hardware and
 sparky-stereo-nvidia-driver-lock and of SparkyLinux's sparky-apt (read from the packages themselves),
-and in the nvidia profile the CUDA pin of the hardware setup.
+and in the nvidia profile those of sparky-stereo-cuda-repo.
 
-Profiles: base (every install), nvidia (base plus the CUDA repository at 1002, what the hardware setup
-adds on a machine with an NVIDIA card), arm64 (the arm64 packages, in an arm64 universe).
+Profiles: base (every install without NVIDIA's repository), nvidia (base plus sparky-stereo-cuda-repo: every
+installed image, and what the hardware setup adds on a machine with an NVIDIA card), arm64 (the arm64 packages,
+in an arm64 universe).
 A package fails a profile when the apt engine says it cannot be installed there.
 
 Output (--report DIR): installable.tsv (one row per package and profile that fails), summary.txt,
@@ -85,13 +86,15 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SPARKY_OS = HERE.parent
-HARDWARE = SPARKY_OS / 'packages' / 'sparky-stereo-hardware'
 POLICY_PACKAGES = ('sparky-stereo-apt', 'sparky-stereo-hardware', 'sparky-stereo-nvidia-driver-lock')
+# NVIDIA's CUDA repository, its key and its pins (the nvidia profile)
+CUDA_PACKAGE = 'sparky-stereo-cuda-repo'
 COMPANIONS = ('-dbgsym', '-lc-hr')
 ORIGIN = 'Sparky Stereo OS'
 # The archives whose builds of our packages the policy blocks (sparky-stereo-only-ours)
 UPSTREAM_ORIGINS = ('Debian', 'Unofficial Multimedia Packages')
 CUDA_BASE = None
+CUDA_ARCHES = ()
 
 
 class Stop(Exception):
@@ -257,18 +260,24 @@ def tree_release(tree, codename, unsigned, scratch):
                              'key_sha256': digest(key), 'gpgv': verify.stderr.strip().splitlines()[-1:]}
 
 
+def tree_deb(tree, index_entries, name):
+    """The newest .deb of NAME in the tree, checked against its index entry."""
+    found = [e for e in index_entries if e['Package'] == name]
+    if not found:
+        raise Stop('the tree has no %s: its apt policy cannot be read' % name)
+    best = max(found, key=lambda e: _Key(e['Version']))
+    deb = tree / best['Filename']
+    if deb.stat().st_size != int(best['Size']) or digest(deb) != best['SHA256']:
+        raise Stop('pool file differs from its index: ' + str(deb))
+    return deb, best['Version']
+
+
 def policy_files(tree, index_entries, scratch):
     """preferences.d files of the edition's policy packages, read from the tree's own .debs."""
     out = {}
     for name in POLICY_PACKAGES:
-        found = [e for e in index_entries if e['Package'] == name]
-        if not found:
-            raise Stop('the tree has no %s: its apt policy cannot be read' % name)
-        best = max(found, key=lambda e: _Key(e['Version']))
-        deb = tree / best['Filename']
-        if deb.stat().st_size != int(best['Size']) or digest(deb) != best['SHA256']:
-            raise Stop('pool file differs from its index: ' + str(deb))
-        out.update(preferences_from_deb(deb, name + ' ' + best['Version']))
+        deb, version = tree_deb(tree, index_entries, name)
+        out.update(preferences_from_deb(deb, name + ' ' + version))
     return out
 
 
@@ -291,17 +300,33 @@ def preferences_from_deb(deb, label):
     return out
 
 
-def cuda_setup():
-    """URL, key checksum and pin of the CUDA repository, as sparky-stereo-hardware's setup writes them."""
-    actions = (HARDWARE / 'lib' / 'actions.sh').read_text()
-    key = (HARDWARE / 'share' / 'cuda-key.sh').read_text()
-    m_base = re.search(r'^\s*local base=(https://\S+)$', actions, re.M)
-    m_sum = re.search(r'^CUDA_KEY_SHA256=([0-9a-f]{64})$', key, re.M)
-    m_pin = re.search(r'cat >"\$pin" <<\'EOF\' \|\| return 1\n(.*?)\nEOF\n', actions, re.S)
-    m_name = re.search(r'local pin="\$ROOT/etc/apt/preferences\.d/([^"]+)"', actions)
-    if not (m_base and m_sum and m_pin and m_name):
-        raise Stop('cannot read the CUDA repository setup from ' + str(HARDWARE))
-    return m_base.group(1), m_sum.group(1), m_pin.group(1) + '\n', m_name.group(1)
+def cuda_repo(tree, index_entries):
+    """NVIDIA's CUDA repository as the tree's sparky-stereo-cuda-repo ships it: its one deb822 source (URI, the flat
+    suite, architectures), the key its Signed-By names, which the package ships, and its preferences.d files."""
+    deb, version = tree_deb(tree, index_entries, CUDA_PACKAGE)
+    label = CUDA_PACKAGE + ' ' + version
+    data = subprocess.run(['dpkg-deb', '--fsys-tarfile', str(deb)], capture_output=True, check=True).stdout
+    files = {}
+    with tarfile.open(fileobj=io.BytesIO(data)) as tar:
+        for member in tar.getmembers():
+            if member.isfile():
+                files['/' + member.name.lstrip('./')] = tar.extractfile(member).read()
+    sources = [p for p in files if p.startswith('/etc/apt/sources.list.d/') and p.endswith('.sources')]
+    if len(sources) != 1:
+        raise Stop('%s ships %d deb822 sources, not one' % (label, len(sources)))
+    text = '\n'.join(line for line in files[sources[0]].decode().split('\n') if not line.lstrip().startswith('#'))
+    entries = [f for f, _ in stanzas(text)]
+    entries = [f for f in entries if 'URIs' in f]
+    if len(entries) != 1 or entries[0].get('Types', '').split() != ['deb'] or entries[0].get('Suites', '').split() != ['/'] \
+            or len(entries[0]['URIs'].split()) != 1 or entries[0].get('Components', '').strip():
+        raise Stop('%s: its source is not one flat deb source (Types: deb, one URI, Suites: /)' % label)
+    source = entries[0]
+    key = source.get('Signed-By', '').strip()
+    if key not in files:
+        raise Stop('%s: its source is signed by %s, which the package does not ship' % (label, key or '(nothing)'))
+    arches = tuple(source.get('Architectures', '').split())
+    prefs = preferences_from_deb(deb, label)
+    return source['URIs'].split()[0].rstrip('/'), arches, files[key], prefs
 
 
 class Universe:
@@ -338,8 +363,9 @@ class Universe:
             else:
                 lines.append('deb [%s] %s %s %s\n' % (opts, source['uri'].rstrip('/'), source['suite'],
                                                       ' '.join(source['components'])))
-        if cuda:
-            lines.append('deb [arch=%s signed-by=%s] %s/ /\n' % (archs, cuda, CUDA_BASE))
+        cuda_archs = [x for x in arches if not CUDA_ARCHES or x in CUDA_ARCHES]
+        if cuda and cuda_archs:
+            lines.append('deb [arch=%s signed-by=%s] %s/ /\n' % (','.join(cuda_archs), cuda, CUDA_BASE))
         # The tree's indexes, copied with a Release that carries the tree's own Origin, so the
         # edition's pins (o=Sparky Stereo OS) apply as on an installed system.
         local = base / 'edition'
@@ -782,10 +808,10 @@ def main():
             raise Stop('unknown profile ' + p)
     if 'arm64' in profiles and 'arm64' not in tree_arches:
         profiles.remove('arm64')
-    global CUDA_BASE
-    CUDA_BASE, cuda_sum, cuda_pin, cuda_pin_name = cuda_setup()
+    global CUDA_BASE, CUDA_ARCHES
+    CUDA_BASE, CUDA_ARCHES, cuda_keyring, cuda_prefs = cuda_repo(tree, tree_entries)
     # The link gate's archives include the CUDA repository (an NVIDIA module depends on its firmware); here
-    # only the nvidia profile has it, added as the hardware setup adds it, with its key checksum and its pin.
+    # only the nvidia profile has it, added as sparky-stereo-cuda-repo adds it, with its key and its pins.
     set_aside = [s for s in sources if s['uri'].rstrip('/') == CUDA_BASE.rstrip('/')]
     sources = [s for s in sources if s not in set_aside]
 
@@ -811,15 +837,11 @@ def main():
         if profile == 'nvidia':
             cuda_key = base / 'keys' / 'cuda-archive-keyring.gpg'
             (base / 'keys').mkdir(parents=True, exist_ok=True)
-            deb = base / 'keys' / 'cuda-keyring.deb'
-            run(['curl', '--fail', '--location', '--silent', '--show-error', '--max-time', '120', '-o', str(deb),
-                 CUDA_BASE + '/cuda-keyring_1.1-1_all.deb'])
-            if digest(deb) != cuda_sum:
-                raise Stop('CUDA keyring checksum differs from sparky-stereo-hardware share/cuda-key.sh')
-            data = subprocess.run(['dpkg-deb', '--fsys-tarfile', str(deb)], capture_output=True, check=True).stdout
-            with tarfile.open(fileobj=io.BytesIO(data)) as tar:
-                cuda_key.write_bytes(tar.extractfile('./usr/share/keyrings/cuda-archive-keyring.gpg').read())
-            p_prefs[cuda_pin_name] = (cuda_pin, 'sparky-stereo-hardware lib/actions.sh setup_nvidia')
+            cuda_key.write_bytes(cuda_keyring)
+            for fname in cuda_prefs:
+                if fname in p_prefs:
+                    raise Stop('%s and %s both ship /etc/apt/preferences.d/%s' % (CUDA_PACKAGE, p_prefs[fname][1], fname))
+            p_prefs.update(cuda_prefs)
         # SparkyLinux's own policy comes from its sparky-apt package, fetched through the same signed state.
         u = Universe(profile, base, arches, sources, cuda_key, tree_fields, tree_indexes, a.codename, p_prefs)
         u.update()
@@ -1126,7 +1148,7 @@ def main():
         if bad == all_:
             return 'fails everywhere it applies'
         if bad == {'base'} and 'nvidia' in all_:
-            return "installs only with NVIDIA's CUDA repository (the hardware setup adds it on NVIDIA machines)"
+            return "installs only with NVIDIA's CUDA repository (sparky-stereo-cuda-repo: every image, and the hardware setup on NVIDIA machines)"
         if bad == {'nvidia'}:
             return "breaks with NVIDIA's CUDA repository and its pin"
         return 'fails in ' + ','.join(sorted(bad))

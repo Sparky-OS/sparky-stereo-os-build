@@ -1,0 +1,21 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/01
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/11/01
+# When the first install stops, the files preinst moved aside go back; dpkg itself removes the conffiles at purge.
+set -e
+FILES="/etc/apt/sources.list.d/sparky-stereo-cuda.sources /etc/apt/preferences.d/91sparky-stereo-cuda"
+case "$1" in
+abort-install | abort-upgrade)
+	for f in $FILES; do
+		if [ -e "$f.dpkg-remove" ] && [ ! -e "$f" ]; then
+			mv "$f.dpkg-remove" "$f"
+		fi
+	done
+	;;
+purge)
+	for f in $FILES; do
+		rm -f "$f.dpkg-remove"
+	done
+	;;
+esac

@@ -90,8 +90,12 @@ if [ "$STEP" = packages ] || [ "$STEP" = all ]; then
 	# module is 615.71.09-2). Sparky KDE's set already brings NVIDIA's user space (libhwloc-plugins depends on
 	# libxnvctrl0), and the hardware meta brings nvidia-detect: installed before the lock, they came at CUDA's newest
 	# version, and the image's first full upgrade downgraded libxnvctrl0 to the locked one.
-	echo "== $(date -u +%T) the NVIDIA driver lock, before anything that brings NVIDIA's user space"
-	apt_in install sparky-stereo-nvidia-driver-lock
+	# With it, sparky-stereo-cuda-repo: NVIDIA's CUDA repository (its source and key) and its pins, so CUDA updates and
+	# NVIDIA's builds of Debian's own tools (dkms) do not replace Debian's. Both come from the edition's repository, and apt
+	# reads NVIDIA's only after them, so nothing of NVIDIA's can come in before the lock and the pins.
+	echo "== $(date -u +%T) the NVIDIA driver lock and NVIDIA's CUDA repository with its pins, before anything that brings NVIDIA's user space"
+	apt_in install sparky-stereo-nvidia-driver-lock sparky-stereo-cuda-repo
+	inr apt-get update
 	echo "== $(date -u +%T) Sparky KDE 2026.09's package set"
 	cp /build/base-list.sh /build/sparky-kde-2026.09.names /edition-lists/base-remove.list $R/tmp/
 	inr env NAMES=/tmp/sparky-kde-2026.09.names REMOVE=/tmp/base-remove.list sh /tmp/base-list.sh > /tmp/base
