@@ -871,6 +871,50 @@ class Packages(unittest.TestCase):
         rc, out = self.verify_output(P)
         self.assertEqual(rc, 0, out)
 
+    def test_post_invoke_corrects_the_false_person_edits_of_0121_once(self):
+        """An upgrade from 0.1.21: its records call moved conffiles in their package's bytes changed by the
+        person (/etc/gprofng.rc on every edition with binutils). The postinst runs inside dpkg's run and
+        leaves them; the post-invoke hook at the run's end checks each against its own package's hash once:
+        those in their package's bytes are examined again, a person's edit stays EDITED."""
+        root, P = self.moved_conffiles()
+        person = '/etc/sysctl.d/90-lc-tools.conf'
+        (root / person.lstrip('/')).write_text(TOOLS_SYSCTL.replace('= 10', '= 60'))
+        left = client.Records(P, 'left')
+        for path in TOOLS_FILES:      # the rows 0.1.21 wrote (ORDER 325's probe of the published 0.1.21)
+            left[path] = {'path': path, 'package': 'lc-tools', 'handler': '', 'reason': client.PERSON_CHANGED}
+        left.save()
+        client.write_packages(P)
+        # recorded well after dpkg wrote the lists, so post-invoke sees no package changed (never racy) and only
+        # the migration can correct these rows
+        rows = client.read_table(P.state(client.PKGS), client.PKG_COLS)
+        for row in rows.values():
+            row['written'] = str(int(row['list_mtime']) + 5)
+        client.write_table(P.state(client.PKGS), client.PKG_COLS, rows)
+        rc, out = self.verify_output(P)
+        self.assertEqual(out.count('EDITED'), 3, out)
+        with patch.dict(os.environ, {'DPKG_MAINTSCRIPT_NAME': 'postinst'}), \
+                contextlib.redirect_stdout(io.StringIO()):
+            client.repair_consumers(P, 1)
+        self.assertFalse(os.path.exists(P.state(client.CONFFILE_MIGRATION)))
+        self.assertEqual(len(client.Records(P, 'left')), 3)
+        with contextlib.redirect_stdout(io.StringIO()) as said:
+            client.post_invoke(P, 1)
+        self.assertIn('dpkg-stereo: 2 conffiles in their package\'s own bytes were recorded as changed by the person',
+                      said.getvalue())
+        self.assertTrue(os.path.exists(P.state(client.CONFFILE_MIGRATION)))
+        left, records = client.Records(P, 'left'), client.Records(P)
+        self.assertEqual(sorted(left), [person])
+        self.assertEqual(left[person]['reason'], client.PERSON_CHANGED)
+        self.assertEqual(records['/etc/systemd/system/lc-tools.service']['conffile'], '1')
+        self.assertNotIn('/etc/lc-tools.rc', records)
+        rc, out = self.verify_output(P)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(out.splitlines()[0], f'EDITED    {person} (changed by the person: left as they made it)')
+        self.assertEqual(out.count('EDITED'), 1, out)
+        # done once: the next hooks only see the marker
+        with patch.object(client, 'Records', side_effect=AssertionError('the left tables were read again')):
+            self.assertEqual(client.repair_conffile_owners(P), 0)
+
     def test_restore_names_scale_to_the_station(self):
         """ORDER 310 measured 68.9 s for restore's filter on the station's 90,217 records with the 47,360
         C and C++ names the migration passed as a list; a set makes it linear (ORDER 315)."""

@@ -1158,7 +1158,56 @@ def repair_consumers(P, jobs=4, pkgs=None, force=False):
     waiting C and C++ file again now; the dpkg hooks and the postinst try one only when its package, APT's
     lists or APT's cache changed since the last try."""
     rc = repair_glsl(P)
+    if not os.environ.get('DPKG_MAINTSCRIPT_NAME'):
+        # inside a maintainer script dpkg's run is half done: the post-invoke hook at its end does this
+        rc = repair_conffile_owners(P, jobs, pkgs=pkgs) or rc
     return migrate_c_form(P, jobs, pkgs=pkgs, force=force) or rc
+
+
+CONFFILE_MIGRATION = 'conffile-owner-v1'
+
+
+def repair_conffile_owners(P, jobs=4, pkgs=None):
+    """The conffiles dpkg-stereo 0.1.21 and older called "changed by the person" from another package's
+    entry for the same path: one map of every package's Conffiles entries gave a moved conffile the hash of
+    the package it left (binutils-common's "newconffile remove-on-upgrade" for binutils' /etc/gprofng.rc,
+    ORDER 325). Each such record is checked once against its own package's entry: a file in the bytes that
+    entry records, or one that package does not record as a conffile, was never the person's, so its record
+    goes and the file is examined again like any other; a file whose bytes differ from its package's own
+    hash stays the person's, as it was. Records of packages that are not installed stay as they are. Reads
+    the small left tables once; a marker makes later hooks a single existence check."""
+    marker = P.state(CONFFILE_MIGRATION)
+    if os.path.exists(marker):
+        return 0
+    db = dpkg_db(P)
+    pkgs = pkgs if pkgs is not None else dpkg_packages(P, db)
+    confs = conffiles(P, db)
+    left = Records(P, 'left')
+    again = {}
+    for path, rec in left.items():
+        if rec['reason'] != PERSON_CHANGED or rec['package'] not in pkgs:
+            continue
+        try:
+            with open(P.real(path), 'rb') as f:
+                data = f.read()
+        except OSError:
+            continue
+        own = confs.get(rec['package'], {}).get(path)
+        if own is None or md5(data) == own:
+            again[path] = rec['package']
+    if again:
+        for path in again:
+            del left[path]
+        left.save()
+        print(f'dpkg-stereo: {len(again)} conffiles in their package\'s own bytes were recorded as changed by the '
+              f'person (another package\'s Conffiles entry for the same path); examined again')
+        project_packages(P, sorted(set(again.values())), jobs, log=lambda m: None, only=set(again), repair=False,
+                         record=False)
+    os.makedirs(P.state(), exist_ok=True)
+    with open(marker + '.new', 'w', encoding='utf-8') as stream:
+        stream.write('Conffiles recorded as changed by the person checked against their own package\'s hash.\n')
+    os.replace(marker + '.new', marker)
+    return 0
 
 
 # v1 (dpkg-stereo 0.1.17): #line to kept line breaks; v2 (0.1.20): any older form to comment-only lines removed
