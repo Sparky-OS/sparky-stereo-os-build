@@ -851,6 +851,26 @@ class Packages(unittest.TestCase):
             self.assertEqual((root / path.lstrip('/')).read_text(), text)
             self.assertIn(f'EDITED    {path} (changed by the person: left as they made it)\n', out)
 
+    def test_a_file_taken_over_through_replaces_is_judged_by_its_new_owner(self):
+        """dpkg takes a replaced file out of the old package's file list and leaves its md5sums as they
+        were (src/main/unpack.c); the file is the new owner's, in the new owner's bytes."""
+        root, P = self.system()
+        old = self.plain_deb('lc-z-old', {'/usr/bin/lc-moved': SCRIPT, '/usr/share/doc/lc-z-old/README': 'kept\n'})
+        new = self.plain_deb('lc-a-new', {'/usr/bin/lc-moved': SCRIPT.replace('hello', 'moved')},
+                             control='Replaces: lc-z-old\n')
+        self.dpkg(root, '-i', str(old))
+        self.dpkg(root, '-i', str(new))
+        info = root / 'var/lib/dpkg/info'
+        self.assertIn('/usr/bin/lc-moved\n', (info / 'lc-a-new.list').read_text())
+        self.assertNotIn('/usr/bin/lc-moved\n', (info / 'lc-z-old.list').read_text())
+        self.assertIn('usr/bin/lc-moved\n', (info / 'lc-z-old.md5sums').read_text())
+        self.run_project(P)
+        self.assertNotIn('/usr/bin/lc-moved', client.Records(P, 'left'))
+        self.assertEqual(client.Records(P)['/usr/bin/lc-moved']['package'], 'lc-a-new')
+        self.assertNotIn('A long explanatory comment', (root / 'usr/bin/lc-moved').read_text())
+        rc, out = self.verify_output(P)
+        self.assertEqual(rc, 0, out)
+
     def test_restore_names_scale_to_the_station(self):
         """ORDER 310 measured 68.9 s for restore's filter on the station's 90,217 records with the 47,360
         C and C++ names the migration passed as a list; a set makes it linear (ORDER 315)."""

@@ -492,8 +492,10 @@ def project_packages(P, names, jobs, image=False, log=print, only=None, known=No
     if only is not None:
         only = set(only)
     held = set(read_hold(P))
-    # a path is judged by the conffiles of the package whose file list holds it (dpkg -S), never by another
-    # package's entry for the same path (src/main/unpack.c)
+    # a path is judged by the conffiles and md5sums of the package whose file list holds it (dpkg -S), as
+    # dpkg --verify checks each package's files against its own records (src/main/verify.c); another package
+    # may still list the path from before it moved (a Replaces takeover takes the path out of the old
+    # package's file list and leaves its md5sums as they were, src/main/unpack.c)
     confs = conffiles(P, db)
     div = diversions(P)
     files = Records(P, 'records', pkgs.keys() if names else None)
@@ -522,7 +524,7 @@ def project_packages(P, names, jobs, image=False, log=print, only=None, known=No
             continue
         if proof is not None:
             log(f'dpkg-stereo: {name}: lc marker rejected ({proof}); using local qualification')
-        sums.update(md5sums(P, info))
+        sums[name] = md5sums(P, info)
         for path in package_files(P, info):
             if path in held or path in div or (only is not None and path not in only):
                 continue
@@ -550,8 +552,8 @@ def project_packages(P, names, jobs, image=False, log=print, only=None, known=No
             if r is None:
                 continue
             ver = pkgs[name][0]
-            conf = confs.get(name, {})
-            if path not in conf and path in sums and md5(data) != sums[path]:
+            conf, own = confs.get(name, {}), sums.get(name, {})
+            if path not in conf and path in own and md5(data) != own[path]:
                 left[path] = {'path': path, 'package': name, 'handler': r.handler,
                               'reason': 'changed since its package installed it (not the package\'s bytes)'}
                 continue
