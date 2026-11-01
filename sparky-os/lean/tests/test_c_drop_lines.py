@@ -207,6 +207,14 @@ class Resolve(unittest.TestCase):
         self.assertEqual(locate.locate(src.encode(), r.lean, '/usr/include/rep.h', third).line,
                          src.split('\n').index('    return 0;', 2 * 9) + 1)
 
+    def test_a_kept_comment_resolves_to_its_own_lines_not_a_removed_one(self):
+        """Lines without code (a kept notice, empty lines) resolve to authored lines of the same kind: the first
+        lean '/*' is the notice's, not the removed comment's that opened the same way (linux ultrasound.h)."""
+        src = ('#ifndef U_H\n#define U_H\n/*\n *\tu.h - macros for programming a device, explained at some length here\n *\tand not portable: they depend on the device, so the lean form drops this\n */\n'
+               '/*\n * Copyright (C) by Someone 1993-1997\n *\n * distributed under the GNU GENERAL PUBLIC LICENSE\n */\n\n'
+               'int u;\n#endif\n')
+        self.assertResolvesEveryLine('/usr/include/u.h', src)
+
     def test_columns_after_a_removed_inline_comment(self):
         src = '// note\nint a = /* an inline explanation of the value below */ 42;\nint b = 7; /* trailing */\n'
         r, mr = P('/usr/src/x/c.c', src)

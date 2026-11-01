@@ -52,15 +52,25 @@ class Side:
         self.lines = text.split('\n')
         buf = list(text)
         self.comment = bytearray(len(text))        # 1 where a comment character is
+        kind = bytearray(len(text))                # 1 removable comment, 2 kept comment, 3 literal
         for sp in spans:
-            if sp.kind in (core.COMMENT, core.KEEP):
-                for k in range(sp.start, sp.end):
+            mark = {core.COMMENT: 1, core.KEEP: 2, core.LITERAL: 3}.get(sp.kind, 0)
+            for k in range(sp.start, sp.end):
+                kind[k] = mark
+                if sp.kind in (core.COMMENT, core.KEEP):
                     self.comment[k] = 1
                     if buf[k] != '\n':
                         buf[k] = ' '
         blanked = ''.join(buf).split('\n')
         self.keys = [_norm(b) for b in blanked]
         self.starts = core.line_starts(text)
+        # what a line without code holds: a kept comment, a literal's text, only a removable comment, or nothing
+        self.cls = []
+        for i, line in enumerate(self.lines):
+            st = self.starts[i]
+            marks = {kind[st + k] for k, ch in enumerate(line) if ch not in ' \t\f\v'}
+            self.cls.append('kept' if 2 in marks else 'literal' if 3 in marks else 'comment' if 1 in marks
+                            else 'blank')
         self.control = [bool(c_like and lang_c.LINE_CONTROL.match(b)) for b in blanked]
         self.pointer = [core.is_pointer(ln) and k == '' for ln, k in zip(self.lines, self.keys)]
         self.content = [bool(k) and not c for k, c in zip(self.keys, self.control)]
@@ -270,12 +280,12 @@ class Locator:
         base = _pick(a, m, above, limit)[0][1] if above >= 0 else -1
         nxt = _next(a, base)
         stop = nxt if nxt >= 0 else len(a.keys)
-        want = m.lines[j].strip()
-        free = [i for i in range(base + 1, stop) if not a.content[i]]
+        want, cls = m.lines[j].strip(), m.cls[j]
+        free = [i for i in range(base + 1, stop) if not a.content[i] and a.cls[i] == cls]
         same = [i for i in free if a.lines[i].strip() == want]
         pool = same or free
         k = sum(1 for i in range(above + 1, j)
-                if not m.pointer[i] and (m.lines[i].strip() == want if same else not m.content[i]))
+                if not m.pointer[i] and m.cls[i] == cls and (m.lines[i].strip() == want or not same))
         if k < len(pool):
             return Found(pool[k] + 1, col if col is not None and same else None, pool[k] + 1, 'line without code')
         if pool:
