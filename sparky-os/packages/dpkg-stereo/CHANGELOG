@@ -1,4 +1,37 @@
 -------------------------------------------------------------------------------
+  Version 0.1.20 (2026-11-01)
+-------------------------------------------------------------------------------
+  * C and C++ lose their comment-only lines completely, as every other
+    language does (Daniel's design, ORDER 334): no #line, and no empty line
+    where a comment was; the authored empty lines stay. Their lean line
+    numbers differ from the authored ones, so __LINE__, assert messages,
+    diagnostics and debug line tables name lean lines. A comment that ended
+    a backslash continuation takes that backslash with it. The renderer
+    identity is lean 0.1.20 (collapse-blank,pointer,c-drop-lines).
+  * dpkg-stereo --resolve PATH:LINE[:COL] finds the authored line by the lean
+    line's content in the authored file (the HR companion or the pristine
+    copy): the line's code, its comments and blanks aside; where the same
+    content occurs more than once, the neighbouring lines pick the right
+    one. It reads the forms older engines wrote too. --resolve-render keeps
+    the previous path: render the authored text again, refuse a lean file
+    that is not that render, and read the render's own line map.
+  * The GCC check compares the tokens and directives (-fpreprocessed) and the
+    full preprocessing with __LINE__ pinned; it names a file whose own code
+    expands __LINE__ or calls __builtin_LINE.
+  * The postinst's --repair-consumers projects again, once, every C and C++
+    file an older engine projected locally (#line, or every line kept), from
+    its exact original; a file the person edited stays theirs, and a file
+    whose original is nowhere waits as before.
+  * Measured with ORDER 303's method (instructions:u): against Debian's
+    libstdc++ headers, preprocessing prog.cc costs 2.9% fewer instructions
+    than the authored headers (0.1.19: 1.9% fewer; 0.1.15: 21.5% more), and
+    -fsyntax-only on all of them 0.63% fewer; against the kernel 7.3.1
+    headers, the hid-tmff2 module preprocesses with 0.78% fewer and compiles
+    with 0.52% fewer. Objects without debug information stay the same,
+    except where an enabled assertion passes a header's line
+    (_GLIBCXX_ASSERTIONS: std::__glibcxx_assert_fail gets the lean line).
+
+-------------------------------------------------------------------------------
   Version 0.1.19 (2026-10-31)
 -------------------------------------------------------------------------------
   * The lean toolkit's link gate (archive.py, carried here with the rest of

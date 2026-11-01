@@ -111,10 +111,16 @@ class C(unittest.TestCase):
         self.assertEqual(cpp(src).split(), cpp(mr).split())
 
     def test_line_number(self):
+        """From engine 0.1.20 (ORDER 334) __LINE__ follows the lean lines, the check names the file, and the
+        resolver finds the authored line by its content."""
+        from lean import locate
         src = '// prose one\n// prose two\n// prose three\nint n = __LINE__;\n'
         r, mr = lean('/usr/include/probe.h', src)
         self.assertEqual(r.status, 'projected', r.reason)
-        self.assertIn('int n = 4;', cpp(mr))
+        self.assertEqual(mr, 'int n = __LINE__;\n')
+        self.assertIn('int n = 1;', cpp(mr))
+        self.assertIn('__LINE__', r.check)
+        self.assertEqual(locate.locate(src.encode(), r.lean, '/usr/include/probe.h', 1).line, 4)
         self.assertNotIn('prose', mr)
 
     def test_raw_string_blank_lines(self):

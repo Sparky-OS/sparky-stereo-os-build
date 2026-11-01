@@ -37,13 +37,13 @@ EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
 
-  * The lean toolkit's link gate asks APT once per case for the signed
-    records of the archives it downloaded, and reuses a record read for
-    the same identity and SHA-256 under the same local index (ORDER 320);
-    each record is matched to its own identity, never by its position.
-    Projection, restore and the dpkg hooks are unchanged from 0.1.18.
+  * C and C++ lose their comment-only lines completely, with no #line and
+    no empty line where a comment was; dpkg-stereo --resolve finds a lean
+    line's authored line by its content (ORDER 334), --resolve-render keeps
+    the render-and-map path, and --repair-consumers projects older local C
+    and C++ forms again once.
 
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 31 Oct 2026 18:00:00 -0300
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 01 Nov 2026 08:00:00 -0300
 EOF
 cat > "$S/debian/rules" <<'EOF'
 #!/usr/bin/make -f

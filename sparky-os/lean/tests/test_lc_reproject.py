@@ -117,7 +117,8 @@ class Reproject(unittest.TestCase):
         lean = (package_dir / 'usr/include/demo.h').read_bytes()
         self.assertNotIn(b'#line', lean)
         self.assertEqual(lean, project.project('/usr/include/demo.h', HEADER, 'demo-dev').lean)
-        self.assertEqual(lean.count(b'\n'), HEADER.count(b'\n'))
+        self.assertLess(lean.count(b'\n'), HEADER.count(b'\n'))      # 0.1.20: the comment-only lines go
+        self.assertNotIn(b'\n\n', lean.split(b'\n', 1)[1])
         self.assertEqual(obj['renderer'], package.renderer())
         fields = package.control(package_dir)
         self.assertEqual(fields['version'], '1.0-2+lc1')
