@@ -11,6 +11,7 @@ can contribute files to the execution root. No maintainer scripts are run.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -32,6 +33,9 @@ RELATIONSHIPS = ('Depends', 'Pre-Depends', 'Provides', 'Conflicts', 'Breaks', 'M
 # far below the kernel's argument limit.
 SHOW_ARGUMENTS = 1024
 SHOW_BYTES = 128 << 10
+# The APT preferences a supplied package ships: its files in this folder, at most this many bytes each.
+PREFERENCES_PARTS = PurePosixPath('/etc/apt/preferences.d')
+PREFERENCES_MAX = 1 << 20
 
 
 def digest(path):
@@ -60,6 +64,65 @@ def control(deb):
         if not obj.get(key):
             raise package.Invalid(f'{deb}: missing {key}')
     return obj
+
+
+def shipped_paths(deb):
+    """The files a package ships, as its control members name them, without reading its data.
+
+    Its conffiles (deb-conffiles(5); a remove-on-upgrade entry is not shipped) and the files of its
+    md5sums (deb-md5sums(5), which lists the others): Debian Policy 10.7.3 makes every file shipped in
+    /etc a conffile, and a package that does not (sparky-stereo-apt before 20261031.1) still lists the
+    file in its md5sums. Only a package without md5sums has its data listed.
+    """
+    run = subprocess.run(['dpkg-deb', '--ctrl-tarfile', str(deb)], capture_output=True)
+    if run.returncode:
+        raise package.Invalid(f'{deb}: invalid Debian archive: {run.stderr.decode(errors="replace").strip()}')
+    paths, md5sums = [], False
+    with tarfile.open(fileobj=io.BytesIO(run.stdout)) as tar:
+        for member in tar:
+            name = os.path.normpath(member.name)
+            if name not in ('conffiles', 'md5sums') or not member.isfile():
+                continue
+            for line in tar.extractfile(member).read().decode(errors='replace').splitlines():
+                words = line.split()
+                if name == 'conffiles' and words and 'remove-on-upgrade' not in words[:-1]:
+                    paths.append(words[-1])
+                elif name == 'md5sums' and len(words) > 1:
+                    paths.append('/' + line.split(None, 1)[1].lstrip('/'))
+            md5sums = md5sums or name == 'md5sums'
+    if not md5sums:
+        paths += data_paths(deb)
+    return paths
+
+
+def data_paths(deb):
+    """Every non-directory path of a package's data, read as a stream (the data can be large)."""
+    proc = subprocess.Popen(['dpkg-deb', '--fsys-tarfile', str(deb)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        with tarfile.open(fileobj=proc.stdout, mode='r|*') as tar:
+            paths = ['/' + os.path.normpath(m.name).lstrip('/') for m in tar if not m.isdir()]
+        while proc.stdout.read(1 << 20):
+            pass
+    except BaseException:
+        proc.kill()
+        raise
+    finally:
+        proc.stdout.close()
+        err = proc.stderr.read()
+        proc.stderr.close()
+        proc.wait()
+    if proc.returncode:
+        raise package.Invalid(f'{deb}: invalid Debian archive: {err.decode(errors="replace").strip()}')
+    return paths
+
+
+def preference_names(paths):
+    """Names of the files a package ships directly in /etc/apt/preferences.d, the folder APT reads."""
+    names = set()
+    for path in map(PurePosixPath, paths):
+        if path.parent == PREFERENCES_PARTS and path.name not in ('', '.', '..') and '\n' not in path.name:
+            names.add(path.name)
+    return sorted(names)
 
 
 def identity(obj):
@@ -375,9 +438,13 @@ class Archive:
     """One architecture and one frozen set of signed indexes per comparison.
 
     Configuration is a JSON list of {uri, suite, components, keyring} sources.
-    HTTPS archives and explicit file: fixture archives are accepted. The optional
-    check_valid_until=false is for immutable snapshots with expired Release dates;
-    it never disables signature or hash verification.
+    HTTPS archives and explicit file: fixture archives are accepted. A suite ending
+    in "/" is an exact path (a flat repository) with no components (sources.list(5)).
+    The optional architectures list limits a source to those architectures, like
+    sources.list's Architectures option. The optional check_valid_until=false is for
+    immutable snapshots with expired Release dates; it never disables signature or
+    hash verification. The APT preferences that the supplied edition packages ship
+    apply after the gate's own exact pins, as on a system that has them installed.
     """
 
     def __init__(self, config, scratch, arch, min_free_gib=2, root_min_free_gib=12):
@@ -393,6 +460,7 @@ class Archive:
         self.scratch.mkdir(parents=True, exist_ok=True)
         self.ensure_space(1 << 20)
         self._inputs, self._indexes, self._active, self._records = {}, set(), set(), {}
+        self._preferences, self.policy = {}, []
         self.universes = self.scratch / 'universes'
         self.universes.mkdir(exist_ok=True)
         self.base = Path(tempfile.mkdtemp(prefix=f'link-{arch}-', dir=self.scratch))
@@ -410,9 +478,9 @@ class Archive:
         (self.base / 'state/status').touch()
         (self.base / 'etc/apt.conf').touch()
         (self.base / 'etc/preferences').touch()
-        lines = []
+        lines, self.skipped_sources = [], []
         for index, source in enumerate(self.sources):
-            if set(source) - {'uri', 'suite', 'components', 'keyring', 'check_valid_until'}:
+            if set(source) - {'uri', 'suite', 'components', 'keyring', 'check_valid_until', 'architectures'}:
                 raise package.Invalid('unknown archive source configuration field')
             uri = source['uri'].rstrip('/')
             parsed = urlsplit(uri)
@@ -422,11 +490,23 @@ class Archive:
                     or (parsed.scheme == 'file' and parsed.netloc)):
                 raise package.Invalid(f'archive requires an explicit public HTTPS or file URI: {uri}')
             suite = source['suite']
-            components = source['components']
-            if not re.fullmatch(r'[a-zA-Z0-9._/-]+', suite) or not components:
+            components = source.get('components', [])
+            # sources.list(5): a suite that ends with "/" is an exact path and takes no
+            # components; any other suite needs at least one.
+            flat = isinstance(suite, str) and suite.endswith('/')
+            if (not isinstance(suite, str) or not re.fullmatch(r'[a-zA-Z0-9._/-]+', suite)
+                    or not isinstance(components, list) or bool(components) == flat):
                 raise package.Invalid('invalid archive suite or components')
-            if any(not re.fullmatch(r'[a-zA-Z0-9._/-]+', c) for c in components):
+            if any(not isinstance(c, str) or not re.fullmatch(r'[a-zA-Z0-9._/-]+', c) for c in components):
                 raise package.Invalid('invalid archive component')
+            architectures = source.get('architectures')
+            if architectures is not None:
+                if (not isinstance(architectures, list) or not architectures
+                        or any(not isinstance(a, str) or not re.fullmatch(r'[a-z0-9-]+', a) for a in architectures)):
+                    raise package.Invalid('invalid archive architectures')
+                if arch not in architectures:
+                    self.skipped_sources.append(index)
+                    continue
             key = self.base / f'etc/key-{index}.gpg'
             key_source = Path(source['keyring'])
             self.ensure_space(key_source.stat().st_size + 16384)
@@ -435,7 +515,12 @@ class Archive:
             opts = f'arch={arch} signed-by={key}'
             if source.get('check_valid_until', True) is False:
                 opts += ' check-valid-until=no'
-            lines.append(f'deb [{opts}] {uri} {suite} {" ".join(components)}\n')
+            if flat:
+                lines.append(f'deb [{opts}] {uri}/ {suite}\n')
+            else:
+                lines.append(f'deb [{opts}] {uri} {suite} {" ".join(components)}\n')
+        if not lines:
+            raise package.Invalid(f'archive configuration has no source for {arch}')
         self.public_sources = ''.join(lines)
         (self.base / 'etc/sources.list').write_text(self.public_sources)
         # APT_CONFIG is read BEFORE apt.conf.d, unlike -c and -o. All paths,
@@ -464,14 +549,15 @@ class Archive:
                 raise package.Invalid('scratch path contains unsupported APT configuration characters')
         (self.base / 'apt.conf').write_text(''.join(f'{k} "{v}";\n' for k, v in options.items()) +
                                            f'APT::Architectures {{ "{arch}"; }};\n')
-        self.ensure_space(len(self.sources) << 30)
+        self.ensure_space(len(lines) << 30)
         self.run(['apt-config', 'dump'], 'configuration')
         self.run(['apt-get', '-y', '-o', 'APT::Update::Error-Mode=any', '-o', 'Debug::Acquire::gpgv=true', 'update'], 'update')
         self.metadata = [{'path': str(p.relative_to(self.base)), 'size': p.stat().st_size, 'sha256': digest(p)}
                          for p in sorted((self.base / 'state/lists').iterdir()) if p.is_file() and p.name != 'lock']
         if not any(p['path'].endswith('InRelease') or p['path'].endswith('Release.gpg') for p in self.metadata):
             raise package.Invalid('archive update produced no verified signed Release metadata')
-        (self.base / 'metadata.json').write_text(json.dumps({'sources': self.sources, 'metadata': self.metadata,
+        (self.base / 'metadata.json').write_text(json.dumps({'sources': self.sources,
+            'skipped_sources': self.skipped_sources, 'metadata': self.metadata,
             'keys': [{'path': str(p.relative_to(self.base)), 'sha256': digest(p)}
                      for p in sorted((self.base / 'etc').glob('key-*.gpg'))],
             'configuration_sha256': digest(self.base / 'apt.conf'),
@@ -523,7 +609,8 @@ class Archive:
             if obj['stamp'] != stamp:
                 raise package.Invalid(f'{path}: supplied input changed after its universe was frozen')
             return obj
-        obj = {'path': path, 'control': control(path), 'sha256': digest(path), 'size': stat.st_size, 'stamp': stamp}
+        obj = {'path': path, 'control': control(path), 'sha256': digest(path), 'size': stat.st_size, 'stamp': stamp,
+               'preferences': preference_names(shipped_paths(path))}
         current = path.stat()
         if stamp != (current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns, current.st_ctime_ns):
             raise package.Invalid(f'{path}: supplied input changed during verification')
@@ -531,6 +618,44 @@ class Archive:
             raise package.Invalid(f'{path}: wrong architecture {obj["control"]["Architecture"]}; context is {self.arch}')
         self._inputs[path] = obj
         return obj
+
+    def preferences(self, item):
+        """{name: bytes} of the files a supplied package ships in /etc/apt/preferences.d, read once per hash.
+
+        A name its md5sums lists but its data lacks is no file to apply, as on an installed system.
+        """
+        if not item['preferences']:
+            return {}
+        if item['sha256'] in self._preferences:
+            return self._preferences[item['sha256']]
+        wanted, found = set(item['preferences']), {}
+        proc = subprocess.Popen(['dpkg-deb', '--fsys-tarfile', str(item['path'])], stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE)
+        try:
+            with tarfile.open(fileobj=proc.stdout, mode='r|*') as tar:
+                for member in tar:
+                    path = PurePosixPath('/' + os.path.normpath(member.name).lstrip('/'))
+                    if path.parent != PREFERENCES_PARTS or path.name not in wanted:
+                        continue
+                    if not member.isfile():
+                        raise package.Invalid(f'{item["path"]}: {path} is not a regular file')
+                    if member.size > PREFERENCES_MAX:
+                        raise package.Invalid(f'{item["path"]}: {path} exceeds {PREFERENCES_MAX} bytes')
+                    found[path.name] = tar.extractfile(member).read()
+            while proc.stdout.read(1 << 20):
+                pass
+        except BaseException:
+            proc.kill()
+            raise
+        finally:
+            proc.stdout.close()
+            err = proc.stderr.read()
+            proc.stderr.close()
+            proc.wait()
+        if proc.returncode:
+            raise package.Invalid(f'{item["path"]}: invalid Debian archive: {err.decode(errors="replace").strip()}')
+        self._preferences[item['sha256']] = found
+        return found
 
     def cached_input(self, item):
         """Copy only selected bytes, once, without hardlinking or modifying a source."""
@@ -615,6 +740,26 @@ class Archive:
         for name in sorted(named):
             preferences.append(f'Package: {name}\nPin: version *\nPin-Priority: -1\n\n')
         (self.base / 'etc/preferences').write_text(''.join(preferences))
+        # The edition's own APT policy (sparky-stereo-apt's pins, the NVIDIA driver lock) is part
+        # of every installed edition before its other packages. APT parses /etc/apt/preferences
+        # first, then preferences.d in lexicographic order, and the first specific record that
+        # matches a version decides it (apt_preferences(5)), so the exact pins above still win
+        # for supplied packages; APT itself ignores a name outside its naming convention.
+        policy = {}
+        for item in inputs:
+            for name, data in self.preferences(item).items():
+                if name in policy:
+                    raise package.Invalid(f'two supplied packages ship {PREFERENCES_PARTS / name}: '
+                                          f'{policy[name][0][0]} and {item["control"]["Package"]}')
+                policy[name] = (identity(item['control']), data)
+        parts = self.base / 'etc/preferences.d'
+        self.ensure_space(sum(len(data) for _, data in policy.values()) + (len(policy) + 1) * 4096)
+        for old in parts.iterdir():
+            old.unlink()
+        for name, (owner, data) in sorted(policy.items()):
+            (parts / name).write_bytes(data)
+        self.policy = [{'path': str(PREFERENCES_PARTS / name), 'package': owner,
+                        'sha256': hashlib.sha256(data).hexdigest()} for name, (owner, data) in sorted(policy.items())]
         return candidate, inputs, local
 
     def signed(self, directory, local, downloads):
@@ -674,6 +819,7 @@ class Archive:
 
     def _qualify(self, deb, siblings, directory):
         candidate, inputs, local = self.universe(deb, siblings)
+        (directory / 'preferences.json').write_text(json.dumps(self.policy, indent=2) + '\n')
         candidate_bytes = self.cached_input(candidate)
         args = ['apt-get', '-y', '--no-remove', '--no-install-recommends', '--download-only',
                 '--print-uris', 'install', str(candidate_bytes)]
@@ -767,6 +913,7 @@ class Archive:
                     'metadata': str(self.base / 'metadata.json'), 'solver': str(self.base / (label + '.log')), 'status': 'empty',
                     'universe': str(local / 'universe.json'), 'local_index_sha256': digest(local / 'Packages'),
                     'space_floors': {'scratch': self.minimum, 'root': self.root_minimum},
+                    'preferences': self.policy,
                     'diversions': list(diversions.values()),
                     'unmodeled_diversion_scripts': unmodeled,
                     'inputs': [{'identity': identity(item['control']), 'sha256': item['sha256'], 'size': item['size'],

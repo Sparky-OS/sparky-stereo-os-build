@@ -32,8 +32,10 @@ policy shows the wanted version blocked or our build as the candidate; when anot
 Archives: the signed public sources of SPARKY_LC_ARCHIVE_CONFIG (Debian forky, deb-multimedia forky,
 SparkyLinux core and tiamat; sparky-os/lean/archive.md describes the file), and, in the nvidia profile,
 NVIDIA's CUDA repository as sparky-stereo-hardware sets it up (its URL, key checksum and pin are read
-from that package's sources). The tree itself is read through its dists only: its Release is checked
-against its own InRelease and key (sparky-stereo-repo.asc in the tree), its indexes against the
+from that package's sources). An entry of the file for that repository (the link gate's, ORDER 329) is set
+aside: only the nvidia profile has the repository, added the hardware setup's way. A source's architectures
+limit it as sources.list's Architectures does. The tree itself is read through its dists only: its Release
+is checked against its own InRelease and key (sparky-stereo-repo.asc in the tree), its indexes against the
 Release, and a copy of the indexes in scratch is what apt reads (nothing in pool/ is copied or linked).
 Policy: the preferences.d files of the tree's sparky-stereo-apt, sparky-stereo-hardware and
 sparky-stereo-nvidia-driver-lock and of SparkyLinux's sparky-apt (read from the packages themselves),
@@ -315,12 +317,21 @@ class Universe:
         lines = []
         archs = ','.join(arches)
         for i, source in enumerate(sources):
+            # a source's architectures limit it as sources.list's Architectures does
+            source_archs = [x for x in arches if x in source.get('architectures', arches)]
+            if not source_archs:
+                continue
             keyfile = base / 'keys' / ('archive-%d.gpg' % i)
             shutil.copyfile(source['keyring'], keyfile)
-            opts = 'arch=%s signed-by=%s' % (archs, keyfile)
+            opts = 'arch=%s signed-by=%s' % (','.join(source_archs), keyfile)
             if source.get('check_valid_until', True) is False:
                 opts += ' check-valid-until=no'
-            lines.append('deb [%s] %s %s %s\n' % (opts, source['uri'].rstrip('/'), source['suite'], ' '.join(source['components'])))
+            if source['suite'].endswith('/'):
+                # an exact path (a flat repository) takes no components (sources.list(5))
+                lines.append('deb [%s] %s/ %s\n' % (opts, source['uri'].rstrip('/'), source['suite']))
+            else:
+                lines.append('deb [%s] %s %s %s\n' % (opts, source['uri'].rstrip('/'), source['suite'],
+                                                      ' '.join(source['components'])))
         if cuda:
             lines.append('deb [arch=%s signed-by=%s] %s/ /\n' % (archs, cuda, CUDA_BASE))
         # The tree's indexes, copied with a Release that carries the tree's own Origin, so the
@@ -726,7 +737,7 @@ def main():
     if not isinstance(sources, list) or not sources:
         raise Stop('the archive configuration must be a nonempty JSON list (sparky-os/lean/archive.md)')
     for s in sources:
-        if set(s) - {'uri', 'suite', 'components', 'keyring', 'check_valid_until'}:
+        if set(s) - {'uri', 'suite', 'components', 'keyring', 'check_valid_until', 'architectures'}:
             raise Stop('unknown archive source field in ' + a.archive_config)
         if not s['uri'].startswith(('https://', 'file:')):
             raise Stop('archive requires an explicit public HTTPS or file URI: ' + s['uri'])
@@ -748,9 +759,14 @@ def main():
         profiles.remove('arm64')
     global CUDA_BASE
     CUDA_BASE, cuda_sum, cuda_pin, cuda_pin_name = cuda_setup()
+    # The link gate's archives include the CUDA repository (an NVIDIA module depends on its firmware); here
+    # only the nvidia profile has it, added as the hardware setup adds it, with its key checksum and its pin.
+    set_aside = [s for s in sources if s['uri'].rstrip('/') == CUDA_BASE.rstrip('/')]
+    sources = [s for s in sources if s not in set_aside]
 
     meta = {'tree': str(tree), 'tree_release_date': tree_fields.get('Date', ''), 'tree_trust': tree_trust,
-            'archive_config': a.archive_config, 'sources': sources, 'engines': engines, 'profiles': {},
+            'archive_config': a.archive_config, 'sources': sources, 'sources_set_aside': set_aside,
+            'engines': engines, 'profiles': {},
             'apt': run(['apt-get', '--version']).stdout.splitlines()[0],
             'dose': run(['dose-debcheck', '--version']).stdout.strip() if 'dose' in engines else None,
             'started': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}

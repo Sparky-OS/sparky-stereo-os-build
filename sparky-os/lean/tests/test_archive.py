@@ -506,3 +506,116 @@ def test_earlier_identity_refusal_precedes_a_later_solver_line_failure(tmp_path,
     good = deb(tmp_path / 'good', 'consumer', depends='libxrandr2')
     with pytest.raises(package.Invalid, match='archive solver returned an unverified download'):
         context.qualify(good)
+
+
+def test_flat_source_and_source_architectures(tmp_path):
+    # NVIDIA publishes its CUDA repository flat: sources.list(5) says a suite ending in "/"
+    # is an exact path, with the components omitted
+    config = signed_archive(tmp_path / 'flat', flat=True)
+    flat = json.loads(config.read_text())[0]
+    context = archive.Archive(config, tmp_path / 'scratch', 'amd64')
+    assert context.public_sources.endswith(flat['uri'].rstrip('/') + '/ /\n')
+    q = context.qualify(deb(tmp_path, 'consumer', depends='chosen (= 2:1.0-3)'))
+    assert ('chosen', '2:1.0-3', 'amd64') in [tuple(r['identity']) for r in manifest(q)['packages']]
+    q.close()
+    # a source for other architectures is left out of this context, like sources.list's Architectures
+    both = tmp_path / 'both.json'
+    both.write_text(json.dumps([flat, dict(flat, architectures=['arm64', 'i386'])]))
+    context = archive.Archive(both, tmp_path / 'scratch-both', 'amd64')
+    assert context.skipped_sources == [1] and context.public_sources.count('deb ') == 1
+    assert json.loads((context.base / 'metadata.json').read_text())['skipped_sources'] == [1]
+    for sources, message in (([dict(flat, architectures=['arm64'])], 'no source for amd64'),
+                             ([dict(flat, architectures=[])], 'invalid archive architectures'),
+                             ([dict(flat, components=['main'])], 'invalid archive suite or components'),
+                             ([dict(flat, suite='fixture')], 'invalid archive suite or components'),
+                             ([{k: v for k, v in flat.items() if k != 'components'}], None)):
+        bad = tmp_path / 'bad.json'
+        bad.write_text(json.dumps(sources))
+        if message is None:
+            archive.Archive(bad, tmp_path / 'scratch-omitted', 'amd64')
+        else:
+            with pytest.raises(package.Invalid, match=message):
+                archive.Archive(bad, tmp_path / 'scratch-bad', 'amd64')
+
+
+LOCK_TEXT = b'Package: firmware\nPin: version 1\nPin-Priority: 1005\n\nPackage: firmware\nPin: version *\nPin-Priority: 100\n'
+
+
+def policy_package(base, name='fixture-lock', file='10fixture-lock', text=LOCK_TEXT, version='1'):
+    return deb(base, name, version, arch='all', files={
+        f'/etc/apt/preferences.d/{file}': text, 'DEBIAN/conffiles': f'/etc/apt/preferences.d/{file}\n'.encode()})
+
+
+@pytest.fixture(scope='module')
+def two_firmwares(tmp_path_factory):
+    base = tmp_path_factory.mktemp('two-firmwares')
+    extra = base / 'extra'
+    extra.mkdir()
+    return signed_archive(base, additional=[deb(extra, 'firmware', '1', arch='all'), deb(extra, 'firmware', '2', arch='all')])
+
+
+def test_exact_dependency_on_an_older_version_resolves_with_the_supplied_lock(two_firmwares, tmp_path):
+    # The NVIDIA trap in miniature: the archive's newer firmware is APT's candidate, and APT's solver
+    # never takes a non-candidate version for an exact dependency (apt 2.9.17, "Reject all
+    # non-candidates outright for strict pinning"); the edition's lock, installed first on every
+    # edition system, makes the locked version the candidate.
+    context = archive.Archive(two_firmwares, tmp_path / 'scratch', 'amd64')
+    module = deb(tmp_path, 'module', depends='firmware (= 1)')
+    with pytest.raises(package.Invalid, match='solve failed'):
+        context.qualify(module, [deb(tmp_path, 'unrelated')])
+    lock = policy_package(tmp_path)
+    q = context.qualify(module, [lock])
+    assert ('firmware', '1', 'all') in [tuple(r['identity']) for r in manifest(q)['packages']]
+    applied = [{'path': '/etc/apt/preferences.d/10fixture-lock', 'package': ['fixture-lock', '1', 'all'],
+                'sha256': hashlib.sha256(LOCK_TEXT).hexdigest()}]
+    assert manifest(q)['preferences'] == applied
+    assert json.loads((q.directory / 'preferences.json').read_text()) == applied
+    assert (context.base / 'etc/preferences.d/10fixture-lock').read_bytes() == LOCK_TEXT
+    q.close()
+    # a later universe without the lock has no preferences file
+    with pytest.raises(package.Invalid, match='solve failed'):
+        context.qualify(module, [deb(tmp_path / 'again', 'unrelated')])
+    assert not any((context.base / 'etc/preferences.d').iterdir())
+
+
+def test_supplied_policy_cannot_replace_an_exact_edition_input(context, tmp_path):
+    # the gate's own pins come first (/etc/apt/preferences, then preferences.d), and the first specific
+    # record that matches a version decides its priority (apt_preferences(5))
+    local = deb(tmp_path, 'chosen', '1', files={'usr/lib/edition-identity': b'local edition'})
+    policy = policy_package(tmp_path, text=b'Package: chosen\nPin: version 2:1.0-3\nPin-Priority: 1005\n')
+    consumer = deb(tmp_path, 'consumer', depends='chosen')
+    q = context.qualify(consumer, [local, policy])
+    assert (q.root / 'usr/lib/edition-identity').read_bytes() == b'local edition'
+    assert 'chosen' not in [r['identity'][0] for r in manifest(q)['packages']]
+    q.close()
+
+
+def test_two_supplied_packages_cannot_ship_one_preferences_file(context, tmp_path):
+    first = policy_package(tmp_path, name='first-policy')
+    second = policy_package(tmp_path, name='second-policy')
+    with pytest.raises(package.Invalid, match='two supplied packages ship /etc/apt/preferences.d/10fixture-lock'):
+        context.qualify(deb(tmp_path, 'consumer'), [first, second])
+
+
+def test_preferences_are_the_files_the_control_members_name(tmp_path):
+    shipped = deb(tmp_path, 'policy', arch='all', files={
+        'etc/apt/preferences.d/a': b'x', 'etc/apt/preferences.d/b': b'y', 'etc/apt/preferences.d/sub/c': b'z',
+        'etc/apt/other': b'w', 'DEBIAN/conffiles': b'/etc/apt/preferences.d/a\n/etc/apt/other\n',
+        'DEBIAN/md5sums': (hashlib.md5(b'y').hexdigest() + '  etc/apt/preferences.d/b\n' +
+                           hashlib.md5(b'z').hexdigest() + '  etc/apt/preferences.d/sub/c\n').encode()})
+    assert archive.preference_names(archive.shipped_paths(shipped)) == ['a', 'b']
+    # without md5sums, the data says what the package ships
+    bare = deb(tmp_path, 'bare', arch='all', files={'etc/apt/preferences.d/d': b'v'})
+    assert archive.preference_names(archive.shipped_paths(bare)) == ['d']
+    assert archive.preference_names(archive.shipped_paths(deb(tmp_path, 'plain'))) == []
+
+
+def test_a_pin_shipped_without_being_declared_a_conffile_applies(two_firmwares, tmp_path):
+    # sparky-stereo-apt before 20261031.1 shipped its pins without declaring them conffiles; APT reads them anyway
+    context = archive.Archive(two_firmwares, tmp_path / 'scratch', 'amd64')
+    lock = deb(tmp_path, 'fixture-lock', arch='all', files={
+        'etc/apt/preferences.d/10fixture-lock': LOCK_TEXT,
+        'DEBIAN/md5sums': (hashlib.md5(LOCK_TEXT).hexdigest() + '  etc/apt/preferences.d/10fixture-lock\n').encode()})
+    q = context.qualify(deb(tmp_path, 'module', depends='firmware (= 1)'), [lock])
+    assert ('firmware', '1', 'all') in [tuple(r['identity']) for r in manifest(q)['packages']]
+    q.close()
