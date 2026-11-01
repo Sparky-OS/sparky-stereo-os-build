@@ -1,4 +1,9 @@
-# DXVK packed-eye copy correction
+# DXVK presentation corrections
+
+`patches/upstream-d3d11-resize-dimensions.patch` carries ficool2's upstream commit [3dbf33cb2205dd0d573cbc7a65e3855d97a4800b](https://github.com/doitsujin/dxvk/commit/3dbf33cb2205dd0d573cbc7a65e3855d97a4800b), merged into master.
+It passes the requested width and height to the presenter before updating the D3D11 swapchain description.
+The patch is first in the source package's series, ahead of the existing Debian and edition patches.
+Credit for the resize correction belongs to ficool2 and the DXVK project.
 
 `patches/packed-eye-exact-copy.patch` applies after the patches in the edition's DXVK `2.7.1-4+stereo3d3+lc1` source descriptor.
 The published descriptor's Debian rules remain the package recipe; this directory does not replace its native, PE32, PE64, debug-symbol or Lean Code build steps.
@@ -25,10 +30,14 @@ Other packed layouts, scaled rectangles, HDR, native DXVK and NVIDIA still requi
 
 `patches/wine-wsi-v1-request.patch` applies after the published DXVK `2.7.1-4+stereo3d3+lc1` patches.
 It is independent of the exact-copy patch above.
-`prepare-source.py SOURCE --toolkit TOOLKIT` appends this patch and the exact-copy patch to a fresh extraction of that descriptor and prepares version `2.7.1-4+stereo3d4+lc1`.
+`prepare-source.py SOURCE --toolkit TOOLKIT` adds the upstream resize patch first, then appends this patch and the exact-copy patch to a fresh extraction of that descriptor and prepares version `2.7.1-4+stereo3d5+lc1`.
 It normalizes the older descriptor's trailing Lean Code build-dependency list before the current toolkit's checked plain-source conversion.
 It preserves the native and Windows build targets, symbols, package set and ordinary fallback.
 Create one descriptor, then build every architecture from it; source preparation alone is not package qualification.
+
+Set `WINE254_CAPTURE_FIRST=1` for the D3D9, D3D10 and D3D11 pair fixtures to capture the first and second Presents before and after resize, with a responsive capture handshake and a frame stamp.
+`check-d3d-pair-first-frames.py ROOT --mode mono|stereo` checks raw and delivered pixels and requires one actual Present request for each capture.
+The unchanged +4 D3D10/11 first resized frame is the failing control; the +5 build must pass every phase in PE32 and PE32+, mono and stereo.
 
 D3D9 and the packed-input DXGI surface factory scope a version-1 request to the Windows thread creating the Vulkan surface.
 The Wine runtime owns the native content declaration and acknowledges a complete child-surface contract.

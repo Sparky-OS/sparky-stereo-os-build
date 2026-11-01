@@ -110,7 +110,7 @@ The compositor must read override-redirect transient hints to apply popup depth 
 `tests/popup-ui.c` exercises those hints with actual Win32 controls.
 Build it with either MinGW target, linking `comctl32` and `gdi32`, and run it with the installed Wine in a disposable headless prefix.
 It accepts newline-separated commands on standard input: `combo`, `menubar`, `right`, `select`, `close`, `context`, `tooltip`, `dialog`, `resize` and `exit`.
-Open `menubar`, then send `right` to open its submenu and `select` to deliver command 101 to the owner.
+Daniel can open `menubar`, then send `right` to open its submenu and `select` to deliver command 101 to the application's main window.
 
 Check the X11 properties while each control is visible.
 The menu bar's popup is `DROPDOWN_MENU`; its child and a context menu are `POPUP_MENU`; the combo, tooltip and owned dialog use their corresponding EWMH types.
@@ -136,7 +136,7 @@ The parent must remain undeclared; a stereo viewport needs its own child surface
 Record X11 requests before launching the fixture to count exactly one declaration per created surface, including the destroyed first surface.
 Final property snapshots alone cannot establish that count.
 
-The offscreen Wine child path can instead create the drawable below a dummy window, manually redirect it and copy its pixels into the owner with GDI.
+Daniel can inspect the offscreen Wine child path, which can instead create the drawable below a dummy window, manually redirect it and copy its pixels into the parent window with GDI.
 A correct stereo format or one declaration does not prove that this copy preserves both eyes.
 Keep this failure and ordinary mono resize/show failures visible when comparing a driver correction; unchanged failure pixels establish non-regression only.
 Direct-child success does not qualify nested clipping, sibling overlap, scaled DPI, native Wayland, or another graphics driver.
