@@ -37,13 +37,20 @@ EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
 
-  * C and C++ lose their comment-only lines completely, with no #line and
-    no empty line where a comment was; dpkg-stereo --resolve finds a lean
-    line's authored line by its content (ORDER 334), --resolve-render keeps
-    the render-and-map path, and --repair-consumers projects older local C
-    and C++ forms again once.
+  * The lean toolkit's link gate reads flat sources (a suite ending in "/",
+    no components, as NVIDIA's CUDA repository) and a source's
+    architectures, and applies the APT preferences the supplied edition
+    packages ship in /etc/apt/preferences.d after its own exact pins
+    (ORDER 329), so nvidia-kernel-open-dkms-stereo3d's exact
+    firmware-nvidia-gsp resolves under sparky-stereo-nvidia-driver-lock as
+    on an installed edition.
+  * Carries 0.1.20's renderer and dpkg-stereo unchanged (ORDER 334): C and
+    C++ lose their comment-only lines completely, dpkg-stereo --resolve
+    finds a lean line's authored line by its content, --resolve-render
+    keeps the render-and-map path, and --repair-consumers projects older
+    local C and C++ forms again once.
 
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 01 Nov 2026 08:00:00 -0300
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 01 Nov 2026 07:30:00 -0300
 EOF
 cat > "$S/debian/rules" <<'EOF'
 #!/usr/bin/make -f

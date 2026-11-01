@@ -1,4 +1,28 @@
 -------------------------------------------------------------------------------
+  Version 0.1.21 (2026-11-01)
+-------------------------------------------------------------------------------
+  * The lean toolkit's link gate (archive.py, carried here with the rest of
+    the toolkit; dpkg-stereo itself does not run it) reads a flat source:
+    a suite ending in "/" is an exact path with no components, as
+    sources.list(5) says and as NVIDIA publishes its CUDA repository. A
+    source's optional architectures list limits it as sources.list's
+    Architectures option does (ORDER 329).
+  * The gate applies the APT preferences that the supplied edition packages
+    ship directly in /etc/apt/preferences.d (named by their conffiles and
+    md5sums control members), after its own exact pins, as an installed
+    edition has them before its other packages. With the CUDA repository
+    among its archives, nvidia-kernel-open-dkms-stereo3d
+    615.71.09-2+stereo3d7+lc1 stopped the publication of 1 November
+    (firmware-nvidia-gsp (= 615.71.09-2): CUDA's newer 615.71.10-1 is APT's
+    candidate and APT takes only the candidate for an exact dependency);
+    sparky-stereo-nvidia-driver-lock's pin makes 615.71.09-2 the candidate
+    in the gate, as on an installed edition. Each case records the files
+    it applied in preferences.json and resolution.json.
+  * The renderer, projection, restore, --resolve and the dpkg hooks are
+    0.1.20's (ORDER 334, below), unchanged; 0.1.20 was never published, so
+    an upgrade from 0.1.19 makes 0.1.20's C and C++ migration. The renderer
+    identity names lean 0.1.21.
+-------------------------------------------------------------------------------
   Version 0.1.20 (2026-11-01)
 -------------------------------------------------------------------------------
   * C and C++ lose their comment-only lines completely, as every other
