@@ -597,9 +597,25 @@ def test_two_supplied_packages_cannot_ship_one_preferences_file(context, tmp_pat
         context.qualify(deb(tmp_path, 'consumer'), [first, second])
 
 
-def test_preferences_are_read_from_declared_conffiles_only(tmp_path):
+def test_preferences_are_the_files_the_control_members_name(tmp_path):
     shipped = deb(tmp_path, 'policy', arch='all', files={
-        'etc/apt/preferences.d/a': b'x', 'etc/apt/preferences.d/sub/b': b'y', 'etc/apt/other': b'z',
-        'DEBIAN/conffiles': b'/etc/apt/preferences.d/a\n/etc/apt/preferences.d/sub/b\n/etc/apt/other\n'})
-    assert archive.preference_names(archive.conffiles(shipped)) == ['a']
-    assert archive.conffiles(deb(tmp_path, 'plain')) == []
+        'etc/apt/preferences.d/a': b'x', 'etc/apt/preferences.d/b': b'y', 'etc/apt/preferences.d/sub/c': b'z',
+        'etc/apt/other': b'w', 'DEBIAN/conffiles': b'/etc/apt/preferences.d/a\n/etc/apt/other\n',
+        'DEBIAN/md5sums': (hashlib.md5(b'y').hexdigest() + '  etc/apt/preferences.d/b\n' +
+                           hashlib.md5(b'z').hexdigest() + '  etc/apt/preferences.d/sub/c\n').encode()})
+    assert archive.preference_names(archive.shipped_paths(shipped)) == ['a', 'b']
+    # without md5sums, the data says what the package ships
+    bare = deb(tmp_path, 'bare', arch='all', files={'etc/apt/preferences.d/d': b'v'})
+    assert archive.preference_names(archive.shipped_paths(bare)) == ['d']
+    assert archive.preference_names(archive.shipped_paths(deb(tmp_path, 'plain'))) == []
+
+
+def test_a_pin_shipped_without_being_declared_a_conffile_applies(two_firmwares, tmp_path):
+    # sparky-stereo-apt before 20261031.1 shipped its pins without declaring them conffiles; APT reads them anyway
+    context = archive.Archive(two_firmwares, tmp_path / 'scratch', 'amd64')
+    lock = deb(tmp_path, 'fixture-lock', arch='all', files={
+        'etc/apt/preferences.d/10fixture-lock': LOCK_TEXT,
+        'DEBIAN/md5sums': (hashlib.md5(LOCK_TEXT).hexdigest() + '  etc/apt/preferences.d/10fixture-lock\n').encode()})
+    q = context.qualify(deb(tmp_path, 'module', depends='firmware (= 1)'), [lock])
+    assert ('firmware', '1', 'all') in [tuple(r['identity']) for r in manifest(q)['packages']]
+    q.close()

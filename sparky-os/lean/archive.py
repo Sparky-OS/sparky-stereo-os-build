@@ -33,8 +33,7 @@ RELATIONSHIPS = ('Depends', 'Pre-Depends', 'Provides', 'Conflicts', 'Breaks', 'M
 # far below the kernel's argument limit.
 SHOW_ARGUMENTS = 1024
 SHOW_BYTES = 128 << 10
-# The APT preferences a supplied package ships: its conffiles in this folder (Policy 10.7.3 makes every
-# file a package ships in /etc a conffile), at most this many bytes each.
+# The APT preferences a supplied package ships: its files in this folder, at most this many bytes each.
 PREFERENCES_PARTS = PurePosixPath('/etc/apt/preferences.d')
 PREFERENCES_MAX = 1 << 20
 
@@ -67,27 +66,46 @@ def control(deb):
     return obj
 
 
-def conffiles(deb):
-    """The conffiles a package ships (deb-conffiles(5)); a remove-on-upgrade entry is not shipped."""
+def shipped_paths(deb):
+    """The files a package ships, as its control members name them, without reading its data.
+
+    Its conffiles (deb-conffiles(5); a remove-on-upgrade entry is not shipped) and the files of its
+    md5sums (deb-md5sums(5), which lists the others): Debian Policy 10.7.3 makes every file shipped in
+    /etc a conffile, and a package that does not (sparky-stereo-apt before 20261031.1) still lists the
+    file in its md5sums. Only a package without md5sums has its data listed.
+    """
     run = subprocess.run(['dpkg-deb', '--ctrl-tarfile', str(deb)], capture_output=True)
     if run.returncode:
         raise package.Invalid(f'{deb}: invalid Debian archive: {run.stderr.decode(errors="replace").strip()}')
+    paths, md5sums = [], False
     with tarfile.open(fileobj=io.BytesIO(run.stdout)) as tar:
         for member in tar:
-            if os.path.normpath(member.name) == 'conffiles' and member.isfile():
-                text = tar.extractfile(member).read().decode(errors='replace')
-                return [line.split()[-1] for line in text.splitlines()
-                        if line.split() and 'remove-on-upgrade' not in line.split()[:-1]]
-    return []
+            name = os.path.normpath(member.name)
+            if name not in ('conffiles', 'md5sums') or not member.isfile():
+                continue
+            for line in tar.extractfile(member).read().decode(errors='replace').splitlines():
+                words = line.split()
+                if name == 'conffiles' and words and 'remove-on-upgrade' not in words[:-1]:
+                    paths.append(words[-1])
+                elif name == 'md5sums' and len(words) > 1:
+                    paths.append('/' + line.split(None, 1)[1].lstrip('/'))
+            md5sums = md5sums or name == 'md5sums'
+    if not md5sums:
+        proc = subprocess.run(['dpkg-deb', '--fsys-tarfile', str(deb)], capture_output=True)
+        if proc.returncode:
+            raise package.Invalid(f'{deb}: invalid Debian archive: {proc.stderr.decode(errors="replace").strip()}')
+        with tarfile.open(fileobj=io.BytesIO(proc.stdout)) as tar:
+            paths += ['/' + os.path.normpath(m.name).lstrip('/') for m in tar if not m.isdir()]
+    return paths
 
 
 def preference_names(paths):
     """Names of the files a package ships directly in /etc/apt/preferences.d, the folder APT reads."""
-    names = []
+    names = set()
     for path in map(PurePosixPath, paths):
         if path.parent == PREFERENCES_PARTS and path.name not in ('', '.', '..') and '\n' not in path.name:
-            names.append(path.name)
-    return names
+            names.add(path.name)
+    return sorted(names)
 
 
 def identity(obj):
@@ -575,7 +593,7 @@ class Archive:
                 raise package.Invalid(f'{path}: supplied input changed after its universe was frozen')
             return obj
         obj = {'path': path, 'control': control(path), 'sha256': digest(path), 'size': stat.st_size, 'stamp': stamp,
-               'preferences': preference_names(conffiles(path))}
+               'preferences': preference_names(shipped_paths(path))}
         current = path.stat()
         if stamp != (current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns, current.st_ctime_ns):
             raise package.Invalid(f'{path}: supplied input changed during verification')
@@ -585,7 +603,10 @@ class Archive:
         return obj
 
     def preferences(self, item):
-        """{name: bytes} of the files a supplied package ships in /etc/apt/preferences.d, read once per hash."""
+        """{name: bytes} of the files a supplied package ships in /etc/apt/preferences.d, read once per hash.
+
+        A name its md5sums lists but its data lacks is no file to apply, as on an installed system.
+        """
         if not item['preferences']:
             return {}
         if item['sha256'] in self._preferences:
@@ -616,8 +637,6 @@ class Archive:
             proc.wait()
         if proc.returncode:
             raise package.Invalid(f'{item["path"]}: invalid Debian archive: {err.decode(errors="replace").strip()}')
-        if wanted - set(found):
-            raise package.Invalid(f'{item["path"]}: conffile {PREFERENCES_PARTS / sorted(wanted - set(found))[0]} is not in its data')
         self._preferences[item['sha256']] = found
         return found
 
