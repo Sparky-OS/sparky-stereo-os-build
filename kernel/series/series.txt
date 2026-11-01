@@ -409,3 +409,13 @@
 39-amdgpu-dp-frame-sequential/0004-drm-amd-display-let-DisplayPort-connectors-send-fram.patch
 39-amdgpu-dp-frame-sequential/0005-drm-amd-display-add-a-stereo_state-debugfs-file-to-D.patch
 39-amdgpu-dp-frame-sequential/0006-drm-amd-display-test-frame-sequential-stereo-on-Disp.patch
+
+# ==== 40-debian-kernelvariables: Debian parity: the headers' Makefile reads .kernelvariables (ORDER 311)
+#      status: next build. Debian debian/kernelvariables.patch (Bastian Blank; refreshed by Ben Hutchings and Salvatore Bonaccorso) and
+#      debian/makefile-make-compiler-version-comparison-optional.patch (Ben Hutchings, #1019749), carried as Debian has them, context regenerated
+#      on v7.3.1 (offsets -1 and +31; +100). kernel/lean/stage.sh writes Debian's .kernelvariables into the headers (kernelvariables.sh): CC is
+#      $(CROSS_COMPILE)gcc-N with CROSS_COMPILE x86_64-linux-gnu-, which gcc-N-for-host provides, so DKMS needs no plain gcc command
+#      (build 11's open item; a minimal install with --no-install-recommends failed every DKMS module with "gcc: not found").
+#      Tests: kernel/tests/kernelvariables-proof.sh (red: the published headers, no gcc command; green: the same with this group and the file).
+40-debian-kernelvariables/0001-kbuild-Make-the-toolchain-variables-easily-overwrita.patch
+40-debian-kernelvariables/0002-Makefile-Make-compiler-version-comparison-optional.patch

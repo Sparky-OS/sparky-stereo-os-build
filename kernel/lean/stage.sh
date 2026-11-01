@@ -39,6 +39,10 @@ else
     exit 1
 fi
 echo "$compiler" > build/compiler.txt
+# Debian's .kernelvariables (ORDER 311): the Makefile reads it (series group 40), so external modules build with
+# x86_64-linux-gnu-gcc-N, which the headers' Depends brings, and DKMS needs no plain gcc command.
+bash debian/kernel-recipe/kernelvariables.sh "$RELEASE" "$compiler" > "$destination/.kernelvariables"
+chmod 0644 "$destination/.kernelvariables"
 
 # Maintainer scripts. The image package gets Debian's (kernel/lean/maint, release in place of @RELEASE@): the
 # upstream builddeb scripts only run run-parts. The headers postinst is Debian's too (headers-postinst.sh).

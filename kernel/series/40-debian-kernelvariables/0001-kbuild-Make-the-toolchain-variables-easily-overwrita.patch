@@ -1,0 +1,99 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bastian Blank <waldi@debian.org>
+Date: Sun, 22 Feb 2009 15:39:35 +0100
+Subject: kbuild: Make the toolchain variables easily overwritable
+
+Allow make variables to be overridden for each flavour by a file in
+the build tree, .kernelvariables.
+
+We currently use this for ARCH, KERNELRELEASE, CC, and in some cases
+also CROSS_COMPILE, KCFLAGS.
+
+This file can only be read after we establish the build tree, and all
+use of $(ARCH) needs to be moved after this.
+
+[bwh: Updated for 5.3: include .kernelvariables from current directory
+ rather than using undefined $(obj).]
+
+[carnil: Update for 6.13: Include .kernelvariables from $(objtree).]
+
+Forwarded: not-needed
+Debian-patch: debian/patches/debian/kernelvariables.patch (salsa.debian.org/kernel-team/linux branch debian/latest, last changed in 245a94c26ff9 by Salvatore Bonaccorso, 2025-01-09)
+[ORDER 311: carried as Debian has it; its hunks apply to v7.3.1's Makefile at offsets -1 and +31, regenerated here with that context.
+ Debian's own headers package ships .kernelvariables with CC = $(CROSS_COMPILE)gcc-16; kernel/lean/stage.sh writes ours.]
+---
+--- a/Makefile
++++ b/Makefile
+@@ -405,36 +405,6 @@
+ # Note: Some architectures assign CROSS_COMPILE in their arch/*/Makefile
+ ARCH		?= $(SUBARCH)
+ 
+-# Architecture as present in compile.h
+-UTS_MACHINE 	:= $(ARCH)
+-SRCARCH 	:= $(ARCH)
+-
+-# Additional ARCH settings for x86
+-ifeq ($(ARCH),i386)
+-        SRCARCH := x86
+-endif
+-ifeq ($(ARCH),x86_64)
+-        SRCARCH := x86
+-endif
+-
+-# Additional ARCH settings for sparc
+-ifeq ($(ARCH),sparc32)
+-       SRCARCH := sparc
+-endif
+-ifeq ($(ARCH),sparc64)
+-       SRCARCH := sparc
+-endif
+-
+-# Additional ARCH settings for parisc
+-ifeq ($(ARCH),parisc64)
+-       SRCARCH := parisc
+-endif
+-
+-export cross_compiling :=
+-ifneq ($(SRCARCH),$(SUBARCH))
+-cross_compiling := 1
+-endif
+-
+ KCONFIG_CONFIG	?= .config
+ export KCONFIG_CONFIG
+ 
+@@ -582,6 +552,35 @@
+ AFLAGS_KERNEL	=
+ LDFLAGS_vmlinux =
+ 
++-include $(objtree)/.kernelvariables
++
++# Architecture as present in compile.h
++UTS_MACHINE 	:= $(ARCH)
++SRCARCH 	:= $(ARCH)
++
++# Additional ARCH settings for x86
++ifeq ($(ARCH),i386)
++        SRCARCH := x86
++endif
++ifeq ($(ARCH),x86_64)
++        SRCARCH := x86
++endif
++
++# Additional ARCH settings for sparc
++ifeq ($(ARCH),sparc64)
++       SRCARCH := sparc
++endif
++
++# Additional ARCH settings for parisc
++ifeq ($(ARCH),parisc64)
++       SRCARCH := parisc
++endif
++
++# Additional ARCH settings for sh
++ifeq ($(ARCH),sh64)
++       SRCARCH := sh
++endif
++
+ # Use USERINCLUDE when you must reference the UAPI directories only.
+ USERINCLUDE    := \
+ 		-I$(srctree)/arch/$(SRCARCH)/include/uapi \
