@@ -37,20 +37,18 @@ EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
 
-  * The lean toolkit 0.1.22's link gate notes the ELF files of another
-    machine that an Architecture: all package keeps under /usr/share, as
-    guest data no host loader loads, instead of refusing them (ORDER 340):
-    qemu-system-data's guest firmware, which QEMU's machine models read
-    with load_elf(), stopped QEMU +stereo3d7's build with "ELF machine
-    does not match amd64". A foreign ELF file anywhere else, or in an
-    architecture-dependent package, still fails, and one of the host's
-    machine is traced wherever it is.
-  * A static-pie program, as qemu-user's are, is static to the gate, as it
-    is to file(1), glibc's ldd and Lintian (#1068304); a library without
-    NEEDED is still traced.
-  * dpkg-stereo itself is 0.1.22's, unchanged.
+  * The lean toolkit 0.1.23's link gate resolves an ELF file with its
+    package's own Recommends installed where every library it misses is
+    shipped by a package those Recommends name, and notes it (ORDER 311
+    step 4: fltk1.4-games' flpuzzle, whose GL libraries Debian sends to
+    Recommends with dpkg-shlibdeps -dRecommends). Debian Policy 7.2:
+    Recommends lists "packages that would be found together with this one
+    in all but unusual installations". The previous build is treated the
+    same way; Depends-only resolution stays the rule for everything else,
+    and a library no Depends and no such Recommends provides still fails.
+  * dpkg-stereo itself is 0.1.23's, unchanged.
 
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 01 Nov 2026 15:30:00 -0300
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 01 Nov 2026 18:00:00 -0300
 EOF
 cat > "$S/debian/rules" <<'EOF'
 #!/usr/bin/make -f

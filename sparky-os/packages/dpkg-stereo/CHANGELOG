@@ -1,4 +1,33 @@
 -------------------------------------------------------------------------------
+  Version 0.1.24 (2026-11-01)
+-------------------------------------------------------------------------------
+  * The lean toolkit 0.1.23's link gate (linkcheck.py, carried here with the
+    rest of the toolkit; dpkg-stereo itself does not run it) resolves an
+    ELF file with its package's own Recommends installed where every
+    library the file misses is shipped by a package those Recommends name
+    (ORDER 311 step 4). fltk1.4-games' /usr/games/flpuzzle links
+    libfltk_gl.so.1.4, libGLU.so.1 and libGL.so.1, and Debian's fltk1.4
+    sends those dependencies to Recommends on purpose
+    (dh_shlibdeps -pfltk1.4-games -Xflpuzzle -- -dRecommends ...flpuzzle);
+    Depends-only resolution left them out, so the published
+    1.4.4-4+stereo3d2+lc1 failed as a predecessor and every rebuild with
+    it.
+  * Why Recommends: Debian Policy 7.2 says Recommends "declares a strong,
+    but not absolute, dependency" and "should list packages that would be
+    found together with this one in all but unusual installations";
+    dpkg-shlibdeps(1) -ddependency-field adds a program's library
+    dependencies to that field ("The default dependency-field is Depends"),
+    and the edition installs Recommends by default, so its systems have
+    them.
+  * Narrowly: only the ELF files whose every missing library such a named
+    Recommends ships are resolved again, and each is printed as a note
+    naming the Recommends; the previous build is treated the same way.
+    Depends-only resolution stays the rule for everything else, and a
+    library that no Depends and no such Recommends provides still fails.
+  * dpkg-stereo itself is 0.1.23's, unchanged; the renderer identity names
+    lean 0.1.23.
+
+-------------------------------------------------------------------------------
   Version 0.1.23 (2026-11-01)
 -------------------------------------------------------------------------------
   * The lean toolkit's link gate (linkcheck.py, carried here with the rest

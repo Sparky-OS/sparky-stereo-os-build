@@ -353,3 +353,52 @@ def test_static_pie_program_needs_no_loader(tmp_path):
     assert gate_resolve(tmp_path, context, static) == {}
     assert linkcheck.check(static, previous_deb=static, archive_context=context) == []
     assert gate_resolve(tmp_path, context, library) == {('/usr/lib/x86_64-linux-gnu/libnoneeded.so', 'undefined', 'ext'): True}
+
+
+def _recommends_case(tmp_path):
+    """fltk1.4-games' shape (ORDER 311 step 4): a game links a library its package only Recommends (Debian's rules send
+    flpuzzle's GL libraries to Recommends with dpkg-shlibdeps -dRecommends); the library's package is in the archive."""
+    from lean.tests.archive_fixtures import signed_archive, deb
+    (tmp_path / 'gl.c').write_text('int gl_window(void) { return 0; }\n')
+    (tmp_path / 'puzzle.c').write_text('int gl_window(void);\nint main(void) { return gl_window(); }\n')
+    subprocess.run(['gcc', '-shared', '-fPIC', '-o', str(tmp_path / 'libdemo_gl.so.1'), '-Wl,-soname,libdemo_gl.so.1',
+                    str(tmp_path / 'gl.c')], check=True)
+    subprocess.run(['gcc', '-o', str(tmp_path / 'puzzle'), str(tmp_path / 'puzzle.c'), f'-L{tmp_path}', '-l:libdemo_gl.so.1'],
+                   check=True)
+    lib = deb(tmp_path / 'archive-debs', 'libdemo-gl1', depends='libc6',
+              files={'usr/lib/x86_64-linux-gnu/libdemo_gl.so.1': tmp_path / 'libdemo_gl.so.1'})
+    context = archive.Archive(signed_archive(tmp_path / 'archive', additional=[lib]), tmp_path / 'scratch', 'amd64')
+
+    def game(version, recommends):
+        return deb(tmp_path / f'games-{version}', 'demo-games', version, depends='libc6',
+                   extra=f'Recommends: {recommends}\n' if recommends else '', files={'usr/games/puzzle': tmp_path / 'puzzle'})
+    return context, game
+
+
+def test_a_library_its_own_recommends_ships_resolves_with_a_note(tmp_path, capsys):
+    context, game = _recommends_case(tmp_path)
+    before, after = game('1', 'libdemo-gl1'), game('1+lc1', 'libdemo-gl1')
+    notes = linkcheck.check(after, previous_deb=before, archive_context=context)
+    assert any('resolved with its Recommends installed' in n and 'libdemo_gl.so.1 from libdemo-gl1' in n
+               and '(this build)' in n for n in notes), notes
+    assert any('(the previous build)' in n for n in notes), notes
+    assert linkcheck.check(after, archive_context=context)        # no predecessor: the same narrow case
+
+
+def test_a_library_no_relation_names_still_fails(tmp_path):
+    context, game = _recommends_case(tmp_path)
+    after = game('1+lc1', '')
+    with pytest.raises(package.Invalid, match='not found libdemo_gl.so.1'):
+        linkcheck.check(after, archive_context=context)
+    before = game('1', '')
+    with pytest.raises(package.Invalid, match='predecessor failed archive-qualified resolution'):
+        linkcheck.check(after, previous_deb=before, archive_context=context)
+
+
+def test_a_recommends_that_ships_another_library_does_not_help(tmp_path):
+    """The Recommends must name the package that ships the missing library itself."""
+    from lean.tests.archive_fixtures import deb
+    context, game = _recommends_case(tmp_path)
+    after = game('1+lc1', 'libxrandr2')
+    with pytest.raises(package.Invalid, match='not found libdemo_gl.so.1'):
+        linkcheck.check(after, archive_context=context)

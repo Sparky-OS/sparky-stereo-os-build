@@ -38,7 +38,7 @@ No private key or workstation signing setup is needed.
 
 APT starts from an empty scratch status database and solves the exact candidate with its explicitly supplied edition siblings available through a scratch-generated local index.
 Its solver handles alternatives, epochs, Debian revisions, versioned Provides, architecture qualifiers, Architecture all, conflicts and Multi-Arch rules within the selected architecture.
-Recommends and Suggests are excluded.
+Recommends and Suggests are excluded, but for one narrow case of the link gate: an ELF file whose every missing library is shipped by a package that its own package's Recommends names is resolved again with those Recommends installed, and noted (linkcheck.py; Debian Policy 7.2: Recommends lists "packages that would be found together with this one in all but unusual installations").
 Local package versions are pinned and the candidate file is requested exactly, so archive packages cannot silently replace edition inputs.
 The APT preferences that the supplied edition packages ship then apply, as on an installed edition, which has its policy packages before any other edition package (the image installs the NVIDIA driver lock first).
 They are the files each supplied package ships directly in `/etc/apt/preferences.d`, as its control members name them: its conffiles ([deb-conffiles(5)](https://manpages.debian.org/testing/dpkg-dev/deb-conffiles.5.en.html); Debian Policy 10.7.3 makes every file shipped in `/etc` a conffile) and the files of its md5sums ([deb-md5sums(5)](https://manpages.debian.org/testing/dpkg-dev/deb-md5sums.5.en.html)), which list the others (sparky-stereo-apt before 20261031.1 shipped its pins without declaring them conffiles).
