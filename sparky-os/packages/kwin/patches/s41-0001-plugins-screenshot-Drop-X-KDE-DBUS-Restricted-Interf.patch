@@ -1,0 +1,255 @@
+From dccbdbadb2fd9f571fb854a37a32123008987a6d Mon Sep 17 00:00:00 2001
+From: Vlad Zahorodnii <vlad.zahorodnii@kde.org>
+Date: Fri, 5 Jul 2024 13:29:04 +0300
+Subject: [PATCH] plugins/screenshot: Drop X-KDE-DBUS-Restricted-Interfaces
+
+The security benefits of the current approach are doubtful. The desktop
+files can be modified or overriden by the user, which makes the
+X-KDE-DBUS-Restricted-Interfaces checks pointless. The best available
+option at the moment are sandbox environments like flatpak.
+
+(cherry picked from commit 0ea31ae72eb052cb9c9cc508318fc3f0f329ed53)
+
+Backported to Stereo KWin 6.7.4: the workspace capture's description in
+org.kde.KWin.ScreenShot2.xml keeps its sentences about stereo outputs,
+and the screenshot_test_support library of our autotests stops linking
+KF6::Service too, like the plugin, since no file of it uses KService
+any more. The rest is as upstream wrote it. f9bf0ee6 and 97b5274a, the
+same merge request's changes to the restricted Wayland interfaces, are
+not part of this.
+
+Origin: backport, https://invent.kde.org/plasma/kwin/-/commit/0ea31ae72eb052cb9c9cc508318fc3f0f329ed53
+Author: Vlad Zahorodnii <vlad.zahorodnii@kde.org>
+Applied-Upstream: v6.8.0, 0ea31ae7 (merge request !6057)
+Last-Update: 2026-11-01
+
+Assisted-by: Claude Opus 5.5
+---
+ src/plugins/screenshot/CMakeLists.txt         |  2 -
+ .../screenshot/org.kde.KWin.ScreenShot2.xml   | 36 +++++------------
+ .../screenshot/screenshotdbusinterface2.cpp   | 40 -------------------
+ .../screenshot/screenshotdbusinterface2.h     |  3 --
+ 4 files changed, 9 insertions(+), 72 deletions(-)
+
+diff --git a/src/plugins/screenshot/CMakeLists.txt b/src/plugins/screenshot/CMakeLists.txt
+index 392afb7dae..3f073aba5d 100644
+--- a/src/plugins/screenshot/CMakeLists.txt
++++ b/src/plugins/screenshot/CMakeLists.txt
+@@ -10,7 +10,6 @@ kcoreaddons_add_plugin(screenshot SOURCES main.cpp ${screenshot_COMMON_SOURCES}
+ target_link_libraries(screenshot PRIVATE
+     kwin
+ 
+-    KF6::Service
+     KF6::I18n
+ 
+     Qt::DBus
+@@ -25,7 +24,6 @@ if(BUILD_TESTING)
+     target_link_libraries(screenshot_test_support PRIVATE
+         kwin
+ 
+-        KF6::Service
+         KF6::I18n
+ 
+         Qt::DBus
+diff --git a/src/plugins/screenshot/org.kde.KWin.ScreenShot2.xml b/src/plugins/screenshot/org.kde.KWin.ScreenShot2.xml
+index 85b5f8944a..eb8fa1a022 100644
+--- a/src/plugins/screenshot/org.kde.KWin.ScreenShot2.xml
++++ b/src/plugins/screenshot/org.kde.KWin.ScreenShot2.xml
+@@ -33,10 +33,7 @@
+             @options: Optional vardict with screenshot options
+             @pipe: The pipe file descriptor where the screenshot will be written
+ 
+-            Take a screenshot of the specified window. The application that
+-            requests the screenshot must have the org.kde.KWin.ScreenShot2
+-            interface listed in the X-KDE-DBUS-Restricted-Interfaces desktop
+-            file entry.
++            Take a screenshot of the specified window.
+ 
+             Available @options include:
+ 
+@@ -84,10 +81,7 @@
+             @options: Optional vardict with screenshot options
+             @pipe: The pipe file descriptor where the screenshot will be written
+ 
+-            Take a screenshot of the active window. The application that
+-            requests the screenshot must have the org.kde.KWin.ScreenShot2
+-            interface listed in the X-KDE-DBUS-Restricted-Interfaces desktop
+-            file entry.
++            Take a screenshot of the active window.
+ 
+             Supported since version 2.
+ 
+@@ -140,10 +134,7 @@
+             @options: Optional vardict with screenshot options
+             @pipe: The pipe file descriptor where the screenshot will be written
+ 
+-            Take a screenshot of the specified rectangular area. The application
+-            that requests the screenshot must have the org.kde.KWin.ScreenShot2
+-            interface listed in the X-KDE-DBUS-Restricted-Interfaces desktop file
+-            entry.
++            Take a screenshot of the specified rectangular area.
+ 
+             Available @options include:
+ 
+@@ -192,10 +183,7 @@
+             @options: Optional vardict with screenshot options
+             @pipe: The pipe file descriptor where the screenshot will be written
+ 
+-            Take a screenshot of the specified monitor. The application that
+-            requests the screenshot must have the org.kde.KWin.ScreenShot2
+-            interface listed in the X-KDE-DBUS-Restricted-Interfaces desktop file
+-            entry.
++            Take a screenshot of the specified monitor.
+ 
+             Available @options include:
+ 
+@@ -242,10 +230,7 @@
+             @options: Optional vardict with screenshot options
+             @pipe: The pipe file descriptor where the screenshot will be written
+ 
+-            Take a screenshot of the active monitor. The application that
+-            requests the screenshot must have the org.kde.KWin.ScreenShot2
+-            interface listed in the X-KDE-DBUS-Restricted-Interfaces desktop file
+-            entry.
++            Take a screenshot of the active monitor.
+ 
+             Supported since version 2.
+ 
+@@ -353,13 +338,10 @@
+             @options: Optional vardict with screenshot options
+             @pipe: The pipe file descriptor where the screenshot will be written
+ 
+-            Take a screenshot of the workspace, i.e. all screens united. The
+-            application that requests the screenshot must have the org.kde.KWin.ScreenShot2
+-            interface listed in the X-KDE-DBUS-Restricted-Interfaces desktop file
+-            entry. A stereo output occupies a double-width section with its two
+-            eyes next to each other; a 2D output occupies one section. The
+-            "stereo" result is false because this is an ordinary image containing
+-            per-output stereo sections.
++            Take a screenshot of the workspace, i.e. all screens united. A stereo
++            output occupies a double-width section with its two eyes next to each
++            other; a 2D output occupies one section. The "stereo" result is false
++            because this is an ordinary image containing per-output stereo sections.
+ 
+             Supported since version 3.
+ 
+diff --git a/src/plugins/screenshot/screenshotdbusinterface2.cpp b/src/plugins/screenshot/screenshotdbusinterface2.cpp
+index cf28f28a03..d73c6dea3a 100644
+--- a/src/plugins/screenshot/screenshotdbusinterface2.cpp
++++ b/src/plugins/screenshot/screenshotdbusinterface2.cpp
+@@ -12,7 +12,6 @@
+ #include "screenshot2adaptor.h"
+ #include "screenshotlogging.h"
+ #include "utils/filedescriptor.h"
+-#include "utils/serviceutils.h"
+ #include "window.h"
+ #include "workspace.h"
+ 
+@@ -145,8 +144,6 @@ static const QString s_dbusServiceName = QStringLiteral("org.kde.KWin.ScreenShot
+ static const QString s_dbusInterface = QStringLiteral("org.kde.KWin.ScreenShot2");
+ static const QString s_dbusObjectPath = QStringLiteral("/org/kde/KWin/ScreenShot2");
+ 
+-static const QString s_errorNotAuthorized = QStringLiteral("org.kde.KWin.ScreenShot2.Error.NoAuthorized");
+-static const QString s_errorNotAuthorizedMessage = QStringLiteral("The process is not authorized to take a screenshot");
+ static const QString s_errorCancelled = QStringLiteral("org.kde.KWin.ScreenShot2.Error.Cancelled");
+ static const QString s_errorCancelledMessage = QStringLiteral("Screenshot got cancelled");
+ static const QString s_errorInvalidWindow = QStringLiteral("org.kde.KWin.ScreenShot2.Error.InvalidWindow");
+@@ -242,30 +239,9 @@ std::optional<pid_t> ScreenShotDBusInterface2::determineCallerPid() const
+     }
+ }
+ 
+-bool ScreenShotDBusInterface2::checkPermissions(std::optional<pid_t> pid) const
+-{
+-    static bool permissionCheckDisabled = qEnvironmentVariableIntValue("KWIN_SCREENSHOT_NO_PERMISSION_CHECKS") == 1;
+-    if (permissionCheckDisabled) {
+-        return true;
+-    }
+-    if (!pid.has_value()) {
+-        return false;
+-    }
+-    const auto interfaces = KWin::fetchRestrictedDBusInterfacesFromPid(*pid);
+-    if (!interfaces.contains(s_dbusInterface)) {
+-        sendErrorReply(s_errorNotAuthorized, s_errorNotAuthorizedMessage);
+-        return false;
+-    }
+-    return true;
+-}
+-
+ QVariantMap ScreenShotDBusInterface2::CaptureActiveWindow(const QVariantMap &options,
+                                                           QDBusUnixFileDescriptor pipe)
+ {
+-    if (!checkPermissions(determineCallerPid())) {
+-        return QVariantMap();
+-    }
+-
+     Window *window = workspace()->activeWindow();
+     if (!window) {
+         sendErrorReply(s_errorNoActiveWindow, s_errorNoActiveWindowMessage);
+@@ -289,10 +265,6 @@ QVariantMap ScreenShotDBusInterface2::CaptureWindow(const QString &handle,
+                                                     const QVariantMap &options,
+                                                     QDBusUnixFileDescriptor pipe)
+ {
+-    if (!checkPermissions(determineCallerPid())) {
+-        return QVariantMap();
+-    }
+-
+     Window *window = workspace()->findWindow(QUuid(handle));
+     if (!window) {
+         sendErrorReply(s_errorInvalidWindow, s_errorInvalidWindowMessage);
+@@ -317,9 +289,6 @@ QVariantMap ScreenShotDBusInterface2::CaptureArea(int x, int y, int width, int h
+                                                   QDBusUnixFileDescriptor pipe)
+ {
+     const auto pid = determineCallerPid();
+-    if (!checkPermissions(pid)) {
+-        return QVariantMap();
+-    }
+ 
+     const Rect area(x, y, width, height);
+     if (area.isEmpty()) {
+@@ -345,9 +314,6 @@ QVariantMap ScreenShotDBusInterface2::CaptureScreen(const QString &name,
+                                                     QDBusUnixFileDescriptor pipe)
+ {
+     const auto pid = determineCallerPid();
+-    if (!checkPermissions(pid)) {
+-        return QVariantMap();
+-    }
+ 
+     LogicalOutput *screen = workspace()->findOutput(name);
+     if (!screen) {
+@@ -372,9 +338,6 @@ QVariantMap ScreenShotDBusInterface2::CaptureActiveScreen(const QVariantMap &opt
+                                                           QDBusUnixFileDescriptor pipe)
+ {
+     const auto pid = determineCallerPid();
+-    if (!checkPermissions(pid)) {
+-        return QVariantMap();
+-    }
+ 
+     LogicalOutput *screen = workspace()->activeOutput();
+     if (!screen) {
+@@ -452,9 +415,6 @@ QVariantMap ScreenShotDBusInterface2::CaptureInteractive(uint kind,
+ QVariantMap ScreenShotDBusInterface2::CaptureWorkspace(const QVariantMap &options, QDBusUnixFileDescriptor pipe)
+ {
+     const auto pid = determineCallerPid();
+-    if (!checkPermissions(pid)) {
+-        return QVariantMap();
+-    }
+ 
+     const int fileDescriptor = fcntl(pipe.fileDescriptor(), F_DUPFD_CLOEXEC, 0);
+     if (fileDescriptor == -1) {
+diff --git a/src/plugins/screenshot/screenshotdbusinterface2.h b/src/plugins/screenshot/screenshotdbusinterface2.h
+index 66d8938032..12f0bd7768 100644
+--- a/src/plugins/screenshot/screenshotdbusinterface2.h
++++ b/src/plugins/screenshot/screenshotdbusinterface2.h
+@@ -25,9 +25,6 @@ class ScreenShotSource2;
+ /**
+  * The ScreenshotDBusInterface2 class provides a d-bus api to take screenshots. This implements
+  * the org.kde.KWin.ScreenShot2 interface.
+- *
+- * An application that requests a screenshot must have "org.kde.KWin.ScreenShot2" listed in its
+- * X-KDE-DBUS-Restricted-Interfaces desktop file field.
+  */
+ class ScreenShotDBusInterface2 : public QObject, public QDBusContext
+ {
+-- 
+2.53.0
+

@@ -1,0 +1,19 @@
+kwin (4:6.7.4-2+stereo3d41) unstable; urgency=medium
+
+  * Sparky-OS/kwin stereo3d41 is stereo3d40 plus Vlad Zahorodnii's
+    0ea31ae7 of KWin 6.8.0, "plugins/screenshot: Drop
+    X-KDE-DBUS-Restricted-Interfaces", backported (s41-0001, ORDER 330).
+    ScreenShot2 no longer asks for the caller's desktop file to list
+    org.kde.KWin.ScreenShot2, a check any program of the person's could
+    pass by writing a desktop file of its own; a sandboxed program
+    reaches it only where its sandbox lets it talk to KWin, and
+    otherwise asks through the screenshot portal. System Settings, whose
+    desktop file names no path, could never pass it, so Display
+    Settings' Show Screen Contents (kscreen +stereo3d11) now shows what
+    each screen shows.
+  * The source carries the four XREAL One Pro EDIDs that
+    testMockDrmGlasses reads (ORDER 322). s34-0010 adds them, but a
+    patch cannot carry a binary file, so they never reached the package
+    source; they are now made from the hex dumps that s34-0010 carries
+    beside them and listed in debian/source/include-binaries, so the
+    debian tarball holds them (dpkg-source(1)).
