@@ -1,0 +1,36 @@
+From b351ded2712358c10ff736513d3e2db9595b2296 Mon Sep 17 00:00:00 2001
+From: Andreas Beckmann <anbe@debian.org>
+Date: Sat, 10 May 2025 03:31:00 +0200
+Subject: [PATCH 3/3] document CLEAN="true"
+
+---
+ dkms.8.in | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/dkms.8.in b/dkms.8.in
+index 4ad5f6b..6b87dfe 100644
+--- a/dkms.8.in
++++ b/dkms.8.in
+@@ -661,6 +661,19 @@ to use the corresponding make command in the
+ .B MAKE[#]
+ directive array to build your module.
+ .TP
++.B CLEAN=
++(deprecated)
++The
++.B CLEAN
++directive used to contain a command for cleaning the ephemeral build tree right before it gets deleted.
++For backwards compatibility with older DKMS versions
++.B CLEAN="true"
++can be used instead of removing the directive from
++.I dkms.conf
++entirely.
++This will turn the unneeded cleanup command into a no-op on older DKMS versions
++while suppressing the deprecation warning on newer versions.
++.TP
+ .B NO_WEAK_MODULES=
+ The
+ .B NO_WEAK_MODULES
+-- 
+2.39.5
+

@@ -1,0 +1,15 @@
+Author: Andreas Beckmann <anbe@debian.org>
+Description: suppress the CLEAN deprecation warning for trixie
+Forwarded: not-needed
+
+--- a/dkms.in
++++ b/dkms.in
+@@ -577,7 +577,7 @@ safe_source() {
+     if (( ${#CLEAN[@]} )); then
+         case "$CLEAN" in
+             true|/bin/true|/usr/bin/true) ;;
+-            *)  deprecated "CLEAN ($to_source_file)" ;;
++#            *)  deprecated "CLEAN ($to_source_file)" ;;
+         esac
+     fi
+     (( ${#REMAKE_INITRD[@]} )) && deprecated "REMAKE_INITRD ($to_source_file)"
