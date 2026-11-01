@@ -1,4 +1,39 @@
 -------------------------------------------------------------------------------
+  Version 0.1.22 (2026-11-01)
+-------------------------------------------------------------------------------
+  * A conffile in its package's own bytes is never called changed by the
+    person (ORDER 325). dpkg-stereo read every package's Conffiles entries
+    into one map, so a conffile that moved kept the entry of the package it
+    left whenever that package came later in dpkg's status file: on a fresh
+    install Debian's binutils-common records /etc/gprofng.rc as "newconffile
+    remove-on-upgrade" (deb-conffiles(5)) while binutils owns the file, and
+    --verify said "EDITED /etc/gprofng.rc (changed by the person: left as
+    they made it)" of Debian's bytes. Each path is now judged by the
+    conffiles and md5sums of the package whose file list holds it, as dpkg
+    does ("The 'conffiles' data in the status file is ignored when a
+    package is not also listed in the file ownership database as having
+    that file", src/main/unpack.c; dpkg --verify checks each package's own
+    files, src/main/verify.c). The Conffiles field is read as dpkg reads it
+    (lib/dpkg/fields.c): its obsolete and remove-on-upgrade flags, and paths
+    with spaces.
+  * A path a package's conffiles list twice is judged by its first entry,
+    the only one dpkg configures (src/main/configure.c): the second keeps
+    "newconffile" or an older version's hash. On an installed edition that
+    made /etc/default/nis (nis 4.5) and /etc/ld.so.conf.d/gds-13-4.conf
+    (libcufile-13-4) EDITED in their package's bytes, as mime-support's
+    obsolete entry did to the /etc/mime.types media-types owns.
+  * A file taken over through Replaces is judged by its new owner's
+    md5sums: dpkg takes the path out of the old package's file list and
+    leaves the old package's md5sums line behind.
+  * The upgrade corrects what 0.1.21 and older recorded: at the end of the
+    dpkg run that installs it, the post-invoke hook checks each conffile
+    recorded as changed by the person once against its own package's hash
+    (marker conffile-owner-v1). Those in their package's bytes are examined
+    again like any other file; a file the person changed stays EDITED,
+    left as they made it.
+  * The lean toolkit is 0.1.21's, unchanged, and so is the renderer
+    identity.
+-------------------------------------------------------------------------------
   Version 0.1.21 (2026-11-01)
 -------------------------------------------------------------------------------
   * The lean toolkit's link gate (archive.py, carried here with the rest of

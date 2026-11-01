@@ -37,20 +37,23 @@ EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
 
-  * The lean toolkit's link gate reads flat sources (a suite ending in "/",
-    no components, as NVIDIA's CUDA repository) and a source's
-    architectures, and applies the APT preferences the supplied edition
-    packages ship in /etc/apt/preferences.d after its own exact pins
-    (ORDER 329), so nvidia-kernel-open-dkms-stereo3d's exact
-    firmware-nvidia-gsp resolves under sparky-stereo-nvidia-driver-lock as
-    on an installed edition.
-  * Carries 0.1.20's renderer and dpkg-stereo unchanged (ORDER 334): C and
-    C++ lose their comment-only lines completely, dpkg-stereo --resolve
-    finds a lean line's authored line by its content, --resolve-render
-    keeps the render-and-map path, and --repair-consumers projects older
-    local C and C++ forms again once.
+  * A conffile in its package's own bytes is never called changed by the
+    person (ORDER 325): each path is judged by the conffiles and md5sums of
+    the package whose file list holds it, as dpkg does, so the
+    "newconffile remove-on-upgrade" entry binutils-common keeps for the
+    /etc/gprofng.rc binutils owns no longer makes it EDITED. The Conffiles
+    field is read as dpkg reads it, flags and paths with spaces included,
+    and a path a package lists twice is judged by its first entry, the one
+    dpkg configures.
+  * A file taken over through Replaces is judged by its new owner's
+    md5sums, not the line dpkg leaves in the old package's.
+  * The post-invoke hook of the upgrade checks once each conffile 0.1.21
+    and older recorded as changed by the person against its own package's
+    hash: those in their package's bytes are examined again, a person's
+    edit stays EDITED.
+  * Carries the lean toolkit 0.1.21 unchanged.
 
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 01 Nov 2026 07:30:00 -0300
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 01 Nov 2026 11:45:00 -0300
 EOF
 cat > "$S/debian/rules" <<'EOF'
 #!/usr/bin/make -f
