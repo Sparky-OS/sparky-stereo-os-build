@@ -34,8 +34,9 @@ def code_sha256() -> str:
 
 
 CODE_SHA256 = code_sha256()
-# c-line-breaks: C and C++ keep every authored line (a removed comment leaves its line breaks), with no #line
-OPTIONS = 'collapse-blank,pointer,c-line-breaks'
+# c-drop-lines: C and C++ lose their comment-only lines like every other language, keep their authored empty
+# lines, and get no #line (engine 0.1.20; 0.1.17 to 0.1.19 were c-line-breaks, which kept every authored line)
+OPTIONS = 'collapse-blank,pointer,c-drop-lines'
 IDENTITY = f'lean {VERSION} ({OPTIONS}) code {CODE_SHA256[:16]}'
 
 
@@ -105,22 +106,20 @@ def pointer_position(text: str) -> int:
 
 def render_text(text: str, key: str, variant: str | None, package: str | None, path: str | None, pointer=True):
     """The render alone: (lean text, Rendered, comment spans). Deterministic for fixed inputs.
-    C and C++ keep every authored line: a removed comment leaves its line breaks, and the pointer takes a
-    line a removed comment emptied, so the compiler sees the authored line numbers with no #line."""
+    C and C++ lose their comment-only lines completely and keep their authored empty lines (no run of them is
+    collapsed), with no #line: their lean line numbers differ from the authored ones, as in every other
+    language, and dpkg-stereo --resolve finds the authored line by its content."""
     mod = consumers.HANDLERS[key]
     spans = _lex(key, mod, text, variant)
     if key == 'c' and variant in ('c', 'c++'):
-        rendered = core.render(text, spans, lang_c.joiner_for(text, spans), keep_lines=True)
-        out, origin = rendered.text, rendered.origin
-        if pointer and rendered.removed:
-            out, origin = lang_c.place_pointer(out, origin, text, spans,
-                                               core.pointer_text(mod.MARKER, package, path))
+        rendered = core.render(text, spans, lang_c.joiner_for(text, spans), keep_empty_after=mod.keep_empty_after,
+                               collapse_blank=False, drop_lines=True)
     else:
         rendered = core.render(text, spans, mod.joiner, keep_empty_after=_keep_empty(key, mod, variant))
-        out, origin = rendered.text, rendered.origin
-        if pointer and mod.MARKER and rendered.removed:
-            ptr = core.pointer_text(mod.MARKER, package, path)
-            out, origin = core.insert_line(out, origin, pointer_position(out), ptr)
+    out, origin = rendered.text, rendered.origin
+    if pointer and mod.MARKER and rendered.removed:
+        ptr = core.pointer_text(mod.MARKER, package, path)
+        out, origin = core.insert_line(out, origin, pointer_position(out), ptr)
     line_map = core.build_line_map(text, out, origin)
     rendered.text, rendered.origin, rendered.line_map = out, origin, line_map
     return out, rendered, spans
@@ -181,9 +180,9 @@ def project(path: str, data: bytes, package: str | None = None, *, pointer=True,
 
 
 def resolve(hr: bytes, mr: bytes, path: str, package: str | None, line: int, col: int | None = None, *, pointer=True):
-    """An MR location -> the authored (HR) location, rendering the HR again and refusing a stale MR.
-    In C and C++ the line is the authored one already (every line keeps its number); the map gives the
-    authored column where a removed comment shortened the line."""
+    """An MR location -> the authored (HR) location, rendering the HR again and refusing a stale MR, then
+    reading the render's own line map (dpkg-stereo --resolve-render). dpkg-stereo --resolve finds it by the
+    line's content instead (locate.locate), which needs no render by the same engine."""
     key, variant, why = consumers.choose(path, hr)
     if key is None:
         raise StaleMr(f'{path}: no handler ({why})')

@@ -383,20 +383,45 @@ class Packages(unittest.TestCase):
         self.assertNotIn(b'#line', r.lean)
         return r.lean
 
-    def test_c_migration_projects_again_with_line_breaks_then_stays_idle(self):
+    def test_c_header_hr_companion_restores_the_authored_bytes_and_resolves(self):
+        """ORDER 334: an lc1 build of a C header in the 0.1.20 form; its HR companion holds the authored bytes,
+        and dpkg-stereo --resolve reads them to find a lean line's authored line by content."""
+        import lzma
+        tree = self.stage()
+        (tree / self.C_PATH[1:]).parent.mkdir(parents=True, exist_ok=True)
+        (tree / self.C_PATH[1:]).write_bytes(self.C_AUTHORED)
+        out = self.base / 'out-c'
+        release.build_tree(tree, out)
+        lean = (tree / self.C_PATH[1:]).read_bytes()
+        self.assertEqual(lean, self.new_form())
+        self.assertEqual(lean.split(b'\n')[1:3], [b'int demo(void);', b'int demo_line = __LINE__;'])
+        obj = package.check_tree(tree)
+        row = next(r for r in obj['files'] if r['path'] == self.C_PATH)
+        self.assertEqual(row['status'], 'projected')
+        x = self.base / 'hr-x'
+        subprocess.run(['dpkg-deb', '-x', str(out / 'lc-demo-lc-hr_1_all.deb'), str(x)], check=True)
+        hr = x / package.hr_path('lc-demo', 'all', row['sha_hr'])[1:]
+        self.assertEqual(lzma.decompress(hr.read_bytes()), self.C_AUTHORED)
+        root, P = self.system()
+        self.dpkg(root, '-i', str(out / 'lc-demo_1_all.deb'), str(out / 'lc-demo-lc-hr_1_all.deb'))
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(client.resolve(P, f'{self.C_PATH}:3:5'), 0)
+        self.assertEqual(output.getvalue().split()[0], f'/usr/share/doc/lc-demo/hr{self.C_PATH}:4:5')
+
+    def test_c_migration_projects_again_in_the_new_form_then_stays_idle(self):
         root, P, raw, _ = self.old_c_header()
         cache = root / 'var/cache/apt/archives'
         cache.mkdir(parents=True)
         shutil.copy2(raw, cache)
         with contextlib.redirect_stdout(io.StringIO()) as output:
             client.post_invoke(P, 1)
-        self.assertIn('line breaks kept instead of #line', output.getvalue())
+        self.assertIn('comment-only lines removed', output.getvalue())
         lean = (root / self.C_PATH[1:]).read_bytes()
         self.assertEqual(lean, self.new_form())
-        self.assertEqual(lean.count(b'\n'), self.C_AUTHORED.count(b'\n'))
+        self.assertEqual(lean.count(b'\n'), self.C_AUTHORED.count(b'\n') - 1)   # 2 comment lines go, the pointer comes
         rec = client.Records(P)[self.C_PATH]
         self.assertEqual((rec['sha_orig'], rec['sha_lean']), (client.sha256(self.C_AUTHORED), client.sha256(lean)))
-        self.assertTrue(Path(P.state('renderer-migration-c-line-breaks-v1')).exists())
+        self.assertTrue(Path(P.state('renderer-migration-c-drop-lines-v2')).exists())
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(client.verify(P, [], True), 0)
         with patch.object(client, 'Records', side_effect=AssertionError('migration rescanned records')):
@@ -420,8 +445,8 @@ class Packages(unittest.TestCase):
         self.assertNotIn(b'#line', (root / second[1:]).read_bytes())
         self.assertEqual((root / self.C_PATH[1:]).read_bytes(), old)
         self.assertIn(self.C_PATH, client.Records(P))
-        self.assertFalse(Path(P.state('renderer-migration-c-line-breaks-v1')).exists())
-        self.assertEqual(sorted(client.read_table(P.state('renderer-migration-c-line-breaks-v1.pending'),
+        self.assertFalse(Path(P.state('renderer-migration-c-drop-lines-v2')).exists())
+        self.assertEqual(sorted(client.read_table(P.state('renderer-migration-c-drop-lines-v2.pending'),
                                                   ('path', 'sha_lean'))), [self.C_PATH])
         tried.clear()
         # a person's --repair-consumers tries the waiting file now (the hooks wait for a change: ORDER 315)
@@ -431,8 +456,8 @@ class Packages(unittest.TestCase):
         self.assertEqual(tried, [[self.C_PATH]])          # the pending file only, not the new projection
         self.assertEqual((root / self.C_PATH[1:]).read_bytes(), self.new_form())
         self.assertEqual(client.Records(P)[second]['sha_lean'], new_other)
-        self.assertTrue(Path(P.state('renderer-migration-c-line-breaks-v1')).exists())
-        self.assertFalse(Path(P.state('renderer-migration-c-line-breaks-v1.pending')).exists())
+        self.assertTrue(Path(P.state('renderer-migration-c-drop-lines-v2')).exists())
+        self.assertFalse(Path(P.state('renderer-migration-c-drop-lines-v2.pending')).exists())
 
     def test_c_migration_preserves_user_edits(self):
         root, P, _, _ = self.old_c_header()
@@ -445,26 +470,35 @@ class Packages(unittest.TestCase):
         self.assertNotIn(self.C_PATH, client.Records(P))
 
     def test_c_resolve_maps_line_and_column(self):
+        """dpkg-stereo --resolve finds the authored line by its content in every form; --resolve-render reads
+        the render's map and names an older form."""
         root, P, raw, old = self.old_c_header()
         with contextlib.redirect_stdout(io.StringIO()) as output:   # old form, no original: the line as it is
             self.assertEqual(client.resolve(P, f'{self.C_PATH}:4:5'), 0)
-        self.assertIn(f'{self.C_PATH}:4:5 (C and C++ keep authored line numbers', output.getvalue())
+        self.assertIn(f"{self.C_PATH}:4:5 (this C or C++ file is in an older engine's form", output.getvalue())
         cache = root / 'var/cache/apt/archives'
         cache.mkdir(parents=True)
         shutil.copy2(raw, cache)
+        with contextlib.redirect_stdout(io.StringIO()) as output:   # old form, original at hand: by content
+            self.assertEqual(client.resolve(P, f'{self.C_PATH}:4:5'), 0)
+        self.assertEqual(output.getvalue().split()[0], f'/usr/share/doc/lc-demo/hr{self.C_PATH}:4:5')
         with contextlib.redirect_stdout(io.StringIO()) as output:
-            self.assertEqual(client.resolve(P, f'{self.C_PATH}:4:5'), 0)   # old form, original at hand
-        self.assertIn("older renderer's form", output.getvalue())
+            self.assertEqual(client.resolve(P, f'{self.C_PATH}:4:5', by_render=True), 0)
+        self.assertIn("older engine's form", output.getvalue())
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(client.resolve(P, f'{self.C_PATH}:2:1'), 1)     # the #line 0.1.15 wrote
+        self.assertIn('#line directive', output.getvalue())
         with contextlib.redirect_stdout(io.StringIO()):
             client.repair_consumers(P)
         lean = (root / self.C_PATH[1:]).read_bytes().decode().split('\n')
-        self.assertEqual(lean[3], 'int demo_line = __LINE__;')
-        with contextlib.redirect_stdout(io.StringIO()) as output:
-            self.assertEqual(client.resolve(P, f'{self.C_PATH}:4:17'), 0)
-        self.assertEqual(output.getvalue().split()[0], f'/usr/share/doc/lc-demo/hr{self.C_PATH}:4:17')
-        with contextlib.redirect_stdout(io.StringIO()) as output:
-            self.assertEqual(client.resolve(P, f'{self.C_PATH}:3:1'), 0)
-        self.assertEqual(output.getvalue().split()[0], f'/usr/share/doc/lc-demo/hr{self.C_PATH}:3:1')
+        self.assertEqual(lean[2], 'int demo_line = __LINE__;')
+        for by_render in (False, True):
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(client.resolve(P, f'{self.C_PATH}:3:17', by_render=by_render), 0)
+            self.assertEqual(output.getvalue().split()[0], f'/usr/share/doc/lc-demo/hr{self.C_PATH}:4:17')
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(client.resolve(P, f'{self.C_PATH}:2:1', by_render=by_render), 0)
+            self.assertEqual(output.getvalue().split()[0], f'/usr/share/doc/lc-demo/hr{self.C_PATH}:3:1')
 
     def stuck_c_header(self):
         """ORDER 315: the station's case: an old-form C header whose package version no cache or archive holds,
@@ -472,7 +506,7 @@ class Packages(unittest.TestCase):
         root, P, raw, old = self.old_c_header()
         with patch.object(client, 'deb_members', return_value={}), contextlib.redirect_stdout(io.StringIO()):
             self.run_project(P)
-        marker = P.state('renderer-migration-c-line-breaks-v1')
+        marker = P.state('renderer-migration-c-drop-lines-v2')
         self.assertFalse(Path(marker).exists())
         self.assertEqual(list(client.read_table(marker + '.pending', client.PENDING_COLS)), [self.C_PATH])
         self.assertEqual([(w['package'], w['version'], w['files']) for w in
@@ -487,7 +521,7 @@ class Packages(unittest.TestCase):
                 patch.object(client, 'deb_members', side_effect=nothing), \
                 patch.object(client, 'archive_versions', side_effect=nothing):
             self.assertEqual(client.repair_consumers(P), 1)
-            self.assertEqual(client.migrate_c_line_breaks(P, pkgs=client.dpkg_packages(P)), 1)
+            self.assertEqual(client.migrate_c_form(P, pkgs=client.dpkg_packages(P)), 1)
         with patch.object(client, 'deb_members', side_effect=nothing), contextlib.redirect_stdout(io.StringIO()) as output:
             client.post_invoke(P, 1)
         self.assertEqual(output.getvalue(), '')
@@ -498,10 +532,10 @@ class Packages(unittest.TestCase):
         shutil.copy2(raw, cache)
         with contextlib.redirect_stdout(io.StringIO()) as output:
             client.post_invoke(P, 1)
-        self.assertIn('line breaks kept instead of #line', output.getvalue())
+        self.assertIn('comment-only lines removed', output.getvalue())
         self.assertEqual((root / self.C_PATH[1:]).read_bytes(), self.new_form())
-        self.assertTrue(Path(P.state('renderer-migration-c-line-breaks-v1')).exists())
-        self.assertFalse(Path(P.state('renderer-migration-c-line-breaks-v1.waiting')).exists())
+        self.assertTrue(Path(P.state('renderer-migration-c-drop-lines-v2')).exists())
+        self.assertFalse(Path(P.state('renderer-migration-c-drop-lines-v2.waiting')).exists())
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(client.verify(P, [], True), 0)
 
@@ -544,7 +578,7 @@ class Packages(unittest.TestCase):
         with patch.object(client, 'deb_members', side_effect=AssertionError('fetched the replaced version')), \
                 contextlib.redirect_stdout(io.StringIO()):
             client.post_invoke(P, 1)
-        self.assertTrue(Path(P.state('renderer-migration-c-line-breaks-v1')).exists())
+        self.assertTrue(Path(P.state('renderer-migration-c-drop-lines-v2')).exists())
         rec = client.Records(P)[self.C_PATH]
         self.assertEqual(rec['version'], '1')
         self.assertEqual((root / self.C_PATH[1:]).read_bytes(), self.new_form())
@@ -554,7 +588,7 @@ class Packages(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertEqual(client.verify(P, []), 0)
         lines = output.getvalue().splitlines()
-        self.assertIn('PENDING   lc-demo 0: 1 C and C++ files keep the older #line form', '\n'.join(lines))
+        self.assertIn("PENDING   lc-demo 0: 1 C and C++ files keep an older engine's form", '\n'.join(lines))
         self.assertTrue(lines[-1].endswith('1 C and C++ files of 1 package versions waiting for their .deb (PENDING)'), lines[-1])
         with contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertEqual(client.verify(P, ['lc-other']), 0)
@@ -562,7 +596,7 @@ class Packages(unittest.TestCase):
 
     def test_old_pending_list_is_tried_once_then_remembered_by_version(self):
         root, P, raw, old = self.stuck_c_header()
-        marker = P.state('renderer-migration-c-line-breaks-v1')
+        marker = P.state('renderer-migration-c-drop-lines-v2')
         # 0.1.17's list: paths and lean hashes, no version and no .waiting
         client.write_table(marker + '.pending', ('path', 'sha_lean'), {self.C_PATH: {'path': self.C_PATH, 'sha_lean': client.sha256(old)}})
         os.unlink(marker + '.waiting')
@@ -604,7 +638,7 @@ class Packages(unittest.TestCase):
     def test_c_migration_progress_stays_quiet_below_both_thresholds(self):
         lines = self.migration_lines(1000, 3600)
         self.assertEqual([l for l in lines if 'projected and checked' in l], [])
-        self.assertTrue(lines[-1].startswith('dpkg-stereo: C and C++ files in the new form: 4, none left with #line'), lines)
+        self.assertTrue(lines[-1].startswith('dpkg-stereo: C and C++ files in the new form: 4, none left in an older form'), lines)
 
     def test_c_migration_prints_progress_before_the_long_steps(self):
         lines = self.migration_lines(1, 3600)
@@ -613,7 +647,7 @@ class Packages(unittest.TestCase):
         self.assertEqual(lines[2], 'dpkg-stereo: projecting and checking 4 files')
         self.assertEqual([l.split(' (')[0] for l in lines[3:6]],
                          [f'dpkg-stereo: {n} of 4 files projected and checked' for n in (1, 2, 3)])
-        self.assertTrue(lines[-1].startswith('dpkg-stereo: C and C++ files in the new form: 4, none left with #line'), lines)
+        self.assertTrue(lines[-1].startswith('dpkg-stereo: C and C++ files in the new form: 4, none left in an older form'), lines)
 
     def test_migration_inside_post_invoke_still_projects_what_the_run_changed(self):
         """The migration's own projection must not mark the packages this dpkg run changed as seen
@@ -705,7 +739,7 @@ class Packages(unittest.TestCase):
 
     def test_restore_names_scale_to_the_station(self):
         """ORDER 310 measured 68.9 s for restore's filter on the station's 90,217 records with the 47,360
-        C and C++ names migrate_c_line_breaks passed as a list; a set makes it linear (ORDER 315)."""
+        C and C++ names the migration passed as a list; a set makes it linear (ORDER 315)."""
         root, P = self.system()
         names = synthetic_records(P, records=90217, c_files=47360)
         t0 = time.monotonic()

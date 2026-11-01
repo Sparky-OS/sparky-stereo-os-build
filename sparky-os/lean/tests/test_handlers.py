@@ -348,9 +348,12 @@ int big = 1'000'000; // digit separators
             for name, text in (('a.cc', src), ('b.cc', mr)):
                 p = os.path.join(d, name)
                 open(p, 'w').write(text + 'int main() { return line_here; }\n')
-                outs.append(subprocess.run(['g++', '-E', '-P', p], capture_output=True, text=True).stdout)
-            self.assertIn('line_here = 12', outs[0].replace(' ', ' '))
-            self.assertEqual(' '.join(outs[0].split()), ' '.join(outs[1].split()))
+                outs.append([subprocess.run(['g++', '-E', '-P', *pin, p], capture_output=True, text=True).stdout
+                             for pin in ((), ('-U__LINE__', '-D__LINE__=0'))])
+            self.assertIn('line_here = 12', outs[0][0])
+            at = mr.split('\n').index('static const int line_here = __LINE__;') + 1
+            self.assertIn(f'line_here = {at}', outs[1][0])       # 0.1.20: __LINE__ follows the lean lines
+            self.assertEqual(' '.join(outs[0][1].split()), ' '.join(outs[1][1].split()))
 
     def test_include_guard_still_read_once(self):
         """GCC reads a guarded header once per translation unit only while #ifndef is its first
@@ -373,75 +376,21 @@ int big = 1'000'000; // digit separators
                 open(os.path.join(d, name, 'g.h'), 'w').write(text)
                 open(os.path.join(d, name, 't.c'), 'w').write('#include "g.h"\n#include "g.h"\nint main(void) { return g_line; }\n')
                 h = subprocess.run(['gcc', '-H', '-fsyntax-only', 't.c'], cwd=os.path.join(d, name), capture_output=True, text=True)
-                pp = subprocess.run(['gcc', '-E', '-P', 't.c'], cwd=os.path.join(d, name), capture_output=True, text=True).stdout
+                pp = subprocess.run(['gcc', '-E', '-P', '-U__LINE__', '-D__LINE__=0', '-w', 't.c'],
+                                    cwd=os.path.join(d, name), capture_output=True, text=True).stdout
                 outs.append((h.stderr.count('g.h'), ' '.join(pp.split())))
             self.assertEqual(outs[0], outs[1])
-            self.assertIn('g_line = 8', outs[1][1])
+            self.assertEqual(outs[1][0], 1)
 
     LINES = (
-        '// Line one explains the file at length, so a projection that drops it moves every line.\n'
-        '#include <stddef.h> /* a trailing note */\n'
-        '/* a block comment\n'
-        '   over three lines */\n'
-        'int a = __LINE__; /* inline, then code: */ int b = __LINE__;\n'
-        'int c = 1; /* a comment that holds\n'
-        '   two line breaks\n'
-        '   */ int d = __LINE__;\n'
-        '#define TWO /* a comment inside the directive\n'
-        '   that goes on */ 2\n'
-        '#if TWO == 2 /* still the directive\n'
-        '   */ && 1\n'
-        'int e = __LINE__;\n'
-        '#endif\n'
         'int f = TWO; /* not a directive: the # below follows code on its logical line\n'
-        '   */ # define NOT_A_DIRECTIVE\n'
-        '// a line comment continued \\\n'
-        '   by a backslash\n'
-        'int g = __LINE__;\n'
-        'int h = /* spliced \\\n   inside a comment */ __LINE__;\n'
-        '#define SUM(x, y) \\\n'
-        '  ((x) /* first */ + \\\n'
-        '   (y)) // second\n'
-        'int i = SUM(__LINE__, 0);\n'
-        'const char *s = R"raw(// kept\n/* kept */\n)raw"; int j = __LINE__;\n'
-        '\n\n\n'
-        '// a closing comment\n'
-        'int k = __LINE__;\n')
-
-    def test_every_line_keeps_its_number_without_line_control(self):
-        """ORDER 303: no #line; every authored line keeps its number; the compiler's view is the same."""
-        src = self.LINES.replace('# define NOT_A_DIRECTIVE', 'NOT_A_DIRECTIVE')
-        r, mr = P('/usr/include/lines.h', src, pointer=True)
-        self.assertEqual(r.status, 'projected', r.reason)
-        self.assertNotRegex(mr, r'(?m)^[ \t]*#[ \t]*line\b')
-        self.assertEqual(mr.count('\n'), src.count('\n'))
-        self.assertNotIn('three lines', mr)
-        self.assertNotIn('backslash', mr)
-        self.assertIn('R"raw(// kept\n/* kept */\n)raw"', mr)
-        self.assertIn('#define TWO /*\n*/ 2', mr)
-        self.assertIn('#if TWO == 2 /*\n*/ && 1', mr)
-        a, b = src.split('\n'), mr.split('\n')
-        for k, (x, y) in enumerate(zip(a, b), 1):
-            if 'int ' in x:
-                # the same declarations on the same line, whatever the comments were
-                self.assertEqual(re.findall(r'int \w+', x), re.findall(r'int \w+', y), k)
-        with tempfile.TemporaryDirectory() as d:
-            outs = []
-            for name, text in (('a.c', src), ('b.c', mr)):
-                open(os.path.join(d, name), 'w').write(text)
-                outs.append(subprocess.run(['gcc', '-E', '-P', name], cwd=d, capture_output=True,
-                                           text=True, check=True).stdout)
-            self.assertEqual(outs[0].split(), outs[1].split())
-            flat = ' '.join(outs[1].split())
-            for var, line in (('a', 5), ('b', 5), ('d', 8), ('e', 13), ('g', 19), ('k', 33)):
-                self.assertIn(f'int {var} = {line};', flat, var)
-            self.assertIn('int i = ((25) + (0));', flat)
+        '   */ # define NOT_A_DIRECTIVE\n')
 
     def test_a_directive_after_code_stays_no_directive(self):
         src = self.LINES
         r, mr = P('/usr/include/lines.h', src)
         self.assertEqual(r.status, 'projected', r.reason)
-        self.assertIn('int f = TWO; /*\n*/ # define NOT_A_DIRECTIVE', mr)
+        self.assertIn('int f = TWO;   # define NOT_A_DIRECTIVE', mr)   # one space: still no directive
 
     def test_cxx_module_and_import_lines_keep_their_line_structure(self):
         """C++20 import and module lines end at a line break like # directives ([cpp.pre])."""
@@ -449,50 +398,36 @@ int big = 1'000'000; // digit separators
                'int y; /* the next word starts no import line in the authored text\n   */ import other;\n'
                'int z = 2; /* this one may become line breaks:\n   */ int w = 3;\n')
         r, mr = P('/usr/src/x/m.cc', src)
-        self.assertIn('export module demo; /*\n*/ int x = 1;', mr)
-        self.assertIn('int y; /*\n*/ import other;', mr)
+        self.assertIn('export module demo;   int x = 1;', mr)
+        self.assertIn('int y;   import other;', mr)
         self.assertIn('int z = 2;\n int w = 3;', mr)
 
-    def test_the_check_refuses_a_moved_line_or_added_line_control(self):
-        """The check can fail: the lean text with a line deleted, or with a #line it did not need."""
+    def test_the_check_refuses_added_line_control(self):
+        """The check can fail: the lean text with a #line it did not need, or a token joined to another."""
         from lean import lang_c
         src = '// explanation\nint a = __LINE__;\n\nint b = __LINE__;\n'
         r, mr = P('/usr/src/x/t.c', src)
-        self.assertEqual(mr, '\nint a = __LINE__;\n\nint b = __LINE__;\n')
+        self.assertEqual(mr, 'int a = __LINE__;\n\nint b = __LINE__;\n')
         self.assertTrue(lang_c.verify(src, mr)[0])
-        moved = mr.replace('\n\nint b', '\nint b')
-        self.assertFalse(lang_c.verify(src, moved)[0])
-        directive = mr.replace('\n\nint b', '\n#line 4\nint b')     # redundant: line 4 is line 4
+        directive = mr.replace('\n\nint b', '\n#line 4\nint b')
         self.assertFalse(lang_c.verify(src, directive)[0])
         self.assertEqual((lang_c._line_controls(src), lang_c._line_controls(mr), lang_c._line_controls(directive)),
                          (0, 0, 1))
         self.assertEqual(lang_c._line_controls('/* #line 9 */\nconst char *s = R"(\n#line 9\n)";\n'), 0)
-        self.assertFalse(lang_c.verify(src, mr.replace('\nint a', 'int a'))[0])
+        self.assertFalse(lang_c.verify(src, mr.replace('int a', 'inta'))[0])
 
-    def test_pointer_takes_a_line_a_removed_comment_emptied(self):
+    def test_pointer_takes_the_first_line(self):
         src = ('int a;\n/* the first removable comment, long enough to pay for the pointer line that\n'
-               '   takes its first line, and it goes on over two lines */\nint b = __LINE__;\n')
+               '   goes on the first line, and it goes on over two lines */\nint b = __LINE__;\n')
         r, mr = P('/usr/include/p.h', src, pointer=True)
         self.assertEqual(r.status, 'projected', r.reason)
         lines = mr.split('\n')
-        self.assertEqual(len(lines), len(src.split('\n')))
-        self.assertTrue(lines[1].startswith('// Lean Code: HR in /usr/share/doc/pkg/hr/'), mr)
-        self.assertEqual(lines[3], 'int b = __LINE__;')
-        for k in range(1, len(lines)):
-            self.assertEqual(project.resolve(src.encode(), r.lean, '/usr/include/p.h', 'pkg', k)[0], k)
-
-    def test_pointer_without_a_freed_line_takes_a_new_last_line(self):
-        src = ('int a = __LINE__; // a trailing explanation long enough to pay for the pointer line\n'
-               'int b = __LINE__; /* and another one, also long enough to be worth removing */\n')
-        r, mr = P('/usr/include/q.h', src, pointer=True)
-        self.assertEqual(r.status, 'projected', r.reason)
-        lines = mr.split('\n')
-        self.assertEqual(lines[:2], ['int a = __LINE__;', 'int b = __LINE__;'])
-        self.assertTrue(lines[2].startswith('// Lean Code:'), mr)
-        self.assertEqual(lines[3:], [''])
-        self.assertEqual(project.resolve(src.encode(), r.lean, '/usr/include/q.h', 'pkg', 2)[0], 2)
+        self.assertTrue(lines[0].startswith('// Lean Code: HR in /usr/share/doc/pkg/hr/'), mr)
+        self.assertEqual(lines[1:], ['int a;', 'int b = __LINE__;', ''])
+        self.assertEqual(project.resolve(src.encode(), r.lean, '/usr/include/p.h', 'pkg', 2)[0], 1)
+        self.assertEqual(project.resolve(src.encode(), r.lean, '/usr/include/p.h', 'pkg', 3)[0], 4)
         with self.assertRaises(core.MrLineMapRefusal):
-            project.resolve(src.encode(), r.lean, '/usr/include/q.h', 'pkg', 3)
+            project.resolve(src.encode(), r.lean, '/usr/include/p.h', 'pkg', 1)
 
     def test_resolver_maps_columns_after_a_removed_inline_comment(self):
         src = 'int a = /* an inline explanation of the value below */ 42;\nint b = 7; /* trailing */\n'
@@ -506,7 +441,7 @@ int big = 1'000'000; // digit separators
 
     def test_renderer_identity_names_the_form_and_its_code(self):
         from lean import package
-        self.assertRegex(project.IDENTITY, r'^lean [0-9.]+ \(collapse-blank,pointer,c-line-breaks\) code [0-9a-f]{16}$')
+        self.assertRegex(project.IDENTITY, r'^lean [0-9.]+ \(collapse-blank,pointer,c-drop-lines\) code [0-9a-f]{16}$')
         self.assertTrue(project.IDENTITY.endswith(project.CODE_SHA256[:16]))
         self.assertEqual(package.renderer(), {'identity': project.IDENTITY, 'sha256': project.CODE_SHA256})
         with tempfile.TemporaryDirectory() as d:
@@ -521,8 +456,9 @@ int big = 1'000'000; // digit separators
             self.assertNotEqual(out, project.IDENTITY)
             self.assertEqual(out.rsplit(' ', 1)[0], project.IDENTITY.rsplit(' ', 1)[0])
 
-    def test_objects_identical_with_debug_info(self):
-        src = 'int f(int x) {\n  // why\n  // and why again, at length, so the line moves\n  return x + __LINE__;\n}\n'
+    def test_objects_identical_outside_debug_line_information(self):
+        """0.1.20: the lines move, so the debug information differs; the code does not."""
+        src = 'int f(int x) {\n  // why\n  // and why again, at length, so the line moves\n  return x + 3;\n}\n'
         r, mr = P('/usr/src/x/f.c', src)
         self.assertEqual(r.status, 'projected', r.reason)
         with tempfile.TemporaryDirectory() as d:
@@ -530,6 +466,7 @@ int big = 1'000'000; // digit separators
             for text in (src, mr):
                 open(os.path.join(d, 'f.c'), 'w').write(text)
                 subprocess.run(['gcc', '-O2', '-g', '-c', 'f.c', '-o', 'f.o'], cwd=d, check=True)
+                subprocess.run(['objcopy', '--strip-debug', 'f.o'], cwd=d, check=True)
                 objs.append(open(os.path.join(d, 'f.o'), 'rb').read())
             self.assertEqual(objs[0], objs[1])
 
