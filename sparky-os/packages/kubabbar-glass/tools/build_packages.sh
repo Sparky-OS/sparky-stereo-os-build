@@ -7,8 +7,8 @@
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 dest=${DEST:-${SPARKY_STAGING_DIR:?}/classic-look/m2}
-version=${VERSION:-20261102~sparky9~0+lc1}
-look_version=${LOOK_VERSION:-20261102~sparky9~0+lc1}
+version=${VERSION:-20261102.1~sparky9~0+lc1}
+look_version=${LOOK_VERSION:-20261102.1~sparky9~0+lc1}
 work=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/kubabbar-pkg.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 RECIPE=$repo
@@ -52,7 +52,7 @@ control() { # dir package depends recommends suggests description-lines...
 build() { # dir package
 	find "$1" -name '*.qmlc' -delete
 	chmod -R go-w "$1"
-	PYTHONPATH="$RECIPE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$1" "$dest" --authoring "$repo"
+	PYTHONPATH="$RECIPE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$1" "$dest" --authoring "$repo" --build-dependency sparky-stereo-problems
 }
 doc() { # dir package copyright-body-file
 	mkdir -p "$1/usr/share/doc/$2"
@@ -67,6 +67,16 @@ cp -a "$repo/share/themes/." "$g/usr/share/themes/"
 install -m 644 "$repo/lib/systemd/user/"* "$g/usr/lib/systemd/user/"
 ln -s ../sparky-stereo-gtk-sync.path "$g/usr/lib/systemd/user/graphical-session.target.wants/sparky-stereo-gtk-sync.path"
 install -m 644 "$repo/etc/xdg/autostart/sparky-stereo-gtk-sync.desktop" "$g/etc/xdg/autostart/"
+sparky-stereo-problems catalog sparky-stereo-gtk "$repo/lang/gtk-sync" "$g/usr/lib/systemd/catalog" --subject LOCAL1
+mkdir -p "$g/DEBIAN"
+cat > "$g/DEBIAN/postrm" <<'POSTRM'
+#!/bin/sh
+set -e
+if [ "$1" = remove ] || [ "$1" = purge ]; then
+	sparky-stereo-problems clear --all sparky-stereo-gtk
+fi
+POSTRM
+chmod 755 "$g/DEBIAN/postrm"
 cat > "$work/gtk-copyright" <<COPYRIGHT
 Upstream Author(s):
 
@@ -86,7 +96,7 @@ Free Software Foundation; version 3 of the License.
 On Debian systems, the complete text of the GNU General Public License version 3 can be found in /usr/share/common-licenses/GPL-3.
 COPYRIGHT
 doc "$g" sparky-stereo-gtk "$work/gtk-copyright"
-control "$g" sparky-stereo-gtk "breeze-gtk-theme, kde-config-gtk-style, libglib2.0-bin, libkf6config-bin" "" "" \
+control "$g" sparky-stereo-gtk "breeze-gtk-theme, kde-config-gtk-style, libglib2.0-bin, libkf6config-bin, procps, sparky-stereo-problems" "" "" \
 	"GTK 3 and GTK 4 themes that follow the Sparky Stereo OS looks" \
 	"Kubabbar-Glass and Sparky-Stereo-Oxygen: the Breeze GTK shapes in each look's colours." \
 	"sparky-stereo-gtk-sync picks the theme from the KDE colour scheme at login and whenever kdeglobals changes;" \

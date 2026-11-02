@@ -3,7 +3,35 @@
 # Make GTK 3 and GTK 4 programs follow the active KDE look.
 # The KDE colour scheme names the GTK theme; kde-gtk-config keeps its colours in step, this script picks the theme.
 set -eu
-scheme=$(kreadconfig6 --file kdeglobals --group General --key ColorScheme 2>/dev/null || true)
+package=sparky-stereo-gtk
+repair='["sparky-stereo-gtk-sync"]'
+run() {
+	key=$1
+	shift
+	sparky-stereo-problems run --person --repair "$repair" "$package" "$key" LOCAL2 -- "$@"
+}
+config=${XDG_CONFIG_HOME:-$HOME/.config}
+# kreadconfig6 returns zero for a string even when its file cannot be read.
+# Check each existing cascading input before asking KConfig to resolve the value.
+old_ifs=$IFS
+IFS=:
+for directory in "$config" ${XDG_CONFIG_DIRS:-/etc/xdg}; do
+	if [ -e "$directory/kdeglobals" ] && [ ! -r "$directory/kdeglobals" ]; then
+		IFS=$old_ifs
+		sparky-stereo-problems keep --person --repair "$repair" "$package" scheme LOCAL3 "$directory/kdeglobals"
+		exit 1
+	fi
+done
+IFS=$old_ifs
+if scheme=$(kreadconfig6 --file kdeglobals --group General --key ColorScheme); then
+	sparky-stereo-problems clear --person "$package" scheme
+else
+	status=$?
+	sparky-stereo-problems keep --person --repair "$repair" --status "$status" \
+		--command '["kreadconfig6","--file","kdeglobals","--group","General","--key","ColorScheme"]' \
+		"$package" scheme LOCAL2 kreadconfig6 "$status"
+	exit "$status"
+fi
 dark=false
 case "$scheme" in
 	kubabbar-glass) theme=Kubabbar-Glass ;;
@@ -11,20 +39,27 @@ case "$scheme" in
 	*Dark*) theme=Breeze-Dark; dark=true ;;
 	*) theme=Breeze ;;
 esac
-config=${XDG_CONFIG_HOME:-$HOME/.config}
 for version in 3.0 4.0; do
-	mkdir -p "$config/gtk-$version"
+	run "gtk-$version-directory" mkdir -p "$config/gtk-$version"
 	file=$config/gtk-$version/settings.ini
-	kwriteconfig6 --file "$file" --group Settings --key gtk-theme-name "$theme"
-	kwriteconfig6 --file "$file" --group Settings --key gtk-application-prefer-dark-theme "$dark"
+	run "gtk-$version-theme" kwriteconfig6 --file "$file" --group Settings --key gtk-theme-name "$theme"
+	run "gtk-$version-dark" kwriteconfig6 --file "$file" --group Settings --key gtk-application-prefer-dark-theme "$dark"
 done
-if command -v gsettings >/dev/null 2>&1; then
-	gsettings set org.gnome.desktop.interface gtk-theme "$theme" 2>/dev/null || true
-	if [ "$dark" = true ]; then colour=prefer-dark; else colour=default; fi
-	gsettings set org.gnome.desktop.interface color-scheme "$colour" 2>/dev/null || true
-fi
+run gsettings-theme gsettings set org.gnome.desktop.interface gtk-theme "$theme"
+if [ "$dark" = true ]; then colour=prefer-dark; else colour=default; fi
+run gsettings-colour gsettings set org.gnome.desktop.interface color-scheme "$colour"
 if [ -f "$config/xsettingsd/xsettingsd.conf" ]; then
-	sed -i "s|^Net/ThemeName .*|Net/ThemeName \"$theme\"|" "$config/xsettingsd/xsettingsd.conf"
-	pkill -HUP -x xsettingsd 2>/dev/null || true
+	run xsettings-config sed -i "s|^Net/ThemeName .*|Net/ThemeName \"$theme\"|" "$config/xsettingsd/xsettingsd.conf"
+	if pids=$(pgrep -u "$(id -u)" -x xsettingsd); then
+		# Signal only this person's daemon, by PID. The repair must discover new PIDs.
+		for pid in $pids; do run xsettings-reload /bin/kill -HUP "$pid"; done
+	elif [ "$?" -eq 1 ]; then
+		sparky-stereo-problems say "$package" LOCAL4
+	else
+		sparky-stereo-problems keep --person --repair "$repair" "$package" xsettings-reload LOCAL5
+		exit 1
+	fi
+else
+	sparky-stereo-problems say "$package" LOCAL6
 fi
-echo "sparky-stereo-gtk-sync: scheme=$scheme gtk-theme=$theme dark=$dark"
+sparky-stereo-problems say "$package" LOCAL7 "$scheme" "$theme" "$dark"
