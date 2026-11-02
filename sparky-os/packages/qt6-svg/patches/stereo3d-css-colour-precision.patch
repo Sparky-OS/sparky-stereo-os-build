@@ -8,10 +8,15 @@ Description: Parse CSS colours and paint them at the target's precision
  painted: gamut mapped (CSS Color 4 section 14.2) where the target holds
  [0, 1] only, kept outside [0, 1] on floating point targets, 16 bits per
  channel or float, and an invalid colour is reported.
+ light-dark() and the system colours follow the element color scheme, from
+ the color-scheme property and the application's colour scheme (CSS Color 5
+ section 7, CSS Color Adjustment 1 sections 2.2 to 2.4); contrast-color()
+ chooses by Oklab lightness with WCAG 2.1's 3:1 as its floor (CSS Color 5
+ section 8).
 Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
-Origin: vendor, Sparky Stereo OS (ORDER 348)
+Origin: vendor, Sparky Stereo OS (ORDER 348, 348b); https://github.com/Sparky-OS/qtsvg/commits/stereo3d-css-colour-6.11 (66135ecb, 840d1582)
 Bug: https://qt-project.atlassian.net/browse/QTBUG-146683
-Forwarded: no
+Forwarded: https://codereview.qt-project.org/c/qt/qtsvg/+/785347 (patch set 3; the color-scheme and contrast-color() part is patch set 4)
 Last-Update: 2026-11-02
 ---
 diff --git a/src/svg/CMakeLists.txt b/src/svg/CMakeLists.txt
@@ -53,10 +58,10 @@ index 338d88f..d7616bf 100644
      }
 diff --git a/src/svg/qsvgcsscolor.cpp b/src/svg/qsvgcsscolor.cpp
 new file mode 100644
-index 0000000..d55f29c
+index 0000000..0cc5928
 --- /dev/null
 +++ b/src/svg/qsvgcsscolor.cpp
-@@ -0,0 +1,2193 @@
+@@ -0,0 +1,2370 @@
 +// Copyright (C) 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 +// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 +
@@ -70,6 +75,7 @@ index 0000000..d55f29c
 +
 +#include <QtCore/qloggingcategory.h>
 +#include <QtCore/qnumeric.h>
++#include <QtCore/qregularexpression.h>
 +#include <QtCore/qvarlengtharray.h>
 +#include <QtGui/qcolorspace.h>
 +#include <QtGui/qguiapplication.h>
@@ -79,10 +85,13 @@ index 0000000..d55f29c
 +#include <QtGui/qpalette.h>
 +#include <QtGui/qstylehints.h>
 +
++#include <algorithm>
 +#include <cmath>
 +#include <limits>
 +
 +QT_BEGIN_NAMESPACE
++
++using namespace Qt::StringLiterals;
 +
 +Q_DECLARE_LOGGING_CATEGORY(lcSvgHandler)
 +
@@ -872,8 +881,50 @@ index 0000000..d55f29c
 +    return c;
 +}
 +
-+// CSS Color 4 section 6.2 and Appendix A: the system colours, from the application palette
-+bool systemColor(const QString &name, S *out)
++// Qt's default palette for a colour scheme: the palette qt_fusionPalette() in qtbase's qplatformtheme.cpp makes for
++// a light or a dark platform, which is what Qt draws with when the platform gives no palette of its own.  Only the
++// roles the system colours read are set.
++QPalette defaultPalette(QSvgCssColorScheme scheme)
++{
++    const bool dark = scheme == QSvgCssColorScheme::Dark;
++    const QColor windowText = dark ? QColor(240, 240, 240) : QColor(Qt::black);
++    const QColor background = dark ? QColor(50, 50, 50) : QColor(239, 239, 239);
++    const QColor base = dark ? background.darker(140) : QColor(Qt::white);
++    const QColor text = dark ? windowText : QColor(Qt::black);
++    const QColor highlight(48, 140, 198);
++    QPalette pal(windowText, background, background.lighter(150), background.darker(150), background.darker(130),
++                 text, base);
++    pal.setBrush(QPalette::Button, background);
++    pal.setBrush(QPalette::HighlightedText, dark ? windowText : QColor(Qt::white));
++    pal.setBrush(QPalette::Disabled, QPalette::Text, dark ? QColor(130, 130, 130) : QColor(190, 190, 190));
++    pal.setBrush(QPalette::Active, QPalette::Highlight, highlight);
++    pal.setBrush(QPalette::Active, QPalette::Accent, highlight);
++    if (dark)
++        pal.setBrush(QPalette::Link, highlight);
++    return pal;
++}
++
++// The colour scheme of a palette: the application's, when the platform says it, otherwise what the palette looks
++// like (text lighter than its background is a dark palette).
++QSvgCssColorScheme paletteScheme(const QPalette &pal, bool applicationPalette)
++{
++    if (applicationPalette) {
++        switch (QGuiApplication::styleHints()->colorScheme()) {
++        case Qt::ColorScheme::Dark: return QSvgCssColorScheme::Dark;
++        case Qt::ColorScheme::Light: return QSvgCssColorScheme::Light;
++        default: break;
++        }
++    }
++    return pal.color(QPalette::Active, QPalette::Base).lightnessF()
++                   < pal.color(QPalette::Active, QPalette::Text).lightnessF()
++            ? QSvgCssColorScheme::Dark : QSvgCssColorScheme::Light;
++}
++
++// CSS Color 4 section 6.2 and Appendix A: the system colours, from the application palette.  They follow the element
++// colour scheme (CSS Color Adjustment 1 section 2.4, "the value of system colors"); QPalette holds one colour scheme
++// only, so when the application palette is of the other one, the colours come from Qt's default palette for the
++// element colour scheme, and *note says so.
++bool systemColor(const QString &name, QSvgCssColorScheme scheme, S *out, QString *note)
 +{
 +    static const struct { const char *css; const char *as; } deprecated[] = {
 +        {"activeborder", "buttonborder"}, {"activecaption", "canvas"}, {"appworkspace", "canvas"},
@@ -905,8 +956,15 @@ index 0000000..d55f29c
 +        {"visitedtext", QPalette::Active, QPalette::LinkVisited}};
 +    for (const auto &r : roles) {
 +        if (key == QLatin1String(r.css)) {
-+            const QPalette pal = qobject_cast<QGuiApplication *>(QCoreApplication::instance())
-+                    ? QGuiApplication::palette() : QPalette();
++            const bool application = qobject_cast<QGuiApplication *>(QCoreApplication::instance());
++            QPalette pal = application ? QGuiApplication::palette() : QPalette();
++            if (paletteScheme(pal, application) != scheme) {
++                pal = defaultPalette(scheme);
++                *note = QStringLiteral("the system colours of the %1 colour scheme come from Qt's default palette, "
++                                       "because the application palette is %2")
++                                .arg(scheme == QSvgCssColorScheme::Dark ? u"dark" : u"light",
++                                     scheme == QSvgCssColorScheme::Dark ? u"light" : u"dark");
++            }
 +            *out = S::fromQColor(pal.color(r.group, r.role));
 +            return true;
 +        }
@@ -972,6 +1030,7 @@ index 0000000..d55f29c
 +    }
 +
 +    bool usesCurrentColor = false;
++    QString note;
 +
 +private:
 +    QList<Tok> m_t;
@@ -1359,7 +1418,7 @@ index 0000000..d55f29c
 +                return m_ctx.currentColor;
 +            }
 +            S sys;
-+            if (m_ctx.usePalette && systemColor(t.text, &sys))
++            if (m_ctx.usePalette && systemColor(t.text, m_ctx.colorScheme, &sys, &note))
 +                return sys;
 +            fail(QStringLiteral("unknown colour %1").arg(t.text));
 +            return S();
@@ -1397,7 +1456,8 @@ index 0000000..d55f29c
 +                expect(TokKind::Comma, "','");
 +                const S b = color();
 +                expect(TokKind::RParen, "')'");
-+                return m_ctx.darkScheme ? b : a;
++                // CSS Color 5 section 7: the first colour in a light element colour scheme, the second in a dark one
++                return m_ctx.colorScheme == QSvgCssColorScheme::Dark ? b : a;
 +            }
 +            if (f == u"contrast-color") {
 +                const S c = color();
@@ -1704,16 +1764,31 @@ index 0000000..d55f29c
 +        return c;
 +    }
 +
-+    // CSS Color 5 section 8: white or black, whichever contrasts more; white on a tie.  The algorithm is
-+    // UA-defined; this one uses the WCAG 2.1 relative luminance of the gamut-mapped sRGB colour.
++    // CSS Color 5 section 8: white or black, "whichever produces maximum color contrast for text when the input
++    // color is used as a solid background", white on a tie; the algorithm is UA-defined, UAs "are advised to not
++    // simply use the WCAG 2.1 section 1.4.3 Contrast (Minimum) contrast ratio algorithm", and the result "should
++    // still meet the WCAG 2.1 section 1.4.3 Contrast (Minimum) for AA large text", 3:1.
++    // The background is the colour as an opaque sRGB colour, gamut mapped (CSS Color 4 section 14.2).  Black when its
++    // Oklab lightness is above 0.7, white otherwise: Lea Verou found that over the OKLCH reference range neither
++    // black nor white text fails APCA, a perceptual contrast algorithm, for lightness between 0.687 and 0.716 ("On
++    // automatically generating contrasting text colors with CSS", 2024).  Then, when the choice has a WCAG 2.1
++    // contrast ratio below 3:1 with the background, the other one, which always has at least 4.58:1.
 +    S contrastColor(const S &in)
 +    {
 +        S opaque = in;
 +        opaque.setAlpha(1);
 +        const QSvgCssTargetColor t = qsvg_resolveForTarget(opaque, QSvgCssColorTarget());
-+        const Vec3 lin = linSrgb({t.rgb[0], t.rgb[1], t.rgb[2]});
-+        const double lum = mul(srgbToXyz, lin)[1];
-+        return (1.05 / (lum + 0.05)) >= ((lum + 0.05) / 0.05) ? rgb8(0xffffff) : rgb8(0x000000);
++        const Vec3 xyz = mul(srgbToXyz, linSrgb({t.rgb[0], t.rgb[1], t.rgb[2]}));
++        const double lum = xyz[1];
++        const double lightness = xyzToOklab(xyz)[0];
++        const double withWhite = 1.05 / (lum + 0.05);
++        const double withBlack = (lum + 0.05) / 0.05;
++        constexpr double lightnessThreshold = 0.7;
++        constexpr double wcagLargeTextAA = 3.0;
++        bool black = lightness > lightnessThreshold;
++        if (black ? withBlack < wcagLargeTextAA : withWhite < wcagLargeTextAA)
++            black = !black;
++        return black ? rgb8(0x000000) : rgb8(0xffffff);
 +    }
 +
 +    // CSS Color 5 section 3.3, with CSS Values 5 section 6.1's percentage normalization
@@ -2066,11 +2141,118 @@ index 0000000..d55f29c
 +    Parser p(tokenize(text), context);
 +    result.color = p.parseWhole();
 +    result.usesCurrentColor = p.usesCurrentColor;
++    result.note = p.note;
 +    if (p.m_failed) {
 +        result.color = QSvgCssColor();
 +        result.error = p.m_error;
 +    }
 +    return result;
++}
++
++// CSS Color Adjustment 1 (CR Snapshot 30 October 2026) section 2.2: color-scheme,
++// normal | [ light | dark | <custom-ident> ]+ && only?
++bool qsvg_parseColorScheme(QStringView text, QSvgCssColorSchemeValue *value, bool *keepsParent, QString *error)
++{
++    *keepsParent = false;
++    const QList<QStringView> words = text.trimmed().split(QRegularExpression(u"[ \t\n\r\f]+"_s), Qt::SkipEmptyParts);
++    auto is = [](QStringView word, QLatin1StringView keyword) {
++        return word.compare(keyword, Qt::CaseInsensitive) == 0;
++    };
++    static const QLatin1StringView cssWide[] = {"initial"_L1, "inherit"_L1, "unset"_L1, "revert"_L1,
++                                                "revert-layer"_L1};
++    auto isCssWide = [&](QStringView word) {
++        return std::any_of(std::begin(cssWide), std::end(cssWide), [&](QLatin1StringView k) { return is(word, k); });
++    };
++    if (words.isEmpty()) {
++        *error = QStringLiteral("empty value");
++        return false;
++    }
++    if (words.size() == 1 && is(words.first(), "normal"_L1)) {
++        *value = QSvgCssColorSchemeValue();
++        return true;
++    }
++    if (words.size() == 1 && isCssWide(words.first())) {
++        if (is(words.first(), "initial"_L1))
++            *value = QSvgCssColorSchemeValue();
++        else
++            *keepsParent = true;   // the property is inherited, so inherit, unset and revert keep the parent's value
++        return true;
++    }
++    // <custom-ident> (CSS Values 4 section 4.2): an identifier that is no CSS-wide keyword and not "default"
++    static const QRegularExpression ident(
++            u"^(--|-?[A-Za-z_\\x{80}-\\x{10FFFF}])[A-Za-z0-9_\\-\\x{80}-\\x{10FFFF}]*$"_s);
++    QSvgCssColorSchemeValue out;
++    out.normal = false;
++    int idents = 0;
++    for (qsizetype i = 0; i < words.size(); ++i) {
++        const QStringView w = words.at(i);
++        if (is(w, "only"_L1)) {
++            // && only?: once, before or after the colour schemes
++            if (out.only || (i != 0 && i != words.size() - 1)) {
++                *error = QStringLiteral("\"only\" goes once, before or after the colour schemes");
++                return false;
++            }
++            out.only = true;
++            continue;
++        }
++        if (is(w, "normal"_L1) || is(w, "default"_L1) || isCssWide(w) || !ident.matchView(w).hasMatch()) {
++            *error = QStringLiteral("\"%1\" is not a colour scheme").arg(w);
++            return false;
++        }
++        ++idents;
++        if (is(w, "light"_L1))
++            out.schemes.append(QSvgCssColorScheme::Light);
++        else if (is(w, "dark"_L1))
++            out.schemes.append(QSvgCssColorScheme::Dark);
++        // any other <custom-ident> is meaningless (section 2.2) and supports nothing
++    }
++    if (!idents) {
++        *error = QStringLiteral("no colour scheme");
++        return false;
++    }
++    *value = out;
++    return true;
++}
++
++// CSS Color Adjustment 1 section 2.3, "To determine the used color scheme"
++QSvgCssColorScheme qsvg_usedColorScheme(const QSvgCssColorSchemeValue &support,
++                                        QSvgCssColorSchemePreference preference)
++{
++    // "If support is null, or none of the color schemes in support are supported by the UA, return the UA default
++    // color scheme": light
++    if (support.normal || support.schemes.isEmpty())
++        return QSvgCssColorScheme::Light;
++    // "If preference is no preference, return the first supported color scheme in support."
++    if (preference == QSvgCssColorSchemePreference::None)
++        return support.schemes.first();
++    // "If preference's color scheme is in support and supported by the UA, return that color scheme."
++    const QSvgCssColorScheme wanted = preference == QSvgCssColorSchemePreference::Dark ? QSvgCssColorScheme::Dark
++                                                                                      : QSvgCssColorScheme::Light;
++    if (support.schemes.contains(wanted))
++        return wanted;
++    // "If support is flagged as sole support, return the first supported color scheme in support."  There is no
++    // overriding preference here, so otherwise too: "return the first supported color scheme in support".
++    return support.schemes.first();
++}
++
++static std::optional<QSvgCssColorSchemePreference> preferenceOverride;
++
++void qsvg_setPreferredColorSchemeOverride(std::optional<QSvgCssColorSchemePreference> preference)
++{
++    preferenceOverride = preference;
++}
++
++QSvgCssColorSchemePreference qsvg_preferredColorScheme()
++{
++    if (preferenceOverride)
++        return *preferenceOverride;
++    if (!qobject_cast<QGuiApplication *>(QCoreApplication::instance()))
++        return QSvgCssColorSchemePreference::None;
++    switch (QGuiApplication::styleHints()->colorScheme()) {
++    case Qt::ColorScheme::Dark: return QSvgCssColorSchemePreference::Dark;
++    case Qt::ColorScheme::Light: return QSvgCssColorSchemePreference::Light;
++    default: return QSvgCssColorSchemePreference::None;
++    }
 +}
 +
 +QSvgCssColorTarget QSvgCssColorTarget::forDevice(const QPaintDevice *device)
@@ -2252,10 +2434,10 @@ index 0000000..d55f29c
 +QT_END_NAMESPACE
 diff --git a/src/svg/qsvgcsscolor_p.h b/src/svg/qsvgcsscolor_p.h
 new file mode 100644
-index 0000000..aca8c0e
+index 0000000..915906d
 --- /dev/null
 +++ b/src/svg/qsvgcsscolor_p.h
-@@ -0,0 +1,191 @@
+@@ -0,0 +1,230 @@
 +// Copyright (C) 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 +// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 +
@@ -2282,6 +2464,7 @@ index 0000000..aca8c0e
 +
 +#include <array>
 +#include <memory>
++#include <optional>
 +
 +QT_BEGIN_NAMESPACE
 +
@@ -2357,11 +2540,46 @@ index 0000000..aca8c0e
 +    double h1, h2;
 +};
 +
-+// What a colour is resolved against while it is parsed (CSS Color 4 sections 6.2 and 6.4, CSS Color 5 section 7).
++// The colour schemes Qt SVG supports (CSS Color Adjustment 1, CR Snapshot 30 October 2026, section 2).
++enum class QSvgCssColorScheme : quint8 { Light, Dark };
++
++// A colour scheme preference (CSS Color Adjustment 1 section 2.3): no preference, light or dark.
++enum class QSvgCssColorSchemePreference : quint8 { None, Light, Dark };
++
++// The computed value of the color-scheme property (CSS Color Adjustment 1 section 2.2): normal, or a colour scheme
++// support, the light and dark keywords in their order (<custom-ident>s are meaningless and left out) and whether
++// "only" was given.
++struct Q_SVG_EXPORT QSvgCssColorSchemeValue
++{
++    bool normal = true;
++    QList<QSvgCssColorScheme> schemes;
++    bool only = false;
++};
++
++// Parses a color-scheme value: normal | [ light | dark | <custom-ident> ]+ && only?.  inherit and the other
++// CSS-wide keywords that keep the parent's value set *keepsParent; initial gives normal.  On failure, returns false
++// and *error says why.
++Q_SVG_EXPORT bool qsvg_parseColorScheme(QStringView text, QSvgCssColorSchemeValue *value, bool *keepsParent,
++                                        QString *error);
++
++// CSS Color Adjustment 1 section 2.3, the used colour scheme of a support (normal is a null support) for a
++// preference; Qt SVG supports light and dark, and its default is light.
++Q_SVG_EXPORT QSvgCssColorScheme qsvg_usedColorScheme(const QSvgCssColorSchemeValue &support,
++                                                     QSvgCssColorSchemePreference preference);
++
++// The preferred colour scheme of the documents Qt SVG renders: an SVG document is embedded in the application, whose
++// colour scheme is its preference (CSS Color Adjustment 1 section 2.1), so the application's colour scheme
++// (QStyleHints::colorScheme()), and no preference without a QGuiApplication or when the platform does not say.
++Q_SVG_EXPORT QSvgCssColorSchemePreference qsvg_preferredColorScheme();
++// For tests: replaces the application's colour scheme as the preference; std::nullopt restores it.
++Q_SVG_EXPORT void qsvg_setPreferredColorSchemeOverride(std::optional<QSvgCssColorSchemePreference> preference);
++
++// What a colour is resolved against while it is parsed (CSS Color 4 sections 6.2 and 6.4, CSS Color 5 section 7):
++// currentcolor, and the element colour scheme that system colours and light-dark() follow.
 +struct Q_SVG_EXPORT QSvgCssColorContext
 +{
 +    QSvgCssColor currentColor = QSvgCssColor(QSvgCssColor::Srgb, 0, 0, 0);
-+    bool darkScheme = false;
++    QSvgCssColorScheme colorScheme = QSvgCssColorScheme::Light;
 +    bool usePalette = true;
 +};
 +
@@ -2370,6 +2588,9 @@ index 0000000..aca8c0e
 +    QSvgCssColor color;
 +    bool usesCurrentColor = false;
 +    QString error;
++    // set when a system colour comes from Qt's default palette for the element colour scheme, because the
++    // application palette is one of the other colour scheme
++    QString note;
 +};
 +
 +// Parses a <color> (the whole string must be one colour).  On failure the result's colour is invalid and error says why.
@@ -2448,7 +2669,7 @@ index 0000000..aca8c0e
 +
 +#endif // QSVGCSSCOLOR_P_H
 diff --git a/src/svg/qsvghandler.cpp b/src/svg/qsvghandler.cpp
-index f6f56ef..132f2b3 100644
+index f6f56ef..f0f98b2 100644
 --- a/src/svg/qsvghandler.cpp
 +++ b/src/svg/qsvghandler.cpp
 @@ -32,6 +32,8 @@
@@ -2496,7 +2717,7 @@ index f6f56ef..132f2b3 100644
  static QStringView idFromUrl(QStringView url)
  {
      // The form is url(<IRI>), where IRI can be
-@@ -460,69 +433,46 @@ static QStringView idFromUrl(QStringView url)
+@@ -460,69 +433,47 @@ static QStringView idFromUrl(QStringView url)
  /**
   * returns true when successfully set the color. false signifies
   * that the color should be inherited
@@ -2554,10 +2775,11 @@ index f6f56ef..132f2b3 100644
 -            break;
 +    QSvgCssColorContext context;
 +    context.currentColor = handler->currentCssColor();
-+    // CSS Color 5 section 7: light-dark() follows the colour scheme, here the application's
-+    if (qobject_cast<QGuiApplication *>(QCoreApplication::instance()))
-+        context.darkScheme = QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark;
++    // system colours and light-dark() follow the element colour scheme (CSS Color Adjustment 1 section 2.4)
++    context.colorScheme = handler->elementColorScheme();
 +    const QSvgCssColorParseResult result = qsvg_parseCssColor(text, context);
++    if (!result.note.isEmpty())
++        handler->noteSystemColors(context.colorScheme, result.note);
 +    if (result.color.isValid()) {
 +        color = result.color.toQColor();
 +        if (css)
@@ -2599,7 +2821,7 @@ index f6f56ef..132f2b3 100644
  }
  
  void setAlpha(QStringView opacity, QColor *color)
-@@ -535,12 +485,15 @@ void setAlpha(QStringView opacity, QColor *color)
+@@ -535,12 +486,15 @@ void setAlpha(QStringView opacity, QColor *color)
  }
  
  static bool constructColor(QStringView colorStr, QStringView opacity,
@@ -2618,7 +2840,35 @@ index f6f56ef..132f2b3 100644
      return true;
  }
  
-@@ -585,9 +538,10 @@ static void parseColor(QSvgNode *,
+@@ -580,14 +534,38 @@ static bool createSvgGlyph(QSvgFont *font, const QXmlStreamAttributes &attribute
+     return true;
+ }
+ 
++// CSS Color Adjustment 1 section 2.2: color-scheme, from style sheets and style attributes only; SVG 2 section 6.6
++// defines no presentation attribute for it, and other attributes "must not be parsed as a presentation attribute"
++static void parseColorScheme(const QXmlStreamAttributes &cssAttributes, QSvgHandler *handler)
++{
++    QStringView text;
++    for (const QXmlStreamAttribute &attribute : cssAttributes) {
++        if (attribute.qualifiedName().compare("color-scheme"_L1, Qt::CaseInsensitive) == 0)
++            text = attribute.value();   // the last declaration wins
++    }
++    if (text.isNull())
++        return;
++    QSvgCssColorSchemeValue value;
++    bool keepsParent = false;
++    QString error;
++    if (!qsvg_parseColorScheme(text, &value, &keepsParent, &error)) {
++        qCWarning(lcSvgHandler, "Invalid color-scheme \"%s\": %s; the declaration is ignored",
++                  qPrintable(text.toString()), qPrintable(error));
++        return;
++    }
++    if (!keepsParent)
++        handler->setColorScheme(value);
++}
++
+ static void parseColor(QSvgNode *,
+                        const QSvgAttributes &attributes,
                         QSvgHandler *handler)
  {
      QColor color;
@@ -2631,7 +2881,7 @@ index f6f56ef..132f2b3 100644
      }
  }
  
-@@ -632,8 +586,9 @@ static void parseBrush(QSvgNode *node,
+@@ -632,8 +610,9 @@ static void parseBrush(QSvgNode *node,
                  }
              } else if (attributes.fill != QLatin1String("none")) {
                  QColor color;
@@ -2643,7 +2893,7 @@ index f6f56ef..132f2b3 100644
              } else {
                  prop->setBrush(QBrush(Qt::NoBrush));
              }
-@@ -797,8 +752,9 @@ static void parsePen(QSvgNode *node,
+@@ -797,8 +776,9 @@ static void parsePen(QSvgNode *node,
                      }
              } else if (attributes.stroke != QLatin1String("none")) {
                  QColor color;
@@ -2655,7 +2905,15 @@ index f6f56ef..132f2b3 100644
              } else {
                  prop->setStroke(QBrush(Qt::NoBrush));
              }
-@@ -2068,9 +2024,10 @@ static void parseBaseGradient(QSvgNode *node,
+@@ -1485,6 +1465,7 @@ static bool parseStyle(QSvgNode *node,
+     if (!style.isEmpty())
+         handler->cssHandler().parseCSStoXMLAttrs(style.toString(), cssAttributes);
+     svgAttributes.setAttributes(cssAttributes, handler);
++    parseColorScheme(cssAttributes, handler);
+ 
+     parseOffsetPath(node, cssAttributes);
+     if (!handler->options().testFlag(QtSvg::DisableCSSAnimations))
+@@ -2068,9 +2049,10 @@ static void parseBaseGradient(QSvgNode *node,
      const QStringView colorOpacityStr  = attributes.value(QLatin1String("color-opacity"));
  
      QColor color;
@@ -2668,7 +2926,7 @@ index f6f56ef..132f2b3 100644
      }
  
      QTransform matrix;
-@@ -2085,6 +2042,7 @@ static void parseBaseGradient(QSvgNode *node,
+@@ -2085,6 +2067,7 @@ static void parseBaseGradient(QSvgNode *node,
              } else {
                  grad->setStops(inherited->qgradient()->stops());
                  gradProp->setGradientStopsSet(inherited->gradientStopsSet());
@@ -2676,7 +2934,7 @@ index f6f56ef..132f2b3 100644
              }
  
              matrix = inherited->qtransform();
-@@ -3030,9 +2988,11 @@ static QSvgStyleProperty *createSolidColorNode(QSvgNode *parent,
+@@ -3030,9 +3013,11 @@ static QSvgStyleProperty *createSolidColorNode(QSvgNode *parent,
          solidOpacityStr = attributes.value(QLatin1String("opacity"));
  
      QColor color;
@@ -2689,7 +2947,22 @@ index f6f56ef..132f2b3 100644
      return style;
  }
  
-@@ -3074,16 +3034,18 @@ static bool parseStopNode(QSvgStyleProperty *parent,
+@@ -3059,12 +3044,14 @@ static bool parseStopNode(QSvgStyleProperty *parent,
+     QXmlStreamAttributes cssAttributes;
+     handler->cssHandler().styleLookup(&dummy, cssAttributes);
+     attrs.setAttributes(cssAttributes, handler);
++    parseColorScheme(cssAttributes, handler);
+ 
+     QXmlStreamAttributes styleCssAttributes;
+     QStringView style = attributes.value(QLatin1String("style"));
+     if (!style.isEmpty())
+         handler->cssHandler().parseCSStoXMLAttrs(style.toString(), styleCssAttributes);
+     attrs.setAttributes(styleCssAttributes, handler);
++    parseColorScheme(styleCssAttributes, handler);
+ #endif
+ 
+     //TODO: Handle style parsing for gradients stop like the rest of the nodes.
+@@ -3074,16 +3061,18 @@ static bool parseStopNode(QSvgStyleProperty *parent,
          static_cast<QSvgGradientStyle*>(parent);
      QStringView colorStr    = attrs.stopColor;
      QColor color;
@@ -2709,7 +2982,7 @@ index f6f56ef..132f2b3 100644
      }
  
      QGradient *grad = gradientStyle->qgradient();
-@@ -3107,6 +3069,7 @@ static bool parseStopNode(QSvgStyleProperty *parent,
+@@ -3107,6 +3096,7 @@ static bool parseStopNode(QSvgStyleProperty *parent,
      }
  
      grad->setColorAt(offset, color);
@@ -2717,7 +2990,32 @@ index f6f56ef..132f2b3 100644
      gradientStyle->setGradientStopsSet(true);
      return true;
  }
-@@ -4176,6 +4139,11 @@ void QSvgHandler::setDefaultCoordinateSystem(QSvgUtils::LengthType type)
+@@ -3660,6 +3650,7 @@ void QSvgHandler::init()
+     m_defaultCoords = QSvgUtils::LT_PX;
+     m_defaultPen = QPen(Qt::black, 1, Qt::SolidLine, Qt::FlatCap, Qt::SvgMiterJoin);
+     m_defaultPen.setMiterLimit(4);
++    m_colorSchemePreference = qsvg_preferredColorScheme();
+     parse();
+ }
+ 
+@@ -3835,6 +3826,7 @@ bool QSvgHandler::startElement(const QStringView localName,
+     QSvgNode *node = nullptr;
+ 
+     pushColorCopy();
++    m_colorSchemeStack.push(m_colorSchemeStack.isEmpty() ? QSvgCssColorSchemeValue() : m_colorSchemeStack.top());
+ 
+     /* The xml:space attribute may appear on any element. We do
+      * a lookup by the qualified name here, but this is namespace aware, since
+@@ -4036,6 +4028,8 @@ bool QSvgHandler::endElement(const QStringView localName)
+     m_whitespaceMode.pop();
+ 
+     popColor();
++    if (!m_colorSchemeStack.isEmpty())
++        m_colorSchemeStack.pop();
+ 
+     if (node == Unknown)
+         return false;
+@@ -4176,6 +4170,11 @@ void QSvgHandler::setDefaultCoordinateSystem(QSvgUtils::LengthType type)
  }
  
  void QSvgHandler::pushColor(const QColor &color)
@@ -2729,12 +3027,37 @@ index f6f56ef..132f2b3 100644
  {
      m_colorStack.push(color);
      m_colorTagCount.push(1);
-@@ -4200,11 +4168,16 @@ void QSvgHandler::popColor()
+@@ -4200,11 +4199,41 @@ void QSvgHandler::popColor()
  }
  
  QColor QSvgHandler::currentColor() const
 +{
 +    return currentCssColor().toQColor();
++}
++
++void QSvgHandler::setColorScheme(const QSvgCssColorSchemeValue &value)
++{
++    if (m_colorSchemeStack.isEmpty())
++        m_colorSchemeStack.push(value);
++    else
++        m_colorSchemeStack.top() = value;
++}
++
++QSvgCssColorScheme QSvgHandler::elementColorScheme() const
++{
++    // normal: the page colour scheme, the used colour scheme of the page's supported colour schemes; SVG has no way
++    // to set them, so that is a null support, and the default, light (CSS Color Adjustment 1 sections 2.1 to 2.3)
++    return qsvg_usedColorScheme(m_colorSchemeStack.isEmpty() ? QSvgCssColorSchemeValue() : m_colorSchemeStack.top(),
++                                m_colorSchemePreference);
++}
++
++void QSvgHandler::noteSystemColors(QSvgCssColorScheme scheme, const QString &note)
++{
++    bool &said = m_systemColorsNoted[scheme == QSvgCssColorScheme::Dark ? 1 : 0];
++    if (!said) {
++        qCWarning(lcSvgHandler, "%s", qPrintable(note));
++        said = true;
++    }
 +}
 +
 +QSvgCssColor QSvgHandler::currentCssColor() const
@@ -2748,7 +3071,7 @@ index f6f56ef..132f2b3 100644
  
  void QSvgHandler::pushUnresolvedStyle(QSvgStyleProperty *prop)
 diff --git a/src/svg/qsvghandler_p.h b/src/svg/qsvghandler_p.h
-index a151302..0fa70de 100644
+index a151302..ec6316a 100644
 --- a/src/svg/qsvghandler_p.h
 +++ b/src/svg/qsvghandler_p.h
 @@ -21,6 +21,7 @@
@@ -2759,7 +3082,7 @@ index a151302..0fa70de 100644
  #if QT_CONFIG(cssparser)
  #include <QtSvg/private/qsvgcsshandler_p.h>
  #include <QtSvg/private/qsvgcssproperties_p.h>
-@@ -63,9 +64,11 @@ public:
+@@ -63,9 +64,18 @@ public:
      QSvgUtils::LengthType defaultCoordinateSystem() const;
  
      void pushColor(const QColor &color);
@@ -2768,10 +3091,17 @@ index a151302..0fa70de 100644
      void popColor();
      QColor currentColor() const;
 +    QSvgCssColor currentCssColor() const;
++
++    // the computed value of color-scheme (CSS Color Adjustment 1 section 2.2), inherited from element to element
++    void setColorScheme(const QSvgCssColorSchemeValue &value);
++    // the element colour scheme that system colours and light-dark() follow (CSS Color Adjustment 1 section 2.4)
++    QSvgCssColorScheme elementColorScheme() const;
++    // says once per document and colour scheme that system colours came from Qt's default palette
++    void noteSystemColors(QSvgCssColorScheme scheme, const QString &note);
  
      void pushUnresolvedStyle(QSvgStyleProperty *prop);
  
-@@ -123,7 +126,7 @@ private:
+@@ -123,7 +133,7 @@ private:
  
      QSvgUtils::LengthType m_defaultCoords;
  
@@ -2780,6 +3110,17 @@ index a151302..0fa70de 100644
      QStack<int>    m_colorTagCount;
  
      int m_animEnd;
+@@ -146,6 +156,10 @@ private:
+ 
+     const QtSvg::Options m_options;
+     const QtSvg::AnimatorType m_animatorType;
++
++    QStack<QSvgCssColorSchemeValue> m_colorSchemeStack;
++    QSvgCssColorSchemePreference m_colorSchemePreference = QSvgCssColorSchemePreference::None;
++    bool m_systemColorsNoted[2] = {false, false};
+ };
+ 
+ Q_DECLARE_LOGGING_CATEGORY(lcSvgHandler)
 diff --git a/src/svg/qsvgstyle.cpp b/src/svg/qsvgstyle.cpp
 index 489ae6b..9d51152 100644
 --- a/src/svg/qsvgstyle.cpp
@@ -3030,10 +3371,10 @@ index 0000000..3d06220
 +)
 diff --git a/tests/auto/qsvgcsscolor/tst_qsvgcsscolor.cpp b/tests/auto/qsvgcsscolor/tst_qsvgcsscolor.cpp
 new file mode 100644
-index 0000000..688b12f
+index 0000000..cb44eef
 --- /dev/null
 +++ b/tests/auto/qsvgcsscolor/tst_qsvgcsscolor.cpp
-@@ -0,0 +1,206 @@
+@@ -0,0 +1,379 @@
 +// Copyright (C) 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 +// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 +
@@ -3042,8 +3383,10 @@ index 0000000..688b12f
 +#include <QtSvg/private/qsvgcsscolor_p.h>
 +#include <QtSvg/QSvgRenderer>
 +#include <QtGui/QColorSpace>
++#include <QtGui/QGuiApplication>
 +#include <QtGui/QImage>
 +#include <QtGui/QPainter>
++#include <QtGui/QPalette>
 +#include <QtCore/QSet>
 +
 +#include <cmath>
@@ -3068,6 +3411,15 @@ index 0000000..688b12f
 +    void invalidIsSaid();
 +    void sixteenBits();
 +    void gradientStops();
++    void colorSchemeValue_data();
++    void colorSchemeValue();
++    void colorScheme_data();
++    void colorScheme();
++    void colorSchemeIsNoPresentationAttribute();
++    void invalidColorSchemeIsSaid();
++    void systemColorsFollowColorScheme();
++    void contrastColor_data();
++    void contrastColor();
 +};
 +
 +void tst_QSvgCssColor::parse_data()
@@ -3238,14 +3590,176 @@ index 0000000..688b12f
 +        QVERIFY2(std::abs(got[i] - want[i]) <= 3.0 / 65535, qPrintable(u"%1 want %2"_s.arg(got[i]).arg(want[i])));
 +}
 +
++// CSS Color Adjustment 1 section 2.2: normal | [ light | dark | <custom-ident> ]+ && only?
++void tst_QSvgCssColor::colorSchemeValue_data()
++{
++    QTest::addColumn<QString>("css");
++    QTest::addColumn<bool>("valid");
++    QTest::addColumn<bool>("normal");
++    QTest::addColumn<QString>("schemes");
++    QTest::addColumn<bool>("only");
++    QTest::newRow("normal") << u"normal"_s << true << true << QString() << false;
++    QTest::newRow("light dark") << u"light dark"_s << true << false << u"light dark"_s << false;
++    QTest::newRow("dark light") << u"Dark  LIGHT"_s << true << false << u"dark light"_s << false;
++    QTest::newRow("only light") << u"only light"_s << true << false << u"light"_s << true;
++    QTest::newRow("light only") << u"light only"_s << true << false << u"light"_s << true;
++    QTest::newRow("custom ident") << u"foo dark"_s << true << false << u"dark"_s << false;
++    QTest::newRow("initial") << u"initial"_s << true << true << QString() << false;
++    QTest::newRow("only alone") << u"only"_s << false << false << QString() << false;
++    QTest::newRow("only between") << u"light only dark"_s << false << false << QString() << false;
++    QTest::newRow("normal and more") << u"normal light"_s << false << false << QString() << false;
++    QTest::newRow("comma") << u"light, dark"_s << false << false << QString() << false;
++    QTest::newRow("css-wide keyword in a list") << u"inherit dark"_s << false << false << QString() << false;
++}
++
++void tst_QSvgCssColor::colorSchemeValue()
++{
++    QFETCH(QString, css);
++    QFETCH(bool, valid);
++    QFETCH(bool, normal);
++    QFETCH(QString, schemes);
++    QFETCH(bool, only);
++    QSvgCssColorSchemeValue value;
++    bool keepsParent = true;
++    QString error;
++    QCOMPARE(qsvg_parseColorScheme(css, &value, &keepsParent, &error), valid);
++    if (!valid) {
++        QVERIFY(!error.isEmpty());
++        return;
++    }
++    QVERIFY(!keepsParent);
++    QCOMPARE(value.normal, normal);
++    QStringList names;
++    for (QSvgCssColorScheme s : value.schemes)
++        names << (s == QSvgCssColorScheme::Dark ? u"dark"_s : u"light"_s);
++    QCOMPARE(names.join(u' '), schemes);
++    QCOMPARE(value.only, only);
++}
++
++void tst_QSvgCssColor::colorScheme_data()
++{
++    QTest::addColumn<QByteArray>("svg");
++    QTest::addColumn<int>("preference");
++    QTest::addColumn<double>("r");
++    QTest::addColumn<double>("g");
++    QTest::addColumn<double>("b");
++    for (const auto &row : schemeRows) {
++        QTest::newRow(row.name) << QByteArray(row.svg) << int(row.preference) << row.rgb[0] << row.rgb[1]
++                                << row.rgb[2];
++    }
++}
++
++// CSS Color 5 section 7: light-dark() takes its first color in a light element color scheme and its second in a
++// dark one; the element color scheme comes from color-scheme and the preference (CSS Color Adjustment 1 sections
++// 2.2 and 2.3), and without color-scheme it is light, whatever the preference
++void tst_QSvgCssColor::colorScheme()
++{
++    QFETCH(QByteArray, svg);
++    QFETCH(int, preference);
++    QFETCH(double, r);
++    QFETCH(double, g);
++    QFETCH(double, b);
++    qsvg_setPreferredColorSchemeOverride(QSvgCssColorSchemePreference(preference));
++    const QImage image = renderSvg(svg, QImage::Format_RGBA64, -1);
++    qsvg_setPreferredColorSchemeOverride(std::nullopt);
++    double got[3];
++    storedRgb(image, 1, 1, got);
++    const double want[3] = {r, g, b};
++    for (int i = 0; i < 3; ++i) {
++        QVERIFY2(std::abs(got[i] - want[i]) <= 1.0 / 65536,
++                 qPrintable(u"channel %1: %2, want %3"_s.arg(i).arg(got[i], 0, 'g', 9).arg(want[i], 0, 'g', 9)));
++    }
++}
++
++// SVG 2 section 6.6: color-scheme has no presentation attribute, so the attribute is not read
++void tst_QSvgCssColor::colorSchemeIsNoPresentationAttribute()
++{
++    const QImage image = renderSvg("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" "
++                                   "color-scheme=\"dark\"><rect width=\"4\" height=\"4\" "
++                                   "fill=\"light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></svg>",
++                                   QImage::Format_RGBA64, -1);
++    double got[3];
++    storedRgb(image, 1, 1, got);
++    QVERIFY(std::abs(got[0] - 0.2) <= 1.0 / 65536);
++}
++
++void tst_QSvgCssColor::invalidColorSchemeIsSaid()
++{
++    QTest::ignoreMessage(QtWarningMsg, QRegularExpression(u"Invalid color-scheme \"light only dark\""_s));
++    renderSvg("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" "
++              "style=\"color-scheme: light only dark\"><rect width=\"4\" height=\"4\"/></svg>",
++              QImage::Format_RGBA64, -1);
++}
++
++// System colors follow the element color scheme (CSS Color Adjustment 1 section 2.4).  The application palette
++// is a light one here; for the dark color scheme the colors come from Qt's default dark palette, which is said.
++void tst_QSvgCssColor::systemColorsFollowColorScheme()
++{
++    const QPalette before = QGuiApplication::palette();
++    QPalette light = before;
++    light.setColor(QPalette::Base, QColor(0xf4, 0xf1, 0xe8));
++    light.setColor(QPalette::Text, QColor(0x2b, 0x5a, 0x87));
++    QGuiApplication::setPalette(light);
++    const QByteArray rect = "<rect width=\"4\" height=\"4\" style=\"fill: CanvasText\"/></svg>";
++    const QImage inLight = renderSvg("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" "
++                                     "style=\"color-scheme: light\">" + rect, QImage::Format_RGBA64, -1);
++    QTest::ignoreMessage(QtWarningMsg, QRegularExpression(u"system colours of the dark colour scheme come from "
++                                                          "Qt's default palette"_s));
++    const QImage inDark = renderSvg("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" "
++                                    "style=\"color-scheme: dark\">" + rect, QImage::Format_RGBA64, -1);
++    QGuiApplication::setPalette(before);
++    QCOMPARE(inLight.pixelColor(1, 1).rgb(), QColor(0x2b, 0x5a, 0x87).rgb());
++    // qtbase's qt_fusionPalette() for a dark platform: text (240, 240, 240)
++    QCOMPARE(inDark.pixelColor(1, 1).rgb(), QColor(240, 240, 240).rgb());
++}
++
++void tst_QSvgCssColor::contrastColor_data()
++{
++    QTest::addColumn<QString>("background");
++    QTest::addColumn<bool>("black");
++    QTest::addColumn<bool>("wcagBlack");
++    QTest::addColumn<double>("ratio");
++    for (const auto &row : contrastRows)
++        QTest::newRow(row.background) << QString::fromUtf8(row.background) << row.black << row.wcagBlack << row.ratio;
++}
++
++// CSS Color 5 section 8: white or black, by a UA-defined algorithm that is not simply WCAG 2.1's contrast ratio,
++// with at least WCAG 2.1's 3:1 (AA for large text); the rows include backgrounds where the two choices differ
++void tst_QSvgCssColor::contrastColor()
++{
++    QFETCH(QString, background);
++    QFETCH(bool, black);
++    QFETCH(bool, wcagBlack);
++    QFETCH(double, ratio);
++    const QSvgCssColorParseResult r = qsvg_parseCssColor(u"contrast-color(" + background + u')',
++                                                         QSvgCssColorContext());
++    QVERIFY2(r.color.isValid(), qPrintable(r.error));
++    const double want = black ? 0.0 : 1.0;
++    for (int i = 0; i < 3; ++i)
++        QCOMPARE(r.color.component(i), want);
++
++    // the WCAG 2.1 contrast ratio of the result with the background, as an sRGB color, is at least 3:1
++    QSvgCssColor bg = qsvg_parseCssColor(background, QSvgCssColorContext()).color;
++    bg.setAlpha(1);
++    const QSvgCssTargetColor t = qsvg_resolveForTarget(bg, QSvgCssColorTarget());
++    auto linear = [](double v) { return v <= 0.04045 ? v / 12.92 : std::pow((v + 0.055) / 1.055, 2.4); };
++    const double lum = 0.2126 * linear(t.rgb[0]) + 0.7152 * linear(t.rgb[1]) + 0.0722 * linear(t.rgb[2]);
++    const double got = black ? (lum + 0.05) / 0.05 : 1.05 / (lum + 0.05);
++    QVERIFY2(got >= 3.0, qPrintable(u"contrast %1:1"_s.arg(got)));
++    QVERIFY2(std::abs(got - ratio) < 1e-3, qPrintable(u"contrast %1:1, want %2:1"_s.arg(got).arg(ratio)));
++    if (black != wcagBlack)
++        qDebug("%s: %s, where WCAG 2.1's larger ratio would give %s", qPrintable(background),
++               black ? "black" : "white", wcagBlack ? "black" : "white");
++}
++
 +QTEST_MAIN(tst_QSvgCssColor)
 +#include "tst_qsvgcsscolor.moc"
 diff --git a/tests/auto/qsvgcsscolor/tst_qsvgcsscolor_rows.inc b/tests/auto/qsvgcsscolor/tst_qsvgcsscolor_rows.inc
 new file mode 100644
-index 0000000..4865a36
+index 0000000..3dc55b2
 --- /dev/null
 +++ b/tests/auto/qsvgcsscolor/tst_qsvgcsscolor_rows.inc
-@@ -0,0 +1,72 @@
+@@ -0,0 +1,101 @@
 +// generated by gen_qt_test_rows.py from the reference engine; do not edit
 +static const struct { const char *name; const char *css; const char *space; double c[3]; double alpha; } parseRows[] = {
 +    {"hex6 (C4 5.2)", "#336699", "srgb", {0.2, 0.4, 0.6}, 1.0},
@@ -3317,4 +3831,33 @@ index 0000000..4865a36
 +    {"color-rec2100-pq rgba64-p3", "color(rec2100-pq 0.5 0.45 0.4)", QImage::Format_RGBA64, QColorSpace::DisplayP3, {0.750804728917465, 0.5487896465737321, 0.4346517590831188}, false},
 +    {"color-rec2100-pq rgba32f", "color(rec2100-pq 0.5 0.45 0.4)", QImage::Format_RGBA32FPx4, -1, {0.7873799550261054, 0.5380864404713642, 0.41434515519587045}, false},
 +    {"color-rec2100-pq rgba32f-2020", "color(rec2100-pq 0.5 0.45 0.4)", QImage::Format_RGBA32FPx4, QColorSpace::Bt2020, {0.719897871811976, 0.5819212173750409, 0.46580537788114085}, false},
++};
++static const struct { const char *name; const char *svg; QSvgCssColorSchemePreference preference; double rgb[3]; } schemeRows[] = {
++    {"no color-scheme, no preference", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\"><rect width=\"4\" height=\"4\" style=\"fill: light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></svg>", QSvgCssColorSchemePreference::None, {0.2, 0.4, 0.6}},
++    {"no color-scheme, dark preference", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\"><rect width=\"4\" height=\"4\" style=\"fill: light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></svg>", QSvgCssColorSchemePreference::Dark, {0.2, 0.4, 0.6}},
++    {"light, dark preference", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" style=\"color-scheme: light\"><rect width=\"4\" height=\"4\" style=\"fill: light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></svg>", QSvgCssColorSchemePreference::Dark, {0.2, 0.4, 0.6}},
++    {"dark, no preference", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" style=\"color-scheme: dark\"><rect width=\"4\" height=\"4\" style=\"fill: light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></svg>", QSvgCssColorSchemePreference::None, {0.8, 0.6, 0.4}},
++    {"dark, light preference", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" style=\"color-scheme: dark\"><rect width=\"4\" height=\"4\" style=\"fill: light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></svg>", QSvgCssColorSchemePreference::Light, {0.8, 0.6, 0.4}},
++    {"light dark, no preference", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" style=\"color-scheme: light dark\"><rect width=\"4\" height=\"4\" style=\"fill: light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></svg>", QSvgCssColorSchemePreference::None, {0.2, 0.4, 0.6}},
++    {"light dark, light preference", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" style=\"color-scheme: light dark\"><rect width=\"4\" height=\"4\" style=\"fill: light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></svg>", QSvgCssColorSchemePreference::Light, {0.2, 0.4, 0.6}},
++    {"light dark, dark preference", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" style=\"color-scheme: light dark\"><rect width=\"4\" height=\"4\" style=\"fill: light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></svg>", QSvgCssColorSchemePreference::Dark, {0.8, 0.6, 0.4}},
++    {"dark light, no preference", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" style=\"color-scheme: dark light\"><rect width=\"4\" height=\"4\" style=\"fill: light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></svg>", QSvgCssColorSchemePreference::None, {0.8, 0.6, 0.4}},
++    {"only light, dark preference", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" style=\"color-scheme: only light\"><rect width=\"4\" height=\"4\" style=\"fill: light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></svg>", QSvgCssColorSchemePreference::Dark, {0.2, 0.4, 0.6}},
++    {"only dark, light preference", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" style=\"color-scheme: dark only\"><rect width=\"4\" height=\"4\" style=\"fill: light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></svg>", QSvgCssColorSchemePreference::Light, {0.8, 0.6, 0.4}},
++    {"custom ident only, dark preference", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" style=\"color-scheme: foo\"><rect width=\"4\" height=\"4\" style=\"fill: light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></svg>", QSvgCssColorSchemePreference::Dark, {0.2, 0.4, 0.6}},
++    {"inherited from a group", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" style=\"color-scheme: dark\"><g><rect width=\"4\" height=\"4\" style=\"fill: light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></g></svg>", QSvgCssColorSchemePreference::None, {0.8, 0.6, 0.4}},
++    {"normal under a dark group", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\"><g style=\"color-scheme: dark\"><rect width=\"4\" height=\"4\" style=\"color-scheme: normal; fill: light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></g></svg>", QSvgCssColorSchemePreference::None, {0.2, 0.4, 0.6}},
++    {"nested in color-mix()", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" style=\"color-scheme: dark\"><rect width=\"4\" height=\"4\" style=\"fill: color-mix(in srgb, light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4)), white 25%)\"/></svg>", QSvgCssColorSchemePreference::None, {0.8500000000000001, 0.7, 0.55}},
++    {"from a style sheet", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\"><style>rect { color-scheme: dark }</style><rect width=\"4\" height=\"4\" style=\"fill: light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></svg>", QSvgCssColorSchemePreference::None, {0.8, 0.6, 0.4}},
++};
++static const struct { const char *background; bool black; bool wcagBlack; double ratio; } contrastRows[] = {
++    {"#e74c3c", false, true, 3.820000520678017},  // Oklab L 0.6307
++    {"#3498db", false, true, 3.153189482342993},  // Oklab L 0.6531
++    {"#808080", false, true, 3.9494396480491147},  // Oklab L 0.5999
++    {"#ff0000", false, true, 3.997882936374221},  // Oklab L 0.6280
++    {"oklch(0.65 0.15 250)", false, true, 3.2256623841268866},  // Oklab L 0.6500
++    {"#ff6600", true, true, 7.153245356944874},  // Oklab L 0.6958
++    {"oklch(0.75 0.1 100)", true, true, 9.507153137627734},  // Oklab L 0.7500
++    {"color(display-p3 0.2 0.3 0.4)", false, false, 8.84008966530431},  // Oklab L 0.4079
++    {"oklch(0.6 0.25 145)", false, true, 3.5224941455712933},  // Oklab L 0.6088
 +};

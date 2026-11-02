@@ -12,5 +12,13 @@ qt6-svg (6.11.2-2+stereo3d1) unstable; urgency=medium
     Color 4 section 14.2 says where the target holds [0, 1] only, and said
     so; values outside [0, 1] kept on floating point targets; 16 bits per
     channel, or float. An invalid colour is still ignored, as CSS says, and
-    now reported on qt.svg. Test: tests/css-colour (the colour corpus
-    against the specifications' sample code) and the new tst_qsvgcsscolor.
+    now reported on qt.svg. light-dark() and the system colours follow
+    the element color scheme (ORDER 348b): the color-scheme property from
+    style sheets and style attributes, inherited, resolved against the
+    application's colour scheme as CSS Color Adjustment 1 section 2.3
+    says, light without color-scheme; when the application palette is of
+    the other colour scheme, system colours come from Qt's default palette
+    for it, and that is said. contrast-color() chooses black above Oklab
+    lightness 0.7 and white below, with WCAG 2.1's 3:1 as its floor (CSS
+    Color 5 section 8). Test: tests/css-colour (the colour corpus against
+    the specifications' sample code) and the new tst_qsvgcsscolor.
