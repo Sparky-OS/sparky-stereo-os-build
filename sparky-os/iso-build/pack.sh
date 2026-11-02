@@ -144,19 +144,48 @@ if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
 		mkdir -p $R/var/lib/sparkyos-plymouth && echo sparky-stereo-lines > $R/var/lib/sparkyos-plymouth/theme
 	fi
 	echo "== $(date -u +%T) the default boot splash: $(inr plymouth-set-default-theme) (plymouthd.conf: $(sed -n 's/^Theme=//p' $R/etc/plymouth/plymouthd.conf))"
-	# the packages SparkyLinux's securebootinstall asks apt for that the image lacks (an offline install finds the rest)
+	# the packages SparkyLinux's securebootinstall requires, installed with their dependencies
 	for p in libjcat1 grub-efi-amd64-signed-template shim-helpers-amd64-signed-template; do
-		apt_in install --no-install-recommends "$p" || echo "!! $p: not installed"
+		apt_in install --no-install-recommends "$p" || {
+			echo "!! Secure Boot helper $p could not be installed. Repair the package sources and rebuild the image." >&2
+			exit 1
+		}
+		status=$(inr dpkg-query -W -f '${db:Status-Status}' "$p") || {
+			echo "!! Could not check Secure Boot helper $p. Repair the package database and rebuild the image." >&2
+			exit 1
+		}
+		[ "$status" = installed ] || {
+			echo "!! Secure Boot helper $p is not installed (status: $status). Repair the package and rebuild the image." >&2
+			exit 1
+		}
 	done
 	echo "== $(date -u +%T) GRUB's EFI packages for an offline UEFI install (calamares-settings-sparky-stereo's offline step)"
 	O=/usr/share/sparky-stereo/offline-debs
-	rm -rf $R$O; mkdir -p $R$O
-	GV=$(inr dpkg-query -W -f '${Version}' grub-efi-amd64-bin)
-	inr sh -c "cd $O && apt-get download grub-efi=$GV grub-efi-amd64=$GV"
-	for p in libjcat1 grub-efi-amd64-signed-template shim-helpers-amd64-signed-template; do
-		inr dpkg-query -W -f '${Status}' "$p" 2>/dev/null | grep -q installed || inr sh -c "cd $O && apt-get download $p" || true
+	rm -rf "$R$O"; mkdir -p "$R$O/partial"
+	GV=$(inr dpkg-query -W -f '${Version}' grub-efi-amd64-bin) || {
+		echo "!! Cannot read the installed GRUB version. Repair grub-efi-amd64-bin and rebuild the image." >&2
+		exit 1
+	}
+	[ -n "$GV" ] || { echo "!! Installed GRUB version is empty; rebuild the image after repairing GRUB." >&2; exit 1; }
+	# Let APT resolve and download the complete installation transaction, including missing
+	# dependencies, into this repository. Download-only never replaces grub-pc in the live image.
+	apt_in -o "Dir::Cache::archives=$O" --download-only --reinstall install \
+		"grub-efi=$GV" "grub-efi-amd64=$GV" \
+		libjcat1 grub-efi-amd64-signed-template shim-helpers-amd64-signed-template || {
+		echo "!! Offline Secure Boot package download failed. Repair the package sources/network and rebuild the image." >&2
+		exit 1
+	}
+	(cd "$R$O" && dpkg-scanpackages -m . > Packages) || {
+		echo "!! Offline Packages index could not be generated. Check the downloaded packages and rebuild the image." >&2
+		exit 1
+	}
+	for p in grub-efi grub-efi-amd64 libjcat1 grub-efi-amd64-signed-template shim-helpers-amd64-signed-template; do
+		grep -qx "Package: $p" "$R$O/Packages" || {
+			echo "!! Offline installation package $p is missing from Packages. Repair the download and rebuild the image." >&2
+			exit 1
+		}
 	done
-	(cd $R$O && dpkg-scanpackages -m . 2>/dev/null > Packages && ls)
+
 	apt_in clean
 	echo "== $(date -u +%T) the image's apt sources: the build's own sources go; Debian, SparkyLinux (sparky-apt), deb-multimedia and NVIDIA's CUDA repository (sparky-stereo-cuda-repo) stay"
 	rm -f $R/etc/apt/sources.list.d/beta-build-*.sources $R/etc/apt/sources.list.d/sparky-stereo-build.sources $R/etc/apt/preferences.d/beta-build-*

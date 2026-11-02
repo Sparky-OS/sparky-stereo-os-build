@@ -18,6 +18,8 @@ D=$W/$PKG
 mkdir -p "$D/DEBIAN" "$D/etc/calamares/modules" "$D/usr/lib/$PKG" "$D/usr/share/doc/$PKG"
 install -m 644 "$HERE/etc/settings.conf" "$D/etc/calamares/settings.conf"
 install -m 644 "$HERE"/etc/modules/*.conf "$D/etc/calamares/modules/"
+install -m 644 "$HERE/lib/installer-common" "$D/usr/lib/$PKG/"
+cp -r "$HERE/lib/lang" "$D/usr/lib/$PKG/"
 install -m 755 "$HERE/lib/dual-boot" "$HERE/lib/efi-fallback" "$HERE/lib/grub-language" "$HERE/lib/offline-packages" "$D/usr/lib/$PKG/"
 (cd "$D" && find etc -type f | sed 's|^|/|' | sort) >"$D/DEBIAN/conffiles"
 cat >"$D/usr/share/doc/$PKG/copyright" <<'EOS'
