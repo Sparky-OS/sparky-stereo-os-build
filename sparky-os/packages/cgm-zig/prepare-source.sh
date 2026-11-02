@@ -25,7 +25,8 @@ cp "$HERE/"{configure.sh,bootstrap-source.sh,build-final.py,check-stage3-command
 cp -a "$HERE/tests" "$TREE/debian/cgm/"
 # The source archive carries the exact toolkit that qualifies its build and payload.
 PYTHONPATH="$HERE/../.." python3 -m lean.debian_prepare "$TREE" "$CGM_ZIG_VERSION-1+lc1" --toolkit "$HERE/../.." \
-	--preserve-source 'test/*' 'Compiler tests contain deliberate syntax, comments and directive fixtures; retain upstream test inputs verbatim'
+	--preserve-source 'test/*' 'Compiler tests contain deliberate syntax, comments and directive fixtures; retain upstream test inputs verbatim' \
+	--generated-output '/usr/lib/cgm-zig/lib/zig/*test.zig' empty "Zig's install step writes every *test.zig as an empty placeholder (build.zig blank_extensions, lib/std/Build/Step/InstallDir.zig)"
 # The compiler must bootstrap its own Zig consumer before Zig qualification.
 python3 - "$TREE/debian/rules" <<'PYRULES'
 from pathlib import Path
