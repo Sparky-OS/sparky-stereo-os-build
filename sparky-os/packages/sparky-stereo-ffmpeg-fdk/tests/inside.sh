@@ -120,7 +120,7 @@ printf 'deb [trusted=yes] file:/repo2 ./\n' >/etc/apt/sources.list.d/sparky-ster
 apt-get update -qq >/dev/null 2>&1
 out=$(runuser -u tester -- $HELPER --yes 2>&1); rc=$?
 check "without the source line in apt's sources it is refused (exit $rc)" test "$rc" -ne 0
-check "... with the message about the source package" grep -q 'no source package' <<<"$out"
+check "... with the message about the source package" grep -q 'update check failed' <<<"$out"
 eq "... and nothing installed" "$(installed_count)" "$before"
 printf 'deb [trusted=yes] file:/repo2 ./\ndeb-src [trusted=yes] file:/repo2 ./\n' >/etc/apt/sources.list.d/sparky-stereo-test.list
 apt-get update -qq >/dev/null 2>&1
@@ -155,7 +155,7 @@ check "... the log of the failed build is kept" test -s $STATE/last-build.log
 check "... no local build is recorded" test ! -e $STATE/installed
 check "... the edition's FFmpeg is untouched" test "$(ver ffmpeg)" = "$V2"
 check "... no build directory is left" test -z "$(ls /mnt/noexec/b)"
-rm -f $STATE/last-failure
+sparky-stereo-problems clear --machine sparky-stereo-ffmpeg-fdk build
 
 fi   # not ONLY_4D
 echo "=== 4d. apt's own question about the build tools: answering no stops everything"
@@ -164,7 +164,8 @@ echo "$out" | grep -E "Do you want to continue|Abort|could not be installed|Noth
 check "apt asked its question (the build tools are listed and confirmed by the user)" grep -q 'Do you want to continue' <<<"$out"
 check "answering no ends with the helper's message" grep -q 'could not be installed' <<<"$out"
 eq "... and nothing installed" "$(installed_count)" "$before"
-rm -f $STATE/last-failure $STATE/consent
+sparky-stereo-problems clear --machine sparky-stereo-ffmpeg-fdk build
+rm -f $STATE/consent
 if [ "${STOP_AFTER_4D:-0}" = 1 ]; then echo "SUMMARY pass=$PASS fail=$FAIL"; [ "$FAIL" -eq 0 ]; exit; fi
 
 fi   # FAST

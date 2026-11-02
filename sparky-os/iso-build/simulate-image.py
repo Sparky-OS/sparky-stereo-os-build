@@ -87,8 +87,8 @@ def main():
     (out / 'preferences.d' / 'beta-build-no-debian-kernel').write_text(
         'Package: /^linux-(image|headers|binary|modules|signed|base)-.*amd64(-unsigned)?$/\n'
         'Pin: release o=Debian\nPin-Priority: -1\n')
-    (out / 'preferences.d' / 'beta-build-no-zfs').write_text(
-        'Package: zfs-dkms zfsutils-linux zfs-zed\nPin: release *\nPin-Priority: -1\n')
+    # rootfs.sh removes this obsolete pin before explicitly installing ZFS.
+    (out / 'preferences.d' / 'beta-build-no-zfs').unlink(missing_ok=True)
     installed = {identity(p): str(p) for p in paragraphs(args.status.read_text())
                  if p.get('Status') == 'install ok installed'}
     initial = dict(installed)

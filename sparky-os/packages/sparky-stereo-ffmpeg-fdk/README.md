@@ -45,3 +45,23 @@ Build:
 Test:
 -------------
 tests/run-tests.sh   (in a debian:testing container with deb-multimedia and a test repository; tests/README.md says how)
+
+Failures from cleanup, the local build and the update check are kept by `sparky-stereo-problems`.
+`--status` reads that engine; a later successful step clears its problem.
+The helper keeps no separate error files.
+Build failures tell the person to use `--rebuild`; there may be no installed local build for `--auto` to retry.
+An upgrade moves the old failure files into the engine before deleting them.
+If migration fails, the upgrade fails visibly and the original evidence remains.
+
+When purging build tools would also remove other packages, the tools stay and the message names those packages.
+`sudo sparky-stereo-ffmpeg-fdk --cleanup` retries a recorded cleanup using a fresh APT simulation and the original package/baseline lists from the engine.
+The engine also offers this command as the problem's repair action.
+A migrated cleanup lacks that old baseline, so it requires manual review; it never guesses a removal plan.
+
+A failed repository query is an error, not an indication that no update exists.
+Dispatch through systemd checks the service launch status.
+Without systemd, a detached Python subprocess reports an execution failure before the checker returns.
+The engine keeps each failed check, with its message printed in apt update's output, until a later successful check.
+check-update then exits 80, and the APT hook lets apt update succeed: the package lists did update, and the failure is already said.
+Any other failure is one nothing could keep (the engine failed, or clearing a problem failed), and it fails apt update.
+A repository without a source record for ffmpeg-dmo is said as such, with the source line to check; an index that cannot be read, or an invalid record, is said apart.

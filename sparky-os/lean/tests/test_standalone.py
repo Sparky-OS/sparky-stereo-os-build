@@ -32,6 +32,18 @@ class StandaloneSource(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'compiled payload'):
             standalone.build(tree, self.base / 'out', self.base, arch)
 
+    def test_recipe_build_dependency_is_retained_in_source(self):
+        tree = self.stage('1+lc1')
+        docs = tree / 'usr/share/doc/lc-demo'
+        docs.mkdir(parents=True)
+        (docs / 'copyright').write_text('Copyright 2026 Example\nLicense: MIT\n')
+        out = self.base / 'out'
+        standalone.build(tree, out, self.authoring(git=True), build_dependencies=['sparky-stereo-problems'])
+        with tarfile.open(out / 'lc-demo_1+lc1.tar.xz') as archive:
+            control = archive.extractfile('lc-demo-1+lc1/debian/control').read().decode()
+        self.assertIn(', sparky-stereo-problems\n', control)
+        self.assertIn('sparky-stereo-problems', (out / 'lc-demo_1+lc1.dsc').read_text())
+
     def authoring(self, git):
         """A recipe folder with an untracked note and Python caches beside its inputs."""
         recipe = self.base / 'recipe'

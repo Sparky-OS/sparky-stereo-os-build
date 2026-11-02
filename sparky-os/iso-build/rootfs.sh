@@ -78,12 +78,11 @@ if [ "$STEP" = packages ] || [ "$STEP" = all ]; then
 		inr dpkg-divert --list "$f" | grep -q . || inr dpkg-divert --local --rename --add "$f"
 		printf '#!/bin/sh\nexit 0\n' > "$R$f"; chmod 755 "$R$f"
 	done
-	# OpenZFS 2.4.4 supports Linux up to 7.2 (its META) and its configure stops on 7.3 ("iops->create()
-	# passes flags"); with zfs-dkms installed DKMS's hook fails and so does every kernel's postinst.
-	# SparkyLinux's image has no ZFS; here it came with Calamares' Recommends. Kept out while building.
-	printf 'Package: zfs-dkms zfsutils-linux zfs-zed\nPin: release *\nPin-Priority: -1\n' > $R/etc/apt/preferences.d/beta-build-no-zfs
-	inr dpkg --purge zfs-zed zfsutils-linux zfs-dkms 2>/dev/null || true
+	# The edition's ZFS carries upstream Linux 7.3 support. Remove the old build exclusion
+	# on resumed trees too, then upgrade/install ZFS before configuring pending kernels.
+	rm -f $R/etc/apt/preferences.d/beta-build-no-zfs
 	inr apt-get update
+	apt_in install zfs-dkms zfsutils-linux zfs-zed
 	inr dpkg --configure -a
 	# sparky-stereo-nvidia-driver-lock before any other package: its pin keeps NVIDIA's whole driver at the version the
 	# edition's open module is built for (NVIDIA's CUDA repository moves ahead: 615.71.10-1 on 2026-10-25, while the
@@ -120,6 +119,9 @@ if [ "$STEP" = packages ] || [ "$STEP" = all ]; then
 	cp /build/boot-kernels.py $R/tmp/
 	inr python3 /tmp/boot-kernels.py / || { echo "rootfs: a kernel that is not the edition's is in the tree" >&2; exit 1; }
 	rm -f $R/tmp/boot-kernels.py
+	cp /build/zfs-check.py $R/tmp/
+	inr python3 /tmp/zfs-check.py / || { echo "rootfs: ZFS is not ready; see validation errors above" >&2; exit 1; }
+	rm -f $R/tmp/zfs-check.py
 	echo "== $(date -u +%T) command-not-found: its index is filled at build time, so a live session names the package of a missing program before anyone runs apt update"
 	# apt-file's Contents targets are on (50apt-file.conf) and command-not-found's own hook (50command-not-found) builds the index
 	# after every apt update: Debian's and deb-multimedia's files come that way. The build's own sources are flat repositories with
@@ -155,6 +157,6 @@ if [ "$STEP" = packages ] || [ "$STEP" = all ]; then
 	fi
 	echo "   $(grep -c '^Inst ' /tmp/full-upgrade.sim) installs or upgrades, no downgrade, no removal"
 	apt_in clean
+	inr dkms status
 fi
 echo "== $(date -u +%T) installed: $(inr dpkg-query -f '${binary:Package}\n' -W | wc -l) packages, $(du -sxh $R | cut -f1)"
-inr dkms status || true

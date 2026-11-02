@@ -1,4 +1,7 @@
 // Sparky Stereo OS: sparky-stereo-ffmpeg-fdk keeps the local FFmpeg build with Fraunhofer's AAC encoder up to date:
 // after apt update, a newer FFmpeg in the edition's repository starts the rebuild in the background (only on a computer
 // that built one with the consent given then).
-APT::Update::Post-Invoke-Success { "if [ -x /usr/lib/sparky-stereo-ffmpeg-fdk/check-update ]; then /usr/lib/sparky-stereo-ffmpeg-fdk/check-update || true; fi"; };
+// check-update exits 80 when the check failed and sparky-stereo-problems kept that failure and said it (in apt update's
+// output, the notification and sparky-stereo-ffmpeg-fdk --status): the package lists did update, so apt update succeeds.
+// Any other failure is one nothing could keep, and it fails apt update.
+APT::Update::Post-Invoke-Success { "if [ -x /usr/lib/sparky-stereo-ffmpeg-fdk/check-update ]; then /usr/lib/sparky-stereo-ffmpeg-fdk/check-update; rc=$?; [ $rc -eq 80 ] || exit $rc; fi"; };

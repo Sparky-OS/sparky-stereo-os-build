@@ -4,8 +4,9 @@
 Every run folder is classified by classify.py's rules (desktop = the Plasma Welcome window is on the screen).
 A cell is "pass Ns" (first desktop frame at N seconds), or "fail: <reason>" with the reason read from the
 serial log (firmware and GRUB text) or the last frame ("black screen", "stuck at menu", "boot manager").
+Unreadable run metadata produces a failure naming result.json and its error; it never reuses an older result.
 """
-import json, os, re, subprocess, sys
+import html, json, os, re, subprocess, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import importlib.util
 spec = importlib.util.spec_from_file_location("classify", os.path.join(os.path.dirname(os.path.abspath(__file__)), "classify.py"))
@@ -20,24 +21,39 @@ KNOWN = [("SBAT self-check failed", "shim: SBAT self-check failed, power off"),
          ("Security Policy Violation", "Security Policy Violation"),
          ("bad shim loader signature", "GRUB: bad shim loader signature")]
 
+def cell_text(text):
+    return html.escape(text, quote=False).replace("|", "&#124;").replace("\r", " ").replace("\n", " ")
+
 def run(d):
     frames = sorted([f[:-4] for f in os.listdir(d) if f.endswith(".png") and f != "sheet.png"], key=tkey)
     times = {}
     try:
-        for s in json.load(open(os.path.join(d, "result.json"))).get("steps", []):
+        with open(os.path.join(d, "result.json"), encoding="utf-8") as metadata:
+            steps = json.load(metadata).get("steps", [])
+        for s in steps:
             if "shot" in s:
+                if "t" not in s:
+                    raise ValueError("%s: time is missing" % os.path.join(d, s["shot"] + ".png"))
                 times[s["shot"]] = s["t"]
-    except Exception:
-        return None
+    except Exception as error:
+        detail = "%s: %s: %s" % (os.path.join(d, "result.json"), type(error).__name__, error)
+        return ("fail", None, "metadata error: " + cell_text(detail))
+    serial = ""
+    try:
+        with open(os.path.join(d, "serial.log"), errors="replace") as log:
+            serial = log.read()
+    except FileNotFoundError:
+        pass  # This run captured no serial log.
+    except Exception as error:
+        detail = "%s: %s: %s" % (os.path.join(d, "serial.log"), type(error).__name__, error)
+        return ("fail", None, "serial log error: " + cell_text(detail))
     labs = [(f, label(os.path.join(d, f + ".png"))) for f in frames]
     for f, l in labs:
         if l == "desktop":
-            return ("pass", times.get(f), "")
-    serial = ""
-    try:
-        serial = open(os.path.join(d, "serial.log"), errors="replace").read()
-    except Exception:
-        pass
+            if times.get(f) is None:
+                detail = "%s: time is missing in %s" % (os.path.join(d, f + ".png"), os.path.join(d, "result.json"))
+                return ("fail", None, "metadata error: " + cell_text(detail))
+            return ("pass", times[f], "")
     for key, text in KNOWN:
         if key in serial:
             return ("fail", None, text)
@@ -55,7 +71,7 @@ def cell(paths):
     r = None
     for path in paths:
         if os.path.isdir(path):
-            r = run(path) or r
+            r = run(path)
     if r is None:
         return "-"
     return ("pass %ds" % round(r[1])) if r[0] == "pass" else "fail: " + r[2]

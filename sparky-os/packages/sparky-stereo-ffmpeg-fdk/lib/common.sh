@@ -2,7 +2,7 @@
 #
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/08
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/08
+# Last update 2026/11/02
 
 STATE=${SPARKY_FDK_STATE:-/var/lib/sparky-stereo-ffmpeg-fdk}
 PINFILE=${SPARKY_FDK_PINFILE:-/etc/apt/preferences.d/sparky-stereo-ffmpeg-fdk}
@@ -31,16 +31,24 @@ load_strings() {
 	case "$code" in pt_BR) ;; pt | pt_*) [ -f "$LANGDIR/pt_BR" ] && . "$LANGDIR/pt_BR" ;; esac
 }
 
-# The highest version of our source package in the edition's own Sources index, and the binary packages it builds:
-# "VERSION BINARY,BINARY,...". Nothing when the repository publishes no source index for it.
-repo_source() {
-	local f
-	apt-get indextargets --format '$(FILENAME)' "Origin: $ORIGIN" 'Created-By: Sources' 2>/dev/null |
+# The highest version of our source package in the edition's own Sources indexes, and the binary packages it builds:
+# "VERSION BINARY,BINARY,...". Three answers, never taken for one another:
+#   0                 a record was found, and it is printed
+#   NO_SOURCE_RECORD  every index could be read and none has a record for the source package (no index at all
+#                     included: the edition's source line is missing from apt's sources, or apt update has not fetched it)
+#   1                 an index could not be listed or read, or a record is incomplete or invalid (said on standard
+#                     error); an index that could not be read decides over the others, since it may hold the record
+NO_SOURCE_RECORD=3
+repo_source() (
+	local f targets
+	local -a status
+	targets=$(apt-get indextargets --format '$(FILENAME)' "Origin: $ORIGIN" 'Created-By: Sources') || return 1
+	printf '%s\n' "$targets" |
 		while IFS= read -r f; do
 			[ -n "$f" ] || continue
-			/usr/lib/apt/apt-helper cat-file "$f" 2>/dev/null
+			/usr/lib/apt/apt-helper cat-file "$f" || exit 1
 			echo
-		done | SRCPKG="$SRCPKG" python3 -c '
+		done | SRCPKG="$SRCPKG" NO_RECORD="$NO_SOURCE_RECORD" python3 -c '
 import os, subprocess, sys
 want = os.environ["SRCPKG"]
 best = None
@@ -53,14 +61,25 @@ for st in sys.stdin.read().split("\n\n"):
         elif ":" in line:
             key, val = line.split(":", 1)
             f[key] = val.strip()
-    if f.get("Package") != want or not f.get("Version"):
+    if f.get("Package") != want:
         continue
-    if best is None or subprocess.run(["dpkg", "--compare-versions", f["Version"], "gt", best[0]]).returncode == 0:
-        best = (f["Version"], f.get("Binary", ""))
-if best:
-    print(best[0], ",".join(x.strip() for x in best[1].split(",") if x.strip()))
+    if not f.get("Version") or not f.get("Binary"):
+        sys.exit("Incomplete source record for " + want)
+    if subprocess.run(["dpkg", "--validate-version", f["Version"]]).returncode:
+        sys.exit("Invalid source version: " + f["Version"])
+    newer = 0 if best is None else subprocess.run(["dpkg", "--compare-versions", f["Version"], "gt", best[0]]).returncode
+    if newer not in (0, 1):
+        sys.exit("Source version comparison failed")
+    if newer == 0:
+        best = (f["Version"], f["Binary"])
+if best is None:
+    sys.exit(int(os.environ["NO_RECORD"]))
+print(best[0], ",".join(x.strip() for x in best[1].split(",") if x.strip()))
 '
-}
+	status=("${PIPESTATUS[@]}")
+	[ "${status[1]}" -eq 0 ] || return 1
+	return "${status[2]}"
+)
 
 # The local build installed now: sets LOCAL_BASE (the edition's version it was built from), LOCAL_VERSION, LOCAL_USER (who
 # built it) and LOCAL_PACKAGES; returns 1 when there is none.
@@ -118,3 +137,21 @@ write_pin() {
 drop_pin() {
 	rm -f -- "$PINFILE"
 }
+
+
+# The engine owns every kept failure. Only consent, installed build identity and build logs stay here.
+FDK_PACKAGE=sparky-stereo-ffmpeg-fdk
+problem_clear() { sparky-stereo-problems clear --machine "$FDK_PACKAGE" "$1"; }
+problem_data() (
+	set -o pipefail
+	sparky-stereo-problems list --json "$FDK_PACKAGE" | python3 -c '
+import json, sys
+rows = json.load(sys.stdin)
+if any("unreadable" in r for r in rows):
+    sys.exit("Cannot read a kept FFmpeg problem")
+for r in rows:
+    if r["scope"] == "machine" and r["key"] == sys.argv[1]:
+        value = (r.get("data") or {}).get(sys.argv[2], "")
+        print("\n".join(value) if isinstance(value, list) else value)
+' "$1" "$2"
+)
