@@ -116,10 +116,8 @@ void MemoryKcm::load()
         m_zramActive = swaps.readAll().contains("/dev/zram");
     }
 
-    const QVariantMap status = MemorySettings::readKeyValues(MemorySettings::cushionStatusPath());
-    m_cushionState = status.value(u"STATE"_s, u"stopped"_s).toString();
-    m_cushionMode = status.value(u"MODE"_s).toString();
-    m_cushionArea = status.value(u"AREA"_s).toString();
+    readCushionStatus();
+    readProblems();
 
     Q_EMIT zramModeChanged();
     Q_EMIT cushionEnabledChanged();
