@@ -1,12 +1,12 @@
 #!/bin/bash
 # Created by Daniel Ramos (Capitain Jack) 2026/10/10
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/03
+# Last update 2026/11/02
 #
 # /tmp on disk, as root in a disposable container: the package's maintainer
 # scripts (DEB = the built package) mask tmp.mount once and leave an
 # administrator's choice alone, and ship no /tmp rule: /tmp keeps its files across
-# boots (Daniel, 2026-11-03: "I never asked for a wipe").
+# boots (Daniel, 2026-11-02: "I never asked for a wipe").
 set -u
 DEB=${DEB:?built package}
 OUT=${OUT:?results folder}

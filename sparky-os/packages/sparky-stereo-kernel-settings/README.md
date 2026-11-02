@@ -47,7 +47,7 @@ etc/security/limits.d/20-sparky-audio.conf  rtprio 99 and nice -11 for @audio (a
 
 /tmp on disk (Daniel: "the dumb /tmp mounted at a ram fs - final result? no ram"): the first install of 20261010.2
 masks tmp.mount, the way Debian's trixie release notes describe it (5.1.6). This package never empties /tmp: Daniel
-never asked for a wipe (2026-11-03), and 20261103.1 removes the boot-wipe rule earlier versions shipped. Debian's own
+never asked for a wipe (2026-11-02), and 20261103.1 removes the boot-wipe rule earlier versions shipped. Debian's own
 tmpfiles.d/tmp.conf still applies as Debian ships it. An administrator's own /etc/systemd/system/tmp.mount is left alone;
 "systemctl unmask tmp.mount" brings /tmp in RAM back and is kept on upgrades. Purging the package removes the mask it
 created. The change applies at the next boot.
