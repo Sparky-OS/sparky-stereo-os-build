@@ -3,7 +3,6 @@
 The package builds Daniel Campos Ramos's patched Zig compiler from source in Debian sid on amd64.
 The compiler stays in [his personal repository](https://github.com/danielcamposramos/cgm-zig).
 `source.env` pins source commit `0399d2b19b71ed865cc2e6d5e21224f124e373db` and compiler version `0.16.0+cgm.0399d2b19b`.
-This recipe has not yet produced a qualified binary package.
 
 ## Source and build
 
