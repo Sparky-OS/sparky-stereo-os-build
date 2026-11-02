@@ -1,9 +1,127 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: sparky-stereo-memory-kcm\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-11-02 18:32+0000\n"
 "Language: pt_BR\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
+
+#: src/memorykcm.cpp:27
+msgctxt "@info zram reason"
+msgid "Switched on by the zram configuration"
+msgstr "Ligado pela configuração do zram"
+
+#: src/memorykcm.cpp:30
+msgctxt "@info zram reason"
+msgid "Switched off by the zram configuration"
+msgstr "Desligado pela configuração do zram"
+
+#: src/memorykcm.cpp:40
+msgctxt "@info zram reason"
+msgid "%1 MiB of RAM: within the automatic zram RAM limit"
+msgstr "%1 MiB de RAM: dentro do limite de RAM para ativação automática do zram"
+
+#: src/memorykcm.cpp:43
+msgctxt "@info zram reason"
+msgid "The swap area is on eMMC storage"
+msgstr "A área de troca está no armazenamento eMMC"
+
+#: src/memorykcm.cpp:44
+msgctxt "@info zram reason"
+msgid "The swap area is on an SD card"
+msgstr "A área de troca está em um cartão SD"
+
+#: src/memorykcm.cpp:45
+msgctxt "@info zram reason"
+msgid "The swap area is on a rotating disk"
+msgstr "A área de troca está em um disco mecânico"
+
+#: src/memorykcm.cpp:46
+msgctxt "@info zram reason"
+msgid "The swap area is on removable storage"
+msgstr "A área de troca está em armazenamento removível"
+
+#: src/memorykcm.cpp:47
+msgctxt "@info zram reason"
+msgid "The swap area is on USB storage"
+msgstr "A área de troca está em armazenamento USB"
+
+#: src/memorykcm.cpp:50
+msgctxt "@info zram reason"
+msgid "%1 MiB of RAM and the swap area on fast storage"
+msgstr "%1 MiB de RAM e área de troca em armazenamento rápido"
+
+#: src/memorykcm.cpp:51
+msgctxt "@info zram reason"
+msgid "%1 MiB of RAM; the swap storage type could not be identified"
+msgstr "%1 MiB de RAM; não foi possível identificar o tipo de armazenamento da área de troca"
+
+#: src/memorykcm.cpp:54
+msgctxt "@info zram reason"
+msgid "Unrecognized zram decision; zram-auto says: %1"
+msgstr "Decisão do zram não reconhecida; nas palavras do zram-auto: %1"
+
+#: src/memorykcm.cpp:149
+msgctxt "@info %1 is the reason"
+msgid "Automatic means on for this computer: %1."
+msgstr "Automático significa ligado neste computador: %1."
+
+#: src/memorykcm.cpp:151
+msgctxt "@info %1 is the reason"
+msgid "Automatic means off for this computer: %1."
+msgstr "Automático significa desligado neste computador: %1."
+
+#: src/memorykcm.cpp:183
+msgctxt "@info"
+msgid "Not saved: not authorized to change these settings."
+msgstr "Não foi salvo: sem autorização para alterar estas configurações."
+
+#: src/memorykcm.cpp:185
+msgctxt "@info %1 is the error"
+msgid "Not saved: %1"
+msgstr "Não foi salvo: %1"
+
+#: src/cushionstatus.cpp:39 src/cushionstatus.cpp:45 src/cushionstatus.cpp:60
+msgctxt "@info"
+msgid "Could not read %1: %2"
+msgstr "Não foi possível ler %1: %2"
+
+#: src/cushionstatus.cpp:60
+msgctxt "@info"
+msgid "Invalid daemon PID."
+msgstr "PID do serviço inválido."
+
+#: src/cushionstatus.cpp:72
+msgctxt "@info"
+msgid "Could not read the protection state from %1: missing or invalid PROTECTION."
+msgstr "Não foi possível ler o estado de proteção em %1: campo PROTECTION ausente ou inválido."
+
+#: src/cushionstatus.cpp:86 src/cushionstatus.cpp:90 src/cushionstatus.cpp:97
+#: src/cushionstatus.cpp:104
+msgctxt "@info"
+msgid "Could not read the kept problems: %1"
+msgstr "Não foi possível ler os problemas registrados: %1"
+
+#: src/cushionstatus.cpp:112
+msgctxt "@info"
+msgid "The problems engine returned a problem without its text."
+msgstr "O mecanismo de problemas retornou um problema sem o texto."
+
+#: src/cushionstatus.cpp:121
+msgctxt "@info"
+msgid "The status names a problem whose text is unavailable from the problems engine. Refresh to try again."
+msgstr "O estado indica um problema cujo texto não está disponível no mecanismo de problemas. Atualize para tentar novamente."
+
+#: src/cushionstatus.cpp:169
+msgctxt "@info"
+msgid "The repair did not run: %1"
+msgstr "O reparo não foi executado: %1"
+
+#: src/cushionstatus.cpp:178
+msgctxt "@info"
+msgid "The repair failed (exit %1): %2"
+msgstr "O reparo falhou (código de saída %1): %2"
 
 #: src/ui/main.qml:26
 msgctxt "@label"
@@ -25,102 +143,135 @@ msgctxt "@option:radio zram"
 msgid "Off"
 msgstr "Desligado"
 
-#: src/ui/main.qml:49
-msgctxt "@info %1 is the reason"
-msgid "Automatic means on for this computer: %1."
-msgstr "Automático significa ligado neste computador: %1."
-
-#: src/ui/main.qml:50
-msgctxt "@info %1 is the reason"
-msgid "Automatic means off for this computer: %1."
-msgstr "Automático significa desligado neste computador: %1."
-
-#: src/ui/main.qml:56
+#: src/ui/main.qml:59
 msgctxt "@info"
 msgid "In use now."
 msgstr "Em uso agora."
 
-#: src/ui/main.qml:56
+#: src/ui/main.qml:59
 msgctxt "@info"
 msgid "Not in use now."
 msgstr "Não está em uso agora."
 
-#: src/ui/main.qml:57
+#: src/ui/main.qml:60
 msgctxt "@info"
 msgid "A change applies at the next start."
 msgstr "A alteração passa a valer na próxima inicialização."
 
-#: src/ui/main.qml:65
+#: src/ui/main.qml:68
 msgctxt "@label"
 msgid "Cushion Swap File:"
 msgstr "Cushion Swap File:"
 
-#: src/ui/main.qml:66
+#: src/ui/main.qml:69
 msgctxt "@option:check"
 msgid "Switch the swap area on only under memory pressure"
 msgstr "Ligar a área de troca somente sob pressão de memória"
 
-#: src/ui/main.qml:71
+#: src/ui/main.qml:80
+msgctxt "@info protection"
+msgid "Memory protected"
+msgstr "Memória protegida"
+
+#: src/ui/main.qml:81
+msgctxt "@info protection"
+msgid "Memory protected, with a kept problem"
+msgstr "Memória protegida, com um problema registrado"
+
+#: src/ui/main.qml:82
+msgctxt "@info protection"
+msgid "Memory not protected"
+msgstr "Memória sem proteção"
+
+#: src/ui/main.qml:83
+msgctxt "@info protection"
+msgid "Cushion Swap is not running"
+msgstr "Cushion Swap não está em execução"
+
+#: src/ui/main.qml:84
+msgctxt "@info protection"
+msgid "Memory protection status could not be read"
+msgstr "Não foi possível ler o estado de proteção da memória"
+
+#: src/ui/main.qml:99
+msgctxt "@label"
+msgid "Daemon’s own words:"
+msgstr "Nas palavras do serviço:"
+
+#: src/ui/main.qml:109
 msgctxt "@label"
 msgid "State:"
 msgstr "Estado:"
 
-#: src/ui/main.qml:74
+#: src/ui/main.qml:112
 msgctxt "@info cushion state"
-msgid "Off, ready"
-msgstr "Desligado, pronto"
+msgid "Off"
+msgstr "Desligada"
 
-#: src/ui/main.qml:75
+#: src/ui/main.qml:113
 msgctxt "@info cushion state"
 msgid "Deployed"
 msgstr "Acionado"
 
-#: src/ui/main.qml:76
+#: src/ui/main.qml:114
 msgctxt "@info cushion state"
 msgid "Retracting"
 msgstr "Recolhendo"
 
-#: src/ui/main.qml:77
+#: src/ui/main.qml:115
 msgctxt "@info cushion state"
 msgid "Switched off"
 msgstr "Desligado"
 
-#: src/ui/main.qml:78
+#: src/ui/main.qml:116
 msgctxt "@info cushion state"
 msgid "No swap area configured"
 msgstr "Nenhuma área de troca configurada"
 
-#: src/ui/main.qml:79
+#: src/ui/main.qml:117
 msgctxt "@info cushion state"
 msgid "Not running"
 msgstr "Não está em execução"
 
-#: src/ui/main.qml:84
+#: src/ui/main.qml:118
+msgctxt "@info cushion state"
+msgid "Unknown"
+msgstr "Desconhecido"
+
+#: src/ui/main.qml:123
 msgctxt "@label"
 msgid "Wake-up:"
 msgstr "Despertar:"
 
-#: src/ui/main.qml:87
+#: src/ui/main.qml:126
 msgctxt "@info"
 msgid "Pressure stall information (PSI): the kernel wakes it when memory stalls"
 msgstr "Pressure Stall Information (PSI): o kernel o desperta quando o acesso à memória trava"
 
-#: src/ui/main.qml:88
+#: src/ui/main.qml:127
 msgctxt "@info"
 msgid "Compatibility mode: no PSI, it checks memory every few seconds"
 msgstr "Modo de compatibilidade: sem PSI, ele verifica a memória a cada poucos segundos"
 
-#: src/ui/main.qml:91
+#: src/ui/main.qml:130
 msgctxt "@label"
 msgid "Swap area:"
 msgstr "Área de troca:"
 
-#: src/memorykcm.cpp:144
-msgctxt "@info"
-msgid "Not saved: not authorized to change these settings."
-msgstr "Não foi salvo: sem autorização para alterar estas configurações."
+#: src/ui/main.qml:160
+msgctxt "@action:button"
+msgid "Repair"
+msgstr "Reparar"
 
-#: src/memorykcm.cpp:146
-msgctxt "@info %1 is the error"
-msgid "Not saved: %1"
-msgstr "Não foi salvo: %1"
+#: src/ui/main.qml:176
+msgctxt "@action:button"
+msgid "Refresh status"
+msgstr "Atualizar estado"
+
+#~ msgctxt "@label"
+#~ msgid "Reason:"
+#~ msgstr "Motivo:"
+
+#~ msgctxt "@info cushion state"
+#~ msgid "Off, ready"
+#~ msgstr "Desligado, pronto"

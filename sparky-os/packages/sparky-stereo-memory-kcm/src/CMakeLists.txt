@@ -5,5 +5,5 @@ set_target_properties(sparkystereo_memorysettings PROPERTIES POSITION_INDEPENDEN
 target_include_directories(sparkystereo_memorysettings PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(sparkystereo_memorysettings PUBLIC Qt::Core)
 
-kcmutils_add_qml_kcm(kcm_sparkystereo_memory SOURCES memorykcm.cpp memorykcm.h)
+kcmutils_add_qml_kcm(kcm_sparkystereo_memory SOURCES cushionstatus.cpp memorykcm.cpp memorykcm.h)
 target_link_libraries(kcm_sparkystereo_memory PRIVATE sparkystereo_memorysettings KF6::AuthCore KF6::CoreAddons KF6::I18n KF6::KCMUtils)
