@@ -1,11 +1,11 @@
 #!/usr/bin/python3
-# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/03
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/02
 # Copyright 2026 under the GNU GPL3 License
 # Writes renamed-commands, the table of commands Debian installs under another name, from Debian's own data (ORDER 252b,
 # study row J15). Debian Policy 10.1: "Two different packages must not install programs with different functionality
 # but with the same filenames ... If this case happens, one of the programs must be renamed." So `fd` is fd-find's
 # `fdfind` (fdclone has /usr/bin/fd) and `bat` is bat's `batcat` (bacula-console-qt has /usr/sbin/bat).
-# A row is written when all three hold:
+# A row is written when both hold:
 #   1. Contents: the package ships the installed name R (in bin, sbin, usr/bin, usr/sbin or usr/games) but not the
 #      command C, and a package of another source ships C (the clash). Either C is the package's or its source's name
 #      (without the rust-, golang-, python-, node-, ruby- or haskell- prefix), one of its leading dash parts or the
@@ -15,13 +15,14 @@
 #      sources.debian.org, at the version in Packages) says why (renamed, clash, conflict, collides, already used), and
 #      one of its sentences names C and then R, with "to", "into", "as", "is" or "it's" between them ("renamed from
 #      'bat' to 'batcat'", "install fd into ... a symlink from this file to /usr/bin/fdfind").
-#   3. Debian's popularity contest: the package has more installations than every package that ships C, so it is the
-#      program people mean by C. A rename where the program under the name is the more installed one (wmdocker's
-#      `docker`, task-spooler's `ts`) is reported and left out, so its message stays as command-not-found writes it.
+# Each row's fourth field orders the offer by Debian's popularity contest: "first" when the package has more
+# installations than every package that ships C (fd-find against fdclone), so it is named before them; "after" when
+# the program under the name is the more installed one (moreutils' ts against task-spooler's tsp), so it is named
+# after them. Every rename Debian's own words document is kept: none is left out.
 # Usage: make-renamed.py --data DIR --evidence DIR [--fetch] --out renamed-commands --report report.tsv
 #   DIR holds Debian's indexes, decompressed: Contents-*.txt (lines under bin and sbin), Packages-*, popcon-by_inst.gz.
 #   --evidence keeps the Debian texts read (one folder per source and version); --fetch downloads the missing ones.
-# Last update 2026/11/03
+# Last update 2026/11/02
 import argparse, collections, glob, gzip, os, re, sys, time, urllib.parse, urllib.request
 
 PREFIXES = ('rust-', 'golang-', 'python-', 'node-', 'ruby-', 'haskell-')
@@ -187,13 +188,12 @@ def main():
             fetch(args.evidence, src, ver, component)
         words = debian_words(args.evidence, src, ver, command, real)
         mine, theirs = installs.get(package, 0), max(installs.get(q, 0) for q in clash)
+        order = 'first' if mine > theirs else 'after'
         if not words:
             verdict = 'no Debian text'
-        elif mine <= theirs:
-            verdict = 'renamed; the program under the name is the more installed one'
         else:
-            verdict = 'written'
-            table.append((command, package, real, src, ver, words[0]))
+            verdict = 'written, ' + order
+            table.append((command, package, real, order, src, ver, words[0]))
         report.append((verdict, command, package, real, ','.join(clash), '%d/%d' % (mine, theirs),
                        '%s %s %s' % (src, ver, words[0]) if words else '', words[1][:300] if words else ''))
     with open(args.report, 'w') as fp:
@@ -206,12 +206,14 @@ def main():
         sys.exit('make-renamed: more than one renamed package for %s; see %s' % (', '.join(duplicates), args.report))
     with open(args.out, 'w') as fp:
         fp.write('# Commands that Debian installs under another name, because another package has the name (Debian Policy 10.1).\n')
-        fp.write('# command-not-found names the package of each row first, with the name to run, and the packages that have the\n')
-        fp.write('# command under its own name after it. Made by make-renamed.py from Debian forky\'s Contents, Packages and\n')
-        fp.write('# popularity contest and each source\'s own README.Debian, NEWS or changelog (the file named per row).\n')
-        fp.write('# Each row: the command, the package, the name it is installed as; the line above it names the Debian text.\n')
-        for command, package, real, src, ver, text in sorted(table):
-            fp.write('# %s %s, %s\n%s\t%s\t%s\n' % (src, ver, text, command, package, real))
+        fp.write('# command-not-found names the package of each row, with the name to run, before the packages that have the\n')
+        fp.write('# command under its own name ("first") or after them ("after"), as Debian\'s popularity contest ranks them.\n')
+        fp.write('# Made by make-renamed.py from Debian forky\'s Contents, Packages and popularity contest and each source\'s own\n')
+        fp.write('# README.Debian, NEWS or changelog (the file named per row).\n')
+        fp.write('# Each row: the command, the package, the name it is installed as, first or after; the line above it names the\n')
+        fp.write('# Debian text.\n')
+        for command, package, real, order, src, ver, text in sorted(table):
+            fp.write('# %s %s, %s\n%s\t%s\t%s\t%s\n' % (src, ver, text, command, package, real, order))
     print('make-renamed: %d candidates, %d rows' % (len(report), len(table)))
 
 
