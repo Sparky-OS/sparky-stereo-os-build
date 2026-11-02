@@ -20,14 +20,14 @@
 #   - /var/lib/sparky-stereo-boot/main-output.json, the record of all of it.
 # Options in /etc/default/sparky-stereo-boot.
 #
-# A step of the boot's upkeep that cannot do what it is for says what failed, why and what to do, and keeps it
-# in /var/lib/sparky-stereo-boot/problems until it is repaired (/usr/lib/sparky-stereo-boot/problems.py); the
-# session shows each kept problem as a notification, and status lists them.
+# A step of the boot's upkeep that cannot do what it is for says what failed, why and what to do, and the edition's
+# one engine keeps it (sparky-stereo-problems, /var/lib/sparky-stereo-problems) until it is repaired (problems.py); its
+# session notifier shows each kept problem, and status lists them.
 #
 # Commands:
 #   sparky-stereo-boot status              what the next boot shows, and the boot's kept problems
 #   sparky-stereo-boot repair              root: run again what each kept problem names
-#   sparky-stereo-boot dismiss STEP        root: hide a kept problem (it comes back if the step fails again)
+#   sparky-stereo-boot dismiss STEP        hide a kept problem for you (it comes back if the step fails again)
 #   sparky-stereo-boot export-user USER    root: take USER's saved settings now
 #   sparky-stereo-boot reapply             root: write the boot files again (after an option change)
 #   sparky-stereo-boot client              the session's side: send the saved settings
@@ -778,37 +778,11 @@ def status():
 
 
 def repair():
-    """Runs again what each kept problem names; a step that succeeds is cleared, one that fails again is kept with
-    its new output. Problems with nothing to run (the splash's hand-over, older kernels kept) are listed."""
+    """Runs again what each kept problem names, through the engine: a step that succeeds is cleared, one that fails
+    again, or that its own command keeps again, stays with its new output. Problems with nothing to run (the splash's
+    hand-over, older kernels kept) are listed."""
     p = problems()
-    found = p.pending()
-    if not found:
-        print(p.text('LOCAL16'))
-        return 0
-    left = 0
-    for entry in found:
-        if not os.path.exists(entry['file']):
-            continue   # an earlier repair cleared it (update-grub writes GRUB's font and resolution again)
-        print(p.message(entry))
-        steps = entry.get('repair') or []
-        if not steps:
-            print(p.text('LOCAL52', [entry['step'], entry['step']]))
-            left += 1
-            continue
-        for command in steps:
-            status, output = p.execute(command)
-            if status != 0:
-                after = [e for e in p.pending() if e['step'] == entry['step']]
-                if not after or after[0].get('time') == entry.get('time'):
-                    # the command does not keep its own record: this one keeps its new output
-                    p.record(entry['step'], entry['key'], entry['args'], command=command, status=status,
-                             output=output, repair=steps, quiet=True)
-                print(p.text('LOCAL51', [' '.join(command), status]))
-                left += 1
-                break
-        else:
-            p.clear(entry['step'])
-            print(p.text('LOCAL50', [entry['step']]))
+    result = p.repair()
     try:
         state = subprocess.run(['dpkg-query', '-W', '-f', '${db:Status-Abbrev}', 'sparky-stereo-boot'],
                                capture_output=True, text=True).stdout.strip()
@@ -816,56 +790,17 @@ def repair():
         state = ''
     if state and state != 'ii':
         print(p.text('LOCAL54'))
-    return 1 if left else 0
+    return result
 
 
 def dismiss(step):
-    p = problems()
-    found = {e['step'] for e in p.pending()}
-    if step not in found:
-        print('%s: %s' % (p.text('LOCAL15'), ', '.join(sorted(found)) or '-'))
-        return 1
-    if not p.clear(step):
-        return 1
-    print(p.text('LOCAL53', [step]))
-    return 0
+    """The engine's Hide: the problem stays listed, hidden for you until it changes or a repair fails."""
+    return problems().dismiss(step)
 
 
 def notify():
-    """The session's side: each kept problem as a notification (org.freedesktop.Notifications, critical, so it
-    stays until the person closes it), once per session and record."""
-    p = problems()
-    runtime = os.environ.get('XDG_RUNTIME_DIR', '')
-    seen_file = os.path.join(runtime, 'sparky-stereo-boot-notified') if runtime else ''
-    try:
-        seen = set(open(seen_file).read().split()) if seen_file else set()
-    except OSError:
-        seen = set()
-    result = 0
-    for entry in p.pending():
-        ident = '%s@%s' % (entry['step'], entry.get('time', ''))
-        if ident in seen:
-            continue
-        body = '%s\n%s' % (p.message(entry), p.text('LOCAL20'))
-        try:
-            call = subprocess.run(['busctl', '--user', 'call', 'org.freedesktop.Notifications',
-                                   '/org/freedesktop/Notifications', 'org.freedesktop.Notifications', 'Notify',
-                                   'susssasa{sv}i', 'Sparky Stereo OS', '0', 'dialog-warning', p.text('LOCAL19'), body,
-                                   '0', '1', 'urgency', 'y', '2', '0'], capture_output=True, text=True, timeout=60)
-            error = call.stderr.strip() if call.returncode else ''
-        except (OSError, subprocess.SubprocessError) as e:
-            error = str(e)
-        if error:
-            log('the notification could not be shown (%s): %s' % (error, p.message(entry, 'en')))
-            result = 1
-            continue
-        seen.add(ident)
-    if seen_file:
-        try:
-            atomic_write(seen_file, '\n'.join(sorted(seen)) + '\n')
-        except OSError as error:
-            log('%s: %s' % (seen_file, error))
-    return result
+    """The session's notifier (sparky-stereo-problems-plasma) shows every kept problem: this starts it."""
+    return problems().notify()
 
 
 def boot_check():

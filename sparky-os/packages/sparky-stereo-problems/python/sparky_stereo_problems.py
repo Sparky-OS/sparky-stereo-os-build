@@ -395,5 +395,7 @@ class Steps:
             return self.dismiss(argv[1])
         if argv == ['notify']:
             return self.notify()
+        if len(argv) == 2 and argv[0] == 'migrate':
+            return 0 if self.migrate(argv[1]) else 1
         print(doc, file=sys.stderr)
         return 2

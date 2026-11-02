@@ -11,7 +11,7 @@
 # stub for GRUB's device probe, which finds no disk in a container. The running kernel comes from
 # SPARKY_STEREO_KERNEL_KEEP_RUNNING; SPARKY_STEREO_KERNEL_KEEP_TEST=1 lifts the container guard, except in "guard".
 # From 0.1.5 (ORDER 345): a failed boot image rebuild after the purge, a failed purge and a cleanup that cannot be
-# queued are said and kept (/var/lib/sparky-stereo-boot/problems/kernel-cleanup.json) and the service fails.
+# queued are said and kept (by the engine, /var/lib/sparky-stereo-problems/sparky-stereo-boot_kernel-cleanup.json) and the service fails.
 import fcntl, glob, json, os, subprocess, sys, tempfile, time
 
 CASE, NEW = sys.argv[1], sys.argv[2]
@@ -132,7 +132,9 @@ def has_image(r):
 
 def kept():
     try:
-        return json.load(open('/var/lib/sparky-stereo-boot/problems/kernel-cleanup.json'))
+        r = json.load(open('/var/lib/sparky-stereo-problems/sparky-stereo-boot_kernel-cleanup.json'))
+        r['key'] = r['message']
+        return r
     except (OSError, ValueError):
         return None
 
