@@ -200,7 +200,7 @@ int main(int argc, char **argv)
         // "Use NAME" of a kept problem: the person's explicit choice of a GPU that can draw, saved; the problem of the
         // old choice is over
         if (useGpu.isEmpty()) {
-            return usage(u"--use needs KEY and GPU"_s);
+            return usage(i18nc("@info:shell --use, KEY and GPU stay as they are", "--use needs KEY and GPU"));
         }
         GraphicsSettings settings;
         if (useKey == u"main-gpu"_s) {
@@ -214,7 +214,7 @@ int main(int argc, char **argv)
                 }
             }
             if (!found) {
-                return usage(u"Unknown kind %1"_s.arg(useKey));
+                return usage(i18nc("@info:shell %1 is the KEY given to --use: main-gpu or a kind of program", "Unknown kind %1", useKey));
             }
         }
         if (!settings.save()) {

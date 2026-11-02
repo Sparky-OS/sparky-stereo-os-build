@@ -220,6 +220,10 @@ check "in German, not the English" "$(pick 'p["text"] != p["text_en"] and p["lan
 check "Use NAME saves that GPU as the person's choice (the action's command)" "$(env_for host --use main-gpu pci-0000:01:00.0; echo $?)" 0
 check "the person's answer is their new choice" "$(grep -c '^MainGpu=pci-0000:01:00.0$' "$CFG")" 1
 check "the problem it answered goes" "$(test -e "$(rec main-gpu)"; echo $?)" 1
+check "--use without its GPU: exit 2, said in German" "$(LANG=de_DE.UTF-8 env_for host --use main-gpu 2>&1 >/dev/null | grep -c '^--use braucht KEY und GPU$'; LANG=de_DE.UTF-8 rc_of env_for host --use main-gpu)" "1
+2"
+check "--use of an unknown kind: exit 2, said in German" "$(LANG=de_DE.UTF-8 env_for host --use nothing pci-0000:01:00.0 2>&1 >/dev/null | grep -c '^Unbekannte Art nothing$'; LANG=de_DE.UTF-8 rc_of env_for host --use nothing pci-0000:01:00.0)" "1
+2"
 mkdir -p "$T/fakebin" && printf '#!/bin/sh\necho "$*" >>%s/systemctl.calls\n' "$T" >"$T/fakebin/systemctl" && chmod 755 "$T/fakebin/systemctl"
 check "--notify starts the session's notifier" "$(PATH=$T/fakebin:$PATH env_for host --notify; echo $?; cat "$T/systemctl.calls")" "0
 --user start sparky-stereo-problems-notifier.service"
