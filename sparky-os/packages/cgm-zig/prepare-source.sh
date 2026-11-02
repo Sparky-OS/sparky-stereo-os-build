@@ -21,7 +21,7 @@ git -C "$SOURCE" archive --format=tar --prefix="cgm-zig-$CGM_ZIG_VERSION/" "$CGM
 tar -xf "$OUT/cgm-zig_${CGM_ZIG_VERSION}.orig.tar.xz" -C "$OUT"
 cp -a "$HERE/debian" "$TREE/"
 mkdir "$TREE/debian/cgm"
-cp "$HERE/"{configure.sh,bootstrap-source.sh,check-stage3-command.py,source.env,ATTRIBUTIONS.md} "$TREE/debian/cgm/"
+cp "$HERE/"{configure.sh,bootstrap-source.sh,build-final.py,check-stage3-command.py,source.env,ATTRIBUTIONS.md} "$TREE/debian/cgm/"
 cp -a "$HERE/tests" "$TREE/debian/cgm/"
 # The source archive carries the exact toolkit that qualifies its build and payload.
 PYTHONPATH="$HERE/../.." python3 -m lean.debian_prepare "$TREE" "$CGM_ZIG_VERSION-1+lc1" --toolkit "$HERE/../.." \

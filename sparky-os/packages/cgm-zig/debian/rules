@@ -5,7 +5,7 @@ export DEB_BUILD_OPTIONS = parallel=4
 export ZIG_GLOBAL_CACHE_DIR = $(CURDIR)/build/global-cache
 export ZIG_LOCAL_CACHE_DIR = $(CURDIR)/build/local-cache
 export ZIG_LIBC = $(CURDIR)/debian/libc.txt
-export LEAN_ZIG = $(CURDIR)/build/zig2
+export LEAN_ZIG = $(CURDIR)/build/consumer/bin/zig
 export LEAN_ZIG_CACHE = $(CURDIR)/build/lean-zig-cache
 export TMPDIR = $(CURDIR)/debian
 
@@ -17,7 +17,7 @@ override_dh_auto_configure:
 	test -f build/CMakeCache.txt
 
 override_dh_auto_build:
-	cmake --build build --parallel 4
+	python3 debian/cgm/build-final.py $(CURDIR)
 
 override_dh_auto_test:
 	test "$$(build/stage3/bin/zig version)" = 0.16.0+cgm.0399d2b19b

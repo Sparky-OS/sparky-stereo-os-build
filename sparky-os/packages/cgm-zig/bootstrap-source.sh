@@ -6,7 +6,7 @@ set -euo pipefail
 SOURCE=${1:?Usage: bootstrap-source.sh EXTRACTED_SOURCE}
 cd "$SOURCE"
 export PYTHONPATH="$SOURCE/debian/sparky-lean-toolkit"
-export LEAN_ZIG="$SOURCE/build/zig2"
+export LEAN_ZIG="$SOURCE/build/consumer/bin/zig"
 PLAN=debian/sparky-lean-languages.json
 test ! -e build
 test ! -e .sparky-lc
@@ -24,7 +24,10 @@ trap 'mv "$PLAN.bootstrap-save" "$PLAN"' EXIT
 python3 -m lean.source_tree project "$SOURCE"
 bash debian/cgm/configure.sh "$SOURCE" "$SOURCE/build"
 mkdir -p "$ZIG_GLOBAL_CACHE_DIR" "$ZIG_LOCAL_CACHE_DIR" "$LEAN_ZIG_CACHE"
-cmake --build build --target zig2 --parallel 4
+# zig2's .core feature set has no version or ast-check command. Build the
+# full compiler first so the Zig consumer can perform both required checks.
+cmake --build build --parallel 4
+mv build/stage3 build/consumer
 test "$("$LEAN_ZIG" version)" = 0.16.0+cgm.0399d2b19b
 # Keep the first pass receipt, restore exact authored inputs, then qualify
 # both languages using the same compiler that will build stage3.

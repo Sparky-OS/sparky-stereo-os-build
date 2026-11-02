@@ -7,7 +7,8 @@ import shlex
 import sys
 
 commands = pathlib.Path(sys.argv[1]).read_text().splitlines()
-rows = [shlex.split(line) for line in commands if 'zig2 build ' in line]
+parsed = [shlex.split(line) for line in commands]
+rows = [args for args in parsed if any(pathlib.Path(a).name in ('zig', 'zig2') and args[i + 1:i + 2] == ['build'] for i, a in enumerate(args))]
 if len(rows) != 1:
     sys.exit(f'cgm-zig: expected one stage3 command, found {len(rows)}')
 args = rows[0]
