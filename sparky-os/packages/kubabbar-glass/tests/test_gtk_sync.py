@@ -86,6 +86,19 @@ cases = [
     ('reload-fail', 'reload-fail', True, 'xsettings-reload', 'No such process'),
     ('pgrep-fail', 'pgrep-fail', True, 'xsettings-reload', 'injected pgrep error'),
 ]
+schemes = {
+    'SparkyStereoOxygen': ('Sparky-Stereo-Oxygen', 'false'),
+    'SparkyStereoOxygenDark': ('Sparky-Stereo-Oxygen-Dark', 'true'),
+    'Oxygen': ('Sparky-Stereo-Oxygen', 'false'),
+    'OxygenDark': ('Sparky-Stereo-Oxygen-Dark', 'true'),
+    'kubabbar-glass': ('Kubabbar-Glass', 'false'),
+    'BreezeDark': ('Breeze-Dark', 'true'),
+    'BreezeLight': ('Breeze', 'false'),
+    'CustomDark': ('Breeze-Dark', 'true'),
+    'Custom': ('Breeze', 'false'),
+    '': ('Breeze', 'false'),
+}
+cases += [('scheme-' + scheme, 'works', True, None, None) for scheme in schemes]
 with tempfile.TemporaryDirectory(prefix='gtk-sync-tests-') as temporary:
     root = Path(temporary)
     stubs = root / 'bin'
@@ -99,7 +112,9 @@ with tempfile.TemporaryDirectory(prefix='gtk-sync-tests-') as temporary:
         config = work / 'config'
         config.mkdir(parents=True)
         source = config / 'kdeglobals'
-        source.write_text('[General]\nColorScheme=OxygenDark\n')
+        scheme = name.removeprefix('scheme-') if name.startswith('scheme-') else 'OxygenDark'
+        expected_theme, expected_dark = schemes[scheme]
+        source.write_text('[General]\nColorScheme=' + scheme + '\n')
         if name == 'unreadable':
             source.chmod(0)
         if xsettings:
@@ -127,7 +142,8 @@ with tempfile.TemporaryDirectory(prefix='gtk-sync-tests-') as temporary:
                           no_success='GTK synchronization completed' not in run.stdout and 'sparky-stereo-gtk-sync: scheme=' not in run.stdout)
         else:
             checks.update(exit_zero=run.returncode == 0, no_problem=not records,
-                          theme='Sparky-Stereo-Oxygen' in (config/'gtk-3.0/settings.ini').read_text())
+                          theme=all('gtk-theme-name=' + expected_theme + '\n' in (config/('gtk-'+v)/'settings.ini').read_text() for v in ('3.0', '4.0')),
+                          dark=all('gtk-application-prefer-dark-theme=' + expected_dark + '\n' in (config/('gtk-'+v)/'settings.ini').read_text() for v in ('3.0', '4.0')))
             if name == 'works':
                 checks['daemon_alive'] = daemon.poll() is None
                 for _ in range(100):
