@@ -5,6 +5,7 @@ Run grub-menu-tests.py fail-{configure,trigger,remove,purge} PACKAGE.deb {en,de}
 The wrapper fails only after the real update-grub completed successfully.
 """
 import os
+import json
 from pathlib import Path
 
 PACKAGE = 'sparky-stereo-grub-l10n'
@@ -57,9 +58,19 @@ def failure_case(action, deb, language, sh, check, calls):
               'the German diagnostic is shown alongside English')
     check(ERROR in output, 'the generator error is shown')
     log = Path('/var/log/sparky-stereo-grub-l10n.log')
-    saved = log.read_text() if log.exists() else ''
-    check(ERROR in saved and english in saved and repair in saved, 'error, exit status and repair are retained')
-    check(log.exists() and log.stat().st_mode & 0o777 == 0o600, 'retained output is readable only by root')
+    record = Path('/var/lib/sparky-stereo-problems/sparky-stereo-grub-l10n_update-grub.json')
+    if configured:
+        # the edition's one engine keeps it (ORDER 350): the error, the exit status and the repair, root's only
+        kept = json.loads(record.read_text()) if record.exists() else {}
+        check(ERROR in kept.get('output', '') and kept.get('status') == 1 and english in kept.get('text_en', '')
+              and repair in kept.get('text_en', '') and kept.get('repair') == [['update-grub']],
+              'error, exit status and repair are kept by the engine (%s)' % sorted(kept))
+        check(record.exists() and record.stat().st_mode & 0o777 == 0o644 and record.stat().st_uid == 0
+              and not log.exists(), "kept in the engine's machine store, writable by root only; no log of its own")
+    else:
+        saved = log.read_text() if log.exists() else ''
+        check(ERROR in saved and english in saved and repair in saved, 'error, exit status and repair are retained')
+        check(log.exists() and log.stat().st_mode & 0o777 == 0o600, 'retained output is readable only by root')
     if not configured:
         check(not Path('/usr/lib/' + PACKAGE + '/merge-mo').exists(),
               'postrm reports the problem after package files have gone')
@@ -71,7 +82,7 @@ def failure_case(action, deb, language, sh, check, calls):
     result = sh(recovery, check=False)
     print(result.stdout + result.stderr, flush=True)
     check(result.returncode == 0 and calls() == before + 1, 'the corrected operation is retried and completes')
-    check(not log.exists(), 'successful regeneration clears the retained problem')
+    check(not log.exists() and not record.exists(), 'successful regeneration clears the retained problem')
     wanted = 'installed' if configured else 'config-files' if action == 'remove' else 'not-installed'
     current = state()
     check(current.split()[-1:] == [wanted] or (action == 'purge' and not current),

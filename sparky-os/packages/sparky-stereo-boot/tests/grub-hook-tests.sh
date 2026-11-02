@@ -6,6 +6,8 @@
 #   grub-hook-tests.sh HOOK FIXTURES
 HOOK=$(readlink -f "$1"); FIX=$(readlink -f "$2")
 PKG=$(dirname "$(dirname "$HOOK")")
+# the problems are kept by the engine (sparky-stereo-problems, 0.1.6), its messages from catalogs of the package's lang/
+CAT=$(mktemp -d); sparky-stereo-problems catalog sparky-stereo-boot "$PKG/lang" "$CAT" --subject LOCAL19 >/dev/null
 pass=0; total=0
 mkroot() {   # mkroot CONNECTOR EDIDFILE [OPTIONS] [GRUBVARS]
 	R=$(mktemp -d); mkdir -p "$R/sys/class/drm/card0-$1" "$R/etc/default" "$R/var/lib/sparky-stereo-boot" "$R/fonts"
@@ -17,7 +19,7 @@ mkroot() {   # mkroot CONNECTOR EDIDFILE [OPTIONS] [GRUBVARS]
 check() {    # check NAME ROOT PRESET EXPECT_GFXMODE EXPECT_PAYLOAD EXPECT_CMDLINE EXPECT_FONT_BASENAME
 	total=$((total + 1))
 	out=$(env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin SPARKY_STEREO_ROOT="$2" SPARKY_FONT_DIR="$2/fonts" \
-		SPARKY_STEREO_LIB="$PKG/lib" SPARKY_STEREO_LANG_DIR="$PKG/lang" LANG=C.UTF-8 bash -c "
+		SPARKY_STEREO_LIB="$PKG/lib" SPARKY_STEREO_LANG_DIR="$PKG/lang" SPARKY_STEREO_PROBLEMS_CATALOG="$CAT:/usr/lib/systemd/catalog" LANG=C.UTF-8 bash -c "
 		GRUB_CMDLINE_LINUX_DEFAULT='quiet splash'; $3
 		. '$HOOK'
 		printf '%s|%s|%s|%s' \"\$GRUB_GFXMODE\" \"\$GRUB_GFXPAYLOAD_LINUX\" \"\$GRUB_CMDLINE_LINUX_DEFAULT\" \"\${GRUB_FONT##*/}\"")
@@ -63,12 +65,12 @@ told() {
 	total=$((total + 1))
 	R=$2
 	out=$(env -i PATH="${4:+$4:}/usr/sbin:/usr/bin:/sbin:/bin" SPARKY_STEREO_ROOT="$R" SPARKY_FONT_DIR="$R/fonts" \
-		SPARKY_STEREO_LIB="$PKG/lib" SPARKY_STEREO_LANG_DIR="$PKG/lang" LANG=C.UTF-8 bash -c "
+		SPARKY_STEREO_LIB="$PKG/lib" SPARKY_STEREO_LANG_DIR="$PKG/lang" SPARKY_STEREO_PROBLEMS_CATALOG="$CAT:/usr/lib/systemd/catalog" LANG=C.UTF-8 bash -c "
 		GRUB_CMDLINE_LINUX_DEFAULT='quiet splash'; $3
 		. '$HOOK'
 		printf '%s|%s' \"\$GRUB_GFXMODE\" \"\${GRUB_FONT##*/}\"" 2> "$R/stderr")
 	step=${7#-}; step=${step%%:*}
-	kept=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["key"])' "$R/var/lib/sparky-stereo-boot/problems/$step.json" 2>/dev/null || echo none)
+	kept=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["message"])' "$R/var/lib/sparky-stereo-problems/sparky-stereo-boot_$step.json" 2>/dev/null || echo none)
 	case $7 in -*) want_kept=none ;; *) want_kept=${7#*:} ;; esac
 	said=$(grep -c -E "$6" "$R/stderr")
 	decided=$(grep -c -E "$8" "$R/var/lib/sparky-stereo-boot/grub-display" 2>/dev/null)
@@ -95,7 +97,7 @@ told 'grub-mkfont fails: said with its error, kept, GRUB font' "$(mkroot eDP-1 /
 told 'the font named in GRUB_STEREO_FONT cannot be read: said and kept' "$(mkroot eDP-1 /tmp/uhd-panel.edid '' 'SPARKY_STEREO_GFXMODE=3840x2160\nSPARKY_STEREO_CONNECTOR=eDP-1\n')" 'GRUB_STEREO_FONT=/nonexistent/font.ttf' '' \
 	'3840x2160,1920x1080,1280x720,1024x768,auto|' 'font of 46 pixels could not be made: /nonexistent/font.ttf: cannot be read' grub-font:LOCAL44 'SOURCE=saved'
 R=$(mkroot eDP-1 /tmp/uhd-panel.edid '' 'SPARKY_STEREO_GFXMODE=3840x2160\nSPARKY_STEREO_CONNECTOR=eDP-1\n')
-mkdir -p "$R/var/lib/sparky-stereo-boot/problems"; echo '{"step": "grub-font", "key": "LOCAL44", "args": ["46", "old"], "time": "x"}' > "$R/var/lib/sparky-stereo-boot/problems/grub-font.json"
+SPARKY_STEREO_ROOT="$R" SPARKY_STEREO_PROBLEMS_CATALOG="$CAT:/usr/lib/systemd/catalog" sparky-stereo-problems keep --machine --quiet sparky-stereo-boot grub-font LOCAL44 46 old
 told 'the font is made again: the kept problem is cleared, the font recorded' "$R" '' '' \
 	'3840x2160,1920x1080,1280x720,1024x768,auto|sparky-46.pf2' "GRUB's resolution: 3840x2160" -grub-font 'FONT=.*sparky-46.pf2'
 python3 - "$FIX/hx855.edid" /tmp/nosize.edid <<'PY2'

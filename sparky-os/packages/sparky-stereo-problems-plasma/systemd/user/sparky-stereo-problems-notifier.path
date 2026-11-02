@@ -1,0 +1,18 @@
+# Created by Daniel Ramos (Capitain Jack) 2026/11/02
+# Copyright 2026 under the GNU GPL3 License
+# A problem kept or changed in any store starts the notifier if it is not running (the stores are flat: only their
+# own entries are watched).
+[Unit]
+Description=A problem of the computer was kept or changed
+Documentation=file:/usr/share/doc/sparky-stereo-problems-plasma/README.md
+ConditionUser=!@system
+PartOf=graphical-session.target
+
+[Path]
+PathChanged=/var/lib/sparky-stereo-problems
+PathChanged=/run/sparky-stereo-problems
+PathChanged=%S/sparky-stereo-problems
+Unit=sparky-stereo-problems-notifier.service
+
+[Install]
+WantedBy=graphical-session.target

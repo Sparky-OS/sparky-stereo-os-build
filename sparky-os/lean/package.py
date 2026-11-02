@@ -266,7 +266,12 @@ def prepare(root, hr_root=None, *, documentation=False):
     if hr and (hr == root or root in hr.parents or hr in root.parents or hr.exists()):
         raise Invalid('HR staging directory must be new and separate')
     rows, originals = [], []
-    for real, row in entries(root):
+    items = list(entries(root))
+    # files another payload file reads as data (Zig's @embedFile) stay as authored, whatever their format
+    readers = project.read_as_data({row['path']: real.read_bytes() for real, row in items
+                                    if row['kind'] == 'file' and project.reads_others(row['path'])},
+                                   (row['path'] for _, row in items)) if not documentation else {}
+    for real, row in items:
         path = row['path']
         row.update(status='left', reason='symlink: retained')
         if row['kind'] == 'file':
@@ -282,6 +287,8 @@ def prepare(root, hr_root=None, *, documentation=False):
                 data = real.read_bytes()
                 if b'\0' in data[:8192]:
                     row['reason'] = 'binary'
+                elif path in readers:
+                    row['reason'] = readers[path]
                 else:
                     r = project.project(path, data, p)
                     row.update(status=r.status, reason=r.reason, handler=r.handler, variant=r.variant)

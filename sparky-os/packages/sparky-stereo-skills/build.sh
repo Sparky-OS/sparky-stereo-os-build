@@ -133,7 +133,7 @@ rm -rf "$S/public"
 cp -a "$P" "$S/public"
 rm -rf "$S/release-toolkit"
 mkdir -p "$S/release-toolkit/lean"
-cp "$TOOLKIT/lean/"*.py "$TOOLKIT/lean/JvmLexer.java" "$S/release-toolkit/lean/"
+cp "$TOOLKIT/lean/"*.py "$TOOLKIT/lean/JvmLexer.java" "$TOOLKIT/lean/ZigTokens.zig" "$S/release-toolkit/lean/"
 cp "$PROVENANCE" "$S/release-toolkit/provenance.sh"
 if [ -f "$TOOLKIT/LICENSE" ]; then
 	cp "$TOOLKIT/LICENSE" "$S/release-toolkit/LICENSE"

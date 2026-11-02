@@ -35,7 +35,7 @@ Options: /etc/default/sparky-stereo-boot (then: sudo sparky-stereo-boot reapply)
 Status: sparky-stereo-boot status
 
 Nothing fails silently.
-When a step of the boot's upkeep cannot do what it is for, it says what failed, why and what to do, in the system's language (and in English beside it, for support), and keeps that, with the command, its exit status and the end of its output, in /var/lib/sparky-stereo-boot/problems until the step succeeds again.
+When a step of the boot's upkeep cannot do what it is for, it says what failed, why and what to do, in the system's language (and in English beside it, for support), and keeps that, with the command, its exit status and the end of its output, in /var/lib/sparky-stereo-problems (the edition's one engine, sparky-stereo-problems) until the step succeeds again.
 - sparky-stereo-boot status lists the kept problems; each is shown as a notification at login and whenever a new one is kept (sparky-stereo-boot-problems.path and .service in the person's session).
 - sudo sparky-stereo-boot repair runs again what each problem names and clears what succeeds; sudo sparky-stereo-boot dismiss STEP hides one by the person's choice (it comes back if the step fails again).
 - Package installation: a failed update-grub fails the package, as grub2's own postinst does (Debian Policy 6.4), so dpkg leaves it half-configured until sudo dpkg --configure -a succeeds. The other steps are said and kept and the package configures, as Debian's own service starts and shim-signed's grub-install do: systemd's reload and the units' start (a unit the system masked is said as its choice), and the certificate on the EFI system partition, which this boot does not need.

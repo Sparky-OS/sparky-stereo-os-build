@@ -85,6 +85,8 @@ while [ $# -gt 0 ]; do
 	shift
 done
 
+# dismiss is the engine's Hide, the person's own (ORDER 350): no administrator
+[ "$ACTION" = dismiss ] && exec python3 "$PROBLEMS" dismiss "$STEP"
 # a root check, unless nothing is written to the system
 if [ "$PRINT" = 0 ] && [ -z "${SPARKY_TIME_OUT:-}" ] && [ "$(id -u)" -ne 0 ]; then
 	printf '%s\n' "$LOCAL5" >&2
@@ -92,7 +94,6 @@ if [ "$PRINT" = 0 ] && [ -z "${SPARKY_TIME_OUT:-}" ] && [ "$(id -u)" -ne 0 ]; th
 fi
 case $ACTION in
 	repair) exec python3 "$PROBLEMS" repair ;;
-	dismiss) exec python3 "$PROBLEMS" dismiss "$STEP" ;;
 esac
 
 # a problem: said and kept (only said with --print, which writes nothing), then the exit status;

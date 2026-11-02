@@ -22,26 +22,24 @@ W=$(mktemp -d "${TMPDIR:-/tmp}/dpkg-stereo-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 D=$W/$PKG
 mkdir -p "$D/DEBIAN" "$D/usr/sbin" "$D/usr/lib/dpkg-stereo/lean" "$D/etc/dpkg/dpkg.cfg.d" "$D/etc/apt/apt.conf.d" \
-	"$D/usr/share/doc/$PKG" "$D/usr/share/sparky/$PKG" "$D/usr/lib/systemd/user/graphical-session.target.wants"
+	"$D/usr/share/doc/$PKG" "$D/usr/share/sparky/$PKG" "$D/usr/lib/systemd/catalog"
 install -m 755 "$HERE/bin/dpkg-stereo" "$D/usr/sbin/dpkg-stereo"
 install -m 755 "$HERE/lib/presquashfs-hook" "$D/usr/lib/dpkg-stereo/presquashfs-hook"
-install -m 644 "$LEAN"/*.py "$LEAN/JvmLexer.java" "$D/usr/lib/dpkg-stereo/lean/"
+install -m 644 "$LEAN"/*.py "$LEAN/JvmLexer.java" "$LEAN/ZigTokens.zig" "$D/usr/lib/dpkg-stereo/lean/"
 install -m 644 "$HERE/etc/dpkg-stereo.cfg" "$D/etc/dpkg/dpkg.cfg.d/dpkg-stereo"
 install -m 644 "$HERE/etc/99dpkg-stereo-hr" "$D/etc/apt/apt.conf.d/99dpkg-stereo-hr"
 install -m 644 "$HERE/copyright" "$D/usr/share/doc/$PKG/copyright"
-# what failed, why and what to do, in the nine languages (0.1.25), and the session's notification of a kept problem
+# what failed, why and what to do, in the nine languages (0.1.25); the edition's one engine keeps a problem and its
+# session notifier shows it (ORDER 350), from these messages built word for word into journal catalogs
 install -m 644 "$HERE"/lang/* "$D/usr/share/sparky/$PKG/"
-for u in dpkg-stereo-problems.path dpkg-stereo-problems.service; do
-	install -m 644 "$HERE/systemd/user/$u" "$D/usr/lib/systemd/user/$u"
-	ln -s ../$u "$D/usr/lib/systemd/user/graphical-session.target.wants/$u"
-done
+sparky-stereo-problems catalog $PKG "$HERE/lang" "$D/usr/lib/systemd/catalog" --subject LOCAL16
 printf '/etc/apt/apt.conf.d/99dpkg-stereo-hr\n/etc/dpkg/dpkg.cfg.d/dpkg-stereo\n' >"$D/DEBIAN/conffiles"
 cat >"$D/DEBIAN/postinst" <<'EOS'
 #!/bin/sh
 # postinst script
 set -e
 # Lean Code never fails dpkg-stereo's own configuration: a step that does not complete is said by dpkg-stereo
-# itself (what, why, what to do), kept in /var/lib/dpkg-stereo/problems and repaired with dpkg-stereo --repair;
+# itself (what, why, what to do), kept by the edition's one engine and repaired with dpkg-stereo --repair;
 # every file stays its package's original or a checked projection
 if [ "$1" = "configure" ] && [ -z "${DPKG_STEREO_NO_PROJECT:-}" ]; then
 	/usr/sbin/dpkg-stereo --repair-consumers --if-changed || true
@@ -79,6 +77,10 @@ cat >"$D/DEBIAN/postrm" <<'EOS'
 #!/bin/sh
 # postrm script
 set -e
+# a problem of a package that is gone cannot be repaired by it (ORDER 350): the engine lets go of them
+if [ "$1" = "remove" ] && command -v sparky-stereo-problems >/dev/null; then
+	sparky-stereo-problems clear --all dpkg-stereo || :
+fi
 if [ "$1" = "purge" ]; then
 	rm -rf /var/lib/dpkg-stereo
 fi
@@ -92,7 +94,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: dpkg, python3
+Depends: dpkg, python3, sparky-stereo-problems (>= 0.1.0)
 Recommends: gcc, node-acorn, nodejs, perl, python3-yaml
 Section: System
 Priority: optional

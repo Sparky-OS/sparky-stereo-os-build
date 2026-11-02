@@ -18,17 +18,20 @@ find "$D" -name '*.so' -o -path '*/usr/bin/sparky-stereo-gpu-env' -o -path '*/us
 # the boot service is on from the start, as the edition's other services are
 mkdir -p "$D/usr/lib/systemd/system/multi-user.target.wants"
 ln -s ../sparky-stereo-gpu-record.service "$D/usr/lib/systemd/system/multi-user.target.wants/sparky-stereo-gpu-record.service"
-# the session's side: each kept problem shown at login and whenever one is kept (0.2.3)
-mkdir -p "$D/usr/lib/systemd/user/graphical-session.target.wants"
-for u in sparky-stereo-graphics-problems.path sparky-stereo-graphics-problems.service; do
-	ln -s ../$u "$D/usr/lib/systemd/user/graphical-session.target.wants/$u"
-done
+# the problems are kept by the edition's one engine and shown by its session notifier (ORDER 350): the page's own
+# messages, word for word from its .po files, as journal catalogs the engine reads in the person's language
+mkdir -p "$D/usr/lib/systemd/catalog"
+sparky-stereo-problems catalog $PACKAGE "$HERE/po" "$D/usr/lib/systemd/catalog" --domain kcm_sparkystereo_graphics \
+	--context "@info" --context "@item kind of program" --context "@action:button" \
+	--subject "@title notification|A graphics choice cannot be used" \
+	--subject-map '{"@info %1 is a file|The machine'"'"'s GPU record, %1, could not be written. Until it is, Automatic treats this computer as not measured. Run: sudo sparky-stereo-gpu-record --apply-known": "@title notification|Graphics needs a repair", "@info %1 is an exit status|systemd could not reload its units after the Graphics page was installed (exit status %1). The boot service that writes the machine'"'"'s GPU record may not start. Run: sudo systemctl daemon-reload": "@title notification|Graphics needs a repair", "@info %1 is a file|A kept problem of the Graphics page cannot be read: %1.": "@title notification|Graphics needs a repair"}'
 install -Dm644 "$HERE/copyright" "$D/usr/share/doc/$PACKAGE/copyright"
 install -m644 "$HERE/README.md" "$D/usr/share/doc/$PACKAGE/README.md"
 mkdir -p "$D/DEBIAN" "$WORK/shlibs/debian"
 printf 'Source: %s\n\nPackage: %s\nArchitecture: amd64\n' "$PACKAGE" "$PACKAGE" >"$WORK/shlibs/debian/control"
-SHLIBS=$(cd "$WORK/shlibs" && dpkg-shlibdeps -O $(find "$D" -type f \( -name '*.so' -o -path '*/usr/bin/sparky-stereo-gpu-env' -o -path '*/usr/bin/sparky-stereo-gpu-record' \)) 2>/dev/null | sed -n 's/^shlibs:Depends=//p')
-DEPENDS="$SHLIBS, kdialog, power-profiles-daemon | tlp-pd | tuned-ppd, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami"
+PRIVATE=$(pkg-config --variable=libdir sparky-stereo-problems)
+SHLIBS=$(cd "$WORK/shlibs" && dpkg-shlibdeps -l"$PRIVATE" --ignore-missing-info -O $(find "$D" -type f \( -name '*.so' -o -path '*/usr/bin/sparky-stereo-gpu-env' -o -path '*/usr/bin/sparky-stereo-gpu-record' \)) 2>/dev/null | sed -n 's/^shlibs:Depends=//p')
+DEPENDS="$SHLIBS, kdialog, power-profiles-daemon | tlp-pd | tuned-ppd, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, sparky-stereo-problems (>= 0.1.0), sparky-stereo-problems-plasma (>= 0.1.0)"
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
 cat >"$D/DEBIAN/control" <<EOS
 Package: $PACKAGE
@@ -70,13 +73,13 @@ Section: System
 Priority: optional
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Standards-Version: 4.7.3
-Build-Depends: cmake, dpkg-dev, extra-cmake-modules, g++, gettext, libkf6config-dev, libkf6coreaddons-dev, libkf6i18n-dev, libkf6kcmutils-dev, libkf6service-dev, qt6-base-dev, qt6-declarative-dev
+Build-Depends: cmake, dpkg-dev, extra-cmake-modules, g++, gettext, libkf6config-dev, libkf6coreaddons-dev, libkf6i18n-dev, libkf6kcmutils-dev, libkf6service-dev, pkgconf, qt6-base-dev, qt6-declarative-dev, sparky-stereo-problems (>= 0.1.0)
 Rules-Requires-Root: no
 Homepage: https://sparkylinux.org
 
 Package: $PACKAGE
 Architecture: amd64
-Depends: \${shlibs:Depends}, kdialog, power-profiles-daemon | tlp-pd | tuned-ppd, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami
+Depends: \${shlibs:Depends}, kdialog, power-profiles-daemon | tlp-pd | tuned-ppd, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, sparky-stereo-problems (>= 0.1.0), sparky-stereo-problems-plasma (>= 0.1.0)
 Recommends: hwdata, switcheroo-control
 Description: Graphics page for System Settings
  Every graphics processor, the main desktop GPU, where programs draw, the GPU
@@ -85,6 +88,16 @@ EOS
 cat >"$S/debian/changelog" <<EOS
 $PACKAGE ($VERSION) unstable; urgency=medium
 
+  * ORDER 350 (Daniel, 2026-11-02: "Why machinery to keep a failure for
+    each?"): the problems are kept by the edition's one engine,
+    sparky-stereo-problems, through its C library; the page's own notifier
+    and user units go: the engine's session notifier shows each problem,
+    with "Use NAME" for each GPU that can draw as the record's own actions
+    (sparky-stereo-gpu-env --use KEY GPU) and Open Graphics settings.
+    --problems and the Graphics page read the engine's records; --notify
+    starts the session's notifier. The messages, word for word from the
+    page's .po files, are built into journal catalogs. Decode on another
+    GPU and the page's choices are untouched.
   * Automatic is a rule, not the person's choice (ORDER 346g): when it
     cannot place a program now (browsers while the power profile cannot be
     read), sparky-stereo-gpu-env says and keeps it as before and exits 5,

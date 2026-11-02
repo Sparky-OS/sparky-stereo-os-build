@@ -3,6 +3,8 @@
 
 #include "problems.h"
 
+#include <sparky-stereo-problems.h>
+
 #include <KLocalizedString>
 
 #include <QDateTime>
@@ -34,14 +36,38 @@ bool Problem::isChoice() const
 namespace Problems
 {
 
+// The problems are kept by the edition's one engine, sparky-stereo-problems (ORDER 350): the machine's in its
+// /var/lib store, the person's in their own; these name the stores, and the engine's root for a test's ROOT
 QString systemDir(const QString &root)
 {
-    return QDir::cleanPath(root + u"/var/lib/sparky-stereo-graphics/problems"_s);
+    return QDir::cleanPath(root + u"/var/lib/sparky-stereo-problems"_s);
 }
 
 QString userDir()
 {
-    return QStandardPaths::writableLocation(QStandardPaths::GenericStateLocation) + u"/sparky-stereo-graphics/problems"_s;
+    return QStandardPaths::writableLocation(QStandardPaths::GenericStateLocation) + u"/sparky-stereo-problems"_s;
+}
+
+static const char s_package[] = "sparky-stereo-graphics";
+
+// the engine's scope of a store, and its root (SPARKY_STEREO_ROOT) for a machine store under a test's root
+static int scopeOf(const QString &dir)
+{
+    if (dir == userDir()) {
+        return SSP_PERSON;
+    }
+    const QString root = dir.chopped(QStringLiteral("/var/lib/sparky-stereo-problems").size());
+    if (root.isEmpty() || root == u"/"_s) {
+        qunsetenv("SPARKY_STEREO_ROOT");
+    } else {
+        qputenv("SPARKY_STEREO_ROOT", root.toUtf8());
+    }
+    return SSP_MACHINE;
+}
+
+static QString engineError()
+{
+    return QString::fromUtf8(ssp_error());
 }
 
 Problem fromResolution(const QString &key, const Resolution &resolution, const QList<Gpu> &gpus, const QString &root, const ProfileReading &profile)
@@ -143,49 +169,168 @@ static Problem fromJson(const QJsonObject &o)
     return p;
 }
 
-static bool sameProblem(const Problem &a, const Problem &b)
+// the action's label lives in the engine's records only: kept here for the message extraction (Messages.sh, xgettext),
+// so the .po files the catalogs are built from keep it
+[[maybe_unused]] static QString extractedLabels()
 {
-    QJsonObject x = toJson(a);
-    QJsonObject y = toJson(b);
-    x.remove(u"time"_s);
-    y.remove(u"time"_s);
-    return x == y;
+    return i18nc("@action:button", "Open Graphics settings");
+}
+
+static QString ctx(const char *context, const char *text)
+{
+    return QString::fromUtf8(context) + u'|' + QString::fromUtf8(text);
+}
+
+static QString addressOf(const QString &id)
+{
+    return id.startsWith(u"pci-"_s) ? id.mid(4) : id;
+}
+
+static QJsonArray kindArg(const QString &key)
+{
+    const char *k = "@item kind of program inside a sentence: The GPU you chose for %1";
+    const char *word = key == u"players"_s ? "players" : key == u"games"_s ? "games" : key == u"browsers"_s ? "browsers" : "other programs";
+    return QJsonArray{ctx(k, word)};
+}
+
+static QJsonArray profileArg(const QString &error, const QString &detail)
+{
+    const char *c = "@info why the power profile could not be read";
+    if (error == u"no-bus"_s) {
+        return QJsonArray{ctx(c, "the system bus cannot be reached")};
+    }
+    if (error == u"no-answer"_s) {
+        return detail.isEmpty() ? QJsonArray{ctx(c, "power-profiles-daemon did not answer")}
+                                : QJsonArray{ctx("@info why the power profile could not be read, %1 is the error", "power-profiles-daemon did not answer (%1)"), detail};
+    }
+    if (error == u"unknown"_s) {
+        return QJsonArray{ctx("@info why the power profile could not be read, %1 is a profile name", "power-profiles-daemon named a profile this page does not know, %1"),
+                          detail};
+    }
+    if (error == u"override"_s) {
+        return QJsonArray{ctx("@info why the power profile could not be read, %1 is a value", "SPARKY_STEREO_POWER_PROFILE is %1, which is not a power profile"), detail};
+    }
+    return QJsonArray{ctx(c, "power-profiles-daemon is not running")};
+}
+
+Sentences sentences(const Problem &p)
+{
+    // the same sentences as message(), named by their catalog keys (CONTEXT|MSGID of this package's .po files), so the
+    // engine says them in each reader's language; autotests/enginetextstest.sh checks the two agree
+    const bool main = p.key == u"main-gpu"_s;
+    const QJsonArray kind = kindArg(p.key);
+    const QString address = addressOf(p.requested);
+    Sentences s;
+    auto todo = [&s](const char *text) {
+        s.more.append(QJsonArray{ctx("@info what to do", text)});
+    };
+    if (p.kind == u"gpu-missing"_s) {
+        s.key = main ? ctx("@info %1 is a PCI address", "The GPU you chose to draw the desktop, at PCI address %1, is not in this computer now.")
+                     : ctx("@info %1 is a kind of program, %2 a PCI address", "The GPU you chose for %1, at PCI address %2, is not in this computer now.");
+        s.args = main ? QJsonArray{address} : QJsonArray{kind, address};
+        todo("Put the GPU back, or choose another GPU in System Settings, Graphics.");
+    } else if (p.kind == u"gpu-no-driver"_s) {
+        if (p.detail.isEmpty()) {
+            s.key = main ? ctx("@info %1 is a PCI address", "The GPU you chose to draw the desktop, at PCI address %1, is in this computer, but no graphics driver is loaded for it.")
+                         : ctx("@info %1 is a kind of program, %2 a PCI address",
+                               "The GPU you chose for %1, at PCI address %2, is in this computer, but no graphics driver is loaded for it.");
+            s.args = main ? QJsonArray{address} : QJsonArray{kind, address};
+        } else {
+            s.key = main ? ctx("@info %1 is a PCI address, %2 a kernel driver",
+                               "The GPU you chose to draw the desktop, at PCI address %1, is in this computer, but its driver, %2, gives it no graphics device.")
+                         : ctx("@info %1 is a kind of program, %2 a PCI address, %3 a kernel driver",
+                               "The GPU you chose for %1, at PCI address %2, is in this computer, but its driver, %3, gives it no graphics device.");
+            s.args = main ? QJsonArray{address, p.detail} : QJsonArray{kind, address, p.detail};
+        }
+        todo("Install or repair its driver, or choose another GPU in System Settings, Graphics.");
+    } else if (p.kind == u"gpu-cannot-render"_s) {
+        const QJsonArray why{ctx("@info why a GPU cannot draw, %1 is a kernel driver", "its driver, %1, gives it no render node"), p.detail};
+        s.key = main ? ctx("@info %1 is a GPU name, %2 says why", "The GPU you chose to draw the desktop, %1, cannot draw now: %2.")
+                     : ctx("@info %1 is a kind of program, %2 a GPU name, %3 says why", "The GPU you chose for %1, %2, cannot draw now: %3.");
+        s.args = main ? QJsonArray{p.gpu, why} : QJsonArray{kind, p.gpu, why};
+        todo("Choose a GPU that can draw in System Settings, Graphics.");
+    } else if (p.kind == u"gpu-not-allowed"_s) {
+        s.key = ctx("@info %1 is a kind of program, %2 a GPU name, %3 a device file", "The GPU you chose for %1, %2, cannot be used by your account: %3 cannot be opened.");
+        s.args = QJsonArray{kind, p.gpu, p.detail};
+        todo("Add your account to the render group (sudo adduser $USER render) and log in again, or choose another GPU in System Settings, Graphics.");
+    } else if (p.kind == u"kind-missing"_s) {
+        s.key = p.requested == u"integrated"_s
+            ? ctx("@info %1 is a kind of program", "You chose the integrated GPU for %1, and this computer has none that can draw now.")
+            : ctx("@info %1 is a kind of program", "You chose the discrete GPU for %1, and this computer has none that can draw now.");
+        s.args = QJsonArray{kind};
+        todo("Choose another GPU in System Settings, Graphics.");
+    } else if (p.kind == u"profile-unreadable"_s) {
+        s.key = ctx("@info %1 is a kind of program, %2 says why", "The GPU for %1 follows the power profile, and the power profile could not be read: %2.");
+        s.args = QJsonArray{kind, profileArg(p.detail, p.extra)};
+        todo("Start power-profiles-daemon (sudo systemctl start power-profiles-daemon), or choose a GPU in System Settings, Graphics.");
+    } else if (p.kind == u"record-write"_s) {
+        s.key = ctx("@info %1 is a file",
+                    "The machine's GPU record, %1, could not be written. Until it is, Automatic treats this computer as not measured. Run: sudo "
+                    "sparky-stereo-gpu-record --apply-known");
+        s.args = QJsonArray{p.detail};
+    } else if (p.kind == u"systemd-reload"_s) {
+        s.key = ctx("@info %1 is an exit status",
+                    "systemd could not reload its units after the Graphics page was installed (exit status %1). The boot service that writes the "
+                    "machine's GPU record may not start. Run: sudo systemctl daemon-reload");
+        s.args = QJsonArray{QString::number(p.status)};
+    } else {
+        s.key = ctx("@info %1 is a file", "A kept problem of the Graphics page cannot be read: %1.");
+        s.args = QJsonArray{p.file};
+    }
+    if (main && p.isChoice()) {
+        s.more.append(QJsonArray{ctx("@info", "At this login the desktop draws on the GPU the system picks.")});
+    }
+    return s;
 }
 
 bool keep(Problem problem, const QString &dir)
 {
-    const QString path = dir + u'/' + problem.key + u".json"_s;
-    // the same problem kept again keeps its first time, so a notification is shown once for it
-    const QList<Problem> kept = read(dir);
-    for (const Problem &old : kept) {
-        if (old.key == problem.key && sameProblem(old, problem)) {
-            return true;
+    // the same problem kept again keeps its first time and its hide (the engine), so it is shown once
+    const int scope = scopeOf(dir);
+    const Sentences s = sentences(problem);
+    QJsonArray actions;
+    if (problem.isChoice()) {
+        // the other GPUs are only ever the person's explicit choice: "Use NAME", which saves that GPU as the choice
+        for (const Alternative &gpu : problem.alternatives) {
+            if (gpu.id != problem.requested) {
+                actions.append(QJsonObject{{u"id"_s, QString(u"use:"_s + gpu.id)},
+                                           {u"label"_s, QJsonArray{ctx("@action:button %1 is a GPU name", "Use %1"), gpu.name}},
+                                           {u"command"_s, QJsonArray{u"sparky-stereo-gpu-env"_s, u"--use"_s, problem.key, gpu.id}}});
+            }
         }
+        actions.append(QJsonObject{{u"id"_s, u"open"_s},
+                                   {u"label"_s, QJsonArray{ctx("@action:button", "Open Graphics settings")}},
+                                   {u"command"_s, QJsonArray{u"systemsettings"_s, u"kcm_sparkystereo_graphics"_s}}});
     }
-    problem.time = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
-    QSaveFile file(path);
-    if (!QDir().mkpath(dir) || !file.open(QIODevice::WriteOnly)) {
-        QTextStream(stderr) << path << ": " << file.errorString() << '\n';
+    QJsonObject details{{u"args"_s, s.args}, {u"more"_s, s.more}, {u"data"_s, toJson(problem)}, {u"actions"_s, actions}};
+    if (problem.status != 0) {
+        details[u"status"_s] = problem.status;
+    }
+    if (!problem.output.isEmpty()) {
+        details[u"output"_s] = problem.output;
+    }
+    if (problem.kind == u"record-write"_s) {
+        details[u"repair"_s] = QJsonArray{QJsonArray{u"sparky-stereo-gpu-record"_s, u"--apply-known"_s}};
+    } else if (problem.kind == u"systemd-reload"_s) {
+        details[u"repair"_s] = QJsonArray{QJsonArray{u"systemctl"_s, u"daemon-reload"_s}};
+    }
+    const QByteArray package(s_package);
+    const QByteArray key = problem.key.toUtf8();
+    const QByteArray message = s.key.toUtf8();
+    const QByteArray json = QJsonDocument(details).toJson(QJsonDocument::Compact);
+    if (ssp_keep(scope, package.constData(), key.constData(), message.constData(), nullptr, 0, json.constData()) != 0) {
+        QTextStream(stderr) << "sparky-stereo-graphics: " << engineError() << '\n';
         return false;
     }
-    file.write(QJsonDocument(toJson(problem)).toJson());
-    if (!file.commit()) {
-        QTextStream(stderr) << path << ": " << file.errorString() << '\n';
-        return false;
-    }
-    QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ReadGroup | QFileDevice::ReadOther);
     return true;
 }
 
 bool clear(const QString &key, const QString &dir)
 {
-    const QString path = dir + u'/' + key + u".json"_s;
-    if (!QFile::exists(path)) {
-        return true;
-    }
-    QFile file(path);
-    if (!file.remove()) {
-        QTextStream(stderr) << path << ": " << file.errorString() << '\n';
+    const int scope = scopeOf(dir);
+    const QByteArray k = key.toUtf8();
+    if (ssp_clear(scope, s_package, k.constData()) != 0) {
+        QTextStream(stderr) << "sparky-stereo-graphics: " << engineError() << '\n';
         return false;
     }
     return true;
@@ -194,19 +339,28 @@ bool clear(const QString &key, const QString &dir)
 QList<Problem> read(const QString &dir, bool system)
 {
     QList<Problem> list;
-    const QStringList names = QDir(dir).entryList({u"*.json"_s}, QDir::Files, QDir::Name);
-    for (const QString &name : names) {
-        QFile file(dir + u'/' + name);
-        Problem p;
-        if (file.open(QIODevice::ReadOnly)) {
-            p = fromJson(QJsonDocument::fromJson(file.readAll()).object());
+    const QString wanted = system ? u"machine"_s : u"person"_s;
+    scopeOf(dir);
+    char *text = ssp_list_json(s_package, nullptr);
+    if (!text) {
+        QTextStream(stderr) << "sparky-stereo-graphics: " << engineError() << '\n';
+        return list;
+    }
+    const QJsonArray all = QJsonDocument::fromJson(QByteArray(text)).array();
+    ssp_free(text);
+    for (const QJsonValue &v : all) {
+        const QJsonObject r = v.toObject();
+        if (r.value(u"scope"_s).toString() != wanted) {
+            continue;
         }
-        if (p.key.isEmpty()) {
+        Problem p = fromJson(r.value(u"data"_s).toObject());
+        if (r.contains(u"unreadable"_s) || p.key.isEmpty()) {
             // a record that cannot be read is still a problem kept: it is shown with its file
-            p.key = name.chopped(5);
+            p.key = r.value(u"key"_s).toString(r.value(u"file"_s).toString().section(u'/', -1));
             p.kind = u"unreadable"_s;
         }
-        p.file = file.fileName();
+        p.time = r.value(u"first"_s).toString();
+        p.file = r.value(u"file"_s).toString();
         p.system = system;
         list.append(p);
     }

@@ -16,6 +16,8 @@ include(ECMQmlModule)
 
 find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Core DBus Quick)
 find_package(KF6 ${KF_MIN_VERSION} REQUIRED COMPONENTS Config CoreAddons I18n KCMUtils)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(PROBLEMS REQUIRED IMPORTED_TARGET GLOBAL sparky-stereo-problems)
 
 add_definitions(-DTRANSLATION_DOMAIN=\"kcm_sparkystereo_graphics\")
 
@@ -33,8 +35,6 @@ install(FILES share/plasma-env/sparky-stereo-graphics.sh DESTINATION /etc/xdg/pl
 file(GLOB SPARKY_MACHINES share/machines/*.conf)
 install(FILES ${SPARKY_MACHINES} DESTINATION ${KDE_INSTALL_DATADIR}/sparky-stereo-graphics/machines)
 install(FILES share/systemd/sparky-stereo-gpu-record.service DESTINATION ${KDE_INSTALL_SYSTEMDUNITDIR}/system)
-install(FILES share/systemd/user/sparky-stereo-graphics-problems.path share/systemd/user/sparky-stereo-graphics-problems.service
-        DESTINATION ${KDE_INSTALL_SYSTEMDUSERUNITDIR})
 
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/po)
     ki18n_install(po)

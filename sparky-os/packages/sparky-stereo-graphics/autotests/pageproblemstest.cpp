@@ -84,13 +84,16 @@ void PageProblemsTest::initTestCase()
     qputenv("DBUS_SYSTEM_BUS_ADDRESS", "unix:path=/nonexistent/system-bus");
     qunsetenv("SPARKY_STEREO_POWER_PROFILE");
     qunsetenv("KWIN_DRM_DEVICES");
+    // the problems are kept by the edition's one engine (ORDER 350), under a root of the test's own: this build of the
+    // page is not an installed package there, and nothing judges it removed
+    qputenv("SPARKY_STEREO_ROOT", m_state.path().toUtf8());
 }
 
 void PageProblemsTest::init()
 {
     QFile::remove(m_config.filePath(u"sparky-stereo-graphicsrc"_s));
     QFile::remove(m_xdg.filePath(u"sparky-stereo-graphicsrc"_s));
-    QDir(m_state.path() + u"/sparky-stereo-graphics"_s).removeRecursively();
+    QDir(m_state.path() + u"/sparky-stereo-problems"_s).removeRecursively();
 }
 
 void PageProblemsTest::aProfileThatCannotBeReadIsSaid()
@@ -126,7 +129,7 @@ void PageProblemsTest::aMissingGpuIsSaidWithTheOthersOffered()
     }
     QCOMPARE(offered, (QStringList{u"pci-0000:0b:00.0"_s, u"pci-0000:01:00.0"_s}));
     // the page keeps it for the notification, as the launchers do
-    QVERIFY(QFile::exists(m_state.path() + u"/sparky-stereo-graphics/problems/games.json"_s));
+    QVERIFY(QFile::exists(m_state.path() + u"/sparky-stereo-problems/sparky-stereo-graphics_games.json"_s));
 }
 
 void PageProblemsTest::theOffersAreTheExplicitChoice()
@@ -141,7 +144,7 @@ void PageProblemsTest::theOffersAreTheExplicitChoice()
     kcm->save();
     qunsetenv("SPARKY_STEREO_POWER_PROFILE");
     QVERIFY(configText().contains("Games=pci-0000:01:00.0"));
-    QVERIFY(!QFile::exists(m_state.path() + u"/sparky-stereo-graphics/problems/games.json"_s));
+    QVERIFY(!QFile::exists(m_state.path() + u"/sparky-stereo-problems/sparky-stereo-graphics_games.json"_s));
     QVERIFY(row(kcm->property("problems").toList(), u"key"_s, u"games"_s).isEmpty());
 }
 

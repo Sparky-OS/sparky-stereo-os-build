@@ -78,7 +78,8 @@ LEAN_ITEM = ('  * Apply verified native Lean Code before compilation and qualifi
 def toolkit_files(sparky_os):
     """The files lean.debian_prepare copies into debian/sparky-lean-toolkit, by their place in the source."""
     files = {f'lean/{p.name}': p for p in (sparky_os / 'lean').glob('*.py')}
-    files.update({'lean/JvmLexer.java': sparky_os / 'lean/JvmLexer.java', 'lean/smoke.tsv': sparky_os / 'lean/smoke.tsv',
+    files.update({'lean/JvmLexer.java': sparky_os / 'lean/JvmLexer.java', 'lean/ZigTokens.zig': sparky_os / 'lean/ZigTokens.zig',
+                  'lean/smoke.tsv': sparky_os / 'lean/smoke.tsv',
                   'provenance.sh': sparky_os / 'repo/provenance.sh', 'LICENSE': sparky_os / 'packages/dpkg-stereo/LICENSE'})
     return files
 
