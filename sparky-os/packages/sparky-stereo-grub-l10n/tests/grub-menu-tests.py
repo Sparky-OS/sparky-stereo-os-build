@@ -74,6 +74,11 @@ def main():
         os.makedirs('/boot/grub', exist_ok=True)
         sh('update-grub')
         check(submenu() == english, "before the package GRUB's menu says %r" % submenu())
+    if CASE.startswith('fail-'):
+        from grub_failure_cases import failure_case
+        failure_case(CASE[5:], DEB, sys.argv[3], sh, check, calls)
+        print('== %s: %s' % (CASE, 'ALL PASS' if all(results) else '%d FAILED' % results.count(False)))
+        sys.exit(0 if all(results) else 1)
     previous = os.environ.get('PREVIOUS_DEB')
     if previous:
         sh(['dpkg', '-i', previous])
