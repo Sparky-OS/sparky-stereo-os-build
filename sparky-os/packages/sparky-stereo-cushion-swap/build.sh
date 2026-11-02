@@ -25,17 +25,13 @@ install -Dm755 -t "$D/usr/lib/systemd/system-sleep" "$HERE/lib/systemd/system-sl
 install -Dm644 -t "$D/usr/lib/tmpfiles.d" "$HERE/lib/tmpfiles.d/cushion-swap.conf"
 install -Dm755 -t "$D/usr/share/initramfs-tools/hooks" "$HERE/share/initramfs-tools/hooks/cushion-swap-resume-offset"
 install -Dm644 -t "$D/etc/logrotate.d" "$HERE/etc/logrotate.d/sparky-stereo-cushion-swap"
-# what is wrong, why and what to do, in the nine languages (0.3.1), and each kept problem shown once in the
-# person's session
+# what is wrong, why and what to do, in the nine languages (0.3.1); the edition's one engine keeps each problem and
+# its session notifier shows it (ORDER 350), from these messages built word for word into journal catalogs
 install -Dm644 -t "$D/usr/share/sparky/$PACKAGE" "$HERE"/lang/*
-mkdir -p "$D/usr/lib/systemd/user/graphical-session.target.wants"
-for u in cushion-swap-problems.path cushion-swap-problems.service; do
-	install -Dm644 "$HERE/lib/systemd/user/$u" "$D/usr/lib/systemd/user/$u"
-	ln -s ../$u "$D/usr/lib/systemd/user/graphical-session.target.wants/$u"
-done
+sparky-stereo-problems catalog $PACKAGE "$HERE/lang" "$D/usr/lib/systemd/catalog" --subject LOCAL16
 install -m644 "$HERE/copyright" "$HERE/README.md" "$D/usr/share/doc/$PACKAGE/"
 GLIBC=$(objdump -T "$D/usr/libexec/cushion-swap/psi-wake" "$D/usr/libexec/cushion-swap/alloc-rate" | sed -n 's/.*GLIBC_\([0-9.]*\).*/\1/p' | sort -V | tail -n 1)
-DEPENDS="bash, libc6 (>= $GLIBC), logrotate, systemd, util-linux"
+DEPENDS="bash, libc6 (>= $GLIBC), logrotate, systemd, util-linux, sparky-stereo-problems (>= 0.1.0)"
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
 cat >"$D/DEBIAN/control" <<EOF
 Package: $PACKAGE
@@ -118,6 +114,10 @@ if [ "$1" = purge ] && [ -x /usr/bin/deb-systemd-helper ]; then
 	deb-systemd-helper purge cushion-swap.service cushion-swap-hibernate.service >/dev/null || true
 	deb-systemd-helper unmask cushion-swap.service cushion-swap-hibernate.service >/dev/null || true
 fi
+# a problem of a package that is gone cannot be repaired by it (ORDER 350): the engine lets go of them
+if [ "$1" = remove ] && command -v sparky-stereo-problems >/dev/null; then
+	sparky-stereo-problems clear --all sparky-stereo-cushion-swap || :
+fi
 if [ "$1" = purge ]; then
 	rm -rf /var/log/cushion-swap
 fi
@@ -150,10 +150,11 @@ $PACKAGE ($VERSION) unstable; urgency=medium
 
   * Nothing fails silently (ORDER 346b, rows U17, U18 and U54 of ORDER 343's
     audit): whatever keeps the daemon from protecting memory, or from
-    protecting it the way it was set, is kept as a problem in
-    /run/cushion-swap/problems, named in the status (PROTECTION, PROBLEMS,
-    REASON, CALIBRATION, MODE_REASON), said once in the journal and shown
-    once per session as a notification, in the nine languages.
+    protecting it the way it was set, is kept as a problem by the edition's
+    one engine, sparky-stereo-problems, for this boot (ORDER 350), named in
+    the status (PROTECTION, PROBLEMS, REASON, CALIBRATION, MODE_REASON), said
+    once in the journal and shown by the engine's session notifier, in the
+    nine languages; the problems go when the package is removed.
   * The package checks that the restarted daemon runs and says whether it
     protects memory; each failed setup step is said with its own error.
   * --status exits 0 only while memory is protected; a stopped, failed or

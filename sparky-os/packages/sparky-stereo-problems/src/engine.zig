@@ -988,6 +988,13 @@ pub fn readRecord(ctx: *Ctx, path: []const u8) Failure!ReadResult {
     return .{ .record = r };
 }
 
+// The kept problem KEY of PACKAGE in SCOPE, as it is
+pub fn get(ctx: *Ctx, scope: Scope, package: []const u8, key: []const u8) Failure!ReadResult {
+    try checkNames(ctx, package, key);
+    const dir = (try storeDir(ctx, scope)) orelse return .missing;
+    return readRecord(ctx, try cat(ctx.a, &.{ dir, "/", try recordName(ctx, package, key) }));
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // The journal
 

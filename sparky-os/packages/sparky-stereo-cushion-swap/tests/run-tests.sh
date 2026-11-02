@@ -113,7 +113,7 @@ build_helper() {
 # that its PID is the one the test stops.
 ENV_COMMON=()
 set_env() {
-	ENV_COMMON=(LOG_EVERY_CYCLE=yes CALIBRATION_DIR="$W/calibration" CUSHION_SWAP_CONFIG=/nonexistent STATE_DIR="$W/state" SWAPON_BIN="$W/bin/swapon" SWAPOFF_BIN="$W/bin/swapoff"
+	ENV_COMMON=(LOG_EVERY_CYCLE=yes CALIBRATION_DIR="$W/calibration" CUSHION_SWAP_CONFIG=/nonexistent STATE_DIR="$W/state" SPARKY_STEREO_ROOT="$W/state/engine" SWAPON_BIN="$W/bin/swapon" SWAPOFF_BIN="$W/bin/swapoff"
 		ALLOC_RATE_HELPER="$W/bin/alloc-rate" CUSHION_SWAP_LANG_DIR="$PKG/lang" LANG=C.UTF-8
 		PSI_WAKE="$W/psi-wake" INITRAMFS_RESUME_PATH=/nonexistent CMDLINE_PATH="$W/cmdline-plain" DEV_DISK_DIR="$W/disk"
 		SYS_POWER_DIR="$W/sys/power" SYS_BLOCK_DIR="$W/empty" FINDMNT_BIN="$W/bin/findmnt" FILEFRAG_BIN="$W/bin/filefrag")
@@ -817,8 +817,10 @@ status_value() {
 	sed -n "s/^$1=//p" "$W/state/status" 2>/dev/null
 }
 
+# the problems are kept by the edition's one engine (ORDER 350), for this boot, under the test's own root
+problem_file() { echo "$W/state/engine/run/sparky-stereo-problems/sparky-stereo-cushion-swap_$1.json"; }
 kept_problem() {
-	[[ -f $W/state/problems/$1 ]] && grep -q -- "$2" "$W/state/problems/$1"
+	[[ -f $(problem_file "$1") ]] && grep -q -- "$2" "$(problem_file "$1")"
 }
 
 # The control: a healthy cycle protects memory, keeps no problem, and --status says so with 0.
@@ -850,7 +852,7 @@ meminfo_unreadable() {
 	[[ $rc == 2 ]] || { echo "  --status exited $rc, not 2"; ok=1; }
 	meminfo "$W/m" 97957892 $((40 * G))
 	daemon MEMINFO_PATH="$W/m" SWAPS_PATH="$W/s" CUSHION_SWAP_AREA="$AREA_OK" LOG_EVERY_CYCLE= "$d" --once >"$W/log" 2>&1
-	[[ ! -e $W/state/problems/meminfo && $(status_value PROTECTION) == yes ]] || { echo "  not cleared when readable again"; ok=1; }
+	[[ ! -e $(problem_file meminfo) && $(status_value PROTECTION) == yes ]] || { echo "  not cleared when readable again"; ok=1; }
 	# Daniel's problems-only default log: that the problem is gone is no log line
 	[[ ! -s $W/log ]] || { echo "  the default log has more than problems: $(head -1 "$W/log")"; ok=1; }
 	return $ok
@@ -894,7 +896,7 @@ deploy_failure_kept() {
 	n=$(grep -c 'could not switch its swap area on' "$W/journal")
 	((n == 1)) || { echo "  said $n times in the journal, not once"; ok=1; }
 	daemon MEMINFO_PATH="$W/m" SWAPS_PATH="$W/s" CUSHION_SWAP_AREA="$AREA_OK" NOW_EPOCH=1006 "$d" --once >>"$W/log" 2>&1
-	[[ ! -e $W/state/problems/deploy-failed ]] || { echo "  not cleared after a successful swapon"; ok=1; }
+	[[ ! -e $(problem_file deploy-failed) ]] || { echo "  not cleared after a successful swapon"; ok=1; }
 	return $ok
 }
 
@@ -941,12 +943,12 @@ stopped_says_why() {
 	[[ $(status_value STATE) == stopped && $(status_value PROTECTION) == no ]] || { echo "  failure: STATE=$(status_value STATE)"; ok=1; }
 	kept_problem service-failed 'result exit-code, exited 1' || { echo "  no service-failed problem"; ok=1; }
 	local first
-	first=$(sed -n 's/^FIRST=//p' "$W/state/problems/service-failed")
+	first=$(sed -n 's/.*"first":"\([^"]*\)".*/\1/p' "$(problem_file service-failed)")
 	sleep 1.1
 	daemon SERVICE_RESULT=signal EXIT_CODE=killed EXIT_STATUS=KILL "$d" --stopped >>"$W/log" 2>&1
-	[[ $(sed -n 's/^FIRST=//p' "$W/state/problems/service-failed") == "$first" ]] || { echo "  a restart loop is not one problem"; ok=1; }
+	[[ -n $first && $(sed -n 's/.*"first":"\([^"]*\)".*/\1/p' "$(problem_file service-failed)") == "$first" ]] || { echo "  a restart loop is not one problem"; ok=1; }
 	daemon SERVICE_RESULT=success EXIT_CODE=killed EXIT_STATUS=TERM "$d" --stopped >>"$W/log" 2>&1
-	[[ ! -e $W/state/problems/service-failed && $(status_value STATE) == stopped ]] || { echo "  a requested stop kept a problem"; ok=1; }
+	[[ ! -e $(problem_file service-failed) && $(status_value STATE) == stopped ]] || { echo "  a requested stop kept a problem"; ok=1; }
 	printf 'STATE=disabled\nPROTECTION=no\n' >"$W/state/status"
 	daemon SERVICE_RESULT=success EXIT_CODE=exited EXIT_STATUS=0 "$d" --stopped >>"$W/log" 2>&1
 	[[ $(status_value STATE) == disabled ]] || { echo "  CUSHION_SWAP=off lost its state"; ok=1; }
@@ -1024,7 +1026,7 @@ calibration_problems() {
 	stop_bg || ok=1
 	((seen)) || { echo "  the failed measurement was not kept"; ok=1; }
 	[[ $(wc -l <"$c/calls" 2>/dev/null) == 3 ]] || { echo "  $(wc -l <"$c/calls" 2>/dev/null) tries, not 3"; ok=1; }
-	[[ $(status_value CALIBRATION) == measured && ! -e $W/state/problems/calibration-failed ]] ||
+	[[ $(status_value CALIBRATION) == measured && ! -e $(problem_file calibration-failed) ]] ||
 		{ echo "  not cleared by the success: CALIBRATION=$(status_value CALIBRATION)"; ok=1; }
 	# measured, but the cache cannot be written: in use, and said
 	rm -rf "$W/state" "$c/calls"
@@ -1141,26 +1143,23 @@ postinst_says_failures() {
 # The session's side: each kept problem once per session, critical when memory is not protected,
 # in the session's language; a notification that cannot be shown is said.
 notify_once() {
+	# the session's notifier (sparky-stereo-problems-plasma) shows the problems, the engine's records: --notify starts it
 	local d=$1 ok=0 rc
-	rm -rf "$W/state" "$W/xdg"
-	mkdir -p "$W/xdg"
+	rm -rf "$W/state"
 	meminfo "$W/m" 97957892 $((40 * G))
 	swaps "$W/s"
 	daemon MEMINFO_PATH="$W/m" SWAPS_PATH="$W/s" "$d" --once >/dev/null 2>&1
-	printf '#!/bin/sh\nprintf "%%s|" "$@" >>%s/busctl.calls; echo >>%s/busctl.calls\n' "$W" "$W" >"$W/bin/busctl"
-	chmod +x "$W/bin/busctl"
-	rm -f "$W/busctl.calls"
-	daemon BUSCTL_BIN="$W/bin/busctl" XDG_RUNTIME_DIR="$W/xdg" LANG=pt_BR.UTF-8 "$d" --notify
+	kept_problem no-area 'no swap area is configured' && grep -q '"severity":"failed"' "$(problem_file no-area)" || { echo "  no failed no-area record"; ok=1; }
+	printf '#!/bin/sh\necho "$*" >>%s/systemctl.calls\n' "$W" >"$W/bin/systemctl-notify"
+	chmod +x "$W/bin/systemctl-notify"
+	rm -f "$W/systemctl.calls"
+	daemon SYSTEMCTL_BIN="$W/bin/systemctl-notify" "$d" --notify
 	rc=$?
-	daemon BUSCTL_BIN="$W/bin/busctl" XDG_RUNTIME_DIR="$W/xdg" LANG=pt_BR.UTF-8 "$d" --notify
-	[[ $rc == 0 && $(wc -l <"$W/busctl.calls") == 1 ]] || { echo "  shown $(wc -l <"$W/busctl.calls" 2>/dev/null) times"; ok=1; }
-	grep -q 'A proteção da memória precisa de atenção|O Cushion Swap não consegue proteger a memória: nenhuma área de swap' "$W/busctl.calls" || { echo "  not in the session's language"; ok=1; }
-	grep -q '|urgency|y|2|' "$W/busctl.calls" || { echo "  not critical"; ok=1; }
-	printf '#!/bin/sh\necho "Failed to connect to bus: No medium found" >&2\nexit 1\n' >"$W/bin/busctl"
-	rm -f "$W/xdg/cushion-swap-notified"
-	daemon BUSCTL_BIN="$W/bin/busctl" XDG_RUNTIME_DIR="$W/xdg" "$d" --notify 2>"$W/log"
+	[[ $rc == 0 ]] && grep -qx -- '--user start sparky-stereo-problems-notifier.service' "$W/systemctl.calls" || { echo "  the session's notifier was not started"; ok=1; }
+	printf '#!/bin/sh\necho "Failed to connect to bus: No medium found" >&2\nexit 1\n' >"$W/bin/systemctl-notify"
+	daemon SYSTEMCTL_BIN="$W/bin/systemctl-notify" "$d" --notify 2>"$W/log"
 	rc=$?
-	[[ $rc == 1 ]] && grep -q 'could not be shown (Failed to connect to bus: No medium found)' "$W/log" || { echo "  a failed notification was not said"; ok=1; }
+	[[ $rc == 1 ]] && grep -q 'Failed to connect to bus: No medium found' "$W/log" || { echo "  a notifier that cannot be started was not said"; ok=1; }
 	return $ok
 }
 

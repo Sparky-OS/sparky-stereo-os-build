@@ -20,12 +20,12 @@
 #   cushion-swap --hibernate-resume  switch it off again after resume if unused
 #   cushion-swap --stopped           the unit's ExecStopPost: says why the daemon is no longer running
 #   cushion-swap --wait-ready EPOCH  the package's check that a daemon started after EPOCH runs and protects
-#   cushion-swap --notify            the session's side: each kept problem once as a desktop notification
+#   cushion-swap --notify            starts the session's notifier, which shows every kept problem
 #   cushion-swap --say KEY [ARG...]  one message of the language files, for the maintainer scripts
 #
 # Nothing fails silently (Daniel, 2026-11-01: "either it works or not and the user must know"). Whatever keeps
-# the daemon from protecting memory, or from protecting it the way it was set, is a problem kept as a file in
-# /run/cushion-swap/problems (what, why and what to do), named in the status (PROTECTION=yes, degraded or no,
+# the daemon from protecting memory, or from protecting it the way it was set, is a problem kept by the edition's one
+# engine for this boot (sparky-stereo-problems; what, why and what to do), named in the status (PROTECTION=yes, degraded or no,
 # PROBLEMS, REASON), said once in the journal and shown once per session as a notification; it clears when it
 # is gone. A running service is never taken for working protection.
 #
@@ -107,7 +107,11 @@ STATE_DIR=${STATE_DIR:-/run/cushion-swap}
 STATE_FILE=$STATE_DIR/state
 STATUS_FILE=$STATE_DIR/status
 HIBERNATE_MARK=$STATE_DIR/hibernate-deployed
-PROBLEM_DIR=$STATE_DIR/problems
+# the problems are kept by the edition's one engine, sparky-stereo-problems, for this boot (ORDER 350): one record per
+# problem in its /run store, its code the record's key; its session notifier shows them
+PROBLEMS_BIN=${PROBLEMS_BIN:-sparky-stereo-problems}
+PROBLEM_PKG=sparky-stereo-cushion-swap
+PROBLEM_DIR=${SPARKY_STEREO_ROOT:-}/run/sparky-stereo-problems
 LANG_DIR=${CUSHION_SWAP_LANG_DIR:-/usr/share/sparky/sparky-stereo-cushion-swap}
 SYSTEMCTL_BIN=${SYSTEMCTL_BIN:-systemctl}
 BUSCTL_BIN=${BUSCTL_BIN:-busctl}
@@ -232,48 +236,50 @@ say() {
 }
 
 # --- Problems ----------------------------------------------------------------
-# One file per problem in $PROBLEM_DIR: FIRST= (when it began, the same while it lasts), EFFECT= (no: memory is
-# not protected; degraded: protected another way than set; notice: protected, something else did not work),
-# KEY= and ARG= lines (the message), TEXT= (the English line, for support). Written only when it changes.
+# One record per problem, kept by the engine in $PROBLEM_DIR/$PROBLEM_PKG_CODE.json, this boot's: its severity
+# (failed: memory is not protected; degraded: protected another way than set; notice: protected, something else did
+# not work), its message (KEY and ARGs), when it began (the same while it lasts) and its English text. Kept only when
+# it changes: the daemon remembers what it kept, and a record another run kept with the same message (the hash of
+# its message in the record's data) is said once, not again.
 declare -A PROBLEM_BODY=()
+problem_file() { printf '%s/%s_%s.json' "$PROBLEM_DIR" "$PROBLEM_PKG" "$1"; }
+json_str() {
+	local v=$1
+	v=${v//\\/\\\\} v=${v//\"/\\\"} v=${v//$'\t'/\\t} v=${v//$'\r'/} v=${v//$'\n'/\\n}
+	printf '"%s"' "$v"
+}
 problem_set() {
-	local code=$1 effect=$2 key=$3 arg body first="" line english file=$PROBLEM_DIR/$1
+	local code=$1 effect=$2 key=$3 arg body hash severity args="" english file
+	file=$(problem_file "$1")
 	shift 3
 	body="EFFECT=$effect"$'\n'"KEY=$key"
-	for arg in "$@"; do body+=$'\n'"ARG=${arg//$'\n'/ }"; done
+	for arg in "$@"; do body+=$'\n'"ARG=${arg//$'\n'/ }"; args+="${args:+,}$(json_str "${arg//$'\n'/ }")"; done
 	[[ ${PROBLEM_BODY[$code]:-} == "$body" && -e $file ]] && return 0
-	local kept=""
-	if [[ -r $file ]]; then
-		while IFS= read -r line; do
-			case $line in FIRST=*) first=${line#FIRST=} ;; EFFECT=* | KEY=* | ARG=*) kept+="${kept:+$'\n'}$line" ;; esac
-		done <"$file"
-	fi
+	hash=$(printf '%s' "$body" | sha1sum) hash=${hash%% *}
 	# the same problem another run of this program kept already: said once, not again
-	if [[ $kept == "$body" ]]; then
+	if [[ -r $file ]] && grep -q "\"body\":\"$hash\"" "$file"; then
 		PROBLEM_BODY[$code]=$body
 		return 0
-	fi
-	if [[ -z $first ]]; then
-		now_ms
-		first=$((NOW_MS / 1000))
 	fi
 	text_into english en "$key" "$@"
 	PROBLEM_BODY[$code]=$body
 	log_err "$english"
 	((DRY_RUN)) && return 0
-	mkdir -p "$PROBLEM_DIR" 2>/dev/null
-	if ! printf 'FIRST=%s\n%s\nTEXT=%s\n' "$first" "$body" "$english" >"$file.tmp" 2>/dev/null || ! mv -f "$file.tmp" "$file" 2>/dev/null; then
-		log_err "cannot keep the problem in $file: the journal line above is all there is"
+	case $effect in no) severity=failed ;; degraded) severity=degraded ;; *) severity=notice ;; esac
+	if ! "$PROBLEMS_BIN" keep --boot --quiet --severity "$severity" "$PROBLEM_PKG" "$code" "$key" \
+		--details "{\"args\":[$args],\"data\":{\"body\":\"$hash\"}}" 2>/dev/null; then
+		log_err "cannot keep the problem $code ($PROBLEMS_BIN keep failed): the journal line above is all there is"
 	fi
 	STATUS_TEXT=""
 }
 
 problem_clear() {
-	local code=$1 file=$PROBLEM_DIR/$1
+	local code=$1 file
+	file=$(problem_file "$1")
 	[[ -n ${PROBLEM_BODY[$code]:-} || -e $file ]] || return 0
 	unset "PROBLEM_BODY[$code]"
 	if ((!DRY_RUN)) && [[ -e $file ]]; then
-		rm -f "$file" 2>/dev/null || log_err "cannot remove $file"
+		"$PROBLEMS_BIN" clear --boot "$PROBLEM_PKG" "$code" 2>/dev/null || log_err "cannot clear the problem $code ($PROBLEMS_BIN clear failed)"
 		# the default log has only real problems (Daniel, 2026-10-10): that one is gone shows in the status, and
 		# in the log only with every-cycle logging
 		[[ $LOG_EVERY_CYCLE == yes ]] && log_cycle "resolved: $code"
@@ -281,24 +287,33 @@ problem_clear() {
 	STATUS_TEXT=""
 }
 
+# The kept problems' codes, oldest file first
+problem_codes() {
+	local file code
+	for file in "$PROBLEM_DIR/${PROBLEM_PKG}_"*.json; do
+		[[ -f $file ]] || continue
+		code=${file##*/${PROBLEM_PKG}_} code=${code%.json}
+		printf '%s\n' "$code"
+	done
+}
+
 # PROTECTION (yes, degraded, no), PROBLEMS (their codes) and REASON (the first one's English line), from every
 # kept problem, the hibernation commands' too.
 protection_state() {
-	local file code line effect text
+	local file code severity text
 	PROTECTION=yes PROBLEMS="" REASON=""
-	for file in "$PROBLEM_DIR"/*; do
-		[[ -f $file && $file != *.tmp ]] || continue
-		code=${file##*/} effect="" text=""
-		while IFS= read -r line; do
-			case $line in EFFECT=*) effect=${line#EFFECT=} ;; TEXT=*) text=${line#TEXT=} ;; esac
-		done <"$file"
+	while IFS= read -r code; do
+		[[ -n $code ]] || continue
+		file=$(problem_file "$code")
+		severity=$(sed -n 's/.*"severity":"\([a-z]*\)".*/\1/p' "$file" 2>/dev/null)
+		text=$("$PROBLEMS_BIN" text --boot --lang en "$PROBLEM_PKG" "$code" 2>/dev/null)
 		PROBLEMS+="${PROBLEMS:+ }$code"
-		case $effect in
-		no) [[ $PROTECTION == no ]] || REASON=$text; PROTECTION=no ;;
+		case $severity in
+		failed) [[ $PROTECTION == no ]] || REASON=$text; PROTECTION=no ;;
 		degraded) [[ $PROTECTION == yes ]] && { PROTECTION=degraded REASON=$text; } ;;
 		*) [[ -z $REASON ]] && REASON=$text ;;
 		esac
-	done
+	done < <(problem_codes)
 }
 
 # Sets NOW_MS (milliseconds) without a subshell: this runs every cycle.
@@ -1309,11 +1324,11 @@ hibernate_resume() {
 
 # problem_message VAR LANG FILE: a kept problem's message in LANG
 problem_message() {
-	local _var=$1 _lang=$2 _line _key="" _args=()
-	while IFS= read -r _line; do
-		case $_line in KEY=*) _key=${_line#KEY=} ;; ARG=*) _args+=("${_line#ARG=}") ;; esac
-	done <"$3"
-	text_into "$_var" "$_lang" "$_key" "${_args[@]}"
+	# the record's text, in the language $2, from the engine (its catalogs are this package's language files)
+	local _code=${3##*/${PROBLEM_PKG}_} _out
+	_code=${_code%.json}
+	_out=$("$PROBLEMS_BIN" text --boot --lang "$2" "$PROBLEM_PKG" "$_code" 2>&1)
+	printf -v "$1" '%s' "$_out"
 }
 
 # The service as systemd has it, for a daemon that is not running: active state, result, unit file state.
@@ -1364,13 +1379,14 @@ print_status() {
 
 # --problems: each kept problem in the system's language (the English line beside it); exit 1 while any.
 print_problems() {
-	local file message english found=0
+	local file code message english found=0
 	lang_code
-	for file in "$PROBLEM_DIR"/*; do
-		[[ -f $file && $file != *.tmp ]] || continue
+	for file in "$PROBLEM_DIR/${PROBLEM_PKG}_"*.json; do
+		[[ -f $file ]] || continue
 		found=1
 		problem_message message "$LANG_CODE" "$file"
-		printf '%s: %s\n' "${file##*/}" "$message"
+		code=${file##*/${PROBLEM_PKG}_}
+		printf '%s: %s\n' "${code%.json}" "$message"
 		if [[ $LANG_CODE != en ]]; then
 			problem_message english en "$file"
 			printf '  (en) %s\n' "$english"
@@ -1450,8 +1466,8 @@ wait_ready() {
 	fi
 	if [[ $protection != yes ]]; then
 		say LOCAL18
-		for file in "$PROBLEM_DIR"/*; do
-			[[ -f $file && $file != *.tmp ]] || continue
+		for file in "$PROBLEM_DIR/${PROBLEM_PKG}_"*.json; do
+			[[ -f $file ]] || continue
 			lang_code
 			problem_message message "$LANG_CODE" "$file"
 			printf 'cushion-swap: %s\n' "$message" >&2
@@ -1460,38 +1476,9 @@ wait_ready() {
 	return 0
 }
 
-# --notify: the session's side. Each kept problem once per session and problem (its code and when it began),
-# as a notification (org.freedesktop.Notifications; critical, so it stays, when memory is not protected).
+# --notify: the session's notifier (sparky-stereo-problems-plasma) shows every kept problem: this starts it.
 notify_session() {
-	local seen_file="" seen=" " file line first code effect title body urgency rc=0 err
-	[[ -n ${XDG_RUNTIME_DIR:-} ]] && seen_file=$XDG_RUNTIME_DIR/cushion-swap-notified
-	[[ -n $seen_file && -r $seen_file ]] && seen+="$(tr '\n' ' ' <"$seen_file") "
-	lang_code
-	text_into title "$LANG_CODE" LOCAL16
-	for file in "$PROBLEM_DIR"/*; do
-		[[ -f $file && $file != *.tmp ]] || continue
-		code=${file##*/} first="" effect=""
-		while IFS= read -r line; do
-			case $line in FIRST=*) first=${line#FIRST=} ;; EFFECT=*) effect=${line#EFFECT=} ;; esac
-		done <"$file"
-		[[ $seen == *" $code@$first "* ]] && continue
-		problem_message body "$LANG_CODE" "$file"
-		urgency=1
-		[[ $effect == no ]] && urgency=2
-		if ! err=$("$BUSCTL_BIN" --user call org.freedesktop.Notifications /org/freedesktop/Notifications \
-			org.freedesktop.Notifications Notify susssasa{sv}i 'Sparky Stereo OS' 0 dialog-warning "$title" "$body" \
-			0 1 urgency y "$urgency" 0 2>&1 >/dev/null); then
-			printf 'cushion-swap: the notification could not be shown (%s): %s\n' "${err##*$'\n'}" "$(problem_message english en "$file"; printf '%s' "$english")" >&2
-			rc=1
-			continue
-		fi
-		seen+="$code@$first "
-	done
-	if [[ -n $seen_file ]]; then
-		printf '%s\n' $seen >"$seen_file.tmp" 2>/dev/null && mv -f "$seen_file.tmp" "$seen_file" 2>/dev/null ||
-			printf 'cushion-swap: cannot write %s\n' "$seen_file" >&2
-	fi
-	return $rc
+	"$SYSTEMCTL_BIN" --user start sparky-stereo-problems-notifier.service
 }
 
 while [[ $# -gt 0 ]]; do

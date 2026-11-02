@@ -25,6 +25,7 @@ const usage_lines = [_]Line{
     .{ .syntax = "hide [SCOPE] PACKAGE KEY", .what = "LOCAL44" },
     .{ .syntax = "show [SCOPE] PACKAGE KEY", .what = "LOCAL45" },
     .{ .syntax = "catalog PACKAGE DIR OUTDIR [--subject KEY[=MESSAGE,...]]... [--keys MESSAGE,...] [--context PREFIX]... [--domain NAME]", .what = "LOCAL47" },
+    .{ .syntax = "text [SCOPE] [--lang LANGUAGES] PACKAGE KEY", .what = "LOCAL63" },
     .{ .syntax = "service-failed [UNIT]", .what = "LOCAL48" },
 };
 const options =
@@ -434,6 +435,28 @@ fn runMain(ctx: *Ctx, argv: []const []const u8) !u8 {
         };
         journalNote(ctx);
         return 0;
+    }
+    if (std.mem.eql(u8, verb, "text")) {
+        // a shell caller's way to say one kept problem (cushion-swap's status)
+        if (pos.len != 2) return wrongUse(ctx, "LOCAL53", &.{"PACKAGE KEY"});
+        switch (engine.get(ctx, scope, pos[0], pos[1]) catch |e| {
+            if (e == error.Failed) return said(ctx);
+            return e;
+        }) {
+            .record => |r| {
+                const shown = try engine.renderRecord(ctx, r, p.lang);
+                _ = engine.writeAll(1, try std.mem.concat(ctx.a, u8, &.{ shown.text, "\n" }));
+                return 0;
+            },
+            .unreadable => |e| {
+                engine.setErr(ctx, "LOCAL25", &.{e}) catch {};
+                return said(ctx);
+            },
+            .missing => {
+                engine.setErr(ctx, "LOCAL18", &.{ pos[1], pos[0] }) catch {};
+                return said(ctx);
+            },
+        }
     }
     if (std.mem.eql(u8, verb, "message-id")) {
         if (pos.len != 2) return wrongUse(ctx, "LOCAL53", &.{"PACKAGE MESSAGE"});
