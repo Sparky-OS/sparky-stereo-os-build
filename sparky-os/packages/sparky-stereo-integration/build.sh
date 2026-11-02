@@ -3,7 +3,7 @@
 # Copyright 2026 under the GNU GPL3 License
 # Builds sparky-stereo-integration (hand-assembled .deb, Paweł's formula): the runner of the edition's integration packs,
 # with the pack generator's source (make-pack.py) retained in the source package for the packs that follow its format.
-# Last update 2026/11/03
+# Last update 2026/11/02
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the output directory}

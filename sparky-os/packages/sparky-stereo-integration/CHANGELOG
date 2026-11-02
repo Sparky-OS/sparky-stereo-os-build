@@ -1,7 +1,9 @@
 -------------------------------------------------------------------------------
-  Version 0.1.2 (2026-11-03)
+  Version 0.1.2 (2026-11-02)
 -------------------------------------------------------------------------------
-  * A program Debian installs under another name (command-not-found's renamed-commands table, ORDER 252b J15): KRunner's missing program runner offers the renamed package first (`fd`: fd-find, run as fdfind; `bat`: bat, run as batcat) and each package that has the name itself after it; Dolphin's packs offer Install for the renamed package, with command-not-found's whole message
+  * A program Debian installs under another name (command-not-found's renamed-commands table, ORDER 252b J15): KRunner's missing program runner offers each package command-not-found names, in its order, the renamed one before the packages that have the command itself when it is the more installed one (`fd`: fd-find, run as fdfind; `bat`: bat, run as batcat) and after them otherwise (`ts`: moreutils, then task-spooler, run as tsp); Dolphin's packs offer Install for the renamed package when it comes first, and for the one other package when the renamed ones come after, with command-not-found's whole message
+  * A renamed program that is installed is a KRunner match of its own, with command-not-found's line as its text, that runs it with the query's arguments in the person's terminal (found as KIO's KTerminalLauncherJob finds it; when none is found, the runner says so in the nine languages)
+  * When command-not-found cannot read its table, its line that says so is the subtext of every KRunner match
   * A command with no renamed package is offered as before: one match, or none when command-not-found names several packages
   * KRunner's runner takes commands of two letters too (it took three or more), so `fd`, `gh` or `rg` typed in KRunner name their package as in the terminal
   * KRunner's runner is enabled by default (X-KDE-PluginInfo-EnabledByDefault=true): KRunner loads a D-Bus runner only when its metadata or krunnerrc enables it, so 0.1.0 and 0.1.1 never ran in KRunner; it stays switchable in KRunner's settings
