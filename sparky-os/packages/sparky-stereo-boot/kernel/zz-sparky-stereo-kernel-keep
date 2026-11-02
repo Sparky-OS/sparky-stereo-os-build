@@ -1,0 +1,15 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/30
+# Copyright 2026 under the GNU GPL3 License
+# After a kernel is installed: the edition keeps two kernels per flavour (sparky-stereo-boot). apt and dpkg hold
+# their lock while this hook runs, so it only records the install; sparky-stereo-kernel-keep.service does the work
+# once they are done. Nothing is recorded in a live session, a chroot or a container.
+[ -x /usr/lib/sparky-stereo-boot/kernel-keep.py ] || exit 0
+version=$1
+# only when the kernel package is configured, as initramfs-tools' own hook
+if [ -n "$DEB_MAINT_PARAMS" ]; then
+	eval set -- "$DEB_MAINT_PARAMS"
+	[ "$1" = configure ] || exit 0
+fi
+/usr/lib/sparky-stereo-boot/kernel-keep.py --queue "$version" || true
+exit 0
