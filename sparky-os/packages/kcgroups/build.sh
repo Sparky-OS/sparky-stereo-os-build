@@ -19,7 +19,7 @@ git clone -q --branch "$TAG" https://github.com/pixelcluster/kcgroups.git "$WORK
 [ "$(git -C "$WORK/up" rev-parse HEAD)" = "$COMMIT" ] || { echo "tag $TAG is not $COMMIT" >&2; exit 1; }
 git -C "$WORK/up" archive --format=tar --prefix="kcgroups-$UPV/" "$COMMIT" | xz -6 > "$WORK/kcgroups_$UPV.orig.tar.xz"
 tar -xJf "$WORK/kcgroups_$UPV.orig.tar.xz" -C "$WORK"
-cp -a "$HERE/debian" "$WORK/kcgroups-$UPV/"
+python3 "${COPY_RECIPE:-$HERE/../../../tools/copy-recipe.py}" "$HERE/debian" "$WORK/kcgroups-$UPV/debian"
 bash "$HERE/../../release/build-dh-lean.sh" "$WORK" "kcgroups-$UPV" "$DEBV+lc1" "$REPO"
 mkdir -p "$OUT"
 cp -a "$WORK"/out/. "$OUT"/

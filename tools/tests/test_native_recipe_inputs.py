@@ -85,6 +85,11 @@ for case in ('red', 'green', 'export'):
                 assert notes, members.keys()
             helper = ('generator-inputs/' if args.kind == 'meta' else '') + 'build-tools/copy-recipe.py'
             expected = baseline_files | {helper} | set(notes)
+            # Lean 0.1.24 bundles its Zig tokenizer; the pre-fix recipe did not.
+            if args.kind == 'skills':
+                tokenizer = 'release-toolkit/lean/ZigTokens.zig'
+                expected |= {tokenizer}
+                assert tar.extractfile(members[tokenizer]).read() == (repo / 'sparky-os/lean/ZigTokens.zig').read_bytes()
             assert members.keys() == expected, (members.keys() - expected, expected - members.keys())
             assert tar.extractfile(members[helper]).read() == (repo / 'tools/copy-recipe.py').read_bytes()
             # Compare the actual indexed inputs, allowing only generated Debian packaging.

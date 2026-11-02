@@ -19,7 +19,7 @@ git clone -q --branch "$TAG" https://gitlab.steamos.cloud/holo/dmemcg-booster.gi
 [ "$(git -C "$WORK/up" rev-parse HEAD)" = "$COMMIT" ] || { echo "tag $TAG is not $COMMIT" >&2; exit 1; }
 git -C "$WORK/up" archive --format=tar --prefix="dmemcg-booster-$UPV/" "$COMMIT" | xz -6 > "$WORK/dmemcg-booster_$UPV.orig.tar.xz"
 tar -xJf "$WORK/dmemcg-booster_$UPV.orig.tar.xz" -C "$WORK"
-cp -a "$HERE/debian" "$WORK/dmemcg-booster-$UPV/"
+python3 "${COPY_RECIPE:-$HERE/../../../tools/copy-recipe.py}" "$HERE/debian" "$WORK/dmemcg-booster-$UPV/debian"
 bash "$HERE/../../release/build-dh-lean.sh" "$WORK" "dmemcg-booster-$UPV" "$DEBV+lc1" "$REPO"
 mkdir -p "$OUT"
 cp -a "$WORK"/out/. "$OUT"/
