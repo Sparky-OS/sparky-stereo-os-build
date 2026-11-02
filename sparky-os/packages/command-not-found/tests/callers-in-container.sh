@@ -28,6 +28,9 @@ cmake --build /tmp/krunner-query >>/out/krunner-query-build.log 2>&1
 apt-get -y update >/out/apt-update-2.log 2>&1
 [ -s /var/lib/command-not-found/commands.db ]
 useradd --create-home --uid 1000 --groups sudo tester
+# a person who has started zsh once has a ~/.zshrc (zsh-newuser-install's choice 0, "a comment"); without it zsh's
+# first-run menu takes the typed line in a pty session
+printf '# Created by newuser for zsh\n' >/home/tester/.zshrc && chown tester: /home/tester/.zshrc
 mkdir -p /usr/local/lib/stand-in /usr/share/sparky-stereo/integrations.d
 cat >/usr/local/lib/stand-in/kdialog <<'X'
 #!/bin/sh

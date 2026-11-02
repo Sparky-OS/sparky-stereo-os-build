@@ -21,6 +21,7 @@ When the renamed program is installed already, the message says so ("Command 'fd
 
 bash (`command_not_found_handle` in Debian's `/etc/bash.bashrc`), zsh (`/etc/zsh_command_not_found`, sourced by sparky-stereo-console's zshrc) and fish (its own handler) print command-not-found's message, so they need nothing else.
 KRunner's missing program runner and Dolphin's packs (sparky-stereo-integration 0.1.2) read the same table: when the first package command-not-found names is the renamed one, KRunner offers each package it names, in its order, and Dolphin offers to install the renamed one; otherwise they offer one package, or none, as before.
+sparky-stereo-integration 0.1.2 also fixes two things the tests found in the KRunner runner: it is enabled by default (KRunner loads a D-Bus runner only when its metadata says `X-KDE-PluginInfo-EnabledByDefault=true` or krunnerrc enables it, and 0.1.0 said neither), and it takes two-letter commands such as `fd` (it took three letters or more).
 
 ## The table
 
@@ -54,7 +55,7 @@ It needs `SPARKY_REPO_DIR` (the published tree) and `SPARKY_LC_ARCHIVE_DIR` (spa
 
 ## Tests
 
-`tests/test-callers.sh CANDIDATES OUT IMAGE` installs today's packages in a fresh Debian testing container (Debian's command-not-found, the published sparky-stereo-integration and sparky-stereo-console), probes `fd`, `bat` and five commands without a renamed package in bash, zsh, fish, KRunner's D-Bus Match and a Dolphin pack, installs the candidates and probes again; `tests/check-callers.py` judges red, green and unchanged, the message in the nine languages, and 300 sampled commands and 23 words that must be unchanged.
+`tests/test-callers.sh CANDIDATES OUT IMAGE` installs today's packages in a fresh Debian testing container (Debian's command-not-found, the published sparky-stereo-integration and sparky-stereo-console, with deb-multimedia), probes `fd`, `bat` and five commands without a renamed package in bash, zsh and fish (with `-i` and in a pty session), the real KRunner library (`tests/krunner-query`, KRunner::RunnerManager with the default krunnerrc), the runner's own D-Bus Match and a Dolphin pack, installs the candidates and probes again; `tests/check-callers.py` judges red, green and unchanged, the message in the nine languages, and 300 sampled commands and 23 words that must be unchanged.
 
 ## Credits
 
