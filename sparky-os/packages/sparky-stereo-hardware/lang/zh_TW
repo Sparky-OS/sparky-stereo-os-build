@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/01
+# Last update 2026/11/02
 LOCAL1="硬體設定"
 LOCAL2="取消"
 LOCAL3="安裝偵測到的硬體支援"
@@ -9,6 +9,7 @@ LOCAL4="安裝偵測到的硬體支援，保留 nouveau"
 LOCAL5="硬體設定：部分步驟失敗"
 LOCAL6="這些步驟沒有完成，也沒有以其他東西取代。每一行說明失敗的內容、原因以及該怎麼做："
 LOCAL7="關閉"
+LOCAL8="您的 NVIDIA 顯示卡是 Maxwell、Pascal 或 Volta 顯示卡，可以用兩種驅動程式執行，結果各不相同，由您選擇。預設的「@INSTALL@」安裝 NVIDIA 的 580 驅動程式：顯示卡以完整時脈執行，支援硬體視訊解碼和 CUDA 12，但沒有 HDMI 3D 模式，因為 NVIDIA 的顯示程式碼是封閉的：3D 電視不會自行切換到 3D，也沒有畫面封裝。Stereo KWin 為手動切換的螢幕提供的紅藍立體、交錯、左右並排和上下排列仍然可用。「@BUTTON@」保留 nouveau，可使用本版本的 HDMI 3D 模式，但 nouveau 以顯示卡的開機時脈執行它，並用軟體解碼視訊。預設選項遵循本版本的原則：硬體視訊解碼開箱即用。"
 LOCAL29="或者依您自己的選擇保留 nouveau（沒有 HDMI 3D）：計畫視窗中的「@BUTTON@」按鈕，或 sparky-stereo-hardware --nvidia nouveau"
 LOCAL30="感測器：sensors-detect 失敗（其輸出在記錄中），因此沒有設定任何感測器模組。請在終端機中執行 sensors-detect 查看原因，然後再次執行硬體設定"
 LOCAL31="感測器：模組 %s 已載入，但沒有出現在 /sys/module 中，因此在這台電腦上無法運作；如果它不應在開機時載入，請將它從 /etc/modules-load.d/sparky-stereo-sensors.conf 中移除"
@@ -35,6 +36,10 @@ LOCAL51="有一個步驟失敗了，但沒有自己的錯誤訊息；記錄 %s �
 LOCAL52="無法顯示計畫視窗（yad 結束代碼為 %s），因此沒有做任何變更。請在終端機中執行 sparky-stereo-hardware --dry-run 查看計畫"
 LOCAL53="laptop-detect 傳回了 %s，因此硬體設定無法分辨筆記型電腦與桌上型電腦，在做任何變更之前就停止了"
 LOCAL54="isenkram 在列出缺少的韌體時傳回了 %s，因此硬體設定在做任何變更之前就停止了（其輸出在記錄中）"
+LOCAL55="NVIDIA：apt 在已設定的軟體庫中找不到 %s（本版本為 Maxwell、Pascal 和 Volta 顯示卡建置的 NVIDIA 580 驅動程式），因此沒有安裝 NVIDIA 驅動程式，也沒有為它做任何變更。請檢查本版本的軟體庫（/etc/apt/sources.list.d/sparky-stereo.sources），執行 apt update 並再次執行硬體設定；@NOUVEAU@"
+LOCAL56="NVIDIA：模組版本 %s 沒有 +sparkyN 後綴，因此不知道它是為哪個 NVIDIA 驅動程式版本建置的，沒有安裝任何東西。請在 https://github.com/Sparky-OS/sparky-stereo-os/issues 回報；@NOUVEAU@"
+LOCAL57="NVIDIA：無法完全清除把 NVIDIA 驅動程式保持在 580 的 %s（apt 失敗，見記錄），因此沒有安裝本版本的開源模組。請執行 dpkg --audit，修正它指出的問題，然後再次執行硬體設定；@NOUVEAU@"
+LOCAL58="或者依您自己的選擇保留 nouveau（以顯示卡的開機時脈使用本版本的 HDMI 3D）：計畫視窗中的「@BUTTON@」按鈕，或 sparky-stereo-hardware --nvidia nouveau"
 LOCAL20="顯示卡驅動程式"
 LOCAL21="此 Live 工作階段為您的 NVIDIA 顯示卡使用本版本的 NVIDIA 驅動程式（開放模組，版本 615）。"
 LOCAL22="此 Live 工作階段為您的 NVIDIA 顯示卡使用 nouveau 驅動程式：本版本的 NVIDIA 驅動程式（開放模組，版本 615）需要 Turing 或更新的顯示卡（GeForce 16 與 20 系列、Quadro RTX、RTX A 系列及更新）。"

@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/05
+# Last update 2026/11/02
 import hashlib
 import pathlib
 import subprocess
@@ -25,7 +25,21 @@ cases = [
      {'firmware-nvidia-graphics'}, {'nvidia-open'}),
     ('ampere-named', {'lspci': '0000:01:00.0 VGA compatible controller [0300]: NVIDIA Corporation GA106 [GeForce RTX 3060] [10de:2504] (rev a1)\n'},
      {'firmware-nvidia-graphics'}, {'nvidia-open'}),
-    ('pascal', {'lspci': '0000:01:00.0 0300: 10de:1b80\n'}, {'firmware-nvidia-graphics'}, set()),
+    # Maxwell, Pascal and Volta: NVIDIA's 580 driver, the last for them, built by the edition (ORDER 354); no RTD3, which
+    # needs a Turing card or newer, not even on a laptop
+    ('pascal', {'lspci': '0000:01:00.0 0300: 10de:1b80\n'}, {'firmware-nvidia-graphics'}, {'nvidia-legacy-580xx'}),
+    ('maxwell-laptop', {'laptop': '0', 'lspci': '0000:01:00.0 0302: 10de:13c2\n'},
+     {'firmware-nvidia-graphics', 'task-laptop', 'power-profiles-daemon'}, {'nvidia-legacy-580xx'}),
+    ('volta', {'lspci': '0000:01:00.0 0300: 10de:1d81\n'}, {'firmware-nvidia-graphics'}, {'nvidia-legacy-580xx'}),
+    ('kepler', {'lspci': '0000:01:00.0 0300: 10de:1180\n'}, {'firmware-nvidia-graphics'}, set()),
+    ('legacy-subsystem', {'lspci': '0000:01:00.0 0302: 10de:137d\n\tSubsystem: 17aa:3699\n'},
+     {'firmware-nvidia-graphics'}, {'nvidia-legacy-580xx'}),
+    ('legacy-wrong-subsystem', {'lspci': '0000:01:00.0 0302: 10de:137d\n\tSubsystem: 17aa:ffff\n'},
+     {'firmware-nvidia-graphics'}, set()),
+    ('mixed-legacy-turing', {'lspci': '0000:01:00.0 0300: 10de:1b80\n0000:02:00.0 0300: 10de:21c4\n'},
+     {'firmware-nvidia-graphics'}, set()),
+    ('legacy-arm', {'architecture': 'arm64', 'lspci': '0000:01:00.0 0300: 10de:1b80\n'},
+     {'firmware-nvidia-graphics'}, set()),
     ('unknown', {'lspci': '0000:01:00.0 0302: 10de:ffff\n'}, {'firmware-nvidia-graphics'}, set()),
     ('mixed', {'lspci': '0000:01:00.0 0300: 10de:2504\n0000:02:00.0 0302: 10de:1b80\n'},
      {'firmware-nvidia-graphics'}, set()),

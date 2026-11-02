@@ -1,11 +1,12 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/01
+# Last update 2026/11/02
 # Nothing is replaced by something else behind the person's back: a step that fails says what failed, why and what to do
 # (ERROR lines, a summary at the end, the same in a window when the menu started it) and the setup exits non-zero; another
 # path, nouveau instead of the edition's NVIDIA driver, is only the person's own choice (--nvidia nouveau, or the plan
-# window's button). Daniel, 2026-11-01: "either it works or not and the user must know".
+# window's button). Daniel, 2026-11-01: "either it works or not and the user must know". The edition's NVIDIA driver is the
+# one for the card: its open modules with HDMI 3D on Turing and newer, NVIDIA's 580 driver on Maxwell, Pascal and Volta.
 set -Eeuo pipefail
 if ((EUID != 0)); then echo 'Run as root (use the Hardware Setup menu entry).'; exit 1; fi
 export LC_ALL=C.UTF-8
@@ -26,7 +27,10 @@ while (($#)); do
 		--fixture) shift; fixture=${1:?Missing fixture directory} ;;
 		--rig-driver) shift; rig_driver=${1:?Missing rig driver package} ;;
 		--nvidia) shift; nvidia_choice=${1:?Missing NVIDIA choice: edition or nouveau} ;;
-		--help) echo 'sparky-stereo-hardware [--auto] [--dry-run] [--fixture DIRECTORY] [--rig-driver PACKAGE] [--nvidia edition|nouveau]'; exit 0 ;;
+		--help) echo 'sparky-stereo-hardware [--auto] [--dry-run] [--fixture DIRECTORY] [--rig-driver PACKAGE] [--nvidia edition|nouveau]'
+			echo '  --nvidia edition (the default): the edition'"'"'s NVIDIA driver for the card: its open modules with HDMI 3D on Turing and newer, NVIDIA'"'"'s 580 driver on Maxwell, Pascal and Volta'
+			echo '  --nvidia nouveau: keep nouveau'
+			exit 0 ;;
 		*) echo "Unknown option: $1" >&2; exit 2 ;;
 	esac
 	shift
@@ -131,6 +135,21 @@ if $dry; then
 			fi
 		fi
 	fi
+	if grep -Fxq $'action\tnvidia-legacy-580xx' "$WORK/plan"; then
+		if [[ $nvidia_choice == nouveau ]]; then
+			log "Would keep nouveau for the NVIDIA graphics, as chosen (--nvidia nouveau), with the edition's HDMI 3D: NVIDIA's 580 driver would not be installed"
+		elif ! module_info=$(apt-cache show --no-all-versions nvidia-legacy-580xx-kernel-dkms 2>/dev/null) || [[ -z $module_info ]]; then
+			log "Would stop with an ERROR: apt finds no nvidia-legacy-580xx-kernel-dkms, the edition's build of NVIDIA's 580 driver, in the configured repositories"
+		else
+			nvidia_version=$(nvidia_version_of "$(sed -n 's/^Version: //p' <<<"$module_info" | head -n1)" sparky)
+			log "Would install sparky-stereo-nvidia-legacy-580xx-driver-lock first"
+			if [[ -n $nvidia_version ]]; then
+				log "Would install nvidia-driver=$nvidia_version nvidia-legacy-580xx-kernel-dkms libnvcuvid1=$nvidia_version nvidia-vaapi-driver by name, downgrades allowed (a newer NVIDIA user space goes back to 580, and the open modules go)"
+			else
+				log "Would stop with an ERROR: the module's version has no +sparkyN suffix, so the NVIDIA driver version it is built for is unknown"
+			fi
+		fi
+	fi
 	exit 0
 fi
 
@@ -140,10 +159,17 @@ if ! $auto; then
 	# the plan installs the edition's NVIDIA driver), or cancel. yad gives 1 for Cancel and 252 for a closed window; any
 	# other code means the window itself failed, which is said, never taken as an answer.
 	buttons=(--button="$LOCAL2:1")
-	if grep -Fxq $'action\tnvidia-open' "$WORK/plan"; then buttons+=(--button="$LOCAL4:2"); fi
+	if grep -Eq $'^action\tnvidia-(open|legacy-580xx)$' "$WORK/plan"; then buttons+=(--button="$LOCAL4:2"); fi
 	buttons+=(--button="$LOCAL3:0")
+	# A Maxwell, Pascal or Volta card has two drivers that give different results: both are said above the plan, in the
+	# person's language, with the default marked and why (LOCAL8; its @INSTALL@ and @BUTTON@ are the two buttons' labels).
+	explain=()
+	if grep -Fxq $'action\tnvidia-legacy-580xx' "$WORK/plan"; then
+		text=${LOCAL8//@INSTALL@/$LOCAL3}
+		explain=(--text="${text//@BUTTON@/$LOCAL4}")
+	fi
 	answer=0
-	yad --text-info --title="$LOCAL1" --filename="$WORK/plan" --width=760 --height=500 "${buttons[@]}" || answer=$?
+	yad --text-info --title="$LOCAL1" --filename="$WORK/plan" --width=760 --height=500 "${explain[@]}" "${buttons[@]}" || answer=$?
 	case $(plan_answer "$answer") in
 		edition) ;;
 		nouveau) nvidia_choice=nouveau ;;
@@ -194,6 +220,13 @@ if printf '%s\n' "${packages[@]}" | grep -Fxq firmware-nvidia-graphics; then
 			log "NVIDIA: nouveau stays, as you chose (--nvidia nouveau), so the edition's NVIDIA driver with HDMI 3D was not installed. Run Hardware Setup again without that choice to install it"
 		else
 			setup_nvidia || failed=1
+		fi
+	fi
+	if grep -Fxq $'action\tnvidia-legacy-580xx' "$WORK/plan"; then
+		if [[ $nvidia_choice == nouveau ]]; then
+			log "NVIDIA: nouveau stays, as you chose (--nvidia nouveau), with the edition's HDMI 3D, so NVIDIA's 580 driver was not installed. Run Hardware Setup again without that choice to install it"
+		else
+			setup_nvidia legacy-580xx || failed=1
 		fi
 	fi
 fi

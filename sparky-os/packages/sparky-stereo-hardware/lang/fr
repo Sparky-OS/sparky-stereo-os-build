@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/01
+# Last update 2026/11/02
 LOCAL1="Configuration du matériel"
 LOCAL2="Annuler"
 LOCAL3="Installer le support correspondant"
@@ -9,6 +9,7 @@ LOCAL4="Installer la prise en charge correspondante, garder nouveau"
 LOCAL5="Configuration du matériel : certaines étapes ont échoué"
 LOCAL6="Ces étapes n'ont pas été effectuées, et rien n'a été mis à leur place. Chaque ligne dit ce qui a échoué, pourquoi et quoi faire :"
 LOCAL7="Fermer"
+LOCAL8="Votre carte NVIDIA est une Maxwell, Pascal ou Volta, et deux pilotes la font fonctionner, avec des résultats différents ; c'est vous qui choisissez. « @INSTALL@ », le choix par défaut, installe le pilote 580 de NVIDIA : la carte à ses fréquences complètes, le décodage vidéo matériel et CUDA 12, mais aucun mode HDMI 3D, car le code d'affichage de NVIDIA est fermé : un téléviseur 3D ne passe pas de lui-même en 3D, et il n'y a pas de frame packing. L'anaglyphe, l'entrelacé, le côte à côte et le haut et bas de Stereo KWin pour un écran basculé à la main fonctionnent toujours. « @BUTTON@ » garde nouveau, avec les modes HDMI 3D de l'édition, mais nouveau fait tourner la carte à ses fréquences de démarrage et décode la vidéo en logiciel. Le choix par défaut suit la règle de l'édition : le décodage vidéo matériel fonctionne dès l'installation."
 LOCAL29="ou gardez nouveau, sans HDMI 3D, par votre propre choix : le bouton « @BUTTON@ » de la fenêtre du plan, ou sparky-stereo-hardware --nvidia nouveau"
 LOCAL30="Capteurs : sensors-detect a échoué (sa sortie est dans le journal), donc aucun module de capteur n'a été configuré. Lancez sensors-detect dans un terminal pour savoir pourquoi, puis relancez la Configuration du matériel"
 LOCAL31="Capteurs : le module %s a été chargé mais n'apparaît pas dans /sys/module, donc il ne fonctionne pas sur cette machine ; retirez-le de /etc/modules-load.d/sparky-stereo-sensors.conf s'il ne doit pas être chargé au démarrage"
@@ -35,6 +36,10 @@ LOCAL51="Une étape a échoué sans son propre message d'erreur ; le journal %s 
 LOCAL52="La fenêtre du plan n'a pas pu s'afficher (yad a quitté avec %s), donc rien n'a été changé. Lancez sparky-stereo-hardware --dry-run dans un terminal pour lire le plan"
 LOCAL53="laptop-detect a renvoyé %s, donc la Configuration du matériel ne peut pas distinguer un portable d'un ordinateur de bureau et s'est arrêtée avant de modifier quoi que ce soit"
 LOCAL54="isenkram a renvoyé %s en listant le micrologiciel manquant, donc la Configuration du matériel s'est arrêtée avant de modifier quoi que ce soit (sa sortie est dans le journal)"
+LOCAL55="NVIDIA : apt ne trouve pas %s, la version de l'édition du pilote 580 de NVIDIA pour les cartes Maxwell, Pascal et Volta, dans les dépôts configurés, donc le pilote de NVIDIA n'a pas été installé et rien n'a été changé pour lui. Vérifiez le dépôt de l'édition (/etc/apt/sources.list.d/sparky-stereo.sources), lancez apt update, puis relancez la Configuration du matériel ; @NOUVEAU@"
+LOCAL56="NVIDIA : la version du module %s n'a pas le suffixe +sparkyN, on ne sait donc pas pour quelle version du pilote de NVIDIA il est construit, et rien n'a été installé. Signalez-le sur https://github.com/Sparky-OS/sparky-stereo-os/issues ; @NOUVEAU@"
+LOCAL57="NVIDIA : %s, qui maintiennent le pilote de NVIDIA à la version 580, n'ont pas pu être purgés (apt a échoué, voir le journal), donc les modules ouverts de l'édition n'ont pas été installés. Lancez dpkg --audit, corrigez ce qu'il signale, puis relancez la Configuration du matériel ; @NOUVEAU@"
+LOCAL58="ou gardez nouveau, avec le HDMI 3D de l'édition aux fréquences de démarrage de la carte, par votre propre choix : le bouton « @BUTTON@ » de la fenêtre du plan, ou sparky-stereo-hardware --nvidia nouveau"
 LOCAL20="Pilote graphique"
 LOCAL21="Cette session live utilise le pilote NVIDIA de l'édition (modules ouverts, version 615) pour votre carte graphique NVIDIA."
 LOCAL22="Cette session live utilise le pilote nouveau pour votre carte graphique NVIDIA : le pilote NVIDIA de l'édition (modules ouverts, version 615) demande une carte Turing ou plus récente (GeForce séries 16 et 20, Quadro RTX, série RTX A et suivantes)."

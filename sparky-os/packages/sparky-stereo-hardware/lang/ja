@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/01
+# Last update 2026/11/02
 LOCAL1="ハードウェア設定"
 LOCAL2="キャンセル"
 LOCAL3="検出したハードウェアのサポートをインストール"
@@ -9,6 +9,7 @@ LOCAL4="検出したハードウェアのサポートをインストールし、
 LOCAL5="ハードウェア設定: 一部の手順が失敗しました"
 LOCAL6="これらの手順は実行されず、代わりのものも設定されていません。各行に、失敗した内容、その理由、対処方法を示します:"
 LOCAL7="閉じる"
+LOCAL8="お使いの NVIDIA カードは Maxwell、Pascal、Volta のいずれかで、結果の異なる 2 つのドライバーで動かせます。選ぶのはあなたです。既定の「@INSTALL@」は NVIDIA の 580 ドライバーをインストールします。カードは本来のクロックで動き、ハードウェアによる動画デコードと CUDA 12 が使えますが、NVIDIA の表示コードは非公開のため HDMI 3D モードはありません。3D テレビは自動で 3D に切り替わらず、フレームパッキングもありません。手動で切り替える画面向けの Stereo KWin のアナグリフ、インターリーブ、サイドバイサイド、トップアンドボトムは引き続き使えます。「@BUTTON@」は nouveau のままにし、エディションの HDMI 3D モードが使えますが、nouveau はカードを起動時のクロックで動かし、動画はソフトウェアでデコードします。既定の選択は、ハードウェアによる動画デコードを最初から使えるようにするというエディションの方針に従っています。"
 LOCAL29="または、HDMI 3D なしの nouveau をご自身の選択として使い続けることもできます：計画ウィンドウのボタン「@BUTTON@」、または sparky-stereo-hardware --nvidia nouveau"
 LOCAL30="センサー: sensors-detect が失敗したため（出力はログにあります）、センサーモジュールは設定されていません。端末で sensors-detect を実行して理由を確認し、もう一度ハードウェア設定を実行してください"
 LOCAL31="センサー: モジュール %s は読み込まれましたが /sys/module に現れないため、このマシンでは動作しません。起動時に読み込むべきでない場合は /etc/modules-load.d/sparky-stereo-sensors.conf から削除してください"
@@ -35,6 +36,10 @@ LOCAL51="固有のエラーメッセージなしに失敗した手順があり�
 LOCAL52="計画ウィンドウを表示できなかったため（yad の終了コード %s）、何も変更されていません。端末で sparky-stereo-hardware --dry-run を実行して計画を読んでください"
 LOCAL53="laptop-detect が %s を返したため、ハードウェア設定はノートパソコンとデスクトップを区別できず、何も変更せずに停止しました"
 LOCAL54="不足しているファームウェアの一覧中に isenkram が %s を返したため、ハードウェア設定は何も変更せずに停止しました（出力はログにあります）"
+LOCAL55="NVIDIA: 設定されたリポジトリに、Maxwell・Pascal・Volta カード向けの NVIDIA 580 ドライバーのエディション版 %s が見つからないため、NVIDIA ドライバーはインストールされず、そのための変更も行われていません。エディションのリポジトリ（/etc/apt/sources.list.d/sparky-stereo.sources）を確認し、apt update とハードウェア設定をもう一度実行してください。@NOUVEAU@"
+LOCAL56="NVIDIA: モジュールのバージョン %s に +sparkyN の接尾辞がないため、どの NVIDIA ドライバーのバージョン向けにビルドされたか不明で、何もインストールされていません。https://github.com/Sparky-OS/sparky-stereo-os/issues に報告してください。@NOUVEAU@"
+LOCAL57="NVIDIA: NVIDIA ドライバーを 580 に固定している %s を完全に削除できなかったため（apt が失敗しました。ログを参照）、エディションのオープンモジュールはインストールされていません。dpkg --audit を実行し、示された問題を直してから、もう一度ハードウェア設定を実行してください。@NOUVEAU@"
+LOCAL58="または、カードの起動時クロックでエディションの HDMI 3D が使える nouveau をご自身の選択として使い続けることもできます：計画ウィンドウのボタン「@BUTTON@」、または sparky-stereo-hardware --nvidia nouveau"
 LOCAL20="グラフィックドライバー"
 LOCAL21="このライブセッションでは、NVIDIA グラフィックにエディションの NVIDIA ドライバー（オープンモジュール、バージョン 615）を使用しています。"
 LOCAL22="このライブセッションでは、NVIDIA グラフィックに nouveau ドライバーを使用しています。エディションの NVIDIA ドライバー（オープンモジュール、バージョン 615）には Turing 以降のカード（GeForce 16・20 シリーズ、Quadro RTX、RTX A シリーズ以降）が必要です。"

@@ -1,3 +1,23 @@
+sparky-stereo-hardware (0.1.18) unstable; urgency=medium
+
+  * Maxwell, Pascal and Volta cards get NVIDIA's 580 driver, the last for
+    them, with the edition's build of its kernel modules
+    (nvidia-legacy-580xx-kernel-dkms) and its own driver lock, picked by
+    PCI ID from the legacy_580.xx table of NVIDIA's 615.71.09 README.
+    Before, they got no driver offer. ORDER 354.
+  * The plan window shows both drivers for such a card, in the nine
+    languages: NVIDIA's 580 driver (the default) and nouveau (the
+    edition's HDMI 3D at the card's boot clocks).
+  * The 580 path installs its lock first, then the driver with downgrades
+    allowed; no CUDA repository and no runtime power management on these
+    cards. Every failure says what failed, why and what to do.
+  * The open modules after the 580 driver: its lock and module are purged
+    first.
+  * Kepler and older cards name the NVIDIA legacy branch that last ran
+    them; the edition does not build it, and the card keeps nouveau.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 02 Nov 2026 18:00:00 -0300
+
 sparky-stereo-hardware (0.1.16) unstable; urgency=medium
 
   * No fallback to nouveau: when the edition's NVIDIA module is missing,
