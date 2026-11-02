@@ -16,4 +16,12 @@
     message's MESSAGE_ID
   * Every failed system service is told: a top-level service.d drop-in names sparky-stereo-problems-failed@ in
     OnFailure= (systemd.unit(5)), which keeps the service's own last lines with systemd's restart as the repair
-  * Repairs of the machine's problems through pkexec and one polkit action, org.sparkylinux.sparkystereo.problems.repair
+  * Repairs of the machine's problems through pkexec and one polkit action,
+    org.sparkylinux.sparkystereo.problems.repair, which runs only repair of what root kept
+  * The record keeps its English text (text_en, shown when no catalog has its message any more), the package's own
+    fields (data) and further sentences (more, what to do); a repair whose command keeps the problem again is not a
+    repair; clear --all PACKAGE at its removal, and the problems of a package that is not installed any more go
+  * The catalog builder reads gettext .po files too (CONTEXT|MSGID, %1..%26 in any order); text, a shell caller's
+    way to say one kept problem; the command's own texts in the nine languages; the command says a kept problem on
+    standard error unless --quiet
+  * Python: Steps, the problems.py commands of the edition's packages answered by the engine, with migrate
