@@ -1,33 +1,51 @@
 #!/usr/bin/python3
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/24
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/24
+# Last update 2026/11/03
 # KRunner's missing program runner (a D-Bus runner, org.kde.krunner1): a typed program that is not installed names the package
 # that provides it, with command-not-found's own message, and the match installs it by the same route as Dolphin's actions
-# (sparky-stereo-integration install). It matches only when command-not-found names exactly one package.
+# (sparky-stereo-integration install). It matches only when command-not-found names exactly one package, or when the first
+# package it names is one that Debian installs the command from under another name (its renamed-commands table: `fd` is
+# fd-find's `fdfind`, `bat` is bat's `batcat`); then each package it names is a match, in its order, the renamed one first.
 import re, shutil, subprocess, sys
 import dbus, dbus.mainloop.glib, dbus.service
 from gi.repository import GLib
 
 NAME = 'org.sparky.stereo.MissingProgram'
 CNF = '/usr/lib/command-not-found'
+RENAMED = '/usr/share/command-not-found/renamed-commands'
 HELPER_MATCH = 70
 IDLE_SECONDS = 120
 
 
+def renamed(command):
+    # the packages that install this command under another name, from command-not-found's table
+    try:
+        with open(RENAMED) as fp:
+            rows = [line.split() for line in fp if line.strip() and not line.lstrip().startswith('#')]
+    except OSError:
+        return set()
+    return {row[1] for row in rows if len(row) == 3 and row[0] == command}
+
+
 def lookup(command):
-    # command-not-found's own lookup and message; (message lines, package) or None
+    # command-not-found's own lookup and message: [(its header line, its install line, package)] in its order
     if not re.fullmatch(r'[a-z0-9][a-z0-9._+-]{2,60}', command) or shutil.which(command):
-        return None
+        return []
     try:
         out = subprocess.run([CNF, '--', command], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=20)
     except (OSError, subprocess.SubprocessError):
-        return None
-    lines = [l for l in out.stdout.splitlines() if l.strip()]
-    pkgs = {m.group(1) for l in lines for m in [re.search(r'apt install ([a-z0-9][a-z0-9.+-]*)', l)] if m}
-    if len(pkgs) != 1:
-        return None
-    return lines, pkgs.pop()
+        return []
+    offers, header = [], None
+    for line in (l for l in out.stdout.splitlines() if l.strip()):
+        m = re.search(r'apt install ([a-z0-9][a-z0-9.+-]*)', line)
+        if not m:
+            header = line
+        elif m.group(1) not in [offer[2] for offer in offers]:
+            offers.append((header or line, line, m.group(1)))
+    if offers and offers[0][2] in renamed(command):
+        return offers
+    return offers if len(offers) == 1 else []
 
 
 class Runner(dbus.service.Object):
@@ -44,14 +62,10 @@ class Runner(dbus.service.Object):
     @dbus.service.method('org.kde.krunner1', in_signature='s', out_signature='a(sssida{sv})')
     def Match(self, query):
         self.touch()
-        found = lookup(query.strip().split(' ')[0]) if query.strip() else None
-        if not found:
-            return []
-        lines, pkg = found
-        # command-not-found's message as it is: its first line as the text, its install line as the subtext
-        text = lines[0].rstrip(':')
-        sub = ' '.join(lines[1:2])
-        return [('install:' + pkg, text, 'system-software-install', HELPER_MATCH, 0.6, {'subtext': sub})]
+        offers = lookup(query.strip().split(' ')[0]) if query.strip() else []
+        # command-not-found's message as it is: its header line as the text, each install line as the subtext of its match
+        return [('install:' + pkg, header.rstrip(':'), 'system-software-install', HELPER_MATCH, 0.6 - 0.01 * i, {'subtext': line})
+                for i, (header, line, pkg) in enumerate(offers)]
 
     @dbus.service.method('org.kde.krunner1', in_signature='ss')
     def Run(self, match_id, action_id):
