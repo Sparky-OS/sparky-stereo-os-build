@@ -1,0 +1,198 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Subject: command-not-found: fill the messages upstream has not translated
+
+command-not-found 23.04.0's catalogs leave messages it prints untranslated in
+three of the edition's nine languages: ten in Brazilian Portuguese and in
+Traditional Chinese (its main header among them, "Command '%(command)s' not
+found, but can be installed with:") and three in Japanese, so a person reads
+English between translated lines. Polish, French, German, Korean and
+Simplified Chinese are complete. Placeholders keep upstream's order.
+The translations are by Claude for Daniel Ramos (Capitain Jack), pt_BR for
+Daniel's review; they are an offer for upstream's translators on Launchpad.
+
+Assisted-by: Claude Opus 5.5
+---
+ po/ja.po    |  6 +++---
+ po/pt_BR.po | 20 ++++++++++----------
+ po/zh_TW.po | 20 ++++++++++----------
+ 3 files changed, 23 insertions(+), 23 deletions(-)
+diff --git a/po/ja.po b/po/ja.po
+index 4785bbc..914743b 100644
+--- a/po/ja.po
++++ b/po/ja.po
+@@ -41,14 +41,14 @@ msgstr "コマンド '%s' が見つかりません。もしかして:"
+ #: ../CommandNotFound/CommandNotFound.py:191
+ #, python-format
+ msgid "  command '%s' from snap %s%s"
+-msgstr ""
++msgstr "  コマンド '%s' (snap %s%s)"
+ 
+ #: ../CommandNotFound/CommandNotFound.py:197
+ #: ../CommandNotFound/CommandNotFound.py:344
+ #: ../CommandNotFound/CommandNotFound.py:345
+ #, python-format
+ msgid "  command '%s' from deb %s%s"
+-msgstr ""
++msgstr "  コマンド '%s' (deb %s%s)"
+ 
+ #: ../CommandNotFound/CommandNotFound.py:199
+ #: ../CommandNotFound/CommandNotFound.py:272
+@@ -85,7 +85,7 @@ msgstr "'%s' リポジトリを有効にしてください"
+ 
+ #: ../CommandNotFound/CommandNotFound.py:258
+ msgid "Ask your administrator to install one of them."
+-msgstr ""
++msgstr "いずれかのインストールを管理者に依頼してください。"
+ 
+ #: ../CommandNotFound/CommandNotFound.py:292
+ #, python-format
+diff --git a/po/pt_BR.po b/po/pt_BR.po
+index caca9c5..0fb964f 100644
+--- a/po/pt_BR.po
++++ b/po/pt_BR.po
+@@ -29,47 +29,47 @@ msgstr "s"
+ #: ../CommandNotFound/CommandNotFound.py:181
+ #, python-format
+ msgid "Command '%s' not found, but there are %s similar ones."
+-msgstr ""
++msgstr "Comando '%s' não encontrado, mas há %s parecidos."
+ 
+ #: ../CommandNotFound/CommandNotFound.py:185
+ #: ../CommandNotFound/CommandNotFound.py:343
+ #, python-format
+ msgid "Command '%s' not found, did you mean:"
+-msgstr ""
++msgstr "Comando '%s' não encontrado. Você quis dizer:"
+ 
+ #: ../CommandNotFound/CommandNotFound.py:191
+ #, python-format
+ msgid "  command '%s' from snap %s%s"
+-msgstr ""
++msgstr "  comando '%s' do snap %s%s"
+ 
+ #: ../CommandNotFound/CommandNotFound.py:197
+ #: ../CommandNotFound/CommandNotFound.py:344
+ #: ../CommandNotFound/CommandNotFound.py:345
+ #, python-format
+ msgid "  command '%s' from deb %s%s"
+-msgstr ""
++msgstr "  comando '%s' do deb %s%s"
+ 
+ #: ../CommandNotFound/CommandNotFound.py:199
+ #: ../CommandNotFound/CommandNotFound.py:272
+ #: ../CommandNotFound/CommandNotFound.py:294
+ msgid "See 'snap info <snapname>' for additional versions."
+-msgstr ""
++msgstr "Veja 'snap info <nome do snap>' para outras versões."
+ 
+ #: ../CommandNotFound/CommandNotFound.py:202
+ #: ../CommandNotFound/CommandNotFound.py:204
+ #, python-format
+ msgid "Try: %s <deb name>"
+-msgstr ""
++msgstr "Tente: %s <nome do deb>"
+ 
+ #: ../CommandNotFound/CommandNotFound.py:208
+ #, python-format
+ msgid "Command '%(command)s' not found, but can be installed with:"
+-msgstr ""
++msgstr "Comando '%(command)s' não encontrado, mas pode ser instalado com:"
+ 
+ #: ../CommandNotFound/CommandNotFound.py:220
+ #: ../CommandNotFound/CommandNotFound.py:233
+ msgid "Please ask your administrator."
+-msgstr ""
++msgstr "Peça ao seu administrador."
+ 
+ #: ../CommandNotFound/CommandNotFound.py:235
+ #, python-format
+@@ -83,12 +83,12 @@ msgstr "Você deverá habilitar o componente chamado '%s'"
+ 
+ #: ../CommandNotFound/CommandNotFound.py:258
+ msgid "Ask your administrator to install one of them."
+-msgstr ""
++msgstr "Peça ao seu administrador para instalar um deles."
+ 
+ #: ../CommandNotFound/CommandNotFound.py:292
+ #, python-format
+ msgid "See 'snap info %s' for additional versions."
+-msgstr ""
++msgstr "Veja 'snap info %s' para outras versões."
+ 
+ #: ../CommandNotFound/CommandNotFound.py:318
+ #, python-format
+diff --git a/po/zh_TW.po b/po/zh_TW.po
+index 52e5878..983e398 100644
+--- a/po/zh_TW.po
++++ b/po/zh_TW.po
+@@ -29,47 +29,47 @@ msgstr "y"
+ #: ../CommandNotFound/CommandNotFound.py:181
+ #, python-format
+ msgid "Command '%s' not found, but there are %s similar ones."
+-msgstr ""
++msgstr "找不到 '%s' 指令，但有 %s 個相似的指令。"
+ 
+ #: ../CommandNotFound/CommandNotFound.py:185
+ #: ../CommandNotFound/CommandNotFound.py:343
+ #, python-format
+ msgid "Command '%s' not found, did you mean:"
+-msgstr ""
++msgstr "找不到 '%s' 指令，您是要找："
+ 
+ #: ../CommandNotFound/CommandNotFound.py:191
+ #, python-format
+ msgid "  command '%s' from snap %s%s"
+-msgstr ""
++msgstr "  '%s' 指令，來自 snap %s%s"
+ 
+ #: ../CommandNotFound/CommandNotFound.py:197
+ #: ../CommandNotFound/CommandNotFound.py:344
+ #: ../CommandNotFound/CommandNotFound.py:345
+ #, python-format
+ msgid "  command '%s' from deb %s%s"
+-msgstr ""
++msgstr "  '%s' 指令，來自 deb %s%s"
+ 
+ #: ../CommandNotFound/CommandNotFound.py:199
+ #: ../CommandNotFound/CommandNotFound.py:272
+ #: ../CommandNotFound/CommandNotFound.py:294
+ msgid "See 'snap info <snapname>' for additional versions."
+-msgstr ""
++msgstr "如需其他版本，請參閱 'snap info <snap 名稱>'。"
+ 
+ #: ../CommandNotFound/CommandNotFound.py:202
+ #: ../CommandNotFound/CommandNotFound.py:204
+ #, python-format
+ msgid "Try: %s <deb name>"
+-msgstr ""
++msgstr "請嘗試：%s <deb 名稱>"
+ 
+ #: ../CommandNotFound/CommandNotFound.py:208
+ #, python-format
+ msgid "Command '%(command)s' not found, but can be installed with:"
+-msgstr ""
++msgstr "找不到 '%(command)s' 指令，但可以用以下方式安裝："
+ 
+ #: ../CommandNotFound/CommandNotFound.py:220
+ #: ../CommandNotFound/CommandNotFound.py:233
+ msgid "Please ask your administrator."
+-msgstr ""
++msgstr "請洽詢您的系統管理員。"
+ 
+ #: ../CommandNotFound/CommandNotFound.py:235
+ #, python-format
+@@ -83,12 +83,12 @@ msgstr "您需要將名為 '%s' 的元件啟動"
+ 
+ #: ../CommandNotFound/CommandNotFound.py:258
+ msgid "Ask your administrator to install one of them."
+-msgstr ""
++msgstr "請洽詢您的系統管理員以安裝其中之一。"
+ 
+ #: ../CommandNotFound/CommandNotFound.py:292
+ #, python-format
+ msgid "See 'snap info %s' for additional versions."
+-msgstr ""
++msgstr "如需其他版本，請參閱 'snap info %s'。"
+ 
+ #: ../CommandNotFound/CommandNotFound.py:318
+ #, python-format
