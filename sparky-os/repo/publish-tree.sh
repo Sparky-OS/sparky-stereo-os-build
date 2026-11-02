@@ -392,7 +392,9 @@ for architecture in $ARCHES; do
 	dir=$DEP11_ARCHIVE/dists/$CODENAME/$COMPONENT/binary-$architecture
 	mkdir -p "$dir"
 	(cd "$DEP11_ARCHIVE" && dpkg-scanpackages --multiversion --arch "$architecture" pool /dev/null 2>"$W/dep11-scan-$architecture.log") |
-		awk -v RS= -v ORS='\n\n' -v a="Architecture: $architecture" 'index($0, "\n" a "\n") || $0 ~ ("\n" a "$")' |
+		awk -v RS= -v ORS='\n\n' -v architecture="$architecture" '
+			index($0, "\nArchitecture: all\n") || $0 ~ ("\nArchitecture: all$") ||
+			index($0, "\nArchitecture: " architecture "\n") || $0 ~ ("\nArchitecture: " architecture "$")' |
 		sed '$d' >"$dir/Packages"
 	gzip -9n -c "$dir/Packages" >"$dir/Packages.gz"
 	xz -9e -T1 -c "$dir/Packages" >"$dir/Packages.xz"
