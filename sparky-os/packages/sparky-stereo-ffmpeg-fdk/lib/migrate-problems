@@ -1,0 +1,41 @@
+#!/usr/bin/python3
+# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Move legacy failure records to the shared engine before deleting their old files."""
+import json
+import os
+from pathlib import Path
+import subprocess
+
+state = Path(os.environ.get('SPARKY_FDK_STATE', '/var/lib/sparky-stereo-ffmpeg-fdk'))
+package = 'sparky-stereo-ffmpeg-fdk'
+log = os.environ.get('SPARKY_FDK_LOG', '/var/log/sparky-stereo-ffmpeg-fdk.log')
+
+def read(name):
+    try:
+        return (state / name).read_text()
+    except FileNotFoundError:
+        return None
+
+rows = json.loads(subprocess.check_output(['sparky-stereo-problems', 'list', '--json', package], text=True))
+if any('unreadable' in r for r in rows):
+    raise RuntimeError('Cannot migrate over an unreadable engine record')
+keys = {r['key'] for r in rows if r['scope'] == 'machine'}
+old = read('last-failure')
+if old is not None:
+    if 'build' not in keys:
+        subprocess.run(['sparky-stereo-problems', 'keep', '--machine', '--details',
+                        json.dumps({'data': {'version': old.strip()}}), '--repair',
+                        json.dumps(['/usr/bin/sparky-stereo-ffmpeg-fdk', '--auto']),
+                        package, 'build', 'LOCAL70', old.strip(), str(state / 'last-build.log')], check=True)
+    (state / 'last-failure').unlink()
+old = read('last-cleanup-error')
+packages = read('cleanup-packages')
+if old is not None or packages is not None:
+    if 'cleanup' not in keys:
+        subprocess.run(['sparky-stereo-problems', 'keep', '--machine', '--details',
+                        json.dumps({'data': {'packages': (packages or '').split(), 'legacy': True},
+                                    'output': old or '', 'more': ['LOCAL82']}),
+                        package, 'cleanup', 'LOCAL73', 'legacy cleanup', log, packages or ''], check=True)
+    for name in ('last-cleanup-error', 'cleanup-packages'):
+        (state / name).unlink(missing_ok=True)

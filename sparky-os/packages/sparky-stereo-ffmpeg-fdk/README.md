@@ -45,3 +45,19 @@ Build:
 Test:
 -------------
 tests/run-tests.sh   (in a debian:testing container with deb-multimedia and a test repository; tests/README.md says how)
+
+Failures from cleanup, the local build and the update check are kept by `sparky-stereo-problems`.
+`--status` reads that engine; a later successful step clears its problem.
+The helper keeps no separate error files.
+An upgrade moves the old failure files into the engine before deleting them.
+If migration fails, the upgrade fails visibly and the original evidence remains.
+
+When purging build tools would also remove other packages, the tools stay and the message names those packages.
+`sudo sparky-stereo-ffmpeg-fdk --cleanup` retries a recorded cleanup using a fresh APT simulation and the original package/baseline lists from the engine.
+The engine also offers this command as the problem's repair action.
+A migrated cleanup lacks that old baseline, so it requires manual review; it never guesses a removal plan.
+
+A failed repository query is an error, not an indication that no update exists.
+Dispatch through systemd checks the service launch status.
+Without systemd, a detached Python subprocess reports an execution failure before the checker returns.
+The APT hook propagates these failures, and the engine retains them until a later successful check.

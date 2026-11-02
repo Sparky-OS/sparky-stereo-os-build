@@ -21,6 +21,7 @@ eq() { if [ "$2" = "$3" ]; then ok "$1 [$2]"; else bad "$1: got [$2], expected [
 printf 'deb [trusted=yes] file:/repo ./\ndeb-src [trusted=yes] file:/repo ./\n' >/etc/apt/sources.list.d/t.list
 apt-get update -qq >/dev/null 2>&1
 apt-get -y -qq install python3-minimal util-linux >/dev/null 2>&1
+export SPARKY_STEREO_ROOT=/tmp/engine
 export SPARKY_FDK_LIBDIR=/g/lib SPARKY_FDK_LANGDIR=/g/lang SPARKY_FDK_STATE=/tmp/state SPARKY_FDK_LOCK=/tmp/lock SPARKY_FDK_BIN=/tmp/fakebin LANG=en_US.UTF-8
 mkdir -p /tmp/state /tmp/pathdir
 printf '#!/bin/sh\necho "$@" >>/tmp/called\n' >/tmp/fakebin; chmod +x /tmp/fakebin
@@ -30,7 +31,11 @@ run() { rm -f /tmp/called; PATH=/tmp/pathdir:$PATH bash /g/lib/check-update 2>&1
 state() { # base version, failure marker
 	rm -f /tmp/state/*; echo "accepted" >/tmp/state/consent
 	[ -n "$1" ] && printf "LOCAL_BASE='%s'\nLOCAL_VERSION='%s+fdk1'\nLOCAL_USER='tester'\nLOCAL_PACKAGES='ffmpeg'\n" "$1" "$1" >/tmp/state/installed
-	[ -n "$2" ] && echo "$2" >/tmp/state/last-failure
+	sparky-stereo-problems clear --all sparky-stereo-ffmpeg-fdk
+	if [ -n "$2" ]; then
+		details=$(python3 -c 'import json,sys; print(json.dumps({"data":{"version":sys.argv[1]}}))' "$2")
+		sparky-stereo-problems keep --machine --quiet --details "$details" sparky-stereo-ffmpeg-fdk build LOCAL70 "$2" /tmp/build.log
+	fi
 	return 0
 }
 rm -f /tmp/state/*

@@ -7,6 +7,7 @@ Pass a package source directory to test an older revision with the same checks.
 No system package manager is invoked. Run inside the package test container.
 """
 import os
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -79,6 +80,8 @@ class FailureChecks(unittest.TestCase):
                 'SPARKY_FDK_STATE': tmp,
                 'SPARKY_FDK_LOG': str(state / 'build.log'),
                 'SCENARIO': scenario, 'LANG': 'en_US.UTF-8',
+                'SPARKY_STEREO_ROOT': str(state / 'engine'),
+                'SPARKY_FDK_LOCK': str(state / 'lock'),
             }
             setup = '''
 NEW_BD=$(printf 'old-orphan\\ntool-a\\ntool-needed\\n')
@@ -96,6 +99,9 @@ tree=/unused
             result = subprocess.run(['bash', '-c', DEFINITIONS + STUBS + setup + body],
                                     env=env, text=True, capture_output=True)
             files = {p.name: p.read_text() for p in state.iterdir() if p.is_file()}
+            listing = subprocess.run(['sparky-stereo-problems', 'list', '--json', 'sparky-stereo-ffmpeg-fdk'],
+                                     env=env, text=True, capture_output=True, check=True)
+            files['problems'] = {r['key']: r for r in json.loads(listing.stdout)}
             return result, files
 
     def test_cleanup_failures_stop_completion(self):
@@ -107,9 +113,12 @@ tree=/unused
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertNotIn('done:', result.stdout)
                 self.assertNotIn('Done.', result.stdout)
-                self.assertIn('cleanup failed', result.stderr)
-                self.assertIn('last-cleanup-error', files)
-                self.assertIn('tool-a', files['cleanup-packages'])
+                self.assertIn('build tools were kept' if scenario.startswith('extra-') else 'cleanup failed', result.stderr)
+                self.assertNotIn('last-cleanup-error', files)
+                self.assertNotIn('cleanup-packages', files)
+                self.assertIn('tool-a', files['problems']['cleanup']['data']['packages'])
+                if scenario.startswith('extra-'):
+                    self.assertIn('unrelated', files['problems']['cleanup']['text'])
                 self.assertNotIn('purged', files)
                 if scenario != 'purge-fail':
                     self.assertFalse(any(' -s ' not in line and 'purge' in line
@@ -139,8 +148,21 @@ tree=/unused
             with self.subTest(status=status):
                 result, files = self.execute('purge-plan-fail', f'trap cleanup EXIT\nexit {status}\n')
                 self.assertEqual(result.returncode, status or 1, result.stderr)
-                self.assertIn('last-cleanup-error', files)
+                self.assertIn('cleanup', files['problems'])
                 self.assertNotIn('purged', files)
+
+    def test_later_cleanup_clears_the_engine(self):
+        result, files = self.execute('mark-fail', 'remove_build_tools; SCENARIO=success; BD_INSTALLED=1; remove_build_tools')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('cleanup', files['problems'])
+        self.assertNotIn('last-cleanup-error', files)
+
+    def test_cleanup_repair_reads_the_saved_plan(self):
+        result, files = self.execute('purge-fail', 'remove_build_tools; SCENARIO=success; NEW_BD=; A0=; do_cleanup')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('purged', files)
+        self.assertNotIn('cleanup', files['problems'])
+        self.assertNotIn('last-cleanup-error', files)
 
     def test_build_plans_must_succeed_without_removals(self):
         prepare = block('\n\tDBO_APT=', '\n\tma=')

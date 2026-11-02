@@ -33,12 +33,14 @@ load_strings() {
 
 # The highest version of our source package in the edition's own Sources index, and the binary packages it builds:
 # "VERSION BINARY,BINARY,...". Nothing when the repository publishes no source index for it.
-repo_source() {
-	local f
-	apt-get indextargets --format '$(FILENAME)' "Origin: $ORIGIN" 'Created-By: Sources' 2>/dev/null |
+repo_source() (
+	set -o pipefail
+	local f targets
+	targets=$(apt-get indextargets --format '$(FILENAME)' "Origin: $ORIGIN" 'Created-By: Sources') || return
+	printf '%s\n' "$targets" |
 		while IFS= read -r f; do
 			[ -n "$f" ] || continue
-			/usr/lib/apt/apt-helper cat-file "$f" 2>/dev/null
+			/usr/lib/apt/apt-helper cat-file "$f" || exit
 			echo
 		done | SRCPKG="$SRCPKG" python3 -c '
 import os, subprocess, sys
@@ -53,14 +55,23 @@ for st in sys.stdin.read().split("\n\n"):
         elif ":" in line:
             key, val = line.split(":", 1)
             f[key] = val.strip()
-    if f.get("Package") != want or not f.get("Version"):
+    if f.get("Package") != want:
         continue
-    if best is None or subprocess.run(["dpkg", "--compare-versions", f["Version"], "gt", best[0]]).returncode == 0:
-        best = (f["Version"], f.get("Binary", ""))
+    if not f.get("Version") or not f.get("Binary"):
+        sys.exit("Incomplete source record for " + want)
+    if subprocess.run(["dpkg", "--validate-version", f["Version"]]).returncode:
+        sys.exit("Invalid source version: " + f["Version"])
+    newer = 0 if best is None else subprocess.run(["dpkg", "--compare-versions", f["Version"], "gt", best[0]]).returncode
+    if newer not in (0, 1):
+        sys.exit("Source version comparison failed")
+    if newer == 0:
+        best = (f["Version"], f["Binary"])
+if not best or not best[1]:
+    sys.exit("No usable source record for " + want)
 if best:
     print(best[0], ",".join(x.strip() for x in best[1].split(",") if x.strip()))
 '
-}
+)
 
 # The local build installed now: sets LOCAL_BASE (the edition's version it was built from), LOCAL_VERSION, LOCAL_USER (who
 # built it) and LOCAL_PACKAGES; returns 1 when there is none.
@@ -118,3 +129,21 @@ write_pin() {
 drop_pin() {
 	rm -f -- "$PINFILE"
 }
+
+
+# The engine owns every kept failure. Only consent, installed build identity and build logs stay here.
+FDK_PACKAGE=sparky-stereo-ffmpeg-fdk
+problem_clear() { sparky-stereo-problems clear --machine "$FDK_PACKAGE" "$1"; }
+problem_data() (
+	set -o pipefail
+	sparky-stereo-problems list --json "$FDK_PACKAGE" | python3 -c '
+import json, sys
+rows = json.load(sys.stdin)
+if any("unreadable" in r for r in rows):
+    sys.exit("Cannot read a kept FFmpeg problem")
+for r in rows:
+    if r["scope"] == "machine" and r["key"] == sys.argv[1]:
+        value = (r.get("data") or {}).get(sys.argv[2], "")
+        print("\n".join(value) if isinstance(value, list) else value)
+' "$1" "$2"
+)
