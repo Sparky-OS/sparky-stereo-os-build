@@ -6,14 +6,16 @@
 
 Nothing fails silently (Daniel, 2026-11-01: "either it works or not and the user must know"). Each drop-in of this
 package names sparky-stereo-service-problem@.service in OnFailure=, so a service that cannot start is said in the
-system's language and kept in /var/lib/sparky-stereo-service-defaults/problems/UNIT.json with its result, its exit
-status and its own last lines (journalctl); the session shows it as a notification. A drop-in's own probe (whether
+system's language and kept by the edition's one engine (sparky-stereo-problems, in /var/lib/sparky-stereo-problems)
+with its result, its exit status and its own last lines (journalctl); the session's notifier shows it. The drop-in's
+own handler takes the place of the engine's generic one for these units (OnFailure= emptied first), so each failure
+is told once, with what this package knows of it. A drop-in's own probe (whether
 ipwatchd is needed yet) keeps a failed probe the same way, apart from a valid "not needed".
 
   sparky-stereo-service-defaults status            the kept problems; exits 1 while one is kept
   sparky-stereo-service-defaults repair            root: starts each kept unit again
-  sparky-stereo-service-defaults dismiss UNIT      root: not shown again until it changes or is repaired
-  sparky-stereo-service-defaults notify            the session's side: each kept problem once as a notification
+  sparky-stereo-service-defaults dismiss UNIT      hides it for you until it changes or a repair fails
+  sparky-stereo-service-defaults notify            starts the session's notifier, which shows every kept problem
   sparky-stereo-service-defaults record UNIT       sparky-stereo-service-problem@UNIT: keep UNIT's failure
   sparky-stereo-service-defaults clear UNIT        the drop-ins' ExecStartPost=: UNIT started
   sparky-stereo-service-defaults needed ipwatchd   the drop-in's ExecCondition=: 0 needed, 1 not needed yet (no IPv4
@@ -21,7 +23,8 @@ ipwatchd is needed yet) keeps a failed probe the same way, apart from a valid "n
   sparky-stereo-service-defaults keep UNIT KEY [ARG...]
                                                    NetworkManager's dispatcher script: say and keep UNIT's problem
 
-Environment, for tests: SPARKY_SERVICE_DEFAULTS_LIB names the folder of problems.py, SPARKY_SERVICE_DEFAULTS_ROOT
+Environment, for tests: SPARKY_SERVICE_DEFAULTS_LIB names the folder of problems.py, SPARKY_STEREO_ROOT the engine's
+root, SPARKY_SERVICE_DEFAULTS_ROOT
 prefixes the configuration files read, SPARKY_SERVICE_DEFAULTS_IP, _SYSTEMCTL and _JOURNALCTL name the programs.
 """
 import os
@@ -136,19 +139,16 @@ def record(unit):
     fields = show(unit)
     invocation = fields.get('InvocationID', '')
     old = problems.load(unit)
-    if old is not None and invocation and old.get('invocation') == invocation:
+    if old is not None and invocation and (old.get('data') or {}).get('invocation') == invocation:
         return 0   # its own probe kept the precise reason for this run already
     output = journal(unit, invocation)
     status = fields.get('ExecMainStatus', '')
     reason = last_line(output) or 'Result=%s, exit status %s' % (fields.get('Result', '?'), status or '?')
     key, args = diagnose(unit, reason, output)
-    problems.record(unit, key, args, command=[SYSTEMCTL, 'start', unit], status=status, output=output,
-                    repair=[[SYSTEMCTL, 'restart', unit]])
-    entry = problems.load(unit)
-    if entry is not None:
-        entry['invocation'] = invocation
-        entry['result'] = fields.get('Result', '')
-        problems.write(entry)
+    # the run and its result are the package's own fields of the record (the engine's data)
+    problems.record(unit, key, args, command=[SYSTEMCTL, 'start', unit], status=int(status) if status.isdigit() else None,
+                    output=output, repair=[[SYSTEMCTL, 'restart', unit]],
+                    data={'invocation': invocation, 'result': fields.get('Result', '')})
     return 0
 
 
@@ -162,11 +162,8 @@ def needed_ipwatchd():
     if code != 0:
         why = (err or out).strip() or 'exit status %s' % code
         problems.record(unit, PROBE, [unit, ' '.join(command), why], command=command, status=code,
-                        output=err or out, repair=[[SYSTEMCTL, 'restart', unit]])
-        entry = problems.load(unit)
-        if entry is not None:
-            entry['invocation'] = os.environ.get('INVOCATION_ID', '')
-            problems.write(entry)
+                        output=err or out, repair=[[SYSTEMCTL, 'restart', unit]],
+                        data={'invocation': os.environ.get('INVOCATION_ID', '')})
         return 255
     problems.clear(unit)
     if out.strip():
@@ -190,11 +187,14 @@ def main(argv):
         return problems.status()
     if argv == ['notify']:
         return problems.notify()
-    if argv == ['repair'] or (len(argv) == 2 and argv[0] == 'dismiss'):
-        if os.geteuid() != 0 and not os.environ.get('SPARKY_SERVICE_DEFAULTS_STATE'):
+    if len(argv) == 2 and argv[0] == 'dismiss':
+        # the engine's Hide: the person's own, no administrator needed
+        return problems.dismiss(argv[1])
+    if argv == ['repair']:
+        if os.geteuid() != 0 and not os.environ.get('SPARKY_STEREO_ROOT'):
             print(problems.text(ROOT_NEEDED), file=sys.stderr)
             return 1
-        return problems.repair() if argv == ['repair'] else problems.dismiss(argv[1])
+        return problems.repair()
     print(problems.text(USAGE), file=sys.stderr)
     return 2
 

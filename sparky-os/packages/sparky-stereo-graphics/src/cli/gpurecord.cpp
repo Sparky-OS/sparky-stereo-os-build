@@ -25,6 +25,8 @@
 #include "machinerecord.h"
 #include "problems.h"
 
+#include <KLocalizedString>
+
 #include <QCoreApplication>
 #include <QTextStream>
 
@@ -34,9 +36,12 @@ using namespace SparkyGraphics;
 static int usage(const QString &problem)
 {
     QTextStream err(stderr);
-    err << problem
-        << "\nUsage: sparky-stereo-gpu-record [--root DIR] [--machines DIR] --apply-known | --show | --forget"
-           " | --set-best GPU [--copy-back true|false] [--model TEXT] [--measurement TEXT] | --copy-back true|false|unset\n";
+    // the synopsis stays as it is: options and their arguments are the same in every language
+    err << problem << '\n'
+        << i18nc("@info:shell %1 is the command's synopsis, which stays as it is", "Usage: %1",
+                 u"sparky-stereo-gpu-record [--root DIR] [--machines DIR] --apply-known | --show | --forget"
+                 " | --set-best GPU [--copy-back true|false] [--model TEXT] [--measurement TEXT] | --copy-back true|false|unset"_s)
+        << '\n';
     return 2;
 }
 
@@ -87,7 +92,7 @@ int main(int argc, char **argv)
         } else if (arg == u"--copy-back"_s) {
             copyBack = value();
             if (copyBack.isEmpty()) {
-                return usage(u"--copy-back needs true, false or unset"_s);
+                return usage(i18nc("@info:shell --copy-back, true, false and unset stay as they are", "--copy-back needs true, false or unset"));
             }
         } else if (arg == u"--model"_s) {
             model = value();
@@ -104,14 +109,14 @@ int main(int argc, char **argv)
         } else if (arg == u"--output"_s) {
             output = value();
         } else {
-            return usage(u"Unknown argument %1"_s.arg(arg));
+            return usage(i18nc("@info:shell %1 is the argument given", "Unknown argument %1", arg));
         }
     }
     std::optional<bool> copy;
     if (!copyBack.isEmpty() && copyBack != u"unset"_s) {
         copy = GraphicsSettings::parseBool(copyBack);
         if (!copy.has_value()) {
-            return usage(u"Not true or false: %1"_s.arg(copyBack));
+            return usage(i18nc("@info:shell %1 is what was given; true and false stay as they are", "Not true or false: %1", copyBack));
         }
     }
     if (action.isEmpty() && !copyBack.isEmpty()) {
@@ -123,7 +128,7 @@ int main(int argc, char **argv)
         // the steps the maintainer scripts say and keep (ORDER 345's way: the package configures, the problem stays shown)
         const QString key = action == u"--keep"_s ? keepKey : clearKey;
         if (key != u"systemd-reload"_s) {
-            return usage(u"Not a step: %1 (systemd-reload)"_s.arg(key));
+            return usage(i18nc("@info:shell %1 is what was given; systemd-reload stays as it is", "Not a step: %1 (systemd-reload)", key));
         }
         if (action == u"--clear"_s) {
             return Problems::clear(key, Problems::systemDir(root)) ? 0 : 3;
@@ -134,7 +139,7 @@ int main(int argc, char **argv)
         problem.kind = key;
         problem.status = status.toInt(&ok);
         if (!ok) {
-            return usage(u"--keep needs --status N"_s);
+            return usage(i18nc("@info:shell --keep, --status and N stay as they are", "--keep needs --status N"));
         }
         problem.command = u"systemctl daemon-reload"_s;
         problem.output = output.right(4000);
@@ -178,17 +183,17 @@ int main(int argc, char **argv)
     }
     if (action == u"--set-best"_s) {
         if (!MachineRecord::validGpu(best.trimmed().toLower())) {
-            return usage(u"Not a GPU: %1 (pci-0000:03:00.0 or 1002:6660)"_s.arg(best));
+            return usage(i18nc("@info:shell %1 is what was given; the two examples stay as they are", "Not a GPU: %1 (pci-0000:03:00.0 or 1002:6660)", best));
         }
         if (!RecordWriter::writeMeasured(root, best, copy, model, measurement)) {
-            QTextStream(stderr) << "sparky-stereo-gpu-record: cannot write " << MachineRecord::systemFile(root) << '\n';
+            QTextStream(stderr) << "sparky-stereo-gpu-record: " << i18nc("@info:shell %1 is a file", "cannot write %1", MachineRecord::systemFile(root)) << '\n';
             return 3;
         }
         return 0;
     }
     if (action == u"--copy-back"_s) {
         if (!RecordWriter::writeCopyBack(root, copy)) {
-            QTextStream(stderr) << "sparky-stereo-gpu-record: cannot write " << MachineRecord::systemFile(root) << '\n';
+            QTextStream(stderr) << "sparky-stereo-gpu-record: " << i18nc("@info:shell %1 is a file", "cannot write %1", MachineRecord::systemFile(root)) << '\n';
             return 3;
         }
         return 0;
@@ -196,5 +201,5 @@ int main(int argc, char **argv)
     if (action == u"--forget"_s) {
         return RecordWriter::forget(root) ? 0 : 3;
     }
-    return usage(u"Nothing to do"_s);
+    return usage(i18nc("@info:shell", "Nothing to do"));
 }

@@ -11,7 +11,7 @@ You should have received a copy of the GNU General Public License along with thi
 
 Each file is a systemd drop-in for one service of another package. A service is never removed or masked: it is configured so it works, and what it needs is supplied. Each drop-in says why, and each cause is reported to the package that owns it.
 
-Nothing fails silently (Daniel, 2026-11-01: "either it works or not and the user must know"). Each drop-in names `sparky-stereo-service-problem@.service` in `OnFailure=`: a service that still cannot start is said in the system's language and kept in `/var/lib/sparky-stereo-service-defaults/problems/UNIT.json`, with its result, its exit status and its own last lines, until it starts again. The session shows each kept problem once as a notification.
+Nothing fails silently (Daniel, 2026-11-01: "either it works or not and the user must know"). Each drop-in empties `OnFailure=` and names `sparky-stereo-service-problem@.service`: a service that still cannot start is said in the system's language and kept by the edition's one engine, sparky-stereo-problems (`/var/lib/sparky-stereo-problems`), with its result, its exit status and its own last lines, until it starts again. The engine's session notifier shows each kept problem. Emptying `OnFailure=` first leaves out the engine's generic handler for these units, so each failure is told once, with what this package knows of it.
 
 - `sparky-stereo-service-defaults status` lists the kept problems.
 - `sudo sparky-stereo-service-defaults repair` starts each kept unit again.

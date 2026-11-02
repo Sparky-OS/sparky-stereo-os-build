@@ -2,7 +2,7 @@
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/01
 # Copyright 2026 under the GNU GPL3 License
 # Tests that sparky-stereo-boot never fails silently (0.1.5): the 3D splash's hand-over, the boot's kept problems
-# (status, repair, dismiss, the session's notifications), the check of GRUB's resolution at boot, and the nine
+# (status, repair, dismiss, kept by the one engine since 0.1.6), the check of GRUB's resolution at boot, and the nine
 # languages of every message the code uses. Each case runs in a process of its own, with fake plymouth, systemctl,
 # busctl and dpkg-query first in PATH and a fake root (SPARKY_STEREO_ROOT); the program is loaded as a module and
 # only its two DRM-facing functions are replaced (the outputs' framebuffers, and whether a stereo splash runs).
@@ -33,11 +33,25 @@ def check(case, ok, text):
     print(('PASS  ' if ok else 'FAIL  ') + '%s: %s' % (case, text), flush=True)
 
 
+# the boot's problems are kept by the edition's one engine (sparky-stereo-problems, 0.1.6): its records, its
+# catalogs built from the package's language files
+STORE = 'var/lib/sparky-stereo-problems'
+CATALOG = tempfile.mkdtemp(prefix='ssb-cat-')
+subprocess.run(['sparky-stereo-problems', 'catalog', 'sparky-stereo-boot', os.path.join(PKG, 'lang'), CATALOG,
+                '--subject', 'LOCAL19'], check=True, stdout=subprocess.DEVNULL)
+
+
+def record_path(root, step):
+    return os.path.join(root, STORE, 'sparky-stereo-boot_%s.json' % step)
+
+
 def kept(root, step):
     try:
-        return json.load(open(os.path.join(root, 'var/lib/sparky-stereo-boot/problems', step + '.json')))
+        r = json.load(open(record_path(root, step)))
     except (OSError, ValueError):
         return None
+    r['key'] = r['message']
+    return r
 
 
 def setup(rules=(), lang='en_US.UTF-8'):
@@ -54,6 +68,7 @@ def setup(rules=(), lang='en_US.UTF-8'):
     env = dict(os.environ, PATH=fakes + ':/usr/bin:/bin', FAKE_LOG=os.path.join(root, 'log'),
                FAKE_RULES=os.path.join(root, 'rules'), SPARKY_STEREO_ROOT=root,
                SPARKY_STEREO_LIB=os.path.join(PKG, 'lib'), SPARKY_STEREO_LANG_DIR=os.path.join(PKG, 'lang'),
+               SPARKY_STEREO_PROBLEMS_CATALOG=CATALOG + ':/usr/lib/systemd/catalog', XDG_STATE_HOME=os.path.join(root, 'state'),
                LANG=lang, XDG_RUNTIME_DIR=os.path.join(root, 'run/user'))
     return root, env
 
@@ -151,9 +166,7 @@ def handover():
     root, env = setup()
     os.makedirs(os.path.join(root, 'run/sparky-stereo-boot'))
     json.dump({'card0:41': 7}, open(os.path.join(root, 'run/sparky-stereo-boot/splash-buffers.json'), 'w'))
-    os.makedirs(os.path.join(root, 'var/lib/sparky-stereo-boot/problems'))
-    json.dump({'step': 'handover', 'key': 'LOCAL32', 'args': [['LOCAL39']], 'time': 'x'},
-              open(os.path.join(root, 'var/lib/sparky-stereo-boot/problems/handover.json'), 'w'))
+    record(root, 'handover', 'LOCAL32', [['LOCAL39']])
     rc, err = call(env, 'plymouth_handover', 20.0, patch='m.crtc_buffers = lambda: {"card0:41": 9}\n')
     check('handover-succeeds', rc == 0 and log(root) == ['plymouth quit --retain-splash'] and kept(root, 'handover') is None,
           'quit keeping the picture, exit %d, the older record cleared (%s)' % (rc, log(root)))
@@ -167,11 +180,20 @@ def handover():
     check('no-splash', rc == 0 and kept(root, 'splash-quit') is None, 'no splash running: nothing to quit, nothing kept (exit %d)' % rc)
 
 
+_order = [0]
+
+
 def record(root, step, key, args, repair=None, output=''):
-    d = os.path.join(root, 'var/lib/sparky-stereo-boot/problems')
-    os.makedirs(d, exist_ok=True)
-    json.dump({'step': step, 'time': '2026-11-01T12:00:%02dZ' % len(os.listdir(d)), 'key': key, 'args': args,
-               'command': None, 'status': 1, 'output': output, 'repair': repair or []}, open(os.path.join(d, step + '.json'), 'w'))
+    """A kept problem of the boot, kept by the engine (its first time in the order of the calls)."""
+    _order[0] += 1
+    details = {'args': args, 'status': 1, 'first': '2026-11-01T12:00:%02dZ' % _order[0]}
+    if output:
+        details['output'] = output
+    if repair:
+        details['repair'] = repair
+    subprocess.run(['sparky-stereo-problems', 'keep', '--machine', '--quiet', 'sparky-stereo-boot', step, key,
+                    '--details', json.dumps(details)], check=True, stderr=subprocess.DEVNULL,
+                   env=dict(os.environ, SPARKY_STEREO_ROOT=root, SPARKY_STEREO_PROBLEMS_CATALOG=CATALOG + ':/usr/lib/systemd/catalog'))
 
 
 def strings(lang):
@@ -194,29 +216,16 @@ def problems():
     want = pt['LOCAL21'] % ('update-grub', '1')
     check('status', rc == 1 and pt['LOCAL15'] in out and want in out and (pt['LOCAL32'] % (pt['LOCAL34'] % '1')) in out,
           'both problems listed in pt_BR, the reason inside the hand-over message, exit %d' % rc)
-    check('status', ('%s: %s' % (pt['LOCAL18'], os.path.join(root, 'var/lib/sparky-stereo-boot/problems/update-grub.json'))) in out,
-          'where the output is kept')
-    # notifications: one per problem, critical, in the person's language; once per session
-    de = strings('de')
+    check('status', ('%s: %s' % (pt['LOCAL18'], record_path(root, 'update-grub'))) in out, 'where the output is kept')
+    # the session's notifier (sparky-stereo-problems-plasma) shows the problems: notify starts it
     root, env = setup(lang='de_DE.UTF-8')
     record(root, 'update-grub', 'LOCAL21', ['update-grub', '1'])
-    record(root, 'kernel-cleanup', 'LOCAL27', ['update-initramfs -u -k all', '1'])
     rc, out = cli(env, 'notify')
-    calls = [c for c in log(root) if c.startswith('busctl')]
-    check('notify', rc == 0 and len(calls) == 2 and all(de['LOCAL19'] in c and 'urgency y 2 0' in c for c in calls)
-          and (de['LOCAL27'] % ('update-initramfs -u -k all', '1')) in calls[1], 'two critical notifications in German (%d)' % len(calls))
+    check('notify', rc == 0 and 'systemctl --user start sparky-stereo-problems-notifier.service' in log(root),
+          "notify starts the session's notifier (%s)" % log(root))
+    root, env = setup([('systemctl --user start sparky-stereo-problems-notifier.service', 1, 'Failed to connect to bus')])
     rc, out = cli(env, 'notify')
-    check('notify', len([c for c in log(root) if c.startswith('busctl')]) == 2, 'not again in the same session')
-    record(root, 'handover', 'LOCAL32', [['LOCAL39']])
-    rc, out = cli(env, 'notify')
-    check('notify', len([c for c in log(root) if c.startswith('busctl')]) == 3, 'a new problem is shown')
-    root, env = setup([('busctl --user call org.freedesktop.Notifications /org/freedesktop/Notifications org.freedesktop.Notifications Notify', 1, '')])
-    open(os.path.join(root, 'rules'), 'w').close()
-    with open(os.path.join(root, 'fakes/busctl'), 'w') as f:
-        f.write('#!/bin/sh\necho "Call failed: The name is not activatable" >&2\nexit 1\n')
-    record(root, 'update-grub', 'LOCAL21', ['update-grub', '1'])
-    rc, out = cli(env, 'notify')
-    check('notify-fails', rc == 1 and 'could not be shown' in out and 'not activatable' in out, 'a notification that cannot be shown is said (exit %d)' % rc)
+    check('notify-fails', rc == 1 and 'Failed to connect to bus' in out, "a notifier that cannot be started is said, systemctl's own words (exit %d)" % rc)
     # repair: what has a command runs again and is cleared; what has none is listed; what fails again is kept
     en = strings('en')
     root, env = setup([('update-initramfs -u -k all', 1, 'E: still broken'), ('dpkg-query -W -f ${db:Status-Abbrev} sparky-stereo-boot', 0, 'iF')])
@@ -226,14 +235,70 @@ def problems():
     rc, out = cli(env, 'repair')
     k = kept(root, 'kernel-cleanup')
     check('repair', kept(root, 'update-grub') is None and (en['LOCAL50'] % 'update-grub') in out, 'update-grub ran again and its problem is cleared')
-    check('repair', bool(k) and 'still broken' in k['output'] and (en['LOCAL51'] % ('update-initramfs -u -k all', '1')) in out,
-          'a step that fails again is kept with its new output')
+    check('repair', bool(k) and 'still broken' in (k.get('last_repair') or {}).get('output', '')
+          and (en['LOCAL51'] % ('update-initramfs -u -k all', '1')) in out,
+          'a step that fails again is kept with the new output of its repair')
     check('repair', kept(root, 'handover') is not None and (en['LOCAL52'] % ('handover', 'handover')) in out, 'a problem with nothing to run is listed')
     check('repair', rc == 1 and en['LOCAL54'] in out, 'exit 1, and the package still waiting for dpkg --configure -a is said')
     rc, out = cli(env, 'dismiss', 'handover')
-    check('dismiss', rc == 0 and kept(root, 'handover') is None and (en['LOCAL53'] % 'handover') in out, 'the person hides a problem')
+    listed = json.loads(subprocess.run(['sparky-stereo-problems', 'list', '--json'], capture_output=True, text=True, env=env).stdout)
+    hidden = [p.get('hidden') for p in listed if p.get('key') == 'handover']
+    check('dismiss', rc == 0 and kept(root, 'handover') is not None and hidden == [True] and (en['LOCAL53'] % 'handover') in out,
+          "the person hides a problem: the engine's Hide, kept listed")
     rc, out = cli(env, 'dismiss', 'nothing-like-this')
     check('dismiss', rc == 1 and 'kernel-cleanup' in out, 'an unknown step names the kept ones (exit %d)' % rc)
+
+
+def migrate():
+    """0.1.5's records move into the engine at the upgrade (postinst: problems.py migrate); one that cannot move stays
+    in the old store, which nothing reads any more, so it is said once and kept as the problem old-store, naming the
+    store, until a repair has moved every record (0.1.6, milestone 2c of ORDER 350)."""
+    de, en = strings('de'), strings('en')
+    # a language file without the message makes its checks fail, not the part
+    de61, en61 = de.get('LOCAL61', '\0LOCAL61 missing %s'), en.get('LOCAL61', '\0LOCAL61 missing %s')
+    root, env = setup(lang='de_DE.UTF-8')
+    old = os.path.join(root, 'var/lib/sparky-stereo-boot/problems')
+    os.makedirs(old)
+    json.dump({'step': 'update-grub', 'time': '2026-10-31T08:00:00Z', 'key': 'LOCAL21', 'args': ['update-grub', '1'],
+               'command': ['update-grub'], 'status': 1, 'output': 'error: disk full\n', 'repair': [['update-grub']]},
+              open(os.path.join(old, 'update-grub.json'), 'w'))
+    open(os.path.join(old, 'handover.json'), 'w').write('{"step": "handover", "key": ')   # cut short
+    script = os.path.join(PKG, 'lib/problems.py')
+    r = subprocess.run([sys.executable, '-I', script, 'migrate', old], env=env, capture_output=True, text=True, timeout=120)
+    moved, kept_old = kept(root, 'update-grub'), kept(root, 'old-store')
+    check('migrate', r.returncode == 1 and moved is not None and moved.get('first') == '2026-10-31T08:00:00Z'
+          and not os.path.exists(os.path.join(old, 'update-grub.json')),
+          'a readable record moves, keeping when it was found; exit %d' % r.returncode)
+    check('migrate', os.path.exists(os.path.join(old, 'handover.json')), 'the one that cannot be read stays in the old store')
+    check('migrate', r.stderr.count(de61 % old) == 1 and r.stderr.count(en61 % old) == 1,
+          'said once, in German and in English beside it')
+    check('migrate', bool(kept_old) and kept_old['key'] == 'LOCAL61' and kept_old.get('args') == [old]
+          and kept_old.get('severity') == 'failed' and 'handover.json: JSONDecodeError' in (kept_old.get('output') or ''),
+          'kept as the problem old-store: the store as its argument, the record and what failed as its output')
+    check('migrate', bool(kept_old) and kept_old.get('repair') == [[sys.executable, script, 'migrate', old]],
+          'its repair is the same move again (%s)' % (kept_old or {}).get('repair'))
+    rc, out = cli(env, 'status')
+    check('migrate', rc == 1 and (de61 % old) in out, 'status lists it in German')
+    # the person reads the record and puts it right: repair moves it, and the problem and the old store go
+    json.dump({'step': 'handover', 'time': '2026-10-30T07:00:00Z', 'key': 'LOCAL32', 'args': [['LOCAL39']]},
+              open(os.path.join(old, 'handover.json'), 'w'))
+    rc, out = cli(env, 'repair')
+    check('migrate', kept(root, 'old-store') is None and kept(root, 'handover') is not None and not os.path.exists(old)
+          and (de['LOCAL50'] % 'old-store') in out, 'repair moves the rest: old-store is repaired, the old store goes')
+    # a store that is not a folder: named the same way
+    root, env = setup()
+    old = os.path.join(root, 'var/lib/sparky-stereo-boot/problems')
+    os.makedirs(os.path.dirname(old))
+    open(old, 'w').write('not a folder\n')
+    r = subprocess.run([sys.executable, '-I', script, 'migrate', old], env=env, capture_output=True, text=True, timeout=120)
+    k = kept(root, 'old-store')
+    check('migrate', r.returncode == 1 and bool(k) and (old + ': ') in (k.get('output') or '') and 'Not a directory' in (k.get('output') or '')
+          and (en61 % old) in r.stderr, 'an old store that cannot be listed is kept the same way, said')
+    # no old store (0.1.4 had none): nothing said, nothing kept
+    root, env = setup()
+    r = subprocess.run([sys.executable, '-I', script, 'migrate', os.path.join(root, 'var/lib/sparky-stereo-boot/problems')],
+                       env=env, capture_output=True, text=True, timeout=120)
+    check('migrate', r.returncode == 0 and not r.stderr and kept(root, 'old-store') is None, 'no old store: exit 0, nothing said or kept')
 
 
 def boot_check():
@@ -287,7 +352,7 @@ def languages():
 
 
 def main():
-    for part in (handover, problems, boot_check, languages):
+    for part in (handover, problems, migrate, boot_check, languages):
         try:
             part()
         except Exception as error:   # noqa: BLE001: a part that cannot run is a failure, said

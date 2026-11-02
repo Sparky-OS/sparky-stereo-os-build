@@ -59,14 +59,17 @@ rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*
 
 fresh() {      # the demo installed anew, no dpkg-stereo state, no fakes, an empty APT cache
 	dpkg --purge lean-demo >/dev/null 2>&1
-	rm -rf "$S" /var/cache/apt/archives/lean-demo_* /usr/local/bin/apt-get /usr/local/bin/apt-cache \
+	rm -rf "$S" $PS/dpkg-stereo_* /var/cache/apt/archives/lean-demo_* /usr/local/bin/apt-get /usr/local/bin/apt-cache \
 		/usr/local/bin/busctl /usr/local/bin/python3.98 "$CACHE"
 	dpkg -i "$DEB" >/dev/null 2>&1 || bad "demo install"
 	mkdir -p "$CACHE"
 	python3 -c "import py_compile; py_compile.compile('$PY', cfile='$CACHE/leandemo.$OWN.pyc')"
 }
 projected() { ! grep -q 'commentary' "$1"; }
-kept() { [ -f "$S/problems/$1.json" ] && python3 "$BIN" --problems | grep -q -- "$2"; }
+# the problems are kept by the edition's one engine (ORDER 350)
+PS=/var/lib/sparky-stereo-problems
+rec() { echo "$PS/dpkg-stereo_$1.json"; }
+kept() { [ -f "$(rec "$1")" ] && python3 "$BIN" --problems | grep -q -- "$2"; }
 said() { grep -q -- "$1" "$W/err"; }
 # apt as a system with no network sees it: the version is listed, and the download fails with APT's own error
 fake_offline_apt() {
@@ -86,7 +89,7 @@ check "control-bytecode-refreshed" python3 -c "
 import os, sys
 data = open('$CACHE/leandemo.$OWN.pyc', 'rb').read()
 sys.exit(int.from_bytes(data[12:16], 'little') != os.path.getsize('$PY'))"
-check "control-no-problem-kept" [ ! -d "$S/problems" ] || [ -z "$(ls -A "$S/problems")" ]
+check "control-no-problem-kept" [ -z "$(ls $PS/dpkg-stereo_* 2>/dev/null)" ]
 
 echo "== U20: a cache that cannot be written (the own interpreter's .pyc is a folder)"
 fresh
@@ -115,7 +118,7 @@ check "u20-other-exit-1" [ $rc = 1 ]
 check "u20-other-kept" kept bytecode "python3.98 exited 3: python3.98: cannot start"
 rm -f /usr/local/bin/python3.98 "$CACHE/leandemo.cpython-398.pyc"
 ds --repair > "$W/out" 2> "$W/err"; rc=$?
-check "u20-repair-clears" sh -c "[ $rc = 0 ] && [ ! -e '$S/problems/bytecode.json' ]"
+check "u20-repair-clears" sh -c "[ $rc = 0 ] && [ ! -e '$(rec bytecode)' ]"
 
 echo "== U57: verify --deep with the .deb at hand (control)"
 fresh
@@ -154,7 +157,7 @@ rm -f /usr/local/bin/apt-get /usr/local/bin/apt-cache
 cp "$DEB" /var/cache/apt/archives/
 ds --repair > "$W/out" 2> "$W/err"; rc=$?
 check "restore-repair-exit-0" [ $rc = 0 ]
-check "restore-repair-cleared" [ ! -e "$S/problems/restore.json" ]
+check "restore-repair-cleared" [ ! -e "$(rec restore)" ]
 check "restore-repair-original-back" cmp -s /usr/bin/lean-demo "$d/usr/bin/lean-demo"
 
 echo "== U19: dpkg's post-invoke hook fails (its records folder is a file)"
@@ -199,7 +202,9 @@ check "u19-project-kept" kept project "NotADirectoryError"
 check "u19-project-said" said "The Lean Code projection of the installed packages did not complete"
 rm -f $S/records
 ds --dismiss project > "$W/out" 2>&1; rc=$?
-check "u19-dismiss" sh -c "[ $rc = 0 ] && [ ! -e '$S/problems/project.json' ]"
+check "u19-dismiss" sh -c "[ $rc = 0 ] && [ -e '$(rec project)' ]"
+check "u19-dismiss-is-the-engines-hide" sh -c "sparky-stereo-problems list --json | python3 -c 'import json,sys; d=[p for p in json.load(sys.stdin) if p.get(\"key\") == \"project\"]; sys.exit(0 if d and d[0][\"hidden\"] else 1)'"
+check "u19-dismissed-not-counted" sh -c "python3 '$BIN' --problems >/dev/null"
 
 echo "== U19: the HR copies cannot be written (a pristine copy is gone)"
 fresh
@@ -212,17 +217,14 @@ check "u19-hr-said" said "HR copies could not be written"
 
 echo "== notifications: each kept problem once per session, and a failure to show one is said"
 mkdir -p "$W/xdg"
-printf '#!/bin/sh\necho "$*" >> %s/busctl.calls\n' "$W" > /usr/local/bin/busctl; chmod 755 /usr/local/bin/busctl
-rm -f "$W/busctl.calls" "$W/xdg/dpkg-stereo-notified"
-XDG_RUNTIME_DIR=$W/xdg python3 "$BIN" --notify > "$W/out" 2> "$W/err"; rc=$?
-check "notify-shown" sh -c "[ $rc = 0 ] && grep -q 'Lean Code needs attention' '$W/busctl.calls'"
-XDG_RUNTIME_DIR=$W/xdg python3 "$BIN" --notify > "$W/out" 2> "$W/err"
-check "notify-once" [ "$(grep -c ' Notify ' "$W/busctl.calls")" = 1 ]
-printf '#!/bin/sh\necho "Failed to connect to bus: No medium found" >&2\nexit 1\n' > /usr/local/bin/busctl
-rm -f "$W/xdg/dpkg-stereo-notified"
-XDG_RUNTIME_DIR=$W/xdg python3 "$BIN" --notify > "$W/out" 2> "$W/err"; rc=$?
-check "notify-failure-said" sh -c "[ $rc = 1 ] && grep -q 'could not be shown' '$W/err'"
-rm -f /usr/local/bin/busctl
+# the session's notifier (sparky-stereo-problems-plasma) shows the kept problems: --notify starts it (ORDER 350)
+printf '#!/bin/sh\necho "$*" >> %s/systemctl.calls\n' "$W" > /usr/local/bin/systemctl; chmod 755 /usr/local/bin/systemctl
+python3 "$BIN" --notify > "$W/out" 2> "$W/err"; rc=$?
+check "notify-starts-the-session-notifier" sh -c "[ $rc = 0 ] && grep -qx -- '--user start sparky-stereo-problems-notifier.service' '$W/systemctl.calls'"
+printf '#!/bin/sh\necho "Failed to connect to bus: No medium found" >&2\nexit 1\n' > /usr/local/bin/systemctl
+python3 "$BIN" --notify > "$W/out" 2> "$W/err"; rc=$?
+check "notify-failure-said" sh -c "[ $rc = 1 ] && grep -q 'Failed to connect to bus' '$W/err'"
+rm -f /usr/local/bin/systemctl
 
 echo "SUMMARY: $passed passed, $failed failed"
 exit $fail

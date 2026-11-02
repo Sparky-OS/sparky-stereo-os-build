@@ -12,6 +12,8 @@ import re
 import shutil
 import subprocess
 
+from . import source_tree
+
 
 TARGETS = (
     "execute_before_dh_auto_configure",
@@ -39,7 +41,7 @@ def add_build_dependencies(control, dependencies):
     return ''.join(paragraphs)
 
 
-def prepare(root, version, toolkit, build_dependencies=(), preserve_sources=()):
+def prepare(root, version, toolkit, build_dependencies=(), preserve_sources=(), generated_outputs=()):
     root, toolkit = Path(root).resolve(), Path(toolkit).resolve()
     rules_path = root / "debian/rules"
     rules = rules_path.read_text()
@@ -67,6 +69,15 @@ def prepare(root, version, toolkit, build_dependencies=(), preserve_sources=()):
     preserve_path = root / 'debian/sparky-lean-preserve.json'
     if preserve and preserve_path.exists():
         raise ValueError("Preserve the existing source-consumer plan; do not replace it")
+    generated = {}
+    for pattern, form, reason in generated_outputs:
+        if pattern in generated:
+            raise ValueError(f"Generated output declared twice: {pattern}")
+        generated[pattern] = {'form': form, 'reason': reason}
+    source_tree.check_generated(generated)
+    generated_path = root / source_tree.PAYLOAD_GENERATED_PLAN
+    if generated and generated_path.exists():
+        raise ValueError("Keep the existing generated-output plan; do not replace it")
 
     # Check all inputs before modifying the disposable source.
     for required in ("lean/source_tree.py", "lean/debhelper.py", "lean/smoke.tsv", "repo/provenance.sh",
@@ -93,6 +104,8 @@ def prepare(root, version, toolkit, build_dependencies=(), preserve_sources=()):
     control_path.write_text(control)
     if preserve:
         preserve_path.write_text(json.dumps(preserve, indent=2) + '\n')
+    if generated:
+        generated_path.write_text(json.dumps(generated, indent=2) + '\n')
     subprocess.run([
         "dch", "--newversion", version, "--distribution", "UNRELEASED",
         "Apply verified native Lean Code before compilation and qualified lc1 "
@@ -124,8 +137,13 @@ if __name__ == "__main__":
     parser.add_argument("--preserve-source", nargs=2, action="append", default=[],
                         metavar=("PATTERN", "REASON"),
                         help="Keep source read by an additional consumer unchanged; retained in source")
+    parser.add_argument("--generated-output", nargs=3, action="append", default=[],
+                        metavar=("PATTERN", "FORM", "REASON"),
+                        help="An installed file a build step generates from a source copy in an exact form "
+                             "(empty, or sha256:HEX); every matching installed file must have it")
     args = parser.parse_args()
     try:
-        prepare(args.root, args.version, args.toolkit, args.build_dependency, args.preserve_source)
+        prepare(args.root, args.version, args.toolkit, args.build_dependency, args.preserve_source,
+                args.generated_output)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.exit(1, str(error) + "\n")

@@ -12,7 +12,7 @@
 #      32-bit libraries (Multi-Arch: same, lock-step versions) are the edition's own, relabelled to the same version
 #   4. takes the build dependencies out again, and rebuilds by itself when the edition updates its FFmpeg (the apt hook)
 # Usage: sparky-stereo-ffmpeg-fdk [--yes] [--keep-build-deps] | --status | --remove | --help
-# Last update 2026/10/08
+# Last update 2026/11/02
 
 LIBDIR=${SPARKY_FDK_LIBDIR:-/usr/lib/sparky-stereo-ffmpeg-fdk}
 [ -f "$LIBDIR/common.sh" ] || LIBDIR=$(dirname "$(readlink -f "$0")")/../lib
@@ -33,7 +33,7 @@ BUILD_USER=${SUDO_USER:-}
 [ "$BUILD_USER" = root ] && BUILD_USER=
 
 usage() {
-	printf '%s\n' "$LOCAL1" "$LOCAL2" "$LOCAL3" "$LOCAL4" "$LOCAL5" "$LOCAL6"
+	printf '%s\n' "$LOCAL1" "$LOCAL2" "$LOCAL3" "$LOCAL4" "$LOCAL5" "$LOCAL6" "$LOCAL81"
 	exit "${1:-0}"
 }
 
@@ -42,6 +42,7 @@ while [ $# -gt 0 ]; do
 	--yes | -y) ASSUME_YES=1 ;;
 	--keep-build-deps) KEEP_BD=1 ;;
 	--status) MODE=status ;;
+	--cleanup) MODE=cleanup ;;
 	--remove | --restore) MODE=remove ;;
 	--rebuild) MODE=build ;;
 	--run) RUN=1 ;;
@@ -114,9 +115,13 @@ note() { printf '%s %s\n' "$(date '+%F %T')" "$*"; }
 
 FAILED_VERSION=
 fail() {
-	printf "$1\n" "${@:2}" >&2
-	[ -n "$FAILED_VERSION" ] && printf '%s\n' "$FAILED_VERSION" >"$STATE/last-failure"
-	logger -t sparky-stereo-ffmpeg-fdk -- "failed: $(printf "$1" "${@:2}")" 2>/dev/null || true
+	local key=$1 details
+	shift
+	printf "${!key}\n" "$@" >&2
+	details=$(python3 -c 'import json,sys; print(json.dumps({"data":{"version":sys.argv[1]},"args":[[sys.argv[2],*sys.argv[3:]]]}))' "$FAILED_VERSION" "$key" "$@") || exit 1
+	# A manual first build may have no installed identity; retry it through the user-facing --rebuild command.
+	sparky-stereo-problems keep --machine --quiet --details "$details" \
+		"$FDK_PACKAGE" build LOCAL79 || exit 1
 	exit 1
 }
 
@@ -131,30 +136,60 @@ AUTOREMOVE_OPT="-o APT::AutoRemove::RecommendsImportant=false -o APT::AutoRemove
 
 # The build tools go again: what this run installed and nothing else (apt's own autoremove list from before this run is left
 # alone, and so is everything that still needs one of them: the encoder's runtime library stays). Also after a failed run.
+cleanup_error() {
+	local key=${2:-LOCAL73} details
+	if [ "$key" = LOCAL75 ]; then
+		printf "$LOCAL75\n" "$1" >&2
+	else
+		printf "$LOCAL73\n" "$1" "$LOG" "$NEW_BD" >&2
+	fi
+	details=$(python3 -c '
+import json, sys
+operation, key, log, packages, baseline, directory = sys.argv[1:]
+print(json.dumps({"data":{"packages":packages.split(),"baseline":baseline.split(),"build_dir":directory},
+                  "args":[operation] if key == "LOCAL75" else [operation,log,packages]}))
+' "$1" "$key" "$LOG" "$NEW_BD" "$A0" "$B") || return 1
+	sparky-stereo-problems keep --machine --quiet --details "$details" \
+		--repair '["/usr/bin/sparky-stereo-ffmpeg-fdk","--cleanup"]' "$FDK_PACKAGE" cleanup "$key" || return 1
+	return 1
+}
+
 remove_build_tools() {
-	local A1 drop sim
+	local A1 drop sim plan extra
 	[ "$BD_INSTALLED" = 1 ] && [ "$KEEP_BD" != 1 ] && [ -n "$NEW_BD" ] || return 0
+	# Attempt cleanup once, including when called from the EXIT trap.
 	BD_INSTALLED=0
 	# shellcheck disable=SC2086
-	apt-mark auto $NEW_BD >/dev/null 2>&1
-	A1=$(apt-get -s $AUTOREMOVE_OPT autoremove 2>/dev/null | awk '/^Remv /{print $2}' | sort -u)
+	apt-mark auto $NEW_BD || { cleanup_error 'apt-mark auto'; return 1; }
+	plan=$(LC_ALL=C apt-get -s $AUTOREMOVE_OPT autoremove) || { cleanup_error 'apt-get -s autoremove'; return 1; }
+	A1=$(printf '%s\n' "$plan" | awk '/^(Remv|Purg) /{print $2}' | sort -u)
 	drop=$(comm -12 <(echo "$NEW_BD") <(comm -13 <(echo "$A0") <(echo "$A1")) | tr '\n' ' ')
-	[ -n "$drop" ] || return 0
-	# shellcheck disable=SC2086
-	sim=$(apt-get -s purge $drop 2>/dev/null | awk '/^Remv /{print $2}' | sort -u)
-	if [ -z "$(comm -13 <(echo "$drop" | tr ' ' '\n' | sort -u) <(echo "$sim"))" ]; then
+	if [ -n "$drop" ]; then
 		# shellcheck disable=SC2086
-		DEBIAN_FRONTEND=noninteractive apt-get $DBO_APT -y purge $drop >/dev/null 2>&1 && note "build tools removed again: $(echo $drop | wc -w) packages"
-	else
-		note "the build tools stay: removing them would take other packages with them"
+		plan=$(LC_ALL=C apt-get -s purge $drop) || { cleanup_error 'apt-get -s purge'; return 1; }
+		sim=$(printf '%s\n' "$plan" | awk '/^(Remv|Purg) /{print $2}' | sort -u)
+		extra=$(comm -13 <(echo "$drop" | tr ' ' '\n' | sort -u) <(echo "$sim") | tr '\n' ' ')
+		if [ -n "$extra" ]; then
+			printf '%s\n' "$plan" >&2
+			cleanup_error "$extra" LOCAL75
+			return 1
+		fi
+		# shellcheck disable=SC2086
+		DEBIAN_FRONTEND=noninteractive apt-get $DBO_APT -y purge $drop || { cleanup_error 'apt-get purge'; return 1; }
+		note "build tools removed again: $(echo $drop | wc -w) packages"
 	fi
+	problem_clear cleanup
 }
 
 cleanup() {
+	local rc=$?
 	trap - EXIT
-	remove_build_tools
-	[ -n "$B" ] && [ -d "$B" ] && rm -rf -- "${B:?}"
-	rm -rf -- "${STATE:?}/stage"
+	remove_build_tools || { [ "$rc" -ne 0 ] || rc=1; }
+	if [ -n "$B" ] && [ -d "$B" ]; then
+		rm -rf -- "${B:?}" || { cleanup_error 'rm build'; [ "$rc" -ne 0 ] || rc=1; }
+	fi
+	rm -rf -- "${STATE:?}/stage" || { cleanup_error 'rm stage'; [ "$rc" -ne 0 ] || rc=1; }
+	exit "$rc"
 }
 
 # Relabel the edition's own package $1 (a .deb of another architecture) as version $2 of the same source: the version, the
@@ -214,7 +249,7 @@ PY
 }
 
 worker() {
-	local info VER BINS LOCALVER INSTALLED OTHERS host_arch tree jobs low high cores want f name arch other sim removals h
+	local info VER BINS LOCALVER INSTALLED OTHERS host_arch tree jobs low high cores want f name arch other sim removals h plan
 	check_user
 	mkdir -p "$STATE" "$(dirname "$LOG")"
 	exec 9>"$LOCK"
@@ -233,34 +268,38 @@ worker() {
 	note "start: build user $BUILD_USER, mode $([ "$AUTO" = 1 ] && echo automatic || echo manual)"
 
 	for f in dpkg-buildpackage fakeroot runuser python3 flock apt-get dpkg-query; do
-		command -v "$f" >/dev/null || fail "$LOCAL32" "$f"
+		command -v "$f" >/dev/null || fail LOCAL32 "$f"
 	done
 	info=$(repo_source)
-	[ -n "$info" ] || fail "$LOCAL33" "$SRCPKG"
+	case $? in
+	0) ;;
+	"$NO_SOURCE_RECORD") fail LOCAL33 "$SRCPKG" ;;
+	*) fail LOCAL83 "$SRCPKG" ;;
+	esac
 	VER=${info%% *}
 	BINS=${info#* }
 	FAILED_VERSION=$VER
 	for f in libfdk-aac-dev libfdk-aac2; do
-		LC_ALL=C apt-cache policy "$f" 2>/dev/null | awk '/Candidate:/ && $2 != "(none)" {ok=1} END {exit !ok}' || fail "$LOCAL34" "$f"
+		LC_ALL=C apt-cache policy "$f" 2>/dev/null | awk '/Candidate:/ && $2 != "(none)" {ok=1} END {exit !ok}' || fail LOCAL34 "$f"
 	done
 	LOCALVER=$(next_local_version "$VER")
 	host_arch=$(dpkg --print-architecture)
 	INSTALLED=$(installed_of "$BINS")
 	note "edition's source $SRCPKG $VER; local build will be $LOCALVER; installed now: $(echo $INSTALLED)"
-	[ -d "$TMPBASE" ] || fail "$LOCAL35" "$TMPBASE" 0 "$NEED_GB"
+	[ -d "$TMPBASE" ] || fail LOCAL35 "$TMPBASE" 0 "$NEED_GB"
 	f=$(df --output=avail -B1G "$TMPBASE" | tail -n1 | tr -d ' ')
-	[ "${f:-0}" -ge "$NEED_GB" ] || fail "$LOCAL35" "$TMPBASE" "${f:-0}" "$NEED_GB"
+	[ "${f:-0}" -ge "$NEED_GB" ] || fail LOCAL35 "$TMPBASE" "${f:-0}" "$NEED_GB"
 
-	B=$(mktemp -d "$TMPBASE/sparky-stereo-ffmpeg-fdk.XXXXXX") || fail "$LOCAL35" "$TMPBASE" 0 "$NEED_GB"
+	B=$(mktemp -d "$TMPBASE/sparky-stereo-ffmpeg-fdk.XXXXXX") || fail LOCAL35 "$TMPBASE" 0 "$NEED_GB"
 	install -d -o "$BUILD_USER" -m 700 "$B/home" "$B/tmp" "$B/other"
 	chown "$BUILD_USER" "$B"
 	chmod 700 "$B"
 
 	# 1. the source, from the edition's own repository
 	note "fetching the source"
-	as_user "cd '$B' && apt-get source -qq $SRCPKG=$VER" || fail "$LOCAL36"
+	as_user "cd '$B' && apt-get source -qq $SRCPKG=$VER" || fail LOCAL36
 	tree=$(find "$B" -mindepth 1 -maxdepth 1 -type d -name "${SRCPKG}-*" | head -n1)
-	[ -f "$tree/debian/changelog" ] && grep -q -F "$PROFILE" "$tree/debian/rules" || fail "$LOCAL37" "$PROFILE"
+	[ -f "$tree/debian/changelog" ] && grep -q -F "$PROFILE" "$tree/debian/rules" || fail LOCAL37 "$PROFILE"
 
 	# 1b. the packages of the other architectures that are installed (the 32-bit libraries): their files are the edition's own,
 	#     downloaded now so that a missing one stops everything before the long build, never after it
@@ -269,7 +308,7 @@ worker() {
 		arch=${other#*:}
 		name=${other%%:*}
 		[ "$arch" != "$host_arch" ] && [ "$arch" != all ] || continue
-		as_user "cd '$B/other' && apt-get download -qq $name:$arch=$VER" && [ -n "$(find "$B/other" -maxdepth 1 -name "${name}_*_${arch}.deb")" ] || fail "$LOCAL41" "$name:$arch" "$VER"
+		as_user "cd '$B/other' && apt-get download -qq $name:$arch=$VER" && [ -n "$(find "$B/other" -maxdepth 1 -name "${name}_*_${arch}.deb")" ] || fail LOCAL41 "$name:$arch" "$VER"
 		OTHERS="$OTHERS $name:$arch"
 	done
 
@@ -285,8 +324,8 @@ worker() {
 		printf ' -- %s <%s@%s>  %s\n\n' "$BUILD_USER" "$BUILD_USER" "$h" "$(date -R)"
 	} >"$B/entry"
 	chown "$BUILD_USER" "$B/entry"
-	as_user "cd '$tree' && cat '$B/entry' debian/changelog > debian/changelog.new && mv debian/changelog.new debian/changelog" || fail "$LOCAL37" "$PROFILE"
-	python3 - "$tree/debian/control" <<'PY' || fail "$LOCAL37" "$PROFILE"
+	as_user "cd '$tree' && cat '$B/entry' debian/changelog > debian/changelog.new && mv debian/changelog.new debian/changelog" || fail LOCAL37 "$PROFILE"
+	python3 - "$tree/debian/control" <<'PY' || fail LOCAL37 "$PROFILE"
 import re, sys
 p = sys.argv[1]
 c = open(p, encoding='utf-8').read()
@@ -302,17 +341,21 @@ PY
 
 	# 3. the build dependencies (apt asks before it installs them, unless --yes or the automatic rebuild)
 	DBO_APT="-o DPkg::Lock::Timeout=$([ "$AUTO" = 1 ] && echo 3600 || echo 300)"
-	A0=$(apt-get -s $AUTOREMOVE_OPT autoremove 2>/dev/null | awk '/^Remv /{print $2}' | sort -u)
+	plan=$(LC_ALL=C apt-get -s $AUTOREMOVE_OPT autoremove) || fail LOCAL74 'apt-get -s autoremove'
+	A0=$(printf '%s\n' "$plan" | awk '/^(Remv|Purg) /{print $2}' | sort -u)
 	# without Recommends and Suggests whatever the computer's policy is: the build tools, not everything that goes with them
 	BDOPT="-o APT::Install-Recommends=false -o APT::Install-Suggests=false"
 	# only the packages that are NEW on this computer ("Inst name (version ...)"); an upgrade has the old version in [] after the name
-	NEW_BD=$(apt-get -s $BDOPT -P "$PROFILE" build-dep "$tree" 2>/dev/null | awk '/^Inst / && $3 !~ /^\[/ {print $2}' | sort -u)
+	plan=$(LC_ALL=C apt-get -s $BDOPT -P "$PROFILE" build-dep "$tree") || fail LOCAL74 'apt-get -s build-dep'
+	removals=$(printf '%s\n' "$plan" | awk '/^(Remv|Purg) /{print $2}' | sort -u | tr '\n' ' ')
+	[ -z "$removals" ] || fail LOCAL42 "$removals"
+	NEW_BD=$(printf '%s\n' "$plan" | awk '/^Inst / && $3 !~ /^\[/ {print $2}' | sort -u)
 	note "build dependencies to install: $(echo "$NEW_BD" | grep -c .)"
 	BD_INSTALLED=1
 	if [ "$ASSUME_YES" = 1 ] || [ "$AUTO" = 1 ]; then
-		DEBIAN_FRONTEND=noninteractive apt-get $DBO_APT $BDOPT -y -P "$PROFILE" build-dep "$tree" || fail "$LOCAL38"
+		DEBIAN_FRONTEND=noninteractive apt-get $DBO_APT $BDOPT --no-remove -y -P "$PROFILE" build-dep "$tree" || fail LOCAL38
 	else
-		apt-get $DBO_APT $BDOPT -P "$PROFILE" build-dep "$tree" || fail "$LOCAL38"
+		apt-get $DBO_APT $BDOPT --no-remove -P "$PROFILE" build-dep "$tree" || fail LOCAL38
 	fi
 
 	# 4. the build, as the user
@@ -336,12 +379,12 @@ PY
 	if [ $? -ne 0 ]; then
 		cp "$B/build.log" "$STATE/last-build.log" 2>/dev/null
 		tail -n 25 "$B/build.log"
-		fail "$LOCAL39" "$STATE/last-build.log"
+		fail LOCAL39 "$STATE/last-build.log"
 	fi
 	note "build finished"
-	find "$B" -maxdepth 1 -name '*.deb' ! -name '*-dbgsym_*' | grep -q . || fail "$LOCAL39" "$STATE/last-build.log"
+	find "$B" -maxdepth 1 -name '*.deb' ! -name '*-dbgsym_*' | grep -q . || fail LOCAL39 "$STATE/last-build.log"
 	f=$(find "$B" -maxdepth 1 -name 'libavcodec[0-9]*.deb' ! -name '*-dbgsym_*' | head -n1)
-	dpkg-deb -f "$f" Depends | grep -q 'libfdk-aac' || fail "$LOCAL40"
+	dpkg-deb -f "$f" Depends | grep -q 'libfdk-aac' || fail LOCAL40
 
 	# 5. what goes in: every package of the source that is installed, ffmpeg and the runtime libraries
 	rm -rf -- "${STATE:?}/stage"
@@ -363,23 +406,23 @@ PY
 		name=${other%%:*}
 		note "relabelling the edition's $name:$arch $VER as $LOCALVER (the same version for both architectures)"
 		f=$(find "$B/other" -maxdepth 1 -name "${name}_*_${arch}.deb" | head -n1)
-		relabel "$f" "$LOCALVER" "$VER" "$B" "$STATE/stage/${name}_${LOCALVER//:/%3a}_${arch}.deb" || fail "$LOCAL41" "$name:$arch" "$VER"
+		relabel "$f" "$LOCALVER" "$VER" "$B" "$STATE/stage/${name}_${LOCALVER//:/%3a}_${arch}.deb" || fail LOCAL41 "$name:$arch" "$VER"
 		want="$want $name:$arch"
 	done
 	chmod 644 "$STATE"/stage/*.deb
 	for f in "$STATE"/stage/*.deb; do
-		[ "$(dpkg-deb -f "$f" Version)" = "$LOCALVER" ] || fail "$LOCAL41" "$f" "$LOCALVER"
+		[ "$(dpkg-deb -f "$f" Version)" = "$LOCALVER" ] || fail LOCAL41 "$f" "$LOCALVER"
 	done
 
 	# 6. nothing is installed that would take something away: apt is asked first, and a removal stops it
-	sim=$(apt-get -s $DBO_APT -o APT::Get::Assume-Yes=true install "$STATE"/stage/*.deb 2>&1)
-	removals=$(echo "$sim" | awk '/^Remv /{print $2}' | sort -u | tr '\n' ' ')
+	sim=$(LC_ALL=C apt-get -s $DBO_APT -o APT::Get::Assume-Yes=true install "$STATE"/stage/*.deb) || fail LOCAL74 'apt-get -s install'
+	removals=$(echo "$sim" | awk '/^(Remv|Purg) /{print $2}' | sort -u | tr '\n' ' ')
 	if [ -n "$removals" ] || echo "$sim" | grep -q '^E: '; then
 		echo "$sim" | grep -E '^(E:|Remv)' | head -n 20
-		fail "$LOCAL42" "${removals:-?}"
+		fail LOCAL42 "${removals:-?}"
 	fi
 	note "installing: $(ls "$STATE/stage" | tr '\n' ' ')"
-	DEBIAN_FRONTEND=noninteractive apt-get $DBO_APT -y -o Dpkg::Options::=--force-confold install "$STATE"/stage/*.deb || fail "$LOCAL43"
+	DEBIAN_FRONTEND=noninteractive apt-get $DBO_APT --no-remove -y -o Dpkg::Options::=--force-confold install "$STATE"/stage/*.deb || fail LOCAL43
 
 	# 7. the state first, then the check that the encoder is there
 	{
@@ -389,14 +432,15 @@ PY
 		printf "LOCAL_PACKAGES='%s'\n" "${want# }"
 		printf "BUILT_AT='%s'\n" "$(date -R)"
 	} >"$STATE/installed"
-	rm -f "$STATE/last-failure"
-	write_pin || fail "$LOCAL46" "$PINFILE"
+	write_pin || fail LOCAL46 "$PINFILE"
 	if command -v ffmpeg >/dev/null && ! ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libfdk_aac; then
-		fail "$LOCAL44"
+		fail LOCAL44
 	fi
 
+	problem_clear build || exit 1
+
 	# 8. the build tools go again
-	remove_build_tools
+	remove_build_tools || exit 1
 	note "done: $LOCALVER"
 	logger -t sparky-stereo-ffmpeg-fdk -- "FFmpeg $LOCALVER with libfdk_aac installed" 2>/dev/null || true
 	printf "$LOCAL45\n" "$LOCALVER"
@@ -419,20 +463,25 @@ do_remove() {
 		ln -s "$f" "$tmp/$(basename "$f")"
 	done
 	pkgs=$(dpkg-query -W -f='${Package}:${Architecture} ${Version} ${db:Status-Abbrev}\n' 2>/dev/null | awk '$2 ~ /\+fdk[0-9]+$/ && $3 ~ /^ii/ {print $1}')
-	[ -n "$pkgs" ] || { rm -rf -- "${tmp:?}"; rm -f "$STATE/installed" "$STATE/consent" "$STATE/last-failure"; drop_pin; die "$LOCAL50"; }
+	[ -n "$pkgs" ] || { rm -rf -- "${tmp:?}"; rm -f "$STATE/installed" "$STATE/consent"; drop_pin; die "$LOCAL50"; }
 	# shellcheck disable=SC2086
 	DEBIAN_FRONTEND=noninteractive apt-get -y --allow-downgrades -o Dir::Etc::PreferencesParts="$tmp" install $pkgs || {
 		rm -rf -- "${tmp:?}"
 		die "$LOCAL51"
 	}
 	rm -rf -- "${tmp:?}"
-	rm -f "$STATE/installed" "$STATE/consent" "$STATE/last-failure"
+	rm -f "$STATE/installed" "$STATE/consent"
 	drop_pin
+	problem_clear build || return 1
+	problem_clear update-check || return 1
 	printf '%s\n' "$LOCAL52"
 }
 
 do_status() {
-	local info repo
+	local info repo failed problem=
+	failed=$(problem_data build version) || return 1
+	sparky-stereo-problems list "$FDK_PACKAGE" || return 1
+
 	if read_installed; then
 		printf "$LOCAL60\n" "$LOCAL_VERSION" "$LOCAL_BASE"
 		printf "$LOCAL61\n" "$LOCAL_PACKAGES"
@@ -441,24 +490,47 @@ do_status() {
 		printf '%s\n' "$LOCAL63"
 	fi
 	info=$(repo_source)
-	repo=${info%% *}
-	if [ -n "$repo" ]; then
+	case $? in
+	0)
+		repo=${info%% *}
 		printf "$LOCAL64\n" "$repo"
 		if read_installed && dpkg --compare-versions "$repo" gt "$LOCAL_BASE"; then
-			if [ "$(cat "$STATE/last-failure" 2>/dev/null)" = "$repo" ]; then
+			if [ "$failed" = "$repo" ]; then
 				printf "$LOCAL65\n" "$STATE/last-build.log"
 			else
 				printf '%s\n' "$LOCAL66"
 			fi
 		fi
-	fi
-	[ -f "$LOG" ] && printf "$LOCAL67\n" "$LOG"
+		;;
+	"$NO_SOURCE_RECORD") problem=LOCAL33 ;;
+	*) problem=LOCAL83 ;;
+	esac
+	if [ -f "$LOG" ]; then printf "$LOCAL67\n" "$LOG"; fi
+	# what could not be told above comes last, and the status fails
+	[ -z "$problem" ] || { printf "${!problem}\n" "$SRCPKG" >&2; return 1; }
+}
+
+do_cleanup() {
+	[ "$(id -u)" -eq 0 ] || exec sudo -- "$SELF" --cleanup
+	exec 9>"$LOCK"
+	flock -n 9 || die "$LOCAL30"
+	local legacy
+	legacy=$(problem_data cleanup legacy) || return 1
+	[ "$legacy" != True ] || { printf '%s\n' "$LOCAL82" >&2; return 1; }
+	NEW_BD=$(problem_data cleanup packages) || return 1
+	A0=$(problem_data cleanup baseline) || return 1
+	B=$(problem_data cleanup build_dir) || return 1
+	BD_INSTALLED=1
+	trap cleanup EXIT
+	remove_build_tools || return 1
+	problem_clear cleanup
 }
 
 # ---- what runs -----------------------------------------------------------------------------------------------
 
 case $MODE in
 status) do_status ;;
+cleanup) do_cleanup ;;
 remove) do_remove ;;
 build)
 	if [ "$RUN" = 1 ]; then

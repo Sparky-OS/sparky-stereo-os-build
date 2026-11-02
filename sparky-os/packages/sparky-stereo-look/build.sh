@@ -18,10 +18,16 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
-VERSION=${VERSION:-20261031~sparky9~0+lc1}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
+VERSION=${VERSION:-20261102~sparky9~0+lc1}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
 case ${1:-all} in all|default) ;; *) echo 'Usage: build.sh [all|default]' >&2; exit 2 ;; esac
 WORK=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}/sparky-os}/look-build.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
+RECIPE=$HERE
+COPY="$RECIPE/../../../tools/copy-recipe.py"
+python3 "$COPY" "$RECIPE" "$WORK/authoring"
+mkdir -p "$WORK/authoring/build-tools"
+cp "$COPY" "$WORK/authoring/build-tools/"
+HERE=$WORK/authoring
 LNF=usr/share/plasma/look-and-feel
 OXYGEN=/usr/share/plasma/look-and-feel/org.kde.oxygen
 SB=/usr/share/plasma/look-and-feel/org.kde.sparkyblack.desktop
@@ -49,7 +55,7 @@ control() { # dir package depends recommends description...
 build() { # dir package
 	find "$1" -name '*.qmlc' -delete
 	chmod -R go-w "$1"
-	PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$1" "$OUT" --authoring "$HERE"
+	PYTHONPATH="$RECIPE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$1" "$OUT" --authoring "$HERE"
 }
 
 # 1. The default look.

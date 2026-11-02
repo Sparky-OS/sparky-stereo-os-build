@@ -16,28 +16,33 @@
 # Nothing is built by installing the package: the first run explains, asks, and only then builds.
 # CPU_MINUTES is the build's CPU time (user plus system, minutes), measured on the container build of ffmpeg-dmo
 # 10:9.0.2-dmo1+stereo3d2 (media-on-dmo, 2026-10-08): the time the command tells the user is this divided by the cores.
-# Needs only dpkg-deb.
+# Needs dpkg-deb and sparky-stereo-problems (catalog generation).
 # Usage: build.sh   (output goes to $OUT, default ${SPARKY_REPO_DIR})
 # Last update 2026/10/29
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
-VERSION=${VERSION:-20261029~sparky9~0+lc1}
+VERSION=${VERSION:-20261102.2~sparky9~0+lc1}
 CPU_MINUTES=${CPU_MINUTES:-35}
 PKG=sparky-stereo-ffmpeg-fdk
 W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/fdk-build.XXXXXX")
 trap 'rm -rf "${W:?}"' EXIT
+python3 "$HERE/../../../tools/copy-recipe.py" "$HERE" "$W/recipe"
+TOOLKIT=$(cd "$HERE/../.." && pwd)
+HERE=$W/recipe
 D=$W/$PKG
 mkdir -p "$D/DEBIAN" "$D/usr/bin" "$D/usr/lib/$PKG" "$D/usr/share/sparky/$PKG" "$D/usr/share/doc/$PKG" \
-	"$D/etc/apt/apt.conf.d" "$D/etc/apt/sources.list.d"
+	"$D/etc/apt/apt.conf.d" "$D/etc/apt/sources.list.d" "$D/usr/lib/systemd/catalog"
 
 install -m 755 "$HERE/bin/$PKG" "$D/usr/bin/$PKG"
 install -m 644 "$HERE/lib/common.sh" "$D/usr/lib/$PKG/common.sh"
 install -m 755 "$HERE/lib/check-update" "$D/usr/lib/$PKG/check-update"
+install -m 755 "$HERE/lib/migrate-problems" "$D/usr/lib/$PKG/migrate-problems"
 install -m 755 "$HERE/lib/write-pin" "$D/usr/lib/$PKG/write-pin"
 sed -i "s/@CPU_MINUTES@/$CPU_MINUTES/" "$D/usr/lib/$PKG/common.sh"
 install -m 644 "$HERE"/lang/* "$D/usr/share/sparky/$PKG/"
+sparky-stereo-problems catalog "$PKG" "$HERE/lang" "$D/usr/lib/systemd/catalog" --subject LOCAL10
 install -m 644 "$HERE/apt/99sparky-stereo-ffmpeg-fdk" "$D/etc/apt/apt.conf.d/99sparky-stereo-ffmpeg-fdk"
 install -m 644 "$HERE/apt/sparky-stereo-ffmpeg-src.sources" "$D/etc/apt/sources.list.d/sparky-stereo-ffmpeg-src.sources"
 printf '%s\n' /etc/apt/apt.conf.d/99sparky-stereo-ffmpeg-fdk /etc/apt/sources.list.d/sparky-stereo-ffmpeg-src.sources \
@@ -49,6 +54,7 @@ cat >"$D/DEBIAN/postinst" <<'EOS'
 set -e
 case "$1" in
 configure)
+	/usr/lib/sparky-stereo-ffmpeg-fdk/migrate-problems
 	# installed again while the FFmpeg built here is still on the computer: apt keeps it again
 	if [ -x /usr/lib/sparky-stereo-ffmpeg-fdk/write-pin ]; then
 		/usr/lib/sparky-stereo-ffmpeg-fdk/write-pin || true
@@ -65,6 +71,7 @@ cat >"$D/DEBIAN/postrm" <<'EOS'
 set -e
 case "$1" in
 remove | purge)
+	sparky-stereo-problems clear --all sparky-stereo-ffmpeg-fdk
 	# the pin goes with the package; the local build stays installed and, without the pin, apt puts the edition's FFmpeg back
 	# at the next full-upgrade
 	if [ "$1" = remove ] && [ -s /var/lib/sparky-stereo-ffmpeg-fdk/installed ]; then
@@ -127,7 +134,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: sparky-stereo-apt, apt, dpkg-dev, build-essential, fakeroot, python3, sudo | pkexec
+Depends: sparky-stereo-problems (>= 0.1.0), sparky-stereo-apt, apt, dpkg-dev, build-essential, fakeroot, python3, sudo | pkexec
 Recommends: powermgmt-base
 Section: sound
 Priority: optional
@@ -144,6 +151,7 @@ EOS
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort |
 	grep -v -x -F -f <(sed 's|^/||' DEBIAN/conffiles) | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT"
-PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone \
-    "$D" "$OUT" --authoring "$HERE"
+PYTHONPATH="$TOOLKIT${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone \
+    "$D" "$OUT" --authoring "$HERE" --build-dependency sparky-stereo-problems
+PYTHONPATH="$TOOLKIT${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release check-identity "$OUT/${PKG}_${VERSION}_all.deb" "$OUT/${PKG}-lc-hr_${VERSION}_all.deb"
 echo "built $OUT/${PKG}_${VERSION}_all.deb"

@@ -1,6 +1,13 @@
 -------------------------------------------------------------------------------
   Version 0.1.3 (2026-11-02)
 -------------------------------------------------------------------------------
+  * ORDER 350 (Daniel, 2026-11-02: "Why machinery to keep a failure for each?"): the problems are kept by
+    the edition's one engine, sparky-stereo-problems, and shown by its session notifier; the package's own
+    store, notifier and user units go. status and repair keep working through the engine; dismiss is the
+    engine's Hide (yours, no administrator needed, back when the problem changes); notify starts the
+    session's notifier. Each drop-in empties OnFailure= before naming its own handler, so a failure of these
+    units is told once, with what this package knows of it, instead of the engine's generic handler. The
+    messages, word for word, are built into journal catalogs; the problems go when the package is removed
   * Nothing fails silently (ORDER 346c; Daniel, 2026-11-01: "either it works or not and the user must know"):
     each drop-in names sparky-stereo-service-problem@ in OnFailure=, so a service that cannot start is said in the
     system's language and kept in /var/lib/sparky-stereo-service-defaults/problems with its own last lines;

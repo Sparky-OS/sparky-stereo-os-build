@@ -12,12 +12,15 @@ T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
 fails=0
 check() { if [ "$2" = "$3" ]; then echo "PASS  $1"; else echo "FAIL  $1: got [$2], want [$3]"; fails=$((fails + 1)); fi; }
+# the problems are kept by the engine (sparky-stereo-problems, 0.1.6), its messages from catalogs of the package's lang/
+sparky-stereo-problems catalog sparky-stereo-boot "$P/lang" "$T/cat" --subject LOCAL19 >/dev/null
 run() { SPARKY_STEREO_ESP=$T/$1 SPARKY_STEREO_CERT=${CERT_USED:-$CERT} SPARKY_STEREO_LANG_DIR=$P/lang SPARKY_STEREO_OS_RELEASE=$T/os-release \
+	SPARKY_STEREO_PROBLEMS_CATALOG=$T/cat:/usr/lib/systemd/catalog \
 	SPARKY_STEREO_ROOT=$T/root SPARKY_STEREO_FSTAB=$T/fstab LANG=$2 python3 -I "$P/lib/secureboot.py" "$3"; }
 printf 'ID=sparky\n' > "$T/os-release"
 : > "$T/fstab"
-REC=$T/root/var/lib/sparky-stereo-boot/problems/esp-certificate.json
-key() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["key"])' "$REC" 2>/dev/null || echo none; }
+REC=$T/root/var/lib/sparky-stereo-problems/sparky-stereo-boot_esp-certificate.json
+key() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["message"])' "$REC" 2>/dev/null || echo none; }
 
 # an installed system as Calamares leaves it: shim in EFI/sparky and EFI/debian, and shim as EFI/BOOT/BOOTX64.EFI
 mkdir -p "$T/a/EFI/sparky" "$T/a/EFI/debian" "$T/a/EFI/boot" "$T/a/EFI/Microsoft/Boot"

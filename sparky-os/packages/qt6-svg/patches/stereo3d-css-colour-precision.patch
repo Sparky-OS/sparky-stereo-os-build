@@ -1,0 +1,3863 @@
+Description: Parse CSS colours and paint them at the target's precision
+ Qt SVG read colours with QColor::fromString(), so every colour CSS Color 4,
+ CSS Color 5 and CSS Color HDR define beyond hex, names and rgb() (color(),
+ lab(), lch(), oklab(), oklch(), hsl(), hwb(), color-mix(), relative
+ colours, the rec2100 spaces) was dropped without a word and painted black.
+ This parses the whole <color> grammar, keeps each colour in its own space
+ in double precision, and resolves it for the painter's target when it is
+ painted: gamut mapped (CSS Color 4 section 14.2) where the target holds
+ [0, 1] only, kept outside [0, 1] on floating point targets, 16 bits per
+ channel or float, and an invalid colour is reported.
+ light-dark() and the system colours follow the element color scheme, from
+ the color-scheme property and the application's colour scheme (CSS Color 5
+ section 7, CSS Color Adjustment 1 sections 2.2 to 2.4); contrast-color()
+ chooses by Oklab lightness with WCAG 2.1's 3:1 as its floor (CSS Color 5
+ section 8).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: vendor, Sparky Stereo OS (ORDER 348, 348b); https://github.com/Sparky-OS/qtsvg/commits/stereo3d-css-colour-6.11 (66135ecb, 840d1582)
+Bug: https://qt-project.atlassian.net/browse/QTBUG-146683
+Forwarded: https://codereview.qt-project.org/c/qt/qtsvg/+/785347 (patch set 3; the color-scheme and contrast-color() part is patch set 4)
+Last-Update: 2026-11-02
+---
+diff --git a/src/svg/CMakeLists.txt b/src/svg/CMakeLists.txt
+index 5f24500..b8d5872 100644
+--- a/src/svg/CMakeLists.txt
++++ b/src/svg/CMakeLists.txt
+@@ -18,6 +18,7 @@ qt_internal_add_module(Svg
+         qsvggenerator.cpp qsvggenerator.h
+         qsvggraphics.cpp qsvggraphics_p.h
+         qsvghandler.cpp qsvghandler_p.h
++        qsvgcsscolor.cpp qsvgcsscolor_p.h
+         qsvgnode.cpp qsvgnode_p.h
+         qsvgrenderer.cpp qsvgrenderer.h
+         qsvgstructure.cpp qsvgstructure_p.h
+diff --git a/src/svg/css/qsvgcsshandler.cpp b/src/svg/css/qsvgcsshandler.cpp
+index 338d88f..d7616bf 100644
+--- a/src/svg/css/qsvgcsshandler.cpp
++++ b/src/svg/css/qsvgcsshandler.cpp
+@@ -3,6 +3,8 @@
+ // Qt-Security score:critical reason:data-parser
+ 
+ #include "qsvgcsshandler_p.h"
++#include "qsvgcsscolor_p.h"
++#include "qsvghandler_p.h"
+ #include <QtSvg/private/qsvgstyleselector_p.h>
+ #include <QtSvg/private/qsvganimatedproperty_p.h>
+ #include <QtSvg/private/qsvgutils_p.h>
+@@ -25,7 +27,10 @@ bool fillColorProperty(const QList<CssKeyFrameValue> &keyFrames, QSvgAnimatedPro
+             return false;
+ 
+         QString colorStr = keyFrame.values.first().toString();
+-        QColor color = QColor::fromString(colorStr);
++        const QSvgCssColorParseResult parsed = qsvg_parseCssColor(colorStr, QSvgCssColorContext());
++        QColor color = parsed.color.isValid() ? parsed.color.toQColor() : QColor::fromString(colorStr);
++        if (!color.isValid())
++            qCWarning(lcSvgHandler, "Invalid colour \"%s\" in a CSS key frame: %s", qPrintable(colorStr), qPrintable(parsed.error));
+         prop->appendColor(color);
+         prop->appendKeyFrame(keyFrame.keyFrame);
+     }
+diff --git a/src/svg/qsvgcsscolor.cpp b/src/svg/qsvgcsscolor.cpp
+new file mode 100644
+index 0000000..0cc5928
+--- /dev/null
++++ b/src/svg/qsvgcsscolor.cpp
+@@ -0,0 +1,2370 @@
++// Copyright (C) 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++
++// CSS colour values for Qt SVG: the <color> grammar of CSS Color 4 (CRD 1 November 2026) sections 4 to 10,
++// CSS Color 5 (WD 29 October 2026) sections 2 to 8 and CSS Color HDR 1 (WD 26 October 2026) sections 4 to 8.
++// The conversions port the specifications' own sample code (CSS Color 4 sections 7.1, 7.2, 8.1, 8.2, 19 and 20.3,
++// CSS Color HDR section 11, CSS Color 5 section 6.1), which W3C publishes under its software and document licence.
++// Gamut mapping is CSS Color 4 section 14.2.2; interpolation CSS Color 4 section 13 and CSS Color 5 section 3.3.
++
++#include "qsvgcsscolor_p.h"
++
++#include <QtCore/qloggingcategory.h>
++#include <QtCore/qnumeric.h>
++#include <QtCore/qregularexpression.h>
++#include <QtCore/qvarlengtharray.h>
++#include <QtGui/qcolorspace.h>
++#include <QtGui/qguiapplication.h>
++#include <QtGui/qimage.h>
++#include <QtGui/qpaintdevice.h>
++#include <QtGui/qpainter.h>
++#include <QtGui/qpalette.h>
++#include <QtGui/qstylehints.h>
++
++#include <algorithm>
++#include <cmath>
++#include <limits>
++
++QT_BEGIN_NAMESPACE
++
++using namespace Qt::StringLiterals;
++
++Q_DECLARE_LOGGING_CATEGORY(lcSvgHandler)
++
++namespace {
++
++using Vec3 = std::array<double, 3>;
++using Mat3 = double[3][3];
++
++Vec3 mul(const Mat3 &m, const Vec3 &v)
++{
++    return {m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2],
++            m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2],
++            m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2]};
++}
++
++double spow(double base, double e)
++{
++    return std::copysign(std::pow(std::abs(base), e), base);
++}
++
++// CSS Color 4 section 19
++const double D50[3] = {0.3457 / 0.3585, 1.0, (1.0 - 0.3457 - 0.3585) / 0.3585};
++
++const Mat3 srgbToXyz = {{506752.0 / 1228815, 87881.0 / 245763, 12673.0 / 70218},
++                        {87098.0 / 409605, 175762.0 / 245763, 12673.0 / 175545},
++                        {7918.0 / 409605, 87881.0 / 737289, 1001167.0 / 1053270}};
++const Mat3 xyzToSrgb = {{12831.0 / 3959, -329.0 / 214, -1974.0 / 3959},
++                        {-851781.0 / 878810, 1648619.0 / 878810, 36519.0 / 878810},
++                        {705.0 / 12673, -2585.0 / 12673, 705.0 / 667}};
++const Mat3 p3ToXyz = {{608311.0 / 1250200, 189793.0 / 714400, 198249.0 / 1000160},
++                      {35783.0 / 156275, 247089.0 / 357200, 198249.0 / 2500400},
++                      {0.0, 32229.0 / 714400, 5220557.0 / 5000800}};
++const Mat3 xyzToP3 = {{446124.0 / 178915, -333277.0 / 357830, -72051.0 / 178915},
++                      {-14852.0 / 17905, 63121.0 / 35810, 423.0 / 17905},
++                      {11844.0 / 330415, -50337.0 / 660830, 316169.0 / 330415}};
++const Mat3 prophotoToXyz = {{0.79776664490064230, 0.13518129740053308, 0.03134773412839220},
++                            {0.28807482881940130, 0.71183523424187300, 0.00008993693872564},
++                            {0.00000000000000000, 0.00000000000000000, 0.82510460251046020}};
++const Mat3 xyzToProphoto = {{1.34578688164715830, -0.25557208737979464, -0.05110186497554526},
++                            {-0.54463070512490190, 1.50824774284514680, 0.02052744743642139},
++                            {0.00000000000000000, 0.00000000000000000, 1.21196754563894520}};
++const Mat3 a98ToXyz = {{573536.0 / 994567, 263643.0 / 1420810, 187206.0 / 994567},
++                       {591459.0 / 1989134, 6239551.0 / 9945670, 374412.0 / 4972835},
++                       {53769.0 / 1989134, 351524.0 / 4972835, 4929758.0 / 4972835}};
++const Mat3 xyzToA98 = {{1829569.0 / 896150, -506331.0 / 896150, -308931.0 / 896150},
++                       {-851781.0 / 878810, 1648619.0 / 878810, 36519.0 / 878810},
++                       {16779.0 / 1248040, -147721.0 / 1248040, 1266979.0 / 1248040}};
++const Mat3 rec2020ToXyz = {{63426534.0 / 99577255, 20160776.0 / 139408157, 47086771.0 / 278816314},
++                           {26158966.0 / 99577255, 472592308.0 / 697040785, 8267143.0 / 139408157},
++                           {0.0, 19567812.0 / 697040785, 295819943.0 / 278816314}};
++const Mat3 xyzToRec2020 = {{30757411.0 / 17917100, -6372589.0 / 17917100, -4539589.0 / 17917100},
++                           {-19765991.0 / 29648200, 47925759.0 / 29648200, 467509.0 / 29648200},
++                           {792561.0 / 44930125, -1921689.0 / 44930125, 42328811.0 / 44930125}};
++const Mat3 d65ToD50 = {{1.0479297925449969, 0.022946870601609652, -0.05019226628920524},
++                       {0.02962780877005599, 0.9904344267538799, -0.017073799063418826},
++                       {-0.009243040646204504, 0.015055191490298152, 0.7518742814281371}};
++const Mat3 d50ToD65 = {{0.955473421488075, -0.02309845494876471, 0.06325924320057072},
++                       {-0.0283697093338637, 1.0099953980813041, 0.021041441191917323},
++                       {0.012314014864481998, -0.020507649298898964, 1.330365926242124}};
++const Mat3 xyzToLms = {{0.8190224379967030, 0.3619062600528904, -0.1288737815209879},
++                       {0.0329836539323885, 0.9292868615863434, 0.0361446663506424},
++                       {0.0481771893596242, 0.2642395317527308, 0.6335478284694309}};
++const Mat3 lmsToOklab = {{0.2104542683093140, 0.7936177747023054, -0.0040720430116193},
++                         {1.9779985324311684, -2.4285922420485799, 0.4505937096174110},
++                         {0.0259040424655478, 0.7827717124575296, -0.8086757549230774}};
++const Mat3 lmsToXyz = {{1.2268798758459243, -0.5578149944602171, 0.2813910456659647},
++                       {-0.0405757452148008, 1.1122868032803170, -0.0717110580655164},
++                       {-0.0763729366746601, -0.4214933324022432, 1.5869240198367816}};
++const Mat3 oklabToLms = {{1.0000000000000000, 0.3963377773761749, 0.2158037573099136},
++                         {1.0000000000000000, -0.1055613458156586, -0.0638541728258133},
++                         {1.0000000000000000, -0.0894841775298119, -1.2914855480194092}};
++
++Vec3 linSrgb(const Vec3 &v)
++{
++    Vec3 o;
++    for (int i = 0; i < 3; ++i) {
++        const double a = std::abs(v[i]);
++        o[i] = a <= 0.04045 ? v[i] / 12.92 : std::copysign(std::pow((a + 0.055) / 1.055, 2.4), v[i]);
++    }
++    return o;
++}
++
++Vec3 gamSrgb(const Vec3 &v)
++{
++    Vec3 o;
++    for (int i = 0; i < 3; ++i) {
++        const double a = std::abs(v[i]);
++        o[i] = a > 0.0031308 ? std::copysign(1.055 * std::pow(a, 1 / 2.4) - 0.055, v[i]) : 12.92 * v[i];
++    }
++    return o;
++}
++
++Vec3 linProphoto(const Vec3 &v)
++{
++    Vec3 o;
++    for (int i = 0; i < 3; ++i)
++        o[i] = std::abs(v[i]) <= 16.0 / 512 ? v[i] / 16 : spow(v[i], 1.8);
++    return o;
++}
++
++Vec3 gamProphoto(const Vec3 &v)
++{
++    Vec3 o;
++    for (int i = 0; i < 3; ++i)
++        o[i] = std::abs(v[i]) >= 1.0 / 512 ? spow(v[i], 1 / 1.8) : 16 * v[i];
++    return o;
++}
++
++Vec3 powEach(const Vec3 &v, double e)
++{
++    return {spow(v[0], e), spow(v[1], e), spow(v[2], e)};
++}
++
++Vec3 xyzToLab(const Vec3 &xyzD50)
++{
++    const double eps = 216.0 / 24389, kappa = 24389.0 / 27;
++    double f[3];
++    for (int i = 0; i < 3; ++i) {
++        const double v = xyzD50[i] / D50[i];
++        f[i] = v > eps ? std::cbrt(v) : (kappa * v + 16) / 116;
++    }
++    return {116 * f[1] - 16, 500 * (f[0] - f[1]), 200 * (f[1] - f[2])};
++}
++
++Vec3 labToXyz(const Vec3 &lab)
++{
++    const double kappa = 24389.0 / 27, eps = 216.0 / 24389;
++    const double l116 = lab[0] / 116, a500 = lab[1] / 500, b200 = lab[2] / 200;
++    const double f1 = l116 + 16.0 / 116, f0 = f1 + a500, f2 = f1 - b200;
++    const Vec3 xyz = {f0 * f0 * f0 > eps ? f0 * f0 * f0 : (l116 + a500) * (116 / kappa),
++                      lab[0] > kappa * eps ? std::pow((lab[0] + 16) / 116, 3) : lab[0] / kappa,
++                      f2 * f2 * f2 > eps ? f2 * f2 * f2 : (l116 - b200) * (116 / kappa)};
++    return {xyz[0] * D50[0], xyz[1] * D50[1], xyz[2] * D50[2]};
++}
++
++// rectangular to polar; returns the hue as NaN when powerless (chroma <= epsilon)
++Vec3 toPolar(const Vec3 &lab, double epsilon)
++{
++    const double chroma = std::hypot(lab[1], lab[2]);
++    double hue = std::atan2(lab[2], lab[1]) * 180 / M_PI;
++    if (hue < 0)
++        hue += 360;
++    if (chroma <= epsilon)
++        hue = std::numeric_limits<double>::quiet_NaN();
++    return {lab[0], chroma, hue};
++}
++
++Vec3 fromPolar(const Vec3 &lch)
++{
++    const double h = std::isnan(lch[2]) ? 0.0 : lch[2] * M_PI / 180;
++    return {lch[0], lch[1] * std::cos(h), lch[1] * std::sin(h)};
++}
++
++Vec3 xyzToOklab(const Vec3 &xyz)
++{
++    const Vec3 lms = mul(xyzToLms, xyz);
++    return mul(lmsToOklab, {std::cbrt(lms[0]), std::cbrt(lms[1]), std::cbrt(lms[2])});
++}
++
++Vec3 oklabToXyz(const Vec3 &lab)
++{
++    const Vec3 lms = mul(oklabToLms, lab);
++    return mul(lmsToXyz, {lms[0] * lms[0] * lms[0], lms[1] * lms[1] * lms[1], lms[2] * lms[2] * lms[2]});
++}
++
++// CSS Color HDR section 11
++const double Yw = 203.0;
++const double pqC1 = 3424.0 / 4096, pqC2 = 2413.0 / 128, pqC3 = 2392.0 / 128, pqN = 2610.0 / 16384, pqM = 2523.0 / 32;
++
++Vec3 pqEncode(const Vec3 &v)
++{
++    Vec3 o;
++    for (int i = 0; i < 3; ++i) {
++        const double x = std::pow(std::max(v[i] * Yw / 10000, 0.0), pqN);
++        o[i] = std::pow((pqC1 + pqC2 * x) / (1 + pqC3 * x), pqM);
++    }
++    return o;
++}
++
++Vec3 pqDecode(const Vec3 &v)
++{
++    Vec3 o;
++    for (int i = 0; i < 3; ++i) {
++        const double vm = spow(v[i], 1 / pqM);
++        o[i] = std::pow(std::max(vm - pqC1, 0.0) / (pqC2 - pqC3 * vm), 1 / pqN) * 10000 / Yw;
++    }
++    return o;
++}
++
++const double hlgA = 0.17883277, hlgB = 0.28466892, hlgC = 0.55991073, hlgScale = 3.7743;
++
++Vec3 hlgEncode(const Vec3 &v)
++{
++    Vec3 o;
++    for (int i = 0; i < 3; ++i) {
++        const double x = v[i] / hlgScale;
++        o[i] = x <= 1.0 / 12 ? spow(3 * x, 0.5) : hlgA * std::log(12 * x - hlgB) + hlgC;
++    }
++    return o;
++}
++
++Vec3 hlgDecode(const Vec3 &v)
++{
++    Vec3 o;
++    for (int i = 0; i < 3; ++i)
++        o[i] = v[i] <= 0.5 ? v[i] * v[i] / 3 * hlgScale : (std::exp((v[i] - hlgC) / hlgA) + hlgB) / 12 * hlgScale;
++    return o;
++}
++
++const Mat3 jzM = {{0.41478972, 0.579999, 0.0146480}, {-0.2015100, 1.120649, 0.0531008}, {-0.0166008, 0.264800, 0.6684799}};
++const Mat3 jzLmsToIab = {{0.5, 0.5, 0}, {3.524000, -4.066708, 0.542708}, {0.199076, 1.096799, -1.295875}};
++const Mat3 jzLmsToXyz = {{1.9242264357876067, -1.0047923125953657, 0.037651404030618},
++                         {0.35031676209499907, 0.7264811939316552, -0.06538442294808501},
++                         {-0.09098281098284752, -0.3127282905230739, 1.5227665613052603}};
++const Mat3 jzIabToLms = {{1, 0.13860504327153927, 0.05804731615611883},
++                         {1, -0.1386050432715393, -0.058047316156118904},
++                         {1, -0.09601924202631895, -0.81189189605603900}};
++const double jzB = 1.15, jzG = 0.66, jzD = -0.56, jzD0 = 1.6295499532821566e-11, jzP = 1.7 * 2523 / 32;
++
++Vec3 xyzToJzazbz(const Vec3 &xyz)
++{
++    const double Xa = xyz[0] * Yw, Ya = xyz[1] * Yw, Za = xyz[2] * Yw;
++    const Vec3 lms = mul(jzM, {jzB * Xa - (jzB - 1) * Za, jzG * Ya - (jzG - 1) * Xa, Za});
++    Vec3 pq;
++    for (int i = 0; i < 3; ++i) {
++        const double x = spow(lms[i] / 10000, pqN);
++        pq[i] = spow((pqC1 + pqC2 * x) / (1 + pqC3 * x), jzP);
++    }
++    const Vec3 iab = mul(jzLmsToIab, pq);
++    return {(1 + jzD) * iab[0] / (1 + jzD * iab[0]) - jzD0, iab[1], iab[2]};
++}
++
++// The sample code returns absolute XYZ; divided by Yw so that diffuse white is jzazbz(0.22207 ...) (HDR section 6.4).
++Vec3 jzazbzToXyz(const Vec3 &j)
++{
++    const double iz = (j[0] + jzD0) / (1 + jzD - jzD * (j[0] + jzD0));
++    const Vec3 pq = mul(jzIabToLms, {iz, j[1], j[2]});
++    Vec3 lms;
++    for (int i = 0; i < 3; ++i) {
++        const double p = spow(pq[i], 1 / jzP);
++        lms[i] = 10000 * spow((pqC1 - p) / (pqC3 * p - pqC2), 1 / pqN);
++    }
++    const Vec3 m = mul(jzLmsToXyz, lms);
++    const double Xa = (m[0] + (jzB - 1) * m[2]) / jzB;
++    const double Ya = (m[1] + (jzG - 1) * Xa) / jzG;
++    return {Xa / Yw, Ya / Yw, m[2] / Yw};
++}
++
++const Mat3 ictcpXyzToLms = {{0.3592832590121217, 0.6976051147779502, -0.0358915932320290},
++                            {-0.1920808463704993, 1.1004767970374321, 0.0753748658519118},
++                            {0.0070797844607479, 0.0748396662186362, 0.8433265453898765}};
++const Mat3 ictcpLmsToIctcp = {{2048.0 / 4096, 2048.0 / 4096, 0},
++                              {6610.0 / 4096, -13613.0 / 4096, 7003.0 / 4096},
++                              {17933.0 / 4096, -17390.0 / 4096, -543.0 / 4096}};
++const Mat3 ictcpLmsToXyz = {{2.0701522183894223, -1.3263473389671563, 0.2066510476294053},
++                            {0.3647385209748072, 0.6805660249472273, -0.0453045459220347},
++                            {-0.0497472075358123, -0.0492609666966131, 1.1880659249923042}};
++const Mat3 ictcpToLms = {{0.9999999999999998, 0.0086090370379328, 0.1110296250030260},
++                         {0.9999999999999998, -0.0086090370379328, -0.1110296250030259},
++                         {0.9999999999999998, 0.5600313357106791, -0.3206271749873188}};
++
++Vec3 xyzToIctcp(const Vec3 &xyz)
++{
++    const Vec3 lms = mul(ictcpXyzToLms, {xyz[0] * Yw, xyz[1] * Yw, xyz[2] * Yw});
++    Vec3 pq;
++    for (int i = 0; i < 3; ++i) {
++        const double x = std::pow(std::max(lms[i], 0.0) / 10000, pqN);
++        pq[i] = std::pow((pqC1 + pqC2 * x) / (1 + pqC3 * x), pqM);
++    }
++    return mul(ictcpLmsToIctcp, pq);
++}
++
++// The sample code returns absolute XYZ; divided by Yw so that ictcp(0.58069 0 0) is diffuse white (HDR section 6.3).
++Vec3 ictcpToXyz(const Vec3 &i)
++{
++    const Vec3 pq = mul(ictcpToLms, i);
++    Vec3 lms;
++    for (int k = 0; k < 3; ++k) {
++        const double vm = spow(pq[k], 1 / pqM);
++        lms[k] = 10000 * std::pow(std::max(vm - pqC1, 0.0) / (pqC2 - pqC3 * vm), 1 / pqN);
++    }
++    const Vec3 x = mul(ictcpLmsToXyz, lms);
++    return {x[0] / Yw, x[1] / Yw, x[2] / Yw};
++}
++
++// CSS Color 4 sections 7.1, 7.2, 8.1 and 8.2
++Vec3 hslToRgb(double hue, double sat, double light)
++{
++    sat /= 100;
++    light /= 100;
++    auto f = [&](double n) {
++        const double k = std::fmod(n + hue / 30, 12.0);
++        const double a = sat * std::min(light, 1 - light);
++        return light - a * std::max(-1.0, std::min({k - 3, 9 - k, 1.0}));
++    };
++    return {f(0), f(8), f(4)};
++}
++
++Vec3 rgbToHsl(double r, double g, double b)
++{
++    const double mx = std::max({r, g, b}), mn = std::min({r, g, b});
++    double hue = std::numeric_limits<double>::quiet_NaN(), sat = 0, light = (mn + mx) / 2;
++    const double d = mx - mn, epsilon = 1.0 / 100000;
++    if (d != 0) {
++        sat = (std::abs(light) <= epsilon || std::abs(1 - light) < epsilon) ? 0 : (mx - light) / std::min(light, 1 - light);
++        if (mx == r)
++            hue = (g - b) / d + (g < b ? 6 : 0);
++        else if (mx == g)
++            hue = (b - r) / d + 2;
++        else
++            hue = (r - g) / d + 4;
++        hue *= 60;
++    }
++    if (sat < 0) {
++        hue = (std::isnan(hue) ? 0 : hue) + 180;
++        sat = std::abs(sat);
++    }
++    if (!std::isnan(hue) && hue >= 360)
++        hue -= 360;
++    if (sat <= epsilon) {
++        hue = std::numeric_limits<double>::quiet_NaN();
++        sat = 0;
++    }
++    return {hue, sat * 100, light * 100};
++}
++
++Vec3 hwbToRgb(double hue, double white, double black)
++{
++    white /= 100;
++    black /= 100;
++    if (white + black >= 1) {
++        const double gray = white / (white + black);
++        return {gray, gray, gray};
++    }
++    Vec3 rgb = hslToRgb(hue, 100, 50);
++    for (double &c : rgb)
++        c = c * (1 - white - black) + white;
++    return rgb;
++}
++
++Vec3 rgbToHwb(double r, double g, double b)
++{
++    const double mx = std::max({r, g, b}), mn = std::min({r, g, b}), d = mx - mn;
++    double hue = std::numeric_limits<double>::quiet_NaN();
++    if (d != 0) {
++        if (mx == r)
++            hue = (g - b) / d + (g < b ? 6 : 0);
++        else if (mx == g)
++            hue = (b - r) / d + 2;
++        else
++            hue = (r - g) / d + 4;
++        hue *= 60;
++    }
++    if (!std::isnan(hue) && hue >= 360)
++        hue -= 360;
++    const double white = mn, black = 1 - mx;
++    if (white + black >= 1 - 1.0 / 100000)
++        hue = std::numeric_limits<double>::quiet_NaN();
++    return {hue, white * 100, black * 100};
++}
++
++double positiveMod(double a, double m)
++{
++    const double r = std::fmod(a, m);
++    return r < 0 ? r + m : r;
++}
++
++using S = QSvgCssColor;
++
++Vec3 toXyz(S::Space space, const Vec3 &c)
++{
++    switch (space) {
++    case S::Srgb: return mul(srgbToXyz, linSrgb(c));
++    case S::SrgbLinear: return mul(srgbToXyz, c);
++    case S::DisplayP3: return mul(p3ToXyz, linSrgb(c));
++    case S::DisplayP3Linear: return mul(p3ToXyz, c);
++    case S::A98Rgb: return mul(a98ToXyz, powEach(c, 563.0 / 256));
++    case S::ProphotoRgb: return mul(d50ToD65, mul(prophotoToXyz, linProphoto(c)));
++    case S::Rec2020: return mul(rec2020ToXyz, powEach(c, 2.4));
++    case S::Rec2100Linear: return mul(rec2020ToXyz, c);
++    case S::Rec2100Pq: return mul(rec2020ToXyz, pqDecode(c));
++    case S::Rec2100Hlg: return mul(rec2020ToXyz, hlgDecode(c));
++    case S::XyzD65: return c;
++    case S::XyzD50: return mul(d50ToD65, c);
++    case S::Hsl: return toXyz(S::Srgb, hslToRgb(positiveMod(c[0], 360), c[1], c[2]));
++    case S::Hwb: return toXyz(S::Srgb, hwbToRgb(positiveMod(c[0], 360), c[1], c[2]));
++    case S::Lab: return mul(d50ToD65, labToXyz(c));
++    case S::Lch: return mul(d50ToD65, labToXyz(fromPolar(c)));
++    case S::Oklab: return oklabToXyz(c);
++    case S::Oklch: return oklabToXyz(fromPolar(c));
++    case S::Jzazbz: return jzazbzToXyz(c);
++    case S::Jzczhz: return jzazbzToXyz(fromPolar(c));
++    case S::Ictcp: return ictcpToXyz(c);
++    case S::Invalid: break;
++    }
++    return {0, 0, 0};
++}
++
++Vec3 fromXyz(S::Space space, const Vec3 &xyz)
++{
++    switch (space) {
++    case S::Srgb: return gamSrgb(mul(xyzToSrgb, xyz));
++    case S::SrgbLinear: return mul(xyzToSrgb, xyz);
++    case S::DisplayP3: return gamSrgb(mul(xyzToP3, xyz));
++    case S::DisplayP3Linear: return mul(xyzToP3, xyz);
++    case S::A98Rgb: return powEach(mul(xyzToA98, xyz), 256.0 / 563);
++    case S::ProphotoRgb: return gamProphoto(mul(xyzToProphoto, mul(d65ToD50, xyz)));
++    case S::Rec2020: return powEach(mul(xyzToRec2020, xyz), 1 / 2.4);
++    case S::Rec2100Linear: return mul(xyzToRec2020, xyz);
++    case S::Rec2100Pq: return pqEncode(mul(xyzToRec2020, xyz));
++    case S::Rec2100Hlg: return hlgEncode(mul(xyzToRec2020, xyz));
++    case S::XyzD65: return xyz;
++    case S::XyzD50: return mul(d65ToD50, xyz);
++    case S::Hsl: { const Vec3 r = fromXyz(S::Srgb, xyz); return rgbToHsl(r[0], r[1], r[2]); }
++    case S::Hwb: { const Vec3 r = fromXyz(S::Srgb, xyz); return rgbToHwb(r[0], r[1], r[2]); }
++    case S::Lab: return xyzToLab(mul(d65ToD50, xyz));
++    case S::Lch: return toPolar(xyzToLab(mul(d65ToD50, xyz)), 0.0015);
++    case S::Oklab: return xyzToOklab(xyz);
++    case S::Oklch: return toPolar(xyzToOklab(xyz), 0.000004);
++    case S::Jzazbz: return xyzToJzazbz(xyz);
++    case S::Jzczhz: return toPolar(xyzToJzazbz(xyz), 0.0000026);
++    case S::Ictcp: return xyzToIctcp(xyz);
++    case S::Invalid: break;
++    }
++    return {0, 0, 0};
++}
++
++int hueIndex(S::Space space)
++{
++    switch (space) {
++    case S::Hsl: case S::Hwb: return 0;
++    case S::Lch: case S::Oklch: case S::Jzczhz: return 2;
++    default: return -1;
++    }
++}
++
++// CSS Color 4 section 13.3: analogous component categories (0 none, then Reds, Greens, Blues, Lightness,
++// Colorfulness, Hue, Opponent a, Opponent b); CSS Color HDR names no analogs for ICtCp and Jzazbz.
++enum Analog : quint8 { NoAnalog, Reds, Greens, Blues, Lightness, Colorfulness, HueAngle, OpponentA, OpponentB };
++
++std::array<Analog, 3> analogs(S::Space space)
++{
++    if (S::isRgbSpace(space) || space == S::XyzD50 || space == S::XyzD65)
++        return {Reds, Greens, Blues};
++    switch (space) {
++    case S::Hsl: return {HueAngle, Colorfulness, Lightness};
++    case S::Hwb: return {HueAngle, NoAnalog, NoAnalog};
++    case S::Lab: case S::Oklab: return {Lightness, OpponentA, OpponentB};
++    case S::Lch: case S::Oklch: return {Lightness, Colorfulness, HueAngle};
++    default: return {NoAnalog, NoAnalog, NoAnalog};
++    }
++}
++
++// CSS Color 4 section 19, powerlessToMissing (and CSS Color HDR section 6.5 for jzczhz)
++void powerlessToMissing(S::Space space, Vec3 &c, bool missing[3])
++{
++    switch (space) {
++    case S::Hsl: {
++        const double sat = missing[1] ? 0 : c[1];
++        if (sat <= 0.001) {
++            missing[0] = true;
++            if (!missing[1] && c[1] > 0)
++                c[1] = 0;
++        }
++        break;
++    }
++    case S::Hwb: {
++        const double w = missing[1] ? 0 : c[1], b = missing[2] ? 0 : c[2];
++        if (w + b >= 99.999) {
++            missing[0] = true;
++            if (w + b < 100) {
++                if (missing[1]) {
++                    c[2] = 100;
++                } else if (missing[2]) {
++                    c[1] = 100;
++                } else {
++                    c[2] = 100 - c[1];
++                }
++            }
++        }
++        break;
++    }
++    case S::Lch: case S::Oklch: case S::Jzczhz: {
++        const double eps = space == S::Lch ? 0.0015 : space == S::Oklch ? 0.000004 : 0.0000026;
++        const double ch = missing[1] ? 0 : c[1];
++        if (ch <= eps) {
++            missing[2] = true;
++            if (!missing[1] && c[1] > 0)
++                c[1] = 0;
++        }
++        break;
++    }
++    default:
++        break;
++    }
++}
++
++} // namespace
++
++const char *QSvgCssColor::name(Space space)
++{
++    static const char *const names[] = {"invalid", "srgb", "srgb-linear", "display-p3", "display-p3-linear", "a98-rgb",
++                                        "prophoto-rgb", "rec2020", "rec2100-pq", "rec2100-hlg", "rec2100-linear",
++                                        "xyz-d50", "xyz-d65", "hsl", "hwb", "lab", "lch", "oklab", "oklch", "ictcp",
++                                        "jzazbz", "jzczhz"};
++    return names[space];
++}
++
++std::array<double, 3> QSvgCssColor::toXyzD65() const
++{
++    Vec3 c = {m_c[0], m_c[1], m_c[2]};
++    for (int i = 0; i < 3; ++i) {
++        if (isMissing(i) || std::isnan(c[i]))
++            c[i] = 0;
++    }
++    return toXyz(m_space, c);
++}
++
++QSvgCssColor QSvgCssColor::fromXyzD65(Space space, const std::array<double, 3> &xyz, double alpha)
++{
++    Vec3 c = fromXyz(space, xyz);
++    bool missing[3] = {false, false, false};
++    if (isPolar(space))
++        powerlessToMissing(space, c, missing);
++    QSvgCssColor out(space, 0, 0, 0, alpha);
++    for (int i = 0; i < 3; ++i) {
++        if (missing[i] || std::isnan(c[i]))
++            out.setMissing(i);
++        else
++            out.setComponent(i, c[i]);
++    }
++    return out;
++}
++
++QSvgCssColor QSvgCssColor::convertedTo(Space space) const
++{
++    if (space == m_space || !isValid())
++        return *this;
++    Vec3 src = {m_c[0], m_c[1], m_c[2]};
++    bool srcMissing[3] = {isMissing(0), isMissing(1), isMissing(2)};
++    powerlessToMissing(m_space, src, srcMissing);
++    Vec3 z = src;
++    for (int i = 0; i < 3; ++i) {
++        if (srcMissing[i] || std::isnan(z[i]))
++            z[i] = 0;
++    }
++    QSvgCssColor out = fromXyzD65(space, toXyz(m_space, z), m_alpha);
++    if (isAlphaMissing())
++        out.setAlphaMissing();
++    // CSS Color 4 section 13.3: analogous components missing in the source stay missing, and so does the
++    // destination's analogous set when every component of the source's set is missing
++    const auto sa = analogs(m_space), da = analogs(space);
++    bool shared[9] = {};
++    for (Analog a : sa) {
++        for (Analog b : da) {
++            if (a != NoAnalog && a == b)
++                shared[a] = true;
++        }
++    }
++    bool allSetMissing = true, haveSet = false, haveDstSet = false;
++    for (int i = 0; i < 3; ++i) {
++        if (!shared[sa[i]] || sa[i] == NoAnalog) {
++            haveSet = true;
++            allSetMissing = allSetMissing && srcMissing[i];
++        } else if (srcMissing[i]) {
++            for (int j = 0; j < 3; ++j) {
++                if (da[j] == sa[i])
++                    out.setMissing(j);
++            }
++        }
++        if (!shared[da[i]] || da[i] == NoAnalog)
++            haveDstSet = true;
++    }
++    if (haveSet && haveDstSet && allSetMissing) {
++        for (int j = 0; j < 3; ++j) {
++            if (!shared[da[j]] || da[j] == NoAnalog)
++                out.setMissing(j);
++        }
++    }
++    return out;
++}
++
++QSvgCssColor QSvgCssColor::fromQColor(const QColor &color)
++{
++    const QColor c = color.spec() == QColor::ExtendedRgb ? color : color.toRgb();
++    QSvgCssColor out(Srgb, c.redF(), c.greenF(), c.blueF(), c.alphaF());
++    if (color.spec() == QColor::Rgb) {
++        const QRgba64 v = color.rgba64();
++        out = QSvgCssColor(Srgb, v.red() / 65535.0, v.green() / 65535.0, v.blue() / 65535.0, v.alpha() / 65535.0);
++    }
++    out.setLegacy(true);
++    return out;
++}
++
++QColor QSvgCssColor::toQColor() const
++{
++    return qsvg_toQColor(qsvg_resolveForTarget(*this, QSvgCssColorTarget()));
++}
++
++// ---------------------------------------------------------------- parsing
++
++namespace {
++
++enum class TokKind : quint8 { Eof, Ws, Ident, Function, Number, Percentage, Dimension, Hash, Comma, Delim, LParen, RParen };
++
++struct Tok
++{
++    TokKind kind = TokKind::Eof;
++    double value = 0;
++    QString text;   // ident, function name (lower case), hash, unit, delim
++    QChar sign;     // the number's sign as written, for the whitespace rule of calc()
++};
++
++bool isNameStart(QChar c) { return c.isLetter() || c == u'_' || c.unicode() >= 0x80; }
++bool isNameChar(QChar c) { return isNameStart(c) || c.isDigit() || c == u'-'; }
++
++QList<Tok> tokenize(QStringView s)
++{
++    QList<Tok> out;
++    qsizetype i = 0;
++    const qsizetype n = s.size();
++    auto startsNumber = [&](qsizetype k) {
++        if (k >= n)
++            return false;
++        const QChar c = s[k];
++        if (c.isDigit())
++            return true;
++        if (c == u'.')
++            return k + 1 < n && s[k + 1].isDigit();
++        if (c == u'+' || c == u'-')
++            return k + 1 < n && (s[k + 1].isDigit() || (s[k + 1] == u'.' && k + 2 < n && s[k + 2].isDigit()));
++        return false;
++    };
++    auto startsIdent = [&](qsizetype k) {
++        if (k >= n)
++            return false;
++        if (isNameStart(s[k]))
++            return true;
++        if (s[k] == u'-' && k + 1 < n)
++            return isNameStart(s[k + 1]) || s[k + 1] == u'-';
++        return false;
++    };
++    while (i < n) {
++        const QChar c = s[i];
++        Tok t;
++        if (c.isSpace()) {
++            while (i < n && s[i].isSpace())
++                ++i;
++            t.kind = TokKind::Ws;
++            out.append(t);
++            continue;
++        }
++        if (c == u'/' && i + 1 < n && s[i + 1] == u'*') {
++            const qsizetype end = s.indexOf(u"*/", i + 2);
++            i = end < 0 ? n : end + 2;
++            continue;
++        }
++        if (startsNumber(i)) {
++            const qsizetype start = i;
++            if (s[i] == u'+' || s[i] == u'-') {
++                t.sign = s[i];
++                ++i;
++            }
++            while (i < n && s[i].isDigit())
++                ++i;
++            if (i + 1 < n && s[i] == u'.' && s[i + 1].isDigit()) {
++                ++i;
++                while (i < n && s[i].isDigit())
++                    ++i;
++            }
++            if (i + 1 < n && (s[i] == u'e' || s[i] == u'E')) {
++                qsizetype k = i + 1;
++                if (k < n && (s[k] == u'+' || s[k] == u'-'))
++                    ++k;
++                if (k < n && s[k].isDigit()) {
++                    i = k;
++                    while (i < n && s[i].isDigit())
++                        ++i;
++                }
++            }
++            t.value = s.sliced(start, i - start).toDouble();
++            if (i < n && s[i] == u'%') {
++                t.kind = TokKind::Percentage;
++                ++i;
++            } else if (startsIdent(i)) {
++                const qsizetype us = i;
++                while (i < n && isNameChar(s[i]))
++                    ++i;
++                t.kind = TokKind::Dimension;
++                t.text = s.sliced(us, i - us).toString().toLower();
++            } else {
++                t.kind = TokKind::Number;
++            }
++            out.append(t);
++            continue;
++        }
++        if (c == u'#') {
++            qsizetype k = i + 1;
++            while (k < n && isNameChar(s[k]))
++                ++k;
++            if (k > i + 1) {
++                t.kind = TokKind::Hash;
++                t.text = s.sliced(i + 1, k - i - 1).toString();
++                out.append(t);
++                i = k;
++                continue;
++            }
++        }
++        if (startsIdent(i)) {
++            const qsizetype start = i;
++            while (i < n && isNameChar(s[i]))
++                ++i;
++            t.text = s.sliced(start, i - start).toString().toLower();
++            if (i < n && s[i] == u'(') {
++                t.kind = TokKind::Function;
++                ++i;
++            } else {
++                t.kind = TokKind::Ident;
++            }
++            out.append(t);
++            continue;
++        }
++        t.kind = c == u'(' ? TokKind::LParen : c == u')' ? TokKind::RParen : c == u',' ? TokKind::Comma : TokKind::Delim;
++        t.text = QString(c);
++        out.append(t);
++        ++i;
++    }
++    return out;
++}
++
++// a calculated value (CSS Values 4 section 10): its canonical value and type
++enum class Unit : quint8 { Number, Percentage, Angle };
++struct Num
++{
++    double v;
++    Unit t;
++};
++
++struct NamedColor
++{
++    const char *name;
++    quint32 rgb;
++};
++
++// CSS Color 4 section 6.1
++const NamedColor namedColors[] = {
++    {"aliceblue", 0xf0f8ff}, {"antiquewhite", 0xfaebd7}, {"aqua", 0x00ffff}, {"aquamarine", 0x7fffd4}, {"azure", 0xf0ffff},
++    {"beige", 0xf5f5dc}, {"bisque", 0xffe4c4}, {"black", 0x000000}, {"blanchedalmond", 0xffebcd}, {"blue", 0x0000ff},
++    {"blueviolet", 0x8a2be2}, {"brown", 0xa52a2a}, {"burlywood", 0xdeb887}, {"cadetblue", 0x5f9ea0}, {"chartreuse", 0x7fff00},
++    {"chocolate", 0xd2691e}, {"coral", 0xff7f50}, {"cornflowerblue", 0x6495ed}, {"cornsilk", 0xfff8dc}, {"crimson", 0xdc143c},
++    {"cyan", 0x00ffff}, {"darkblue", 0x00008b}, {"darkcyan", 0x008b8b}, {"darkgoldenrod", 0xb8860b}, {"darkgray", 0xa9a9a9},
++    {"darkgreen", 0x006400}, {"darkgrey", 0xa9a9a9}, {"darkkhaki", 0xbdb76b}, {"darkmagenta", 0x8b008b},
++    {"darkolivegreen", 0x556b2f}, {"darkorange", 0xff8c00}, {"darkorchid", 0x9932cc}, {"darkred", 0x8b0000},
++    {"darksalmon", 0xe9967a}, {"darkseagreen", 0x8fbc8f}, {"darkslateblue", 0x483d8b}, {"darkslategray", 0x2f4f4f},
++    {"darkslategrey", 0x2f4f4f}, {"darkturquoise", 0x00ced1}, {"darkviolet", 0x9400d3}, {"deeppink", 0xff1493},
++    {"deepskyblue", 0x00bfff}, {"dimgray", 0x696969}, {"dimgrey", 0x696969}, {"dodgerblue", 0x1e90ff},
++    {"firebrick", 0xb22222}, {"floralwhite", 0xfffaf0}, {"forestgreen", 0x228b22}, {"fuchsia", 0xff00ff},
++    {"gainsboro", 0xdcdcdc}, {"ghostwhite", 0xf8f8ff}, {"gold", 0xffd700}, {"goldenrod", 0xdaa520}, {"gray", 0x808080},
++    {"green", 0x008000}, {"greenyellow", 0xadff2f}, {"grey", 0x808080}, {"honeydew", 0xf0fff0}, {"hotpink", 0xff69b4},
++    {"indianred", 0xcd5c5c}, {"indigo", 0x4b0082}, {"ivory", 0xfffff0}, {"khaki", 0xf0e68c}, {"lavender", 0xe6e6fa},
++    {"lavenderblush", 0xfff0f5}, {"lawngreen", 0x7cfc00}, {"lemonchiffon", 0xfffacd}, {"lightblue", 0xadd8e6},
++    {"lightcoral", 0xf08080}, {"lightcyan", 0xe0ffff}, {"lightgoldenrodyellow", 0xfafad2}, {"lightgray", 0xd3d3d3},
++    {"lightgreen", 0x90ee90}, {"lightgrey", 0xd3d3d3}, {"lightpink", 0xffb6c1}, {"lightsalmon", 0xffa07a},
++    {"lightseagreen", 0x20b2aa}, {"lightskyblue", 0x87cefa}, {"lightslategray", 0x778899}, {"lightslategrey", 0x778899},
++    {"lightsteelblue", 0xb0c4de}, {"lightyellow", 0xffffe0}, {"lime", 0x00ff00}, {"limegreen", 0x32cd32},
++    {"linen", 0xfaf0e6}, {"magenta", 0xff00ff}, {"maroon", 0x800000}, {"mediumaquamarine", 0x66cdaa},
++    {"mediumblue", 0x0000cd}, {"mediumorchid", 0xba55d3}, {"mediumpurple", 0x9370db}, {"mediumseagreen", 0x3cb371},
++    {"mediumslateblue", 0x7b68ee}, {"mediumspringgreen", 0x00fa9a}, {"mediumturquoise", 0x48d1cc},
++    {"mediumvioletred", 0xc71585}, {"midnightblue", 0x191970}, {"mintcream", 0xf5fffa}, {"mistyrose", 0xffe4e1},
++    {"moccasin", 0xffe4b5}, {"navajowhite", 0xffdead}, {"navy", 0x000080}, {"oldlace", 0xfdf5e6}, {"olive", 0x808000},
++    {"olivedrab", 0x6b8e23}, {"orange", 0xffa500}, {"orangered", 0xff4500}, {"orchid", 0xda70d6},
++    {"palegoldenrod", 0xeee8aa}, {"palegreen", 0x98fb98}, {"paleturquoise", 0xafeeee}, {"palevioletred", 0xdb7093},
++    {"papayawhip", 0xffefd5}, {"peachpuff", 0xffdab9}, {"peru", 0xcd853f}, {"pink", 0xffc0cb}, {"plum", 0xdda0dd},
++    {"powderblue", 0xb0e0e6}, {"purple", 0x800080}, {"rebeccapurple", 0x663399}, {"red", 0xff0000},
++    {"rosybrown", 0xbc8f8f}, {"royalblue", 0x4169e1}, {"saddlebrown", 0x8b4513}, {"salmon", 0xfa8072},
++    {"sandybrown", 0xf4a460}, {"seagreen", 0x2e8b57}, {"seashell", 0xfff5ee}, {"sienna", 0xa0522d}, {"silver", 0xc0c0c0},
++    {"skyblue", 0x87ceeb}, {"slateblue", 0x6a5acd}, {"slategray", 0x708090}, {"slategrey", 0x708090}, {"snow", 0xfffafa},
++    {"springgreen", 0x00ff7f}, {"steelblue", 0x4682b4}, {"tan", 0xd2b48c}, {"teal", 0x008080}, {"thistle", 0xd8bfd8},
++    {"tomato", 0xff6347}, {"turquoise", 0x40e0d0}, {"violet", 0xee82ee}, {"wheat", 0xf5deb3}, {"white", 0xffffff},
++    {"whitesmoke", 0xf5f5f5}, {"yellow", 0xffff00}, {"yellowgreen", 0x9acd32},
++};
++
++S rgb8(quint32 v, double alpha = 1)
++{
++    S c(S::Srgb, ((v >> 16) & 255) / 255.0, ((v >> 8) & 255) / 255.0, (v & 255) / 255.0, alpha);
++    c.setLegacy(true);
++    return c;
++}
++
++// Qt's default palette for a colour scheme: the palette qt_fusionPalette() in qtbase's qplatformtheme.cpp makes for
++// a light or a dark platform, which is what Qt draws with when the platform gives no palette of its own.  Only the
++// roles the system colours read are set.
++QPalette defaultPalette(QSvgCssColorScheme scheme)
++{
++    const bool dark = scheme == QSvgCssColorScheme::Dark;
++    const QColor windowText = dark ? QColor(240, 240, 240) : QColor(Qt::black);
++    const QColor background = dark ? QColor(50, 50, 50) : QColor(239, 239, 239);
++    const QColor base = dark ? background.darker(140) : QColor(Qt::white);
++    const QColor text = dark ? windowText : QColor(Qt::black);
++    const QColor highlight(48, 140, 198);
++    QPalette pal(windowText, background, background.lighter(150), background.darker(150), background.darker(130),
++                 text, base);
++    pal.setBrush(QPalette::Button, background);
++    pal.setBrush(QPalette::HighlightedText, dark ? windowText : QColor(Qt::white));
++    pal.setBrush(QPalette::Disabled, QPalette::Text, dark ? QColor(130, 130, 130) : QColor(190, 190, 190));
++    pal.setBrush(QPalette::Active, QPalette::Highlight, highlight);
++    pal.setBrush(QPalette::Active, QPalette::Accent, highlight);
++    if (dark)
++        pal.setBrush(QPalette::Link, highlight);
++    return pal;
++}
++
++// The colour scheme of a palette: the application's, when the platform says it, otherwise what the palette looks
++// like (text lighter than its background is a dark palette).
++QSvgCssColorScheme paletteScheme(const QPalette &pal, bool applicationPalette)
++{
++    if (applicationPalette) {
++        switch (QGuiApplication::styleHints()->colorScheme()) {
++        case Qt::ColorScheme::Dark: return QSvgCssColorScheme::Dark;
++        case Qt::ColorScheme::Light: return QSvgCssColorScheme::Light;
++        default: break;
++        }
++    }
++    return pal.color(QPalette::Active, QPalette::Base).lightnessF()
++                   < pal.color(QPalette::Active, QPalette::Text).lightnessF()
++            ? QSvgCssColorScheme::Dark : QSvgCssColorScheme::Light;
++}
++
++// CSS Color 4 section 6.2 and Appendix A: the system colours, from the application palette.  They follow the element
++// colour scheme (CSS Color Adjustment 1 section 2.4, "the value of system colors"); QPalette holds one colour scheme
++// only, so when the application palette is of the other one, the colours come from Qt's default palette for the
++// element colour scheme, and *note says so.
++bool systemColor(const QString &name, QSvgCssColorScheme scheme, S *out, QString *note)
++{
++    static const struct { const char *css; const char *as; } deprecated[] = {
++        {"activeborder", "buttonborder"}, {"activecaption", "canvas"}, {"appworkspace", "canvas"},
++        {"background", "canvas"}, {"buttonhighlight", "buttonface"}, {"buttonshadow", "buttonface"},
++        {"captiontext", "canvastext"}, {"inactiveborder", "buttonborder"}, {"inactivecaption", "canvas"},
++        {"inactivecaptiontext", "graytext"}, {"infobackground", "canvas"}, {"infotext", "canvastext"},
++        {"menu", "canvas"}, {"menutext", "canvastext"}, {"scrollbar", "canvas"}, {"threeddarkshadow", "buttonborder"},
++        {"threedface", "buttonface"}, {"threedhighlight", "buttonborder"}, {"threedlightshadow", "buttonborder"},
++        {"threedshadow", "buttonborder"}, {"window", "canvas"}, {"windowframe", "buttonborder"},
++        {"windowtext", "canvastext"}};
++    QString key = name;
++    for (const auto &d : deprecated) {
++        if (key == QLatin1String(d.css)) {
++            key = QLatin1String(d.as);
++            break;
++        }
++    }
++    static const struct { const char *css; QPalette::ColorGroup group; QPalette::ColorRole role; } roles[] = {
++        {"accentcolor", QPalette::Active, QPalette::Accent}, {"accentcolortext", QPalette::Active, QPalette::HighlightedText},
++        {"activetext", QPalette::Active, QPalette::Link}, {"buttonborder", QPalette::Active, QPalette::Mid},
++        {"buttonface", QPalette::Active, QPalette::Button}, {"buttontext", QPalette::Active, QPalette::ButtonText},
++        {"canvas", QPalette::Active, QPalette::Base}, {"canvastext", QPalette::Active, QPalette::Text},
++        {"field", QPalette::Active, QPalette::Base}, {"fieldtext", QPalette::Active, QPalette::Text},
++        {"graytext", QPalette::Disabled, QPalette::Text}, {"highlight", QPalette::Active, QPalette::Highlight},
++        {"highlighttext", QPalette::Active, QPalette::HighlightedText}, {"linktext", QPalette::Active, QPalette::Link},
++        {"mark", QPalette::Active, QPalette::Highlight}, {"marktext", QPalette::Active, QPalette::HighlightedText},
++        {"selecteditem", QPalette::Active, QPalette::Highlight},
++        {"selecteditemtext", QPalette::Active, QPalette::HighlightedText},
++        {"visitedtext", QPalette::Active, QPalette::LinkVisited}};
++    for (const auto &r : roles) {
++        if (key == QLatin1String(r.css)) {
++            const bool application = qobject_cast<QGuiApplication *>(QCoreApplication::instance());
++            QPalette pal = application ? QGuiApplication::palette() : QPalette();
++            if (paletteScheme(pal, application) != scheme) {
++                pal = defaultPalette(scheme);
++                *note = QStringLiteral("the system colours of the %1 colour scheme come from Qt's default palette, "
++                                       "because the application palette is %2")
++                                .arg(scheme == QSvgCssColorScheme::Dark ? u"dark" : u"light",
++                                     scheme == QSvgCssColorScheme::Dark ? u"light" : u"dark");
++            }
++            *out = S::fromQColor(pal.color(r.group, r.role));
++            return true;
++        }
++    }
++    return false;
++}
++
++const char *const mathFunctions[] = {"calc", "min", "max", "clamp", "round", "mod", "rem", "sin", "cos", "tan", "asin",
++                                     "acos", "atan", "atan2", "pow", "sqrt", "hypot", "log", "exp", "abs", "sign"};
++
++bool isMathFunction(const QString &name)
++{
++    for (const char *f : mathFunctions) {
++        if (name == QLatin1String(f))
++            return true;
++    }
++    return false;
++}
++
++struct Channels
++{
++    QVarLengthArray<std::pair<QString, double>, 4> values;   // NaN for a missing (none) component
++    bool has(const QString &n) const
++    {
++        for (const auto &v : values) {
++            if (v.first == n)
++                return true;
++        }
++        return false;
++    }
++    double get(const QString &n) const
++    {
++        for (const auto &v : values) {
++            if (v.first == n)
++                return v.second;
++        }
++        return 0;
++    }
++};
++
++// a parsed component: value (NaN for none) and its kind
++struct Comp
++{
++    double v;
++    Unit t;
++    bool none;
++};
++
++S interpolate(const S &a, const S &b, double p, S::Space space, int hueMethod);
++
++class Parser
++{
++public:
++    Parser(QList<Tok> toks, const QSvgCssColorContext &ctx) : m_t(std::move(toks)), m_ctx(ctx) {}
++
++    S parseWhole()
++    {
++        S c = color();
++        ws();
++        if (!m_failed && m_i < m_t.size())
++            fail(QStringLiteral("unexpected text after the colour"));
++        return m_failed ? S() : c;
++    }
++
++    bool usesCurrentColor = false;
++    QString note;
++
++private:
++    QList<Tok> m_t;
++    qsizetype m_i = 0;
++    qsizetype m_argCount = 0;
++    const QSvgCssColorContext &m_ctx;
++    static inline const Tok eof{};
++
++    // Qt modules are built without exceptions: the first error is kept and the input then reads as ended,
++    // so that every rule returns at once
++    void fail(const QString &why)
++    {
++        if (!m_failed) {
++            m_failed = true;
++            m_error = why;
++        }
++    }
++    const Tok &peek() const { return (!m_failed && m_i < m_t.size()) ? m_t.at(m_i) : eof; }
++
++    // a speculative parse: on failure the position and the error state are restored
++    template <typename F>
++    bool attempt(F &&f)
++    {
++        const qsizetype save = m_i;
++        f();
++        if (!m_failed)
++            return true;
++        m_failed = false;
++        m_error.clear();
++        m_i = save;
++        return false;
++    }
++
++public:
++    bool m_failed = false;
++    QString m_error;
++
++private:
++    const Tok &next()
++    {
++        const Tok &t = peek();
++        ++m_i;
++        return t;
++    }
++    void ws()
++    {
++        while (peek().kind == TokKind::Ws)
++            ++m_i;
++    }
++    bool at(TokKind k)
++    {
++        ws();
++        return peek().kind == k;
++    }
++    bool atIdent(const char *name)
++    {
++        ws();
++        return peek().kind == TokKind::Ident && peek().text == QLatin1String(name);
++    }
++    bool atDelim(QChar c)
++    {
++        ws();
++        return peek().kind == TokKind::Delim && peek().text.at(0) == c;
++    }
++    void expect(TokKind k, const char *what)
++    {
++        ws();
++        if (next().kind != k)
++            fail(QStringLiteral("expected %1").arg(QLatin1String(what)));
++    }
++
++    // ---- math functions (CSS Values 4 section 10), with channel keywords as numbers
++    Num mathValue(const Channels *ch)
++    {
++        ws();
++        const Tok t = next();
++        switch (t.kind) {
++        case TokKind::Number: return {t.value, Unit::Number};
++        case TokKind::Percentage: return {t.value, Unit::Percentage};
++        case TokKind::Dimension: return angle(t);
++        case TokKind::Ident: {
++            if (ch && ch->has(t.text)) {
++                const double v = ch->get(t.text);
++                return {std::isnan(v) ? 0.0 : v, Unit::Number};
++            }
++            if (t.text == u"e") return {M_E, Unit::Number};
++            if (t.text == u"pi") return {M_PI, Unit::Number};
++            if (t.text == u"infinity") return {std::numeric_limits<double>::infinity(), Unit::Number};
++            if (t.text == u"-infinity") return {-std::numeric_limits<double>::infinity(), Unit::Number};
++            if (t.text == u"nan") return {std::numeric_limits<double>::quiet_NaN(), Unit::Number};
++            fail(QStringLiteral("unknown keyword %1 in a math function").arg(t.text));
++            return {0, Unit::Number};
++        }
++        case TokKind::LParen: {
++            const Num v = mathSum(ch);
++            expect(TokKind::RParen, "')'");
++            return v;
++        }
++        case TokKind::Function:
++            if (isMathFunction(t.text))
++                return mathFunction(t.text, ch);
++            break;
++        default:
++            break;
++        }
++        fail(QStringLiteral("not a math value"));
++        return {0, Unit::Number};
++    }
++
++    Num angle(const Tok &t)
++    {
++        double f;
++        if (t.text == u"deg")
++            f = 1;
++        else if (t.text == u"grad")
++            f = 0.9;
++        else if (t.text == u"rad")
++            f = 180 / M_PI;
++        else if (t.text == u"turn")
++            f = 360;
++        else {
++            fail(QStringLiteral("unit %1 is not an angle").arg(t.text));
++            return {0, Unit::Angle};
++        }
++        return {t.value * f, Unit::Angle};
++    }
++
++    Num mathProduct(const Channels *ch)
++    {
++        Num v = mathValue(ch);
++        for (;;) {
++            const qsizetype save = m_i;
++            ws();
++            if (peek().kind == TokKind::Delim && (peek().text == u"*" || peek().text == u"/")) {
++                const bool times = next().text == u"*";
++                const Num w = mathValue(ch);
++                if (times) {
++                    if (v.t != Unit::Number && w.t != Unit::Number)
++                        fail(QStringLiteral("a product of two dimensions"));
++                    v = {v.v * w.v, v.t == Unit::Number ? w.t : v.t};
++                } else {
++                    if (w.t != Unit::Number && w.t != v.t)
++                        fail(QStringLiteral("a division by a dimension"));
++                    v = {v.v / w.v, w.t == v.t ? Unit::Number : v.t};
++                }
++            } else {
++                m_i = save;
++                return v;
++            }
++        }
++    }
++
++    Num mathSum(const Channels *ch)
++    {
++        Num v = mathProduct(ch);
++        for (;;) {
++            const qsizetype save = m_i;
++            const bool hadWs = peek().kind == TokKind::Ws;
++            ws();
++            const Tok &t = peek();
++            if (t.kind == TokKind::Delim && (t.text == u"+" || t.text == u"-") && hadWs
++                && m_i + 1 < m_t.size() && m_t.at(m_i + 1).kind == TokKind::Ws) {
++                const bool plus = next().text == u"+";
++                const Num w = mathProduct(ch);
++                if (w.t != v.t)
++                    fail(QStringLiteral("a sum of different types"));
++                v = {plus ? v.v + w.v : v.v - w.v, v.t};
++            } else if ((t.kind == TokKind::Number || t.kind == TokKind::Percentage || t.kind == TokKind::Dimension)
++                       && hadWs && !t.sign.isNull()) {
++                fail(QStringLiteral("+ and - need whitespace on both sides"));
++            } else {
++                m_i = save;
++                return v;
++            }
++        }
++    }
++
++    QVarLengthArray<Num, 4> mathArgs(const Channels *ch)
++    {
++        QVarLengthArray<Num, 4> args;
++        args.append(mathSum(ch));
++        while (at(TokKind::Comma)) {
++            next();
++            args.append(mathSum(ch));
++        }
++        expect(TokKind::RParen, "')'");
++        m_argCount = args.size();
++        while (args.size() < 3)   // so that an incomplete call reads defined values while the parse unwinds
++            args.append({0, args[0].t});
++        return args;
++    }
++
++    Num mathFunction(const QString &name, const Channels *ch)
++    {
++        auto same = [&](const QVarLengthArray<Num, 4> &list) {
++            for (const Num &x : list) {
++                if (x.t != list[0].t)
++                    fail(QStringLiteral("%1() of different types").arg(name));
++            }
++            return list[0].t;
++        };
++        auto radians = [&](const Num &x) {
++            if (x.t == Unit::Percentage)
++                fail(QStringLiteral("trigonometry of a percentage"));
++            return x.t == Unit::Angle ? x.v * M_PI / 180 : x.v;
++        };
++        const double nan = std::numeric_limits<double>::quiet_NaN();
++        if (name == u"round") {
++            int strategy = 0;   // nearest, up, down, to-zero
++            ws();
++            if (peek().kind == TokKind::Ident) {
++                const QString s = peek().text;
++                if (s == u"nearest" || s == u"up" || s == u"down" || s == u"to-zero") {
++                    next();
++                    strategy = s == u"nearest" ? 0 : s == u"up" ? 1 : s == u"down" ? 2 : 3;
++                    expect(TokKind::Comma, "','");
++                }
++            }
++            const auto a = mathArgs(ch);
++            const double b = m_argCount > 1 ? a[1].v : 1.0;
++            if (b == 0)
++                return {nan, a[0].t};
++            const double q = a[0].v / b;
++            const double r = strategy == 0 ? std::floor(q + 0.5) : strategy == 1 ? std::ceil(q)
++                    : strategy == 2 ? std::floor(q) : std::trunc(q);
++            return {r * b, a[0].t};
++        }
++        const auto a = mathArgs(ch);
++        if (name == u"calc") {
++            if (m_argCount != 1)
++                fail(QStringLiteral("calc() takes one argument"));
++            return a[0];
++        }
++        const qsizetype argc = m_argCount;
++        auto args = [&] { return QVarLengthArray<Num, 4>(a.begin(), a.begin() + argc); };
++        if (name == u"min" || name == u"max") {
++            const Unit t = same(args());
++            double v = a[0].v;
++            for (qsizetype k = 0; k < argc; ++k)
++                v = name == u"min" ? std::min(v, a[k].v) : std::max(v, a[k].v);
++            return {v, t};
++        }
++        if (name == u"clamp") {
++            if (argc != 3)
++                fail(QStringLiteral("clamp() takes three arguments"));
++            const Unit t = same(args());
++            return {std::max(a[0].v, std::min(a[1].v, a[2].v)), t};
++        }
++        if (name == u"mod" || name == u"rem") {
++            const Unit t = same(args());
++            if (argc != 2)
++                fail(QStringLiteral("%1() takes two arguments").arg(name));
++            if (a[1].v == 0)
++                return {nan, t};
++            const double q = a[0].v / a[1].v;
++            return {a[0].v - a[1].v * (name == u"mod" ? std::floor(q) : std::trunc(q)), t};
++        }
++        if (name == u"sin")
++            return {std::sin(radians(a[0])), Unit::Number};
++        if (name == u"cos")
++            return {std::cos(radians(a[0])), Unit::Number};
++        if (name == u"tan")
++            return {std::tan(radians(a[0])), Unit::Number};
++        if (name == u"asin" || name == u"acos" || name == u"atan") {
++            if (a[0].t != Unit::Number)
++                fail(QStringLiteral("%1() of a dimension").arg(name));
++            const double r = name == u"asin" ? std::asin(a[0].v) : name == u"acos" ? std::acos(a[0].v) : std::atan(a[0].v);
++            return {r * 180 / M_PI, Unit::Angle};
++        }
++        if (name == u"atan2") {
++            same(args());
++            if (argc != 2)
++                fail(QStringLiteral("atan2() takes two arguments"));
++            return {std::atan2(a[0].v, a[1].v) * 180 / M_PI, Unit::Angle};
++        }
++        if (name == u"pow") {
++            if (argc != 2 || a[0].t != Unit::Number || a[1].t != Unit::Number)
++                fail(QStringLiteral("pow() takes two numbers"));
++            return {std::pow(a[0].v, a[1].v), Unit::Number};
++        }
++        if (name == u"sqrt")
++            return {a[0].v >= 0 ? std::sqrt(a[0].v) : nan, Unit::Number};
++        if (name == u"hypot") {
++            const Unit t = same(args());
++            double s = 0;
++            for (qsizetype k = 0; k < argc; ++k)
++                s += a[k].v * a[k].v;
++            return {std::sqrt(s), t};
++        }
++        if (name == u"log") {
++            const double v = a[0].v;
++            const double r = v > 0 ? std::log(v) : v == 0 ? -std::numeric_limits<double>::infinity() : nan;
++            return {argc > 1 ? r / std::log(a[1].v) : r, Unit::Number};
++        }
++        if (name == u"exp")
++            return {std::exp(a[0].v), Unit::Number};
++        if (name == u"abs")
++            return {std::abs(a[0].v), a[0].t};
++        if (name == u"sign")
++            return {a[0].v == 0 ? 0.0 : std::copysign(1.0, a[0].v), Unit::Number};
++        fail(name);
++        return {0, Unit::Number};
++    }
++
++    Comp component(const Channels *ch, bool allowPercent = true, bool hue = false, bool allowNone = true)
++    {
++        ws();
++        const Tok &t = peek();
++        if (t.kind == TokKind::Ident && t.text == u"none") {
++            if (!allowNone)
++                fail(QStringLiteral("none is not allowed here"));
++            next();
++            return {0, Unit::Number, true};
++        }
++        if (t.kind == TokKind::Ident && ch && ch->has(t.text)) {
++            const double v = ch->get(next().text);
++            return {std::isnan(v) ? 0.0 : v, Unit::Number, std::isnan(v)};
++        }
++        Num v{0, Unit::Number};
++        if (t.kind == TokKind::Function && isMathFunction(t.text)) {
++            const QString name = next().text;
++            v = mathFunction(name, ch);
++        } else if (t.kind == TokKind::Number || t.kind == TokKind::Percentage) {
++            const Tok &x = next();
++            v = {x.value, x.kind == TokKind::Number ? Unit::Number : Unit::Percentage};
++        } else if (t.kind == TokKind::Dimension) {
++            const Tok x = next();
++            if (!hue)
++                fail(QStringLiteral("unit %1 is not allowed here").arg(x.text));
++            v = angle(x);
++        } else {
++            fail(QStringLiteral("expected a number"));
++            return {0, Unit::Number, false};
++        }
++        if (v.t == Unit::Percentage && !allowPercent)
++            fail(QStringLiteral("a percentage is not allowed here"));
++        if (v.t == Unit::Angle && !hue)
++            fail(QStringLiteral("an angle is not allowed here"));
++        if (std::isnan(v.v))
++            v.v = 0;
++        return {v.v, v.t, false};
++    }
++
++    // [ / [<alpha-value> | none] ]?
++    void alphaPart(S &c, const Channels *ch, const S *origin)
++    {
++        if (atDelim(u'/')) {
++            next();
++            const Comp a = component(ch);
++            if (a.none) {
++                c.setAlphaMissing();
++                return;
++            }
++            if (a.t == Unit::Angle)
++                fail(QStringLiteral("an angle is not an alpha value"));
++            double v = a.t == Unit::Percentage ? a.v / 100 : a.v;
++            if (std::isinf(v))
++                v = v > 0 ? 1 : 0;
++            c.setAlpha(std::clamp(v, 0.0, 1.0));
++        } else if (origin) {
++            if (origin->isAlphaMissing())
++                c.setAlphaMissing();
++            else
++                c.setAlpha(origin->alpha());
++        } else {
++            c.setAlpha(1);
++        }
++    }
++
++    S color()
++    {
++        ws();
++        const Tok t = next();
++        if (t.kind == TokKind::Hash)
++            return hex(t.text);
++        if (t.kind == TokKind::Ident) {
++            for (const NamedColor &n : namedColors) {
++                if (t.text == QLatin1String(n.name))
++                    return rgb8(n.rgb);
++            }
++            if (t.text == u"transparent")
++                return rgb8(0, 0);
++            if (t.text == u"currentcolor") {
++                usesCurrentColor = true;
++                return m_ctx.currentColor;
++            }
++            S sys;
++            if (m_ctx.usePalette && systemColor(t.text, m_ctx.colorScheme, &sys, &note))
++                return sys;
++            fail(QStringLiteral("unknown colour %1").arg(t.text));
++            return S();
++        }
++        if (t.kind == TokKind::Function) {
++            const QString &f = t.text;
++            if (f == u"rgb" || f == u"rgba")
++                return rgbFunction();
++            if (f == u"hsl" || f == u"hsla")
++                return hslFunction();
++            if (f == u"hwb")
++                return modern(S::Hwb, nullptr, false);
++            if (f == u"lab")
++                return modern(S::Lab, nullptr, false);
++            if (f == u"lch")
++                return modern(S::Lch, nullptr, false);
++            if (f == u"oklab")
++                return modern(S::Oklab, nullptr, false);
++            if (f == u"oklch")
++                return modern(S::Oklch, nullptr, false);
++            if (f == u"ictcp")
++                return modern(S::Ictcp, nullptr, false);
++            if (f == u"jzazbz")
++                return modern(S::Jzazbz, nullptr, false);
++            if (f == u"jzczhz")
++                return modern(S::Jzczhz, nullptr, false);
++            if (f == u"color")
++                return colorFunction();
++            if (f == u"color-mix")
++                return colorMix();
++            if (f == u"alpha")
++                return alphaFunction();
++            if (f == u"light-dark") {
++                const S a = color();
++                expect(TokKind::Comma, "','");
++                const S b = color();
++                expect(TokKind::RParen, "')'");
++                // CSS Color 5 section 7: the first colour in a light element colour scheme, the second in a dark one
++                return m_ctx.colorScheme == QSvgCssColorScheme::Dark ? b : a;
++            }
++            if (f == u"contrast-color") {
++                const S c = color();
++                expect(TokKind::RParen, "')'");
++                return contrastColor(c);
++            }
++            if (f == u"device-cmyk")
++                return deviceCmyk();
++            if (f == u"hdr-color" || f == u"color-hdr")
++                return hdrColor();
++            fail(QStringLiteral("%1() is not a colour function").arg(f));
++            return S();
++        }
++        fail(QStringLiteral("not a colour"));
++        return S();
++    }
++
++    S hex(const QString &h)
++    {
++        if (h.size() != 3 && h.size() != 4 && h.size() != 6 && h.size() != 8) {
++            fail(QStringLiteral("#%1 is not a hex colour").arg(h));
++            return S();
++        }
++        QString x = h;
++        if (h.size() <= 4) {
++            x.clear();
++            for (QChar c : h)
++                x += QString(2, c);
++        }
++        bool ok = true;
++        const uint v = x.toUInt(&ok, 16);
++        if (!ok) {
++            fail(QStringLiteral("#%1 is not a hex colour").arg(h));
++            return S();
++        }
++        if (x.size() == 8)
++            return rgb8(v >> 8, (v & 255) / 255.0);
++        return rgb8(v);
++    }
++
++    const S *origin(S *storage)
++    {
++        if (atIdent("from")) {
++            next();
++            *storage = color();
++            return storage;
++        }
++        return nullptr;
++    }
++
++    S rgbFunction()
++    {
++        S storage;
++        const S *o = origin(&storage);
++        if (!o) {
++            S legacy;
++            if (attempt([&] { legacy = rgbLegacy(); }))
++                return legacy;
++        }
++        Channels ch;
++        if (o) {
++            const S s = o->convertedTo(S::Srgb);
++            const char *names[] = {"r", "g", "b"};
++            for (int i = 0; i < 3; ++i)
++                ch.values.append({QLatin1String(names[i]), s.isMissing(i) ? qQNaN() : s.component(i) * 255});
++            ch.values.append({QStringLiteral("alpha"), o->isAlphaMissing() ? qQNaN() : o->alpha()});
++        }
++        S c(S::Srgb, 0, 0, 0);
++        bool anyNone = false;
++        for (int i = 0; i < 3; ++i) {
++            const Comp v = component(o ? &ch : nullptr);
++            if (v.none) {
++                c.setMissing(i);
++                anyNone = true;
++                continue;
++            }
++            double x = (v.t == Unit::Percentage ? v.v * 255 / 100 : v.v) / 255;
++            if (!o)
++                x = std::clamp(x, 0.0, 1.0);
++            c.setComponent(i, x);
++        }
++        alphaPart(c, o ? &ch : nullptr, o);
++        expect(TokKind::RParen, "')'");
++        c.setLegacy(!o && !anyNone && !c.isAlphaMissing());
++        return c;
++    }
++
++    S rgbLegacy()
++    {
++        double v[3];
++        Unit kind = Unit::Number;
++        for (int i = 0; i < 3; ++i) {
++            if (i)
++                expect(TokKind::Comma, "','");
++            ws();
++            if (peek().kind == TokKind::Ident) {
++                fail(QStringLiteral("keyword in the legacy syntax"));
++                return S();
++            }
++            const Comp c = component(nullptr, true, false, false);
++            if (i && c.t != kind)
++                fail(QStringLiteral("the legacy syntax does not mix numbers and percentages"));
++            kind = c.t;
++            v[i] = c.v;
++        }
++        double alpha = 1;
++        if (at(TokKind::Comma)) {
++            next();
++            const Comp a = component(nullptr, true, false, false);
++            alpha = std::clamp(a.t == Unit::Percentage ? a.v / 100 : a.v, 0.0, 1.0);
++        }
++        expect(TokKind::RParen, "')'");
++        const double k = kind == Unit::Percentage ? 255.0 / 100 : 1.0;
++        S c(S::Srgb, std::clamp(v[0] * k / 255, 0.0, 1.0), std::clamp(v[1] * k / 255, 0.0, 1.0),
++            std::clamp(v[2] * k / 255, 0.0, 1.0), alpha);
++        c.setLegacy(true);
++        return c;
++    }
++
++    S hslFunction()
++    {
++        S storage;
++        const S *o = origin(&storage);
++        if (!o) {
++            S legacy;
++            const bool ok = attempt([&] {
++                const Comp h = component(nullptr, false, true, false);
++                expect(TokKind::Comma, "','");
++                const Comp s = component(nullptr, true, false, false);
++                expect(TokKind::Comma, "','");
++                const Comp l = component(nullptr, true, false, false);
++                if (s.t != Unit::Percentage || l.t != Unit::Percentage)
++                    fail(QStringLiteral("legacy hsl() takes percentages"));
++                double alpha = 1;
++                if (at(TokKind::Comma)) {
++                    next();
++                    const Comp a = component(nullptr, true, false, false);
++                    alpha = std::clamp(a.t == Unit::Percentage ? a.v / 100 : a.v, 0.0, 1.0);
++                }
++                expect(TokKind::RParen, "')'");
++                legacy = S(S::Hsl, positiveMod(h.v, 360), std::max(0.0, s.v), l.v, alpha);
++                legacy.setLegacy(true);
++            });
++            if (ok)
++                return legacy;
++        }
++        return modern(S::Hsl, o, true);
++    }
++
++    // CSS Color 4 sections 7 to 9 and CSS Color HDR section 6: percentage reference ranges and parse-time clamps
++    S modern(S::Space space, const S *o, bool originParsed)
++    {
++        S storage;
++        if (!originParsed)
++            o = origin(&storage);
++        struct Rule { double ref; bool hue; bool clampLow; double low; bool clampHigh; double high; };
++        Rule rules[3];
++        const char *names[3];
++        auto set = [&](int i, const char *n, double ref, bool hue = false, bool cl = false, double lo = 0,
++                       bool ch = false, double hi = 0) {
++            names[i] = n;
++            rules[i] = {ref, hue, cl, lo, ch, hi};
++        };
++        switch (space) {
++        case S::Hsl: set(0, "h", 0, true); set(1, "s", 100); set(2, "l", 100); break;
++        case S::Hwb: set(0, "h", 0, true); set(1, "w", 100); set(2, "b", 100); break;
++        case S::Lab: set(0, "l", 100, false, true, 0, true, 100); set(1, "a", 125); set(2, "b", 125); break;
++        case S::Lch: set(0, "l", 100, false, true, 0, true, 100); set(1, "c", 150, false, true, 0); set(2, "h", 0, true); break;
++        case S::Oklab: set(0, "l", 1, false, true, 0, true, 1); set(1, "a", 0.4); set(2, "b", 0.4); break;
++        case S::Oklch: set(0, "l", 1, false, true, 0, true, 1); set(1, "c", 0.4, false, true, 0); set(2, "h", 0, true); break;
++        case S::Ictcp: set(0, "i", 1); set(1, "ct", 0.5); set(2, "cp", 0.5); break;
++        case S::Jzazbz: set(0, "j", 1); set(1, "a", 0.21); set(2, "b", 0.21); break;
++        case S::Jzczhz: set(0, "j", 1); set(1, "c", 0.26); set(2, "h", 0, true); break;
++        default: fail(QStringLiteral("internal: not a colour function space")); return S();
++        }
++        Channels ch;
++        if (o) {
++            const S s = o->convertedTo(space);
++            for (int i = 0; i < 3; ++i)
++                ch.values.append({QLatin1String(names[i]), s.isMissing(i) ? qQNaN() : s.component(i)});
++            ch.values.append({QStringLiteral("alpha"), o->isAlphaMissing() ? qQNaN() : o->alpha()});
++        }
++        // relative colours keep their values, except that Lab, LCH, Oklab and OkLCh lightness and chroma keep
++        // their parse-time clamps (as the web-platform-tests relative colour tests expect)
++        const bool keepClamps = !o || space == S::Lab || space == S::Lch || space == S::Oklab || space == S::Oklch;
++        S c(space, 0, 0, 0);
++        for (int i = 0; i < 3; ++i) {
++            const Rule &r = rules[i];
++            const Comp v = component(o ? &ch : nullptr, !r.hue, r.hue);
++            if (v.none) {
++                c.setMissing(i);
++                continue;
++            }
++            double x = v.t == Unit::Percentage ? v.v * r.ref / 100 : v.v;
++            if (r.hue)
++                x = std::isinf(x) ? 0.0 : positiveMod(x, 360);
++            if (keepClamps && r.clampLow)
++                x = std::max(r.low, x);
++            if (keepClamps && r.clampHigh)
++                x = std::min(r.high, x);
++            if (!o && space == S::Hsl && i == 1)
++                x = std::max(0.0, x);
++            c.setComponent(i, x);
++        }
++        alphaPart(c, o ? &ch : nullptr, o);
++        expect(TokKind::RParen, "')'");
++        return c;
++    }
++
++    S colorFunction()
++    {
++        S storage;
++        const S *o = origin(&storage);
++        ws();
++        const Tok t = next();
++        if (t.kind != TokKind::Ident) {
++            fail(QStringLiteral("color() needs a colour space"));
++            return S();
++        }
++        static const struct { const char *name; S::Space space; } spaces[] = {
++            {"srgb", S::Srgb}, {"srgb-linear", S::SrgbLinear}, {"display-p3", S::DisplayP3},
++            {"display-p3-linear", S::DisplayP3Linear}, {"a98-rgb", S::A98Rgb}, {"prophoto-rgb", S::ProphotoRgb},
++            {"rec2020", S::Rec2020}, {"rec2100-pq", S::Rec2100Pq}, {"rec2100-hlg", S::Rec2100Hlg},
++            {"rec2100-linear", S::Rec2100Linear}, {"xyz", S::XyzD65}, {"xyz-d50", S::XyzD50}, {"xyz-d65", S::XyzD65}};
++        S::Space space = S::Invalid;
++        for (const auto &s : spaces) {
++            if (t.text == QLatin1String(s.name))
++                space = s.space;
++        }
++        if (space == S::Invalid) {
++            if (t.text.startsWith(u"--"))
++                fail(QStringLiteral("the custom colour space %1 needs an @color-profile, which Qt SVG does not load").arg(t.text));
++            fail(QStringLiteral("%1 is not a predefined colour space").arg(t.text));
++            return S();
++        }
++        const bool xyz = space == S::XyzD50 || space == S::XyzD65;
++        Channels ch;
++        if (o) {
++            const S s = o->convertedTo(space);
++            const char *names[] = {xyz ? "x" : "r", xyz ? "y" : "g", xyz ? "z" : "b"};
++            for (int i = 0; i < 3; ++i)
++                ch.values.append({QLatin1String(names[i]), s.isMissing(i) ? qQNaN() : s.component(i)});
++            ch.values.append({QStringLiteral("alpha"), o->isAlphaMissing() ? qQNaN() : o->alpha()});
++        }
++        S c(space, 0, 0, 0);
++        for (int i = 0; i < 3; ++i) {
++            const Comp v = component(o ? &ch : nullptr);
++            if (v.none)
++                c.setMissing(i);
++            else
++                c.setComponent(i, v.t == Unit::Percentage ? v.v / 100 : v.v);
++        }
++        alphaPart(c, o ? &ch : nullptr, o);
++        expect(TokKind::RParen, "')'");
++        return c;
++    }
++
++    S alphaFunction()
++    {
++        S storage;
++        const S *o = origin(&storage);
++        if (!o) {
++            fail(QStringLiteral("alpha() needs from <color>"));
++            return S();
++        }
++        if (!atDelim(u'/')) {
++            fail(QStringLiteral("alpha() needs / <alpha-value>"));
++            return S();
++        }
++        Channels ch;
++        ch.values.append({QStringLiteral("alpha"), o->isAlphaMissing() ? qQNaN() : o->alpha()});
++        S c = *o;
++        alphaPart(c, &ch, o);
++        expect(TokKind::RParen, "')'");
++        return c;
++    }
++
++    S deviceCmyk()
++    {
++        double v[4] = {0, 0, 0, 0};
++        S c(S::Srgb, 0, 0, 0);
++        const bool legacy = attempt([&] {
++            for (int i = 0; i < 4; ++i) {
++                if (i)
++                    expect(TokKind::Comma, "','");
++                v[i] = component(nullptr, false, false, false).v;
++            }
++            expect(TokKind::RParen, "')'");
++        });
++        if (!legacy) {
++            for (int i = 0; i < 4; ++i) {
++                const Comp x = component(nullptr);
++                v[i] = x.none ? 0 : x.t == Unit::Percentage ? x.v / 100 : x.v;
++            }
++            alphaPart(c, nullptr, nullptr);
++            expect(TokKind::RParen, "')'");
++        }
++        for (double &x : v)
++            x = std::clamp(x, 0.0, 1.0);
++        // CSS Color 5 section 6.1, the naive conversion (there is no @color-profile for device-cmyk)
++        c.setComponent(0, 1 - std::min(1.0, v[0] * (1 - v[3]) + v[3]));
++        c.setComponent(1, 1 - std::min(1.0, v[1] * (1 - v[3]) + v[3]));
++        c.setComponent(2, 1 - std::min(1.0, v[2] * (1 - v[3]) + v[3]));
++        return c;
++    }
++
++    // CSS Color 5 section 8: white or black, "whichever produces maximum color contrast for text when the input
++    // color is used as a solid background", white on a tie; the algorithm is UA-defined, UAs "are advised to not
++    // simply use the WCAG 2.1 section 1.4.3 Contrast (Minimum) contrast ratio algorithm", and the result "should
++    // still meet the WCAG 2.1 section 1.4.3 Contrast (Minimum) for AA large text", 3:1.
++    // The background is the colour as an opaque sRGB colour, gamut mapped (CSS Color 4 section 14.2).  Black when its
++    // Oklab lightness is above 0.7, white otherwise: Lea Verou found that over the OKLCH reference range neither
++    // black nor white text fails APCA, a perceptual contrast algorithm, for lightness between 0.687 and 0.716 ("On
++    // automatically generating contrasting text colors with CSS", 2024).  Then, when the choice has a WCAG 2.1
++    // contrast ratio below 3:1 with the background, the other one, which always has at least 4.58:1.
++    S contrastColor(const S &in)
++    {
++        S opaque = in;
++        opaque.setAlpha(1);
++        const QSvgCssTargetColor t = qsvg_resolveForTarget(opaque, QSvgCssColorTarget());
++        const Vec3 xyz = mul(srgbToXyz, linSrgb({t.rgb[0], t.rgb[1], t.rgb[2]}));
++        const double lum = xyz[1];
++        const double lightness = xyzToOklab(xyz)[0];
++        const double withWhite = 1.05 / (lum + 0.05);
++        const double withBlack = (lum + 0.05) / 0.05;
++        constexpr double lightnessThreshold = 0.7;
++        constexpr double wcagLargeTextAA = 3.0;
++        bool black = lightness > lightnessThreshold;
++        if (black ? withBlack < wcagLargeTextAA : withWhite < wcagLargeTextAA)
++            black = !black;
++        return black ? rgb8(0x000000) : rgb8(0xffffff);
++    }
++
++    // CSS Color 5 section 3.3, with CSS Values 5 section 6.1's percentage normalization
++    S colorMix()
++    {
++        S::Space space = S::Oklab;
++        int hueMethod = 0;   // shorter, longer, increasing, decreasing
++        if (atIdent("in")) {
++            next();
++            ws();
++            const Tok t = next();
++            static const struct { const char *name; S::Space space; } spaces[] = {
++                {"srgb", S::Srgb}, {"srgb-linear", S::SrgbLinear}, {"display-p3", S::DisplayP3},
++                {"display-p3-linear", S::DisplayP3Linear}, {"a98-rgb", S::A98Rgb}, {"prophoto-rgb", S::ProphotoRgb},
++                {"rec2020", S::Rec2020}, {"lab", S::Lab}, {"oklab", S::Oklab}, {"xyz", S::XyzD65},
++                {"xyz-d50", S::XyzD50}, {"xyz-d65", S::XyzD65}, {"hsl", S::Hsl}, {"hwb", S::Hwb}, {"lch", S::Lch},
++                {"oklch", S::Oklch}};
++            space = S::Invalid;
++            if (t.kind == TokKind::Ident) {
++                for (const auto &s : spaces) {
++                    if (t.text == QLatin1String(s.name))
++                        space = s.space;
++                }
++            }
++            if (space == S::Invalid) {
++                fail(QStringLiteral("not an interpolation colour space"));
++                return S();
++            }
++            if (S::isPolar(space) && at(TokKind::Ident)) {
++                const QString m = peek().text;
++                if (m == u"shorter" || m == u"longer" || m == u"increasing" || m == u"decreasing") {
++                    next();
++                    hueMethod = m == u"shorter" ? 0 : m == u"longer" ? 1 : m == u"increasing" ? 2 : 3;
++                    if (!atIdent("hue"))
++                        fail(QStringLiteral("expected hue"));
++                    next();
++                }
++            }
++            expect(TokKind::Comma, "','");
++        }
++        struct Item { S color; double pct; bool given; };
++        QVarLengthArray<Item, 4> items;
++        auto atPercent = [&] {
++            ws();
++            return peek().kind == TokKind::Percentage || (peek().kind == TokKind::Function && isMathFunction(peek().text));
++        };
++        for (;;) {
++            Item it{S(), 0, false};
++            if (atPercent()) {
++                it.pct = mixPercent();
++                it.given = true;
++                it.color = color();
++            } else {
++                it.color = color();
++                if (atPercent()) {
++                    it.pct = mixPercent();
++                    it.given = true;
++                }
++            }
++            items.append(it);
++            if (m_failed)
++                return S();
++            if (at(TokKind::Comma)) {
++                next();
++                continue;
++            }
++            expect(TokKind::RParen, "')'");
++            break;
++        }
++        double specified = 0;
++        int omitted = 0;
++        for (const Item &it : items) {
++            if (it.given)
++                specified += it.pct;
++            else
++                ++omitted;
++        }
++        const double specifiedClamped = std::min(specified, 100.0);
++        double total = 0;
++        for (Item &it : items) {
++            if (!it.given)
++                it.pct = (100 - specifiedClamped) / omitted;
++            total += it.pct;
++        }
++        if (total > 0) {
++            for (Item &it : items)
++                it.pct = it.pct * 100 / total;
++        }
++        const double leftover = total < 100 ? 100 - total : 0;
++        S result;
++        if (items.size() == 1) {
++            result = items[0].color.convertedTo(space);
++        } else {
++            S acc = items[0].color;
++            double accPct = items[0].pct;
++            for (qsizetype k = 1; k < items.size(); ++k) {
++                const double combined = accPct + items[k].pct;
++                const double p = combined > 0 ? items[k].pct / combined : 0.5;
++                acc = interpolate(acc, items[k].color, p, space, hueMethod);
++                accPct = combined;
++            }
++            result = acc;
++        }
++        if (!result.isAlphaMissing())
++            result.setAlpha(result.alpha() * (1 - leftover / 100));
++        return result;
++    }
++
++    double mixPercent()
++    {
++        ws();
++        const bool literal = peek().kind == TokKind::Percentage;
++        const Comp v = component(nullptr, true, false, false);
++        if (v.t != Unit::Percentage)
++            fail(QStringLiteral("a color-mix() amount is a percentage"));
++        if (literal && (v.v < 0 || v.v > 100))
++            fail(QStringLiteral("a color-mix() amount is between 0% and 100%"));
++        return std::clamp(v.v, 0.0, 100.0);
++    }
++
++    // CSS Color HDR sections 5.1 and 11.6
++    S hdrColor()
++    {
++        S c[2];
++        double h[2] = {0, 0};
++        for (int i = 0; i < 2; ++i) {
++            if (i)
++                expect(TokKind::Comma, "','");
++            ws();
++            if (peek().kind == TokKind::Number) {
++                h[i] = next().value;
++                c[i] = color();
++            } else {
++                c[i] = color();
++                ws();
++                if (peek().kind == TokKind::Number)
++                    h[i] = next().value;
++            }
++            if (h[i] < 0)
++                fail(QStringLiteral("a negative headroom"));
++        }
++        expect(TokKind::RParen, "')'");
++        if (!m_failed && h[0] == h[1])
++            fail(QStringLiteral("hdr-color() needs two different headrooms"));
++        // the colour is resolved when it is painted, against the target's headroom: it keeps both colours
++        S out = hdrMix(c[0], h[0], c[1], h[1], 0.0);
++        out.setHdrPair(c[0], h[0], c[1], h[1]);
++        return out;
++    }
++
++public:
++    static S hdrMix(const S &c1, double h1, const S &c2, double h2, double H)
++    {
++        const Vec3 x1 = c1.toXyzD65(), x2 = c2.toXyzD65();
++        const double w1 = std::clamp((H - h2) / (h1 - h2), 0.0, 1.0);
++        const double w2 = std::clamp((H - h1) / (h2 - h1), 0.0, 1.0);
++        const double eps = 0.001;
++        Vec3 out;
++        for (int i = 0; i < 3; ++i)
++            out[i] = (std::pow(x1[i] * Yw + eps, w1) * std::pow(x2[i] * Yw + eps, w2) - eps) / Yw;
++        const double a1 = c1.isAlphaMissing() ? 1 : c1.alpha(), a2 = c2.isAlphaMissing() ? 1 : c2.alpha();
++        return S(S::XyzD65, out[0], out[1], out[2], a1 * w1 + a2 * w2);
++    }
++};
++
++// CSS Color 4 section 13
++S interpolate(const S &a, const S &b, double p, S::Space space, int hueMethod)
++{
++    const S ca = a.convertedTo(space), cb = b.convertedTo(space);
++    double va[3], vb[3];
++    bool ma[3], mb[3];
++    for (int i = 0; i < 3; ++i) {
++        va[i] = ca.component(i);
++        vb[i] = cb.component(i);
++        ma[i] = ca.isMissing(i);
++        mb[i] = cb.isMissing(i);
++        if (ma[i] && !mb[i]) {
++            va[i] = vb[i];
++            ma[i] = false;
++        } else if (mb[i] && !ma[i]) {
++            vb[i] = va[i];
++            mb[i] = false;
++        }
++    }
++    bool aMissA = a.isAlphaMissing(), aMissB = b.isAlphaMissing();
++    double aa = a.alpha(), ab = b.alpha();
++    if (aMissA && !aMissB) {
++        aa = ab;
++        aMissA = false;
++    } else if (aMissB && !aMissA) {
++        ab = aa;
++        aMissB = false;
++    }
++    const int hi = hueIndex(space);
++    if (hi >= 0 && !ma[hi] && !mb[hi]) {
++        double t1 = positiveMod(va[hi], 360), t2 = positiveMod(vb[hi], 360);
++        const double d = t2 - t1;
++        switch (hueMethod) {
++        case 0:
++            if (d > 180)
++                t1 += 360;
++            else if (d < -180)
++                t2 += 360;
++            break;
++        case 1:
++            if (0 < d && d < 180)
++                t1 += 360;
++            else if (-180 < d && d <= 0)
++                t2 += 360;
++            break;
++        case 2:
++            if (t2 < t1)
++                t2 += 360;
++            break;
++        case 3:
++            if (t1 < t2)
++                t1 += 360;
++            break;
++        }
++        va[hi] = t1;
++        vb[hi] = t2;
++    }
++    const bool alphaNone = aMissA;
++    S out(space, 0, 0, 0);
++    const double alpha = alphaNone ? 0 : aa * (1 - p) + ab * p;
++    for (int i = 0; i < 3; ++i) {
++        if (ma[i] || mb[i]) {
++            out.setMissing(i);
++            continue;
++        }
++        double x;
++        if (alphaNone || i == hi) {
++            x = va[i] * (1 - p) + vb[i] * p;
++        } else {
++            x = va[i] * aa * (1 - p) + vb[i] * ab * p;
++            if (alpha != 0)
++                x /= alpha;
++        }
++        if (i == hi)
++            x = positiveMod(x, 360);
++        out.setComponent(i, x);
++    }
++    if (alphaNone)
++        out.setAlphaMissing();
++    else
++        out.setAlpha(alpha);
++    return out;
++}
++
++// ---------------------------------------------------------------- gamut mapping, CSS Color 4 section 14.2.2
++
++// eps absorbs the rounding of the matrix round trip, so that a colour on the gamut boundary (white) is in gamut
++bool inUnit(const Vec3 &v)
++{
++    const double eps = 1e-9;
++    return v[0] >= -eps && v[0] <= 1 + eps && v[1] >= -eps && v[1] <= 1 + eps && v[2] >= -eps && v[2] <= 1 + eps;
++}
++
++// the colour in dest for display: missing components are zero (CSS Color 4 section 4.4), nothing carried forward
++Vec3 displayValues(const S &color, S::Space dest)
++{
++    if (color.space() == dest) {
++        Vec3 v;
++        for (int i = 0; i < 3; ++i)
++            v[i] = color.isMissing(i) || std::isnan(color.component(i)) ? 0.0 : color.component(i);
++        return v;
++    }
++    return fromXyz(dest, color.toXyzD65());
++}
++
++Vec3 clip(const Vec3 &v)
++{
++    return {std::clamp(v[0], 0.0, 1.0), std::clamp(v[1], 0.0, 1.0), std::clamp(v[2], 0.0, 1.0)};
++}
++
++double deltaEOK(const Vec3 &a, const Vec3 &b)
++{
++    return std::sqrt((a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2]));
++}
++
++Vec3 gamutMap(const S &color, S::Space dest, bool *mapped)
++{
++    *mapped = false;
++    const Vec3 target = displayValues(color, dest);
++    if (inUnit(target))
++        return clip(target);
++    *mapped = true;
++    const S o = color.convertedTo(S::Oklch);
++    const double L = o.isMissing(0) ? 0 : o.component(0);
++    const double C = o.isMissing(1) ? 0 : o.component(1);
++    const double H = o.isMissing(2) ? 0 : o.component(2);
++    if (L >= 1)
++        return clip(fromXyz(dest, oklabToXyz({1, 0, 0})));
++    if (L <= 0)
++        return clip(fromXyz(dest, oklabToXyz({0, 0, 0})));
++    const double JND = 0.02, epsilon = 0.0001;
++    auto oklabOfDest = [&](const Vec3 &v) { return xyzToOklab(toXyz(dest, v)); };
++    Vec3 current = {L, C, H};
++    Vec3 curDest = fromXyz(dest, oklabToXyz(fromPolar(current)));
++    Vec3 clipped = clip(curDest);
++    double E = deltaEOK(oklabOfDest(clipped), fromPolar(current));
++    if (E < JND)
++        return clipped;
++    double lo = 0, hi = C;
++    bool minInGamut = true;
++    while (hi - lo > epsilon) {
++        const double chroma = (lo + hi) / 2;
++        current = {L, chroma, H};
++        curDest = fromXyz(dest, oklabToXyz(fromPolar(current)));
++        if (minInGamut && inUnit(curDest)) {
++            lo = chroma;
++            continue;
++        }
++        clipped = clip(curDest);
++        E = deltaEOK(oklabOfDest(clipped), fromPolar(current));
++        if (E < JND) {
++            if (JND - E < epsilon)
++                return clipped;
++            minInGamut = false;
++            lo = chroma;
++        } else {
++            hi = chroma;
++        }
++    }
++    return clipped;
++}
++
++} // namespace
++
++QSvgCssColor QSvgCssColor::atHeadroom(double headroom) const
++{
++    if (!m_hdr)
++        return *this;
++    return Parser::hdrMix(m_hdr->c1, m_hdr->h1, m_hdr->c2, m_hdr->h2, headroom);
++}
++
++double QSvgCssColor::hdrMaxHeadroom() const
++{
++    return m_hdr ? std::max(m_hdr->h1, m_hdr->h2) : 0.0;
++}
++
++void QSvgCssColor::setHdrPair(const QSvgCssColor &c1, double h1, const QSvgCssColor &c2, double h2)
++{
++    m_hdr = std::make_shared<const HdrPair>(HdrPair{c1, c2, h1, h2});
++}
++
++QSvgCssColorParseResult qsvg_parseCssColor(QStringView text, const QSvgCssColorContext &context)
++{
++    QSvgCssColorParseResult result;
++    Parser p(tokenize(text), context);
++    result.color = p.parseWhole();
++    result.usesCurrentColor = p.usesCurrentColor;
++    result.note = p.note;
++    if (p.m_failed) {
++        result.color = QSvgCssColor();
++        result.error = p.m_error;
++    }
++    return result;
++}
++
++// CSS Color Adjustment 1 (CR Snapshot 30 October 2026) section 2.2: color-scheme,
++// normal | [ light | dark | <custom-ident> ]+ && only?
++bool qsvg_parseColorScheme(QStringView text, QSvgCssColorSchemeValue *value, bool *keepsParent, QString *error)
++{
++    *keepsParent = false;
++    const QList<QStringView> words = text.trimmed().split(QRegularExpression(u"[ \t\n\r\f]+"_s), Qt::SkipEmptyParts);
++    auto is = [](QStringView word, QLatin1StringView keyword) {
++        return word.compare(keyword, Qt::CaseInsensitive) == 0;
++    };
++    static const QLatin1StringView cssWide[] = {"initial"_L1, "inherit"_L1, "unset"_L1, "revert"_L1,
++                                                "revert-layer"_L1};
++    auto isCssWide = [&](QStringView word) {
++        return std::any_of(std::begin(cssWide), std::end(cssWide), [&](QLatin1StringView k) { return is(word, k); });
++    };
++    if (words.isEmpty()) {
++        *error = QStringLiteral("empty value");
++        return false;
++    }
++    if (words.size() == 1 && is(words.first(), "normal"_L1)) {
++        *value = QSvgCssColorSchemeValue();
++        return true;
++    }
++    if (words.size() == 1 && isCssWide(words.first())) {
++        if (is(words.first(), "initial"_L1))
++            *value = QSvgCssColorSchemeValue();
++        else
++            *keepsParent = true;   // the property is inherited, so inherit, unset and revert keep the parent's value
++        return true;
++    }
++    // <custom-ident> (CSS Values 4 section 4.2): an identifier that is no CSS-wide keyword and not "default"
++    static const QRegularExpression ident(
++            u"^(--|-?[A-Za-z_\\x{80}-\\x{10FFFF}])[A-Za-z0-9_\\-\\x{80}-\\x{10FFFF}]*$"_s);
++    QSvgCssColorSchemeValue out;
++    out.normal = false;
++    int idents = 0;
++    for (qsizetype i = 0; i < words.size(); ++i) {
++        const QStringView w = words.at(i);
++        if (is(w, "only"_L1)) {
++            // && only?: once, before or after the colour schemes
++            if (out.only || (i != 0 && i != words.size() - 1)) {
++                *error = QStringLiteral("\"only\" goes once, before or after the colour schemes");
++                return false;
++            }
++            out.only = true;
++            continue;
++        }
++        if (is(w, "normal"_L1) || is(w, "default"_L1) || isCssWide(w) || !ident.matchView(w).hasMatch()) {
++            *error = QStringLiteral("\"%1\" is not a colour scheme").arg(w);
++            return false;
++        }
++        ++idents;
++        if (is(w, "light"_L1))
++            out.schemes.append(QSvgCssColorScheme::Light);
++        else if (is(w, "dark"_L1))
++            out.schemes.append(QSvgCssColorScheme::Dark);
++        // any other <custom-ident> is meaningless (section 2.2) and supports nothing
++    }
++    if (!idents) {
++        *error = QStringLiteral("no colour scheme");
++        return false;
++    }
++    *value = out;
++    return true;
++}
++
++// CSS Color Adjustment 1 section 2.3, "To determine the used color scheme"
++QSvgCssColorScheme qsvg_usedColorScheme(const QSvgCssColorSchemeValue &support,
++                                        QSvgCssColorSchemePreference preference)
++{
++    // "If support is null, or none of the color schemes in support are supported by the UA, return the UA default
++    // color scheme": light
++    if (support.normal || support.schemes.isEmpty())
++        return QSvgCssColorScheme::Light;
++    // "If preference is no preference, return the first supported color scheme in support."
++    if (preference == QSvgCssColorSchemePreference::None)
++        return support.schemes.first();
++    // "If preference's color scheme is in support and supported by the UA, return that color scheme."
++    const QSvgCssColorScheme wanted = preference == QSvgCssColorSchemePreference::Dark ? QSvgCssColorScheme::Dark
++                                                                                      : QSvgCssColorScheme::Light;
++    if (support.schemes.contains(wanted))
++        return wanted;
++    // "If support is flagged as sole support, return the first supported color scheme in support."  There is no
++    // overriding preference here, so otherwise too: "return the first supported color scheme in support".
++    return support.schemes.first();
++}
++
++static std::optional<QSvgCssColorSchemePreference> preferenceOverride;
++
++void qsvg_setPreferredColorSchemeOverride(std::optional<QSvgCssColorSchemePreference> preference)
++{
++    preferenceOverride = preference;
++}
++
++QSvgCssColorSchemePreference qsvg_preferredColorScheme()
++{
++    if (preferenceOverride)
++        return *preferenceOverride;
++    if (!qobject_cast<QGuiApplication *>(QCoreApplication::instance()))
++        return QSvgCssColorSchemePreference::None;
++    switch (QGuiApplication::styleHints()->colorScheme()) {
++    case Qt::ColorScheme::Dark: return QSvgCssColorSchemePreference::Dark;
++    case Qt::ColorScheme::Light: return QSvgCssColorSchemePreference::Light;
++    default: return QSvgCssColorSchemePreference::None;
++    }
++}
++
++QSvgCssColorTarget QSvgCssColorTarget::forDevice(const QPaintDevice *device)
++{
++    QSvgCssColorTarget t;
++    if (!device || device->devType() != QInternal::Image)
++        return t;
++    const QImage *image = static_cast<const QImage *>(device);
++    switch (image->format()) {
++    case QImage::Format_RGBX16FPx4:
++    case QImage::Format_RGBA16FPx4:
++    case QImage::Format_RGBA16FPx4_Premultiplied:
++        t.extendedRange = true;
++        break;
++    case QImage::Format_RGBX32FPx4:
++    case QImage::Format_RGBA32FPx4:
++    case QImage::Format_RGBA32FPx4_Premultiplied:
++        t.extendedRange = true;
++        t.floatFormat = true;
++        break;
++    default:
++        break;
++    }
++    const QColorSpace cs = image->colorSpace();
++    if (!cs.isValid())
++        return t;
++    if (cs == QColorSpace(QColorSpace::SRgb))
++        t.space = QSvgCssColor::Srgb;
++    else if (cs == QColorSpace(QColorSpace::SRgbLinear))
++        t.space = QSvgCssColor::SrgbLinear;
++    else if (cs == QColorSpace(QColorSpace::DisplayP3))
++        t.space = QSvgCssColor::DisplayP3;
++    else if (cs == QColorSpace(QColorSpace::AdobeRgb))
++        t.space = QSvgCssColor::A98Rgb;
++    else if (cs == QColorSpace(QColorSpace::ProPhotoRgb))
++        t.space = QSvgCssColor::ProphotoRgb;
++    else if (cs == QColorSpace(QColorSpace::Bt2020))
++        t.space = QSvgCssColor::Rec2020;
++    else if (cs == QColorSpace(QColorSpace::Bt2100Pq))
++        t.space = QSvgCssColor::Rec2100Pq;
++    else if (cs == QColorSpace(QColorSpace::Bt2100Hlg))
++        t.space = QSvgCssColor::Rec2100Hlg;
++    else if (cs.primaries() == QColorSpace::Primaries::Bt2020 && cs.transferFunction() == QColorSpace::TransferFunction::Linear)
++        t.space = QSvgCssColor::Rec2100Linear;
++    else if (cs.primaries() == QColorSpace::Primaries::DciP3D65 && cs.transferFunction() == QColorSpace::TransferFunction::Linear)
++        t.space = QSvgCssColor::DisplayP3Linear;
++    else
++        t.unknownSpace = true;
++    // PQ and HLG code values are bounded, whatever the storage
++    if (t.space == QSvgCssColor::Rec2100Pq || t.space == QSvgCssColor::Rec2100Hlg)
++        t.extendedRange = false;
++    return t;
++}
++
++QSvgCssColorTarget QSvgCssColorTarget::forPainter(const QPainter *painter)
++{
++    return forDevice(painter ? painter->device() : nullptr);
++}
++
++QSvgCssTargetColor qsvg_resolveForTarget(const QSvgCssColor &color, const QSvgCssColorTarget &target)
++{
++    QSvgCssTargetColor out;
++    if (!color.isValid())
++        return out;
++    // CSS Color HDR section 5: an hdr-color() takes the target's headroom
++    if (color.hasHdrPair())
++        return qsvg_resolveForTarget(color.atHeadroom(target.extendedRange ? color.hdrMaxHeadroom() : 0.0), target);
++    out.alpha = color.isAlphaMissing() ? 0 : color.alpha();
++    if (target.extendedRange) {
++        out.rgb = displayValues(color, target.space);
++        for (double v : out.rgb) {
++            if (v < 0 || v > 1)
++                out.outOfRange = true;
++        }
++        return out;
++    }
++    bool mapped = false;
++    const Vec3 v = gamutMap(color, target.space, &mapped);
++    out.rgb = clip(v);
++    out.gamutMapped = mapped;
++    return out;
++}
++
++QColor qsvg_toQColor(const QSvgCssTargetColor &value)
++{
++    if (!value.outOfRange) {
++        auto u16 = [](double v) { return quint16(std::lround(std::clamp(v, 0.0, 1.0) * 65535)); };
++        return QColor::fromRgba64(u16(value.rgb[0]), u16(value.rgb[1]), u16(value.rgb[2]), u16(value.alpha));
++    }
++    return QColor::fromRgbF(float(value.rgb[0]), float(value.rgb[1]), float(value.rgb[2]), float(value.alpha));
++}
++
++QBrush qsvg_solidBrush(const QSvgCssTargetColor &value, const QSvgCssColorTarget &target)
++{
++    if (value.outOfRange && target.floatFormat) {
++        QImage texel(1, 1, QImage::Format_RGBA32FPx4_Premultiplied);
++        float *p = reinterpret_cast<float *>(texel.bits());
++        const double a = value.alpha;
++        p[0] = float(value.rgb[0] * a);
++        p[1] = float(value.rgb[1] * a);
++        p[2] = float(value.rgb[2] * a);
++        p[3] = float(a);
++        return QBrush(texel);
++    }
++    return QBrush(qsvg_toQColor(value));
++}
++
++static QString describeTarget(const QSvgCssColorTarget &t)
++{
++    return QString::fromLatin1("%1%2").arg(QLatin1String(QSvgCssColor::name(t.space)),
++                                         t.extendedRange ? QLatin1String(", extended range") : QLatin1String(""));
++}
++
++QBrush QSvgCssPaint::brush(const QPainter *painter)
++{
++    const QSvgCssColorTarget target = QSvgCssColorTarget::forPainter(painter);
++    if (m_cached && target == m_target)
++        return m_brush;
++    const QSvgCssTargetColor v = qsvg_resolveForTarget(m_color, target);
++    if (target.unknownSpace) {
++        qCWarning(lcSvgHandler, "The target image's colour space is none that CSS Color 4 or CSS Color HDR predefines; "
++                  "%s is drawn for sRGB", qPrintable(m_text));
++    }
++    if (v.gamutMapped) {
++        qCWarning(lcSvgHandler, "%s is outside the gamut of the target (%s); it is drawn gamut mapped, as CSS Color 4 "
++                  "section 14.2 says", qPrintable(m_text), qPrintable(describeTarget(target)));
++    }
++    m_brush = qsvg_solidBrush(v, target);
++    m_target = target;
++    m_cached = true;
++    return m_brush;
++}
++
++QGradientStops qsvg_gradientStops(const QGradientStops &positions, const QList<QSvgCssColor> &colors,
++                                  const QSvgCssColorTarget &target, bool *mapped)
++{
++    *mapped = false;
++    QGradientStops out;
++    if (positions.size() != colors.size())
++        return positions;
++    QSvgCssColorTarget bounded = target;
++    bounded.extendedRange = false;
++    bounded.floatFormat = false;
++    auto resolve = [&](const QSvgCssColor &c) {
++        const QSvgCssTargetColor v = qsvg_resolveForTarget(c, bounded);
++        *mapped = *mapped || v.gamutMapped;
++        return qsvg_toQColor(v);
++    };
++    // SVG gradients interpolate in sRGB (color-interpolation: sRGB, its initial value); in another target space
++    // the interpolation is kept by 16 segments per stop interval, each interpolated in sRGB, premultiplied
++    const bool subdivide = target.space != QSvgCssColor::Srgb;
++    const int segments = 16;
++    for (qsizetype i = 0; i < positions.size(); ++i) {
++        const QSvgCssColor &c = colors.at(i);
++        const QSvgCssColor c0 = c.hasHdrPair() ? c.atHeadroom(0) : c;
++        out.append({positions.at(i).first, resolve(c0)});
++        if (!subdivide || i + 1 >= positions.size())
++            continue;
++        const QSvgCssColor &d = colors.at(i + 1);
++        const QSvgCssColor d0 = d.hasHdrPair() ? d.atHeadroom(0) : d;
++        const auto a = c0.toXyzD65(), b = d0.toXyzD65();
++        const QSvgCssColor sa = QSvgCssColor::fromXyzD65(QSvgCssColor::Srgb, a, c0.isAlphaMissing() ? 0 : c0.alpha());
++        const QSvgCssColor sb = QSvgCssColor::fromXyzD65(QSvgCssColor::Srgb, b, d0.isAlphaMissing() ? 0 : d0.alpha());
++        const double o0 = positions.at(i).first, o1 = positions.at(i + 1).first;
++        for (int k = 1; k < segments; ++k) {
++            const double p = double(k) / segments;
++            const double alpha = sa.alpha() * (1 - p) + sb.alpha() * p;
++            double rgb[3];
++            for (int j = 0; j < 3; ++j) {
++                const double x = sa.component(j) * sa.alpha() * (1 - p) + sb.component(j) * sb.alpha() * p;
++                rgb[j] = alpha > 0 ? x / alpha : 0;
++            }
++            out.append({o0 + (o1 - o0) * p, resolve(QSvgCssColor(QSvgCssColor::Srgb, rgb[0], rgb[1], rgb[2], alpha))});
++        }
++    }
++    return out;
++}
++
++QT_END_NAMESPACE
+diff --git a/src/svg/qsvgcsscolor_p.h b/src/svg/qsvgcsscolor_p.h
+new file mode 100644
+index 0000000..915906d
+--- /dev/null
++++ b/src/svg/qsvgcsscolor_p.h
+@@ -0,0 +1,230 @@
++// Copyright (C) 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++
++#ifndef QSVGCSSCOLOR_P_H
++#define QSVGCSSCOLOR_P_H
++
++//
++//  W A R N I N G
++//  -------------
++//
++// This file is not part of the Qt API.  It exists purely as an
++// implementation detail.  This header file may change from version to
++// version without notice, or even be removed.
++//
++// We mean it.
++//
++
++#include "qtsvgglobal_p.h"
++
++#include <QtGui/qbrush.h>
++#include <QtGui/qcolor.h>
++#include <QtCore/qlist.h>
++#include <QtCore/qstring.h>
++
++#include <array>
++#include <memory>
++#include <optional>
++
++QT_BEGIN_NAMESPACE
++
++class QPainter;
++class QPaintDevice;
++
++// A <color> value of CSS Color 4, CSS Color 5 and CSS Color HDR 1, kept in its own colour space at full
++// precision until it is painted, where the painter's target decides the space and the depth.
++class Q_SVG_EXPORT QSvgCssColor
++{
++public:
++    enum Space : quint8 {
++        Invalid,
++        // the predefined RGB spaces (CSS Color 4 section 10, CSS Color HDR section 8)
++        Srgb, SrgbLinear, DisplayP3, DisplayP3Linear, A98Rgb, ProphotoRgb, Rec2020,
++        Rec2100Pq, Rec2100Hlg, Rec2100Linear,
++        XyzD50, XyzD65,
++        // the other notations (CSS Color 4 sections 7 to 9, CSS Color HDR section 6)
++        Hsl, Hwb, Lab, Lch, Oklab, Oklch, Ictcp, Jzazbz, Jzczhz
++    };
++
++    QSvgCssColor() = default;
++    QSvgCssColor(Space space, double c0, double c1, double c2, double alpha = 1.0)
++        : m_space(space), m_c{c0, c1, c2}, m_alpha(alpha) {}
++
++    bool isValid() const { return m_space != Invalid; }
++    Space space() const { return m_space; }
++    double component(int i) const { return m_c[i]; }
++    double alpha() const { return m_alpha; }
++    bool isMissing(int i) const { return m_missing & (1u << i); }
++    bool isAlphaMissing() const { return m_missing & 8u; }
++    bool isLegacy() const { return m_legacy; }
++
++    void setComponent(int i, double v) { m_c[i] = v; m_missing &= ~(1u << i); }
++    void setMissing(int i) { m_c[i] = 0; m_missing |= (1u << i); }
++    void setAlpha(double a) { m_alpha = a; m_missing &= ~8u; }
++    void setAlphaMissing() { m_alpha = 0; m_missing |= 8u; }
++    void setLegacy(bool legacy) { m_legacy = legacy; }
++
++    // CSS Color 4 section 11.2, with the missing components of section 13.3 carried forward
++    QSvgCssColor convertedTo(Space space) const;
++    std::array<double, 3> toXyzD65() const;
++    static QSvgCssColor fromXyzD65(Space space, const std::array<double, 3> &xyz, double alpha);
++
++    static QSvgCssColor fromQColor(const QColor &color);
++    // The colour for an sRGB target with no other information (16 bits per channel, gamut mapped):
++    // what QSvgRenderer users that read a QColor back get.
++    QColor toQColor() const;
++
++    // CSS Color HDR section 5: an hdr-color() keeps its two colours, and the paint target's headroom picks between them
++    bool hasHdrPair() const { return bool(m_hdr); }
++    double hdrMaxHeadroom() const;
++    QSvgCssColor atHeadroom(double headroom) const;
++    void setHdrPair(const QSvgCssColor &c1, double h1, const QSvgCssColor &c2, double h2);
++
++    static bool isPolar(Space space) { return space == Hsl || space == Hwb || space == Lch || space == Oklch || space == Jzczhz; }
++    static bool isRgbSpace(Space space) { return space >= Srgb && space <= Rec2100Linear; }
++    static const char *name(Space space);
++
++private:
++    Space m_space = Invalid;
++    double m_c[3] = {0, 0, 0};
++    double m_alpha = 1.0;
++    quint8 m_missing = 0;
++    bool m_legacy = false;
++    struct HdrPair;
++    std::shared_ptr<const HdrPair> m_hdr;
++};
++
++struct QSvgCssColor::HdrPair
++{
++    QSvgCssColor c1, c2;
++    double h1, h2;
++};
++
++// The colour schemes Qt SVG supports (CSS Color Adjustment 1, CR Snapshot 30 October 2026, section 2).
++enum class QSvgCssColorScheme : quint8 { Light, Dark };
++
++// A colour scheme preference (CSS Color Adjustment 1 section 2.3): no preference, light or dark.
++enum class QSvgCssColorSchemePreference : quint8 { None, Light, Dark };
++
++// The computed value of the color-scheme property (CSS Color Adjustment 1 section 2.2): normal, or a colour scheme
++// support, the light and dark keywords in their order (<custom-ident>s are meaningless and left out) and whether
++// "only" was given.
++struct Q_SVG_EXPORT QSvgCssColorSchemeValue
++{
++    bool normal = true;
++    QList<QSvgCssColorScheme> schemes;
++    bool only = false;
++};
++
++// Parses a color-scheme value: normal | [ light | dark | <custom-ident> ]+ && only?.  inherit and the other
++// CSS-wide keywords that keep the parent's value set *keepsParent; initial gives normal.  On failure, returns false
++// and *error says why.
++Q_SVG_EXPORT bool qsvg_parseColorScheme(QStringView text, QSvgCssColorSchemeValue *value, bool *keepsParent,
++                                        QString *error);
++
++// CSS Color Adjustment 1 section 2.3, the used colour scheme of a support (normal is a null support) for a
++// preference; Qt SVG supports light and dark, and its default is light.
++Q_SVG_EXPORT QSvgCssColorScheme qsvg_usedColorScheme(const QSvgCssColorSchemeValue &support,
++                                                     QSvgCssColorSchemePreference preference);
++
++// The preferred colour scheme of the documents Qt SVG renders: an SVG document is embedded in the application, whose
++// colour scheme is its preference (CSS Color Adjustment 1 section 2.1), so the application's colour scheme
++// (QStyleHints::colorScheme()), and no preference without a QGuiApplication or when the platform does not say.
++Q_SVG_EXPORT QSvgCssColorSchemePreference qsvg_preferredColorScheme();
++// For tests: replaces the application's colour scheme as the preference; std::nullopt restores it.
++Q_SVG_EXPORT void qsvg_setPreferredColorSchemeOverride(std::optional<QSvgCssColorSchemePreference> preference);
++
++// What a colour is resolved against while it is parsed (CSS Color 4 sections 6.2 and 6.4, CSS Color 5 section 7):
++// currentcolor, and the element colour scheme that system colours and light-dark() follow.
++struct Q_SVG_EXPORT QSvgCssColorContext
++{
++    QSvgCssColor currentColor = QSvgCssColor(QSvgCssColor::Srgb, 0, 0, 0);
++    QSvgCssColorScheme colorScheme = QSvgCssColorScheme::Light;
++    bool usePalette = true;
++};
++
++struct Q_SVG_EXPORT QSvgCssColorParseResult
++{
++    QSvgCssColor color;
++    bool usesCurrentColor = false;
++    QString error;
++    // set when a system colour comes from Qt's default palette for the element colour scheme, because the
++    // application palette is one of the other colour scheme
++    QString note;
++};
++
++// Parses a <color> (the whole string must be one colour).  On failure the result's colour is invalid and error says why.
++Q_SVG_EXPORT QSvgCssColorParseResult qsvg_parseCssColor(QStringView text, const QSvgCssColorContext &context);
++
++// The target a painter draws into: its colour space (an RGB space of QSvgCssColor) and whether it holds values
++// outside [0, 1] (the floating point QImage formats).  A bounded target gets CSS Color 4 section 14.2 gamut mapping.
++struct Q_SVG_EXPORT QSvgCssColorTarget
++{
++    QSvgCssColor::Space space = QSvgCssColor::Srgb;
++    bool extendedRange = false;
++    bool floatFormat = false;
++    // HDR headroom in stops for hdr-color() (CSS Color HDR section 5): 0 for an SDR target
++    double headroom = 0;
++    // the image's colour space is none of the predefined ones: colours are drawn for sRGB, and said so
++    bool unknownSpace = false;
++
++    bool operator==(const QSvgCssColorTarget &o) const
++    {
++        return space == o.space && extendedRange == o.extendedRange && floatFormat == o.floatFormat
++                && headroom == o.headroom && unknownSpace == o.unknownSpace;
++    }
++    bool operator!=(const QSvgCssColorTarget &o) const { return !(*this == o); }
++
++    static QSvgCssColorTarget forDevice(const QPaintDevice *device);
++    static QSvgCssColorTarget forPainter(const QPainter *painter);
++};
++
++struct Q_SVG_EXPORT QSvgCssTargetColor
++{
++    // the colour in the target's space, as the target stores it
++    std::array<double, 3> rgb = {0, 0, 0};
++    double alpha = 1;
++    bool gamutMapped = false;
++    bool outOfRange = false;    // components outside [0, 1] kept for an extended-range target
++};
++
++Q_SVG_EXPORT QSvgCssTargetColor qsvg_resolveForTarget(const QSvgCssColor &color, const QSvgCssColorTarget &target);
++// A QColor that carries the target value at the precision QColor holds: 16 bits per channel in [0, 1],
++// half float outside it.
++Q_SVG_EXPORT QColor qsvg_toQColor(const QSvgCssTargetColor &value);
++// A brush for a solid fill in the target; values outside [0, 1] on a 32-bit float target are carried by a
++// 1x1 float texture, because QColor holds them as half floats only.
++Q_SVG_EXPORT QBrush qsvg_solidBrush(const QSvgCssTargetColor &value, const QSvgCssColorTarget &target);
++
++// A paint colour with its brush for the last target it was painted on; says once per target when the colour had to
++// be gamut mapped (CSS Color 4 section 14.2) or the target's colour space is not a predefined one.
++class Q_SVG_EXPORT QSvgCssPaint
++{
++public:
++    void setColor(const QSvgCssColor &color, const QString &text)
++    {
++        m_color = color;
++        m_text = text;
++        m_cached = false;
++    }
++    bool isValid() const { return m_color.isValid(); }
++    const QSvgCssColor &color() const { return m_color; }
++    QBrush brush(const QPainter *painter);
++
++private:
++    QSvgCssColor m_color;
++    QString m_text;
++    QSvgCssColorTarget m_target;
++    QBrush m_brush;
++    bool m_cached = false;
++};
++
++// Gradient stops for a target: the stop colours resolved for its space, with SVG's sRGB interpolation
++// (color-interpolation, SVG 2 section 13.12) kept by extra stops when the target's space is another one.
++// QPainter's gradient tables hold [0, 1] at 16 bits, so stops are always gamut mapped; mapped says whether any was.
++Q_SVG_EXPORT QGradientStops qsvg_gradientStops(const QGradientStops &positions, const QList<QSvgCssColor> &colors,
++                                               const QSvgCssColorTarget &target, bool *mapped);
++
++QT_END_NAMESPACE
++
++#endif // QSVGCSSCOLOR_P_H
+diff --git a/src/svg/qsvghandler.cpp b/src/svg/qsvghandler.cpp
+index f6f56ef..f0f98b2 100644
+--- a/src/svg/qsvghandler.cpp
++++ b/src/svg/qsvghandler.cpp
+@@ -32,6 +32,8 @@
+ #include "qtransform.h"
+ #include "qvarlengtharray.h"
+ #include "qimagereader.h"
++#include <QtGui/qguiapplication.h>
++#include <QtGui/qstylehints.h>
+ 
+ #include "float.h"
+ 
+@@ -410,35 +412,6 @@ static QList<qreal> parseNumbersList(QStringView *str)
+     return points;
+ }
+ 
+-static QList<qreal> parsePercentageList(QStringView str)
+-{
+-    QList<qreal> points;
+-
+-    while (!str.isEmpty() && str.first().isSpace())
+-        str.slice(1);
+-    while ((!str.isEmpty() && str.first() >= QLatin1Char('0') && str.first() <= QLatin1Char('9'))
+-           || str.startsWith(QLatin1Char('-')) || str.startsWith(QLatin1Char('+'))
+-           || str.startsWith(QLatin1Char('.'))) {
+-
+-        points.append(QSvgUtils::toDouble(&str));
+-
+-        while (!str.isEmpty() && str.first().isSpace())
+-            str.slice(1);
+-        if (str.startsWith(QLatin1Char('%')))
+-            str.slice(1);
+-        while (!str.isEmpty() && str.first().isSpace())
+-            str.slice(1);
+-        if (str.startsWith(QLatin1Char(',')))
+-            str.slice(1);
+-
+-        //eat the rest of space
+-        while (!str.isEmpty() && str.first().isSpace())
+-            str.slice(1);
+-    }
+-
+-    return points;
+-}
+-
+ static QStringView idFromUrl(QStringView url)
+ {
+     // The form is url(<IRI>), where IRI can be
+@@ -460,69 +433,47 @@ static QStringView idFromUrl(QStringView url)
+ /**
+  * returns true when successfully set the color. false signifies
+  * that the color should be inherited
++ *
++ * The value is a CSS <color> (CSS Color 4, CSS Color 5, CSS Color HDR 1); css, when given, receives it at full
++ * precision in its own colour space, for the styles to resolve it for the painter's target.
+  */
+-static bool resolveColor(QStringView colorStr, QColor &color, QSvgHandler *handler)
++static bool resolveColor(QStringView colorStr, QColor &color, QSvgHandler *handler, QSvgCssColor *css = nullptr)
+ {
+-    QStringView colorStrTr = colorStr.trimmed();
+-    if (colorStrTr.isEmpty())
++    const QStringView text = colorStr.trimmed();
++    if (text.isEmpty() || text == tokens::inherit)
+         return false;
+ 
+-    switch(colorStrTr.at(0).unicode()) {
+-
+-        case '#':
+-            {
+-                // #rrggbb is very very common, so let's tackle it here
+-                // rather than falling back to QColor
+-                QRgb rgb;
+-                bool ok = qsvg_get_hex_rgb(colorStrTr.constData(), colorStrTr.size(), &rgb);
+-                if (ok)
+-                    color.setRgb(rgb);
+-                return ok;
+-            }
+-            break;
+-
+-        case 'r':
+-            {
+-                // starts with "rgb(", ends with ")" and consists of at least 7 characters "rgb(,,)"
+-                if (colorStrTr.size() >= 7 && colorStrTr.at(colorStrTr.size() - 1) == QLatin1Char(')')
+-                    && colorStrTr.mid(0, 4) == QLatin1String("rgb(")) {
+-                    QStringView sv{ colorStrTr.sliced(4) };
+-                    QList<qreal> compo = parseNumbersList(&sv);
+-                    //1 means that it failed after reaching non-parsable
+-                    //character which is going to be "%"
+-                    if (compo.size() == 1) {
+-                        compo = parsePercentageList(colorStrTr.sliced(4));
+-                        for (int i = 0; i < compo.size(); ++i)
+-                            compo[i] *= (qreal)2.55;
+-                    }
+-
+-                    if (compo.size() == 3) {
+-                        color = QColor(int(compo[0]),
+-                                       int(compo[1]),
+-                                       int(compo[2]));
+-                        return true;
+-                    }
+-                    return false;
+-                }
+-            }
+-            break;
++    QSvgCssColorContext context;
++    context.currentColor = handler->currentCssColor();
++    // system colours and light-dark() follow the element colour scheme (CSS Color Adjustment 1 section 2.4)
++    context.colorScheme = handler->elementColorScheme();
++    const QSvgCssColorParseResult result = qsvg_parseCssColor(text, context);
++    if (!result.note.isEmpty())
++        handler->noteSystemColors(context.colorScheme, result.note);
++    if (result.color.isValid()) {
++        color = result.color.toQColor();
++        if (css)
++            *css = result.color;
++        return true;
++    }
+ 
+-        case 'c':
+-            if (colorStrTr == QLatin1String("currentColor")) {
+-                color = handler->currentColor();
+-                return true;
+-            }
+-            break;
+-        case 'i':
+-            if (colorStrTr == tokens::inherit)
+-                return false;
+-            break;
+-        default:
+-            break;
++    // Qt SVG has always read #RRRGGGBBB and #RRRRGGGGBBBB, which CSS does not define: still read, and said
++    QRgb rgb;
++    if (text.startsWith(u'#') && (text.size() == 10 || text.size() == 13)
++        && qsvg_get_hex_rgb(text.constData(), int(text.size()), &rgb)) {
++        qCWarning(lcSvgHandler, "\"%s\" is not a CSS colour (CSS Color 4 section 5.2 defines 3, 4, 6 and 8 hex "
++                  "digits); it is read as Qt SVG has always read it", qPrintable(text.toString()));
++        color.setRgb(rgb);
++        if (css)
++            *css = QSvgCssColor::fromQColor(color);
++        return true;
+     }
+ 
+-    color = QColor::fromString(colorStrTr);
+-    return color.isValid();
++    // CSS Color 4 section 4.5: an invalid colour makes its declaration invalid, so the property keeps its
++    // inherited or initial value; say so, rather than draw that value without a word
++    qCWarning(lcSvgHandler, "Invalid colour \"%s\": %s; the declaration is ignored", qPrintable(text.toString()),
++              qPrintable(result.error));
++    return false;
+ }
+ 
+ void setAlpha(QStringView opacity, QColor *color)
+@@ -535,12 +486,15 @@ void setAlpha(QStringView opacity, QColor *color)
+ }
+ 
+ static bool constructColor(QStringView colorStr, QStringView opacity,
+-                           QColor &color, QSvgHandler *handler)
++                           QColor &color, QSvgHandler *handler, QSvgCssColor *css = nullptr)
+ {
+-    if (!resolveColor(colorStr, color, handler))
++    if (!resolveColor(colorStr, color, handler, css))
+         return false;
+-    if (!opacity.isEmpty())
++    if (!opacity.isEmpty()) {
+         setAlpha(opacity, &color);
++        if (css)
++            css->setAlpha(color.alphaF());
++    }
+     return true;
+ }
+ 
+@@ -580,14 +534,38 @@ static bool createSvgGlyph(QSvgFont *font, const QXmlStreamAttributes &attribute
+     return true;
+ }
+ 
++// CSS Color Adjustment 1 section 2.2: color-scheme, from style sheets and style attributes only; SVG 2 section 6.6
++// defines no presentation attribute for it, and other attributes "must not be parsed as a presentation attribute"
++static void parseColorScheme(const QXmlStreamAttributes &cssAttributes, QSvgHandler *handler)
++{
++    QStringView text;
++    for (const QXmlStreamAttribute &attribute : cssAttributes) {
++        if (attribute.qualifiedName().compare("color-scheme"_L1, Qt::CaseInsensitive) == 0)
++            text = attribute.value();   // the last declaration wins
++    }
++    if (text.isNull())
++        return;
++    QSvgCssColorSchemeValue value;
++    bool keepsParent = false;
++    QString error;
++    if (!qsvg_parseColorScheme(text, &value, &keepsParent, &error)) {
++        qCWarning(lcSvgHandler, "Invalid color-scheme \"%s\": %s; the declaration is ignored",
++                  qPrintable(text.toString()), qPrintable(error));
++        return;
++    }
++    if (!keepsParent)
++        handler->setColorScheme(value);
++}
++
+ static void parseColor(QSvgNode *,
+                        const QSvgAttributes &attributes,
+                        QSvgHandler *handler)
+ {
+     QColor color;
+-    if (constructColor(attributes.color, attributes.colorOpacity, color, handler)) {
++    QSvgCssColor css;
++    if (constructColor(attributes.color, attributes.colorOpacity, color, handler, &css)) {
+         handler->popColor();
+-        handler->pushColor(color);
++        handler->pushColor(css);
+     }
+ }
+ 
+@@ -632,8 +610,9 @@ static void parseBrush(QSvgNode *node,
+                 }
+             } else if (attributes.fill != QLatin1String("none")) {
+                 QColor color;
+-                if (resolveColor(attributes.fill, color, handler))
+-                    prop->setBrush(QBrush(color));
++                QSvgCssColor css;
++                if (resolveColor(attributes.fill, color, handler, &css))
++                    prop->setCssColor(css, attributes.fill.trimmed().toString());
+             } else {
+                 prop->setBrush(QBrush(Qt::NoBrush));
+             }
+@@ -797,8 +776,9 @@ static void parsePen(QSvgNode *node,
+                     }
+             } else if (attributes.stroke != QLatin1String("none")) {
+                 QColor color;
+-                if (resolveColor(attributes.stroke, color, handler))
+-                    prop->setStroke(QBrush(color));
++                QSvgCssColor css;
++                if (resolveColor(attributes.stroke, color, handler, &css))
++                    prop->setCssColor(css, attributes.stroke.trimmed().toString());
+             } else {
+                 prop->setStroke(QBrush(Qt::NoBrush));
+             }
+@@ -1485,6 +1465,7 @@ static bool parseStyle(QSvgNode *node,
+     if (!style.isEmpty())
+         handler->cssHandler().parseCSStoXMLAttrs(style.toString(), cssAttributes);
+     svgAttributes.setAttributes(cssAttributes, handler);
++    parseColorScheme(cssAttributes, handler);
+ 
+     parseOffsetPath(node, cssAttributes);
+     if (!handler->options().testFlag(QtSvg::DisableCSSAnimations))
+@@ -2068,9 +2049,10 @@ static void parseBaseGradient(QSvgNode *node,
+     const QStringView colorOpacityStr  = attributes.value(QLatin1String("color-opacity"));
+ 
+     QColor color;
+-    if (constructColor(colorStr, colorOpacityStr, color, handler)) {
++    QSvgCssColor css;
++    if (constructColor(colorStr, colorOpacityStr, color, handler, &css)) {
+         handler->popColor();
+-        handler->pushColor(color);
++        handler->pushColor(css);
+     }
+ 
+     QTransform matrix;
+@@ -2085,6 +2067,7 @@ static void parseBaseGradient(QSvgNode *node,
+             } else {
+                 grad->setStops(inherited->qgradient()->stops());
+                 gradProp->setGradientStopsSet(inherited->gradientStopsSet());
++                gradProp->setCssStops(inherited->cssStops());
+             }
+ 
+             matrix = inherited->qtransform();
+@@ -3030,9 +3013,11 @@ static QSvgStyleProperty *createSolidColorNode(QSvgNode *parent,
+         solidOpacityStr = attributes.value(QLatin1String("opacity"));
+ 
+     QColor color;
+-    if (!constructColor(solidColorStr, solidOpacityStr, color, handler))
++    QSvgCssColor css;
++    if (!constructColor(solidColorStr, solidOpacityStr, color, handler, &css))
+         return 0;
+     QSvgSolidColorStyle *style = new QSvgSolidColorStyle(color);
++    style->setCssColor(css, solidColorStr.trimmed().toString());
+     return style;
+ }
+ 
+@@ -3059,12 +3044,14 @@ static bool parseStopNode(QSvgStyleProperty *parent,
+     QXmlStreamAttributes cssAttributes;
+     handler->cssHandler().styleLookup(&dummy, cssAttributes);
+     attrs.setAttributes(cssAttributes, handler);
++    parseColorScheme(cssAttributes, handler);
+ 
+     QXmlStreamAttributes styleCssAttributes;
+     QStringView style = attributes.value(QLatin1String("style"));
+     if (!style.isEmpty())
+         handler->cssHandler().parseCSStoXMLAttrs(style.toString(), styleCssAttributes);
+     attrs.setAttributes(styleCssAttributes, handler);
++    parseColorScheme(styleCssAttributes, handler);
+ #endif
+ 
+     //TODO: Handle style parsing for gradients stop like the rest of the nodes.
+@@ -3074,16 +3061,18 @@ static bool parseStopNode(QSvgStyleProperty *parent,
+         static_cast<QSvgGradientStyle*>(parent);
+     QStringView colorStr    = attrs.stopColor;
+     QColor color;
++    QSvgCssColor css;
+ 
+     bool ok = true;
+     qreal offset = convertToNumber(attrs.offset, &ok);
+     if (!ok)
+         offset = 0.0;
+ 
+-    if (!constructColor(colorStr, attrs.stopOpacity, color, handler)) {
++    if (!constructColor(colorStr, attrs.stopOpacity, color, handler, &css)) {
+         color = Qt::black;
+         if (!attrs.stopOpacity.isEmpty())
+             setAlpha(attrs.stopOpacity, &color);
++        css = QSvgCssColor::fromQColor(color);
+     }
+ 
+     QGradient *grad = gradientStyle->qgradient();
+@@ -3107,6 +3096,7 @@ static bool parseStopNode(QSvgStyleProperty *parent,
+     }
+ 
+     grad->setColorAt(offset, color);
++    gradientStyle->appendCssStop(css);
+     gradientStyle->setGradientStopsSet(true);
+     return true;
+ }
+@@ -3660,6 +3650,7 @@ void QSvgHandler::init()
+     m_defaultCoords = QSvgUtils::LT_PX;
+     m_defaultPen = QPen(Qt::black, 1, Qt::SolidLine, Qt::FlatCap, Qt::SvgMiterJoin);
+     m_defaultPen.setMiterLimit(4);
++    m_colorSchemePreference = qsvg_preferredColorScheme();
+     parse();
+ }
+ 
+@@ -3835,6 +3826,7 @@ bool QSvgHandler::startElement(const QStringView localName,
+     QSvgNode *node = nullptr;
+ 
+     pushColorCopy();
++    m_colorSchemeStack.push(m_colorSchemeStack.isEmpty() ? QSvgCssColorSchemeValue() : m_colorSchemeStack.top());
+ 
+     /* The xml:space attribute may appear on any element. We do
+      * a lookup by the qualified name here, but this is namespace aware, since
+@@ -4036,6 +4028,8 @@ bool QSvgHandler::endElement(const QStringView localName)
+     m_whitespaceMode.pop();
+ 
+     popColor();
++    if (!m_colorSchemeStack.isEmpty())
++        m_colorSchemeStack.pop();
+ 
+     if (node == Unknown)
+         return false;
+@@ -4176,6 +4170,11 @@ void QSvgHandler::setDefaultCoordinateSystem(QSvgUtils::LengthType type)
+ }
+ 
+ void QSvgHandler::pushColor(const QColor &color)
++{
++    pushColor(QSvgCssColor::fromQColor(color));
++}
++
++void QSvgHandler::pushColor(const QSvgCssColor &color)
+ {
+     m_colorStack.push(color);
+     m_colorTagCount.push(1);
+@@ -4200,11 +4199,41 @@ void QSvgHandler::popColor()
+ }
+ 
+ QColor QSvgHandler::currentColor() const
++{
++    return currentCssColor().toQColor();
++}
++
++void QSvgHandler::setColorScheme(const QSvgCssColorSchemeValue &value)
++{
++    if (m_colorSchemeStack.isEmpty())
++        m_colorSchemeStack.push(value);
++    else
++        m_colorSchemeStack.top() = value;
++}
++
++QSvgCssColorScheme QSvgHandler::elementColorScheme() const
++{
++    // normal: the page colour scheme, the used colour scheme of the page's supported colour schemes; SVG has no way
++    // to set them, so that is a null support, and the default, light (CSS Color Adjustment 1 sections 2.1 to 2.3)
++    return qsvg_usedColorScheme(m_colorSchemeStack.isEmpty() ? QSvgCssColorSchemeValue() : m_colorSchemeStack.top(),
++                                m_colorSchemePreference);
++}
++
++void QSvgHandler::noteSystemColors(QSvgCssColorScheme scheme, const QString &note)
++{
++    bool &said = m_systemColorsNoted[scheme == QSvgCssColorScheme::Dark ? 1 : 0];
++    if (!said) {
++        qCWarning(lcSvgHandler, "%s", qPrintable(note));
++        said = true;
++    }
++}
++
++QSvgCssColor QSvgHandler::currentCssColor() const
+ {
+     if (!m_colorStack.isEmpty())
+         return m_colorStack.top();
+     else
+-        return QColor(0, 0, 0);
++        return QSvgCssColor(QSvgCssColor::Srgb, 0, 0, 0);
+ }
+ 
+ void QSvgHandler::pushUnresolvedStyle(QSvgStyleProperty *prop)
+diff --git a/src/svg/qsvghandler_p.h b/src/svg/qsvghandler_p.h
+index a151302..ec6316a 100644
+--- a/src/svg/qsvghandler_p.h
++++ b/src/svg/qsvghandler_p.h
+@@ -21,6 +21,7 @@
+ #include "QtCore/qstack.h"
+ #include <QtCore/QLoggingCategory>
+ #include "qsvgstyle_p.h"
++#include "qsvgcsscolor_p.h"
+ #if QT_CONFIG(cssparser)
+ #include <QtSvg/private/qsvgcsshandler_p.h>
+ #include <QtSvg/private/qsvgcssproperties_p.h>
+@@ -63,9 +64,18 @@ public:
+     QSvgUtils::LengthType defaultCoordinateSystem() const;
+ 
+     void pushColor(const QColor &color);
++    void pushColor(const QSvgCssColor &color);
+     void pushColorCopy();
+     void popColor();
+     QColor currentColor() const;
++    QSvgCssColor currentCssColor() const;
++
++    // the computed value of color-scheme (CSS Color Adjustment 1 section 2.2), inherited from element to element
++    void setColorScheme(const QSvgCssColorSchemeValue &value);
++    // the element colour scheme that system colours and light-dark() follow (CSS Color Adjustment 1 section 2.4)
++    QSvgCssColorScheme elementColorScheme() const;
++    // says once per document and colour scheme that system colours came from Qt's default palette
++    void noteSystemColors(QSvgCssColorScheme scheme, const QString &note);
+ 
+     void pushUnresolvedStyle(QSvgStyleProperty *prop);
+ 
+@@ -123,7 +133,7 @@ private:
+ 
+     QSvgUtils::LengthType m_defaultCoords;
+ 
+-    QStack<QColor> m_colorStack;
++    QStack<QSvgCssColor> m_colorStack;
+     QStack<int>    m_colorTagCount;
+ 
+     int m_animEnd;
+@@ -146,6 +156,10 @@ private:
+ 
+     const QtSvg::Options m_options;
+     const QtSvg::AnimatorType m_animatorType;
++
++    QStack<QSvgCssColorSchemeValue> m_colorSchemeStack;
++    QSvgCssColorSchemePreference m_colorSchemePreference = QSvgCssColorSchemePreference::None;
++    bool m_systemColorsNoted[2] = {false, false};
+ };
+ 
+ Q_DECLARE_LOGGING_CATEGORY(lcSvgHandler)
+diff --git a/src/svg/qsvgstyle.cpp b/src/svg/qsvgstyle.cpp
+index 489ae6b..9d51152 100644
+--- a/src/svg/qsvgstyle.cpp
++++ b/src/svg/qsvgstyle.cpp
+@@ -4,6 +4,7 @@
+ 
+ 
+ #include "qsvgstyle_p.h"
++#include "qsvghandler_p.h"
+ 
+ #include "qsvgfont_p.h"
+ #include "qsvgnode_p.h"
+@@ -125,6 +126,7 @@ void QSvgFillStyle::setFillOpacity(qreal opacity)
+ void QSvgFillStyle::setFillStyle(QSvgPaintStyleProperty* style)
+ {
+     m_style.reset(style);
++    m_cssFill = QSvgCssPaint();
+     m_fillSet = 1;
+ }
+ 
+@@ -132,9 +134,16 @@ void QSvgFillStyle::setBrush(QBrush brush)
+ {
+     m_fill = std::move(brush);
+     m_style.reset();
++    m_cssFill = QSvgCssPaint();
+     m_fillSet = 1;
+ }
+ 
++void QSvgFillStyle::setCssColor(const QSvgCssColor &color, const QString &text)
++{
++    setBrush(QBrush(color.toQColor()));
++    m_cssFill.setColor(color, text);
++}
++
+ void QSvgFillStyle::apply(QPainter *p, const QSvgNode *n, QSvgExtraStates &states)
+ {
+     m_oldFill = p->brush();
+@@ -146,6 +155,8 @@ void QSvgFillStyle::apply(QPainter *p, const QSvgNode *n, QSvgExtraStates &state
+     if (m_fillSet) {
+         if (m_style)
+             p->setBrush(m_style->brush(p, n, states));
++        else if (m_cssFill.isValid())
++            p->setBrush(m_cssFill.brush(p));
+         else
+             p->setBrush(m_fill);
+     }
+@@ -310,6 +321,8 @@ void QSvgStrokeStyle::apply(QPainter *p, const QSvgNode *n, QSvgExtraStates &sta
+     if (m_strokeSet) {
+         if (m_style)
+             pen.setBrush(m_style->brush(p, n, states));
++        else if (m_cssStroke.isValid())
++            pen.setBrush(m_cssStroke.brush(p));
+         else
+             pen.setBrush(m_stroke.brush());
+     }
+@@ -413,7 +426,7 @@ QSvgGradientStyle::~QSvgGradientStyle()
+     delete m_gradient;
+ }
+ 
+-QBrush QSvgGradientStyle::brush(QPainter *, const QSvgNode *, QSvgExtraStates &)
++QBrush QSvgGradientStyle::brush(QPainter *p, const QSvgNode *, QSvgExtraStates &)
+ {
+     if (!m_link.isEmpty()) {
+         resolveStops();
+@@ -423,6 +436,27 @@ QBrush QSvgGradientStyle::brush(QPainter *, const QSvgNode *, QSvgExtraStates &)
+     if (!m_gradientStopsSet) {
+         m_gradient->setStops(QGradientStops() << QGradientStop(0.0, QColor(0, 0, 0, 0)));
+         m_gradientStopsSet = true;
++        m_cssStops.clear();
++    }
++
++    if (p && !m_cssStops.isEmpty() && m_cssStops.size() == m_gradient->stops().size()) {
++        const QSvgCssColorTarget target = QSvgCssColorTarget::forPainter(p);
++        if (!m_cssCached || target != m_cssTarget) {
++            bool mapped = false;
++            m_cssGradient = *m_gradient;
++            m_cssGradient.setStops(qsvg_gradientStops(m_gradient->stops(), m_cssStops, target, &mapped));
++            if (mapped) {
++                qCWarning(lcSvgHandler, "A gradient stop colour is outside the gamut of the target (%s) or of the "
++                          "range QPainter's gradients hold, [0, 1]; it is drawn gamut mapped, as CSS Color 4 section "
++                          "14.2 says", QSvgCssColor::name(target.space));
++            }
++            m_cssTarget = target;
++            m_cssCached = true;
++        }
++        QBrush b(m_cssGradient);
++        if (!m_transform.isIdentity())
++            b.setTransform(m_transform);
++        return b;
+     }
+ 
+     QBrush b(*m_gradient);
+@@ -610,6 +644,7 @@ void QSvgGradientStyle::resolveStops_helper(QStringList *visited)
+                 st->resolveStops_helper(visited);
+                 m_gradient->setStops(st->qgradient()->stops());
+                 m_gradientStopsSet = st->gradientStopsSet();
++                setCssStops(st->cssStops());
+             }
+         } else {
+             qWarning("Could not resolve property : %s", qPrintable(m_link));
+diff --git a/src/svg/qsvgstyle_p.h b/src/svg/qsvgstyle_p.h
+index 69a64cc..ccbf440 100644
+--- a/src/svg/qsvgstyle_p.h
++++ b/src/svg/qsvgstyle_p.h
+@@ -27,6 +27,7 @@
+ #include "QtGui/qfont.h"
+ #include <qdebug.h>
+ #include "qtsvgglobal_p.h"
++#include "qsvgcsscolor_p.h"
+ 
+ QT_BEGIN_NAMESPACE
+ 
+@@ -246,6 +247,8 @@ public:
+     void setFillOpacity(qreal opacity);
+     void setFillStyle(QSvgPaintStyleProperty* style);
+     void setBrush(QBrush brush);
++    // a CSS colour, resolved for each painter's target when it is applied
++    void setCssColor(const QSvgCssColor &color, const QString &text);
+ 
+     const QBrush & qbrush() const
+     {
+@@ -294,6 +297,8 @@ private:
+     uint m_fillRuleSet : 1;
+     uint m_fillOpacitySet : 1;
+     uint m_fillSet : 1;
++
++    QSvgCssPaint m_cssFill;
+ };
+ 
+ class Q_SVG_EXPORT QSvgViewportFillStyle : public QSvgStyleProperty
+@@ -416,12 +421,21 @@ public:
+     {
+         m_stroke.setBrush(brush);
+         m_style.reset();
++        m_cssStroke = QSvgCssPaint();
+         m_strokeSet = 1;
+     }
+ 
++    // a CSS colour, resolved for each painter's target when it is applied
++    void setCssColor(const QSvgCssColor &color, const QString &text)
++    {
++        setStroke(QBrush(color.toQColor()));
++        m_cssStroke.setColor(color, text);
++    }
++
+     void setStyle(QSvgPaintStyleProperty *style)
+     {
+         m_style.reset(style);
++        m_cssStroke = QSvgCssPaint();
+         m_strokeSet = 1;
+     }
+ 
+@@ -531,6 +545,8 @@ private:
+     uint m_strokeOpacitySet : 1;
+     uint m_strokeWidthSet : 1;
+     uint m_vectorEffectSet : 1;
++
++    QSvgCssPaint m_cssStroke;
+ };
+ 
+ class Q_SVG_EXPORT QSvgSolidColorStyle : public QSvgPaintStyleProperty
+@@ -546,11 +562,16 @@ public:
+         return m_solidColor;
+     }
+ 
+-    QBrush brush(QPainter *, const QSvgNode *, QSvgExtraStates &) override
++    QBrush brush(QPainter *p, const QSvgNode *, QSvgExtraStates &) override
+     {
++        if (m_css.isValid())
++            return m_css.brush(p);
+         return m_solidColor;
+     }
+ 
++    // a CSS colour, resolved for each painter's target
++    void setCssColor(const QSvgCssColor &color, const QString &text) { m_css.setColor(color, text); }
++
+ private:
+     // solid-color       v 	x 	'inherit' | <SVGColor.datatype>
+     // solid-opacity     v 	x 	'inherit' | <OpacityValue.datatype>
+@@ -558,6 +579,8 @@ private:
+ 
+     QBrush m_oldFill;
+     QPen   m_oldStroke;
++
++    QSvgCssPaint m_css;
+ };
+ 
+ class Q_SVG_EXPORT QSvgGradientStyle : public QSvgPaintStyleProperty
+@@ -595,6 +618,11 @@ public:
+     }
+ 
+     QBrush brush(QPainter *, const QSvgNode *, QSvgExtraStates &) override;
++
++    // the CSS colours of the stops, in the order of qgradient()->stops(); resolved for each painter's target
++    void appendCssStop(const QSvgCssColor &color) { m_cssStops.append(color); m_cssCached = false; }
++    void setCssStops(const QList<QSvgCssColor> &stops) { m_cssStops = stops; m_cssCached = false; }
++    const QList<QSvgCssColor> &cssStops() const { return m_cssStops; }
+ private:
+     QGradient      *m_gradient;
+     QTransform m_transform;
+@@ -602,6 +630,11 @@ private:
+     QSvgDocument *m_doc{nullptr};
+     QString           m_link;
+     bool m_gradientStopsSet;
++
++    QList<QSvgCssColor> m_cssStops;
++    QGradient m_cssGradient;
++    QSvgCssColorTarget m_cssTarget;
++    bool m_cssCached = false;
+ };
+ 
+ class Q_SVG_EXPORT QSvgPatternStyle : public QSvgPaintStyleProperty
+diff --git a/tests/auto/CMakeLists.txt b/tests/auto/CMakeLists.txt
+index 7076ad1..d1aa7dd 100644
+--- a/tests/auto/CMakeLists.txt
++++ b/tests/auto/CMakeLists.txt
+@@ -22,3 +22,4 @@ endif()
+ if (QT_FEATURE_cssparser)
+     add_subdirectory(qsvgcss)
+ endif()
++add_subdirectory(qsvgcsscolor)
+diff --git a/tests/auto/qsvgcsscolor/CMakeLists.txt b/tests/auto/qsvgcsscolor/CMakeLists.txt
+new file mode 100644
+index 0000000..3d06220
+--- /dev/null
++++ b/tests/auto/qsvgcsscolor/CMakeLists.txt
+@@ -0,0 +1,21 @@
++# Copyright (C) 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++# SPDX-License-Identifier: BSD-3-Clause
++
++#####################################################################
++## tst_qsvgcsscolor Test:
++#####################################################################
++
++if(NOT QT_BUILD_STANDALONE_TESTS AND NOT QT_BUILDING_QT)
++    cmake_minimum_required(VERSION 3.16)
++    project(tst_qsvgcsscolor LANGUAGES CXX)
++    find_package(Qt6BuildInternals REQUIRED COMPONENTS STANDALONE_TEST)
++endif()
++
++qt_internal_add_test(tst_qsvgcsscolor
++    SOURCES
++        tst_qsvgcsscolor.cpp
++    LIBRARIES
++        Qt::Gui
++        Qt::GuiPrivate
++        Qt::SvgPrivate
++)
+diff --git a/tests/auto/qsvgcsscolor/tst_qsvgcsscolor.cpp b/tests/auto/qsvgcsscolor/tst_qsvgcsscolor.cpp
+new file mode 100644
+index 0000000..cb44eef
+--- /dev/null
++++ b/tests/auto/qsvgcsscolor/tst_qsvgcsscolor.cpp
+@@ -0,0 +1,379 @@
++// Copyright (C) 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
++
++#include <QtTest/QTest>
++
++#include <QtSvg/private/qsvgcsscolor_p.h>
++#include <QtSvg/QSvgRenderer>
++#include <QtGui/QColorSpace>
++#include <QtGui/QGuiApplication>
++#include <QtGui/QImage>
++#include <QtGui/QPainter>
++#include <QtGui/QPalette>
++#include <QtCore/QSet>
++
++#include <cmath>
++
++using namespace Qt::Literals::StringLiterals;
++
++// Expected values come from a separate reference implementation of the specifications' sample code
++// (CSS Color 4 section 19, CSS Color HDR section 11), not from the code under test.
++#include "tst_qsvgcsscolor_rows.inc"
++
++class tst_QSvgCssColor : public QObject
++{
++    Q_OBJECT
++
++private slots:
++    void parse_data();
++    void parse();
++    void invalid_data();
++    void invalid();
++    void render_data();
++    void render();
++    void invalidIsSaid();
++    void sixteenBits();
++    void gradientStops();
++    void colorSchemeValue_data();
++    void colorSchemeValue();
++    void colorScheme_data();
++    void colorScheme();
++    void colorSchemeIsNoPresentationAttribute();
++    void invalidColorSchemeIsSaid();
++    void systemColorsFollowColorScheme();
++    void contrastColor_data();
++    void contrastColor();
++};
++
++void tst_QSvgCssColor::parse_data()
++{
++    QTest::addColumn<QString>("css");
++    QTest::addColumn<QString>("space");
++    QTest::addColumn<double>("c0");
++    QTest::addColumn<double>("c1");
++    QTest::addColumn<double>("c2");
++    QTest::addColumn<double>("alpha");
++    for (const auto &r : parseRows) {
++        QTest::newRow(r.name) << QString::fromUtf8(r.css) << QString::fromLatin1(r.space) << r.c[0] << r.c[1]
++                              << r.c[2] << r.alpha;
++    }
++}
++
++static bool close(double a, double b, double eps)
++{
++    if (std::isnan(b))
++        return std::isnan(a);
++    return std::abs(a - b) <= eps;
++}
++
++void tst_QSvgCssColor::parse()
++{
++    QFETCH(QString, css);
++    QFETCH(QString, space);
++    QFETCH(double, c0);
++    QFETCH(double, c1);
++    QFETCH(double, c2);
++    QFETCH(double, alpha);
++    const QSvgCssColorParseResult r = qsvg_parseCssColor(css, QSvgCssColorContext());
++    QVERIFY2(r.color.isValid(), qPrintable(r.error));
++    QCOMPARE(QString::fromLatin1(QSvgCssColor::name(r.color.space())), space);
++    const double want[3] = {c0, c1, c2};
++    for (int i = 0; i < 3; ++i) {
++        const double got = r.color.isMissing(i) ? qQNaN() : r.color.component(i);
++        QVERIFY2(close(got, want[i], 1e-9), qPrintable(u"component %1: %2, want %3"_s.arg(i).arg(got).arg(want[i])));
++    }
++    QVERIFY(close(r.color.alpha(), alpha, 1e-9));
++}
++
++void tst_QSvgCssColor::invalid_data()
++{
++    QTest::addColumn<QString>("css");
++    for (const auto &r : invalidRows)
++        QTest::newRow(r.name) << QString::fromUtf8(r.css);
++}
++
++void tst_QSvgCssColor::invalid()
++{
++    QFETCH(QString, css);
++    const QSvgCssColorParseResult r = qsvg_parseCssColor(css, QSvgCssColorContext());
++    QVERIFY(!r.color.isValid());
++    QVERIFY(!r.error.isEmpty());
++}
++
++void tst_QSvgCssColor::render_data()
++{
++    QTest::addColumn<QString>("css");
++    QTest::addColumn<int>("format");
++    QTest::addColumn<int>("space");
++    QTest::addColumn<double>("r");
++    QTest::addColumn<double>("g");
++    QTest::addColumn<double>("b");
++    QTest::addColumn<bool>("mapped");
++    for (const auto &row : renderRows) {
++        QTest::newRow(row.name) << QString::fromUtf8(row.css) << int(row.format) << row.space << row.rgb[0]
++                                << row.rgb[1] << row.rgb[2] << row.mapped;
++    }
++}
++
++static QImage renderSvg(const QByteArray &svg, QImage::Format format, int space, int w = 4, int h = 4)
++{
++    QImage image(w, h, format);
++    if (space >= 0)
++        image.setColorSpace(QColorSpace(QColorSpace::NamedColorSpace(space)));
++    image.fill(Qt::transparent);
++    QSvgRenderer renderer(svg);
++    QPainter p(&image);
++    renderer.render(&p);
++    p.end();
++    return image;
++}
++
++static void storedRgb(const QImage &image, int x, int y, double out[3])
++{
++    const uchar *line = image.constScanLine(y);
++    if (image.format() == QImage::Format_RGBA64) {
++        const quint16 *p = reinterpret_cast<const quint16 *>(line) + 4 * x;
++        for (int i = 0; i < 3; ++i)
++            out[i] = p[i] / 65535.0;
++    } else {
++        const float *p = reinterpret_cast<const float *>(line) + 4 * x;
++        for (int i = 0; i < 3; ++i)
++            out[i] = p[i];
++    }
++}
++
++// a solid fill reaches the target at 16 bits per channel or better (CSS Color 4 section 16.5, CSS Color HDR
++// section 10.1 ask for up to 16), and a colour outside a bounded target is gamut mapped and said so
++void tst_QSvgCssColor::render()
++{
++    QFETCH(QString, css);
++    QFETCH(int, format);
++    QFETCH(int, space);
++    QFETCH(double, r);
++    QFETCH(double, g);
++    QFETCH(double, b);
++    QFETCH(bool, mapped);
++    if (mapped)
++        QTest::ignoreMessage(QtWarningMsg, QRegularExpression(u"outside the gamut of the target"_s));
++    const QByteArray svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\">"
++                           "<rect width=\"4\" height=\"4\" fill=\"" + css.toUtf8() + "\"/></svg>";
++    const QImage image = renderSvg(svg, QImage::Format(format), space);
++    double got[3];
++    storedRgb(image, 1, 1, got);
++    const double want[3] = {r, g, b};
++    for (int i = 0; i < 3; ++i) {
++        QVERIFY2(std::abs(got[i] - want[i]) <= 1.0 / 65536,
++                 qPrintable(u"channel %1: %2, want %3"_s.arg(i).arg(got[i], 0, 'g', 9).arg(want[i], 0, 'g', 9)));
++    }
++}
++
++// CSS Color 4 section 4.5: an invalid colour drops its declaration; the renderer says so
++void tst_QSvgCssColor::invalidIsSaid()
++{
++    QTest::ignoreMessage(QtWarningMsg, QRegularExpression(u"Invalid colour \"lab\\(50% 40 abc\\)\""_s));
++    const QImage image = renderSvg("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\">"
++                                   "<rect width=\"4\" height=\"4\" fill=\"lab(50% 40 abc)\"/></svg>",
++                                   QImage::Format_RGBA64, -1);
++    // the fill keeps its initial value, black (SVG 2 section 13.2)
++    QCOMPARE(image.pixelColor(1, 1), QColor(Qt::black));
++}
++
++// 256 solid fills one 16-bit step apart (1/65535) stay 256 distinct values in a 16-bit target
++void tst_QSvgCssColor::sixteenBits()
++{
++    QByteArray svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1024\" height=\"2\">";
++    for (int k = 0; k < 256; ++k) {
++        const double v = (32768 + k) / 65535.0;
++        svg += "<rect x=\"" + QByteArray::number(4 * k) + "\" width=\"4\" height=\"2\" fill=\"color(srgb "
++               + QByteArray::number(v, 'f', 10) + ' ' + QByteArray::number(v, 'f', 10) + ' '
++               + QByteArray::number(v, 'f', 10) + ")\"/>";
++    }
++    svg += "</svg>";
++    const QImage image = renderSvg(svg, QImage::Format_RGBA64, -1, 1024, 2);
++    QSet<quint16> levels;
++    for (int x = 0; x < 1024; ++x)
++        levels.insert(reinterpret_cast<const quint16 *>(image.constScanLine(1))[4 * x + 1]);
++    QCOMPARE(levels.size(), 256);
++}
++
++// gradient stops are resolved for the target: a display-p3 stop in an sRGB target is its sRGB value
++void tst_QSvgCssColor::gradientStops()
++{
++    const QByteArray svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"2\"><defs>"
++                           "<linearGradient id=\"g\"><stop offset=\"0\" stop-color=\"color(display-p3 0.423457 0.554321 0.676543)\"/>"
++                           "<stop offset=\"1\" stop-color=\"color(display-p3 0.423457 0.554321 0.676543)\"/>"
++                           "</linearGradient></defs><rect width=\"8\" height=\"2\" fill=\"url(#g)\"/></svg>";
++    const QImage image = renderSvg(svg, QImage::Format_RGBA64, -1, 8, 2);
++    double got[3];
++    storedRgb(image, 4, 1, got);
++    // color(display-p3 0.423457 0.554321 0.676543) in sRGB, from the reference implementation
++    const double want[3] = {0.38617457, 0.55899669, 0.68873827};
++    // QPainter's gradient tables hold 16 bits per channel
++    for (int i = 0; i < 3; ++i)
++        QVERIFY2(std::abs(got[i] - want[i]) <= 3.0 / 65535, qPrintable(u"%1 want %2"_s.arg(got[i]).arg(want[i])));
++}
++
++// CSS Color Adjustment 1 section 2.2: normal | [ light | dark | <custom-ident> ]+ && only?
++void tst_QSvgCssColor::colorSchemeValue_data()
++{
++    QTest::addColumn<QString>("css");
++    QTest::addColumn<bool>("valid");
++    QTest::addColumn<bool>("normal");
++    QTest::addColumn<QString>("schemes");
++    QTest::addColumn<bool>("only");
++    QTest::newRow("normal") << u"normal"_s << true << true << QString() << false;
++    QTest::newRow("light dark") << u"light dark"_s << true << false << u"light dark"_s << false;
++    QTest::newRow("dark light") << u"Dark  LIGHT"_s << true << false << u"dark light"_s << false;
++    QTest::newRow("only light") << u"only light"_s << true << false << u"light"_s << true;
++    QTest::newRow("light only") << u"light only"_s << true << false << u"light"_s << true;
++    QTest::newRow("custom ident") << u"foo dark"_s << true << false << u"dark"_s << false;
++    QTest::newRow("initial") << u"initial"_s << true << true << QString() << false;
++    QTest::newRow("only alone") << u"only"_s << false << false << QString() << false;
++    QTest::newRow("only between") << u"light only dark"_s << false << false << QString() << false;
++    QTest::newRow("normal and more") << u"normal light"_s << false << false << QString() << false;
++    QTest::newRow("comma") << u"light, dark"_s << false << false << QString() << false;
++    QTest::newRow("css-wide keyword in a list") << u"inherit dark"_s << false << false << QString() << false;
++}
++
++void tst_QSvgCssColor::colorSchemeValue()
++{
++    QFETCH(QString, css);
++    QFETCH(bool, valid);
++    QFETCH(bool, normal);
++    QFETCH(QString, schemes);
++    QFETCH(bool, only);
++    QSvgCssColorSchemeValue value;
++    bool keepsParent = true;
++    QString error;
++    QCOMPARE(qsvg_parseColorScheme(css, &value, &keepsParent, &error), valid);
++    if (!valid) {
++        QVERIFY(!error.isEmpty());
++        return;
++    }
++    QVERIFY(!keepsParent);
++    QCOMPARE(value.normal, normal);
++    QStringList names;
++    for (QSvgCssColorScheme s : value.schemes)
++        names << (s == QSvgCssColorScheme::Dark ? u"dark"_s : u"light"_s);
++    QCOMPARE(names.join(u' '), schemes);
++    QCOMPARE(value.only, only);
++}
++
++void tst_QSvgCssColor::colorScheme_data()
++{
++    QTest::addColumn<QByteArray>("svg");
++    QTest::addColumn<int>("preference");
++    QTest::addColumn<double>("r");
++    QTest::addColumn<double>("g");
++    QTest::addColumn<double>("b");
++    for (const auto &row : schemeRows) {
++        QTest::newRow(row.name) << QByteArray(row.svg) << int(row.preference) << row.rgb[0] << row.rgb[1]
++                                << row.rgb[2];
++    }
++}
++
++// CSS Color 5 section 7: light-dark() takes its first color in a light element color scheme and its second in a
++// dark one; the element color scheme comes from color-scheme and the preference (CSS Color Adjustment 1 sections
++// 2.2 and 2.3), and without color-scheme it is light, whatever the preference
++void tst_QSvgCssColor::colorScheme()
++{
++    QFETCH(QByteArray, svg);
++    QFETCH(int, preference);
++    QFETCH(double, r);
++    QFETCH(double, g);
++    QFETCH(double, b);
++    qsvg_setPreferredColorSchemeOverride(QSvgCssColorSchemePreference(preference));
++    const QImage image = renderSvg(svg, QImage::Format_RGBA64, -1);
++    qsvg_setPreferredColorSchemeOverride(std::nullopt);
++    double got[3];
++    storedRgb(image, 1, 1, got);
++    const double want[3] = {r, g, b};
++    for (int i = 0; i < 3; ++i) {
++        QVERIFY2(std::abs(got[i] - want[i]) <= 1.0 / 65536,
++                 qPrintable(u"channel %1: %2, want %3"_s.arg(i).arg(got[i], 0, 'g', 9).arg(want[i], 0, 'g', 9)));
++    }
++}
++
++// SVG 2 section 6.6: color-scheme has no presentation attribute, so the attribute is not read
++void tst_QSvgCssColor::colorSchemeIsNoPresentationAttribute()
++{
++    const QImage image = renderSvg("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" "
++                                   "color-scheme=\"dark\"><rect width=\"4\" height=\"4\" "
++                                   "fill=\"light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></svg>",
++                                   QImage::Format_RGBA64, -1);
++    double got[3];
++    storedRgb(image, 1, 1, got);
++    QVERIFY(std::abs(got[0] - 0.2) <= 1.0 / 65536);
++}
++
++void tst_QSvgCssColor::invalidColorSchemeIsSaid()
++{
++    QTest::ignoreMessage(QtWarningMsg, QRegularExpression(u"Invalid color-scheme \"light only dark\""_s));
++    renderSvg("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" "
++              "style=\"color-scheme: light only dark\"><rect width=\"4\" height=\"4\"/></svg>",
++              QImage::Format_RGBA64, -1);
++}
++
++// System colors follow the element color scheme (CSS Color Adjustment 1 section 2.4).  The application palette
++// is a light one here; for the dark color scheme the colors come from Qt's default dark palette, which is said.
++void tst_QSvgCssColor::systemColorsFollowColorScheme()
++{
++    const QPalette before = QGuiApplication::palette();
++    QPalette light = before;
++    light.setColor(QPalette::Base, QColor(0xf4, 0xf1, 0xe8));
++    light.setColor(QPalette::Text, QColor(0x2b, 0x5a, 0x87));
++    QGuiApplication::setPalette(light);
++    const QByteArray rect = "<rect width=\"4\" height=\"4\" style=\"fill: CanvasText\"/></svg>";
++    const QImage inLight = renderSvg("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" "
++                                     "style=\"color-scheme: light\">" + rect, QImage::Format_RGBA64, -1);
++    QTest::ignoreMessage(QtWarningMsg, QRegularExpression(u"system colours of the dark colour scheme come from "
++                                                          "Qt's default palette"_s));
++    const QImage inDark = renderSvg("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" "
++                                    "style=\"color-scheme: dark\">" + rect, QImage::Format_RGBA64, -1);
++    QGuiApplication::setPalette(before);
++    QCOMPARE(inLight.pixelColor(1, 1).rgb(), QColor(0x2b, 0x5a, 0x87).rgb());
++    // qtbase's qt_fusionPalette() for a dark platform: text (240, 240, 240)
++    QCOMPARE(inDark.pixelColor(1, 1).rgb(), QColor(240, 240, 240).rgb());
++}
++
++void tst_QSvgCssColor::contrastColor_data()
++{
++    QTest::addColumn<QString>("background");
++    QTest::addColumn<bool>("black");
++    QTest::addColumn<bool>("wcagBlack");
++    QTest::addColumn<double>("ratio");
++    for (const auto &row : contrastRows)
++        QTest::newRow(row.background) << QString::fromUtf8(row.background) << row.black << row.wcagBlack << row.ratio;
++}
++
++// CSS Color 5 section 8: white or black, by a UA-defined algorithm that is not simply WCAG 2.1's contrast ratio,
++// with at least WCAG 2.1's 3:1 (AA for large text); the rows include backgrounds where the two choices differ
++void tst_QSvgCssColor::contrastColor()
++{
++    QFETCH(QString, background);
++    QFETCH(bool, black);
++    QFETCH(bool, wcagBlack);
++    QFETCH(double, ratio);
++    const QSvgCssColorParseResult r = qsvg_parseCssColor(u"contrast-color(" + background + u')',
++                                                         QSvgCssColorContext());
++    QVERIFY2(r.color.isValid(), qPrintable(r.error));
++    const double want = black ? 0.0 : 1.0;
++    for (int i = 0; i < 3; ++i)
++        QCOMPARE(r.color.component(i), want);
++
++    // the WCAG 2.1 contrast ratio of the result with the background, as an sRGB color, is at least 3:1
++    QSvgCssColor bg = qsvg_parseCssColor(background, QSvgCssColorContext()).color;
++    bg.setAlpha(1);
++    const QSvgCssTargetColor t = qsvg_resolveForTarget(bg, QSvgCssColorTarget());
++    auto linear = [](double v) { return v <= 0.04045 ? v / 12.92 : std::pow((v + 0.055) / 1.055, 2.4); };
++    const double lum = 0.2126 * linear(t.rgb[0]) + 0.7152 * linear(t.rgb[1]) + 0.0722 * linear(t.rgb[2]);
++    const double got = black ? (lum + 0.05) / 0.05 : 1.05 / (lum + 0.05);
++    QVERIFY2(got >= 3.0, qPrintable(u"contrast %1:1"_s.arg(got)));
++    QVERIFY2(std::abs(got - ratio) < 1e-3, qPrintable(u"contrast %1:1, want %2:1"_s.arg(got).arg(ratio)));
++    if (black != wcagBlack)
++        qDebug("%s: %s, where WCAG 2.1's larger ratio would give %s", qPrintable(background),
++               black ? "black" : "white", wcagBlack ? "black" : "white");
++}
++
++QTEST_MAIN(tst_QSvgCssColor)
++#include "tst_qsvgcsscolor.moc"
+diff --git a/tests/auto/qsvgcsscolor/tst_qsvgcsscolor_rows.inc b/tests/auto/qsvgcsscolor/tst_qsvgcsscolor_rows.inc
+new file mode 100644
+index 0000000..3dc55b2
+--- /dev/null
++++ b/tests/auto/qsvgcsscolor/tst_qsvgcsscolor_rows.inc
+@@ -0,0 +1,101 @@
++// generated by gen_qt_test_rows.py from the reference engine; do not edit
++static const struct { const char *name; const char *css; const char *space; double c[3]; double alpha; } parseRows[] = {
++    {"hex6 (C4 5.2)", "#336699", "srgb", {0.2, 0.4, 0.6}, 1.0},
++    {"hex8 (C4 5.2)", "#33669980", "srgb", {0.2, 0.4, 0.6}, 0.5019607843137255},
++    {"named (C4 6.1)", "rebeccapurple", "srgb", {0.4, 0.2, 0.6}, 1.0},
++    {"transparent (C4 6.3)", "transparent", "srgb", {0.0, 0.0, 0.0}, 0.0},
++    {"rgb-legacy (C4 5.1)", "rgb(51, 102, 153)", "srgb", {0.2, 0.4, 0.6}, 1.0},
++    {"rgb-modern (C4 5.1)", "rgb(31.4159 159.2653 89.7932 / 80%)", "srgb", {0.12319960784313726, 0.6245698039215686, 0.3521301960784314}, 0.8},
++    {"hsl (C4 7)", "hsl(210.123 50.5% 40.25%)", "hsl", {210.123, 50.5, 40.25}, 1.0},
++    {"hwb (C4 8)", "hwb(150.5 20.25% 10.125%)", "hwb", {150.5, 20.25, 10.125}, 1.0},
++    {"lab (C4 9.3)", "lab(52.2345% 40.1645 59.9971)", "lab", {52.2345, 40.1645, 59.9971}, 1.0},
++    {"lch (C4 9.3)", "lch(52.2345% 72.2 56.2)", "lch", {52.2345, 72.2, 56.2}, 1.0},
++    {"oklab (C4 9.4)", "oklab(59.686% 0.1009 0.1192)", "oklab", {0.59686, 0.1009, 0.1192}, 1.0},
++    {"oklch (C4 9.4)", "oklch(0.6 0.2 30)", "oklch", {0.6, 0.2, 30.0}, 1.0},
++    {"srgb (C4 10.2)", "color(srgb 0.123457 0.654321 0.876543)", "srgb", {0.123457, 0.654321, 0.876543}, 1.0},
++    {"srgb-linear (C4 10.3)", "color(srgb-linear 0.0123457 0.3654321 0.6876543)", "srgb-linear", {0.0123457, 0.3654321, 0.6876543}, 1.0},
++    {"display-p3 (C4 10.4)", "color(display-p3 0.423457 0.554321 0.676543)", "display-p3", {0.423457, 0.554321, 0.676543}, 1.0},
++    {"display-p3-linear (C4 10.5)", "color(display-p3-linear 0.123457 0.354321 0.476543)", "display-p3-linear", {0.123457, 0.354321, 0.476543}, 1.0},
++    {"a98-rgb (C4 10.6)", "color(a98-rgb 0.423457 0.554321 0.676543)", "a98-rgb", {0.423457, 0.554321, 0.676543}, 1.0},
++    {"prophoto-rgb (C4 10.7)", "color(prophoto-rgb 0.423457 0.454321 0.576543)", "prophoto-rgb", {0.423457, 0.454321, 0.576543}, 1.0},
++    {"rec2020 (C4 10.8)", "color(rec2020 0.423457 0.554321 0.676543)", "rec2020", {0.423457, 0.554321, 0.676543}, 1.0},
++    {"xyz (C4 10.9)", "color(xyz 0.2123457 0.2654321 0.3876543)", "xyz-d65", {0.2123457, 0.2654321, 0.3876543}, 1.0},
++    {"xyz-d50 (C4 10.9)", "color(xyz-d50 0.2123457 0.2654321 0.2876543)", "xyz-d50", {0.2123457, 0.2654321, 0.2876543}, 1.0},
++    {"rec2100-pq (HDR 8.1)", "color(rec2100-pq 0.5 0.45 0.4)", "rec2100-pq", {0.5, 0.45, 0.4}, 1.0},
++    {"rec2100-hlg (HDR 8.2)", "color(rec2100-hlg 0.6 0.55 0.5)", "rec2100-hlg", {0.6, 0.55, 0.5}, 1.0},
++    {"rec2100-linear (HDR 8.3)", "color(rec2100-linear 2.5 2.25 2)", "rec2100-linear", {2.5, 2.25, 2.0}, 1.0},
++    {"ictcp (HDR 6.3)", "ictcp(0.45 -0.05 0.03)", "ictcp", {0.45, -0.05, 0.03}, 1.0},
++    {"jzazbz (HDR 6.4)", "jzazbz(0.12 0.02 -0.03)", "jzazbz", {0.12, 0.02, -0.03}, 1.0},
++    {"jzczhz (HDR 6.5)", "jzczhz(0.12 0.04 300)", "jzczhz", {0.12, 0.04, 300.0}, 1.0},
++    {"color-mix (C5 3)", "color-mix(in oklab, #336699 30%, color(display-p3 0.9 0.6 0.1))", "oklab", {0.6729674301837101, 0.032375191156416135, 0.08988942024095753}, 1.0},
++    {"color-mix-hue (C5 3, C4 13.5)", "color-mix(in oklch longer hue, oklch(0.6 0.15 20), oklch(0.7 0.12 200))", "oklch", {0.6499999999999999, 0.135, 110.0}, 1.0},
++    {"color-mix-three (C5 3.3)", "color-mix(in srgb-linear, red, lime 25%, blue 25%)", "srgb-linear", {0.5, 0.24999999999999994, 0.25}, 1.0},
++    {"relative-oklch (C5 4.9)", "oklch(from #336699 calc(l + 0.1) calc(c * 1.5) calc(h + 30))", "oklch", {0.5993144558452084, 0.14799656568627492, 280.4330574201754}, 1.0},
++    {"relative-color (C5 5.1)", "color(from color(display-p3 0.4 0.5 0.6) display-p3 calc(r * 0.9) g calc(b + 0.05))", "display-p3", {0.36000000000000004, 0.5, 0.65}, 1.0},
++    {"alpha (C5 4.10)", "alpha(from color(display-p3 0.4 0.5 0.6) / 0.5)", "display-p3", {0.4, 0.5, 0.6}, 0.5},
++    {"device-cmyk (C5 6)", "device-cmyk(10% 20% 30% 5% / 80%)", "srgb", {0.855, 0.76, 0.665}, 0.8},
++    {"contrast-color (C5 8)", "contrast-color(color(display-p3 0.2 0.3 0.4))", "srgb", {1.0, 1.0, 1.0}, 1.0},
++};
++static const struct { const char *name; const char *css; } invalidRows[] = {
++    {"unknown-space", "color(profoto-rgb 0.4835 0.9167 0.2188)"},
++    {"bad-component", "lab(50% 40 abc)"},
++    {"legacy-none", "rgb(none, 20, 30)"},
++    {"commas-in-color", "color(srgb, 1, 0, 0)"},
++    {"mix-negative", "color-mix(in srgb, red -10%, blue)"},
++    {"hdr-same-headroom", "color-hdr(red 1, blue 1)"},
++};
++static const struct { const char *name; const char *css; QImage::Format format; int space; double rgb[3]; bool mapped; } renderRows[] = {
++    {"color-srgb rgba64", "color(srgb 0.123457 0.654321 0.876543)", QImage::Format_RGBA64, -1, {0.123457, 0.654321, 0.876543}, false},
++    {"color-srgb rgba64-p3", "color(srgb 0.123457 0.654321 0.876543)", QImage::Format_RGBA64, QColorSpace::DisplayP3, {0.3133657657134425, 0.6447782979117164, 0.8562387137206271}, false},
++    {"color-srgb rgba32f", "color(srgb 0.123457 0.654321 0.876543)", QImage::Format_RGBA32FPx4, -1, {0.123457, 0.654321, 0.876543}, false},
++    {"color-srgb rgba32f-2020", "color(srgb 0.123457 0.654321 0.876543)", QImage::Format_RGBA32FPx4, QColorSpace::Bt2020, {0.4755004653272651, 0.6563648264397353, 0.8611406413029781}, false},
++    {"lab rgba64", "lab(52.2345% 40.1645 59.9971)", QImage::Format_RGBA64, -1, {0.7761739623385975, 0.363389841266188, 0.02454739525191026}, false},
++    {"lab rgba64-p3", "lab(52.2345% 40.1645 59.9971)", QImage::Format_RGBA64, QColorSpace::DisplayP3, {0.7242782342605922, 0.386738038983091, 0.14836607991601777}, false},
++    {"lab rgba32f", "lab(52.2345% 40.1645 59.9971)", QImage::Format_RGBA32FPx4, -1, {0.7761739623385975, 0.363389841266188, 0.02454739525191026}, false},
++    {"lab rgba32f-2020", "lab(52.2345% 40.1645 59.9971)", QImage::Format_RGBA32FPx4, QColorSpace::Bt2020, {0.6753714612079438, 0.4393408195647032, 0.1980015700642023}, false},
++    {"oklch rgba64", "oklch(0.7 0.3 145)", QImage::Format_RGBA64, -1, {0.0, 0.7660618230285321, 0.0}, true},
++    {"oklch rgba64-p3", "oklch(0.7 0.3 145)", QImage::Format_RGBA64, QColorSpace::DisplayP3, {0.10098928247604463, 0.7711538322814111, 0.0}, true},
++    {"oklch rgba32f", "oklch(0.7 0.3 145)", QImage::Format_RGBA32FPx4, -1, {-0.3697087430112182, 0.7851986630475667, -0.23485115449652055}, false},
++    {"oklch rgba32f-2020", "oklch(0.7 0.3 145)", QImage::Format_RGBA32FPx4, QColorSpace::Bt2020, {0.4105613648920222, 0.7640293393562103, 0.13914663018918239}, false},
++    {"color-display-p3 rgba64", "color(display-p3 1 0.25 0)", QImage::Format_RGBA64, -1, {1.0, 0.25053909579955563, 0.014515301080269305}, true},
++    {"color-display-p3 rgba64-p3", "color(display-p3 1 0.25 0)", QImage::Format_RGBA64, QColorSpace::DisplayP3, {1.0, 0.25, 0.0}, false},
++    {"color-display-p3 rgba32f", "color(display-p3 1 0.25 0)", QImage::Format_RGBA32FPx4, -1, {1.0885850082055275, 0.10587460215706865, -0.16661143660613567}, false},
++    {"color-display-p3 rgba32f-2020", "color(display-p3 1 0.25 0)", QImage::Format_RGBA32FPx4, QColorSpace::Bt2020, {0.8938691552885285, 0.37280062096016514, -0.03474299459305302}, false},
++    {"color-rec2100-linear rgba64", "color(rec2100-linear 2.5 2.25 2)", QImage::Format_RGBA64, -1, {1.0, 0.9999999999999997, 0.9999999999999997}, true},
++    {"color-rec2100-linear rgba64-p3", "color(rec2100-linear 2.5 2.25 2)", QImage::Format_RGBA64, QColorSpace::DisplayP3, {1.0, 0.9999999999999997, 0.9999999999999997}, true},
++    {"color-rec2100-linear rgba32f", "color(rec2100-linear 2.5 2.25 2)", QImage::Format_RGBA32FPx4, -1, {1.5367212488384683, 1.4161047478837296, 1.3431657628747717}, false},
++    {"color-rec2100-linear rgba32f-2020", "color(rec2100-linear 2.5 2.25 2)", QImage::Format_RGBA32FPx4, QColorSpace::Bt2020, {1.4649012073622552, 1.4019828977761006, 1.3348398541700344}, false},
++    {"color-rec2100-pq rgba64", "color(rec2100-pq 0.5 0.45 0.4)", QImage::Format_RGBA64, -1, {0.7873799550261054, 0.5380864404713642, 0.41434515519587045}, false},
++    {"color-rec2100-pq rgba64-p3", "color(rec2100-pq 0.5 0.45 0.4)", QImage::Format_RGBA64, QColorSpace::DisplayP3, {0.750804728917465, 0.5487896465737321, 0.4346517590831188}, false},
++    {"color-rec2100-pq rgba32f", "color(rec2100-pq 0.5 0.45 0.4)", QImage::Format_RGBA32FPx4, -1, {0.7873799550261054, 0.5380864404713642, 0.41434515519587045}, false},
++    {"color-rec2100-pq rgba32f-2020", "color(rec2100-pq 0.5 0.45 0.4)", QImage::Format_RGBA32FPx4, QColorSpace::Bt2020, {0.719897871811976, 0.5819212173750409, 0.46580537788114085}, false},
++};
++static const struct { const char *name; const char *svg; QSvgCssColorSchemePreference preference; double rgb[3]; } schemeRows[] = {
++    {"no color-scheme, no preference", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\"><rect width=\"4\" height=\"4\" style=\"fill: light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></svg>", QSvgCssColorSchemePreference::None, {0.2, 0.4, 0.6}},
++    {"no color-scheme, dark preference", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\"><rect width=\"4\" height=\"4\" style=\"fill: light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></svg>", QSvgCssColorSchemePreference::Dark, {0.2, 0.4, 0.6}},
++    {"light, dark preference", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" style=\"color-scheme: light\"><rect width=\"4\" height=\"4\" style=\"fill: light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></svg>", QSvgCssColorSchemePreference::Dark, {0.2, 0.4, 0.6}},
++    {"dark, no preference", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" style=\"color-scheme: dark\"><rect width=\"4\" height=\"4\" style=\"fill: light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></svg>", QSvgCssColorSchemePreference::None, {0.8, 0.6, 0.4}},
++    {"dark, light preference", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" style=\"color-scheme: dark\"><rect width=\"4\" height=\"4\" style=\"fill: light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></svg>", QSvgCssColorSchemePreference::Light, {0.8, 0.6, 0.4}},
++    {"light dark, no preference", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" style=\"color-scheme: light dark\"><rect width=\"4\" height=\"4\" style=\"fill: light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></svg>", QSvgCssColorSchemePreference::None, {0.2, 0.4, 0.6}},
++    {"light dark, light preference", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" style=\"color-scheme: light dark\"><rect width=\"4\" height=\"4\" style=\"fill: light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></svg>", QSvgCssColorSchemePreference::Light, {0.2, 0.4, 0.6}},
++    {"light dark, dark preference", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" style=\"color-scheme: light dark\"><rect width=\"4\" height=\"4\" style=\"fill: light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></svg>", QSvgCssColorSchemePreference::Dark, {0.8, 0.6, 0.4}},
++    {"dark light, no preference", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" style=\"color-scheme: dark light\"><rect width=\"4\" height=\"4\" style=\"fill: light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></svg>", QSvgCssColorSchemePreference::None, {0.8, 0.6, 0.4}},
++    {"only light, dark preference", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" style=\"color-scheme: only light\"><rect width=\"4\" height=\"4\" style=\"fill: light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></svg>", QSvgCssColorSchemePreference::Dark, {0.2, 0.4, 0.6}},
++    {"only dark, light preference", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" style=\"color-scheme: dark only\"><rect width=\"4\" height=\"4\" style=\"fill: light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></svg>", QSvgCssColorSchemePreference::Light, {0.8, 0.6, 0.4}},
++    {"custom ident only, dark preference", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" style=\"color-scheme: foo\"><rect width=\"4\" height=\"4\" style=\"fill: light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></svg>", QSvgCssColorSchemePreference::Dark, {0.2, 0.4, 0.6}},
++    {"inherited from a group", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" style=\"color-scheme: dark\"><g><rect width=\"4\" height=\"4\" style=\"fill: light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></g></svg>", QSvgCssColorSchemePreference::None, {0.8, 0.6, 0.4}},
++    {"normal under a dark group", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\"><g style=\"color-scheme: dark\"><rect width=\"4\" height=\"4\" style=\"color-scheme: normal; fill: light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></g></svg>", QSvgCssColorSchemePreference::None, {0.2, 0.4, 0.6}},
++    {"nested in color-mix()", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\" style=\"color-scheme: dark\"><rect width=\"4\" height=\"4\" style=\"fill: color-mix(in srgb, light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4)), white 25%)\"/></svg>", QSvgCssColorSchemePreference::None, {0.8500000000000001, 0.7, 0.55}},
++    {"from a style sheet", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\"><style>rect { color-scheme: dark }</style><rect width=\"4\" height=\"4\" style=\"fill: light-dark(color(srgb 0.2 0.4 0.6), color(srgb 0.8 0.6 0.4))\"/></svg>", QSvgCssColorSchemePreference::None, {0.8, 0.6, 0.4}},
++};
++static const struct { const char *background; bool black; bool wcagBlack; double ratio; } contrastRows[] = {
++    {"#e74c3c", false, true, 3.820000520678017},  // Oklab L 0.6307
++    {"#3498db", false, true, 3.153189482342993},  // Oklab L 0.6531
++    {"#808080", false, true, 3.9494396480491147},  // Oklab L 0.5999
++    {"#ff0000", false, true, 3.997882936374221},  // Oklab L 0.6280
++    {"oklch(0.65 0.15 250)", false, true, 3.2256623841268866},  // Oklab L 0.6500
++    {"#ff6600", true, true, 7.153245356944874},  // Oklab L 0.6958
++    {"oklch(0.75 0.1 100)", true, true, 9.507153137627734},  // Oklab L 0.7500
++    {"color(display-p3 0.2 0.3 0.4)", false, false, 8.84008966530431},  // Oklab L 0.4079
++    {"oklch(0.6 0.25 145)", false, true, 3.5224941455712933},  // Oklab L 0.6088
++};

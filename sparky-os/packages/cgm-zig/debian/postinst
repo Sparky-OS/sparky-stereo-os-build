@@ -1,0 +1,8 @@
+#!/bin/sh
+set -e
+case "$1" in
+	configure|abort-upgrade|abort-remove|abort-deconfigure)
+		update-alternatives --install /usr/bin/zig zig /usr/lib/cgm-zig/bin/zig 20
+		;;
+esac
+#DEBHELPER#

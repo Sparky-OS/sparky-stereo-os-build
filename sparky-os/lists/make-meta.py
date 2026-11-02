@@ -257,8 +257,10 @@ KERNEL_PROVIDES = {
 META = {
     'sparky-stereo-desktop': (
         'Sparky Stereo desktop',
-        'This meta package installs the desktop of Sparky Stereo OS: the look, console and system information of the edition, the Memory page in System Settings, time synchronisation, the Dolphin menus (convert audio, and the stereo integration packs), VLC Stereo as the video player, and the applications beyond the KDE edition.',
-        ['sparky-stereo-audio-convert', 'sparky-stereo-cec', 'sparky-stereo-console', 'sparky-stereo-info', 'sparky-stereo-integrations', 'sparky-stereo-look', 'sparky-stereo-memory-kcm', 'sparky-stereo-power-profiles', 'sparky-stereo-time'] + lst('look') + OURS_PLAYER,
+        'This meta package installs the desktop of Sparky Stereo OS: the look, console and system information of the edition, the Memory page in System Settings, the notifications of what failed on the computer until it is repaired, time synchronisation, the Dolphin menus (convert audio, and the stereo integration packs), VLC Stereo as the video player, and the applications beyond the KDE edition.',
+        # sparky-stereo-problems-plasma: the person is told what failed (ORDER 350; a designed feature's dependency is a
+        # Depends, memory design-check-every-default)
+        ['sparky-stereo-audio-convert', 'sparky-stereo-cec', 'sparky-stereo-console', 'sparky-stereo-info', 'sparky-stereo-integrations', 'sparky-stereo-look', 'sparky-stereo-memory-kcm', 'sparky-stereo-power-profiles', 'sparky-stereo-problems-plasma', 'sparky-stereo-time'] + lst('look') + OURS_PLAYER,
         [p for p in lst('apps') if p not in ROLED] + lst('image') + OURS_PLAYER_OUTPUT),
     'sparky-stereo-integrations': (
         'Sparky Stereo integrations',
