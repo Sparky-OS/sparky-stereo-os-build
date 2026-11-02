@@ -8,6 +8,10 @@
     0.1.5 kept in /var/lib/sparky-stereo-boot/problems move into the engine once at the upgrade, keeping when
     each was found. The messages, word for word, are built into journal catalogs; the boot's problems go when
     the package is removed
+  * A record of 0.1.5 that cannot move (unreadable, or refused by the engine) stays in the old store, which
+    nothing reads any more: it is said once and kept as the boot problem old-store, which names the store and
+    each record with what failed, so the next login tells it; repair tries the move again and the problem is
+    over when every record moved. The package still configures
 -------------------------------------------------------------------------------
   Version 0.1.5 (2026-11-01)
 -------------------------------------------------------------------------------
