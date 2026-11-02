@@ -224,6 +224,48 @@ check "--use without its GPU: exit 2, said in German" "$(LANG=de_DE.UTF-8 env_fo
 2"
 check "--use of an unknown kind: exit 2, said in German" "$(LANG=de_DE.UTF-8 env_for host --use nothing pci-0000:01:00.0 2>&1 >/dev/null | grep -c '^Unbekannte Art nothing$'; LANG=de_DE.UTF-8 rc_of env_for host --use nothing pci-0000:01:00.0)" "1
 2"
+echo "== the command lines' wrong uses, said in the person's language (required-languages: every string we add)"
+# de: WHAT [ARG...]: exit 2, the first line said in German, then the usage in German with the synopsis as it is
+de_use() { local want=$1; shift; (export LANG=de_DE.UTF-8; "$@" >/dev/null 2>"$T/de.err"; echo $?); head -n1 "$T/de.err" | grep -cxF -- "$want"; grep -c '^Aufruf: sparky-stereo-gpu-' "$T/de.err"; }
+check "gpu-env: an unknown argument" "$(de_use 'Unbekanntes Argument --nothing' env_for host --nothing)" "2
+1
+1"
+check "gpu-env: not a power profile" "$(de_use 'Kein Energieprofil: fast (power-saver, balanced oder performance)' env_for host --category games --profile fast)" "2
+1
+1"
+check "gpu-env: not a choice" "$(de_use 'Keine Auswahl: nowhere' env_for host --choice nowhere --profile balanced)" "2
+1
+1"
+check "gpu-env: not a category" "$(de_use 'Keine Kategorie: toys' env_for host --category toys --profile balanced)" "2
+1
+1"
+check "gpu-env: not something to print" "$(de_use 'Nichts, was ausgegeben werden kann: everything' env_for host --category games --profile balanced --print everything)" "2
+1
+1"
+check "gpu-env: no desktop entry" "$(de_use 'Kein Desktop-Eintrag no.such.App' env_for host --app no.such.App --profile balanced)" "2
+1
+1"
+check "gpu-record: an unknown argument" "$(de_use 'Unbekanntes Argument --nothing' "$BIN/sparky-stereo-gpu-record" --root "$T/host" --nothing)" "2
+1
+1"
+check "gpu-record: not true or false" "$(de_use 'Weder true noch false: maybe' "$BIN/sparky-stereo-gpu-record" --root "$T/host" --copy-back maybe)" "2
+1
+1"
+check "gpu-record: nothing to do" "$(de_use 'Nichts zu tun' "$BIN/sparky-stereo-gpu-record" --root "$T/host")" "2
+1
+1"
+check "gpu-record: --copy-back without its value" "$(de_use '--copy-back braucht true, false oder unset' "$BIN/sparky-stereo-gpu-record" --root "$T/host" --copy-back)" "2
+1
+1"
+check "gpu-record: not a GPU" "$(de_use 'Keine GPU: nothing (pci-0000:03:00.0 oder 1002:6660)' "$BIN/sparky-stereo-gpu-record" --root "$T/host" --set-best nothing)" "2
+1
+1"
+check "gpu-record: --keep without --status" "$(de_use '--keep braucht --status N' "$BIN/sparky-stereo-gpu-record" --root "$T/host" --keep systemd-reload)" "2
+1
+1"
+check "gpu-record: not a step" "$(de_use 'Kein Schritt: other (systemd-reload)' "$BIN/sparky-stereo-gpu-record" --root "$T/host" --keep other)" "2
+1
+1"
 mkdir -p "$T/fakebin" && printf '#!/bin/sh\necho "$*" >>%s/systemctl.calls\n' "$T" >"$T/fakebin/systemctl" && chmod 755 "$T/fakebin/systemctl"
 check "--notify starts the session's notifier" "$(PATH=$T/fakebin:$PATH env_for host --notify; echo $?; cat "$T/systemctl.calls")" "0
 --user start sparky-stereo-problems-notifier.service"

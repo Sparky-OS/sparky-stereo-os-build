@@ -98,6 +98,11 @@ $PACKAGE ($VERSION) unstable; urgency=medium
     starts the session's notifier. The messages, word for word from the
     page's .po files, are built into journal catalogs. Decode on another
     GPU and the page's choices are untouched.
+  * Every line sparky-stereo-gpu-env and sparky-stereo-gpu-record say is in
+    the nine languages (required-languages: "It covers every string we
+    add"): their usage, with the synopsis as it is, and each wrong use;
+    the translations test also finds any translatable string of the
+    sources that the template lacks.
   * Automatic is a rule, not the person's choice (ORDER 346g): when it
     cannot place a program now (browsers while the power profile cannot be
     read), sparky-stereo-gpu-env says and keeps it as before and exits 5,

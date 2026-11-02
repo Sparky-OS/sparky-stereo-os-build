@@ -62,9 +62,12 @@ static QString shellQuote(const QString &text)
 static int usage(const QString &problem)
 {
     QTextStream err(stderr);
-    err << problem
-        << "\nUsage: sparky-stereo-gpu-env [--category C | --app ID | --choice X] [--3d] [--profile P] [--root DIR] [--print what] [--shell] [--ask] | --session | "
-           "--list [--json] | --problems | --notify | --use KEY GPU\n";
+    // the synopsis stays as it is: options and their arguments are the same in every language
+    err << problem << '\n'
+        << i18nc("@info:shell %1 is the command's synopsis, which stays as it is", "Usage: %1",
+                 u"sparky-stereo-gpu-env [--category C | --app ID | --choice X] [--3d] [--profile P] [--root DIR] [--print what] [--shell] [--ask] | "
+                 "--session | --list [--json] | --problems | --notify | --use KEY GPU"_s)
+        << '\n';
     return 2;
 }
 
@@ -100,7 +103,7 @@ static QString ask(const Problem &problem)
     }
     const QString kdialog = QStandardPaths::findExecutable(u"kdialog"_s);
     if (kdialog.isEmpty()) {
-        QTextStream(stderr) << "sparky-stereo-gpu-env: kdialog is not installed, so the choice cannot be asked\n";
+        QTextStream(stderr) << "sparky-stereo-gpu-env: " << i18nc("@info:shell kdialog stays as it is", "kdialog is not installed, so the choice cannot be asked") << '\n';
         return {};
     }
     QStringList args = {u"--title"_s,
@@ -188,7 +191,7 @@ int main(int argc, char **argv)
             useKey = value();
             useGpu = value();
         } else {
-            return usage(u"Unknown argument %1"_s.arg(arg));
+            return usage(i18nc("@info:shell %1 is the argument given", "Unknown argument %1", arg));
         }
     }
 
@@ -238,7 +241,8 @@ int main(int argc, char **argv)
     } else if (const auto named = powerProfileFromString(profile)) {
         powerProfile = ProfileReading(*named);
     } else {
-        return usage(u"Not a power profile: %1 (power-saver, balanced or performance)"_s.arg(profile));
+        return usage(i18nc("@info:shell %1 is what was given; power-saver, balanced and performance stay as they are",
+                            "Not a power profile: %1 (power-saver, balanced or performance)", profile));
     }
     const QList<Gpu> gpus = GpuInventory::read(root);
     const GraphicsSettings settings;
@@ -296,7 +300,7 @@ int main(int argc, char **argv)
     if (!appId.isEmpty()) {
         const AppEntry entry = QDir::isAbsolutePath(appId) ? AppEntries::fromFile(appId) : AppEntries::fromEnvironment().find(appId);
         if (entry.id.isEmpty()) {
-            return usage(u"No desktop entry %1"_s.arg(appId));
+            return usage(i18nc("@info:shell %1 is an application ID", "No desktop entry %1", appId));
         }
         resolution = resolver.resolveApp(entry, settings, stereo);
         asked = entry.category;
@@ -305,7 +309,7 @@ int main(int argc, char **argv)
         }
     } else if (!choice.isEmpty()) {
         if (!GraphicsSettings::validChoice(choice)) {
-            return usage(u"Not a choice: %1"_s.arg(choice));
+            return usage(i18nc("@info:shell %1 is what was given to --choice", "Not a choice: %1", choice));
         }
         resolution = resolver.resolveChoice(choice, Category::Other, stereo);
     } else {
@@ -319,7 +323,7 @@ int main(int argc, char **argv)
             }
         }
         if (!known) {
-            return usage(u"Not a category: %1"_s.arg(category));
+            return usage(i18nc("@info:shell %1 is what was given to --category", "Not a category: %1", category));
         }
         resolution = resolver.resolveCategory(selected, settings, stereo);
         asked = selected;
@@ -370,7 +374,7 @@ int main(int argc, char **argv)
     } else if (print == u"reason"_s) {
         out << resolution.reason << '\n';
     } else {
-        return usage(u"Not something to print: %1"_s.arg(print));
+        return usage(i18nc("@info:shell %1 is what was given to --print", "Not something to print: %1", print));
     }
     return 0;
 }
