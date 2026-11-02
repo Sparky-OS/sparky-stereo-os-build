@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-# Created by Daniel Ramos (Capitain Jack) 2026/11/03
+# Created by Daniel Ramos (Capitain Jack) 2026/11/02
 # Copyright 2026 under the GNU GPL3 License
 # Asks KRunner's missing program runner what KRunner asks it: org.kde.krunner1.Match on its bus name, which the session bus
 # activates from /usr/share/dbus-1/services. Prints {query: [[id, text, relevance, subtext], ...]} as JSON.
