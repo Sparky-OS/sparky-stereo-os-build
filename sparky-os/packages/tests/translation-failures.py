@@ -86,6 +86,11 @@ done''')
         r=self.run_build(self.package('sparky-stereo-calamares-branding'))
         self.assertEqual(r.returncode,0,r.stderr);self.assertTrue((self.out/'sealed').exists())
 
+    def test_U10_missing_maintainer_diagnostic(self):
+        p=self.package('sparky-stereo-grub-l10n')
+        (p/'lang/de').unlink()
+        self.failed(self.run_build(p),'Cannot embed required GRUB package messages')
+
     def test_success_grub(self):
         r=self.run_build(self.package('sparky-stereo-grub-l10n'))
         self.assertEqual(r.returncode,0,r.stderr);self.assertTrue((self.out/'sealed').exists())
