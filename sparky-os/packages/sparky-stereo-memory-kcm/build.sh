@@ -5,11 +5,19 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.1.4
+VERSION=0.1.5
 PACKAGE=sparky-stereo-memory-kcm
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.memory-kcm.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
+# Build from the same tracked inputs that enter the source archive.
+TOOLKIT=$(cd "$HERE/../.." && pwd)
+COPY="$HERE/build-tools/copy-recipe.py"
+[ -f "$COPY" ] || COPY="$HERE/../../../tools/copy-recipe.py"
+python3 "$COPY" "$HERE" "$WORK/inputs"
+mkdir -p "$WORK/inputs/build-tools"
+cp "$COPY" "$WORK/inputs/build-tools/"
+HERE=$WORK/inputs
 D=$WORK/$PACKAGE
 cmake -S "$HERE" -B "$WORK/build" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=/usr -DKDE_INSTALL_LIBDIR=lib/x86_64-linux-gnu -DKDE_INSTALL_LIBEXECDIR=lib/x86_64-linux-gnu/libexec -DBUILD_TESTING=OFF >"$WORK/configure.log"
 cmake --build "$WORK/build" -j"${JOBS:-4}" >"$WORK/build.log"
@@ -44,14 +52,18 @@ dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${PACKAGE}_${VERSION}_amd64.deb"
 
 S=$WORK/$PACKAGE-$VERSION
 mkdir -p "$S/debian"
-cp -a "$HERE/." "$S/"
+COPY="$HERE/build-tools/copy-recipe.py"
+[ -f "$COPY" ] || COPY="$HERE/../../../tools/copy-recipe.py"
+python3 "$COPY" "$HERE" "$S"
+mkdir -p "$S/build-tools"
+cp "$COPY" "$S/build-tools/"
 cat >"$S/debian/control" <<EOF
 Source: $PACKAGE
 Section: System
 Priority: optional
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Standards-Version: 4.7.3
-Build-Depends: cmake, dpkg-dev, extra-cmake-modules, g++, libkf6auth-dev, libkf6coreaddons-dev, libkf6i18n-dev, libkf6kcmutils-dev, qt6-base-dev, qt6-declarative-dev
+Build-Depends: git, python3, cmake, dpkg-dev, extra-cmake-modules, g++, libkf6auth-dev, libkf6coreaddons-dev, libkf6i18n-dev, libkf6kcmutils-dev, qt6-base-dev, qt6-declarative-dev
 Rules-Requires-Root: no
 Homepage: https://sparkylinux.org
 
@@ -64,6 +76,12 @@ Description: Memory page for System Settings
 EOF
 cat >"$S/debian/changelog" <<EOF
 $PACKAGE ($VERSION) unstable; urgency=medium
+
+  * Copy only tracked recipe inputs; retain the shared copier for source rebuilds.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 03 Nov 2026 12:00:00 -0300
+
+$PACKAGE (0.1.4) unstable; urgency=medium
 
   * Show memory protection, unreadable status and localized kept problems.
   * Offer the shared engine's authorized repair and retain unsaved choices.

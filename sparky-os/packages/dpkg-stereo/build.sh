@@ -16,10 +16,13 @@ umask 022
 HERE=$(cd "$(dirname "$0")" && pwd)
 LEAN=$(cd "$HERE/../../lean" && pwd)
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
-VERSION=0.1.25
+VERSION=0.1.26
 PKG=dpkg-stereo
 W=$(mktemp -d "${TMPDIR:-/tmp}/dpkg-stereo-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
+COPY="$HERE/../../../tools/copy-recipe.py"
+python3 "$COPY" "$LEAN" "$W/lean-inputs"
+LEAN=$W/lean-inputs
 D=$W/$PKG
 mkdir -p "$D/DEBIAN" "$D/usr/sbin" "$D/usr/lib/dpkg-stereo/lean" "$D/etc/dpkg/dpkg.cfg.d" "$D/etc/apt/apt.conf.d" \
 	"$D/usr/share/doc/$PKG" "$D/usr/share/sparky/$PKG" "$D/usr/lib/systemd/catalog"
@@ -31,8 +34,9 @@ install -m 644 "$HERE/etc/99dpkg-stereo-hr" "$D/etc/apt/apt.conf.d/99dpkg-stereo
 install -m 644 "$HERE/copyright" "$D/usr/share/doc/$PKG/copyright"
 # what failed, why and what to do, in the nine languages (0.1.25); the edition's one engine keeps a problem and its
 # session notifier shows it (ORDER 350), from these messages built word for word into journal catalogs
-install -m 644 "$HERE"/lang/* "$D/usr/share/sparky/$PKG/"
-sparky-stereo-problems catalog $PKG "$HERE/lang" "$D/usr/lib/systemd/catalog" --subject LOCAL16
+python3 "$COPY" "$HERE/lang" "$W/lang-inputs"
+install -m 644 "$W/lang-inputs"/* "$D/usr/share/sparky/$PKG/"
+sparky-stereo-problems catalog $PKG "$D/usr/share/sparky/$PKG" "$D/usr/lib/systemd/catalog" --subject LOCAL16
 printf '/etc/apt/apt.conf.d/99dpkg-stereo-hr\n/etc/dpkg/dpkg.cfg.d/dpkg-stereo\n' >"$D/DEBIAN/conffiles"
 cat >"$D/DEBIAN/postinst" <<'EOS'
 #!/bin/sh
