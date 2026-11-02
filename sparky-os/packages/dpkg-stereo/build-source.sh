@@ -47,24 +47,21 @@ EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
 
-  * The lean toolkit 0.1.23's link gate resolves an ELF file with its
-    package's own Recommends installed where every library it misses is
-    shipped by a package those Recommends name, and notes it (ORDER 311
-    step 4: fltk1.4-games' flpuzzle, whose GL libraries Debian sends to
-    Recommends with dpkg-shlibdeps -dRecommends). Debian Policy 7.2:
-    Recommends lists "packages that would be found together with this one
-    in all but unusual installations". The previous build is treated the
-    same way; Depends-only resolution stays the rule for everything else,
-    and a library no Depends and no such Recommends provides still fails.
-  * dpkg-stereo --status labels the version it prints as the lean
-    toolkit's ("lean 0.1.23"), which it is (ORDER 339); the renderer
-    identity stays as it was.
-  * The source package carries the recipe folder as git tracks it, so an
-    untracked bin/__pycache__ or *.pyc in a working checkout never ships
-    in it; outside a git work tree the folder is copied without them
-    (ORDER 339).
+  * Nothing fails silently (ORDER 346b, rows U19, U20, U57 and U58): a step
+    that cannot do what it is for says what failed, why and what to do, in
+    the nine languages, and keeps it in /var/lib/dpkg-stereo/problems until
+    it next succeeds; --problems, --repair, --dismiss and --notify (a
+    session unit shows each problem once). dpkg's and APT's hooks still
+    return 0, because dpkg and APT stop when a hook fails.
+  * --verify --deep exits 2 and names the reason when a file could not be
+    compared with its package's .deb; --restore, --hr and --fetch-hr name
+    the same reasons.
+  * A Python bytecode cache that cannot be refreshed is kept with its file
+    and interpreter, and the records are saved before the refresh.
+  * The lean toolkit's link gate blocks when readelf or nm cannot read an
+    ELF file's inventory; the renderer identity stays as it was.
 
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 01 Nov 2026 18:00:00 -0300
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 02 Nov 2026 12:00:00 -0300
 EOF
 cat > "$S/debian/rules" <<'EOF'
 #!/usr/bin/make -f

@@ -1,4 +1,40 @@
 -------------------------------------------------------------------------------
+  Version 0.1.25 (2026-11-02)
+-------------------------------------------------------------------------------
+  * Nothing fails silently (Daniel, 2026-11-01: "either it works or not and
+    the user must know"; ORDER 346b, rows U19, U20, U57 and U58 of ORDER
+    343's audit). A step that cannot do what it is for says what failed, why
+    and what to do, in the system's language with the English line beside
+    it, and keeps it in /var/lib/dpkg-stereo/problems/STEP.json until the
+    step next succeeds. New commands: --problems (exit 1 while any is kept),
+    --repair (runs again what each problem names), --dismiss STEP and
+    --notify (the session's side: dpkg-stereo-problems.path shows each
+    problem once as a notification). The messages ship in the nine
+    languages in /usr/share/sparky/dpkg-stereo.
+  * dpkg's hooks still return 0: dpkg ends its run when a hook fails
+    ("cannot execute hook 'exit 3', exit code 768", measured), and APT's
+    update fails the whole update when its hook fails ("E: Problem executing
+    scripts APT::Update::Post-Invoke-Success", exit 100, measured). The
+    post-invoke and pre-invoke errors are now kept and said, where they were
+    only appended to error.log; the HR hook no longer throws its output away.
+  * --verify --deep never says clean when it did not check: a file whose
+    package's .deb could not be had or read is NODEB with the real reason
+    (apt-get download's own error, dpkg-deb's exit status, the archive
+    reader's error), is not counted as checked, and the command exits 2
+    (dpkg(1): an error interacting with the system) when nothing else is
+    wrong. --restore, --hr and --fetch-hr name the same reasons.
+  * Python bytecode: a cache that cannot be refreshed (a compile error, a
+    cache that cannot be written, an interpreter that is not installed or
+    that fails) is kept with each file and interpreter. A cache that could
+    not be written used to end the projection before its records were
+    saved; the records are now saved first.
+  * The lean toolkit 0.1.23's link gate (linkcheck.py) blocks when readelf
+    or nm cannot read an ELF file's inventory, naming the tool's error: a
+    failed probe gave an empty inventory, so a predecessor whose nm failed
+    hid a stereo import its rebuild lost. Guest firmware (resolve()'s note)
+    is not read. The renderer identity stays as it was.
+
+-------------------------------------------------------------------------------
   Version 0.1.24 (2026-11-01)
 -------------------------------------------------------------------------------
   * The lean toolkit 0.1.23's link gate (linkcheck.py, carried here with the
