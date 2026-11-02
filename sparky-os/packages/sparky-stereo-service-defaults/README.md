@@ -9,11 +9,26 @@ This program is distributed in the hope that it will be useful, but WITHOUT ANY 
 
 You should have received a copy of the GNU General Public License along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-Each file is a systemd drop-in for one service of another package. A service is never removed or masked: it is configured so it works, or skipped until what it needs is there. Each drop-in says why, and each cause is reported to the package that owns it.
+Each file is a systemd drop-in for one service of another package. A service is never removed or masked: it is configured so it works, and what it needs is supplied. Each drop-in says why, and each cause is reported to the package that owns it.
+
+Nothing fails silently (Daniel, 2026-11-01: "either it works or not and the user must know"). Each drop-in names `sparky-stereo-service-problem@.service` in `OnFailure=`: a service that still cannot start is said in the system's language and kept in `/var/lib/sparky-stereo-service-defaults/problems/UNIT.json`, with its result, its exit status and its own last lines, until it starts again. The session shows each kept problem once as a notification.
+
+- `sparky-stereo-service-defaults status` lists the kept problems.
+- `sudo sparky-stereo-service-defaults repair` starts each kept unit again.
+- `sudo sparky-stereo-service-defaults dismiss UNIT` stops showing one until it changes or is repaired.
+
+| Service | What failed at every boot | The working default |
+| --- | --- | --- |
+| snmptt | Its default `ipv6_enable = 1` needs Net::IP, which Debian's snmptt does not depend on | The edition's snmptt 1.5-3+sparky1 depends on libnet-ip-perl |
+| pkcs11-daemon | Its default library, SoftHSM's, is not installed with it | The edition's pkcs11-daemon 0.4.1-5+sparky1 depends on libsofthsm2 |
+| xfs_healer@- | On a root that is not XFS, `xfs_healer --supported` ended with status 255 | xfsprogs 7.2.0-1+sparky1 carries upstream's fde1eee: status 1, a skip |
+| ipwatchd | Started before any interface has an IPv4 address | Waits for one (a skip); NetworkManager starts it; a failed probe is said |
+| urfkill | Debian's 0.5.0-8 needs ConsoleKit | Not on the image; where installed, its failure is said with the reason |
+| stas-config@ | /etc/nvme missing without nvme-cli | Created first |
 
 Dependencies:
 -------------
-systemd
+systemd, python3, iproute2
 
 Build:
 -------------

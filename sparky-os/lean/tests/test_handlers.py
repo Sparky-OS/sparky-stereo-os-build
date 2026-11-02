@@ -140,6 +140,26 @@ printf '%s|%s|%s|%s|%s|%s\n' "$n" "$v" "$p" "$b" "${arr[*]}" "$long"
         self.assertFalse(lang_shell.verify(source, '#!/bin/sh\nprintf changed\n', 'dash')[0])
 
 
+@unittest.skipUnless(shutil.which('perl'), 'perl required')
+class Perl(unittest.TestCase):
+    def test_comment_removed_and_checked(self):
+        r, out = P('/usr/bin/tool', '#!/usr/bin/perl\n# a removable explanation\nuse strict;\nprint "ready\\n";\n')
+        self.assertEqual(r.status, 'projected')
+        self.assertNotIn('removable explanation', out)
+        self.assertIn('B::Deparse prints the same program', r.check)
+
+    def test_file_perl_does_not_compile_on_its_own_is_retained(self):
+        """snmptt's snmptthandler-embedded uses NETSNMPTRAPD_HANDLER_OK, a name snmptrapd's embedded Perl defines:
+        perl -c rejects it on its own, so no consumer check exists and the file is retained, never a build failure."""
+        source = ('#!/usr/bin/perl\n# the handler snmptrapd loads\nuse strict;\n'
+                  'sub handler { return NETSNMPTRAPD_HANDLER_OK; }\n')
+        result, output = P('/usr/lib/snmptt/snmptthandler-embedded', source)
+        self.assertEqual(result.status, 'left')
+        self.assertIn('not compiled by perl on its own', result.reason)
+        self.assertFalse(result.reason.startswith('check failed:'))
+        self.assertIsNone(output)
+
+
 class Python(unittest.TestCase):
     SRC = '''#!/usr/bin/python3
 # -*- coding: utf-8 -*-

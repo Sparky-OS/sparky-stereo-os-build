@@ -1,0 +1,203 @@
+#!/usr/bin/python3
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/02
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/11/02
+"""The services whose defaults sparky-stereo-service-defaults sets: what failed, why and what to do.
+
+Nothing fails silently (Daniel, 2026-11-01: "either it works or not and the user must know"). Each drop-in of this
+package names sparky-stereo-service-problem@.service in OnFailure=, so a service that cannot start is said in the
+system's language and kept in /var/lib/sparky-stereo-service-defaults/problems/UNIT.json with its result, its exit
+status and its own last lines (journalctl); the session shows it as a notification. A drop-in's own probe (whether
+ipwatchd is needed yet) keeps a failed probe the same way, apart from a valid "not needed".
+
+  sparky-stereo-service-defaults status            the kept problems; exits 1 while one is kept
+  sparky-stereo-service-defaults repair            root: starts each kept unit again
+  sparky-stereo-service-defaults dismiss UNIT      root: not shown again until it changes or is repaired
+  sparky-stereo-service-defaults notify            the session's side: each kept problem once as a notification
+  sparky-stereo-service-defaults record UNIT       sparky-stereo-service-problem@UNIT: keep UNIT's failure
+  sparky-stereo-service-defaults clear UNIT        the drop-ins' ExecStartPost=: UNIT started
+  sparky-stereo-service-defaults needed ipwatchd   the drop-in's ExecCondition=: 0 needed, 1 not needed yet (no IPv4
+                                                   address), 255 the probe failed (said and kept, the unit fails)
+  sparky-stereo-service-defaults keep UNIT KEY [ARG...]
+                                                   NetworkManager's dispatcher script: say and keep UNIT's problem
+
+Environment, for tests: SPARKY_SERVICE_DEFAULTS_LIB names the folder of problems.py, SPARKY_SERVICE_DEFAULTS_ROOT
+prefixes the configuration files read, SPARKY_SERVICE_DEFAULTS_IP, _SYSTEMCTL and _JOURNALCTL name the programs.
+"""
+import os
+import subprocess
+import sys
+
+sys.path.insert(0, os.environ.get('SPARKY_SERVICE_DEFAULTS_LIB', '/usr/lib/sparky-stereo-service-defaults'))
+import problems  # noqa: E402
+
+ROOT = os.environ.get('SPARKY_SERVICE_DEFAULTS_ROOT', '')
+IP = os.environ.get('SPARKY_SERVICE_DEFAULTS_IP', 'ip')
+SYSTEMCTL = os.environ.get('SPARKY_SERVICE_DEFAULTS_SYSTEMCTL', 'systemctl')
+JOURNALCTL = os.environ.get('SPARKY_SERVICE_DEFAULTS_JOURNALCTL', 'journalctl')
+LINES = 30
+# the messages (lang/en)
+GENERIC, SNMPTT_NET_IP, PKCS11, URFKILL_CK, PROBE, NO_IPV4, USAGE, ROOT_NEEDED = (
+    'LOCAL1', 'LOCAL2', 'LOCAL3', 'LOCAL4', 'LOCAL5', 'LOCAL6', 'LOCAL19', 'LOCAL20')
+
+
+def capture(command):
+    try:
+        done = subprocess.run(command, capture_output=True, text=True, timeout=60)
+        return done.returncode, done.stdout, done.stderr
+    except (OSError, subprocess.SubprocessError) as error:
+        return 127, '', '%s: %s' % (command[0], error)
+
+
+def show(unit):
+    """systemctl show of UNIT: its result, its main process's exit, its invocation."""
+    code, out, err = capture([SYSTEMCTL, 'show', unit, '-p', 'Result', '-p', 'ExecMainStatus', '-p', 'ExecMainCode',
+                              '-p', 'InvocationID', '-p', 'ActiveState'])
+    fields = dict(line.split('=', 1) for line in out.splitlines() if '=' in line)
+    if code != 0:
+        fields['error'] = (err or out).strip()
+    return fields
+
+
+def journal(unit, invocation):
+    """UNIT's own lines of that run (its processes' output), newest last."""
+    command = [JOURNALCTL, '--no-pager', '-o', 'cat', '-n', str(LINES)]
+    command += ['_SYSTEMD_INVOCATION_ID=' + invocation] if invocation else ['-u', unit, '-b']
+    code, out, err = capture(command)
+    return out if code == 0 else 'journalctl: %s' % (err or out).strip()
+
+
+def last_line(output):
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    return lines[-1] if lines else ''
+
+
+def environment_file(path):
+    """The VAR=value lines of a systemd EnvironmentFile (quotes taken off)."""
+    values = {}
+    try:
+        for line in open(ROOT + path, encoding='utf-8', errors='replace'):
+            line = line.strip()
+            if '=' in line and not line.startswith('#'):
+                key, value = line.split('=', 1)
+                values[key.strip()] = value.strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return values
+
+
+def ipv6_enabled(path):
+    """snmptt.ini's ipv6_enable = 1 (snmptt's own default)."""
+    try:
+        for line in open(ROOT + path, encoding='utf-8', errors='replace'):
+            key, _, value = line.partition('=')
+            if key.strip() == 'ipv6_enable' and value.strip() == '1':
+                return True
+    except OSError:
+        pass
+    return False
+
+
+def multiarch():
+    code, out, _ = capture(['dpkg-architecture', '-qDEB_HOST_MULTIARCH'])
+    if code == 0 and out.strip():
+        return out.strip()
+    return {'x86_64': 'x86_64-linux-gnu', 'aarch64': 'aarch64-linux-gnu', 'i686': 'i386-linux-gnu'}.get(
+        os.uname().machine, os.uname().machine + '-linux-gnu')
+
+
+def diagnose(unit, reason, output):
+    """The message for UNIT's failure: what this package knows about the service when its own output or its
+    configuration shows that cause, else its own last line."""
+    base = unit.split('@')[0]
+    base = base[:-len('.service')] if base.endswith('.service') else base
+    if base == 'snmptt' and ipv6_enabled('/etc/snmp/snmptt.ini'):
+        if capture(['perl', '-MNet::IP', '-e', '1'])[0] != 0:
+            return SNMPTT_NET_IP, ['/etc/snmp/snmptt.ini']
+    if base == 'pkcs11-daemon':
+        library = environment_file('/etc/default/pkcs11-daemon').get('PKCS11_LIB', '')
+        return PKCS11, [reason, library or '-', '/etc/default/pkcs11-daemon']
+    if base == 'urfkill':
+        daemon = ROOT + '/usr/lib/' + multiarch() + '/urfkill/urfkilld'
+        consolekit = ROOT + '/usr/share/dbus-1/system-services/org.freedesktop.ConsoleKit.service'
+        try:
+            with open(daemon, 'rb') as f:
+                needs_ck = b'org.freedesktop.ConsoleKit' in f.read()
+        except OSError:
+            needs_ck = False
+        if needs_ck and not os.path.exists(consolekit) and 'consolekit' in output.lower():
+            version = capture(['dpkg-query', '-W', '-f', '${Version}', 'urfkill'])[1].strip()
+            return URFKILL_CK, [version or '-']
+    return GENERIC, [unit, reason]
+
+
+def record(unit):
+    """sparky-stereo-service-problem@UNIT: UNIT entered the failed state."""
+    fields = show(unit)
+    invocation = fields.get('InvocationID', '')
+    old = problems.load(unit)
+    if old is not None and invocation and old.get('invocation') == invocation:
+        return 0   # its own probe kept the precise reason for this run already
+    output = journal(unit, invocation)
+    status = fields.get('ExecMainStatus', '')
+    reason = last_line(output) or 'Result=%s, exit status %s' % (fields.get('Result', '?'), status or '?')
+    key, args = diagnose(unit, reason, output)
+    problems.record(unit, key, args, command=[SYSTEMCTL, 'start', unit], status=status, output=output,
+                    repair=[[SYSTEMCTL, 'restart', unit]])
+    entry = problems.load(unit)
+    if entry is not None:
+        entry['invocation'] = invocation
+        entry['result'] = fields.get('Result', '')
+        problems.write(entry)
+    return 0
+
+
+def needed_ipwatchd():
+    """ipwatchd watches the interfaces that have an IPv4 address when it starts (iface_configuration automatic):
+    needed (0) when one has, not needed yet (1) when none has, and a probe that fails is said and kept (255, the unit
+    fails); NetworkManager's dispatcher starts it when an address comes up."""
+    unit = 'ipwatchd.service'
+    command = [IP, '-4', '-o', 'address', 'show', 'scope', 'global']
+    code, out, err = capture(command)
+    if code != 0:
+        why = (err or out).strip() or 'exit status %s' % code
+        problems.record(unit, PROBE, [unit, ' '.join(command), why], command=command, status=code,
+                        output=err or out, repair=[[SYSTEMCTL, 'restart', unit]])
+        entry = problems.load(unit)
+        if entry is not None:
+            entry['invocation'] = os.environ.get('INVOCATION_ID', '')
+            problems.write(entry)
+        return 255
+    problems.clear(unit)
+    if out.strip():
+        return 0
+    problems.say(NO_IPV4, [unit])
+    return 1
+
+
+def main(argv):
+    if len(argv) == 2 and argv[0] == 'record':
+        return record(argv[1])
+    if len(argv) == 2 and argv[0] == 'clear':
+        return 0 if problems.clear(argv[1]) else 1
+    if argv == ['needed', 'ipwatchd']:
+        return needed_ipwatchd()
+    if len(argv) >= 3 and argv[0] == 'keep':
+        # a caller of this package's own (NetworkManager's dispatcher) found UNIT's problem itself
+        problems.record(argv[1], argv[2], argv[3:], repair=[[SYSTEMCTL, 'restart', argv[1]]])
+        return 1
+    if argv == ['status']:
+        return problems.status()
+    if argv == ['notify']:
+        return problems.notify()
+    if argv == ['repair'] or (len(argv) == 2 and argv[0] == 'dismiss'):
+        if os.geteuid() != 0 and not os.environ.get('SPARKY_SERVICE_DEFAULTS_STATE'):
+            print(problems.text(ROOT_NEEDED), file=sys.stderr)
+            return 1
+        return problems.repair() if argv == ['repair'] else problems.dismiss(argv[1])
+    print(problems.text(USAGE), file=sys.stderr)
+    return 2
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

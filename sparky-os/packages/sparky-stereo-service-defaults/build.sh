@@ -2,8 +2,10 @@
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/15
 # Copyright 2026 under the GNU GPL3 License
 # Builds sparky-stereo-service-defaults: systemd drop-ins that give services of other packages a
-# working default where they failed at every boot (queue item 140). Needs only dpkg-deb.
-# Last update 2026/10/16
+# working default where they failed at every boot (queue item 140), and, since 0.1.3 (ORDER 346c),
+# say and keep each one's failure instead of skipping it (sparky-stereo-service-problem@, problems.py).
+# Needs only dpkg-deb.
+# Last update 2026/11/02
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -14,11 +16,20 @@ VERSION=${VERSION}+lc1
 W=$(mktemp -d "${TMPDIR:-/tmp}/service-defaults.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 D=$W/$PKG
-mkdir -p "$D/DEBIAN" "$D/usr/lib/systemd" "$D/usr/share/doc/$PKG"
+mkdir -p "$D/DEBIAN" "$D/usr/lib/systemd" "$D/usr/share/doc/$PKG" "$D/usr/bin" "$D/usr/lib/$PKG" \
+	"$D/usr/share/sparky/$PKG" "$D/var/lib/$PKG/problems"
 cp -r "$HERE/system" "$HERE/user" "$D/usr/lib/systemd/"
+mkdir -p "$D/usr/lib/systemd/user/graphical-session.target.wants"
+for u in sparky-stereo-service-problems.path sparky-stereo-service-problems.service; do
+	ln -s ../$u "$D/usr/lib/systemd/user/graphical-session.target.wants/$u"
+done
 find "$D/usr/lib/systemd" -type d -exec chmod 755 {} + && find "$D/usr/lib/systemd" -type f -exec chmod 644 {} +
 install -D -m 755 "$HERE/NetworkManager/dispatcher.d/90-sparky-stereo-ipwatchd" \
 	"$D/usr/lib/NetworkManager/dispatcher.d/90-sparky-stereo-ipwatchd"
+install -m 755 "$HERE/bin/sparky-stereo-service-defaults" "$D/usr/bin/"
+install -m 644 "$HERE/lib/problems.py" "$D/usr/lib/$PKG/problems.py"
+install -m 644 "$HERE"/lang/* "$D/usr/share/sparky/$PKG/"
+install -m 644 "$HERE/README.md" "$D/usr/share/doc/$PKG/README.md"
 cat >"$D/usr/share/doc/$PKG/copyright" <<'EOS'
 Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux (https://sparkylinux.org, by Paweł "pavroo" Pijanowski).
 
@@ -49,16 +60,27 @@ On Debian systems, the complete text of the GNU General
 Public License can be found in `/usr/share/common-licenses/GPL-3'.
 EOS
 chmod 644 "$D/usr/share/doc/$PKG/copyright"
+# A failed daemon-reload is said and kept (problems.py), and the package configures, as debhelper's own unit
+# handling does; sparky-stereo-service-defaults repair runs it again.
 cat >"$D/DEBIAN/postinst" <<'EOS'
 #!/bin/sh
 # postinst script
 set -e
 if [ "$1" = "configure" ] && [ -d /run/systemd/system ]; then
-	systemctl daemon-reload || true
+	python3 /usr/lib/sparky-stereo-service-defaults/problems.py run systemd-reload LOCAL21 -- systemctl daemon-reload || :
 fi
 exit 0
 EOS
-chmod 755 "$D/DEBIAN/postinst"
+cat >"$D/DEBIAN/postrm" <<'EOS'
+#!/bin/sh
+# postrm script
+set -e
+if [ "$1" = "purge" ]; then
+	rm -rf /var/lib/sparky-stereo-service-defaults
+fi
+exit 0
+EOS
+chmod 755 "$D/DEBIAN/postinst" "$D/DEBIAN/postrm"
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
 cat >"$D/DEBIAN/control" <<EOS
 Package: $PKG
@@ -66,15 +88,19 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: systemd
+Depends: systemd, python3, iproute2
+Breaks: snmptt (<< 1.5-3+sparky1~), pkcs11-daemon (<< 0.4.1-5+sparky1~), xfsprogs (<< 7.2.0-1+sparky1~)
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org
 Description: Sparky Stereo working defaults for services
   systemd drop-ins that give services of other packages a working default
-  where they failed at every boot on a fresh system: configured so they work,
-  or skipped until what they need is installed. No service is removed or
-  masked; each cause is reported to the package that owns it.
+  where they failed at every boot on a fresh system. What a service needs is
+  supplied (the edition's builds of snmptt, pkcs11-daemon and xfsprogs); a
+  service that still cannot start is said and kept, with the reason and what
+  to do, and shown in the session, never skipped behind the person's back.
+  No service is removed or masked; each cause is reported to the package that
+  owns it.
 EOS
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT"
