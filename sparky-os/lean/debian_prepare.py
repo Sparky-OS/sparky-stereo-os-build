@@ -86,6 +86,7 @@ def prepare(root, version, toolkit, build_dependencies=(), preserve_sources=()):
     for path in (toolkit / "lean").glob("*.py"):
         shutil.copy2(path, destination / "lean" / path.name)
     shutil.copy2(toolkit / "lean/JvmLexer.java", destination / "lean/JvmLexer.java")
+    shutil.copy2(toolkit / "lean/ZigTokens.zig", destination / "lean/ZigTokens.zig")
     shutil.copy2(toolkit / "lean/smoke.tsv", destination / "lean/smoke.tsv")
     shutil.copy2(toolkit / "repo/provenance.sh", destination / "provenance.sh")
     shutil.copy2(toolkit / "packages/dpkg-stereo/LICENSE", destination / "LICENSE")
