@@ -150,6 +150,13 @@ def project(path: str, data: bytes, package: str | None = None, *, pointer=True,
         if why:
             res.reason = why
             return res
+    if key == 'perl' and check:
+        # as for shell: an authored file perl does not compile on its own (a handler that runs inside its host,
+        # such as snmptrapd's embedded Perl, which defines its names) has no consumer check, so it is retained
+        why = mod.authored_refusal(text)
+        if why:
+            res.reason = why
+            return res
     try:
         lean, rendered, spans = render_text(text, key, variant, package, path, pointer)
     except Exception as e:      # a lexer's refusal, or the language's own tokenizer error (TabError, TokenError)
