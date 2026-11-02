@@ -306,8 +306,49 @@ Status
 -------------
 /run/cushion-swap/status (read by the System Settings page and by
 "cushion-swap --status"): STATE (off, deployed, retracting, disabled,
-no-area), MODE (psi, compatibility), FAST, PACING, MAX_ALLOC_MIB_S, CALIBRATED, AREA and the thresholds in
-use.
+no-area, unknown, stopped), PROTECTION (yes, degraded, no), PROBLEMS,
+REASON, MODE (psi, compatibility), MODE_REASON, CALIBRATION (override,
+measured, pending, failed, unavailable), STARTED, PID, FAST, PACING,
+MAX_ALLOC_MIB_S, CALIBRATED, AREA and the thresholds in use.
+"cushion-swap --status" exits 0 while memory is protected, 1 while it is
+protected with a problem kept, 2 when it is not protected, 3 when the
+daemon is not running and 4 when the state cannot be read.
+
+Nothing fails silently
+-------------
+Daniel, 2026-11-01: "nothing we do should silently fail or have a fall
+back - either it works or not and the user must know". Whatever keeps
+the daemon from protecting memory, or from protecting it the way it was
+set, is a problem: a file in /run/cushion-swap/problems with what, why
+and what to do, named in the status, said once in the journal and shown
+once per session as a notification (cushion-swap-problems.path in the
+person's session runs "cushion-swap --notify"). It clears when it is
+gone. "cushion-swap --problems" lists them in the system's language with
+the English line beside it. The messages are in /usr/share/sparky/
+sparky-stereo-cushion-swap, in the nine languages the edition requires.
+- Memory not protected (EFFECT=no): no swap area configured, an area that
+  is not there, /proc/meminfo or /proc/swaps unreadable (his fail-safe
+  stays: no action without the numbers), swapon failing while memory runs
+  low, a daemon that stopped without being asked to.
+- Protected another way than set (degraded): a kernel with PSI whose
+  helper is missing or whose trigger is refused or lost (the poller keeps
+  watching; the trigger is armed again once a minute at most; PSI=off makes
+  compatibility mode the person's choice), swapoff failing (the area stays
+  on).
+- Protected, something else did not work (notice): the allocation-rate
+  helper missing or failing three times, or its result not kept (the
+  conservative pace stays; MAX_ALLOC_MIB_S makes it the person's choice);
+  hibernation unable to switch its area on, a kernel resume device that
+  differs from the one the file names, an area that cannot be switched off
+  after resume (each also fails its command).
+A kernel without PSI, PSI=off and CUSHION_SWAP=off are modes and choices,
+said in MODE_REASON and REASON, never problems.
+The unit keeps the status past the daemon (RuntimeDirectoryPreserve=yes)
+and its ExecStopPost says why the daemon stopped (systemd's
+SERVICE_RESULT, EXIT_CODE and EXIT_STATUS). The package's postinst says
+each failed setup step with its own error, then checks that the restarted
+daemon runs and whether it protects memory ("cushion-swap --wait-ready");
+the package still configures, as debhelper's own scripts do for units.
 
 Tests
 -------------
