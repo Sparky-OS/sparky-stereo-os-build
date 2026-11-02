@@ -14,7 +14,10 @@
 #   dists/mashtabba/main/Contents-<arch>{,.gz,.xz}         (amd64 always; i386, arm64 and all when selected; every file of every
 #                                                           selected binary package, Architecture: all included in each architecture's
 #                                                           file, as Debian's archive does; what apt-file and command-not-found read)
-#   dists/mashtabba/main/dep11/Components-<arch>.yml{,.gz}  (optional, with SPARKY_APPSTREAM=1; AppStream, with icons)
+#   dists/mashtabba/main/dep11/Components-<arch>.yml{,.gz} (AppStream, made on every run unless SPARKY_APPSTREAM=0: amd64
+#   dists/mashtabba/main/dep11/icons-<size>{,@2}.tar.gz      always, i386 and arm64 when selected, Architecture: all in each;
+#                                                           what Discover, KRunner, Dolphin's appstream:// offers and
+#                                                           appstreamcli find programs by, through apt's DEP-11 targets)
 # SparkyLinux's shape with our names: Origin and Label are the distribution ("Sparky Stereo
 # OS"), the Codename is the version of the edition (mashtabba, tied to a Debian: a new
 # Debian means a new codename of the same edition) and the Suite is its role (testing; it
@@ -31,8 +34,6 @@
 # newest are removed from the pool, and when nothing changed the signed Release stays as it was.
 #
 # Usage: SPARKY_REPO_KEY=<fingerprint> SPARKY_REPO_GNUPGHOME=<gnupg home> \
-#        [SPARKY_APPSTREAM=1 SPARKY_APPSTREAM_IMAGE=<Debian testing image with appstream-generator> \
-#         SPARKY_APPSTREAM_USER=1000:1000] \
 #        publish-tree.sh SRC DEST [extra.deb ...]
 #   extra.deb: more packages to include (for example the sparky-stereo-keyring package).
 # With a key that has a passphrase, gpg-agent asks for it once (run from a terminal); it
@@ -42,7 +43,13 @@
 # goes to SPARKY_INSTALLABLE_REPORT (default SPARKY_LC_SCRATCH/installable/report-<time>). SPARKY_INSTALLABLE=report (the
 # default) prints it and goes on; refuse stops before signing when a package fails that SPARKY_INSTALLABLE_KNOWN
 # (package<TAB>version or *<TAB>reason) does not list; off skips the check.
-# Last update 2026/11/02 (DEP-11 catalogues, ORDER 252b; installability report, ORDER 317)
+# AppStream (ORDER 252b): every run makes the DEP-11 catalogues with Debian's appstream-generator, in the image
+# SPARKY_APPSTREAM_IMAGE (default sparky-appstream-generator:<the version appstream/Dockerfile pins>, which
+# appstream/build-image.sh builds), as SPARKY_APPSTREAM_USER (default: the user running this), with no network and the
+# selected archives read-only. A missing image or a failed generator stops before DEST changes and says what to do.
+# SPARKY_APPSTREAM=0 publishes without them, says so, and removes earlier ones from DEST; any other value is refused.
+# SPARKY_APPSTREAM_MAX_BYTES (optional) bounds the generator's workspace.
+# Last update 2026/11/02 (AppStream catalogues, ORDER 252b; installability report, ORDER 317)
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -62,18 +69,6 @@ shift 2
 EXTRA=("$@")
 : "${SPARKY_REPO_KEY:?set SPARKY_REPO_KEY to the signing key fingerprint}"
 : "${SPARKY_REPO_GNUPGHOME:?set SPARKY_REPO_GNUPGHOME to the GnuPG home that holds the key}"
-SPARKY_APPSTREAM=${SPARKY_APPSTREAM-}
-case "$SPARKY_APPSTREAM" in
-    1|'') ;;
-    *) echo "SPARKY_APPSTREAM must be 1 when set" >&2; exit 2 ;;
-esac
-if [ "$SPARKY_APPSTREAM" = 1 ]; then
-    : "${SPARKY_APPSTREAM_IMAGE:?set SPARKY_APPSTREAM_IMAGE to a Debian testing image with appstream-generator}"
-    : "${SPARKY_APPSTREAM_USER:?set SPARKY_APPSTREAM_USER to 1000:1000}"
-    [ "$SPARKY_APPSTREAM_USER" = 1000:1000 ] || { echo "the AppStream generator must run as user 1000:1000" >&2; exit 2; }
-fi
-SCRATCH=${TMPDIR:-${SPARKY_SCRATCH:?}}
-[ -d "$SCRATCH" ] || { echo "scratch directory is missing: $SCRATCH" >&2; exit 2; }
 [ -n "$DEST" ] && [ "$DEST" != / ] || { echo "bad DEST" >&2; exit 2; }
 [ "$SRC" != "$DEST" ] || { echo "SRC and DEST must differ" >&2; exit 2; }
 case "$DEST/" in "$SRC"/*) echo "DEST must not be inside SRC" >&2; exit 2 ;; esac
@@ -86,9 +81,32 @@ export GPG_TTY
 }
 FPR=$(gpg --homedir "$SPARKY_REPO_GNUPGHOME" --with-colons --fingerprint "$SPARKY_REPO_KEY" |
 	awk -F: '/^fpr:/ {print $10; exit}')
+# AppStream catalogues: on unless SPARKY_APPSTREAM=0, and the generator image checked now, before the gates run.
+APPSTREAM=${SPARKY_APPSTREAM-1}
+case $APPSTREAM in
+	1 | 0) ;;
+	*) echo "SPARKY_APPSTREAM must be 1 (the default: make the AppStream catalogues) or 0 (publish without them)" >&2; exit 2 ;;
+esac
+if [ "$APPSTREAM" = 1 ]; then
+	if [ -z "${SPARKY_APPSTREAM_IMAGE:-}" ]; then
+		APPSTREAM_VERSION=$(sed -n 's/.*appstream-generator=\([^[:space:]]*\).*/\1/p' "$HERE/appstream/Dockerfile")
+		[ -n "$APPSTREAM_VERSION" ] || { echo "no appstream-generator version pinned in $HERE/appstream/Dockerfile; set SPARKY_APPSTREAM_IMAGE" >&2; exit 2; }
+		SPARKY_APPSTREAM_IMAGE=sparky-appstream-generator:$APPSTREAM_VERSION
+	fi
+	SPARKY_APPSTREAM_USER=${SPARKY_APPSTREAM_USER:-$(id -u):$(id -g)}
+	[[ $SPARKY_APPSTREAM_USER =~ ^[0-9]+:[0-9]+$ ]] || { echo "SPARKY_APPSTREAM_USER must be uid:gid in numbers: $SPARKY_APPSTREAM_USER" >&2; exit 2; }
+	if ! appstream_error=$(docker image inspect "$SPARKY_APPSTREAM_IMAGE" 2>&1 >/dev/null); then
+		echo "AppStream catalogues: the generator image $SPARKY_APPSTREAM_IMAGE cannot be used: ${appstream_error:-docker image inspect failed}" >&2
+		echo "Nothing was changed. Build the image with $HERE/appstream/build-image.sh, or publish without the catalogues with SPARKY_APPSTREAM=0." >&2
+		exit 1
+	fi
+	echo "AppStream catalogues: on, made by appstream-generator in $SPARKY_APPSTREAM_IMAGE"
+else
+	echo "AppStream catalogues: not made (SPARKY_APPSTREAM=0)"
+fi
 umask 022
 
-W=$(mktemp -d "$SCRATCH/publish-tree.XXXXXX")
+W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/publish-tree.XXXXXX")
 trap 'rm -rf "${W:?}"' EXIT
 
 # 1. Choose the newest version of each package and where it goes in the pool.
@@ -353,20 +371,14 @@ for line in Path(selection).read_text().splitlines():
             raise SystemExit('published archive is immutable: ' + relative)
 PY
 
-# 2. DEP-11, generated before any destination file changes. The temporary archive
-# links only the selected inputs, so a generator failure leaves DEST untouched and
-# does not duplicate the repository in scratch.
-# amd64 always; other supported architectures only when selected packages exist.
-ARCHES=amd64
-for architecture in i386 arm64 all; do
-	if grep -q $'\t'"$architecture"$'$' "$W/selection.tsv"; then ARCHES="$ARCHES $architecture"; fi
-done
-if [ "$SPARKY_APPSTREAM" = 1 ]; then
-DEP11=$W/dep11
-DEP11_ARCHIVE=$DEP11/archive
-rm -rf -- "$DEP11"
-mkdir -p "$DEP11_ARCHIVE"
-python3 - "$W/selection.tsv" "$DEP11_ARCHIVE" "$DEP11/mounts.txt" <<'PY'
+# 1b. AppStream catalogues (DEP-11), made before anything in DEST changes, so a failure leaves it as it was. A
+# temporary archive links the selected inputs (nothing is copied); the generator reads them read-only, with no
+# network, and its cache, hints, HTML and statistics stay in its workspace.
+if [ "$APPSTREAM" = 1 ]; then
+	DEP11=$W/dep11
+	DEP11_ARCHIVE=$DEP11/archive
+	mkdir -p "$DEP11_ARCHIVE" "$DEP11/config" "$DEP11/workspace" "$DEP11/publish"
+	python3 - "$W/selection.tsv" "$DEP11_ARCHIVE" "$DEP11/mounts.txt" <<'PY'
 import os, sys
 
 selection, archive, mounts = sys.argv[1:]
@@ -392,22 +404,25 @@ with open(mounts, 'w') as stream:
     for root in sorted(roots):
         stream.write(root + '\n')
 PY
-APPSTREAM_ARCHES=$(printf '%s\n' $ARCHES | grep -vx all | paste -sd, - |
-	sed 's/[^,]*/"&"/g')
-for architecture in $ARCHES; do
-	dir=$DEP11_ARCHIVE/dists/$CODENAME/$COMPONENT/binary-$architecture
-	mkdir -p "$dir"
-	(cd "$DEP11_ARCHIVE" && dpkg-scanpackages --multiversion --arch "$architecture" pool /dev/null 2>"$W/dep11-scan-$architecture.log") |
-		awk -v RS= -v ORS='\n\n' -v architecture="$architecture" '
-			index($0, "\nArchitecture: all\n") || $0 ~ ("\nArchitecture: all$") ||
-			index($0, "\nArchitecture: " architecture "\n") || $0 ~ ("\nArchitecture: " architecture "$")' |
-		sed '$d' >"$dir/Packages"
-	gzip -9n -c "$dir/Packages" >"$dir/Packages.gz"
-	xz -9e -T1 -c "$dir/Packages" >"$dir/Packages.xz"
-	grep -v -e '^dpkg-scanpackages: info:' -e '^dpkg-scanpackages: warning:' "$W/dep11-scan-$architecture.log" >&2 || true
-done
-mkdir -p "$DEP11/config" "$DEP11/workspace"
-cat >"$DEP11/config/config.json" <<EOF
+	# The same architectures as the indexes below; each architecture's index lists Architecture: all too, as Debian's do.
+	DEP11_ARCHES=amd64
+	for a in i386 arm64 all; do
+		if grep -q $'\t'"$a"$'$' "$W/selection.tsv"; then DEP11_ARCHES="$DEP11_ARCHES $a"; fi
+	done
+	for architecture in $DEP11_ARCHES; do
+		dir=$DEP11_ARCHIVE/dists/$CODENAME/$COMPONENT/binary-$architecture
+		mkdir -p "$dir"
+		(cd "$DEP11_ARCHIVE" && dpkg-scanpackages --multiversion --arch "$architecture" pool /dev/null 2>"$W/dep11-scan-$architecture.log") |
+			awk -v RS= -v ORS='\n\n' -v architecture="$architecture" '
+				index($0, "\nArchitecture: all\n") || $0 ~ ("\nArchitecture: all$") ||
+				index($0, "\nArchitecture: " architecture "\n") || $0 ~ ("\nArchitecture: " architecture "$")' |
+			sed '$d' >"$dir/Packages"
+		gzip -9n -c "$dir/Packages" >"$dir/Packages.gz"
+		xz -9e -T1 -c "$dir/Packages" >"$dir/Packages.xz"
+		grep -v -e '^dpkg-scanpackages: info:' -e '^dpkg-scanpackages: warning:' "$W/dep11-scan-$architecture.log" >&2 || true
+	done
+	APPSTREAM_ARCHES=$(printf '%s\n' $DEP11_ARCHES | grep -vx all | sed 's/.*/"&"/' | paste -sd, -)
+	cat >"$DEP11/config/config.json" <<EOF
 {
   "ArchiveRoot": "/dep11/archive",
   "ProjectName": "$ORIGIN",
@@ -427,29 +442,31 @@ cat >"$DEP11/config/config.json" <<EOF
   }
 }
 EOF
-# The image runs as 1000:1000, with four CPUs, no network, and only the roots
-# needed by the selected inputs mounted read-only.
-APPSTREAM_DOCKER=(docker run --rm --cpus 4 --user "$SPARKY_APPSTREAM_USER" --network none -v "$DEP11:/dep11")
-while IFS= read -r root; do
-	APPSTREAM_DOCKER+=(-v "$root:$root:ro")
-done <"$DEP11/mounts.txt"
-APPSTREAM_DOCKER+=("$SPARKY_APPSTREAM_IMAGE")
-"${APPSTREAM_DOCKER[@]}" \
-	appstream-generator -c /dep11/config/config.json -w /dep11/workspace run "$CODENAME" "$COMPONENT"
-if [ -n "${SPARKY_APPSTREAM_MAX_BYTES:-}" ]; then
-	case "$SPARKY_APPSTREAM_MAX_BYTES" in
-		''|*[!0-9]*) echo "SPARKY_APPSTREAM_MAX_BYTES must be a byte count" >&2; exit 2 ;;
-	esac
-	appstream_workspace_bytes=$(du -sb "$DEP11" | cut -f1)
-	[ "$appstream_workspace_bytes" -le "$SPARKY_APPSTREAM_MAX_BYTES" ] || {
-		echo "AppStream workspace exceeds ${SPARKY_APPSTREAM_MAX_BYTES} bytes: $DEP11 ($appstream_workspace_bytes bytes)" >&2
-		exit 2
+	APPSTREAM_DOCKER=(docker run --rm --pull never --cpus 4 --network none --user "$SPARKY_APPSTREAM_USER" -v "$DEP11:/dep11")
+	while IFS= read -r root; do
+		APPSTREAM_DOCKER+=(-v "$root:$root:ro")
+	done <"$DEP11/mounts.txt"
+	generator=0
+	"${APPSTREAM_DOCKER[@]}" "$SPARKY_APPSTREAM_IMAGE" \
+		appstream-generator -c /dep11/config/config.json -w /dep11/workspace run "$CODENAME" "$COMPONENT" || generator=$?
+	appstream_stop() {
+		echo "AppStream catalogues: $1" >&2
+		echo "Nothing in DEST was changed and no Release was signed. Fix the generator or rebuild its image ($HERE/appstream/build-image.sh), or publish without the catalogues with SPARKY_APPSTREAM=0." >&2
+		exit 1
 	}
-fi
-DEP11_DATA=$DEP11/workspace/export/data/$CODENAME/$COMPONENT
-DEP11_STAGED=$DEP11/publish
-mkdir -p "$DEP11_STAGED"
-python3 - "$DEP11_DATA" "$DEP11_STAGED" <<'PY'
+	[ "$generator" -eq 0 ] || appstream_stop "appstream-generator failed (exit $generator) in $SPARKY_APPSTREAM_IMAGE; its messages are above."
+	if [ -n "${SPARKY_APPSTREAM_MAX_BYTES:-}" ]; then
+		case $SPARKY_APPSTREAM_MAX_BYTES in
+			*[!0-9]*) echo "SPARKY_APPSTREAM_MAX_BYTES must be a byte count" >&2; exit 2 ;;
+		esac
+		appstream_bytes=$(du -sb "$DEP11" | cut -f1)
+		[ "$appstream_bytes" -le "$SPARKY_APPSTREAM_MAX_BYTES" ] ||
+			appstream_stop "the generator's workspace $DEP11 holds $appstream_bytes bytes, over SPARKY_APPSTREAM_MAX_BYTES ($SPARKY_APPSTREAM_MAX_BYTES)."
+	fi
+	DEP11_DATA=$DEP11/workspace/export/data/$CODENAME/$COMPONENT
+	DEP11_STAGED=$DEP11/publish
+	# Icon tarballs in a fixed form (order, owner, mode, time), so a run that changes nothing keeps the signed Release.
+	python3 - "$DEP11_DATA" "$DEP11_STAGED" <<'PY'
 import gzip
 import io
 import os
@@ -480,41 +497,37 @@ for source in sorted(source_dir.glob("icons-*.tar.gz")):
                                 info.gid = 0
                                 info.uname = ""
                                 info.gname = ""
-                                data = archive.extractfile(member).read()
-                                tar.addfile(info, io.BytesIO(data))
+                                tar.addfile(info, io.BytesIO(archive.extractfile(member).read()))
     os.replace(temporary, target)
 PY
-DEP11_FILES=()
-for architecture in $ARCHES; do
-	[ "$architecture" = all ] && continue
-	name=Components-$architecture.yml.gz
-	[ -f "$DEP11_DATA/$name" ] || { echo "the AppStream generator made no $name" >&2; exit 1; }
-	cp "$DEP11_DATA/$name" "$DEP11_STAGED/$name"
-	gzip -dc "$DEP11_DATA/$name" >"$DEP11_STAGED/Components-$architecture.yml"
-	DEP11_FILES+=(Components-$architecture.yml)
-	DEP11_FILES+=("$name")
-done
-for name in icons-48x48 icons-64x64 icons-128x128; do
-	[ -f "$DEP11_STAGED/$name.tar.gz" ] || { echo "the AppStream generator made no $name.tar.gz" >&2; exit 1; }
-	DEP11_FILES+=("$name.tar.gz")
-	if [ -f "$DEP11_STAGED/$name@2.tar.gz" ]; then
-		DEP11_FILES+=("$name@2.tar.gz")
+	DEP11_FILES=()
+	for architecture in $DEP11_ARCHES; do
+		[ "$architecture" = all ] && continue
+		name=Components-$architecture.yml.gz
+		[ -f "$DEP11_DATA/$name" ] || appstream_stop "appstream-generator made no $name."
+		cp "$DEP11_DATA/$name" "$DEP11_STAGED/$name"
+		gzip -dc "$DEP11_DATA/$name" >"$DEP11_STAGED/Components-$architecture.yml"
+		DEP11_FILES+=("Components-$architecture.yml" "$name")
+	done
+	for name in icons-48x48 icons-64x64 icons-128x128; do
+		[ -f "$DEP11_STAGED/$name.tar.gz" ] || appstream_stop "appstream-generator made no $name.tar.gz."
+		DEP11_FILES+=("$name.tar.gz")
+		if [ -f "$DEP11_STAGED/$name@2.tar.gz" ]; then DEP11_FILES+=("$name@2.tar.gz"); fi
+	done
+	printf '%s\n' "${DEP11_FILES[@]}" | sort >"$DEP11/expected.txt"
+	if [ -d "$DEST/dists/$CODENAME/$COMPONENT/dep11" ]; then
+		find "$DEST/dists/$CODENAME/$COMPONENT/dep11" -maxdepth 1 -type f -printf '%f\n' | sort >"$DEP11/present.txt"
+	else
+		: >"$DEP11/present.txt"
 	fi
-done
-printf '%s\n' "${DEP11_FILES[@]}" | sort >"$DEP11/expected.txt"
-if [ -d "$DEST/dists/$CODENAME/$COMPONENT/dep11" ]; then
-	find "$DEST/dists/$CODENAME/$COMPONENT/dep11" -maxdepth 1 -type f -printf '%f\n' | sort >"$DEP11/present.txt"
-else
-	: >"$DEP11/present.txt"
-fi
-DEP11_CHANGED=0
-cmp -s "$DEP11/expected.txt" "$DEP11/present.txt" || DEP11_CHANGED=1
-for name in "${DEP11_FILES[@]}"; do
-	cmp -s "$DEP11_STAGED/$name" "$DEST/dists/$CODENAME/$COMPONENT/dep11/$name" || DEP11_CHANGED=1
-done
+	DEP11_CHANGED=0
+	cmp -s "$DEP11/expected.txt" "$DEP11/present.txt" || DEP11_CHANGED=1
+	for name in "${DEP11_FILES[@]}"; do
+		cmp -s "$DEP11_STAGED/$name" "$DEST/dists/$CODENAME/$COMPONENT/dep11/$name" || DEP11_CHANGED=1
+	done
 fi
 
-# 3. Pool: copy new archives, then drop what is no longer selected.
+# 2. Pool: copy new archives, then drop what is no longer selected.
 mkdir -p "$DEST/pool/$COMPONENT"
 cut -f2 "$W/selection.tsv" | sort >"$W/wanted.txt"
 added=0
@@ -532,7 +545,7 @@ while read -r f; do
 done < <(comm -13 "$W/wanted.txt" "$W/present.txt")
 find "$DEST/pool" -mindepth 1 -type d -empty -delete 2>/dev/null || true
 
-# 4. Indexes, compressed, and the by-hash copies.
+# 3. Indexes, compressed, and the by-hash copies.
 D=$DEST/dists/$CODENAME
 sums=()
 # index_done DIR REL NAME...: compress DIR/NAME (already written), copy all three by hash, list them
@@ -560,66 +573,36 @@ index_done() {
 		fi
 	done
 }
+# amd64 always; other supported architectures only when selected packages exist.
+ARCHES=amd64
+for a in i386 arm64 all; do
+	if grep -q $'\t'"$a"$'$' "$W/selection.tsv"; then ARCHES="$ARCHES $a"; else rm -rf "${D:?}/$COMPONENT/binary-$a"; fi
+done
 for arch in $ARCHES; do
 	dir=$D/$COMPONENT/binary-$arch
-	if [ "$arch" != amd64 ] && ! grep -q $'\t'"$arch"$'$' "$W/selection.tsv"; then
-		rm -rf "${dir:?}"
-		continue
-	fi
-	stage=$W/index-binary-$arch
-	mkdir -p "$stage"
-
+	mkdir -p "$dir"
 	# dpkg-scanpackages --arch amd64 also lists Architecture: all; keep each index to its own
 	# Selection already chose one version per architecture. Keep architecture
 	# siblings until the filter; scanpackages otherwise collapses by name alone.
 	(cd "$DEST" && dpkg-scanpackages --multiversion --arch "$arch" pool /dev/null 2>"$W/scan-$arch.log") |
 		awk -v RS= -v ORS='\n\n' -v a="Architecture: $arch" 'index($0, "\n" a "\n") || $0 ~ ("\n" a "$")' |
-		sed '$d' >"$stage/Packages"
-
+		sed '$d' >"$dir/Packages.new"
 	grep -v -e '^dpkg-scanpackages: info:' -e '^dpkg-scanpackages: warning:' "$W/scan-$arch.log" >&2 || true
-	index_done "$stage" "$COMPONENT/binary-$arch" Packages
-	mkdir -p "$dir"
-	for name in Packages Packages.gz Packages.xz; do
-		cp "$stage/$name" "$dir/$name.tmp"
-		chmod 644 "$dir/$name.tmp"
-		mv -f "$dir/$name.tmp" "$dir/$name"
-	done
-	cp -a "$stage/by-hash" "$dir/"
-
+	mv -f "$dir/Packages.new" "$dir/Packages"
+	index_done "$dir" "$COMPONENT/binary-$arch" Packages
 done
 dir=$D/$COMPONENT/source
 if grep -q $'\tsource$' "$W/selection.tsv"; then
 	mkdir -p "$dir"
-	stage=$W/index-source
-	mkdir -p "$stage"
-	(cd "$DEST" && dpkg-scansources pool /dev/null 2>"$W/scan-src.log") >"$stage/Sources"
-
+	(cd "$DEST" && dpkg-scansources pool /dev/null 2>"$W/scan-src.log") >"$dir/Sources.new"
 	grep -v -e '^dpkg-scansources: info:' -e '^dpkg-scansources: warning:' "$W/scan-src.log" >&2 || true
-	index_done "$stage" "$COMPONENT/source" Sources
-	mkdir -p "$dir"
-	for name in Sources Sources.gz Sources.xz; do
-		cp "$stage/$name" "$dir/$name.tmp"
-		chmod 644 "$dir/$name.tmp"
-		mv -f "$dir/$name.tmp" "$dir/$name"
-	done
-	cp -a "$stage/by-hash" "$dir/"
-
+	mv -f "$dir/Sources.new" "$dir/Sources"
+	index_done "$dir" "$COMPONENT/source" Sources
 else
-	source_existing=true
-	for name in Sources Sources.gz Sources.xz; do
-		[ -f "$dir/$name" ] || source_existing=false
-	done
-	if [ "$source_existing" = true ]; then
-		for name in Sources Sources.gz Sources.xz; do
-			source_hash=$(sha256sum "$dir/$name" | cut -d' ' -f1)
-			sums+=("$source_hash $(stat -c %s "$dir/$name") $COMPONENT/source/$name")
-		done
-	else
-		rm -rf "${dir:?}"
-	fi
+	rm -rf "${dir:?}"
 fi
 
-# 4b. Contents files (apt-file and command-not-found read them): which package ships which path. Debian's
+# 3b. Contents files (apt-file and command-not-found read them): which package ships which path. Debian's
 # format: "path<tab>section/package[,section/package]", sorted by path; Architecture: all packages are listed in
 # every architecture's file and in Contents-all, as the archive does. Deterministic, so a run that changes
 # nothing leaves the signed Release as it was.
@@ -630,7 +613,7 @@ for arch in $ARCHES; do
 done
 index_done "$D/$COMPONENT" "$COMPONENT" $(for arch in $ARCHES; do echo "Contents-$arch"; done)
 
-# 4c. Installability (ORDER 317). A package can stop installing after we published it, with no change on our side:
+# 3c. Installability (ORDER 317). A package can stop installing after we published it, with no change on our side:
 # Debian testing moves a library to a new soname and our build still depends on the old one (kdenlive 26.08.1-1+stereo3d5
 # and libkddockwidgets-qt6-3, 31 October 2026). The indexes above are this run's own, so they are read unsigned.
 case ${SPARKY_INSTALLABLE:-report} in
@@ -650,43 +633,48 @@ case ${SPARKY_INSTALLABLE:-report} in
 	*) echo "SPARKY_INSTALLABLE must be report, refuse or off" >&2; exit 2 ;;
 esac
 
-# 4d. Publish only the generated DEP-11 catalogues and icon tarballs; the generator's
-# cache, hints, CID index, HTML, statistics and compressed xz catalogues stay outside.
-if [ "$SPARKY_APPSTREAM" = 1 ]; then
+# 3d. AppStream catalogues and their icons, listed with their by-hash copies like the indexes; the generator's cache,
+# hints, CID index, HTML, statistics and xz catalogues stay in its workspace. Unchanged files are kept as they are.
 DEP11_DIR=$D/$COMPONENT/dep11
-if [ "$DEP11_CHANGED" = 1 ]; then
-	mkdir -p "$DEP11_DIR"
-	while IFS= read -r name; do
-		rm -f "${DEP11_DIR:?}/${name:?}"
-	done < <(comm -23 "$DEP11/present.txt" "$DEP11/expected.txt")
+if [ "$APPSTREAM" = 1 ]; then
+	if [ "$DEP11_CHANGED" = 1 ]; then
+		mkdir -p "$DEP11_DIR"
+		while IFS= read -r name; do
+			rm -f "${DEP11_DIR:?}/${name:?}"
+		done < <(comm -23 "$DEP11/present.txt" "$DEP11/expected.txt")
+		for name in "${DEP11_FILES[@]}"; do
+			cp "$DEP11_STAGED/$name" "$DEP11_DIR/$name.tmp"
+			chmod 644 "$DEP11_DIR/$name.tmp"
+			mv -f "$DEP11_DIR/$name.tmp" "$DEP11_DIR/$name"
+		done
+		appstream_state="published in dists/$CODENAME/$COMPONENT/dep11 (${#DEP11_FILES[@]} files, $SPARKY_APPSTREAM_IMAGE)"
+	else
+		appstream_state="unchanged (${#DEP11_FILES[@]} files, $SPARKY_APPSTREAM_IMAGE)"
+	fi
+	mkdir -p "$DEP11_DIR/by-hash/SHA256"
+	live=
 	for name in "${DEP11_FILES[@]}"; do
-		cp "$DEP11_STAGED/$name" "$DEP11_DIR/$name.tmp"
-		chmod 644 "$DEP11_DIR/$name.tmp"
-		mv -f "$DEP11_DIR/$name.tmp" "$DEP11_DIR/$name"
-	done
-fi
-dep11_done() {
-	local dir=$1 rel=$2 name f h live=
-	shift 2
-	mkdir -p "$dir/by-hash/SHA256"
-	for name in "$@"; do
-		h=$(sha256sum "$dir/$name" | cut -d' ' -f1)
-		cp -f "$dir/$name" "$dir/by-hash/SHA256/$h"
-		chmod 644 "$dir/by-hash/SHA256/$h"
-		sums+=("$h $(stat -c %s "$dir/$name") $rel/$name")
+		h=$(sha256sum "$DEP11_DIR/$name" | cut -d' ' -f1)
+		cp -f "$DEP11_DIR/$name" "$DEP11_DIR/by-hash/SHA256/$h"
+		chmod 644 "$DEP11_DIR/by-hash/SHA256/$h"
+		sums+=("$h $(stat -c %s "$DEP11_DIR/$name") $COMPONENT/dep11/$name")
 		live="$live $h"
 	done
-	for f in "$dir"/by-hash/SHA256/*; do
+	# by-hash files of older catalogues stay a few days for clients mid-update, then go
+	for f in "$DEP11_DIR"/by-hash/SHA256/*; do
 		case " $live " in *" $(basename "$f") "*) continue ;; esac
 		if [ -n "$(find "$f" -mtime +"$KEEP_BYHASH_DAYS" -print 2>/dev/null)" ]; then
 			rm -f "${f:?}"
 		fi
 	done
-}
-dep11_done "$DEP11_DIR" "$COMPONENT/dep11" "${DEP11_FILES[@]}"
+elif [ -d "$DEP11_DIR" ]; then
+	rm -rf "${DEP11_DIR:?}"
+	appstream_state="not made (SPARKY_APPSTREAM=0); the earlier catalogues were removed from DEST"
+else
+	appstream_state="not made (SPARKY_APPSTREAM=0)"
 fi
 
-# 5. Release, signed. When nothing but the date would change, the signed files stay.
+# 4. Release, signed. When nothing but the date would change, the signed files stay.
 {
 	echo "Origin: $ORIGIN"
 	echo "Label: $ORIGIN"
@@ -715,7 +703,7 @@ else
 	signed=signed
 fi
 
-# 6. The public key (armoured, as SparkyLinux serves theirs) and the page.
+# 5. The public key (armoured, as SparkyLinux serves theirs) and the page.
 rm -f "$DEST/sparky-stereo-archive-keyring.gpg" "$DEST/sparky-stereo-archive-keyring.asc"
 "${GPG[@]}" --armor --export "$FPR" >"$DEST/sparky-stereo-repo.asc"
 FPR_SPACED=$(echo "$FPR" | sed 's/.\{4\}/& /g; s/ $//')
@@ -724,6 +712,7 @@ chmod 644 "$DEST/sparky-stereo-repo.asc" "$DEST/index.html"
 
 echo "tree $DEST: $(grep -vc $'\tsource$' "$W/selection.tsv") packages, $(grep -c $'\tsource$' "$W/selection.tsv") source files, $added copied, $removed removed from the pool, Release $signed"
 echo "key fingerprint: $FPR_SPACED"
+echo "AppStream catalogues: $appstream_state"
 if [ -s "$W/leftout.txt.nosource" ]; then
 	echo "source packages missing ($(wc -l <"$W/leftout.txt.nosource")): $(grep -q $'\tsource$' "$W/selection.tsv" && echo "partial sources index" || echo "no sources index, use Types: deb")"
 	sed 's/^/  /' "$W/leftout.txt.nosource"

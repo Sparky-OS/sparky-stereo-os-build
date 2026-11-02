@@ -5,7 +5,9 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import tarfile
 import tempfile
+import time
 from unittest.mock import patch
 
 import pytest
@@ -282,11 +284,73 @@ def qualify_payload(raw, output, stage):
     release.build_tree(stage, output)
 
 
+FAKE_DOCKER = r'''#!/usr/bin/env python3
+"""Stands in for Docker and Debian's appstream-generator: records each call, writes a workspace like the generator's."""
+import gzip, io, json, os, sys, tarfile
+from pathlib import Path
+
+args = sys.argv[1:]
+with open(os.environ['FAKE_DOCKER_LOG'], 'a') as log:
+    log.write(json.dumps(args) + '\n')
+if args[:2] == ['image', 'inspect']:
+    if args[2] in os.environ.get('FAKE_DOCKER_MISSING', '').split():
+        sys.exit('Error: No such image: ' + args[2])
+    sys.exit(0)
+assert args[0] == 'run', args
+mounts = [args[i + 1] for i, a in enumerate(args) if a == '-v']
+dep11 = Path(next(m.split(':')[0] for m in mounts if m.split(':')[1] == '/dep11'))
+if os.environ.get('FAKE_ASGEN_FAIL'):
+    print('fake appstream-generator: failing as the test asked', file=sys.stderr)
+    sys.exit(3)
+config = json.loads((dep11 / 'config/config.json').read_text())
+work = dep11 / 'workspace'
+data = work / 'export/data/mashtabba/main'
+data.mkdir(parents=True)
+for junk in ('db/main/data.mdb', 'export/hints/mashtabba/main/Hints-amd64.json.gz', 'export/html/index.html',
+             'export/data/mashtabba/main/CID-Index-amd64.json.gz', 'export/data/mashtabba/main/Components-amd64.yml.xz'):
+    (work / junk).parent.mkdir(parents=True, exist_ok=True)
+    (work / junk).write_bytes(b'generator working file\n')
+if os.environ.get('FAKE_ASGEN_EMPTY'):
+    sys.exit(0)
+for arch in config['Suites']['mashtabba']['architectures']:
+    packages = (dep11 / f'archive/dists/mashtabba/main/binary-{arch}/Packages').read_text()
+    names = sorted(line.split(': ', 1)[1] for line in packages.splitlines() if line.startswith('Package: '))
+    text = 'File: DEP-11\nVersion: "1.0"\nOrigin: Sparky Stereo OS\n' + ''.join(
+        f'---\nType: desktop-application\nID: org.example.{name}\nPackage: {name}\n' for name in names)
+    with (data / f'Components-{arch}.yml.gz').open('wb') as raw:
+        with gzip.GzipFile(filename='', mode='wb', fileobj=raw, mtime=0) as stream:
+            stream.write(text.encode())
+for size in ('48x48', '64x64', '128x128'):
+    with tarfile.open(data / f'icons-{size}.tar.gz', 'w:gz') as tar:
+        for name in ('zz-late.png', 'org.example.edition-consumer.png'):
+            info = tarfile.TarInfo(name)
+            payload = f'{size} {name}\n'.encode()
+            info.size, info.mtime = len(payload), 1700000000 + len(name)
+            tar.addfile(info, io.BytesIO(payload))
+'''
+
+
+def fake_docker(directory):
+    directory.mkdir(parents=True, exist_ok=True)
+    executable = directory / 'docker'
+    executable.write_text(FAKE_DOCKER)
+    executable.chmod(0o755)
+    return executable
+
+
+def docker_calls(env):
+    log = Path(env['FAKE_DOCKER_LOG'])
+    return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+
 @pytest.fixture
 def publisher_env(sources, tmp_path):
-    # Synthetic key only. A short isolated home avoids Unix socket path limits.
+    # Synthetic key only. A short isolated home avoids Unix socket path limits. Docker and the AppStream generator are
+    # a recording stand-in, so the catalogues are made by default, as on the edition's machines.
+    fake = fake_docker(tmp_path / 'fake-docker')
     with tempfile.TemporaryDirectory(prefix='lc-pub-', dir='/tmp') as home:
-        env = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C', 'HOME': str(tmp_path),
+        env = {'PATH': f'{fake.parent}:/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C', 'HOME': str(tmp_path),
+               'FAKE_DOCKER_LOG': str(tmp_path / 'fake-docker/calls.jsonl'),
                'GNUPGHOME': home, 'SPARKY_REPO_GNUPGHOME': home, 'TMPDIR': str(tmp_path),
                'SPARKY_LC_ARCHIVE_CONFIG': str(sources), 'SPARKY_LC_SCRATCH': str(tmp_path / 'link-scratch')}
         try:
@@ -308,105 +372,6 @@ def publish_fixture(source, destination, env):
 
 def tree_hashes(root):
     return {str(path.relative_to(root)): archive.digest(path) for path in root.rglob('*') if path.is_file()}
-
-
-def deterministic_gzip(path, data):
-    with path.open('wb') as output:
-        with gzip.GzipFile(filename='', mode='wb', fileobj=output, mtime=0) as compressed:
-            compressed.write(data)
-
-
-def deterministic_tar(path, members):
-    with path.open('wb') as output:
-        with gzip.GzipFile(filename='', mode='wb', fileobj=output, mtime=0) as compressed:
-            with tarfile.open(fileobj=compressed, mode='w', format=tarfile.PAX_FORMAT) as archive:
-                for name, data in members:
-                    info = tarfile.TarInfo(name)
-                    info.size = len(data)
-                    info.mtime = 0
-                    info.mode = 0o644
-                    info.type = tarfile.REGTYPE
-                    info.uid = 0
-                    info.gid = 0
-                    info.uname = ''
-                    info.gname = ''
-                    archive.addfile(info, io.BytesIO(data))
-
-
-def fake_docker(path):
-    path.mkdir(parents=True)
-    executable = path / 'docker'
-    executable.write_text('''#!/usr/bin/env python3
-import gzip
-import io
-import sys
-import tarfile
-from pathlib import Path
-
-def deterministic_tar(path, members):
-    with path.open('wb') as output:
-        with gzip.GzipFile(filename='', mode='wb', fileobj=output, mtime=0) as compressed:
-            with tarfile.open(fileobj=compressed, mode='w', format=tarfile.PAX_FORMAT) as archive:
-                for name, data in members:
-                    info = tarfile.TarInfo(name)
-                    info.size = len(data)
-                    info.mtime = 0
-                    info.mode = 0o644
-                    info.type = tarfile.REGTYPE
-                    info.uid = 0
-                    info.gid = 0
-                    info.uname = ''
-                    info.gname = ''
-                    archive.addfile(info, io.BytesIO(data))
-
-dep11 = None
-arguments = sys.argv[1:]
-while arguments:
-    if arguments[0] == '-v' and len(arguments) > 1:
-        source, target = arguments[1].split(':', 1)
-        if target == '/dep11':
-            dep11 = Path(source)
-        arguments = arguments[2:]
-        continue
-    arguments.pop(0)
-if dep11 is None:
-    raise SystemExit('fake Docker did not receive /dep11')
-marker = dep11 / 'workspace/stale-marker'
-if marker.exists():
-    raise SystemExit('stale DEP-11 workspace survived')
-marker.parent.mkdir(parents=True, exist_ok=True)
-marker.write_text('stale')
-(dep11 / 'workspace/export/data/mashtabba/main').mkdir(parents=True, exist_ok=True)
-data = dep11 / 'workspace/export/data/mashtabba/main'
-(data / 'Components-amd64.yml').write_bytes(b'File: DEP-11\\n---\\n- Type: generic\\n  ID: edition-consumer.desktop\\n')
-with (data / 'Components-amd64.yml.gz').open('wb') as output:
-    import gzip
-    with gzip.GzipFile(filename='', mode='wb', fileobj=output, mtime=0) as compressed:
-        compressed.write((data / 'Components-amd64.yml').read_bytes())
-for size in (48, 64, 128):
-    deterministic_tar(
-        data / f'icons-{size}x{size}.tar.gz',
-        [(f'{size}x{size}/app.png', b'fake icon\\n')],
-    )
-''')
-    executable.chmod(0o755)
-    return executable
-
-
-def normalized_release(path, env):
-    if path.name == 'InRelease':
-        result = subprocess.run(['gpg', '--batch', '--decrypt', str(path)], env=env,
-                                capture_output=True, text=True, check=True)
-        text = result.stdout
-    else:
-        text = path.read_text()
-    return '\n'.join(line for line in text.splitlines() if not line.startswith('Date: '))
-
-
-def appstream_release_entries(root):
-    release = root / 'dists/mashtabba/Release'
-    return {line.rsplit(' ', 1)[1] for line in release.read_text().splitlines()
-            if '/dep11/' in line}
 
 
 def test_actual_publisher_wires_destination_previous_snapshot(publisher_env, tmp_path):
@@ -450,78 +415,179 @@ def test_actual_publisher_wires_destination_previous_snapshot(publisher_env, tmp
     assert tree_hashes(destination) == before
 
 
-def test_appstream_is_off_by_default_and_matches_main(publisher_env, tmp_path):
+MAIN_BEFORE_APPSTREAM = '6851488d4376a0a86626950391b2edfd818da39d'
+DEP11_FILES = {'Components-amd64.yml', 'Components-amd64.yml.gz',
+               'icons-48x48.tar.gz', 'icons-64x64.tar.gz', 'icons-128x128.tar.gz'}
+
+
+def qualified_source(tmp_path):
     programs, libraries, common = edition(tmp_path / 'build')
     source = tmp_path / 'source'
     for i, raw in enumerate((programs[0], libraries[0], common)):
         qualify_payload(raw, source, tmp_path / f'stage-{i}')
-    current = tmp_path / 'current-out'
-    baseline = tmp_path / 'main-out'
-    current_result = publish_fixture(source, current, publisher_env)
-    assert current_result.returncode == 0, current_result.stdout + current_result.stderr
-    main_publisher = tmp_path / 'publish-tree-main.sh'
-    main_publisher.write_bytes(subprocess.check_output(
-        ['git', 'show', 'b9bf64f:sparky-os/repo/publish-tree.sh'], cwd=Path(__file__).resolve().parents[3]))
-    main_make_contents = tmp_path / 'make-contents.py'
-    main_make_contents.write_bytes(subprocess.check_output(
-        ['git', 'show', 'b9bf64f:sparky-os/repo/make-contents.py'], cwd=Path(__file__).resolve().parents[3]))
-    (tmp_path / 'index.html').write_bytes(subprocess.check_output(
-        ['git', 'show', 'b9bf64f:sparky-os/repo/index.html'], cwd=Path(__file__).resolve().parents[3]))
-    main_env = dict(publisher_env)
-    main_env['SPARKY_LC_SCRATCH'] = str(tmp_path / 'main-link-scratch')
-    main_env['PYTHONPATH'] = str(Path(__file__).resolve().parents[3] / 'sparky-os')
-    main_result = subprocess.run(['bash', str(main_publisher), str(source), str(baseline)], env=main_env,
-                                capture_output=True, text=True, timeout=180,
-                                cwd=Path(__file__).resolve().parents[3])
-    assert main_result.returncode == 0, main_result.stdout + main_result.stderr
-    assert not (current / 'dists/mashtabba/main/dep11').exists()
-    current_hashes = tree_hashes(current)
-    baseline_hashes = tree_hashes(baseline)
-    for name in ('dists/mashtabba/InRelease', 'dists/mashtabba/Release.gpg',
-                  'dists/mashtabba/Release'):
-        current_hashes.pop(name)
-        baseline_hashes.pop(name)
-    assert current_hashes == baseline_hashes
-    for name in ('dists/mashtabba/Release', 'dists/mashtabba/InRelease'):
-        assert normalized_release(current / name, publisher_env) == normalized_release(
-            baseline / name, {**publisher_env, 'SPARKY_LC_SCRATCH': main_env['SPARKY_LC_SCRATCH']})
+    return source
 
 
-def test_appstream_flag_publishes_catalogues_and_icons_idempotently(publisher_env, tmp_path):
-    programs, libraries, common = edition(tmp_path / 'build')
-    source = tmp_path / 'source'
-    for i, raw in enumerate((programs[0], libraries[0], common)):
-        qualify_payload(raw, source, tmp_path / f'stage-{i}')
-    docker = fake_docker(tmp_path / 'fake-bin')
+def release_entries(root, part):
+    release = (root / 'dists/mashtabba/Release').read_text()
+    return {line.split()[2]: tuple(line.split()[:2]) for line in release.splitlines()
+            if line.startswith(' ') and f'/{part}/' in line}
+
+
+def signed_text(path, env):
+    return subprocess.run(['gpg', '--batch', '--decrypt', str(path)], env=env,
+                          capture_output=True, text=True, check=True).stdout
+
+
+def without_date(text):
+    return '\n'.join(line for line in text.splitlines() if not line.startswith('Date: '))
+
+
+def main_publisher(directory):
+    """The publisher of main before the AppStream catalogues, with the files it runs beside it."""
+    repo = directory / 'repo'
+    repo.mkdir(parents=True)
+    tree = Path(__file__).resolve().parents[3]
+    for name in ('publish-tree.sh', 'make-contents.py', 'check-installable.py', 'index.html'):
+        (repo / name).write_bytes(subprocess.check_output(
+            ['git', 'show', f'{MAIN_BEFORE_APPSTREAM}:sparky-os/repo/{name}'], cwd=tree))
+    return repo / 'publish-tree.sh'
+
+
+def test_appstream_catalogues_are_made_by_default(publisher_env, tmp_path):
+    source = qualified_source(tmp_path)
     destination = tmp_path / 'published-fixture'
-    env = dict(publisher_env)
-    env.update({
-        'PATH': f'{docker.parent}:{publisher_env["PATH"]}',
-        'SPARKY_APPSTREAM': '1',
-        'SPARKY_APPSTREAM_IMAGE': 'fake-appstream-generator',
-        'SPARKY_APPSTREAM_USER': '1000:1000',
-    })
-    first = publish_fixture(source, destination, env)
+    first = publish_fixture(source, destination, publisher_env)
     assert first.returncode == 0, first.stdout + first.stderr
+    pinned = (Path(__file__).resolve().parents[2] / 'repo/appstream/Dockerfile').read_text()
+    version = pinned.split('appstream-generator=', 1)[1].split()[0]
+    run = next(call for call in docker_calls(publisher_env) if call[0] == 'run')
+    image = run[run.index('appstream-generator') - 1]
+    assert image == f'sparky-appstream-generator:{version}'
+    assert ['image', 'inspect', image] in docker_calls(publisher_env)
+    for option, value in (('--pull', 'never'), ('--network', 'none'), ('--user', f'{os.getuid()}:{os.getgid()}'),
+                          ('--cpus', '4')):
+        assert run[run.index(option) + 1] == value
+    mounts = [run[i + 1] for i, a in enumerate(run) if a == '-v']
+    assert [m for m in mounts if not m.endswith(':/dep11')] and all(
+        m.endswith(':ro') for m in mounts if not m.endswith(':/dep11'))
+    assert f'AppStream catalogues: on, made by appstream-generator in {image}' in first.stdout
+    assert 'AppStream catalogues: published in dists/mashtabba/main/dep11 (5 files' in first.stdout
     dep11 = destination / 'dists/mashtabba/main/dep11'
-    expected = {
-        'Components-amd64.yml', 'Components-amd64.yml.gz',
-        'icons-48x48.tar.gz', 'icons-64x64.tar.gz', 'icons-128x128.tar.gz',
-    }
-    assert {path.name for path in dep11.iterdir() if path.is_file()} == expected
-    entries = appstream_release_entries(destination)
-    assert {f'main/dep11/{name}' for name in expected} <= entries
-    release_hashes = {}
-    for line in (destination / 'dists/mashtabba/Release').read_text().splitlines():
-        if '/dep11/' in line:
-            digest, size, name = line.split()
-            release_hashes[name] = digest
-    for name in expected:
-        assert (dep11 / 'by-hash/SHA256' / release_hashes[f'main/dep11/{name}']).is_file()
+    assert {path.name for path in dep11.iterdir() if path.is_file()} == DEP11_FILES
+    entries = release_entries(destination, 'dep11')
+    assert set(entries) == {f'main/dep11/{name}' for name in DEP11_FILES}
+    for name in DEP11_FILES:
+        digest, size = entries[f'main/dep11/{name}']
+        assert (archive.digest(dep11 / name), str((dep11 / name).stat().st_size)) == (digest, size)
+        assert archive.digest(dep11 / 'by-hash/SHA256' / digest) == digest
+    assert 'main/dep11/Components-amd64.yml' in signed_text(destination / 'dists/mashtabba/InRelease', publisher_env)
+    with tarfile.open(dep11 / 'icons-64x64.tar.gz') as icons:
+        assert [m.name for m in icons.getmembers()] == ['org.example.edition-consumer.png', 'zz-late.png']
+        assert {(m.mtime, m.uid, m.mode) for m in icons.getmembers()} == {(0, 0, 0o644)}
+    assert b'ID: org.example.edition-consumer\n' in (dep11 / 'Components-amd64.yml').read_bytes()
+    published = {str(p.relative_to(destination)) for p in (destination / 'dists').rglob('*')}
+    assert not [p for p in published if any(word in p for word in ('Hints', 'CID-Index', '.yml.xz', '.html', '.mdb'))]
     before = tree_hashes(destination)
-    second = publish_fixture(source, destination, env)
-    assert second.returncode == 0, second.stdout + second.stderr
+    again = publish_fixture(source, destination, publisher_env)
+    assert again.returncode == 0, again.stdout + again.stderr
+    assert 'Release kept' in again.stdout and 'AppStream catalogues: unchanged (5 files' in again.stdout
     assert tree_hashes(destination) == before
+    explicit = publish_fixture(source, destination, {**publisher_env, 'SPARKY_APPSTREAM': '1'})
+    assert explicit.returncode == 0, explicit.stdout + explicit.stderr
+    assert 'Release kept' in explicit.stdout and tree_hashes(destination) == before
+    # SPARKY_APPSTREAM=0 publishes without them: the catalogues and their Release lines go, and it is said.
+    off = publish_fixture(source, destination, {**publisher_env, 'SPARKY_APPSTREAM': '0'})
+    assert off.returncode == 0, off.stdout + off.stderr
+    assert 'AppStream catalogues: not made (SPARKY_APPSTREAM=0)' in off.stdout
+    assert 'the earlier catalogues were removed from DEST' in off.stdout and 'Release signed' in off.stdout
+    assert not dep11.exists() and not release_entries(destination, 'dep11')
+    assert 'dep11' not in signed_text(destination / 'dists/mashtabba/InRelease', publisher_env)
+
+
+def test_appstream_off_publishes_what_main_published(publisher_env, tmp_path):
+    source = qualified_source(tmp_path)
+    off = {**publisher_env, 'SPARKY_APPSTREAM': '0'}
+    reference = {**publisher_env, 'SPARKY_LC_SCRATCH': str(tmp_path / 'main-link-scratch'),
+                 'PYTHONPATH': str(Path(__file__).resolve().parents[2])}
+    publisher = main_publisher(tmp_path / 'main')
+    current, baseline = tmp_path / 'current-out', tmp_path / 'main-out'
+
+    def both():
+        ours = publish_fixture(source, current, off)
+        assert ours.returncode == 0, ours.stdout + ours.stderr
+        assert 'AppStream catalogues: not made (SPARKY_APPSTREAM=0)' in ours.stdout
+        theirs = subprocess.run(['bash', str(publisher), str(source), str(baseline)], env=reference,
+                                capture_output=True, text=True, timeout=180)
+        assert theirs.returncode == 0, theirs.stdout + theirs.stderr
+        signed = ('dists/mashtabba/InRelease', 'dists/mashtabba/Release.gpg', 'dists/mashtabba/Release')
+        ours_tree, main_tree = tree_hashes(current), tree_hashes(baseline)
+        for name in signed:
+            ours_tree.pop(name)
+            main_tree.pop(name)
+        assert ours_tree == main_tree
+        assert without_date((current / signed[2]).read_text()) == without_date((baseline / signed[2]).read_text())
+        assert without_date(signed_text(current / signed[0], off)) == without_date(signed_text(baseline / signed[0], off))
+
+    both()
+    assert not (current / 'dists/mashtabba/main/dep11').exists()
+    # An index copy older than the by-hash window goes in both, and a recent one stays in both.
+    old, recent = time.time() - 10 * 86400, time.time() - 3600
+    for root in (current, baseline):
+        store = root / 'dists/mashtabba/main/binary-amd64/by-hash/SHA256'
+        for name, stamp in (('0' * 64, old), ('1' * 64, recent)):
+            (store / name).write_text('an index of an earlier run\n')
+            os.utime(store / name, (stamp, stamp))
+    both()
+    for root in (current, baseline):
+        store = root / 'dists/mashtabba/main/binary-amd64/by-hash/SHA256'
+        assert not (store / ('0' * 64)).exists() and (store / ('1' * 64)).exists()
+
+
+@pytest.mark.parametrize('fault', ['generator-fails', 'no-catalogue'])
+def test_appstream_generator_failure_stops_before_signing(publisher_env, tmp_path, fault):
+    source = qualified_source(tmp_path)
+    destination = tmp_path / 'published-fixture'
+    first = publish_fixture(source, destination, {**publisher_env, 'SPARKY_APPSTREAM': '0'})
+    assert first.returncode == 0, first.stdout + first.stderr
+    broken = {**publisher_env, ('FAKE_ASGEN_FAIL' if fault == 'generator-fails' else 'FAKE_ASGEN_EMPTY'): '1'}
+    fresh = tmp_path / 'fresh-destination'
+    for target in (destination, fresh):
+        before = tree_hashes(target) if target.exists() else {}
+        failure = publish_fixture(source, target, broken)
+        assert failure.returncode == 1, failure.stdout + failure.stderr
+        reason = ('appstream-generator failed (exit 3)' if fault == 'generator-fails'
+                  else 'appstream-generator made no Components-amd64.yml.gz.')
+        assert 'AppStream catalogues: ' + reason in failure.stderr
+        assert 'Nothing in DEST was changed and no Release was signed.' in failure.stderr
+        assert 'SPARKY_APPSTREAM=0' in failure.stderr and 'appstream/build-image.sh' in failure.stderr
+        assert tree_hashes(target) == before
+    assert not (fresh / 'dists').exists() and not (fresh / 'pool').exists()
+
+
+def test_appstream_missing_image_stops_before_the_gates(publisher_env, tmp_path):
+    source = qualified_source(tmp_path)
+    destination = tmp_path / 'published-fixture'
+    env = {**publisher_env, 'SPARKY_APPSTREAM_IMAGE': 'sparky-appstream-generator:absent',
+           'FAKE_DOCKER_MISSING': 'sparky-appstream-generator:absent'}
+    failure = publish_fixture(source, destination, env)
+    assert failure.returncode == 1, failure.stdout + failure.stderr
+    assert ('AppStream catalogues: the generator image sparky-appstream-generator:absent cannot be used: '
+            'Error: No such image: sparky-appstream-generator:absent') in failure.stderr
+    assert 'Nothing was changed.' in failure.stderr and 'appstream/build-image.sh' in failure.stderr
+    assert 'SPARKY_APPSTREAM=0' in failure.stderr
+    assert not any(destination.iterdir())
+    assert not (tmp_path / 'link-scratch').exists()
+    assert [call[0] for call in docker_calls(env)] == ['image']
+
+
+@pytest.mark.parametrize('value', ['', 'yes', 'on', '2', 'true'])
+def test_appstream_flag_takes_only_one_or_zero(publisher_env, tmp_path, value):
+    source = qualified_source(tmp_path)
+    refused = publish_fixture(source, tmp_path / 'published-fixture', {**publisher_env, 'SPARKY_APPSTREAM': value})
+    assert refused.returncode == 2, refused.stdout + refused.stderr
+    assert 'SPARKY_APPSTREAM must be 1 (the default: make the AppStream catalogues) or 0' in refused.stderr
+    assert not docker_calls(publisher_env)
 
 
 def test_actual_publisher_missing_old_edition_dependency_blocks(publisher_env, tmp_path):
