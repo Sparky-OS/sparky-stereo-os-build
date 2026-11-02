@@ -47,9 +47,8 @@ KCM.SimpleKCM {
             Layout.minimumWidth: 0
             wrapMode: Text.Wrap
             font: Kirigami.Theme.smallFont
-            text: kcm.autoZramOn
-                ? i18nc("@info %1 is the reason", "Automatic means on for this computer: %1.", kcm.autoReason)
-                : i18nc("@info %1 is the reason", "Automatic means off for this computer: %1.", kcm.autoReason)
+            objectName: "automaticExplanation"
+            text: kcm.autoDecisionText
         }
         QQC2.Label {
             Layout.fillWidth: true
@@ -96,7 +95,8 @@ KCM.SimpleKCM {
             text: kcm.cushionStatusError
         }
         QQC2.Label {
-            Kirigami.FormData.label: i18nc("@label", "Reason:")
+            objectName: "daemonReason"
+            Kirigami.FormData.label: i18nc("@label", "Daemon’s own words:")
             visible: kcm.cushionReason.length > 0
             Layout.fillWidth: true
             Layout.preferredWidth: Kirigami.Units.gridUnit * 24
@@ -132,43 +132,51 @@ KCM.SimpleKCM {
             textFormat: Text.PlainText
             text: kcm.cushionArea
         }
-        Repeater {
-            model: kcm.cushionProblems
-            delegate: ColumnLayout {
-                required property var modelData
-                required property int index
-                Layout.fillWidth: true
-                Layout.preferredWidth: Kirigami.Units.gridUnit * 24
-                Layout.minimumWidth: 0
-                QQC2.Label {
-                    Layout.fillWidth: true
-                    Layout.preferredWidth: Kirigami.Units.gridUnit * 24
-                    Layout.minimumWidth: 0
-                    wrapMode: Text.Wrap
-                    textFormat: Text.PlainText
-                    text: modelData.text
-                }
-                QQC2.Button {
-                    visible: modelData.repair.length > 0
-                    enabled: !kcm.repairing
-                    text: i18nc("@action:button", "Repair")
-                    onClicked: kcm.repairProblem(index)
-                }
-            }
-        }
-        QQC2.Label {
-            visible: kcm.cushionProblemsError.length > 0
+        ColumnLayout {
+            objectName: "problemActions"
             Layout.fillWidth: true
             Layout.preferredWidth: Kirigami.Units.gridUnit * 24
             Layout.minimumWidth: 0
-            wrapMode: Text.Wrap
-            textFormat: Text.PlainText
-            text: kcm.cushionProblemsError
-        }
-        QQC2.Button {
-            text: i18nc("@action:button", "Refresh status")
-            enabled: !kcm.repairing
-            onClicked: kcm.refreshStatus()
+            Repeater {
+                model: kcm.cushionProblems
+                delegate: ColumnLayout {
+                    required property var modelData
+                    required property int index
+                    Layout.fillWidth: true
+                    Layout.preferredWidth: Kirigami.Units.gridUnit * 24
+                    Layout.minimumWidth: 0
+                    QQC2.Label {
+                        Layout.fillWidth: true
+                        Layout.preferredWidth: Kirigami.Units.gridUnit * 24
+                        Layout.minimumWidth: 0
+                        wrapMode: Text.Wrap
+                        textFormat: Text.PlainText
+                        text: modelData.text
+                    }
+                    QQC2.Button {
+                        objectName: "repairProblem"
+                        visible: modelData.repair.length > 0
+                        enabled: !kcm.repairing
+                        text: i18nc("@action:button", "Repair")
+                        onClicked: kcm.repairProblem(index)
+                    }
+                }
+            }
+            QQC2.Label {
+                visible: kcm.cushionProblemsError.length > 0
+                Layout.fillWidth: true
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 24
+                Layout.minimumWidth: 0
+                wrapMode: Text.Wrap
+                textFormat: Text.PlainText
+                text: kcm.cushionProblemsError
+            }
+            QQC2.Button {
+                objectName: "refreshStatus"
+                text: i18nc("@action:button", "Refresh status")
+                enabled: !kcm.repairing
+                onClicked: kcm.refreshStatus()
+            }
         }
     }
 }

@@ -11,6 +11,7 @@ class MemoryKcm : public KQuickConfigModule
     Q_OBJECT
     Q_PROPERTY(int zramMode READ zramMode WRITE setZramMode NOTIFY zramModeChanged)
     Q_PROPERTY(bool autoZramOn READ autoZramOn NOTIFY statusChanged)
+    Q_PROPERTY(QString autoDecisionText READ autoDecisionText NOTIFY statusChanged)
     Q_PROPERTY(QString autoReason READ autoReason NOTIFY statusChanged)
     Q_PROPERTY(bool zramActive READ zramActive NOTIFY statusChanged)
     Q_PROPERTY(bool cushionEnabled READ cushionEnabled WRITE setCushionEnabled NOTIFY cushionEnabledChanged)
@@ -41,6 +42,7 @@ public:
     void setZramMode(int mode);
     bool autoZramOn() const;
     QString autoReason() const;
+    QString autoDecisionText() const { return m_autoDecisionText; }
     bool zramActive() const;
     bool cushionEnabled() const;
     void setCushionEnabled(bool enabled);
@@ -54,7 +56,7 @@ public:
     Q_ENUM(CushionStatus)
     int cushionStatus() const { return m_cushionStatus; }
     QString cushionProtection() const { return m_cushionProtection; }
-    QString cushionReason() const { return m_cushionReason; }
+    QString cushionReason() const;
     QString cushionStatusError() const { return m_cushionStatusError; }
     QStringList cushionProblemKeys() const { return m_cushionProblemKeys; }
     QVariantList cushionProblems() const { return m_cushionProblems; }
@@ -86,6 +88,7 @@ private:
     bool m_savedCushionEnabled = true;
     bool m_autoZramOn = false;
     QString m_autoReason;
+    QString m_autoDecisionText;
     bool m_zramActive = false;
     QString m_cushionState;
     QString m_cushionMode;

@@ -124,6 +124,16 @@ void MemoryKcm::readProblems()
     }
 }
 
+QString MemoryKcm::cushionReason() const
+{
+    for (const QVariant &problem : m_cushionProblems) {
+        if (m_cushionProblemKeys.contains(problem.toMap().value(u"key"_s).toString())) {
+            return {};
+        }
+    }
+    return m_cushionReason;
+}
+
 void MemoryKcm::refreshStatus()
 {
     readCushionStatus();

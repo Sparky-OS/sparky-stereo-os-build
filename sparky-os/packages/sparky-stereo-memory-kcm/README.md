@@ -33,7 +33,9 @@ What the page shows and changes
   /etc/default/sparky-stereo-zram. Under the switch: what Automatic decides
   for this computer and why (zram-auto --explain, the program zram-generator
   runs at boot), and whether zram is in use now. A change applies at the
-  next start.
+  next start. RAM and storage fields supply the translated explanation for
+  automatic decisions and configuration overrides. Unrecognized decisions
+  retain the helper's raw words under an explicit label.
 - Cushion Swap File: on or off, written as CUSHION_SWAP= in
   /etc/default/cushion-swap; the daemon restarts and reads it. Switching it
   off never switches the swap area off. Its state (off, deployed, retracting,
@@ -47,7 +49,10 @@ What the page shows and changes
   person's language. Problems with an engine repair offer a Repair button.
   Machine repairs use pkexec and org.sparkylinux.sparkystereo.problems.repair;
   the engine runs the commands kept with the record, never a page-supplied command.
-  Refresh status and repairs preserve unsaved choices in the page.
+  A matching engine record replaces the raw daemon reason. Without a matching
+  record, the raw reason is labelled as the daemon's own words.
+  Repair appears below its problem text and before Refresh status in every
+  language. Refresh status and repairs preserve unsaved choices in the page.
 The page reads and writes those settings files, so a hand edit shows in the page
 and the page's change shows in the file. The write goes through KAuth (action
 org.sparkylinux.sparkystereo.memory.save, administrator authentication kept
@@ -73,3 +78,7 @@ select another test account), with root confined to container setup and helpers.
 It also checks the engine's real pkexec repair with fakepolkit allowing and
 denying the installed policy's action. The container must have a passwd entry
 for the test uid, pkexec and Cushion Swap's catalogs installed.
+
+The memorykcmtest data rows cover every structured zram decision and an unknown
+result. memorypagetest loads the real KCM plugin in English and Portuguese and
+checks reason visibility, the translated automatic explanation and button order.

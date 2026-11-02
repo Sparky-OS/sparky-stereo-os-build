@@ -25,6 +25,8 @@ private Q_SLOTS:
     void handEditShows();
     void statusShows();
     void automaticExplained();
+    void translatedAutoReason_data();
+    void translatedAutoReason();
     void saveThroughKAuth();
     void repairThroughPolkit();
 
@@ -107,6 +109,41 @@ void MemoryKcmTest::automaticExplained()
     QCOMPARE(kcm.autoZramOn(), qEnvironmentVariable("EXPECT_AUTO") == u"on"_s);
     QCOMPARE(kcm.autoReason(), qEnvironmentVariable("EXPECT_REASON"));
     QCOMPARE(kcm.zramMode(), int(MemoryKcm::On));
+}
+
+void MemoryKcmTest::translatedAutoReason_data()
+{
+    QTest::addColumn<QByteArray>("fields");
+    QTest::addColumn<QString>("expected");
+    QTest::newRow("small-ram") << QByteArray("DECISION=on\nMODE=auto\nRAM_KIB=4073000\nSTORAGE=fast\n") << u"3977 MiB of RAM: within the automatic zram RAM limit"_s;
+    QTest::newRow("ram-boundary") << QByteArray("DECISION=on\nMODE=auto\nRAM_KIB=9437184\nSTORAGE=fast\n") << u"9216 MiB of RAM: within the automatic zram RAM limit"_s;
+    QTest::newRow("emmc") << QByteArray("DECISION=on\nMODE=auto\nRAM_KIB=97957892\nSTORAGE=emmc\n") << u"The swap area is on eMMC storage"_s;
+    QTest::newRow("sd-card") << QByteArray("DECISION=on\nMODE=auto\nRAM_KIB=97957892\nSTORAGE=sd-card\n") << u"The swap area is on an SD card"_s;
+    QTest::newRow("rotating") << QByteArray("DECISION=on\nMODE=auto\nRAM_KIB=97957892\nSTORAGE=rotating\n") << u"The swap area is on a rotating disk"_s;
+    QTest::newRow("removable") << QByteArray("DECISION=on\nMODE=auto\nRAM_KIB=97957892\nSTORAGE=removable\n") << u"The swap area is on removable storage"_s;
+    QTest::newRow("usb") << QByteArray("DECISION=on\nMODE=auto\nRAM_KIB=97957892\nSTORAGE=usb\n") << u"The swap area is on USB storage"_s;
+    QTest::newRow("ample-fast") << QByteArray("DECISION=off\nMODE=auto\nRAM_KIB=97957892\nSTORAGE=fast\n") << u"95662 MiB of RAM and the swap area on fast storage"_s;
+    QTest::newRow("unknown-storage") << QByteArray("DECISION=off\nMODE=auto\nRAM_KIB=97957892\nSTORAGE=unknown\n") << u"95662 MiB of RAM; the swap storage type could not be identified"_s;
+    QTest::newRow("override-on") << QByteArray("DECISION=on\nMODE=on\n") << u"Switched on by the zram configuration"_s;
+    QTest::newRow("override-off") << QByteArray("DECISION=off\nMODE=off\n") << u"Switched off by the zram configuration"_s;
+    QTest::newRow("unknown-decision") << QByteArray("DECISION=future\nMODE=future\n") << u"Unrecognized zram decision; zram-auto says: raw helper words"_s;
+}
+
+void MemoryKcmTest::translatedAutoReason()
+{
+    QFETCH(QByteArray, fields);
+    QFETCH(QString, expected);
+    const QString helper = MemorySettings::zramAutoPath();
+    const QByteArray original = read(helper);
+    write(helper, "#!/bin/sh\ncat <<'DECISION_EOF'\n" + fields + "REASON=raw helper words\nDECISION_EOF\n");
+    QVERIFY(QFile::setPermissions(helper, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    MemoryKcm kcm(nullptr, KPluginMetaData());
+    kcm.load();
+    QCOMPARE(kcm.autoReason(), expected);
+    if (fields.contains("DECISION=future")) {
+        QCOMPARE(kcm.autoDecisionText(), expected);
+    }
+    write(helper, original);
 }
 
 void MemoryKcmTest::saveThroughKAuth()

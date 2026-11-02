@@ -67,7 +67,8 @@ $PACKAGE ($VERSION) unstable; urgency=medium
 
   * Show memory protection, unreadable status and localized kept problems.
   * Offer the shared engine's authorized repair and retain unsaved choices.
-  * Translate the new status and repair messages in all nine languages.
+  * Translate status, repairs and structured zram decisions in nine languages.
+  * Prefer engine text, label raw daemon words and keep the action order stable.
 
  -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 02 Nov 2026 16:00:00 -0300
 

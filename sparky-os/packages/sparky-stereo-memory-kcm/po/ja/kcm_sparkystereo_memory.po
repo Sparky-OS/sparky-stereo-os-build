@@ -2,17 +2,82 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sparky-stereo-memory-kcm\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-02 18:20+0000\n"
+"POT-Creation-Date: 2026-11-02 18:32+0000\n"
 "Language: ja\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: src/memorykcm.cpp:142
+#: src/memorykcm.cpp:27
+msgctxt "@info zram reason"
+msgid "Switched on by the zram configuration"
+msgstr "zram 設定によりオン"
+
+#: src/memorykcm.cpp:30
+msgctxt "@info zram reason"
+msgid "Switched off by the zram configuration"
+msgstr "zram 設定によりオフ"
+
+#: src/memorykcm.cpp:40
+msgctxt "@info zram reason"
+msgid "%1 MiB of RAM: within the automatic zram RAM limit"
+msgstr "RAM %1 MiB: zram の自動有効化の RAM 上限以内"
+
+#: src/memorykcm.cpp:43
+msgctxt "@info zram reason"
+msgid "The swap area is on eMMC storage"
+msgstr "スワップ領域は eMMC ストレージにあります"
+
+#: src/memorykcm.cpp:44
+msgctxt "@info zram reason"
+msgid "The swap area is on an SD card"
+msgstr "スワップ領域は SD カードにあります"
+
+#: src/memorykcm.cpp:45
+msgctxt "@info zram reason"
+msgid "The swap area is on a rotating disk"
+msgstr "スワップ領域は回転式ディスクにあります"
+
+#: src/memorykcm.cpp:46
+msgctxt "@info zram reason"
+msgid "The swap area is on removable storage"
+msgstr "スワップ領域はリムーバブルストレージにあります"
+
+#: src/memorykcm.cpp:47
+msgctxt "@info zram reason"
+msgid "The swap area is on USB storage"
+msgstr "スワップ領域は USB ストレージにあります"
+
+#: src/memorykcm.cpp:50
+msgctxt "@info zram reason"
+msgid "%1 MiB of RAM and the swap area on fast storage"
+msgstr "RAM %1 MiB、スワップ領域は高速ストレージ上"
+
+#: src/memorykcm.cpp:51
+msgctxt "@info zram reason"
+msgid "%1 MiB of RAM; the swap storage type could not be identified"
+msgstr "RAM %1 MiB: スワップ領域のストレージ種別を特定できませんでした"
+
+#: src/memorykcm.cpp:54
+msgctxt "@info zram reason"
+msgid "Unrecognized zram decision; zram-auto says: %1"
+msgstr "認識できない zram の判断です。zram-auto の原文: %1"
+
+#: src/memorykcm.cpp:149
+msgctxt "@info %1 is the reason"
+msgid "Automatic means on for this computer: %1."
+msgstr "自動とは、このコンピューターではオンになることを意味します: %1。"
+
+#: src/memorykcm.cpp:151
+msgctxt "@info %1 is the reason"
+msgid "Automatic means off for this computer: %1."
+msgstr "自動とは、このコンピューターではオフになることを意味します: %1。"
+
+#: src/memorykcm.cpp:183
 msgctxt "@info"
 msgid "Not saved: not authorized to change these settings."
 msgstr "保存されませんでした: これらの設定を変更する権限がありません。"
 
-#: src/memorykcm.cpp:144
+#: src/memorykcm.cpp:185
 msgctxt "@info %1 is the error"
 msgid "Not saved: %1"
 msgstr "保存されませんでした: %1"
@@ -48,12 +113,12 @@ msgctxt "@info"
 msgid "The status names a problem whose text is unavailable from the problems engine. Refresh to try again."
 msgstr "状態に記載された問題の説明を問題管理エンジンから取得できません。更新して再試行してください。"
 
-#: src/cushionstatus.cpp:159
+#: src/cushionstatus.cpp:169
 msgctxt "@info"
 msgid "The repair did not run: %1"
 msgstr "修復を実行できませんでした: %1"
 
-#: src/cushionstatus.cpp:168
+#: src/cushionstatus.cpp:178
 msgctxt "@info"
 msgid "The repair failed (exit %1): %2"
 msgstr "修復に失敗しました (終了コード %1): %2"
@@ -78,70 +143,60 @@ msgctxt "@option:radio zram"
 msgid "Off"
 msgstr "オフ"
 
-#: src/ui/main.qml:51
-msgctxt "@info %1 is the reason"
-msgid "Automatic means on for this computer: %1."
-msgstr "自動とは、このコンピューターではオンになることを意味します: %1。"
-
-#: src/ui/main.qml:52
-msgctxt "@info %1 is the reason"
-msgid "Automatic means off for this computer: %1."
-msgstr "自動とは、このコンピューターではオフになることを意味します: %1。"
-
-#: src/ui/main.qml:60
+#: src/ui/main.qml:59
 msgctxt "@info"
 msgid "In use now."
 msgstr "現在使用中。"
 
-#: src/ui/main.qml:60
+#: src/ui/main.qml:59
 msgctxt "@info"
 msgid "Not in use now."
 msgstr "現在使用していません。"
 
-#: src/ui/main.qml:61
+#: src/ui/main.qml:60
 msgctxt "@info"
 msgid "A change applies at the next start."
 msgstr "変更は次回の起動時に適用されます。"
 
-#: src/ui/main.qml:69
+#: src/ui/main.qml:68
 msgctxt "@label"
 msgid "Cushion Swap File:"
 msgstr "Cushion Swap File:"
 
-#: src/ui/main.qml:70
+#: src/ui/main.qml:69
 msgctxt "@option:check"
 msgid "Switch the swap area on only under memory pressure"
 msgstr "メモリー負荷時にのみスワップ領域をオンにする"
 
-#: src/ui/main.qml:81
+#: src/ui/main.qml:80
 msgctxt "@info protection"
 msgid "Memory protected"
 msgstr "メモリは保護されています"
 
-#: src/ui/main.qml:82
+#: src/ui/main.qml:81
 msgctxt "@info protection"
 msgid "Memory protected, with a kept problem"
 msgstr "メモリは保護されていますが、記録された問題があります"
 
-#: src/ui/main.qml:83
+#: src/ui/main.qml:82
 msgctxt "@info protection"
 msgid "Memory not protected"
 msgstr "メモリは保護されていません"
 
-#: src/ui/main.qml:84
+#: src/ui/main.qml:83
 msgctxt "@info protection"
 msgid "Cushion Swap is not running"
 msgstr "Cushion Swap は実行されていません"
 
-#: src/ui/main.qml:85
+#: src/ui/main.qml:84
 msgctxt "@info protection"
 msgid "Memory protection status could not be read"
 msgstr "メモリの保護状態を読み取れませんでした"
 
 #: src/ui/main.qml:99
 msgctxt "@label"
-msgid "Reason:"
-msgstr "理由:"
+msgid "Daemon’s own words:"
+msgstr "デーモンの原文:"
 
 #: src/ui/main.qml:109
 msgctxt "@label"
@@ -203,15 +258,19 @@ msgctxt "@label"
 msgid "Swap area:"
 msgstr "スワップ領域:"
 
-#: src/ui/main.qml:154
+#: src/ui/main.qml:160
 msgctxt "@action:button"
 msgid "Repair"
 msgstr "修復"
 
-#: src/ui/main.qml:169
+#: src/ui/main.qml:176
 msgctxt "@action:button"
 msgid "Refresh status"
 msgstr "状態を更新"
+
+#~ msgctxt "@label"
+#~ msgid "Reason:"
+#~ msgstr "理由:"
 
 #~ msgctxt "@info cushion state"
 #~ msgid "Off, ready"

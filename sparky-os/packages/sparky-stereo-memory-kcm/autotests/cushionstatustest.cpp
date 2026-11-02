@@ -151,15 +151,17 @@ void CushionStatusTest::engineText()
     QCOMPARE(problems.first().toMap().value(u"scope"_s).toString(), u"boot"_s);
     QVERIFY(!problems.first().toMap().value(u"repair"_s).toList().isEmpty());
     QVERIFY(kcm.property("cushionProblemsError").toString().isEmpty());
+    QVERIFY(kcm.cushionReason().isEmpty());
     qputenv("SPARKY_STEREO_PROBLEMS_CATALOG", catalog);
 }
 
 void CushionStatusTest::missingProblem()
 {
-    writeStatus("STATE=off\nPROTECTION=no\nPROBLEMS=missing-record\n");
+    writeStatus("STATE=off\nPROTECTION=no\nPROBLEMS=missing-record\nREASON=daemon diagnostic\n");
     MemoryKcm kcm(nullptr, KPluginMetaData());
     kcm.load();
     QVERIFY(!kcm.property("cushionProblemsError").toString().isEmpty());
+    QCOMPARE(kcm.cushionReason(), u"daemon diagnostic"_s);
 }
 
 void CushionStatusTest::refreshKeepsEdits()

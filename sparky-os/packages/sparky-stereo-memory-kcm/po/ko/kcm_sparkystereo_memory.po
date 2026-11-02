@@ -2,17 +2,82 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sparky-stereo-memory-kcm\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-02 18:20+0000\n"
+"POT-Creation-Date: 2026-11-02 18:32+0000\n"
 "Language: ko\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: src/memorykcm.cpp:142
+#: src/memorykcm.cpp:27
+msgctxt "@info zram reason"
+msgid "Switched on by the zram configuration"
+msgstr "zram 설정으로 켜짐"
+
+#: src/memorykcm.cpp:30
+msgctxt "@info zram reason"
+msgid "Switched off by the zram configuration"
+msgstr "zram 설정으로 꺼짐"
+
+#: src/memorykcm.cpp:40
+msgctxt "@info zram reason"
+msgid "%1 MiB of RAM: within the automatic zram RAM limit"
+msgstr "RAM %1 MiB: zram 자동 활성화 RAM 한도 이내"
+
+#: src/memorykcm.cpp:43
+msgctxt "@info zram reason"
+msgid "The swap area is on eMMC storage"
+msgstr "스왑 영역이 eMMC 저장장치에 있습니다"
+
+#: src/memorykcm.cpp:44
+msgctxt "@info zram reason"
+msgid "The swap area is on an SD card"
+msgstr "스왑 영역이 SD 카드에 있습니다"
+
+#: src/memorykcm.cpp:45
+msgctxt "@info zram reason"
+msgid "The swap area is on a rotating disk"
+msgstr "스왑 영역이 회전식 디스크에 있습니다"
+
+#: src/memorykcm.cpp:46
+msgctxt "@info zram reason"
+msgid "The swap area is on removable storage"
+msgstr "스왑 영역이 이동식 저장장치에 있습니다"
+
+#: src/memorykcm.cpp:47
+msgctxt "@info zram reason"
+msgid "The swap area is on USB storage"
+msgstr "스왑 영역이 USB 저장장치에 있습니다"
+
+#: src/memorykcm.cpp:50
+msgctxt "@info zram reason"
+msgid "%1 MiB of RAM and the swap area on fast storage"
+msgstr "RAM %1 MiB, 스왑 영역은 빠른 저장장치에 있음"
+
+#: src/memorykcm.cpp:51
+msgctxt "@info zram reason"
+msgid "%1 MiB of RAM; the swap storage type could not be identified"
+msgstr "RAM %1 MiB; 스왑 저장장치 유형을 확인하지 못했습니다"
+
+#: src/memorykcm.cpp:54
+msgctxt "@info zram reason"
+msgid "Unrecognized zram decision; zram-auto says: %1"
+msgstr "알 수 없는 zram 결정; zram-auto 원문: %1"
+
+#: src/memorykcm.cpp:149
+msgctxt "@info %1 is the reason"
+msgid "Automatic means on for this computer: %1."
+msgstr "자동은 이 컴퓨터에서 켬을 의미합니다: %1."
+
+#: src/memorykcm.cpp:151
+msgctxt "@info %1 is the reason"
+msgid "Automatic means off for this computer: %1."
+msgstr "자동은 이 컴퓨터에서 끔을 의미합니다: %1."
+
+#: src/memorykcm.cpp:183
 msgctxt "@info"
 msgid "Not saved: not authorized to change these settings."
 msgstr "저장되지 않음: 이 설정을 변경할 권한이 없습니다."
 
-#: src/memorykcm.cpp:144
+#: src/memorykcm.cpp:185
 msgctxt "@info %1 is the error"
 msgid "Not saved: %1"
 msgstr "저장되지 않음: %1"
@@ -48,12 +113,12 @@ msgctxt "@info"
 msgid "The status names a problem whose text is unavailable from the problems engine. Refresh to try again."
 msgstr "상태에 표시된 문제의 설명을 문제 관리 엔진에서 가져올 수 없습니다. 새로 고쳐 다시 시도하세요."
 
-#: src/cushionstatus.cpp:159
+#: src/cushionstatus.cpp:169
 msgctxt "@info"
 msgid "The repair did not run: %1"
 msgstr "복구가 실행되지 않았습니다: %1"
 
-#: src/cushionstatus.cpp:168
+#: src/cushionstatus.cpp:178
 msgctxt "@info"
 msgid "The repair failed (exit %1): %2"
 msgstr "복구에 실패했습니다(종료 코드 %1): %2"
@@ -78,70 +143,60 @@ msgctxt "@option:radio zram"
 msgid "Off"
 msgstr "끔"
 
-#: src/ui/main.qml:51
-msgctxt "@info %1 is the reason"
-msgid "Automatic means on for this computer: %1."
-msgstr "자동은 이 컴퓨터에서 켬을 의미합니다: %1."
-
-#: src/ui/main.qml:52
-msgctxt "@info %1 is the reason"
-msgid "Automatic means off for this computer: %1."
-msgstr "자동은 이 컴퓨터에서 끔을 의미합니다: %1."
-
-#: src/ui/main.qml:60
+#: src/ui/main.qml:59
 msgctxt "@info"
 msgid "In use now."
 msgstr "현재 사용 중입니다."
 
-#: src/ui/main.qml:60
+#: src/ui/main.qml:59
 msgctxt "@info"
 msgid "Not in use now."
 msgstr "현재 사용 중이 아닙니다."
 
-#: src/ui/main.qml:61
+#: src/ui/main.qml:60
 msgctxt "@info"
 msgid "A change applies at the next start."
 msgstr "변경 사항은 다음 시작 시 적용됩니다."
 
-#: src/ui/main.qml:69
+#: src/ui/main.qml:68
 msgctxt "@label"
 msgid "Cushion Swap File:"
 msgstr "Cushion Swap File:"
 
-#: src/ui/main.qml:70
+#: src/ui/main.qml:69
 msgctxt "@option:check"
 msgid "Switch the swap area on only under memory pressure"
 msgstr "메모리 압박 시에만 스왑 영역을 켭니다"
 
-#: src/ui/main.qml:81
+#: src/ui/main.qml:80
 msgctxt "@info protection"
 msgid "Memory protected"
 msgstr "메모리 보호됨"
 
-#: src/ui/main.qml:82
+#: src/ui/main.qml:81
 msgctxt "@info protection"
 msgid "Memory protected, with a kept problem"
 msgstr "메모리가 보호되지만 기록된 문제가 있습니다"
 
-#: src/ui/main.qml:83
+#: src/ui/main.qml:82
 msgctxt "@info protection"
 msgid "Memory not protected"
 msgstr "메모리 보호되지 않음"
 
-#: src/ui/main.qml:84
+#: src/ui/main.qml:83
 msgctxt "@info protection"
 msgid "Cushion Swap is not running"
 msgstr "Cushion Swap이 실행 중이 아닙니다"
 
-#: src/ui/main.qml:85
+#: src/ui/main.qml:84
 msgctxt "@info protection"
 msgid "Memory protection status could not be read"
 msgstr "메모리 보호 상태를 읽지 못했습니다"
 
 #: src/ui/main.qml:99
 msgctxt "@label"
-msgid "Reason:"
-msgstr "이유:"
+msgid "Daemon’s own words:"
+msgstr "데몬의 원문:"
 
 #: src/ui/main.qml:109
 msgctxt "@label"
@@ -203,15 +258,19 @@ msgctxt "@label"
 msgid "Swap area:"
 msgstr "스왑 영역:"
 
-#: src/ui/main.qml:154
+#: src/ui/main.qml:160
 msgctxt "@action:button"
 msgid "Repair"
 msgstr "복구"
 
-#: src/ui/main.qml:169
+#: src/ui/main.qml:176
 msgctxt "@action:button"
 msgid "Refresh status"
 msgstr "상태 새로 고침"
+
+#~ msgctxt "@label"
+#~ msgid "Reason:"
+#~ msgstr "이유:"
 
 #~ msgctxt "@info cushion state"
 #~ msgid "Off, ready"

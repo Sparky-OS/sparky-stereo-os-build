@@ -2,17 +2,82 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sparky-stereo-memory-kcm\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-02 18:20+0000\n"
+"POT-Creation-Date: 2026-11-02 18:32+0000\n"
 "Language: fr\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: src/memorykcm.cpp:142
+#: src/memorykcm.cpp:27
+msgctxt "@info zram reason"
+msgid "Switched on by the zram configuration"
+msgstr "Activé par la configuration zram"
+
+#: src/memorykcm.cpp:30
+msgctxt "@info zram reason"
+msgid "Switched off by the zram configuration"
+msgstr "Désactivé par la configuration zram"
+
+#: src/memorykcm.cpp:40
+msgctxt "@info zram reason"
+msgid "%1 MiB of RAM: within the automatic zram RAM limit"
+msgstr "%1 Mio de RAM : dans la limite de RAM pour zram automatique"
+
+#: src/memorykcm.cpp:43
+msgctxt "@info zram reason"
+msgid "The swap area is on eMMC storage"
+msgstr "La zone d’échange est sur un stockage eMMC"
+
+#: src/memorykcm.cpp:44
+msgctxt "@info zram reason"
+msgid "The swap area is on an SD card"
+msgstr "La zone d’échange est sur une carte SD"
+
+#: src/memorykcm.cpp:45
+msgctxt "@info zram reason"
+msgid "The swap area is on a rotating disk"
+msgstr "La zone d’échange est sur un disque mécanique"
+
+#: src/memorykcm.cpp:46
+msgctxt "@info zram reason"
+msgid "The swap area is on removable storage"
+msgstr "La zone d’échange est sur un stockage amovible"
+
+#: src/memorykcm.cpp:47
+msgctxt "@info zram reason"
+msgid "The swap area is on USB storage"
+msgstr "La zone d’échange est sur un stockage USB"
+
+#: src/memorykcm.cpp:50
+msgctxt "@info zram reason"
+msgid "%1 MiB of RAM and the swap area on fast storage"
+msgstr "%1 Mio de RAM et zone d’échange sur un stockage rapide"
+
+#: src/memorykcm.cpp:51
+msgctxt "@info zram reason"
+msgid "%1 MiB of RAM; the swap storage type could not be identified"
+msgstr "%1 Mio de RAM ; le type de stockage de la zone d’échange n’a pas pu être identifié"
+
+#: src/memorykcm.cpp:54
+msgctxt "@info zram reason"
+msgid "Unrecognized zram decision; zram-auto says: %1"
+msgstr "Décision zram non reconnue ; zram-auto indique : %1"
+
+#: src/memorykcm.cpp:149
+msgctxt "@info %1 is the reason"
+msgid "Automatic means on for this computer: %1."
+msgstr "Automatique signifie activé pour cet ordinateur : %1."
+
+#: src/memorykcm.cpp:151
+msgctxt "@info %1 is the reason"
+msgid "Automatic means off for this computer: %1."
+msgstr "Automatique signifie désactivé pour cet ordinateur : %1."
+
+#: src/memorykcm.cpp:183
 msgctxt "@info"
 msgid "Not saved: not authorized to change these settings."
 msgstr "Non enregistré : autorisation insuffisante pour modifier ces paramètres."
 
-#: src/memorykcm.cpp:144
+#: src/memorykcm.cpp:185
 msgctxt "@info %1 is the error"
 msgid "Not saved: %1"
 msgstr "Non enregistré : %1"
@@ -48,12 +113,12 @@ msgctxt "@info"
 msgid "The status names a problem whose text is unavailable from the problems engine. Refresh to try again."
 msgstr "L’état indique un problème dont le texte est indisponible dans le moteur de problèmes. Actualisez pour réessayer."
 
-#: src/cushionstatus.cpp:159
+#: src/cushionstatus.cpp:169
 msgctxt "@info"
 msgid "The repair did not run: %1"
 msgstr "La réparation n’a pas été exécutée : %1"
 
-#: src/cushionstatus.cpp:168
+#: src/cushionstatus.cpp:178
 msgctxt "@info"
 msgid "The repair failed (exit %1): %2"
 msgstr "La réparation a échoué (code de sortie %1) : %2"
@@ -78,70 +143,60 @@ msgctxt "@option:radio zram"
 msgid "Off"
 msgstr "Désactivé"
 
-#: src/ui/main.qml:51
-msgctxt "@info %1 is the reason"
-msgid "Automatic means on for this computer: %1."
-msgstr "Automatique signifie activé pour cet ordinateur : %1."
-
-#: src/ui/main.qml:52
-msgctxt "@info %1 is the reason"
-msgid "Automatic means off for this computer: %1."
-msgstr "Automatique signifie désactivé pour cet ordinateur : %1."
-
-#: src/ui/main.qml:60
+#: src/ui/main.qml:59
 msgctxt "@info"
 msgid "In use now."
 msgstr "Utilisé actuellement."
 
-#: src/ui/main.qml:60
+#: src/ui/main.qml:59
 msgctxt "@info"
 msgid "Not in use now."
 msgstr "Non utilisé actuellement."
 
-#: src/ui/main.qml:61
+#: src/ui/main.qml:60
 msgctxt "@info"
 msgid "A change applies at the next start."
 msgstr "Une modification s'applique au prochain démarrage."
 
-#: src/ui/main.qml:69
+#: src/ui/main.qml:68
 msgctxt "@label"
 msgid "Cushion Swap File:"
 msgstr "Cushion Swap File :"
 
-#: src/ui/main.qml:70
+#: src/ui/main.qml:69
 msgctxt "@option:check"
 msgid "Switch the swap area on only under memory pressure"
 msgstr "Activer la zone d'échange uniquement sous pression mémoire"
 
-#: src/ui/main.qml:81
+#: src/ui/main.qml:80
 msgctxt "@info protection"
 msgid "Memory protected"
 msgstr "Mémoire protégée"
 
-#: src/ui/main.qml:82
+#: src/ui/main.qml:81
 msgctxt "@info protection"
 msgid "Memory protected, with a kept problem"
 msgstr "Mémoire protégée, avec un problème conservé"
 
-#: src/ui/main.qml:83
+#: src/ui/main.qml:82
 msgctxt "@info protection"
 msgid "Memory not protected"
 msgstr "Mémoire non protégée"
 
-#: src/ui/main.qml:84
+#: src/ui/main.qml:83
 msgctxt "@info protection"
 msgid "Cushion Swap is not running"
 msgstr "Cushion Swap n’est pas en cours d’exécution"
 
-#: src/ui/main.qml:85
+#: src/ui/main.qml:84
 msgctxt "@info protection"
 msgid "Memory protection status could not be read"
 msgstr "Impossible de lire l’état de protection de la mémoire"
 
 #: src/ui/main.qml:99
 msgctxt "@label"
-msgid "Reason:"
-msgstr "Raison :"
+msgid "Daemon’s own words:"
+msgstr "Dans les mots du service :"
 
 #: src/ui/main.qml:109
 msgctxt "@label"
@@ -203,15 +258,19 @@ msgctxt "@label"
 msgid "Swap area:"
 msgstr "Zone d'échange :"
 
-#: src/ui/main.qml:154
+#: src/ui/main.qml:160
 msgctxt "@action:button"
 msgid "Repair"
 msgstr "Réparer"
 
-#: src/ui/main.qml:169
+#: src/ui/main.qml:176
 msgctxt "@action:button"
 msgid "Refresh status"
 msgstr "Actualiser l’état"
+
+#~ msgctxt "@label"
+#~ msgid "Reason:"
+#~ msgstr "Raison :"
 
 #~ msgctxt "@info cushion state"
 #~ msgid "Off, ready"
