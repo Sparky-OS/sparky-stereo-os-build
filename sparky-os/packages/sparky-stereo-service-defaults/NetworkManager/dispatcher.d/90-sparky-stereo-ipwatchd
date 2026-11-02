@@ -1,7 +1,15 @@
 #!/bin/sh
-# Sparky Stereo OS: ipwatchd watches the interfaces that have an address when it starts, and at boot
-# it is skipped while none has one (sparky-stereo-service-defaults). When an interface comes up it
-# is started, or restarted so it watches that interface too. Only when ipwatchd is enabled.
+# Sparky Stereo OS: ipwatchd watches the interfaces that have an address when it starts, and at boot it waits while
+# none has one (sparky-stereo-service-defaults). When an interface comes up it is started, or restarted so it
+# watches that interface too, when ipwatchd is installed and enabled. A check or start that fails is said and kept.
 [ "$2" = up ] || exit 0
-systemctl is-enabled --quiet ipwatchd.service 2>/dev/null || exit 0
-exec systemctl --no-block restart ipwatchd.service
+[ -x /usr/sbin/ipwatchd ] || exit 0
+state=$(systemctl is-enabled ipwatchd.service 2>&1)
+case $state in
+	enabled|enabled-runtime) ;;
+	disabled|masked|masked-runtime|static|indirect|generated|transient|alias|linked|linked-runtime) exit 0 ;;
+	*) exec /usr/bin/sparky-stereo-service-defaults keep ipwatchd.service LOCAL7 ipwatchd.service "systemctl is-enabled: $state" ;;
+esac
+out=$(systemctl --no-block restart ipwatchd.service 2>&1) ||
+	exec /usr/bin/sparky-stereo-service-defaults keep ipwatchd.service LOCAL7 ipwatchd.service "systemctl restart: $out"
+exit 0

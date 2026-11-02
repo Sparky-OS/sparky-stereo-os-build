@@ -4,17 +4,39 @@
 # Copyright 2026 under the GNU GPL3 License
 # Runs sparky-stereo-time when timedated reports a new timezone. A PathChanged unit on
 # /etc/localtime never fires: timedated replaces the symlink by rename, and so does ln -sf.
-# Last update 2026/10/02
+# A monitor that cannot listen (it ends within its first seconds) is said and kept as the
+# watcher problem (lib/problems.py), and cleared once a monitor has listened for a minute; the
+# tool keeps its own problems.
+# Last update 2026/11/02
 
 TOOL=${SPARKY_TIME_TOOL:-/usr/bin/sparky-stereo-time}
 BUSCTL=${SPARKY_TIME_BUSCTL:-busctl}
+PROBLEMS=${SPARKY_TIME_PROBLEMS:-/usr/lib/sparky-stereo-time/problems.py}
+# a monitor that ended before this many seconds never listened
+LISTENED=${SPARKY_TIME_LISTENED:-10}
+CLEAR_AFTER=${SPARKY_TIME_CLEAR_AFTER:-60}
+
+err=$(mktemp "${TMPDIR:-/tmp}/sparky-stereo-time-watch.XXXXXX") || exit 1
+start=$(date +%s)
+( sleep "$CLEAR_AFTER" && python3 "$PROBLEMS" clear watcher ) &
+clearer=$!
+trap 'kill "$clearer" 2>/dev/null; rm -f "$err"' EXIT
 
 $BUSCTL --system --json=short monitor \
-	--match "type='signal',sender='org.freedesktop.timedate1',member='PropertiesChanged'" |
+	--match "type='signal',sender='org.freedesktop.timedate1',member='PropertiesChanged'" 2>"$err" |
 while read -r line; do
 	case "$line" in
 		*'"Timezone"'*) "$TOOL" ;;
 	esac
 done
+status=${PIPESTATUS[0]}
+if [ $(($(date +%s) - start)) -lt "$LISTENED" ]; then
+	kill "$clearer" 2>/dev/null
+	why=$(grep -v -e "^$" -e "Monitoring bus message stream" "$err" | tail -n1)
+	python3 "$PROBLEMS" record watcher LOCAL16 "${why:-$BUSCTL monitor: exit status $status}" \
+		--repair systemctl restart sparky-stereo-time-watch.service
+else
+	cat "$err" >&2
+fi
 # the monitor ended: let systemd start us again
 exit 1
