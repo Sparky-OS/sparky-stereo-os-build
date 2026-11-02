@@ -48,13 +48,13 @@ EOS
 install -m 644 "$HERE/python/sparky_stereo_problems.py" "$D/usr/lib/python3/dist-packages/sparky_stereo_problems.py"
 # the engine's own messages, built by the engine just built, as every package's are (README.md)
 "$WORK/bin/$PACKAGE" catalog $PACKAGE "$HERE/lang" "$D/usr/lib/systemd/catalog" \
-	--subject LOCAL29 --subject LOCAL1=LOCAL4 --subject LOCAL2=LOCAL13,LOCAL21 --subject LOCAL3=LOCAL15
+	--subject LOCAL29 --subject LOCAL1=LOCAL4 --subject LOCAL2=LOCAL13,LOCAL21,LOCAL59 --subject LOCAL3=LOCAL15
 install -m 644 "$HERE/systemd/system/service.d/50-sparky-stereo-problems.conf" "$D/usr/lib/systemd/system/service.d/"
 install -m 644 "$HERE/systemd/system/sparky-stereo-problems-failed@.service" "$D/usr/lib/systemd/system/"
 # the handler's own instances: the top-level drop-in masked, so a handler that fails starts no other (systemd.unit(5))
 ln -s /dev/null "$D/usr/lib/systemd/system/sparky-stereo-problems-failed@.service.d/50-sparky-stereo-problems.conf"
 install -m 644 "$HERE/tmpfiles/$PACKAGE.conf" "$D/usr/lib/tmpfiles.d/$PACKAGE.conf"
-install -m 644 "$HERE/polkit/org.sparkylinux.problems.policy" "$D/usr/share/polkit-1/actions/"
+install -m 644 "$HERE/polkit/org.sparkylinux.sparkystereo.problems.policy" "$D/usr/share/polkit-1/actions/"
 install -m 644 "$HERE/copyright" "$D/usr/share/doc/$PACKAGE/copyright"
 install -m 644 "$HERE/README.md" "$D/usr/share/doc/$PACKAGE/README.md"
 mkdir -p "$D/DEBIAN" "$WORK/shlibs/debian"

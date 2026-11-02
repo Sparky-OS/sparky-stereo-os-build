@@ -96,12 +96,22 @@ pub const Record = struct {
     unit: ?[]const u8 = null,
     repairs_failed: i64 = 0,
     last_repair: ?Repair = null,
+    // further sentences after the message, each "@KEY" or [KEY, ARG...] of the package (a reason, what to do)
+    more: []const Value = &.{},
+    // the English text rendered when the problem was kept: shown when no catalog has the message any more
+    text_en: []const u8 = "",
+    // the package's own fields, kept and returned as they are
+    data: ?Value = null,
+    // when it was last kept, in nanoseconds: a repair command that keeps it again is told from one that repaired it
+    kept_ns: i64 = 0,
 };
 
 pub const Rendered = struct {
     title: []const u8,
     text: []const u8,
     lang: []const u8,
+    // false when no catalog has the message (then the text names it with its arguments)
+    found: bool = true,
 };
 
 const Entry = struct {
@@ -115,6 +125,7 @@ pub const Failure = error{ Failed, OutOfMemory };
 pub const Ctx = struct {
     a: Allocator,
     root: []const u8 = "",
+    // folders searched in order; SPARKY_STEREO_PROBLEMS_CATALOG may name several, separated by ":"
     catalog_dir: []const u8 = "/usr/lib/systemd/catalog",
     euid: u32,
     under_pkexec: bool = false,
@@ -455,10 +466,14 @@ fn loadCatalog(ctx: *Ctx, package: []const u8, lang: []const u8) Failure!?*const
     const slot = try ctx.catalogs.getOrPut(ctx.a, name);
     if (!slot.found_existing) {
         slot.value_ptr.* = null;
-        const path = try cat(ctx.a, &.{ ctx.catalog_dir, "/", name });
-        if (readFile(ctx.a, path)) |text| {
-            slot.value_ptr.* = try parseCatalog(ctx.a, text);
-        } else |_| {}
+        var dirs = std.mem.splitScalar(u8, ctx.catalog_dir, ':');
+        while (dirs.next()) |dir| {
+            if (dir.len == 0) continue;
+            if (readFile(ctx.a, try cat(ctx.a, &.{ dir, "/", name }))) |text| {
+                slot.value_ptr.* = try parseCatalog(ctx.a, text);
+                break;
+            } else |_| {}
+        }
     }
     if (slot.value_ptr.*) |*c| return c;
     return null;
@@ -538,7 +553,7 @@ fn renderIn(ctx: *Ctx, package: []const u8, msg: []const u8, args: []const Value
         try out.append(ctx.a, ' ');
         try out.appendSlice(ctx.a, try renderArg(ctx, package, x, "en", depth));
     }
-    return .{ .title = package, .text = out.items, .lang = "en" };
+    return .{ .title = package, .text = out.items, .lang = "en", .found = false };
 }
 
 // MSG of PACKAGE with ARGS in LANG (a language list as LANGUAGE writes it), or in the person's languages when null
@@ -548,6 +563,26 @@ pub fn render(ctx: *Ctx, package: []const u8, msg: []const u8, args: []const Val
         return renderIn(ctx, package, msg, args, found.lang, 0);
     }
     return renderIn(ctx, package, msg, args, "en", 0);
+}
+
+// A kept problem as the person reads it: its message, then its further sentences, in LANG or the person's languages.
+// When no catalog has its message any more (a removed package, a renamed key) it is its English text as kept, under
+// the engine's own title, never the bare key and arguments
+pub fn renderRecord(ctx: *Ctx, r: Record, lang: ?[]const u8) Failure!Rendered {
+    const main = try render(ctx, r.package, r.message, r.args, lang);
+    if (!main.found and r.text_en.len > 0) {
+        const title = try render(ctx, engine_package, "LOCAL29", &.{}, lang);
+        return .{ .title = title.text, .text = r.text_en, .lang = "en", .found = false };
+    }
+    var out: std.ArrayList(u8) = .empty;
+    try out.appendSlice(ctx.a, main.text);
+    for (r.more) |m| {
+        const sentence = try renderArg(ctx, r.package, m, main.lang, 0);
+        if (sentence.len == 0) continue;
+        try out.append(ctx.a, ' ');
+        try out.appendSlice(ctx.a, sentence);
+    }
+    return .{ .title = main.title, .text = out.items, .lang = main.lang, .found = main.found };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -720,6 +755,16 @@ fn writeRecordFields(w: *Writer, ctx: *Ctx, r: Record) Failure!void {
     if (r.unit) |u| try w.str(u) else try w.nul();
     try w.key("repairs_failed");
     try w.int(r.repairs_failed);
+    try w.key("more");
+    try w.open("[");
+    for (r.more) |x| try w.value(x);
+    try w.close("]");
+    try w.key("text_en");
+    try w.str(r.text_en);
+    try w.key("data");
+    if (r.data) |d| try w.value(d) else try w.nul();
+    try w.key("kept_ns");
+    try w.int(r.kept_ns);
     try w.key("last_repair");
     if (r.last_repair) |lr| {
         try w.open("{");
@@ -804,6 +849,12 @@ pub fn applyDetails(a: Allocator, r: *Record, obj: std.json.ObjectMap) BadValue!
         r.actions = list.items;
     }
     if (fieldStr(obj, "unit")) |s| r.unit = s;
+    if (field(obj, "more")) |v| r.more = try argList(v);
+    if (fieldStr(obj, "first")) |f| r.first = f;
+    if (field(obj, "data")) |v| {
+        if (v != .object) return error.BadValue;
+        r.data = v;
+    }
 }
 
 pub fn parseAction(a: Allocator, x: Value) BadValue!Action {
@@ -830,6 +881,8 @@ fn parseRecord(a: Allocator, text: []const u8) BadValue!Record {
         .time = fieldStr(o, "time") orelse "",
         .changed = fieldStr(o, "changed") orelse "",
         .repairs_failed = fieldInt(o, "repairs_failed") orelse 0,
+        .text_en = fieldStr(o, "text_en") orelse "",
+        .kept_ns = fieldInt(o, "kept_ns") orelse 0,
     };
     try applyDetails(a, &r, o);
     if (field(o, "last_repair")) |lr| {
@@ -976,7 +1029,7 @@ fn problemFields(ctx: *Ctx, list: *std.ArrayList(JField), scope: Scope, r: Recor
 // The problem itself, with its own MESSAGE_ID and its arguments as the fields its catalog entry names
 fn journalProblem(ctx: *Ctx, event: []const u8, scope: Scope, r: Record, file: []const u8) Failure!void {
     var list: std.ArrayList(JField) = .empty;
-    const en = try render(ctx, r.package, r.message, r.args, "en");
+    const en = try renderRecord(ctx, r, "en");
     try list.append(ctx.a, .{ .name = "MESSAGE", .value = en.text });
     try list.append(ctx.a, .{ .name = "MESSAGE_ID", .value = try messageId(ctx.a, r.package, r.message) });
     try list.append(ctx.a, .{ .name = "PRIORITY", .value = r.severity.priority() });
@@ -1027,6 +1080,11 @@ pub fn keep(ctx: *Ctx, scope: Scope, input: Record) Failure!Record {
     const now = try nowIso(ctx.a);
     var r = input;
     r.time = now;
+    var ts: sys.Timespec = undefined;
+    _ = sys.clock_gettime(0, &ts);
+    r.kept_ns = ts.sec * 1_000_000_000 + ts.nsec;
+    r.text_en = "";
+    r.text_en = (try renderRecord(ctx, r, "en")).text;
     const lock = (try lockStore(ctx, scope, dir)) orelse {
         const e = strerror(sys.errno());
         r.first = now;
@@ -1046,7 +1104,8 @@ pub fn keep(ctx: *Ctx, scope: Scope, input: Record) Failure!Record {
         },
         else => {
             r.id = try randomId(ctx.a);
-            r.first = now;
+            // a problem moved from an older store keeps the time it was first found (Steps.migrate)
+            r.first = if (input.first.len > 0) input.first else now;
             r.generation = 1;
             r.changed = now;
         },
@@ -1238,11 +1297,68 @@ pub fn repair(ctx: *Ctx, scope: Scope, package: []const u8, key: []const u8) Fai
     }
     const lock = (try lockStore(ctx, scope, dir)) orelse return fail(ctx, "LOCAL28", &.{ key, package, dir, strerror(sys.errno()) });
     defer lock.release();
+    // a repair command that is the package's own step (sparky-stereo-time, sparky-stereo-boot repair) keeps the
+    // problem again itself when it still fails, and may exit 0: then it is not repaired
+    switch (try readRecord(ctx, path)) {
+        .record => |after| if (after.kept_ns != r.kept_ns or !std.mem.eql(u8, after.time, r.time)) {
+            var again = after;
+            again.repairs_failed += 1;
+            again.generation += 1;
+            const joined = try std.mem.join(ctx.a, " ", r.repair[r.repair.len - 1]);
+            again.last_repair = .{ .time = try nowIso(ctx.a), .command = r.repair[r.repair.len - 1], .status = 0, .output = "" };
+            const mode: c_uint = if (scope == .person) 0o600 else 0o644;
+            if (!try writeFileAtomic(ctx.a, dir, name, try recordJson(ctx, again), mode)) {
+                return fail(ctx, "LOCAL15", &.{ key, package, dir, strerror(sys.errno()) });
+            }
+            try journalEvent(ctx, "repair-failed", "LOCAL62", &.{ key, package, joined }, "3", scope, again, path);
+            try setErr(ctx, "LOCAL62", &.{ key, package, joined });
+            return 1;
+        },
+        else => {},
+    }
     if (sys.unlink(try z(ctx.a, path)) != 0 and sys.errno() != sys.ENOENT) {
         return fail(ctx, "LOCAL28", &.{ key, package, dir, strerror(sys.errno()) });
     }
     try journalEvent(ctx, "repaired", "LOCAL13", &.{ key, package }, "6", scope, r, path);
     return 0;
+}
+
+// Every problem of PACKAGE goes from each store the caller can write (root: the machine's and this boot's; a person:
+// their own): its package was removed, and a problem of a package that is gone cannot be repaired by it. The number
+pub fn clearAll(ctx: *Ctx, package: []const u8) Failure!usize {
+    if (!validPackage(package)) return fail(ctx, "LOCAL30", &.{package});
+    var n: usize = 0;
+    const scopes: []const Scope = if (ctx.euid == 0) &.{ .machine, .boot } else &.{.person};
+    for (scopes) |scope| {
+        const dir = (try storeDir(ctx, scope)) orelse continue;
+        const d = sys.opendir(try z(ctx.a, dir)) orelse continue;
+        defer _ = sys.closedir(d);
+        const prefix = try cat(ctx.a, &.{ package, "_" });
+        var keys: std.ArrayList([]const u8) = .empty;
+        while (sys.readdir(d)) |e| {
+            const f = std.mem.sliceTo(&e.name, 0);
+            if (!std.mem.startsWith(u8, f, prefix) or !std.mem.endsWith(u8, f, ".json")) continue;
+            switch (try readRecord(ctx, try cat(ctx.a, &.{ dir, "/", f }))) {
+                .record => |r| if (std.mem.eql(u8, r.package, package)) try keys.append(ctx.a, r.key),
+                else => {},
+            }
+        }
+        for (keys.items) |k| {
+            if (try clear(ctx, scope, package, k)) n += 1;
+        }
+    }
+    return n;
+}
+
+// dpkg's own list of PACKAGE's files: a package that has none is not installed (null when dpkg's database is not
+// there, as in a bare build root: then nothing is judged)
+fn installed(ctx: *Ctx, package: []const u8) Failure!?bool {
+    const info = try cat(ctx.a, &.{ ctx.root, "/var/lib/dpkg/info" });
+    if (sys.access(try z(ctx.a, try cat(ctx.a, &.{ ctx.root, "/var/lib/dpkg/status" })), 0) != 0) return null;
+    for ([_][]const u8{ "", ":amd64", ":i386", ":all" }) |arch| {
+        if (sys.access(try z(ctx.a, try cat(ctx.a, &.{ info, "/", package, arch, ".list" })), 0) == 0) return true;
+    }
+    return false;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1466,6 +1582,16 @@ pub fn collect(ctx: *Ctx, package: ?[]const u8) Failure![]Listed {
                 .unreadable => |e| try out.append(ctx.a, .{ .scope = scope, .file = path, .record = null, .unreadable = e }),
                 .record => |r| {
                     if (package) |p| if (!std.mem.eql(u8, p, r.package)) continue;
+                    // the problem of a package that is not installed any more is over (its postrm clears the
+                    // machine's; this clears what it could not reach)
+                    if (!std.mem.eql(u8, r.package, engine_package) and (try installed(ctx, r.package)) == false) {
+                        if (scope == .person or ctx.euid == 0) {
+                            if (sys.unlink(try z(ctx.a, path)) == 0) {
+                                try journalEvent(ctx, "over", "LOCAL59", &.{ r.key, r.package, r.package }, "6", scope, r, path);
+                            }
+                        }
+                        continue;
+                    }
                     if (r.unit) |u| {
                         if (try unitProperty(ctx, u, "ActiveState")) |state| {
                             if (!std.mem.eql(u8, state, "failed")) {
@@ -1513,7 +1639,7 @@ pub fn listJson(ctx: *Ctx, package: ?[]const u8, lang: ?[]const u8) Failure![]co
         try w.str(item.file);
         if (item.record) |r| {
             try writeRecordFields(&w, ctx, r);
-            const shown = try render(ctx, r.package, r.message, r.args, lang);
+            const shown = try renderRecord(ctx, r, lang);
             try w.key("title");
             try w.str(shown.title);
             try w.key("text");
@@ -1600,8 +1726,242 @@ fn langCode(n: []const u8) bool {
     return true;
 }
 
-pub fn buildCatalog(ctx: *Ctx, package: []const u8, langdir: []const u8, outdir: []const u8, rules: []const SubjectRule, only: ?[]const []const u8) Failure!usize {
+// gettext .po files (a KDE program's po/LANG/DOMAIN.po, or po/LANG.po): a message is named CONTEXT|MSGID (MSGID alone
+// when it has no context), its %1 to %26 are its arguments A to Z, in any order a language needs
+const PoEntry = struct { ctxt: ?[]const u8, id: []const u8, plural: bool, str: []const u8, fuzzy: bool };
+
+fn unescapePo(a: Allocator, t: []const u8) Failure![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    var i: usize = 0;
+    while (i < t.len) : (i += 1) {
+        if (t[i] == '\\' and i + 1 < t.len) {
+            i += 1;
+            try out.append(a, switch (t[i]) {
+                'n' => '\n',
+                't' => '\t',
+                else => t[i],
+            });
+        } else try out.append(a, t[i]);
+    }
+    return out.items;
+}
+
+fn parsePo(a: Allocator, text: []const u8) Failure![]PoEntry {
+    var entries: std.ArrayList(PoEntry) = .empty;
+    var blocks = std.mem.splitSequence(u8, text, "\n\n");
+    while (blocks.next()) |block| {
+        var e = PoEntry{ .ctxt = null, .id = "", .plural = false, .str = "", .fuzzy = false };
+        var target: enum { none, ctxt, id, plural, str, other } = .none;
+        var ctxt: std.ArrayList(u8) = .empty;
+        var id: std.ArrayList(u8) = .empty;
+        var str: std.ArrayList(u8) = .empty;
+        var has_id = false;
+        var lines = std.mem.splitScalar(u8, block, '\n');
+        while (lines.next()) |raw| {
+            const line = std.mem.trim(u8, raw, " \t\r");
+            if (std.mem.startsWith(u8, line, "#,") and std.mem.indexOf(u8, line, "fuzzy") != null) e.fuzzy = true;
+            if (line.len == 0 or line[0] == '#') continue;
+            var rest = line;
+            if (std.mem.startsWith(u8, line, "msgctxt ")) {
+                target = .ctxt;
+                e.ctxt = "";
+                rest = line["msgctxt ".len..];
+            } else if (std.mem.startsWith(u8, line, "msgid_plural ")) {
+                target = .plural;
+                e.plural = true;
+                rest = line["msgid_plural ".len..];
+            } else if (std.mem.startsWith(u8, line, "msgid ")) {
+                target = .id;
+                has_id = true;
+                rest = line["msgid ".len..];
+            } else if (std.mem.startsWith(u8, line, "msgstr ")) {
+                target = .str;
+                rest = line["msgstr ".len..];
+            } else if (std.mem.startsWith(u8, line, "msgstr[")) {
+                target = .other;
+                continue;
+            }
+            if (rest.len < 2 or rest[0] != '"' or rest[rest.len - 1] != '"') continue;
+            const piece = try unescapePo(a, rest[1 .. rest.len - 1]);
+            switch (target) {
+                .ctxt => try ctxt.appendSlice(a, piece),
+                .id => try id.appendSlice(a, piece),
+                .str => try str.appendSlice(a, piece),
+                else => {},
+            }
+        }
+        if (!has_id or id.items.len == 0) continue;
+        if (e.ctxt != null) e.ctxt = ctxt.items;
+        e.id = id.items;
+        e.str = str.items;
+        try entries.append(a, e);
+    }
+    return entries.items;
+}
+
+fn poKey(a: Allocator, e: PoEntry) Failure![]const u8 {
+    return if (e.ctxt) |c| cat(a, &.{ c, "|", e.id }) else e.id;
+}
+
+// the set of %1 .. %26 a text uses
+fn poPlaceholders(t: []const u8) u32 {
+    var set: u32 = 0;
+    var i: usize = 0;
+    while (i + 1 < t.len) : (i += 1) {
+        if (t[i] != '%') continue;
+        var j = i + 1;
+        while (j < t.len and std.ascii.isDigit(t[j])) j += 1;
+        if (j > i + 1) {
+            const n = std.fmt.parseInt(u32, t[i + 1 .. j], 10) catch 0;
+            if (n >= 1 and n <= 26) set |= @as(u32, 1) << @intCast(n - 1);
+        }
+    }
+    return set;
+}
+
+fn poCatalogText(a: Allocator, t: []const u8) Failure![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    var i: usize = 0;
+    while (i < t.len) : (i += 1) {
+        if (t[i] == '%' and i + 1 < t.len and std.ascii.isDigit(t[i + 1])) {
+            var j = i + 1;
+            while (j < t.len and std.ascii.isDigit(t[j])) j += 1;
+            const n = std.fmt.parseInt(u32, t[i + 1 .. j], 10) catch 0;
+            if (n >= 1 and n <= 26) {
+                try out.print(a, "@SPARKY_ARG_{c}@", .{@as(u8, 'A') + @as(u8, @intCast(n - 1))});
+                i = j - 1;
+                continue;
+            }
+        }
+        try out.append(a, t[i]);
+    }
+    return out.items;
+}
+
+fn findPo(ctx: *Ctx, dir: []const u8, domain: ?[]const u8) Failure!?[]const u8 {
+    if (domain) |d| {
+        const p = try cat(ctx.a, &.{ dir, "/", d, ".po" });
+        return if (sys.access(try z(ctx.a, p), 0) == 0) p else null;
+    }
+    const d = sys.opendir(try z(ctx.a, dir)) orelse return null;
+    defer _ = sys.closedir(d);
+    var found: ?[]const u8 = null;
+    while (sys.readdir(d)) |e| {
+        const n = std.mem.sliceTo(&e.name, 0);
+        if (!std.mem.endsWith(u8, n, ".po")) continue;
+        if (found != null) return null;
+        found = try cat(ctx.a, &.{ dir, "/", n });
+    }
+    return found;
+}
+
+fn buildPoCatalog(ctx: *Ctx, package: []const u8, podir: []const u8, outdir: []const u8, rules: []const SubjectRule, only: ?[]const []const u8, contexts: []const []const u8, domain: ?[]const u8) Failure!usize {
+    const LangPo = struct { lang: []const u8, path: []const u8 };
+    var files: std.ArrayList(LangPo) = .empty;
+    var pot: ?[]const u8 = null;
+    if (sys.opendir(try z(ctx.a, podir))) |d| {
+        defer _ = sys.closedir(d);
+        while (sys.readdir(d)) |e| {
+            const n = try ctx.a.dupe(u8, std.mem.sliceTo(&e.name, 0));
+            if (n.len == 0 or n[0] == '.') continue;
+            const full = try cat(ctx.a, &.{ podir, "/", n });
+            if (std.mem.endsWith(u8, n, ".pot")) {
+                pot = full;
+            } else if (std.mem.endsWith(u8, n, ".po") and langCode(n[0 .. n.len - 3])) {
+                try files.append(ctx.a, .{ .lang = n[0 .. n.len - 3], .path = full });
+            } else if (langCode(n)) {
+                if (try findPo(ctx, full, domain)) |po| try files.append(ctx.a, .{ .lang = n, .path = po });
+            }
+        }
+    }
+    if (files.items.len == 0) return fail(ctx, "LOCAL33", &.{try cat(ctx.a, &.{ podir, ": no language file (lang/en, or gettext .po files)" })});
+    std.mem.sort(LangPo, files.items, {}, struct {
+        fn lt(_: void, x: LangPo, y: LangPo) bool {
+            return std.mem.order(u8, x.lang, y.lang) == .lt;
+        }
+    }.lt);
+    const source_path = pot orelse files.items[0].path;
+    const source = try parsePo(ctx.a, readFile(ctx.a, source_path) catch return fail(ctx, "LOCAL33", &.{try cat(ctx.a, &.{ source_path, ": ", strerror(last_errno) })}));
+    var english: std.StringHashMapUnmanaged([]const u8) = .empty;
+    for (source) |e| {
+        if (!e.plural) try english.put(ctx.a, try poKey(ctx.a, e), e.id);
+    }
+    var subjects: std.StringHashMapUnmanaged([]const u8) = .empty;
+    var default_subject: ?[]const u8 = null;
+    for (rules) |rule| {
+        if (!english.contains(rule.subject)) return fail(ctx, "LOCAL32", &.{ rule.subject, source_path });
+        if (rule.keys) |ks| {
+            for (ks) |k| try subjects.put(ctx.a, k, rule.subject);
+        } else default_subject = rule.subject;
+    }
+    var selected: std.ArrayList([]const u8) = .empty;
+    if (only) |ks| {
+        for (ks) |k| {
+            if (!english.contains(k)) return fail(ctx, "LOCAL32", &.{ k, source_path });
+            try selected.append(ctx.a, k);
+        }
+    } else {
+        for (source) |e| {
+            if (e.plural) continue;
+            const k = try poKey(ctx.a, e);
+            var is_subject = false;
+            for (rules) |rule| is_subject = is_subject or std.mem.eql(u8, rule.subject, k);
+            // a subject is a message too: the engine shows it as a title of its own (renderRecord)
+            if (is_subject) {
+                try selected.append(ctx.a, k);
+                continue;
+            }
+            if (contexts.len > 0) {
+                const c = e.ctxt orelse continue;
+                var hit = false;
+                for (contexts) |prefix| hit = hit or std.mem.startsWith(u8, c, prefix);
+                if (!hit) continue;
+            }
+            try selected.append(ctx.a, k);
+        }
+    }
+    if (!try ensureDir(ctx.a, outdir, 0o755, true)) return fail(ctx, "LOCAL33", &.{try cat(ctx.a, &.{ outdir, ": ", strerror(sys.errno()) })});
+    var entries: usize = 0;
+    var langs: std.ArrayList(LangPo) = .empty;
+    try langs.append(ctx.a, .{ .lang = "en", .path = source_path });
+    try langs.appendSlice(ctx.a, files.items);
+    for (langs.items) |lp| {
+        var map: std.StringHashMapUnmanaged(PoEntry) = .empty;
+        if (!std.mem.eql(u8, lp.lang, "en")) {
+            const text = readFile(ctx.a, lp.path) catch return fail(ctx, "LOCAL33", &.{try cat(ctx.a, &.{ lp.path, ": ", strerror(last_errno) })});
+            for (try parsePo(ctx.a, text)) |e| try map.put(ctx.a, try poKey(ctx.a, e), e);
+        }
+        var out: std.ArrayList(u8) = .empty;
+        for (selected.items) |k| {
+            const subject_key = subjects.get(k) orelse default_subject orelse k;
+            var body = english.get(k).?;
+            var subject = english.get(subject_key).?;
+            if (!std.mem.eql(u8, lp.lang, "en")) {
+                // every language carries every message, translated and not fuzzy, with the same arguments
+                const tr = map.get(k) orelse return fail(ctx, "LOCAL32", &.{ k, lp.path });
+                if (tr.fuzzy or tr.str.len == 0) return fail(ctx, "LOCAL32", &.{ k, lp.path });
+                if (poPlaceholders(tr.str) != poPlaceholders(body)) return fail(ctx, "LOCAL33", &.{try cat(ctx.a, &.{ lp.path, ": ", k, " has other %1 .. %26 than English" })});
+                body = tr.str;
+                const ts = map.get(subject_key) orelse return fail(ctx, "LOCAL32", &.{ subject_key, lp.path });
+                if (ts.fuzzy or ts.str.len == 0) return fail(ctx, "LOCAL32", &.{ subject_key, lp.path });
+                subject = ts.str;
+            }
+            const text = try poCatalogText(ctx.a, body);
+            if (std.mem.indexOf(u8, text, "\n-- ") != null or std.mem.startsWith(u8, text, "-- ")) return fail(ctx, "LOCAL33", &.{try cat(ctx.a, &.{ lp.path, ": ", k, " starts a line with -- " })});
+            try out.print(ctx.a, "-- {s}\nSubject: {s}\nDefined-By: {s}\nSupport: {s}\n\n{s}\n\n", .{ try messageId(ctx.a, package, k), try poCatalogText(ctx.a, subject), package, support_url, text });
+            entries += 1;
+        }
+        const name = if (std.mem.eql(u8, lp.lang, "en")) try cat(ctx.a, &.{ package, ".catalog" }) else try cat(ctx.a, &.{ package, ".", lp.lang, ".catalog" });
+        if (!try writeFileAtomic(ctx.a, outdir, name, out.items, 0o644)) return fail(ctx, "LOCAL33", &.{try cat(ctx.a, &.{ outdir, "/", name, ": ", strerror(sys.errno()) })});
+    }
+    return entries;
+}
+
+pub fn buildCatalog(ctx: *Ctx, package: []const u8, langdir: []const u8, outdir: []const u8, rules: []const SubjectRule, only: ?[]const []const u8, contexts: []const []const u8, domain: ?[]const u8) Failure!usize {
     if (!validPackage(package)) return fail(ctx, "LOCAL30", &.{package});
+    if (sys.access(try z(ctx.a, try cat(ctx.a, &.{ langdir, "/en" })), 0) != 0) {
+        return buildPoCatalog(ctx, package, langdir, outdir, rules, only, contexts, domain);
+    }
     const en_text = readFile(ctx.a, try cat(ctx.a, &.{ langdir, "/en" })) catch return fail(ctx, "LOCAL33", &.{try cat(ctx.a, &.{ langdir, "/en: ", strerror(last_errno) })});
     const en = try parseLangFile(ctx.a, en_text);
     var subjects: std.StringHashMapUnmanaged([]const u8) = .empty;
@@ -1644,11 +2004,7 @@ pub fn buildCatalog(ctx: *Ctx, package: []const u8, langdir: []const u8, outdir:
         var out: std.ArrayList(u8) = .empty;
         for (selected.items) |k| {
             const subject_key = subjects.get(k) orelse default_subject orelse k;
-            const is_subject = blk: {
-                for (rules) |rule| if (std.mem.eql(u8, rule.subject, k)) break :blk true;
-                break :blk false;
-            };
-            if (is_subject and only == null) continue;
+            // a subject is a message too: the engine shows it as a title of its own (renderRecord)
             // every language carries every message, with the same arguments: a translation that lacks one fails the build
             const tmpl = l.map.get(k) orelse return fail(ctx, "LOCAL32", &.{ k, try cat(ctx.a, &.{ langdir, "/", lang }) });
             if (placeholders(tmpl) != placeholders(en.map.get(k).?)) return fail(ctx, "LOCAL33", &.{try cat(ctx.a, &.{ langdir, "/", lang, ": ", k, " has another number of %s than English" })});

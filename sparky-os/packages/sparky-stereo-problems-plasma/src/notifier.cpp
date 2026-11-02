@@ -333,7 +333,7 @@ void Notifier::repair(const QJsonObject &p)
     QStringList args = {u"repair"_s, u"--"_s + scope, p[u"package"_s].toString(), p[u"key"_s].toString()};
     QString program = s_engine;
     if (scope != u"person"_s) {
-        // the machine's problems are root's: org.sparkylinux.problems.repair, which runs only repair
+        // the machine's problems are root's: org.sparkylinux.sparkystereo.problems.repair, which runs only repair
         args.prepend(s_engine);
         program = u"pkexec"_s;
     }

@@ -39,7 +39,7 @@ Each message's MESSAGE_ID is the name-based UUID (version 5, URL namespace) of `
 
 `sparky-stereo-problems list` shows every problem; the session's notifier (sparky-stereo-problems-plasma) shows each as a notification, with Show details, Repair, the record's own actions and Hide.
 Hide is the person's: the problem stays listed with its evidence and comes back when its message changes or a repair fails; `show` undoes it.
-Repairing the machine's problems runs through `pkexec` and the polkit action `org.sparkylinux.problems.repair`, which runs only `repair` of what root kept.
+Repairing the machine's problems runs through `pkexec` and the polkit action `org.sparkylinux.sparkystereo.problems.repair`, which runs only `repair` of what root kept.
 
 ## Every failed system service
 

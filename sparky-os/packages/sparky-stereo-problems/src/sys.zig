@@ -93,6 +93,8 @@ pub extern "c" fn pipe(fds: *[2]c_int) c_int;
 pub extern "c" fn dup2(old: c_int, new: c_int) c_int;
 pub extern "c" fn _exit(status: c_int) noreturn;
 pub extern "c" fn time(t: ?*i64) i64;
+pub const Timespec = extern struct { sec: i64, nsec: i64 };
+pub extern "c" fn clock_gettime(clock: c_int, ts: *Timespec) c_int;
 pub extern "c" fn gmtime_r(t: *const i64, out: *Tm) ?*Tm;
 pub extern "c" fn getrandom(buf: [*]u8, n: usize, flags: c_uint) isize;
 pub extern "c" fn malloc(n: usize) ?*anyopaque;

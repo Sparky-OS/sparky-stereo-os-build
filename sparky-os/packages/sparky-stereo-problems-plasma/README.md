@@ -6,7 +6,7 @@ The session's side of [sparky-stereo-problems](../sparky-stereo-problems/README.
 - Then one notification for each new problem, and for each problem whose message changed or whose repair failed.
 - A failed problem is Critical and stays until it is closed; a degraded one or a notice is Normal.
 - Each offers Show details (what failed, why, what to do, the command, its exit status and output, the repair and the last repair), Repair, the record's own actions and Hide.
-- Repair runs `sparky-stereo-problems repair`; for the machine's and this boot's problems through `pkexec` and the polkit action `org.sparkylinux.problems.repair`.
+- Repair runs `sparky-stereo-problems repair`; for the machine's and this boot's problems through `pkexec` and the polkit action `org.sparkylinux.sparkystereo.problems.repair`.
 - Hide is the person's own: the problem stays listed (`sparky-stereo-problems list`) and comes back when its message changes or a repair fails.
 - A notification closes when its problem is over.
 

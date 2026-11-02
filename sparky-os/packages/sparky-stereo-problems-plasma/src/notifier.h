@@ -18,7 +18,7 @@ class KNotification;
 // the person, as a KDE notification (sparky-stereo-problems.notifyrc). At login one notification per open problem, or
 // one summary when several are open; then one for each new or changed problem. A failed problem is Critical and stays
 // until it is closed; a degraded one or a notice is Normal. Each offers Show details (the evidence), Repair (pkexec
-// for the machine's and this boot's problems: org.sparkylinux.problems.repair), the record's own actions and Hide,
+// for the machine's and this boot's problems: org.sparkylinux.sparkystereo.problems.repair), the record's own actions and Hide,
 // which is the person's own. A notification closes when its problem is over.
 class Notifier : public QObject
 {

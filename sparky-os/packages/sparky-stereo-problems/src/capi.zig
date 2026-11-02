@@ -143,6 +143,14 @@ export fn ssp_clear(scope: c_int, package: ?[*:0]const u8, key: ?[*:0]const u8) 
     return 0;
 }
 
+export fn ssp_clear_all(package: ?[*:0]const u8) c_int {
+    var c: Call = undefined;
+    begin(&c);
+    defer c.deinit();
+    _ = engine.clearAll(&c.ctx, str(package) orelse return 2) catch |e| return result(&c.ctx, e);
+    return 0;
+}
+
 export fn ssp_say(package: ?[*:0]const u8, message: ?[*:0]const u8, args: ?[*]const ?[*:0]const u8, nargs: c_int) c_int {
     var c: Call = undefined;
     begin(&c);

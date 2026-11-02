@@ -12,42 +12,52 @@ const Value = std.json.Value;
 const Ctx = engine.Ctx;
 const Scope = engine.Scope;
 
-const usage =
-    \\Usage: sparky-stereo-problems COMMAND ...
-    \\  keep [SCOPE] [OPTIONS] PACKAGE KEY MESSAGE [ARG...]
-    \\        keeps a problem until it is repaired, and says it in the journal
-    \\  run [SCOPE] [OPTIONS] PACKAGE KEY MESSAGE [ARG...] -- COMMAND [ARG...]
-    \\        runs COMMAND with its output shown; a success clears KEY, a failure keeps it with the command, its exit
-    \\        status and the end of its output (MESSAGE's first two %s are the command and its status, then ARGs);
-    \\        exits with COMMAND's status
-    \\  clear [SCOPE] PACKAGE KEY              the step works again
-    \\  say PACKAGE MESSAGE [ARG...]          says a notice on standard error and in the journal, kept nowhere
-    \\  list [--json] [--lang LANGUAGES] [PACKAGE]
-    \\  repair [SCOPE] PACKAGE [KEY]          runs the repair commands of KEY (of every problem of PACKAGE)
-    \\  hide [SCOPE] PACKAGE KEY              hides it from your notifications until it changes or a repair fails
-    \\  show [SCOPE] PACKAGE KEY              shows it again
-    \\  catalog PACKAGE LANGDIR OUTDIR [--subject KEY[=MESSAGE,...]]... [--keys MESSAGE,...]
-    \\        builds PACKAGE.catalog and PACKAGE.LANG.catalog (journal message catalogs) from Sparky language files
-    \\  service-failed [UNIT]                 the handler of a failed system service (sparky-stereo-problems-failed@)
-    \\  message-id PACKAGE MESSAGE | languages | --version
-    \\SCOPE: --machine (the default for root), --boot (this boot only), --person (the default for a person)
-    \\OPTIONS: --severity failed|degraded|notice  --repair JSON-ARRAY (repeatable)  --command JSON-ARRAY  --status N
-    \\  --output TEXT  --output-file FILE  --action '{"id":..,"label":[MESSAGE,ARG...],"command":[..]}' (repeatable)
+// The usage, each description in the person's language (the engine's own messages); the command lines are syntax
+const Line = struct { syntax: []const u8, what: []const u8 };
+const usage_lines = [_]Line{
+    .{ .syntax = "keep [SCOPE] [OPTIONS] PACKAGE KEY MESSAGE [ARG...]", .what = "LOCAL38" },
+    .{ .syntax = "run [SCOPE] [OPTIONS] PACKAGE KEY MESSAGE [ARG...] -- COMMAND [ARG...]", .what = "LOCAL39" },
+    .{ .syntax = "clear [SCOPE] PACKAGE KEY", .what = "LOCAL40" },
+    .{ .syntax = "clear --all PACKAGE", .what = "LOCAL46" },
+    .{ .syntax = "say PACKAGE MESSAGE [ARG...]", .what = "LOCAL41" },
+    .{ .syntax = "list [--json] [--lang LANGUAGES] [PACKAGE]", .what = "LOCAL42" },
+    .{ .syntax = "repair [SCOPE] PACKAGE [KEY]", .what = "LOCAL43" },
+    .{ .syntax = "hide [SCOPE] PACKAGE KEY", .what = "LOCAL44" },
+    .{ .syntax = "show [SCOPE] PACKAGE KEY", .what = "LOCAL45" },
+    .{ .syntax = "catalog PACKAGE DIR OUTDIR [--subject KEY[=MESSAGE,...]]... [--keys MESSAGE,...] [--context PREFIX]... [--domain NAME]", .what = "LOCAL47" },
+    .{ .syntax = "service-failed [UNIT]", .what = "LOCAL48" },
+};
+const options =
+    \\  --severity failed|degraded|notice  --repair JSON-ARRAY  --command JSON-ARRAY  --status N
+    \\  --output TEXT  --output-file FILE  --action '{"id":..,"label":[MESSAGE,ARG...],"command":[..]}'
     \\  --unit UNIT  --details JSON-OBJECT
-    \\An ARG written @KEY is the package's own message KEY, in the same language.
-    \\Exit status: 0 done, 1 failed (said), 2 wrong use; run exits with COMMAND's status, repair with the failing one's.
     \\
 ;
+
+fn usageText(ctx: *Ctx) ![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    const say = struct {
+        fn f(c: *Ctx, msg: []const u8, args: []const Value) ![]const u8 {
+            return (try engine.render(c, engine.engine_package, msg, args, null)).text;
+        }
+    }.f;
+    try out.print(ctx.a, "{s}\n", .{try say(ctx, "LOCAL37", &.{.{ .string = "sparky-stereo-problems" }})});
+    for (usage_lines) |l| try out.print(ctx.a, "  {s}\n        {s}\n", .{ l.syntax, try say(ctx, l.what, &.{}) });
+    try out.print(ctx.a, "  message-id PACKAGE MESSAGE | languages | --version\n{s}\n{s}\n{s}{s}\n{s}\n", .{
+        try say(ctx, "LOCAL49", &.{}), try say(ctx, "LOCAL60", &.{}), options, try say(ctx, "LOCAL50", &.{}), try say(ctx, "LOCAL51", &.{}),
+    });
+    return out.items;
+}
 
 fn err(text: []const u8) void {
     _ = engine.writeAll(2, text);
 }
 
-fn wrongUse(what: []const u8) u8 {
-    err("sparky-stereo-problems: ");
-    err(what);
-    err("\n");
-    err(usage);
+// A wrong use: what is wrong, in the person's language and in English, then the usage
+fn wrongUse(ctx: *Ctx, msg: []const u8, args: []const []const u8) u8 {
+    engine.setErr(ctx, msg, args) catch {};
+    _ = said(ctx);
+    err(usageText(ctx) catch "");
     return 2;
 }
 
@@ -91,6 +101,9 @@ const Parsed = struct {
     actions: std.ArrayList(engine.Action) = .empty,
     subjects: std.ArrayList(engine.SubjectRule) = .empty,
     keys: ?[]const []const u8 = null,
+    contexts: std.ArrayList([]const u8) = .empty,
+    domain: ?[]const u8 = null,
+    all: bool = false,
     bad: ?[]const u8 = null,
 };
 
@@ -117,6 +130,10 @@ fn parse(ctx: *Ctx, args: []const []const u8) !Parsed {
         }
         if (std.mem.eql(u8, x, "--json")) {
             p.json = true;
+            continue;
+        }
+        if (std.mem.eql(u8, x, "--all")) {
+            p.all = true;
             continue;
         }
         if (i + 1 >= args.len) {
@@ -181,6 +198,10 @@ fn parse(ctx: *Ctx, args: []const []const u8) !Parsed {
                 while (it.next()) |k| if (k.len > 0) try keys.append(ctx.a, k);
                 try p.subjects.append(ctx.a, .{ .subject = v[0..eq], .keys = keys.items });
             } else try p.subjects.append(ctx.a, .{ .subject = v, .keys = null });
+        } else if (std.mem.eql(u8, x, "--context")) {
+            try p.contexts.append(ctx.a, v);
+        } else if (std.mem.eql(u8, x, "--domain")) {
+            p.domain = v;
         } else if (std.mem.eql(u8, x, "--keys")) {
             var keys: std.ArrayList([]const u8) = .empty;
             var it = std.mem.splitScalar(u8, v, ',');
@@ -226,7 +247,7 @@ fn printList(ctx: *Ctx, p: *Parsed) !u8 {
             try out.print(ctx.a, "{s}  {s}\n  {s}\n\n", .{ @tagName(item.scope), item.file, e.text });
             continue;
         };
-        const shown = try engine.render(ctx, r.package, r.message, r.args, p.lang);
+        const shown = try engine.renderRecord(ctx, r, p.lang);
         const since = try engine.render(ctx, engine.engine_package, "LOCAL22", &.{.{ .string = r.first }}, shown.lang);
         try out.print(ctx.a, "{s}  {s}  {s}  {s}  ({s})", .{ @tagName(r.severity), @tagName(item.scope), r.package, r.key, since.text });
         if (item.hidden) {
@@ -247,26 +268,26 @@ fn printList(ctx: *Ctx, p: *Parsed) !u8 {
 }
 
 fn runMain(ctx: *Ctx, argv: []const []const u8) !u8 {
-    if (argv.len < 1) return wrongUse("a command is needed");
+    if (argv.len < 1) return wrongUse(ctx, "LOCAL52", &.{});
     const verb = argv[0];
     if (std.mem.eql(u8, verb, "--version")) {
         _ = engine.writeAll(1, "sparky-stereo-problems " ++ engine.version ++ "\n");
         return 0;
     }
     if (std.mem.eql(u8, verb, "--help") or std.mem.eql(u8, verb, "help")) {
-        _ = engine.writeAll(1, usage);
+        _ = engine.writeAll(1, try usageText(ctx));
         return 0;
     }
     var p = try parse(ctx, argv[1..]);
-    if (p.bad) |b| return wrongUse(try std.mem.concat(ctx.a, u8, &.{ "wrong or missing value for ", b }));
+    if (p.bad) |b| return wrongUse(ctx, "LOCAL54", &.{b});
     const pos = p.positional.items;
     const scope = p.scope orelse engine.defaultScope(ctx);
-    // pkexec runs only a repair of what root kept, never anything the caller names (org.sparkylinux.problems.repair)
+    // pkexec runs only a repair of what root kept, never anything the caller names (org.sparkylinux.sparkystereo.problems.repair)
     if (ctx.under_pkexec and (!std.mem.eql(u8, verb, "repair") or p.scope == null or p.scope.? == .person)) {
-        return wrongUse("through pkexec only repair --machine or repair --boot runs");
+        return wrongUse(ctx, "LOCAL55", &.{});
     }
     if (std.mem.eql(u8, verb, "keep") or std.mem.eql(u8, verb, "run")) {
-        if (pos.len < 3) return wrongUse("PACKAGE KEY MESSAGE are needed");
+        if (pos.len < 3) return wrongUse(ctx, "LOCAL53", &.{"PACKAGE KEY MESSAGE"});
         var r = p.record;
         r.package = pos[0];
         r.key = pos[1];
@@ -284,8 +305,8 @@ fn runMain(ctx: *Ctx, argv: []const []const u8) !u8 {
             journalNote(ctx);
             return 0;
         }
-        const command = p.command orelse return wrongUse("run needs -- COMMAND");
-        if (command.len == 0) return wrongUse("run needs -- COMMAND");
+        const command = p.command orelse return wrongUse(ctx, "LOCAL57", &.{});
+        if (command.len == 0) return wrongUse(ctx, "LOCAL57", &.{});
         const status = engine.run(ctx, scope, r, command) catch |e| {
             if (e == error.Failed) {
                 _ = said(ctx);
@@ -297,8 +318,17 @@ fn runMain(ctx: *Ctx, argv: []const []const u8) !u8 {
         journalNote(ctx);
         return @intCast(@min(@max(status, 0), 255));
     }
+    if (std.mem.eql(u8, verb, "clear") and p.all) {
+        if (pos.len != 1) return wrongUse(ctx, "LOCAL53", &.{"--all PACKAGE"});
+        _ = engine.clearAll(ctx, pos[0]) catch |e| {
+            if (e == error.Failed) return said(ctx);
+            return e;
+        };
+        journalNote(ctx);
+        return 0;
+    }
     if (std.mem.eql(u8, verb, "clear")) {
-        if (pos.len != 2) return wrongUse("PACKAGE KEY are needed");
+        if (pos.len != 2) return wrongUse(ctx, "LOCAL53", &.{"PACKAGE KEY"});
         _ = engine.clear(ctx, scope, pos[0], pos[1]) catch |e| {
             if (e == error.Failed) return said(ctx);
             return e;
@@ -307,7 +337,7 @@ fn runMain(ctx: *Ctx, argv: []const []const u8) !u8 {
         return 0;
     }
     if (std.mem.eql(u8, verb, "say")) {
-        if (pos.len < 2) return wrongUse("PACKAGE MESSAGE are needed");
+        if (pos.len < 2) return wrongUse(ctx, "LOCAL53", &.{"PACKAGE MESSAGE"});
         var list: std.ArrayList(Value) = .empty;
         for (pos[2..]) |x| try list.append(ctx.a, .{ .string = x });
         const both = engine.say(ctx, pos[0], pos[1], list.items) catch |e| {
@@ -320,11 +350,11 @@ fn runMain(ctx: *Ctx, argv: []const []const u8) !u8 {
         return 0;
     }
     if (std.mem.eql(u8, verb, "list")) {
-        if (pos.len > 1) return wrongUse("list takes one PACKAGE at most");
+        if (pos.len > 1) return wrongUse(ctx, "LOCAL58", &.{});
         return printList(ctx, &p);
     }
     if (std.mem.eql(u8, verb, "repair")) {
-        if (pos.len < 1 or pos.len > 2) return wrongUse("PACKAGE [KEY] are needed");
+        if (pos.len < 1 or pos.len > 2) return wrongUse(ctx, "LOCAL53", &.{"PACKAGE [KEY]"});
         var keys: std.ArrayList([]const u8) = .empty;
         if (pos.len == 2) {
             try keys.append(ctx.a, pos[1]);
@@ -356,7 +386,7 @@ fn runMain(ctx: *Ctx, argv: []const []const u8) !u8 {
         return worst;
     }
     if (std.mem.eql(u8, verb, "hide") or std.mem.eql(u8, verb, "show")) {
-        if (pos.len != 2) return wrongUse("PACKAGE KEY are needed");
+        if (pos.len != 2) return wrongUse(ctx, "LOCAL53", &.{"PACKAGE KEY"});
         const done = if (std.mem.eql(u8, verb, "hide")) engine.hide(ctx, scope, pos[0], pos[1]) else engine.show(ctx, scope, pos[0], pos[1]);
         done catch |e| {
             if (e == error.Failed) return said(ctx);
@@ -366,8 +396,8 @@ fn runMain(ctx: *Ctx, argv: []const []const u8) !u8 {
         return 0;
     }
     if (std.mem.eql(u8, verb, "catalog")) {
-        if (pos.len != 3) return wrongUse("PACKAGE LANGDIR OUTDIR are needed");
-        const n = engine.buildCatalog(ctx, pos[0], pos[1], pos[2], p.subjects.items, p.keys) catch |e| {
+        if (pos.len != 3) return wrongUse(ctx, "LOCAL53", &.{"PACKAGE DIR OUTDIR"});
+        const n = engine.buildCatalog(ctx, pos[0], pos[1], pos[2], p.subjects.items, p.keys, p.contexts.items, p.domain) catch |e| {
             if (e == error.Failed) return said(ctx);
             return e;
         };
@@ -387,7 +417,7 @@ fn runMain(ctx: *Ctx, argv: []const []const u8) !u8 {
         return 0;
     }
     if (std.mem.eql(u8, verb, "message-id")) {
-        if (pos.len != 2) return wrongUse("PACKAGE MESSAGE are needed");
+        if (pos.len != 2) return wrongUse(ctx, "LOCAL53", &.{"PACKAGE MESSAGE"});
         _ = engine.writeAll(1, try std.mem.concat(ctx.a, u8, &.{ try engine.messageId(ctx.a, pos[0], pos[1]), "\n" }));
         return 0;
     }
@@ -396,7 +426,7 @@ fn runMain(ctx: *Ctx, argv: []const []const u8) !u8 {
         _ = engine.writeAll(1, try std.mem.concat(ctx.a, u8, &.{ try std.mem.join(ctx.a, ":", langs), if (langs.len > 0) ":en\n" else "en\n" }));
         return 0;
     }
-    return wrongUse(try std.mem.concat(ctx.a, u8, &.{ "unknown command ", verb }));
+    return wrongUse(ctx, "LOCAL56", &.{verb});
 }
 
 pub export fn main(argc: c_int, argv: [*][*:0]u8) callconv(.c) c_int {
@@ -409,7 +439,7 @@ pub export fn main(argc: c_int, argv: [*][*:0]u8) callconv(.c) c_int {
     var ctx = Ctx.init(a);
     defer ctx.deinit();
     const status = runMain(&ctx, args) catch {
-        err("sparky-stereo-problems: out of memory\n");
+        err("sparky-stereo-problems: out of memory (the engine could not allocate memory)\n");
         return 1;
     };
     return status;

@@ -89,11 +89,11 @@ check "its notification is closed" "closed $c"
 mkdir -p /etc/polkit-1/rules.d
 cat >/etc/polkit-1/rules.d/50-problems-test.rules <<'EOS'
 polkit.addRule(function(action, subject) {
-    if (action.id == "org.sparkylinux.problems.repair" && subject.user == "person") { return polkit.Result.YES; }
+    if (action.id == "org.sparkylinux.sparkystereo.problems.repair" && subject.user == "person") { return polkit.Result.YES; }
 });
 EOS
 systemctl restart polkit.service 2>/dev/null
-check "polkit knows the action, with pkexec's program and argv1" "pkaction --verbose --action-id org.sparkylinux.problems.repair | grep -q 'org.freedesktop.policykit.exec.argv1 -> repair'"
+check "polkit knows the action, with pkexec's program and argv1" "pkaction --verbose --action-id org.sparkylinux.sparkystereo.problems.repair | grep -q 'org.freedesktop.policykit.exec.argv1 -> repair'"
 first=$(python3 -c "import json; d=json.load(open('$LOG'))['notify']; print([x['id'] for x in d if 'First Service' in x['body'] and \"'Repair'\" in str(x['actions'])][-1])")
 invoke "$first" "Repair"
 check "Repair of the machine's problem runs through pkexec as root: it is over" "waitfor '[ ! -e /var/lib/sparky-stereo-problems/${P}_one.json ]' 30"
@@ -146,6 +146,11 @@ c=$(n)
 ux systemctl --user start sparky-stereo-problems-notifier.service
 check "a new login shows the open problems again, in German" "waitfor '[ \$(n) -gt $c ]' 20 && nf -1 summary | grep -q 'Probleme brauchen Aufmerksamkeit' && nf -1 actions | grep -q 'Details anzeigen'"
 ux systemctl --user unset-environment LANG
+# the record only (memory performance-is-not-a-gate): the notifier's memory while it shows a session's problems
+pid=$(ux systemctl --user show -p MainPID --value sparky-stereo-problems-notifier.service)
+if [ -n "$pid" ] && [ "$pid" != 0 ]; then
+	echo "MEASURE notifier pid $pid: $(grep -E '^VmRSS' /proc/$pid/status | tr -s ' ') ; $(grep -E '^(Pss|Private_Dirty):' /proc/$pid/smaps_rollup | tr -s ' ' | tr '\n' ';') problems shown: $(n) notifications this session"
+fi
 
 ux systemctl --user stop sparky-stereo-problems-notifier.service fake-notifications.service 2>/dev/null
 echo "== $( [ $fail = 0 ] && echo ALL PASS || echo "$fail FAILED")"

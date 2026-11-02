@@ -195,7 +195,7 @@ mkdir -p $W/lang $W/cat
 printf 'LOCAL1="Title"\nLOCAL2="Something %%s failed with %%s."\n' >$W/lang/en
 printf 'LOCAL1="Titel"\nLOCAL2="Etwas %%s ist mit %%s fehlgeschlagen."\n' >$W/lang/de
 $B catalog demo-pkg $W/lang $W/cat --subject LOCAL1 >/dev/null; rc=$?
-check "a complete language builds (exit 0), one entry per message, the subject aside" "[ $rc = 0 ] && [ \$(grep -c '^-- ' $W/cat/demo-pkg.catalog) = 1 ] && [ -f $W/cat/demo-pkg.de.catalog ]"
+check "a complete language builds (exit 0), one entry per message, the subject too" "[ $rc = 0 ] && [ \$(grep -c '^-- ' $W/cat/demo-pkg.catalog) = 2 ] && [ -f $W/cat/demo-pkg.de.catalog ]"
 check "each %s becomes the field the journal fills" "grep -q 'Something @SPARKY_ARG_A@ failed with @SPARKY_ARG_B@.' $W/cat/demo-pkg.catalog"
 check "the entry's id is the message id" "grep -q \"^-- \$($B message-id demo-pkg LOCAL2)\$\" $W/cat/demo-pkg.de.catalog"
 printf 'LOCAL1="Tytuł"\n' >$W/lang/pl
@@ -250,6 +250,125 @@ else:
 print('python ok')
 EOP
 check "Python: keep with a message as an argument, list in French, repair, a refused name" "grep -q 'python ok' $W/py.out"
+
+echo "== milestone 2b: the English text, the package's own fields, further sentences"
+reset
+G=sparky-test-gone
+mkdir -p /var/lib/dpkg/info && touch /var/lib/dpkg/info/$G.list
+mkdir -p $W/glang
+printf 'LOCAL1="Gone test"\nLOCAL2="The thing %%s broke with %%s."\n' >$W/glang/en
+printf 'LOCAL1="Test weg"\nLOCAL2="Das Ding %%s ging mit %%s kaputt."\n' >$W/glang/de
+$B catalog $G $W/glang /usr/lib/systemd/catalog --subject LOCAL1 >/dev/null
+$B keep --machine $G thing LOCAL2 pump 7
+check "the English text is kept with the problem" "pyck $M/${G}_thing.json 'd[\"text_en\"] == \"The thing pump broke with 7.\"'"
+rm -f /usr/lib/systemd/catalog/$G.catalog /usr/lib/systemd/catalog/$G.de.catalog
+env -i LANG=de_DE.UTF-8 $B list --json >$W/gone.json
+check "no catalog has its message any more: its English text, never the bare key" "pyck $W/gone.json 'd[0][\"text\"] == \"The thing pump broke with 7.\" and \"LOCAL2\" not in d[0][\"text\"]'"
+check "under the engine's own title, in the person's language" "pyck $W/gone.json 'd[0][\"title\"] == \"Sparky Stereo OS: Ein Problem braucht Aufmerksamkeit\"'"
+$B keep --machine $P own LOCAL4 "O" o.service @LOCAL8 --details '{"data":{"gpu":"pci-0000:03:00.0","alternatives":[{"id":"a","name":"A"}]},"more":["@LOCAL9",["LOCAL5","3"]]}'
+$B list --json >$W/own.json
+check "the package's own fields come back as they were kept" "pyck $W/own.json '[x for x in d if x[\"key\"] == \"own\"][0][\"data\"] == {\"gpu\": \"pci-0000:03:00.0\", \"alternatives\": [{\"id\": \"a\", \"name\": \"A\"}]}'"
+check "further sentences follow the message, each a message of the package" "pyck $W/own.json '[x for x in d if x[\"key\"] == \"own\"][0][\"text\"].endswith(\"Repair starts it again. it was started too often in a short time it stopped with exit status 3\")'"
+
+echo "== milestone 2b: a package that is removed"
+$B keep --machine $G a LOCAL2 x 1; $B keep --machine $G b LOCAL2 y 2
+$B clear --all $G; rc=$?
+check "clear --all: every problem of the package goes (exit 0)" "[ $rc = 0 ] && [ ! -e $M/${G}_a.json ] && [ ! -e $M/${G}_b.json ] && [ ! -e $M/${G}_thing.json ]"
+check "and the others stay" "[ -e $M/${P}_own.json ]"
+$B keep --machine $G c LOCAL2 z 3
+rm /var/lib/dpkg/info/$G.list
+$B list >$W/l.txt
+check "the problem of a package that is not installed any more is over: not listed, its record goes" "! grep -q 'sparky-test-gone' $W/l.txt && [ ! -e $M/${G}_c.json ]"
+
+echo "== milestone 2b: a repair whose command keeps the problem again"
+reset
+$B keep --machine $P again2 LOCAL4 "K" k.service @LOCAL8 --repair '["sparky-stereo-problems","keep","--machine","sparky-stereo-problems","again2","LOCAL4","K","k.service","@LOCAL8"]'
+sleep 1
+$B repair --machine $P again2 >$W/again.out 2>&1; rc=$?
+check "it is not repaired: exit 1, said, kept with the failed repair" "[ $rc = 1 ] && grep -q 'but the problem was kept again' $W/again.out && pyck $M/${P}_again2.json 'd[\"repairs_failed\"] == 1'"
+
+echo "== milestone 2b: the command's own texts in the person's language"
+env -i LANG=de_DE.UTF-8 $B frobnicate >$W/use.out 2>&1; rc=$?
+check "a wrong use: exit 2, said in German and English, with the usage in German" "[ $rc = 2 ] && grep -q 'unbekannter Befehl frobnicate' $W/use.out && grep -q '(en) unknown command frobnicate' $W/use.out && grep -q 'Aufruf: sparky-stereo-problems BEFEHL' $W/use.out && grep -q 'hält ein Problem fest' $W/use.out"
+env -i LANG=ja_JP.UTF-8 $B --help >$W/help.out 2>&1
+check "--help in Japanese" "grep -q '使い方: sparky-stereo-problems' $W/help.out && grep -q 'keep \[SCOPE\]' $W/help.out"
+check "the polkit action follows the edition's names" "grep -q '<action id=\"org.sparkylinux.sparkystereo.problems.repair\">' /usr/share/polkit-1/actions/org.sparkylinux.sparkystereo.problems.policy"
+
+echo "== milestone 2b: gettext .po files"
+mkdir -p $W/po/de $W/po/fr $W/pocat
+cat >$W/po/demo.pot <<'EOP'
+msgid ""
+msgstr ""
+
+msgctxt "@title notification"
+msgid "Demo needs a repair"
+msgstr ""
+
+msgctxt "@info %1 is a GPU, %2 an address"
+msgid "The GPU %1, at %2, is not here."
+msgstr ""
+
+msgctxt "@action:button"
+msgid "Open"
+msgstr ""
+EOP
+cat >$W/po/de/demo.po <<'EOP'
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgctxt "@title notification"
+msgid "Demo needs a repair"
+msgstr "Demo braucht eine Reparatur"
+
+msgctxt "@info %1 is a GPU, %2 an address"
+msgid "The GPU %1, at %2, is not here."
+msgstr "An %2 ist die GPU %1 nicht da."
+
+msgctxt "@action:button"
+msgid "Open"
+msgstr "Öffnen"
+EOP
+sed 's/msgstr "An %2 ist die GPU %1 nicht da."/msgstr "Le GPU %1, à %2, n’est pas là."/; s/Demo braucht eine Reparatur/Démo doit être réparée/; s/Öffnen/Ouvrir/' $W/po/de/demo.po >$W/po/fr/demo.po
+$B catalog $P-po-test $W/po $W/pocat --subject '@title notification|Demo needs a repair' --context '@info' >/dev/null 2>$W/po.err; rc=$?
+check "a gettext po folder builds (exit 0); only the chosen contexts and the subject" "[ $rc = 0 ] && [ \$(grep -c '^-- ' $W/pocat/$P-po-test.catalog) = 2 ] && ! grep -q 'Ouvrir' $W/pocat/$P-po-test.fr.catalog && [ -f $W/pocat/$P-po-test.de.catalog ] && [ -f $W/pocat/$P-po-test.fr.catalog ]"
+check "%1 and %2 become fields A and B, in the order each language needs" "grep -q 'An @SPARKY_ARG_B@ ist die GPU @SPARKY_ARG_A@ nicht da.' $W/pocat/$P-po-test.de.catalog"
+check "the message is named CONTEXT|MSGID" "grep -q \"^-- \$($B message-id $P-po-test '@info %1 is a GPU, %2 an address|The GPU %1, at %2, is not here.')\$\" $W/pocat/$P-po-test.catalog"
+env -i LANG=de_DE.UTF-8 SPARKY_STEREO_PROBLEMS_CATALOG=$W/pocat:/usr/lib/systemd/catalog $B say $P-po-test '@info %1 is a GPU, %2 an address|The GPU %1, at %2, is not here.' Radeon 0000:03:00.0 >$W/po.out 2>&1
+check "rendered from a list of catalog folders, in German, the arguments in German's order" "grep -q 'An 0000:03:00.0 ist die GPU Radeon nicht da.' $W/po.out"
+sed -i 's/^msgstr "Le GPU %1, à %2, n’est pas là."/#, fuzzy\nmsgstr "Le GPU %1, à %2, n’est pas là."/' $W/po/fr/demo.po
+python3 - $W/po/fr/demo.po <<'EOP'
+import sys
+p = sys.argv[1]
+s = open(p).read().replace('\n#, fuzzy\nmsgstr', '\nmsgstr')
+s = s.replace('msgctxt "@info %1 is a GPU, %2 an address"', '#, fuzzy\nmsgctxt "@info %1 is a GPU, %2 an address"')
+open(p, 'w').write(s)
+EOP
+$B catalog $P-po-test $W/po $W/pocat --subject '@title notification|Demo needs a repair' --context '@info' >$W/po.err 2>&1; rc=$?
+check "a fuzzy translation fails the build, said" "[ $rc = 1 ] && grep -q 'is missing from' $W/po.err"
+
+echo "== milestone 2b: the older problems.py commands, answered by the engine (Steps)"
+reset
+mkdir -p $W/old
+printf '{"step": "moved", "time": "2026-10-01T00:00:00Z", "key": "LOCAL4", "args": ["Old", "old.service", "@LOCAL8"], "command": ["x"], "status": 2, "output": "why\\n", "repair": [["true"]]}\n' >$W/old/moved.json
+python3 - $W/old >$W/steps.out 2>&1 <<'EOP'
+import os, sys
+import sparky_stereo_problems as engine
+s = engine.Steps('sparky-stereo-problems', words={'none': 'LOCAL27', 'header': 'LOCAL29', 'since': 'LOCAL22',
+                 'repaired': 'LOCAL13', 'failed_again': 'LOCAL14', 'hidden': 'LOCAL19', 'unknown': 'LOCAL18'})
+assert s.migrate(sys.argv[1]) and not os.path.exists(sys.argv[1]), 'migrate'
+moved = [e for e in s.pending() if e['step'] == 'moved'][0]
+assert moved['time'] == '2026-10-01T00:00:00Z' and moved['output'] == 'why\n' and moved['status'] == 2, moved
+assert s.record('st1', 'LOCAL4', ['A', 'a.service', ['LOCAL5', '3']], repair=[['true']], quiet=True)
+assert 'it stopped with exit status 3' in s.message([e for e in s.pending() if e['step'] == 'st1'][0])
+assert s.status() == 1
+assert s.dismiss('nosuch') == 1
+assert s.repair() == 0 and s.pending() == []
+assert s.run('st2', 'LOCAL34', ['@LOCAL35'], ['sh', '-c', 'exit 5']) == 5
+assert s.pending()[0]['status'] == 5
+print('steps ok')
+EOP
+check "Steps: migrate keeps the first time, record, message, status, dismiss, repair, run" "grep -q 'steps ok' $W/steps.out"
 
 rm -rf "$W"
 echo "== $( [ $fail = 0 ] && echo ALL PASS || echo "$fail FAILED")"
