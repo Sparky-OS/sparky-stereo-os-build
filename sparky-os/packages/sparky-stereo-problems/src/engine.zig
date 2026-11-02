@@ -1591,8 +1591,11 @@ pub fn collect(ctx: *Ctx, package: ?[]const u8) Failure![]Listed {
                 .record => |r| {
                     if (package) |p| if (!std.mem.eql(u8, p, r.package)) continue;
                     // the problem of a package that is not installed any more is over (its postrm clears the
-                    // machine's; this clears what it could not reach)
-                    if (!std.mem.eql(u8, r.package, engine_package) and (try installed(ctx, r.package)) == false) {
+                    // machine's; this clears what it could not reach): dpkg has no file list of it, and no catalog
+                    // of its messages is there (a build or a test that names its catalogs is not judged gone)
+                    if (!std.mem.eql(u8, r.package, engine_package) and (try installed(ctx, r.package)) == false and
+                        (try loadCatalog(ctx, r.package, "en")) == null)
+                    {
                         if (scope == .person or ctx.euid == 0) {
                             if (sys.unlink(try z(ctx.a, path)) == 0) {
                                 try journalEvent(ctx, "over", "LOCAL59", &.{ r.key, r.package, r.package }, "6", scope, r, path);

@@ -24,7 +24,7 @@ const usage_lines = [_]Line{
     .{ .syntax = "repair [SCOPE] PACKAGE [KEY]", .what = "LOCAL43" },
     .{ .syntax = "hide [SCOPE] PACKAGE KEY", .what = "LOCAL44" },
     .{ .syntax = "show [SCOPE] PACKAGE KEY", .what = "LOCAL45" },
-    .{ .syntax = "catalog PACKAGE DIR OUTDIR [--subject KEY[=MESSAGE,...]]... [--keys MESSAGE,...] [--context PREFIX]... [--domain NAME]", .what = "LOCAL47" },
+    .{ .syntax = "catalog PACKAGE DIR OUTDIR [--subject KEY[=MESSAGE,...]]... [--subject-map JSON] [--keys MESSAGE,...] [--context PREFIX]... [--domain NAME]", .what = "LOCAL47" },
     .{ .syntax = "text [SCOPE] [--lang LANGUAGES] PACKAGE KEY", .what = "LOCAL63" },
     .{ .syntax = "service-failed [UNIT]", .what = "LOCAL48" },
 };
@@ -212,6 +212,23 @@ fn parse(ctx: *Ctx, args: []const []const u8) !Parsed {
                 while (it.next()) |k| if (k.len > 0) try keys.append(ctx.a, k);
                 try p.subjects.append(ctx.a, .{ .subject = v[0..eq], .keys = keys.items });
             } else try p.subjects.append(ctx.a, .{ .subject = v, .keys = null });
+        } else if (std.mem.eql(u8, x, "--subject-map")) {
+            // {"MESSAGE": "SUBJECT", ...}: for messages whose names hold commas (gettext's CONTEXT|MSGID)
+            const m = parseJson(ctx, v) orelse .null;
+            if (m != .object) {
+                p.bad = x;
+                return p;
+            }
+            var it = m.object.iterator();
+            while (it.next()) |e| {
+                if (e.value_ptr.* != .string) {
+                    p.bad = x;
+                    return p;
+                }
+                const one = try ctx.a.alloc([]const u8, 1);
+                one[0] = e.key_ptr.*;
+                try p.subjects.append(ctx.a, .{ .subject = e.value_ptr.string, .keys = one });
+            }
         } else if (std.mem.eql(u8, x, "--context")) {
             try p.contexts.append(ctx.a, v);
         } else if (std.mem.eql(u8, x, "--domain")) {

@@ -46,7 +46,13 @@ export DBUS_SYSTEM_BUS_ADDRESS=unix:path=$T/no-system-bus LANG=C.UTF-8
 unset LANGUAGE LC_ALL LC_MESSAGES WAYLAND_DISPLAY DISPLAY DRI_PRIME MESA_VK_DEVICE_SELECT VK_LOADER_DRIVERS_SELECT __NV_PRIME_RENDER_OFFLOAD
 mkdir -p "$XDG_CONFIG_HOME" "$T/none"
 CFG=$XDG_CONFIG_HOME/sparky-stereo-graphicsrc
-PROBLEMS=$XDG_STATE_HOME/sparky-stereo-graphics/problems
+# the problems are kept by the edition's one engine (ORDER 350), its messages from catalogs of the page's .po files
+PROBLEMS=$XDG_STATE_HOME/sparky-stereo-problems
+rec() { echo "$PROBLEMS/sparky-stereo-graphics_$1.json"; }
+sparky-stereo-problems catalog sparky-stereo-graphics "$SRC/po" "$T/catalog" --domain kcm_sparkystereo_graphics \
+	--context "@info" --context "@item kind of program" --context "@action:button" \
+	--subject "@title notification|A graphics choice cannot be used" >/dev/null || exit 1
+export SPARKY_STEREO_PROBLEMS_CATALOG=$T/catalog:/usr/lib/systemd/catalog
 save() { printf '%b' "$1" >"$CFG"; }
 env_for() { SPARKY_STEREO_GRAPHICS_ROOT=$T/$1 "$BIN/sparky-stereo-gpu-env" "${@:2}"; }
 rc_of() { "$@" >"$T/out" 2>"$T/err"; echo $?; }
@@ -59,10 +65,10 @@ has "an address that is not here: the GPUs that can draw are offered" "$T/err" "
 has "an address that is not here: how to start on one" "$T/err" "sparky-stereo-gpu-run --choice ID COMMAND"
 save '[Render]\nGames=pci-0000:09:00.0\n'
 check "a saved choice for games that is not here: exit 4" "$(rc_of env_for host --category games --profile balanced)" 4
-check "a saved choice for games that is not here: kept" "$(python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["kind"], d["requested"])' "$PROBLEMS/games.json" 2>&1)" "gpu-missing pci-0000:09:00.0"
+check "a saved choice for games that is not here: kept" "$(python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["data"]["kind"], d["data"]["requested"])' "$(rec games)" 2>&1)" "gpu-missing pci-0000:09:00.0"
 save '[Render]\nGames=discrete\n'
 check "the choice works again: exit 0" "$(rc_of env_for host --category games --profile balanced)" 0
-check "the choice works again: its record goes" "$(test -e "$PROBLEMS/games.json"; echo $?)" 1
+check "the choice works again: its record goes" "$(test -e "$(rec games)"; echo $?)" 1
 save '[Render]\nPlayers=pci-0000:01:00.0\n'
 check "one GPU left, the chosen one gone: exit 4, not \"the only GPU\"" "$(rc_of env_for one --category players --profile balanced --print reason)" 4
 save '[Render]\nGames=discrete\n'
@@ -95,7 +101,7 @@ echo "== U24: a power profile that cannot be read is said, never Balanced"
 # Plasma's launcher never refuses a program the person placed nowhere
 check "browsers on Automatic without a readable profile: exit 5" "$(rc_of env_for host --category browsers --print gpu)" 5
 has "browsers on Automatic without a readable profile: said" "$T/err" "follows the power profile, and the power profile could not be read: the system bus cannot be reached."
-check "browsers on Automatic without a readable profile: kept" "$(python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["kind"], d["requested"])' "$PROBLEMS/browsers.json" 2>&1)" "profile-unreadable auto"
+check "browsers on Automatic without a readable profile: kept" "$(python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["data"]["kind"], d["data"]["requested"])' "$(rec browsers)" 2>&1)" "profile-unreadable auto"
 # as Plasma's launcher asks for an entry outside the menu: by its desktop file
 printf '[Desktop Entry]\nType=Application\nName=Browser\nExec=true\nCategories=Network;WebBrowser;\n' >"$T/browser.desktop"
 check "a browser's entry on Automatic without a readable profile: exit 5" "$(rc_of env_for host --app "$T/browser.desktop")" 5
@@ -153,9 +159,9 @@ session() { # root savedmain
 }
 check "a main GPU that is not here: KWin's own order draws this login" "$(session host pci-0000:09:00.0 2>"$T/err")" unset
 has "a main GPU that is not here: said in the session's log" "$T/err" "The GPU you chose to draw the desktop, at PCI address 0000:09:00.0, is not in this computer now."
-check "a main GPU that is not here: kept for the notification" "$(python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["kind"], [a["id"] for a in d["alternatives"]])' "$PROBLEMS/main-gpu.json" 2>&1)" "gpu-missing ['pci-0000:0b:00.0', 'pci-0000:01:00.0']"
+check "a main GPU that is not here: kept for the notification" "$(python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["data"]["kind"], [a["id"] for a in d["data"]["alternatives"]])' "$(rec main-gpu)" 2>&1)" "gpu-missing ['pci-0000:0b:00.0', 'pci-0000:01:00.0']"
 check "a main GPU that is here: applied" "$(session host pci-0000:01:00.0 2>/dev/null)" "/dev/dri/card1:/dev/dri/card0"
-check "a main GPU that is here: its record goes" "$(test -e "$PROBLEMS/main-gpu.json"; echo $?)" 1
+check "a main GPU that is here: its record goes" "$(test -e "$(rec main-gpu)"; echo $?)" 1
 mkdir -p "$T/pkg"
 printf '#!/bin/sh\necho installed\n' >"$T/pkg/dpkg-query"
 chmod +x "$T/pkg/dpkg-query"
@@ -191,37 +197,32 @@ check "postrm purge: the machine's kept problems go" "$(maint postrm purge 2>/de
 mkdir -p "$T/a10/etc" && chmod 555 "$T/a10/etc"
 check "gpu-record: the A10's record it cannot write exits 3" "$("$BIN/sparky-stereo-gpu-record" --root "$T/a10" --machines "$SRC/share/machines" --apply-known >/dev/null 2>"$T/err"; echo $?)" 3
 has "gpu-record: said" "$T/err" "could not be written. Until it is, Automatic treats this computer as not measured."
-check "gpu-record: kept for the sessions and the page" "$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["kind"])' "$T/a10/var/lib/sparky-stereo-graphics/problems/machine-record.json" 2>&1)" record-write
+check "gpu-record: kept for the sessions and the page" "$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["data"]["kind"])' "$T/a10/var/lib/sparky-stereo-problems/sparky-stereo-graphics_machine-record.json" 2>&1)" record-write
 chmod 755 "$T/a10/etc"
-check "gpu-record: written at last, the problem goes" "$("$BIN/sparky-stereo-gpu-record" --root "$T/a10" --machines "$SRC/share/machines" --apply-known; test -e "$T/a10/var/lib/sparky-stereo-graphics/problems/machine-record.json"; echo $?)" "written
+check "gpu-record: written at last, the problem goes" "$("$BIN/sparky-stereo-gpu-record" --root "$T/a10" --machines "$SRC/share/machines" --apply-known; test -e "$T/a10/var/lib/sparky-stereo-problems/sparky-stereo-graphics_machine-record.json"; echo $?)" "written
 1"
 
-echo "== the notification at login offers the GPUs that can draw, as the person's choice"
-cat >"$T/bus.conf" <<CONF
-<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN" "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
-<busconfig><type>session</type><listen>unix:path=$T/session-bus</listen><auth>EXTERNAL</auth>
-<policy context="default"><allow send_destination="*" eavesdrop="true"/><allow eavesdrop="true"/><allow own="*"/></policy></busconfig>
-CONF
-dbus-daemon --config-file="$T/bus.conf" --nofork >"$T/bus.log" 2>&1 &
-BUS=$!
-for i in $(seq 1 50); do [ -S "$T/session-bus" ] && break; sleep 0.1; done
-export DBUS_SESSION_BUS_ADDRESS=unix:path=$T/session-bus XDG_RUNTIME_DIR=$T/runtime
-mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
+echo "== the engine's notifier offers the GPUs that can draw, as the person's choice (ORDER 350)"
 rm -rf "$PROBLEMS"
 save '[General]\nMainGpu=pci-0000:09:00.0\n'
 env_for host --session >/dev/null 2>&1
-python3 -I "$SRC/autotests/fake-notifications.py" "$T/notified.json" "use:pci-0000:01:00.0" >"$T/fake.log" 2>&1 &
-FAKE=$!
-for i in $(seq 1 50); do grep -q ready "$T/fake.log" && break; sleep 0.1; done
-check "notify: exit 0 once the person chose" "$(SPARKY_STEREO_GRAPHICS_ROOT=$T/host timeout 20 "$BIN/sparky-stereo-gpu-env" --notify >/dev/null 2>"$T/err"; echo $?)" 0
-kill $FAKE 2>/dev/null; wait $FAKE 2>/dev/null
-check "notify: shown once, critical" "$(python3 -I -c 'import json,sys; n=json.load(open(sys.argv[1])); print(len(n), n[0]["urgency"])' "$T/notified.json" 2>&1)" "1 2"
-check "notify: the title" "$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))[0]["summary"])' "$T/notified.json" 2>&1)" "A graphics choice cannot be used"
-has "notify: what failed" "$T/notified.json" "is not in this computer now"
-check "notify: each GPU that can draw is an action" "$(python3 -I -c 'import json,sys; a=json.load(open(sys.argv[1]))[0]["actions"]; print(a[0::2])' "$T/notified.json" 2>&1)" "['default', 'use:pci-0000:0b:00.0', 'use:pci-0000:01:00.0', 'open']"
-check "notify: the person's answer is their new choice" "$(grep -c '^MainGpu=pci-0000:01:00.0$' "$CFG")" 1
-check "notify: the problem it answered goes" "$(test -e "$PROBLEMS/main-gpu.json"; echo $?)" 1
-check "notify: nothing new, nothing shown again" "$(SPARKY_STEREO_GRAPHICS_ROOT=$T/host timeout 20 "$BIN/sparky-stereo-gpu-env" --notify; echo $?)" 0
+L=$(sparky-stereo-problems list --json sparky-stereo-graphics)
+pick() { printf '%s' "$L" | python3 -I -c "import json,sys; p=[x for x in json.load(sys.stdin) if x['key'] == 'main-gpu'][0]; print($1)" 2>&1; }
+check "kept by the engine, failed (critical in the notification)" "$(pick 'p["severity"], p["scope"]')" "failed person"
+check "its title" "$(pick 'p["title"]')" "A graphics choice cannot be used"
+has "what failed" <(pick 'p["text"]') "is not in this computer now"
+check "each GPU that can draw is an action, then the page" "$(pick '[a["id"] for a in p["actions"]]')" "['use:pci-0000:0b:00.0', 'use:pci-0000:01:00.0', 'open']"
+check "the actions' labels" "$(pick 'p["labels"][1:]')" "['Use NVIDIA GeForce RTX 3060 Lite Hash Rate', 'Open Graphics settings']"
+check "the engine says what the page says" "$(pick 'p["text"]')" "$(env_for host --problems | sed -n 's/^  [^ ]*  //p' | head -n1)"
+L=$(LANG=de_DE.UTF-8 sparky-stereo-problems list --json sparky-stereo-graphics)
+check "the engine says what the page says, in German" "$(pick 'p["text"]')" "$(LANG=de_DE.UTF-8 env_for host --problems | sed -n 's/^  [^ ]*  //p' | head -n1)"
+check "in German, not the English" "$(pick 'p["text"] != p["text_en"] and p["lang"]')" "de"
+check "Use NAME saves that GPU as the person's choice (the action's command)" "$(env_for host --use main-gpu pci-0000:01:00.0; echo $?)" 0
+check "the person's answer is their new choice" "$(grep -c '^MainGpu=pci-0000:01:00.0$' "$CFG")" 1
+check "the problem it answered goes" "$(test -e "$(rec main-gpu)"; echo $?)" 1
+mkdir -p "$T/fakebin" && printf '#!/bin/sh\necho "$*" >>%s/systemctl.calls\n' "$T" >"$T/fakebin/systemctl" && chmod 755 "$T/fakebin/systemctl"
+check "--notify starts the session's notifier" "$(PATH=$T/fakebin:$PATH env_for host --notify; echo $?; cat "$T/systemctl.calls")" "0
+--user start sparky-stereo-problems-notifier.service"
 rm -f "$CFG"
 
 echo "no-fallbacks: $pass passed, $fail failed"
