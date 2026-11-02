@@ -36,8 +36,8 @@ usage: dpkg-stereo [--root DIR] [--map /etc=DIR ...] COMMAND
   --status                 what is projected, held, and left alone, and how many problems are kept
   --problems               the kept problems: what did not complete, why, and what repairs it (exit 1 while any)
   --repair                 run again what each kept problem names; what succeeds is cleared
-  --dismiss STEP           hide one kept problem (it comes back if the step fails again)
-  --notify                 the session's side: each kept problem once as a desktop notification
+  --dismiss STEP           hide one kept problem for you (it comes back if the step fails again)
+  --notify                 start the session's notifier, which shows every kept problem
 Options: --jobs N (parallel checks, default 4), --image (building an image), --if-changed (with
 --repair-consumers: try a waiting C or C++ file again only when its package, APT's lists or APT's cache
 changed since the last try, as the dpkg hooks do; the postinst uses it).
@@ -46,7 +46,8 @@ own step); DPKG_STEREO_NO_PROJECT=1 skips the first projection when the package 
 
 Nothing fails silently (Daniel, 2026-11-01: "either it works or not and the user must know"). A step that cannot
 do what it is for says what failed, why and what to do, in the system's language with the English line beside it,
-and keeps it in /var/lib/dpkg-stereo/problems/STEP.json until the step next succeeds or --repair fixes it. dpkg's
+and the edition's one engine (sparky-stereo-problems) keeps it in /var/lib/sparky-stereo-problems until the step
+next succeeds or --repair fixes it. dpkg's
 hooks still return 0, because dpkg stops its run when a hook fails ("cannot execute hook ... exit code"), and APT's
 update hook too, because APT then fails the whole update ("Problem executing scripts APT::Update::Post-Invoke-
 Success"); every file stays its package's original or a checked projection either way. --verify --deep that could
@@ -183,65 +184,74 @@ def say(key, args=(), stream=None):
         print(f'{TAG}: (en) {text(key, args, "en")}', file=stream, flush=True)
 
 
-def problem_path(P, step):
-    return P.state(PROBLEMS, step + '.json')
+def engine(P):
+    """The edition's one engine (sparky-stereo-problems, ORDER 350), over P's root; None, said, when it cannot load."""
+    os.environ['SPARKY_STEREO_ROOT'] = P.root
+    try:
+        import sparky_stereo_problems
+        return sparky_stereo_problems
+    except (ImportError, OSError) as error:
+        print(f'{TAG}: the problems engine cannot be loaded ({error}); what failed is said here only', file=sys.stderr,
+              flush=True)
+        return None
+
+
+def problems_store(P):
+    return P.root + '/var/lib/sparky-stereo-problems'
 
 
 def keep_problem(P, step, reason, detail='', repair=REPAIR, items=None, quiet=False):
     """Says (unless QUIET) and keeps that STEP did not complete, with REASON (one line, or [KEY, ARG...] for a
     message of the language files), DETAIL (the evidence: the end of a traceback or of a command's output), ITEMS
-    (what it could not do, for --repair) and the REPAIR command."""
+    (what it could not do, for --repair) and the REPAIR command, in the edition's one engine; its notifier shows it,
+    and its Repair runs dpkg-stereo --repair."""
     if not quiet:
         say('LOCAL8', [[STEPS[step]], reason])
-        say('LOCAL9', [P.state(PROBLEMS)])
+        say('LOCAL9', [problems_store(P)])
         say('LOCAL10', [repair])
-    args = [[STEPS[step]], reason]
-    entry = {'step': step, 'time': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
-             'text': text('LOCAL8', args, 'en'), 'key': 'LOCAL8', 'args': args, 'detail': detail[-20000:],
-             'items': items or [], 'repair': repair}
+    e = engine(P)
+    if e is None:
+        return False
     try:
-        os.makedirs(P.state(PROBLEMS), mode=0o755, exist_ok=True)
-        path = problem_path(P, step)
-        with open(path + '.new', 'w', encoding='utf-8') as f:
-            json.dump(entry, f, indent=1, ensure_ascii=False)
-            f.write('\n')
-        os.chmod(path + '.new', 0o644)
-        os.replace(path + '.new', path)
-    except OSError as error:
+        e.keep(TAG, step, 'LOCAL8', [[STEPS[step]], reason], scope=e.MACHINE, output=detail[-20000:] or None,
+               repair=[['dpkg-stereo', '--repair']], data={'items': items or [], 'repair': repair})
+    except e.Failed as error:
         # the record is the evidence the repair needs: that it could not be kept is said too
-        print(f'{TAG}: {P.state(PROBLEMS)}: {error}', file=sys.stderr, flush=True)
+        print(f'{TAG}: {error}', file=sys.stderr, flush=True)
+        if error.english != str(error):
+            print(f'{TAG}: (en) {error.english}', file=sys.stderr, flush=True)
         return False
     return True
 
 
 def clear_problem(P, step):
+    e = engine(P)
+    if e is None:
+        return False
     try:
-        os.unlink(problem_path(P, step))
-    except FileNotFoundError:
-        pass
-    except OSError as error:
-        print(f'{TAG}: {problem_path(P, step)}: {error}', file=sys.stderr, flush=True)
+        e.clear(TAG, step, scope=e.MACHINE)
+    except e.Failed as error:
+        print(f'{TAG}: {error}', file=sys.stderr, flush=True)
         return False
     return True
 
 
 def kept_problems(P):
-    """The kept records, oldest first; an unreadable one is shown as unreadable, never skipped."""
-    d = P.state(PROBLEMS)
-    try:
-        names = sorted(n for n in os.listdir(d) if n.endswith('.json'))
-    except FileNotFoundError:
+    """The kept records, oldest first, as the engine lists them; an unreadable one is shown as unreadable, never
+    skipped."""
+    e = engine(P)
+    if e is None:
         return []
     found = []
-    for name in names:
-        try:
-            with open(os.path.join(d, name), encoding='utf-8') as f:
-                entry = json.load(f)
-        except (OSError, ValueError) as error:
-            entry = {'step': name[:-5], 'time': '', 'unreadable': f'{os.path.join(d, name)}: {error}'}
-        entry['file'] = os.path.join(d, name)
-        found.append(entry)
-    return sorted(found, key=lambda e: e.get('time', ''))
+    for p in e.list(TAG):
+        if 'unreadable' in p:
+            found.append({'step': '-', 'time': '', 'unreadable': f'{p["file"]}: {p["unreadable"]}', 'file': p['file']})
+            continue
+        data = p.get('data') or {}
+        found.append({'step': p['key'], 'time': p['first'], 'text': p['text_en'], 'key': p['message'], 'args': p['args'],
+                      'detail': p['output'], 'items': data.get('items', []), 'repair': data.get('repair', REPAIR),
+                      'file': p['file'], 'hidden': p['hidden']})
+    return found
 
 
 def problem_text(entry, lang=None):
@@ -1989,14 +1999,21 @@ def show_problems(P):
         print(text('LOCAL17'))
         return 0
     lang = language(P)
+    shown = 0
     for entry in kept:
-        print(f'[{entry.get("time", "")}] {entry.get("step", "")}: {problem_text(entry, lang)}')
+        hidden = ''
+        if entry.get('hidden'):
+            e = engine(P)
+            hidden = f' [{e.render("sparky-stereo-problems", "LOCAL24")["text"]}]' if e else ' [hidden]'
+        else:
+            shown += 1
+        print(f'[{entry.get("time", "")}] {entry.get("step", "")}: {problem_text(entry, lang)}{hidden}')
         if lang != 'en' and not entry.get('unreadable'):
             print(f'  (en) {problem_text(entry, "en")}')
         if entry.get('repair'):
             print('  ' + text('LOCAL10', [entry['repair']], lang))
         print(f'  {entry["file"]}')
-    return 1
+    return 1 if shown else 0
 
 
 def repair(P, jobs):
@@ -2042,53 +2059,24 @@ def repair(P, jobs):
 
 
 def dismiss(P, step):
+    """The engine's Hide: the problem stays listed, hidden for you until it fails again."""
     found = [e.get('step') for e in kept_problems(P)]
     if step not in found:
         print(text('LOCAL21', [step, ', '.join(found) or '-']))
         return 1
-    if not clear_problem(P, step):
+    e = engine(P)
+    try:
+        e.hide(TAG, step, scope=e.MACHINE)
+    except e.Failed as error:
+        print(f'{TAG}: {error}', file=sys.stderr, flush=True)
         return 1
     print(text('LOCAL22', [[STEPS.get(step, 'LOCAL3')]]))
     return 0
 
 
 def notify(P):
-    """The session's side: each kept problem once per session and record, as a critical notification
-    (org.freedesktop.Notifications: it stays until the person closes it)."""
-    runtime = os.environ.get('XDG_RUNTIME_DIR', '')
-    seen_file = os.path.join(runtime, 'dpkg-stereo-notified') if runtime else ''
-    try:
-        with open(seen_file, encoding='utf-8') as f:
-            seen = set(f.read().split())
-    except OSError:
-        seen = set()
-    result = 0
-    for entry in kept_problems(P):
-        ident = f'{entry.get("step")}@{entry.get("time", "")}'
-        if ident in seen:
-            continue
-        body = f'{problem_text(entry)}\n{text("LOCAL24")}'
-        try:
-            call = subprocess.run(['busctl', '--user', 'call', 'org.freedesktop.Notifications',
-                                   '/org/freedesktop/Notifications', 'org.freedesktop.Notifications', 'Notify',
-                                   'susssasa{sv}i', 'Sparky Stereo OS', '0', 'dialog-warning', text('LOCAL16'), body,
-                                   '0', '1', 'urgency', 'y', '2', '0'], capture_output=True, text=True, timeout=60)
-            error = call.stderr.strip() if call.returncode else ''
-        except (OSError, subprocess.SubprocessError) as e:
-            error = error_line(e)
-        if error:
-            print(f'{TAG}: the notification could not be shown ({error}): {problem_text(entry, "en")}', file=sys.stderr)
-            result = 1
-            continue
-        seen.add(ident)
-    if seen_file:
-        try:
-            with open(seen_file + '.new', 'w', encoding='utf-8') as f:
-                f.write('\n'.join(sorted(seen)) + '\n')
-            os.replace(seen_file + '.new', seen_file)
-        except OSError as error:
-            print(f'{TAG}: {seen_file}: {error}', file=sys.stderr)
-    return result
+    """The session's notifier (sparky-stereo-problems-plasma) shows every kept problem: this starts it."""
+    return subprocess.run(['systemctl', '--user', 'start', 'sparky-stereo-problems-notifier.service']).returncode
 
 
 def main():
@@ -2160,6 +2148,9 @@ def main():
             keep_problem(P, step, error_line(e), detail=detail)
             say('LOCAL11')
         return 0
+    if a.dismiss:
+        # the engine's Hide is the person's own: no lock, no administrator
+        return dismiss(P, a.dismiss)
     # the commands that change the system: an error is said and kept (the step's name), and the command fails
     step = ('project' if a.project is not None else 'restore' if a.restore is not None or a.hold
             else 'repair-consumers' if a.repair_consumers else 'fetch-hr' if a.fetch_hr else None)
@@ -2189,8 +2180,6 @@ def run_command(P, a):
         return repair_consumers(P, a.jobs, force=not a.if_changed)
     if a.repair:
         return repair(P, a.jobs)
-    if a.dismiss:
-        return dismiss(P, a.dismiss)
     if a.hold:
         rc = restore(P, [a.hold])
         with open(P.state(HOLD), 'a', encoding='utf-8') as f:

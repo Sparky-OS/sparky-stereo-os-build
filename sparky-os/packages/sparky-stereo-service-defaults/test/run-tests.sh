@@ -10,8 +10,10 @@ SD=${SD:-/usr/lib/systemd/system}
 LANGDIR=${SPARKY_SERVICE_DEFAULTS_LANGDIR:-/usr/share/sparky/sparky-stereo-service-defaults}
 T=${T:-sparky-stereo-service-defaults}
 ok() { if eval "$2"; then echo "PASS $1"; else echo "FAIL $1"; FAILS=$((FAILS + 1)); fi; }
-fresh() { SPARKY_SERVICE_DEFAULTS_STATE=$(mktemp -d); export SPARKY_SERVICE_DEFAULTS_STATE; }
-kept() { [ -s "$SPARKY_SERVICE_DEFAULTS_STATE/problems/$1.json" ] && grep -q "\"key\": \"$2\"" "$SPARKY_SERVICE_DEFAULTS_STATE/problems/$1.json"; }
+# the problems are kept by the engine (sparky-stereo-problems, ORDER 350) under a root of the case's own
+fresh() { SPARKY_STEREO_ROOT=$(mktemp -d); export SPARKY_STEREO_ROOT; }
+rec() { echo "$SPARKY_STEREO_ROOT/var/lib/sparky-stereo-problems/sparky-stereo-service-defaults_$1.json"; }
+kept() { [ -s "$(rec "$1")" ] && grep -q "\"message\":\"$2\"" "$(rec "$1")"; }
 # the value of one directive of a drop-in, all of them when it repeats
 directive() { sed -n "s/^$2=//p" "$SD/$1/sparky-stereo.conf" 2>/dev/null; }
 F=$(mktemp -d); export FAKE=$F
@@ -40,7 +42,7 @@ export SPARKY_SERVICE_DEFAULTS_IP=$F/ip SPARKY_SERVICE_DEFAULTS_SYSTEMCTL=$F/sys
 
 # every drop-in of a service this package sets says its failure: OnFailure names the handler
 for u in snmptt.service pkcs11-daemon.service urfkill.service ipwatchd.service xfs_healer@.service; do
-	ok "$u: OnFailure= names sparky-stereo-service-problem@" '[ "$(directive $u.d OnFailure)" = "sparky-stereo-service-problem@%n.service" ]'
+	ok "$u: OnFailure= is emptied, then names sparky-stereo-service-problem@" '[ "$(directive $u.d OnFailure | tr "\\n" " ")" = " sparky-stereo-service-problem@%n.service " ]'
 done
 ok "the failure handler unit is installed" '[ -s "$SD/sparky-stereo-service-problem@.service" ] && grep -q "^ExecStart=/usr/bin/sparky-stereo-service-defaults record %i$" "$SD/sparky-stereo-service-problem@.service"'
 # U14, U15, U16: no condition hides a service whose need is not met
@@ -56,7 +58,7 @@ out=$(PATH=$F:$PATH LANG=C sh -c "$cond" 2>&1); rc=$?
 ok "U53 ipwatchd: an IPv4 address: needed (0)" '[ "$rc" = 0 ]'
 : >"$F/addresses"
 out=$(PATH=$F:$PATH LANG=C sh -c "$cond" 2>&1); rc=$?
-ok "U53 ipwatchd: no IPv4 address yet: a skip (1), said, nothing kept" '[ "$rc" = 1 ] && echo "$out" | grep -q "waits for an IPv4 address" && [ ! -e "$SPARKY_SERVICE_DEFAULTS_STATE/problems/ipwatchd.service.json" ]'
+ok "U53 ipwatchd: no IPv4 address yet: a skip (1), said, nothing kept" '[ "$rc" = 1 ] && echo "$out" | grep -q "waits for an IPv4 address" && [ ! -e "$(rec ipwatchd.service)" ]'
 : >"$F/ip-fails"
 out=$(PATH=$F:$PATH INVOCATION_ID=probe-run LANG=C sh -c "$cond" 2>&1); rc=$?
 ok "U53 ipwatchd: a failed probe is not \"no address\": the unit fails (255)" '[ "$rc" = 255 ]'
@@ -68,7 +70,7 @@ PATH=$F:$PATH LANG=C $T record ipwatchd.service 2>/dev/null
 ok "U53 ipwatchd: the failure handler keeps the probe's reason for that run" 'kept ipwatchd.service LOCAL5'
 rm -f "$F/ip-fails"; printf '2: eth0    inet 192.0.2.5/24 scope global eth0\n' >"$F/addresses"
 PATH=$F:$PATH LANG=C sh -c "$cond" >/dev/null 2>&1
-ok "U53 ipwatchd: a probe that works again clears it" '[ ! -e "$SPARKY_SERVICE_DEFAULTS_STATE/problems/ipwatchd.service.json" ]'
+ok "U53 ipwatchd: a probe that works again clears it" '[ ! -e "$(rec ipwatchd.service)" ]'
 
 # the failure handler: what each service needs, from its own output and configuration
 R=$(mktemp -d); export SPARKY_SERVICE_DEFAULTS_ROOT=$R
@@ -81,7 +83,7 @@ if perl -MNet::IP -e 1 2>/dev/null; then
 	echo "FAIL U14: Net::IP is installed in this bench, the missing-module case cannot run"; FAILS=$((FAILS + 1))
 else
 	ok "U14 snmptt without Net::IP: said with what to install" 'echo "$out" | grep -q "turns IPv6 on (ipv6_enable = 1), which needs the Perl module Net::IP" && echo "$out" | grep -q "sudo apt-get install libnet-ip-perl"'
-	ok "U14 snmptt: kept with its own lines as evidence" 'kept snmptt.service LOCAL2 && grep -q "Could not load the Perl module Net::IP" "$SPARKY_SERVICE_DEFAULTS_STATE/problems/snmptt.service.json"'
+	ok "U14 snmptt: kept with its own lines as evidence" 'kept snmptt.service LOCAL2 && grep -q "Could not load the Perl module Net::IP" "$(rec snmptt.service)"'
 fi
 ok "the handler reads only that run's lines" 'grep -q "_SYSTEMD_INVOCATION_ID=run-1" "$F/journal-args"'
 fresh; printf 'PKCS11_DAEMON_SOCKET="tls://[::1]:2345"\nPKCS11_LIB=/usr/lib/softhsm/libsofthsm2.so\n' >"$R/etc/default/pkcs11-daemon"
@@ -101,7 +103,7 @@ fresh; printf '/: Input/output error\n' >"$F/journal"
 out=$(PATH=$F:$PATH LANG=C $T record xfs_healer@-.service 2>&1)
 ok "U53 xfs_healer@-: a real failure is said with the healer's own line, and kept" 'kept xfs_healer@-.service LOCAL1 && echo "$out" | grep -q "The service xfs_healer@-.service could not start: /: Input/output error"'
 PATH=$F:$PATH $T clear xfs_healer@-.service
-ok "a unit that starts clears its record (ExecStartPost)" '[ ! -e "$SPARKY_SERVICE_DEFAULTS_STATE/problems/xfs_healer@-.service.json" ]'
+ok "a unit that starts clears its record (ExecStartPost)" '[ ! -e "$(rec xfs_healer@-.service)" ]'
 unset SPARKY_SERVICE_DEFAULTS_ROOT
 
 # status, dismiss, repair, notify
@@ -109,22 +111,24 @@ fresh; printf 'Result=exit-code\nExecMainStatus=1\nInvocationID=run-2\n' >"$F/sh
 PATH=$F:$PATH LANG=C $T record ipwatchd.service 2>/dev/null
 out=$(LANG=C $T status 2>&1); rc=$?
 ok "status lists the kept problem and exits 1" '[ "$rc" = 1 ] && echo "$out" | grep -q "The service ipwatchd.service could not start: it broke"'
-cat >"$F/busctl" <<'EOS'
-#!/bin/sh
-echo "$*" >>"$FAKE/notified"
-EOS
-chmod 755 "$F/busctl"; export XDG_RUNTIME_DIR=$(mktemp -d)
-PATH=$F:$PATH LANG=pt_BR.UTF-8 $T notify; PATH=$F:$PATH LANG=pt_BR.UTF-8 $T notify
-ok "notify: once, in the session's language" '[ "$(grep -c Notify "$F/notified")" = 1 ] && grep -q "O serviço ipwatchd.service não pôde iniciar: it broke" "$F/notified"'
+# the session's notifier shows the problems now (sparky-stereo-problems-plasma): notify starts it
+NF=$(mktemp -d)
+printf '#!/bin/sh\necho "$*" >>%s/systemctl.log\n' "$NF" >"$NF/systemctl"; chmod 755 "$NF/systemctl"
+PATH=$NF:$PATH LANG=C $T notify
+ok "notify: starts the session's notifier, which shows every problem" 'grep -q "^--user start sparky-stereo-problems-notifier.service$" "$NF/systemctl.log"'
+LANG=pt_BR.UTF-8 $T status >"$F/status-pt" 2>&1
+ok "status in the session's language" 'grep -q "O serviço ipwatchd.service não pôde iniciar: it broke" "$F/status-pt"'
 : >"$F/restart-fails"
 out=$(PATH=$F:$PATH LANG=C $T repair 2>&1); rc=$?
 ok "repair: a unit that fails again stays kept (exit 1)" '[ "$rc" = 1 ] && kept ipwatchd.service LOCAL1 && grep -q "restart ipwatchd.service" "$F/restarted"'
 rm -f "$F/restart-fails"
 out=$(PATH=$F:$PATH LANG=C $T repair 2>&1); rc=$?
-ok "repair: a unit that starts is cleared (exit 0)" '[ "$rc" = 0 ] && echo "$out" | grep -q "Repaired: ipwatchd.service" && [ ! -e "$SPARKY_SERVICE_DEFAULTS_STATE/problems/ipwatchd.service.json" ]'
+ok "repair: a unit that starts is cleared (exit 0)" '[ "$rc" = 0 ] && echo "$out" | grep -q "Repaired: ipwatchd.service" && [ ! -e "$(rec ipwatchd.service)" ]'
 PATH=$F:$PATH LANG=C $T record ipwatchd.service 2>/dev/null
 out=$(LANG=C $T dismiss ipwatchd.service 2>&1); rc=$?
-ok "dismiss: said, status no longer counts it, notify does not show it" '[ "$rc" = 0 ] && LANG=C $T status >/dev/null 2>&1 && export XDG_RUNTIME_DIR=$(mktemp -d) && PATH=$F:$PATH LANG=C $T notify && [ "$(grep -c Notify "$F/notified")" = 1 ]'
+ok "dismiss: said, status no longer counts it" '[ "$rc" = 0 ] && LANG=C $T status >/dev/null 2>&1'
+ok "dismiss is the engine's Hide: kept listed, hidden for you" 'sparky-stereo-problems list --json | python3 -c "import json,sys; d=[p for p in json.load(sys.stdin) if p.get(\"key\") == \"ipwatchd.service\"]; sys.exit(0 if d and d[0][\"hidden\"] else 1)"'
+ok "each drop-in empties OnFailure= before its own handler: one notification per failure" '[ "$(directive snmptt.service.d OnFailure | head -n1)" = "" ] && [ "$(directive snmptt.service.d OnFailure | sed -n 2p)" = "sparky-stereo-service-problem@%n.service" ]'
 
 # NetworkManager's dispatcher: a check that fails is said and kept
 NMD=/usr/lib/NetworkManager/dispatcher.d/90-sparky-stereo-ipwatchd
@@ -135,7 +139,7 @@ if [ -x /usr/sbin/ipwatchd ]; then
 	ok "dispatcher: a failed is-enabled is said and kept" 'kept ipwatchd.service LOCAL7 && echo "$out" | grep -q "NetworkManager could not start ipwatchd.service for the new address"'
 	fresh; echo disabled >"$F/enabled"; : >"$F/restarted"
 	PATH=$F:$PATH "$NMD" eth0 up >/dev/null 2>&1
-	ok "dispatcher: a disabled ipwatchd is left alone" '[ ! -s "$F/restarted" ] && [ ! -e "$SPARKY_SERVICE_DEFAULTS_STATE/problems/ipwatchd.service.json" ]'
+	ok "dispatcher: a disabled ipwatchd is left alone" '[ ! -s "$F/restarted" ] && [ ! -e "$(rec ipwatchd.service)" ]'
 	echo enabled >"$F/enabled"
 	PATH=$F:$PATH "$NMD" eth0 up >/dev/null 2>&1
 	ok "dispatcher: an enabled ipwatchd is restarted" 'grep -q "restart ipwatchd.service" "$F/restarted"'

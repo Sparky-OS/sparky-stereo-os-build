@@ -10,7 +10,9 @@
 //   sparky-stereo-gpu-env --session     the KWIN_DRM_DEVICES line for the next login, nothing when Automatic
 //   sparky-stereo-gpu-env --list        the GPUs, one line each (--json for a machine reader)
 //   sparky-stereo-gpu-env --problems    what is kept: each choice that cannot be used, each failed step of the package
-//   sparky-stereo-gpu-env --notify      the session's side: each kept problem as a notification (once per session)
+//   sparky-stereo-gpu-env --notify      starts the session's notifier (sparky-stereo-problems-plasma), which shows the
+//                                       kept problems
+//   sparky-stereo-gpu-env --use KEY GPU "Use NAME" of a kept problem: saves GPU as the person's choice for KEY
 //
 // --3d: the program presents 3D, so Automatic is the GPU measured best on this machine (the machine record,
 // sparky-stereo-gpu-record), whatever the power profile, as it always is for players.
@@ -32,7 +34,6 @@
 #include "gpuinventory.h"
 #include "graphicssettings.h"
 #include "machinerecord.h"
-#include "notifier.h"
 #include "powerprofiles.h"
 #include "problems.h"
 #include "resolver.h"
@@ -63,7 +64,7 @@ static int usage(const QString &problem)
     QTextStream err(stderr);
     err << problem
         << "\nUsage: sparky-stereo-gpu-env [--category C | --app ID | --choice X] [--3d] [--profile P] [--root DIR] [--print what] [--shell] [--ask] | --session | "
-           "--list [--json] | --problems | --notify\n";
+           "--list [--json] | --problems | --notify | --use KEY GPU\n";
     return 2;
 }
 
@@ -148,6 +149,8 @@ int main(int argc, char **argv)
     bool askChoice = false;
     bool problems = false;
     bool notify = false;
+    QString useKey;
+    QString useGpu;
     for (int i = 0; i < args.size(); ++i) {
         const QString &arg = args.at(i);
         const auto value = [&]() -> QString {
@@ -181,14 +184,44 @@ int main(int argc, char **argv)
             problems = true;
         } else if (arg == u"--notify"_s) {
             notify = true;
+        } else if (arg == u"--use"_s) {
+            useKey = value();
+            useGpu = value();
         } else {
             return usage(u"Unknown argument %1"_s.arg(arg));
         }
     }
 
     if (notify) {
-        Notifier notifier(root);
-        return notifier.run();
+        // the edition's one engine and its session notifier show the kept problems (ORDER 350): this starts it
+        return QProcess::execute(u"systemctl"_s, {u"--user"_s, u"start"_s, u"sparky-stereo-problems-notifier.service"_s});
+    }
+    if (!useKey.isEmpty()) {
+        // "Use NAME" of a kept problem: the person's explicit choice of a GPU that can draw, saved; the problem of the
+        // old choice is over
+        if (useGpu.isEmpty()) {
+            return usage(i18nc("@info:shell --use, KEY and GPU stay as they are", "--use needs KEY and GPU"));
+        }
+        GraphicsSettings settings;
+        if (useKey == u"main-gpu"_s) {
+            settings.setMainGpu(useGpu);
+        } else {
+            bool found = false;
+            for (Category category : allCategories()) {
+                if (categoryKey(category).toLower() == useKey) {
+                    settings.setRenderChoice(category, useGpu);
+                    found = true;
+                }
+            }
+            if (!found) {
+                return usage(i18nc("@info:shell %1 is the KEY given to --use: main-gpu or a kind of program", "Unknown kind %1", useKey));
+            }
+        }
+        if (!settings.save()) {
+            QTextStream(stderr) << "sparky-stereo-gpu-env: " << i18nc("@info", "The graphics settings could not be saved.") << '\n';
+            return 3;
+        }
+        return Problems::clear(useKey, Problems::userDir()) ? 0 : 3;
     }
     QTextStream out(stdout);
     if (problems) {

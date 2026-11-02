@@ -9,8 +9,10 @@ T=${T:-sparky-stereo-time}
 TSV=${SPARKY_TIME_TSV:-/usr/share/sparky-stereo-time/ntp-countries.tsv}
 LANGDIR=${SPARKY_TIME_LANGDIR:-/usr/share/sparky/sparky-stereo-time}
 FAILS=0
-# problems of the cases are kept here, never in the system's /var/lib
-export SPARKY_TIME_STATE=$(mktemp -d)
+# problems of the cases are kept by the engine (sparky-stereo-problems) under this root, never in the system's /var/lib
+export SPARKY_STEREO_ROOT=$(mktemp -d)
+# a problem's record in the engine's machine store
+rec() { echo "$SPARKY_STEREO_ROOT/var/lib/sparky-stereo-problems/sparky-stereo-time_$1.json"; }
 check() { # name, zone, expected-grep-pattern(s) joined by |, absent-pattern
 	local out
 	out=$(LANG=C $T --print --zone "$2" 2>&1)
@@ -139,9 +141,9 @@ SPARKY_TIME_BUSCTL=$F/busctl SPARKY_TIME_TOOL=$F/tool "$W"; rc=$?
 [ "$rc" = 1 ] && echo "PASS watcher exits 1 when the monitor ends (systemd restarts it)" || { echo "FAIL watcher exit $rc"; FAILS=$((FAILS + 1)); }
 # ---- ORDER 346c: nothing fails silently (Daniel, 2026-11-01). Each case below fails on 20261029~sparky9~0.
 ok() { if eval "$2"; then echo "PASS $1"; else echo "FAIL $1"; FAILS=$((FAILS + 1)); fi; }
-kept() { [ -s "$SPARKY_TIME_STATE/problems/$1.json" ] && grep -q "\"key\": \"$2\"" "$SPARKY_TIME_STATE/problems/$1.json"; }
-# a new, empty state folder for the next case
-fresh() { SPARKY_TIME_STATE=$(mktemp -d); export SPARKY_TIME_STATE; }
+kept() { [ -s "$(rec "$1")" ] && grep -q "\"message\":\"$2\"" "$(rec "$1")"; }
+# a new, empty engine root for the next case
+fresh() { SPARKY_STEREO_ROOT=$(mktemp -d); export SPARKY_STEREO_ROOT; }
 NOBODY="setpriv --reuid=65534 --regid=65534 --clear-groups"
 # U12: a catalogue that cannot be read is said and kept, and the sources in use stay as they are
 fresh; D=$(mktemp -d); chmod 777 "$D"; export SPARKY_TIME_OUT=$D/s.sources
@@ -166,12 +168,12 @@ out=$(SPARKY_TIME_ZONEINFO=$Z2 LANG=C $T --print --zone America/Sao_Paulo 2>&1);
 ok "U12 missing timezone tables: exit 3, not taken as no national service" '[ "$rc" = 3 ] && echo "$out" | grep -q "The timezone tables in $Z2 could not be read" && ! echo "$out" | grep -q -E "^pool|No national"'
 # U12: the problem is cleared when the step works again, and the sources are written
 out=$(LANG=C $T --zone Europe/Paris --no-reload 2>&1); rc=$?
-ok "U12 repaired catalogue: written, the problem cleared" '[ "$rc" = 0 ] && grep -q "server ntp.obspm.fr iburst nts" "$SPARKY_TIME_OUT" && [ ! -e "$SPARKY_TIME_STATE/problems/catalogue.json" ]'
+ok "U12 repaired catalogue: written, the problem cleared" '[ "$rc" = 0 ] && grep -q "server ntp.obspm.fr iburst nts" "$SPARKY_TIME_OUT" && [ ! -e "$(rec catalogue)" ]'
 # the policy is said: the sources chosen, the pool where it completes the country's servers
 ok "the chosen sources are said, the pool beside one NTS server too" 'echo "$out" | grep -q "^Time sources: ntp.obspm.fr (NTS), debian.pool.ntp.org (maxsources 2)$"'
 # U13: a file that cannot be written is said, never announced as written
-fresh; chmod 777 "$SPARKY_TIME_STATE"; R=$(mktemp -d); chmod 555 "$R"
-out=$(SPARKY_TIME_OUT=$R/sub/s.sources LANG=C $NOBODY $T --zone Europe/Paris --no-reload 2>&1); rc=$?
+fresh; XS=$(mktemp -d); chmod 777 "$XS"; R=$(mktemp -d); chmod 555 "$R"
+out=$(SPARKY_TIME_OUT=$R/sub/s.sources XDG_STATE_HOME=$XS LANG=C $NOBODY $T --zone Europe/Paris --no-reload 2>&1); rc=$?
 ok "U13 unwritable sources: exit 4, said, not announced as written" '[ "$rc" = 4 ] && echo "$out" | grep -q "could not be written to" && ! echo "$out" | grep -q "written$"'
 # the nine languages, from the installed language files
 for l in en_US pl_PL pt_BR fr_FR de_DE ja_JP ko_KR zh_CN zh_TW; do
@@ -208,11 +210,11 @@ echo active >"$F/state"; : >"$F/reload-fails"
 out=$(PATH=$F:$PATH LANG=C $T --zone Europe/Copenhagen 2>&1); rc=$?
 ok "U13 a running chrony refuses the reload: exit 4" '[ "$rc" = 4 ]'
 ok "U13 the refusal is said with chronyc's answer" 'echo "$out" | grep -q "chrony did not take the new time servers: chronyc reload sources ended with exit status 1" && echo "$out" | grep -q "501 Not authorised"'
-ok "U13 the refusal is kept with its evidence" 'kept apply LOCAL14 && grep -q "501 Not authorised" "$SPARKY_TIME_STATE/problems/apply.json"'
+ok "U13 the refusal is kept with its evidence" 'kept apply LOCAL14 && grep -q "501 Not authorised" "$(rec apply)"'
 ok "U13 a refusal is not reported as chrony not running" '! echo "$out" | grep -q "chrony is not running"'
 mv "$F/reload-fails" "$F/reload-works"
 out=$(PATH=$F:$PATH LANG=C $T --zone Europe/Copenhagen 2>&1); rc=$?
-ok "U13 the reload works again: exit 0, the problem cleared" '[ "$rc" = 0 ] && [ ! -e "$SPARKY_TIME_STATE/problems/apply.json" ]'
+ok "U13 the reload works again: exit 0, the problem cleared" '[ "$rc" = 0 ] && [ ! -e "$(rec apply)" ]'
 : >"$F/restart-fails"
 out=$(PATH=$F:$PATH LANG=C $T --zone America/Sao_Paulo 2>&1); rc=$?
 ok "U13 a new authselectmode that chrony's restart does not take: exit 4, kept" '[ "$rc" = 4 ] && kept apply LOCAL14 && echo "$out" | grep -q "systemctl try-restart chrony.service ended with exit status 1"'
@@ -221,7 +223,7 @@ out=$(PATH=$F:$PATH LANG=C $T --zone America/Sao_Paulo 2>&1); rc=$?
 ok "U13 a failed chrony: exit 4, said and kept" '[ "$rc" = 4 ] && kept chrony LOCAL15 && echo "$out" | grep -q "chrony has failed, so the clock is not kept"'
 fresh; echo inactive >"$F/state"
 out=$(PATH=$F:$PATH LANG=C $T --zone America/Sao_Paulo 2>&1); rc=$?
-ok "a stopped chrony reads the sources at its start: exit 0, said, nothing kept" '[ "$rc" = 0 ] && echo "$out" | grep -q "chrony is not running" && [ ! -e "$SPARKY_TIME_STATE/problems/chrony.json" ]'
+ok "a stopped chrony reads the sources at its start: exit 0, said, nothing kept" '[ "$rc" = 0 ] && echo "$out" | grep -q "chrony is not running" && [ ! -e "$(rec chrony)" ]'
 
 # the time source that cannot be reached: --check reads chrony's reachability of the servers this tool chose
 fresh; echo active >"$F/state"; echo 'default via 192.0.2.1 dev eth0' >"$F/route"
@@ -233,40 +235,38 @@ out=$(PATH=$F:$PATH LANG=C $T --check 2>&1); rc=$?
 ok "reach: none of the chosen servers answers: exit 5" '[ "$rc" = 5 ]'
 ok "reach: said, with what the clock follows instead" 'echo "$out" | grep -q "None of the time servers chosen for BR (America/Sao_Paulo) answers: gps.ntp.br, a.st1.ntp.br, c.st1.ntp.br, d.st1.ntp.br, e.st1.ntp.br. The clock follows 2.debian.pool.ntp.org instead."'
 ok "reach: kept" 'kept reach LOCAL17'
-first=$(sed -n 's/.*"time": "\(.*\)".*/\1/p' "$SPARKY_TIME_STATE/problems/reach.json"); sleep 1
+first=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["first"])' "$(rec reach)"); sleep 1
 PATH=$F:$PATH LANG=C $T --check >/dev/null 2>&1
-ok "reach: found again, it keeps the time it was first found (shown once)" '[ -n "$first" ] && [ "$(sed -n "s/.*\"time\": \"\(.*\)\".*/\1/p" "$SPARKY_TIME_STATE/problems/reach.json")" = "$first" ]'
+ok "reach: found again, it keeps the time it was first found (shown once)" '[ -n "$first" ] && [ "$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))[\"first\"])" "$(rec reach)")" = "$first" ]'
 sed -i 's/^\^,?,gps.ntp.br,0,6,0,/^,*,gps.ntp.br,1,6,377,/; s/^\^,\*,2.debian/^,-,2.debian/' "$F/sources"
 out=$(PATH=$F:$PATH LANG=C $T --check 2>&1); rc=$?
-ok "reach: a server answers again: exit 0, cleared, said" '[ "$rc" = 0 ] && [ ! -e "$SPARKY_TIME_STATE/problems/reach.json" ] && echo "$out" | grep -q "The chosen time servers answer: gps.ntp.br." && echo "$out" | grep -q "The clock follows gps.ntp.br."'
+ok "reach: a server answers again: exit 0, cleared, said" '[ "$rc" = 0 ] && [ ! -e "$(rec reach)" ] && echo "$out" | grep -q "The chosen time servers answer: gps.ntp.br." && echo "$out" | grep -q "The clock follows gps.ntp.br."'
 sed -i 's/^\^,\*,gps.ntp.br,1,6,377,/^,?,gps.ntp.br,0,6,0,/' "$F/sources"; : >"$F/route"
 out=$(PATH=$F:$PATH LANG=C $T --check 2>&1); rc=$?
-ok "reach: no network is not a server problem: exit 0, said, nothing kept" '[ "$rc" = 0 ] && echo "$out" | grep -q "No network" && [ ! -e "$SPARKY_TIME_STATE/problems/reach.json" ]'
+ok "reach: no network is not a server problem: exit 0, said, nothing kept" '[ "$rc" = 0 ] && echo "$out" | grep -q "No network" && [ ! -e "$(rec reach)" ]'
 echo 'default via 192.0.2.1 dev eth0' >"$F/route"; touch "$SPARKY_TIME_OUT"
 out=$(PATH=$F:$PATH LANG=C $T --check 2>&1); rc=$?
-ok "reach: sources changed a moment ago are checked later, not judged" '[ "$rc" = 0 ] && echo "$out" | grep -q "checked later" && [ ! -e "$SPARKY_TIME_STATE/problems/reach.json" ]'
+ok "reach: sources changed a moment ago are checked later, not judged" '[ "$rc" = 0 ] && echo "$out" | grep -q "checked later" && [ ! -e "$(rec reach)" ]'
 touch -d '10 minutes ago' "$SPARKY_TIME_OUT"
 
 # status, dismiss, repair and the session's notification
 fresh; PATH=$F:$PATH LANG=C $T --check >/dev/null 2>&1
 out=$(LANG=C $T --status 2>&1); rc=$?
 ok "status lists the kept problem and exits 1" '[ "$rc" = 1 ] && echo "$out" | grep -q "None of the time servers chosen"'
-cat >"$F/busctl" <<'EOS'
-#!/bin/sh
-echo "$*" >>"$FAKE/notified"
-EOS
-chmod 755 "$F/busctl"; export XDG_RUNTIME_DIR=$(mktemp -d)
-PATH=$F:$PATH LANG=de_DE.UTF-8 $T --notify; PATH=$F:$PATH LANG=de_DE.UTF-8 $T --notify
-ok "notify: shown once, in the session's language" '[ "$(grep -c Notify "$F/notified")" = 1 ] && grep -q "Keiner der für BR (America/Sao_Paulo) gewählten Zeitserver antwortet" "$F/notified"'
+# the session's notifier shows the problems now (sparky-stereo-problems-plasma): --notify starts it
+NF=$(mktemp -d)
+printf '#!/bin/sh\necho "$*" >>%s/systemctl.log\n' "$NF" >"$NF/systemctl"; chmod 755 "$NF/systemctl"
+PATH=$NF:$PATH LANG=C $T --notify
+ok "notify: starts the session's notifier, which shows every problem" 'grep -q "^--user start sparky-stereo-problems-notifier.service$" "$NF/systemctl.log"'
+export XDG_STATE_HOME=$(mktemp -d)
 out=$(LANG=C $T --dismiss reach 2>&1); rc=$?
-ok "dismiss: said, and status no longer counts it" '[ "$rc" = 0 ] && LANG=C $T --status >/dev/null 2>&1'
-export XDG_RUNTIME_DIR=$(mktemp -d); PATH=$F:$PATH LANG=C $T --notify
-ok "dismiss: not shown again, in a new session either" '[ "$(grep -c Notify "$F/notified")" = 1 ]'
+ok "dismiss: said, and status no longer counts it" '[ "$rc" = 0 ] && echo "$out" | grep -q "reach is not shown again until it changes or is repaired." && LANG=C $T --status >/dev/null 2>&1'
+ok "dismiss is the engine's Hide: kept listed, hidden for you" 'sparky-stereo-problems list --json | python3 -c "import json,sys; d=[p for p in json.load(sys.stdin) if p.get(\"key\") == \"reach\"]; sys.exit(0 if d and d[0][\"hidden\"] else 1)"'
 PATH=$F:$PATH LANG=C $T --check >/dev/null 2>&1
-ok "dismiss: the same problem found again stays dismissed" 'grep -q "\"dismissed\": true" "$SPARKY_TIME_STATE/problems/reach.json"'
+ok "dismiss: the same problem found again stays hidden" 'sparky-stereo-problems list --json | python3 -c "import json,sys; d=[p for p in json.load(sys.stdin) if p.get(\"key\") == \"reach\"]; sys.exit(0 if d and d[0][\"hidden\"] else 1)"'
 sed -i 's/^\^,?,gps.ntp.br,0,6,0,/^,*,gps.ntp.br,1,6,377,/' "$F/sources"
 out=$(PATH=$F:$PATH SPARKY_TIME_SELF=$(command -v $T) LANG=C $T --repair 2>&1); rc=$?
-ok "repair runs the check again; a server answers: repaired, cleared" '[ "$rc" = 0 ] && echo "$out" | grep -q "Repaired: reach" && [ ! -e "$SPARKY_TIME_STATE/problems/reach.json" ]'
+ok "repair runs the check again; a server answers: repaired, cleared" '[ "$rc" = 0 ] && echo "$out" | grep -q "Repaired: reach" && [ ! -e "$(rec reach)" ]'
 unset SPARKY_TIME_LOCALTIME
 
 # U13: the watcher's monitor that cannot listen is said and kept; the tool is not run
@@ -274,7 +274,7 @@ fresh; W2=$(command -v sparky-stereo-time-watch || echo "$(dirname "$T")/sparky-
 printf '#!/bin/sh\necho "Failed to connect to bus: No such file or directory" >&2\nexit 1\n' >"$F/busctl-dead"; chmod 755 "$F/busctl-dead"
 SPARKY_TIME_BUSCTL=$F/busctl-dead SPARKY_TIME_TOOL=/bin/false LANG=C "$W2" 2>"$F/watch.err"; rc=$?
 ok "U13 watcher: exit 1 (systemd starts it again)" '[ "$rc" = 1 ]'
-ok "U13 watcher: the reason is said and kept" 'kept watcher LOCAL16 && grep -q "Failed to connect to bus" "$F/watch.err" && grep -q "Failed to connect to bus" "$SPARKY_TIME_STATE/problems/watcher.json"'
+ok "U13 watcher: the reason is said and kept" 'kept watcher LOCAL16 && grep -q "Failed to connect to bus" "$F/watch.err" && grep -q "Failed to connect to bus" "$(rec watcher)"'
 
 # U13: the maintainer script says and keeps a watcher that cannot be started; the package configures
 fresh; PI=${SPARKY_TIME_POSTINST:-/var/lib/dpkg/info/sparky-stereo-time.postinst}

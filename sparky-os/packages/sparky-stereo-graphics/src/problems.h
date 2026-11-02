@@ -6,6 +6,7 @@
 #include "gpuinventory.h"
 #include "resolver.h"
 
+#include <QJsonArray>
 #include <QList>
 #include <QString>
 #include <QStringList>
@@ -19,9 +20,9 @@ struct Alternative {
 };
 
 // A saved choice that cannot be used, or a step of the package that failed: what failed, why and what to do, kept with
-// its evidence until it is repaired (the way ORDER 345 keeps the boot's problems). The person's own problems are kept in
-// $XDG_STATE_HOME/sparky-stereo-graphics/problems, the machine's in /var/lib/sparky-stereo-graphics/problems; each is
-// shown at login and when it is kept (sparky-stereo-gpu-env --notify) and on the Graphics page.
+// its evidence until it is repaired, by the edition's one engine (sparky-stereo-problems, ORDER 350): the person's own
+// in $XDG_STATE_HOME/sparky-stereo-problems, the machine's in /var/lib/sparky-stereo-problems; the engine's session
+// notifier shows each at login and when it is kept, with "Use NAME" for each GPU that can draw, and the Graphics page too.
 struct Problem {
     // Where it belongs, and the file it is kept in: "main-gpu", the kind of program ("players", "games", "browsers",
     // "other"), or a step of the machine ("machine-record", "systemd-reload")
@@ -44,6 +45,14 @@ struct Problem {
     bool isEmpty() const;
     // One GPU choice of the person's (main GPU or a kind of program): the page and the notification offer the others
     bool isChoice() const;
+};
+
+// What the edition's one engine keeps of a problem: its message (CONTEXT|MSGID of this package's .po files), the
+// message's arguments (strings, or [KEY, ARG...] for a message inside it) and the sentences after it (what to do)
+struct Sentences {
+    QString key;
+    QJsonArray args;
+    QJsonArray more;
 };
 
 namespace Problems
@@ -70,6 +79,8 @@ QList<Problem> all(const QString &root = QStringLiteral("/"));
 QString title(const Problem &problem);
 // What failed, why and what to do, in the person's language
 QString message(const Problem &problem);
+// The same, as the engine keeps it
+Sentences sentences(const Problem &problem);
 // The kind of program as it reads inside a sentence ("players")
 QString kindInSentence(const QString &key);
 }

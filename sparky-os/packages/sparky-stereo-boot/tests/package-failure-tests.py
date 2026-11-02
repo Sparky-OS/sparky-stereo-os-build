@@ -11,7 +11,7 @@
 import json, os, subprocess, sys
 
 CASE, DEB = sys.argv[1], sys.argv[2]
-PROBLEMS = '/var/lib/sparky-stereo-boot/problems'
+PROBLEMS = '/var/lib/sparky-stereo-problems'   # the engine's (0.1.6)
 results = []
 
 
@@ -33,7 +33,9 @@ def state():
 
 def kept(step):
     try:
-        return json.load(open(os.path.join(PROBLEMS, step + '.json')))
+        r = json.load(open(os.path.join(PROBLEMS, 'sparky-stereo-boot_%s.json' % step)))
+        r['key'] = r['message']
+        return r
     except (OSError, ValueError):
         return None
 
