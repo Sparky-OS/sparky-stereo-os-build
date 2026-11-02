@@ -30,5 +30,5 @@ docker run --rm --cpus 4 --platform linux/amd64 "${MOUNTS[@]}" -v "$RESULTS/corp
 	-v "$RESULTS/out":/out "$IMAGE" bash /tools/test-in-container.sh
 fails=$(grep -c "^FAIL .* $RENDERER:" "$RESULTS/out/compare.txt" || true)
 echo "$RENDERER: $fails failing values" | tee "$RESULTS/summary.txt"
-grep " $RENDERER:" "$RESULTS/out/summary.txt" | tee -a "$RESULTS/summary.txt"
+grep "^$RENDERER:" "$RESULTS/out/summary.txt" | tee -a "$RESULTS/summary.txt"
 [ "$fails" = 0 ]
