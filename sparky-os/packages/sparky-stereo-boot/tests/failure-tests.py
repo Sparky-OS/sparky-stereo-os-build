@@ -249,6 +249,56 @@ def problems():
     check('dismiss', rc == 1 and 'kernel-cleanup' in out, 'an unknown step names the kept ones (exit %d)' % rc)
 
 
+def migrate():
+    """0.1.5's records move into the engine at the upgrade (postinst: problems.py migrate); one that cannot move stays
+    in the old store, which nothing reads any more, so it is said once and kept as the problem old-store, naming the
+    store, until a repair has moved every record (0.1.6, milestone 2c of ORDER 350)."""
+    de, en = strings('de'), strings('en')
+    root, env = setup(lang='de_DE.UTF-8')
+    old = os.path.join(root, 'var/lib/sparky-stereo-boot/problems')
+    os.makedirs(old)
+    json.dump({'step': 'update-grub', 'time': '2026-10-31T08:00:00Z', 'key': 'LOCAL21', 'args': ['update-grub', '1'],
+               'command': ['update-grub'], 'status': 1, 'output': 'error: disk full\n', 'repair': [['update-grub']]},
+              open(os.path.join(old, 'update-grub.json'), 'w'))
+    open(os.path.join(old, 'handover.json'), 'w').write('{"step": "handover", "key": ')   # cut short
+    script = os.path.join(PKG, 'lib/problems.py')
+    r = subprocess.run([sys.executable, '-I', script, 'migrate', old], env=env, capture_output=True, text=True, timeout=120)
+    moved, kept_old = kept(root, 'update-grub'), kept(root, 'old-store')
+    check('migrate', r.returncode == 1 and moved is not None and moved.get('first') == '2026-10-31T08:00:00Z'
+          and not os.path.exists(os.path.join(old, 'update-grub.json')),
+          'a readable record moves, keeping when it was found; exit %d' % r.returncode)
+    check('migrate', os.path.exists(os.path.join(old, 'handover.json')), 'the one that cannot be read stays in the old store')
+    check('migrate', r.stderr.count(de['LOCAL61'] % old) == 1 and r.stderr.count(en['LOCAL61'] % old) == 1,
+          'said once, in German and in English beside it')
+    check('migrate', bool(kept_old) and kept_old['key'] == 'LOCAL61' and kept_old.get('args') == [old]
+          and kept_old.get('severity') == 'failed' and 'handover.json: JSONDecodeError' in (kept_old.get('output') or ''),
+          'kept as the problem old-store: the store as its argument, the record and what failed as its output')
+    check('migrate', bool(kept_old) and kept_old.get('repair') == [[sys.executable, script, 'migrate', old]],
+          'its repair is the same move again (%s)' % (kept_old or {}).get('repair'))
+    rc, out = cli(env, 'status')
+    check('migrate', rc == 1 and (de['LOCAL61'] % old) in out, 'status lists it in German')
+    # the person reads the record and puts it right: repair moves it, and the problem and the old store go
+    json.dump({'step': 'handover', 'time': '2026-10-30T07:00:00Z', 'key': 'LOCAL32', 'args': [['LOCAL39']]},
+              open(os.path.join(old, 'handover.json'), 'w'))
+    rc, out = cli(env, 'repair')
+    check('migrate', kept(root, 'old-store') is None and kept(root, 'handover') is not None and not os.path.exists(old)
+          and (de['LOCAL50'] % 'old-store') in out, 'repair moves the rest: old-store is repaired, the old store goes')
+    # a store that is not a folder: named the same way
+    root, env = setup()
+    old = os.path.join(root, 'var/lib/sparky-stereo-boot/problems')
+    os.makedirs(os.path.dirname(old))
+    open(old, 'w').write('not a folder\n')
+    r = subprocess.run([sys.executable, '-I', script, 'migrate', old], env=env, capture_output=True, text=True, timeout=120)
+    k = kept(root, 'old-store')
+    check('migrate', r.returncode == 1 and bool(k) and (old + ': ') in (k.get('output') or '') and 'Not a directory' in (k.get('output') or '')
+          and (en['LOCAL61'] % old) in r.stderr, 'an old store that cannot be listed is kept the same way, said')
+    # no old store (0.1.4 had none): nothing said, nothing kept
+    root, env = setup()
+    r = subprocess.run([sys.executable, '-I', script, 'migrate', os.path.join(root, 'var/lib/sparky-stereo-boot/problems')],
+                       env=env, capture_output=True, text=True, timeout=120)
+    check('migrate', r.returncode == 0 and not r.stderr and kept(root, 'old-store') is None, 'no old store: exit 0, nothing said or kept')
+
+
 def boot_check():
     def params(root, video, w, h):
         d = os.path.join(root, 'sys/kernel/boot_params')
@@ -300,7 +350,7 @@ def languages():
 
 
 def main():
-    for part in (handover, problems, boot_check, languages):
+    for part in (handover, problems, migrate, boot_check, languages):
         try:
             part()
         except Exception as error:   # noqa: BLE001: a part that cannot run is a failure, said

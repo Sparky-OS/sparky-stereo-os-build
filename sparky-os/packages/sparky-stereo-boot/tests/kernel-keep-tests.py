@@ -3,7 +3,7 @@
 # Copyright 2026 under the GNU GPL3 License
 # Tests of sparky-stereo-boot's kernel keeping and boot images (0.1.4), one case per fresh container, as root, with
 # initramfs-tools, plymouth, plymouth-themes, grub-common, grub2-common and python3 installed:
-#   kernel-keep-tests.py CASE BOOT.deb [OLD-BOOT.deb]
+#   kernel-keep-tests.py CASE BOOT.deb [OLD-BOOT.deb]   (upgrade: OLD is a published predecessor, 0.1.5 or 0.1.4)
 # Kernels are small packages made here with Debian's kernel maintainer scripts (the /etc/kernel hooks with
 # DEB_MAINT_PARAMS), in the edition's names (linux-image, linux-headers and -lc-hr per release) and in Debian's split
 # names (linux-image, linux-binary, linux-modules, linux-base and linux-headers per release, linux-kbuild and
@@ -305,28 +305,42 @@ def main():
         want = (14,) if CASE == 'plymouth-0.1.3' else (13, 14)
         check(tuple(themed) == want, 'after a theme change and update-initramfs -u, the boot images with it: %s (expected %s)' % (tuple(themed), want))
     elif CASE == 'upgrade':
-        for n in (13, 14):
-            install(edition(n))
-        debian_md5 = sh('md5sum /etc/initramfs-tools/update-initramfs.conf').stdout.split()[0]
+        # from a published predecessor (OLD: 0.1.5, which may have kept problems in its own store, or 0.1.4, which had
+        # none), both already diverting initramfs-tools' update-initramfs.conf (0.1.4) and keeping kernels
+        old_version = sh(['dpkg-deb', '-f', OLD, 'Version']).stdout.strip()
+        new_version = sh(['dpkg-deb', '-f', NEW, 'Version']).stdout.strip()
+        kernels_in_turn((13, 14))
+        p = '/etc/initramfs-tools/update-initramfs.conf'
+        # initramfs-tools' own file, as its package lists it
+        debian_md5 = next(l.split()[1] for l in sh("dpkg-query -W -f '${Conffiles}\\n' initramfs-tools").stdout.splitlines()
+                          if l.split() and l.split()[0] == p)
+        check('update-initramfs.conf.debian by sparky-stereo-boot' in sh('dpkg-divert --list ' + p).stdout,
+              'control: %s diverts update-initramfs.conf' % old_version)
         pk = installed()
         mt = {n: os.stat('/boot/initrd.img-' + E[n][0]).st_mtime for n in (13, 14)}
         time.sleep(1.1)
-        install([NEW])
+        r = install([NEW])
         after = installed()
-        check(set(after) == set(pk) and all(after[p] == pk[p] for p in pk), 'installing 0.1.4 over 0.1.3 removes and changes no other package')
-        div = sh('dpkg-divert --list /etc/initramfs-tools/update-initramfs.conf').stdout.strip()
-        check('update-initramfs.conf.debian by sparky-stereo-boot' in div, 'the diversion is in place (%s)' % div)
-        check(os.readlink('/etc/initramfs-tools/update-initramfs.conf') == 'update-initramfs.conf.sparky-stereo'
-              and 'update_initramfs=all' in open('/etc/initramfs-tools/update-initramfs.conf').read(), 'update-initramfs reads update_initramfs=all')
-        check(sh('md5sum /etc/initramfs-tools/update-initramfs.conf.debian').stdout.split()[0] == debian_md5, "initramfs-tools' file kept as .debian")
+        status = sh("dpkg-query -W -f '${db:Status-Abbrev}${Version}' sparky-stereo-boot").stdout
+        check(status == 'ii %s' % new_version, '%s over %s configures cleanly (%s)' % (new_version, old_version, status))
+        check(set(after) == set(pk) and all(after[q] == pk[q] for q in pk if q != 'sparky-stereo-boot'),
+              'installing %s over %s removes and changes no other package' % (new_version, old_version))
+        div = sh('dpkg-divert --list ' + p).stdout.strip()
+        check('update-initramfs.conf.debian by sparky-stereo-boot' in div, 'the diversion stays in place (%s)' % div)
+        check(os.readlink(p) == 'update-initramfs.conf.sparky-stereo' and 'update_initramfs=all' in open(p).read(),
+              'update-initramfs reads update_initramfs=all')
+        check(sh(['md5sum', p + '.debian']).stdout.split()[0] == debian_md5, "initramfs-tools' file kept as .debian")
         check(all(os.stat('/boot/initrd.img-' + E[n][0]).st_mtime > mt[n] for n in (13, 14)), "both kernels' boot images were written at the upgrade")
         check(not os.path.exists(QUEUE) and has_image(E[13][0]), 'nothing queued and nothing removed at install time')
+        old_store = '/var/lib/sparky-stereo-boot/problems'
+        check(not os.path.exists(old_store) and not os.path.exists('/var/lib/sparky-stereo-problems/sparky-stereo-boot_old-store.json')
+              and 'old-store' not in r.stdout + r.stderr,
+              'no old store left and nothing said or kept about one')
         install(edition(15))
         check(os.path.exists(QUEUE), 'the next kernel install queues the work')
         keep_run()
         check(not has_image(E[13][0]) and has_image(E[14][0]) and has_image(E[15][0]), 'then 13 goes, 14 (running) and 15 stay')
         sh('dpkg -r sparky-stereo-boot')
-        p = '/etc/initramfs-tools/update-initramfs.conf'
         check(not os.path.islink(p) and sh(['md5sum', p]).stdout.split()[0] == debian_md5 and not os.path.exists(p + '.debian')
               and not sh('dpkg-divert --list ' + p).stdout.strip(), "removal brings initramfs-tools' own file back, undiverted")
         sh('dpkg -P sparky-stereo-boot')

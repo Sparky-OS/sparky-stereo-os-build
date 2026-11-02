@@ -87,8 +87,9 @@ set -e
 P=/usr/lib/sparky-stereo-boot/problems.py
 if [ "$1" = configure ]; then
 	failed=
-	# 0.1.5 kept its problems in its own store: they move into the engine once, keeping when each was found (said
-	# when one cannot move; it stays in the old store and the package configures)
+	# 0.1.5 kept its problems in its own store: they move into the engine once, keeping when each was found. One that
+	# cannot move stays there and is said, and kept as the problem old-store, so the person's next login tells it and
+	# repair tries again; the package configures
 	if [ -n "$2" ] && dpkg --compare-versions "$2" lt 0.1.6 && [ -d /var/lib/sparky-stereo-boot/problems ]; then
 		python3 $P migrate /var/lib/sparky-stereo-boot/problems || :
 	fi
