@@ -24,7 +24,9 @@ if [ "$2" != debian ]; then
 	MOUNTS=(-v "$(cd "$2" && pwd)":/debs:ro)
 fi
 mkdir "$RESULTS/out"
+# the edition sits on deb-multimedia (the edition's librsvg links its dav1d), so the test image has it too
 docker run --rm --cpus 4 --platform linux/amd64 "${MOUNTS[@]}" -v "$RESULTS/corpus":/corpus:ro -v "$HERE":/tools:ro \
+	-v /usr/share/keyrings/deb-multimedia-keyring.pgp:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro \
 	-v "$RESULTS/out":/out "$IMAGE" bash /tools/test-in-container.sh
 fails=$(grep -c "^FAIL .* $RENDERER:" "$RESULTS/out/compare.txt" || true)
 echo "$RENDERER: $fails failing values" | tee "$RESULTS/summary.txt"
