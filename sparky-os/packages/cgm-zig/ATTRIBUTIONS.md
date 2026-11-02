@@ -21,6 +21,7 @@ The ReleaseSafe and multiarch libc requirements come from the fork's [BUILDING.m
 Ubuntu's [zig0.16 source packaging](https://archive.ubuntu.com/ubuntu/pool/universe/z/zig0.16/zig0.16_0.16.0~us1-0ubuntu1.debian.tar.xz) names nick black and Nick Hastings in its packaging copyright, and Pushkar Kulkarni in its Ubuntu changelog.
 This recipe follows its `ZIG_TARGET_MCPU=baseline` choice and uses its LLVM 21 development-package list as a reference.
 Its CMake build and stage3 library layout agree with the fork's upstream build notes.
+Its `chrpath -d` install step fixes the same measured LLVM dependency-lookup error here: the compiler must use the standard runtime library directory, not the toolchain development-directory alias.
 The recipe scripts are new; Ubuntu's rules are reference material, not copied wholesale.
 The detailed Debian copyright inventory is adapted from Ubuntu's zig0.16 package, with its legal texts retained and entries for the fork's retained Clang resource headers and the edition's packaging.
 Ubuntu's [zig-defaults 5ubuntu1](https://archive.ubuntu.com/ubuntu/pool/universe/z/zig-defaults/zig-defaults_5ubuntu1.tar.xz) chooses zig0.16 with a directly owned `/usr/bin/zig` link.

@@ -8,7 +8,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN test "$(dpkg --print-architecture)" = amd64 \
     && apt-get -y update \
     && apt-get -y --no-install-recommends install \
-       build-essential bubblewrap ca-certificates cmake debhelper devscripts dpkg-dev file git \
+       build-essential bubblewrap ca-certificates cmake chrpath debhelper devscripts dpkg-dev file git \
        clang clang-21 libclang-21-dev libclang-cpp21-dev liblld-21-dev \
        libxml2-dev libzstd-dev lld-21 llvm-21-dev ninja-build \
        node-acorn nodejs perl pkgconf python3 python3-yaml xz-utils zlib1g-dev \

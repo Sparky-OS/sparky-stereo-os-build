@@ -25,6 +25,8 @@ override_dh_auto_test:
 override_dh_auto_install:
 	mkdir -p debian/cgm-zig/usr/lib/cgm-zig debian/cgm-zig/usr/share/doc/cgm-zig
 	cp -a build/stage3/bin build/stage3/lib debian/cgm-zig/usr/lib/cgm-zig/
+	# Ubuntu zig0.16 uses this to resolve LLVM through its runtime package.
+	chrpath -d debian/cgm-zig/usr/lib/cgm-zig/bin/zig
 	cp LICENSE debian/cgm-zig/usr/share/doc/cgm-zig/LICENSE.upstream
 	cp debian/cgm/ATTRIBUTIONS.md debian/cgm-zig/usr/share/doc/cgm-zig/
 

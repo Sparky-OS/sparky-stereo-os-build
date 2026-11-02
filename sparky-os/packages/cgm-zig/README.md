@@ -29,7 +29,7 @@ No toolkit source is changed by this recipe.
 The fork's [build notes](https://github.com/danielcamposramos/cgm-zig/blob/0399d2b19b71ed865cc2e6d5e21224f124e373db/docs/crown/BUILDING.md) require `RelWithDebInfo`, `ZIG_RELEASE_SAFE=ON` and `-Ddebug-extensions` together.
 `configure.sh` checks the actual generated stage3 command; `CMAKE_BUILD_TYPE=ReleaseSafe` alone selects ReleaseFast plus stripping and is rejected.
 The baseline CPU target follows Ubuntu's packaging, avoiding a dependency on the build station's instruction set.
-The source package supplies the Debian amd64 libc include and CRT paths through `ZIG_LIBC`, uses build-local Zig caches, and retains compiler symbols for diagnostics.
+The source package supplies the Debian amd64 libc include and CRT paths through `ZIG_LIBC`, uses build-local Zig caches, and retains compiler symbols for diagnostics. Like Ubuntu zig0.16, installation removes the toolchain RUNPATH with `chrpath -d`, so dpkg resolves LLVM and Clang through their runtime packages in the standard library directory.
 
 ## Installed layout
 
