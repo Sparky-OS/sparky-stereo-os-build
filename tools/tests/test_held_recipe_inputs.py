@@ -44,8 +44,6 @@ def prove(repo, work, package, baseline):
             for script in ('build.sh', 'build-source.sh') if package == 'dpkg-stereo' else ('build.sh',):
                 (recipe / script).write_bytes(run('git', '-C', str(repo), 'show', baseline + ':' + relative + '/' + script))
         expected = inventory(recipe)
-        if package == PACKAGES[2]:
-            expected = {n: (m & ~0o022, b) for n, (m, b) in expected.items()}
         if case != 'export':
             run('git', '-C', str(root), 'init', '-q')
             run('git', '-C', str(root), 'add', '.')
@@ -96,7 +94,7 @@ def prove(repo, work, package, baseline):
             elif case == 'export':
                 assert 'untracked-note' in actual
             elif package != 'dpkg-stereo':
-                assert set(NOTES) <= actual.keys(), actual.keys()
+                assert (set(NOTES) if package in NATIVE else {'untracked-note'}) <= actual.keys(), actual.keys()
             else:
                 assert 'sparky-os/lean/untracked_engine_note.py' in members
             if case != 'red':
