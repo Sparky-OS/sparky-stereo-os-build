@@ -135,7 +135,7 @@ Section: System
 Priority: optional
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Standards-Version: 4.7.3
-Build-Depends: dpkg-dev, gcc, binutils
+Build-Depends: dpkg-dev, gcc, binutils, sparky-stereo-problems (>= 0.1.0)
 Rules-Requires-Root: no
 Homepage: https://sparkylinux.org
 
