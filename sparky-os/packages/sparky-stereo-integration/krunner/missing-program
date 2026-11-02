@@ -30,7 +30,7 @@ def renamed(command):
 
 def lookup(command):
     # command-not-found's own lookup and message: [(its header line, its install line, package)] in its order
-    if not re.fullmatch(r'[a-z0-9][a-z0-9._+-]{2,60}', command) or shutil.which(command):
+    if not re.fullmatch(r'[a-z0-9][a-z0-9._+-]{1,60}', command) or shutil.which(command):
         return []
     try:
         out = subprocess.run([CNF, '--', command], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=20)
