@@ -27,6 +27,8 @@ cd "$BUILD_ROOT/authored"
 cp "$HERE"/patches/*.patch debian/patches/
 cat "$HERE/patches/series" >> debian/patches/series
 dpkg-source --before-build .
+# DKMS copies module sources; setuptools also installs generated pyzfs metadata.
+cp "$HERE/payload-sources.json" debian/sparky-lean-payload-sources.json
 python3 - <<'PY'
 from pathlib import Path
 p = Path('debian/control')
