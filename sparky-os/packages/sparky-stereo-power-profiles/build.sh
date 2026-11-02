@@ -5,7 +5,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=20261008.1~sparky9~0+lc1
+VERSION=20261102~sparky9~0+lc1
 PACKAGE=sparky-stereo-power-profiles
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.power-profiles.XXXXXX")

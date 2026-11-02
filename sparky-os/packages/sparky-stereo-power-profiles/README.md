@@ -47,7 +47,7 @@ from the patched PowerDevil package. Stock PowerDevil must not satisfy it:
 stock code cannot apply desktop/laptop AC sleep defaults or idle locking.
 The GL show and its trigger belong to milestone 3 and are not shipped here.
 
-The profile mapping is Daniel's brief. The group and key come from Plasma's
+The profile mapping is ours (no design found: Daniel's call, ORDER 355). The group and key come from Plasma's
 PowerDevilProfileSettings.kcfg and PowerProfile::onProfileLoad(). PPD owns
 the CPU and GPU behavior; this package writes no governor or GPU sysfs file.
 PPD may omit performance on unsupported hardware. Plasma keeps that native
@@ -55,3 +55,11 @@ limitation, and this package does not substitute a second power controller.
 
 The real PPD and settings tests are in ../../power-idle/probe/; their measured
 results and limits are not public yet.
+
+Design attribution:
+-------------
+Daniel, 2026-10-08, on idle: "Desktop sleep I do not agree, here, for example, I tend to go out or to sleep and leave the machine running, it shuts down the monitor but not the machine. notebook sleep is ok at 4h".
+On the power button: "the one press shut down"; "press power button = shut down confirm".
+On the mains lid: "when plugged shut down the laptop screen but do not disable it - so it keeps the icons".
+LockGrace=0, LockOnResume=true, the battery lid Sleep action and InhibitLidActionWhenExternalMonitorPresent=false are our implementation choices (no design found: Daniel's call, ORDER 355).
+These attributions do not change any shipped setting.

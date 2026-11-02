@@ -85,3 +85,12 @@ gives 10). The package's file is 70, not lower, because 50-default.conf (package
 upstream defaults) sets vm.max_map_count = 1048576, and the edition's value must come after it.
 tests/sysctl-order-test.sh checks the rule with systemd's own file ordering (systemd-analyze cat-config sysctl.d).
 Debian's procps 4.0.7 no longer ships /etc/sysctl.conf.
+
+Swappiness:
+-------------
+Daniel's value is unchanged: "vm.swappiness = 1 always" (2026-10-10).
+Our explanation follows Linux Documentation/admin-guide/sysctl/vm.rst, swappiness:
+https://docs.kernel.org/admin-guide/sysctl/vm.html#swappiness
+The range is 0 to 200 and expresses the relative I/O cost of swapping and filesystem paging.
+A low value treats swap I/O as more expensive; 1 is not the minimum or a promise to retain every page in RAM.
+At 0, swapping waits until free plus file-backed pages fall below a zone's high watermark.

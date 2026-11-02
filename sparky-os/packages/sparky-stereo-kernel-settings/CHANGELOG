@@ -1,6 +1,7 @@
 -------------------------------------------------------------------------------
   Version 20261103.2~sparky9~0 (2026-11-02)
 -------------------------------------------------------------------------------
+  * Correct the swappiness explanation and separate Daniel's value from our explanation; no value changes
   * Say when udev is absent; show and retain failed rule reloads with repairs in
     the shared problems engine, in nine languages, while completing configuration.
 
@@ -33,8 +34,8 @@
 -------------------------------------------------------------------------------
   Version 20261010.1~sparky9~0 (2026-10-10)
 -------------------------------------------------------------------------------
-  * vm.swappiness = 1, the minimum, whether the swap is on or off (Daniel): the swap is the emergency area the swap parachute
-    deploys under memory pressure, never a place to push pages early. 20261010 had left it at the kernel default (60)
+  * vm.swappiness = 1 (Daniel, 2026-10-10: "vm.swappiness = 1 always"). Our explanation: a low value treats swap I/O as
+    more expensive than filesystem paging; 0 is also allowed. 20261010 had left it at the kernel default (60)
 
 -------------------------------------------------------------------------------
   Version 20261010~sparky9~0 (2026-10-10)
