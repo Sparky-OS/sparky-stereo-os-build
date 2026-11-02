@@ -8,6 +8,16 @@ HARDWARE_ACTIONS_FILE=${HARDWARE_ACTIONS:-/usr/lib/sparky-stereo-hardware/action
 source "$HARDWARE_ACTIONS_FILE"
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
+# the strings, error messages included: the source tree's lang/ or the installed package's; neither is a test failure
+if [[ -r $(dirname "$HARDWARE_ACTIONS_FILE")/../lang/en ]]; then
+	SHARE=$(cd "$(dirname "$HARDWARE_ACTIONS_FILE")/../lang" && pwd)
+elif [[ -r /usr/share/sparky/sparky-stereo-hardware/en ]]; then
+	SHARE=/usr/share/sparky/sparky-stereo-hardware
+else
+	echo "FAIL: no strings next to $HARDWARE_ACTIONS_FILE and none installed"
+	exit 1
+fi
+LANGUAGES=(en pl pt_BR fr de ja ko zh_CN zh_TW)
 ROOT=$T/root
 WORK=$T/work
 mkdir -p "$ROOT" "$WORK"
@@ -124,12 +134,13 @@ echo 'PASS NVIDIA: the source the image or an older setup wrote, and a commented
 printf 'deb [signed-by=/usr/share/keyrings/cuda-archive-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64/ /\n' >"$ROOT/etc/apt/sources.list.d/cuda-debian13-x86_64.list"
 : >"$calls"
 setup_nvidia >"$T/log"
-grep -Fxq "DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install $LOCK" "$calls"
-refute grep -q "install $LOCK $REPO" "$calls"
-grep -Fq "NVIDIA's CUDA repository is already configured in /etc/apt/sources.list.d/cuda-debian13-x86_64.list; kept as it is" "$T/log"
+# sparky-stereo-cuda-repo itself keeps the person's source (its postinst writes none of its own then) and adds its pins,
+# which go by origin; so both policy packages come, and the setup says why the person's source stays
+grep -Fxq "DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install $LOCK $REPO" "$calls"
+grep -Fq "NVIDIA's CUDA repository is already configured in /etc/apt/sources.list.d/cuda-debian13-x86_64.list; sparky-stereo-cuda-repo keeps that source and adds the edition's pins" "$T/log"
 grep -Fxq "$DRIVER_LINE" "$calls"
 rm -f "$ROOT/etc/apt/sources.list.d/cuda-debian13-x86_64.list" "$ROOT/etc/apt/sources.list.d/commented.list" "$ROOT/etc/apt/sources.list.d/sparky-stereo-cuda.sources"
-echo 'PASS NVIDIA: a CUDA repository the person set up is kept; only the driver lock is added before the driver'
+echo 'PASS NVIDIA: a CUDA repository the person set up is kept and named; the lock and the repository package (for its pins) come before the driver'
 fail_policy=1
 : >"$calls"
 fails_with "NVIDIA: $LOCK $REPO could not be installed" setup_nvidia
@@ -194,12 +205,12 @@ echo 'PASS laptop RTD3 requires a successful driver transaction and repeats with
 
 # Rig drivers: every refusal says why.
 uname() { echo "${kernel_name:-7.3.1-stereo3d14}"; }
-fails_with 'rig driver evdi-dkms: not one of the wheel drivers' setup_rig_driver evdi-dkms
+fails_with 'Wheel driver evdi-dkms: not one of the wheel drivers' setup_rig_driver evdi-dkms
 kernel_name='bad name'
-fails_with 'rig driver hid-tmff2-dkms: the running kernel.s name' setup_rig_driver hid-tmff2-dkms
+fails_with 'Wheel driver hid-tmff2-dkms: the running kernel.s name' setup_rig_driver hid-tmff2-dkms
 kernel_name=
 fail_preflight=1
-fails_with 'rig driver hid-tmff2-dkms: apt cannot install it with linux-headers-7.3.1-stereo3d14' setup_rig_driver hid-tmff2-dkms
+fails_with 'Wheel driver hid-tmff2-dkms: apt cannot install it with linux-headers-7.3.1-stereo3d14' setup_rig_driver hid-tmff2-dkms
 fail_preflight=0
 echo 'PASS rig drivers: an unknown package, an unusable kernel name and a failed preflight each fail with their reason'
 # AMD power: an action power-profiles-daemon does not offer is an error, not a quiet skip; the other action still runs.
@@ -219,36 +230,82 @@ echo 'PASS AMD power: an action the machine does not offer fails visibly, and th
 [[ $(plan_answer 0) == edition && $(plan_answer 2) == nouveau && $(plan_answer 1) == cancel && $(plan_answer 252) == cancel ]]
 for code in 3 70 127 255; do [[ $(plan_answer $code) == window-failed ]]; done
 echo 'PASS the plan window: install, keep nouveau, cancel, and a failed window told apart'
-# The end of a run: the list of ERROR lines and exit 1, and the same list in a window when the menu started it.
-SHARE=$T/share
-mkdir -p "$SHARE"
-cp "$(dirname "$HARDWARE_ACTIONS_FILE")"/../lang/* "$SHARE/" 2>/dev/null || cp /usr/share/sparky/sparky-stereo-hardware/[a-z]* "$SHARE/" 2>/dev/null || :
+# The error messages: every one the code uses exists in the nine languages, with the English message's %s count and no
+# other printf directive, and the window's lines in the person's language.
+code_files=("$HARDWARE_ACTIONS_FILE")
+for f in "$(dirname "$HARDWARE_ACTIONS_FILE")/../bin/sparky-stereo-hardware" /usr/bin/sparky-stereo-hardware; do
+	if [[ -r $f ]]; then code_files+=("$f"); fi
+done
+[[ ${#code_files[@]} -ge 2 ]] || { echo 'FAIL: sparky-stereo-hardware itself not found next to actions.sh or installed'; exit 1; }
+used=$(grep -ohE '\berr [0-9]+' "${code_files[@]}" | awk '{print $2}' | sort -un)
+[[ -n $used ]] || { echo 'FAIL: no err call found'; exit 1; }
+# count_of PATTERN TEXT: how often PATTERN occurs in TEXT
+count_of() { awk -v pattern="$1" -v text="$2" 'BEGIN {print gsub(pattern, "", text)}'; }
+for id in $used 29; do
+	en_text=$(source "$SHARE/en"; v=LOCAL$id; printf '%s' "${!v:-}")
+	[[ -n $en_text ]] || { echo "FAIL: message $id has no English text"; exit 1; }
+	en_count=$(count_of '%s' "$en_text")
+	for language in "${LANGUAGES[@]}"; do
+		text=$(source "$SHARE/$language"; v=LOCAL$id; printf '%s' "${!v:-}")
+		[[ -n $text ]] || { echo "FAIL: message $id is missing in $language"; exit 1; }
+		[[ $language == en || $text != "$en_text" ]] || { echo "FAIL: message $id in $language is the English text"; exit 1; }
+		[[ $(count_of '%s' "$text") == "$en_count" ]] || { echo "FAIL: message $id in $language has another %s count"; exit 1; }
+		[[ $(count_of '%' "$text") == "$en_count" ]] || { echo "FAIL: message $id in $language has a printf directive other than %s"; exit 1; }
+		refute grep -q '\\' <<<"$text"
+	done
+done
+for language in "${LANGUAGES[@]}"; do
+	text=$(source "$SHARE/$language"; printf '%s' "$LOCAL6")
+	refute grep -qi 'english\|anglais\|ingl\|angielsk\|englisch\|英語\|영어\|英文\|英语' <<<"$text"
+done
+echo "PASS the error messages $(tr '\n' ' ' <<<"$used")and the nouveau choice exist in the nine languages with the English %s count"
+# The end of a run: the list of ERROR lines in English and exit 1, and the same list in a window in the person's language
+# when the menu started it.
 yad() {
 	local a
 	echo "yad $*" >>"$calls"
 	for a; do if [[ $a == --filename=* ]]; then cp "${a#--filename=}" "$T/window"; fi; done
 }
 : >"$WORK/errors"
-log 'ERROR first failed step: why; what to do' >/dev/null
+err 47 'nvidia-settings' >"$T/out"
+grep -Fxq 'ERROR nvidia-settings could not be installed (apt failed, see the log); fix the apt error and run Hardware Setup again' "$T/out"
 log 'NOTE not an error' >/dev/null
-log 'ERROR second failed step: why; what to do' >/dev/null
+err 40 'nvidia-kernel-open-dkms-stereo3d' >/dev/null
 [[ $(wc -l <"$WORK/errors") == 2 ]]
 : >"$calls"
 if finish_run "$T/run.log" 1 >"$T/out"; then echo 'FAIL a run with errors ended with status 0'; exit 1; fi
-grep -Fxq 'ERROR first failed step: why; what to do' "$T/out"
+grep -Fxq 'ERROR nvidia-settings could not be installed (apt failed, see the log); fix the apt error and run Hardware Setup again' "$T/out"
+grep -Fq "ERROR NVIDIA: apt finds no nvidia-kernel-open-dkms-stereo3d, the edition's NVIDIA module with HDMI 3D" "$T/out"
+grep -Fq 'or keep nouveau, without HDMI 3D, as your own choice: the plan window'"'"'s button “Install matched support, keep nouveau”, or sparky-stereo-hardware --nvidia nouveau' "$T/out"
 refute grep -q '^yad' "$calls"
-if [[ -f $SHARE/en ]]; then
-	LOCALE_FILE=$T/locale
-	printf 'LANG=pt_BR.UTF-8\n' >"$LOCALE_FILE"
-	: >"$calls"
-	if SPARKY_STEREO_HARDWARE_GUI=1 DISPLAY=:9 finish_run "$T/run.log" 1 >"$T/out"; then echo 'FAIL a GUI run with errors ended with status 0'; exit 1; fi
-	grep -q '^yad --text-info' "$calls"
-	grep -Fq 'Configuração de hardware: algumas etapas falharam' "$calls"
-	grep -Fxq 'ERROR second failed step: why; what to do' "$T/window"
-	echo 'PASS the end of a run: its errors listed, exit 1, and the same list in a window in the person'"'"'s language when the menu started it'
-else
-	echo 'PASS the end of a run: its errors listed and exit 1 (the window strings are not installed here)'
-fi
+refute grep -q '@NOUVEAU@\|@BUTTON@\|^message ' "$T/out"
+LOCALE_FILE=$T/locale
+printf 'LANG=pt_BR.UTF-8\n' >"$LOCALE_FILE"
+: >"$calls"
+if SPARKY_STEREO_HARDWARE_GUI=1 DISPLAY=:9 finish_run "$T/run.log" 1 >"$T/out"; then echo 'FAIL a GUI run with errors ended with status 0'; exit 1; fi
+grep -q '^yad --text-info' "$calls"
+grep -Fq 'Configuração de hardware: algumas etapas falharam' "$calls"
+grep -Fxq 'Estas etapas não foram feitas, e nada foi colocado no lugar delas. Cada linha diz o que falhou, por que e o que fazer:' "$T/window"
+grep -Fxq 'Não foi possível instalar nvidia-settings (o apt falhou, veja o registro); corrija o erro do apt e rode a Configuração de hardware de novo' "$T/window"
+grep -Fq 'NVIDIA: o apt não encontra nvidia-kernel-open-dkms-stereo3d, o módulo NVIDIA da edição com HDMI 3D' "$T/window"
+grep -Fq 'o botão “Instalar suporte ao hardware detectado, manter o nouveau” da janela do plano' "$T/window"
+refute grep -q 'ERROR\|could not be installed\|@NOUVEAU@\|@BUTTON@' "$T/window"
+# the log keeps English for support, also in a GUI run
+grep -Fxq 'ERROR nvidia-settings could not be installed (apt failed, see the log); fix the apt error and run Hardware Setup again' "$T/out"
+for language in ja zh_TW; do
+	case $language in ja) printf 'LANG=ja_JP.UTF-8\n' ;; zh_TW) printf 'LANG=zh_TW.UTF-8\n' ;; esac >"$LOCALE_FILE"
+	if SPARKY_STEREO_HARDWARE_GUI=1 DISPLAY=:9 finish_run "$T/run.log" 1 >/dev/null; then echo "FAIL a GUI run in $language ended with status 0"; exit 1; fi
+	expected=$(source "$SHARE/$language"; printf "$LOCAL47" nvidia-settings)
+	grep -Fxq "$expected" "$T/window"
+done
+echo 'PASS the end of a run: its errors listed in English with exit 1, and a window in the person'"'"'s language (pt_BR, ja, zh_TW) when the menu started it'
+# a run that failed without a message of its own still says so, in the window too
+: >"$WORK/errors"
+printf 'LANG=de_DE.UTF-8\n' >"$LOCALE_FILE"
+if SPARKY_STEREO_HARDWARE_GUI=1 DISPLAY=:9 finish_run "$T/run.log" 1 >"$T/out"; then echo 'FAIL a failed run without messages ended with status 0'; exit 1; fi
+grep -Fxq "ERROR A step failed without an error message of its own; the log $T/run.log shows which" "$T/out"
+grep -Fxq "Ein Schritt ist ohne eigene Fehlermeldung fehlgeschlagen; das Protokoll $T/run.log zeigt, welcher" "$T/window"
+echo 'PASS a failed run without a message of its own says so, in English and in the window'
 : >"$WORK/errors"
 finish_run "$T/run.log" 0 >"$T/out"
 grep -q 'finished with no errors' "$T/out"

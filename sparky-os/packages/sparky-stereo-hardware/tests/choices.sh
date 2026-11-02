@@ -31,3 +31,8 @@ else
 	grep -q 'Would stop with an ERROR: apt finds no nvidia-kernel-open-dkms-stereo3d' "$T/default"
 	echo 'PASS a dry run whose apt does not know the module says what would stop the setup, and ends with status 0'
 fi
+# a command that fails without its own check stops the setup with where and what (the ERR trap), never a silent exit
+if sparky-stereo-hardware --auto --dry-run --fixture /etc/hostname >"$T/stopped" 2>&1; then echo 'FAIL a broken fixture ran through'; exit 1; fi
+grep -Eq '^ERROR Hardware Setup stopped at line [0-9]+, where this command failed: python3 .*detect.py' "$T/stopped" || { cat "$T/stopped"; exit 1; }
+grep -q '^Hardware Setup finished with errors' "$T/stopped"
+echo 'PASS a command failing without its own check stops the setup and says where and what failed'
