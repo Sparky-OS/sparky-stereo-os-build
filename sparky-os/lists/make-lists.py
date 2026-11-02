@@ -309,7 +309,7 @@ group('developer', 'Developer: code and game engines', kf6_dev + qt6_dev + pysid
     # Rust, Go, Zig
     'rustc', 'cargo', 'rust-src', 'rust-clippy', 'rustfmt', 'rust-gdb', 'rust-lldb', 'rust-analyzer', 'cargo-c',
     'golang', 'gopls', 'delve',
-    'zig',   # not in Debian (2026-10-16): ours to package (Daniel's cgm-zig, Zig 0.16.0 with its frontend fix)
+    'cgm-zig',   # the edition's Zig compiler; roles.tsv places our packaged build in the developer task
     # Python
     'python3-dev', 'python3-venv', 'python3-pip', 'pipx', 'python3-pytest', 'ipython3', 'python3-debugpy', 'black',
     'flake8', 'mypy', 'pylint', 'ruff', 'python3-poetry', 'python3-build', 'python3-setuptools', 'python3-wheel',
