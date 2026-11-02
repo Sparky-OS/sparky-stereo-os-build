@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD polkit Policy Configuration 1.0//EN"
+"http://www.freedesktop.org/software/polkit/policyconfig-1.dtd">
+<policyconfig>
+  <vendor>Sparky Stereo OS</vendor>
+  <vendor_url>https://sparkylinux.org</vendor_url>
+  <action id="org.sparkylinux.problems.repair">
+    <description>Repair a problem of the computer</description>
+    <description xml:lang="pl">Napraw problem komputera</description>
+    <description xml:lang="pt_BR">Reparar um problema do computador</description>
+    <description xml:lang="fr">Réparer un problème de l’ordinateur</description>
+    <description xml:lang="de">Ein Problem des Computers reparieren</description>
+    <description xml:lang="ja">コンピューターの問題を修復する</description>
+    <description xml:lang="ko">컴퓨터 문제 복구</description>
+    <description xml:lang="zh_CN">修复计算机的问题</description>
+    <description xml:lang="zh_TW">修復電腦的問題</description>
+    <message>Repairing a problem of the computer runs the commands it keeps as an administrator</message>
+    <message xml:lang="pl">Naprawa problemu komputera uruchamia zachowane przy nim polecenia jako administrator</message>
+    <message xml:lang="pt_BR">Reparar um problema do computador executa como administrador os comandos guardados com ele</message>
+    <message xml:lang="fr">Réparer un problème de l’ordinateur exécute en administrateur les commandes conservées avec lui</message>
+    <message xml:lang="de">Die Reparatur eines Problems des Computers führt die dabei festgehaltenen Befehle als Administrator aus</message>
+    <message xml:lang="ja">コンピューターの問題の修復では、記録されたコマンドを管理者として実行します</message>
+    <message xml:lang="ko">컴퓨터 문제를 복구하면 함께 기록된 명령을 관리자로 실행합니다</message>
+    <message xml:lang="zh_CN">修复计算机的问题会以管理员身份运行随问题保存的命令</message>
+    <message xml:lang="zh_TW">修復電腦的問題會以管理員身分執行隨問題保存的指令</message>
+    <icon_name>dialog-warning</icon_name>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/sparky-stereo-problems</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">repair</annotate>
+  </action>
+</policyconfig>
