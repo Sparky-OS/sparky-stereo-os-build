@@ -1,0 +1,19 @@
+# Created by Daniel Ramos (Capitain Jack) 2026/11/02
+# Copyright 2026 under the GNU GPL3 License
+# The session's side of sparky-stereo-problems (ORDER 350): every kept problem as a notification, at login and when
+# one is kept or changes, for the whole session.
+[Unit]
+Description=Show the computer's problems in the session
+Documentation=file:/usr/share/doc/sparky-stereo-problems-plasma/README.md
+# people's sessions only: the login screen's accounts are system users
+ConditionUser=!@system
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/sparky-stereo-problems-notifier
+Restart=on-failure
+
+[Install]
+WantedBy=graphical-session.target
