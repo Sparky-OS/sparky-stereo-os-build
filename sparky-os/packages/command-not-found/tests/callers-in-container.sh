@@ -7,6 +7,8 @@
 # the sudo group, as a desktop user is): bash, zsh and fish typing the command, KRunner's D-Bus Match on the missing
 # program runner (activated by the session bus from its service file, as KRunner does), and a Dolphin pack whose program
 # is the command, with a stand-in kdialog that records the offer. Nothing reaches a display: no socket is mounted.
+# fish sets up command-not-found only in an interactive shell, as a person's terminal is (fish -i). Every probe runs with
+# PYTHONHASHSEED=0: command-not-found's spelling suggestions come from a set, whose order follows Python's string hash.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive LC_ALL=C.UTF-8
 probe_commands="fd bat cmatrix docker ts wakeonlan python"
@@ -14,8 +16,8 @@ probe_commands="fd bat cmatrix docker ts wakeonlan python"
 cp /repo/sparky-stereo-repo.asc /usr/share/keyrings/sparky-stereo-test.asc
 printf 'deb [signed-by=/usr/share/keyrings/sparky-stereo-test.asc] file:/repo mashtabba main\n' >/etc/apt/sources.list.d/edition.list
 printf 'Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n' >/etc/apt/preferences.d/edition
-# the edition's media stack sits on deb-multimedia (skill edition-packaging)
-printf 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://www.deb-multimedia.org forky main non-free\n' >/etc/apt/sources.list.d/multimedia.list
+# the edition's media stack sits on deb-multimedia (skill edition-packaging); plain HTTP, as the image has no CA store and apt checks the signature
+printf 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] http://www.deb-multimedia.org forky main non-free\n' >/etc/apt/sources.list.d/multimedia.list
 apt-get -y update >/out/apt-update-1.log 2>&1
 apt-get -y install --no-install-recommends command-not-found sparky-stereo-console sparky-stereo-integration zsh fish dbus \
 	python3-dbus python3-gi >/out/apt-install.log 2>&1
@@ -50,22 +52,22 @@ probe() { # phase
 	mkdir -p "$d"
 	dpkg-query -W -f '${Package} ${Version}\n' command-not-found sparky-stereo-integration sparky-stereo-console bash zsh fish >"$d/versions.txt"
 	for c in $probe_commands; do
-		runuser -u tester -- env -i HOME=/home/tester PATH=/usr/local/bin:/usr/bin:/bin TERM=dumb LANG=C.UTF-8 bash -i -c "$c" >"$d/bash-$c.txt" 2>&1 </dev/null || true
-		runuser -u tester -- env -i HOME=/home/tester PATH=/usr/local/bin:/usr/bin:/bin TERM=dumb LANG=C.UTF-8 zsh -i -c "$c" >"$d/zsh-$c.txt" 2>&1 </dev/null || true
-		runuser -u tester -- env -i HOME=/home/tester PATH=/usr/local/bin:/usr/bin:/bin TERM=dumb LANG=C.UTF-8 fish -c "$c" >"$d/fish-$c.txt" 2>&1 </dev/null || true
+		runuser -u tester -- env -i PYTHONHASHSEED=0 HOME=/home/tester PATH=/usr/local/bin:/usr/bin:/bin TERM=dumb LANG=C.UTF-8 bash -i -c "$c" >"$d/bash-$c.txt" 2>&1 </dev/null || true
+		runuser -u tester -- env -i PYTHONHASHSEED=0 HOME=/home/tester PATH=/usr/local/bin:/usr/bin:/bin TERM=dumb LANG=C.UTF-8 zsh -i -c "$c" >"$d/zsh-$c.txt" 2>&1 </dev/null || true
+		runuser -u tester -- env -i PYTHONHASHSEED=0 HOME=/home/tester PATH=/usr/local/bin:/usr/bin:/bin TERM=dumb LANG=C.UTF-8 fish -i -c "$c" >"$d/fish-$c.txt" 2>&1 </dev/null || true
 		rm -f /home/tester/kdialog.log
-		runuser -u tester -- env -i HOME=/home/tester PATH=/usr/local/lib/stand-in:/usr/bin:/bin LANG=C.UTF-8 \
+		runuser -u tester -- env -i PYTHONHASHSEED=0 HOME=/home/tester PATH=/usr/local/lib/stand-in:/usr/bin:/bin LANG=C.UTF-8 \
 			WAYLAND_DISPLAY=j15-stand-in-no-display sparky-stereo-integration run "j15-$c" -- /tmp/x >"$d/dolphin-$c.out" 2>&1 || true
 		cp /home/tester/kdialog.log "$d/dolphin-$c.txt" 2>/dev/null || : >"$d/dolphin-$c.txt"
 	done
-	runuser -u tester -- env -i HOME=/home/tester PATH=/usr/bin:/bin LANG=C.UTF-8 \
+	runuser -u tester -- env -i PYTHONHASHSEED=0 HOME=/home/tester PATH=/usr/bin:/bin LANG=C.UTF-8 \
 		dbus-run-session -- python3 /usr/local/lib/stand-in/krunner-match.py $probe_commands >"$d/krunner.json" 2>"$d/krunner.err"
 	for l in en pl pt_BR fr de ja ko zh_CN zh_TW; do
-		runuser -u tester -- env -i HOME=/home/tester PATH=/usr/bin:/bin LANG=C.UTF-8 LANGUAGE=$l /usr/lib/command-not-found -- fd >"$d/lang-$l.txt" 2>&1 || true
+		runuser -u tester -- env -i PYTHONHASHSEED=0 HOME=/home/tester PATH=/usr/bin:/bin LANG=C.UTF-8 LANGUAGE=$l /usr/lib/command-not-found -- fd >"$d/lang-$l.txt" 2>&1 || true
 	done
 	while read -r c; do
 		printf '=== %s\n' "$c"
-		runuser -u tester -- env -i HOME=/home/tester PATH=/usr/bin:/bin LANG=C.UTF-8 /usr/lib/command-not-found -- "$c" 2>&1 || true
+		runuser -u tester -- env -i PYTHONHASHSEED=0 HOME=/home/tester PATH=/usr/bin:/bin LANG=C.UTF-8 /usr/lib/command-not-found -- "$c" 2>&1 || true
 	done <"$d/../sample.txt" >"$d/sample-out.txt"
 }
 sample >/out/sample.txt
