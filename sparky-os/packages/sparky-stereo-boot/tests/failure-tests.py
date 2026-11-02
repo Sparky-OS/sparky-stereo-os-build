@@ -254,6 +254,8 @@ def migrate():
     in the old store, which nothing reads any more, so it is said once and kept as the problem old-store, naming the
     store, until a repair has moved every record (0.1.6, milestone 2c of ORDER 350)."""
     de, en = strings('de'), strings('en')
+    # a language file without the message makes its checks fail, not the part
+    de61, en61 = de.get('LOCAL61', '\0LOCAL61 missing %s'), en.get('LOCAL61', '\0LOCAL61 missing %s')
     root, env = setup(lang='de_DE.UTF-8')
     old = os.path.join(root, 'var/lib/sparky-stereo-boot/problems')
     os.makedirs(old)
@@ -268,7 +270,7 @@ def migrate():
           and not os.path.exists(os.path.join(old, 'update-grub.json')),
           'a readable record moves, keeping when it was found; exit %d' % r.returncode)
     check('migrate', os.path.exists(os.path.join(old, 'handover.json')), 'the one that cannot be read stays in the old store')
-    check('migrate', r.stderr.count(de['LOCAL61'] % old) == 1 and r.stderr.count(en['LOCAL61'] % old) == 1,
+    check('migrate', r.stderr.count(de61 % old) == 1 and r.stderr.count(en61 % old) == 1,
           'said once, in German and in English beside it')
     check('migrate', bool(kept_old) and kept_old['key'] == 'LOCAL61' and kept_old.get('args') == [old]
           and kept_old.get('severity') == 'failed' and 'handover.json: JSONDecodeError' in (kept_old.get('output') or ''),
@@ -276,7 +278,7 @@ def migrate():
     check('migrate', bool(kept_old) and kept_old.get('repair') == [[sys.executable, script, 'migrate', old]],
           'its repair is the same move again (%s)' % (kept_old or {}).get('repair'))
     rc, out = cli(env, 'status')
-    check('migrate', rc == 1 and (de['LOCAL61'] % old) in out, 'status lists it in German')
+    check('migrate', rc == 1 and (de61 % old) in out, 'status lists it in German')
     # the person reads the record and puts it right: repair moves it, and the problem and the old store go
     json.dump({'step': 'handover', 'time': '2026-10-30T07:00:00Z', 'key': 'LOCAL32', 'args': [['LOCAL39']]},
               open(os.path.join(old, 'handover.json'), 'w'))
@@ -291,7 +293,7 @@ def migrate():
     r = subprocess.run([sys.executable, '-I', script, 'migrate', old], env=env, capture_output=True, text=True, timeout=120)
     k = kept(root, 'old-store')
     check('migrate', r.returncode == 1 and bool(k) and (old + ': ') in (k.get('output') or '') and 'Not a directory' in (k.get('output') or '')
-          and (en['LOCAL61'] % old) in r.stderr, 'an old store that cannot be listed is kept the same way, said')
+          and (en61 % old) in r.stderr, 'an old store that cannot be listed is kept the same way, said')
     # no old store (0.1.4 had none): nothing said, nothing kept
     root, env = setup()
     r = subprocess.run([sys.executable, '-I', script, 'migrate', os.path.join(root, 'var/lib/sparky-stereo-boot/problems')],
