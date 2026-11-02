@@ -281,6 +281,27 @@ class Successor(unittest.TestCase):
         subprocess.run([sys.executable, str(REPO / 'plain-from-lc.py'), str(tree)], check=True, stdout=subprocess.DEVNULL)
         self.assertEqual(subprocess.check_output(['dpkg-parsechangelog', '-S', 'Version'], cwd=tree, text=True).strip(), '1.0-2')
 
+    def test_preserve_adds_a_pattern_and_nothing_else(self):
+        """ORDER 352b: the kernel's rust/kernel/*.rs.S joined its source-consumer plan (Kbuild cuts their cpp -C output
+        at a comment); a successor may add a reviewed pattern, and the published ones stay as they were."""
+        r = subprocess.run([sys.executable, str(REPO / 'lc-successor.py'), '--next', '1.0-2', '--item', 'x',
+                            '--preserve', 'src/*.S', 'cpp -C keeps its comments and a tool reads one', '--work', str(self.tmp),
+                            str(self.published()), str(self.tmp / 'out')], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        report = json.loads(r.stdout.splitlines()[-1])
+        self.assertEqual(report['preserve_added'], ['src/*.S'])
+        self.assertEqual(report['changed'], ['debian/changelog', 'debian/sparky-lean-preserve.json'])
+        tree = self.unpack(self.tmp / 'out/demo_1.0-2+lc1.dsc')
+        self.assertEqual(json.loads((tree / 'debian/sparky-lean-preserve.json').read_text()),
+                         {'src/demo.h': 'a generator reads it', 'src/*.S': 'cpp -C keeps its comments and a tool reads one'})
+
+    def test_preserve_of_a_published_pattern_stops(self):
+        r = subprocess.run([sys.executable, str(REPO / 'lc-successor.py'), '--next', '1.0-2', '--item', 'x',
+                            '--preserve', 'src/demo.h', 'again', '--work', str(self.tmp), str(self.published()),
+                            str(self.tmp / 'out')], capture_output=True, text=True)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('already in the published source-consumer plan', r.stderr)
+
     def test_build_dependencies_at_the_end_move_to_where_debian_prepare_puts_them(self):
         report = self.successor(self.published(at_end=True))
         self.assertEqual(report['plain_from_lc'], ['--build-depends-at-end'])
