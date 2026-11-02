@@ -5,9 +5,9 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=20261103.1~sparky9~0+lc1
+VERSION=20261103.2~sparky9~0+lc1
 PACKAGE=sparky-stereo-kernel-settings
-DEPENDS='libpam-modules, systemd, systemd-zram-generator, udev'
+DEPENDS='sparky-stereo-problems, libpam-modules, systemd, systemd-zram-generator, udev'
 FILES='etc/security/limits.d/20-sparky-audio.conf usr/lib/modules-load.d/sparky-stereo.conf usr/lib/sysctl.d/70-sparky-stereo.conf usr/lib/systemd/zram-generator.conf.d/50-sparky-stereo.conf usr/lib/tmpfiles.d/sparky-thp.conf usr/lib/udev/rules.d/60-sparky-block.rules usr/lib/udev/rules.d/70-sparky-ntsync.rules usr/lib/udev/rules.d/99-sparky-audio.rules'
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.kernel-settings.XXXXXX")
@@ -17,6 +17,7 @@ mkdir -p "$D/DEBIAN" "$D/usr/share/doc/$PACKAGE"
 for f in $FILES; do install -Dm644 "$HERE/$f" "$D/$f"; done
 install -Dm755 "$HERE/usr/libexec/sparky-stereo/zram-auto" "$D/usr/libexec/sparky-stereo/zram-auto"
 install -m644 "$HERE/copyright" "$D/usr/share/doc/$PACKAGE/copyright"
+sparky-stereo-problems catalog "$PACKAGE" "$HERE/problems-lang" "$D/usr/lib/systemd/catalog" --subject LOCAL1
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
 cat >"$D/DEBIAN/control" <<EOT
 Package: $PACKAGE
@@ -44,13 +45,25 @@ if [ "$1" = configure ] && dpkg --compare-versions "${2:-0}" lt 20261010.2~spark
 	mkdir -p /var/lib/sparky-stereo-kernel-settings
 	: >/var/lib/sparky-stereo-kernel-settings/tmp-mount-masked
 fi
-if [ "$1" = configure ] && command -v udevadm >/dev/null 2>&1; then
-	udevadm control --reload >/dev/null 2>&1 || true
+if [ "$1" = configure ]; then
+	# ORDER 358: installed settings remain configured after a failed live reload.
+	# debhelper 14.5 autoscripts/postinst-systemd-restart similarly completes:
+	# systemctl --system daemon-reload >/dev/null || true
+	# We show and keep the failure instead. Policy 6 has no reload exception.
+	# dh_installudev 14.5 installs rules but has no reload autoscript.
+	if [ -z "${DPKG_ROOT:-}" ] && [ -S /run/udev/control ]; then
+		sparky-stereo-problems run --machine sparky-stereo-kernel-settings udev-reload LOCAL2 -- udevadm control --reload || :
+	else
+		sparky-stereo-problems say sparky-stereo-kernel-settings LOCAL4
+	fi
 fi
 EOT
 cat >"$D/DEBIAN/postrm" <<'EOT'
 #!/bin/sh
 set -e
+if [ "$1" = remove ] && command -v sparky-stereo-problems >/dev/null 2>&1; then
+	sparky-stereo-problems clear --all sparky-stereo-kernel-settings
+fi
 if [ "$1" = purge ] && [ -e /var/lib/sparky-stereo-kernel-settings/tmp-mount-masked ]; then
 	if [ "$(readlink /etc/systemd/system/tmp.mount 2>/dev/null)" = /dev/null ]; then
 		rm -f /etc/systemd/system/tmp.mount
@@ -60,4 +73,4 @@ fi
 EOT
 chmod 755 "$D/DEBIAN/postinst" "$D/DEBIAN/postrm"
 (cd "$D" && find etc usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
-PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$HERE"
+PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$HERE" --build-dependency sparky-stereo-problems
