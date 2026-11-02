@@ -18,12 +18,12 @@ It refuses an existing destination; `fetch-source.sh --verify DIRECTORY` verifie
 Inside the toolchain container, `prepare-source.sh VERIFIED_CLONE NEW_OUTPUT_DIRECTORY` creates the original source archive and the Lean-integrated `.dsc` at `0.16.0+cgm.0399d2b19b-1+lc1`.
 Extract the `.dsc` using `dpkg-source -x`, then build with `dpkg-buildpackage -us -uc -b -j4` as the build user.
 Set `SPARKY_LC_ARCHIVE_CONFIG` and `SPARKY_LC_SCRATCH` for the automatic link gate, as the edition's Lean Code archive documentation describes.
-The isolated link gate needs bubblewrap user namespaces available inside the container.
+The isolated link gate needs bubblewrap user namespaces available inside the container. Before staging, run `PYTHONPATH=sparky-os python3 -m lean.release check-identity` on every resulting `.deb`; the toolkit must carry its released 0.1.24 identity.
 
 The source package retains the edition's exact Lean toolkit and provenance helper.
-Lean Code projects C/C++ inputs before configuration and restores installed sources before projecting the payload.
+Lean Code 0.1.24 projects C/C++ before the CMake bootstrap. That bootstrap builds `zig2` from the pinned source and its upstream WASM seed. The recipe then restores the authored inputs and qualifies C/C++ and Zig together with `LEAN_ZIG=build/zig2`, before building the self-hosted stage3 compiler. This avoids a dependency on a previously installed cgm-zig package. Installed sources are restored before the separate payload projection.
 The root test corpus is retained because its deliberately invalid source and comment directives are test inputs.
-The toolkit currently has no Zig source adapter: `.zig` files stay authored and require a rebuild after the adapter lands.
+Zig qualification uses the bootstrap compiler’s tokenizer and ast-check; the retained language plan selects C and Zig. The bootstrap reads authored Zig to establish that consumer; only the subsequent stage3 compiler and projected library are packaged. The unversioned `clang` dependency supplies the raw lexer used for conditional C headers.
 No toolkit source is changed by this recipe.
 
 The fork's [build notes](https://github.com/danielcamposramos/cgm-zig/blob/0399d2b19b71ed865cc2e6d5e21224f124e373db/docs/crown/BUILDING.md) require `RelWithDebInfo`, `ZIG_RELEASE_SAFE=ON` and `-Ddebug-extensions` together.
