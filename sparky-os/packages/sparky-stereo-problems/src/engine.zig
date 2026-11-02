@@ -192,6 +192,42 @@ pub fn fail(ctx: *Ctx, msg: []const u8, args: []const []const u8) Failure {
     return error.Failed;
 }
 
+// The one failure that has no memory to say itself with: LOCAL64 rendered from the engine's catalogs like every other
+// message, in the person's language and in English, with memory of its own (a static megabyte, not the allocator that
+// failed; one thread at a time). Without the engine's catalogs it is their English words, as every message of the
+// engine is then its name.
+var oom_memory: [1 << 20]u8 = undefined;
+var oom_busy = std.atomic.Value(bool).init(false);
+pub const oom_english = "Out of memory: there was not enough free memory to do this. Close some programs to free memory, then try again.";
+
+pub const OutOfMemory = struct {
+    local: []const u8,
+    en: []const u8,
+    // LOCAL is another language than English
+    other: bool,
+};
+
+fn copyInto(buf: []u8, text: []const u8) []const u8 {
+    const n = @min(text.len, buf.len - 1);
+    @memcpy(buf[0..n], text[0..n]);
+    buf[n] = 0;
+    return buf[0..n];
+}
+
+// LOCAL64 into LOCAL and EN (each ended with a 0 byte)
+pub fn outOfMemory(local: []u8, en: []u8) OutOfMemory {
+    while (oom_busy.swap(true, .acquire)) std.atomic.spinLoopHint();
+    defer oom_busy.store(false, .release);
+    var fba = std.heap.FixedBufferAllocator.init(&oom_memory);
+    var ctx = Ctx.init(fba.allocator());
+    const english = render(&ctx, engine_package, "LOCAL64", &.{}, "en") catch null;
+    const en_text = copyInto(en, if (english) |r| (if (r.found) r.text else oom_english) else oom_english);
+    if (render(&ctx, engine_package, "LOCAL64", &.{}, null) catch null) |r| {
+        if (r.found and !std.mem.eql(u8, r.lang, "en")) return .{ .local = copyInto(local, r.text), .en = en_text, .other = true };
+    }
+    return .{ .local = copyInto(local, en_text), .en = en_text, .other = false };
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Files
 

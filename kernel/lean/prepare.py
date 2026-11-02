@@ -193,6 +193,8 @@ override_dh_auto_clean:
         ('include/linux/oid_registry.h', 'build_OID_registry reads cryptographic OID values from trailing comments'),
         ('arch/x86/include/asm/cpufeatures.h', 'mkcapflags.sh reads CPU capability and bug names from quoted comments'),
         ('arch/x86/include/asm/vmxfeatures.h', 'mkcapflags.sh reads VMX capability names from quoted comments'),
+        ('rust/kernel/*.rs.S', "Kbuild's cmd_rustc_rs_rs_S preprocesses it as C with comments kept (-xc -C -P) and cuts the "
+                               "output at its '// Cut here.' comment with sed (scripts/Makefile.build)"),
     ]
     for path in sorted((root / 'arch').iterdir()):
         if path.is_dir() and path.name != 'x86':

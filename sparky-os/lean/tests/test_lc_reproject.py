@@ -281,6 +281,54 @@ class Successor(unittest.TestCase):
         subprocess.run([sys.executable, str(REPO / 'plain-from-lc.py'), str(tree)], check=True, stdout=subprocess.DEVNULL)
         self.assertEqual(subprocess.check_output(['dpkg-parsechangelog', '-S', 'Version'], cwd=tree, text=True).strip(), '1.0-2')
 
+    def test_preserve_adds_a_pattern_and_nothing_else(self):
+        """ORDER 352b: the kernel's rust/kernel/*.rs.S joined its source-consumer plan (Kbuild cuts their cpp -C output
+        at a comment); a successor may add a reviewed pattern, and the published ones stay as they were."""
+        r = subprocess.run([sys.executable, str(REPO / 'lc-successor.py'), '--next', '1.0-2', '--item', 'x',
+                            '--preserve', 'src/*.S', 'cpp -C keeps its comments and a tool reads one', '--work', str(self.tmp),
+                            str(self.published()), str(self.tmp / 'out')], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        report = json.loads(r.stdout.splitlines()[-1])
+        self.assertEqual(report['preserve_added'], ['src/*.S'])
+        self.assertEqual(report['changed'], ['debian/changelog', 'debian/sparky-lean-preserve.json'])
+        tree = self.unpack(self.tmp / 'out/demo_1.0-2+lc1.dsc')
+        self.assertEqual(json.loads((tree / 'debian/sparky-lean-preserve.json').read_text()),
+                         {'src/demo.h': 'a generator reads it', 'src/*.S': 'cpp -C keeps its comments and a tool reads one'})
+
+    def test_generated_outputs_are_declared_in_source_and_kept_by_successors(self):
+        """ORDER 352b part 4: lean.debian_prepare --generated-output writes the retained plan the payload restoration
+        reads; a bad form stops before the source is touched; the next version keeps the plan as it was."""
+        from lean import debian_prepare, source_tree
+        bad = self.tmp / 'bad' / 'demo-1.0'
+        plain_source(bad)
+        before = sorted(p.relative_to(bad).as_posix() for p in bad.rglob('*'))
+        with self.assertRaisesRegex(ValueError, 'Unknown generated-output form'):
+            debian_prepare.prepare(bad, '1.0-1+lc1', REPO.parent,
+                                   generated_outputs=[('/usr/share/demo/*test.zig', 'blank', 'a stub')])
+        self.assertEqual(sorted(p.relative_to(bad).as_posix() for p in bad.rglob('*')), before)
+        work = self.tmp / 'pub'
+        work.mkdir()
+        tree = work / 'demo-1.0'
+        plain_source(tree)
+        subprocess.run(['tar', '-C', str(work), '--exclude=debian', '-cJf', str(work / 'demo_1.0.orig.tar.xz'), 'demo-1.0'],
+                       check=True)
+        debian_prepare.prepare(tree, '1.0-1+lc1', REPO.parent,
+                               generated_outputs=[('/usr/share/demo/*test.zig', 'empty', 'an install step empties them')])
+        plan = {'/usr/share/demo/*test.zig': {'form': 'empty', 'reason': 'an install step empties them'}}
+        self.assertEqual(json.loads((tree / source_tree.PAYLOAD_GENERATED_PLAN).read_text()), plan)
+        subprocess.run(['dpkg-source', '-b', 'demo-1.0'], cwd=work, check=True, stdout=subprocess.DEVNULL)
+        report = self.successor(work / 'demo_1.0-1+lc1.dsc')
+        self.assertEqual(report['changed'], ['debian/changelog'])
+        new = self.unpack(self.tmp / 'out/demo_1.0-2+lc1.dsc')
+        self.assertEqual(json.loads((new / source_tree.PAYLOAD_GENERATED_PLAN).read_text()), plan)
+
+    def test_preserve_of_a_published_pattern_stops(self):
+        r = subprocess.run([sys.executable, str(REPO / 'lc-successor.py'), '--next', '1.0-2', '--item', 'x',
+                            '--preserve', 'src/demo.h', 'again', '--work', str(self.tmp), str(self.published()),
+                            str(self.tmp / 'out')], capture_output=True, text=True)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('already in the published source-consumer plan', r.stderr)
+
     def test_build_dependencies_at_the_end_move_to_where_debian_prepare_puts_them(self):
         report = self.successor(self.published(at_end=True))
         self.assertEqual(report['plain_from_lc'], ['--build-depends-at-end'])

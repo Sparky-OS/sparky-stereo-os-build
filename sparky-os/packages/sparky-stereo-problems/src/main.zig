@@ -492,14 +492,27 @@ pub export fn main(argc: c_int, argv: [*][*:0]u8) callconv(.c) c_int {
     var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    var args = a.alloc([]const u8, @intCast(@max(argc - 1, 0))) catch return 1;
+    var args = a.alloc([]const u8, @intCast(@max(argc - 1, 0))) catch return outOfMemory();
     var i: usize = 1;
     while (i < @as(usize, @intCast(argc))) : (i += 1) args[i - 1] = std.mem.span(argv[i]);
     var ctx = Ctx.init(a);
     defer ctx.deinit();
-    const status = runMain(&ctx, args) catch {
-        err("sparky-stereo-problems: out of memory (the engine could not allocate memory)\n");
-        return 1;
-    };
+    const status = runMain(&ctx, args) catch return outOfMemory();
     return status;
+}
+
+// An allocation failed: said as every failure is, in the person's language and in English when that is another
+fn outOfMemory() c_int {
+    var local: [2048]u8 = undefined;
+    var en: [2048]u8 = undefined;
+    const said_oom = engine.outOfMemory(&local, &en);
+    err("sparky-stereo-problems: ");
+    err(said_oom.local);
+    err("\n");
+    if (said_oom.other) {
+        err("sparky-stereo-problems: (en) ");
+        err(said_oom.en);
+        err("\n");
+    }
+    return 1;
 }

@@ -138,7 +138,8 @@ class Steps:
     one engine (ORDER 350): record, run, clear, say, pending, message, status, repair, dismiss and notify, and their
     command line. A STEP is the problem's key, a KEY (LOCALn) its message; the package's own words for status and
     repair are its messages named in WORDS (header, none, since, evidence, dismissed, repaired, failed_again, hidden,
-    unknown, no_repair). Dismiss is the engine's Hide: the person's own, kept listed, back when the problem changes.
+    unknown, no_repair, migrate_failed). Dismiss is the engine's Hide: the person's own, kept listed, back when the
+    problem changes.
     """
     OUTPUT_LINES = 200
 
@@ -329,38 +330,60 @@ class Steps:
         import subprocess
         return subprocess.run(['systemctl', '--user', 'start', 'sparky-stereo-problems-notifier.service']).returncode
 
-    def migrate(self, old_dir):
+    MIGRATE_STEP = 'old-store'
+
+    def migrate(self, old_dir, repair=None):
         """Moves the records of an older store (STEP.json: step, key, args, command, status, output, repair, time)
-        into the engine, once, keeping when each was first found; the old store goes when every record moved."""
+        into the engine, once, keeping when each was first found; the old store goes when every record moved. A record
+        that cannot move stays there, and nothing else reads that store, so the package keeps one problem of its own
+        (step old-store, its message the WORDS' migrate_failed, OLD_DIR its argument, each record that could not move
+        and why in its output, REPAIR the command that tries again): the person is told until every record moved."""
+        failed = []
         try:
             names = sorted(n for n in os.listdir(old_dir) if n.endswith('.json'))
         except FileNotFoundError:
-            return True
+            return self._migrated()
         except OSError as error:
-            print('%s: %s: %s' % (self.tag, old_dir, error), file=sys.stderr, flush=True)
-            return False
-        ok = True
+            return self._not_migrated(old_dir, ['%s: %s' % (old_dir, error)], repair)
         for name in names:
             path = os.path.join(old_dir, name)
             try:
                 with open(path, encoding='utf-8') as f:
                     e = json.load(f)
                 step, key = e.get('step') or name[:-5], e['key']
-            except (OSError, ValueError, KeyError) as error:
-                print('%s: %s: %s' % (self.tag, path, error), file=sys.stderr, flush=True)
-                ok = False
+            except (OSError, ValueError, KeyError, AttributeError) as error:
+                # Python's own words for what it could not read, as a command's output is kept
+                failed.append('%s: %s: %s' % (path, type(error).__name__, error))
                 continue
-            if not self.record(step, key, e.get('args') or [], command=e.get('command'), status=e.get('status'),
-                               output=e.get('output') or '', repair=e.get('repair') or None, quiet=True,
-                               first=e.get('time') or None):
-                ok = False
-                continue
-            os.remove(path)
-        if ok:
+            try:
+                keep(self.package, step, key, e.get('args') or [], scope=self.scope, command=e.get('command'),
+                     status=e.get('status'), output=e.get('output') or None, repair=e.get('repair') or None,
+                     first=e.get('time') or None)
+                os.remove(path)
+            except (Failed, OSError) as error:
+                failed.append('%s: %s' % (path, error))
+        if failed:
+            return self._not_migrated(old_dir, failed, repair)
+        try:
             for rest in os.listdir(old_dir):
                 os.remove(os.path.join(old_dir, rest))
             os.rmdir(old_dir)
-        return ok
+        except OSError as error:
+            return self._not_migrated(old_dir, ['%s: %s' % (old_dir, error)], repair)
+        return self._migrated()
+
+    def _migrated(self):
+        # every record moved (or the store is gone): the problem that told it, if any, is over
+        return self.clear(self.MIGRATE_STEP) if self.words.get('migrate_failed') else True
+
+    def _not_migrated(self, old_dir, failed, repair):
+        for line in failed:
+            print('%s: %s' % (self.tag, line), file=sys.stderr, flush=True)
+        key = self.words.get('migrate_failed')
+        if key:
+            # said once, in the person's language, and kept until every record moved
+            self.record(self.MIGRATE_STEP, key, [old_dir], output='\n'.join(failed) + '\n', repair=repair)
+        return False
 
     @staticmethod
     def split_repair(args):
@@ -396,6 +419,8 @@ class Steps:
         if argv == ['notify']:
             return self.notify()
         if len(argv) == 2 and argv[0] == 'migrate':
-            return 0 if self.migrate(argv[1]) else 1
+            # a record that cannot move is kept with this same command as its repair
+            again = [sys.executable or 'python3', os.path.abspath(sys.argv[0]), 'migrate', argv[1]]
+            return 0 if self.migrate(argv[1], repair=[again]) else 1
         print(doc, file=sys.stderr)
         return 2

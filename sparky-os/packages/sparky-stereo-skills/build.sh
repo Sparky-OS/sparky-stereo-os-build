@@ -19,6 +19,7 @@ PACKAGE=sparky-stereo-skills
 SKILLS_SRC=${SKILLS_SRC:-${SPARKY_PUBLIC_EDITION:-}}
 SKILLS_COMMIT=${SKILLS_COMMIT:-}
 SOURCE_PACKAGE=${SOURCE_PACKAGE:-yes}
+COPY=${COPY_RECIPE:-$HERE/../../../tools/copy-recipe.py}
 TOOLKIT=${SPARKY_LEAN_TOOLKIT:-$HERE/release-toolkit}
 if [ ! -d "$TOOLKIT/lean" ]; then TOOLKIT=$(cd "$HERE/../.." && pwd); fi
 PROVENANCE=$TOOLKIT/provenance.sh
@@ -27,13 +28,16 @@ mkdir -p "$OUT"
 OUT=$(cd "$OUT" && pwd)
 W=$(mktemp -d "$OUT/.$PACKAGE.XXXXXX")
 trap 'rm -rf "$W"' EXIT
+RECIPE=$HERE
+python3 "$COPY" "$RECIPE" "$W/recipe"
+HERE=$W/recipe
 
 # The snapshot: skills and tools whole, the documents' Markdown and architecture
 # overview image (large screenshot galleries stay online), the front page,
 # the credits, the citation and both licences.
 P=$W/public
 if [ -d "$HERE/public" ]; then
-	cp -a "$HERE/public" "$P"
+	python3 "$COPY" "$HERE/public" "$P"
 	chmod -R u+w "$P"
 	[ -s "$P/SOURCE" ] && [ -s "$P/MANIFEST.sha256" ] || {
 		echo 'A bundled snapshot needs SOURCE and MANIFEST.sha256; do not disguise a local candidate as a released commit.' >&2
@@ -128,7 +132,9 @@ echo "built $OUT/${PACKAGE}_${VERSION}_all.deb"
 
 S=$W/$PACKAGE-$VERSION
 mkdir -p "$S/debian/source"
-cp -a "$HERE/." "$S/"
+python3 "$COPY" "$HERE" "$S"
+mkdir -p "$S/build-tools"
+cp "$COPY" "$S/build-tools/"
 rm -rf "$S/public"
 cp -a "$P" "$S/public"
 rm -rf "$S/release-toolkit"
@@ -138,14 +144,14 @@ cp "$PROVENANCE" "$S/release-toolkit/provenance.sh"
 if [ -f "$TOOLKIT/LICENSE" ]; then
 	cp "$TOOLKIT/LICENSE" "$S/release-toolkit/LICENSE"
 else
-	cp "$HERE/../dpkg-stereo/LICENSE" "$S/release-toolkit/LICENSE"
+	cp "$RECIPE/../dpkg-stereo/LICENSE" "$S/release-toolkit/LICENSE"
 fi
 cat >"$S/debian/control" <<EOF
 Source: $PACKAGE
 Section: Development
 Priority: optional
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
-Build-Depends: gcc, node-acorn, nodejs, perl, python3, python3-yaml
+Build-Depends: git, gcc, node-acorn, nodejs, perl, python3, python3-yaml
 Standards-Version: 4.7.4
 Rules-Requires-Root: no
 Homepage: https://sparkylinux.org
@@ -170,7 +176,7 @@ echo '3.0 (native)' >"$S/debian/source/format"
 cat >"$S/debian/rules" <<'EOF'
 #!/usr/bin/make -f
 binary binary-indep:
-	OUT=$(CURDIR)/.. SOURCE_PACKAGE=no bash ./build.sh
+	OUT=$(CURDIR)/.. COPY_RECIPE=$(CURDIR)/build-tools/copy-recipe.py SOURCE_PACKAGE=no bash ./build.sh
 	dpkg-distaddfile $$(dpkg-parsechangelog -S Source)_$$(dpkg-parsechangelog -S Version)_all.deb Development optional
 	if test -f ../sparky-stereo-skills-lc-hr_$$(dpkg-parsechangelog -S Version)_all.deb; then dpkg-distaddfile sparky-stereo-skills-lc-hr_$$(dpkg-parsechangelog -S Version)_all.deb doc optional; sed -i '/^sparky-stereo-skills-lc-hr_/s/$$/ automatic=yes/' debian/files; fi
 binary-arch build build-arch build-indep clean:
