@@ -91,11 +91,21 @@ has "a render node the account may not open: said" "$T/err" "cannot be used by y
 rm -f "$CFG"
 
 echo "== U24: a power profile that cannot be read is said, never Balanced"
-check "browsers without a readable profile: exit 4" "$(rc_of env_for host --category browsers --print gpu)" 4
-has "browsers without a readable profile: said" "$T/err" "follows the power profile, and the power profile could not be read: the system bus cannot be reached."
+# Automatic is a rule, not the person's choice (ORDER 346g): it cannot place browsers then, said and kept, exit status 5, so
+# Plasma's launcher never refuses a program the person placed nowhere
+check "browsers on Automatic without a readable profile: exit 5" "$(rc_of env_for host --category browsers --print gpu)" 5
+has "browsers on Automatic without a readable profile: said" "$T/err" "follows the power profile, and the power profile could not be read: the system bus cannot be reached."
+check "browsers on Automatic without a readable profile: kept" "$(python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["kind"], d["requested"])' "$PROBLEMS/browsers.json" 2>&1)" "profile-unreadable auto"
+# as Plasma's launcher asks for an entry outside the menu: by its desktop file
+printf '[Desktop Entry]\nType=Application\nName=Browser\nExec=true\nCategories=Network;WebBrowser;\n' >"$T/browser.desktop"
+check "a browser's entry on Automatic without a readable profile: exit 5" "$(rc_of env_for host --app "$T/browser.desktop")" 5
+save '[Render]\nBrowsers=profile\n'
+check "browsers the person set to follow the power profile, unreadable: exit 4" "$(rc_of env_for host --category browsers --print gpu)" 4
+has "browsers the person set to follow the power profile, unreadable: said" "$T/err" "follows the power profile, and the power profile could not be read: the system bus cannot be reached."
+rm -f "$CFG"
 check "an explicit profile is honoured" "$(env_for host --category browsers --profile performance --print gpu 2>&1)" "NVIDIA GeForce RTX 3060 Lite Hash Rate"
 check "a profile name that is none: a wrong argument" "$(rc_of env_for host --category browsers --profile turbo)" 2
-check "SPARKY_STEREO_POWER_PROFILE that is none: exit 4" "$(rc_of env SPARKY_STEREO_POWER_PROFILE=turbo SPARKY_STEREO_GRAPHICS_ROOT=$T/host "$BIN/sparky-stereo-gpu-env" --category browsers)" 4
+check "SPARKY_STEREO_POWER_PROFILE that is none, browsers on Automatic: exit 5" "$(rc_of env SPARKY_STEREO_POWER_PROFILE=turbo SPARKY_STEREO_GRAPHICS_ROOT=$T/host "$BIN/sparky-stereo-gpu-env" --category browsers)" 5
 has "SPARKY_STEREO_POWER_PROFILE that is none: said" "$T/err" "SPARKY_STEREO_POWER_PROFILE is turbo, which is not a power profile"
 check "other programs need no profile" "$(env_for host --category other --print reason 2>&1)" desktop
 
@@ -113,6 +123,8 @@ chmod +x "$T/failing/sparky-stereo-gpu-env"
 check "a resolver that fails: the program does not start" "$( (export PATH=$T/failing:/usr/bin:/bin; sh "$RUN" --category games printf ran 2>"$T/err"; echo " rc=$?") )" " rc=3"
 has "a resolver that fails: said" "$T/err" "sparky-stereo-gpu-env failed (exit status 3)"
 has "a resolver that fails: its own words too" "$T/err" "the resolver broke"
+check "Automatic cannot place a browser: the wrapper starts nothing either" "$( (export PATH=$BIN:$PATH SPARKY_STEREO_GRAPHICS_ROOT=$T/host; unset SPARKY_STEREO_POWER_PROFILE; sh "$RUN" --category browsers printf ran 2>"$T/err"; echo " rc=$?") )" " rc=4"
+has "Automatic cannot place a browser: the wrapper says it was not started" "$T/err" "The program was not started."
 check "no resolver: the program does not start" "$( (export PATH=/usr/bin:/bin; sh "$RUN" --category games printf ran 2>"$T/err"; echo " rc=$?") )" " rc=127"
 has "no resolver: said" "$T/err" "sparky-stereo-gpu-env is missing"
 check "--choice: a GPU the person names, this start" "$(wrapped --choice pci-0000:01:00.0 env 2>&1 | grep -c '^__NV_PRIME_RENDER_OFFLOAD=1$')" 1

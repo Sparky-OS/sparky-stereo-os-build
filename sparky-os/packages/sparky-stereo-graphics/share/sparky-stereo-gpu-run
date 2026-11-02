@@ -103,7 +103,9 @@ if [ -z "$chosen" ]; then
 	status=$?
 	case $status in
 	0) eval "$gpu_env" ;;
-	4)
+	# 5: Automatic cannot place it now (browsers while the power profile cannot be read), said as for 4; this wrapper
+	# was asked to start it on its GPU, so it asks or does not start it, as for 4
+	4 | 5)
 		say stopped
 		exit 4
 		;;
