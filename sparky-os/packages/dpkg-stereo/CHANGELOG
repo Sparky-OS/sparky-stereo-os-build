@@ -38,7 +38,24 @@
     or nm cannot read an ELF file's inventory, naming the tool's error: a
     failed probe gave an empty inventory, so a predecessor whose nm failed
     hid a stereo import its rebuild lost. Guest firmware (resolve()'s note)
-    is not read. The renderer identity stays as it was.
+    is not read.
+  * The lean toolkit 0.1.24 (ORDER 352): one label, one renderer. ORDER
+    346c's Perl rule had moved the renderer's code under the label 0.1.23;
+    that code is released as 0.1.24, with a table of every released identity
+    (lean/identities.py) that the release gate checks each package against.
+  * Zig is qualified: comments go, doc comments and zig fmt directives stay,
+    and Zig's own tokenizer and zig ast-check check every projection (zig
+    needed; without it a Zig file stays as authored, with that reason). A file
+    another Zig file reads with @embedFile stays as authored.
+  * C-family files are checked in the mode their consumer reads them in:
+    assembler sources (.S, .sx) and headers for them with GCC's
+    assembler-with-cpp, and a file whose only GCC refusals are directives in
+    conditional groups other targets take with clang's raw lexer (clang
+    needed for those files).
+  * Upgrades examine once the files 0.1.24 qualifies first (marker
+    renderer-migration-0124-v1): the packages owning Zig or assembler
+    sources, and the files GCC or perl left as "check failed". No earlier
+    projection changes form.
 
 -------------------------------------------------------------------------------
   Version 0.1.24 (2026-11-01)

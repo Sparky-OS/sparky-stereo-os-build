@@ -1148,7 +1148,7 @@ class SourcePackage(unittest.TestCase):
         shutil.copytree(self.REPO / 'packages/dpkg-stereo', recipe,
                         ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
         (root / 'sparky-os/lean').mkdir(parents=True)
-        for f in list((self.REPO / 'lean').glob('*.py')) + [self.REPO / 'lean/JvmLexer.java']:
+        for f in list((self.REPO / 'lean').glob('*.py')) + [self.REPO / 'lean/JvmLexer.java', self.REPO / 'lean/ZigTokens.zig']:
             shutil.copy2(f, root / 'sparky-os/lean')
         (root / 'sparky-os/repo').mkdir(parents=True)
         shutil.copy2(self.REPO / 'repo/provenance.sh', root / 'sparky-os/repo')

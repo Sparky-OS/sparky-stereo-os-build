@@ -25,7 +25,7 @@ mkdir -p "$D/DEBIAN" "$D/usr/sbin" "$D/usr/lib/dpkg-stereo/lean" "$D/etc/dpkg/dp
 	"$D/usr/share/doc/$PKG" "$D/usr/share/sparky/$PKG" "$D/usr/lib/systemd/catalog"
 install -m 755 "$HERE/bin/dpkg-stereo" "$D/usr/sbin/dpkg-stereo"
 install -m 755 "$HERE/lib/presquashfs-hook" "$D/usr/lib/dpkg-stereo/presquashfs-hook"
-install -m 644 "$LEAN"/*.py "$LEAN/JvmLexer.java" "$D/usr/lib/dpkg-stereo/lean/"
+install -m 644 "$LEAN"/*.py "$LEAN/JvmLexer.java" "$LEAN/ZigTokens.zig" "$D/usr/lib/dpkg-stereo/lean/"
 install -m 644 "$HERE/etc/dpkg-stereo.cfg" "$D/etc/dpkg/dpkg.cfg.d/dpkg-stereo"
 install -m 644 "$HERE/etc/99dpkg-stereo-hr" "$D/etc/apt/apt.conf.d/99dpkg-stereo-hr"
 install -m 644 "$HERE/copyright" "$D/usr/share/doc/$PKG/copyright"
