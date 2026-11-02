@@ -63,7 +63,9 @@ echo "$langs" | tr ' ' '\n' >"$S/languages"
 install -m 755 "$HERE/lib/merge-mo" "$D/usr/lib/$PKG/merge-mo"
 
 # GRUB's menu is written again whenever the catalogues change, in both maintainer scripts
-MENU=$(cat <<'EOS'
+MENU=$({
+python3 "$HERE/tools/maintainer-messages.py" "$HERE/lang" || exit $?
+cat <<'EOS'
 # GRUB's menu written again with the merged messages, so a translation reaches it at once rather than at the next
 # update-grub of another package; never in a live session, a chroot or a container (as sparky-stereo-boot's kernel
 # keeping), where an image build or the installer writes the menu itself
@@ -76,10 +78,24 @@ menu() {
 		fi
 		if [ -e /.dockerenv ] || [ -e /run/.containerenv ] || [ ! -d /run/systemd/system ]; then return 0; fi
 	fi
-	update-grub || true
+	log=/var/log/sparky-stereo-grub-l10n.log
+	if (umask 077; touch "$log" && chmod 600 "$log"); then :; else
+		say 2 "$log"
+		return 1
+	fi
+	if update-grub >"$log" 2>&1; then
+		cat "$log" >&2
+		rm -f "$log"
+	else
+		rc=$?
+		cat "$log" >&2
+		failure "$1" "$rc"
+		failure "$1" "$rc" 2>>"$log"
+		return "$rc"
+	fi
 }
 EOS
-)
+})
 { cat <<'EOS'
 #!/bin/sh
 # postinst script
@@ -104,7 +120,7 @@ cat <<'EOS'
 case "$1" in
 	configure|triggered)
 		merge
-		menu
+		menu configure
 	;;
 esac
 exit 0
@@ -127,7 +143,7 @@ fi
 # Debian's catalogues are back: GRUB's menu in their words at once (ORDER 298c)
 case "$1" in
 	remove|purge)
-		menu
+		menu "$1"
 	;;
 esac
 exit 0

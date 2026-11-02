@@ -25,3 +25,9 @@ After every merge, at install and whenever grub2-common updates a catalogue, and
 It does not in a live session, a chroot or a container, where the image build or the installer writes the menu.
 
 Build: OUT=/path/to/output ./build.sh (dpkg-deb, gettext; GRUB_TARBALL=/path/to/grub-2.14.tar.xz, else it is downloaded and checked)
+
+If update-grub fails, configuration or removal fails too. Its output and a diagnostic in the system's language
+(and English for support) are shown and kept in /var/log/sparky-stereo-grub-l10n.log, readable by root.
+After fixing the error, run sudo dpkg --configure -a for configure/trigger failures, or repeat the failed remove
+or purge operation. The next successful update-grub run clears the log. All nine messages are embedded in both
+maintainer scripts, so removal does not need files that dpkg has already deleted.
