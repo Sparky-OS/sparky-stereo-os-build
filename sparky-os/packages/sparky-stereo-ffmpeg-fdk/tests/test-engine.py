@@ -164,6 +164,15 @@ class EngineChecks(unittest.TestCase):
         self.assertEqual(rows['build']['data']['version'],'2')
         self.assertEqual(rows['cleanup']['data']['packages'],['tool-a','tool-b'])
         self.assertTrue(rows['cleanup']['data']['legacy'])
+        for lang in ('en','pl','pt_BR','fr','de','ja','ko','zh_CN','zh_TW'):
+            with self.subTest(lang=lang):
+                self.env['LANGUAGE']=lang
+                row=self.records()['cleanup']
+                self.assertEqual(row['lang'],lang)
+                self.assertNotIn('LOCAL82',row['text'])
+                self.assertEqual(row['more'],[['LOCAL82']])
+        self.env['LANGUAGE']='en'
+        self.assertIn('without a saved safe plan',self.records()['cleanup']['text'])
         for name in ('last-failure','last-cleanup-error','cleanup-packages'):
             self.assertFalse((self.state/name).exists())
 

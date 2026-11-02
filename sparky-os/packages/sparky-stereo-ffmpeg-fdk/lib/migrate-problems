@@ -35,7 +35,7 @@ if old is not None or packages is not None:
     if 'cleanup' not in keys:
         subprocess.run(['sparky-stereo-problems', 'keep', '--machine', '--details',
                         json.dumps({'data': {'packages': (packages or '').split(), 'legacy': True},
-                                    'output': old or '', 'more': ['LOCAL82']}),
+                                    'output': old or '', 'more': [['LOCAL82']]}),
                         package, 'cleanup', 'LOCAL73', 'legacy cleanup', log, packages or ''], check=True)
     for name in ('last-cleanup-error', 'cleanup-packages'):
         (state / name).unlink(missing_ok=True)
