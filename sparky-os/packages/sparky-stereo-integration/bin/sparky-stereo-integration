@@ -110,7 +110,7 @@ offer() { # program
 	msg=""
 	[ -n "$cnf" ] && msg=$("$cnf" -- "$program" 2>&1 | sed '/^$/d')
 	[ -n "$msg" ] || msg=$(printf "$LOCAL2" "$program")$'\n'$(printf "$LOCAL8" "$program")
-	pkgs=$(printf '%s\n' "$msg" | sed -n 's/.*apt install \([a-z0-9][a-z0-9.+-]*\).*/\1/p' | awk '!seen[$0]++')
+	pkgs=$(printf '%s\n' "$msg" | sed -n 's/.*apt install \([a-z0-9][a-z0-9.+-]*\).*/\1/p' | awk '!seen[$1]++')
 	if renamed "$program" "${pkgs%%$'\n'*}"; then
 		pkgs=${pkgs%%$'\n'*}
 	elif [ "$(printf '%s' "$pkgs" | grep -c .)" -ne 1 ]; then
