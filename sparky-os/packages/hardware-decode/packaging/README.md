@@ -19,6 +19,11 @@ The FFmpeg i386 twin must come from the same new `.dsc` as amd64, with the same 
 The diagnostic builds in the earlier review are not release inputs.
 Final qualification uses the installed archives, without diagnostic library or plugin overlays.
 
+## mpv's next source
+
+`mpv-next-recipe.sh PUBLISHED.dsc NEXT GPU_ROUTE_FLOOR WORK OUT PATCH... -- ITEM...` makes mpv-dmo's next source the way every recipe makes its next version (ORDER 311): the published +lc1 source unpacked, its plain `debian/` (`repo/plain-from-lc.py`) with the new patches from `patches/mpv-dmo` appended to the series, the libmedia-gpu-route floors raised and the new changelog entry (`changelog-entry.py`), handed to `repo/lc-successor.py --recipe`, which adds this tree's Lean Code toolkit at NEXT+lc1 next to the same orig tarball and stops on any change beyond `debian/`.
+ORDER 346a made 1:0.41.0-dmo9+stereo3d9+lc1 with it from the published +stereo3d8+lc1 and patch 0060.
+
 ## Main session's A10 bench
 
 The A10 is the main session's bench, not a lane endpoint.

@@ -28,11 +28,19 @@ target_compile_definitions(graphicskcmtest PRIVATE SOURCE_UI="${CMAKE_CURRENT_SO
 target_link_libraries(graphicskcmtest sparkystereo_graphics Qt::Test Qt::Quick KF6::Service KF6::CoreAddons KF6::I18n KF6::KCMUtils KF6::KCMUtilsQuick)
 add_test(NAME graphicskcmtest COMMAND graphicskcmtest)
 
+add_executable(pageproblemstest pageproblemstest.cpp ../src/graphicskcm.cpp ../src/graphicskcm.h fixtures.h)
+target_include_directories(pageproblemstest PRIVATE ../src)
+target_link_libraries(pageproblemstest sparkystereo_graphics Qt::Test Qt::Quick KF6::Service KF6::CoreAddons KF6::I18n KF6::KCMUtils KF6::KCMUtilsQuick)
+add_test(NAME pageproblemstest COMMAND pageproblemstest)
+
 add_executable(powerprofilestest powerprofilestest.cpp ../src/graphicskcm.cpp ../src/graphicskcm.h fixtures.h)
 target_include_directories(powerprofilestest PRIVATE ../src)
 target_link_libraries(powerprofilestest sparkystereo_graphics Qt::Test Qt::Quick KF6::Service KF6::CoreAddons KF6::I18n KF6::KCMUtils KF6::KCMUtilsQuick)
 add_test(NAME powerprofilestest COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/powerprofiles-test.sh)
 set_tests_properties(powerprofilestest PROPERTIES ENVIRONMENT "BIN=${CMAKE_BINARY_DIR}/bin;SRC=${CMAKE_CURRENT_SOURCE_DIR}/..")
+
+add_test(NAME nofallbackstest COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/no-fallbacks-test.sh)
+set_tests_properties(nofallbackstest PROPERTIES ENVIRONMENT "BIN=${CMAKE_BINARY_DIR}/bin;SRC=${CMAKE_CURRENT_SOURCE_DIR}/..")
 
 add_test(NAME translationstest COMMAND python3 -I ${CMAKE_CURRENT_SOURCE_DIR}/translations-test.py ${CMAKE_CURRENT_SOURCE_DIR}/../po)
 

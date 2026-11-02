@@ -8,7 +8,7 @@ using namespace Qt::StringLiterals;
 namespace SparkyGraphics
 {
 
-PowerProfile powerProfileFromString(const QString &name, PowerProfile fallback)
+std::optional<PowerProfile> powerProfileFromString(const QString &name)
 {
     if (name == u"power-saver"_s) {
         return PowerProfile::PowerSaver;
@@ -19,7 +19,7 @@ PowerProfile powerProfileFromString(const QString &name, PowerProfile fallback)
     if (name == u"performance"_s) {
         return PowerProfile::Performance;
     }
-    return fallback;
+    return std::nullopt;
 }
 
 QString powerProfileToString(PowerProfile profile)
@@ -35,7 +35,7 @@ QString powerProfileToString(PowerProfile profile)
     return u"balanced"_s;
 }
 
-Resolver::Resolver(const QList<Gpu> &gpus, const QString &savedMainGpu, PowerProfile profile, const QString &measuredBest)
+Resolver::Resolver(const QList<Gpu> &gpus, const QString &savedMainGpu, const ProfileReading &profile, const QString &measuredBest)
     : m_gpus(gpus)
     , m_savedMain(savedMainGpu)
     , m_profile(profile)
@@ -56,6 +56,11 @@ int Resolver::measuredIndex() const
         }
     }
     return -1;
+}
+
+bool Resolver::measuredNamesAbsentGpu() const
+{
+    return !m_measuredBest.isEmpty() && measuredIndex() < 0;
 }
 
 int Resolver::presentingIndex() const
@@ -124,6 +129,36 @@ int Resolver::mainIndex() const
         return saved;
     }
     return automaticMainIndex();
+}
+
+Resolution Resolver::mainProblem() const
+{
+    Resolution resolution;
+    resolution.reason = u"choice"_s;
+    if (m_savedMain.isEmpty()) {
+        return resolution;
+    }
+    const int saved = indexOfId(m_savedMain);
+    if (saved < 0) {
+        return cannotUse(u"gpu-missing"_s, m_savedMain);
+    }
+    // KWin opens the card through the session (logind), so the render node's permissions do not matter here; drawing does
+    if (!m_gpus.at(saved).canRender) {
+        return cannotUse(u"gpu-cannot-render"_s, m_savedMain, saved);
+    }
+    resolution.gpuIndex = saved;
+    return resolution;
+}
+
+QList<int> Resolver::usableIndices() const
+{
+    QList<int> list;
+    for (int i = 0; i < m_gpus.size(); ++i) {
+        if (m_gpus.at(i).usable()) {
+            list << i;
+        }
+    }
+    return list;
 }
 
 int Resolver::defaultIndex() const
@@ -197,11 +232,58 @@ Resolution Resolver::make(int index, const QString &reason) const
     return resolution;
 }
 
+Resolution Resolver::cannotUse(const QString &problem, const QString &requested, int requestedIndex) const
+{
+    Resolution resolution;
+    resolution.missing = true;
+    resolution.problem = problem;
+    resolution.requested = requested;
+    resolution.requestedIndex = requestedIndex;
+    resolution.reason = u"choice"_s;
+    resolution.isMain = false;
+    return resolution;
+}
+
+Resolution Resolver::resolveGpu(const QString &choice) const
+{
+    if (choice == u"integrated"_s || choice == u"discrete"_s) {
+        const GpuKind kind = choice == u"integrated"_s ? GpuKind::Integrated : GpuKind::Discrete;
+        const int index = firstOfKind(kind);
+        if (index >= 0) {
+            return make(index, u"choice"_s);
+        }
+        // a GPU of that kind that is here but cannot be used says why; none at all is said too
+        for (int i = 0; i < m_gpus.size(); ++i) {
+            const Gpu &gpu = m_gpus.at(i);
+            if (gpu.canRender && gpu.kind == kind) {
+                return cannotUse(u"gpu-not-allowed"_s, choice, i);
+            }
+        }
+        return cannotUse(u"kind-missing"_s, choice);
+    }
+    const int index = indexOfId(choice);
+    if (index < 0) {
+        return cannotUse(u"gpu-missing"_s, choice);
+    }
+    if (!m_gpus.at(index).canRender) {
+        return cannotUse(u"gpu-cannot-render"_s, choice, index);
+    }
+    if (!m_gpus.at(index).accessible) {
+        return cannotUse(u"gpu-not-allowed"_s, choice, index);
+    }
+    return make(index, u"choice"_s);
+}
+
 Resolution Resolver::resolveChoice(const QString &choice, Category category, bool stereo) const
 {
+    // The person's own GPU, by its id or its kind, is kept or said to be unusable, also when one GPU or none is left: another
+    // GPU is only ever an explicit choice of theirs (Daniel, 2026-11-01)
+    if (choice != u"auto"_s && choice != u"profile"_s) {
+        return resolveGpu(choice);
+    }
     const int main = mainIndex();
     if (main < 0) {
-        return {};
+        return {}; // no GPU: nothing to choose
     }
     int renderers = 0;
     for (const Gpu &gpu : m_gpus) {
@@ -211,41 +293,34 @@ Resolution Resolver::resolveChoice(const QString &choice, Category category, boo
         return make(main, u"only-gpu"_s);
     }
 
-    int index = -1;
-    QString reason = u"choice"_s;
-    bool missing = false;
-    if (choice == u"auto"_s || choice == u"profile"_s) {
-        const QString target = choice == u"profile"_s ? profileTarget(m_profile) : automaticTarget(category, m_profile, stereo);
-        reason = u"profile:"_s + powerProfileToString(m_profile);
-        if (target == u"measured"_s) {
-            index = presentingIndex();
-            reason = measuredIndex() >= 0 ? u"measured"_s : u"unmeasured"_s;
-        } else if (choice == u"auto"_s && category == Category::Other && !stereo) {
-            index = main;
-            reason = u"desktop"_s;
-        } else if (target == u"integrated"_s) {
-            index = firstOfKind(GpuKind::Integrated);
-        } else if (target == u"discrete"_s) {
-            index = firstOfKind(GpuKind::Discrete);
-        } else {
-            index = main;
-        }
-    } else if (choice == u"integrated"_s) {
-        index = firstOfKind(GpuKind::Integrated);
-    } else if (choice == u"discrete"_s) {
-        index = firstOfKind(GpuKind::Discrete);
-    } else {
-        index = indexOfId(choice);
-        if (index < 0 || !m_gpus.at(index).usable()) {
-            index = -1;
-            missing = true;
-        }
+    // Automatic and Follow the power profile are rules: each says where it puts a kind of program, and the page shows it
+    const bool measured = choice == u"auto"_s && (category == Category::Players || category == Category::Games || stereo);
+    if (measured) {
+        // the machine's record naming a GPU that is not here is said, not taken for "not measured"
+        return make(presentingIndex(), measuredIndex() >= 0 ? u"measured"_s : (measuredNamesAbsentGpu() ? u"measured-missing"_s : u"unmeasured"_s));
     }
-    if (index < 0) {
-        index = main; // nothing of that kind here
+    if (choice == u"auto"_s && category == Category::Other) {
+        return make(main, u"desktop"_s);
+    }
+    // Browsers on Automatic, and every kind set to follow the power profile, need the profile: without it there is no answer
+    if (!m_profile.profile) {
+        return cannotUse(u"profile-unreadable"_s, choice);
+    }
+    const PowerProfile profile = *m_profile.profile;
+    const QString wanted = profileTarget(profile);
+    const QString reason = u"profile:"_s + powerProfileToString(profile);
+    int index = main;
+    QString absent;
+    if (wanted == u"integrated"_s || wanted == u"discrete"_s) {
+        index = firstOfKind(wanted == u"integrated"_s ? GpuKind::Integrated : GpuKind::Discrete);
+        if (index < 0) {
+            // the rule's own answer when this computer has no usable GPU of that kind: the GPU that draws the desktop
+            index = main;
+            absent = wanted;
+        }
     }
     Resolution resolution = make(index, reason);
-    resolution.missing = missing;
+    resolution.kindAbsent = absent;
     return resolution;
 }
 

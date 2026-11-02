@@ -8,7 +8,7 @@ under the GNU General Public License, version 3 or any later version.
 
 Dependencies:
 -------------
-KDE Frameworks 6 (KConfig, KCMUtils, KI18n, KService, Kirigami), Qt 6 (Quick, DBus)
+KDE Frameworks 6 (KConfig, KCMUtils, KI18n, KService, Kirigami), Qt 6 (Quick, DBus), kdialog
 Recommended: switcheroo-control, power-profiles-daemon, hwdata
 
 Build:
@@ -18,7 +18,7 @@ OUT=/path/in/workspace/pending-pack ./build.sh (inside a Debian container with K
 Install:
 -------------
 su
-apt-get install ./sparky-stereo-graphics_0.2.2_amd64.deb
+apt-get install ./sparky-stereo-graphics_0.2.3_amd64.deb
 
 Uninstall:
 -------------
@@ -38,10 +38,20 @@ Nothing is written until Apply. Defaults clears the main GPU, the render choices
 
 Commands
 -------------
-sparky-stereo-gpu-env: what the page decides, for programs that start programs (--category, --app ID or the path of a desktop file, --choice, --3d, --profile, --print, --shell, --session, --list, --json). Plasma's launcher (KIO, kf6-kio 6.30.0-1+stereo3d6) asks it with --app for every program whose desktop entry does not set PrefersNonDefaultGPU; libmedia-gpu-route asks it which GPU players decode on.
-sparky-stereo-gpu-run [--category C | --app ID] [--3d] COMMAND: starts a program on its GPU; in Steam, set a game's launch options to `sparky-stereo-gpu-run --category games %command%` (add --3d for a program presenting 3D). A GPU already chosen in its environment (DRI_PRIME, MESA_VK_DEVICE_SELECT, VK_LOADER_DRIVERS_SELECT, __NV_PRIME_RENDER_OFFLOAD) is kept. It never stops a program from starting.
+sparky-stereo-gpu-env: what the page decides, for programs that start programs (--category, --app ID or the path of a desktop file, --choice, --3d, --profile, --print, --shell, --ask, --session, --list, --json, --problems, --notify). Plasma's launcher (KIO, kf6-kio 6.30.0-1+stereo3d6) asks it with --app for every program whose desktop entry does not set PrefersNonDefaultGPU; libmedia-gpu-route asks it which GPU players decode on. Exit status 4: the choice cannot be used (below).
+sparky-stereo-gpu-run [--category C | --app ID | --choice GPU] [--3d] COMMAND: starts a program on its GPU; in Steam, set a game's launch options to `sparky-stereo-gpu-run --category games %command%` (add --3d for a program presenting 3D). A GPU already chosen in its environment (DRI_PRIME, MESA_VK_DEVICE_SELECT, VK_LOADER_DRIVERS_SELECT, __NV_PRIME_RENDER_OFFLOAD) is kept. When the chosen GPU cannot be used, the program does not start on another one: with a display it asks on which GPU that can draw the program starts this time (kdialog), otherwise it says why and does not start it (exit status 4). A missing or failing sparky-stereo-gpu-env is said, and the program does not start.
 sparky-stereo-gpu-record (root): --apply-known, --set-best GPU [--copy-back true|false] [--model TEXT] [--measurement TEXT], --copy-back true|false|unset, --forget, --show; --root DIR for another system's root.
+
+Nothing fails silently
+-------------
+Daniel, 2026-11-01: "nothing we do should silently fail or have a fall back - either it works or not and the user must know". The person's chosen GPU is kept, or the step stops and says why, and the other GPUs are offered only as the person's explicit choice.
+- A GPU chosen by its PCI address, or as Integrated or Discrete, for the desktop or for a kind of program, is checked whatever the number of GPUs: not in the computer, in it with no graphics driver (the kernel lists it on the PCI bus with no DRM device, as an NVIDIA card whose driver did not install), with no render node, or with a render node the account may not open, or no GPU of the chosen kind. Nothing is put in its place. Mesa would not say it either: a DRI_PRIME that names no GPU selects the default GPU, logged only at Mesa's info level (src/loader/loader.c).
+- What failed, why and what to do are said in the person's language: on stderr (sparky-stereo-gpu-env, sparky-stereo-gpu-run, the session's log), on the Graphics page (each problem with a "Use NAME" button for every GPU that can draw; Apply saves the choice) and in a notification at login and whenever a problem is kept (sparky-stereo-graphics-problems.path and .service in the person's session; the notification stays until closed and offers the same "Use NAME" actions and Open Graphics settings). Each saved choice's problem is kept in ~/.local/state/sparky-stereo-graphics/problems until the choice works again; `sparky-stereo-gpu-env --problems` lists them.
+- The desktop: a saved main GPU that cannot draw is said and kept at login; KWin's own order draws that login, because nothing could show the person why without a desktop, and the notification offers the GPUs that can draw.
+- Automatic and Follow the power profile are rules, shown on the page with the GPU they give: when the profile asks for a kind of GPU the computer does not have, the GPU that draws the desktop, and the page says so; when the GPU measured best for the computer is not there, the page says that, not "not measured". A power profile that cannot be read (no system bus, power-profiles-daemon not running or not answering, a profile name this page does not know) is said and is never taken for Balanced: browsers on Automatic, and every kind that follows the profile, cannot be placed until it is read. An explicit --profile or SPARKY_STEREO_POWER_PROFILE is honoured; a value that names no profile is a wrong argument.
+- The machine record that cannot be written fails the package's configuration and its removal (Debian Policy 6.1 and 6.7), said by sparky-stereo-gpu-record and kept in /var/lib/sparky-stereo-graphics/problems; at boot the service fails and keeps it the same way. systemd's reload after installation is said and kept, and the package configures, as debhelper's own reload does.
+- Plasma's launcher (kf6-kio) still starts a program as the session would when sparky-stereo-gpu-env exits 4; the problem is kept and notified all the same.
 
 Tests
 -------------
-autotests: the machine record (system folders, matching a known model, the boot service's rules, what the tool writes), GPU listing from sysfs fixtures (one GPU, the A10's two AMD, the workstation's AMD and NVIDIA, a BMC board, three GPUs), saved choices, the power-profile mapping, the application list through KDE's own KService, the command line and the session script (with the edition's own primary-gpu script after it), the page and its QML on four machines, the power switches against a stand-in power-profiles-daemon on a private bus, and the translations of the nine languages.
+autotests: the machine record (system folders, matching a known model, the boot service's rules, what the tool writes), GPU listing from sysfs fixtures (one GPU, the A10's two AMD, the workstation's AMD and NVIDIA, a BMC board, three GPUs), saved choices, the power-profile mapping, the application list through KDE's own KService, the command line and the session script (with the edition's own primary-gpu script after it), the page and its QML on four machines, the power switches against a stand-in power-profiles-daemon on a private bus, the translations of the nine languages, and (no-fallbacks-test.sh) every way a choice or a step can fail, against the command line, the wrapper, the session script, the maintainer scripts and the notifier with a stand-in notification server.

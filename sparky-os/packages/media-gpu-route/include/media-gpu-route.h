@@ -1,6 +1,7 @@
 /* Copyright 2026 Daniel Campos Ramos. SPDX-License-Identifier: MIT */
 #ifndef MEDIA_GPU_ROUTE_H
 #define MEDIA_GPU_ROUTE_H
+#include <stddef.h>
 #include <stdint.h>
 #ifdef __cplusplus
 extern "C" {
@@ -65,6 +66,25 @@ int media_gpu_route_decoder_frames(const struct media_gpu_video *video, enum med
 /* The choice for a caller that copies its pictures back:
  * media_gpu_route_decoder_frames(video, MEDIA_GPU_FRAMES_COPY, decoder). */
 int media_gpu_route_decoder(const struct media_gpu_video *video, struct media_gpu_decoder *decoder);
+/* 0.2.2. A caller that copies its pictures back decodes on the GPU the Graphics page names for players
+ * (sparky-stereo-gpu-env), and on no other GPU unless the person allows it (media_gpu_route_other_gpu):
+ * nothing changes GPU without telling (Daniel, 2026-11-01). As media_gpu_route_decoder_frames, and TEXT
+ * (at most SIZE bytes, in the person's language; empty when there is nothing to say) says why the choice
+ * is not that GPU's hardware decoder. Return -2 when the GPU chosen for players could not be resolved:
+ * the Graphics page's command failed (it says why itself), answered nothing, or named a GPU this
+ * program cannot open; nothing is decoded on another GPU in its place. The 0.2 entry points answer 0
+ * (software) then, and write TEXT to stderr, so their callers use no other GPU either. */
+int media_gpu_route_decoder_said(const struct media_gpu_video *video, enum media_gpu_frames frames,
+                                 struct media_gpu_decoder *decoder, char *text, size_t size);
+/* Whether a caller that copies its pictures back may decode on another GPU when the GPU the Graphics
+ * page names for players cannot decode the video: MEDIA_GPU_ROUTE_OTHER_GPU, else OtherGpu in group
+ * [Decoding] of sparky-stereo-graphicsrc (the person's file over the machine's), else not. Return 1
+ * when allowed, 0 otherwise. Nothing is written. 0.2.2. */
+int media_gpu_route_other_gpu(void);
+/* What a caller says when it decodes in software because a conversion needs the decoded pictures in memory and
+ * copying them back is not allowed (media_gpu_route_copy_back), in the person's language, with how to allow it.
+ * A static string. 0.2.2. */
+const char *media_gpu_route_copy_back_off_text(void);
 /* Whether a Vulkan renderer on this GPU can import decoded surfaces without a
  * copy: dma-buf memory (VK_EXT_external_memory_dma_buf) laid out by DRM format
  * modifiers (VK_EXT_image_drm_format_modifier), which libplacebo requires.

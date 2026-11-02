@@ -1,11 +1,11 @@
 #!/bin/bash
 # Created by Daniel Ramos (Capitain Jack) 2026/10/23
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/24
+# Last update 2026/11/02
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.2.2
+VERSION=0.2.3
 PACKAGE=sparky-stereo-graphics
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.graphics.XXXXXX")
@@ -18,12 +18,17 @@ find "$D" -name '*.so' -o -path '*/usr/bin/sparky-stereo-gpu-env' -o -path '*/us
 # the boot service is on from the start, as the edition's other services are
 mkdir -p "$D/usr/lib/systemd/system/multi-user.target.wants"
 ln -s ../sparky-stereo-gpu-record.service "$D/usr/lib/systemd/system/multi-user.target.wants/sparky-stereo-gpu-record.service"
+# the session's side: each kept problem shown at login and whenever one is kept (0.2.3)
+mkdir -p "$D/usr/lib/systemd/user/graphical-session.target.wants"
+for u in sparky-stereo-graphics-problems.path sparky-stereo-graphics-problems.service; do
+	ln -s ../$u "$D/usr/lib/systemd/user/graphical-session.target.wants/$u"
+done
 install -Dm644 "$HERE/copyright" "$D/usr/share/doc/$PACKAGE/copyright"
 install -m644 "$HERE/README.md" "$D/usr/share/doc/$PACKAGE/README.md"
 mkdir -p "$D/DEBIAN" "$WORK/shlibs/debian"
 printf 'Source: %s\n\nPackage: %s\nArchitecture: amd64\n' "$PACKAGE" "$PACKAGE" >"$WORK/shlibs/debian/control"
 SHLIBS=$(cd "$WORK/shlibs" && dpkg-shlibdeps -O $(find "$D" -type f \( -name '*.so' -o -path '*/usr/bin/sparky-stereo-gpu-env' -o -path '*/usr/bin/sparky-stereo-gpu-record' \)) 2>/dev/null | sed -n 's/^shlibs:Depends=//p')
-DEPENDS="$SHLIBS, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami"
+DEPENDS="$SHLIBS, kdialog, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami"
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
 cat >"$D/DEBIAN/control" <<EOS
 Package: $PACKAGE
@@ -48,52 +53,11 @@ Description: Graphics page for System Settings
 EOS
 printf '%s\n' /etc/xdg/plasma-workspace/env/sparky-stereo-graphics.sh >"$D/DEBIAN/conffiles"
 # The machine record (/etc/xdg/sparky-stereo-graphicsrc) is written by sparky-stereo-gpu-record, never shipped:
-# at boot from the record of a known model, or by a measurement or an administrator on this machine.
-cat >"$D/DEBIAN/postinst" <<'EOS'
-#!/bin/sh
-# postinst script
-set -e
-if [ "$1" = "configure" ]; then
-	sparky-stereo-gpu-record --apply-known >/dev/null 2>&1 || true
-	if [ -d /run/systemd/system ]; then
-		systemctl daemon-reload || true
-	fi
-fi
-exit 0
-EOS
-cat >"$D/DEBIAN/prerm" <<'EOS'
-#!/bin/sh
-# prerm script
-set -e
-if [ "$1" = "remove" ]; then
-	# a record from a shipped model goes with the shipped records; one made on this machine stays
-	sparky-stereo-gpu-record --apply-known --machines /nonexistent >/dev/null 2>&1 || true
-fi
-exit 0
-EOS
-cat >"$D/DEBIAN/postrm" <<'EOS'
-#!/bin/sh
-# postrm script
-set -e
-f=/etc/xdg/sparky-stereo-graphicsrc
-if [ "$1" = "purge" ] && [ -f "$f" ] && grep -q '^Origin=' "$f"; then
-	# the keys sparky-stereo-gpu-record wrote; anything an administrator added stays
-	awk '
-		/^\[/ { group = $0; held = $0; shown = 0; next }
-		group == "[Measured]" || group == "[Record]" { next }
-		group == "[Decoding]" && /^CopyBack(\[\$i\])?=/ { next }
-		/^[[:space:]]*$/ { next }
-		{ if (!shown && held != "") { print held; shown = 1 } print }
-	' "$f" >"$f.dpkg-new"
-	if [ -s "$f.dpkg-new" ]; then mv "$f.dpkg-new" "$f"; else rm -f "$f" "$f.dpkg-new"; fi
-fi
-if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
-	if [ -d /run/systemd/system ]; then
-		systemctl daemon-reload || true
-	fi
-fi
-exit 0
-EOS
+# at boot from the record of a known model, or by a measurement or an administrator on this machine. The maintainer
+# scripts say and keep what fails (share/debian; autotests/no-fallbacks-test.sh runs them)
+for m in postinst prerm postrm; do
+	install -m 755 "$HERE/share/debian/$m" "$D/DEBIAN/$m"
+done
 chmod 755 "$D/DEBIAN/postinst" "$D/DEBIAN/prerm" "$D/DEBIAN/postrm"
 (cd "$D" && find usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
 
@@ -112,7 +76,7 @@ Homepage: https://sparkylinux.org
 
 Package: $PACKAGE
 Architecture: amd64
-Depends: \${shlibs:Depends}, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami
+Depends: \${shlibs:Depends}, kdialog, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami
 Recommends: hwdata, power-profiles-daemon, switcheroo-control
 Description: Graphics page for System Settings
  Every graphics processor, the main desktop GPU, where programs draw, the GPU
@@ -120,6 +84,37 @@ Description: Graphics page for System Settings
 EOS
 cat >"$S/debian/changelog" <<EOS
 $PACKAGE ($VERSION) unstable; urgency=medium
+
+  * Nothing fails silently (Daniel, 2026-11-01; ORDER 346a): a GPU the
+    person chose (by its PCI address, or Integrated or Discrete) that is not
+    here, has no driver or render node, or that the account may not open,
+    is never replaced by another GPU, also when one GPU is left. What
+    failed, why and what to do are said in the person's language, kept in
+    ~/.local/state/sparky-stereo-graphics/problems until the choice works
+    again, shown as a notification at login with the GPUs that can draw as
+    "Use NAME" choices, and on the Graphics page with the same buttons.
+  * sparky-stereo-gpu-run starts nothing on another GPU: it asks, with a
+    display, on which GPU the program starts this time, and otherwise does
+    not start it (exit status 4); a missing or failing
+    sparky-stereo-gpu-env is said. --choice GPU starts on a named GPU.
+  * The session script says and keeps a saved main GPU that cannot draw;
+    KWin's own order draws that login, and the notification offers the
+    others.
+  * A power profile that cannot be read is said as such, never Balanced:
+    browsers on Automatic and every kind that follows the profile cannot
+    be placed until it is read; an explicit --profile is honoured, a wrong
+    one is a wrong argument.
+  * The machine record that cannot be written fails the configuration (and
+    the removal), said and kept; systemd's reload is said and kept.
+  * Automatic says when the GPU measured best for the computer is not
+    there, instead of "not measured".
+  * Decode on another GPU, the person's choice ([Decoding] OtherGpu), which
+    libmedia-gpu-route 0.2.2 reads: a video the players' GPU cannot decode
+    is decoded on another GPU only where the person allows it.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 02 Nov 2026 06:00:00 -0300
+
+$PACKAGE (0.2.2) unstable; urgency=medium
 
   * Automatic split by kind (Daniel, 2026-10-24): players, games and any
     program started in 3D on the GPU measured best whatever the power

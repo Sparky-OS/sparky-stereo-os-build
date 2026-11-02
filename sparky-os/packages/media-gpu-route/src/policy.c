@@ -75,17 +75,19 @@ int media_gpu_read_bool(const char *path, const char *group, const char *key, in
     return found;
 }
 
-static void read_config_dir(const char *dir, size_t length, int *value)
+static void read_config_dir(const char *dir, size_t length, const char *key, int *value)
 {
     char path[1024];
     if (length && snprintf(path, sizeof(path), "%.*s/sparky-stereo-graphicsrc", (int)length, dir) < (int)sizeof(path))
-        media_gpu_read_bool(path, "Decoding", "CopyBack", value);
+        media_gpu_read_bool(path, "Decoding", key, value);
 }
 
-int media_gpu_route_copy_back(void)
+/* One boolean of group [Decoding]: the environment variable for one start, else the person's file in
+ * $XDG_CONFIG_HOME over the machine's in $XDG_CONFIG_DIRS, as KConfig reads them; 0 when nobody chose. */
+static int decoding_choice(const char *variable, const char *key)
 {
     int value = 0;
-    const char *env = getenv("MEDIA_GPU_ROUTE_COPY_BACK");
+    const char *env = getenv(variable);
     if (env && parse_bool(env, &value))
         return value;
     /* $XDG_CONFIG_DIRS lists the most important directory first, so read it
@@ -98,15 +100,25 @@ int media_gpu_route_copy_back(void)
         const char *start = end;
         while (start > dirs && start[-1] != ':')
             start--;
-        read_config_dir(start, (size_t)(end - start), &value);
+        read_config_dir(start, (size_t)(end - start), key, &value);
         end = start > dirs ? start - 1 : dirs;
     }
     const char *home = getenv("XDG_CONFIG_HOME");
     char user[1024];
     if (home && *home)
-        read_config_dir(home, strlen(home), &value);
+        read_config_dir(home, strlen(home), key, &value);
     else if ((home = getenv("HOME")) && *home
              && snprintf(user, sizeof(user), "%s/.config", home) < (int)sizeof(user))
-        read_config_dir(user, strlen(user), &value);
+        read_config_dir(user, strlen(user), key, &value);
     return value;
+}
+
+int media_gpu_route_copy_back(void)
+{
+    return decoding_choice("MEDIA_GPU_ROUTE_COPY_BACK", "CopyBack");
+}
+
+int media_gpu_route_other_gpu(void)
+{
+    return decoding_choice("MEDIA_GPU_ROUTE_OTHER_GPU", "OtherGpu");
 }
