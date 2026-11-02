@@ -1332,7 +1332,7 @@ mutant headroom-ignores-game "compat-game-opening-headroom" 's/^\t((FAST_SINCE_M
 mutant unused-area-kept "retract-unused-area hibernate-offered-after-retract" 's/ || area_empty) \&\& quiet_elapsed/) \&\& quiet_elapsed/'
 mutant retract-during-hibernation "no-retract-while-hibernating" 's/ \&\& !hold))/))/'
 mutant offered-only-while-on "hibernate-offered-after-retract" 's|^target=\$(value TARGET)$|target=$(value TARGET); grep -q "^$target[[:space:]]" "${SWAPS_PATH:-/proc/swaps}" \|\| exit 0|' generator
-mutant skip-switch-on "hibernate-partition-not-in-fstab hibernate-swap-file-from-offset" 's/^\t\tif ! "\$SWAPON_BIN" -- "\$TARGET"; then$/\t\tif false; then/'
+mutant skip-switch-on "hibernate-partition-not-in-fstab hibernate-swap-file-from-offset" 's/^\t\toutput=\$("\$SWAPON_BIN" -- "\$TARGET" 2>\&1)$/\t\toutput=""/'
 # 4. logging
 mutant actions-not-in-journal "actions-in-file-and-journal" 's/^\t((JOURNAL_TOO)) \&\& printf .%s\\n. "\$line" >\&2$/\t:/'
 mutant noisy-default "problems-only-default" 's/^LOG_EVERY_CYCLE=\${LOG_EVERY_CYCLE:-no}$/LOG_EVERY_CYCLE=${LOG_EVERY_CYCLE:-yes}/'
