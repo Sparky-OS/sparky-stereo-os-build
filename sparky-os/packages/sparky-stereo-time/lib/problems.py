@@ -41,8 +41,8 @@ _steps = _engine.Steps(TAG, words={'header': 'LOCAL22', 'none': 'LOCAL23', 'sinc
                                    'hidden': 'LOCAL31', 'unknown': 'LOCAL32'})
 language, text, say, record, clear, pending, message = (_steps.language, _steps.text, _steps.say, _steps.record,
                                                         _steps.clear, _steps.pending, _steps.message)
-execute, run, status, repair, dismiss, notify = (_steps.execute, _steps.run, _steps.status, _steps.repair,
-                                                 _steps.dismiss, _steps.notify)
+execute, run, status, repair, dismiss, notify, load = (_steps.execute, _steps.run, _steps.status, _steps.repair,
+                                                       _steps.dismiss, _steps.notify, _steps.load)
 
 
 def main(argv):

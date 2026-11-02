@@ -213,6 +213,10 @@ class Steps:
                           'text': p['text'], 'data': p.get('data')})
         return found
 
+    def load(self, step):
+        """The kept problem STEP as pending() lists it, or None."""
+        return next((e for e in self.pending() if e['step'] == step), None)
+
     def message(self, entry, lang=None):
         if entry.get('unreadable'):
             return '%s: %s' % (entry['file'], entry['unreadable'])
