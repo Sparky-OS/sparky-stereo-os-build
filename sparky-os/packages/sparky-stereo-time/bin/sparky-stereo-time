@@ -5,7 +5,11 @@
 # Sets chrony's time sources from the timezone: the country's official service (with NTS where
 # it offers it), or Debian's pool where the country has none. The zone comes from /etc/localtime,
 # the country from zone.tab, then zone1970.tab (as sparky-ntp-server does), then tzdata.zi links.
-# Last update 2026/10/02
+# Nothing fails silently (Daniel, 2026-11-01): a catalogue or timezone that cannot be read, sources
+# that cannot be written, a chrony that does not take them and servers that do not answer are said,
+# kept in /var/lib/sparky-stereo-time/problems (lib/problems.py) and shown in the session; the
+# sources in use are then left as they were, never replaced by another choice.
+# Last update 2026/11/02
 
 TSV=${SPARKY_TIME_TSV:-/usr/share/sparky-stereo-time/ntp-countries.tsv}
 ZONEINFO=${SPARKY_TIME_ZONEINFO:-/usr/share/zoneinfo}
@@ -19,12 +23,24 @@ if [ -z "$AUTHCONF" ]; then
 	if [ -n "${SPARKY_TIME_OUT:-}" ]; then AUTHCONF=$(dirname "$SPARKY_TIME_OUT")/sparky-stereo-auth.conf
 	else AUTHCONF=/etc/chrony/conf.d/sparky-stereo-auth.conf; fi
 fi
-FALLBACK='pool debian.pool.ntp.org iburst'
-LANGDIR=/usr/share/sparky/sparky-stereo-time
-[ -d "$LANGDIR" ] || LANGDIR=$(dirname "$0")/../lang
+# Debian's pool: the source for a country without a service of its own, and the companion of a
+# country whose own servers are too few (policy, written in README.md; never put in place of the
+# country's servers when something fails)
+POOL='pool debian.pool.ntp.org iburst'
+LANGDIR=${SPARKY_TIME_LANGDIR:-/usr/share/sparky/sparky-stereo-time}
+PROBLEMS=${SPARKY_TIME_PROBLEMS:-/usr/lib/sparky-stereo-time/problems.py}
+export SPARKY_TIME_LANGDIR=$LANGDIR
+CHRONYC=${SPARKY_TIME_CHRONYC:-chronyc}
+IP=${SPARKY_TIME_IP:-ip}
+SYSTEMCTL=${SPARKY_TIME_SYSTEMCTL:-systemctl}
+SYSTEMD_DIR=${SPARKY_TIME_SYSTEMD_DIR:-/run/systemd/system}
+# a check waits this long after chrony's start or a change of the sources: iburst and the NTS key
+# exchange need a few seconds, the reachability register a few polls
+SETTLE_MIN=3
 ZONE=
 PRINT=0
 RELOAD=1
+ACTION=set
 
 # strings: the whole LANG=xx_YY, then xx, then English
 LANGCODE=${LANG%%.*}
@@ -34,20 +50,35 @@ esac
 for c in "$LANGCODE" "${LANGCODE%%_*}" en; do
 	[ -f "$LANGDIR/$c" ] && { . "$LANGDIR/$c"; break; }
 done
+if [ -z "${LOCAL1:-}" ]; then
+	echo "sparky-stereo-time: its messages are missing ($LANGDIR/en): sudo apt-get install --reinstall sparky-stereo-time" >&2
+	exit 3
+fi
 
 usage() {
 	printf '%s\n' "$LOCAL1"
 	printf '  --zone ZONE   %s\n' "$LOCAL2"
 	printf '  --print       %s\n' "$LOCAL3"
 	printf '  --no-reload   %s\n' "$LOCAL4"
+	printf '  --check       %s\n' "$LOCAL38"
+	printf '  --status      %s\n' "$LOCAL39"
+	printf '  --repair      %s\n' "$LOCAL40"
+	printf '  --dismiss STEP %s\n' "$LOCAL41"
 	exit "${1:-0}"
 }
+
+problems() { python3 "$PROBLEMS" "$@"; }
 
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--zone) [ -n "${2:-}" ] || usage 2; ZONE=$2; shift ;;
 		--print) PRINT=1; RELOAD=0 ;;
 		--no-reload) RELOAD=0 ;;
+		--check) ACTION=check ;;
+		--status) exec python3 "$PROBLEMS" status ;;
+		--repair) ACTION=repair ;;
+		--dismiss) [ -n "${2:-}" ] || usage 2; ACTION=dismiss; STEP=$2; shift ;;
+		--notify) exec python3 "$PROBLEMS" notify ;;
 		-h|--help) usage 0 ;;
 		*) usage 2 ;;
 	esac
@@ -59,6 +90,20 @@ if [ "$PRINT" = 0 ] && [ -z "${SPARKY_TIME_OUT:-}" ] && [ "$(id -u)" -ne 0 ]; th
 	printf '%s\n' "$LOCAL5" >&2
 	exit 1
 fi
+case $ACTION in
+	repair) exec python3 "$PROBLEMS" repair ;;
+	dismiss) exec python3 "$PROBLEMS" dismiss "$STEP" ;;
+esac
+
+# a problem: said and kept (only said with --print, which writes nothing), then the exit status;
+# the sources in use are left as they are
+fail() { # exit-status step key args...
+	local code=$1 step=$2
+	shift 2
+	if [ "$PRINT" = 1 ]; then problems say "$@"
+	else problems record "$step" "$@" --repair "${SPARKY_TIME_SELF:-/usr/bin/sparky-stereo-time}"; fi
+	exit "$code"
+}
 
 zone_name() {
 	local t=$LOCALTIME i
@@ -105,42 +150,130 @@ country_for() {
 	fi
 }
 
+# what chrony is doing: active, failed, inactive, or none when systemd does not run (a chroot, a container)
+chrony_state() {
+	[ -d "$SYSTEMD_DIR" ] || { echo none; return; }
+	case $($SYSTEMCTL is-active chrony.service 2>/dev/null) in
+		active|activating|reloading|refreshing) echo active ;;
+		failed) echo failed ;;
+		*) echo inactive ;;
+	esac
+}
+
+# --check: do the time servers this tool chose answer? A server that never answered in chrony's
+# reachability register is not reached; when none of them is, the clock follows something else or
+# nothing, and that is said and kept, never left to chrony's quiet choice
+check() {
+	local hosts h rows rc reach reached= unreached= follows active now mtime
+	if [ ! -r "$OUT" ]; then problems say LOCAL47 "$OUT"; exit 4; fi
+	hosts=$(awk '$1 == "server" || $1 == "pool" { print $2 }' "$OUT" | tr '\n' ' ')
+	hosts=${hosts% }
+	if [ -z "$($IP -4 route show default 2>/dev/null)$($IP -6 route show default 2>/dev/null)" ]; then
+		problems say LOCAL21; exit 0
+	fi
+	case $(chrony_state) in
+		failed) problems record chrony LOCAL15 "$OUT" --repair "$SYSTEMCTL" restart chrony.service; exit 4 ;;
+		inactive) problems say LOCAL33; exit 4 ;;
+	esac
+	now=$(date +%s)
+	mtime=$(stat -c %Y "$OUT")
+	active=$($SYSTEMCTL show -p ActiveEnterTimestamp --value chrony.service 2>/dev/null)
+	active=$(date -d "$active" +%s 2>/dev/null || echo 0)
+	if [ $((now - mtime)) -lt $((SETTLE_MIN * 60)) ] || [ $((now - active)) -lt $((SETTLE_MIN * 60)) ]; then
+		problems say LOCAL34 "$SETTLE_MIN"; exit 0
+	fi
+	rows=$($CHRONYC -N -c sources 2>&1)
+	rc=$?
+	if [ "$rc" -ne 0 ]; then
+		problems record chrony LOCAL48 "$CHRONYC -N -c sources" "$rc" "$(printf '%s' "$rows" | head -n1)" \
+			--repair "${SPARKY_TIME_SELF:-/usr/bin/sparky-stereo-time}" --check
+		exit 4
+	fi
+	for h in $hosts; do
+		# CSV: mode, state, name (as configured, -N), stratum, poll, reach (octal), ...
+		reach=$(printf '%s\n' "$rows" | awk -F, -v h="$h" '$3 == h && $6 != "0" { print $6; exit }')
+		if [ -n "$reach" ]; then reached+="${reached:+, }$h"; else unreached+="${unreached:+, }$h"; fi
+	done
+	follows=$(printf '%s\n' "$rows" | awk -F, '$2 == "*" { print $3; exit }')
+	if [ -z "$reached" ]; then
+		if [ -n "$follows" ]; then
+			problems record reach LOCAL17 "$(zone_label)" "$unreached" "@LOCAL19:$follows" \
+				--repair "${SPARKY_TIME_SELF:-/usr/bin/sparky-stereo-time}" --check
+		else
+			problems record reach LOCAL17 "$(zone_label)" "$unreached" @LOCAL18 \
+				--repair "${SPARKY_TIME_SELF:-/usr/bin/sparky-stereo-time}" --check
+		fi
+		exit 5
+	fi
+	problems clear reach chrony
+	printf "$LOCAL20"'\n' "$reached"
+	if [ -n "$follows" ]; then printf "$LOCAL49"'\n' "$follows"; else printf '%s\n' "$LOCAL18"; fi
+	exit 0
+}
+
+zone_label() {
+	local z=${ZONE:-$(zone_name)} c
+	c=$(country_for "$z" 2>/dev/null | head -n1)
+	if [ -n "$c" ]; then echo "$c ($z)"; else echo "$z"; fi
+}
+
+[ "$ACTION" = check ] && check
+
 [ -n "$ZONE" ] || ZONE=$(zone_name)
+if [ -z "$ZONE" ]; then
+	fail 3 zone LOCAL11 "$LOCALTIME" "$ZONEINFO" "$TIMEZONE_FILE"
+fi
+# the catalogue of the countries' servers: read, or said; never taken as "no service" when it fails
+if [ ! -e "$TSV" ]; then
+	fail 3 catalogue LOCAL10 "$TSV" "$(LC_ALL=C cat "$TSV" 2>&1 >/dev/null | sed 's/^cat: .*: //')"
+fi
+CATALOGUE=$(LC_ALL=C grep -v -e '^#' -e '^[[:space:]]*$' "$TSV" 2>&1)
+case $? in
+	0) ;;
+	1) fail 3 catalogue LOCAL10 "$TSV" "@LOCAL36" ;;
+	*) fail 3 catalogue LOCAL10 "$TSV" "$(printf '%s' "$CATALOGUE" | head -n1 | sed 's/^grep: .*: //')" ;;
+esac
+# the timezone tables that name the country: one of them is needed
+if [ ! -r "$ZONEINFO/zone.tab" ] && [ ! -r "$ZONEINFO/zone1970.tab" ]; then
+	why=$(LC_ALL=C cat "$ZONEINFO/zone1970.tab" 2>&1 >/dev/null | sed 's/^cat: .*: //')
+	fail 3 zone LOCAL12 "$ZONEINFO" "${why:-unreadable}" "$ZONE"
+fi
 CC=
 ROW=
-if [ -n "$ZONE" ]; then
-	for c in $(country_for "$ZONE"); do
-		r=$(awk -F'\t' -v c="$c" '!/^#/ && $1 == c { print; exit }' "$TSV" 2>/dev/null)
-		[ -n "$r" ] && { CC=$c; ROW=$r; break; }
-	done
-fi
+for c in $(country_for "$ZONE"); do
+	r=$(printf '%s\n' "$CATALOGUE" | awk -F'\t' -v c="$c" '$1 == c { print; exit }')
+	[ -n "$r" ] && { CC=$c; ROW=$r; break; }
+done
 
 LINES=
 COUNT=0
 NTSCOUNT=0
 PLAINCOUNT=0
+USED=
 if [ -n "$ROW" ]; then
 	servers=$(echo "$ROW" | cut -f2)
 	nts=$(echo "$ROW" | cut -f3)
 	for h in $servers; do
 		[ "$h" = - ] && continue
 		case " $nts " in
-			*" $h "*) LINES+="server $h iburst nts"$'\n'; NTSCOUNT=$((NTSCOUNT + 1)) ;;
-			*) LINES+="server $h iburst"$'\n'; PLAINCOUNT=$((PLAINCOUNT + 1)) ;;
+			*" $h "*) LINES+="server $h iburst nts"$'\n'; NTSCOUNT=$((NTSCOUNT + 1)); USED+="${USED:+, }$h (NTS)" ;;
+			*) LINES+="server $h iburst"$'\n'; PLAINCOUNT=$((PLAINCOUNT + 1)); USED+="${USED:+, }$h" ;;
 		esac
 		COUNT=$((COUNT + 1))
 	done
 fi
-# Debian's pool is the fallback only where the country's own servers are too few: none; NTS
-# servers fewer than three with no plain official server of the country beside them; a plain
-# service with a single server. Several plain official servers need no pool.
+# Debian's pool is the policy only where the country's own servers are too few: none; NTS servers
+# fewer than three with no plain official server of the country beside them; a plain service with
+# a single server. Several plain official servers need no pool.
 if [ "$COUNT" -eq 0 ]; then
-	LINES+="$FALLBACK"$'\n'
-	WHAT=$(printf "$LOCAL7" "${ZONE:-?}")
+	LINES+="$POOL"$'\n'
+	USED="debian.pool.ntp.org"
+	WHAT=$(printf "$LOCAL7" "${ZONE}")
 else
 	if { [ "$NTSCOUNT" -gt 0 ] && [ "$COUNT" -lt 3 ] && [ "$PLAINCOUNT" -eq 0 ]; } ||
 		{ [ "$NTSCOUNT" -eq 0 ] && [ "$COUNT" -lt 2 ]; }; then
-		LINES+="$FALLBACK maxsources 2"$'\n'
+		LINES+="$POOL maxsources 2"$'\n'
+		USED+=", debian.pool.ntp.org (maxsources 2)"
 	fi
 	WHAT=$(printf "$LOCAL6" "$CC" "$ZONE")
 fi
@@ -157,32 +290,70 @@ if [ "$PRINT" = 1 ]; then
 	exit 0
 fi
 
+# writes FILE with CONTENT through FILE.new; on failure WHY says why and nothing is left half written
+put() {
+	why=$( { mkdir -p "$(dirname "$1")" && printf '%s' "$2" >"$1.new" && mv "$1.new" "$1"; } 2>&1 ) && return 0
+	rm -f "$1.new" 2>/dev/null
+	why=${why:-exit status 1}
+	return 1
+}
+
 # conf.d is read only at chrony's start: a changed authselectmode needs a restart
 CONFCHANGED=0
 if [ -n "$AUTH" ]; then
 	if [ "$(cat "$AUTHCONF" 2>/dev/null)" != "${AUTH%$'\n'}" ]; then
-		mkdir -p "$(dirname "$AUTHCONF")"
-		printf '%s' "$AUTH" >"$AUTHCONF.new" && mv "$AUTHCONF.new" "$AUTHCONF"
+		put "$AUTHCONF" "$AUTH" || fail 4 write LOCAL13 "$AUTHCONF" "$why"
 		CONFCHANGED=1
 	fi
-elif [ -f "$AUTHCONF" ]; then
-	rm -f "$AUTHCONF"
+elif [ -e "$AUTHCONF" ]; then
+	why=$(rm -f "$AUTHCONF" 2>&1) || fail 4 write LOCAL13 "$AUTHCONF" "$why"
 	CONFCHANGED=1
 fi
 
-mkdir -p "$(dirname "$OUT")"
 if [ ! -f "$OUT" ] || [ "$(cat "$OUT")" != "${CONTENT%$'\n'}" ]; then
-	printf '%s' "$CONTENT" >"$OUT.new" && mv "$OUT.new" "$OUT"
+	put "$OUT" "$CONTENT" || fail 4 write LOCAL13 "$OUT" "$why"
 	printf '%s\n' "$WHAT"
 else
 	printf '%s\n' "$LOCAL9"
 fi
+printf "$LOCAL35"'\n' "$USED"
+problems clear catalogue zone write
+
 # also when nothing changed: an earlier reload may have failed while chrony was starting
 if [ "$RELOAD" = 1 ]; then
-	if [ "$CONFCHANGED" = 1 ] && [ -d /run/systemd/system ]; then
-				systemctl try-restart chrony.service >/dev/null 2>&1 || printf '%s\n' "$LOCAL8"
-	elif command -v chronyc >/dev/null 2>&1; then
-		chronyc reload sources >/dev/null 2>&1 || printf '%s\n' "$LOCAL8"
-	fi
+	case $(chrony_state) in
+	active)
+		if [ "$CONFCHANGED" = 1 ]; then
+			problems run apply LOCAL14 "$OUT" --repair "${SPARKY_TIME_SELF:-/usr/bin/sparky-stereo-time}" -- \
+				$SYSTEMCTL try-restart chrony.service >/dev/null || exit 4
+		else
+			problems run apply LOCAL14 "$OUT" --repair "${SPARKY_TIME_SELF:-/usr/bin/sparky-stereo-time}" -- \
+				$CHRONYC reload sources >/dev/null || exit 4
+		fi
+		problems clear chrony
+		;;
+	failed)
+		problems record chrony LOCAL15 "$OUT" --repair "$SYSTEMCTL" restart chrony.service
+		exit 4
+		;;
+	inactive)
+		# not running (stopped, or not started yet): it reads the sources when it starts
+		printf '%s\n' "$LOCAL8"
+		problems clear apply chrony
+		;;
+	none)
+		# no systemd: a chrony started by hand is told; none running reads the sources when it starts
+		if out=$($CHRONYC reload sources 2>&1); then
+			[ "$CONFCHANGED" = 1 ] && printf "$LOCAL37"'\n' "$AUTHCONF"
+			problems clear apply
+		else
+			case $out in
+				*"Cannot talk to daemon"*) printf '%s\n' "$LOCAL8"; problems clear apply ;;
+				*) problems run apply LOCAL14 "$OUT" --repair "${SPARKY_TIME_SELF:-/usr/bin/sparky-stereo-time}" -- \
+					$CHRONYC reload sources >/dev/null || exit 4 ;;
+			esac
+		fi
+		;;
+	esac
 fi
 exit 0
