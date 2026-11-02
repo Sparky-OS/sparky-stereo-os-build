@@ -1,0 +1,37 @@
+#!/usr/bin/make -f
+export DEBFULLNAME = Daniel Ramos (Capitain Jack)
+export DEBEMAIL = Capitain_Jack@yahoo.com
+export DEB_BUILD_OPTIONS = parallel=4
+export ZIG_GLOBAL_CACHE_DIR = $(CURDIR)/build/global-cache
+export ZIG_LOCAL_CACHE_DIR = $(CURDIR)/build/local-cache
+export ZIG_LIBC = $(CURDIR)/debian/libc.txt
+export TMPDIR = $(CURDIR)/debian
+
+%:
+	dh $@ --buildsystem=cmake --builddirectory=build
+
+override_dh_auto_configure:
+	bash debian/cgm/configure.sh $(CURDIR) $(CURDIR)/build
+	mkdir -p $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR) $(TMPDIR)
+
+override_dh_auto_build:
+	cmake --build build --parallel 4
+
+override_dh_auto_test:
+	test "$$(build/stage3/bin/zig version)" = 0.16.0+cgm.0399d2b19b
+
+override_dh_auto_install:
+	mkdir -p debian/cgm-zig/usr/lib/cgm-zig debian/cgm-zig/usr/share/doc/cgm-zig
+	cp -a build/stage3/bin build/stage3/lib debian/cgm-zig/usr/lib/cgm-zig/
+	cp LICENSE debian/cgm-zig/usr/share/doc/cgm-zig/LICENSE.upstream
+	cp debian/cgm/ATTRIBUTIONS.md debian/cgm-zig/usr/share/doc/cgm-zig/
+
+override_dh_strip:
+	# Keep diagnostic symbols in the working compiler, as in the fork's build.
+
+override_dh_dwz:
+
+override_dh_installchangelogs:
+
+override_dh_auto_clean:
+	rm -rf build

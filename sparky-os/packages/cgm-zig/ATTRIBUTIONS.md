@@ -22,6 +22,7 @@ Ubuntu's [zig0.16 source packaging](https://archive.ubuntu.com/ubuntu/pool/unive
 This recipe follows its `ZIG_TARGET_MCPU=baseline` choice and uses its LLVM 21 development-package list as a reference.
 Its CMake build and stage3 library layout agree with the fork's upstream build notes.
 The recipe scripts are new; Ubuntu's rules are reference material, not copied wholesale.
+The detailed Debian copyright inventory is adapted from Ubuntu's zig0.16 package, with its legal texts retained and entries for the fork's retained Clang resource headers and the edition's packaging.
 Ubuntu's [zig-defaults 5ubuntu1](https://archive.ubuntu.com/ubuntu/pool/universe/z/zig-defaults/zig-defaults_5ubuntu1.tar.xz) chooses zig0.16 with a directly owned `/usr/bin/zig` link.
 This package instead follows the edition's alternatives design.
 Coexistence requires another provider to participate in the same alternatives group; a package owning `/usr/bin/zig` directly is not proven compatible.

@@ -1,31 +1,46 @@
-# cgm-zig package preparation
+# cgm-zig Debian package recipe
 
-This recipe prepares the pinned cgm-zig source and the Debian sid amd64 compiler build environment.
-The Debian package assembly and installed-package proofs are not implemented yet.
+The package builds Daniel Campos Ramos's patched Zig compiler from source in Debian sid on amd64.
+The compiler stays in [his personal repository](https://github.com/danielcamposramos/cgm-zig).
+`source.env` pins source commit `0399d2b19b71ed865cc2e6d5e21224f124e373db` and compiler version `0.16.0+cgm.0399d2b19b`.
+This recipe has not yet produced a qualified binary package.
 
-The source remains in [Daniel Campos Ramos's repository](https://github.com/danielcamposramos/cgm-zig).
-`source.env` pins commit `0399d2b19b71ed865cc2e6d5e21224f124e373db` and compiler version `0.16.0+cgm.0399d2b19b`.
-`fetch-source.sh NEW_DIRECTORY` makes a full clone, checks that the commit belongs to `origin/main`, and checks out that commit detached.
-It refuses an existing destination rather than overwriting work.
-`fetch-source.sh --verify DIRECTORY` checks a previously fetched source without changing it.
+## Source and build
 
-Build the Dockerfile as a lane-owned image with `--platform linux/amd64`.
-Its Debian sid base is pinned to the amd64 manifest digest, and it installs LLVM, Clang and LLD 21 development libraries.
-Record the installed dependency versions for every build: the base digest does not pin the moving sid apt repository.
-Run `configure.sh SOURCE EMPTY_BUILD_DIRECTORY` inside that image, as the build user's uid, with the source and scratch on SSD storage.
-Limit the container to four CPUs and use `ninja -j4` for the eventual compile.
-The configure step checks the generated stage3 invocation before any compilation.
+Build the Dockerfile with `--platform linux/amd64` and a locally chosen image tag.
+Its sid base is pinned to the amd64 manifest digest; its apt repository is moving, so retain `dpkg-query -W` with each build.
+It installs LLVM, Clang and LLD 21 and the packaging and Lean Code prerequisites.
+Use a disposable container limited to four CPUs and a four-CPU affinity mask, with persistent SSD scratch owned by the build user.
+Keep enough space for the source, generated C bootstrap, self-hosted compiler and package staging.
+
+`fetch-source.sh NEW_DIRECTORY` makes a full clone and verifies the pinned commit against origin/main.
+It refuses an existing destination; `fetch-source.sh --verify DIRECTORY` verifies an existing clone without changing it.
+Inside the toolchain container, `prepare-source.sh VERIFIED_CLONE NEW_OUTPUT_DIRECTORY` creates the original source archive and the Lean-integrated `.dsc` at `0.16.0+cgm.0399d2b19b-1+lc1`.
+Extract the `.dsc` using `dpkg-source -x`, then build with `dpkg-buildpackage -us -uc -b -j4` as the build user.
+Set `SPARKY_LC_ARCHIVE_CONFIG` and `SPARKY_LC_SCRATCH` for the automatic link gate, as the edition's Lean Code archive documentation describes.
+The isolated link gate needs bubblewrap user namespaces available inside the container.
+
+The source package retains the edition's exact Lean toolkit and provenance helper.
+Lean Code projects C/C++ inputs before configuration and restores installed sources before projecting the payload.
+The root test corpus is retained because its deliberately invalid source and comment directives are test inputs.
+The toolkit currently has no Zig source adapter: `.zig` files stay authored and require a rebuild after the adapter lands.
+No toolkit source is changed by this recipe.
 
 The fork's [build notes](https://github.com/danielcamposramos/cgm-zig/blob/0399d2b19b71ed865cc2e6d5e21224f124e373db/docs/crown/BUILDING.md) require `RelWithDebInfo`, `ZIG_RELEASE_SAFE=ON` and `-Ddebug-extensions` together.
-A CMake build type called `ReleaseSafe` alone selects a stripped ReleaseFast stage3 and is rejected by the command check.
-The baseline CPU target follows Ubuntu's Zig packaging so the package does not require the build station's instruction set.
-The build will need an explicit `ZIG_LIBC` file with `include_dir=/usr/include`, `sys_include_dir=/usr/include/x86_64-linux-gnu`, and the detected CRT directories.
-Set both Zig cache directories to persistent lane scratch, before compiling.
+`configure.sh` checks the actual generated stage3 command; `CMAKE_BUILD_TYPE=ReleaseSafe` alone selects ReleaseFast plus stripping and is rejected.
+The baseline CPU target follows Ubuntu's packaging, avoiding a dependency on the build station's instruction set.
+The source package supplies the Debian amd64 libc include and CRT paths through `ZIG_LIBC`, uses build-local Zig caches, and retains compiler symbols for diagnostics.
 
-Before compilation, the disposable source must pass the edition's Lean Code source preparation.
-Keep `.zig` files authored until a Zig adapter is available, and record that coverage gap for a subsequent rebuild.
-Do not alter the shared Lean toolkit in this recipe.
-The eventual package layout is `/usr/lib/cgm-zig/bin/zig` plus `/usr/lib/cgm-zig/lib/zig`, preserving the upstream executable-relative library search.
-`/usr/bin/zig` will be registered through `update-alternatives`, with `Provides: zig` in package metadata.
+## Installed layout
 
-See [ATTRIBUTIONS.md](ATTRIBUTIONS.md) for upstream and packaging references.
+The compiler is `/usr/lib/cgm-zig/bin/zig`; its matching library is `/usr/lib/cgm-zig/lib/zig`.
+This preserves upstream's executable-relative library lookup.
+The package provides `zig` and registers `/usr/bin/zig` through update-alternatives at priority 20.
+That positive priority selects it when it is the sole provider and leaves room for higher-priority providers; manual administrator selections remain respected.
+It does not declare Conflicts or divert `/usr/bin/zig`.
+A future package directly owning that path needs its own compatibility investigation.
+
+`tests/installed.sh NEW_SCRATCH_DIRECTORY` checks the installed version, hello world, and a C caller of a Zig shared library in a clean container.
+Alternatives lifecycle, downstream engine, apt resolution and publication link-gate proofs remain required in addition to that test.
+
+See [ATTRIBUTIONS.md](ATTRIBUTIONS.md) for the compiler, fork, Debian/Ubuntu packaging and SparkyLinux credits.

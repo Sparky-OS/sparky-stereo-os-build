@@ -8,7 +8,11 @@ source "$HERE/source.env"
 SOURCE=${1:?Usage: configure.sh SOURCE EMPTY_BUILD_DIRECTORY}
 BUILD=${2:?Usage: configure.sh SOURCE EMPTY_BUILD_DIRECTORY}
 test "$(dpkg --print-architecture)" = amd64
-test "$(git -C "$SOURCE" rev-parse HEAD)" = "$CGM_ZIG_COMMIT"
+if [ -f "$SOURCE/debian/upstream-commit" ]; then
+	test "$(cat "$SOURCE/debian/upstream-commit")" = "$CGM_ZIG_COMMIT"
+else
+	test "$(git -C "$SOURCE" rev-parse HEAD)" = "$CGM_ZIG_COMMIT"
+fi
 if [ -e "$BUILD" ] || [ -L "$BUILD" ]; then
 	printf 'cgm-zig: configure requires a fresh build directory: %s\n' "$BUILD" >&2
 	exit 1
