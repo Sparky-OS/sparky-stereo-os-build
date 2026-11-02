@@ -129,6 +129,9 @@ int main(void)
     const char *langs[][2] = { { "C.UTF-8", "Decoding in software:" }, { "de_DE.UTF-8", "Dekodierung in Software:" },
                                { "pt_BR.UTF-8", "Decodificando em software:" }, { "fr_CA.UTF-8", "Décodage par logiciel" },
                                { "zh_HK.UTF-8", "正在以軟體解碼" }, { "zh_SG.UTF-8", "正在以软件解码" }, { "eo.UTF-8", "Decoding in software:" } };
+    unsetenv("LANGUAGE");
+    unsetenv("LC_ALL");
+    unsetenv("LC_MESSAGES");
     for (size_t i = 0; i < sizeof(langs) / sizeof(langs[0]); i++) {
         setenv("LANG", langs[i][0], 1);
         int ok = !strncmp(media_gpu_route_copy_back_off_text(), langs[i][1], strlen(langs[i][1]));
@@ -136,6 +139,13 @@ int main(void)
         failures += !ok;
     }
     unsetenv("LANG");
+    setenv("LANGUAGE", "ko", 1);
+    setenv("LC_ALL", "de_DE.UTF-8", 1);
+    int first = !strncmp(media_gpu_route_copy_back_off_text(), "소프트웨어로", strlen("소프트웨어로"));
+    printf("%-58s %s\n", "LANGUAGE before LC_ALL, as gettext reads them", first ? "ok" : "FAIL");
+    failures += !first;
+    unsetenv("LANGUAGE");
+    unsetenv("LC_ALL");
 
     /* A caller that copies back keeps software when nobody allowed it, for a
      * profile any GPU decodes and even with no GPU at all. */
