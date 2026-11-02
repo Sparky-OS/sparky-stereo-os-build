@@ -55,6 +55,13 @@ static void expect(const char *name, int wanted)
     failures += got != wanted;
 }
 
+static void expect_other(const char *name, int wanted)
+{
+    int got = media_gpu_route_other_gpu();
+    printf("%-58s other-gpu=%d %s\n", name, got, got == wanted ? "ok" : "FAIL");
+    failures += got != wanted;
+}
+
 int main(void)
 {
     snprintf(root, sizeof(root), "%s/media-gpu-route-policy-XXXXXX", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp");
@@ -101,6 +108,34 @@ int main(void)
     dirs(NULL, "person-no");
     setenv("MEDIA_GPU_ROUTE_COPY_BACK", "sometimes", 1);
     expect("an unreadable environment value leaves the files", 0);
+
+    /* OtherGpu, read the same way: another GPU decodes only where the person allows it (ORDER 346a) */
+    unsetenv("MEDIA_GPU_ROUTE_OTHER_GPU");
+    write_file("other-yes", "[Decoding]\nOtherGpu=true\n");
+    write_file("other-no", "[Decoding]\nOtherGpu=false\n");
+    dirs(NULL, NULL);
+    expect_other("other GPU: nothing recorded, never assumed", 0);
+    dirs("other-yes", NULL);
+    expect_other("other GPU: the machine allows it", 1);
+    dirs("other-yes", "other-no");
+    expect_other("other GPU: the person's choice over the machine", 0);
+    dirs(NULL, "machine-yes");
+    expect_other("other GPU: CopyBack is another key", 0);
+    setenv("MEDIA_GPU_ROUTE_OTHER_GPU", "true", 1);
+    expect_other("other GPU: the environment for one start", 1);
+    unsetenv("MEDIA_GPU_ROUTE_OTHER_GPU");
+
+    /* what a player says when it decodes in software for a conversion: the person's language, else English */
+    const char *langs[][2] = { { "C.UTF-8", "Decoding in software:" }, { "de_DE.UTF-8", "Dekodierung in Software:" },
+                               { "pt_BR.UTF-8", "Decodificando em software:" }, { "fr_CA.UTF-8", "Décodage par logiciel" },
+                               { "zh_HK.UTF-8", "正在以軟體解碼" }, { "zh_SG.UTF-8", "正在以软件解码" }, { "eo.UTF-8", "Decoding in software:" } };
+    for (size_t i = 0; i < sizeof(langs) / sizeof(langs[0]); i++) {
+        setenv("LANG", langs[i][0], 1);
+        int ok = !strncmp(media_gpu_route_copy_back_off_text(), langs[i][1], strlen(langs[i][1]));
+        printf("%-58s %s\n", langs[i][0], ok ? "ok" : "FAIL");
+        failures += !ok;
+    }
+    unsetenv("LANG");
 
     /* A caller that copies back keeps software when nobody allowed it, for a
      * profile any GPU decodes and even with no GPU at all. */
