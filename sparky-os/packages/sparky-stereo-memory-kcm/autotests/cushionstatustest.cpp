@@ -25,6 +25,7 @@ private Q_SLOTS:
     void status_data();
     void status();
     void unreadable();
+    void engineText_data();
     void engineText();
     void missingProblem();
     void refreshKeepsEdits();
@@ -68,6 +69,7 @@ void CushionStatusTest::status_data()
     QTest::newRow("not-running") << QByteArray("STATE=stopped\nPROTECTION=no\n") << 3;
     QTest::newRow("disabled") << QByteArray("STATE=disabled\nPROTECTION=no\n") << 3;
     QTest::newRow("dead-pid") << QByteArray("STATE=off\nPROTECTION=yes\nPID=999999999\n") << 3;
+    QTest::newRow("invalid-pid") << QByteArray("STATE=off\nPROTECTION=yes\nPID=not-a-pid\n") << 4;
     QTest::newRow("missing-status") << QByteArray() << 3;
     QTest::newRow("missing-protection") << QByteArray("STATE=off\n") << 4;
     QTest::newRow("invalid-protection") << QByteArray("STATE=off\nPROTECTION=maybe\n") << 4;
@@ -107,13 +109,26 @@ void CushionStatusTest::unreadable()
     QVERIFY(kcm.cushionState() != u"stopped"_s);
 }
 
+void CushionStatusTest::engineText_data()
+{
+    QTest::addColumn<bool>("catalogAvailable");
+    QTest::newRow("portuguese-catalog") << true;
+    QTest::newRow("kept-english-without-catalog") << false;
+}
+
 void CushionStatusTest::engineText()
 {
+    QFETCH(bool, catalogAvailable);
+    const QByteArray catalog = qgetenv("SPARKY_STEREO_PROBLEMS_CATALOG");
+    if (!catalogAvailable) {
+        qputenv("SPARKY_STEREO_PROBLEMS_CATALOG", (root.path() + u"/no-catalog"_s).toUtf8());
+    }
+
     const QString dir = root.path() + u"/run/sparky-stereo-problems"_s;
     QVERIFY(QDir().mkpath(dir));
     QFile record(dir + u"/sparky-stereo-cushion-swap_swapon-failed.json"_s);
     QVERIFY(record.open(QIODevice::WriteOnly));
-    record.write(R"({"package":"sparky-stereo-cushion-swap","key":"swapon-failed","message":"LOCAL5","args":["/swap/cushion","permission denied"],"severity":"failed","text_en":"A kept English explanation with the next step.","repair":[["/usr/bin/true"]]})");
+    record.write(R"({"package":"sparky-stereo-cushion-swap","key":"swapon-failed","message":"LOCAL5","args":["/swap/cushion","permission denied","/swap/cushion"],"severity":"failed","text_en":"A kept English explanation with the next step.","repair":[["/usr/bin/true"]]})");
     record.close();
     writeStatus("STATE=off\nPROTECTION=no\nPROBLEMS=swapon-failed\nREASON=swapon failed\n");
     KLocalizedString::setLanguages({u"pt_BR"_s});
@@ -123,7 +138,11 @@ void CushionStatusTest::engineText()
     QCOMPARE(engine.exitCode(), 0);
     const QJsonArray expected = QJsonDocument::fromJson(engine.readAllStandardOutput()).array();
     QCOMPARE(expected.size(), 1);
-    QCOMPARE(expected.first().toObject().value(u"lang"_s).toString(), u"pt_BR"_s);
+    QVERIFY(!expected.first().toObject().value(u"text"_s).toString().contains(u"@SPARKY_ARG"_s));
+    QCOMPARE(expected.first().toObject().value(u"lang"_s).toString(), catalogAvailable ? u"pt_BR"_s : u"en"_s);
+    if (!catalogAvailable) {
+        QCOMPARE(expected.first().toObject().value(u"text"_s).toString(), u"A kept English explanation with the next step."_s);
+    }
     MemoryKcm kcm(nullptr, KPluginMetaData());
     kcm.load();
     const QVariantList problems = kcm.property("cushionProblems").toList();
@@ -132,6 +151,7 @@ void CushionStatusTest::engineText()
     QCOMPARE(problems.first().toMap().value(u"scope"_s).toString(), u"boot"_s);
     QVERIFY(!problems.first().toMap().value(u"repair"_s).toList().isEmpty());
     QVERIFY(kcm.property("cushionProblemsError").toString().isEmpty());
+    qputenv("SPARKY_STEREO_PROBLEMS_CATALOG", catalog);
 }
 
 void CushionStatusTest::missingProblem()

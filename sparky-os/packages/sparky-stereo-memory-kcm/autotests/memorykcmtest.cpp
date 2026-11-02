@@ -26,6 +26,7 @@ private Q_SLOTS:
     void statusShows();
     void automaticExplained();
     void saveThroughKAuth();
+    void repairThroughPolkit();
 
 private:
     static void write(const QString &path, const QByteArray &text);
@@ -141,6 +142,28 @@ void MemoryKcmTest::saveThroughKAuth()
     QCOMPARE(kcm.zramMode(), int(MemoryKcm::On));
     QVERIFY(!kcm.cushionEnabled());
     QVERIFY(!kcm.needsSave());
+}
+
+void MemoryKcmTest::repairThroughPolkit()
+{
+    const QString mode = qEnvironmentVariable("SPARKY_KAUTH_TEST");
+    if (mode.isEmpty()) {
+        QSKIP("needs the authorization container");
+    }
+    MemoryKcm kcm(nullptr, KPluginMetaData());
+    kcm.load();
+    const QVariantList problems = kcm.property("cushionProblems").toList();
+    QCOMPARE(problems.size(), 1);
+    QCOMPARE(problems.first().toMap().value(u"key"_s).toString(), u"order353-test"_s);
+    kcm.setZramMode(MemoryKcm::Off);
+    QVERIFY(QMetaObject::invokeMethod(&kcm, "repairProblem", Qt::DirectConnection, Q_ARG(int, 0)));
+    QTRY_VERIFY_WITH_TIMEOUT(!kcm.property("repairing").toBool(), 20000);
+    const bool allowed = mode == u"allow"_s;
+    QVERIFY2(QFile::exists(u"/run/order353-repaired"_s) == allowed, qPrintable(kcm.errorText()));
+    QCOMPARE(kcm.errorText().isEmpty(), allowed);
+    QCOMPARE(kcm.zramMode(), int(MemoryKcm::Off));
+    QVERIFY(kcm.needsSave());
+    QCOMPARE(QFile::exists(u"/run/sparky-stereo-problems/sparky-stereo-cushion-swap_order353-test.json"_s), !allowed);
 }
 
 QTEST_GUILESS_MAIN(MemoryKcmTest)

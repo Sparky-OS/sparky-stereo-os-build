@@ -11,6 +11,7 @@ Dependencies:
 KDE Frameworks 6 (KAuth, KCMUtils, KI18n, Kirigami)
 sparky-stereo-kernel-settings (zram-auto)
 sparky-stereo-cushion-swap (recommended)
+sparky-stereo-problems (>= 0.1.0), pkexec
 
 Build:
 -------------
@@ -19,7 +20,7 @@ OUT=/path/in/workspace/pending-pack bash ./build.sh (inside a Debian container w
 Install:
 -------------
 su
-apt-get install ./sparky-stereo-memory-kcm_0.1.2_amd64.deb
+apt-get install ./sparky-stereo-memory-kcm_0.1.4_amd64.deb
 
 Uninstall:
 -------------
@@ -38,7 +39,16 @@ What the page shows and changes
   off never switches the swap area off. Its state (off, deployed, retracting,
   switched off, no area) and how it is woken (PSI, or compatibility mode
   without PSI) come from /run/cushion-swap/status.
-The page reads and writes only those files, so a hand edit shows in the page
+- Memory protection: protected, protected with a kept problem, not protected,
+  daemon not running, or status unreadable with the read error.
+  The protection result, problem keys and reason come from the status file;
+  the swap area's state remains a separate line.
+- Kept problems: their text and next steps come from the shared engine in the
+  person's language. Problems with an engine repair offer a Repair button.
+  Machine repairs use pkexec and org.sparkylinux.sparkystereo.problems.repair;
+  the engine runs the commands kept with the record, never a page-supplied command.
+  Refresh status and repairs preserve unsaved choices in the page.
+The page reads and writes those settings files, so a hand edit shows in the page
 and the page's change shows in the file. The write goes through KAuth (action
 org.sparkylinux.sparkystereo.memory.save, administrator authentication kept
 for the session); the helper accepts only auto/on/off and on/off and keeps
@@ -52,3 +62,14 @@ by the real zram-auto. autotests/run-kauth-test.sh (as root in a disposable
 container): a private system bus activates the installed helper, a test double
 answers for polkit, and the page saves through KAuth: allowed, both files
 change; denied, both stay byte for byte and the page shows why.
+
+The cushionstatustest target exercises all five status outcomes, stale and
+invalid PIDs, unreadable and malformed files, the engine's Portuguese text and
+kept English text when its catalog is absent, and refresh with unsaved edits.
+It requires sparky-stereo-problems and Cushion Swap catalogs, supplied through
+SPARKY_STEREO_PROBLEMS_CATALOG in the test container.
+The authorization script runs its clients as uid 1000 (TEST_UID/TEST_GID can
+select another test account), with root confined to container setup and helpers.
+It also checks the engine's real pkexec repair with fakepolkit allowing and
+denying the installed policy's action. The container must have a passwd entry
+for the test uid, pkexec and Cushion Swap's catalogs installed.

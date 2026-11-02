@@ -1,9 +1,62 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: sparky-stereo-memory-kcm\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-11-02 18:20+0000\n"
 "Language: zh_CN\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
+
+#: src/memorykcm.cpp:142
+msgctxt "@info"
+msgid "Not saved: not authorized to change these settings."
+msgstr "未保存：无权更改这些设置。"
+
+#: src/memorykcm.cpp:144
+msgctxt "@info %1 is the error"
+msgid "Not saved: %1"
+msgstr "未保存：%1"
+
+#: src/cushionstatus.cpp:39 src/cushionstatus.cpp:45 src/cushionstatus.cpp:60
+msgctxt "@info"
+msgid "Could not read %1: %2"
+msgstr "无法读取 %1：%2"
+
+#: src/cushionstatus.cpp:60
+msgctxt "@info"
+msgid "Invalid daemon PID."
+msgstr "守护进程 PID 无效。"
+
+#: src/cushionstatus.cpp:72
+msgctxt "@info"
+msgid "Could not read the protection state from %1: missing or invalid PROTECTION."
+msgstr "无法从 %1 读取保护状态：PROTECTION 缺失或无效。"
+
+#: src/cushionstatus.cpp:86 src/cushionstatus.cpp:90 src/cushionstatus.cpp:97
+#: src/cushionstatus.cpp:104
+msgctxt "@info"
+msgid "Could not read the kept problems: %1"
+msgstr "无法读取已记录的问题：%1"
+
+#: src/cushionstatus.cpp:112
+msgctxt "@info"
+msgid "The problems engine returned a problem without its text."
+msgstr "问题管理引擎返回的问题没有说明文字。"
+
+#: src/cushionstatus.cpp:121
+msgctxt "@info"
+msgid "The status names a problem whose text is unavailable from the problems engine. Refresh to try again."
+msgstr "问题管理引擎中没有状态所列问题的说明文字。请刷新以重试。"
+
+#: src/cushionstatus.cpp:159
+msgctxt "@info"
+msgid "The repair did not run: %1"
+msgstr "修复未能运行：%1"
+
+#: src/cushionstatus.cpp:168
+msgctxt "@info"
+msgid "The repair failed (exit %1): %2"
+msgstr "修复失败（退出码 %1）：%2"
 
 #: src/ui/main.qml:26
 msgctxt "@label"
@@ -25,102 +78,141 @@ msgctxt "@option:radio zram"
 msgid "Off"
 msgstr "关闭"
 
-#: src/ui/main.qml:49
+#: src/ui/main.qml:51
 msgctxt "@info %1 is the reason"
 msgid "Automatic means on for this computer: %1."
 msgstr "自动意味着此计算机已开启：%1。"
 
-#: src/ui/main.qml:50
+#: src/ui/main.qml:52
 msgctxt "@info %1 is the reason"
 msgid "Automatic means off for this computer: %1."
 msgstr "自动意味着此计算机已关闭：%1。"
 
-#: src/ui/main.qml:56
+#: src/ui/main.qml:60
 msgctxt "@info"
 msgid "In use now."
 msgstr "正在使用中。"
 
-#: src/ui/main.qml:56
+#: src/ui/main.qml:60
 msgctxt "@info"
 msgid "Not in use now."
 msgstr "当前未使用。"
 
-#: src/ui/main.qml:57
+#: src/ui/main.qml:61
 msgctxt "@info"
 msgid "A change applies at the next start."
 msgstr "更改将在下次启动时生效。"
 
-#: src/ui/main.qml:65
+#: src/ui/main.qml:69
 msgctxt "@label"
 msgid "Cushion Swap File:"
 msgstr "Cushion Swap File："
 
-#: src/ui/main.qml:66
+#: src/ui/main.qml:70
 msgctxt "@option:check"
 msgid "Switch the swap area on only under memory pressure"
 msgstr "仅在内存压力下启用交换区域"
 
-#: src/ui/main.qml:71
+#: src/ui/main.qml:81
+msgctxt "@info protection"
+msgid "Memory protected"
+msgstr "内存受保护"
+
+#: src/ui/main.qml:82
+msgctxt "@info protection"
+msgid "Memory protected, with a kept problem"
+msgstr "内存受保护，但有已记录的问题"
+
+#: src/ui/main.qml:83
+msgctxt "@info protection"
+msgid "Memory not protected"
+msgstr "内存未受保护"
+
+#: src/ui/main.qml:84
+msgctxt "@info protection"
+msgid "Cushion Swap is not running"
+msgstr "Cushion Swap 未运行"
+
+#: src/ui/main.qml:85
+msgctxt "@info protection"
+msgid "Memory protection status could not be read"
+msgstr "无法读取内存保护状态"
+
+#: src/ui/main.qml:99
+msgctxt "@label"
+msgid "Reason:"
+msgstr "原因："
+
+#: src/ui/main.qml:109
 msgctxt "@label"
 msgid "State:"
 msgstr "状态："
 
-#: src/ui/main.qml:74
+#: src/ui/main.qml:112
 msgctxt "@info cushion state"
-msgid "Off, ready"
-msgstr "关闭，已就绪"
+msgid "Off"
+msgstr "关闭"
 
-#: src/ui/main.qml:75
+#: src/ui/main.qml:113
 msgctxt "@info cushion state"
 msgid "Deployed"
 msgstr "已部署"
 
-#: src/ui/main.qml:76
+#: src/ui/main.qml:114
 msgctxt "@info cushion state"
 msgid "Retracting"
 msgstr "正在收回"
 
-#: src/ui/main.qml:77
+#: src/ui/main.qml:115
 msgctxt "@info cushion state"
 msgid "Switched off"
 msgstr "已关闭"
 
-#: src/ui/main.qml:78
+#: src/ui/main.qml:116
 msgctxt "@info cushion state"
 msgid "No swap area configured"
 msgstr "未配置交换区域"
 
-#: src/ui/main.qml:79
+#: src/ui/main.qml:117
 msgctxt "@info cushion state"
 msgid "Not running"
 msgstr "未运行"
 
-#: src/ui/main.qml:84
+#: src/ui/main.qml:118
+msgctxt "@info cushion state"
+msgid "Unknown"
+msgstr "未知"
+
+#: src/ui/main.qml:123
 msgctxt "@label"
 msgid "Wake-up:"
 msgstr "唤醒："
 
-#: src/ui/main.qml:87
+#: src/ui/main.qml:126
 msgctxt "@info"
 msgid "Pressure stall information (PSI): the kernel wakes it when memory stalls"
 msgstr "压力停滞信息（PSI）：内存停滞时内核将其唤醒"
 
-#: src/ui/main.qml:88
+#: src/ui/main.qml:127
 msgctxt "@info"
 msgid "Compatibility mode: no PSI, it checks memory every few seconds"
 msgstr "兼容模式：无 PSI，每隔几秒检查一次内存"
 
-#: src/ui/main.qml:91
+#: src/ui/main.qml:130
 msgctxt "@label"
 msgid "Swap area:"
 msgstr "交换区域："
 
-#: src/memorykcm.cpp:144
-msgctxt "@info"
-msgid "Not saved: not authorized to change these settings."
-msgstr "未保存：无权更改这些设置。"
+#: src/ui/main.qml:154
+msgctxt "@action:button"
+msgid "Repair"
+msgstr "修复"
 
-#: src/memorykcm.cpp:146
-msgctxt "@info %1 is the error"
-msgid "Not saved: %1"
-msgstr "未保存：%1"
+#: src/ui/main.qml:169
+msgctxt "@action:button"
+msgid "Refresh status"
+msgstr "刷新状态"
+
+#~ msgctxt "@info cushion state"
+#~ msgid "Off, ready"
+#~ msgstr "关闭，已就绪"

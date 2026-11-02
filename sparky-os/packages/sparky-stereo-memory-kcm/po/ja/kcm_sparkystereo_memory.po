@@ -1,9 +1,62 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: sparky-stereo-memory-kcm\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-11-02 18:20+0000\n"
 "Language: ja\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
+
+#: src/memorykcm.cpp:142
+msgctxt "@info"
+msgid "Not saved: not authorized to change these settings."
+msgstr "保存されませんでした: これらの設定を変更する権限がありません。"
+
+#: src/memorykcm.cpp:144
+msgctxt "@info %1 is the error"
+msgid "Not saved: %1"
+msgstr "保存されませんでした: %1"
+
+#: src/cushionstatus.cpp:39 src/cushionstatus.cpp:45 src/cushionstatus.cpp:60
+msgctxt "@info"
+msgid "Could not read %1: %2"
+msgstr "%1 を読み取れませんでした: %2"
+
+#: src/cushionstatus.cpp:60
+msgctxt "@info"
+msgid "Invalid daemon PID."
+msgstr "デーモンの PID が無効です。"
+
+#: src/cushionstatus.cpp:72
+msgctxt "@info"
+msgid "Could not read the protection state from %1: missing or invalid PROTECTION."
+msgstr "%1 から保護状態を読み取れませんでした: PROTECTION がないか無効です。"
+
+#: src/cushionstatus.cpp:86 src/cushionstatus.cpp:90 src/cushionstatus.cpp:97
+#: src/cushionstatus.cpp:104
+msgctxt "@info"
+msgid "Could not read the kept problems: %1"
+msgstr "記録された問題を読み取れませんでした: %1"
+
+#: src/cushionstatus.cpp:112
+msgctxt "@info"
+msgid "The problems engine returned a problem without its text."
+msgstr "問題管理エンジンが説明のない問題を返しました。"
+
+#: src/cushionstatus.cpp:121
+msgctxt "@info"
+msgid "The status names a problem whose text is unavailable from the problems engine. Refresh to try again."
+msgstr "状態に記載された問題の説明を問題管理エンジンから取得できません。更新して再試行してください。"
+
+#: src/cushionstatus.cpp:159
+msgctxt "@info"
+msgid "The repair did not run: %1"
+msgstr "修復を実行できませんでした: %1"
+
+#: src/cushionstatus.cpp:168
+msgctxt "@info"
+msgid "The repair failed (exit %1): %2"
+msgstr "修復に失敗しました (終了コード %1): %2"
 
 #: src/ui/main.qml:26
 msgctxt "@label"
@@ -25,102 +78,141 @@ msgctxt "@option:radio zram"
 msgid "Off"
 msgstr "オフ"
 
-#: src/ui/main.qml:49
+#: src/ui/main.qml:51
 msgctxt "@info %1 is the reason"
 msgid "Automatic means on for this computer: %1."
 msgstr "自動とは、このコンピューターではオンになることを意味します: %1。"
 
-#: src/ui/main.qml:50
+#: src/ui/main.qml:52
 msgctxt "@info %1 is the reason"
 msgid "Automatic means off for this computer: %1."
 msgstr "自動とは、このコンピューターではオフになることを意味します: %1。"
 
-#: src/ui/main.qml:56
+#: src/ui/main.qml:60
 msgctxt "@info"
 msgid "In use now."
 msgstr "現在使用中。"
 
-#: src/ui/main.qml:56
+#: src/ui/main.qml:60
 msgctxt "@info"
 msgid "Not in use now."
 msgstr "現在使用していません。"
 
-#: src/ui/main.qml:57
+#: src/ui/main.qml:61
 msgctxt "@info"
 msgid "A change applies at the next start."
 msgstr "変更は次回の起動時に適用されます。"
 
-#: src/ui/main.qml:65
+#: src/ui/main.qml:69
 msgctxt "@label"
 msgid "Cushion Swap File:"
 msgstr "Cushion Swap File:"
 
-#: src/ui/main.qml:66
+#: src/ui/main.qml:70
 msgctxt "@option:check"
 msgid "Switch the swap area on only under memory pressure"
 msgstr "メモリー負荷時にのみスワップ領域をオンにする"
 
-#: src/ui/main.qml:71
+#: src/ui/main.qml:81
+msgctxt "@info protection"
+msgid "Memory protected"
+msgstr "メモリは保護されています"
+
+#: src/ui/main.qml:82
+msgctxt "@info protection"
+msgid "Memory protected, with a kept problem"
+msgstr "メモリは保護されていますが、記録された問題があります"
+
+#: src/ui/main.qml:83
+msgctxt "@info protection"
+msgid "Memory not protected"
+msgstr "メモリは保護されていません"
+
+#: src/ui/main.qml:84
+msgctxt "@info protection"
+msgid "Cushion Swap is not running"
+msgstr "Cushion Swap は実行されていません"
+
+#: src/ui/main.qml:85
+msgctxt "@info protection"
+msgid "Memory protection status could not be read"
+msgstr "メモリの保護状態を読み取れませんでした"
+
+#: src/ui/main.qml:99
+msgctxt "@label"
+msgid "Reason:"
+msgstr "理由:"
+
+#: src/ui/main.qml:109
 msgctxt "@label"
 msgid "State:"
 msgstr "状態:"
 
-#: src/ui/main.qml:74
+#: src/ui/main.qml:112
 msgctxt "@info cushion state"
-msgid "Off, ready"
-msgstr "オフ、準備完了"
+msgid "Off"
+msgstr "オフ"
 
-#: src/ui/main.qml:75
+#: src/ui/main.qml:113
 msgctxt "@info cushion state"
 msgid "Deployed"
 msgstr "展開済み"
 
-#: src/ui/main.qml:76
+#: src/ui/main.qml:114
 msgctxt "@info cushion state"
 msgid "Retracting"
 msgstr "縮小中"
 
-#: src/ui/main.qml:77
+#: src/ui/main.qml:115
 msgctxt "@info cushion state"
 msgid "Switched off"
 msgstr "オフになっています"
 
-#: src/ui/main.qml:78
+#: src/ui/main.qml:116
 msgctxt "@info cushion state"
 msgid "No swap area configured"
 msgstr "スワップ領域が設定されていません"
 
-#: src/ui/main.qml:79
+#: src/ui/main.qml:117
 msgctxt "@info cushion state"
 msgid "Not running"
 msgstr "実行されていません"
 
-#: src/ui/main.qml:84
+#: src/ui/main.qml:118
+msgctxt "@info cushion state"
+msgid "Unknown"
+msgstr "不明"
+
+#: src/ui/main.qml:123
 msgctxt "@label"
 msgid "Wake-up:"
 msgstr "起動:"
 
-#: src/ui/main.qml:87
+#: src/ui/main.qml:126
 msgctxt "@info"
 msgid "Pressure stall information (PSI): the kernel wakes it when memory stalls"
 msgstr "Pressure Stall Information (PSI): メモリーが停滞したときにカーネルがそれを起動します"
 
-#: src/ui/main.qml:88
+#: src/ui/main.qml:127
 msgctxt "@info"
 msgid "Compatibility mode: no PSI, it checks memory every few seconds"
 msgstr "互換モード: PSI なし。数秒ごとにメモリーを確認します"
 
-#: src/ui/main.qml:91
+#: src/ui/main.qml:130
 msgctxt "@label"
 msgid "Swap area:"
 msgstr "スワップ領域:"
 
-#: src/memorykcm.cpp:144
-msgctxt "@info"
-msgid "Not saved: not authorized to change these settings."
-msgstr "保存されませんでした: これらの設定を変更する権限がありません。"
+#: src/ui/main.qml:154
+msgctxt "@action:button"
+msgid "Repair"
+msgstr "修復"
 
-#: src/memorykcm.cpp:146
-msgctxt "@info %1 is the error"
-msgid "Not saved: %1"
-msgstr "保存されませんでした: %1"
+#: src/ui/main.qml:169
+msgctxt "@action:button"
+msgid "Refresh status"
+msgstr "状態を更新"
+
+#~ msgctxt "@info cushion state"
+#~ msgid "Off, ready"
+#~ msgstr "オフ、準備完了"

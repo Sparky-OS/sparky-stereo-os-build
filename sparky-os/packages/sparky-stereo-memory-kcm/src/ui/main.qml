@@ -43,6 +43,8 @@ KCM.SimpleKCM {
         }
         QQC2.Label {
             Layout.fillWidth: true
+            Layout.preferredWidth: Kirigami.Units.gridUnit * 24
+            Layout.minimumWidth: 0
             wrapMode: Text.Wrap
             font: Kirigami.Theme.smallFont
             text: kcm.autoZramOn
@@ -51,6 +53,8 @@ KCM.SimpleKCM {
         }
         QQC2.Label {
             Layout.fillWidth: true
+            Layout.preferredWidth: Kirigami.Units.gridUnit * 24
+            Layout.minimumWidth: 0
             wrapMode: Text.Wrap
             font: Kirigami.Theme.smallFont
             text: (kcm.zramActive ? i18nc("@info", "In use now.") : i18nc("@info", "Not in use now."))
@@ -85,6 +89,8 @@ KCM.SimpleKCM {
         QQC2.Label {
             visible: kcm.cushionStatusError.length > 0
             Layout.fillWidth: true
+            Layout.preferredWidth: Kirigami.Units.gridUnit * 24
+            Layout.minimumWidth: 0
             wrapMode: Text.Wrap
             textFormat: Text.PlainText
             text: kcm.cushionStatusError
@@ -93,6 +99,8 @@ KCM.SimpleKCM {
             Kirigami.FormData.label: i18nc("@label", "Reason:")
             visible: kcm.cushionReason.length > 0
             Layout.fillWidth: true
+            Layout.preferredWidth: Kirigami.Units.gridUnit * 24
+            Layout.minimumWidth: 0
             wrapMode: Text.Wrap
             textFormat: Text.PlainText
             text: kcm.cushionReason
@@ -130,8 +138,12 @@ KCM.SimpleKCM {
                 required property var modelData
                 required property int index
                 Layout.fillWidth: true
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 24
+                Layout.minimumWidth: 0
                 QQC2.Label {
                     Layout.fillWidth: true
+                    Layout.preferredWidth: Kirigami.Units.gridUnit * 24
+                    Layout.minimumWidth: 0
                     wrapMode: Text.Wrap
                     textFormat: Text.PlainText
                     text: modelData.text
@@ -147,6 +159,8 @@ KCM.SimpleKCM {
         QQC2.Label {
             visible: kcm.cushionProblemsError.length > 0
             Layout.fillWidth: true
+            Layout.preferredWidth: Kirigami.Units.gridUnit * 24
+            Layout.minimumWidth: 0
             wrapMode: Text.Wrap
             textFormat: Text.PlainText
             text: kcm.cushionProblemsError

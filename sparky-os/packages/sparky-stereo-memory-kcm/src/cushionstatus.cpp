@@ -56,8 +56,10 @@ void MemoryKcm::readCushionStatus()
     const QString pid = status.value(u"PID"_s).toString();
     if (m_cushionState == u"stopped"_s || m_cushionState == u"disabled"_s) {
         m_cushionStatus = NotRunning;
-    } else if (!pid.isEmpty() && QRegularExpression(u"^[0-9]+$"_s).match(pid).hasMatch()
-               && !QFileInfo::exists(qEnvironmentVariable("SPARKY_STEREO_MEMORY_ROOT") + u"/proc/"_s + pid)) {
+    } else if (!pid.isEmpty() && !QRegularExpression(u"^[0-9]+$"_s).match(pid).hasMatch()) {
+        m_cushionStatusError = i18nc("@info", "Could not read %1: %2", file.fileName(), i18nc("@info", "Invalid daemon PID."));
+        return;
+    } else if (!pid.isEmpty() && !QFileInfo::exists(qEnvironmentVariable("SPARKY_STEREO_MEMORY_ROOT") + u"/proc/"_s + pid)) {
         m_cushionStatus = NotRunning;
     } else if (m_cushionProtection == u"yes"_s) {
         m_cushionStatus = m_cushionProblemKeys.isEmpty() ? Protected : ProtectedWithProblem;
