@@ -191,5 +191,107 @@ class SourceBuildTests(unittest.TestCase):
                     source_tree.restore_payload(root, root / 'debian/staging')
 
 
+class GeneratedOutputs(unittest.TestCase):
+    """ORDER 352b part 4 (lane 161): Zig's install step writes every *test.zig as an empty placeholder (build.zig
+    blank_extensions = {"test.zig"}, lib/std/Build/Step/InstallDir.zig), so a mapped installed copy of a projected
+    source is legitimately not that source. A recipe declares such outputs; nothing else is accepted."""
+
+    SOURCE = 'lib/compiler_rt/ucmpti2_test.zig'
+    INSTALLED = 'usr/lib/cgm-zig/lib/zig/compiler_rt/ucmpti2_test.zig'
+    OTHER = 'lib/compiler_rt/ucmpti2.zig'
+    AUTHORED = b'// an upstream test\ntest "example" {}\n'
+    PROJECTED = b'test "example" {}\n'
+
+    def tree(self, folder, generated=None):
+        """lane 161's reproducer (tools/reproduce-generated-test.py), with a second mapped source beside it."""
+        root = Path(folder)
+        records = {}
+        for name in (self.SOURCE, self.OTHER):
+            original = root / '.sparky-lc/authored' / name
+            original.parent.mkdir(parents=True, exist_ok=True)
+            original.write_bytes(self.AUTHORED)
+            records[name] = {'status': 'projected', 'sha_in': source_tree.sha(self.AUTHORED),
+                             'final_sha256': source_tree.sha(self.PROJECTED), 'source_mtime_ns': 1}
+        (root / '.sparky-lc/source.json').write_text(json.dumps({'files': records}))
+        (root / 'debian').mkdir()
+        (root / source_tree.PAYLOAD_SOURCE_PLAN).write_text(json.dumps({'/usr/lib/cgm-zig/lib/zig': 'lib'}))
+        if generated is not None:
+            (root / source_tree.PAYLOAD_GENERATED_PLAN).write_text(json.dumps(generated))
+        staging = root / 'staging'
+        for name, data in ((self.INSTALLED, b''), ('usr/lib/cgm-zig/lib/zig/compiler_rt/ucmpti2.zig', self.PROJECTED)):
+            target = staging / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        return root, staging
+
+    PLAN = {'/usr/lib/cgm-zig/lib/zig/*test.zig': {
+        'form': 'empty', 'reason': "Zig's install step writes every *test.zig as an empty placeholder"}}
+
+    def test_reproducer_red_without_a_declaration(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root, staging = self.tree(folder)
+            with self.assertRaisesRegex(ValueError, 'Mapped source copy changed during staging: .*ucmpti2_test.zig'):
+                source_tree.restore_payload(root, staging)
+            self.assertEqual((staging / self.INSTALLED).read_bytes(), b'')
+
+    def test_reproducer_green_with_the_declaration(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root, staging = self.tree(folder, self.PLAN)
+            source_tree.restore_payload(root, staging)
+            self.assertEqual((staging / self.INSTALLED).read_bytes(), b'')          # left as generated
+            self.assertEqual((staging / 'usr/lib/cgm-zig/lib/zig/compiler_rt/ucmpti2.zig').read_bytes(),
+                             self.AUTHORED)                                             # the ordinary copy restored
+            record = json.loads((root / '.sparky-lc/payload-generated.json').read_text())
+            self.assertEqual(record['/' + self.INSTALLED]['form'], 'empty')
+            self.assertIn('empty placeholder', record['/' + self.INSTALLED]['reason'])
+
+    def test_a_declared_file_with_other_content_is_refused(self):
+        for data in (self.PROJECTED, self.AUTHORED, b'\n'):
+            with self.subTest(data=data), tempfile.TemporaryDirectory() as folder:
+                root, staging = self.tree(folder, self.PLAN)
+                (staging / self.INSTALLED).write_bytes(data)
+                with self.assertRaisesRegex(ValueError, r'not its declared form \(empty\)'):
+                    source_tree.restore_payload(root, staging)
+
+    def test_an_undeclared_change_is_still_refused(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root, staging = self.tree(folder, self.PLAN)
+            (staging / 'usr/lib/cgm-zig/lib/zig/compiler_rt/ucmpti2.zig').write_bytes(b'')   # empty, but not declared
+            with self.assertRaisesRegex(ValueError, 'Mapped source copy changed during staging: .*ucmpti2.zig'):
+                source_tree.restore_payload(root, staging)
+
+    def test_a_declaration_matching_nothing_stops(self):
+        plan = dict(self.PLAN, **{'/usr/lib/cgm-zig/lib/zig/*.zig.bak': {'form': 'empty', 'reason': 'none exist'}})
+        with tempfile.TemporaryDirectory() as folder:
+            root, staging = self.tree(folder, plan)
+            with self.assertRaisesRegex(ValueError, r'matches no installed file: /usr/lib/cgm-zig/lib/zig/\*\.zig\.bak'):
+                source_tree.restore_payload(root, staging)
+            # over the packages of a build: a pattern another package's staging matches is covered
+            other = root / 'other-staging/usr/lib/cgm-zig/lib/zig/x.zig.bak'
+            other.parent.mkdir(parents=True)
+            other.write_bytes(b'')
+            source_tree.require_generated(root, [staging, root / 'other-staging'])
+            source_tree.restore_payload(root, staging, check_coverage=False)
+            with self.assertRaisesRegex(ValueError, 'matches no installed file'):
+                source_tree.require_generated(root, [staging])
+
+    def test_an_exact_content_form(self):
+        data = b'// generated\n'
+        plan = {'/usr/lib/cgm-zig/lib/zig/*test.zig': {'form': 'sha256:' + source_tree.sha(data), 'reason': 'a stub'}}
+        with tempfile.TemporaryDirectory() as folder:
+            root, staging = self.tree(folder, plan)
+            with self.assertRaisesRegex(ValueError, 'not its declared form'):
+                source_tree.restore_payload(root, staging)        # the empty file is not that content
+            (staging / self.INSTALLED).write_bytes(data)
+            source_tree.restore_payload(root, staging)
+
+    def test_plan_validation(self):
+        for plan in ({'usr/lib/x': {'form': 'empty', 'reason': 'r'}}, {'/usr/../x': {'form': 'empty', 'reason': 'r'}},
+                     {'/usr/lib/x': {'form': 'blank', 'reason': 'r'}}, {'/usr/lib/x': {'form': 'empty', 'reason': ' '}},
+                     {'/usr/lib/x': {'form': 'sha256:abc', 'reason': 'r'}}, ['/usr/lib/x']):
+            with self.subTest(plan=plan), self.assertRaises(ValueError):
+                source_tree.check_generated(plan)
+
+
 if __name__ == '__main__':
     unittest.main()
