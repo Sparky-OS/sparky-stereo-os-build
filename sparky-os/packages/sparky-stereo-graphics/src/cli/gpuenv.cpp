@@ -23,7 +23,10 @@
 // other GPUs the program starts on this time; the answer's variables are printed, nothing is saved.
 //
 // Exit status: 0 done (no variables when the computer has no GPU and nothing was chosen), 1 no GPU to print (--print gpu,
-// render-node, card-node, id, reason on a computer without one), 2 wrong arguments, 4 the choice cannot be used.
+// render-node, card-node, id, reason on a computer without one), 2 wrong arguments, 4 the choice cannot be used, 5 Automatic
+// cannot place the program now (browsers while the power profile they follow cannot be read): said and kept as for 4, but
+// the person chose nothing, so Plasma's launcher starts the program as the session would (ORDER 346g), and
+// sparky-stereo-gpu-run asks or does not start it, as for 4.
 
 #include "appentries.h"
 #include "gpuinventory.h"
@@ -297,7 +300,9 @@ int main(int argc, char **argv)
         tell(problem, true);
         const QString picked = askChoice ? ask(problem) : QString();
         if (picked.isEmpty()) {
-            return 4;
+            // Automatic is a rule, not the person's choice: said apart, so a launcher never refuses a program the person
+            // placed nowhere
+            return resolution.requested == u"auto"_s ? 5 : 4;
         }
         // the person's answer for this start only: their saved choice stays, and so does its problem
         resolution = resolver.resolveChoice(picked, asked, stereo);

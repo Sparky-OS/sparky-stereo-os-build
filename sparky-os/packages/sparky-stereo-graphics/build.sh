@@ -5,7 +5,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.2.3
+VERSION=0.2.4
 PACKAGE=sparky-stereo-graphics
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.graphics.XXXXXX")
@@ -84,6 +84,19 @@ Description: Graphics page for System Settings
 EOS
 cat >"$S/debian/changelog" <<EOS
 $PACKAGE ($VERSION) unstable; urgency=medium
+
+  * Automatic is a rule, not the person's choice (ORDER 346g): when it
+    cannot place a program now (browsers while the power profile cannot be
+    read), sparky-stereo-gpu-env says and keeps it as before and exits 5,
+    so Plasma's launcher (kf6-kio 6.30.0-1+stereo3d8) starts the program
+    as the session would; a kind the person set to Follow the power profile
+    and every chosen GPU that cannot be used still exit 4, and the launcher
+    then starts nothing. sparky-stereo-gpu-run asks or does not start the
+    program on 4 and on 5 alike.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 02 Nov 2026 12:00:00 -0300
+
+$PACKAGE (0.2.3) unstable; urgency=medium
 
   * Nothing fails silently (Daniel, 2026-11-01; ORDER 346a): a GPU the
     person chose (by its PCI address, or Integrated or Discrete) that is not
