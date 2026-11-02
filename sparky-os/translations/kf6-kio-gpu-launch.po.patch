@@ -1,0 +1,427 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Subject: kio: carry the translated messages of a launch whose GPU cannot be applied
+
+The seven messages added by
+EDITION-ONLY-start-no-application-whose-GPU-cannot-be-applied.patch (ORDER
+346g): the program that was not started, and why the Graphics page's
+sparky-stereo-gpu-env could not apply its GPU, in Polish, Brazilian
+Portuguese, French, German, Japanese, Korean and Chinese (Simplified and
+Traditional); English stays in the code. The wording follows the published
+lines of sparky-stereo-gpu-run, which say the same failures from the command
+line. A first draft with AI assistance, pending review by native speakers.
+
+Assisted-by: Claude Opus 5.5
+---
+diff --git a/po/de/kio6.po b/po/de/kio6.po
+index aabe86e..704c51b 100644
+--- a/po/de/kio6.po
++++ b/po/de/kio6.po
+@@ -11405,3 +11405,47 @@ msgstr "Wenn Sie diesem Programm nicht vertrauen, drücken Sie Abbrechen"
+ 
+ #~ msgid "MS Windows encoding:"
+ #~ msgstr "MS-Windows-Kodierung:"
++
++#: src/gui/gpudetection.cpp:193
++#, kde-format
++msgctxt "@info %1 is the name of a program"
++msgid "%1 was not started."
++msgstr "Das Programm %1 wurde nicht gestartet."
++
++#: src/gui/gpudetection.cpp:202
++#, kde-format
++msgctxt "@info"
++msgid "Reinstall it: sudo apt-get install --reinstall sparky-stereo-graphics"
++msgstr "Installieren Sie es neu: sudo apt-get install --reinstall sparky-stereo-graphics"
++
++#: src/gui/gpudetection.cpp:205
++#, kde-format
++msgctxt "@info %1 says why"
++msgid "sparky-stereo-gpu-env could not be started (%1), so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr "sparky-stereo-gpu-env konnte nicht gestartet werden (%1), daher kann die in den Systemeinstellungen unter Grafik gewählte GPU nicht angewendet werden."
++
++#: src/gui/gpudetection.cpp:211
++#, kde-format
++msgctxt "@info"
++msgid "sparky-stereo-gpu-env did not answer within %1 second, so the GPU chosen in System Settings, Graphics cannot be applied."
++msgid_plural "sparky-stereo-gpu-env did not answer within %1 seconds, so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr[0] "sparky-stereo-gpu-env hat nicht innerhalb von %1 Sekunde geantwortet, daher kann die in den Systemeinstellungen unter Grafik gewählte GPU nicht angewendet werden."
++msgstr[1] "sparky-stereo-gpu-env hat nicht innerhalb von %1 Sekunden geantwortet, daher kann die in den Systemeinstellungen unter Grafik gewählte GPU nicht angewendet werden."
++
++#: src/gui/gpudetection.cpp:215
++#, kde-format
++msgctxt "@info"
++msgid "Start the program again in a moment."
++msgstr "Starten Sie das Programm gleich noch einmal."
++
++#: src/gui/gpudetection.cpp:217
++#, kde-format
++msgctxt "@info"
++msgid "sparky-stereo-gpu-env crashed, so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr "sparky-stereo-gpu-env ist abgestürzt, daher kann die in den Systemeinstellungen unter Grafik gewählte GPU nicht angewendet werden."
++
++#: src/gui/gpudetection.cpp:228
++#, kde-format
++msgctxt "@info %1 is an exit status"
++msgid "sparky-stereo-gpu-env failed (exit status %1), so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr "sparky-stereo-gpu-env ist fehlgeschlagen (Exit-Status %1), daher kann die in den Systemeinstellungen unter Grafik gewählte GPU nicht angewendet werden."
+diff --git a/po/fr/kio6.po b/po/fr/kio6.po
+index 33100a3..fb47e24 100644
+--- a/po/fr/kio6.po
++++ b/po/fr/kio6.po
+@@ -11127,3 +11127,47 @@ msgstr "Si vous ne faites pas confiance à ce programme, cliquez sur Annuler"
+ 
+ #~ msgid "lan:/ Iosla&ve"
+ #~ msgstr "M&odule d'entrée / sortie « lan:/ »"
++
++#: src/gui/gpudetection.cpp:193
++#, kde-format
++msgctxt "@info %1 is the name of a program"
++msgid "%1 was not started."
++msgstr "Le programme %1 n'a pas été lancé."
++
++#: src/gui/gpudetection.cpp:202
++#, kde-format
++msgctxt "@info"
++msgid "Reinstall it: sudo apt-get install --reinstall sparky-stereo-graphics"
++msgstr "Réinstallez-le : sudo apt-get install --reinstall sparky-stereo-graphics"
++
++#: src/gui/gpudetection.cpp:205
++#, kde-format
++msgctxt "@info %1 says why"
++msgid "sparky-stereo-gpu-env could not be started (%1), so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr "sparky-stereo-gpu-env n'a pas pu être lancé (%1) : le GPU choisi dans Configuration du système, Graphiques ne peut pas être appliqué."
++
++#: src/gui/gpudetection.cpp:211
++#, kde-format
++msgctxt "@info"
++msgid "sparky-stereo-gpu-env did not answer within %1 second, so the GPU chosen in System Settings, Graphics cannot be applied."
++msgid_plural "sparky-stereo-gpu-env did not answer within %1 seconds, so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr[0] "sparky-stereo-gpu-env n'a pas répondu en %1 seconde : le GPU choisi dans Configuration du système, Graphiques ne peut pas être appliqué."
++msgstr[1] "sparky-stereo-gpu-env n'a pas répondu en %1 secondes : le GPU choisi dans Configuration du système, Graphiques ne peut pas être appliqué."
++
++#: src/gui/gpudetection.cpp:215
++#, kde-format
++msgctxt "@info"
++msgid "Start the program again in a moment."
++msgstr "Relancez le programme dans un instant."
++
++#: src/gui/gpudetection.cpp:217
++#, kde-format
++msgctxt "@info"
++msgid "sparky-stereo-gpu-env crashed, so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr "sparky-stereo-gpu-env a planté : le GPU choisi dans Configuration du système, Graphiques ne peut pas être appliqué."
++
++#: src/gui/gpudetection.cpp:228
++#, kde-format
++msgctxt "@info %1 is an exit status"
++msgid "sparky-stereo-gpu-env failed (exit status %1), so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr "sparky-stereo-gpu-env a échoué (code de sortie %1) : le GPU choisi dans Configuration du système, Graphiques ne peut pas être appliqué."
+diff --git a/po/ja/kio6.po b/po/ja/kio6.po
+index 2af3ad2..bc38410 100644
+--- a/po/ja/kio6.po
++++ b/po/ja/kio6.po
+@@ -7460,3 +7460,46 @@ msgstr "このプログラムを信頼しない場合は「キャンセル」を
+ 
+ #~ msgid "Link to Device"
+ #~ msgstr "デバイスへのリンク"
++
++#: src/gui/gpudetection.cpp:193
++#, kde-format
++msgctxt "@info %1 is the name of a program"
++msgid "%1 was not started."
++msgstr "プログラム %1 は起動されませんでした。"
++
++#: src/gui/gpudetection.cpp:202
++#, kde-format
++msgctxt "@info"
++msgid "Reinstall it: sudo apt-get install --reinstall sparky-stereo-graphics"
++msgstr "再インストールしてください: sudo apt-get install --reinstall sparky-stereo-graphics"
++
++#: src/gui/gpudetection.cpp:205
++#, kde-format
++msgctxt "@info %1 says why"
++msgid "sparky-stereo-gpu-env could not be started (%1), so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr "sparky-stereo-gpu-env を起動できなかったため (%1)、システム設定の「グラフィックス」で選んだ GPU を適用できません。"
++
++#: src/gui/gpudetection.cpp:211
++#, kde-format
++msgctxt "@info"
++msgid "sparky-stereo-gpu-env did not answer within %1 second, so the GPU chosen in System Settings, Graphics cannot be applied."
++msgid_plural "sparky-stereo-gpu-env did not answer within %1 seconds, so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr[0] "sparky-stereo-gpu-env が %1 秒以内に応答しなかったため、システム設定の「グラフィックス」で選んだ GPU を適用できません。"
++
++#: src/gui/gpudetection.cpp:215
++#, kde-format
++msgctxt "@info"
++msgid "Start the program again in a moment."
++msgstr "少し待ってから、もう一度プログラムを起動してください。"
++
++#: src/gui/gpudetection.cpp:217
++#, kde-format
++msgctxt "@info"
++msgid "sparky-stereo-gpu-env crashed, so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr "sparky-stereo-gpu-env がクラッシュしたため、システム設定の「グラフィックス」で選んだ GPU を適用できません。"
++
++#: src/gui/gpudetection.cpp:228
++#, kde-format
++msgctxt "@info %1 is an exit status"
++msgid "sparky-stereo-gpu-env failed (exit status %1), so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr "sparky-stereo-gpu-env が失敗したため (終了ステータス %1)、システム設定の「グラフィックス」で選んだ GPU を適用できません。"
+diff --git a/po/ko/kio6.po b/po/ko/kio6.po
+index 266893a..add314f 100644
+--- a/po/ko/kio6.po
++++ b/po/ko/kio6.po
+@@ -10084,3 +10084,46 @@ msgstr "이 프로그램을 신뢰할 수 없다면 취소를 클릭하십시오
+ #~ "%1.\n"
+ #~ "\n"
+ #~ "이유: %2"
++
++#: src/gui/gpudetection.cpp:193
++#, kde-format
++msgctxt "@info %1 is the name of a program"
++msgid "%1 was not started."
++msgstr "프로그램 %1을(를) 시작하지 않았습니다."
++
++#: src/gui/gpudetection.cpp:202
++#, kde-format
++msgctxt "@info"
++msgid "Reinstall it: sudo apt-get install --reinstall sparky-stereo-graphics"
++msgstr "다시 설치하십시오: sudo apt-get install --reinstall sparky-stereo-graphics"
++
++#: src/gui/gpudetection.cpp:205
++#, kde-format
++msgctxt "@info %1 says why"
++msgid "sparky-stereo-gpu-env could not be started (%1), so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr "sparky-stereo-gpu-env를 시작할 수 없어서(%1) 시스템 설정의 그래픽에서 선택한 GPU를 적용할 수 없습니다."
++
++#: src/gui/gpudetection.cpp:211
++#, kde-format
++msgctxt "@info"
++msgid "sparky-stereo-gpu-env did not answer within %1 second, so the GPU chosen in System Settings, Graphics cannot be applied."
++msgid_plural "sparky-stereo-gpu-env did not answer within %1 seconds, so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr[0] "sparky-stereo-gpu-env가 %1초 안에 응답하지 않아서 시스템 설정의 그래픽에서 선택한 GPU를 적용할 수 없습니다."
++
++#: src/gui/gpudetection.cpp:215
++#, kde-format
++msgctxt "@info"
++msgid "Start the program again in a moment."
++msgstr "잠시 후 프로그램을 다시 시작하십시오."
++
++#: src/gui/gpudetection.cpp:217
++#, kde-format
++msgctxt "@info"
++msgid "sparky-stereo-gpu-env crashed, so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr "sparky-stereo-gpu-env가 비정상적으로 종료되어서 시스템 설정의 그래픽에서 선택한 GPU를 적용할 수 없습니다."
++
++#: src/gui/gpudetection.cpp:228
++#, kde-format
++msgctxt "@info %1 is an exit status"
++msgid "sparky-stereo-gpu-env failed (exit status %1), so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr "sparky-stereo-gpu-env가 실패해서(종료 상태 %1) 시스템 설정의 그래픽에서 선택한 GPU를 적용할 수 없습니다."
+diff --git a/po/pl/kio6.po b/po/pl/kio6.po
+index 9d39be1..2de5896 100644
+--- a/po/pl/kio6.po
++++ b/po/pl/kio6.po
+@@ -10844,3 +10844,48 @@ msgstr "Jeśli nie ufasz temu programowi, naciśnij Anuluj"
+ #~| msgid "Path:"
+ #~ msgid "Path"
+ #~ msgstr "Ścieżka:"
++
++#: src/gui/gpudetection.cpp:193
++#, kde-format
++msgctxt "@info %1 is the name of a program"
++msgid "%1 was not started."
++msgstr "Program %1 nie został uruchomiony."
++
++#: src/gui/gpudetection.cpp:202
++#, kde-format
++msgctxt "@info"
++msgid "Reinstall it: sudo apt-get install --reinstall sparky-stereo-graphics"
++msgstr "Zainstaluj go ponownie: sudo apt-get install --reinstall sparky-stereo-graphics"
++
++#: src/gui/gpudetection.cpp:205
++#, kde-format
++msgctxt "@info %1 says why"
++msgid "sparky-stereo-gpu-env could not be started (%1), so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr "Nie można było uruchomić sparky-stereo-gpu-env (%1), więc nie można zastosować procesora graficznego wybranego w Ustawieniach systemowych, Grafika."
++
++#: src/gui/gpudetection.cpp:211
++#, kde-format
++msgctxt "@info"
++msgid "sparky-stereo-gpu-env did not answer within %1 second, so the GPU chosen in System Settings, Graphics cannot be applied."
++msgid_plural "sparky-stereo-gpu-env did not answer within %1 seconds, so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr[0] "sparky-stereo-gpu-env nie odpowiedział w ciągu %1 sekundy, więc nie można zastosować procesora graficznego wybranego w Ustawieniach systemowych, Grafika."
++msgstr[1] "sparky-stereo-gpu-env nie odpowiedział w ciągu %1 sekund, więc nie można zastosować procesora graficznego wybranego w Ustawieniach systemowych, Grafika."
++msgstr[2] "sparky-stereo-gpu-env nie odpowiedział w ciągu %1 sekund, więc nie można zastosować procesora graficznego wybranego w Ustawieniach systemowych, Grafika."
++
++#: src/gui/gpudetection.cpp:215
++#, kde-format
++msgctxt "@info"
++msgid "Start the program again in a moment."
++msgstr "Uruchom program ponownie za chwilę."
++
++#: src/gui/gpudetection.cpp:217
++#, kde-format
++msgctxt "@info"
++msgid "sparky-stereo-gpu-env crashed, so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr "sparky-stereo-gpu-env uległ awarii, więc nie można zastosować procesora graficznego wybranego w Ustawieniach systemowych, Grafika."
++
++#: src/gui/gpudetection.cpp:228
++#, kde-format
++msgctxt "@info %1 is an exit status"
++msgid "sparky-stereo-gpu-env failed (exit status %1), so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr "sparky-stereo-gpu-env zakończył się błędem (kod wyjścia %1), więc nie można zastosować procesora graficznego wybranego w Ustawieniach systemowych, Grafika."
+diff --git a/po/pt_BR/kio6.po b/po/pt_BR/kio6.po
+index 477e4d2..c2236af 100644
+--- a/po/pt_BR/kio6.po
++++ b/po/pt_BR/kio6.po
+@@ -10053,3 +10053,47 @@ msgstr "Se você não confia neste programa, clique em Cancelar"
+ #~ "armazenadas localmente e embaralhadas para que não possam ser "
+ #~ "visualizadas. Por razões de segurança, você pode não querer fazer isto, "
+ #~ "pois entradas com senhas são claramente indicadas como tais.</p>"
++
++#: src/gui/gpudetection.cpp:193
++#, kde-format
++msgctxt "@info %1 is the name of a program"
++msgid "%1 was not started."
++msgstr "O programa %1 não foi iniciado."
++
++#: src/gui/gpudetection.cpp:202
++#, kde-format
++msgctxt "@info"
++msgid "Reinstall it: sudo apt-get install --reinstall sparky-stereo-graphics"
++msgstr "Reinstale-o: sudo apt-get install --reinstall sparky-stereo-graphics"
++
++#: src/gui/gpudetection.cpp:205
++#, kde-format
++msgctxt "@info %1 says why"
++msgid "sparky-stereo-gpu-env could not be started (%1), so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr "Não foi possível iniciar o sparky-stereo-gpu-env (%1), então a GPU escolhida em Configurações do Sistema, Gráficos não pode ser aplicada."
++
++#: src/gui/gpudetection.cpp:211
++#, kde-format
++msgctxt "@info"
++msgid "sparky-stereo-gpu-env did not answer within %1 second, so the GPU chosen in System Settings, Graphics cannot be applied."
++msgid_plural "sparky-stereo-gpu-env did not answer within %1 seconds, so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr[0] "O sparky-stereo-gpu-env não respondeu em %1 segundo, então a GPU escolhida em Configurações do Sistema, Gráficos não pode ser aplicada."
++msgstr[1] "O sparky-stereo-gpu-env não respondeu em %1 segundos, então a GPU escolhida em Configurações do Sistema, Gráficos não pode ser aplicada."
++
++#: src/gui/gpudetection.cpp:215
++#, kde-format
++msgctxt "@info"
++msgid "Start the program again in a moment."
++msgstr "Inicie o programa novamente daqui a pouco."
++
++#: src/gui/gpudetection.cpp:217
++#, kde-format
++msgctxt "@info"
++msgid "sparky-stereo-gpu-env crashed, so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr "O sparky-stereo-gpu-env encerrou inesperadamente, então a GPU escolhida em Configurações do Sistema, Gráficos não pode ser aplicada."
++
++#: src/gui/gpudetection.cpp:228
++#, kde-format
++msgctxt "@info %1 is an exit status"
++msgid "sparky-stereo-gpu-env failed (exit status %1), so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr "O sparky-stereo-gpu-env falhou (código de saída %1), então a GPU escolhida em Configurações do Sistema, Gráficos não pode ser aplicada."
+diff --git a/po/zh_CN/kio6.po b/po/zh_CN/kio6.po
+index 0a1c6cc..1de6b6c 100644
+--- a/po/zh_CN/kio6.po
++++ b/po/zh_CN/kio6.po
+@@ -7173,3 +7173,46 @@ msgstr "这将启动此程序："
+ #, kde-format
+ msgid "If you do not trust this program, click Cancel"
+ msgstr "如果您不信任此程序，请点击取消"
++
++#: src/gui/gpudetection.cpp:193
++#, kde-format
++msgctxt "@info %1 is the name of a program"
++msgid "%1 was not started."
++msgstr "程序 %1 未启动。"
++
++#: src/gui/gpudetection.cpp:202
++#, kde-format
++msgctxt "@info"
++msgid "Reinstall it: sudo apt-get install --reinstall sparky-stereo-graphics"
++msgstr "请重新安装：sudo apt-get install --reinstall sparky-stereo-graphics"
++
++#: src/gui/gpudetection.cpp:205
++#, kde-format
++msgctxt "@info %1 says why"
++msgid "sparky-stereo-gpu-env could not be started (%1), so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr "无法启动 sparky-stereo-gpu-env（%1），因此无法应用在“系统设置 > 图形”中选择的 GPU。"
++
++#: src/gui/gpudetection.cpp:211
++#, kde-format
++msgctxt "@info"
++msgid "sparky-stereo-gpu-env did not answer within %1 second, so the GPU chosen in System Settings, Graphics cannot be applied."
++msgid_plural "sparky-stereo-gpu-env did not answer within %1 seconds, so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr[0] "sparky-stereo-gpu-env 在 %1 秒内没有响应，因此无法应用在“系统设置 > 图形”中选择的 GPU。"
++
++#: src/gui/gpudetection.cpp:215
++#, kde-format
++msgctxt "@info"
++msgid "Start the program again in a moment."
++msgstr "请稍后再次启动该程序。"
++
++#: src/gui/gpudetection.cpp:217
++#, kde-format
++msgctxt "@info"
++msgid "sparky-stereo-gpu-env crashed, so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr "sparky-stereo-gpu-env 崩溃了，因此无法应用在“系统设置 > 图形”中选择的 GPU。"
++
++#: src/gui/gpudetection.cpp:228
++#, kde-format
++msgctxt "@info %1 is an exit status"
++msgid "sparky-stereo-gpu-env failed (exit status %1), so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr "sparky-stereo-gpu-env 运行失败（退出状态 %1），因此无法应用在“系统设置 > 图形”中选择的 GPU。"
+diff --git a/po/zh_TW/kio6.po b/po/zh_TW/kio6.po
+index d3a8eb8..4359160 100644
+--- a/po/zh_TW/kio6.po
++++ b/po/zh_TW/kio6.po
+@@ -9547,3 +9547,46 @@ msgstr "若您不信任此程式，請點擊「取消」"
+ #~ msgctxt "@item"
+ #~ msgid "Recently Saved"
+ #~ msgstr "最近儲存"
++
++#: src/gui/gpudetection.cpp:193
++#, kde-format
++msgctxt "@info %1 is the name of a program"
++msgid "%1 was not started."
++msgstr "程式 %1 未啟動。"
++
++#: src/gui/gpudetection.cpp:202
++#, kde-format
++msgctxt "@info"
++msgid "Reinstall it: sudo apt-get install --reinstall sparky-stereo-graphics"
++msgstr "請重新安裝：sudo apt-get install --reinstall sparky-stereo-graphics"
++
++#: src/gui/gpudetection.cpp:205
++#, kde-format
++msgctxt "@info %1 says why"
++msgid "sparky-stereo-gpu-env could not be started (%1), so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr "無法啟動 sparky-stereo-gpu-env（%1），因此無法套用在「系統設定 > 圖形」中選擇的 GPU。"
++
++#: src/gui/gpudetection.cpp:211
++#, kde-format
++msgctxt "@info"
++msgid "sparky-stereo-gpu-env did not answer within %1 second, so the GPU chosen in System Settings, Graphics cannot be applied."
++msgid_plural "sparky-stereo-gpu-env did not answer within %1 seconds, so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr[0] "sparky-stereo-gpu-env 在 %1 秒內沒有回應，因此無法套用在「系統設定 > 圖形」中選擇的 GPU。"
++
++#: src/gui/gpudetection.cpp:215
++#, kde-format
++msgctxt "@info"
++msgid "Start the program again in a moment."
++msgstr "請稍後再次啟動該程式。"
++
++#: src/gui/gpudetection.cpp:217
++#, kde-format
++msgctxt "@info"
++msgid "sparky-stereo-gpu-env crashed, so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr "sparky-stereo-gpu-env 當機了，因此無法套用在「系統設定 > 圖形」中選擇的 GPU。"
++
++#: src/gui/gpudetection.cpp:228
++#, kde-format
++msgctxt "@info %1 is an exit status"
++msgid "sparky-stereo-gpu-env failed (exit status %1), so the GPU chosen in System Settings, Graphics cannot be applied."
++msgstr "sparky-stereo-gpu-env 執行失敗（結束狀態 %1），因此無法套用在「系統設定 > 圖形」中選擇的 GPU。"
