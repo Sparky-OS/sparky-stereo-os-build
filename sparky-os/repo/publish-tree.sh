@@ -359,6 +359,7 @@ done
 if [ "$SPARKY_APPSTREAM" = 1 ]; then
 DEP11=$W/dep11
 DEP11_ARCHIVE=$DEP11/archive
+rm -rf -- "$DEP11"
 mkdir -p "$DEP11_ARCHIVE"
 python3 - "$W/selection.tsv" "$DEP11_ARCHIVE" "$DEP11/mounts.txt" <<'PY'
 import os, sys

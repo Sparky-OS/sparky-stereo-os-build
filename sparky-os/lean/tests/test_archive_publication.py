@@ -371,6 +371,11 @@ while arguments:
     arguments.pop(0)
 if dep11 is None:
     raise SystemExit('fake Docker did not receive /dep11')
+marker = dep11 / 'workspace/stale-marker'
+if marker.exists():
+    raise SystemExit('stale DEP-11 workspace survived')
+marker.parent.mkdir(parents=True, exist_ok=True)
+marker.write_text('stale')
 (dep11 / 'workspace/export/data/mashtabba/main').mkdir(parents=True, exist_ok=True)
 data = dep11 / 'workspace/export/data/mashtabba/main'
 (data / 'Components-amd64.yml').write_bytes(b'File: DEP-11\\n---\\n- Type: generic\\n  ID: edition-consumer.desktop\\n')
