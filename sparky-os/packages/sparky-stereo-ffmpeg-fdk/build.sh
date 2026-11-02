@@ -23,7 +23,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
-VERSION=${VERSION:-20261029~sparky9~0+lc1}
+VERSION=${VERSION:-20261102~sparky9~0+lc1}
 CPU_MINUTES=${CPU_MINUTES:-35}
 PKG=sparky-stereo-ffmpeg-fdk
 W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/fdk-build.XXXXXX")

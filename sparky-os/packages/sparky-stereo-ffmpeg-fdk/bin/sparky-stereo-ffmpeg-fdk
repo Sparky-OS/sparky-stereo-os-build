@@ -131,30 +131,50 @@ AUTOREMOVE_OPT="-o APT::AutoRemove::RecommendsImportant=false -o APT::AutoRemove
 
 # The build tools go again: what this run installed and nothing else (apt's own autoremove list from before this run is left
 # alone, and so is everything that still needs one of them: the encoder's runtime library stays). Also after a failed run.
+cleanup_error() {
+	local message
+	printf -v message "$LOCAL73" "$1" "$LOG" "$STATE/cleanup-packages"
+	printf '%s\n' "$message" >&2
+	printf '%s\n' "$message" >"$STATE/last-cleanup-error" || return 1
+	return 1
+}
+
 remove_build_tools() {
-	local A1 drop sim
+	local A1 drop sim plan
 	[ "$BD_INSTALLED" = 1 ] && [ "$KEEP_BD" != 1 ] && [ -n "$NEW_BD" ] || return 0
+	# Attempt cleanup once, including when called from the EXIT trap.
 	BD_INSTALLED=0
+	printf '%s\n' "$NEW_BD" >"$STATE/cleanup-packages" || { cleanup_error 'cleanup-packages'; return 1; }
 	# shellcheck disable=SC2086
-	apt-mark auto $NEW_BD >/dev/null 2>&1
-	A1=$(apt-get -s $AUTOREMOVE_OPT autoremove 2>/dev/null | awk '/^Remv /{print $2}' | sort -u)
+	apt-mark auto $NEW_BD || { cleanup_error 'apt-mark auto'; return 1; }
+	plan=$(LC_ALL=C apt-get -s $AUTOREMOVE_OPT autoremove) || { cleanup_error 'apt-get -s autoremove'; return 1; }
+	A1=$(printf '%s\n' "$plan" | awk '/^(Remv|Purg) /{print $2}' | sort -u)
 	drop=$(comm -12 <(echo "$NEW_BD") <(comm -13 <(echo "$A0") <(echo "$A1")) | tr '\n' ' ')
-	[ -n "$drop" ] || return 0
-	# shellcheck disable=SC2086
-	sim=$(apt-get -s purge $drop 2>/dev/null | awk '/^Remv /{print $2}' | sort -u)
-	if [ -z "$(comm -13 <(echo "$drop" | tr ' ' '\n' | sort -u) <(echo "$sim"))" ]; then
+	if [ -n "$drop" ]; then
 		# shellcheck disable=SC2086
-		DEBIAN_FRONTEND=noninteractive apt-get $DBO_APT -y purge $drop >/dev/null 2>&1 && note "build tools removed again: $(echo $drop | wc -w) packages"
-	else
-		note "the build tools stay: removing them would take other packages with them"
+		plan=$(LC_ALL=C apt-get -s purge $drop) || { cleanup_error 'apt-get -s purge'; return 1; }
+		sim=$(printf '%s\n' "$plan" | awk '/^(Remv|Purg) /{print $2}' | sort -u)
+		if [ -n "$(comm -13 <(echo "$drop" | tr ' ' '\n' | sort -u) <(echo "$sim"))" ]; then
+			printf '%s\n' "$plan" >&2
+			cleanup_error 'apt-get -s purge: +packages'
+			return 1
+		fi
+		# shellcheck disable=SC2086
+		DEBIAN_FRONTEND=noninteractive apt-get $DBO_APT -y purge $drop || { cleanup_error 'apt-get purge'; return 1; }
+		note "build tools removed again: $(echo $drop | wc -w) packages"
 	fi
+	rm -f -- "$STATE/last-cleanup-error" "$STATE/cleanup-packages" || { cleanup_error 'rm'; return 1; }
 }
 
 cleanup() {
+	local rc=$?
 	trap - EXIT
-	remove_build_tools
-	[ -n "$B" ] && [ -d "$B" ] && rm -rf -- "${B:?}"
-	rm -rf -- "${STATE:?}/stage"
+	remove_build_tools || { [ "$rc" -ne 0 ] || rc=1; }
+	if [ -n "$B" ] && [ -d "$B" ]; then
+		rm -rf -- "${B:?}" || { cleanup_error 'rm build'; [ "$rc" -ne 0 ] || rc=1; }
+	fi
+	rm -rf -- "${STATE:?}/stage" || { cleanup_error 'rm stage'; [ "$rc" -ne 0 ] || rc=1; }
+	exit "$rc"
 }
 
 # Relabel the edition's own package $1 (a .deb of another architecture) as version $2 of the same source: the version, the
@@ -214,7 +234,7 @@ PY
 }
 
 worker() {
-	local info VER BINS LOCALVER INSTALLED OTHERS host_arch tree jobs low high cores want f name arch other sim removals h
+	local info VER BINS LOCALVER INSTALLED OTHERS host_arch tree jobs low high cores want f name arch other sim removals h plan
 	check_user
 	mkdir -p "$STATE" "$(dirname "$LOG")"
 	exec 9>"$LOCK"
@@ -302,17 +322,21 @@ PY
 
 	# 3. the build dependencies (apt asks before it installs them, unless --yes or the automatic rebuild)
 	DBO_APT="-o DPkg::Lock::Timeout=$([ "$AUTO" = 1 ] && echo 3600 || echo 300)"
-	A0=$(apt-get -s $AUTOREMOVE_OPT autoremove 2>/dev/null | awk '/^Remv /{print $2}' | sort -u)
+	plan=$(LC_ALL=C apt-get -s $AUTOREMOVE_OPT autoremove) || fail "$LOCAL74" 'apt-get -s autoremove'
+	A0=$(printf '%s\n' "$plan" | awk '/^(Remv|Purg) /{print $2}' | sort -u)
 	# without Recommends and Suggests whatever the computer's policy is: the build tools, not everything that goes with them
 	BDOPT="-o APT::Install-Recommends=false -o APT::Install-Suggests=false"
 	# only the packages that are NEW on this computer ("Inst name (version ...)"); an upgrade has the old version in [] after the name
-	NEW_BD=$(apt-get -s $BDOPT -P "$PROFILE" build-dep "$tree" 2>/dev/null | awk '/^Inst / && $3 !~ /^\[/ {print $2}' | sort -u)
+	plan=$(LC_ALL=C apt-get -s $BDOPT -P "$PROFILE" build-dep "$tree") || fail "$LOCAL74" 'apt-get -s build-dep'
+	removals=$(printf '%s\n' "$plan" | awk '/^(Remv|Purg) /{print $2}' | sort -u | tr '\n' ' ')
+	[ -z "$removals" ] || fail "$LOCAL42" "$removals"
+	NEW_BD=$(printf '%s\n' "$plan" | awk '/^Inst / && $3 !~ /^\[/ {print $2}' | sort -u)
 	note "build dependencies to install: $(echo "$NEW_BD" | grep -c .)"
 	BD_INSTALLED=1
 	if [ "$ASSUME_YES" = 1 ] || [ "$AUTO" = 1 ]; then
-		DEBIAN_FRONTEND=noninteractive apt-get $DBO_APT $BDOPT -y -P "$PROFILE" build-dep "$tree" || fail "$LOCAL38"
+		DEBIAN_FRONTEND=noninteractive apt-get $DBO_APT $BDOPT --no-remove -y -P "$PROFILE" build-dep "$tree" || fail "$LOCAL38"
 	else
-		apt-get $DBO_APT $BDOPT -P "$PROFILE" build-dep "$tree" || fail "$LOCAL38"
+		apt-get $DBO_APT $BDOPT --no-remove -P "$PROFILE" build-dep "$tree" || fail "$LOCAL38"
 	fi
 
 	# 4. the build, as the user
@@ -372,14 +396,14 @@ PY
 	done
 
 	# 6. nothing is installed that would take something away: apt is asked first, and a removal stops it
-	sim=$(apt-get -s $DBO_APT -o APT::Get::Assume-Yes=true install "$STATE"/stage/*.deb 2>&1)
-	removals=$(echo "$sim" | awk '/^Remv /{print $2}' | sort -u | tr '\n' ' ')
+	sim=$(LC_ALL=C apt-get -s $DBO_APT -o APT::Get::Assume-Yes=true install "$STATE"/stage/*.deb) || fail "$LOCAL74" 'apt-get -s install'
+	removals=$(echo "$sim" | awk '/^(Remv|Purg) /{print $2}' | sort -u | tr '\n' ' ')
 	if [ -n "$removals" ] || echo "$sim" | grep -q '^E: '; then
 		echo "$sim" | grep -E '^(E:|Remv)' | head -n 20
 		fail "$LOCAL42" "${removals:-?}"
 	fi
 	note "installing: $(ls "$STATE/stage" | tr '\n' ' ')"
-	DEBIAN_FRONTEND=noninteractive apt-get $DBO_APT -y -o Dpkg::Options::=--force-confold install "$STATE"/stage/*.deb || fail "$LOCAL43"
+	DEBIAN_FRONTEND=noninteractive apt-get $DBO_APT --no-remove -y -o Dpkg::Options::=--force-confold install "$STATE"/stage/*.deb || fail "$LOCAL43"
 
 	# 7. the state first, then the check that the encoder is there
 	{
@@ -396,7 +420,7 @@ PY
 	fi
 
 	# 8. the build tools go again
-	remove_build_tools
+	remove_build_tools || exit 1
 	note "done: $LOCALVER"
 	logger -t sparky-stereo-ffmpeg-fdk -- "FFmpeg $LOCALVER with libfdk_aac installed" 2>/dev/null || true
 	printf "$LOCAL45\n" "$LOCALVER"
@@ -433,6 +457,9 @@ do_remove() {
 
 do_status() {
 	local info repo
+	if [ -f "$STATE/last-cleanup-error" ]; then
+		cat "$STATE/last-cleanup-error" >&2 || return 1
+	fi
 	if read_installed; then
 		printf "$LOCAL60\n" "$LOCAL_VERSION" "$LOCAL_BASE"
 		printf "$LOCAL61\n" "$LOCAL_PACKAGES"

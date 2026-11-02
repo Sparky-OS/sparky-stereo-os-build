@@ -17,3 +17,10 @@ Needs: docker; the proof base image `mdmo-proofbase:1` (debian:testing with deb-
 What it proves, each with a check that can fail: nothing happens until the helper is asked; the question, and answering no; the languages (Polish, Brazilian Portuguese, the English fallback); the stops before any change (no source line, a 32-bit package the repository lacks, too little room); a build that fails (a folder where nothing can run) changes nothing and the build tools go again; apt's own question about the build tools, answered no; the build (libfdk_aac listed, HE-AAC encoded, which the native encoder cannot make, apt keeps the build: the pin names the exact version and apt's candidate for every package, the 32-bit twin too, is the local build; the 32-bit libraries in step); the update that apt update turns into a rebuild by itself, with apt keeping the old local build while it runs and the pin following the new one; --remove, which takes the pin away.
 
 The upgrade of a computer that has our old Debian-based "-extra" libraries is tested by `../sparky-stereo-ffmpeg-transitional/test-upgrade.sh`.
+
+## Failed APT queries and cleanup
+
+Run `python3 tests/test-failures.py` in the package test container.
+Pass another package source directory to run identical expectations against the previous source, or `/usr` after installing the package to test its Lean Code payload.
+The test executes the actual cleanup functions and transaction blocks with APT doubles, without changing the container's package database.
+It checks failed and partial simulations, failed marking and purging, extra removals, EXIT status preservation, and the successful keep/needed/pre-existing-package controls.
