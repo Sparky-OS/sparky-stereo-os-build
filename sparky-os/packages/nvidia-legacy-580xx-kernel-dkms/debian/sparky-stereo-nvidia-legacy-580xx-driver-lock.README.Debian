@@ -1,0 +1,55 @@
+sparky-stereo-nvidia-legacy-580xx-driver-lock
+=============================================
+
+The edition's NVIDIA driver is its build of NVIDIA's open kernel modules,
+nvidia-kernel-open-dkms-stereo3d, with HDMI 3D and HDMI deep colour. Those
+modules run Turing cards and newer only. NVIDIA's 580 branch is the last that
+runs Maxwell, Pascal and Volta cards (NVIDIA's 615 README lists them in its
+table "legacy_580.xx"), and nvidia-legacy-580xx-kernel-dkms builds its kernel
+modules for the edition's kernels. This package keeps NVIDIA's driver at that
+version while it is installed.
+
+/etc/apt/preferences.d/09sparky-stereo-nvidia-legacy-580xx-driver-lock is
+generated from this package's version when it is built. Its four records, in
+order:
+
+1. NVIDIA's and Debian's own NVIDIA kernel module packages
+   (nvidia-kernel-open-dkms, nvidia-kernel-dkms, nvidia-open-kernel-dkms) and
+   the edition's open modules (nvidia-kernel-open-dkms-stereo3d): priority -1,
+   never installed. nvidia-legacy-580xx-kernel-dkms provides
+   nvidia-kernel-dkms at NVIDIA's version, so NVIDIA's user space is satisfied
+   by it.
+2. Every NVIDIA driver package at the version the 580 module is built for:
+   priority 1005. The set is the one sparky-stereo-nvidia-driver-lock names
+   (the packages NVIDIA's own nvidia-driver-pinning package pins), with this
+   module in the place of the open one.
+3. The same packages at any other version: priority 100.
+4. This package itself: priority 1001 from the edition's repository.
+
+sparky-stereo-nvidia-driver-lock (the lock of the open modules, version 615)
+stays installed beside it: sparky-stereo-cuda-repo depends on it, and every
+image has both. Its file, 10sparky-stereo-nvidia-driver-lock, names the same
+packages, and APT reads this file first: "The first specific-form record that
+matches an available package version determines the priority of the package
+version" (apt_preferences(5)). So while this package is installed, its records
+decide every version of those packages, and the 615 lock decides none.
+Hardware Setup removes this package before it installs the open modules on a
+card that runs them.
+
+NVIDIA's user space for 580 (nvidia-driver, its libraries, nvidia-settings,
+libnvcuvid1) is NVIDIA's, as the 615 user space is, and NVIDIA publishes it
+for Debian only in its CUDA repository for Debian 12 (its repository for
+Debian 13 starts at 590). Debian 14's APT cannot read that repository: its
+only key, EB693B3035CD5710E231E123A4B469963BF863CC, is bound with a SHA-1
+self-signature, and sqv refuses it ("SHA1 is not considered secure since
+2026-02-01"; apt 3.3.3, sqv 1.5.0, measured 2026-11-02). So the 580 user
+space must come from the edition's repository, and this package writes no
+source for NVIDIA's Debian 12 repository: one would make every apt update
+fail. CUDA 13 does not run on these cards (NVIDIA's CUDA 13.0 release notes:
+"Removed support for Maxwell, Pascal, and Volta GPUs"); CUDA 12 toolkits do,
+with this driver.
+
+To leave the 580 driver, purge both packages
+("apt purge nvidia-legacy-580xx-kernel-dkms
+sparky-stereo-nvidia-legacy-580xx-driver-lock"); removing without purging
+keeps the configuration file, and with it the lock.

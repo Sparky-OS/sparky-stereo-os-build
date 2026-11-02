@@ -1,0 +1,28 @@
+#!/usr/bin/make -f
+include /usr/share/dpkg/pkg-info.mk
+
+# NVIDIA's version of the driver this build carries (580.196.07-1 for 580.196.07-1+sparky1): the control fields and the
+# APT lock are generated from it.
+NV_VERSION := $(firstword $(subst +sparky, ,$(DEB_VERSION)))
+NV_UPSTREAM := $(DEB_VERSION_UPSTREAM)
+MOD := debian/nvidia-legacy-580xx-kernel-dkms
+LOCK := debian/sparky-stereo-nvidia-legacy-580xx-driver-lock
+
+%:
+	dh $@ --with dkms
+
+override_dh_auto_configure override_dh_auto_build override_dh_auto_test override_dh_auto_clean:
+
+override_dh_auto_install:
+	mkdir -p $(MOD)/usr/src/nvidia-$(NV_UPSTREAM)
+	tar --exclude=./debian --exclude=./.pc --exclude=./.sparky-lc -cf - . | tar -xf - -C $(MOD)/usr/src/nvidia-$(NV_UPSTREAM)
+	mkdir -p $(LOCK)/etc/apt/preferences.d
+	sed 's/@NV_VERSION@/$(NV_VERSION)/g' debian/nvidia-driver-lock.in >$(LOCK)/etc/apt/preferences.d/09sparky-stereo-nvidia-legacy-580xx-driver-lock
+	! grep -q '@NV_VERSION@' $(LOCK)/etc/apt/preferences.d/09sparky-stereo-nvidia-legacy-580xx-driver-lock
+	grep -q '^Pin: version $(NV_VERSION)\*$$' $(LOCK)/etc/apt/preferences.d/09sparky-stereo-nvidia-legacy-580xx-driver-lock
+
+override_dh_dkms:
+	dh_dkms -p nvidia-legacy-580xx-kernel-dkms -V $(NV_UPSTREAM)
+
+override_dh_gencontrol:
+	dh_gencontrol -- -Vnvidia:Version=$(NV_VERSION) -Vnvidia:Upstream=$(NV_UPSTREAM)
