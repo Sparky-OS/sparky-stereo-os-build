@@ -1,0 +1,13 @@
+#!/usr/bin/make -f
+%:
+	dh $@ --with dkms
+override_dh_auto_build:
+override_dh_auto_test:
+override_dh_auto_clean:
+override_dh_auto_install:
+	mkdir -p debian/hid-fanatecff-dkms/usr/src/hid-fanatec-0+git20261010.bc2601b
+	tar --exclude=debian --exclude=.git --exclude=.sparky-lc -cf - . | tar -xf - -C debian/hid-fanatecff-dkms/usr/src/hid-fanatec-0+git20261010.bc2601b
+	install -m644 debian/dkms.conf debian/hid-fanatecff-dkms/usr/src/hid-fanatec-0+git20261010.bc2601b/dkms.conf
+	install -Dm644 debian/70-sparky-hid-fanatecff.rules debian/hid-fanatecff-dkms/usr/lib/udev/rules.d/70-sparky-hid-fanatecff.rules
+override_dh_dkms:
+	dh_dkms -V 0+git20261010.bc2601b

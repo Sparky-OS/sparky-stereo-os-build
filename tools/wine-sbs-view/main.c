@@ -96,8 +96,9 @@ int main(int argc, char **argv)
             if (event.xconfigure.width == attributes.width && event.xconfigure.height == attributes.height) continue;
             attributes.width = event.xconfigure.width;
             attributes.height = event.xconfigure.height;
-            XResizeWindow(display, window, attributes.width / 2, attributes.height);
+            // The compositor must know the new eye size when it handles the resize.
             stereo_declare_x11_one_view_size(display, window, attributes.width / 2, attributes.height);
+            XResizeWindow(display, window, attributes.width / 2, attributes.height);
         }
         if (event.type == Expose || event.type == damage_event + XDamageNotify || event.type == ConfigureNotify) {
             XDamageSubtract(display, damage, None, None);

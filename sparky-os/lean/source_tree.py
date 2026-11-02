@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: MIT
 """Source projection for disposable builds, with exact authored recovery.
 
-C/C++ is the default. A retained language plan explicitly opts a Java build in;
-its JDK must be installed before this stage, as for the actual compiler.
+C/C++ is the default. A retained language plan explicitly opts a Java or Zig build in;
+its JDK or zig must be installed before this stage, as for the actual compiler.
 """
 import argparse
 from dataclasses import asdict
@@ -13,13 +13,13 @@ import json
 import os
 from pathlib import Path
 
-from . import VERSION, lang_c, project
+from . import VERSION, lang_c, lang_zig, project
 
 EXCLUDED = {'.git', '.pc', 'debian', '.sparky-lc', 'build'}
 PRESERVE_PLAN = 'debian/sparky-lean-preserve.json'
 LANGUAGE_PLAN = 'debian/sparky-lean-languages.json'
 PAYLOAD_SOURCE_PLAN = 'debian/sparky-lean-payload-sources.json'
-EXTENSIONS = {'c': lang_c.EXTS, 'java': {'.java'}}
+EXTENSIONS = {'c': lang_c.EXTS | lang_c.ASM_EXTS, 'java': {'.java'}, 'zig': lang_zig.EXTS}
 
 
 def sha(data):
@@ -50,7 +50,7 @@ def project_tree(root):
     if (not isinstance(languages, list) or not languages
             or any(not isinstance(name, str) or name not in EXTENSIONS for name in languages)
             or len(languages) != len(set(languages))):
-        raise ValueError('Source language plan must name supported, unique languages: c, java')
+        raise ValueError('Source language plan must name supported, unique languages: ' + ', '.join(sorted(EXTENSIONS)))
     languages = sorted(languages)
     extensions = set().union(*(EXTENSIONS[name] for name in languages))
     if report.exists():
@@ -68,7 +68,8 @@ def project_tree(root):
     paths = []
     for path in sorted(root.rglob('*')):
         rel = path.relative_to(root)
-        if (path.is_symlink() or not path.is_file() or path.suffix.lower() not in extensions
+        suffix = path.suffix if path.suffix in lang_c.ASM_EXTS else path.suffix.lower()   # `.s` is no cpp input
+        if (path.is_symlink() or not path.is_file() or suffix not in extensions
                 or any(p in EXCLUDED or p.startswith('obj-') for p in rel.parts)):
             continue
         paths.append(path)
@@ -78,12 +79,17 @@ def project_tree(root):
             raise ValueError(f'Source preservation pattern matches no eligible file: {pattern}')
     evidence.mkdir(exist_ok=True)
     records = {}
+    # a file another source file reads as data (Zig's @embedFile) is that file's input, not code to project
+    readers = project.read_as_data({'/' + n: p.read_bytes() for p, n in zip(paths, names) if project.reads_others(n)},
+                                   ('/' + n for n in names))
     for path, name in zip(paths, names):
         rel = path.relative_to(root)
         raw = path.read_bytes()
         metadata = path.stat()
         reasons = [reason for pattern, reason in plan.items()
                    if fnmatch.fnmatchcase(name, pattern)]
+        if '/' + name in readers:
+            reasons.append(readers['/' + name])
         if reasons:
             result = project.Result(path='/' + name, status='left',
                                     reason='additional source consumer: ' + '; '.join(reasons),
@@ -101,13 +107,14 @@ def project_tree(root):
             original.write_bytes(raw)
             path.write_bytes(result.lean)
             os.utime(path, ns=(metadata.st_atime_ns, metadata.st_mtime_ns))
-        if result.reason.startswith(('check failed:', 'the c reader', 'the java reader', 'not stable')):
+        if result.reason.startswith(('check failed:', 'the c reader', 'the java reader', 'the zig reader', 'not stable')):
             # Retain recovery records even when qualification fails.
             report.write_text(json.dumps({'engine': VERSION, 'files': records}, indent=2) + '\n')
             raise ValueError(f'{rel}: {result.reason}')
     report.write_text(json.dumps({'engine': VERSION, 'qualified': True,
                                  'preserve': plan, 'languages': languages,
-                                 'options': 'collapse-blank,no-pointer,C/C++ line directives',
+                                 'options': 'collapse-blank,no-pointer,C/C++ line breaks kept',
+                                 'renderer': project.IDENTITY,
                                  'stage': 'before compilation', 'files': records}, indent=2) + '\n')
     print(f'Build-input Lean Code: {sum(r["status"] == "projected" for r in records.values())}/{len(records)} files projected')
 

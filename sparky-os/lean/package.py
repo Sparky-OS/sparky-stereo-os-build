@@ -132,10 +132,8 @@ def metadata_target(root, path):
 
 @functools.lru_cache(maxsize=1)
 def renderer():
-    root = Path(__file__).parent
-    names = ['__init__.py', 'project.py', 'core.py', 'consumers.py', 'JvmLexer.java']
-    names += sorted(p.name for p in root.glob('lang_*.py'))
-    return {'identity': project.IDENTITY, 'sha256': digest(encode({n: file_hash(root / n) for n in names}))}
+    # the same digest the identity carries (project.RENDERER_FILES and every lang_*.py)
+    return {'identity': project.IDENTITY, 'sha256': project.CODE_SHA256}
 
 
 def entries(root):
@@ -206,10 +204,30 @@ def load(marker, raw, package, version, arch):
     return obj
 
 
+def dpkg_records(P):
+    """dpkg's package records as dpkg reads them: the status file, then each entry of its journal
+    (/var/lib/dpkg/updates: names of digits, in sorted order). dpkg folds the journal into the status file
+    only at a checkpoint, so inside a dpkg run the status file alone is out of date (ORDER 315)."""
+    texts = [Path(P.real('/var/lib/dpkg/status')).read_text()]
+    updates = Path(P.real('/var/lib/dpkg/updates'))
+    if updates.is_dir():
+        for n in sorted(os.listdir(updates)):
+            if n.isascii() and n.isdigit():
+                try:
+                    texts.append((updates / n).read_text())
+                except FileNotFoundError:      # a dpkg checkpoint removed it meanwhile (another dpkg run)
+                    pass
+    rows = {}
+    for text in texts:
+        for row in stanzas(text):
+            rows[(row.get('package'), row.get('architecture'))] = row
+    return list(rows.values())
+
+
 def installed(P, names=None):
     """Only read markers in dpkg's installed control records; never trust a loose JSON file."""
     out = {}
-    for row in stanzas(Path(P.real('/var/lib/dpkg/status')).read_text()):
+    for row in dpkg_records(P):
         if row.get('status') != 'install ok installed' or FIELD.lower() not in row:
             continue
         p, v, a = identity(row)
@@ -248,7 +266,12 @@ def prepare(root, hr_root=None, *, documentation=False):
     if hr and (hr == root or root in hr.parents or hr in root.parents or hr.exists()):
         raise Invalid('HR staging directory must be new and separate')
     rows, originals = [], []
-    for real, row in entries(root):
+    items = list(entries(root))
+    # files another payload file reads as data (Zig's @embedFile) stay as authored, whatever their format
+    readers = project.read_as_data({row['path']: real.read_bytes() for real, row in items
+                                    if row['kind'] == 'file' and project.reads_others(row['path'])},
+                                   (row['path'] for _, row in items)) if not documentation else {}
+    for real, row in items:
         path = row['path']
         row.update(status='left', reason='symlink: retained')
         if row['kind'] == 'file':
@@ -264,6 +287,8 @@ def prepare(root, hr_root=None, *, documentation=False):
                 data = real.read_bytes()
                 if b'\0' in data[:8192]:
                     row['reason'] = 'binary'
+                elif path in readers:
+                    row['reason'] = readers[path]
                 else:
                     r = project.project(path, data, p)
                     row.update(status=r.status, reason=r.reason, handler=r.handler, variant=r.variant)

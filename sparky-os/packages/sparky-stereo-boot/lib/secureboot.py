@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/25
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/25
+# Last update 2026/11/01
 """The Sparky Stereo OS key on an installed system, for Secure Boot.
 
   secureboot.py esp    keep the edition's public certificate next to every shim on the EFI system partition
@@ -18,8 +18,15 @@ shim_lock=y, grub_shim_lock_verifier_setup), the menu first asks shim about the 
 command verifies it); if shim refuses it, the enrolment entry becomes the menu's default, so the timeout starts it
 and the person sees it selected. (GRUB's fallback takes entry numbers only, get_and_remove_first_entry_number in
 grub-core/normal/menu.c, and the number of entries before this one is not known here.)
+A certificate that cannot be placed is said and kept for repair (problems.py, step esp-certificate): the EFI system
+partition named in /etc/fstab but not mounted, the certificate missing from the package, a copy that fails. That does
+not stop a package or a kernel from installing: the boot of this system does not need the certificate today, and a
+failing kernel hook would keep zz-update-grub from writing the new kernel's menu entry. A machine with no EFI system
+partition (a BIOS boot) has nothing to place, as shim-signed's postinst skips such a machine; an EFI system partition
+without shim is said, since GRUB's menu then has no enrolment entry.
 Environment: SPARKY_STEREO_ESP (default /boot/efi), SPARKY_STEREO_CERT (default the packaged certificate),
-SPARKY_STEREO_LANG_DIR (default /usr/share/sparky/sparky-stereo-boot), LANG; from the grub.d script:
+SPARKY_STEREO_LANG_DIR (default /usr/share/sparky/sparky-stereo-boot), SPARKY_STEREO_FSTAB (default /etc/fstab), LANG;
+from the grub.d script:
 SPARKY_STEREO_KERNEL_PATH (the kernel as GRUB reaches it), SPARKY_STEREO_KERNEL_ACCESS (GRUB's lines to reach its
 file system, grub-mkconfig_lib's prepare_grub_to_access_device) and SPARKY_STEREO_ESP_UUID (the partition's).
 """
@@ -29,10 +36,16 @@ import shutil
 import sys
 import unicodedata
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import problems  # noqa: E402
+
 CERT_NAME = 'sparky-stereo-secureboot-2026.der'
 CERT = os.environ.get('SPARKY_STEREO_CERT', '/usr/share/sparky-stereo-boot/secureboot/' + CERT_NAME)
 ESP = os.environ.get('SPARKY_STEREO_ESP', '/boot/efi')
 LANG_DIR = os.environ.get('SPARKY_STEREO_LANG_DIR', '/usr/share/sparky/sparky-stereo-boot')
+FSTAB = os.environ.get('SPARKY_STEREO_FSTAB', '/etc/fstab')
+STEP = 'esp-certificate'
+REPAIR = [['python3', '/usr/lib/sparky-stereo-boot/secureboot.py', 'esp']]
 LANGS = ['en', 'pl', 'pt_BR', 'fr', 'de', 'ja', 'ko', 'zh_CN', 'zh_TW']
 COLUMNS = 98   # GRUB's terminal at 800x600 with Unifont 16 has 100 columns; wider screens have more
 
@@ -58,12 +71,39 @@ def efi_dirs():
     return found
 
 
+def esp_declared():
+    """The EFI system partition is this system's: /etc/fstab mounts something at ESP."""
+    want = os.path.normpath(ESP)
+    try:
+        for line in open(FSTAB, encoding='utf-8', errors='replace'):
+            fields = line.split()
+            if len(fields) >= 2 and not fields[0].startswith('#') and os.path.normpath(fields[1]) == want:
+                return True
+    except OSError:
+        pass
+    return False
+
+
 def esp(quiet=False):
-    """Copy the certificate next to every shim; returns the folders that hold it."""
-    held = []
+    """Copy the certificate next to every shim; returns the folders that hold it and whether it failed somewhere."""
     if not os.path.isfile(CERT):
-        return held
-    for d in efi_dirs():
+        problems.record(STEP, 'LOCAL24', [CERT], repair=[['apt-get', 'install', '--reinstall', 'sparky-stereo-boot']])
+        return [], True
+    if not os.path.isdir(os.path.join(ESP, 'EFI')):
+        if esp_declared() and not os.path.ismount(ESP):
+            problems.record(STEP, 'LOCAL23', [ESP, ESP], repair=REPAIR)
+            return [], True
+        if os.path.ismount(ESP):
+            problems.say('LOCAL26', [ESP])
+        problems.clear(STEP)
+        return [], False
+    dirs = efi_dirs()
+    if not dirs:
+        problems.say('LOCAL26', [ESP])
+        problems.clear(STEP)
+        return [], False
+    held, failed = [], []
+    for d in dirs:
         target = os.path.join(d, CERT_NAME)
         try:
             if not (os.path.isfile(target) and filecmp.cmp(CERT, target, shallow=False)):
@@ -71,9 +111,14 @@ def esp(quiet=False):
                 if not quiet:
                     print('sparky-stereo-boot: %s' % target)
             held.append(d)
-        except OSError as e:   # a read-only or full partition never stops a package installation
-            print('sparky-stereo-boot: cannot write %s: %s' % (target, e), file=sys.stderr)
-    return held
+        except OSError as e:
+            failed.append((target, e.strerror or str(e)))
+    if failed:
+        problems.record(STEP, 'LOCAL25', [', '.join(t for t, _ in failed), '; '.join(sorted({e for _, e in failed}))],
+                        repair=REPAIR)
+    else:
+        problems.clear(STEP)
+    return held, bool(failed)
 
 
 def strings(lang):
@@ -140,7 +185,7 @@ def wrap(text, columns=COLUMNS):
 
 
 def grub():
-    held = esp(quiet=True)
+    held, _ = esp(quiet=True)
     if not held:
         return   # no shim on an EFI system partition here (a BIOS boot, or another boot loader)
     # the system's own folder (os-release ID, as grub-install names it), else the first that is not EFI/BOOT;
@@ -198,7 +243,7 @@ def grub():
 def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else ''
     if cmd == 'esp':
-        esp()
+        sys.exit(1 if esp()[1] else 0)
     elif cmd == 'grub':
         grub()
     else:

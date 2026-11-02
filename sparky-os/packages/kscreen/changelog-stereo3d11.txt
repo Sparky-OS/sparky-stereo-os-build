@@ -1,0 +1,27 @@
+kscreen (4:6.7.4-1+stereo3d11) unstable; urgency=medium
+
+  * What wdisplays offered that Display Settings lacked, added to ours
+    (Daniel, 2026-10-31: "if any functionality from it is still missing,
+    add as extra menus to ours"):
+    - Upstream's arrow keys, which move the selected screen pixel by pixel
+      without snapping: c7b9b8b5 by Antti Savolainen (bug 519347, merge
+      request 476, in Plasma 6.8.0), backported without the display number
+      badge it also touches (s11-0001).
+    - Holding Shift while dragging a screen turns snapping off, as in
+      wdisplays (s11-0002 and s11-0003).
+    - The arrangement view zooms with Ctrl and the wheel, around the
+      pointer, and pans by dragging its empty part or with the middle
+      button; a View menu beside Edit Arrangement has Zoom In, Zoom Out and
+      Fit All (s11-0004 and s11-0005).
+    - Show Screen Contents, in the same menu: a picture of each screen,
+      once a second, through KWin's ScreenShot2 interface. Until the person
+      chooses, it is on with mains power and off on battery (UPower's
+      OnBattery); the choice is kept in kcm_kscreenrc. KWin 6.7 gives the
+      interface only to programs that declare it in their desktop file
+      entry, so with today's Stereo KWin the view says the contents cannot
+      be shown and works as before; KWin's 0ea31ae7 (Plasma 6.8) lifts the
+      check (s11-0006 and s11-0007).
+    The arrangementview test drives all of it in a compositor; the package
+    build does not run it (BUILD_TESTING stays off).
+  * The new strings in pl, pt_BR, fr, de, ja, ko, zh_CN and zh_TW
+    (kscreen-arrangement-view.po.patch, after the existing catalogs).

@@ -13,17 +13,31 @@
 #   REPO        the edition's repository (a flat tree with dists/mashtabba), mounted read-only
 # IMAGE (default sparky-lc-migration:20261020) and CPUS (default 4) can be set; EXTRA names a folder of .deb files not yet
 # in the repository (a library built just before), offered to apt as a flat source above the repository.
-# Last update 2026/10/25
+# SPARKY_LC_ARCHIVE_DIR (required) is the link gate's folder, mounted at /archive: sources.json, the signed public archives
+# with keyring paths under /archive (sparky-os/lean/archive.md), and those keyrings. lean.debhelper runs the link and start
+# gate when the packages are built, and it refuses to run without it. SPARKY_LC_PREVIOUS_DIR, when set, is a folder of the
+# earlier +lc1 builds the gate compares with (mounted at /prev).
+# Last update 2026/11/01
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 WORK=$(realpath "${1:?work folder}") SRC=${2:?source folder} VERSION=${3:?lc1 version} REPO=$(realpath "${4:?repository}")
 IMAGE=${IMAGE:-sparky-lc-migration:20261020}
 [ -d "$WORK/$SRC/debian" ] || { echo "no $WORK/$SRC/debian" >&2; exit 2; }
+ARCHIVE=$(realpath "${SPARKY_LC_ARCHIVE_DIR:?set SPARKY_LC_ARCHIVE_DIR to the link gate folder: sources.json and its keyrings, mounted at /archive (sparky-os/lean/archive.md)}")
+[ -f "$ARCHIVE/sources.json" ] || { echo "no $ARCHIVE/sources.json" >&2; exit 2; }
+PREV_MOUNT=() PREV_ENV=()
+if [ -n "${SPARKY_LC_PREVIOUS_DIR:-}" ]; then
+	PREV_MOUNT=(-v "$(realpath "$SPARKY_LC_PREVIOUS_DIR")":/prev:ro) PREV_ENV=(-e SPARKY_LC_PREVIOUS_DIR=/prev)
+fi
 mkdir -p "$WORK/out"
 NAME=lean-dh-$(basename "$SRC" | sed 's/[^A-Za-z0-9_.-]/-/g')
 EXTRA_MOUNT=()
 [ -n "${EXTRA:-}" ] && EXTRA_MOUNT=(-v "$(realpath "$EXTRA")":/extra-debs:ro)
+# the gate isolates each case with bubblewrap, which needs the container's /proc unmasked
 docker run --rm --name "$NAME" --platform linux/amd64 --cpus "${CPUS:-4}" --memory 8g \
+	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
+	-e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$ARCHIVE":/archive:ro \
+	"${PREV_MOUNT[@]}" "${PREV_ENV[@]}" \
 	-v "$WORK":/work -v "$HERE/..":/toolkit:ro -v "$REPO":/repo:ro "${EXTRA_MOUNT[@]}" \
 	-e SRC="$SRC" -e VERSION="$VERSION" -e OWNER="$(id -u):$(id -g)" "$IMAGE" bash -c '
 set -euo pipefail

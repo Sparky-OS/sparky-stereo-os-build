@@ -1,0 +1,8 @@
+[Unit]
+Description=Sparky Stereo OS: do the time servers of the timezone answer
+Documentation=file:///usr/share/doc/sparky-stereo-time/README.md
+After=chrony.service network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/sparky-stereo-time --check

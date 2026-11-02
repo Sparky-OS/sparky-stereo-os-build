@@ -1,0 +1,24 @@
+Description: ui/spice: follow QEMU block comment style
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, downstream commit c7f34e489dc97e04ec3e1ca7496dde09ed46ef0a
+Forwarded: not-needed
+Last-Update: 2026-11-01
+Assisted-by: gpt-6-astra via Codex
+
+diff --git a/ui/spice-display.c b/ui/spice-display.c
+index cd3d5b9..29efbd0 100644
+--- a/ui/spice-display.c
++++ b/ui/spice-display.c
+@@ -207,8 +207,10 @@ static void qemu_spice_create_update(SimpleSpiceDisplay *ssd)
+             .bottom = surface_height(ssd->ds),
+         };
+ 
+-        /* A new layout needs a new acquisition even when its pixels match the
+-         * mirror. Capture the current surface here, after the switch. */
++        /*
++         * A new layout needs a new acquisition even when its pixels match the
++         * mirror. Capture the current surface here, after the switch.
++         */
+         qemu_spice_create_one_update(ssd, &full);
+         ssd->stereo_refresh = false;
+         memset(&ssd->dirty, 0, sizeof(ssd->dirty));

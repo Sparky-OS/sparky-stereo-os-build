@@ -1,11 +1,11 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/10
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/10
+# Last update 2026/11/02
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.3.0
+VERSION=0.3.1
 PACKAGE=sparky-stereo-cushion-swap
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.cushion-swap.XXXXXX")
@@ -25,6 +25,14 @@ install -Dm755 -t "$D/usr/lib/systemd/system-sleep" "$HERE/lib/systemd/system-sl
 install -Dm644 -t "$D/usr/lib/tmpfiles.d" "$HERE/lib/tmpfiles.d/cushion-swap.conf"
 install -Dm755 -t "$D/usr/share/initramfs-tools/hooks" "$HERE/share/initramfs-tools/hooks/cushion-swap-resume-offset"
 install -Dm644 -t "$D/etc/logrotate.d" "$HERE/etc/logrotate.d/sparky-stereo-cushion-swap"
+# what is wrong, why and what to do, in the nine languages (0.3.1), and each kept problem shown once in the
+# person's session
+install -Dm644 -t "$D/usr/share/sparky/$PACKAGE" "$HERE"/lang/*
+mkdir -p "$D/usr/lib/systemd/user/graphical-session.target.wants"
+for u in cushion-swap-problems.path cushion-swap-problems.service; do
+	install -Dm644 "$HERE/lib/systemd/user/$u" "$D/usr/lib/systemd/user/$u"
+	ln -s ../$u "$D/usr/lib/systemd/user/graphical-session.target.wants/$u"
+done
 install -m644 "$HERE/copyright" "$HERE/README.md" "$D/usr/share/doc/$PACKAGE/"
 GLIBC=$(objdump -T "$D/usr/libexec/cushion-swap/psi-wake" "$D/usr/libexec/cushion-swap/alloc-rate" | sed -n 's/.*GLIBC_\([0-9.]*\).*/\1/p' | sort -V | tail -n 1)
 DEPENDS="bash, libc6 (>= $GLIBC), logrotate, systemd, util-linux"
@@ -53,22 +61,39 @@ echo 'activate-noawait update-initramfs' >"$D/DEBIAN/triggers"
 cat >"$D/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
 set -e
+# A step that fails is said with its own error, in the system's language, and the package still configures,
+# as debhelper's own autoscripts do for units ("|| true"). Whether the daemon then runs and protects memory is
+# checked, never assumed (0.3.1): it says when it could not start, and what keeps it from protecting memory.
+say() {
+	/usr/sbin/cushion-swap --say "$@" || echo "cushion-swap: $*" >&2
+}
+step() {
+	if out=$("$@" 2>&1); then
+		return 0
+	else
+		rc=$?
+	fi
+	say LOCAL19 "$*" "$rc" "$(printf '%s\n' "$out" | tail -n 3 | tr '\n' ' ')"
+}
 if [ "$1" = configure ] || [ "$1" = abort-upgrade ] || [ "$1" = abort-deconfigure ] || [ "$1" = abort-remove ]; then
 	# The log folder and file (root:adm, 0750 and 0640) before the unit opens the file.
 	if [ -x /usr/bin/systemd-tmpfiles ]; then
-		systemd-tmpfiles --create cushion-swap.conf >/dev/null || true
+		step systemd-tmpfiles --create cushion-swap.conf
 	fi
 	for unit in cushion-swap.service cushion-swap-hibernate.service; do
-		deb-systemd-helper unmask "$unit" >/dev/null || true
+		step deb-systemd-helper unmask "$unit"
 		if deb-systemd-helper --quiet was-enabled "$unit"; then
-			deb-systemd-helper enable "$unit" >/dev/null || true
+			step deb-systemd-helper enable "$unit"
 		else
-			deb-systemd-helper update-state "$unit" >/dev/null || true
+			step deb-systemd-helper update-state "$unit"
 		fi
 	done
 	if [ -d /run/systemd/system ]; then
-		systemctl --system daemon-reload >/dev/null || true
-		deb-systemd-invoke restart cushion-swap.service >/dev/null || true
+		step systemctl --system daemon-reload
+		since=$(date +%s)
+		step deb-systemd-invoke restart cushion-swap.service
+		# the person's own switches (CUSHION_SWAP=off, a disabled or masked unit) are said as their choice
+		/usr/sbin/cushion-swap --wait-ready "$since" || :
 	fi
 fi
 EOF
@@ -122,6 +147,27 @@ Description: Cushion Swap File: swap only under memory pressure
 EOF
 cat >"$S/debian/changelog" <<EOF
 $PACKAGE ($VERSION) unstable; urgency=medium
+
+  * Nothing fails silently (ORDER 346b, rows U17, U18 and U54 of ORDER 343's
+    audit): whatever keeps the daemon from protecting memory, or from
+    protecting it the way it was set, is kept as a problem in
+    /run/cushion-swap/problems, named in the status (PROTECTION, PROBLEMS,
+    REASON, CALIBRATION, MODE_REASON), said once in the journal and shown
+    once per session as a notification, in the nine languages.
+  * The package checks that the restarted daemon runs and says whether it
+    protects memory; each failed setup step is said with its own error.
+  * --status exits 0 only while memory is protected; a stopped, failed or
+    unreadable state is never "stopped" with exit 0. The unit's
+    ExecStopPost says why the daemon stopped.
+  * A kernel with PSI whose trigger is lost, and a failed allocation-rate
+    measurement, are said and kept; the poller and the retry a minute
+    later go on as before.
+  * Hibernation: a failed switch-on, a kernel resume device that differs
+    and a failed switch-off after resume fail their unit and are kept.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 02 Nov 2026 12:00:00 -0300
+
+$PACKAGE (0.3.0) unstable; urgency=medium
 
   * Measure the machine's allocation rate while idle for headroom pacing.
   * Problems only by default; optional cycle logging and weekly rotation.

@@ -1,0 +1,12 @@
+[Unit]
+Description=Sparky Stereo OS: check the resolution GRUB showed against the one it was given
+Documentation=file:/usr/share/doc/sparky-stereo-boot/README.md
+ConditionVirtualization=!container
+ConditionPathExists=/var/lib/sparky-stereo-boot/grub-display
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/sparky-stereo-boot boot-check
+
+[Install]
+WantedBy=multi-user.target

@@ -21,8 +21,10 @@ struct PowerAction {
 class PowerProfiles
 {
 public:
-    // The active profile; SPARKY_STEREO_POWER_PROFILE overrides it (tests, the command line); Balanced when the daemon is absent.
-    static PowerProfile active();
+    // The active profile, or why it could not be read: no system bus, the daemon not running, no answer, a profile name this
+    // page does not know. SPARKY_STEREO_POWER_PROFILE overrides it (tests, the command line); a value that names no profile
+    // is said too. Nothing stands in for a profile that could not be read (Daniel, 2026-11-01).
+    static ProfileReading read();
     static bool daemonAvailable();
     // Only the actions that concern the graphics processor
     static QList<PowerAction> gpuActions();

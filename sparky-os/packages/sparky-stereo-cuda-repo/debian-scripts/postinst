@@ -1,0 +1,60 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/01
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/11/01
+# NVIDIA's CUDA source is written here, from the package's copy in /usr/share/sparky-stereo-cuda-repo, only when no other
+# source of apt names NVIDIA's repository: a source of the person's own for the same URI is kept untouched, since two
+# sources for one URI with different Signed-By stop apt ("Conflicting values set for option Signed-By"). The pins
+# (91sparky-stereo-cuda, a conffile) apply either way: they go by origin, not by source file. It says what it did.
+# The files preinst moved aside go. So does the key the image and the hardware setup wrote, in the folder apt keeps for the
+# system operator's own keys (sources.list(5)): only while it is still NVIDIA's key byte for byte, no package owns it and
+# no source names it any more; this package ships the same key where packages keep theirs.
+set -e
+URI=developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64
+OURS=/etc/apt/sources.list.d/sparky-stereo-cuda.sources
+TEMPLATE=/usr/share/sparky-stereo-cuda-repo/sparky-stereo-cuda.sources
+OLD_KEY=/etc/apt/keyrings/sparky-stereo-cuda.gpg
+# other_sources: the files of apt's sources, besides ours, that name NVIDIA's repository outside a comment
+other_sources() {
+	for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+		[ -f "$f" ] && [ "$f" != "$OURS" ] || continue
+		if sed 's/#.*//' "$f" | grep -Fq "$URI"; then echo "$f"; fi
+	done
+}
+if [ "$1" = configure ]; then
+	rm -f "$OURS.dpkg-remove" /etc/apt/preferences.d/91sparky-stereo-cuda.dpkg-remove
+	others=$(other_sources | tr '\n' ' ')
+	if [ -n "$others" ]; then
+		if [ -f "$OURS" ] && cmp -s "$OURS" "$TEMPLATE"; then
+			rm -f "$OURS"
+			echo "sparky-stereo-cuda-repo: removed the edition's NVIDIA source $OURS, because another source names the same repository"
+		fi
+		echo "sparky-stereo-cuda-repo: keeping your NVIDIA source at ${others% }; the edition's pins apply (/etc/apt/preferences.d/91sparky-stereo-cuda)"
+	elif [ -e "$OURS" ] && ! cmp -s "$OURS" "$TEMPLATE"; then
+		echo "sparky-stereo-cuda-repo: keeping your NVIDIA source at $OURS, which differs from the edition's; the edition's pins apply (/etc/apt/preferences.d/91sparky-stereo-cuda)"
+	elif [ ! -e "$OURS" ]; then
+		install -m644 "$TEMPLATE" "$OURS"
+		echo "sparky-stereo-cuda-repo: wrote NVIDIA's CUDA source $OURS (run apt update to read it)"
+	fi
+	# A pin file of the person's own for NVIDIA's origin: apt reads preferences.d in name order; the first specific record
+	# that matches a version decides (apt_preferences(5)), and so, measured with apt 3.3.3, does the first Package: * record
+	# (the manual says the maximum). A specific record still beats a Package: * one in any file. Which one decides is said.
+	# A file a package ships is not the person's and is not named here.
+	for f in /etc/apt/preferences /etc/apt/preferences.d/*; do
+		[ -f "$f" ] && [ "$f" != /etc/apt/preferences.d/91sparky-stereo-cuda ] || continue
+		case ${f##*/} in *.dpkg-*|*.ucf-*) continue ;; esac
+		if dpkg-query -S "$f" >/dev/null 2>&1; then continue; fi
+		grep -q '^Pin: *origin "*developer\.download\.nvidia\.com' "$f" || continue
+		first=$(printf '%s\n%s\n' "${f##*/}" 91sparky-stereo-cuda | LC_ALL=C sort | head -n1)
+		if [ "$f" = /etc/apt/preferences ] || [ "$first" != 91sparky-stereo-cuda ]; then
+			echo "sparky-stereo-cuda-repo: your pin file $f pins NVIDIA's origin and sorts before 91sparky-stereo-cuda, so its records decide first"
+		else
+			echo "sparky-stereo-cuda-repo: your pin file $f pins NVIDIA's origin but sorts after 91sparky-stereo-cuda, so where both pin a package the edition's pins decide (apt takes the first record that matches: for Package: * records, and for CUDA and NVIDIA's EGL platform libraries, which the edition pins by name); to keep yours, give the file a name that sorts first, such as 00-${f##*/}"
+		fi
+	done
+	if [ -f "$OLD_KEY" ] && [ ! -L "$OLD_KEY" ] && ! dpkg-query -S "$OLD_KEY" >/dev/null 2>&1 &&
+		[ "$(md5sum <"$OLD_KEY" | cut -d' ' -f1)" = 672a16cb3b8c6e53844563ae8c441557 ] &&
+		! grep -rqsF "$OLD_KEY" /etc/apt/sources.list /etc/apt/sources.list.d; then
+		rm -f "$OLD_KEY"
+	fi
+fi

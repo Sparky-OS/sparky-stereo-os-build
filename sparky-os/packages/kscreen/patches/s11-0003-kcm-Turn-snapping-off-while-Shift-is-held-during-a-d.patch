@@ -1,0 +1,77 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sun, 1 Nov 2026 01:30:03 -0300
+Subject: [PATCH] kcm: Turn snapping off while Shift is held during a drag
+
+Dragging a screen in the arrangement view snaps it to the edges and
+centres of the others within 80 pixels, so a small offset, such as a
+screen 60 pixels lower than its neighbour, cannot be made with the mouse.
+The arrow keys already move a selected screen pixel by pixel without
+snapping; holding Shift now does the same for a drag: the screen goes
+where it is dropped, through the model's setPosition() with snapping off.
+A line under the arrangement view's heading says so while it is edited.
+
+wdisplays, the wlroots display tool, uses the same modifier; KScreen used
+Ctrl for it before its KF5 port (bug 348241, comment 1).
+
+Assisted-by: Claude Opus 5.5
+---
+ kcm/ui/Output.qml     |  4 +++-
+ kcm/ui/ScreenView.qml | 19 +++++++++++++++++++
+ 2 files changed, 22 insertions(+), 1 deletion(-)
+
+diff --git a/kcm/ui/Output.qml b/kcm/ui/Output.qml
+index 3dca479c..6a7b0f6e 100644
+--- a/kcm/ui/Output.qml
++++ b/kcm/ui/Output.qml
+@@ -293,7 +293,9 @@ Item {
+         onTranslationChanged: {
+             var newX = dragStartPosition.x + translation.x;
+             var newY = dragStartPosition.y + translation.y;
+-            model.position = getAbsolutePosition(Qt.point(newX, newY));
++            // Holding Shift places the screen exactly where it is dropped
++            const snap = !(centroid.modifiers & Qt.ShiftModifier);
++            kcm.outputModel.sourceModel.setPosition(model.index, getAbsolutePosition(Qt.point(newX, newY)), snap);
+         }
+         onActiveChanged: {
+             model.interactiveMove = active;
+diff --git a/kcm/ui/ScreenView.qml b/kcm/ui/ScreenView.qml
+index 95293e73..6f282e36 100644
+--- a/kcm/ui/ScreenView.qml
++++ b/kcm/ui/ScreenView.qml
+@@ -41,6 +41,7 @@ QQC2.ScrollView {
+     readonly property int yOffset: (height - totalSize.height / relativeFactor) / 2;
+ 
+     Kirigami.Heading {
++        id: dragHint
+         z: 90
+         anchors {
+             top: parent.top
+@@ -62,6 +63,24 @@ QQC2.ScrollView {
+         }
+     }
+ 
++    QQC2.Label {
++        z: 90
++        anchors {
++            top: dragHint.bottom
++            left: parent.left
++            right: parent.right
++            leftMargin: Kirigami.Units.smallSpacing
++            rightMargin: Kirigami.Units.smallSpacing
++        }
++        horizontalAlignment: Text.AlignHCenter
++        wrapMode: Text.Wrap
++        font: Kirigami.Theme.smallFont
++        text: i18nc("@info:usagetip", "Hold Shift while dragging to place a screen without snapping")
++
++        opacity: dragHint.opacity
++        visible: dragHint.visible
++    }
++
+     Repeater {
+         model: kcm.outputModel
+         delegate: Output {
+-- 
+2.53.0
+

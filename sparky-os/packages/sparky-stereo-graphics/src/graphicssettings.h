@@ -40,6 +40,11 @@ public:
     std::optional<bool> copyBack() const;
     void setCopyBack(std::optional<bool> value);
 
+    // [Decoding] OtherGpu, which libmedia-gpu-route reads: whether a player that copies its pictures back may decode on
+    // another GPU when the GPU players use cannot decode a video; empty when the person never chose (then not)
+    std::optional<bool> otherGpu() const;
+    void setOtherGpu(std::optional<bool> value);
+
     bool isDefault() const;
     void resetToDefaults();
 
@@ -55,6 +60,7 @@ private:
     QString m_mainGpu;
     QStringList m_choices;
     std::optional<bool> m_copyBack;
+    std::optional<bool> m_otherGpu;
 };
 
 }

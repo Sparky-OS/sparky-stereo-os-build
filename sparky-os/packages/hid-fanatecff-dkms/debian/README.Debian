@@ -1,0 +1,41 @@
+hid-fanatecff-dkms for Sparky Stereo OS
+=======================================
+
+This package builds the unchanged upstream driver (gotzl/hid-fanatecff,
+revision bc2601b) with DKMS, and installs an edition udev rule:
+
+    /usr/lib/udev/rules.d/70-sparky-hid-fanatecff.rules
+
+It is upstream's fanatec.rules with two changes. Upstream's install.sh copies
+that file to /etc/udev/rules.d/99-fanatec.rules; nothing from install.sh is run
+here.
+
+1. MODE="0666" is replaced by uaccess.
+   Upstream sets mode 0666 on every device below a USB device with vendor 0eb7,
+   so any user or service on the machine could write to the wheel base's raw
+   nodes. The edition rule gives the same nodes (the hidraw node and the USB
+   device node) to the person logged in at the seat, through an ACL (uaccess),
+   and to nobody else. uaccess is applied on every action except "remove"
+   (systemd v258 NEWS) and needs a file name starting with a number below 73,
+   hence 70-.
+2. ACTION also accepts "bind".
+   The driver creates its sysfs files while it binds, after the "add" event, so
+   upstream's settings could run before the files exist when a wheel is plugged
+   in. (Not verified on hardware; the rule test checks the rule, not a wheel.)
+
+What the rule opens: range, display, load, rumble, the tuning menu entries and
+the LEDs are group "games", as upstream intends (their modes allow group
+write). Without any rule they are root:root and only root could change the
+wheel's range or tuning. Debian's "games" group is empty by default. To allow
+yourself, once:
+
+    sudo adduser "$USER" games
+
+then log out and in. The evdev-joystick deadzone settings need the "joystick"
+package (Recommends).
+
+If you also ran upstream's install.sh, remove /etc/udev/rules.d/99-fanatec.rules:
+it would put MODE="0666" back.
+
+Test: study/packages/rigs/check-wheel-udev.py (simulated devices; fails on the
+previous build, which shipped no rule).

@@ -9,47 +9,66 @@
 # CGM) in /usr/lib/dpkg-stereo, dpkg's pre-invoke and post-invoke hooks, the first-update hook that writes
 # the HR copies of settings, and the pre-squashfs hook Sparky Backup Core Stereo runs for the ISO.
 # Needs only dpkg-deb; run it in a throwaway container or on any Debian.
-# Last update 2026/10/17
+# Last update 2026/11/02
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 umask 022
 HERE=$(cd "$(dirname "$0")" && pwd)
 LEAN=$(cd "$HERE/../../lean" && pwd)
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
-VERSION=0.1.16
+VERSION=0.1.25
 PKG=dpkg-stereo
 W=$(mktemp -d "${TMPDIR:-/tmp}/dpkg-stereo-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 D=$W/$PKG
 mkdir -p "$D/DEBIAN" "$D/usr/sbin" "$D/usr/lib/dpkg-stereo/lean" "$D/etc/dpkg/dpkg.cfg.d" "$D/etc/apt/apt.conf.d" \
-	"$D/usr/share/doc/$PKG"
+	"$D/usr/share/doc/$PKG" "$D/usr/share/sparky/$PKG" "$D/usr/lib/systemd/user/graphical-session.target.wants"
 install -m 755 "$HERE/bin/dpkg-stereo" "$D/usr/sbin/dpkg-stereo"
 install -m 755 "$HERE/lib/presquashfs-hook" "$D/usr/lib/dpkg-stereo/presquashfs-hook"
-install -m 644 "$LEAN"/*.py "$LEAN/JvmLexer.java" "$D/usr/lib/dpkg-stereo/lean/"
+install -m 644 "$LEAN"/*.py "$LEAN/JvmLexer.java" "$LEAN/ZigTokens.zig" "$D/usr/lib/dpkg-stereo/lean/"
 install -m 644 "$HERE/etc/dpkg-stereo.cfg" "$D/etc/dpkg/dpkg.cfg.d/dpkg-stereo"
 install -m 644 "$HERE/etc/99dpkg-stereo-hr" "$D/etc/apt/apt.conf.d/99dpkg-stereo-hr"
 install -m 644 "$HERE/copyright" "$D/usr/share/doc/$PKG/copyright"
+# what failed, why and what to do, in the nine languages (0.1.25), and the session's notification of a kept problem
+install -m 644 "$HERE"/lang/* "$D/usr/share/sparky/$PKG/"
+for u in dpkg-stereo-problems.path dpkg-stereo-problems.service; do
+	install -m 644 "$HERE/systemd/user/$u" "$D/usr/lib/systemd/user/$u"
+	ln -s ../$u "$D/usr/lib/systemd/user/graphical-session.target.wants/$u"
+done
 printf '/etc/apt/apt.conf.d/99dpkg-stereo-hr\n/etc/dpkg/dpkg.cfg.d/dpkg-stereo\n' >"$D/DEBIAN/conffiles"
 cat >"$D/DEBIAN/postinst" <<'EOS'
 #!/bin/sh
 # postinst script
 set -e
+# Lean Code never fails dpkg-stereo's own configuration: a step that does not complete is said by dpkg-stereo
+# itself (what, why, what to do), kept in /var/lib/dpkg-stereo/problems and repaired with dpkg-stereo --repair;
+# every file stays its package's original or a checked projection
 if [ "$1" = "configure" ] && [ -z "${DPKG_STEREO_NO_PROJECT:-}" ]; then
-	/usr/sbin/dpkg-stereo --repair-consumers || true
-	# dpkg read its hooks before this run, so the first projection of the installed packages is made here;
-	# an upgrade finds them recorded already, and its own post-invoke run takes only what it changed
+	/usr/sbin/dpkg-stereo --repair-consumers --if-changed || true
+	# dpkg read its hooks before this run, and this package's hook file is a conffile that arrives only now,
+	# so the first projection of the installed packages is made here; an upgrade finds them recorded already,
+	# and its own post-invoke run takes only what it changed
 	if [ -z "${2:-}" ] || [ ! -e /var/lib/dpkg-stereo/packages.tsv ]; then
 		/usr/sbin/dpkg-stereo --project || true
+		# what this dpkg run configures after this package is projected when dpkg processes this trigger,
+		# at the end of its run (deb-triggers(5), interest-noawait)
+		dpkg-trigger --no-await dpkg-stereo-first-projection || true
 	fi
+fi
+if [ "$1" = "triggered" ] && [ -z "${DPKG_STEREO_NO_PROJECT:-}" ]; then
+	/usr/sbin/dpkg-stereo --post-invoke || true
 fi
 exit 0
 EOS
+printf 'interest-noawait dpkg-stereo-first-projection\n' >"$D/DEBIAN/triggers"
 cat >"$D/DEBIAN/prerm" <<'EOS'
 #!/bin/sh
 # prerm script
 set -e
 if [ "$1" = "remove" ]; then
-	# the way back: the original files return (conffiles from the record, other files from their packages)
+	# the way back: the original files return (conffiles from the record, other files from their packages); what
+	# cannot come back is said with its reason and the packages to reinstall, and the removal goes on (a failing
+	# prerm would keep dpkg-stereo installed, Debian Policy 6.6)
 	/usr/sbin/dpkg-stereo --restore || true
 	# without the package table a later install projects everything again
 	rm -f /var/lib/dpkg-stereo/packages.tsv

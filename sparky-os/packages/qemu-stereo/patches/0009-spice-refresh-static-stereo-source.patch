@@ -1,0 +1,54 @@
+Description: ui/spice: refresh identical CPU pixels after stereo metadata changes
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, downstream commit 7a3e688ef889e6c638160a521eb0a382d1cbe1bf
+Forwarded: not-needed
+Last-Update: 2026-11-01
+Assisted-by: gpt-6-astra via Codex
+
+diff --git a/include/ui/spice-display.h b/include/ui/spice-display.h
+index 426fb22..6122fb7 100644
+--- a/include/ui/spice-display.h
++++ b/include/ui/spice-display.h
+@@ -86,6 +86,7 @@ struct SimpleSpiceDisplay {
+     DisplaySurface *ds;
+ #ifdef CONFIG_SPICE_STEREO
+     QemuStereo stereo;
++    bool stereo_refresh;
+ #endif
+     DisplayGLCtx dgc;
+     DisplayChangeListener dcl;
+diff --git a/ui/spice-display.c b/ui/spice-display.c
+index 99de6eb..cd3d5b9 100644
+--- a/ui/spice-display.c
++++ b/ui/spice-display.c
+@@ -200,6 +200,22 @@ static void qemu_spice_create_update(SimpleSpiceDisplay *ssd)
+     int bpp = surface_bytes_per_pixel(ssd->ds);
+     uint8_t *guest, *mirror;
+ 
++#ifdef CONFIG_SPICE_STEREO
++    if (ssd->stereo_refresh) {
++        QXLRect full = {
++            .right = surface_width(ssd->ds),
++            .bottom = surface_height(ssd->ds),
++        };
++
++        /* A new layout needs a new acquisition even when its pixels match the
++         * mirror. Capture the current surface here, after the switch. */
++        qemu_spice_create_one_update(ssd, &full);
++        ssd->stereo_refresh = false;
++        memset(&ssd->dirty, 0, sizeof(ssd->dirty));
++        return;
++    }
++#endif
++
+     if (qemu_spice_rect_is_empty(&ssd->dirty)) {
+         return;
+     };
+@@ -413,6 +429,7 @@ static void qemu_spice_update_stereo(SimpleSpiceDisplay *ssd)
+         return;
+     }
+     ssd->stereo = *stereo;
++    ssd->stereo_refresh = true;
+     qemu_spice_rect(&left, &stereo->left);
+     qemu_spice_rect(&right, &stereo->right);
+     spice_qxl_set_stereo(&ssd->qxl, stereo->layout,

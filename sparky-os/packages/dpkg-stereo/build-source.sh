@@ -12,9 +12,19 @@ OUT=$(cd "$OUT" && pwd)
 W=$(mktemp -d "$OUT/.dpkg-stereo-source.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 S=$W/dpkg-stereo-$VERSION
-mkdir -p "$S/sparky-os/packages" "$S/sparky-os/lean" "$S/sparky-os/repo" "$S/debian/source"
-cp -a "$HERE" "$S/sparky-os/packages/dpkg-stereo"
-cp "$ROOT/lean/"*.py "$ROOT/lean/JvmLexer.java" "$S/sparky-os/lean/"
+P=$S/sparky-os/packages/dpkg-stereo
+mkdir -p "$P" "$S/sparky-os/lean" "$S/sparky-os/repo" "$S/debian/source"
+# The recipe folder as git tracks it, so what a working checkout made beside it (bin/__pycache__ and *.pyc from
+# running bin/dpkg-stereo there, editor and test leftovers) never ships in the source package. Outside a git work
+# tree (an unpacked source package, an export) the folder is copied without __pycache__ folders and *.pyc files.
+if git -C "$HERE" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+	echo "build-source: the recipe's files as git tracks them"
+	(cd "$HERE" && git ls-files -z -- . | xargs -0r cp -a --parents -t "$P")
+else
+	echo "build-source: no git work tree; the recipe folder without __pycache__ and *.pyc"
+	(cd "$HERE" && find . -name __pycache__ -prune -o ! -type d ! -name '*.pyc' -print0 | xargs -0r cp -a --parents -t "$P")
+fi
+cp "$ROOT/lean/"*.py "$ROOT/lean/JvmLexer.java" "$ROOT/lean/ZigTokens.zig" "$S/sparky-os/lean/"
 cp "$ROOT/repo/provenance.sh" "$S/sparky-os/repo/"
 cp "$HERE/copyright" "$S/debian/copyright"
 printf '3.0 (native)\n' > "$S/debian/source/format"
@@ -37,16 +47,21 @@ EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
 
-  * Development release: explicit source layouts for copied package headers.
-    Distinguish unchanged/generated files from coincidentally identical native
-    projections. Retain GLSL recovery and dependency parser safeguards.
-    Preserve shell inputs rejected by their declared interpreter before any
-    transformation; a newly introduced parse failure still rejects the build.
-    Preserve Wine headers shared by its C and IDL/resource preprocessors.
-    Add build prerequisites to the Source stanza while preserving leading
-    licence-comment paragraphs and existing dependency continuations.
+  * Nothing fails silently (ORDER 346b, rows U19, U20, U57 and U58): a step
+    that cannot do what it is for says what failed, why and what to do, in
+    the nine languages, and keeps it in /var/lib/dpkg-stereo/problems until
+    it next succeeds; --problems, --repair, --dismiss and --notify (a
+    session unit shows each problem once). dpkg's and APT's hooks still
+    return 0, because dpkg and APT stop when a hook fails.
+  * --verify --deep exits 2 and names the reason when a file could not be
+    compared with its package's .deb; --restore, --hr and --fetch-hr name
+    the same reasons.
+  * A Python bytecode cache that cannot be refreshed is kept with its file
+    and interpreter, and the records are saved before the refresh.
+  * The lean toolkit's link gate blocks when readelf or nm cannot read an
+    ELF file's inventory; the renderer identity stays as it was.
 
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 20 Oct 2026 12:00:00 -0300
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 02 Nov 2026 12:00:00 -0300
 EOF
 cat > "$S/debian/rules" <<'EOF'
 #!/usr/bin/make -f

@@ -1,0 +1,11 @@
+# NVIDIA's CUDA repository for Debian 13, flat (sources.list(5): "suite can specify an exact path, in which case the
+# components must be omitted and suite must end with a slash"), read for amd64 only: the edition's NVIDIA user space and
+# CUDA are 64-bit. Signed-By names NVIDIA's own key file, the one NVIDIA's cuda-keyring installs, so a source written
+# NVIDIA's way names the same key (apt refuses two sources for one URI with different Signed-By).
+# sparky-stereo-cuda-repo's postinst writes this file, from /usr/share/sparky-stereo-cuda-repo, when no other source of apt
+# names this repository, and its postrm removes it; 91sparky-stereo-cuda holds the pins.
+Types: deb
+URIs: https://developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64/
+Suites: /
+Architectures: amd64
+Signed-By: /usr/share/keyrings/cuda-archive-keyring.gpg

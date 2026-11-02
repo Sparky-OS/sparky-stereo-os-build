@@ -5,9 +5,8 @@
 # Usage: test.sh WORK TESTS EXTRA_DIR   (WORK: the build.sh folder; TESTS: an empty folder for the test build and the logs;
 #   EXTRA_DIR: the build.sh EXTRA_DIR, the plasma-wayland-protocols build the source needs)
 # The render node is passed in for testStereoPair, /dev/udmabuf for testDmabufFormatSwitch (it skips without it).
-# testMockDrmFrameSequential hangs in some runs of the +stereo3d28 source as well (about 1 run in 10 to 20, seen again on
-# +stereo3d35 in ORDER 257: probably a lost wake-up in DrmCommitThread at shutdown); the others must pass
-# (testMockDrmStereoPair 19 of 19).
+# Up to +stereo3d38, testMockDrmFrameSequential hung in some runs (about 1 run in 10 to 20: a lost wake-up in DrmCommitThread at
+# shutdown, fixed in +stereo3d39, which testDrmCommitThread covers); every test must pass (testMockDrmStereoPair 19 of 19).
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)

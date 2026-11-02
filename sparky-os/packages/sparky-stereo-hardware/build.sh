@@ -1,15 +1,22 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/30
+# Last update 2026/11/02
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.1.13+lc1
+VERSION=0.1.17+lc1
 PACKAGE=sparky-stereo-hardware
 mkdir -p "$OUT"
 W=$(mktemp -d "$OUT/.sparky-stereo-hardware.XXXXXX")
 trap 'rm -rf "$W"' EXIT
+RECIPE=$HERE
+COPY="$RECIPE/../../../tools/copy-recipe.py"
+python3 "$COPY" "$RECIPE" "$W/authoring"
+mkdir -p "$W/authoring/build-tools"
+cp "$COPY" "$W/authoring/build-tools/"
+# The payload's lib/* and lang/* globs must use the same bounded inputs.
+HERE=$W/authoring
 D=$W/sparky-stereo-hardware
 mkdir -p "$D/DEBIAN" "$D/usr/share/doc/sparky-stereo-hardware"
 install -m644 "$HERE/copyright" "$D/usr/share/doc/sparky-stereo-hardware/copyright"
@@ -22,6 +29,7 @@ Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
 Depends: apt, bash, ca-certificates, coreutils, curl, grep, isenkram-cli, kmod, laptop-detect, libnotify-bin, lm-sensors, nvidia-detect, pciutils, power-profiles-daemon (>= 0.30), python3, sed, sparky-remsu, sparky-xterm, udev, usbutils, util-linux, yad
+Recommends: sparky-stereo-cuda-repo
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org
@@ -40,4 +48,4 @@ install -m755 "$HERE/debian-scripts/postinst" "$HERE/debian-scripts/postrm" "$D/
 # the initramfs carries the live session's NVIDIA choice
 echo 'activate-noawait update-initramfs' >"$D/DEBIAN/triggers"
 (cd "$D" && find usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
-PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$HERE"
+PYTHONPATH="$RECIPE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$HERE"

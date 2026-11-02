@@ -1,8 +1,12 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/16
-set -euo pipefail
+# Last update 2026/11/01
+# Nothing is replaced by something else behind the person's back: a step that fails says what failed, why and what to do
+# (ERROR lines, a summary at the end, the same in a window when the menu started it) and the setup exits non-zero; another
+# path, nouveau instead of the edition's NVIDIA driver, is only the person's own choice (--nvidia nouveau, or the plan
+# window's button). Daniel, 2026-11-01: "either it works or not and the user must know".
+set -Eeuo pipefail
 if ((EUID != 0)); then echo 'Run as root (use the Hardware Setup menu entry).'; exit 1; fi
 export LC_ALL=C.UTF-8
 SHARE=/usr/share/sparky/sparky-stereo-hardware
@@ -14,18 +18,21 @@ fixture=
 dry=false
 auto=false
 rig_driver=
+nvidia_choice=edition
 while (($#)); do
 	case "$1" in
 		--auto) auto=true ;;
 		--dry-run) dry=true ;;
 		--fixture) shift; fixture=${1:?Missing fixture directory} ;;
 		--rig-driver) shift; rig_driver=${1:?Missing rig driver package} ;;
-		--help) echo 'sparky-stereo-hardware [--auto] [--dry-run] [--fixture DIRECTORY] [--rig-driver PACKAGE]'; exit 0 ;;
+		--nvidia) shift; nvidia_choice=${1:?Missing NVIDIA choice: edition or nouveau} ;;
+		--help) echo 'sparky-stereo-hardware [--auto] [--dry-run] [--fixture DIRECTORY] [--rig-driver PACKAGE] [--nvidia edition|nouveau]'; exit 0 ;;
 		*) echo "Unknown option: $1" >&2; exit 2 ;;
 	esac
 	shift
 done
 case "$rig_driver" in ''|hid-tmff2-dkms|hid-fanatecff-dkms|new-lg4ff-dkms) ;; *) echo 'Unknown rig driver' >&2; exit 2 ;; esac
+case "$nvidia_choice" in edition|nouveau) ;; *) echo 'The NVIDIA choice is edition (the default: the edition'"'"'s driver with HDMI 3D) or nouveau' >&2; exit 2 ;; esac
 if [[ -n "$fixture" ]] && ! $dry; then echo 'Fixtures require --dry-run' >&2; exit 2; fi
 if [[ -e /.dockerenv && -z "$fixture" ]]; then
 	echo 'In a container use --fixture DIRECTORY --dry-run; hardware probing is disabled.' >&2
@@ -33,9 +40,19 @@ if [[ -e /.dockerenv && -z "$fixture" ]]; then
 fi
 # shellcheck source=../lib/actions.sh
 source "$LIB/actions.sh"
-source "$SHARE/cuda-key.sh"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
+# Started from the menu (not --auto, not a dry run), the person has no terminal: what fails is shown in a window too.
+if ! $auto && ! $dry; then export SPARKY_STEREO_HARDWARE_GUI=1; fi
+# stop_run: the end of a run that cannot go on: its errors, in a window too when the menu started it, and exit 1
+stop_run() {
+	finish_run "${LOG:-}" 1 || exit 1
+	exit 1
+}
+# An unexpected failure of a command stops the setup (set -e); it is said, with where, and the log's place. set -E carries
+# the trap into functions, where set -e alone would end the setup without a word; in a subshell (a command substitution)
+# the trap only ends that subshell, so the command that used it fails and is said once, by the setup itself.
+trap 'if ((BASHPID != $$)); then exit 1; fi; trap - ERR; err 50 "$LINENO" "$BASH_COMMAND" "${LOG:-the output above}"; stop_run' ERR
 if ! $dry; then
 	mkdir -p /var/log/sparky-stereo-hardware /run/lock
 	exec 9>/run/lock/sparky-stereo-hardware.lock
@@ -53,12 +70,15 @@ else
 	cp /proc/cpuinfo "$FACTS/cpuinfo"
 	if laptop-detect; then echo 0 >"$FACTS/laptop"; else
 		status=$?
-		[[ $status == 1 ]] || { log "ERROR laptop-detect returned $status"; exit 1; }
+		[[ $status == 1 ]] || { err 53 "$status"; stop_run; }
 		echo 1 >"$FACTS/laptop"
 	fi
 	dpkg --print-architecture >"$FACTS/architecture"
 	# CPU level: the loader's own list (lines marked "supported, searched"); board: DMI
-	if [[ -x /lib64/ld-linux-x86-64.so.2 ]]; then /lib64/ld-linux-x86-64.so.2 --help >"$FACTS/ldso-help" 2>&1 || :; fi
+	if [[ -x /lib64/ld-linux-x86-64.so.2 ]] && ! /lib64/ld-linux-x86-64.so.2 --help >"$FACTS/ldso-help" 2>&1; then
+		rm -f "$FACTS/ldso-help"
+		log 'NOTE the loader did not list its CPU levels (ld-linux-x86-64.so.2 --help failed), so the plan names no CPU level'
+	fi
 	for file in board_vendor board_name; do
 		if [[ -r /sys/class/dmi/id/$file ]]; then cat "/sys/class/dmi/id/$file" >"$FACTS/dmi-${file//_/-}"; fi
 	done
@@ -73,7 +93,7 @@ else
 	if isenkram-autoinstall-firmware -l >"$FACTS/firmware-packages" 2>"$WORK/isenkram.log"; then :; else
 		status=$?
 		if [[ $status != 1 ]] || ! grep -q 'did not find any firmware files' "$WORK/isenkram.log"; then
-			cat "$WORK/isenkram.log"; log "ERROR isenkram returned $status"; exit 1
+			cat "$WORK/isenkram.log"; err 54 "$status"; stop_run
 		fi
 	fi
 	cat "$WORK/isenkram.log"
@@ -97,67 +117,101 @@ if $dry; then
 		sensor_modules "$FACTS/sensors-detect"
 	fi
 	if grep -Fxq $'action\tnvidia-open' "$WORK/plan"; then
-		log 'Would configure CUDA debian13/x86_64 Signed-By key and origin pin 1002'
-		nvidia_version=$(apt-cache show --no-all-versions nvidia-kernel-open-dkms-stereo3d 2>/dev/null | sed -n 's/^Version: \(.*\)+stereo3d[0-9]*$/\1/p' | head -n1)
-		log "Would install nvidia-driver=${nvidia_version:-<module version>} nvidia-kernel-open-dkms-stereo3d libnvcuvid1=${nvidia_version:-<module version>} nvidia-vaapi-driver by name"
+		if [[ $nvidia_choice == nouveau ]]; then
+			log "Would keep nouveau for the NVIDIA graphics, as chosen (--nvidia nouveau): the edition's NVIDIA driver with HDMI 3D would not be installed"
+		elif ! module_info=$(apt-cache show --no-all-versions nvidia-kernel-open-dkms-stereo3d 2>/dev/null) || [[ -z $module_info ]]; then
+			log "Would stop with an ERROR: apt finds no nvidia-kernel-open-dkms-stereo3d, the edition's NVIDIA module, in the configured repositories"
+		else
+			nvidia_version=$(nvidia_version_of "$(sed -n 's/^Version: //p' <<<"$module_info" | head -n1)")
+			log "Would install sparky-stereo-nvidia-driver-lock and sparky-stereo-cuda-repo (NVIDIA's CUDA repository and its pins) first, the repository only where none is configured for NVIDIA's URI"
+			if [[ -n $nvidia_version ]]; then
+				log "Would install nvidia-driver=$nvidia_version nvidia-kernel-open-dkms-stereo3d libnvcuvid1=$nvidia_version nvidia-vaapi-driver by name"
+			else
+				log "Would stop with an ERROR: the module's version has no +stereo3dN suffix, so the NVIDIA driver version it is built for is unknown"
+			fi
+		fi
 	fi
 	exit 0
 fi
+
 if ! $auto; then
-	source "$SHARE/en"
-	locale_code=$(sed -nE 's/^LANG=["\x27]?([a-z]{2}_[A-Z]{2})(\.[^"\x27]*)?["\x27]?$/\1/p' /etc/default/locale 2>/dev/null || true)
-	case "$locale_code" in
-		pl_PL) source "$SHARE/pl" ;;
-		pt_BR) source "$SHARE/pt_BR" ;;
-		zh_CN) source "$SHARE/zh_CN" ;;
-		zh_TW) source "$SHARE/zh_TW" ;;
-		fr_*) source "$SHARE/fr" ;;
-		de_*) source "$SHARE/de" ;;
-		ja_*) source "$SHARE/ja" ;;
-		ko_*) source "$SHARE/ko" ;;
+	load_strings
+	# The plan, and the person's answer: install it, install it but keep nouveau for the NVIDIA graphics (offered only when
+	# the plan installs the edition's NVIDIA driver), or cancel. yad gives 1 for Cancel and 252 for a closed window; any
+	# other code means the window itself failed, which is said, never taken as an answer.
+	buttons=(--button="$LOCAL2:1")
+	if grep -Fxq $'action\tnvidia-open' "$WORK/plan"; then buttons+=(--button="$LOCAL4:2"); fi
+	buttons+=(--button="$LOCAL3:0")
+	answer=0
+	yad --text-info --title="$LOCAL1" --filename="$WORK/plan" --width=760 --height=500 "${buttons[@]}" || answer=$?
+	case $(plan_answer "$answer") in
+		edition) ;;
+		nouveau) nvidia_choice=nouveau ;;
+		cancel) log 'Hardware Setup cancelled; nothing was changed'; exit 0 ;;
+		*) err 52 "$answer"; stop_run ;;
 	esac
-	yad --text-info --title="$LOCAL1" --filename="$WORK/plan" --width=760 --height=500 --button="$LOCAL2:1" --button="$LOCAL3:0" || exit 0
 	# The child owns the execution lock; release it before launching the visible terminal.
 	flock -u 9
-	exec env SHELL=/bin/bash sparky-xterm "/usr/bin/sparky-stereo-hardware --auto ${rig_driver:+--rig-driver $rig_driver}"
+	exec env SHELL=/bin/bash SPARKY_STEREO_HARDWARE_GUI=1 sparky-xterm "/usr/bin/sparky-stereo-hardware --auto --nvidia $nvidia_choice ${rig_driver:+--rig-driver $rig_driver}"
 fi
+failed=0
+# install_step PACKAGE... [OPTION...]: apt installs them, or the failure is said and counted; the setup goes on with the
+# steps that do not need them
+install_step() {
+	if ! apt_install "$@"; then
+		err 47 "$(printf '%s ' "$@" | sed 's/--[a-z-]* //g; s/ $//')"
+		failed=1
+	fi
+}
 mapfile -t packages < <(awk -F '\t' '$1 == "package" {print $2}' "$WORK/plan")
 for package in "${packages[@]}"; do
 	case "$package" in
-		task-laptop) apt_install --install-recommends "$package" ;;
-		power-profiles-daemon|thermald) apt_install "$package" ;;
+		task-laptop) install_step --install-recommends "$package" ;;
+		power-profiles-daemon|thermald) install_step "$package" ;;
 	esac
 done
 if [[ -s "$FACTS/firmware-packages" ]]; then
-	run env DEBIAN_FRONTEND=noninteractive isenkram-autoinstall-firmware
+	if ! run env DEBIAN_FRONTEND=noninteractive isenkram-autoinstall-firmware; then
+		err 48 "$(tr '\n' ' ' <"$FACTS/firmware-packages" | sed 's/ $//')"
+		failed=1
+	fi
 else
 	log 'No missing firmware packages matched by isenkram'
 fi
 for package in "${packages[@]}"; do
-	case "$package" in amd64-microcode|intel-microcode) apt_install "$package" ;; esac
+	case "$package" in amd64-microcode|intel-microcode) install_step "$package" ;; esac
 done
-failed=0
 amdgpu_actions=()
 if grep -Fxq $'action\tamdgpu-dpm' "$WORK/plan"; then amdgpu_actions+=(amdgpu_dpm); fi
 if grep -Fxq $'action\tamdgpu-panel' "$WORK/plan"; then amdgpu_actions+=(amdgpu_panel_power); fi
 if ((${#amdgpu_actions[@]})); then setup_amdgpu "${amdgpu_actions[@]}" || failed=1; fi
 setup_sensors || failed=1
 if printf '%s\n' "${packages[@]}" | grep -Fxq firmware-nvidia-graphics; then
-	apt_install firmware-nvidia-graphics
-	if grep -Fxq $'action\tnvidia-open' "$WORK/plan"; then setup_nvidia || failed=1; fi
+	# nouveau's firmware, for the driver the card runs on now (and until a reboot into NVIDIA's driver)
+	install_step firmware-nvidia-graphics
+	if grep -Fxq $'action\tnvidia-open' "$WORK/plan"; then
+		if [[ $nvidia_choice == nouveau ]]; then
+			log "NVIDIA: nouveau stays, as you chose (--nvidia nouveau), so the edition's NVIDIA driver with HDMI 3D was not installed. Run Hardware Setup again without that choice to install it"
+		else
+			setup_nvidia || failed=1
+		fi
+	fi
 fi
 if grep -Fxq $'action\tcreative-msi' "$WORK/plan"; then
-	apt_install firmware-creative-stereo
+	install_step firmware-creative-stereo
 	setup_creative || failed=1
 fi
 for package in "${packages[@]}"; do
 	case "$package" in
-		evdi-dkms|xpadneo-dkms|steam-devices|sparky-sim-hidraw) apt_install "$package" ;;
+		evdi-dkms|xpadneo-dkms|steam-devices|sparky-sim-hidraw) install_step "$package" ;;
 		hid-tmff2-dkms|hid-fanatecff-dkms|new-lg4ff-dkms) setup_rig_driver "$package" || failed=1 ;;
 	esac
 done
 # The OpenGL stereo default follows the card the desktop runs on; a driver installed now
 # binds at the next boot, when sparky-stereo-opengl-default.service writes it again.
-run /usr/bin/sparky-stereo-opengl-default || failed=1
-log "Hardware setup finished, errors=$failed. Firmware and driver changes may need a reboot."
-exit "$failed"
+if ! run /usr/bin/sparky-stereo-opengl-default; then
+	err 49
+	failed=1
+fi
+trap - ERR
+finish_run "$LOG" "$failed"

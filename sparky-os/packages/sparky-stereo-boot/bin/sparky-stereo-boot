@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/16
+# Last update 2026/11/01
 #
 # sparky-stereo-boot: the boot follows the saved choice of the main screen.
 #
@@ -20,14 +20,22 @@
 #   - /var/lib/sparky-stereo-boot/main-output.json, the record of all of it.
 # Options in /etc/default/sparky-stereo-boot.
 #
+# A step of the boot's upkeep that cannot do what it is for says what failed, why and what to do, and keeps it
+# in /var/lib/sparky-stereo-boot/problems until it is repaired (/usr/lib/sparky-stereo-boot/problems.py); the
+# session shows each kept problem as a notification, and status lists them.
+#
 # Commands:
-#   sparky-stereo-boot status              what the next boot shows
+#   sparky-stereo-boot status              what the next boot shows, and the boot's kept problems
+#   sparky-stereo-boot repair              root: run again what each kept problem names
+#   sparky-stereo-boot dismiss STEP        root: hide a kept problem (it comes back if the step fails again)
 #   sparky-stereo-boot export-user USER    root: take USER's saved settings now
 #   sparky-stereo-boot reapply             root: write the boot files again (after an option change)
 #   sparky-stereo-boot client              the session's side: send the saved settings
+#   sparky-stereo-boot notify              the session's side: show the kept problems as notifications
 #   sparky-stereo-boot export-socket       the socket service (stdin is the connection)
 #   sparky-stereo-boot plymouth-quit       plymouth-quit.service: hand the splash over
 #   sparky-stereo-boot plymouth-handover   wait for the compositor's first frame, then quit
+#   sparky-stereo-boot boot-check          at boot: the resolution GRUB showed, against the one it was given
 import ctypes
 import ctypes.util
 import hashlib
@@ -52,7 +60,13 @@ GRUBENV = ROOT + '/boot/grub/grubenv'
 DRM_SYSFS = ROOT + '/sys/class/drm'
 SOCKET = '/run/sparky-stereo-boot.socket'
 RUN_DIR = ROOT + '/run/sparky-stereo-boot'
-LANG_DIR = '/usr/share/sparky/sparky-stereo-boot'
+LANG_DIR = os.environ.get('SPARKY_STEREO_LANG_DIR', '/usr/share/sparky/sparky-stereo-boot')
+LIB_DIR = os.environ.get('SPARKY_STEREO_LIB', '/usr/lib/sparky-stereo-boot')
+GRUB_DISPLAY = STATE_DIR + '/grub-display'
+CMDLINE = ROOT + '/proc/cmdline'
+DRI = ROOT + '/dev/dri'
+BOOT_PARAMS = ROOT + '/sys/kernel/boot_params/data'
+HANDOVER_LIMIT = float(os.environ.get('SPARKY_STEREO_HANDOVER_LIMIT', '600'))
 MAX_INPUT = 1024 * 1024
 GREETERS = (('plasmalogin', 'plasma-login-manager'), ('sddm', 'sddm'))
 SDDM_WAYLAND = ROOT + '/etc/sddm.conf.d/50-sparky-stereo-boot.conf'
@@ -87,6 +101,19 @@ HDMI_LAYOUTS = ((FRAME_PACKING, 'frame-packing'), (SBS_FULL, 'sbs-full'), (SBS_H
 
 def log(message):
     print('sparky-stereo-boot: ' + message, file=sys.stderr, flush=True)
+
+
+_problems = None
+
+
+def problems():
+    """problems.py, beside the package's other programs."""
+    global _problems
+    if _problems is None:
+        sys.path.insert(0, LIB_DIR)
+        import problems as module
+        _problems = module
+    return _problems
 
 
 # ------------------------------------------------------------------ strings (Paweł's LOCAL files)
@@ -690,27 +717,186 @@ def reapply():
     return 0
 
 
+def grub_display():
+    """What the last update-grub gave GRUB (30-sparky-stereo-boot.cfg writes it): GFXMODE, WANTED, SOURCE, FONT,
+    PAYLOAD, SCREEN."""
+    values = {}
+    try:
+        for line in open(GRUB_DISPLAY, encoding='utf-8'):
+            if '=' in line:
+                key, value = line.rstrip('\n').split('=', 1)
+                values[key.strip()] = value.strip()
+    except OSError:
+        pass
+    return values
+
+
 def status():
     s = strings()
     try:
         record = json.load(open(STATE))
     except (OSError, ValueError):
+        record = None
         print(text(s, 'LOCAL10', 'No saved choice yet: the boot uses the screen\'s own mode.'))
+    if record:
+        main = record.get('main') or {}
+        options = record.get('options', DEFAULTS)
+        layout = main.get('layout', '2d')
+        print('%s: %s' % (text(s, 'LOCAL1', 'Main screen'), main.get('connector', '-')))
+        print('%s: %sx%s @ %.3f Hz' % (text(s, 'LOCAL2', 'Mode'), main.get('width', 0), main.get('height', 0),
+                                       main.get('refreshRate', 0) / 1000.0))
+        print('%s: %s' % (text(s, 'LOCAL3', '3D layout'), layout if layout != '2d' else text(s, 'LOCAL4', 'None (2D)')))
+        if record.get('stereoOutputs'):
+            where = text(s, 'LOCAL6', 'the boot splash') if options.get('SPARKY_STEREO_SPLASH') != '2d' else text(s, 'LOCAL7', 'the login screen')
+            print('%s: %s' % (text(s, 'LOCAL5', '3D switches on at'), where))
+    grub = grub_display()
+    modes = [m for m in grub.get('GFXMODE', '').split(',') if m]
+    if grub.get('WANTED', 'auto') != 'auto' and len(modes) > 1:
+        rest = ', '.join(m for m in modes[1:] if m != 'auto')
+        print(problems().text('LOCAL47', [modes[0], rest]))
+    else:
+        print('%s: %s' % (text(s, 'LOCAL8', 'GRUB resolution'), (modes[0] if modes else '') or
+                          (record or {}).get('grubGfxmode') or 'auto'))
+    if grub:
+        font = os.path.basename(grub.get('FONT', ''))
+        print('%s: %s' % (problems().text('LOCAL48'), font or problems().text('LOCAL49')))
+    if record:
+        print('%s: %s' % (text(s, 'LOCAL9', 'Login screens with these settings'), ', '.join(record.get('greeters', [])) or '-'))
+        print('%s: %s (%s)' % (text(s, 'LOCAL11', 'Saved from the settings of'), record.get('source', '-'), record.get('time', '-')))
+    p = problems()
+    found = p.pending()
+    if not found:
+        print(p.text('LOCAL16'))
         return 0
-    main = record.get('main') or {}
-    options = record.get('options', DEFAULTS)
-    layout = main.get('layout', '2d')
-    print('%s: %s' % (text(s, 'LOCAL1', 'Main screen'), main.get('connector', '-')))
-    print('%s: %sx%s @ %.3f Hz' % (text(s, 'LOCAL2', 'Mode'), main.get('width', 0), main.get('height', 0),
-                                   main.get('refreshRate', 0) / 1000.0))
-    print('%s: %s' % (text(s, 'LOCAL3', '3D layout'), layout if layout != '2d' else text(s, 'LOCAL4', 'None (2D)')))
-    if record.get('stereoOutputs'):
-        where = text(s, 'LOCAL6', 'the boot splash') if options.get('SPARKY_STEREO_SPLASH') != '2d' else text(s, 'LOCAL7', 'the login screen')
-        print('%s: %s' % (text(s, 'LOCAL5', '3D switches on at'), where))
-    print('%s: %s' % (text(s, 'LOCAL8', 'GRUB resolution'), record.get('grubGfxmode') or 'auto'))
-    print('%s: %s' % (text(s, 'LOCAL9', 'Login screens with these settings'), ', '.join(record.get('greeters', [])) or '-'))
-    print('%s: %s (%s)' % (text(s, 'LOCAL11', 'Saved from the settings of'), record.get('source', '-'), record.get('time', '-')))
+    print('%s:' % p.text('LOCAL15'))
+    for entry in found:
+        print('- %s' % p.message(entry))
+        print('  %s: %s' % (p.text('LOCAL17'), entry.get('time') or '-'))
+        if entry.get('output'):
+            print('  %s: %s' % (p.text('LOCAL18'), entry['file']))
+    return 1
+
+
+def repair():
+    """Runs again what each kept problem names; a step that succeeds is cleared, one that fails again is kept with
+    its new output. Problems with nothing to run (the splash's hand-over, older kernels kept) are listed."""
+    p = problems()
+    found = p.pending()
+    if not found:
+        print(p.text('LOCAL16'))
+        return 0
+    left = 0
+    for entry in found:
+        if not os.path.exists(entry['file']):
+            continue   # an earlier repair cleared it (update-grub writes GRUB's font and resolution again)
+        print(p.message(entry))
+        steps = entry.get('repair') or []
+        if not steps:
+            print(p.text('LOCAL52', [entry['step'], entry['step']]))
+            left += 1
+            continue
+        for command in steps:
+            status, output = p.execute(command)
+            if status != 0:
+                after = [e for e in p.pending() if e['step'] == entry['step']]
+                if not after or after[0].get('time') == entry.get('time'):
+                    # the command does not keep its own record: this one keeps its new output
+                    p.record(entry['step'], entry['key'], entry['args'], command=command, status=status,
+                             output=output, repair=steps, quiet=True)
+                print(p.text('LOCAL51', [' '.join(command), status]))
+                left += 1
+                break
+        else:
+            p.clear(entry['step'])
+            print(p.text('LOCAL50', [entry['step']]))
+    try:
+        state = subprocess.run(['dpkg-query', '-W', '-f', '${db:Status-Abbrev}', 'sparky-stereo-boot'],
+                               capture_output=True, text=True).stdout.strip()
+    except OSError:
+        state = ''
+    if state and state != 'ii':
+        print(p.text('LOCAL54'))
+    return 1 if left else 0
+
+
+def dismiss(step):
+    p = problems()
+    found = {e['step'] for e in p.pending()}
+    if step not in found:
+        print('%s: %s' % (p.text('LOCAL15'), ', '.join(sorted(found)) or '-'))
+        return 1
+    if not p.clear(step):
+        return 1
+    print(p.text('LOCAL53', [step]))
     return 0
+
+
+def notify():
+    """The session's side: each kept problem as a notification (org.freedesktop.Notifications, critical, so it
+    stays until the person closes it), once per session and record."""
+    p = problems()
+    runtime = os.environ.get('XDG_RUNTIME_DIR', '')
+    seen_file = os.path.join(runtime, 'sparky-stereo-boot-notified') if runtime else ''
+    try:
+        seen = set(open(seen_file).read().split()) if seen_file else set()
+    except OSError:
+        seen = set()
+    result = 0
+    for entry in p.pending():
+        ident = '%s@%s' % (entry['step'], entry.get('time', ''))
+        if ident in seen:
+            continue
+        body = '%s\n%s' % (p.message(entry), p.text('LOCAL20'))
+        try:
+            call = subprocess.run(['busctl', '--user', 'call', 'org.freedesktop.Notifications',
+                                   '/org/freedesktop/Notifications', 'org.freedesktop.Notifications', 'Notify',
+                                   'susssasa{sv}i', 'Sparky Stereo OS', '0', 'dialog-warning', p.text('LOCAL19'), body,
+                                   '0', '1', 'urgency', 'y', '2', '0'], capture_output=True, text=True, timeout=60)
+            error = call.stderr.strip() if call.returncode else ''
+        except (OSError, subprocess.SubprocessError) as e:
+            error = str(e)
+        if error:
+            log('the notification could not be shown (%s): %s' % (error, p.message(entry, 'en')))
+            result = 1
+            continue
+        seen.add(ident)
+    if seen_file:
+        try:
+            atomic_write(seen_file, '\n'.join(sorted(seen)) + '\n')
+        except OSError as error:
+            log('%s: %s' % (seen_file, error))
+    return result
+
+
+def boot_check():
+    """At boot: the resolution GRUB handed to the kernel (gfxpayload=keep keeps GRUB's mode; the kernel's
+    boot_params screen_info has it) against the first one the last update-grub gave GRUB. GRUB takes the next of its
+    list when the firmware does not offer a mode, and nothing else shows which one it took."""
+    grub = grub_display()
+    wanted = grub.get('WANTED', '')
+    numbers = wanted.split('x')
+    if grub.get('SOURCE') not in ('saved', 'native') or grub.get('PAYLOAD') != 'keep' or \
+            len(numbers) != 2 or not all(n.isdigit() for n in numbers):
+        forget_problem('grub-mode')
+        return 0
+    try:
+        data = open(BOOT_PARAMS, 'rb').read(0x18)
+    except OSError:
+        log('no boot_params here (%s): GRUB\'s resolution is not checked' % BOOT_PARAMS)
+        return 0
+    # struct screen_info (include/uapi/linux/screen_info.h): orig_video_isVGA at 0x0f, lfb_width and lfb_height at
+    # 0x12 and 0x14; VIDEO_TYPE_VLFB (0x23, VESA) and VIDEO_TYPE_EFI (0x70) are a linear frame buffer
+    if len(data) < 0x18 or data[0x0f] not in (0x23, 0x70):
+        log('the kernel got no frame buffer from GRUB (video type %s): GRUB\'s resolution is not checked'
+            % (hex(data[0x0f]) if len(data) > 0x0f else '-'))
+        return 0
+    shown = '%dx%d' % struct.unpack_from('<HH', data, 0x12)
+    if shown == wanted:
+        forget_problem('grub-mode')
+        log('GRUB showed %s, as it was given' % shown)
+        return 0
+    keep_problem('grub-mode', 'LOCAL46', [shown, wanted, wanted])
+    return 1
 
 
 # ------------------------------------------------------------------ the splash's hand-over
@@ -745,11 +931,11 @@ def crtc_buffers():
     drm.drmModeGetCrtc.restype = ctypes.POINTER(_Crtc)
     drm.drmModeGetCrtc.argtypes = [ctypes.c_int, ctypes.c_uint32]
     state = {}
-    for card in sorted(os.listdir('/dev/dri')):
+    for card in sorted(os.listdir(DRI)):
         if not card.startswith('card'):
             continue
         try:
-            fd = os.open('/dev/dri/' + card, os.O_RDWR | os.O_CLOEXEC)
+            fd = os.open(os.path.join(DRI, card), os.O_RDWR | os.O_CLOEXEC)
         except OSError:
             continue
         try:
@@ -770,7 +956,7 @@ def crtc_buffers():
 
 def stereo_splash_running():
     try:
-        cmdline = open('/proc/cmdline').read().split()
+        cmdline = open(CMDLINE).read().split()
     except OSError:
         return False
     if not any(a.startswith('plymouth.stereo=') for a in cmdline):
@@ -778,22 +964,70 @@ def stereo_splash_running():
     return subprocess.run(['plymouth', '--ping'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
 
 
+def keep_problem(step, key, args, **kw):
+    """Keeps a problem of the boot (problems.py), and says it in the journal in English."""
+    try:
+        problems().record(step, key, args, quiet=True, **kw)
+        log(problems().text(key, args, 'en'))
+    except Exception as error:   # noqa: BLE001: the boot goes on; the journal keeps what could not be kept
+        log('%s %s (not kept: %s)' % (key, args, error))
+
+
+def forget_problem(step):
+    try:
+        problems().clear(step)
+    except Exception as error:   # noqa: BLE001
+        log('%s: not cleared: %s' % (step, error))
+
+
+def ordinary_quit():
+    """Every boot without a 3D splash: plymouth quit, as Debian's plymouth-quit.service. Debian's unit ignores the
+    status (ExecStart=-); here it counts while a splash still runs after it, because that splash hides the login
+    screen. With no splash running there was nothing to quit."""
+    status = subprocess.run(['plymouth', 'quit']).returncode
+    if status != 0 and subprocess.run(['plymouth', '--ping'], stdout=subprocess.DEVNULL,
+                                      stderr=subprocess.DEVNULL).returncode == 0:
+        keep_problem('splash-quit', 'LOCAL40', [status])
+        return status
+    forget_problem('splash-quit')
+    return 0
+
+
+def handover_failed(reason, retain=False):
+    """The 3D splash cannot be handed over: it is quit now (keeping its picture until the login screen draws when
+    RETAIN), so the login screen can start, and the reason (KEY, ARG...) is kept for the person. Returns 1: the
+    hand-over failed. A splash that cannot be quit either is kept as a problem of its own."""
+    status = subprocess.run(['plymouth', 'quit'] + (['--retain-splash'] if retain else [])).returncode
+    keep_problem('handover', 'LOCAL32', [list(reason)])
+    if status != 0 and subprocess.run(['plymouth', '--ping'], stdout=subprocess.DEVNULL,
+                                      stderr=subprocess.DEVNULL).returncode == 0:
+        keep_problem('splash-quit', 'LOCAL40', [status])
+    return 1
+
+
 def plymouth_quit():
     """plymouth-quit.service. A stereo splash is not quit here: it is deactivated (it drops the
     DRM master and keeps showing its picture in the 3D mode), the display manager's KWin takes
     the same mode with no new mode set, and plymouth-handover quits it with --retain-splash after
-    KWin's first frame (the boot-chain study, A.4). Any other boot quits as before."""
+    KWin's first frame (the boot-chain study, A.4). Any other boot quits as before.
+    A step of the hand-over that fails quits the splash at once, so the login screen can start, keeps
+    the reason for the person (sparky-stereo-boot status, and a notification after login) and makes
+    the unit fail."""
     if not stereo_splash_running():
-        os.execvp('plymouth', ['plymouth', 'quit'])
+        return ordinary_quit()
     os.makedirs(RUN_DIR, exist_ok=True)
     try:
         before = crtc_buffers()
     except OSError as error:
-        log('cannot read the outputs (%s), quitting the splash as usual' % error)
-        os.execvp('plymouth', ['plymouth', 'quit'])
+        return handover_failed(('LOCAL33', error))
     atomic_write(RUN_DIR + '/splash-buffers.json', json.dumps(before))
-    subprocess.run(['plymouth', 'deactivate'], check=False)
-    subprocess.run(['systemctl', 'start', '--no-block', 'sparky-stereo-boot-handover.service'], check=False)
+    status = subprocess.run(['plymouth', 'deactivate']).returncode
+    if status != 0:
+        return handover_failed(('LOCAL34', status))
+    status = subprocess.run(['systemctl', 'start', '--no-block', 'sparky-stereo-boot-handover.service']).returncode
+    if status != 0:
+        # deactivated, so the login screen can take the screen; quit keeping the picture until it draws
+        return handover_failed(('LOCAL35', status), retain=True)
     log('splash deactivated, buffers %s; the login screen takes the 3D mode' % before)
     return 0
 
@@ -807,25 +1041,31 @@ def display_manager_state():
     return out or 'unknown'
 
 
-def plymouth_handover(limit=600.0):
+def plymouth_handover(limit=HANDOVER_LIMIT):
     """Waits until every output that showed the splash shows a frame of the compositor, then
     quits the splash keeping its picture. While the display manager is starting or running
     there is no hurry (on a loaded machine its KWin can take long to start); when it fails or
-    stops, or after the limit, the splash quits as usual and the console comes back"""
+    stops, or after the limit, the splash quits so the console comes back, and the reason is
+    kept for the person (the hand-over did not happen)"""
     try:
         before = json.load(open(RUN_DIR + '/splash-buffers.json'))
-    except (OSError, ValueError):
-        before = {}
+    except (OSError, ValueError) as error:
+        return handover_failed(('LOCAL33', error), retain=True)
     shown = {k: v for k, v in before.items() if v}
+    if not shown:
+        return handover_failed(('LOCAL39',), retain=True)
     start = time.monotonic()
     down_since = None
     checked = 0.0
     while time.monotonic() - start < limit:
         now = crtc_buffers()
-        if shown and all(now.get(k, 0) != v for k, v in shown.items()):
-            subprocess.run(['plymouth', 'quit', '--retain-splash'], check=False)
+        if all(now.get(k, 0) != v for k, v in shown.items()):
+            status = subprocess.run(['plymouth', 'quit', '--retain-splash']).returncode
+            if status != 0:
+                return handover_failed(('LOCAL36', status))
             log('compositor took over after %.2f s (%s), splash quit keeping its picture' % (
                 time.monotonic() - start, now))
+            forget_problem('handover')
             return 0
         if time.monotonic() - checked > 1.0:
             checked = time.monotonic()
@@ -833,15 +1073,11 @@ def plymouth_handover(limit=600.0):
             if state in ('failed', 'inactive', 'deactivating'):
                 down_since = down_since or checked
                 if checked - down_since > 3.0:
-                    subprocess.run(['plymouth', 'quit'], check=False)
-                    log('the display manager is %s, splash quit as usual' % state)
-                    return 0
+                    return handover_failed(('LOCAL37', state))
             else:
                 down_since = None
         time.sleep(0.02)
-    subprocess.run(['plymouth', 'quit'], check=False)
-    log('no compositor frame in %d s, splash quit as usual' % limit)
-    return 0
+    return handover_failed(('LOCAL38', '%d' % limit))
 
 
 def main(argv):
@@ -864,6 +1100,14 @@ def main(argv):
         return 0
     if command == 'reapply':
         return reapply()
+    if command == 'repair':
+        return repair()
+    if command == 'dismiss' and len(argv) == 3:
+        return dismiss(argv[2])
+    if command == 'notify':
+        return notify()
+    if command == 'boot-check':
+        return boot_check()
     if command == 'plymouth-quit':
         return plymouth_quit()
     if command == 'plymouth-handover':

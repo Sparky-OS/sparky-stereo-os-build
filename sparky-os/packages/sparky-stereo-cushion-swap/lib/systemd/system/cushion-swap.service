@@ -14,6 +14,11 @@ RestartSec=3
 OOMScoreAdjust=-1000
 RuntimeDirectory=cushion-swap
 RuntimeDirectoryMode=0755
+# The status and the kept problems outlive the daemon, and the stop says why it happened, so a stopped or failed
+# daemon is never shown as a working one; its status line reaches systemctl status through the notify socket.
+RuntimeDirectoryPreserve=yes
+ExecStopPost=/usr/sbin/cushion-swap --stopped
+NotifyAccess=all
 StateDirectory=cushion-swap
 StateDirectoryMode=0700
 # Problems to both destinations; optional cycle arithmetic only to the file.

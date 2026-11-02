@@ -1,4 +1,22 @@
 -------------------------------------------------------------------------------
+  Version 0.1.3 (2026-11-01)
+-------------------------------------------------------------------------------
+  * Stop on gettext errors and require all edition language catalogues
+  * Fail configuration and removal when update-grub fails; say and keep its error in all nine languages
+-------------------------------------------------------------------------------
+  Version 0.1.2 (2026-10-30)
+-------------------------------------------------------------------------------
+  * Removal too (ORDER 298c): on remove and purge, once Debian's catalogues are back, GRUB's menu is written
+    again (update-grub, where /boot/grub/grub.cfg exists, under the same guard), so it says Debian's words at
+    once instead of keeping the merged translations until the next update-grub
+-------------------------------------------------------------------------------
+  Version 0.1.1 (2026-10-30)
+-------------------------------------------------------------------------------
+  * GRUB's menu is written again (update-grub) right after the messages are merged, at install and whenever
+    grub2-common updates its catalogues (ORDER 298b): the translated entries reach the menu at once instead of
+    at the next update-grub of another package. Not in a live session, a chroot or a container, as
+    sparky-stereo-boot's kernel keeping; only where /boot/grub/grub.cfg exists
+-------------------------------------------------------------------------------
   Version 0.1.0 (2026-10-16)
 -------------------------------------------------------------------------------
   * First version: the messages of GRUB's shell scripts from GNU GRUB 2.14's translations, added to Debian's

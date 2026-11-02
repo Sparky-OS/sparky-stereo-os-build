@@ -3,6 +3,7 @@ Every case projects a text and checks (a) what must be gone, (b) what must stay 
 (c) the consumer's own verdict (the handler's check), which is also what the projection runs."""
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -137,6 +138,26 @@ printf '%s|%s|%s|%s|%s|%s\n' "$n" "$v" "$p" "$b" "${arr[*]}" "$long"
         self.assertEqual(run(['dash'], projected), (0, '', ''))
         self.assertTrue(lang_shell.verify('', '', 'dash')[0])
         self.assertFalse(lang_shell.verify(source, '#!/bin/sh\nprintf changed\n', 'dash')[0])
+
+
+@unittest.skipUnless(shutil.which('perl'), 'perl required')
+class Perl(unittest.TestCase):
+    def test_comment_removed_and_checked(self):
+        r, out = P('/usr/bin/tool', '#!/usr/bin/perl\n# a removable explanation\nuse strict;\nprint "ready\\n";\n')
+        self.assertEqual(r.status, 'projected')
+        self.assertNotIn('removable explanation', out)
+        self.assertIn('B::Deparse prints the same program', r.check)
+
+    def test_file_perl_does_not_compile_on_its_own_is_retained(self):
+        """snmptt's snmptthandler-embedded uses NETSNMPTRAPD_HANDLER_OK, a name snmptrapd's embedded Perl defines:
+        perl -c rejects it on its own, so no consumer check exists and the file is retained, never a build failure."""
+        source = ('#!/usr/bin/perl\n# the handler snmptrapd loads\nuse strict;\n'
+                  'sub handler { return NETSNMPTRAPD_HANDLER_OK; }\n')
+        result, output = P('/usr/lib/snmptt/snmptthandler-embedded', source)
+        self.assertEqual(result.status, 'left')
+        self.assertIn('not compiled by perl on its own', result.reason)
+        self.assertFalse(result.reason.startswith('check failed:'))
+        self.assertIsNone(output)
 
 
 class Python(unittest.TestCase):
@@ -347,13 +368,17 @@ int big = 1'000'000; // digit separators
             for name, text in (('a.cc', src), ('b.cc', mr)):
                 p = os.path.join(d, name)
                 open(p, 'w').write(text + 'int main() { return line_here; }\n')
-                outs.append(subprocess.run(['g++', '-E', '-P', p], capture_output=True, text=True).stdout)
-            self.assertIn('line_here = 12', outs[0].replace(' ', ' '))
-            self.assertEqual(' '.join(outs[0].split()), ' '.join(outs[1].split()))
+                outs.append([subprocess.run(['g++', '-E', '-P', *pin, p], capture_output=True, text=True).stdout
+                             for pin in ((), ('-U__LINE__', '-D__LINE__=0'))])
+            self.assertIn('line_here = 12', outs[0][0])
+            at = mr.split('\n').index('static const int line_here = __LINE__;') + 1
+            self.assertIn(f'line_here = {at}', outs[1][0])       # 0.1.20: __LINE__ follows the lean lines
+            self.assertEqual(' '.join(outs[0][1].split()), ' '.join(outs[1][1].split()))
 
     def test_include_guard_still_read_once(self):
         """GCC reads a guarded header once per translation unit only while #ifndef is its first
-        directive and #endif its last; a #line outside the guard would make it read the header again."""
+        directive and #endif its last; the pointer and the line breaks of removed comments are no
+        directive, before the guard or after it."""
         src = ('// Copyright 2026 Someone, MIT licence\n// a long explanation of this header, which goes on\n'
                '// and on, line after line, so the projection shifts the lines below it\n\n#ifndef G_H\n#define G_H\n'
                '// another long explanation inside the guard, also removed from the lean form\n'
@@ -371,13 +396,89 @@ int big = 1'000'000; // digit separators
                 open(os.path.join(d, name, 'g.h'), 'w').write(text)
                 open(os.path.join(d, name, 't.c'), 'w').write('#include "g.h"\n#include "g.h"\nint main(void) { return g_line; }\n')
                 h = subprocess.run(['gcc', '-H', '-fsyntax-only', 't.c'], cwd=os.path.join(d, name), capture_output=True, text=True)
-                pp = subprocess.run(['gcc', '-E', '-P', 't.c'], cwd=os.path.join(d, name), capture_output=True, text=True).stdout
+                pp = subprocess.run(['gcc', '-E', '-P', '-U__LINE__', '-D__LINE__=0', '-w', 't.c'],
+                                    cwd=os.path.join(d, name), capture_output=True, text=True).stdout
                 outs.append((h.stderr.count('g.h'), ' '.join(pp.split())))
             self.assertEqual(outs[0], outs[1])
-            self.assertIn('g_line = 8', outs[1][1])
+            self.assertEqual(outs[1][0], 1)
 
-    def test_objects_identical_with_debug_info(self):
-        src = 'int f(int x) {\n  // why\n  // and why again, at length, so the line moves\n  return x + __LINE__;\n}\n'
+    LINES = (
+        'int f = TWO; /* not a directive: the # below follows code on its logical line\n'
+        '   */ # define NOT_A_DIRECTIVE\n')
+
+    def test_a_directive_after_code_stays_no_directive(self):
+        src = self.LINES
+        r, mr = P('/usr/include/lines.h', src)
+        self.assertEqual(r.status, 'projected', r.reason)
+        self.assertIn('int f = TWO;   # define NOT_A_DIRECTIVE', mr)   # one space: still no directive
+
+    def test_cxx_module_and_import_lines_keep_their_line_structure(self):
+        """C++20 import and module lines end at a line break like # directives ([cpp.pre])."""
+        src = ('export module demo; /* the module line, then a comment\n   over two lines */ int x = 1;\n'
+               'int y; /* the next word starts no import line in the authored text\n   */ import other;\n'
+               'int z = 2; /* this one may become line breaks:\n   */ int w = 3;\n')
+        r, mr = P('/usr/src/x/m.cc', src)
+        self.assertIn('export module demo;   int x = 1;', mr)
+        self.assertIn('int y;   import other;', mr)
+        self.assertIn('int z = 2;\n int w = 3;', mr)
+
+    def test_the_check_refuses_added_line_control(self):
+        """The check can fail: the lean text with a #line it did not need, or a token joined to another."""
+        from lean import lang_c
+        src = '// explanation\nint a = __LINE__;\n\nint b = __LINE__;\n'
+        r, mr = P('/usr/src/x/t.c', src)
+        self.assertEqual(mr, 'int a = __LINE__;\n\nint b = __LINE__;\n')
+        self.assertTrue(lang_c.verify(src, mr)[0])
+        directive = mr.replace('\n\nint b', '\n#line 4\nint b')
+        self.assertFalse(lang_c.verify(src, directive)[0])
+        self.assertEqual((lang_c._line_controls(src), lang_c._line_controls(mr), lang_c._line_controls(directive)),
+                         (0, 0, 1))
+        self.assertEqual(lang_c._line_controls('/* #line 9 */\nconst char *s = R"(\n#line 9\n)";\n'), 0)
+        self.assertFalse(lang_c.verify(src, mr.replace('int a', 'inta'))[0])
+
+    def test_pointer_takes_the_first_line(self):
+        src = ('int a;\n/* the first removable comment, long enough to pay for the pointer line that\n'
+               '   goes on the first line, and it goes on over two lines */\nint b = __LINE__;\n')
+        r, mr = P('/usr/include/p.h', src, pointer=True)
+        self.assertEqual(r.status, 'projected', r.reason)
+        lines = mr.split('\n')
+        self.assertTrue(lines[0].startswith('// Lean Code: HR in /usr/share/doc/pkg/hr/'), mr)
+        self.assertEqual(lines[1:], ['int a;', 'int b = __LINE__;', ''])
+        self.assertEqual(project.resolve(src.encode(), r.lean, '/usr/include/p.h', 'pkg', 2)[0], 1)
+        self.assertEqual(project.resolve(src.encode(), r.lean, '/usr/include/p.h', 'pkg', 3)[0], 4)
+        with self.assertRaises(core.MrLineMapRefusal):
+            project.resolve(src.encode(), r.lean, '/usr/include/p.h', 'pkg', 1)
+
+    def test_resolver_maps_columns_after_a_removed_inline_comment(self):
+        src = 'int a = /* an inline explanation of the value below */ 42;\nint b = 7; /* trailing */\n'
+        r, mr = P('/usr/src/x/c.c', src)
+        self.assertEqual(r.status, 'projected', r.reason)
+        self.assertNotIn('explanation', mr)
+        col = mr.split('\n')[0].index('42') + 1
+        self.assertEqual(project.resolve(src.encode(), r.lean, '/usr/src/x/c.c', 'pkg', 1, col, pointer=False),
+                         (1, src.index('42') + 1))
+        self.assertEqual(project.resolve(src.encode(), r.lean, '/usr/src/x/c.c', 'pkg', 2, 5, pointer=False), (2, 5))
+
+    def test_renderer_identity_names_the_form_and_its_code(self):
+        from lean import package
+        self.assertRegex(project.IDENTITY, r'^lean [0-9.]+ \(collapse-blank,pointer,c-drop-lines\) code [0-9a-f]{16}$')
+        self.assertTrue(project.IDENTITY.endswith(project.CODE_SHA256[:16]))
+        self.assertEqual(package.renderer(), {'identity': project.IDENTITY, 'sha256': project.CODE_SHA256})
+        with tempfile.TemporaryDirectory() as d:
+            here = os.path.join(os.path.dirname(__file__), '..')
+            copy = os.path.join(d, 'lean')
+            shutil.copytree(here, copy, ignore=shutil.ignore_patterns('tests', '__pycache__'))
+            with open(os.path.join(copy, 'lang_c.py'), 'a') as f:
+                f.write('\n# a change to the renderer\n')
+            out = subprocess.run([sys.executable, '-c', 'from lean import project; print(project.IDENTITY)'],
+                                 cwd=d, capture_output=True, text=True, check=True,
+                                 env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'}).stdout.strip()
+            self.assertNotEqual(out, project.IDENTITY)
+            self.assertEqual(out.rsplit(' ', 1)[0], project.IDENTITY.rsplit(' ', 1)[0])
+
+    def test_objects_identical_outside_debug_line_information(self):
+        """0.1.20: the lines move, so the debug information differs; the code does not."""
+        src = 'int f(int x) {\n  // why\n  // and why again, at length, so the line moves\n  return x + 3;\n}\n'
         r, mr = P('/usr/src/x/f.c', src)
         self.assertEqual(r.status, 'projected', r.reason)
         with tempfile.TemporaryDirectory() as d:
@@ -385,6 +486,7 @@ int big = 1'000'000; // digit separators
             for text in (src, mr):
                 open(os.path.join(d, 'f.c'), 'w').write(text)
                 subprocess.run(['gcc', '-O2', '-g', '-c', 'f.c', '-o', 'f.o'], cwd=d, check=True)
+                subprocess.run(['objcopy', '--strip-debug', 'f.o'], cwd=d, check=True)
                 objs.append(open(os.path.join(d, 'f.o'), 'rb').read())
             self.assertEqual(objs[0], objs[1])
 

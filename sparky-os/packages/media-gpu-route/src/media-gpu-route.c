@@ -1,10 +1,10 @@
 /* Copyright 2026 Daniel Campos Ramos. SPDX-License-Identifier: MIT */
 #include "gpu-private.h"
-#include <pthread.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/sysmacros.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <vulkan/vulkan.h>
 #include <xf86drm.h>
@@ -163,52 +163,87 @@ int media_gpu_route_vulkan_import(const struct media_gpu_route *gpu)
 
 /* Where players draw is the person's choice on the Graphics page (sparky-stereo-graphics): its command names
  * the render node players use now (the choice, or Automatic: the GPU measured best on the machine). A caller
- * that copies its pictures back decodes there first, every other GPU behind it in order, so a source it cannot
- * decode still falls back. A caller that imports decoded surfaces keeps the graphics stack's order, because its
- * renderer draws on the GPU the program was started on, and the page's launch environment puts it there.
- * Nothing is written. A GPU chosen at launch (DRI_PRIME, a Vulkan device selection, an NVIDIA offload) is
- * more specific than the page and wins; a missing, failing or unknown answer changes nothing. */
-static char graphics_page_node[128];
-static pthread_once_t graphics_page_once = PTHREAD_ONCE_INIT;
-
-static void ask_graphics_page(void)
+ * that copies its pictures back decodes there, and on another GPU that can unless the person turned that off
+ * (media_gpu_route_other_gpu). A caller that imports decoded surfaces keeps the graphics stack's order,
+ * because its renderer draws on the GPU the program was started on, and the page's launch environment puts it
+ * there. Nothing is written. A GPU chosen at launch (DRI_PRIME, a Vulkan device selection, an NVIDIA offload)
+ * is more specific than the page and wins, and a computer without the page has nothing to ask. A page that
+ * fails, answers nothing or names a GPU this program cannot open is said, and no other GPU is put in its place
+ * (Daniel, 2026-11-01: "either it works or not and the user must know"). The page is asked at each choice, so a
+ * new choice on the page reaches a running program's next video. */
+static int page_installed(void)
 {
-    static const char *const launch_choice[] = { "DRI_PRIME", "MESA_VK_DEVICE_SELECT", "VK_LOADER_DRIVERS_SELECT", "__NV_PRIME_RENDER_OFFLOAD" };
-    for (size_t i = 0; i < sizeof(launch_choice) / sizeof(launch_choice[0]); i++)
-        if (getenv(launch_choice[i]))
-            return;
-    FILE *answer = popen("sparky-stereo-gpu-env --category players --print render-node 2>/dev/null", "re");
-    if (!answer)
-        return;
-    char node[sizeof(graphics_page_node)] = "";
-    if (!fgets(node, sizeof(node), answer))
-        node[0] = '\0';
-    if (pclose(answer) != 0)
-        return;
-    node[strcspn(node, "\n")] = '\0';
-    memcpy(graphics_page_node, node, sizeof(node));
+    const char *path = getenv("PATH");
+    if (!path || !*path)
+        path = "/usr/local/bin:/usr/bin:/bin";
+    while (*path) {
+        size_t length = strcspn(path, ":");
+        char candidate[1024];
+        if (length && snprintf(candidate, sizeof(candidate), "%.*s/sparky-stereo-gpu-env", (int)length, path) < (int)sizeof(candidate)
+            && !access(candidate, X_OK))
+            return 1;
+        path += length + (path[length] == ':');
+    }
+    return 0;
 }
 
-void media_gpu_route_prefer_graphics_page(struct media_gpu_route *routes, int count)
+enum media_gpu_page media_gpu_route_prefer_graphics_page(struct media_gpu_route *routes, int count, char node[128], int *status)
 {
-    if (count < 2)
-        return;
-    pthread_once(&graphics_page_once, ask_graphics_page);
-    if (!graphics_page_node[0])
-        return;
-    for (int i = 1; i < count; i++) {
-        if (strcmp(routes[i].render_node, graphics_page_node))
+    static const char *const launch_choice[] = { "DRI_PRIME", "MESA_VK_DEVICE_SELECT", "VK_LOADER_DRIVERS_SELECT", "__NV_PRIME_RENDER_OFFLOAD" };
+    node[0] = '\0';
+    *status = 0;
+    for (size_t i = 0; i < sizeof(launch_choice) / sizeof(launch_choice[0]); i++)
+        if (getenv(launch_choice[i]))
+            return MEDIA_GPU_PAGE_NOT_ASKED;
+    if (!page_installed())
+        return MEDIA_GPU_PAGE_NOT_ASKED;
+    /* its stderr is the program's: the page says itself why a choice cannot be used, in the person's language */
+    FILE *answer = popen("sparky-stereo-gpu-env --category players --print render-node", "re");
+    if (!answer) {
+        *status = -1;
+        return MEDIA_GPU_PAGE_FAILED;
+    }
+    if (!fgets(node, 128, answer))
+        node[0] = '\0';
+    int closed = pclose(answer);
+    node[strcspn(node, "\n")] = '\0';
+    if (closed != 0 || !node[0]) {
+        *status = closed == -1 ? -1 : WIFEXITED(closed) ? WEXITSTATUS(closed) : 128 + WTERMSIG(closed);
+        return MEDIA_GPU_PAGE_FAILED;
+    }
+    for (int i = 0; i < count; i++) {
+        if (strcmp(routes[i].render_node, node))
             continue;
         struct media_gpu_route chosen = routes[i];
         memmove(&routes[1], &routes[0], (size_t)i * sizeof(*routes));
         routes[0] = chosen;
-        return;
+        return MEDIA_GPU_PAGE_NAMED;
     }
+    return MEDIA_GPU_PAGE_NOT_FOUND;
 }
 
-int media_gpu_route_decoder_frames(const struct media_gpu_video *video, enum media_gpu_frames frames,
-                                   struct media_gpu_decoder *decoder)
+static void say(char *text, size_t size, const char *message)
 {
+    if (text && size)
+        snprintf(text, size, "%s", message);
+}
+
+static int supports(const struct media_gpu_video *video, const struct media_gpu_route *route, struct media_gpu_decoder *candidate)
+{
+    candidate->gpu = *route;
+    if (route->vendor_id == 0x10de) {
+        candidate->backend = MEDIA_GPU_CUDA;
+        return media_gpu_cuda_supports(video, route, candidate->device);
+    }
+    candidate->backend = MEDIA_GPU_VAAPI;
+    snprintf(candidate->device, sizeof(candidate->device), "%s", route->render_node);
+    return media_gpu_vaapi_supports(video, route);
+}
+
+int media_gpu_route_decoder_said(const struct media_gpu_video *video, enum media_gpu_frames frames,
+                                 struct media_gpu_decoder *decoder, char *text, size_t size)
+{
+    say(text, size, "");
     if (!video || !decoder)
         return -1;
     memset(decoder, 0, sizeof(*decoder));
@@ -223,29 +258,61 @@ int media_gpu_route_decoder_frames(const struct media_gpu_video *video, enum med
         return 0;
     struct media_gpu_route *routes = NULL;
     int count = media_gpu_routes(&routes);
-    if (frames == MEDIA_GPU_FRAMES_COPY)
-        media_gpu_route_prefer_graphics_page(routes, count);
+    char message[1024];
+    enum media_gpu_page page = MEDIA_GPU_PAGE_NOT_ASKED;
+    if (frames == MEDIA_GPU_FRAMES_COPY) {
+        char node[128];
+        int status;
+        page = media_gpu_route_prefer_graphics_page(routes, count, node, &status);
+        if (page == MEDIA_GPU_PAGE_FAILED || page == MEDIA_GPU_PAGE_NOT_FOUND) {
+            if (page == MEDIA_GPU_PAGE_FAILED)
+                snprintf(message, sizeof(message), media_gpu_route_text(MEDIA_GPU_TEXT_PAGE_FAILED), status);
+            else
+                snprintf(message, sizeof(message), media_gpu_route_text(MEDIA_GPU_TEXT_NOT_FOUND), node);
+            say(text, size, message);
+            free(routes);
+            return -2;
+        }
+    }
     int unknown = 0;
     for (int i = 0; i < count; i++) {
-        struct media_gpu_decoder candidate = { .gpu = routes[i] };
-        int supported;
-        if (routes[i].vendor_id == 0x10de) {
-            candidate.backend = MEDIA_GPU_CUDA;
-            supported = media_gpu_cuda_supports(video, &routes[i], candidate.device);
-        } else {
-            candidate.backend = MEDIA_GPU_VAAPI;
-            snprintf(candidate.device, sizeof(candidate.device), "%s", routes[i].render_node);
-            supported = media_gpu_vaapi_supports(video, &routes[i]);
-        }
+        struct media_gpu_decoder candidate;
+        memset(&candidate, 0, sizeof(candidate));
+        int supported = supports(video, &routes[i], &candidate);
         if (supported > 0) {
             *decoder = candidate;
+            if (page == MEDIA_GPU_PAGE_NAMED && i > 0) {
+                snprintf(message, sizeof(message), media_gpu_route_text(MEDIA_GPU_TEXT_OTHER_GPU), routes[i].name);
+                say(text, size, message);
+            }
             free(routes);
             return 1;
         }
         unknown |= supported < 0;
+        /* the players' GPU cannot decode it: another GPU that can, unless the person turned Decode on another GPU off */
+        if (page == MEDIA_GPU_PAGE_NAMED && i == 0 && !media_gpu_route_other_gpu()) {
+            snprintf(message, sizeof(message), media_gpu_route_text(supported == 0 ? MEDIA_GPU_TEXT_CANNOT_DECODE : MEDIA_GPU_TEXT_UNKNOWN),
+                     routes[0].name);
+            say(text, size, message);
+            free(routes);
+            /* a driver that does not answer is never taken for "decodes it", nor for another GPU's turn */
+            return supported == 0 ? 0 : -2;
+        }
     }
     free(routes);
     return unknown || !count ? -1 : 0;
+}
+
+int media_gpu_route_decoder_frames(const struct media_gpu_video *video, enum media_gpu_frames frames,
+                                   struct media_gpu_decoder *decoder)
+{
+    /* the 0.2 callers (MLT, VLC) take another GPU on -1: when the GPU chosen for players cannot be resolved they
+     * get software, and the reason goes where the program keeps its messages */
+    char text[1024];
+    int result = media_gpu_route_decoder_said(video, frames, decoder, text, sizeof(text));
+    if (text[0])
+        fprintf(stderr, "media-gpu-route: %s\n", text);
+    return result == -2 ? 0 : result;
 }
 
 int media_gpu_route_decoder(const struct media_gpu_video *video, struct media_gpu_decoder *decoder)

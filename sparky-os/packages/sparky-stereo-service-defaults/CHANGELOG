@@ -1,4 +1,24 @@
 -------------------------------------------------------------------------------
+  Version 0.1.3 (2026-11-02)
+-------------------------------------------------------------------------------
+  * Nothing fails silently (ORDER 346c; Daniel, 2026-11-01: "either it works or not and the user must know"):
+    each drop-in names sparky-stereo-service-problem@ in OnFailure=, so a service that cannot start is said in the
+    system's language and kept in /var/lib/sparky-stereo-service-defaults/problems with its own last lines;
+    the session shows it as a notification; sparky-stereo-service-defaults status, repair and dismiss
+  * snmptt: no longer skipped without Net::IP; the edition's snmptt 1.5-3+sparky1 depends on libnet-ip-perl
+    (Breaks: snmptt << 1.5-3+sparky1~), and a failure says what is missing
+  * pkcs11-daemon: no longer skipped without its library; the edition's pkcs11-daemon 0.4.1-5+sparky1 depends on
+    libsofthsm2, the library its default names (Breaks: pkcs11-daemon << 0.4.1-5+sparky1~); a library that cannot be
+    loaded is said with where PKCS11_LIB is set
+  * urfkill: no longer skipped behind a ConsoleKit condition; Debian's 0.5.0-8, built for ConsoleKit, fails and that is
+    said with the reason (radio switches work without it)
+  * xfs_healer@: xfsprogs' own --supported check again, now that it skips a file system that is not XFS (upstream
+    fde1eee, carried in xfsprogs 7.2.0-1+sparky1; Breaks: xfsprogs << 7.2.0-1+sparky1~); our findmnt check, which took
+    a failed findmnt for "not XFS", is gone
+  * ipwatchd: a failed address probe is no longer "no address": it is said and kept, and the unit fails; no address is
+    still a skip; NetworkManager's dispatcher says a check or start that fails
+  * Messages in en, pl, pt_BR, fr, de, ja, ko, zh_CN and zh_TW
+-------------------------------------------------------------------------------
   Version 0.1.2 (2026-10-16)
 -------------------------------------------------------------------------------
   * ipwatchd: skipped at boot while no interface has an IPv4 address (it stopped with "No interfaces discovered"), started by NetworkManager when one comes up

@@ -128,6 +128,7 @@ def main(root, recipe, counter, smoke, packaging_revision=None):
         shutil.copy2(recipe / filename, target / filename)
     shutil.copytree(HERE / 'maint', target / 'maint')
     shutil.copy2(HERE / 'libc-dev.py', target / 'libc-dev.py')
+    shutil.copy2(HERE / 'kernelvariables.sh', target / 'kernelvariables.sh')
     # The recipe's test fixtures include binary files (group 38's EDID, tests/vkms-frame-sequential/dp-fs.bin): the
     # 3.0 (quilt) Debian tarball carries them only when debian/source/include-binaries lists them.
     binaries = sorted(path.relative_to(root).as_posix() for path in target.rglob('*')

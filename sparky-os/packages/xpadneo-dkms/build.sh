@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/03
+# Last update 2026/11/01
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
@@ -15,7 +15,7 @@ source "$HERE/payload.sh"
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
 cat >"$D/DEBIAN/control" <<EOF
 Package: xpadneo-dkms
-Version: 0.1.0+lc1
+Version: 0.1.2+lc1
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE

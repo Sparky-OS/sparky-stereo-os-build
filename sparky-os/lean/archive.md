@@ -27,6 +27,8 @@ That message does not certify their runtime behavior.
 
 The JSON file is a nonempty list of objects with `uri`, `suite`, `components` and `keyring`.
 HTTPS public sources and explicit `file:` fixture archives are accepted.
+A `suite` ending in `/` is an exact path, a flat repository such as NVIDIA's CUDA repository, and its `components` are empty, as [sources.list(5)](https://manpages.debian.org/testing/apt/sources.list.5.en.html) says; any other suite needs at least one component.
+The optional `architectures` list limits a source to those architectures, as the Architectures option of sources.list does; a context with no source left is refused.
 Credentials in URLs and arbitrary APT configuration directives are rejected.
 For an immutable Debian snapshot use its timestamped URI, for example `https://snapshot.debian.org/archive/debian/20261025T000000Z`, the intended suite and `"check_valid_until": false` when the Release date has expired.
 This option changes Release freshness checking only.
@@ -36,8 +38,17 @@ No private key or workstation signing setup is needed.
 
 APT starts from an empty scratch status database and solves the exact candidate with its explicitly supplied edition siblings available through a scratch-generated local index.
 Its solver handles alternatives, epochs, Debian revisions, versioned Provides, architecture qualifiers, Architecture all, conflicts and Multi-Arch rules within the selected architecture.
-Recommends and Suggests are excluded.
+Recommends and Suggests are excluded, but for one narrow case of the link gate: an ELF file whose every missing library is shipped by a package that its own package's Recommends names is resolved again with those Recommends installed, and noted (linkcheck.py; Debian Policy 7.2: Recommends lists "packages that would be found together with this one in all but unusual installations").
 Local package versions are pinned and the candidate file is requested exactly, so archive packages cannot silently replace edition inputs.
+The APT preferences that the supplied edition packages ship then apply, as on an installed edition, which has its policy packages before any other edition package (the image installs the NVIDIA driver lock first).
+They are the files each supplied package ships directly in `/etc/apt/preferences.d`, as its control members name them: its conffiles ([deb-conffiles(5)](https://manpages.debian.org/testing/dpkg-dev/deb-conffiles.5.en.html); Debian Policy 10.7.3 makes every file shipped in `/etc` a conffile) and the files of its md5sums ([deb-md5sums(5)](https://manpages.debian.org/testing/dpkg-dev/deb-md5sums.5.en.html)), which list the others (sparky-stereo-apt before 20261031.1 shipped its pins without declaring them conffiles).
+So the gate reads each input's small control member, lists the data of only a package without md5sums, and opens the data of only the packages that ship such a file.
+APT parses `/etc/apt/preferences` first and then `preferences.d` in lexicographic order, and the first specific record that matches a version decides its priority ([apt_preferences(5)](https://manpages.debian.org/testing/apt/apt_preferences.5.en.html)), so the gate's exact pins, in the first file, still decide every supplied package.
+The shipped files are copied under their own names, and APT ignores a name outside its naming convention, as it does on an installed system.
+Two supplied packages shipping one file name are refused, as dpkg refuses the second.
+This is what lets an exact dependency take an archive version that is not the newest: APT's solver takes only the candidate for an exact dependency (apt 2.9.17, "Reject all non-candidates outright for strict pinning"), so `nvidia-kernel-open-dkms-stereo3d`'s `firmware-nvidia-gsp (= 615.71.09-2)` resolves from the CUDA repository only with sparky-stereo-nvidia-driver-lock's pin, as on an installed edition (ORDER 329).
+APT's `--no-strict-pinning` would solve it without the lock, but an installed system does not, so the gate would pass what a person's APT refuses.
+Each case records the files it applied, their packages and hashes, in `case-*/preferences.json` and in `resolution.json`.
 Only siblings selected by the dependency solver contribute files, and those selected packages must be coinstallable and dependency-valid.
 The scratch local index is trusted only for the explicitly supplied files whose identities and hashes are recorded; public archive indexes still require signature verification.
 The publisher supplies the selected native and architecture-independent edition packages as that local universe, including libraries already present in the destination pool.
@@ -55,6 +66,12 @@ A predecessor whose executable or runtime libraries do not resolve in the qualif
 
 Each architecture gets separate APT state and one frozen signed-index view for candidate and predecessor comparisons.
 Downloads use APT's selected URL, signed size and SHA-256, then independently check the archive control identity against the signed index before extraction.
+Each case asks APT for the signed records of all its downloaded identities together, `apt-cache show NAME:ARCH=VERSION ...`, at most 1024 identities and 128 KiB of arguments per call.
+A record already read is reused for the rest of the run for the same identity and SHA-256 under the same local index digest: the public indexes are frozen for the architecture's context, and the local index is the only other source APT reads.
+With several arguments apt-cache skips an absent one silently and exits 0 unless it finds none (exit 100, `E: No packages found`), and it retries an absent name containing `.` as an unanchored regular expression that prints other packages' records.
+So every record is matched to its own Package, Version and Architecture, never by its position in the output, and only that exit 100 with no output counts as nothing found.
+A download without a record of its identity is refused by name; a record whose SHA256, Size, Depends, Pre-Depends, Provides, Conflicts, Breaks or Multi-Arch differs from the downloaded control is refused; a disk floor reached while asking APT remains a space refusal.
+When a later solver line fails, the downloads before it are checked first, so the refusal reported is the first one in solver order.
 Supplied archive identities and hashes are frozen without copying the offered universe.
 A shared immutable local index contains metadata and source links only, and records each offered input in `universes/<hash>/universe.json`.
 The original source files must remain available and unchanged during qualification.
@@ -62,7 +79,7 @@ Only selected archive bytes enter the shared scratch `sha256/` cache, once per h
 Cached copies are read-only and have distinct inodes from source archives; source modes and bytes are never changed.
 A corrupt cache entry blocks the gate and names the entry to remove before retrying.
 Each comparison retains configuration, signature-verification logs, signed metadata and its hashes, solver decisions, dependency controls, exact identities, URLs, byte sizes, hashes and execution commands.
-See `metadata.json`, `case-*-solve.log`, `case-*/resolution.json`, `case-*/execution.jsonl` and `case-*/root-files.jsonl` below the reported scratch directory.
+See `metadata.json`, `case-*-solve.log`, `case-*-signed-index-N.log`, `case-*/signed-index.json` (the log holding the record each download matched), `case-*/resolution.json`, `case-*/execution.jsonl` and `case-*/root-files.jsonl` below the reported scratch directory.
 A comparison has at most two live qualified roots, and releases them after retaining file hashes and symlink inventories, including when a runtime check fails.
 The low-level `Archive.qualify` API returns a qualifier whose `close()` records the inventory and releases its root; a third live qualifier is refused.
 These are qualification evidence, not packages to publish.
@@ -102,6 +119,9 @@ Smoke programs also use immediate binding.
 Library-only imports legitimately supplied by their application remain informational without a predecessor.
 Lost stereo imports still block and lost NEEDED entries remain informational when resolution succeeds.
 Static ELF files are inspected without requiring a dynamic loader, independently of locale.
+A static-pie executable (no interpreter, no NEEDED, `DF_1_PIE`; qemu-user's programs) is static too; a library without NEEDED is still traced.
+An ELF file of another machine in an `Architecture: all` package under `/usr/share` is guest data (QEMU's firmware), recorded as a note and never traced (ORDER 340).
+Every other ELF file of another machine fails with "ELF machine does not match", as before.
 
 The gate does not implement foreign execution, cross-architecture dependency roots, non-glibc loaders, maintainer-script effects, or package configuration services.
 The static diversion form described above is the sole modeled preinst effect.

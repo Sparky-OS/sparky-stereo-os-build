@@ -1,0 +1,34 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/01
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/11/01
+# Removing the package removes the NVIDIA source its postinst wrote, while it is still the package's own copy; a source of
+# the person's own stays. When the first install stops, the files preinst moved aside go back; dpkg itself removes the
+# pin, a conffile, at purge.
+set -e
+OURS=/etc/apt/sources.list.d/sparky-stereo-cuda.sources
+FILES="$OURS /etc/apt/preferences.d/91sparky-stereo-cuda"
+case "$1" in
+remove)
+	# the template is gone by now: compare with the bytes it had, kept in the source's own checksum
+	if [ -f "$OURS" ] && [ "$(md5sum <"$OURS" | cut -d' ' -f1)" = @TEMPLATE_MD5@ ]; then
+		rm -f "$OURS"
+		echo "sparky-stereo-cuda-repo: removed NVIDIA's CUDA source $OURS"
+	fi
+	;;
+abort-install | abort-upgrade)
+	for f in $FILES; do
+		if [ -e "$f.dpkg-remove" ] && [ ! -e "$f" ]; then
+			mv "$f.dpkg-remove" "$f"
+		fi
+	done
+	;;
+purge)
+	if [ -f "$OURS" ] && [ "$(md5sum <"$OURS" | cut -d' ' -f1)" = @TEMPLATE_MD5@ ]; then
+		rm -f "$OURS"
+	fi
+	for f in $FILES; do
+		rm -f "$f.dpkg-remove"
+	done
+	;;
+esac

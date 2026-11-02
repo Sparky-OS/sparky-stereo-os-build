@@ -233,10 +233,10 @@ def test_low_space_while_checking_a_download_is_reported_as_space(sources, tmp_p
     candidate = deb(tmp_path, 'consumer', depends='libxrandr2')
     original = archive.Archive.run
 
-    def run(self, args, label):
+    def run(self, args, label, **options):
         if args[:2] == ['apt-cache', 'show']:
             raise package.NoSpace('/: free space 1 is below root floor 12884901888')
-        return original(self, args, label)
+        return original(self, args, label, **options)
 
     with patch.object(archive.Archive, 'run', run):
         with pytest.raises(package.NoSpace, match='below root floor') as raised:

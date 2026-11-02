@@ -14,5 +14,6 @@ if [ "$1" = configure ]; then
 		systemctl daemon-reload || true
 		if [ ! -e /sys/module/nvidia ]; then systemctl reset-failed nvidia-persistenced.service nvidia-powerd.service >/dev/null 2>&1 || true; fi
 	fi
-	sparky-stereo-opengl-default || true
+	sparky-stereo-opengl-default ||
+		echo 'sparky-stereo-hardware: the OpenGL stereo default could not be written now (sparky-stereo-opengl-default failed); sparky-stereo-opengl-default.service writes it at the next boot' >&2
 fi

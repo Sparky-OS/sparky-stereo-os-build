@@ -1,5 +1,36 @@
 
 -------------------------------------------------------------------------------
+  Version 20261031.2~sparky9~0 (2026-11-01)
+-------------------------------------------------------------------------------
+  * A program or library we ship for amd64 and not for i386 has its Debian and deb-multimedia i386 builds blocked too (NAME:i386 at -1; apt_preferences(5): a plain name matches the native architecture only), so apt never lists them. Daniel, 2026-11-01: "32 bit builds we need? why are you even asking if we have 64 bit versions?" (ORDER 321b)
+  * They could never be installed beside ours: ORDER 321's check found 29 of them, of 17 sources (dolphin, digikam, kalgebra, kdenlive, kdeplasma-addons, kf6-kfilemetadata, kf6-kiconthemes, kio-extras, koko, kpipewire, kwin, libkscreen, octave, plasma-desktop, plasma-discover, powerdevil, and deb-multimedia's kdenlive-dmo), listed but needing Debian's Architecture: all -data package at its exact version, which ours replaces
+  * The i386 packages that stay are the libraries Steam, 32-bit Wine and 32-bit games need, and ours where we replace them (Mesa, FFmpeg, SDL 3, wine32, dxvk-wine32 and the rest): steam-installer, wine32, dxvk-wine32 and lutris pull 320 i386 packages, none of them a name we ship for amd64 only
+  * sparky-stereo-only-ours regenerated from the published repository (InRelease 39f06de4, 1 Nov 2026): 1116 packages blocked, as 2088 names, 810 of them the i386 builds of names we ship for amd64 only; 210 Architecture: all names at 100 where their source is not built; 5 packages that are not ours at 400
+  * Supersedes 20261031.1~sparky9~0 (ORDER 321), which was not published; its changes are in this version
+
+-------------------------------------------------------------------------------
+  Version 20261031.1~sparky9~0 (2026-10-31)
+-------------------------------------------------------------------------------
+  * The four files under /etc are conffiles (DEBIAN/conffiles), as Debian Policy 10.7.3 asks: "local changes must be preserved during a package upgrade". Before, dpkg replaced them at every upgrade, a person's edits included (ORDER 321, ORDER 318's finding)
+  * A preinst lets the first upgrade that makes them conffiles replace a file nobody changed without a question: a file still as the installed version shipped it (its md5sums) is set aside as FILE.dpkg-remove, so dpkg installs the new one, and the postinst removes the old copy; a changed file stays, and dpkg asks about it, keeping the person's file by default. The postrm puts the set-aside files back if the upgrade stops
+  * deb-multimedia's own deb-multimedia-keyring is no longer blocked: make-only-ours.py skips the packages that are not ours by an explicit list (NOT_OURS), with its reason for each, instead of by the pool path carried/, which the published tree no longer has. Ours ranks at 400 under deb-multimedia's 500, so a new keyring from deb-multimedia, after a key rotation, reaches the edition (ORDER 321, ORDER 318's finding)
+  * The list also holds Debian's libunibreak 7.0-2 (libunibreak7, its dbgsym, -dev and -doc), carried only through Lean Code: Debian's libunibreak-dev and libunibreak-doc 8.0-2 are no longer blocked or outranked. Every other name in sparky-stereo-only-ours is a build of ours (checked against Debian forky and deb-multimedia forky)
+  * sparky-stereo-only-ours regenerated from the published repository (InRelease 6ea88846, 31 Oct 2026): 1116 packages blocked, as 1278 names; 210 Architecture: all names at 100 where their source is not built; 5 packages that are not ours at 400
+  * README.md, also in /usr/share/doc/sparky-stereo-apt: what an upgrade does with a changed file, and how to keep pins of one's own without editing these files (a file that sorts before sparky-stereo-only-ours: apt_preferences(5) takes the first specific record that matches)
+  * Supersedes 20261031~sparky9~0 (ORDER 318), which was not published; its changes are in this version
+
+-------------------------------------------------------------------------------
+  Version 20261031~sparky9~0 (2026-10-31)
+-------------------------------------------------------------------------------
+  * sparky-stereo-only-ours names each package with the architectures the repository ships it for (krdc:amd64 krdc:arm64, wine32:i386): apt matches a plain name on the native architecture only (apt_preferences(5)), so on arm64 the file blocked Debian's arm64 kio6, libkf6kiowidgets6, libkf6screen8 and libkscreen-bin, which we ship for amd64 only, and krdc could not be installed there; on amd64 it never blocked Debian's i386 builds of what we ship for i386 (ORDER 318, found by ORDER 317's installability check)
+  * An Architecture: all package carries the architectures we ship the rest of its source for (libkscreen-data:amd64), because apt files it under the native architecture: Debian's arm64 libkf6screen8 and libkf6iconthemes6 need Debian's libkscreen-data and libkf6iconthemes-data at their exact versions; one stays plain only when we ship no architecture-specific package of its source
+  * On the other architectures our build of such a package is not the candidate (100, under Debian's 500), because apt does not take another version to satisfy an exact dependency: krdc installs on arm64 with Debian's kio6, libkf6screen8, libkscreen-data and libkf6iconthemes-data
+  * sparky-stereo-only-ours regenerated from the published repository (InRelease 6ea88846, 31 Oct 2026): 1121 packages, 1287 architecture-qualified names, 40 of them plain, and 211 Architecture: all names at 100 on the architectures their source is not built for; the nine names of the retired 7.3.0-rc6 stereo3d12 kernel are gone (Debian has none of them)
+  * sparky-stereo blocks Debian's and deb-multimedia's Bino on every architecture (bino:any), as the Bino rule says
+  * Depends on sparky-stereo-keyring (>= 20261008.1~sparky9~0+lc1) as before, no longer on a keyring of its own version
+  * The source keeps "Types: deb deb-src", as the published package has it: build.sh makes deb-src the default
+
+-------------------------------------------------------------------------------
   Version 20261008.1~sparky9~0 (2026-10-08)
 -------------------------------------------------------------------------------
   * Adds deb-multimedia (forky, main and non-free) as /etc/apt/sources.list.d/sparky-stereo-deb-multimedia.sources, Signed-By the keyring of its own package; Depends: deb-multimedia-keyring (carried unmodified by the repository)

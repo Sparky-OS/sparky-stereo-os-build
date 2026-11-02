@@ -1,4 +1,48 @@
 -------------------------------------------------------------------------------
+  Version 0.1.5 (2026-11-01)
+-------------------------------------------------------------------------------
+  * Nothing fails silently (ORDER 345; Daniel, 2026-11-01: "either it works or not and the user must know"):
+    a step of the boot's upkeep that cannot do what it is for says what failed, why and what to do in the
+    system's language, keeps it with its command, exit status and output in /var/lib/sparky-stereo-boot/problems
+    until the step succeeds again (lib/problems.py), and the session shows it as a notification;
+    sparky-stereo-boot status lists the problems, repair runs again what each names, dismiss hides one
+  * postinst: a failed update-grub fails the package, as grub2's postinst does; systemd's reload, the units'
+    start and the certificate on the EFI system partition are said and kept, and the package configures;
+    update-grub runs once on the upgrade from 0.1.4, for GRUB's new record
+  * The kernel hooks say and keep a certificate that cannot be placed and a cleanup that cannot be queued;
+    the kernel still installs and zz-update-grub still runs after them
+  * secureboot.py: an EFI system partition named in /etc/fstab but not mounted, a missing certificate and a
+    failed copy are problems; an EFI system partition without shim is said
+  * Removal: failed grub-editenv, rm, update-initramfs and, on purge, update-grub fail the removal, with the
+    messages in the nine languages written into the postrm
+  * Kernel cleanup: update-initramfs and update-grub after a purge are checked; a failed purge, apt's simulation
+    naming more than the plan and any unexpected error make the service fail and are kept (--now runs the
+    cleanup without a queued install, for repair)
+  * The 3D splash's hand-over: a failed deactivate, hand-over service or plymouth quit, a login screen that does
+    not start and no picture before the limit quit the splash, keep the reason and fail the unit; with no
+    recorded splash picture it no longer waits ten minutes; plymouth-quit.service fails when a running splash
+    cannot be quit (Debian's unit ignores that)
+  * GRUB: update-grub's output names the resolution GRUB is given and the ones it takes when the firmware does
+    not offer it; no connected screen with an EDID and a font that cannot be made are kept, with grub-mkfont's
+    error; grub-display records what GRUB was given, and sparky-stereo-boot-check.service compares it at boot
+    with the resolution the kernel got from GRUB
+  * 46 new messages, in en, pl, pt_BR, fr, de, ja, ko, zh_CN and zh_TW
+-------------------------------------------------------------------------------
+  Version 0.1.4 (2026-10-30)
+-------------------------------------------------------------------------------
+  * Two kernels per flavour (ORDER 298): after a new kernel has installed (its image, its boot image and its
+    GRUB entry written), each flavour keeps the running kernel and the newest, or the one before the newest when
+    that is the running one; the others are purged, all their packages (image, binary, modules, headers, the
+    per-release base, their -dbg and Lean Code companions, and the kbuild and headers-common packages nothing
+    else needs), then their module folders and DKMS records, and every kept kernel's boot image and GRUB's menu
+    are written again. Never a general autoremove: only the kernels' own packages, checked against apt's
+    simulation first. A kernel hook records the install and sparky-stereo-kernel-keep.service does the work
+    once apt and dpkg are done; nothing happens in a live session, a chroot or a container
+  * Every boot image, always: update_initramfs=all, so every update-initramfs -u (what Plymouth's, the
+    firmware's and the edition's triggers run) writes the boot image of every installed kernel; initramfs-tools'
+    update-initramfs.conf is kept as update-initramfs.conf.debian and comes back on removal
+  * kernel-keep.py --dry-run prints the plan
+-------------------------------------------------------------------------------
   Version 0.1.3 (2026-10-25)
 -------------------------------------------------------------------------------
   * Secure Boot without the edition's key is never a dead end: a new or reset motherboard, or Secure Boot turned on

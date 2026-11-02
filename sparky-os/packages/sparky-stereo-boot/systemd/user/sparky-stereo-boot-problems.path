@@ -1,0 +1,11 @@
+[Unit]
+Description=Sparky Stereo OS: a problem of the boot was kept
+Documentation=file:/usr/share/doc/sparky-stereo-boot/README.md
+ConditionUser=!@system
+
+[Path]
+PathChanged=/var/lib/sparky-stereo-boot/problems
+Unit=sparky-stereo-boot-problems.service
+
+[Install]
+WantedBy=graphical-session.target

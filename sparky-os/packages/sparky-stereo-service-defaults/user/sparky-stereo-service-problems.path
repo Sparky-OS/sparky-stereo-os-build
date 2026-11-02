@@ -1,0 +1,12 @@
+[Unit]
+Description=Sparky Stereo OS: a service's problem was kept
+Documentation=file:///usr/share/doc/sparky-stereo-service-defaults/README.md
+# people's sessions only: the login screen's accounts are system users
+ConditionUser=!@system
+
+[Path]
+PathChanged=/var/lib/sparky-stereo-service-defaults/problems
+Unit=sparky-stereo-service-problems.service
+
+[Install]
+WantedBy=graphical-session.target

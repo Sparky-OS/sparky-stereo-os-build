@@ -37,7 +37,16 @@
 #   extra.deb: more packages to include (for example the sparky-stereo-keyring package).
 # With a key that has a passphrase, gpg-agent asks for it once (run from a terminal); it
 # stays cached for the run. A key without a passphrase signs without asking.
+<<<<<<< HEAD
 # Last update 2026/10/30 (DEP-11 catalogues, ORDER 252b)
+=======
+# Installability (ORDER 317): before Release is signed, check-installable.py asks whether every package of the new tree
+# installs on a fresh edition from the archives it uses (SPARKY_LC_ARCHIVE_CONFIG; the CUDA repository too). Its report
+# goes to SPARKY_INSTALLABLE_REPORT (default SPARKY_LC_SCRATCH/installable/report-<time>). SPARKY_INSTALLABLE=report (the
+# default) prints it and goes on; refuse stops before signing when a package fails that SPARKY_INSTALLABLE_KNOWN
+# (package<TAB>version or *<TAB>reason) does not list; off skips the check.
+# Last update 2026/10/31 (installability report, ORDER 317)
+>>>>>>> bd46151204159e4298126d7dddf39fde66ac75af
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -625,6 +634,7 @@ for arch in $ARCHES; do
 done
 index_done "$D/$COMPONENT" "$COMPONENT" $(for arch in $ARCHES; do echo "Contents-$arch"; done)
 
+<<<<<<< HEAD
 # 4c. Publish only the generated DEP-11 catalogues and icon tarballs; the generator's
 # cache, hints, CID index, HTML, statistics and compressed xz catalogues stay outside.
 if [ "$SPARKY_APPSTREAM" = 1 ]; then
@@ -662,6 +672,29 @@ dep11_done "$DEP11_DIR" "$COMPONENT/dep11" "${DEP11_FILES[@]}"
 fi
 
 # 5. Release, signed. When nothing but the date would change, the signed files stay.
+=======
+# 3c. Installability (ORDER 317). A package can stop installing after we published it, with no change on our side:
+# Debian testing moves a library to a new soname and our build still depends on the old one (kdenlive 26.08.1-1+stereo3d5
+# and libkddockwidgets-qt6-3, 31 October 2026). The indexes above are this run's own, so they are read unsigned.
+case ${SPARKY_INSTALLABLE:-report} in
+	off) echo "installability: not checked (SPARKY_INSTALLABLE=off)" ;;
+	report | refuse)
+		INSTALLABLE_REPORT=${SPARKY_INSTALLABLE_REPORT:-${SPARKY_LC_SCRATCH:?set SPARKY_LC_SCRATCH or SPARKY_INSTALLABLE_REPORT}/installable/report-$(date -u +%Y%m%dT%H%M%SZ)}
+		installable=0
+		python3 "$HERE/check-installable.py" "$DEST" --codename "$CODENAME" --unsigned --mode "${SPARKY_INSTALLABLE:-report}" \
+			--report "$INSTALLABLE_REPORT" ${SPARKY_INSTALLABLE_KNOWN:+--known "$SPARKY_INSTALLABLE_KNOWN"} || installable=$?
+		if [ "$installable" -ne 0 ]; then
+			if [ "${SPARKY_INSTALLABLE:-report}" = refuse ]; then
+				echo "installability: refused before signing (exit $installable); see $INSTALLABLE_REPORT/summary.txt" >&2
+				exit 1
+			fi
+			echo "installability: the check did not finish (exit $installable); the publication goes on without it (SPARKY_INSTALLABLE=report)" >&2
+		fi ;;
+	*) echo "SPARKY_INSTALLABLE must be report, refuse or off" >&2; exit 2 ;;
+esac
+
+# 4. Release, signed. When nothing but the date would change, the signed files stay.
+>>>>>>> bd46151204159e4298126d7dddf39fde66ac75af
 {
 	echo "Origin: $ORIGIN"
 	echo "Label: $ORIGIN"

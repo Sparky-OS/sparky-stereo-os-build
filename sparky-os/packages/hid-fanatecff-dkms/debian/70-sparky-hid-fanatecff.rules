@@ -1,0 +1,47 @@
+# Sparky Stereo OS, an edition of SparkyLinux.
+# Edition form of fanatec.rules from gotzl/hid-fanatecff (revision bc2601b),
+# installed as a package file instead of copying it to /etc by hand.
+# Differences from the upstream file, and why (see README.Debian):
+#  1. ACTION also accepts "bind": the driver creates its sysfs files when it
+#     binds, after the "add" event, so the settings below would run too early
+#     when a wheel is plugged in.
+#  2. MODE="0666" on every USB device with vendor 0eb7 is replaced by "uaccess"
+#     on the hidraw node and the USB device node: the user logged in at the
+#     seat gets access through an ACL, other users and services do not.
+#     uaccess is applied on every action except "remove" (systemd v258 NEWS),
+#     and this file's name starts with a number smaller than 73.
+# Everything else is the upstream file unchanged.
+ACTION!="add|change|bind", GOTO="fanatec_end"
+SUBSYSTEM=="hid", DRIVER=="fanatec", GOTO="ftec_module_settings"
+SUBSYSTEM=="input", DRIVERS=="fanatec", GOTO="ftec_input_settings"
+SUBSYSTEM=="leds", DRIVERS=="fanatec", GOTO="ftec_leds_settings"
+SUBSYSTEM=="ftec_tuning", ACTION=="add", GOTO="ftec_tuning_settings"
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="0eb7", SUBSYSTEM=="hidraw", TAG+="uaccess"
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="0eb7", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", TAG+="uaccess"
+GOTO="fanatec_end"
+
+LABEL="ftec_module_settings"
+# let everyone in games group read/write device attributes, such as range, display, LEDs
+# FIXME: this should be narrowed down in the future!
+RUN+="/bin/sh -c 'cd %S%p && chown -f :games range display load rumble || true'"
+GOTO="fanatec_end"
+
+LABEL="ftec_input_settings"
+# remove deadzone/fuzz, fix ranges of analog stick
+RUN+="/bin/sh -c '/usr/bin/evdev-joystick --evdev $devnode --deadzone 0 --fuzz 0 --flatness 0; \
+	/usr/bin/evdev-joystick --evdev $devnode --axis 3 --min -128 --max 128; \
+	/usr/bin/evdev-joystick --evdev $devnode --axis 4 --min -128 --max 128'"
+GOTO="fanatec_end"
+
+LABEL="ftec_tuning_settings"
+# let everyone in games group read/write tuning-menu entries
+# FIXME: this should be narrowed down in the future! Also, this fires every time a value is changed!
+RUN+="/bin/sh -c 'cd %S%p && chown -f :games advanced_mode RESET SLOT SEN FF SHO BLI DRI FOR SPR DPR NDP NFR brF FEI INT NIN FUL FFS ACP || true'"
+GOTO="fanatec_end"
+
+LABEL="ftec_leds_settings"
+# let everyone in games group read/write leds
+RUN+="/bin/sh -c 'cd %S%p && (chown -f :games brightness multi_intensity; chmod -f 660 brightness multi_intensity) || true'"
+GOTO="fanatec_end"
+
+LABEL="fanatec_end"

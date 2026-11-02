@@ -1,0 +1,58 @@
+# DXVK presentation corrections
+
+`patches/upstream-d3d11-resize-dimensions.patch` carries ficool2's upstream commit [3dbf33cb2205dd0d573cbc7a65e3855d97a4800b](https://github.com/doitsujin/dxvk/commit/3dbf33cb2205dd0d573cbc7a65e3855d97a4800b), merged into master.
+It passes the requested width and height to the presenter before updating the D3D11 swapchain description.
+The patch is first in the source package's series, ahead of the existing Debian and edition patches.
+Credit for the resize correction belongs to ficool2 and the DXVK project.
+
+`patches/packed-eye-exact-copy.patch` applies after the patches in the edition's DXVK `2.7.1-4+stereo3d3+lc1` source descriptor.
+The published descriptor's Debian rules remain the package recipe; this directory does not replace its native, PE32, PE64, debug-symbol or Lean Code build steps.
+
+When a packed eye has exactly the size of its destination half, interpolated texture coordinates can round across a texel boundary.
+The one-to-one copy now uses integer framebuffer coordinates.
+Source and destination extents must match without truncating fractional half-widths; scaling continues through the existing sampler.
+The C++ and GLSL push-constant layouts change together.
+Normal mono presentation and color-space conversion retain their existing paths.
+
+The synthetic D3D9 and D3D11 fixtures in `../wine-stereo/tests/` upload the same coordinate-labelled packed image, then resize.
+`check-d3d9-pair.py` checks their raw X11 captures without tolerance.
+Capture is signaled after the eleventh Present, so these fixtures do not assert first-Present timing.
+
+Measured with the AMD Vulkan provider, the old D3D9 PE64 copy has 718 wrong pixels at 320x200 and 574 at 256x160, each with maximum channel error one.
+The corrected PE32 and PE64 copies and their mono controls are exact at both sizes.
+Stereo ScreenShot2 captures additionally require a compositor declaration; this shader patch alone does not supply that declaration.
+
+The DXVK/Wine declaration handoff remains a separate owner and lifecycle change.
+Do not treat this patch, a private module substitution, or these bounded pixel controls as a complete DXVK package/release qualification.
+Other packed layouts, scaled rectangles, HDR, native DXVK and NVIDIA still require their applicable controls before release.
+
+### Versioned Wine surface request candidate
+
+`patches/wine-wsi-v1-request.patch` applies after the published DXVK `2.7.1-4+stereo3d3+lc1` patches.
+It is independent of the exact-copy patch above.
+`prepare-source.py SOURCE --toolkit TOOLKIT` adds the upstream resize patch first, then appends this patch and the exact-copy patch to a fresh extraction of that descriptor and prepares version `2.7.1-4+stereo3d5+lc1`.
+It normalizes the older descriptor's trailing Lean Code build-dependency list before the current toolkit's checked plain-source conversion.
+It preserves the native and Windows build targets, symbols, package set and ordinary fallback.
+Create one descriptor, then build every architecture from it; source preparation alone is not package qualification.
+
+Set `WINE254_CAPTURE_FIRST=1` for the D3D9, D3D10 and D3D11 pair fixtures to capture the first and second Presents before and after resize, with a responsive capture handshake and a frame stamp.
+`check-d3d-pair-first-frames.py ROOT --mode mono|stereo` checks raw and delivered pixels and requires one actual Present request for each capture.
+The unchanged +4 D3D10/11 first resized frame is the failing control; the +5 build must pass every phase in PE32 and PE32+, mono and stereo.
+
+D3D9 and the packed-input DXGI surface factory scope a version-1 request to the Windows thread creating the Vulkan surface.
+The Wine runtime owns the native content declaration and acknowledges a complete child-surface contract.
+The producer restores any previous Win32 property value after the call.
+Failure to set the hint, an old runtime or an old compositor retains ordinary surface creation instead of turning an optional hint failure into allocation failure.
+Native stereo array swapchains remain on their existing path.
+
+The matching Wine patch requires libstereo-declare 1.8 and the compositor's version-9 child-shape consumer.
+PE32 and PE64 D3D9 acknowledgement, old-runtime and old-compositor fallback have private-module evidence.
+D3D11's versioned path, injected property failures and restoration, native DXVK, packaging and GPU coverage still need their own gates; the earlier unversioned D3D11 proof is not a proof of this new handshake.
+
+### Windows debug companion check
+
+`tests/check-pe-debug.py DLL_DIRECTORY DEBUG_BUILD_ID_DIRECTORY` checks all five Windows DLLs after the original debug split.
+It requires a distinct CodeView build ID for each DLL, the corresponding debug filename, and a matching GNU debug-link CRC.
+Pass `--objdump i686-w64-mingw32-objdump` for PE32.
+An empty build ID can otherwise make the stripping helper overwrite several modules at the same `.debug` path.
+Run the source package through `debian/rules build` so debhelper exports its build flags before the configuration hooks; invoking those hooks directly does not reproduce that environment.

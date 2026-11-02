@@ -150,7 +150,8 @@ class SourceBuildTests(unittest.TestCase):
             (root / 'debian').mkdir()
             originals = {'include/empty.h': b'',
                          'arch/x86/include/asm/exec.h': b'// Architecture explanation for humans.\n',
-                         'scripts/empty.c': b'// Different commentary for the build tools.\n'}
+                         # a different comment-only file of the same name: both keep only their line break
+                         'scripts/include/exec.h': b'// Different commentary for the build tools.\n'}
             for name, raw in originals.items():
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)

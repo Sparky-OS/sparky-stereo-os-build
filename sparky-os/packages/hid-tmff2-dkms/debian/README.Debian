@@ -1,0 +1,26 @@
+hid-tmff2-dkms for Sparky Stereo OS
+===================================
+
+This package builds the unchanged upstream driver (Kimplul/hid-tmff2, revision
+d890a93, with hid-tminit 8c45472) with DKMS, and installs an edition udev rule:
+
+    /usr/lib/udev/rules.d/70-sparky-hid-tmff2.rules
+
+Upstream ships no rule for the driver's sysfs files. Its README mentions
+"make udev-rules", but the Makefile has no such target. The files (range, gain,
+alternate_modes and the spring, damper and friction levels) are created
+root:root with mode 0644, so only root could set them. The edition rule makes
+them group "games" and group-writable, the convention hid-fanatecff's own rules
+use. Nothing is opened to other users. Debian's "games" group is empty by
+default; to allow yourself, once:
+
+    sudo adduser "$USER" games
+
+then log out and in.
+
+Upstream's udev/71-thrustmaster-steamdeck.rules is not installed: its README
+says to use it only on a Steam Deck. The hidraw node of the T300RS and T248
+(044f:b66d, b66e, b66f, b696) gets its uaccess ACL from sparky-sim-hidraw.
+
+Test: study/packages/rigs/check-wheel-udev.py (simulated devices; fails on the
+previous build, which shipped no rule). Not verified on a wheel.

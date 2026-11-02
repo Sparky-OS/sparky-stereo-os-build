@@ -1,4 +1,19 @@
 -------------------------------------------------------------------------------
+  Version 0.3.1 (2026-11-02)
+-------------------------------------------------------------------------------
+
+  * Nothing fails silently (Daniel, 2026-11-01; ORDER 346b, rows U17, U18 and U54 of ORDER 343's audit)
+  * Whatever keeps the daemon from protecting memory, or from protecting it the way it was set, is a problem kept in /run/cushion-swap/problems, said once in the journal and shown once per session as a notification, in the nine languages
+  * The status names it: PROTECTION (yes, degraded, no), PROBLEMS, REASON, MODE_REASON, CALIBRATION, STARTED and PID
+  * No swap area, an area that is not there, an unreadable /proc/meminfo or /proc/swaps and a failed swapon say that memory is not protected; a failed swapoff says the area stays on
+  * --status exits 0 only while memory is protected: 1 with a problem kept, 2 not protecting, 3 not running, 4 unreadable; --problems lists them in the system's language
+  * The unit keeps its status past the daemon (RuntimeDirectoryPreserve=yes), says why it stopped (ExecStopPost) and gives systemctl status a status line (NotifyAccess=all)
+  * The package checks that the restarted daemon runs and says whether it protects memory; each failed setup step is said with its own error, and the package still configures
+  * PSI: a kernel without it, or PSI=off, is a mode; a kernel with PSI whose helper is missing or whose trigger is refused or lost is a problem; the poller keeps watching as before, and PSI=off is offered as a choice
+  * Calibration: a missing helper, a failed fingerprint, a failed measurement (tried again a minute later, as before) or a result that cannot be kept are problems; the conservative pace stays, with MAX_ALLOC_MIB_S offered as a choice
+  * Hibernation: a failed switch-on, a kernel resume device that differs and a failed switch-off after resume fail their command and are kept
+
+-------------------------------------------------------------------------------
   Version 0.3.0 (2026-10-11)
 -------------------------------------------------------------------------------
 

@@ -1,0 +1,153 @@
+--- a/src/d3d9/d3d9_swapchain.cpp
++++ b/src/d3d9/d3d9_swapchain.cpp
+@@ -4,6 +4,7 @@
+ 
+ #include "d3d9_hud.h"
+ #include "d3d9_window.h"
++#include "../wsi/wsi_wine_stereo.h"
+ 
+ namespace dxvk {
+ 
+@@ -970,11 +971,14 @@
+       cWindow = Window
+     ] (VkSurfaceKHR* surface) {
+       auto vki = cDevice->adapter()->vki();
+-
+-      return wsi::createSurface(cWindow,
++      wsi::WineStereoSurface stereo(cWindow,
++        cDevice->config().stereoInput != DxvkStereoInput::None);
++      VkResult result = wsi::createSurface(cWindow,
+         vki->getLoaderProc(),
+         vki->instance(),
+         surface);
++      stereo.complete(result);
++      return result;
+     });
+ 
+     presenter->setSurfaceExtent(m_swapchainExtent);
+--- a/src/dxgi/dxgi_surface.h
++++ b/src/dxgi/dxgi_surface.h
+@@ -20,7 +20,8 @@
+ 
+     DxgiSurfaceFactory(
+             PFN_vkGetInstanceProcAddr vulkanLoaderProc,
+-            HWND                      hWnd);
++            HWND                      hWnd,
++            bool                      packedStereo = false);
+ 
+     ~DxgiSurfaceFactory();
+ 
+@@ -38,6 +39,7 @@
+     PFN_vkGetInstanceProcAddr m_vkGetInstanceProcAddr = nullptr;
+     HWND                      m_window = nullptr;
+     bool                      m_ownsWindow = false;
++    bool                      m_packedStereo = false;
+ 
+     HWND CreateDummyWindow();
+ 
+--- a/src/dxgi/dxgi_surface.cpp
++++ b/src/dxgi/dxgi_surface.cpp
+@@ -1,11 +1,13 @@
+ #include "dxgi_surface.h"
+ 
+ #include "../wsi/wsi_window.h"
++#include "../wsi/wsi_wine_stereo.h"
+ 
+ namespace dxvk {
+ 
+-  DxgiSurfaceFactory::DxgiSurfaceFactory(PFN_vkGetInstanceProcAddr vulkanLoaderProc, HWND hWnd)
+-  : m_vkGetInstanceProcAddr(vulkanLoaderProc), m_window(hWnd), m_ownsWindow(!hWnd) {
++  DxgiSurfaceFactory::DxgiSurfaceFactory(PFN_vkGetInstanceProcAddr vulkanLoaderProc, HWND hWnd, bool packedStereo)
++  : m_vkGetInstanceProcAddr(vulkanLoaderProc), m_window(hWnd), m_ownsWindow(!hWnd),
++    m_packedStereo(packedStereo) {
+     if (!m_window)
+       m_window = CreateDummyWindow();
+   }
+@@ -44,7 +46,10 @@
+           VkInstance                Instance,
+           VkPhysicalDevice          Adapter,
+           VkSurfaceKHR*             pSurface) {
+-    return wsi::createSurface(m_window, m_vkGetInstanceProcAddr, Instance, pSurface);
++    wsi::WineStereoSurface stereo(m_window, m_packedStereo);
++    VkResult result = wsi::createSurface(m_window, m_vkGetInstanceProcAddr, Instance, pSurface);
++    stereo.complete(result);
++    return result;
+   }
+ 
+ 
+--- a/src/dxgi/dxgi_factory.cpp
++++ b/src/dxgi/dxgi_factory.cpp
+@@ -588,7 +588,8 @@
+ 
+     if (SUCCEEDED(pDevice->QueryInterface(IID_PPV_ARGS(&dxvkFactory)))) {
+       Com<IDXGIVkSurfaceFactory> surfaceFactory = new DxgiSurfaceFactory(
+-        m_instance->vki()->getLoaderProc(), hWnd);
++        m_instance->vki()->getLoaderProc(), hWnd,
++        !desc.Stereo && m_instance->options().stereoInput != DxvkStereoInput::None);
+ 
+       Com<IDXGIVkSwapChain> presenter;
+       HRESULT hr = dxvkFactory->CreateSwapChain(surfaceFactory.ptr(), &desc, &presenter);
+--- /dev/null
++++ b/src/wsi/wsi_wine_stereo.h
+@@ -0,0 +1,61 @@
++#pragma once
++
++#include "wsi_window.h"
++#include "../util/log/log.h"
++
++namespace dxvk::wsi {
++
++  // A synchronous, versioned Wine WSI request. The native surface owns the
++  // content declaration; this temporary Win32 property is not a declaration.
++  class WineStereoSurface {
++  public:
++    WineStereoSurface(HWND window, bool packed)
++#ifdef _WIN32
++    : m_window(window), m_enabled(packed)
++#endif
++    {
++#ifdef _WIN32
++      if (m_enabled) {
++        swprintf(m_name, 64, L"__wine_vulkan_stereo_v1_%08x", GetCurrentThreadId());
++        m_previous = GetPropW(m_window, m_name);
++        m_requested = SetPropW(m_window, m_name, reinterpret_cast<HANDLE>(0x10003));
++      }
++#endif
++    }
++
++    ~WineStereoSurface() {
++#ifdef _WIN32
++      if (m_requested) {
++        if (m_previous)
++          SetPropW(m_window, m_name, m_previous);
++        else
++          RemovePropW(m_window, m_name);
++      }
++#endif
++    }
++
++    void complete(VkResult result) const {
++#ifdef _WIN32
++      if (m_enabled && result == VK_SUCCESS) {
++        const bool accepted = m_requested
++          && GetPropW(m_window, m_name) == reinterpret_cast<HANDLE>(0x18003);
++        Logger::info(accepted ? "Wine stereo WSI v1: acknowledged"
++                              : "Wine stereo WSI v1: ordinary WSI fallback");
++      }
++#endif
++    }
++
++    WineStereoSurface(const WineStereoSurface&) = delete;
++    WineStereoSurface& operator=(const WineStereoSurface&) = delete;
++
++  private:
++#ifdef _WIN32
++    HWND m_window;
++    bool m_enabled;
++    bool m_requested = false;
++    HANDLE m_previous = nullptr;
++    wchar_t m_name[64] = { };
++#endif
++  };
++
++}
