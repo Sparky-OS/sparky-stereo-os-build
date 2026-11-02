@@ -17,6 +17,8 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 sparky_need SPARKY_REPO_DIR
 : "${SPARKY_LC_ARCHIVE_DIR:?the link gate's folder, mounted at /archive: sources.json (the public archives, and the edition's
   published tree as file:/repo) and the public keyrings it names; see sparky-os/lean/archive.md}"
+# Docker mounts no symlink: the published tree by its real path
+REPO=$(readlink -f "$SPARKY_REPO_DIR")
 WORK=$(mkdir -p "$1" && cd "$1" && pwd)
 PREV=$(cd "$2" && pwd)
 SRC=$(cd "$3" && pwd)
@@ -25,7 +27,7 @@ name=command-not-found-build-$$
 docker run -d --name "$name" --cpus 4 --platform linux/amd64 \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
 	-e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro \
-	-v "$WORK":/work -v "$SRC":/src:ro -v "$SPARKY_REPO_DIR":/repo:ro -v "$PREV":/prev:ro \
+	-v "$WORK":/work -v "$SRC":/src:ro -v "$REPO":/repo:ro -v "$PREV":/prev:ro \
 	-v "$HERE/../..":/toolkit:ro -v "$HERE":/tools:ro \
 	sparky-lc-migration:20261020 bash -c 'bash /tools/build-in-container.sh > /work/build.log 2>&1' >/dev/null
 status=$(docker wait "$name")

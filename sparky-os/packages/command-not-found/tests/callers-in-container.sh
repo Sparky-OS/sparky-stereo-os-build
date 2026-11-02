@@ -10,9 +10,9 @@
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive LC_ALL=C.UTF-8
 probe_commands="fd bat cmatrix docker ts wakeonlan python"
-gpg --dearmor </repo/sparky-stereo-repo.asc >/usr/share/keyrings/sparky-stereo-test.gpg 2>/dev/null ||
-	{ apt-get -y update >/dev/null && apt-get -y install --no-install-recommends gpg >/dev/null && gpg --dearmor </repo/sparky-stereo-repo.asc >/usr/share/keyrings/sparky-stereo-test.gpg; }
-printf 'deb [signed-by=/usr/share/keyrings/sparky-stereo-test.gpg] file:/repo mashtabba main\n' >/etc/apt/sources.list.d/edition.list
+# apt reads an armored key named .asc (sources.list(5), Signed-By)
+cp /repo/sparky-stereo-repo.asc /usr/share/keyrings/sparky-stereo-test.asc
+printf 'deb [signed-by=/usr/share/keyrings/sparky-stereo-test.asc] file:/repo mashtabba main\n' >/etc/apt/sources.list.d/edition.list
 printf 'Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n' >/etc/apt/preferences.d/edition
 apt-get -y update >/out/apt-update-1.log 2>&1
 apt-get -y install --no-install-recommends command-not-found sparky-stereo-console sparky-stereo-integration zsh fish dbus \

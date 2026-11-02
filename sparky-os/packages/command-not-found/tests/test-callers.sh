@@ -13,10 +13,11 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "$HERE/../../../config/local-config.sh"
 sparky_need SPARKY_REPO_DIR
+REPO=$(readlink -f "$SPARKY_REPO_DIR")
 CAND=$(cd "$1" && pwd)
 OUT=$(mkdir -p "$2" && cd "$2" && pwd)
 IMAGE=${3:-debian:testing}
 [ -z "$(ls -A "$OUT")" ] || { echo "$OUT is not empty" >&2; exit 1; }
 docker run --rm --cpus 4 --platform linux/amd64 --network bridge \
-	-v "$SPARKY_REPO_DIR":/repo:ro -v "$CAND":/cand:ro -v "$HERE":/tests:ro -v "$OUT":/out \
+	-v "$REPO":/repo:ro -v "$CAND":/cand:ro -v "$HERE":/tests:ro -v "$OUT":/out \
 	"$IMAGE" bash -c 'trap "chown -R '"$(id -u):$(id -g)"' /out" EXIT; bash /tests/callers-in-container.sh' 2>&1 | tee "$OUT/test.log"
