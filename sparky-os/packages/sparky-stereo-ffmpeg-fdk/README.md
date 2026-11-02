@@ -49,6 +49,7 @@ tests/run-tests.sh   (in a debian:testing container with deb-multimedia and a te
 Failures from cleanup, the local build and the update check are kept by `sparky-stereo-problems`.
 `--status` reads that engine; a later successful step clears its problem.
 The helper keeps no separate error files.
+Build failures tell the person to use `--rebuild`; there may be no installed local build for `--auto` to retry.
 An upgrade moves the old failure files into the engine before deleting them.
 If migration fails, the upgrade fails visibly and the original evidence remains.
 

@@ -171,6 +171,8 @@ tree=/unused
                 result, files = self.execute(scenario, prepare)
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertNotIn('transaction', files)
+                self.assertIn('--rebuild', files['problems']['build']['text'])
+                self.assertEqual(files['problems']['build']['repair'], [])
                 self.assertTrue(result.stderr.strip())
 
     def test_successful_build_plan_installs_and_excludes_upgrades(self):

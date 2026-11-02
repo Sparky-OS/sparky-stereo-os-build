@@ -162,6 +162,8 @@ class EngineChecks(unittest.TestCase):
         self.assertEqual(result.returncode,0,result.stderr)
         rows=self.records()
         self.assertEqual(rows['build']['data']['version'],'2')
+        self.assertEqual(rows['build']['repair'],[])
+        self.assertIn('--rebuild',rows['build']['text'])
         self.assertEqual(rows['cleanup']['data']['packages'],['tool-a','tool-b'])
         self.assertTrue(rows['cleanup']['data']['legacy'])
         for lang in ('en','pl','pt_BR','fr','de','ja','ko','zh_CN','zh_TW'):
