@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Daniel Ramos (Capitain Jack) 2026/08/01
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/11
+# Last update 2026/11/02
 #
 # Cushion Swap File: the swap area stays off, is deployed under memory
 # pressure and retracted only when that is safe. Daniel Ramos's design, his
@@ -11,10 +11,23 @@
 #
 #   cushion-swap [--dry-run] [--once] [--interval N]   the daemon (his options)
 #   cushion-swap --thresholds        the values for this machine and why
-#   cushion-swap --status            the state file the System Settings page reads
+#   cushion-swap --status            the state file the System Settings page reads; exit 0 protecting,
+#                                    1 protecting with a problem kept, 2 not protecting, 3 not running,
+#                                    4 the state cannot be read
+#   cushion-swap --problems          what is wrong, why and what to do, in the system's language
 #   cushion-swap --resume-target     where the hibernation image goes, and which setting says so
 #   cushion-swap --hibernate-deploy  switch that area on before hibernation
 #   cushion-swap --hibernate-resume  switch it off again after resume if unused
+#   cushion-swap --stopped           the unit's ExecStopPost: says why the daemon is no longer running
+#   cushion-swap --wait-ready EPOCH  the package's check that a daemon started after EPOCH runs and protects
+#   cushion-swap --notify            the session's side: each kept problem once as a desktop notification
+#   cushion-swap --say KEY [ARG...]  one message of the language files, for the maintainer scripts
+#
+# Nothing fails silently (Daniel, 2026-11-01: "either it works or not and the user must know"). Whatever keeps
+# the daemon from protecting memory, or from protecting it the way it was set, is a problem kept as a file in
+# /run/cushion-swap/problems (what, why and what to do), named in the status (PROTECTION=yes, degraded or no,
+# PROBLEMS, REASON), said once in the journal and shown once per session as a notification; it clears when it
+# is gone. A running service is never taken for working protection.
 #
 # Settings: /etc/default/cushion-swap (every value can be set there).
 # Hibernation: /etc/initramfs-tools/conf.d/resume (RESUME=, RESUME_OFFSET=),
@@ -23,7 +36,7 @@
 # STATE_DIR NOW_EPOCH NOW_EPOCH_MS PSI_PATH PSI_WAKE RUN_USER_DIR PROC_DIR
 # CUSHION_SWAP_CONFIG CUSHION_SWAP_AREA SWAPON_BIN SWAPOFF_BIN
 # INITRAMFS_RESUME_PATH CMDLINE_PATH DEV_DISK_DIR SYS_BLOCK_DIR SYS_POWER_DIR
-# FINDMNT_BIN FILEFRAG_BIN BTRFS_BIN.
+# FINDMNT_BIN FILEFRAG_BIN BTRFS_BIN CUSHION_SWAP_LANG_DIR SYSTEMCTL_BIN BUSCTL_BIN.
 set -u
 # Not set -e: a long-running daemon must survive one failed command
 # (Daniel's rule); every command whose failure matters is checked.
@@ -94,6 +107,15 @@ STATE_DIR=${STATE_DIR:-/run/cushion-swap}
 STATE_FILE=$STATE_DIR/state
 STATUS_FILE=$STATE_DIR/status
 HIBERNATE_MARK=$STATE_DIR/hibernate-deployed
+PROBLEM_DIR=$STATE_DIR/problems
+LANG_DIR=${CUSHION_SWAP_LANG_DIR:-/usr/share/sparky/sparky-stereo-cushion-swap}
+SYSTEMCTL_BIN=${SYSTEMCTL_BIN:-systemctl}
+BUSCTL_BIN=${BUSCTL_BIN:-busctl}
+# the daemon's own problems (the hibernation commands keep theirs beside them)
+readonly DAEMON_PROBLEMS="no-area area-missing meminfo swaps deploy-failed retract-failed psi-missing psi-lost calibration-failed calibration-unavailable calibration-save service-failed status-write"
+# a daemon that keeps stopping is one problem, not one per restart: it clears after this long running
+SERVICE_OK_AFTER_SEC=${SERVICE_OK_AFTER_SEC:-60}
+CALIBRATION_RETRY_SEC=${CALIBRATION_RETRY_SEC:-60}
 PSI_PATH=${PSI_PATH:-/proc/pressure/memory}
 PSI_WAKE=${PSI_WAKE:-/usr/libexec/cushion-swap/psi-wake}
 RUN_USER_DIR=${RUN_USER_DIR:-/run/user}
@@ -108,8 +130,13 @@ GAME_SIGNAL=cushion-swap-game-opening
 DRY_RUN=0
 RUN_ONCE=0
 MODE=compatibility
+MODE_REASON=""
 FAST_SINCE_MS=0
 CYCLE=0
+CALIBRATION=pending
+CALIBRATION_FAILURES=0
+CALIBRATION_LAST_ERROR=""
+STARTED=0
 
 _find_bin() {
 	local name=$1 c
@@ -151,6 +178,129 @@ log_err() {
 	return 0
 }
 
+# --- What is said to the person ---------------------------------------------
+# The messages are the package's language files (LOCALn="text", %s for the arguments) in the nine languages
+# the edition requires. The language: LANG, else /etc/default/locale; the whole name, then the bare language,
+# then English; Chinese keeps its territory, zh_CN when none is named.
+lang_code() {
+	local lang=${LANG:-} line code
+	if [[ -z $lang || $lang == C || $lang == C.* || $lang == POSIX ]] && [[ -r /etc/default/locale ]]; then
+		while IFS= read -r line; do
+			[[ $line == LANG=* ]] && { lang=${line#LANG=}; lang=${lang//\"/}; }
+		done </etc/default/locale
+	fi
+	lang=${lang%%.*} lang=${lang%%@*}
+	for code in "$lang" "$( [[ $lang == zh* ]] && echo zh_CN || echo "${lang%%_*}")"; do
+		case $code in en | pl | pt_BR | fr | de | ja | ko | zh_CN | zh_TW) LANG_CODE=$code; return ;; esac
+	done
+	LANG_CODE=en
+}
+
+# text_into VAR LANG KEY [ARG...]: the message KEY in LANG with its %s filled; a key missing from the language's
+# file comes from the English file, and a key missing from both is the key and its arguments, never nothing.
+text_into() {
+	local out=$1 lang=$2 key=$3 line template="" file
+	shift 3
+	for file in "$LANG_DIR/$lang" "$LANG_DIR/en"; do
+		[[ -r $file ]] || continue
+		while IFS= read -r line; do
+			if [[ $line == "$key="* ]]; then
+				template=${line#"$key="} template=${template#\"} template=${template%\"}
+				break
+			fi
+		done <"$file"
+		[[ -n $template ]] && break
+	done
+	if [[ -z $template ]]; then
+		printf -v "$out" '%s' "$key $*"
+		return
+	fi
+	# shellcheck disable=SC2059
+	printf -v "$out" "${template//\\/\\\\}" "$@"
+}
+
+# say KEY [ARG...]: on standard error in the system's language, and in English too when that is another
+say() {
+	local message
+	lang_code
+	text_into message "$LANG_CODE" "$@"
+	printf 'cushion-swap: %s\n' "$message" >&2
+	if [[ $LANG_CODE != en ]]; then
+		text_into message en "$@"
+		printf 'cushion-swap: (en) %s\n' "$message" >&2
+	fi
+}
+
+# --- Problems ----------------------------------------------------------------
+# One file per problem in $PROBLEM_DIR: FIRST= (when it began, the same while it lasts), EFFECT= (no: memory is
+# not protected; degraded: protected another way than set; notice: protected, something else did not work),
+# KEY= and ARG= lines (the message), TEXT= (the English line, for support). Written only when it changes.
+declare -A PROBLEM_BODY=()
+problem_set() {
+	local code=$1 effect=$2 key=$3 arg body first="" line english file=$PROBLEM_DIR/$1
+	shift 3
+	body="EFFECT=$effect"$'\n'"KEY=$key"
+	for arg in "$@"; do body+=$'\n'"ARG=${arg//$'\n'/ }"; done
+	[[ ${PROBLEM_BODY[$code]:-} == "$body" && -e $file ]] && return 0
+	local kept=""
+	if [[ -r $file ]]; then
+		while IFS= read -r line; do
+			case $line in FIRST=*) first=${line#FIRST=} ;; EFFECT=* | KEY=* | ARG=*) kept+="${kept:+$'\n'}$line" ;; esac
+		done <"$file"
+	fi
+	# the same problem another run of this program kept already: said once, not again
+	if [[ $kept == "$body" ]]; then
+		PROBLEM_BODY[$code]=$body
+		return 0
+	fi
+	if [[ -z $first ]]; then
+		now_ms
+		first=$((NOW_MS / 1000))
+	fi
+	text_into english en "$key" "$@"
+	PROBLEM_BODY[$code]=$body
+	log_err "$english"
+	((DRY_RUN)) && return 0
+	mkdir -p "$PROBLEM_DIR" 2>/dev/null
+	if ! printf 'FIRST=%s\n%s\nTEXT=%s\n' "$first" "$body" "$english" >"$file.tmp" 2>/dev/null || ! mv -f "$file.tmp" "$file" 2>/dev/null; then
+		log_err "cannot keep the problem in $file: the journal line above is all there is"
+	fi
+	STATUS_TEXT=""
+}
+
+problem_clear() {
+	local code=$1 file=$PROBLEM_DIR/$1
+	[[ -n ${PROBLEM_BODY[$code]:-} || -e $file ]] || return 0
+	unset "PROBLEM_BODY[$code]"
+	if ((!DRY_RUN)) && [[ -e $file ]]; then
+		rm -f "$file" 2>/dev/null || log_err "cannot remove $file"
+		# the default log has only real problems (Daniel, 2026-10-10): that one is gone shows in the status, and
+		# in the log only with every-cycle logging
+		[[ $LOG_EVERY_CYCLE == yes ]] && log_cycle "resolved: $code"
+	fi
+	STATUS_TEXT=""
+}
+
+# PROTECTION (yes, degraded, no), PROBLEMS (their codes) and REASON (the first one's English line), from every
+# kept problem, the hibernation commands' too.
+protection_state() {
+	local file code line effect text
+	PROTECTION=yes PROBLEMS="" REASON=""
+	for file in "$PROBLEM_DIR"/*; do
+		[[ -f $file && $file != *.tmp ]] || continue
+		code=${file##*/} effect="" text=""
+		while IFS= read -r line; do
+			case $line in EFFECT=*) effect=${line#EFFECT=} ;; TEXT=*) text=${line#TEXT=} ;; esac
+		done <"$file"
+		PROBLEMS+="${PROBLEMS:+ }$code"
+		case $effect in
+		no) [[ $PROTECTION == no ]] || REASON=$text; PROTECTION=no ;;
+		degraded) [[ $PROTECTION == yes ]] && { PROTECTION=degraded REASON=$text; } ;;
+		*) [[ -z $REASON ]] && REASON=$text ;;
+		esac
+	done
+}
+
 # Sets NOW_MS (milliseconds) without a subshell: this runs every cycle.
 now_ms() {
 	if [[ -n ${NOW_EPOCH_MS:-} ]]; then
@@ -183,9 +333,11 @@ gib_str() {
 	printf '%s' "$text"
 }
 
+# MEMINFO_WHY says what was wrong; the caller keeps it as the meminfo problem (said once, not every cycle).
 read_meminfo() {
+	MEMINFO_WHY=""
 	if [[ ! -r $MEMINFO_PATH ]]; then
-		log_err "cannot read $MEMINFO_PATH (fail-safe: skipping this cycle, no action taken)"
+		MEMINFO_WHY="it is missing or unreadable"
 		return 1
 	fi
 	local key number total="" avail="" stotal="" sfree=""
@@ -198,11 +350,11 @@ read_meminfo() {
 		esac
 	done <"$MEMINFO_PATH"
 	if [[ -z $avail || -z $stotal || -z $sfree ]]; then
-		log_err "malformed $MEMINFO_PATH: MemAvailable='${avail}' SwapTotal='${stotal}' SwapFree='${sfree}' (fail-safe: skipping this cycle)"
+		MEMINFO_WHY="malformed: MemAvailable='${avail}' SwapTotal='${stotal}' SwapFree='${sfree}'"
 		return 1
 	fi
 	if ! [[ $avail =~ ^[0-9]+$ && $stotal =~ ^[0-9]+$ && $sfree =~ ^[0-9]+$ ]]; then
-		log_err "non-numeric field in $MEMINFO_PATH (fail-safe: skipping this cycle)"
+		MEMINFO_WHY="a field is not a number: MemAvailable='${avail}' SwapTotal='${stotal}' SwapFree='${sfree}'"
 		return 1
 	fi
 	[[ $total =~ ^[0-9]+$ ]] || total=$REFERENCE_KIB
@@ -314,12 +466,39 @@ save_state() {
 		>"$STATE_FILE" 2>/dev/null || true
 }
 
+# The area the daemon switches: none configured, or one that is not there, means no protection.
+area_problem() {
+	if [[ -z $AREA ]]; then
+		problem_set no-area no LOCAL1
+		problem_clear area-missing
+	elif [[ ! -e $AREA ]]; then
+		problem_clear no-area
+		problem_set area-missing no LOCAL2 "$AREA"
+	else
+		problem_clear no-area
+		problem_clear area-missing
+	fi
+}
+
 STATUS_TEXT=""
+STATUS_FAILED=0
 write_status() {
 	local state=$1 text fast=no
 	((FAST_SINCE_MS)) && fast=yes
+	protection_state
+	# no swap area, no numbers, or no daemon: memory is not protected whatever else is said
+	case $state in no-area | unknown | stopped | disabled) PROTECTION=no ;; esac
+	[[ $state == disabled ]] && REASON=${REASON_OFF:-$REASON}
+	[[ $state == stopped && -z $REASON ]] && REASON="the service was stopped"
 	text="STATE=$state
+PROTECTION=$PROTECTION
+PROBLEMS=$PROBLEMS
+REASON=$REASON
 MODE=$MODE
+MODE_REASON=$MODE_REASON
+CALIBRATION=$CALIBRATION
+STARTED=$STARTED
+PID=${STATUS_PID-$$}
 FAST=$fast
 PACING=$PACING
 MAX_ALLOC_MIB_S=$MAX_ALLOC_MIB_S
@@ -335,9 +514,29 @@ RATE_WINDOW_SEC=$RATE_WINDOW_SEC
 RETRACT_MARGIN_KIB=${RETRACT_MARGIN_KIB:-0}
 QUIET_SECONDS=$QUIET_SECONDS"
 	[[ $text == "$STATUS_TEXT" ]] && return
-	STATUS_TEXT=$text
 	[[ -d $STATE_DIR ]] || mkdir -p "$STATE_DIR" 2>/dev/null
-	printf '%s\n' "$text" >"$STATUS_FILE.tmp" 2>/dev/null && mv -f "$STATUS_FILE.tmp" "$STATUS_FILE" 2>/dev/null || true
+	if printf '%s\n' "$text" >"$STATUS_FILE.tmp" 2>/dev/null && mv -f "$STATUS_FILE.tmp" "$STATUS_FILE" 2>/dev/null; then
+		STATUS_TEXT=$text
+		STATUS_FAILED=0
+		notify_systemd
+	elif ((!STATUS_FAILED)); then
+		# the page and --status read this file: that it cannot be written is said, once until it works again
+		STATUS_FAILED=1
+		log_err "cannot write $STATUS_FILE: System Settings and cushion-swap --status show an old state"
+		notify_systemd
+	fi
+}
+
+# systemd's own status line (systemctl status cushion-swap: "Status: ..."), where the unit gives a notify
+# socket (NotifyAccess=all); the first one also says the daemon is ready.
+NOTIFIED_STATUS=""
+notify_systemd() {
+	[[ -n ${NOTIFY_SOCKET:-} ]] || return 0
+	local line="memory protection: $PROTECTION${REASON:+ ($REASON)}"
+	((STATUS_FAILED)) && line+="; cannot write $STATUS_FILE"
+	[[ $line == "$NOTIFIED_STATUS" ]] && return 0
+	NOTIFIED_STATUS=$line
+	systemd-notify --ready --status="$line" 2>/dev/null || log_err "systemd-notify failed: systemctl status shows no protection state"
 }
 
 # A hibernation is using the area: the hibernate unit switched it on and
@@ -360,9 +559,14 @@ run_cycle() {
 	CYCLE=$((CYCLE + 1))
 
 	if ! read_meminfo; then
+		# Daniel's fail-safe: no action without the numbers; and the person is told memory is not protected
+		problem_set meminfo no LOCAL3 "$MEMINFO_PATH" "$MEMINFO_WHY"
+		((DRY_RUN)) || write_status unknown
 		return 0
 	fi
+	problem_clear meminfo
 	compute_thresholds
+	area_problem
 
 	local swap_used_kib=$((SWAP_TOTAL_KIB - SWAP_FREE_KIB))
 	((swap_used_kib < 0)) && swap_used_kib=0
@@ -416,6 +620,11 @@ run_cycle() {
 	local swap_active_rc=0
 	area_state
 	swap_active_rc=$?
+	if ((swap_active_rc == 2)); then
+		problem_set swaps no LOCAL4 "$SWAPS_PATH"
+	else
+		problem_clear swaps
+	fi
 
 	local quiet_elapsed=$((now - LAST_DANGER_EPOCH))
 	local margin_kib=$((swap_used_kib + RETRACT_MARGIN_KIB))
@@ -449,24 +658,34 @@ run_cycle() {
 
 	local state=off
 	((swap_active_rc == 0)) && state=deployed
-	[[ -z $AREA ]] && state=no-area
+	# no area, or one that is not there: nothing to deploy, whatever /proc/swaps says
+	[[ -z $AREA ]] || { ((swap_active_rc != 0)) && [[ ! -e $AREA ]]; } && state=no-area
 
 	if ((deploy_trigger)); then
 		if [[ -z $AREA ]]; then
-			log_err "deploy wanted but no Cushion Swap File area is configured (AREA= or a noauto swap line in $FSTAB_PATH)"
+			# the no-area problem says it once; here only the moment it mattered
+			log_err "deploy wanted (${deploy_reason}) but no Cushion Swap File area is configured (AREA= or a noauto swap line in $FSTAB_PATH)"
 		elif ((swap_active_rc == 1)); then
 			log "DEPLOY triggered: ${deploy_reason} -- swap currently OFF -> $( ((DRY_RUN)) && echo '[dry-run] would run' || echo 'running') '${SWAPON_BIN} ${AREA}'"
 			if ((!DRY_RUN)); then
-				if "$SWAPON_BIN" -- "$AREA"; then
+				local output rc
+				output=$("$SWAPON_BIN" -- "$AREA" 2>&1)
+				rc=$?
+				[[ -n $output ]] && printf '%s\n' "$output" >&2
+				if ((rc == 0)); then
 					log "DEPLOY succeeded."
+					problem_clear deploy-failed
 					state=deployed
 				else
-					log_err "DEPLOY command failed (swapon ${AREA} returned non-zero). Will re-evaluate next cycle."
+					log_err "DEPLOY command failed (swapon ${AREA} returned $rc). Will re-evaluate next cycle."
+					problem_set deploy-failed no LOCAL5 "$AREA" "exit status $rc${output:+: ${output##*$'\n'}}" "$AREA"
 				fi
 			fi
 		elif ((swap_active_rc == 2)); then
 			log_err "swap state unknown (cannot read ${SWAPS_PATH}); fail-safe: not attempting deploy this cycle"
 		fi
+	elif ((swap_active_rc == 0)); then
+		problem_clear deploy-failed
 	fi
 
 	if ((retract_ok)); then
@@ -474,15 +693,21 @@ run_cycle() {
 			log "RETRACT triggered: swap_used=$used_s avail=$avail_s quiet_elapsed=${quiet_elapsed}s required_avail=$margin_s margin=$margin_l hard=$hard_l soft=$soft_l$( ((area_empty)) && echo ' area unused') -- swap currently ON -> $( ((DRY_RUN)) && echo '[dry-run] would run' || echo 'running') '${SWAPOFF_BIN} ${AREA}'"
 			if ((!DRY_RUN)); then
 				write_status retracting
-				if "$SWAPOFF_BIN" -- "$AREA"; then
+				local output rc
+				output=$("$SWAPOFF_BIN" -- "$AREA" 2>&1)
+				rc=$?
+				[[ -n $output ]] && printf '%s\n' "$output" >&2
+				if ((rc == 0)); then
 					log "RETRACT succeeded."
+					problem_clear retract-failed
 					state=off
 				else
 					local since_fail=$((now - LAST_FAIL_LOG_EPOCH))
 					if ((since_fail >= FAIL_LOG_THROTTLE_SEC)); then
-						log_err "RETRACT command failed (swapoff ${AREA} returned non-zero). Will retry next cycle (throttled logging: next failure log in >=${FAIL_LOG_THROTTLE_SEC}s)."
+						log_err "RETRACT command failed (swapoff ${AREA} returned $rc). Will retry next cycle (throttled logging: next failure log in >=${FAIL_LOG_THROTTLE_SEC}s)."
 						LAST_FAIL_LOG_EPOCH=$now
 					fi
+					problem_set retract-failed degraded LOCAL6 "$AREA" "exit status $rc${output:+: ${output##*$'\n'}}"
 				fi
 			fi
 		elif ((swap_active_rc == 2)); then
@@ -490,6 +715,7 @@ run_cycle() {
 		fi
 	fi
 
+	CYCLE_NOW_MS=$now_millis
 	PREV_EPOCH=$now
 	PREV_MS=$now_millis
 	PREV_AVAIL_KIB=$MEM_AVAILABLE_KIB
@@ -498,22 +724,62 @@ run_cycle() {
 	CYCLE_AVAIL_KIB=$MEM_AVAILABLE_KIB
 }
 
+# The wake-up (Daniel, 2026-10-10): the kernel's PSI trigger where the kernel has PSI, else his poller
+# (compatibility mode). That a kernel has no PSI, or that PSI=off was chosen, is said in MODE_REASON and is no
+# problem; a kernel that has PSI while the trigger cannot be armed or is lost is one: the poller keeps memory
+# protected meanwhile, as before, and the person is told, with PSI=off to make that mode their choice and a
+# restart to arm the trigger again.
 start_psi() {
 	MODE=compatibility
-	[[ $PSI == off ]] && { [[ $LOG_EVERY_CYCLE == yes ]] && log_cycle "PSI switched off in settings: compatibility mode"; return; }
-	if [[ ! -x $PSI_WAKE ]]; then
-		[[ $LOG_EVERY_CYCLE == yes ]] && log_cycle "no PSI helper at $PSI_WAKE: compatibility mode"
+	if [[ $PSI == off ]]; then
+		MODE_REASON="PSI=off in $CONFIG"
+		[[ $LOG_EVERY_CYCLE == yes ]] && log_cycle "PSI switched off in settings: compatibility mode"
+		problem_clear psi-missing
+		problem_clear psi-lost
 		return
 	fi
-	coproc PSIWAKE { exec "$PSI_WAKE" "$PSI_PATH" "$PSI_TRIGGER"; }
+	if [[ ! -e $PSI_PATH ]]; then
+		MODE_REASON="this kernel has no PSI ($PSI_PATH is absent)"
+		[[ $LOG_EVERY_CYCLE == yes ]] && log_cycle "PSI not available here: compatibility mode (poll ${POLL_INTERVAL_SEC}s, ${FAST_INTERVAL_SEC}s while a game is opening)"
+		problem_clear psi-missing
+		problem_clear psi-lost
+		return
+	fi
+	if [[ ! -x $PSI_WAKE ]]; then
+		MODE_REASON="the PSI helper $PSI_WAKE is missing"
+		[[ $LOG_EVERY_CYCLE == yes ]] && log_cycle "no PSI helper at $PSI_WAKE: compatibility mode"
+		problem_set psi-missing degraded LOCAL7 "$PSI_WAKE is missing or not executable"
+		return
+	fi
+	problem_clear psi-missing
+	mkdir -p "$STATE_DIR" 2>/dev/null
+	coproc PSIWAKE { exec "$PSI_WAKE" "$PSI_PATH" "$PSI_TRIGGER" 2>"$STATE_DIR/psi-wake.err"; }
 	PSI_FD=${PSIWAKE[0]}
-	local line=""
+	PSI_HELPER_PID=$PSIWAKE_PID
+	local line="" why
 	if read -r -t 5 -u "$PSI_FD" line && [[ $line == ready ]]; then
 		MODE=psi
+		MODE_REASON="the kernel's PSI trigger '$PSI_TRIGGER' on $PSI_PATH"
+		problem_clear psi-lost
 		[[ $LOG_EVERY_CYCLE == yes ]] && log_cycle "PSI mode: woken by the kernel when memory stalls ($PSI_PATH, trigger '$PSI_TRIGGER'), safety tick ${SAFETY_TICK_SEC}s"
 	else
+		psi_helper_reason why
+		MODE_REASON="the PSI trigger could not be armed: $why"
 		[[ $LOG_EVERY_CYCLE == yes ]] && log_cycle "PSI not available here: compatibility mode (poll ${POLL_INTERVAL_SEC}s, ${FAST_INTERVAL_SEC}s while a game is opening)"
+		problem_set psi-lost degraded LOCAL8 "the trigger could not be armed: $why"
 	fi
+}
+
+# Why the helper stopped: its own last error line and exit status (psi-wake: 2 no PSI or refused, 3 lost).
+psi_helper_reason() {
+	local _out=$1 err="" rc
+	if [[ -n ${PSI_HELPER_PID:-} ]]; then
+		kill "$PSI_HELPER_PID" 2>/dev/null
+		wait "$PSI_HELPER_PID" 2>/dev/null
+		rc=$?
+	fi
+	[[ -r $STATE_DIR/psi-wake.err ]] && err=$(tail -n 1 "$STATE_DIR/psi-wake.err" 2>/dev/null)
+	printf -v "$_out" '%s' "${err:-it gave no answer}${rc:+ (exit status $rc)}"
 }
 
 # Compatibility mode: the edition's game launcher signal, or a launcher process
@@ -618,8 +884,13 @@ wait_next() {
 		if ((rc == 0)); then
 			while read -r -t 0 -u "$PSI_FD" && read -r -u "$PSI_FD" line; do :; done
 		elif ((rc <= 128)); then
-			[[ $LOG_EVERY_CYCLE == yes ]] && log_cycle "PSI helper ended: compatibility mode"
+			# the helper ended: the poller protects memory, as before, and the person is told
+			local why
+			psi_helper_reason why
 			MODE=compatibility
+			MODE_REASON="the PSI trigger was lost: $why"
+			problem_set psi-lost degraded LOCAL8 "the trigger was lost: $why"
+			[[ $LOG_EVERY_CYCLE == yes ]] && log_cycle "PSI helper ended: compatibility mode"
 		fi
 		return
 	fi
@@ -635,17 +906,51 @@ wait_next() {
 	read -r -t "$INTERVAL" -u "$SLEEP_FD"
 }
 
-# The persistent rate is invalidated only by a kernel/CPU/RAM change.
+# The persistent rate is invalidated only by a kernel/CPU/RAM change. CALIBRATION: override (MAX_ALLOC_MIB_S
+# set, the person's choice), measured, pending (waiting for an idle moment), failed or unavailable (both kept
+# as problems: the conservative pace stays, which costs CPU, never protection).
+CONSERVATIVE_MIB_S=$MAX_ALLOC_MIB_S
 load_calibration() {
-	[[ $CALIBRATED == yes || ! -x $ALLOC_RATE_HELPER ]] && return
-	CALIBRATION_FINGERPRINT=$("$ALLOC_RATE_HELPER" --fingerprint) || return
+	if [[ $CALIBRATED == yes ]]; then
+		CALIBRATION=override
+		return
+	fi
+	if [[ ! -x $ALLOC_RATE_HELPER ]]; then
+		CALIBRATION=unavailable
+		problem_set calibration-unavailable notice LOCAL10 "$ALLOC_RATE_HELPER is missing or not executable" \
+			"$CONSERVATIVE_MIB_S" "$CONSERVATIVE_MIB_S"
+		return
+	fi
+	local output
+	if ! output=$("$ALLOC_RATE_HELPER" --fingerprint 2>&1) || [[ -z $output ]]; then
+		CALIBRATION=unavailable
+		problem_set calibration-unavailable notice LOCAL10 "$ALLOC_RATE_HELPER --fingerprint failed${output:+: ${output##*$'\n'}}" \
+			"$CONSERVATIVE_MIB_S" "$CONSERVATIVE_MIB_S"
+		return
+	fi
+	problem_clear calibration-unavailable
+	CALIBRATION_FINGERPRINT=$output
+	CALIBRATION=pending
 	local fingerprint rate rest
 	if read -r fingerprint rate rest 2>/dev/null <"$CALIBRATION_DIR/allocation-rate"; then
 		if [[ $fingerprint == "$CALIBRATION_FINGERPRINT" && $rate =~ ^[1-9][0-9]*$ ]]; then
 			MAX_ALLOC_MIB_S=$rate
 			CALIBRATED=yes
+			CALIBRATION=measured
 		fi
 	fi
+}
+
+# A measurement that failed: kept and said from the first failure (the conservative pace stays), and tried again
+# as before: a minute later for a helper that failed, at the next idle check for one that gave no rate; a later
+# success clears it.
+calibration_failed() {
+	CALIBRATION_FAILURES=$((CALIBRATION_FAILURES + 1))
+	CALIBRATION_LAST_ERROR=$1
+	CALIBRATION=failed
+	problem_set calibration-failed notice LOCAL9 "$1" "$CONSERVATIVE_MIB_S" "$CONSERVATIVE_MIB_S"
+	[[ ${2:-} == later ]] && CALIBRATION_AFTER_MS=$((NOW_MS + $(to_ms "$CALIBRATION_RETRY_SEC")))
+	return 0
 }
 
 # Require two CPU snapshots separated by the normal loop, at least 90% idle,
@@ -680,24 +985,32 @@ calibrate_when_idle() {
 		done <"$PSI_PATH"
 	fi
 	local rate cpus workers duration
-	local observation
-	if ! observation=$("$ALLOC_RATE_HELPER"); then
-		log_err "allocation-rate measurement failed; conservative pacing retained"
-		CALIBRATION_AFTER_MS=$((NOW_MS + 60000))
+	local observation rc
+	observation=$("$ALLOC_RATE_HELPER" 2>"$STATE_DIR/alloc-rate.err")
+	rc=$?
+	if ((rc != 0)); then
+		local err
+		err=$(tail -n 1 "$STATE_DIR/alloc-rate.err" 2>/dev/null)
+		calibration_failed "$ALLOC_RATE_HELPER exited $rc${err:+: $err}" later
 		return
 	fi
 	read -r rate cpus workers duration <<<"$observation"
 	if ! [[ $rate =~ ^[1-9][0-9]*$ && $cpus =~ ^[1-9][0-9]*$ && $workers =~ ^[1-9][0-9]*$ ]]; then
-		log_err "invalid allocation-rate measurement; conservative pacing retained"
+		calibration_failed "$ALLOC_RATE_HELPER gave '${observation:0:80}', not a rate"
 		return
 	fi
 	MAX_ALLOC_MIB_S=$((rate * cpus * ALLOC_SAFETY_FACTOR / workers))
-	if mkdir -p "$CALIBRATION_DIR" && printf '%s %s %s %s %s %s\n' "$CALIBRATION_FINGERPRINT" \
+	CALIBRATED=yes
+	CALIBRATION=measured
+	problem_clear calibration-failed
+	local error
+	if error=$( { mkdir -p "$CALIBRATION_DIR" && printf '%s %s %s %s %s %s\n' "$CALIBRATION_FINGERPRINT" \
 		"$MAX_ALLOC_MIB_S" "$rate" "$cpus" "$workers" "$duration" >"$CALIBRATION_DIR/allocation-rate.tmp" \
-		&& mv -f "$CALIBRATION_DIR/allocation-rate.tmp" "$CALIBRATION_DIR/allocation-rate"; then
-		CALIBRATED=yes
+		&& mv -f "$CALIBRATION_DIR/allocation-rate.tmp" "$CALIBRATION_DIR/allocation-rate"; } 2>&1); then
+		problem_clear calibration-save
 	else
-		log_err "cannot save allocation-rate measurement in $CALIBRATION_DIR"
+		# measured and in use for this run; measured again at the next start
+		problem_set calibration-save notice LOCAL11 "$CALIBRATION_DIR" "${error##*$'\n'}"
 	fi
 }
 
@@ -706,7 +1019,7 @@ print_help() {
 }
 
 print_thresholds() {
-	read_meminfo || exit 1
+	read_meminfo || { printf 'cushion-swap: cannot read %s: %s\n' "$MEMINFO_PATH" "$MEMINFO_WHY" >&2; exit 1; }
 	compute_thresholds
 	resolve_area
 	local reference
@@ -899,7 +1212,10 @@ kernel_resume_check() {
 	wanted=$(device_number "$TARGET")
 	if [[ $kernel != "$wanted" ]] || [[ $TARGET_KIND == file && $offset != "$RESUME_OFFSET_VALUE" ]]; then
 		log_err "hibernation: the kernel resumes from $kernel offset ${offset:-0} (set by the initramfs at boot), but $RESUME_SOURCE names $TARGET ($wanted offset ${RESUME_OFFSET_VALUE:-0}); systemd-sleep will refuse until the initramfs is rebuilt (update-initramfs -u) and the system restarted"
+		problem_set hibernate-mismatch notice LOCAL13 "$kernel offset ${offset:-0}" "$RESUME_SOURCE" "$TARGET ($wanted offset ${RESUME_OFFSET_VALUE:-0})"
+		return 1
 	fi
+	problem_clear hibernate-mismatch
 }
 
 # Hibernation needs the area on before systemd-sleep looks for it
@@ -915,6 +1231,7 @@ hibernate_deploy() {
 	fi
 	if [[ -z $TARGET ]]; then
 		log_err "hibernation: $RESUME_SOURCE names RESUME=$RESUME_SPEC${RESUME_OFFSET_VALUE:+ RESUME_OFFSET=$RESUME_OFFSET_VALUE}, but $TARGET_NOTE"
+		problem_set hibernate-swapon notice LOCAL14 "$RESUME_SOURCE names RESUME=$RESUME_SPEC${RESUME_OFFSET_VALUE:+ RESUME_OFFSET=$RESUME_OFFSET_VALUE}, but $TARGET_NOTE"
 		exit 1
 	fi
 	now_ms
@@ -928,20 +1245,29 @@ hibernate_deploy() {
 		;;
 	1)
 		printf '%s %s 1\n' "$now" "$TARGET" >"$HIBERNATE_MARK"
-		if ! "$SWAPON_BIN" -- "$TARGET"; then
+		local output rc
+		output=$("$SWAPON_BIN" -- "$TARGET" 2>&1)
+		rc=$?
+		[[ -n $output ]] && printf '%s\n' "$output" >&2
+		if ((rc != 0)); then
 			rm -f "$HIBERNATE_MARK"
 			log_err "hibernation: swapon $TARGET failed"
+			problem_set hibernate-swapon notice LOCAL14 "swapon $TARGET failed (exit status $rc${output:+: ${output##*$'\n'}})"
 			exit 1
 		fi
 		log "hibernation: $TARGET switched on for the image (from $RESUME_SOURCE)"
 		;;
 	*)
 		log_err "hibernation: cannot read $SWAPS_PATH"
+		problem_set hibernate-swapon notice LOCAL14 "cannot read $SWAPS_PATH"
 		exit 1
 		;;
 	esac
+	problem_clear hibernate-swapon
 	[[ -n $RESUME_NOTE ]] && log "hibernation: note: $RESUME_NOTE"
-	kernel_resume_check
+	# a resume device the kernel does not share makes systemd-sleep refuse: the unit fails and says why
+	kernel_resume_check || exit 1
+	exit 0
 }
 
 # After resume: an area switched on only for the image goes off again when
@@ -956,13 +1282,216 @@ hibernate_resume() {
 	case $? in
 	0)
 		if ((SWAP_USED_KIB == 0)); then
-			"$SWAPOFF_BIN" -- "$target" && log "after resume: $target was empty, switched off again"
+			local output rc
+			output=$("$SWAPOFF_BIN" -- "$target" 2>&1)
+			rc=$?
+			[[ -n $output ]] && printf '%s\n' "$output" >&2
+			if ((rc != 0)); then
+				log_err "after resume: swapoff $target failed (exit status $rc)"
+				problem_set resume-swapoff notice LOCAL15 "$target" "exit status $rc${output:+: ${output##*$'\n'}}"
+				exit 1
+			fi
+			log "after resume: $target was empty, switched off again"
 		else
 			log "after resume: $target holds $(gib_str "$SWAP_USED_KIB"); the daemon retracts it when it is safe"
 		fi
 		;;
 	1) log "after resume: $target is already off" ;;
+	*)
+		log_err "after resume: cannot read $SWAPS_PATH, so $target is left as it is"
+		problem_set resume-swapoff notice LOCAL15 "$target" "cannot read $SWAPS_PATH"
+		exit 1
+		;;
 	esac
+	problem_clear resume-swapoff
+	exit 0
+}
+
+# problem_message VAR LANG FILE: a kept problem's message in LANG
+problem_message() {
+	local _var=$1 _lang=$2 _line _key="" _args=()
+	while IFS= read -r _line; do
+		case $_line in KEY=*) _key=${_line#KEY=} ;; ARG=*) _args+=("${_line#ARG=}") ;; esac
+	done <"$3"
+	text_into "$_var" "$_lang" "$_key" "${_args[@]}"
+}
+
+# The service as systemd has it, for a daemon that is not running: active state, result, unit file state.
+unit_state() {
+	local out
+	out=$("$SYSTEMCTL_BIN" show -p ActiveState -p SubState -p Result -p UnitFileState cushion-swap.service 2>&1) ||
+		{ printf -v "$1" 'systemctl cannot say (%s)' "${out##*$'\n'}"; return; }
+	out=${out//$'\n'/, }
+	printf -v "$1" 'cushion-swap.service: %s' "$out"
+}
+
+# --status: the file the page reads, and an exit status a script can trust (help text above).
+print_status() {
+	local text line protection="" state="" pid="" problems="" why
+	if [[ ! -e $STATUS_FILE ]]; then
+		unit_state why
+		if [[ $CUSHION_SWAP == off ]]; then
+			printf 'STATE=disabled\nPROTECTION=no\nREASON=CUSHION_SWAP=off in %s\n' "$CONFIG"
+		else
+			printf 'STATE=stopped\nPROTECTION=no\nREASON=not running (%s)\n' "$why"
+		fi
+		exit 3
+	fi
+	if ! text=$(cat -- "$STATUS_FILE" 2>&1); then
+		printf 'STATE=unknown\nPROTECTION=unknown\nREASON=cannot read %s: %s\n' "$STATUS_FILE" "${text##*: }"
+		exit 4
+	fi
+	printf '%s\n' "$text"
+	while IFS= read -r line; do
+		case $line in
+		STATE=*) state=${line#STATE=} ;; PROTECTION=*) protection=${line#PROTECTION=} ;;
+		PID=*) pid=${line#PID=} ;; PROBLEMS=*) problems=${line#PROBLEMS=} ;;
+		esac
+	done <<<"$text"
+	case $state in stopped | disabled) exit 3 ;; esac
+	# a status left by a daemon that is gone is not a running one
+	if [[ -n $pid && ! -d $PROC_DIR/$pid ]]; then
+		printf 'RUNNING=no\n'
+		exit 3
+	fi
+	case $protection in
+	yes) [[ -z $problems ]] && exit 0; exit 1 ;;
+	degraded) exit 1 ;;
+	no) exit 2 ;;
+	*) exit 4 ;;
+	esac
+}
+
+# --problems: each kept problem in the system's language (the English line beside it); exit 1 while any.
+print_problems() {
+	local file message english found=0
+	lang_code
+	for file in "$PROBLEM_DIR"/*; do
+		[[ -f $file && $file != *.tmp ]] || continue
+		found=1
+		problem_message message "$LANG_CODE" "$file"
+		printf '%s: %s\n' "${file##*/}" "$message"
+		if [[ $LANG_CODE != en ]]; then
+			problem_message english en "$file"
+			printf '  (en) %s\n' "$english"
+		fi
+	done
+	if ((!found)); then
+		text_into message "$LANG_CODE" LOCAL17
+		printf '%s\n' "$message"
+		[[ -e $STATUS_FILE ]] || { unit_state english; text_into message "$LANG_CODE" LOCAL20 "$english"; printf '%s\n' "$message"; exit 3; }
+		exit 0
+	fi
+	exit 1
+}
+
+# ExecStopPost: why the daemon is no longer running, from systemd's SERVICE_RESULT, EXIT_CODE and EXIT_STATUS
+# (systemd.exec(5)). A stop that was not asked for is a problem; a stop the person or the shutdown asked for
+# ends the daemon's own problems. CUSHION_SWAP=off keeps its "disabled".
+stopped() {
+	local line state="" code why
+	if [[ -r $STATUS_FILE ]]; then
+		while IFS= read -r line; do [[ $line == STATE=* ]] && state=${line#STATE=}; done <"$STATUS_FILE"
+	fi
+	[[ $state == disabled ]] && exit 0
+	# the daemon is gone: no PID, and nothing more for systemd's status line
+	STATUS_PID="" NOTIFY_SOCKET=""
+	mkdir -p "$STATE_DIR"
+	if [[ -n ${SERVICE_RESULT:-} && $SERVICE_RESULT != success ]]; then
+		why="result $SERVICE_RESULT, ${EXIT_CODE:-?} ${EXIT_STATUS:-?}"
+		problem_set service-failed no LOCAL12 "$why"
+	else
+		why="stopped"
+		for code in $DAEMON_PROBLEMS; do problem_clear "$code"; done
+	fi
+	STATUS_TEXT=""
+	write_status stopped
+	exit 0
+}
+
+# --wait-ready EPOCH: after the package restarted the unit, a daemon started since EPOCH must be running and say
+# whether it protects memory. The person's own switches (CUSHION_SWAP=off, a disabled or masked unit) are said as
+# their choice. Exit 1 when it did not start.
+wait_ready() {
+	local since=$1 i line started=0 pid="" protection="" enabled why file message
+	if [[ $CUSHION_SWAP == off ]]; then
+		say LOCAL21 "CUSHION_SWAP=off in $CONFIG"
+		return 0
+	fi
+	if [[ -e ${CGM_PARACHUTE_UNIT:-/etc/systemd/system/cgm-swap-parachute.service} ]]; then
+		say LOCAL21 "cgm-swap-parachute.service is in charge here"
+		return 0
+	fi
+	enabled=$("$SYSTEMCTL_BIN" is-enabled cushion-swap.service 2>/dev/null)
+	case $enabled in
+	disabled | masked | masked-runtime)
+		if ! "$SYSTEMCTL_BIN" --quiet is-active cushion-swap.service; then
+			say LOCAL21 "cushion-swap.service is $enabled"
+			return 0
+		fi
+		;;
+	esac
+	for ((i = 0; i < ${READY_WAIT_SEC:-20} * 10; i++)); do
+		started=0 pid="" protection=""
+		if [[ -r $STATUS_FILE ]]; then
+			while IFS= read -r line; do
+				case $line in STARTED=*) started=${line#STARTED=} ;; PID=*) pid=${line#PID=} ;; PROTECTION=*) protection=${line#PROTECTION=} ;; esac
+			done <"$STATUS_FILE"
+		fi
+		[[ $started =~ ^[0-9]+$ ]] || started=0
+		((started >= since)) && [[ -n $pid && -d $PROC_DIR/$pid ]] && break
+		started=0
+		sleep 0.1
+	done
+	if ((started < since)); then
+		unit_state why
+		say LOCAL22 "$why"
+		return 1
+	fi
+	if [[ $protection != yes ]]; then
+		say LOCAL18
+		for file in "$PROBLEM_DIR"/*; do
+			[[ -f $file && $file != *.tmp ]] || continue
+			lang_code
+			problem_message message "$LANG_CODE" "$file"
+			printf 'cushion-swap: %s\n' "$message" >&2
+		done
+	fi
+	return 0
+}
+
+# --notify: the session's side. Each kept problem once per session and problem (its code and when it began),
+# as a notification (org.freedesktop.Notifications; critical, so it stays, when memory is not protected).
+notify_session() {
+	local seen_file="" seen=" " file line first code effect title body urgency rc=0 err
+	[[ -n ${XDG_RUNTIME_DIR:-} ]] && seen_file=$XDG_RUNTIME_DIR/cushion-swap-notified
+	[[ -n $seen_file && -r $seen_file ]] && seen+="$(tr '\n' ' ' <"$seen_file") "
+	lang_code
+	text_into title "$LANG_CODE" LOCAL16
+	for file in "$PROBLEM_DIR"/*; do
+		[[ -f $file && $file != *.tmp ]] || continue
+		code=${file##*/} first="" effect=""
+		while IFS= read -r line; do
+			case $line in FIRST=*) first=${line#FIRST=} ;; EFFECT=*) effect=${line#EFFECT=} ;; esac
+		done <"$file"
+		[[ $seen == *" $code@$first "* ]] && continue
+		problem_message body "$LANG_CODE" "$file"
+		urgency=1
+		[[ $effect == no ]] && urgency=2
+		if ! err=$("$BUSCTL_BIN" --user call org.freedesktop.Notifications /org/freedesktop/Notifications \
+			org.freedesktop.Notifications Notify susssasa{sv}i 'Sparky Stereo OS' 0 dialog-warning "$title" "$body" \
+			0 1 urgency y "$urgency" 0 2>&1 >/dev/null); then
+			printf 'cushion-swap: the notification could not be shown (%s): %s\n' "${err##*$'\n'}" "$(problem_message english en "$file"; printf '%s' "$english")" >&2
+			rc=1
+			continue
+		fi
+		seen+="$code@$first "
+	done
+	if [[ -n $seen_file ]]; then
+		printf '%s\n' $seen >"$seen_file.tmp" 2>/dev/null && mv -f "$seen_file.tmp" "$seen_file" 2>/dev/null ||
+			printf 'cushion-swap: cannot write %s\n' "$seen_file" >&2
+	fi
+	return $rc
 }
 
 while [[ $# -gt 0 ]]; do
@@ -971,10 +1500,15 @@ while [[ $# -gt 0 ]]; do
 	--once) RUN_ONCE=1; shift ;;
 	--interval) POLL_INTERVAL_SEC=$2; shift 2 ;;
 	--thresholds) print_thresholds; exit 0 ;;
-	--status) cat "$STATUS_FILE" 2>/dev/null || echo "STATE=stopped"; exit 0 ;;
+	--status) print_status ;;
+	--problems) print_problems ;;
 	--resume-target) print_resume_target ;;
-	--hibernate-deploy) hibernate_deploy; exit 0 ;;
-	--hibernate-resume) hibernate_resume; exit 0 ;;
+	--hibernate-deploy) hibernate_deploy; exit $? ;;
+	--hibernate-resume) hibernate_resume; exit $? ;;
+	--stopped) stopped ;;
+	--wait-ready) wait_ready "${2:?--wait-ready needs the epoch the restart began}"; exit $? ;;
+	--notify) notify_session; exit $? ;;
+	--say) shift; say "$@"; exit 0 ;;
 	--help | -h) print_help; exit 0 ;;
 	*)
 		log_err "unknown argument: $1"
@@ -984,10 +1518,17 @@ while [[ $# -gt 0 ]]; do
 done
 
 resolve_area
+now_ms
+STARTED=$((NOW_MS / 1000))
 
 if [[ $CUSHION_SWAP == off ]]; then
 	[[ $LOG_EVERY_CYCLE == yes ]] && log_cycle "Cushion Swap File is off ($CONFIG: CUSHION_SWAP=off); the swap state is left as it is"
-	((DRY_RUN)) || write_status disabled
+	if ((!DRY_RUN)); then
+		# the person's choice: no problem of the daemon's holds, and the status says memory is not protected
+		for code in $DAEMON_PROBLEMS; do problem_clear "$code"; done
+		REASON_OFF="CUSHION_SWAP=off in $CONFIG"
+		write_status disabled
+	fi
 	exit 0
 fi
 
@@ -998,6 +1539,8 @@ elif [[ $LOG_EVERY_CYCLE == yes ]]; then
 fi
 
 if ((RUN_ONCE)); then
+	# one cycle, no daemon left behind: its status names no PID
+	STATUS_PID=""
 	run_cycle
 	exit 0
 fi
@@ -1010,8 +1553,14 @@ load_calibration
 start_psi
 run_cycle
 [[ $LOG_EVERY_CYCLE == yes ]] && log_cycle "thresholds ($THRESHOLD_SOURCE, MemTotal $(gib_str "$MEM_TOTAL_KIB")): hard $(gib_str "$DEPLOY_HARD_KIB") soft $(gib_str "$DEPLOY_SOFT_KIB") rate $(gib_str "$RATE_KIB")/${RATE_WINDOW_SEC}s margin $(gib_str "$RETRACT_MARGIN_KIB") quiet ${QUIET_SECONDS}s"
+SERVICE_OK_MS=$((STARTED * 1000 + SERVICE_OK_AFTER_SEC * 1000))
 while true; do
 	calibrate_when_idle
 	wait_next
 	run_cycle
+	# a daemon that stopped unexpectedly is fixed once this one has run a while (a restart loop stays one problem)
+	if ((SERVICE_OK_MS)) && ((CYCLE_NOW_MS >= SERVICE_OK_MS)); then
+		problem_clear service-failed
+		SERVICE_OK_MS=0
+	fi
 done

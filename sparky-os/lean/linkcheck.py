@@ -25,6 +25,11 @@ Four checks, none installs anything and none needs a display:
            at load, which is exactly what failed for torcs) and no display; a dynamic-loader
            error in the output blocks.
 
+The stereo and needed checks read each host ELF file's inventory with readelf -d and nm -D. An inventory that
+cannot be read (the tool fails, times out or is missing) blocks, naming the tool's own error: it never stands for
+a file that imports nothing (U58, ORDER 346b). A static file has a readable, empty inventory (readelf: "There is
+no dynamic section", nm: "no symbols", both exit 0).
+
 Recommends, narrowly (ORDER 311 step 4, fltk1.4's flpuzzle): Depends-only resolution is the rule. Where an ELF's
 missing library is shipped by a package that the supplied package's own Recommends names, that ELF is resolved again
 with those Recommends installed, and the result is a note naming them; the predecessor is treated the same way. Debian
@@ -77,8 +82,29 @@ def elf_files(root):
     return sorted(found)
 
 
+class InventoryError(package.Invalid):
+    """An ELF inventory (NEEDED, stereo imports) that could not be read: never an empty inventory (U58)."""
+
+
+def probe(args, what, path, timeout):
+    """The output of an inventory tool, read in the C locale; its failure is an InventoryError naming the tool's own
+    error, so a failed probe never passes for a file with nothing to report."""
+    try:
+        run = subprocess.run(args, capture_output=True, text=True, timeout=timeout,
+                             env={'PATH': '/usr/bin:/bin', 'LC_ALL': 'C'})
+    except subprocess.TimeoutExpired:
+        raise InventoryError(f'cannot verify the {what} of {path}: {args[0]} timed out after {timeout} s')
+    except OSError as exc:
+        raise InventoryError(f'cannot verify the {what} of {path}: {args[0]}: {exc}')
+    if run.returncode:
+        error = ' '.join(run.stderr.strip().splitlines()[-2:]) or 'no message'
+        raise InventoryError(f'cannot verify the {what} of {path}: {" ".join(args[:-1])} exited {run.returncode}: '
+                             f'{error}')
+    return run.stdout
+
+
 def needed(path):
-    out = subprocess.run(['readelf', '-d', '-W', str(path)], capture_output=True, text=True, timeout=30).stdout
+    out = probe(['readelf', '-d', '-W', str(path)], 'NEEDED libraries', path, 30)
     return sorted(line.split('[', 1)[1].rstrip(']') for line in out.splitlines() if '(NEEDED)' in line)
 
 
@@ -88,8 +114,9 @@ STEREO = re.compile(r'stereo', re.I)
 
 
 def stereo_imports(path):
-    """Dynamic symbols a file imports whose names mention stereo (stereo_declare_*, libstereo-layer, ...)."""
-    out = subprocess.run(['nm', '-D', '--undefined-only', str(path)], capture_output=True, text=True, timeout=60).stdout
+    """Dynamic symbols a file imports whose names mention stereo (stereo_declare_*, libstereo-layer, ...). A file
+    without dynamic symbols (a static program) has none: nm says "no symbols" and exits 0."""
+    out = probe(['nm', '-D', '--undefined-only', str(path)], 'stereo imports', path, 60)
     found = set()
     for line in out.splitlines():
         part = line.split()
@@ -230,6 +257,23 @@ def resolve(root, timeout=20, extra_dirs=(), qualified=None, notes=None):
     return result
 
 
+def inventories(root, qualified, findings, whose):
+    """({file: NEEDED}, {file: stereo imports}) of the ELF files the host loads; guest data is resolve()'s note, never
+    loaded by the host. A file whose inventory cannot be read is a finding (U58: a failed readelf or nm gave an empty
+    inventory, the same as a file that imports nothing, and could hide a lost stereo import)."""
+    needed_of, stereo_of = {}, {}
+    for path in elf_files(root):
+        rel = str(path.relative_to(root))
+        if guest_data(path, '/' + rel, qualified):
+            continue
+        try:
+            needed_of[rel] = needed(path)
+            stereo_of[rel] = stereo_imports(path)
+        except InventoryError as exc:
+            findings.append(f'/{rel} ({whose}): {str(exc).replace(str(path), "/" + rel)}')
+    return needed_of, stereo_of
+
+
 def recommends_of(deb):
     """The package's Recommends: one list of alternative package names per relation."""
     fields = control_field(deb, 'Recommends')
@@ -307,9 +351,9 @@ def compare(new_deb, previous_deb=None, extra_dirs=(), qualified=None, previous_
         now = resolve(new_root, extra_dirs=extra_dirs, qualified=qualified, notes=notes)
         if archive_context is not None:
             now = with_recommends(new_deb, siblings, new_root, now, archive_context, notes, 'this build')
-        new_needed = {str(p.relative_to(new_root)): needed(p) for p in elf_files(new_root)}
-        new_stereo = {str(p.relative_to(new_root)): stereo_imports(p) for p in elf_files(new_root)}
         if previous_deb:
+            # the inventories are compared with the previous build's, so they are read only when there is one
+            new_needed, new_stereo = inventories(new_root, qualified, findings, 'this build')
             own_previous = previous_qualified is None
             old_inputs = siblings if previous_siblings is None else previous_siblings
             if own_previous:
@@ -327,8 +371,7 @@ def compare(new_deb, previous_deb=None, extra_dirs=(), qualified=None, previous_
                     if archive_context is not None:
                         before = with_recommends(previous_deb, old_inputs, old_root, before, archive_context, notes,
                                                  'the previous build')
-                    old_needed = {str(p.relative_to(old_root)): needed(p) for p in elf_files(old_root)}
-                    old_stereo = {str(p.relative_to(old_root)): stereo_imports(p) for p in elf_files(old_root)}
+                    old_needed, old_stereo = inventories(old_root, previous_qualified, findings, 'the previous build')
             finally:
                 if own_previous:
                     previous_qualified.close()

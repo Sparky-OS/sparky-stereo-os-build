@@ -1,3 +1,5 @@
 // dpkg-stereo: the full HR copies of projected settings arrive with the first successful update over
-// the internet (Daniel, 2026-10-14: "the install iso don't ship them, but installs on first internet update")
-APT::Update::Post-Invoke-Success { "if [ -x /usr/sbin/dpkg-stereo ] && [ ! -e /var/lib/dpkg-stereo/hr-fetched ]; then /usr/sbin/dpkg-stereo --fetch-hr >/dev/null 2>&1 || true; fi"; };
+// the internet (Daniel, 2026-10-14: "the install iso don't ship them, but installs on first internet update").
+// What cannot be fetched is said here and kept for dpkg-stereo --problems; a failing command would fail the
+// whole update ("E: Problem executing scripts APT::Update::Post-Invoke-Success"), so the update goes on.
+APT::Update::Post-Invoke-Success { "if [ -x /usr/sbin/dpkg-stereo ] && [ ! -e /var/lib/dpkg-stereo/hr-fetched ]; then /usr/sbin/dpkg-stereo --fetch-hr || true; fi"; };
