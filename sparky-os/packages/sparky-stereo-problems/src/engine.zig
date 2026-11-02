@@ -954,7 +954,8 @@ const Lock = struct {
 
 fn lockStore(ctx: *Ctx, scope: Scope, dir: []const u8) Failure!?Lock {
     const mode: c_uint = if (scope == .person) 0o700 else 0o755;
-    if (!try ensureDir(ctx.a, dir, mode, scope == .person)) return null;
+    // the folders above are made too: a person's ~/.local/state, or a test's SPARKY_STEREO_ROOT
+    if (!try ensureDir(ctx.a, dir, mode, true)) return null;
     const fd = sys.open(try z(ctx.a, try cat(ctx.a, &.{ dir, "/.lock" })), sys.O_RDWR | sys.O_CREAT | sys.O_CLOEXEC | sys.O_NOFOLLOW, @as(c_uint, 0o644));
     if (fd < 0) return null;
     while (sys.flock(fd, sys.LOCK_EX) != 0) {

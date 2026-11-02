@@ -239,11 +239,16 @@ class Steps:
         return proc.wait(), ''.join(tail)
 
     def run(self, step, key, args, command, repair=None):
+        """Runs COMMAND with its output shown: a failure is said and kept (KEY's first two %s are COMMAND and its
+        exit status, then ARGS), a success clears STEP; COMMAND's exit status."""
         try:
-            return run(self.package, step, key, self._args(args), command, scope=self.scope, repair=repair)
+            status = run(self.package, step, key, self._args(args), command, scope=self.scope, repair=repair)
         except Failed as error:
             self._failed(error)
             return 1
+        if status != 0:
+            self.say(key, [' '.join(command), status] + builtins.list(args))
+        return status
 
     def _word(self, name, args=()):
         key = self.words.get(name)

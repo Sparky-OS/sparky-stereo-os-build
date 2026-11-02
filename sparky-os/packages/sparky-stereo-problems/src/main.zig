@@ -30,7 +30,7 @@ const usage_lines = [_]Line{
 const options =
     \\  --severity failed|degraded|notice  --repair JSON-ARRAY  --command JSON-ARRAY  --status N
     \\  --output TEXT  --output-file FILE  --action '{"id":..,"label":[MESSAGE,ARG...],"command":[..]}'
-    \\  --unit UNIT  --details JSON-OBJECT
+    \\  --unit UNIT  --details JSON-OBJECT  --quiet
     \\
 ;
 
@@ -74,6 +74,14 @@ fn said(ctx: *Ctx) u8 {
     return 1;
 }
 
+// A kept problem said on standard error, in the person's language and in English when that is another (a maintainer
+// script's output, a terminal): unless --quiet
+fn sayRecord(ctx: *Ctx, r: engine.Record) !void {
+    const local = try engine.renderRecord(ctx, r, null);
+    err(try std.mem.concat(ctx.a, u8, &.{ r.package, ": ", local.text, "\n" }));
+    if (!std.mem.eql(u8, local.lang, "en")) err(try std.mem.concat(ctx.a, u8, &.{ r.package, ": (en) ", r.text_en, "\n" }));
+}
+
 // The journal's own failure is said apart, after what was asked, without taking the place of its failure
 fn journalNote(ctx: *Ctx) void {
     const e = ctx.journal_error orelse return;
@@ -104,6 +112,7 @@ const Parsed = struct {
     contexts: std.ArrayList([]const u8) = .empty,
     domain: ?[]const u8 = null,
     all: bool = false,
+    quiet: bool = false,
     bad: ?[]const u8 = null,
 };
 
@@ -134,6 +143,10 @@ fn parse(ctx: *Ctx, args: []const []const u8) !Parsed {
         }
         if (std.mem.eql(u8, x, "--all")) {
             p.all = true;
+            continue;
+        }
+        if (std.mem.eql(u8, x, "--quiet")) {
+            p.quiet = true;
             continue;
         }
         if (i + 1 >= args.len) {
@@ -294,7 +307,7 @@ fn runMain(ctx: *Ctx, argv: []const []const u8) !u8 {
         r.message = pos[2];
         r.args = try messageArgs(ctx, &p, 3);
         if (std.mem.eql(u8, verb, "keep")) {
-            _ = engine.keep(ctx, scope, r) catch |e| {
+            const kept = engine.keep(ctx, scope, r) catch |e| {
                 if (e == error.Failed) {
                     _ = said(ctx);
                     journalNote(ctx);
@@ -302,6 +315,7 @@ fn runMain(ctx: *Ctx, argv: []const []const u8) !u8 {
                 }
                 return e;
             };
+            if (!p.quiet) try sayRecord(ctx, kept);
             journalNote(ctx);
             return 0;
         }
@@ -315,6 +329,11 @@ fn runMain(ctx: *Ctx, argv: []const []const u8) !u8 {
             }
             return e;
         };
+        if (status != 0 and !p.quiet) {
+            for (try engine.collect(ctx, r.package)) |item| {
+                if (item.record) |k| if (item.scope == scope and std.mem.eql(u8, k.key, r.key)) try sayRecord(ctx, k);
+            }
+        }
         journalNote(ctx);
         return @intCast(@min(@max(status, 0), 255));
     }
