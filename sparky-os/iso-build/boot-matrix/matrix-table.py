@@ -4,8 +4,9 @@
 Every run folder is classified by classify.py's rules (desktop = the Plasma Welcome window is on the screen).
 A cell is "pass Ns" (first desktop frame at N seconds), or "fail: <reason>" with the reason read from the
 serial log (firmware and GRUB text) or the last frame ("black screen", "stuck at menu", "boot manager").
+Unreadable run metadata produces a failure naming result.json and its error; it never reuses an older result.
 """
-import json, os, re, subprocess, sys
+import html, json, os, re, subprocess, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import importlib.util
 spec = importlib.util.spec_from_file_location("classify", os.path.join(os.path.dirname(os.path.abspath(__file__)), "classify.py"))
@@ -24,11 +25,15 @@ def run(d):
     frames = sorted([f[:-4] for f in os.listdir(d) if f.endswith(".png") and f != "sheet.png"], key=tkey)
     times = {}
     try:
-        for s in json.load(open(os.path.join(d, "result.json"))).get("steps", []):
+        with open(os.path.join(d, "result.json"), encoding="utf-8") as metadata:
+            steps = json.load(metadata).get("steps", [])
+        for s in steps:
             if "shot" in s:
                 times[s["shot"]] = s["t"]
-    except Exception:
-        return None
+    except Exception as error:
+        detail = "%s: %s: %s" % (os.path.join(d, "result.json"), type(error).__name__, error)
+        detail = html.escape(detail, quote=False).replace("|", "&#124;").replace("\r", " ").replace("\n", " ")
+        return ("fail", None, "metadata error: " + detail)
     labs = [(f, label(os.path.join(d, f + ".png"))) for f in frames]
     for f, l in labs:
         if l == "desktop":
@@ -55,7 +60,7 @@ def cell(paths):
     r = None
     for path in paths:
         if os.path.isdir(path):
-            r = run(path) or r
+            r = run(path)
     if r is None:
         return "-"
     return ("pass %ds" % round(r[1])) if r[0] == "pass" else "fail: " + r[2]
