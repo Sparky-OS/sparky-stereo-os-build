@@ -30,12 +30,12 @@
 # Needs dpkg-deb and python3.
 # REPO names what make-only-ours.py reads: a flat repository, a published tree (its dists) or a Packages file.
 # Usage: build.sh   (output goes to $OUT, default the current folder)
-# Last update 2026/11/01
+# Last update 2026/11/02
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-$PWD}
-VERSION=${VERSION:-20261031.2~sparky9~0+lc1}
+VERSION=${VERSION:-20261102~sparky9~0+lc1}
 # the oldest sparky-stereo-keyring with the repository's one key (the key has not changed since; 20261016 is published)
 KEYRING_VERSION=${KEYRING_VERSION:-20261008.1~sparky9~0+lc1}
 PKG=sparky-stereo-apt
@@ -126,6 +126,9 @@ install -m755 "$HERE/debian-scripts/preinst" "$HERE/debian-scripts/postinst" "$H
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT"
 mkdir -p "$W/authoring"
-cp -a "$HERE/." "$W/authoring/"
-cp -a "$HERE/../../apt" "$W/authoring/apt-generator"
+COPY="$HERE/../../../tools/copy-recipe.py"
+python3 "$COPY" "$HERE" "$W/authoring"
+python3 "$COPY" "$HERE/../../apt" "$W/authoring/apt-generator"
+mkdir -p "$W/authoring/build-tools"
+cp "$COPY" "$W/authoring/build-tools/"
 PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$W/authoring"
