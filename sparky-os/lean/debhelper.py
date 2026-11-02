@@ -35,12 +35,14 @@ def build(root, provenance):
                       list((root / 'debian/.debhelper').glob('*/dbgsym-root/DEBIAN/control')))
     if not controls:
         raise ValueError('No staged binary controls; run after dh_gencontrol')
+    # every declared generated output matches an installed file of some package, before anything is built
+    source_tree.require_generated(root, [control.parent.parent for control in controls])
     built = []
     for control in controls:
         staging = control.parent.parent
         fields = package.control(staging)
         name, version, arch = package.identity(fields)
-        source_tree.restore_payload(root, staging)
+        source_tree.restore_payload(root, staging, check_coverage=False)
         subprocess.run(['bash', str(provenance), '--tree', str(staging)], check=True)
         before = set(root.parent.glob('*.deb'))
         release.build_tree(staging, root.parent)
