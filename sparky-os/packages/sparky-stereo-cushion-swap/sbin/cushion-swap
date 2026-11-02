@@ -274,7 +274,9 @@ problem_clear() {
 	unset "PROBLEM_BODY[$code]"
 	if ((!DRY_RUN)) && [[ -e $file ]]; then
 		rm -f "$file" 2>/dev/null || log_err "cannot remove $file"
-		log "resolved: $code"
+		# the default log has only real problems (Daniel, 2026-10-10): that one is gone shows in the status, and
+		# in the log only with every-cycle logging
+		[[ $LOG_EVERY_CYCLE == yes ]] && log_cycle "resolved: $code"
 	fi
 	STATUS_TEXT=""
 }

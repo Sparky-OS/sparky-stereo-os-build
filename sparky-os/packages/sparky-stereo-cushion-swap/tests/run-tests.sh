@@ -849,8 +849,10 @@ meminfo_unreadable() {
 	rc=$?
 	[[ $rc == 2 ]] || { echo "  --status exited $rc, not 2"; ok=1; }
 	meminfo "$W/m" 97957892 $((40 * G))
-	daemon MEMINFO_PATH="$W/m" SWAPS_PATH="$W/s" CUSHION_SWAP_AREA="$AREA_OK" "$d" --once >"$W/log" 2>&1
+	daemon MEMINFO_PATH="$W/m" SWAPS_PATH="$W/s" CUSHION_SWAP_AREA="$AREA_OK" LOG_EVERY_CYCLE= "$d" --once >"$W/log" 2>&1
 	[[ ! -e $W/state/problems/meminfo && $(status_value PROTECTION) == yes ]] || { echo "  not cleared when readable again"; ok=1; }
+	# Daniel's problems-only default log: that the problem is gone is no log line
+	[[ ! -s $W/log ]] || { echo "  the default log has more than problems: $(head -1 "$W/log")"; ok=1; }
 	return $ok
 }
 
