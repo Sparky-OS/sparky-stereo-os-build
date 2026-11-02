@@ -1,0 +1,17 @@
+librsvg (2.63.3+dfsg-1+stereo3d1) unstable; urgency=medium
+
+  * Sparky Stereo OS: librsvg reads every CSS colour and draws it at more
+    than 8 bits (ORDER 348, stereo3d-css-colour-precision). librsvg kept
+    only rgb(), hsl() and hwb() and rejected lab(), lch(), oklab(),
+    oklch() and color() as "unsupported color syntax"; the CSS Color HDR
+    spaces, color-mix() and relative colours did not parse at all; the
+    shape was painted black and the message reached only RSVG_LOG. Now the
+    whole <color> grammar of CSS Color 4, CSS Color 5 and CSS Color HDR is
+    parsed (rsvg/src/css_color.rs), each colour stays in its own space in
+    double precision, and solid colours and gradient stops reach cairo as
+    doubles, gamut mapped into sRGB as CSS Color 4 section 14.2 says when
+    they are outside it, which is logged. Not supported, and said in the
+    parse error: currentcolor inside a colour function, the system colours
+    (librsvg has no palette) and custom colour spaces (@color-profile).
+    Test: tests/css-colour (the colour corpus against the specifications'
+    sample code) and the new unit tests in rsvg/src/color.rs.
