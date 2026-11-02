@@ -17,7 +17,11 @@ with tempfile.TemporaryDirectory(dir=out, prefix='.meta-source-') as temp:
     source = work / f'sparky-stereo-meta-{version}'
     (source / 'debian/source').mkdir(parents=True)
     shutil.copytree(trees, source / 'trees')
-    shutil.copytree(root / 'lists', source / 'generator-inputs/lists', ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+    copier = root.parent / 'tools/copy-recipe.py'
+    subprocess.run([sys.executable, str(copier), str(root / 'lists'),
+                    str(source / 'generator-inputs/lists')], check=True)
+    (source / 'generator-inputs/build-tools').mkdir()
+    shutil.copy2(copier, source / 'generator-inputs/build-tools/copy-recipe.py')
     kit = source / 'release-toolkit'
     (kit / 'lean').mkdir(parents=True)
     for p in (root / 'lean').glob('*.py'):

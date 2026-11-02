@@ -4,10 +4,12 @@
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 lane=$(dirname "$repo")
+COPY="$repo/../../../tools/copy-recipe.py"
 dest=${SPARKY_STAGING_DIR:?}/classic-look/kubabbar-glass
+[ ! -e "$dest" ] || { echo "Use a new staging directory: $dest" >&2; exit 1; }
 printf '%s\n' "$dest" >> "$lane/.artifacts"
 mkdir -p "$dest/usr/share" "$dest/integration"
-cp -a "$repo/share/." "$dest/usr/share/"
+python3 "$COPY" "$repo/share" "$dest/usr/share"
 cp "$repo/README.md" "$repo/ABOUT.md" "$repo/LICENSE" "$repo/copyright" "$dest/"
 cp "$repo/config/kwinrc" "$dest/integration/kwinrc-reference"
 cp "$repo/integration/README.md" "$repo/integration/oxygen-defaults.patch" "$dest/integration/"

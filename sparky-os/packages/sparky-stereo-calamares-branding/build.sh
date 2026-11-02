@@ -5,13 +5,19 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION='20261101~sparky9~0+lc1'
+VERSION='20261102~sparky9~0+lc1'
 PACKAGE=sparky-stereo-calamares-branding
 DEPENDS='calamares, libstereo-layer1 (>= 1.4.1), qml6-module-qtquick-window'
 RECOMMENDS='calamares (>= 3.4.3~sparky9~4-1+stereo3d1)'
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.calamares-branding.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
+RECIPE=$HERE
+COPY="$RECIPE/../../../tools/copy-recipe.py"
+python3 "$COPY" "$RECIPE" "$WORK/authoring"
+mkdir -p "$WORK/authoring/build-tools"
+cp "$COPY" "$WORK/authoring/build-tools/"
+HERE=$WORK/authoring
 D=$WORK/$PACKAGE
 mkdir -p "$D/DEBIAN" "$D/usr/share/doc/$PACKAGE"
 cp -a "$HERE/usr" "$HERE/etc" "$D/"
@@ -55,5 +61,5 @@ Description: Stereo 3D slideshow for the installer
   the reader's language, set at the screen plane.
 EOT
 (cd "$D" && find usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
-PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$HERE"
+PYTHONPATH="$RECIPE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$HERE"
 sync
