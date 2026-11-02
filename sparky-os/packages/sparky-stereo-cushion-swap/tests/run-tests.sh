@@ -1341,7 +1341,7 @@ mutant hook-drops-offset "initramfs-hook-offset" 's/^echo "resume_offset=\$offse
 # ORDER 346b: nothing fails silently
 mutant problems-never-kept "meminfo-unreadable deploy-failure-kept calibration-problems" 's/^\t((DRY_RUN)) \&\& return 0$/\treturn 0/'
 mutant unprotected-exits-0 "meminfo-unreadable no-area-unprotected" 's/^\tno) exit 2 ;;$/\tno) exit 0 ;;/'
-mutant psi-loss-silent "psi-failures-said" 's/^\t\t\t\tproblem_set psi-lost degraded LOCAL8 "the trigger was lost: \$why"$/\t\t\t\t:/'
+mutant psi-loss-silent "psi-failures-said" 's/^\t\t\tproblem_set psi-lost degraded LOCAL8 "the trigger was lost: \$why"$/\t\t\t:/'
 mutant calibration-failure-silent "calibration-problems" 's/^\tproblem_set calibration-failed notice LOCAL9 "\$1" "\$CONSERVATIVE_MIB_S" "\$CONSERVATIVE_MIB_S"$/\t:/'
 mutant resume-swapoff-ignored "hibernate-failures-kept" 's/^\t\t\t\texit 1$/\t\t\t\texit 0/' 
 echo "SUMMARY: $PASS passed, $FAIL failed"
