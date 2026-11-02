@@ -26,7 +26,7 @@ reset
 $B keep --machine $P demo LOCAL4 "Demo Service" demo.service @LOCAL8 --repair '["true"]' 2>$W/err; rc=$?
 check "keep exits 0" "[ $rc = 0 ]"
 check "the record is one file in the machine's store" "[ -f $M/${P}_demo.json ] && [ \$(ls $M | wc -l) = 1 ]"
-check "it is written whole: no dot-file is left" "[ -z \"\$(ls -A $M | grep -v '^.lock$' | grep '^\\.')\" ]"
+check "it is written whole: the record is there and no dot-file is left" "[ -f $M/${P}_demo.json ] && [ -z \"\$(ls -A $M | grep -v '^.lock$' | grep '^\\.')\" ]"
 check "its file is not writable by others" "[ \$(stat -c %a $M/${P}_demo.json) = 644 ]"
 $B list --json >$W/l.json
 check "list --json has it, with its title and its text" "pyck $W/l.json 'len(d) == 1 and d[0][\"key\"] == \"demo\" and d[0][\"scope\"] == \"machine\" and d[0][\"title\"] == \"Sparky Stereo OS: a system service failed\"'"
@@ -47,12 +47,12 @@ sleep 2
 $B keep --machine $P again LOCAL4 "A" a.service @LOCAL8
 f2=$(js $M/${P}_again.json '(d["first"], d["id"], d["generation"], d["changed"])')
 t2=$(js $M/${P}_again.json 'd["time"]')
-check "kept again with the same message: the same first time, id, generation and change" "[ \"$f1\" = \"$f2\" ]"
-check "its last time moves" "[ \"$t2\" != \"\$(python3 -c \"print($f1[0])\")\" ]"
+check "kept again with the same message: the same first time, id, generation and change" "[ -n \"$f1\" ] && [ \"$f1\" = \"$f2\" ]"
+check "its last time moves" "[ -n \"$t2\" ] && [ \"$t2\" != \"\$(python3 -c \"print($f1[0])\")\" ]"
 sleep 1
 $B keep --machine $P again LOCAL4 "A" a.service @LOCAL9
-check "a new message keeps the first time and id, and is a new generation" "[ \"\$(js $M/${P}_again.json '(d[\"first\"], d[\"id\"], d[\"generation\"])')\" = \"\$(python3 -c \"f=$f1; print((f[0], f[1], f[2] + 1))\")\" ]"
-check "a new message moves its change time" "[ \"\$(js $M/${P}_again.json 'd[\"changed\"]')\" != \"\$(python3 -c \"print($f1[3])\")\" ]"
+check "a new message keeps the first time and id, and is a new generation" "[ -n \"$f1\" ] && [ \"\$(js $M/${P}_again.json '(d[\"first\"], d[\"id\"], d[\"generation\"])')\" = \"\$(python3 -c \"f=$f1; print((f[0], f[1], f[2] + 1))\")\" ]"
+check "a new message moves its change time" "[ -n \"$f1\" ] && [ -f $M/${P}_again.json ] && [ \"\$(js $M/${P}_again.json 'd[\"changed\"]')\" != \"\$(python3 -c \"print($f1[3])\")\" ]"
 
 echo "== hide is the person's"
 reset
@@ -84,8 +84,9 @@ as alice $B hide --machine $P hid
 $B keep --machine $P hid LOCAL4 "H" h.service @LOCAL9 --repair '["true"]'
 as alice $B list --json >$W/a.json
 check "a hidden problem whose message changes shows again" "[ \"\$(js $W/a.json 'd[0][\"hidden\"]')\" = False ]"
+had=$( [ -e /home/alice/.local/state/sparky-stereo-problems/.hidden/machine_${P}_hid ] && echo yes)
 $B clear --machine $P hid; as alice $B list >/dev/null
-check "the person's hide of a problem that is over goes with it" "[ ! -e /home/alice/.local/state/sparky-stereo-problems/.hidden/machine_${P}_hid ]"
+check "the person's hide of a problem that is over goes with it" "[ \"$had\" = yes ] && [ ! -e /home/alice/.local/state/sparky-stereo-problems/.hidden/machine_${P}_hid ]"
 
 echo "== repair"
 reset
@@ -94,7 +95,7 @@ check "a person's problem is kept in their own store, theirs only" "[ \"\$(stat 
 as alice $B repair $P mine >$W/rep.out 2>&1; rc=$?
 check "a repair whose commands all succeed exits 0" "[ $rc = 0 ]"
 check "its output was shown" "grep -q fixing $W/rep.out"
-check "and the problem is over" "[ ! -e /home/alice/.local/state/sparky-stereo-problems/${P}_mine.json ]"
+check "and the problem is over" "[ $rc = 0 ] && [ ! -e /home/alice/.local/state/sparky-stereo-problems/${P}_mine.json ]"
 $B keep --machine $P root-only LOCAL4 "R" r.service @LOCAL8 --repair '["true"]'
 as alice $B repair --machine $P root-only >$W/rep.out 2>&1; rc=$?
 check "a person repairing the machine's problem: exit 1, it needs an administrator, said with how" "[ $rc = 1 ] && grep -q 'needs an administrator: pkexec sparky-stereo-problems repair --machine sparky-stereo-problems root-only' $W/rep.out"
@@ -164,7 +165,7 @@ echo "== say"
 reset
 env -i LANG=de_DE.UTF-8 $B say $P LOCAL4 "S" s.service @LOCAL8 >$W/say.out 2>&1; rc=$?
 check "say exits 0, in the person's language and English" "[ $rc = 0 ] && grep -q '^sparky-stereo-problems: Der Systemdienst S' $W/say.out && grep -q '^sparky-stereo-problems: (en) The system service S' $W/say.out"
-check "say keeps nothing" "[ -z \"\$(ls $M)\" ]"
+check "say keeps nothing" "[ $rc = 0 ] && [ -d $M ] && [ -z \"\$(ls $M)\" ]"
 
 echo "== pkexec runs only a repair of what root kept"
 reset
@@ -195,7 +196,7 @@ printf 'LOCAL1="Title"\nLOCAL2="Something %%s failed with %%s."\n' >$W/lang/en
 printf 'LOCAL1="Titel"\nLOCAL2="Etwas %%s ist mit %%s fehlgeschlagen."\n' >$W/lang/de
 $B catalog demo-pkg $W/lang $W/cat --subject LOCAL1 >/dev/null; rc=$?
 check "a complete language builds (exit 0), one entry per message, the subject aside" "[ $rc = 0 ] && [ \$(grep -c '^-- ' $W/cat/demo-pkg.catalog) = 1 ] && [ -f $W/cat/demo-pkg.de.catalog ]"
-check "each %s becomes the field the journal fills" "grep -q 'Something @SPARKY_ARG1@ failed with @SPARKY_ARG2@.' $W/cat/demo-pkg.catalog"
+check "each %s becomes the field the journal fills" "grep -q 'Something @SPARKY_ARG_A@ failed with @SPARKY_ARG_B@.' $W/cat/demo-pkg.catalog"
 check "the entry's id is the message id" "grep -q \"^-- \$($B message-id demo-pkg LOCAL2)\$\" $W/cat/demo-pkg.de.catalog"
 printf 'LOCAL1="Tytuł"\n' >$W/lang/pl
 $B catalog demo-pkg $W/lang $W/cat --subject LOCAL1 >$W/cat.out 2>&1; rc=$?
@@ -203,8 +204,8 @@ check "a language that lacks a message fails the build (exit 1), said" "[ $rc = 
 printf 'LOCAL1="Tytuł"\nLOCAL2="Coś %%s nie działa."\n' >$W/lang/pl
 $B catalog demo-pkg $W/lang $W/cat --subject LOCAL1 >$W/cat.out 2>&1; rc=$?
 check "a language with another number of %s fails the build" "[ $rc = 1 ]"
-check "the installed catalogs are in journalctl's database (systemd's trigger)" "journalctl --dump-catalog \$($B message-id $P LOCAL4) 2>/dev/null | grep -q 'The system service @SPARKY_ARG1@ (@SPARKY_ARG2@) failed'"
-check "and journalctl -x reads them in the person's language" "LANG=de_DE.UTF-8 journalctl --dump-catalog \$($B message-id $P LOCAL4) 2>/dev/null | grep -q 'Der Systemdienst @SPARKY_ARG1@ (@SPARKY_ARG2@) ist fehlgeschlagen'"
+check "the installed catalogs are in journalctl's database (systemd's trigger)" "journalctl --dump-catalog \$($B message-id $P LOCAL4) 2>/dev/null | grep -q 'The system service @SPARKY_ARG_A@ (@SPARKY_ARG_B@) failed'"
+check "and journalctl -x reads them in the person's language" "LANG=de_DE.UTF-8 journalctl --dump-catalog \$($B message-id $P LOCAL4) 2>/dev/null | grep -q 'Der Systemdienst @SPARKY_ARG_A@ (@SPARKY_ARG_B@) ist fehlgeschlagen'"
 
 echo "== C, C++ and Python"
 reset

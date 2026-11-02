@@ -10,6 +10,7 @@
 #include <QPointer>
 #include <QSet>
 #include <QTimer>
+#include <QVariantMap>
 
 class KNotification;
 
@@ -26,6 +27,10 @@ class Notifier : public QObject
 public:
     explicit Notifier(QObject *parent = nullptr);
     void start();
+
+private Q_SLOTS:
+    // systemd's unit state (Manager.Subscribe): a failed service that systemd no longer has as failed is over
+    void unitChanged(const QString &interface, const QVariantMap &changed, const QStringList &invalidated);
 
 private:
     void rescan();
@@ -44,6 +49,7 @@ private:
     QSet<QString> m_notified; // scope/package/key/id/generation, this login
     QString m_notifiedFile;
     bool m_login = true;
+    bool m_watchUnits = false;
     QFileSystemWatcher m_watcher;
     QTimer m_settle;
 };

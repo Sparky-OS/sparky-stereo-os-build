@@ -504,18 +504,16 @@ fn renderArg(ctx: *Ctx, package: []const u8, arg: Value, lang: []const u8, depth
 fn substitute(ctx: *Ctx, package: []const u8, template: []const u8, args: []const Value, lang: []const u8, depth: u8) Failure![]const u8 {
     var out: std.ArrayList(u8) = .empty;
     var i: usize = 0;
-    const mark = "@SPARKY_ARG";
+    const mark = "@SPARKY_ARG_";
     while (i < template.len) {
-        if (std.mem.startsWith(u8, template[i..], mark)) {
-            var j = i + mark.len;
-            while (j < template.len and std.ascii.isDigit(template[j])) j += 1;
-            if (j > i + mark.len and j < template.len and template[j] == '@') {
-                const n = std.fmt.parseInt(usize, template[i + mark.len .. j], 10) catch 0;
-                if (n >= 1 and n <= args.len) {
-                    try out.appendSlice(ctx.a, try renderArg(ctx, package, args[n - 1], lang, depth));
-                    i = j + 1;
-                    continue;
-                }
+        // @SPARKY_ARG_A@ is the first argument: systemd's catalogs name a field with capital letters and underscores only
+        // (replace-var.c), so the arguments are lettered, A to Z
+        if (std.mem.startsWith(u8, template[i..], mark) and i + mark.len + 1 < template.len and template[i + mark.len + 1] == '@') {
+            const letter = template[i + mark.len];
+            if (letter >= 'A' and letter <= 'Z' and letter - 'A' < args.len) {
+                try out.appendSlice(ctx.a, try renderArg(ctx, package, args[letter - 'A'], lang, depth));
+                i += mark.len + 2;
+                continue;
             }
         }
         try out.append(ctx.a, template[i]);
@@ -941,6 +939,11 @@ pub fn readRecord(ctx: *Ctx, path: []const u8) Failure!ReadResult {
 
 const JField = struct { name: []const u8, value: []const u8 };
 
+// The journal field of the argument at INDEX: SPARKY_ARG_A for the first (the name its catalog entry uses)
+fn argField(a: Allocator, index: usize) Failure![]const u8 {
+    return std.fmt.allocPrint(a, "SPARKY_ARG_{c}", .{@as(u8, @intCast('A' + index))});
+}
+
 fn journalSend(ctx: *Ctx, fields: []const JField) Failure!void {
     var iov: std.ArrayList(sys.iovec) = .empty;
     for (fields) |f| {
@@ -979,7 +982,8 @@ fn journalProblem(ctx: *Ctx, event: []const u8, scope: Scope, r: Record, file: [
     try list.append(ctx.a, .{ .name = "PRIORITY", .value = r.severity.priority() });
     try list.append(ctx.a, .{ .name = "SPARKY_PROBLEM_EVENT", .value = event });
     for (r.args, 0..) |x, i| {
-        try list.append(ctx.a, .{ .name = try std.fmt.allocPrint(ctx.a, "SPARKY_ARG{d}", .{i + 1}), .value = try renderArg(ctx, r.package, x, "en", 0) });
+        if (i >= 26) break;
+        try list.append(ctx.a, .{ .name = try argField(ctx.a, i), .value = try renderArg(ctx, r.package, x, "en", 0) });
     }
     try problemFields(ctx, &list, scope, r, file);
     if (r.output.len > 0) try list.append(ctx.a, .{ .name = "SPARKY_PROBLEM_OUTPUT", .value = r.output });
@@ -997,7 +1001,8 @@ fn journalEvent(ctx: *Ctx, event: []const u8, msg: []const u8, args: []const []c
     try list.append(ctx.a, .{ .name = "PRIORITY", .value = priority });
     try list.append(ctx.a, .{ .name = "SPARKY_PROBLEM_EVENT", .value = event });
     for (args, 0..) |x, i| {
-        try list.append(ctx.a, .{ .name = try std.fmt.allocPrint(ctx.a, "SPARKY_ARG{d}", .{i + 1}), .value = x });
+        if (i >= 26) break;
+        try list.append(ctx.a, .{ .name = try argField(ctx.a, i), .value = x });
     }
     try problemFields(ctx, &list, scope, r, file);
     try journalSend(ctx, list.items);
@@ -1576,8 +1581,8 @@ fn catalogText(a: Allocator, t: []const u8) Failure![]const u8 {
     var i: usize = 0;
     while (i < t.len) : (i += 1) {
         if (t[i] == '%' and i + 1 < t.len and t[i + 1] == 's') {
+            try out.print(a, "@SPARKY_ARG_{c}@", .{@as(u8, 'A') + @as(u8, @intCast(@min(n, 25)))});
             n += 1;
-            try out.print(a, "@SPARKY_ARG{d}@", .{n});
             i += 1;
         } else if (t[i] == '%' and i + 1 < t.len and t[i + 1] == '%') {
             try out.append(a, '%');
@@ -1647,6 +1652,7 @@ pub fn buildCatalog(ctx: *Ctx, package: []const u8, langdir: []const u8, outdir:
             // every language carries every message, with the same arguments: a translation that lacks one fails the build
             const tmpl = l.map.get(k) orelse return fail(ctx, "LOCAL32", &.{ k, try cat(ctx.a, &.{ langdir, "/", lang }) });
             if (placeholders(tmpl) != placeholders(en.map.get(k).?)) return fail(ctx, "LOCAL33", &.{try cat(ctx.a, &.{ langdir, "/", lang, ": ", k, " has another number of %s than English" })});
+            if (placeholders(tmpl) > 26) return fail(ctx, "LOCAL33", &.{try cat(ctx.a, &.{ langdir, "/", lang, ": ", k, " has more than 26 %s" })});
             const subject = l.map.get(subject_key) orelse return fail(ctx, "LOCAL32", &.{ subject_key, try cat(ctx.a, &.{ langdir, "/", lang }) });
             const body = try catalogText(ctx.a, tmpl);
             if (std.mem.indexOf(u8, body, "\n-- ") != null or std.mem.startsWith(u8, body, "-- ")) return fail(ctx, "LOCAL33", &.{try cat(ctx.a, &.{ langdir, "/", lang, ": ", k, " starts a line with -- " })});

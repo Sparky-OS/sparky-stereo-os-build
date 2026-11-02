@@ -13,7 +13,7 @@ include(KDEInstallDirs)
 include(KDECMakeSettings)
 include(KDECompilerSettings NO_POLICY_SCOPE)
 
-find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Core Gui)
+find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Core DBus Gui)
 find_package(KF6 ${KF_MIN_VERSION} REQUIRED COMPONENTS I18n Notifications)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(PROBLEMS REQUIRED IMPORTED_TARGET sparky-stereo-problems)
@@ -21,7 +21,7 @@ pkg_check_modules(PROBLEMS REQUIRED IMPORTED_TARGET sparky-stereo-problems)
 add_definitions(-DTRANSLATION_DOMAIN=\"sparky-stereo-problems-plasma\")
 
 add_executable(sparky-stereo-problems-notifier src/main.cpp src/notifier.cpp src/notifier.h)
-target_link_libraries(sparky-stereo-problems-notifier Qt6::Core Qt6::Gui KF6::I18n KF6::Notifications PkgConfig::PROBLEMS)
+target_link_libraries(sparky-stereo-problems-notifier Qt6::Core Qt6::DBus Qt6::Gui KF6::I18n KF6::Notifications PkgConfig::PROBLEMS)
 # the engine's library is private (Debian Policy 10.2): found through its own folder
 set_target_properties(sparky-stereo-problems-notifier PROPERTIES INSTALL_RPATH "${PROBLEMS_LIBDIR}" BUILD_WITH_INSTALL_RPATH ON)
 install(TARGETS sparky-stereo-problems-notifier DESTINATION ${KDE_INSTALL_BINDIR})

@@ -8,6 +8,9 @@
 #include <KLocalizedString>
 #include <KNotification>
 
+#include <QDBusConnection>
+#include <QDBusMessage>
+#include <QDBusPendingCall>
 #include <QDir>
 #include <QFile>
 #include <QJsonArray>
@@ -96,12 +99,29 @@ void Notifier::start()
     if (QDir().mkpath(state)) {
         QFile::setPermissions(state, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
     }
+    QDBusConnection system = QDBusConnection::systemBus();
+    if (system.isConnected()) {
+        system.connect(u"org.freedesktop.systemd1"_s, QString(), u"org.freedesktop.DBus.Properties"_s, u"PropertiesChanged"_s, this,
+                       SLOT(unitChanged(QString, QVariantMap, QStringList)));
+        system.asyncCall(QDBusMessage::createMethodCall(u"org.freedesktop.systemd1"_s, u"/org/freedesktop/systemd1"_s,
+                                                        u"org.freedesktop.systemd1.Manager"_s, u"Subscribe"_s));
+    } else {
+        QTextStream(stderr) << "sparky-stereo-problems-notifier: the system bus cannot be reached, so a failed service restarted by other means is shown until a store changes\n";
+    }
     for (const QString &dir : {u"/var/lib/sparky-stereo-problems"_s, u"/run/sparky-stereo-problems"_s, state}) {
         if (!QFileInfo::exists(dir) || !m_watcher.addPath(dir)) {
             QTextStream(stderr) << "sparky-stereo-problems-notifier: " << dir << " cannot be watched; its problems are shown when another store changes\n";
         }
     }
     rescan();
+}
+
+void Notifier::unitChanged(const QString &interface, const QVariantMap &changed, const QStringList &invalidated)
+{
+    if (m_watchUnits && interface == u"org.freedesktop.systemd1.Unit"_s
+        && (changed.contains(u"ActiveState"_s) || invalidated.contains(u"ActiveState"_s))) {
+        m_settle.start();
+    }
 }
 
 void Notifier::saveNotified()
@@ -136,6 +156,7 @@ void Notifier::rescan()
     ssp_free(json);
     QList<QJsonObject> open;
     QSet<QString> handles;
+    m_watchUnits = false;
     for (const QJsonValue &v : all) {
         QJsonObject p = v.toObject();
         if (p.contains(u"unreadable"_s)) {
@@ -152,6 +173,7 @@ void Notifier::rescan()
         }
         open << p;
         handles.insert(handleOf(p));
+        m_watchUnits = m_watchUnits || !p[u"unit"_s].toString().isEmpty();
     }
     // a problem that is over, or hidden, closes its notification
     const QStringList shown = m_shown.keys();
@@ -236,7 +258,12 @@ void Notifier::notifySummary(const QList<QJsonObject> &problems)
     QStringList titles;
     for (const QJsonObject &p : problems) {
         failed = failed || p[u"severity"_s].toString() == u"failed"_s;
-        titles << u"• "_s + p[u"title"_s].toString().toHtmlEscaped();
+        // what each one is, in a line: the start of its message
+        QString line = p[u"text"_s].toString().section(u'\n', 0, 0);
+        if (line.size() > 160) {
+            line = line.left(159) + u'…';
+        }
+        titles << u"• "_s + line.toHtmlEscaped();
     }
     auto *n = new KNotification(u"summary"_s, failed ? KNotification::Persistent : KNotification::CloseOnTimeout);
     n->setComponentName(u"sparky-stereo-problems"_s);
