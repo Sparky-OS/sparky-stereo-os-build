@@ -61,6 +61,10 @@ done
 langs=${langs# }
 echo "$langs" | tr ' ' '\n' >"$S/languages"
 install -m 755 "$HERE/lib/merge-mo" "$D/usr/lib/$PKG/merge-mo"
+# the package's messages, word for word, as journal catalogs: the edition's one engine says and keeps a failed
+# update-grub of configure and of the trigger in the person's language (ORDER 350)
+mkdir -p "$D/usr/lib/systemd/catalog"
+sparky-stereo-problems catalog $PKG "$HERE/lang" "$D/usr/lib/systemd/catalog" --subject LOCAL3
 
 # GRUB's menu is written again whenever the catalogues change, in both maintainer scripts
 MENU=$({
@@ -77,6 +81,15 @@ menu() {
 			if systemd-detect-virt --quiet --chroot || systemd-detect-virt --quiet --container; then return 0; fi
 		fi
 		if [ -e /.dockerenv ] || [ -e /run/.containerenv ] || [ ! -d /run/systemd/system ]; then return 0; fi
+	fi
+	# configure and the trigger: the edition's one engine runs update-grub, says a failure with its output and keeps
+	# it until update-grub works again (ORDER 350); the package's catalogs are installed, so it says it in the
+	# person's language. At remove and purge the package's catalogs are gone (and after the engine's own removal,
+	# the engine), so this script's own nine-language diagnostic and dpkg's failed state tell, with the output in
+	# the log below
+	if [ "$1" = configure ] && command -v sparky-stereo-problems >/dev/null; then
+		sparky-stereo-problems run --machine sparky-stereo-grub-l10n update-grub LOCAL21 -- update-grub
+		return
 	fi
 	log=/var/log/sparky-stereo-grub-l10n.log
 	if (umask 077; touch "$log" && chmod 600 "$log"); then :; else
@@ -140,6 +153,10 @@ if [ "$1" = "remove" ] || [ "$1" = "purge" ] || [ "$1" = "abort-install" ]; then
 		dpkg-divert --quiet --package $PKG --remove --rename --divert "$f.debian" "$f"
 	done
 fi
+# a problem of a package that is gone cannot be repaired by it (ORDER 350): the engine lets go of them first
+if [ "$1" = "remove" ] && command -v sparky-stereo-problems >/dev/null; then
+	sparky-stereo-problems clear --all $PKG || :
+fi
 # Debian's catalogues are back: GRUB's menu in their words at once (ORDER 298c)
 case "$1" in
 	remove|purge)
@@ -185,7 +202,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: grub2-common, python3
+Depends: grub2-common, python3, sparky-stereo-problems (>= 0.1.0)
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org

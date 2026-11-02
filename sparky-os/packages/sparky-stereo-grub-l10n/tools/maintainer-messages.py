@@ -22,7 +22,8 @@ def generate(directory):
             if not match or int(match[1]) in messages:
                 raise ValueError(f'{path}: malformed or duplicate message: {line}')
             messages[int(match[1])] = match[2]
-        if messages.keys() != ARGUMENTS.keys():
+        # the ones the maintainer scripts embed; the others (LOCAL3, the engine's title) are the catalogs' only
+        if not ARGUMENTS.keys() <= messages.keys():
             raise ValueError(f'{path}: required message keys are {sorted(ARGUMENTS)}')
         cases.append(f'\t{language}) case $1 in')
         for key, count in ARGUMENTS.items():
