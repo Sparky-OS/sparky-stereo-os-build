@@ -155,5 +155,6 @@ chmod +x "$S/debian/rules"
 cp "$WORK/${PACKAGE}_${VERSION}.dsc" "$WORK/${PACKAGE}_${VERSION}.tar.xz" "$OUT/"
 
 "$HERE/../../repo/provenance.sh" --tree "$D"
-PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release build-tree "$D" "$OUT"
+# Lean Code 0.1.24 reads Zig with Zig's own tokenizer: the same compiler as the build (ORDER 352a)
+LEAN_ZIG=${LEAN_ZIG:-$ZIG} PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release build-tree "$D" "$OUT"
 sync
