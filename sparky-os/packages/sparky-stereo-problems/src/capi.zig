@@ -42,11 +42,34 @@ fn keepError(ctx: *engine.Ctx) void {
     have_err = true;
 }
 
-fn plainError(text: []const u8) c_int {
-    copyTo(&err_local, text);
-    copyTo(&err_en, text);
+// an allocation failed: LOCAL64 in the person's language and in English, rendered with memory of its own
+fn outOfMemory() c_int {
+    _ = engine.outOfMemory(&err_local, &err_en);
     have_err = true;
     return 2;
+}
+
+// a wrong call (LOCAL65 a scope that is none, LOCAL66 a missing name or arguments the library cannot read): said like
+// every failure, from the engine's catalog
+fn wrongCall(ctx: *engine.Ctx, msg: []const u8) c_int {
+    engine.setErr(ctx, msg, &.{}) catch return outOfMemory();
+    keepError(ctx);
+    return 2;
+}
+
+const CallError = error{ Wrong, OutOfMemory };
+
+fn callFailed(ctx: *engine.Ctx, e: CallError) c_int {
+    return switch (e) {
+        error.Wrong => wrongCall(ctx, "LOCAL66"),
+        error.OutOfMemory => outOfMemory(),
+    };
+}
+
+// a call that returns text: null, said
+fn failedNull(ctx: *engine.Ctx, e: CallError) ?[*:0]u8 {
+    _ = callFailed(ctx, e);
+    return null;
 }
 
 fn result(ctx: *engine.Ctx, e: anyerror) c_int {
@@ -54,7 +77,7 @@ fn result(ctx: *engine.Ctx, e: anyerror) c_int {
         keepError(ctx);
         return 1;
     }
-    return plainError("out of memory");
+    return outOfMemory();
 }
 
 fn scopeOf(ctx: *engine.Ctx, s: c_int) ?engine.Scope {
@@ -71,40 +94,49 @@ fn str(p: ?[*:0]const u8) ?[]const u8 {
     return if (p) |x| std.mem.span(x) else null;
 }
 
-fn strings(a: std.mem.Allocator, list: ?[*]const ?[*:0]const u8, n: c_int) ?[]const []const u8 {
-    if (n < 0) return null;
+// a name the call must give
+fn name(p: ?[*:0]const u8) CallError![]const u8 {
+    return str(p) orelse error.Wrong;
+}
+
+fn strings(a: std.mem.Allocator, list: ?[*]const ?[*:0]const u8, n: c_int) CallError![]const []const u8 {
+    if (n < 0) return error.Wrong;
     const count: usize = @intCast(n);
-    const out = a.alloc([]const u8, count) catch return null;
-    for (0..count) |i| out[i] = std.mem.span((list orelse return null)[i] orelse return null);
+    const out = try a.alloc([]const u8, count);
+    for (0..count) |i| out[i] = std.mem.span((list orelse return error.Wrong)[i] orelse return error.Wrong);
     return out;
 }
 
-fn values(a: std.mem.Allocator, list: ?[*]const ?[*:0]const u8, n: c_int) ?[]const Value {
-    const s = strings(a, list, n) orelse return null;
-    const out = a.alloc(Value, s.len) catch return null;
+fn values(a: std.mem.Allocator, list: ?[*]const ?[*:0]const u8, n: c_int) CallError![]const Value {
+    const s = try strings(a, list, n);
+    const out = try a.alloc(Value, s.len);
     for (s, 0..) |x, i| out[i] = .{ .string = x };
     return out;
 }
 
+// text the caller frees with ssp_free; null, said, when it cannot be allocated
 fn dup(s: []const u8) ?[*:0]u8 {
-    const p: [*]u8 = @ptrCast(sys.malloc(s.len + 1) orelse return null);
+    const p: [*]u8 = @ptrCast(sys.malloc(s.len + 1) orelse {
+        _ = outOfMemory();
+        return null;
+    });
     @memcpy(p[0..s.len], s);
     p[s.len] = 0;
     return @ptrCast(p);
 }
 
-fn record(c: *Call, package: ?[*:0]const u8, key: ?[*:0]const u8, message: ?[*:0]const u8, args: ?[*]const ?[*:0]const u8, nargs: c_int, details: ?[*:0]const u8) ?engine.Record {
+fn record(c: *Call, package: ?[*:0]const u8, key: ?[*:0]const u8, message: ?[*:0]const u8, args: ?[*]const ?[*:0]const u8, nargs: c_int, details: ?[*:0]const u8) CallError!engine.Record {
     const a = c.arena.allocator();
     var r = engine.Record{
-        .package = str(package) orelse return null,
-        .key = str(key) orelse return null,
-        .message = str(message) orelse return null,
-        .args = values(a, args, nargs) orelse return null,
+        .package = try name(package),
+        .key = try name(key),
+        .message = try name(message),
+        .args = try values(a, args, nargs),
     };
     if (str(details)) |d| {
-        const v = std.json.parseFromSliceLeaky(Value, a, d, .{}) catch return null;
-        if (v != .object) return null;
-        engine.applyDetails(a, &r, v.object) catch return null;
+        const v = std.json.parseFromSliceLeaky(Value, a, d, .{}) catch |e| return if (e == error.OutOfMemory) error.OutOfMemory else error.Wrong;
+        if (v != .object) return error.Wrong;
+        engine.applyDetails(a, &r, v.object) catch |e| return if (e == error.OutOfMemory) error.OutOfMemory else error.Wrong;
     }
     return r;
 }
@@ -113,8 +145,8 @@ export fn ssp_keep(scope: c_int, package: ?[*:0]const u8, key: ?[*:0]const u8, m
     var c: Call = undefined;
     begin(&c);
     defer c.deinit();
-    const s = scopeOf(&c.ctx, scope) orelse return plainError("unknown scope");
-    const r = record(&c, package, key, message, args, nargs, details) orelse return plainError("wrong arguments or details");
+    const s = scopeOf(&c.ctx, scope) orelse return wrongCall(&c.ctx, "LOCAL65");
+    const r = record(&c, package, key, message, args, nargs, details) catch |e| return callFailed(&c.ctx, e);
     _ = engine.keep(&c.ctx, s, r) catch |e| return result(&c.ctx, e);
     return 0;
 }
@@ -123,10 +155,22 @@ export fn ssp_run(scope: c_int, package: ?[*:0]const u8, key: ?[*:0]const u8, me
     var c: Call = undefined;
     begin(&c);
     defer c.deinit();
-    const s = scopeOf(&c.ctx, scope) orelse return -1;
-    const r = record(&c, package, key, message, args, nargs, details) orelse return -1;
-    const cmd = strings(c.arena.allocator(), command, ncommand) orelse return -1;
-    if (cmd.len == 0) return -1;
+    const s = scopeOf(&c.ctx, scope) orelse {
+        _ = wrongCall(&c.ctx, "LOCAL65");
+        return -1;
+    };
+    const r = record(&c, package, key, message, args, nargs, details) catch |e| {
+        _ = callFailed(&c.ctx, e);
+        return -1;
+    };
+    const cmd = strings(c.arena.allocator(), command, ncommand) catch |e| {
+        _ = callFailed(&c.ctx, e);
+        return -1;
+    };
+    if (cmd.len == 0) {
+        _ = wrongCall(&c.ctx, "LOCAL66");
+        return -1;
+    }
     const status = engine.run(&c.ctx, s, r, cmd) catch |e| {
         _ = result(&c.ctx, e);
         return -1;
@@ -138,8 +182,8 @@ export fn ssp_clear(scope: c_int, package: ?[*:0]const u8, key: ?[*:0]const u8) 
     var c: Call = undefined;
     begin(&c);
     defer c.deinit();
-    const s = scopeOf(&c.ctx, scope) orelse return plainError("unknown scope");
-    _ = engine.clear(&c.ctx, s, str(package) orelse return 2, str(key) orelse return 2) catch |e| return result(&c.ctx, e);
+    const s = scopeOf(&c.ctx, scope) orelse return wrongCall(&c.ctx, "LOCAL65");
+    _ = engine.clear(&c.ctx, s, name(package) catch |e| return callFailed(&c.ctx, e), name(key) catch |e| return callFailed(&c.ctx, e)) catch |e| return result(&c.ctx, e);
     return 0;
 }
 
@@ -147,7 +191,7 @@ export fn ssp_clear_all(package: ?[*:0]const u8) c_int {
     var c: Call = undefined;
     begin(&c);
     defer c.deinit();
-    _ = engine.clearAll(&c.ctx, str(package) orelse return 2) catch |e| return result(&c.ctx, e);
+    _ = engine.clearAll(&c.ctx, name(package) catch |e| return callFailed(&c.ctx, e)) catch |e| return result(&c.ctx, e);
     return 0;
 }
 
@@ -156,12 +200,14 @@ export fn ssp_say(package: ?[*:0]const u8, message: ?[*:0]const u8, args: ?[*]co
     begin(&c);
     defer c.deinit();
     const a = c.arena.allocator();
-    const pkg = str(package) orelse return 2;
-    const both = engine.say(&c.ctx, pkg, str(message) orelse return 2, values(a, args, nargs) orelse return 2) catch |e| return result(&c.ctx, e);
-    const line = std.mem.concat(a, u8, &.{ pkg, ": ", both[0].text, "\n" }) catch return 2;
+    const pkg = name(package) catch |e| return callFailed(&c.ctx, e);
+    const msg = name(message) catch |e| return callFailed(&c.ctx, e);
+    const vals = values(a, args, nargs) catch |e| return callFailed(&c.ctx, e);
+    const both = engine.say(&c.ctx, pkg, msg, vals) catch |e| return result(&c.ctx, e);
+    const line = std.mem.concat(a, u8, &.{ pkg, ": ", both[0].text, "\n" }) catch return outOfMemory();
     _ = engine.writeAll(2, line);
     if (!std.mem.eql(u8, both[0].lang, "en")) {
-        _ = engine.writeAll(2, std.mem.concat(a, u8, &.{ pkg, ": (en) ", both[1].text, "\n" }) catch return 2);
+        _ = engine.writeAll(2, std.mem.concat(a, u8, &.{ pkg, ": (en) ", both[1].text, "\n" }) catch return outOfMemory());
     }
     return 0;
 }
@@ -170,8 +216,19 @@ export fn ssp_repair(scope: c_int, package: ?[*:0]const u8, key: ?[*:0]const u8)
     var c: Call = undefined;
     begin(&c);
     defer c.deinit();
-    const s = scopeOf(&c.ctx, scope) orelse return -1;
-    const status = engine.repair(&c.ctx, s, str(package) orelse return -1, str(key) orelse return -1) catch |e| {
+    const s = scopeOf(&c.ctx, scope) orelse {
+        _ = wrongCall(&c.ctx, "LOCAL65");
+        return -1;
+    };
+    const pkg = name(package) catch |e| {
+        _ = callFailed(&c.ctx, e);
+        return -1;
+    };
+    const k = name(key) catch |e| {
+        _ = callFailed(&c.ctx, e);
+        return -1;
+    };
+    const status = engine.repair(&c.ctx, s, pkg, k) catch |e| {
         _ = result(&c.ctx, e);
         return -1;
     };
@@ -183,8 +240,8 @@ export fn ssp_hide(scope: c_int, package: ?[*:0]const u8, key: ?[*:0]const u8) c
     var c: Call = undefined;
     begin(&c);
     defer c.deinit();
-    const s = scopeOf(&c.ctx, scope) orelse return plainError("unknown scope");
-    engine.hide(&c.ctx, s, str(package) orelse return 2, str(key) orelse return 2) catch |e| return result(&c.ctx, e);
+    const s = scopeOf(&c.ctx, scope) orelse return wrongCall(&c.ctx, "LOCAL65");
+    engine.hide(&c.ctx, s, name(package) catch |e| return callFailed(&c.ctx, e), name(key) catch |e| return callFailed(&c.ctx, e)) catch |e| return result(&c.ctx, e);
     return 0;
 }
 
@@ -192,8 +249,8 @@ export fn ssp_show(scope: c_int, package: ?[*:0]const u8, key: ?[*:0]const u8) c
     var c: Call = undefined;
     begin(&c);
     defer c.deinit();
-    const s = scopeOf(&c.ctx, scope) orelse return plainError("unknown scope");
-    engine.show(&c.ctx, s, str(package) orelse return 2, str(key) orelse return 2) catch |e| return result(&c.ctx, e);
+    const s = scopeOf(&c.ctx, scope) orelse return wrongCall(&c.ctx, "LOCAL65");
+    engine.show(&c.ctx, s, name(package) catch |e| return callFailed(&c.ctx, e), name(key) catch |e| return callFailed(&c.ctx, e)) catch |e| return result(&c.ctx, e);
     return 0;
 }
 
@@ -213,11 +270,14 @@ export fn ssp_render(package: ?[*:0]const u8, message: ?[*:0]const u8, args: ?[*
     begin(&c);
     defer c.deinit();
     const a = c.arena.allocator();
-    const r = engine.render(&c.ctx, str(package) orelse return null, str(message) orelse return null, values(a, args, nargs) orelse return null, str(lang)) catch |e| {
+    const pkg = name(package) catch |e| return failedNull(&c.ctx, e);
+    const msg = name(message) catch |e| return failedNull(&c.ctx, e);
+    const vals = values(a, args, nargs) catch |e| return failedNull(&c.ctx, e);
+    const r = engine.render(&c.ctx, pkg, msg, vals, str(lang)) catch |e| {
         _ = result(&c.ctx, e);
         return null;
     };
-    const text = std.json.Stringify.valueAlloc(a, .{ .title = r.title, .text = r.text, .lang = r.lang }, .{}) catch return null;
+    const text = std.json.Stringify.valueAlloc(a, .{ .title = r.title, .text = r.text, .lang = r.lang }, .{}) catch return failedNull(&c.ctx, error.OutOfMemory);
     return dup(text);
 }
 
@@ -225,7 +285,9 @@ export fn ssp_message_id(package: ?[*:0]const u8, message: ?[*:0]const u8) ?[*:0
     var c: Call = undefined;
     begin(&c);
     defer c.deinit();
-    const id = engine.messageId(c.arena.allocator(), str(package) orelse return null, str(message) orelse return null) catch return null;
+    const pkg = name(package) catch |e| return failedNull(&c.ctx, e);
+    const msg = name(message) catch |e| return failedNull(&c.ctx, e);
+    const id = engine.messageId(c.arena.allocator(), pkg, msg) catch return failedNull(&c.ctx, error.OutOfMemory);
     return dup(id);
 }
 
@@ -233,8 +295,8 @@ export fn ssp_languages() ?[*:0]u8 {
     var c: Call = undefined;
     begin(&c);
     defer c.deinit();
-    const langs = engine.languages(&c.ctx) catch return null;
-    const joined = std.mem.join(c.arena.allocator(), ":", langs) catch return null;
+    const langs = engine.languages(&c.ctx) catch return failedNull(&c.ctx, error.OutOfMemory);
+    const joined = std.mem.join(c.arena.allocator(), ":", langs) catch return failedNull(&c.ctx, error.OutOfMemory);
     return dup(joined);
 }
 

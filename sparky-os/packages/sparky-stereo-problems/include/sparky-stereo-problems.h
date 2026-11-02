@@ -24,7 +24,8 @@
  * message as CONTEXT|MSGID ("@info|The GPU %1 is not here."), whose %1 .. %26 are its arguments.
  *
  * Calls return 0 when done, 1 when what was asked failed (ssp_error says what, in the person's language;
- * ssp_error_en in English) and 2 for wrong arguments. Text a call returns is freed with ssp_free.
+ * ssp_error_en in English) and 2 for a wrong call or when memory could not be allocated (said the same way). A call
+ * that returns text returns NULL, said, when it fails. Text a call returns is freed with ssp_free.
  */
 #ifndef SPARKY_STEREO_PROBLEMS_H
 #define SPARKY_STEREO_PROBLEMS_H

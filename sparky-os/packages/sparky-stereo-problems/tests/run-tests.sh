@@ -371,6 +371,55 @@ print('steps ok')
 EOP
 check "Steps: migrate keeps the first time, record, message, status, dismiss, repair, run" "grep -q 'steps ok' $W/steps.out"
 
+echo "== milestone 2c: out of memory and a wrong call of the library, said like every failure (LOCAL64 to LOCAL66)"
+reset
+# a record larger than the memory the engine may take: reading it cannot allocate
+python3 -c "import json,sys; json.dump({'package': '$P', 'key': 'big', 'message': 'LOCAL4', 'args': ['x', 'x.service', '@LOCAL8'], 'output': 'x' * (160 << 20)}, open(sys.argv[1], 'w'))" $M/${P}_big.json
+# the smallest address space (in steps of 8 MiB) in which the engine starts and says its languages, then 16 MiB more
+limit=
+for mb in $(seq 16 8 256); do
+	if (ulimit -v $((mb * 1024)); $B languages >/dev/null 2>&1); then limit=$(((mb + 16) * 1024)); break; fi
+done
+check "control: the engine starts in a bounded address space ($((${limit:-0} / 1024)) MiB)" "[ -n \"$limit\" ]"
+(ulimit -v ${limit:-1}; env -i LANG=de_DE.UTF-8 $B list --json >/dev/null 2>$W/oom.err); rc=$?
+check "out of memory: exit 1" "[ $rc = 1 ]"
+check "said in German, from the catalog" "grep -qxF 'sparky-stereo-problems: Kein Speicher mehr: Es war nicht genug freier Speicher dafür vorhanden. Schließen Sie einige Programme, um Speicher freizugeben, und versuchen Sie es erneut.' $W/oom.err"
+check "and in English beside it" "grep -qxF 'sparky-stereo-problems: (en) Out of memory: there was not enough free memory to do this. Close some programs to free memory, then try again.' $W/oom.err"
+(ulimit -v ${limit:-1}; env -i LANG=ja_JP.UTF-8 $B list >/dev/null 2>$W/oom-ja.err)
+check "and in Japanese" "grep -qF 'メモリ不足: これを行うための空きメモリが足りませんでした' $W/oom-ja.err"
+(ulimit -v ${limit:-1}; env -i LANG=C.UTF-8 $B list >/dev/null 2>$W/oom-en.err)
+check "in English alone when that is the person's language" "[ \"\$(cat $W/oom-en.err)\" = 'sparky-stereo-problems: Out of memory: there was not enough free memory to do this. Close some programs to free memory, then try again.' ]"
+env -i LANG=de_DE.UTF-8 python3 - $M/${P}_big.json >$W/oom-lib.out 2>&1 <<'EOP'
+import resource
+import sparky_stereo_problems as problems
+# the address space the process has now, and 32 MiB more: the record cannot be read into it
+size = [int(l.split()[1]) for l in open('/proc/self/status') if l.startswith('VmSize:')][0] * 1024
+resource.setrlimit(resource.RLIMIT_AS, (size + (32 << 20), resource.RLIM_INFINITY))
+try:
+    problems.list('sparky-stereo-problems')
+    print('listed')
+except problems.Failed as error:
+    print('local:', error)
+    print('en:', error.english)
+EOP
+check "through the library too: in German and in English" "grep -qxF 'local: Kein Speicher mehr: Es war nicht genug freier Speicher dafür vorhanden. Schließen Sie einige Programme, um Speicher freizugeben, und versuchen Sie es erneut.' $W/oom-lib.out && grep -qxF 'en: Out of memory: there was not enough free memory to do this. Close some programs to free memory, then try again.' $W/oom-lib.out"
+rm -f $M/${P}_big.json
+env -i LANG=de_DE.UTF-8 python3 - >$W/wrong.out 2>&1 <<'EOP'
+import ctypes
+import sparky_stereo_problems as problems
+try:
+    problems.keep('sparky-stereo-problems', 'k', 'LOCAL4', ['A', 'a.service', '@LOCAL8'], scope=7)
+except problems.Failed as error:
+    print('scope:', error, '|', error.english)
+rc = problems._lib.ssp_clear(0, None, b'k')
+print('null:', rc, problems._lib.ssp_error().decode(), '|', problems._lib.ssp_error_en().decode())
+rc = problems._lib.ssp_keep(0, b'sparky-stereo-problems', b'k', b'LOCAL4', None, 0, b'[1, 2]')
+print('details:', rc, problems._lib.ssp_error().decode())
+EOP
+check "a scope that is none: said in German and in English" "grep -qxF 'scope: sparky-stereo-problems wurde mit einem anderen Bereich als machine, boot oder person aufgerufen. | sparky-stereo-problems was called with a scope other than machine, boot or person.' $W/wrong.out"
+check "a missing name: exit 2, said" "grep -qF 'null: 2 sparky-stereo-problems wurde ohne Paket oder Schlüssel aufgerufen' $W/wrong.out"
+check "details that are not an object: exit 2, said" "grep -qF 'details: 2 sparky-stereo-problems wurde ohne Paket oder Schlüssel aufgerufen oder mit Argumenten oder Details' $W/wrong.out"
+
 rm -rf "$W"
 echo "== $( [ $fail = 0 ] && echo ALL PASS || echo "$fail FAILED")"
 exit $fail
