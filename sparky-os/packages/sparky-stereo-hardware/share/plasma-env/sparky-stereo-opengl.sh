@@ -18,8 +18,41 @@ if [ -r "$_sp_conf" ] && [ "$(sed -n 's/^desktop=//p' "$_sp_conf" | tail -n1)" =
 	_sp_gl=${_sp_gl:-zink}
 	[ -n "${GL_STEREO_NVIDIA_OPENGL:-}" ] || export GL_STEREO_NVIDIA_OPENGL=$_sp_gl
 	_sp_vendors=${SPARKY_STEREO_EGL_VENDORS:-/usr/share/glvnd/egl_vendor.d}
-	_sp_systemd=$(kreadconfig6 --file startkderc --group General --key systemdBoot --default true 2>/dev/null || echo true)
-	if [ "$_sp_gl" = zink ] && [ "$_sp_systemd" != false ] &&
+	# A failed read is not evidence that KWin will be isolated by systemd.
+	# kreadconfig6's string path can also return zero for an unreadable file.
+	# The subshell keeps IFS, globbing and return status out of startplasma's shell.
+	_sp_read_startkderc() (
+		set -f
+		IFS=:
+		_sp_repair='["sh","-c",". /etc/xdg/plasma-workspace/env/sparky-stereo-opengl.sh"]'
+		for _sp_dir in "${XDG_CONFIG_HOME:-$HOME/.config}" ${XDG_CONFIG_DIRS:-/etc/xdg}; do
+			if [ -e "$_sp_dir/startkderc" ] && [ ! -r "$_sp_dir/startkderc" ]; then
+				sparky-stereo-problems keep --person --status 1 --repair "$_sp_repair" \
+					sparky-stereo-hardware systemd-boot LOCAL3 "$_sp_dir/startkderc"
+				return 1
+			fi
+		done
+		if _sp_value=$(kreadconfig6 --file startkderc --group General --key systemdBoot --default true); then
+			sparky-stereo-problems clear --person sparky-stereo-hardware systemd-boot
+			printf '%s\n' "$_sp_value"
+		else
+			_sp_status=$?
+			sparky-stereo-problems keep --person --status "$_sp_status" --repair "$_sp_repair" \
+				--command '["kreadconfig6","--file","startkderc","--group","General","--key","systemdBoot","--default","true"]' \
+				sparky-stereo-hardware systemd-boot LOCAL2 "$_sp_status"
+			return "$_sp_status"
+		fi
+	)
+	if _sp_systemd=$(_sp_read_startkderc); then
+		_sp_read_ok=true
+		if [ "$_sp_systemd" = false ]; then
+			sparky-stereo-problems say sparky-stereo-hardware LOCAL4
+		fi
+	else
+		_sp_read_ok=false
+	fi
+	unset -f _sp_read_startkderc
+	if [ "$_sp_read_ok" = true ] && [ "$_sp_gl" = zink ] && [ "$_sp_systemd" != false ] &&
 		[ -f "$_sp_vendors/50_mesa.json" ] && [ -f "$_sp_vendors/10_nvidia.json" ] &&
 		[ -z "${__EGL_VENDOR_LIBRARY_FILENAMES:-}${MESA_LOADER_DRIVER_OVERRIDE:-}" ]; then
 		export SPARKY_STEREO_OPENGL=zink
@@ -52,6 +85,6 @@ if [ -r "$_sp_conf" ] && [ "$(sed -n 's/^desktop=//p' "$_sp_conf" | tail -n1)" =
 		fi
 		unset _sp_lib _sp_share _sp_programs _sp_out _sp_n
 	fi
-	unset _sp_gl _sp_vendors _sp_systemd
+	unset _sp_gl _sp_vendors _sp_systemd _sp_read_ok
 fi
 unset _sp_conf

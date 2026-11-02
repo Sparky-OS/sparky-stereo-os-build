@@ -1,4 +1,11 @@
 -------------------------------------------------------------------------------
+  Version 0.1.18 (2026-11-02)
+-------------------------------------------------------------------------------
+  * Report unreadable startkderc or failed systemdBoot reads in the shared problems
+    engine. Do not apply the session zink override without a successful read; keep
+    the desktop shell running and explain how to repair and start a new session.
+
+-------------------------------------------------------------------------------
   Version 0.1.16 (2026-11-01)
 -------------------------------------------------------------------------------
   * No fallback to nouveau: when the edition's NVIDIA module is not in the repositories, its version names no NVIDIA version, the lock and the CUDA repository package cannot be installed, apt update fails or the preflight fails, the NVIDIA setup stops with an ERROR line that says what failed, why and what to do, purges what it installed, and the setup exits non-zero. Before, each of these logged "FALLBACK ... nouveau firmware installed" and the setup reported success (Daniel, 2026-11-01: "nothing we do should silently fail or have a fall back"; ORDER 343)
