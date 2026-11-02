@@ -19,6 +19,8 @@ VERSION=2.4.4-1+stereo3d1
 printf '%s  %s\n' eee05c1c5a638cfec621633a305e156f85c790f7ed358f62f033450c180c62e0 "$SOURCE_DSC" | sha256sum -c -
 [ ! -e "$BUILD_ROOT/authored" ] && [ ! -e "$OUT/source" ]
 mkdir -p "$BUILD_ROOT" "$OUT/source" "$OUT/authored"
+python3 "$HERE/../../../tools/copy-recipe.py" "$HERE" "$BUILD_ROOT/recipe"
+HERE=$BUILD_ROOT/recipe
 cp "$(dirname "$SOURCE_DSC")"/zfs-linux_2.4.4.orig.tar.gz "$BUILD_ROOT/"
 dpkg-source -x "$SOURCE_DSC" "$BUILD_ROOT/authored"
 cd "$BUILD_ROOT/authored"
@@ -39,10 +41,11 @@ dch --newversion "$VERSION" --distribution mashtabba \
 dpkg-source -b .
 cp "$BUILD_ROOT"/*.dsc "$BUILD_ROOT"/*.debian.tar.* "$BUILD_ROOT"/*.orig.tar.* "$OUT/authored/"
 dpkg-source -x "$BUILD_ROOT/zfs-linux_$VERSION.dsc" "$BUILD_ROOT/lean-source"
-PYTHONPATH="$TOOLKIT" python3 -m lean.debian_prepare "$BUILD_ROOT/lean-source" "$VERSION+lc1" --toolkit "$TOOLKIT"
+PYTHONPATH="$TOOLKIT" python3 -m lean.debian_prepare "$BUILD_ROOT/lean-source" "$VERSION+lc1" --toolkit "$TOOLKIT" --build-dependency clang
 cd "$BUILD_ROOT/lean-source"
 dpkg-buildpackage -us -uc -j4
 PYTHONPATH="$TOOLKIT" python3 -m lean.release check-debs "$BUILD_ROOT"/*+lc1_*.deb
+PYTHONPATH="$TOOLKIT" python3 -m lean.release check-identity "$BUILD_ROOT"/*+lc1_*.deb
 cp "$BUILD_ROOT"/*+lc1_*.deb "$OUT/"
 cp "$BUILD_ROOT"/*+lc1.dsc "$BUILD_ROOT"/*+lc1.debian.tar.* "$BUILD_ROOT"/*.orig.tar.* "$OUT/source/"
 cp .sparky-lc/source.json "$OUT/native-source.json"
