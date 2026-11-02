@@ -9,7 +9,7 @@ set -euo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
 OUT=$(readlink -f "${1:-.}")
 PKG=sparky-stereo-boot
-VERSION=0.1.5+lc1
+VERSION=0.1.6+lc1
 umask 022
 mkdir -p "$OUT"
 D=$(mktemp -d "${TMPDIR:-/tmp}/stereo-boot-build.XXXXXX")
@@ -22,18 +22,16 @@ done
 install -D -m 644 "$HERE/systemd/system/plymouth-quit.service.d/sparky-stereo-boot.conf" "$D/usr/lib/systemd/system/plymouth-quit.service.d/sparky-stereo-boot.conf"
 install -D -m 644 "$HERE/systemd/system/sddm.service.d/sparky-stereo-boot.conf" "$D/usr/lib/systemd/system/sddm.service.d/sparky-stereo-boot.conf"
 mkdir -p "$D/usr/lib/systemd/system/sockets.target.wants" "$D/usr/lib/systemd/system/multi-user.target.wants" \
-	"$D/usr/lib/systemd/user/default.target.wants" "$D/usr/lib/systemd/user/graphical-session.target.wants"
+	"$D/usr/lib/systemd/user/default.target.wants" "$D/usr/lib/systemd/catalog"
 ln -s ../sparky-stereo-boot.socket "$D/usr/lib/systemd/system/sockets.target.wants/sparky-stereo-boot.socket"
 ln -s ../sparky-stereo-boot-check.service "$D/usr/lib/systemd/system/multi-user.target.wants/sparky-stereo-boot-check.service"
 for u in sparky-stereo-boot-export.path sparky-stereo-boot-export.service; do
 	install -D -m 644 "$HERE/systemd/user/$u" "$D/usr/lib/systemd/user/$u"
 	ln -s ../$u "$D/usr/lib/systemd/user/default.target.wants/$u"
 done
-# the boot's kept problems as notifications in the person's session (0.1.5)
-for u in sparky-stereo-boot-problems.path sparky-stereo-boot-problems.service; do
-	install -D -m 644 "$HERE/systemd/user/$u" "$D/usr/lib/systemd/user/$u"
-	ln -s ../$u "$D/usr/lib/systemd/user/graphical-session.target.wants/$u"
-done
+# the boot's messages, word for word, as journal catalogs: the edition's one engine keeps the boot's problems and its
+# session notifier shows them (0.1.6, ORDER 350)
+sparky-stereo-problems catalog sparky-stereo-boot "$HERE/lang" "$D/usr/lib/systemd/catalog" --subject LOCAL19
 install -D -m 644 "$HERE/default/sparky-stereo-boot" "$D/etc/default/sparky-stereo-boot"
 install -D -m 755 "$HERE/initramfs/sparky-stereo-nvidia" "$D/usr/share/initramfs-tools/hooks/sparky-stereo-nvidia"
 install -D -m 644 "$HERE/modprobe/sparky-stereo-nvidia-kms.conf" "$D/usr/lib/modprobe.d/sparky-stereo-nvidia-kms.conf"
@@ -89,6 +87,12 @@ set -e
 P=/usr/lib/sparky-stereo-boot/problems.py
 if [ "$1" = configure ]; then
 	failed=
+	# 0.1.5 kept its problems in its own store: they move into the engine once, keeping when each was found. One that
+	# cannot move stays there and is said, and kept as the problem old-store, so the person's next login tells it and
+	# repair tries again; the package configures
+	if [ -n "$2" ] && dpkg --compare-versions "$2" lt 0.1.6 && [ -d /var/lib/sparky-stereo-boot/problems ]; then
+		python3 $P migrate /var/lib/sparky-stereo-boot/problems || :
+	fi
 	if [ -d /run/systemd/system ]; then
 		# said and kept; the package configures (the boot itself does not need them)
 		python3 $P run systemd-reload LOCAL60 -- systemctl daemon-reload || :
@@ -183,6 +187,8 @@ remove)
 	# back by now, and its default rebuilds only the newest); without update-initramfs the boot images are another
 	# generator's, as Debian's initramfs-tools hook leaves them
 	if command -v update-initramfs >/dev/null; then must update-initramfs -u -k all; fi
+	# a problem of a package that is gone cannot be repaired by it (ORDER 350): the engine lets go of the boot's
+	if command -v sparky-stereo-problems >/dev/null; then must sparky-stereo-problems clear --all sparky-stereo-boot; fi
 	;;
 purge)
 	must rm -rf /var/lib/sparky-stereo-boot
@@ -207,7 +213,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: grub-common, libdrm2, python3, systemd
+Depends: grub-common, libdrm2, python3, systemd, sparky-stereo-problems (>= 0.1.0)
 Recommends: plymouth (>= 26.134.222-1+stereo3d1), sparky-stereo-plymouth
 Section: System
 Priority: optional

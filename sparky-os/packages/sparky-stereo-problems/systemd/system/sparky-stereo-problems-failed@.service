@@ -1,0 +1,14 @@
+# Sparky Stereo OS (ORDER 350): the failure of %i is kept for this boot in /run/sparky-stereo-problems, with the
+# service's own last lines from the journal and "systemctl restart" as its repair, and is shown in each person's
+# session (sparky-stereo-problems-plasma). systemd passes the failed unit's MONITOR_UNIT, MONITOR_SERVICE_RESULT,
+# MONITOR_EXIT_CODE, MONITOR_EXIT_STATUS and MONITOR_INVOCATION_ID (systemd.exec(5)).
+[Unit]
+Description=Tell that %i failed
+Documentation=man:systemd.unit(5) file:/usr/share/doc/sparky-stereo-problems/README.md
+DefaultDependencies=no
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/sparky-stereo-problems service-failed %i

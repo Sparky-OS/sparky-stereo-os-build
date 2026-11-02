@@ -6,10 +6,16 @@
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 dest=${DEST:-${SPARKY_STAGING_DIR:?}/classic-look/m3}
-version=${VERSION:-20261014.7~sparky9~1+lc1}
+version=${VERSION:-20261102~sparky9~0+lc1}
 base=${BASE_VERSION:-20261014.6~sparky9~1+lc1}
 work=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/kubabbar-m3-pkg.XXXXXX")
 trap 'rm -rf "$work"' EXIT
+RECIPE=$repo
+COPY="$RECIPE/../../../tools/copy-recipe.py"
+python3 "$COPY" "$RECIPE" "$work/authoring"
+mkdir -p "$work/authoring/build-tools"
+cp "$COPY" "$work/authoring/build-tools/"
+repo=$work/authoring
 mkdir -p "$dest"
 if compgen -G "$dest/*.deb" >/dev/null; then
 	echo "Use an empty candidate output directory; existing archives are retained." >&2
@@ -67,7 +73,7 @@ mkdir -p "$k/DEBIAN"
 } > "$k/DEBIAN/control"
 (cd "$k" && find . -type f ! -path './DEBIAN/*' -printf '%P\n' | LC_ALL=C sort | xargs -d '\n' md5sum > DEBIAN/md5sums)
 chmod -R go-w "$k"
-PYTHONPATH="$repo/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$k" "$dest" --authoring "$repo"
+PYTHONPATH="$RECIPE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$k" "$dest" --authoring "$repo"
 (cd "$dest" && sha256sum ./*.deb | sed 's|\./||' > SHA256SUMS)
 printf "%s\n" "${SOURCE_COMMIT:-unknown}" > "$dest/SOURCE-COMMIT"
 cat "$dest/SHA256SUMS"

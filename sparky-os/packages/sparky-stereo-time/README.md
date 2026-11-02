@@ -22,7 +22,7 @@ Policy (Daniel): time authenticated wherever the country's official service offe
 - No service: `pool debian.pool.ntp.org iburst`.
 The data file keeps the order of the servers.
 
-Nothing fails silently (Daniel, 2026-11-01: "either it works or not and the user must know"). What fails is said in the system's language and kept in `/var/lib/sparky-stereo-time/problems/STEP.json` with its evidence until it works again, and the session shows each kept problem once as a notification:
+Nothing fails silently (Daniel, 2026-11-01: "either it works or not and the user must know"). What fails is said in the system's language and kept in `/var/lib/sparky-stereo-problems (the edition's one engine, sparky-stereo-problems)/STEP.json` with its evidence until it works again, and the session shows each kept problem once as a notification:
 - a catalogue (`ntp-countries.tsv`) or timezone tables that cannot be read, or a timezone that is not known: nothing is written, and the sources in use stay as they were (exit 3). Debian's pool is never put in place of a country's servers because something failed;
 - sources that cannot be written (exit 4);
 - a running chrony that refuses the reload or the restart, or a failed chrony (exit 4); a chrony that is not running reads the sources when it starts, and that is said;

@@ -32,6 +32,56 @@ class StandaloneSource(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'compiled payload'):
             standalone.build(tree, self.base / 'out', self.base, arch)
 
+    def authoring(self, git):
+        """A recipe folder with an untracked note and Python caches beside its inputs."""
+        recipe = self.base / 'recipe'
+        recipe.mkdir()
+        (recipe / 'build.sh').write_text('#!/bin/sh\necho build\n')
+        (recipe / 'README').write_text('The recipe inputs.\n')
+        if git:
+            run = lambda *a: subprocess.run(['git', '-C', str(recipe), '-c', 'user.name=Test',  # noqa: E731
+                                             '-c', 'user.email=test@example.org', *a], check=True, capture_output=True)
+            run('init', '-q')
+            run('add', 'build.sh', 'README')
+            run('commit', '-q', '-m', 'inputs')
+            (recipe / 'README').write_text('The recipe inputs, edited in the work tree.\n')
+        (recipe / 'PRIVATE-NOTE.md').write_text('A note for myself, never for the archive.\n')
+        (recipe / '__pycache__').mkdir()
+        (recipe / '__pycache__/helper.cpython-314.pyc').write_bytes(b'\0cache')
+        (recipe / 'helper.pyc').write_bytes(b'\0cache')
+        return recipe
+
+    def authoring_members(self, out):
+        with tarfile.open(out / 'lc-demo_1+lc1.tar.xz') as stream:
+            prefix = 'lc-demo-1+lc1/authoring/'
+            return {item.name[len(prefix):]: stream.extractfile(item).read() for item in stream
+                    if item.name.startswith(prefix) and item.isfile()}
+
+    def built(self, recipe):
+        tree = self.stage('1+lc1')
+        docs = tree / 'usr/share/doc/lc-demo'
+        docs.mkdir(parents=True)
+        (docs / 'copyright').write_text('Copyright 2026 Example\nLicense: MIT\n')
+        standalone.build(tree, self.base / 'out', recipe, 'all')
+        return self.authoring_members(self.base / 'out')
+
+    def test_authoring_in_a_checkout_ships_only_what_git_tracks(self):
+        """ORDER 339's rule for lean.standalone --authoring: the untracked note and the caches stay out of the source
+        and HR archives; a tracked file goes with its working bytes."""
+        members = self.built(self.authoring(git=True))
+        self.assertEqual(set(members), {'build.sh', 'README'})
+        self.assertEqual(members['README'], b'The recipe inputs, edited in the work tree.\n')
+
+    def test_authoring_outside_git_is_the_folder_without_caches(self):
+        members = self.built(self.authoring(git=False))
+        self.assertEqual(set(members), {'build.sh', 'README', 'PRIVATE-NOTE.md'})
+
+    def test_a_checkout_git_cannot_read_stops_the_copy(self):
+        recipe = self.authoring(git=False)
+        (recipe / '.git').write_text('gitdir: /nonexistent/broken\n')
+        with self.assertRaises(ValueError):
+            self.built(recipe)
+
     def source_roundtrip(self, arch):
         tree = self.stage('1+lc1', arch=arch)
         docs = tree / 'usr/share/doc/lc-demo'

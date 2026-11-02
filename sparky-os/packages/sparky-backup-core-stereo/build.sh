@@ -15,11 +15,14 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 SRC=${SRC:-${SPARKY_SOURCES:?}/sparky-backup-core-stereo}/9
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
 PKG=sparky-backup-core-stereo
-VERSION=$(sed -n '2s/^  Version \([^ ]*\) .*/\1/p' "$SRC/CHANGELOG")
-[ -n "$VERSION" ] || { echo "no version in $SRC/CHANGELOG"; exit 1; }
-VERSION=${VERSION%+lc1}+lc1
+SOURCE_VERSION=$(sed -n '2s/^  Version \(.*\) (.*$/\1/p' "$SRC/CHANGELOG")
+[ -n "$SOURCE_VERSION" ] || { echo "no version in $SRC/CHANGELOG" >&2; exit 1; }
+VERSION=${VERSION:-20261102~sparky9~0+lc1}
 W=$(mktemp -d "${TMPDIR:-/tmp}/backup-stereo-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
+COPY="$HERE/../../../tools/copy-recipe.py"
+python3 "$COPY" "$SRC" "$W/input"
+SRC=$W/input
 D=$W/$PKG
 mkdir -p "$D/DEBIAN" "$D/usr/bin" "$D/etc/sparkybackup" "$D/etc/xdg/autostart" "$D/lib/live/config" \
 	"$D/usr/lib/sparkybackup" "$D/usr/share/applications" "$D/usr/share/sparkybackup/idesk" \
@@ -79,7 +82,9 @@ EOS
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT"
 mkdir -p "$W/authoring"
-cp -a "$HERE/." "$W/authoring/builder"
+python3 "$COPY" "$HERE" "$W/authoring/builder"
 cp -a "$SRC" "$W/authoring/upstream"
+mkdir -p "$W/authoring/build-tools"
+cp "$COPY" "$W/authoring/build-tools/"
 PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone \
     "$D" "$OUT" --authoring "$W/authoring" --architecture amd64

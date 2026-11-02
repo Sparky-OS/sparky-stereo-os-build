@@ -15,7 +15,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-from . import archive, linkcheck, package
+from . import VERSION, archive, identities, linkcheck, package, project
 
 
 def projection_hash(path):
@@ -59,7 +59,15 @@ def check_iso(iso):
     print(f'lc1: verified ISO build attestation: {iso.name}')
 
 
+def toolkit_identity():
+    """This toolkit certifies packages only with its VERSION's one released renderer (lean/identities.py)."""
+    why = identities.toolkit_problem(VERSION, project.IDENTITY, project.CODE_SHA256)
+    if why:
+        raise package.Invalid(why)
+
+
 def build_tree(root, out):
+    toolkit_identity()
     root, out = Path(root).resolve(), Path(out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='lc-build-') as work:
@@ -103,6 +111,9 @@ def check_debs(paths):
         with tempfile.TemporaryDirectory(prefix='lc-check-') as work:
             subprocess.run(['dpkg-deb', '--raw-extract', str(deb), work], check=True, stdout=subprocess.DEVNULL)
             obj = package.check_tree(work)
+            why = identities.problem(obj['renderer']['identity'], obj['renderer']['sha256'])
+            if why:
+                raise package.Invalid(f'{deb}: {why}')
             key = (obj['package'], obj['version'], obj['architecture'])
             if key in verified:
                 raise package.Invalid(f'duplicate package identity: {key}')
@@ -130,6 +141,54 @@ def check_debs(paths):
                 raise package.Invalid(f'{key}: HR missing or corrupt for {row["path"]}')
     print(f'lc1: verified {len(verified)} packages, payload hashes and required HR companions')
     return verified
+
+
+def manifest_of(deb):
+    """(package, version, architecture, manifest) of an lc1 archive, reading only its control and its manifest."""
+    fields = dict(line.split(': ', 1) for line in subprocess.run(
+        ['dpkg-deb', '-f', str(deb), 'Package', 'Version', 'Architecture', package.FIELD], capture_output=True,
+        text=True, check=True).stdout.splitlines() if ': ' in line)
+    p, v, a = fields.get('Package', ''), fields.get('Version', ''), fields.get('Architecture', '')
+    if package.FIELD not in fields:
+        raise package.Invalid(f'{deb}: no {package.FIELD} field')
+    member = '.' + package.manifest_path(p, a)
+    tar = subprocess.Popen(['dpkg-deb', '--fsys-tarfile', str(deb)], stdout=subprocess.PIPE)
+    try:
+        r = subprocess.run(['tar', '-xO', '--occurrence=1', member], stdin=tar.stdout, capture_output=True)
+    finally:
+        tar.stdout.close()
+        tar.kill()
+        tar.wait()
+    if r.returncode != 0 or not r.stdout:
+        raise package.Invalid(f'{deb}: lc1 manifest {member[1:]} unreadable')
+    return p, v, a, package.load(fields[package.FIELD], r.stdout, p, v, a)
+
+
+def check_identity(paths):
+    """The Part 1 check of a publication round: every staged package's lc1 renderer pairs its label with the
+    digest the version table gives it. Reads each archive's control and manifest only (check-debs, run by
+    publish-tree's check-selection and by sync-to-server's check-repo, makes the same check with the full
+    payload verification). Names every refused package, then refuses the set."""
+    refused, seen = [], {}
+    for deb in paths:
+        try:
+            p, v, a, obj = manifest_of(deb)
+        except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+            refused.append(f'{deb}: {exc}')
+            continue
+        why = identities.problem(obj['renderer']['identity'], obj['renderer']['sha256'])
+        if why:
+            refused.append(f'{deb}: {why}')
+            continue
+        seen.setdefault(obj['renderer']['identity'], []).append(f'{p}_{v}_{a}')
+    for line in refused:
+        print(f'lc1: refused: {line}')
+    for identity, names in sorted(seen.items()):
+        print(f'lc1: {len(names)} packages: {identity}')
+    if refused:
+        raise package.Invalid(f'{len(refused)} of {len(paths)} packages carry a renderer the version table does not '
+                              f'release (lean/identities.py)')
+    print(f'lc1: verified {len(paths)} renderer identities against the version table')
 
 
 def previous_build(deb, previous_dir=None, previous_debs=(), controls=None):
@@ -206,6 +265,8 @@ def main():
     build.add_argument('out')
     check = commands.add_parser('check-debs')
     check.add_argument('debs', nargs='+')
+    ident = commands.add_parser('check-identity', help='staged lc1 archives: renderer label and digest match the version table')
+    ident.add_argument('debs', nargs='+')
     link = commands.add_parser('check-link')
     link.add_argument('debs', nargs='+')
     link.add_argument('--previous-dir', help='directory holding the pre-lc1 builds to compare with')
@@ -234,6 +295,8 @@ def main():
             build_tree(args.tree, args.out)
         elif args.command == 'check-debs':
             check_debs(args.debs)
+        elif args.command == 'check-identity':
+            check_identity(args.debs)
         elif args.command == 'check-link':
             check_link(args.debs, args.previous_dir, args.smoke, args.archive_config, args.scratch,
                        Path(args.siblings_file).read_text().splitlines() if args.siblings_file else (),

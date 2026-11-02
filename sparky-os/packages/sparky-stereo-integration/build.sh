@@ -7,11 +7,17 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the output directory}
-VERSION=0.1.0+lc1
+VERSION=0.1.1+lc1
 PKG=sparky-stereo-integration
 mkdir -p "$OUT"
 W=$(mktemp -d "$OUT/.$PKG.XXXXXX")
 trap 'rm -rf "$W"' EXIT
+RECIPE=$HERE
+COPY="$RECIPE/../../../tools/copy-recipe.py"
+python3 "$COPY" "$RECIPE" "$W/authoring"
+mkdir -p "$W/authoring/build-tools"
+cp "$COPY" "$W/authoring/build-tools/"
+HERE=$W/authoring
 D=$W/$PKG
 mkdir -p "$D/DEBIAN" "$D/usr/bin" "$D/etc/xdg/autostart" "$D/usr/share/sparky/$PKG" "$D/usr/share/sparky-stereo/integrations.d" "$D/usr/share/doc/$PKG" "$D/usr/lib/sparky-stereo" "$D/usr/share/krunner/dbusplugins" "$D/usr/share/dbus-1/services"
 install -m755 "$HERE/bin/sparky-stereo-integration" "$D/usr/bin/"
@@ -52,9 +58,6 @@ Description: Runs the Dolphin right click actions of the stereo integration pack
   package it names, with its own message; hiding such actions is a secondary choice after Cancel.
 X
 (cd "$D" && find usr etc -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
-A=$W/authoring
-mkdir -p "$A"
-cp -a "$HERE/." "$A/"
-rm -f "$A/copyright.keep"
-PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$A"
+A=$HERE
+PYTHONPATH="$RECIPE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$A"
 sync

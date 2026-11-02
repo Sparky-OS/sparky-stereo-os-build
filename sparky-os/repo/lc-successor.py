@@ -13,6 +13,8 @@ folded Build-Depends, an edition entry that is also the Lean Code entry, the 19 
 the published debian/ directory stays as it is but for its toolkit, replaced by this tree's (the files debian_prepare
 copies), and its changelog, which gains the plain entry for NEXT and the Lean Code entry for NEXT+lc1 on top (one entry,
 NEXT, for a source whose versions carry no +lc1). Only the changelog and the toolkit may differ.
+--preserve PATTERN REASON: the next version keeps one more file as authored for a source consumer the recipe names
+(lean.debian_prepare --preserve-source): the published plan stays as it is and gains this pattern, nothing else.
 --recipe DIR: the next version carries a recipe change: DIR is the recipe's debian/ directory, whose changelog is the
 published plain changelog with the new version's entry (or entries) on top; it replaces the plain debian/ directory, and
 the new version is its top entry. Only debian/ may differ then; the tool lists what did.
@@ -78,7 +80,8 @@ LEAN_ITEM = ('  * Apply verified native Lean Code before compilation and qualifi
 def toolkit_files(sparky_os):
     """The files lean.debian_prepare copies into debian/sparky-lean-toolkit, by their place in the source."""
     files = {f'lean/{p.name}': p for p in (sparky_os / 'lean').glob('*.py')}
-    files.update({'lean/JvmLexer.java': sparky_os / 'lean/JvmLexer.java', 'lean/smoke.tsv': sparky_os / 'lean/smoke.tsv',
+    files.update({'lean/JvmLexer.java': sparky_os / 'lean/JvmLexer.java', 'lean/ZigTokens.zig': sparky_os / 'lean/ZigTokens.zig',
+                  'lean/smoke.tsv': sparky_os / 'lean/smoke.tsv',
                   'provenance.sh': sparky_os / 'repo/provenance.sh', 'LICENSE': sparky_os / 'packages/dpkg-stereo/LICENSE'})
     return files
 
@@ -140,6 +143,8 @@ def main():
     ap.add_argument('--item', action='append')
     ap.add_argument('--recipe', type=Path, help="the recipe's debian/ directory for the next version")
     ap.add_argument('--in-place', action='store_true', help='keep the published debian/ but for its toolkit and changelog')
+    ap.add_argument('--preserve', nargs=2, action='append', default=[], metavar=('PATTERN', 'REASON'),
+                    help='one more source-consumer pattern for the next version, its reason beside it')
     ap.add_argument('--work', type=Path)
     ap.add_argument('dsc', type=Path)
     ap.add_argument('out', type=Path)
@@ -171,6 +176,11 @@ def main():
         shutil.copytree(old / 'debian', new / 'debian', symlinks=True)
         plan = new / 'debian/sparky-lean-preserve.json'
         preserve = list(json.loads(plan.read_text()).items()) if plan.exists() else []
+        published_plan = dict(preserve)
+        for pattern, reason in args.preserve:
+            if pattern in published_plan:
+                raise ValueError(f'{pattern}: already in the published source-consumer plan')
+            preserve.append((pattern, reason))
         control = (new / 'debian/control').read_text()
         six = 'gcc, node-acorn, nodejs, perl, python3, python3-yaml'
         mode = []
@@ -211,10 +221,12 @@ def main():
             env.write_text(text.replace(line, f'PACKAGE_VERSION={args.next}+lc1\n'))
         debian_prepare.prepare(new, args.next + '+lc1', HERE.parent, preserve_sources=preserve)
         if plan.exists() or (old / 'debian/sparky-lean-preserve.json').exists():
-            if plan.read_bytes() != (old / 'debian/sparky-lean-preserve.json').read_bytes():
+            if json.loads(plan.read_text()) != {**published_plan, **dict(args.preserve)}:
+                raise ValueError('the source-consumer plan changed beyond the --preserve patterns')
+            if not args.preserve and plan.read_bytes() != (old / 'debian/sparky-lean-preserve.json').read_bytes():
                 raise ValueError('the source-consumer plan changed')
         changed = sorted(tree_diff(old, new))
-        allowed = {'debian/changelog', 'debian/kernel-build.env'}
+        allowed = {'debian/changelog', 'debian/kernel-build.env'} | ({'debian/sparky-lean-preserve.json'} if args.preserve else set())
         if mode:
             if (new / 'debian/control').read_text() != moved:
                 raise ValueError('debian/control differs beyond the place of the six build dependencies')
@@ -227,7 +239,7 @@ def main():
             raise ValueError(f'the new source differs beyond its changelog and toolkit: {other}')
         report = {'source': name, 'old': version, 'new': args.next + '+lc1', 'recipe': str(args.recipe or ''),
                   'changed': [p for p in changed if p not in toolkit], 'toolkit_files_changed': len(toolkit),
-                  'preserve_patterns': len(preserve), 'plain_from_lc': mode}
+                  'preserve_patterns': len(preserve), 'preserve_added': [p for p, _ in args.preserve], 'plain_from_lc': mode}
         finish(work, dsc, name, version, args.next + '+lc1', old, out, report)
 
 

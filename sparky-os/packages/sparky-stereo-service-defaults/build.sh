@@ -3,8 +3,9 @@
 # Copyright 2026 under the GNU GPL3 License
 # Builds sparky-stereo-service-defaults: systemd drop-ins that give services of other packages a
 # working default where they failed at every boot (queue item 140), and, since 0.1.3 (ORDER 346c),
-# say and keep each one's failure instead of skipping it (sparky-stereo-service-problem@, problems.py).
-# Needs only dpkg-deb.
+# say and keep each one's failure instead of skipping it (sparky-stereo-service-problem@, problems.py), kept since
+# ORDER 350 by the edition's one engine, sparky-stereo-problems.
+# Needs dpkg-deb and sparky-stereo-problems (its catalog command).
 # Last update 2026/11/02
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
@@ -17,12 +18,10 @@ W=$(mktemp -d "${TMPDIR:-/tmp}/service-defaults.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 D=$W/$PKG
 mkdir -p "$D/DEBIAN" "$D/usr/lib/systemd" "$D/usr/share/doc/$PKG" "$D/usr/bin" "$D/usr/lib/$PKG" \
-	"$D/usr/share/sparky/$PKG" "$D/var/lib/$PKG/problems"
+	"$D/usr/share/sparky/$PKG" "$D/usr/lib/systemd/catalog"
 cp -r "$HERE/system" "$HERE/user" "$D/usr/lib/systemd/"
-mkdir -p "$D/usr/lib/systemd/user/graphical-session.target.wants"
-for u in sparky-stereo-service-problems.path sparky-stereo-service-problems.service; do
-	ln -s ../$u "$D/usr/lib/systemd/user/graphical-session.target.wants/$u"
-done
+# the package's own messages, word for word, as journal catalogs the engine reads in the person's language (ORDER 350)
+sparky-stereo-problems catalog $PKG "$HERE/lang" "$D/usr/lib/systemd/catalog" --subject LOCAL13
 find "$D/usr/lib/systemd" -type d -exec chmod 755 {} + && find "$D/usr/lib/systemd" -type f -exec chmod 644 {} +
 install -D -m 755 "$HERE/NetworkManager/dispatcher.d/90-sparky-stereo-ipwatchd" \
 	"$D/usr/lib/NetworkManager/dispatcher.d/90-sparky-stereo-ipwatchd"
@@ -75,6 +74,11 @@ cat >"$D/DEBIAN/postrm" <<'EOS'
 #!/bin/sh
 # postrm script
 set -e
+# a problem of a package that is gone cannot be repaired by it (ORDER 350): the engine lets go of them, and says
+# what it could not
+if [ "$1" = "remove" ] && command -v sparky-stereo-problems >/dev/null; then
+	sparky-stereo-problems clear --all sparky-stereo-service-defaults || :
+fi
 if [ "$1" = "purge" ]; then
 	rm -rf /var/lib/sparky-stereo-service-defaults
 fi
@@ -88,7 +92,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: systemd, python3, iproute2
+Depends: systemd, python3, iproute2, sparky-stereo-problems (>= 0.1.0)
 Breaks: snmptt (<< 1.5-3+sparky1~), pkcs11-daemon (<< 0.4.1-5+sparky1~), xfsprogs (<< 7.2.0-1+sparky1~)
 Section: System
 Priority: optional

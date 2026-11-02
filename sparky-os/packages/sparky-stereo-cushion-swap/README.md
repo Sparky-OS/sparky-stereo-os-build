@@ -319,7 +319,7 @@ Nothing fails silently
 Daniel, 2026-11-01: "nothing we do should silently fail or have a fall
 back - either it works or not and the user must know". Whatever keeps
 the daemon from protecting memory, or from protecting it the way it was
-set, is a problem: a file in /run/cushion-swap/problems with what, why
+set, is a problem: a file in /run/sparky-stereo-problems (the edition's one engine, sparky-stereo-problems) with what, why
 and what to do, named in the status, said once in the journal and shown
 once per session as a notification (cushion-swap-problems.path in the
 person's session runs "cushion-swap --notify"). It clears when it is

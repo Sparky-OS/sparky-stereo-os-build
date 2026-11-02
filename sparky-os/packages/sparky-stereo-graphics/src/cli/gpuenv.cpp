@@ -10,7 +10,9 @@
 //   sparky-stereo-gpu-env --session     the KWIN_DRM_DEVICES line for the next login, nothing when Automatic
 //   sparky-stereo-gpu-env --list        the GPUs, one line each (--json for a machine reader)
 //   sparky-stereo-gpu-env --problems    what is kept: each choice that cannot be used, each failed step of the package
-//   sparky-stereo-gpu-env --notify      the session's side: each kept problem as a notification (once per session)
+//   sparky-stereo-gpu-env --notify      starts the session's notifier (sparky-stereo-problems-plasma), which shows the
+//                                       kept problems
+//   sparky-stereo-gpu-env --use KEY GPU "Use NAME" of a kept problem: saves GPU as the person's choice for KEY
 //
 // --3d: the program presents 3D, so Automatic is the GPU measured best on this machine (the machine record,
 // sparky-stereo-gpu-record), whatever the power profile, as it always is for players.
@@ -32,7 +34,6 @@
 #include "gpuinventory.h"
 #include "graphicssettings.h"
 #include "machinerecord.h"
-#include "notifier.h"
 #include "powerprofiles.h"
 #include "problems.h"
 #include "resolver.h"
@@ -61,9 +62,12 @@ static QString shellQuote(const QString &text)
 static int usage(const QString &problem)
 {
     QTextStream err(stderr);
-    err << problem
-        << "\nUsage: sparky-stereo-gpu-env [--category C | --app ID | --choice X] [--3d] [--profile P] [--root DIR] [--print what] [--shell] [--ask] | --session | "
-           "--list [--json] | --problems | --notify\n";
+    // the synopsis stays as it is: options and their arguments are the same in every language
+    err << problem << '\n'
+        << i18nc("@info:shell %1 is the command's synopsis, which stays as it is", "Usage: %1",
+                 u"sparky-stereo-gpu-env [--category C | --app ID | --choice X] [--3d] [--profile P] [--root DIR] [--print what] [--shell] [--ask] | "
+                 "--session | --list [--json] | --problems | --notify | --use KEY GPU"_s)
+        << '\n';
     return 2;
 }
 
@@ -99,7 +103,7 @@ static QString ask(const Problem &problem)
     }
     const QString kdialog = QStandardPaths::findExecutable(u"kdialog"_s);
     if (kdialog.isEmpty()) {
-        QTextStream(stderr) << "sparky-stereo-gpu-env: kdialog is not installed, so the choice cannot be asked\n";
+        QTextStream(stderr) << "sparky-stereo-gpu-env: " << i18nc("@info:shell kdialog stays as it is", "kdialog is not installed, so the choice cannot be asked") << '\n';
         return {};
     }
     QStringList args = {u"--title"_s,
@@ -148,6 +152,8 @@ int main(int argc, char **argv)
     bool askChoice = false;
     bool problems = false;
     bool notify = false;
+    QString useKey;
+    QString useGpu;
     for (int i = 0; i < args.size(); ++i) {
         const QString &arg = args.at(i);
         const auto value = [&]() -> QString {
@@ -181,14 +187,44 @@ int main(int argc, char **argv)
             problems = true;
         } else if (arg == u"--notify"_s) {
             notify = true;
+        } else if (arg == u"--use"_s) {
+            useKey = value();
+            useGpu = value();
         } else {
-            return usage(u"Unknown argument %1"_s.arg(arg));
+            return usage(i18nc("@info:shell %1 is the argument given", "Unknown argument %1", arg));
         }
     }
 
     if (notify) {
-        Notifier notifier(root);
-        return notifier.run();
+        // the edition's one engine and its session notifier show the kept problems (ORDER 350): this starts it
+        return QProcess::execute(u"systemctl"_s, {u"--user"_s, u"start"_s, u"sparky-stereo-problems-notifier.service"_s});
+    }
+    if (!useKey.isEmpty()) {
+        // "Use NAME" of a kept problem: the person's explicit choice of a GPU that can draw, saved; the problem of the
+        // old choice is over
+        if (useGpu.isEmpty()) {
+            return usage(i18nc("@info:shell --use, KEY and GPU stay as they are", "--use needs KEY and GPU"));
+        }
+        GraphicsSettings settings;
+        if (useKey == u"main-gpu"_s) {
+            settings.setMainGpu(useGpu);
+        } else {
+            bool found = false;
+            for (Category category : allCategories()) {
+                if (categoryKey(category).toLower() == useKey) {
+                    settings.setRenderChoice(category, useGpu);
+                    found = true;
+                }
+            }
+            if (!found) {
+                return usage(i18nc("@info:shell %1 is the KEY given to --use: main-gpu or a kind of program", "Unknown kind %1", useKey));
+            }
+        }
+        if (!settings.save()) {
+            QTextStream(stderr) << "sparky-stereo-gpu-env: " << i18nc("@info", "The graphics settings could not be saved.") << '\n';
+            return 3;
+        }
+        return Problems::clear(useKey, Problems::userDir()) ? 0 : 3;
     }
     QTextStream out(stdout);
     if (problems) {
@@ -205,7 +241,8 @@ int main(int argc, char **argv)
     } else if (const auto named = powerProfileFromString(profile)) {
         powerProfile = ProfileReading(*named);
     } else {
-        return usage(u"Not a power profile: %1 (power-saver, balanced or performance)"_s.arg(profile));
+        return usage(i18nc("@info:shell %1 is what was given; power-saver, balanced and performance stay as they are",
+                            "Not a power profile: %1 (power-saver, balanced or performance)", profile));
     }
     const QList<Gpu> gpus = GpuInventory::read(root);
     const GraphicsSettings settings;
@@ -263,7 +300,7 @@ int main(int argc, char **argv)
     if (!appId.isEmpty()) {
         const AppEntry entry = QDir::isAbsolutePath(appId) ? AppEntries::fromFile(appId) : AppEntries::fromEnvironment().find(appId);
         if (entry.id.isEmpty()) {
-            return usage(u"No desktop entry %1"_s.arg(appId));
+            return usage(i18nc("@info:shell %1 is an application ID", "No desktop entry %1", appId));
         }
         resolution = resolver.resolveApp(entry, settings, stereo);
         asked = entry.category;
@@ -272,7 +309,7 @@ int main(int argc, char **argv)
         }
     } else if (!choice.isEmpty()) {
         if (!GraphicsSettings::validChoice(choice)) {
-            return usage(u"Not a choice: %1"_s.arg(choice));
+            return usage(i18nc("@info:shell %1 is what was given to --choice", "Not a choice: %1", choice));
         }
         resolution = resolver.resolveChoice(choice, Category::Other, stereo);
     } else {
@@ -286,7 +323,7 @@ int main(int argc, char **argv)
             }
         }
         if (!known) {
-            return usage(u"Not a category: %1"_s.arg(category));
+            return usage(i18nc("@info:shell %1 is what was given to --category", "Not a category: %1", category));
         }
         resolution = resolver.resolveCategory(selected, settings, stereo);
         asked = selected;
@@ -337,7 +374,7 @@ int main(int argc, char **argv)
     } else if (print == u"reason"_s) {
         out << resolution.reason << '\n';
     } else {
-        return usage(u"Not something to print: %1"_s.arg(print));
+        return usage(i18nc("@info:shell %1 is what was given to --print", "Not something to print: %1", print));
     }
     return 0;
 }

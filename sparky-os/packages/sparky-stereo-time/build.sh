@@ -5,9 +5,10 @@
 # Builds sparky-stereo-time: chrony's time sources from the timezone. The country's official
 # service (NTS where it offers it) from a TSV of verified rows, else Debian's pool. A oneshot
 # service runs at boot before chrony; a watcher runs it again when timedated reports a new timezone;
-# a timer checks after the start and every hour that the chosen servers answer. What fails is said,
-# kept in /var/lib/sparky-stereo-time/problems and shown in the session (lib/problems.py).
-# Needs only dpkg-deb; run it in a throwaway container or on any Debian.
+# a timer checks after the start and every hour that the chosen servers answer. What fails is said and
+# kept by the edition's one engine, sparky-stereo-problems (lib/problems.py, ORDER 350), whose notifier shows
+# it in the session; the messages are built into journal catalogs by its catalog command.
+# Needs dpkg-deb and sparky-stereo-problems; run it in a throwaway container or on any Debian.
 # Last update 2026/11/02
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
@@ -21,7 +22,7 @@ D=$W/$PKG
 S=$D/usr/share/$PKG
 mkdir -p "$D/DEBIAN" "$D/usr/bin" "$S" "$D/usr/share/sparky/$PKG" "$D/usr/share/doc/$PKG" "$D/usr/lib/$PKG" \
 	"$D/etc/chrony/conf.d" "$D/usr/lib/systemd/system/multi-user.target.wants" "$D/usr/lib/systemd/system/timers.target.wants" \
-	"$D/usr/lib/systemd/user/graphical-session.target.wants" "$D/var/lib/$PKG/problems"
+	"$D/usr/lib/systemd/catalog"
 
 install -m 755 "$HERE/bin/sparky-stereo-time" "$HERE/bin/sparky-stereo-time-watch" "$D/usr/bin/"
 install -m 755 "$HERE/lib/problems.py" "$D/usr/lib/$PKG/problems.py"
@@ -31,10 +32,8 @@ install -m 644 "$HERE/README.md" "$D/usr/share/doc/$PKG/README.md"
 for u in sparky-stereo-time.service sparky-stereo-time-watch.service sparky-stereo-time-check.service sparky-stereo-time-check.timer; do
 	install -m 644 "$HERE/systemd/$u" "$D/usr/lib/systemd/system/"
 done
-for u in sparky-stereo-time-problems.path sparky-stereo-time-problems.service; do
-	install -m 644 "$HERE/systemd/user/$u" "$D/usr/lib/systemd/user/"
-	ln -s ../$u "$D/usr/lib/systemd/user/graphical-session.target.wants/$u"
-done
+# the package's own messages, word for word, as journal catalogs the engine reads in the person's language
+sparky-stereo-problems catalog $PKG "$HERE/lang" "$D/usr/lib/systemd/catalog" --subject LOCAL27
 cat >"$D/etc/chrony/conf.d/sparky-stereo.conf" <<'EOS'
 # Sparky Stereo OS: sparky-stereo-time. A machine with a wrong clock (no RTC) cannot check the
 # NTS-KE certificate dates, and with authselectmode prefer no plain source corrects it first.
@@ -143,6 +142,10 @@ if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
 		out=$(chronyc reload sources 2>&1) || case $out in *"Cannot talk to daemon"*) ;; *) say 43 "chronyc reload sources: $out" ;; esac
 	fi
 fi
+# a problem of a package that is gone cannot be repaired by it (ORDER 350): the engine lets go of them
+if [ "$1" = "remove" ] && command -v sparky-stereo-problems >/dev/null; then
+	sparky-stereo-problems clear --all sparky-stereo-time || failed=1
+fi
 if [ "$1" = "purge" ]; then
 	must rm -rf /var/lib/sparky-stereo-time
 fi
@@ -193,7 +196,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: ca-certificates, chrony, python3, iproute2, systemd
+Depends: ca-certificates, chrony, python3, iproute2, systemd, sparky-stereo-problems (>= 0.1.0)
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org
@@ -204,7 +207,7 @@ Description: Sparky Stereo time servers
   pool is never selected next to them. chrony.conf is not modified.
   A catalogue or timezone that cannot be read, sources that cannot be written,
   a chrony that does not take them and servers that do not answer are said,
-  kept and shown in the session; the sources in use are never replaced by
+  kept by sparky-stereo-problems and shown in the session; the sources in use are never replaced by
   another choice behind the person's back.
 EOS
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
