@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.20)
+project(krunner-query CXX)
+find_package(Qt6 REQUIRED COMPONENTS Gui)
+find_package(KF6Runner REQUIRED)
+add_executable(krunner-query main.cpp)
+target_link_libraries(krunner-query Qt6::Gui KF6::Runner)

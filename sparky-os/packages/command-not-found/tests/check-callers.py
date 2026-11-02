@@ -25,6 +25,8 @@ def check(ok, what):
 
 def block(text):
     # command-not-found's lines: from its first "Command '" line to its last install line
+    # a pty session adds carriage returns and the terminal's escape sequences around the shell's own output
+    text = re.sub(r'\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[=>()][0-9A-Za-z]?', '', text).replace('\r', '')
     lines = [l.rstrip() for l in text.splitlines()]
     start = next((i for i, l in enumerate(lines) if l.startswith("Command '")), None)
     if start is None:
@@ -69,6 +71,25 @@ for c in ('fd', 'bat'):
     check(ids_g == ['install:' + table[c][0], 'install:' + literal[c]] and rel == sorted(rel, reverse=True) and rel[0] > rel[1]
           and kg[c][0][3] == want[c][1] and kg[c][1][3] == want[c][2] and kg[c][0][1] == want[c][0].rstrip(':'),
           f'green KRunner {c}: {[(m[0], m[2], m[3]) for m in kg[c]]}')
+# the real KRunner library: only the missing program runner is installed, so its matches are the whole result
+qr, qg = json.loads((red / 'krunner-real.json').read_text()), json.loads((green / 'krunner-real.json').read_text())
+mine = lambda ms: [m for m in ms if m[0] == 'sparky-stereo-missing-program']
+check(all(mine(qr[c]) == [] for c in qr), f'red   real KRunner: no match for any command (the runner is not enabled): {[c for c in qr if mine(qr[c])]}')
+for c in ('fd', 'bat'):
+    g = mine(qg[c])
+    check([m[3] for m in g] == want[c][1:] and [m[2] for m in g] == [want[c][0].rstrip(':')] * 2 and g[0][4] > g[1][4],
+          f'green real KRunner {c}: {[(m[1], m[3], m[4]) for m in g]}')
+for c, ids in (('cmatrix', ['cmatrix']), ('docker', []), ('ts', ['moreutils']), ('wakeonlan', ['wakeonlan']), ('python', [])):
+    g = mine(qg[c])
+    check([m[3].split()[-1] for m in g] == ids, f'green real KRunner {c}: {[m[3] for m in g]}')
+for sh in ('bash', 'zsh', 'fish'):
+    for c in ('fd', 'bat'):
+        r = block((red / f'pty-{sh}-{c}.txt').read_text())
+        g = block((green / f'pty-{sh}-{c}.txt').read_text())
+        check(packages(r)[:1] == [literal[c]] and g == want[c], f'pty   {sh} {c}: {packages(r)} then {packages(g)}')
+    r, g = block((red / f'pty-{sh}-cmatrix.txt').read_text()), block((green / f'pty-{sh}-cmatrix.txt').read_text())
+    check(r == g and packages(g) == ['cmatrix'], f'pty   {sh} cmatrix unchanged: {packages(g)}')
+
 for c in unchanged:
     if c == 'ts':
         # two letters: no match today; now command-not-found's one package, as for longer commands

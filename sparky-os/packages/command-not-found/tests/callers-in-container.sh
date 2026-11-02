@@ -4,9 +4,10 @@
 # Copyright 2026 under the GNU GPL3 License
 # Runs as root in a fresh Debian testing container; test-callers.sh starts it. /repo is the published edition tree,
 # /cand the candidate .deb files, /tests this folder, /out the results. The probes run as the user tester (uid 1000, in
-# the sudo group, as a desktop user is): bash, zsh and fish typing the command, KRunner's D-Bus Match on the missing
-# program runner (activated by the session bus from its service file, as KRunner does), and a Dolphin pack whose program
-# is the command, with a stand-in kdialog that records the offer. Nothing reaches a display: no socket is mounted.
+# the sudo group, as a desktop user is): bash, zsh and fish typing the command (with -i, and in a pty session), the real
+# KRunner library (KRunner::RunnerManager with the default krunnerrc, krunner-query/), the runner's own D-Bus Match
+# (activated by the session bus from its service file), and a Dolphin pack whose program is the command, with a
+# stand-in kdialog that records the offer. Nothing reaches a display: no socket is mounted, Qt runs offscreen.
 # fish sets up command-not-found only in an interactive shell, as a person's terminal is (fish -i). Every probe runs with
 # PYTHONHASHSEED=0: command-not-found's spelling suggestions come from a set, whose order follows Python's string hash.
 set -euo pipefail
@@ -20,7 +21,9 @@ printf 'Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n' >/etc
 printf 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] http://www.deb-multimedia.org forky main non-free\n' >/etc/apt/sources.list.d/multimedia.list
 apt-get -y update >/out/apt-update-1.log 2>&1
 apt-get -y install --no-install-recommends command-not-found sparky-stereo-console sparky-stereo-integration zsh fish dbus \
-	python3-dbus python3-gi >/out/apt-install.log 2>&1
+	python3-dbus python3-gi cmake g++ make libkf6runner-dev qt6-base-dev >/out/apt-install.log 2>&1
+cmake -S /tests/krunner-query -B /tmp/krunner-query >/out/krunner-query-build.log 2>&1
+cmake --build /tmp/krunner-query >>/out/krunner-query-build.log 2>&1
 # command-not-found's own apt hook fills its database from the Contents indexes apt-file enabled
 apt-get -y update >/out/apt-update-2.log 2>&1
 [ -s /var/lib/command-not-found/commands.db ]
@@ -36,7 +39,7 @@ chmod 755 /usr/local/lib/stand-in/kdialog
 for c in $probe_commands; do
 	printf 'program=%s\nworker=/bin/true\nmenus=\n' "$c" >/usr/share/sparky-stereo/integrations.d/j15-$c.conf
 done
-cp /tests/krunner-match.py /usr/local/lib/stand-in/
+cp /tests/krunner-match.py /tmp/krunner-query/krunner-query /usr/local/lib/stand-in/
 sample() { # the commands of the database not on this system, in a fixed sample, and words that are no command
 	python3 - <<'PY'
 import random, shutil, sqlite3
@@ -62,6 +65,15 @@ probe() { # phase
 	done
 	runuser -u tester -- env -i PYTHONHASHSEED=0 HOME=/home/tester PATH=/usr/bin:/bin LANG=C.UTF-8 \
 		dbus-run-session -- python3 /usr/local/lib/stand-in/krunner-match.py $probe_commands >"$d/krunner.json" 2>"$d/krunner.err"
+	runuser -u tester -- env -i PYTHONHASHSEED=0 HOME=/home/tester PATH=/usr/bin:/bin LANG=C.UTF-8 QT_QPA_PLATFORM=offscreen \
+		dbus-run-session -- /usr/local/lib/stand-in/krunner-query $probe_commands >"$d/krunner-real.json" 2>"$d/krunner-real.err"
+	for sh in bash zsh fish; do
+		for c in fd bat cmatrix; do
+			# a pty session, as Konsole gives: the command typed, then exit
+			printf '%s\nexit\n' "$c" | runuser -u tester -- env -i PYTHONHASHSEED=0 HOME=/home/tester PATH=/usr/local/bin:/usr/bin:/bin \
+				TERM=dumb LANG=C.UTF-8 timeout 60 script -qec "$sh -i" /dev/null >"$d/pty-$sh-$c.txt" 2>&1 || true
+		done
+	done
 	for l in en pl pt_BR fr de ja ko zh_CN zh_TW; do
 		runuser -u tester -- env -i PYTHONHASHSEED=0 HOME=/home/tester PATH=/usr/bin:/bin LANG=C.UTF-8 LANGUAGE=$l /usr/lib/command-not-found -- fd >"$d/lang-$l.txt" 2>&1 || true
 	done
