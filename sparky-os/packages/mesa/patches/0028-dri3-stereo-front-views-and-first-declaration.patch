@@ -1,0 +1,237 @@
+--- a/src/gallium/frontends/dri/dri2.c
++++ b/src/gallium/frontends/dri/dri2.c
+@@ -127,10 +127,12 @@
+ 
+       switch (statts[i]) {
+       case ST_ATTACHMENT_FRONT_LEFT:
++      case ST_ATTACHMENT_FRONT_RIGHT:
+          buffer_mask |= __DRI_IMAGE_BUFFER_FRONT;
+          color_format = pf;
+          break;
+       case ST_ATTACHMENT_BACK_LEFT:
++      case ST_ATTACHMENT_BACK_RIGHT:
+          buffer_mask |= __DRI_IMAGE_BUFFER_BACK;
+          color_format = pf;
+          break;
+@@ -138,6 +140,13 @@
+          break;
+       }
+    }
++
++   /* A one-view X window cannot supply the second view when a fake front
++    * is first requested after a swap. Keep the packed front in the loader
++    * from the first stereo frame so both views participate in the exchange.
++    */
++   if (dri_drawable_has_stereo_buffers(drawable))
++      buffer_mask |= __DRI_IMAGE_BUFFER_FRONT | __DRI_IMAGE_BUFFER_BACK;
+ 
+    /* Stamp usage behavior in the getBuffers callback:
+     *
+@@ -183,6 +192,33 @@
+  * Backend functions for pipe_frontend_drawable.
+  */
+ 
++/* Copy one view without changing its resolution. */
++static void
++dri2_copy_view(struct pipe_context *pipe, struct pipe_resource *dst,
++               unsigned dst_x, struct pipe_resource *src, unsigned src_x,
++               unsigned width, unsigned height)
++{
++   struct pipe_blit_info blit = {0};
++
++   if (!dst || !src)
++      return;
++   blit.src.resource = src;
++   blit.src.format = src->format;
++   blit.src.box.x = src_x;
++   blit.src.box.width = width;
++   blit.src.box.height = height;
++   blit.src.box.depth = 1;
++   blit.dst.resource = dst;
++   blit.dst.format = dst->format;
++   blit.dst.box.x = dst_x;
++   blit.dst.box.width = width;
++   blit.dst.box.height = height;
++   blit.dst.box.depth = 1;
++   blit.mask = PIPE_MASK_RGBA;
++   blit.filter = PIPE_TEX_FILTER_NEAREST;
++   pipe->blit(pipe, &blit);
++}
++
+ static void
+ dri2_allocate_textures(struct dri_context *ctx,
+                        struct dri_drawable *drawable,
+@@ -249,6 +285,7 @@
+       pipe_resource_reference(&drawable->textures[i], NULL);
+    }
+    pipe_resource_reference(&drawable->stereo_target, NULL);
++   pipe_resource_reference(&drawable->stereo_front, NULL);
+ 
+    if (drawable->stvis.samples > 1) {
+       for (i = 0; i < ST_ATTACHMENT_COUNT; i++) {
+@@ -282,10 +319,13 @@
+          &drawable->textures[ST_ATTACHMENT_FRONT_LEFT];
+       struct pipe_resource *texture = images.front->texture;
+ 
+-      drawable->w = texture->width0;
++      drawable->w = stereo ? texture->width0 / 2 : texture->width0;
+       drawable->h = texture->height0;
+ 
+-      pipe_resource_reference(buf, texture);
++      if (stereo)
++         pipe_resource_reference(&drawable->stereo_front, texture);
++      else
++         pipe_resource_reference(buf, texture);
+       dri_image_fence_sync(ctx, images.front);
+    }
+ 
+@@ -324,6 +364,52 @@
+     */
+    templ.width0 = drawable->w;
+    templ.height0 = drawable->h;
++
++   if (stereo) {
++      const enum st_attachment_type eye_statts[] = {
++         ST_ATTACHMENT_BACK_LEFT,
++         ST_ATTACHMENT_BACK_RIGHT,
++         ST_ATTACHMENT_FRONT_LEFT,
++         ST_ATTACHMENT_FRONT_RIGHT,
++      };
++
++      for (i = 0; i < ARRAY_SIZE(eye_statts); i++) {
++         enum st_attachment_type statt = eye_statts[i];
++         enum pipe_format format;
++         unsigned bind;
++
++         if ((statt == ST_ATTACHMENT_FRONT_LEFT ||
++              statt == ST_ATTACHMENT_FRONT_RIGHT) && !drawable->stereo_front)
++            continue;
++
++         if (drawable->textures[statt] &&
++             (drawable->textures[statt]->width0 != drawable->w ||
++              drawable->textures[statt]->height0 != drawable->h))
++            pipe_resource_reference(&drawable->textures[statt], NULL);
++
++         if (drawable->textures[statt])
++            continue;
++
++         dri_drawable_get_format(drawable, statt, &format, &bind);
++         templ.format = format;
++         templ.bind = bind & ~PIPE_BIND_SHARED;
++         templ.width0 = drawable->w;
++         templ.height0 = drawable->h;
++         drawable->textures[statt] =
++            screen->base.screen->resource_create(screen->base.screen, &templ);
++      }
++   }
++
++   if (stereo && drawable->stereo_front) {
++      /* The loader owns a packed front pixmap; GL owns two one-view fronts. */
++      for (unsigned eye = 0; eye < 2; eye++) {
++         enum st_attachment_type statt = eye ? ST_ATTACHMENT_FRONT_RIGHT
++                                             : ST_ATTACHMENT_FRONT_LEFT;
++         dri2_copy_view(ctx->st->pipe, drawable->textures[statt], 0,
++                        drawable->stereo_front, eye * drawable->w,
++                        drawable->w, drawable->h);
++      }
++   }
+ 
+    /* Allocate private MSAA colorbuffers. */
+    if (drawable->stvis.samples > 1) {
+@@ -376,34 +462,6 @@
+       }
+    }
+ 
+-   if (stereo) {
+-      const enum st_attachment_type eye_statts[] = {
+-         ST_ATTACHMENT_BACK_LEFT,
+-         ST_ATTACHMENT_BACK_RIGHT,
+-      };
+-
+-      for (i = 0; i < ARRAY_SIZE(eye_statts); i++) {
+-         enum st_attachment_type statt = eye_statts[i];
+-         enum pipe_format format;
+-         unsigned bind;
+-
+-         if (drawable->textures[statt] &&
+-             (drawable->textures[statt]->width0 != drawable->w ||
+-              drawable->textures[statt]->height0 != drawable->h))
+-            pipe_resource_reference(&drawable->textures[statt], NULL);
+-
+-         if (drawable->textures[statt])
+-            continue;
+-
+-         dri_drawable_get_format(drawable, statt, &format, &bind);
+-         templ.format = format;
+-         templ.bind = bind & ~PIPE_BIND_SHARED;
+-         templ.width0 = drawable->w;
+-         templ.height0 = drawable->h;
+-         drawable->textures[statt] =
+-            screen->base.screen->resource_create(screen->base.screen, &templ);
+-      }
+-   }
+ 
+    if (mono_back) {
+       if (drawable->textures[ST_ATTACHMENT_BACK_LEFT] &&
+@@ -475,6 +533,7 @@
+     * has redirected GL_BACK to the front buffer.
+     */
+    if (statt != ST_ATTACHMENT_FRONT_LEFT &&
++       !(statt == ST_ATTACHMENT_FRONT_RIGHT && drawable->stereo_front) &&
+        (!ctx->is_shared_buffer_bound || statt != ST_ATTACHMENT_BACK_LEFT))
+          return false;
+ 
+@@ -489,7 +548,13 @@
+                     drawable->msaa_textures[statt]);
+    }
+ 
+-   if (drawable->textures[statt]) {
++   if (drawable->stereo_front &&
++       (statt == ST_ATTACHMENT_FRONT_LEFT || statt == ST_ATTACHMENT_FRONT_RIGHT)) {
++      dri2_copy_view(pipe, drawable->stereo_front,
++                     statt == ST_ATTACHMENT_FRONT_RIGHT ? drawable->w : 0,
++                     drawable->textures[statt], 0, drawable->w, drawable->h);
++      pipe->flush_resource(pipe, drawable->stereo_front);
++   } else if (drawable->textures[statt]) {
+       pipe->flush_resource(pipe, drawable->textures[statt]);
+    }
+ 
+--- a/src/gallium/frontends/dri/dri_drawable.c
++++ b/src/gallium/frontends/dri/dri_drawable.c
+@@ -214,6 +214,7 @@
+    for (i = 0; i < ST_ATTACHMENT_COUNT; i++)
+       pipe_resource_reference(&drawable->msaa_textures[i], NULL);
+    pipe_resource_reference(&drawable->stereo_target, NULL);
++   pipe_resource_reference(&drawable->stereo_front, NULL);
+ 
+    screen->base.screen->fence_reference(screen->base.screen,
+          &drawable->throttle_fence, NULL);
+--- a/src/gallium/frontends/dri/dri_drawable.h
++++ b/src/gallium/frontends/dri/dri_drawable.h
+@@ -61,6 +61,7 @@
+    struct pipe_resource *textures[ST_ATTACHMENT_COUNT];
+    struct pipe_resource *msaa_textures[ST_ATTACHMENT_COUNT];
+    struct pipe_resource *stereo_target;
++   struct pipe_resource *stereo_front;
+    /* The loader holds one view until the first right-eye use. */
+    bool stereo_on_demand;
+    /* The window system makes a window that became stereo twice as wide
+--- a/src/glx/dri3_glx.c
++++ b/src/glx/dri3_glx.c
+@@ -132,10 +132,16 @@
+    return (gc != &dummyContext && psc) ? psc->base.frontend_screen : NULL;
+ }
+ 
++static void glx_activate_stereo(struct dri3_drawable *pdraw);
++
+ static void
+ glx_dri3_flush_drawable(struct loader_dri3_drawable *draw, unsigned flags)
+ {
+    loader_dri3_flush(draw, flags, __DRI2_THROTTLE_SWAPBUFFER);
++   /* The queued GL commands may have activated stereo during this flush.
++    * Publish the declaration before the loader submits the packed Present.
++    */
++   glx_activate_stereo(loader_drawable_to_dri3_drawable(draw));
+ }
+ 
+ static const struct loader_dri3_vtable glx_dri3_vtable = {

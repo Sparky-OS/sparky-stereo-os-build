@@ -1,0 +1,61 @@
+Description: kopper: move event selection for present into kopperGetSyncValues
+Origin: upstream, https://gitlab.freedesktop.org/mesa/mesa/-/commit/b258e2a051761868734f09774295ee9cee5f7e8d
+Author: Mike Blumenkrantz
+Applied-Upstream: main, b258e2a051761868734f09774295ee9cee5f7e8d
+Last-Update: 2026-11-01
+
+diff --git a/src/gallium/frontends/dri/dri_drawable.h b/src/gallium/frontends/dri/dri_drawable.h
+index dc3082c82658c0f6f1042303fd95be2bfe8d8ab1..22989d5c6fce3d3f11eaf8c99d0058193c300499 100644
+--- a/src/gallium/frontends/dri/dri_drawable.h
++++ b/src/gallium/frontends/dri/dri_drawable.h
+@@ -99,6 +99,7 @@ struct dri_drawable
+    bool window_valid;
+ #ifdef VK_USE_PLATFORM_XCB_KHR
+    xcb_special_event_t *special_event;
++   uint32_t present_eid;
+ #endif
+ 
+    /* hooks filled in by dri2 & drisw */
+diff --git a/src/gallium/frontends/dri/kopper.c b/src/gallium/frontends/dri/kopper.c
+index 493096f18d5eb11a0767e9beebead38b73e27cf9..258fc0925c775d5b54e916af763571a0a3561a2c 100644
+--- a/src/gallium/frontends/dri/kopper.c
++++ b/src/gallium/frontends/dri/kopper.c
+@@ -492,14 +492,10 @@ kopper_init_drawable(struct dri_drawable *drawable, bool isPixmap, int alphaBits
+       VkXcbSurfaceCreateInfoKHR *xcb = (VkXcbSurfaceCreateInfoKHR *)&drawable->info.bos;
+       xcb_connection_t *conn = xcb->connection;
+ 
+-      int32_t eid = xcb_generate_id(conn);
+-      if (drawable->is_window) {
+-         xcb_present_select_input(conn, eid, xcb->window,
+-                                  XCB_PRESENT_EVENT_MASK_COMPLETE_NOTIFY);
+-      }
+-
++      drawable->present_eid = xcb_generate_id(conn);
+       drawable->special_event =
+-         xcb_register_for_special_xge(conn, &xcb_present_id, eid, NULL);
++         xcb_register_for_special_xge(conn, &xcb_present_id,
++                                      drawable->present_eid, NULL);
+    }
+ #endif
+ }
+@@ -647,6 +643,11 @@ kopperGetSyncValues(struct dri_drawable *drawable, int64_t target_msc, int64_t d
+    VkXcbSurfaceCreateInfoKHR *xcb = (VkXcbSurfaceCreateInfoKHR *)&info->bos;
+    xcb_connection_t *conn = xcb->connection;
+ 
++   if (!drawable->is_window)
++      return 0;
++
++   xcb_present_select_input(conn, drawable->present_eid, xcb->window,
++                            XCB_PRESENT_EVENT_MASK_COMPLETE_NOTIFY);
+    xcb_void_cookie_t cookie =
+       xcb_present_notify_msc(conn, xcb->window, 0, target_msc, divisor, remainder);
+ 
+@@ -680,6 +681,8 @@ kopperGetSyncValues(struct dri_drawable *drawable, int64_t target_msc, int64_t d
+       free(event);
+    }
+ 
++   xcb_present_select_input(conn, drawable->present_eid, xcb->window, 0);
++
+    return ret;
+ #else
+    return 0;
