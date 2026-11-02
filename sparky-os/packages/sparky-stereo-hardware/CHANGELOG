@@ -1,4 +1,19 @@
 -------------------------------------------------------------------------------
+  Version 0.1.16 (2026-11-01)
+-------------------------------------------------------------------------------
+  * No fallback to nouveau: when the edition's NVIDIA module is not in the repositories, its version names no NVIDIA version, the lock and the CUDA repository package cannot be installed, apt update fails or the preflight fails, the NVIDIA setup stops with an ERROR line that says what failed, why and what to do, purges what it installed, and the setup exits non-zero. Before, each of these logged "FALLBACK ... nouveau firmware installed" and the setup reported success (Daniel, 2026-11-01: "nothing we do should silently fail or have a fall back"; ORDER 343)
+  * nouveau on a supported NVIDIA card is the person's own choice: the plan window's new button "Install matched support, keep nouveau", or --nvidia nouveau
+  * Every step says when it fails and the run ends with the list of errors and exit status 1: package installs (before, a failed one stopped the run without a word), the missing firmware, the power-profiles-daemon actions the machine does not offer (before, logged as UNSUPPORTED and counted as done), the wheel drivers (before, three silent refusals), the OpenGL stereo default, and any unexpected failure, with its line
+  * When the menu started the setup, the list of errors also opens in a window before the terminal closes, each error in the person's language: the error messages are numbered strings (LOCAL29 to LOCAL54) in the nine language files, like the window's labels, and the log keeps every ERROR line in English for support. The plan window's own failure is said instead of being taken for Cancel
+  * An unexpected failure inside a step (set -E) is said with its line and command too; before, set -e ended the setup there without a word
+  * Recommends sparky-stereo-cuda-repo, so an installed system takes the narrowed CUDA pin and the edition's dkms with an ordinary upgrade (installed systems take Recommends by default), and no file of the image's is left to decide
+  * A CUDA repository the person set up already is kept and named, and sparky-stereo-cuda-repo comes with the lock anyway: from 20261101.2 it writes no source of its own when another source names NVIDIA's URI, and its pins go by origin, so they apply to the person's source too. Before (0.1.15), only the lock was added there, and NVIDIA's packages kept the person's pins
+  * French: the plan window's button reads "Installer la prise en charge correspondante, garder nouveau"
+  * The dry run says what would stop the NVIDIA setup instead of ending without a word when apt does not know the module; a loader that does not list its CPU levels is noted; the postinst says when the OpenGL stereo default could not be written
+  * The plan says why an unsupported NVIDIA card keeps nouveau
+  * Supersedes 0.1.15, which was not published; its changes are in this version
+
+-------------------------------------------------------------------------------
   Version 0.1.15 (2026-11-01)
 -------------------------------------------------------------------------------
   * NVIDIA's CUDA repository comes from the edition's package sparky-stereo-cuda-repo (its source, NVIDIA's key and the edition's pins), installed with sparky-stereo-nvidia-driver-lock in a transaction of their own before the driver, so the lock and the pins are in force when apt chooses NVIDIA's user space. Before, the setup downloaded NVIDIA's cuda-keyring, wrote the source and a pin of every NVIDIA package at 1002 itself, and the lock came only as the module's dependency, in the driver's own transaction (ORDER 338, ORDER 329's findings)

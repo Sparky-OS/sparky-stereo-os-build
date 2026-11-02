@@ -1,3 +1,42 @@
+sparky-stereo-hardware (0.1.16) unstable; urgency=medium
+
+  * No fallback to nouveau: when the edition's NVIDIA module is missing,
+    its version names no NVIDIA version, the lock and the CUDA repository
+    package cannot be installed, apt update fails or the preflight fails,
+    the NVIDIA setup stops with an ERROR line saying what failed, why and
+    what to do, purges what it installed, and the setup exits non-zero.
+    Before, each case logged "FALLBACK ... nouveau firmware installed" and
+    the setup reported success. ORDER 343.
+  * nouveau on a supported NVIDIA card is the person's own choice: the plan
+    window's button "Install matched support, keep nouveau", or
+    --nvidia nouveau.
+  * Every step says when it fails, and the run ends with the list of errors
+    and exit status 1: package installs, the missing firmware, the
+    power-profiles-daemon actions the machine does not offer (counted as
+    done before), the wheel drivers, the OpenGL stereo default, and any
+    unexpected failure with its line.
+  * When the menu started the setup, the list of errors opens in a window,
+    each error in the person's language: the error messages are numbered
+    strings (LOCAL29 to LOCAL54) in the nine language files, and the log
+    keeps every ERROR line in English for support. The plan window's own
+    failure is said instead of being taken for Cancel.
+  * An unexpected failure inside a step (set -E) is said with its line and
+    command; set -e alone ended the setup there without a word.
+  * Recommends sparky-stereo-cuda-repo, so an installed system takes the
+    narrowed CUDA pin and the edition's dkms with an ordinary upgrade.
+  * A CUDA repository the person set up is kept and named, and
+    sparky-stereo-cuda-repo comes with the lock anyway: from 20261101.2 it
+    writes no source of its own then, and its pins go by origin.
+  * French: the plan window's button reads "Installer la prise en charge
+    correspondante, garder nouveau".
+  * The dry run says what would stop the NVIDIA setup; a loader that does
+    not list its CPU levels is noted; the postinst says when the OpenGL
+    stereo default could not be written; the plan says why an unsupported
+    NVIDIA card keeps nouveau.
+  * Supersedes 0.1.15, which was not published.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 01 Nov 2026 21:30:00 -0300
+
 sparky-stereo-hardware (0.1.15) unstable; urgency=medium
 
   * NVIDIA's CUDA repository comes from the edition's package

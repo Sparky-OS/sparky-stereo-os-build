@@ -9,6 +9,7 @@ bash "$P/sparky-stereo-hardware/tests/container-build.sh"
 apt-get -y --no-install-recommends --reinstall install "$PWD"/out/firmware-creative-stereo_*.deb "$PWD"/out/xpadneo-dkms_*.deb "$PWD"/out/sparky-stereo-hardware_*.deb
 python3 "$P/sparky-stereo-hardware/tests/detection.py"
 bash "$P/sparky-stereo-hardware/tests/actions.sh"
+bash "$P/sparky-stereo-hardware/tests/choices.sh"
 sparky-stereo-hardware --auto --dry-run --fixture "$P/sparky-stereo-hardware/tests/fixtures/creative-nvidia-laptop" >evidence/combined-dry-run.log
 cp /usr/lib/sparky-stereo-hardware/detect.py "$PWD/out/detect.current.py"
 cp evidence/detect-before.py /usr/lib/sparky-stereo-hardware/detect.py
