@@ -21,6 +21,9 @@ KNOWN = [("SBAT self-check failed", "shim: SBAT self-check failed, power off"),
          ("Security Policy Violation", "Security Policy Violation"),
          ("bad shim loader signature", "GRUB: bad shim loader signature")]
 
+def cell_text(text):
+    return html.escape(text, quote=False).replace("|", "&#124;").replace("\r", " ").replace("\n", " ")
+
 def run(d):
     frames = sorted([f[:-4] for f in os.listdir(d) if f.endswith(".png") and f != "sheet.png"], key=tkey)
     times = {}
@@ -29,20 +32,28 @@ def run(d):
             steps = json.load(metadata).get("steps", [])
         for s in steps:
             if "shot" in s:
+                if "t" not in s:
+                    raise ValueError("%s: time is missing" % os.path.join(d, s["shot"] + ".png"))
                 times[s["shot"]] = s["t"]
     except Exception as error:
         detail = "%s: %s: %s" % (os.path.join(d, "result.json"), type(error).__name__, error)
-        detail = html.escape(detail, quote=False).replace("|", "&#124;").replace("\r", " ").replace("\n", " ")
-        return ("fail", None, "metadata error: " + detail)
+        return ("fail", None, "metadata error: " + cell_text(detail))
+    serial = ""
+    try:
+        with open(os.path.join(d, "serial.log"), errors="replace") as log:
+            serial = log.read()
+    except FileNotFoundError:
+        pass  # This run captured no serial log.
+    except Exception as error:
+        detail = "%s: %s: %s" % (os.path.join(d, "serial.log"), type(error).__name__, error)
+        return ("fail", None, "serial log error: " + cell_text(detail))
     labs = [(f, label(os.path.join(d, f + ".png"))) for f in frames]
     for f, l in labs:
         if l == "desktop":
-            return ("pass", times.get(f), "")
-    serial = ""
-    try:
-        serial = open(os.path.join(d, "serial.log"), errors="replace").read()
-    except Exception:
-        pass
+            if times.get(f) is None:
+                detail = "%s: time is missing in %s" % (os.path.join(d, f + ".png"), os.path.join(d, "result.json"))
+                return ("fail", None, "metadata error: " + cell_text(detail))
+            return ("pass", times[f], "")
     for key, text in KNOWN:
         if key in serial:
             return ("fail", None, text)

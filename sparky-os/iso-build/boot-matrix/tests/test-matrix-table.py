@@ -75,8 +75,7 @@ class LatestMetadata(unittest.TestCase):
         self.assert_metadata_failure('IsADirectoryError')
 
     def test_unreadable_step_structure(self):
-        for value, exception in (([], 'AttributeError'), ({'steps': None}, 'TypeError'),
-                                 ({'steps': [{'shot': 't1'}]}, 'KeyError')):
+        for value, exception in (([], 'AttributeError'), ({'steps': None}, 'TypeError')):
             with self.subTest(value=value):
                 self.metadata.write_text(json.dumps(value))
                 self.assert_metadata_failure(exception)
@@ -129,6 +128,110 @@ class LatestMetadata(unittest.TestCase):
         self.assertEqual(rows[0].count('|'), 4, rows[0])
         self.assertIn('odd&#124;&lt;run&gt;', rows[0])
         self.assertIn('FileNotFoundError', rows[0])
+
+
+    def test_desktop_time_missing(self):
+        for steps in ([], [{'shot': 'other', 't': 20}], [{'shot': 't1'}],
+                      [{'shot': 't1', 't': None}]):
+            self.metadata.write_text(json.dumps({'steps': steps}))
+            for paths in ([str(self.new)], [str(self.old), str(self.new)]):
+                with self.subTest(steps=steps, paths=paths):
+                    result = matrix.cell(paths)
+                    self.assertTrue(result.startswith('fail: metadata error:'), result)
+                    self.assertIn(str(self.new / 't1.png'), result)
+                    self.assertIn('time is missing', result)
+                    self.assertIn(str(self.metadata), result)
+
+    def test_first_desktop_without_time_is_not_replaced(self):
+        (self.new / 't2.png').write_bytes((self.new / 't1.png').read_bytes())
+        self.metadata.write_text(json.dumps({'steps': [{'shot': 't2', 't': 60}]}))
+        result = matrix.cell([str(self.old), str(self.new)])
+        self.assertIn('t1.png: time is missing', result)
+        self.assertNotIn('pass ', result)
+
+    def test_other_shot_missing_timestamp_still_fails(self):
+        black = self.make_run('black/seabios-cd', 30, desktop=False)
+        (black / 'result.json').write_text('{"steps": [{"shot": "t1"}]}')
+        self.assertTrue(matrix.cell([str(black)]).startswith('fail: metadata error:'))
+
+    def test_zero_desktop_time_is_valid(self):
+        self.metadata.write_text(json.dumps({'steps': [{'shot': 't1', 't': 0}]}))
+        self.assertEqual(matrix.cell([str(self.new)]), 'pass 0s')
+
+    def test_serial_permission_denied(self):
+        self.assertNotEqual(os.geteuid(), 0, 'Run as an unprivileged user to exercise EACCES')
+        black = self.make_run('black/seabios-cd', 30, desktop=False)
+        for path in (black, self.new):
+            log = path / 'serial.log'
+            log.write_text('Security Policy Violation')
+            log.chmod(0)
+            self.addCleanup(log.chmod, 0o600)
+            for paths in ([str(path)], [str(self.old), str(path)]):
+                with self.subTest(paths=paths):
+                    result = matrix.cell(paths)
+                    self.assertTrue(result.startswith('fail: serial log error:'), result)
+                    self.assertIn(str(log), result)
+                    self.assertIn('PermissionError', result)
+
+    def test_other_serial_read_errors(self):
+        black = self.make_run('black/seabios-cd', 30, desktop=False)
+        log = black / 'serial.log'
+        log.mkdir()
+        result = matrix.cell([str(self.old), str(black)])
+        self.assertIn('fail: serial log error:', result)
+        self.assertIn(str(log), result)
+        self.assertIn('IsADirectoryError', result)
+        log.rmdir()
+        log.symlink_to('serial.log')
+        result = matrix.cell([str(black)])
+        self.assertIn('fail: serial log error:', result)
+        self.assertIn(str(log), result)
+        self.assertIn('OSError', result)
+
+    def test_absent_and_readable_serial_keep_classification(self):
+        black = self.make_run('black/seabios-cd', 30, desktop=False)
+        for content in (None, '', 'ordinary boot output', 'boot bytes: \ufffd'):
+            with self.subTest(content=content):
+                for path in (black, self.new):
+                    if content is not None:
+                        (path / 'serial.log').write_text(content)
+                self.assertEqual(matrix.cell([str(black)]), 'fail: black screen')
+                self.assertEqual(matrix.cell([str(self.new)]), 'pass 37s')
+        (black / 'serial.log').write_text('Verifying shim SBAT data failed')
+        self.assertEqual(matrix.cell([str(black)]), 'fail: shim: SBAT verification failed')
+        (self.new / 'serial.log').write_text('Verifying shim SBAT data failed')
+        self.assertEqual(matrix.cell([str(self.new)]), 'pass 37s')
+
+    def test_cli_time_and_serial_errors_do_not_abort_other_cells(self):
+        self.make_run('old/seabios-usb', 20)
+        self.make_run('new/seabios-usb', 45)
+        for failure in ('time', 'serial'):
+            with self.subTest(failure=failure):
+                self.metadata.write_text(json.dumps({'steps': [] if failure == 'time' else [{'shot': 't1', 't': 37}]}))
+                if failure == 'serial':
+                    (self.new / 'serial.log').mkdir()
+                result = subprocess.run([sys.executable, str(TABLE),
+                                         f'fixture={self.old.parent}+{self.new.parent}#seabios'],
+                                        text=True, capture_output=True, check=True)
+                row = next(line for line in result.stdout.splitlines() if line.startswith('| seabios |'))
+                self.assertIn('time is missing' if failure == 'time' else 'IsADirectoryError', row)
+                self.assertTrue(row.endswith('| pass 45s |'), row)
+                self.assertNotIn('pass 12s', row)
+
+    def test_followup_diagnostics_keep_markdown_intact(self):
+        odd = self.make_run('odd|<run>\n/seabios-cd', 60)
+        (odd / 'result.json').write_text('{"steps": []}')
+        for failure in ('time', 'serial'):
+            with self.subTest(failure=failure):
+                if failure == 'serial':
+                    (odd / 'serial.log').mkdir()
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    matrix.table('fixture', str(odd.parent), ['seabios'])
+                row = next(line for line in output.getvalue().splitlines() if line.startswith('| seabios |'))
+                self.assertEqual(row.count('|'), 4, row)
+                self.assertIn('odd&#124;&lt;run&gt;', row)
+                self.assertIn('time is missing' if failure == 'time' else 'IsADirectoryError', row)
 
 
 if __name__ == '__main__':
