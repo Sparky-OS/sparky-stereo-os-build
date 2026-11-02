@@ -1,8 +1,14 @@
 #!/bin/sh
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/25
 # Copyright 2026 under the GNU GPL3 License
+# Last update 2026/11/01
 # After a kernel is installed: the Sparky Stereo OS certificate stays next to every shim on the EFI system
 # partition, so MokManager can enroll it from the disk (sparky-stereo-boot).
+# The package was removed (this conffile stays until a purge): nothing to place.
 [ -f /usr/lib/sparky-stereo-boot/secureboot.py ] || exit 0
-/usr/bin/python3 /usr/lib/sparky-stereo-boot/secureboot.py esp || true
+# A certificate that cannot be placed is said here, in the system's language, and kept for repair by secureboot.py
+# (sparky-stereo-boot status, and a notification at login). It does not stop the kernel's installation: this kernel
+# boots without it, and a failing hook would keep zz-update-grub, which runs after this one (run-parts
+# --exit-on-error in linux-run-hooks), from writing the new kernel's GRUB entry.
+/usr/bin/python3 /usr/lib/sparky-stereo-boot/secureboot.py esp || :
 exit 0

@@ -1,0 +1,13 @@
+[Unit]
+Description=Sparky Stereo OS: show the boot's kept problems
+Documentation=file:/usr/share/doc/sparky-stereo-boot/README.md
+# people's sessions only: the login screen's accounts are system users
+ConditionUser=!@system
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/sparky-stereo-boot notify
+
+[Install]
+WantedBy=graphical-session.target

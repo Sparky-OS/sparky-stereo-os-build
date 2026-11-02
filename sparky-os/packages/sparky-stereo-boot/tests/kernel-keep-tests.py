@@ -10,7 +10,9 @@
 # linux-headers-common per version). initramfs-tools writes their boot images; update-grub writes GRUB's menu, with a
 # stub for GRUB's device probe, which finds no disk in a container. The running kernel comes from
 # SPARKY_STEREO_KERNEL_KEEP_RUNNING; SPARKY_STEREO_KERNEL_KEEP_TEST=1 lifts the container guard, except in "guard".
-import fcntl, glob, os, subprocess, sys, tempfile, time
+# From 0.1.5 (ORDER 345): a failed boot image rebuild after the purge, a failed purge and a cleanup that cannot be
+# queued are said and kept (/var/lib/sparky-stereo-boot/problems/kernel-cleanup.json) and the service fails.
+import fcntl, glob, json, os, subprocess, sys, tempfile, time
 
 CASE, NEW = sys.argv[1], sys.argv[2]
 OLD = sys.argv[3] if len(sys.argv) > 3 else None
@@ -48,7 +50,7 @@ KERNEL_SCRIPTS = {
 }
 
 
-def deb(name, version, source, depends='', boot=None, modules=None, scripts=None, fail=False):
+def deb(name, version, source, depends='', boot=None, modules=None, scripts=None, fail=False, fail_rm=False):
     d = os.path.join(W, 'b', name)
     os.makedirs(os.path.join(d, 'DEBIAN'))
     if boot:
@@ -70,7 +72,7 @@ def deb(name, version, source, depends='', boot=None, modules=None, scripts=None
     open(os.path.join(d, 'DEBIAN/control'), 'w').write(control + 'Description: test package %s\n' % name)
     for s, text in (scripts or {}).items():
         p = os.path.join(d, 'DEBIAN', s)
-        open(p, 'w').write(('#!/bin/sh\nexit 1\n' if fail and s == 'postinst' else text.replace('{r}', scripts['_r'])) if s != '_r' else '')
+        open(p, 'w').write(('#!/bin/sh\nexit 1\n' if (fail and s == 'postinst') or (fail_rm and s == 'prerm') else text.replace('{r}', scripts['_r'])) if s != '_r' else '')
         os.chmod(p, 0o755)
     if scripts:
         os.remove(os.path.join(d, 'DEBIAN/_r'))
@@ -79,10 +81,10 @@ def deb(name, version, source, depends='', boot=None, modules=None, scripts=None
     return out
 
 
-def edition(n, fail=False):
+def edition(n, fail=False, fail_rm=False):
     r, v = E[n]
     image = deb('linux-image-' + r, v, 'linux-stereo-base', 'kmod, initramfs-tools', boot=r, modules=r,
-                scripts=dict(KERNEL_SCRIPTS, _r=r), fail=fail)
+                scripts=dict(KERNEL_SCRIPTS, _r=r), fail=fail, fail_rm=fail_rm)
     return [image, deb('linux-headers-' + r, v, 'linux-stereo-base'), deb('linux-headers-%s-lc-hr' % r, v, 'linux-stereo-base')]
 
 
@@ -128,6 +130,20 @@ def has_image(r):
     return installed().get('linux-image-' + r, '').startswith('ii')
 
 
+def kept():
+    try:
+        return json.load(open('/var/lib/sparky-stereo-boot/problems/kernel-cleanup.json'))
+    except (OSError, ValueError):
+        return None
+
+
+def stub_initramfs(body):
+    if not os.path.exists('/usr/sbin/update-initramfs.distrib'):
+        sh(['dpkg-divert', '--local', '--rename', '--add', '/usr/sbin/update-initramfs'])
+    open('/usr/sbin/update-initramfs', 'w').write('#!/bin/sh\nREAL=/usr/sbin/update-initramfs.distrib\n%s\n' % body)
+    os.chmod('/usr/sbin/update-initramfs', 0o755)
+
+
 def setup(boot_deb):
     # grub-mkconfig calls ${sbindir}/grub-probe by its path: the bench's own programs move aside (a throwaway container)
     for real in ('/usr/sbin/grub-probe', '/usr/bin/grub-mkrelpath'):
@@ -154,7 +170,8 @@ def main():
     running = {'edition': E[13][0], 'newest-running': E[14][0], 'running-older': E[12][0], 'second-flavour': E[13][0],
                'debian-split': E[13][0], 'shared-kept': E[13][0], 'one-kernel': E[14][0], 'failed-install': E[14][0],
                'lock-wait': E[13][0], 'guard': E[13][0], 'edition-0.1.3': E[13][0], 'plymouth': E[14][0],
-               'plymouth-0.1.3': E[14][0], 'upgrade': E[14][0]}[CASE]
+               'plymouth-0.1.3': E[14][0], 'upgrade': E[14][0], 'regen-fails': E[13][0], 'purge-fails': E[13][0],
+               'queue-fails': E[13][0]}[CASE]
     os.environ['SPARKY_STEREO_KERNEL_KEEP_RUNNING'] = running
     setup(OLD if CASE in ('edition-0.1.3', 'plymouth-0.1.3', 'upgrade') else NEW)
     has_keep = os.path.exists(KEEP)
@@ -312,6 +329,47 @@ def main():
               and not sh('dpkg-divert --list ' + p).stdout.strip(), "removal brings initramfs-tools' own file back, undiverted")
         sh('dpkg -P sparky-stereo-boot')
         check(not os.path.exists(p + '.sparky-stereo'), "purge removes the edition's file")
+    elif CASE == 'regen-fails':
+        kernels_in_turn((12, 13))
+        install(edition(14))
+        # the boot images cannot be written again after the purge (the kernels' own hooks still work)
+        stub_initramfs('[ "$*" = "-u -k all" ] && [ ! -e /tmp/initramfs-works ] && { echo "E: fake failure for the test" >&2; exit 1; }\nexec "$REAL" "$@"')
+        r, _ = keep_run()
+        k = kept()
+        check(r.returncode == 1, 'the service fails (exit %d)' % r.returncode)
+        check(not has_image(E[12][0]) and has_image(E[13][0]) and has_image(E[14][0]), '12 was removed before the rebuild failed')
+        check(bool(k) and k['key'] == 'LOCAL27' and k['args'] == ['update-initramfs -u -k all', '1']
+              and k['repair'] == [['update-initramfs', '-u', '-k', 'all'], ['update-grub']] and 'fake failure for the test' in k['output'],
+              'kept: boot files incomplete, with the output and the commands that repair them (%s)' % (k and k['args']))
+        check('Kernel cleanup left the boot files incomplete: update-initramfs -u -k all failed (exit status 1)' in r.stderr,
+              'said in the journal')
+        open('/tmp/initramfs-works', 'w').close()
+        rr = sh(['sparky-stereo-boot', 'repair'], check=False)
+        check(rr.returncode == 0 and kept() is None, 'sparky-stereo-boot repair writes them again and clears it (exit %d)' % rr.returncode)
+    elif CASE == 'purge-fails':
+        install(edition(12, fail_rm=True))
+        if has_keep:
+            keep_run()
+        for n in (13, 14):
+            install(edition(n))
+            if has_keep:
+                r, _ = keep_run()
+        k = kept()
+        check(r.returncode == 1, 'the service fails (exit %d)' % r.returncode)
+        check(bool(k) and k['key'] == 'LOCAL29' and 'purge' in k['args'][0] and k['args'][1] != '0' and k['repair'] == [[KEEP, '--now']],
+              'kept: the purge failed, with its exit status and the repair (%s)' % (k and k['args'][1:]))
+        check(bool(k) and 'linux-image-%s' % E[12][0] in k['output'], "apt's output naming the kernel is kept")
+    elif CASE == 'queue-fails':
+        kernels_in_turn((12, 13))
+        os.makedirs(QUEUE)   # the install cannot be recorded
+        r = install(edition(14), check_rc=False)
+        k = kept()
+        check(r.returncode == 0 and has_image(E[14][0]), 'the kernel installs (exit %d)' % r.returncode)
+        check(('The cleanup after the new kernel %s could not be queued' % E[14][0]) in r.stdout + r.stderr, 'said during the install')
+        check(bool(k) and k['key'] == 'LOCAL30' and k['repair'] == [[KEEP, '--now']], 'kept, with the cleanup to run (%s)' % (k and k['key']))
+        os.rmdir(QUEUE)
+        rr = sh(['sparky-stereo-boot', 'repair'], check=False)
+        check(rr.returncode == 0 and kept() is None and not has_image(E[12][0]), 'sparky-stereo-boot repair runs the cleanup: 12 goes, the problem is cleared')
     print('== %s: %s' % (CASE, 'ALL PASS' if all(results) else '%d FAILED' % results.count(False)))
     sys.exit(0 if all(results) else 1)
 
