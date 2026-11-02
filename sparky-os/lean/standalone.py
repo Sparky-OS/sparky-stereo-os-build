@@ -16,7 +16,7 @@ import stat
 import subprocess
 import tempfile
 
-from . import package, release
+from . import package, release, tracked
 
 
 def normalize_modes(tree):
@@ -100,9 +100,8 @@ def _build(tree, out, authoring, architecture):
         (source / "tree-modes.json").write_text(
             json.dumps(tree_modes(tree), sort_keys=True, indent=2) + "\n"
         )
-        shutil.copytree(authoring, source / "authoring",
-                        symlinks=True,
-                        ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"))
+        # exactly what the checkout tracks, never an untracked note or cache (ORDER 339's rule, lean/tracked.py)
+        tracked.copy(authoring, source / "authoring")
         kit = source / "release-toolkit"
         (kit / "lean").mkdir(parents=True)
         for path in (toolkit / "lean").glob("*.py"):
