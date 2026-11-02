@@ -211,6 +211,10 @@ if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
 	cp /build/boot-kernels.py $R/tmp/
 	inr python3 /tmp/boot-kernels.py / || { echo "!! a kernel that is not the edition's is in the tree"; exit 1; }
 	rm -f $R/tmp/boot-kernels.py
+	# Missing ZFS or modules for any shipped kernel must stop image packing.
+	cp /build/zfs-check.py $R/tmp/
+	inr python3 /tmp/zfs-check.py / || { echo "!! ZFS is not ready in the image; see validation errors above" >&2; exit 1; }
+	rm -f $R/tmp/zfs-check.py
 	# DKMS made its own signing key while building in the chroot; a private key never ships
 	rm -f $R/var/lib/dkms/mok.key $R/var/lib/dkms/mok.pub
 	# each installed system gets its own identity
