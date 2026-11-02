@@ -72,7 +72,7 @@ mkdir -p "$g/DEBIAN"
 cat > "$g/DEBIAN/postrm" <<'POSTRM'
 #!/bin/sh
 set -e
-if [ "$1" = remove ] || [ "$1" = purge ]; then
+if [ "$1" = remove ]; then
 	sparky-stereo-problems clear --all sparky-stereo-gtk
 fi
 POSTRM

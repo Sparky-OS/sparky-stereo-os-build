@@ -18,6 +18,7 @@ args.output.mkdir(parents=True, exist_ok=True)
 script = args.script.resolve()
 results = []
 # This child belongs to the test. Only its PID is ever signalled.
+(args.output / 'daemon-signals').unlink(missing_ok=True)
 daemon = subprocess.Popen(['/usr/bin/python3', '-c',
     'import signal,time,sys; signal.signal(signal.SIGHUP, lambda *_: open(sys.argv[1], "a").write("HUP\\n")); print("ready",flush=True); time.sleep(300)', str(args.output.resolve()/'daemon-signals')],
     stdout=subprocess.PIPE, text=True)
