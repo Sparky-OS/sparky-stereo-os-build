@@ -276,9 +276,10 @@ $B clear --all $G; rc=$?
 check "clear --all: every problem of the package goes (exit 0)" "[ $rc = 0 ] && [ ! -e $M/${G}_a.json ] && [ ! -e $M/${G}_b.json ] && [ ! -e $M/${G}_thing.json ]"
 check "and the others stay" "[ -e $M/${P}_own.json ]"
 $B keep --machine $G c LOCAL2 z 3
+had=$( [ -e $M/${G}_c.json ] && echo yes)
 rm /var/lib/dpkg/info/$G.list
 $B list >$W/l.txt
-check "the problem of a package that is not installed any more is over: not listed, its record goes" "! grep -q 'sparky-test-gone' $W/l.txt && [ ! -e $M/${G}_c.json ]"
+check "the problem of a package that is not installed any more is over: not listed, its record goes" "[ \"$had\" = yes ] && ! grep -q 'sparky-test-gone' $W/l.txt && [ ! -e $M/${G}_c.json ]"
 
 echo "== milestone 2b: a repair whose command keeps the problem again"
 reset
