@@ -9,7 +9,8 @@ under the GNU General Public License, version 3 or any later version.
 Dependencies:
 -------------
 KDE Frameworks 6 (KConfig, KCMUtils, KI18n, KService, Kirigami), Qt 6 (Quick, DBus), kdialog
-Recommended: switcheroo-control, power-profiles-daemon, hwdata
+Also: power-profiles-daemon, or tlp-pd (TLP) or tuned-ppd (TuneD), which provide the same power profiles
+Recommended: switcheroo-control, hwdata
 
 Build:
 -------------

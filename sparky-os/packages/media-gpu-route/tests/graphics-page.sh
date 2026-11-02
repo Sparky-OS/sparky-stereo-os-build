@@ -1,7 +1,7 @@
 #!/bin/bash
 # Copyright 2026 Daniel Campos Ramos. SPDX-License-Identifier: MIT
 # The Graphics page names the GPU players use (sparky-stereo-gpu-env --category players). A caller that
-# copies its decoded pictures back decodes there, and on another GPU only where the person allows it
+# copies its decoded pictures back decodes there, and on another GPU that can unless the person turned that off
 # ([Decoding] OtherGpu, MEDIA_GPU_ROUTE_OTHER_GPU); a page that fails, answers nothing or names a GPU that
 # is not here is said and nothing decodes on another GPU (ORDER 346a). A caller that imports decoded
 # surfaces, and media_gpu_route_default, keep the graphics stack's order: the renderer draws on the GPU
@@ -52,7 +52,8 @@ check "page cannot use the chosen GPU: said, no other GPU" "$(unresolved)" "resu
 fake ":"
 check "page answers nothing: said, no other GPU" "$(unresolved)" "result=unresolved"
 if [ "${AV1:-}" = 1 ]; then
-	# AV1: the GPU that cannot decode it is named for players; another GPU decodes it only where the person allows it
+	# AV1: the GPU that cannot decode it is named for players; another GPU that can decodes it, unless the person turned
+	# Decode on another GPU off (Daniel, 2026-11-02); then software. Both are said.
 	av1() { run MEDIA_GPU_ROUTE_COPY_BACK=true "$@" "$QUERY" --decoder av1 0 8 1920x1080 copy 2>"$T/av1-err"; }
 	rm -rf "$T/bin"
 	able=$(av1 | sed -n 's/^result=hardware .* gpu=//p')
@@ -60,10 +61,10 @@ if [ "${AV1:-}" = 1 ]; then
 	for node in $nodes; do [ "$(name_of "$node")" = "$able" ] || unable=$node; done
 	[ -n "$able" ] && [ -n "$unable" ] || { echo "SKIP: no pair of GPUs where one decodes AV1 and one not"; exit 77; }
 	fake "echo $unable"
-	check "AV1, the players' GPU cannot decode it: software" "$(av1)" "result=software"
-	check "AV1, the players' GPU cannot decode it: said" "$(grep -c 'cannot decode this video in hardware' "$T/av1-err")" 1
-	check "AV1, another GPU where the person allows it" "$(av1 MEDIA_GPU_ROUTE_OTHER_GPU=true | sed -n 's/^result=hardware .* gpu=//p')" "$able"
-	check "AV1, another GPU where the person allows it: said" "$(grep -c 'as Decode on another GPU allows' "$T/av1-err")" 1
+	check "AV1, the players' GPU cannot decode it: another GPU that can, by default" "$(av1 | sed -n 's/^result=hardware .* gpu=//p')" "$able"
+	check "AV1, another GPU by default: said" "$(grep -c 'as Decode on another GPU allows' "$T/av1-err")" 1
+	check "AV1, Decode on another GPU off: software" "$(av1 MEDIA_GPU_ROUTE_OTHER_GPU=false)" "result=software"
+	check "AV1, Decode on another GPU off: said" "$(grep -c 'cannot decode this video in hardware' "$T/av1-err")" 1
 fi
 fake "echo $last"
 check "copying back not allowed: software, and the page is not asked" "$(run "$QUERY" --decoder h264 100 8 1920x1080 copy):$(cat "$T/asked" 2>/dev/null)" "result=software:"
