@@ -109,18 +109,25 @@ int main(void)
     setenv("MEDIA_GPU_ROUTE_COPY_BACK", "sometimes", 1);
     expect("an unreadable environment value leaves the files", 0);
 
-    /* OtherGpu, read the same way: another GPU decodes only where the person allows it (ORDER 346a) */
+    /* OtherGpu, read the same way: on unless the person turns it off (Daniel, 2026-11-02) */
     unsetenv("MEDIA_GPU_ROUTE_OTHER_GPU");
     write_file("other-yes", "[Decoding]\nOtherGpu=true\n");
     write_file("other-no", "[Decoding]\nOtherGpu=false\n");
     dirs(NULL, NULL);
-    expect_other("other GPU: nothing recorded, never assumed", 0);
+    expect_other("other GPU: nothing recorded, on by default", 1);
+    dirs("other-no", NULL);
+    expect_other("other GPU: the machine turns it off", 0);
     dirs("other-yes", NULL);
     expect_other("other GPU: the machine allows it", 1);
     dirs("other-yes", "other-no");
     expect_other("other GPU: the person's choice over the machine", 0);
     dirs(NULL, "machine-yes");
-    expect_other("other GPU: CopyBack is another key", 0);
+    expect_other("other GPU: CopyBack is another key", 1);
+    dirs("other-no", "other-yes");
+    expect_other("other GPU: the person's yes over the machine's no", 1);
+    setenv("MEDIA_GPU_ROUTE_OTHER_GPU", "false", 1);
+    expect_other("other GPU: the environment turns it off for one start", 0);
+    dirs("other-yes", NULL);
     setenv("MEDIA_GPU_ROUTE_OTHER_GPU", "true", 1);
     expect_other("other GPU: the environment for one start", 1);
     unsetenv("MEDIA_GPU_ROUTE_OTHER_GPU");

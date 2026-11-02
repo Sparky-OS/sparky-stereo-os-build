@@ -538,13 +538,13 @@ bool GraphicsKcm::copyBackSetInSession() const
 
 bool GraphicsKcm::otherGpu() const
 {
-    return m_settings.otherGpu().value_or(false);
+    return m_settings.otherGpu().value_or(true);
 }
 
 void GraphicsKcm::setOtherGpu(bool otherGpu)
 {
-    // off is the default and is not written, so the key is there only when the person turned it on
-    const std::optional<bool> value = otherGpu ? std::optional<bool>(true) : std::nullopt;
+    // on is the default and is not written, so the key is there only when the person turned it off
+    const std::optional<bool> value = otherGpu ? std::nullopt : std::optional<bool>(false);
     if (value == m_settings.otherGpu()) {
         return;
     }

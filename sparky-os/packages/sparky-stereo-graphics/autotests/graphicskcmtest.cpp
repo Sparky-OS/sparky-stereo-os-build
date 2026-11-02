@@ -499,21 +499,22 @@ void GraphicsKcmTest::copyBackSetInTheSessionIsReported()
 
 void GraphicsKcmTest::decodeOnAnotherGpuIsTheChoice()
 {
-    // ORDER 346a: libmedia-gpu-route decodes on another GPU only where the person allows it ([Decoding] OtherGpu)
+    // libmedia-gpu-route decodes on another GPU that can when the players' GPU cannot, unless the person turns it off
+    // ([Decoding] OtherGpu; Daniel, 2026-11-02: on by default)
     auto kcm = page(u"host"_s);
-    QVERIFY(!kcm->otherGpu());
-    kcm->setOtherGpu(true);
+    QVERIFY(kcm->otherGpu());
+    kcm->setOtherGpu(false);
     QVERIFY(kcm->needsSave());
     QVERIFY(!configText().contains("OtherGpu"));
     kcm->save();
-    QVERIFY2(configText().contains("[Decoding]\nOtherGpu=true"), configText().constData());
-    QVERIFY(kcm->otherGpu());
-    kcm->setOtherGpu(false);
+    QVERIFY2(configText().contains("[Decoding]\nOtherGpu=false"), configText().constData());
+    QVERIFY(!kcm->otherGpu());
+    kcm->setOtherGpu(true);
     kcm->save();
     QVERIFY(!configText().contains("OtherGpu"));
-    kcm->setOtherGpu(true);
+    kcm->setOtherGpu(false);
     kcm->defaults();
-    QVERIFY(!kcm->otherGpu());
+    QVERIFY(kcm->otherGpu());
     qputenv("MEDIA_GPU_ROUTE_OTHER_GPU", "true");
     QVERIFY(kcm->otherGpuSetInSession());
     qunsetenv("MEDIA_GPU_ROUTE_OTHER_GPU");

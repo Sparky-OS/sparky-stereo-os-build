@@ -67,8 +67,9 @@ int media_gpu_route_decoder_frames(const struct media_gpu_video *video, enum med
  * media_gpu_route_decoder_frames(video, MEDIA_GPU_FRAMES_COPY, decoder). */
 int media_gpu_route_decoder(const struct media_gpu_video *video, struct media_gpu_decoder *decoder);
 /* 0.2.2. A caller that copies its pictures back decodes on the GPU the Graphics page names for players
- * (sparky-stereo-gpu-env), and on no other GPU unless the person allows it (media_gpu_route_other_gpu):
- * nothing changes GPU without telling (Daniel, 2026-11-01). As media_gpu_route_decoder_frames, and TEXT
+ * (sparky-stereo-gpu-env); a video that GPU cannot decode in hardware goes to another GPU that can, unless the
+ * person turned that off (media_gpu_route_other_gpu, on by default), and either way it is said: nothing changes
+ * GPU without telling (Daniel, 2026-11-01). As media_gpu_route_decoder_frames, and TEXT
  * (at most SIZE bytes, in the person's language; empty when there is nothing to say) says why the choice
  * is not that GPU's hardware decoder. Return -2 when the GPU chosen for players could not be resolved:
  * the Graphics page's command failed (it says why itself), answered nothing, or named a GPU this

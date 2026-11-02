@@ -28,7 +28,7 @@ install -m644 "$HERE/README.md" "$D/usr/share/doc/$PACKAGE/README.md"
 mkdir -p "$D/DEBIAN" "$WORK/shlibs/debian"
 printf 'Source: %s\n\nPackage: %s\nArchitecture: amd64\n' "$PACKAGE" "$PACKAGE" >"$WORK/shlibs/debian/control"
 SHLIBS=$(cd "$WORK/shlibs" && dpkg-shlibdeps -O $(find "$D" -type f \( -name '*.so' -o -path '*/usr/bin/sparky-stereo-gpu-env' -o -path '*/usr/bin/sparky-stereo-gpu-record' \)) 2>/dev/null | sed -n 's/^shlibs:Depends=//p')
-DEPENDS="$SHLIBS, kdialog, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami"
+DEPENDS="$SHLIBS, kdialog, power-profiles-daemon | tlp-pd | tuned-ppd, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami"
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
 cat >"$D/DEBIAN/control" <<EOS
 Package: $PACKAGE
@@ -37,7 +37,7 @@ Architecture: amd64
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
 Depends: $DEPENDS
-Recommends: hwdata, power-profiles-daemon, switcheroo-control
+Recommends: hwdata, switcheroo-control
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org
@@ -76,8 +76,8 @@ Homepage: https://sparkylinux.org
 
 Package: $PACKAGE
 Architecture: amd64
-Depends: \${shlibs:Depends}, kdialog, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami
-Recommends: hwdata, power-profiles-daemon, switcheroo-control
+Depends: \${shlibs:Depends}, kdialog, power-profiles-daemon | tlp-pd | tuned-ppd, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami
+Recommends: hwdata, switcheroo-control
 Description: Graphics page for System Settings
  Every graphics processor, the main desktop GPU, where programs draw, the GPU
  measured best for players and 3D, and the copy-back choice of video decoding.
@@ -108,9 +108,14 @@ $PACKAGE ($VERSION) unstable; urgency=medium
     the removal), said and kept; systemd's reload is said and kept.
   * Automatic says when the GPU measured best for the computer is not
     there, instead of "not measured".
-  * Decode on another GPU, the person's choice ([Decoding] OtherGpu), which
-    libmedia-gpu-route 0.2.2 reads: a video the players' GPU cannot decode
-    is decoded on another GPU only where the person allows it.
+  * Decode on another GPU ([Decoding] OtherGpu), which libmedia-gpu-route
+    0.2.2 reads, is on by default (Daniel, 2026-11-02): a video the
+    players' GPU cannot decode in hardware is decoded on another GPU that
+    can, and that is said; turned off, it is decoded in software, and that
+    is said.
+  * power-profiles-daemon is a dependency, so Follow the power profile
+    works on every system (Daniel, 2026-11-02); tlp-pd (TLP) and tuned-ppd
+    (TuneD) provide it for the people who use those instead.
 
  -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 02 Nov 2026 06:00:00 -0300
 

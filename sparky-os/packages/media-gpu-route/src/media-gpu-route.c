@@ -163,7 +163,7 @@ int media_gpu_route_vulkan_import(const struct media_gpu_route *gpu)
 
 /* Where players draw is the person's choice on the Graphics page (sparky-stereo-graphics): its command names
  * the render node players use now (the choice, or Automatic: the GPU measured best on the machine). A caller
- * that copies its pictures back decodes there, and on another GPU only where the person allows it
+ * that copies its pictures back decodes there, and on another GPU that can unless the person turned that off
  * (media_gpu_route_other_gpu). A caller that imports decoded surfaces keeps the graphics stack's order,
  * because its renderer draws on the GPU the program was started on, and the page's launch environment puts it
  * there. Nothing is written. A GPU chosen at launch (DRI_PRIME, a Vulkan device selection, an NVIDIA offload)
@@ -289,7 +289,7 @@ int media_gpu_route_decoder_said(const struct media_gpu_video *video, enum media
             return 1;
         }
         unknown |= supported < 0;
-        /* the players' GPU cannot decode it: another GPU only where the person allows it */
+        /* the players' GPU cannot decode it: another GPU that can, unless the person turned Decode on another GPU off */
         if (page == MEDIA_GPU_PAGE_NAMED && i == 0 && !media_gpu_route_other_gpu()) {
             snprintf(message, sizeof(message), media_gpu_route_text(supported == 0 ? MEDIA_GPU_TEXT_CANNOT_DECODE : MEDIA_GPU_TEXT_UNKNOWN),
                      routes[0].name);

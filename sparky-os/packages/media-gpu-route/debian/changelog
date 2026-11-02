@@ -2,9 +2,11 @@ media-gpu-route (0.2.2) unstable; urgency=medium
 
   * Nothing changes GPU without telling (Daniel, 2026-11-01; ORDER 346a,
     row U25): a caller that copies its pictures back decodes on the GPU the
-    Graphics page names for players, and on another GPU only where the
-    person allows it ([Decoding] OtherGpu, MEDIA_GPU_ROUTE_OTHER_GPU, the
-    page's Decode on another GPU). A page that fails, answers nothing or
+    Graphics page names for players; a video that GPU cannot decode in
+    hardware is decoded on another GPU that can, and that is said (the
+    page's Decode on another GPU, on by default; [Decoding] OtherGpu,
+    MEDIA_GPU_ROUTE_OTHER_GPU); turned off, it is decoded in software, and
+    that is said. A page that fails, answers nothing or
     names a GPU this program cannot open, and a GPU whose decoder driver
     does not answer, are said in the person's language and nothing decodes
     on another GPU in their place.

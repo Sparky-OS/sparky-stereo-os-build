@@ -83,10 +83,10 @@ static void read_config_dir(const char *dir, size_t length, const char *key, int
 }
 
 /* One boolean of group [Decoding]: the environment variable for one start, else the person's file in
- * $XDG_CONFIG_HOME over the machine's in $XDG_CONFIG_DIRS, as KConfig reads them; 0 when nobody chose. */
-static int decoding_choice(const char *variable, const char *key)
+ * $XDG_CONFIG_HOME over the machine's in $XDG_CONFIG_DIRS, as KConfig reads them; unchosen when nobody chose. */
+static int decoding_choice(const char *variable, const char *key, int unchosen)
 {
-    int value = 0;
+    int value = unchosen;
     const char *env = getenv(variable);
     if (env && parse_bool(env, &value))
         return value;
@@ -115,10 +115,11 @@ static int decoding_choice(const char *variable, const char *key)
 
 int media_gpu_route_copy_back(void)
 {
-    return decoding_choice("MEDIA_GPU_ROUTE_COPY_BACK", "CopyBack");
+    return decoding_choice("MEDIA_GPU_ROUTE_COPY_BACK", "CopyBack", 0);
 }
 
 int media_gpu_route_other_gpu(void)
 {
-    return decoding_choice("MEDIA_GPU_ROUTE_OTHER_GPU", "OtherGpu");
+    /* on unless the person turns it off: a video the players' GPU cannot decode goes to a GPU that can */
+    return decoding_choice("MEDIA_GPU_ROUTE_OTHER_GPU", "OtherGpu", 1);
 }
