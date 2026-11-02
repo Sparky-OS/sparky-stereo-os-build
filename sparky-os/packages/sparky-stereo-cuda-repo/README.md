@@ -15,7 +15,7 @@ Files:
 /usr/share/keyrings/cuda-archive-keyring.gpg: NVIDIA's key for it, the same file NVIDIA's cuda-keyring package installs.
 /etc/apt/preferences.d/91sparky-stereo-cuda: the pins.
 
-The edition's rule: NVIDIA's repository may update compute, never the display driver, which is the edition's, with HDMI 3D.
+The edition's rule: NVIDIA's repository may update compute, never the display driver, which is the edition's, with [HDMI®](https://www.hdmi.org/resource/brand) 3D.
 The pins say it in apt's terms:
 - CUDA, the CUDA-X libraries and GPUDirect Storage come from NVIDIA and keep updating (1002).
 - NVIDIA's EGL platform libraries come from NVIDIA too (1002): NVIDIA's driver needs NVIDIA's versions of them.
@@ -68,3 +68,5 @@ apt update
 Uninstall:
 -------------
 apt remove sparky-stereo-cuda-repo   (apt purge also removes the pin file)
+
+HDMI®, HDMI® High-Definition Multimedia Interface and the HDMI® Logo are trademarks or registered trademarks of HDMI Licensing Administrator, Inc.

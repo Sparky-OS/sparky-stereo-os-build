@@ -17,7 +17,7 @@ The edition's `sparky-stereo-power-profiles` package owns dimming at 15 minutes,
 screen-off/locking at 165 minutes, laptop AC sleep at four hours, and battery
 screen-off at 20 minutes. Desktops do not auto-sleep. This integration requests
 no power inhibitor and writes no console or power-controller settings. The
-visible AC interval is 30 minutes. HDMI-CEC remains the existing power path;
+visible AC interval is 30 minutes. [HDMI®](https://www.hdmi.org/resource/brand)-CEC remains the existing power path;
 the headless tests neither connect a TV nor exercise physical standby.
 
 The main greeter surface stays undeclared and draws the normal 2D prompt.
@@ -106,3 +106,5 @@ The autostart entry is KDE-only, and default settings live in
 `/etc/xdg/stereoshowrc`. User settings take precedence. The fresh suite stages
 the native install and verifies all relocated receipt hashes. Nothing is
 installed on the host, merged upstream or published by these scripts.
+
+HDMI®, HDMI® High-Definition Multimedia Interface and the HDMI® Logo are trademarks or registered trademarks of HDMI Licensing Administrator, Inc.

@@ -40,7 +40,7 @@ It launches a fresh private KWin with one or two virtual outputs for each GPU ca
 The player records IPC counters, process CPU time, its real driver log, Wayland traffic and native `video-flip` timing.
 Count flips over the five second interval starting one second after the first flip to report VO flips per second; this is virtual presentation, not physical scanout.
 The table must identify source frame rate, dropped frame counters, GPU names and any hardware download or cross-GPU transfer.
-Do not call a virtual stereo-content case a physical HDMI frame packing test.
+Do not call a virtual stereo-content case a physical [HDMI®](https://www.hdmi.org/resource/brand) frame packing test.
 
 `prepare-packages.sh` verifies the exact Debian patch stacks and runtime floors against pinned plain sources.
 The diagnostic version suffix in that test is not a release version reservation.
@@ -65,3 +65,5 @@ The 2D load is H.264 1920x1080 at 48 fps from testsrc2.
 The 3D load is a stream-copy extension of the owned H.264 1920x540 at 48 fps source.
 The timing checker requires no settled VO drops and at least 98% of source cadence.
 It still reports startup drops and sampled decoder counters separately.
+
+HDMI®, HDMI® High-Definition Multimedia Interface and the HDMI® Logo are trademarks or registered trademarks of HDMI Licensing Administrator, Inc.
