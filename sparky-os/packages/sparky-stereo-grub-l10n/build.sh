@@ -37,11 +37,26 @@ mkdir -p "$D/DEBIAN" "$S" "$D/usr/lib/$PKG" "$D/usr/share/doc/$PKG"
 langs=
 for po in "$P"/*.po; do
 	l=$(basename "$po" .po)
-	msggrep --location='util/*.in' --location='util/grub.d/*.in' "$po" 2>/dev/null \
-		| msgattrib --translated --no-fuzzy --no-obsolete -o "$W/$l.po" - 2>/dev/null || continue
-	grep -q '^msgid "[^"]' "$W/$l.po" || continue
-	msgfmt -o "$S/$l.mo" "$W/$l.po"
+	[ -f "$po" ] || { echo "GRUB translation inputs are missing in $P; repair the source archive and rebuild." >&2; exit 1; }
+	msggrep --location='util/*.in' --location='util/grub.d/*.in' "$po" \
+		| msgattrib --translated --no-fuzzy --no-obsolete -o "$W/$l.po" - || {
+		echo "GRUB translation $l could not be extracted. Repair the catalogue/gettext tools and rebuild." >&2
+		exit 1
+	}
+	if ! grep -q '^msgid "[^"]' "$W/$l.po"; then
+		echo "GRUB catalogue $l has no translated shell messages; no supplemental catalogue generated." >&2
+		continue
+	fi
+	msgfmt -o "$S/$l.mo" "$W/$l.po" || {
+		echo "GRUB translation $l could not be compiled. Repair the catalogue/gettext tools and rebuild." >&2
+		exit 1
+	}
+	[ -s "$S/$l.mo" ] || { echo "GRUB translation $l produced no catalogue; repair msgfmt and rebuild." >&2; exit 1; }
 	langs="$langs $l"
+done
+# English uses GRUB's source strings; all eight translated edition languages must be present.
+for l in pl pt_BR fr de ja ko zh_CN zh_TW; do
+	[ -s "$S/$l.mo" ] || { echo "Required GRUB translation $l is missing; supply its shell messages and rebuild." >&2; exit 1; }
 done
 langs=${langs# }
 echo "$langs" | tr ' ' '\n' >"$S/languages"

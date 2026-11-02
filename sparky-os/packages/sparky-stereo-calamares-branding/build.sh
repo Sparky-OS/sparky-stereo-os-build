@@ -5,7 +5,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION='20261016.1~sparky9~0+lc1'
+VERSION='20261101~sparky9~0+lc1'
 PACKAGE=sparky-stereo-calamares-branding
 DEPENDS='calamares, libstereo-layer1 (>= 1.4.1), qml6-module-qtquick-window'
 RECOMMENDS='calamares (>= 3.4.3~sparky9~4-1+stereo3d1)'
@@ -15,16 +15,22 @@ trap 'rm -rf "$WORK"' EXIT
 D=$WORK/$PACKAGE
 mkdir -p "$D/DEBIAN" "$D/usr/share/doc/$PACKAGE"
 cp -a "$HERE/usr" "$HERE/etc" "$D/"
-# the translations: a .qm only from a .ts with finished translations (an unfinished string falls back to its English source)
+# Validate every required language before compiling; lrelease normally accepts missing translations.
+python3 "$HERE/tools/check-translations.py" "$HERE/translations"
 LANGDIR=$D/usr/share/calamares/branding/sparky-stereo/lang
 mkdir -p "$LANGDIR"
-LRELEASE=$(command -v lrelease6 || command -v lrelease || ls /usr/lib/qt6/bin/lrelease)
+LRELEASE=$(command -v lrelease6 || command -v lrelease || { [ -x /usr/lib/qt6/bin/lrelease ] && echo /usr/lib/qt6/bin/lrelease; }) || {
+	echo "Required installer translations could not be built: lrelease is missing. Install Qt Linguist tools and rebuild." >&2
+	exit 1
+}
 for ts in "$HERE"/translations/calamares-sparky_*.ts; do
 	qm=$LANGDIR/$(basename "${ts%.ts}").qm
-	"$LRELEASE" -silent "$ts" -qm "$qm" || true
-	if ! grep -q '<translation>' "$ts"; then rm -f "$qm"; fi
+	"$LRELEASE" -silent "$ts" -qm "$qm" || {
+		echo "Required installer translation $ts could not be built by lrelease. Repair the catalogue/toolchain and rebuild." >&2
+		exit 1
+	}
+	[ -s "$qm" ] || { echo "Required installer translation $qm was not generated; repair lrelease and rebuild." >&2; exit 1; }
 done
-rmdir --ignore-fail-on-non-empty "$LANGDIR"
 find "$D" -type d -exec chmod 755 {} +
 find "$D" -type f -exec chmod 644 {} +
 install -m644 "$HERE/copyright" "$D/usr/share/doc/$PACKAGE/copyright"
