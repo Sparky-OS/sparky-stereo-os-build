@@ -108,6 +108,9 @@ $PACKAGE ($VERSION) unstable; urgency=medium
     the removal), said and kept; systemd's reload is said and kept.
   * Automatic says when the GPU measured best for the computer is not
     there, instead of "not measured".
+  * Decode on another GPU, the person's choice ([Decoding] OtherGpu), which
+    libmedia-gpu-route 0.2.2 reads: a video the players' GPU cannot decode
+    is decoded on another GPU only where the person allows it.
 
  -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 02 Nov 2026 06:00:00 -0300
 
