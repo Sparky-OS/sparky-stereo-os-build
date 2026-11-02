@@ -78,6 +78,14 @@ has "the NVIDIA card with no driver: said" "$T/err" "is in this computer, but no
 mkdir -p "$T/usr/locale/de/LC_MESSAGES"
 msgfmt -o "$T/usr/locale/de/LC_MESSAGES/kcm_sparkystereo_graphics.mo" "$SRC/po/de/kcm_sparkystereo_graphics.po"
 check "said in German" "$(LANG=de_DE.UTF-8 env_for host --choice pci-0000:09:00.0 --profile balanced 2>&1 >/dev/null | grep -c 'an der PCI-Adresse 0000:09:00.0, ist jetzt nicht in diesem Computer.')" 1
+# another kind of device at the chosen address (a disk controller took the slot): the GPU is not in the computer
+cp -a "$T/host-nodriver" "$T/host-other"
+for l in "$T/host-other"/sys/class/drm/card0/device "$T/host-other"/sys/bus/pci/devices/*; do
+	t=$(readlink "$l"); ln -sfn "$T/host-other${t#"$T/host-nodriver"}" "$l"
+done
+echo 0x010601 >"$T/host-other/sys/devices/pci0000:00/0000:00:01.1/0000:01:00.0/class"
+check "another kind of device at that address: exit 4" "$(rc_of env_for host-other --choice pci-0000:01:00.0 --profile balanced)" 4
+has "another kind of device at that address: the GPU is not here" "$T/err" "at PCI address 0000:01:00.0, is not in this computer now."
 check "a render node the account may not open: exit 4" "$(rc_of env_for host-denied --choice discrete --profile balanced)" 4
 has "a render node the account may not open: said" "$T/err" "cannot be used by your account: /dev/dri/renderD129 cannot be opened."
 rm -f "$CFG"

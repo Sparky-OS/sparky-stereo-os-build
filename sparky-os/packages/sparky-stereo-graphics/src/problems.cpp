@@ -61,8 +61,11 @@ Problem fromResolution(const QString &key, const Resolution &resolution, const Q
     if (problem.kind == u"gpu-missing"_s && problem.requested.startsWith(u"pci-"_s)) {
         // The kernel lists the device on the PCI bus whether or not a graphics driver gave it a DRM device: when it is
         // there, the GPU is in the computer and its driver is what is missing (an NVIDIA card whose driver did not install)
+        // A display controller (PCI base class 03, the kernel's class file) at that address; another kind of device there
+        // (a disk controller that took the slot) means the GPU is not in the computer
         const QString device = QDir::cleanPath(root + u"/sys/bus/pci/devices/"_s + problem.requested.mid(4));
-        if (QFileInfo::exists(device)) {
+        QFile pciClass(device + u"/class"_s);
+        if (pciClass.open(QIODevice::ReadOnly) && pciClass.readAll().trimmed().startsWith("0x03")) {
             problem.kind = u"gpu-no-driver"_s;
             problem.detail = QFileInfo(device + u"/driver"_s).symLinkTarget().section(u'/', -1);
         }
