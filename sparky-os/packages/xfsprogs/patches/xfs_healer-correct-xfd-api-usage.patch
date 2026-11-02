@@ -1,0 +1,27 @@
+Description: xfs_healer: correct xfd_ API usage
+ This callsite is wrong -- the xfd_* functions return 0 on success or
+ negative errno on failure, so we should be using strerror on the value
+ provided, and not perror, which uses errno.  Fix this to be consistent
+ with the other xfsprogs utilities.
+Author: Darrick J. Wong <djwong@kernel.org>
+Origin: upstream, https://git.kernel.org/pub/scm/fs/xfs/xfsprogs-dev.git/commit/?id=d28edf8b3722d2b3f8ae23bd225c733184b0802e
+Reviewed-by: Andrey Albershteyn <aalbersh@kernel.org>
+Applied-Upstream: v7.2.1, d28edf8b3722d2b3f8ae23bd225c733184b0802e
+Last-Update: 2026-11-02
+---
+diff --git a/healer/xfs_healer.c b/healer/xfs_healer.c
+index ec402a7..8fa58b7 100644
+--- a/healer/xfs_healer.c
++++ b/healer/xfs_healer.c
+@@ -315,9 +315,9 @@ setup_monitor(
+ 	int			mon_fd;
+ 	int			ret;
+ 
+-	ret = xfd_open(&ctx->mnt, ctx->mntpoint, O_RDONLY);
++	ret = -xfd_open(&ctx->mnt, ctx->mntpoint, O_RDONLY);
+ 	if (ret) {
+-		perror(ctx->mntpoint);
++		fprintf(stderr, "%s: %s\n", ctx->mntpoint, strerror(ret));
+ 		return outcome;
+ 	}
+ 
