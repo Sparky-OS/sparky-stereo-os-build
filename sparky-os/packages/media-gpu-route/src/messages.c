@@ -50,8 +50,8 @@ static const char *const texts[][9] = {
         "die für Player gewählte GPU kann dieses Video nicht in Hardware dekodieren, daher wird es auf %s dekodiert, wie „Auf einer anderen GPU dekodieren“ es erlaubt.",
         "プレーヤー用に選んだGPUはこの動画をハードウェアでデコードできないため、「別のGPUでデコード」の設定どおり %s でデコードします。",
         "플레이어용으로 선택한 GPU가 이 동영상을 하드웨어로 디코딩할 수 없어, '다른 GPU에서 디코딩'이 허용하는 대로 %s에서 디코딩합니다.",
-        "为播放器选择的 GPU 无法以硬件解码此视频，因此按照“在另一个 GPU 上解码”的允许，在 %s 上解码。",
-        "為播放器選擇的 GPU 無法以硬體解碼此影片，因此依照「在另一個 GPU 上解碼」的允許，在 %s 上解碼。",
+        "为播放器选择的 GPU 无法以硬件解码此视频，因此按照“在另一个 GPU 上解码”的设置，在 %s 上解码。",
+        "為播放器選擇的 GPU 無法以硬體解碼此影片，因此依照「在另一個 GPU 上解碼」的設定，在 %s 上解碼。",
     },
     [MEDIA_GPU_TEXT_UNKNOWN] = {
         "the GPU chosen for players, %s, could not be asked what it decodes: its VA-API or NVDEC driver did not answer. This video is decoded in software, on no other GPU.",
