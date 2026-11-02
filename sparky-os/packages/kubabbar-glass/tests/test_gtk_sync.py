@@ -24,7 +24,7 @@ daemon = subprocess.Popen(['/usr/bin/python3', '-c',
 assert daemon.stdout.readline().strip() == 'ready'
 
 STUB = '''#!/usr/bin/python3
-import os, pathlib, sys
+import os, pathlib, sys, signal
 name = pathlib.Path(sys.argv[0]).name
 mode = os.environ['TEST_MODE']
 with open(os.environ['TEST_CALLS'], 'a') as stream:
@@ -40,9 +40,17 @@ if name == 'kwriteconfig6':
         sys.exit(21)
     os.execv('/usr/bin/kwriteconfig6', sys.argv)
 if name == 'gsettings':
+    value = pathlib.Path(os.environ['TEST_CALLS']).parent / sys.argv[3]
+    if sys.argv[1] == 'get':
+        print(repr(value.read_text() if value.exists() else 'Before'))
+        sys.exit(0)
+    if mode == 'lost-' + sys.argv[3]:
+        print('injected dconf commit error', file=sys.stderr)
+        sys.exit(0)
     if mode == 'gsettings-' + sys.argv[3]:
         print('injected gsettings error', file=sys.stderr)
         sys.exit(23)
+    value.write_text(sys.argv[4])
     sys.exit(0)
 if name == 'pgrep':
     if mode == 'live-daemon':
@@ -56,19 +64,24 @@ if name == 'pgrep':
         sys.exit(0)
     sys.exit(1)
 if name == 'pkill':
+    if mode == 'live-daemon':
+        os.kill(int(os.environ['TEST_PID']), signal.SIGHUP)
+        sys.exit(0)
     print('injected xsettingsd reload error', file=sys.stderr)
     sys.exit(1)
 '''
 
 cases = [
-    ('works', 'works', False, None, None),
+    ('works', 'live-daemon', True, None, None),
     ('no-daemon', 'works', True, None, None),
-    ('live-daemon', 'live-daemon', True, None, None),
+    ('no-config', 'works', False, None, None),
     ('read-fail', 'read-fail', True, 'scheme', 'injected kreadconfig6 error'),
     ('unreadable', 'works', True, 'scheme', 'Cannot read'),
     ('write-fail', 'write-fail', True, 'gtk-3.0-theme', 'injected kwriteconfig6 error'),
     ('gsettings-theme', 'gsettings-gtk-theme', True, 'gsettings-theme', 'injected gsettings error'),
     ('gsettings-colour', 'gsettings-color-scheme', True, 'gsettings-colour', 'injected gsettings error'),
+    ('lost-theme', 'lost-gtk-theme', True, 'gsettings-theme-verify', 'injected dconf commit error'),
+    ('lost-colour', 'lost-color-scheme', True, 'gsettings-colour-verify', 'injected dconf commit error'),
     ('reload-fail', 'reload-fail', True, 'xsettings-reload', 'No such process'),
     ('pgrep-fail', 'pgrep-fail', True, 'xsettings-reload', 'injected pgrep error'),
 ]
@@ -114,7 +127,7 @@ with tempfile.TemporaryDirectory(prefix='gtk-sync-tests-') as temporary:
         else:
             checks.update(exit_zero=run.returncode == 0, no_problem=not records,
                           theme='Sparky-Stereo-Oxygen' in (config/'gtk-3.0/settings.ini').read_text())
-            if name == 'live-daemon':
+            if name == 'works':
                 checks['daemon_alive'] = daemon.poll() is None
                 for _ in range(100):
                     if (args.output/'daemon-signals').exists():

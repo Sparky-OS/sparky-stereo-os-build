@@ -46,8 +46,12 @@ for version in 3.0 4.0; do
 	run "gtk-$version-dark" kwriteconfig6 --file "$file" --group Settings --key gtk-application-prefer-dark-theme "$dark"
 done
 run gsettings-theme gsettings set org.gnome.desktop.interface gtk-theme "$theme"
+# dconf can report a failed commit while gsettings exits zero. Read from a new
+# process so its in-memory value cannot stand in for the saved setting.
+run gsettings-theme-verify sh -c 'value=$(gsettings get org.gnome.desktop.interface "$1") || exit "$?"; [ "$value" = "$2" ]' sh gtk-theme "'$theme'"
 if [ "$dark" = true ]; then colour=prefer-dark; else colour=default; fi
 run gsettings-colour gsettings set org.gnome.desktop.interface color-scheme "$colour"
+run gsettings-colour-verify sh -c 'value=$(gsettings get org.gnome.desktop.interface "$1") || exit "$?"; [ "$value" = "$2" ]' sh color-scheme "'$colour'"
 if [ -f "$config/xsettingsd/xsettingsd.conf" ]; then
 	run xsettings-config sed -i "s|^Net/ThemeName .*|Net/ThemeName \"$theme\"|" "$config/xsettingsd/xsettingsd.conf"
 	if pids=$(pgrep -u "$(id -u)" -x xsettingsd); then
