@@ -102,6 +102,20 @@ if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
 	KV=$(inr dpkg-query -W -f '${Depends}' linux-image-sparky-stereo | sed -n 's/^linux-image-\([^ ,]*\).*/\1/p')
 	[ -n "$KV" ] && [ -f $R/boot/vmlinuz-$KV ] || { echo "!! the edition's kernel release ($KV) is not in /boot"; exit 1; }
 	echo "   the edition's kernel: $KV"
+	# the ISO ships one kernel (ORDER 297): an edition kernel published after the root file system was built comes in
+	# beside the older one through the meta's new Depends, and nothing removes the older one; it goes here with its
+	# module tree (DKMS's own kernel hooks remove its DKMS builds)
+	cp /build/old-kernels.py $R/tmp/
+	old=$(inr python3 /tmp/old-kernels.py / "$KV")
+	rm -f $R/tmp/old-kernels.py
+	if [ -n "$old" ]; then
+		echo "   older edition kernels, purged: $(echo $old)"
+		# shellcheck disable=SC2086
+		apt_in purge $old
+		for d in $R/usr/lib/modules/*; do
+			r=$(basename "$d"); [ "$r" = "$KV" ] || [ -e $R/boot/vmlinuz-$r ] || rm -rf "$d"
+		done
+	fi
 	echo "== $(date -u +%T) the boot chain in 3D (ORDER 138): the stereo Plymouth, sparky-stereo-boot, the stereo splash themes; GRUB's menu translated; Kubabbar Glass for Quick Settings"
 	apt_in install plymouth libplymouth5 plymouth-themes plymouth-label sparky-stereo-boot sparky-stereo-plymouth sparky-stereo-grub-l10n \
 		sparky-stereo-look-kubabbar-glass sparky-stereo-look-kubabbar-glass-menubar
