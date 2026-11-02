@@ -1,6 +1,6 @@
 #!/bin/bash
 # Sparky Stereo OS: command-not-found 23.04.0-3+sparky1, Debian's 23.04.0-3 with the renamed-commands table, built with Lean Code.
-# Created by Daniel Ramos (Capitain Jack) 2026/11/03
+# Created by Daniel Ramos (Capitain Jack) 2026/11/02
 # Copyright 2026 under the GNU GPL3 License
 # Runs inside the Lean Code migration container; build.sh starts it. /work is the job folder, /src Debian's source package,
 # /prev the predecessor build for the link gate, /tools this folder (its patches, the table and the changelog entry).
@@ -16,15 +16,17 @@ echo 'd15130ca2dd6c11332cda2a6168b16cfb78f012f642d405c9f15dffd120184dd  /src/com
 cp /src/command-not-found_23.04.0-3.dsc /src/command-not-found_23.04.0-3.debian.tar.xz /src/command-not-found_23.04.0.orig.tar.xz .
 dpkg-source -x command-not-found_23.04.0-3.dsc t >/dev/null
 cd t
-# our two patches after Debian's series: the code, its tests and messages; then the table, made from this folder's copy
+# our patches after Debian's series: the code, its tests and messages; the table, made from this folder's copy; the
+# messages upstream left untranslated in the nine languages (sparky-os/translations)
 cp /tools/patches/sparky-renamed-commands.patch debian/patches/
 {
 	printf 'Description: The commands Debian installs under another name\n'
 	printf ' Made by make-renamed.py (Sparky Stereo OS build tree, sparky-os/packages/command-not-found).\n'
-	printf 'Author: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>\nForwarded: no\nLast-Update: 2026-11-03\n---\n'
+	printf 'Author: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>\nForwarded: no\nLast-Update: 2026-11-02\n---\n'
 	diff -Nu --label /dev/null --label b/data/renamed-commands /dev/null /tools/renamed-commands || [ $? = 1 ]
 } >debian/patches/sparky-renamed-commands-table.patch
-printf '%s\n' sparky-renamed-commands.patch sparky-renamed-commands-table.patch >>debian/patches/series
+cp /toolkit/translations/command-not-found-messages.po.patch debian/patches/sparky-translations.patch
+printf '%s\n' sparky-renamed-commands.patch sparky-renamed-commands-table.patch sparky-translations.patch >>debian/patches/series
 python3 - <<'PY'
 from pathlib import Path
 import email.utils

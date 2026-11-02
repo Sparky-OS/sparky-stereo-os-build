@@ -1,4 +1,4 @@
-Description: Name the program Debian installs under another name first
+Description: Name the programs Debian installs under another name
  Debian Policy 10.1: "Two different packages must not install programs with
  different functionality but with the same filenames ... If this case happens,
  one of the programs must be renamed." So `fd` is fd-find's `fdfind`
@@ -7,35 +7,41 @@ Description: Name the program Debian installs under another name first
  offered fdclone for `fd` and bacula-console-qt for `bat`.
  .
  The data directory's renamed-commands file lists those programs: the command,
- the package and the name Debian installs it as. For a listed command,
- advise() names the package first, with the name to run, then the packages and
- snaps that have the command under its own name, as before. A package the
- database does not have is not offered; one whose program is installed is
- said to be installed. A command with no row is advised exactly as before.
+ the package, the name Debian installs it as, and "first" or "after". For a
+ listed command, advise() names the package with the name to run, before the
+ packages and snaps that have the command under its own name ("first") or
+ after them ("after"); those stay listed as before. A package the database
+ does not have is not offered; one whose program is installed is said to be
+ installed. A command with no row is advised exactly as before. A table that
+ cannot be read (missing, unreadable, a broken row) is said in one line, with
+ the way to restore it, and the command is advised as without the table.
+ The upstream tests now read the source tree's own data directory.
+ .
  Ubuntu's priority.txt (Michael Vogt, 2009, LP: #318442) ordered packages that
  have the command itself and left with the sqlite database in 2018; neither
- project has a renamed-commands table (searched 2026-11-03: Launchpad and
+ project has a renamed-commands table (searched 2026-11-02: Launchpad and
  salsa main, merge requests, Debian's and Launchpad's bugs).
- The new strings ship in pl, pt_BR, fr, de, ja, ko, zh_CN and zh_TW.
+ The three new messages ship in pl, pt_BR, fr, de, ja, ko, zh_CN and zh_TW.
 Author: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Forwarded: no
-Last-Update: 2026-11-03
+Last-Update: 2026-11-02
 ---
- CommandNotFound/CommandNotFound.py             |  98 ++++++++++++++++-
- CommandNotFound/tests/test_renamed_commands.py | 139 +++++++++++++++++++++++++
- po/command-not-found.pot                       |  10 ++
- po/de.po                                       |  10 ++
- po/fr.po                                       |  10 ++
- po/ja.po                                       |  10 ++
- po/ko.po                                       |  10 ++
- po/pl.po                                       |  10 ++
- po/pt_BR.po                                    |  10 ++
- po/zh_CN.po                                    |  10 ++
- po/zh_TW.po                                    |  10 ++
- setup.py                                       |   1 +
- 12 files changed, 327 insertions(+), 1 deletion(-)
+ CommandNotFound/CommandNotFound.py              | 130 +++++++++++++++++-
+ CommandNotFound/tests/test_command_not_found.py |   3 +-
+ CommandNotFound/tests/test_renamed_commands.py  | 172 ++++++++++++++++++++++++
+ po/command-not-found.pot                        |  15 +++
+ po/de.po                                        |  15 +++
+ po/fr.po                                        |  15 +++
+ po/ja.po                                        |  15 +++
+ po/ko.po                                        |  15 +++
+ po/pl.po                                        |  15 +++
+ po/pt_BR.po                                     |  15 +++
+ po/zh_CN.po                                     |  15 +++
+ po/zh_TW.po                                     |  15 +++
+ setup.py                                        |   1 +
+ 13 files changed, 439 insertions(+), 2 deletions(-)
 diff --git a/CommandNotFound/CommandNotFound.py b/CommandNotFound/CommandNotFound.py
-index 74f1b89..6df2b37 100644
+index 74f1b89..cb42f2e 100644
 --- a/CommandNotFound/CommandNotFound.py
 +++ b/CommandNotFound/CommandNotFound.py
 @@ -70,9 +70,13 @@ class CommandNotFound(object):
@@ -52,7 +58,7 @@ index 74f1b89..6df2b37 100644
          self.sources_list = self._getSourcesList()
          # a new style DB means we can skip loading the old legacy static DB
          if os.path.exists(dbpath) and os.access(dbpath, os.R_OK):
-@@ -96,6 +100,40 @@ class CommandNotFound(object):
+@@ -96,6 +100,58 @@ class CommandNotFound(object):
      def get_packages(self, command):
          return self.db.lookup(command)
  
@@ -63,59 +69,95 @@ index 74f1b89..6df2b37 100644
 +        Debian Policy 10.1: of two programs with one name, "one of the
 +        programs must be renamed". The renamed-commands file in the data
 +        directory lists those programs, one per line: the command as its
-+        upstream names it, the package, and the name Debian installs it as.
-+        Each result is (package, version, component, installed name, path):
-+        path is where the installed name already is, otherwise None and the
-+        package is one the database has for the installed name.
++        upstream names it, the package, the name Debian installs it as, and
++        "first" or "after": whether the package is named before the packages
++        that have the command itself or after them.
++        Each result is (package, version, component, installed name, path,
++        first): path is where the installed name already is, otherwise None
++        and the package is one the database has for the installed name.
++        A table that cannot be read is said, and no package is renamed.
 +        """
++        path = os.path.join(self.data_dir, self.renamed_file)
 +        try:
-+            with open(os.path.join(self.data_dir, self.renamed_file)) as fp:
-+                rows = [line.split() for line in fp
-+                        if line.strip() and not line.lstrip().startswith("#")]
-+        except IOError:
++            with open(path) as fp:
++                lines = fp.readlines()
++        except (IOError, OSError) as e:
++            self.print_renamed_problem(path, e.strerror or str(e))
 +            return []
-+        results = []
-+        for row in rows:
-+            if len(row) != 3 or row[0] != command:
++        rows = []
++        for number, line in enumerate(lines, 1):
++            if not line.strip() or line.lstrip().startswith("#"):
 +                continue
-+            package, name = row[1], row[2]
++            row = line.split()
++            if len(row) != 4 or row[3] not in ("first", "after"):
++                self.print_renamed_problem(path, "line %d: %s" % (number, line.strip()))
++                return []
++            rows.append(row)
++        results = []
++        for (cmd, package, name, order) in rows:
++            if cmd != command:
++                continue
++            first = order == "first"
 +            places = [os.path.join(prefix, name) for prefix in self.prefixes
 +                      if os.path.isfile(os.path.join(prefix, name))]
 +            if places:
-+                results.append((package, None, None, name, places[0]))
++                results.append((package, None, None, name, places[0], first))
 +                continue
 +            for (pkg, ver, comp) in self.get_packages(name):
 +                if pkg == package:
-+                    results.append((pkg, ver, comp, name, None))
++                    results.append((pkg, ver, comp, name, None, first))
 +                    break
 +        return results
++
++    def print_renamed_problem(self, path, error):
++        print(_("The renamed-commands table %(path)s could not be read (%(error)s); reinstalling command-not-found restores it.") % {
++            'path': path, 'error': error}, file=self.output_fd)
++        self.output_fd.flush()
 +
      def get_snaps(self, command):
          exact_result = []
          mispell_result = []
-@@ -293,7 +331,54 @@ class CommandNotFound(object):
+@@ -293,7 +349,72 @@ class CommandNotFound(object):
          else:
              print(_("See 'snap info <snapname>' for additional versions."), file=self.output_fd)
          self.output_fd.flush()
 -        
 +
-+    def advice_renamed(self, command, renamed, packages, snaps):
-+        """
-+        name the programs Debian installs this command as first, then the
-+        packages and snaps that have the command under its own name; return
-+        False when every renamed program is installed and nothing was offered
-+        """
-+        for (package, ver, comp, name, place) in renamed:
++    def print_installed(self, command, renamed):
++        for (package, ver, comp, name, place, first) in renamed:
 +            if place:
 +                print(_("Command '%(command)s' is installed as '%(place)s' from deb %(package)s") % {
 +                    'command': command, 'place': place, 'package': package}, file=self.output_fd)
-+        offered = [r for r in renamed if not r[4]]
-+        if not offered:
++
++    def advice_renamed(self, command, renamed, packages, snaps):
++        """
++        name each program Debian installs this command as before the
++        packages and snaps that have the command under its own name when its
++        row says "first", after them when it says "after"
++        """
++        first = [r for r in renamed if r[5]]
++        after = [r for r in renamed if not r[5]]
++        self.print_installed(command, first)
++        if all(r[4] for r in renamed):
++            # each renamed program is installed: the other packages as they
++            # are always advised
++            if len(packages) == 0 and len(snaps) == 1:
++                self.advice_single_snap_package(command, packages, snaps)
++            elif len(packages) == 0 and len(snaps) > 1:
++                self.advice_multi_snap_packages(command, packages, snaps)
++            elif len(packages) == 1 and len(snaps) == 0:
++                self.advice_single_deb_package(command, packages, snaps)
++            elif len(packages) > 1 and len(snaps) == 0:
++                self.advice_multi_deb_package(command, packages, snaps)
++            elif len(packages) > 0 and len(snaps) > 0:
++                self.advice_multi_mixed_packages(command, packages, snaps)
++            self.print_installed(command, after)
 +            self.output_fd.flush()
-+            return False
++            return
 +        self._print_exact_header(command)
-+        rows = [(r[0], r[1], r[2], r[3]) for r in offered]
++        rows = [(r[0], r[1], r[2], r[3]) for r in first if not r[4]]
 +        rows += [(p[0], p[1], p[2], None) for p in packages]
++        rows += [(r[0], r[1], r[2], r[3]) for r in after if not r[4]]
 +        pad = max([len(r[0]) for r in rows] + [len(s[0]) for s in snaps])
 +        for (package, ver, comp, name) in rows:
 +            notes = []
@@ -143,13 +185,13 @@ index 74f1b89..6df2b37 100644
 +                print(_("Ask your administrator to install one of them."), file=self.output_fd)
 +        elif len(rows) == 1 and not snaps:
 +            self.install_prompt(rows[0][0])
++        self.print_installed(command, after)
 +        self.output_fd.flush()
-+        return True
 +
      def advise(self, command, ignore_installed=False):
          " give advice where to find the given command to stderr "
          def _in_prefix(prefix, command):
-@@ -348,6 +433,17 @@ class CommandNotFound(object):
+@@ -348,6 +469,13 @@ class CommandNotFound(object):
          packages = self.get_packages(command)
          snaps, mispell_snaps = self.get_snaps(command)
          logging.debug("got debs: %s snaps: %s" % (packages, snaps))
@@ -158,21 +200,31 @@ index 74f1b89..6df2b37 100644
 +            logging.debug("got renamed debs: %s" % renamed)
 +            names = set(r[0] for r in renamed)
 +            packages = [p for p in packages if p[0] not in names]
-+            if self.advice_renamed(command, renamed, packages, snaps):
-+                return True
-+            # each renamed program is installed and was named; the literal
-+            # matches follow as they always do
-+            if len(packages) == 0 and len(snaps) == 0:
-+                return True
++            self.advice_renamed(command, renamed, packages, snaps)
++            return True
          if len(packages) == 0 and len(snaps) == 0:
              mispell_packages = self.spelling_suggestions(command)
              if len(mispell_packages) > 0 or len(mispell_snaps) > 0:
+diff --git a/CommandNotFound/tests/test_command_not_found.py b/CommandNotFound/tests/test_command_not_found.py
+index 809809f..78973f4 100644
+--- a/CommandNotFound/tests/test_command_not_found.py
++++ b/CommandNotFound/tests/test_command_not_found.py
+@@ -115,7 +115,8 @@ class CommandNotFoundOutputTest(unittest.TestCase):
+     def setUp(self):
+         self.tmpdir = tempfile.mkdtemp()
+         self.mock_db()
+-        self.cnf = CommandNotFound()
++        # the source tree's own data directory, which holds the renamed-commands table
++        self.cnf = CommandNotFound(os.path.join(os.path.dirname(__file__), "..", "..", "data"))
+         self.cnf.snap_cmd = os.path.join(self.tmpdir, "mock-snap-cmd-%i")
+         # FIXME: add this to the test spec to test the outputs for uid=0/1000
+         #        and for sudo/no-sudo
 diff --git a/CommandNotFound/tests/test_renamed_commands.py b/CommandNotFound/tests/test_renamed_commands.py
 new file mode 100644
-index 0000000..2f8e975
+index 0000000..bc09ba9
 --- /dev/null
 +++ b/CommandNotFound/tests/test_renamed_commands.py
-@@ -0,0 +1,139 @@
+@@ -0,0 +1,172 @@
 +#!/usr/bin/python3
 +
 +import os
@@ -198,10 +250,13 @@ index 0000000..2f8e975
 +
 +
 +TABLE = """\
-+# command	package	installed as
-+bat	bat	batcat
-+fd	fd-find	fdfind
++# command	package	installed as	order
++bat	bat	batcat	first
++fd	fd-find	fdfind	first
++ts	task-spooler	tsp	after
 +"""
++
++PROBLEM = "The renamed-commands table %s could not be read (%s); reinstalling command-not-found restores it.\n"
 +
 +
 +class RenamedCommandsTest(unittest.TestCase):
@@ -216,10 +271,13 @@ index 0000000..2f8e975
 +        CommandNotFound_Module.dbpath = os.path.join(self.tmpdir, "test.db")
 +        self.data_dir = os.path.join(self.tmpdir, "data")
 +        os.mkdir(self.data_dir)
-+        with open(os.path.join(self.data_dir, "renamed-commands"), "w") as fp:
-+            fp.write(TABLE)
++        self.write_table(TABLE)
 +        self.bindir = os.path.join(self.tmpdir, "bin")
 +        os.mkdir(self.bindir)
++
++    def write_table(self, text):
++        with open(os.path.join(self.data_dir, "renamed-commands"), "w") as fp:
++            fp.write(text)
 +
 +    def advise(self, debs, command, euid=1000, sudo=True, data_dir=None):
 +        cnf = CommandNotFound(data_dir or self.data_dir)
@@ -247,6 +305,13 @@ index 0000000..2f8e975
 +sudo apt install bacula-console-qt
 +"""))
 +
++    def test_renamed_after_literal(self):
++        self.assertEqual(self.advise("moreutils:ts;task-spooler:tsp", "ts"), (True, """\
++Command 'ts' not found, but can be installed with:
++sudo apt install moreutils
++sudo apt install task-spooler  # run it as 'tsp'
++"""))
++
 +    def test_renamed_only(self):
 +        self.assertEqual(self.advise("fd-find:fdfind", "fd"), (True, """\
 +Command 'fd' not found, but can be installed with:
@@ -263,6 +328,12 @@ index 0000000..2f8e975
 +        self.assertEqual(self.advise("fd-find:fdfind", "fd"), (True, """\
 +Command 'fd' is installed as '%s/fdfind' from deb fd-find
 +""" % self.bindir))
++        open(os.path.join(self.bindir, "tsp"), "w").close()
++        self.assertEqual(self.advise("moreutils:ts;task-spooler:tsp", "ts"), (True, """\
++Command 'ts' not found, but can be installed with:
++sudo apt install moreutils
++Command 'ts' is installed as '%s/tsp' from deb task-spooler
++""" % self.bindir))
 +
 +    def test_renamed_package_not_in_the_archive(self):
 +        # a row whose package the archive does not have is not offered
@@ -271,18 +342,30 @@ index 0000000..2f8e975
 +sudo apt install fdclone
 +"""))
 +
-+    def test_no_table_or_no_row_unchanged(self):
-+        for data_dir in (self.data_dir, os.path.join(self.tmpdir, "missing")):
-+            self.assertEqual(self.advise("vim:x-vi;neovim:x-vi", "x-vi", data_dir=data_dir), (True, """\
++    def test_no_row_unchanged(self):
++        self.assertEqual(self.advise("vim:x-vi;neovim:x-vi", "x-vi"), (True, """\
 +Command 'x-vi' not found, but can be installed with:
 +sudo apt install vim""" + "   " + """
 +sudo apt install neovim
 +"""))
-+        self.assertEqual(self.advise("fdclone:fd;fd-find:fdfind", "fd",
-+                                     data_dir=os.path.join(self.tmpdir, "missing")), (True, """\
++
++    def test_table_that_cannot_be_read_is_said(self):
++        # missing, unreadable (a folder in its place, which root cannot read either) and a broken row: the problem is
++        # said, and the command is advised as without the table
++        literal = """\
 +Command 'fd' not found, but can be installed with:
 +sudo apt install fdclone
-+"""))
++"""
++        path = os.path.join(self.data_dir, "renamed-commands")
++        missing = os.path.join(self.tmpdir, "missing")
++        self.assertEqual(self.advise("fdclone:fd;fd-find:fdfind", "fd", data_dir=missing), (True,
++                         PROBLEM % (os.path.join(missing, "renamed-commands"), "No such file or directory") + literal))
++        os.remove(path)
++        os.mkdir(path)
++        self.assertEqual(self.advise("fdclone:fd;fd-find:fdfind", "fd"), (True, PROBLEM % (path, "Is a directory") + literal))
++        os.rmdir(path)
++        self.write_table(TABLE + "cal\tccal\tccal\n")
++        self.assertEqual(self.advise("fdclone:fd;fd-find:fdfind", "fd"), (True, PROBLEM % (path, "line 5: cal\tccal\tccal") + literal))
 +
 +    def test_without_sudo(self):
 +        self.assertEqual(self.advise("fdclone:fd;fd-find:fdfind", "fd", sudo=False), (True, """\
@@ -303,20 +386,22 @@ index 0000000..2f8e975
 +            for line in fp:
 +                if line.strip() and not line.lstrip().startswith("#"):
 +                    fields = line.split()
-+                    self.assertEqual(len(fields), 3, line)
++                    self.assertEqual(len(fields), 4, line)
++                    self.assertIn(fields[3], ("first", "after"), line)
 +                    self.assertNotIn(fields[0], rows, line)
-+                    rows[fields[0]] = (fields[1], fields[2])
-+        self.assertEqual(rows["fd"], ("fd-find", "fdfind"))
-+        self.assertEqual(rows["bat"], ("bat", "batcat"))
++                    rows[fields[0]] = tuple(fields[1:])
++        self.assertEqual(rows["fd"], ("fd-find", "fdfind", "first"))
++        self.assertEqual(rows["bat"], ("bat", "batcat", "first"))
++        self.assertEqual(rows["ts"], ("task-spooler", "tsp", "after"))
 +
 +
 +if __name__ == "__main__":
 +    unittest.main()
 diff --git a/po/command-not-found.pot b/po/command-not-found.pot
-index 7c1d617..a6a4c5c 100644
+index 7c1d617..e8a25ab 100644
 --- a/po/command-not-found.pot
 +++ b/po/command-not-found.pot
-@@ -161,3 +161,13 @@ msgstr ""
+@@ -161,3 +161,18 @@ msgstr ""
  #: ../CommandNotFound/util.py:36
  msgid "Exception information:"
  msgstr ""
@@ -330,11 +415,16 @@ index 7c1d617..a6a4c5c 100644
 +#, python-format
 +msgid "Command '%(command)s' is installed as '%(place)s' from deb %(package)s"
 +msgstr ""
++
++#: ../CommandNotFound/CommandNotFound.py
++#, python-format
++msgid "The renamed-commands table %(path)s could not be read (%(error)s); reinstalling command-not-found restores it."
++msgstr ""
 diff --git a/po/de.po b/po/de.po
-index 1986997..b0bb669 100644
+index 1986997..66677bb 100644
 --- a/po/de.po
 +++ b/po/de.po
-@@ -174,3 +174,13 @@ msgstr "Python-Version: %d.%d.%d %s %d"
+@@ -174,3 +174,18 @@ msgstr "Python-Version: %d.%d.%d %s %d"
  #: ../CommandNotFound/util.py:36
  msgid "Exception information:"
  msgstr "Informationen zum Fehler:"
@@ -348,11 +438,16 @@ index 1986997..b0bb669 100644
 +#, python-format
 +msgid "Command '%(command)s' is installed as '%(place)s' from deb %(package)s"
 +msgstr "Befehl »%(command)s« ist als »%(place)s« aus dem deb %(package)s installiert"
++
++#: ../CommandNotFound/CommandNotFound.py
++#, python-format
++msgid "The renamed-commands table %(path)s could not be read (%(error)s); reinstalling command-not-found restores it."
++msgstr "Die Tabelle der umbenannten Befehle %(path)s konnte nicht gelesen werden (%(error)s); eine Neuinstallation von command-not-found stellt sie wieder her."
 diff --git a/po/fr.po b/po/fr.po
-index 5fa671a..d93e76d 100644
+index 5fa671a..284d195 100644
 --- a/po/fr.po
 +++ b/po/fr.po
-@@ -170,3 +170,13 @@ msgstr "Version de python : %d.%d.%d %s %d"
+@@ -170,3 +170,18 @@ msgstr "Version de python : %d.%d.%d %s %d"
  #: ../CommandNotFound/util.py:36
  msgid "Exception information:"
  msgstr "Information sur l'exception :"
@@ -366,11 +461,16 @@ index 5fa671a..d93e76d 100644
 +#, python-format
 +msgid "Command '%(command)s' is installed as '%(place)s' from deb %(package)s"
 +msgstr "La commande « %(command)s » est installée sous le nom « %(place)s » par le deb %(package)s"
++
++#: ../CommandNotFound/CommandNotFound.py
++#, python-format
++msgid "The renamed-commands table %(path)s could not be read (%(error)s); reinstalling command-not-found restores it."
++msgstr "Impossible de lire la table des commandes renommées %(path)s (%(error)s) ; réinstaller command-not-found la rétablit."
 diff --git a/po/ja.po b/po/ja.po
-index 0b11359..4a13361 100644
+index 0b11359..4785bbc 100644
 --- a/po/ja.po
 +++ b/po/ja.po
-@@ -167,3 +167,13 @@ msgstr "Python バージョン: %d.%d.%d %s %d"
+@@ -167,3 +167,18 @@ msgstr "Python バージョン: %d.%d.%d %s %d"
  #: ../CommandNotFound/util.py:36
  msgid "Exception information:"
  msgstr "例外情報:"
@@ -384,11 +484,16 @@ index 0b11359..4a13361 100644
 +#, python-format
 +msgid "Command '%(command)s' is installed as '%(place)s' from deb %(package)s"
 +msgstr "コマンド '%(command)s' は deb %(package)s から '%(place)s' としてインストールされています"
++
++#: ../CommandNotFound/CommandNotFound.py
++#, python-format
++msgid "The renamed-commands table %(path)s could not be read (%(error)s); reinstalling command-not-found restores it."
++msgstr "名前が変更されたコマンドの表 %(path)s を読み込めませんでした (%(error)s)。command-not-found を再インストールすると元に戻ります。"
 diff --git a/po/ko.po b/po/ko.po
-index 0ae2421..1ceac7f 100644
+index 0ae2421..48bcfe3 100644
 --- a/po/ko.po
 +++ b/po/ko.po
-@@ -169,3 +169,13 @@ msgstr "파이선 버전: %d.%d.%d %s %d"
+@@ -169,3 +169,18 @@ msgstr "파이선 버전: %d.%d.%d %s %d"
  #: ../CommandNotFound/util.py:36
  msgid "Exception information:"
  msgstr "예외 정보:"
@@ -402,11 +507,16 @@ index 0ae2421..1ceac7f 100644
 +#, python-format
 +msgid "Command '%(command)s' is installed as '%(place)s' from deb %(package)s"
 +msgstr "'%(command)s' 명령은 deb %(package)s에서 '%(place)s'(으)로 설치되어 있습니다"
++
++#: ../CommandNotFound/CommandNotFound.py
++#, python-format
++msgid "The renamed-commands table %(path)s could not be read (%(error)s); reinstalling command-not-found restores it."
++msgstr "이름이 바뀐 명령 표 %(path)s을(를) 읽을 수 없습니다(%(error)s). command-not-found를 다시 설치하면 복구됩니다."
 diff --git a/po/pl.po b/po/pl.po
-index 061259d..f1c7be0 100644
+index 061259d..8a84fa6 100644
 --- a/po/pl.po
 +++ b/po/pl.po
-@@ -170,3 +170,13 @@ msgstr "Python wersja: %d.%d.%d %s %d"
+@@ -170,3 +170,18 @@ msgstr "Python wersja: %d.%d.%d %s %d"
  #: ../CommandNotFound/util.py:36
  msgid "Exception information:"
  msgstr "Informacje o błędzie:"
@@ -420,11 +530,16 @@ index 061259d..f1c7be0 100644
 +#, python-format
 +msgid "Command '%(command)s' is installed as '%(place)s' from deb %(package)s"
 +msgstr "Polecenie '%(command)s' jest zainstalowane jako '%(place)s' z pakietu deb %(package)s"
++
++#: ../CommandNotFound/CommandNotFound.py
++#, python-format
++msgid "The renamed-commands table %(path)s could not be read (%(error)s); reinstalling command-not-found restores it."
++msgstr "Nie można odczytać tabeli przemianowanych poleceń %(path)s (%(error)s); ponowna instalacja command-not-found ją przywróci."
 diff --git a/po/pt_BR.po b/po/pt_BR.po
-index 8b70374..188c511 100644
+index 8b70374..caca9c5 100644
 --- a/po/pt_BR.po
 +++ b/po/pt_BR.po
-@@ -168,3 +168,13 @@ msgstr "Versão de Python: %d.%d.%d %s %d"
+@@ -168,3 +168,18 @@ msgstr "Versão de Python: %d.%d.%d %s %d"
  #: ../CommandNotFound/util.py:36
  msgid "Exception information:"
  msgstr "Informação de exceção:"
@@ -438,11 +553,16 @@ index 8b70374..188c511 100644
 +#, python-format
 +msgid "Command '%(command)s' is installed as '%(place)s' from deb %(package)s"
 +msgstr "O comando '%(command)s' está instalado como '%(place)s', do pacote deb %(package)s"
++
++#: ../CommandNotFound/CommandNotFound.py
++#, python-format
++msgid "The renamed-commands table %(path)s could not be read (%(error)s); reinstalling command-not-found restores it."
++msgstr "Não foi possível ler a tabela de comandos renomeados %(path)s (%(error)s); reinstalar o command-not-found a restaura."
 diff --git a/po/zh_CN.po b/po/zh_CN.po
-index c452e34..32e0d56 100644
+index c452e34..1a55960 100644
 --- a/po/zh_CN.po
 +++ b/po/zh_CN.po
-@@ -163,3 +163,13 @@ msgstr "Python 版本：%d.%d.%d %s %d"
+@@ -163,3 +163,18 @@ msgstr "Python 版本：%d.%d.%d %s %d"
  #: ../CommandNotFound/util.py:36
  msgid "Exception information:"
  msgstr "额外信息："
@@ -456,11 +576,16 @@ index c452e34..32e0d56 100644
 +#, python-format
 +msgid "Command '%(command)s' is installed as '%(place)s' from deb %(package)s"
 +msgstr "命令 “%(command)s” 已由 Debian 软件包 %(package)s 安装为 “%(place)s”"
++
++#: ../CommandNotFound/CommandNotFound.py
++#, python-format
++msgid "The renamed-commands table %(path)s could not be read (%(error)s); reinstalling command-not-found restores it."
++msgstr "无法读取重命名命令表 %(path)s（%(error)s）；重新安装 command-not-found 即可恢复。"
 diff --git a/po/zh_TW.po b/po/zh_TW.po
-index 43631e2..fee5cc8 100644
+index 43631e2..52e5878 100644
 --- a/po/zh_TW.po
 +++ b/po/zh_TW.po
-@@ -162,3 +162,13 @@ msgstr "Python 版本：%d.%d.%d %s %d"
+@@ -162,3 +162,18 @@ msgstr "Python 版本：%d.%d.%d %s %d"
  #: ../CommandNotFound/util.py:36
  msgid "Exception information:"
  msgstr "例外訊息："
@@ -474,6 +599,11 @@ index 43631e2..fee5cc8 100644
 +#, python-format
 +msgid "Command '%(command)s' is installed as '%(place)s' from deb %(package)s"
 +msgstr "'%(command)s' 指令已由 deb %(package)s 安裝為 '%(place)s'"
++
++#: ../CommandNotFound/CommandNotFound.py
++#, python-format
++msgid "The renamed-commands table %(path)s could not be read (%(error)s); reinstalling command-not-found restores it."
++msgstr "無法讀取重新命名指令表 %(path)s（%(error)s）；重新安裝 command-not-found 即可還原。"
 diff --git a/setup.py b/setup.py
 index 3ced20e..3a6361f 100755
 --- a/setup.py

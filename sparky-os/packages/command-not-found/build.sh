@@ -1,6 +1,6 @@
 #!/bin/bash
 # Sparky Stereo OS: builds command-not-found 23.04.0-3+sparky1+lc1 from Debian's 23.04.0-3 source package.
-# Created by Daniel Ramos (Capitain Jack) 2026/11/03
+# Created by Daniel Ramos (Capitain Jack) 2026/11/02
 # Copyright 2026 under the GNU GPL3 License
 # Source package once (patches/sparky-renamed-commands.patch and the table renamed-commands after Debian's series, the
 # changelog entry), then the Lean Code source, then the build with its own tests and the link and start gate against
@@ -10,7 +10,7 @@
 #   command-not-found_23.04.0-3.dsc, its debian.tar.xz and the orig tarball, as apt-get source downloads them)
 # The candidates and their SHA256SUMS land in WORK/out. Workstation paths come from the local configuration:
 # sparky-os/config/build.conf.example.
-# Last update 2026/11/03
+# Last update 2026/11/02
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "$HERE/../../config/local-config.sh"
