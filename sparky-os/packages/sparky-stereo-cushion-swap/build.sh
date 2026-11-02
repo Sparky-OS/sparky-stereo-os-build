@@ -5,11 +5,19 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.3.1
+VERSION=0.3.2
 PACKAGE=sparky-stereo-cushion-swap
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.cushion-swap.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
+# Build from the same tracked inputs that enter the source archive.
+TOOLKIT=$(cd "$HERE/../.." && pwd)
+COPY="$HERE/build-tools/copy-recipe.py"
+[ -f "$COPY" ] || COPY="$HERE/../../../tools/copy-recipe.py"
+python3 "$COPY" "$HERE" "$WORK/inputs"
+mkdir -p "$WORK/inputs/build-tools"
+cp "$COPY" "$WORK/inputs/build-tools/"
+HERE=$WORK/inputs
 D=$WORK/$PACKAGE
 mkdir -p "$D/DEBIAN" "$D/usr/share/doc/$PACKAGE" "$D/usr/libexec/cushion-swap"
 gcc ${CFLAGS:--O2 -Wall -Wextra -Werror} -o "$D/usr/libexec/cushion-swap/psi-wake" "$HERE/src/psi-wake.c"
@@ -128,14 +136,18 @@ dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${PACKAGE}_${VERSION}_amd64.deb"
 
 S=$WORK/$PACKAGE-$VERSION
 mkdir -p "$S/debian"
-cp -a "$HERE/." "$S/"
+COPY="$HERE/build-tools/copy-recipe.py"
+[ -f "$COPY" ] || COPY="$HERE/../../../tools/copy-recipe.py"
+python3 "$COPY" "$HERE" "$S"
+mkdir -p "$S/build-tools"
+cp "$COPY" "$S/build-tools/"
 cat >"$S/debian/control" <<EOF
 Source: $PACKAGE
 Section: System
 Priority: optional
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Standards-Version: 4.7.3
-Build-Depends: dpkg-dev, gcc, binutils, sparky-stereo-problems (>= 0.1.0)
+Build-Depends: git, python3, dpkg-dev, gcc, binutils, sparky-stereo-problems (>= 0.1.0)
 Rules-Requires-Root: no
 Homepage: https://sparkylinux.org
 
@@ -147,6 +159,12 @@ Description: Cushion Swap File: swap only under memory pressure
 EOF
 cat >"$S/debian/changelog" <<EOF
 $PACKAGE ($VERSION) unstable; urgency=medium
+
+  * Copy only tracked recipe inputs; retain the shared copier for source rebuilds.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 03 Nov 2026 12:00:00 -0300
+
+$PACKAGE (0.3.1) unstable; urgency=medium
 
   * Nothing fails silently (ORDER 346b, rows U17, U18 and U54 of ORDER 343's
     audit): whatever keeps the daemon from protecting memory, or from
