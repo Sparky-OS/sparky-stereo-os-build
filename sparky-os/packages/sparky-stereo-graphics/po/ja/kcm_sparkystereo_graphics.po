@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sparky-stereo-graphics\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-02 03:40+0000\n"
+"POT-Creation-Date: 2026-11-02 03:53+0000\n"
 "PO-Revision-Date: 2026-10-24 04:15-0300\n"
 "Last-Translator: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>\n"
 "Language-Team: Sparky Stereo OS\n"
@@ -211,12 +211,37 @@ msgstr ""
 "このセッションでは MEDIA_GPU_ROUTE_COPY_BACK が設定されており、この選択の代わ"
 "りに使われます。"
 
-#: src/ui/main.qml:382
+#: src/ui/main.qml:376
+msgctxt "@option:check"
+msgid "Decode on another GPU"
+msgstr "別のGPUでデコード"
+
+#: src/ui/main.qml:385
+msgctxt "@info"
+msgid ""
+"When the GPU players use cannot decode a video in hardware, a player that "
+"copies decoded pictures back decodes it on another GPU that can. Off: such a "
+"video is decoded in software, and the player says so."
+msgstr ""
+"プレーヤーが使うGPUが動画をハードウェアでデコードできないとき、デコードした画"
+"像をコピーして戻すプレーヤーは、デコードできる別のGPUでデコードします。オフ: "
+"そのような動画はソフトウェアでデコードし、プレーヤーがそのことを知らせます。"
+
+#: src/ui/main.qml:391
+msgctxt "@info"
+msgid ""
+"MEDIA_GPU_ROUTE_OTHER_GPU is set in this session and is used instead of this "
+"choice."
+msgstr ""
+"このセッションでは MEDIA_GPU_ROUTE_OTHER_GPU が設定されており、この選択の代わ"
+"りに使われます。"
+
+#: src/ui/main.qml:402
 msgctxt "@title:group"
 msgid "GPU power"
 msgstr "GPUの電力"
 
-#: src/ui/main.qml:389
+#: src/ui/main.qml:409
 msgctxt "@info"
 msgid ""
 "These save power when the power profile asks for it. They work for the "
@@ -547,22 +572,22 @@ msgctxt "@info"
 msgid "This computer's measured setting: Off."
 msgstr "このコンピューターの測定済みの設定: オフ。"
 
-#: src/graphicskcm.cpp:578
+#: src/graphicskcm.cpp:600
 msgctxt "@info in place of a GPU name"
 msgid "its group's GPU cannot be used"
 msgstr "グループのGPUを使用できません"
 
-#: src/graphicskcm.cpp:600
+#: src/graphicskcm.cpp:622
 msgctxt "@item:inlistbox"
 msgid "Same as its group"
 msgstr "グループと同じ"
 
-#: src/graphicskcm.cpp:601
+#: src/graphicskcm.cpp:623
 msgctxt "@item:inlistbox"
 msgid "The dedicated GPU"
 msgstr "専用GPU"
 
-#: src/graphicskcm.cpp:602
+#: src/graphicskcm.cpp:624
 msgctxt "@item:inlistbox"
 msgid "The main GPU"
 msgstr "メインGPU"

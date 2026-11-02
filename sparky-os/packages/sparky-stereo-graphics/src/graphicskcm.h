@@ -34,6 +34,8 @@ class GraphicsKcm : public KQuickConfigModule
     Q_PROPERTY(bool copyBack READ copyBack WRITE setCopyBack NOTIFY changed)
     Q_PROPERTY(QString copyBackMachineText READ copyBackMachineText NOTIFY changed)
     Q_PROPERTY(bool copyBackSetInSession READ copyBackSetInSession NOTIFY changed)
+    Q_PROPERTY(bool otherGpu READ otherGpu WRITE setOtherGpu NOTIFY changed)
+    Q_PROPERTY(bool otherGpuSetInSession READ otherGpuSetInSession NOTIFY changed)
     Q_PROPERTY(QString appFilter READ appFilter WRITE setAppFilter NOTIFY appsChanged)
     Q_PROPERTY(QVariantList apps READ apps NOTIFY appsChanged)
     Q_PROPERTY(int hiddenApps READ hiddenApps NOTIFY appsChanged)
@@ -63,6 +65,9 @@ public:
     void setCopyBack(bool copyBack);
     QString copyBackMachineText() const;
     bool copyBackSetInSession() const;
+    bool otherGpu() const;
+    void setOtherGpu(bool otherGpu);
+    bool otherGpuSetInSession() const;
     QString appFilter() const;
     void setAppFilter(const QString &filter);
     QVariantList apps() const;

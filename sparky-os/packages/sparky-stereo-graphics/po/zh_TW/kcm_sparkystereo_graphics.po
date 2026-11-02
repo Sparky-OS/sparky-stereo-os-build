@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sparky-stereo-graphics\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-02 03:40+0000\n"
+"POT-Creation-Date: 2026-11-02 03:53+0000\n"
 "PO-Revision-Date: 2026-10-24 04:15-0300\n"
 "Last-Translator: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>\n"
 "Language-Team: Sparky Stereo OS\n"
@@ -196,12 +196,34 @@ msgid ""
 "choice."
 msgstr "此工作階段中設定了 MEDIA_GPU_ROUTE_COPY_BACK，將取代此選擇使用。"
 
-#: src/ui/main.qml:382
+#: src/ui/main.qml:376
+msgctxt "@option:check"
+msgid "Decode on another GPU"
+msgstr "在另一個 GPU 上解碼"
+
+#: src/ui/main.qml:385
+msgctxt "@info"
+msgid ""
+"When the GPU players use cannot decode a video in hardware, a player that "
+"copies decoded pictures back decodes it on another GPU that can. Off: such a "
+"video is decoded in software, and the player says so."
+msgstr ""
+"當播放器使用的 GPU 無法以硬體解碼影片時，會把解碼後的畫面複製回來的播放器將在"
+"另一個能解碼的 GPU 上解碼。關閉時：這樣的影片以軟體解碼，播放器會說明這一點。"
+
+#: src/ui/main.qml:391
+msgctxt "@info"
+msgid ""
+"MEDIA_GPU_ROUTE_OTHER_GPU is set in this session and is used instead of this "
+"choice."
+msgstr "此工作階段中設定了 MEDIA_GPU_ROUTE_OTHER_GPU，將代替此選擇使用。"
+
+#: src/ui/main.qml:402
 msgctxt "@title:group"
 msgid "GPU power"
 msgstr "GPU 電源"
 
-#: src/ui/main.qml:389
+#: src/ui/main.qml:409
 msgctxt "@info"
 msgid ""
 "These save power when the power profile asks for it. They work for the "
@@ -523,22 +545,22 @@ msgctxt "@info"
 msgid "This computer's measured setting: Off."
 msgstr "此電腦測得的設定：關。"
 
-#: src/graphicskcm.cpp:578
+#: src/graphicskcm.cpp:600
 msgctxt "@info in place of a GPU name"
 msgid "its group's GPU cannot be used"
 msgstr "其所在群組的 GPU 無法使用"
 
-#: src/graphicskcm.cpp:600
+#: src/graphicskcm.cpp:622
 msgctxt "@item:inlistbox"
 msgid "Same as its group"
 msgstr "與所屬群組相同"
 
-#: src/graphicskcm.cpp:601
+#: src/graphicskcm.cpp:623
 msgctxt "@item:inlistbox"
 msgid "The dedicated GPU"
 msgstr "獨立 GPU"
 
-#: src/graphicskcm.cpp:602
+#: src/graphicskcm.cpp:624
 msgctxt "@item:inlistbox"
 msgid "The main GPU"
 msgstr "主要 GPU"

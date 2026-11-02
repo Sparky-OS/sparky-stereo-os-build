@@ -71,6 +71,17 @@ GraphicsSettings::GraphicsSettings()
         }
     }
     m_copyBack = parseBool(config.group(u"Decoding"_s).readEntry("CopyBack", QString()));
+    m_otherGpu = parseBool(config.group(u"Decoding"_s).readEntry("OtherGpu", QString()));
+}
+
+std::optional<bool> GraphicsSettings::otherGpu() const
+{
+    return m_otherGpu;
+}
+
+void GraphicsSettings::setOtherGpu(std::optional<bool> value)
+{
+    m_otherGpu = value;
 }
 
 std::optional<bool> GraphicsSettings::copyBack() const
@@ -109,7 +120,7 @@ void GraphicsSettings::setRenderChoice(Category category, const QString &choice)
 
 bool GraphicsSettings::isDefault() const
 {
-    return m_mainGpu.isEmpty() && m_choices == QStringList(s_keys.size(), u"auto"_s) && !m_copyBack.has_value();
+    return m_mainGpu.isEmpty() && m_choices == QStringList(s_keys.size(), u"auto"_s) && !m_copyBack.has_value() && !m_otherGpu.has_value();
 }
 
 void GraphicsSettings::resetToDefaults()
@@ -117,6 +128,7 @@ void GraphicsSettings::resetToDefaults()
     m_mainGpu.clear();
     m_choices = QStringList(s_keys.size(), u"auto"_s);
     m_copyBack.reset();
+    m_otherGpu.reset();
 }
 
 bool GraphicsSettings::save()
@@ -141,6 +153,11 @@ bool GraphicsSettings::save()
         decoding.writeEntry("CopyBack", *m_copyBack);
     } else {
         decoding.deleteEntry("CopyBack");
+    }
+    if (m_otherGpu.has_value()) {
+        decoding.writeEntry("OtherGpu", *m_otherGpu);
+    } else {
+        decoding.deleteEntry("OtherGpu");
     }
     return config.sync();
 }

@@ -46,6 +46,7 @@ private Q_SLOTS:
     void copyBackChoice();
     void copyBackWithoutARecord();
     void copyBackSetInTheSessionIsReported();
+    void decodeOnAnotherGpuIsTheChoice();
     void qmlLoads_data();
     void qmlLoads();
 
@@ -494,6 +495,28 @@ void GraphicsKcmTest::copyBackSetInTheSessionIsReported()
     qputenv("MEDIA_GPU_ROUTE_COPY_BACK", "true");
     QVERIFY(page(u"host"_s)->copyBackSetInSession());
     qunsetenv("MEDIA_GPU_ROUTE_COPY_BACK");
+}
+
+void GraphicsKcmTest::decodeOnAnotherGpuIsTheChoice()
+{
+    // ORDER 346a: libmedia-gpu-route decodes on another GPU only where the person allows it ([Decoding] OtherGpu)
+    auto kcm = page(u"host"_s);
+    QVERIFY(!kcm->otherGpu());
+    kcm->setOtherGpu(true);
+    QVERIFY(kcm->needsSave());
+    QVERIFY(!configText().contains("OtherGpu"));
+    kcm->save();
+    QVERIFY2(configText().contains("[Decoding]\nOtherGpu=true"), configText().constData());
+    QVERIFY(kcm->otherGpu());
+    kcm->setOtherGpu(false);
+    kcm->save();
+    QVERIFY(!configText().contains("OtherGpu"));
+    kcm->setOtherGpu(true);
+    kcm->defaults();
+    QVERIFY(!kcm->otherGpu());
+    qputenv("MEDIA_GPU_ROUTE_OTHER_GPU", "true");
+    QVERIFY(kcm->otherGpuSetInSession());
+    qunsetenv("MEDIA_GPU_ROUTE_OTHER_GPU");
 }
 
 void GraphicsKcmTest::qmlLoads_data()

@@ -536,6 +536,28 @@ bool GraphicsKcm::copyBackSetInSession() const
     return qEnvironmentVariableIsSet("MEDIA_GPU_ROUTE_COPY_BACK");
 }
 
+bool GraphicsKcm::otherGpu() const
+{
+    return m_settings.otherGpu().value_or(false);
+}
+
+void GraphicsKcm::setOtherGpu(bool otherGpu)
+{
+    // off is the default and is not written, so the key is there only when the person turned it on
+    const std::optional<bool> value = otherGpu ? std::optional<bool>(true) : std::nullopt;
+    if (value == m_settings.otherGpu()) {
+        return;
+    }
+    m_settings.setOtherGpu(value);
+    updateState();
+    setNeedsSave(true);
+}
+
+bool GraphicsKcm::otherGpuSetInSession() const
+{
+    return qEnvironmentVariableIsSet("MEDIA_GPU_ROUTE_OTHER_GPU");
+}
+
 QString GraphicsKcm::appFilter() const
 {
     return m_appFilter;

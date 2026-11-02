@@ -370,6 +370,26 @@ KCM.SimpleKCM {
             type: Kirigami.MessageType.Warning
             text: i18nc("@info", "MEDIA_GPU_ROUTE_COPY_BACK is set in this session and is used instead of this choice.")
         }
+        QQC2.CheckBox {
+            Layout.fillWidth: true
+            visible: kcm.multiGpu
+            text: i18nc("@option:check", "Decode on another GPU")
+            checked: kcm.otherGpu
+            onToggled: kcm.otherGpu = checked
+        }
+        QQC2.Label {
+            visible: kcm.multiGpu
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
+            font: Kirigami.Theme.smallFont
+            text: i18nc("@info", "When the GPU players use cannot decode a video in hardware, a player that copies decoded pictures back decodes it on another GPU that can. Off: such a video is decoded in software, and the player says so.")
+        }
+        Kirigami.InlineMessage {
+            Layout.fillWidth: true
+            visible: kcm.otherGpuSetInSession
+            type: Kirigami.MessageType.Warning
+            text: i18nc("@info", "MEDIA_GPU_ROUTE_OTHER_GPU is set in this session and is used instead of this choice.")
+        }
 
         Kirigami.Separator {
             Layout.fillWidth: true

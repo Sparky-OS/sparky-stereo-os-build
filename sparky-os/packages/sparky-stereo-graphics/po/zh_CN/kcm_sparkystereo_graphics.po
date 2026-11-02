@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sparky-stereo-graphics\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-02 03:40+0000\n"
+"POT-Creation-Date: 2026-11-02 03:53+0000\n"
 "PO-Revision-Date: 2026-10-24 04:15-0300\n"
 "Last-Translator: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>\n"
 "Language-Team: Sparky Stereo OS\n"
@@ -196,12 +196,34 @@ msgid ""
 "choice."
 msgstr "此会话中设置了 MEDIA_GPU_ROUTE_COPY_BACK，将代替此选择使用。"
 
-#: src/ui/main.qml:382
+#: src/ui/main.qml:376
+msgctxt "@option:check"
+msgid "Decode on another GPU"
+msgstr "在另一个 GPU 上解码"
+
+#: src/ui/main.qml:385
+msgctxt "@info"
+msgid ""
+"When the GPU players use cannot decode a video in hardware, a player that "
+"copies decoded pictures back decodes it on another GPU that can. Off: such a "
+"video is decoded in software, and the player says so."
+msgstr ""
+"当播放器使用的 GPU 无法以硬件解码视频时，会把解码后的画面复制回来的播放器将在"
+"另一个能解码的 GPU 上解码。关闭时：这样的视频以软件解码，播放器会说明这一点。"
+
+#: src/ui/main.qml:391
+msgctxt "@info"
+msgid ""
+"MEDIA_GPU_ROUTE_OTHER_GPU is set in this session and is used instead of this "
+"choice."
+msgstr "此会话中设置了 MEDIA_GPU_ROUTE_OTHER_GPU，将代替此选择使用。"
+
+#: src/ui/main.qml:402
 msgctxt "@title:group"
 msgid "GPU power"
 msgstr "GPU 电源"
 
-#: src/ui/main.qml:389
+#: src/ui/main.qml:409
 msgctxt "@info"
 msgid ""
 "These save power when the power profile asks for it. They work for the "
@@ -523,22 +545,22 @@ msgctxt "@info"
 msgid "This computer's measured setting: Off."
 msgstr "此计算机测得的设置：关。"
 
-#: src/graphicskcm.cpp:578
+#: src/graphicskcm.cpp:600
 msgctxt "@info in place of a GPU name"
 msgid "its group's GPU cannot be used"
 msgstr "其所在组的 GPU 无法使用"
 
-#: src/graphicskcm.cpp:600
+#: src/graphicskcm.cpp:622
 msgctxt "@item:inlistbox"
 msgid "Same as its group"
 msgstr "与所属分组相同"
 
-#: src/graphicskcm.cpp:601
+#: src/graphicskcm.cpp:623
 msgctxt "@item:inlistbox"
 msgid "The dedicated GPU"
 msgstr "独立 GPU"
 
-#: src/graphicskcm.cpp:602
+#: src/graphicskcm.cpp:624
 msgctxt "@item:inlistbox"
 msgid "The main GPU"
 msgstr "主 GPU"
