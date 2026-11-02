@@ -1,10 +1,10 @@
 #!/bin/bash
-# Sparky Stereo OS: builds sview 26.9+stereo3d2+lc1 from a clone of Sparky-OS/sview, through Lean Code.
-# Created by Daniel Ramos (Capitain Jack) 2026/10/24, +stereo3d2 2026/10/31
+# Sparky Stereo OS: builds sview 26.9+stereo3d3+lc1 from a clone of Sparky-OS/sview, through Lean Code.
+# Created by Daniel Ramos (Capitain Jack) 2026/10/24, +stereo3d2 2026/10/31, +stereo3d3 2026/11/02
 # Copyright 2026 under the GNU GPL3 License
 # The plain source package is made from the commit (a native package: debian/ is in the tree), then the Lean Code
 # source, then the build with the link and start gate against the earlier +lc1 builds, then the one-output check
-# (ORDER 312: Stereo KWin's output only). Candidates stay in WORK.
+# (ORDER 312: Stereo KWin's output only), the identity check of lean 0.1.24. Candidates stay in WORK.
 # Usage: build.sh WORK PREVIOUS_DIR CLONE
 #   (PREVIOUS_DIR: the earlier +lc1 .deb files, an empty folder for a first build; CLONE: a clone holding the commit)
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
