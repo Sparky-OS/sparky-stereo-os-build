@@ -4,6 +4,8 @@
 # ORIG is the published release_1.0 Files-Excluded orig archive, mounted read-only.
 # WORK must be empty; source, binaries and Lean Code companions stay there for review.
 set -euo pipefail
+: "${SPARKY_LC_ARCHIVE_CONFIG:?signed archive configuration for the link gate}"
+: "${SPARKY_LC_SCRATCH:?private link-gate scratch directory}"
 HERE=$(cd "$(dirname "$0")" && pwd)
 : "${ORIG:?published openrgb_1.0+ds.orig.tar.xz}"
 : "${WORK:?empty build directory}"
