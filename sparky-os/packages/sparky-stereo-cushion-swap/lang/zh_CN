@@ -6,7 +6,7 @@ LOCAL5="内存不足时 Cushion Swap 无法开启它的交换区：swapon %s 失
 LOCAL6="Cushion Swap 无法关闭它的交换区：swapoff %s 失败（%s）。交换区保持开启，因此内存仍受保护；它稍后会重试。"
 LOCAL7="内核在内存停滞时的唤醒功能不可用：%s。Cushion Swap 改为每隔几秒检查一次内存（兼容模式）。修复方法：sudo apt-get install --reinstall sparky-stereo-cushion-swap。若要主动选择兼容模式：在 /etc/default/cushion-swap 中设置 PSI=off"
 LOCAL8="内核在内存停滞时的唤醒功能无法工作：%s。Cushion Swap 改为每隔几秒检查一次内存（兼容模式）。若要重试唤醒功能：sudo systemctl restart cushion-swap。若要主动选择兼容模式：在 /etc/default/cushion-swap 中设置 PSI=off"
-LOCAL9="Cushion Swap 无法测量这台计算机分配内存的速度（%s），因此保持保守的节奏 %s MiB/s，这种节奏采样更频繁，占用更多 CPU。若要重试：sudo systemctl restart cushion-swap。若要主动选择这一节奏：在 /etc/default/cushion-swap 中设置 MAX_ALLOC_MIB_S=%s"
+LOCAL9="Cushion Swap 无法测量这台计算机分配内存的速度（%s），因此保持保守的节奏 %s MiB/s，这种节奏采样更频繁，占用更多 CPU。它会在一分钟后、计算机空闲时重试。若要主动选择这一节奏：在 /etc/default/cushion-swap 中设置 MAX_ALLOC_MIB_S=%s"
 LOCAL10="Cushion Swap 无法测量这台计算机分配内存的速度：%s。它保持保守的节奏 %s MiB/s，这种节奏采样更频繁，占用更多 CPU。修复方法：sudo apt-get install --reinstall sparky-stereo-cushion-swap。若要主动选择这一节奏：在 /etc/default/cushion-swap 中设置 MAX_ALLOC_MIB_S=%s"
 LOCAL11="Cushion Swap 已测量这台计算机分配内存的速度，但无法将结果保存在 %s 中（%s）；它会在下次启动时重新测量。"
 LOCAL12="Cushion Swap 意外停止（%s），在它重新运行之前内存不受保护。systemd 会重新启动它；如果反复出现，请查看：journalctl -u cushion-swap"

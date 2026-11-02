@@ -332,11 +332,12 @@ sparky-stereo-cushion-swap, in the nine languages the edition requires.
   low, a daemon that stopped without being asked to.
 - Protected another way than set (degraded): a kernel with PSI whose
   helper is missing or whose trigger is refused or lost (the poller keeps
-  watching; the trigger is armed again once a minute at most; PSI=off makes
-  compatibility mode the person's choice), swapoff failing (the area stays
-  on).
+  watching, as it did before; a restart arms the trigger again; PSI=off
+  makes compatibility mode the person's choice), swapoff failing (the area
+  stays on).
 - Protected, something else did not work (notice): the allocation-rate
-  helper missing or failing three times, or its result not kept (the
+  helper missing, a measurement that failed (tried again as before, a
+  minute later, and cleared by a success), or its result not kept (the
   conservative pace stays; MAX_ALLOC_MIB_S makes it the person's choice);
   hibernation unable to switch its area on, a kernel resume device that
   differs from the one the file names, an area that cannot be switched off

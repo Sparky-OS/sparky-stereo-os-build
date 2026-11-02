@@ -976,16 +976,6 @@ psi_failures_said() {
 	stop_bg || ok=1
 	[[ $(status_value MODE) == compatibility && $(status_value PROTECTION) == degraded ]] && kept_problem psi-lost 'trigger lost (exit status 3)' ||
 		{ echo "  lost trigger: MODE=$(status_value MODE) PROTECTION=$(status_value PROTECTION)"; ok=1; }
-	# lost once, armed again: no problem left
-	rm -rf "$W/state" "$W/psi-once"
-	printf '#!/bin/sh\necho ready\nif [ -e %s ]; then exec sleep 60; fi\n: >%s\nexit 3\n' "$W/psi-once" "$W/psi-once" >"$W/bin/psi-once"
-	chmod +x "$W/bin/psi-once"
-	daemon_bg "$log" "$log" MEMINFO_PATH="$W/m" SWAPS_PATH="$W/s" CUSHION_SWAP_AREA="$AREA_OK" PSI_PATH="$W/pressure" PSI_REARM_SEC=0 \
-		PSI_WAKE="$W/bin/psi-once" SAFETY_TICK_SEC=0.1 PACING=fixed RUN_USER_DIR="$W/empty" PROC_DIR="$W/empty" "$d"
-	sleep 1
-	[[ $(status_value MODE) == psi && $(status_value PROTECTION) == yes ]] || { echo "  not armed again: MODE=$(status_value MODE)"; ok=1; }
-	grep -q 'arming the trigger again' "$log" || { echo "  the re-arm was not said"; ok=1; }
-	stop_bg || ok=1
 	# the controls: no PSI in this kernel, and PSI=off, are modes, not problems
 	rm -rf "$W/state"
 	daemon MEMINFO_PATH="$W/m" SWAPS_PATH="$W/s" CUSHION_SWAP_AREA="$AREA_OK" PSI_PATH=/nonexistent/pressure "$d" --once >/dev/null 2>&1
@@ -998,8 +988,9 @@ psi_failures_said() {
 	return $ok
 }
 
-# U54: the allocation-rate helper missing, its fingerprint failing, its measurement failing three
-# times, its result not saved: each kept and said; conservative pacing stays, a named choice offered.
+# U54: the allocation-rate helper missing, its measurement failing, its result not saved: each kept and
+# said; the conservative pace stays, a named choice is offered, and a failed measurement is tried again
+# as before, its problem cleared by the success.
 calibration_problems() {
 	local d=$1 ok=0 c=$W/calib346
 	rm -rf "$W/state" "$c"
@@ -1014,23 +1005,25 @@ calibration_problems() {
 	stop_bg || ok=1
 	[[ $(status_value CALIBRATION) == unavailable ]] && kept_problem calibration-unavailable 'MAX_ALLOC_MIB_S=8192' ||
 		{ echo "  missing helper: CALIBRATION=$(status_value CALIBRATION)"; ok=1; }
-	# the measurement fails each time: three tries, then kept, and no more tries
+	# the measurement fails twice, then works: kept from the first failure, tried again, cleared
 	rm -rf "$W/state"
-	printf '#!/bin/sh\nif [ "$1" = --fingerprint ]; then echo fp; exit 0; fi\necho try >>%s/calls\necho "alloc-rate: mmap: Cannot allocate memory" >&2\nexit 1\n' "$c" "$c" >"$c/helper"
+	printf '#!/bin/sh\nif [ "$1" = --fingerprint ]; then echo fp; exit 0; fi\necho try >>%s/calls\nif [ $(wc -l <%s/calls) -le 2 ]; then echo "alloc-rate: mmap: Cannot allocate memory" >&2; exit 1; fi\necho "512 1 1 0.020"\n' "$c" "$c" >"$c/helper"
 	chmod +x "$c/helper"
 	echo 'cpu 100 0 0 100 0 0 0 0' >"$c/stat"
 	daemon_bg "$c/log" "$c/log" MEMINFO_PATH="$W/m" SWAPS_PATH="$W/s" CUSHION_SWAP_AREA="$AREA_OK" PSI=off PACING=fixed \
 		POLL_INTERVAL_SEC=0.05 RUN_USER_DIR="$W/empty" PROC_DIR="$c/proc" CPU_STAT_PATH="$c/stat" CALIBRATION_CHECK_SEC=0.05 \
 		PSI_PATH=/nonexistent CALIBRATION_RETRY_SEC=0.05 CALIBRATION_DIR="$c/state" ALLOC_RATE_HELPER="$c/helper" "$d"
-	local i
+	local i seen=0
 	for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
 		echo "cpu 500 0 0 $((1000 * i)) 0 0 0 0" >"$c/stat"
 		sleep 0.15
+		[[ $(status_value CALIBRATION) == failed ]] && kept_problem calibration-failed 'Cannot allocate memory' && seen=1
 	done
 	stop_bg || ok=1
+	((seen)) || { echo "  the failed measurement was not kept"; ok=1; }
 	[[ $(wc -l <"$c/calls" 2>/dev/null) == 3 ]] || { echo "  $(wc -l <"$c/calls" 2>/dev/null) tries, not 3"; ok=1; }
-	[[ $(status_value CALIBRATION) == failed ]] && kept_problem calibration-failed 'Cannot allocate memory' ||
-		{ echo "  failed measurement: CALIBRATION=$(status_value CALIBRATION)"; ok=1; }
+	[[ $(status_value CALIBRATION) == measured && ! -e $W/state/problems/calibration-failed ]] ||
+		{ echo "  not cleared by the success: CALIBRATION=$(status_value CALIBRATION)"; ok=1; }
 	# measured, but the cache cannot be written: in use, and said
 	rm -rf "$W/state" "$c/calls"
 	: >"$c/blocked"
@@ -1347,7 +1340,7 @@ mutant hook-drops-offset "initramfs-hook-offset" 's/^echo "resume_offset=\$offse
 mutant problems-never-kept "meminfo-unreadable deploy-failure-kept calibration-problems" 's/^\t((DRY_RUN)) \&\& return 0$/\treturn 0/'
 mutant unprotected-exits-0 "meminfo-unreadable no-area-unprotected" 's/^\tno) exit 2 ;;$/\tno) exit 0 ;;/'
 mutant psi-loss-silent "psi-failures-said" 's/^\t\t\t\tproblem_set psi-lost degraded LOCAL8 "the trigger was lost: \$why"$/\t\t\t\t:/'
-mutant calibration-retries-forever "calibration-problems" 's/^\tif ((CALIBRATION_FAILURES >= CALIBRATION_TRIES)); then$/\tif false; then/'
+mutant calibration-failure-silent "calibration-problems" 's/^\tproblem_set calibration-failed notice LOCAL9 "\$1" "\$CONSERVATIVE_MIB_S" "\$CONSERVATIVE_MIB_S"$/\t:/'
 mutant resume-swapoff-ignored "hibernate-failures-kept" 's/^\t\t\t\texit 1$/\t\t\t\texit 0/' 
 echo "SUMMARY: $PASS passed, $FAIL failed"
 echo "SUMMARY: $PASS passed, $FAIL failed" >"$OUT/summary.txt"

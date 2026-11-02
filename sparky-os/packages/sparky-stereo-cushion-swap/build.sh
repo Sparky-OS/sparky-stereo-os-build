@@ -159,8 +159,9 @@ $PACKAGE ($VERSION) unstable; urgency=medium
   * --status exits 0 only while memory is protected; a stopped, failed or
     unreadable state is never "stopped" with exit 0. The unit's
     ExecStopPost says why the daemon stopped.
-  * A kernel with PSI whose trigger is lost is armed again, then said; the
-    allocation-rate measurement stops after three failures and says so.
+  * A kernel with PSI whose trigger is lost, and a failed allocation-rate
+    measurement, are said and kept; the poller and the retry a minute
+    later go on as before.
   * Hibernation: a failed switch-on, a kernel resume device that differs
     and a failed switch-off after resume fail their unit and are kept.
 

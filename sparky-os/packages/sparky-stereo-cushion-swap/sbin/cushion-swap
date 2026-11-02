@@ -115,8 +115,6 @@ BUSCTL_BIN=${BUSCTL_BIN:-busctl}
 readonly DAEMON_PROBLEMS="no-area area-missing meminfo swaps deploy-failed retract-failed psi-missing psi-lost calibration-failed calibration-unavailable calibration-save service-failed status-write"
 # a daemon that keeps stopping is one problem, not one per restart: it clears after this long running
 SERVICE_OK_AFTER_SEC=${SERVICE_OK_AFTER_SEC:-60}
-PSI_REARM_SEC=${PSI_REARM_SEC:-60}
-CALIBRATION_TRIES=${CALIBRATION_TRIES:-3}
 CALIBRATION_RETRY_SEC=${CALIBRATION_RETRY_SEC:-60}
 PSI_PATH=${PSI_PATH:-/proc/pressure/memory}
 PSI_WAKE=${PSI_WAKE:-/usr/libexec/cushion-swap/psi-wake}
@@ -139,7 +137,6 @@ CALIBRATION=pending
 CALIBRATION_FAILURES=0
 CALIBRATION_LAST_ERROR=""
 STARTED=0
-PSI_ARMED_MS=0
 
 _find_bin() {
 	local name=$1 c
@@ -728,7 +725,8 @@ run_cycle() {
 # The wake-up (Daniel, 2026-10-10): the kernel's PSI trigger where the kernel has PSI, else his poller
 # (compatibility mode). That a kernel has no PSI, or that PSI=off was chosen, is said in MODE_REASON and is no
 # problem; a kernel that has PSI while the trigger cannot be armed or is lost is one: the poller keeps memory
-# protected meanwhile, and the person is told, with PSI=off to make that mode their choice.
+# protected meanwhile, as before, and the person is told, with PSI=off to make that mode their choice and a
+# restart to arm the trigger again.
 start_psi() {
 	MODE=compatibility
 	if [[ $PSI == off ]]; then
@@ -760,8 +758,6 @@ start_psi() {
 	if read -r -t 5 -u "$PSI_FD" line && [[ $line == ready ]]; then
 		MODE=psi
 		MODE_REASON="the kernel's PSI trigger '$PSI_TRIGGER' on $PSI_PATH"
-		now_ms
-		PSI_ARMED_MS=$NOW_MS
 		problem_clear psi-lost
 		[[ $LOG_EVERY_CYCLE == yes ]] && log_cycle "PSI mode: woken by the kernel when memory stalls ($PSI_PATH, trigger '$PSI_TRIGGER'), safety tick ${SAFETY_TICK_SEC}s"
 	else
@@ -886,20 +882,13 @@ wait_next() {
 		if ((rc == 0)); then
 			while read -r -t 0 -u "$PSI_FD" && read -r -u "$PSI_FD" line; do :; done
 		elif ((rc <= 128)); then
-			# the helper ended: the trigger is armed again once a minute at most, else the poller protects
-			# memory and the person is told
+			# the helper ended: the poller protects memory, as before, and the person is told
 			local why
 			psi_helper_reason why
 			MODE=compatibility
-			now_ms
-			if ((NOW_MS - PSI_ARMED_MS >= PSI_REARM_SEC * 1000)); then
-				log_err "the PSI helper ended ($why); arming the trigger again"
-				start_psi
-			else
-				MODE_REASON="the PSI trigger was lost: $why"
-				problem_set psi-lost degraded LOCAL8 "the trigger was lost: $why"
-			fi
-			[[ $LOG_EVERY_CYCLE == yes ]] && log_cycle "PSI helper ended: ${MODE} mode"
+			MODE_REASON="the PSI trigger was lost: $why"
+			problem_set psi-lost degraded LOCAL8 "the trigger was lost: $why"
+			[[ $LOG_EVERY_CYCLE == yes ]] && log_cycle "PSI helper ended: compatibility mode"
 		fi
 		return
 	fi
@@ -950,19 +939,16 @@ load_calibration() {
 	fi
 }
 
-# A measurement that failed: tried again a minute later, CALIBRATION_TRIES times in all; then the failure is
-# kept, the conservative pace stays, and a restart tries again.
+# A measurement that failed: kept and said from the first failure (the conservative pace stays), and tried again
+# as before: a minute later for a helper that failed, at the next idle check for one that gave no rate; a later
+# success clears it.
 calibration_failed() {
 	CALIBRATION_FAILURES=$((CALIBRATION_FAILURES + 1))
 	CALIBRATION_LAST_ERROR=$1
-	if ((CALIBRATION_FAILURES >= CALIBRATION_TRIES)); then
-		CALIBRATION=failed
-		CALIBRATION_FINGERPRINT=""
-		problem_set calibration-failed notice LOCAL9 "$CALIBRATION_FAILURES tries: $1" "$CONSERVATIVE_MIB_S" "$CONSERVATIVE_MIB_S"
-	else
-		log_err "allocation-rate measurement failed ($1); conservative pacing retained, try $((CALIBRATION_FAILURES + 1)) of $CALIBRATION_TRIES in ${CALIBRATION_RETRY_SEC} s"
-		CALIBRATION_AFTER_MS=$((NOW_MS + $(to_ms "$CALIBRATION_RETRY_SEC")))
-	fi
+	CALIBRATION=failed
+	problem_set calibration-failed notice LOCAL9 "$1" "$CONSERVATIVE_MIB_S" "$CONSERVATIVE_MIB_S"
+	[[ ${2:-} == later ]] && CALIBRATION_AFTER_MS=$((NOW_MS + $(to_ms "$CALIBRATION_RETRY_SEC")))
+	return 0
 }
 
 # Require two CPU snapshots separated by the normal loop, at least 90% idle,
@@ -1003,7 +989,7 @@ calibrate_when_idle() {
 	if ((rc != 0)); then
 		local err
 		err=$(tail -n 1 "$STATE_DIR/alloc-rate.err" 2>/dev/null)
-		calibration_failed "$ALLOC_RATE_HELPER exited $rc${err:+: $err}"
+		calibration_failed "$ALLOC_RATE_HELPER exited $rc${err:+: $err}" later
 		return
 	fi
 	read -r rate cpus workers duration <<<"$observation"

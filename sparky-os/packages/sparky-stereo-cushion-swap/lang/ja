@@ -6,7 +6,7 @@ LOCAL5="メモリが不足しているのに Cushion Swap はスワップ領域�
 LOCAL6="Cushion Swap はスワップ領域を無効にできませんでした: swapoff %s が失敗しました (%s)。領域は有効なままなので、メモリは保護されたままです。後で再試行します。"
 LOCAL7="メモリ停滞時のカーネルによる起動通知が利用できません: %s。代わりに Cushion Swap は数秒ごとにメモリを確認します (互換モード)。修復するには: sudo apt-get install --reinstall sparky-stereo-cushion-swap。互換モードを自分で選ぶには: /etc/default/cushion-swap に PSI=off"
 LOCAL8="メモリ停滞時のカーネルによる起動通知が機能していません: %s。代わりに Cushion Swap は数秒ごとにメモリを確認します (互換モード)。起動通知を再度試すには: sudo systemctl restart cushion-swap。互換モードを自分で選ぶには: /etc/default/cushion-swap に PSI=off"
-LOCAL9="Cushion Swap はこのコンピューターがメモリを確保する速さを測定できなかったため (%s)、慎重なペース %s MiB/s を維持します。このペースは確認の頻度が高く、CPU を多く使います。再試行するには: sudo systemctl restart cushion-swap。このペースを自分で選ぶには: /etc/default/cushion-swap に MAX_ALLOC_MIB_S=%s"
+LOCAL9="Cushion Swap はこのコンピューターがメモリを確保する速さを測定できなかったため (%s)、慎重なペース %s MiB/s を維持します。このペースは確認の頻度が高く、CPU を多く使います。1 分後、コンピューターがアイドル状態のときに再試行します。このペースを自分で選ぶには: /etc/default/cushion-swap に MAX_ALLOC_MIB_S=%s"
 LOCAL10="Cushion Swap はこのコンピューターがメモリを確保する速さを測定できません: %s。慎重なペース %s MiB/s を維持します。このペースは確認の頻度が高く、CPU を多く使います。修復するには: sudo apt-get install --reinstall sparky-stereo-cushion-swap。このペースを自分で選ぶには: /etc/default/cushion-swap に MAX_ALLOC_MIB_S=%s"
 LOCAL11="Cushion Swap はこのコンピューターがメモリを確保する速さを測定しましたが、結果を %s に保存できませんでした (%s)。次回の起動時に再測定します。"
 LOCAL12="Cushion Swap が予期せず停止しました (%s)。再び動作するまでメモリは保護されません。systemd が再起動します。繰り返す場合は次を参照してください: journalctl -u cushion-swap"
