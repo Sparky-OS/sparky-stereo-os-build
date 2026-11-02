@@ -16,11 +16,14 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 SRC=${SRC:-${SPARKY_SOURCES:?}/sparky-beep}
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
 PKG=sparky-beep
-VERSION=$(sed -n '2s/^  Version \([^ ]*\) .*/\1/p' "$SRC/CHANGELOG")
-[ -n "$VERSION" ] || { echo "no version in $SRC/CHANGELOG"; exit 1; }
-VERSION=$VERSION+lc1
+SOURCE_VERSION=$(sed -n '2s/^  Version \(.*\) (.*$/\1/p' "$SRC/CHANGELOG")
+[ -n "$SOURCE_VERSION" ] || { echo "no version in $SRC/CHANGELOG" >&2; exit 1; }
+VERSION=${VERSION:-0.2.1+lc1}
 W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}/sparky-os}/beep-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
+COPY="$HERE/../../../tools/copy-recipe.py"
+python3 "$COPY" "$SRC" "$W/input"
+SRC=$W/input
 D=$W/$PKG
 S=$D/usr/share/$PKG
 mkdir -p "$D/DEBIAN" "$D/usr/bin" "$D/etc/init.d" "$D/etc/$PKG" "$D/usr/lib/systemd/system" \
@@ -67,4 +70,6 @@ EOC
 mkdir -p "$OUT" "$W/authoring"
 cp "$HERE/build.sh" "$W/authoring/build.sh"
 cp -a "$SRC" "$W/authoring/source"
+mkdir -p "$W/authoring/build-tools"
+cp "$COPY" "$W/authoring/build-tools/"
 PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$W/authoring"

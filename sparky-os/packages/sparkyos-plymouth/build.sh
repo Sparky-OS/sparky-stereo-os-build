@@ -19,6 +19,9 @@ VERSION=$(sed -n '2s/^  Version \([^ ]*\) .*/\1/p' "$HERE/CHANGELOG")
 VERSION=$VERSION+lc1
 W=$(mktemp -d "${TMPDIR:-/tmp}/sparkyos-plymouth.XXXXXX")
 trap 'rm -rf "$W"' EXIT
+COPY="$HERE/../../../tools/copy-recipe.py"
+python3 "$COPY" "$ART" "$W/input"
+ART=$W/input
 D=$W/$PKG
 mkdir -p "$D/DEBIAN" "$D/usr/share/plymouth/themes" "$D/usr/share/doc/$PKG"
 for t in sparkyos sparkyos-stereo; do
@@ -95,6 +98,8 @@ EOS
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT"
 mkdir -p "$W/authoring"
-cp -a "$HERE/." "$W/authoring/"
+python3 "$COPY" "$HERE" "$W/authoring"
 cp -a "$ART" "$W/authoring/artwork"
+mkdir -p "$W/authoring/build-tools"
+cp "$COPY" "$W/authoring/build-tools/"
 PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$W/authoring"
