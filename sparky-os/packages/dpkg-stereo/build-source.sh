@@ -24,7 +24,7 @@ else
 	echo "build-source: no git work tree; the recipe folder without __pycache__ and *.pyc"
 	(cd "$HERE" && find . -name __pycache__ -prune -o ! -type d ! -name '*.pyc' -print0 | xargs -0r cp -a --parents -t "$P")
 fi
-cp "$ROOT/lean/"*.py "$ROOT/lean/JvmLexer.java" "$S/sparky-os/lean/"
+cp "$ROOT/lean/"*.py "$ROOT/lean/JvmLexer.java" "$ROOT/lean/ZigTokens.zig" "$S/sparky-os/lean/"
 cp "$ROOT/repo/provenance.sh" "$S/sparky-os/repo/"
 cp "$HERE/copyright" "$S/debian/copyright"
 printf '3.0 (native)\n' > "$S/debian/source/format"

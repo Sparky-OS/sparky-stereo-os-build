@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,11 +23,12 @@ from . import VERSION, consumers, core, lang_c
 # The files whose code decides what a render gives. The identity carries their digest, so it changes
 # whenever that code does (ORDER 297: two renderers that differed both reported "lean 0.1.15
 # (collapse-blank,pointer)", and an image sealed by one was refused by the other).
-RENDERER_FILES = ('__init__.py', 'project.py', 'core.py', 'consumers.py', 'JvmLexer.java')
+RENDERER_FILES = ('__init__.py', 'project.py', 'core.py', 'consumers.py', 'JvmLexer.java', 'ZigTokens.zig')
 
 
-def code_sha256() -> str:
-    root = Path(__file__).parent
+def code_sha256(root=None) -> str:
+    """The renderer's code digest: this toolkit's, or that of the toolkit copy in `root`."""
+    root = Path(root) if root is not None else Path(__file__).parent
     names = list(RENDERER_FILES) + sorted(p.name for p in root.glob('lang_*.py'))
     files = {n: hashlib.sha256((root / n).read_bytes()).hexdigest() for n in names}
     return hashlib.sha256((json.dumps(files, sort_keys=True, separators=(',', ':'), ensure_ascii=True)
@@ -85,7 +87,7 @@ def _verify(key, mod, original, lean, variant):
     if key == 'shell':
         return mod.verify(original, lean, 'dash' if variant in ('dash', 'env') else 'bash')
     if key == 'c':
-        return mod.verify(original, lean, 'c++' if variant == 'c++' else 'c')
+        return mod.verify(original, lean, variant if variant in ('c++', 'asm') else 'c')
     return mod.verify(original, lean)
 
 
@@ -111,9 +113,15 @@ def render_text(text: str, key: str, variant: str | None, package: str | None, p
     language, and dpkg-stereo --resolve finds the authored line by its content."""
     mod = consumers.HANDLERS[key]
     spans = _lex(key, mod, text, variant)
-    if key == 'c' and variant in ('c', 'c++'):
-        rendered = core.render(text, spans, lang_c.joiner_for(text, spans), keep_empty_after=mod.keep_empty_after,
+    if key == 'c' and variant in ('c', 'c++', 'asm'):
+        # a file the assembler preprocessor reads keeps its lines: a removed comment is one space there
+        asm = lang_c.assembler_evidence(text, variant) is not None
+        rendered = core.render(text, spans, lang_c.joiner_for(text, spans, asm=asm), keep_empty_after=mod.keep_empty_after,
                                collapse_blank=False, drop_lines=True)
+    elif getattr(mod, 'DROP_LINES', False):
+        # Zig as C and C++: comment-only lines go completely, the authored empty lines stay
+        rendered = core.render(text, spans, mod.joiner, keep_empty_after=mod.keep_empty_after, collapse_blank=False,
+                               drop_lines=True)
     else:
         rendered = core.render(text, spans, mod.joiner, keep_empty_after=_keep_empty(key, mod, variant))
     out, origin = rendered.text, rendered.origin
@@ -150,9 +158,10 @@ def project(path: str, data: bytes, package: str | None = None, *, pointer=True,
         if why:
             res.reason = why
             return res
-    if key == 'perl' and check:
+    if key in ('perl', 'zig') and check:
         # as for shell: an authored file perl does not compile on its own (a handler that runs inside its host,
-        # such as snmptrapd's embedded Perl, which defines its names) has no consumer check, so it is retained
+        # such as snmptrapd's embedded Perl, which defines its names) has no consumer check, so it is retained;
+        # so is a Zig file Zig's tokenizer or `zig ast-check` does not accept, or any Zig file without zig
         why = mod.authored_refusal(text)
         if why:
             res.reason = why
@@ -184,6 +193,34 @@ def project(path: str, data: bytes, package: str | None = None, *, pointer=True,
     res.lean, res.bytes_out, res.sha_out = out, len(out), sha256(out)
     res.comments_removed = rendered.removed
     return res
+
+
+def reads_others(path: str) -> bool:
+    """True for a file whose text can name other files it reads as data (a Zig file's @embedFile)."""
+    return os.path.splitext(path)[1].lower() in consumers.lang_zig.EXTS
+
+
+def read_as_data(texts: dict, paths) -> dict:
+    """{path: reason} for the payload files another file reads as data, whatever their format: their bytes are
+    that file's input, so they stay as authored (Zig's @embedFile: the language reference, "@embedFile ...
+    returns a compile time constant pointer to null-terminated, fixed-size array with length equal to the
+    byte count of the file"). `texts` maps the files reads_others names to their bytes; `paths` is the whole
+    payload, which a computed @embedFile path covers folder by folder."""
+    paths = list(paths)
+    out = {}
+    for path, data in sorted(texts.items()):
+        try:
+            text = data.decode('utf-8')
+        except UnicodeDecodeError:
+            continue
+        for target, why in consumers.lang_zig.embedded(path, text):
+            if target.endswith('/'):
+                for other in paths:
+                    if other.startswith(target) and other != path:
+                        out.setdefault(other, why)
+            else:
+                out.setdefault(target, why)
+    return out
 
 
 def resolve(hr: bytes, mr: bytes, path: str, package: str | None, line: int, col: int | None = None, *, pointer=True):
