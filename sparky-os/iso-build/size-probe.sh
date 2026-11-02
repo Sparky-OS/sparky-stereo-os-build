@@ -11,8 +11,10 @@ if [ "${SKIP_APT_SETUP:-0}" != 1 ]; then
 	# with the driver lock before any other package (simulate-image.py applies both packages' pins after that install)
 	W=$(mktemp -d)
 	(cd "$W" && apt-get download -qq sparky-stereo-cuda-repo)
+	# its postinst writes the source from the package's copy when no other source names the repository, as in the image
+	dpkg-deb --fsys-tarfile "$W"/sparky-stereo-cuda-repo_*_all.deb | tar -x -C / ./usr/share/keyrings/cuda-archive-keyring.gpg
 	dpkg-deb --fsys-tarfile "$W"/sparky-stereo-cuda-repo_*_all.deb |
-		tar -x -C / ./etc/apt/sources.list.d/sparky-stereo-cuda.sources ./usr/share/keyrings/cuda-archive-keyring.gpg
+		tar -xO ./usr/share/sparky-stereo-cuda-repo/sparky-stereo-cuda.sources >/etc/apt/sources.list.d/sparky-stereo-cuda.sources
 	rm -rf "$W"
 	apt-get update -o APT::Update::Error-Mode=any
 fi

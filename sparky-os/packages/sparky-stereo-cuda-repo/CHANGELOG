@@ -1,4 +1,14 @@
 -------------------------------------------------------------------------------
+  Version 20261101.2~sparky9~0 (2026-11-01)
+-------------------------------------------------------------------------------
+  * A source of the person's own for NVIDIA's repository is kept untouched, and the package then writes none of its own: two sources for one URI with different Signed-By stop apt ("Conflicting values set for option Signed-By"), as on Daniel's host. The pins still apply, since they go by origin. The postinst says which it did. So the source is no longer a conffile: the postinst writes it from /usr/share/sparky-stereo-cuda-repo only when no other source names the repository, and the postrm removes it (ORDER 342, Opus's review)
+  * The byte-identical takeover of the image's hand-written source and pin stays as it was
+  * The install says when a pin file of the person's own (one no package ships) pins NVIDIA's origin, and whether it decides: apt takes the first specific record that matches (apt_preferences(5)) and, for Package: * records of one origin, apt 3.3.3 also takes the first file in name order, not the highest (measured), so a file sorting after 91sparky-stereo-cuda, such as the host's cuda-repository at 1002, no longer decides where both pin a package
+  * The install says when it replaces cuda-keyring's key file that held another key (Debian 12's cuda-keyring holds 3BF863CC)
+  * NVIDIA's cuda-keyring is no longer removed: this package takes over its key file (the same bytes, Replaces) and keeps its source as the person's own (before: Conflicts)
+  * Supersedes 20261101.1~sparky9~0, which was not published; its changes are in this version
+
+-------------------------------------------------------------------------------
   Version 20261101.1~sparky9~0 (2026-11-01)
 -------------------------------------------------------------------------------
   * README: the edition now ships its own dkms (3.4.4-1+sparky1, at 1001 from its repository, with the overlay sparky-stereo-dkms-compat needs), so choosing NVIDIA's dkms takes a record at 1002, not 990; the pins are unchanged (ORDER 342)

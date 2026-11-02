@@ -37,7 +37,8 @@ left at an older version installs alone and never beside the other (libplacebo36
 Archives: the signed public sources of SPARKY_LC_ARCHIVE_CONFIG (Debian forky, deb-multimedia forky,
 SparkyLinux core and tiamat; sparky-os/lean/archive.md describes the file), and, in the nvidia profile,
 NVIDIA's CUDA repository as the tree's sparky-stereo-cuda-repo ships it (its source, its key and its pins,
-read from the package itself; ORDER 338). An entry of the file for that repository (the link gate's, ORDER 329)
+read from the package itself; ORDER 338; the source as its postinst writes it on a system with no other source for
+that repository, ORDER 342). An entry of the file for that repository (the link gate's, ORDER 329)
 is set aside: only the nvidia profile has the repository, added the package's way. A source's architectures
 limit it as sources.list's Architectures does. The tree itself is read through its dists only: its Release
 is checked against its own InRelease and key (sparky-stereo-repo.asc in the tree), its indexes against the
@@ -311,7 +312,10 @@ def cuda_repo(tree, index_entries):
         for member in tar.getmembers():
             if member.isfile():
                 files['/' + member.name.lstrip('./')] = tar.extractfile(member).read()
-    sources = [p for p in files if p.startswith('/etc/apt/sources.list.d/') and p.endswith('.sources')]
+    # the source as the package's postinst writes it, from its copy in /usr/share/<package> (20261101.2 on), or as a
+    # conffile in /etc/apt/sources.list.d (the first builds)
+    sources = [p for p in files if p.endswith('.sources') and
+               (p.startswith('/etc/apt/sources.list.d/') or p.startswith('/usr/share/%s/' % CUDA_PACKAGE))]
     if len(sources) != 1:
         raise Stop('%s ships %d deb822 sources, not one' % (label, len(sources)))
     text = '\n'.join(line for line in files[sources[0]].decode().split('\n') if not line.lstrip().startswith('#'))
