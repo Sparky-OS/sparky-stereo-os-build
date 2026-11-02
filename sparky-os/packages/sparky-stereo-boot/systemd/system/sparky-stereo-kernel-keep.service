@@ -1,0 +1,10 @@
+[Unit]
+Description=Sparky Stereo OS: keep two kernels per flavour, the running one and one more
+Documentation=file:/usr/share/doc/sparky-stereo-boot/README.md
+ConditionPathExists=/var/lib/sparky-stereo-boot/kernel-keep.queue
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/sparky-stereo-boot/kernel-keep.py --run
+TimeoutStartSec=infinity
+Nice=10
