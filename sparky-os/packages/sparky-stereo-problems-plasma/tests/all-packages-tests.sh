@@ -21,6 +21,12 @@ n() { python3 -c "import json; print(len(json.load(open('$LOG'))['notify']))" 2>
 nf() { python3 -c "import json,sys; d=json.load(open('$LOG'))['notify']; print(d[-1][sys.argv[1]])" "$1" 2>/dev/null; }
 mine() { ux $B list --json | python3 -c "import json,sys; print(sorted((p['package'], p['key'], p['hidden']) for p in json.load(sys.stdin) if p.get('key') in sys.argv[1:]))" "$@"; }
 
+# a stand-in notification server of this test's own (session-tests.sh stops its own when it ends)
+install -m 755 /suite-plasma/fake-notifications.py /usr/local/bin/fake-notifications
+ux systemctl --user stop fake-notifications.service 2>/dev/null
+ux systemd-run --user --quiet --unit fake-notifications-all /usr/local/bin/fake-notifications $LOG
+check "a notification server answers" "waitfor 'ux busctl --user status org.freedesktop.Notifications >/dev/null 2>&1' 30"
+
 echo "== start from nothing kept"
 ux systemctl --user stop sparky-stereo-problems-notifier.service 2>/dev/null
 rm -f /var/lib/sparky-stereo-problems/*.json /run/sparky-stereo-problems/*.json $H/.local/state/sparky-stereo-problems/*.json
@@ -79,6 +85,6 @@ dpkg -r sparky-stereo-time >/tmp/remove-time.log 2>&1
 check "the time package's problems went with it" "[ -z \"\$(ls /var/lib/sparky-stereo-problems/ | grep sparky-stereo-time)\" ]"
 check "the others stay" "[ -e /var/lib/sparky-stereo-problems/sparky-stereo-boot_all-boot.json ]"
 
-ux systemctl --user stop sparky-stereo-problems-notifier.service 2>/dev/null
+ux systemctl --user stop sparky-stereo-problems-notifier.service fake-notifications-all.service 2>/dev/null
 echo "== $( [ $fail = 0 ] && echo ALL PASS || echo "$fail FAILED")"
 exit $fail

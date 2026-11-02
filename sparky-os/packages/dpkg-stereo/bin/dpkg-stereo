@@ -2074,6 +2074,9 @@ def main():
             keep_problem(P, step, error_line(e), detail=detail)
             say('LOCAL11')
         return 0
+    if a.dismiss:
+        # the engine's Hide is the person's own: no lock, no administrator
+        return dismiss(P, a.dismiss)
     # the commands that change the system: an error is said and kept (the step's name), and the command fails
     step = ('project' if a.project is not None else 'restore' if a.restore is not None or a.hold
             else 'repair-consumers' if a.repair_consumers else 'fetch-hr' if a.fetch_hr else None)
@@ -2103,8 +2106,6 @@ def run_command(P, a):
         return repair_consumers(P, a.jobs, force=not a.if_changed)
     if a.repair:
         return repair(P, a.jobs)
-    if a.dismiss:
-        return dismiss(P, a.dismiss)
     if a.hold:
         rc = restore(P, [a.hold])
         with open(P.state(HOLD), 'a', encoding='utf-8') as f:

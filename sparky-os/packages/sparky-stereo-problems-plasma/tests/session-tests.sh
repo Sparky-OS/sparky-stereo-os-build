@@ -38,6 +38,12 @@ EOS
 chmod 755 /usr/local/bin/kdialog
 check "the units are enabled for the person's graphical session" "[ -L /usr/lib/systemd/user/graphical-session.target.wants/sparky-stereo-problems-notifier.service ] && [ -L /usr/lib/systemd/user/graphical-session.target.wants/sparky-stereo-problems-notifier.path ]"
 
+# the computer's own problems (the other packages' failed services in this container, and the like) are hidden for the
+# person first, so this suite's own make the login: Hide holds while they do not change
+for k in $(ux $B list --json | python3 -c 'import json,sys; print(" ".join("%s/%s/%s" % (p["scope"], p["package"], p["key"]) for p in json.load(sys.stdin) if "key" in p and not p["hidden"]))'); do
+	ux $B hide --"${k%%/*}" "$(echo "$k" | cut -d/ -f2)" "${k#*/*/}"
+done
+
 echo "== at login: several open problems, one summary"
 $B keep --machine $P one LOCAL4 "First Service" one.service @LOCAL8 --repair '["true"]'
 $B keep --machine $P two LOCAL4 "Second Service" two.service @LOCAL9
