@@ -1,4 +1,11 @@
 -------------------------------------------------------------------------------
+  Version 20261103.1~sparky9~0 (2026-11-03)
+-------------------------------------------------------------------------------
+  * No /tmp wipe (Daniel: "I never asked for a wipe"): usr/lib/tmpfiles.d/sparky-tmp.conf, which emptied /tmp at every
+    boot since 20261010.2, is removed; /tmp stays on disk and keeps its files across reboots
+  * tests/tmp-on-disk-test.sh now checks that the package keeps /tmp at boot and ships no /tmp rule
+
+-------------------------------------------------------------------------------
   Version 20261010.3~sparky9~0 (2026-10-10)
 -------------------------------------------------------------------------------
   * The rule for your own sysctl values, in the README and at the top of 70-sparky-stereo.conf (Daniel): name your file
