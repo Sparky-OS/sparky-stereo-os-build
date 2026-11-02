@@ -56,15 +56,18 @@ def check_architecture(arch):
             raise ValueError(f"Script package architecture {arch} differs from build host {host}")
 
 
-def build(tree, out, authoring, architecture="all"):
+def build(tree, out, authoring, architecture="all", build_dependencies=()):
     old_umask = os.umask(0o022)
     try:
-        return _build(tree, out, authoring, architecture)
+        return _build(tree, out, authoring, architecture, build_dependencies)
     finally:
         os.umask(old_umask)
 
 
-def _build(tree, out, authoring, architecture):
+def _build(tree, out, authoring, architecture, build_dependencies):
+    if any(not dep or any(c in dep for c in "\n\r") for dep in build_dependencies):
+        raise ValueError("Invalid additional build dependency")
+    extra_build_deps = "".join(", " + dep for dep in build_dependencies)
     tree, out, authoring = (Path(p).resolve() for p in (tree, out, authoring))
     fields = package.control(tree)
     name, version, arch = package.identity(fields)
@@ -118,7 +121,7 @@ def _build(tree, out, authoring, architecture):
         (source / "debian/control").write_text(
             f"Source: {name}\nSection: {section}\nPriority: {priority}\n"
             f"Maintainer: {maintainer}\n"
-            "Build-Depends: dpkg-dev, gcc, node-acorn, nodejs, perl, python3, python3-yaml\n"
+            f"Build-Depends: dpkg-dev, gcc, node-acorn, nodejs, perl, python3, python3-yaml{extra_build_deps}\n"
             "Standards-Version: 4.7.4\nRules-Requires-Root: no\n\n"
             f"Package: {name}\nArchitecture: {arch}\nSection: {section}\nPriority: {priority}\n"
             f"Description: {fields['description']}\n"
@@ -191,8 +194,10 @@ if __name__ == "__main__":
     parser.add_argument("--authoring", required=True, type=Path)
     parser.add_argument("--architecture", default="all",
                         help="explicit architecture for script/data packages constrained to this build host")
+    parser.add_argument("--build-dependency", action="append", default=[],
+                        help="additional dependency used by the authored recipe")
     args = parser.parse_args()
     try:
-        build(args.tree, args.out, args.authoring, args.architecture)
+        build(args.tree, args.out, args.authoring, args.architecture, args.build_dependency)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.exit(1, str(error) + "\n")
