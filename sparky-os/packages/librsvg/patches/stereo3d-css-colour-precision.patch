@@ -1,0 +1,2452 @@
+Description: Parse every CSS colour and draw it at more than 8 bits
+ librsvg kept only rgb(), hsl() and hwb() of what cssparser-color parses and
+ rejected lab(), lch(), oklab(), oklch() and color() as "unsupported color
+ syntax"; the CSS Color HDR spaces, color-mix() and relative colours did not
+ parse at all.  The declaration was dropped and the shape painted black, and
+ the message reached only RSVG_LOG.  Colours that did parse were stored as
+ 8-bit RGBA.  This adds a parser for the whole <color> grammar of CSS Color 4,
+ CSS Color 5 and CSS Color HDR (css_color.rs) that keeps each colour in its
+ own space in double precision; solid colours and gradient stops reach cairo
+ as doubles, gamut mapped into sRGB as CSS Color 4 section 14.2 says when
+ they are outside it, which is logged.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: vendor, Sparky Stereo OS (ORDER 348)
+Forwarded: no
+Last-Update: 2026-11-02
+---
+diff --git a/rsvg/src/color.rs b/rsvg/src/color.rs
+index 470f4c0..9267949 100644
+--- a/rsvg/src/color.rs
++++ b/rsvg/src/color.rs
+@@ -4,6 +4,7 @@ use cssparser::{ParseErrorKind, Parser};
+ use cssparser_color as cssc;
+ use cssparser_color::{hsl_to_rgb, hwb_to_rgb};
+ 
++use crate::css_color::{self, CssColor};
+ use crate::error::*;
+ use crate::parsers::Parse;
+ use crate::unit_interval::UnitInterval;
+@@ -20,6 +21,8 @@ pub enum Color {
+     Hsl(Hsl),
+     /// Specifies a color in sRGB using hue, whiteness and blackness components.
+     Hwb(Hwb),
++    /// Any `<color>` of CSS Color 4, CSS Color 5 and CSS Color HDR, kept in its own colour space in double precision.
++    Css(CssColor),
+ }
+ 
+ /// A color with red, green, blue, and alpha components, in a byte each.
+@@ -145,58 +148,43 @@ fn clamp_floor_256_f32(val: f32) -> u8 {
+     val.round().clamp(0., 255.) as u8
+ }
+ 
+-/// Turn a short-lived [`cssparser::ParseError`] into a long-lived [`ParseError`].
+-///
+-/// cssparser's error type has a lifetime equal to the string being parsed.  We want
+-/// a long-lived error so we can store it away if needed.  Basically, here we turn
+-/// a `&str` into a `String`.
+-fn map_color_parse_error(err: cssparser::ParseError<'_, ()>) -> ParseError<'_> {
+-    let string_err = match err.kind {
+-        ParseErrorKind::Basic(ref e) => format!("{}", e),
+-        ParseErrorKind::Custom(()) => {
+-            // In cssparser 0.31, the error type for Color::parse is defined like this:
+-            //
+-            //   pub fn parse<'i>(input: &mut Parser<'i, '_>) -> Result<Color, ParseError<'i, ()>> {
+-            //
+-            // The ParseError<'i, ()> means that the ParseErrorKind::Custom(T) variant will have
+-            // T be the () type.
+-            //
+-            // So, here we match for () inside the Custom variant.  If cssparser
+-            // changes its error API, this match will hopefully catch errors.
+-            //
+-            // Implementation detail: Color::parse() does not ever return Custom errors, only
+-            // Basic ones.  So the match for Basic above handles everything, and this one
+-            // for () is a dummy case.
+-            "could not parse color".to_string()
+-        }
+-    };
+-
+-    ParseError {
+-        kind: ParseErrorKind::Custom(ValueErrorKind::Parse(string_err)),
+-        location: err.location,
+-    }
+-}
+-
+ fn parse_plain_color<'i>(parser: &mut Parser<'i, '_>) -> Result<Color, ParseError<'i>> {
+     let loc = parser.current_source_location();
++    let start = parser.position();
++
++    // One component value: a function with its arguments, an identifier or a hash.  Its source text goes to the
++    // CSS colour parser, which knows the whole <color> grammar.
++    let is_function = matches!(parser.next()?, cssparser::Token::Function(_));
++    if is_function {
++        parser.parse_nested_block(|p| {
++            while p.next_including_whitespace_and_comments().is_ok() {}
++            Ok::<(), ParseError<'i>>(())
++        })?;
++    }
++    let text = parser.slice_from(start).trim();
+ 
+-    let csscolor = cssc::Color::parse(parser).map_err(map_color_parse_error)?;
+-
+-    // Return only supported color types, and mark the others as errors.
+-    match csscolor {
+-        cssc::Color::CurrentColor => Ok(Color::CurrentColor),
+-
+-        cssc::Color::Rgba(rgba) => Ok(Color::Rgba(rgba.into())),
+-
+-        cssc::Color::Hsl(hsl) => Ok(Color::Hsl(hsl.into())),
+-
+-        cssc::Color::Hwb(hwb) => Ok(Color::Hwb(hwb.into())),
++    if text.eq_ignore_ascii_case("currentcolor") {
++        return Ok(Color::CurrentColor);
++    }
+ 
+-        _ => Err(ParseError {
+-            kind: ParseErrorKind::Custom(ValueErrorKind::parse_error("unsupported color syntax")),
++    css_color::parse_css_color(text, &css_color::Context::default())
++        .map(|css| {
++            // an sRGB colour that 8 bits hold exactly (hex, names, rgb() with integers) stays an RGBA
++            let byte = |v: f64| {
++                let b = v * 255.0;
++                if (b - b.round()).abs() < 1e-9 { Some(b.round() as u8) } else { None }
++            };
++            if css.space == css_color::Space::Srgb && css.missing == 0 {
++                if let (Some(red), Some(green), Some(blue)) = (byte(css.c[0]), byte(css.c[1]), byte(css.c[2])) {
++                    return Color::Rgba(RGBA::new(red, green, blue, css.alpha as f32));
++                }
++            }
++            Color::Css(css)
++        })
++        .map_err(|e| ParseError {
++            kind: ParseErrorKind::Custom(ValueErrorKind::parse_error(&e)),
+             location: loc,
+-        }),
+-    }
++        })
+ }
+ 
+ /// Parse a custom property name.
+@@ -284,10 +272,41 @@ pub fn color_to_rgba(color: &Color) -> RGBA {
+             RGBA::from_floats(red, green, blue, hwb.alpha.unwrap_or(OPAQUE))
+         }
+ 
++        Color::Css(css) => {
++            let ([red, green, blue, alpha], _) = color_to_rgba_f64(color);
++            let _ = css;
++            RGBA::from_floats(red as f32, green as f32, blue as f32, alpha as f32)
++        }
++
+         _ => unimplemented!(),
+     }
+ }
+ 
++/// The colour for an sRGB cairo target in double precision, gamut mapped into [0, 1] as CSS Color 4 section
++/// 14.2 says when it is outside sRGB; the second value says whether it was.
++pub fn color_to_rgba_f64(color: &Color) -> ([f64; 4], bool) {
++    match color {
++        Color::Css(css) => {
++            let (rgb, mapped) = css_color::gamut_map(css, css_color::Space::Srgb);
++            let alpha = if css.alpha_missing() { 0.0 } else { css.alpha };
++            ([rgb[0], rgb[1], rgb[2], alpha.clamp(0.0, 1.0)], mapped)
++        }
++        Color::Hsl(_) | Color::Hwb(_) | Color::Rgba(_) => {
++            let rgba = color_to_rgba(color);
++            (
++                [
++                    f64::from(rgba.red) / 255.0,
++                    f64::from(rgba.green) / 255.0,
++                    f64::from(rgba.blue) / 255.0,
++                    f64::from(rgba.alpha),
++                ],
++                false,
++            )
++        }
++        Color::CurrentColor => unimplemented!(),
++    }
++}
++
+ /// Takes the `opacity` property and an alpha value from a CSS `<color>` and returns a resulting
+ /// alpha for a computed value.
+ ///
+@@ -337,6 +356,15 @@ pub fn resolve_color(color: &Color, opacity: UnitInterval, current_color: &Color
+             ..hsl
+         }),
+ 
++        Color::Css(css) => {
++            let mut out = css;
++            let UnitInterval(o) = opacity;
++            let alpha = if css.alpha_missing() { 0.0 } else { css.alpha };
++            out.alpha = util::clamp(alpha * o, 0.0, 1.0);
++            out.missing &= !8;
++            Color::Css(out)
++        }
++
+         Color::Hwb(hwb) => Color::Hwb(Hwb {
+             alpha: Some(resolve_alpha(opacity, hwb.alpha)),
+             ..hwb
+@@ -363,12 +391,53 @@ mod tests {
+             Color::Rgba(RGBA::new(0x11, 0x22, 0x33, 1.0))
+         );
+ 
++        // CSS Color 4 section 5.1: the precision as authored, so 50% is 0.5 rather than 128 / 255
+         assert_eq!(
+             Color::parse_str("var(--foo, rgb(100% 50% 25%)").unwrap(),
+-            Color::Rgba(RGBA::new(0xff, 0x80, 0x40, 1.0))
++            Color::Css(CssColor::new(css_color::Space::Srgb, 1.0, 0.5, 0.25, 1.0))
+         );
+     }
+ 
++    #[test]
++    fn parses_css_color_4_5_and_hdr() {
++        for text in [
++            "color(display-p3 0.423457 0.554321 0.676543)",
++            "lab(52.2345% 40.1645 59.9971)",
++            "oklch(0.6 0.2 30)",
++            "color(rec2100-pq 0.5 0.45 0.4)",
++            "color-mix(in oklab, #336699 30%, color(display-p3 0.9 0.6 0.1))",
++            "oklch(from #336699 calc(l + 0.1) calc(c * 1.5) calc(h + 30))",
++            "jzczhz(0.12 0.04 300)",
++        ] {
++            assert!(matches!(Color::parse_str(text).unwrap(), Color::Css(_)), "{}", text);
++        }
++    }
++
++    // a colour keeps more than 8 bits: color(srgb 0.123457 ...) reaches cairo as that value
++    #[test]
++    fn keeps_precision() {
++        let c = Color::parse_str("color(srgb 0.123457 0.654321 0.876543)").unwrap();
++        let ([r, g, b, a], mapped) = color_to_rgba_f64(&c);
++        assert!(!mapped);
++        assert!((r - 0.123457).abs() < 1e-12 && (g - 0.654321).abs() < 1e-12 && (b - 0.876543).abs() < 1e-12);
++        assert_eq!(a, 1.0);
++    }
++
++    // CSS Color 4 section 14.2: outside sRGB, the colour is gamut mapped and that is reported
++    #[test]
++    fn gamut_maps_outside_srgb() {
++        let c = Color::parse_str("color(display-p3 1 1 0)").unwrap();
++        let ([r, g, b, _], mapped) = color_to_rgba_f64(&c);
++        assert!(mapped);
++        assert!((r - 0.99116).abs() < 0.01 && (g - 0.99733).abs() < 0.01 && b.abs() < 0.01);
++    }
++
++    #[test]
++    fn invalid_colour_is_an_error_that_says_why() {
++        assert!(Color::parse_str("color(profoto-rgb 0.4835 0.9167 0.2188)").is_err());
++        assert!(Color::parse_str("lab(50% 40 abc)").is_err());
++    }
++
+     // FIXME: var() - when fixing #459, see the note in the code above.  All the syntaxes
+     // in this test function will become valid once we have full support for var().
+     #[test]
+diff --git a/rsvg/src/css_color.rs b/rsvg/src/css_color.rs
+new file mode 100644
+index 0000000..b35affa
+--- /dev/null
++++ b/rsvg/src/css_color.rs
+@@ -0,0 +1,2107 @@
++//! CSS colour values: the `<color>` grammar of CSS Color 4 (CRD 1 November 2026) sections 4 to 10,
++//! CSS Color 5 (WD 29 October 2026) sections 2 to 8 and CSS Color HDR 1 (WD 26 October 2026) sections 4 to 8.
++//!
++//! Each colour is kept in its own colour space in double precision.  The conversions port the specifications'
++//! own sample code (CSS Color 4 sections 7.1, 7.2, 8.1, 8.2, 19 and 20.3, CSS Color HDR section 11, CSS Color 5
++//! section 6.1), which W3C publishes under its software and document licence.  Gamut mapping is CSS Color 4
++//! section 14.2.2; interpolation is CSS Color 4 section 13 and CSS Color 5 section 3.3.
++
++use std::f64::consts::{E, PI};
++
++type Vec3 = [f64; 3];
++type Mat3 = [[f64; 3]; 3];
++
++fn mul(m: &Mat3, v: &Vec3) -> Vec3 {
++    [
++        m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2],
++        m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2],
++        m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2],
++    ]
++}
++
++fn spow(base: f64, e: f64) -> f64 {
++    base.abs().powf(e).copysign(base)
++}
++
++// CSS Color 4 section 19
++const D50: [f64; 3] = [0.3457 / 0.3585, 1.0, (1.0 - 0.3457 - 0.3585) / 0.3585];
++
++const SRGB_TO_XYZ: Mat3 = [
++    [506752.0 / 1228815.0, 87881.0 / 245763.0, 12673.0 / 70218.0],
++    [87098.0 / 409605.0, 175762.0 / 245763.0, 12673.0 / 175545.0],
++    [7918.0 / 409605.0, 87881.0 / 737289.0, 1001167.0 / 1053270.0],
++];
++const XYZ_TO_SRGB: Mat3 = [
++    [12831.0 / 3959.0, -329.0 / 214.0, -1974.0 / 3959.0],
++    [-851781.0 / 878810.0, 1648619.0 / 878810.0, 36519.0 / 878810.0],
++    [705.0 / 12673.0, -2585.0 / 12673.0, 705.0 / 667.0],
++];
++const P3_TO_XYZ: Mat3 = [
++    [608311.0 / 1250200.0, 189793.0 / 714400.0, 198249.0 / 1000160.0],
++    [35783.0 / 156275.0, 247089.0 / 357200.0, 198249.0 / 2500400.0],
++    [0.0, 32229.0 / 714400.0, 5220557.0 / 5000800.0],
++];
++const XYZ_TO_P3: Mat3 = [
++    [446124.0 / 178915.0, -333277.0 / 357830.0, -72051.0 / 178915.0],
++    [-14852.0 / 17905.0, 63121.0 / 35810.0, 423.0 / 17905.0],
++    [11844.0 / 330415.0, -50337.0 / 660830.0, 316169.0 / 330415.0],
++];
++const PROPHOTO_TO_XYZ: Mat3 = [
++    [0.79776664490064230, 0.13518129740053308, 0.03134773412839220],
++    [0.28807482881940130, 0.71183523424187300, 0.00008993693872564],
++    [0.00000000000000000, 0.00000000000000000, 0.82510460251046020],
++];
++const XYZ_TO_PROPHOTO: Mat3 = [
++    [1.34578688164715830, -0.25557208737979464, -0.05110186497554526],
++    [-0.54463070512490190, 1.50824774284514680, 0.02052744743642139],
++    [0.00000000000000000, 0.00000000000000000, 1.21196754563894520],
++];
++const A98_TO_XYZ: Mat3 = [
++    [573536.0 / 994567.0, 263643.0 / 1420810.0, 187206.0 / 994567.0],
++    [591459.0 / 1989134.0, 6239551.0 / 9945670.0, 374412.0 / 4972835.0],
++    [53769.0 / 1989134.0, 351524.0 / 4972835.0, 4929758.0 / 4972835.0],
++];
++const XYZ_TO_A98: Mat3 = [
++    [1829569.0 / 896150.0, -506331.0 / 896150.0, -308931.0 / 896150.0],
++    [-851781.0 / 878810.0, 1648619.0 / 878810.0, 36519.0 / 878810.0],
++    [16779.0 / 1248040.0, -147721.0 / 1248040.0, 1266979.0 / 1248040.0],
++];
++const REC2020_TO_XYZ: Mat3 = [
++    [63426534.0 / 99577255.0, 20160776.0 / 139408157.0, 47086771.0 / 278816314.0],
++    [26158966.0 / 99577255.0, 472592308.0 / 697040785.0, 8267143.0 / 139408157.0],
++    [0.0, 19567812.0 / 697040785.0, 295819943.0 / 278816314.0],
++];
++const XYZ_TO_REC2020: Mat3 = [
++    [30757411.0 / 17917100.0, -6372589.0 / 17917100.0, -4539589.0 / 17917100.0],
++    [-19765991.0 / 29648200.0, 47925759.0 / 29648200.0, 467509.0 / 29648200.0],
++    [792561.0 / 44930125.0, -1921689.0 / 44930125.0, 42328811.0 / 44930125.0],
++];
++const D65_TO_D50: Mat3 = [
++    [1.0479297925449969, 0.022946870601609652, -0.05019226628920524],
++    [0.02962780877005599, 0.9904344267538799, -0.017073799063418826],
++    [-0.009243040646204504, 0.015055191490298152, 0.7518742814281371],
++];
++const D50_TO_D65: Mat3 = [
++    [0.955473421488075, -0.02309845494876471, 0.06325924320057072],
++    [-0.0283697093338637, 1.0099953980813041, 0.021041441191917323],
++    [0.012314014864481998, -0.020507649298898964, 1.330365926242124],
++];
++const XYZ_TO_LMS: Mat3 = [
++    [0.8190224379967030, 0.3619062600528904, -0.1288737815209879],
++    [0.0329836539323885, 0.9292868615863434, 0.0361446663506424],
++    [0.0481771893596242, 0.2642395317527308, 0.6335478284694309],
++];
++const LMS_TO_OKLAB: Mat3 = [
++    [0.2104542683093140, 0.7936177747023054, -0.0040720430116193],
++    [1.9779985324311684, -2.4285922420485799, 0.4505937096174110],
++    [0.0259040424655478, 0.7827717124575296, -0.8086757549230774],
++];
++const LMS_TO_XYZ: Mat3 = [
++    [1.2268798758459243, -0.5578149944602171, 0.2813910456659647],
++    [-0.0405757452148008, 1.1122868032803170, -0.0717110580655164],
++    [-0.0763729366746601, -0.4214933324022432, 1.5869240198367816],
++];
++const OKLAB_TO_LMS: Mat3 = [
++    [1.0000000000000000, 0.3963377773761749, 0.2158037573099136],
++    [1.0000000000000000, -0.1055613458156586, -0.0638541728258133],
++    [1.0000000000000000, -0.0894841775298119, -1.2914855480194092],
++];
++
++fn lin_srgb(v: &Vec3) -> Vec3 {
++    v.map(|x| {
++        let a = x.abs();
++        if a <= 0.04045 { x / 12.92 } else { ((a + 0.055) / 1.055).powf(2.4).copysign(x) }
++    })
++}
++
++fn gam_srgb(v: &Vec3) -> Vec3 {
++    v.map(|x| {
++        let a = x.abs();
++        if a > 0.0031308 { (1.055 * a.powf(1.0 / 2.4) - 0.055).copysign(x) } else { 12.92 * x }
++    })
++}
++
++fn lin_prophoto(v: &Vec3) -> Vec3 {
++    v.map(|x| if x.abs() <= 16.0 / 512.0 { x / 16.0 } else { spow(x, 1.8) })
++}
++
++fn gam_prophoto(v: &Vec3) -> Vec3 {
++    v.map(|x| if x.abs() >= 1.0 / 512.0 { spow(x, 1.0 / 1.8) } else { 16.0 * x })
++}
++
++fn pow_each(v: &Vec3, e: f64) -> Vec3 {
++    v.map(|x| spow(x, e))
++}
++
++fn xyz_to_lab(xyz_d50: &Vec3) -> Vec3 {
++    let eps = 216.0 / 24389.0;
++    let kappa = 24389.0 / 27.0;
++    let mut f = [0.0; 3];
++    for i in 0..3 {
++        let v = xyz_d50[i] / D50[i];
++        f[i] = if v > eps { v.cbrt() } else { (kappa * v + 16.0) / 116.0 };
++    }
++    [116.0 * f[1] - 16.0, 500.0 * (f[0] - f[1]), 200.0 * (f[1] - f[2])]
++}
++
++fn lab_to_xyz(lab: &Vec3) -> Vec3 {
++    let kappa = 24389.0 / 27.0;
++    let eps = 216.0 / 24389.0;
++    let l116 = lab[0] / 116.0;
++    let a500 = lab[1] / 500.0;
++    let b200 = lab[2] / 200.0;
++    let f1 = l116 + 16.0 / 116.0;
++    let f0 = f1 + a500;
++    let f2 = f1 - b200;
++    let xyz = [
++        if f0 * f0 * f0 > eps { f0 * f0 * f0 } else { (l116 + a500) * (116.0 / kappa) },
++        if lab[0] > kappa * eps { ((lab[0] + 16.0) / 116.0).powi(3) } else { lab[0] / kappa },
++        if f2 * f2 * f2 > eps { f2 * f2 * f2 } else { (l116 - b200) * (116.0 / kappa) },
++    ];
++    [xyz[0] * D50[0], xyz[1] * D50[1], xyz[2] * D50[2]]
++}
++
++/// Rectangular to polar; the hue is NaN when powerless (chroma <= epsilon).
++fn to_polar(lab: &Vec3, epsilon: f64) -> Vec3 {
++    let chroma = lab[1].hypot(lab[2]);
++    let mut hue = lab[2].atan2(lab[1]) * 180.0 / PI;
++    if hue < 0.0 {
++        hue += 360.0;
++    }
++    if chroma <= epsilon {
++        hue = f64::NAN;
++    }
++    [lab[0], chroma, hue]
++}
++
++fn from_polar(lch: &Vec3) -> Vec3 {
++    let h = if lch[2].is_nan() { 0.0 } else { lch[2] * PI / 180.0 };
++    [lch[0], lch[1] * h.cos(), lch[1] * h.sin()]
++}
++
++fn xyz_to_oklab(xyz: &Vec3) -> Vec3 {
++    let lms = mul(&XYZ_TO_LMS, xyz);
++    mul(&LMS_TO_OKLAB, &lms.map(f64::cbrt))
++}
++
++fn oklab_to_xyz(lab: &Vec3) -> Vec3 {
++    let lms = mul(&OKLAB_TO_LMS, lab);
++    mul(&LMS_TO_XYZ, &lms.map(|c| c * c * c))
++}
++
++// CSS Color HDR section 11
++const YW: f64 = 203.0;
++const PQ_C1: f64 = 3424.0 / 4096.0;
++const PQ_C2: f64 = 2413.0 / 128.0;
++const PQ_C3: f64 = 2392.0 / 128.0;
++const PQ_N: f64 = 2610.0 / 16384.0;
++const PQ_M: f64 = 2523.0 / 32.0;
++
++fn pq_encode(v: &Vec3) -> Vec3 {
++    v.map(|x| {
++        let x = (x * YW / 10000.0).max(0.0).powf(PQ_N);
++        ((PQ_C1 + PQ_C2 * x) / (1.0 + PQ_C3 * x)).powf(PQ_M)
++    })
++}
++
++fn pq_decode(v: &Vec3) -> Vec3 {
++    v.map(|x| {
++        let vm = spow(x, 1.0 / PQ_M);
++        ((vm - PQ_C1).max(0.0) / (PQ_C2 - PQ_C3 * vm)).powf(1.0 / PQ_N) * 10000.0 / YW
++    })
++}
++
++const HLG_A: f64 = 0.17883277;
++const HLG_B: f64 = 0.28466892;
++const HLG_C: f64 = 0.55991073;
++const HLG_SCALE: f64 = 3.7743;
++
++fn hlg_encode(v: &Vec3) -> Vec3 {
++    v.map(|x| {
++        let x = x / HLG_SCALE;
++        if x <= 1.0 / 12.0 { spow(3.0 * x, 0.5) } else { HLG_A * (12.0 * x - HLG_B).ln() + HLG_C }
++    })
++}
++
++fn hlg_decode(v: &Vec3) -> Vec3 {
++    v.map(|x| {
++        if x <= 0.5 { x * x / 3.0 * HLG_SCALE } else { ((x - HLG_C) / HLG_A).exp().mul_add(1.0, HLG_B) / 12.0 * HLG_SCALE }
++    })
++}
++
++const JZ_M: Mat3 = [[0.41478972, 0.579999, 0.0146480], [-0.2015100, 1.120649, 0.0531008], [-0.0166008, 0.264800, 0.6684799]];
++const JZ_LMS_TO_IAB: Mat3 = [[0.5, 0.5, 0.0], [3.524000, -4.066708, 0.542708], [0.199076, 1.096799, -1.295875]];
++const JZ_LMS_TO_XYZ: Mat3 = [
++    [1.9242264357876067, -1.0047923125953657, 0.037651404030618],
++    [0.35031676209499907, 0.7264811939316552, -0.06538442294808501],
++    [-0.09098281098284752, -0.3127282905230739, 1.5227665613052603],
++];
++const JZ_IAB_TO_LMS: Mat3 = [
++    [1.0, 0.13860504327153927, 0.05804731615611883],
++    [1.0, -0.1386050432715393, -0.058047316156118904],
++    [1.0, -0.09601924202631895, -0.81189189605603900],
++];
++const JZ_B: f64 = 1.15;
++const JZ_G: f64 = 0.66;
++const JZ_D: f64 = -0.56;
++const JZ_D0: f64 = 1.6295499532821566e-11;
++const JZ_P: f64 = 1.7 * 2523.0 / 32.0;
++
++fn xyz_to_jzazbz(xyz: &Vec3) -> Vec3 {
++    let (xa, ya, za) = (xyz[0] * YW, xyz[1] * YW, xyz[2] * YW);
++    let lms = mul(&JZ_M, &[JZ_B * xa - (JZ_B - 1.0) * za, JZ_G * ya - (JZ_G - 1.0) * xa, za]);
++    let pq = lms.map(|v| {
++        let x = spow(v / 10000.0, PQ_N);
++        spow((PQ_C1 + PQ_C2 * x) / (1.0 + PQ_C3 * x), JZ_P)
++    });
++    let iab = mul(&JZ_LMS_TO_IAB, &pq);
++    [(1.0 + JZ_D) * iab[0] / (1.0 + JZ_D * iab[0]) - JZ_D0, iab[1], iab[2]]
++}
++
++/// The sample code returns absolute XYZ; divided by Yw so that diffuse white is jzazbz(0.22207 ...) (HDR section 6.4).
++fn jzazbz_to_xyz(j: &Vec3) -> Vec3 {
++    let iz = (j[0] + JZ_D0) / (1.0 + JZ_D - JZ_D * (j[0] + JZ_D0));
++    let pq = mul(&JZ_IAB_TO_LMS, &[iz, j[1], j[2]]);
++    let lms = pq.map(|v| {
++        let p = spow(v, 1.0 / JZ_P);
++        10000.0 * spow((PQ_C1 - p) / (PQ_C3 * p - PQ_C2), 1.0 / PQ_N)
++    });
++    let m = mul(&JZ_LMS_TO_XYZ, &lms);
++    let xa = (m[0] + (JZ_B - 1.0) * m[2]) / JZ_B;
++    let ya = (m[1] + (JZ_G - 1.0) * xa) / JZ_G;
++    [xa / YW, ya / YW, m[2] / YW]
++}
++
++const ICTCP_XYZ_TO_LMS: Mat3 = [
++    [0.3592832590121217, 0.6976051147779502, -0.0358915932320290],
++    [-0.1920808463704993, 1.1004767970374321, 0.0753748658519118],
++    [0.0070797844607479, 0.0748396662186362, 0.8433265453898765],
++];
++const ICTCP_LMS_TO_ICTCP: Mat3 = [
++    [2048.0 / 4096.0, 2048.0 / 4096.0, 0.0],
++    [6610.0 / 4096.0, -13613.0 / 4096.0, 7003.0 / 4096.0],
++    [17933.0 / 4096.0, -17390.0 / 4096.0, -543.0 / 4096.0],
++];
++const ICTCP_LMS_TO_XYZ: Mat3 = [
++    [2.0701522183894223, -1.3263473389671563, 0.2066510476294053],
++    [0.3647385209748072, 0.6805660249472273, -0.0453045459220347],
++    [-0.0497472075358123, -0.0492609666966131, 1.1880659249923042],
++];
++const ICTCP_TO_LMS: Mat3 = [
++    [0.9999999999999998, 0.0086090370379328, 0.1110296250030260],
++    [0.9999999999999998, -0.0086090370379328, -0.1110296250030259],
++    [0.9999999999999998, 0.5600313357106791, -0.3206271749873188],
++];
++
++fn xyz_to_ictcp(xyz: &Vec3) -> Vec3 {
++    let lms = mul(&ICTCP_XYZ_TO_LMS, &xyz.map(|v| v * YW));
++    let pq = lms.map(|v| {
++        let x = (v.max(0.0) / 10000.0).powf(PQ_N);
++        ((PQ_C1 + PQ_C2 * x) / (1.0 + PQ_C3 * x)).powf(PQ_M)
++    });
++    mul(&ICTCP_LMS_TO_ICTCP, &pq)
++}
++
++/// The sample code returns absolute XYZ; divided by Yw so that ictcp(0.58069 0 0) is diffuse white (HDR section 6.3).
++fn ictcp_to_xyz(i: &Vec3) -> Vec3 {
++    let pq = mul(&ICTCP_TO_LMS, i);
++    let lms = pq.map(|v| {
++        let vm = spow(v, 1.0 / PQ_M);
++        10000.0 * ((vm - PQ_C1).max(0.0) / (PQ_C2 - PQ_C3 * vm)).powf(1.0 / PQ_N)
++    });
++    mul(&ICTCP_LMS_TO_XYZ, &lms).map(|v| v / YW)
++}
++
++// CSS Color 4 sections 7.1, 7.2, 8.1 and 8.2
++fn hsl_to_rgb(hue: f64, sat: f64, light: f64) -> Vec3 {
++    let sat = sat / 100.0;
++    let light = light / 100.0;
++    let f = |n: f64| {
++        let k = (n + hue / 30.0) % 12.0;
++        let a = sat * light.min(1.0 - light);
++        light - a * (-1.0f64).max((k - 3.0).min(9.0 - k).min(1.0))
++    };
++    [f(0.0), f(8.0), f(4.0)]
++}
++
++fn rgb_to_hsl(r: f64, g: f64, b: f64) -> Vec3 {
++    let mx = r.max(g).max(b);
++    let mn = r.min(g).min(b);
++    let (mut hue, mut sat, light) = (f64::NAN, 0.0, (mn + mx) / 2.0);
++    let d = mx - mn;
++    let epsilon = 1.0 / 100000.0;
++    if d != 0.0 {
++        sat = if light.abs() <= epsilon || (1.0 - light).abs() < epsilon {
++            0.0
++        } else {
++            (mx - light) / light.min(1.0 - light)
++        };
++        hue = if mx == r {
++            (g - b) / d + if g < b { 6.0 } else { 0.0 }
++        } else if mx == g {
++            (b - r) / d + 2.0
++        } else {
++            (r - g) / d + 4.0
++        };
++        hue *= 60.0;
++    }
++    if sat < 0.0 {
++        hue = if hue.is_nan() { 0.0 } else { hue } + 180.0;
++        sat = sat.abs();
++    }
++    if !hue.is_nan() && hue >= 360.0 {
++        hue -= 360.0;
++    }
++    if sat <= epsilon {
++        hue = f64::NAN;
++        sat = 0.0;
++    }
++    [hue, sat * 100.0, light * 100.0]
++}
++
++fn hwb_to_rgb(hue: f64, white: f64, black: f64) -> Vec3 {
++    let white = white / 100.0;
++    let black = black / 100.0;
++    if white + black >= 1.0 {
++        let gray = white / (white + black);
++        return [gray, gray, gray];
++    }
++    hsl_to_rgb(hue, 100.0, 50.0).map(|c| c * (1.0 - white - black) + white)
++}
++
++fn rgb_to_hwb(r: f64, g: f64, b: f64) -> Vec3 {
++    let mx = r.max(g).max(b);
++    let mn = r.min(g).min(b);
++    let d = mx - mn;
++    let mut hue = f64::NAN;
++    if d != 0.0 {
++        hue = if mx == r {
++            (g - b) / d + if g < b { 6.0 } else { 0.0 }
++        } else if mx == g {
++            (b - r) / d + 2.0
++        } else {
++            (r - g) / d + 4.0
++        };
++        hue *= 60.0;
++    }
++    if !hue.is_nan() && hue >= 360.0 {
++        hue -= 360.0;
++    }
++    let (white, black) = (mn, 1.0 - mx);
++    if white + black >= 1.0 - 1.0 / 100000.0 {
++        hue = f64::NAN;
++    }
++    [hue, white * 100.0, black * 100.0]
++}
++
++fn positive_mod(a: f64, m: f64) -> f64 {
++    a.rem_euclid(m)
++}
++
++/// The colour spaces of CSS Color 4 sections 7 to 10 and CSS Color HDR sections 6 and 8.
++#[derive(Clone, Copy, PartialEq, Eq, Debug)]
++pub enum Space {
++    Srgb,
++    SrgbLinear,
++    DisplayP3,
++    DisplayP3Linear,
++    A98Rgb,
++    ProphotoRgb,
++    Rec2020,
++    Rec2100Pq,
++    Rec2100Hlg,
++    Rec2100Linear,
++    XyzD50,
++    XyzD65,
++    Hsl,
++    Hwb,
++    Lab,
++    Lch,
++    Oklab,
++    Oklch,
++    Ictcp,
++    Jzazbz,
++    Jzczhz,
++}
++
++impl Space {
++    pub fn name(self) -> &'static str {
++        match self {
++            Space::Srgb => "srgb",
++            Space::SrgbLinear => "srgb-linear",
++            Space::DisplayP3 => "display-p3",
++            Space::DisplayP3Linear => "display-p3-linear",
++            Space::A98Rgb => "a98-rgb",
++            Space::ProphotoRgb => "prophoto-rgb",
++            Space::Rec2020 => "rec2020",
++            Space::Rec2100Pq => "rec2100-pq",
++            Space::Rec2100Hlg => "rec2100-hlg",
++            Space::Rec2100Linear => "rec2100-linear",
++            Space::XyzD50 => "xyz-d50",
++            Space::XyzD65 => "xyz-d65",
++            Space::Hsl => "hsl",
++            Space::Hwb => "hwb",
++            Space::Lab => "lab",
++            Space::Lch => "lch",
++            Space::Oklab => "oklab",
++            Space::Oklch => "oklch",
++            Space::Ictcp => "ictcp",
++            Space::Jzazbz => "jzazbz",
++            Space::Jzczhz => "jzczhz",
++        }
++    }
++
++    fn is_polar(self) -> bool {
++        matches!(self, Space::Hsl | Space::Hwb | Space::Lch | Space::Oklch | Space::Jzczhz)
++    }
++
++    fn hue_index(self) -> Option<usize> {
++        match self {
++            Space::Hsl | Space::Hwb => Some(0),
++            Space::Lch | Space::Oklch | Space::Jzczhz => Some(2),
++            _ => None,
++        }
++    }
++
++    fn is_rgb_or_xyz(self) -> bool {
++        matches!(
++            self,
++            Space::Srgb
++                | Space::SrgbLinear
++                | Space::DisplayP3
++                | Space::DisplayP3Linear
++                | Space::A98Rgb
++                | Space::ProphotoRgb
++                | Space::Rec2020
++                | Space::Rec2100Pq
++                | Space::Rec2100Hlg
++                | Space::Rec2100Linear
++                | Space::XyzD50
++                | Space::XyzD65
++        )
++    }
++}
++
++fn to_xyz(space: Space, c: &Vec3) -> Vec3 {
++    match space {
++        Space::Srgb => mul(&SRGB_TO_XYZ, &lin_srgb(c)),
++        Space::SrgbLinear => mul(&SRGB_TO_XYZ, c),
++        Space::DisplayP3 => mul(&P3_TO_XYZ, &lin_srgb(c)),
++        Space::DisplayP3Linear => mul(&P3_TO_XYZ, c),
++        Space::A98Rgb => mul(&A98_TO_XYZ, &pow_each(c, 563.0 / 256.0)),
++        Space::ProphotoRgb => mul(&D50_TO_D65, &mul(&PROPHOTO_TO_XYZ, &lin_prophoto(c))),
++        Space::Rec2020 => mul(&REC2020_TO_XYZ, &pow_each(c, 2.4)),
++        Space::Rec2100Linear => mul(&REC2020_TO_XYZ, c),
++        Space::Rec2100Pq => mul(&REC2020_TO_XYZ, &pq_decode(c)),
++        Space::Rec2100Hlg => mul(&REC2020_TO_XYZ, &hlg_decode(c)),
++        Space::XyzD65 => *c,
++        Space::XyzD50 => mul(&D50_TO_D65, c),
++        Space::Hsl => to_xyz(Space::Srgb, &hsl_to_rgb(positive_mod(c[0], 360.0), c[1], c[2])),
++        Space::Hwb => to_xyz(Space::Srgb, &hwb_to_rgb(positive_mod(c[0], 360.0), c[1], c[2])),
++        Space::Lab => mul(&D50_TO_D65, &lab_to_xyz(c)),
++        Space::Lch => mul(&D50_TO_D65, &lab_to_xyz(&from_polar(c))),
++        Space::Oklab => oklab_to_xyz(c),
++        Space::Oklch => oklab_to_xyz(&from_polar(c)),
++        Space::Jzazbz => jzazbz_to_xyz(c),
++        Space::Jzczhz => jzazbz_to_xyz(&from_polar(c)),
++        Space::Ictcp => ictcp_to_xyz(c),
++    }
++}
++
++fn from_xyz(space: Space, xyz: &Vec3) -> Vec3 {
++    match space {
++        Space::Srgb => gam_srgb(&mul(&XYZ_TO_SRGB, xyz)),
++        Space::SrgbLinear => mul(&XYZ_TO_SRGB, xyz),
++        Space::DisplayP3 => gam_srgb(&mul(&XYZ_TO_P3, xyz)),
++        Space::DisplayP3Linear => mul(&XYZ_TO_P3, xyz),
++        Space::A98Rgb => pow_each(&mul(&XYZ_TO_A98, xyz), 256.0 / 563.0),
++        Space::ProphotoRgb => gam_prophoto(&mul(&XYZ_TO_PROPHOTO, &mul(&D65_TO_D50, xyz))),
++        Space::Rec2020 => pow_each(&mul(&XYZ_TO_REC2020, xyz), 1.0 / 2.4),
++        Space::Rec2100Linear => mul(&XYZ_TO_REC2020, xyz),
++        Space::Rec2100Pq => pq_encode(&mul(&XYZ_TO_REC2020, xyz)),
++        Space::Rec2100Hlg => hlg_encode(&mul(&XYZ_TO_REC2020, xyz)),
++        Space::XyzD65 => *xyz,
++        Space::XyzD50 => mul(&D65_TO_D50, xyz),
++        Space::Hsl => {
++            let r = from_xyz(Space::Srgb, xyz);
++            rgb_to_hsl(r[0], r[1], r[2])
++        }
++        Space::Hwb => {
++            let r = from_xyz(Space::Srgb, xyz);
++            rgb_to_hwb(r[0], r[1], r[2])
++        }
++        Space::Lab => xyz_to_lab(&mul(&D65_TO_D50, xyz)),
++        Space::Lch => to_polar(&xyz_to_lab(&mul(&D65_TO_D50, xyz)), 0.0015),
++        Space::Oklab => xyz_to_oklab(xyz),
++        Space::Oklch => to_polar(&xyz_to_oklab(xyz), 0.000004),
++        Space::Jzazbz => xyz_to_jzazbz(xyz),
++        Space::Jzczhz => to_polar(&xyz_to_jzazbz(xyz), 0.0000026),
++        Space::Ictcp => xyz_to_ictcp(xyz),
++    }
++}
++
++// CSS Color 4 section 13.3: analogous component categories; CSS Color HDR names no analogs for its spaces
++#[derive(Clone, Copy, PartialEq, Eq)]
++enum Analog {
++    None,
++    Reds,
++    Greens,
++    Blues,
++    Lightness,
++    Colorfulness,
++    Hue,
++    OpponentA,
++    OpponentB,
++}
++
++fn analogs(space: Space) -> [Analog; 3] {
++    use Analog::*;
++    if space.is_rgb_or_xyz() {
++        return [Reds, Greens, Blues];
++    }
++    match space {
++        Space::Hsl => [Hue, Colorfulness, Lightness],
++        Space::Hwb => [Hue, None, None],
++        Space::Lab | Space::Oklab => [Lightness, OpponentA, OpponentB],
++        Space::Lch | Space::Oklch => [Lightness, Colorfulness, Hue],
++        _ => [None, None, None],
++    }
++}
++
++// CSS Color 4 section 19, powerlessToMissing (and CSS Color HDR section 6.5 for jzczhz)
++fn powerless_to_missing(space: Space, c: &mut Vec3, missing: &mut [bool; 3]) {
++    match space {
++        Space::Hsl => {
++            let sat = if missing[1] { 0.0 } else { c[1] };
++            if sat <= 0.001 {
++                missing[0] = true;
++                if !missing[1] && c[1] > 0.0 {
++                    c[1] = 0.0;
++                }
++            }
++        }
++        Space::Hwb => {
++            let w = if missing[1] { 0.0 } else { c[1] };
++            let b = if missing[2] { 0.0 } else { c[2] };
++            if w + b >= 99.999 {
++                missing[0] = true;
++                if w + b < 100.0 {
++                    if missing[1] {
++                        c[2] = 100.0;
++                    } else if missing[2] {
++                        c[1] = 100.0;
++                    } else {
++                        c[2] = 100.0 - c[1];
++                    }
++                }
++            }
++        }
++        Space::Lch | Space::Oklch | Space::Jzczhz => {
++            let eps = match space {
++                Space::Lch => 0.0015,
++                Space::Oklch => 0.000004,
++                _ => 0.0000026,
++            };
++            let ch = if missing[1] { 0.0 } else { c[1] };
++            if ch <= eps {
++                missing[2] = true;
++                if !missing[1] && c[1] > 0.0 {
++                    c[1] = 0.0;
++                }
++            }
++        }
++        _ => (),
++    }
++}
++
++/// A `<color>` value in its own colour space; missing (`none`) components and alpha are flagged.
++#[derive(Clone, Copy, PartialEq, Debug)]
++pub struct CssColor {
++    pub space: Space,
++    pub c: [f64; 3],
++    pub alpha: f64,
++    /// bit i: component i is missing; bit 3: alpha is missing
++    pub missing: u8,
++}
++
++impl CssColor {
++    pub fn new(space: Space, c0: f64, c1: f64, c2: f64, alpha: f64) -> CssColor {
++        CssColor { space, c: [c0, c1, c2], alpha, missing: 0 }
++    }
++
++    pub fn is_missing(&self, i: usize) -> bool {
++        self.missing & (1 << i) != 0
++    }
++
++    pub fn alpha_missing(&self) -> bool {
++        self.missing & 8 != 0
++    }
++
++    fn set(&mut self, i: usize, v: f64) {
++        self.c[i] = v;
++        self.missing &= !(1 << i);
++    }
++
++    fn set_missing(&mut self, i: usize) {
++        self.c[i] = 0.0;
++        self.missing |= 1 << i;
++    }
++
++    fn set_alpha(&mut self, a: f64) {
++        self.alpha = a;
++        self.missing &= !8;
++    }
++
++    fn set_alpha_missing(&mut self) {
++        self.alpha = 0.0;
++        self.missing |= 8;
++    }
++
++    fn values(&self) -> Vec3 {
++        let mut v = self.c;
++        for (i, x) in v.iter_mut().enumerate() {
++            if self.is_missing(i) || x.is_nan() {
++                *x = 0.0;
++            }
++        }
++        v
++    }
++
++    pub fn to_xyz_d65(&self) -> Vec3 {
++        to_xyz(self.space, &self.values())
++    }
++
++    fn from_xyz_d65(space: Space, xyz: &Vec3, alpha: f64) -> CssColor {
++        let mut c = from_xyz(space, xyz);
++        let mut missing = [false; 3];
++        if space.is_polar() {
++            powerless_to_missing(space, &mut c, &mut missing);
++        }
++        let mut out = CssColor::new(space, 0.0, 0.0, 0.0, alpha);
++        for i in 0..3 {
++            if missing[i] || c[i].is_nan() {
++                out.set_missing(i);
++            } else {
++                out.set(i, c[i]);
++            }
++        }
++        out
++    }
++
++    /// CSS Color 4 section 11.2, with the missing components of section 13.3 carried forward.
++    pub fn converted_to(&self, space: Space) -> CssColor {
++        if space == self.space {
++            return *self;
++        }
++        let mut src = self.c;
++        let mut src_missing = [self.is_missing(0), self.is_missing(1), self.is_missing(2)];
++        powerless_to_missing(self.space, &mut src, &mut src_missing);
++        let mut z = src;
++        for i in 0..3 {
++            if src_missing[i] || z[i].is_nan() {
++                z[i] = 0.0;
++            }
++        }
++        let mut out = CssColor::from_xyz_d65(space, &to_xyz(self.space, &z), self.alpha);
++        if self.alpha_missing() {
++            out.set_alpha_missing();
++        }
++        let sa = analogs(self.space);
++        let da = analogs(space);
++        let shared = |a: Analog| a != Analog::None && da.contains(&a) && sa.contains(&a);
++        let mut have_set = false;
++        let mut all_missing = true;
++        let mut have_dst_set = false;
++        for i in 0..3 {
++            if !shared(sa[i]) {
++                have_set = true;
++                all_missing = all_missing && src_missing[i];
++            } else if src_missing[i] {
++                for j in 0..3 {
++                    if da[j] == sa[i] {
++                        out.set_missing(j);
++                    }
++                }
++            }
++            if !shared(da[i]) {
++                have_dst_set = true;
++            }
++        }
++        if have_set && have_dst_set && all_missing {
++            for j in 0..3 {
++                if !shared(da[j]) {
++                    out.set_missing(j);
++                }
++            }
++        }
++        out
++    }
++
++    /// The colour in `dest` for display: missing components are zero (CSS Color 4 section 4.4), none carried.
++    pub fn display_values(&self, dest: Space) -> Vec3 {
++        if self.space == dest {
++            return self.values();
++        }
++        from_xyz(dest, &self.to_xyz_d65())
++    }
++
++    fn srgb8(v: u32, alpha: f64) -> CssColor {
++        CssColor::new(
++            Space::Srgb,
++            f64::from((v >> 16) & 255) / 255.0,
++            f64::from((v >> 8) & 255) / 255.0,
++            f64::from(v & 255) / 255.0,
++            alpha,
++        )
++    }
++}
++
++// ---------------------------------------------------------------- gamut mapping, CSS Color 4 section 14.2.2
++
++fn in_unit(v: &Vec3) -> bool {
++    // eps absorbs the rounding of the matrix round trip, so that a colour on the gamut boundary (white) is in gamut
++    let eps = 1e-9;
++    v.iter().all(|&x| x >= -eps && x <= 1.0 + eps)
++}
++
++fn clip(v: &Vec3) -> Vec3 {
++    v.map(|x| x.clamp(0.0, 1.0))
++}
++
++fn delta_eok(a: &Vec3, b: &Vec3) -> f64 {
++    ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
++}
++
++/// Gamut maps `color` into the RGB space `dest`; returns the values in [0, 1] and whether they were mapped.
++pub fn gamut_map(color: &CssColor, dest: Space) -> (Vec3, bool) {
++    let target = color.display_values(dest);
++    if in_unit(&target) {
++        return (clip(&target), false);
++    }
++    let o = color.converted_to(Space::Oklch);
++    let l = if o.is_missing(0) { 0.0 } else { o.c[0] };
++    let c = if o.is_missing(1) { 0.0 } else { o.c[1] };
++    let h = if o.is_missing(2) { 0.0 } else { o.c[2] };
++    if l >= 1.0 {
++        return (clip(&from_xyz(dest, &oklab_to_xyz(&[1.0, 0.0, 0.0]))), true);
++    }
++    if l <= 0.0 {
++        return (clip(&from_xyz(dest, &oklab_to_xyz(&[0.0, 0.0, 0.0]))), true);
++    }
++    let jnd = 0.02;
++    let epsilon = 0.0001;
++    let oklab_of_dest = |v: &Vec3| xyz_to_oklab(&to_xyz(dest, v));
++    let mut current = [l, c, h];
++    let mut cur_dest = from_xyz(dest, &oklab_to_xyz(&from_polar(&current)));
++    let mut clipped = clip(&cur_dest);
++    let mut e = delta_eok(&oklab_of_dest(&clipped), &from_polar(&current));
++    if e < jnd {
++        return (clipped, true);
++    }
++    let (mut lo, mut hi) = (0.0, c);
++    let mut min_in_gamut = true;
++    while hi - lo > epsilon {
++        let chroma = (lo + hi) / 2.0;
++        current = [l, chroma, h];
++        cur_dest = from_xyz(dest, &oklab_to_xyz(&from_polar(&current)));
++        if min_in_gamut && in_unit(&cur_dest) {
++            lo = chroma;
++            continue;
++        }
++        clipped = clip(&cur_dest);
++        e = delta_eok(&oklab_of_dest(&clipped), &from_polar(&current));
++        if e < jnd {
++            if jnd - e < epsilon {
++                return (clipped, true);
++            }
++            min_in_gamut = false;
++            lo = chroma;
++        } else {
++            hi = chroma;
++        }
++    }
++    (clipped, true)
++}
++
++// ---------------------------------------------------------------- parsing
++
++#[derive(Clone, PartialEq, Debug)]
++enum Tok {
++    Ws,
++    Ident(String),
++    Function(String),
++    Number(f64, bool),
++    Percentage(f64, bool),
++    Dimension(f64, String, bool),
++    Hash(String),
++    Comma,
++    Delim(char),
++    LParen,
++    RParen,
++}
++
++fn is_name_start(c: char) -> bool {
++    c.is_alphabetic() || c == '_' || !c.is_ascii()
++}
++
++fn is_name_char(c: char) -> bool {
++    is_name_start(c) || c.is_ascii_digit() || c == '-'
++}
++
++fn tokenize(s: &str) -> Vec<Tok> {
++    let ch: Vec<char> = s.chars().collect();
++    let n = ch.len();
++    let mut out = Vec::new();
++    let mut i = 0;
++    let starts_number = |k: usize| -> bool {
++        if k >= n {
++            return false;
++        }
++        let c = ch[k];
++        if c.is_ascii_digit() {
++            return true;
++        }
++        if c == '.' {
++            return k + 1 < n && ch[k + 1].is_ascii_digit();
++        }
++        if c == '+' || c == '-' {
++            return k + 1 < n
++                && (ch[k + 1].is_ascii_digit() || (ch[k + 1] == '.' && k + 2 < n && ch[k + 2].is_ascii_digit()));
++        }
++        false
++    };
++    let starts_ident = |k: usize| -> bool {
++        if k >= n {
++            return false;
++        }
++        if is_name_start(ch[k]) {
++            return true;
++        }
++        ch[k] == '-' && k + 1 < n && (is_name_start(ch[k + 1]) || ch[k + 1] == '-')
++    };
++    while i < n {
++        let c = ch[i];
++        if c.is_whitespace() {
++            while i < n && ch[i].is_whitespace() {
++                i += 1;
++            }
++            out.push(Tok::Ws);
++            continue;
++        }
++        if c == '/' && i + 1 < n && ch[i + 1] == '*' {
++            let mut k = i + 2;
++            while k + 1 < n && !(ch[k] == '*' && ch[k + 1] == '/') {
++                k += 1;
++            }
++            i = if k + 1 < n { k + 2 } else { n };
++            continue;
++        }
++        if starts_number(i) {
++            let start = i;
++            let signed = ch[i] == '+' || ch[i] == '-';
++            if signed {
++                i += 1;
++            }
++            while i < n && ch[i].is_ascii_digit() {
++                i += 1;
++            }
++            if i + 1 < n && ch[i] == '.' && ch[i + 1].is_ascii_digit() {
++                i += 1;
++                while i < n && ch[i].is_ascii_digit() {
++                    i += 1;
++                }
++            }
++            if i + 1 < n && (ch[i] == 'e' || ch[i] == 'E') {
++                let mut k = i + 1;
++                if k < n && (ch[k] == '+' || ch[k] == '-') {
++                    k += 1;
++                }
++                if k < n && ch[k].is_ascii_digit() {
++                    i = k;
++                    while i < n && ch[i].is_ascii_digit() {
++                        i += 1;
++                    }
++                }
++            }
++            let text: String = ch[start..i].iter().collect();
++            let v: f64 = text.parse().unwrap_or(0.0);
++            if i < n && ch[i] == '%' {
++                out.push(Tok::Percentage(v, signed));
++                i += 1;
++            } else if starts_ident(i) {
++                let us = i;
++                while i < n && is_name_char(ch[i]) {
++                    i += 1;
++                }
++                out.push(Tok::Dimension(v, ch[us..i].iter().collect::<String>().to_ascii_lowercase(), signed));
++            } else {
++                out.push(Tok::Number(v, signed));
++            }
++            continue;
++        }
++        if c == '#' {
++            let mut k = i + 1;
++            while k < n && is_name_char(ch[k]) {
++                k += 1;
++            }
++            if k > i + 1 {
++                out.push(Tok::Hash(ch[i + 1..k].iter().collect()));
++                i = k;
++                continue;
++            }
++        }
++        if starts_ident(i) {
++            let start = i;
++            while i < n && is_name_char(ch[i]) {
++                i += 1;
++            }
++            let name = ch[start..i].iter().collect::<String>().to_ascii_lowercase();
++            if i < n && ch[i] == '(' {
++                out.push(Tok::Function(name));
++                i += 1;
++            } else {
++                out.push(Tok::Ident(name));
++            }
++            continue;
++        }
++        out.push(match c {
++            '(' => Tok::LParen,
++            ')' => Tok::RParen,
++            ',' => Tok::Comma,
++            _ => Tok::Delim(c),
++        });
++        i += 1;
++    }
++    out
++}
++
++#[derive(Clone, Copy, PartialEq, Debug)]
++enum Unit {
++    Number,
++    Percentage,
++    Angle,
++}
++
++#[derive(Clone, Copy, Debug)]
++struct Num {
++    v: f64,
++    t: Unit,
++}
++
++#[derive(Clone, Copy, Debug)]
++struct Comp {
++    v: f64,
++    t: Unit,
++    none: bool,
++}
++
++const MATH_FUNCTIONS: &[&str] = &[
++    "calc", "min", "max", "clamp", "round", "mod", "rem", "sin", "cos", "tan", "asin", "acos", "atan", "atan2",
++    "pow", "sqrt", "hypot", "log", "exp", "abs", "sign",
++];
++
++fn is_math(name: &str) -> bool {
++    MATH_FUNCTIONS.contains(&name)
++}
++
++// CSS Color 4 section 6.1
++const NAMED_COLORS: &[(&str, u32)] = &[
++    ("aliceblue", 0xf0f8ff), ("antiquewhite", 0xfaebd7), ("aqua", 0x00ffff), ("aquamarine", 0x7fffd4),
++    ("azure", 0xf0ffff), ("beige", 0xf5f5dc), ("bisque", 0xffe4c4), ("black", 0x000000), ("blanchedalmond", 0xffebcd),
++    ("blue", 0x0000ff), ("blueviolet", 0x8a2be2), ("brown", 0xa52a2a), ("burlywood", 0xdeb887), ("cadetblue", 0x5f9ea0),
++    ("chartreuse", 0x7fff00), ("chocolate", 0xd2691e), ("coral", 0xff7f50), ("cornflowerblue", 0x6495ed),
++    ("cornsilk", 0xfff8dc), ("crimson", 0xdc143c), ("cyan", 0x00ffff), ("darkblue", 0x00008b), ("darkcyan", 0x008b8b),
++    ("darkgoldenrod", 0xb8860b), ("darkgray", 0xa9a9a9), ("darkgreen", 0x006400), ("darkgrey", 0xa9a9a9),
++    ("darkkhaki", 0xbdb76b), ("darkmagenta", 0x8b008b), ("darkolivegreen", 0x556b2f), ("darkorange", 0xff8c00),
++    ("darkorchid", 0x9932cc), ("darkred", 0x8b0000), ("darksalmon", 0xe9967a), ("darkseagreen", 0x8fbc8f),
++    ("darkslateblue", 0x483d8b), ("darkslategray", 0x2f4f4f), ("darkslategrey", 0x2f4f4f), ("darkturquoise", 0x00ced1),
++    ("darkviolet", 0x9400d3), ("deeppink", 0xff1493), ("deepskyblue", 0x00bfff), ("dimgray", 0x696969),
++    ("dimgrey", 0x696969), ("dodgerblue", 0x1e90ff), ("firebrick", 0xb22222), ("floralwhite", 0xfffaf0),
++    ("forestgreen", 0x228b22), ("fuchsia", 0xff00ff), ("gainsboro", 0xdcdcdc), ("ghostwhite", 0xf8f8ff),
++    ("gold", 0xffd700), ("goldenrod", 0xdaa520), ("gray", 0x808080), ("green", 0x008000), ("greenyellow", 0xadff2f),
++    ("grey", 0x808080), ("honeydew", 0xf0fff0), ("hotpink", 0xff69b4), ("indianred", 0xcd5c5c), ("indigo", 0x4b0082),
++    ("ivory", 0xfffff0), ("khaki", 0xf0e68c), ("lavender", 0xe6e6fa), ("lavenderblush", 0xfff0f5),
++    ("lawngreen", 0x7cfc00), ("lemonchiffon", 0xfffacd), ("lightblue", 0xadd8e6), ("lightcoral", 0xf08080),
++    ("lightcyan", 0xe0ffff), ("lightgoldenrodyellow", 0xfafad2), ("lightgray", 0xd3d3d3), ("lightgreen", 0x90ee90),
++    ("lightgrey", 0xd3d3d3), ("lightpink", 0xffb6c1), ("lightsalmon", 0xffa07a), ("lightseagreen", 0x20b2aa),
++    ("lightskyblue", 0x87cefa), ("lightslategray", 0x778899), ("lightslategrey", 0x778899),
++    ("lightsteelblue", 0xb0c4de), ("lightyellow", 0xffffe0), ("lime", 0x00ff00), ("limegreen", 0x32cd32),
++    ("linen", 0xfaf0e6), ("magenta", 0xff00ff), ("maroon", 0x800000), ("mediumaquamarine", 0x66cdaa),
++    ("mediumblue", 0x0000cd), ("mediumorchid", 0xba55d3), ("mediumpurple", 0x9370db), ("mediumseagreen", 0x3cb371),
++    ("mediumslateblue", 0x7b68ee), ("mediumspringgreen", 0x00fa9a), ("mediumturquoise", 0x48d1cc),
++    ("mediumvioletred", 0xc71585), ("midnightblue", 0x191970), ("mintcream", 0xf5fffa), ("mistyrose", 0xffe4e1),
++    ("moccasin", 0xffe4b5), ("navajowhite", 0xffdead), ("navy", 0x000080), ("oldlace", 0xfdf5e6), ("olive", 0x808000),
++    ("olivedrab", 0x6b8e23), ("orange", 0xffa500), ("orangered", 0xff4500), ("orchid", 0xda70d6),
++    ("palegoldenrod", 0xeee8aa), ("palegreen", 0x98fb98), ("paleturquoise", 0xafeeee), ("palevioletred", 0xdb7093),
++    ("papayawhip", 0xffefd5), ("peachpuff", 0xffdab9), ("peru", 0xcd853f), ("pink", 0xffc0cb), ("plum", 0xdda0dd),
++    ("powderblue", 0xb0e0e6), ("purple", 0x800080), ("rebeccapurple", 0x663399), ("red", 0xff0000),
++    ("rosybrown", 0xbc8f8f), ("royalblue", 0x4169e1), ("saddlebrown", 0x8b4513), ("salmon", 0xfa8072),
++    ("sandybrown", 0xf4a460), ("seagreen", 0x2e8b57), ("seashell", 0xfff5ee), ("sienna", 0xa0522d),
++    ("silver", 0xc0c0c0), ("skyblue", 0x87ceeb), ("slateblue", 0x6a5acd), ("slategray", 0x708090),
++    ("slategrey", 0x708090), ("snow", 0xfffafa), ("springgreen", 0x00ff7f), ("steelblue", 0x4682b4), ("tan", 0xd2b48c),
++    ("teal", 0x008080), ("thistle", 0xd8bfd8), ("tomato", 0xff6347), ("turquoise", 0x40e0d0), ("violet", 0xee82ee),
++    ("wheat", 0xf5deb3), ("white", 0xffffff), ("whitesmoke", 0xf5f5f5), ("yellow", 0xffff00), ("yellowgreen", 0x9acd32),
++];
++
++// CSS Color 4 section 6.2 and Appendix A
++const SYSTEM_COLORS: &[&str] = &[
++    "accentcolor", "accentcolortext", "activetext", "buttonborder", "buttonface", "buttontext", "canvas", "canvastext",
++    "field", "fieldtext", "graytext", "highlight", "highlighttext", "linktext", "mark", "marktext", "selecteditem",
++    "selecteditemtext", "visitedtext", "activeborder", "activecaption", "appworkspace", "background", "buttonhighlight",
++    "buttonshadow", "captiontext", "inactiveborder", "inactivecaption", "inactivecaptiontext", "infobackground",
++    "infotext", "menu", "menutext", "scrollbar", "threeddarkshadow", "threedface", "threedhighlight",
++    "threedlightshadow", "threedshadow", "window", "windowframe", "windowtext",
++];
++
++/// What a colour is resolved against while it is parsed.
++#[derive(Clone, Copy, Debug, Default)]
++pub struct Context {
++    /// the value of currentcolor, when it is known where the colour is parsed
++    pub current_color: Option<CssColor>,
++    /// CSS Color 5 section 7: light-dark() takes its second colour in a dark colour scheme
++    pub dark_scheme: bool,
++}
++
++struct Channels {
++    names: [&'static str; 3],
++    values: [f64; 4], // NaN for a missing component
++}
++
++impl Channels {
++    fn get(&self, name: &str) -> Option<f64> {
++        if name == "alpha" {
++            return Some(self.values[3]);
++        }
++        self.names.iter().position(|n| *n == name).map(|i| self.values[i])
++    }
++}
++
++type PResult<T> = Result<T, String>;
++
++struct Parser<'a> {
++    t: Vec<Tok>,
++    i: usize,
++    ctx: &'a Context,
++    arg_count: usize,
++}
++
++impl<'a> Parser<'a> {
++    fn peek(&self) -> Option<&Tok> {
++        self.t.get(self.i)
++    }
++
++    fn next(&mut self) -> Option<Tok> {
++        let t = self.t.get(self.i).cloned();
++        self.i += 1;
++        t
++    }
++
++    fn ws(&mut self) {
++        while let Some(Tok::Ws) = self.peek() {
++            self.i += 1;
++        }
++    }
++
++    fn at_comma(&mut self) -> bool {
++        self.ws();
++        matches!(self.peek(), Some(Tok::Comma))
++    }
++
++    fn at_ident(&mut self, name: &str) -> bool {
++        self.ws();
++        matches!(self.peek(), Some(Tok::Ident(s)) if s == name)
++    }
++
++    fn at_slash(&mut self) -> bool {
++        self.ws();
++        matches!(self.peek(), Some(Tok::Delim('/')))
++    }
++
++    fn expect_comma(&mut self) -> PResult<()> {
++        self.ws();
++        match self.next() {
++            Some(Tok::Comma) => Ok(()),
++            _ => Err("expected ','".to_string()),
++        }
++    }
++
++    fn expect_close(&mut self) -> PResult<()> {
++        self.ws();
++        match self.next() {
++            Some(Tok::RParen) => Ok(()),
++            _ => Err("expected ')'".to_string()),
++        }
++    }
++
++    /// A speculative parse: on failure the position is restored.
++    fn attempt<T>(&mut self, f: impl FnOnce(&mut Self) -> PResult<T>) -> Option<T> {
++        let save = self.i;
++        match f(self) {
++            Ok(v) => Some(v),
++            Err(_) => {
++                self.i = save;
++                None
++            }
++        }
++    }
++
++    fn angle(v: f64, unit: &str) -> PResult<Num> {
++        let f = match unit {
++            "deg" => 1.0,
++            "grad" => 0.9,
++            "rad" => 180.0 / PI,
++            "turn" => 360.0,
++            _ => return Err(format!("unit {} is not an angle", unit)),
++        };
++        Ok(Num { v: v * f, t: Unit::Angle })
++    }
++
++    // ---- math functions (CSS Values 4 section 10), with channel keywords as numbers
++    fn math_value(&mut self, ch: Option<&Channels>) -> PResult<Num> {
++        self.ws();
++        match self.next() {
++            Some(Tok::Number(v, _)) => Ok(Num { v, t: Unit::Number }),
++            Some(Tok::Percentage(v, _)) => Ok(Num { v, t: Unit::Percentage }),
++            Some(Tok::Dimension(v, u, _)) => Parser::angle(v, &u),
++            Some(Tok::Ident(name)) => {
++                if let Some(v) = ch.and_then(|c| c.get(&name)) {
++                    return Ok(Num { v: if v.is_nan() { 0.0 } else { v }, t: Unit::Number });
++                }
++                let v = match name.as_str() {
++                    "e" => E,
++                    "pi" => PI,
++                    "infinity" => f64::INFINITY,
++                    "-infinity" => f64::NEG_INFINITY,
++                    "nan" => f64::NAN,
++                    _ => return Err(format!("unknown keyword {} in a math function", name)),
++                };
++                Ok(Num { v, t: Unit::Number })
++            }
++            Some(Tok::LParen) => {
++                let v = self.math_sum(ch)?;
++                self.expect_close()?;
++                Ok(v)
++            }
++            Some(Tok::Function(name)) if is_math(&name) => self.math_function(&name, ch),
++            _ => Err("not a math value".to_string()),
++        }
++    }
++
++    fn math_product(&mut self, ch: Option<&Channels>) -> PResult<Num> {
++        let mut v = self.math_value(ch)?;
++        loop {
++            let save = self.i;
++            self.ws();
++            match self.peek() {
++                Some(Tok::Delim(op @ ('*' | '/'))) => {
++                    let times = *op == '*';
++                    self.i += 1;
++                    let w = self.math_value(ch)?;
++                    if times {
++                        if v.t != Unit::Number && w.t != Unit::Number {
++                            return Err("a product of two dimensions".to_string());
++                        }
++                        v = Num { v: v.v * w.v, t: if v.t == Unit::Number { w.t } else { v.t } };
++                    } else {
++                        if w.t != Unit::Number && w.t != v.t {
++                            return Err("a division by a dimension".to_string());
++                        }
++                        v = Num { v: v.v / w.v, t: if w.t == v.t { Unit::Number } else { v.t } };
++                    }
++                }
++                _ => {
++                    self.i = save;
++                    return Ok(v);
++                }
++            }
++        }
++    }
++
++    fn math_sum(&mut self, ch: Option<&Channels>) -> PResult<Num> {
++        let mut v = self.math_product(ch)?;
++        loop {
++            let save = self.i;
++            let had_ws = matches!(self.peek(), Some(Tok::Ws));
++            self.ws();
++            let ws_after = matches!(self.t.get(self.i + 1), Some(Tok::Ws));
++            match self.peek().cloned() {
++                Some(Tok::Delim(op @ ('+' | '-'))) if had_ws && ws_after => {
++                    self.i += 1;
++                    let w = self.math_product(ch)?;
++                    if w.t != v.t {
++                        return Err("a sum of different types".to_string());
++                    }
++                    v = Num { v: if op == '+' { v.v + w.v } else { v.v - w.v }, t: v.t };
++                }
++                Some(Tok::Number(_, true)) | Some(Tok::Percentage(_, true)) | Some(Tok::Dimension(_, _, true)) if had_ws => {
++                    return Err("+ and - need whitespace on both sides".to_string());
++                }
++                _ => {
++                    self.i = save;
++                    return Ok(v);
++                }
++            }
++        }
++    }
++
++    fn math_args(&mut self, ch: Option<&Channels>) -> PResult<Vec<Num>> {
++        let mut args = vec![self.math_sum(ch)?];
++        while self.at_comma() {
++            self.i += 1;
++            args.push(self.math_sum(ch)?);
++        }
++        self.expect_close()?;
++        self.arg_count = args.len();
++        Ok(args)
++    }
++
++    fn math_function(&mut self, name: &str, ch: Option<&Channels>) -> PResult<Num> {
++        let nan = f64::NAN;
++        if name == "round" {
++            let mut strategy = 0;
++            self.ws();
++            if let Some(Tok::Ident(s)) = self.peek().cloned() {
++                if let Some(k) = ["nearest", "up", "down", "to-zero"].iter().position(|x| *x == s) {
++                    self.i += 1;
++                    strategy = k;
++                    self.expect_comma()?;
++                }
++            }
++            let a = self.math_args(ch)?;
++            let b = if a.len() > 1 { a[1].v } else { 1.0 };
++            if b == 0.0 {
++                return Ok(Num { v: nan, t: a[0].t });
++            }
++            let q = a[0].v / b;
++            let r = match strategy {
++                0 => (q + 0.5).floor(),
++                1 => q.ceil(),
++                2 => q.floor(),
++                _ => q.trunc(),
++            };
++            return Ok(Num { v: r * b, t: a[0].t });
++        }
++        let a = self.math_args(ch)?;
++        let same = |a: &[Num]| -> PResult<Unit> {
++            if a.iter().any(|x| x.t != a[0].t) {
++                Err(format!("{}() of different types", name))
++            } else {
++                Ok(a[0].t)
++            }
++        };
++        let radians = |x: &Num| -> PResult<f64> {
++            match x.t {
++                Unit::Percentage => Err("trigonometry of a percentage".to_string()),
++                Unit::Angle => Ok(x.v * PI / 180.0),
++                Unit::Number => Ok(x.v),
++            }
++        };
++        let n = |v: f64| Num { v, t: Unit::Number };
++        match name {
++            "calc" => {
++                if a.len() != 1 {
++                    return Err("calc() takes one argument".to_string());
++                }
++                Ok(a[0])
++            }
++            "min" | "max" => {
++                let t = same(&a)?;
++                let v = a.iter().map(|x| x.v).fold(a[0].v, |m, x| if name == "min" { m.min(x) } else { m.max(x) });
++                Ok(Num { v, t })
++            }
++            "clamp" => {
++                if a.len() != 3 {
++                    return Err("clamp() takes three arguments".to_string());
++                }
++                let t = same(&a)?;
++                Ok(Num { v: a[0].v.max(a[1].v.min(a[2].v)), t })
++            }
++            "mod" | "rem" => {
++                let t = same(&a)?;
++                if a.len() != 2 {
++                    return Err(format!("{}() takes two arguments", name));
++                }
++                if a[1].v == 0.0 {
++                    return Ok(Num { v: nan, t });
++                }
++                let q = a[0].v / a[1].v;
++                Ok(Num { v: a[0].v - a[1].v * if name == "mod" { q.floor() } else { q.trunc() }, t })
++            }
++            "sin" => Ok(n(radians(&a[0])?.sin())),
++            "cos" => Ok(n(radians(&a[0])?.cos())),
++            "tan" => Ok(n(radians(&a[0])?.tan())),
++            "asin" | "acos" | "atan" => {
++                if a[0].t != Unit::Number {
++                    return Err(format!("{}() of a dimension", name));
++                }
++                let r = match name {
++                    "asin" => a[0].v.asin(),
++                    "acos" => a[0].v.acos(),
++                    _ => a[0].v.atan(),
++                };
++                Ok(Num { v: r * 180.0 / PI, t: Unit::Angle })
++            }
++            "atan2" => {
++                same(&a)?;
++                if a.len() != 2 {
++                    return Err("atan2() takes two arguments".to_string());
++                }
++                Ok(Num { v: a[0].v.atan2(a[1].v) * 180.0 / PI, t: Unit::Angle })
++            }
++            "pow" => {
++                if a.len() != 2 || a[0].t != Unit::Number || a[1].t != Unit::Number {
++                    return Err("pow() takes two numbers".to_string());
++                }
++                Ok(n(a[0].v.powf(a[1].v)))
++            }
++            "sqrt" => Ok(n(if a[0].v >= 0.0 { a[0].v.sqrt() } else { nan })),
++            "hypot" => {
++                let t = same(&a)?;
++                Ok(Num { v: a.iter().map(|x| x.v * x.v).sum::<f64>().sqrt(), t })
++            }
++            "log" => {
++                let v = a[0].v;
++                let r = if v > 0.0 {
++                    v.ln()
++                } else if v == 0.0 {
++                    f64::NEG_INFINITY
++                } else {
++                    nan
++                };
++                Ok(n(if a.len() > 1 { r / a[1].v.ln() } else { r }))
++            }
++            "exp" => Ok(n(a[0].v.exp())),
++            "abs" => Ok(Num { v: a[0].v.abs(), t: a[0].t }),
++            "sign" => Ok(n(if a[0].v == 0.0 { 0.0 } else { 1.0f64.copysign(a[0].v) })),
++            _ => Err(name.to_string()),
++        }
++    }
++
++    fn component(&mut self, ch: Option<&Channels>, allow_percent: bool, hue: bool, allow_none: bool) -> PResult<Comp> {
++        self.ws();
++        let v = match self.peek().cloned() {
++            Some(Tok::Ident(name)) if name == "none" => {
++                if !allow_none {
++                    return Err("none is not allowed here".to_string());
++                }
++                self.i += 1;
++                return Ok(Comp { v: 0.0, t: Unit::Number, none: true });
++            }
++            Some(Tok::Ident(name)) if ch.and_then(|c| c.get(&name)).is_some() => {
++                self.i += 1;
++                let v = ch.unwrap().get(&name).unwrap();
++                return Ok(Comp { v: if v.is_nan() { 0.0 } else { v }, t: Unit::Number, none: v.is_nan() });
++            }
++            Some(Tok::Function(name)) if is_math(&name) => {
++                self.i += 1;
++                self.math_function(&name, ch)?
++            }
++            Some(Tok::Number(v, _)) => {
++                self.i += 1;
++                Num { v, t: Unit::Number }
++            }
++            Some(Tok::Percentage(v, _)) => {
++                self.i += 1;
++                Num { v, t: Unit::Percentage }
++            }
++            Some(Tok::Dimension(v, u, _)) => {
++                self.i += 1;
++                if !hue {
++                    return Err(format!("unit {} is not allowed here", u));
++                }
++                Parser::angle(v, &u)?
++            }
++            _ => return Err("expected a number".to_string()),
++        };
++        if v.t == Unit::Percentage && !allow_percent {
++            return Err("a percentage is not allowed here".to_string());
++        }
++        if v.t == Unit::Angle && !hue {
++            return Err("an angle is not allowed here".to_string());
++        }
++        Ok(Comp { v: if v.v.is_nan() { 0.0 } else { v.v }, t: v.t, none: false })
++    }
++
++    /// `[ / [<alpha-value> | none] ]?`
++    fn alpha_part(&mut self, c: &mut CssColor, ch: Option<&Channels>, origin: Option<&CssColor>) -> PResult<()> {
++        if self.at_slash() {
++            self.i += 1;
++            let a = self.component(ch, true, false, true)?;
++            if a.none {
++                c.set_alpha_missing();
++                return Ok(());
++            }
++            let mut v = if a.t == Unit::Percentage { a.v / 100.0 } else { a.v };
++            if v.is_infinite() {
++                v = if v > 0.0 { 1.0 } else { 0.0 };
++            }
++            c.set_alpha(v.clamp(0.0, 1.0));
++        } else if let Some(o) = origin {
++            if o.alpha_missing() {
++                c.set_alpha_missing();
++            } else {
++                c.set_alpha(o.alpha);
++            }
++        } else {
++            c.set_alpha(1.0);
++        }
++        Ok(())
++    }
++
++    fn color(&mut self) -> PResult<CssColor> {
++        self.ws();
++        match self.next() {
++            Some(Tok::Hash(h)) => hex(&h),
++            Some(Tok::Ident(name)) => {
++                if let Some((_, v)) = NAMED_COLORS.iter().find(|(n, _)| *n == name) {
++                    return Ok(CssColor::srgb8(*v, 1.0));
++                }
++                if name == "transparent" {
++                    return Ok(CssColor::srgb8(0, 0.0));
++                }
++                if name == "currentcolor" {
++                    return self.ctx.current_color.ok_or_else(|| {
++                        "currentcolor inside a colour function needs the computed colour, which librsvg does not \
++                         have where colours are parsed"
++                            .to_string()
++                    });
++                }
++                if SYSTEM_COLORS.contains(&name.as_str()) {
++                    return Err(format!(
++                        "the system colour {} needs the platform's palette (CSS Color 4 section 6.2), which librsvg \
++                         does not have",
++                        name
++                    ));
++                }
++                Err(format!("unknown colour {}", name))
++            }
++            Some(Tok::Function(f)) => match f.as_str() {
++                "rgb" | "rgba" => self.rgb_function(),
++                "hsl" | "hsla" => self.hsl_function(),
++                "hwb" => self.modern(Space::Hwb, None, false),
++                "lab" => self.modern(Space::Lab, None, false),
++                "lch" => self.modern(Space::Lch, None, false),
++                "oklab" => self.modern(Space::Oklab, None, false),
++                "oklch" => self.modern(Space::Oklch, None, false),
++                "ictcp" => self.modern(Space::Ictcp, None, false),
++                "jzazbz" => self.modern(Space::Jzazbz, None, false),
++                "jzczhz" => self.modern(Space::Jzczhz, None, false),
++                "color" => self.color_function(),
++                "color-mix" => self.color_mix(),
++                "alpha" => self.alpha_function(),
++                "light-dark" => {
++                    let a = self.color()?;
++                    self.expect_comma()?;
++                    let b = self.color()?;
++                    self.expect_close()?;
++                    Ok(if self.ctx.dark_scheme { b } else { a })
++                }
++                "contrast-color" => {
++                    let c = self.color()?;
++                    self.expect_close()?;
++                    Ok(contrast_color(&c))
++                }
++                "device-cmyk" => self.device_cmyk(),
++                "hdr-color" | "color-hdr" => self.hdr_color(),
++                _ => Err(format!("{}() is not a colour function", f)),
++            },
++            _ => Err("not a colour".to_string()),
++        }
++    }
++
++    fn origin(&mut self) -> PResult<Option<CssColor>> {
++        if self.at_ident("from") {
++            self.i += 1;
++            return Ok(Some(self.color()?));
++        }
++        Ok(None)
++    }
++
++    fn rgb_function(&mut self) -> PResult<CssColor> {
++        let o = self.origin()?;
++        if o.is_none() {
++            if let Some(c) = self.attempt(|p| p.rgb_legacy()) {
++                return Ok(c);
++            }
++        }
++        let ch = o.map(|o| {
++            let s = o.converted_to(Space::Srgb);
++            let g = |i: usize| if s.is_missing(i) { f64::NAN } else { s.c[i] * 255.0 };
++            Channels { names: ["r", "g", "b"], values: [g(0), g(1), g(2), if o.alpha_missing() { f64::NAN } else { o.alpha }] }
++        });
++        let mut c = CssColor::new(Space::Srgb, 0.0, 0.0, 0.0, 1.0);
++        for i in 0..3 {
++            let v = self.component(ch.as_ref(), true, false, true)?;
++            if v.none {
++                c.set_missing(i);
++                continue;
++            }
++            let mut x = (if v.t == Unit::Percentage { v.v * 255.0 / 100.0 } else { v.v }) / 255.0;
++            if o.is_none() {
++                x = x.clamp(0.0, 1.0);
++            }
++            c.set(i, x);
++        }
++        self.alpha_part(&mut c, ch.as_ref(), o.as_ref())?;
++        self.expect_close()?;
++        Ok(c)
++    }
++
++    fn rgb_legacy(&mut self) -> PResult<CssColor> {
++        let mut v = [0.0; 3];
++        let mut kind = Unit::Number;
++        for i in 0..3 {
++            if i > 0 {
++                self.expect_comma()?;
++            }
++            self.ws();
++            if let Some(Tok::Ident(_)) = self.peek() {
++                return Err("keyword in the legacy syntax".to_string());
++            }
++            let c = self.component(None, true, false, false)?;
++            if i > 0 && c.t != kind {
++                return Err("the legacy syntax does not mix numbers and percentages".to_string());
++            }
++            kind = c.t;
++            v[i] = c.v;
++        }
++        let mut alpha = 1.0;
++        if self.at_comma() {
++            self.i += 1;
++            let a = self.component(None, true, false, false)?;
++            alpha = (if a.t == Unit::Percentage { a.v / 100.0 } else { a.v }).clamp(0.0, 1.0);
++        }
++        self.expect_close()?;
++        let k = if kind == Unit::Percentage { 255.0 / 100.0 } else { 1.0 };
++        Ok(CssColor::new(
++            Space::Srgb,
++            (v[0] * k / 255.0).clamp(0.0, 1.0),
++            (v[1] * k / 255.0).clamp(0.0, 1.0),
++            (v[2] * k / 255.0).clamp(0.0, 1.0),
++            alpha,
++        ))
++    }
++
++    fn hsl_function(&mut self) -> PResult<CssColor> {
++        let o = self.origin()?;
++        if o.is_none() {
++            let legacy = self.attempt(|p| {
++                let h = p.component(None, false, true, false)?;
++                p.expect_comma()?;
++                let s = p.component(None, true, false, false)?;
++                p.expect_comma()?;
++                let l = p.component(None, true, false, false)?;
++                if s.t != Unit::Percentage || l.t != Unit::Percentage {
++                    return Err("legacy hsl() takes percentages".to_string());
++                }
++                let mut alpha = 1.0;
++                if p.at_comma() {
++                    p.i += 1;
++                    let a = p.component(None, true, false, false)?;
++                    alpha = (if a.t == Unit::Percentage { a.v / 100.0 } else { a.v }).clamp(0.0, 1.0);
++                }
++                p.expect_close()?;
++                Ok(CssColor::new(Space::Hsl, positive_mod(h.v, 360.0), s.v.max(0.0), l.v, alpha))
++            });
++            if let Some(c) = legacy {
++                return Ok(c);
++            }
++        }
++        self.modern(Space::Hsl, o, true)
++    }
++
++    // CSS Color 4 sections 7 to 9 and CSS Color HDR section 6: percentage reference ranges and parse-time clamps
++    fn modern(&mut self, space: Space, o: Option<CssColor>, origin_parsed: bool) -> PResult<CssColor> {
++        let o = if origin_parsed { o } else { self.origin()? };
++        // (name, percentage reference, hue, clamp low, clamp high)
++        type Rule = (&'static str, f64, bool, Option<f64>, Option<f64>);
++        let rules: [Rule; 3] = match space {
++            Space::Hsl => [("h", 0.0, true, None, None), ("s", 100.0, false, None, None), ("l", 100.0, false, None, None)],
++            Space::Hwb => [("h", 0.0, true, None, None), ("w", 100.0, false, None, None), ("b", 100.0, false, None, None)],
++            Space::Lab => [("l", 100.0, false, Some(0.0), Some(100.0)), ("a", 125.0, false, None, None), ("b", 125.0, false, None, None)],
++            Space::Lch => [("l", 100.0, false, Some(0.0), Some(100.0)), ("c", 150.0, false, Some(0.0), None), ("h", 0.0, true, None, None)],
++            Space::Oklab => [("l", 1.0, false, Some(0.0), Some(1.0)), ("a", 0.4, false, None, None), ("b", 0.4, false, None, None)],
++            Space::Oklch => [("l", 1.0, false, Some(0.0), Some(1.0)), ("c", 0.4, false, Some(0.0), None), ("h", 0.0, true, None, None)],
++            Space::Ictcp => [("i", 1.0, false, None, None), ("ct", 0.5, false, None, None), ("cp", 0.5, false, None, None)],
++            Space::Jzazbz => [("j", 1.0, false, None, None), ("a", 0.21, false, None, None), ("b", 0.21, false, None, None)],
++            Space::Jzczhz => [("j", 1.0, false, None, None), ("c", 0.26, false, None, None), ("h", 0.0, true, None, None)],
++            _ => return Err("internal: not a colour function space".to_string()),
++        };
++        let ch = o.map(|o| {
++            let s = o.converted_to(space);
++            let g = |i: usize| if s.is_missing(i) { f64::NAN } else { s.c[i] };
++            Channels {
++                names: [rules[0].0, rules[1].0, rules[2].0],
++                values: [g(0), g(1), g(2), if o.alpha_missing() { f64::NAN } else { o.alpha }],
++            }
++        });
++        // relative colours keep their values, except that Lab, LCH, Oklab and OkLCh lightness and chroma keep their
++        // parse-time clamps (as the web-platform-tests relative colour tests expect)
++        let keep_clamps = o.is_none() || matches!(space, Space::Lab | Space::Lch | Space::Oklab | Space::Oklch);
++        let mut c = CssColor::new(space, 0.0, 0.0, 0.0, 1.0);
++        for (i, &(_, reference, hue, low, high)) in rules.iter().enumerate() {
++            let v = self.component(ch.as_ref(), !hue, hue, true)?;
++            if v.none {
++                c.set_missing(i);
++                continue;
++            }
++            let mut x = if v.t == Unit::Percentage { v.v * reference / 100.0 } else { v.v };
++            if hue {
++                x = if x.is_infinite() { 0.0 } else { positive_mod(x, 360.0) };
++            }
++            if keep_clamps {
++                if let Some(lo) = low {
++                    x = x.max(lo);
++                }
++                if let Some(hi) = high {
++                    x = x.min(hi);
++                }
++            }
++            if o.is_none() && space == Space::Hsl && i == 1 {
++                x = x.max(0.0);
++            }
++            c.set(i, x);
++        }
++        self.alpha_part(&mut c, ch.as_ref(), o.as_ref())?;
++        self.expect_close()?;
++        Ok(c)
++    }
++
++    fn color_function(&mut self) -> PResult<CssColor> {
++        let o = self.origin()?;
++        self.ws();
++        let name = match self.next() {
++            Some(Tok::Ident(n)) => n,
++            _ => return Err("color() needs a colour space".to_string()),
++        };
++        let space = match name.as_str() {
++            "srgb" => Space::Srgb,
++            "srgb-linear" => Space::SrgbLinear,
++            "display-p3" => Space::DisplayP3,
++            "display-p3-linear" => Space::DisplayP3Linear,
++            "a98-rgb" => Space::A98Rgb,
++            "prophoto-rgb" => Space::ProphotoRgb,
++            "rec2020" => Space::Rec2020,
++            "rec2100-pq" => Space::Rec2100Pq,
++            "rec2100-hlg" => Space::Rec2100Hlg,
++            "rec2100-linear" => Space::Rec2100Linear,
++            "xyz" | "xyz-d65" => Space::XyzD65,
++            "xyz-d50" => Space::XyzD50,
++            n if n.starts_with("--") => {
++                return Err(format!("the custom colour space {} needs an @color-profile, which librsvg does not load", n));
++            }
++            n => return Err(format!("{} is not a predefined colour space", n)),
++        };
++        let xyz = matches!(space, Space::XyzD50 | Space::XyzD65);
++        let ch = o.map(|o| {
++            let s = o.converted_to(space);
++            let g = |i: usize| if s.is_missing(i) { f64::NAN } else { s.c[i] };
++            Channels {
++                names: if xyz { ["x", "y", "z"] } else { ["r", "g", "b"] },
++                values: [g(0), g(1), g(2), if o.alpha_missing() { f64::NAN } else { o.alpha }],
++            }
++        });
++        let mut c = CssColor::new(space, 0.0, 0.0, 0.0, 1.0);
++        for i in 0..3 {
++            let v = self.component(ch.as_ref(), true, false, true)?;
++            if v.none {
++                c.set_missing(i);
++            } else {
++                c.set(i, if v.t == Unit::Percentage { v.v / 100.0 } else { v.v });
++            }
++        }
++        self.alpha_part(&mut c, ch.as_ref(), o.as_ref())?;
++        self.expect_close()?;
++        Ok(c)
++    }
++
++    fn alpha_function(&mut self) -> PResult<CssColor> {
++        let o = self.origin()?.ok_or_else(|| "alpha() needs from <color>".to_string())?;
++        if !self.at_slash() {
++            return Err("alpha() needs / <alpha-value>".to_string());
++        }
++        let ch = Channels { names: ["", "", ""], values: [0.0, 0.0, 0.0, if o.alpha_missing() { f64::NAN } else { o.alpha }] };
++        let mut c = o;
++        self.alpha_part(&mut c, Some(&ch), Some(&o))?;
++        self.expect_close()?;
++        Ok(c)
++    }
++
++    fn device_cmyk(&mut self) -> PResult<CssColor> {
++        let mut c = CssColor::new(Space::Srgb, 0.0, 0.0, 0.0, 1.0);
++        let legacy = self.attempt(|p| {
++            let mut v = [0.0; 4];
++            for (i, x) in v.iter_mut().enumerate() {
++                if i > 0 {
++                    p.expect_comma()?;
++                }
++                *x = p.component(None, false, false, false)?.v;
++            }
++            p.expect_close()?;
++            Ok(v)
++        });
++        let mut v = match legacy {
++            Some(v) => v,
++            None => {
++                let mut v = [0.0; 4];
++                for x in v.iter_mut() {
++                    let k = self.component(None, true, false, true)?;
++                    *x = if k.none { 0.0 } else if k.t == Unit::Percentage { k.v / 100.0 } else { k.v };
++                }
++                self.alpha_part(&mut c, None, None)?;
++                self.expect_close()?;
++                v
++            }
++        };
++        for x in v.iter_mut() {
++            *x = x.clamp(0.0, 1.0);
++        }
++        // CSS Color 5 section 6.1, the naive conversion (there is no @color-profile for device-cmyk)
++        for i in 0..3 {
++            c.set(i, 1.0 - (v[i] * (1.0 - v[3]) + v[3]).min(1.0));
++        }
++        Ok(c)
++    }
++
++    // CSS Color 5 section 3.3, with CSS Values 5 section 6.1's percentage normalization
++    fn color_mix(&mut self) -> PResult<CssColor> {
++        let mut space = Space::Oklab;
++        let mut hue_method = 0;
++        if self.at_ident("in") {
++            self.i += 1;
++            self.ws();
++            let name = match self.next() {
++                Some(Tok::Ident(n)) => n,
++                _ => return Err("not an interpolation colour space".to_string()),
++            };
++            space = match name.as_str() {
++                "srgb" => Space::Srgb,
++                "srgb-linear" => Space::SrgbLinear,
++                "display-p3" => Space::DisplayP3,
++                "display-p3-linear" => Space::DisplayP3Linear,
++                "a98-rgb" => Space::A98Rgb,
++                "prophoto-rgb" => Space::ProphotoRgb,
++                "rec2020" => Space::Rec2020,
++                "lab" => Space::Lab,
++                "oklab" => Space::Oklab,
++                "xyz" | "xyz-d65" => Space::XyzD65,
++                "xyz-d50" => Space::XyzD50,
++                "hsl" => Space::Hsl,
++                "hwb" => Space::Hwb,
++                "lch" => Space::Lch,
++                "oklch" => Space::Oklch,
++                _ => return Err("not an interpolation colour space".to_string()),
++            };
++            self.ws();
++            if space.is_polar() {
++                if let Some(Tok::Ident(m)) = self.peek().cloned() {
++                    if let Some(k) = ["shorter", "longer", "increasing", "decreasing"].iter().position(|x| *x == m) {
++                        self.i += 1;
++                        hue_method = k;
++                        if !self.at_ident("hue") {
++                            return Err("expected hue".to_string());
++                        }
++                        self.i += 1;
++                    }
++                }
++            }
++            self.expect_comma()?;
++        }
++        let mut items: Vec<(CssColor, f64, bool)> = Vec::new();
++        loop {
++            let mut pct = 0.0;
++            let mut given = false;
++            let col;
++            if self.at_percent() {
++                pct = self.mix_percent()?;
++                given = true;
++                col = self.color()?;
++            } else {
++                col = self.color()?;
++                if self.at_percent() {
++                    pct = self.mix_percent()?;
++                    given = true;
++                }
++            }
++            items.push((col, pct, given));
++            if self.at_comma() {
++                self.i += 1;
++                continue;
++            }
++            self.expect_close()?;
++            break;
++        }
++        let specified: f64 = items.iter().filter(|x| x.2).map(|x| x.1).sum();
++        let omitted = items.iter().filter(|x| !x.2).count();
++        let specified_clamped = specified.min(100.0);
++        let mut total = 0.0;
++        for it in items.iter_mut() {
++            if !it.2 {
++                it.1 = (100.0 - specified_clamped) / omitted as f64;
++            }
++            total += it.1;
++        }
++        if total > 0.0 {
++            for it in items.iter_mut() {
++                it.1 = it.1 * 100.0 / total;
++            }
++        }
++        let leftover = if total < 100.0 { 100.0 - total } else { 0.0 };
++        let mut result = if items.len() == 1 {
++            items[0].0.converted_to(space)
++        } else {
++            let mut acc = items[0].0;
++            let mut acc_pct = items[0].1;
++            for it in items.iter().skip(1) {
++                let combined = acc_pct + it.1;
++                let p = if combined > 0.0 { it.1 / combined } else { 0.5 };
++                acc = interpolate(&acc, &it.0, p, space, hue_method);
++                acc_pct = combined;
++            }
++            acc
++        };
++        if !result.alpha_missing() {
++            result.alpha *= 1.0 - leftover / 100.0;
++        }
++        Ok(result)
++    }
++
++    fn at_percent(&mut self) -> bool {
++        self.ws();
++        match self.peek() {
++            Some(Tok::Percentage(..)) => true,
++            Some(Tok::Function(f)) => is_math(f),
++            _ => false,
++        }
++    }
++
++    fn mix_percent(&mut self) -> PResult<f64> {
++        self.ws();
++        let literal = matches!(self.peek(), Some(Tok::Percentage(..)));
++        let v = self.component(None, true, false, false)?;
++        if v.t != Unit::Percentage {
++            return Err("a color-mix() amount is a percentage".to_string());
++        }
++        if literal && !(0.0..=100.0).contains(&v.v) {
++            return Err("a color-mix() amount is between 0% and 100%".to_string());
++        }
++        Ok(v.v.clamp(0.0, 100.0))
++    }
++
++    // CSS Color HDR sections 5.1 and 11.6; librsvg draws on SDR targets, so the colour is the one at headroom 0
++    fn hdr_color(&mut self) -> PResult<CssColor> {
++        let mut c = [CssColor::new(Space::Srgb, 0.0, 0.0, 0.0, 1.0); 2];
++        let mut h = [0.0; 2];
++        for i in 0..2 {
++            if i > 0 {
++                self.expect_comma()?;
++            }
++            self.ws();
++            if let Some(Tok::Number(v, _)) = self.peek().cloned() {
++                self.i += 1;
++                h[i] = v;
++                c[i] = self.color()?;
++            } else {
++                c[i] = self.color()?;
++                self.ws();
++                if let Some(Tok::Number(v, _)) = self.peek().cloned() {
++                    self.i += 1;
++                    h[i] = v;
++                }
++            }
++            if h[i] < 0.0 {
++                return Err("a negative headroom".to_string());
++            }
++        }
++        self.expect_close()?;
++        if h[0] == h[1] {
++            return Err("hdr-color() needs two different headrooms".to_string());
++        }
++        Ok(hdr_mix(&c[0], h[0], &c[1], h[1], 0.0))
++    }
++}
++
++fn hex(h: &str) -> PResult<CssColor> {
++    if ![3, 4, 6, 8].contains(&h.len()) || !h.chars().all(|c| c.is_ascii_hexdigit()) {
++        return Err(format!("#{} is not a hex colour", h));
++    }
++    let x: String = if h.len() <= 4 { h.chars().flat_map(|c| [c, c]).collect() } else { h.to_string() };
++    let v = u32::from_str_radix(&x, 16).map_err(|_| format!("#{} is not a hex colour", h))?;
++    if x.len() == 8 {
++        Ok(CssColor::srgb8(v >> 8, f64::from(v & 255) / 255.0))
++    } else {
++        Ok(CssColor::srgb8(v, 1.0))
++    }
++}
++
++/// CSS Color 5 section 8: white or black, whichever contrasts more; white on a tie.  The algorithm is UA-defined;
++/// this one uses the WCAG 2.1 relative luminance of the gamut-mapped sRGB colour.
++fn contrast_color(c: &CssColor) -> CssColor {
++    let mut opaque = *c;
++    opaque.set_alpha(1.0);
++    let (rgb, _) = gamut_map(&opaque, Space::Srgb);
++    let lum = mul(&SRGB_TO_XYZ, &lin_srgb(&rgb))[1];
++    if 1.05 / (lum + 0.05) >= (lum + 0.05) / 0.05 {
++        CssColor::srgb8(0xffffff, 1.0)
++    } else {
++        CssColor::srgb8(0x000000, 1.0)
++    }
++}
++
++fn hdr_mix(c1: &CssColor, h1: f64, c2: &CssColor, h2: f64, headroom: f64) -> CssColor {
++    let x1 = c1.to_xyz_d65();
++    let x2 = c2.to_xyz_d65();
++    let w1 = ((headroom - h2) / (h1 - h2)).clamp(0.0, 1.0);
++    let w2 = ((headroom - h1) / (h2 - h1)).clamp(0.0, 1.0);
++    let eps = 0.001;
++    let mut out = [0.0; 3];
++    for i in 0..3 {
++        out[i] = ((x1[i] * YW + eps).powf(w1) * (x2[i] * YW + eps).powf(w2) - eps) / YW;
++    }
++    let a1 = if c1.alpha_missing() { 1.0 } else { c1.alpha };
++    let a2 = if c2.alpha_missing() { 1.0 } else { c2.alpha };
++    CssColor::new(Space::XyzD65, out[0], out[1], out[2], a1 * w1 + a2 * w2)
++}
++
++// CSS Color 4 section 13
++fn interpolate(a: &CssColor, b: &CssColor, p: f64, space: Space, hue_method: usize) -> CssColor {
++    let ca = a.converted_to(space);
++    let cb = b.converted_to(space);
++    let mut va = ca.c;
++    let mut vb = cb.c;
++    let mut ma = [ca.is_missing(0), ca.is_missing(1), ca.is_missing(2)];
++    let mut mb = [cb.is_missing(0), cb.is_missing(1), cb.is_missing(2)];
++    for i in 0..3 {
++        if ma[i] && !mb[i] {
++            va[i] = vb[i];
++            ma[i] = false;
++        } else if mb[i] && !ma[i] {
++            vb[i] = va[i];
++            mb[i] = false;
++        }
++    }
++    let (mut amiss_a, amiss_b) = (a.alpha_missing(), b.alpha_missing());
++    let (mut aa, mut ab) = (a.alpha, b.alpha);
++    if amiss_a && !amiss_b {
++        aa = ab;
++        amiss_a = false;
++    } else if amiss_b && !amiss_a {
++        ab = aa;
++    }
++    let hi = space.hue_index();
++    if let Some(h) = hi {
++        if !ma[h] && !mb[h] {
++            let mut t1 = positive_mod(va[h], 360.0);
++            let mut t2 = positive_mod(vb[h], 360.0);
++            let d = t2 - t1;
++            match hue_method {
++                0 => {
++                    if d > 180.0 {
++                        t1 += 360.0;
++                    } else if d < -180.0 {
++                        t2 += 360.0;
++                    }
++                }
++                1 => {
++                    if 0.0 < d && d < 180.0 {
++                        t1 += 360.0;
++                    } else if -180.0 < d && d <= 0.0 {
++                        t2 += 360.0;
++                    }
++                }
++                2 => {
++                    if t2 < t1 {
++                        t2 += 360.0;
++                    }
++                }
++                _ => {
++                    if t1 < t2 {
++                        t1 += 360.0;
++                    }
++                }
++            }
++            va[h] = t1;
++            vb[h] = t2;
++        }
++    }
++    let alpha_none = amiss_a;
++    let alpha = if alpha_none { 0.0 } else { aa * (1.0 - p) + ab * p };
++    let mut out = CssColor::new(space, 0.0, 0.0, 0.0, 1.0);
++    for i in 0..3 {
++        if ma[i] || mb[i] {
++            out.set_missing(i);
++            continue;
++        }
++        let mut x;
++        if alpha_none || Some(i) == hi {
++            x = va[i] * (1.0 - p) + vb[i] * p;
++        } else {
++            x = va[i] * aa * (1.0 - p) + vb[i] * ab * p;
++            if alpha != 0.0 {
++                x /= alpha;
++            }
++        }
++        if Some(i) == hi {
++            x = positive_mod(x, 360.0);
++        }
++        out.set(i, x);
++    }
++    if alpha_none {
++        out.set_alpha_missing();
++    } else {
++        out.set_alpha(alpha);
++    }
++    out
++}
++
++/// Parses a `<color>`; the whole string must be one colour.
++pub fn parse_css_color(text: &str, ctx: &Context) -> Result<CssColor, String> {
++    let mut p = Parser { t: tokenize(text), i: 0, ctx, arg_count: 0 };
++    let c = p.color()?;
++    p.ws();
++    if p.i < p.t.len() {
++        return Err("unexpected text after the colour".to_string());
++    }
++    let _ = p.arg_count;
++    Ok(c)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn close(a: &[f64], b: &[f64], eps: f64) -> bool {
++        a.iter().zip(b).all(|(x, y)| (x - y).abs() <= eps)
++    }
++
++    // the specifications' own examples (CSS Color 4 sections 10.1 and 14.1.3, CSS Color HDR sections 5 and 8)
++    #[test]
++    fn spec_examples() {
++        let ctx = Context::default();
++        let white = [1.0, 1.0, 1.0];
++        for text in ["color(rec2100-pq 0.5807 0.5807 0.5807)", "color(rec2100-hlg 0.75 0.75 0.75)", "ictcp(0.58069 0 0)"] {
++            let c = parse_css_color(text, &ctx).unwrap();
++            assert!(close(&c.display_values(Space::Srgb), &white, 2e-4), "{}", text);
++        }
++        let p3 = parse_css_color("color(rec2020 0.42053 0.979780 0.00579)", &ctx).unwrap();
++        assert!(close(&p3.display_values(Space::DisplayP3), &[-0.350289, 1.00707, -0.144209], 2e-4));
++        let yellow = parse_css_color("color(display-p3 1 1 0)", &ctx).unwrap();
++        let (mapped, was) = gamut_map(&yellow, Space::Srgb);
++        assert!(was && close(&mapped, &[0.99116, 0.99733, 0.00001], 0.01));
++        let hdr = parse_css_color(
++            "color-hdr(color(rec2100-linear 0.9 1.0 0.8) 0, color(rec2100-linear 1.8 2.0 1.5) 2)",
++            &ctx,
++        )
++        .unwrap();
++        let first = parse_css_color("color(rec2100-linear 0.9 1.0 0.8)", &ctx).unwrap();
++        assert!(close(&hdr.to_xyz_d65(), &first.to_xyz_d65(), 1e-4));
++    }
++
++    #[test]
++    fn invalid_colours_say_why() {
++        let ctx = Context::default();
++        for text in ["color(profoto-rgb 0.4835 0.9167 0.2188)", "lab(50% 40 abc)", "rgb(none, 20, 30)", "color(srgb, 1, 0, 0)"] {
++            assert!(parse_css_color(text, &ctx).is_err(), "{}", text);
++        }
++    }
++}
+diff --git a/rsvg/src/drawing_ctx.rs b/rsvg/src/drawing_ctx.rs
+index 874309c..a972157 100644
+--- a/rsvg/src/drawing_ctx.rs
++++ b/rsvg/src/drawing_ctx.rs
+@@ -12,7 +12,7 @@ use std::{borrow::Cow, sync::OnceLock};
+ use crate::accept_language::UserLanguage;
+ use crate::bbox::BoundingBox;
+ use crate::cairo_path::CairoPath;
+-use crate::color::{Color, color_to_rgba};
++use crate::color::{Color, color_to_rgba_f64};
+ use crate::coord_units::CoordUnits;
+ use crate::document::{AcquiredNodes, NodeId, RenderingOptions};
+ use crate::dpi::Dpi;
+@@ -1376,6 +1376,7 @@ impl DrawingCtx {
+         acquired_nodes: &mut AcquiredNodes<'_>,
+         viewport: &Viewport,
+     ) -> Result<bool, Box<InternalRenderingError>> {
++        log_gamut_mapping(&self.session, paint_source);
+         match *paint_source {
+             UserSpacePaintSource::Gradient(ref gradient, _c) => {
+                 set_gradient_on_cairo(&self.cr, gradient)?;
+@@ -2122,15 +2123,38 @@ pub fn create_pango_context(font_options: &FontOptions) -> pango::Context {
+     context
+ }
+ 
++/// Says when a colour is outside sRGB, the space of librsvg's cairo targets, and so is drawn gamut mapped
++/// (CSS Color 4 section 14.2).
++fn log_gamut_mapping(session: &Session, paint_source: &UserSpacePaintSource) {
++    let report = |color: &Color| {
++        if let Color::Css(css) = color {
++            if color_to_rgba_f64(color).1 {
++                rsvg_log!(
++                    session,
++                    "color({} {} {} {} / {}) is outside sRGB; it is drawn gamut mapped, as CSS Color 4 \
++                     section 14.2 says",
++                    css.space.name(),
++                    css.c[0],
++                    css.c[1],
++                    css.c[2],
++                    css.alpha
++                );
++            }
++        }
++    };
++    match *paint_source {
++        UserSpacePaintSource::SolidColor(ref c) => report(c),
++        UserSpacePaintSource::Pattern(_, Some(ref c)) => report(c),
++        UserSpacePaintSource::Gradient(ref g, _) => g.stops.iter().for_each(|s| report(&s.color)),
++        _ => (),
++    }
++}
++
+ pub fn set_source_color_on_cairo(cr: &cairo::Context, color: &Color) {
+-    let rgba = color_to_rgba(color);
+-
+-    cr.set_source_rgba(
+-        f64::from(rgba.red) / 255.0,
+-        f64::from(rgba.green) / 255.0,
+-        f64::from(rgba.blue) / 255.0,
+-        f64::from(rgba.alpha),
+-    );
++    let ([red, green, blue, alpha], _) = color_to_rgba_f64(color);
++
++    // in double precision: cairo keeps 16 bits per channel for a solid source
++    cr.set_source_rgba(red, green, blue, alpha);
+ }
+ 
+ fn set_gradient_on_cairo(
+@@ -2158,15 +2182,9 @@ fn set_gradient_on_cairo(
+     for stop in &gradient.stops {
+         let UnitInterval(stop_offset) = stop.offset;
+ 
+-        let rgba = color_to_rgba(&stop.color);
++        let ([red, green, blue, alpha], _) = color_to_rgba_f64(&stop.color);
+ 
+-        g.add_color_stop_rgba(
+-            stop_offset,
+-            f64::from(rgba.red) / 255.0,
+-            f64::from(rgba.green) / 255.0,
+-            f64::from(rgba.blue) / 255.0,
+-            f64::from(rgba.alpha),
+-        );
++        g.add_color_stop_rgba(stop_offset, red, green, blue, alpha);
+     }
+ 
+     Ok(cr.set_source(&g)?)
+diff --git a/rsvg/src/lib.rs b/rsvg/src/lib.rs
+index 401cebc..5d921e0 100644
+--- a/rsvg/src/lib.rs
++++ b/rsvg/src/lib.rs
+@@ -174,6 +174,7 @@ mod aspect_ratio;
+ mod bbox;
+ mod cairo_path;
+ mod color;
++mod css_color;
+ mod cond;
+ mod coord_units;
+ mod css;
