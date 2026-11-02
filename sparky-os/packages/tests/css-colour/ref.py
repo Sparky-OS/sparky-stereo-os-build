@@ -1416,14 +1416,98 @@ def parse_hex(h):
     return Color('srgb', [r / 255, g / 255, b / 255], a, legacy=True)
 
 
-def contrast_color(c):
-    """CSS Color 5 section 8: white or black, whichever has the larger contrast; white on a tie.
-    The algorithm is UA-defined; this uses WCAG 2.1 relative luminance from the gamut-mapped sRGB value."""
+# Oklab lightness above which black text is chosen (Lea Verou, "On automatically generating contrasting text colors
+# with CSS", 2024-05-17: over the OKLCH reference range, neither black nor white text fails APCA between 68.7% and
+# 71.6%, "e.g. 70%")
+CONTRAST_L_THRESHOLD = 0.7
+# WCAG 2.1 section 1.4.3, AA for large text: the floor CSS Color 5 section 8 asks contrast-color() to meet
+CONTRAST_WCAG_FLOOR = 3.0
+
+
+def contrast_choice(c):
+    """CSS Color 5 section 8: white or black, "whichever produces maximum color contrast for text when the input color
+    is used as a solid background"; white on a tie; the algorithm is UA-defined, and UAs "are advised to not simply
+    use the WCAG 2.1 section 1.4.3 Contrast (Minimum) contrast ratio algorithm", while the result "should still meet
+    the WCAG 2.1 section 1.4.3 Contrast (Minimum) for AA large text".  The background is the colour as an opaque sRGB
+    colour (gamut mapped, CSS Color 4 section 14.2).  Black when its Oklab lightness is above the threshold, white
+    otherwise (white when it is equal); then the other one when the choice is below 3:1 by WCAG 2.1's contrast ratio,
+    which always leaves at least 4.58:1.  Returns ('white' or 'black', the WCAG 2.1 choice, Oklab L, the ratio)."""
     rgb, _ = gamut_map(Color(c.space, c.c, 1.0), 'srgb')
-    lum = mul(M_SRGB_TO_XYZ, lin_sRGB(rgb))[1]
+    rgb = [0.0 if v is None else v for v in rgb]
+    lin = lin_sRGB(rgb)
+    lum = mul(M_SRGB_TO_XYZ, lin)[1]
+    lightness = XYZ_to_OKLab(mul(M_SRGB_TO_XYZ, lin))[0]
     white = 1.05 / (lum + 0.05)
     black = (lum + 0.05) / 0.05
-    return rgb8(0xffffff) if white >= black else rgb8(0x000000)
+    pick = 'black' if lightness > CONTRAST_L_THRESHOLD else 'white'
+    if pick == 'black' and black < CONTRAST_WCAG_FLOOR:
+        pick = 'white'
+    elif pick == 'white' and white < CONTRAST_WCAG_FLOOR:
+        pick = 'black'
+    wcag = 'white' if white >= black else 'black'
+    return pick, wcag, lightness, (black if pick == 'black' else white)
+
+
+def contrast_color(c):
+    return rgb8(0x000000) if contrast_choice(c)[0] == 'black' else rgb8(0xffffff)
+
+
+# ---------------------------------------------------------------- color-scheme (CSS Color Adjustment 1)
+
+CSS_WIDE_KEYWORDS = {'initial', 'inherit', 'unset', 'revert', 'revert-layer'}
+_IDENT = re.compile(r'^(--|-?[A-Za-z_\u0080-\U0010ffff])[A-Za-z0-9_\-\u0080-\U0010ffff]*$')
+
+
+def parse_color_scheme(text):
+    """CSS Color Adjustment 1 (CR Snapshot 30 October 2026) section 2.2: the color-scheme property,
+    normal | [ light | dark | <custom-ident> ]+ && only?.  Returns None for normal, a CSS-wide keyword as a string,
+    or (the known colour schemes in order, only).  <custom-ident>s are kept out: "meaningless"."""
+    words = text.split()
+    if not words:
+        raise Invalid('color-scheme: empty value')
+    low = [w.lower() for w in words]
+    if low == ['normal']:
+        return None
+    if len(low) == 1 and low[0] in CSS_WIDE_KEYWORDS:
+        return low[0]
+    only = False
+    schemes = []
+    idents = 0
+    for i, w in enumerate(low):
+        if w == 'only':
+            # && only?: once, before or after the keywords
+            if only or i not in (0, len(low) - 1):
+                raise Invalid('color-scheme: "only" goes once, before or after the color schemes')
+            only = True
+            continue
+        if w == 'normal' or w in CSS_WIDE_KEYWORDS or w == 'default' or not _IDENT.match(words[i]):
+            raise Invalid('color-scheme: %r is not a color scheme' % words[i])
+        idents += 1
+        if w in ('light', 'dark'):
+            schemes.append(w)
+    if not idents:
+        raise Invalid('color-scheme: no color scheme')
+    return (schemes, only)
+
+
+def used_color_scheme(support, preference):
+    """CSS Color Adjustment 1 section 2.3, "To determine the used color scheme": support is None (null) or
+    (schemes, only); preference None (no preference), 'light' or 'dark'.  The UA supports light and dark; its default
+    is light.  There is no overriding preference here."""
+    supported = [s for s in (support[0] if support else []) if s in ('light', 'dark')]
+    if not supported:
+        return 'light'
+    if preference is None:
+        return supported[0]
+    if preference in supported:
+        return preference
+    return supported[0]   # sole support, and otherwise: the first supported color scheme in support
+
+
+def element_color_scheme(computed, preference):
+    """The element color scheme: the page color scheme for normal (SVG sets no page color schemes, so it is the
+    used color scheme of a null support: light), the used color scheme of the support otherwise."""
+    return used_color_scheme(None if computed is None else computed, preference)
 
 
 def hdr_mix(c1, H1, c2, H2, H):

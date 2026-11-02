@@ -93,9 +93,11 @@ def main():
             verdict = 'PASS' if ok else 'FAIL'
             detail = 'drawn %s, %s' % ('black (the dropped declaration)' if black else 'not black %s' % px,
                                       'warned: %s' % cm[0][:120] if cm else 'NO WARNING')
-        elif c.get('context') == 'system':
+        elif c.get('context') in ('system', 'system-dark'):
             if renderer == 'qt' and palette:
-                want = palette['palette_text']
+                # in a dark element color scheme with the light test palette: Qt's default dark palette's text
+                want = palette['palette_text'] if c['context'] == 'system' else '#fff0f0f0'
+
                 pal = ref.Color('srgb', [int(want[i:i + 2], 16) / 255 for i in (3, 5, 7)])
                 space = QT_SPACE[None if cs == 'none' else cs]
                 extended = fmt in ('RGBA16FPx4', 'RGBA32FPx4') and space not in ('rec2100-pq',)
@@ -104,7 +106,8 @@ def main():
                 layer = LAYER_LIMITS.get((renderer, c['form']))
                 ok = err <= max(1.5 / 65535, 2 * step(max(rgb), fmt), layer[1] if layer else 0)
                 verdict = 'PASS' if ok else 'FAIL'
-                detail = 'palette text %s in %s, got %s, error %.2g' % (want, space, [round(v, 4) for v in px[:3]], err)
+                detail = '%s text %s in %s, got %s, error %.2g' % ('palette' if c['context'] == 'system' else "Qt's default dark palette's",
+                                                                  want, space, [round(v, 4) for v in px[:3]], err)
             else:
                 ok = bool(cm)
                 verdict = 'PASS' if ok else 'FAIL'

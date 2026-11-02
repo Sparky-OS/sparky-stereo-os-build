@@ -8,14 +8,17 @@ Description: Parse every CSS colour and draw it at more than 8 bits
  CSS Color 5 and CSS Color HDR (css_color.rs) that keeps each colour in its
  own space in double precision; solid colours and gradient stops reach cairo
  as doubles, gamut mapped into sRGB as CSS Color 4 section 14.2 says when
- they are outside it, which is logged.
+ they are outside it, which is logged.  light-dark() follows the element
+ color scheme from the color-scheme property (CSS Color 5 section 7, CSS
+ Color Adjustment 1 section 2.2); contrast-color() chooses by Oklab
+ lightness with WCAG 2.1's 3:1 as its floor (CSS Color 5 section 8).
 Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
-Origin: vendor, Sparky Stereo OS (ORDER 348)
+Origin: vendor, Sparky Stereo OS (ORDER 348, 348b); https://github.com/Sparky-OS/librsvg/commits/stereo3d-css-colour-2.63 (90545e38f, 96eaad9c2)
 Forwarded: no
 Last-Update: 2026-11-02
 ---
 diff --git a/rsvg/src/color.rs b/rsvg/src/color.rs
-index 470f4c0..9267949 100644
+index 470f4c0..198c326 100644
 --- a/rsvg/src/color.rs
 +++ b/rsvg/src/color.rs
 @@ -4,6 +4,7 @@ use cssparser::{ParseErrorKind, Parser};
@@ -26,16 +29,61 @@ index 470f4c0..9267949 100644
  use crate::error::*;
  use crate::parsers::Parse;
  use crate::unit_interval::UnitInterval;
-@@ -20,6 +21,8 @@ pub enum Color {
+@@ -20,6 +21,53 @@ pub enum Color {
      Hsl(Hsl),
      /// Specifies a color in sRGB using hue, whiteness and blackness components.
      Hwb(Hwb),
 +    /// Any `<color>` of CSS Color 4, CSS Color 5 and CSS Color HDR, kept in its own colour space in double precision.
 +    Css(CssColor),
++    /// A colour that depends on the element colour scheme through `light-dark()`, anywhere in it (CSS Color 5
++    /// section 7): what it is in a light and in a dark colour scheme.  Computing the property on an element
++    /// resolves it with [`Color::for_color_scheme`]; it never reaches drawing.
++    LightDark(LightDark),
++}
++
++/// The two values of a colour that contains `light-dark()`.
++#[derive(Clone, Copy, PartialEq, Debug)]
++pub struct LightDark {
++    pub light: CssColor,
++    pub dark: CssColor,
++}
++
++/// The colour schemes librsvg supports (CSS Color Adjustment 1, section 2).
++#[derive(Clone, Copy, PartialEq, Eq, Debug)]
++pub enum ColorSchemeKind {
++    Light,
++    Dark,
++}
++
++impl Color {
++    /// The colour in an element colour scheme: a `light-dark()` colour becomes its light or its dark value.
++    pub fn for_color_scheme(&self, scheme: ColorSchemeKind) -> Color {
++        match self {
++            Color::LightDark(ld) => css_to_color(match scheme {
++                ColorSchemeKind::Light => ld.light,
++                ColorSchemeKind::Dark => ld.dark,
++            }),
++            other => *other,
++        }
++    }
++}
++
++/// An sRGB colour that 8 bits hold exactly (hex, names, rgb() with integers) stays an RGBA; any other is a CSS colour.
++fn css_to_color(css: CssColor) -> Color {
++    let byte = |v: f64| {
++        let b = v * 255.0;
++        if (b - b.round()).abs() < 1e-9 { Some(b.round() as u8) } else { None }
++    };
++    if css.space == css_color::Space::Srgb && css.missing == 0 {
++        if let (Some(red), Some(green), Some(blue)) = (byte(css.c[0]), byte(css.c[1]), byte(css.c[2])) {
++            return Color::Rgba(RGBA::new(red, green, blue, css.alpha as f32));
++        }
++    }
++    Color::Css(css)
  }
  
  /// A color with red, green, blue, and alpha components, in a byte each.
-@@ -145,58 +148,43 @@ fn clamp_floor_256_f32(val: f32) -> u8 {
+@@ -145,58 +193,54 @@ fn clamp_floor_256_f32(val: f32) -> u8 {
      val.round().clamp(0., 255.) as u8
  }
  
@@ -95,28 +143,38 @@ index 470f4c0..9267949 100644
 -        cssc::Color::Rgba(rgba) => Ok(Color::Rgba(rgba.into())),
 -
 -        cssc::Color::Hsl(hsl) => Ok(Color::Hsl(hsl.into())),
--
--        cssc::Color::Hwb(hwb) => Ok(Color::Hwb(hwb.into())),
 +    if text.eq_ignore_ascii_case("currentcolor") {
 +        return Ok(Color::CurrentColor);
 +    }
  
+-        cssc::Color::Hwb(hwb) => Ok(Color::Hwb(hwb.into())),
++    let light = css_color::parse_css_color(text, &css_color::Context::default());
++
++    // The colour is parsed before the cascade knows the element colour scheme.  The only part of a colour that depends
++    // on it is light-dark() (librsvg has no system colours), and that is a choice between two, so a colour that
++    // contains light-dark() is parsed for both colour schemes, and the property's computed value takes one.
++    if text.to_ascii_lowercase().contains("light-dark") {
++        let dark = css_color::parse_css_color(
++            text,
++            &css_color::Context {
++                dark_scheme: true,
++                ..Default::default()
++            },
++        );
++        if let (Ok(light), Ok(dark)) = (&light, &dark) {
++            if light != dark {
++                return Ok(Color::LightDark(LightDark {
++                    light: *light,
++                    dark: *dark,
++                }));
++            }
++        }
++    }
+ 
 -        _ => Err(ParseError {
 -            kind: ParseErrorKind::Custom(ValueErrorKind::parse_error("unsupported color syntax")),
-+    css_color::parse_css_color(text, &css_color::Context::default())
-+        .map(|css| {
-+            // an sRGB colour that 8 bits hold exactly (hex, names, rgb() with integers) stays an RGBA
-+            let byte = |v: f64| {
-+                let b = v * 255.0;
-+                if (b - b.round()).abs() < 1e-9 { Some(b.round() as u8) } else { None }
-+            };
-+            if css.space == css_color::Space::Srgb && css.missing == 0 {
-+                if let (Some(red), Some(green), Some(blue)) = (byte(css.c[0]), byte(css.c[1]), byte(css.c[2])) {
-+                    return Color::Rgba(RGBA::new(red, green, blue, css.alpha as f32));
-+                }
-+            }
-+            Color::Css(css)
-+        })
++    light
++        .map(css_to_color)
 +        .map_err(|e| ParseError {
 +            kind: ParseErrorKind::Custom(ValueErrorKind::parse_error(&e)),
              location: loc,
@@ -126,7 +184,7 @@ index 470f4c0..9267949 100644
  }
  
  /// Parse a custom property name.
-@@ -284,10 +272,41 @@ pub fn color_to_rgba(color: &Color) -> RGBA {
+@@ -284,10 +328,45 @@ pub fn color_to_rgba(color: &Color) -> RGBA {
              RGBA::from_floats(red, green, blue, hwb.alpha.unwrap_or(OPAQUE))
          }
  
@@ -135,6 +193,9 @@ index 470f4c0..9267949 100644
 +            let _ = css;
 +            RGBA::from_floats(red as f32, green as f32, blue as f32, alpha as f32)
 +        }
++
++        // not resolved by a computed value (a filter function's colour): the default colour scheme, light
++        Color::LightDark(_) => color_to_rgba(&color.for_color_scheme(ColorSchemeKind::Light)),
 +
          _ => unimplemented!(),
      }
@@ -161,6 +222,7 @@ index 470f4c0..9267949 100644
 +                false,
 +            )
 +        }
++        Color::LightDark(_) => color_to_rgba_f64(&color.for_color_scheme(ColorSchemeKind::Light)),
 +        Color::CurrentColor => unimplemented!(),
 +    }
 +}
@@ -168,7 +230,27 @@ index 470f4c0..9267949 100644
  /// Takes the `opacity` property and an alpha value from a CSS `<color>` and returns a resulting
  /// alpha for a computed value.
  ///
-@@ -337,6 +356,15 @@ pub fn resolve_color(color: &Color, opacity: UnitInterval, current_color: &Color
+@@ -317,15 +396,17 @@ pub fn resolve_color(color: &Color, opacity: UnitInterval, current_color: &Color
+             if let Color::CurrentColor = current_color {
+                 black()
+             } else {
+-                *current_color
++                current_color.for_color_scheme(ColorSchemeKind::Light)
+             }
+         }
+ 
++        Color::LightDark(_) => color.for_color_scheme(ColorSchemeKind::Light),
++
+         _ => *color,
+     };
+ 
+     match without_opacity_applied {
+-        Color::CurrentColor => unreachable!(),
++        Color::CurrentColor | Color::LightDark(_) => unreachable!(),
+ 
+         Color::Rgba(rgba) => Color::Rgba(RGBA {
+             alpha: resolve_alpha(opacity, Some(rgba.alpha)),
+@@ -337,6 +418,15 @@ pub fn resolve_color(color: &Color, opacity: UnitInterval, current_color: &Color
              ..hsl
          }),
  
@@ -184,7 +266,38 @@ index 470f4c0..9267949 100644
          Color::Hwb(hwb) => Color::Hwb(Hwb {
              alpha: Some(resolve_alpha(opacity, hwb.alpha)),
              ..hwb
-@@ -363,12 +391,53 @@ mod tests {
+@@ -348,6 +438,30 @@ pub fn resolve_color(color: &Color, opacity: UnitInterval, current_color: &Color
+ mod tests {
+     use super::*;
+ 
++    #[test]
++    fn light_dark_keeps_both_colors() {
++        let c = Color::parse_str("color-mix(in srgb, light-dark(#336699, #996633), white)").unwrap();
++        assert!(matches!(c, Color::LightDark(_)));
++        assert_eq!(
++            c.for_color_scheme(ColorSchemeKind::Light),
++            Color::parse_str("color-mix(in srgb, #336699, white)").unwrap()
++        );
++        assert_eq!(
++            c.for_color_scheme(ColorSchemeKind::Dark),
++            Color::parse_str("color-mix(in srgb, #996633, white)").unwrap()
++        );
++        // the same colour in both is no light-dark() colour
++        assert_eq!(Color::parse_str("light-dark(red, red)").unwrap(), Color::Rgba(RGBA::new(255, 0, 0, 1.0)));
++    }
++
++    #[test]
++    fn contrast_color_is_not_plain_wcag() {
++        // WCAG 2.1's larger ratio would give black on red; white has 4:1
++        assert_eq!(Color::parse_str("contrast-color(red)").unwrap(), Color::Rgba(RGBA::new(255, 255, 255, 1.0)));
++        // white would have less than 3:1 on #ff6600
++        assert_eq!(Color::parse_str("contrast-color(#ff6600)").unwrap(), Color::Rgba(RGBA::new(0, 0, 0, 1.0)));
++    }
++
+     #[test]
+     fn parses_plain_color() {
+         assert_eq!(
+@@ -363,12 +477,53 @@ mod tests {
              Color::Rgba(RGBA::new(0x11, 0x22, 0x33, 1.0))
          );
  
@@ -241,10 +354,10 @@ index 470f4c0..9267949 100644
      #[test]
 diff --git a/rsvg/src/css_color.rs b/rsvg/src/css_color.rs
 new file mode 100644
-index 0000000..b35affa
+index 0000000..6c0a1c7
 --- /dev/null
 +++ b/rsvg/src/css_color.rs
-@@ -0,0 +1,2107 @@
+@@ -0,0 +1,2126 @@
 +//! CSS colour values: the `<color>` grammar of CSS Color 4 (CRD 1 November 2026) sections 4 to 10,
 +//! CSS Color 5 (WD 29 October 2026) sections 2 to 8 and CSS Color HDR 1 (WD 26 October 2026) sections 4 to 8.
 +//!
@@ -1305,7 +1418,7 @@ index 0000000..b35affa
 +pub struct Context {
 +    /// the value of currentcolor, when it is known where the colour is parsed
 +    pub current_color: Option<CssColor>,
-+    /// CSS Color 5 section 7: light-dark() takes its second colour in a dark colour scheme
++    /// CSS Color 5 section 7: light-dark() takes its second colour when the element colour scheme is dark
 +    pub dark_scheme: bool,
 +}
 +
@@ -2181,17 +2294,36 @@ index 0000000..b35affa
 +    }
 +}
 +
-+/// CSS Color 5 section 8: white or black, whichever contrasts more; white on a tie.  The algorithm is UA-defined;
-+/// this one uses the WCAG 2.1 relative luminance of the gamut-mapped sRGB colour.
++/// CSS Color 5 section 8: white or black, "whichever produces maximum color contrast for text when the input color
++/// is used as a solid background", white on a tie; the algorithm is UA-defined, UAs "are advised to not simply use
++/// the WCAG 2.1 section 1.4.3 Contrast (Minimum) contrast ratio algorithm", and the result "should still meet the
++/// WCAG 2.1 section 1.4.3 Contrast (Minimum) for AA large text", 3:1.
++///
++/// The background is the colour as an opaque sRGB colour, gamut mapped (CSS Color 4 section 14.2).  Black when its
++/// Oklab lightness is above 0.7, white otherwise: Lea Verou found that over the OKLCH reference range neither black
++/// nor white text fails APCA, a perceptual contrast algorithm, for lightness between 0.687 and 0.716 ("On
++/// automatically generating contrasting text colors with CSS", 2024).  Then, when the choice has a WCAG 2.1 contrast
++/// ratio below 3:1 with the background, the other one, which always has at least 4.58:1.
 +fn contrast_color(c: &CssColor) -> CssColor {
++    const LIGHTNESS_THRESHOLD: f64 = 0.7;
++    const WCAG_LARGE_TEXT_AA: f64 = 3.0;
++
 +    let mut opaque = *c;
 +    opaque.set_alpha(1.0);
 +    let (rgb, _) = gamut_map(&opaque, Space::Srgb);
-+    let lum = mul(&SRGB_TO_XYZ, &lin_srgb(&rgb))[1];
-+    if 1.05 / (lum + 0.05) >= (lum + 0.05) / 0.05 {
-+        CssColor::srgb8(0xffffff, 1.0)
-+    } else {
++    let xyz = mul(&SRGB_TO_XYZ, &lin_srgb(&rgb));
++    let lum = xyz[1];
++    let lightness = xyz_to_oklab(&xyz)[0];
++    let with_white = 1.05 / (lum + 0.05);
++    let with_black = (lum + 0.05) / 0.05;
++    let mut black = lightness > LIGHTNESS_THRESHOLD;
++    if (black && with_black < WCAG_LARGE_TEXT_AA) || (!black && with_white < WCAG_LARGE_TEXT_AA) {
++        black = !black;
++    }
++    if black {
 +        CssColor::srgb8(0x000000, 1.0)
++    } else {
++        CssColor::srgb8(0xffffff, 1.0)
 +    }
 +}
 +
@@ -2450,3 +2582,308 @@ index 401cebc..5d921e0 100644
  mod cond;
  mod coord_units;
  mod css;
+diff --git a/rsvg/src/paint_server.rs b/rsvg/src/paint_server.rs
+index cf82556..b88e740 100644
+--- a/rsvg/src/paint_server.rs
++++ b/rsvg/src/paint_server.rs
+@@ -121,6 +121,18 @@ impl Parse for PaintServer {
+ }
+ 
+ impl PaintServer {
++    /// The paint in an element colour scheme: its colours with light-dark() resolved (CSS Color 5 section 7).
++    pub fn for_color_scheme(&self, scheme: crate::color::ColorSchemeKind) -> PaintServer {
++        match self {
++            PaintServer::SolidColor(c) => PaintServer::SolidColor(c.for_color_scheme(scheme)),
++            PaintServer::Iri { iri, alternate } => PaintServer::Iri {
++                iri: iri.clone(),
++                alternate: alternate.map(|c| c.for_color_scheme(scheme)),
++            },
++            other => other.clone(),
++        }
++    }
++
+     /// Resolves colors, plus node references for gradients and patterns.
+     ///
+     /// `opacity` depends on `strokeOpacity` or `fillOpacity` depending on whether
+diff --git a/rsvg/src/properties.rs b/rsvg/src/properties.rs
+index 9e838d9..26a641d 100644
+--- a/rsvg/src/properties.rs
++++ b/rsvg/src/properties.rs
+@@ -495,6 +495,8 @@ make_properties! {
+     }
+     
+     longhands_not_supported_by_markup5ever: {
++        // SVG 2 section 6.6 gives color-scheme no presentation attribute
++        "color-scheme"                => (PresentationAttr::No,  color_scheme                : ColorScheme),
+         "isolation"                   => (PresentationAttr::No,  isolation                   : Isolation),
+         "line-height"                 => (PresentationAttr::No,  line_height                 : LineHeight),
+         "mask-type"                   => (PresentationAttr::Yes, mask_type                   : MaskType),
+@@ -695,6 +697,10 @@ impl SpecifiedValues {
+ 
+         compute!(FontSize, font_size);
+ 
++        // Then color-scheme: the colours of the element follow its colour scheme (CSS Color 5 section 7).
++
++        compute!(ColorScheme, color_scheme);
++
+         // Then, do all the other properties.
+ 
+         compute!(BaselineShift, baseline_shift);
+diff --git a/rsvg/src/property_defs.rs b/rsvg/src/property_defs.rs
+index 5e87fa2..6a3b4a8 100644
+--- a/rsvg/src/property_defs.rs
++++ b/rsvg/src/property_defs.rs
+@@ -163,8 +163,107 @@ make_property!(
+     /// [`crate::color::resolve_color`].
+     Color,
+     default: crate::color::Color::Rgba(crate::color::RGBA::new(0, 0, 0, 1.0)),
++    newtype: crate::color::Color,
++    property_impl: {
++        impl Property for Color {
++            fn inherits_automatically() -> bool {
++                true
++            }
++
++            // light-dark() takes the element colour scheme (CSS Color 5 section 7)
++            fn compute(&self, v: &ComputedValues) -> Self {
++                Color(self.0.for_color_scheme(v.color_scheme().used()))
++            }
++        }
++    },
++    parse_impl: {
++        impl Parse for Color {
++            fn parse<'i>(parser: &mut Parser<'i, '_>) -> Result<Color, crate::error::ParseError<'i>> {
++                Ok(Color(<crate::color::Color as Parse>::parse(parser)?))
++            }
++        }
++    }
++);
++
++/// `color-scheme` property.
++///
++/// CSS Color Adjustment 1 (CR Snapshot 30 October 2026) section 2.2:
++/// <https://www.w3.org/TR/css-color-adjust-1/#color-scheme-prop>
++///
++/// `normal | [ light | dark | <custom-ident> ]+ && only?`.  The computed value is `normal` or a colour scheme
++/// support: the `light` and `dark` keywords in their order (a `<custom-ident>` is "meaningless" and supports nothing)
++/// and whether `only` was given.  There is no presentation attribute (SVG 2 section 6.6 lists none).
++#[derive(Debug, Clone, PartialEq)]
++pub struct ColorScheme {
++    pub normal: bool,
++    pub schemes: Vec<crate::color::ColorSchemeKind>,
++    pub only: bool,
++}
++
++impl ColorScheme {
++    /// The element colour scheme (CSS Color Adjustment 1 sections 2.1 to 2.3).  librsvg has no colour scheme
++    /// preference, so: for `normal`, the page colour scheme, which SVG cannot set, so the default, light; otherwise the
++    /// first supported colour scheme in the support, or the default, light, when it lists none.
++    pub fn used(&self) -> crate::color::ColorSchemeKind {
++        if self.normal {
++            return crate::color::ColorSchemeKind::Light;
++        }
++        self.schemes.first().copied().unwrap_or(crate::color::ColorSchemeKind::Light)
++    }
++}
++
++make_property!(
++    ColorScheme,
++    default: ColorScheme { normal: true, schemes: Vec::new(), only: false },
+     inherits_automatically: true,
+-    newtype_parse: crate::color::Color,
++    parse_impl: {
++        impl Parse for ColorScheme {
++            fn parse<'i>(parser: &mut Parser<'i, '_>) -> Result<ColorScheme, crate::error::ParseError<'i>> {
++                let loc = parser.current_source_location();
++                let mut idents = Vec::new();
++                while let Ok(token) = parser.next() {
++                    match token {
++                        Token::Ident(s) => idents.push(s.to_ascii_lowercase()),
++                        t => {
++                            let t = t.clone();
++                            return Err(loc.new_unexpected_token_error(t));
++                        }
++                    }
++                }
++                let invalid = || loc.new_custom_error(ValueErrorKind::parse_error("invalid color-scheme"));
++                if idents.is_empty() {
++                    return Err(invalid());
++                }
++                if idents.len() == 1 && idents[0] == "normal" {
++                    return Ok(ColorScheme { normal: true, schemes: Vec::new(), only: false });
++                }
++                let mut value = ColorScheme { normal: false, schemes: Vec::new(), only: false };
++                let mut count = 0;
++                let last = idents.len() - 1;
++                for (i, ident) in idents.iter().enumerate() {
++                    match ident.as_str() {
++                        // && only?: once, before or after the colour schemes
++                        "only" if !value.only && (i == 0 || i == last) => value.only = true,
++                        "only" | "normal" | "default" | "initial" | "inherit" | "unset" | "revert"
++                        | "revert-layer" => return Err(invalid()),
++                        "light" => {
++                            count += 1;
++                            value.schemes.push(crate::color::ColorSchemeKind::Light);
++                        }
++                        "dark" => {
++                            count += 1;
++                            value.schemes.push(crate::color::ColorSchemeKind::Dark);
++                        }
++                        _ => count += 1,
++                    }
++                }
++                if count == 0 {
++                    return Err(invalid());
++                }
++                Ok(value)
++            }
++        }
++    }
+ );
+ 
+ make_property!(
+@@ -357,8 +456,26 @@ make_property!(
+     default: PaintServer::SolidColor(crate::color::Color::Rgba(
+         crate::color::RGBA::new(0, 0, 0, 1.0)
+     )),
+-    inherits_automatically: true,
+-    newtype_parse: PaintServer,
++    newtype: PaintServer,
++    property_impl: {
++        impl Property for Fill {
++            fn inherits_automatically() -> bool {
++                true
++            }
++
++            // light-dark() takes the element colour scheme (CSS Color 5 section 7)
++            fn compute(&self, v: &ComputedValues) -> Self {
++                Fill(self.0.for_color_scheme(v.color_scheme().used()))
++            }
++        }
++    },
++    parse_impl: {
++        impl Parse for Fill {
++            fn parse<'i>(parser: &mut Parser<'i, '_>) -> Result<Fill, crate::error::ParseError<'i>> {
++                Ok(Fill(<PaintServer as Parse>::parse(parser)?))
++            }
++        }
++    }
+ );
+ 
+ make_property!(
+@@ -431,8 +548,26 @@ make_property!(
+     /// Filter Effects 1: <https://www.w3.org/TR/filter-effects/#FloodColorProperty>
+     FloodColor,
+     default: crate::color::Color::Rgba(crate::color::RGBA::new(0, 0, 0, 1.0)),
+-    inherits_automatically: false,
+-    newtype_parse: crate::color::Color,
++    newtype: crate::color::Color,
++    property_impl: {
++        impl Property for FloodColor {
++            fn inherits_automatically() -> bool {
++                false
++            }
++
++            // light-dark() takes the element colour scheme (CSS Color 5 section 7)
++            fn compute(&self, v: &ComputedValues) -> Self {
++                FloodColor(self.0.for_color_scheme(v.color_scheme().used()))
++            }
++        }
++    },
++    parse_impl: {
++        impl Parse for FloodColor {
++            fn parse<'i>(parser: &mut Parser<'i, '_>) -> Result<FloodColor, crate::error::ParseError<'i>> {
++                Ok(FloodColor(<crate::color::Color as Parse>::parse(parser)?))
++            }
++        }
++    }
+ );
+ 
+ make_property!(
+@@ -642,8 +777,26 @@ make_property!(
+     /// Filter Effects 1: <https://www.w3.org/TR/filter-effects/#LightingColorProperty>
+     LightingColor,
+     default: crate::color::Color::Rgba(crate::color::RGBA::new(255, 255, 255, 1.0)),
+-    inherits_automatically: false,
+-    newtype_parse: crate::color::Color,
++    newtype: crate::color::Color,
++    property_impl: {
++        impl Property for LightingColor {
++            fn inherits_automatically() -> bool {
++                false
++            }
++
++            // light-dark() takes the element colour scheme (CSS Color 5 section 7)
++            fn compute(&self, v: &ComputedValues) -> Self {
++                LightingColor(self.0.for_color_scheme(v.color_scheme().used()))
++            }
++        }
++    },
++    parse_impl: {
++        impl Parse for LightingColor {
++            fn parse<'i>(parser: &mut Parser<'i, '_>) -> Result<LightingColor, crate::error::ParseError<'i>> {
++                Ok(LightingColor(<crate::color::Color as Parse>::parse(parser)?))
++            }
++        }
++    }
+ );
+ 
+ make_property!(
+@@ -924,8 +1077,26 @@ make_property!(
+     /// SVG2: <https://www.w3.org/TR/SVG2/pservers.html#StopColorProperty>
+     StopColor,
+     default: crate::color::Color::Rgba(crate::color::RGBA::new(0, 0, 0, 1.0)),
+-    inherits_automatically: false,
+-    newtype_parse: crate::color::Color,
++    newtype: crate::color::Color,
++    property_impl: {
++        impl Property for StopColor {
++            fn inherits_automatically() -> bool {
++                false
++            }
++
++            // light-dark() takes the element colour scheme (CSS Color 5 section 7)
++            fn compute(&self, v: &ComputedValues) -> Self {
++                StopColor(self.0.for_color_scheme(v.color_scheme().used()))
++            }
++        }
++    },
++    parse_impl: {
++        impl Parse for StopColor {
++            fn parse<'i>(parser: &mut Parser<'i, '_>) -> Result<StopColor, crate::error::ParseError<'i>> {
++                Ok(StopColor(<crate::color::Color as Parse>::parse(parser)?))
++            }
++        }
++    }
+ );
+ 
+ make_property!(
+@@ -944,8 +1115,26 @@ make_property!(
+     /// SVG2: <https://www.w3.org/TR/SVG2/painting.html#SpecifyingStrokePaint>
+     Stroke,
+     default: PaintServer::None,
+-    inherits_automatically: true,
+-    newtype_parse: PaintServer,
++    newtype: PaintServer,
++    property_impl: {
++        impl Property for Stroke {
++            fn inherits_automatically() -> bool {
++                true
++            }
++
++            // light-dark() takes the element colour scheme (CSS Color 5 section 7)
++            fn compute(&self, v: &ComputedValues) -> Self {
++                Stroke(self.0.for_color_scheme(v.color_scheme().used()))
++            }
++        }
++    },
++    parse_impl: {
++        impl Parse for Stroke {
++            fn parse<'i>(parser: &mut Parser<'i, '_>) -> Result<Stroke, crate::error::ParseError<'i>> {
++                Ok(Stroke(<PaintServer as Parse>::parse(parser)?))
++            }
++        }
++    }
+ );
+ 
+ make_property!(

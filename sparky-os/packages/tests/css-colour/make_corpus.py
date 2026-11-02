@@ -86,10 +86,38 @@ CASES = [
     ('alpha-function', 'alpha(from color(display-p3 0.4 0.5 0.6) / 0.5)', 'C5 4.10', p16_5('display-p3')),
     ('light-dark', 'light-dark(color(display-p3 0.2 0.4 0.6), color(display-p3 0.8 0.6 0.4))', 'C5 7', p16_5('display-p3')),
     ('contrast-color', 'contrast-color(color(display-p3 0.2 0.3 0.4))', 'C5 8', P8),
+    # backgrounds where the choice is not WCAG 2.1's larger ratio (white, still above 3:1), and one where the 3:1 floor
+    # decides (black)
+    ('contrast-color-red', 'contrast-color(#ff0000)', 'C5 8', P8),
+    ('contrast-color-3498db', 'contrast-color(#3498db)', 'C5 8', P8),
+    ('contrast-color-808080', 'contrast-color(#808080)', 'C5 8', P8),
+    ('contrast-color-ff6600', 'contrast-color(#ff6600)', 'C5 8', P8),
     ('device-cmyk', 'device-cmyk(0.1 0.2 0.3 0.05)', 'C5 6', P8),
     ('device-cmyk-modern', 'device-cmyk(10% 20% 30% 5% / 80%)', 'C5 6', P8),
     ('hdr-color', 'color-hdr(color(rec2100-linear 0.9 1.0 0.8) 0, color(rec2100-linear 1.8 2.0 1.5) 2)', 'HDR 5', p16_5('rec2100-linear')),
 ]
+# light-dark() follows the element color scheme (CSS Color 5 section 7; CSS Color Adjustment 1 sections 2.2 to 2.4):
+# (id, the root's color-scheme or None, the body with FILL for the rect's fill, the color-scheme that applies to the
+# rect).  The renderers run with no color scheme preference (Qt: no platform colour scheme; librsvg: none).
+LD = 'light-dark(color(display-p3 0.2 0.4 0.6), color(display-p3 0.8 0.6 0.4))'
+RECT = '<rect width="%d" height="%d" style="fill: %%s"/>' % (64, 16)
+SCHEME_CASES = [
+    ('scheme-none', None, RECT, None),
+    ('scheme-light', 'light', RECT, 'light'),
+    ('scheme-dark', 'dark', RECT, 'dark'),
+    ('scheme-light-dark', 'light dark', RECT, 'light dark'),
+    ('scheme-dark-light', 'dark light', RECT, 'dark light'),
+    ('scheme-only-light', 'only light', RECT, 'only light'),
+    ('scheme-custom', 'foo', RECT, 'foo'),
+    ('scheme-inherited', 'dark', '<g>' + RECT + '</g>', 'dark'),
+    ('scheme-normal-under-dark', None, '<g style="color-scheme: dark"><rect width="64" height="16" '
+     'style="color-scheme: normal; fill: %s"/></g>', None),
+    ('scheme-style-sheet', None, '<style>rect { color-scheme: dark }</style>' + RECT, 'dark'),
+    ('scheme-nested', 'dark', '<rect width="64" height="16" style="fill: color-mix(in srgb, %s, white 25%%)"/>', 'dark'),
+]
+# SVG 2 section 6.6: color-scheme has no presentation attribute; a color-scheme attribute is not read
+SCHEME_ATTRIBUTE = ('scheme-attribute-not-read', ' color-scheme="dark"', RECT)
+
 INVALID = [
     ('invalid-space', 'color(profoto-rgb 0.4835 0.9167 0.2188)', 'C4 10.1'),
     ('invalid-syntax', 'lab(50% 40 abc)', 'C4 4.5'),
@@ -183,6 +211,40 @@ def main():
                         brgb, _, bmapped = expected(colour, space, True, ctx)
                         entry['expected'][key]['bounded'] = {'rgb': brgb, 'gamut_mapped': bmapped}
             cases.append(entry)
+    for cid, root, body, applies in SCHEME_CASES + [(SCHEME_ATTRIBUTE[0], SCHEME_ATTRIBUTE[1], SCHEME_ATTRIBUTE[2], None)]:
+        name = '%s-solid' % cid
+        attrs = '' if root is None else (root if root.startswith(' ') else ' style="color-scheme: %s"' % root)
+        open(os.path.join(out, 'svg', name + '.svg'), 'w').write(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d"%s>%s</svg>\n' % (W, H, attrs, body % LD))
+        computed = None if applies is None else ref.parse_color_scheme(applies)
+        dark = ref.element_color_scheme(computed, None) == 'dark'
+        fill = 'color-mix(in srgb, %s, white 25%%)' % LD if cid == 'scheme-nested' else LD
+        entry = {'id': name, 'case': cid, 'colour': fill, 'form': 'solid', 'how': 'style',
+                 'syntax_clause': 'C5 7, CA1 2.2-2.4', 'precision_clause': 'C4 16.5', 'required_bits': 10,
+                 'color_scheme': applies, 'element_color_scheme': 'dark' if dark else 'light',
+                 'points': [[8, 8], [W // 2, 8], [W - 8, 8]], 'expected': {}}
+        sctx = ref.Context(current=ref.rgb8(0x2a5f8e), dark=dark)
+        for renderer, targets in (('qt', QT_TARGETS), ('rsvg', RSVG_TARGETS)):
+            for fmt, cs, extended in targets:
+                space = QT_SPACE[cs] if renderer == 'qt' else 'srgb'
+                key = '%s:%s:%s' % (renderer, fmt, cs or 'none')
+                rgb, alpha, mapped = expected(fill, space, not extended, sctx)
+                entry['expected'][key] = {'rgb': rgb, 'alpha': alpha, 'gamut_mapped': mapped, 'space': space,
+                                          'target_bits': TARGET_BITS[fmt]}
+                if extended:
+                    brgb, _, bmapped = expected(fill, space, True, sctx)
+                    entry['expected'][key]['bounded'] = {'rgb': brgb, 'gamut_mapped': bmapped}
+        cases.append(entry)
+    # system colours follow the element color scheme (CSS Color Adjustment 1 section 2.4); Qt's palette is one colour
+    # scheme only: in a dark element color scheme with a light application palette, Qt's default dark palette
+    name = 'system-canvastext-dark-solid'
+    open(os.path.join(out, 'svg', name + '.svg'), 'w').write(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" style="color-scheme: dark">'
+        '<rect width="%d" height="%d" style="fill: CanvasText"/></svg>\n' % (W, H, W, H))
+    cases.append({'id': name, 'case': 'system-canvastext-dark', 'colour': 'CanvasText', 'form': 'solid', 'how': 'style',
+                  'syntax_clause': 'C4 6.2, CA1 2.4', 'precision_clause': 'C4 16.2', 'required_bits': 8,
+                  'context': 'system-dark', 'points': [[8, 8], [W // 2, 8], [W - 8, 8]],
+                  'expected': {}, 'note': "Qt: qtbase's qt_fusionPalette() for a dark platform, text (240, 240, 240)"})
     for cid, colour, clause in INVALID:
         name = '%s-solid' % cid
         open(os.path.join(out, 'svg', name + '.svg'), 'w').write(svg_solid(colour, 'attr'))

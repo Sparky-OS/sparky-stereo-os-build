@@ -13,5 +13,11 @@ librsvg (2.63.3+dfsg-1+stereo3d1) unstable; urgency=medium
     they are outside it, which is logged. Not supported, and said in the
     parse error: currentcolor inside a colour function, the system colours
     (librsvg has no palette) and custom colour spaces (@color-profile).
+    light-dark() follows the element color scheme (ORDER 348b): the
+    color-scheme property from style sheets and style attributes,
+    inherited; librsvg has no colour scheme preference, so the first
+    supported colour scheme, light without color-scheme. contrast-color()
+    chooses black above Oklab lightness 0.7 and white below, with WCAG
+    2.1's 3:1 as its floor (CSS Color 5 section 8).
     Test: tests/css-colour (the colour corpus against the specifications'
     sample code) and the new unit tests in rsvg/src/color.rs.
