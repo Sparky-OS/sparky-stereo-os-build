@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/30
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/30
-"""kernel-keep.py --dry-run | --run | --queue RELEASE : the installed system keeps two kernels per flavour.
+# Last update 2026/11/01
+"""kernel-keep.py --dry-run | --run | --now | --queue RELEASE : the installed system keeps two kernels per flavour.
 
 After a new kernel has installed successfully (its image, its boot image and its GRUB entry written), each kernel
 flavour (the edition's base, v3 and rt; Debian's amd64, cloud-amd64 and rt-amd64) keeps the running kernel and the
@@ -12,9 +12,16 @@ other releases go: their packages only, purged (image, binary, modules, headers,
 needs), then their module folders that no package owns and that have no kernel in /boot, and their DKMS records;
 then every kept kernel's boot image and GRUB's menu are written again. Never a general autoremove.
 
+Whatever stops the cleanup is said and kept for repair (problems.py, step kernel-cleanup), and the run exits 1:
+apt's simulation naming more than the plan (nothing is removed then), a failed purge, a boot image or GRUB menu that
+could not be written again after the purge (the boot files are incomplete until it is repaired), an unexpected error,
+or an install that could not be queued. A later run that succeeds clears it. Where update-initramfs or GRUB's menu is
+not there, that step is not this system's (Debian's own kernel hooks skip it the same way) and the log says so.
+
   --dry-run          prints the plan and changes nothing
   --run              the service (sparky-stereo-kernel-keep.service): waits until apt and dpkg are done, then carries
                      out the plan; only with a queued kernel install, never in a live session, a chroot or a container
+  --now              the same without a queued install (sparky-stereo-boot repair runs it)
   --queue RELEASE    the kernel hook (/etc/kernel/postinst.d/zz-sparky-stereo-kernel-keep): records the install
 
 Environment, for tests: SPARKY_STEREO_KERNEL_KEEP_RUNNING=RELEASE stands for the running kernel;
@@ -29,6 +36,10 @@ import shutil
 import subprocess
 import sys
 import time
+import traceback
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import problems  # noqa: E402
 
 STATE = '/var/lib/sparky-stereo-boot'
 QUEUE = os.path.join(STATE, 'kernel-keep.queue')
@@ -40,6 +51,8 @@ COMPANIONS = ('-lc-hr', '-dbgsym', '-dbg', '-unsigned')
 # the packages a release's packages share with others of the same upstream version
 SHARED = re.compile(r'^linux-(?:kbuild-\S+|headers-\S+-common)$')
 TAG = 'sparky-stereo-kernel-keep'
+STEP = 'kernel-cleanup'
+SELF = '/usr/lib/sparky-stereo-boot/kernel-keep.py'
 
 
 def say(text):
@@ -215,20 +228,40 @@ def wait_for_dpkg():
         time.sleep(2)
 
 
-def run(command, **kw):
-    say('runs ' + ' '.join(command))
-    return subprocess.run(command, **kw)
-
-
 def regenerate():
-    """Every kept kernel's boot image, then GRUB's menu."""
+    """Every kept kernel's boot image, then GRUB's menu; returns [(command, exit status, output)] of what failed."""
+    failed = []
+    steps = []
     if shutil.which('update-initramfs'):
-        run(['update-initramfs', '-u', '-k', 'all'])
+        steps.append(['update-initramfs', '-u', '-k', 'all'])
+    else:
+        say('update-initramfs is not installed: the boot images belong to the generator this system uses, '
+            'as Debian\'s initramfs-tools hook leaves them')
     if shutil.which('update-grub') and os.path.exists('/boot/grub/grub.cfg'):
-        run(['update-grub'])
+        steps.append(['update-grub'])
+    else:
+        say('no GRUB menu here (update-grub, /boot/grub/grub.cfg): GRUB\'s menu is not written, '
+            'as Debian\'s zz-update-grub hook leaves it')
+    for command in steps:
+        say('runs ' + ' '.join(command))
+        status, output = problems.execute(command)
+        if status != 0:
+            say('%s failed (exit %d)' % (' '.join(command), status))
+            failed.append((command, status, output))
+    return failed, steps
 
 
 def carry_out(running):
+    try:
+        return cleanup(running)
+    except Exception as error:   # noqa: BLE001: whatever stops the cleanup is told and kept
+        traceback.print_exc()
+        problems.record(STEP, 'LOCAL31', ['%s: %s' % (type(error).__name__, error)], output=traceback.format_exc(),
+                        repair=[[SELF, '--now']])
+        return 1
+
+
+def cleanup(running):
     pkgs = packages()
     flavours, purge, gone = plan(pkgs, running)
     keep = {r for _, k, _, _ in flavours for r in k} | {running}
@@ -238,12 +271,25 @@ def carry_out(running):
         apt = ['apt-get', '-o', 'APT::Get::AutomaticRemove=false', '-o', 'DPkg::Lock::Timeout=600']
         sim = subprocess.run(apt + ['-s', 'purge'] + purge, capture_output=True, text=True, env=env)
         would = {line.split()[1] for line in sim.stdout.splitlines() if line.startswith(('Purg ', 'Remv '))}
-        if sim.returncode != 0 or would != set(purge):
-            say('nothing removed: apt would remove %s, not exactly the plan' % (' '.join(sorted(would ^ set(purge))) or sim.stderr.strip()))
+        if sim.returncode != 0:
+            say('nothing removed: apt-get -s purge failed (exit %d): %s' % (sim.returncode, sim.stderr.strip()))
+            problems.record(STEP, 'LOCAL29', [' '.join(apt + ['-s', 'purge'] + purge), sim.returncode],
+                            command=apt + ['-s', 'purge'] + purge, status=sim.returncode,
+                            output=sim.stdout + sim.stderr, repair=[[SELF, '--now']])
             return 1
-        r = run(apt + ['-y', '-o', 'Dpkg::Options::=--force-confdef', '-o', 'Dpkg::Options::=--force-confold', 'purge'] + purge, env=env)
-        if r.returncode != 0:
-            say('apt-get purge failed (exit %d)' % r.returncode)
+        if would != set(purge):
+            extra = ' '.join(sorted(would - set(purge))) or ' '.join(sorted(set(purge) - would))
+            say('nothing removed: apt would remove %s, not exactly the plan' % ' '.join(sorted(would ^ set(purge))))
+            problems.record(STEP, 'LOCAL28', [extra], command=apt + ['-s', 'purge'] + purge, status=0,
+                            output=sim.stdout)
+            return 1
+        cmd = apt + ['-y', '-o', 'Dpkg::Options::=--force-confdef', '-o', 'Dpkg::Options::=--force-confold', 'purge'] + purge
+        say('runs ' + ' '.join(cmd))
+        status, output = problems.execute(cmd)
+        if status != 0:
+            say('apt-get purge failed (exit %d)' % status)
+            problems.record(STEP, 'LOCAL29', [' '.join(cmd), status], command=cmd, status=status, output=output,
+                            repair=[[SELF, '--now']])
             return 1
     dirs, dkms = leftovers(keep)
     for d in dirs + dkms:
@@ -256,7 +302,13 @@ def carry_out(running):
     for d in dirs + dkms:
         say('removed %s' % d)
     if purge or dirs or dkms:
-        regenerate()
+        failed, steps = regenerate()
+        if failed:
+            command, status, output = failed[0]
+            problems.record(STEP, 'LOCAL27', [' '.join(command), status], command=command, status=status,
+                            output='\n'.join(o for _, _, o in failed), repair=steps)
+            return 1
+    problems.clear(STEP)
     return 0
 
 
@@ -276,10 +328,22 @@ def main():
         why = guarded()
         if why:
             return 0
-        os.makedirs(STATE, exist_ok=True)
-        with open(QUEUE, 'a') as f:
-            f.write(args[1] + '\n')
+        try:
+            os.makedirs(STATE, exist_ok=True)
+            with open(QUEUE, 'a') as f:
+                f.write(args[1] + '\n')
+        except OSError as error:
+            problems.record(STEP, 'LOCAL30', [args[1], '%s: %s' % (QUEUE, error.strerror or error)],
+                            repair=[[SELF, '--now']])
+            return 1
         return 0
+    if args == ['--now']:
+        why = guarded()
+        if why:
+            say('nothing to do in %s' % why)
+            return 0
+        wait_for_dpkg()
+        return carry_out(running)
     if args == ['--run']:
         why = guarded()
         if why:
