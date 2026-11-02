@@ -1,0 +1,17 @@
+# Created by Daniel Ramos (Capitain Jack) 2026/11/02
+# Copyright 2026 under the GNU GPL3 License
+# At login and whenever one is kept: each GPU choice that cannot be used, and each failed step of the package, as a
+# notification that stays until it is closed, with the other GPUs as explicit choices (sparky-stereo-gpu-env --notify).
+[Unit]
+Description=Graphics page: show the GPU choices that cannot be used and the failed steps
+Documentation=file:/usr/share/doc/sparky-stereo-graphics/README.md
+# people's sessions only: the login screen's accounts are system users
+ConditionUser=!@system
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/sparky-stereo-gpu-env --notify
+
+[Install]
+WantedBy=graphical-session.target

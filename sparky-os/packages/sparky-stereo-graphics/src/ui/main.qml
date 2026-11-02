@@ -20,6 +20,38 @@ KCM.SimpleKCM {
     ColumnLayout {
         spacing: Kirigami.Units.largeSpacing
 
+        // Each saved choice that cannot be used, and each failed step of the package: what failed, why and what to do;
+        // the GPUs that can draw now are offered as buttons, the person's explicit choice (Apply saves it)
+        Repeater {
+            model: kcm.problems
+            delegate: ColumnLayout {
+                Layout.fillWidth: true
+                spacing: Kirigami.Units.smallSpacing
+                Kirigami.InlineMessage {
+                    Layout.fillWidth: true
+                    visible: true
+                    type: Kirigami.MessageType.Error
+                    text: modelData.text
+                }
+                Flow {
+                    id: problemGpus
+                    Layout.fillWidth: true
+                    visible: modelData.gpus.length > 0
+                    spacing: Kirigami.Units.smallSpacing
+                    Repeater {
+                        model: modelData.gpus
+                        delegate: QQC2.Button {
+                            required property var modelData
+                            icon.name: "video-card"
+                            text: modelData.text
+                            onClicked: kcm.useGpu(problemGpus.problemKey, modelData.id)
+                        }
+                    }
+                    readonly property string problemKey: modelData.key
+                }
+            }
+        }
+
         Kirigami.Heading {
             level: 2
             text: i18nc("@title:group", "Graphics processors")
@@ -138,7 +170,7 @@ KCM.SimpleKCM {
                 model: kcm.mainOptions
                 textRole: "text"
                 valueRole: "value"
-                currentIndex: Math.max(0, indexOfValue(kcm.mainChoice))
+                currentIndex: count > 0 ? Math.max(0, indexOfValue(kcm.mainChoice)) : -1
                 onActivated: kcm.mainChoice = currentValue
             }
         }
@@ -201,7 +233,7 @@ KCM.SimpleKCM {
                     model: modelData.options
                     textRole: "text"
                     valueRole: "value"
-                    currentIndex: Math.max(0, indexOfValue(modelData.choice))
+                    currentIndex: count > 0 ? Math.max(0, indexOfValue(modelData.choice)) : -1
                     onActivated: kcm.setCategoryChoice(modelData.key, currentValue)
                 }
                 ColumnLayout {
@@ -293,7 +325,7 @@ KCM.SimpleKCM {
                     model: kcm.appOptions
                     textRole: "text"
                     valueRole: "value"
-                    currentIndex: Math.max(0, indexOfValue(modelData.preference))
+                    currentIndex: count > 0 ? Math.max(0, indexOfValue(modelData.preference)) : -1
                     onActivated: kcm.setAppPreference(modelData.id, currentValue)
                 }
             }

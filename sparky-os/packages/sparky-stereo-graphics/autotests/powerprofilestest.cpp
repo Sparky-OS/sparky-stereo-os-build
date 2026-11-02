@@ -41,13 +41,20 @@ void PowerProfilesTest::initTestCase()
 void PowerProfilesTest::profileFromTheDaemon()
 {
     QVERIFY(PowerProfiles::daemonAvailable());
-    QVERIFY(PowerProfiles::active() == PowerProfile::Performance); // fake-ppd.py is started on performance
+    const ProfileReading reading = PowerProfiles::read();
+    QVERIFY(reading.profile == PowerProfile::Performance); // fake-ppd.py is started on performance
+    QVERIFY(reading.error.isEmpty());
 }
 
 void PowerProfilesTest::overrideBeatsTheDaemon()
 {
     qputenv("SPARKY_STEREO_POWER_PROFILE", "power-saver");
-    QVERIFY(PowerProfiles::active() == PowerProfile::PowerSaver);
+    QVERIFY(PowerProfiles::read().profile == PowerProfile::PowerSaver);
+    // a value that names no profile is said, never Balanced
+    qputenv("SPARKY_STEREO_POWER_PROFILE", "turbo");
+    QVERIFY(!PowerProfiles::read().profile);
+    QCOMPARE(PowerProfiles::read().error, u"override"_s);
+    QCOMPARE(PowerProfiles::read().detail, u"turbo"_s);
     qunsetenv("SPARKY_STEREO_POWER_PROFILE");
 }
 
@@ -83,6 +90,7 @@ void PowerProfilesTest::pageShowsAndSavesThem()
     fixture.add(SysfsFixture::intel());
     QTemporaryDir config;
     qputenv("XDG_CONFIG_HOME", config.path().toUtf8());
+    qputenv("XDG_STATE_HOME", config.path().toUtf8());
     qputenv("XDG_CONFIG_DIRS", config.path().toUtf8());
     qputenv("SPARKY_STEREO_GRAPHICS_ROOT", fixture.root().toUtf8());
     // one GPU: the page still offers the GPU power switches

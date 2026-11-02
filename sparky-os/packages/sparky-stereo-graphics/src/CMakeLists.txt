@@ -7,15 +7,17 @@ add_library(sparkystereo_graphics STATIC
     appentries.cpp appentries.h
     resolver.cpp resolver.h
     powerprofiles.cpp powerprofiles.h
+    problems.cpp problems.h
 )
 set_target_properties(sparkystereo_graphics PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(sparkystereo_graphics PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(sparkystereo_graphics PUBLIC Qt::Core Qt::DBus KF6::ConfigCore)
+target_link_libraries(sparkystereo_graphics PUBLIC Qt::Core Qt::DBus KF6::ConfigCore KF6::I18n)
 
 kcmutils_add_qml_kcm(kcm_sparkystereo_graphics SOURCES graphicskcm.cpp graphicskcm.h)
 target_link_libraries(kcm_sparkystereo_graphics PRIVATE sparkystereo_graphics KF6::CoreAddons KF6::I18n KF6::KCMUtils)
 
-add_executable(sparky-stereo-gpu-env cli/gpuenv.cpp)
+add_executable(sparky-stereo-gpu-env cli/gpuenv.cpp cli/notifier.cpp cli/notifier.h)
+target_include_directories(sparky-stereo-gpu-env PRIVATE cli)
 target_link_libraries(sparky-stereo-gpu-env PRIVATE sparkystereo_graphics)
 install(TARGETS sparky-stereo-gpu-env DESTINATION ${KDE_INSTALL_BINDIR})
 

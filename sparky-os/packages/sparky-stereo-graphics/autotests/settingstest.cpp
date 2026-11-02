@@ -47,6 +47,7 @@ private:
 void SettingsTest::init()
 {
     qputenv("XDG_CONFIG_HOME", m_config.path().toUtf8());
+    qputenv("XDG_STATE_HOME", m_config.path().toUtf8());
     qputenv("XDG_CONFIG_DIRS", m_dirs.path().toUtf8());
     QFile::remove(file());
 }

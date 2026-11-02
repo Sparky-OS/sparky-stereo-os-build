@@ -1,0 +1,26 @@
+#!/bin/sh
+# postrm script
+set -e
+f=${DPKG_ROOT:-}/etc/xdg/sparky-stereo-graphicsrc
+if [ "$1" = "purge" ] && [ -f "$f" ] && grep -q '^Origin=' "$f"; then
+	# the keys sparky-stereo-gpu-record wrote; anything an administrator added stays
+	awk '
+		/^\[/ { group = $0; held = $0; shown = 0; next }
+		group == "[Measured]" || group == "[Record]" { next }
+		group == "[Decoding]" && /^CopyBack(\[\$i\])?=/ { next }
+		/^[[:space:]]*$/ { next }
+		{ if (!shown && held != "") { print held; shown = 1 } print }
+	' "$f" >"$f.dpkg-new"
+	if [ -s "$f.dpkg-new" ]; then mv "$f.dpkg-new" "$f"; else rm -f "$f" "$f.dpkg-new"; fi
+fi
+if [ "$1" = "purge" ]; then
+	# the machine's kept problems go with the package
+	rm -rf "${DPKG_ROOT:-}/var/lib/sparky-stereo-graphics"
+fi
+if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
+	if [ -d "${DPKG_ROOT:-}/run/systemd/system" ]; then
+		# systemd says its own error; the files are gone already, so the removal completes, as debhelper's own reload does
+		systemctl daemon-reload || :
+	fi
+fi
+exit 0

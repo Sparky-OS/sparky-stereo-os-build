@@ -30,6 +30,16 @@ Resolver GraphicsKcm::resolver() const
     return Resolver(m_gpus, m_settings.mainGpu(), m_profile, m_record.bestGpu);
 }
 
+int GraphicsKcm::indexOf(const QString &id) const
+{
+    for (int i = 0; i < m_gpus.size(); ++i) {
+        if (m_gpus.at(i).id == id) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 QString GraphicsKcm::gpuLabel(int index) const
 {
     if (index < 0 || index >= m_gpus.size()) {
@@ -61,31 +71,42 @@ QString GraphicsKcm::categoryLabel(Category category) const
 
 QString GraphicsKcm::reasonText(const Resolution &resolution) const
 {
-    if (resolution.missing) {
-        return i18nc("@info", "the chosen GPU is not installed, so the main GPU");
+    if (resolution.reason == u"measured-missing"_s) {
+        return i18nc("@info", "the GPU measured best for this computer is not here now");
     }
-    if (resolution.reason == u"only-gpu"_s) {
+    if (resolution.kindAbsent == u"integrated"_s) {
+        return i18nc("@info %1 is the power profile's reason", "%1, and this computer has no integrated GPU that can draw", reasonTextOf(resolution.reason));
+    }
+    if (resolution.kindAbsent == u"discrete"_s) {
+        return i18nc("@info %1 is the power profile's reason", "%1, and this computer has no discrete GPU that can draw", reasonTextOf(resolution.reason));
+    }
+    return reasonTextOf(resolution.reason);
+}
+
+QString GraphicsKcm::reasonTextOf(const QString &reason) const
+{
+    if (reason == u"only-gpu"_s) {
         return i18nc("@info", "the only GPU");
     }
-    if (resolution.reason == u"profile:power-saver"_s) {
+    if (reason == u"profile:power-saver"_s) {
         return i18nc("@info", "power saver profile");
     }
-    if (resolution.reason == u"profile:performance"_s) {
+    if (reason == u"profile:performance"_s) {
         return i18nc("@info", "performance profile");
     }
-    if (resolution.reason == u"profile:balanced"_s) {
+    if (reason == u"profile:balanced"_s) {
         return i18nc("@info", "balanced profile");
     }
-    if (resolution.reason == u"desktop"_s) {
+    if (reason == u"desktop"_s) {
         return i18nc("@info", "the GPU that draws the desktop");
     }
-    if (resolution.reason == u"app"_s) {
+    if (reason == u"app"_s) {
         return i18nc("@info", "the program's own setting");
     }
-    if (resolution.reason == u"measured"_s) {
+    if (reason == u"measured"_s) {
         return m_record.origin == u"shipped"_s ? i18nc("@info", "measured best for this model") : i18nc("@info", "measured best on this computer");
     }
-    if (resolution.reason == u"unmeasured"_s) {
+    if (reason == u"unmeasured"_s) {
         return i18nc("@info", "not measured on this computer yet");
     }
     return i18nc("@info", "your choice");
@@ -96,7 +117,7 @@ void GraphicsKcm::load()
     m_gpus = GpuInventory::read(m_root);
     m_settings = GraphicsSettings();
     m_record = MachineRecord::read();
-    m_profile = PowerProfiles::active();
+    m_profile = PowerProfiles::read();
     m_actions = PowerProfiles::gpuActions();
     m_appChanges.clear();
     m_actionChanges.clear();
@@ -132,9 +153,87 @@ void GraphicsKcm::load()
             m_handSet = true;
         }
     }
+    syncKept();
     updateState();
     setNeedsSave(false);
     setRepresentsDefaults(m_settings.isDefault());
+}
+
+QList<Problem> GraphicsKcm::liveProblems(const GraphicsSettings &settings) const
+{
+    const Resolver r(m_gpus, settings.mainGpu(), m_profile, m_record.bestGpu);
+    QList<Problem> list;
+    const Problem main = Problems::fromResolution(u"main-gpu"_s, r.mainProblem(), m_gpus, m_root);
+    if (!main.isEmpty()) {
+        list << main;
+    }
+    for (Category category : allCategories()) {
+        const QString key = categoryKey(category).toLower();
+        const Problem problem = Problems::fromResolution(key, r.resolveCategory(category, settings), m_gpus, m_root, m_profile);
+        if (!problem.isEmpty()) {
+            list << problem;
+        }
+    }
+    return list;
+}
+
+void GraphicsKcm::syncKept()
+{
+    // the page sees the same problems the launchers keep, so a choice made here clears its record at once
+    const QList<Problem> live = liveProblems(GraphicsSettings());
+    QStringList keys = {u"main-gpu"_s};
+    for (Category category : allCategories()) {
+        keys << categoryKey(category).toLower();
+    }
+    for (const QString &key : std::as_const(keys)) {
+        bool found = false;
+        for (const Problem &problem : live) {
+            if (problem.key == key) {
+                Problems::keep(problem, Problems::userDir());
+                found = true;
+            }
+        }
+        if (!found) {
+            Problems::clear(key, Problems::userDir());
+        }
+    }
+}
+
+QVariantList GraphicsKcm::problems() const
+{
+    QVariantList list;
+    const auto add = [this, &list](const Problem &problem) {
+        QVariantList gpus;
+        if (problem.isChoice()) {
+            for (const Alternative &gpu : problem.alternatives) {
+                if (gpu.id != problem.requested) {
+                    gpus.append(QVariantMap{{u"id"_s, gpu.id}, {u"text"_s, i18nc("@action:button %1 is a GPU name", "Use %1", gpuLabel(indexOf(gpu.id)))}});
+                }
+            }
+        }
+        list.append(QVariantMap{{u"key"_s, problem.key}, {u"text"_s, Problems::message(problem)}, {u"system"_s, problem.system}, {u"gpus"_s, gpus}});
+    };
+    // the machine's failed steps, then the person's choices as they are now, pending changes included
+    for (const Problem &problem : Problems::read(Problems::systemDir(m_root), true)) {
+        add(problem);
+    }
+    for (const Problem &problem : liveProblems(m_settings)) {
+        add(problem);
+    }
+    return list;
+}
+
+void GraphicsKcm::useGpu(const QString &key, const QString &id)
+{
+    if (key == u"main-gpu"_s) {
+        setMainChoice(id);
+    } else {
+        for (Category category : allCategories()) {
+            if (categoryKey(category).toLower() == key) {
+                setCategoryChoice(categoryKey(category), id);
+            }
+        }
+    }
 }
 
 void GraphicsKcm::save()
@@ -324,14 +423,17 @@ QVariantList GraphicsKcm::categories() const
         const QString stereoText = stereo.gpuIndex >= 0 && stereo.gpuIndex != resolution.gpuIndex
             ? i18nc("@info %1 is a GPU name, %2 the reason", "Started in 3D: %1, %2", gpuLabel(stereo.gpuIndex), reasonText(stereo))
             : QString();
+        const QString nowText = !resolution.problem.isEmpty()
+            ? Problems::message(Problems::fromResolution(categoryKey(category).toLower(), resolution, m_gpus, m_root, m_profile))
+            : (resolution.gpuIndex < 0 ? QString() : i18nc("@info %1 is a GPU name, %2 the reason", "Now: %1, %2", gpuLabel(resolution.gpuIndex), reasonText(resolution)));
         list.append(QVariantMap{
+            {u"problem"_s, !resolution.problem.isEmpty()},
             {u"stereoText"_s, stereoText},
             {u"key"_s, categoryKey(category)},
             {u"label"_s, categoryLabel(category)},
             {u"choice"_s, choice},
             {u"options"_s, choiceOptions(choice)},
-            {u"nowText"_s,
-             resolution.gpuIndex < 0 ? QString() : i18nc("@info %1 is a GPU name, %2 the reason", "Now: %1, %2", gpuLabel(resolution.gpuIndex), reasonText(resolution))},
+            {u"nowText"_s, nowText},
         });
     }
     return list;
@@ -350,12 +452,16 @@ void GraphicsKcm::setCategoryChoice(const QString &key, const QString &choice)
 
 QString GraphicsKcm::profile() const
 {
-    return powerProfileToString(m_profile);
+    return m_profile.profile ? powerProfileToString(*m_profile.profile) : QString();
 }
 
 QString GraphicsKcm::profileText() const
 {
-    switch (m_profile) {
+    if (!m_profile.profile) {
+        // never Balanced in its place: the kinds that follow the profile say they cannot be placed
+        return i18nc("@info %1 says why", "The power profile could not be read: %1.", Problems::profileError(m_profile.error, m_profile.detail));
+    }
+    switch (*m_profile.profile) {
     case PowerProfile::PowerSaver:
         return i18nc("@info", "Power profile: Power Saver. Automatic draws browsers on the integrated GPU. Other programs stay on the GPU that draws the desktop.");
     case PowerProfile::Performance:
@@ -373,6 +479,14 @@ QString GraphicsKcm::measuredText() const
     }
     const Resolver r = resolver();
     const QString gpu = gpuLabel(r.presentingIndex());
+    if (r.measuredIndex() < 0 && !m_record.bestGpu.isEmpty()) {
+        // the record names a GPU that is not here: said, never taken for "not measured"
+        return i18nc("@info %1 is a GPU name, %2 a PCI address or vendor and device ids",
+                     "Automatic draws players, games and any program started in 3D on %1 whatever the power profile, on battery too. The GPU this computer "
+                     "was measured best on, %2, is not here now, so that is its discrete GPU.",
+                     gpu,
+                     m_record.bestGpu.startsWith(u"pci-"_s) ? m_record.bestGpu.mid(4) : m_record.bestGpu);
+    }
     if (r.measuredIndex() < 0) {
         return i18nc("@info %1 is a GPU name",
                      "Automatic draws players, games and any program started in 3D on %1 whatever the power profile, on battery too. This computer has "
@@ -460,7 +574,9 @@ QVariantList GraphicsKcm::apps() const
             {u"name"_s, entry.name},
             {u"icon"_s, entry.icon},
             {u"preference"_s, int(shown.preference)},
-            {u"nowText"_s, resolution.gpuIndex < 0 ? QString() : gpuLabel(resolution.gpuIndex)},
+            {u"nowText"_s,
+             !resolution.problem.isEmpty() ? i18nc("@info in place of a GPU name", "its group's GPU cannot be used")
+                                           : (resolution.gpuIndex < 0 ? QString() : gpuLabel(resolution.gpuIndex))},
             {u"systemPrefersOther"_s, entry.systemPrefersOther},
         });
     }

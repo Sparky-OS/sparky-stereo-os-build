@@ -9,6 +9,8 @@
 
 #include <QStringList>
 
+#include <optional>
+
 namespace SparkyGraphics
 {
 
@@ -18,25 +20,55 @@ enum class PowerProfile {
     Performance,
 };
 
-PowerProfile powerProfileFromString(const QString &name, PowerProfile fallback = PowerProfile::Balanced);
+// The name power-profiles-daemon gives a profile, or nothing for a name that is not one
+std::optional<PowerProfile> powerProfileFromString(const QString &name);
 QString powerProfileToString(PowerProfile profile);
 
+// The power profile as it could be read: the profile, or why it could not be read
+struct ProfileReading {
+    std::optional<PowerProfile> profile;
+    // "not-running", "no-bus", "no-answer", "unknown" (the daemon named another profile) or "override" (SPARKY_STEREO_POWER_PROFILE
+    // names no profile); detail is the D-Bus error or the name
+    QString error;
+    QString detail;
+
+    ProfileReading() = default;
+    ProfileReading(PowerProfile known)
+        : profile(known)
+    {
+    }
+};
+
 struct Resolution {
-    int gpuIndex = -1; // into the inventory, -1 when the machine has no GPU
+    int gpuIndex = -1; // into the inventory, -1 when the machine has no GPU or the choice cannot be used
     bool isMain = true;
-    bool missing = false; // the saved choice names a GPU that is not here
-    QString reason; // "app", "choice", "profile:performance", "desktop", "measured", "unmeasured", "only-gpu", ...
+    bool missing = false; // the choice cannot be used: problem says why
+    QString reason; // "app", "choice", "profile:performance", "desktop", "measured", "unmeasured", "measured-missing", "only-gpu", ...
     QStringList environment; // KEY=value lines; empty for the main GPU
+    // Why the choice cannot be used; nothing else is put in its place (Daniel, 2026-11-01: "either it works or not and the user
+    // must know"): "gpu-missing" (no GPU at that PCI address has a graphics device), "gpu-cannot-render" (here, no render node),
+    // "gpu-not-allowed" (the account may not open its render node), "kind-missing" (no integrated or discrete GPU),
+    // "profile-unreadable" (the choice follows the power profile, which could not be read)
+    QString problem;
+    QString requested; // the choice that cannot be used: a GPU id, "integrated", "discrete", "profile" or "auto"
+    int requestedIndex = -1; // the GPU that was asked for, when it is here but cannot be used
+    // Automatic or the power profile asked for a kind this computer has no usable GPU of ("integrated", "discrete"), so the
+    // GPU that draws the desktop: the rule of that choice, said on the page
+    QString kindAbsent;
 };
 
 class Resolver
 {
 public:
     // measuredBest: the machine record's GPU for players and 3D ("pci-0000:03:00.0" or "1002:6660"), empty when not measured
-    Resolver(const QList<Gpu> &gpus, const QString &savedMainGpu, PowerProfile profile, const QString &measuredBest = QString());
+    Resolver(const QList<Gpu> &gpus, const QString &savedMainGpu, const ProfileReading &profile, const QString &measuredBest = QString());
 
-    // The GPU that draws the desktop after the next login
+    // The GPU that draws the desktop after the next login: the saved one when it can draw, else what Automatic picks
     int mainIndex() const;
+    // Why the saved main GPU cannot draw the desktop (problem empty when it can, or when the choice is Automatic)
+    Resolution mainProblem() const;
+    // The GPUs a program can be sent to, offered as explicit choices when a choice cannot be used
+    QList<int> usableIndices() const;
     // What Automatic picks as the main GPU: render-capable, internal panel first, most screens, boot VGA
     int automaticMainIndex() const;
     int indexOfId(const QString &id) const;
@@ -69,12 +101,16 @@ public:
 
 private:
     Resolution make(int index, const QString &reason) const;
+    Resolution cannotUse(const QString &problem, const QString &requested, int requestedIndex = -1) const;
+    // The person's choice of one GPU, by its id or by its kind, checked whatever the number of GPUs
+    Resolution resolveGpu(const QString &choice) const;
     int firstOfKind(GpuKind kind) const;
     int defaultIndex() const;
+    bool measuredNamesAbsentGpu() const;
 
     QList<Gpu> m_gpus;
     QString m_savedMain;
-    PowerProfile m_profile;
+    ProfileReading m_profile;
     QString m_measuredBest;
 };
 

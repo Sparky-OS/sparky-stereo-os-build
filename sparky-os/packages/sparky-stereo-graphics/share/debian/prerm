@@ -1,0 +1,10 @@
+#!/bin/sh
+# prerm script
+set -e
+if [ "$1" = "remove" ]; then
+	# a record from a shipped model goes with the shipped records; one made on this machine stays. A record that cannot be
+	# removed fails the removal, said by sparky-stereo-gpu-record (Debian Policy 6.7: the package stays installed, and the
+	# removal can run again)
+	sparky-stereo-gpu-record --root "${DPKG_ROOT:-/}" --apply-known --machines /nonexistent >/dev/null
+fi
+exit 0

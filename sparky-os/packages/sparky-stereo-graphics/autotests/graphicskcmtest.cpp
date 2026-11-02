@@ -84,6 +84,26 @@ static int countCards(QQuickItem *item)
     return count;
 }
 
+// visible items whose "text" holds the text
+static int countText(QQuickItem *item, const QString &text)
+{
+    int count = item->isVisible() && item->property("text").toString().contains(text) ? 1 : 0;
+    for (QQuickItem *child : item->childItems()) {
+        count += countText(child, text);
+    }
+    return count;
+}
+
+// visible buttons whose text is the text
+static int countButtons(QQuickItem *item, const QString &text)
+{
+    int count = item->isVisible() && item->inherits("QQuickAbstractButton") && item->property("text").toString() == text ? 1 : 0;
+    for (QQuickItem *child : item->childItems()) {
+        count += countButtons(child, text);
+    }
+    return count;
+}
+
 static QVariantMap row(const QVariantList &list, const QString &key, const QString &value)
 {
     for (const QVariant &v : list) {
@@ -119,6 +139,7 @@ void GraphicsKcmTest::initTestCase()
     entry(u"org.example.player.desktop"_s, u"[Desktop Entry]\nType=Application\nName=Example Player\nExec=player\nIcon=player\nCategories=AudioVideo;Player;\n"_s);
     entry(u"org.example.game.desktop"_s, u"[Desktop Entry]\nType=Application\nName=Example Game\nExec=game\nCategories=Game;\n"_s);
     qputenv("XDG_CONFIG_HOME", m_config.path().toUtf8());
+    qputenv("XDG_STATE_HOME", m_config.path().toUtf8());
     qputenv("XDG_CONFIG_DIRS", (m_xdg.path() + u"/etc/xdg"_s).toUtf8());
     qputenv("XDG_DATA_HOME", m_data.path().toUtf8());
     qputenv("XDG_DATA_DIRS", m_system.path().toUtf8());
@@ -323,7 +344,9 @@ void GraphicsKcmTest::missingGpuStaysVisible()
     QCOMPARE(kcm->mainOptions().size(), 4);
     QVERIFY(kcm->mainOptions().last().toMap().value(u"text"_s).toString().contains(u"Missing GPU"_s));
     const QVariantMap games = row(kcm->categories(), u"key"_s, u"Games"_s);
-    QVERIFY(games.value(u"nowText"_s).toString().contains(u"not installed"_s));
+    // said as it is, never "so the main GPU"
+    QVERIFY2(games.value(u"nowText"_s).toString().contains(u"is not in this computer now"_s), qPrintable(games.value(u"nowText"_s).toString()));
+    QVERIFY(games.value(u"problem"_s).toBool());
     // and it is kept when something else is saved
     kcm->setCategoryChoice(u"Other"_s, u"discrete"_s);
     kcm->save();
@@ -478,11 +501,14 @@ void GraphicsKcmTest::qmlLoads_data()
     QTest::addColumn<QString>("machine");
     QTest::addColumn<int>("cards");
     QTest::addColumn<bool>("record");
-    QTest::newRow("one GPU") << u"one"_s << 1 << false;
-    QTest::newRow("A10") << u"a10"_s << 2 << false;
-    QTest::newRow("A10 with its record") << u"a10"_s << 2 << true;
-    QTest::newRow("host") << u"host"_s << 2 << false;
-    QTest::newRow("three GPUs") << u"three"_s << 3 << false;
+    QTest::addColumn<bool>("gone");
+    QTest::newRow("one GPU") << u"one"_s << 1 << false << false;
+    QTest::newRow("A10") << u"a10"_s << 2 << false << false;
+    QTest::newRow("A10 with its record") << u"a10"_s << 2 << true << false;
+    QTest::newRow("host") << u"host"_s << 2 << false << false;
+    QTest::newRow("three GPUs") << u"three"_s << 3 << false << false;
+    // ORDER 346a: the chosen GPUs are gone; each problem is shown with a button for each GPU that can draw
+    QTest::newRow("host, chosen GPUs gone") << u"host"_s << 2 << false << true;
 }
 
 void GraphicsKcmTest::qmlLoads()
@@ -490,6 +516,13 @@ void GraphicsKcmTest::qmlLoads()
     QFETCH(QString, machine);
     QFETCH(int, cards);
     QFETCH(bool, record);
+    QFETCH(bool, gone);
+    if (gone) {
+        KConfig config(configFile(), KConfig::SimpleConfig);
+        config.group(u"General"_s).writeEntry("MainGpu", "pci-0000:09:00.0");
+        config.group(u"Render"_s).writeEntry("Games", "pci-0000:09:00.0");
+        config.sync();
+    }
     if (record) {
         QDir().mkpath(m_xdg.path() + u"/etc/xdg"_s);
         QFile f(MachineRecord::systemFile(m_xdg.path()));
@@ -511,11 +544,22 @@ void GraphicsKcmTest::qmlLoads()
     QTest::qWait(300);
     // one card per GPU
     QCOMPARE(countCards(view.rootObject()), cards);
+    if (gone) {
+        QVERIFY(countText(view.rootObject(), u"The GPU you chose to draw the desktop, at PCI address 0000:09:00.0, is not in this computer now."_s) >= 1);
+        QVERIFY(countText(view.rootObject(), u"The GPU you chose for games, at PCI address 0000:09:00.0, is not in this computer now."_s) >= 1);
+        // two problems, two GPUs that can draw each
+        QCOMPARE(countButtons(view.rootObject(), u"Use NVIDIA GeForce RTX 3060 Lite Hash Rate"_s), 2);
+        QCOMPARE(countButtons(view.rootObject(), u"Use AMD Radeon Vega Series / Radeon Vega Mobile Series"_s), 2);
+        // the boxes show the saved choice as it is, never "Automatic" in its place (the main GPU and games)
+        QVERIFY(countText(view.rootObject(), u"Missing GPU (pci-0000:09:00.0)"_s) >= 2);
+        QVERIFY(countText(view.rootObject(), u"Now: its group's GPU cannot be used"_s) >= 1);
+    }
     const QString shots = qEnvironmentVariable("SCREENSHOT_DIR");
     if (!shots.isEmpty()) {
         QDir().mkpath(shots);
-        QVERIFY(view.grabWindow().save(shots + u'/' + machine + (record ? u"-record"_s : QString()) + u".png"_s));
+        QVERIFY(view.grabWindow().save(shots + u'/' + machine + (record ? u"-record"_s : QString()) + (gone ? u"-gone"_s : QString()) + u".png"_s));
     }
+    QFile::remove(configFile());
 }
 
 QTEST_MAIN(GraphicsKcmTest)

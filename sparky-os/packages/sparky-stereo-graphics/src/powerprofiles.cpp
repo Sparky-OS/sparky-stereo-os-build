@@ -8,6 +8,7 @@
 #include <QDBusConnectionInterface>
 #include <QDBusInterface>
 #include <QDBusMessage>
+#include <QDBusError>
 #include <QDBusReply>
 
 using namespace Qt::StringLiterals;
@@ -40,16 +41,41 @@ static QVariant property(const QString &name)
     return reply.arguments().first().value<QDBusVariant>().variant();
 }
 
-PowerProfile PowerProfiles::active()
+ProfileReading PowerProfiles::read()
 {
+    ProfileReading reading;
     const QString forced = qEnvironmentVariable("SPARKY_STEREO_POWER_PROFILE");
     if (!forced.isEmpty()) {
-        return powerProfileFromString(forced);
+        reading.profile = powerProfileFromString(forced);
+        if (!reading.profile) {
+            reading.error = u"override"_s;
+            reading.detail = forced;
+        }
+        return reading;
     }
-    if (!daemonAvailable()) {
-        return PowerProfile::Balanced;
+    QDBusConnection bus = QDBusConnection::systemBus();
+    if (!bus.isConnected()) {
+        reading.error = u"no-bus"_s;
+        reading.detail = bus.lastError().message();
+        return reading;
     }
-    return powerProfileFromString(property(u"ActiveProfile"_s).toString());
+    if (!bus.interface()->isServiceRegistered(s_service)) {
+        reading.error = u"not-running"_s;
+        return reading;
+    }
+    const QDBusMessage reply = call(u"org.freedesktop.DBus.Properties"_s, u"Get"_s, {s_service, u"ActiveProfile"_s});
+    if (reply.type() != QDBusMessage::ReplyMessage || reply.arguments().isEmpty()) {
+        reading.error = u"no-answer"_s;
+        reading.detail = reply.type() == QDBusMessage::ErrorMessage ? reply.errorMessage() : QString();
+        return reading;
+    }
+    const QString name = reply.arguments().first().value<QDBusVariant>().variant().toString();
+    reading.profile = powerProfileFromString(name);
+    if (!reading.profile) {
+        reading.error = u"unknown"_s;
+        reading.detail = name;
+    }
+    return reading;
 }
 
 QList<PowerAction> PowerProfiles::gpuActions()

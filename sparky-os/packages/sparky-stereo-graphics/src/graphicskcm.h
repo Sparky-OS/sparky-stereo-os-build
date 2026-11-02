@@ -8,6 +8,7 @@
 #include "graphicssettings.h"
 #include "machinerecord.h"
 #include "powerprofiles.h"
+#include "problems.h"
 #include "resolver.h"
 
 #include <KQuickConfigModule>
@@ -39,6 +40,8 @@ class GraphicsKcm : public KQuickConfigModule
     Q_PROPERTY(QVariantList appOptions READ appOptions CONSTANT)
     Q_PROPERTY(QVariantList powerActions READ powerActions NOTIFY changed)
     Q_PROPERTY(QString errorText READ errorText NOTIFY changed)
+    // Each saved choice that cannot be used, and each failed step of the package: text, and the GPUs offered instead
+    Q_PROPERTY(QVariantList problems READ problems NOTIFY changed)
 
 public:
     GraphicsKcm(QObject *parent, const KPluginMetaData &data);
@@ -67,7 +70,10 @@ public:
     QVariantList appOptions() const;
     QVariantList powerActions() const;
     QString errorText() const;
+    QVariantList problems() const;
 
+    // The person's explicit answer to a problem: draw the desktop (key "main-gpu") or a kind of program on that GPU
+    Q_INVOKABLE void useGpu(const QString &key, const QString &id);
     Q_INVOKABLE void setCategoryChoice(const QString &key, const QString &choice);
     Q_INVOKABLE void setAppPreference(const QString &id, int preference);
     Q_INVOKABLE void setPowerAction(const QString &name, bool enabled);
@@ -85,15 +91,21 @@ private:
     SparkyGraphics::Resolver resolver() const;
     QString gpuLabel(int index) const;
     QString reasonText(const SparkyGraphics::Resolution &resolution) const;
+    QString reasonTextOf(const QString &reason) const;
+    int indexOf(const QString &id) const;
     QString categoryLabel(SparkyGraphics::Category category) const;
     SparkyGraphics::AppPreference pendingPreference(const SparkyGraphics::AppEntry &entry) const;
     void updateState();
+    // The saved choices' problems as they are now, against the person's own file (not the pending changes)
+    QList<SparkyGraphics::Problem> liveProblems(const SparkyGraphics::GraphicsSettings &settings) const;
+    // Keeps the saved choices' problems that are there and clears the ones that are over
+    void syncKept();
 
     QString m_root;
     QList<SparkyGraphics::Gpu> m_gpus;
     SparkyGraphics::GraphicsSettings m_settings;
     SparkyGraphics::MachineRecord m_record;
-    SparkyGraphics::PowerProfile m_profile = SparkyGraphics::PowerProfile::Balanced;
+    SparkyGraphics::ProfileReading m_profile;
     QList<SparkyGraphics::AppEntry> m_apps;
     QMap<QString, int> m_appChanges;
     QList<SparkyGraphics::PowerAction> m_actions;
