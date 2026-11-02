@@ -5,8 +5,10 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.1.4
+VERSION=0.1.5
 PACKAGE=sparky-stereo-cec
+COPY=${COPY_RECIPE:-$HERE/../../../tools/copy-recipe.py}
+SOURCE_PACKAGE=${SOURCE_PACKAGE:-yes}
 ARCH=$(dpkg --print-architecture)
 mkdir -p "$OUT"
 W=$(mktemp -d "$OUT/.sparky-stereo-cec.XXXXXX")
@@ -43,16 +45,19 @@ Description: TV power follows Plasma output power
 CONTROL
 (cd "$D" && find etc usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
 dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${PACKAGE}_${VERSION}_${ARCH}.deb"
+[ "$SOURCE_PACKAGE" = yes ] || exit 0
 S=$W/$PACKAGE-$VERSION
 mkdir -p "$S/debian/source"
-cp -a "$HERE/." "$S/"
+python3 "$COPY" "$HERE" "$S"
+mkdir -p "$S/build-tools"
+cp "$COPY" "$S/build-tools/"
 cat >"$S/debian/control" <<CONTROL
 Source: $PACKAGE
 Section: System
 Priority: optional
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Standards-Version: 4.7.3
-Build-Depends: cmake, dpkg-dev, g++, libkf6config-dev, libkscreen-dev, qt6-base-dev, qt6-wayland-dev
+Build-Depends: git, python3, cmake, dpkg-dev, g++, libkf6config-dev, libkscreen-dev, qt6-base-dev, qt6-declarative-dev, qt6-wayland-dev
 Rules-Requires-Root: no
 Homepage: https://sparkylinux.org
 
@@ -64,6 +69,12 @@ Description: TV power follows Plasma output power
 CONTROL
 cat >"$S/debian/changelog" <<CHANGELOG
 $PACKAGE ($VERSION) unstable; urgency=medium
+
+  * Copy only tracked recipe inputs; retain the shared copier for source rebuilds.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 02 Nov 2026 10:00:00 +0000
+
+$PACKAGE (0.1.4) unstable; urgency=medium
 
   * The autostart entry's name in German, French, Japanese, Korean,
     Simplified Chinese and Traditional Chinese.
@@ -81,7 +92,7 @@ echo '3.0 (native)' >"$S/debian/source/format"
 cat >"$S/debian/rules" <<'RULES'
 #!/usr/bin/make -f
 binary:
-	OUT=$(CURDIR)/.. bash ./build.sh
+	OUT=$(CURDIR)/.. COPY_RECIPE=$(CURDIR)/build-tools/copy-recipe.py SOURCE_PACKAGE=no bash ./build.sh
 	dpkg-distaddfile $$(dpkg-parsechangelog -S Source)_$$(dpkg-parsechangelog -S Version)_$$(dpkg --print-architecture).deb System optional
 clean:
 build:

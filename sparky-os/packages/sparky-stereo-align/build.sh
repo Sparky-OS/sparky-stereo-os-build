@@ -7,7 +7,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the output directory}
-VERSION=0.1.0+lc1
+VERSION=0.1.1+lc1
 PKG=sparky-stereo-align
 mkdir -p "$OUT"
 W=$(mktemp -d "$OUT/.$PKG.XXXXXX")
@@ -38,7 +38,10 @@ Description: Dolphin menu to align a stereo pair with Hugin
 X
 (cd "$D" && find usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
 A=$W/authoring
-cp -a "$HERE/." "$A/"
+COPY="$HERE/../../../tools/copy-recipe.py"
+python3 "$COPY" "$HERE" "$A"
+mkdir -p "$A/build-tools"
+cp "$COPY" "$A/build-tools/"
 cp "$HERE/../sparky-stereo-integration/make-pack.py" "$A/make-pack.py"
 PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$A"
 sync

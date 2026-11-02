@@ -7,10 +7,16 @@
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 dest=${DEST:-${SPARKY_STAGING_DIR:?}/classic-look/m2}
-version=${VERSION:-20261030~sparky9~0+lc1}
-look_version=${LOOK_VERSION:-20261030~sparky9~0+lc1}
+version=${VERSION:-20261102~sparky9~0+lc1}
+look_version=${LOOK_VERSION:-20261102~sparky9~0+lc1}
 work=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/kubabbar-pkg.XXXXXX")
 trap 'rm -rf "$work"' EXIT
+RECIPE=$repo
+COPY="$RECIPE/../../../tools/copy-recipe.py"
+python3 "$COPY" "$RECIPE" "$work/authoring"
+mkdir -p "$work/authoring/build-tools"
+cp "$COPY" "$work/authoring/build-tools/"
+repo=$work/authoring
 mkdir -p "$dest"
 if compgen -G "$dest/*.deb" >/dev/null; then
 	echo "Use an empty candidate output directory; existing archives are retained." >&2
@@ -46,7 +52,7 @@ control() { # dir package depends recommends suggests description-lines...
 build() { # dir package
 	find "$1" -name '*.qmlc' -delete
 	chmod -R go-w "$1"
-	PYTHONPATH="$repo/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$1" "$dest" --authoring "$repo"
+	PYTHONPATH="$RECIPE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$1" "$dest" --authoring "$repo"
 }
 doc() { # dir package copyright-body-file
 	mkdir -p "$1/usr/share/doc/$2"
