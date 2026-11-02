@@ -61,4 +61,7 @@ A migrated cleanup lacks that old baseline, so it requires manual review; it nev
 A failed repository query is an error, not an indication that no update exists.
 Dispatch through systemd checks the service launch status.
 Without systemd, a detached Python subprocess reports an execution failure before the checker returns.
-The APT hook propagates these failures, and the engine retains them until a later successful check.
+The engine keeps each failed check, with its message printed in apt update's output, until a later successful check.
+check-update then exits 80, and the APT hook lets apt update succeed: the package lists did update, and the failure is already said.
+Any other failure is one nothing could keep (the engine failed, or clearing a problem failed), and it fails apt update.
+A repository without a source record for ffmpeg-dmo is said as such, with the source line to check; an index that cannot be read, or an invalid record, is said apart.

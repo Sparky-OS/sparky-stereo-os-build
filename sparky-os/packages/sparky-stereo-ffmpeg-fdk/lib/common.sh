@@ -2,7 +2,7 @@
 #
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/08
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/08
+# Last update 2026/11/02
 
 STATE=${SPARKY_FDK_STATE:-/var/lib/sparky-stereo-ffmpeg-fdk}
 PINFILE=${SPARKY_FDK_PINFILE:-/etc/apt/preferences.d/sparky-stereo-ffmpeg-fdk}
@@ -31,18 +31,24 @@ load_strings() {
 	case "$code" in pt_BR) ;; pt | pt_*) [ -f "$LANGDIR/pt_BR" ] && . "$LANGDIR/pt_BR" ;; esac
 }
 
-# The highest version of our source package in the edition's own Sources index, and the binary packages it builds:
-# "VERSION BINARY,BINARY,...". Nothing when the repository publishes no source index for it.
+# The highest version of our source package in the edition's own Sources indexes, and the binary packages it builds:
+# "VERSION BINARY,BINARY,...". Three answers, never taken for one another:
+#   0                 a record was found, and it is printed
+#   NO_SOURCE_RECORD  every index could be read and none has a record for the source package (no index at all
+#                     included: the edition's source line is missing from apt's sources, or apt update has not fetched it)
+#   1                 an index could not be listed or read, or a record is incomplete or invalid (said on standard
+#                     error); an index that could not be read decides over the others, since it may hold the record
+NO_SOURCE_RECORD=3
 repo_source() (
-	set -o pipefail
 	local f targets
-	targets=$(apt-get indextargets --format '$(FILENAME)' "Origin: $ORIGIN" 'Created-By: Sources') || return
+	local -a status
+	targets=$(apt-get indextargets --format '$(FILENAME)' "Origin: $ORIGIN" 'Created-By: Sources') || return 1
 	printf '%s\n' "$targets" |
 		while IFS= read -r f; do
 			[ -n "$f" ] || continue
-			/usr/lib/apt/apt-helper cat-file "$f" || exit
+			/usr/lib/apt/apt-helper cat-file "$f" || exit 1
 			echo
-		done | SRCPKG="$SRCPKG" python3 -c '
+		done | SRCPKG="$SRCPKG" NO_RECORD="$NO_SOURCE_RECORD" python3 -c '
 import os, subprocess, sys
 want = os.environ["SRCPKG"]
 best = None
@@ -66,11 +72,13 @@ for st in sys.stdin.read().split("\n\n"):
         sys.exit("Source version comparison failed")
     if newer == 0:
         best = (f["Version"], f["Binary"])
-if not best or not best[1]:
-    sys.exit("No usable source record for " + want)
-if best:
-    print(best[0], ",".join(x.strip() for x in best[1].split(",") if x.strip()))
+if best is None:
+    sys.exit(int(os.environ["NO_RECORD"]))
+print(best[0], ",".join(x.strip() for x in best[1].split(",") if x.strip()))
 '
+	status=("${PIPESTATUS[@]}")
+	[ "${status[1]}" -eq 0 ] || return 1
+	return "${status[2]}"
 )
 
 # The local build installed now: sets LOCAL_BASE (the edition's version it was built from), LOCAL_VERSION, LOCAL_USER (who

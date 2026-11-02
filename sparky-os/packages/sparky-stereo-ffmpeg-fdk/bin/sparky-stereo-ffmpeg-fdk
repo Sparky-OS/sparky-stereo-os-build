@@ -12,7 +12,7 @@
 #      32-bit libraries (Multi-Arch: same, lock-step versions) are the edition's own, relabelled to the same version
 #   4. takes the build dependencies out again, and rebuilds by itself when the edition updates its FFmpeg (the apt hook)
 # Usage: sparky-stereo-ffmpeg-fdk [--yes] [--keep-build-deps] | --status | --remove | --help
-# Last update 2026/10/08
+# Last update 2026/11/02
 
 LIBDIR=${SPARKY_FDK_LIBDIR:-/usr/lib/sparky-stereo-ffmpeg-fdk}
 [ -f "$LIBDIR/common.sh" ] || LIBDIR=$(dirname "$(readlink -f "$0")")/../lib
@@ -270,8 +270,12 @@ worker() {
 	for f in dpkg-buildpackage fakeroot runuser python3 flock apt-get dpkg-query; do
 		command -v "$f" >/dev/null || fail LOCAL32 "$f"
 	done
-	info=$(repo_source) || fail LOCAL77 "repo_source: $SRCPKG"
-	[ -n "$info" ] || fail LOCAL33 "$SRCPKG"
+	info=$(repo_source)
+	case $? in
+	0) ;;
+	"$NO_SOURCE_RECORD") fail LOCAL33 "$SRCPKG" ;;
+	*) fail LOCAL83 "$SRCPKG" ;;
+	esac
 	VER=${info%% *}
 	BINS=${info#* }
 	FAILED_VERSION=$VER
@@ -474,7 +478,7 @@ do_remove() {
 }
 
 do_status() {
-	local info repo failed
+	local info repo failed problem=
 	failed=$(problem_data build version) || return 1
 	sparky-stereo-problems list "$FDK_PACKAGE" || return 1
 
@@ -485,9 +489,10 @@ do_status() {
 	else
 		printf '%s\n' "$LOCAL63"
 	fi
-	info=$(repo_source) || { printf "$LOCAL77\n" "repo_source: $SRCPKG" >&2; return 1; }
-	repo=${info%% *}
-	if [ -n "$repo" ]; then
+	info=$(repo_source)
+	case $? in
+	0)
+		repo=${info%% *}
 		printf "$LOCAL64\n" "$repo"
 		if read_installed && dpkg --compare-versions "$repo" gt "$LOCAL_BASE"; then
 			if [ "$failed" = "$repo" ]; then
@@ -496,8 +501,13 @@ do_status() {
 				printf '%s\n' "$LOCAL66"
 			fi
 		fi
-	fi
+		;;
+	"$NO_SOURCE_RECORD") problem=LOCAL33 ;;
+	*) problem=LOCAL83 ;;
+	esac
 	if [ -f "$LOG" ]; then printf "$LOCAL67\n" "$LOG"; fi
+	# what could not be told above comes last, and the status fails
+	[ -z "$problem" ] || { printf "${!problem}\n" "$SRCPKG" >&2; return 1; }
 }
 
 do_cleanup() {

@@ -18,6 +18,7 @@ import unittest
 
 P = Path(sys.argv.pop(1)).resolve() if len(sys.argv) > 1 else Path(__file__).resolve().parents[1]
 PKG = 'sparky-stereo-ffmpeg-fdk'
+KEPT = 80  # check-update: failed, and the engine kept and said it
 LIB = P / ('lib/' + PKG if P == Path('/usr') else 'lib')
 LANG = P / ('share/sparky/' + PKG if P == Path('/usr') else 'lang')
 
@@ -63,12 +64,42 @@ class EngineChecks(unittest.TestCase):
         return subprocess.run(['sparky-stereo-problems','keep','--machine','--details',json.dumps(details or {}),
                                PKG,key,message,*args], env=self.env, capture_output=True, text=True, check=True)
 
-    def assert_failure(self, result):
-        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+    def assert_failure(self, result, text=None):
+        # failed, and kept and said by the engine: check-update's documented status 80, which the apt hook lets pass
+        self.assertEqual(result.returncode, KEPT, result.stdout + result.stderr)
         self.assertIn('update-check', self.records())
         self.assertNotIn('last-cleanup-error', [p.name for p in self.state.iterdir()])
         self.assertTrue(result.stderr.strip())
         self.assertFalse((self.state/'launched').exists())
+        if text:
+            self.assertIn(text, self.records()['update-check']['text'])
+            self.assertIn(text, result.stderr)
+
+    def assert_not_kept(self, result):
+        # nothing could keep it: any status but 0 and 80, so apt update fails
+        self.assertNotIn(result.returncode, (0, KEPT), result.stdout + result.stderr)
+        self.assertTrue(result.stderr.strip())
+        self.assertFalse((self.state/'launched').exists())
+
+    def sources(self, case):
+        """An apt-get double whose indextargets lists Sources files for the case; apt-helper reads them for real."""
+        other = self.root / 'Sources.other'
+        other.write_text('Package: something-else\nVersion: 1\nBinary: something-else\n\n')
+        self.source.write_text('Package: ffmpeg-dmo\nVersion: 2\nBinary: ffmpeg\n\n')
+        if case == 'targets': body = 'exit 100'
+        elif case == 'empty': body = 'exit 0'
+        elif case == 'other': body = 'echo ' + repr(str(other))
+        elif case == 'unreadable': body = 'echo /missing/source-index'
+        elif case == 'partial': body = 'printf "%s\\n" ' + repr(str(self.source)) + ' /missing/source-index'
+        elif case == 'partial-other': body = 'printf "%s\\n" ' + repr(str(other)) + ' /missing/source-index'
+        else:
+            self.source.write_text('Package: ffmpeg-dmo\nVersion: ' + ('invalid' if case == 'bad-version' else '2') + '\n'
+                                   + ('Binary: ffmpeg\n' if case == 'bad-version' else '') + '\n')
+            body = 'echo ' + repr(str(self.source))
+        self.stub('apt-get', body)
+
+    UNREADABLE = ('targets', 'unreadable', 'partial', 'partial-other', 'bad-version', 'no-binaries')
+    NO_RECORD = ('empty', 'other')
 
     def test_missing_common_is_kept(self):
         self.env['SPARKY_FDK_LIBDIR'] = str(self.root/'missing')
@@ -76,18 +107,103 @@ class EngineChecks(unittest.TestCase):
         self.assertIn('could not load', self.records()['update-check']['text'])
 
     def test_repository_failures_are_not_no_update(self):
-        for case in ('targets', 'empty', 'unreadable', 'partial', 'bad-version', 'no-binaries'):
+        # an index that cannot be read decides over one that lacks the record (partial-other)
+        for case in self.UNREADABLE:
             with self.subTest(case=case):
-                self.source.write_text('Package: ffmpeg-dmo\nVersion: 2\nBinary: ffmpeg\n\n')
-                if case == 'targets': body='exit 100'
-                elif case == 'empty': body='exit 0'
-                elif case == 'unreadable': body='echo /missing/source-index'
-                elif case == 'partial': body='printf "%s\\n" '+repr(str(self.source))+' /missing/source-index'
-                else:
-                    self.source.write_text('Package: ffmpeg-dmo\nVersion: '+('invalid' if case=='bad-version' else '2')+'\n'+('Binary: ffmpeg\n' if case=='bad-version' else '')+'\n')
-                    body='echo '+repr(str(self.source))
-                self.stub('apt-get',body)
-                self.assert_failure(self.run_hook())
+                self.sources(case)
+                self.assert_failure(self.run_hook(), 'update check failed')
+
+    def test_no_source_record_is_said_as_such(self):
+        for case in self.NO_RECORD:
+            with self.subTest(case=case):
+                self.sources(case)
+                result = self.run_hook()
+                self.assert_failure(result, 'has no source package ffmpeg-dmo')
+                self.assertIn('sparky-stereo-ffmpeg-src.sources', result.stderr)
+                self.assertNotIn('update check failed', result.stderr)
+
+    def test_failures_nothing_kept_fail_the_hook(self):
+        # the engine cannot keep (its store is a file): the check's own message is still said, and the status is not 80
+        broken = self.root / 'not-a-folder'
+        broken.write_text('')
+        self.env['SPARKY_STEREO_ROOT'] = str(broken)
+        self.sources('unreadable')
+        result = self.run_hook()
+        self.assert_not_kept(result)
+        self.assertIn('update check failed', result.stderr)
+        self.sources('empty')
+        result = self.run_hook()
+        self.assert_not_kept(result)
+        self.assertIn('has no source package ffmpeg-dmo', result.stderr)
+        self.env['SPARKY_FDK_LIBDIR'] = str(self.root / 'missing')
+        self.assert_not_kept(self.run_hook())
+
+    def test_failed_clear_fails_the_hook(self):
+        # a record the engine cannot remove (a folder in its place): no new version, but the clear fails
+        store = self.root / 'engine/var/lib/sparky-stereo-problems'
+        (store / (PKG + '_update-check.json')).mkdir(parents=True)
+        self.source.write_text('Package: ffmpeg-dmo\nVersion: 1\nBinary: ffmpeg\n\n')
+        self.assert_not_kept(self.run_hook())
+
+    def run_worker(self):
+        # the automatic build for real, up to the point where it reads the repository; the tools after it are doubles
+        for tool in ('dpkg-buildpackage', 'fakeroot', 'runuser'):
+            self.stub(tool, 'echo "$0 must not run here" >&2; exit 99')
+        self.stub('id', '[ "$1 $2" = "-u tester" ] && { echo 1000; exit 0; }; exec /usr/bin/id "$@"')
+        (self.root / 'log').unlink(missing_ok=True)
+        result = subprocess.run(['bash', str(P / 'bin' / PKG), '--auto'], env=self.env, text=True, capture_output=True)
+        log = (self.root / 'log').read_text() if (self.root / 'log').exists() else ''
+        return result, log
+
+    def assert_worker(self, text):
+        result, log = self.run_worker()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr + log)
+        self.assertIn(text, log)
+        self.assertNotIn('update check', log)
+        build = self.records()['build']
+        self.assertIn(text, build['text'])
+        self.assertNotIn('update check', build['text'])
+        self.assertNotIn('must not run here', log)
+
+    def test_worker_without_source_record(self):
+        for case in self.NO_RECORD:
+            with self.subTest(case=case):
+                self.sources(case)
+                self.assert_worker('has no source package ffmpeg-dmo')
+
+    def test_worker_with_unreadable_index(self):
+        for case in self.UNREADABLE:
+            with self.subTest(case=case):
+                self.sources(case)
+                self.assert_worker('could not be read, or one of its records is invalid')
+
+    def run_status(self):
+        (self.root / 'log').write_text('')
+        return subprocess.run(['bash', str(P / 'bin' / PKG), '--status'], env=self.env, text=True,
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+    def assert_status(self, text):
+        result = self.run_status()
+        out = result.stdout
+        self.assertNotEqual(result.returncode, 0, out)
+        self.assertIn(text, out)
+        for line in ('Installed: FFmpeg 1+fdk1', 'Packages: ffmpeg', 'Log of the builds'):
+            self.assertIn(line, out)
+            self.assertLess(out.index(line), out.index(text), out)
+        self.assertNotIn('update check', out)
+        self.assertNotIn('LOCAL', out)
+
+    def test_status_without_source_record(self):
+        for case in self.NO_RECORD:
+            with self.subTest(case=case):
+                self.sources(case)
+                self.assert_status('has no source package ffmpeg-dmo')
+
+    def test_status_with_unreadable_index(self):
+        for case in self.UNREADABLE:
+            with self.subTest(case=case):
+                self.sources(case)
+                self.assert_status('could not be read, or one of its records is invalid')
 
     def test_both_dispatch_failures_are_kept(self):
         # A real failed exec, not just the exit code of a forked launcher.

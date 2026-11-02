@@ -7,12 +7,17 @@
 # consent given on the first run. Nothing happens on a computer that never built one. A rebuild that failed is not tried
 # again by itself for the same version (the user is told, and "sparky-stereo-ffmpeg-fdk --rebuild" tries again), and a
 # computer on battery waits for the mains: the build takes a long time.
-# Last update 2026/10/08
+# Exit status: 0 when the check worked (nothing to do, or the rebuild started); KEPT (80) when the check failed and
+# sparky-stereo-problems kept the failure and said it (here, in apt update's output, then in the notification and in
+# sparky-stereo-ffmpeg-fdk --status); any other status when the failure could not be kept (the engine failed, or a
+# clear failed): the apt hook (99sparky-stereo-ffmpeg-fdk) fails apt update for those, and only for those.
+# Last update 2026/11/02
+KEPT=80
 LIBDIR=${SPARKY_FDK_LIBDIR:-/usr/lib/sparky-stereo-ffmpeg-fdk}
 # shellcheck disable=SC1091
 . "$LIBDIR/common.sh" || {
 	sparky-stereo-problems keep --machine --repair '["/usr/lib/sparky-stereo-ffmpeg-fdk/check-update"]' \
-		sparky-stereo-ffmpeg-fdk update-check LOCAL76 "$LIBDIR/common.sh"
+		sparky-stereo-ffmpeg-fdk update-check LOCAL76 "$LIBDIR/common.sh" && exit "$KEPT"
 	exit 1
 }
 if ! read_installed || [ ! -s "$STATE/consent" ]; then
@@ -20,14 +25,23 @@ if ! read_installed || [ ! -s "$STATE/consent" ]; then
 	exit $?
 fi
 load_strings
-check_failed() {
+# The update check failed: kept by the engine, which says it, or said here when nothing could keep it.
+keep_failure() {
+	local key=$1
 	sparky-stereo-problems keep --machine --repair '["/usr/lib/sparky-stereo-ffmpeg-fdk/check-update"]' \
-		"$FDK_PACKAGE" update-check LOCAL77 "$1"
+		"$FDK_PACKAGE" update-check "$@" && exit "$KEPT"
+	shift
+	printf "${!key}\n" "$@" >&2
 	exit 1
 }
-info=$(repo_source) || check_failed "repo_source: $SRCPKG"
+check_failed() { keep_failure LOCAL77 "$1"; }
+info=$(repo_source)
+case $? in
+0) ;;
+"$NO_SOURCE_RECORD") keep_failure LOCAL33 "$SRCPKG" ;;
+*) check_failed "repo_source: $SRCPKG" ;;
+esac
 repo=${info%% *}
-[ -n "$repo" ] || check_failed "repo_source: $SRCPKG"
 dpkg --compare-versions "$repo" gt "$LOCAL_BASE"
 rc=$?
 case "$rc" in
