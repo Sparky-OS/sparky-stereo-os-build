@@ -15,7 +15,7 @@
 #                                                           selected binary package, Architecture: all included in each architecture's
 #                                                           file, as Debian's archive does; what apt-file and command-not-found read)
 #   dists/mashtabba/main/dep11/Components-<arch>.yml{,.gz} (AppStream, made on every run unless SPARKY_APPSTREAM=0: amd64
-#   dists/mashtabba/main/dep11/icons-<size>{,@2}.tar.gz      always, i386 and arm64 when selected, Architecture: all in each;
+#   dists/mashtabba/main/dep11/icons-<size>{,@2}.tar{,.gz}   always, i386 and arm64 when selected, Architecture: all in each;
 #                                                           what Discover, KRunner, Dolphin's appstream:// offers and
 #                                                           appstreamcli find programs by, through apt's DEP-11 targets)
 # SparkyLinux's shape with our names: Origin and Label are the distribution ("Sparky Stereo
@@ -509,10 +509,15 @@ PY
 		gzip -dc "$DEP11_DATA/$name" >"$DEP11_STAGED/Components-$architecture.yml"
 		DEP11_FILES+=("Components-$architecture.yml" "$name")
 	done
+	# apt's icon targets (appstream's 50appstream) name the uncompressed tarball, icons-64x64.tar: the Release must list
+	# it, with the .tar.gz apt fetches, as Debian's does, or apt never fetches the icons.
 	for name in icons-48x48 icons-64x64 icons-128x128; do
 		[ -f "$DEP11_STAGED/$name.tar.gz" ] || appstream_stop "appstream-generator made no $name.tar.gz."
-		DEP11_FILES+=("$name.tar.gz")
-		if [ -f "$DEP11_STAGED/$name@2.tar.gz" ]; then DEP11_FILES+=("$name@2.tar.gz"); fi
+		for tarball in "$name" "$name@2"; do
+			[ -f "$DEP11_STAGED/$tarball.tar.gz" ] || continue
+			gzip -dc "$DEP11_STAGED/$tarball.tar.gz" >"$DEP11_STAGED/$tarball.tar"
+			DEP11_FILES+=("$tarball.tar" "$tarball.tar.gz")
+		done
 	done
 	printf '%s\n' "${DEP11_FILES[@]}" | sort >"$DEP11/expected.txt"
 	if [ -d "$DEST/dists/$CODENAME/$COMPONENT/dep11" ]; then

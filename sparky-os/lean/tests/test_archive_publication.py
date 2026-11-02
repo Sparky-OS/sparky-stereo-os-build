@@ -1,5 +1,6 @@
 """Versioned edition snapshots and bounded archive scratch, through real APT/ELF."""
 
+import gzip
 import json
 import os
 from pathlib import Path
@@ -416,8 +417,8 @@ def test_actual_publisher_wires_destination_previous_snapshot(publisher_env, tmp
 
 
 MAIN_BEFORE_APPSTREAM = '6851488d4376a0a86626950391b2edfd818da39d'
-DEP11_FILES = {'Components-amd64.yml', 'Components-amd64.yml.gz',
-               'icons-48x48.tar.gz', 'icons-64x64.tar.gz', 'icons-128x128.tar.gz'}
+DEP11_FILES = {'Components-amd64.yml', 'Components-amd64.yml.gz', 'icons-48x48.tar', 'icons-48x48.tar.gz',
+               'icons-64x64.tar', 'icons-64x64.tar.gz', 'icons-128x128.tar', 'icons-128x128.tar.gz'}
 
 
 def qualified_source(tmp_path):
@@ -472,7 +473,7 @@ def test_appstream_catalogues_are_made_by_default(publisher_env, tmp_path):
     assert [m for m in mounts if not m.endswith(':/dep11')] and all(
         m.endswith(':ro') for m in mounts if not m.endswith(':/dep11'))
     assert f'AppStream catalogues: on, made by appstream-generator in {image}' in first.stdout
-    assert 'AppStream catalogues: published in dists/mashtabba/main/dep11 (5 files' in first.stdout
+    assert 'AppStream catalogues: published in dists/mashtabba/main/dep11 (8 files' in first.stdout
     dep11 = destination / 'dists/mashtabba/main/dep11'
     assert {path.name for path in dep11.iterdir() if path.is_file()} == DEP11_FILES
     entries = release_entries(destination, 'dep11')
@@ -482,6 +483,9 @@ def test_appstream_catalogues_are_made_by_default(publisher_env, tmp_path):
         assert (archive.digest(dep11 / name), str((dep11 / name).stat().st_size)) == (digest, size)
         assert archive.digest(dep11 / 'by-hash/SHA256' / digest) == digest
     assert 'main/dep11/Components-amd64.yml' in signed_text(destination / 'dists/mashtabba/InRelease', publisher_env)
+    # apt's icon targets name the uncompressed tarball, so the Release lists it beside the one apt fetches.
+    for size in ('48x48', '64x64', '128x128'):
+        assert gzip.decompress((dep11 / f'icons-{size}.tar.gz').read_bytes()) == (dep11 / f'icons-{size}.tar').read_bytes()
     with tarfile.open(dep11 / 'icons-64x64.tar.gz') as icons:
         assert [m.name for m in icons.getmembers()] == ['org.example.edition-consumer.png', 'zz-late.png']
         assert {(m.mtime, m.uid, m.mode) for m in icons.getmembers()} == {(0, 0, 0o644)}
@@ -491,7 +495,7 @@ def test_appstream_catalogues_are_made_by_default(publisher_env, tmp_path):
     before = tree_hashes(destination)
     again = publish_fixture(source, destination, publisher_env)
     assert again.returncode == 0, again.stdout + again.stderr
-    assert 'Release kept' in again.stdout and 'AppStream catalogues: unchanged (5 files' in again.stdout
+    assert 'Release kept' in again.stdout and 'AppStream catalogues: unchanged (8 files' in again.stdout
     assert tree_hashes(destination) == before
     explicit = publish_fixture(source, destination, {**publisher_env, 'SPARKY_APPSTREAM': '1'})
     assert explicit.returncode == 0, explicit.stdout + explicit.stderr
