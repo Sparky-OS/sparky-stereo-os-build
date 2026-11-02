@@ -51,13 +51,15 @@ def lookup(query):
     if rows is None:
         rows = []
         problem = next((l for l in lines if RENAMED in l), None)
-    installed = [os.path.join(prefix, name) for _, name in rows for prefix in PREFIXES if os.path.isfile(os.path.join(prefix, name))]
+    # the installed renamed programs, the longest path first, so /usr/bin/tsp is found whole and not as /bin/tsp
+    installed = sorted({os.path.join(prefix, name) for _, name in rows for prefix in PREFIXES if os.path.isfile(os.path.join(prefix, name))},
+                       key=len, reverse=True)
     offers, header, named = [], None, False
     for line in lines:
         if line == problem:
             continue
         m = re.search(r'apt install ([a-z0-9][a-z0-9.+-]*)', line)
-        place = next((path for path in installed if path in line), None)
+        place = next((path for path in installed if re.search(r'(?<![\w/])' + re.escape(path) + r'(?![\w/-])', line)), None)
         if m and m.group(1) not in [offer[0] for offer in offers]:
             offers.append(('install:' + m.group(1), (header or line).rstrip(':'), line))
             named = named or m.group(1) in [package for package, _ in rows]

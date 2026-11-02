@@ -26,7 +26,7 @@ Author: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Forwarded: no
 Last-Update: 2026-11-02
 ---
- CommandNotFound/CommandNotFound.py              | 130 +++++++++++++++++-
+ CommandNotFound/CommandNotFound.py              | 133 +++++++++++++++++-
  CommandNotFound/tests/test_command_not_found.py |   3 +-
  CommandNotFound/tests/test_renamed_commands.py  | 172 ++++++++++++++++++++++++
  po/command-not-found.pot                        |  15 +++
@@ -39,9 +39,9 @@ Last-Update: 2026-11-02
  po/zh_CN.po                                     |  15 +++
  po/zh_TW.po                                     |  15 +++
  setup.py                                        |   1 +
- 13 files changed, 439 insertions(+), 2 deletions(-)
+ 13 files changed, 442 insertions(+), 2 deletions(-)
 diff --git a/CommandNotFound/CommandNotFound.py b/CommandNotFound/CommandNotFound.py
-index 74f1b89..cb42f2e 100644
+index 74f1b89..3c9f811 100644
 --- a/CommandNotFound/CommandNotFound.py
 +++ b/CommandNotFound/CommandNotFound.py
 @@ -70,9 +70,13 @@ class CommandNotFound(object):
@@ -58,7 +58,7 @@ index 74f1b89..cb42f2e 100644
          self.sources_list = self._getSourcesList()
          # a new style DB means we can skip loading the old legacy static DB
          if os.path.exists(dbpath) and os.access(dbpath, os.R_OK):
-@@ -96,6 +100,58 @@ class CommandNotFound(object):
+@@ -96,6 +100,61 @@ class CommandNotFound(object):
      def get_packages(self, command):
          return self.db.lookup(command)
  
@@ -98,8 +98,11 @@ index 74f1b89..cb42f2e 100644
 +            if cmd != command:
 +                continue
 +            first = order == "first"
-+            places = [os.path.join(prefix, name) for prefix in self.prefixes
-+                      if os.path.isfile(os.path.join(prefix, name))]
++            # where the shell finds it (PATH, so /usr/bin before a merged /bin), then the other prefixes
++            folders = [d for d in os.getenv("PATH", "").split(":") if d in self.prefixes]
++            folders += [prefix for prefix in self.prefixes if prefix not in folders]
++            places = [os.path.join(folder, name) for folder in folders
++                      if os.path.isfile(os.path.join(folder, name))]
 +            if places:
 +                results.append((package, None, None, name, places[0], first))
 +                continue
@@ -117,7 +120,7 @@ index 74f1b89..cb42f2e 100644
      def get_snaps(self, command):
          exact_result = []
          mispell_result = []
-@@ -293,7 +349,72 @@ class CommandNotFound(object):
+@@ -293,7 +352,72 @@ class CommandNotFound(object):
          else:
              print(_("See 'snap info <snapname>' for additional versions."), file=self.output_fd)
          self.output_fd.flush()
@@ -191,7 +194,7 @@ index 74f1b89..cb42f2e 100644
      def advise(self, command, ignore_installed=False):
          " give advice where to find the given command to stderr "
          def _in_prefix(prefix, command):
-@@ -348,6 +469,13 @@ class CommandNotFound(object):
+@@ -348,6 +472,13 @@ class CommandNotFound(object):
          packages = self.get_packages(command)
          snaps, mispell_snaps = self.get_snaps(command)
          logging.debug("got debs: %s snaps: %s" % (packages, snaps))
