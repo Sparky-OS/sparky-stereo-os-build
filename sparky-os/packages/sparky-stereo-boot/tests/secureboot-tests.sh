@@ -1,8 +1,9 @@
 #!/bin/sh
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/25
 # Copyright 2026 under the GNU GPL3 License
-# Tests of lib/secureboot.py on fake EFI system partitions: where the certificate goes, and the GRUB entry it writes
-# in each of the nine languages. Needs python3 only.
+# Tests of lib/secureboot.py on fake EFI system partitions: where the certificate goes, the GRUB entry it writes
+# in each of the nine languages, and what it says and keeps when the certificate cannot be placed (0.1.5).
+# Needs python3 only.
 #   secureboot-tests.sh PATH/TO/sparky-stereo-boot
 set -u
 P=$(cd "${1:?package source}" && pwd)
@@ -11,9 +12,12 @@ T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
 fails=0
 check() { if [ "$2" = "$3" ]; then echo "PASS  $1"; else echo "FAIL  $1: got [$2], want [$3]"; fails=$((fails + 1)); fi; }
-run() { SPARKY_STEREO_ESP=$T/$1 SPARKY_STEREO_CERT=$CERT SPARKY_STEREO_LANG_DIR=$P/lang SPARKY_STEREO_OS_RELEASE=$T/os-release \
-	LANG=$2 python3 -I "$P/lib/secureboot.py" "$3"; }
+run() { SPARKY_STEREO_ESP=$T/$1 SPARKY_STEREO_CERT=${CERT_USED:-$CERT} SPARKY_STEREO_LANG_DIR=$P/lang SPARKY_STEREO_OS_RELEASE=$T/os-release \
+	SPARKY_STEREO_ROOT=$T/root SPARKY_STEREO_FSTAB=$T/fstab LANG=$2 python3 -I "$P/lib/secureboot.py" "$3"; }
 printf 'ID=sparky\n' > "$T/os-release"
+: > "$T/fstab"
+REC=$T/root/var/lib/sparky-stereo-boot/problems/esp-certificate.json
+key() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["key"])' "$REC" 2>/dev/null || echo none; }
 
 # an installed system as Calamares leaves it: shim in EFI/sparky and EFI/debian, and shim as EFI/BOOT/BOOTX64.EFI
 mkdir -p "$T/a/EFI/sparky" "$T/a/EFI/debian" "$T/a/EFI/boot" "$T/a/EFI/Microsoft/Boot"
@@ -60,5 +64,30 @@ check "only on 64-bit UEFI" "$(echo "$out" | head -2 | tr -d ' ' | tr '\n' ' ')"
 check "no character GRUB would expand in the texts" "$(echo "$out" | grep 'echo "' | grep -c -E '\$|\\')" 0
 w=$(echo "$out" | grep 'echo "' | sed 's/^ *echo "//; s/"$//' | python3 -c 'import sys,unicodedata; print(max(sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in l.rstrip("\n")) for l in sys.stdin))')
 check "lines fit 98 columns (800x600)" "$([ "$w" -le 98 ] && echo yes)" yes
+
+# 0.1.5: what cannot be placed is said and kept (problems.py), and a success clears it
+printf 'UUID=0B1C-2D3E %s vfat umask=0077 0 1\n' "$T/m" > "$T/fstab"; mkdir -p "$T/m"
+out=$(run m en_US.UTF-8 esp 2>&1); rc=$?
+check "ESP in /etc/fstab, not mounted: the step fails" "$rc" 1
+check "ESP not mounted: said, with the mount to do" "$(echo "$out" | grep -c "The EFI system partition $T/m is not mounted.*sudo mount $T/m")" 1
+check "ESP not mounted: kept for repair" "$(key)" LOCAL23
+: > "$T/fstab"
+out=$(run m en_US.UTF-8 esp 2>&1); rc=$?
+check "no ESP for this system (a BIOS boot): nothing to do, nothing said" "$rc:$out" "0:"
+check "a step that has nothing to do clears the kept problem" "$(key)" none
+rm -f "$T/a/EFI/debian/sparky-stereo-secureboot-2026.der"; mkdir -p "$T/a/EFI/debian/sparky-stereo-secureboot-2026.der"   # a folder where the certificate goes: the copy fails
+out=$(run a de_DE.UTF-8 esp 2>&1); rc=$?
+check "copy fails: the step fails" "$rc" 1
+check "copy fails: said in the system's language, naming the folder" "$(echo "$out" | grep -c "Das Secure-Boot-Zertifikat konnte nicht nach $T/a/EFI/debian/sparky-stereo-secureboot-2026.der geschrieben werden")" 1
+check "copy fails: said in English too, for support" "$(echo "$out" | grep -c '(en) The Secure Boot certificate could not be written to')" 1
+check "copy fails: kept, with the command that repairs it" "$(key):$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["repair"])' "$REC")" "LOCAL25:[['python3', '/usr/lib/sparky-stereo-boot/secureboot.py', 'esp']]"
+check "copy fails: the other folders still get it" "$(cmp -s "$CERT" "$T/a/EFI/sparky/sparky-stereo-secureboot-2026.der" && echo same)" same
+rmdir "$T/a/EFI/debian/sparky-stereo-secureboot-2026.der"
+out=$(run a en_US.UTF-8 esp 2>&1); rc=$?
+check "repaired: the step succeeds and clears the kept problem" "$rc:$(key)" "0:none"
+out=$(CERT_USED=$T/missing.der run a en_US.UTF-8 esp 2>&1); rc=$?
+check "certificate missing from the package: said and kept" "$rc:$(key):$(echo "$out" | grep -c 'is missing from this installation')" "1:LOCAL24:1"
+out=$(run c en_US.UTF-8 esp 2>&1); rc=$?
+check "an EFI system partition without shim: said, not failed" "$rc:$(echo "$out" | grep -c "No shim is on the EFI system partition $T/c")" "0:1"
 echo "== $( [ $fails = 0 ] && echo "ALL PASS" || echo "$fails FAILED")"
 [ $fails = 0 ]
