@@ -422,3 +422,8 @@ settings or the TV's mode.
    above the early-warning floor to below the hard floor between two
    samples; with a load that did, the next step is a faster rate or PSI.
 6. Afterwards: "journalctl -u cushion-swap --since today" shows each action.
+
+A person’s zram remains independent.
+Its capacity and used pages are excluded from Cushion’s disk-swap accounting.
+A zram device is skipped in fstab area selection and rejected as an explicit AREA or resume device, including a symlink to it.
+The daemon never switches that device on or off.

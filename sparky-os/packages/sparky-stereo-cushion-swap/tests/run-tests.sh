@@ -1204,7 +1204,44 @@ messages_complete() {
 	return $ok
 }
 
+# A person's 8 GiB in zram cannot increase the margin for retracting 1 GiB on disk.
+zram_accounting() {
+	local d=$1 out
+	rm -rf "$W/state"
+	mkdir -p "$W/state"
+	printf '100 %s 1 0 100000\n' "$((24 * G))" >"$W/state/state"
+	meminfo "$W/m" "$((96 * G))" "$((24 * G))" "$((24 * G))" "$((15 * G))"
+	swaps "$W/s" "$W/root/swapfile" "$((16 * G))" "$G" /dev/zram0 "$((8 * G))" "$((8 * G))"
+	out=$(daemon CUSHION_SWAP_AREA="$W/root/swapfile" MEMINFO_PATH="$W/m" SWAPS_PATH="$W/s" NOW_EPOCH_MS=1000000 "$d" --dry-run --once)
+	[[ $out == *'SwapTotal=16.00GiB SwapUsed=1.00GiB'* && $out == *'=> retract_ok=1'* ]]
+}
+
+zram_not_claimed() {
+	local d=$1 out
+	rm -rf "$W/state"
+	rm -f "$W/actions"
+	meminfo "$W/m" 97957892 "$G"
+	swaps "$W/s" /dev/zram0 "$((8 * G))" 0
+	printf '/dev/zram0 none swap noauto 0 0\n%s none swap noauto 0 0\n' "$W/root/swapfile" >"$W/fstab-zram"
+	out=$(daemon FSTAB_PATH="$W/fstab-zram" MEMINFO_PATH="$W/m" SWAPS_PATH="$W/s" "$d" --thresholds)
+	[[ $out == *"area=$W/root/swapfile"* ]] || return 1
+	ln -sf /dev/zram0 "$W/disk/by-uuid/compressed"
+	daemon CUSHION_SWAP_AREA=UUID=compressed MEMINFO_PATH="$W/m" SWAPS_PATH="$W/s" "$d" --once >/dev/null 2>&1
+	[[ ! -s $W/actions ]] && grep -q '^STATE=no-area$' "$W/state/status"
+}
+
+zram_not_resume() {
+	local d=$1 out rc
+	echo 'RESUME=/dev/zram0' >"$W/resume-zram"
+	out=$(daemon INITRAMFS_RESUME_PATH="$W/resume-zram" "$d" --resume-target)
+	rc=$?
+	[[ $rc == 1 && $out == *'Choose a swap area on disk.'* ]]
+}
+
 suite() {
+	check zram-accounting zram_accounting "$1"
+	check zram-not-claimed zram_not_claimed "$1"
+	check zram-not-resume zram_not_resume "$1"
 	local d=$1
 	check thresholds-4-8-16-32-64-96GB threshold_cases "$d"
 	check reference-96GB-is-Daniels reference_unchanged "$d"
