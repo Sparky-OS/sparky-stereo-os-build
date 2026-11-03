@@ -283,10 +283,11 @@ def installed(root):
 
 
 def image_files(root):
-    """Every file and link of the image's trees, once."""
+    """Every file and link of the image's trees, once: a tree reached through a link (lib, bin and sbin merged into
+    /usr) is the tree it leads to, read under its own name."""
     seen = set()
     for top in [root / t for t in IMAGE_TREES] + sorted(p for g in IMAGE_GLOBS for p in root.glob(g)):
-        if top.is_symlink() or not top.exists():
+        if top.is_symlink() or not top.exists() or top.resolve() != top.absolute():
             continue
         walk = [(top.parent, [], [top.name])] if top.is_file() else os.walk(top)
         for directory, _, names in walk:

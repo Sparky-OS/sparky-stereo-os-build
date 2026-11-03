@@ -257,6 +257,12 @@ class Images(Fixtures):
                      '/var/lib/dpkg/info/x.postinst:2:', f'{menu}:2:'):
             self.assertTrue(any(part in f for f in findings), f'{part!r} not in {findings}')
 
+    def test_merged_usr_is_read_once(self):
+        root = self.image([('x', '')], {'/usr/lib/systemd/zram-generator.conf': '[zram0]\n'})
+        (root / 'lib').symlink_to('usr/lib')
+        findings, errors, _ = gate.check_image(root, [])
+        self.assertEqual(findings, ['/usr/lib/systemd/zram-generator.conf:1: [zram0] (a zram-generator configuration)'])
+
     def test_image_without_status_is_refused(self):
         root = self.dir / 'empty'
         root.mkdir()
