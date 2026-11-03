@@ -118,20 +118,31 @@ check() {
 		return 0
 	fi
 	clear_notice
-	# a run that installs them itself (the Repair, the unit) says what fails; the unit already queued waits for this run
+	# a run that installs them itself (the Repair, the unit) says what fails
 	[[ ${SPARKY_STEREO_HARDWARE_NVIDIA_I386:-} == installing ]] && return 0
-	queued && return 0
-	list=$(listed "$need")
-	why=$(no_unit_here)
-	if [[ -z $why && -n ${DPKG_FRONTEND_LOCKED:-} ]]; then
-		if out=$(systemctl --no-block start "$UNIT" 2>&1); then
-			# a problem kept before stays until they are in (a failed install keeps its reason until the next verdict)
-			! kept_as_no_unit || sparky-stereo-problems keep --repair "$REPAIR" "$PKG" "$KEY" LOCAL5 "$version" "$list" >/dev/null 2>&1 || true
-			sparky-stereo-problems say "$PKG" LOCAL12 "$list" "$version" "$UNIT" >&2 || true
-			return 0
-		else
-			why="systemctl --no-block start $UNIT exited $?: $(printf '%s' "$out" | tr '\n' ' ')"
+	if [[ -n ${DPKG_FRONTEND_LOCKED:-} ]]; then
+		# the unit already queued waits for this run
+		queued && return 0
+		list=$(listed "$need")
+		why=$(no_unit_here)
+		if [[ -z $why ]]; then
+			if out=$(systemctl --no-block start "$UNIT" 2>&1); then
+				# a problem kept before stays until they are in (a failed install keeps its reason until the next verdict)
+				! kept_as_no_unit || sparky-stereo-problems keep --repair "$REPAIR" "$PKG" "$KEY" LOCAL5 "$version" "$list" >/dev/null 2>&1 || true
+				sparky-stereo-problems say "$PKG" LOCAL12 "$list" "$version" "$UNIT" >&2 || true
+				return 0
+			else
+				why="systemctl --no-block start $UNIT exited $?: $(printf '%s' "$out" | tr '\n' ' ')"
+			fi
 		fi
+	else
+		# a dpkg run of its own, with the problem kept already: nothing to change or say (the check runs after every dpkg
+		# run), unless i386 has just been added or the problem says no unit can start here
+		if [[ -e $STORE/${PKG}_$KEY.json && ${DPKG_HOOK_ACTION:-} != add-architecture ]] && ! kept_as_no_unit; then
+			return 0
+		fi
+		list=$(listed "$need")
+		why=$(no_unit_here)
 	fi
 	if [[ -n $why ]]; then
 		keep_problem LOCAL13 "$list" "$version" "$why" && first=true
