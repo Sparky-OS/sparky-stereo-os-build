@@ -1,0 +1,9 @@
+#!/bin/sh
+set -e
+
+# Sparky Stereo OS, ORDER 370: the problems dkms-sign-unsigned kept name a repair that leaves with this package
+if [ "$1" = remove ] && command -v sparky-stereo-problems >/dev/null 2>&1; then
+	sparky-stereo-problems clear --all dkms
+fi
+
+#DEBHELPER#

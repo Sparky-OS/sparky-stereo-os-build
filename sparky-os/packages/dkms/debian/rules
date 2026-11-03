@@ -24,3 +24,5 @@ override_dh_auto_install:
 
 execute_after_dh_install:
 	DH_AUTOSCRIPTDIR=debian/scripts debian/scripts/dh_dkms
+	# Sparky Stereo OS, ORDER 370: dkms-sign-unsigned's messages as journal catalogs, in the nine languages
+	sparky-stereo-problems catalog dkms debian/problems-lang debian/dkms/usr/lib/systemd/catalog --subject LOCAL1
