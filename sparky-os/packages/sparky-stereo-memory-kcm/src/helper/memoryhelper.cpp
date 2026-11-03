@@ -10,22 +10,16 @@
 
 using namespace Qt::StringLiterals;
 
-KAuth::ActionReply MemoryHelper::save(const QVariantMap &args)
+KAuth::ActionReply MemoryHelper::savecushion(const QVariantMap &args)
 {
-    const QString zram = args.value(u"zram"_s).toString();
     const QString cushion = args.value(u"cushion"_s).toString();
-    if (!QStringList{u"auto"_s, u"on"_s, u"off"_s}.contains(zram) || !QStringList{u"on"_s, u"off"_s}.contains(cushion)) {
+    if (!QStringList{u"on"_s, u"off"_s}.contains(cushion)) {
         KAuth::ActionReply reply = KAuth::ActionReply::HelperErrorReply();
         reply.setErrorDescription(u"Invalid value"_s);
         return reply;
     }
 
     QString error;
-    if (!MemorySettings::writeValue(MemorySettings::zramConfigPath(), u"ZRAM"_s, zram, &error)) {
-        KAuth::ActionReply reply = KAuth::ActionReply::HelperErrorReply();
-        reply.setErrorDescription(error);
-        return reply;
-    }
     const QString previous = MemorySettings::readValue(MemorySettings::cushionConfigPath(), u"CUSHION_SWAP"_s);
     if (!MemorySettings::writeValue(MemorySettings::cushionConfigPath(), u"CUSHION_SWAP"_s, cushion, &error)) {
         KAuth::ActionReply reply = KAuth::ActionReply::HelperErrorReply();

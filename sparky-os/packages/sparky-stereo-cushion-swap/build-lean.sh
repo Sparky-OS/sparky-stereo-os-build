@@ -13,8 +13,8 @@ export PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}"
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL='Capitain_Jack@yahoo.com'
 export DEB_BUILD_OPTIONS=parallel=4
 OUT="$OUT/authored" bash "$HERE/build.sh"
-dpkg-source -x "$OUT/authored/sparky-stereo-cushion-swap_0.3.3.dsc" "$OUT/source"
-python3 -m lean.debian_custom "$OUT/source" 0.3.3+lc1 --toolkit "$HERE/../.."
+dpkg-source -x "$OUT/authored/sparky-stereo-cushion-swap_0.3.4.dsc" "$OUT/source"
+python3 -m lean.debian_custom "$OUT/source" 0.3.4+lc1 --toolkit "$HERE/../.."
 (cd "$OUT/source" && dpkg-buildpackage -us -uc -j4)
 # Every resulting runtime/HR archive enters the ordinary cohort link gate.
 args=()

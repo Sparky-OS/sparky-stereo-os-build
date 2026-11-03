@@ -12,5 +12,5 @@ class MemoryHelper : public QObject
     Q_OBJECT
 
 public Q_SLOTS:
-    KAuth::ActionReply save(const QVariantMap &args);
+    KAuth::ActionReply savecushion(const QVariantMap &args);
 };

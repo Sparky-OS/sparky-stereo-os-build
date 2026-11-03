@@ -5,9 +5,9 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=20261103.3~sparky9~0+lc1
+VERSION=20261103.4~sparky9~0+lc1
 PACKAGE=sparky-stereo-kernel-settings
-DEPENDS='sparky-stereo-problems, libpam-modules, systemd, mount, udev'
+DEPENDS='python3, apt, sparky-stereo-problems, libpam-modules, systemd, mount, udev'
 FILES='etc/security/limits.d/20-sparky-audio.conf usr/lib/modules-load.d/sparky-stereo.conf usr/lib/sysctl.d/70-sparky-stereo.conf usr/lib/tmpfiles.d/sparky-thp.conf usr/lib/udev/rules.d/60-sparky-block.rules usr/lib/udev/rules.d/70-sparky-ntsync.rules usr/lib/udev/rules.d/99-sparky-audio.rules'
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.kernel-settings.XXXXXX")
@@ -17,6 +17,20 @@ mkdir -p "$D/DEBIAN" "$D/usr/share/doc/$PACKAGE"
 for f in $FILES; do install -Dm644 "$HERE/$f" "$D/$f"; done
 install -m755 "$HERE/preinst" "$D/DEBIAN/preinst"
 install -m644 "$HERE/copyright" "$D/usr/share/doc/$PACKAGE/copyright"
+install -Dm755 "$HERE/usr/libexec/sparky-stereo/zram-migration" "$D/usr/libexec/sparky-stereo/zram-migration"
+install -Dm644 "$HERE/README.md" "$D/usr/share/doc/$PACKAGE/README.md"
+mkdir -p "$D/usr/lib/systemd/system/systemd-zram-setup@zram0.service.d" "$D/usr/lib/systemd/system/dev-zram0.swap.d"
+cat >"$D/usr/lib/systemd/system/systemd-zram-setup@zram0.service.d/50-sparky-migration.conf" <<'EOF'
+[Unit]
+RequiresMountsFor=/var/lib/apt /var/lib/sparky-stereo-kernel-settings
+[Service]
+ExecCondition=/usr/libexec/sparky-stereo/zram-migration --allow
+EOF
+cat >"$D/usr/lib/systemd/system/dev-zram0.swap.d/50-sparky-migration.conf" <<'EOF'
+[Unit]
+# The generator orders this swap after its setup service, which evaluates the guard.
+ConditionPathExists=!/run/sparky-stereo-kernel-settings/blocked-zram0
+EOF
 sparky-stereo-problems catalog "$PACKAGE" "$HERE/problems-lang" "$D/usr/lib/systemd/catalog" --subject LOCAL1
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
 cat >"$D/DEBIAN/control" <<EOT
@@ -26,14 +40,13 @@ Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
 Depends: $DEPENDS
-Conflicts: systemd-zram-generator, zram-tools
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org
 Description: Kernel tunables for Sparky Stereo OS
   Sysctl, udev, tmpfiles, modules-load and audio-limit settings that replace
   kernel patches of performance kernels. Closes kexec after boot and excludes
-  compressed RAM swap; the edition uses Cushion Swap on disk.
+  automatic compressed RAM swap; the person may opt in through Stereo APTus.
 EOT
 printf '%s\n' /etc/security/limits.d/20-sparky-audio.conf >"$D/DEBIAN/conffiles"
 cat >"$D/DEBIAN/postinst" <<'EOT'
@@ -47,9 +60,8 @@ if [ "$1" = configure ] && dpkg --compare-versions "${2:-0}" lt 20261010.2~spark
 	: >/var/lib/sparky-stereo-kernel-settings/tmp-mount-masked
 fi
 if [ "$1" = configure ]; then
-	# Daniel, 2026-11-02: REMOVE AND FORBID ZRAM. APT removes the conflicting
-	# generator in its own visible plan. Stop/reset only our former zram0;
-	# do not run swapoff -a or alter any other swap area.
+	# Stop/reset only the edition’s former Auto zram0, never a person’s choice.
+	sparky-stereo-problems run --machine sparky-stereo-kernel-settings zram-migration LOCAL5 -- /usr/libexec/sparky-stereo/zram-migration --migrate || :
 	if [ -f /var/lib/sparky-stereo-kernel-settings/retire-owned-zram0 ]; then
 		cleanup='
 set -e
@@ -90,6 +102,9 @@ cat >"$D/DEBIAN/postrm" <<'EOT'
 set -e
 if [ "$1" = remove ] && command -v sparky-stereo-problems >/dev/null 2>&1; then
 	sparky-stereo-problems clear --all sparky-stereo-kernel-settings
+fi
+if [ "$1" = purge ]; then
+	rm -f /etc/apt/apt.conf.d/90sparky-stereo-chosen-zram
 fi
 if [ "$1" = purge ] && [ -e /var/lib/sparky-stereo-kernel-settings/tmp-mount-masked ]; then
 	if [ "$(readlink /etc/systemd/system/tmp.mount 2>/dev/null)" = /dev/null ]; then

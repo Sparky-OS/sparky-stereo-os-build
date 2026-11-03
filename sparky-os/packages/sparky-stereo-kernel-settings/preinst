@@ -5,7 +5,18 @@ set -e
 if [ "$1" = upgrade ] && [ -f /usr/lib/systemd/zram-generator.conf.d/50-sparky-stereo.conf ]; then
     if grep -q '^set!sparky_zram=/usr/libexec/sparky-stereo/zram-auto$' /usr/lib/systemd/zram-generator.conf.d/50-sparky-stereo.conf; then
         mkdir -p /var/lib/sparky-stereo-kernel-settings
-        : >/var/lib/sparky-stereo-kernel-settings/retire-owned-zram0
+        choice=$(sed -n "s/^[[:space:]]*ZRAM[[:space:]]*=[[:space:]]*[\"']\{0,1\}\([a-z]*\).*/\1/p" /etc/default/sparky-stereo-zram 2>/dev/null | tail -n 1)
+        manual=$(apt-mark showmanual systemd-zram-generator zram-tools)
+        if [ "$choice" = on ] || [ -n "$manual" ]; then
+            : >/var/lib/sparky-stereo-kernel-settings/preserve-chosen-zram
+            rm -f /var/lib/sparky-stereo-kernel-settings/retire-owned-zram0
+        else
+            : >/var/lib/sparky-stereo-kernel-settings/retire-owned-zram0
+            automatic=$(apt-mark showauto systemd-zram-generator)
+            if [ "$automatic" = systemd-zram-generator ]; then
+                : >/var/lib/sparky-stereo-kernel-settings/leftover-zram-generator
+            fi
+        fi
     else
         status=$?
         [ "$status" -eq 1 ] || exit "$status"

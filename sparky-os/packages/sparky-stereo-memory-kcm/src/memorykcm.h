@@ -9,11 +9,6 @@
 class MemoryKcm : public KQuickConfigModule
 {
     Q_OBJECT
-    Q_PROPERTY(int zramMode READ zramMode WRITE setZramMode NOTIFY zramModeChanged)
-    Q_PROPERTY(bool autoZramOn READ autoZramOn NOTIFY statusChanged)
-    Q_PROPERTY(QString autoDecisionText READ autoDecisionText NOTIFY statusChanged)
-    Q_PROPERTY(QString autoReason READ autoReason NOTIFY statusChanged)
-    Q_PROPERTY(bool zramActive READ zramActive NOTIFY statusChanged)
     Q_PROPERTY(bool cushionEnabled READ cushionEnabled WRITE setCushionEnabled NOTIFY cushionEnabledChanged)
     Q_PROPERTY(QString cushionState READ cushionState NOTIFY statusChanged)
     Q_PROPERTY(QString cushionMode READ cushionMode NOTIFY statusChanged)
@@ -25,25 +20,14 @@ class MemoryKcm : public KQuickConfigModule
     Q_PROPERTY(QStringList cushionProblemKeys READ cushionProblemKeys NOTIFY statusChanged)
     Q_PROPERTY(QVariantList cushionProblems READ cushionProblems NOTIFY statusChanged)
     Q_PROPERTY(QString cushionProblemsError READ cushionProblemsError NOTIFY statusChanged)
+    Q_PROPERTY(QVariantMap zram READ zram NOTIFY zramChanged)
+    Q_PROPERTY(bool zramBusy READ zramBusy NOTIFY zramChanged)
     Q_PROPERTY(bool repairing READ repairing NOTIFY repairingChanged)
     Q_PROPERTY(QString errorText READ errorText NOTIFY errorTextChanged)
 
 public:
-    enum ZramMode {
-        Automatic = 0,
-        On,
-        Off,
-    };
-    Q_ENUM(ZramMode)
-
     MemoryKcm(QObject *parent, const KPluginMetaData &data);
 
-    int zramMode() const;
-    void setZramMode(int mode);
-    bool autoZramOn() const;
-    QString autoReason() const;
-    QString autoDecisionText() const { return m_autoDecisionText; }
-    bool zramActive() const;
     bool cushionEnabled() const;
     void setCushionEnabled(bool enabled);
     QString cushionState() const;
@@ -65,12 +49,17 @@ public:
     Q_INVOKABLE void refreshStatus();
     Q_INVOKABLE void repairProblem(int index);
 
+    QVariantMap zram() const { return m_zram; }
+    bool zramBusy() const { return m_zramBusy; }
+    Q_INVOKABLE void refreshZram();
+    Q_INVOKABLE void changeZram();
+
     void load() override;
     void save() override;
     void defaults() override;
 
 Q_SIGNALS:
-    void zramModeChanged();
+    void zramChanged();
     void cushionEnabledChanged();
     void statusChanged();
     void errorTextChanged();
@@ -82,14 +71,12 @@ private:
     void readCushionStatus();
     void readProblems();
 
-    int m_zramMode = Automatic;
-    int m_savedZramMode = Automatic;
+    QVariantMap m_zram;
+    bool m_zramBusy = false;
+    bool m_zramReading = false;
+    bool m_zramKnown = false;
     bool m_cushionEnabled = true;
     bool m_savedCushionEnabled = true;
-    bool m_autoZramOn = false;
-    QString m_autoReason;
-    QString m_autoDecisionText;
-    bool m_zramActive = false;
     QString m_cushionState;
     QString m_cushionMode;
     QString m_cushionArea;

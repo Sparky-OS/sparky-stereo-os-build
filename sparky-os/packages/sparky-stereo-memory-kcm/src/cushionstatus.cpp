@@ -136,6 +136,7 @@ QString MemoryKcm::cushionReason() const
 
 void MemoryKcm::refreshStatus()
 {
+    refreshZram();
     readCushionStatus();
     readProblems();
     Q_EMIT statusChanged();

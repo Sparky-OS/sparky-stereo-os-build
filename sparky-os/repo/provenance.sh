@@ -20,14 +20,13 @@ ME="$NAME <$MAIL>"
 HOME_URL=https://sparkylinux.org
 BUGS_URL=https://github.com/Sparky-OS/sparky-stereo-os/issues
 MARK='Sparky Stereo OS packaging'
-PAWEL='Paweł "pavroo" Pijanowski <pavroo@onet.eu>'
+PAWEL='Paweł "pavroo" Pijanowski'
 PAWEL_NAME='Paweł "pavroo" Pijanowski'
 # The edition is Daniel's, on Paweł's SparkyLinux (Daniel, 2026-10-07).
 STANZA="Files: debian/*
-Comment: $MARK. Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux
- ($HOME_URL, by $PAWEL_NAME).
+Comment: $MARK. Sparky Stereo OS, Daniel Ramos's edition of SparkyLinux (by $PAWEL_NAME).
 Copyright: 2026 $PAWEL
-           2026 $ME
+           2026 $NAME
 License: GPL-2+
  On Debian systems the full text of the GNU General Public License version 2
  is in /usr/share/common-licenses/GPL-2."
@@ -93,7 +92,7 @@ fi
 for deb in "$@"; do
 	if [ "$(dpkg-deb -f "$deb" Maintainer)" = "$ME" ] && [ "$(dpkg-deb -f "$deb" Homepage)" = "$HOME_URL" ] &&
 		[ "$(dpkg-deb -f "$deb" Bugs)" = "$BUGS_URL" ] &&
-		dpkg-deb --fsys-tarfile "$deb" | tar -xO --wildcards './usr/share/doc/*/copyright' 2>/dev/null | grep -q -F "Daniel Ramos's (Capitain Jack) edition of SparkyLinux"; then
+		dpkg-deb --fsys-tarfile "$deb" | tar -xO --wildcards './usr/share/doc/*/copyright' 2>/dev/null | grep -q -F "Daniel Ramos's edition of SparkyLinux"; then
 		echo "$(basename "$deb"): already signed"
 		continue
 	fi

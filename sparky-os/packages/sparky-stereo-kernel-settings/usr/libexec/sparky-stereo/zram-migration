@@ -1,0 +1,85 @@
+#!/usr/bin/python3
+# SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack)
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Gate only the generator inherited from the edition's old automatic dependency."""
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+STATE = Path('/var/lib/sparky-stereo-kernel-settings')
+APT_STATE = Path('/var/lib/apt/extended_states')
+CONFIG = Path('/etc/default/sparky-stereo-zram')
+BLOCKED = Path('/run/sparky-stereo-kernel-settings/blocked-zram0')
+PROTECTION = Path('/etc/apt/apt.conf.d/90sparky-stereo-chosen-zram')
+PACKAGE = 'sparky-stereo-kernel-settings'
+ENGINE = '/usr/bin/sparky-stereo-problems'
+
+
+def auto_packages():
+    if not APT_STATE.exists():
+        return set()
+    result = set()
+    for stanza in APT_STATE.read_text().split('\n\n'):
+        fields = dict(line.split(': ', 1) for line in stanza.splitlines() if ': ' in line)
+        if fields.get('Auto-Installed') == '1':
+            result.add(fields.get('Package'))
+    return result
+
+
+def installed(package):
+    result = subprocess.run(['/usr/bin/dpkg-query', '-W', '-f=${db:Status-Status}', package], capture_output=True, text=True)
+    if result.returncode not in (0, 1):
+        raise RuntimeError(result.stderr)
+    return result.returncode == 0 and result.stdout == 'installed'
+
+
+def old_choice():
+    if not CONFIG.exists():
+        return False
+    values = re.findall(r'''^\s*ZRAM\s*=\s*["']?([a-z]+)["']?\s*(?:#.*)?$''', CONFIG.read_text(), re.M)
+    return bool(values and values[-1] == 'on')
+
+
+def allowed():
+    if not (STATE / 'leftover-zram-generator').exists():
+        return True
+    automatic = auto_packages()
+    if old_choice() or 'systemd-zram-generator' not in automatic:
+        return True
+    return installed('zram-tools') and 'zram-tools' not in automatic
+
+
+def main():
+    if sys.argv[1:] == ['--allow']:
+        if allowed():
+            BLOCKED.unlink(missing_ok=True)
+            leftover = STATE / 'leftover-zram-generator'
+            if leftover.exists() and installed('systemd-zram-generator') and 'systemd-zram-generator' not in auto_packages():
+                subprocess.run([ENGINE, 'clear', '--machine', PACKAGE, 'leftover-generator'], check=True)
+                leftover.unlink()
+            return 0
+        BLOCKED.parent.mkdir(parents=True, exist_ok=True)
+        BLOCKED.touch()
+        return 1  # systemd ExecCondition skips setup without starting swap.
+    if sys.argv[1:] != ['--migrate']:
+        return 2
+    if (STATE / 'preserve-chosen-zram').exists() and installed('systemd-zram-generator'):
+        # apt may be running. Use our own apt policy, never edit extended_states
+        # or invoke a second state-changing apt process from a maintainer script.
+        if 'systemd-zram-generator' in auto_packages():
+            PROTECTION.write_text('APT::NeverAutoRemove { "^systemd-zram-generator$"; };\n')
+            subprocess.run([ENGINE, 'keep', '--machine', '--severity', 'notice', PACKAGE,
+                            'chosen-zram', 'LOCAL8'], check=True)
+    if (STATE / 'leftover-zram-generator').exists() and not allowed():
+        subprocess.run([ENGINE, 'keep', '--machine', '--severity', 'notice', PACKAGE,
+                        'leftover-generator', 'LOCAL7'], check=True)
+    return 0
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main())
+    except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
+        print(error, file=sys.stderr)
+        sys.exit(255)  # a broken guard is a failure, not permission to activate swap.

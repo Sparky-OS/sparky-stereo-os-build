@@ -1,6 +1,6 @@
 sparky-stereo-kernel-settings
 Kernel tunables for Sparky Stereo OS as user-space files: sysctl, udev, tmpfiles, modules-load and audio limits.
-No compressed swap (Daniel, 2026-11-02: "REMOVE AND FORBID ZRAM"). The swap is the Cushion Swap File on disk, on only under memory pressure.
+No compressed swap by default; the person may opt in through Stereo APTus. The swap is the Cushion Swap File on disk, on only under memory pressure.
 
 Copyright (C) 2026 Daniel Ramos (Capitain Jack), see copyright file.
 Derived from CachyOS-Settings (GPL-3.0) and the CachyOS kernel patches, and from the value SteamOS uses for vm.max_map_count; authors in the copyright file.
@@ -52,14 +52,24 @@ Other settings apply at the next boot (or: sysctl --system, systemd-tmpfiles --c
 Not taken from CachyOS, on purpose: SATA link power max_performance (costs laptop battery), journald and systemd timeouts (distribution policy),
 kernel.printk and kernel.sysrq (Debian's defaults stay), the NVMe kyber scheduler (no measurement favours it), the HDA power-save script.
 
-Compressed swap removal:
+Compressed swap is the person's opt-in:
 -------------
-The package conflicts with systemd-zram-generator and zram-tools.
-APT full-upgrade shows removal of an installed generator in its plan; a plain apt-get upgrade may keep this package back.
-No generator configuration or mask is installed by this package.
-During upgrade, the old edition drop-in identifies our zram0 for deactivation and reset; other swap areas are untouched.
+Nothing installs or configures zram by default, and there are no Conflicts, Breaks or Replaces against its packages.
+The old edition generator drop-in identifies the migration; other swap areas are not retired.
+Before unpack, an earlier ZRAM=on or a manually installed generator or zram-tools identifies a person's choice and prevents retirement.
+The old configuration file is read for this migration, never written or removed.
+A formerly auto-installed generator without that choice gets a persistent leftover marker.
+The setup service guard blocks only that marker plus an auto-installed generator without ZRAM=on or a manually installed zram-tools.
+No marker, a manually installed generator, ZRAM=on, or manually installed zram-tools passes.
+The guard reads apt's extended_states; it never writes apt's state.
+The generated swap unit runs after setup and checks the guard's runtime marker, so a skipped setup does not cause a futile swapon.
+The generator may create an empty device node before the condition runs; no capacity or active swap is established by the blocked setup.
+Installing the generator explicitly through apt or Stereo APTus marks it manual; the next setup passes without changing a mask or configuration.
+Stereo APTus tells the person to restart for the generator's normal boot setup.
+A kept notice explains the leftover and apt autoremove, in nine languages.
+An earlier ZRAM=on with an automatic generator is protected using our own APT::NeverAutoRemove policy file, not by writing apt's database or running a second apt during configuration.
+The person is told of this protection and can still explicitly uninstall the package.
 An unsuccessful retirement is shown and kept in the problems engine with its repair command.
-The obsolete personal /etc/default/sparky-stereo-zram file is no longer read or written.
 
 Your own sysctl values:
 -------------

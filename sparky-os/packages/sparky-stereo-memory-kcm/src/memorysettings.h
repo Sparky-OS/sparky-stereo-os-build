@@ -6,16 +6,11 @@
 #include <QString>
 #include <QVariantMap>
 
-// The page shows and changes only these files, so a hand edit and the page
-// always agree: /etc/default/sparky-stereo-zram (ZRAM=auto|on|off) and
-// /etc/default/cushion-swap (CUSHION_SWAP=on|off).
+// The page and hand edits share /etc/default/cushion-swap (CUSHION_SWAP=on|off).
 namespace MemorySettings
 {
-QString zramConfigPath();
 QString cushionConfigPath();
 QString cushionStatusPath();
-QString zramAutoPath();
-QString swapsPath();
 
 QString readValue(const QString &path, const QString &key);
 bool writeValue(const QString &path, const QString &key, const QString &value, QString *error);

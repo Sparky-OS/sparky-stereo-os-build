@@ -374,6 +374,18 @@ read_meminfo() {
 	MEM_AVAILABLE_KIB=$avail
 	SWAP_TOTAL_KIB=$stotal
 	SWAP_FREE_KIB=$sfree
+	# A person's compressed swap is not disk swap and is never ours to retract.
+	local name kind size used rest
+	if [[ -r $SWAPS_PATH ]]; then
+		while read -r name kind size used rest; do
+			is_zram "$name" || continue
+			[[ $size =~ ^[0-9]+$ && $used =~ ^[0-9]+$ ]] || continue
+			SWAP_TOTAL_KIB=$((SWAP_TOTAL_KIB - size))
+			SWAP_FREE_KIB=$((SWAP_FREE_KIB - size + used))
+		done <"$SWAPS_PATH"
+	fi
+	((SWAP_TOTAL_KIB < 0)) && SWAP_TOTAL_KIB=0
+	((SWAP_FREE_KIB < 0)) && SWAP_FREE_KIB=0
 	return 0
 }
 
@@ -421,12 +433,21 @@ spec_path() {
 	[[ -L $SPEC_PATH ]] && SPEC_PATH=$(readlink -f -- "$SPEC_PATH")
 }
 
+is_zram() {
+	local device=$1
+	[[ -L $device ]] && device=$(readlink -f -- "$device")
+	[[ $device =~ ^/dev/zram[0-9]+$ ]]
+}
+
+AREA_REJECTED_ZRAM=0
 resolve_area() {
 	local spec _ type options rest
 	if [[ -z $AREA && -r $FSTAB_PATH ]]; then
 		while read -r spec _ type options rest; do
 			[[ $spec == \#* || $type != swap ]] && continue
 			[[ ,$options, == *,noauto,* ]] || continue
+			spec_path "$spec"
+			is_zram "$SPEC_PATH" && continue
 			AREA=$spec
 			break
 		done <"$FSTAB_PATH"
@@ -434,6 +455,10 @@ resolve_area() {
 	[[ -n $AREA ]] || return 0
 	spec_path "$AREA"
 	AREA=$SPEC_PATH
+	if is_zram "$AREA"; then
+		AREA=""
+		AREA_REJECTED_ZRAM=1
+	fi
 }
 
 # Is this swap area active? 0 yes, 1 no, 2 unknown; SWAP_USED_KIB from its
@@ -481,7 +506,11 @@ save_state() {
 # The area the daemon switches: none configured, or one that is not there, means no protection.
 area_problem() {
 	if [[ -z $AREA ]]; then
-		problem_set no-area no LOCAL1
+		if ((AREA_REJECTED_ZRAM)); then
+			problem_set no-area no LOCAL24
+		else
+			problem_set no-area no LOCAL1
+		fi
 		problem_clear area-missing
 	elif [[ ! -e $AREA ]]; then
 		problem_clear no-area
@@ -1166,6 +1195,11 @@ resume_target() {
 	resume_config || return 1
 	spec_path "$RESUME_SPEC"
 	local device=$SPEC_PATH
+	if is_zram "$device"; then
+		lang_code
+		text_into RESUME_NOTE "$LANG_CODE" LOCAL24
+		return 1
+	fi
 	if [[ -z $RESUME_OFFSET_VALUE || $RESUME_OFFSET_VALUE == 0 ]]; then
 		TARGET_KIND='device'
 		if [[ -e $device ]]; then

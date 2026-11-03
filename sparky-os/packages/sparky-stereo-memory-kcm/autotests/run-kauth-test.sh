@@ -43,8 +43,8 @@ for decision in allow deny; do
 	stdbuf -oL "$BUILD/bin/fakepolkit" "$decision" >"$OUT/polkit-$decision.log" 2>&1 &
 	polkit=$!
 	sleep 1
-	touch /etc/default/sparky-stereo-zram /etc/default/cushion-swap
-	chown "$test_uid:$test_gid" /etc/default/sparky-stereo-zram /etc/default/cushion-swap
+	touch /etc/default/cushion-swap
+	chown "$test_uid:$test_gid" /etc/default/cushion-swap
 	SPARKY_KAUTH_TEST=$decision QT_QPA_PLATFORM=offscreen setpriv --reuid="$test_uid" --regid="$test_gid" --init-groups "$BUILD/bin/memorykcmtest" saveThroughKAuth >"$OUT/kcm-$decision.log" 2>&1 || status=1
 	rm -f /run/order353-repaired
 	cat >/run/sparky-stereo-problems/sparky-stereo-cushion-swap_order353-test.json <<'JSON'
@@ -53,10 +53,9 @@ JSON
 	SPARKY_KAUTH_TEST=$decision QT_QPA_PLATFORM=offscreen setpriv --reuid="$test_uid" --regid="$test_gid" --init-groups "$BUILD/bin/memorykcmtest" repairThroughPolkit >"$OUT/repair-$decision.log" 2>&1 || status=1
 	grep -q "^CheckAuthorization org.sparkylinux.sparkystereo.problems.repair $decision" "$OUT/polkit-$decision.log" || status=1
 	rm -f /run/sparky-stereo-problems/sparky-stereo-cushion-swap_order353-test.json /run/order353-repaired
-	grep -q "^CheckAuthorization org.sparkylinux.sparkystereo.memory.save $decision" "$OUT/polkit-$decision.log" || status=1
+	grep -q "^CheckAuthorization org.sparkylinux.sparkystereo.memory.savecushion $decision" "$OUT/polkit-$decision.log" || status=1
 	kill "$polkit"
 	wait "$polkit" 2>/dev/null
-	cp /etc/default/sparky-stereo-zram "$OUT/zram-after-$decision.txt"
 	cp /etc/default/cushion-swap "$OUT/cushion-after-$decision.txt"
 done
 kill "$(cat "$OUT/bus.pid")"

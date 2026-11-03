@@ -1,5 +1,5 @@
 sparky-stereo-memory-kcm
-The Memory page of System Settings: compressed RAM swap and the Cushion Swap File.
+The Memory page of System Settings: the Cushion Swap File.
 
 Copyright (C) 2026 Daniel Ramos (Capitain Jack), see copyright file.
 
@@ -9,7 +9,7 @@ under the GNU General Public License, version 3 or any later version.
 Dependencies:
 -------------
 KDE Frameworks 6 (KAuth, KCMUtils, KI18n, Kirigami)
-sparky-stereo-kernel-settings (zram-auto)
+sparky-stereo-kernel-settings (>= 20261103.4~)
 sparky-stereo-cushion-swap (recommended)
 sparky-stereo-problems (>= 0.1.0), pkexec
 
@@ -20,7 +20,7 @@ OUT=/path/in/workspace/pending-pack bash ./build.sh (inside a Debian container w
 Install:
 -------------
 su
-apt-get install ./sparky-stereo-memory-kcm_0.1.4_amd64.deb
+apt-get install ./sparky-stereo-memory-kcm_0.1.6_amd64.deb
 
 Uninstall:
 -------------
@@ -29,13 +29,6 @@ apt-get purge sparky-stereo-memory-kcm
 
 What the page shows and changes
 -------------
-- Compressed RAM swap (zram): Automatic, On or Off, written as ZRAM= in
-  /etc/default/sparky-stereo-zram. Under the switch: what Automatic decides
-  for this computer and why (zram-auto --explain, the program zram-generator
-  runs at boot), and whether zram is in use now. A change applies at the
-  next start. RAM and storage fields supply the translated explanation for
-  automatic decisions and configuration overrides. Unrecognized decisions
-  retain the helper's raw words under an explicit label.
 - Cushion Swap File: on or off, written as CUSHION_SWAP= in
   /etc/default/cushion-swap; the daemon restarts and reads it. Switching it
   off never switches the swap area off. Its state (off, deployed, retracting,
@@ -53,20 +46,16 @@ What the page shows and changes
   record, the raw reason is labelled as the daemon's own words.
   Repair appears below its problem text and before Refresh status in every
   language. Refresh status and repairs preserve unsaved choices in the page.
-The page reads and writes those settings files, so a hand edit shows in the page
-and the page's change shows in the file. The write goes through KAuth (action
-org.sparkylinux.sparkystereo.memory.save, administrator authentication kept
-for the session); the helper accepts only auto/on/off and on/off and keeps
-every other line of both files.
+The page reads and writes the Cushion Swap settings file, so hand edits and
+the page agree. The write goes through KAuth (action
+org.sparkylinux.sparkystereo.memory.savecushion, administrator authentication
+kept for the session). The helper accepts only on/off and keeps every other line.
 
 Tests
 -------------
-autotests/run-tests.sh (as a user): hand edits show in the page, the daemon's
-status shows, Automatic is explained for a 96 GB NVMe and a 4 GB eMMC fixture
-by the real zram-auto. autotests/run-kauth-test.sh (as root in a disposable
-container): a private system bus activates the installed helper, a test double
-answers for polkit, and the page saves through KAuth: allowed, both files
-change; denied, both stay byte for byte and the page shows why.
+autotests/run-tests.sh checks hand edits and daemon status as an ordinary user.
+autotests/run-kauth-test.sh checks allowed and denied Cushion Swap saves and
+authorized repairs on a private system bus in a disposable container.
 
 The cushionstatustest target exercises all five status outcomes, stale and
 invalid PIDs, unreadable and malformed files, the engine's Portuguese text and
@@ -79,6 +68,12 @@ It also checks the engine's real pkexec repair with fakepolkit allowing and
 denying the installed policy's action. The container must have a passwd entry
 for the test uid, pkexec and Cushion Swap's catalogs installed.
 
-The memorykcmtest data rows cover every structured zram decision and an unknown
-result. memorypagetest loads the real KCM plugin in English and Portuguese and
-checks reason visibility, the translated automatic explanation and button order.
+memorypagetest loads the real KCM plugin in English and Portuguese and
+checks reason visibility, translated controls and button order.
+
+Compressed RAM swap (zram) is the person’s package choice.
+The old Automatic/On/Off setting and its privileged configuration-writing action are removed.
+The page never reads, writes or deletes /etc/default/sparky-stereo-zram.
+The zram item reads installation and active-device state through Stereo APTus and invokes the same authorized install/remove action.
+Status is refreshed on showing the page, activating its application and requesting Refresh status.
+The APTus action supplies the translated labels and kept engine failure; the page does not copy its package-management logic.

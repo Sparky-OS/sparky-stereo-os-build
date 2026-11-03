@@ -21,7 +21,7 @@ if compgen -G "$dest/*.deb" >/dev/null; then
 	echo "Use an empty candidate output directory; existing archives are retained." >&2
 	exit 1
 fi
-credit="Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux (https://sparkylinux.org, by Paweł \"pavroo\" Pijanowski)"
+credit="Sparky Stereo OS, Daniel Ramos's edition of SparkyLinux (by Paweł \"pavroo\" Pijanowski)"
 p=sparky-stereo-look-kubabbar-glass-menubar
 k=$work/$p
 mkdir -p "$k/usr/share/plasma/look-and-feel" "$k/usr/share/icons/hicolor/scalable/apps" "$k/usr/bin" "$k/usr/share/sparky/kubabbar-glass-minimize" "$k/usr/share/doc/$p"
