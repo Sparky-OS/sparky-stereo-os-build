@@ -5,7 +5,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT}
 SOURCE=${APTUS_SOURCE:-$HERE/../../sparky-aptus-stereo-appcenter}
-VERSION=0.1.1+lc1
+VERSION=0.1.3+lc1
 PACKAGE=sparky-aptus-stereo-appcenter
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.aptus-stereo.XXXXXX")
@@ -16,6 +16,8 @@ python3 "$HERE/../../../tools/copy-recipe.py" "$SOURCE/stereo" "$WORK/source"
 install -m755 "$WORK/source/appcenter" "$D/usr/lib/$PACKAGE/appcenter"
 install -m755 "$WORK/source/handler" "$D/usr/lib/$PACKAGE/handler"
 install -m644 "$WORK/source/ATTRIBUTIONS.md" "$D/usr/lib/$PACKAGE/ATTRIBUTIONS.md"
+install -m644 "$WORK/source/catalogue.py" "$WORK/source/catalogue.json" "$D/usr/lib/$PACKAGE/"
+install -Dm755 "$WORK/source/actions/entry" "$D/usr/lib/$PACKAGE/actions/entry"
 install -m644 "$WORK/source/common.py" "$D/usr/lib/$PACKAGE/common.py"
 install -Dm755 "$WORK/source/actions/zram" "$D/usr/lib/$PACKAGE/actions/zram"
 install -m644 "$WORK/source/lang/"*.json "$D/usr/share/sparky/$PACKAGE/"
@@ -34,9 +36,10 @@ desktop='[Desktop Entry]\nVersion=1.0\nType=Application\nName=Stereo APTus\nExec
 for code,d in sorted(texts.items()): desktop+=f'Comment[{code}]={d["categories"]}\n'
 (root/'usr/share/applications/sparky-aptus-stereo-appcenter.desktop').write_text(desktop)
 policy='<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN" "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">\n<policyconfig>\n'
-for key,path,gui in [('launch','/usr/bin/sparky-aptus-stereo-appcenter',True),('zram','/usr/lib/sparky-aptus-stereo-appcenter/actions/zram',False)]:
-    policy+=f'<action id="org.sparkylinux.sparkystereo.aptus.{key}"><description>Stereo APTus</description><message>{escape(texts["en"]["authorization"])}</message>'
-    for code,d in sorted(texts.items()): policy+=f'<message xml:lang="{code}">{escape(d["authorization"])}</message>'
+for key,path,gui in [('launch','/usr/bin/sparky-aptus-stereo-appcenter',True),('zram','/usr/lib/sparky-aptus-stereo-appcenter/actions/zram',False),('entry','/usr/lib/sparky-aptus-stereo-appcenter/actions/entry',False)]:
+    authorization = "authorization" if key == "zram" else "entry_authorization"
+    policy+=f'<action id="org.sparkylinux.sparkystereo.aptus.{key}"><description>Stereo APTus</description><message>{escape(texts["en"][authorization])}</message>'
+    for code,d in sorted(texts.items()): policy+=f'<message xml:lang="{code}">{escape(d[authorization])}</message>'
     policy+='<defaults><allow_any>no</allow_any><allow_inactive>auth_admin</allow_inactive><allow_active>auth_admin</allow_active></defaults>'
     policy+=f'<annotate key="org.freedesktop.policykit.exec.path">{path}</annotate>'
     if gui: policy+='<annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>'
@@ -49,13 +52,13 @@ Package: $PACKAGE
 Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
-Depends: sparky-aptus-appcenter, python3, apt, dpkg, systemd, udev, kmod, pkexec, yad, sparky-stereo-problems (>= 0.1.1)
+Depends: sparky-aptus-appcenter, sparky-stereo-apt, python3, python3-apt, curl, flatpak, sparky-stereo-hardware, apt, dpkg, systemd, udev, kmod, pkexec, yad, sparky-stereo-problems (>= 0.1.1)
 Section: admin
 Priority: optional
 Homepage: https://sparkylinux.org
 Description: Stereo APTus choices beside SparkyLinux AppCenter
- Offers the person's compressed RAM swap opt-in and links to the original
- AppCenter categories. The original package and its files stay untouched.
+ Offers edition programs, VR, verified vendor downloads, Hardware Setup
+ and the compressed RAM swap opt-in above the original AppCenter categories.
 EOF
 cat > "$D/DEBIAN/postrm" <<'EOF'
 #!/bin/sh

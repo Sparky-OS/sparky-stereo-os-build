@@ -18,7 +18,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
-VERSION=${VERSION:-20261103.1~sparky9~0+lc1}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
+VERSION=${VERSION:-20261103.2~sparky9~0+lc1}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
 case ${1:-all} in all|default) ;; *) echo 'Usage: build.sh [all|default]' >&2; exit 2 ;; esac
 WORK=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}/sparky-os}/look-build.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
@@ -68,6 +68,7 @@ cp -a "$HERE/default/desktoptheme/sparky-stereo-oxygen" "$D/usr/share/plasma/des
 cp "$HERE/default/kglobalaccel/org.sparkystereo.systemmonitor.desktop" "$D/usr/share/kglobalaccel/"
 cp "$HERE/default/org.sparkystereo.desktop/metadata.json" "$T/"
 cp "$HERE/default/org.sparkystereo.desktop/contents/defaults" "$T/contents/"
+cp -a "$HERE/default/org.sparkystereo.desktop/contents/layouts" "$T/contents/"
 cp -a "$OXYGEN/contents/splash" "$OXYGEN/contents/previews" "$T/contents/"
 # Oxygen's Splash.qml animates a bottomRect that does not exist: our fixed copy (see upstream-patches/)
 cp "$HERE/default/splash/Splash.qml" "$T/contents/splash/Splash.qml"
