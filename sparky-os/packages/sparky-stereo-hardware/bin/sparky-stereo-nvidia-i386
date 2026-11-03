@@ -35,7 +35,9 @@ missing() {
 	done
 	printf '%s\n' "${out[*]}"
 }
+# only a kept problem is cleared: on a machine without one, the hook asks the engine nothing (it runs after every dpkg run)
 clear_problem() {
+	[[ -e $STORE/${PKG}_$KEY.json ]] || return 0
 	sparky-stereo-problems clear "$PKG" "$KEY" >/dev/null 2>&1 || true
 }
 check() {
