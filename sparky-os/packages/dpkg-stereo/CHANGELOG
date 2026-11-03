@@ -1,6 +1,14 @@
 -------------------------------------------------------------------------------
   Version 0.1.32 (2026-11-04)
 -------------------------------------------------------------------------------
+  * With native dpkg conffile capability 2, pre-invoke restores no conffile.
+    Both the running binary's hook signal and its package's Provides must
+    advertise the capability; older dpkg retains the restore path.
+  * Keep native conffile refusals in the problems engine, naming the package,
+    file, reason and remaining .dpkg-dist/.dpkg-new. Repair only rechecks.
+    Messages ship in all nine edition languages.
+  * Retain conffile records across separate unpack/configure runs, and remove
+    them if the unpacked package is purged before configuration.
   * Share the exact original-to-projection byte comparison between --verify
     and /usr/lib/dpkg-stereo/conffile-verify, the read-only verifier for the
     edition's dpkg. Select the reader from the original and installed path.

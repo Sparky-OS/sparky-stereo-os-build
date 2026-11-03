@@ -42,6 +42,12 @@ EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
 
+  * Skip pre-invoke conffile restoration only when the running dpkg and
+    its installed Provides advertise conffile capability 2.
+  * Keep native refusals in the problems engine with their package, path,
+    reason and candidate file; repair rechecks without replacing edits.
+  * Retain pending conffile records across unpack/configure, cleaning them
+    when the unpacked owner is purged before configuration.
   * Share exact original-to-projection validation with the read-only
     conffile verifier for the edition's dpkg (ORDER 376).
 

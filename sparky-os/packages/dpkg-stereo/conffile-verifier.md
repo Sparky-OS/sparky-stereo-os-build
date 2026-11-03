@@ -2,7 +2,7 @@
 
 dpkg-stereo 0.1.32 ships `/usr/lib/dpkg-stereo/conffile-verify` and its `lean` library.
 This is a read-only predicate, not a hook or a command that restores files.
-The native caller and fallback reporting are separate integration steps.
+The native caller records its decisions in /var/lib/dpkg-stereo/conffile-events; the post-invoke hook transfers refusals to the problems engine.
 
 The native dpkg caller must first validate the current SHA-256 and the pristine original's SHA-256 and MD5 against its owning package's Conffiles entry.
 Only then may it invoke the verifier at the fixed absolute path compiled into dpkg.
@@ -51,3 +51,15 @@ An upgraded renderer is loaded on each invocation.
 The helper does not remember earlier acceptances or accept an older render merely because its record matches.
 Older output that the installed renderer does not reproduce is refused with exit 12 or 13.
 The native transaction tests must cover both a renderer changed in the same dpkg run and one changed in an earlier run.
+
+The native caller exports DPKG_LEAN_CODE_VERSION=2 only to its invoke hooks.
+Pre-invoke skips restoration only when both that running-binary signal and dpkg-query's installed Provides field advertise capability 2.
+An older running binary therefore keeps restoration even if its database already describes a newer dpkg.
+
+The journal uses package, hex-encoded logical path and numeric reason, separated by tabs.
+Reason 0 clears a previous refusal, 16 marks duplicate records and 17 marks failed execution; 10 through 15 have the meanings above.
+Native appenders and the hook reader hold an exclusive flock.
+The hook truncates consumed events only after the problems engine keeps or clears their result.
+A failed engine leaves the journal for the next post-invoke.
+The hook names existing .dpkg-dist/.dpkg-new files, or says when package bytes are installed at the original path or neither candidate remains.
+Repair only rechecks the conffile; it does not merge or overwrite it.

@@ -45,6 +45,7 @@ if __name__ == '__main__':
 EOS
 chmod 755 "$D/usr/sbin/dpkg-stereo"
 install -m 755 "$HERE/lib/presquashfs-hook" "$D/usr/lib/dpkg-stereo/presquashfs-hook"
+install -m 644 "$HERE/lib/conffile_events.py" "$D/usr/lib/dpkg-stereo/conffile_events.py"
 install -m 755 "$HERE/lib/conffile-verify" "$D/usr/lib/dpkg-stereo/conffile-verify"
 install -m 644 "$LEAN"/*.py "$LEAN/JvmLexer.java" "$LEAN/ZigTokens.zig" "$D/usr/lib/dpkg-stereo/lean/"
 install -m 644 "$HERE/etc/dpkg-stereo.cfg" "$D/etc/dpkg/dpkg.cfg.d/dpkg-stereo"
