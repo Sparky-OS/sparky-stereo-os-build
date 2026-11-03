@@ -7,6 +7,13 @@ install -Dm755 "$HERE/bin/sparky-stereo-hardware" "$D/usr/bin/sparky-stereo-hard
 # NVIDIA's i386 libraries when i386 comes after NVIDIA's driver: dpkg's post-invoke hook checks after every dpkg run
 install -Dm755 "$HERE/bin/sparky-stereo-nvidia-i386" "$D/usr/lib/sparky-stereo-hardware/nvidia-i386"
 install -Dm644 "$HERE/share/dpkg/sparky-stereo-hardware" "$D/etc/dpkg/dpkg.cfg.d/sparky-stereo-hardware"
+# the unit the hook starts inside an apt run: it installs them once that run has ended, under the engine
+install -Dm644 "$HERE/share/systemd/sparky-stereo-hardware-nvidia-i386.service" "$D/usr/lib/systemd/system/sparky-stereo-hardware-nvidia-i386.service"
+# told once: the unit's own step keeps its failure in the engine (with apt's output and the Repair), so the engine's
+# handler for every failed service is masked for it by name, as the engine masks it for its own handler (an empty
+# OnFailure= cannot remove a dependency another drop-in added: measured with systemd 262)
+mkdir -p "$D/usr/lib/systemd/system/sparky-stereo-hardware-nvidia-i386.service.d"
+ln -s /dev/null "$D/usr/lib/systemd/system/sparky-stereo-hardware-nvidia-i386.service.d/50-sparky-stereo-problems.conf"
 mkdir -p "$D/usr/lib/sparky-stereo-hardware" "$D/usr/share/sparky/sparky-stereo-hardware"
 install -m644 "$HERE"/lib/* "$D/usr/lib/sparky-stereo-hardware/"
 install -m644 "$HERE"/lang/* "$HERE/share/nvidia-open.ids" "$HERE/share/network-ids.tsv" "$HERE/share/nvidia-open-source.txt" "$HERE/share/rig-devices.json" "$D/usr/share/sparky/sparky-stereo-hardware/"
@@ -36,4 +43,4 @@ done
 install -Dm644 "$HERE/share/udev/71-sparky-stereo-nvidia-units.rules" "$D/usr/lib/udev/rules.d/71-sparky-stereo-nvidia-units.rules"
 
 sparky-stereo-problems catalog sparky-stereo-hardware "$HERE/problems-lang" "$D/usr/lib/systemd/catalog" \
-	--subject LOCAL1=LOCAL2,LOCAL3,LOCAL4 --subject LOCAL9=LOCAL5,LOCAL6,LOCAL7,LOCAL8
+	--subject LOCAL1=LOCAL2,LOCAL3,LOCAL4 --subject LOCAL9=LOCAL5,LOCAL6,LOCAL7,LOCAL8,LOCAL10,LOCAL11,LOCAL12,LOCAL13,LOCAL14,LOCAL15
