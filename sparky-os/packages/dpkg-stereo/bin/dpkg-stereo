@@ -1271,6 +1271,8 @@ def post_invoke(P, jobs):
         if heir:
             files[path] = dict(files[path], package=heir)
         else:
+            if files[path].get('conffile') == '1':
+                removed_conffile_back(P, path, files[path], db)
             del files[path]
         dirty = True
     if gone:
@@ -1367,6 +1369,40 @@ def post_invoke(P, jobs):
     if not full and not again and not unchanged:
         # what this run saw, so the next run that finds dpkg's database and lists as they are now reads neither
         write_packages(P, pkgs)
+
+
+def removed_conffile_back(P, path, rec, db):
+    """A removed package's conffile in its lean form goes back to its package's bytes (0.1.31, ORDER 373). dpkg keeps a
+    removed package's conffiles, and their hashes in its database (the package in "config-files"), until a purge; an
+    install of the package again compares each with that hash (src/main/unpack.c, md5hash), so a lean one looked
+    changed by the person: 0.1.30 and older left it lean and unrecorded, and the install kept it lean and called it
+    changed by the person (ORDER 367). In its package's bytes it is what dpkg left, the install is quiet, and post-invoke
+    projects it again. Only a file that is still exactly the recorded projection, of a package dpkg lists in
+    "config-files" with the recorded original's hash, is written; a conffile the person changed stays as they made
+    it, and a purge removes them all. True when it was written."""
+    name, _, arch = rec['package'].partition(':')
+    stanza = (db or {}).get((name, arch)) if arch else \
+        next((r for (n, _), r in (db or {}).items() if n == name and r.get('Status', '').endswith(' config-files')), None)
+    if not stanza or not stanza.get('Status', '').endswith(' config-files') \
+            or stanza.get('Conffiles', {}).get(path) != rec.get('md5_orig'):
+        return False
+    real = P.real(path)
+    if not size_may_be(real, rec.get('bytes_lean')):
+        return False
+    try:
+        with open(real, 'rb') as f:
+            data = f.read()
+    except OSError:
+        return False
+    if sha256(data) != rec['sha_lean']:
+        return False
+    orig = load_pristine(P, rec['sha_orig'])
+    if orig is None or sha256(orig) != rec['sha_orig']:
+        # its original is nowhere: it stays lean, and an install of the package again will call it changed
+        say('LOCAL59', [path, rec['package']])
+        return False
+    write_lean(real, data, orig, os.lstat(real))
+    return True
 
 
 class Heirs:
