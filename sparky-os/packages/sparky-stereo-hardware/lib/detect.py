@@ -72,17 +72,61 @@ for line in read("lspci").splitlines():
         match(f"Creative CA0132 {vendor}:{device}", "firmware-creative-stereo")
         emit("action", "creative-msi")
 
+def nvidia_table(name):
+    return {tuple(line.split()) for line in (data / name).read_text().splitlines()}
+
+
+def listed(gpu, table):
+    """NVIDIA's README tables: a row with a subsystem matches only that subsystem."""
+    return (gpu[0],) in table or tuple(gpu) in table
+
+
 if gpus:
     match("NVIDIA display " + ", ".join(gpu[0] for gpu in gpus), "firmware-nvidia-graphics")
-    supported = {tuple(line.split()) for line in (data / "nvidia-open.ids").read_text().splitlines()}
-    if all((gpu[0],) in supported or tuple(gpu) in supported for gpu in gpus) and read("architecture").strip() == "amd64":
+    supported = nvidia_table("nvidia-open.ids")
+    # NVIDIA's 580 branch, the last for Maxwell, Pascal and Volta (the "legacy_580.xx" table of NVIDIA's 615.71.09 README):
+    # the edition builds its kernel modules (nvidia-legacy-580xx-kernel-dkms) for the cards the open modules do not run.
+    legacy = nvidia_table("nvidia-legacy-580xx.ids")
+    amd64 = read("architecture").strip() == "amd64"
+    if all(listed(gpu, supported) for gpu in gpus) and amd64:
         emit("action", "nvidia-open")
         if laptop == "0":
             emit("action", "nvidia-runtime-pm")
+    elif all(listed(gpu, legacy) for gpu in gpus) and amd64:
+        # Two drivers give these cards different results, so both are the person's choice (Daniel, 2026-10-14: "where two
+        # paths appear differ, make sure it's a user option then and do both"). NVIDIA's runtime power management needs a
+        # Turing card or newer (NVIDIA's 580.196.07 README, Dynamic Power Management), so no RTD3 action here.
+        emit("action", "nvidia-legacy-580xx")
+        emit("found", "NVIDIA " + ", ".join(gpu[0] for gpu in gpus) + ": a Maxwell, Pascal or Volta card, which the edition's "
+             "open modules with HDMI 3D (Turing and newer) do not run; NVIDIA's 580 driver, the last for these cards, runs it")
+        emit("choice", "nvidia-580\tdefault: NVIDIA's 580 driver: full clocks, hardware video decoding (NVDEC), CUDA 12; "
+             "NVIDIA's display code is closed, so no HDMI 3D modes (the television does not switch itself, no frame packing); "
+             "Stereo KWin's anaglyph, interleaved, side by side and top and bottom for a screen switched by hand, and output "
+             "pairs work")
+        emit("choice", "nouveau\tthe edition's HDMI 3D modes (the television switches itself into 3D, frame packing), at the "
+             "card's boot clocks (nouveau does not reclock Pascal and Volta), without hardware video decoding")
     else:
+        older = {}
+        for line in (data / "nvidia-legacy-older.tsv").read_text().splitlines():
+            device, branch = line.split("\t")
+            older[device] = branch
+        reasons = []
+        for gpu in gpus:
+            if listed(gpu, supported):
+                reasons.append(f"{gpu[0]} runs on the edition's open modules")
+            elif listed(gpu, legacy):
+                reasons.append(f"{gpu[0]} runs on NVIDIA's 580 driver")
+            elif gpu[0] in older:
+                reasons.append(f"{gpu[0]}: NVIDIA's last driver for it is its legacy {older[gpu[0]]} branch, which the "
+                               "edition does not build")
+            else:
+                reasons.append(f"{gpu[0]} is in none of NVIDIA's 615.71.09 tables")
         emit("found", "NVIDIA " + ", ".join(gpu[0] for gpu in gpus) + ": not supported by the edition's NVIDIA driver with "
              "HDMI 3D, which needs a Turing card or newer for every NVIDIA card of the machine, on amd64; nothing is installed "
              "for it, and the card keeps nouveau")
+        if amd64:
+            emit("found", "NVIDIA cards: " + "; ".join(reasons) + "; one NVIDIA driver runs all the cards of a machine, so "
+                 "they keep nouveau")
 else:
     emit("found", "No NVIDIA display controller")
 

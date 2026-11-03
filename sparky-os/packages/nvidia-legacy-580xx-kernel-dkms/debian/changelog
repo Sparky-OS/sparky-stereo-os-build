@@ -1,0 +1,34 @@
+nvidia-kmod-legacy-580xx (580.196.07-1+sparky2) unstable; urgency=medium
+
+  * NVIDIA's 580 user space now comes from the edition's repository, carried
+    from NVIDIA's own Debian 12 packages at this package's version
+    (nvidia-legacy-580xx-userspace, ORDER 354 milestone 2). The module
+    provides nvidia-kernel-dkms at its own version, which is the carried
+    user space's, and recommends nvidia-driver at it; NVIDIA's packages
+    depend on nvidia-kernel-dkms at their exact version.
+  * The lock's README says where the user space comes from.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 03 Nov 2026 01:00:00 -0300
+
+nvidia-kmod-legacy-580xx (580.196.07-1+sparky1) unstable; urgency=medium
+
+  * NVIDIA's 580 driver, the last branch for Maxwell, Pascal and Volta cards,
+    for the edition's kernels (ORDER 354). The upstream tarball is the DKMS
+    tree /usr/src/nvidia-580.196.07 of NVIDIA's nvidia-kernel-dkms
+    580.196.07-1 from NVIDIA's CUDA repository for Debian 12, unmodified. It
+    builds on Linux 7.3.0 and 7.3.1 (stereo3d13 base and real-time,
+    stereo3d14 base, x86-64-v3 and real-time) with no patch.
+  * Two binary packages: nvidia-legacy-580xx-kernel-dkms, which provides
+    nvidia-kernel-dkms at NVIDIA's exact version, and
+    sparky-stereo-nvidia-legacy-580xx-driver-lock, the APT lock generated
+    from the same version. NVIDIA publishes the 580 user space for Debian only
+    in its repository for Debian 12, which Debian 14's APT refuses (its key's
+    binding signature is SHA-1), so the lock names no source for it.
+  * NVIDIA's own package depends on firmware-nvidia-gsp at its version; this
+    one does not: GSP firmware runs only on Turing cards and newer, which the
+    edition's open modules drive, and NVIDIA publishes the 580 copy only in
+    that Debian 12 repository.
+  * Depends on gcc: NVIDIA's build calls cc, and the edition's kernel headers
+    bring only gcc-16-for-host (x86_64-linux-gnu-gcc-16).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 02 Nov 2026 17:30:00 -0300

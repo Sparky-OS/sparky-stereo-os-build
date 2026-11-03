@@ -1,0 +1,25 @@
+nvidia-kmod-legacy-580xx for Sparky Stereo OS
+=============================================
+
+The upstream tarball nvidia-kmod-legacy-580xx_580.196.07.orig.tar.xz is the
+DKMS source tree /usr/src/nvidia-580.196.07 of NVIDIA's own binary package
+nvidia-kernel-dkms_580.196.07-1_amd64.deb (SHA-256
+ad34c436444fc50aeba6519daf923694bf762e8df4489a19849e72326b7aee37), from
+https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/,
+unmodified: that index lists that hash, and its Release file, which carries the
+index's hash, is signed with NVIDIA's key EB693B3035CD5710E231E123A4B469963BF863CC.
+NVIDIA's CUDA repository publishes no source packages, so the packaging in
+debian/ is ours; the binary package keeps NVIDIA's control fields, file layout
+and DKMS configuration. NVIDIA's repository for Debian 13 starts at 590, which
+no longer runs Maxwell, Pascal and Volta cards; Debian's own packaging stops at
+555 (experimental, 2026-10-21).
+
+The tree holds two precompiled objects under the NVIDIA Software License,
+nvidia/nv-kernel.o_binary and nvidia-modeset/nv-modeset-kernel.o_binary. Its
+section 1.1(d) allows distributing them only unmodified; the build checks that
+they leave it byte for byte as NVIDIA ships them. The other source files are
+licensed as NVIDIA's copyright file says ("Except where noted otherwise, the
+individual kernel module source files (but not the blobs) are licensed as MIT
+(aka Expat)"), each with its notice; see debian/copyright.
+
+No patch: the tree builds on the edition's 7.3 kernels as NVIDIA ships it.

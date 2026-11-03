@@ -1,0 +1,23 @@
+@SOURCE@ (580.196.07-1+sparky2+lc1) unstable; urgency=medium, binary-only=yes
+
+  * NVIDIA's package 580.196.07-1 from NVIDIA's CUDA repository for Debian
+    12, carried by Sparky Stereo OS for Maxwell, Pascal and Volta cards
+    (ORDER 354): NVIDIA publishes its 580 driver for Debian only there, and
+    Debian 14's APT refuses that repository's key (a SHA-1 binding
+    signature). NVIDIA's files and maintainer scripts are unchanged, byte
+    for byte, with their modes: the NVIDIA Software License distributes the
+    binary files only unmodified (1.1(d)(i), 2.3).
+  * The control file is the edition's: the version, NVIDIA's exact
+    relations among the carried packages at this version (with
+    nvidia-kernel-dkms, which the edition's nvidia-legacy-580xx-kernel-dkms
+    provides at it), the maintainer (NVIDIA stays as Original-Maintainer),
+    the homepage, the bug tracker and a note in the description; where
+    NVIDIA's package ships ELF files and declares no dependency at all
+    (libnvidia-nscq), the dependency dpkg-shlibdeps derives from them.
+  * Added: README.sparky-stereo, this entry and the Lean Code manifest,
+    which records every NVIDIA file as kept as NVIDIA ships it; and, in the
+    packages NVIDIA ships without one (its i386 packages, cuda-drivers),
+    NVIDIA's copyright file, byte for byte the one its amd64 packages ship
+    (NVIDIA Software License 1.1(d)(ii); Debian Policy 2.3).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 03 Nov 2026 01:00:00 -0300

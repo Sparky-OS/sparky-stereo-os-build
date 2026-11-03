@@ -1,3 +1,54 @@
+sparky-stereo-hardware (0.1.19) unstable; urgency=medium
+
+  * NVIDIA's 580 path installs NVIDIA's 580 user space from the edition's
+    repository, where the edition carries NVIDIA's own Debian 12 packages at
+    its module's version: nvidia-driver and libnvcuvid1 are named at the
+    module's version (580.196.07-1+sparky2+lc1). ORDER 354 milestone 2.
+  * Where dpkg has i386, both NVIDIA paths install NVIDIA's i386 libraries
+    at the driver's version too (nvidia-driver-libs:i386, libcuda1:i386),
+    for Steam's, Wine's and 32-bit games' OpenGL, Vulkan and CUDA, and the
+    dry run says so. On the 615 path they come from NVIDIA's CUDA
+    repository, which apt already reads for every architecture dpkg has:
+    a flat repository has one index, and its source's Architectures
+    option does not limit it (measured with apt 3.3.3).
+  * The 580 path installs sparky-stereo-cuda-repo with its lock, as the
+    615 path does: NVIDIA's 580 nvidia-driver-libs depends on
+    libnvidia-egl-xcb1 and libnvidia-egl-xlib1 at NVIDIA's epoch
+    (>= 1:1.0.1), which only NVIDIA's repository has (Debian: 1.0.3-1).
+    0.1.18 installed no CUDA repository there, so the path worked only
+    where the image had already installed it.
+  * Supersedes both packages numbered 0.1.18, which can never sit in one
+    repository: ORDER 358's (in the round's cohort until this one is
+    accepted) and ORDER 354's (not published). The changes of both are in
+    this version.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 03 Nov 2026 01:00:00 -0300
+
+sparky-stereo-hardware (0.1.18) unstable; urgency=medium
+
+  * ORDER 358: report unreadable startkderc or failed systemdBoot reads in
+    the shared problems engine. Do not apply the session zink override
+    without a successful read; keep the desktop shell running and explain
+    how to repair and start a new session.
+  * ORDER 354, the lines below.
+  * Maxwell, Pascal and Volta cards get NVIDIA's 580 driver, the last for
+    them, with the edition's build of its kernel modules
+    (nvidia-legacy-580xx-kernel-dkms) and its own driver lock, picked by
+    PCI ID from the legacy_580.xx table of NVIDIA's 615.71.09 README.
+    Before, they got no driver offer. ORDER 354.
+  * The plan window shows both drivers for such a card, in the nine
+    languages: NVIDIA's 580 driver (the default) and nouveau (the
+    edition's HDMI 3D at the card's boot clocks).
+  * The 580 path installs its lock first, then the driver with downgrades
+    allowed; no CUDA repository and no runtime power management on these
+    cards. Every failure says what failed, why and what to do.
+  * The open modules after the 580 driver: its lock and module are purged
+    first.
+  * Kepler and older cards name the NVIDIA legacy branch that last ran
+    them; the edition does not build it, and the card keeps nouveau.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 02 Nov 2026 18:00:00 -0300
+
 sparky-stereo-hardware (0.1.16) unstable; urgency=medium
 
   * No fallback to nouveau: when the edition's NVIDIA module is missing,

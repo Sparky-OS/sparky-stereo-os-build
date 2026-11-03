@@ -1,12 +1,14 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/01
+# Last update 2026/11/02
 set -euo pipefail
 install -Dm755 "$HERE/bin/sparky-stereo-hardware" "$D/usr/bin/sparky-stereo-hardware"
 mkdir -p "$D/usr/lib/sparky-stereo-hardware" "$D/usr/share/sparky/sparky-stereo-hardware"
 install -m644 "$HERE"/lib/* "$D/usr/lib/sparky-stereo-hardware/"
 install -m644 "$HERE"/lang/* "$HERE/share/nvidia-open.ids" "$HERE/share/network-ids.tsv" "$HERE/share/nvidia-open-source.txt" "$HERE/share/rig-devices.json" "$D/usr/share/sparky/sparky-stereo-hardware/"
+# NVIDIA's 580 branch (Maxwell, Pascal, Volta) and the older branches, from NVIDIA's 615.71.09 README (nvidia-legacy-source.txt)
+install -m644 "$HERE/share/nvidia-legacy-580xx.ids" "$HERE/share/nvidia-legacy-older.tsv" "$HERE/share/nvidia-legacy-source.txt" "$D/usr/share/sparky/sparky-stereo-hardware/"
 install -Dm644 "$HERE/share/sparky-stereo-hardware.desktop" "$D/usr/share/applications/sparky-stereo-hardware.desktop"
 install -Dm644 "$HERE/share/org.sparky-stereo-hardware.policy" "$D/usr/share/polkit-1/actions/org.sparky-stereo-hardware.policy"
 install -Dm644 "$HERE/share/apt/sparky-stereo-gpu-nvidia" "$D/etc/apt/preferences.d/sparky-stereo-gpu-nvidia"

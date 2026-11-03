@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/01
+# Last update 2026/11/02
 LOCAL1="Konfiguracja sprzętu"
 LOCAL2="Anuluj"
 LOCAL3="Zainstaluj obsługę wykrytego sprzętu"
@@ -9,6 +9,7 @@ LOCAL4="Zainstaluj obsługę wykrytego sprzętu, zostaw nouveau"
 LOCAL5="Konfiguracja sprzętu: niektóre kroki się nie powiodły"
 LOCAL6="Te kroki nie zostały wykonane i nic nie zostało zastosowane w ich miejsce. Każdy wiersz mówi, co się nie powiodło, dlaczego i co zrobić:"
 LOCAL7="Zamknij"
+LOCAL8="Twoja karta NVIDIA to karta Maxwell, Pascal lub Volta i obsługują ją dwa sterowniki, z różnymi wynikami; wybór należy do ciebie. „@INSTALL@”, wybór domyślny, instaluje sterownik NVIDIA 580: karta na pełnych zegarach, sprzętowe dekodowanie wideo i CUDA 12, ale bez trybów HDMI 3D, bo kod wyświetlania NVIDIA jest zamknięty: telewizor 3D nie przełącza się sam w 3D i nie ma frame packing. Anaglif, przeplot oraz obraz obok siebie i jeden nad drugim w Stereo KWin, dla ekranu przełączanego ręcznie, nadal działają. „@BUTTON@” zostawia nouveau, z trybami HDMI 3D edycji, ale nouveau prowadzi kartę na zegarach startowych i dekoduje wideo programowo. Wybór domyślny wynika z zasady edycji, że sprzętowe dekodowanie wideo działa od razu."
 LOCAL29="albo zostaw nouveau, bez HDMI 3D, z własnego wyboru: przycisk „@BUTTON@” w oknie planu lub sparky-stereo-hardware --nvidia nouveau"
 LOCAL30="Czujniki: sensors-detect nie powiodło się (jego wynik jest w dzienniku), więc nie skonfigurowano żadnego modułu czujników. Uruchom sensors-detect w terminalu, aby zobaczyć dlaczego, a potem ponownie Konfigurację sprzętu"
 LOCAL31="Czujniki: moduł %s został załadowany, ale nie ma go w /sys/module, więc na tym komputerze nie działa; usuń go z /etc/modules-load.d/sparky-stereo-sensors.conf, jeśli nie powinien ładować się przy starcie"
@@ -35,6 +36,10 @@ LOCAL51="Jeden z kroków nie powiódł się, nie zgłaszając własnego komunika
 LOCAL52="Nie udało się pokazać okna planu (yad zakończył się kodem %s), więc nic nie zmieniono. Uruchom sparky-stereo-hardware --dry-run w terminalu, aby przeczytać plan"
 LOCAL53="laptop-detect zwrócił %s, więc Konfiguracja sprzętu nie może odróżnić laptopa od komputera stacjonarnego i zatrzymała się, zanim cokolwiek zmieniła"
 LOCAL54="isenkram zwrócił %s podczas wypisywania brakującego firmware, więc Konfiguracja sprzętu zatrzymała się, zanim cokolwiek zmieniła (jego wynik jest w dzienniku)"
+LOCAL55="NVIDIA: apt nie znajduje %s, wersji edycji sterownika NVIDIA 580 dla kart Maxwell, Pascal i Volta, w skonfigurowanych repozytoriach, więc sterownik NVIDIA nie został zainstalowany i nic dla niego nie zmieniono. Sprawdź repozytorium edycji (/etc/apt/sources.list.d/sparky-stereo.sources), uruchom apt update i ponownie Konfigurację sprzętu; @NOUVEAU@"
+LOCAL56="NVIDIA: wersja modułu %s nie ma przyrostka +sparkyN, więc nie wiadomo, dla jakiej wersji sterownika NVIDIA został zbudowany, i niczego nie zainstalowano. Zgłoś to na https://github.com/Sparky-OS/sparky-stereo-os/issues; @NOUVEAU@"
+LOCAL57="NVIDIA: nie udało się wyczyścić %s, które utrzymują sterownik NVIDIA w wersji 580 (apt zawiódł, zobacz dziennik), więc otwarte moduły edycji nie zostały zainstalowane. Uruchom dpkg --audit, popraw to, co wskaże, i ponownie Konfigurację sprzętu; @NOUVEAU@"
+LOCAL58="albo zostaw nouveau, z HDMI 3D edycji na startowych zegarach karty, z własnego wyboru: przycisk „@BUTTON@” w oknie planu lub sparky-stereo-hardware --nvidia nouveau"
 LOCAL20="Sterownik grafiki"
 LOCAL21="Ta sesja live używa sterownika NVIDIA edycji (otwarte moduły, wersja 615) dla Twojej karty graficznej NVIDIA."
 LOCAL22="Ta sesja live używa sterownika nouveau dla Twojej karty graficznej NVIDIA: sterownik NVIDIA edycji (otwarte moduły, wersja 615) wymaga karty Turing lub nowszej (GeForce serii 16 i 20, Quadro RTX, seria RTX A i nowsze)."

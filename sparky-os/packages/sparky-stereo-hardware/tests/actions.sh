@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/01
+# Last update 2026/11/03
 set -euo pipefail
 [[ -e /.dockerenv ]] || exit 1
 HARDWARE_ACTIONS_FILE=${HARDWARE_ACTIONS:-/usr/lib/sparky-stereo-hardware/actions.sh}
@@ -71,15 +71,26 @@ echo 'PASS Creative requires four blobs and writes the real kernel parameter'
 # The commands below are doubles. No actual repository or driver is changed.
 LOCK=sparky-stereo-nvidia-driver-lock
 REPO=sparky-stereo-cuda-repo
+LEGACY_LOCK=sparky-stereo-nvidia-legacy-580xx-driver-lock
+LEGACY_MODULE=nvidia-legacy-580xx-kernel-dkms
 DRIVER_LINE='DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install nvidia-driver=615.71.09-2 nvidia-kernel-open-dkms-stereo3d libnvcuvid1=615.71.09-2 nvidia-vaapi-driver'
 installed_packages=
 apt-cache() { [[ ${missing_module:-0} == 0 ]] || return 1; printf '%s\n' 'Package: nvidia-kernel-open-dkms-stereo3d' "Version: ${module_version:-615.71.09-2+stereo3d4}"; }
 curl() { echo "curl $*" >>"$calls"; return 1; }
 dpkg-query() { [[ " $installed_packages " != *" ${*: -1} "* ]] || printf 'ii '; }
-dpkg() { echo "dpkg $*" >>"$calls"; [[ ${fail_purge:-0} == 0 ]]; }
+dpkg() {
+	if [[ $1 == --print-foreign-architectures ]]; then
+		[[ -z ${foreign:-} ]] || printf '%s\n' $foreign
+		return 0
+	fi
+	echo "dpkg $*" >>"$calls"
+	[[ ${fail_purge:-0} == 0 ]]
+}
 env() {
 	echo "$*" >>"$calls"
 	[[ $* != *"install $LOCK"* || ${fail_policy:-0} == 0 ]] || return 1
+	[[ $* != *"install $LEGACY_LOCK"* || ${fail_policy:-0} == 0 ]] || return 1
+	[[ $* != *'apt-get -y purge'* || ${fail_stale:-0} == 0 ]] || return 1
 	[[ $* != *'apt-get -y update'* || ${fail_update:-0} == 0 ]] || return 1
 	[[ $* != *--simulate* || ${fail_preflight:-0} == 0 ]] || return 1
 	[[ $* != *install\ nvidia-driver=* || $* == *--simulate* || ${fail_install:-0} == 0 ]] || return 1
@@ -203,6 +214,107 @@ cmp "$T/expected-runtime-rules" "$ROOT/etc/udev/rules.d/80-sparky-stereo-nvidia-
 [[ $(grep -c '^ACTION=="unbind"' "$T/expected-runtime-rules") == 2 ]]
 echo 'PASS laptop RTD3 requires a successful driver transaction and repeats without duplicating rules'
 
+# NVIDIA's 580 driver for Maxwell, Pascal and Volta (ORDER 354): its own lock first, in a transaction of its own, then the
+# index, the preflight and the exact driver, downgrades allowed (the image's 615 user space goes back to 580); the CUDA
+# repository package comes with the lock (NVIDIA's EGL platform libraries, which the 580 driver needs at NVIDIA's epoch, are
+# there; milestone 2), and no RTD3 (it needs Turing or newer), even with the plan's laptop line still there from the case above.
+# The edition carries NVIDIA's 580 user space at the module's own version (milestone 2), so the driver is named at it.
+LEGACY_V=580.196.07-1+sparky2+lc1
+LEGACY_LINE="DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install --allow-downgrades nvidia-driver=$LEGACY_V $LEGACY_MODULE libnvcuvid1=$LEGACY_V nvidia-vaapi-driver"
+LEGACY_SIMULATE="DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests --allow-downgrades --simulate install nvidia-driver=$LEGACY_V $LEGACY_MODULE libnvcuvid1=$LEGACY_V nvidia-vaapi-driver"
+rm -f "$ROOT/etc/modprobe.d/sparky-stereo-nvidia-runtime-pm.conf" "$ROOT/etc/udev/rules.d/80-sparky-stereo-nvidia-runtime-pm.rules"
+module_version=$LEGACY_V
+: >"$calls"
+setup_nvidia legacy-580xx >"$T/log"
+lock_line=$(line_of "DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install $LEGACY_LOCK $REPO")
+update_line=$(line_of 'DEBIAN_FRONTEND=noninteractive apt-get -y update')
+simulate_line=$(line_of "$LEGACY_SIMULATE")
+driver_line=$(line_of "$LEGACY_LINE")
+[[ -n $lock_line && -n $update_line && -n $simulate_line && -n $driver_line ]] || { echo 'FAIL the 580 path'; cat "$calls"; exit 1; }
+((lock_line < update_line && update_line < simulate_line && simulate_line < driver_line))
+refute grep -q "install $LOCK" "$calls"
+[[ ! -e "$ROOT/etc/modprobe.d/sparky-stereo-nvidia-runtime-pm.conf" ]]
+grep -Fq "NVIDIA $LEGACY_V userspace and the edition's build of NVIDIA's 580 kernel modules installed" "$T/log"
+refute grep -q ':i386' "$calls"
+echo 'PASS NVIDIA 580: its lock and the CUDA repository package first, then the index, the preflight and the driver at the carried version with downgrades allowed; no RTD3, no i386 package without i386'
+# an installed CUDA repository package is not installed again: only the lock comes
+installed_packages=$REPO
+: >"$calls"
+setup_nvidia legacy-580xx >"$T/log"
+grep -Fxq "DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install $LEGACY_LOCK" "$calls"
+installed_packages=
+echo 'PASS NVIDIA 580: an installed CUDA repository package is not installed again'
+# where dpkg has i386, NVIDIA's i386 libraries come at the same version, in the preflight and the transaction
+foreign=i386
+: >"$calls"
+setup_nvidia legacy-580xx >"$T/log"
+grep -Fxq "${LEGACY_SIMULATE} nvidia-driver-libs:i386=$LEGACY_V libcuda1:i386=$LEGACY_V" "$calls"
+grep -Fxq "${LEGACY_LINE} nvidia-driver-libs:i386=$LEGACY_V libcuda1:i386=$LEGACY_V" "$calls"
+grep -Fq "NVIDIA's i386 libraries $LEGACY_V installed" "$T/log"
+foreign='i386 arm64'
+: >"$calls"
+module_version=615.71.09-2+stereo3d4
+setup_nvidia >"$T/log"
+grep -Fxq "${DRIVER_LINE/ install / --simulate install } nvidia-driver-libs:i386=615.71.09-2 libcuda1:i386=615.71.09-2" "$calls"
+grep -Fxq "$DRIVER_LINE nvidia-driver-libs:i386=615.71.09-2 libcuda1:i386=615.71.09-2" "$calls"
+foreign=arm64
+: >"$calls"
+setup_nvidia >"$T/log"
+grep -Fxq "$DRIVER_LINE" "$calls"
+refute grep -q ':i386' "$calls"
+foreign=
+module_version=$LEGACY_V
+echo 'PASS NVIDIA i386: with i386 in dpkg, nvidia-driver-libs:i386 and libcuda1:i386 at the driver version on the 580 and the 615 path; none without i386'
+# its errors say that nouveau keeps the edition's HDMI 3D on these cards (LOCAL58), never LOCAL29's "without HDMI 3D"
+missing_module=1
+fails_with "NVIDIA: apt finds no $LEGACY_MODULE, the edition's build of NVIDIA's 580 driver" setup_nvidia legacy-580xx
+grep -Fq "or keep nouveau, with the edition's HDMI 3D at the card's boot clocks, as your own choice" "$T/out"
+refute grep -q 'without HDMI 3D' "$T/out"
+missing_module=0
+for module_version in 580.196.07-1 580.196.07-1+lc1 580.196.07-1+stereo3d1+lc1; do
+	: >"$calls"
+	fails_with "NVIDIA: the module's version ${module_version//+/\\+} has no \\+sparkyN suffix" setup_nvidia legacy-580xx
+	refute grep -q 'install' "$calls"
+done
+module_version=$LEGACY_V
+fail_policy=1
+: >"$calls"
+fails_with "NVIDIA: $LEGACY_LOCK $REPO could not be installed" setup_nvidia legacy-580xx
+grep -Fxq "dpkg --purge $LEGACY_LOCK $REPO" "$calls"
+grep -Fq "HDMI 3D at the card's boot clocks" "$T/out"
+fail_policy=0
+fail_preflight=1
+: >"$calls"
+fails_with "NVIDIA: apt cannot install NVIDIA's driver ${LEGACY_V//+/\\+} " setup_nvidia legacy-580xx
+refute grep -Fxq "$LEGACY_LINE" "$calls"
+grep -Fxq "dpkg --purge $LEGACY_LOCK $REPO" "$calls"
+grep -Fq "HDMI 3D at the card's boot clocks" "$T/out"
+fail_preflight=0
+echo 'PASS NVIDIA 580: a missing module, a module without +sparkyN, a failed lock install and a failed preflight stop and say so, with nouveau keeping HDMI 3D as the other choice'
+# the open modules on a machine that had NVIDIA's 580 driver: its lock (which decides first while installed) and its module are
+# purged after the index and before the preflight; a failed purge stops before anything else, and says what holds the driver
+module_version=615.71.09-2+stereo3d4
+installed_packages="$LOCK $REPO $LEGACY_LOCK $LEGACY_MODULE"
+: >"$calls"
+setup_nvidia
+purge_line=$(line_of "DEBIAN_FRONTEND=noninteractive apt-get -y purge $LEGACY_LOCK $LEGACY_MODULE")
+update_line=$(line_of 'DEBIAN_FRONTEND=noninteractive apt-get -y update')
+simulate_line=$(line_of "${DRIVER_LINE/ install / --simulate install }")
+[[ -n $purge_line && -n $update_line && -n $simulate_line ]] || { echo 'FAIL the 580 lock is not purged before the open modules'; cat "$calls"; exit 1; }
+((update_line < purge_line && purge_line < simulate_line))
+grep -Fxq "$DRIVER_LINE" "$calls"
+fail_stale=1
+: >"$calls"
+fails_with "NVIDIA: $LEGACY_LOCK $LEGACY_MODULE, which hold NVIDIA's driver at 580, could not be purged" setup_nvidia
+refute grep -q -- '--simulate' "$calls"
+grep -Fq 'or keep nouveau, without HDMI 3D' "$T/out"
+fail_stale=0
+installed_packages=
+: >"$calls"
+setup_nvidia
+refute grep -q 'apt-get -y purge' "$calls"
+echo 'PASS the open modules after NVIDIA 580: its lock and module purged first (and only when installed); a failed purge stops and says so'
+
 # Rig drivers: every refusal says why.
 uname() { echo "${kernel_name:-7.3.1-stereo3d14}"; }
 fails_with 'Wheel driver evdi-dkms: not one of the wheel drivers' setup_rig_driver evdi-dkms
@@ -237,8 +349,11 @@ for f in "$(dirname "$HARDWARE_ACTIONS_FILE")/../bin/sparky-stereo-hardware" /us
 	if [[ -r $f ]]; then code_files+=("$f"); fi
 done
 [[ ${#code_files[@]} -ge 2 ]] || { echo 'FAIL: sparky-stereo-hardware itself not found next to actions.sh or installed'; exit 1; }
-used=$(grep -ohE '\berr [0-9]+' "${code_files[@]}" | awk '{print $2}' | sort -un)
+used=$(grep -ohE '\berr "?[0-9]+' "${code_files[@]}" | grep -oE '[0-9]+$' | sort -un)
 [[ -n $used ]] || { echo 'FAIL: no err call found'; exit 1; }
+# setup_nvidia names its module errors by variable (40 and 41 for the open modules, 55 and 56 for the 580 module) and the
+# 580 path's nouveau phrase as @58
+used=$(printf '%s\n' $used 40 41 55 56 58 | sort -un)
 # count_of PATTERN TEXT: how often PATTERN occurs in TEXT
 count_of() { awk -v pattern="$1" -v text="$2" 'BEGIN {print gsub(pattern, "", text)}'; }
 for id in $used 29; do
@@ -258,7 +373,7 @@ for language in "${LANGUAGES[@]}"; do
 	text=$(source "$SHARE/$language"; printf '%s' "$LOCAL6")
 	refute grep -qi 'english\|anglais\|ingl\|angielsk\|englisch\|英語\|영어\|英文\|英语' <<<"$text"
 done
-echo "PASS the error messages $(tr '\n' ' ' <<<"$used")and the nouveau choice exist in the nine languages with the English %s count"
+echo "PASS the error messages $(tr '\n' ' ' <<<"$used")and the nouveau choices exist in the nine languages with the English %s count"
 # The end of a run: the list of ERROR lines in English and exit 1, and the same list in a window in the person's language
 # when the menu started it.
 yad() {

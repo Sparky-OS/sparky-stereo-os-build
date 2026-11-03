@@ -59,6 +59,14 @@ C-family files are checked in the mode their consumer reads them in: C or C++ by
 
 An installed copy of a projected source is restored to its authored bytes before the payload pass, and a mapped copy that is neither the authored nor the projected form stops the build ("Mapped source copy changed during staging"). Where the package's own install step generates a file in a known form instead (Zig's writes every `*test.zig` as an empty placeholder: build.zig `blank_extensions`, lib/std/Build/Step/InstallDir.zig), the recipe declares it with `lean.debian_prepare --generated-output PATTERN FORM REASON`: an absolute installed pattern, `empty` or `sha256:HEX`, and why. The plan is retained in `debian/sparky-lean-payload-generated.json`. Each installed file matching it must be exactly that form and is recorded as generated (`.sparky-lc/payload-generated.json`, and the build log); a declared pattern that matches no installed file of the build's packages stops the build, and every other change is still refused. Empty files are never accepted in general.
 
+## Files kept as their authors ship them (ORDER 354, 3 November)
+
+A vendor's package carried through Lean Code can hold files its licence asks to stay unmodified. NVIDIA's user space is one: the NVIDIA Software License distributes its binary files only unmodified (1.1(d)(i) and 2.3), and asks that a modified file carry a prominent notice of the change (2.5).
+`python3 -m lean.release build-tree STAGING OUTPUT --preserve-plan PLAN.json` takes a payload preservation plan, `{installed pattern: reason}` (absolute fnmatch patterns, the payload counterpart of `lean.debian_prepare --preserve-source`).
+Every payload file a pattern names stays byte for byte as staged; its manifest row is `left`, with the reason `preserved as authored: REASON`, so `dpkg-stereo --status` says why, and the client, which skips lc1 packages after checking their manifests, never projects it either.
+A pattern that names no payload file stops the build, so a stale plan cannot pass unnoticed; the HR companion takes no plan.
+The files of ours in such a package (its control fields, a README, a changelog entry) are rendered as in every other package.
+
 ## Link and start gate (22 October)
 
 `check-debs` proves archive bytes and HR companions, not that the programs still run. On 22 October 2026 torcs 1.3.7+dfsg-5+stereo3d1+lc1 was published although torcs-bin stopped with `undefined symbol: XRRConfigCurrentConfiguration`: libtgfclient calls libXrandr without listing it, torcs-bin had kept libXrandr only because the libglut it was linked against still listed it, and the lc1 rebuild of libglut no longer did.

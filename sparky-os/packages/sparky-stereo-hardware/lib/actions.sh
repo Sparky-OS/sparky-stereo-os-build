@@ -1,26 +1,33 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/01
+# Last update 2026/11/03
 # Nothing here falls back to something else on its own: a step that cannot do what it is for says what failed, why and
 # what to do on an ERROR line and returns non-zero, and another path (nouveau for an NVIDIA card) is only ever the
 # person's own choice (Daniel, 2026-11-01: "either it works or not and the user must know").
 
 log() { printf '%s\n' "$*"; }
 
-# The error messages are LOCAL29 to LOCAL54 of the language files, numbered, with %s for their arguments; @NOUVEAU@ stands
-# for LOCAL29 (the choice of nouveau) and @BUTTON@ in it for LOCAL4 (the plan window's button), in the same language.
-# render_message ID ARG...: message ID in the strings now loaded, its arguments put in
+# The error messages are LOCAL29 to LOCAL58 of the language files, numbered, with %s for their arguments; @NOUVEAU@ stands
+# for LOCAL29 (the choice of nouveau) and @BUTTON@ in it for LOCAL4 (the plan window's button), in the same language. An ID
+# written ID@N puts LOCALN in the place of LOCAL29: the NVIDIA 580 path's errors name LOCAL58, since nouveau on those cards
+# keeps the edition's HDMI 3D, which NVIDIA's 580 driver does not have.
+# render_message ID[@N] ARG...: message ID in the strings now loaded, its arguments put in
 render_message() {
-	local id=$1 v text nouveau
+	local id=$1 v text nouveau tail=29
 	shift
+	if [[ $id == *@* ]]; then
+		tail=${id#*@}
+		id=${id%@*}
+	fi
 	v=LOCAL$id
 	text=${!v:-}
 	if [[ -z $text ]]; then
 		printf 'message %s: %s\n' "$id" "$*"
 		return 0
 	fi
-	nouveau=${LOCAL29:-}
+	v=LOCAL$tail
+	nouveau=${!v:-}
 	nouveau=${nouveau//@BUTTON@/${LOCAL4:-}}
 	text=${text//@NOUVEAU@/$nouveau}
 	# shellcheck disable=SC2059
@@ -236,11 +243,12 @@ package_installed() {
 	[[ $(dpkg-query -W -f '${db:Status-Abbrev}' "$1" 2>/dev/null) == ii* ]]
 }
 
-# nvidia_version_of MODULE_VERSION: NVIDIA's driver version the edition's module is built for, the module's version
-# without our +stereo3d suffix and Lean Code's +lc mark after it (615.71.09-2+stereo3d7+lc1 -> 615.71.09-2), so the two
-# cannot drift; nothing for a version without our suffix.
+# nvidia_version_of MODULE_VERSION [SUFFIX]: NVIDIA's driver version the edition's module is built for, the module's version
+# without our suffix (stereo3d by default, sparky for the 580 module, which carries no patch) and Lean Code's +lc mark after
+# it (615.71.09-2+stereo3d7+lc1 -> 615.71.09-2, 580.196.07-1+sparky1+lc1 -> 580.196.07-1), so the two cannot drift; nothing
+# for a version without that suffix.
 nvidia_version_of() {
-	printf '%s\n' "$1" | sed -n 's/^\(.*\)+stereo3d[0-9]*\(+lc[0-9]*\)\{0,1\}$/\1/p'
+	printf '%s\n' "$1" | sed -n "s/^\\(.*\\)+${2:-stereo3d}[0-9]*\\(+lc[0-9]*\\)\\{0,1\\}\$/\\1/p"
 }
 
 # purge_added PACKAGE...: what this run installed for the NVIDIA setup goes again (a removed package's conffiles, the
@@ -253,24 +261,61 @@ purge_added() {
 	fi
 }
 
+# foreign_i386: dpkg installs i386 packages beside amd64 ones on this machine (dpkg --add-architecture i386, which Steam's
+# and Wine's 32-bit programs need)
+foreign_i386() {
+	dpkg --print-foreign-architectures 2>/dev/null | grep -qx i386
+}
+
+# setup_nvidia [open|legacy-580xx]: NVIDIA's driver for the plan's NVIDIA branch. open (the default): the edition's open
+# modules with HDMI 3D (Turing and newer) and NVIDIA's user space at their version; legacy-580xx: NVIDIA's 580 driver, the
+# last for Maxwell, Pascal and Volta, with the edition's build of its kernel modules. Each branch has its own driver lock,
+# installed first. Where dpkg has i386, NVIDIA's i386 libraries come too, at the same version, for Steam's, Wine's and 32-bit
+# games' OpenGL, Vulkan and CUDA: nvidia-driver-libs:i386 and libcuda1:i386, which NVIDIA's amd64 nvidia-driver-libs and
+# libcuda1 recommend (named, so they come on a downgrade or a reinstall too, when apt adds no new recommendation).
 setup_nvidia() {
+	local branch=${1:-open}
 	local uri=developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64
-	local driver decoder nvidia_version found_version other package
-	local module=nvidia-kernel-open-dkms-stereo3d
-	local -a policy=(sparky-stereo-nvidia-driver-lock sparky-stereo-cuda-repo) added=()
+	local driver decoder nvidia_version userspace found_version other package
+	local module=nvidia-kernel-open-dkms-stereo3d suffix=stereo3d missing=40 unsuffixed=41 tail=
+	local -a policy=(sparky-stereo-nvidia-driver-lock sparky-stereo-cuda-repo) added=() stale=() options=() i386=()
+	if [[ $branch == legacy-580xx ]]; then
+		# NVIDIA's 580 user space comes from the edition's repository, NVIDIA's own Debian 12 packages carried at the
+		# module's version, under the 580 lock. Its EGL platform libraries come from NVIDIA's CUDA repository, as on the
+		# 615 path: nvidia-driver-libs 580 depends on libnvidia-egl-xcb1 and libnvidia-egl-xlib1 (>= 1:1.0.1), NVIDIA's
+		# epoch, which Debian's 1.0.3-1 does not have; so the branch takes sparky-stereo-cuda-repo (the repository, its
+		# pins and the 615 lock it depends on, which decides nothing while the 580 lock is installed) with its lock. It
+		# replaces a newer NVIDIA user space (the image's 615) by the older 580, so apt is allowed to downgrade.
+		module=nvidia-legacy-580xx-kernel-dkms suffix=sparky missing=55@58 unsuffixed=56@58 tail=@58
+		policy=(sparky-stereo-nvidia-legacy-580xx-driver-lock sparky-stereo-cuda-repo)
+		options=(--allow-downgrades)
+	else
+		# The 580 lock, while installed, decides NVIDIA's packages before the 615 lock (its file sorts first): it goes, with
+		# the 580 module that depends on it, before the open modules come.
+		for package in sparky-stereo-nvidia-legacy-580xx-driver-lock nvidia-legacy-580xx-kernel-dkms; do
+			package_installed "$package" && stale+=("$package")
+		done
+	fi
 	# Nothing is changed when the edition's module is not there: the setup stops and says so.
 	if ! apt-cache show --no-all-versions "$module" >"$WORK/nvidia-module" 2>&1 || ! grep -q '^Package:' "$WORK/nvidia-module"; then
-		err 40 "$module"
+		err "$missing" "$module"
 		return 1
 	fi
 	found_version=$(sed -n 's/^Version: //p' "$WORK/nvidia-module" | head -n1)
-	nvidia_version=$(nvidia_version_of "$found_version")
+	nvidia_version=$(nvidia_version_of "$found_version" "$suffix")
 	if [[ -z $nvidia_version ]]; then
-		err 41 "$found_version"
+		err "$unsuffixed" "$found_version"
 		return 1
 	fi
-	driver=nvidia-driver=$nvidia_version
-	decoder=libnvcuvid1=$nvidia_version
+	# the edition carries NVIDIA's 580 user space at its module's own version (580.196.07-1+sparky2+lc1); the 615 user space
+	# is NVIDIA's, at the NVIDIA version the open module is built for (615.71.09-2)
+	userspace=$nvidia_version
+	[[ $branch != legacy-580xx ]] || userspace=$found_version
+	driver=nvidia-driver=$userspace
+	decoder=libnvcuvid1=$userspace
+	if foreign_i386; then
+		i386=("nvidia-driver-libs:i386=$userspace" "libcuda1:i386=$userspace")
+	fi
 	# NVIDIA's CUDA repository comes from the edition's package sparky-stereo-cuda-repo (its source, NVIDIA's key and the
 	# edition's pins: CUDA updates, NVIDIA's driver stays at the module's version, Debian's own tools stay Debian's), with
 	# the driver lock it depends on. Both go in a transaction of their own, so the lock and the pins are in force before
@@ -287,25 +332,34 @@ setup_nvidia() {
 	# On a failure below, what this run installed is purged (a removed package's conffiles, the source among them, stay).
 	if ((${#added[@]})) && ! apt_install "${added[@]}"; then
 		purge_added "${added[@]}" || return 1
-		err 42 "${added[*]}"
+		err "42$tail" "${added[*]}"
 		return 1
 	fi
 	if ! run env DEBIAN_FRONTEND=noninteractive apt-get -y update; then
 		purge_added "${added[@]}" || return 1
-		err 43
+		err "43$tail"
 		return 1
 	fi
-	if ! run env DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests --simulate install "$driver" "$module" "$decoder" nvidia-vaapi-driver; then
+	if ((${#stale[@]})) && ! run env DEBIAN_FRONTEND=noninteractive apt-get -y purge "${stale[@]}"; then
+		err 57 "${stale[*]}"
+		return 1
+	fi
+	if ! run env DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests "${options[@]}" --simulate install "$driver" "$module" "$decoder" nvidia-vaapi-driver "${i386[@]}"; then
 		purge_added "${added[@]}" || return 1
-		err 44 "$nvidia_version"
+		err "44$tail" "$userspace"
 		return 1
 	fi
-	if ! apt_install "$driver" "$module" "$decoder" nvidia-vaapi-driver; then
+	if ! apt_install "${options[@]}" "$driver" "$module" "$decoder" nvidia-vaapi-driver "${i386[@]}"; then
 		err 45
 		return 1
 	fi
-	if grep -Fxq $'action\tnvidia-runtime-pm' "$WORK/plan"; then
+	if [[ $branch == open ]] && grep -Fxq $'action\tnvidia-runtime-pm' "$WORK/plan"; then
 		setup_nvidia_runtime_pm || return 1
 	fi
-	log "NVIDIA $nvidia_version userspace and edition open modules installed; reboot required"
+	((${#i386[@]} == 0)) || log "NVIDIA's i386 libraries $userspace installed, for 32-bit programs"
+	if [[ $branch == legacy-580xx ]]; then
+		log "NVIDIA $userspace userspace and the edition's build of NVIDIA's 580 kernel modules installed; reboot required"
+	else
+		log "NVIDIA $userspace userspace and edition open modules installed; reboot required"
+	fi
 }
