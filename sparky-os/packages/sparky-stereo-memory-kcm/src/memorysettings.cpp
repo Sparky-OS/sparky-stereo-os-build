@@ -17,11 +17,6 @@ static QString path(const QString &file)
     return qEnvironmentVariable("SPARKY_STEREO_MEMORY_ROOT") + file;
 }
 
-QString zramConfigPath()
-{
-    return path(u"/etc/default/sparky-stereo-zram"_s);
-}
-
 QString cushionConfigPath()
 {
     return path(u"/etc/default/cushion-swap"_s);
@@ -30,16 +25,6 @@ QString cushionConfigPath()
 QString cushionStatusPath()
 {
     return path(u"/run/cushion-swap/status"_s);
-}
-
-QString zramAutoPath()
-{
-    return path(u"/usr/libexec/sparky-stereo/zram-auto"_s);
-}
-
-QString swapsPath()
-{
-    return path(u"/proc/swaps"_s);
 }
 
 static QString unquote(QString value)

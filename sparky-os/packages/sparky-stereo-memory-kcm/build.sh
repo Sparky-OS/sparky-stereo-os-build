@@ -1,11 +1,11 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/10
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/29
+# Last update 2026/11/03
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.1.5
+VERSION=0.1.6
 PACKAGE=sparky-stereo-memory-kcm
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.memory-kcm.XXXXXX")
@@ -39,13 +39,13 @@ Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
 Depends: $DEPENDS
 Recommends: sparky-stereo-cushion-swap
+Breaks: sparky-stereo-kernel-settings (<< 20261103.3~)
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org
 Description: Memory page for System Settings
-  Compressed RAM swap (zram) set to Automatic, On or Off, with what
-  Automatic decides for this computer and why, and the Cushion Swap File:
-  its switch, its state and how it is woken.
+  The Cushion Swap File: its switch, its protection state, kept problems
+  and how it is woken.
 EOF
 (cd "$D" && find usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
 dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${PACKAGE}_${VERSION}_amd64.deb"
@@ -71,11 +71,20 @@ Package: $PACKAGE
 Architecture: amd64
 Depends: \${shlibs:Depends}, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, sparky-stereo-kernel-settings (>= 20261010.2~sparky9~0), sparky-stereo-problems (>= 0.1.0), pkexec
 Recommends: sparky-stereo-cushion-swap
+Breaks: sparky-stereo-kernel-settings (<< 20261103.3~)
 Description: Memory page for System Settings
- Compressed RAM swap and the Cushion Swap File in System Settings.
+ The Cushion Swap File and its protection state in System Settings.
 EOF
 cat >"$S/debian/changelog" <<EOF
 $PACKAGE ($VERSION) unstable; urgency=medium
+
+  * Remove zram controls, backend and translations; retain Cushion Swap.
+  * Leave the administrator-owned zram configuration untouched.
+  * Break older kernel-settings which can still enable zram.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 03 Nov 2026 12:00:00 -0300
+
+$PACKAGE (0.1.5) unstable; urgency=medium
 
   * Copy only tracked recipe inputs; retain the shared copier for source rebuilds.
 

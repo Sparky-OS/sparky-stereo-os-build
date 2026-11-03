@@ -169,12 +169,10 @@ void CushionStatusTest::refreshKeepsEdits()
     writeStatus("STATE=off\nPROTECTION=yes\n");
     MemoryKcm kcm(nullptr, KPluginMetaData());
     kcm.load();
-    kcm.setZramMode(MemoryKcm::On);
     kcm.setCushionEnabled(false);
     writeStatus("STATE=off\nPROTECTION=no\n");
     QVERIFY(QMetaObject::invokeMethod(&kcm, "refreshStatus", Qt::DirectConnection));
     QCOMPARE(kcm.property("cushionStatus"), QVariant(2));
-    QCOMPARE(kcm.zramMode(), int(MemoryKcm::On));
     QVERIFY(!kcm.cushionEnabled());
     QVERIFY(kcm.needsSave());
 }

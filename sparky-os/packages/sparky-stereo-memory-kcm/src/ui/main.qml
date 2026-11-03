@@ -18,52 +18,6 @@ KCM.SimpleKCM {
     }
 
     Kirigami.FormLayout {
-        QQC2.ButtonGroup {
-            id: zramGroup
-        }
-
-        QQC2.RadioButton {
-            Kirigami.FormData.label: i18nc("@label", "Compressed RAM swap (zram):")
-            text: i18nc("@option:radio zram", "Automatic")
-            checked: kcm.zramMode === 0
-            onToggled: kcm.zramMode = 0
-            QQC2.ButtonGroup.group: zramGroup
-        }
-        QQC2.RadioButton {
-            text: i18nc("@option:radio zram", "On")
-            checked: kcm.zramMode === 1
-            onToggled: kcm.zramMode = 1
-            QQC2.ButtonGroup.group: zramGroup
-        }
-        QQC2.RadioButton {
-            text: i18nc("@option:radio zram", "Off")
-            checked: kcm.zramMode === 2
-            onToggled: kcm.zramMode = 2
-            QQC2.ButtonGroup.group: zramGroup
-        }
-        QQC2.Label {
-            Layout.fillWidth: true
-            Layout.preferredWidth: Kirigami.Units.gridUnit * 24
-            Layout.minimumWidth: 0
-            wrapMode: Text.Wrap
-            font: Kirigami.Theme.smallFont
-            objectName: "automaticExplanation"
-            text: kcm.autoDecisionText
-        }
-        QQC2.Label {
-            Layout.fillWidth: true
-            Layout.preferredWidth: Kirigami.Units.gridUnit * 24
-            Layout.minimumWidth: 0
-            wrapMode: Text.Wrap
-            font: Kirigami.Theme.smallFont
-            text: (kcm.zramActive ? i18nc("@info", "In use now.") : i18nc("@info", "Not in use now."))
-                + " " + i18nc("@info", "A change applies at the next start.")
-        }
-
-        Kirigami.Separator {
-            Kirigami.FormData.isSection: true
-        }
-
         QQC2.CheckBox {
             Kirigami.FormData.label: i18nc("@label", "Cushion Swap File:")
             text: i18nc("@option:check", "Switch the swap area on only under memory pressure")

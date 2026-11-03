@@ -57,10 +57,6 @@ void MemoryPageTest::presentation()
         QCOMPARE(file.write(text), text.size());
     };
     write(u"/run/cushion-swap/status"_s, "STATE=off\nPROTECTION=no\nPROBLEMS=swapon-failed\nREASON=RAW DAEMON WORDS\n");
-    write(u"/usr/libexec/sparky-stereo/zram-auto"_s,
-          "#!/bin/sh\nprintf 'DECISION=off\\nMODE=auto\\nRAM_KIB=97957892\\nSTORAGE=fast\\nREASON=RAW AUTO WORDS\\n'\n");
-    QVERIFY(QFile::setPermissions(fixture.path() + u"/usr/libexec/sparky-stereo/zram-auto"_s,
-                                 QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
     if (record) {
         write(u"/run/sparky-stereo-problems/sparky-stereo-cushion-swap_swapon-failed.json"_s,
               R"({"package":"sparky-stereo-cushion-swap","key":"swapon-failed","message":"LOCAL5","args":["/swap/cushion","test","/swap/cushion"],"severity":"failed","text_en":"Engine text","repair":[["/usr/bin/true"]]})");
@@ -78,14 +74,10 @@ void MemoryPageTest::presentation()
     window.show();
     QQuickItem *refresh = nullptr;
     QQuickItem *reason = nullptr;
-    QQuickItem *automatic = nullptr;
     QTRY_VERIFY((refresh = namedItem(page, u"refreshStatus"_s)));
     QTRY_VERIFY((reason = namedItem(page, u"daemonReason"_s)));
-    QTRY_VERIFY((automatic = namedItem(page, u"automaticExplanation"_s)));
     QTRY_COMPARE(reason->isVisible(), !record);
-    QVERIFY(!automatic->property("text").toString().contains(u"RAW AUTO WORDS"_s));
     if (language == u"pt_BR"_s) {
-        QVERIFY2(automatic->property("text").toString().contains(u"armazenamento rápido"_s), qPrintable(automatic->property("text").toString()));
         QCOMPARE(refresh->property("text").toString(), u"Atualizar estado"_s);
     }
     if (record) {
