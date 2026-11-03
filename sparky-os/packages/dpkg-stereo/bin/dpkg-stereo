@@ -550,15 +550,27 @@ def dpkg_db(P, files=None):
     return db
 
 
+# The states whose files are the package version's own, configured or past its conffiles (dpkg(1), "Package states"):
+# "installed"; "triggers-pending" (the package has been triggered) and "triggers-awaited" (it awaits another package's
+# trigger processing), which a run with --no-triggers leaves until a later run processes them, as apt's runs leave
+# systemd after any package ships a file in /usr/lib/systemd/catalog; and "half-configured" (configuration started:
+# dpkg settled the conffiles when it left "unpacked", src/main/configure.c, and a package another one's unpack
+# deconfigured, --auto-deconfigure, is in it until it is configured again). 0.1.28 and older counted only
+# "installed": such a package looked removed, its records went, and its lean files stayed unrecorded (ORDER 367: on the
+# lane's lean image 313 of systemd's 320 projected files after one `dpkg --no-triggers -i`).
+INSTALLED_STATES = ('installed', 'triggers-pending', 'triggers-awaited', 'half-configured')
+
+
 def _installed(P, db):
-    """(name, fields) of each installed package in dpkg's database, named as its file list is: package:arch
-    for a Multi-Arch: same package or one whose list carries the architecture, the package alone otherwise."""
+    """(name, fields) of each installed package in dpkg's database (INSTALLED_STATES), named as its file list is:
+    package:arch for a Multi-Arch: same package or one whose list carries the architecture, the package alone
+    otherwise."""
     try:
         lists = set(os.listdir(P.real('/var/lib/dpkg/info')))
     except FileNotFoundError:
         lists = set()
     for (pkg, arch), rec in (dpkg_db(P) if db is None else db).items():
-        if not rec.get('Status', '').endswith(' installed'):
+        if rec.get('Status', '').rsplit(' ', 1)[-1] not in INSTALLED_STATES:
             continue
         name = pkg
         if rec.get('Multi-Arch') == 'same' or f'{pkg}:{arch}.list' in lists:
