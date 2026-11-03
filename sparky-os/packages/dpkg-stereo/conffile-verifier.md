@@ -56,6 +56,20 @@ The native caller exports DPKG_LEAN_CODE_VERSION=2 only to its invoke hooks.
 Pre-invoke skips restoration only when both that running-binary signal and dpkg-query's installed Provides field advertise capability 2.
 An older running binary therefore keeps restoration even if its database already describes a newer dpkg.
 
+An idle configure checks the existing package snapshot first. When no recorded
+conffile has a pending owner, dpkg will compare none, so pre-invoke returns
+without starting the capability query. Runs that can compare a conffile still
+require both capability predicates.
+
+The older-dpkg restoration path and explicit restore also use the shared
+comparison before writing. The original must match the owning package's
+Conffiles entry, or its own md5sums and installed version for other files;
+its path must occur in that owner's file list. Hashes in the projection record
+alone never authorize restoration. A refusal keeps the current bytes and is
+reported through the existing hook or restore problem. Removed conffiles retain
+0.1.31's config-files check and exact reproduction before restoration; pending
+unpacked owners retain their records for the later configure operation.
+
 The journal uses package, hex-encoded logical path and numeric reason, separated by tabs.
 Reason 0 clears a previous refusal, 16 marks duplicate records and 17 marks failed execution; 10 through 15 have the meanings above.
 Native appenders and the hook reader hold an exclusive flock.
