@@ -70,3 +70,10 @@ for the test uid, pkexec and Cushion Swap's catalogs installed.
 
 memorypagetest loads the real KCM plugin in English and Portuguese and
 checks reason visibility, translated controls and button order.
+
+Compressed RAM swap (zram) is the person’s package choice.
+The old Automatic/On/Off setting and its privileged configuration-writing action are removed.
+The page never reads, writes or deletes /etc/default/sparky-stereo-zram.
+The zram item reads installation and active-device state through Stereo APTus and invokes the same authorized install/remove action.
+Status is refreshed on showing the page, activating its application and requesting Refresh status.
+The APTus action supplies the translated labels and kept engine failure; the page does not copy its package-management logic.

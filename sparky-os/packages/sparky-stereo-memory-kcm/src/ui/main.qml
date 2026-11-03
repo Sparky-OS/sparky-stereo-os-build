@@ -9,6 +9,13 @@ import org.kde.kcmutils as KCM
 
 KCM.SimpleKCM {
     id: root
+    onVisibleChanged: if (visible) kcm.refreshZram()
+    Connections {
+        target: Qt.application
+        function onStateChanged() {
+            if (root.visible && Qt.application.state === Qt.ApplicationActive) kcm.refreshZram()
+        }
+    }
 
     header: Kirigami.InlineMessage {
         visible: kcm.errorText.length > 0
@@ -18,6 +25,37 @@ KCM.SimpleKCM {
     }
 
     Kirigami.FormLayout {
+        ColumnLayout {
+            objectName: "zramItem"
+            Kirigami.FormData.label: kcm.zram.title || "zram"
+            Layout.fillWidth: true
+            Layout.preferredWidth: Kirigami.Units.gridUnit * 24
+            QQC2.Label {
+                objectName: "zramState"
+                text: kcm.zram.state || ""
+                textFormat: Text.PlainText
+            }
+            QQC2.Label {
+                text: (kcm.zram.description || "") + "\n" + (kcm.zram.restart || "")
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                textFormat: Text.PlainText
+            }
+            Kirigami.InlineMessage {
+                visible: (kcm.zram.error || "").length > 0
+                text: kcm.zram.error || ""
+                type: Kirigami.MessageType.Error
+                Layout.fillWidth: true
+            }
+            QQC2.Button {
+                objectName: "zramAction"
+                text: kcm.zram.button || ""
+                enabled: !!kcm.zram.known && !kcm.zramBusy
+                onClicked: kcm.changeZram()
+            }
+            QQC2.BusyIndicator { running: kcm.zramBusy; visible: running }
+        }
+
         QQC2.CheckBox {
             Kirigami.FormData.label: i18nc("@label", "Cushion Swap File:")
             text: i18nc("@option:check", "Switch the swap area on only under memory pressure")

@@ -9,6 +9,10 @@
 #include <KAuth/ExecuteJob>
 #include <KLocalizedString>
 #include <KPluginFactory>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QProcess>
+#include <QProcessEnvironment>
 
 using namespace Qt::StringLiterals;
 
@@ -60,6 +64,7 @@ void MemoryKcm::load()
     m_savedCushionEnabled = MemorySettings::readValue(MemorySettings::cushionConfigPath(), u"CUSHION_SWAP"_s) != u"off"_s;
     m_cushionEnabled = m_savedCushionEnabled;
 
+    refreshZram();
     readCushionStatus();
     readProblems();
 
@@ -105,6 +110,78 @@ void MemoryKcm::updateState()
 {
     setNeedsSave(m_cushionEnabled != m_savedCushionEnabled);
     setRepresentsDefaults(m_cushionEnabled);
+}
+
+
+void MemoryKcm::refreshZram()
+{
+    if (m_zramReading || m_zramBusy) {
+        return;
+    }
+    m_zramReading = true;
+    auto *process = new QProcess(this);
+    auto environment = QProcessEnvironment::systemEnvironment();
+    environment.insert(u"LANGUAGE"_s, KLocalizedString::languages().join(u':'));
+    process->setProcessEnvironment(environment);
+    connect(process, &QProcess::errorOccurred, this, [this, process](QProcess::ProcessError error) {
+        if (error == QProcess::FailedToStart) {
+            m_zramReading = false;
+            m_zramKnown = false;
+            m_zram.insert(u"known"_s, false);
+            m_zram.insert(u"error"_s, process->errorString());
+            Q_EMIT zramChanged();
+            process->deleteLater();
+        }
+    });
+    connect(process, &QProcess::finished, this, [this, process](int code, QProcess::ExitStatus exitStatus) {
+        QJsonParseError parseError;
+        const auto document = QJsonDocument::fromJson(process->readAllStandardOutput(), &parseError);
+        m_zramKnown = exitStatus == QProcess::NormalExit && code == 0 && parseError.error == QJsonParseError::NoError
+            && document.isObject() && document.object().value(u"installed"_s).isBool();
+        if (m_zramKnown) {
+            m_zram = document.object().toVariantMap();
+        } else {
+            const QString error = QString::fromUtf8(process->readAllStandardError()).trimmed()
+                + u" "_s + parseError.errorString();
+            m_zram.insert(u"error"_s, error);
+        }
+        m_zram.insert(u"known"_s, m_zramKnown);
+        m_zramReading = false;
+        Q_EMIT zramChanged();
+        process->deleteLater();
+    });
+    process->start(u"/usr/lib/sparky-aptus-stereo-appcenter/actions/zram"_s, {u"status"_s});
+}
+
+void MemoryKcm::changeZram()
+{
+    if (!m_zramKnown || m_zramBusy || m_zramReading) {
+        return;
+    }
+    m_zramBusy = true;
+    auto *process = new QProcess(this);
+    process->setProcessChannelMode(QProcess::MergedChannels);
+    connect(process, &QProcess::errorOccurred, this, [this, process](QProcess::ProcessError error) {
+        if (error == QProcess::FailedToStart) {
+            m_zramBusy = false;
+            m_errorText = process->errorString();
+            Q_EMIT zramChanged();
+            Q_EMIT errorTextChanged();
+            process->deleteLater();
+        }
+    });
+    connect(process, &QProcess::finished, this, [this, process](int code, QProcess::ExitStatus status) {
+        m_zramBusy = false;
+        m_errorText = (status == QProcess::NormalExit && code == 0) ? QString()
+            : QString::fromUtf8(process->readAll()).trimmed();
+        Q_EMIT errorTextChanged();
+        Q_EMIT zramChanged();
+        refreshZram();
+        process->deleteLater();
+    });
+    Q_EMIT zramChanged();
+    process->start(u"/usr/bin/pkexec"_s, {u"/usr/lib/sparky-aptus-stereo-appcenter/actions/zram"_s,
+        m_zram.value(u"installed"_s).toBool() ? u"remove"_s : u"install"_s});
 }
 
 #include "memorykcm.moc"

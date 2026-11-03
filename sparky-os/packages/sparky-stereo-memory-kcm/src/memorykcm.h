@@ -20,6 +20,8 @@ class MemoryKcm : public KQuickConfigModule
     Q_PROPERTY(QStringList cushionProblemKeys READ cushionProblemKeys NOTIFY statusChanged)
     Q_PROPERTY(QVariantList cushionProblems READ cushionProblems NOTIFY statusChanged)
     Q_PROPERTY(QString cushionProblemsError READ cushionProblemsError NOTIFY statusChanged)
+    Q_PROPERTY(QVariantMap zram READ zram NOTIFY zramChanged)
+    Q_PROPERTY(bool zramBusy READ zramBusy NOTIFY zramChanged)
     Q_PROPERTY(bool repairing READ repairing NOTIFY repairingChanged)
     Q_PROPERTY(QString errorText READ errorText NOTIFY errorTextChanged)
 
@@ -47,11 +49,17 @@ public:
     Q_INVOKABLE void refreshStatus();
     Q_INVOKABLE void repairProblem(int index);
 
+    QVariantMap zram() const { return m_zram; }
+    bool zramBusy() const { return m_zramBusy; }
+    Q_INVOKABLE void refreshZram();
+    Q_INVOKABLE void changeZram();
+
     void load() override;
     void save() override;
     void defaults() override;
 
 Q_SIGNALS:
+    void zramChanged();
     void cushionEnabledChanged();
     void statusChanged();
     void errorTextChanged();
@@ -63,6 +71,10 @@ private:
     void readCushionStatus();
     void readProblems();
 
+    QVariantMap m_zram;
+    bool m_zramBusy = false;
+    bool m_zramReading = false;
+    bool m_zramKnown = false;
     bool m_cushionEnabled = true;
     bool m_savedCushionEnabled = true;
     QString m_cushionState;
