@@ -8,8 +8,9 @@
     as "changed by the person"). --verify did not name them, --restore could not bring their originals back, and dpkg
     would ask about such a conffile at its package's next upgrade. On the station 378 rows were so (systemd 313, udev
     50), and /etc/default/nss was a lean conffile called the person's.
-  * A one-time migration (marker orphaned-lean-v1), run by the postinst and then by the hooks until it completes, judges
-    each such file of an installed package against its package's own file at the installed version. dpkg's database
+  * A one-time migration (marker orphaned-lean-v1), run by the post-invoke hook at the end of the dpkg run that installs
+    this version (outside the postinst, where dpkg's run is half done, as the conffile owners' migration of 0.1.22) and
+    then by the hooks until it completes, judges each such file of an installed package against its package's own file at the installed version. dpkg's database
     names the version (a left row names none), and an original is that version's only when its MD5 is the one dpkg
     records for the file (md5sums, or the conffile's hash). The original comes from the pristine store (a conffile's
     copy, found by that MD5), then as restore takes it: APT's cache, a configured source, and snapshot.debian.org only

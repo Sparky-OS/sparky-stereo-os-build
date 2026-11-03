@@ -2395,7 +2395,9 @@ def repair_consumers(P, jobs=4, pkgs=None, force=False, fetch=False):
     rc = migrate_qualified(P, jobs, pkgs=pkgs) or rc
     rc = migrate_perl_quotes(P, jobs, pkgs=pkgs) or rc
     rc = repair_twin_rows(P) or rc
-    rc = migrate_orphans(P, jobs, pkgs=pkgs, force=force, fetch=fetch) or rc
+    if not os.environ.get('DPKG_MAINTSCRIPT_NAME'):
+        # as for the conffile owners: the post-invoke hook at the end of the run that installs it does this
+        rc = migrate_orphans(P, jobs, pkgs=pkgs, force=force, fetch=fetch) or rc
     return migrate_c_form(P, jobs, pkgs=pkgs, force=force) or rc
 
 
@@ -2833,8 +2835,10 @@ def migrate_orphans(P, jobs=4, pkgs=None, force=False, fetch=False):
     its record (a left row "changed since its package installed it", or PERSON_CHANGED for a conffile) of a package
     installed now is judged against its package's own file at the installed version (orphan_plan): exactly that file's
     projection, checked again by its reader, gets its record back and its row goes; anything else stays the person's,
-    as before; a file in its package's own bytes is examined again. What came back and what stayed is said once, in the system's language with English
-    beside it. A file whose original is nowhere at hand keeps its row and is listed in .pending, its package version in
+    as before; a file in its package's own bytes is examined again. It runs outside dpkg's maintainer scripts, as the
+    conffile owners' migration does (inside one, dpkg's run is half done): the post-invoke hook at the end of the dpkg
+    run that installs this version runs it first. What came back and what stayed is said once, in the system's language
+    with English beside it. A file whose original is nowhere at hand keeps its row and is listed in .pending, its package version in
     .waiting with APT's lists and cache as they were; the step is kept as a problem (each version, why, and what gives
     the files their record) until a later run gives them their record: a dpkg run tries a version again only when its
     installed version, APT's lists or APT's cache changed (or FORCE says so), and only the person's --repair and
