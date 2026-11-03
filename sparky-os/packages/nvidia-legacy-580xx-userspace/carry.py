@@ -35,6 +35,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 
 MAINTAINER = 'Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>'
 HOMEPAGE = 'https://sparkylinux.org'
@@ -175,6 +176,24 @@ def deb_parts(deb):
     return payload(data), scripts
 
 
+def shlib_depends(tree, files):
+    """The dependency dpkg-shlibdeps derives from NVIDIA's ELF files (dpkg-shlibdeps(1): it "calculates shared library
+    dependencies for executables named in its arguments"), for a package of NVIDIA's that ships them and declares none."""
+    elfs = [tree / p.lstrip('/') for p, v in files.items()
+            if v[0] == 'file' and (tree / p.lstrip('/')).read_bytes()[:4] == b'\x7fELF']
+    if not elfs:
+        return None
+    with tempfile.TemporaryDirectory(prefix='carry-shlibs-') as d:
+        (Path(d) / 'debian').mkdir()
+        (Path(d) / 'debian/control').write_text('Source: carry\n\nPackage: carry\nArchitecture: any\n')
+        out = subprocess.run(['dpkg-shlibdeps', '-O', *map(str, elfs)], cwd=d, check=True, capture_output=True,
+                             text=True).stdout
+    match = re.search(r'^shlibs:Depends=(.+)$', out, re.M)
+    if not match:
+        sys.exit(f'dpkg-shlibdeps derived no dependency for {[str(e) for e in elfs]}')
+    return match.group(1)
+
+
 def plan_pattern(path):
     return re.sub(r'([][*?])', r'[\1]', path)
 
@@ -223,6 +242,14 @@ def stage(deb, nv_version, version, packages_path, changelog, readme, copyright_
         out.append([key, value])
     position = next(i for i, (k, _) in enumerate(out) if k.lower() == 'version')
     out.insert(position + 1, ['Source', f'{source} ({nv_version})'])
+    # NVIDIA ships libnvidia-nscq, a library, with no dependency at all (not even libc6); a package that ships ELF files
+    # and declares none gets the one dpkg-shlibdeps derives, in the control file, which is the edition's
+    added_depends = None
+    if not any(k in RELATIONS[:2] for k, _ in pairs):
+        added_depends = shlib_depends(tree, files)
+        if added_depends:
+            position = next(i for i, (k, _) in enumerate(out) if k.lower() == 'architecture')
+            out.insert(position + 1, ['Depends', added_depends])
     position = next(i for i, (k, _) in enumerate(out) if k.lower() == 'description')
     out[position:position] = [['Homepage', HOMEPAGE], ['Bugs', BUGS]]
     (tree / 'DEBIAN/control').write_text(''.join(f'{k}: {v}\n' for k, v in out))
@@ -257,7 +284,7 @@ def stage(deb, nv_version, version, packages_path, changelog, readme, copyright_
         'deb': os.path.basename(deb), 'deb_sha256': sha256(Path(deb).read_bytes()), 'package': package,
         'architecture': arch, 'nv_version': nv_version, 'version': version, 'control': dict(pairs),
         'payload': files, 'maintainer_files': {n: [m, sha256(d)] for n, (m, d) in scripts.items()},
-        'names': sorted(names), 'added_nvidia': added,
+        'names': sorted(names), 'added_nvidia': added, 'added_depends': added_depends,
         'ours': sorted(ours)}, indent=1, sort_keys=True) + '\n')
     print(f'{package}:{arch} staged at {version}: {len(plan)} NVIDIA files kept as NVIDIA ships them')
 
@@ -303,6 +330,8 @@ def verify(built, nvidia_json):
             problems.append(f'control {key}: {control.get(key)!r}, NVIDIA {nvidia.get(key)!r}')
     for key in RELATIONS:
         want = rewrite_relation(nvidia[key], set(ref['names']), ref['nv_version'], ref['version']) if key in nvidia else None
+        if key == 'Depends' and ref['added_depends']:
+            want = ref['added_depends']
         if key == 'Breaks':
             want = (want + ', ' if want else '') + LEAN_BREAKS
         if control.get(key) != want:
@@ -323,7 +352,8 @@ def verify(built, nvidia_json):
             print(f'{value}  {package}:{arch}  {path}')
     print(f'# {package}:{arch} {ref["version"]}: {sum(v[0] == "file" for v in ref["payload"].values())} NVIDIA files '
           f'identical to {ref["deb"]} ({ref["deb_sha256"]}), maintainer files identical, 3 files of the edition'
-          + (', NVIDIA\'s copyright file added' if ref['added_nvidia'] else ''),
+          + (', NVIDIA\'s copyright file added' if ref['added_nvidia'] else '')
+          + (f', Depends: {ref["added_depends"]} (dpkg-shlibdeps)' if ref['added_depends'] else ''),
           file=sys.stderr)
 
 
