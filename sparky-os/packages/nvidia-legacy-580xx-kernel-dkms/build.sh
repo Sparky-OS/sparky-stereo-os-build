@@ -7,9 +7,10 @@
 # nvidia-kernel-dkms at the version in debian/changelog (580.196.07-1 for 580.196.07-1+sparky1), unmodified, taken from
 # NVIDIA's CUDA repository for Debian 12 (the only one where NVIDIA publishes 580 for Debian); debian/ is ours. The .deb's
 # SHA-256 is fixed below and checked against NVIDIA's signed index. Two binary packages come out:
-# nvidia-legacy-580xx-kernel-dkms (provides nvidia-kernel-dkms at NVIDIA's exact version, because NVIDIA's nvidia-driver
-# depends on exactly that version) and sparky-stereo-nvidia-legacy-580xx-driver-lock (the APT lock generated from the same
-# version, see its README.Debian). NVIDIA's 580 user space is not in this source; see README.Debian for where it comes from.
+# nvidia-legacy-580xx-kernel-dkms (provides nvidia-kernel-dkms at its own version, the version at which the edition carries
+# NVIDIA's 580 user space, because NVIDIA's nvidia-driver depends on exactly that version) and
+# sparky-stereo-nvidia-legacy-580xx-driver-lock (the APT lock generated from the same version, see its README.Debian).
+# NVIDIA's 580 user space is not in this source: ../nvidia-legacy-580xx-userspace carries it at this version.
 # The build goes through the Lean Code toolkit (release/build-dh-lean.sh); the tree's two precompiled objects, under the
 # NVIDIA Software License, must come out byte for byte as NVIDIA ships them, and that is checked in the built package.
 # To move to a new 580 version: put its .deb hash in DEB_SHA256, add a changelog entry with the new version (for example
@@ -20,7 +21,7 @@
 #                              /var/tmp/sparky-repo-current; SRCDEB, a local copy of NVIDIA's .deb; SPARKY_LC_ARCHIVE_DIR,
 #                              the link gate's folder, which must list NVIDIA's Debian 12 repository)
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
-# Last update 2026/11/02
+# Last update 2026/11/03
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=$(realpath -m "${1:-${SPARKY_STAGING_DIR:?}/nvidia-kmod-legacy-580xx}")

@@ -13,10 +13,10 @@ Architecture: amd64
 Multi-Arch: foreign
 Pre-Depends: nvidia-installer-cleanup
 Depends: dkms (>= 3.1.8), gcc, nvidia-kernel-support, sparky-stereo-nvidia-legacy-580xx-driver-lock (>= ${source:Version}), ${misc:Depends}
-Recommends: nvidia-driver (= ${nvidia:Version}) | nvidia-driver-cuda (= ${nvidia:Version})
+Recommends: nvidia-driver (= ${binary:Version}) | nvidia-driver-cuda (= ${binary:Version})
 Conflicts: nvidia-kernel-dkms, nvidia-kernel-open-dkms
 Replaces: nvidia-kernel-dkms
-Provides: nvidia-kernel-dkms (= ${nvidia:Version}), nvidia-kernel-dkms-any (= ${nvidia:Upstream}), nvidia-kernel-${nvidia:Upstream}
+Provides: nvidia-kernel-dkms (= ${binary:Version}), nvidia-kernel-dkms-any (= ${nvidia:Upstream}), nvidia-kernel-${nvidia:Upstream}
 XB-Original-Maintainer: NVIDIA <cudatools@nvidia.com>
 XB-Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues
 Description: NVIDIA's 580 kernel modules (DKMS) for Maxwell, Pascal and Volta cards
@@ -51,6 +51,6 @@ Description: Keep NVIDIA's driver at the version of the 580 kernel module
  580 driver.
  .
  NVIDIA's 580 user space for these cards comes from the edition's
- repository: NVIDIA publishes it for Debian only in its repository for
- Debian 12, whose key Debian 14's APT refuses (a SHA-1 binding signature).
- See README.Debian.
+ repository, NVIDIA's own Debian 12 packages carried at this version
+ (NVIDIA publishes it for Debian only in its repository for Debian 12, whose
+ key Debian 14's APT refuses: a SHA-1 binding signature). See README.Debian.

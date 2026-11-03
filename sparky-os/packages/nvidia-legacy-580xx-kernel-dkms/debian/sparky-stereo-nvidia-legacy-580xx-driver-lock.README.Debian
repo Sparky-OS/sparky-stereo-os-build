@@ -17,8 +17,8 @@ order:
    (nvidia-kernel-open-dkms, nvidia-kernel-dkms, nvidia-open-kernel-dkms) and
    the edition's open modules (nvidia-kernel-open-dkms-stereo3d): priority -1,
    never installed. nvidia-legacy-580xx-kernel-dkms provides
-   nvidia-kernel-dkms at NVIDIA's version, so NVIDIA's user space is satisfied
-   by it.
+   nvidia-kernel-dkms at its own version, the version of the carried user
+   space, so NVIDIA's user space is satisfied by it.
 2. Every NVIDIA driver package at the version the 580 module is built for:
    priority 1005. The set is the one sparky-stereo-nvidia-driver-lock names
    (the packages NVIDIA's own nvidia-driver-pinning package pins), with this
@@ -43,9 +43,14 @@ Debian 13 starts at 590). Debian 14's APT cannot read that repository: its
 only key, EB693B3035CD5710E231E123A4B469963BF863CC, is bound with a SHA-1
 self-signature, and sqv refuses it ("SHA1 is not considered secure since
 2026-02-01"; apt 3.3.3, sqv 1.5.0, measured 2026-11-02). So the 580 user
-space must come from the edition's repository, and this package writes no
+space comes from the edition's repository, and this package writes no
 source for NVIDIA's Debian 12 repository: one would make every apt update
-fail. CUDA 13 does not run on these cards (NVIDIA's CUDA 13.0 release notes:
+fail. The edition carries NVIDIA's own Debian 12 packages there
+(nvidia-legacy-580xx-userspace in the build tree): NVIDIA's files byte for
+byte, NVIDIA's signature checked with gpgv when they are built, at this
+package's version (580.196.07-1+sparkyN), which this lock's 580.196.07-1*
+record keeps at 1005; amd64 and the i386 libraries Steam, Wine and 32-bit
+games need. Each package's README.sparky-stereo says what is NVIDIA's. CUDA 13 does not run on these cards (NVIDIA's CUDA 13.0 release notes:
 "Removed support for Maxwell, Pascal, and Volta GPUs"); CUDA 12 toolkits do,
 with this driver.
 
