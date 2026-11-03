@@ -46,6 +46,8 @@ SH
 	printf 'Package: %s\nVersion: %s\nArchitecture: %s\nMulti-Arch: same\nMaintainer: test <t@example.org>\nDescription: shared files test\n' "$1" "$2" "$3" >"$d/DEBIAN/control"
 	dpkg-deb --root-owner-group -b "$d" "$W/$1_$2_$3.deb" >/dev/null
 }
+command -v dpkg-stereo >/dev/null || { echo "dpkg-stereo is not installed: install it (and the edition's dpkg) first"; exit 2; }
+dpkg-query -W -f '${Provides}' dpkg | grep -q 'dpkg-lean-code' || { echo "dpkg is not the edition's (no dpkg-lean-code)"; exit 2; }
 rm -rf "$W"
 mkdir -p "$W"
 dpkg --print-foreign-architectures | grep -qx i386 || dpkg --add-architecture i386
@@ -72,7 +74,9 @@ lean "$(dpkg-query -W -f '${Package}:${Architecture}\n' twin-demo:amd64 twin-dem
 dpkg -i "$W/twin-demo_1.0_${owner#*:}.deb" </dev/null >"$W/f.log" 2>&1 && ok "$owner installs again" || bad "$owner again: $(grep -m1 'trying to overwrite' "$W/f.log")"
 grep -qx 'Edited=by the person' $RC && ok "the person's edit kept" || bad "the edit changed"
 dpkg-stereo --verify twin-demo >"$W/verify.log" 2>&1
-grep -qE '^(MISSING|RESTORED|STALE|MISMATCH) ' "$W/verify.log" && bad "verify: $(cat "$W/verify.log")" || ok "verify: $(tail -1 "$W/verify.log")"
+if grep -q 'projected files checked' "$W/verify.log" && ! grep -qE '^(MISSING|RESTORED|STALE|MISMATCH) ' "$W/verify.log"; then
+	ok "verify: $(tail -1 "$W/verify.log")"
+else bad "verify: $(cat "$W/verify.log")"; fi
 echo "== purge both"
 dpkg -P twin-demo:i386 </dev/null >"$W/g.log" 2>&1 && lean twin-demo:amd64 $T && recorded $T && ok "purge i386: the file stays, recorded" || bad "purge i386"
 dpkg -P twin-demo:amd64 </dev/null >"$W/h.log" 2>&1 && [ ! -e $T ] && ! grep -qs "^/usr/share/twin-demo/" /var/lib/dpkg-stereo/records/*.tsv &&
