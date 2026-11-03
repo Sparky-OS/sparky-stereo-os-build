@@ -9,7 +9,8 @@
 #      projected but which is not upgraded
 #   C. verify tells "restored, not projected" (the package's own bytes) from "changed by the person";
 #      the next dpkg run and --project project such files again; a real edit is left alone
-#   D. (with OLD.deb) the state the A10 was left in, made by the old version, healed by installing this one
+#   D. (with OLD.deb, dpkg-stereo 0.1.4 or older: 0.1.5 fixed it) the state the A10 was left in, made by the old
+#      version, healed by installing this one
 #   E. the same as A with apt as the first run (apt keeps the frontend lock between its dpkg runs)
 #   F. PackageKit's own dpkg runs (packagekitd on the container's system bus): an install through it, and
 #      a second dpkg started while PackageKit's dpkg runs
@@ -17,6 +18,15 @@
 set -u
 DEB=$1 W=$2 OLD=${3:-}
 export DEBIAN_FRONTEND=noninteractive
+# case D starts from the state only the versions before 0.1.5 left (a dpkg stopped at the lock made them leave
+# conffiles in their package's bytes): with a later OLD there is nothing to heal, and the case could not fail
+if [ -n "$OLD" ]; then
+	old_version=$(dpkg-deb -f "$OLD" Version 2>/dev/null)
+	dpkg --compare-versions "${old_version:-0}" lt 0.1.5 || {
+		echo "case D needs OLD to be dpkg-stereo 0.1.4 or older, the versions that left conffiles behind; $(basename "$OLD") is ${old_version:-not a .deb}"
+		exit 2
+	}
+fi
 fail=0
 ok() { echo "PASS $*"; }
 bad() { echo "FAIL $*"; fail=1; }
