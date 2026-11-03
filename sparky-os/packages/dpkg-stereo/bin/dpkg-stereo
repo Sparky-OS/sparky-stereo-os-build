@@ -1988,7 +1988,9 @@ def restore(P, names, drop_hold=False, pkgs=None, log=print, progress=None, fetc
             elif why is None:
                 why = ('other-bytes', f'{first}: its .deb{src} does not hold it{more}' if source or first in wanted
                        else f'{first}: its pristine copy is not the recorded original{more}', None)
-            offered = plans.get((package, version), (True,))[0]
+            # whether a configured source offers this version, as far as APT was asked (a version whose .deb was in the
+            # cache was not asked about: apt-get's reinstall is then never named for it)
+            offered = plans.get((package, version), (False,))[0]
             missing[(package, version)] = {
                 'package': package, 'version': version, 'files': len(stuck), 'why': why[0], 'detail': why[1],
                 'remedy': remedy(P, why[0], package, version, arch, offered, prerm, why[2])}
