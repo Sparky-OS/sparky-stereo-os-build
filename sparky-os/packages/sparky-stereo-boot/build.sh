@@ -9,14 +9,15 @@ set -euo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
 OUT=$(readlink -f "${1:-.}")
 PKG=sparky-stereo-boot
-VERSION=0.1.7+lc1
+VERSION=0.1.8+lc1
 umask 022
 mkdir -p "$OUT"
 D=$(mktemp -d "${TMPDIR:-/tmp}/stereo-boot-build.XXXXXX")
 trap 'rm -rf "$D"' EXIT
 chmod 755 "$D"
 install -D -m 755 "$HERE/bin/sparky-stereo-boot" "$D/usr/bin/sparky-stereo-boot"
-for u in sparky-stereo-boot.socket sparky-stereo-boot@.service sparky-stereo-boot-handover.service sparky-stereo-boot-check.service; do
+for u in sparky-stereo-boot.socket sparky-stereo-boot@.service sparky-stereo-boot-handover.service sparky-stereo-boot-check.service \
+	sparky-stereo-boot-secureboot.service sparky-stereo-boot-dkms-key.path; do
 	install -D -m 644 "$HERE/systemd/system/$u" "$D/usr/lib/systemd/system/$u"
 done
 install -D -m 644 "$HERE/systemd/system/plymouth-quit.service.d/sparky-stereo-boot.conf" "$D/usr/lib/systemd/system/plymouth-quit.service.d/sparky-stereo-boot.conf"
@@ -25,6 +26,9 @@ mkdir -p "$D/usr/lib/systemd/system/sockets.target.wants" "$D/usr/lib/systemd/sy
 	"$D/usr/lib/systemd/user/default.target.wants" "$D/usr/lib/systemd/catalog"
 ln -s ../sparky-stereo-boot.socket "$D/usr/lib/systemd/system/sockets.target.wants/sparky-stereo-boot.socket"
 ln -s ../sparky-stereo-boot-check.service "$D/usr/lib/systemd/system/multi-user.target.wants/sparky-stereo-boot-check.service"
+# this computer's DKMS key (0.1.8, ORDER 374): beside shim and checked against the MOK list at every boot, and placed
+# when DKMS makes it (the first boot's signing)
+ln -s ../sparky-stereo-boot-secureboot.service "$D/usr/lib/systemd/system/multi-user.target.wants/sparky-stereo-boot-secureboot.service"
 for u in sparky-stereo-boot-export.path sparky-stereo-boot-export.service; do
 	install -D -m 644 "$HERE/systemd/user/$u" "$D/usr/lib/systemd/user/$u"
 	ln -s ../$u "$D/usr/lib/systemd/user/default.target.wants/$u"
@@ -53,6 +57,7 @@ for u in sparky-stereo-kernel-keep.path sparky-stereo-kernel-keep.service; do
 done
 mkdir -p "$D/usr/lib/systemd/system/paths.target.wants"
 ln -s ../sparky-stereo-kernel-keep.path "$D/usr/lib/systemd/system/paths.target.wants/sparky-stereo-kernel-keep.path"
+ln -s ../sparky-stereo-boot-dkms-key.path "$D/usr/lib/systemd/system/paths.target.wants/sparky-stereo-boot-dkms-key.path"
 # every update-initramfs -u writes every kernel's boot image (0.1.4): initramfs-tools' update-initramfs.conf is
 # diverted to .debian (preinst) and its name becomes a link to the edition's file, a conffile of this package beside it
 # (a diverted conffile at the same name could not be renamed back on removal, as dpkg keeps conffiles then)
@@ -96,7 +101,7 @@ if [ "$1" = configure ]; then
 	if [ -d /run/systemd/system ]; then
 		# said and kept; the package configures (the boot itself does not need them)
 		python3 $P run systemd-reload LOCAL60 -- systemctl daemon-reload || :
-		for u in sparky-stereo-boot.socket:LOCAL22 sparky-stereo-kernel-keep.path:LOCAL59; do
+		for u in sparky-stereo-boot.socket:LOCAL22 sparky-stereo-kernel-keep.path:LOCAL59 sparky-stereo-boot-dkms-key.path:LOCAL67; do
 			if [ "$(systemctl is-enabled "${u%:*}" 2>/dev/null || :)" = masked ]; then
 				python3 $P say LOCAL55 "${u%:*}" "${u%:*}"   # the system's own choice
 			else
@@ -104,20 +109,22 @@ if [ "$1" = configure ]; then
 			fi
 		done
 	fi
-	# the Sparky Stereo OS certificate next to every shim on the EFI system partition: a failure is said and kept by
-	# secureboot.py, and the package configures (this system boots without it until Secure Boot needs the key)
+	# the Sparky Stereo OS certificate, and this computer's DKMS certificate (0.1.8), next to every shim on the EFI
+	# system partition: a failure is said and kept by secureboot.py, and the package configures (this system boots
+	# without them until Secure Boot needs the keys)
 	python3 /usr/lib/sparky-stereo-boot/secureboot.py esp || :
 	# the kernel line takes ${sparky_stereo_boot} from GRUB's environment block (0.1.0), the menu the Secure Boot
-	# enrolment entry (0.1.3), 30-sparky-stereo-boot.cfg says what GRUB is given and keeps it (0.1.5), and the menu's
-	# text has one size for every screen (0.1.7); a failed update-grub fails the package, as grub2's postinst does
-	if { [ -z "$2" ] || dpkg --compare-versions "$2" lt 0.1.7; } && [ -x /usr/sbin/update-grub ] && [ -e /boot/grub/grub.cfg ]; then
+	# enrolment entry (0.1.3), 30-sparky-stereo-boot.cfg says what GRUB is given and keeps it (0.1.5), the menu's
+	# text has one size for every screen (0.1.7) and the menu has the entry for this computer's DKMS key (0.1.8); a
+	# failed update-grub fails the package, as grub2's postinst does
+	if { [ -z "$2" ] || dpkg --compare-versions "$2" lt 0.1.8; } && [ -x /usr/sbin/update-grub ] && [ -e /boot/grub/grub.cfg ]; then
 		python3 $P run update-grub LOCAL21 -- update-grub || failed=1
 	fi
 	[ -z "$failed" ] || exit 1
 fi
 if [ "$1" = triggered ]; then
-	# shim's or GRUB's signed programs were installed again: the certificate beside them again (said and kept by
-	# secureboot.py when it cannot be placed)
+	# shim's or GRUB's signed programs were installed again: the certificates beside them again (said and kept by
+	# secureboot.py when they cannot be placed)
 	python3 /usr/lib/sparky-stereo-boot/secureboot.py esp || :
 fi
 exit 0
@@ -193,7 +200,7 @@ remove)
 purge)
 	must rm -rf /var/lib/sparky-stereo-boot
 	# said; a certificate left on the partition does not change any boot
-	for f in /boot/efi/EFI/*/sparky-stereo-secureboot-2026.der; do
+	for f in /boot/efi/EFI/*/sparky-stereo-secureboot-2026.der /boot/efi/EFI/*/dkms-this-computer.der; do
 		[ -e "$f" ] || continue
 		rm -f "$f" || say 58 "$f"
 	done
@@ -229,6 +236,11 @@ Description: Sparky Stereo OS boot that follows the main screen
   removes the older ones after a new kernel has installed; every boot
   image is written again whenever the boot changes, the older kernel's
   too.
+  .
+  Under Secure Boot, the edition's key and this computer's DKMS key are
+  kept next to shim on the EFI system partition, with a GRUB entry that
+  enrolls each one; a DKMS key that is not enrolled while modules signed
+  with it are installed is said.
   .
   Nothing in the boot's upkeep fails silently: a failed update-grub,
   boot image, Secure Boot certificate, kernel cleanup or 3D splash

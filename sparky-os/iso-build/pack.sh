@@ -220,7 +220,13 @@ if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
 	cp /build/zram-check.py $R/tmp/
 	inr python3 /tmp/zram-check.py / || { echo "!! zram or zswap is in the image; see the gate's findings above" >&2; exit 1; }
 	rm -f $R/tmp/zram-check.py
-	# DKMS made its own signing key while building in the chroot; a private key never ships
+	# DKMS's signing key never ships: one key in the image would be every installed machine's key (dkms-project/dkms
+	# #574; dkms signs nothing and makes no key in a chroot unless try_sign_modules=true, #575). Each installed system
+	# makes its own and signs the image's DKMS modules at its first boot (dkms-sign-unsigned.service), and GRUB's menu
+	# offers to enroll it (sparky-stereo-boot). Said in the build log, with what was found.
+	found=$(cd $R/var/lib/dkms 2>/dev/null && ls -d mok.key mok.pub 2>/dev/null | tr '\n' ' ')
+	found=${found% }
+	echo "== $(date -u +%T) DKMS signing key of the chroot: ${found:-none}; removed if found, because one key in the image would be every installed machine's key; each installed system makes its own at its first boot, which signs the image's DKMS modules (dkms-sign-unsigned.service), and GRUB's menu offers to enroll it"
 	rm -f $R/var/lib/dkms/mok.key $R/var/lib/dkms/mok.pub
 	# each installed system gets its own identity
 	: > $R/etc/machine-id; rm -f $R/var/lib/dbus/machine-id

@@ -1,0 +1,14 @@
+[Unit]
+Description=Sparky Stereo OS: this computer's DKMS key beside shim, and whether Secure Boot knows it
+Documentation=file:/usr/share/doc/sparky-stereo-boot/README.md
+ConditionVirtualization=!container
+ConditionPathIsDirectory=/sys/firmware/efi
+
+[Service]
+Type=oneshot
+# what cannot be placed, or a key that is not enrolled, is said and kept by secureboot.py; the unit does not fail too,
+# so it is told once
+ExecStart=-/usr/bin/python3 /usr/lib/sparky-stereo-boot/secureboot.py dkms-key
+
+[Install]
+WantedBy=multi-user.target

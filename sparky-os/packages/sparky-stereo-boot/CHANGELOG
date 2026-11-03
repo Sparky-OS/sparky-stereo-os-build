@@ -1,4 +1,26 @@
 -------------------------------------------------------------------------------
+  Version 0.1.8 (2026-11-03)
+-------------------------------------------------------------------------------
+  * This computer's DKMS key follows the edition key's design (ORDER 374; ORDER 260, Daniel, 2026-10-25: "we never
+    know when the user will migrate the mb or even have to reset it"): DKMS signs the modules it builds on this
+    computer (NVIDIA's open modules among them) with this computer's own key, which Secure Boot accepts only once it
+    is in the MOK list, and no package enrolls it (Debian #1076269; dkms-project/dkms #429, closed as stale). Its
+    certificate (dkms's mok_certificate, /var/lib/dkms/mok.pub by default; DER, a PEM one converted) is kept next to
+    every shim as dkms-this-computer.der, and removed there when the computer has no DKMS key, by the postinst, the
+    kernel hook, the shim and GRUB triggers and repair, as the edition's is
+  * GRUB's menu has a second entry, "Secure Boot: enroll this computer's DKMS key", in the system's language with the
+    steps in the nine languages, starting MokManager as the first does ("Enroll key from disk" asks only for a
+    confirmation). GRUB looks for the certificate on the partition, by its UUID, when it reads the menu, so the entry
+    appears as soon as DKMS has made the key, with no update-grub; update-grub runs once on the upgrade, for the entry
+  * sparky-stereo-boot-dkms-key.path places the certificate when DKMS makes or changes the key (the installed
+    system's first boot signs the modules its image built unsigned, dkms 3.4.4-1+sparky4), through
+    sparky-stereo-boot-secureboot.service, which also runs at every boot
+  * Under Secure Boot, a DKMS key that is not in shim's MOK list while DKMS modules signed with it are installed for
+    the running kernel is said and kept, naming the GRUB entry that enrolls it (no silent fallbacks, Daniel,
+    2026-11-01: "either it works or not and the user must know"); it clears at the first boot after the enrolment
+  * A DKMS certificate that cannot be written or read is said and kept (esp-dkms-certificate), with
+    secureboot.py esp as its repair; the purge removes dkms-this-computer.der from the partition too
+-------------------------------------------------------------------------------
   Version 0.1.7 (2026-11-03)
 -------------------------------------------------------------------------------
   * GRUB's menu text has one size on every screen, for a PC at a desk (ORDER 361; Daniel, 2026-11-02: "I sit at 50cm
