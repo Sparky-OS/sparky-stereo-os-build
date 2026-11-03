@@ -23,7 +23,15 @@ def link_gate(built):
     try:
         if not table.is_file():
             raise ValueError(f'{table}: the toolkit lacks the smoke table')
-        release.check_link(gated, os.environ.get('SPARKY_LC_PREVIOUS_DIR') or None, str(table))
+        siblings_file = os.environ.get('SPARKY_LC_SIBLINGS_FILE')
+        previous_file = os.environ.get('SPARKY_LC_PREVIOUS_SIBLINGS_FILE')
+        release.check_link(
+            gated, os.environ.get('SPARKY_LC_PREVIOUS_DIR') or None, str(table),
+            siblings=Path(siblings_file).read_text().splitlines() if siblings_file else (),
+            previous_siblings=Path(previous_file).read_text().splitlines() if previous_file else (),
+            min_free_gib=float(os.environ.get('SPARKY_LC_MIN_FREE_GIB', '2')),
+            root_min_free_gib=float(os.environ.get('SPARKY_LC_ROOT_MIN_FREE_GIB', '12')),
+        )
     except (ValueError, OSError, subprocess.CalledProcessError):
         for deb in built:
             deb.unlink(missing_ok=True)
