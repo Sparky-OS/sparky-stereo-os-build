@@ -26,3 +26,8 @@ execute_after_dh_install:
 	DH_AUTOSCRIPTDIR=debian/scripts debian/scripts/dh_dkms
 	# Sparky Stereo OS, ORDER 370: dkms-sign-unsigned's messages as journal catalogs, in the nine languages
 	sparky-stereo-problems catalog dkms debian/problems-lang debian/dkms/usr/lib/systemd/catalog --subject LOCAL1
+
+# Sparky Stereo OS, ORDER 374: dkms-sign-unsigned.service signs, at the installed system's first boot, the modules an
+# image built in a chroot carries unsigned; enabled, never started by the package (the postinst signs on its own)
+override_dh_installsystemd:
+	dh_installsystemd --name=dkms-sign-unsigned --no-start

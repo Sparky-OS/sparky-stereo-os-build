@@ -1,3 +1,35 @@
+dkms (3.4.4-1+sparky4) unstable; urgency=medium
+
+  * dkms-sign-unsigned.service signs, once, at the installed system's
+    first boot, the DKMS modules an image built in a chroot carries
+    unsigned: dkms signs nothing and makes no key there
+    (try_sign_modules, dkms-project/dkms #574 and #575), so the image's
+    modules (NVIDIA's open modules, evdi and acpi-call on the edition's
+    ISO) stayed unsigned on every installed system until dkms was
+    configured again. The unit runs /usr/lib/dkms/dkms-sign-unsigned
+    first-boot in the background (the boot and the login do not wait
+    for it), so the machine makes its own key, and marks itself done in
+    /var/lib/dkms/dkms-sign-unsigned.first-boot; a module that cannot be
+    signed is kept by sparky-stereo-problems with its repair. It does
+    not run in a live session (boot=live) or a container. The package
+    enables it and never starts it. ORDER 374.
+  * dkms-sign-unsigned checks the files the kernel loads (the name
+    resolved through the kernel's modules.dep), not only DKMS's built
+    copies: installed copies signed with another key (an image's
+    modules signed with the edition's key) are left alone.
+  * After it signs modules for a kernel, the kernel's boot image is
+    written again when it holds an older copy of them
+    (update-initramfs -u -k; dkms never writes a boot image), so Secure
+    Boot also loads them while the machine starts; a failure is kept
+    with that as its repair (dkms-sign-unsigned boot-image KERNEL).
+  * A build stopped by a shutdown puts DKMS's built copy back, so the
+    next run finds the module installed as it was.
+  * The postrm removes the first boot's mark at purge.
+  * The check's xargs starts /bin/sh by its path (it searched PATH for
+    sh, nine failed execve per run; ORDER 370's suggestion).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 03 Nov 2026 20:30:00 -0300
+
 dkms (3.4.4-1+sparky3) unstable; urgency=medium
 
   * dkms: when dkms is configured, DKMS modules built without a signature

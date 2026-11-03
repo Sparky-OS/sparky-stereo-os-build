@@ -5,5 +5,9 @@ set -e
 if [ "$1" = remove ] && command -v sparky-stereo-problems >/dev/null 2>&1; then
 	sparky-stereo-problems clear --all dkms
 fi
+# Sparky Stereo OS, ORDER 374: the mark of the first boot's signing goes with the package's configuration
+if [ "$1" = purge ]; then
+	rm -f /var/lib/dkms/dkms-sign-unsigned.first-boot
+fi
 
 #DEBHELPER#

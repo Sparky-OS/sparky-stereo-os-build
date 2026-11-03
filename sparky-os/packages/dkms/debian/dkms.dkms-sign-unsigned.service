@@ -1,0 +1,19 @@
+# Sparky Stereo OS, ORDER 374: an image built in a chroot carries its DKMS modules unsigned and no key (dkms signs
+# nothing there, try_sign_modules, dkms-project/dkms #574 and #575), so every machine installed from it makes its own
+# key. The installed system signs those modules once, in the background of its first boot, and marks itself done; a
+# module that cannot be signed is kept by sparky-stereo-problems with its repair. A live session and a container have
+# no modules of their own to sign.
+[Unit]
+Description=Sign the DKMS modules built without a signature, once, at the first boot
+Documentation=man:dkms(8)
+ConditionPathExists=!/var/lib/dkms/dkms-sign-unsigned.first-boot
+ConditionKernelCommandLine=!boot=live
+ConditionVirtualization=!container
+
+[Service]
+# the boot and the login do not wait for it
+Type=exec
+ExecStart=/usr/lib/dkms/dkms-sign-unsigned first-boot
+
+[Install]
+WantedBy=multi-user.target
