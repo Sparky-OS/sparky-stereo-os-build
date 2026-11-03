@@ -1,3 +1,13 @@
+new-lg4ff-dkms (0.5.0+git20261010.2092db1-1+stereo3d5) unstable; urgency=medium
+
+  * Wheel-driver builds at install and update time are never capped (Daniel,
+    2026-11-02: "Wheel-driver builds - or any build at update time - DO NEVER
+    CAP EXECUTION"; ORDER 361): dkms.conf takes upstream's form: MAKE[0]="make
+    KVERSION=$kernelver", to which DKMS adds the parallel jobs it gives every
+    module (-j$parallel_jobs) and KERNELRELEASE; the -j4 limit goes.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 02 Nov 2026 22:35:01 -0300
+
 new-lg4ff-dkms (0.5.0+git20261010.2092db1-1+stereo3d4) unstable; urgency=medium
 
   * Leave the build's Lean Code records out of /usr/src: the source tree is
