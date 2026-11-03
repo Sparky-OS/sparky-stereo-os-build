@@ -1,7 +1,7 @@
 #!/bin/sh
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/01
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/01
+# Last update 2026/11/03
 # NVIDIA's CUDA source is written here, from the package's copy in /usr/share/sparky-stereo-cuda-repo, only when no other
 # source of apt names NVIDIA's repository: a source of the person's own for the same URI is kept untouched, since two
 # sources for one URI with different Signed-By stop apt ("Conflicting values set for option Signed-By"). The pins
@@ -14,6 +14,19 @@ URI=developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64
 OURS=/etc/apt/sources.list.d/sparky-stereo-cuda.sources
 TEMPLATE=/usr/share/sparky-stereo-cuda-repo/sparky-stereo-cuda.sources
 OLD_KEY=/etc/apt/keyrings/sparky-stereo-cuda.gpg
+# the earlier versions' templates, byte for byte (md5): a source still as one of them wrote it is the package's own, and an
+# upgrade replaces it with this version's (20261101.2: amd64 only)
+OLD_TEMPLATES="8f078b2a0e2a8616b3507b2f8fd57ec4"
+# ours_unchanged FILE: FILE is this version's template or an earlier one, as the package wrote it
+ours_unchanged() {
+	[ -f "$1" ] || return 1
+	cmp -s "$1" "$TEMPLATE" && return 0
+	sum=$(md5sum <"$1" | cut -d' ' -f1)
+	for old in $OLD_TEMPLATES; do
+		[ "$sum" = "$old" ] && return 0
+	done
+	return 1
+}
 # other_sources: the files of apt's sources, besides ours, that name NVIDIA's repository outside a comment
 other_sources() {
 	for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
@@ -25,11 +38,14 @@ if [ "$1" = configure ]; then
 	rm -f "$OURS.dpkg-remove" /etc/apt/preferences.d/91sparky-stereo-cuda.dpkg-remove
 	others=$(other_sources | tr '\n' ' ')
 	if [ -n "$others" ]; then
-		if [ -f "$OURS" ] && cmp -s "$OURS" "$TEMPLATE"; then
+		if ours_unchanged "$OURS"; then
 			rm -f "$OURS"
 			echo "sparky-stereo-cuda-repo: removed the edition's NVIDIA source $OURS, because another source names the same repository"
 		fi
 		echo "sparky-stereo-cuda-repo: keeping your NVIDIA source at ${others% }; the edition's pins apply (/etc/apt/preferences.d/91sparky-stereo-cuda)"
+	elif [ -f "$OURS" ] && ! cmp -s "$OURS" "$TEMPLATE" && ours_unchanged "$OURS"; then
+		install -m644 "$TEMPLATE" "$OURS"
+		echo "sparky-stereo-cuda-repo: updated NVIDIA's CUDA source $OURS, which reads NVIDIA's i386 driver libraries too now (run apt update to read it)"
 	elif [ -e "$OURS" ] && ! cmp -s "$OURS" "$TEMPLATE"; then
 		echo "sparky-stereo-cuda-repo: keeping your NVIDIA source at $OURS, which differs from the edition's; the edition's pins apply (/etc/apt/preferences.d/91sparky-stereo-cuda)"
 	elif [ ! -e "$OURS" ]; then

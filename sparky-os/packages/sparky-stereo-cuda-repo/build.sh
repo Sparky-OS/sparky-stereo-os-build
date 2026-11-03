@@ -6,7 +6,7 @@
 # repository may update compute (CUDA), never the display driver, which is the edition's, with HDMI 3D (Daniel,
 # 2026-10-11), and NVIDIA's rebuilds of Debian's own tools do not replace Debian's (ORDER 338). It installs
 #   /usr/share/sparky-stereo-cuda-repo/sparky-stereo-cuda.sources   (deb822: the flat repository for Debian 13, amd64
-#                                                      only, Signed-By NVIDIA's key), which the postinst writes to
+#                                                      and i386, Signed-By NVIDIA's key), which the postinst writes to
 #                                                      /etc/apt/sources.list.d only when no other source names the
 #                                                      repository, and the postrm removes
 #   /usr/share/keyrings/cuda-archive-keyring.gpg         (NVIDIA's key, byte for byte the file NVIDIA's cuda-keyring 1.1-1
@@ -22,11 +22,11 @@
 # driver at the version of the edition's module. It replaces NVIDIA's cuda-keyring's key file (Debian Policy 7.6.1): both
 # install the same bytes there, and cuda-keyring stays installed; its source is a source of the person's own.
 # Needs dpkg-deb and python3. Usage: OUT=DIR build.sh   (output goes to $OUT, default the current folder)
-# Last update 2026/11/01
+# Last update 2026/11/03
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-$PWD}
-VERSION=${VERSION:-20261101.2~sparky9~0+lc1}
+VERSION=${VERSION:-20261103.1~sparky9~0+lc1}
 PKG=sparky-stereo-cuda-repo
 # shellcheck source=cuda-key.sh
 . "$HERE/cuda-key.sh"
@@ -57,8 +57,9 @@ Priority: optional
 Homepage: https://sparkylinux.org
 Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues
 Description: NVIDIA's CUDA repository for Sparky Stereo OS
-  The apt source and key of NVIDIA's CUDA repository for Debian 13 (amd64),
-  with the edition's pins: CUDA and NVIDIA's other compute libraries update
+  The apt source and key of NVIDIA's CUDA repository for Debian 13 (amd64,
+  and i386 for NVIDIA's driver libraries that 32-bit programs need), with
+  the edition's pins: CUDA and NVIDIA's other compute libraries update
   from it, NVIDIA's driver stays at the version of the edition's stereo 3D
   module (sparky-stereo-nvidia-driver-lock), and NVIDIA's builds of Debian's
   own tools, such as dkms, do not replace the edition's or Debian's. A source

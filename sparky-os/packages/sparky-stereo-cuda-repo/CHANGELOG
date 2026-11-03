@@ -1,4 +1,10 @@
 -------------------------------------------------------------------------------
+  Version 20261103.1~sparky9~0 (2026-11-03)
+-------------------------------------------------------------------------------
+  * NVIDIA's repository is read for i386 too (Architectures: amd64 i386): NVIDIA's i386 driver libraries (nvidia-driver-libs, libcuda1 and what they depend on) are what Steam's, Wine's and 32-bit games need on an NVIDIA card, NVIDIA publishes them there at every driver version (23 at 615.71.09-2), and a Multi-Arch: same library must be at the same version on both architectures (Debian Policy 5.6.34.3), so they come from NVIDIA's repository at the locked version, like the amd64 driver. Before, apt never read them, and 32-bit games got no NVIDIA OpenGL or Vulkan (ORDER 354; the libraries Steam, Wine and 32-bit games need are allowed, memory no-32bit-builds). The pins already name NVIDIA's EGL platform libraries and egl-wayland with :any, and the driver lock names nvidia-graphics-drivers with :any, so the i386 copies take the same priorities as the amd64 ones
+  * The upgrade replaces the source when it is still byte for byte the one 20261101.2 wrote; a source the person changed, or one of the person's own for the same repository, stays as it is, as before
+
+-------------------------------------------------------------------------------
   Version 20261101.2~sparky9~0 (2026-11-01)
 -------------------------------------------------------------------------------
   * A source of the person's own for NVIDIA's repository is kept untouched, and the package then writes none of its own: two sources for one URI with different Signed-By stop apt ("Conflicting values set for option Signed-By"), as on Daniel's host. The pins still apply, since they go by origin. The postinst says which it did. So the source is no longer a conffile: the postinst writes it from /usr/share/sparky-stereo-cuda-repo only when no other source names the repository, and the postrm removes it (ORDER 342, Opus's review)
