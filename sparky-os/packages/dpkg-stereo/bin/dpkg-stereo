@@ -1382,8 +1382,11 @@ def removed_conffile_back(P, path, rec, db):
     changed by the person: 0.1.30 and older left it lean and unrecorded, and the install kept it lean and called it
     changed by the person (ORDER 367). In its package's bytes it is what dpkg left, the install is quiet, and post-invoke
     projects it again. Only a file that is still exactly the recorded projection, of a package dpkg lists in
-    "config-files" with the recorded original's hash, is written; a conffile the person changed stays as they made
-    it, and a purge removes them all; the caller leaves alone a path an installed package lists among its own conffiles
+    "config-files" with the recorded original's hash, and that today's renderer makes, byte for byte, from that original
+    (its pristine copy), is written: hashes alone would trust a record whose lean hash is wrong (a bug, or anything else
+    that wrote it) and overwrite a person's edit (ORDER 376). A file the renderer does not make stays as it is and is
+    said (installing the package again will then ask about it); a conffile the person changed stays as they made it,
+    and a purge removes them all; the caller leaves alone a path an installed package lists among its own conffiles
     (a package that took it over, Replaces). True when it was written."""
     name, _, arch = rec['package'].partition(':')
     stanza = (db or {}).get((name, arch)) if arch else \
@@ -1405,6 +1408,11 @@ def removed_conffile_back(P, path, rec, db):
     if orig is None or sha256(orig) != rec['sha_orig']:
         # its original is nowhere: it stays lean, and an install of the package again will call it changed
         say('LOCAL59', [path, rec['package']])
+        return False
+    r = project.project(path, orig, name, check=False)
+    if r.status != 'projected' or r.sha_out != sha256(data):
+        # not our projection of its package's file, whatever its record says: it may be the person's
+        say('LOCAL60', [path, rec['package']])
         return False
     write_lean(real, data, orig, os.lstat(real))
     return True

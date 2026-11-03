@@ -38,8 +38,10 @@
     their hashes, until a purge, and an install of the package again compares each with that hash: a lean one looked
     changed by the person, so the install kept it lean and --verify called it EDITED (ORDER 367). Post-invoke now writes
     back the pristine original of each recorded conffile that is still exactly its projection, of a package dpkg lists
-    in "config-files" with that original's hash; installing the package again is quiet, finds it unmodified, and
-    projects and records it again. What the person sees: after removing a package (not purging it), its settings files
+    in "config-files" with that original's hash, and that today's renderer makes byte for byte from that original:
+    hashes alone would trust a record whose lean hash is wrong and overwrite a person's edit (ORDER 376); a file the
+    renderer does not make stays as it is and is said, and installing the package again will ask about it. Installing
+    the package again is quiet, finds the conffile unmodified, and projects and records it again. What the person sees: after removing a package (not purging it), its settings files
     in /etc are as the package shipped them, comments included, until it is installed again; a settings file the person
     changed stays as they made it; a purge removes them all, as before.
   * restore's order for an original (APT's cache, a configured source, snapshot.debian.org) is one function, which

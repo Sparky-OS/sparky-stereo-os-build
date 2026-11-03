@@ -20,7 +20,9 @@
 #      server answering as its interface does) and gives the records back, and the problem goes
 #   D. removal: a removed package's lean conffile goes back to its package's bytes, so installing it again is quiet and
 #      the conffile is projected and recorded again; a conffile the person changed stays as they made it; a purge
-#      removes them
+#      removes them; a record whose lean hash is wrong (forged here to the person's edit, so every hash passes) never
+#      gets the person's edit overwritten: only a file today's renderer makes from the original goes back, and the
+#      other is said
 # Usage: orphans-test.sh OLD.deb (0.1.28) NEW.deb (the package under test) SYSTEMD.deb (the installed systemd's .deb)
 #   WORKDIR
 set -u
@@ -73,6 +75,7 @@ mk orph-src 1.0 "$W/debs" /usr/share/orph-watched
 mk orph-gone 1.0 "$W/debs" /usr/share/orph-watched
 mk orph-rm 1.0 "$W/debs"
 mk orph-rm2 1.0 "$W/debs"
+mk orph-rm3 1.0 "$W/debs"
 d=$W/src/orph-feed; mkdir -p "$d/DEBIAN" "$d/usr/share/orph-watched" "$d/usr/lib/systemd/catalog"
 echo data >"$d/usr/share/orph-watched/feed.txt"
 printf -- '-- 0123456789abcdef0123456789abcdef\nSubject: orphans test\n' >"$d/usr/lib/systemd/catalog/orph-feed.catalog"
@@ -311,8 +314,36 @@ check "D: the conffile lean and recorded again" bash -c "$(declare -f lean recor
 dpkg-stereo --verify orph-rm orph-rm2 >"$W/verify-d.log" 2>&1
 check "D: --verify: orph-rm clean, only the person's file named as theirs" bash -c "! grep -q 'orph-rmrc' '$W/verify-d.log' && grep -q '^EDITED    /etc/xdg/orph-rm2rc' '$W/verify-d.log'"
 check "D: the person's conffile still as they made it" cmp -s /etc/xdg/orph-rm2rc "$W/rm2.copy"
-dpkg -P orph-rm orph-rm2 </dev/null >"$W/d4.log" 2>&1 || bad "D: purge: $(tail -3 "$W/d4.log")"
-check "D: a purge removes them" bash -c "test ! -e /etc/xdg/orph-rmrc && test ! -e /etc/xdg/orph-rm2rc"
+# a record whose lean hash is wrong: the person edits orph-rm3's lean conffile, and its record's sha_lean and bytes_lean
+# are forged to the edited bytes (the pristine original and dpkg's config-files hash stay right, so every hash passes)
+dpkg -i "$W/debs/orph-rm3_1.0_all.deb" </dev/null >"$W/d5.log" 2>&1 || bad "D: install orph-rm3: $(tail -3 "$W/d5.log")"
+check "D: control: orph-rm3's conffile lean and recorded" bash -c "$(declare -f lean recorded); R=$R; lean /etc/xdg/orph-rm3rc && recorded orph-rm3 /etc/xdg/orph-rm3rc"
+sed -i 's/^Mode=fast$/Mode=mine/' /etc/xdg/orph-rm3rc
+cp /etc/xdg/orph-rm3rc "$W/rm3.copy"
+python3 - "$R" <<'EOF'
+import hashlib, sys
+R, p = sys.argv[1], '/etc/xdg/orph-rm3rc'
+data = open(p, 'rb').read()
+for t in (R + '/records/orph-rm3.tsv', R + '/conffiles.tsv'):
+    lines = open(t, encoding='utf-8').read().splitlines(True)
+    cols = lines[0].lstrip('#').rstrip('\n').split('\t')
+    out = []
+    for line in lines:
+        v = line.rstrip('\n').split('\t')
+        if v[0] == p:
+            v[cols.index('sha_lean')] = hashlib.sha256(data).hexdigest()
+            v[cols.index('bytes_lean')] = str(len(data))
+            line = '\t'.join(v) + '\n'
+        out.append(line)
+    open(t, 'w', encoding='utf-8').writelines(out)
+EOF
+check "D: control: the forged record's lean hash is the person's file" bash -c "grep '^/etc/xdg/orph-rm3rc	' $R/records/orph-rm3.tsv | cut -f7 | grep -qx \$(sha256sum </etc/xdg/orph-rm3rc | cut -d' ' -f1)"
+dpkg -r orph-rm3 </dev/null >"$W/d6.log" 2>&1 || bad "D: remove orph-rm3: $(tail -3 "$W/d6.log")"
+cat "$W/d6.log"
+check "D: a record whose lean hash is wrong never overwrites the person's edit" cmp -s /etc/xdg/orph-rm3rc "$W/rm3.copy"
+check "D: and that is said, naming the file and the package" grep -q "/etc/xdg/orph-rm3rc, a setting of the removed package orph-rm3, stays as it is: today's renderer does not make it from the package's own file" "$W/d6.log"
+dpkg -P orph-rm orph-rm2 orph-rm3 </dev/null >"$W/d4.log" 2>&1 || bad "D: purge: $(tail -3 "$W/d4.log")"
+check "D: a purge removes them" bash -c "test ! -e /etc/xdg/orph-rmrc && test ! -e /etc/xdg/orph-rm2rc && test ! -e /etc/xdg/orph-rm3rc"
 
 dpkg --audit >"$W/audit.log" 2>&1
 check "dpkg --audit empty" test ! -s "$W/audit.log"
