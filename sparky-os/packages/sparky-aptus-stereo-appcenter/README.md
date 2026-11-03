@@ -26,7 +26,10 @@ The engine’s explicit repair retries the failed reset through Debian’s gener
 
 The ordered sections offer 3D emulation, stereo players/editors/tools, VR and SteamVR, drivers, then System.
 The shipped catalogue comes from the edition's image, emulation and role lists, with the VLC Stereo package selected by make-meta.py.
-Install and remove use the shared engine; installation refuses a candidate outside the trusted edition archive.
+Install and remove use the shared engine.
+The installed sparky-stereo-apt only-ours policy determines which names require a trusted edition candidate.
+Other entries install APT's candidate from configured signed archives.
+Names with no downloadable archive candidate are omitted, except only-ours names whose missing edition build remains a visible problem with Repair.
 The system's configured Flathub remote supplies SlimeVR; no remote is added here.
 The SlimeVR driver ZIP is downloaded and checked against its pinned SHA-256 before being made available in /var/cache/sparky-aptus-stereo-appcenter.
 It is labelled Downloaded; its linked upstream instructions describe registration in SteamVR.
