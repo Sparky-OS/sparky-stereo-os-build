@@ -2039,6 +2039,48 @@ def remedy(P, why, package, version, arch, offered, prerm, file=None):
     return ['LOCAL36', deb, deb]
 
 
+def fetch_originals(P, package, version, arch, wanted, plans, offline, fetch, unreachable, note, deb_errors=None):
+    """The files WANTED of one package version from its .deb, in restore's order (ORDER 365): APT's cache (that
+    architecture's file, by APT's own name), then a configured source (apt-get download) unless OFFLINE holds the
+    version, then, with FETCH, snapshot.debian.org when PLANS (AptView.plan) say APT's data call the package Debian's.
+    ({path: bytes}, None or ('snapshot', file), None or (why, detail, file)): WHY one of WHY's keys when the .deb could
+    not be had. UNREACHABLE (a list) keeps snapshot's first failure to answer, and snapshot is not asked again while it
+    holds one; NOTE gets the line that says a .deb was fetched. A fetched .deb waits in APT's partial/ directory: the
+    caller checks every file it gives back, then moves it into APT's cache (place_in_cache) or deletes it. Restore
+    (with the person's own .deb files besides) and the migration that gives back lost records (0.1.31) share it."""
+    name = package.split(':')[0]
+    offered, ask, archive = plans.get((package, version), (True, True, ''))
+    got = {}
+    m = deb_members(P, package, version, wanted, download=(package, version) not in offline, errors=deb_errors,
+                    arch=arch, why=got)
+    w = got.get((package, version))
+    if w is None or w[0] not in ('unlisted', 'apt'):
+        return m, None, w and (w[0], w[1], w[2])
+    # neither APT's cache nor a configured source gave the .deb
+    if not fetch:
+        return m, None, ('unlisted' if w[0] == 'unlisted' else 'apt', w[1], None)
+    if not ask:
+        return m, None, ('apt', w[1], None) if offered else \
+            ('other-archive', f'{archive}; {w[1]}' if archive else w[1], None)
+    if unreachable:
+        return m, None, ('unreachable', f'snapshot.debian.org was not asked again after: {unreachable[0]}', None)
+    path, err = snapshot_deb(P, name, version, arch or 'all')
+    if path is None:
+        kind, detail = err
+        if kind == 'unreachable':
+            unreachable.append(detail)
+        if offered:
+            detail = f'{w[1]}; {detail}'
+        return m, None, ({'unreachable': 'unreachable', 'refused': 'refused'}.get(kind) or
+                         ('apt' if offered else 'not-on-snapshot'), detail, None)
+    note(f'dpkg-stereo: {package} {version}: its .deb fetched from snapshot.debian.org ({os.path.getsize(path)} '
+         f'bytes; its SHA-1 and its Package, Version and Architecture checked)')
+    got = {}
+    m = deb_members(P, package, version, wanted, arch=arch, debs=[path], why=got)
+    w = got.get((package, version))
+    return m, ('snapshot', path), w and (w[0], w[1], w[2])
+
+
 def restore(P, names, drop_hold=False, pkgs=None, log=print, progress=None, fetch=False, debs=()):
     """The original files back, records dropped: every record, or the packages and paths `names` lists.
     `pkgs` limits the records read to those packages (a caller that knows them); `progress` gets a line
@@ -2134,42 +2176,12 @@ def restore(P, names, drop_hold=False, pkgs=None, log=print, progress=None, fetc
     def originals(package, version, arch, wanted):
         """The originals of WANTED, where they came from (None, or ('given'|'snapshot', file)), and, when the .deb
         could not be had, (why, detail, file)."""
-        name = package.split(':')[0]
         if (package, version) in given:
             got = {}
             m = deb_members(P, package, version, wanted, arch=arch, debs=[given[(package, version)]], why=got)
             w = got.get((package, version))
             return m, ('given', given[(package, version)]), w and ('given', w[1], None)
-        offered, ask, archive = plans.get((package, version), (True, True, ''))
-        got = {}
-        m = deb_members(P, package, version, wanted, download=(package, version) not in offline, errors=deb_errors,
-                        arch=arch, why=got)
-        w = got.get((package, version))
-        if w is None or w[0] not in ('unlisted', 'apt'):
-            return m, None, w and (w[0], w[1], w[2])
-        # neither APT's cache nor a configured source gave the .deb
-        if not fetch:
-            return m, None, ('unlisted' if w[0] == 'unlisted' else 'apt', w[1], None)
-        if not ask:
-            return m, None, ('apt', w[1], None) if offered else \
-                ('other-archive', f'{archive}; {w[1]}' if archive else w[1], None)
-        if unreachable:
-            return m, None, ('unreachable', f'snapshot.debian.org was not asked again after: {unreachable[0]}', None)
-        path, err = snapshot_deb(P, name, version, arch or 'all')
-        if path is None:
-            kind, detail = err
-            if kind == 'unreachable':
-                unreachable.append(detail)
-            if offered:
-                detail = f'{w[1]}; {detail}'
-            return m, None, ({'unreachable': 'unreachable', 'refused': 'refused'}.get(kind) or
-                             ('apt' if offered else 'not-on-snapshot'), detail, None)
-        note(f'dpkg-stereo: {package} {version}: its .deb fetched from snapshot.debian.org ({os.path.getsize(path)} '
-             f'bytes; its SHA-1 and its Package, Version and Architecture checked)')
-        got = {}
-        m = deb_members(P, package, version, wanted, arch=arch, debs=[path], why=got)
-        w = got.get((package, version))
-        return m, ('snapshot', path), w and (w[0], w[1], w[2])
+        return fetch_originals(P, package, version, arch, wanted, plans, offline, fetch, unreachable, note, deb_errors)
 
     t0 = said = time.time()
     seen = 0
