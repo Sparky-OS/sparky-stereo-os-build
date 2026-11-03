@@ -9,14 +9,14 @@
 # CGM) in /usr/lib/dpkg-stereo, dpkg's pre-invoke and post-invoke hooks, the first-update hook that writes
 # the HR copies of settings, and the pre-squashfs hook Sparky Backup Core Stereo runs for the ISO.
 # Needs only dpkg-deb; run it in a throwaway container or on any Debian.
-# Last update 2026/11/02
+# Last update 2026/11/03
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 umask 022
 HERE=$(cd "$(dirname "$0")" && pwd)
 LEAN=$(cd "$HERE/../../lean" && pwd)
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
-VERSION=0.1.26
+VERSION=0.1.27
 PKG=dpkg-stereo
 W=$(mktemp -d "${TMPDIR:-/tmp}/dpkg-stereo-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
@@ -98,7 +98,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: dpkg, python3, sparky-stereo-problems (>= 0.1.0)
+Depends: dpkg (>= 1.23.11+stereo3d1+lc1), dpkg-lean-code (>= 1), python3, sparky-stereo-problems (>= 0.1.0)
 Recommends: gcc, node-acorn, nodejs, perl, python3-yaml
 Section: System
 Priority: optional

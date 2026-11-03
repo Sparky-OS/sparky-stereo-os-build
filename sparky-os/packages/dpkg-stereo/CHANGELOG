@@ -1,4 +1,29 @@
 -------------------------------------------------------------------------------
+  Version 0.1.27 (2026-11-03)
+-------------------------------------------------------------------------------
+  * ORDER 363 (Daniel, 2026-11-03: "make it recognize the lc1 mark, it's ours to modify anyways"): the
+    other architecture of a projected Multi-Arch: same package installs, upgrades, reinstalls and is
+    removed. Debian's dpkg refused it ("trying to overwrite shared '/usr/share/gcc/python/libstdcxx/v6/
+    __init__.py', which is different from other instances of package libstdc++6:i386", apt exit 100),
+    so Steam and wine32 could not be installed where dpkg-stereo had projected libstdc++6. The edition's
+    dpkg (1.23.11+stereo3d1+lc1) accepts a shared file that is the projection this package's record
+    names when the file being unpacked is the file every other instance shipped and the recorded
+    original, and refuses every other difference as Debian's dpkg does; this package depends on it
+    (dpkg-lean-code, the contract it provides). Shared files stay projected, as every other file.
+  * One projection, one record, for a shared file: a run that installs or reinstalls the other
+    architecture's instance reads that instance's record too, so the file our dpkg put back in the
+    package's bytes is projected again from the same checked render, and its record moves to the
+    instance that projected it; a file its twin projected earlier in the same run is no longer kept as
+    "changed since its package installed it".
+  * When dpkg removes the instance a shared file is recorded for, the file stays (another instance still
+    ships it, src/main/remove.c) and so does its projection: the record goes to that instance, at the
+    recorded version, with the recorded original's MD5 in its md5sums. Before, the record went and the
+    file stayed lean with no record, so neither --verify nor --restore knew it.
+  * Every projection records the MD5 of its original (before, only conffiles did).
+  * Upgrades remove once the second records and the false left rows earlier versions kept for shared
+    files (marker shared-twin-records-v1); no file changes.
+
+-------------------------------------------------------------------------------
   Version 0.1.26 (2026-11-03)
 -------------------------------------------------------------------------------
   * Use the shared tracked-input copier for source and binary inputs; fail on git errors.
