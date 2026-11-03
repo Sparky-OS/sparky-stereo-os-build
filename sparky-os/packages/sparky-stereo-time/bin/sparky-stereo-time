@@ -285,7 +285,7 @@ authselectmode prefer
 CONTENT="# Sparky Stereo OS: written by sparky-stereo-time from the timezone, do not edit
 ${LINES}"
 if [ "$PRINT" = 1 ]; then
-	if [ "$DEBIAN" = 1 ]; then printf "$LOCAL54"'\n' "$CC"; exit 0; fi
+	if [ "$DEBIAN" = 1 ]; then printf "$LOCAL54"'\n' "$CC" >&2; exit 0; fi
 	printf '%s' "$CONTENT"
 	[ -n "$AUTH" ] && echo "# conf.d: authselectmode prefer"
 	exit 0

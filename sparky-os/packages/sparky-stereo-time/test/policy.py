@@ -69,6 +69,8 @@ with tempfile.TemporaryDirectory(prefix='time-policy-') as tmp:
         check(zone + ' kept by the engine', bool(records))
         (evidence / (zone.replace('/', '-') + '-failure.txt')).write_text(r.stdout + r.stderr)
     for zone, cc in (('Antarctica/McMurdo', 'AQ'), ('Pacific/Guam', 'GU')):
+        r = run([program, '--zone', zone, '--print'], env)
+        check(zone + ' --print keeps notices out of generated configuration', r.returncode == 0 and not r.stdout and 'No official time service' in r.stderr)
         for mode in ('--no-reload', '--check'):
             # Seed the exact obsolete step, as the accepted previous package did.
             run(['python3', env['SPARKY_TIME_PROBLEMS'], 'record', 'zone', 'LOCAL54', cc], env)
