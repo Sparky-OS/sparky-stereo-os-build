@@ -9,7 +9,7 @@ under the GNU General Public License, version 3 or any later version.
 Dependencies:
 -------------
 KDE Frameworks 6 (KAuth, KCMUtils, KI18n, Kirigami)
-sparky-stereo-kernel-settings (>= 20261103.3~)
+sparky-stereo-kernel-settings (>= 20261103.4~)
 sparky-stereo-cushion-swap (recommended)
 sparky-stereo-problems (>= 0.1.0), pkexec
 

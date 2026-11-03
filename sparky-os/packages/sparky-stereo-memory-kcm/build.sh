@@ -39,7 +39,7 @@ Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
 Depends: $DEPENDS
 Recommends: sparky-stereo-cushion-swap
-Breaks: sparky-stereo-kernel-settings (<< 20261103.3~)
+Breaks: sparky-stereo-kernel-settings (<< 20261103.4~)
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org
@@ -71,7 +71,7 @@ Package: $PACKAGE
 Architecture: amd64
 Depends: \${shlibs:Depends}, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, sparky-stereo-kernel-settings (>= 20261010.2~sparky9~0), sparky-stereo-problems (>= 0.1.0), pkexec
 Recommends: sparky-stereo-cushion-swap
-Breaks: sparky-stereo-kernel-settings (<< 20261103.3~)
+Breaks: sparky-stereo-kernel-settings (<< 20261103.4~)
 Description: Memory page for System Settings
  The Cushion Swap File and its protection state in System Settings.
 EOF
