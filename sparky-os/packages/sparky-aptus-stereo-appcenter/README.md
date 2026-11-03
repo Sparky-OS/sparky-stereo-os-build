@@ -6,8 +6,8 @@ Sparky Stereo OS, Daniel Ramos's edition of SparkyLinux (by Paweł "pavroo" Pija
 This package sits beside Paweł Pijanowski's sparky-aptus-appcenter, on which it depends.
 It owns only paths named sparky-aptus-stereo-appcenter and its own polkit actions.
 It never replaces or diverts the original's files.
-The start page reads the original category links at runtime and shows them below our System section.
-Requests outside aptus://stereo_ go unchanged to the original handler, from its working directory.
+The start page reads the original category links at runtime and shows them below our edition sections.
+Unrecognized requests go unchanged to the original handler, from its working directory.
 
 System offers compressed RAM swap (zram), absent and off in the edition by default.
 The action /usr/lib/sparky-aptus-stereo-appcenter/actions/zram supports status, install and remove.
@@ -24,8 +24,14 @@ A failed stop or device reset prevents removal; a failed start is retained with 
 Removal checks service Result and zero disksize after stopping, not only systemctl’s exit code.
 The engine’s explicit repair retries the failed reset through Debian’s generator after swap is inactive.
 
-ORDER 104 still owns the other sections and entries: 3D emulation, stereo players, editors and tools, VR and SteamVR, drivers, verified vendor downloads, the pinned launcher, the CODESYS 4 store link and SlimeVR.
-This first version neither implements nor claims those entries.
+The ordered sections offer 3D emulation, stereo players/editors/tools, VR and SteamVR, drivers, then System.
+The shipped catalogue comes from the edition's image, emulation and role lists, with the VLC Stereo package selected by make-meta.py.
+Install and remove use the shared engine; installation refuses a candidate outside the trusted edition archive.
+The system's configured Flathub remote supplies SlimeVR; no remote is added here.
+The SlimeVR driver ZIP is downloaded and checked against its pinned SHA-256 before being made available in /var/cache/sparky-aptus-stereo-appcenter.
+It is labelled Downloaded; its linked upstream instructions describe registration in SteamVR.
+CODESYS 4 links to CODESYS Store; registration and the EULA stay with CODESYS.
+Hardware Setup owns driver choices.
 
 Build with OUT=/scratch/output APTUS_SOURCE=/path/to/the/fork bash build.sh inside the package build container.
 The default source is the build repository's APTus submodule.
