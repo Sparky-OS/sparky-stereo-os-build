@@ -78,7 +78,7 @@ install -D -m 644 "$HERE/default/xdg/plasma-workspace/env/10-sparky-stereo-input
 install -D -m 644 "$HERE/default/needrestart.conf" "$D/etc/needrestart/conf.d/90-sparky-stereo.conf"
 install -D -m 644 "$HERE/default/flathub.flatpakrepo" "$D/usr/share/flatpak/remotes.d/flathub.flatpakrepo"
 control "$D" sparky-stereo-look \
-	"plasma-theme-oxygen, oxygen-icon-theme, oxygencursors, kde-style-oxygen-qt6, kwin-decoration-oxygen, kwin-style-aurorae, libkf6config-bin, plasma-runners-addons (>= 4:6.7.4-1+stereo3d1), plasma-systemmonitor, sparky-stereo-gtk" \
+	"plasma-workspace (>= 4:6.7.4-2+stereo3d6), plasma-theme-oxygen, oxygen-icon-theme, oxygencursors, kde-style-oxygen-qt6, kwin-decoration-oxygen, kwin-style-aurorae, libkf6config-bin, plasma-runners-addons (>= 4:6.7.4-1+stereo3d1), plasma-systemmonitor, sparky-stereo-gtk" \
 	"kde-style-oxygen-qt5, sparkyos-artwork, sparky-stereo-look-kubabbar-glass" \
 	"Sparky Stereo OS default look: Oxygen dark" \
 	"The edition's default global theme: Oxygen, whole, in its dark colours:" \
