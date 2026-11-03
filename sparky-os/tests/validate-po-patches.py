@@ -15,7 +15,7 @@ DSC_MAP = {
     "kalgebra-stereo3d.po.patch": "kalgebra_26.04.0-1+stereo3d2.dsc",
     "kalzium-stereo3d.po.patch": "kalzium_26.04.3-1+stereo3d4.dsc",
     "kf6-kfilemetadata-stereo3d.po.patch": "kf6-kfilemetadata_6.30.0-1+stereo3d2.dsc",
-    "kinfocenter-stereo3d.po.patch": "/var/tmp/sparky-lc-migration-20261020/recovered-sources/kinfocenter/kinfocenter_6.7.4-1+stereo3d1.dsc",
+    "kinfocenter-stereo3d.po.patch": "kinfocenter_6.7.4-1+stereo3d1.dsc",
     "kubrick-stereo3d.po.patch": "kubrick_26.04.0-1+stereo3d2.dsc",
     "plasma-workspace-recovery.po.patch": "plasma-workspace_6.7.4-2+stereo3d2.dsc",
 }
