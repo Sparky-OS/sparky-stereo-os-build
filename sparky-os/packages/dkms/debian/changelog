@@ -1,3 +1,28 @@
+dkms (3.4.4-1+sparky3) unstable; urgency=medium
+
+  * dkms: when dkms is configured, DKMS modules built without a signature
+    while dkms could not sign them are built again, so DKMS signs them
+    (/usr/lib/dkms/dkms-sign-unsigned, called by the postinst). Before
+    3.4.4-1+sparky2 dkms did not depend on openssl; without it dkms said
+    "openssl not found, can't generate key and certificate." and installed
+    the modules unsigned, and they stayed unsigned after openssl arrived,
+    because "dkms install --force" copies the module already built; a
+    Secure Boot machine refuses an unsigned module at load. Only modules
+    with a file that lacks the module signature trailer, on a kernel built
+    with module signing, are built again ("dkms build --force", then
+    "dkms install --force"); signed modules are left alone, and nothing is
+    built when every module is signed. Upstream has no command that signs
+    installed modules again (dkms-project/dkms #372, closed as stale;
+    Debian #1035707, Simon Richter, open). ORDER 370.
+  * A rebuild that fails is said and kept by sparky-stereo-problems with
+    the rebuild as its repair, DKMS's built copy is put back so the module
+    stays installed as it was, and the configuration completes. dkms
+    Depends and Build-Depends on sparky-stereo-problems; its messages are
+    in nine languages (debian/problems-lang), and the postrm clears its
+    problems when dkms is removed.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 03 Nov 2026 11:30:00 -0300
+
 dkms (3.4.4-1+sparky2) unstable; urgency=medium
 
   * dkms: Depends on openssl. DKMS signs every module it builds with a key
