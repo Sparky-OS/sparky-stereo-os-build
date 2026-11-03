@@ -2,11 +2,12 @@
   Version 0.1.29 (2026-11-03)
 -------------------------------------------------------------------------------
   * ORDER 367: a dpkg run that changes nothing costs the hooks almost nothing. On the A10 (run aba2-20261103)
-    `dpkg --configure -a` with nothing to do took 1.4 to 1.8 s lean against 1.0 s with nothing projected; in the
-    lane's container (Debian testing, 2,912 packages, 597 record tables, 12,986 records, 104 projected conffiles)
-    dpkg alone took about 60 ms and the two hooks about 470 ms more. Where it went: each hook compiled the
-    2,900-line program (28 ms) and imported modules it rarely needs (64 ms: concurrent.futures alone brings
-    logging, traceback and _colorize); pre-invoke put every lean conffile back in its package's bytes for every
+    `dpkg --configure -a` with nothing to do took 1.4 to 1.8 s lean against 1.0 s with nothing projected. In the
+    lane's container (Debian testing, 3,856 packages, 1,302 record tables, 53,500 records, 105 projected conffiles,
+    a Ryzen 5 5600G) dpkg alone took 65 ms, and 0.1.28's two hooks 368 ms more; 0.1.29's take 64 ms (median of 10;
+    of 20 alternating runs: 380 against 115 ms, and 649 against 171 ms on a busier machine). Where it went: each hook
+    compiled the 2,900-line program (28 ms) and imported modules it rarely needs (64 ms: concurrent.futures alone
+    brings logging, traceback and _colorize); pre-invoke put every lean conffile back in its package's bytes for every
     run and post-invoke projected each again, reading their packages' record tables; post-invoke parsed dpkg's
     whole database, looked at every package's file list and read every recorded conffile.
   * The program is /usr/lib/dpkg-stereo/dpkg_stereo.py, byte-compiled by the postinst (py3compile, removed by the
@@ -38,7 +39,8 @@
     (lean/package.py, installed) counts the same states: it took only "install ok installed", so a marked package
     on hold, or with its trigger pending, was taken for an unmarked one (the renderer's identity does not move).
   * A run that changes a package reads dpkg's database once (it read it three times: post-invoke, the projection
-    and the package table each).
+    and the package table each). In the same container, one package of 28 files installed, upgraded, removed and
+    purged, medians of 20: 1,326, 1,276, 905 and 982 ms with 0.1.28; 970, 982, 606 and 616 ms now.
   * Tests: test/hook-cost-test.sh (red on 0.1.28: every projected conffile written again by a run that changed
     nothing; three mutants of 0.1.29 fail its other cases) and test/trigger-states-test.sh (red on 0.1.28: 8 of
     18).
