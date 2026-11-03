@@ -11,7 +11,7 @@ You should have received a copy of the GNU General Public License along with thi
 
 Files:
 -------------
-/etc/apt/sources.list.d/sparky-stereo-cuda.sources: NVIDIA's repository for Debian 13, https://developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64/, read for amd64 and i386 (since 20261103.1: NVIDIA's i386 driver libraries, which Steam's, Wine's and 32-bit games need on an NVIDIA card, at the version of the amd64 driver, since a Multi-Arch: same library must have the same version on both architectures; dpkg installs them only where it has i386). The package's postinst writes it from /usr/share/sparky-stereo-cuda-repo/sparky-stereo-cuda.sources, only when no other source of apt names this repository, and says so.
+/etc/apt/sources.list.d/sparky-stereo-cuda.sources: NVIDIA's repository for Debian 13, https://developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64/, read for amd64. The package's postinst writes it from /usr/share/sparky-stereo-cuda-repo/sparky-stereo-cuda.sources, only when no other source of apt names this repository, and says so.
 /usr/share/keyrings/cuda-archive-keyring.gpg: NVIDIA's key for it, the same file NVIDIA's cuda-keyring package installs.
 /etc/apt/preferences.d/91sparky-stereo-cuda: the pins.
 
