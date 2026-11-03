@@ -7,8 +7,15 @@ dpkg (1.23.11+stereo3d3) mashtabba; urgency=medium
     including edited, missing and unrecorded conffiles. Keep physical-byte
     hashes for incoming files, shared files and dpkg --verify.
   * Apply the same check to dpkg-maintscript-helper removals and renames
-    through a private read-only action, preserving real local edits.
+    through a private action that reads the database without changing it,
+    preserving real local edits and recording refusal diagnostics.
   * Provide dpkg-lean-code (= 2), allowing dpkg-stereo to leave projected
     conffiles in place before a dpkg run.
   * Add a functional conffile regression covering upgrades, reinstall,
     force options, original validation and declarative removal.
+
+  * Bind the recorded projection to the genuine original through dpkg-stereo's
+    fixed, ownership-checked read-only verifier. Keep Debian conflict decisions
+    on refusal and journal their reasons for dpkg-stereo's problems engine.
+  * Signal capability 2 to invoke hooks, and keep forged-projection and
+    untrusted-verifier regressions mandatory.

@@ -96,6 +96,11 @@ cd /work/lc/source
 runuser -u builder -- dpkg-buildpackage -us -uc -j4 >/work/build.log 2>&1
 # Capability 2 requires the in-process pristine-original decoder.
 grep -q '^#define WITH_LIBLZMA 1$' build-tree/config.h
+# The conffile functional cases execute the real read-only renderer verifier at
+# its fixed trusted path. Runtime installations receive these from dpkg-stereo.
+install -d /usr/lib/dpkg-stereo/lean
+install -m 644 /toolkit/lean/*.py /toolkit/lean/JvmLexer.java /toolkit/lean/ZigTokens.zig /usr/lib/dpkg-stereo/lean/
+install -m 755 /toolkit/packages/dpkg-stereo/lib/conffile-verify /usr/lib/dpkg-stereo/conffile-verify
 # the functional test suite against the build tree's programs, as non-root (dpkg's own default mode); dpkg-build-tree has
 # the programs, the source tree the shell library dpkg-maintscript-helper reads from DPKG_DATADIR (src/sh)
 set +e
