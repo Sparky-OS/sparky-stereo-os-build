@@ -66,13 +66,15 @@ def toolkit_identity():
         raise package.Invalid(why)
 
 
-def build_tree(root, out):
+def build_tree(root, out, preserve=None):
+    """preserve: a payload preservation plan ({installed pattern: reason}, package.preservation): those files stay as
+    their authors ship them and the manifest says why."""
     toolkit_identity()
     root, out = Path(root).resolve(), Path(out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='lc-build-') as work:
         hr = Path(work) / 'hr'
-        obj = package.prepare(root, hr)
+        obj = package.prepare(root, hr, preserve=preserve)
         trees = [root] + ([hr] if obj['hr_package'] else [])
         built = []
         for tree in trees:
@@ -263,6 +265,8 @@ def main():
     build = commands.add_parser('build-tree')
     build.add_argument('tree')
     build.add_argument('out')
+    build.add_argument('--preserve-plan', help='JSON {installed pattern: reason}: payload files kept exactly as their '
+                                               'authors ship them (a vendor licence), each with its reason')
     check = commands.add_parser('check-debs')
     check.add_argument('debs', nargs='+')
     ident = commands.add_parser('check-identity', help='staged lc1 archives: renderer label and digest match the version table')
@@ -292,7 +296,8 @@ def main():
     args = parser.parse_args()
     try:
         if args.command == 'build-tree':
-            build_tree(args.tree, args.out)
+            plan = json.loads(Path(args.preserve_plan).read_text()) if args.preserve_plan else None
+            build_tree(args.tree, args.out, plan)
         elif args.command == 'check-debs':
             check_debs(args.debs)
         elif args.command == 'check-identity':

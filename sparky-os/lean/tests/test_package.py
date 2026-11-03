@@ -188,6 +188,30 @@ class Packages(unittest.TestCase):
         self.assertEqual(row['status'], 'left')
         self.assertIn('no qualified adapter', row['reason'])
 
+    def test_preserved_payload_stays_as_authored_with_its_reason(self):
+        root = self.stage()
+        script = (root / 'usr/bin/lc-demo').read_bytes()
+        out = self.base / 'preserved-out'
+        release.build_tree(root, out, {'/usr/bin/lc-*': 'the vendor licence asks for unmodified files'})
+        self.assertEqual((root / 'usr/bin/lc-demo').read_bytes(), script)
+        obj = package.check_tree(root)
+        rows = {r['path']: r for r in obj['files']}
+        self.assertEqual(rows['/usr/bin/lc-demo']['status'], 'left')
+        self.assertEqual(rows['/usr/bin/lc-demo']['reason'],
+                         package.PRESERVED + 'the vendor licence asks for unmodified files')
+        self.assertEqual(rows['/usr/bin/lc-demo']['sha256'], hashlib.sha256(script).hexdigest())
+        self.assertEqual(rows['/usr/bin/lc-demo-link']['kind'], 'symlink')
+        self.assertEqual(rows['/etc/systemd/system/lc-demo.service']['status'], 'projected')
+        self.assertEqual(len(release.check_debs(sorted(out.glob('*.deb')))), 2)
+
+    def test_preservation_plan_must_name_payload_files_with_reasons(self):
+        for plan in ({'/usr/bin/nothing-here': 'stale'}, {'usr/bin/lc-demo': 'relative'},
+                     {'/usr/bin/lc-demo': ' '}, {'/usr/../etc/x': 'escape'}, ['/usr/bin/lc-demo']):
+            root = self.stage(package_name='lc-plan-' + str(abs(hash(str(plan))) % 10000))
+            with self.assertRaises(package.Invalid):
+                package.prepare(root, self.base / ('hr-' + root.name), preserve=plan)
+            self.assertNotIn(package.FIELD.lower(), package.control(root))
+
     def test_old_renderer_provenance_remains_compatible(self):
         root = self.stage()
         obj = package.prepare(root, self.base / 'hr')

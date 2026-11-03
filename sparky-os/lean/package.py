@@ -10,6 +10,7 @@ HR lives in a separate, exact-version documentation package, never in the runtim
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import functools
 import json
@@ -246,11 +247,29 @@ def installed(P, names=None):
     return out
 
 
-def prepare(root, hr_root=None, *, documentation=False):
+PRESERVED = 'preserved as authored: '
+
+
+def preservation(plan):
+    """A payload preservation plan, {installed pattern: reason}: absolute fnmatch patterns of payload files that stay
+    exactly as their authors ship them, each with why (a vendor's licence asks that its files stay unmodified)."""
+    if plan is None:
+        return {}
+    if not isinstance(plan, dict):
+        raise Invalid('a payload preservation plan maps installed patterns to reasons')
+    for pattern, reason in plan.items():
+        if (not isinstance(pattern, str) or not pattern.startswith('/') or '\\' in pattern
+                or '..' in pattern.split('/') or not isinstance(reason, str) or not reason.strip()):
+            raise Invalid('payload preservation needs absolute installed patterns, each with a reason')
+    return plan
+
+
+def prepare(root, hr_root=None, *, documentation=False, preserve=None):
     """Final staging step, before md5sums/dpkg-deb. Never run against an installed root.
 
     Failure leaves an unmarked disposable staging tree. Rebuild the staging tree to retry.
     documentation=True is reserved for our generated HR companion (it contains only docs).
+    preserve: a payload preservation plan (see preservation); every pattern must name a payload file.
     """
     root = Path(root).resolve()
     fields = control(root)
@@ -265,8 +284,15 @@ def prepare(root, hr_root=None, *, documentation=False):
     hr = Path(hr_root).resolve() if hr_root is not None else None
     if hr and (hr == root or root in hr.parents or hr in root.parents or hr.exists()):
         raise Invalid('HR staging directory must be new and separate')
+    plan = preservation(preserve)
+    if plan and documentation:
+        raise Invalid('the HR companion has no preservation plan')
     rows, originals = [], []
     items = list(entries(root))
+    unused = sorted(pattern for pattern in plan
+                    if not any(row['kind'] == 'file' and fnmatch.fnmatchcase(row['path'], pattern) for _, row in items))
+    if unused:
+        raise Invalid('payload preservation patterns that name no payload file: ' + ', '.join(unused))
     # files another payload file reads as data (Zig's @embedFile) stay as authored, whatever their format
     readers = project.read_as_data({row['path']: real.read_bytes() for real, row in items
                                     if row['kind'] == 'file' and project.reads_others(row['path'])},
@@ -275,10 +301,13 @@ def prepare(root, hr_root=None, *, documentation=False):
         path = row['path']
         row.update(status='left', reason='symlink: retained')
         if row['kind'] == 'file':
+            kept = next((pattern for pattern in plan if fnmatch.fnmatchcase(path, pattern)), None)
             if documentation:
                 if not (path.startswith(HR_BASE + '/') or path.startswith('/usr/share/doc/')):
                     raise Invalid('HR companion may contain only documentation')
                 row['reason'] = 'authored documentation: retained'
+            elif kept is not None:
+                row['reason'] = PRESERVED + plan[kept]
             elif real.stat().st_nlink > 1:
                 row['reason'] = 'hardlinked payload: retained'
             elif row['bytes'] == 0 or row['bytes'] > MAX_TEXT:
