@@ -1,4 +1,50 @@
 -------------------------------------------------------------------------------
+  Version 0.1.31 (2026-11-03)
+-------------------------------------------------------------------------------
+  * ORDER 373: the records dpkg-stereo 0.1.28 and older lost come back. Those versions counted a package as installed
+    only in dpkg's state "installed" (0.1.29 fixed that, ORDER 367): a run that left one with its trigger pending, as
+    apt's --no-triggers runs leave systemd whenever a package ships a file under /usr/lib/systemd/catalog, dropped its
+    records, and the next projection left its lean files as "changed since its package installed it" (a lean conffile
+    as "changed by the person"). --verify did not name them, --restore could not bring their originals back, and dpkg
+    would ask about such a conffile at its package's next upgrade. On the station 378 rows were so (systemd 313, udev
+    50), and /etc/default/nss was a lean conffile called the person's.
+  * A one-time migration (marker orphaned-lean-v1), run by the postinst and then by the hooks until it completes, judges
+    each such file of an installed package against its package's own file at the installed version. dpkg's database
+    names the version (a left row names none), and an original is that version's only when its MD5 is the one dpkg
+    records for the file (md5sums, or the conffile's hash). The original comes from the pristine store (a conffile's
+    copy, found by that MD5), then as restore takes it: APT's cache, a configured source, and snapshot.debian.org only
+    for the person's --repair and --repair-consumers, never inside dpkg's hooks.
+      - exactly the projection of that original, checked again by its reader: its record comes back (a conffile's with
+        its pristine copies, so pre-invoke puts it back before dpkg compares it) and its row goes;
+      - anything else stays the person's, as before; a file without the pointer line every projection carries is not
+        one, and its original is not fetched to say so;
+      - a file in its package's own bytes (a stale row) is examined again;
+      - a projection today's check refuses (an older engine's) goes back to its package's bytes, its row saying why.
+  * What came back and what stayed the person's is said once, in the system's language with English beside it. A file
+    whose original is nowhere at hand keeps its row; --verify names it (UNRECORDED; exit 2, the check is not complete),
+    --status counts it, and the step is kept as a problem naming each package version, why, and what gives the records
+    back (sudo dpkg-stereo --repair, which also asks snapshot.debian.org; or the package's next upgrade). A dpkg run
+    tries a version again only when its installed version, APT's lists or APT's cache changed.
+  * Counted read-only on the station (dpkg-stereo 0.1.16; 401 such rows of installed packages): 375 files get their
+    record back (systemd 313, udev 50, libc-bin 3, man-db 2, cracklib-runtime 2, initramfs-tools 2, install-info,
+    mailcap and menu 1 each); 19 stay the person's, none of them carrying the pointer line (systemd's sleep.conf,
+    system.conf and user.conf among them); 3 rows were files in their package's own bytes (nis, libcufile-13-4,
+    media-types); 4 conffiles of nut, readable by root only, were not read. cracklib-runtime 2.9.6-5.3+b1 is in no
+    configured source any more, so its 2 files wait for the person's --repair.
+  * A removed package's lean conffiles go back to its package's bytes. dpkg keeps a removed package's conffiles, and
+    their hashes, until a purge, and an install of the package again compares each with that hash: a lean one looked
+    changed by the person, so the install kept it lean and --verify called it EDITED (ORDER 367). Post-invoke now writes
+    back the pristine original of each recorded conffile that is still exactly its projection, of a package dpkg lists
+    in "config-files" with that original's hash; installing the package again is quiet, finds it unmodified, and
+    projects and records it again. What the person sees: after removing a package (not purging it), its settings files
+    in /etc are as the package shipped them, comments included, until it is installed again; a settings file the person
+    changed stays as they made it; a purge removes them all, as before.
+  * restore's order for an original (APT's cache, a configured source, snapshot.debian.org) is one function, which
+    restore and the migration share.
+  * Tests: test/orphans-test.sh. 0.1.28 loses systemd's and three fixtures' records through one `dpkg --no-triggers -i`
+    (ORDER 367's probe) and their conffiles' through one `dpkg --no-triggers -r` (pre-invoke puts no conffile back for a
+    removal); the package under test is then installed over it. On 0.1.29 it exits 1 with 29 of its 60 checks
+    failing (every control passes: the loss is reproduced); on 0.1.31 all 60 pass.
   Version 0.1.30 (2026-11-03)
 -------------------------------------------------------------------------------
   * Carry Lean Code 0.1.25, whose Perl handler keeps quoted pattern and string

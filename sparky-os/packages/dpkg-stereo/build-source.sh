@@ -42,6 +42,19 @@ EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
 
+  * The records dpkg-stereo 0.1.28 and older lost come back, once: a lean
+    file left without its record is recorded again when it is exactly the
+    projection of its package's own file at the installed version; any
+    other file stays the person's; what cannot be judged yet, because its
+    package's .deb is nowhere at hand, is kept as a problem until a later
+    run or the person's --repair gives it its record (ORDER 373).
+  * A removed package's lean conffiles go back to its package's bytes, so
+    installing it again is quiet and projects them again.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 03 Nov 2026 23:30:00 -0300
+
+dpkg-stereo (0.1.30) unstable; urgency=medium
+
   * Carry Lean Code 0.1.25 and recheck recorded Perl quote refusals once,
     keeping user edits, holds and already qualified projections (ORDER 372).
 
