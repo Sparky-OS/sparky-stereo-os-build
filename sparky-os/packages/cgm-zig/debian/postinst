@@ -1,8 +1,10 @@
 #!/bin/sh
 set -e
+# 2147483647, the highest priority update-alternatives(1) accepts: in automatic mode no other provider of zig is chosen
+# over this one; a choice the person made (manual mode, update-alternatives --config zig) is kept.
 case "$1" in
 	configure|abort-upgrade|abort-remove|abort-deconfigure)
-		update-alternatives --install /usr/bin/zig zig /usr/lib/cgm-zig/bin/zig 20
+		update-alternatives --install /usr/bin/zig zig /usr/lib/cgm-zig/bin/zig 2147483647
 		;;
 esac
 #DEBHELPER#

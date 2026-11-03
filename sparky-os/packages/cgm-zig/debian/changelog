@@ -1,3 +1,19 @@
+cgm-zig (0.16.0+cgm.0399d2b19b-2) unstable; urgency=medium
+
+  * The edition's zig is the zig whenever another zig is installed too (Daniel,
+    2026-11-02: "WHERE HAVE YOU SEEN WHEN WE OFFER A PACKAGE PEOPLE SHOULD
+    INSTALL DEBIAN's VERSION???"; ORDER 361): the alternative is registered at
+    2147483647, the highest priority update-alternatives accepts, so automatic
+    mode never chooses another provider over it; a choice the person makes with
+    update-alternatives --config stays theirs.
+  * The Debian Zig Team's zig package (zig-defaults) ships /usr/bin/zig itself
+    rather than an alternative, so dpkg would put it over this package's link:
+    the preinst diverts every other package's /usr/bin/zig to
+    /usr/bin/zig.distrib (moving one already installed aside), and the postrm
+    takes the diversion away and gives that file back its name.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 02 Nov 2026 22:41:39 -0300
+
 cgm-zig (0.16.0+cgm.0399d2b19b-1) unstable; urgency=medium
 
   * Package the verified compiler source with its matching standard library.

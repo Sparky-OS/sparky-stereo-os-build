@@ -1,0 +1,15 @@
+#!/bin/sh
+set -e
+# The diversion goes with the package, and another package's /usr/bin/zig comes back to its name (prerm took the
+# alternatives link away first). An upgrade from a version without the diversion that is undone takes it away too.
+case "$1" in
+	remove|abort-install|disappear)
+		dpkg-divert --package cgm-zig --remove --rename --divert /usr/bin/zig.distrib /usr/bin/zig
+		;;
+	abort-upgrade)
+		if dpkg --compare-versions "$2" lt 0.16.0+cgm.0399d2b19b-2~; then
+			dpkg-divert --package cgm-zig --remove --rename --divert /usr/bin/zig.distrib /usr/bin/zig
+		fi
+		;;
+esac
+#DEBHELPER#

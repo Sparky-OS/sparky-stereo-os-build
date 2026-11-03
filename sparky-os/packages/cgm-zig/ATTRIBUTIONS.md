@@ -24,9 +24,8 @@ Its CMake build and stage3 library layout agree with the fork's upstream build n
 Its `chrpath -d` install step fixes the same measured LLVM dependency-lookup error here: the compiler must use the standard runtime library directory, not the toolchain development-directory alias.
 The recipe scripts are new; Ubuntu's rules are reference material, not copied wholesale.
 The detailed Debian copyright inventory is adapted from Ubuntu's zig0.16 package, with its legal texts retained and entries for the fork's retained Clang resource headers and the edition's packaging.
-Ubuntu's [zig-defaults 5ubuntu1](https://archive.ubuntu.com/ubuntu/pool/universe/z/zig-defaults/zig-defaults_5ubuntu1.tar.xz) chooses zig0.16 with a directly owned `/usr/bin/zig` link.
-This package instead follows the edition's alternatives design.
-Coexistence requires another provider to participate in the same alternatives group; a package owning `/usr/bin/zig` directly is not proven compatible.
+Ubuntu's [zig-defaults 5ubuntu1](https://archive.ubuntu.com/ubuntu/pool/universe/z/zig-defaults/zig-defaults_5ubuntu1.tar.xz), packaging of the Debian Zig Team (its `XSBC-Original-Maintainer`, with nick black's earlier Debian uploads in its changelog), chooses zig0.16 with a directly owned `/usr/bin/zig` link.
+This package follows the edition's design instead: its alternative at the highest priority, and a diversion that sends another package's `/usr/bin/zig` to `/usr/bin/zig.distrib`, so the edition's zig stays the zig with that package installed too (ORDER 361; `tests/alternatives.sh` proves both install orders against zig 5ubuntu1 and zig0.16 0.16.0~us1-0ubuntu1).
 The Debian dpkg maintainers document registration and removal in [update-alternatives(1)](https://manpages.debian.org/testing/dpkg/update-alternatives.1.en.html).
 
 ## Edition packaging
