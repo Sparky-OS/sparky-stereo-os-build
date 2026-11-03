@@ -76,7 +76,7 @@ say() {
 step() {
 	key=$(printf '%s-' "$@" | tr -c 'a-zA-Z0-9-' '_')
 	# debhelper 14.5 autoscripts/postinst-systemd-restart completes with
-	# "deb-systemd-invoke restart ... >/dev/null || true". We complete and
+	# "systemctl --system daemon-reload >/dev/null || true". We complete and
 	# keep the error and repair. This is our behavior, not a Policy exception.
 	if sparky-stereo-problems run sparky-stereo-cushion-swap "setup-$key" LOCAL19 '' -- "$@"; then
 		return 0
