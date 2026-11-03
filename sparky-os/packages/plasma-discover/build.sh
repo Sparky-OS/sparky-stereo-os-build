@@ -24,9 +24,11 @@ cp "$(dirname "$SOURCE_DSC")"/plasma-discover_6.7.4.orig.tar.* "$BUILD_ROOT/"
 dpkg-source -x "$SOURCE_DSC" "$BUILD_ROOT/authored"
 cd "$BUILD_ROOT/authored"
 mkdir -p debian/patches
-cp "$HERE/backend-split.patch" "$HERE/flatpak-appstream-cache.patch" debian/patches/
+cp "$HERE/backend-split.patch" "$HERE/flatpak-appstream-cache.patch" "$HERE/sparky-problems-appstream-cache.patch" debian/patches/
 cp "$TOOLKIT/translations/discover-backend-split.po.patch" debian/patches/
-printf '%s\n' backend-split.patch discover-backend-split.po.patch flatpak-appstream-cache.patch >> debian/patches/series
+printf '%s\n' backend-split.patch discover-backend-split.po.patch flatpak-appstream-cache.patch sparky-problems-appstream-cache.patch >> debian/patches/series
+mkdir -p debian/sparky-lang
+cp "$HERE"/lang/* debian/sparky-lang/
 dpkg-source --before-build .
 python3 - <<'PY'
 from pathlib import Path
@@ -37,12 +39,24 @@ text = text.replace(old, 'Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jac
 text = text.replace('Homepage: https://invent.kde.org/system/plasma-discover',
                     'Homepage: https://sparkylinux.org\nBugs: https://github.com/Sparky-OS/sparky-stereo-os/issues', 1)
 path.write_text(text)
+# the failures of the cache compile are kept by the edition's one engine of problems (ORDER 380), with the texts in the nine
+# languages built into journal catalogs; it is also a build dependency, for the catalog command
+engine = 'sparky-stereo-problems (>= 0.1.2)'
+text = text.replace('Build-Depends: ', 'Build-Depends: ' + engine + ', ', 1)
+start = text.index('Package: plasma-discover\n')
+text = text[:start] + text[start:].replace('Depends: appstream (>= 1.0),', 'Depends: appstream (>= 1.0),\n         ' + engine + ',', 1)
+path.write_text(text)
+rules = Path('debian/rules')
+rules.write_text(rules.read_text() + '\nexecute_after_dh_auto_install:\n\tmkdir -p debian/tmp/usr/lib/systemd/catalog\n\tsparky-stereo-problems catalog plasma-discover debian/sparky-lang debian/tmp/usr/lib/systemd/catalog --subject LOCAL1\n')
+core = Path('debian/plasma-discover.install')
+core.write_text(core.read_text() + 'usr/lib/systemd/catalog/plasma-discover*.catalog\n')
 install = Path('debian/plasma-discover-backend-fwupd.install')
 install.write_text(install.read_text() + 'usr/lib/${DEB_HOST_MULTIARCH}/qt6/plugins/discover-notifier/FirmwareNotifier.so\n')
 PY
 dch --newversion "$VERSION" --distribution mashtabba \
 	'Default to Flatpak and firmware; retain an explicit persistent PackageKit option for Debian packages.'
 dch --append 'Compile the AppStream caches of the Flatpak catalogs in a short-lived process, so Discover loads compiled caches and does not keep the XML of the catalogs in its heap.'
+dch --append 'Keep a failed cache compile in sparky-stereo-problems, with the texts in the nine languages.'
 dpkg-source -b .
 cp "$BUILD_ROOT"/*.dsc "$BUILD_ROOT"/*.debian.tar.* "$BUILD_ROOT"/*.orig.tar.* "$OUT/authored/"
 dpkg-source -x "$BUILD_ROOT/plasma-discover_${VERSION}.dsc" "$BUILD_ROOT/lean-source"
