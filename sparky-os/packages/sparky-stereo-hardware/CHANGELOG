@@ -1,4 +1,12 @@
 -------------------------------------------------------------------------------
+  Version 0.1.22 (2026-11-03)
+-------------------------------------------------------------------------------
+  * Let Repair wait for a running apt or dpkg operation before installing NVIDIA's
+    32-bit libraries, and explain the wait on the terminal in the nine languages
+  * Preserve the caller's language for Repair; keep detection output in C
+  * Ship README.md at the Documentation path named by both system units
+
+-------------------------------------------------------------------------------
   Version 0.1.21 (2026-11-03)
 -------------------------------------------------------------------------------
   * NVIDIA's i386 libraries install by themselves after the apt run that needs them (ORDER 363b; Daniel, 2026-10-23: "user has not to configure, out of the box full experience, including the drivers needed to"). When dpkg's post-invoke hook finds them missing inside an apt run (apt holds dpkg's frontend lock for its whole run and says so to dpkg with DPKG_FRONTEND_LOCKED, apt-pkg/deb/dpkgpm.cc:2057), it starts sparky-stereo-hardware-nvidia-i386.service without waiting for it (systemctl --no-block) and tells the run's terminal. The unit waits until that run has ended (apt-get check with DPkg::Lock::Timeout=-1, apt-pkg/deb/debsystem.cc:80-116), asks apt whether it can install them (apt-get --simulate without the locks), installs nvidia-driver-libs:i386 and libcuda1:i386 at the driver's version under the engine (sparky-stereo-problems run) and keeps a notice for this boot, which the session's notifier shows. The person's `dpkg --add-architecture i386; apt-get update; apt-get install steam-installer` now ends with them installed, and that run never waits on the unit
