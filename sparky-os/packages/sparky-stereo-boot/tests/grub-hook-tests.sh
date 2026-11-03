@@ -59,6 +59,33 @@ check 'UHD laptop saved at 3840x2160: 46 px font' "$(mkroot eDP-1 /tmp/uhd-panel
 	'3840x2160,1920x1080,1280x720,1024x768,auto' keep "$CMD" 'sparky-46.pf2'
 check 'UHD laptop saved at 1920x1080: 24 px font' "$(mkroot eDP-1 /tmp/uhd-panel.edid '' 'SPARKY_STEREO_GFXMODE=1920x1080\nSPARKY_STEREO_CONNECTOR=eDP-1\n')" '' \
 	'1920x1080,1280x720,1024x768,auto' keep "$CMD" 'sparky-24.pf2'
+# 0.1.7: one text height for every screen, at a desk (Daniel, 2026-11-02: "I sit at 50cm from the screen, I use it as
+# a monitor, and people installing sparky will be installing on a PC, not in a television"). A 43 inch UHD screen
+# (941 x 529 mm) reports a television's size: 4.2 mm is 17 px there, GRUB's own font (0.1.6 made it 38 px, for 1.3 m);
+# a 27 inch UHD monitor (597 x 336 mm) keeps 28 px; the person's GRUB_STEREO_TEXT_MM and GRUB_FONT still decide.
+edid() {     # edid FILE WIDTH HEIGHT WIDTH_MM HEIGHT_MM
+	python3 - "$FIX/hx855.edid" "$@" <<'PY'
+import sys
+e = bytearray(open(sys.argv[1], 'rb').read()[:128])
+w, h, wm, hm = (int(v) for v in sys.argv[3:7])
+e[56] = w & 0xff; e[58] = (e[58] & 0x0f) | ((w >> 8) << 4)
+e[59] = h & 0xff; e[61] = (e[61] & 0x0f) | ((h >> 8) << 4)
+e[66] = wm & 0xff; e[67] = hm & 0xff; e[68] = ((wm >> 8) << 4) | (hm >> 8)
+e[127] = (-sum(e[:127])) & 0xff
+open(sys.argv[2], 'wb').write(bytes(e))
+PY
+}
+edid /tmp/uhd-43.edid 3840 2160 941 529
+edid /tmp/uhd-27.edid 3840 2160 597 336
+check '43 inch UHD screen: the desk size, GRUB font (no television scaling)' "$(mkroot HDMI-A-1 /tmp/uhd-43.edid '' 'SPARKY_STEREO_GFXMODE=3840x2160\nSPARKY_STEREO_CONNECTOR=HDMI-A-1\n')" '' \
+	'3840x2160,1920x1080,1280x720,1024x768,auto' keep "$CMD" ''
+check '27 inch UHD monitor: 28 px font' "$(mkroot DP-1 /tmp/uhd-27.edid '' 'SPARKY_STEREO_GFXMODE=3840x2160\nSPARKY_STEREO_CONNECTOR=DP-1\n')" '' \
+	'3840x2160,1920x1080,1280x720,1024x768,auto' keep "$CMD" 'sparky-28.pf2'
+check 'GRUB_STEREO_TEXT_MM=9 on the 43 inch screen: 36 px font' "$(mkroot HDMI-A-1 /tmp/uhd-43.edid '' 'SPARKY_STEREO_GFXMODE=3840x2160\nSPARKY_STEREO_CONNECTOR=HDMI-A-1\n')" 'GRUB_STEREO_TEXT_MM=9' \
+	'3840x2160,1920x1080,1280x720,1024x768,auto' keep "$CMD" 'sparky-36.pf2'
+check 'GRUB_FONT set by the person on the 43 inch screen: kept' "$(mkroot HDMI-A-1 /tmp/uhd-43.edid '' 'SPARKY_STEREO_GFXMODE=3840x2160\nSPARKY_STEREO_CONNECTOR=HDMI-A-1\n')" 'GRUB_FONT=/boot/grub/fonts/mine.pf2' \
+	'3840x2160,1920x1080,1280x720,1024x768,auto' keep "$CMD" 'mine.pf2'
+rm -f /tmp/uhd-43.edid /tmp/uhd-27.edid
 # 0.1.5: told, kept and recorded. told NAME ROOT PRESET PATH-FIRST WANT-VARS STDERR-PATTERN KEPT DECISION
 #   KEPT is STEP:KEY, or -STEP for none; DECISION a pattern grub-display must match
 told() {

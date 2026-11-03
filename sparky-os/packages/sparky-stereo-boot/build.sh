@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/01
+# Last update 2026/11/03
 #
 # Builds the sparky-stereo-boot package (hand assembled, Paweł's formula).
 #   build.sh OUTDIR
@@ -9,7 +9,7 @@ set -euo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
 OUT=$(readlink -f "${1:-.}")
 PKG=sparky-stereo-boot
-VERSION=0.1.6+lc1
+VERSION=0.1.7+lc1
 umask 022
 mkdir -p "$OUT"
 D=$(mktemp -d "${TMPDIR:-/tmp}/stereo-boot-build.XXXXXX")
@@ -108,9 +108,9 @@ if [ "$1" = configure ]; then
 	# secureboot.py, and the package configures (this system boots without it until Secure Boot needs the key)
 	python3 /usr/lib/sparky-stereo-boot/secureboot.py esp || :
 	# the kernel line takes ${sparky_stereo_boot} from GRUB's environment block (0.1.0), the menu the Secure Boot
-	# enrolment entry (0.1.3), and 30-sparky-stereo-boot.cfg says what GRUB is given and keeps it (0.1.5); a failed
-	# update-grub fails the package, as grub2's postinst does
-	if { [ -z "$2" ] || dpkg --compare-versions "$2" lt 0.1.5; } && [ -x /usr/sbin/update-grub ] && [ -e /boot/grub/grub.cfg ]; then
+	# enrolment entry (0.1.3), 30-sparky-stereo-boot.cfg says what GRUB is given and keeps it (0.1.5), and the menu's
+	# text has one size for every screen (0.1.7); a failed update-grub fails the package, as grub2's postinst does
+	if { [ -z "$2" ] || dpkg --compare-versions "$2" lt 0.1.7; } && [ -x /usr/sbin/update-grub ] && [ -e /boot/grub/grub.cfg ]; then
 		python3 $P run update-grub LOCAL21 -- update-grub || failed=1
 	fi
 	[ -z "$failed" ] || exit 1

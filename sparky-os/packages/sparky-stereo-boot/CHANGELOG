@@ -1,4 +1,16 @@
 -------------------------------------------------------------------------------
+  Version 0.1.7 (2026-11-03)
+-------------------------------------------------------------------------------
+  * GRUB's menu text has one size on every screen, for a PC at a desk (ORDER 361; Daniel, 2026-11-02: "I sit at 50cm
+    from the screen, I use it as a monitor, and people installing sparky will be installing on a PC, not in a
+    television"): GRUB_STEREO_TEXT_MM (4.2 mm) is no longer enlarged for screens that report a television's size
+    (1.2 times the diagonal for a screen over 32 inches); a 43 inch UHD screen gets GRUB's own font instead of 38 px.
+    GRUB_STEREO_TEXT_MM and GRUB_FONT set by the person still decide. update-grub runs once on the upgrade, so the
+    menu takes the new size
+  * The old-kernel cleanup runs at normal priority, as part of the update (ORDER 361; Daniel, 2026-11-02, after "any
+    build at update time - DO NEVER CAP EXECUTION": "same with kernel removal"): sparky-stereo-kernel-keep.service
+    loses Nice=10
+-------------------------------------------------------------------------------
   Version 0.1.6 (2026-11-02)
 -------------------------------------------------------------------------------
   * ORDER 350 (Daniel, 2026-11-02: "Why machinery to keep a failure for each?"): the boot's problems are kept
