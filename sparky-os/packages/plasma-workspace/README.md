@@ -1,7 +1,7 @@
 # Plasma leave-screen recovery actions
 
 Rebuild Debian testing's plasma-workspace 4:6.7.4-2 with two actions in the
-Ctrl+Alt+Del leave screen. Task manager launches KDE System Monitor through
+Ctrl+Alt+Esc leave screen. Task manager launches KDE System Monitor through
 KDE's application launcher. Close a frozen window dismisses the greeter and
 uses KWin's existing interactive window selection. Power and session actions
 are retained. New text uses KDE's translation mechanism.
@@ -45,3 +45,11 @@ link and start gate against the published +stereo3d2+lc1 builds. The three patch
 `patches/s3-0001` is invent danielcamposramos/plasma-workspace `lock-wallpaper-below-291` (on v6.7.4): the image
 wallpaper's TransientImage reads its image again when its texture is released, so that it shows in a new window (the
 lock screen moves its wallpaper into a window of its own below the prompt). Test: `testtransientimage`.
+
+## 4:6.7.4-2+stereo3d6 (ORDER 359)
+
+Ctrl+Alt+Esc opens the logout screen; the look package makes Ctrl+Alt+Del open System Monitor.
+Ctrl+Esc and Ctrl+Shift+Esc continue to open System Monitor, and Meta+Ctrl+Esc keeps KWin’s Kill Window action.
+The default belongs to startkde/session-shortcuts/main.cpp, which registers the existing ksmserver/Log Out action with KGlobalAccel.
+Saved assignments win, and System Settings’ Reset to defaults restores the edition’s assignment.
+The patch is committed in the edition’s plasma-workspace fork on order359-time-shortcuts.
