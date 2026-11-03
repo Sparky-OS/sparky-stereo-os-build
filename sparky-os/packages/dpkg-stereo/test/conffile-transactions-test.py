@@ -4,9 +4,12 @@
 """Actual native dpkg transactions in a disposable root container.
 
 Usage: conffile-transactions-test.py SOURCE-BUILT-DPKG
-The candidate program/toolkit/catalogue must already be installed in the
-container. This is a source-build fixture, not a release-package check: its
-dpkg status stanza receives the Provides field emitted by the build recipe.
+       conffile-transactions-test.py --installed
+       conffile-transactions-test.py --installed-baseline TransactionsTest.test_forged_projection_cannot_hide_edit_through_hooks
+The program/toolkit/catalogue must already be installed in the container.
+Source-build mode supplies explicit hooks and the recipe's Provides field.
+Installed mode checks real package metadata and uses the packaged hook file;
+it does not rewrite dpkg's status stanza or add command-line hooks.
 A fixture renderer package replaces core.py so dpkg itself changes the active
 renderer during unpack. Never run this test on a host or a shared container.
 """
@@ -18,7 +21,9 @@ import sys
 import tempfile
 import unittest
 
-NATIVE = sys.argv.pop(1)
+mode = sys.argv.pop(1)
+INSTALLED = mode in ('--installed', '--installed-baseline')
+NATIVE = '/usr/bin/dpkg' if INSTALLED else mode
 sys.path.insert(0, '/usr/lib/dpkg-stereo')
 import dpkg_stereo as stereo
 from lean import project
@@ -37,7 +42,20 @@ HOOK = '/usr/bin/python3 /usr/lib/dpkg-stereo/dpkg_stereo.py'
 class TransactionsTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        if not Path('/.dockerenv').exists() or os.geteuid() != 0:
+            raise RuntimeError('use a disposable root container')
         cls.core = CORE.read_bytes()
+        if INSTALLED:
+            version, provides = subprocess.check_output(
+                ['/usr/bin/dpkg-query', '-W', '-f=${Version}\n${Provides}', 'dpkg'], text=True).split('\n')
+            baseline = mode == '--installed-baseline'
+            expected = '1.23.11+stereo3d2+lc1' if baseline else '1.23.11+stereo3d3+lc1'
+            assert version == expected, version
+            assert provides == ('dpkg-lean-code (= 1)' if baseline else 'dpkg-lean-code (= 2)'), provides
+            stereo_version = subprocess.check_output(
+                ['/usr/bin/dpkg-query', '-W', '-f=${Version}', 'dpkg-stereo'], text=True)
+            assert stereo_version == ('0.1.30' if baseline else '0.1.32'), stereo_version
+            return
         cls.status_path = Path('/var/lib/dpkg/status')
         cls.status = cls.status_path.read_text()
         stanzas = cls.status.split('\n\n')
@@ -54,7 +72,8 @@ class TransactionsTest(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         CORE.write_bytes(cls.core)
-        cls.status_path.write_text(cls.status)
+        if not INSTALLED:
+            cls.status_path.write_text(cls.status)
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix='order376-')
@@ -105,7 +124,7 @@ class TransactionsTest(unittest.TestCase):
         if not hooks:
             env['DPKG_STEREO_DISABLE'] = '1'
         cmd = [NATIVE, '--root=/', '--admindir=/var/lib/dpkg', '--force-unsafe-io', '--force-overwrite']
-        if hooks:
+        if hooks and not INSTALLED:
             cmd += ['--pre-invoke=' + HOOK + ' --pre-invoke', '--post-invoke=' + HOOK + ' --post-invoke']
         result = subprocess.run(cmd + list(args), input=b'', stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, timeout=600, env=env)
@@ -187,14 +206,18 @@ class TransactionsTest(unittest.TestCase):
             verifier.chmod(0o755)
 
     def test_forged_projection_cannot_hide_edit_through_hooks(self):
-        edited = LEAN.replace(b'value=old', b'value=personal')
+        # Keep the size identical, so the old hook's size check cannot mask
+        # its trust in a forged sha_lean before native dpkg sees the edit.
+        edited = LEAN.replace(b'value=old', b'value=own')
+        self.assertEqual(len(edited), len(LEAN))
+        self.assertNotEqual(edited, LEAN)
         self.file.write_bytes(edited)
         records = stereo.Records(stereo.Paths())
         records[PATH] = dict(records[PATH], sha_lean=hashlib.sha256(edited).hexdigest())
         records.save()
         result = self.invoke('-i', self.packages[(PACKAGE, '2')])
+        self.assertEqual(self.file.read_bytes(), edited, result.stdout.decode())
         self.assertNotEqual(result.returncode, 0, result.stdout.decode())
-        self.assertEqual(self.file.read_bytes(), edited)
         self.assertEqual(Path(PATH + '.dpkg-new').read_bytes(), NEW)
         kept = next(p for p in stereo.kept_problems(stereo.Paths()) if p['step'] == 'conffiles')
         self.assertTrue(any(i['package'] == PACKAGE and i['reason'] == 13 for i in kept['items']))
