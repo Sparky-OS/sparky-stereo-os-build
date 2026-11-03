@@ -145,7 +145,10 @@ What the edition adds around his rules
   uninstall.sh, stopping never switches the swap off ("removing the watcher
   is not the same decision as forcing swap off").
 - Where his own /etc/systemd/system/cgm-swap-parachute.service exists, the
-  packaged units and the generator do nothing.
+  packaged pressure daemon and the generator do nothing.
+  The native sleep preparation still checks and deploys the configured resume area.
+  The hold controls the packaged daemon; an independently installed watcher
+  must also respect the native sleep lifecycle.
 
 The log
 -------------

@@ -6,6 +6,8 @@ Run as root in a disposable container for the engine's real boot store; all
 kernel swap and sleep operations are fixtures. PKG may name an older source.
 """
 import json
+import fcntl
+import time
 import os
 from pathlib import Path
 import subprocess
@@ -16,6 +18,7 @@ pkg = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path(__file__).resol
 results = []
 with tempfile.TemporaryDirectory() as tmp:
     w = Path(tmp)
+    w.chmod(0o755)
     for name in ('state', 'sys', 'empty', 'catalog', 'engine'):
         (w / name).mkdir()
     swap = w / 'resume-partition'
@@ -24,6 +27,7 @@ with tempfile.TemporaryDirectory() as tmp:
     (w / 'resume').write_text(f'RESUME={swap}\n')
     (w / 'cmdline').write_text('quiet\n')
     (w / 'sys/resume').write_text('0:0\n')
+    (w / 'sys/resume_offset').write_text('0\n')
     (w / 'meminfo').write_text('MemTotal: 16777216 kB\nMemAvailable: 14000000 kB\nSwapTotal: 16777216 kB\nSwapFree: 16777216 kB\n')
     for command in ('swapon', 'swapoff'):
         f = w / command
@@ -95,9 +99,15 @@ if [ "${0##*/}" = swapon ]; then printf '%s file 16777216 0 -2\n' "$2" >>"$SWAPS
         sleep_entered = not native_pre or failed.returncode == 0
         records = list((w / 'engine/run/sparky-stereo-problems').glob('*hibernate-swapon.json'))
         kept = bool(records) and 'No space left on device' in records[0].read_text()
+        command = ['sparky-stereo-problems', 'list', '--json', 'sparky-stereo-cushion-swap']
+        root_records = subprocess.run(command, env=env, text=True, capture_output=True, check=True)
+        person_records = subprocess.run(command, env=env, text=True, capture_output=True, check=True,
+                                        preexec_fn=(lambda: os.setuid(1000)) if os.geteuid() == 0 else None)
+        visible = bool(json.loads(root_records.stdout)) and bool(json.loads(person_records.stdout))
         results.append(dict(case=verb + '-deployment-failure', pre_exit=failed.returncode,
-                            sleep_entered=sleep_entered, kept=kept,
-                            passed=failed.returncode != 0 and not sleep_entered and kept and
+                            sleep_entered=sleep_entered, kept=kept, root_list=json.loads(root_records.stdout),
+                            person_list=json.loads(person_records.stdout),
+                            passed=failed.returncode != 0 and not sleep_entered and kept and visible and
                             'No space left on device' in failed.stderr))
     # Normal pacing starts afresh when the used area must stay on after resume.
     reset()
@@ -114,6 +124,20 @@ if [ "${0##*/}" = swapon ]; then printf '%s file 16777216 0 -2\n' "$2" >>"$SWAPS
     pre = run('--hibernate-deploy')
     post = run('--hibernate-resume', now=1010)
     results.append(dict(case='manual-wake', passed=pre.returncode == 0 and post.returncode == 0 and not active()))
+    reset()
+    # A daemon read/decide/swap operation holding the shared lock must finish
+    # before preparation can observe or change the same swap state.
+    with (w / 'state/swap-actions.lock').open('w') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        waiting = subprocess.Popen([str(pkg / 'sbin/cushion-swap'), '--hibernate-deploy'],
+                                   env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        time.sleep(0.2)
+        blocked = waiting.poll() is None and not active()
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        waiting.communicate(timeout=10)
+    results.append(dict(case='preparation-serialized-with-daemon',
+                        passed=blocked and waiting.returncode == 0 and active()))
+    run('--hibernate-resume')
     reset()
     missing = run('--hibernate-deploy', INITRAMFS_RESUME_PATH=str(w / 'absent'))
     results.append(dict(case='missing-resume-blocks-sleep', exit=missing.returncode, passed=missing.returncode != 0))
