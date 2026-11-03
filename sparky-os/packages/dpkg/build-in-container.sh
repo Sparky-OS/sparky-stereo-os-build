@@ -1,5 +1,5 @@
 #!/bin/bash
-# Sparky Stereo OS: dpkg 1.23.11+stereo3d1, Debian's dpkg 1.23.11 with the Lean Code shared-file check, built with Lean Code.
+# Sparky Stereo OS: dpkg 1.23.11+stereo3d2, Debian's dpkg 1.23.11 with the Lean Code shared-file check, built with Lean Code.
 # Created by Daniel Ramos (Capitain Jack) 2026/11/03
 # Copyright 2026 under the GNU GPL3 License
 # Runs as root inside a clean Debian testing build container; build.sh starts it. /work is the job folder (empty), /src
@@ -14,7 +14,7 @@ set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS='parallel=4'
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com LC_ALL=C.UTF-8
 UPSTREAM=1.23.11
-VERSION=$UPSTREAM+stereo3d1
+VERSION=$UPSTREAM+stereo3d2
 cd /work
 echo "4511c16a3bbbd3a88982408e2e5e5c471dc5f4a49eaa9b2cb93bf3e8c067fa78  /src/dpkg_$UPSTREAM.dsc" | sha256sum -c
 mkdir s1 && cd s1
@@ -51,8 +51,8 @@ desc = body.index('\nDescription:')
 text = text[:stanza] + body[:desc] + '\nProvides: dpkg-lean-code (= 1)' + body[desc:] + text[end:]
 path.write_text(text)
 p = Path('debian/changelog')
-entry = Path('/tools/changelog-stereo3d1.txt').read_text()
-assert entry.startswith('dpkg (1.23.11+stereo3d1) mashtabba;'), entry[:60]
+entry = Path('/tools/changelog-stereo3d2.txt').read_text()
+assert entry.startswith('dpkg (1.23.11+stereo3d2) mashtabba;'), entry[:60]
 assert p.read_text().startswith('dpkg (1.23.11) unstable;')
 p.write_text(entry.rstrip('\n') + '\n\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  '
              + email.utils.formatdate(localtime=True) + '\n\n' + p.read_text())
@@ -70,24 +70,17 @@ PYTHONPATH=/toolkit python3 -m lean.debian_prepare /work/lc/authored $VERSION+lc
 dpkg-source -x dpkg_$VERSION+lc1.dsc /work/lc/source >/dev/null
 n=$(grep -c 'python3 -m lean.debhelper --provenance' /work/lc/source/debian/rules)
 [ "$n" = 1 ]
-# payload-preserve.json: the five Perl modules lean's Perl handler cannot qualify (their qr{...}x patterns carry whole-line
-# comments, which are pattern text B::Deparse prints) stay as authored, each with its reason in the lc1 manifest
-cat >/work/builddeb-nogate.py <<'PY'
-import json
+# The link gate runs on the assembled cohort after the build. Every Perl
+# payload goes through the normal projection and consumer-equivalence check.
+cat >/work/builddeb-nogate.py <<'PYWRAP'
 import sys
 from pathlib import Path
 root = Path(sys.argv[1])
 sys.path.insert(0, str(root / 'debian/sparky-lean-toolkit'))
-from lean import debhelper, package, release
-plans = json.loads(Path('/tools/payload-preserve.json').read_text())
-build_tree = release.build_tree
-def preserving(staging, out, preserve=None):
-    name = package.identity(package.control(staging))[0]
-    return build_tree(staging, out, preserve=plans.get(name, preserve))
-release.build_tree = preserving
+from lean import debhelper
 debhelper.link_gate = lambda built: print('link gate after the build: lean.release check-link', ' '.join(p.name for p in built))
 debhelper.build(root, root / 'debian/sparky-lean-toolkit/provenance.sh')
-PY
+PYWRAP
 sed -i "s|^\tPYTHONPATH=\$(CURDIR)/debian/sparky-lean-toolkit python3 -m lean.debhelper --provenance .*\$|\tpython3 /work/builddeb-nogate.py \$(CURDIR)|" /work/lc/source/debian/rules
 apt-get -y update >/dev/null 2>&1
 apt-get -y --no-install-recommends build-dep /work/lc/source >/work/build-dep.log 2>&1
