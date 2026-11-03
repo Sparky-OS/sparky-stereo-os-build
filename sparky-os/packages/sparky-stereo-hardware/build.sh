@@ -29,7 +29,7 @@ Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
 Depends: apt, bash, ca-certificates, coreutils, curl, grep, isenkram-cli, kmod, laptop-detect, libnotify-bin, lm-sensors, nvidia-detect, pciutils, power-profiles-daemon (>= 0.30), python3, sed, sparky-remsu, sparky-xterm, udev, usbutils, util-linux, yad
-Recommends: sparky-stereo-cuda-repo (>= 20261103.1~sparky9~0)
+Recommends: sparky-stereo-cuda-repo
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org

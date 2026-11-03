@@ -7,9 +7,10 @@ sparky-stereo-hardware (0.1.19) unstable; urgency=medium
   * Where dpkg has i386, both NVIDIA paths install NVIDIA's i386 libraries
     at the driver's version too (nvidia-driver-libs:i386, libcuda1:i386),
     for Steam's, Wine's and 32-bit games' OpenGL, Vulkan and CUDA, and the
-    dry run says so.
-  * Recommends sparky-stereo-cuda-repo 20261103.1 or later, whose source
-    reads NVIDIA's i386 libraries.
+    dry run says so. On the 615 path they come from NVIDIA's CUDA
+    repository, which apt already reads for every architecture dpkg has:
+    a flat repository has one index, and its source's Architectures
+    option does not limit it (measured with apt 3.3.3).
   * Supersedes 0.1.18, which was not published; its changes are in this
     version.
 
