@@ -3,8 +3,9 @@
 # Copyright 2026 under the GNU GPL3 License
 # Last update 2026/11/03
 """The zram and zswap gate against fixture packages (built with dpkg-deb) and fixture image roots: every rule refuses
-what it is for and names the file and line, and what is allowed (Conflicts, zswap.enabled=0, comments, listing zram
-devices, documentation) passes. Needs python3 and dpkg-deb. SUBJECT selects another zram-check.py."""
+what it is for and names the file and line, and what is allowed (the person's Stereo APTus opt-in, Suggests,
+zswap.enabled=0, comments, listing zram devices, documentation) passes. Needs python3 and dpkg-deb. SUBJECT selects
+another zram-check.py."""
 import importlib.util
 import os
 from pathlib import Path
@@ -69,13 +70,31 @@ class Packages(Fixtures):
         self.assertRefused(self.deb(fields='Depends: libc6, systemd-zram-generator (>= 1.0)\n'),
                            'DEBIAN/control:5: Depends: systemd-zram-generator')
         self.assertRefused(self.deb(fields='Recommends: foo | zram-tools\n'), 'Recommends: zram-tools')
-        self.assertRefused(self.deb(fields='Suggests: zram-config\n'), 'Suggests: zram-config')
         self.assertRefused(self.deb(fields='Pre-Depends: zram-generator:amd64\n'), 'Pre-Depends: zram-generator')
         self.assertRefused(self.deb(fields='Provides: systemd-zram-generator\n'), 'Provides: systemd-zram-generator')
 
-    def test_relations_that_keep_it_out_pass(self):
-        self.assertPassed(self.deb(fields='Conflicts: systemd-zram-generator, zram-tools\nBreaks: zram-config\n'
+    def test_relations_that_cap_the_persons_choice(self):
+        # Daniel, 2026-11-03: "we don't cape user choice"; ORDER 358's kernel-settings 20261103.3 had this line
+        found = self.assertRefused(self.deb(fields='Conflicts: systemd-zram-generator, zram-tools\n'),
+                                   'DEBIAN/control:5: Conflicts: systemd-zram-generator', 'Conflicts: zram-tools',
+                                   'keeps the person from opting in')
+        self.assertEqual(len(found), 2)
+        self.assertRefused(self.deb(fields='Breaks: zram-config (<< 2)\n'), 'Breaks: zram-config')
+
+    def test_relations_that_leave_the_choice_pass(self):
+        self.assertPassed(self.deb(fields='Suggests: systemd-zram-generator\nEnhances: zram-tools\n'
                                           'Replaces: zram-generator\nDepends: systemd-zram-generator-doc\n'))
+
+    def test_the_persons_opt_in_from_stereo_aptus_passes(self):
+        # an aptus://sysoth_ entry and its install case, as sparky-aptus-stereo-appcenter's system-others.html and
+        # bin/aptus-app carry their entries (Daniel, 2026-11-03: "the user opt in inside stereo aptus")
+        lib = '/usr/lib/sparky-aptus-appcenter'
+        self.assertPassed(self.deb(name='sparky-aptus-stereo-appcenter', files={
+            lib + '/system-others.html': '<td><a href="aptus://sysoth_systemd-zram-generator" class="button1">'
+                                         '<img src="images/default-icon.svg" class="appicon"><br />zram swap</a>\n',
+            lib + '/bin/aptus-app': '#!/bin/bash\nif [ "$1" = "systemd-zram-generator" ]; then\n\tPACKAGE="$1"\nfi\n'
+                                    'apt-get install -y "$PACKAGE"\n',
+            lib + '/handler': '#!/bin/bash\nCHECKSYSOTH=`echo "$CMD" | grep sysoth_`\n'}))
 
     def test_zram_generator_configuration(self):
         conf = '# ours\n\n[zram0]\nzram-size = ram / 2\n'
@@ -182,9 +201,11 @@ class Packages(Fixtures):
         ok = run('--debs', str(clean))
         self.assertEqual(ok.returncode, 0, ok.stderr)
         self.assertIn('passed', ok.stdout)
+        self.assertIn('opt-in from Stereo APTus is allowed', ok.stdout)
         refused = run('--debs', str(clean), str(bad))
         self.assertEqual(refused.returncode, 1)
         self.assertIn('bad_1.0_all.deb: DEBIAN/control:5: Depends: systemd-zram-generator', refused.stderr)
+        self.assertIn('the person may opt in', refused.stderr)
         listed = self.dir / 'list'
         listed.write_text(f'{clean}\n{bad}\n')
         self.assertEqual(run('--debs-file', str(listed)).returncode, 1)
@@ -208,7 +229,7 @@ class Images(Fixtures):
 
     def test_clean_image(self):
         root = self.image([('systemd', 'Depends: libc6\n'), ('sparky-stereo-kernel-settings',
-                                                              'Conflicts: systemd-zram-generator, zram-tools\n')],
+                                                              'Suggests: systemd-zram-generator\n')],
                           {'/etc/default/grub': 'GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"\n',
                            '/boot/config-7.3.1-x': '# CONFIG_ZSWAP_DEFAULT_ON is not set\n',
                            '/usr/sbin/zramctl': '#!/bin/sh\n# stands for util-linux\n'})
@@ -217,7 +238,8 @@ class Images(Fixtures):
         self.assertIn('files read', what)
 
     def test_installed_packages_and_files(self):
-        root = self.image([('systemd-zram-generator', ''), ('x', 'Recommends: zram-tools\n')],
+        root = self.image([('systemd-zram-generator', ''), ('x', 'Recommends: zram-tools\n'),
+                           ('y', 'Conflicts: zram-tools\n')],
                           {'/etc/default/grub': '# x\nGRUB_CMDLINE_LINUX_DEFAULT="quiet zswap.enabled=1"\n',
                            '/boot/config-7.3.1-x': 'CONFIG_ZSWAP_DEFAULT_ON=y\n',
                            '/usr/lib/systemd/zram-generator.conf': '[zram0]\n',
@@ -229,6 +251,7 @@ class Images(Fixtures):
         findings, errors, _ = gate.check_image(root, [str(menu)])
         self.assertEqual(errors, [])
         for part in ('/var/lib/dpkg/status: systemd-zram-generator is installed', '/var/lib/dpkg/status: x:4: Recommends: zram-tools',
+                     '/var/lib/dpkg/status: y:4: Conflicts: zram-tools',
                      '/etc/default/grub:2:', '/boot/config-7.3.1-x:1: CONFIG_ZSWAP_DEFAULT_ON=y',
                      '/usr/lib/systemd/zram-generator.conf:1: [zram0]', 'systemd-zram-setup@zram0.service: a zram unit',
                      '/var/lib/dpkg/info/x.postinst:2:', f'{menu}:2:'):

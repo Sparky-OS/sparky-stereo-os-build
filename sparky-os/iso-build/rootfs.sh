@@ -122,7 +122,8 @@ if [ "$STEP" = packages ] || [ "$STEP" = all ]; then
 	cp /build/zfs-check.py $R/tmp/
 	inr python3 /tmp/zfs-check.py / || { echo "rootfs: ZFS is not ready; see validation errors above" >&2; exit 1; }
 	rm -f $R/tmp/zfs-check.py
-	# no zram and no zswap in the image (Daniel, 2026-11-02): every finding names its file and line
+	# nothing of zram or zswap of ours in the image, and the zram packages not installed (HOUSE-RULES "zram and zswap:
+	# never ours, never on by default; the person may opt in"): every finding names its file and line
 	cp /build/zram-check.py $R/tmp/
 	inr python3 /tmp/zram-check.py / || { echo "rootfs: zram or zswap is in the tree; see the gate's findings above" >&2; exit 1; }
 	rm -f $R/tmp/zram-check.py

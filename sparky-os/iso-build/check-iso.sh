@@ -114,7 +114,7 @@ if mount -o loop,ro "$I/live/filesystem.squashfs" "$T/image"; then
 		n=$(grep -c '^FAIL' "$T/kernel-fixes.txt"); [ "$n" -gt 0 ] || { n=1; echo "FAIL  kernel-fixes.py stopped (exit $r)"; }
 		fails=$((fails + n))
 	fi
-	echo "-- no zram and no zswap (zram-check.py: the image and the ISO's boot menus)"
+	echo "-- nothing of zram or zswap of ours (zram-check.py: the image and the ISO's boot menus; the person may opt in later)"
 	python3 /build/zram-check.py "$T/image" --also "$T/boot_grub_grub.cfg" --also "$T/isolinux_isolinux.cfg" > "$T/zram.txt" 2>&1 \
 		&& ok "$(cat "$T/zram.txt")" || { sed 's/^/   /' "$T/zram.txt"; no "zram or zswap in the image or its boot menus"; }
 	umount "$T/image"

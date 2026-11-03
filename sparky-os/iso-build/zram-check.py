@@ -2,13 +2,17 @@
 # Created by Daniel Ramos (Capitain Jack) 2026/11/03
 # Copyright 2026 under the GNU GPL3 License
 # Last update 2026/11/03
-"""Refuse zram and zswap in what the edition ships: packages and images.
+"""Refuse zram and zswap in what the edition ships or turns on, and anything of ours that keeps the person from it.
 
-Daniel, 2026-11-02: "do not compress or put anything to run from the RAM regarding swap". The swap is the
-Cushion Swap File on disk; no package, image or boot menu of the edition may ship, enable, recommend or depend
-on zram (zram-generator configurations, systemd-zram-generator, zram-tools, zramctl set-ups) or zswap
-(zswap.enabled=1 on a kernel command line, CONFIG_ZSWAP_DEFAULT_ON=y). Every finding names the file and the
-line (a byte offset in a compiled file), and any finding refuses.
+zram and zswap: never ours, never on by default; the person may opt in (HOUSE-RULES; Daniel, 2026-11-02: "do not
+compress or put anything to run from the RAM regarding swap"; 2026-11-03: "now make it a opt in for the user that
+really wants it", "we don't cape user choice", "what opt in means - off and disabled, the user opt in inside stereo
+aptus"). The swap is the Cushion Swap File on disk. No package, image or boot menu of the edition may ship, enable
+or pull in zram (zram-generator configurations, systemd-zram-generator, zram-tools, zramctl set-ups, the former
+Auto rule) or zswap (zswap.enabled=1 on a kernel command line, CONFIG_ZSWAP_DEFAULT_ON=y), and none may Conflict
+with or Break the zram packages, which would cap the person's choice. The person's opt-in passes: the Stereo APTus
+entry that installs Debian's systemd-zram-generator when the person picks it is neither a dependency nor a
+default. Every finding names the file and the line (a byte offset in a compiled file), and any finding refuses.
 
   zram-check.py [ROOT] [--also FILE ...]       an image root (default /): its installed packages, the files that
                                                configure boot, swap, modules, units and devices, the maintainer
@@ -38,9 +42,11 @@ FORBIDDEN = {
     'zram-config': "Ubuntu's zram set-up",
     'zram-generator': 'zram-generator',
 }
-# The fields that install, offer or stand in for a package (Debian Policy 7.2, 7.5). Conflicts, Breaks and
-# Replaces are how a package keeps them out, and stay allowed.
-PULLING = ('Pre-Depends', 'Depends', 'Recommends', 'Suggests', 'Enhances', 'Provides')
+# The fields that install a package by default or stand in for it (Debian Policy 7.2, 7.5), and the ones that keep
+# the person from installing it (Policy 7.3, 7.4): both refuse. Suggests and Enhances install nothing by default
+# (apt leaves them to the person) and Replaces alone removes nothing; they pass, as the person's own opt-in does.
+PULLING = ('Pre-Depends', 'Depends', 'Recommends', 'Provides')
+CAPPING = ('Conflicts', 'Breaks')
 
 # Never executed and never read as configuration: documentation, manual pages, translations, shell completions,
 # and dpkg-stereo's compressed authored copies (the package they belong to is checked itself).
@@ -191,12 +197,14 @@ def relations(control, origin):
             entries[-1][2] += ' ' + line.strip()
     findings = []
     for field, number, value in entries:
-        if field not in PULLING:
+        if field not in PULLING + CAPPING:
             continue
         for alternative in re.split(r'[,|]', value):
             m = re.match(r'\s*([a-z0-9][a-z0-9+.-]*)', alternative)
             if m and m.group(1) in FORBIDDEN:
-                findings.append(f'{origin}:{number}: {field}: {m.group(1)} ({FORBIDDEN[m.group(1)]})')
+                why = (FORBIDDEN[m.group(1)] if field in PULLING else
+                       f"{FORBIDDEN[m.group(1)]}: keeps the person from opting in, which caps their choice")
+                findings.append(f'{origin}:{number}: {field}: {m.group(1)} ({why})')
     return findings
 
 
@@ -297,7 +305,8 @@ def check_image(root, also):
         return findings, [f'/var/lib/dpkg/status: cannot be read: {error}'], 'the image'
     for name, stanza in sorted(packages.items()):
         if name in FORBIDDEN:
-            findings.append(f'/var/lib/dpkg/status: {name} is installed ({FORBIDDEN[name]})')
+            findings.append(f'/var/lib/dpkg/status: {name} is installed ({FORBIDDEN[name]}: an image has it off '
+                            'and not installed; the person opts in from Stereo APTus)')
         findings += relations(stanza, f'/var/lib/dpkg/status: {name}')
     count = 0
     for path in image_files(root):
@@ -324,21 +333,25 @@ def check_image(root, also):
     return findings, errors, f'the image {root} ({count} files read, {len(also)} of them outside it)'
 
 
-WHY = ('Daniel, 2026-11-02: "do not compress or put anything to run from the RAM regarding swap". zram and zswap '
-       'are forbidden in everything the edition ships; the swap is the Cushion Swap File on disk.')
+WHY = ('zram and zswap: never ours, never on by default; the person may opt in (Daniel, 2026-11-02: "do not compress '
+       'or put anything to run from the RAM regarding swap"; 2026-11-03: "we don\'t cape user choice"). The swap is the '
+       'Cushion Swap File on disk. Nothing the edition ships sets zram or zswap up, pulls in a zram package or keeps the '
+       'person from one; the Stereo APTus entry that installs Debian\'s systemd-zram-generator when the person picks it '
+       'is the opt-in, neither a dependency nor a default, and passes.')
 
 
 def report(findings, errors, what):
     if not findings and not errors:
-        print(f'zram/zswap gate: passed, nothing of zram or zswap in {what}.')
+        print(f'zram/zswap gate: passed, nothing of zram or zswap of ours in {what} (the person\'s opt-in from Stereo '
+              'APTus is allowed).')
         return 0
     print(f'zram/zswap gate: refused, {len(findings)} finding(s) and {len(errors)} unreadable in {what}:',
           file=sys.stderr)
     for line in findings + errors:
         print(f'  {line}', file=sys.stderr)
     print(WHY, file=sys.stderr)
-    print('Remove each set-up named above, or the dependency that pulls it, rebuild the package or the image and run '
-          'this gate again; nothing is published or packed until it passes.', file=sys.stderr)
+    print('Remove each set-up named above, or the relation that pulls the package in or keeps it out, rebuild the '
+          'package or the image and run this gate again; nothing is published or packed until it passes.', file=sys.stderr)
     return 1
 
 

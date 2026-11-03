@@ -215,7 +215,8 @@ if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
 	cp /build/zfs-check.py $R/tmp/
 	inr python3 /tmp/zfs-check.py / || { echo "!! ZFS is not ready in the image; see validation errors above" >&2; exit 1; }
 	rm -f $R/tmp/zfs-check.py
-	# no zram and no zswap in the image (Daniel, 2026-11-02): every finding names its file and line
+	# nothing of zram or zswap of ours in the image, and the zram packages not installed (HOUSE-RULES "zram and zswap:
+	# never ours, never on by default; the person may opt in"): every finding names its file and line
 	cp /build/zram-check.py $R/tmp/
 	inr python3 /tmp/zram-check.py / || { echo "!! zram or zswap is in the image; see the gate's findings above" >&2; exit 1; }
 	rm -f $R/tmp/zram-check.py
