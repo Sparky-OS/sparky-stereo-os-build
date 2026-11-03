@@ -1,4 +1,15 @@
 -------------------------------------------------------------------------------
+  Version 0.1.32 (2026-11-04)
+-------------------------------------------------------------------------------
+  * Share the exact original-to-projection byte comparison between --verify
+    and /usr/lib/dpkg-stereo/conffile-verify, the read-only verifier for the
+    edition's dpkg. Select the reader from the original and installed path.
+  * Recheck original MD5/SHA-256 and current SHA-256 at the verifier boundary;
+    reject forged lean hashes even when the pristine original is genuine.
+  * Isolate Python imports, require a protected root-owned renderer, and
+    refuse writes and external processes during verification.
+
+-------------------------------------------------------------------------------
   Version 0.1.31 (2026-11-03)
 -------------------------------------------------------------------------------
   * ORDER 373: the records dpkg-stereo 0.1.28 and older lost come back. Those versions counted a package as installed

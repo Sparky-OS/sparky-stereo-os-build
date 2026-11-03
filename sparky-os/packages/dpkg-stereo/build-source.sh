@@ -42,6 +42,13 @@ EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
 
+  * Share exact original-to-projection validation with the read-only
+    conffile verifier for the edition's dpkg (ORDER 376).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Wed, 04 Nov 2026 12:00:00 -0300
+
+dpkg-stereo (0.1.31) unstable; urgency=medium
+
   * The records dpkg-stereo 0.1.28 and older lost come back, once: a lean
     file left without its record is recorded again when it is exactly the
     projection of its package's own file at the installed version; any

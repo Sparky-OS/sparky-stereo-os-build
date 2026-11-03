@@ -87,6 +87,7 @@ class _Lazy:
 
 
 project = _Lazy('lean.project')
+conffile_projection = _Lazy('lean.conffile')
 locate = _Lazy('lean.locate')
 consumers = _Lazy('lean.consumers')
 lean_pkg = _Lazy('lean')
@@ -2016,9 +2017,9 @@ def verify(P, names, deep=False):
                 bad += 1
                 continue
         if orig is not None:
-            r = project.project(path, orig, rec['package'].split(':')[0], check=False)
-            if r.sha_out != rec['sha_lean']:
-                print(f'MISMATCH  {path} (the original does not render to the installed lean file)')
+            reason, detail = conffile_projection.projection_matches(path, orig, data, rec['package'])
+            if reason != 'ok':
+                print(f'MISMATCH  {path} ({reason}: {detail})')
                 bad += 1
                 continue
     left = Records(P, 'left')
