@@ -2,8 +2,16 @@
 set -e
 #DEBHELPER#
 if [ "$1" = configure ]; then
-	# apply the new rules to devices already plugged in; a failure here is harmless
-	udevadm control --reload-rules >/dev/null 2>&1 || true
-	udevadm trigger --subsystem-match=usb --subsystem-match=hidraw >/dev/null 2>&1 || true
+	# ORDER 358: configure the installed rules even if activating them fails.
+	# debhelper 14.5, autoscripts/postinst-systemd-restart, similarly completes:
+	# systemctl --system daemon-reload >/dev/null || true
+	# We show the error and keep a repair; this is our behavior, not a Policy exception.
+	# dh_installudev 14.5 installs rules; it has no reload autoscript.
+	if [ -z "${DPKG_ROOT:-}" ] && [ -S /run/udev/control ]; then
+		sparky-stereo-problems run --machine openrgb udev-reload LOCAL2 -- udevadm control --reload-rules || :
+		sparky-stereo-problems run --machine openrgb udev-trigger LOCAL3 -- udevadm trigger --subsystem-match=usb --subsystem-match=hidraw || :
+	else
+		sparky-stereo-problems say openrgb LOCAL4
+	fi
 fi
 exit 0

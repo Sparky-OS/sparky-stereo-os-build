@@ -5,18 +5,19 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=20261103.1~sparky9~0+lc1
+VERSION=20261103.3~sparky9~0+lc1
 PACKAGE=sparky-stereo-kernel-settings
-DEPENDS='libpam-modules, systemd, systemd-zram-generator, udev'
-FILES='etc/security/limits.d/20-sparky-audio.conf usr/lib/modules-load.d/sparky-stereo.conf usr/lib/sysctl.d/70-sparky-stereo.conf usr/lib/systemd/zram-generator.conf.d/50-sparky-stereo.conf usr/lib/tmpfiles.d/sparky-thp.conf usr/lib/udev/rules.d/60-sparky-block.rules usr/lib/udev/rules.d/70-sparky-ntsync.rules usr/lib/udev/rules.d/99-sparky-audio.rules'
+DEPENDS='sparky-stereo-problems, libpam-modules, systemd, mount, udev'
+FILES='etc/security/limits.d/20-sparky-audio.conf usr/lib/modules-load.d/sparky-stereo.conf usr/lib/sysctl.d/70-sparky-stereo.conf usr/lib/tmpfiles.d/sparky-thp.conf usr/lib/udev/rules.d/60-sparky-block.rules usr/lib/udev/rules.d/70-sparky-ntsync.rules usr/lib/udev/rules.d/99-sparky-audio.rules'
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.kernel-settings.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 D=$WORK/$PACKAGE
 mkdir -p "$D/DEBIAN" "$D/usr/share/doc/$PACKAGE"
 for f in $FILES; do install -Dm644 "$HERE/$f" "$D/$f"; done
-install -Dm755 "$HERE/usr/libexec/sparky-stereo/zram-auto" "$D/usr/libexec/sparky-stereo/zram-auto"
+install -m755 "$HERE/preinst" "$D/DEBIAN/preinst"
 install -m644 "$HERE/copyright" "$D/usr/share/doc/$PACKAGE/copyright"
+sparky-stereo-problems catalog "$PACKAGE" "$HERE/problems-lang" "$D/usr/lib/systemd/catalog" --subject LOCAL1
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
 cat >"$D/DEBIAN/control" <<EOT
 Package: $PACKAGE
@@ -25,13 +26,14 @@ Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
 Depends: $DEPENDS
+Conflicts: systemd-zram-generator, zram-tools
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org
 Description: Kernel tunables for Sparky Stereo OS
   Sysctl, udev, tmpfiles, modules-load and audio-limit settings that replace
-  kernel patches of performance kernels. Closes kexec after boot. zram only
-  where the hardware needs it.
+  kernel patches of performance kernels. Closes kexec after boot and excludes
+  compressed RAM swap; the edition uses Cushion Swap on disk.
 EOT
 printf '%s\n' /etc/security/limits.d/20-sparky-audio.conf >"$D/DEBIAN/conffiles"
 cat >"$D/DEBIAN/postinst" <<'EOT'
@@ -44,13 +46,51 @@ if [ "$1" = configure ] && dpkg --compare-versions "${2:-0}" lt 20261010.2~spark
 	mkdir -p /var/lib/sparky-stereo-kernel-settings
 	: >/var/lib/sparky-stereo-kernel-settings/tmp-mount-masked
 fi
-if [ "$1" = configure ] && command -v udevadm >/dev/null 2>&1; then
-	udevadm control --reload >/dev/null 2>&1 || true
+if [ "$1" = configure ]; then
+	# Daniel, 2026-11-02: REMOVE AND FORBID ZRAM. APT removes the conflicting
+	# generator in its own visible plan. Stop/reset only our former zram0;
+	# do not run swapoff -a or alter any other swap area.
+	if [ -f /var/lib/sparky-stereo-kernel-settings/retire-owned-zram0 ]; then
+		cleanup='
+set -e
+active=$(awk '\''$1 == "/dev/zram0" { found=1 } END { print found+0 }'\'' /proc/swaps)
+if [ "$active" = 1 ]; then
+    if [ -d /run/systemd/system ]; then
+        systemctl stop dev-zram0.swap
+    fi
+    # The service may already have stopped it; swapoff is needed without a manager.
+    active=$(awk '\''$1 == "/dev/zram0" { found=1 } END { print found+0 }'\'' /proc/swaps)
+    if [ "$active" = 1 ]; then
+    swapoff /dev/zram0
+    fi
+fi
+if [ -r /sys/block/zram0/disksize ] && [ "$(cat /sys/block/zram0/disksize)" != 0 ]; then
+    printf "1\\n" >/sys/block/zram0/reset
+fi
+rm -f /var/lib/sparky-stereo-kernel-settings/retire-owned-zram0
+'
+		if sparky-stereo-problems run --machine sparky-stereo-kernel-settings retire-zram LOCAL5 -- /bin/sh -c "$cleanup"; then
+			sparky-stereo-problems say sparky-stereo-kernel-settings LOCAL6
+		fi
+	fi
+	# ORDER 358: installed settings remain configured after a failed live reload.
+	# debhelper 14.5 autoscripts/postinst-systemd-restart similarly completes:
+	# systemctl --system daemon-reload >/dev/null || true
+	# We show and keep the failure instead. Policy 6 has no reload exception.
+	# dh_installudev 14.5 installs rules but has no reload autoscript.
+	if [ -z "${DPKG_ROOT:-}" ] && [ -S /run/udev/control ]; then
+		sparky-stereo-problems run --machine sparky-stereo-kernel-settings udev-reload LOCAL2 -- udevadm control --reload || :
+	else
+		sparky-stereo-problems say sparky-stereo-kernel-settings LOCAL4
+	fi
 fi
 EOT
 cat >"$D/DEBIAN/postrm" <<'EOT'
 #!/bin/sh
 set -e
+if [ "$1" = remove ] && command -v sparky-stereo-problems >/dev/null 2>&1; then
+	sparky-stereo-problems clear --all sparky-stereo-kernel-settings
+fi
 if [ "$1" = purge ] && [ -e /var/lib/sparky-stereo-kernel-settings/tmp-mount-masked ]; then
 	if [ "$(readlink /etc/systemd/system/tmp.mount 2>/dev/null)" = /dev/null ]; then
 		rm -f /etc/systemd/system/tmp.mount
@@ -60,4 +100,4 @@ fi
 EOT
 chmod 755 "$D/DEBIAN/postinst" "$D/DEBIAN/postrm"
 (cd "$D" && find etc usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
-PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$HERE"
+PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$HERE" --build-dependency sparky-stereo-problems

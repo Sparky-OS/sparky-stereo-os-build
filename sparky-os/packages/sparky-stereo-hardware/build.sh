@@ -28,7 +28,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: apt, bash, ca-certificates, coreutils, curl, grep, isenkram-cli, kmod, laptop-detect, libnotify-bin, lm-sensors, nvidia-detect, pciutils, power-profiles-daemon (>= 0.30), python3, sed, sparky-remsu, sparky-xterm, udev, usbutils, util-linux, yad
+Depends: sparky-stereo-problems, libkf6config-bin, apt, bash, ca-certificates, coreutils, curl, grep, isenkram-cli, kmod, laptop-detect, libnotify-bin, lm-sensors, nvidia-detect, pciutils, power-profiles-daemon (>= 0.30), python3, sed, sparky-remsu, sparky-xterm, udev, usbutils, util-linux, yad
 Recommends: sparky-stereo-cuda-repo
 Section: System
 Priority: optional
@@ -48,4 +48,4 @@ install -m755 "$HERE/debian-scripts/postinst" "$HERE/debian-scripts/postrm" "$D/
 # the initramfs carries the live session's NVIDIA choice
 echo 'activate-noawait update-initramfs' >"$D/DEBIAN/triggers"
 (cd "$D" && find usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
-PYTHONPATH="$RECIPE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$HERE"
+PYTHONPATH="$RECIPE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$HERE" --build-dependency sparky-stereo-problems

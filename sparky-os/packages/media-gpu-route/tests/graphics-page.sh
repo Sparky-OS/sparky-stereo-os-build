@@ -53,7 +53,7 @@ fake ":"
 check "page answers nothing: said, no other GPU" "$(unresolved)" "result=unresolved"
 if [ "${AV1:-}" = 1 ]; then
 	# AV1: the GPU that cannot decode it is named for players; another GPU that can decodes it, unless the person turned
-	# Decode on another GPU off (Daniel, 2026-11-02); then software. Both are said.
+	# Decode on another GPU off for this test; Daniel's default is on (2026-11-02); then software. Both are said.
 	av1() { run MEDIA_GPU_ROUTE_COPY_BACK=true "$@" "$QUERY" --decoder av1 0 8 1920x1080 copy 2>"$T/av1-err"; }
 	rm -rf "$T/bin"
 	able=$(av1 | sed -n 's/^result=hardware .* gpu=//p')

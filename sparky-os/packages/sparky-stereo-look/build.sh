@@ -18,7 +18,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
-VERSION=${VERSION:-20261102~sparky9~0+lc1}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
+VERSION=${VERSION:-20261103.1~sparky9~0+lc1}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
 case ${1:-all} in all|default) ;; *) echo 'Usage: build.sh [all|default]' >&2; exit 2 ;; esac
 WORK=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}/sparky-os}/look-build.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
@@ -55,7 +55,7 @@ control() { # dir package depends recommends description...
 build() { # dir package
 	find "$1" -name '*.qmlc' -delete
 	chmod -R go-w "$1"
-	PYTHONPATH="$RECIPE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$1" "$OUT" --authoring "$HERE"
+	PYTHONPATH="$RECIPE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$1" "$OUT" --authoring "$RECIPE"
 }
 
 # 1. The default look.
@@ -78,7 +78,7 @@ install -D -m 644 "$HERE/default/xdg/plasma-workspace/env/10-sparky-stereo-input
 install -D -m 644 "$HERE/default/needrestart.conf" "$D/etc/needrestart/conf.d/90-sparky-stereo.conf"
 install -D -m 644 "$HERE/default/flathub.flatpakrepo" "$D/usr/share/flatpak/remotes.d/flathub.flatpakrepo"
 control "$D" sparky-stereo-look \
-	"plasma-theme-oxygen, oxygen-icon-theme, oxygencursors, kde-style-oxygen-qt6, kwin-decoration-oxygen, kwin-style-aurorae, libkf6config-bin, plasma-runners-addons (>= 4:6.7.4-1+stereo3d1), plasma-systemmonitor, sparky-stereo-gtk" \
+	"plasma-workspace (>= 4:6.7.4-2+stereo3d6), plasma-theme-oxygen, oxygen-icon-theme, oxygencursors, kde-style-oxygen-qt6, kwin-decoration-oxygen, kwin-style-aurorae, libkf6config-bin, plasma-runners-addons (>= 4:6.7.4-1+stereo3d1), plasma-systemmonitor, sparky-stereo-gtk" \
 	"kde-style-oxygen-qt5, sparkyos-artwork, sparky-stereo-look-kubabbar-glass" \
 	"Sparky Stereo OS default look: Oxygen dark" \
 	"The edition's default global theme: Oxygen, whole, in its dark colours:" \
@@ -93,7 +93,7 @@ control "$D" sparky-stereo-look \
 	"Search lists installed applications first, then settings. Power actions and" \
 	"unit conversion remain available. Currency rates refresh only when converting a currency." \
 	"Web search and the online dictionary are off by default." \
-	"Ctrl+Shift+Esc opens System Monitor; existing shortcuts remain available." \
+	"Ctrl+Alt+Del, Ctrl+Shift+Esc and Ctrl+Esc open System Monitor; existing shortcuts remain available." \
 	"Japanese, Korean and Chinese sessions default to the installed Fcitx5 input" \
 	"method before KWin starts, preserving an existing or explicitly disabled choice."
 printf '%s\n' /etc/xdg/kdeglobals /etc/xdg/kwinrc /etc/xdg/kde-mimeapps.list /etc/xdg/krunnerrc /etc/xdg/konsolerc /etc/xdg/dolphinrc \
@@ -109,6 +109,7 @@ Copyright The Oxygen Project, GPL; only its background SVGs are changed (91 % al
 foreground artwork is inherited; licence texts in /usr/share/plasma/desktoptheme/sparky-stereo-oxygen/.
 On Debian systems the GPL is in /usr/share/common-licenses/GPL-2.
 EOF
+install -m 644 "$HERE/README.md" "$D/usr/share/doc/sparky-stereo-look/README"
 build "$D" sparky-stereo-look
 [ "${1:-all}" != default ] || exit 0
 

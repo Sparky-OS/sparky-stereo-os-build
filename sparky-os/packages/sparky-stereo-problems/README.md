@@ -45,3 +45,28 @@ Repairing the machine's problems runs through `pkexec` and the polkit action `or
 
 `/usr/lib/systemd/system/service.d/50-sparky-stereo-problems.conf` names `sparky-stereo-problems-failed@%N.service` in `OnFailure=` for every service (systemd.unit(5), "Top level drop-ins with template units"; the handler's own instances have the drop-in masked).
 The handler keeps the failure for this boot with the service's last lines and `systemctl restart` as its repair; the problem is over when systemd no longer has the unit as failed.
+
+## Failures that outlive removal (0.1.1)
+
+A maintainer script at remove, purge or abort-install can keep an unresolved
+restoration even after its package disappears:
+
+    sparky-stereo-problems keep --machine --after-removal \
+      --command '["cp","/usr/share/base-files/motd","/etc/motd"]' \
+      --repair '["cp","/usr/share/base-files/motd","/etc/motd"]' \
+      --status "$status" --output "$error" sparky-stereo-console motd \
+      'cp /usr/share/base-files/motd /etc/motd'
+
+This form requires machine scope, a nonzero status, nonempty command and error,
+a repair, and exactly PACKAGE KEY STEP. Use the failed operation as STEP (a
+command needs no translation); the engine owns the translated explanation.
+The record belongs to `sparky-stereo-problems`, with key
+`after-removal:PACKAGE:KEY`; its data names the original package, step, operation,
+command and error. Clearing the removed package's ordinary records cannot clear
+it. Successful repair, or an explicit clear of the engine-owned key, ends it.
+A unit state cannot automatically finish this record.
+
+Postrm cannot assume this dependency is still installed (Debian Policy 6.5).
+If it is absent, the maintainer script must print its embedded diagnostic and
+attempt to journal it itself, including saying if the journal cannot be reached.
+Packages using this flag Depend on sparky-stereo-problems (>= 0.1.1).

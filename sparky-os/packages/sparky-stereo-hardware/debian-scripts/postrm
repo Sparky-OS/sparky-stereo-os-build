@@ -2,6 +2,9 @@
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL3 License
 set -e
+if [ "$1" = remove ] && command -v sparky-stereo-problems >/dev/null 2>&1; then
+	sparky-stereo-problems clear --all sparky-stereo-hardware
+fi
 if [ "$1" = remove ] && command -v deb-systemd-helper > /dev/null; then
 	deb-systemd-helper mask sparky-stereo-opengl-default.service >/dev/null || true
 fi

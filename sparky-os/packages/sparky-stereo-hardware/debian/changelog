@@ -17,13 +17,20 @@ sparky-stereo-hardware (0.1.19) unstable; urgency=medium
     (>= 1:1.0.1), which only NVIDIA's repository has (Debian: 1.0.3-1).
     0.1.18 installed no CUDA repository there, so the path worked only
     where the image had already installed it.
-  * Supersedes 0.1.18, which was not published; its changes are in this
-    version.
+  * Supersedes both packages numbered 0.1.18, which can never sit in one
+    repository: ORDER 358's (in the round's cohort until this one is
+    accepted) and ORDER 354's (not published). The changes of both are in
+    this version.
 
  -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 03 Nov 2026 01:00:00 -0300
 
 sparky-stereo-hardware (0.1.18) unstable; urgency=medium
 
+  * ORDER 358: report unreadable startkderc or failed systemdBoot reads in
+    the shared problems engine. Do not apply the session zink override
+    without a successful read; keep the desktop shell running and explain
+    how to repair and start a new session.
+  * ORDER 354, the lines below.
   * Maxwell, Pascal and Volta cards get NVIDIA's 580 driver, the last for
     them, with the edition's build of its kernel modules
     (nvidia-legacy-580xx-kernel-dkms) and its own driver lock, picked by

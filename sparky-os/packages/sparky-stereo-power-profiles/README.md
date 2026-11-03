@@ -47,7 +47,7 @@ from the patched PowerDevil package. Stock PowerDevil must not satisfy it:
 stock code cannot apply desktop/laptop AC sleep defaults or idle locking.
 The GL show and its trigger belong to milestone 3 and are not shipped here.
 
-The profile mapping is Daniel's brief. The group and key come from Plasma's
+The profile mapping is Daniel's decision of 2026-11-02 ("same pattern partner"): performance on mains, balanced on battery and power saver when low. The group and key come from Plasma's
 PowerDevilProfileSettings.kcfg and PowerProfile::onProfileLoad(). PPD owns
 the CPU and GPU behavior; this package writes no governor or GPU sysfs file.
 PPD may omit performance on unsupported hardware. Plasma keeps that native
@@ -55,3 +55,30 @@ limitation, and this package does not substitute a second power controller.
 
 The real PPD and settings tests are in ../../power-idle/probe/; their measured
 results and limits are not public yet.
+
+Design attribution:
+-------------
+Daniel, 2026-10-08, on idle: "Desktop sleep I do not agree, here, for example, I tend to go out or to sleep and leave the machine running, it shuts down the monitor but not the machine. notebook sleep is ok at 4h".
+On the power button: "the one press shut down"; "press power button = shut down confirm".
+Daniel clarified on 2026-11-02: "the after reafirms the first".
+One press shuts down without a dialog; PowerButtonAction=8 stays unchanged.
+On the mains lid: "when plugged shut down the laptop screen but do not disable it - so it keeps the icons".
+Daniel confirmed the other defaults on 2026-11-02: "same pattern partner".
+That decides performance on mains, balanced on battery, power saver when low, no lock grace (LockGrace=0), and battery dimming at 15 minutes.
+LockOnResume=true is KScreenLocker's own default (settings/kscreenlockersettings.kcfg, LockOnResume default true), written out here; it is not a choice of ours.
+These attributions do not change any shipped setting.
+
+Battery sleep and hibernation:
+-------------
+Daniel, 2026-11-02: "the expected default for a laptop is sleep on windows and hibernate if kept in that state for more than 2 hours"; "this deppends on the user choice".
+Battery and LowBattery use PowerDevil's native SleepMode=3 (SuspendThenHibernate), including lid closure with an external monitor attached.
+PowerDevil uses this sleep mode for both lid and automatic Sleep actions within the profile; their existing timeouts stay unchanged.
+The person can select another mode in Power Management; their KConfig settings take precedence.
+AC keeps its existing sleep mode and lid action.
+Systemd-sleep owns the timer through sleep.conf.d/50-sparky-hibernate.conf, HibernateDelaySec=2h; native low-battery handling may hibernate sooner.
+An administrator can override the delay through /etc/systemd/sleep.conf.d/.
+Cushion Swap 0.3.3 deploys and holds the installer’s resume area through the native sleep service’s ExecStartPre and ExecStopPost.
+A failed deployment blocks sleep and is retained in the shared problems engine.
+At login, laptops using this mode check logind's capability and retain an unavailable or failed check for the person.
+If hibernation or hybrid sleep later fails, systemd’s suspend-after-failed-hibernate or suspend-after-failed-hybrid-sleep action retains the error before its return to sleep; a successful hibernate/resume clears it.
+These checks report configuration and command failures; a physical hibernate/resume still depends on the machine's firmware, driver and resume setup.

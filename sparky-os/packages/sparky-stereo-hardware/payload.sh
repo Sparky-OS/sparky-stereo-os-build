@@ -31,3 +31,5 @@ for u in nvidia-persistenced nvidia-powerd; do
 	install -Dm644 "$HERE/share/systemd/nvidia-units/sparky-stereo-hardware.conf" "$D/usr/lib/systemd/system/$u.service.d/sparky-stereo-hardware.conf"
 done
 install -Dm644 "$HERE/share/udev/71-sparky-stereo-nvidia-units.rules" "$D/usr/lib/udev/rules.d/71-sparky-stereo-nvidia-units.rules"
+
+sparky-stereo-problems catalog sparky-stereo-hardware "$HERE/problems-lang" "$D/usr/lib/systemd/catalog" --subject LOCAL1

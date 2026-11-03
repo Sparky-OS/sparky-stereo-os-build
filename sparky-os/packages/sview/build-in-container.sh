@@ -1,7 +1,8 @@
 #!/bin/bash
-# Sparky Stereo OS: sview 26.9+stereo3d3+lc1 from Sparky-OS/sview (ORDER 312: Stereo KWin's output only; ORDER 349:
-# the review corrections of the JPS save and the frame-sequence eye order), built with Lean Code.
-# Created by Daniel Ramos (Capitain Jack) 2026/10/24, +stereo3d2 2026/10/31, +stereo3d3 2026/11/02
+# Sparky Stereo OS: sview 26.9+stereo3d4+lc1 from Sparky-OS/sview (ORDER 312: Stereo KWin's output only; ORDER 349:
+# the review corrections of the JPS save and the frame-sequence eye order; ORDER 349b: the reasons said in nine
+# languages, PNG's sTER and the save into videos), built with Lean Code.
+# Created by Daniel Ramos (Capitain Jack) 2026/10/24, +stereo3d2 2026/10/31, +stereo3d3 and +stereo3d4 2026/11/02
 # Copyright 2026 under the GNU GPL3 License
 # Runs inside the Lean Code migration container; build.sh starts it. /work is the job folder, /fork the sview clone,
 # /prev the earlier +lc1 builds, /archive the link gate's public sources. The commit carries debian/ (a native 3.0
@@ -10,8 +11,8 @@ trap 'chown -R 1000:1000 /work' EXIT
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=4
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
-NEWV=26.9+stereo3d3
-REV=5797261b7b5b47cf13206d95143d46abde204112
+NEWV=26.9+stereo3d4
+REV=a2b1680bbfbaaf88557c91a898d5cacab16d26cc
 printf 'deb [trusted=yes] file:/repo mashtabba main\n' > /etc/apt/sources.list.d/edition.list
 printf 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://www.deb-multimedia.org forky main non-free\n' > /etc/apt/sources.list.d/multimedia.list
 printf 'deb http://deb.debian.org/debian testing contrib non-free non-free-firmware\n' > /etc/apt/sources.list.d/debian-extra-components.list

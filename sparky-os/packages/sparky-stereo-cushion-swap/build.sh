@@ -5,7 +5,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.3.2
+VERSION=0.3.3
 PACKAGE=sparky-stereo-cushion-swap
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.cushion-swap.XXXXXX")
@@ -26,10 +26,12 @@ gcc ${CFLAGS:--O2 -Wall -Wextra -Werror} -pthread -o "$D/usr/libexec/cushion-swa
 strip --strip-unneeded "$D/usr/libexec/cushion-swap/alloc-rate"
 install -Dm644 "$HERE/etc/default/cushion-swap" "$D/etc/default/cushion-swap"
 install -Dm755 "$HERE/sbin/cushion-swap" "$D/usr/sbin/cushion-swap"
-install -Dm644 -t "$D/usr/lib/systemd/system" "$HERE/lib/systemd/system/cushion-swap.service" \
-	"$HERE/lib/systemd/system/cushion-swap-hibernate.service"
+install -Dm644 -t "$D/usr/lib/systemd/system" "$HERE/lib/systemd/system/cushion-swap.service"
+for operation in hibernate hybrid-sleep suspend-then-hibernate; do
+	install -Dm644 "$HERE/lib/systemd/system/systemd-$operation.service.d/50-cushion-swap.conf" \
+		"$D/usr/lib/systemd/system/systemd-$operation.service.d/50-cushion-swap.conf"
+done
 install -Dm755 -t "$D/usr/lib/systemd/system-generators" "$HERE/lib/systemd/system-generators/cushion-swap-hibernate-generator"
-install -Dm755 -t "$D/usr/lib/systemd/system-sleep" "$HERE/lib/systemd/system-sleep/cushion-swap"
 install -Dm644 -t "$D/usr/lib/tmpfiles.d" "$HERE/lib/tmpfiles.d/cushion-swap.conf"
 install -Dm755 -t "$D/usr/share/initramfs-tools/hooks" "$HERE/share/initramfs-tools/hooks/cushion-swap-resume-offset"
 install -Dm644 -t "$D/etc/logrotate.d" "$HERE/etc/logrotate.d/sparky-stereo-cushion-swap"
@@ -39,7 +41,7 @@ install -Dm644 -t "$D/usr/share/sparky/$PACKAGE" "$HERE"/lang/*
 sparky-stereo-problems catalog $PACKAGE "$HERE/lang" "$D/usr/lib/systemd/catalog" --subject LOCAL16
 install -m644 "$HERE/copyright" "$HERE/README.md" "$D/usr/share/doc/$PACKAGE/"
 GLIBC=$(objdump -T "$D/usr/libexec/cushion-swap/psi-wake" "$D/usr/libexec/cushion-swap/alloc-rate" | sed -n 's/.*GLIBC_\([0-9.]*\).*/\1/p' | sort -V | tail -n 1)
-DEPENDS="bash, libc6 (>= $GLIBC), logrotate, systemd, util-linux, sparky-stereo-problems (>= 0.1.0)"
+DEPENDS="bash, libc6 (>= $GLIBC), logrotate, mount, systemd, util-linux, sparky-stereo-problems (>= 0.1.0)"
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
 cat >"$D/DEBIAN/control" <<EOF
 Package: $PACKAGE
@@ -72,19 +74,26 @@ say() {
 	/usr/sbin/cushion-swap --say "$@" || echo "cushion-swap: $*" >&2
 }
 step() {
-	if out=$("$@" 2>&1); then
+	key=$(printf '%s-' "$@" | tr -c 'a-zA-Z0-9-' '_')
+	# debhelper 14.5 autoscripts/postinst-systemd-restart completes with
+	# "systemctl --system daemon-reload >/dev/null || true". We complete and
+	# keep the error and repair. This is our behavior, not a Policy exception.
+	if sparky-stereo-problems run sparky-stereo-cushion-swap "setup-$key" LOCAL19 '' -- "$@"; then
 		return 0
-	else
-		rc=$?
 	fi
-	say LOCAL19 "$*" "$rc" "$(printf '%s\n' "$out" | tail -n 3 | tr '\n' ' ')"
+	return 0
 }
+
 if [ "$1" = configure ] || [ "$1" = abort-upgrade ] || [ "$1" = abort-deconfigure ] || [ "$1" = abort-remove ]; then
 	# The log folder and file (root:adm, 0750 and 0640) before the unit opens the file.
 	if [ -x /usr/bin/systemd-tmpfiles ]; then
 		step systemd-tmpfiles --create cushion-swap.conf
 	fi
-	for unit in cushion-swap.service cushion-swap-hibernate.service; do
+	# The native sleep units now own preparation and cleanup. Remove only our
+	# old helper links; no administrator sleep-unit configuration is changed.
+	step deb-systemd-helper disable cushion-swap-hibernate.service
+	step deb-systemd-helper purge cushion-swap-hibernate.service
+	for unit in cushion-swap.service; do
 		step deb-systemd-helper unmask "$unit"
 		if deb-systemd-helper --quiet was-enabled "$unit"; then
 			step deb-systemd-helper enable "$unit"
@@ -160,7 +169,10 @@ EOF
 cat >"$S/debian/changelog" <<EOF
 $PACKAGE ($VERSION) unstable; urgency=medium
 
-  * Copy only tracked recipe inputs; retain the shared copier for source rebuilds.
+  * Hold the resume area for the whole native hibernate, hybrid-sleep or
+    suspend-then-hibernate service, including intermediate RTC wakeups.
+  * Fail preparation before sleep; resume normal pacing when the service ends.
+  * Remove obsolete compressed-memory swap references.
 
  -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 03 Nov 2026 12:00:00 -0300
 

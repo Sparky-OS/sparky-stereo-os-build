@@ -16,6 +16,7 @@ const Scope = engine.Scope;
 const Line = struct { syntax: []const u8, what: []const u8 };
 const usage_lines = [_]Line{
     .{ .syntax = "keep [SCOPE] [OPTIONS] PACKAGE KEY MESSAGE [ARG...]", .what = "LOCAL38" },
+    .{ .syntax = "keep --after-removal --command JSON --status N --output ERROR --repair JSON PACKAGE KEY STEP", .what = "LOCAL68" },
     .{ .syntax = "run [SCOPE] [OPTIONS] PACKAGE KEY MESSAGE [ARG...] -- COMMAND [ARG...]", .what = "LOCAL39" },
     .{ .syntax = "clear [SCOPE] PACKAGE KEY", .what = "LOCAL40" },
     .{ .syntax = "clear --all PACKAGE", .what = "LOCAL46" },
@@ -114,11 +115,45 @@ const Parsed = struct {
     domain: ?[]const u8 = null,
     all: bool = false,
     quiet: bool = false,
+    after_removal: bool = false,
     bad: ?[]const u8 = null,
 };
 
 fn parseJson(ctx: *Ctx, text: []const u8) ?Value {
     return std.json.parseFromSliceLeaky(Value, ctx.a, text, .{}) catch null;
+}
+
+// A postrm repair belongs to the engine: the removed package no longer has
+// catalogs or a dpkg file list. Ordinary package cleanup remains unchanged.
+fn afterRemoval(ctx: *Ctx, original: engine.Record) !engine.Record {
+    var r = original;
+    var data: std.json.ObjectMap = .empty;
+    try data.put(ctx.a, "package", .{ .string = original.package });
+    try data.put(ctx.a, "step", .{ .string = original.key });
+    try data.put(ctx.a, "operation", .{ .string = original.message });
+    try data.put(ctx.a, "error", .{ .string = original.output });
+    var command = std.array_list.Managed(Value).init(ctx.a);
+    for (original.command.?) |arg| try command.append(.{ .string = arg });
+    try data.put(ctx.a, "command", .{ .array = command });
+    if (original.data) |details| try data.put(ctx.a, "details", details);
+    r.data = .{ .object = data };
+    r.package = engine.engine_package;
+    r.key = try std.fmt.allocPrint(ctx.a, "after-removal:{s}:{s}", .{ original.package, original.key });
+    r.message = "LOCAL67";
+    const args = try ctx.a.alloc(Value, 4);
+    args[0] = .{ .string = original.package };
+    args[1] = .{ .string = original.message };
+    args[2] = .{ .string = std.mem.trim(u8, original.output, "\r\n") };
+    var repairs: std.ArrayList([]const u8) = .empty;
+    for (original.repair) |cmd| try repairs.append(ctx.a, try std.json.Stringify.valueAlloc(ctx.a, cmd, .{}));
+    args[3] = .{ .string = try std.mem.join(ctx.a, "; ", repairs.items) };
+    r.args = args;
+    // A unit's state or the removed package's messages cannot finish or render
+    // this repair. Only successful repair or explicit clear ends it.
+    r.unit = null;
+    r.more = &.{};
+    r.actions = &.{};
+    return r;
 }
 
 fn parse(ctx: *Ctx, args: []const []const u8) !Parsed {
@@ -148,6 +183,10 @@ fn parse(ctx: *Ctx, args: []const []const u8) !Parsed {
         }
         if (std.mem.eql(u8, x, "--quiet")) {
             p.quiet = true;
+            continue;
+        }
+        if (std.mem.eql(u8, x, "--after-removal")) {
+            p.after_removal = true;
             continue;
         }
         if (i + 1 >= args.len) {
@@ -313,6 +352,10 @@ fn runMain(ctx: *Ctx, argv: []const []const u8) !u8 {
     if (p.bad) |b| return wrongUse(ctx, "LOCAL54", &.{b});
     const pos = p.positional.items;
     const scope = p.scope orelse engine.defaultScope(ctx);
+    if (p.after_removal and (!std.mem.eql(u8, verb, "keep") or scope != .machine or
+        pos.len != 3 or p.record.command == null or p.record.command.?.len == 0 or
+        p.record.status == null or p.record.status.? == 0 or p.record.output.len == 0 or p.repairs.items.len == 0))
+        return wrongUse(ctx, "LOCAL54", &.{"--after-removal"});
     // pkexec runs only a repair of what root kept, never anything the caller names (org.sparkylinux.sparkystereo.problems.repair)
     if (ctx.under_pkexec and (!std.mem.eql(u8, verb, "repair") or p.scope == null or p.scope.? == .person)) {
         return wrongUse(ctx, "LOCAL55", &.{});
@@ -324,6 +367,7 @@ fn runMain(ctx: *Ctx, argv: []const []const u8) !u8 {
         r.key = pos[1];
         r.message = pos[2];
         r.args = try messageArgs(ctx, &p, 3);
+        if (p.after_removal) r = try afterRemoval(ctx, r);
         if (std.mem.eql(u8, verb, "keep")) {
             const kept = engine.keep(ctx, scope, r) catch |e| {
                 if (e == error.Failed) {

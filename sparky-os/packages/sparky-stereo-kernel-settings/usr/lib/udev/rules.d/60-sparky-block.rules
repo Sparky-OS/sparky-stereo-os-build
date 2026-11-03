@@ -1,6 +1,7 @@
 # Sparky Stereo OS: block device defaults.
 # Source: CachyOS-Settings usr/lib/udev/rules.d/60-ioschedulers.rules (GPL-3.0) for the rotating disk rule; the read-ahead value is the CachyOS kernel
-# patch "Increase VM_READAHEAD_PAGES to 256K" done as a rule instead of a patch.
+# tag cachyos-7.3.1-1, include/linux/pagemap.h:1429 (SZ_256K), applied as a rule.
+# Bazzite's OGC v7.3.1-ogc5 has SZ_128K at the same source line; our 256 KiB follows CachyOS.
 
 # Rotating disks: BFQ keeps the desktop responsive while something big is copied.
 ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", KERNEL=="sd[a-z]*", ATTR{queue/rotational}=="1", TEST=="queue/scheduler", ATTR{queue/scheduler}="bfq"

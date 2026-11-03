@@ -96,9 +96,6 @@ IDLE_PREVIOUS_IDLE=0
 ALLOC_SAFETY_FACTOR=${ALLOC_SAFETY_FACTOR:-2}
 CALIBRATION_CHECK_SEC=${CALIBRATION_CHECK_SEC:-10}
 MIN_INTERVAL_SEC=${MIN_INTERVAL_SEC:-0.25}
-# The hibernate unit switched the area on for the image: no retraction for
-# this long, or until the sleep hook ends the hold after resume.
-HIBERNATE_HOLD_SEC=${HIBERNATE_HOLD_SEC:-300}
 
 MEMINFO_PATH=${MEMINFO_PATH:-/proc/meminfo}
 SWAPS_PATH=${SWAPS_PATH:-/proc/swaps}
@@ -456,7 +453,7 @@ swap_state() {
 }
 
 # The Cushion Swap File's own area. Only this area is ever switched on or off
-# by the daemon; zram and other swap areas are not ours.
+# by the daemon; other swap areas are not ours.
 area_state() {
 	local rc
 	swap_state "$AREA"
@@ -554,19 +551,33 @@ notify_systemd() {
 	systemd-notify --ready --status="$line" 2>/dev/null || log_err "systemd-notify failed: systemctl status shows no protection state"
 }
 
-# A hibernation is using the area: the hibernate unit switched it on and
-# systemd-sleep has yet to write the image (or the sleep hook has yet to run
-# after resume). Retracting it now would make the hibernation fail. A mark
-# older than HIBERNATE_HOLD_SEC is a hibernation that never started.
+# ExecStartPre acquires the area before systemd-sleep starts; ExecStopPost
+# releases it after the entire operation, including every internal RTC wake.
+# /run clears on boot. A long sleep is not a stale transaction.
 hibernation_hold() {
-	local since="" rest
-	[[ -r $HIBERNATE_MARK ]] || return 1
-	read -r since rest <"$HIBERNATE_MARK" 2>/dev/null
-	[[ $since =~ ^[0-9]+$ ]] || return 1
-	(($1 - since < HIBERNATE_HOLD_SEC))
+	[[ -e $HIBERNATE_MARK ]]
+}
+
+# Serialize preparation, cleanup and the daemon's read/decide/swap operation.
+# Keep this lock only while awake; the marker owns the full sleep lifetime.
+lock_actions() {
+	if { [[ -d $STATE_DIR ]] || mkdir -p "$STATE_DIR"; } && exec {ACTION_FD}>"$STATE_DIR/swap-actions.lock" && flock "$ACTION_FD"; then
+		problem_clear action-lock
+		return 0
+	fi
+	problem_set action-lock notice LOCAL23 "$STATE_DIR/swap-actions.lock"
+	return 1
 }
 
 run_cycle() {
+	lock_actions || return 1
+	run_cycle_unlocked
+	local rc=$?
+	exec {ACTION_FD}>&-
+	return "$rc"
+}
+
+run_cycle_unlocked() {
 	local now now_millis
 	now_ms
 	now_millis=$NOW_MS
@@ -645,7 +656,12 @@ run_cycle() {
 	local margin_kib=$((swap_used_kib + RETRACT_MARGIN_KIB))
 	local retract_ok=0 area_empty=0 hold=0
 	((swap_active_rc == 0 && AREA_USED_KIB == 0)) && area_empty=1
-	hibernation_hold "$now" && hold=1
+	if hibernation_hold; then
+		hold=1
+		# Suspended time and intermediate wakes never count as quiet time.
+		LAST_DANGER_EPOCH=$now
+		quiet_elapsed=0
+	fi
 	# His rule: something in swap, MemAvailable above it plus the margin
 	# (swapoff reads every swapped page back), quiet for the window. Daniel,
 	# 2026-10-10: an area that is on and holds nothing goes off after the
@@ -1235,14 +1251,14 @@ kernel_resume_check() {
 
 # Hibernation needs the area on before systemd-sleep looks for it
 # (systemd src/sleep/sleep.c: find_suitable_hibernation_device() runs
-# before the system-sleep hooks), so a unit ordered before
-# systemd-hibernate.service calls this. The mark holds the daemon's
-# retraction until the sleep hook runs after resume.
+# before the system-sleep hooks). Each native sleep service calls this
+# through ExecStartPre, whose failure prevents its ExecStart (systemd.service(5)).
+# ExecStopPost ends the hold even if preparation or systemd-sleep fails.
 hibernate_deploy() {
 	local now
 	if ! resume_target; then
-		log "hibernation: $RESUME_NOTE; nothing to switch on"
-		exit 0
+		problem_set hibernate-swapon notice LOCAL14 "$RESUME_NOTE"
+		exit 1
 	fi
 	if [[ -z $TARGET ]]; then
 		log_err "hibernation: $RESUME_SOURCE names RESUME=$RESUME_SPEC${RESUME_OFFSET_VALUE:+ RESUME_OFFSET=$RESUME_OFFSET_VALUE}, but $TARGET_NOTE"
@@ -1252,6 +1268,11 @@ hibernate_deploy() {
 	now_ms
 	now=$((NOW_MS / 1000))
 	mkdir -p "$STATE_DIR"
+	# The marker must exist before swapon. Failure to keep it must block sleep.
+	if ! printf '%s %s 0\n' "$now" "$TARGET" >"$HIBERNATE_MARK"; then
+		problem_set hibernate-swapon notice LOCAL14 "cannot write $HIBERNATE_MARK"
+		exit 1
+	fi
 	swap_state "$TARGET"
 	case $? in
 	0)
@@ -1259,7 +1280,10 @@ hibernate_deploy() {
 		log "hibernation: $TARGET is already on (from $RESUME_SOURCE)"
 		;;
 	1)
-		printf '%s %s 1\n' "$now" "$TARGET" >"$HIBERNATE_MARK"
+		if ! printf '%s %s 1\n' "$now" "$TARGET" >"$HIBERNATE_MARK"; then
+			problem_set hibernate-swapon notice LOCAL14 "cannot write $HIBERNATE_MARK"
+			exit 1
+		fi
 		local output rc
 		output=$("$SWAPON_BIN" -- "$TARGET" 2>&1)
 		rc=$?
@@ -1291,7 +1315,14 @@ hibernate_resume() {
 	local since="" target="" switched=""
 	[[ -e $HIBERNATE_MARK ]] || exit 0
 	read -r since target switched <"$HIBERNATE_MARK" 2>/dev/null
-	rm -f "$HIBERNATE_MARK"
+	# Reset the quiet window even if the daemon slept for the entire operation.
+	now_ms
+	PREV_EPOCH=0 PREV_AVAIL_KIB=0 PREV_MS=0 LAST_FAIL_LOG_EPOCH=0
+	LAST_DANGER_EPOCH=$((NOW_MS / 1000))
+	if ! printf '0 0 %s 0 0\n' "$LAST_DANGER_EPOCH" >"$STATE_FILE" || ! rm -f "$HIBERNATE_MARK"; then
+		problem_set action-lock notice LOCAL23 "$STATE_DIR"
+		exit 1
+	fi
 	[[ $switched == 1 && -n $target ]] || exit 0
 	swap_state "$target"
 	case $? in
@@ -1490,8 +1521,8 @@ while [[ $# -gt 0 ]]; do
 	--status) print_status ;;
 	--problems) print_problems ;;
 	--resume-target) print_resume_target ;;
-	--hibernate-deploy) hibernate_deploy; exit $? ;;
-	--hibernate-resume) hibernate_resume; exit $? ;;
+	--hibernate-deploy) lock_actions || exit 1; hibernate_deploy; exit $? ;;
+	--hibernate-resume) lock_actions || exit 1; hibernate_resume; exit $? ;;
 	--stopped) stopped ;;
 	--wait-ready) wait_ready "${2:?--wait-ready needs the epoch the restart began}"; exit $? ;;
 	--notify) notify_session; exit $? ;;

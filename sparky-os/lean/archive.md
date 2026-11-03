@@ -144,3 +144,9 @@ TMPDIR=/path/to/private-test-scratch PYTHONPATH=sparky-os \
 
 APT configuration loading and scratch path controls follow [apt.conf(5)](https://manpages.debian.org/testing/apt/apt.conf.5.en.html).
 Dependency relationships are interpreted by APT according to [Debian Policy chapter 7](https://www.debian.org/doc/debian-policy/ch-relationships.html), rather than a new package-name parser.
+
+Native debhelper builds can pass the same edition snapshots as the CLI with
+`SPARKY_LC_SIBLINGS_FILE` and `SPARKY_LC_PREVIOUS_SIBLINGS_FILE`, each naming a
+newline-separated list of readable archives. The embedded link gate reads these
+files before qualification; an unreadable list fails the build and removes its
+outputs. `SPARKY_LC_MIN_FREE_GIB` and `SPARKY_LC_ROOT_MIN_FREE_GIB` set its disk floors.
