@@ -45,7 +45,7 @@ Priority: optional
 Homepage: https://sparkylinux.org
 Description: Memory page for System Settings
   The Cushion Swap File: its switch, its protection state, kept problems
-  and how it is woken.
+  and how it is woken, beside the shared Stereo APTus zram install/remove action.
 EOF
 (cd "$D" && find usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
 dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${PACKAGE}_${VERSION}_amd64.deb"
