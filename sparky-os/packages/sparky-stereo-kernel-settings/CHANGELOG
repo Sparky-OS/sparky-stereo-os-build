@@ -1,6 +1,11 @@
 -------------------------------------------------------------------------------
-  Version 20261103.2~sparky9~0 (2026-11-02)
+  Version 20261103.3~sparky9~0 (2026-11-02)
 -------------------------------------------------------------------------------
+  * Remove compressed RAM swap and its helper/configuration/tests. Conflict with
+    systemd-zram-generator and zram-tools; APT owns their visible removal.
+    Retire only the old edition zram0, reporting and retaining failures.
+  * Verify the retained 256 KiB block-device read-ahead against CachyOS 7.3.1;
+    document the differing Bazzite OGC 128 KiB kernel default.
   * Correct the swappiness explanation and separate Daniel's value from our explanation; no value changes
   * Say when udev is absent; show and retain failed rule reloads with repairs in
     the shared problems engine, in nine languages, while completing configuration.
@@ -23,10 +28,6 @@
 -------------------------------------------------------------------------------
   Version 20261010.2~sparky9~0 (2026-10-10)
 -------------------------------------------------------------------------------
-  * zram by hardware (Daniel): off on capable machines, on with 8 GB of RAM or less or a swap area on eMMC, an SD card, a
-    rotating disk or removable storage; decided by zram-auto through zram-generator's set! directive, lz4, priority 100;
-    ZRAM=auto|on|off in /etc/default/sparky-stereo-zram overrides it
-  * README: how your own sysctl value wins over 70-sparky-stereo.conf; the sysctl file's comment says zram by hardware
   * /tmp on disk (Daniel): tmp.mount masked once at install as Debian's trixie release notes describe
   * /tmp cleaned at every boot and of files unused for 10 days: added by the assistant who wrote this version, never
     asked for by Daniel; removed in 20261103.1

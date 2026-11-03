@@ -1,0 +1,13 @@
+#!/bin/sh
+set -e
+# Remember ownership before dpkg removes our old generator drop-in. This is
+# migration state, not a problem store; failures belong to the problems engine.
+if [ "$1" = upgrade ] && [ -f /usr/lib/systemd/zram-generator.conf.d/50-sparky-stereo.conf ]; then
+    if grep -q '^set!sparky_zram=/usr/libexec/sparky-stereo/zram-auto$' /usr/lib/systemd/zram-generator.conf.d/50-sparky-stereo.conf; then
+        mkdir -p /var/lib/sparky-stereo-kernel-settings
+        : >/var/lib/sparky-stereo-kernel-settings/retire-owned-zram0
+    else
+        status=$?
+        [ "$status" -eq 1 ] || exit "$status"
+    fi
+fi
