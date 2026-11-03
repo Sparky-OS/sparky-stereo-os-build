@@ -174,12 +174,12 @@ settings_win() {
 		grep -q '^DEPLOY_HARD_KIB=1024000 DEPLOY_SOFT_KIB=543066 RATE_KIB=45255 RETRACT_MARGIN_KIB=3145728$'
 }
 
-# Deploy at the floor, one area only, with zram already active.
+# Deploy at the floor, one area only, with another disk swap already active.
 deploy_own_area_only() {
 	local d=$1
 	rm -f "$W/actions" "$W/state/state"
 	meminfo "$W/m" 97957892 $((4 * G)) $((8 * G)) $((8 * G))
-	swaps "$W/s" /dev/zram0 8388608 0
+	swaps "$W/s" /swap-other 8388608 0
 	daemon MEMINFO_PATH="$W/m" SWAPS_PATH="$W/s" CUSHION_SWAP_AREA=/swapfile NOW_EPOCH=1000 "$d" --once >"$W/log" 2>&1
 	[[ $(cat "$W/actions" 2>/dev/null) == "swapon -- /swapfile" ]]
 }
@@ -211,7 +211,7 @@ retract_own_area_only() {
 	mkdir -p "$W/state"
 	printf '0 0 1000 0\n' >"$W/state/state"
 	meminfo "$W/m" 97957892 $((40 * G)) $((16 * G)) $((14 * G))
-	swaps "$W/s" /dev/zram0 8388608 0 /swapfile 8388608 2097152
+	swaps "$W/s" /swap-other 8388608 0 /swapfile 8388608 2097152
 	daemon MEMINFO_PATH="$W/m" SWAPS_PATH="$W/s" CUSHION_SWAP_AREA=/swapfile NOW_EPOCH=1700 "$d" --once >"$W/log" 2>&1
 	[[ $(cat "$W/actions" 2>/dev/null) == "swapoff -- /swapfile" ]]
 }
@@ -264,8 +264,7 @@ no_retract_unused_area_before_quiet() {
 }
 
 # The hibernate unit has switched the area on for the image: no retraction
-# until the sleep hook runs, or the hold has expired (a hibernation that
-# never started).
+# until ExecStopPost ends the full native sleep service, with no timeout.
 no_retract_while_hibernating() {
 	local d=$1 ok=0
 	rm -f "$W/actions"
@@ -278,7 +277,7 @@ no_retract_while_hibernating() {
 	[[ ! -e $W/actions ]] && grep -q 'hibernating=yes => retract_ok=0' "$W/log" || { echo "  retracted during a hibernation"; ok=1; }
 	printf '1000 /swapfile 1\n' >"$W/state/hibernate-deployed"
 	daemon MEMINFO_PATH="$W/m" SWAPS_PATH="$W/s" CUSHION_SWAP_AREA=/swapfile NOW_EPOCH=1700 "$d" --once >"$W/log" 2>&1
-	[[ $(cat "$W/actions" 2>/dev/null) == "swapoff -- /swapfile" ]] || { echo "  a stale hold kept the area on"; ok=1; }
+	[[ ! -e $W/actions ]] && grep -q "quiet_elapsed=0s" "$W/log" || { echo "  long sleep lost its hold or counted quiet time"; ok=1; }
 	rm -f "$W/state/hibernate-deployed"
 	return $ok
 }
@@ -414,13 +413,22 @@ logrotate_while_writing() {
 	swaps "$W/s"
 	daemon_bg "$lr/cushion-swap.log" "$lr/journal" MEMINFO_PATH="$W/m" SWAPS_PATH="$W/s" CUSHION_SWAP_AREA=/swapfile PSI=off \
 		PACING=fixed POLL_INTERVAL_SEC=0.02 "$d"
+	# Wait for samples, not a host-speed assumption; still require >100 cycles.
+	rotation_samples() {
+		local attempt
+		for attempt in {1..100}; do
+			(( $(grep -c 'sample:' "$lr/cushion-swap.log" 2>/dev/null) >= 35 )) && return 0
+			sleep 0.1
+		done
+		return 1
+	}
 	for r in 1 2 3; do
-		sleep 1
+		rotation_samples || { echo "  daemon did not produce 35 samples before rotation"; ok=1; }
 		logrotate -f -s "$lr/state" "$lr/conf" 2>>"$lr/logrotate.err" || { echo "  logrotate run $r failed"; ok=1; }
 		cp "$lr/cushion-swap.log.1" "$lr/record-$r"
 		echo "after rotation $r: $(ls "$lr" | tr '\n' ' ')" >>"$OUT/logrotate-files.txt"
 	done
-	sleep 1
+	rotation_samples || ok=1
 	stop_bg || ok=1
 	[[ -s $lr/cushion-swap.log.1 && ! -e $lr/cushion-swap.log.2 ]] ||
 		{ echo "  expected exactly one previous week's file"; ok=1; }
@@ -576,7 +584,9 @@ hibernate_nothing_configured() {
 	local d=$1
 	rm -f "$W/actions" "$W/state/hibernate-deployed"
 	swaps "$W/s"
-	hibernate_env "$d" --hibernate-deploy >"$W/log" 2>&1 && [[ ! -e $W/actions ]] && grep -q 'nothing to switch on' "$W/log"
+	hibernate_env "$d" --hibernate-deploy >"$W/log" 2>&1
+	local rc=$?
+	[[ $rc == 1 && ! -e $W/actions ]] && grep -q "Hibernation could not" "$W/log"
 }
 
 # The kernel's resume device (set by the initramfs at boot) must be the one
@@ -1131,11 +1141,11 @@ postinst_says_failures() {
 	# the script's absolute paths go to the fakes
 	sed -e "s|/usr/sbin/cushion-swap|$W/pibin/cushion-swap|g" -e "s|-x /usr/bin/systemd-tmpfiles|-x $W/pibin/systemd-tmpfiles|" \
 		-e "s|-d /run/systemd/system|-d $W/pirun/systemd/system|" "$pi" >"$W/postinst.run"
-	out=$(PATH="$W/pibin:$PATH" sh "$W/postinst.run" configure 0.3.0 2>&1)
+	out=$(SPARKY_STEREO_ROOT="$W/pi-engine" PATH="$W/pibin:$PATH" sh "$W/postinst.run" configure 0.3.0 2>&1)
 	rc=$?
 	[[ $rc == 0 ]] || { echo "  the postinst failed the package: $rc"; ok=1; }
-	[[ $out == *'said: LOCAL19 systemd-tmpfiles --create cushion-swap.conf 73 '*'Read-only file system'* ]] || { echo "  tmpfiles failure not said: $out"; ok=1; }
-	[[ $out == *'said: LOCAL19 deb-systemd-invoke restart cushion-swap.service 1 Job for cushion-swap.service failed.'* ]] || { echo "  restart failure not said"; ok=1; }
+	[[ $out == *'Read-only file system'*'systemd-tmpfiles --create cushion-swap.conf failed (exit status 73)'* ]] || { echo "  tmpfiles failure not said: $out"; ok=1; }
+	[[ $out == *'Job for cushion-swap.service failed.'*'deb-systemd-invoke restart cushion-swap.service failed (exit status 1)'* ]] || { echo "  restart failure not said"; ok=1; }
 	grep -q -- '--wait-ready [0-9]' "$W/pi.calls" || { echo "  readiness not checked"; ok=1; }
 	return $ok
 }
