@@ -16,7 +16,7 @@ umask 022
 HERE=$(cd "$(dirname "$0")" && pwd)
 LEAN=$(cd "$HERE/../../lean" && pwd)
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
-VERSION=0.1.28
+VERSION=0.1.29
 PKG=dpkg-stereo
 W=$(mktemp -d "${TMPDIR:-/tmp}/dpkg-stereo-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
@@ -26,7 +26,24 @@ LEAN=$W/lean-inputs
 D=$W/$PKG
 mkdir -p "$D/DEBIAN" "$D/usr/sbin" "$D/usr/lib/dpkg-stereo/lean" "$D/etc/dpkg/dpkg.cfg.d" "$D/etc/apt/apt.conf.d" \
 	"$D/usr/share/doc/$PKG" "$D/usr/share/sparky/$PKG" "$D/usr/lib/systemd/catalog"
-install -m 755 "$HERE/bin/dpkg-stereo" "$D/usr/sbin/dpkg-stereo"
+# the program is a module beside the lean toolkit, so Python reads its byte-compiled form at every start instead of
+# compiling it again (a script is compiled at every run: about 28 ms of each dpkg hook, ORDER 367); the command loads it
+install -m 644 "$HERE/bin/dpkg-stereo" "$D/usr/lib/dpkg-stereo/dpkg_stereo.py"
+cat >"$D/usr/sbin/dpkg-stereo" <<'EOS'
+#!/usr/bin/python3
+# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
+# SPDX-License-Identifier: MIT
+# dpkg-stereo: the program is /usr/lib/dpkg-stereo/dpkg_stereo.py, whose byte-compiled form Python reads at every
+# start; its names are this file's too, for a caller that loads this file as a module
+import os
+import sys
+sys.path.insert(0, os.environ.get('DPKG_STEREO_LIB', '/usr/lib/dpkg-stereo'))
+from dpkg_stereo import *  # noqa: F401,F403
+from dpkg_stereo import main
+if __name__ == '__main__':
+    sys.exit(main())
+EOS
+chmod 755 "$D/usr/sbin/dpkg-stereo"
 install -m 755 "$HERE/lib/presquashfs-hook" "$D/usr/lib/dpkg-stereo/presquashfs-hook"
 install -m 644 "$LEAN"/*.py "$LEAN/JvmLexer.java" "$LEAN/ZigTokens.zig" "$D/usr/lib/dpkg-stereo/lean/"
 install -m 644 "$HERE/etc/dpkg-stereo.cfg" "$D/etc/dpkg/dpkg.cfg.d/dpkg-stereo"
@@ -45,6 +62,11 @@ set -e
 # Lean Code never fails dpkg-stereo's own configuration: a step that does not complete is said by dpkg-stereo
 # itself (what, why, what to do), kept by the edition's one engine and repaired with dpkg-stereo --repair;
 # every file stays its package's original or a checked projection
+# the program and the lean toolkit byte-compiled now, as Debian's Python packages are (py3compile, removed by the
+# prerm's py3clean), so no dpkg hook compiles them
+if [ "$1" = "configure" ] && command -v py3compile >/dev/null 2>&1; then
+	py3compile -p dpkg-stereo /usr/lib/dpkg-stereo || true
+fi
 if [ "$1" = "configure" ] && [ -z "${DPKG_STEREO_NO_PROJECT:-}" ]; then
 	/usr/sbin/dpkg-stereo --repair-consumers --if-changed || true
 	# dpkg read its hooks before this run, and this package's hook file is a conffile that arrives only now,
@@ -75,6 +97,10 @@ if [ "$1" = "remove" ]; then
 	/usr/sbin/dpkg-stereo --restore || true
 	# without the package table a later install projects everything again
 	rm -f /var/lib/dpkg-stereo/packages.tsv
+fi
+# the byte-compiled files the postinst (or a run) made, last, after the program's own last run
+if command -v py3clean >/dev/null 2>&1; then
+	py3clean -p dpkg-stereo || true
 fi
 exit 0
 EOS
