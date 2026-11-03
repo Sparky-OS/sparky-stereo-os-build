@@ -17,9 +17,16 @@ PKG=sparky-stereo-hardware
 KEY=nvidia-i386
 REPAIR='["sparky-stereo-hardware","--nvidia-i386"]'
 STORE=${SPARKY_STEREO_ROOT:-}/var/lib/sparky-stereo-problems
-# "ii VERSION" of an installed package, nothing for one that is not installed
-installed() {
-	dpkg-query -W -f '${db:Status-Abbrev}\t${Version}\n' "$1" 2>/dev/null | awk -F'\t' '$1 ~ /^ii/ { print $2; exit }'
+# the installed versions of NVIDIA's driver libraries for amd64 and of the two for i386, in one dpkg-query (the check runs
+# after every dpkg run): VERSIONS[package:arch], unset for one that is not installed
+declare -A VERSIONS
+read_versions() {
+	local name status version
+	VERSIONS=()
+	while IFS=$'\t' read -r name status version; do
+		[[ $status == ii* ]] && VERSIONS[$name]=$version
+	done < <(dpkg-query -W -f '${Package}:${Architecture}\t${db:Status-Abbrev}\t${Version}\n' \
+		nvidia-driver-libs:amd64 nvidia-driver-libs:i386 libcuda1:i386 2>/dev/null)
 }
 has_i386() {
 	dpkg --print-foreign-architectures 2>/dev/null | grep -qx i386
@@ -31,7 +38,7 @@ listed() { printf '%s\n' $1 | paste -sd, - | sed 's/,/, /g'; }
 missing() {
 	local p out=()
 	for p in nvidia-driver-libs:i386 libcuda1:i386; do
-		[[ $(installed "$p") == "$1" ]] || out+=("$p")
+		[[ ${VERSIONS[$p]:-} == "$1" ]] || out+=("$p")
 	done
 	printf '%s\n' "${out[*]}"
 }
@@ -42,7 +49,8 @@ clear_problem() {
 }
 check() {
 	local version need first=false
-	version=$(installed nvidia-driver-libs:amd64)
+	read_versions
+	version=${VERSIONS[nvidia-driver-libs:amd64]:-}
 	if [[ -z $version ]] || ! has_i386; then
 		clear_problem
 		return 0
@@ -68,7 +76,8 @@ install() {
 		echo 'Run as root: sudo sparky-stereo-hardware --nvidia-i386' >&2
 		return 1
 	fi
-	version=$(installed nvidia-driver-libs:amd64)
+	read_versions
+	version=${VERSIONS[nvidia-driver-libs:amd64]:-}
 	if [[ -z $version ]]; then
 		sparky-stereo-problems say "$PKG" LOCAL7 >&2 || true
 		clear_problem
@@ -102,6 +111,7 @@ install() {
 		rm -f "$out"
 	fi
 	check
+	read_versions
 	[[ -z $(missing "$version") ]]
 }
 case ${1:-} in
