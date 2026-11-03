@@ -5,10 +5,14 @@
 # /var/lib/dpkg-stereo/problems, and --repair must fix it once its cause is gone; dpkg's hooks still return 0, so
 # dpkg goes on. A verification that did not check a file must never say clean. Each case has its control.
 # Usage: no-fallbacks-test.sh DPKG-STEREO-PROGRAM LIB-DIR LANG-DIR WORKDIR
-#   (the program to test, the folder holding its lean package, its language files' folder, a scratch folder)
+#   (the program to test, the folder holding its lean package, its language files' folder, a scratch folder; the
+#   program's journal catalogs are read from ../lib/systemd/catalog beside it)
 set -u
 BIN=$1 LIB=$2 LANGS=$3 W=$4
 export DEBIAN_FRONTEND=noninteractive DPKG_STEREO_LIB=$LIB DPKG_STEREO_LANG_DIR=$LANGS LANG=C.UTF-8
+# The problems engine forgets the problems of a package dpkg does not list and whose catalog it cannot find (a
+# package that was removed); the program under test runs from an unpacked copy, so its own catalogs are named here
+export SPARKY_STEREO_PROBLEMS_CATALOG="$(cd "$(dirname "$BIN")/../lib/systemd/catalog" 2>/dev/null && pwd):/usr/lib/systemd/catalog"
 unset DPKG_STEREO_DISABLE DPKG_STEREO_NO_PROJECT
 fail=0 passed=0 failed=0
 ok() { echo "PASS $*"; passed=$((passed + 1)); }
@@ -150,8 +154,10 @@ rm -f /var/cache/apt/archives/lean-demo_*
 fake_offline_apt
 ds --restore lean-demo > "$W/out" 2> "$W/err"; rc=$?
 check "restore-offline-exit-1" [ $rc = 1 ]
-check "restore-offline-real-reason" grep -q 'stay lean (apt-get download lean-demo=1.0 exited 100: E: Failed to fetch' "$W/out"
-check "restore-offline-kept" kept restore "could not be put back"
+check "restore-offline-real-reason" grep -q 'files stay lean: APT could not download it (apt-get download lean-demo=1.0 exited 100: E: Failed to fetch' "$W/out"
+# a configured source offers the version: what brings it back is APT's own download, never a reinstall of it
+check "restore-offline-what-to-do" grep -q 'Run: sudo apt-get update, then: sudo dpkg-stereo --repair' "$W/out"
+check "restore-offline-kept" kept restore "lean-demo 1.0 stay lean: APT could not download it"
 check "restore-offline-problems-exit-1" sh -c "python3 '$BIN' --problems >/dev/null; [ \$? = 1 ]"
 rm -f /usr/local/bin/apt-get /usr/local/bin/apt-cache
 cp "$DEB" /var/cache/apt/archives/

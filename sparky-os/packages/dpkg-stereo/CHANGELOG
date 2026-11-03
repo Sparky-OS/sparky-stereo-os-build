@@ -1,4 +1,61 @@
 -------------------------------------------------------------------------------
+  Version 0.1.28 (2026-11-03)
+-------------------------------------------------------------------------------
+  * ORDER 365: --restore brings back every original, fetching the exact version itself. On the A10 (run
+    aba2-20261103) 0.1.24 left 1,597 files lean in 33 packages whose installed version was neither in
+    APT's cache nor in any configured source, and advised `apt-get install --reinstall NAME`, which can
+    only fetch a version a source offers. Now an original without a pristine copy comes from APT's cache
+    (that architecture's .deb, by APT's own name), then the configured sources (apt-get download, as
+    before), then snapshot.debian.org, the Debian Project's archive of every version Debian has published,
+    through its machine-readable interface (/mr/binary/NAME/VERSION/binfiles?fileinfo=1 names the .deb by
+    its SHA-1, /file/SHA1 is the file), downloaded with APT's own apt-helper (APT's proxies and TLS). A
+    fetched .deb waits in APT's partial/ directory; its SHA-1, its control file's Package, Version and
+    Architecture and every file it gives back (against the record's sha_orig) are checked, and only then
+    does it go into APT's cache under APT's own name (NAME_VERSION_ARCH.deb, an epoch's colon as %3a).
+  * Snapshot is asked for a package APT's own data call Debian's: the Origin of the Release file of each
+    source that lists the version, or other versions of the package, with the installed version's
+    Maintainer (dpkg's database) deciding where both Debian and another archive list it; and for a package
+    no list holds any more, once, by its exact name, version and architecture. A package of another
+    archive (deb-multimedia, a vendor) is not asked of snapshot. Once snapshot cannot be reached, it is not
+    asked again in that run. The person's --restore, --hold and --repair and dpkg-stereo's own removal
+    fetch; the hooks' migrations do not (the network in dpkg's hooks stays as it was).
+  * What stays lean is said package version by package version, in the nine languages, with why (no
+    network, not on snapshot, another archive, a refused file, a .deb with other files, APT's own error)
+    and the one thing that brings it back; apt-get's reinstall is named only for a version a configured
+    source offers, and only once dpkg-stereo is removed. The restore problem keeps each package version
+    (dpkg-stereo --problems lists them); a restore of some packages keeps the others an earlier restore
+    kept while their files stay lean.
+  * --restore [PACKAGE...] --deb FILE.deb: a .deb the person hands restore (a vendor's, such as Zoom's,
+    which no archive keeps) is taken only when its control file is exactly an installed version with
+    recorded files and every file it gives back is the recorded original; otherwise nothing is taken from
+    it, and why is said.
+  * Depends on apt: the fetch uses APT's apt-helper (before, apt-get and apt-cache were used undeclared).
+  * A Multi-Arch: same package's .deb is read for its own architecture only: the twin's .deb of the other
+    architecture in APT's cache was taken for it before (any NAME_VERSION_* name matched).
+  * The post-invoke hook gives the same records whichever second dpkg and the hook ran in (found by Opus in
+    ORDER 363's proofs: two runs of one case ended with different --verify output). A package whose file
+    list was written in the second packages.tsv was written in is looked at again (git's racy rule); then a
+    file the person changed after its projection lost its record, so --verify passed silently, and a
+    Multi-Arch: same instance's shared files were examined only when the twin holding their record looked
+    changed too, so a script dpkg put back in its package's bytes after a reinstall could stay so. Now a
+    file whose bytes are neither its projection nor dpkg's (its md5sums or conffile hash) keeps its record,
+    and --verify names it as changed after its projection; a changed instance's examination reads the
+    records its twin holds for the paths its file list shares; and a path recorded for this version is never
+    also "left" for the other instance (a person's edit of a shared conffile is named once, as CHANGED).
+    What a removed package left alone with its reason goes with it too (--verify named a removed instance's
+    conffile as changed by the person). test/post-invoke-seconds-test.sh runs each case with the instance's
+    row made racy and not.
+  * Tests: test/restore-fetch-test.sh (a local server with snapshot's interface; no internet). The three
+    tests that failed with 0.1.26 too are fixed: no-fallbacks-test.sh names the unpacked program's own
+    journal catalogs (the problems engine forgets the problems of a package dpkg does not list and whose
+    catalog it does not find); migrate-test.sh tells a full projection from the one-time migration line
+    0.1.25 added; concurrent-test.sh case D says it needs dpkg-stereo 0.1.4 or older.
+  * Credits: snapshot.debian.org (the Debian Project; hardware and hosting by Glasklar Teknik AB, LeaseWeb
+    Netherlands B.V. and the Wellcome Trust Sanger Institute; its current web frontend by Baptiste
+    Beauplat); APT's apt-helper (the APT team); David Paleino's debsnap (devscripts), whose use of the
+    same interface this follows.
+
+-------------------------------------------------------------------------------
   Version 0.1.27 (2026-11-03)
 -------------------------------------------------------------------------------
   * ORDER 363 (Daniel, 2026-11-03: "make it recognize the lc1 mark, it's ours to modify anyways"): the

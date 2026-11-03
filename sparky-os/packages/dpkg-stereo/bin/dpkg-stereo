@@ -20,7 +20,12 @@ usage: dpkg-stereo [--root DIR] [--map /etc=DIR ...] COMMAND
   --pre-invoke             before dpkg (dpkg's pre-invoke hook): projected conffiles back to pristine
   --post-invoke            after dpkg (dpkg's post-invoke hook): project what changed, reproject conffiles
   --verify [PACKAGE...]    projected files against their lean hashes, pristine records against dpkg's
-  --restore [PACKAGE...]   the original files back (all packages without a name), records dropped
+  --restore [PACKAGE...]   the original files back (all packages without a name), records dropped; a package
+                           version neither APT's cache nor its sources hold comes from snapshot.debian.org when
+                           it is Debian's, and what cannot come back is said with the one thing that brings it back
+  --restore [PACKAGE...] --deb FILE.deb ...  the same, with these .deb files as the originals: each is taken
+                           only when it is exactly an installed version and every file it gives back is the
+                           recorded original (without a PACKAGE, the files' own packages are restored)
   --repair-consumers       restore projections whose old consumer check was withdrawn, and project
                            again the C and C++ files an older renderer gave another form (#line
                            directives, or every authored line kept); those whose .deb is nowhere wait,
@@ -64,6 +69,7 @@ import io
 import json
 import lzma
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -71,6 +77,7 @@ import sys
 import tarfile
 import tempfile
 import time
+import urllib.parse
 from concurrent.futures import ProcessPoolExecutor
 
 sys.path.insert(0, os.environ.get('DPKG_STEREO_LIB', '/usr/lib/dpkg-stereo'))
@@ -120,6 +127,16 @@ REPAIR = 'sudo dpkg-stereo --repair'
 STEPS = {'post-invoke': 'LOCAL1', 'pre-invoke': 'LOCAL2', 'project': 'LOCAL3', 'restore': 'LOCAL4',
          'repair-consumers': 'LOCAL5', 'fetch-hr': 'LOCAL6', 'bytecode': 'LOCAL7'}
 OUTPUT_LINES = 200
+# snapshot.debian.org, the Debian Project's archive of every package version Debian has published, and its
+# machine-readable interface: /mr/binary/NAME/VERSION/binfiles?fileinfo=1 names each architecture's .deb by its
+# SHA-1, /file/SHA1 is that file (ORDER 365). DPKG_STEREO_SNAPSHOT names another server of the same interface (the
+# tests' local one).
+SNAPSHOT = os.environ.get('DPKG_STEREO_SNAPSHOT', 'https://snapshot.debian.org').rstrip('/')
+APT_HELPER = '/usr/lib/apt/apt-helper'
+# why an original stays lean, and what brings it back: the messages of the language files (restore, ORDER 365)
+WHY = {'unreachable': 'LOCAL26', 'not-on-snapshot': 'LOCAL27', 'other-archive': 'LOCAL28', 'refused': 'LOCAL29',
+       'other-bytes': 'LOCAL30', 'apt': 'LOCAL31', 'unreadable': 'LOCAL32', 'root': 'LOCAL33', 'given': 'LOCAL34',
+       'unlisted': 'LOCAL50'}
 
 
 def language(P=None):
@@ -162,11 +179,19 @@ def strings(lang):
 
 def text(key, args=(), lang=None):
     """KEY in LANG (the system's language when None), its %s filled with ARGS; an argument [KEY, ARG...] is that
-    message itself. A key missing from the language's file is taken from the English file, and a key missing from
-    both is printed with its arguments, never left out."""
+    message itself, and an argument @KEY that message without arguments, as the problems engine renders them. A key
+    missing from the language's file is taken from the English file, and a key missing from both is printed with its
+    arguments, never left out."""
     lang = lang or language()
     template = strings(lang).get(key) or strings('en').get(key)
-    filled = [text(a[0], a[1:], lang) if isinstance(a, (list, tuple)) and a else str(a) for a in args]
+
+    def fill(a):
+        if isinstance(a, (list, tuple)) and a:
+            return text(a[0], a[1:], lang)
+        if isinstance(a, str) and len(a) > 1 and a[0] == '@' and (strings(lang).get(a[1:]) or strings('en').get(a[1:])):
+            return text(a[1:], (), lang)
+        return str(a)
+    filled = [fill(a) for a in args]
     if template is None:
         return ' '.join([key] + filled)
     try:
@@ -409,7 +434,7 @@ def write_table(path, cols, rows):
     os.replace(tmp, path)
 
 
-DB_FIELDS = ('Package', 'Version', 'Architecture', 'Status', 'Multi-Arch')
+DB_FIELDS = ('Package', 'Version', 'Architecture', 'Status', 'Multi-Arch', 'Maintainer')
 
 
 def conffile_entry(line):
@@ -822,10 +847,13 @@ def project_packages(P, names, jobs, image=False, log=print, only=None, known=No
                 continue
             ver = pkgs[name][0]
             conf, own = confs.get(name, {}), sums.get(name, {})
-            twin = files.get(path)
-            if twin_record(twin, name) and twin['version'] == ver and sha256(data) == twin['sha_lean']:
-                # a shared file its other architecture's instance projected earlier in this run: one projection, one
-                # record (the file is never "changed since its package installed it")
+            prior = files.get(path)
+            if prior and prior['version'] == ver and (prior['package'] == name or twin_record(prior, name)) \
+                    and sha256(data) != prior['sha_orig']:
+                # projected for this version already (a shared file by its other architecture's instance, earlier in
+                # this run or before): one projection, one record. A file changed after that projection keeps the
+                # record, and --verify names it there, never as "changed since its package installed it" beside it
+                # (ORDER 365: such a file was named twice, or not at all, by which second the hooks ran in)
                 if left.get(path, {}).get('package') == name:
                     del left[path]
                 continue
@@ -1030,7 +1058,12 @@ def post_invoke(P, jobs):
                     restored.append(path)
         except OSError:
             pass
-    files = Records(P, 'records', set(ch) | gone | {conf_idx[p]['package'] for p in restored if p in conf_idx})
+    # a shared file of a Multi-Arch: same package may be recorded for the other architecture's instance: its tables are
+    # read too, so what dpkg did to the shared files of a changed instance is seen whether or not its twin also looks
+    # changed (the racy rule makes that a matter of which second dpkg and this hook wrote in, ORDER 365)
+    twin_of = {t: k for k in sorted(ch) for t in twins(k, pkgs) if t not in ch}
+    files = Records(P, 'records', set(ch) | gone | set(twin_of)
+                    | {conf_idx[p]['package'] for p in restored if p in conf_idx})
     dirty = False
     again = set()          # paths dpkg wrote back with the package's bytes: project them again
     heirs = Heirs(P, pkgs)
@@ -1043,24 +1076,56 @@ def post_invoke(P, jobs):
         else:
             del files[path]
         dirty = True
+    if gone:
+        # what a removed package left alone, with its reason, goes with it: --verify named a removed instance's
+        # conffile "changed by the person" until the same path was left again (ORDER 365)
+        left_gone = Records(P, 'left', gone)
+        for path in [p for p, r in left_gone.items() if r['package'] in gone]:
+            del left_gone[path]
+        left_gone.save()
     same_version = {k for k in ch if recorded.get(k, {}).get('version') == pkgs[k][0]}
     known = {}             # what was projected and checked before, for files that come back in the same bytes
-    for path in [p for p, r in files.items() if r['package'] in ch]:
+    # each recorded path of a changed instance once: its own records, then the records its twin holds for the paths
+    # its file list shares
+    examine = {p: r['package'] for p, r in files.items() if r['package'] in ch}
+    lists = {}
+    for path, rec in files.items():
+        owner = twin_of.get(rec['package'])
+        if owner and path not in examine and rec['version'] == pkgs[owner][0]:
+            if owner not in lists:
+                lists[owner] = set(package_files(P, pkgs[owner][1]))
+            if path in lists[owner]:
+                examine[path] = owner
+    sums = {}
+    conf = None
+    for path, owner in sorted(examine.items()):
         rec = files[path]
         known[path] = (rec['sha_orig'], rec['sha_lean'])
-        if rec['package'] in same_version or rec['version'] == pkgs[rec['package']][0]:
+        if owner in same_version or rec['version'] == pkgs[owner][0]:
             # dpkg rewrote the package's file list (a reinstall), or the list only looks different (an
             # image unpacked elsewhere), or this record was made from the installed version after dpkg
             # installed it (a migration earlier in this hook, which leaves packages.tsv as it was): the files
             # themselves say which of them dpkg replaced
             try:
                 with open(P.real(path), 'rb') as f:
-                    cur = sha256(f.read())
+                    data = f.read()
+                cur = sha256(data)
             except FileNotFoundError:
-                cur = None
+                data = cur = None
             if cur == rec['sha_lean']:
                 continue
-            if cur == rec['sha_orig'] and rec['package'] in same_version:
+            if cur is not None and cur != rec['sha_orig']:
+                # neither the projection nor its original: dpkg wrote other bytes of this version (its md5sums, or
+                # its conffile hash, say so), or the person changed the file after its projection; then the record
+                # stays, so --verify names the file whichever second dpkg and this hook ran in (ORDER 365: the
+                # record went when the racy rule made the package look changed, and --verify passed silently)
+                if owner not in sums:
+                    sums[owner] = md5sums(P, pkgs[owner][1])
+                if conf is None:
+                    conf = conffiles(P)
+                if md5(data) not in (sums[owner].get(path), conf.get(owner, {}).get(path)):
+                    continue
+            if owner in same_version:
                 again.add(path)      # (a package whose version changed is projected whole below)
         del files[path]
         dirty = True
@@ -1144,33 +1209,302 @@ def cached_debs(P):
         return []
 
 
-def in_cache(debs, package, version):
-    """Whether APT's cache (the sorted names cached_debs gives) holds this package version's .deb."""
-    prefix = f"{package.split(':')[0]}_{version.replace(':', '%3a')}_"
+def apt_quote(s, bad):
+    """apt's QuoteString (apt-pkg/contrib/strutl.cc): the characters of BAD, '%', spaces, control characters and
+    anything outside ASCII as %xx in lower-case hex."""
+    out = []
+    for byte in s.encode('utf-8', 'surrogateescape'):
+        ch = chr(byte)
+        out.append(f'%{byte:02x}' if ch in bad or ch == '%' or byte <= 0x20 or byte >= 0x7f else ch)
+    return ''.join(out)
+
+
+def apt_name(name, version, arch):
+    """The name APT gives this package version's .deb in its cache (apt-pkg/acquire-item.cc, pkgAcqArchive: package,
+    version and architecture each through QuoteString, so an epoch's colon is %3a)."""
+    return f'{apt_quote(name, "_:")}_{apt_quote(version, "_:")}_{apt_quote(arch, "_:.")}.deb'
+
+
+def pool_name(name, version, arch):
+    """The .deb's own name in a Debian archive, where the version goes without its epoch (Debian Policy 3.2.2:
+    "Epochs are not included in the names of the files that compose source packages, or in the filenames of binary
+    packages")."""
+    return f'{name}_{version.split(":", 1)[1] if ":" in version else version}_{arch}.deb'
+
+
+def in_cache(debs, package, version, arch=None):
+    """Whether APT's cache (the sorted names cached_debs gives) holds this package version's .deb: for ARCH (or the
+    package's own :arch) the file of that architecture only, apt's own name; without one, any architecture's."""
+    name, _, qualified = package.partition(':')
+    arch = arch or qualified
+    if arch:
+        exact = apt_name(name, version, arch)
+        i = bisect.bisect_left(debs, exact)
+        return i < len(debs) and debs[i] == exact
+    prefix = f"{name}_{version.replace(':', '%3a')}_"
     i = bisect.bisect_left(debs, prefix)
     return i < len(debs) and debs[i].startswith(prefix)
 
 
-def archive_versions(P, packages):
-    """{(name, version)} of what APT's lists offer for these packages, from one apt-cache call: `apt-cache
-    madison` lists the versions the sources hold, never dpkg's own record of an installed one (one call for
-    38 packages took 0.63 s in ORDER 315's probe, where each failing `apt-get download` took 0.71 s). None when
-    APT cannot be asked (another root, no apt-cache, an error): every download is then tried, as before."""
+def apt_offers(P, packages):
+    """[(name, version, source)] of what APT's lists offer for these packages, from one apt-cache call: `apt-cache
+    madison` lists the versions the sources hold, never dpkg's own record of an installed one (one call for 38
+    packages took 0.63 s in ORDER 315's probe, where each failing `apt-get download` took 0.71 s); SOURCE is the
+    package index as apt-cache policy names it (URI suite/component architecture Packages). None when APT cannot be
+    asked (another root, no apt-cache, an error)."""
     if P.root != '' or not packages or not shutil.which('apt-cache'):
         return None
     try:
         proc = subprocess.run(['apt-cache', 'madison', *sorted(set(packages))], capture_output=True, text=True,
-                              errors='surrogateescape', timeout=900)
+                              errors='surrogateescape', timeout=900, env=dict(os.environ, LC_ALL='C.UTF-8'))
     except (OSError, subprocess.SubprocessError):
         return None
     if proc.returncode != 0:
         return None
-    out = set()
+    out = []
     for line in proc.stdout.splitlines():
         fields = [x.strip() for x in line.split('|')]
         if len(fields) >= 3 and fields[0] and fields[1]:
-            out.add((fields[0], fields[1]))
+            out.append((fields[0], fields[1], fields[2]))
     return out
+
+
+def archive_versions(P, packages):
+    """{(name, version)} of what APT's lists offer for these packages (apt_offers). None when APT cannot be asked:
+    every download is then tried, as before."""
+    lines = apt_offers(P, packages)
+    return None if lines is None else {(name, version) for name, version, _ in lines}
+
+
+def debian_origin(origin):
+    """Whether a Release file's Origin is the Debian archive's (Debian, Debian Backports, Debian Ports): the archives
+    snapshot.debian.org keeps."""
+    return origin == 'Debian' or origin.startswith('Debian ')
+
+
+class AptView:
+    """What APT's own data say about where the package versions restore needs come from (ORDER 365). The sources
+    each Packages index belongs to and its Release file's Origin come from `apt-cache policy`; which versions each
+    source lists, from `apt-cache madison`; dpkg's database gives the installed instance's architecture and
+    Maintainer. For one package version, `plan` says whether a configured source offers it (APT downloads it, as
+    before), whether snapshot.debian.org is asked when neither APT's cache nor its sources gave the .deb, and the
+    archive it comes from otherwise:
+      - a source offers this exact version: snapshot is asked only when that source's Origin is Debian's;
+      - the sources list other versions of the package only: snapshot is asked when one of them is Debian's; when
+        the installed version's Maintainer is that of the versions of some sources only (deb-multimedia's builds of
+        a package Debian also has), those sources decide;
+      - no list holds the package any more (Debian dropped it, or it never came from a configured source, as a
+        vendor's downloaded .deb): nothing in APT or dpkg says where it came from, so snapshot is asked once, by its
+        exact name, version and architecture; Debian's archive keeps every version Debian published, and the
+        checks prove the file. A version snapshot does not hold is then said, with the --deb way;
+      - APT cannot be asked (no apt-cache, another root, an error): the download is tried, then snapshot."""
+
+    def __init__(self, P, needed, origins=True):
+        # needed: {(package, version): (arch, maintainer)}; without ORIGINS only which versions APT offers (madison)
+        self.needed = needed
+        self.origins = {}
+        self.lines = apt_offers(P, [k[0] for k in needed]) if needed else None
+        self.maint = {}
+        if self.lines is None or not origins:
+            return
+        try:
+            proc = subprocess.run(['apt-cache', 'policy'], capture_output=True, text=True, errors='surrogateescape',
+                                  timeout=900, env=dict(os.environ, LC_ALL='C.UTF-8'))
+            policy = proc.stdout if proc.returncode == 0 else ''
+        except (OSError, subprocess.SubprocessError):
+            policy = ''
+        source = None
+        for line in policy.splitlines():
+            words = line.strip()
+            m = re.match(r'^-?\d+\s+(\S.*)$', words)
+            if m and not words.startswith(('release ', 'origin ')):
+                source = m.group(1).strip()
+                self.origins.setdefault(source, '')
+            elif words.startswith('release ') and source is not None:
+                fields = dict(kv.split('=', 1) for kv in words[len('release '):].split(',') if '=' in kv)
+                self.origins[source] = fields.get('o', '')
+        # the installed version's Maintainer decides between sources only where both Debian and another archive list
+        # the package and none lists this version: one apt-cache show for those packages
+        ask = set()
+        for (package, version), (arch, maintainer) in needed.items():
+            mine = self.listed(package, arch)
+            origins = {self.origins.get(s, '') for _, s in mine}
+            if mine and version not in {v for v, _ in mine} and maintainer and len(origins) > 1 \
+                    and any(debian_origin(o) for o in origins):
+                ask.add(package.split(':')[0])
+        if ask:
+            try:
+                proc = subprocess.run(['apt-cache', 'show', *sorted(ask)], capture_output=True, text=True,
+                                      errors='surrogateescape', timeout=900, env=dict(os.environ, LC_ALL='C.UTF-8'))
+                show = proc.stdout
+            except (OSError, subprocess.SubprocessError):
+                show = ''
+            rec = {}
+            for line in show.splitlines() + ['']:
+                if not line.strip():
+                    if rec.get('Package') and rec.get('Version'):
+                        self.maint[(rec['Package'], rec['Version'])] = rec.get('Maintainer', '')
+                    rec = {}
+                elif line[0] not in ' \t' and ':' in line:
+                    key, _, value = line.partition(':')
+                    rec[key] = value.strip()
+
+    @staticmethod
+    def arch_ok(source, arch):
+        """Whether an index (URI suite/component ARCH Packages, or a flat source's DIR Packages) can hold ARCH."""
+        words = source.split()
+        if arch in (None, '', 'all') or len(words) < 2 or words[-1] != 'Packages' or '/' in words[-2] \
+                or words[-2] == '.':
+            return True
+        return words[-2] == arch
+
+    def listed(self, package, arch):
+        name = package.split(':')[0]
+        return [(v, s) for n, v, s in (self.lines or ()) if n == name and self.arch_ok(s, arch)]
+
+    def label(self, sources):
+        return ', '.join(sorted({self.origins.get(s) or s for s in sources}))
+
+    def plan(self, package, version):
+        """(offered, snapshot, archive): whether a configured source offers this version, whether snapshot is
+        asked, and the archive named when it is not."""
+        arch, maintainer = self.needed.get((package, version), (None, ''))
+        if self.lines is None:
+            return True, True, ''
+        mine = self.listed(package, arch)
+        exact = [s for v, s in mine if v == version]
+        if exact:
+            return True, any(debian_origin(self.origins.get(s, '')) for s in exact), self.label(exact)
+        if not mine:
+            return False, True, ''
+        name = package.split(':')[0]
+        same = [(v, s) for v, s in mine if maintainer and self.maint.get((name, v)) == maintainer]
+        decide = [s for _, s in (same or mine)]
+        return False, any(debian_origin(self.origins.get(s, '')) for s in decide), self.label(decide)
+
+
+def apt_download(url, target):
+    """URL into TARGET through APT's own downloader, apt-helper download-file: APT's proxies, TLS and retries as
+    apt.conf(5) sets them, as the sandbox user when root. None when the file arrived, else (missing, why): MISSING
+    when the server answered that it has no such file (404, 410), WHY in APT's own words."""
+    try:
+        os.unlink(target)
+    except FileNotFoundError:
+        pass
+    env = dict(os.environ, LC_ALL='C.UTF-8')
+    env.pop('LANGUAGE', None)
+    try:
+        run = subprocess.run([APT_HELPER, 'download-file', url, target], capture_output=True, text=True,
+                             errors='surrogateescape', env=env, stdin=subprocess.DEVNULL)
+    except OSError as e:
+        return False, error_line(e)
+    if run.returncode == 0 and os.path.isfile(target):
+        return None
+    out = (run.stderr + '\n' + run.stdout).splitlines()
+    failed = [re.sub(r'^E: Failed to fetch \S+\s*', '', l.strip()) for l in out if l.startswith('E: Failed to fetch')]
+    why = failed[0] if failed else ' '.join(l.strip() for l in out if l.startswith(('E:', 'W:'))) \
+        or f'apt-helper exited {run.returncode}'
+    status = re.match(r'(\d{3})\s', why)
+    try:
+        os.unlink(target)
+    except FileNotFoundError:
+        pass
+    return bool(status and status.group(1) in ('404', '410')), why
+
+
+def deb_fields(deb):
+    """(Package, Version, Architecture) of a .deb's control file (dpkg-deb --show), or the reason it has none."""
+    try:
+        run = subprocess.run(['dpkg-deb', '--show', '--showformat=${Package}\t${Version}\t${Architecture}\n', deb],
+                             capture_output=True, text=True, errors='surrogateescape')
+    except OSError as e:
+        return None, error_line(e)
+    fields = run.stdout.rstrip('\n').split('\t')
+    if run.returncode != 0 or len(fields) != 3:
+        return None, ' '.join(run.stderr.strip().splitlines()[-2:]) or f'dpkg-deb --show exited {run.returncode}'
+    return tuple(fields), None
+
+
+def sha1_file(path):
+    h = hashlib.sha1()
+    with open(path, 'rb') as f:
+        for block in iter(lambda: f.read(1 << 20), b''):
+            h.update(block)
+    return h.hexdigest()
+
+
+def partial_dir(P):
+    """APT's partial/ directory, made as APT makes it (the sandbox user _apt's, mode 700) when it is missing."""
+    d = P.real('/var/cache/apt/archives/partial')
+    if not os.path.isdir(d):
+        os.makedirs(d, mode=0o700, exist_ok=True)
+        if os.geteuid() == 0:
+            try:
+                import pwd
+                os.chown(d, pwd.getpwnam('_apt').pw_uid, 0)
+            except (KeyError, OSError):
+                pass
+    return d
+
+
+def snapshot_deb(P, name, version, arch):
+    """The .deb of exactly NAME VERSION ARCH from snapshot.debian.org, fetched into APT's partial/ directory: the
+    machine-readable interface names the file by its SHA-1, the file is fetched by that SHA-1, and it is kept only
+    when its own SHA-1 is that one and its control file names this package, version and architecture. (path, None),
+    or (None, (kind, why)): kind 'unreachable' (no answer, or an answer that is not the interface's), 'missing' (no
+    such version for this architecture) or 'refused' (a file that is not the one asked for)."""
+    q = lambda s: urllib.parse.quote(s, safe='')
+    work = partial_dir(P)
+    api = f'{SNAPSHOT}/mr/binary/{q(name)}/{q(version)}/binfiles?fileinfo=1'
+    meta = os.path.join(work, f'dpkg-stereo.{os.getpid()}.json')
+    got = apt_download(api, meta)
+    if got is not None:
+        return None, ('missing' if got[0] else 'unreachable', f'{api}: {got[1]}')
+    try:
+        with open(meta, encoding='utf-8') as f:
+            info = json.load(f)
+        results = info['result']
+        hashes = list(dict.fromkeys(r['hash'] for r in results if r['architecture'] == arch))
+    except (OSError, ValueError, TypeError, KeyError) as e:
+        return None, ('unreachable', f'{api}: the answer is not the interface\'s ({error_line(e)})')
+    finally:
+        try:
+            os.unlink(meta)
+        except FileNotFoundError:
+            pass
+    if not hashes:
+        others = sorted({str(r.get('architecture')) for r in results if isinstance(r, dict)})
+        return None, ('missing', f'{api}: no {arch} file' + (f' (only {", ".join(others)})' if others else ''))
+    target = os.path.join(work, f'dpkg-stereo.{os.getpid()}.{apt_name(name, version, arch)}')
+    refused = []
+    for sha in hashes:
+        url = f'{SNAPSHOT}/file/{sha}'
+        got = apt_download(url, target)
+        if got is not None:
+            if not got[0]:
+                return None, ('unreachable', f'{url}: {got[1]}')
+            refused.append(f'{url}: {got[1]}')
+            continue
+        have = sha1_file(target)
+        fields, why = deb_fields(target)
+        if have != sha:
+            refused.append(f'{url} has SHA-1 {have}, not {sha}')
+        elif fields != (name, version, arch):
+            refused.append(f'{url} is ' + (' '.join(fields) if fields else f'no .deb ({why})'))
+        else:
+            return target, None
+        os.unlink(target)
+    return None, ('refused', '; '.join(refused))
+
+
+def place_in_cache(P, path, name, version, arch):
+    """A fetched .deb whose every check passed, moved from partial/ into APT's cache under APT's own name."""
+    dest = os.path.join(P.real('/var/cache/apt/archives'), apt_name(name, version, arch))
+    os.chmod(path, 0o644)
+    if os.geteuid() == 0:
+        os.chown(path, 0, 0)
+    os.replace(path, dest)
+    return dest
 
 
 def apt_state(P):
@@ -1196,27 +1530,40 @@ def apt_state(P):
     return digest(lists), digest(cached_debs(P))
 
 
-def deb_members(P, package, version, wanted, download=True, errors=None):
+def deb_members(P, package, version, wanted, download=True, errors=None, arch=None, debs=None, why=None):
     """The pristine bytes of these files from the package's .deb, read in one pass of its archive: APT's
-    cache first, then one download (unless `download` is false: APT's lists hold no such version). Files the
-    archive does not hold are missing from the answer. When the archive could not be had or read, `errors` (a
-    dict) gets (package, version) -> why: no .deb in the cache and none downloaded, apt-get download's own error,
-    or dpkg-deb's or the archive reader's (U57: these were dropped, and a missing original looked like an
-    archive that does not hold the file)."""
+    cache first, then one download (unless `download` is false: APT's lists hold no such version); or only the .deb
+    files DEBS names (one fetched from snapshot.debian.org, or one the person gave restore). With ARCH (or the
+    package's own :arch) only that architecture's .deb in the cache is read, by APT's own name: a Multi-Arch twin's
+    .deb of the other architecture holds other files. Files the archive does not hold are missing from the answer.
+    When the archive could not be had or read, `errors` (a dict) gets (package, version) -> why: no .deb in the
+    cache and none downloaded, apt-get download's own error, or dpkg-deb's or the archive reader's (U57: these were
+    dropped, and a missing original looked like an archive that does not hold the file); `why` (a dict) gets the
+    same as (kind, reason, file): kind 'root' (another root), 'unlisted' (no source offers it), 'apt' (the
+    download failed) or 'unreadable' (FILE could not be read)."""
     name = package.split(':')[0]
     arch_q = package.split(':')[1] if ':' in package else None
+    arch = arch or arch_q
     cands = []
-    why = []
+    reasons = []
     cache = P.real('/var/cache/apt/archives')
-    if os.path.isdir(cache):
-        ev = version.replace(':', '%3a')
-        cands = [os.path.join(cache, f) for f in os.listdir(cache) if f.startswith(f'{name}_{ev}_')]
+    if debs is not None:
+        cands = list(debs)
+    elif os.path.isdir(cache):
+        if arch:
+            exact = os.path.join(cache, apt_name(name, version, arch))
+            cands = [exact] if os.path.isfile(exact) else []
+        else:
+            ev = version.replace(':', '%3a')
+            cands = [os.path.join(cache, f) for f in os.listdir(cache) if f.startswith(f'{name}_{ev}_')]
     tmp = None
-    if not cands:
+    if not cands and debs is None:
         if P.root != '':
-            why.append(f'no .deb of {package} {version} in {cache} (another root is never downloaded into)')
+            reasons.append(('root', f'no .deb of {package} {version} in {cache} (another root is never downloaded into)',
+                            None))
         elif not download:
-            why.append(f'no .deb of {package} {version} in APT\'s cache, and APT\'s lists do not offer it')
+            reasons.append(('unlisted', f'no .deb of {package} {version} in APT\'s cache, and APT\'s lists do not offer '
+                            'it', None))
         else:
             tmp = tempfile.mkdtemp(prefix='dpkg-stereo-')
             spec = f'{name}:{arch_q}={version}' if arch_q else f'{name}={version}'
@@ -1229,8 +1576,8 @@ def deb_members(P, package, version, wanted, download=True, errors=None):
             cands = [os.path.join(tmp, f) for f in os.listdir(tmp) if f.endswith('.deb')]
             if rc != 0 or not cands:
                 tail = ' '.join(l.strip() for l in err.strip().splitlines()[-2:])
-                why.append(f'apt-get download {spec} ' + (f'exited {rc}' if rc != 0 else 'gave no .deb')
-                           + (f': {tail}' if tail else ''))
+                reasons.append(('apt', f'apt-get download {spec} ' + (f'exited {rc}' if rc != 0 else 'gave no .deb')
+                                + (f': {tail}' if tail else ''), None))
     found = {}
     try:
         for deb in cands:
@@ -1257,12 +1604,15 @@ def deb_members(P, package, version, wanted, download=True, errors=None):
             # a reader that stopped early, with everything it wanted, closes the pipe: dpkg-deb's error then is ours
             if not complete and (rc != 0 or problem):
                 tail = ' '.join(l.strip() for l in err.strip().splitlines()[-2:])
-                why.append(problem or f'dpkg-deb --fsys-tarfile {os.path.basename(deb)} exited {rc}'
-                           + (f': {tail}' if tail else ''))
+                reasons.append(('unreadable', problem or f'dpkg-deb --fsys-tarfile {os.path.basename(deb)} exited {rc}'
+                                + (f': {tail}' if tail else ''), deb))
             if len(found) == len(wanted):
                 break
-        if errors is not None and why and len(found) < len(wanted):
-            errors[(package, version)] = '; '.join(why)
+        if reasons and len(found) < len(wanted):
+            if errors is not None:
+                errors[(package, version)] = '; '.join(r[1] for r in reasons)
+            if why is not None:
+                why[(package, version)] = (reasons[0][0], '; '.join(r[1] for r in reasons), reasons[0][2])
         return found
     finally:
         if tmp:
@@ -1454,45 +1804,186 @@ def verify(P, names, deep=False):
     return 1 if bad else 2 if lost else 0
 
 
-def restore(P, names, drop_hold=False, pkgs=None, log=print, progress=None):
+def tell(log, key, args=()):
+    """KEY through LOG in the system's language, and in English too when that is another (as say() does)."""
+    lang = language()
+    log(f'{TAG}: {text(key, args, lang)}')
+    if lang != 'en':
+        log(f'{TAG}: (en) {text(key, args, "en")}')
+
+
+def stays_lean(item, lang=None):
+    """One package version whose files stay lean: how many, why, and the one thing that brings them back."""
+    return text('LOCAL25', [item['package'], item['version'], item['files'], [WHY[item['why']]], item['detail'],
+                            item['remedy']], lang)
+
+
+def remedy(P, why, package, version, arch, offered, prerm, file=None):
+    """What brings back the originals of a package version that stays lean for WHY ([KEY, ARG...]). Once
+    dpkg-stereo is removed (its prerm runs the restore) dpkg-stereo cannot be asked again: a version a configured
+    source offers comes back with apt-get's reinstall, any other with dpkg -i of exactly that .deb; apt-get's
+    reinstall is never named for a version no configured source offers (it can only fetch what a source offers)."""
+    name = package.split(':')[0]
+    deb = pool_name(name, version, arch or 'all')
+    if prerm and why != 'root':
+        return ['LOCAL41', name] if offered and why in ('unreachable', 'apt', 'unreadable') else ['LOCAL42', deb, deb]
+    if why == 'unreachable':
+        return ['LOCAL35']
+    if why == 'refused':
+        return ['LOCAL37']
+    if why == 'apt':
+        return ['LOCAL38']
+    if why == 'unreadable':
+        return ['LOCAL39', file or deb]
+    if why == 'root':
+        return ['LOCAL40', P.real('/var/cache/apt/archives'), apt_name(name, version, arch or 'all')]
+    if why == 'unlisted':
+        return ['LOCAL51', package]
+    return ['LOCAL36', deb, deb]
+
+
+def restore(P, names, drop_hold=False, pkgs=None, log=print, progress=None, fetch=False, debs=()):
     """The original files back, records dropped: every record, or the packages and paths `names` lists.
     `pkgs` limits the records read to those packages (a caller that knows them); `progress` gets a line
-    every PROGRESS_EVERY files, and at least every PROGRESS_SECONDS."""
+    every PROGRESS_EVERY files, and at least every PROGRESS_SECONDS.
+
+    An original without a pristine copy comes from its package version's .deb: APT's cache (that architecture's
+    file, by APT's own name), then the configured sources (apt-get download), then, with FETCH (the person's
+    --restore, --hold and --repair, and dpkg-stereo's own removal), snapshot.debian.org, for a package APT's data
+    call Debian's or no longer know at all (AptView). A fetched .deb is checked three times: its SHA-1 against the
+    one snapshot gives, its control file's Package, Version and Architecture against the installed ones, and every
+    file it gives back against the record's sha_orig; it waits in APT's partial/ directory and goes into APT's
+    cache under APT's own name only when all of them pass (ORDER 365). DEBS are .deb files the person hands restore
+    (--deb): each is taken only when its control file is exactly an installed version whose files are recorded,
+    and every file it gives back is the recorded original; otherwise nothing is taken from it. Without NAMES, DEBS
+    name the packages to restore. What stays lean is said package version by package version, with why and the
+    one thing that brings it back (LOCAL25), and kept as the restore problem."""
     # a set: with the list the C and C++ migration passed, this test cost 68.9 s on the station's 90,217 records
     # and 47,360 C and C++ names (ORDER 310), 0.05 s with a set
     names = set(names or ())
+    note = progress or log
+    db = {}
+
+    def instance(package):
+        """dpkg's database stanza of the installed instance records name PACKAGE (package or package:arch)."""
+        if not db:
+            db.update(dpkg_db(P))
+        name, _, arch = package.partition(':')
+        if arch:
+            return db.get((name, arch)) or {'Architecture': arch}
+        found = [r for (n, _), r in db.items() if n == name]
+        return ([r for r in found if r.get('Status', '').endswith(' installed')] or found or [{}])[0]
+
+    def arch_of(package):
+        return package.partition(':')[2] or instance(package).get('Architecture') or None
+
     files = Records(P, 'records', pkgs)
+    groups = {}
+    for path, rec in files.items():
+        groups.setdefault((rec['package'], rec['version']), []).append(path)
+    # the person's own .deb files (--deb): exactly an installed version with recorded files, or refused
+    given, refused = {}, 0
+    for deb in debs or ():
+        fields, err = deb_fields(deb)
+        if fields is None:
+            tell(log, 'LOCAL46', [deb, err])
+            refused += 1
+            continue
+        match = [k for k in groups if k[0].split(':')[0] == fields[0] and k[1] == fields[1]
+                 and arch_of(k[0]) == fields[2]]
+        if not match:
+            have = sorted(f'{k[0]} {k[1]}' for k in groups if k[0].split(':')[0] == fields[0])
+            inst = instance(fields[0]) if not have else {}
+            tell(log, 'LOCAL47', [deb, *fields, 'lean files are recorded for ' + ', '.join(have) if have else
+                                  f'installed: {inst["Version"]} {inst.get("Architecture", "")}, no lean files'
+                                  if inst.get('Version') else 'not installed'])
+            refused += 1
+            continue
+        given[match[0]] = os.path.abspath(deb)
+    if debs and not names:
+        names = {k[0] for k in given}
+        if not names:
+            return 1
     ok = fail = 0
     todo = {}
-    for path, rec in sorted(files.items()):
-        if names and rec['package'].split(':')[0] not in names and rec['package'] not in names and path not in names:
-            continue
-        todo.setdefault((rec['package'], rec['version']), []).append(path)
+    for (package, version), paths in sorted(groups.items()):
+        for path in sorted(paths):
+            if names and package.split(':')[0] not in names and package not in names and path not in names:
+                continue
+            todo.setdefault((package, version), []).append(path)
     pys = []
     missing = {}
     deb_errors = {}
     # the package versions that need their .deb and are not in APT's cache: one apt-cache call says which of
-    # them APT's lists still offer, and only those are downloaded
-    debs = cached_debs(P)
-    need = [k for k, paths in todo.items() if not in_cache(debs, *k)
+    # them APT's lists still offer, and only those are downloaded; where the others come from is AptView's
+    cached = cached_debs(P)
+    need = [k for k, paths in todo.items() if k not in given and not in_cache(cached, k[0], k[1], arch_of(k[0]))
             and any(not has_pristine(P, files[p]['sha_orig']) for p in paths)]
-    listed = archive_versions(P, [package for package, _ in need]) if need else None
-    offline = set() if listed is None else {(package, version) for package, version in need
-                                            if (package.split(':')[0], version) not in listed}
+    view = AptView(P, {k: (arch_of(k[0]), instance(k[0]).get('Maintainer', '')) for k in need}, origins=fetch) \
+        if need else None
+    plans = {k: view.plan(*k) for k in need} if view else {}
+    offline = {k for k, plan in plans.items() if not plan[0]}
     total = sum(map(len, todo.values()))
     if progress and total:
         progress(f'dpkg-stereo: putting back the originals of {total} files of {len(todo)} package versions '
                  f'({len(offline)} of them in no APT list or cache)')
+    asked = [k for k in offline if plans[k][1]] if fetch and P.root == '' else []
+    if asked:
+        note(f'dpkg-stereo: {len(asked)} package versions are in no APT source or cache: their .deb is asked of '
+             f'snapshot.debian.org ({SNAPSHOT}), one at a time')
+    unreachable = []
+    prerm = os.environ.get('DPKG_MAINTSCRIPT_NAME') == 'prerm'
+
+    def originals(package, version, arch, wanted):
+        """The originals of WANTED, where they came from (None, or ('given'|'snapshot', file)), and, when the .deb
+        could not be had, (why, detail, file)."""
+        name = package.split(':')[0]
+        if (package, version) in given:
+            got = {}
+            m = deb_members(P, package, version, wanted, arch=arch, debs=[given[(package, version)]], why=got)
+            w = got.get((package, version))
+            return m, ('given', given[(package, version)]), w and ('given', w[1], None)
+        offered, ask, archive = plans.get((package, version), (True, True, ''))
+        got = {}
+        m = deb_members(P, package, version, wanted, download=(package, version) not in offline, errors=deb_errors,
+                        arch=arch, why=got)
+        w = got.get((package, version))
+        if w is None or w[0] not in ('unlisted', 'apt'):
+            return m, None, w and (w[0], w[1], w[2])
+        # neither APT's cache nor a configured source gave the .deb
+        if not fetch:
+            return m, None, ('unlisted' if w[0] == 'unlisted' else 'apt', w[1], None)
+        if not ask:
+            return m, None, ('apt', w[1], None) if offered else \
+                ('other-archive', f'{archive}; {w[1]}' if archive else w[1], None)
+        if unreachable:
+            return m, None, ('unreachable', f'snapshot.debian.org was not asked again after: {unreachable[0]}', None)
+        path, err = snapshot_deb(P, name, version, arch or 'all')
+        if path is None:
+            kind, detail = err
+            if kind == 'unreachable':
+                unreachable.append(detail)
+            if offered:
+                detail = f'{w[1]}; {detail}'
+            return m, None, ({'unreachable': 'unreachable', 'refused': 'refused'}.get(kind) or
+                             ('apt' if offered else 'not-on-snapshot'), detail, None)
+        note(f'dpkg-stereo: {package} {version}: its .deb fetched from snapshot.debian.org ({os.path.getsize(path)} '
+             f'bytes; its SHA-1 and its Package, Version and Architecture checked)')
+        got = {}
+        m = deb_members(P, package, version, wanted, arch=arch, debs=[path], why=got)
+        w = got.get((package, version))
+        return m, ('snapshot', path), w and (w[0], w[1], w[2])
+
     t0 = said = time.time()
     seen = 0
     # package by package: the originals without a pristine copy come from one pass of the package's .deb
     for i, ((package, version), paths) in enumerate(sorted(todo.items()), 1):
-        from_deb = None
+        arch = arch_of(package)
+        lean_now = {}
         for path in paths:
             rec = files[path]
-            real = P.real(path)
             try:
-                with open(real, 'rb') as f:
+                with open(P.real(path), 'rb') as f:
                     data = f.read()
             except FileNotFoundError:
                 del files[path]
@@ -1500,24 +1991,57 @@ def restore(P, names, drop_hold=False, pkgs=None, log=print, progress=None):
             if sha256(data) != rec['sha_lean']:
                 del files[path]     # the person's own file now; nothing of ours to undo
                 continue
-            if from_deb is None and not has_pristine(P, rec['sha_orig']):
-                from_deb = deb_members(P, package, version,
-                                       {p for p in paths if p in files and not has_pristine(P, files[p]['sha_orig'])},
-                                       download=(package, version) not in offline, errors=deb_errors)
-            orig = original_bytes(P, rec, from_deb if from_deb is not None else {})
+            lean_now[path] = data
+        wanted = {p for p in lean_now if not has_pristine(P, files[p]['sha_orig'])}
+        from_deb, source, why = ({}, None, None)
+        if wanted:
+            from_deb, source, why = originals(package, version, arch, wanted)
+            if source and source[0] == 'given':
+                wrong = sorted(p for p in wanted if from_deb.get(p) is None or sha256(from_deb[p]) != files[p]['sha_orig'])
+                if wrong:
+                    # a .deb the person hands restore is taken whole or not at all
+                    tell(log, 'LOCAL48', [source[1], package.split(':')[0], version, arch or '', len(wrong), wrong[0]])
+                    why = ('given', f'{os.path.basename(source[1])}: {len(wrong)} of {len(wanted)} files are not the '
+                                    f'recorded originals, the first {wrong[0]}', None)
+                    from_deb = {}
+        stuck = []
+        for path, data in lean_now.items():
+            rec = files[path]
+            orig = original_bytes(P, rec, from_deb)
             if orig is None:
-                if (from_deb or {}).get(path) is not None:
-                    why = 'its .deb holds other bytes than the recorded original'
-                else:
-                    why = deb_errors.get((package, version)) or 'neither its pristine copy nor its .deb holds it'
-                missing.setdefault((package, version), [0, why])[0] += 1
+                stuck.append(path)
                 fail += 1
                 continue
+            real = P.real(path)
             write_lean(real, data, orig, os.lstat(real))
             if path.endswith('.py'):
                 pys.append(real)
             del files[path]
             ok += 1
+        if stuck:
+            first = stuck[0]
+            more = f' (and {len(stuck) - 1} more files)' if len(stuck) > 1 else ''
+            src = ' from snapshot.debian.org' if source and source[0] == 'snapshot' else \
+                f' {os.path.basename(source[1])}' if source else ''
+            if from_deb.get(first) is not None:
+                why = ('other-bytes', f'{first}: its .deb{src} holds other bytes than the recorded original{more}', None)
+            elif why is None:
+                why = ('other-bytes', f'{first}: its .deb{src} does not hold it{more}' if source or first in wanted
+                       else f'{first}: its pristine copy is not the recorded original{more}', None)
+            # whether a configured source offers this version, as far as APT was asked (a version whose .deb was in the
+            # cache was not asked about: apt-get's reinstall is then never named for it)
+            offered = plans.get((package, version), (False,))[0]
+            missing[(package, version)] = {
+                'package': package, 'version': version, 'files': len(stuck), 'why': why[0], 'detail': why[1],
+                'remedy': remedy(P, why[0], package, version, arch, offered, prerm, why[2])}
+        if source and source[0] == 'snapshot':
+            if stuck:
+                os.unlink(source[1])
+            else:
+                kept_at = place_in_cache(P, source[1], package.split(':')[0], version, arch or 'all')
+                note(f'dpkg-stereo: {package} {version}: every file checked; its .deb kept in APT\'s cache as {kept_at}')
+        if source and source[0] == 'given' and not stuck:
+            tell(log, 'LOCAL49', [len(lean_now), package, version, source[1]])
         if progress and seen + len(paths) < total and (seen // PROGRESS_EVERY != (seen + len(paths)) // PROGRESS_EVERY
                                                        or time.time() - said >= PROGRESS_SECONDS):
             progress(f'dpkg-stereo: originals: {seen + len(paths)} of {total} files, {i} of {len(todo)} package '
@@ -1529,31 +2053,49 @@ def restore(P, names, drop_hold=False, pkgs=None, log=print, progress=None):
     if failed:
         keep_bytecode(P, failed)
         FAILED_STEPS.add('bytecode')
-    for (package, version), (n, why) in sorted(missing.items()):
-        # the original could not be had (the reason is the archive's or APT's own): the files stay lean (and
-        # recorded) until the package is reinstalled or upgraded
-        log(f'dpkg-stereo: {package} {version}: {n} files stay lean ({why}); apt-get install --reinstall '
-            f'{package.split(":")[0]} brings them back')
-    log(f'dpkg-stereo: {ok} files restored, {fail} need their package reinstalled')
+    for key in sorted(missing):
+        # the original could not be had: the files stay lean (and recorded); the reason is the archive's, APT's or
+        # snapshot's own, and the remedy one that can work
+        tell(log, 'LOCAL25', [missing[key]['package'], key[1], missing[key]['files'], [WHY[missing[key]['why']]],
+                              missing[key]['detail'], missing[key]['remedy']])
+    tell(log, 'LOCAL45', [ok, fail])
     if log is print:
-        # a person's --restore, or the removal of dpkg-stereo: what stays lean is kept with its reason (U19)
-        if missing:
-            shown = '; '.join(f'{p} {v}: {n} ({why})' for (p, v), (n, why) in sorted(missing.items())[:3])
-            keep_problem(P, 'restore', ['LOCAL12', fail, shown + (f' (+{len(missing) - 3})' if len(missing) > 3
-                                                                  else '')],
-                         detail='\n'.join(f'{p}\t{v}\t{n}\t{why}' for (p, v), (n, why) in sorted(missing.items())),
-                         # dpkg-stereo's own removal: once it is gone, a reinstalled package keeps its original files
-                         repair=('sudo apt-get install --reinstall ' + ' '.join(sorted({p.split(':')[0] for p, _ in missing}))
-                                 if os.environ.get('DPKG_MAINTSCRIPT_NAME') == 'prerm' else REPAIR),
-                         items=[{'package': p, 'version': v} for p, v in sorted(missing)])
-            FAILED_STEPS.add('restore')
-        elif not names:
+        # a person's --restore, or the removal of dpkg-stereo: what stays lean is kept with its reason (U19); a
+        # restore of some packages keeps what an earlier restore kept for the others, while their files stay lean
+        items = [missing[k] for k in sorted(missing)]
+        before = next((e for e in kept_problems(P) if e.get('step') == 'restore'), None)
+        if before and names:
+            done = {(i['package'], i['version']) for i in items} | set(todo)
+            old = [i for i in before.get('items', []) if isinstance(i, dict) and i.get('package')
+                   and (i['package'], i.get('version')) not in done]
+            left = Records(P, 'records', {i['package'] for i in old})
+            still = {(r['package'], r['version']) for r in left.values()}
+            items += [i for i in old if (i['package'], i.get('version')) in still]
+        if items:
+            stuck_files = sum(int(i.get('files') or 0) for i in items)
+            new = [i for i in items if i.get('why') in WHY] or [None]
+            first = new[0]
+            summary = ['LOCAL44', stuck_files, first['package'], first['version'], '@' + WHY[first['why']]] \
+                if len(items) == 1 and first else \
+                ['LOCAL43', stuck_files, len(items), first['package'], first['version'], '@' + WHY[first['why']]] \
+                if first else ['LOCAL12', stuck_files, f'{len(items)} package versions']
+            # what this run could not put back is said; the packages an earlier run kept are kept again quietly
+            keep_problem(P, 'restore', summary, detail='\n'.join(stays_lean(i, 'en') if i.get('why') in WHY else
+                                                                 f'{i["package"]} {i.get("version", "")}' for i in items),
+                         # dpkg-stereo's own removal: once it is gone, only apt-get or dpkg can bring them back
+                         repair=('; '.join(dict.fromkeys(text(i['remedy'][0], i['remedy'][1:], 'en') for i in items
+                                                         if i.get('remedy')))
+                                 if prerm else REPAIR),
+                         items=items, quiet=not missing)
+            if missing:
+                FAILED_STEPS.add('restore')
+        elif before or not names:
             clear_problem(P, 'restore')
     # the note is for a person's --restore; a migration (its own log) skips reading every lc1 manifest
     if log is print and any(isinstance(obj, dict) and (not names or name in names or name.split(':')[0] in names)
                             for name, obj in lc_package.installed(P).items()):
         log('dpkg-stereo: lc1 build-time files remain at their distribution baseline; --hr retrieves their authored text')
-    return 1 if fail else 0
+    return 1 if fail or refused else 0
 
 
 def repair_consumers(P, jobs=4, pkgs=None, force=False):
@@ -2154,6 +2696,12 @@ def show_problems(P):
         print(f'[{entry.get("time", "")}] {entry.get("step", "")}: {problem_text(entry, lang)}{hidden}')
         if lang != 'en' and not entry.get('unreadable'):
             print(f'  (en) {problem_text(entry, "en")}')
+        # each package version whose files stay lean, with why and what brings it back (restore, ORDER 365)
+        for item in entry.get('items', []):
+            if isinstance(item, dict) and item.get('why') in WHY:
+                print('  ' + stays_lean(item, lang))
+                if lang != 'en':
+                    print(f'    (en) {stays_lean(item, "en")}')
         if entry.get('repair'):
             print('  ' + text('LOCAL10', [entry['repair']], lang))
         print(f'  {entry["file"]}')
@@ -2181,7 +2729,7 @@ def repair(P, jobs):
             elif step == 'fetch-hr':
                 ok = fetch_hr(P) == 0
             elif step == 'restore':
-                ok = restore(P, sorted({i['package'] for i in entry.get('items', [])})) == 0
+                ok = restore(P, sorted({i['package'] for i in entry.get('items', [])}), fetch=True) == 0
             elif step in STEPS:
                 # a hook, the projection or a migration: what dpkg changed since the last record, projected now
                 repair_consumers(P, jobs, force=True)
@@ -2238,6 +2786,8 @@ def main():
     g.add_argument('--verify', nargs='*')
     ap.add_argument('--deep', action='store_true', help='with --verify: check every original against its .deb')
     g.add_argument('--restore', nargs='*')
+    ap.add_argument('--deb', action='append', default=[], metavar='FILE.deb',
+                    help='with --restore: a .deb of exactly an installed version, to take its originals from')
     g.add_argument('--repair-consumers', action='store_true')
     g.add_argument('--hold')
     g.add_argument('--unhold')
@@ -2252,6 +2802,8 @@ def main():
     g.add_argument('--dismiss')
     g.add_argument('--notify', action='store_true')
     a = ap.parse_args()
+    if a.deb and a.restore is None:
+        ap.error('--deb goes with --restore')
     # every line as it is written, even through a pipe: apt shows a long migration as it goes (ORDER 315)
     sys.stdout.reconfigure(line_buffering=True)
     P = Paths(a.root, [m.split('=', 1) for m in a.map])
@@ -2319,13 +2871,13 @@ def run_command(P, a):
     if a.verify is not None:
         return verify(P, a.verify, a.deep)
     if a.restore is not None:
-        return restore(P, a.restore)
+        return restore(P, a.restore, fetch=True, debs=a.deb)
     if a.repair_consumers:
         return repair_consumers(P, a.jobs, force=not a.if_changed)
     if a.repair:
         return repair(P, a.jobs)
     if a.hold:
-        rc = restore(P, [a.hold])
+        rc = restore(P, [a.hold], fetch=True)
         with open(P.state(HOLD), 'a', encoding='utf-8') as f:
             f.write(a.hold + '\n')
         return rc

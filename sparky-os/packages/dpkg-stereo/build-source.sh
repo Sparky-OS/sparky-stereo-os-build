@@ -42,6 +42,23 @@ EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
 
+  * --restore fetches the exact version from snapshot.debian.org when no
+    cache or configured source has it, checked by SHA-1, control fields and
+    every file; what cannot come back is said with the one thing that brings
+    it back; --restore --deb FILE.deb takes a person's file of exactly the
+    installed version (ORDER 365).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 03 Nov 2026 18:00:00 -0300
+
+dpkg-stereo (0.1.27) unstable; urgency=medium
+
+  * Pre-depends on the edition's dpkg, which recognizes the Lean Code
+    projections of a Multi-Arch: same package's shared files (ORDER 363).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 03 Nov 2026 15:00:00 -0300
+
+dpkg-stereo (0.1.26) unstable; urgency=medium
+
   * Use the shared tracked-input copier for recipe and engine inputs; stop on git errors.
 
  -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 03 Nov 2026 12:00:00 -0300

@@ -15,8 +15,12 @@ dpkg --verify > /tmp/dv0.log 2>&1
 dpkg -i "$OLD" < /dev/null > /tmp/old.log 2>&1 || bad "install $(basename "$OLD")"
 n_old=$(count)
 [ "$n_old" -gt 0 ] && ok "$(basename "$OLD") projected at its first install ($n_old records)" || bad "no records after the first install"
+# a full projection says "N files projected (...), M left alone with their reason, K examined"; an upgrade's one-time
+# migrations name what they examine in lines of their own ("files lean 0.1.24 qualifies first: N packages examined",
+# 0.1.25 and later), and those are not a projection of every package
+full='left alone with their reason, [0-9]+ examined'
 t0=$(date +%s%N); dpkg -i "$NEW" < /dev/null > /tmp/new.log 2>&1 || bad "upgrade: $(tail -3 /tmp/new.log)"; t1=$(date +%s%N)
-grep -q 'examined' /tmp/new.log && bad "the upgrade projected every package again: $(grep examined /tmp/new.log)" || ok "the upgrade projected nothing again ($(( (t1 - t0) / 1000000 )) ms)"
+grep -Eq "$full" /tmp/new.log && bad "the upgrade projected every package again: $(grep -E "$full" /tmp/new.log)" || ok "the upgrade projected nothing again ($(( (t1 - t0) / 1000000 )) ms)$(grep -m1 'qualifies first' /tmp/new.log | sed 's/^/; its one-time migration: /')"
 [ ! -f /var/lib/dpkg-stereo/files.tsv ] && [ -d /var/lib/dpkg-stereo/records ] && ok "records per package ($(ls /var/lib/dpkg-stereo/records | wc -l) packages)" || bad "records not moved"
 n_new=$(count)
 [ "$n_new" -ge $((n_old - 20)) ] && ok "records kept: $n_old before, $n_new after" || bad "records lost: $n_old before, $n_new after"
@@ -40,7 +44,7 @@ dpkg --verify > /tmp/dv1.log 2>&1
 diff /tmp/dv0.log /tmp/dv1.log | sed -n 's/^> ..5.......* //p' | sort > /tmp/dv.paths
 cmp -s /tmp/dv.paths /tmp/remain.paths && ok "dpkg --verify: as before dpkg-stereo, but for the $(grep -c . /tmp/remain.paths) files that stay lean" || bad "dpkg --verify after removal: $(diff /tmp/dv.paths /tmp/remain.paths | head -5)"
 dpkg -i "$NEW" < /dev/null > /tmp/again.log 2>&1 || bad "install again: $(tail -3 /tmp/again.log)"
-grep -q 'examined' /tmp/again.log && ok "a new install after the removal projects again: $(grep examined /tmp/again.log)" || bad "a new install did not project"
+grep -Eq "$full" /tmp/again.log && ok "a new install after the removal projects again: $(grep -E "$full" /tmp/again.log)" || bad "a new install did not project"
 n_again=$(count)
 [ "$n_again" -ge $((n_old - 20)) ] && ok "records again: $n_again" || bad "records after the new install: $n_again (first install $n_old)"
 dpkg-stereo --verify > /tmp/verify3.log 2>&1 && ok "verify: $(tail -1 /tmp/verify3.log)" || bad "verify after the new install: $(tail -3 /tmp/verify3.log)"
