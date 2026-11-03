@@ -3,7 +3,7 @@
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/02
 # Copyright 2026 under the GNU GPL3 License
 # Builds sparky-stereo-time: chrony's time sources from the timezone. The country's official
-# service (NTS where it offers it) from a TSV of verified rows, else Debian's pool. A oneshot
+# service (NTS where it offers it) from a TSV of verified rows, else its country pool. A oneshot
 # service runs at boot before chrony; a watcher runs it again when timedated reports a new timezone;
 # a timer checks after the start and every hour that the chosen servers answer. What fails is said and
 # kept by the edition's one engine, sparky-stereo-problems (lib/problems.py, ORDER 350), whose notifier shows
@@ -14,7 +14,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
-VERSION=20261102~sparky9~0+lc1
+VERSION=20261103~sparky9~0+lc1
 PKG=sparky-stereo-time
 W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/time-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
@@ -25,8 +25,8 @@ mkdir -p "$D/DEBIAN" "$D/usr/bin" "$S" "$D/usr/share/sparky/$PKG" "$D/usr/share/
 	"$D/usr/lib/systemd/catalog"
 
 install -m 755 "$HERE/bin/sparky-stereo-time" "$HERE/bin/sparky-stereo-time-watch" "$D/usr/bin/"
-install -m 755 "$HERE/lib/problems.py" "$D/usr/lib/$PKG/problems.py"
-install -m 644 "$HERE/data/ntp-countries.tsv" "$S/ntp-countries.tsv"
+install -m 755 "$HERE/lib/problems.py" "$HERE/lib/chrony-config" "$D/usr/lib/$PKG/"
+install -m 644 "$HERE/data/ntp-countries.tsv" "$HERE/data/ntp-pools.txt" "$S/"
 install -m 644 "$HERE"/lang/* "$D/usr/share/sparky/$PKG/"
 install -m 644 "$HERE/README.md" "$D/usr/share/doc/$PKG/README.md"
 for u in sparky-stereo-time.service sparky-stereo-time-watch.service sparky-stereo-time-check.service sparky-stereo-time-check.timer; do
@@ -54,7 +54,7 @@ cat >"$D/DEBIAN/postinst" <<'EOS'
 # postinst script
 set -e
 P=/usr/lib/sparky-stereo-time/problems.py
-if [ "$1" = "configure" ]; then
+if [ "$1" = "configure" ] || [ "$1" = "triggered" ]; then
 	# the tool says and keeps what fails (the catalogue, the timezone, the file, chrony)
 	/usr/bin/sparky-stereo-time || :
 	if [ -d /run/systemd/system ]; then
@@ -71,11 +71,23 @@ if [ "$1" = "configure" ]; then
 fi
 exit 0
 EOS
+printf 'interest-noawait /usr/share/chrony/chrony.conf\n' >"$D/DEBIAN/triggers"
 cat >"$D/DEBIAN/prerm" <<'EOS'
 #!/bin/sh
 # prerm script
 set -e
 P=/usr/lib/sparky-stereo-time/problems.py
+if [ "$1" = "remove" ]; then
+	if /usr/lib/sparky-stereo-time/chrony-config restore; then :
+	else
+		rc=$?
+		case $rc in
+			10) ;;
+			20) python3 $P say LOCAL55 /etc/chrony/chrony.conf ;;
+			*) python3 $P say LOCAL56 "ucf: exit $rc"; exit "$rc" ;;
+		esac
+	fi
+fi
 if { [ "$1" = "remove" ] || [ "$1" = "upgrade" ]; } && [ -d /run/systemd/system ]; then
 	for u in sparky-stereo-time-watch.service sparky-stereo-time-check.timer; do
 		# said; the upgrade or the removal goes on (the new postinst starts the watcher again)
@@ -127,8 +139,8 @@ failed=0
 must() { if "$@"; then :; else rc=$?; say 51 "$*" "$rc"; failed=1; fi; }
 if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
 	must rm -f /etc/chrony/sources.d/sparky-stereo.sources
-	# chrony.conf itself is never touched; our generated conf.d snippet goes, chrony restarts once
-	changed=0
+	# prerm restored the Debian template through ucf; restart to read it.
+	changed=1
 	if [ -f /etc/chrony/conf.d/sparky-stereo-auth.conf ]; then must rm -f /etc/chrony/conf.d/sparky-stereo-auth.conf; changed=1; fi
 	if [ -d /run/systemd/system ]; then
 		systemctl daemon-reload || say 52 "systemctl daemon-reload" "$?"
@@ -137,9 +149,14 @@ if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
 		elif systemctl is-active --quiet chrony.service; then
 			out=$(chronyc reload sources 2>&1) || say 43 "chronyc reload sources: $out"
 		fi
-	elif [ "$changed" = 0 ]; then
-		# no systemd: a chrony started by hand is told; none running reads chrony.conf when it starts
-		out=$(chronyc reload sources 2>&1) || case $out in *"Cannot talk to daemon"*) ;; *) say 43 "chronyc reload sources: $out" ;; esac
+	else
+		# A manually started daemon also needs a restart for chrony.conf.
+		# Do not leave that requirement silent when systemd is absent.
+		if out=$(chronyc tracking 2>&1); then
+			say 43 /etc/chrony/chrony.conf
+		else
+			case $out in *"Cannot talk to daemon"*) ;; *) say 43 "chronyc tracking: $out" ;; esac
+		fi
 	fi
 fi
 # a problem of a package that is gone cannot be repaired by it (ORDER 350): the engine lets go of them
@@ -196,15 +213,15 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: ca-certificates, chrony, python3, iproute2, systemd, sparky-stereo-problems (>= 0.1.0)
+Depends: ca-certificates, chrony, python3, iproute2, systemd, sparky-stereo-problems (>= 0.1.0), ucf
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org
 Description: Sparky Stereo time servers
   Sets chrony's time sources from the timezone: the country's official
-  service, with NTS where it offers it, or Debian's pool where it has none.
-  Countries with two or more NTS servers use authselectmode prefer, so Debian's
-  pool is never selected next to them. chrony.conf is not modified.
+  service, with NTS where it offers it, or its country's pool where it has none.
+  Debian's pool is removed from the vendor template through ucf.
+  A person's edited chrony configuration is preserved and reported.
   A catalogue or timezone that cannot be read, sources that cannot be written,
   a chrony that does not take them and servers that do not answer are said,
   kept by sparky-stereo-problems and shown in the session; the sources in use are never replaced by

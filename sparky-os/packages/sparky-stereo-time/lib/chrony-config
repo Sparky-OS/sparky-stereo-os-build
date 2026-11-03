@@ -1,0 +1,33 @@
+#!/bin/bash
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/02
+# Copyright 2026 under the GNU GPL3 License
+# Debian's template and ucf own chrony.conf. Exit 10: changed; 20: local edits kept.
+set -euo pipefail
+MODE=${1:?apply or restore}
+CONF=${SPARKY_TIME_CHRONY_CONF:-/etc/chrony/chrony.conf}
+TEMPLATE=${SPARKY_TIME_CHRONY_TEMPLATE:-/usr/share/chrony/chrony.conf}
+UCF=${SPARKY_TIME_UCF:-ucf}
+case $MODE in apply|restore) ;; *) exit 2 ;; esac
+W=$(mktemp -d)
+trap 'rm -rf "$W"' EXIT
+# Filter the packaged template, never the person's file.
+awk '
+$1 == "pool" && $2 ~ /(^|\.)debian\.pool\.ntp\.org$/ {next}
+{print}
+' "$TEMPLATE" > "$W/edition"
+[ -f "$CONF" ] || exit 20
+if [ "$MODE" = apply ]; then NEW=$W/edition; OLD=$TEMPLATE
+else NEW=$TEMPLATE; OLD=$W/edition; fi
+cmp -s "$CONF" "$NEW" && exit 0
+# An edited file stays byte for byte intact, even when only a comment changed.
+cmp -s "$CONF" "$OLD" || exit 20
+cp "$CONF" "$W/before"
+args=(--three-way)
+[ -z "${SPARKY_TIME_UCF_STATE:-}" ] || args+=(--state-dir "$SPARKY_TIME_UCF_STATE")
+# The comparison above establishes that this is the unedited vendor version.
+# Do not inherit an installer force-confnew that could bypass that protection.
+env -u UCF_FORCE_CONFFNEW -u UCF_FORCE_CONFFOLD -u UCF_FORCE_CONFFMISS -u DPKG_FORCE \
+	DEBIAN_FRONTEND=noninteractive "$UCF" "${args[@]}" "$NEW" "$CONF"
+# ucf can keep a file because of its prior answers. That choice is reported.
+cmp -s "$CONF" "$NEW" || exit 20
+cmp -s "$CONF" "$W/before" || exit 10
