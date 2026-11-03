@@ -27,28 +27,28 @@ check "Sao_Paulo -> gps.ntp.br with nts" America/Sao_Paulo '^server gps\.ntp\.br
 check "Sao_Paulo has no b.st1 (no NTS answer)" America/Sao_Paulo '^server a\.st1' 'b\.st1'
 check "Berlin -> PTB with nts" Europe/Berlin '^server ptbtime1\.ptb\.de iburst nts$' 'pool'
 check "Vienna -> BEV (zone1970 or zone.tab)" Europe/Vienna '^server bevtime1\.metrologie\.at iburst nts$' 'pool'
-check "Copenhagen -> DFM plus pool" Europe/Copenhagen '^server time\.dfm\.dk iburst nts$'
-check "Copenhagen has the pool completing it" Europe/Copenhagen '^pool debian\.pool\.ntp\.org iburst maxsources 2$'
-check "Tokyo (NICT left out) -> Debian pool only" Asia/Tokyo '^pool debian\.pool\.ntp\.org iburst$' 'nict|^server'
-check "New York (NIST left out) -> Debian pool only" America/New_York '^pool debian\.pool\.ntp\.org iburst$' 'nist|^server'
-check "Lisbon (no service) -> Debian pool only" Europe/Lisbon '^pool debian\.pool\.ntp\.org iburst$' '^server'
-check "Auckland (NZ excluded) -> Debian pool only" Pacific/Auckland '^pool debian\.pool\.ntp\.org iburst$' '^server'
+check "Copenhagen -> DFM alone" Europe/Copenhagen '^server time\.dfm\.dk iburst nts$'
+check "Copenhagen has no added pool" Europe/Copenhagen '^server time\.dfm\.dk iburst' '^pool|authselectmode'
+check "Tokyo (NICT left out) -> country pool only" Asia/Tokyo '^pool jp\.pool\.ntp\.org iburst$' 'nict|^server'
+check "New York (NIST left out) -> country pool only" America/New_York '^pool us\.pool\.ntp\.org iburst$' 'nist|^server'
+check "Lisbon (no service) -> country pool only" Europe/Lisbon '^pool pt\.pool\.ntp\.org iburst$' '^server'
+check "Auckland (NZ excluded) -> country pool only" Pacific/Auckland '^pool nz\.pool\.ntp\.org iburst$' '^server'
 check "Backward alias Brazil/East (tzdata.zi link) -> NTP.br" Brazil/East '^server a\.st1\.ntp\.br iburst nts$' 'debian'
-check "Backward alias Asia/Calcutta, no service -> pool" Asia/Calcutta '^pool debian\.pool\.ntp\.org iburst$' '^server'
-check "Stockholm -> RISE, both nts, pool maxsources 2" Europe/Stockholm '^server nts1\.ri\.se iburst nts$' '^server nts[^12]'
+check "Backward alias Asia/Calcutta, no service -> pool" Asia/Calcutta '^pool in\.pool\.ntp\.org iburst$' '^server'
+check "Stockholm -> RISE, both NTS alone" Europe/Stockholm '^server nts1\.ri\.se iburst nts$' '^server nts[^12]'
 check "Stockholm second server" Europe/Stockholm '^server nts2\.ri\.se iburst nts$'
-check "Stockholm pool completes" Europe/Stockholm '^pool debian\.pool\.ntp\.org iburst maxsources 2$'
+check "Stockholm has no added pool" Europe/Stockholm '^server nts1\.ri\.se iburst' '^pool'
 check "Madrid -> ROA nts1 only" Europe/Madrid '^server nts1\.roa\.es iburst nts$' 'hora\.roa'
 check "Canary -> ROA" Atlantic/Canary '^server nts1\.roa\.es iburst nts$' 'hora\.roa'
 check "Paris -> LNE-OP with nts" Europe/Paris '^server ntp\.obspm\.fr iburst nts$'
-check "Paris pool completes" Europe/Paris '^pool debian\.pool\.ntp\.org iburst maxsources 2$'
+check "Paris has no added pool" Europe/Paris '^server ntp\.obspm\.fr iburst' '^pool|authselectmode'
 check "Vienna three servers" Europe/Vienna '^server time\.metrologie\.at iburst nts$' 'pool'
 check "Berlin three servers" Europe/Berlin '^server ptbtime3\.ptb\.de iburst nts$' 'pool'
 check "Zurich (zone.tab: CH) -> METAS plain, not DE" Europe/Zurich '^server ntp11\.metas\.ch iburst$' 'nts|ptbtime|pool'
 check "Zurich has no authselectmode" Europe/Zurich '^server ntp13\.metas\.ch iburst$' 'authselectmode'
 check "London -> NPL plain, three servers, no pool" Europe/London '^server ntp3\.npl\.co\.uk iburst$' 'nts|pool|authselectmode'
 check "Warsaw -> GUM plain" Europe/Warsaw '^server tempus1\.gum\.gov\.pl iburst$' 'nts|pool'
-check "Johannesburg -> NMISA one plain server plus the Debian pool" Africa/Johannesburg '^pool debian\.pool\.ntp\.org iburst maxsources 2$' 'nts|authselectmode'
+check "Johannesburg -> NMISA one plain server alone" Africa/Johannesburg '^server time\.nmisa\.org iburst' '^pool'
 check "Johannesburg server line" Africa/Johannesburg '^server time\.nmisa\.org iburst$'
 check "Moscow -> VNIIFTRI plain, four servers, no pool" Europe/Moscow '^server ntp4\.vniiftri\.ru iburst$' 'nts|pool'
 # Brazil's servers come out in the TSV order, gps.ntp.br first, all five with nts
@@ -60,8 +60,8 @@ M=$(mktemp -d); printf 'XX\tn.example plain.example\tn.example\tfixture\n' >"$M/
 printf 'XX\t+0000+00000\tAfrica/Xx\n' >"$M/zone.tab"
 out=$(SPARKY_TIME_TSV=$M/t.tsv SPARKY_TIME_ZONEINFO=$M LANG=C $T --print --zone Africa/Xx)
 echo "$out" | grep -q '^server plain\.example iburst$' && ! echo "$out" | grep -q -E 'pool|authselectmode' && echo "PASS plain official server replaces the Debian pool next to one NTS server" || { echo "FAIL mixed row: $out"; FAILS=$((FAILS + 1)); }
-check "Unknown zone -> Debian pool" Nowhere/Land '^pool debian\.pool\.ntp\.org iburst$' '^server'
-check "Never a public country zone" Europe/Lisbon 'debian\.pool' '(^|[ ])[a-z]{2}\.pool\.ntp\.org'
+check "Unknown zone is reported without a pool" Nowhere/Land 'The country of timezone' '^pool|^server'
+check "Lisbon uses its country pool" Europe/Lisbon '^pool pt\.pool\.ntp\.org iburst$' 'debian'
 # every TSV country is reachable through some zone, and none of the excluded institutes is in the file
 bad=$(grep -v '^#' "$TSV" | grep -i -E '^(JP|US|NZ|AU)	|nict\.|nist\.gov|measurement\.go' || true)
 [ -z "$bad" ] && echo "PASS TSV has no excluded institute" || { echo "FAIL TSV: $bad"; FAILS=$((FAILS + 1)); }
@@ -92,7 +92,7 @@ zcheck() { # name, zone, expected, absent
 }
 zcheck "zone1970.tab alone answers (no zone.tab)" America/Fakepaulo '^server a\.st1\.ntp\.br iburst nts$' 'debian'
 zcheck "tzdata.zi link into a zone1970 entry" Brazil/Fake '^server a\.st1\.ntp\.br iburst nts$' 'debian'
-zcheck "shared zone1970 entry (CH,DE,LI) is not DE" Europe/Fakezurich '^pool debian\.pool\.ntp\.org iburst$' '^server'
+zcheck "shared zone1970 entry (CH,DE,LI) is not DE" Europe/Fakezurich 'The country of timezone' '^pool|^server'
 # the zone name from /etc/localtime and /etc/timezone, with files that need not exist
 L=$(mktemp -d)
 lcheck() { # name, expected-first-line-pattern
@@ -119,10 +119,10 @@ LANG=C $T --print --zone >/dev/null 2>&1; [ $? -eq 2 ] && echo "PASS --zone with
 check "BR (3 NTS) -> authselectmode prefer" America/Sao_Paulo '^# conf\.d: authselectmode prefer$'
 check "SE (2 NTS) -> authselectmode prefer" Europe/Stockholm '^# conf\.d: authselectmode prefer$'
 check "AT (3 NTS) -> authselectmode prefer" Europe/Vienna '^# conf\.d: authselectmode prefer$'
-check "DK (1 NTS) -> mix, no prefer" Europe/Copenhagen '^pool debian' 'authselectmode'
-check "ES (1 NTS) -> mix, no prefer" Europe/Madrid '^pool debian' 'authselectmode'
-check "FR (1 NTS) -> mix, no prefer" Europe/Paris '^pool debian' 'authselectmode'
-check "Lisbon (no service) -> no prefer" Europe/Lisbon '^pool debian' 'authselectmode'
+check "DK (1 NTS) -> mix, no prefer" Europe/Copenhagen '^server time\.dfm\.dk iburst' '^pool|authselectmode'
+check "ES (1 NTS) -> mix, no prefer" Europe/Madrid '^server nts1\.roa\.es iburst' '^pool|authselectmode'
+check "FR (1 NTS) -> mix, no prefer" Europe/Paris '^server ntp\.obspm\.fr iburst' '^pool|authselectmode'
+check "Lisbon (no service) -> no prefer" Europe/Lisbon '^pool pt' 'authselectmode'
 # the generated snippet is written, removed for another country, and chrony.conf is never touched
 D=$(mktemp -d); export SPARKY_TIME_OUT=$D/s.sources
 printf 'pool 2.debian.pool.ntp.org iburst\nrtcsync\n' >"$D/chrony.conf"; cp "$D/chrony.conf" "$D/chrony.conf.orig"
@@ -170,7 +170,7 @@ ok "U12 missing timezone tables: exit 3, not taken as no national service" '[ "$
 out=$(LANG=C $T --zone Europe/Paris --no-reload 2>&1); rc=$?
 ok "U12 repaired catalogue: written, the problem cleared" '[ "$rc" = 0 ] && grep -q "server ntp.obspm.fr iburst nts" "$SPARKY_TIME_OUT" && [ ! -e "$(rec catalogue)" ]'
 # the policy is said: the sources chosen, the pool where it completes the country's servers
-ok "the chosen sources are said, the pool beside one NTS server too" 'echo "$out" | grep -q "^Time sources: ntp.obspm.fr (NTS), debian.pool.ntp.org (maxsources 2)$"'
+ok "the chosen sources are said, without a pool beside one NTS server" 'echo "$out" | grep -q "^Time sources: ntp.obspm.fr (NTS)$"'
 # U13: a file that cannot be written is said, never announced as written
 fresh; XS=$(mktemp -d); chmod 777 "$XS"; R=$(mktemp -d); chmod 555 "$R"
 out=$(SPARKY_TIME_OUT=$R/sub/s.sources XDG_STATE_HOME=$XS LANG=C $NOBODY $T --zone Europe/Paris --no-reload 2>&1); rc=$?

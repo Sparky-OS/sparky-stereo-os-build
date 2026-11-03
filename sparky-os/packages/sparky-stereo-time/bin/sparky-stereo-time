@@ -3,11 +3,11 @@
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/02
 # Copyright 2026 under the GNU GPL3 License
 # Sets chrony's time sources from the timezone: the country's official service (with NTS where
-# it offers it), or Debian's pool where the country has none. The zone comes from /etc/localtime,
+# it offers it), or its country pool where the country has none. The zone comes from /etc/localtime,
 # the country from zone.tab, then zone1970.tab (as sparky-ntp-server does), then tzdata.zi links.
 # Nothing fails silently (Daniel, 2026-11-01): a catalogue or timezone that cannot be read, sources
 # that cannot be written, a chrony that does not take them and servers that do not answer are said,
-# kept in /var/lib/sparky-stereo-time/problems (lib/problems.py) and shown in the session; the
+# kept by sparky-stereo-problems (lib/problems.py) and shown in the session; the
 # sources in use are then left as they were, never replaced by another choice.
 # Last update 2026/11/02
 
@@ -16,17 +16,13 @@ ZONEINFO=${SPARKY_TIME_ZONEINFO:-/usr/share/zoneinfo}
 LOCALTIME=${SPARKY_TIME_LOCALTIME:-/etc/localtime}
 TIMEZONE_FILE=${SPARKY_TIME_TIMEZONE_FILE:-/etc/timezone}
 OUT=${SPARKY_TIME_OUT:-/etc/chrony/sources.d/sparky-stereo.sources}
-# the generated chrony.conf.d snippet: with two or more NTS servers the Debian pool is never
-# selected while authenticated sources exist (chrony.conf(5): authselectmode prefer)
+# With two or more NTS servers prefer authenticated sources (chrony.conf(5)).
 AUTHCONF=${SPARKY_TIME_AUTHCONF:-}
 if [ -z "$AUTHCONF" ]; then
 	if [ -n "${SPARKY_TIME_OUT:-}" ]; then AUTHCONF=$(dirname "$SPARKY_TIME_OUT")/sparky-stereo-auth.conf
 	else AUTHCONF=/etc/chrony/conf.d/sparky-stereo-auth.conf; fi
 fi
-# Debian's pool: the source for a country without a service of its own, and the companion of a
-# country whose own servers are too few (policy, written in README.md; never put in place of the
-# country's servers when something fails)
-POOL='pool debian.pool.ntp.org iburst'
+POOLS=${SPARKY_TIME_POOLS:-/usr/share/sparky-stereo-time/ntp-pools.txt}
 LANGDIR=${SPARKY_TIME_LANGDIR:-/usr/share/sparky/sparky-stereo-time}
 PROBLEMS=${SPARKY_TIME_PROBLEMS:-/usr/lib/sparky-stereo-time/problems.py}
 export SPARKY_TIME_LANGDIR=$LANGDIR
@@ -239,12 +235,9 @@ if [ ! -r "$ZONEINFO/zone.tab" ] && [ ! -r "$ZONEINFO/zone1970.tab" ]; then
 	why=$(LC_ALL=C cat "$ZONEINFO/zone1970.tab" 2>&1 >/dev/null | sed 's/^cat: .*: //')
 	fail 3 zone LOCAL12 "$ZONEINFO" "${why:-unreadable}" "$ZONE"
 fi
-CC=
-ROW=
-for c in $(country_for "$ZONE"); do
-	r=$(printf '%s\n' "$CATALOGUE" | awk -F'\t' -v c="$c" '$1 == c { print; exit }')
-	[ -n "$r" ] && { CC=$c; ROW=$r; break; }
-done
+CC=$(country_for "$ZONE")
+[ -n "$CC" ] || fail 3 zone LOCAL53 "$ZONE"
+ROW=$(printf '%s\n' "$CATALOGUE" | awk -F'\t' -v c="$CC" '$1 == c { print; exit }')
 
 LINES=
 COUNT=0
@@ -263,19 +256,13 @@ if [ -n "$ROW" ]; then
 		COUNT=$((COUNT + 1))
 	done
 fi
-# Debian's pool is the policy only where the country's own servers are too few: none; NTS servers
-# fewer than three with no plain official server of the country beside them; a plain service with
-# a single server. Several plain official servers need no pool.
 if [ "$COUNT" -eq 0 ]; then
-	LINES+="$POOL"$'\n'
-	USED="debian.pool.ntp.org"
-	WHAT=$(printf "$LOCAL7" "${ZONE}")
+	[ -r "$POOLS" ] || fail 3 catalogue LOCAL10 "$POOLS" "unreadable"
+	grep -qx "${CC,,}" "$POOLS" || fail 3 zone LOCAL54 "$CC"
+	LINES+="pool ${CC,,}.pool.ntp.org iburst"$'\n'
+	USED="${CC,,}.pool.ntp.org"
+	WHAT=$(printf "$LOCAL7" "$ZONE" "$USED")
 else
-	if { [ "$NTSCOUNT" -gt 0 ] && [ "$COUNT" -lt 3 ] && [ "$PLAINCOUNT" -eq 0 ]; } ||
-		{ [ "$NTSCOUNT" -eq 0 ] && [ "$COUNT" -lt 2 ]; }; then
-		LINES+="$POOL maxsources 2"$'\n'
-		USED+=", debian.pool.ntp.org (maxsources 2)"
-	fi
 	WHAT=$(printf "$LOCAL6" "$CC" "$ZONE")
 fi
 
@@ -299,8 +286,22 @@ put() {
 	return 1
 }
 
-# conf.d is read only at chrony's start: a changed authselectmode needs a restart
+# Debian owns chrony.conf through ucf. Pass it a changed vendor template; never edit
+# the person's configuration directly. Tests with an alternate sources path opt in explicitly.
 CONFCHANGED=0
+if [ -z "${SPARKY_TIME_OUT:-}" ] || [ -n "${SPARKY_TIME_CHRONY_CONF:-}" ]; then
+	CONFIGURE=${SPARKY_TIME_CONFIGURE:-/usr/lib/sparky-stereo-time/chrony-config}
+	why=$("$CONFIGURE" apply 2>&1); rc=$?
+	case $rc in
+		0) ;;
+		10) CONFCHANGED=1 ;;
+		20) fail 4 configuration LOCAL55 "${SPARKY_TIME_CHRONY_CONF:-/etc/chrony/chrony.conf}" ;;
+		*) fail 4 configuration LOCAL56 "$why" ;;
+	esac
+	problems clear configuration
+fi
+
+# conf.d is read only at chrony's start: a changed authselectmode needs a restart
 if [ -n "$AUTH" ]; then
 	if [ "$(cat "$AUTHCONF" 2>/dev/null)" != "${AUTH%$'\n'}" ]; then
 		put "$AUTHCONF" "$AUTH" || fail 4 write LOCAL13 "$AUTHCONF" "$why"
