@@ -1264,6 +1264,7 @@ def post_invoke(P, jobs):
     dirty = False
     again = set()          # paths dpkg wrote back with the package's bytes: project them again
     heirs = Heirs(P, pkgs)
+    taken = None           # the conffiles installed packages list: a removed package's lean conffile is not written there
     for path in [p for p, r in files.items() if r['package'] in gone]:
         # a shared file stays on disk while another architecture's instance of its package ships it (dpkg removes it
         # with the last one, src/main/remove.c): its projection's record goes to that instance (0.1.27)
@@ -1272,7 +1273,10 @@ def post_invoke(P, jobs):
             files[path] = dict(files[path], package=heir)
         else:
             if files[path].get('conffile') == '1':
-                removed_conffile_back(P, path, files[path], db)
+                if taken is None:
+                    taken = {p for c in conffiles(P, db).values() for p in c}
+                if path not in taken:
+                    removed_conffile_back(P, path, files[path], db)
             del files[path]
         dirty = True
     if gone:
@@ -1379,7 +1383,8 @@ def removed_conffile_back(P, path, rec, db):
     changed by the person (ORDER 367). In its package's bytes it is what dpkg left, the install is quiet, and post-invoke
     projects it again. Only a file that is still exactly the recorded projection, of a package dpkg lists in
     "config-files" with the recorded original's hash, is written; a conffile the person changed stays as they made
-    it, and a purge removes them all. True when it was written."""
+    it, and a purge removes them all; the caller leaves alone a path an installed package lists among its own conffiles
+    (a package that took it over, Replaces). True when it was written."""
     name, _, arch = rec['package'].partition(':')
     stanza = (db or {}).get((name, arch)) if arch else \
         next((r for (n, _), r in (db or {}).items() if n == name and r.get('Status', '').endswith(' config-files')), None)
