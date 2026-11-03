@@ -27,7 +27,7 @@ def call(command, label, uid=0):
     env = dict(os.environ, LANG='C.UTF-8', HOME='/tmp',
                XDG_STATE_HOME='/tmp/unlisted-package-state')
     for key in ('LANGUAGE', 'LC_ALL', 'SPARKY_STEREO_PROBLEMS_CATALOG',
-                'SPARKY_STEREO_PROBLEMS_ROOT'):
+                'SPARKY_STEREO_ROOT'):
         env.pop(key, None)
 
     def person():
@@ -165,6 +165,8 @@ exit 0
           and 'PREINST: engine returned 11' in p.stderr)
     check('preinst keeps and says the failure before unpack',
           'PREINST: record exists' in p.stderr and fresh + ':' in p.stderr)
+    check('dpkg post-invoke observes the first installation without an explicit reader',
+          record(fresh, 'prepare').get('package_seen') is True)
     items = listed(fresh, 'installed-person-abi', uid=1000, abi=True)
     check('after install the notifier reader sees the preinst failure with its catalog',
           any(x['key'] == 'prepare' and x['status'] == 11
@@ -174,16 +176,31 @@ exit 0
     assert p.returncode == 0, p.stderr
     check('installed-package control stores a failure and lists it',
           any(x['key'] == 'removed' for x in listed(fresh, 'installed-control')))
+    hook = Path('/etc/dpkg/dpkg.cfg.d/sparky-stereo-problems')
+    saved_hook = work / 'hook'
+    if hook.exists():
+        hook.rename(saved_hook)
     p = call(['dpkg', '--remove', fresh], 'remove')
     assert p.returncode == 0, p.stderr
     check('real removal removes the package file list and catalog',
           not Path(f'/var/lib/dpkg/info/{fresh}.list').exists()
           and not Path(f'/usr/lib/systemd/catalog/{fresh}.catalog').exists())
-    check('the notifier reader no longer sees a really removed package',
-          listed(fresh, 'removed-person-abi', uid=1000, abi=True) == [])
+    check('a reader unable to unlink still lists the removed package record',
+          any(x['key'] == 'removed' for x in listed(fresh, 'removed-person-abi', uid=1000, abi=True)))
     check('root collection clears a really removed package record',
           listed(fresh, 'removed-root') == []
           and not (store / f'{fresh}_removed.json').exists())
+    check('after root cleanup the notifier reader no longer sees the removed package',
+          listed(fresh, 'removed-person-after-root', uid=1000, abi=True) == [])
+    if saved_hook.exists():
+        saved_hook.rename(hook)
+    p = call(['dpkg', '-i', str(work / 'probe.deb')], 'hook-install')
+    assert p.returncode == 0, p.stderr
+    hook_had_record = record(fresh, 'prepare').get('status') == 11
+    p = call(['dpkg', '--remove', fresh], 'hook-remove')
+    assert p.returncode == 0, p.stderr
+    check('dpkg post-invoke clears a preinst failure after real removal without an explicit reader',
+          hook_had_record and not (store / f'{fresh}_prepare.json').exists())
 
 p = call([engine, 'clear', '--all', unlisted], 'explicit-clear')
 check('explicit clear remains available for unlisted failures',

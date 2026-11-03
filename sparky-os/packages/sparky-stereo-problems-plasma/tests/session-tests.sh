@@ -142,7 +142,15 @@ systemctl daemon-reload
 systemctl start failer2.service 2>/dev/null
 check "a failed system service is notified, with what systemd says" "waitfor 'nf -1 body | grep -q \"Second failer for the session (failer2.service) failed: it stopped with exit status 4\"' 30"
 systemctl reset-failed failer2.service
+# An unprivileged reader keeps the record visible until its writer can remove it.
+$B list >/dev/null
 check "and when systemd no longer has it as failed, its notification closes" "waitfor 'closed $(n)' 30"
+
+echo "== a package not unpacked yet"
+$B run --machine sparky-test-not-installed prepare LOCAL999 -- sh -c 'exit 7' >/tmp/unlisted.out 2>&1; rc=$?
+check "an unlisted failure is said and reaches the notifier" "[ $rc = 7 ] && grep -q 'sparky-test-not-installed.*prepare.*7' /tmp/unlisted.out && waitfor 'nf -1 body | grep -q \"sparky-test-not-installed.*prepare.*7\"' 30"
+$B clear --machine sparky-test-not-installed prepare
+check "clearing the unlisted failure closes its notification" "waitfor 'closed $(n)' 30"
 
 echo "== in German"
 ux systemctl --user stop sparky-stereo-problems-notifier.service sparky-stereo-problems-notifier.path

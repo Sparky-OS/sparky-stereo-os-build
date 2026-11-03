@@ -114,10 +114,12 @@ exit 0
     call(keep, 'keep-again')
     call([engine, 'clear', '--machine', engine, key], 'explicit-clear')
     assert not any(r['key'] == key for r in json.loads(call([engine, 'list', '--json'], 'cleared-person', uid=1000)))
-    # Ordinary removed-package records still expire; no global cleanup change.
+    # A new failure after purge is not a stale record from before removal.
     call([engine, 'keep', '--machine', pkg, 'ordinary', 'old failure'], 'ordinary-keep')
-    assert json.loads(call([engine, 'list', '--json', pkg], 'ordinary-cleanup')) == []
+    assert any(r['key'] == 'ordinary' for r in json.loads(call([engine, 'list', '--json', pkg], 'ordinary-retained')))
+    call([engine, 'clear', '--all', pkg], 'ordinary-clear')
+    assert json.loads(call([engine, 'list', '--json', pkg], 'ordinary-cleared')) == []
     call([engine, 'keep', '--after-removal', pkg, 'x', 'step'], 'missing-evidence', expected=2)
     call([engine, 'keep', '--person', '--after-removal', pkg, 'x', 'step'], 'wrong-scope', uid=1000, expected=2)
     assert not call(['dpkg', '--audit'], 'audit').strip()
-    print('PASS: removal, purge, person/root visibility, nine languages, failed/successful repair, clear, ordinary cleanup and invalid calls')
+    print('PASS: removal, purge, person/root visibility, nine languages, failed/successful repair, clear, new failure after purge and invalid calls')

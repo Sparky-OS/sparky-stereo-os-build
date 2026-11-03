@@ -17,6 +17,7 @@
  *   "unit": "name.service"                           a systemd unit: the problem is over when it is not failed
  *   "args": ["text", "@KEY", ["MESSAGE", "ARG"...]]  the arguments, when one is a message with its own arguments
  *   "more": ["@KEY", ["MESSAGE", "ARG"...]]          further sentences after the message (why, what to do)
+ *   "text_en": "English explanation"                 used when the package catalog is unavailable
  *   "data": {...}                                    the package's own fields, kept and returned as they are
  *   "first": "2026-11-02T10:00:00Z"                  for a problem moved from an older store: when it was found
  *

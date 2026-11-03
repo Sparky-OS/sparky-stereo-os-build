@@ -28,7 +28,7 @@ const sys = @import("sys.zig");
 const Allocator = std.mem.Allocator;
 const Value = std.json.Value;
 
-pub const version = "0.1.1";
+pub const version = "0.1.2";
 pub const engine_package = "sparky-stereo-problems";
 const support_url = "https://github.com/Sparky-OS/sparky-stereo-os/issues";
 const output_lines = 200;
@@ -104,6 +104,8 @@ pub const Record = struct {
     data: ?Value = null,
     // when it was last kept, in nanoseconds: a repair command that keeps it again is told from one that repaired it
     kept_ns: i64 = 0,
+    // Positive evidence after this failure: absence alone also describes a first installation.
+    package_seen: bool = false,
 };
 
 pub const Rendered = struct {
@@ -134,10 +136,13 @@ pub const Ctx = struct {
     err_local: []const u8 = "",
     err_lang: []const u8 = "en",
     journal_error: ?[]const u8 = null,
+    last_kept: ?Record = null,
     catalogs: std.StringHashMapUnmanaged(?Catalog) = .empty,
     langs: ?[]const []const u8 = null,
     bus: ?*anyopaque = null,
     bus_tried: bool = false,
+    dpkg_status: ?[]const u8 = null,
+    dpkg_read: bool = false,
 
     pub fn init(a: Allocator) Ctx {
         var ctx = Ctx{ .a = a, .euid = sys.geteuid() };
@@ -606,9 +611,20 @@ pub fn render(ctx: *Ctx, package: []const u8, msg: []const u8, args: []const Val
 // the engine's own title, never the bare key and arguments
 pub fn renderRecord(ctx: *Ctx, r: Record, lang: ?[]const u8) Failure!Rendered {
     const main = try render(ctx, r.package, r.message, r.args, lang);
-    if (!main.found and r.text_en.len > 0) {
+    if (!main.found) {
         const title = try render(ctx, engine_package, "LOCAL29", &.{}, lang);
-        return .{ .title = title.text, .text = r.text_en, .lang = "en", .found = false };
+        if (r.text_en.len > 0 and !std.mem.eql(u8, r.text_en, main.text)) return .{ .title = title.text, .text = r.text_en, .lang = "en", .found = false };
+        // Literal English and gettext's msgid are useful without the package's catalog.
+        const text = if (std.mem.indexOfScalar(u8, r.message, '|')) |bar| r.message[bar + 1 ..] else r.message;
+        if (std.mem.indexOfAny(u8, text, " \t\n") != null) {
+            return .{ .title = title.text, .text = text, .lang = "en", .found = false };
+        }
+        var args: std.ArrayList(Value) = .empty;
+        try args.append(ctx.a, .{ .string = r.package });
+        try args.append(ctx.a, .{ .string = r.key });
+        if (r.status) |status| try args.append(ctx.a, .{ .integer = status });
+        const generic = try render(ctx, engine_package, if (r.status != null) "LOCAL69" else "LOCAL70", args.items, "en");
+        return .{ .title = title.text, .text = generic.text, .lang = "en", .found = false };
     }
     var out: std.ArrayList(u8) = .empty;
     try out.appendSlice(ctx.a, main.text);
@@ -799,6 +815,8 @@ fn writeRecordFields(w: *Writer, ctx: *Ctx, r: Record) Failure!void {
     try w.str(r.text_en);
     try w.key("data");
     if (r.data) |d| try w.value(d) else try w.nul();
+    try w.key("package_seen");
+    try w.value(.{ .bool = r.package_seen });
     try w.key("kept_ns");
     try w.int(r.kept_ns);
     try w.key("last_repair");
@@ -868,6 +886,7 @@ pub fn applyDetails(a: Allocator, r: *Record, obj: std.json.ObjectMap) BadValue!
     if (field(obj, "command")) |v| r.command = try stringList(a, v);
     if (field(obj, "status")) |v| r.status = if (v == .integer) v.integer else return error.BadValue;
     if (fieldStr(obj, "output")) |s| r.output = s;
+    if (fieldStr(obj, "text_en")) |s| r.text_en = s;
     if (field(obj, "repair")) |v| {
         if (v != .array) return error.BadValue;
         var list: std.ArrayList([]const []const u8) = .empty;
@@ -920,6 +939,10 @@ fn parseRecord(a: Allocator, text: []const u8) BadValue!Record {
         .text_en = fieldStr(o, "text_en") orelse "",
         .kept_ns = fieldInt(o, "kept_ns") orelse 0,
     };
+    if (field(o, "package_seen")) |seen| {
+        if (seen != .bool) return error.BadValue;
+        r.package_seen = seen.bool;
+    }
     try applyDetails(a, &r, o);
     if (field(o, "last_repair")) |lr| {
         if (lr == .object) {
@@ -1127,7 +1150,7 @@ pub fn keep(ctx: *Ctx, scope: Scope, input: Record) Failure!Record {
     var ts: sys.Timespec = undefined;
     _ = sys.clock_gettime(0, &ts);
     r.kept_ns = ts.sec * 1_000_000_000 + ts.nsec;
-    r.text_en = "";
+    r.package_seen = (try installed(ctx, r.package)) == true;
     r.text_en = (try renderRecord(ctx, r, "en")).text;
     const lock = (try lockStore(ctx, scope, dir)) orelse {
         const e = strerror(sys.errno());
@@ -1161,6 +1184,7 @@ pub fn keep(ctx: *Ctx, scope: Scope, input: Record) Failure!Record {
         return fail(ctx, "LOCAL15", &.{ input.key, input.package, dir, e });
     }
     try journalProblem(ctx, "kept", scope, r, path);
+    ctx.last_kept = r;
     return r;
 }
 
@@ -1394,15 +1418,84 @@ pub fn clearAll(ctx: *Ctx, package: []const u8) Failure!usize {
     return n;
 }
 
-// dpkg's own list of PACKAGE's files: a package that has none is not installed (null when dpkg's database is not
-// there, as in a bare build root: then nothing is judged)
+// dpkg presence: removed states take precedence over leftover conffile lists. An active state with no list,
+// or an unavailable database, is unknown and never authorizes collection.
 fn installed(ctx: *Ctx, package: []const u8) Failure!?bool {
-    const info = try cat(ctx.a, &.{ ctx.root, "/var/lib/dpkg/info" });
-    if (sys.access(try z(ctx.a, try cat(ctx.a, &.{ ctx.root, "/var/lib/dpkg/status" })), 0) != 0) return null;
-    for ([_][]const u8{ "", ":amd64", ":i386", ":all" }) |arch| {
-        if (sys.access(try z(ctx.a, try cat(ctx.a, &.{ info, "/", package, arch, ".list" })), 0) == 0) return true;
+    if (!ctx.dpkg_read) {
+        ctx.dpkg_read = true;
+        ctx.dpkg_status = readFile(ctx.a, try cat(ctx.a, &.{ ctx.root, "/var/lib/dpkg/status" })) catch |e| {
+            if (e == error.OutOfMemory) return error.OutOfMemory;
+            return null;
+        };
     }
+    const status = ctx.dpkg_status orelse return null;
+    var known = false;
+    var active = false;
+    var paragraphs = std.mem.splitSequence(u8, status, "\n\n");
+    while (paragraphs.next()) |paragraph| {
+        var name: []const u8 = "";
+        var state: []const u8 = "";
+        var arch: []const u8 = "";
+        var lines = std.mem.splitScalar(u8, paragraph, '\n');
+        while (lines.next()) |line| {
+            if (std.mem.startsWith(u8, line, "Package: ")) name = line[9..];
+            if (std.mem.startsWith(u8, line, "Status: ")) state = line[8..];
+            if (std.mem.startsWith(u8, line, "Architecture: ")) arch = line[14..];
+        }
+        const colon = std.mem.indexOfScalar(u8, package, ':');
+        const base = if (colon) |i| package[0..i] else package;
+        if (!std.mem.eql(u8, name, base)) continue;
+        if (colon) |i| if (!std.mem.eql(u8, arch, package[i + 1 ..])) continue;
+        known = true;
+        if (!std.mem.endsWith(u8, state, " config-files") and !std.mem.endsWith(u8, state, " not-installed")) active = true;
+    }
+    if (known and !active) return false;
+    const info = try cat(ctx.a, &.{ ctx.root, "/var/lib/dpkg/info" });
+    const d = sys.opendir(try z(ctx.a, info)) orelse return null;
+    defer _ = sys.closedir(d);
+    while (sys.readdir(d)) |entry| {
+        const name = std.mem.sliceTo(&entry.name, 0);
+        if (!std.mem.endsWith(u8, name, ".list")) continue;
+        const owner = name[0 .. name.len - 5];
+        const base = if (std.mem.indexOfScalar(u8, owner, ':')) |colon| owner[0..colon] else owner;
+        if (std.mem.eql(u8, package, owner) or std.mem.eql(u8, package, base)) return true;
+    }
+    if (active) return null;
     return false;
+}
+
+// Collection may observe installation or finish a record, but never overwrite a concurrent keep or repair.
+fn observePackage(ctx: *Ctx, scope: Scope, dir: []const u8, name: []const u8, r: Record) Failure!void {
+    if (scope != .person and ctx.euid != 0) return;
+    const lock = (try lockStore(ctx, scope, dir)) orelse return;
+    defer lock.release();
+    const path = try cat(ctx.a, &.{ dir, "/", name });
+    switch (try readRecord(ctx, path)) {
+        .record => |now| {
+            if (!std.mem.eql(u8, try recordJson(ctx, now), try recordJson(ctx, r))) return;
+            var updated = now;
+            updated.package_seen = true;
+            _ = try writeFileAtomic(ctx.a, dir, name, try recordJson(ctx, updated), if (scope == .person) 0o600 else 0o644);
+        },
+        else => {},
+    }
+}
+
+fn finishCollected(ctx: *Ctx, scope: Scope, dir: []const u8, name: []const u8, r: Record, msg: []const u8, reason: []const u8) Failure!bool {
+    if (scope != .person and ctx.euid != 0) return false;
+    const lock = (try lockStore(ctx, scope, dir)) orelse return false;
+    defer lock.release();
+    const path = try cat(ctx.a, &.{ dir, "/", name });
+    switch (try readRecord(ctx, path)) {
+        .missing => return true,
+        .record => |now| {
+            if (!std.mem.eql(u8, try recordJson(ctx, now), try recordJson(ctx, r))) return false;
+            if (sys.unlink(try z(ctx.a, path)) != 0) return false;
+            try journalEvent(ctx, "over", msg, &.{ r.key, r.package, reason }, "6", scope, r, path);
+            return true;
+        },
+        else => return false,
+    }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1531,8 +1624,8 @@ pub fn serviceFailed(ctx: *Ctx, unit_arg: ?[]const u8) Failure!Record {
     const status = env("MONITOR_EXIT_STATUS") orelse "";
     var reason: std.json.Array = .init(ctx.a);
     const simple = [_]struct { []const u8, []const u8 }{
-        .{ "timeout", "LOCAL8" },      .{ "start-limit-hit", "LOCAL9" },
-        .{ "oom-kill", "LOCAL10" },    .{ "watchdog", "LOCAL11" },
+        .{ "timeout", "LOCAL8" },   .{ "start-limit-hit", "LOCAL9" },
+        .{ "oom-kill", "LOCAL10" }, .{ "watchdog", "LOCAL11" },
     };
     if (std.mem.eql(u8, result, "exit-code")) {
         try reason.append(.{ .string = "LOCAL5" });
@@ -1626,28 +1719,17 @@ pub fn collect(ctx: *Ctx, package: ?[]const u8) Failure![]Listed {
                 .unreadable => |e| try out.append(ctx.a, .{ .scope = scope, .file = path, .record = null, .unreadable = e }),
                 .record => |r| {
                     if (package) |p| if (!std.mem.eql(u8, p, r.package)) continue;
-                    // the problem of a package that is not installed any more is over (its postrm clears the
-                    // machine's; this clears what it could not reach): dpkg has no file list of it, and no catalog
-                    // of its messages is there (a build or a test that names its catalogs is not judged gone)
-                    if (!std.mem.eql(u8, r.package, engine_package) and (try installed(ctx, r.package)) == false and
+                    const present = try installed(ctx, r.package);
+                    if (present == true and !r.package_seen) try observePackage(ctx, scope, dir, n, r);
+                    if (!std.mem.eql(u8, r.package, engine_package) and r.package_seen and present == false and
                         (try loadCatalog(ctx, r.package, "en")) == null)
                     {
-                        if (scope == .person or ctx.euid == 0) {
-                            if (sys.unlink(try z(ctx.a, path)) == 0) {
-                                try journalEvent(ctx, "over", "LOCAL59", &.{ r.key, r.package, r.package }, "6", scope, r, path);
-                            }
-                        }
-                        continue;
+                        if (try finishCollected(ctx, scope, dir, n, r, "LOCAL59", r.package)) continue;
                     }
                     if (r.unit) |u| {
                         if (try unitProperty(ctx, u, "ActiveState")) |state| {
                             if (!std.mem.eql(u8, state, "failed")) {
-                                if (scope == .person or ctx.euid == 0) {
-                                    if (sys.unlink(try z(ctx.a, path)) == 0) {
-                                        try journalEvent(ctx, "over", "LOCAL21", &.{ r.key, r.package, u }, "6", scope, r, path);
-                                    }
-                                }
-                                continue;
+                                if (try finishCollected(ctx, scope, dir, n, r, "LOCAL21", u)) continue;
                             }
                         }
                     }

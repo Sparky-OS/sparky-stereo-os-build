@@ -5,7 +5,7 @@
 # is Zig (cgm-zig, Daniel's Zig; ZIG names it, `zig` by default), built twice from the same source: the command and
 # the private C library. Then its own message catalogs (with the command just built), the source package, provenance
 # and Lean Code's build-tree. Needs zig, libsystemd-dev, dpkg-dev and python3.
-# Last update 2026/11/02
+# Last update 2026/11/03
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
@@ -55,9 +55,12 @@ install -m 644 "$HERE/systemd/system/sparky-stereo-problems-failed@.service" "$D
 ln -s /dev/null "$D/usr/lib/systemd/system/sparky-stereo-problems-failed@.service.d/50-sparky-stereo-problems.conf"
 install -m 644 "$HERE/tmpfiles/$PACKAGE.conf" "$D/usr/lib/tmpfiles.d/$PACKAGE.conf"
 install -m 644 "$HERE/polkit/org.sparkylinux.sparkystereo.problems.policy" "$D/usr/share/polkit-1/actions/"
+mkdir -p "$D/etc/dpkg/dpkg.cfg.d"
+install -m 644 "$HERE/dpkg/$PACKAGE" "$D/etc/dpkg/dpkg.cfg.d/$PACKAGE"
 install -m 644 "$HERE/copyright" "$D/usr/share/doc/$PACKAGE/copyright"
 install -m 644 "$HERE/README.md" "$D/usr/share/doc/$PACKAGE/README.md"
 mkdir -p "$D/DEBIAN" "$WORK/shlibs/debian"
+printf "/etc/dpkg/dpkg.cfg.d/%s\n" "$PACKAGE" >"$D/DEBIAN/conffiles"
 printf 'Source: %s\n\nPackage: %s\nArchitecture: amd64\n' "$PACKAGE" "$PACKAGE" >"$WORK/shlibs/debian/control"
 SHLIBS=$(cd "$WORK/shlibs" && dpkg-shlibdeps -O "$D/usr/bin/$PACKAGE" "$D/$PRIVATE/lib$PACKAGE.so.0" 2>/dev/null | sed -n 's/^shlibs:Depends=//p')
 [ -n "$SHLIBS" ] || { echo "dpkg-shlibdeps found no dependencies" >&2; exit 1; }
@@ -112,7 +115,7 @@ fi
 exit 0
 EOS
 chmod 755 "$D/DEBIAN/postinst" "$D/DEBIAN/postrm"
-(cd "$D" && find usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
+(cd "$D" && find usr etc -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
 
 S=$WORK/$PACKAGE-$VERSION
 mkdir -p "$S/debian/source"
@@ -138,7 +141,7 @@ EOS
 {
 	printf '%s (%s) unstable; urgency=medium\n\n' "$PACKAGE" "$VERSION"
 	sed -n '4,/^---/p' "$HERE/CHANGELOG" | grep -v '^---' | sed 's/^  \*/  */'
-	printf '\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 02 Nov 2026 12:00:00 -0300\n'
+	printf '\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 03 Nov 2026 12:00:00 -0300\n'
 } >"$S/debian/changelog"
 cp "$HERE/copyright" "$S/debian/copyright"
 echo '3.0 (native)' >"$S/debian/source/format"

@@ -70,3 +70,18 @@ Postrm cannot assume this dependency is still installed (Debian Policy 6.5).
 If it is absent, the maintainer script must print its embedded diagnostic and
 attempt to journal it itself, including saying if the journal cannot be reached.
 Packages using this flag Depend on sparky-stereo-problems (>= 0.1.1).
+
+## Before installation and after removal (0.1.2)
+
+A failure is kept even before dpkg has unpacked the package or its catalogs.
+Without a catalog, the engine saves literal English supplied as MESSAGE (or `text_en` in the details), or an English explanation naming the package, step and exit status.
+Once its catalog arrives, the package's translated message is used.
+`run` says the record it just kept without running collection.
+
+Each record remembers whether dpkg's file list has been observed since this failure was kept.
+A dpkg post-invoke hook collects after package operations in the running system’s standard database, so a first installation is observed before a later removal.
+Collection removes a package's stale record only after that observed presence is gone; an active dpkg state with a missing file list is not removal.
+Old records without that observation and records in an unreadable database are kept until presence is observed, they are repaired, or they are explicitly cleared.
+A new failure kept after removal starts a new observation, so it too is retained.
+A reader unable to delete a record continues to show it, including a recovered service until a privileged collection clears its boot record.
+A package's `postrm remove` should still call `clear --all PACKAGE`; use `--after-removal` for a restoration failure that must outlive that clear.
