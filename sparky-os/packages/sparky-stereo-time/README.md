@@ -20,7 +20,7 @@ Official servers are used alone, with NTS where the service offers it and plain 
 Brazil uses gps.ntp.br first, followed by the working NTP.br letters in order.
 No Debian pool is added beside a country's official servers, even when there is only one server.
 Where no official service is listed, the country's pool.ntp.org zone is used, for example pt.pool.ntp.org for Portugal.
-The pool catalogue lists country pools with servers in the pool operator's regional directories, checked on 2026-11-02.
+The pool catalogue lists country pools with servers in the pool operator's regional directories and resolving addresses, checked on 2026-11-02.
 An unknown country or a country without a listed usable pool is reported; no replacement is chosen.
 
 Debian manages chrony.conf with ucf.

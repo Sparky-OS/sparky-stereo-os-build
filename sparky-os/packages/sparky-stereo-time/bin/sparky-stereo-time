@@ -326,7 +326,7 @@ if [ "$RELOAD" = 1 ]; then
 	case $(chrony_state) in
 	active)
 		if [ "$CONFCHANGED" = 1 ]; then
-			problems run apply LOCAL14 "$OUT" --repair "${SPARKY_TIME_SELF:-/usr/bin/sparky-stereo-time}" -- \
+			problems run apply LOCAL14 "$OUT" --repair "$SYSTEMCTL" try-restart chrony.service -- \
 				$SYSTEMCTL try-restart chrony.service >/dev/null || exit 4
 		else
 			problems run apply LOCAL14 "$OUT" --repair "${SPARKY_TIME_SELF:-/usr/bin/sparky-stereo-time}" -- \

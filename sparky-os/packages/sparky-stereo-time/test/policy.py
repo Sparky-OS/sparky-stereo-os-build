@@ -59,7 +59,7 @@ with tempfile.TemporaryDirectory(prefix='time-policy-') as tmp:
         actual = [l for l in r.stdout.splitlines() if l.startswith(('server ', 'pool '))]
         check(zone + ' exact sources and order', r.returncode == 0 and actual == expected)
         (evidence / (zone.replace('/', '-') + '-print.txt')).write_text(r.stdout + r.stderr)
-    for zone in ('Nowhere/Land', 'Antarctica/McMurdo'):
+    for zone in ('Nowhere/Land', 'Antarctica/McMurdo', 'Pacific/Guam'):
         out = Path(env['SPARKY_TIME_OUT'])
         out.parent.mkdir(exist_ok=True)
         out.write_text('server previous.example iburst\n')
@@ -100,9 +100,16 @@ with tempfile.TemporaryDirectory(prefix='time-policy-') as tmp:
         conf.unlink()
         r = run(['fakeroot', helper, 'apply'], env)
         check('deleted configuration is not recreated', r.returncode == 20 and not conf.exists())
-        # A separate case tests a vendor upgrade: chrony updates via ucf, then the
-        # package trigger applies our filter to the newly installed template.
+        # Simulate chrony's own ucf step before the template-change trigger.
         conf.write_text(vendor)
+        r = run(['fakeroot', helper, 'apply'], env)
+        check('template upgrade baseline', r.returncode in (0, 10))
+        upgrade = d / 'vendor-upgrade'
+        upgrade.write_text(vendor + '\n# new vendor revision\n')
+        r = run(['fakeroot', 'ucf', '--state-dir', d / 'ucf', '--three-way', upgrade, conf], env)
+        check('chrony vendor upgrade through ucf', r.returncode == 0 and conf.read_text() == upgrade.read_text())
+        r = run(['fakeroot', helper, 'apply'], env | {'SPARKY_TIME_CHRONY_TEMPLATE': str(upgrade)})
+        check('trigger reapplies policy after vendor upgrade', r.returncode == 10 and '# new vendor revision' in conf.read_text() and 'pool 2.debian' not in conf.read_text())
         env.pop('SPARKY_TIME_CHRONY_CONF')
     else:
         check('configuration migration helper is installed', False)
