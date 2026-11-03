@@ -21,7 +21,10 @@ Brazil uses gps.ntp.br first, followed by the working NTP.br letters in order.
 No Debian pool is added beside a country's official servers, even when there is only one server.
 Where no official service is listed, the country's pool.ntp.org zone is used, for example pt.pool.ntp.org for Portugal.
 The pool catalogue lists country pools with servers in the pool operator's regional directories and resolving addresses, checked on 2026-11-02.
-An unknown country or a country without a listed usable pool is reported; no replacement is chosen.
+If neither an official service nor a usable country pool is listed, configuration and --check print a notice and succeed without keeping a problem.
+The clock keeps Debian’s pool as Debian configures it; returning from a supported country restores the unedited Debian template through ucf and removes the generated edition sources.
+An older LOCAL54 problem is cleared.
+A timezone that cannot be placed in a country remains a fault, reported and kept until repaired.
 
 Debian manages chrony.conf with ucf.
 The tool removes Debian's pool from a copy of Debian's packaged template and gives that template to ucf.

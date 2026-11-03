@@ -59,7 +59,7 @@ with tempfile.TemporaryDirectory(prefix='time-policy-') as tmp:
         actual = [l for l in r.stdout.splitlines() if l.startswith(('server ', 'pool '))]
         check(zone + ' exact sources and order', r.returncode == 0 and actual == expected)
         (evidence / (zone.replace('/', '-') + '-print.txt')).write_text(r.stdout + r.stderr)
-    for zone in ('Nowhere/Land', 'Antarctica/McMurdo', 'Pacific/Guam'):
+    for zone in ('Nowhere/Land',):
         out = Path(env['SPARKY_TIME_OUT'])
         out.parent.mkdir(exist_ok=True)
         out.write_text('server previous.example iburst\n')
@@ -68,6 +68,22 @@ with tempfile.TemporaryDirectory(prefix='time-policy-') as tmp:
         records = list(d.rglob('sparky-stereo-time_zone.json'))
         check(zone + ' kept by the engine', bool(records))
         (evidence / (zone.replace('/', '-') + '-failure.txt')).write_text(r.stdout + r.stderr)
+    for zone, cc in (('Antarctica/McMurdo', 'AQ'), ('Pacific/Guam', 'GU')):
+        for mode in ('--no-reload', '--check'):
+            # Seed the exact obsolete step, as the accepted previous package did.
+            run(['python3', env['SPARKY_TIME_PROBLEMS'], 'record', 'zone', 'LOCAL54', cc], env)
+            r = run([program, '--zone', zone, mode], env)
+            notice = f"No official time service or pool.ntp.org zone was found for {cc}; the clock keeps Debian's pool, as Debian sets it up"
+            check(zone + ' ' + mode + ' succeeds with one plain notice', r.returncode == 0 and (r.stdout + r.stderr).strip() == notice)
+            check(zone + ' ' + mode + ' clears obsolete problem', not list(d.rglob('sparky-stereo-time_zone.json')))
+            (evidence / (zone.replace('/', '-') + mode + '.txt')).write_text(r.stdout + r.stderr)
+    r = run([program, '--zone', 'Nowhere/Land', '--check'], env)
+    check('unknown timezone --check remains a kept fault', r.returncode == 3 and bool(list(d.rglob('sparky-stereo-time_zone.json'))))
+    for lang in ('en', 'pl', 'pt_BR', 'fr', 'de', 'ja', 'ko', 'zh_CN', 'zh_TW'):
+        words = run(['bash', '-c', 'source "$1"; printf "$LOCAL54" GU', 'bash', base / 'share/sparky/sparky-stereo-time' / lang], env).stdout
+        r = run([program, '--zone', 'Pacific/Guam', '--check'], env | {'LANGUAGE': lang, 'LANG': lang + '.UTF-8'})
+        (evidence / ('notice-' + lang + '.txt')).write_text(repr((r.returncode, r.stdout, r.stderr, words)))
+        check(lang + ' translated no-service notice', r.returncode == 0 and (r.stdout + r.stderr).strip() == words and words)
     if helper.exists():
         conf = d / 'chrony.conf'
         vendor = Path('/usr/share/chrony/chrony.conf').read_text()
@@ -86,6 +102,16 @@ with tempfile.TemporaryDirectory(prefix='time-policy-') as tmp:
         check('configuration migration idempotent', r.returncode == 0)
         r = run(['fakeroot', helper, 'restore'], env)
         check('removal restores unedited Debian template through ucf', r.returncode == 10 and conf.read_text() == vendor)
+        wrapper = d / 'configure'
+        wrapper.write_text(f'#!/bin/sh\nexec fakeroot "{helper}" "$@"\n')
+        wrapper.chmod(0o755)
+        transition = env | {'SPARKY_TIME_CONFIGURE': str(wrapper)}
+        r = run([program, '--zone', 'America/Sao_Paulo', '--no-reload'], transition)
+        check('supported country before transition', r.returncode == 0 and 'pool 2.debian' not in conf.read_text())
+        r = run([program, '--zone', 'Pacific/Guam', '--no-reload'], transition)
+        check('no-service country restores Debian and removes previous sources and authentication', r.returncode == 0 and conf.read_text() == vendor and not Path(env['SPARKY_TIME_OUT']).exists() and not Path(env['SPARKY_TIME_AUTHCONF']).exists())
+        r = run([program, '--zone', 'Pacific/Guam', '--no-reload'], transition)
+        check('no-service country configuration is idempotent', r.returncode == 0 and conf.read_text() == vendor)
         personal = vendor.replace('pool 2.debian.pool.ntp.org iburst', 'server 192.0.2.7 iburst') + '\n# my own comment\n'
         conf.write_text(personal)
         out = Path(env['SPARKY_TIME_OUT'])
@@ -102,6 +128,7 @@ with tempfile.TemporaryDirectory(prefix='time-policy-') as tmp:
         check('deleted configuration is not recreated', r.returncode == 20 and not conf.exists())
         # Simulate chrony's own ucf step before the template-change trigger.
         conf.write_text(vendor)
+        run(['fakeroot', 'ucf', '--state-dir', d / 'ucf', '--three-way', '/usr/share/chrony/chrony.conf', conf], env)
         r = run(['fakeroot', helper, 'apply'], env)
         check('template upgrade baseline', r.returncode in (0, 10))
         upgrade = d / 'vendor-upgrade'

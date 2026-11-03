@@ -214,8 +214,6 @@ zone_label() {
 	if [ -n "$c" ]; then echo "$c ($z)"; else echo "$z"; fi
 }
 
-[ "$ACTION" = check ] && check
-
 [ -n "$ZONE" ] || ZONE=$(zone_name)
 if [ -z "$ZONE" ]; then
 	fail 3 zone LOCAL11 "$LOCALTIME" "$ZONEINFO" "$TIMEZONE_FILE"
@@ -239,6 +237,7 @@ CC=$(country_for "$ZONE")
 [ -n "$CC" ] || fail 3 zone LOCAL53 "$ZONE"
 ROW=$(printf '%s\n' "$CATALOGUE" | awk -F'\t' -v c="$CC" '$1 == c { print; exit }')
 
+DEBIAN=0
 LINES=
 COUNT=0
 NTSCOUNT=0
@@ -258,12 +257,24 @@ if [ -n "$ROW" ]; then
 fi
 if [ "$COUNT" -eq 0 ]; then
 	[ -r "$POOLS" ] || fail 3 catalogue LOCAL10 "$POOLS" "unreadable"
-	grep -qx "${CC,,}" "$POOLS" || fail 3 zone LOCAL54 "$CC"
-	LINES+="pool ${CC,,}.pool.ntp.org iburst"$'\n'
-	USED="${CC,,}.pool.ntp.org"
-	WHAT=$(printf "$LOCAL7" "$ZONE" "$USED")
+	if ! grep -qx "${CC,,}" "$POOLS"; then
+		DEBIAN=1
+	else
+		LINES+="pool ${CC,,}.pool.ntp.org iburst"$'\n'
+		USED="${CC,,}.pool.ntp.org"
+		WHAT=$(printf "$LOCAL7" "$ZONE" "$USED")
+	fi
 else
 	WHAT=$(printf "$LOCAL6" "$CC" "$ZONE")
+fi
+
+if [ "$ACTION" = check ]; then
+	if [ "$DEBIAN" = 1 ]; then
+		problems clear zone
+		printf "$LOCAL54"'\n' "$CC"
+		exit 0
+	fi
+	check
 fi
 
 AUTH=
@@ -273,6 +284,7 @@ authselectmode prefer
 CONTENT="# Sparky Stereo OS: written by sparky-stereo-time from the timezone, do not edit
 ${LINES}"
 if [ "$PRINT" = 1 ]; then
+	if [ "$DEBIAN" = 1 ]; then printf "$LOCAL54"'\n' "$CC"; exit 0; fi
 	printf '%s' "$CONTENT"
 	[ -n "$AUTH" ] && echo "# conf.d: authselectmode prefer"
 	exit 0
@@ -291,7 +303,9 @@ put() {
 CONFCHANGED=0
 if [ -z "${SPARKY_TIME_OUT:-}" ] || [ -n "${SPARKY_TIME_CHRONY_CONF:-}" ]; then
 	CONFIGURE=${SPARKY_TIME_CONFIGURE:-/usr/lib/sparky-stereo-time/chrony-config}
-	why=$("$CONFIGURE" apply 2>&1); rc=$?
+	mode=apply
+	[ "$DEBIAN" = 0 ] || mode=restore
+	why=$("$CONFIGURE" "$mode" 2>&1); rc=$?
 	case $rc in
 		0) ;;
 		10) CONFCHANGED=1 ;;
@@ -312,13 +326,19 @@ elif [ -e "$AUTHCONF" ]; then
 	CONFCHANGED=1
 fi
 
-if [ ! -f "$OUT" ] || [ "$(cat "$OUT")" != "${CONTENT%$'\n'}" ]; then
+if [ "$DEBIAN" = 1 ]; then
+	if [ -e "$OUT" ]; then
+		why=$(rm -f "$OUT" 2>&1) || fail 4 write LOCAL13 "$OUT" "$why"
+	fi
+	problems clear reach
+	printf "$LOCAL54"'\n' "$CC"
+elif [ ! -f "$OUT" ] || [ "$(cat "$OUT")" != "${CONTENT%$'\n'}" ]; then
 	put "$OUT" "$CONTENT" || fail 4 write LOCAL13 "$OUT" "$why"
 	printf '%s\n' "$WHAT"
 else
 	printf '%s\n' "$LOCAL9"
 fi
-printf "$LOCAL35"'\n' "$USED"
+[ "$DEBIAN" = 1 ] || printf "$LOCAL35"'\n' "$USED"
 problems clear catalogue zone write
 
 # also when nothing changed: an earlier reload may have failed while chrony was starting

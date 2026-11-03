@@ -14,7 +14,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
-VERSION=20261102.1~sparky9~0+lc1
+VERSION=20261103~sparky9~0+lc1
 PKG=sparky-stereo-time
 W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/time-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
