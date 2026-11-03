@@ -259,6 +259,7 @@ if [ "$COUNT" -eq 0 ]; then
 	[ -r "$POOLS" ] || fail 3 catalogue LOCAL10 "$POOLS" "unreadable"
 	if ! grep -qx "${CC,,}" "$POOLS"; then
 		DEBIAN=1
+		[ "$PRINT" = 1 ] || problems clear zone
 	else
 		LINES+="pool ${CC,,}.pool.ntp.org iburst"$'\n'
 		USED="${CC,,}.pool.ntp.org"
