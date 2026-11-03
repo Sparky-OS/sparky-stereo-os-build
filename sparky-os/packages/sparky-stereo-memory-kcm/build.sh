@@ -5,7 +5,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.1.6
+VERSION=0.1.7
 PACKAGE=sparky-stereo-memory-kcm
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.memory-kcm.XXXXXX")
@@ -29,7 +29,7 @@ install -m644 "$HERE/README.md" "$D/usr/share/doc/$PACKAGE/README.md"
 mkdir -p "$D/DEBIAN" "$WORK/shlibs/debian"
 printf 'Source: %s\n\nPackage: %s\nArchitecture: amd64\n' "$PACKAGE" "$PACKAGE" >"$WORK/shlibs/debian/control"
 SHLIBS=$(cd "$WORK/shlibs" && dpkg-shlibdeps -O $(find "$D" -type f \( -name '*.so' -o -path '*/kauth/*' \)) 2>/dev/null | sed -n 's/^shlibs:Depends=//p')
-DEPENDS="$SHLIBS, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, sparky-stereo-kernel-settings (>= 20261010.2~sparky9~0), sparky-stereo-problems (>= 0.1.0), sparky-aptus-stereo-appcenter (>= 0.1.0), pkexec"
+DEPENDS="$SHLIBS, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, sparky-stereo-kernel-settings (>= 20261010.2~sparky9~0), sparky-stereo-problems (>= 0.1.0), sparky-aptus-stereo-appcenter (>= 0.1.1), pkexec"
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
 cat >"$D/DEBIAN/control" <<EOF
 Package: $PACKAGE
@@ -69,7 +69,7 @@ Homepage: https://sparkylinux.org
 
 Package: $PACKAGE
 Architecture: amd64
-Depends: \${shlibs:Depends}, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, sparky-stereo-kernel-settings (>= 20261010.2~sparky9~0), sparky-stereo-problems (>= 0.1.0), sparky-aptus-stereo-appcenter (>= 0.1.0), pkexec
+Depends: \${shlibs:Depends}, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, sparky-stereo-kernel-settings (>= 20261010.2~sparky9~0), sparky-stereo-problems (>= 0.1.0), sparky-aptus-stereo-appcenter (>= 0.1.1), pkexec
 Recommends: sparky-stereo-cushion-swap
 Breaks: sparky-stereo-kernel-settings (<< 20261103.4~)
 Description: Memory page for System Settings
@@ -77,6 +77,12 @@ Description: Memory page for System Settings
 EOF
 cat >"$S/debian/changelog" <<EOF
 $PACKAGE ($VERSION) unstable; urgency=medium
+
+  * Require Stereo APTus 0.1.1 for immediate zram activation and removal.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 03 Nov 2026 12:00:00 -0300
+
+sparky-stereo-memory-kcm (0.1.6) unstable; urgency=medium
 
   * Remove zram controls, backend and translations; retain Cushion Swap.
   * Leave the administrator-owned zram configuration untouched.

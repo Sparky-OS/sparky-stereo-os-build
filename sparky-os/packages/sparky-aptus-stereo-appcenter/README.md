@@ -15,9 +15,11 @@ Status is unprivileged JSON with dpkg installation state, active zram0 swap stat
 Install and remove require root through the package's polkit policy.
 Both this page and the Memory KCM call this same action.
 Install explicitly requests Debian's systemd-zram-generator, including when already installed automatically, so apt records the person's choice.
-It starts after a restart; this package does not write a zram configuration or start swap itself.
+It starts dev-zram0.swap immediately after install, using Debian’s configuration and the edition’s inherited-generator guard.
+Removal stops the swap first, then its setup service, before removing the package.
+A restart is mentioned only when systemd is not running, with that reason.
 Failures remain with the shared problems engine and are read on the next page load.
-An active device after removal is reported separately from the package's installation state.
+A failed stop prevents removal; a failed start is retained with its repair.
 
 ORDER 104 still owns the other sections and entries: 3D emulation, stereo players, editors and tools, VR and SteamVR, drivers, verified vendor downloads, the pinned launcher, the CODESYS 4 store link and SlimeVR.
 This first version neither implements nor claims those entries.

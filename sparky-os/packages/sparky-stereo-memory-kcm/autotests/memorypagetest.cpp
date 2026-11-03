@@ -7,6 +7,8 @@
 #include <QDir>
 #include <QFile>
 #include <QGuiApplication>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QTemporaryDir>
@@ -121,9 +123,27 @@ void MemoryPageTest::zram()
     auto *button = namedItem(page, u"zramAction"_s);
     QVERIFY(button);
     const bool installed = kcm->property("zram").toMap().value(u"installed"_s).toBool();
-    const QString expected = language == u"pt_BR"_s ? (installed ? u"Desinstalar"_s : u"Instalar"_s)
-                                                   : (installed ? u"Uninstall"_s : u"Install"_s);
+    QFile catalog(u"/usr/share/sparky/sparky-aptus-stereo-appcenter/"_s + language + u".json"_s);
+    QVERIFY(catalog.open(QIODevice::ReadOnly));
+    const auto strings = QJsonDocument::fromJson(catalog.readAll()).object();
+    const QString expected = strings.value(installed ? u"remove"_s : u"install"_s).toString();
+    QVERIFY(!expected.isEmpty());
     QTRY_COMPARE(button->property("text").toString(), expected);
+    const auto state = kcm->property("zram").toMap();
+    if (qEnvironmentVariableIsSet("EXPECT_ZRAM_ACTIVE")) {
+        QCOMPARE(state.value(u"active"_s).toBool(), qEnvironmentVariableIntValue("EXPECT_ZRAM_ACTIVE") != 0);
+    }
+    if (qEnvironmentVariableIsSet("EXPECT_ZRAM_RESTART")) {
+        QCOMPARE(!state.value(u"restart"_s).toString().isEmpty(), qEnvironmentVariableIntValue("EXPECT_ZRAM_RESTART") != 0);
+    }
+    if (qEnvironmentVariableIsSet("EXPECT_ZRAM_ERROR")) {
+        QCOMPARE(!state.value(u"error"_s).toString().isEmpty(), qEnvironmentVariableIntValue("EXPECT_ZRAM_ERROR") != 0);
+    }
+    auto *stateLabel = namedItem(page, u"zramState"_s);
+    QVERIFY(stateLabel);
+    QCOMPARE(stateLabel->property("text").toString(),
+             strings.value(installed ? u"installed"_s : u"absent"_s).toString() + u" · "_s
+             + strings.value(state.value(u"active"_s).toBool() ? u"active"_s : u"inactive"_s).toString());
     if (qEnvironmentVariableIsSet("SCREENSHOT")) {
         QTest::qWait(500);
         QVERIFY(window.grabWindow().save(qEnvironmentVariable("SCREENSHOT")));
