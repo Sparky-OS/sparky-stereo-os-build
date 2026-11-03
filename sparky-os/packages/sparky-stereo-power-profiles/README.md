@@ -67,3 +67,18 @@ Daniel confirmed the other defaults on 2026-11-02: "same pattern partner".
 That decides performance on mains, balanced on battery, power saver when low, no lock grace (LockGrace=0), and battery dimming at 15 minutes.
 LockOnResume=true remains our implementation choice (no design found: Daniel's call, ORDER 355).
 These attributions do not change any shipped setting.
+
+Battery sleep and hibernation:
+-------------
+Daniel, 2026-11-02: "the expected default for a laptop is sleep on windows and hibernate if kept in that state for more than 2 hours"; "this deppends on the user choice".
+Battery and LowBattery use PowerDevil's native SleepMode=3 (SuspendThenHibernate), including lid closure with an external monitor attached.
+PowerDevil uses this sleep mode for both lid and automatic Sleep actions within the profile; their existing timeouts stay unchanged.
+The person can select another mode in Power Management; their KConfig settings take precedence.
+AC keeps its existing sleep mode and lid action.
+Systemd-sleep owns the timer through sleep.conf.d/50-sparky-hibernate.conf, HibernateDelaySec=2h; native low-battery handling may hibernate sooner.
+An administrator can override the delay through /etc/systemd/sleep.conf.d/.
+Cushion Swap 0.3.3 deploys and holds the installer’s resume area through the native sleep service’s ExecStartPre and ExecStopPost.
+A failed deployment blocks sleep and is retained in the shared problems engine.
+At login, laptops using this mode check logind's capability and retain an unavailable or failed check for the person.
+If hibernation or hybrid sleep later fails, systemd’s suspend-after-failed-hibernate or suspend-after-failed-hybrid-sleep action retains the error before its return to sleep; a successful hibernate/resume clears it.
+These checks report configuration and command failures; a physical hibernate/resume still depends on the machine's firmware, driver and resume setup.

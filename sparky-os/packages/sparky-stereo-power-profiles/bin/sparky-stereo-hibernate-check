@@ -1,0 +1,105 @@
+#!/usr/bin/python3
+"""Report unavailable hibernation and systemd's failed-hibernate re-suspend."""
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+PACKAGE = 'sparky-stereo-power-profiles'
+SELF = '/usr/libexec/sparky-stereo/hibernate-check'
+ENGINE = 'sparky-stereo-problems'
+LOGIN = ['busctl', '--system', 'call', 'org.freedesktop.login1',
+         '/org/freedesktop/login1', 'org.freedesktop.login1.Manager', 'CanSuspendThenHibernate']
+
+
+def call(command):
+    return subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+
+def clear(key, machine=False):
+    subprocess.run([ENGINE, 'clear', '--machine' if machine else '--person', PACKAGE, key], check=True)
+
+
+def failure(key, message, command, status, output, repair, machine=False):
+    if output:
+        print(output, file=sys.stderr)
+    subprocess.run([ENGINE, 'keep', '--machine' if machine else '--person',
+                    '--command', json.dumps(command), '--status', str(status or 1),
+                    '--output', output, '--repair', json.dumps(repair), PACKAGE, key, message], check=True)
+    return 1
+
+
+def session_check():
+    if not Path('/run/systemd/system').is_dir():
+        subprocess.run([ENGINE, 'say', PACKAGE, 'LOCAL6'], check=True)
+        return 0
+    command = ['busctl', '--system', 'get-property', 'org.freedesktop.UPower',
+               '/org/freedesktop/UPower', 'org.freedesktop.UPower', 'LidIsPresent']
+    result = call(command)
+    if result.returncode or result.stdout.strip() not in ('b true', 'b false'):
+        return failure('hibernate-capability', 'LOCAL2', command, result.returncode,
+                       result.stdout + result.stderr, [SELF, '--check'])
+    if result.stdout.strip() == 'b false':
+        clear('hibernate-capability')
+        return 0
+    modes = []
+    config_dirs = [os.environ.get('XDG_CONFIG_HOME', str(Path.home() / '.config')),
+                   *os.environ.get('XDG_CONFIG_DIRS', '/etc/xdg').split(':')]
+    for directory in config_dirs:
+        config = Path(directory) / 'powerdevilrc'
+        if config.exists():
+            config.read_bytes()  # KConfig itself can return defaults on unreadable input.
+    for profile in ('Battery', 'LowBattery'):
+        command = ['kreadconfig6', '--file', 'powerdevilrc', '--group', profile,
+                   '--group', 'SuspendAndShutdown', '--key', 'SleepMode', '--default', '1']
+        result = call(command)
+        if result.returncode or not result.stdout.strip().isdigit():
+            return failure('hibernate-capability', 'LOCAL2', command, result.returncode,
+                           result.stdout + result.stderr, [SELF, '--check'])
+        modes.append(int(result.stdout.strip()))
+    if 3 not in modes:
+        clear('hibernate-capability')
+        return 0
+    result = call(LOGIN)
+    if result.returncode or result.stdout.strip() not in ('s "yes"', 's "challenge"'):
+        return failure('hibernate-capability', 'LOCAL2', LOGIN, result.returncode,
+                       result.stdout + result.stderr, [SELF, '--check'])
+    clear('hibernate-capability')
+    return 0
+
+
+def sleep_hook(phase, operation):
+    if operation not in ('suspend-then-hibernate', 'hybrid-sleep'):
+        return 0
+    action = os.environ.get('SYSTEMD_SLEEP_ACTION', '')
+    if phase == 'pre' and action in ('suspend-after-failed-hibernate', 'suspend-after-failed-hybrid-sleep'):
+        command = ['journalctl', '-b', '-u', f'systemd-{operation}.service',
+                   '-n', '30', '--no-pager', '--output=cat']
+        result = call(command)
+        return failure('hibernate-failed', 'LOCAL4', ['systemctl', operation],
+                       1, result.stdout + result.stderr, ['systemctl', 'hibernate'], True)
+    if phase == 'post' and action in ('hibernate', 'hybrid-sleep'):
+        clear('hibernate-failed', True)
+    return 0
+
+
+def main():
+    if sys.argv[1:] == ['--check']:
+        return session_check()
+    if len(sys.argv) == 4 and sys.argv[1] == '--sleep-hook':
+        return sleep_hook(sys.argv[2], sys.argv[3])
+    raise ValueError('expected --check or --sleep-hook PHASE OPERATION')
+
+
+if __name__ == '__main__':
+    try:
+        result = main()
+        if result == 0:
+            clear('hibernate-check', '--check' not in sys.argv)
+        sys.exit(result)
+    except (OSError, subprocess.CalledProcessError) as error:
+        # A missing helper or unreadable input must also reach the shared store.
+        machine = '--check' not in sys.argv
+        sys.exit(failure('hibernate-check', 'LOCAL2', [SELF, *sys.argv[1:]], 1,
+                         str(error), [SELF, *sys.argv[1:]], machine))
