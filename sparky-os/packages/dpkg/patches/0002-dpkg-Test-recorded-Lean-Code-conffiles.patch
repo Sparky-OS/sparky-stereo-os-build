@@ -1,0 +1,311 @@
+From 299009e4540d8b9aaf26bcae53f3f6460929d170 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 3 Nov 2026 12:59:10 -0300
+Subject: [PATCH] dpkg: Test conffile decisions with recorded Lean Code bytes
+
+Exercise upgrade, reinstall, split configure, removal, force options and rejection of mismatched records against isolated roots.
+
+Assisted-by: gpt-6-astra via Codex
+---
+ tests/Makefile                     |   1 +
+ tests/t-conffile-leancode/Makefile |   8 +
+ tests/t-conffile-leancode/test.py  | 260 +++++++++++++++++++++++++++++
+ 3 files changed, 269 insertions(+)
+ create mode 100644 tests/t-conffile-leancode/Makefile
+ create mode 100644 tests/t-conffile-leancode/test.py
+
+diff --git a/tests/Makefile b/tests/Makefile
+index ef16a38..79c3ced 100644
+--- a/tests/Makefile
++++ b/tests/Makefile
+@@ -80,6 +80,7 @@ TESTS_PASS += t-file-replaces
+ TESTS_PASS += t-file-replaces-disappear
+ TESTS_PASS += t-file-replaces-versioned
+ TESTS_PASS += t-conffile-normal
++TESTS_PASS += t-conffile-leancode
+ TESTS_PASS += t-conffile-obsolete
+ TESTS_PASS += t-conffile-orphan
+ TESTS_PASS += t-conffile-forcemiss
+diff --git a/tests/t-conffile-leancode/Makefile b/tests/t-conffile-leancode/Makefile
+new file mode 100644
+index 0000000..c0d46d9
+--- /dev/null
++++ b/tests/t-conffile-leancode/Makefile
+@@ -0,0 +1,8 @@
++TESTS_DEB :=
++
++include ../Test.mk
++
++test-case:
++	$(BEROOT) python3 test.py
++
++test-clean:
+diff --git a/tests/t-conffile-leancode/test.py b/tests/t-conffile-leancode/test.py
+new file mode 100644
+index 0000000..e6ee8fa
+--- /dev/null
++++ b/tests/t-conffile-leancode/test.py
+@@ -0,0 +1,260 @@
++#!/usr/bin/env python3
++# Copyright 2026 Daniel Campos Ramos
++# SPDX-License-Identifier: GPL-2.0-or-later
++
++"""Exercise recorded conffiles against dpkg's ordinary conflict decisions."""
++
++import hashlib
++import lzma
++import os
++from pathlib import Path
++import subprocess
++import tempfile
++import unittest
++
++
++NAME = 'pkg-conff-leancode'
++PATH = '/etc/leancode.conf'
++ORIGINAL = b'# The distributed setting, with its explanation.\nvalue=old\n'
++LEAN = b'value=old\n'
++NEW = b'# The updated distributed setting.\nvalue=new\n'
++EDITED = b'value=personal\n'
++
++
++def sha(data):
++    return hashlib.sha256(data).hexdigest()
++
++
++def run(*args):
++    return subprocess.run(args, input=b'', stdout=subprocess.PIPE,
++                          stderr=subprocess.STDOUT, timeout=30)
++
++
++class ConffileTest(unittest.TestCase):
++    @classmethod
++    def setUpClass(cls):
++        cls.tmp = tempfile.TemporaryDirectory(prefix='leancode-', dir='.')
++        cls.work = Path(cls.tmp.name).resolve()
++        cls.debs = {}
++        for version, data in [('1', ORIGINAL), ('2', NEW), ('3', None)]:
++            tree = cls.work / ('pkg-' + version)
++            control = tree / 'DEBIAN'
++            control.mkdir(parents=True)
++            (control / 'control').write_text(
++                f'Package: {NAME}\nVersion: {version}\nArchitecture: all\n'
++                'Maintainer: Daniel Campos Ramos <Capitain_Jack@yahoo.com>\n'
++                'Description: recorded conffile test\n')
++            (control / 'conffiles').write_text(
++                ('remove-on-upgrade ' if data is None else '') + PATH + '\n')
++            if data is not None:
++                target = tree / PATH.lstrip('/')
++                target.parent.mkdir(parents=True)
++                target.write_bytes(data)
++            # Deliberately no md5sums: Conffiles is the conffile authority.
++            deb = cls.work / ('pkg-' + version + '.deb')
++            result = run('dpkg-deb', '--root-owner-group', '-b', str(tree), str(deb))
++            if result.returncode:
++                raise RuntimeError(result.stdout.decode())
++            cls.debs[version] = str(deb)
++
++    @classmethod
++    def tearDownClass(cls):
++        cls.tmp.cleanup()
++
++    def setUp(self):
++        self.root = Path(tempfile.mkdtemp(dir=self.work))
++        self.file = self.root / PATH.lstrip('/')
++        self.state = self.root / 'var/lib/dpkg-stereo'
++        result = self.dpkg('-i', self.debs['1'])
++        self.assertEqual(result.returncode, 0, result.stdout.decode())
++
++    def dpkg(self, *args):
++        return run('dpkg', '--root=' + str(self.root), '--force-not-root',
++                   '--force-script-chrootless', '--force-unsafe-io',
++                   '--log=' + str(self.root / 'dpkg.log'), *args)
++
++    def record(self, original=ORIGINAL, lean=LEAN, package=NAME, path=PATH):
++        records = self.state / 'records'
++        pristine = self.state / 'pristine'
++        records.mkdir(parents=True, exist_ok=True)
++        pristine.mkdir(exist_ok=True)
++        cache = pristine / (sha(original) + '.xz')
++        cache.write_bytes(lzma.compress(original))
++        record = records / (package + '.tsv')
++        record.write_text('#path\tpackage\tconffile\tsha_orig\tmd5_orig\tsha_lean\n'
++                          f'{path}\t{package}\t1\t{sha(original)}\t'
++                          f'{hashlib.md5(ORIGINAL).hexdigest()}\t{sha(lean)}\n')
++        self.file.write_bytes(lean)
++        return record, cache
++
++    def upgrade(self, *options, version='2'):
++        return self.dpkg(*options, '-i', self.debs[version])
++
++    def assert_prompt(self, result):
++        self.assertNotEqual(result.returncode, 0, result.stdout.decode())
++        self.assertIn(b'end of file on <standard input> at conffile prompt', result.stdout)
++
++    def test_unmodified_upgrade(self):
++        self.record()
++        result = self.upgrade()
++        self.assertEqual(result.returncode, 0, result.stdout.decode())
++        self.assertNotIn(b'Configuration file', result.stdout)
++        self.assertEqual(self.file.read_bytes(), NEW)
++        self.assertFalse(self.file.with_suffix('.conf.dpkg-old').exists())
++
++    def test_unmodified_reinstall(self):
++        self.record()
++        before = self.file.stat()
++        result = self.upgrade(version='1')
++        self.assertEqual(result.returncode, 0, result.stdout.decode())
++        self.assertEqual(self.file.read_bytes(), LEAN)
++        self.assertEqual(self.file.stat().st_ino, before.st_ino)
++        self.assertEqual(self.file.stat().st_mtime_ns, before.st_mtime_ns)
++
++    def test_split_unpack_configure(self):
++        self.record()
++        result = self.dpkg('--unpack', self.debs['2'])
++        self.assertEqual(result.returncode, 0, result.stdout.decode())
++        self.assertEqual(self.file.read_bytes(), LEAN)
++        result = self.dpkg('--configure', NAME)
++        self.assertEqual(result.returncode, 0, result.stdout.decode())
++        self.assertEqual(self.file.read_bytes(), NEW)
++
++    def test_edit_prompts(self):
++        self.record()
++        self.file.write_bytes(EDITED)
++        self.assert_prompt(self.upgrade())
++        self.assertEqual(self.file.read_bytes(), EDITED)
++
++    def test_force_options_match_without_record(self):
++        for options, expected in [
++            (['--force-confold'], EDITED),
++            (['--force-confnew'], NEW),
++            (['--force-confdef'], EDITED),
++            (['--force-confdef', '--force-confnew'], EDITED),
++            (['--force-confdef', '--force-confold'], EDITED),
++        ]:
++            for projected in [False, True]:
++                with self.subTest(options=options, projected=projected):
++                    self.setUp()
++                    if projected:
++                        self.record()
++                    self.file.write_bytes(EDITED)
++                    result = self.upgrade(*options)
++                    self.assertEqual(result.returncode, 0, result.stdout.decode())
++                    self.assertEqual(self.file.read_bytes(), expected)
++
++    def test_force_confask_unmodified(self):
++        self.record()
++        result = self.upgrade('--force-confask', version='1')
++        self.assertEqual(result.returncode, 0, result.stdout.decode())
++        self.assertNotIn(b'Configuration file', result.stdout)
++
++    def test_force_confask_edited(self):
++        self.record()
++        self.file.write_bytes(EDITED)
++        self.assert_prompt(self.upgrade('--force-confask', version='1'))
++
++    def test_deleted(self):
++        self.record()
++        self.file.unlink()
++        self.assert_prompt(self.upgrade())
++        self.assertFalse(self.file.exists())
++
++    def test_force_confmiss(self):
++        self.record()
++        self.file.unlink()
++        result = self.upgrade('--force-confmiss')
++        self.assertEqual(result.returncode, 0, result.stdout.decode())
++        self.assertEqual(self.file.read_bytes(), NEW)
++
++    def test_forged_original_cannot_hide_edit(self):
++        # Both SHA fields and the cache agree, but this is not the shipped file.
++        # Even a forged md5_orig matching dpkg's baseline is not authority.
++        self.record(original=b'value=forged\n', lean=EDITED)
++        self.assert_prompt(self.upgrade())
++        self.assertEqual(self.file.read_bytes(), EDITED)
++
++    def test_original_cache_hash_mismatch(self):
++        _, cache = self.record()
++        cache.write_bytes(lzma.compress(b'not the recorded original'))
++        self.assert_prompt(self.upgrade())
++
++    def test_missing_original(self):
++        _, cache = self.record()
++        cache.unlink()
++        self.assert_prompt(self.upgrade())
++
++    def test_corrupt_original(self):
++        _, cache = self.record()
++        cache.write_bytes(b'corrupt xz')
++        self.assert_prompt(self.upgrade())
++
++    def test_truncated_original(self):
++        _, cache = self.record()
++        cache.write_bytes(cache.read_bytes()[:-8])
++        self.assert_prompt(self.upgrade())
++
++    def test_wrong_owner(self):
++        self.record(package='another-package')
++        self.assert_prompt(self.upgrade())
++
++    def test_wrong_path(self):
++        self.record(path='/etc/another.conf')
++        self.assert_prompt(self.upgrade())
++
++    def test_no_record(self):
++        self.file.write_bytes(LEAN)
++        self.assert_prompt(self.upgrade())
++
++    def test_duplicate_record(self):
++        record, _ = self.record()
++        record.write_text(record.read_text() + record.read_text().splitlines()[1] + '\n')
++        self.assert_prompt(self.upgrade())
++
++    def test_new_file_not_recognized_as_installed(self):
++        # A forged entry for .dpkg-new must not change the incoming baseline.
++        self.record()
++        record, _ = self.record(path=PATH + '.dpkg-new', original=ORIGINAL, lean=NEW)
++        self.file.write_bytes(ORIGINAL)
++        result = self.upgrade()
++        self.assertEqual(result.returncode, 0, result.stdout.decode())
++        self.assertEqual(self.file.read_bytes(), NEW)
++        status = (self.root / 'var/lib/dpkg/status').read_text()
++        self.assertIn(hashlib.md5(NEW).hexdigest(), status)
++
++    def test_remove_on_upgrade_unmodified(self):
++        self.record()
++        result = self.upgrade(version='3')
++        self.assertEqual(result.returncode, 0, result.stdout.decode())
++        self.assertFalse(self.file.exists())
++        self.assertFalse(Path(str(self.file) + '.dpkg-old').exists())
++
++    def test_remove_on_upgrade_edited(self):
++        self.record()
++        self.file.write_bytes(EDITED)
++        result = self.upgrade(version='3')
++        self.assertEqual(result.returncode, 0, result.stdout.decode())
++        self.assertFalse(self.file.exists())
++        self.assertEqual(Path(str(self.file) + '.dpkg-old').read_bytes(), EDITED)
++
++    def test_symlink(self):
++        self.record()
++        self.file.rename(self.file.with_name('target.conf'))
++        self.file.symlink_to('target.conf')
++        result = self.upgrade()
++        self.assertEqual(result.returncode, 0, result.stdout.decode())
++        self.assertTrue(self.file.is_symlink())
++        self.assertEqual(self.file.read_bytes(), NEW)
++
++    def test_verify_still_hashes_physical_bytes(self):
++        self.record()
++        result = self.dpkg('--verify', NAME)
++        self.assertEqual(result.returncode, 0, result.stdout.decode())
++        self.assertIn(PATH.encode(), result.stdout)
++        self.assertIn(b'5', result.stdout)
++
++
++if __name__ == '__main__':
++    os.environ['LC_ALL'] = 'C'
++    unittest.main(verbosity=2)
+-- 
+2.53.0
+
