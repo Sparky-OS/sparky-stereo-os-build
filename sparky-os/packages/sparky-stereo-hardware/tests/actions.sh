@@ -215,9 +215,9 @@ cmp "$T/expected-runtime-rules" "$ROOT/etc/udev/rules.d/80-sparky-stereo-nvidia-
 echo 'PASS laptop RTD3 requires a successful driver transaction and repeats without duplicating rules'
 
 # NVIDIA's 580 driver for Maxwell, Pascal and Volta (ORDER 354): its own lock first, in a transaction of its own, then the
-# index, the preflight and the exact driver, downgrades allowed (the image's 615 user space goes back to 580); no CUDA
-# repository package (CUDA 13 does not run on these cards) and no RTD3 (it needs Turing or newer), even with the plan's
-# laptop line still there from the case above.
+# index, the preflight and the exact driver, downgrades allowed (the image's 615 user space goes back to 580); the CUDA
+# repository package comes with the lock (NVIDIA's EGL platform libraries, which the 580 driver needs at NVIDIA's epoch, are
+# there; milestone 2), and no RTD3 (it needs Turing or newer), even with the plan's laptop line still there from the case above.
 # The edition carries NVIDIA's 580 user space at the module's own version (milestone 2), so the driver is named at it.
 LEGACY_V=580.196.07-1+sparky2+lc1
 LEGACY_LINE="DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install --allow-downgrades nvidia-driver=$LEGACY_V $LEGACY_MODULE libnvcuvid1=$LEGACY_V nvidia-vaapi-driver"
@@ -226,18 +226,24 @@ rm -f "$ROOT/etc/modprobe.d/sparky-stereo-nvidia-runtime-pm.conf" "$ROOT/etc/ude
 module_version=$LEGACY_V
 : >"$calls"
 setup_nvidia legacy-580xx >"$T/log"
-lock_line=$(line_of "DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install $LEGACY_LOCK")
+lock_line=$(line_of "DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install $LEGACY_LOCK $REPO")
 update_line=$(line_of 'DEBIAN_FRONTEND=noninteractive apt-get -y update')
 simulate_line=$(line_of "$LEGACY_SIMULATE")
 driver_line=$(line_of "$LEGACY_LINE")
 [[ -n $lock_line && -n $update_line && -n $simulate_line && -n $driver_line ]] || { echo 'FAIL the 580 path'; cat "$calls"; exit 1; }
 ((lock_line < update_line && update_line < simulate_line && simulate_line < driver_line))
-refute grep -Fq "$REPO" "$calls"
 refute grep -q "install $LOCK" "$calls"
 [[ ! -e "$ROOT/etc/modprobe.d/sparky-stereo-nvidia-runtime-pm.conf" ]]
 grep -Fq "NVIDIA $LEGACY_V userspace and the edition's build of NVIDIA's 580 kernel modules installed" "$T/log"
 refute grep -q ':i386' "$calls"
-echo 'PASS NVIDIA 580: its lock first, then the index, the preflight and the driver at the carried version with downgrades allowed; no CUDA repository, no RTD3, no i386 package without i386'
+echo 'PASS NVIDIA 580: its lock and the CUDA repository package first, then the index, the preflight and the driver at the carried version with downgrades allowed; no RTD3, no i386 package without i386'
+# an installed CUDA repository package is not installed again: only the lock comes
+installed_packages=$REPO
+: >"$calls"
+setup_nvidia legacy-580xx >"$T/log"
+grep -Fxq "DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install $LEGACY_LOCK" "$calls"
+installed_packages=
+echo 'PASS NVIDIA 580: an installed CUDA repository package is not installed again'
 # where dpkg has i386, NVIDIA's i386 libraries come at the same version, in the preflight and the transaction
 foreign=i386
 : >"$calls"
@@ -273,15 +279,15 @@ done
 module_version=$LEGACY_V
 fail_policy=1
 : >"$calls"
-fails_with "NVIDIA: $LEGACY_LOCK could not be installed" setup_nvidia legacy-580xx
-grep -Fxq "dpkg --purge $LEGACY_LOCK" "$calls"
+fails_with "NVIDIA: $LEGACY_LOCK $REPO could not be installed" setup_nvidia legacy-580xx
+grep -Fxq "dpkg --purge $LEGACY_LOCK $REPO" "$calls"
 grep -Fq "HDMI 3D at the card's boot clocks" "$T/out"
 fail_policy=0
 fail_preflight=1
 : >"$calls"
 fails_with "NVIDIA: apt cannot install NVIDIA's driver ${LEGACY_V//+/\\+} " setup_nvidia legacy-580xx
-grep -Fxq "dpkg --purge $LEGACY_LOCK" "$calls"
 refute grep -Fxq "$LEGACY_LINE" "$calls"
+grep -Fxq "dpkg --purge $LEGACY_LOCK $REPO" "$calls"
 grep -Fq "HDMI 3D at the card's boot clocks" "$T/out"
 fail_preflight=0
 echo 'PASS NVIDIA 580: a missing module, a module without +sparkyN, a failed lock install and a failed preflight stop and say so, with nouveau keeping HDMI 3D as the other choice'

@@ -11,6 +11,12 @@ sparky-stereo-hardware (0.1.19) unstable; urgency=medium
     repository, which apt already reads for every architecture dpkg has:
     a flat repository has one index, and its source's Architectures
     option does not limit it (measured with apt 3.3.3).
+  * The 580 path installs sparky-stereo-cuda-repo with its lock, as the
+    615 path does: NVIDIA's 580 nvidia-driver-libs depends on
+    libnvidia-egl-xcb1 and libnvidia-egl-xlib1 at NVIDIA's epoch
+    (>= 1:1.0.1), which only NVIDIA's repository has (Debian: 1.0.3-1).
+    0.1.18 installed no CUDA repository there, so the path worked only
+    where the image had already installed it.
   * Supersedes 0.1.18, which was not published; its changes are in this
     version.
 

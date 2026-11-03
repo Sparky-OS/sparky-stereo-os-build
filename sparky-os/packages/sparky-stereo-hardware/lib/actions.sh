@@ -280,12 +280,14 @@ setup_nvidia() {
 	local module=nvidia-kernel-open-dkms-stereo3d suffix=stereo3d missing=40 unsuffixed=41 tail=
 	local -a policy=(sparky-stereo-nvidia-driver-lock sparky-stereo-cuda-repo) added=() stale=() options=() i386=()
 	if [[ $branch == legacy-580xx ]]; then
-		# NVIDIA's CUDA repository for Debian 13 has no 580 driver and CUDA 13 does not run on these cards, so the branch
-		# needs only its lock; NVIDIA's 580 user space comes from the edition's repository, NVIDIA's own Debian 12 packages
-		# carried at the module's version. It replaces a newer NVIDIA user space (the image's 615) by the older 580, so apt
-		# is allowed to downgrade.
+		# NVIDIA's 580 user space comes from the edition's repository, NVIDIA's own Debian 12 packages carried at the
+		# module's version, under the 580 lock. Its EGL platform libraries come from NVIDIA's CUDA repository, as on the
+		# 615 path: nvidia-driver-libs 580 depends on libnvidia-egl-xcb1 and libnvidia-egl-xlib1 (>= 1:1.0.1), NVIDIA's
+		# epoch, which Debian's 1.0.3-1 does not have; so the branch takes sparky-stereo-cuda-repo (the repository, its
+		# pins and the 615 lock it depends on, which decides nothing while the 580 lock is installed) with its lock. It
+		# replaces a newer NVIDIA user space (the image's 615) by the older 580, so apt is allowed to downgrade.
 		module=nvidia-legacy-580xx-kernel-dkms suffix=sparky missing=55@58 unsuffixed=56@58 tail=@58
-		policy=(sparky-stereo-nvidia-legacy-580xx-driver-lock)
+		policy=(sparky-stereo-nvidia-legacy-580xx-driver-lock sparky-stereo-cuda-repo)
 		options=(--allow-downgrades)
 	else
 		# The 580 lock, while installed, decides NVIDIA's packages before the 615 lock (its file sorts first): it goes, with
@@ -321,7 +323,7 @@ setup_nvidia() {
 	# A source the person set up for NVIDIA's URI is kept: sparky-stereo-cuda-repo then writes none of its own (a second
 	# source for it with another key file stops apt) and its pins apply to the person's source, since they go by origin.
 	other=$(cuda_sources_elsewhere "$uri")
-	if [[ -n $other && $branch == open ]]; then
+	if [[ -n $other ]]; then
 		log "NVIDIA's CUDA repository is already configured in $other; sparky-stereo-cuda-repo keeps that source and adds the edition's pins"
 	fi
 	for package in "${policy[@]}"; do

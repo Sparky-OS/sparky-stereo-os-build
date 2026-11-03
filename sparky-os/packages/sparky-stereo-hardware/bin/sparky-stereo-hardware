@@ -144,7 +144,7 @@ if $dry; then
 		else
 			module_version=$(sed -n 's/^Version: //p' <<<"$module_info" | head -n1)
 			nvidia_version=$(nvidia_version_of "$module_version" sparky)
-			log "Would install sparky-stereo-nvidia-legacy-580xx-driver-lock first"
+			log "Would install sparky-stereo-nvidia-legacy-580xx-driver-lock and sparky-stereo-cuda-repo (NVIDIA's CUDA repository and its pins, for NVIDIA's EGL platform libraries) first, the repository only where none is configured for NVIDIA's URI"
 			if [[ -n $nvidia_version ]]; then
 				# the edition carries NVIDIA's 580 user space at the module's own version
 				log "Would install nvidia-driver=$module_version nvidia-legacy-580xx-kernel-dkms libnvcuvid1=$module_version nvidia-vaapi-driver by name, downgrades allowed (a newer NVIDIA user space goes back to 580, and the open modules go)"
