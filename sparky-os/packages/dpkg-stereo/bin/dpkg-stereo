@@ -1215,10 +1215,18 @@ def pre_invoke(P, action=None):
     compares those of the packages it unpacks (src/main/unpack.c and archives.c, md5hash), which no hook is told, so
     every lean one goes back, as before."""
     _migrate(P)
+    files, only = None, None
+    if action == 'configure':
+        files = read_table(P.state(CONFFILES), FILE_COLS)
+        only = configurable(P, {rec['package'] for rec in files.values()}) if files else set()
+        if not only:
+            # dpkg compares no conffile of an already configured package.
+            # No restoration decision needs a capability query in this run.
+            return 0
     if native_conffiles():
         return 0
-    files = read_table(P.state(CONFFILES), FILE_COLS)
-    only = configurable(P, {rec['package'] for rec in files.values()}) if action == 'configure' and files else None
+    if files is None:
+        files = read_table(P.state(CONFFILES), FILE_COLS)
     n = 0
     try:
         with open(P.state('restored-for-dpkg'), encoding='utf-8', errors='surrogateescape') as f:

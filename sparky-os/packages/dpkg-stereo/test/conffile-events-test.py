@@ -189,6 +189,12 @@ class EventsTest(unittest.TestCase):
             self.assertEqual(stereo.restore(self.P, [PACKAGE]), 0)
         self.assertEqual(self.file.read_bytes(), ORIGINAL)
 
+    def test_noop_configure_does_not_query_capability(self):
+        with patch.object(stereo.subprocess, 'run', side_effect=AssertionError('unneeded capability process')), \
+             patch.object(stereo, 'write_lean', side_effect=AssertionError('no-op wrote a conffile')):
+            self.assertEqual(stereo.pre_invoke(self.P, 'configure'), 0)
+        self.assertEqual(self.file.read_bytes(), LEAN)
+
     def test_nine_languages_have_the_same_message_arguments(self):
         keys = list(range(61, 72)) + [73, 74, 75]
         for lang in stereo.LANGS:

@@ -42,6 +42,8 @@ EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
 
+  * A configure with no pending conffile needs no native-capability subprocess;
+    use the existing package snapshot to return before querying dpkg.
   * Reconcile 0.1.31 orphan recovery; apply exact independent reproduction
     to older-dpkg pre-invoke and explicit restore before writing a file.
   * Skip pre-invoke conffile restoration only when the running dpkg and

@@ -1,6 +1,8 @@
 -------------------------------------------------------------------------------
   Version 0.1.32 (2026-11-04)
 -------------------------------------------------------------------------------
+  * A configure with no pending conffile needs no native-capability subprocess;
+    use the existing package snapshot to return before querying dpkg.
   * Carry 0.1.31's orphan recovery and removed-conffile restoration. The older-dpkg
     pre-invoke path and explicit restore also require exact reproduction from the
     original independently identified by the owning package before writing; a
