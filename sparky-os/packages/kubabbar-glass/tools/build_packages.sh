@@ -22,7 +22,7 @@ if compgen -G "$dest/*.deb" >/dev/null; then
 	echo "Use an empty candidate output directory; existing archives are retained." >&2
 	exit 1
 fi
-credit="Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux (https://sparkylinux.org, by Paweł \"pavroo\" Pijanowski)"
+credit="Sparky Stereo OS, Daniel Ramos's edition of SparkyLinux (by Paweł \"pavroo\" Pijanowski)"
 
 control() { # dir package depends recommends suggests description-lines...
 	local d=$1 p=$2 dep=$3 rec=$4 sug=$5; shift 5
