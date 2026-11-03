@@ -1,4 +1,4 @@
-From 299009e4540d8b9aaf26bcae53f3f6460929d170 Mon Sep 17 00:00:00 2001
+From e81a2cafe41a9cb06a6a68af4660464a4ae975ca Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Date: Tue, 3 Nov 2026 12:59:10 -0300
 Subject: [PATCH] dpkg: Test conffile decisions with recorded Lean Code bytes
@@ -7,13 +7,26 @@ Exercise upgrade, reinstall, split configure, removal, force options and rejecti
 
 Assisted-by: gpt-6-astra via Codex
 ---
+ debian/control                     |   1 +
  tests/Makefile                     |   1 +
  tests/t-conffile-leancode/Makefile |   8 +
- tests/t-conffile-leancode/test.py  | 260 +++++++++++++++++++++++++++++
- 3 files changed, 269 insertions(+)
+ tests/t-conffile-leancode/test.py  | 318 +++++++++++++++++++++++++++++
+ 4 files changed, 328 insertions(+)
  create mode 100644 tests/t-conffile-leancode/Makefile
  create mode 100644 tests/t-conffile-leancode/test.py
 
+diff --git a/debian/control b/debian/control
+index b74fe2b..da0425c 100644
+--- a/debian/control
++++ b/debian/control
+@@ -24,6 +24,7 @@ Build-Depends:
+  libselinux-dev [linux-any] | libselinux1-dev [linux-any],
+  libncurses-dev (>= 6.1+20180210),
+ # Needed for the functional test.
++ python3 <!nocheck>,
+  bzip2 <!nocheck>,
+ # Version needed for multi-threaded decompressor support.
+  xz-utils (>= 5.4.0) <!nocheck>,
 diff --git a/tests/Makefile b/tests/Makefile
 index ef16a38..79c3ced 100644
 --- a/tests/Makefile
@@ -42,10 +55,10 @@ index 0000000..c0d46d9
 +test-clean:
 diff --git a/tests/t-conffile-leancode/test.py b/tests/t-conffile-leancode/test.py
 new file mode 100644
-index 0000000..e6ee8fa
+index 0000000..bda00d7
 --- /dev/null
 +++ b/tests/t-conffile-leancode/test.py
-@@ -0,0 +1,260 @@
+@@ -0,0 +1,318 @@
 +#!/usr/bin/env python3
 +# Copyright 2026 Daniel Campos Ramos
 +# SPDX-License-Identifier: GPL-2.0-or-later
@@ -117,7 +130,8 @@ index 0000000..e6ee8fa
 +        self.assertEqual(result.returncode, 0, result.stdout.decode())
 +
 +    def dpkg(self, *args):
-+        return run('dpkg', '--root=' + str(self.root), '--force-not-root',
++        return run('dpkg', '--root=' + str(self.root),
++                   '--admindir=' + str(self.root / 'var/lib/dpkg'), '--force-not-root',
 +                   '--force-script-chrootless', '--force-unsafe-io',
 +                   '--log=' + str(self.root / 'dpkg.log'), *args)
 +
@@ -260,6 +274,56 @@ index 0000000..e6ee8fa
 +        record.write_text(record.read_text() + record.read_text().splitlines()[1] + '\n')
 +        self.assert_prompt(self.upgrade())
 +
++    def test_record_fifo(self):
++        record, _ = self.record()
++        record.unlink()
++        os.mkfifo(record)
++        self.assert_prompt(self.upgrade())
++
++    def test_original_fifo(self):
++        _, cache = self.record()
++        cache.unlink()
++        os.mkfifo(cache)
++        self.assert_prompt(self.upgrade())
++
++    def helper(self, operation):
++        args = [operation, PATH]
++        if operation == 'mv_conffile':
++            args.append('/etc/moved.conf')
++        args.extend(['2', NAME, '--', 'upgrade', '1'])
++        return run('env', 'DPKG_ROOT=' + str(self.root),
++                   'DPKG_ADMINDIR=' + str(self.root / 'var/lib/dpkg'),
++                   'DPKG_MAINTSCRIPT_NAME=preinst',
++                   'DPKG_MAINTSCRIPT_PACKAGE=' + NAME,
++                   'dpkg-maintscript-helper', *args)
++
++    def test_maintscript_remove(self):
++        for edited in [False, True]:
++            with self.subTest(edited=edited):
++                self.setUp()
++                self.record()
++                if edited:
++                    self.file.write_bytes(EDITED)
++                result = self.helper('rm_conffile')
++                self.assertEqual(result.returncode, 0, result.stdout.decode())
++                suffix = '.dpkg-backup' if edited else '.dpkg-remove'
++                self.assertTrue(Path(str(self.file) + suffix).exists(), result.stdout.decode())
++                self.assertEqual(Path(str(self.file) + suffix).read_bytes(),
++                                 EDITED if edited else LEAN)
++
++    def test_maintscript_move(self):
++        for edited in [False, True]:
++            with self.subTest(edited=edited):
++                self.setUp()
++                self.record()
++                if edited:
++                    self.file.write_bytes(EDITED)
++                result = self.helper('mv_conffile')
++                self.assertEqual(result.returncode, 0, result.stdout.decode())
++                path = self.file if edited else Path(str(self.file) + '.dpkg-remove')
++                self.assertTrue(path.exists(), result.stdout.decode())
++                self.assertEqual(path.read_bytes(), EDITED if edited else LEAN)
++
 +    def test_new_file_not_recognized_as_installed(self):
 +        # A forged entry for .dpkg-new must not change the incoming baseline.
 +        self.record()
@@ -286,14 +350,21 @@ index 0000000..e6ee8fa
 +        self.assertFalse(self.file.exists())
 +        self.assertEqual(Path(str(self.file) + '.dpkg-old').read_bytes(), EDITED)
 +
-+    def test_symlink(self):
-+        self.record()
-+        self.file.rename(self.file.with_name('target.conf'))
-+        self.file.symlink_to('target.conf')
-+        result = self.upgrade()
-+        self.assertEqual(result.returncode, 0, result.stdout.decode())
-+        self.assertTrue(self.file.is_symlink())
-+        self.assertEqual(self.file.read_bytes(), NEW)
++    def test_symlink_matches_debian(self):
++        # dpkg 1.23.11 leaves .dpkg-new beside the symlink, while configure
++        # looks beside its target. Preserve that behavior for both forms.
++        for projected in [False, True]:
++            with self.subTest(projected=projected):
++                self.setUp()
++                if projected:
++                    self.record()
++                self.file.rename(self.file.with_name('target.conf'))
++                self.file.symlink_to('target.conf')
++                result = self.upgrade()
++                self.assertEqual(result.returncode, 0, result.stdout.decode())
++                self.assertTrue(self.file.is_symlink())
++                self.assertEqual(self.file.read_bytes(), LEAN if projected else ORIGINAL)
++                self.assertEqual(Path(str(self.file) + '.dpkg-new').read_bytes(), NEW)
 +
 +    def test_verify_still_hashes_physical_bytes(self):
 +        self.record()

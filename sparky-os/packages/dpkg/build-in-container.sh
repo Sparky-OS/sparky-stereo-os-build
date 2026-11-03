@@ -1,5 +1,5 @@
 #!/bin/bash
-# Sparky Stereo OS: dpkg 1.23.11+stereo3d2, Debian's dpkg 1.23.11 with the Lean Code shared-file check, built with Lean Code.
+# Sparky Stereo OS: dpkg 1.23.11+stereo3d3, Debian's dpkg 1.23.11 with Lean Code shared-file and conffile checks, built with Lean Code.
 # Created by Daniel Ramos (Capitain Jack) 2026/11/03
 # Copyright 2026 under the GNU GPL3 License
 # Runs as root inside a clean Debian testing build container; build.sh starts it. /work is the job folder (empty), /src
@@ -14,7 +14,7 @@ set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS='parallel=4'
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com LC_ALL=C.UTF-8
 UPSTREAM=1.23.11
-VERSION=$UPSTREAM+stereo3d2
+VERSION=$UPSTREAM+stereo3d3
 cd /work
 echo "4511c16a3bbbd3a88982408e2e5e5c471dc5f4a49eaa9b2cb93bf3e8c067fa78  /src/dpkg_$UPSTREAM.dsc" | sha256sum -c
 mkdir s1 && cd s1
@@ -26,6 +26,8 @@ for p in /tools/patches/*.patch; do
 	patch -p1 --no-backup-if-mismatch <"$p"
 done
 grep -q 'leancode_shared_projection' src/main/archives.c
+grep -q 'md5hash_conffile' src/main/configure.c
+grep -q 't-conffile-leancode' tests/Makefile
 grep -q 'test-coinstall-shared-files-leancode:' tests/t-multiarch/Makefile
 # dpkg --version names the build: configure takes the version from .dist-version (build-aux/get-version), and dh's
 # autoreconf regenerates configure
@@ -48,11 +50,11 @@ end = len(text) if end < 0 else end
 body = text[stanza:end]
 assert '\nProvides:' not in body, 'dpkg already provides something: merge by hand'
 desc = body.index('\nDescription:')
-text = text[:stanza] + body[:desc] + '\nProvides: dpkg-lean-code (= 1)' + body[desc:] + text[end:]
+text = text[:stanza] + body[:desc] + '\nProvides: dpkg-lean-code (= 2)' + body[desc:] + text[end:]
 path.write_text(text)
 p = Path('debian/changelog')
-entry = Path('/tools/changelog-stereo3d2.txt').read_text()
-assert entry.startswith('dpkg (1.23.11+stereo3d2) mashtabba;'), entry[:60]
+entry = Path('/tools/changelog-stereo3d3.txt').read_text()
+assert entry.startswith('dpkg (1.23.11+stereo3d3) mashtabba;'), entry[:60]
 assert p.read_text().startswith('dpkg (1.23.11) unstable;')
 p.write_text(entry.rstrip('\n') + '\n\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  '
              + email.utils.formatdate(localtime=True) + '\n\n' + p.read_text())
@@ -92,6 +94,8 @@ chown -R builder:builder /work/
 cd /work/lc/source
 # dpkg's test suite (make check) runs inside dpkg-buildpackage
 runuser -u builder -- dpkg-buildpackage -us -uc -j4 >/work/build.log 2>&1
+# Capability 2 requires the in-process pristine-original decoder.
+grep -q '^#define WITH_LIBLZMA 1$' build-tree/config.h
 # the functional test suite against the build tree's programs, as non-root (dpkg's own default mode); dpkg-build-tree has
 # the programs, the source tree the shell library dpkg-maintscript-helper reads from DPKG_DATADIR (src/sh)
 set +e
