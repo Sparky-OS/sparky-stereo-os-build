@@ -55,7 +55,7 @@ PowerDevil. There is no second idle timer, screen locker or console command.
 X11 is outside this helper's scope: KScreen's X11 backend does not expose
 these mode notifications and its constructor changes X11 DPMS timeouts.
 
-A matched HDMI screen entering Off, Standby or Suspend first broadcasts
+A matched [HDMI®](https://www.hdmi.org/resource/brand) screen entering Off, Standby or Suspend first broadcasts
 Request Active Source. The kernel waits up to one second for Active Source.
 Only a successful reply carrying our current physical address permits
 Standby to TV logical address 0. Another address, no reply, Feature Abort or
@@ -71,8 +71,8 @@ but retains acknowledged ownership. Device removal, process restart or an
 address change clears ownership; uncertain history never authorizes wake.
 
 Discovery prefers CEC_ADAP_G_CONNECTOR_INFO's DRM card/connector identity.
-The connected HDMI connector must match exactly one Qt screen name. Without
-kernel connector metadata, one adapter and one connected HDMI screen can be
+The connected HDMI® connector must match exactly one Qt screen name. Without
+kernel connector metadata, one adapter and one connected HDMI® screen can be
 paired automatically. Ambiguous USB cases need an explicit binding in the
 user's ~/.config/sparky-stereo-cecrc (or system /etc/xdg file):
 
@@ -106,6 +106,8 @@ The tests in tests/ run in a container: the native protocol and its wire-byte
 assertions, with the vivid kernel framework. Their design notes are not public yet.
 Tests do not access any real CEC adapter, display, TV or host session.
 Actual TV firmware, cable association, driver HPD behavior and physical
-standby/wake still require hardware verification. If the TV drops HDMI/CEC
+standby/wake still require hardware verification. If the TV drops HDMI®/CEC
 when powered off, or the kernel invalidates its address, wake can fail; the
 helper logs it rather than claiming success.
+
+HDMI®, HDMI® High-Definition Multimedia Interface and the HDMI® Logo are trademarks or registered trademarks of HDMI Licensing Administrator, Inc.

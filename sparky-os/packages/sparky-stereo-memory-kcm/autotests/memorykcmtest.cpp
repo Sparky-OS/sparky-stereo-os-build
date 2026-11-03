@@ -25,7 +25,10 @@ private Q_SLOTS:
     void handEditShows();
     void statusShows();
     void automaticExplained();
+    void translatedAutoReason_data();
+    void translatedAutoReason();
     void saveThroughKAuth();
+    void repairThroughPolkit();
 
 private:
     static void write(const QString &path, const QByteArray &text);
@@ -108,6 +111,41 @@ void MemoryKcmTest::automaticExplained()
     QCOMPARE(kcm.zramMode(), int(MemoryKcm::On));
 }
 
+void MemoryKcmTest::translatedAutoReason_data()
+{
+    QTest::addColumn<QByteArray>("fields");
+    QTest::addColumn<QString>("expected");
+    QTest::newRow("small-ram") << QByteArray("DECISION=on\nMODE=auto\nRAM_KIB=4073000\nSTORAGE=fast\n") << u"3977 MiB of RAM: within the automatic zram RAM limit"_s;
+    QTest::newRow("ram-boundary") << QByteArray("DECISION=on\nMODE=auto\nRAM_KIB=9437184\nSTORAGE=fast\n") << u"9216 MiB of RAM: within the automatic zram RAM limit"_s;
+    QTest::newRow("emmc") << QByteArray("DECISION=on\nMODE=auto\nRAM_KIB=97957892\nSTORAGE=emmc\n") << u"The swap area is on eMMC storage"_s;
+    QTest::newRow("sd-card") << QByteArray("DECISION=on\nMODE=auto\nRAM_KIB=97957892\nSTORAGE=sd-card\n") << u"The swap area is on an SD card"_s;
+    QTest::newRow("rotating") << QByteArray("DECISION=on\nMODE=auto\nRAM_KIB=97957892\nSTORAGE=rotating\n") << u"The swap area is on a rotating disk"_s;
+    QTest::newRow("removable") << QByteArray("DECISION=on\nMODE=auto\nRAM_KIB=97957892\nSTORAGE=removable\n") << u"The swap area is on removable storage"_s;
+    QTest::newRow("usb") << QByteArray("DECISION=on\nMODE=auto\nRAM_KIB=97957892\nSTORAGE=usb\n") << u"The swap area is on USB storage"_s;
+    QTest::newRow("ample-fast") << QByteArray("DECISION=off\nMODE=auto\nRAM_KIB=97957892\nSTORAGE=fast\n") << u"95662 MiB of RAM and the swap area on fast storage"_s;
+    QTest::newRow("unknown-storage") << QByteArray("DECISION=off\nMODE=auto\nRAM_KIB=97957892\nSTORAGE=unknown\n") << u"95662 MiB of RAM; the swap storage type could not be identified"_s;
+    QTest::newRow("override-on") << QByteArray("DECISION=on\nMODE=on\n") << u"Switched on by the zram configuration"_s;
+    QTest::newRow("override-off") << QByteArray("DECISION=off\nMODE=off\n") << u"Switched off by the zram configuration"_s;
+    QTest::newRow("unknown-decision") << QByteArray("DECISION=future\nMODE=future\n") << u"Unrecognized zram decision; zram-auto says: raw helper words"_s;
+}
+
+void MemoryKcmTest::translatedAutoReason()
+{
+    QFETCH(QByteArray, fields);
+    QFETCH(QString, expected);
+    const QString helper = MemorySettings::zramAutoPath();
+    const QByteArray original = read(helper);
+    write(helper, "#!/bin/sh\ncat <<'DECISION_EOF'\n" + fields + "REASON=raw helper words\nDECISION_EOF\n");
+    QVERIFY(QFile::setPermissions(helper, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    MemoryKcm kcm(nullptr, KPluginMetaData());
+    kcm.load();
+    QCOMPARE(kcm.autoReason(), expected);
+    if (fields.contains("DECISION=future")) {
+        QCOMPARE(kcm.autoDecisionText(), expected);
+    }
+    write(helper, original);
+}
+
 void MemoryKcmTest::saveThroughKAuth()
 {
     const QString mode = qEnvironmentVariable("SPARKY_KAUTH_TEST");
@@ -141,6 +179,28 @@ void MemoryKcmTest::saveThroughKAuth()
     QCOMPARE(kcm.zramMode(), int(MemoryKcm::On));
     QVERIFY(!kcm.cushionEnabled());
     QVERIFY(!kcm.needsSave());
+}
+
+void MemoryKcmTest::repairThroughPolkit()
+{
+    const QString mode = qEnvironmentVariable("SPARKY_KAUTH_TEST");
+    if (mode.isEmpty()) {
+        QSKIP("needs the authorization container");
+    }
+    MemoryKcm kcm(nullptr, KPluginMetaData());
+    kcm.load();
+    const QVariantList problems = kcm.property("cushionProblems").toList();
+    QCOMPARE(problems.size(), 1);
+    QCOMPARE(problems.first().toMap().value(u"key"_s).toString(), u"order353-test"_s);
+    kcm.setZramMode(MemoryKcm::Off);
+    QVERIFY(QMetaObject::invokeMethod(&kcm, "repairProblem", Qt::DirectConnection, Q_ARG(int, 0)));
+    QTRY_VERIFY_WITH_TIMEOUT(!kcm.property("repairing").toBool(), 20000);
+    const bool allowed = mode == u"allow"_s;
+    QVERIFY2(QFile::exists(u"/run/order353-repaired"_s) == allowed, qPrintable(kcm.errorText()));
+    QCOMPARE(kcm.errorText().isEmpty(), allowed);
+    QCOMPARE(kcm.zramMode(), int(MemoryKcm::Off));
+    QVERIFY(kcm.needsSave());
+    QCOMPARE(QFile::exists(u"/run/sparky-stereo-problems/sparky-stereo-cushion-swap_order353-test.json"_s), !allowed);
 }
 
 QTEST_GUILESS_MAIN(MemoryKcmTest)

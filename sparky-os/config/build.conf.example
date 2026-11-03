@@ -83,3 +83,10 @@ SPARKY_WORKSTATION_HOSTNAME=my-workstation
 SPARKY_A10_HOST=user@test-laptop
 SPARKY_A10_HOSTNAME=test-laptop
 SPARKY_A10_SSH_KEY=$HOME/.ssh/id_ed25519
+
+# AppStream catalogues (DEP-11): sparky-os/repo/publish-tree.sh makes them on every run, with Debian's
+# appstream-generator in the image sparky-os/repo/appstream/build-image.sh builds; build it once per version the
+# recipe pins. SPARKY_APPSTREAM=0 publishes without them, and says so. Set SPARKY_APPSTREAM_IMAGE only for another
+# image; the default is sparky-appstream-generator:<the version sparky-os/repo/appstream/Dockerfile pins>.
+#SPARKY_APPSTREAM=1
+#SPARKY_APPSTREAM_IMAGE=sparky-appstream-generator:1.0.0-1

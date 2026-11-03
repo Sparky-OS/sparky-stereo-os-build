@@ -14,17 +14,12 @@ trap 'rm -rf "$W"' EXIT
 S=$W/dpkg-stereo-$VERSION
 P=$S/sparky-os/packages/dpkg-stereo
 mkdir -p "$P" "$S/sparky-os/lean" "$S/sparky-os/repo" "$S/debian/source"
-# The recipe folder as git tracks it, so what a working checkout made beside it (bin/__pycache__ and *.pyc from
-# running bin/dpkg-stereo there, editor and test leftovers) never ships in the source package. Outside a git work
-# tree (an unpacked source package, an export) the folder is copied without __pycache__ folders and *.pyc files.
-if git -C "$HERE" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-	echo "build-source: the recipe's files as git tracks them"
-	(cd "$HERE" && git ls-files -z -- . | xargs -0r cp -a --parents -t "$P")
-else
-	echo "build-source: no git work tree; the recipe folder without __pycache__ and *.pyc"
-	(cd "$HERE" && find . -name __pycache__ -prune -o ! -type d ! -name '*.pyc' -print0 | xargs -0r cp -a --parents -t "$P")
-fi
-cp "$ROOT/lean/"*.py "$ROOT/lean/JvmLexer.java" "$ROOT/lean/ZigTokens.zig" "$S/sparky-os/lean/"
+COPY="$HERE/../../../tools/copy-recipe.py"
+python3 "$COPY" "$HERE" "$P"
+mkdir -p "$S/tools"
+cp "$COPY" "$S/tools/"
+python3 "$COPY" "$ROOT/lean" "$W/lean-inputs"
+cp "$W/lean-inputs/"*.py "$W/lean-inputs/JvmLexer.java" "$W/lean-inputs/ZigTokens.zig" "$S/sparky-os/lean/"
 cp "$ROOT/repo/provenance.sh" "$S/sparky-os/repo/"
 cp "$HERE/copyright" "$S/debian/copyright"
 printf '3.0 (native)\n' > "$S/debian/source/format"
@@ -33,7 +28,7 @@ Source: dpkg-stereo
 Section: System
 Priority: optional
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
-Build-Depends: gcc, node-acorn, nodejs, perl, python3, python3-yaml
+Build-Depends: git, sparky-stereo-problems (>= 0.1.0), gcc, node-acorn, nodejs, perl, python3, python3-yaml
 Standards-Version: 4.7.4
 Rules-Requires-Root: no
 Homepage: https://sparkylinux.org
@@ -46,6 +41,12 @@ Description: Lean Code for installed packages
 EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
+
+  * Use the shared tracked-input copier for recipe and engine inputs; stop on git errors.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 03 Nov 2026 12:00:00 -0300
+
+dpkg-stereo (0.1.25) unstable; urgency=medium
 
   * Nothing fails silently (ORDER 346b, rows U19, U20, U57 and U58): a step
     that cannot do what it is for says what failed, why and what to do, in

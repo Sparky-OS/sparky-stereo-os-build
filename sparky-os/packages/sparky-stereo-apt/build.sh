@@ -16,7 +16,8 @@
 #                                                     builds of what we ship for amd64 only)
 #   /etc/apt/preferences.d/sparky-stereo             (o=Sparky Stereo OS at 1001; the file is
 #                                                     ../../apt/sparky-stereo, its one source)
-# All four are conffiles (DEBIAN/conffiles, since 20261031.1~sparky9~0; Debian Policy 10.7.3: "local changes must be
+#   /etc/apt/apt.conf.d/60sparky-stereo-appstream-icons (AppStream's DEP-11 icon downloads enabled)
+# All five are conffiles (the original four since 20261031.1~sparky9~0; Debian Policy 10.7.3: "local changes must be
 # preserved during a package upgrade"); the preinst lets the first upgrade that makes them conffiles replace the files
 # nobody changed without a question (debian-scripts/preinst). README.md, shipped in /usr/share/doc, says how a person keeps
 # pins of their own without editing these files.
@@ -35,7 +36,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-$PWD}
-VERSION=${VERSION:-20261102~sparky9~0+lc1}
+VERSION=${VERSION:-20261102.1~sparky9~0+lc1}
 # the oldest sparky-stereo-keyring with the repository's one key (the key has not changed since; 20261016 is published)
 KEYRING_VERSION=${KEYRING_VERSION:-20261008.1~sparky9~0+lc1}
 PKG=sparky-stereo-apt
@@ -44,7 +45,8 @@ TYPES=deb
 W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/apt-build.XXXXXX")
 trap 'rm -rf "${W:?}"' EXIT
 D=$W/$PKG
-mkdir -p "$D/DEBIAN" "$D/etc/apt/sources.list.d" "$D/etc/apt/preferences.d" "$D/usr/share/doc/$PKG"
+mkdir -p "$D/DEBIAN" "$D/etc/apt/sources.list.d" "$D/etc/apt/preferences.d" "$D/etc/apt/apt.conf.d" "$D/usr/share/doc/$PKG"
+install -m644 "$HERE/60sparky-stereo-appstream-icons" "$D/etc/apt/apt.conf.d/"
 
 cat >"$D/etc/apt/sources.list.d/sparky-stereo.sources" <<EOS
 Types: $TYPES
@@ -121,7 +123,8 @@ Description: Sparky Stereo OS apt source
   deb-multimedia's FFmpeg and mpv sources, so deb-multimedia's repository too.
 EOS
 printf '%s\n' /etc/apt/sources.list.d/sparky-stereo.sources /etc/apt/sources.list.d/sparky-stereo-deb-multimedia.sources \
-	/etc/apt/preferences.d/sparky-stereo /etc/apt/preferences.d/sparky-stereo-only-ours >"$D/DEBIAN/conffiles"
+	/etc/apt/preferences.d/sparky-stereo /etc/apt/preferences.d/sparky-stereo-only-ours \
+	/etc/apt/apt.conf.d/60sparky-stereo-appstream-icons >"$D/DEBIAN/conffiles"
 install -m755 "$HERE/debian-scripts/preinst" "$HERE/debian-scripts/postinst" "$HERE/debian-scripts/postrm" "$D/DEBIAN/"
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT"

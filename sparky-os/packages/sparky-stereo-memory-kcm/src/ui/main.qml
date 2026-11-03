@@ -43,14 +43,17 @@ KCM.SimpleKCM {
         }
         QQC2.Label {
             Layout.fillWidth: true
+            Layout.preferredWidth: Kirigami.Units.gridUnit * 24
+            Layout.minimumWidth: 0
             wrapMode: Text.Wrap
             font: Kirigami.Theme.smallFont
-            text: kcm.autoZramOn
-                ? i18nc("@info %1 is the reason", "Automatic means on for this computer: %1.", kcm.autoReason)
-                : i18nc("@info %1 is the reason", "Automatic means off for this computer: %1.", kcm.autoReason)
+            objectName: "automaticExplanation"
+            text: kcm.autoDecisionText
         }
         QQC2.Label {
             Layout.fillWidth: true
+            Layout.preferredWidth: Kirigami.Units.gridUnit * 24
+            Layout.minimumWidth: 0
             wrapMode: Text.Wrap
             font: Kirigami.Theme.smallFont
             text: (kcm.zramActive ? i18nc("@info", "In use now.") : i18nc("@info", "Not in use now."))
@@ -67,16 +70,52 @@ KCM.SimpleKCM {
             checked: kcm.cushionEnabled
             onToggled: kcm.cushionEnabled = checked
         }
+        Kirigami.InlineMessage {
+            Layout.fillWidth: true
+            visible: true
+            type: kcm.cushionStatus === 0 ? Kirigami.MessageType.Positive
+                : kcm.cushionStatus === 1 ? Kirigami.MessageType.Warning : Kirigami.MessageType.Error
+            text: {
+                switch (kcm.cushionStatus) {
+                case 0: return i18nc("@info protection", "Memory protected");
+                case 1: return i18nc("@info protection", "Memory protected, with a kept problem");
+                case 2: return i18nc("@info protection", "Memory not protected");
+                case 3: return i18nc("@info protection", "Cushion Swap is not running");
+                default: return i18nc("@info protection", "Memory protection status could not be read");
+                }
+            }
+        }
+        QQC2.Label {
+            visible: kcm.cushionStatusError.length > 0
+            Layout.fillWidth: true
+            Layout.preferredWidth: Kirigami.Units.gridUnit * 24
+            Layout.minimumWidth: 0
+            wrapMode: Text.Wrap
+            textFormat: Text.PlainText
+            text: kcm.cushionStatusError
+        }
+        QQC2.Label {
+            objectName: "daemonReason"
+            Kirigami.FormData.label: i18nc("@label", "Daemon’s own words:")
+            visible: kcm.cushionReason.length > 0
+            Layout.fillWidth: true
+            Layout.preferredWidth: Kirigami.Units.gridUnit * 24
+            Layout.minimumWidth: 0
+            wrapMode: Text.Wrap
+            textFormat: Text.PlainText
+            text: kcm.cushionReason
+        }
         QQC2.Label {
             Kirigami.FormData.label: i18nc("@label", "State:")
             text: {
                 switch (kcm.cushionState) {
-                case "off": return i18nc("@info cushion state", "Off, ready");
+                case "off": return i18nc("@info cushion state", "Off");
                 case "deployed": return i18nc("@info cushion state", "Deployed");
                 case "retracting": return i18nc("@info cushion state", "Retracting");
                 case "disabled": return i18nc("@info cushion state", "Switched off");
                 case "no-area": return i18nc("@info cushion state", "No swap area configured");
-                default: return i18nc("@info cushion state", "Not running");
+                case "stopped": return i18nc("@info cushion state", "Not running");
+                default: return i18nc("@info cushion state", "Unknown");
                 }
             }
         }
@@ -90,7 +129,54 @@ KCM.SimpleKCM {
         QQC2.Label {
             Kirigami.FormData.label: i18nc("@label", "Swap area:")
             visible: kcm.cushionArea.length > 0
+            textFormat: Text.PlainText
             text: kcm.cushionArea
+        }
+        ColumnLayout {
+            objectName: "problemActions"
+            Layout.fillWidth: true
+            Layout.preferredWidth: Kirigami.Units.gridUnit * 24
+            Layout.minimumWidth: 0
+            Repeater {
+                model: kcm.cushionProblems
+                delegate: ColumnLayout {
+                    required property var modelData
+                    required property int index
+                    Layout.fillWidth: true
+                    Layout.preferredWidth: Kirigami.Units.gridUnit * 24
+                    Layout.minimumWidth: 0
+                    QQC2.Label {
+                        Layout.fillWidth: true
+                        Layout.preferredWidth: Kirigami.Units.gridUnit * 24
+                        Layout.minimumWidth: 0
+                        wrapMode: Text.Wrap
+                        textFormat: Text.PlainText
+                        text: modelData.text
+                    }
+                    QQC2.Button {
+                        objectName: "repairProblem"
+                        visible: modelData.repair.length > 0
+                        enabled: !kcm.repairing
+                        text: i18nc("@action:button", "Repair")
+                        onClicked: kcm.repairProblem(index)
+                    }
+                }
+            }
+            QQC2.Label {
+                visible: kcm.cushionProblemsError.length > 0
+                Layout.fillWidth: true
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 24
+                Layout.minimumWidth: 0
+                wrapMode: Text.Wrap
+                textFormat: Text.PlainText
+                text: kcm.cushionProblemsError
+            }
+            QQC2.Button {
+                objectName: "refreshStatus"
+                text: i18nc("@action:button", "Refresh status")
+                enabled: !kcm.repairing
+                onClicked: kcm.refreshStatus()
+            }
         }
     }
 }

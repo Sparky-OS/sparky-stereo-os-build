@@ -53,4 +53,6 @@ No per-film rule or user configuration file is installed.
 The renderer still owns hardware surface import, copy fallback and transfer to the compositor.
 GL follows the window system's display device; this change does not force a global DRI_PRIME value.
 The routing probes use one fresh private compositor session per case and clear compositor-only device controls before launching clients.
-They measure virtual output presentation and must not be reported as physical connector, HDMI or TV timing proof.
+They measure virtual output presentation and must not be reported as physical connector, [HDMI®](https://www.hdmi.org/resource/brand) or TV timing proof.
+
+HDMI®, HDMI® High-Definition Multimedia Interface and the HDMI® Logo are trademarks or registered trademarks of HDMI Licensing Administrator, Inc.

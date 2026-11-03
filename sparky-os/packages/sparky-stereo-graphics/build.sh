@@ -5,11 +5,19 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.2.4
+VERSION=0.2.5
 PACKAGE=sparky-stereo-graphics
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.graphics.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
+# Build from the same tracked inputs that enter the source archive.
+TOOLKIT=$(cd "$HERE/../.." && pwd)
+COPY="$HERE/build-tools/copy-recipe.py"
+[ -f "$COPY" ] || COPY="$HERE/../../../tools/copy-recipe.py"
+python3 "$COPY" "$HERE" "$WORK/inputs"
+mkdir -p "$WORK/inputs/build-tools"
+cp "$COPY" "$WORK/inputs/build-tools/"
+HERE=$WORK/inputs
 D=$WORK/$PACKAGE
 cmake -S "$HERE" -B "$WORK/build" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=/usr -DKDE_INSTALL_LIBDIR=lib/x86_64-linux-gnu -DKDE_INSTALL_LIBEXECDIR=lib/x86_64-linux-gnu/libexec -DBUILD_TESTING=OFF >"$WORK/configure.log"
 cmake --build "$WORK/build" -j"${JOBS:-4}" >"$WORK/build.log"
@@ -66,14 +74,18 @@ chmod 755 "$D/DEBIAN/postinst" "$D/DEBIAN/prerm" "$D/DEBIAN/postrm"
 
 S=$WORK/$PACKAGE-$VERSION
 mkdir -p "$S/debian"
-cp -a "$HERE/." "$S/"
+COPY="$HERE/build-tools/copy-recipe.py"
+[ -f "$COPY" ] || COPY="$HERE/../../../tools/copy-recipe.py"
+python3 "$COPY" "$HERE" "$S"
+mkdir -p "$S/build-tools"
+cp "$COPY" "$S/build-tools/"
 cat >"$S/debian/control" <<EOS
 Source: $PACKAGE
 Section: System
 Priority: optional
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Standards-Version: 4.7.3
-Build-Depends: cmake, dpkg-dev, extra-cmake-modules, g++, gettext, libkf6config-dev, libkf6coreaddons-dev, libkf6i18n-dev, libkf6kcmutils-dev, libkf6service-dev, pkgconf, qt6-base-dev, qt6-declarative-dev, sparky-stereo-problems (>= 0.1.0)
+Build-Depends: git, python3, cmake, dpkg-dev, extra-cmake-modules, g++, gettext, libkf6config-dev, libkf6coreaddons-dev, libkf6i18n-dev, libkf6kcmutils-dev, libkf6service-dev, pkgconf, qt6-base-dev, qt6-declarative-dev, sparky-stereo-problems (>= 0.1.0)
 Rules-Requires-Root: no
 Homepage: https://sparkylinux.org
 
@@ -87,6 +99,12 @@ Description: Graphics page for System Settings
 EOS
 cat >"$S/debian/changelog" <<EOS
 $PACKAGE ($VERSION) unstable; urgency=medium
+
+  * Copy only tracked recipe inputs; retain the shared copier for source rebuilds.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 03 Nov 2026 12:00:00 -0300
+
+$PACKAGE (0.2.4) unstable; urgency=medium
 
   * ORDER 350 (Daniel, 2026-11-02: "Why machinery to keep a failure for
     each?"): the problems are kept by the edition's one engine,
@@ -210,6 +228,6 @@ chmod +x "$S/debian/rules"
 (cd "$WORK" && dpkg-source -b "$S")
 cp "$WORK/${PACKAGE}_${VERSION}.dsc" "$WORK/${PACKAGE}_${VERSION}.tar.xz" "$OUT/"
 
-"$HERE/../../repo/provenance.sh" --tree "$D"
-PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release build-tree "$D" "$OUT"
+"$TOOLKIT/repo/provenance.sh" --tree "$D"
+PYTHONPATH="$TOOLKIT${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release build-tree "$D" "$OUT"
 sync

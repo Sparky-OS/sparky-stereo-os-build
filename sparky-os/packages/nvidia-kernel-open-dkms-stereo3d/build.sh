@@ -29,6 +29,7 @@
 # this; the control fields and the lock follow the changelog.
 # Usage: build.sh   (OUT, default ${SPARKY_STAGING_DIR}/nvidia-kmod-open;
 #                    SRCDEB, default: apt-get download of NVIDIA's package, signature checked by apt)
+# Native and payload Lean Code qualification uses release/build-dh-lean.sh; set SPARKY_LC_ARCHIVE_DIR as that helper requires.
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -40,7 +41,7 @@ python3 -c 'import json, sys; sys.exit(json.load(open(sys.argv[1])) != {sys.argv
 	"$HERE/debian/sparky-lean-payload-sources.json" "/usr/src/nvidia-$UPV" ||
 	{ echo "debian/sparky-lean-payload-sources.json does not map /usr/src/nvidia-$UPV" >&2; exit 1; }
 WORK=$(mktemp -d ${SPARKY_SCRATCH:?}/sparky-os/nvidia-kmod-open.XXXXXX)
-trap 'docker run --rm -v "$WORK":/w debian:testing chown -R "$(id -u):$(id -g)" /w >/dev/null 2>&1; rm -rf "$WORK"' EXIT
+trap 'rm -rf "$WORK"' EXIT
 SRCDEB=${SRCDEB:-}
 if [ -z "$SRCDEB" ]; then
 	(cd "$WORK" && apt-get download "nvidia-kernel-open-dkms=$NV")
@@ -50,11 +51,9 @@ dpkg-deb -x "$SRCDEB" "$WORK/x"
 mv "$WORK/x/usr/src/nvidia-$UPV" "$WORK/nvidia-kmod-open-$UPV"
 tar --sort=name --owner=0 --group=0 --numeric-owner --format=gnu -C "$WORK" -cf - "nvidia-kmod-open-$UPV" |
 	xz -T4 -6 >"$WORK/nvidia-kmod-open_$UPV.orig.tar.xz"
-cp -a "$HERE/debian" "$WORK/nvidia-kmod-open-$UPV/"
-docker run --rm -v "$WORK":/w debian:testing bash -c "export DEBIAN_FRONTEND=noninteractive
-	apt-get update -qq && apt-get install -y -qq --no-install-recommends build-essential debhelper dh-dkms >/dev/null
-	cd /w/nvidia-kmod-open-$UPV && dpkg-buildpackage -us -uc"
+python3 "${COPY_RECIPE:-$HERE/../../../tools/copy-recipe.py}" "$HERE/debian" "$WORK/nvidia-kmod-open-$UPV/debian"
+bash "$HERE/../../release/build-dh-lean.sh" "$WORK" "nvidia-kmod-open-$UPV" "$DEBV+lc1" "${REPO:-/var/tmp/sparky-repo-current}"
 mkdir -p "$OUT"
-cp "$WORK"/*.deb "$WORK"/*.dsc "$WORK"/*.debian.tar.xz "$WORK"/*.orig.tar.xz "$WORK"/*.buildinfo "$WORK"/*.changes "$OUT"/
+cp -a "$WORK"/out/. "$OUT"/
 sync
 echo "built $(cd "$OUT" && ls *.deb *.dsc)"

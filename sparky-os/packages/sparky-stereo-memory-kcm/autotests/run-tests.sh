@@ -29,5 +29,5 @@ run() {
 	tail -n 3 "$OUT/$name.log"
 }
 run nvme-96GB 97957892 259:0 off "95662 MiB of RAM and the swap area on fast storage"
-run emmc-4GB 4073000 179:0 on "3977 MiB of RAM: 8 GB or less"
+run emmc-4GB 4073000 179:0 on "3977 MiB of RAM: within the automatic zram RAM limit"
 exit $status

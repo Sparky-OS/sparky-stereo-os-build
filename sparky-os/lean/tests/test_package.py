@@ -1080,7 +1080,9 @@ class Packages(unittest.TestCase):
         env = {'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'HOME': str(self.base), 'LC_ALL': 'C',
                'SPARKY_REPO_GNUPGHOME': str(home), 'TMPDIR': str(self.base),
                'SPARKY_LC_ARCHIVE_CONFIG': str(signed_archive(self.base / 'link-archive')),
-               'SPARKY_LC_SCRATCH': str(self.base / 'link-scratch')}
+               'SPARKY_LC_SCRATCH': str(self.base / 'link-scratch'),
+               # The lc1 gate is this test's subject; the AppStream catalogues have their own tests.
+               'SPARKY_APPSTREAM': '0'}
         try:
             subprocess.run(['gpg', '--homedir', str(home), '--batch', '--pinentry-mode', 'loopback',
                             '--passphrase', '', '--quick-generate-key', 'LC Test <lc@example.org>',
