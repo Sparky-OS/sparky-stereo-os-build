@@ -19,7 +19,9 @@ It starts dev-zram0.swap immediately after install, using Debian’s configurati
 Removal stops the swap first, then its setup service, before removing the package.
 A restart is mentioned only when systemd is not running, with that reason.
 Failures remain with the shared problems engine and are read on the next page load.
-A failed stop prevents removal; a failed start is retained with its repair.
+A failed stop or device reset prevents removal; a failed start is retained with its repair.
+Removal checks service Result and zero disksize after stopping, not only systemctl’s exit code.
+The engine’s explicit repair retries the failed reset through Debian’s generator after swap is inactive.
 
 ORDER 104 still owns the other sections and entries: 3D emulation, stereo players, editors and tools, VR and SteamVR, drivers, verified vendor downloads, the pinned launcher, the CODESYS 4 store link and SlimeVR.
 This first version neither implements nor claims those entries.
