@@ -1076,6 +1076,13 @@ def post_invoke(P, jobs):
         else:
             del files[path]
         dirty = True
+    if gone:
+        # what a removed package left alone, with its reason, goes with it: --verify named a removed instance's
+        # conffile "changed by the person" until the same path was left again (ORDER 365)
+        left_gone = Records(P, 'left', gone)
+        for path in [p for p, r in left_gone.items() if r['package'] in gone]:
+            del left_gone[path]
+        left_gone.save()
     same_version = {k for k in ch if recorded.get(k, {}).get('version') == pkgs[k][0]}
     known = {}             # what was projected and checked before, for files that come back in the same bytes
     # each recorded path of a changed instance once: its own records, then the records its twin holds for the paths

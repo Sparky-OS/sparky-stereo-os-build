@@ -11,6 +11,8 @@
 #   B. both instances reinstalled, the one that holds the script's record not looking changed: the script dpkg put
 #      back in its package's bytes is projected again, and recorded once
 #   C. the person's conffile edit, then the other instance installs: the conffile is named once, as changed by the person
+#   and after each purge nothing of the package stays recorded or left (a removed instance's conffile was named
+#   "changed by the person" in a later case)
 # Usage: post-invoke-seconds-test.sh WORKDIR
 set -u
 W=$1
@@ -77,6 +79,7 @@ fresh() { dpkg -P twin-demo:amd64 twin-demo:i386 </dev/null >/dev/null 2>&1; rm 
 for mode in racy calm; do
 	echo "== A ($mode). the script and the conffile changed after their projection; the other instance refused"
 	fresh
+	check "A $mode: nothing of the purged instances kept, recorded or left" sh -c "! ls /var/lib/dpkg-stereo/records /var/lib/dpkg-stereo/left 2>/dev/null | grep -q '^twin-demo'"
 	dpkg -i "$W/twin-demo_1.0_amd64.deb" </dev/null >"$W/a-$mode.log" 2>&1 || bad "A $mode: amd64 install"
 	lean twin-demo:amd64 $T && recorded $T || bad "A $mode: control, the script projected and recorded"
 	printf '# changed after the projection\n' >>$T
