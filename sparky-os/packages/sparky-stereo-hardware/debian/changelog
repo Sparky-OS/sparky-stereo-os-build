@@ -1,3 +1,17 @@
+sparky-stereo-hardware (0.1.20) unstable; urgency=medium
+
+  * NVIDIA's i386 libraries when i386 is enabled after NVIDIA's driver: dpkg's
+    post-invoke hook (/etc/dpkg/dpkg.cfg.d/sparky-stereo-hardware) checks
+    after every dpkg run, dpkg --add-architecture i386 among them, and where
+    nvidia-driver-libs:i386 or libcuda1:i386 is missing at the installed
+    driver's version the edition's engine keeps the problem (shown at login,
+    its Repair installs them) and the terminal is told, in the nine languages;
+    the problem is cleared when they are there. ORDER 363.
+  * sparky-stereo-hardware --nvidia-i386 installs them at the driver's version
+    after apt-get update; it is the problem's Repair.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 03 Nov 2026 00:46:13 -0300
+
 sparky-stereo-hardware (0.1.19) unstable; urgency=medium
 
   * NVIDIA's 580 path installs NVIDIA's 580 user space from the edition's

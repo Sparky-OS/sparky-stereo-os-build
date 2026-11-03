@@ -1,9 +1,12 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/02
+# Last update 2026/11/03
 set -euo pipefail
 install -Dm755 "$HERE/bin/sparky-stereo-hardware" "$D/usr/bin/sparky-stereo-hardware"
+# NVIDIA's i386 libraries when i386 comes after NVIDIA's driver: dpkg's post-invoke hook checks after every dpkg run
+install -Dm755 "$HERE/bin/sparky-stereo-nvidia-i386" "$D/usr/lib/sparky-stereo-hardware/nvidia-i386"
+install -Dm644 "$HERE/share/dpkg/sparky-stereo-hardware" "$D/etc/dpkg/dpkg.cfg.d/sparky-stereo-hardware"
 mkdir -p "$D/usr/lib/sparky-stereo-hardware" "$D/usr/share/sparky/sparky-stereo-hardware"
 install -m644 "$HERE"/lib/* "$D/usr/lib/sparky-stereo-hardware/"
 install -m644 "$HERE"/lang/* "$HERE/share/nvidia-open.ids" "$HERE/share/network-ids.tsv" "$HERE/share/nvidia-open-source.txt" "$HERE/share/rig-devices.json" "$D/usr/share/sparky/sparky-stereo-hardware/"
@@ -32,4 +35,5 @@ for u in nvidia-persistenced nvidia-powerd; do
 done
 install -Dm644 "$HERE/share/udev/71-sparky-stereo-nvidia-units.rules" "$D/usr/lib/udev/rules.d/71-sparky-stereo-nvidia-units.rules"
 
-sparky-stereo-problems catalog sparky-stereo-hardware "$HERE/problems-lang" "$D/usr/lib/systemd/catalog" --subject LOCAL1
+sparky-stereo-problems catalog sparky-stereo-hardware "$HERE/problems-lang" "$D/usr/lib/systemd/catalog" \
+	--subject LOCAL1=LOCAL2,LOCAL3,LOCAL4 --subject LOCAL9=LOCAL5,LOCAL6,LOCAL7,LOCAL8
