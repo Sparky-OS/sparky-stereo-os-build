@@ -15,6 +15,7 @@ Status is unprivileged JSON with dpkg installation state, active zram0 swap stat
 Install and remove require root through the package's polkit policy.
 Both this page and the Memory KCM call this same action.
 Install explicitly requests Debian's systemd-zram-generator, including when already installed automatically, so apt records the person's choice.
+The package depends on kmod so Debian’s generator can load the kernel module when it is first chosen.
 It starts dev-zram0.swap immediately after install, using Debian’s configuration and the edition’s inherited-generator guard.
 Removal stops the swap first, then its setup service, before removing the package.
 A restart is mentioned only when systemd is not running, with that reason.

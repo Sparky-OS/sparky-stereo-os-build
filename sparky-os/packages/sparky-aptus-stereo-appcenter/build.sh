@@ -49,7 +49,7 @@ Package: $PACKAGE
 Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
-Depends: sparky-aptus-appcenter, python3, apt, dpkg, systemd, udev, pkexec, yad, sparky-stereo-problems (>= 0.1.1)
+Depends: sparky-aptus-appcenter, python3, apt, dpkg, systemd, udev, kmod, pkexec, yad, sparky-stereo-problems (>= 0.1.1)
 Section: admin
 Priority: optional
 Homepage: https://sparkylinux.org
