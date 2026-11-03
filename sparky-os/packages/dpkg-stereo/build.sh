@@ -16,7 +16,7 @@ umask 022
 HERE=$(cd "$(dirname "$0")" && pwd)
 LEAN=$(cd "$HERE/../../lean" && pwd)
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
-VERSION=0.1.27
+VERSION=0.1.28
 PKG=dpkg-stereo
 W=$(mktemp -d "${TMPDIR:-/tmp}/dpkg-stereo-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
@@ -68,8 +68,9 @@ cat >"$D/DEBIAN/prerm" <<'EOS'
 # prerm script
 set -e
 if [ "$1" = "remove" ]; then
-	# the way back: the original files return (conffiles from the record, other files from their packages); what
-	# cannot come back is said with its reason and the packages to reinstall, and the removal goes on (a failing
+	# the way back: the original files return (conffiles from the record, other files from their packages' .deb,
+	# fetched from snapshot.debian.org when no cache or source has the installed version); what cannot come back is
+	# said with its reason and what brings it back once dpkg-stereo is gone, and the removal goes on (a failing
 	# prerm would keep dpkg-stereo installed, Debian Policy 6.6)
 	/usr/sbin/dpkg-stereo --restore || true
 	# without the package table a later install projects everything again

@@ -154,8 +154,10 @@ rm -f /var/cache/apt/archives/lean-demo_*
 fake_offline_apt
 ds --restore lean-demo > "$W/out" 2> "$W/err"; rc=$?
 check "restore-offline-exit-1" [ $rc = 1 ]
-check "restore-offline-real-reason" grep -q 'stay lean (apt-get download lean-demo=1.0 exited 100: E: Failed to fetch' "$W/out"
-check "restore-offline-kept" kept restore "could not be put back"
+check "restore-offline-real-reason" grep -q 'files stay lean: APT could not download it (apt-get download lean-demo=1.0 exited 100: E: Failed to fetch' "$W/out"
+# a configured source offers the version: what brings it back is APT's own download, never a reinstall of it
+check "restore-offline-what-to-do" grep -q 'Run: sudo apt-get update, then: sudo dpkg-stereo --repair' "$W/out"
+check "restore-offline-kept" kept restore "lean-demo 1.0 stay lean: APT could not download it"
 check "restore-offline-problems-exit-1" sh -c "python3 '$BIN' --problems >/dev/null; [ \$? = 1 ]"
 rm -f /usr/local/bin/apt-get /usr/local/bin/apt-cache
 cp "$DEB" /var/cache/apt/archives/
