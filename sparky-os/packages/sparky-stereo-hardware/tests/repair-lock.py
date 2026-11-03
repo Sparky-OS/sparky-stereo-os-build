@@ -5,12 +5,13 @@
 
 Real apt/dpkg, real frontend lock held by another apt transaction; no mocked
 commands. Empty NVIDIA-named packages test version selection/install state, not
-GPU binaries. Usage: repair-lock.py EVIDENCE [VERSION]. Always expects the fixed
+GPU binaries. Usage: repair-lock.py EVIDENCE [VERSION] [LANGUAGE]. Always expects the fixed
 behavior; baseline 0.1.21 must fail. Requires dpkg-dev for the local fixture repo.
 """
 import fcntl
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -20,6 +21,8 @@ import time
 assert os.geteuid() == 0 and Path('/.dockerenv').exists(), 'Disposable container only'
 evidence = Path(sys.argv[1]); evidence.mkdir(parents=True, exist_ok=True)
 version = sys.argv[2] if len(sys.argv) > 2 else '615.71.09-2'
+language=sys.argv[3] if len(sys.argv)>3 else 'en'
+expected=re.search(r'^LOCAL16="(.*)"$', (Path(__file__).resolve().parent.parent/'problems-lang'/language).read_text(), re.M).group(1)
 engine = ['sparky-stereo-problems']
 record = Path('/var/lib/sparky-stereo-problems/sparky-stereo-hardware_nvidia-i386.json')
 failures = []
@@ -56,7 +59,8 @@ with tempfile.TemporaryDirectory(prefix='order368-repair-') as td:
     (work/'sources.list').write_text(f'deb [trusted=yes] file:{repo} ./\n')
     config=work/'apt.conf'
     config.write_text(f'Dir::Etc::sourcelist "{work}/sources.list";\nDir::Etc::sourceparts "{work}/empty";\nDir::State::lists "{work}/lists";\nAPT::Get::List-Cleanup "false";\n')
-    env=dict(os.environ, APT_CONFIG=str(config), DEBIAN_FRONTEND='noninteractive', LC_ALL='C.UTF-8')
+    env=dict(os.environ, APT_CONFIG=str(config), DEBIAN_FRONTEND='noninteractive', LANG='en_US.UTF-8', LANGUAGE=language)
+    env.pop('LC_ALL', None)
     setup_env=dict(env, SPARKY_STEREO_HARDWARE_NVIDIA_I386='installing')
     with (evidence/'setup.log').open('w') as log:
         # This package set belongs entirely to the disposable fixture.
@@ -90,13 +94,13 @@ with tempfile.TemporaryDirectory(prefix='order368-repair-') as td:
             repair=subprocess.Popen(['sparky-stereo-hardware','--nvidia-i386'],env=env,stdout=rl,stderr=rl)
             deadline=time.monotonic()+20
             while time.monotonic()<deadline and repair.poll() is None:
-                if 'Waiting for cache lock' in (evidence/'repair.log').read_text(): break
+                if expected in (evidence/'repair.log').read_text(): break
                 time.sleep(.1)
             time.sleep(2)
             before=(evidence/'repair.log').read_text()
-            waiting=repair.poll() is None and 'Waiting for cache lock' in before
+            waiting=repair.poll() is None and holder.poll() is None and expected in before
             check(waiting,'Repair remains running while apt holds its lock')
-            check('this repair waits for it to finish' in before,'translated wait explanation is on the terminal before release')
+            check(expected in before,'translated wait explanation is on the terminal before release')
             check(not installed('nvidia-driver-libs:i386') and not installed('libcuda1:i386'),'nothing installed while the competing lock is held')
             if record.exists(): (evidence/'record-before-release.json').write_bytes(record.read_bytes())
             (evidence/'timing.json').write_text(json.dumps({'holder_pid':holder.pid,'repair_pid':repair.pid,'repair_returncode_before_release':repair.poll(),'wait_observed':waiting,'release_monotonic':time.monotonic()},indent=2)+'\n')

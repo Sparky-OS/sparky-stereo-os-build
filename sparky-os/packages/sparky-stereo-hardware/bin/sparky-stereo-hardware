@@ -9,7 +9,6 @@
 # one for the card: its open modules with HDMI 3D on Turing and newer, NVIDIA's 580 driver on Maxwell, Pascal and Volta.
 set -Eeuo pipefail
 if ((EUID != 0)); then echo 'Run as root (use the Hardware Setup menu entry).'; exit 1; fi
-export LC_ALL=C.UTF-8
 SHARE=/usr/share/sparky/sparky-stereo-hardware
 LIB=/usr/lib/sparky-stereo-hardware
 # Used by the sourced action functions; production always targets the live root.
@@ -39,6 +38,8 @@ while (($#)); do
 	esac
 	shift
 done
+# Detection and plan parsing use stable output; Repair above keeps the person's language.
+export LC_ALL=C.UTF-8
 case "$rig_driver" in ''|hid-tmff2-dkms|hid-fanatecff-dkms|new-lg4ff-dkms) ;; *) echo 'Unknown rig driver' >&2; exit 2 ;; esac
 case "$nvidia_choice" in edition|nouveau) ;; *) echo 'The NVIDIA choice is edition (the default: the edition'"'"'s driver with HDMI 3D) or nouveau' >&2; exit 2 ;; esac
 if [[ -n "$fixture" ]] && ! $dry; then echo 'Fixtures require --dry-run' >&2; exit 2; fi
