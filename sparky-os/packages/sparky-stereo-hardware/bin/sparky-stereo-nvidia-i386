@@ -24,6 +24,9 @@ installed() {
 has_i386() {
 	dpkg --print-foreign-architectures 2>/dev/null | grep -qx i386
 }
+# a list of package names for a message: comma-separated
+# shellcheck disable=SC2086 # the package names, one word each
+listed() { printf '%s\n' $1 | paste -sd, - | sed 's/,/, /g'; }
 # the NVIDIA libraries for i386 that are not installed at VERSION, space-separated
 missing() {
 	local p out=()
@@ -48,12 +51,12 @@ check() {
 		return 0
 	fi
 	[[ -e $STORE/${PKG}_$KEY.json ]] || first=true
-	if ! sparky-stereo-problems keep --repair "$REPAIR" "$PKG" "$KEY" LOCAL5 "$version" "$need" >/dev/null 2>&1; then
+	if ! sparky-stereo-problems keep --repair "$REPAIR" "$PKG" "$KEY" LOCAL5 "$version" "$(listed "$need")" >/dev/null 2>&1; then
 		first=true
 	fi
 	# the terminal of the dpkg or apt run is told the first time, and whenever i386 has just been added
 	if $first || [[ ${DPKG_HOOK_ACTION:-} == add-architecture ]]; then
-		sparky-stereo-problems say "$PKG" LOCAL5 "$version" "$need" >&2 || true
+		sparky-stereo-problems say "$PKG" LOCAL5 "$version" "$(listed "$need")" >&2 || true
 	fi
 	return 0
 }
@@ -89,8 +92,8 @@ install() {
 		fi
 		if ((status != 0)); then
 			sparky-stereo-problems keep --repair "$REPAIR" --status "$status" --output "$(tail -n 40 "$out")" \
-				"$PKG" "$KEY" LOCAL6 "$need" "$step" "$status" >/dev/null 2>&1 || true
-			sparky-stereo-problems say "$PKG" LOCAL6 "$need" "$step" "$status" >&2 || true
+				"$PKG" "$KEY" LOCAL6 "$(listed "$need")" "$step" "$status" >/dev/null 2>&1 || true
+			sparky-stereo-problems say "$PKG" LOCAL6 "$(listed "$need")" "$step" "$status" >&2 || true
 			rm -f "$out"
 			return 1
 		fi
