@@ -8,7 +8,7 @@ Nothing fails silently (Daniel, 2026-11-01: "either it works or not and the user
 package names sparky-stereo-service-problem@.service in OnFailure=, so a service that cannot start is said in the
 system's language and kept by the edition's one engine (sparky-stereo-problems, in /var/lib/sparky-stereo-problems)
 with its result, its exit status and its own last lines (journalctl); the session's notifier shows it. The drop-in's
-own handler takes the place of the engine's generic one for these units (OnFailure= emptied first), so each failure
+own handler takes the place of the engine's generic one for these units (the engine's drop-in masked by name), so each failure
 is told once, with what this package knows of it. A drop-in's own probe (whether
 ipwatchd is needed yet) keeps a failed probe the same way, apart from a valid "not needed".
 

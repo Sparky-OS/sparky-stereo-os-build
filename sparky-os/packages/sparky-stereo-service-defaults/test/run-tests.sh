@@ -43,6 +43,7 @@ export SPARKY_SERVICE_DEFAULTS_IP=$F/ip SPARKY_SERVICE_DEFAULTS_SYSTEMCTL=$F/sys
 # every drop-in of a service this package sets says its failure: OnFailure names the handler
 for u in snmptt.service pkcs11-daemon.service urfkill.service ipwatchd.service xfs_healer@.service; do
 	ok "$u: OnFailure= is emptied, then names sparky-stereo-service-problem@" '[ "$(directive $u.d OnFailure | tr "\\n" " ")" = " sparky-stereo-service-problem@%n.service " ]'
+	ok "$u: the engine's top-level handler is masked by name" '[ "$(readlink "$SD/$u.d/50-sparky-stereo-problems.conf")" = /dev/null ]'
 done
 ok "the failure handler unit is installed" '[ -s "$SD/sparky-stereo-service-problem@.service" ] && grep -q "^ExecStart=/usr/bin/sparky-stereo-service-defaults record %i$" "$SD/sparky-stereo-service-problem@.service"'
 # U14, U15, U16: no condition hides a service whose need is not met
@@ -128,7 +129,6 @@ PATH=$F:$PATH LANG=C $T record ipwatchd.service 2>/dev/null
 out=$(LANG=C $T dismiss ipwatchd.service 2>&1); rc=$?
 ok "dismiss: said, status no longer counts it" '[ "$rc" = 0 ] && LANG=C $T status >/dev/null 2>&1'
 ok "dismiss is the engine's Hide: kept listed, hidden for you" 'sparky-stereo-problems list --json | python3 -c "import json,sys; d=[p for p in json.load(sys.stdin) if p.get(\"key\") == \"ipwatchd.service\"]; sys.exit(0 if d and d[0][\"hidden\"] else 1)"'
-ok "each drop-in empties OnFailure= before its own handler: one notification per failure" '[ "$(directive snmptt.service.d OnFailure | head -n1)" = "" ] && [ "$(directive snmptt.service.d OnFailure | sed -n 2p)" = "sparky-stereo-service-problem@%n.service" ]'
 
 # NetworkManager's dispatcher: a check that fails is said and kept
 NMD=/usr/lib/NetworkManager/dispatcher.d/90-sparky-stereo-ipwatchd
