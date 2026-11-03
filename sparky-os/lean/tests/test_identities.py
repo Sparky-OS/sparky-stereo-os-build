@@ -23,7 +23,7 @@ class Table(unittest.TestCase):
         self.assertEqual(identities.RELEASED[VERSION], {project.CODE_SHA256: project.IDENTITY})
 
     def test_a_renderer_change_without_a_bump_fails(self):
-        for name in ('lang_zig.py', 'project.py', 'ZigTokens.zig', 'JvmLexer.java'):
+        for name in ('lang_perl.py', 'lang_zig.py', 'project.py', 'ZigTokens.zig', 'JvmLexer.java'):
             with self.subTest(name), tempfile.TemporaryDirectory() as d:
                 copy = Path(d) / 'lean'
                 shutil.copytree(LEAN, copy, ignore=shutil.ignore_patterns('__pycache__', 'tests'))

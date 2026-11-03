@@ -154,6 +154,12 @@ q{not code
         self.assertNotIn('# outside', output)
         self.assertEqual(run(['perl'], code), run(['perl'], output))
 
+    def test_heredoc_after_filehandle_or_function(self):
+        body = '# heredoc literal\n\n\n'
+        for statement in ('print STDERR', 'sub consume { print $_[0]; } consume'):
+            with self.subTest(statement=statement):
+                self.check_quote(statement + " <<'END';\n" + body + 'END\n', body)
+
     def test_changed_program_is_still_refused(self):
         self.assertEqual(lang_perl.verify('print "one";', 'print "two";'),
                          (False, 'B::Deparse prints a different program'))
