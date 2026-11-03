@@ -15,6 +15,10 @@ export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS='parallel=4'
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com LC_ALL=C.UTF-8
 UPSTREAM=1.23.11
 VERSION=$UPSTREAM+stereo3d3
+# Source preparation calls dch before the prepared source's build dependencies
+# exist. Install that bootstrap tool explicitly in a minimal build image.
+apt-get -y update >/work/apt-update.log 2>&1
+apt-get -y --no-install-recommends install devscripts dpkg-dev python3 >/work/bootstrap.log 2>&1
 cd /work
 echo "4511c16a3bbbd3a88982408e2e5e5c471dc5f4a49eaa9b2cb93bf3e8c067fa78  /src/dpkg_$UPSTREAM.dsc" | sha256sum -c
 mkdir s1 && cd s1
@@ -84,7 +88,6 @@ PYWRAP
 sed -i "s|^\tPYTHONPATH=\$(CURDIR)/debian/sparky-lean-toolkit python3 -m lean.debhelper --provenance .*\$|\tpython3 \$(CURDIR)/debian/sparky-builddeb.py \$(CURDIR)|" /work/lc/authored/debian/rules
 (cd /work/lc/authored && dpkg-source -b . >/dev/null)
 dpkg-source -x dpkg_$VERSION+lc1.dsc /work/lc/source >/dev/null
-apt-get -y update >/dev/null 2>&1
 apt-get -y --no-install-recommends build-dep /work/lc/source >/work/build-dep.log 2>&1
 # the functional test suite runs under eatmydata, as dpkg's own autopkgtest does (debian/tests/test-func)
 apt-get -y --no-install-recommends install eatmydata >>/work/build-dep.log 2>&1
