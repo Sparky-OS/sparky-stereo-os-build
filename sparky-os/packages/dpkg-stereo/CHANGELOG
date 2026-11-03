@@ -1,4 +1,45 @@
 -------------------------------------------------------------------------------
+  Version 0.1.29 (2026-11-03)
+-------------------------------------------------------------------------------
+  * ORDER 367: a dpkg run that changes nothing costs the hooks almost nothing. On the A10 (run aba2-20261103)
+    `dpkg --configure -a` with nothing to do took 1.4 to 1.8 s lean against 1.0 s with nothing projected; in the
+    lane's container (Debian testing, 2,912 packages, 597 record tables, 12,986 records, 104 projected conffiles)
+    dpkg alone took about 60 ms and the two hooks about 470 ms more. Where it went: each hook compiled the
+    2,900-line program (28 ms) and imported modules it rarely needs (64 ms: concurrent.futures alone brings
+    logging, traceback and _colorize); pre-invoke put every lean conffile back in its package's bytes for every
+    run and post-invoke projected each again, reading their packages' record tables; post-invoke parsed dpkg's
+    whole database, looked at every package's file list and read every recorded conffile.
+  * The program is /usr/lib/dpkg-stereo/dpkg_stereo.py, byte-compiled by the postinst (py3compile, removed by the
+    prerm's py3clean, as Debian's Python packages are), and /usr/sbin/dpkg-stereo loads it; a module is imported
+    when it is first needed; the hooks parse no options (dpkg.cfg.d runs them without any); the problems engine is
+    loaded only when the step has a kept record to clear (its clear does nothing when the record's file is not
+    there).
+  * A configure run compares the conffiles only of the packages it configures from "unpacked" (src/main/
+    configure.c, deferred_configure), so pre-invoke gives dpkg back only the conffiles of packages its database
+    does not show installed; an unpack or an install compares those of the packages it unpacks, which no hook is
+    told, so every lean one goes back, as before; a removal or a purge compares none (src/main/remove.c), so
+    nothing goes back.
+  * packages.tsv's second header line keeps the digest of dpkg's database (the bytes of its status file and
+    journal: dpkg writes the status file again at the end of every run, so its time says nothing), the time of
+    dpkg's info directory (dpkg writes every file list through a rename there, so a reinstall of the same version,
+    which leaves the database's bytes as they were, changes it) and the digest of the table's rows. A run that
+    finds all three as they were, with neither the directory nor any row in the second the table was written in
+    (git's racy rule, as before), reads no field of dpkg's database and no file list: no package changed.
+  * A conffile is read for its lean form, or for its package's bytes, only when its size is the one looked for.
+  * Found while measuring: dpkg-stereo counted a package as installed only in dpkg's state "installed". A run with
+    --no-triggers, as each of apt's dpkg runs is, leaves a package whose file trigger it activated in
+    "triggers-pending" until a later run processes it (apt leaves systemd so whenever a package ships a file in
+    /usr/lib/systemd/catalog, binfmt.d or sysctl.d); post-invoke took it for removed and dropped its records, and
+    its lean files stayed lean and unrecorded, called "changed since its package installed it" by the next
+    projection, so --verify did not name them and --restore could not bring them back (313 of systemd's 320
+    projected files after one `dpkg --no-triggers -i` on the lane's image). A package another one's unpack
+    deconfigures went the same way through "half-configured". installed, triggers-pending, triggers-awaited and
+    half-configured now count (dpkg(1), "Package states").
+  * Tests: test/hook-cost-test.sh (red on 0.1.28: every projected conffile written again by a run that changed
+    nothing; three mutants of 0.1.29 fail its other cases) and test/trigger-states-test.sh (red on 0.1.28: 8 of
+    18).
+
+-------------------------------------------------------------------------------
   Version 0.1.28 (2026-11-03)
 -------------------------------------------------------------------------------
   * ORDER 365: --restore brings back every original, fetching the exact version itself. On the A10 (run

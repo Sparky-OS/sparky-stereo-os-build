@@ -60,7 +60,6 @@ not compare a file with its package's .deb says so and exits 2, never clean.
 """
 
 import fcntl
-import hashlib
 import io
 import os
 import stat
@@ -101,6 +100,14 @@ subprocess = _Lazy('subprocess')
 tarfile = _Lazy('tarfile')
 tempfile = _Lazy('tempfile')
 urllib_parse = _Lazy('urllib.parse')
+# SHA-256 and MD5 come from OpenSSL's binding, which takes about 3 ms to load, and a run that changes nothing reads no
+# file to hash; BLAKE2, which says whether dpkg's database changed, is CPython's own (Lib/hashlib.py takes blake2b
+# from _blake2, never from OpenSSL)
+hashlib = _Lazy('hashlib')
+try:
+    from _blake2 import blake2b
+except ImportError:
+    from hashlib import blake2b
 
 STATE = '/var/lib/dpkg-stereo'
 FILES = 'files.tsv'
@@ -520,7 +527,7 @@ def db_digest(files):
     file again at the end of every run that opens it for writing, a run that changed nothing included
     (lib/dpkg/dbmodify.c, modstatdb_shutdown and modstatdb_checkpoint), so its time says nothing; its bytes say whether
     any package's version or state changed."""
-    h = hashlib.blake2b(digest_size=16)
+    h = blake2b(digest_size=16)
     for name, data in files:
         h.update(f'{os.path.basename(name)}\0{len(data)}\0'.encode('utf-8', 'surrogateescape'))
         h.update(data)
@@ -1014,11 +1021,11 @@ def list_mtime(P, info):
 
 # packages.tsv's second header line: what dpkg's database and its file lists were when the table was written (0.1.29)
 SEEN = '#seen'
-SEEN_COLS = ('db', 'info', 'written', 'rows')
+SEEN_COLS = ('db', 'info', 'written', 'newest', 'rows')
 
 
 def rows_digest(lines):
-    return hashlib.blake2b(''.join(lines).encode('utf-8', 'surrogateescape'), digest_size=16).hexdigest()
+    return blake2b(''.join(lines).encode('utf-8', 'surrogateescape'), digest_size=16).hexdigest()
 
 
 def info_mtime(P):
@@ -1034,7 +1041,7 @@ def info_mtime(P):
 def write_packages(P, pkgs=None):
     """packages.tsv: each installed package's version and the time of its file list, and in its second header line the
     digest of the dpkg database those rows come from (when PKGS carries it), the time of dpkg's info directory, the
-    second it was written in and the digest of its rows."""
+    second it was written in, the newest file list's second and the digest of its rows."""
     pkgs = pkgs if pkgs is not None else dpkg_packages(P)
     rows = {k: {'package': k, 'version': v[0], 'list_mtime': list_mtime(P, v[1])} for k, v in pkgs.items()}
     info = info_mtime(P)
@@ -1048,7 +1055,8 @@ def write_packages(P, pkgs=None):
         f.write('#' + '\t'.join(PKG_COLS) + '\n')
         digest = getattr(pkgs, 'digest', None)
         if digest:
-            f.write('\t'.join((SEEN, digest, info, written, rows_digest(lines))) + '\n')
+            newest = max((int(r['list_mtime']) for r in rows.values() if r['list_mtime'].isdigit()), default=0)
+            f.write('\t'.join((SEEN, digest, info, written, str(newest), rows_digest(lines))) + '\n')
         f.writelines(lines)
     os.replace(path + '.new', path)
 
@@ -1068,7 +1076,8 @@ def read_packages(P):
                     continue
                 lines.append(line)
                 v = line.rstrip('\n').split('\t')
-                rows[v[0]] = dict(zip(PKG_COLS, v))
+                rows[v[0]] = ({'package': v[0], 'version': v[1], 'list_mtime': v[2], 'written': v[3]} if len(v) == 4
+                              else dict(zip(PKG_COLS, v)))
     except FileNotFoundError:
         pass
     if seen is not None and seen.get('rows') != rows_digest(lines):
@@ -1076,20 +1085,19 @@ def read_packages(P):
     return rows, seen
 
 
-def as_seen(P, recorded, seen, digest):
+def as_seen(P, seen, digest):
     """Whether dpkg changed nothing since packages.tsv was written: its database holds the same bytes (so every
     package has the version and the state the rows record), its info directory has the same time (so no file list was
     written again: a reinstall of the same version leaves the database as it was, and rewrites the list), neither that
-    time nor any row's list is in the second the table was written in (git's racy rule, as racy()), and the rows are
-    the ones it was written with."""
+    time nor any row's list is in the second the table was written in (git's racy rule, as racy(): the newest list's
+    second is in the line, and the rows are the ones it was written with)."""
     if not seen or not digest or seen.get('db') != digest or not seen.get('info') or seen['info'] != info_mtime(P):
         return False
     try:
-        if int(seen['info']) // 1000000000 >= int(seen.get('written') or 0):
-            return False
+        written = int(seen.get('written') or 0)
+        return int(seen['info']) // 1000000000 < written and int(seen.get('newest') or written) < written
     except ValueError:
         return False
-    return not any(racy(row) for row in recorded.values())
 
 
 def size_may_be(real, size):
@@ -1209,7 +1217,7 @@ def post_invoke(P, jobs):
     recorded, seen = read_packages(P)
     db_files = dpkg_db_files(P)
     digest = db_digest(db_files)
-    unchanged = as_seen(P, recorded, seen, digest)
+    unchanged = as_seen(P, seen, digest)
     if unchanged:
         pkgs = Installed((k, (v.get('version'), k)) for k, v in recorded.items())
         pkgs.digest = digest
