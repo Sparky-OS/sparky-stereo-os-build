@@ -1,3 +1,19 @@
+dkms (3.4.4-1+sparky2) unstable; urgency=medium
+
+  * dkms: Depends on openssl. DKMS signs every module it builds with a key
+    and certificate it makes with the openssl command (prepare_mok in
+    dkms.in; upstream's README, "Module signing" and "Code Signing extended
+    key usage validation": "This requires version 1.1.1 or newer of the
+    openssl command to be present on the system"), and with Secure Boot a
+    module must be signed before it can be loaded (README, "Secure Boot").
+    Without openssl, dkms says "openssl not found, can't generate key and
+    certificate." and installs the modules unsigned. Debian's packaging
+    names openssl in no field (salsa main 288c608, merge request !8);
+    Fedora's dkms recommends it since Paweł Marciniak's 0b971c5
+    (2022-11-19). ORDER 369.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 03 Nov 2026 10:35:00 -0300
+
 dkms (3.4.4-1+sparky1) unstable; urgency=medium
 
   * Rebuilt for Sparky Stereo OS from Debian's packaging of 3.4.4 as
