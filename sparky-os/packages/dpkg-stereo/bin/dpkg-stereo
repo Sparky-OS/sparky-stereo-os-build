@@ -847,10 +847,13 @@ def project_packages(P, names, jobs, image=False, log=print, only=None, known=No
                 continue
             ver = pkgs[name][0]
             conf, own = confs.get(name, {}), sums.get(name, {})
-            twin = files.get(path)
-            if twin_record(twin, name) and twin['version'] == ver and sha256(data) == twin['sha_lean']:
-                # a shared file its other architecture's instance projected earlier in this run: one projection, one
-                # record (the file is never "changed since its package installed it")
+            prior = files.get(path)
+            if prior and prior['version'] == ver and (prior['package'] == name or twin_record(prior, name)) \
+                    and sha256(data) != prior['sha_orig']:
+                # projected for this version already (a shared file by its other architecture's instance, earlier in
+                # this run or before): one projection, one record. A file changed after that projection keeps the
+                # record, and --verify names it there, never as "changed since its package installed it" beside it
+                # (ORDER 365: such a file was named twice, or not at all, by which second the hooks ran in)
                 if left.get(path, {}).get('package') == name:
                     del left[path]
                 continue
@@ -1055,7 +1058,12 @@ def post_invoke(P, jobs):
                     restored.append(path)
         except OSError:
             pass
-    files = Records(P, 'records', set(ch) | gone | {conf_idx[p]['package'] for p in restored if p in conf_idx})
+    # a shared file of a Multi-Arch: same package may be recorded for the other architecture's instance: its tables are
+    # read too, so what dpkg did to the shared files of a changed instance is seen whether or not its twin also looks
+    # changed (the racy rule makes that a matter of which second dpkg and this hook wrote in, ORDER 365)
+    twin_of = {t: k for k in sorted(ch) for t in twins(k, pkgs) if t not in ch}
+    files = Records(P, 'records', set(ch) | gone | set(twin_of)
+                    | {conf_idx[p]['package'] for p in restored if p in conf_idx})
     dirty = False
     again = set()          # paths dpkg wrote back with the package's bytes: project them again
     heirs = Heirs(P, pkgs)
@@ -1070,22 +1078,47 @@ def post_invoke(P, jobs):
         dirty = True
     same_version = {k for k in ch if recorded.get(k, {}).get('version') == pkgs[k][0]}
     known = {}             # what was projected and checked before, for files that come back in the same bytes
-    for path in [p for p, r in files.items() if r['package'] in ch]:
+    # each recorded path of a changed instance once: its own records, then the records its twin holds for the paths
+    # its file list shares
+    examine = {p: r['package'] for p, r in files.items() if r['package'] in ch}
+    lists = {}
+    for path, rec in files.items():
+        owner = twin_of.get(rec['package'])
+        if owner and path not in examine and rec['version'] == pkgs[owner][0]:
+            if owner not in lists:
+                lists[owner] = set(package_files(P, pkgs[owner][1]))
+            if path in lists[owner]:
+                examine[path] = owner
+    sums = {}
+    conf = None
+    for path, owner in sorted(examine.items()):
         rec = files[path]
         known[path] = (rec['sha_orig'], rec['sha_lean'])
-        if rec['package'] in same_version or rec['version'] == pkgs[rec['package']][0]:
+        if owner in same_version or rec['version'] == pkgs[owner][0]:
             # dpkg rewrote the package's file list (a reinstall), or the list only looks different (an
             # image unpacked elsewhere), or this record was made from the installed version after dpkg
             # installed it (a migration earlier in this hook, which leaves packages.tsv as it was): the files
             # themselves say which of them dpkg replaced
             try:
                 with open(P.real(path), 'rb') as f:
-                    cur = sha256(f.read())
+                    data = f.read()
+                cur = sha256(data)
             except FileNotFoundError:
-                cur = None
+                data = cur = None
             if cur == rec['sha_lean']:
                 continue
-            if cur == rec['sha_orig'] and rec['package'] in same_version:
+            if cur is not None and cur != rec['sha_orig']:
+                # neither the projection nor its original: dpkg wrote other bytes of this version (its md5sums, or
+                # its conffile hash, say so), or the person changed the file after its projection; then the record
+                # stays, so --verify names the file whichever second dpkg and this hook ran in (ORDER 365: the
+                # record went when the racy rule made the package look changed, and --verify passed silently)
+                if owner not in sums:
+                    sums[owner] = md5sums(P, pkgs[owner][1])
+                if conf is None:
+                    conf = conffiles(P)
+                if md5(data) not in (sums[owner].get(path), conf.get(owner, {}).get(path)):
+                    continue
+            if owner in same_version:
                 again.add(path)      # (a package whose version changed is projected whole below)
         del files[path]
         dirty = True

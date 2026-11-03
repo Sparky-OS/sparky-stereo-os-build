@@ -32,6 +32,17 @@
   * Depends on apt: the fetch uses APT's apt-helper (before, apt-get and apt-cache were used undeclared).
   * A Multi-Arch: same package's .deb is read for its own architecture only: the twin's .deb of the other
     architecture in APT's cache was taken for it before (any NAME_VERSION_* name matched).
+  * The post-invoke hook gives the same records whichever second dpkg and the hook ran in (found by Opus in
+    ORDER 363's proofs: two runs of one case ended with different --verify output). A package whose file
+    list was written in the second packages.tsv was written in is looked at again (git's racy rule); then a
+    file the person changed after its projection lost its record, so --verify passed silently, and a
+    Multi-Arch: same instance's shared files were examined only when the twin holding their record looked
+    changed too, so a script dpkg put back in its package's bytes after a reinstall could stay so. Now a
+    file whose bytes are neither its projection nor dpkg's (its md5sums or conffile hash) keeps its record,
+    and --verify names it as changed after its projection; a changed instance's examination reads the
+    records its twin holds for the paths its file list shares; and a path recorded for this version is never
+    also "left" for the other instance (a person's edit of a shared conffile is named once, as CHANGED).
+    test/post-invoke-seconds-test.sh runs each case with the instance's row made racy and not.
   * Tests: test/restore-fetch-test.sh (a local server with snapshot's interface; no internet). The three
     tests that failed with 0.1.26 too are fixed: no-fallbacks-test.sh names the unpacked program's own
     journal catalogs (the problems engine forgets the problems of a package dpkg does not list and whose
