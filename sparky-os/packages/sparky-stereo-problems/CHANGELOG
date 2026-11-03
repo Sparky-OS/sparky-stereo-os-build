@@ -1,4 +1,16 @@
 -------------------------------------------------------------------------------
+  Version 0.1.2 (2026-11-03)
+-------------------------------------------------------------------------------
+  * Keep failures before a package is first unpacked. Remember observed package
+    presence and only collect stale records after it disappears; readers unable
+    to delete a record continue to list it. A dpkg post-invoke hook observes
+    completed installations and clears records after removal.
+  * Say a failed run from the record just kept, without invoking cleanup. Save
+    literal English or a package, step and exit-status explanation when a catalog
+    is not yet available. Add the generic messages in all nine languages.
+  * Serialize collection with keep and repair so it cannot remove a newer record.
+
+-------------------------------------------------------------------------------
   Version 0.1.1 (2026-11-02)
 -------------------------------------------------------------------------------
   * Keep post-removal repairs with --after-removal as engine-owned records, with the

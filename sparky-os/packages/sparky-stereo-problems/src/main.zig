@@ -392,9 +392,7 @@ fn runMain(ctx: *Ctx, argv: []const []const u8) !u8 {
             return e;
         };
         if (status != 0 and !p.quiet) {
-            for (try engine.collect(ctx, r.package)) |item| {
-                if (item.record) |k| if (item.scope == scope and std.mem.eql(u8, k.key, r.key)) try sayRecord(ctx, k);
-            }
+            if (ctx.last_kept) |kept| try sayRecord(ctx, kept);
         }
         journalNote(ctx);
         return @intCast(@min(@max(status, 0), 255));
