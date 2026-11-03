@@ -1,0 +1,25 @@
+# Commands that Debian installs under another name, because another package has the name (Debian Policy 10.1).
+# command-not-found names the package of each row, with the name to run, before the packages that have the
+# command under its own name ("first") or after them ("after"), as Debian's popularity contest ranks them.
+# Made by make-renamed.py from Debian forky's Contents, Packages and popularity contest and each source's own
+# README.Debian, NEWS or changelog (the file named per row).
+# Each row: the command, the package, the name it is installed as, first or after; the line above it names the
+# Debian text.
+# antlr 2.7.7+dfsg-14, debian/changelog
+antlr	antlr	runantlr	first
+# rust-bat 0.26.1+ds-1, debian/README.Debian
+bat	bat	batcat	first
+# cal 4.1-1, debian/README.Debian
+cal	ccal	ccal	after
+# iraf 2.18.2-4, debian/README.Debian
+cl	iraf	irafcl	first
+# rust-fd-find 10.5.0-1, debian/README.Debian
+fd	fd-find	fdfind	first
+# spline 1.2-6, debian/changelog
+spline	spline	aspline	after
+# task-spooler 1.0.3+dfsg1-2, debian/changelog
+ts	task-spooler	tsp	after
+# lam 7.1.4-8, debian/changelog
+wipe	lam-runtime	lamwipe	after
+# xsd 4.0.0-10, debian/README.Debian
+xsd	xsdcxx	xsdcxx	after
