@@ -1,4 +1,12 @@
 -------------------------------------------------------------------------------
+  Version 0.1.19 (2026-11-03)
+-------------------------------------------------------------------------------
+  * NVIDIA's 580 path installs NVIDIA's 580 user space from the edition's repository: NVIDIA publishes it for Debian only in its repository for Debian 12, whose key Debian 14's APT refuses, so the edition carries NVIDIA's own packages, their files byte for byte, at its 580 module's version, and the setup names nvidia-driver and libnvcuvid1 at that version (580.196.07-1+sparky2+lc1). Before (0.1.18, not published), the path stopped at its simulation because nothing apt reads had them (ORDER 354 milestone 2; Daniel, 2026-11-01: "why can't we have our own, if nvidia's is not compatible?")
+  * Where dpkg has i386 (dpkg --add-architecture i386, which Steam and 32-bit Wine need), both NVIDIA paths also install nvidia-driver-libs:i386 and libcuda1:i386 at the driver's version, NVIDIA's i386 OpenGL, Vulkan and CUDA libraries, which NVIDIA's amd64 packages recommend; they are named, so a downgrade or a reinstall brings them too. Before, 32-bit games got no NVIDIA OpenGL or Vulkan on either path. The dry run says so
+  * Recommends sparky-stereo-cuda-repo 20261103.1 or later, whose source reads NVIDIA's i386 libraries
+  * Supersedes 0.1.18, which was not published; its changes are in this version
+
+-------------------------------------------------------------------------------
   Version 0.1.18 (2026-11-02)
 -------------------------------------------------------------------------------
   * Maxwell, Pascal and Volta cards get NVIDIA's driver: NVIDIA's 580 branch, the last for them, with the edition's build of its kernel modules for the edition's kernels (nvidia-legacy-580xx-kernel-dkms) and its own driver lock (sparky-stereo-nvidia-legacy-580xx-driver-lock), picked by PCI ID from the "legacy_580.xx" table of NVIDIA's 615.71.09 README (share/nvidia-legacy-580xx.ids). Before, these cards got no driver offer and kept nouveau (ORDER 354; Daniel, 2026-11-01: "why can't we have our own, if nvidia's is not compatible?")

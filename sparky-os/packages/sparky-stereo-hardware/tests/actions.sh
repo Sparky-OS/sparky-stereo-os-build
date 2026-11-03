@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/02
+# Last update 2026/11/03
 set -euo pipefail
 [[ -e /.dockerenv ]] || exit 1
 HARDWARE_ACTIONS_FILE=${HARDWARE_ACTIONS:-/usr/lib/sparky-stereo-hardware/actions.sh}
@@ -78,7 +78,14 @@ installed_packages=
 apt-cache() { [[ ${missing_module:-0} == 0 ]] || return 1; printf '%s\n' 'Package: nvidia-kernel-open-dkms-stereo3d' "Version: ${module_version:-615.71.09-2+stereo3d4}"; }
 curl() { echo "curl $*" >>"$calls"; return 1; }
 dpkg-query() { [[ " $installed_packages " != *" ${*: -1} "* ]] || printf 'ii '; }
-dpkg() { echo "dpkg $*" >>"$calls"; [[ ${fail_purge:-0} == 0 ]]; }
+dpkg() {
+	if [[ $1 == --print-foreign-architectures ]]; then
+		[[ -z ${foreign:-} ]] || printf '%s\n' $foreign
+		return 0
+	fi
+	echo "dpkg $*" >>"$calls"
+	[[ ${fail_purge:-0} == 0 ]]
+}
 env() {
 	echo "$*" >>"$calls"
 	[[ $* != *"install $LOCK"* || ${fail_policy:-0} == 0 ]] || return 1
@@ -211,10 +218,12 @@ echo 'PASS laptop RTD3 requires a successful driver transaction and repeats with
 # index, the preflight and the exact driver, downgrades allowed (the image's 615 user space goes back to 580); no CUDA
 # repository package (CUDA 13 does not run on these cards) and no RTD3 (it needs Turing or newer), even with the plan's
 # laptop line still there from the case above.
-LEGACY_LINE="DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install --allow-downgrades nvidia-driver=580.196.07-1 $LEGACY_MODULE libnvcuvid1=580.196.07-1 nvidia-vaapi-driver"
-LEGACY_SIMULATE="DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests --allow-downgrades --simulate install nvidia-driver=580.196.07-1 $LEGACY_MODULE libnvcuvid1=580.196.07-1 nvidia-vaapi-driver"
+# The edition carries NVIDIA's 580 user space at the module's own version (milestone 2), so the driver is named at it.
+LEGACY_V=580.196.07-1+sparky2+lc1
+LEGACY_LINE="DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install --allow-downgrades nvidia-driver=$LEGACY_V $LEGACY_MODULE libnvcuvid1=$LEGACY_V nvidia-vaapi-driver"
+LEGACY_SIMULATE="DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests --allow-downgrades --simulate install nvidia-driver=$LEGACY_V $LEGACY_MODULE libnvcuvid1=$LEGACY_V nvidia-vaapi-driver"
 rm -f "$ROOT/etc/modprobe.d/sparky-stereo-nvidia-runtime-pm.conf" "$ROOT/etc/udev/rules.d/80-sparky-stereo-nvidia-runtime-pm.rules"
-module_version=580.196.07-1+sparky1+lc1
+module_version=$LEGACY_V
 : >"$calls"
 setup_nvidia legacy-580xx >"$T/log"
 lock_line=$(line_of "DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install $LEGACY_LOCK")
@@ -226,8 +235,30 @@ driver_line=$(line_of "$LEGACY_LINE")
 refute grep -Fq "$REPO" "$calls"
 refute grep -q "install $LOCK" "$calls"
 [[ ! -e "$ROOT/etc/modprobe.d/sparky-stereo-nvidia-runtime-pm.conf" ]]
-grep -Fq "NVIDIA 580.196.07-1 userspace and the edition's build of NVIDIA's 580 kernel modules installed" "$T/log"
-echo 'PASS NVIDIA 580: its lock first, then the index, the preflight and the exact driver with downgrades allowed; no CUDA repository, no RTD3'
+grep -Fq "NVIDIA $LEGACY_V userspace and the edition's build of NVIDIA's 580 kernel modules installed" "$T/log"
+refute grep -q ':i386' "$calls"
+echo 'PASS NVIDIA 580: its lock first, then the index, the preflight and the driver at the carried version with downgrades allowed; no CUDA repository, no RTD3, no i386 package without i386'
+# where dpkg has i386, NVIDIA's i386 libraries come at the same version, in the preflight and the transaction
+foreign=i386
+: >"$calls"
+setup_nvidia legacy-580xx >"$T/log"
+grep -Fxq "${LEGACY_SIMULATE} nvidia-driver-libs:i386=$LEGACY_V libcuda1:i386=$LEGACY_V" "$calls"
+grep -Fxq "${LEGACY_LINE} nvidia-driver-libs:i386=$LEGACY_V libcuda1:i386=$LEGACY_V" "$calls"
+grep -Fq "NVIDIA's i386 libraries $LEGACY_V installed" "$T/log"
+foreign='i386 arm64'
+: >"$calls"
+module_version=615.71.09-2+stereo3d4
+setup_nvidia >"$T/log"
+grep -Fxq "${DRIVER_LINE/ install / --simulate install } nvidia-driver-libs:i386=615.71.09-2 libcuda1:i386=615.71.09-2" "$calls"
+grep -Fxq "$DRIVER_LINE nvidia-driver-libs:i386=615.71.09-2 libcuda1:i386=615.71.09-2" "$calls"
+foreign=arm64
+: >"$calls"
+setup_nvidia >"$T/log"
+grep -Fxq "$DRIVER_LINE" "$calls"
+refute grep -q ':i386' "$calls"
+foreign=
+module_version=$LEGACY_V
+echo 'PASS NVIDIA i386: with i386 in dpkg, nvidia-driver-libs:i386 and libcuda1:i386 at the driver version on the 580 and the 615 path; none without i386'
 # its errors say that nouveau keeps the edition's HDMI 3D on these cards (LOCAL58), never LOCAL29's "without HDMI 3D"
 missing_module=1
 fails_with "NVIDIA: apt finds no $LEGACY_MODULE, the edition's build of NVIDIA's 580 driver" setup_nvidia legacy-580xx
@@ -239,7 +270,7 @@ for module_version in 580.196.07-1 580.196.07-1+lc1 580.196.07-1+stereo3d1+lc1; 
 	fails_with "NVIDIA: the module's version ${module_version//+/\\+} has no \\+sparkyN suffix" setup_nvidia legacy-580xx
 	refute grep -q 'install' "$calls"
 done
-module_version=580.196.07-1+sparky1+lc1
+module_version=$LEGACY_V
 fail_policy=1
 : >"$calls"
 fails_with "NVIDIA: $LEGACY_LOCK could not be installed" setup_nvidia legacy-580xx
@@ -248,7 +279,7 @@ grep -Fq "HDMI 3D at the card's boot clocks" "$T/out"
 fail_policy=0
 fail_preflight=1
 : >"$calls"
-fails_with "NVIDIA: apt cannot install NVIDIA's driver 580.196.07-1" setup_nvidia legacy-580xx
+fails_with "NVIDIA: apt cannot install NVIDIA's driver ${LEGACY_V//+/\\+} " setup_nvidia legacy-580xx
 grep -Fxq "dpkg --purge $LEGACY_LOCK" "$calls"
 refute grep -Fxq "$LEGACY_LINE" "$calls"
 grep -Fq "HDMI 3D at the card's boot clocks" "$T/out"

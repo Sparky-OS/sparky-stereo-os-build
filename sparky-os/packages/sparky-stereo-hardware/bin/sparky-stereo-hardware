@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/02
+# Last update 2026/11/03
 # Nothing is replaced by something else behind the person's back: a step that fails says what failed, why and what to do
 # (ERROR lines, a summary at the end, the same in a window when the menu started it) and the setup exits non-zero; another
 # path, nouveau instead of the edition's NVIDIA driver, is only the person's own choice (--nvidia nouveau, or the plan
@@ -130,6 +130,7 @@ if $dry; then
 			log "Would install sparky-stereo-nvidia-driver-lock and sparky-stereo-cuda-repo (NVIDIA's CUDA repository and its pins) first, the repository only where none is configured for NVIDIA's URI"
 			if [[ -n $nvidia_version ]]; then
 				log "Would install nvidia-driver=$nvidia_version nvidia-kernel-open-dkms-stereo3d libnvcuvid1=$nvidia_version nvidia-vaapi-driver by name"
+				! foreign_i386 || log "Would install nvidia-driver-libs:i386=$nvidia_version libcuda1:i386=$nvidia_version with them (dpkg has i386: NVIDIA's libraries for 32-bit programs)"
 			else
 				log "Would stop with an ERROR: the module's version has no +stereo3dN suffix, so the NVIDIA driver version it is built for is unknown"
 			fi
@@ -141,10 +142,13 @@ if $dry; then
 		elif ! module_info=$(apt-cache show --no-all-versions nvidia-legacy-580xx-kernel-dkms 2>/dev/null) || [[ -z $module_info ]]; then
 			log "Would stop with an ERROR: apt finds no nvidia-legacy-580xx-kernel-dkms, the edition's build of NVIDIA's 580 driver, in the configured repositories"
 		else
-			nvidia_version=$(nvidia_version_of "$(sed -n 's/^Version: //p' <<<"$module_info" | head -n1)" sparky)
+			module_version=$(sed -n 's/^Version: //p' <<<"$module_info" | head -n1)
+			nvidia_version=$(nvidia_version_of "$module_version" sparky)
 			log "Would install sparky-stereo-nvidia-legacy-580xx-driver-lock first"
 			if [[ -n $nvidia_version ]]; then
-				log "Would install nvidia-driver=$nvidia_version nvidia-legacy-580xx-kernel-dkms libnvcuvid1=$nvidia_version nvidia-vaapi-driver by name, downgrades allowed (a newer NVIDIA user space goes back to 580, and the open modules go)"
+				# the edition carries NVIDIA's 580 user space at the module's own version
+				log "Would install nvidia-driver=$module_version nvidia-legacy-580xx-kernel-dkms libnvcuvid1=$module_version nvidia-vaapi-driver by name, downgrades allowed (a newer NVIDIA user space goes back to 580, and the open modules go)"
+				! foreign_i386 || log "Would install nvidia-driver-libs:i386=$module_version libcuda1:i386=$module_version with them (dpkg has i386: NVIDIA's libraries for 32-bit programs)"
 			else
 				log "Would stop with an ERROR: the module's version has no +sparkyN suffix, so the NVIDIA driver version it is built for is unknown"
 			fi

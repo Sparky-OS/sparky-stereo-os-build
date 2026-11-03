@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/01
+# Last update 2026/11/03
 # Nothing here falls back to something else on its own: a step that cannot do what it is for says what failed, why and
 # what to do on an ERROR line and returns non-zero, and another path (nouveau for an NVIDIA card) is only ever the
 # person's own choice (Daniel, 2026-11-01: "either it works or not and the user must know").
@@ -261,20 +261,29 @@ purge_added() {
 	fi
 }
 
+# foreign_i386: dpkg installs i386 packages beside amd64 ones on this machine (dpkg --add-architecture i386, which Steam's
+# and Wine's 32-bit programs need)
+foreign_i386() {
+	dpkg --print-foreign-architectures 2>/dev/null | grep -qx i386
+}
+
 # setup_nvidia [open|legacy-580xx]: NVIDIA's driver for the plan's NVIDIA branch. open (the default): the edition's open
 # modules with HDMI 3D (Turing and newer) and NVIDIA's user space at their version; legacy-580xx: NVIDIA's 580 driver, the
 # last for Maxwell, Pascal and Volta, with the edition's build of its kernel modules. Each branch has its own driver lock,
-# installed first.
+# installed first. Where dpkg has i386, NVIDIA's i386 libraries come too, at the same version, for Steam's, Wine's and 32-bit
+# games' OpenGL, Vulkan and CUDA: nvidia-driver-libs:i386 and libcuda1:i386, which NVIDIA's amd64 nvidia-driver-libs and
+# libcuda1 recommend (named, so they come on a downgrade or a reinstall too, when apt adds no new recommendation).
 setup_nvidia() {
 	local branch=${1:-open}
 	local uri=developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64
-	local driver decoder nvidia_version found_version other package
+	local driver decoder nvidia_version userspace found_version other package
 	local module=nvidia-kernel-open-dkms-stereo3d suffix=stereo3d missing=40 unsuffixed=41 tail=
-	local -a policy=(sparky-stereo-nvidia-driver-lock sparky-stereo-cuda-repo) added=() stale=() options=()
+	local -a policy=(sparky-stereo-nvidia-driver-lock sparky-stereo-cuda-repo) added=() stale=() options=() i386=()
 	if [[ $branch == legacy-580xx ]]; then
 		# NVIDIA's CUDA repository for Debian 13 has no 580 driver and CUDA 13 does not run on these cards, so the branch
-		# needs only its lock; NVIDIA's 580 user space comes from the edition's repository. It replaces a newer NVIDIA user
-		# space (the image's 615) by the older 580, so apt is allowed to downgrade.
+		# needs only its lock; NVIDIA's 580 user space comes from the edition's repository, NVIDIA's own Debian 12 packages
+		# carried at the module's version. It replaces a newer NVIDIA user space (the image's 615) by the older 580, so apt
+		# is allowed to downgrade.
 		module=nvidia-legacy-580xx-kernel-dkms suffix=sparky missing=55@58 unsuffixed=56@58 tail=@58
 		policy=(sparky-stereo-nvidia-legacy-580xx-driver-lock)
 		options=(--allow-downgrades)
@@ -296,8 +305,15 @@ setup_nvidia() {
 		err "$unsuffixed" "$found_version"
 		return 1
 	fi
-	driver=nvidia-driver=$nvidia_version
-	decoder=libnvcuvid1=$nvidia_version
+	# the edition carries NVIDIA's 580 user space at its module's own version (580.196.07-1+sparky2+lc1); the 615 user space
+	# is NVIDIA's, at the NVIDIA version the open module is built for (615.71.09-2)
+	userspace=$nvidia_version
+	[[ $branch != legacy-580xx ]] || userspace=$found_version
+	driver=nvidia-driver=$userspace
+	decoder=libnvcuvid1=$userspace
+	if foreign_i386; then
+		i386=("nvidia-driver-libs:i386=$userspace" "libcuda1:i386=$userspace")
+	fi
 	# NVIDIA's CUDA repository comes from the edition's package sparky-stereo-cuda-repo (its source, NVIDIA's key and the
 	# edition's pins: CUDA updates, NVIDIA's driver stays at the module's version, Debian's own tools stay Debian's), with
 	# the driver lock it depends on. Both go in a transaction of their own, so the lock and the pins are in force before
@@ -326,21 +342,22 @@ setup_nvidia() {
 		err 57 "${stale[*]}"
 		return 1
 	fi
-	if ! run env DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests "${options[@]}" --simulate install "$driver" "$module" "$decoder" nvidia-vaapi-driver; then
+	if ! run env DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests "${options[@]}" --simulate install "$driver" "$module" "$decoder" nvidia-vaapi-driver "${i386[@]}"; then
 		purge_added "${added[@]}" || return 1
-		err "44$tail" "$nvidia_version"
+		err "44$tail" "$userspace"
 		return 1
 	fi
-	if ! apt_install "${options[@]}" "$driver" "$module" "$decoder" nvidia-vaapi-driver; then
+	if ! apt_install "${options[@]}" "$driver" "$module" "$decoder" nvidia-vaapi-driver "${i386[@]}"; then
 		err 45
 		return 1
 	fi
 	if [[ $branch == open ]] && grep -Fxq $'action\tnvidia-runtime-pm' "$WORK/plan"; then
 		setup_nvidia_runtime_pm || return 1
 	fi
+	((${#i386[@]} == 0)) || log "NVIDIA's i386 libraries $userspace installed, for 32-bit programs"
 	if [[ $branch == legacy-580xx ]]; then
-		log "NVIDIA $nvidia_version userspace and the edition's build of NVIDIA's 580 kernel modules installed; reboot required"
+		log "NVIDIA $userspace userspace and the edition's build of NVIDIA's 580 kernel modules installed; reboot required"
 	else
-		log "NVIDIA $nvidia_version userspace and edition open modules installed; reboot required"
+		log "NVIDIA $userspace userspace and edition open modules installed; reboot required"
 	fi
 }
