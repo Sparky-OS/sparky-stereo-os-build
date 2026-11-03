@@ -49,7 +49,8 @@
 # selected archives read-only. A missing image or a failed generator stops before DEST changes and says what to do.
 # SPARKY_APPSTREAM=0 publishes without them, says so, and removes earlier ones from DEST; any other value is refused.
 # SPARKY_APPSTREAM_MAX_BYTES (optional) bounds the generator's workspace.
-# Last update 2026/11/02 (AppStream catalogues, ORDER 252b; installability report, ORDER 317)
+# No zram and no zswap (ORDER 361): iso-build/zram-check.py refuses the selection before anything is copied or signed.
+# Last update 2026/11/03 (the zram and zswap gate, ORDER 361; AppStream catalogues, ORDER 252b; installability report, ORDER 317)
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -254,6 +255,12 @@ PY
 # This runs before copying or signing anything. Rebuild unmarked packages at a
 # new version; never stamp or alter a previously published .deb in place.
 PYTHONPATH="$HERE/..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release check-selection "$W/selection.tsv"
+
+# No zram and no zswap in anything published (Daniel, 2026-11-02: "do not compress or put anything to run from the RAM
+# regarding swap"; ORDER 361): every selected package, the ones already in DEST too, before anything is copied or
+# signed. A finding names the package, the file and the line, and stops the publication.
+awk -F'\t' '$5 != "source" { print $1 }' "$W/selection.tsv" >"$W/zram-debs.txt"
+python3 "$HERE/../iso-build/zram-check.py" --debs-file "$W/zram-debs.txt"
 
 # Link and start gate (ORDER 198): what check-selection proves is the archive bytes, not that
 # the programs run. Every package that is new to DEST and runs on this machine must resolve like
