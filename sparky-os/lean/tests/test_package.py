@@ -768,6 +768,22 @@ class Packages(unittest.TestCase):
         self.assertNotIn('lc-demo', package.installed(P))
         self.assertNotIn('lc-demo', client.dpkg_packages(P))
 
+    def test_lc1_markers_follow_the_installed_states(self):
+        """A marked package whose files are its version's own keeps its mark however dpkg left it: with its trigger
+        pending or awaited, deconfigured, on hold (ORDER 367); unpacked, it has not settled its conffiles yet."""
+        _, _, deb = self.build()
+        root, P = self.system()
+        self.dpkg(root, '-i', str(deb))
+        path = root / 'var/lib/dpkg/status'
+        status = path.read_text()
+        for state, counted in (('install ok triggers-pending', True), ('install ok triggers-awaited', True),
+                               ('install ok half-configured', True), ('hold ok installed', True),
+                               ('install ok unpacked', False), ('install ok half-installed', False)):
+            path.write_text(status.replace('Status: install ok installed', 'Status: ' + state))
+            self.assertEqual('lc-demo' in package.installed(P), counted, state)
+            self.assertEqual('lc-demo' in client.dpkg_packages(P), counted, state)
+        path.write_text(status)
+
     def plain_deb(self, name, files, conffiles=(), control='', version='1'):
         """A package of another distribution (no lc1 mark), with an md5sums of every file it ships."""
         tree = self.base / f'tree-{name}-{version}'

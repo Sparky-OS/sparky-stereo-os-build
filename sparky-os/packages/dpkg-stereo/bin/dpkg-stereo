@@ -59,32 +59,20 @@ Success"); every file stays its package's original or a checked projection eithe
 not compare a file with its package's .deb says so and exits 2, never clean.
 """
 
-import argparse
-import bisect
-import collections
-import datetime
 import fcntl
-import hashlib
 import io
-import json
-import lzma
 import os
-import re
-import shutil
 import stat
-import subprocess
 import sys
-import tarfile
-import tempfile
 import time
-import urllib.parse
-from concurrent.futures import ProcessPoolExecutor
 
 sys.path.insert(0, os.environ.get('DPKG_STEREO_LIB', '/usr/lib/dpkg-stereo'))
 
 
 class _Lazy:
-    """The lean package, imported the first time it is needed (dpkg's hooks usually need none of it)."""
+    """A module imported the first time it is needed. dpkg's hooks usually need none of these, and importing them all
+    cost each hook more than its own work did (ORDER 367: about 64 ms of a 111 ms hook that did nothing, Python 3.14
+    on a Ryzen 5 5600G; concurrent.futures alone brings logging, traceback and _colorize)."""
     def __init__(self, name):
         self.name = name
         self.mod = None
@@ -92,15 +80,34 @@ class _Lazy:
     def __getattr__(self, attr):
         if self.mod is None:
             import importlib
-            self.mod = importlib.import_module('lean.' + self.name if self.name else 'lean')
+            self.mod = importlib.import_module(self.name)
         return getattr(self.mod, attr)
 
 
-project = _Lazy('project')
-locate = _Lazy('locate')
-consumers = _Lazy('consumers')
-lean_pkg = _Lazy('')
-lc_package = _Lazy('package')
+project = _Lazy('lean.project')
+locate = _Lazy('lean.locate')
+consumers = _Lazy('lean.consumers')
+lean_pkg = _Lazy('lean')
+lc_package = _Lazy('lean.package')
+argparse = _Lazy('argparse')
+bisect = _Lazy('bisect')
+collections = _Lazy('collections')
+json = _Lazy('json')
+lzma = _Lazy('lzma')
+re = _Lazy('re')
+shutil = _Lazy('shutil')
+subprocess = _Lazy('subprocess')
+tarfile = _Lazy('tarfile')
+tempfile = _Lazy('tempfile')
+urllib_parse = _Lazy('urllib.parse')
+# SHA-256 and MD5 come from OpenSSL's binding, which takes about 3 ms to load, and a run that changes nothing reads no
+# file to hash; BLAKE2, which says whether dpkg's database changed, is CPython's own (Lib/hashlib.py takes blake2b
+# from _blake2, never from OpenSSL)
+hashlib = _Lazy('hashlib')
+try:
+    from _blake2 import blake2b
+except ImportError:
+    from hashlib import blake2b
 
 STATE = '/var/lib/dpkg-stereo'
 FILES = 'files.tsv'
@@ -250,6 +257,18 @@ def keep_problem(P, step, reason, detail='', repair=REPAIR, items=None, quiet=Fa
 
 
 def clear_problem(P, step):
+    """STEP succeeded: its kept problem goes. The engine keeps one record per file, PACKAGE_KEY.json in the machine's
+    store (its README, "Where problems are kept"), and its clear returns at once, doing nothing, when that file is not
+    there (src/engine.zig, clear and readRecord); so when it is not there the engine is not loaded (loading it took
+    about 6 ms of every dpkg hook, ORDER 367). Under pkexec the engine reads only the real root's store."""
+    if all(c.isascii() and (c.isalnum() or c in '_@:+-') for c in step):
+        root = '' if os.geteuid() == 0 and os.environ.get('PKEXEC_UID') is not None else P.root
+        try:
+            os.lstat(f'{root}/var/lib/sparky-stereo-problems/{TAG}_{step}.json')
+        except FileNotFoundError:
+            return True
+        except OSError:
+            pass
     e = engine(P)
     if e is None:
         return False
@@ -483,13 +502,9 @@ def _db_stanzas(f):
         yield rec
 
 
-def dpkg_db(P):
-    """dpkg's database as dpkg itself reads it: the status file, then every entry of its journal,
-    /var/lib/dpkg/updates, in order. dpkg writes each change to the journal first and folds the journal into
-    the status file only at a checkpoint, so inside a dpkg run (in a maintainer script) the status file alone
-    is out of date: on a first install, dpkg-stereo's postinst found packages configured earlier in the same
-    run still "unpacked" there (ORDER 315). {(package, architecture): fields}."""
-    db = {}
+def dpkg_db_files(P):
+    """The files of dpkg's database in the order dpkg reads them, [(path, bytes)]: the status file, then every entry of
+    its journal, /var/lib/dpkg/updates. A file that is not there is left out."""
     names = [P.real('/var/lib/dpkg/status')]
     updates = P.real('/var/lib/dpkg/updates')
     try:
@@ -497,26 +512,72 @@ def dpkg_db(P):
         names += [os.path.join(updates, n) for n in sorted(os.listdir(updates)) if n.isascii() and n.isdigit()]
     except FileNotFoundError:
         pass
+    files = []
     for name in names:
         try:
-            with open(name, encoding='utf-8', errors='surrogateescape') as f:
-                for rec in _db_stanzas(f):
-                    if 'Package' in rec:
-                        db[(rec['Package'], rec.get('Architecture', ''))] = rec
+            with open(name, 'rb') as f:
+                files.append((name, f.read()))
         except FileNotFoundError:
             pass
+    return files
+
+
+def db_digest(files):
+    """What dpkg's database holds, as one short digest of the bytes of its files (dpkg_db_files). dpkg writes the status
+    file again at the end of every run that opens it for writing, a run that changed nothing included
+    (lib/dpkg/dbmodify.c, modstatdb_shutdown and modstatdb_checkpoint), so its time says nothing; its bytes say whether
+    any package's version or state changed."""
+    h = blake2b(digest_size=16)
+    for name, data in files:
+        h.update(f'{os.path.basename(name)}\0{len(data)}\0'.encode('utf-8', 'surrogateescape'))
+        h.update(data)
+    return h.hexdigest()
+
+
+class Db(dict):
+    """dpkg's database, {(package, architecture): fields}, with `digest`, db_digest of the bytes it was read from."""
+    digest = None
+
+
+def dpkg_db(P, files=None):
+    """dpkg's database as dpkg itself reads it: the status file, then every entry of its journal,
+    /var/lib/dpkg/updates, in order. dpkg writes each change to the journal first and folds the journal into
+    the status file only at a checkpoint, so inside a dpkg run (in a maintainer script) the status file alone
+    is out of date: on a first install, dpkg-stereo's postinst found packages configured earlier in the same
+    run still "unpacked" there (ORDER 315). {(package, architecture): fields}; FILES, dpkg_db_files read once
+    already, when the caller has them."""
+    files = dpkg_db_files(P) if files is None else files
+    db = Db()
+    db.digest = db_digest(files)
+    for _, data in files:
+        with io.TextIOWrapper(io.BytesIO(data), encoding='utf-8', errors='surrogateescape') as f:
+            for rec in _db_stanzas(f):
+                if 'Package' in rec:
+                    db[(rec['Package'], rec.get('Architecture', ''))] = rec
     return db
 
 
+# The states whose files are the package version's own, configured or past its conffiles (dpkg(1), "Package states"):
+# "installed"; "triggers-pending" (the package has been triggered) and "triggers-awaited" (it awaits another package's
+# trigger processing), which a run with --no-triggers leaves until a later run processes them, as apt's runs leave
+# systemd after any package ships a file in /usr/lib/systemd/catalog; and "half-configured" (configuration started:
+# dpkg settled the conffiles when it left "unpacked", src/main/configure.c, and a package another one's unpack
+# deconfigured, --auto-deconfigure, is in it until it is configured again). 0.1.28 and older counted only
+# "installed": such a package looked removed, its records went, and its lean files stayed unrecorded (ORDER 367: on the
+# lane's lean image 313 of systemd's 320 projected files after one `dpkg --no-triggers -i`).
+INSTALLED_STATES = ('installed', 'triggers-pending', 'triggers-awaited', 'half-configured')
+
+
 def _installed(P, db):
-    """(name, fields) of each installed package in dpkg's database, named as its file list is: package:arch
-    for a Multi-Arch: same package or one whose list carries the architecture, the package alone otherwise."""
+    """(name, fields) of each installed package in dpkg's database (INSTALLED_STATES), named as its file list is:
+    package:arch for a Multi-Arch: same package or one whose list carries the architecture, the package alone
+    otherwise."""
     try:
         lists = set(os.listdir(P.real('/var/lib/dpkg/info')))
     except FileNotFoundError:
         lists = set()
     for (pkg, arch), rec in (dpkg_db(P) if db is None else db).items():
-        if not rec.get('Status', '').endswith(' installed'):
+        if rec.get('Status', '').rsplit(' ', 1)[-1] not in INSTALLED_STATES:
             continue
         name = pkg
         if rec.get('Multi-Arch') == 'same' or f'{pkg}:{arch}.list' in lists:
@@ -524,9 +585,18 @@ def _installed(P, db):
         yield name, rec
 
 
+class Installed(dict):
+    """{package: (version, arch-qualified info name)}, with `digest`, the digest of the dpkg database they were read
+    from (None when that is not known)."""
+    digest = None
+
+
 def dpkg_packages(P, db=None):
     """{package: (version, arch-qualified info name)} of the installed packages, from dpkg's database."""
-    return {name: (rec.get('Version'), name) for name, rec in _installed(P, db)}
+    db = dpkg_db(P) if db is None else db
+    pkgs = Installed((name, (rec.get('Version'), name)) for name, rec in _installed(P, db))
+    pkgs.digest = getattr(db, 'digest', None)
+    return pkgs
 
 
 def twins(name, pkgs):
@@ -755,12 +825,13 @@ PROGRESS_SECONDS = 60      # and a line at least this often (some headers take G
 
 
 def project_packages(P, names, jobs, image=False, log=print, only=None, known=None, repair=True, record=True,
-                     progress=None):
+                     progress=None, db=None):
     """Project the installed files of these packages (every installed package without names). With `only`,
     just those paths. `record=False` leaves packages.tsv as it is: a migration inside a dpkg run must not mark
     the packages that run changed as seen, or post-invoke would never project them. `progress` gets a line
-    every PROGRESS_EVERY files, and at least every PROGRESS_SECONDS."""
-    db = dpkg_db(P)
+    every PROGRESS_EVERY files, and at least every PROGRESS_SECONDS. `db`: dpkg's database, when the caller read it
+    already (post-invoke: a dpkg run is over when its hook runs, so it is the same)."""
+    db = dpkg_db(P) if db is None else db
     if repair:
         repair_consumers(P, jobs, pkgs=dpkg_packages(P, db))
     pkgs = dpkg_packages(P, db)
@@ -833,7 +904,10 @@ def project_packages(P, names, jobs, image=False, log=print, only=None, known=No
     done = skipped = same = 0
     pys = []
     # a handful of files (a package or two after an upgrade) is quicker in this process than in a pool
-    pool = ProcessPoolExecutor(max_workers=jobs) if len(tasks) > 200 and jobs > 1 else None
+    pool = None
+    if len(tasks) > 200 and jobs > 1:
+        from concurrent.futures import ProcessPoolExecutor
+        pool = ProcessPoolExecutor(max_workers=jobs)
     results = pool.map(_work, tasks, chunksize=16) if pool else map(_work, tasks)
     if progress and tasks:
         progress(f'dpkg-stereo: projecting and checking {len(tasks)} files')
@@ -914,7 +988,7 @@ def project_packages(P, names, jobs, image=False, log=print, only=None, known=No
         except FileNotFoundError:
             pass
     if record:
-        write_packages(P)
+        write_packages(P, everything)
     with open(P.state('identity'), 'w') as f:
         f.write(project.IDENTITY + '\n')
     log(f'dpkg-stereo: {done} files projected ({same} of them already checked in these bytes), {skipped} left '
@@ -946,13 +1020,96 @@ def list_mtime(P, info):
         return ''
 
 
+# packages.tsv's second header line: what dpkg's database and its file lists were when the table was written (0.1.29)
+SEEN = '#seen'
+SEEN_COLS = ('db', 'info', 'written', 'newest', 'rows')
+
+
+def rows_digest(lines):
+    return blake2b(''.join(lines).encode('utf-8', 'surrogateescape'), digest_size=16).hexdigest()
+
+
+def info_mtime(P):
+    """The time of dpkg's info directory, in nanoseconds: dpkg writes every file list through a new file renamed over
+    the old one (lib/dpkg/db-fsys-files.c, write_filelist_except, with atomic_file_commit), and unpacks a package's
+    control files into it the same way, so a list dpkg rewrote changes the directory's time."""
+    try:
+        return str(os.stat(P.real('/var/lib/dpkg/info')).st_mtime_ns)
+    except FileNotFoundError:
+        return ''
+
+
 def write_packages(P, pkgs=None):
+    """packages.tsv: each installed package's version and the time of its file list, and in its second header line the
+    digest of the dpkg database those rows come from (when PKGS carries it), the time of dpkg's info directory, the
+    second it was written in, the newest file list's second and the digest of its rows."""
     pkgs = pkgs if pkgs is not None else dpkg_packages(P)
     rows = {k: {'package': k, 'version': v[0], 'list_mtime': list_mtime(P, v[1])} for k, v in pkgs.items()}
+    info = info_mtime(P)
     written = str(int(time.time()))
-    for row in rows.values():
-        row['written'] = written
-    write_table(P.state(PKGS), PKG_COLS, rows)
+    lines = []
+    for k in sorted(rows):
+        rows[k]['written'] = written
+        lines.append('\t'.join(str(rows[k].get(c, '')) for c in PKG_COLS) + '\n')
+    path = P.state(PKGS)
+    with open(path + '.new', 'w', encoding='utf-8', errors='surrogateescape') as f:
+        f.write('#' + '\t'.join(PKG_COLS) + '\n')
+        digest = getattr(pkgs, 'digest', None)
+        if digest:
+            newest = max((int(r['list_mtime']) for r in rows.values() if r['list_mtime'].isdigit()), default=0)
+            f.write('\t'.join((SEEN, digest, info, written, str(newest), rows_digest(lines))) + '\n')
+        f.writelines(lines)
+    os.replace(path + '.new', path)
+
+
+def read_packages(P):
+    """packages.tsv as write_packages left it: its rows, and what its second header line says was seen when they were
+    written ({db, info, written, newest, rows}), or None when the table has no such line (0.1.28 and older wrote none)
+    or its rows are no longer the ones it was written with."""
+    rows, lines, seen = {}, [], None
+    try:
+        with open(P.state(PKGS), encoding='utf-8', errors='surrogateescape') as f:
+            for line in f:
+                if line.startswith(SEEN + '\t'):
+                    seen = dict(zip(SEEN_COLS, line.rstrip('\n').split('\t')[1:]))
+                    continue
+                if line.startswith('#') or not line.strip():
+                    continue
+                lines.append(line)
+                v = line.rstrip('\n').split('\t')
+                rows[v[0]] = ({'package': v[0], 'version': v[1], 'list_mtime': v[2], 'written': v[3]} if len(v) == 4
+                              else dict(zip(PKG_COLS, v)))
+    except FileNotFoundError:
+        pass
+    if seen is not None and seen.get('rows') != rows_digest(lines):
+        seen = None
+    return rows, seen
+
+
+def as_seen(P, seen, digest):
+    """Whether dpkg changed nothing since packages.tsv was written: its database holds the same bytes (so every
+    package has the version and the state the rows record), its info directory has the same time (so no file list was
+    written again: a reinstall of the same version leaves the database as it was, and rewrites the list), neither that
+    time nor any row's list is in the second the table was written in (git's racy rule, as racy(): the newest list's
+    second is in the line, and the rows are the ones it was written with)."""
+    if not seen or not digest or seen.get('db') != digest or not seen.get('info') or seen['info'] != info_mtime(P):
+        return False
+    try:
+        written = int(seen.get('written') or 0)
+        return int(seen['info']) // 1000000000 < written and int(seen.get('newest') or written) < written
+    except ValueError:
+        return False
+
+
+def size_may_be(real, size):
+    """Whether the file at REAL may hold bytes of SIZE (a record's bytes_orig or bytes_lean): a file of another size
+    cannot hash to them, so it is not read. A record without the size, and a file that cannot be looked at, may."""
+    try:
+        return os.stat(real).st_size == int(size)
+    except (TypeError, ValueError):
+        return True
+    except OSError:
+        return True
 
 
 def racy(row):
@@ -984,14 +1141,35 @@ def read_hold(P):
         return []
 
 
-def pre_invoke(P):
+def configurable(P, names):
+    """Of NAMES, the packages dpkg's database does not show installed: the ones a configure run may configure. When the
+    database holds the bytes packages.tsv was written from, its rows are the installed packages, and the database's
+    fields are not read."""
+    recorded, seen = read_packages(P)
+    db_files = dpkg_db_files(P)
+    if seen and seen.get('db') == db_digest(db_files):
+        installed = recorded
+    else:
+        installed = dpkg_packages(P, dpkg_db(P, db_files))
+    return {n for n in names if n not in installed}
+
+
+def pre_invoke(P, action=None):
     """Projected conffiles still in their lean form go back to their pristine bytes, so dpkg finds them
     unmodified; a conffile the person edited (its bytes are no longer the lean ones) is left alone.
     dpkg runs this hook before it takes its lock, so a dpkg started while another one runs gets here, then
     stops at the lock and never runs post-invoke: the list for post-invoke is added to, never replaced,
-    and what a stopped run restored is projected again by the next post-invoke."""
+    and what a stopped run restored is projected again by the next post-invoke.
+
+    ACTION is dpkg's DPKG_HOOK_ACTION. A configure run compares the conffiles of the packages it configures, and only
+    of those still unpacked (src/main/configure.c, deferred_configure: an installed package is "already installed and
+    configured", a half-configured one had its conffiles settled before), so for `dpkg --configure` only the conffiles
+    of the packages dpkg's database does not show installed go back (0.1.29, ORDER 367); an unpack or an install
+    compares those of the packages it unpacks (src/main/unpack.c and archives.c, md5hash), which no hook is told, so
+    every lean one goes back, as before."""
     _migrate(P)
     files = read_table(P.state(CONFFILES), FILE_COLS)
+    only = configurable(P, {rec['package'] for rec in files.values()}) if action == 'configure' and files else None
     n = 0
     try:
         with open(P.state('restored-for-dpkg'), encoding='utf-8', errors='surrogateescape') as f:
@@ -1000,9 +1178,11 @@ def pre_invoke(P):
         restored = []
     listed = set(restored)
     for path, rec in files.items():
-        if rec.get('conffile') != '1':
+        if rec.get('conffile') != '1' or (only is not None and rec['package'] not in only):
             continue
         real = P.real(path)
+        if not size_may_be(real, rec.get('bytes_lean')):
+            continue                 # not the lean form's size: the person's edit, or already its package's bytes
         try:
             with open(real, 'rb') as f:
                 data = f.read()
@@ -1029,16 +1209,29 @@ def post_invoke(P, jobs):
     """After dpkg: the packages it installed, upgraded or reinstalled (their version or their file list
     changed) are projected again; the conffiles pre-invoke restored for it, and any recorded conffile found
     in its package's bytes, are projected again (the same render as before, so no new check); records of
-    removed packages go. Beyond the conffiles, nothing else is read."""
+    removed packages go. Beyond the conffiles, nothing else is read.
+
+    A run in which dpkg changed nothing (its database holds the bytes packages.tsv was written from, and no file list
+    was written again: as_seen) reads neither the database's fields nor any package's file list: the rows of
+    packages.tsv are the installed packages, and no package changed (0.1.29, ORDER 367)."""
     _migrate(P)
-    pkgs = dpkg_packages(P)
+    recorded, seen = read_packages(P)
+    db_files = dpkg_db_files(P)
+    digest = db_digest(db_files)
+    unchanged = as_seen(P, seen, digest)
+    if unchanged:
+        pkgs = Installed((k, (v.get('version'), k)) for k, v in recorded.items())
+        pkgs.digest = digest
+        db = None
+    else:
+        db = dpkg_db(P, db_files)
+        pkgs = dpkg_packages(P, db)
     repair_consumers(P, jobs, pkgs=pkgs)
-    recorded = read_table(P.state(PKGS), PKG_COLS)
-    changed = sorted(k for k, v in pkgs.items()
-                     if recorded.get(k, {}).get('version') != v[0]
-                     or recorded.get(k, {}).get('list_mtime') != list_mtime(P, v[1])
-                     or racy(recorded.get(k, {})))
-    gone = {k for k in recorded if k not in pkgs}
+    changed = [] if unchanged else sorted(k for k, v in pkgs.items()
+                                          if recorded.get(k, {}).get('version') != v[0]
+                                          or recorded.get(k, {}).get('list_mtime') != list_mtime(P, v[1])
+                                          or racy(recorded.get(k, {})))
+    gone = set() if unchanged else {k for k in recorded if k not in pkgs}
     ch = set(changed)
     try:
         with open(P.state('restored-for-dpkg'), encoding='utf-8', errors='surrogateescape') as f:
@@ -1052,6 +1245,8 @@ def post_invoke(P, jobs):
     for path, rec in conf_idx.items():
         if rec.get('conffile') != '1' or rec['package'] in ch or path in listed:
             continue
+        if not size_may_be(P.real(path), rec.get('bytes_orig')):
+            continue                 # not the original's size: the projection, or the person's edit
         try:
             with open(P.real(path), 'rb') as f:
                 if sha256(f.read()) == rec['sha_orig']:
@@ -1122,7 +1317,7 @@ def post_invoke(P, jobs):
                 if owner not in sums:
                     sums[owner] = md5sums(P, pkgs[owner][1])
                 if conf is None:
-                    conf = conffiles(P)
+                    conf = conffiles(P, db)
                 if md5(data) not in (sums[owner].get(path), conf.get(owner, {}).get(path)):
                     continue
             if owner in same_version:
@@ -1163,10 +1358,12 @@ def post_invoke(P, jobs):
     full = sorted(ch - same_version)
     # repair_consumers ran at the start of this hook: once per dpkg run is enough
     if full:
-        project_packages(P, full, jobs, log=lambda m: None, known=known, repair=False)
+        project_packages(P, full, jobs, log=lambda m: None, known=known, repair=False, db=db)
     if again:
-        project_packages(P, sorted(same_version), jobs, log=lambda m: None, only=again, known=known, repair=False)
-    if not full and not again and (gone or ch):
+        project_packages(P, sorted(same_version), jobs, log=lambda m: None, only=again, known=known, repair=False,
+                         db=db)
+    if not full and not again and not unchanged:
+        # what this run saw, so the next run that finds dpkg's database and lists as they are now reads neither
         write_packages(P, pkgs)
 
 
@@ -1453,7 +1650,7 @@ def snapshot_deb(P, name, version, arch):
     when its own SHA-1 is that one and its control file names this package, version and architecture. (path, None),
     or (None, (kind, why)): kind 'unreachable' (no answer, or an answer that is not the interface's), 'missing' (no
     such version for this architecture) or 'refused' (a file that is not the one asked for)."""
-    q = lambda s: urllib.parse.quote(s, safe='')
+    q = lambda s: urllib_parse.quote(s, safe='')
     work = partial_dir(P)
     api = f'{SNAPSHOT}/mr/binary/{q(name)}/{q(version)}/binfiles?fileinfo=1'
     meta = os.path.join(work, f'dpkg-stereo.{os.getpid()}.json')
@@ -2771,7 +2968,42 @@ def notify(P):
     return subprocess.run(['systemctl', '--user', 'start', 'sparky-stereo-problems-notifier.service']).returncode
 
 
+def hook(P, pre, jobs=4):
+    """dpkg's pre-invoke (PRE) or post-invoke hook. A hook never stops dpkg (dpkg ends its run with "cannot execute
+    hook" when one fails): what goes wrong is said, kept with its evidence for --repair, and dpkg goes on with every file
+    its package's original or a checked projection."""
+    if os.environ.get('DPKG_STEREO_DISABLE'):
+        return 0      # an image build turns the hooks off until its own Lean Code step
+    step = 'pre-invoke' if pre else 'post-invoke'
+    try:
+        with Lock(P):
+            if pre:
+                # a removal or a purge removes conffiles without comparing them (src/main/remove.c has no
+                # md5hash), and the others touch none
+                action = os.environ.get('DPKG_HOOK_ACTION', '')
+                if action not in ('triggers-only', 'remove', 'purge', 'add-architecture', 'remove-architecture'):
+                    pre_invoke(P, action)
+            else:
+                post_invoke(P, jobs)
+        clear_problem(P, step)
+    except Exception as e:
+        detail = error_detail()
+        try:
+            with open(P.state('error.log'), 'a', encoding='utf-8') as f:
+                f.write(time.strftime('%Y-%m-%d %H:%M:%S ') + step + '\n' + detail)
+        except OSError as error:
+            print(f'{TAG}: {P.state("error.log")}: {error}', file=sys.stderr)
+        keep_problem(P, step, error_line(e), detail=detail)
+        say('LOCAL11')
+    return 0
+
+
 def main():
+    if sys.argv[1:] in (['--pre-invoke'], ['--post-invoke']):
+        # dpkg's hooks, exactly as /etc/dpkg/dpkg.cfg.d/dpkg-stereo runs them, at every dpkg run: no option to parse
+        # (argparse alone took about 7 ms of a hook's start, ORDER 367)
+        sys.stdout.reconfigure(line_buffering=True)
+        return hook(Paths('/'), sys.argv[1] == '--pre-invoke')
     ap = argparse.ArgumentParser(prog='dpkg-stereo', description=__doc__.split('\n\n')[0])
     ap.add_argument('--root', default='/')
     ap.add_argument('--map', action='append', default=[], help='/etc=DIR: where an image folder really is')
@@ -2807,8 +3039,6 @@ def main():
     # every line as it is written, even through a pipe: apt shows a long migration as it goes (ORDER 315)
     sys.stdout.reconfigure(line_buffering=True)
     P = Paths(a.root, [m.split('=', 1) for m in a.map])
-    if (a.pre_invoke or a.post_invoke) and os.environ.get('DPKG_STEREO_DISABLE'):
-        return 0      # an image build turns the hooks off until its own Lean Code step
     # the reading commands need no lock, and a person's session may run them
     if a.status:
         return status(P)
@@ -2821,29 +3051,7 @@ def main():
     if a.resolve_render:
         return resolve(P, a.resolve_render, by_render=True)
     if a.pre_invoke or a.post_invoke:
-        # A hook never stops dpkg (dpkg ends its run with "cannot execute hook" when one fails): what goes wrong is
-        # said, kept with its evidence for --repair, and dpkg goes on with every file its package's original or a
-        # checked projection.
-        step = 'pre-invoke' if a.pre_invoke else 'post-invoke'
-        try:
-            with Lock(P):
-                if a.pre_invoke:
-                    if os.environ.get('DPKG_HOOK_ACTION', '') not in ('triggers-only', 'remove', 'add-architecture',
-                                                                      'remove-architecture'):
-                        pre_invoke(P)
-                else:
-                    post_invoke(P, a.jobs)
-            clear_problem(P, step)
-        except Exception as e:
-            detail = error_detail()
-            try:
-                with open(P.state('error.log'), 'a', encoding='utf-8') as f:
-                    f.write(time.strftime('%Y-%m-%d %H:%M:%S ') + step + '\n' + detail)
-            except OSError as error:
-                print(f'{TAG}: {P.state("error.log")}: {error}', file=sys.stderr)
-            keep_problem(P, step, error_line(e), detail=detail)
-            say('LOCAL11')
-        return 0
+        return hook(P, a.pre_invoke, a.jobs)
     if a.dismiss:
         # the engine's Hide is the person's own: no lock, no administrator
         return dismiss(P, a.dismiss)
