@@ -13,8 +13,9 @@
     confirmation). GRUB looks for the certificate on the partition, by its UUID, when it reads the menu, so the entry
     appears as soon as DKMS has made the key, with no update-grub; update-grub runs once on the upgrade, for the entry
   * sparky-stereo-boot-dkms-key.path places the certificate when DKMS makes or changes the key (the installed
-    system's first boot signs the modules its image built unsigned, dkms 3.4.4-1+sparky4), through
-    sparky-stereo-boot-secureboot.service, which also runs at every boot
+    system's first boot signs the modules its image built unsigned, dkms 3.4.4-1+sparky4), and checks the
+    enrolment again when the running kernel's modules.dep is written (depmod, after DKMS installs the modules it
+    signed), through sparky-stereo-boot-secureboot.service, which also runs at every boot
   * Under Secure Boot, a DKMS key that is not in shim's MOK list while DKMS modules signed with it are installed for
     the running kernel is said and kept, naming the GRUB entry that enrolls it (no silent fallbacks, Daniel,
     2026-11-01: "either it works or not and the user must know"); it clears at the first boot after the enrolment

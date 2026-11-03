@@ -34,7 +34,7 @@ Under Secure Boot the menu first asks shim about the newest kernel; when shim re
 This computer's DKMS key follows the same design.
 DKMS signs the modules it builds here (NVIDIA's open modules among them) with this computer's own key, which it makes the first time it signs (/var/lib/dkms/mok.pub, or mok_certificate in /etc/dkms/framework.conf); the installed system's first boot signs the modules its image carries unsigned (dkms's dkms-sign-unsigned.service).
 Secure Boot loads them only once that key is in the MOK list too, and no package enrolls it (Debian #1076269).
-So its certificate is kept next to every shim as dkms-this-computer.der (removed there when the computer has no DKMS key), by the same steps that keep the edition's, and when DKMS makes or changes the key (sparky-stereo-boot-dkms-key.path).
+So its certificate is kept next to every shim as dkms-this-computer.der (removed there when the computer has no DKMS key), by the same steps that keep the edition's, and when DKMS makes or changes the key (sparky-stereo-boot-dkms-key.path, which also checks the enrolment again when depmod writes the running kernel's modules.dep after DKMS installed modules it signed).
 GRUB's menu has "Secure Boot: enroll this computer's DKMS key", with the steps in the nine languages, as soon as the certificate is on the partition: GRUB looks for it there when it reads the menu.
 Under Secure Boot, a DKMS key that is not enrolled while modules signed with it are installed for the running kernel is said at every boot and kept, naming that entry, until it is enrolled (sparky-stereo-boot-secureboot.service).
 

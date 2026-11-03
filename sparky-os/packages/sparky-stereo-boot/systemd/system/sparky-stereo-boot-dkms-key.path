@@ -1,9 +1,13 @@
 [Unit]
-Description=Sparky Stereo OS: DKMS made or changed this computer's key
+Description=Sparky Stereo OS: DKMS made or changed this computer's key, or the running kernel's modules changed
 Documentation=file:/usr/share/doc/sparky-stereo-boot/README.md
 
 [Path]
+# the key, as DKMS makes it the first time it signs (the certificate goes beside shim), and the running kernel's
+# module list (%v, systemd.unit(5) specifiers), which depmod writes again after DKMS installs modules it signed: the
+# enrolment check then sees them
 PathChanged=/var/lib/dkms/mok.pub
+PathChanged=/lib/modules/%v/modules.dep
 Unit=sparky-stereo-boot-secureboot.service
 
 [Install]
