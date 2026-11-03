@@ -37,8 +37,9 @@ for code,d in sorted(texts.items()): desktop+=f'Comment[{code}]={d["categories"]
 (root/'usr/share/applications/sparky-aptus-stereo-appcenter.desktop').write_text(desktop)
 policy='<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN" "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">\n<policyconfig>\n'
 for key,path,gui in [('launch','/usr/bin/sparky-aptus-stereo-appcenter',True),('zram','/usr/lib/sparky-aptus-stereo-appcenter/actions/zram',False),('entry','/usr/lib/sparky-aptus-stereo-appcenter/actions/entry',False)]:
-    policy+=f'<action id="org.sparkylinux.sparkystereo.aptus.{key}"><description>Stereo APTus</description><message>{escape(texts["en"]["authorization"])}</message>'
-    for code,d in sorted(texts.items()): policy+=f'<message xml:lang="{code}">{escape(d["authorization"])}</message>'
+    authorization = "authorization" if key == "zram" else "entry_authorization"
+    policy+=f'<action id="org.sparkylinux.sparkystereo.aptus.{key}"><description>Stereo APTus</description><message>{escape(texts["en"][authorization])}</message>'
+    for code,d in sorted(texts.items()): policy+=f'<message xml:lang="{code}">{escape(d[authorization])}</message>'
     policy+='<defaults><allow_any>no</allow_any><allow_inactive>auth_admin</allow_inactive><allow_active>auth_admin</allow_active></defaults>'
     policy+=f'<annotate key="org.freedesktop.policykit.exec.path">{path}</annotate>'
     if gui: policy+='<annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>'
