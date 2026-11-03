@@ -28,3 +28,5 @@ class GateInputs(TestCase):
             self.assertEqual(check.call_args.kwargs['siblings'], ['/cohort/engine.deb'])
             self.assertEqual(check.call_args.kwargs['previous_siblings'], ['/published/engine.deb'])
             self.assertEqual(check.call_args.kwargs['root_min_free_gib'], 15)
+            self.assertIs(type(check.call_args.kwargs['root_min_free_gib']), int)
+            self.assertIs(type(check.call_args.kwargs['min_free_gib']), int)
