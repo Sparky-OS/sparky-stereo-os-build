@@ -27,9 +27,13 @@ while (($#)); do
 		--fixture) shift; fixture=${1:?Missing fixture directory} ;;
 		--rig-driver) shift; rig_driver=${1:?Missing rig driver package} ;;
 		--nvidia) shift; nvidia_choice=${1:?Missing NVIDIA choice: edition or nouveau} ;;
-		--help) echo 'sparky-stereo-hardware [--auto] [--dry-run] [--fixture DIRECTORY] [--rig-driver PACKAGE] [--nvidia edition|nouveau]'
+		# NVIDIA's i386 libraries at the installed driver's version, for i386 enabled after the driver (the Repair of the
+		# problem dpkg's hook keeps; ORDER 363)
+		--nvidia-i386) exec "$LIB/nvidia-i386" install ;;
+		--help) echo 'sparky-stereo-hardware [--auto] [--dry-run] [--fixture DIRECTORY] [--rig-driver PACKAGE] [--nvidia edition|nouveau] [--nvidia-i386]'
 			echo '  --nvidia edition (the default): the edition'"'"'s NVIDIA driver for the card: its open modules with HDMI 3D on Turing and newer, NVIDIA'"'"'s 580 driver on Maxwell, Pascal and Volta'
 			echo '  --nvidia nouveau: keep nouveau'
+			echo '  --nvidia-i386: only NVIDIA'"'"'s 32-bit libraries (nvidia-driver-libs:i386, libcuda1:i386) at the installed driver'"'"'s version, where dpkg has i386'
 			exit 0 ;;
 		*) echo "Unknown option: $1" >&2; exit 2 ;;
 	esac

@@ -1,0 +1,106 @@
+#!/bin/bash
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/03
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/11/03
+# NVIDIA's i386 libraries for 32-bit programs (Steam, Wine and 32-bit games): nvidia-driver-libs:i386 and libcuda1:i386
+# at the version of NVIDIA's driver installed for amd64. Hardware Setup installs them with the driver where dpkg has i386;
+# this covers i386 enabled later (ORDER 363; Daniel, 2026-11-01: "either it works or not and the user must know").
+#   check    after every dpkg run (dpkg's post-invoke hook, /etc/dpkg/dpkg.cfg.d/sparky-stereo-hardware), among them
+#            dpkg --add-architecture i386: where they are missing, the edition's engine keeps the problem (its notifier
+#            shows it at login, its Repair runs install) and the terminal is told the first time; where they are there, or
+#            dpkg has no i386, or no NVIDIA driver is installed, the problem is cleared. A dpkg hook cannot install them:
+#            dpkg, and apt above it, hold their locks until the run ends.
+#   install  installs them at the driver's version, after apt-get update (the i386 indices arrive with it after
+#            dpkg --add-architecture), then checks again (sparky-stereo-hardware --nvidia-i386 runs this)
+set -uo pipefail
+PKG=sparky-stereo-hardware
+KEY=nvidia-i386
+REPAIR='["sparky-stereo-hardware","--nvidia-i386"]'
+STORE=${SPARKY_STEREO_ROOT:-}/var/lib/sparky-stereo-problems
+# "ii VERSION" of an installed package, nothing for one that is not installed
+installed() {
+	dpkg-query -W -f '${db:Status-Abbrev}\t${Version}\n' "$1" 2>/dev/null | awk -F'\t' '$1 ~ /^ii/ { print $2; exit }'
+}
+has_i386() {
+	dpkg --print-foreign-architectures 2>/dev/null | grep -qx i386
+}
+# the NVIDIA libraries for i386 that are not installed at VERSION, space-separated
+missing() {
+	local p out=()
+	for p in nvidia-driver-libs:i386 libcuda1:i386; do
+		[[ $(installed "$p") == "$1" ]] || out+=("$p")
+	done
+	printf '%s\n' "${out[*]}"
+}
+clear_problem() {
+	sparky-stereo-problems clear "$PKG" "$KEY" >/dev/null 2>&1 || true
+}
+check() {
+	local version need first=false
+	version=$(installed nvidia-driver-libs:amd64)
+	if [[ -z $version ]] || ! has_i386; then
+		clear_problem
+		return 0
+	fi
+	need=$(missing "$version")
+	if [[ -z $need ]]; then
+		clear_problem
+		return 0
+	fi
+	[[ -e $STORE/${PKG}_$KEY.json ]] || first=true
+	if ! sparky-stereo-problems keep --repair "$REPAIR" "$PKG" "$KEY" LOCAL5 "$version" "$need" >/dev/null 2>&1; then
+		first=true
+	fi
+	# the terminal of the dpkg or apt run is told the first time, and whenever i386 has just been added
+	if $first || [[ ${DPKG_HOOK_ACTION:-} == add-architecture ]]; then
+		sparky-stereo-problems say "$PKG" LOCAL5 "$version" "$need" >&2 || true
+	fi
+	return 0
+}
+install() {
+	local version need status out step
+	if ((EUID != 0)); then
+		echo 'Run as root: sudo sparky-stereo-hardware --nvidia-i386' >&2
+		return 1
+	fi
+	version=$(installed nvidia-driver-libs:amd64)
+	if [[ -z $version ]]; then
+		sparky-stereo-problems say "$PKG" LOCAL7 >&2 || true
+		clear_problem
+		return 1
+	fi
+	if ! has_i386; then
+		sparky-stereo-problems say "$PKG" LOCAL8 >&2 || true
+		clear_problem
+		return 0
+	fi
+	need=$(missing "$version")
+	if [[ -n $need ]]; then
+		out=$(mktemp)
+		DEBIAN_FRONTEND=noninteractive apt-get -y update 2>&1 | tee "$out"
+		status=${PIPESTATUS[0]}
+		if ((status == 0)); then
+			# shellcheck disable=SC2086 # the package names, one word each
+			DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install $(printf '%s\n' $need | sed "s/\$/=$version/") 2>&1 | tee "$out"
+			status=${PIPESTATUS[0]}
+			step='apt-get install'
+		else
+			step='apt-get update'
+		fi
+		if ((status != 0)); then
+			sparky-stereo-problems keep --repair "$REPAIR" --status "$status" --output "$(tail -n 40 "$out")" \
+				"$PKG" "$KEY" LOCAL6 "$need" "$step" "$status" >/dev/null 2>&1 || true
+			sparky-stereo-problems say "$PKG" LOCAL6 "$need" "$step" "$status" >&2 || true
+			rm -f "$out"
+			return 1
+		fi
+		rm -f "$out"
+	fi
+	check
+	[[ -z $(missing "$version") ]]
+}
+case ${1:-} in
+check) check ;;
+install) install ;;
+*) echo 'usage: nvidia-i386 check|install' >&2; exit 2 ;;
+esac
