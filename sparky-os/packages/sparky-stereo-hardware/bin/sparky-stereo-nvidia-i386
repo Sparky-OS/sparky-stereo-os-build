@@ -259,8 +259,9 @@ install() {
 		DEBIAN_FRONTEND=noninteractive apt-get -y update 2>&1 | tee "$out"
 		status=${PIPESTATUS[0]}
 		if ((status == 0)); then
+			sparky-stereo-problems say "$PKG" LOCAL16 >&2 || true
 			# shellcheck disable=SC2046,SC2086 # the package names, one word each
-			SPARKY_STEREO_HARDWARE_NVIDIA_I386=installing DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install $(printf '%s\n' $need | sed "s/\$/=$version/") 2>&1 | tee "$out"
+			SPARKY_STEREO_HARDWARE_NVIDIA_I386=installing DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests -o DPkg::Lock::Timeout=-1 install $(printf '%s\n' $need | sed "s/\$/=$version/") 2>&1 | tee "$out"
 			status=${PIPESTATUS[0]}
 			step='apt-get install'
 		else
