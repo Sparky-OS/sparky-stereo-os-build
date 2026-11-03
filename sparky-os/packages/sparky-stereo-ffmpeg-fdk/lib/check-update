@@ -6,12 +6,13 @@
 # FFmpeg than the one the local build was made from, the local build is made again, in the background, with the
 # consent given on the first run. Nothing happens on a computer that never built one. A rebuild that failed is not tried
 # again by itself for the same version (the user is told, and "sparky-stereo-ffmpeg-fdk --rebuild" tries again), and a
-# computer on battery waits for the mains: the build takes a long time.
+# computer on battery waits for the mains: the build takes a long time. The rebuild runs at normal priority on every
+# processor, as any build at update time does (Daniel, 2026-11-02: "any build at update time - DO NEVER CAP EXECUTION").
 # Exit status: 0 when the check worked (nothing to do, or the rebuild started); KEPT (80) when the check failed and
 # sparky-stereo-problems kept the failure and said it (here, in apt update's output, then in the notification and in
 # sparky-stereo-ffmpeg-fdk --status); any other status when the failure could not be kept (the engine failed, or a
 # clear failed): the apt hook (99sparky-stereo-ffmpeg-fdk) fails apt update for those, and only for those.
-# Last update 2026/11/02
+# Last update 2026/11/03
 KEPT=80
 LIBDIR=${SPARKY_FDK_LIBDIR:-/usr/lib/sparky-stereo-ffmpeg-fdk}
 # shellcheck disable=SC1091
@@ -77,15 +78,14 @@ SELF=${SPARKY_FDK_BIN:-/usr/bin/sparky-stereo-ffmpeg-fdk}
 if [ -d /run/systemd/system ]; then
 	systemd-run --quiet --no-block --collect --unit=sparky-stereo-ffmpeg-fdk-rebuild \
 		--description="Sparky Stereo OS: FFmpeg with Fraunhofer's AAC, rebuilt for $repo" \
-		-p Nice=19 -p IOSchedulingClass=idle -p CPUSchedulingPolicy=batch "$SELF" --auto || check_failed "systemd-run: $?"
+		"$SELF" --auto || check_failed "systemd-run: $?"
 else
 	# Popen reports exec errors before returning; setsid -f reports only the fork.
 	python3 - "$SELF" "$LOG" <<'PYTHON' || check_failed "background launch: $?"
-import os, subprocess, sys
+import subprocess, sys
 with open(sys.argv[2], "ab") as log:
     subprocess.Popen([sys.argv[1], "--auto"], stdin=subprocess.DEVNULL,
-                     stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
-                     preexec_fn=lambda: os.nice(19))
+                     stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
 PYTHON
 fi
 problem_clear update-check
