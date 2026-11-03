@@ -10,8 +10,7 @@ UCF=${SPARKY_TIME_UCF:-ucf}
 case $MODE in apply|restore) ;; *) exit 2 ;; esac
 W=$(mktemp -d)
 trap 'rm -rf "$W"' EXIT
-# Filter the packaged template, never the person's file. Refuse new vendor pool
-# syntax rather than silently leaving another Debian pool active.
+# Filter the packaged template, never the person's file.
 awk '
 $1 == "pool" && $2 ~ /(^|\.)debian\.pool\.ntp\.org$/ {next}
 {print}

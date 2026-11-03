@@ -149,9 +149,14 @@ if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
 		elif systemctl is-active --quiet chrony.service; then
 			out=$(chronyc reload sources 2>&1) || say 43 "chronyc reload sources: $out"
 		fi
-	elif [ "$changed" = 0 ]; then
-		# no systemd: a chrony started by hand is told; none running reads chrony.conf when it starts
-		out=$(chronyc reload sources 2>&1) || case $out in *"Cannot talk to daemon"*) ;; *) say 43 "chronyc reload sources: $out" ;; esac
+	else
+		# A manually started daemon also needs a restart for chrony.conf.
+		# Do not leave that requirement silent when systemd is absent.
+		if out=$(chronyc tracking 2>&1); then
+			say 43 /etc/chrony/chrony.conf
+		else
+			case $out in *"Cannot talk to daemon"*) ;; *) say 43 "chronyc tracking: $out" ;; esac
+		fi
 	fi
 fi
 # a problem of a package that is gone cannot be repaired by it (ORDER 350): the engine lets go of them
