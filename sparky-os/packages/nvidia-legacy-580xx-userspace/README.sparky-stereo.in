@@ -1,0 +1,49 @@
+@PACKAGE@ in Sparky Stereo OS
+@UNDERLINE@
+
+This is NVIDIA's package @PACKAGE@ @NV_VERSION@ from NVIDIA's CUDA
+repository for Debian 12, carried by Sparky Stereo OS at version
+@VERSION@,
+for the Maxwell, Pascal and Volta cards that the edition's open kernel
+modules (Turing and newer) do not run. NVIDIA's 580 branch is the last
+for these cards, and NVIDIA publishes it for Debian only in that repository,
+whose key Debian 14's APT refuses (its binding signature is SHA-1).
+When the edition builds this package, gpgv checks NVIDIA's signature on the
+repository's Release file with NVIDIA's key, the Release file gives the
+index's SHA-256, and the index gives this package's; the edition's key signs
+the edition's repository.
+
+What is NVIDIA's
+----------------
+
+Every file of the package is NVIDIA's, byte for byte as NVIDIA ships it, with
+its mode, and so are its maintainer scripts. The NVIDIA Software License
+distributes the binary files only unmodified (sections 1.1(d)(i) and 2.3) and
+asks that a modified file carry a prominent notice of the change (section
+2.5), so no file of NVIDIA's is changed. Lean Code, which removes comments
+from the edition's text files, leaves each of them as NVIDIA ships it:
+"dpkg-stereo --status" and the manifest named below give that reason for
+each. NVIDIA's licence is in this folder's copyright file, NVIDIA's text byte
+for byte. NVIDIA ships its i386 packages and its cuda-drivers meta packages
+without that file; the edition adds it to them, the same file NVIDIA's amd64
+packages ship, so that the licence goes to each recipient of the software
+(section 1.1(d)(ii)) and every package has its copyright file (Debian Policy
+2.3).
+
+What is the edition's
+---------------------
+
+- The control file: the version, NVIDIA's exact relations among the carried
+  packages at that version (with nvidia-kernel-dkms, which the edition's
+  nvidia-legacy-580xx-kernel-dkms provides at it), the maintainer (NVIDIA
+  stays as Original-Maintainer), the homepage, the bug tracker and a note in
+  the description. This file is the notice of that change.
+- Three files: this one; changelog.Debian.ARCHITECTURE.gz in this folder,
+  the edition's changelog entry (NVIDIA's own changelog stays as it is); and
+  the Lean Code manifest /usr/share/dpkg-stereo/lc/@PACKAGE@/ARCHITECTURE.json,
+  which lists every file with its SHA-256.
+
+Packaging: Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of
+SparkyLinux (https://sparkylinux.org, by Paweł "pavroo" Pijanowski).
+Problems with this package go to the edition's tracker,
+https://github.com/Sparky-OS/sparky-stereo-os/issues, not to NVIDIA.
