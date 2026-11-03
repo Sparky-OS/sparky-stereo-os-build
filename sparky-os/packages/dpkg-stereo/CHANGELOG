@@ -29,6 +29,7 @@
     which no archive keeps) is taken only when its control file is exactly an installed version with
     recorded files and every file it gives back is the recorded original; otherwise nothing is taken from
     it, and why is said.
+  * Depends on apt: the fetch uses APT's apt-helper (before, apt-get and apt-cache were used undeclared).
   * A Multi-Arch: same package's .deb is read for its own architecture only: the twin's .deb of the other
     architecture in APT's cache was taken for it before (any NAME_VERSION_* name matched).
   * Tests: test/restore-fetch-test.sh (a local server with snapshot's interface; no internet). The three
