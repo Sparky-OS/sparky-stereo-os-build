@@ -34,7 +34,11 @@
     projection, so --verify did not name them and --restore could not bring them back (313 of systemd's 320
     projected files after one `dpkg --no-triggers -i` on the lane's image). A package another one's unpack
     deconfigures went the same way through "half-configured". installed, triggers-pending, triggers-awaited and
-    half-configured now count (dpkg(1), "Package states").
+    half-configured now count (dpkg(1), "Package states"), and the lean toolkit's reader of lc1 marks
+    (lean/package.py, installed) counts the same states: it took only "install ok installed", so a marked package
+    on hold, or with its trigger pending, was taken for an unmarked one (the renderer's identity does not move).
+  * A run that changes a package reads dpkg's database once (it read it three times: post-invoke, the projection
+    and the package table each).
   * Tests: test/hook-cost-test.sh (red on 0.1.28: every projected conffile written again by a run that changed
     nothing; three mutants of 0.1.29 fail its other cases) and test/trigger-states-test.sh (red on 0.1.28: 8 of
     18).

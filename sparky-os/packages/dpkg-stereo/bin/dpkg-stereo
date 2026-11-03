@@ -825,12 +825,13 @@ PROGRESS_SECONDS = 60      # and a line at least this often (some headers take G
 
 
 def project_packages(P, names, jobs, image=False, log=print, only=None, known=None, repair=True, record=True,
-                     progress=None):
+                     progress=None, db=None):
     """Project the installed files of these packages (every installed package without names). With `only`,
     just those paths. `record=False` leaves packages.tsv as it is: a migration inside a dpkg run must not mark
     the packages that run changed as seen, or post-invoke would never project them. `progress` gets a line
-    every PROGRESS_EVERY files, and at least every PROGRESS_SECONDS."""
-    db = dpkg_db(P)
+    every PROGRESS_EVERY files, and at least every PROGRESS_SECONDS. `db`: dpkg's database, when the caller read it
+    already (post-invoke: a dpkg run is over when its hook runs, so it is the same)."""
+    db = dpkg_db(P) if db is None else db
     if repair:
         repair_consumers(P, jobs, pkgs=dpkg_packages(P, db))
     pkgs = dpkg_packages(P, db)
@@ -987,7 +988,7 @@ def project_packages(P, names, jobs, image=False, log=print, only=None, known=No
         except FileNotFoundError:
             pass
     if record:
-        write_packages(P)
+        write_packages(P, everything)
     with open(P.state('identity'), 'w') as f:
         f.write(project.IDENTITY + '\n')
     log(f'dpkg-stereo: {done} files projected ({same} of them already checked in these bytes), {skipped} left '
@@ -1221,8 +1222,10 @@ def post_invoke(P, jobs):
     if unchanged:
         pkgs = Installed((k, (v.get('version'), k)) for k, v in recorded.items())
         pkgs.digest = digest
+        db = None
     else:
-        pkgs = dpkg_packages(P, dpkg_db(P, db_files))
+        db = dpkg_db(P, db_files)
+        pkgs = dpkg_packages(P, db)
     repair_consumers(P, jobs, pkgs=pkgs)
     changed = [] if unchanged else sorted(k for k, v in pkgs.items()
                                           if recorded.get(k, {}).get('version') != v[0]
@@ -1314,7 +1317,7 @@ def post_invoke(P, jobs):
                 if owner not in sums:
                     sums[owner] = md5sums(P, pkgs[owner][1])
                 if conf is None:
-                    conf = conffiles(P)
+                    conf = conffiles(P, db)
                 if md5(data) not in (sums[owner].get(path), conf.get(owner, {}).get(path)):
                     continue
             if owner in same_version:
@@ -1355,9 +1358,10 @@ def post_invoke(P, jobs):
     full = sorted(ch - same_version)
     # repair_consumers ran at the start of this hook: once per dpkg run is enough
     if full:
-        project_packages(P, full, jobs, log=lambda m: None, known=known, repair=False)
+        project_packages(P, full, jobs, log=lambda m: None, known=known, repair=False, db=db)
     if again:
-        project_packages(P, sorted(same_version), jobs, log=lambda m: None, only=again, known=known, repair=False)
+        project_packages(P, sorted(same_version), jobs, log=lambda m: None, only=again, known=known, repair=False,
+                         db=db)
     if not full and not again and not unchanged:
         # what this run saw, so the next run that finds dpkg's database and lists as they are now reads neither
         write_packages(P, pkgs)
