@@ -73,7 +73,7 @@ mkdir -p "$k/DEBIAN"
 } > "$k/DEBIAN/control"
 (cd "$k" && find . -type f ! -path './DEBIAN/*' -printf '%P\n' | LC_ALL=C sort | xargs -d '\n' md5sum > DEBIAN/md5sums)
 chmod -R go-w "$k"
-PYTHONPATH="$RECIPE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$k" "$dest" --authoring "$repo"
+PYTHONPATH="$RECIPE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$k" "$dest" --authoring "$RECIPE"
 (cd "$dest" && sha256sum ./*.deb | sed 's|\./||' > SHA256SUMS)
 printf "%s\n" "${SOURCE_COMMIT:-unknown}" > "$dest/SOURCE-COMMIT"
 cat "$dest/SHA256SUMS"
