@@ -84,16 +84,17 @@ queued() {
 	[[ $state == activating || $state == active ]]
 }
 # why the unit cannot be started here, as the path or command that says it; nothing when it can (sd_booted(3);
-# systemctl itself ignores start in a chroot and exits 0; Debian Policy 9.3.3.1 on policy-rc.d, which
-# deb-systemd-invoke honours the same way: 101 forbids the action)
+# systemctl itself ignores start in a chroot and exits 0; policy-rc.d as Debian Policy 9.3.3 and invoke-rc.d(8) give
+# it, honoured as deb-systemd-invoke does: 101 forbids the action; a masked unit is the person's off switch)
 no_unit_here() {
 	if [[ ! -d /run/systemd/system ]]; then
 		echo '/run/systemd/system is missing (systemd is not running)'
 	elif systemd-detect-virt --quiet --chroot 2>/dev/null; then
 		echo 'systemd-detect-virt --chroot (this is a chroot)'
-	elif [[ -x /usr/sbin/policy-rc.d ]]; then
-		/usr/sbin/policy-rc.d "$UNIT" start >/dev/null 2>&1
-		(($? != 101)) || echo "/usr/sbin/policy-rc.d $UNIT start exited 101 (services may not be started here)"
+	elif [[ -x /usr/sbin/policy-rc.d ]] && { /usr/sbin/policy-rc.d "$UNIT" start >/dev/null 2>&1; (($? == 101)); }; then
+		echo "/usr/sbin/policy-rc.d $UNIT start exited 101 (services may not be started here)"
+	elif [[ $(systemctl is-enabled "$UNIT" 2>/dev/null) == masked* ]]; then
+		echo "systemctl is-enabled $UNIT: masked (the automatic install is switched off)"
 	fi
 }
 # keeps the problem with MESSAGE and its arguments; true when it was not kept before (the terminal is told then)
@@ -145,6 +146,8 @@ check() {
 		why=$(no_unit_here)
 	fi
 	if [[ -n $why ]]; then
+		# said when this reason is new to the problem
+		kept_as_no_unit || first=true
 		keep_problem LOCAL13 "$list" "$version" "$why" && first=true
 		if $first || [[ ${DPKG_HOOK_ACTION:-} == add-architecture ]]; then
 			sparky-stereo-problems say "$PKG" LOCAL13 "$list" "$version" "$why" >&2 || true
