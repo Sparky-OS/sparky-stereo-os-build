@@ -15,6 +15,8 @@
 #      post-invoke leaves it): the configure run gives dpkg the conffile's own bytes, so dpkg takes the new conffile
 #      without asking, and projects it after
 #   F. a removal and a purge: nothing of the package stays recorded or left, no conffile prompt
+#   G. a hook that fails keeps its problem in the edition's engine, and the next run that succeeds clears it (the engine
+#      is loaded only when the step has a record to clear)
 # Usage: hook-cost-test.sh WORKDIR
 set -u
 W=$1
@@ -103,6 +105,23 @@ check "E: projected" bash -c "$(declare -f lean); lean /etc/xdg/hc-arc && lean /
 dpkg-stereo --verify hc-a >"$W/verify-e.log" 2>&1
 check "E: verify clean" grep -q ' 0 problems' "$W/verify-e.log"
 
+echo "== G. a hook's kept problem goes with the next run that succeeds"
+check "no hook errors before G" test ! -s /var/lib/dpkg-stereo/error.log
+T=/var/lib/dpkg-stereo/packages.tsv
+mv $T $T.aside && mkdir $T
+dpkg --configure -a </dev/null >"$W/g1.log" 2>&1 || bad "G: dpkg stopped by a failing hook: $(tail -3 "$W/g1.log")"
+errors=$(stat -c %s /var/lib/dpkg-stereo/error.log 2>/dev/null || echo 0)
+dpkg-stereo --problems >"$W/g2.log" 2>&1; rc=$?
+check "G: control: the failing post-invoke kept its problem" sh -c "[ $rc = 1 ] && grep -q 'IsADirectoryError' '$W/g2.log'"
+rmdir $T && mv $T.aside $T
+dpkg --configure -a </dev/null >"$W/g3.log" 2>&1
+dpkg-stereo --problems >"$W/g4.log" 2>&1; rc=$?
+check "G: the next run that succeeds clears it" [ $rc = 0 ]
+dpkg --configure -a </dev/null >"$W/g5.log" 2>&1
+dpkg-stereo --problems >"$W/g6.log" 2>&1; rc=$?
+check "G: and the run after keeps none" [ $rc = 0 ]
+check "G: no hook error after the fix" [ "$(stat -c %s /var/lib/dpkg-stereo/error.log 2>/dev/null || echo 0)" = "$errors" ]
+
 echo "== F. a removal and a purge"
 dpkg -r hc-a </dev/null >"$W/f1.log" 2>&1 || bad "F: remove: $(tail -3 "$W/f1.log")"
 dpkg -P hc-a hc-b </dev/null >"$W/f2.log" 2>&1 || bad "F: purge: $(tail -3 "$W/f2.log")"
@@ -110,6 +129,5 @@ check "F: the conffiles gone with the purge" sh -c "! ls /etc/xdg/hc-arc /etc/xd
 check "F: nothing of hc-a or hc-b recorded or left" sh -c "! ls /var/lib/dpkg-stereo/records /var/lib/dpkg-stereo/left 2>/dev/null | grep -q '^hc-' && ! grep -q '^/etc/xdg/hc-' /var/lib/dpkg-stereo/conffiles.tsv"
 dpkg --audit >"$W/audit.log" 2>&1
 check "dpkg --audit empty" test ! -s "$W/audit.log"
-check "no hook errors" test ! -s /var/lib/dpkg-stereo/error.log
 echo "SUMMARY: $passed passed, $failed failed"
 exit $fail
