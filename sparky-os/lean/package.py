@@ -225,11 +225,18 @@ def dpkg_records(P):
     return list(rows.values())
 
 
+# The states whose files are the package version's own (dpkg(1), "Package states"), as dpkg-stereo counts installed
+# packages (its INSTALLED_STATES, 0.1.29): a marked package with its trigger pending or awaited, deconfigured, or on
+# hold keeps its build-time projection. Before, only "install ok installed" counted, and dpkg-stereo took such a package
+# for an unmarked one.
+INSTALLED_STATES = ('installed', 'triggers-pending', 'triggers-awaited', 'half-configured')
+
+
 def installed(P, names=None):
     """Only read markers in dpkg's installed control records; never trust a loose JSON file."""
     out = {}
     for row in dpkg_records(P):
-        if row.get('status') != 'install ok installed' or FIELD.lower() not in row:
+        if (row.get('status') or '').rsplit(' ', 1)[-1] not in INSTALLED_STATES or FIELD.lower() not in row:
             continue
         p, v, a = identity(row)
         info = f'{p}:{a}' if row.get('multi-arch') == 'same' or Path(P.real(f'/var/lib/dpkg/info/{p}:{a}.list')).exists() else p

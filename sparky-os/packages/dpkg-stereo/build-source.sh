@@ -42,6 +42,17 @@ EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
 
+  * A dpkg run that changes nothing costs the hooks almost nothing: the
+    program is byte-compiled and imports what it needs when it needs it;
+    a configure run gets back only the conffiles of the packages it
+    configures; a run that finds dpkg's database and its file lists as
+    they were reads no package's fields or list (ORDER 367).
+  * A package with its trigger pending, or deconfigured, keeps its records.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 03 Nov 2026 21:00:00 -0300
+
+dpkg-stereo (0.1.28) unstable; urgency=medium
+
   * --restore fetches the exact version from snapshot.debian.org when no
     cache or configured source has it, checked by SHA-1, control fields and
     every file; what cannot come back is said with the one thing that brings
