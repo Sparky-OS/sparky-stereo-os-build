@@ -8,6 +8,8 @@ functional suite separately checks when dpkg calls it and its fallback decisions
 """
 
 import hashlib
+import contextlib
+import io
 import lzma
 import os
 from pathlib import Path
@@ -155,6 +157,34 @@ class VerifierTest(unittest.TestCase):
         self.expect(15, package='../other')
         self.expect(15, path='relative/path')
         self.expect(15, md5='wrong')
+
+    def test_dpkg_stereo_verify_uses_the_same_comparison(self):
+        import dpkg_stereo as stereo
+        root = self.work / 'root'
+        target = root / PATH.lstrip('/')
+        target.parent.mkdir(parents=True)
+        info = root / 'var/lib/dpkg/info'
+        info.mkdir(parents=True)
+        (info / (PACKAGE + '.list')).write_text(PATH + '\n')
+        (info.parent / 'status').write_text(
+            f'Package: {PACKAGE}\nStatus: install ok installed\nArchitecture: all\n'
+            f'Version: 1\nConffiles:\n {PATH} {MD5}\n\n')
+        paths = stereo.Paths(str(root))
+        stereo.store_pristine(paths, ORIGINAL)
+        records = stereo.Records(paths)
+        for data, expected in ((LEAN, 0), (LEAN.replace(b'value=old', b'value=personal'), 1)):
+            target.write_bytes(data)
+            records[PATH] = {'path': PATH, 'package': PACKAGE, 'version': '1', 'conffile': '1',
+                             'sha_orig': sha(ORIGINAL), 'md5_orig': MD5, 'sha_lean': sha(data),
+                             'handler': 'untrusted-record-value', 'variant': '',
+                             'bytes_orig': len(ORIGINAL), 'bytes_lean': len(data)}
+            records.save()
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                result = stereo.verify(paths, [PACKAGE])
+            self.assertEqual(result, expected, output.getvalue())
+            if expected:
+                self.assertIn('projection-mismatch', output.getvalue())
 
 
 if __name__ == '__main__':
