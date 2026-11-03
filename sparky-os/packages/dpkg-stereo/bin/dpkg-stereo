@@ -1064,8 +1064,8 @@ def write_packages(P, pkgs=None):
 
 def read_packages(P):
     """packages.tsv as write_packages left it: its rows, and what its second header line says was seen when they were
-    written ({db, info, written}), or None when the table has no such line (0.1.28 and older wrote none) or its rows are
-    no longer the ones it was written with."""
+    written ({db, info, written, newest, rows}), or None when the table has no such line (0.1.28 and older wrote none)
+    or its rows are no longer the ones it was written with."""
     rows, lines, seen = {}, [], None
     try:
         with open(P.state(PKGS), encoding='utf-8', errors='surrogateescape') as f:
