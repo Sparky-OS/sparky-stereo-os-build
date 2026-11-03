@@ -54,6 +54,10 @@ def main():
     if sys.argv[1:] == ['--allow']:
         if allowed():
             BLOCKED.unlink(missing_ok=True)
+            leftover = STATE / 'leftover-zram-generator'
+            if leftover.exists() and installed('systemd-zram-generator') and 'systemd-zram-generator' not in auto_packages():
+                subprocess.run([ENGINE, 'clear', '--machine', PACKAGE, 'leftover-generator'], check=True)
+                leftover.unlink()
             return 0
         BLOCKED.parent.mkdir(parents=True, exist_ok=True)
         BLOCKED.touch()
