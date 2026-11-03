@@ -16,7 +16,7 @@ TOOLKIT=$(cd "$HERE/../.." && pwd)
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 export DEB_BUILD_OPTIONS='nocheck parallel=4' DEB_BUILD_PROFILES=nocheck
 export LC_ALL=C.UTF-8
-VERSION=6.7.4-3+stereo3d1
+VERSION=6.7.4-3+stereo3d2
 printf '%s  %s\n' 7642e296183b6229816c7eb316ba0f8f0e0ec4d4711904df0abcf970ad613db7 "$SOURCE_DSC" | sha256sum -c -
 [ ! -e "$BUILD_ROOT/authored" ] && [ ! -e "$OUT/source" ]
 mkdir -p "$BUILD_ROOT" "$OUT/source" "$OUT/authored"
@@ -24,9 +24,9 @@ cp "$(dirname "$SOURCE_DSC")"/plasma-discover_6.7.4.orig.tar.* "$BUILD_ROOT/"
 dpkg-source -x "$SOURCE_DSC" "$BUILD_ROOT/authored"
 cd "$BUILD_ROOT/authored"
 mkdir -p debian/patches
-cp "$HERE/backend-split.patch" debian/patches/
+cp "$HERE/backend-split.patch" "$HERE/flatpak-appstream-cache.patch" debian/patches/
 cp "$TOOLKIT/translations/discover-backend-split.po.patch" debian/patches/
-printf '%s\n' backend-split.patch discover-backend-split.po.patch >> debian/patches/series
+printf '%s\n' backend-split.patch discover-backend-split.po.patch flatpak-appstream-cache.patch >> debian/patches/series
 dpkg-source --before-build .
 python3 - <<'PY'
 from pathlib import Path
@@ -42,6 +42,7 @@ install.write_text(install.read_text() + 'usr/lib/${DEB_HOST_MULTIARCH}/qt6/plug
 PY
 dch --newversion "$VERSION" --distribution mashtabba \
 	'Default to Flatpak and firmware; retain an explicit persistent PackageKit option for Debian packages.'
+dch --append 'Compile the AppStream caches of the Flatpak catalogs in a short-lived process, so Discover loads compiled caches and does not keep the XML of the catalogs in its heap.'
 dpkg-source -b .
 cp "$BUILD_ROOT"/*.dsc "$BUILD_ROOT"/*.debian.tar.* "$BUILD_ROOT"/*.orig.tar.* "$OUT/authored/"
 dpkg-source -x "$BUILD_ROOT/plasma-discover_${VERSION}.dsc" "$BUILD_ROOT/lean-source"
