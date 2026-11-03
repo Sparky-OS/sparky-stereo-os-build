@@ -1,6 +1,10 @@
 -------------------------------------------------------------------------------
   Version 0.1.32 (2026-11-04)
 -------------------------------------------------------------------------------
+  * Carry 0.1.31's orphan recovery and removed-conffile restoration. The older-dpkg
+    pre-invoke path and explicit restore also require exact reproduction from the
+    original independently identified by the owning package before writing; a
+    refusal keeps the file and names its reason through the problems engine.
   * With native dpkg conffile capability 2, pre-invoke restores no conffile.
     Both the running binary's hook signal and its package's Provides must
     advertise the capability; older dpkg retains the restore path.

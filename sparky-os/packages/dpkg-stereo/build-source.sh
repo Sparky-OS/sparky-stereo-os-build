@@ -42,6 +42,8 @@ EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
 
+  * Reconcile 0.1.31 orphan recovery; apply exact independent reproduction
+    to older-dpkg pre-invoke and explicit restore before writing a file.
   * Skip pre-invoke conffile restoration only when the running dpkg and
     its installed Provides advertise conffile capability 2.
   * Keep native refusals in the problems engine with their package, path,

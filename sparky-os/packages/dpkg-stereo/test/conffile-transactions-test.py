@@ -54,7 +54,7 @@ class TransactionsTest(unittest.TestCase):
             assert provides == ('dpkg-lean-code (= 1)' if baseline else 'dpkg-lean-code (= 2)'), provides
             stereo_version = subprocess.check_output(
                 ['/usr/bin/dpkg-query', '-W', '-f=${Version}', 'dpkg-stereo'], text=True)
-            assert stereo_version == ('0.1.30' if baseline else '0.1.32'), stereo_version
+            assert stereo_version == (os.environ.get('ORDER376_BASELINE_VERSION', '0.1.31') if baseline else '0.1.32'), stereo_version
             return
         cls.status_path = Path('/var/lib/dpkg/status')
         cls.status = cls.status_path.read_text()

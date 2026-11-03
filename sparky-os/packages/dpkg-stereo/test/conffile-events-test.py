@@ -161,8 +161,36 @@ class EventsTest(unittest.TestCase):
             stereo.pre_invoke(self.P, 'install')
         self.assertEqual(self.file.read_bytes(), LEAN)
 
+    def forge(self):
+        edited = LEAN.replace(b'value=old', b'value=own')
+        self.file.write_bytes(edited)
+        records = stereo.Records(self.P)
+        records[PATH] = dict(records[PATH], sha_lean=stereo.sha256(edited))
+        records.save()
+        return edited
+
+    def test_older_dpkg_pre_invoke_refuses_forged_projection(self):
+        edited = self.forge()
+        with patch.dict(os.environ, DPKG_LEAN_CODE_VERSION=''), self.assertRaisesRegex(RuntimeError, 'projection-mismatch'):
+            stereo.pre_invoke(self.P, 'install')
+        self.assertEqual(self.file.read_bytes(), edited)
+
+    def test_restore_refuses_forged_projection_and_keeps_problem(self):
+        edited = self.forge()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(stereo.restore(self.P, [PACKAGE]), 1)
+        self.assertEqual(self.file.read_bytes(), edited)
+        self.assertIn(PATH, stereo.Records(self.P))
+        problem = next(p for p in stereo.kept_problems(self.P) if p['step'] == 'restore')
+        self.assertIn('projection-mismatch', problem['items'][0]['detail'])
+
+    def test_restore_valid_projection(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(stereo.restore(self.P, [PACKAGE]), 0)
+        self.assertEqual(self.file.read_bytes(), ORIGINAL)
+
     def test_nine_languages_have_the_same_message_arguments(self):
-        keys = list(range(52, 63)) + [64, 65, 66]
+        keys = list(range(61, 72)) + [73, 74, 75]
         for lang in stereo.LANGS:
             for key in keys:
                 name = f'LOCAL{key}'

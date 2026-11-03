@@ -1172,6 +1172,34 @@ def native_conffiles():
                           result.stdout.decode()))
 
 
+def recorded_projection(P, path, rec, original, current, owners, metadata):
+    """Validate a record against its owner's database, then reproduce its bytes.
+
+    OWNERS and METADATA live only for this operation. No acceptance survives a
+    renderer change, and the record never selects the reader.
+    """
+    package = rec['package']
+    owner = owners.get(package, {})
+    if package not in metadata:
+        metadata[package] = (set(package_files(P, package)), None)
+    paths, sums = metadata[package]
+    if path not in paths:
+        return 'owner-mismatch', 'the owning package does not list this path'
+    if rec.get('conffile') == '1':
+        baseline = owner.get('Conffiles', {}).get(path)
+    else:
+        if owner.get('Version') != rec.get('version'):
+            return 'owner-mismatch', 'the recorded version is not the installed version'
+        if sums is None:
+            sums = md5sums(P, package)
+            metadata[package] = (paths, sums)
+        baseline = sums.get(path)
+    if not baseline or baseline != rec.get('md5_orig'):
+        return 'original-mismatch', 'the original is not identified by the owning package'
+    return conffile_projection.validate(path, original, current, package, baseline,
+                                        rec['sha_orig'], rec['sha_lean'])
+
+
 def pre_invoke(P, action=None):
     """Capability 2 keeps conffiles on disk. With older dpkg, matching projections go back to pristine.
     Projected conffiles still in their lean form go back to their pristine bytes, so older dpkg finds them
@@ -1198,6 +1226,7 @@ def pre_invoke(P, action=None):
     except FileNotFoundError:
         restored = []
     listed = set(restored)
+    owners, metadata, refused = None, {}, []
     for path, rec in files.items():
         if rec.get('conffile') != '1' or (only is not None and rec['package'] not in only):
             continue
@@ -1214,6 +1243,12 @@ def pre_invoke(P, action=None):
         orig = load_pristine(P, rec['sha_orig'])
         if orig is None or sha256(orig) != rec['sha_orig']:
             continue
+        if owners is None:
+            owners = dict(_installed(P, dpkg_db(P), INSTALLED_STATES + ('unpacked', 'half-installed', 'config-files')))
+        reason, detail = recorded_projection(P, path, rec, orig, data, owners, metadata)
+        if reason != 'ok':
+            refused.append(f"{rec['package']}: {path}: {reason}: {detail}; dpkg will settle the new version at {path}.dpkg-new")
+            continue
         write_lean(real, data, orig, os.lstat(real))
         if path not in listed:
             restored.append(path)
@@ -1223,6 +1258,8 @@ def pre_invoke(P, action=None):
     with open(tmp, 'w', encoding='utf-8', errors='surrogateescape') as f:
         f.write(''.join(p + '\n' for p in restored))
     os.replace(tmp, P.state('restored-for-dpkg'))
+    if refused:
+        raise RuntimeError('\n'.join(refused))
     return n
 
 
@@ -1434,8 +1471,9 @@ def removed_conffile_back(P, path, rec, db):
         # its original is nowhere: it stays lean, and an install of the package again will call it changed
         say('LOCAL59', [path, rec['package']])
         return False
-    r = project.project(path, orig, name, check=False)
-    if r.status != 'projected' or r.sha_out != sha256(data):
+    reason, _ = conffile_projection.validate(path, orig, data, rec['package'],
+                                               stanza['Conffiles'][path], rec['sha_orig'], rec['sha_lean'])
+    if reason != 'ok':
         # not our projection of its package's file, whatever its record says: it may be the person's
         say('LOCAL60', [path, rec['package']])
         return False
@@ -2270,6 +2308,8 @@ def restore(P, names, drop_hold=False, pkgs=None, log=print, progress=None, fetc
             return m, ('given', given[(package, version)]), w and ('given', w[1], None)
         return fetch_originals(P, package, version, arch, wanted, plans, offline, fetch, unreachable, note, deb_errors)
 
+    owners = dict(_installed(P, dpkg_db(P), INSTALLED_STATES + ('unpacked', 'half-installed', 'config-files')))
+    metadata = {}
     t0 = said = time.time()
     seen = 0
     # package by package: the originals without a pristine copy come from one pass of the package's .deb
@@ -2308,6 +2348,12 @@ def restore(P, names, drop_hold=False, pkgs=None, log=print, progress=None, fetc
                 stuck.append(path)
                 fail += 1
                 continue
+            reason, detail = recorded_projection(P, path, rec, orig, data, owners, metadata)
+            if reason != 'ok':
+                stuck.append(path)
+                fail += 1
+                why = ('other-bytes', f'{package}: {path}: {reason}: {detail}; current bytes kept', None)
+                continue
             real = P.real(path)
             write_lean(real, data, orig, os.lstat(real))
             if path.endswith('.py'):
@@ -2319,7 +2365,7 @@ def restore(P, names, drop_hold=False, pkgs=None, log=print, progress=None, fetc
             more = f' (and {len(stuck) - 1} more files)' if len(stuck) > 1 else ''
             src = ' from snapshot.debian.org' if source and source[0] == 'snapshot' else \
                 f' {os.path.basename(source[1])}' if source else ''
-            if from_deb.get(first) is not None:
+            if why is None and from_deb.get(first) is not None:
                 why = ('other-bytes', f'{first}: its .deb{src} holds other bytes than the recorded original{more}', None)
             elif why is None:
                 why = ('other-bytes', f'{first}: its .deb{src} does not hold it{more}' if source or first in wanted
