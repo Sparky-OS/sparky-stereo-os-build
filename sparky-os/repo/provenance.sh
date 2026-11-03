@@ -9,7 +9,7 @@
 #                        the Debian-derivative convention
 # and signs the latest changelog entry with the same identity when a build container left
 # root@<container> there, and credits the edition in each copyright file: Sparky Stereo OS,
-# Daniel Ramos's (Capitain Jack) edition of SparkyLinux (by Paweł "pavroo" Pijanowski), in
+# Daniel Ramos's edition of SparkyLinux (by Paweł "pavroo" Pijanowski), in
 # Daniel's wording of 2026-10-07; the Copyright holders stay as they were.
 # Usage: provenance.sh file.deb...   (rewrites them in place)
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.

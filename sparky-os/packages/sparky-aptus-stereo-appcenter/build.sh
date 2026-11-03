@@ -5,7 +5,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT}
 SOURCE=${APTUS_SOURCE:-$HERE/../../sparky-aptus-stereo-appcenter}
-VERSION=0.1.0+lc1
+VERSION=0.1.1+lc1
 PACKAGE=sparky-aptus-stereo-appcenter
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.aptus-stereo.XXXXXX")
@@ -49,7 +49,7 @@ Package: $PACKAGE
 Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
-Depends: sparky-aptus-appcenter, python3, apt, dpkg, pkexec, yad, sparky-stereo-problems (>= 0.1.1)
+Depends: sparky-aptus-appcenter, python3, apt, dpkg, systemd, udev, kmod, pkexec, yad, sparky-stereo-problems (>= 0.1.1)
 Section: admin
 Priority: optional
 Homepage: https://sparkylinux.org

@@ -10,7 +10,7 @@ Dependencies:
 -------------
 KDE Frameworks 6 (KAuth, KCMUtils, KI18n, Kirigami)
 sparky-stereo-kernel-settings (>= 20261103.4~)
-sparky-stereo-cushion-swap (recommended)
+sparky-stereo-cushion-swap (required by the Memory page)
 sparky-stereo-problems (>= 0.1.0), pkexec
 
 Build:
@@ -20,7 +20,7 @@ OUT=/path/in/workspace/pending-pack bash ./build.sh (inside a Debian container w
 Install:
 -------------
 su
-apt-get install ./sparky-stereo-memory-kcm_0.1.6_amd64.deb
+apt-get install ./sparky-stereo-memory-kcm_0.1.8+lc1_amd64.deb
 
 Uninstall:
 -------------
