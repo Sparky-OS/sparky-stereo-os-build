@@ -8,8 +8,12 @@
     so Steam and wine32 could not be installed where dpkg-stereo had projected libstdc++6. The edition's
     dpkg (1.23.11+stereo3d1+lc1) accepts a shared file that is the projection this package's record
     names when the file being unpacked is the file every other instance shipped and the recorded
-    original, and refuses every other difference as Debian's dpkg does; this package depends on it
-    (dpkg-lean-code, the contract it provides). Shared files stay projected, as every other file.
+    original, and refuses every other difference as Debian's dpkg does; this package pre-depends on it
+    (dpkg-lean-code, the contract it provides), so apt unpacks and configures the edition's dpkg in dpkg runs
+    before this package's, and the twins an apt run brings with it are unpacked by the new dpkg even with
+    APT::Immediate-Configure=false (measured on a machine with systemd: with a plain Depends, apt put Debian's
+    dpkg, the edition's and the twins in one dpkg run, which refused libstdc++6:i386). Shared files stay
+    projected, as every other file.
   * One projection, one record, for a shared file: a run that installs or reinstalls the other
     architecture's instance reads that instance's record too, so the file our dpkg put back in the
     package's bytes is projected again from the same checked render, and its record moves to the

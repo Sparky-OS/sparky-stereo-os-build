@@ -98,7 +98,8 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: dpkg (>= 1.23.11+stereo3d1+lc1), dpkg-lean-code (>= 1), python3, sparky-stereo-problems (>= 0.1.0)
+Pre-Depends: dpkg (>= 1.23.11+stereo3d1+lc1), dpkg-lean-code (>= 1)
+Depends: python3, sparky-stereo-problems (>= 0.1.0)
 Recommends: gcc, node-acorn, nodejs, perl, python3-yaml
 Section: System
 Priority: optional
