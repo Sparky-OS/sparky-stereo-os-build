@@ -2316,6 +2316,24 @@ def restore(P, names, drop_hold=False, pkgs=None, log=print, progress=None, fetc
     if failed:
         keep_bytecode(P, failed)
         FAILED_STEPS.add('bytecode')
+    if log is print and not os.path.exists(P.state(ORPHAN_MIGRATION)):
+        # lean files whose record 0.1.28 or older lost and whose original was not at hand yet (0.1.31): restore cannot
+        # bring them back, so they are said with the rest, each version with why and what brings them back (ORDER 373)
+        said_before = {(i['package'], i.get('version')): i for i in kept_items(P) if isinstance(i, dict) and i.get('package')}
+        unrecorded = {}
+        for path, row in read_table(P.state(ORPHAN_MIGRATION + '.pending'), ORPHAN_PENDING_COLS).items():
+            if not names or row['package'] in names or row['package'].split(':')[0] in names or path in names:
+                unrecorded.setdefault((row['package'], row['version']), []).append(path)
+        for (package, version), paths in sorted(unrecorded.items()):
+            before = said_before.get((package, version), {})
+            why = before.get('why') if before.get('why') in WHY else 'unlisted'
+            missing[(package, version)] = {
+                'package': package, 'version': version, 'files': len(paths), 'why': why,
+                'detail': f'{paths[0]}: lean without its record, which dpkg-stereo 0.1.28 or older lost'
+                          + (f'; {before["detail"]}' if before.get('detail') else ''),
+                'remedy': remedy(P, why, package, version, arch_of(package), why == 'apt', prerm) if prerm
+                else orphan_remedy(why, package, False)}
+            fail += len(paths)
     for key in sorted(missing):
         # the original could not be had: the files stay lean (and recorded); the reason is the archive's, APT's or
         # snapshot's own, and the remedy one that can work

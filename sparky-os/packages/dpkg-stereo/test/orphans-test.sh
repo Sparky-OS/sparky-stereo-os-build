@@ -236,6 +236,10 @@ dpkg-stereo --status >"$W/status-c.log" 2>&1
 check "C: --status counts them" grep -q 'unrecorded: 2 lean files' "$W/status-c.log"
 dpkg --configure -a </dev/null >"$W/again-c.log" 2>&1
 check "C: a dpkg run that changes nothing does not say it again" sh -c "! grep -q 'no record yet' '$W/again-c.log'"
+dpkg-stereo --restore orph-gone >"$W/restore-c.log" 2>&1; rc=$?
+cat "$W/restore-c.log"
+check "C: --restore of the package says its unrecorded files stay lean, and why (exit $rc)" bash -c "[ $rc = 1 ] && grep -q 'orph-gone 1.0: 2 files stay lean: no configured source offers this version' '$W/restore-c.log' && grep -q '1 files restored, 2 stay lean' '$W/restore-c.log'"
+check "C: its recorded conffile restored, its unrecorded files still lean" bash -c "$(declare -f confok lean); confok orph-gone /etc/xdg/orph-gonerc && lean /usr/bin/orph-gone && lean /usr/share/orph-gone/helper.sh"
 # snapshot.debian.org's interface, answered locally: the .deb by its SHA-1
 sha=$(sha1sum <"$W/debs/orph-gone_1.0_all.deb" | cut -d' ' -f1)
 mkdir -p "$W/srv/mr/orph-gone"
@@ -270,11 +274,15 @@ python3 "$W/server.py" "$W/srv" $PORT &
 SERVER=$!
 trap 'kill $SERVER 2>/dev/null' EXIT
 for i in $(seq 50); do (exec 3<>/dev/tcp/127.0.0.1/$PORT) 2>/dev/null && break; sleep 0.1; done
+DPKG_STEREO_SNAPSHOT=http://127.0.0.1:$PORT dpkg-stereo --repair-consumers >"$W/repair-consumers.log" 2>&1; rc=$?
+cat "$W/repair-consumers.log"
+check "C: the person's --repair-consumers gives them their records from snapshot (exit $rc)" bash -c "$(declare -f recorded leftrow); R=$R; [ $rc = 0 ] && recorded orph-gone /usr/bin/orph-gone && recorded orph-gone /usr/share/orph-gone/helper.sh && ! leftrow orph-gone /usr/bin/orph-gone"
+check "C: the fetched .deb kept in APT's cache" test -f "$CACHE/orph-gone_1.0_all.deb"
+check "C: the orphans problem cleared, the migration done" bash -c "! grep -q '^\[.*\] orphans:' <(dpkg-stereo --problems 2>&1) && test -e $R/orphaned-lean-v1 && test ! -e $R/orphaned-lean-v1.pending"
 DPKG_STEREO_SNAPSHOT=http://127.0.0.1:$PORT dpkg-stereo --repair >"$W/repair.log" 2>&1; rc=$?
 cat "$W/repair.log"
-check "C: --repair gives them their records from snapshot (exit $rc)" bash -c "$(declare -f recorded leftrow); R=$R; [ $rc = 0 ] && recorded orph-gone /usr/bin/orph-gone && recorded orph-gone /etc/xdg/orph-gonerc && ! leftrow orph-gone /usr/bin/orph-gone"
-check "C: the fetched .deb kept in APT's cache" test -f "$CACHE/orph-gone_1.0_all.deb"
-check "C: the problem cleared, the migration done" bash -c "dpkg-stereo --problems >/dev/null 2>&1 && test -e $R/orphaned-lean-v1 && test ! -e $R/orphaned-lean-v1.pending"
+check "C: --repair completes the restore kept as a problem (exit $rc): every file of orph-gone in its package's bytes" bash -c "$(declare -f md5ok confok); [ $rc = 0 ] && md5ok orph-gone /usr/bin/orph-gone && md5ok orph-gone /usr/share/orph-gone/helper.sh && confok orph-gone /etc/xdg/orph-gonerc"
+check "C: no problem left" sh -c "dpkg-stereo --problems >/dev/null 2>&1"
 dpkg-stereo --verify orph-gone orph-watch orph-src >"$W/verify-c2.log" 2>&1; rc=$?
 check "C: --verify clean (exit $rc: $(tail -1 "$W/verify-c2.log"))" bash -c "[ $rc = 0 ] && ! grep -q UNRECORDED '$W/verify-c2.log'"
 
