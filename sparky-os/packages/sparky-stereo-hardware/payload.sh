@@ -7,6 +7,9 @@ install -Dm755 "$HERE/bin/sparky-stereo-hardware" "$D/usr/bin/sparky-stereo-hard
 # NVIDIA's i386 libraries when i386 comes after NVIDIA's driver: dpkg's post-invoke hook checks after every dpkg run
 install -Dm755 "$HERE/bin/sparky-stereo-nvidia-i386" "$D/usr/lib/sparky-stereo-hardware/nvidia-i386"
 install -Dm644 "$HERE/share/dpkg/sparky-stereo-hardware" "$D/etc/dpkg/dpkg.cfg.d/sparky-stereo-hardware"
+# the unit the hook starts inside an apt run: it installs them once that run has ended, under the engine
+install -Dm644 "$HERE/share/systemd/sparky-stereo-hardware-nvidia-i386.service" "$D/usr/lib/systemd/system/sparky-stereo-hardware-nvidia-i386.service"
+install -Dm644 "$HERE/share/systemd/nvidia-i386-told-once.conf" "$D/usr/lib/systemd/system/sparky-stereo-hardware-nvidia-i386.service.d/sparky-stereo-hardware.conf"
 mkdir -p "$D/usr/lib/sparky-stereo-hardware" "$D/usr/share/sparky/sparky-stereo-hardware"
 install -m644 "$HERE"/lib/* "$D/usr/lib/sparky-stereo-hardware/"
 install -m644 "$HERE"/lang/* "$HERE/share/nvidia-open.ids" "$HERE/share/network-ids.tsv" "$HERE/share/nvidia-open-source.txt" "$HERE/share/rig-devices.json" "$D/usr/share/sparky/sparky-stereo-hardware/"
@@ -36,4 +39,4 @@ done
 install -Dm644 "$HERE/share/udev/71-sparky-stereo-nvidia-units.rules" "$D/usr/lib/udev/rules.d/71-sparky-stereo-nvidia-units.rules"
 
 sparky-stereo-problems catalog sparky-stereo-hardware "$HERE/problems-lang" "$D/usr/lib/systemd/catalog" \
-	--subject LOCAL1=LOCAL2,LOCAL3,LOCAL4 --subject LOCAL9=LOCAL5,LOCAL6,LOCAL7,LOCAL8
+	--subject LOCAL1=LOCAL2,LOCAL3,LOCAL4 --subject LOCAL9=LOCAL5,LOCAL6,LOCAL7,LOCAL8,LOCAL10,LOCAL11,LOCAL12,LOCAL13,LOCAL14,LOCAL15

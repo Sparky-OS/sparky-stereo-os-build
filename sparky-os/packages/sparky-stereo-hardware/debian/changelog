@@ -1,3 +1,19 @@
+sparky-stereo-hardware (0.1.21) unstable; urgency=medium
+
+  * NVIDIA's i386 libraries install by themselves after the apt run that
+    needs them: inside an apt run, dpkg's post-invoke hook starts
+    sparky-stereo-hardware-nvidia-i386.service (systemctl --no-block),
+    which waits until that run has ended (DPkg::Lock::Timeout=-1), then
+    installs nvidia-driver-libs:i386 and libcuda1:i386 at the driver's
+    version under the edition's engine and tells the session; the run's
+    terminal is told. ORDER 363b.
+  * After a dpkg run of its own (dpkg --add-architecture i386) nothing is
+    started; the problem is kept and says the next apt run brings them.
+  * A failure keeps the problem with apt's output and the Repair; where no
+    unit can be started, the problem says why.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 03 Nov 2026 07:40:00 -0300
+
 sparky-stereo-hardware (0.1.20) unstable; urgency=medium
 
   * NVIDIA's i386 libraries when i386 is enabled after NVIDIA's driver: dpkg's

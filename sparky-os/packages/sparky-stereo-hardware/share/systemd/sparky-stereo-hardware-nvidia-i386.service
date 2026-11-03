@@ -1,0 +1,19 @@
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/03
+# Copyright 2026 under the GNU GPL3 License
+# Started by dpkg's post-invoke hook (/usr/lib/sparky-stereo-hardware/nvidia-i386 check) inside an apt run in which
+# NVIDIA's i386 libraries are missing at the driver's version: it waits until that run has ended (apt's own
+# DPkg::Lock::Timeout), then installs them and tells the session. Static: nothing else starts it, and systemctl mask
+# switches it off (the problem then says so at the next apt run, and its Repair stays).
+[Unit]
+Description=NVIDIA's 32-bit libraries, installed after the apt run that needs them
+Documentation=file:/usr/share/doc/sparky-stereo-hardware/README.md
+
+[Service]
+Type=oneshot
+Environment=DEBIAN_FRONTEND=noninteractive SPARKY_STEREO_HARDWARE_NVIDIA_I386=installing
+ExecStart=/usr/lib/sparky-stereo-hardware/nvidia-i386 auto
+# it waits as long as the apt run that needs them lasts
+TimeoutStartSec=infinity
+# as Debian's apt-daily-upgrade.service: a stop never kills a running dpkg
+KillMode=process
+TimeoutStopSec=900

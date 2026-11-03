@@ -4,19 +4,39 @@
 # Last update 2026/11/03
 # NVIDIA's i386 libraries for 32-bit programs (Steam, Wine and 32-bit games): nvidia-driver-libs:i386 and libcuda1:i386
 # at the version of NVIDIA's driver installed for amd64. Hardware Setup installs them with the driver where dpkg has i386;
-# this covers i386 enabled later (ORDER 363; Daniel, 2026-11-01: "either it works or not and the user must know").
+# this covers i386 enabled later (ORDER 363), and installs them by themselves after the apt run that needs them (ORDER
+# 363b; Daniel, 2026-10-23: "user has not to configure, out of the box full experience, including the drivers needed to";
+# 2026-11-01: "either it works or not and the user must know").
 #   check    after every dpkg run (dpkg's post-invoke hook, /etc/dpkg/dpkg.cfg.d/sparky-stereo-hardware), among them
-#            dpkg --add-architecture i386: where they are missing, the edition's engine keeps the problem (its notifier
-#            shows it at login, its Repair runs install) and the terminal is told the first time; where they are there, or
-#            dpkg has no i386, or no NVIDIA driver is installed, the problem is cleared. A dpkg hook cannot install them:
-#            dpkg, and apt above it, hold their locks until the run ends.
+#            dpkg --add-architecture i386. Where they are missing:
+#            - inside an apt run (apt holds dpkg's frontend lock for its whole run and says so to dpkg with
+#              DPKG_FRONTEND_LOCKED, apt-pkg/deb/dpkgpm.cc:2057), sparky-stereo-hardware-nvidia-i386.service is started
+#              without waiting for it (systemctl --no-block): it installs them once that run has ended, and the terminal of
+#              the run is told;
+#            - after a dpkg run of its own (dpkg --add-architecture i386, dpkg -i), whose hooks run with dpkg's locks
+#              already free, nothing is started: the unit would run at once, beside the apt-get update the person runs next,
+#              which takes only the lists lock and never waits for it (apt-pkg/acquire.cc:180), so one of the two would
+#              fail. The edition's engine keeps the problem (its notifier shows it at login, its Repair runs install), and
+#              the terminal is told that the next apt run brings them;
+#            - where no unit can be started (systemd is not running, a chroot, policy-rc.d forbids it, systemctl fails),
+#              the problem is kept with that reason.
+#            Where they are there, or dpkg has no i386, or no NVIDIA driver is installed, the problem is cleared.
+#   auto     the unit's step: waits until no apt or dpkg run holds dpkg's locks (apt-get check with
+#            DPkg::Lock::Timeout=-1 waits for them as long as they are held, apt-pkg/deb/debsystem.cc:80-116), then, if they
+#            are still missing, asks apt whether it can install them (apt-get --simulate) and installs them under the
+#            engine (sparky-stereo-problems run): a failure is kept with apt's output and the Repair; once they are in, the
+#            problem is cleared and the session is told (a notice kept for this boot). No apt-get update: it would race the
+#            person's own.
 #   install  installs them at the driver's version, after apt-get update (the i386 indices arrive with it after
 #            dpkg --add-architecture), then checks again (sparky-stereo-hardware --nvidia-i386 runs this)
 set -uo pipefail
 PKG=sparky-stereo-hardware
 KEY=nvidia-i386
+NOTICE=nvidia-i386-installed
+UNIT=sparky-stereo-hardware-nvidia-i386.service
 REPAIR='["sparky-stereo-hardware","--nvidia-i386"]'
 STORE=${SPARKY_STEREO_ROOT:-}/var/lib/sparky-stereo-problems
+BOOT=${SPARKY_STEREO_ROOT:-}/run/sparky-stereo-problems
 # the installed versions of NVIDIA's driver libraries for amd64 and of the two for i386, in one dpkg-query (the check runs
 # after every dpkg run): VERSIONS[package:arch], unset for one that is not installed
 declare -A VERSIONS
@@ -47,12 +67,49 @@ clear_problem() {
 	[[ -e $STORE/${PKG}_$KEY.json ]] || return 0
 	sparky-stereo-problems clear "$PKG" "$KEY" >/dev/null 2>&1 || true
 }
+# the session's notice that they were installed holds only while they are
+clear_notice() {
+	[[ -e $BOOT/${PKG}_$NOTICE.json ]] || return 0
+	sparky-stereo-problems clear --boot "$PKG" "$NOTICE" >/dev/null 2>&1 || true
+}
+# the kept problem says they cannot be installed by themselves here (no longer true once the unit can start)
+kept_as_no_unit() {
+	grep -q '"message": *"LOCAL13"' "$STORE/${PKG}_$KEY.json" 2>/dev/null
+}
+# the unit is installing them, or waiting for the apt run in progress to end
+queued() {
+	local state
+	[[ -d /run/systemd/system ]] || return 1
+	state=$(systemctl is-active "$UNIT" 2>/dev/null)
+	[[ $state == activating || $state == active ]]
+}
+# why the unit cannot be started here, as the path or command that says it; nothing when it can (sd_booted(3);
+# systemctl itself ignores start in a chroot and exits 0; Debian Policy 9.3.3.1 on policy-rc.d, which
+# deb-systemd-invoke honours the same way: 101 forbids the action)
+no_unit_here() {
+	if [[ ! -d /run/systemd/system ]]; then
+		echo '/run/systemd/system is missing (systemd is not running)'
+	elif systemd-detect-virt --quiet --chroot 2>/dev/null; then
+		echo 'systemd-detect-virt --chroot (this is a chroot)'
+	elif [[ -x /usr/sbin/policy-rc.d ]]; then
+		/usr/sbin/policy-rc.d "$UNIT" start >/dev/null 2>&1
+		(($? != 101)) || echo "/usr/sbin/policy-rc.d $UNIT start exited 101 (services may not be started here)"
+	fi
+}
+# keeps the problem with MESSAGE and its arguments; true when it was not kept before (the terminal is told then)
+keep_problem() {
+	local first=false
+	[[ -e $STORE/${PKG}_$KEY.json ]] || first=true
+	sparky-stereo-problems keep --repair "$REPAIR" "$PKG" "$KEY" "$@" >/dev/null 2>&1 || first=true
+	$first
+}
 check() {
-	local version need first=false
+	local version need list why out first=false
 	read_versions
 	version=${VERSIONS[nvidia-driver-libs:amd64]:-}
 	if [[ -z $version ]] || ! has_i386; then
 		clear_problem
+		clear_notice
 		return 0
 	fi
 	need=$(missing "$version")
@@ -60,14 +117,108 @@ check() {
 		clear_problem
 		return 0
 	fi
-	[[ -e $STORE/${PKG}_$KEY.json ]] || first=true
-	if ! sparky-stereo-problems keep --repair "$REPAIR" "$PKG" "$KEY" LOCAL5 "$version" "$(listed "$need")" >/dev/null 2>&1; then
-		first=true
+	clear_notice
+	# a run that installs them itself (the Repair, the unit) says what fails; the unit already queued waits for this run
+	[[ ${SPARKY_STEREO_HARDWARE_NVIDIA_I386:-} == installing ]] && return 0
+	queued && return 0
+	list=$(listed "$need")
+	why=$(no_unit_here)
+	if [[ -z $why && -n ${DPKG_FRONTEND_LOCKED:-} ]]; then
+		if out=$(systemctl --no-block start "$UNIT" 2>&1); then
+			# a problem kept before stays until they are in (a failed install keeps its reason until the next verdict)
+			! kept_as_no_unit || sparky-stereo-problems keep --repair "$REPAIR" "$PKG" "$KEY" LOCAL5 "$version" "$list" >/dev/null 2>&1 || true
+			sparky-stereo-problems say "$PKG" LOCAL12 "$list" "$version" "$UNIT" >&2 || true
+			return 0
+		else
+			why="systemctl --no-block start $UNIT exited $?: $(printf '%s' "$out" | tr '\n' ' ')"
+		fi
 	fi
-	# the terminal of the dpkg or apt run is told the first time, and whenever i386 has just been added
+	if [[ -n $why ]]; then
+		keep_problem LOCAL13 "$list" "$version" "$why" && first=true
+		if $first || [[ ${DPKG_HOOK_ACTION:-} == add-architecture ]]; then
+			sparky-stereo-problems say "$PKG" LOCAL13 "$list" "$version" "$why" >&2 || true
+		fi
+		return 0
+	fi
+	# a dpkg run of its own: the next apt run brings them (a failed install's problem keeps its reason meanwhile)
+	if [[ ! -e $STORE/${PKG}_$KEY.json ]] || kept_as_no_unit; then
+		keep_problem LOCAL5 "$version" "$list" && first=true
+	fi
 	if $first || [[ ${DPKG_HOOK_ACTION:-} == add-architecture ]]; then
-		sparky-stereo-problems say "$PKG" LOCAL5 "$version" "$(listed "$need")" >&2 || true
+		sparky-stereo-problems say "$PKG" LOCAL5 "$version" "$list" >&2 || true
+		sparky-stereo-problems say "$PKG" LOCAL14 >&2 || true
 	fi
+	return 0
+}
+# the unit stopped while it waits (a shutdown during the apt run that needs them): the wait ends, nothing was installed,
+# and the problem says they are missing
+stopped_waiting() {
+	local version need
+	kill "$1" 2>/dev/null
+	read_versions
+	version=${VERSIONS[nvidia-driver-libs:amd64]:-}
+	if [[ -n $version ]] && has_i386 && need=$(missing "$version") && [[ -n $need && ! -e $STORE/${PKG}_$KEY.json ]]; then
+		sparky-stereo-problems keep --repair "$REPAIR" "$PKG" "$KEY" LOCAL5 "$version" "$(listed "$need")" >/dev/null 2>&1 || true
+	fi
+}
+auto() {
+	local version need list out status waited waiter
+	local -a pkgs
+	out=$(mktemp)
+	# apt prints one "Waiting for cache lock" line a second while it waits; the journal gets the first and their count
+	apt-get -q -o DPkg::Lock::Timeout=-1 check >"$out" 2>&1 &
+	waiter=$!
+	trap 'stopped_waiting "$waiter"; rm -f "$out"; exit 143' TERM
+	wait "$waiter"
+	status=$?
+	# from here a stop lets the step finish, as Debian's apt-daily-upgrade.service does (KillMode=process: a running dpkg
+	# is never killed)
+	trap ':' TERM
+	waited=$(grep -c '^Waiting for cache lock' "$out")
+	((waited == 0)) || echo "$(grep -m1 '^Waiting for cache lock' "$out") ($waited lines, one a second)"
+	grep -v '^Waiting for cache lock' "$out"
+	read_versions
+	version=${VERSIONS[nvidia-driver-libs:amd64]:-}
+	need=
+	[[ -z $version ]] || ! has_i386 || need=$(missing "$version")
+	if [[ -z $need ]]; then
+		# the run that held the locks brought them, or no longer needs them
+		rm -f "$out"
+		SPARKY_STEREO_HARDWARE_NVIDIA_I386= check
+		return 0
+	fi
+	list=$(listed "$need")
+	if ((status != 0)); then
+		sparky-stereo-problems keep --repair "$REPAIR" --status "$status" --output "$(grep -v '^Waiting for cache lock' "$out" | tail -n 40)" \
+			"$PKG" "$KEY" LOCAL6 "$list" 'apt-get check' "$status" >/dev/null 2>&1 || true
+		rm -f "$out"
+		return "$status"
+	fi
+	# shellcheck disable=SC2086 # the package names, one word each
+	mapfile -t pkgs < <(printf '%s\n' $need | sed "s/\$/=$version/")
+	# a simulation reads the cache only: without dpkg's locks (apt.conf(5), Debug::NoLocking), so another apt run starting
+	# now never finds them taken by it
+	apt-get -s -q -o Debug::NoLocking=true --no-install-suggests install "${pkgs[@]}" >"$out" 2>&1
+	status=$?
+	cat "$out"
+	if ((status != 0)); then
+		sparky-stereo-problems keep --repair "$REPAIR" --status "$status" --output "$(tail -n 40 "$out")" \
+			"$PKG" "$KEY" LOCAL15 "$list" "$version" "$status" >/dev/null 2>&1 || true
+		rm -f "$out"
+		return "$status"
+	fi
+	rm -f "$out"
+	sparky-stereo-problems run --repair "$REPAIR" "$PKG" "$KEY" LOCAL10 -- \
+		apt-get -y -q --no-install-suggests -o DPkg::Lock::Timeout=-1 install "${pkgs[@]}"
+	status=$?
+	((status == 0)) || return "$status"
+	read_versions
+	if [[ -n $(missing "$version") ]]; then
+		sparky-stereo-problems keep --repair "$REPAIR" "$PKG" "$KEY" LOCAL5 "$version" "$(listed "$(missing "$version")")" >/dev/null 2>&1 || true
+		return 1
+	fi
+	SPARKY_STEREO_HARDWARE_NVIDIA_I386= check
+	sparky-stereo-problems keep --boot --severity notice --quiet "$PKG" "$NOTICE" LOCAL11 "$list" "$version" || true
 	return 0
 }
 install() {
@@ -95,7 +246,7 @@ install() {
 		status=${PIPESTATUS[0]}
 		if ((status == 0)); then
 			# shellcheck disable=SC2086 # the package names, one word each
-			DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install $(printf '%s\n' $need | sed "s/\$/=$version/") 2>&1 | tee "$out"
+			SPARKY_STEREO_HARDWARE_NVIDIA_I386=installing DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install $(printf '%s\n' $need | sed "s/\$/=$version/") 2>&1 | tee "$out"
 			status=${PIPESTATUS[0]}
 			step='apt-get install'
 		else
@@ -116,6 +267,7 @@ install() {
 }
 case ${1:-} in
 check) check ;;
+auto) auto ;;
 install) install ;;
-*) echo 'usage: nvidia-i386 check|install' >&2; exit 2 ;;
+*) echo 'usage: nvidia-i386 check|auto|install' >&2; exit 2 ;;
 esac
