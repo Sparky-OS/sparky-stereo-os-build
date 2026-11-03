@@ -413,7 +413,7 @@
 39-amdgpu-dp-frame-sequential/0006-drm-amd-display-test-frame-sequential-stereo-on-Disp.patch
 
 # ==== 40-debian-kernelvariables: Debian parity: the headers' Makefile reads .kernelvariables (ORDER 311)
-#      status: next build (build 15, ORDER 364, all three flavours). Debian debian/kernelvariables.patch (Bastian Blank; refreshed by Ben Hutchings and Salvatore Bonaccorso) and
+#      status: this build (build 15, all three flavours: 7.3.1-15+lc1). Debian debian/kernelvariables.patch (Bastian Blank; refreshed by Ben Hutchings and Salvatore Bonaccorso) and
 #      debian/makefile-make-compiler-version-comparison-optional.patch (Ben Hutchings, #1019749), carried as Debian has them, context regenerated
 #      on v7.3.1 (offsets -1 and +31; +100). kernel/lean/stage.sh writes Debian's .kernelvariables into the headers (kernelvariables.sh): CC is
 #      $(CROSS_COMPILE)gcc-N with CROSS_COMPILE x86_64-linux-gnu-, which gcc-N-for-host provides, so DKMS needs no plain gcc command
@@ -423,7 +423,7 @@
 40-debian-kernelvariables/0002-Makefile-Make-compiler-version-comparison-optional.patch
 
 # ==== 41-stable-security-7.3.2: security fixes queued for 7.3.2 that 7.3.1 lacks (ORDER 364)
-#      status: next build (build 15, ORDER 364, all three flavours). The mainline commits, cherry-picked -x; each applies unchanged on v7.3.1 + groups 01-40.
+#      status: this build (build 15, all three flavours: 7.3.1-15+lc1). The mainline commits, cherry-picked -x; each applies unchanged on v7.3.1 + groups 01-40.
 #      Upstream check of 2026-11-03: no 7.3.y release after v7.3.1 (kernel.org releases.json; linux-7.3.y and stable-rc linux-7.3.y at 79a907609d53).
 #      The kernel CVE records (vulns.git ca1f3afafcaa, 2026-11-02) name four fixes 7.3.1 lacks, all four in 7.2.14 and queued for 7.3.2 in
 #      stable-queue.git queue-7.3/series (lines 17 to 20): CVE-2026-99231 c254eec4364b, CVE-2026-99230 4c83e39f4d19, CVE-2026-99229 34f5a664c34d,
@@ -438,7 +438,7 @@
 41-stable-security-7.3.2/0005-io_uring-io-wq-don-t-lose-the-signal-that-ends-work.patch
 
 # ==== 42-debian-bugfix-7.3.1: Debian parity: the fixes Debian carries on 7.3.1 (ORDER 364)
-#      status: next build (build 15, ORDER 364, all three flavours). Debian 7.3.1-1~exp1 and debian/latest (7.3.1-1~exp2, 2026-11-01) on salsa,
+#      status: this build (build 15, all three flavours: 7.3.1-15+lc1). Debian 7.3.1-1~exp1 and debian/latest (7.3.1-1~exp2, 2026-11-01) on salsa,
 #      debian/patches/bugfix/all: each is a mainline commit (same patch-id as Debian's file), cherry-picked -x, applies unchanged on groups 01-41.
 #      0001 AppArmor NULL dereference on connected AF_UNIX datagram sockets (Maxime Bélair, 4de32fd05ce9; Debian #1145111);
 #      0002 the Behringer UMC204HD that 7.3's generic Behringer boot quirk stops from probing (Takashi Iwai, e88f4749c02f; Debian #1151339).
