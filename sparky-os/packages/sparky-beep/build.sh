@@ -18,7 +18,7 @@ OUT=${OUT:-${SPARKY_REPO_DIR:?}}
 PKG=sparky-beep
 SOURCE_VERSION=$(sed -n '2s/^  Version \(.*\) (.*$/\1/p' "$SRC/CHANGELOG")
 [ -n "$SOURCE_VERSION" ] || { echo "no version in $SRC/CHANGELOG" >&2; exit 1; }
-VERSION=${VERSION:-0.2.1+lc1}
+VERSION=${VERSION:-0.2.3+lc1}
 W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}/sparky-os}/beep-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 COPY="$HERE/../../../tools/copy-recipe.py"
@@ -42,7 +42,10 @@ install -m 644 "$SRC"/compositions/*.beepmusic "$S/compositions/"
 install -m 644 "$SRC/config/beep.conf" "$D/etc/$PKG/beep.conf"
 install -m 644 "$SRC/copyright" "$D/usr/share/doc/$PKG/copyright"
 for s in preinst postinst prerm postrm; do
-	[ -f "$SRC/debian/$s" ] && install -m 755 "$SRC/debian/$s" "$D/DEBIAN/$s"
+	if [ -f "$SRC/debian/$s" ]; then
+		python3 "$SRC/debian/render-maintscript.py" "$SRC/debian/$s" >"$D/DEBIAN/$s"
+		chmod 755 "$D/DEBIAN/$s"
+	fi
 done
 echo "/etc/$PKG/beep.conf" >"$D/DEBIAN/conffiles"
 
@@ -53,7 +56,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: apt, bash, bc, beep, coreutils, grep, sed, systemd
+Depends: apt, bash, bc, beep, coreutils, grep, sed, systemd, util-linux
 Recommends: whiptail | dialog, yad | zenity
 Suggests: netdata, openssh-server, samba, webmin
 Section: System

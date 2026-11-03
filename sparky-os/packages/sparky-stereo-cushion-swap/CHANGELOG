@@ -1,4 +1,12 @@
 -------------------------------------------------------------------------------
+  Version 0.3.3 (2026-11-03)
+-------------------------------------------------------------------------------
+  * Hold the resume area across every phase of hibernate, hybrid sleep and
+    suspend-then-hibernate, until the native systemd sleep service ends.
+  * Fail preparation before sleep, retain the error, and reset the quiet window
+    after resume; serialize preparation and cleanup with the daemon's actions.
+  * Remove obsolete compressed-memory swap references.
+-------------------------------------------------------------------------------
   Version 0.3.2 (2026-11-03)
 -------------------------------------------------------------------------------
   * Copy only tracked recipe inputs and retain the shared copier in source exports.

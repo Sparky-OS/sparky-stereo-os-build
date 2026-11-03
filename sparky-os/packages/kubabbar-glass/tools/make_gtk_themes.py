@@ -8,7 +8,8 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 THEMES = {
     "Kubabbar-Glass": ("Breeze", ROOT / "share/color-schemes/kubabbar-glass.colors", "Kubabbar Glass"),
-    "Sparky-Stereo-Oxygen": ("Breeze-Dark", pathlib.Path("/usr/share/color-schemes/OxygenDark.colors"), "Sparky Stereo Oxygen"),
+    "Sparky-Stereo-Oxygen": ("Breeze", ROOT / "tools/color-schemes/Oxygen.colors", "Sparky Stereo Oxygen"),
+    "Sparky-Stereo-Oxygen-Dark": ("Breeze-Dark", ROOT / "tools/color-schemes/SparkyStereoOxygenDark.colors", "Sparky Stereo Oxygen Dark"),
 }
 for name, (base, scheme, title) in THEMES.items():
     for gtk in ("3.0", "4.0"):

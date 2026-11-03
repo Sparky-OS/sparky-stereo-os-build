@@ -8,9 +8,7 @@ Files: *
 Files: etc/security/limits.d/20-sparky-audio.conf
        usr/lib/modules-load.d/sparky-stereo.conf
        usr/lib/sysctl.d/70-sparky-stereo.conf
-       usr/lib/systemd/zram-generator.conf.d/sparky-stereo.conf
        usr/lib/tmpfiles.d/sparky-thp.conf
-       usr/lib/udev/rules.d/30-sparky-zram.rules
        usr/lib/udev/rules.d/60-sparky-block.rules
        usr/lib/udev/rules.d/99-sparky-audio.rules
   Derived from CachyOS-Settings, https://github.com/CachyOS/CachyOS-Settings
@@ -18,7 +16,7 @@ Files: etc/security/limits.d/20-sparky-audio.conf
   the authors below are the git authors of the corresponding files, read from
   the repository on 2026-10-09, commit e27ea45cc5af):
     Vasiliy Stelmachenok (limits.d/20-audio.conf, sysctl.d/70-cachyos-settings.conf,
-      zram-generator.conf, tmpfiles.d/thp.conf, udev 30-zram.rules,
+      tmpfiles.d/thp.conf,
       60-ioschedulers.rules, 40-hpet-permissions.rules, 99-cpu-dma-latency.rules)
     Peter Jung (modules-load.d/ntsync.conf, tmpfiles.d/thp-shrinker.conf,
       60-ioschedulers.rules)
@@ -40,12 +38,6 @@ Files: usr/lib/sysctl.d/70-sparky-stereo.conf, usr/lib/udev/rules.d/60-sparky-bl
   sets, as reported in the Fedora FESCo discussion
   https://pagure.io/fesco/issue/2993 ; SteamOS's own repository is not
   publicly readable, so its authors could not be verified and are not named.
-  License: GPL-3+
-
-Files: usr/libexec/sparky-stereo/zram-auto usr/lib/systemd/zram-generator.conf.d/50-sparky-stereo.conf
-  Copyright 2026 Daniel Ramos (Capitain Jack)
-  A configuration of zram-generator (the systemd project's zram-generator,
-  https://github.com/systemd/zram-generator); no code from it is included.
   License: GPL-3+
 
 Sparky Stereo OS, an edition of SparkyLinux, created by Paweł "pavroo"

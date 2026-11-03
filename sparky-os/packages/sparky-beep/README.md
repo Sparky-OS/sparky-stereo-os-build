@@ -23,6 +23,7 @@ coreutils
 grep
 sed
 systemd
+util-linux
 
 Build:
 -------------

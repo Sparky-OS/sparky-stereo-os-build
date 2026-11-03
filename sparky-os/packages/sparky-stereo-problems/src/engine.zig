@@ -28,7 +28,7 @@ const sys = @import("sys.zig");
 const Allocator = std.mem.Allocator;
 const Value = std.json.Value;
 
-pub const version = "0.1.0";
+pub const version = "0.1.1";
 pub const engine_package = "sparky-stereo-problems";
 const support_url = "https://github.com/Sparky-OS/sparky-stereo-os/issues";
 const output_lines = 200;

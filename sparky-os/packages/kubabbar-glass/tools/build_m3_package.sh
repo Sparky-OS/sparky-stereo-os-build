@@ -6,7 +6,7 @@
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 dest=${DEST:-${SPARKY_STAGING_DIR:?}/classic-look/m3}
-version=${VERSION:-20261102~sparky9~0+lc1}
+version=${VERSION:-20261102.1~sparky9~0+lc1}
 base=${BASE_VERSION:-20261014.6~sparky9~1+lc1}
 work=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/kubabbar-m3-pkg.XXXXXX")
 trap 'rm -rf "$work"' EXIT
@@ -21,7 +21,7 @@ if compgen -G "$dest/*.deb" >/dev/null; then
 	echo "Use an empty candidate output directory; existing archives are retained." >&2
 	exit 1
 fi
-credit='Sparky Stereo OS, an edition of SparkyLinux, created by Paweł "pavroo" Pijanowski <pavroo@onet.eu> and Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>'
+credit="Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux (https://sparkylinux.org, by Paweł \"pavroo\" Pijanowski)"
 p=sparky-stereo-look-kubabbar-glass-menubar
 k=$work/$p
 mkdir -p "$k/usr/share/plasma/look-and-feel" "$k/usr/share/icons/hicolor/scalable/apps" "$k/usr/bin" "$k/usr/share/sparky/kubabbar-glass-minimize" "$k/usr/share/doc/$p"
