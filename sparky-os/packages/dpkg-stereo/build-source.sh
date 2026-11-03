@@ -42,6 +42,13 @@ EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
 
+  * Carry Lean Code 0.1.25 and recheck recorded Perl quote refusals once,
+    keeping user edits, holds and already qualified projections (ORDER 372).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 03 Nov 2026 22:00:00 -0300
+
+dpkg-stereo (0.1.29) unstable; urgency=medium
+
   * A dpkg run that changes nothing costs the hooks almost nothing: the
     program is byte-compiled and imports what it needs when it needs it;
     a configure run gets back only the conffiles of the packages it

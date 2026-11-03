@@ -47,6 +47,9 @@ RELEASED = {
     # ORDER 352: the Zig adapter and 346c's Perl rule, released under their own label
     '0.1.24': {'d426fe3fd950a527223d5e1972b5525f6f499002b0abbfb1bb2f782dcd99c57a':
                'lean 0.1.24 (collapse-blank,pointer,c-drop-lines) code d426fe3fd950a527'},
+    # ORDER 372: Perl quotes, including /x pattern text, remain literal.
+    '0.1.25': {'de4a718bfb6893b85c8054898082ad54b6cceb6c278fb22436930f3a987cd7c5':
+               'lean 0.1.25 (collapse-blank,pointer,c-drop-lines) code de4a718bfb6893b8'},
 }
 
 # Digests that built under a label without being its released renderer: never accepted.
