@@ -34,10 +34,9 @@ The source package supplies the Debian amd64 libc include and CRT paths through 
 
 The compiler is `/usr/lib/cgm-zig/bin/zig`; its matching library is `/usr/lib/cgm-zig/lib/zig`.
 This preserves upstream's executable-relative library lookup.
-The package provides `zig` and registers `/usr/bin/zig` through update-alternatives at priority 20.
-That positive priority selects it when it is the sole provider and leaves room for higher-priority providers; manual administrator selections remain respected.
-It does not declare Conflicts or divert `/usr/bin/zig`.
-A future package directly owning that path needs its own compatibility investigation.
+The package provides `zig` and registers `/usr/bin/zig` through update-alternatives at priority 2147483647, the highest update-alternatives accepts: the edition's zig is the zig whenever another one is installed too (Daniel, 2026-11-02, ORDER 361), and a choice the person makes with `update-alternatives --config zig` stays theirs.
+The Debian Zig Team's `zig` package (zig-defaults, built by Ubuntu) owns `/usr/bin/zig` directly instead of joining the alternatives group, so the preinst diverts every other package's `/usr/bin/zig` to `/usr/bin/zig.distrib` (moving one already installed aside); that compiler stays reachable by its own name (`zig0.16`). The postrm removes the diversion and gives the file its name back.
+`tests/alternatives.sh` installs it with the Debian Zig Team's zig in both orders and removes each.
 
 `tests/installed.sh NEW_SCRATCH_DIRECTORY` checks the installed version, hello world, and a C caller of a Zig shared library in a clean container.
 Alternatives lifecycle, downstream engine, apt resolution and publication link-gate proofs remain required in addition to that test.

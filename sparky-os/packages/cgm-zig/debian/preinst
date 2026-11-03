@@ -1,0 +1,19 @@
+#!/bin/sh
+set -e
+# The edition's zig is the zig (Daniel, 2026-11-02: "WHERE HAVE YOU SEEN WHEN WE OFFER A PACKAGE PEOPLE SHOULD
+# INSTALL DEBIAN's VERSION???"). The Debian Zig Team's zig package (zig-defaults) ships /usr/bin/zig itself, not
+# through update-alternatives, so dpkg would put it over this package's alternatives link; the diversion sends every
+# other package's /usr/bin/zig to /usr/bin/zig.distrib (their compiler stays reachable as zig0.16 and the like).
+# A /usr/bin/zig that another package installed is moved aside with it; this package's own link is left in place.
+case "$1" in
+	install|upgrade)
+		if [ "$(dpkg-divert --listpackage /usr/bin/zig)" != cgm-zig ]; then
+			rename=--no-rename
+			if dpkg-query -S /usr/bin/zig >/dev/null 2>&1; then
+				rename=--rename
+			fi
+			dpkg-divert --package cgm-zig --add $rename --divert /usr/bin/zig.distrib /usr/bin/zig
+		fi
+		;;
+esac
+#DEBHELPER#

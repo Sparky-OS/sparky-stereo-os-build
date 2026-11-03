@@ -1,14 +1,15 @@
 #!/bin/sh
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/25
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/31
+# Last update 2026/11/03
 # Checks a packed ISO against the recipe: the live kernel is the edition's and the only one (/live and the image's /boot),
 # the boot menus have no second kernel and offer the Secure Boot enrolment, the EFI image carries Debian's signed shim,
 # GRUB and MokManager (the same files as the root file system's packages) and the edition's certificate, the edition's
 # kernel is signed with that certificate's key, the default boot splash is the Stereo one (in the image and in the live
 # boot image), command-not-found's index is filled, and every kernel the ISO boots or installs carries the security
 # fixes kernel-fixes.py lists, with no older kernel left (the ISO's kernels, initrds and menus; the image's /boot,
-# module trees, DKMS builds and kernel packages, linux-libc-dev included). Runs as root in the build image (privileged,
+# module trees, DKMS builds and kernel packages, linux-libc-dev included), and nothing of zram or zswap is in the image
+# or its boot menus (zram-check.py). Runs as root in the build image (privileged,
 # for the loop mounts and the chroot), with the root file system at /rootfs and the build tree at /build. The ISO and
 # its filesystem.squashfs are mounted read-only and only a few small files are copied out, into the container's own
 # /tmp. Prints a report; exits 1 on any failed check.
@@ -113,6 +114,9 @@ if mount -o loop,ro "$I/live/filesystem.squashfs" "$T/image"; then
 		n=$(grep -c '^FAIL' "$T/kernel-fixes.txt"); [ "$n" -gt 0 ] || { n=1; echo "FAIL  kernel-fixes.py stopped (exit $r)"; }
 		fails=$((fails + n))
 	fi
+	echo "-- nothing of zram or zswap of ours (zram-check.py: the image and the ISO's boot menus; the person may opt in later)"
+	python3 /build/zram-check.py "$T/image" --also "$T/boot_grub_grub.cfg" --also "$T/isolinux_isolinux.cfg" > "$T/zram.txt" 2>&1 \
+		&& ok "$(cat "$T/zram.txt")" || { sed 's/^/   /' "$T/zram.txt"; no "zram or zswap in the image or its boot menus"; }
 	umount "$T/image"
 else
 	no "cannot mount the image's filesystem.squashfs"

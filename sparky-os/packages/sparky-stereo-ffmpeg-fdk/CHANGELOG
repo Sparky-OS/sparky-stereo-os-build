@@ -1,4 +1,9 @@
 -------------------------------------------------------------------------------
+  Version 20261103.1~sparky9~0 (2026-11-03)
+-------------------------------------------------------------------------------
+  * The rebuild after an update is never capped (ORDER 361; Daniel, 2026-11-02: "Wheel-driver builds - or any build at update time - DO NEVER CAP EXECUTION"): it runs at normal priority on every processor; the transient service loses Nice=19, IOSchedulingClass=idle and CPUSchedulingPolicy=batch, the detached process its nice 19, the build its nice 10, and an automatic rebuild no longer leaves one processor out
+
+-------------------------------------------------------------------------------
   Version 20261102.2~sparky9~0 (2026-11-02)
 -------------------------------------------------------------------------------
   * A failed update check that the problems engine kept and said no longer fails apt update; a failure nothing could keep still does

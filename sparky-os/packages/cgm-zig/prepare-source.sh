@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Daniel Ramos (Capitain Jack) 2026/11/02
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/02
+# Last update 2026/11/03
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 source "$HERE/source.env"
@@ -24,7 +24,10 @@ mkdir "$TREE/debian/cgm"
 cp "$HERE/"{configure.sh,bootstrap-source.sh,build-final.py,check-stage3-command.py,source.env,ATTRIBUTIONS.md} "$TREE/debian/cgm/"
 cp -a "$HERE/tests" "$TREE/debian/cgm/"
 # The source archive carries the exact toolkit that qualifies its build and payload.
-PYTHONPATH="$HERE/../.." python3 -m lean.debian_prepare "$TREE" "$CGM_ZIG_VERSION-1+lc1" --toolkit "$HERE/../.." \
+# the recipe's own version (debian/changelog), with the Lean Code suffix
+VERSION=$(dpkg-parsechangelog -l "$HERE/debian/changelog" -S Version)
+case $VERSION in "$CGM_ZIG_VERSION"-*) ;; *) printf 'cgm-zig: debian/changelog version %s is not of %s\n' "$VERSION" "$CGM_ZIG_VERSION" >&2; exit 1 ;; esac
+PYTHONPATH="$HERE/../.." python3 -m lean.debian_prepare "$TREE" "$VERSION+lc1" --toolkit "$HERE/../.." \
 	--preserve-source 'test/*' 'Compiler tests contain deliberate syntax, comments and directive fixtures; retain upstream test inputs verbatim' \
 	--generated-output '/usr/lib/cgm-zig/lib/zig/*test.zig' empty "Zig's install step writes every *test.zig as an empty placeholder (build.zig blank_extensions, lib/std/Build/Step/InstallDir.zig)"
 # The compiler must bootstrap its own Zig consumer before Zig qualification.

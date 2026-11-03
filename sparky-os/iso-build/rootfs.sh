@@ -122,6 +122,11 @@ if [ "$STEP" = packages ] || [ "$STEP" = all ]; then
 	cp /build/zfs-check.py $R/tmp/
 	inr python3 /tmp/zfs-check.py / || { echo "rootfs: ZFS is not ready; see validation errors above" >&2; exit 1; }
 	rm -f $R/tmp/zfs-check.py
+	# nothing of zram or zswap of ours in the image, and the zram packages not installed (HOUSE-RULES "zram and zswap:
+	# never ours, never on by default; the person may opt in"): every finding names its file and line
+	cp /build/zram-check.py $R/tmp/
+	inr python3 /tmp/zram-check.py / || { echo "rootfs: zram or zswap is in the tree; see the gate's findings above" >&2; exit 1; }
+	rm -f $R/tmp/zram-check.py
 	echo "== $(date -u +%T) command-not-found: its index is filled at build time, so a live session names the package of a missing program before anyone runs apt update"
 	# apt-file's Contents targets are on (50apt-file.conf) and command-not-found's own hook (50command-not-found) builds the index
 	# after every apt update: Debian's and deb-multimedia's files come that way. The build's own sources are flat repositories with

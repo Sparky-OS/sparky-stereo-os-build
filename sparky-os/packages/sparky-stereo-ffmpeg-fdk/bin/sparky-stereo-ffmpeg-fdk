@@ -12,7 +12,7 @@
 #      32-bit libraries (Multi-Arch: same, lock-step versions) are the edition's own, relabelled to the same version
 #   4. takes the build dependencies out again, and rebuilds by itself when the edition updates its FFmpeg (the apt hook)
 # Usage: sparky-stereo-ffmpeg-fdk [--yes] [--keep-build-deps] | --status | --remove | --help
-# Last update 2026/11/02
+# Last update 2026/11/03
 
 LIBDIR=${SPARKY_FDK_LIBDIR:-/usr/lib/sparky-stereo-ffmpeg-fdk}
 [ -f "$LIBDIR/common.sh" ] || LIBDIR=$(dirname "$(readlink -f "$0")")/../lib
@@ -369,13 +369,14 @@ PY
 		chmod 755 "$B/shim/dpkg-shlibdeps"
 		SHIM="$B/shim"
 	fi
+	# every processor, at normal priority, the rebuild after an update too (Daniel, 2026-11-02: "any build at update
+	# time - DO NEVER CAP EXECUTION")
 	cores=$(nproc 2>/dev/null || echo 1)
 	jobs=$cores
-	[ "$AUTO" = 1 ] && [ "$jobs" -gt 1 ] && jobs=$((jobs - 1))
 	DBO="nocheck parallel=$jobs"
 	read -r low high cores < <(estimate)
 	note "building with $jobs jobs (expected $low to $high minutes)"
-	as_user "cd '$tree' && nice -n 10 dpkg-buildpackage -B -us -uc -P$PROFILE" >"$B/build.log" 2>&1
+	as_user "cd '$tree' && dpkg-buildpackage -B -us -uc -P$PROFILE" >"$B/build.log" 2>&1
 	if [ $? -ne 0 ]; then
 		cp "$B/build.log" "$STATE/last-build.log" 2>/dev/null
 		tail -n 25 "$B/build.log"

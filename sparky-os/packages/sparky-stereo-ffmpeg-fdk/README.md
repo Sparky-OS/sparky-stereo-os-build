@@ -24,7 +24,7 @@ What it does (`sparky-stereo-ffmpeg-fdk`, run as your own user):
 
 Updates:
 -------------
-`/etc/apt/apt.conf.d/99sparky-stereo-ffmpeg-fdk` runs `/usr/lib/sparky-stereo-ffmpeg-fdk/check-update` after every successful `apt update`. If the edition's repository has a newer FFmpeg than the one the local build was made from, the build runs again in the background (a transient systemd service at the lowest priority, or a detached process), with the consent given at the first run. Nothing happens on a computer that never built one; a rebuild that failed is not tried again by itself for the same version; a computer on battery waits for the mains. Until the rebuild is done the old local build stays (the pin names its exact version), so FFmpeg is never half upgraded.
+`/etc/apt/apt.conf.d/99sparky-stereo-ffmpeg-fdk` runs `/usr/lib/sparky-stereo-ffmpeg-fdk/check-update` after every successful `apt update`. If the edition's repository has a newer FFmpeg than the one the local build was made from, the build runs again in the background (a transient systemd service, or a detached process), at normal priority on every processor, as any build at update time, with the consent given at the first run. Nothing happens on a computer that never built one; a rebuild that failed is not tried again by itself for the same version; a computer on battery waits for the mains. Until the rebuild is done the old local build stays (the pin names its exact version), so FFmpeg is never half upgraded.
 
 Other commands:
 -------------

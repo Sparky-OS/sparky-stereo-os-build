@@ -215,6 +215,11 @@ if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
 	cp /build/zfs-check.py $R/tmp/
 	inr python3 /tmp/zfs-check.py / || { echo "!! ZFS is not ready in the image; see validation errors above" >&2; exit 1; }
 	rm -f $R/tmp/zfs-check.py
+	# nothing of zram or zswap of ours in the image, and the zram packages not installed (HOUSE-RULES "zram and zswap:
+	# never ours, never on by default; the person may opt in"): every finding names its file and line
+	cp /build/zram-check.py $R/tmp/
+	inr python3 /tmp/zram-check.py / || { echo "!! zram or zswap is in the image; see the gate's findings above" >&2; exit 1; }
+	rm -f $R/tmp/zram-check.py
 	# DKMS made its own signing key while building in the chroot; a private key never ships
 	rm -f $R/var/lib/dkms/mok.key $R/var/lib/dkms/mok.pub
 	# each installed system gets its own identity
