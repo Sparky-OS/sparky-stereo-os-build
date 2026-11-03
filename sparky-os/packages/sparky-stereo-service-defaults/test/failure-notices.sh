@@ -13,13 +13,14 @@ E=${2:?evidence directory}; mkdir -p "$E"
 B=sparky-stereo-problems
 units=(urfkill.service snmptt.service ipwatchd.service pkcs11-daemon.service xfs_healer@-.service xfs_healer@test.service order368-other.service order368-other@x.service stafd.service)
 # New session each run; records outside this suite are hidden, not deleted.
-useradd -m "proof${RANDOM}"
-PERSON=$(tail -1 /etc/passwd | cut -d: -f1)
+PERSON="proof${RANDOM}"
+useradd -m "$PERSON"
 U=$(id -u "$PERSON"); H=$(getent passwd "$PERSON" | cut -d: -f6)
 ux() { runuser -u "$PERSON" -- env HOME="$H" XDG_RUNTIME_DIR="/run/user/$U" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$U/bus" "$@"; }
 waitfor() { for ((i=0;i<60;i++)); do if "$@"; then return 0; fi; sleep 0.25; done; return 1; }
 cleanup() { ux systemctl --user stop sparky-stereo-problems-notifier.service sparky-stereo-problems-notifier.path fake-notifications.service || true; loginctl terminate-user "$PERSON" || true; loginctl disable-linger "$PERSON" || true; }
 trap cleanup EXIT
+systemctl stop "${units[@]}" 2>/dev/null || true
 # Base units replace only the daemons: retain every installed package drop-in.
 for unit in urfkill.service snmptt.service ipwatchd.service pkcs11-daemon.service xfs_healer@.service order368-other.service order368-other@.service stafd.service; do
  cat >"/etc/systemd/system/$unit" <<'UNIT'
@@ -78,13 +79,14 @@ ux "$B" list --json >"$E/records.json"
 python3 - "$E" "${units[@]}" <<'PY'
 import json,pathlib,sys
 p=pathlib.Path(sys.argv[1]); rows=[]; errors=0
-records=json.load(open(p/'records.json')); notices=json.load(open(p/'notices.json'))['notify']
+records=json.load(open(p/'records.json')); previous=0
 for u in sys.argv[2:]:
     rs=[r for r in records if r['key']==u and not r['hidden']]
-    ns=[n for n in notices if u in n['body']]
+    notices=json.load(open(p/f'{u}.notices.json'))['notify']
+    ns=notices[previous:]; previous=len(notices)
     own=u.split('@')[0] in ('xfs_healer',) or u in ('urfkill.service','snmptt.service','ipwatchd.service','pkcs11-daemon.service')
     expected='sparky-stereo-service-defaults' if own else 'sparky-stereo-problems'
-    good=len(rs)==len(ns)==1 and rs[0]['package']==expected and rs[0]['repair']==[['systemctl','restart',u]] and 'Repair' in ns[0]['actions']
+    good=len(rs)==len(ns)==1 and rs[0]['package']==expected and rs[0]['repair']==[['systemctl','restart',u]] and 'Repair' in ns[0]['actions'] and u.split('.service')[0].split('@')[0] in ns[0]['body']
     rows.append(f'{"PASS" if good else "FAIL"} {u}: records={len(rs)} notices={len(ns)} packages={[r["package"] for r in rs]}')
     errors+=not good
 text='\n'.join(rows)+f'\nfailures: {errors}\n'
