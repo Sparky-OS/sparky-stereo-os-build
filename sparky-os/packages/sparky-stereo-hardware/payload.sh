@@ -9,7 +9,11 @@ install -Dm755 "$HERE/bin/sparky-stereo-nvidia-i386" "$D/usr/lib/sparky-stereo-h
 install -Dm644 "$HERE/share/dpkg/sparky-stereo-hardware" "$D/etc/dpkg/dpkg.cfg.d/sparky-stereo-hardware"
 # the unit the hook starts inside an apt run: it installs them once that run has ended, under the engine
 install -Dm644 "$HERE/share/systemd/sparky-stereo-hardware-nvidia-i386.service" "$D/usr/lib/systemd/system/sparky-stereo-hardware-nvidia-i386.service"
-install -Dm644 "$HERE/share/systemd/nvidia-i386-told-once.conf" "$D/usr/lib/systemd/system/sparky-stereo-hardware-nvidia-i386.service.d/sparky-stereo-hardware.conf"
+# told once: the unit's own step keeps its failure in the engine (with apt's output and the Repair), so the engine's
+# handler for every failed service is masked for it by name, as the engine masks it for its own handler (an empty
+# OnFailure= cannot remove a dependency another drop-in added: measured with systemd 262)
+mkdir -p "$D/usr/lib/systemd/system/sparky-stereo-hardware-nvidia-i386.service.d"
+ln -s /dev/null "$D/usr/lib/systemd/system/sparky-stereo-hardware-nvidia-i386.service.d/50-sparky-stereo-problems.conf"
 mkdir -p "$D/usr/lib/sparky-stereo-hardware" "$D/usr/share/sparky/sparky-stereo-hardware"
 install -m644 "$HERE"/lib/* "$D/usr/lib/sparky-stereo-hardware/"
 install -m644 "$HERE"/lang/* "$HERE/share/nvidia-open.ids" "$HERE/share/network-ids.tsv" "$HERE/share/nvidia-open-source.txt" "$HERE/share/rig-devices.json" "$D/usr/share/sparky/sparky-stereo-hardware/"

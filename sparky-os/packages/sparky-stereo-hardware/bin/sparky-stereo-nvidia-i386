@@ -184,7 +184,7 @@ auto() {
 	if [[ -z $need ]]; then
 		# the run that held the locks brought them, or no longer needs them
 		rm -f "$out"
-		SPARKY_STEREO_HARDWARE_NVIDIA_I386= check
+		SPARKY_STEREO_HARDWARE_NVIDIA_I386='' check
 		return 0
 	fi
 	list=$(listed "$need")
@@ -217,7 +217,7 @@ auto() {
 		sparky-stereo-problems keep --repair "$REPAIR" "$PKG" "$KEY" LOCAL5 "$version" "$(listed "$(missing "$version")")" >/dev/null 2>&1 || true
 		return 1
 	fi
-	SPARKY_STEREO_HARDWARE_NVIDIA_I386= check
+	SPARKY_STEREO_HARDWARE_NVIDIA_I386='' check
 	sparky-stereo-problems keep --boot --severity notice --quiet "$PKG" "$NOTICE" LOCAL11 "$list" "$version" || true
 	return 0
 }
@@ -245,7 +245,7 @@ install() {
 		DEBIAN_FRONTEND=noninteractive apt-get -y update 2>&1 | tee "$out"
 		status=${PIPESTATUS[0]}
 		if ((status == 0)); then
-			# shellcheck disable=SC2086 # the package names, one word each
+			# shellcheck disable=SC2046,SC2086 # the package names, one word each
 			SPARKY_STEREO_HARDWARE_NVIDIA_I386=installing DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install $(printf '%s\n' $need | sed "s/\$/=$version/") 2>&1 | tee "$out"
 			status=${PIPESTATUS[0]}
 			step='apt-get install'
