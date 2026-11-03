@@ -163,6 +163,14 @@ class TransactionsTest(unittest.TestCase):
         self.assertNotIn(b'Configuration file', result.stdout)
         self.assertEqual(self.file.read_bytes(), NEW_LEAN)
 
+    def test_remove_then_reinstall_does_not_prompt_for_projection(self):
+        result = self.invoke('-r', PACKAGE)
+        self.assertEqual(result.returncode, 0, result.stdout.decode())
+        result = self.invoke('-i', self.packages[(PACKAGE, '2')])
+        self.assertEqual(result.returncode, 0, result.stdout.decode())
+        self.assertNotIn(b'Configuration file', result.stdout)
+        self.assertEqual(self.file.read_bytes(), NEW_LEAN)
+
     def test_purge_after_unpack_removes_retained_conffile_records(self):
         result = self.invoke('--unpack', self.packages[(PACKAGE, '2')])
         self.assertEqual(result.returncode, 0, result.stdout.decode())
