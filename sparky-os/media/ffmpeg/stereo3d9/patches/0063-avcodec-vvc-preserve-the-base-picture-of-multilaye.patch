@@ -1,0 +1,71 @@
+Description: avcodec/vvc: preserve the base picture of multilayer access units
+ Returning AVERROR_PATCHWELCOME for an unsupported layer aborts the
+ whole access unit, including a layer-0 picture already being decoded.
+ This contradicts the intent of bb9e4ff355 to skip enhancement NALs.
+ .
+ Keep the existing layer-0 restriction, skip unsupported NAL units and
+ warn once. Read only layer-0 prefix SEI in the separate prefix scan so
+ another layer's metadata cannot reach the decoded picture (H.266
+ D.2.2). Returning success for skipped NALs also keeps enhancement suffix
+ SEI from overwriting the base picture's decoded-picture hash.
+ .
+ With complete access units from the parser fix, VPS_A_3 and OPI_B_3
+ decode all nine and seventeen base pictures, matching independent
+ layer-0 extractions and their decoded-picture hashes.
+ .
+ Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+ Assisted-by: Claude Opus via Claude Code
+ Assisted-by: GPT-6 via Codex
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/07436e4f9988b202a9ca2773c8a17f83dd8a8262
+Forwarded: no, held by Daniel 2026-11-03 (fork branch vvc-layer-au on code.ffmpeg.org/danielcamposramos/FFmpeg)
+Last-Update: 2026-11-03
+
+diff --git a/libavcodec/vvc/dec.c b/libavcodec/vvc/dec.c
+index 5bf2f71..b43d82b 100644
+--- a/libavcodec/vvc/dec.c
++++ b/libavcodec/vvc/dec.c
+@@ -748,9 +748,12 @@ static void decode_prefix_sei(VVCFrameContext *fc, VVCContext *s)
+ 
+     for (int i = 0; i < frame->nb_units; i++) {
+         const CodedBitstreamUnit *unit = frame->units + i;
++        const H266RawSEI *sei          = unit->content_ref;
+ 
+-        if (unit->type == VVC_PREFIX_SEI_NUT) {
+-            int ret = ff_vvc_sei_decode(&fc->sei, unit->content_ref, fc);
++        /* Keep layer-associated SEI with its picture (H.266 D.2.2). */
++        if (unit->type == VVC_PREFIX_SEI_NUT &&
++            (!sei || !sei->nal_unit_header.nuh_layer_id)) {
++            int ret = ff_vvc_sei_decode(&fc->sei, sei, fc);
+             if (ret < 0)
+                 return;
+         }
+@@ -1000,10 +1003,13 @@ static int decode_nal_unit(VVCContext *s, VVCFrameContext *fc, AVBufferRef *buf_
+ 
+     s->temporal_id = nal->temporal_id;
+ 
++    /* Only layer 0 is supported. Skip other layers without discarding
++     * the base picture in the same access unit. */
+     if (nal->nuh_layer_id > 0) {
+-        avpriv_report_missing_feature(fc->log_ctx,
+-                "Decoding of multilayer bitstreams");
+-        return AVERROR_PATCHWELCOME;
++        av_log_once(s->avctx, AV_LOG_WARNING, AV_LOG_DEBUG, &s->multilayer_warning_shown,
++                    "Decoding of multilayer bitstreams is not implemented, "
++                    "decoding the base layer only.\n");
++        return 0;
+     }
+ 
+     switch (unit->type) {
+diff --git a/libavcodec/vvc/dec.h b/libavcodec/vvc/dec.h
+index 9298e41..4870430 100644
+--- a/libavcodec/vvc/dec.h
++++ b/libavcodec/vvc/dec.h
+@@ -234,6 +234,7 @@ typedef struct VVCContext {
+     int no_output_before_recovery_flag; ///< NoOutputBeforeRecoveryFlag
+     int gdr_recovery_point_poc;         ///< recoveryPointPocVal
+     int film_grain_warning_shown;
++    int multilayer_warning_shown;
+ 
+     /**
+      * Sequence counters for decoded and output frames, so that old

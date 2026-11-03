@@ -1,0 +1,38 @@
+Description: avcodec/vvc: retain EOS for the following access unit
+ The NAL loop writes last_eos after decoding the picture in the packet.
+ The next packet overwrites it from eos, which remains zero, so a CRA
+ following EOS is not recognized as the start of a new coded layer video
+ sequence. Reusing a POC then drops the picture with a duplicate-POC
+ error.
+ .
+ Set the current packet's eos flag instead, so the following access unit
+ gets NoOutputBeforeRecoveryFlag as required by H.266 8.1.1. Only retain
+ EOS for the supported layer 0; another layer's EOS does not end layer
+ 0's CLVS (H.266 7.4.3.11).
+ .
+ Two CRA-only excerpts of RAP_A_1 separated by EOS now output both
+ pictures, matching two independent decodes. Master outputs only the
+ first picture and can still exit successfully.
+ .
+ Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+ Assisted-by: Claude Opus via Claude Code
+ Assisted-by: GPT-6 via Codex
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/18e51353fbcff2aa8806f23ed41c55b0fe76472d
+Forwarded: no, held by Daniel 2026-11-03 (fork branch vvc-eos-recovery on code.ffmpeg.org/danielcamposramos/FFmpeg)
+Last-Update: 2026-11-03
+
+diff --git a/libavcodec/vvc/dec.c b/libavcodec/vvc/dec.c
+index 49186af..5bf2f71 100644
+--- a/libavcodec/vvc/dec.c
++++ b/libavcodec/vvc/dec.c
+@@ -1065,7 +1065,8 @@ static int decode_nal_units(VVCContext *s, VVCFrameContext *fc, AVPacket *avpkt)
+         const CodedBitstreamUnit *unit = frame->units + i;
+ 
+         if (unit->type == VVC_EOB_NUT || unit->type == VVC_EOS_NUT) {
+-            s->last_eos = 1;
++            if (!nal->nuh_layer_id)
++                s->eos = 1;
+         } else {
+             ret = decode_nal_unit(s, fc, avpkt->buf, nal, unit);
+             if (ret < 0) {

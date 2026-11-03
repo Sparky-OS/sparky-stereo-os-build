@@ -1,0 +1,35 @@
+ffmpeg-dmo (10:9.0.2-dmo1+stereo3d9) unstable; urgency=medium
+
+  * Carry the six accepted multilayer and AC-3 fixes of the edition's FFmpeg
+    fork (code.ffmpeg.org danielcamposramos/FFmpeg; not sent upstream, held by
+    Daniel 2026-11-03), each as a fix patch and a separate test patch
+    (0055 to 0066), ported from FFmpeg master to 9.0.2:
+    - hevc-ps-layer-id-mask (0055, 0056): the HEVC VPS layer_id_included_flag
+      bits are read in layer ID order (H.265 7.3.2.1, 7.4.3.1), so an MV-HEVC
+      stream with layer IDs 0 and 6 keeps its second view.
+    - hevc-parser-au-split (0057, 0058): the HEVC parser defers an access unit
+      boundary until the next VCL NAL unit and follows the increasing layer
+      order of H.265 F.7.4.2.4.4, so one 3D frame is no longer split across
+      packets.
+    - vvc-parser-layer1 (0059, 0060): the VVC parser assembles all picture
+      units of an access unit, outputting the preceding access unit before a
+      new one starts (H.266 7.4.2.4.3).
+    - vvc-eos-recovery (0061, 0062): the VVC decoder keeps an end of sequence
+      NAL unit of layer 0 for the access unit that follows it, so a CRA after
+      EOS gets NoOutputBeforeRecoveryFlag (H.266 8.1.1, 7.4.3.11).
+    - vvc-layer-au (0063, 0064): the VVC decoder keeps the base picture of a
+      multilayer access unit, skipping unsupported layers, and reads only the
+      layer 0 prefix SEI (H.266 D.2.2); it builds on vvc-parser-layer1.
+    - ac3-parser-short-header (0065, 0066): the AC-3 and E-AC-3 sync scan
+      reads only the seven byte header prefix again and leaves the metadata
+      to a full header helper, which stops intermittent dropped E-AC-3 audio
+      (eac3-5, eac3-core-bsf) and Valgrind's uninitialised reads.
+  * The tests need samples that the FATE suite does not hold yet (hevc/mv-*,
+    vvc/eos-cra, vvc/multilayer-sei, vvc/opi-missing-top-layer); the test
+    commits of the fork say how they are generated.
+
+  * Built with the Lean Code toolkit 0.1.25 of build-repo main 39663a5: the six
+    build dependencies of the lc1 build now lead Build-Depends (they ended its
+    folded field before); the plain source is otherwise the published one.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  @DATE@

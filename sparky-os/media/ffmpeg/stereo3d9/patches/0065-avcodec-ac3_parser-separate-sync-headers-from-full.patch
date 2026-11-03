@@ -1,0 +1,187 @@
+Description: avcodec/ac3_parser: separate sync headers from full bitstream info
+ The sync scanner only buffers seven bytes. Since 117343c0ba expanded
+ ff_ac3_parse_header() to parse all bitstream information, it also reads
+ uninitialized bytes beyond that prefix. A random dependent-channel map
+ can reject a valid sync word and corrupt packet boundaries. This causes
+ intermittent eac3-5 and eac3-core-bsf FATE failures, even with one
+ thread.
+ .
+ Restore the bounded header reader and put metadata parsing in a full
+ header helper. Keep the existing full-header callers on that helper and
+ preserve the sync scanner's substream-ID restriction. Account for all 56
+ prefix bits, including both mix-level fields in AC-3 3/2 mode.
+ .
+ Valgrind reports uninitialized reads on master and none with this
+ change.
+ .
+ Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+ Assisted-by: Claude Opus via Claude Code
+ Assisted-by: GPT-6 via Codex
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/9b26375024f52ba8a69701f142519facae666738
+Forwarded: no, held by Daniel 2026-11-03 (fork branch ac3-parser-short-header on code.ffmpeg.org/danielcamposramos/FFmpeg)
+Last-Update: 2026-11-03
+
+diff --git a/libavcodec/ac3_parser.c b/libavcodec/ac3_parser.c
+index 232c96d..ae3e89f 100644
+--- a/libavcodec/ac3_parser.c
++++ b/libavcodec/ac3_parser.c
+@@ -345,10 +345,6 @@ int ff_ac3_parse_header(GetBitContext *gbc, AC3HeaderInfo *hdr)
+         hdr->frame_size = ff_ac3_frame_size_tab[frame_size_code][hdr->sr_code] * 2;
+         hdr->frame_type = EAC3_FRAME_TYPE_AC3_CONVERT; //EAC3_FRAME_TYPE_INDEPENDENT;
+         hdr->substreamid = 0;
+-
+-        int ret = ac3_parse_header(gbc, hdr);
+-        if (ret < 0)
+-            return ret;
+     } else {
+         /* Enhanced AC-3 */
+         hdr->crc1 = 0;
+@@ -381,10 +377,6 @@ int ff_ac3_parse_header(GetBitContext *gbc, AC3HeaderInfo *hdr)
+         hdr->bit_rate = 8LL * hdr->frame_size * hdr->sample_rate /
+                         (hdr->num_blocks * 256);
+         hdr->channels = ff_ac3_channels_tab[hdr->channel_mode] + hdr->lfe_on;
+-
+-        int ret = eac3_parse_header(gbc, hdr);
+-        if (ret < 0)
+-            return ret;
+     }
+     hdr->channel_layout = ff_ac3_channel_layout_tab[hdr->channel_mode];
+     if (hdr->lfe_on)
+@@ -393,6 +385,19 @@ int ff_ac3_parse_header(GetBitContext *gbc, AC3HeaderInfo *hdr)
+     return 0;
+ }
+ 
++int ff_ac3_parse_header_full(GetBitContext *gbc, AC3HeaderInfo *hdr)
++{
++    int ret = ff_ac3_parse_header(gbc, hdr);
++
++    if (ret < 0)
++        return ret;
++
++    if (hdr->bitstream_id <= 10)
++        return ac3_parse_header(gbc, hdr);
++    else
++        return eac3_parse_header(gbc, hdr);
++}
++
+ // TODO: Better way to pass AC3HeaderInfo fields to mov muxer.
+ int avpriv_ac3_parse_header(AC3HeaderInfo **phdr, const uint8_t *buf,
+                             size_t size)
+@@ -410,7 +415,7 @@ int avpriv_ac3_parse_header(AC3HeaderInfo **phdr, const uint8_t *buf,
+     err = init_get_bits8(&gb, buf, size);
+     if (err < 0)
+         return AVERROR_INVALIDDATA;
+-    err = ff_ac3_parse_header(&gb, hdr);
++    err = ff_ac3_parse_header_full(&gb, hdr);
+     if (err < 0)
+         return AVERROR_INVALIDDATA;
+ 
+@@ -431,7 +436,7 @@ int av_ac3_parse_header(const uint8_t *buf, size_t size,
+     err = init_get_bits8(&gb, tmp, size);
+     if (err < 0)
+         return AVERROR_INVALIDDATA;
+-    err = ff_ac3_parse_header(&gb, &hdr);
++    err = ff_ac3_parse_header_full(&gb, &hdr);
+     if (err < 0)
+         return AVERROR_INVALIDDATA;
+ 
+@@ -457,10 +462,10 @@ static int ac3_sync(uint64_t state, int *need_next_header, int *new_frame_start)
+         FFSWAP(uint8_t, tmp.u8[5], tmp.u8[6]);
+     }
+ 
+-    init_get_bits(&gbc, tmp.u8+8-AC3_HEADER_SIZE, 54);
++    init_get_bits(&gbc, tmp.u8+8-AC3_HEADER_SIZE, AC3_HEADER_SIZE * 8);
+     err = ff_ac3_parse_header(&gbc, &hdr);
+ 
+-    if(err < 0)
++    if (err < 0 || hdr.substreamid)
+         return 0;
+ 
+     *new_frame_start  = (hdr.frame_type != EAC3_FRAME_TYPE_DEPENDENT);
+diff --git a/libavcodec/ac3_parser_internal.h b/libavcodec/ac3_parser_internal.h
+index ab5df34..52c2b56 100644
+--- a/libavcodec/ac3_parser_internal.h
++++ b/libavcodec/ac3_parser_internal.h
+@@ -94,14 +94,21 @@ typedef enum {
+ 
+ /**
+  * Parse AC-3 frame header.
+- * Parse the header up to the lfeon element, which is the first 52 or 54 bits
+- * depending on the audio coding mode.
+- * @param[in]  gbc BitContext containing the first 54 bits of the frame.
++ * Parse the header up to the lfeon element, which ends within the first 56 bits
++ * depending on the audio coding mode and bitstream identification.
++ * @param[in]  gbc BitContext containing the first 56 bits of the frame.
+  * @param[out] hdr Pointer to struct where header info is written.
+  * @return 0 on success and AC3_PARSE_ERROR_* values otherwise.
+  */
+ int ff_ac3_parse_header(GetBitContext *gbc, AC3HeaderInfo *hdr);
+ 
++/**
++ * Parse the complete AC-3 or E-AC-3 bit stream information.
++ * Unlike ff_ac3_parse_header(), this requires the full header, including
++ * optional metadata following lfeon.
++ */
++int ff_ac3_parse_header_full(GetBitContext *gbc, AC3HeaderInfo *hdr);
++
+ int avpriv_ac3_parse_header(AC3HeaderInfo **hdr, const uint8_t *buf,
+                             size_t size);
+ 
+diff --git a/libavcodec/ac3dec.c b/libavcodec/ac3dec.c
+index 6f7306e..238ea9f 100644
+--- a/libavcodec/ac3dec.c
++++ b/libavcodec/ac3dec.c
+@@ -165,7 +165,7 @@ static int parse_frame_header(AC3DecodeContext *s)
+     AC3HeaderInfo hdr;
+     int err;
+ 
+-    err = ff_ac3_parse_header(&s->gbc, &hdr);
++    err = ff_ac3_parse_header_full(&s->gbc, &hdr);
+     if (err)
+         return err;
+ 
+@@ -1559,7 +1559,7 @@ dependent_frame:
+         if ((ret = init_get_bits8(&s->gbc, buf + s->frame_size, buf_size - s->frame_size)) < 0)
+             return ret;
+ 
+-        err = ff_ac3_parse_header(&s->gbc, &hdr);
++        err = ff_ac3_parse_header_full(&s->gbc, &hdr);
+         if (err)
+             return err;
+ 
+diff --git a/libavcodec/audiotoolboxdec.c b/libavcodec/audiotoolboxdec.c
+index 143a10f..fa0d238 100644
+--- a/libavcodec/audiotoolboxdec.c
++++ b/libavcodec/audiotoolboxdec.c
+@@ -361,7 +361,7 @@ static av_cold int ffat_create_decoder(AVCodecContext *avctx,
+         AC3HeaderInfo hdr;
+         GetBitContext gbc;
+         init_get_bits8(&gbc, pkt->data, pkt->size);
+-        if (ff_ac3_parse_header(&gbc, &hdr) < 0)
++        if (ff_ac3_parse_header_full(&gbc, &hdr) < 0)
+             return AVERROR_INVALIDDATA;
+         in_format.mSampleRate = hdr.sample_rate;
+         in_format.mChannelsPerFrame = hdr.channels;
+diff --git a/libavcodec/bsf/eac3_core.c b/libavcodec/bsf/eac3_core.c
+index da35381..570ffa9 100644
+--- a/libavcodec/bsf/eac3_core.c
++++ b/libavcodec/bsf/eac3_core.c
+@@ -43,7 +43,7 @@ static int eac3_core_filter(AVBSFContext *ctx, AVPacket *pkt)
+     if (ret < 0)
+         goto fail;
+ 
+-    ret = ff_ac3_parse_header(&gbc, &hdr);
++    ret = ff_ac3_parse_header_full(&gbc, &hdr);
+     if (ret < 0) {
+         ret = AVERROR_INVALIDDATA;
+         goto fail;
+@@ -59,7 +59,7 @@ static int eac3_core_filter(AVBSFContext *ctx, AVPacket *pkt)
+         if (ret < 0)
+             goto fail;
+ 
+-        ret = ff_ac3_parse_header(&gbc, &hdr2);
++        ret = ff_ac3_parse_header_full(&gbc, &hdr2);
+         if (ret < 0) {
+             ret = AVERROR_INVALIDDATA;
+             goto fail;

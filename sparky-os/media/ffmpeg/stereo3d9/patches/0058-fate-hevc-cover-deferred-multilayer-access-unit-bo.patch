@@ -1,0 +1,281 @@
+Description: fate/hevc: cover deferred multilayer access unit boundaries
+ Insert a layer-six prefix SEI before an access unit and a repeated PPS
+ between the two pictures of another access unit. Check packet sizes
+ and checksums, and compare both decoded views with the existing
+ mv_nuh_layer_id.bit reference. No coded picture changes.
+ .
+ Add a longer prefix variant and feed it one byte at a time to exercise
+ a buffered boundary whose offset equals END_NOT_FOUND. An API test
+ also checks packet positions and timestamps when the prefix spans
+ more input buffers than the parser timestamp history can retain.
+ Keep the expected output in tests/ref/fate.
+ .
+ Generate both samples with make-hevc-au-boundaries.py from the
+ accompanying sample request. Install mv-au-boundaries.hevc and
+ mv-au-boundaries-buffered.hevc in the FATE suite's hevc directory.
+ .
+ Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+ Assisted-by: Claude Opus via Claude Code
+ Assisted-by: GPT-6 via Codex
+ .
+ Port to 9.0.2: tests/api/Makefile: the line is added before api-seek, 9.0.2 has no api-movenc and api-movtext entries.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/b9fdfdb4ac5416cdc41f2a95eb22854ee9f63864
+Forwarded: no, held by Daniel 2026-11-03 (fork branch hevc-parser-au-split on code.ffmpeg.org/danielcamposramos/FFmpeg)
+Last-Update: 2026-11-03
+
+diff --git a/tests/api/Makefile b/tests/api/Makefile
+index 987db1b..900e7d0 100644
+--- a/tests/api/Makefile
++++ b/tests/api/Makefile
+@@ -1,6 +1,7 @@
+ APITESTPROGS-$(call ENCDEC, FLAC, FLAC) += api-flac
+ APITESTPROGS-$(call DEMDEC, H264, H264) += api-h264
+ APITESTPROGS-$(call DEMDEC, H264, H264) += api-h264-slice
++APITESTPROGS-$(CONFIG_HEVC_PARSER) += api-hevc-parser
+ APITESTPROGS-yes += api-seek api-dump-stream-meta
+ APITESTPROGS-$(call DEMDEC, H263, H263) += api-band
+ APITESTPROGS-$(HAVE_THREADS) += api-threadmessage
+diff --git a/tests/api/api-hevc-parser-test.c b/tests/api/api-hevc-parser-test.c
+new file mode 100644
+index 0000000..d76b6b9
+--- /dev/null
++++ b/tests/api/api-hevc-parser-test.c
+@@ -0,0 +1,123 @@
++/*
++ * HEVC parser packet boundary and timestamp test
++ * Copyright (c) 2026 Daniel Campos Ramos
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++#include <errno.h>
++#include <inttypes.h>
++#include <limits.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include "libavcodec/avcodec.h"
++#include "libavutil/file.h"
++#include "libavutil/mem.h"
++
++static int positive_int(const char *arg)
++{
++    char *end;
++    long value;
++
++    errno = 0;
++    value = strtol(arg, &end, 10);
++    if (errno || !*arg || *end || value <= 0 ||
++        value > INT_MAX - AV_INPUT_BUFFER_PADDING_SIZE)
++        return -1;
++    return value;
++}
++
++static void show(const AVCodecParserContext *parser, int size)
++{
++    printf("%"PRId64" %d %"PRId64" %"PRId64" %"PRId64" %"PRId64"\n",
++           parser->frame_offset, size, parser->pts, parser->dts,
++           parser->pos, parser->offset);
++}
++
++int main(int argc, char **argv)
++{
++    AVCodecParserContext *parser = NULL;
++    AVCodecContext *ctx = NULL;
++    uint8_t *data = NULL, *buf = NULL, *out;
++    size_t size = 0, pos = 0;
++    int chunk, out_size, ret = 1;
++
++    if (argc < 4 || (chunk = positive_int(argv[2])) < 0) {
++        fprintf(stderr, "Usage: %s sample chunk_size input_packet_sizes...\n",
++                argv[0]);
++        return 1;
++    }
++    if (av_file_map(argv[1], &data, &size, 0, NULL) < 0)
++        return 1;
++    buf = av_mallocz(chunk + AV_INPUT_BUFFER_PADDING_SIZE);
++    parser = av_parser_init(AV_CODEC_ID_HEVC);
++    ctx = avcodec_alloc_context3(NULL);
++    if (!buf || !parser || !ctx)
++        goto end;
++    ctx->codec_id = AV_CODEC_ID_HEVC;
++
++    /* The arguments describe input packets, not expected parser output.
++     * Only the first chunk of each input packet carries its timestamps. */
++    for (int i = 3; i < argc; i++) {
++        int length = positive_int(argv[i]);
++        size_t packet_end, start = pos;
++
++        if (length < 0 || length > size - pos)
++            goto end;
++        packet_end = pos + length;
++        while (pos < packet_end) {
++            int n = packet_end - pos < chunk ? packet_end - pos : chunk;
++            int off = 0;
++            int64_t pts = pos == start ? (int64_t)(i - 3) * 100 : AV_NOPTS_VALUE;
++            int64_t dts = pos == start ? (int64_t)(i - 3) * 100 - 50 : AV_NOPTS_VALUE;
++
++            memcpy(buf, data + pos, n);
++            memset(buf + n, 0, AV_INPUT_BUFFER_PADDING_SIZE);
++            while (off < n) {
++                int used = av_parser_parse2(parser, ctx, &out, &out_size,
++                                            buf + off, n - off, pts, dts, pos);
++                if (used < 0 || (!used && !out_size))
++                    goto end;
++                if (out_size)
++                    show(parser, out_size);
++                off += used;
++            }
++            pos += n;
++        }
++    }
++    if (pos != size)
++        goto end;
++    do {
++        if (av_parser_parse2(parser, ctx, &out, &out_size, NULL, 0,
++                             AV_NOPTS_VALUE, AV_NOPTS_VALUE, pos) < 0)
++            goto end;
++        if (out_size)
++            show(parser, out_size);
++    } while (out_size);
++    ret = 0;
++
++end:
++    if (ret)
++        fprintf(stderr, "HEVC parser probe failed at input offset %zu\n", pos);
++    av_parser_close(parser);
++    avcodec_free_context(&ctx);
++    av_free(buf);
++    av_file_unmap(data, size);
++    return ret;
++}
+diff --git a/tests/fate/api.mak b/tests/fate/api.mak
+index ba9789d..16a0cf3 100644
+--- a/tests/fate/api.mak
++++ b/tests/fate/api.mak
+@@ -9,6 +9,14 @@ fate-api-enc-parser: CMD = run $(APITESTSDIR)/api-enc-parser-test$(EXESUF) h261
+ fate-api-enc-parser-cif: $(APITESTSDIR)/api-enc-parser-test$(EXESUF)
+ fate-api-enc-parser-cif: CMD = run $(APITESTSDIR)/api-enc-parser-test$(EXESUF) h261 352 288
+ 
++FATE_API_SAMPLES-$(CONFIG_HEVC_PARSER) += fate-api-hevc-parser fate-api-hevc-parser-shared-input
++fate-api-hevc-parser: $(APITESTSDIR)/api-hevc-parser-test$(EXESUF)
++fate-api-hevc-parser: CMD = run $(APITESTSDIR)/api-hevc-parser-test$(EXESUF) $(TARGET_SAMPLES)/hevc/mv-au-boundaries-buffered.hevc 16 9559 52 129 4965 4885
++
++# The second input packet contains four AUs, but its timestamp belongs to one.
++fate-api-hevc-parser-shared-input: $(APITESTSDIR)/api-hevc-parser-test$(EXESUF)
++fate-api-hevc-parser-shared-input: CMD = run $(APITESTSDIR)/api-hevc-parser-test$(EXESUF) $(TARGET_SAMPLES)/hevc/mv-au-boundaries-buffered.hevc 19590 9559 10031
++
+ FATE_API_SAMPLES_LIBAVFORMAT-$(call DEMDEC, FLV, FLV) += fate-api-band
+ fate-api-band: $(APITESTSDIR)/api-band-test$(EXESUF)
+ fate-api-band: CMD = run $(APITESTSDIR)/api-band-test$(EXESUF) $(TARGET_SAMPLES)/mpeg4/resize_down-up.h263
+diff --git a/tests/fate/hevc.mak b/tests/fate/hevc.mak
+index 48aa85d..4964434 100644
+--- a/tests/fate/hevc.mak
++++ b/tests/fate/hevc.mak
+@@ -312,6 +312,13 @@ FATE_HEVC-$(call FRAMECRC, HEVC, HEVC, HEVC_PARSER SCALE_FILTER) += fate-hevc-sm
+ fate-hevc-pir: CMD = framecrc -i $(TARGET_SAMPLES)/hevc/pir.hevc
+ FATE_HEVC-$(call FRAMECRC, HEVC, HEVC, HEVC_PARSER) += fate-hevc-pir
+ 
++# Nonzero-layer prefix SEI at an AU boundary and PPS between pictures of one AU.
++fate-hevc-mv-au-boundaries: CMD = framecrc -i $(TARGET_SAMPLES)/hevc/mv-au-boundaries.hevc -c copy
++fate-hevc-mv-au-boundaries-decode: CMD = framecrc -i $(TARGET_SAMPLES)/hevc/mv-au-boundaries.hevc -map 0:view:all
++# One-byte input makes the deferred boundary coincide with END_NOT_FOUND (-100).
++fate-hevc-mv-au-boundaries-buffered: CMD = framecrc -raw_packet_size 1 -i $(TARGET_SAMPLES)/hevc/mv-au-boundaries-buffered.hevc -c copy
++FATE_HEVC-$(call FRAMECRC, HEVC, HEVC, HEVC_PARSER) += fate-hevc-mv-au-boundaries fate-hevc-mv-au-boundaries-decode fate-hevc-mv-au-boundaries-buffered
++
+ # multiview stream, where the secondary layer has a nontrivial nuh_layer_id=6
+ fate-hevc-mv-nuh-layer-id: CMD = framecrc -i $(TARGET_SAMPLES)/hevc/mv_nuh_layer_id.bit -map 0:view:all
+ FATE_HEVC-$(call FRAMECRC, HEVC, HEVC, HEVC_PARSER) += fate-hevc-mv-nuh-layer-id
+diff --git a/tests/ref/fate/api-hevc-parser b/tests/ref/fate/api-hevc-parser
+new file mode 100644
+index 0000000..37d39ca
+--- /dev/null
++++ b/tests/ref/fate/api-hevc-parser
+@@ -0,0 +1,5 @@
++0 9559 0 -50 0 0
++9559 52 100 50 9559 0
++9611 129 200 150 9611 0
++9740 4965 300 250 9740 0
++14705 4885 400 350 14705 0
+diff --git a/tests/ref/fate/api-hevc-parser-shared-input b/tests/ref/fate/api-hevc-parser-shared-input
+new file mode 100644
+index 0000000..eb6f35b
+--- /dev/null
++++ b/tests/ref/fate/api-hevc-parser-shared-input
+@@ -0,0 +1,5 @@
++0 9559 0 -50 0 0
++9559 52 100 50 9559 0
++9611 129 -9223372036854775808 -9223372036854775808 -1 0
++9740 4965 -9223372036854775808 -9223372036854775808 -1 0
++14705 4885 -9223372036854775808 -9223372036854775808 -1 0
+diff --git a/tests/ref/fate/hevc-mv-au-boundaries b/tests/ref/fate/hevc-mv-au-boundaries
+new file mode 100644
+index 0000000..28dc33f
+--- /dev/null
++++ b/tests/ref/fate/hevc-mv-au-boundaries
+@@ -0,0 +1,11 @@
++#extradata 0:      173, 0x102f2f7e
++#tb 0: 1/1200000
++#media_type 0: video
++#codec_id 0: hevc
++#dimensions 0: 128x128
++#sar 0: 0/1
++0,    -144000, -9223372036854775808,    48000,     9559, 0x2a359502
++0,     -96000, -9223372036854775808,    48000,       52, 0xc66a1248, F=0x0
++0,     -48000, -9223372036854775808,    48000,       52, 0x2c670ed0, F=0x0
++0,          0, -9223372036854775808,    48000,     4965, 0xcf4faecf, F=0x0
++0,      48000, -9223372036854775808,    48000,     4885, 0x989a5da0, F=0x0
+diff --git a/tests/ref/fate/hevc-mv-au-boundaries-buffered b/tests/ref/fate/hevc-mv-au-boundaries-buffered
+new file mode 100644
+index 0000000..f1c232c
+--- /dev/null
++++ b/tests/ref/fate/hevc-mv-au-boundaries-buffered
+@@ -0,0 +1,11 @@
++#extradata 0:      173, 0x102f2f7e
++#tb 0: 1/1200000
++#media_type 0: video
++#codec_id 0: hevc
++#dimensions 0: 128x128
++#sar 0: 0/1
++0,    -144000, -9223372036854775808,    48000,     9559, 0x2a359502
++0,     -96000, -9223372036854775808,    48000,       52, 0xc66a1248, F=0x0
++0,     -48000, -9223372036854775808,    48000,      129, 0x9ec02e87, F=0x0
++0,          0, -9223372036854775808,    48000,     4965, 0xcf4faecf, F=0x0
++0,      48000, -9223372036854775808,    48000,     4885, 0x989a5da0, F=0x0
+diff --git a/tests/ref/fate/hevc-mv-au-boundaries-decode b/tests/ref/fate/hevc-mv-au-boundaries-decode
+new file mode 100644
+index 0000000..3cbefe1
+--- /dev/null
++++ b/tests/ref/fate/hevc-mv-au-boundaries-decode
+@@ -0,0 +1,15 @@
++#tb 0: 1/25
++#media_type 0: video
++#codec_id 0: rawvideo
++#dimensions 0: 128x128
++#sar 0: 0/1
++0,          0,          0,        1,    24576, 0xdfd350a6
++0,          1,          1,        1,    24576, 0xf8f638da
++0,          2,          2,        1,    24576, 0x8ac574d5
++0,          3,          3,        1,    24576, 0xd22675a4
++0,          4,          4,        1,    24576, 0xdd0f4704
++0,          5,          5,        1,    24576, 0x60da42e6
++0,          6,          6,        1,    24576, 0x8bf28fdd
++0,          7,          7,        1,    24576, 0xe0577f6e
++0,          8,          8,        1,    24576, 0x8b3e3c29
++0,          9,          9,        1,    24576, 0x8d9944bd

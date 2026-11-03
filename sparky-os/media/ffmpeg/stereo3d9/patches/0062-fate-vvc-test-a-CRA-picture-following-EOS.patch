@@ -1,0 +1,52 @@
+Description: fate/vvc: test a CRA picture following EOS
+ Join two CRA-only excerpts of RAP_A_1 with an EOS NAL unit. Both
+ pictures must be output, matching two independent decodes and the
+ existing RAP_A_1 reference. Enable crccheck+explode to verify their
+ picture hashes.
+ .
+ Without the decoder fix, the second picture has a duplicate POC in the
+ same sequence and is dropped, even though the CLI exits successfully.
+ .
+ Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+ Assisted-by: Claude Opus via Claude Code
+ Assisted-by: GPT-6 via Codex
+ .
+ Port to 9.0.2: tests/fate/vvc.mak: placed by 9.0.2 context (no curr-ltrp-alias or mv-clip-wrap tests).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/a744e5f916899df00262f90f3bdabd3abf5755b1
+Forwarded: no, held by Daniel 2026-11-03 (fork branch vvc-eos-recovery on code.ffmpeg.org/danielcamposramos/FFmpeg)
+Last-Update: 2026-11-03
+
+diff --git a/tests/fate/vvc.mak b/tests/fate/vvc.mak
+index 0449378..3dee65f 100644
+--- a/tests/fate/vvc.mak
++++ b/tests/fate/vvc.mak
+@@ -51,6 +51,7 @@ fate-vvc-conformance-%: CMD = framecrc -c:v vvc -i $(TARGET_SAMPLES)/vvc-conform
+ fate-vvc-output-ref: CMD = framecrc -c:v vvc -i $(TARGET_SAMPLES)/vvc/Hierarchical.bit $(SCALE_OPTS)
+ fate-vvc-frames-with-ltr: CMD = framecrc -c:v vvc -i $(TARGET_SAMPLES)/vvc/vvc_frames_with_ltr.vvc -pix_fmt yuv420p10le -vf scale
+ fate-vvc-wpp-single-slice-pic: CMD = framecrc -c:v vvc -i $(TARGET_SAMPLES)/vvc/wpp-single-slice-pic.vvc -pix_fmt yuv420p10le -vf scale
++fate-vvc-eos-cra: CMD = framecrc -c:v vvc -err_detect crccheck+explode -i $(TARGET_SAMPLES)/vvc/eos-cra.vvc -pix_fmt yuv420p10le -vf scale
+ 
+ FATE_VVC-$(call FRAMECRC, VVC, VVC, VVC_PARSER) += $(VVC_TESTS_8BIT) fate-vvc-output-ref
+ FATE_VVC-$(call FRAMECRC, VVC, VVC, VVC_PARSER SCALE_FILTER) +=                   \
+@@ -59,6 +60,7 @@ FATE_VVC-$(call FRAMECRC, VVC, VVC, VVC_PARSER SCALE_FILTER) +=
+                                                     $(VVC_TESTS_444_10BIT)        \
+                                                     fate-vvc-frames-with-ltr      \
+                                                     fate-vvc-wpp-single-slice-pic \
++                                                    fate-vvc-eos-cra              \
+ 
+ # The frame packing arrangement follows the output order and ends with the
+ # coded video sequence. showinfo prints the Stereo 3D side data of each output
+diff --git a/tests/ref/fate/vvc-eos-cra b/tests/ref/fate/vvc-eos-cra
+new file mode 100644
+index 0000000..0051e4b
+--- /dev/null
++++ b/tests/ref/fate/vvc-eos-cra
+@@ -0,0 +1,7 @@
++#tb 0: 1/25
++#media_type 0: video
++#codec_id 0: rawvideo
++#dimensions 0: 416x240
++#sar 0: 0/1
++0,          0,          0,        1,   299520, 0x96a3e8f2
++0,          1,          1,        1,   299520, 0x96a3e8f2
