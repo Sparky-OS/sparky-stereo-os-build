@@ -9,7 +9,7 @@
 # Code's link and start gate runs afterwards on the built archives, outside the build (LINK_GATE_ON_HOST, as snmptt's
 # recipe does).
 # Last update 2026/11/03
-trap 'chown -R 1000:1000 /work' EXIT
+trap 'chown -R 1000:1000 /work/' EXIT
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS='parallel=4'
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com LC_ALL=C.UTF-8
@@ -66,13 +66,11 @@ mkdir -p /work/lc && cd /work/lc
 cp ../s1/dpkg_$VERSION.dsc ../s1/dpkg_$VERSION.tar.xz .
 dpkg-source -x dpkg_$VERSION.dsc /work/lc/authored >/dev/null
 PYTHONPATH=/toolkit python3 -m lean.debian_prepare /work/lc/authored $VERSION+lc1 --toolkit /toolkit
-(cd /work/lc/authored && dpkg-source -b . >/dev/null)
-dpkg-source -x dpkg_$VERSION+lc1.dsc /work/lc/source >/dev/null
-n=$(grep -c 'python3 -m lean.debhelper --provenance' /work/lc/source/debian/rules)
+n=$(grep -c 'python3 -m lean.debhelper --provenance' /work/lc/authored/debian/rules)
 [ "$n" = 1 ]
 # The link gate runs on the assembled cohort after the build. Every Perl
 # payload goes through the normal projection and consumer-equivalence check.
-cat >/work/builddeb-nogate.py <<'PYWRAP'
+cat >/work/lc/authored/debian/sparky-builddeb.py <<'PYWRAP'
 import sys
 from pathlib import Path
 root = Path(sys.argv[1])
@@ -81,14 +79,16 @@ from lean import debhelper
 debhelper.link_gate = lambda built: print('link gate after the build: lean.release check-link', ' '.join(p.name for p in built))
 debhelper.build(root, root / 'debian/sparky-lean-toolkit/provenance.sh')
 PYWRAP
-sed -i "s|^\tPYTHONPATH=\$(CURDIR)/debian/sparky-lean-toolkit python3 -m lean.debhelper --provenance .*\$|\tpython3 /work/builddeb-nogate.py \$(CURDIR)|" /work/lc/source/debian/rules
+sed -i "s|^\tPYTHONPATH=\$(CURDIR)/debian/sparky-lean-toolkit python3 -m lean.debhelper --provenance .*\$|\tpython3 \$(CURDIR)/debian/sparky-builddeb.py \$(CURDIR)|" /work/lc/authored/debian/rules
+(cd /work/lc/authored && dpkg-source -b . >/dev/null)
+dpkg-source -x dpkg_$VERSION+lc1.dsc /work/lc/source >/dev/null
 apt-get -y update >/dev/null 2>&1
 apt-get -y --no-install-recommends build-dep /work/lc/source >/work/build-dep.log 2>&1
 # the functional test suite runs under eatmydata, as dpkg's own autopkgtest does (debian/tests/test-func)
 apt-get -y --no-install-recommends install eatmydata >>/work/build-dep.log 2>&1
 dpkg-query -W -f '${Package} ${Version}\n' gcc dpkg-dev debhelper po4a libmd-dev python3 >/work/build-toolchain.txt
 id builder >/dev/null 2>&1 || useradd --create-home --uid 1000 builder
-chown -R builder:builder /work
+chown -R builder:builder /work/
 cd /work/lc/source
 # dpkg's test suite (make check) runs inside dpkg-buildpackage
 runuser -u builder -- dpkg-buildpackage -us -uc -j4 >/work/build.log 2>&1
@@ -96,8 +96,10 @@ runuser -u builder -- dpkg-buildpackage -us -uc -j4 >/work/build.log 2>&1
 # the programs, the source tree the shell library dpkg-maintscript-helper reads from DPKG_DATADIR (src/sh)
 set +e
 runuser -u builder -- env -C /work/lc/source/tests eatmydata make test DPKG_BUILDTREE=/work/lc/source/build-tree DPKG_DATADIR=/work/lc/source/src >/work/functional.log 2>&1
-echo "functional test suite: exit $?" >/work/functional.exit
+functional_status=$?
+echo "functional test suite: exit $functional_status" >/work/functional.exit
 set -e
 cat /work/functional.exit
+[ "$functional_status" = 0 ]
 cd /work/lc
 PYTHONPATH=/toolkit python3 -m lean.release check-debs /work/lc/*+lc1_*.deb
