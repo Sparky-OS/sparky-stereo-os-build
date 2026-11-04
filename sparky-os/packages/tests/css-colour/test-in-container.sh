@@ -7,7 +7,7 @@
 trap 'chown -R 1000:1000 /out' EXIT
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
-printf 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] http://www.deb-multimedia.org forky main non-free\n' > /etc/apt/sources.list.d/multimedia.list
+printf 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://www.deb-multimedia.org forky main non-free\n' > /etc/apt/sources.list.d/multimedia.list
 apt-get -y update >/out/apt.log 2>&1
 apt-get -y install --no-install-recommends g++ pkg-config qt6-base-dev qt6-svg-dev librsvg2-dev libcairo2-dev \
 	python3 >>/out/apt.log 2>&1

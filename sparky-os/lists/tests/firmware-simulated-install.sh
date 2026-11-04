@@ -37,11 +37,12 @@ rm -rf "$D"
 
 OUTFILE=$T/sim.out
 docker run --rm -e DEBIAN_FRONTEND=noninteractive -e LC_ALL=C \
-	-v "$REPO:$REPO:ro" -v "$T/scratch:/scratch:ro" debian:testing bash -c '
+	-v "$REPO:$REPO:ro" -v "$T/scratch:/scratch:ro" -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro debian:testing bash -c '
+sh /run/https-only-apt.sh
 rm -f /etc/apt/sources.list.d/*
 cat >/etc/apt/sources.list.d/d.sources <<S
 Types: deb
-URIs: http://deb.debian.org/debian
+URIs: https://deb.debian.org/debian
 Suites: testing
 Components: main contrib non-free non-free-firmware
 Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg

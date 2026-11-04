@@ -21,5 +21,6 @@ UDMABUF=()
 docker run --rm --cpus 4 --platform linux/amd64 --device "$NODE" --group-add "$(stat -c %g "$NODE")" "${UDMABUF[@]}" \
 	-v "$TESTS":/t -v "$WORK":/work:ro -v "$EXTRA":/extra:ro -v "$SPARKY_REPO_DIR":/repo:ro -v "$HERE":/tools:ro \
 	-v /usr/share/keyrings/deb-multimedia-keyring.pgp:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro \
-	sparky-lc-migration:20261020 bash -c 'bash /tools/test-in-container.sh > /t/test.log 2>&1'
+	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
+	sparky-lc-migration:20261020 bash -c 'sh /run/https-only-apt.sh && bash /tools/test-in-container.sh > /t/test.log 2>&1'
 cat "$TESTS/test.log"

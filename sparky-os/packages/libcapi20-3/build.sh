@@ -12,12 +12,13 @@ set -euo pipefail
 WORK=${1:-${SPARKY_WORKSPACES:?}/hand-installed-apps/capi/build}
 mkdir -p "$WORK"
 HERE=$(dirname "$(readlink -f "$0")")
-docker run --rm -e HOST_UID=$(id -u) -v "$WORK":/out -v "$HERE/compat-include":/compat:ro sparky-pkg-base:amd64 bash -c '
+docker run --rm -e HOST_UID=$(id -u) -v "$WORK":/out -v "$HERE/compat-include":/compat:ro -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro sparky-pkg-base:amd64 bash -c '
 set -e
+sh /run/https-only-apt.sh
 sed -i "s/^Suites: unstable/Suites: testing testing-updates/" /etc/apt/sources.list.d/debian.sources
 export DEBIAN_FRONTEND=noninteractive LC_ALL=C DEBFULLNAME="Daniel Ramos (Capitain Jack)" DEBEMAIL=Capitain_Jack@yahoo.com DEB_BUILD_OPTIONS=parallel=4
 apt-get update -qq >/dev/null; apt-get install -y -qq ca-certificates >/dev/null
-printf "Types: deb-src\nURIs: http://deb.debian.org/debian\nSuites: unstable\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.pgp\n" >/etc/apt/sources.list.d/u.sources
+printf "Types: deb-src\nURIs: https://deb.debian.org/debian\nSuites: unstable\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.pgp\n" >/etc/apt/sources.list.d/u.sources
 apt-get update -qq >/dev/null
 apt-get install -y -qq dpkg-dev devscripts build-essential fakeroot lintian >/dev/null
 cd /out && rm -rf work && mkdir work && cd work

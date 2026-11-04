@@ -27,5 +27,6 @@ docker run --platform linux/amd64 --cpus 4 --name "$name" -e PKG="$pkg" -e SOURC
  -v "$SPARKY_PACKAGE_WORK/out/$pkg:/candidate:ro" -v "$packages:/kit:ro" -v "$SPARKY_RELEASE_TOOLKIT:/toolkit:ro" \
  -v "$SPARKY_LIBPLACEBO_INPUT:/libplacebo-input:ro" \
  -v "${SPARKY_DMO_KEYRING:?Set the public multimedia keyring}:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro" \
- "$SPARKY_PACKAGE_IMAGE" bash /work/build-entry.sh \
+ -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$here/../../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
+ "$SPARKY_PACKAGE_IMAGE" sh -c 'sh /run/https-only-apt.sh && exec bash /work/build-entry.sh' \
  > "$SPARKY_PACKAGE_WORK/logs/$pkg-container.log" 2>&1
