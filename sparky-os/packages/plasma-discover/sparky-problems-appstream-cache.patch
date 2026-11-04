@@ -1,0 +1,105 @@
+Description: Edition only: hand a failed AppStream cache compile to sparky-stereo-problems
+ Daniel, 2026-11-01: "nothing we do should silently fail or have a fall back - either it works or not and the user must know".
+ When appstreamcli cannot compile a catalog's cache, flatpak-appstream-cache.patch warns in the log and Discover loads the
+ catalog in its own process, about 1 GB of memory, and the person never learns why.
+ The edition's one engine for failures (sparky-stereo-problems, ORDER 350) keeps the problem in the person's store, with the
+ catalog, the reason and what to do, in the nine languages (the package's lang/ files built into journal catalogs), shows it
+ through its session notifier, and clears it at the next successful compile.
+ One key per catalog (appstream-cache- and a hash of the arguments). Not for Debian or KDE: this file only adds the call.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: vendor
+Forwarded: not-needed
+Last-Update: 2026-11-03
+Assisted-by: claude-sonnet-5-5 via Claude Code
+
+--- a/libdiscover/appstream/AppStreamUtils.cpp
++++ b/libdiscover/appstream/AppStreamUtils.cpp
+@@ -19,6 +19,7 @@
+ #include <KIconLoader>
+ #include <KLocalizedString>
+ #include <QCoroTimer>
++#include <QCryptographicHash>
+ #include <QDebug>
+ #include <QJsonArray>
+ #include <QJsonObject>
+@@ -239,12 +240,57 @@
+     return icons.contains(name);
+ }
+ 
+-bool AppStreamUtils::compileCache(const QStringList &arguments, const QString &locale)
++// The edition keeps what failed in the one engine of its problems, which says it to the person and keeps it until the step works.
++// The key is one per catalog.
++static QByteArray problemKey(const QStringList &arguments)
++{
++    return "appstream-cache-" + QCryptographicHash::hash(arguments.join(QLatin1Char(' ')).toUtf8(), QCryptographicHash::Md5).toHex().left(12);
++}
++
++static void keepProblem(const QStringList &arguments, const QString &reason)
++{
++    const QString catalog = arguments.isEmpty() ? QStringLiteral("@LOCAL3") : arguments.last();
++    const QByteArray key = problemKey(arguments);
++    const QString engine = QStandardPaths::findExecutable(QStringLiteral("sparky-stereo-problems"));
++    if (engine.isEmpty()) {
++        qCWarning(LIBDISCOVER_LOG) << "sparky-stereo-problems not found, the failure to compile the AppStream cache is only in this log";
++        return;
++    }
++    QProcess process;
++    process.start(engine,
++                  {QStringLiteral("keep"),
++                   QStringLiteral("--person"),
++                   QStringLiteral("--quiet"),
++                   QStringLiteral("--severity"),
++                   QStringLiteral("degraded"),
++                   QStringLiteral("--details"),
++                   QStringLiteral(R"({"more":["@LOCAL2"]})"),
++                   QStringLiteral("plasma-discover"),
++                   QString::fromLatin1(key),
++                   QStringLiteral("LOCAL1"),
++                   catalog,
++                   reason});
++    Q_UNUSED(process.waitForFinished(10000));
++}
++
++static void clearProblem(const QStringList &arguments)
++{
++    const QByteArray key = problemKey(arguments);
++    const QString engine = QStandardPaths::findExecutable(QStringLiteral("sparky-stereo-problems"));
++    if (engine.isEmpty()) {
++        return;
++    }
++    QProcess process;
++    process.start(engine, {QStringLiteral("clear"), QStringLiteral("--person"), QStringLiteral("plasma-discover"), QString::fromLatin1(key)});
++    Q_UNUSED(process.waitForFinished(10000));
++}
++
++static QString compileCacheReason(const QStringList &arguments, const QString &locale)
+ {
+     const QString appstreamcli = QStandardPaths::findExecutable(QStringLiteral("appstreamcli"));
+     if (appstreamcli.isEmpty()) {
+         qCWarning(LIBDISCOVER_LOG) << "appstreamcli not found, AppStream will compile its cache in this process";
+-        return false;
++        return QStringLiteral("appstreamcli not found");
+     }
+ 
+     QProcess process;
+@@ -259,7 +305,18 @@
+     if (!process.waitForFinished(-1) || process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+         qCWarning(LIBDISCOVER_LOG) << "Could not compile the AppStream cache, AppStream will compile it in this process:" << process.errorString() << process.exitCode()
+                                    << process.readAll().trimmed();
+-        return false;
++        return process.exitStatus() == QProcess::NormalExit ? QStringLiteral("exit %1").arg(process.exitCode()) : process.errorString();
++    }
++    return {};
++}
++
++bool AppStreamUtils::compileCache(const QStringList &arguments, const QString &locale)
++{
++    const QString reason = compileCacheReason(arguments, locale);
++    if (reason.isEmpty()) {
++        clearProblem(arguments);
++        return true;
+     }
+-    return true;
++    keepProblem(arguments, reason);
++    return false;
+ }
