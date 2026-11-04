@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "adapter.h"
 #include "controller.h"
+#include "problems.h"
 #include "session.h"
 #include <KScreenDpms/Dpms>
 #include <QDBusMessage>
@@ -9,6 +10,10 @@
 #include <QDir>
 #include <QFile>
 #include <QGuiApplication>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QProcess>
 #include <QScreen>
 #include <QSignalSpy>
 #include <QTest>
@@ -80,6 +85,39 @@ private:
         const auto data = (output + QLatin1Char(' ') + mode + QLatin1Char('\n')).toLatin1();
         QCOMPARE(file.write(data), data.size());
     }
+    // ORDER 346f-1: what the helper kept in the edition's problem engine (the person's store, XDG_STATE_HOME)
+    QStringList kept()
+    {
+        QProcess engine;
+        engine.start(QStringLiteral("sparky-stereo-problems"), {QStringLiteral("list"), QStringLiteral("--json"), QStringLiteral("sparky-stereo-cec")});
+        engine.waitForFinished(10000);
+        QStringList keys;
+        for (const auto &record : QJsonDocument::fromJson(engine.readAllStandardOutput()).array()) {
+            keys.append(record.toObject().value(QStringLiteral("key")).toString());
+        }
+        keys.sort();
+        return keys;
+    }
+    QString keptText(const QString &key)
+    {
+        QProcess engine;
+        engine.start(QStringLiteral("sparky-stereo-problems"), {QStringLiteral("text"), QStringLiteral("sparky-stereo-cec"), key});
+        engine.waitForFinished(10000);
+        return QString::fromUtf8(engine.readAllStandardOutput());
+    }
+    // the wiring main.cpp gives the controller: the problem engine, or (-DOLD_WIRING, 0.1.4's main.cpp) qWarning only
+    CecProblems problems;
+    void wire(CecController &controller, SessionGate &gate)
+    {
+        connect(&gate, &SessionGate::activeChanged, &controller, &CecController::setSessionActive);
+#ifdef OLD_WIRING
+        connect(&controller, &CecController::failed, this, [](const QString &message) {
+            qWarning().noquote() << message;
+        });
+#else
+        problems.watch(controller, gate);
+#endif
+    }
     AdapterConfig config()
     {
         return {root + QStringLiteral("/devices/cec0"), QStringLiteral("HDMI-A-1"), root + QStringLiteral("/drm/card0-HDMI-A-1/edid"), false};
@@ -129,6 +167,7 @@ private Q_SLOTS:
     }
     void init()
     {
+        QProcess::execute(QStringLiteral("sparky-stereo-problems"), {QStringLiteral("clear"), QStringLiteral("--all"), QStringLiteral("sparky-stereo-cec")});
         session.change(true);
         write(qEnvironmentVariable("CEC_TEST_STATE"), "0\n");
         write(qEnvironmentVariable("CEC_TEST_FRAMES"), {});
@@ -381,6 +420,103 @@ private Q_SLOTS:
         adapter.setScreenOn(false);
         QTRY_COMPARE(failed.size(), 1);
         QCOMPARE(frames(), QString());
+    }
+    void problemTvNeverAnswers()
+    {
+        // the TV does not answer the request for its active source: a failure the person sees, ended by the next acknowledged message
+        write(qEnvironmentVariable("CEC_TEST_STATE"), "64\n");
+        control(QStringLiteral("HDMI-A-1"), QStringLiteral("on"));
+        QTest::qWait(50);
+        CecController controller(root + QStringLiteral("/devices"), root + QStringLiteral("/drm"), {}, command);
+        SessionGate gate(QDBusConnection::systemBus());
+        wire(controller, gate);
+        QSignalSpy sent(&controller, &CecController::transmitted);
+        QSignalSpy failed(&controller, &CecController::failed);
+        QTRY_VERIFY(gate.isActive());
+        control(QStringLiteral("HDMI-A-1"), QStringLiteral("off"));
+        QTRY_COMPARE(failed.size(), 1);
+        QCOMPARE(kept(), QStringList{QStringLiteral("unacknowledged:HDMI-A-1")});
+        QVERIFY(keptText(QStringLiteral("unacknowledged:HDMI-A-1")).contains(QStringLiteral("HDMI-A-1")));
+        write(qEnvironmentVariable("CEC_TEST_STATE"), "0\n");
+        control(QStringLiteral("HDMI-A-1"), QStringLiteral("on"));
+        QTest::qWait(50);
+        control(QStringLiteral("HDMI-A-1"), QStringLiteral("off"));
+        QTRY_COMPARE(sent.size(), 1);
+        QCOMPARE(kept(), QStringList());
+    }
+    void problemStandbyNotAcknowledged()
+    {
+        write(qEnvironmentVariable("CEC_TEST_STATE"), "16384\n");
+        control(QStringLiteral("HDMI-A-1"), QStringLiteral("on"));
+        QTest::qWait(50);
+        CecController controller(root + QStringLiteral("/devices"), root + QStringLiteral("/drm"), {}, command);
+        SessionGate gate(QDBusConnection::systemBus());
+        wire(controller, gate);
+        QSignalSpy failed(&controller, &CecController::failed);
+        QTRY_VERIFY(gate.isActive());
+        control(QStringLiteral("HDMI-A-1"), QStringLiteral("off"));
+        QTRY_COMPARE(failed.size(), 1);
+        QCOMPARE(kept(), QStringList{QStringLiteral("unacknowledged:HDMI-A-1")});
+    }
+    void problemProgramCannotStart()
+    {
+        control(QStringLiteral("HDMI-A-1"), QStringLiteral("on"));
+        QTest::qWait(50);
+        CecController broken(root + QStringLiteral("/devices"), root + QStringLiteral("/drm"), {}, QStringLiteral("/missing/cec-ctl"));
+        SessionGate gate(QDBusConnection::systemBus());
+        wire(broken, gate);
+        QSignalSpy failed(&broken, &CecController::failed);
+        QTRY_VERIFY(gate.isActive());
+        control(QStringLiteral("HDMI-A-1"), QStringLiteral("off"));
+        QTRY_COMPARE(failed.size(), 1);
+        QCOMPARE(kept(), QStringList{QStringLiteral("start:HDMI-A-1")});
+    }
+    void problemNoUsableAddress()
+    {
+        // an adapter the kernel gives no address (the controller's discovery does not offer such an adapter at all)
+        write(qEnvironmentVariable("CEC_TEST_STATE"), "4\n");
+        CecAdapter adapter(config(), command);
+        QSignalSpy failed(&adapter, &CecAdapter::failed);
+#ifndef OLD_WIRING
+        connect(&adapter, &CecAdapter::problem, this, [this](const QString &kind, const QString &detail, const QString &evidence) {
+            problems.keep(QStringLiteral("HDMI-A-1"), kind, detail, evidence);
+        });
+#endif
+        adapter.setScreenOn(false);
+        QTRY_COMPARE(failed.size(), 1);
+        QCOMPARE(kept(), QStringList{QStringLiteral("address:HDMI-A-1")});
+        QCOMPARE(frames(), QString());
+    }
+    void refusalIsNotAProblem()
+    {
+        // another input is the active source: the helper leaves that TV alone, by design
+        write(qEnvironmentVariable("CEC_TEST_STATE"), "1024\n");
+        control(QStringLiteral("HDMI-A-1"), QStringLiteral("on"));
+        QTest::qWait(50);
+        CecController controller(root + QStringLiteral("/devices"), root + QStringLiteral("/drm"), {}, command);
+        SessionGate gate(QDBusConnection::systemBus());
+        wire(controller, gate);
+        QSignalSpy skipped(&controller, &CecController::skipped);
+        QSignalSpy failed(&controller, &CecController::failed);
+        QTRY_VERIFY(gate.isActive());
+        control(QStringLiteral("HDMI-A-1"), QStringLiteral("off"));
+        QTRY_COMPARE(skipped.size(), 1);
+        QTest::qWait(100);
+        QCOMPARE(failed.size(), 0);
+        QCOMPARE(kept(), QStringList());
+    }
+    void problemSessionLookup()
+    {
+        CecController controller(root + QStringLiteral("/devices"), root + QStringLiteral("/drm"), {}, command);
+        SessionGate gate(QDBusConnection::systemBus());
+        wire(controller, gate);
+        QTRY_VERIFY(gate.isActive());
+        QCOMPARE(kept(), QStringList());
+        QVERIFY(QDBusConnection::systemBus().unregisterService(QStringLiteral("org.freedesktop.login1")));
+        QTRY_COMPARE(kept(), QStringList{QStringLiteral("session")});
+        QVERIFY(QDBusConnection::systemBus().registerService(QStringLiteral("org.freedesktop.login1")));
+        QTRY_VERIFY(gate.isActive());
+        QTRY_COMPARE(kept(), QStringList());
     }
     void discovery()
     {

@@ -66,7 +66,7 @@ CecAdapter::CecAdapter(const AdapterConfig &config, const QString &command, QObj
             m_timeout.stop();
             m_busy = false;
             m_pending.clear();
-            Q_EMIT failed(m_process.errorString());
+            fail(m_process.errorString(), QStringLiteral("start"), m_process.errorString());
         }
     });
 }
@@ -105,7 +105,7 @@ void CecAdapter::next()
             start(arguments, Operation::Configure);
         } else {
             m_pending.clear();
-            Q_EMIT failed(QStringLiteral("CEC adapter has no usable playback address: ") + m_config.device);
+            fail(QStringLiteral("CEC adapter has no usable playback address: ") + m_config.device, QStringLiteral("address"), m_config.device);
         }
         return;
     }
@@ -126,6 +126,12 @@ void CecAdapter::next()
         m_standbyPhysical = -1;
         send(Operation::CheckSource);
     }
+}
+
+void CecAdapter::fail(const QString &message, const QString &kind, const QString &detail, const QString &evidence)
+{
+    Q_EMIT failed(message);
+    Q_EMIT problem(kind, detail, evidence);
 }
 
 void CecAdapter::setActive(bool active)
@@ -149,7 +155,7 @@ void CecAdapter::send(Operation operation)
     if (!current.ready || current.physical != m_physical) {
         m_standbyPhysical = -1;
         m_pending.clear();
-        Q_EMIT failed(QStringLiteral("CEC address changed during power request: ") + m_config.device);
+        fail(QStringLiteral("CEC address changed during power request: ") + m_config.device, QStringLiteral("address"), m_config.device);
         return;
     }
     QStringList arguments{QStringLiteral("--device=") + m_config.device, QStringLiteral("--skip-info"), QStringLiteral("--verbose"),
@@ -196,12 +202,12 @@ void CecAdapter::finished(int exitCode, QProcess::ExitStatus status)
     if (operation == Operation::Configure) {
         if (!exited || !state(m_config).ready) {
             m_pending.clear();
-            Q_EMIT failed(QStringLiteral("CEC playback configuration failed: ") + output);
+            fail(QStringLiteral("CEC playback configuration failed: ") + output, QStringLiteral("address"), m_config.device, output);
             return;
         }
     } else if (operation == Operation::CheckSource) {
         if (!acknowledged) {
-            Q_EMIT failed(QStringLiteral("CEC Request Active Source failed: ") + output);
+            fail(QStringLiteral("CEC Request Active Source failed: ") + output, QStringLiteral("unacknowledged"), QStringLiteral("Request Active Source"), output);
         }
         const auto reply = QRegularExpression(QStringLiteral("Received from[^\\n]*\\n\\s*ACTIVE_SOURCE \\(0x82\\):\\s*\\n\\s*phys-addr: ([0-9a-fA-F])\\.([0-9a-fA-F])\\.([0-9a-fA-F])\\.([0-9a-fA-F])")).match(output);
         int physical = -1;
@@ -224,7 +230,7 @@ void CecAdapter::finished(int exitCode, QProcess::ExitStatus status)
         }
         Q_EMIT transmitted(false, acknowledged);
         if (!acknowledged) {
-            Q_EMIT failed(QStringLiteral("CEC Standby was not acknowledged: ") + output);
+            fail(QStringLiteral("CEC Standby was not acknowledged: ") + output, QStringLiteral("unacknowledged"), QStringLiteral("Standby"), output);
         }
     } else if (operation == Operation::ViewOn) {
         if (acknowledged) {
@@ -233,12 +239,12 @@ void CecAdapter::finished(int exitCode, QProcess::ExitStatus status)
         }
         m_standbyPhysical = -1;
         Q_EMIT transmitted(true, false);
-        Q_EMIT failed(QStringLiteral("CEC Image View On was not acknowledged: ") + output);
+        fail(QStringLiteral("CEC Image View On was not acknowledged: ") + output, QStringLiteral("unacknowledged"), QStringLiteral("Image View On"), output);
     } else if (operation == Operation::AnnounceSource) {
         m_standbyPhysical = -1;
         Q_EMIT transmitted(true, acknowledged);
         if (!acknowledged) {
-            Q_EMIT failed(QStringLiteral("CEC Active Source was not acknowledged: ") + output);
+            fail(QStringLiteral("CEC Active Source was not acknowledged: ") + output, QStringLiteral("unacknowledged"), QStringLiteral("Active Source"), output);
         }
     }
     next();

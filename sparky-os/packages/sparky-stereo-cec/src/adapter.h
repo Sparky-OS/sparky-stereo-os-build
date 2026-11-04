@@ -32,10 +32,15 @@ public:
 Q_SIGNALS:
     void transmitted(bool on, bool acknowledged);
     void failed(const QString &message);
+    // the same failure for the edition's problem engine: kind is start (cec-ctl could not run), address (the adapter
+    // has no usable playback address) or unacknowledged (the TV did not acknowledge a message); detail names the program
+    // error, the device or the message; evidence is cec-ctl's output
+    void problem(const QString &kind, const QString &detail, const QString &evidence);
     void skipped(const QString &message);
 
 private:
     void next();
+    void fail(const QString &message, const QString &kind, const QString &detail, const QString &evidence = {});
     enum class Operation { Idle,
                            Configure,
                            CheckSource,
