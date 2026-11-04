@@ -1,4 +1,28 @@
 -------------------------------------------------------------------------------
+  Version 0.1.37 (2026-11-04)
+-------------------------------------------------------------------------------
+  * --verify --deep exits 0 on a healthy, just-upgraded system (ORDER 398).
+    A check that is red on a healthy system proves nothing (the proof of
+    release r1103a: dist-upgrade exit 0, --verify 0 problems, --deep 27).
+  * A file that is not a conffile, whose installed bytes today's renderer does
+    not reproduce, but which passes restore's own checks (the owner lists the
+    path and is at the recorded version, the owner's md5sums, the original's
+    md5 and sha256, the installed bytes against the recorded projection), is
+    printed as OLDFORM, information, and not counted: an earlier renderer's
+    form, which restore takes back from its original. Any other mismatch
+    stays MISMATCH and counted, a conffile always needs the exact render.
+  * --deep also compares the lc1 manifest rows dpkg-stereo did not project
+    with their build-time payload, to know the package's own files are
+    intact. One that differs is printed as AFTERINST, information, and not
+    counted: depmod rewrites modules.dep at every kernel install, and
+    maintainer scripts rewrite os-release, issue and plymouthd.defaults;
+    dpkg-stereo did not project them and leaves them. A projected row that
+    differs, or a row that is gone, stays LCCHANGED and counted.
+  * The summary line names both information counts, and the exit status
+    follows the problems only (0, 1 for a problem, 2 for an incomplete check).
+    Messages LOCAL77 to LOCAL80 in the nine languages.
+
+-------------------------------------------------------------------------------
   Version 0.1.36 (2026-11-04)
 -------------------------------------------------------------------------------
   * Carry lean 0.1.28: every Lean Code build leaves a build record
