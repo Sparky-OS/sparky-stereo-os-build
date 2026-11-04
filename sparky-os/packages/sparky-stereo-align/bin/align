@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/24
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/24
+# Last update 2026/11/04
 # Aligns the two views of a stereo pair with Hugin's align_image_stack -S and saves the result as a new stereo file,
 # next to the original, which is never touched:  align FORMAT [swap] -- FILE...   (FORMAT: jps, mpo or pns)
 #   two files: the first is the left eye, or the right eye with "swap" (the input correction of an unmarked pair);
@@ -327,7 +327,12 @@ def main():
         print('usage: align jps|mpo|pns [swap] -- FILE...', file=sys.stderr)
         return 2
     cut = args.index('--')
-    fmt, opts, files = args[0], args[1:cut], [f for f in args[cut + 1:] if os.path.isfile(f)]
+    fmt, opts, files = args[0], args[1:cut], args[cut + 1:]
+    missing = [f for f in files if not os.path.isfile(f)]
+    for f in missing:
+        say(S['9'] % f, error=True)
+    if missing:
+        return 1
     try:
         if len(files) == 2:
             a, b = read_plain(files[0]), read_plain(files[1])

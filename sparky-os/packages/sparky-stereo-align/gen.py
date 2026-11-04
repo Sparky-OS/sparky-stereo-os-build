@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/24
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/24
+# Last update 2026/11/04
 # Writes pack.json (for ../sparky-stereo-integration/make-pack.py) and lang/<code> (for the worker) from the one
 # table below. Usage: gen.py OUT-DIR
 import json, os, sys
@@ -19,17 +19,17 @@ W = {
  'zh_CN': ['对齐立体图像对', '对齐两个视图', '保存为 %s', '（第一张图片为左眼）', '（第一张图片为右眼）'],
  'zh_TW': ['對齊立體影像對', '對齊兩個視圖', '儲存為 %s', '（第一張影像為左眼）', '（第一張影像為右眼）'],
 }
-# worker messages LOCAL2 to LOCAL8, printf order: 2 file; 3 none; 4 file; 5 sizes; 6 file; 7 none; 8 left, right
+# worker messages LOCAL2 to LOCAL9, printf order: 2 file; 3 none; 4 file; 5 sizes; 6 file; 7 none; 8 left, right; 9 file
 M = {
- 'en': ['Saved as %s.', 'The pictures could not be aligned: they share too few points.', '%s is not a stereo picture (JPS, MPO or PNS with a mark).', 'The two pictures differ in size: %s and %s.', 'Could not read %s.', 'Select two pictures, or one stereo picture.', 'Left eye: %s. Right eye: %s.'],
- 'pl': ['Zapisano jako %s.', 'Nie udało się wyrównać obrazów: mają zbyt mało wspólnych punktów.', '%s nie jest obrazem stereo (JPS, MPO lub PNS ze znacznikiem).', 'Oba obrazy mają różne rozmiary: %s i %s.', 'Nie udało się odczytać %s.', 'Wybierz dwa obrazy albo jeden obraz stereo.', 'Lewe oko: %s. Prawe oko: %s.'],
- 'pt_BR': ['Salvo como %s.', 'Não foi possível alinhar as imagens: elas têm pontos em comum de menos.', '%s não é uma imagem estéreo (JPS, MPO ou PNS com marca).', 'As duas imagens têm tamanhos diferentes: %s e %s.', 'Não foi possível ler %s.', 'Selecione duas imagens ou uma imagem estéreo.', 'Olho esquerdo: %s. Olho direito: %s.'],
- 'fr': ['Enregistré sous %s.', "Les images n'ont pas pu être alignées : elles ont trop peu de points communs.", "%s n'est pas une image stéréo (JPS, MPO ou PNS avec marque).", 'Les deux images ont des tailles différentes : %s et %s.', 'Impossible de lire %s.', 'Sélectionnez deux images ou une image stéréo.', 'Œil gauche : %s. Œil droit : %s.'],
- 'de': ['Gespeichert als %s.', 'Die Bilder konnten nicht ausgerichtet werden: Sie haben zu wenige gemeinsame Punkte.', '%s ist kein Stereobild (JPS, MPO oder PNS mit Markierung).', 'Die beiden Bilder haben unterschiedliche Größen: %s und %s.', '%s konnte nicht gelesen werden.', 'Wählen Sie zwei Bilder oder ein Stereobild aus.', 'Linkes Auge: %s. Rechtes Auge: %s.'],
- 'ja': ['%s として保存しました。', '画像を位置合わせできませんでした。共通する点が少なすぎます。', '%s はステレオ画像（マーク付きの JPS、MPO、PNS）ではありません。', '2つの画像のサイズが異なります: %s と %s。', '%s を読み込めませんでした。', '画像を2つ、またはステレオ画像を1つ選択してください。', '左目: %s。右目: %s。'],
- 'ko': ['%s(으)로 저장했습니다.', '사진을 정렬하지 못했습니다. 공통된 점이 너무 적습니다.', '%s은(는) 스테레오 사진(표시가 있는 JPS, MPO, PNS)이 아닙니다.', '두 사진의 크기가 다릅니다: %s 및 %s.', '%s을(를) 읽을 수 없습니다.', '사진 두 장 또는 스테레오 사진 한 장을 선택하세요.', '왼쪽 눈: %s. 오른쪽 눈: %s.'],
- 'zh_CN': ['已保存为 %s。', '无法对齐这些图片：它们的共同点太少。', '%s 不是立体图片（带标记的 JPS、MPO 或 PNS）。', '两张图片大小不同：%s 与 %s。', '无法读取 %s。', '请选择两张图片或一张立体图片。', '左眼：%s。右眼：%s。'],
- 'zh_TW': ['已儲存為 %s。', '無法對齊這些影像：它們的共同點太少。', '%s 不是立體影像（帶標記的 JPS、MPO 或 PNS）。', '兩張影像大小不同：%s 與 %s。', '無法讀取 %s。', '請選取兩張影像或一張立體影像。', '左眼：%s。右眼：%s。'],
+ 'en': ['Saved as %s.', 'The pictures could not be aligned: they share too few points.', '%s is not a stereo picture (JPS, MPO or PNS with a mark).', 'The two pictures differ in size: %s and %s.', 'Could not read %s.', 'Select two pictures, or one stereo picture.', 'Left eye: %s. Right eye: %s.', 'Cannot align %s: the selected input is missing.'],
+ 'pl': ['Zapisano jako %s.', 'Nie udało się wyrównać obrazów: mają zbyt mało wspólnych punktów.', '%s nie jest obrazem stereo (JPS, MPO lub PNS ze znacznikiem).', 'Oba obrazy mają różne rozmiary: %s i %s.', 'Nie udało się odczytać %s.', 'Wybierz dwa obrazy albo jeden obraz stereo.', 'Lewe oko: %s. Prawe oko: %s.', 'Nie można wyrównać %s: wybrany plik nie istnieje.'],
+ 'pt_BR': ['Salvo como %s.', 'Não foi possível alinhar as imagens: elas têm pontos em comum de menos.', '%s não é uma imagem estéreo (JPS, MPO ou PNS com marca).', 'As duas imagens têm tamanhos diferentes: %s e %s.', 'Não foi possível ler %s.', 'Selecione duas imagens ou uma imagem estéreo.', 'Olho esquerdo: %s. Olho direito: %s.', 'Não é possível alinhar %s: a entrada selecionada não existe.'],
+ 'fr': ['Enregistré sous %s.', "Les images n'ont pas pu être alignées : elles ont trop peu de points communs.", "%s n'est pas une image stéréo (JPS, MPO ou PNS avec marque).", 'Les deux images ont des tailles différentes : %s et %s.', 'Impossible de lire %s.', 'Sélectionnez deux images ou une image stéréo.', 'Œil gauche : %s. Œil droit : %s.', "Impossible d'aligner %s : l'entrée sélectionnée est manquante."],
+ 'de': ['Gespeichert als %s.', 'Die Bilder konnten nicht ausgerichtet werden: Sie haben zu wenige gemeinsame Punkte.', '%s ist kein Stereobild (JPS, MPO oder PNS mit Markierung).', 'Die beiden Bilder haben unterschiedliche Größen: %s und %s.', '%s konnte nicht gelesen werden.', 'Wählen Sie zwei Bilder oder ein Stereobild aus.', 'Linkes Auge: %s. Rechtes Auge: %s.', '%s kann nicht ausgerichtet werden: Die ausgewählte Eingabe fehlt.'],
+ 'ja': ['%s として保存しました。', '画像を位置合わせできませんでした。共通する点が少なすぎます。', '%s はステレオ画像（マーク付きの JPS、MPO、PNS）ではありません。', '2つの画像のサイズが異なります: %s と %s。', '%s を読み込めませんでした。', '画像を2つ、またはステレオ画像を1つ選択してください。', '左目: %s。右目: %s。', '%s を位置合わせできません。選択された入力が見つかりません。'],
+ 'ko': ['%s(으)로 저장했습니다.', '사진을 정렬하지 못했습니다. 공통된 점이 너무 적습니다.', '%s은(는) 스테레오 사진(표시가 있는 JPS, MPO, PNS)이 아닙니다.', '두 사진의 크기가 다릅니다: %s 및 %s.', '%s을(를) 읽을 수 없습니다.', '사진 두 장 또는 스테레오 사진 한 장을 선택하세요.', '왼쪽 눈: %s. 오른쪽 눈: %s.', '%s을(를) 정렬할 수 없습니다. 선택한 입력이 없습니다.'],
+ 'zh_CN': ['已保存为 %s。', '无法对齐这些图片：它们的共同点太少。', '%s 不是立体图片（带标记的 JPS、MPO 或 PNS）。', '两张图片大小不同：%s 与 %s。', '无法读取 %s。', '请选择两张图片或一张立体图片。', '左眼：%s。右眼：%s。', '无法对齐 %s：所选输入不存在。'],
+ 'zh_TW': ['已儲存為 %s。', '無法對齊這些影像：它們的共同點太少。', '%s 不是立體影像（帶標記的 JPS、MPO 或 PNS）。', '兩張影像大小不同：%s 與 %s。', '無法讀取 %s。', '請選取兩張影像或一張立體影像。', '左眼：%s。右眼：%s。', '無法對齊 %s：所選輸入不存在。'],
 }
 FORMATS = [('Jps', 'jps', 'JPS'), ('Mpo', 'mpo', 'MPO'), ('Pns', 'pns', 'PNS')]
 PAIR_MIME = ['image/jpeg', 'image/png', 'image/tiff', 'image/x-mpo', 'image/x-jps', 'image/x-pns']
@@ -38,7 +38,7 @@ FILE_MIME = ['image/x-jps', 'image/x-mpo', 'image/x-pns']
 def main():
     out = sys.argv[1]
     os.makedirs(os.path.join(out, 'lang'), exist_ok=True)
-    hdr = '#!/bin/bash\n# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/24\n# Copyright 2026 under the GNU GPL3 License\n# Last update 2026/10/24\n'
+    hdr = '#!/bin/bash\n# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/24\n# Copyright 2026 under the GNU GPL3 License\n# Last update 2026/11/04\n'
     for l in LANGS:
         open(os.path.join(out, 'lang', l), 'w').write(hdr + f'LOCAL1="{W[l][0]}"\n' + ''.join(f'LOCAL{i + 2}="{s}"\n' for i, s in enumerate(M[l])))
     pair, single = [], []
