@@ -8,7 +8,7 @@
 
 log() { printf '%s\n' "$*"; }
 
-# The error messages are LOCAL29 to LOCAL58 of the language files, numbered, with %s for their arguments; @NOUVEAU@ stands
+# The error messages are LOCAL29 to LOCAL60 of the language files, numbered, with %s for their arguments; @NOUVEAU@ stands
 # for LOCAL29 (the choice of nouveau) and @BUTTON@ in it for LOCAL4 (the plan window's button), in the same language. An ID
 # written ID@N puts LOCALN in the place of LOCAL29: the NVIDIA 580 path's errors name LOCAL58, since nouveau on those cards
 # keeps the edition's HDMI 3D, which NVIDIA's 580 driver does not have.
@@ -267,6 +267,54 @@ foreign_i386() {
 	dpkg --print-foreign-architectures 2>/dev/null | grep -qx i386
 }
 
+# The NVIDIA driver stack's own packages, whichever stack is installed: the locks, the modules and the driver.
+nvidia_stack_roots() {
+	local package
+	for package in sparky-stereo-nvidia-driver-lock sparky-stereo-nvidia-legacy-580xx-driver-lock nvidia-kernel-open-dkms-stereo3d nvidia-legacy-580xx-kernel-dkms nvidia-driver; do
+		package_installed "$package" && printf '%s\n' "$package"
+	done
+	return 0
+}
+
+# nvidia_stack_closure: every installed package the NVIDIA stack's own packages need, one name per line. Of these, only what
+# nothing else needs after a switch is the previous stack's leftover.
+nvidia_stack_closure() {
+	local -a roots
+	mapfile -t roots < <(nvidia_stack_roots)
+	((${#roots[@]})) || return 0
+	LC_ALL=C apt-cache depends --installed --recurse --no-recommends --no-suggests --no-conflicts --no-breaks --no-replaces --no-enhances "${roots[@]}" |
+		sed -n 's/^\([^ <|][^ ]*\)$/\1/p' | sort -u
+}
+
+# unneeded_packages: the packages apt would autoremove (installed as dependencies, needed by nothing now), by name; this only
+# reads the plan, nothing is removed with it
+unneeded_packages() {
+	LC_ALL=C apt-get --simulate --purge autoremove | sed -n 's/^\(Remv\|Purg\) \([^ ]*\).*/\2/p' | sort -u
+}
+
+# remove_previous_stack_leftovers BEFORE CLOSURE: after a switch from one NVIDIA stack to the other, the previous stack's
+# leftovers go: the packages that were unneeded by nothing before the switch and are needed by nothing now, among those the
+# previous stack's packages needed (firmware-nvidia-gsp 615 after a switch to 580, libnvidia-egl-wayland1 after a switch back).
+# Never a general autoremove (system-self-prunes, Daniel 2026-10-07: it would remove what the person installed, CUDA on his
+# own host): a package the person installed, and every unneeded package the NVIDIA stack never needed, stay. The removal is
+# simulated first and must remove exactly these; what is removed is said.
+remove_previous_stack_leftovers() {
+	local before=$1 closure=$2 package
+	local -a leftovers=() planned=()
+	mapfile -t leftovers < <(comm -12 <(unneeded_packages) <(printf '%s\n' "$closure") | comm -23 - <(printf '%s\n' "$before"))
+	((${#leftovers[@]})) || { log "NVIDIA: the previous driver stack left nothing behind"; return 0; }
+	mapfile -t planned < <(LC_ALL=C apt-get --simulate --purge purge "${leftovers[@]}" | sed -n 's/^\(Remv\|Purg\) \([^ ]*\).*/\2/p' | sort -u)
+	if [[ "${planned[*]}" != "$(printf '%s\n' "${leftovers[@]}" | sort -u | tr '\n' ' ' | sed 's/ $//')" ]]; then
+		err 60 "${leftovers[*]}"
+		return 1
+	fi
+	if ! run env DEBIAN_FRONTEND=noninteractive apt-get -y purge "${leftovers[@]}"; then
+		err 59 "${leftovers[*]}"
+		return 1
+	fi
+	log "NVIDIA: removed the previous driver stack's leftovers: ${leftovers[*]}"
+}
+
 # setup_nvidia [open|legacy-580xx]: NVIDIA's driver for the plan's NVIDIA branch. open (the default): the edition's open
 # modules with HDMI 3D (Turing and newer) and NVIDIA's user space at their version; legacy-580xx: NVIDIA's 580 driver, the
 # last for Maxwell, Pascal and Volta, with the edition's build of its kernel modules. Each branch has its own driver lock,
@@ -276,7 +324,7 @@ foreign_i386() {
 setup_nvidia() {
 	local branch=${1:-open}
 	local uri=developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64
-	local driver decoder nvidia_version userspace found_version other package
+	local driver decoder nvidia_version userspace found_version other package switching=0 unneeded_before old_stack
 	local module=nvidia-kernel-open-dkms-stereo3d suffix=stereo3d missing=40 unsuffixed=41 tail=
 	local -a policy=(sparky-stereo-nvidia-driver-lock sparky-stereo-cuda-repo) added=() stale=() options=() i386=()
 	if [[ $branch == legacy-580xx ]]; then
@@ -297,11 +345,13 @@ setup_nvidia() {
 		done
 	fi
 	# Nothing is changed when the edition's module is not there: the setup stops and says so.
-	if ! apt-cache show --no-all-versions "$module" >"$WORK/nvidia-module" 2>&1 || ! grep -q '^Package:' "$WORK/nvidia-module"; then
+	# Every version the sources offer, not only apt's candidate: the other stack's lock, while it is installed, pins this module
+	# at -1 (never installed), and apt has no candidate for it until that lock is gone, which is the switch this run makes.
+	if ! apt-cache show "$module" >"$WORK/nvidia-module" 2>&1 || ! grep -q '^Package:' "$WORK/nvidia-module"; then
 		err "$missing" "$module"
 		return 1
 	fi
-	found_version=$(sed -n 's/^Version: //p' "$WORK/nvidia-module" | head -n1)
+	found_version=$(sed -n 's/^Version: //p' "$WORK/nvidia-module" | sort -V | tail -n1)
 	nvidia_version=$(nvidia_version_of "$found_version" "$suffix")
 	if [[ -z $nvidia_version ]]; then
 		err "$unsuffixed" "$found_version"
@@ -322,6 +372,17 @@ setup_nvidia() {
 	# apt chooses any NVIDIA package; installed together with the driver, the lock came too late for NVIDIA's user space.
 	# A source the person set up for NVIDIA's URI is kept: sparky-stereo-cuda-repo then writes none of its own (a second
 	# source for it with another key file stops apt) and its pins apply to the person's source, since they go by origin.
+	# A switch from the other NVIDIA stack: what its packages needed and nothing needs after it is removed at the end. Recorded
+	# now, while that stack is installed, and what was already unneeded is not ours to remove.
+	if [[ $branch == legacy-580xx ]]; then
+		package_installed sparky-stereo-nvidia-driver-lock && switching=1
+	else
+		package_installed sparky-stereo-nvidia-legacy-580xx-driver-lock && switching=1
+	fi
+	if ((switching)); then
+		unneeded_before=$(unneeded_packages)
+		old_stack=$(nvidia_stack_closure)
+	fi
 	other=$(cuda_sources_elsewhere "$uri")
 	if [[ -n $other ]]; then
 		log "NVIDIA's CUDA repository is already configured in $other; sparky-stereo-cuda-repo keeps that source and adds the edition's pins"
@@ -351,6 +412,9 @@ setup_nvidia() {
 	fi
 	if ! apt_install "${options[@]}" "$driver" "$module" "$decoder" nvidia-vaapi-driver "${i386[@]}"; then
 		err 45
+		return 1
+	fi
+	if ((switching)) && ! remove_previous_stack_leftovers "$unneeded_before" "$old_stack"; then
 		return 1
 	fi
 	if [[ $branch == open ]] && grep -Fxq $'action\tnvidia-runtime-pm' "$WORK/plan"; then
