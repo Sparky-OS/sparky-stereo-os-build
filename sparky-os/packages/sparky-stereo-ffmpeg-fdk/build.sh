@@ -12,18 +12,20 @@
 #   (not shipped: /etc/apt/preferences.d/sparky-stereo-ffmpeg-fdk is written by each build, exact version at 1002, because apt
 #   takes a version pin only exact or with a trailing * and the local version changes with every build)
 #   /etc/apt/apt.conf.d/99sparky-stereo-ffmpeg-fdk                  the hook (APT::Update::Post-Invoke-Success)
-#   /etc/apt/sources.list.d/sparky-stereo-ffmpeg-src.sources        the edition's source index (deb-src), for the build
+#   (not shipped since 20261104.1: the edition's source index (deb-src), which the build needs, is in sparky-stereo-apt's
+#   sparky-stereo.sources, "Types: deb deb-src"; this package's own sparky-stereo-ffmpeg-src.sources said the same and made apt warn
+#   "Target Sources ... is configured multiple times". The postinst, preinst and postrm below remove it on upgrade, ORDER 400)
 # Nothing is built by installing the package: the first run explains, asks, and only then builds.
 # CPU_MINUTES is the build's CPU time (user plus system, minutes), measured on the container build of ffmpeg-dmo
 # 10:9.0.2-dmo1+stereo3d2 (media-on-dmo, 2026-10-08): the time the command tells the user is this divided by the cores.
 # Needs dpkg-deb and sparky-stereo-problems (catalog generation).
 # Usage: build.sh   (output goes to $OUT, default ${SPARKY_REPO_DIR})
-# Last update 2026/11/03
+# Last update 2026/11/04
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
-VERSION=${VERSION:-20261103.1~sparky9~0+lc1}
+VERSION=${VERSION:-20261104.1~sparky9~0+lc1}
 CPU_MINUTES=${CPU_MINUTES:-35}
 PKG=sparky-stereo-ffmpeg-fdk
 W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/fdk-build.XXXXXX")
@@ -33,7 +35,7 @@ TOOLKIT=$(cd "$HERE/../.." && pwd)
 HERE=$W/recipe
 D=$W/$PKG
 mkdir -p "$D/DEBIAN" "$D/usr/bin" "$D/usr/lib/$PKG" "$D/usr/share/sparky/$PKG" "$D/usr/share/doc/$PKG" \
-	"$D/etc/apt/apt.conf.d" "$D/etc/apt/sources.list.d" "$D/usr/lib/systemd/catalog"
+	"$D/etc/apt/apt.conf.d" "$D/usr/lib/systemd/catalog"
 
 install -m 755 "$HERE/bin/$PKG" "$D/usr/bin/$PKG"
 install -m 644 "$HERE/lib/common.sh" "$D/usr/lib/$PKG/common.sh"
@@ -44,14 +46,13 @@ sed -i "s/@CPU_MINUTES@/$CPU_MINUTES/" "$D/usr/lib/$PKG/common.sh"
 install -m 644 "$HERE"/lang/* "$D/usr/share/sparky/$PKG/"
 sparky-stereo-problems catalog "$PKG" "$HERE/lang" "$D/usr/lib/systemd/catalog" --subject LOCAL10
 install -m 644 "$HERE/apt/99sparky-stereo-ffmpeg-fdk" "$D/etc/apt/apt.conf.d/99sparky-stereo-ffmpeg-fdk"
-install -m 644 "$HERE/apt/sparky-stereo-ffmpeg-src.sources" "$D/etc/apt/sources.list.d/sparky-stereo-ffmpeg-src.sources"
-printf '%s\n' /etc/apt/apt.conf.d/99sparky-stereo-ffmpeg-fdk /etc/apt/sources.list.d/sparky-stereo-ffmpeg-src.sources \
-	>"$D/DEBIAN/conffiles"
+printf '%s\n' /etc/apt/apt.conf.d/99sparky-stereo-ffmpeg-fdk >"$D/DEBIAN/conffiles"
 
 cat >"$D/DEBIAN/postinst" <<'EOS'
 #!/bin/sh
 # postinst script
 set -e
+dpkg-maintscript-helper rm_conffile /etc/apt/sources.list.d/sparky-stereo-ffmpeg-src.sources 20261104.1~ sparky-stereo-ffmpeg-fdk -- "$@"
 case "$1" in
 configure)
 	/usr/lib/sparky-stereo-ffmpeg-fdk/migrate-problems
@@ -65,10 +66,22 @@ exit 0
 EOS
 chmod 755 "$D/DEBIAN/postinst"
 
+# The duplicate source file of versions before 20261104.1 goes the Debian way (dpkg-maintscript-helper rm_conffile, deb-conffiles(5)
+# "remove-on-upgrade" being its replacement only where the file never changes): an unchanged copy is removed, a copy the person
+# edited is kept as FILE.dpkg-bak, and an upgrade that stops puts it back.
+cat >"$D/DEBIAN/preinst" <<'EOS'
+#!/bin/sh
+set -e
+dpkg-maintscript-helper rm_conffile /etc/apt/sources.list.d/sparky-stereo-ffmpeg-src.sources 20261104.1~ sparky-stereo-ffmpeg-fdk -- "$@"
+exit 0
+EOS
+chmod 755 "$D/DEBIAN/preinst"
+
 cat >"$D/DEBIAN/postrm" <<'EOS'
 #!/bin/sh
 # postrm script
 set -e
+dpkg-maintscript-helper rm_conffile /etc/apt/sources.list.d/sparky-stereo-ffmpeg-src.sources 20261104.1~ sparky-stereo-ffmpeg-fdk -- "$@"
 case "$1" in
 remove | purge)
 	sparky-stereo-problems clear --all sparky-stereo-ffmpeg-fdk
@@ -134,7 +147,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: sparky-stereo-problems (>= 0.1.0), sparky-stereo-apt, apt, dpkg-dev, build-essential, fakeroot, python3, sudo | pkexec
+Depends: sparky-stereo-problems (>= 0.1.0), sparky-stereo-apt (>= 20261104.2~sparky9~0), dpkg (>= 1.20.6), apt, dpkg-dev, build-essential, fakeroot, python3, sudo | pkexec
 Recommends: powermgmt-base
 Section: sound
 Priority: optional

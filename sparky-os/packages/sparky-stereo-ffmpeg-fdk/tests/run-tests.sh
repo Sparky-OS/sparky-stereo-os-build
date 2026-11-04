@@ -27,7 +27,7 @@ Package: sparky-stereo-apt-standin
 Version: 1
 Architecture: all
 Maintainer: test <test@example.org>
-Provides: sparky-stereo-apt
+Provides: sparky-stereo-apt (= 20261104.2~sparky9~0)
 Description: stand-in for sparky-stereo-apt in the test container
 EOS
 dpkg-deb --root-owner-group -b "$W" "$T/pkgs/sparky-stereo-apt-standin_1_all.deb" >/dev/null

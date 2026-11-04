@@ -1,4 +1,11 @@
 -------------------------------------------------------------------------------
+  Version 20261104.1~sparky9~0 (2026-11-04)
+-------------------------------------------------------------------------------
+  * No source line file of its own any more (ORDER 400): sparky-stereo-apt's sparky-stereo.sources already says "Types: deb deb-src" for the same repository, so this package's sparky-stereo-ffmpeg-src.sources made apt warn "Target Sources (main/source/Sources) is configured multiple times" at every update. The file is removed on upgrade the Debian way (dpkg-maintscript-helper rm_conffile in preinst, postinst and postrm: an unchanged copy goes, a copy you edited is kept as FILE.dpkg-bak, an upgrade that stops puts it back), and the package depends on sparky-stereo-apt (>= 20261104.2~sparky9~0), the first that carries deb-src for sure. apt-get source ffmpeg-dmo, which the build runs, reads the deb-src line of sparky-stereo.sources
+  * The messages that said "check that the source line is in apt's sources (sparky-stereo-ffmpeg-src.sources)" name sparky-stereo.sources (nine languages)
+  * A person who removed deb-src from sparky-stereo.sources by hand gets the message "has no source package" at the next update check, as before: the source line is theirs to restore
+
+-------------------------------------------------------------------------------
   Version 20261103.1~sparky9~0 (2026-11-03)
 -------------------------------------------------------------------------------
   * The rebuild after an update is never capped (ORDER 361; Daniel, 2026-11-02: "Wheel-driver builds - or any build at update time - DO NEVER CAP EXECUTION"): it runs at normal priority on every processor; the transient service loses Nice=19, IOSchedulingClass=idle and CPUSchedulingPolicy=batch, the detached process its nice 19, the build its nice 10, and an automatic rebuild no longer leaves one processor out

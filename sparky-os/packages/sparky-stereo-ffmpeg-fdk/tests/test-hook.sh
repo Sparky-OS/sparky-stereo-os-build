@@ -142,7 +142,7 @@ APT=apt update; eq "... apt update succeeds too" "$rc" 0; has "... with the mess
 fixture "$GOOD"
 mv /etc/apt/sources.list.d/hooktest.list /tmp/hooktest.list.aside
 update; echo "$out"; eq "no source line at all, kept: apt-get update succeeds" "$rc" 0
-has "... the message names the source line to check" "$out" "sparky-stereo-ffmpeg-src.sources"
+has "... the message names the source line to check" "$out" "sparky-stereo.sources"
 has "... the problem is in the engine" "$(problem)" "has no source package ffmpeg-dmo"
 mv /tmp/hooktest.list.aside /etc/apt/sources.list.d/hooktest.list
 fixture "$INVALID"
