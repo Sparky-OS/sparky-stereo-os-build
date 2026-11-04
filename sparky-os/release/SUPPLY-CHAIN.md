@@ -1,6 +1,6 @@
 # Bill of materials and build provenance of a publication round
 
-ORDER 394. Tools: `make-sbom.py`, `make-provenance.py`, `check-supply-chain.py`, their reader `supply_chain.py`, the test `sparky-os/tests/supply-chain/test.sh`.
+ORDER 394 and 394b. Tools: `make-sbom.py`, `make-provenance.py`, `check-supply-chain.py`, their reader `supply_chain.py`, the round scripts `round-supply-chain.sh` and `sync-supply-chain.sh`, the test `sparky-os/tests/supply-chain/test.sh`.
 They live in `sparky-os/release/` beside `verify-online-repository.py` and `publish-tree.sh`'s checks because they read a published tree or a round's cohort, never a recipe's build, and run at the same moment as the release checks.
 Everything they write is unsigned; signing and publication are the main session's step of a round.
 
@@ -49,16 +49,52 @@ The document's namespace is made from the package hashes, so the same inputs giv
 - `byproducts`: the `.buildinfo` file when one exists.
 - `finishedOn`: the `.buildinfo` Build-Date (RFC 2822, converted to UTC).
 
+## The build record (ORDER 394b)
+
+Every Lean Code build leaves `SOURCE_VERSION_ARCH.sparky-build.json` next to its `.deb` files (format `sparky-build-record/1`).
+Two points of the Lean Code toolkit write it, because every package build passes both:
+
+- `lean.debhelper` replaces `dh_builddeb`, so no `.deb` of a build is made without it.
+  It notes when `dpkg-buildpackage` started (read from `/proc`, in whole seconds, so up to a second early) in `.sparky-build-start.json`.
+- `lean.release check-debs` is the gate every build script ends with.
+  After the checks pass it writes the record, with the `.deb` files' sha256, the name and sha256 of the `.buildinfo`, `.changes` and `.dsc` files beside them, and the finish time (the moment the gate accepted the packages).
+  `--no-record` only checks, for the controls that run the gate on published or read-only files.
+
+The build repository's commit, the builder image's id, the invocation id and the moment the script started are known only to the host.
+`sparky-os/repo/build-provenance.sh` reads them (`git rev-parse HEAD` and whether `sparky-os` differs from it, `docker image inspect`, a random UUID, the clock) and `sparky_provenance_init IMAGE` fills `"${SPARKY_PROV_ARGS[@]}"`, which the build script adds to its `docker run` line as `SPARKY_BUILD_*` variables.
+A fact that was not passed is not guessed: the record lists it under `unrecorded`, the gate prints it, and the statement keeps the gap.
+`SPARKY_PROVENANCE_REQUIRED=1` stops the build script, and the gate, instead.
+The reader refuses a record in which a fact is neither recorded nor listed as unrecorded.
+
+Build scripts wired so far (they call `sparky_provenance_init`): the `build.sh` of command-not-found, dpkg, full-sbs, kscreen, kscreenlocker, kwin, libkscreen, librsvg (amd64 and i386), plasma-desktop, plasma-union, plasma-wayland-protocols, plasma-workspace, qt6-3d, qt6-base, qt6-declarative, qt6-svg, sview and transition-rebuilds, and `release/build-dh-lean.sh`.
+The others that end in `check-debs` still record the finish time, the start of `dpkg-buildpackage` and the files, and list the other three facts as unrecorded: hardware-decode, kf6-kio, kf6-networkmanager-qt, kpmcore, mesa, nvidia-legacy-580xx-userspace, pipewire-bluez5-codec-aac, pkcs11-proxy, plasma-discover, plasma-nm, snmptt, spatial-video-rebuilds, stereo-declare, vibe, xfsprogs, xwayland, zfs-linux, the VLC packaging and the `release/run-*` batches.
+Wiring one is two lines: source `build-provenance.sh` after `HERE=`, call `sparky_provenance_init IMAGE` before `docker run`, and put `"${SPARKY_PROV_ARGS[@]}"` on that line.
+Plain builds that never reach the Lean Code gate (`repo/build-from-dsc.sh`) write no record.
+
+`make-provenance.py --build-dir DIR` (also the older `--buildinfo-dir`) searches the folders for records and `.buildinfo` files.
+A record changes the statement:
+
+| statement field | record field |
+| --- | --- |
+| `resolvedDependencies` entry `recipe-repository`: `uri` the build repository, `digest.gitCommit`, annotation `worktreeDiffersFromCommit` | `recipeCommit`, `recipeDirty` |
+| `runDetails.builder.builderDependencies`: the image, `digest.sha256` | `builderImage`, `builderImageName`, `builderImageRepoDigests` |
+| `runDetails.metadata.invocationId`, `startedOn`, `finishedOn` | `invocationId`, `startedOn`, `finishedOn` |
+| `internalParameters.buildRecord` | `startBasis` (`build-script` or `dpkg-buildpackage`), `unrecorded`, `buildArchitecture` |
+| `byproducts` | the record file |
+
+`check-supply-chain.py provenance DIR --require-recorded [--only-source NAME]` makes those facts mandatory: a statement without them is a problem.
+A round does not use it yet, because the packages built before 394b have no record.
+
 ## Gaps (written per recipe by `make-provenance.py --report`)
 
-Nothing records these today, so no statement states them:
+A fact nothing records is not stated; the gap report names it per recipe.
+Builds made after 394b through a wired script close the first four; the others keep them.
 
 | gap | what is missing | how to close it |
 | --- | --- | --- |
-| `recipe-commit` | the build repository's commit the build ran from | the build script writes `git rev-parse HEAD` of the build repository into a file next to the `.deb` files (a `.buildinfo` Environment line or a `provenance.json`) |
-| `builder-image-digest` | the container image digest the build ran in (SLSA `builderDependencies`) | the build script records `docker inspect --format '{{.Image}}'` and the image's repo digest |
-| `build-environment`, `build-dependencies`, `build-finish-time` | with no `.buildinfo`, the installed build dependencies, the environment and the time | keep the `.buildinfo` that `dpkg-buildpackage` writes (18 `.buildinfo` files exist in the 39 stage folders of the 4 November cohort; the publication tree copies none) |
-| `build-start-time`, `invocation-id` | no build records them | the build script writes both |
+| `recipe-commit`, `builder-image-digest`, `build-start-time`, `invocation-id` | no build record, or the record lists them as unrecorded | wire the build script (above) |
+| `build-environment`, `build-dependencies` | no `.buildinfo` | keep the `.buildinfo` that `dpkg-buildpackage` writes beside the `.deb` files: the record names it, and the stage folder must copy it |
+| `build-finish-time` | neither a `.buildinfo` nor a record | as above |
 | `recipe-unresolved` | no recipe folder with the source's name or changelog | register the source with its recipe |
 | `source-dsc-missing` | the `.dsc` was not beside the tree or the cohort | keep the `.dsc` in the stage folder |
 
@@ -67,27 +103,37 @@ Nothing records these today, so no statement states them:
 `check-supply-chain.py` uses the standards' own libraries: the SPDX project's `spdx-tools` (tools-python) for the document, in-toto's `in-toto-attestation` library (Statement v1 and the generated SLSA Provenance v1 protobuf, unknown fields refused) for the statements.
 `sparky-os/tests/supply-chain/test.sh` runs them on a small fixture repository, red on deliberately broken copies and green on the real ones.
 
-## A round (a plan; the main session wires it)
+## A round
 
-The tools run in a container with Python 3.14, `dpkg-dev` and a virtual environment holding `spdx-tools` 0.8.5, `in-toto-attestation` 0.9.3 and `license-expression` 30.4.4 (versions measured on 4 November 2026); the Dockerfile is in the lane report.
-They read the finished DEST, so no cohort mode is needed in the round itself; the cohort mode (`--cohort-list`, `--cohort-sha256`) is for the check before Part 1 and for lanes.
+The tools run in a container whose image is built from `release/supply-chain-image`:
+
+- `Dockerfile`: an amd64 Debian testing base (pass `--build-arg BASE=` an image pulled by digest) with `python3`, `python3-venv`, `dpkg-dev`, `xz-utils` and `ca-certificates`; no `git` (the tools read files) and no `jsonschema` (nothing imports it).
+- `requirements.txt`: the Python packages, each pinned with its sha256 and installed by `pip install --require-hashes --no-deps`.
+  `make-requirements.py top-level.txt requirements.txt` writes it (run inside the base, with network): it resolves the pinned top-level packages in a throwaway environment, downloads each package once, takes the sha256 of the bytes it got and compares it with the hash PyPI declares for that file name (`https://pypi.org/pypi/NAME/VERSION/json`, `urls[].digests.sha256`); it stops unless both agree.
+  PyPI's index is the only source of those hashes, so a hash proves the bytes did not change after this was written, not who uploaded them.
+- Current set (4 November 2026): spdx-tools 0.8.5, in-toto-attestation 0.9.3, license-expression 30.4.4, protobuf 7.36.2 and their dependencies beartype, boolean.py, click, ply, pyparsing, PyYAML, rdflib, semantic-version, uritools and xmltodict.
 
 **Part 1, in `official-part1.sh`, after `publish-tree.sh` returns 0 and `sync`** (unsigned, nothing sent):
 
-1. `ROUND=r1103a; O=$W/supply-chain; mkdir -p $O`.
-2. In the tools container, with `$D` (DEST) and the build repository mounted read-only, `$W/stagedirs.txt` already written by Part 1:
-   - `make-sbom.py --tree $D --name sparky-stereo-os-mashtabba-$ROUND --out $O/sparky-stereo-os-mashtabba-$ROUND.spdx.json --report $O/sbom-report.json --cache $O/cache.json`
-   - `make-provenance.py --tree $D $(sed 's/^/--buildinfo-dir /' $W/stagedirs.txt) --recipes-dir $B/packages --recipes-dir $B/upstream --out-dir $O/provenance --bundle $O/provenance-$ROUND.intoto.jsonl --report $O/provenance-gaps.json --cache $O/cache.json`
-   - `check-supply-chain.py sbom ... --tree $D` and `check-supply-chain.py provenance $O/provenance --tree $D`; either exit code stops Part 1.
-3. `cd $O && sha256sum *.spdx.json *.intoto.jsonl provenance-gaps.json > SHA256SUMS`.
+`round-supply-chain.sh DEST ROUND OUT STAGEDIRS` runs `round-supply-chain-inner.sh` in the container (network off, DEST and the stage folders read only):
+`make-sbom.py` on DEST, `check-supply-chain.py sbom --tree DEST`, `make-provenance.py` with a `--build-dir` for every line of `stagedirs.txt`, `check-supply-chain.py provenance --tree DEST`, then `sha256sum` of the SPDX document, the provenance bundle and the gap report into `OUT/publish/SHA256SUMS`.
+Any non-zero exit stops Part 1.
 
 **Part 2, signed by the main session with the official key** (the same key and call as `publish-tree.sh`'s Release signature):
 
-4. `gpg --homedir $SPARKY_REPO_GNUPG --local-user 10DFD38DAD1E4808BC688E5A945E5D079A2A0B9C --armor --detach-sign` on `SHA256SUMS`, and on each document if the documents are fetched singly (`.asc` beside each file).
-   This is the key apt clients already trust, so a person verifies with `gpgv` and the repository key they have.
-   A later step may wrap each statement in a DSSE envelope signed with the same key; the statements need no change.
-5. Publish after the repository itself is live (the documents describe it): `rsync` of `$O` to `sbom/$ROUND/` under the web root, then `sbom/latest` pointing at it.
-   `sync-to-server.sh` owns only `pool/` and `dists/` (its step 4 deletes only there), so a new `sbom/` tree is neither sent nor removed by it; a small `sync-supply-chain.sh` with the same dry run and `--go` is the one new script needed.
-6. `verify-online-repository.py` gains one check: the served `SHA256SUMS` matches `$O` and its signature verifies.
+`gpg --homedir $SPARKY_REPO_GNUPG --local-user 10DFD38DAD1E4808BC688E5A945E5D079A2A0B9C --armor --detach-sign` on `OUT/publish/SHA256SUMS`, writing `SHA256SUMS.asc` beside it.
+This is the key apt clients already trust, so a person verifies with `gpgv` and the repository key they have.
+A later step may wrap each statement in a DSSE envelope signed with the same key; the statements need no change.
+
+**Publication, after the repository itself is live** (the documents describe it):
+
+`sync-supply-chain.sh OUT/publish ROUND sparky-stereo-repo.asc` is a dry run; with `--go` it checks `SHA256SUMS` against the files and `SHA256SUMS.asc` against the repository key (it refuses unsigned documents), then sends the files to `sbom/ROUND/` (SHA256SUMS and its signature last) and points the symlink `sbom/latest` at it.
+It owns only `sbom/ROUND/` and `sbom/latest`: `sync-to-server.sh` owns only `pool/` and `dists/`, and neither deletes what the other sends.
+`verify-online-repository.py DEST --supply-chain-dir OUT/publish --supply-chain-round ROUND` then checks that every served file under `sbom/ROUND/` and `sbom/latest/` is the signed local file and that the signature verifies.
 
 What the documents give a person: `grep` of the SPDX file for a package gives its version, hash, origin, licence and source; the provenance line for the same `.deb` hash says what built it and what is not known.
+
+## Tests
+
+`sparky-os/tests/supply-chain/test.sh WORKDIR` (inside the image: documents, statements, build records, the validators red and green) and `test-publish.sh WORKDIR` (on a host with rsync and gpg, throwaway key: sync-supply-chain.sh and the served-files check).
+`sparky-os/lean/tests/test_buildrecord.py` tests the writer.

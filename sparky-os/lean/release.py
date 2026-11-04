@@ -15,7 +15,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-from . import VERSION, archive, identities, linkcheck, package, project
+from . import VERSION, archive, buildrecord, identities, linkcheck, package, project
 
 
 def projection_hash(path):
@@ -269,6 +269,8 @@ def main():
                                                'authors ship them (a vendor licence), each with its reason')
     check = commands.add_parser('check-debs')
     check.add_argument('debs', nargs='+')
+    check.add_argument('--no-record', action='store_true',
+                       help='only check; the default also writes the build record beside the .deb files (lean/buildrecord.py)')
     ident = commands.add_parser('check-identity', help='staged lc1 archives: renderer label and digest match the version table')
     ident.add_argument('debs', nargs='+')
     link = commands.add_parser('check-link')
@@ -300,6 +302,8 @@ def main():
             build_tree(args.tree, args.out, plan)
         elif args.command == 'check-debs':
             check_debs(args.debs)
+            if not args.no_record:
+                buildrecord.record(args.debs)
         elif args.command == 'check-identity':
             check_identity(args.debs)
         elif args.command == 'check-link':
@@ -324,7 +328,7 @@ def main():
             check_iso(args.iso)
         else:
             package.check_tree(args.tree)
-    except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+    except (OSError, ValueError, subprocess.CalledProcessError) as exc:  # buildrecord.Incomplete is a ValueError
         parser.exit(1, f'lc1: release blocked: {exc}\n')
 
 

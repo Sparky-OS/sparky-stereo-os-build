@@ -13,6 +13,7 @@
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+. "$HERE/../../repo/build-provenance.sh"
 TOOLKIT=${SPARKY_TOOLKIT:-$HERE/../..}
 . "$TOOLKIT/config/local-config.sh"
 sparky_need SPARKY_REPO_DIR
@@ -28,9 +29,10 @@ if [ -n "${SPARKY_LC_SIBLINGS_FILE:-}" ]; then
 	SIBLING_MOUNTS=(-v "$SPARKY_LC_SIBLINGS_FILE":/siblings.list:ro -e SPARKY_LC_SIBLINGS_FILE=/siblings.list)
 	while read -r dir; do SIBLING_MOUNTS+=(-v "$dir":"$dir":ro); done < <(xargs -d '\n' -n1 dirname < "$SPARKY_LC_SIBLINGS_FILE" | sort -u)
 fi
+sparky_provenance_init sparky-lc-migration:20261020
 docker run --rm --cpus 4 --platform linux/amd64 "${SIBLING_MOUNTS[@]}" \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
-	-e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro \
+	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro \
 	-v "$WORK":/work -v "$SRC":/src:ro \
 	-v "$SPARKY_REPO_DIR":/repo:ro -v "$PREV":/prev:ro -v "$TOOLKIT":/toolkit:ro -v "$HERE":/tools:ro \
 	-v "$HERE/patches":/patches:ro -v "$TRANSLATIONS":/translations:ro \

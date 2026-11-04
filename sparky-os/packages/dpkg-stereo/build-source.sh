@@ -42,6 +42,14 @@ EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
 
+  * Carry Lean Code 0.1.28: every Lean Code build leaves a build record
+    beside its .deb files (ORDER 394b). Includes 0.1.35's alternative-policy
+    ordering.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Wed, 04 Nov 2026 12:00:00 +0000
+
+dpkg-stereo (0.1.35) unstable; urgency=medium
+
   * Carry Lean Code 0.1.27: a case under an alternative APT policy is
     ordered by that policy's own records, as on an installed system, and
     must install under every coinstallable policy when its plan uses a

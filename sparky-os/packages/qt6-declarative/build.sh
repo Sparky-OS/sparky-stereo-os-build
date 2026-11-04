@@ -10,13 +10,15 @@
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+. "$HERE/../../repo/build-provenance.sh"
 . "$HERE/../../config/local-config.sh"
 sparky_need SPARKY_REPO_DIR
 WORK=$(mkdir -p "$1" && cd "$1" && pwd)
 PREV=$(cd "$2" && pwd)
 SRC=$(cd "$3" && pwd)
 [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
-docker run --rm --cpus 4 --platform linux/amd64 -v "$WORK":/work -v "$SRC":/src:ro \
+sparky_provenance_init sparky-lc-migration:20261020
+docker run "${SPARKY_PROV_ARGS[@]}" --rm --cpus 4 --platform linux/amd64 -v "$WORK":/work -v "$SRC":/src:ro \
 	-v "$SPARKY_REPO_DIR":/repo:ro -v "$PREV":/prev:ro -v "$HERE/../..":/toolkit:ro -v "$HERE":/tools:ro \
 	-v "$HERE/patches":/patches:ro \
 	-v /usr/share/keyrings/deb-multimedia-keyring.pgp:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro \

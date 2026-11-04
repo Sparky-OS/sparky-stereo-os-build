@@ -118,4 +118,57 @@ expect red "in-toto: unknown predicate field"  $PY "$R/check-supply-chain.py" pr
 expect red "in-toto: subject digest differs from the tree" $PY "$R/check-supply-chain.py" provenance "$W/prov-sha" --tree "$W/tree"
 expect red "SLSA: builder.id missing"          $PY "$R/check-supply-chain.py" provenance "$W/prov-builder"
 expect red "make-sbom: cohort file changed"    bash -c "echo x >> '$W/cohort/beta_2.1_amd64.deb'; $PY '$R/make-sbom.py' --tree '$W/tree' --cohort-list '$W/cohort.list' --cohort-sha256 '$W/cohort.sha256' --name x --out '$W/x.json'"
+
+# ORDER 394b: a build record beside the .deb files closes the four gaps; a damaged or missing fact is red
+mkdir -p "$W/rec"
+$PY -I - "$W" "$A" <<'P'
+import json, sys
+w, alpha = sys.argv[1:3]
+rec = {'format': 'sparky-build-record/1', 'source': 'fixsrc', 'version': '1.0-1+stereo3d1+lc1', 'buildArchitecture': 'amd64',
+       'recipeCommit': 'a' * 40, 'recipeDirty': False, 'builderImage': 'sha256:' + 'b' * 64, 'builderImageName': 'builder:1',
+       'invocationId': '0b0e86c3-6c0a-4d6a-9d57-0f5f0a1d7f10', 'startedOn': '2026-11-04T02:00:00Z', 'startBasis': 'build-script',
+       'finishedOn': '2026-11-04T02:30:00Z', 'debs': [{'name': 'alpha_1.0-1+stereo3d1+lc1_amd64.deb', 'sha256': alpha}],
+       'files': [], 'unrecorded': []}
+name = 'fixsrc_1.0-1+stereo3d1+lc1_amd64.sparky-build.json'
+def put(folder, **change):
+    import os
+    r = json.loads(json.dumps(rec))
+    for k, v in change.items():
+        if v is None: r.pop(k, None)
+        else: r[k] = v
+    os.makedirs(w + '/' + folder, exist_ok=True)
+    json.dump(r, open(w + '/' + folder + '/' + name, 'w'))
+put('rec')
+put('rec-damaged', recipeCommit=None, recipeDirty=None)                       # absent and not listed as unrecorded
+put('rec-unrecorded', recipeCommit=None, recipeDirty=None, unrecorded=['recipeCommit'])
+put('rec-badcommit', recipeCommit='main')
+put('rec-bothways', unrecorded=['invocationId'])
+P
+prov() { $PY "$R/make-provenance.py" --tree "$W/tree" --build-dir "$W/bi" --build-dir "$1" --recipes-dir "$W/recipes" --recipes-dir "$W/empty" --out-dir "$2" --report "$2.report.json"; }
+expect green "make-provenance with a build record"  prov "$W/rec" "$W/prov-rec"
+expect green "check provenance --require-recorded for the recorded source" $PY "$R/check-supply-chain.py" provenance "$W/prov-rec" --tree "$W/tree" --require-recorded --only-source fixsrc
+expect green "the record's facts are in the statement" $PY -I - "$W/prov-rec" "$W/prov-rec.report.json" <<'P'
+import glob, json, sys
+a = json.load(open(glob.glob(sys.argv[1] + '/fixsrc*')[0]))
+rd = a['predicate']['buildDefinition']['resolvedDependencies']
+repo = [r for r in rd if r.get('annotations', {}).get('role') == 'recipe-repository']
+assert repo and repo[0]['digest'] == {'gitCommit': 'a' * 40} and repo[0]['annotations']['worktreeDiffersFromCommit'] is False, rd
+run = a['predicate']['runDetails']
+assert run['builder']['builderDependencies'][0]['digest'] == {'sha256': 'b' * 64}, run['builder']
+assert run['metadata'] == {'invocationId': '0b0e86c3-6c0a-4d6a-9d57-0f5f0a1d7f10', 'startedOn': '2026-11-04T02:00:00Z', 'finishedOn': '2026-11-04T02:30:00Z'}, run['metadata']
+rep = json.load(open(sys.argv[2]))
+k = [x for x in rep['gaps_by_recipe'] if x.endswith('/fixsrc')][0]
+gaps = rep['gaps_by_recipe'][k]['gaps']
+assert not {'recipe-commit', 'builder-image-digest', 'build-start-time', 'invocation-id'} & set(gaps), gaps
+assert rep['gaps_by_recipe']['unresolved:beta']['gaps'].count('recipe-commit') == 1     # no record: the gaps stay
+assert rep['statements_with_build_record'] == 1 and rep['build_records_read'] == 1
+P
+expect red "make-provenance: a record lacking a fact it did not list as unrecorded" prov "$W/rec-damaged" "$W/prov-damaged"
+expect red "make-provenance: a malformed commit"      prov "$W/rec-badcommit" "$W/prov-badcommit"
+expect red "make-provenance: recorded and unrecorded at once" prov "$W/rec-bothways" "$W/prov-bothways"
+expect green "make-provenance: an unrecorded fact is allowed" prov "$W/rec-unrecorded" "$W/prov-unrec"
+expect red "check --require-recorded: the commit is unrecorded" $PY "$R/check-supply-chain.py" provenance "$W/prov-unrec" --require-recorded --only-source fixsrc
+expect red "check --require-recorded: no record at all" $PY "$R/check-supply-chain.py" provenance "$W/prov" --require-recorded --only-source fixsrc
+expect green "check without --require-recorded accepts a statement with gaps" $PY "$R/check-supply-chain.py" provenance "$W/prov-unrec"
+
 [ $fail = 0 ] && echo "ALL PASS" || { echo "FAILED"; exit 1; }

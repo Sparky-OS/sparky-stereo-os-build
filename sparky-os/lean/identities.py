@@ -57,6 +57,9 @@ RELEASED = {
     # pinned name must install under every coinstallable policy.
     '0.1.27': {'3ee1f0b77127a873731534113f4b41dfd53b55a2606bece7d684804693b79a72':
                'lean 0.1.27 (collapse-blank,pointer,c-drop-lines) code 3ee1f0b77127a873'},
+    # ORDER 394b: lean.debhelper and lean.release check-debs write the build record beside the .deb files.
+    '0.1.28': {'a79f7be67b527027657a7cb1c3aff678bf5b7ecc042bc9316346468c7e59f046':
+               'lean 0.1.28 (collapse-blank,pointer,c-drop-lines) code a79f7be67b527027'},
 }
 
 # Digests that built under a label without being its released renderer: never accepted.

@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 import subprocess
 
-from . import package, release, source_tree
+from . import buildrecord, package, release, source_tree
 
 
 def link_gate(built):
@@ -43,6 +43,7 @@ def build(root, provenance):
                       list((root / 'debian/.debhelper').glob('*/dbgsym-root/DEBIAN/control')))
     if not controls:
         raise ValueError('No staged binary controls; run after dh_gencontrol')
+    buildrecord.note_start(root.parent)
     # every declared generated output matches an installed file of some package, before anything is built
     source_tree.require_generated(root, [control.parent.parent for control in controls])
     built = []

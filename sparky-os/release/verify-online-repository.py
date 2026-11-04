@@ -19,10 +19,17 @@ import local_config as cfg
 
 sys.path.insert(0, str(cfg.TREE / 'sparky-os'))
 from lean.package import stanzas
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import supply_chain as sc
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('repository', type=Path)
+parser.add_argument('--supply-chain-dir', type=Path, help='the round\'s signed publish folder (round-supply-chain.sh OUT/publish '
+                    'with SHA256SUMS.asc): the served sbom/ROUND files must be these bytes, and the signature must verify')
+parser.add_argument('--supply-chain-round', help='the round\'s name, the folder under sbom/')
 args = parser.parse_args()
+if bool(args.supply_chain_dir) != bool(args.supply_chain_round):
+    parser.error('--supply-chain-dir and --supply-chain-round go together')
 repo = args.repository.resolve()
 base = cfg.path('SPARKY_MIGRATION_WORK')
 out = base / ('online-verification-' + datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S'))
@@ -34,8 +41,8 @@ def digest(path):
     with path.open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
-def check_http(relative):
-    path = repo / relative
+def check_http(relative, path=None):
+    path = path or repo / relative
     expected = digest(path)
     request = urllib.request.Request(url + urllib.parse.quote(relative, safe='/+~.-_'),
                                      headers={'Cache-Control': 'no-cache'})
@@ -100,7 +107,14 @@ for package in ['dpkg-stereo', 'sparky-stereo-apt', 'sparky-stereo-skills']:
     matches = list(repo.glob('pool/**/' + package + '_*.deb'))
     assert len(matches) == 1, package
     check_http(str(matches[0].relative_to(repo)))
-(out / 'status.json').write_text(json.dumps(dict(state='passed', https_files=len(http),
+supply_chain = None
+if args.supply_chain_dir:
+    def fetch(relative):
+        request = urllib.request.Request(url + urllib.parse.quote(relative, safe='/+~.-_'), headers={'Cache-Control': 'no-cache'})
+        with urllib.request.urlopen(request, timeout=120) as response:
+            return response.read()
+    supply_chain = sc.verify_served(args.supply_chain_dir, args.supply_chain_round, fetch, out / 'keyring.gpg')
+(out / 'status.json').write_text(json.dumps(dict(state='passed', https_files=len(http), supply_chain=supply_chain,
     pool_files=len(pool), inrelease_sha256=digest(repo / 'dists/mashtabba/InRelease'),
     scope='Public HTTPS metadata/client archives and every served pool archive over authenticated SSH'), indent=2) + '\n')
 print(out, 'PASS', flush=True)

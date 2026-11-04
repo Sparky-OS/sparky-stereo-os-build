@@ -51,6 +51,49 @@ DEP5_EXCEPTIONS = {
 class ReadError(Exception):
     pass
 
+# The build record lean/buildrecord.py writes beside the .deb files (ORDER 394b). This reader is separate from the
+# writer on purpose: the tools run outside the build container and check what the writer promised.
+RECORD_SUFFIX = '.sparky-build.json'
+RECORD_FORMAT = 'sparky-build-record/1'
+RECORD_HOST_FACTS = ('recipeCommit', 'builderImage', 'invocationId', 'startedOn')
+_RECORD_SHAPES = {
+    'recipeCommit': re.compile(r'^[0-9a-f]{40}$'),
+    'builderImage': re.compile(r'^sha256:[0-9a-f]{64}$'),
+    'invocationId': re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'),
+    'startedOn': re.compile(r'^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$'),
+    'finishedOn': re.compile(r'^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$'),
+}
+
+
+def read_build_record(path):
+    """Parse and validate a build record. A fact is either present and well formed or named under "unrecorded";
+    a record that is neither is damaged and is refused (ReadError), never read as if the fact were absent."""
+    try:
+        obj = json.loads(Path(path).read_text(encoding='utf-8'))
+    except (OSError, ValueError) as exc:
+        raise ReadError(f'{path}: {exc}')
+    if not isinstance(obj, dict) or obj.get('format') != RECORD_FORMAT:
+        raise ReadError(f'{path}: not a {RECORD_FORMAT} record')
+    for key in ('source', 'version', 'buildArchitecture', 'finishedOn', 'debs', 'files', 'unrecorded'):
+        if key not in obj:
+            raise ReadError(f'{path}: the record lacks "{key}"')
+    unrecorded = obj['unrecorded']
+    if not isinstance(unrecorded, list) or not all(isinstance(u, str) for u in unrecorded):
+        raise ReadError(f'{path}: "unrecorded" is not a list of names')
+    for key in RECORD_HOST_FACTS:
+        if key in obj and key in unrecorded:
+            raise ReadError(f'{path}: "{key}" is both recorded and unrecorded')
+        if key not in obj and key not in unrecorded:
+            raise ReadError(f'{path}: "{key}" is neither recorded nor listed as unrecorded (damaged record)')
+    for key, shape in _RECORD_SHAPES.items():
+        if key in obj and not (isinstance(obj[key], str) and shape.match(obj[key])):
+            raise ReadError(f'{path}: "{key}" is not well formed: {obj[key]!r}')
+    if 'recipeCommit' in obj and not isinstance(obj.get('recipeDirty'), bool):
+        raise ReadError(f'{path}: "recipeDirty" is missing beside "recipeCommit"')
+    if not obj['debs'] or not all(isinstance(r, dict) and re.match(r'^[0-9a-f]{64}$', str(r.get('sha256', ''))) for r in obj['debs']):
+        raise ReadError(f'{path}: "debs" lacks the sha256 of the packages')
+    return obj
+
 
 def sha256_file(path):
     h = hashlib.sha256()
@@ -489,3 +532,35 @@ class Cache:
         tmp = self.path.with_suffix('.tmp')
         tmp.write_text(json.dumps(self.d, sort_keys=True))
         os.replace(tmp, self.path)
+
+
+def verify_served(publish_dir, round_name, fetch, keyring):
+    """The round's served supply-chain files are the signed local ones (ORDER 394b). `fetch(relative)` returns the bytes the
+    server gives for a path below the web root; `keyring` is a gpgv keyring with the repository key. Checks: every name in
+    SHA256SUMS, its .asc and every file it lists served as sbom/ROUND/NAME with the local bytes, sbom/latest/SHA256SUMS the same,
+    the signature valid, every file equal to the hash SHA256SUMS gives. Raises ReadError on the first difference."""
+    import subprocess
+    publish = Path(publish_dir).resolve()
+    if not re.fullmatch(r'[A-Za-z0-9._-]+', round_name):
+        raise ReadError('bad round name %r' % round_name)
+    rows = []
+    for line in (publish / 'SHA256SUMS').read_text().splitlines():
+        if line.strip():
+            digest, _, name = line.partition('  ')
+            if not re.fullmatch(r'[0-9a-f]{64}', digest) or not name or '/' in name or name.startswith('.'):
+                raise ReadError('SHA256SUMS: bad line %r' % line)
+            rows.append((digest, name))
+    if not rows:
+        raise ReadError('SHA256SUMS lists no file')
+    for digest, name in rows:
+        if sha256_file(publish / name) != digest:
+            raise ReadError('%s differs from SHA256SUMS' % name)
+    sig = subprocess.run(['gpgv', '--keyring', str(keyring), str(publish / 'SHA256SUMS.asc'), str(publish / 'SHA256SUMS')],
+                         capture_output=True, text=True)
+    if sig.returncode != 0:
+        raise ReadError('SHA256SUMS.asc does not verify: ' + sig.stderr.strip())
+    for name in ['SHA256SUMS', 'SHA256SUMS.asc'] + [n for _, n in rows]:
+        for where in ('sbom/%s/%s' % (round_name, name), 'sbom/latest/%s' % name):
+            if fetch(where) != (publish / name).read_bytes():
+                raise ReadError('the served %s is not the signed file %s' % (where, name))
+    return {'round': round_name, 'files': [n for _, n in rows], 'sha256sums': sha256_file(publish / 'SHA256SUMS')}

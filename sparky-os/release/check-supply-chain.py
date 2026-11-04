@@ -9,6 +9,9 @@
       Each *.intoto.json is checked as an in-toto Statement v1 (in-toto's attestation library) and its predicate is
       parsed strictly as SLSA Provenance v1 (in-toto's generated protobuf: an unknown field is an error).
       With --tree, each subject's sha256 must be the pool file of that name.
+      With --require-recorded (optionally limited by --only-source NAME, repeatable), each such statement must also
+      carry what a build leaves since ORDER 394b: the build repository's commit, the builder image, the invocation id
+      and the start and finish times; a statement without them is a problem, not a gap.
 Exit 0 only when nothing is wrong; every problem is printed.
 """
 import argparse
@@ -54,7 +57,23 @@ def check_sbom(path, tree):
     return problems
 
 
-def check_statement(path, files):
+def check_recorded(path, d):
+    pred = d.get('predicate') or {}
+    rd_ = pred.get('runDetails') or {}
+    meta = rd_.get('metadata') or {}
+    deps = (pred.get('buildDefinition') or {}).get('resolvedDependencies') or []
+    out = []
+    if not any((x.get('annotations') or {}).get('role') == 'recipe-repository' and (x.get('digest') or {}).get('gitCommit') for x in deps):
+        out.append('no build repository commit in resolvedDependencies')
+    if not any((x.get('digest') or {}).get('sha256') for x in (rd_.get('builder') or {}).get('builderDependencies') or []):
+        out.append('no builder image digest in runDetails.builder.builderDependencies')
+    for field in ('invocationId', 'startedOn', 'finishedOn'):
+        if not meta.get(field):
+            out.append('no runDetails.metadata.' + field)
+    return ['%s: recorded fact missing: %s' % (path.name, m) for m in out]
+
+
+def check_statement(path, files, require=None):
     from google.protobuf import json_format
     from in_toto_attestation.predicates.provenance.v1 import provenance_pb2
     from in_toto_attestation.v1.statement import Statement
@@ -84,6 +103,10 @@ def check_statement(path, files):
                        ('runDetails.builder.id', (rd_.get('builder') or {}).get('id'))):
         if not val:
             problems.append('%s: SLSA Build L1 requires %s' % (path.name, field))
+    if require is not None:
+        name = ((bd.get('externalParameters') or {}).get('source') or {}).get('name')
+        if not require or name in require:
+            problems += check_recorded(path, d)
     if files is not None:
         for s in d.get('subject', []):
             n = s.get('name')
@@ -99,6 +122,8 @@ def main():
     ap.add_argument('kind', choices=('sbom', 'provenance'))
     ap.add_argument('target', type=Path)
     ap.add_argument('--tree', type=Path)
+    ap.add_argument('--require-recorded', action='store_true', help='provenance: statements must carry the build record facts')
+    ap.add_argument('--only-source', action='append', default=[], help='with --require-recorded: only statements of this source package')
     a = ap.parse_args()
     if a.kind == 'sbom':
         problems = check_sbom(a.target, a.tree)
@@ -108,7 +133,8 @@ def main():
         stmts = sorted(a.target.glob('*.intoto.json'))
         if not stmts:
             sys.exit('no *.intoto.json files in %s' % a.target)
-        problems = [p for s in stmts for p in check_statement(s, files)]
+        require = set(a.only_source) if a.require_recorded else None
+        problems = [p for s in stmts for p in check_statement(s, files, require)]
         n = len(stmts)
     for p in problems:
         print('FAIL', p)

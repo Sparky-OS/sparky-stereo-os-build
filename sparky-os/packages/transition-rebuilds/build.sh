@@ -18,6 +18,7 @@
 #   SPARKY_BUILD_IMAGE (a debian:testing image updated the same day, with build-essential, devscripts and python3).
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+. "$HERE/../../repo/build-provenance.sh"
 : "${SPARKY_PUBLISHED_TREE:?the signed published tree, read only}"
 : "${SPARKY_LC_ARCHIVE_DIR:?the folder of the link gate, mounted at /archive}"
 : "${SPARKY_BUILD_IMAGE:?a freshly updated debian:testing build image}"
@@ -44,10 +45,11 @@ for stanza in text.split('\n\n'):
 sys.exit('not in the published Sources: ' + dsc)
 PY
 DSC_SHA256=$(cat "$WORK/dsc.sha256")
+sparky_provenance_init "$SPARKY_BUILD_IMAGE"
 docker run --rm --cpus 4 --platform linux/amd64 \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
 	-e DSC="$DSC" -e DSC_SHA256="$DSC_SHA256" -e PLAIN_OPTIONS="$PLAIN_OPTIONS" \
-	-e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch \
+	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch \
 	-v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro -v "$SPARKY_PUBLISHED_TREE":/repo:ro \
 	-v "$WORK":/work -v "$SRC":/src:ro -v "$PREV":/prev:ro -v "$ENTRY":/entry:ro \
 	-v "$HERE/../..":/toolkit:ro -v "$HERE":/tools:ro \
