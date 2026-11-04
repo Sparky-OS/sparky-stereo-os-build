@@ -1,0 +1,66 @@
+#!/bin/sh
+# Created by Daniel Ramos (Capitain Jack) 2026/11/04
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/11/04
+#
+# Gives the "games" group the sysfs controls a wheel driver creates root-only (range, gain, LEDs ...), for the udev
+# rules of new-lg4ff-dkms, hid-tmff2-dkms and hid-fanatecff-dkms, and says when it cannot. An attribute the wheel's model
+# does not have is expected and skipped; one that is there and cannot be changed is a failure the person must see
+# (the wheel's force feedback or LEDs would not answer to their account): it is kept by the edition's one engine,
+# sparky-stereo-problems (ORDER 346f-1), and cleared when the same wheel's controls are set up again.
+#
+#   sparky-stereo-wheel-access [--mode MODE] DRIVER DIR ATTR...
+#   sparky-stereo-wheel-access --repair [--mode MODE] DRIVER DIR ATTR...   the problem's Repair: again; a wheel that
+#                                                                          is gone (DIR is not there) ends it
+#
+# DRIVER names the driver in the message, DIR is the device's sysfs folder (udev's %S%p), MODE a chmod mode
+# (g+w, 660). Exit 0: every present attribute is set; 1: a failure was kept (or could not be, and is said here).
+PACKAGE=sparky-stereo-wheel-access
+SELF=${SPARKY_STEREO_WHEEL_ACCESS_SELF:-/usr/lib/udev/sparky-stereo-wheel-access}
+ENGINE=${SPARKY_STEREO_WHEEL_ACCESS_ENGINE:-sparky-stereo-problems}
+GROUP=${SPARKY_STEREO_WHEEL_ACCESS_GROUP:-games}
+mode=
+repair=
+while :; do
+	case ${1:-} in
+		--mode) mode=$2; shift 2 ;;
+		--repair) repair=1; shift ;;
+		*) break ;;
+	esac
+done
+[ $# -ge 3 ] || { echo "usage: sparky-stereo-wheel-access [--repair] [--mode MODE] DRIVER DIR ATTR..." >&2; exit 2; }
+driver=$1 dir=$2
+shift 2
+key=$driver:$(basename "$dir" | tr -c 'A-Za-z0-9._\n-' _)
+
+if ! command -v "$ENGINE" >/dev/null 2>&1; then
+	echo "sparky-stereo-wheel-access: $ENGINE is not installed, so a failure could not be kept" >&2
+fi
+if [ -n "$repair" ] && [ ! -d "$dir" ]; then
+	"$ENGINE" clear --machine "$PACKAGE" "$key"
+	exit $?
+fi
+
+failed=
+reason=
+for attr in "$@"; do
+	[ -e "$dir/$attr" ] || continue
+	if out=$(chown ":$GROUP" "$dir/$attr" 2>&1) && { [ -z "$mode" ] || out=$(chmod "$mode" "$dir/$attr" 2>&1); }; then
+		continue
+	fi
+	failed="${failed:+$failed, }$attr"
+	reason="${reason:+$reason; }$(printf '%s' "$out" | tr '\n' ' ' | sed 's/^[a-z]*: //')"
+done
+
+if [ -z "$failed" ]; then
+	"$ENGINE" clear --machine "$PACKAGE" "$key"
+	exit $?
+fi
+repair_json="[\"$SELF\",\"--repair\""
+[ -z "$mode" ] || repair_json="$repair_json,\"--mode\",\"$mode\""
+repair_json="$repair_json,\"$driver\",\"$dir\""
+for attr in "$@"; do repair_json="$repair_json,\"$attr\""; done
+repair_json="$repair_json]"
+echo "sparky-stereo-wheel-access: $driver: $failed could not be set up for the $GROUP group: $reason" >&2
+"$ENGINE" keep --machine --repair "[$repair_json]" "$PACKAGE" "$key" LOCAL2 "$driver" "$failed" "$reason" || exit 1
+exit 1
