@@ -161,7 +161,6 @@ rm -f "$DATA/Nasal/a.nas"
 check "--check: exit status is not 0 when a file is missing" test $? -ne 0
 
 # 7 messages: every language has every key and the same placeholders; a language is picked from the locale
-cp "$W/recorded.real" "$LIBD/recorded" 2>/dev/null || true
 fail_msgs=0
 for f in "$LANGD"/*; do
 	l=$(basename "$f")
@@ -179,13 +178,22 @@ for pair in de_DE.UTF-8:"Führen Sie" fr_FR.UTF-8:"Lancez ceci" pl_PL.UTF-8:"Uru
 	out=$(setpriv --reuid=65534 --regid=65534 --clear-groups env LC_ALL=$loc "$BIN" install 2>&1)
 	check "language $loc" bash -c 'grep -qF -- "$1" <<<"$2"' _ "$want" "$out"
 done
-# 8 purge (dpkg's own purge: the program is gone by then); the other package's file in gui/ is removed first, as removing that package does
+# 8 purge: the program is already gone when dpkg purges, so the package's own postrm does it; the other package's file in gui/ goes first,
+# as removing that package does; Nasal/ still holds the other package's file
 rm -f "$DATA/gui/other.xml"
-dpkg --purge flightgear-data-installer >"$W/purge.txt" 2>&1
+sed -i 's/^MIRROR_URL=.*/MIRROR_URL=/' /etc/default/flightgear-data-installer
+/var/lib/dpkg/info/flightgear-data-installer.postrm purge >"$W/purge.txt" 2>&1
 check "purge: exit status 0" test $? -eq 0
 check "purge: the data it placed is gone" test ! -e "$DATA/Aircraft" -a ! -e "$DATA/version" -a ! -e "$DATA/Nasal/a.nas"
 check "purge: a shared folder that is empty by then goes too, the one still holding a file stays" test ! -e "$DATA/gui" -a -d "$DATA/Nasal"
 check "purge: the other package's file stays" test "$(cat "$DATA/Nasal/sparky-stereo.nas")" = mine
 check "purge: state and cache are gone" test ! -e "$STATE" -a ! -e "$CACHE"
-
+# the data folder was the other package's and is empty by purge time: it goes with the data
+conf "file://$W/FlightGear-2024.1.5-data.txz"
+run install
+check "reinstall: exit status 0 ($RC)" test "$RC" -eq 0
+rm -f "$DATA/Nasal/sparky-stereo.nas"
+dpkg --purge flightgear-data-installer >"$W/purge2.txt" 2>&1
+check "dpkg purge: exit status 0" test $? -eq 0
+check "dpkg purge: the whole data folder is gone, nothing is left of the package" bash -c "[ ! -e $DATA ] && [ ! -e $STATE ] && [ ! -e $CACHE ] && ! dpkg -L flightgear-data-installer >/dev/null 2>&1"
 exit $fail

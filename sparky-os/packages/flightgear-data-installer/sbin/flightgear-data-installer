@@ -299,6 +299,7 @@ install_data() {
 	local rel src target
 	: >"$PENDING.files"
 	: >"$PENDING.shared"
+	[ -d "$DATA_DIR" ] && echo "$DATA_DIR" >>"$PENDING.shared"
 	while IFS= read -r -d '' rel; do
 		src=$rel
 		rel=${rel#"$root"/}
