@@ -19,7 +19,7 @@ The edition's rule: NVIDIA's repository may update compute, never the display dr
 The pins say it in apt's terms:
 - CUDA, the CUDA-X libraries and GPUDirect Storage come from NVIDIA and keep updating (1002).
 - NVIDIA's EGL platform libraries come from NVIDIA too (1002): NVIDIA's driver needs NVIDIA's versions of them.
-- NVIDIA's driver stays at the version of the edition's stereo 3D module: sparky-stereo-nvidia-driver-lock decides it, and this package depends on it.
+- NVIDIA's driver stays at the version of the edition's stereo 3D module: the selected open or legacy driver lock decides it, and this package depends on either lock.
 - Everything else NVIDIA publishes there is never chosen over another archive's build (100). NVIDIA also publishes its own builds of some of Debian's tools, dkms among them; the edition's own dkms (with the overlay from /etc/dkms/<module>/ that sparky-stereo-dkms-compat needs) and Debian's other tools stay the ones installed.
   A package that only NVIDIA publishes still installs from there, and a package installed from there keeps getting NVIDIA's newer versions, as Debian's backports do.
 

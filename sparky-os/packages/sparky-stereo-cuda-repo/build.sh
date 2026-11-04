@@ -18,7 +18,7 @@
 # The pin is a conffile (Debian Policy 10.7.3: "local changes must be preserved during a package upgrade"). The source is
 # the other kind Policy names, a file the maintainer scripts manage: a conffile cannot be left out, and a source of the
 # person's own for the same URI must be kept, since two sources for one URI with different Signed-By stop apt.
-# It depends on sparky-stereo-nvidia-driver-lock, so NVIDIA's repository never comes without the lock that keeps NVIDIA's
+# It depends on either NVIDIA driver lock, so NVIDIA's repository never comes without the lock that keeps NVIDIA's
 # driver at the version of the edition's module. It replaces NVIDIA's cuda-keyring's key file (Debian Policy 7.6.1): both
 # install the same bytes there, and cuda-keyring stays installed; its source is a source of the person's own.
 # Needs dpkg-deb and python3. Usage: OUT=DIR build.sh   (output goes to $OUT, default the current folder)
@@ -26,7 +26,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-$PWD}
-VERSION=${VERSION:-20261101.2~sparky9~0+lc1}
+VERSION=${VERSION:-20261104~sparky9~0+lc1}
 PKG=sparky-stereo-cuda-repo
 # shellcheck source=cuda-key.sh
 . "$HERE/cuda-key.sh"
@@ -50,7 +50,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: apt, sparky-stereo-nvidia-driver-lock
+Depends: apt, sparky-stereo-nvidia-driver-lock | sparky-stereo-nvidia-legacy-580xx-driver-lock
 Replaces: cuda-keyring
 Section: System
 Priority: optional
