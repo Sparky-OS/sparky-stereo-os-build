@@ -42,7 +42,7 @@ UNPACKED=$UNP
 TOP=fgdata_2024_1
 EOT
 conf() { printf 'MIRROR_URL=%s\n' "$1" >/etc/default/flightgear-data-installer; }
-tree_state() { { find "$DATA" "$STATE" "$CACHE" /usr/share/games -maxdepth 6 2>/dev/null | grep -v -e '/lock$' -e '\.txz$' -e 'cache/flightgear-data-installer$'; } | sort; }
+tree_state() { { find "$DATA" "$STATE" "$CACHE" /usr/share/games -maxdepth 6 2>/dev/null | grep -v -e '/lock$' -e '\.txz$' -e 'cache/flightgear-data-installer$' -e 'lib/flightgear-data-installer$'; } | sort; }
 leftovers() { ! ls -d /usr/share/games/.flightgear-data-installer.* "$CACHE"/*.txz "$STATE"/pending.* "$STATE"/files.list "$STATE"/installed 2>/dev/null | grep -q .; }
 run() { OUTF=$W/out.txt; "$BIN" "$@" >"$OUTF" 2>&1; RC=$?; }
 rm -rf "$DATA" "$STATE" "$CACHE"
@@ -55,6 +55,9 @@ check "no network: exit status is not 0 ($RC)" test "$RC" -ne 0
 check "no network: the message says what failed, that nothing was installed and what to do" grep -q "could not be downloaded.*Nothing was installed.*What to do" "$OUTF"
 check "no network: nothing half-made is left" leftovers
 check "no network: no data folder was made" test ! -e "$DATA/version"
+
+# 1b no network, the data folder's parent does not exist: no folder is made either
+check "no network: no empty folder of ours is left" bash -c "[ ! -e /usr/share/games/flightgear ] && [ ! -e $STATE ] && [ ! -e $CACHE ]"
 
 # 2 hash mismatch
 conf "file://$W/bad.txz"

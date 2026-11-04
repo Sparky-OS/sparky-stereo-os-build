@@ -91,13 +91,18 @@ cleanup() {
 	local rc=$?
 	trap - EXIT
 	[ -n "$WATCHER" ] && kill "$WATCHER" 2>/dev/null || true
+	[ -n "$STAGE" ] && rm -rf "$STAGE"
 	if [ -n "$LINKING" ]; then
-		# nothing half-made: what this run linked into place is taken out again
+		# nothing half-made: what this run placed, and the folders it made, are taken out again
 		remove_listed "$PENDING.files" "$PENDING.dirs"
 		rm -f "$PENDING.files" "$PENDING.dirs"
 	fi
-	[ -n "$STAGE" ] && rm -rf "$STAGE"
 	[ -n "$CURL_LOG" ] && rm -f "$CURL_LOG"
+	if [ "$rc" -ne 0 ] && [ -z "$KEPT_FILE" ] && [ ! -f "$STATE/installed" ]; then
+		# a run that installed nothing leaves nothing, not even its empty folders
+		rm -f "$CACHE/lock" "$CACHE"/*.part 2>/dev/null || true
+		rmdir "$CACHE" "$STATE" 2>/dev/null || true
+	fi
 	exit "$rc"
 }
 
@@ -224,7 +229,6 @@ install_data() {
 	need_cache=0
 	[ -z "$userfile" ] && need_cache=$((SIZE > have ? SIZE - have : 0))
 	need_data=$((UNPACKED + UNPACKED / 20))
-	mkdir -p "$(dirname "$DATA_DIR")"
 	if [ "$(devof "$CACHE")" = "$(devof "$DATA_DIR")" ]; then
 		[ "$(avail "$CACHE")" -ge $((need_cache + need_data)) ] ||
 			die SPACE "$CACHE" "$(human $((need_cache + need_data)))" "$(human "$(avail "$CACHE")")"
@@ -246,6 +250,15 @@ install_data() {
 
 	[ -z "$userfile" ] && KEPT_FILE=$tarball
 	say UNPACKING "$DATA_DIR"
+	# the folders this run makes on the way to the data folder are listed first, so a failure takes them out again
+	local d=$DATA_DIR
+	: >"$PENDING.dirs"
+	while [ ! -d "$d" ]; do
+		echo "$d" >>"$PENDING.dirs"
+		d=$(dirname "$d")
+	done
+	LINKING=1
+	mkdir -p "$(dirname "$DATA_DIR")"
 	STAGE=$(mktemp -d "$(dirname "$DATA_DIR")/.flightgear-data-installer.XXXXXX")
 	local err
 	err=$(mktemp "$CACHE/tar.XXXXXX")
@@ -269,29 +282,20 @@ install_data() {
 	done
 
 	# every path is checked before anything is placed: a file that is already there and is not ours stops the install
+	local rel src target
 	: >"$PENDING.files"
-	: >"$PENDING.dirs"
-	local rel src target d
-	if [ ! -d "$DATA_DIR" ]; then
-		d=$DATA_DIR
-		while [ ! -d "$d" ]; do
-			echo "$d" >>"$PENDING.dirs"
-			d=$(dirname "$d")
-		done
-	fi
 	while IFS= read -r -d '' rel; do
 		src=$rel
 		rel=${rel#"$root"/}
 		target=$DATA_DIR/$rel
 		if [ -d "$src" ] && [ ! -L "$src" ]; then
 			if [ -e "$target" ] || [ -L "$target" ]; then
-				[ -d "$target" ] && [ ! -L "$target" ] || { rm -f "$PENDING.files" "$PENDING.dirs"; die CONFLICT "$target"; }
+				[ -d "$target" ] && [ ! -L "$target" ] || die CONFLICT "$target"
 			else
 				echo "$target" >>"$PENDING.dirs"
 			fi
 		else
 			if [ -e "$target" ] || [ -L "$target" ]; then
-				rm -f "$PENDING.files" "$PENDING.dirs"
 				die CONFLICT "$target"
 			fi
 			echo "$target" >>"$PENDING.files"
@@ -299,7 +303,6 @@ install_data() {
 	done < <(find "$root" -mindepth 1 -print0)
 
 	mkdir -p "$DATA_DIR"
-	LINKING=1
 	if ! cp -al "$root/." "$DATA_DIR/" 2>"$STAGE/.cp-error"; then
 		die UNPACK "$(tail -n 1 "$STAGE/.cp-error")"
 	fi
