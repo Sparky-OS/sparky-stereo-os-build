@@ -13,6 +13,73 @@
 
 set -eu
 
+# The person-readable text is in the edition's nine languages (ORDER 346f-3b; memory required-languages): the same lang/ files
+# as every shell tool of the edition (LOCAL1="..."), found by LANGUAGE (KInfoCenter's rule for the tools it runs), then
+# LC_ALL, LC_MESSAGES and LANG: the whole code, then the bare language (a list that starts with English, en_US:pt_BR, is English),
+# then English. English is always read first, so a
+# string a language lacks is shown in English. In a string, %1 to %4 are replaced by the values, so a language puts them in
+# its own order. What a program reads is never translated: the --keys fields, the "@@ kind name" lines of --sections, and
+# the English words the script itself tests (structure and format names) stay as they are inside and are translated only
+# where they are printed.
+LANGDIR=${SPARKY_STEREO_INFO_LANGDIR:-/usr/share/sparky/sparky-stereo-info}
+DRM=${SPARKY_STEREO_INFO_DRM:-/sys/class/drm}
+set -a
+. "$LANGDIR/en"
+chosen=
+for code in $(printf '%s' "${LANGUAGE:-}" | tr ':' ' ') "${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}"; do
+    code=${code%%.*}
+    code=${code%%@*}
+    case $code in
+        zh_HK | zh_MO) code=zh_TW ;;
+        zh_SG | zh) code=zh_CN ;;
+    esac
+    for file in "$code" "${code%%_*}"; do
+        [ -n "$file" ] && [ -f "$LANGDIR/$file" ] && chosen=$file && break
+    done
+    [ -z "$chosen" ] || break
+done
+[ -z "$chosen" ] || [ "$chosen" = en ] || . "$LANGDIR/$chosen"
+set +a
+
+# What every awk program below uses: L(n) is LOCALn, fill() puts values in a string's %1 to %4 (never as a format, so a value
+# with a % or a & stays as it is), F(n, ...) is both, and sname() / pname() translate the English names the programs keep
+# inside (HDMI 3D structures, colour profiles) where they are printed.
+AWKLIB='
+function L(n) { return ENVIRON["LOCAL" n] }
+function fill(t, a1, a2, a3, a4,   out, c) {
+    out = ""
+    while (match(t, /%[1-4]/) > 0) {
+        c = substr(t, RSTART + 1, 1)
+        out = out substr(t, 1, RSTART - 1) (c == 1 ? a1 : c == 2 ? a2 : c == 3 ? a3 : a4)
+        t = substr(t, RSTART + RLENGTH)
+    }
+    return out t
+}
+function F(n, a1, a2, a3, a4) { return fill(L(n), a1, a2, a3, a4) }
+function sname(s) {
+    if (s == "frame packing") return L(16)
+    if (s == "side by side (half)") return L(14)
+    if (s == "side by side (full)") return L(13)
+    if (s == "top and bottom") return L(15)
+    if (s == "field alternative") return L(18)
+    if (s == "line alternative") return L(19)
+    if (s == "a stereo format made by the system") return L(17)
+    return s
+}
+function pname(s) {
+    if (s == "built-in (from the EDID)") return L(20)
+    if (s == "none") return L(21)
+    return s
+}
+'
+
+# T N [VALUE...]: the string LOCALN with %1 to %4 replaced by the values
+T() {
+    eval "_template=\$LOCAL$1"
+    shift
+    _t=$_template _1=${1:-} _2=${2:-} _3=${3:-} _4=${4:-} awk "$AWKLIB"'BEGIN { printf "%s", fill(ENVIRON["_t"], ENVIRON["_1"], ENVIRON["_2"], ENVIRON["_3"], ENVIRON["_4"]) }'
+}
+
 # stereo-display-info --keys prints one line per display for the KInfoCenter page, separated
 # by tabs: connector, look-up tag, EDID MD5, manufacturer name, colour profile.
 keys=
@@ -28,11 +95,12 @@ mark() {
 }
 
 if ! command -v edid-decode > /dev/null 2>&1; then
-    echo "edid-decode is not installed."
+    T 1
+    echo
     exit 0
 fi
 
-pnp_ids=/usr/share/hwdata/pnp.ids
+pnp_ids=${SPARKY_STEREO_INFO_PNP_IDS:-/usr/share/hwdata/pnp.ids}
 
 # probe SECONDS COMMAND...: runs a read-only probe; its output is in $probe_out, its status in $probe_rc and the
 # first line of its error text in $probe_err
@@ -48,9 +116,9 @@ probe() {
 # why_failed TOOL SECONDS: the cause of the probe that just failed, in words
 why_failed() {
     case $probe_rc in
-        124) echo "$1 did not answer within $2 seconds" ;;
-        126 | 127) echo "$1 could not be run${probe_err:+ ($probe_err)}" ;;
-        *) echo "$1 exited with status $probe_rc${probe_err:+ ($probe_err)}" ;;
+        124) T 2 "$1" "$2"; echo ;;
+        126 | 127) if [ -n "$probe_err" ]; then T 4 "$1" "$probe_err"; else T 3 "$1"; fi; echo ;;
+        *) if [ -n "$probe_err" ]; then T 6 "$1" "$probe_rc" "$probe_err"; else T 5 "$1" "$probe_rc"; fi; echo ;;
     esac
 }
 
@@ -66,7 +134,7 @@ state=
 json=
 if [ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]; then
     if ! command -v kscreen-doctor > /dev/null 2>&1; then
-        note "Live display state, not read: kscreen-doctor is not installed"
+        note "$(T 7 "$(T 8 kscreen-doctor)")"
     else
         probe 10 kscreen-doctor -o
         if [ "$probe_rc" = 0 ]; then
@@ -77,11 +145,11 @@ if [ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]; then
                 if [ "$probe_rc" = 0 ]; then
                     json=$probe_out
                 else
-                    note "Stereo and HDR switches of the displays, not read: $(why_failed "kscreen-doctor -j" 10)"
+                    note "$(T 9 "$(why_failed "kscreen-doctor -j" 10)")"
                 fi
             fi
         else
-            note "Live display state, not read: $(why_failed "kscreen-doctor -o" 10)"
+            note "$(T 7 "$(why_failed "kscreen-doctor -o" 10)")"
         fi
     fi
 fi
@@ -105,7 +173,7 @@ json_value() {
 # What output $1 is doing now, from the kscreen-doctor text in $state.
 live() {
     [ -n "$state" ] || return 0
-    printf '%s\n' "$state" | awk -v want="$1" -v only="${2:-}" '
+    printf '%s\n' "$state" | awk -v want="$1" -v only="${2:-}" "$AWKLIB"'
         /^Output: / { current = $3; next }
         current != want { next }
         { found = 1 }
@@ -155,13 +223,13 @@ live() {
                 printf "%s", format
                 exit
             }
-            print "  Now:"
+            print "  " L(22)
             if (off)
-                print "    switched off"
+                print "    " L(23)
             else if (mode != "")
-                printf "    mode %s at %.2f Hz, 3D: %s\n", size, hz, format == "none" ? "no" : format
+                print "    " F(24, size, sprintf("%.2f", hz), format == "none" ? L(25) : sname(format))
             if (colour ~ /unknown/ || colour == "")
-                print "    colour resolution: not reported"
+                print "    " L(26)
             else {
                 range = colour
                 sub(/^.*range: \[/, "", range)
@@ -169,13 +237,16 @@ live() {
                 split(range, bounds, "; ")
                 sub(/, range:.*$/, "", colour)
                 if (colour ~ /^automatic \(/)
-                    colour = "automatic"
-                else
-                    sub(/ bits per color/, " bits per colour", colour)
-                printf "    colour resolution: %s (this output allows %s to %s bits per colour)\n", colour, bounds[1], bounds[2]
+                    colour = L(28)
+                else if (colour ~ /^[0-9]+ bits per color$/) {
+                    bits = colour
+                    sub(/ .*$/, "", bits)
+                    colour = F(29, bits)
+                }
+                print "    " F(27, colour, bounds[1], bounds[2])
             }
             if (profile != "")
-                print "    colour profile: " profile
+                print "    " F(30, pname(profile))
         }'
 }
 
@@ -185,20 +256,20 @@ egl=
 vulkan=
 if [ -z "$keys" ]; then
     if ! command -v eglinfo > /dev/null 2>&1; then
-        note "OpenGL renderer of each card, not read: eglinfo is not installed"
+        note "$(T 10 "$(T 8 eglinfo)")"
     else
         probe 30 eglinfo -B
-        [ "$probe_rc" = 0 ] || note "OpenGL renderer of each card, not read completely: $(why_failed eglinfo 30)"
+        [ "$probe_rc" = 0 ] || note "$(T 11 "$(why_failed eglinfo 30)")"
         egl=$(printf '%s\n' "$probe_out" | sed -n '/^Device platform:/,$p')
     fi
     if ! command -v vulkaninfo > /dev/null 2>&1; then
-        note "Vulkan device of each card, not read: vulkaninfo is not installed"
+        note "$(T 12 "$(T 8 vulkaninfo)")"
     else
         probe 30 vulkaninfo --summary
         if [ "$probe_rc" = 0 ]; then
             vulkan=$probe_out
         else
-            note "Vulkan device of each card, not read: $(why_failed vulkaninfo 30)"
+            note "$(T 12 "$(why_failed vulkaninfo 30)")"
         fi
     fi
 fi
@@ -241,7 +312,14 @@ card_vulkan() {
 }
 
 onoff() {
-    [ "$1" = true ] && echo on || echo off
+    if [ "$1" = true ]; then T 35; else T 36; fi
+}
+yesno() {
+    if [ "$1" = true ]; then T 37; else T 25; fi
+}
+# join: the translated list separator
+join() {
+    printf '%s%s' "$1" "$(T 40)"
 }
 
 # The stereo and HDR switches of output $1, one line each, when the session reports them.
@@ -249,17 +327,17 @@ extra() {
     [ -n "$json" ] || return 0
     line=
     value=$(json_value "$1" anaglyph)
-    [ -z "$value" ] || line="anaglyph $(onoff "$value")"
+    [ -z "$value" ] || line="$(T 32 "$(onoff "$value")")"
     value=$(json_value "$1" otherStereoFormats)
-    [ -z "$value" ] || line="${line:+$line, }other stereo formats $(onoff "$value")"
+    [ -z "$value" ] || line="${line:+$(join "$line")}$(T 33 "$(onoff "$value")")"
     value=$(json_value "$1" stereoEyeSwap)
-    [ -z "$value" ] || line="${line:+$line, }eyes swapped $([ "$value" = true ] && echo yes || echo no)"
-    [ -z "$line" ] || echo "    stereo: $line"
+    [ -z "$value" ] || line="${line:+$(join "$line")}$(T 34 "$(yesno "$value")")"
+    [ -z "$line" ] || echo "    $(T 31 "$line")"
     line=
     value=$(json_value "$1" hdr)
-    [ -z "$value" ] || line="HDR $(onoff "$value")"
+    [ -z "$value" ] || line="$(T 38 "$(onoff "$value")")"
     value=$(json_value "$1" wcg)
-    [ -z "$value" ] || line="${line:+$line, }wide colour gamut $(onoff "$value")"
+    [ -z "$value" ] || line="${line:+$(join "$line")}$(T 39 "$(onoff "$value")")"
     [ -z "$line" ] || echo "    $line"
 }
 
@@ -268,40 +346,40 @@ stack() {
     edition=$( . /usr/share/sparky-stereo-info/edition 2> /dev/null && echo "$EDITION_PRETTY") || edition=
     [ -n "$edition" ] || edition=$( . /usr/lib/os-release 2> /dev/null && echo "$PRETTY_NAME") || edition=
     [ -z "$edition" ] || echo "$edition"
-    echo "  Kernel: $(uname -r)"
+    echo "  $(T 41 "$(uname -r)")"
     if [ -n "${WAYLAND_DISPLAY:-}" ] && command -v wayland-info > /dev/null 2>&1; then
         probe 10 wayland-info
         if [ "$probe_rc" != 0 ]; then
-            echo "  Compositor stereo: could not be checked ($(why_failed wayland-info 10))"
+            echo "  $(T 42 "$(why_failed wayland-info 10)")"
         else
             version=$(printf '%s\n' "$probe_out" | sed -n "s/.*interface: 'kde_stereo_content_manager_v1', *version: *\([0-9]*\).*/\1/p" | head -n 1)
             if [ -n "$version" ]; then
-                echo "  Compositor stereo: announced (kde_stereo_content_manager_v1, version $version)"
+                echo "  $(T 43 "$version")"
             else
-                echo "  Compositor stereo: not announced"
+                echo "  $(T 44)"
             fi
         fi
     elif [ -n "${DISPLAY:-}" ] && command -v xprop > /dev/null 2>&1; then
         probe 10 xprop -root _KDE_NET_WM_STEREO_CONTENT_SUPPORTED
         if [ "$probe_rc" != 0 ]; then
-            echo "  Compositor stereo: could not be checked ($(why_failed xprop 10))"
+            echo "  $(T 42 "$(why_failed xprop 10)")"
         else
             version=$(printf '%s\n' "$probe_out" | sed -n 's/.*= *\([0-9]*\).*/\1/p')
             if [ -n "$version" ]; then
-                echo "  Compositor stereo: announced (_KDE_NET_WM_STEREO_CONTENT_SUPPORTED, version $version)"
+                echo "  $(T 45 "$version")"
             else
-                echo "  Compositor stereo: not announced"
+                echo "  $(T 44)"
             fi
         fi
     elif [ -n "${WAYLAND_DISPLAY:-}" ]; then
-        echo "  Compositor stereo: could not be checked (wayland-info is not installed)"
+        echo "  $(T 42 "$(T 8 wayland-info)")"
     elif [ -n "${DISPLAY:-}" ]; then
-        echo "  Compositor stereo: could not be checked (xprop is not installed)"
+        echo "  $(T 42 "$(T 8 xprop)")"
     fi
     if command -v dpkg-query > /dev/null 2>&1; then
         packages=$(dpkg-query -W -f='${db:Status-Abbrev} ${Package} ${Version}\n' kwin-wayland mesa-libgallium libgl1-mesa-dri mesa-vulkan-layer-stereo libstereo-declare1 libkf6screen8 libkscreen-bin kscreen libnvidia-egl-wayland1 2> /dev/null | sed -n 's/^[a-z]i  *//p' | awk '!listed[$1]++') || packages=
         if [ -n "$packages" ]; then
-            echo "  Installed:"
+            echo "  $(T 46)"
             printf '%s\n' "$packages" | sed 's/^/    /'
         fi
     fi
@@ -311,8 +389,8 @@ stack() {
 [ -n "$keys" ] || { mark stack -; stack; }
 
 seen=
-for card in /sys/class/drm/card[0-9]*; do
-    case "$card" in *-*) continue ;; esac
+for card in "$DRM"/card[0-9]*; do
+    case "${card##*/}" in *-*) continue ;; esac
     cardname=$(basename "$card")
     # the card'"'"'s own driver, not its connectors'"'"'
     driver=$(basename "$(readlink -f "$card/device/driver")")
@@ -326,15 +404,15 @@ for card in /sys/class/drm/card[0-9]*; do
         if command -v lspci > /dev/null 2>&1; then
             gpu=$(lspci -s "$pci" 2> /dev/null | sed 's/^[^ ]* [^:]*: //; s/ (rev [0-9a-f]*)$//')
         fi
-        [ -n "$gpu" ] || gpu="PCI device $vendor_id:$device_id"
+        [ -n "$gpu" ] || gpu=$(T 51 "$vendor_id" "$device_id")
         mark card "$cardname"
-        echo "Graphics card $cardname: $gpu"
-        echo "  Driver: $driver"
-        cards_of_maker=$(for other in /sys/class/drm/card[0-9]*; do case "$other" in *-*) continue ;; esac; [ "$(cat "$other/device/vendor" 2> /dev/null)" = "$vendor_id" ] && echo x; done | wc -l)
+        T 47 "$cardname" "$gpu"; echo
+        echo "  $(T 48 "$driver")"
+        cards_of_maker=$(for other in "$DRM"/card[0-9]*; do case "${other##*/}" in *-*) continue ;; esac; [ "$(cat "$other/device/vendor" 2> /dev/null)" = "$vendor_id" ] && echo x; done | wc -l)
         opengl=$(card_opengl "$vendor_id" "$cards_of_maker")
-        [ -z "$opengl" ] || echo "  OpenGL: $opengl"
+        [ -z "$opengl" ] || echo "  $(T 49 "$opengl")"
         vk=$(card_vulkan "$vendor_id" "$device_id")
-        [ -z "$vk" ] || echo "  Vulkan: $vk"
+        [ -z "$vk" ] || echo "  $(T 50 "$vk")"
     fi
     shown=
     for connector in "$@"; do
@@ -365,7 +443,7 @@ for card in /sys/class/drm/card[0-9]*; do
     mark display "$name"
     edid-decode "$connector/edid" 2> /dev/null | awk -v connector="$name" -v driver="$driver" -v md5="$md5" \
         -v interlaced="$interlaced" -v vendor_name="$vendor_name" \
-        -v now_width="$(live "$name" width)" -v now_format="$(live "$name" format)" '
+        -v now_width="$(live "$name" width)" -v now_format="$(live "$name" format)" "$AWKLIB"'
         function mode(   hz) {
             # "VIC  31:  1920x1080   50.000000 Hz ..." gives "1920x1080 50 Hz"
             hz = $4 + 0
@@ -456,75 +534,84 @@ for card in /sys/class/drm/card[0-9]*; do
         }
         list != "" && !/^ *VIC/ { list = "" }
         END {
-            printf "%s: %s\n", connector, product == "" ? "unnamed display" : product
+            print F(55, connector, product == "" ? L(54) : product)
             if (maker != "") {
-                printf "  Manufacturer: %s%s\n", maker, vendor_name == "" ? "" : " (" vendor_name ")"
-                printf "  Product code: %d (0x%04X)\n", model, model
+                print "  " F(56, maker (vendor_name == "" ? "" : " (" vendor_name ")"))
+                print "  " F(57, sprintf("%d", model), sprintf("0x%04X", model))
+                if (made ~ /^week [0-9]+ of [0-9]+$/) {
+                    split(made, week, " ")
+                    made = F(82, week[2], week[4])
+                }
                 if (made != "")
-                    printf "  Made in: %s\n", made
-                printf "  Look-up keys: %s%04X, EDID MD5 %s\n", maker, model, md5
+                    print "  " F(58, made)
+                print "  " F(59, sprintf("%s%04X", maker, model), md5)
             }
             if (hdmi && connector !~ /^HDMI/)
-                printf "  An HDMI display on a %s connector (%s), through an adapter or a dual-mode port: HDMI 3D signalling and deep colour depend on that adapter.\n", connector ~ /^DP/ ? "DisplayPort" : "different kind of", connector
+                print "  " F(connector ~ /^DP/ ? 60 : 61, connector)
             if (stereo) {
-                print "  HDMI 3D: yes"
-                print "    Always available on a 3D display that has the 2D mode:"
-                print "      frame packing: 1920x1080 24 Hz, 1280x720 50 Hz, 1280x720 60 Hz"
+                print "  " L(62)
+                print "    " L(63)
+                print "      " F(64, sname("frame packing"), "1920x1080 24 Hz, 1280x720 50 Hz, 1280x720 60 Hz")
                 if (interlaced == "no") {
                     add_interlaced("side by side (half)", "1920x1080i 50 Hz")
                     add_interlaced("side by side (half)", "1920x1080i 60 Hz")
                 } else
-                    print "      side by side (half): 1920x1080i 50 Hz, 1920x1080i 60 Hz"
-                print "      top and bottom: 1920x1080 24 Hz, 1280x720 50 Hz, 1280x720 60 Hz"
-                if (structures != "" && all != "")
-                    printf "    Listed by the display, %s:\n      %s\n", structures, all
-                for (i = 1; i <= structures_listed; i++)
-                    printf "    Listed by the display, %s:\n      %s\n", order[i], specific[order[i]]
+                    print "      " F(64, sname("side by side (half)"), "1920x1080i 50 Hz, 1920x1080i 60 Hz")
+                print "      " F(64, sname("top and bottom"), "1920x1080 24 Hz, 1280x720 50 Hz, 1280x720 60 Hz")
+                if (structures != "" && all != "") {
+                    n = split(structures, parts, ", ")
+                    names = ""
+                    for (i = 1; i <= n; i++)
+                        names = (i > 1 ? names L(40) : "") sname(parts[i])
+                    print "    " F(65, names)
+                    print "      " all
+                }
+                for (i = 1; i <= structures_listed; i++) {
+                    print "    " F(65, sname(order[i]))
+                    print "      " specific[order[i]]
+                }
                 if (interlaced_count > 0) {
                     for (i = 1; i <= interlaced_count; i++)
-                        line = (i > 1 ? line "; " : "") interlaced_order[i] " " interlaced_list[interlaced_order[i]]
-                    printf "    Interlaced formats (not offered by the %s driver, and not needed: the progressive formats above do the same better): %s\n", driver, line
+                        line = (i > 1 ? line "; " : "") sname(interlaced_order[i]) " " interlaced_list[interlaced_order[i]]
+                    print "    " F(66, driver, line)
                 }
             } else {
-                print "  HDMI 3D: not announced"
-                print "    3D is still available through the anaglyph and the other stereo formats in Display settings."
+                print "  " L(67)
+                print "    " L(68)
             }
             if (dc30) depth = add(depth, "10")
             if (dc36) depth = add(depth, "12")
             if (dc48) depth = add(depth, "16")
             if (depth != "")
-                printf "  Deep colour: %s bits per colour%s\n", depth, y444 ? ", also for YCbCr 4:4:4" : ""
+                print "  " F(y444 ? 70 : 69, depth)
             else if (hdmi)
-                print "  Deep colour: 8 bits per colour only"
+                print "  " L(71)
             else if (panel_bits != "")
-                printf "  Colour depth: %s bits per colour\n", panel_bits
+                print "  " F(72, panel_bits)
             if (forum != "")
-                printf "  %s\n", forum
+                print "  " forum
             if (tmds != "")
-                printf "  Maximum TMDS clock: %s\n", tmds
+                print "  " F(73, tmds)
             if (hdr_block)
-                printf "  HDR: announced (%s)%s\n", eotf, bt2020 ? ", BT.2020 colorimetry" : ""
+                print "  " F(bt2020 ? 75 : 74, eotf)
             else
-                print "  HDR: not announced"
+                print "  " L(76)
             if (mm_w == 0 && cm_w > 0) { mm_w = cm_w * 10; mm_h = cm_h * 10 }
             if (mm_w > 0 && mm_h > 0) {
                 diagonal = sqrt(mm_w * mm_w + mm_h * mm_h) / 25.4
-                printf "  Size: %d mm x %d mm (%.1f inches diagonal), from the EDID\n", mm_w, mm_h, diagonal
+                print "  " F(77, sprintf("%d", mm_w), sprintf("%d", mm_h), sprintf("%.1f", diagonal))
                 width = now_width != "" ? now_width : dtd_width
                 if (width > 0) {
                     pixels = 65 * width / mm_w
-                    printf "  Eye distance, 65 mm (the usual limit for the two views of a far point): %.0f pixels at %d pixels wide%s", pixels, width, now_width != "" ? "" : " (the preferred mode)"
-                    if (now_format ~ /^side by side/)
-                        printf ", %.0f pixels in one view of the picture", pixels / 2
-                    printf "\n"
+                    print "  " F(78, sprintf("%.0f", pixels), sprintf("%d", width), now_width != "" ? "" : L(79), now_format ~ /^side by side/ ? F(80, sprintf("%.0f", pixels / 2)) : "")
                 }
             } else
-                print "  Size: not announced"
+                print "  " L(81)
         }' | sed 's/^\(.\)/  \1/'
     { live "$name"; extra "$name"; } | sed 's/^\(.\)/  \1/'
     echo
     done
-    [ -n "$keys" ] || [ -n "$shown" ] || printf '  no display connected\n\n'
+    [ -n "$keys" ] || [ -n "$shown" ] || printf '  %s\n\n' "$(T 52)"
 done
 
 # Outputs the session has that are not a connected connector here (a virtual output).
@@ -534,7 +621,7 @@ if [ -n "$state" ] && [ -z "$keys" ]; then
             *" $name "*) continue ;;
         esac
         mark display "$name"
-        echo "Virtual display $name: not a graphics card output"
+        T 53 "$name"; echo
         { live "$name"; extra "$name"; } | sed 's/^\(.\)/  \1/'
         echo
     done

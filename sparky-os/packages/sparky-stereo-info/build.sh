@@ -27,16 +27,18 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
-VERSION=20261104~sparky9~0+lc1
+VERSION=20261104.1~sparky9~0+lc1
 PKG=sparky-stereo-info
 W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}/sparky-os}/info-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 D=$W/$PKG
-mkdir -p "$D/DEBIAN" "$D/usr/bin" "$D/usr/share/$PKG" "$D/usr/share/doc/$PKG"
+mkdir -p "$D/DEBIAN" "$D/usr/bin" "$D/usr/share/$PKG" "$D/usr/share/doc/$PKG" "$D/usr/share/sparky/$PKG"
 cp "$HERE/edition" "$D/usr/share/$PKG/edition"
 cp "$HERE/welcome-header.html" "$D/usr/share/$PKG/welcome-header.html"
 install -m 644 "$HERE/kcm-about-distrorc" "$D/usr/share/$PKG/kcm-about-distrorc"
 install -m 755 "$HERE/stereo-display-info" "$D/usr/bin/stereo-display-info"
+# stereo-display-info's text in the nine languages (ORDER 346f-3b), the edition's lang/ files
+install -m 644 "$HERE"/lang/* "$D/usr/share/sparky/$PKG/"
 
 cat >"$D/DEBIAN/preinst" <<'EOF'
 #!/bin/sh

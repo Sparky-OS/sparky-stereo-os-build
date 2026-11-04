@@ -3,9 +3,10 @@
 # Copyright 2026 under the GNU GPL3 License
 # ORDER 346f-3 (U41): stereo-display-info says when a probe could not run, timed out or failed, apart from the real answer "not
 # announced"; the normal answers are unchanged. Fake probe tools in a private PATH; the script reads the real /sys (no card needed).
-# Usage: probe-proof.sh STEREO_DISPLAY_INFO      exit 0 only when every case matches
+# Usage: probe-proof.sh STEREO_DISPLAY_INFO LANGDIR      exit 0 only when every case matches (LANGDIR: the lang/ folder; English is read)
 set -u
 S=${1:?the stereo-display-info script}
+LD=${2:?the lang folder}
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/bin" "$T/core"
 for t in sh sleep sed awk timeout mktemp head cut cat rm md5sum basename readlink uname wc tr grep; do
@@ -16,7 +17,7 @@ ok() { if [ "$1" = 0 ]; then echo "PASS $2"; else echo "FAIL $2"; fails=$((fails
 fake() { printf '#!/bin/sh\n%s\n' "$2" >"$T/bin/$1"; chmod +x "$T/bin/$1"; }
 reset() { rm -f "$T"/bin/*; fake edid-decode 'exit 0'; }
 info() { # info [ENV=VALUE...]: the report in $T/out
-	env -i PATH="$T/bin:$T/core" "$@" sh "$S" ${MODE:---sections} >"$T/out" 2>"$T/err"; status=$?
+	env -i PATH="$T/bin:$T/core" SPARKY_STEREO_INFO_LANGDIR="$LD" "$@" sh "$S" ${MODE:---sections} >"$T/out" 2>"$T/err"; status=$?
 }
 has() { grep -qF -- "$1" "$T/out"; }
 notann() { grep "Compositor stereo" "$T/out" | grep -qF "not announced"; }
