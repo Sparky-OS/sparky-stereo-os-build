@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
-"""Validate every .po.patch in a directory against the exact DSC sources."""
+"""Validate .po.patch files and their exact DSC sources."""
 
 import argparse
-import os
 import pathlib
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
-
 
 DSC_MAP = {
     "kalgebra-stereo3d.po.patch": "kalgebra_26.04.0-1+stereo3d2.dsc",
@@ -19,14 +17,15 @@ DSC_MAP = {
     "kubrick-stereo3d.po.patch": "kubrick_26.04.0-1+stereo3d2.dsc",
     "plasma-workspace-recovery.po.patch": "plasma-workspace_6.7.4-2+stereo3d2.dsc",
 }
-
 PATCH_ROOT = pathlib.Path("/K3D/temp/sparky-os/repo/source")
 PATCH_NAME = pathlib.Path("/usr/bin/patch")
 MSGFMT_NAME = pathlib.Path("/usr/bin/msgfmt")
+HUNK_HEADER = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 
 def run(command, cwd=None):
-    return subprocess.run(command, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    return subprocess.run(command, cwd=cwd, text=True, stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT)
 
 
 def extract_dsc(dsc_path, destination):
@@ -36,112 +35,210 @@ def extract_dsc(dsc_path, destination):
     return None
 
 
-def parse_targets(patch_text):
-    targets = {}
-    for match in re.finditer(r"^\+\+\+\s+(?:b/)?(po/([^/\s]+)/([^/\s]+))$", patch_text, re.MULTILINE):
-        targets[match.group(1)] = "po"
-    return targets
+def clean_diff_path(value, side):
+    if side == "old":
+        return value if value == "/dev/null" else value[2:] if value.startswith("a/") else value
+    return value[2:] if value.startswith("b/") else value
 
 
-def validate_patch_structure(patch_text):
-    errors = []
-    previous = ""
-    diff_paths = set()
-    target_paths = set()
-    for line in patch_text.splitlines():
-        stripped = line.strip()
+def parse_patch_sections(patch_text, errors, patch_name):
+    sections = []
+    lines = patch_text.splitlines()
+    first_diff = next((index for index, line in enumerate(lines)
+                       if line.startswith("diff --git ")), None)
+    if first_diff is None:
+        errors.append("%s: no file section" % patch_name)
+        return sections
+    index = first_diff + 1
+    section = None
+    hunk_open = False
+    old_count = new_count = counted_old = counted_new = 0
+    hunk_start_line = 0
+
+    def close_section():
+        nonlocal section
+        if section is not None:
+            sections.append(section)
+            section = None
+
+    def close_hunk():
+        nonlocal hunk_open, old_count, new_count, counted_old, counted_new, hunk_start_line
+        if hunk_open and (counted_old != old_count or counted_new != new_count):
+            errors.append("%s: hunk at line %d: expected %d/%d lines, got %d/%d"
+                          % (patch_name, hunk_start_line, old_count, new_count,
+                             counted_old, counted_new))
+        hunk_open = False
+        old_count = new_count = counted_old = counted_new = 0
+        hunk_start_line = 0
+
+    while index < len(lines):
+        number = index + 1
+        line = lines[index]
+        index += 1
+
+        if hunk_open:
+            if line == r"\ No newline at end of file":
+                if counted_old == old_count or counted_new == new_count:
+                    continue
+                errors.append("%s: line %d: misplaced no-newline marker" % (patch_name, number))
+                continue
+            first = line[:1]
+            if not (section is not None and first in ("+", "-", " ")):
+                errors.append("%s: line %d: line outside hunk: %s"
+                              % (patch_name, number, line or "<blank>"))
+                continue
+            if first != "+":
+                old_count += 1
+            if first != "-":
+                new_count += 1
+            if first == "+":
+                section["added"].append(line[1:])
+            if first != "-":
+                counted_new += 1
+            if first != "+":
+                counted_old += 1
+            if counted_old > old_count or counted_new > new_count:
+                errors.append("%s: hunk at line %d: line beyond header counts"
+                              % (patch_name, hunk_start_line))
+            elif counted_old == old_count and counted_new == new_count:
+                hunk_open = False
+            continue
+
         if line.startswith("diff --git "):
-            match = re.search(r"\sa/(\S+)\s+b/(\S+)$", line)
-            if match:
-                diff_paths.update(match.groups())
-                if match.group(1) != match.group(2):
-                    errors.append("diff path mismatch: " + line[11:])
-        elif stripped.startswith("---"):
-            if stripped.startswith("--- a/"):
-                if not previous.startswith("diff --git "):
-                    errors.append("file section lacks diff --git: " + previous)
-                diff_paths.add(stripped[6:])
-        elif stripped.startswith("+++"):
-            if stripped.startswith("+++ b/"):
-                if not previous.startswith("--- "):
-                    errors.append("+++ marker has no preceding ---: " + stripped[6:])
-            else:
-                errors.append("malformed +++ marker: " + line)
-        elif stripped == "Only garbage was found":
-            errors.append("GNU patch found no applicable content")
-        previous = line
+            close_section()
+            match = re.match(r"^diff --git\s+a/(\S+)\s+b/(\S+)$", line)
+            if not match:
+                errors.append("%s: line %d: malformed diff header" % (patch_name, number))
+                continue
+            old_path = clean_diff_path(match.group(1), "old")
+            new_path = clean_diff_path(match.group(2), "new")
+            if old_path != "/dev/null" and old_path != new_path:
+                errors.append("%s: line %d: diff paths differ: %s -> %s"
+                              % (patch_name, number, old_path, new_path))
+            section = {"old_path": old_path, "new_path": new_path, "added": []}
+            continue
 
-    for match in re.finditer(r"(?m)^\+\+\+\s+(?:b/)?(po/\S+)$", patch_text):
-        target_paths.add(match.group(1))
-    missing = sorted(diff_paths.difference(target_paths))
-    for target in missing:
-        errors.append("diff --git names " + target
-                      + " but the patch adds nothing there")
+        if section is None:
+            errors.append("%s: line %d: line outside file section: %s"
+                          % (patch_name, number, line or "<blank>"))
+            continue
+
+        if line.startswith("--- "):
+            section["old_path"] = clean_diff_path(line[4:], "old")
+        elif line.startswith("+++ "):
+            section["new_path"] = clean_diff_path(line[4:], "new")
+        elif line.startswith("@@ "):
+            match = HUNK_HEADER.match(line)
+            if not match:
+                errors.append("%s: line %d: malformed hunk header" % (patch_name, number))
+                continue
+            old_start, old_length, new_start, new_length = match.groups()
+            old_count = int(old_length) if old_length is not None else 1
+            new_count = int(new_length) if new_length is not None else 1
+            counted_old = counted_new = 0
+            hunk_start_line = number
+            hunk_open = True
+        elif line.startswith(("index ", "old mode ", "new mode ", "deleted file mode ",
+                              "new file mode ", "similarity index ", "rename from ",
+                              "rename to ")):
+            pass
+        else:
+            errors.append("%s: line %d: line outside hunk: %s"
+                          % (patch_name, number, line or "<blank>"))
+
+    close_hunk()
+    close_section()
+    return sections
+
+
+def validate_patch_structure(patch_text, patch_name):
+    errors = []
+    parse_patch_sections(patch_text, errors, patch_name)
+    if re.search(r"(?m)^\+diff --git ", patch_text):
+        errors.append("%s: malformed section marker" % patch_name)
+    if "Only garbage was found" in patch_text:
+        errors.append("%s: GNU patch found no applicable content" % patch_name)
     return errors
 
 
+def parse_targets(patch_text):
+    targets = set()
+    for match in re.finditer(r"(?m)^\+\+\+\s+(?:b/)?(po/\S+)$", patch_text):
+        targets.add(match.group(1))
+    return targets
+
+
 def parse_added_messages(patch_text, path):
-    lines = patch_text.splitlines()
+    sections = parse_patch_sections(patch_text, [], path)
     target_lines = []
-    current = None
-    for line in lines:
-        if line.startswith("diff --git "):
-            current = None
-        elif line.startswith("--- a/") and line[6:] in (path, "a/" + path):
-            current = path
-        elif line.startswith("--- a/") and line[6:]:
-            current = None
-        if current is not None and len(line) > 1 and line.startswith("+") and not line.startswith("+++ "):
-            target_lines.append(line[1:])
+    for section in sections:
+        if path in (section["old_path"], section["new_path"]):
+            target_lines.extend(section["added"])
     messages = []
-    for index, line in enumerate(target_lines):
-        if re.match(r"^\s*msgid\s", line):
-            msgstr = next((target_lines[j] for j in range(index + 1, len(target_lines))
-                           if re.match(r"^\s*msgstr\s", target_lines[j])), "")
-            messages.append((line.strip(), msgstr.strip()))
+    index = 0
+    context = None
+    while index < len(target_lines):
+        stripped = target_lines[index].strip()
+        if stripped.startswith("msgctxt "):
+            context = stripped
+            index += 1
+            continue
+        if not stripped.startswith("msgid "):
+            index += 1
+            continue
+        msgid_parts = [stripped]
+        index += 1
+        while index < len(target_lines) and not target_lines[index].startswith("msgstr "):
+            msgid_parts.append(target_lines[index].strip())
+            index += 1
+        if index >= len(target_lines):
+            break
+        msgstr_parts = [target_lines[index].strip()]
+        index += 1
+        while index < len(target_lines) and target_lines[index].startswith('"'):
+            msgstr_parts.append(target_lines[index].strip())
+            index += 1
+        messages.append((context, "\n".join(msgid_parts), "\n".join(msgstr_parts)))
+        context = None
     return messages
 
 
 def unquote(value):
-    value = re.sub(r"^\s*msg(?:id|str)\s*", "", value)
-    value = value.strip()
-    if value.startswith('"'):
-        value = value[1:]
-    if value.endswith('"'):
-        value = value[:-1]
+    value = re.sub(r"^\s*msg(?:ctxt|id|str)\s*", "", value).strip()
+    if value.startswith('"') and value.endswith('"'):
+        value = value[1:-1]
     return value
 
 
-def po_has_messages(file_path, added_messages):
-    try:
-        text = file_path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as error:
-        return ["cannot read " + str(file_path) + ": " + str(error)]
-
+def parse_po_entries(file_path):
+    text = file_path.read_text(encoding="utf-8")
     entries = []
-    msg_context = None
+    context = None
     msgid_parts = None
     msgstr_parts = None
     mode = None
 
     def flush():
         if msgid_parts is not None and msgstr_parts is not None:
-            entries.append((unquote(msg_context) if msg_context is not None else "",
-                            unquote("".join(msgid_parts)),
-                            unquote("".join(msgstr_parts))))
+            entries.append((
+                unquote(context) if context is not None else "",
+                unquote("\n".join(msgid_parts)),
+                unquote("\n".join(msgstr_parts)),
+            ))
 
     for raw_line in text.splitlines() + [""]:
         line = raw_line.strip()
-        if line.startswith("#~") and ("msgid " in line or "msgstr " in line):
+        if line.startswith("#~"):
             continue
         if line.startswith("msgctxt "):
             flush()
-            msg_context = line[len("msgctxt "):].strip()
+            context = line[len("msgctxt "):].strip()
             msgid_parts = None
             msgstr_parts = None
             mode = None
         elif line.startswith("msgid "):
             flush()
+            context = context if context is not None else None
             msgid_parts = [line[len("msgid "):].strip()]
             msgstr_parts = None
             mode = "msgid"
@@ -150,6 +247,7 @@ def po_has_messages(file_path, added_messages):
                 msgstr_parts = [line[len("msgstr "):].strip()]
                 mode = "msgstr"
             else:
+                msgid_parts = None
                 msgstr_parts = None
                 mode = None
         elif line.startswith('"') and line.endswith('"'):
@@ -157,17 +255,32 @@ def po_has_messages(file_path, added_messages):
                 msgid_parts.append(line)
             elif mode == "msgstr" and msgstr_parts is not None:
                 msgstr_parts.append(line)
-    flush()
+        elif not line:
+            flush()
+            context = None
+            msgid_parts = None
+            msgstr_parts = None
+            mode = None
+    # Clear the context before msgid only, not after a completed entry.
+    return [(entry_context, entry_id, entry_str)
+            for entry_context, entry_id, entry_str in entries]
 
+
+def po_has_messages(file_path, added_messages):
+    try:
+        entries = parse_po_entries(file_path)
+    except (OSError, UnicodeError) as error:
+        return ["cannot read %s: %s" % (file_path, error)]
     errors = []
-    for added_msgid, added_msgstr in added_messages:
+    for added_context, added_msgid, added_msgstr in added_messages:
+        wanted_context = unquote(added_context) if added_context is not None else ""
         wanted_id = unquote(added_msgid)
         wanted_str = unquote(added_msgstr)
         if not wanted_str:
             errors.append("patch translation is empty: " + wanted_id)
             continue
-        if not any(actual_id == wanted_id and actual_str == wanted_str
-                   for _, actual_id, actual_str in entries):
+        if not any(actual_context == wanted_context and actual_id == wanted_id
+                   and actual_str == wanted_str for actual_context, actual_id, actual_str in entries):
             errors.append("added msgid not found with the exact non-empty msgstr: " + wanted_id)
     return errors
 
@@ -196,78 +309,66 @@ def main():
     failures = False
     for patch_path in patch_names:
         patch_text = patch_path.read_text(encoding="utf-8")
-        structure_errors = validate_patch_structure(patch_text)
-        garbage_patterns = (
-            r"(?m)^\+diff --git ",
-            r"(?m)^\+--- a/",
-            r"(?m)^\+\+\+\+\s",
-            r"Only garbage was found",
-            r"(?m)^patch: Failed$",
-        )
-        if structure_errors or any(re.search(pattern, patch_text) for pattern in garbage_patterns):
+        structure_errors = validate_patch_structure(patch_text, patch_path.name)
+        if structure_errors:
             results = [("structure", "FAIL", " ; ".join(structure_errors)),
-                       ("garbage", "FAIL", "malformed section marker or GNU patch garbage"),
                        ("dsc", "SKIP", ""), ("dry_run", "SKIP", ""), ("apply", "SKIP", ""),
                        ("po_check", "SKIP", "")]
         else:
-            results = [("garbage", "PASS", "")]
+            results = [("structure", "PASS", "")]
             dsc_name = DSC_MAP.get(patch_path.name)
             if dsc_name is None:
                 results.append(("dsc", "FAIL", "no DSC mapping for " + patch_path.name))
-                results.extend([("dry_run", "SKIP", ""), ("apply", "SKIP", ""), ("po_check", "SKIP", "")])
-                results.append(("row", "FAIL", ""))
-                row = "%s\t%s\t%s\n" % (patch_path.name, "FAIL", " | ".join("%s:%s:%s" % item for item in results))
-                print(row, end="")
-                if args.tsv:
-                    with args.tsv.open("a", encoding="utf-8") as stream:
-                        stream.write(row)
-                failures = True
-                continue
-            dsc_path = pathlib.Path(dsc_name)
-            if not dsc_path.is_absolute():
-                dsc_path = PATCH_ROOT / dsc_name
-            with tempfile.TemporaryDirectory(prefix="validate-po-") as temporary:
-                temporary_path = pathlib.Path(temporary)
-                source_path = temporary_path / "source"
-                extract_error = extract_dsc(dsc_path, source_path)
-                if extract_error:
-                    results.extend([("dsc", "FAIL", extract_error), ("dry_run", "SKIP", ""),
-                                    ("apply", "SKIP", ""), ("po_check", "SKIP", "")])
-                else:
-                    patch_copy = source_path / patch_path.name
-                    shutil.copyfile(patch_path, patch_copy)
-                    dry_run = run([str(PATCH_NAME), "-p1", "--dry-run", "-i", patch_copy.name],
-                                  cwd=source_path)
-                    results.append(("dry_run", "PASS" if not dry_run.returncode else "FAIL",
-                                    dry_run.stdout.strip().replace("\n", " | ")))
-                    if not dry_run.returncode:
-                        applied = run([str(PATCH_NAME), "-p1", "-i", patch_copy.name], cwd=source_path)
-                        results.append(("apply", "PASS" if not applied.returncode else "FAIL",
-                                        applied.stdout.strip().replace("\n", " | ")))
-                        po_results = []
-                        if not applied.returncode:
-                            targets = parse_targets(patch_text)
-                            for path in sorted(targets):
-                                file_path = source_path / path
-                                if not file_path.is_file():
-                                    po_results.append((path, "FAIL", "target missing"))
-                                    continue
-                                message_errors = po_has_messages(
-                                    file_path, parse_added_messages(patch_text, path))
-                                checked = run([str(MSGFMT_NAME), "--check", "--statistics", path],
-                                              cwd=source_path)
-                                statistics = " ".join(checked.stdout.strip().split())
-                                if message_errors:
-                                    po_results.append((path, "FAIL", "; ".join(message_errors)))
-                                elif checked.returncode:
-                                    po_results.append((path, "FAIL",
-                                                       checked.stdout.strip().replace("\n", " | ")))
-                                elif not statistics:
-                                    po_results.append((path, "FAIL", "msgfmt reported no statistics"))
-                                else:
-                                    po_results.append((path, "PASS", statistics))
-                        results.append(("po_check", "FAIL" if any(a[1] != "PASS" for a in po_results) else "PASS",
-                                        " ; ".join("%s %s %s" % item for item in po_results)))
+                results.extend([("dry_run", "SKIP", ""), ("apply", "SKIP", ""),
+                                ("po_check", "SKIP", "")])
+            else:
+                dsc_path = pathlib.Path(dsc_name)
+                if not dsc_path.is_absolute():
+                    dsc_path = PATCH_ROOT / dsc_name
+                with tempfile.TemporaryDirectory(prefix="validate-po-") as temporary:
+                    temporary_path = pathlib.Path(temporary)
+                    source_path = temporary_path / "source"
+                    extract_error = extract_dsc(dsc_path, source_path)
+                    if extract_error:
+                        results.extend([("dsc", "FAIL", extract_error), ("dry_run", "SKIP", ""),
+                                        ("apply", "SKIP", ""), ("po_check", "SKIP", "")])
+                    else:
+                        patch_copy = source_path / patch_path.name
+                        shutil.copyfile(patch_path, patch_copy)
+                        dry_run = run([str(PATCH_NAME), "-p1", "--dry-run", "-i", patch_copy.name],
+                                      cwd=source_path)
+                        results.append(("dry_run", "PASS" if not dry_run.returncode else "FAIL",
+                                        dry_run.stdout.strip().replace("\n", " | ")))
+                        if not dry_run.returncode:
+                            applied = run([str(PATCH_NAME), "-p1", "-i", patch_copy.name],
+                                          cwd=source_path)
+                            results.append(("apply", "PASS" if not applied.returncode else "FAIL",
+                                            applied.stdout.strip().replace("\n", " | ")))
+                            po_results = []
+                            if not applied.returncode:
+                                targets = parse_targets(patch_text)
+                                for path in sorted(targets):
+                                    file_path = source_path / path
+                                    if not file_path.is_file():
+                                        po_results.append((path, "FAIL", "target missing"))
+                                        continue
+                                    message_errors = po_has_messages(
+                                        file_path, parse_added_messages(patch_text, path))
+                                    checked = run([str(MSGFMT_NAME), "--check", "--statistics", path],
+                                                  cwd=source_path)
+                                    statistics = " ".join(checked.stdout.strip().split())
+                                    if message_errors:
+                                        po_results.append((path, "FAIL", "; ".join(message_errors)))
+                                    elif checked.returncode:
+                                        po_results.append((path, "FAIL",
+                                                           checked.stdout.strip().replace("\n", " | ")))
+                                    elif not statistics:
+                                        po_results.append((path, "FAIL", "msgfmt reported no statistics"))
+                                    else:
+                                        po_results.append((path, "PASS", statistics))
+                            results.append(("po_check", "FAIL" if any(a[1] != "PASS" for a in po_results)
+                                            else "PASS",
+                                            " ; ".join("%s %s %s" % item for item in po_results)))
 
         row_status = "FAIL" if any(state == "FAIL" for _, state, _ in results) else "PASS"
         row = "%s\t%s\t%s\n" % (patch_path.name, row_status,
