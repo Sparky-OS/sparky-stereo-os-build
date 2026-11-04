@@ -6,8 +6,8 @@
 # Fraunhofer's AAC encoder (libfdk_aac). The edition's FFmpeg is built without it (FFmpeg's LICENSE.md calls a GPL build that
 # includes it unredistributable); a build made by this helper is for that computer only. It installs
 #   /usr/bin/sparky-stereo-ffmpeg-fdk                              the command
-#   /usr/lib/sparky-stereo-ffmpeg-fdk/{common.sh,check-update,write-pin}   its functions, the apt hook that rebuilds on an update,
-#                                                                   and the writer of the pin (the postinst runs it)
+#   /usr/lib/sparky-stereo-ffmpeg-fdk/{common.sh,check-update,write-pin,link-config}   its functions, the apt hook that rebuilds on an update,
+#                                                                   the writer of the pin (the postinst runs it) and the archives of the link check
 #   /usr/share/sparky/sparky-stereo-ffmpeg-fdk/{en,pl,pt_BR}        the strings
 #   (not shipped: /etc/apt/preferences.d/sparky-stereo-ffmpeg-fdk is written by each build, exact version at 1002, because apt
 #   takes a version pin only exact or with a trailing * and the local version changes with every build)
@@ -25,7 +25,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
-VERSION=${VERSION:-20261104.1~sparky9~0+lc1}
+VERSION=${VERSION:-20261104.2~sparky9~0+lc1}
 CPU_MINUTES=${CPU_MINUTES:-35}
 PKG=sparky-stereo-ffmpeg-fdk
 W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/fdk-build.XXXXXX")
@@ -42,6 +42,7 @@ install -m 644 "$HERE/lib/common.sh" "$D/usr/lib/$PKG/common.sh"
 install -m 755 "$HERE/lib/check-update" "$D/usr/lib/$PKG/check-update"
 install -m 755 "$HERE/lib/migrate-problems" "$D/usr/lib/$PKG/migrate-problems"
 install -m 755 "$HERE/lib/write-pin" "$D/usr/lib/$PKG/write-pin"
+install -m 755 "$HERE/lib/link-config" "$D/usr/lib/$PKG/link-config"
 sed -i "s/@CPU_MINUTES@/$CPU_MINUTES/" "$D/usr/lib/$PKG/common.sh"
 install -m 644 "$HERE"/lang/* "$D/usr/share/sparky/$PKG/"
 sparky-stereo-problems catalog "$PKG" "$HERE/lang" "$D/usr/lib/systemd/catalog" --subject LOCAL10
@@ -147,7 +148,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: sparky-stereo-problems (>= 0.1.0), sparky-stereo-apt (>= 20261104.2~sparky9~0), apt, dpkg-dev, build-essential, fakeroot, python3, sudo | pkexec
+Depends: sparky-stereo-problems (>= 0.1.0), sparky-stereo-apt (>= 20261104.2~sparky9~0), apt, dpkg-dev, build-essential, fakeroot, bubblewrap, python3, sudo | pkexec
 Recommends: powermgmt-base
 Section: sound
 Priority: optional

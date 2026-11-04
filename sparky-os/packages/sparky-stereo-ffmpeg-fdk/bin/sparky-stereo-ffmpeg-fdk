@@ -22,6 +22,7 @@ load_strings
 
 TMPBASE=${SPARKY_FDK_TMPBASE:-/var/tmp}
 NEED_GB=${SPARKY_FDK_NEED_GB:-8}
+LC_ROOT_GB=${SPARKY_FDK_LC_ROOT_GB:-12}    # the free room the link gate wants on / (lean/archive.md: 12 GiB)
 SELF=$(readlink -f "$0")
 MODE=build        # build, status, remove
 RUN=0             # 1: the root worker (started by the front, or by the apt hook with --auto)
@@ -358,6 +359,26 @@ PY
 		apt-get $DBO_APT $BDOPT --no-remove -P "$PROFILE" build-dep "$tree" || fail LOCAL38
 	fi
 
+	# 3b. the link check (ORDER 402). The FFmpeg source carries Lean Code's gate, which refuses to qualify a build unless it is
+	#     given signed archives to resolve the build's dependencies from and a private scratch folder (lean/archive.md). On this
+	#     computer the archives are its own: the sources of apt that serve what the build depends on, with the keys apt trusts for
+	#     them (link-config). The reference build is the edition's own FFmpeg of the same version, which the repository serves:
+	#     the rebuilt programs have to resolve like it and keep its stereo calls.
+	LC=$B/lc
+	f=$(df --output=avail -B1G / | tail -n1 | tr -d ' ')
+	[ "${f:-0}" -ge "$LC_ROOT_GB" ] || fail LOCAL35 / "${f:-0}" "$LC_ROOT_GB"
+	install -d -o "$BUILD_USER" -m 700 "$LC" "$LC/scratch" "$LC/previous"
+	msg=$(python3 "$LIBDIR/link-config" "$LC" $(echo "$BINS" | tr ',' ' ') libfdk-aac2 2>&1) || fail LOCAL84 "$msg"
+	note "link check: archives of this computer: $(echo "$msg" | tr '\n' ';')"
+	chown -R "$BUILD_USER" "$LC"
+	for name in $(echo "$BINS" | tr ',' ' '); do
+		as_user "cd '$LC/previous' && apt-get download -qq $name=$VER" >/dev/null 2>&1 || note "link check: the edition's $name $VER is not served for $host_arch, no reference for it"
+	done
+	find "$LC/previous" -maxdepth 1 -name '*.deb' | sort >"$LC/previous.list"
+	[ -s "$LC/previous.list" ] || fail LOCAL84 "the edition's FFmpeg $VER could not be downloaded as the reference build"
+	chown "$BUILD_USER" "$LC/previous.list"
+	note "link check: reference build: $(wc -l <"$LC/previous.list") packages"
+
 	# 4. the build, as the user
 	# dpkg-shlibdeps looks a library up like the run-time linker, /etc/ld.so.conf.d included: an entry there that comes before
 	# the distribution's directory (CUDA's OpenCL, PipeWire's JACK) hands it a file no package owns, and the build stops at
@@ -376,7 +397,7 @@ PY
 	DBO="nocheck parallel=$jobs"
 	read -r low high cores < <(estimate)
 	note "building with $jobs jobs (expected $low to $high minutes)"
-	as_user "cd '$tree' && dpkg-buildpackage -B -us -uc -P$PROFILE" >"$B/build.log" 2>&1
+	as_user "cd '$tree' && export SPARKY_LC_ARCHIVE_CONFIG='$LC/archive.json' SPARKY_LC_SCRATCH='$LC/scratch' SPARKY_LC_PREVIOUS_SIBLINGS_FILE='$LC/previous.list' && dpkg-buildpackage -B -us -uc -P$PROFILE" >"$B/build.log" 2>&1
 	if [ $? -ne 0 ]; then
 		cp "$B/build.log" "$STATE/last-build.log" 2>/dev/null
 		tail -n 25 "$B/build.log"
