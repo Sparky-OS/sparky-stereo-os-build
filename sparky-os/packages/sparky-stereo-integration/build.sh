@@ -3,11 +3,11 @@
 # Copyright 2026 under the GNU GPL3 License
 # Builds sparky-stereo-integration (hand-assembled .deb, Paweł's formula): the runner of the edition's integration packs,
 # with the pack generator's source (make-pack.py) retained in the source package for the packs that follow its format.
-# Last update 2026/11/04
+# Last update 2026/11/04 (0.1.4: Depends on sparky-stereo-integration-catalogue, the package that holds integrations.map)
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the output directory}
-VERSION=0.1.3+lc1
+VERSION=0.1.4+lc1
 PKG=sparky-stereo-integration
 mkdir -p "$OUT"
 W=$(mktemp -d "$OUT/.$PKG.XXXXXX")
@@ -68,7 +68,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: bash, command-not-found (>= 23.04.0-3+sparky1), kdialog, python3, python3-dbus, python3-gi, sparky-stereo-problems (>= 0.1.2)
+Depends: bash, command-not-found (>= 23.04.0-3+sparky1), kdialog, python3, python3-dbus, python3-gi, sparky-stereo-integration-catalogue, sparky-stereo-problems (>= 0.1.2)
 Recommends: pkexec
 Section: Utilities
 Priority: optional
