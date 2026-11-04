@@ -42,6 +42,14 @@ EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
 
+  * Carry Lean Code 0.1.26: qualify conflicting APT policies only with
+    their coinstallable owners selected, preserving strict edition pins
+    and both NVIDIA driver stacks (ORDER 390).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Wed, 04 Nov 2026 01:40:00 +0000
+
+dpkg-stereo (0.1.32) unstable; urgency=medium
+
   * A configure with no pending conffile needs no native-capability subprocess;
     use the existing package snapshot to return before querying dpkg.
   * Reconcile 0.1.31 orphan recovery; apply exact independent reproduction
