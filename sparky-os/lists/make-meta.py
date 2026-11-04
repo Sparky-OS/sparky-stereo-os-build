@@ -374,6 +374,10 @@ def main():
         path = os.path.join(dd, name)
         open(path, 'w').write('\n'.join(l for l in lines if l != '') + '\n'); os.chmod(path, 0o755)
     for pkg, (title, body, dep, rec) in META.items():
+        if pkg == 'sparky-stereo-integrations':
+            # the meta moved the catalogue file out (ORDER 346f-3b): with a plain `apt upgrade` the meta must not move ahead of the
+            # package that now holds integrations.map, or an installed runner finds no catalogue until the full upgrade (measured)
+            dep = dep + [f'sparky-stereo-integration-catalogue (>= {version})']
         dep = sorted(set(dep))
         for n in dep:   # no versioned library names in Depends
             b = n.split(' ')[0].split(':')[0]

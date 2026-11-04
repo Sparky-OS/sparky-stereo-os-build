@@ -4,7 +4,9 @@
   * New package sparky-stereo-integration-catalogue holds /usr/share/sparky-stereo/integrations.map (made by lists/make-meta.py from the
     same list as before); sparky-stereo-integration Depends on it, so the runner of the Dolphin actions is never installed without the
     catalogue it reads (ORDER 346f-3b). The file leaves sparky-stereo-integrations (Replaces and Breaks sparky-stereo-integrations (<< this version))
-    so no Depends is needed back from the runner to the meta: the packs Depend on the runner, and a Depends the other way would make a cycle of three
+    so no Depends is needed back from the runner to the meta: the packs Depend on the runner, and a Depends the other way would make a cycle of three.
+    sparky-stereo-integrations Depends on the catalogue (>= its own version): measured, a plain `apt upgrade` otherwise moved the meta ahead and an
+    installed runner found no catalogue until the full upgrade
 -------------------------------------------------------------------------------
   Version 20261102.3 (2026-11-02)
 -------------------------------------------------------------------------------
