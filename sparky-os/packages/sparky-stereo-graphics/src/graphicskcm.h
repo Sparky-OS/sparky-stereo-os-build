@@ -31,6 +31,7 @@ class GraphicsKcm : public KQuickConfigModule
     Q_PROPERTY(QString profile READ profile NOTIFY changed)
     Q_PROPERTY(QString profileText READ profileText NOTIFY changed)
     Q_PROPERTY(QString measuredText READ measuredText NOTIFY changed)
+    Q_PROPERTY(bool vramProtection READ vramProtection WRITE setVramProtection NOTIFY changed)
     Q_PROPERTY(bool copyBack READ copyBack WRITE setCopyBack NOTIFY changed)
     Q_PROPERTY(QString copyBackMachineText READ copyBackMachineText NOTIFY changed)
     Q_PROPERTY(bool copyBackSetInSession READ copyBackSetInSession NOTIFY changed)
@@ -61,6 +62,8 @@ public:
     QString profile() const;
     QString profileText() const;
     QString measuredText() const;
+    bool vramProtection() const;
+    void setVramProtection(bool enabled);
     bool copyBack() const;
     void setCopyBack(bool copyBack);
     QString copyBackMachineText() const;
@@ -78,6 +81,7 @@ public:
     QVariantList problems() const;
 
     // The person's explicit answer to a problem: draw the desktop (key "main-gpu") or a kind of program on that GPU
+    Q_INVOKABLE void runProblemAction(const QString &package, const QString &key, const QString &id);
     Q_INVOKABLE void useGpu(const QString &key, const QString &id);
     Q_INVOKABLE void setCategoryChoice(const QString &key, const QString &choice);
     Q_INVOKABLE void setAppPreference(const QString &id, int preference);
@@ -89,6 +93,7 @@ public:
     void defaults() override;
 
 Q_SIGNALS:
+    void saveFinished(bool success);
     void changed();
     void appsChanged();
 
@@ -117,6 +122,9 @@ private:
     QMap<QString, bool> m_actionChanges;
     QString m_appFilter;
     QString m_errorText;
+    bool m_vramProtection = false;
+    bool m_savedVramProtection = false;
+    bool m_savingVram = false;
     bool m_handSet = false;
     int m_runningMain = -1;
 };

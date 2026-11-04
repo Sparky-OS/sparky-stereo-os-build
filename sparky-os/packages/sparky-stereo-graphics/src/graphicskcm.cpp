@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "graphicskcm.h"
+#include "vramsettings.h"
+#include <KAuth/Action>
+#include <KAuth/ExecuteJob>
+#include <QJsonObject>
+#include <QProcess>
 
 #include <KLocalizedString>
 #include <KPluginFactory>
@@ -114,6 +119,7 @@ QString GraphicsKcm::reasonTextOf(const QString &reason) const
 
 void GraphicsKcm::load()
 {
+    m_vramProtection = m_savedVramProtection = VramSettings::enabled();
     m_gpus = GpuInventory::read(m_root);
     m_settings = GraphicsSettings();
     m_record = MachineRecord::read();
@@ -156,7 +162,7 @@ void GraphicsKcm::load()
     syncKept();
     updateState();
     setNeedsSave(false);
-    setRepresentsDefaults(m_settings.isDefault());
+    setRepresentsDefaults(m_settings.isDefault() && !m_vramProtection);
 }
 
 QList<Problem> GraphicsKcm::liveProblems(const GraphicsSettings &settings) const
@@ -220,7 +226,62 @@ QVariantList GraphicsKcm::problems() const
     for (const Problem &problem : liveProblems(m_settings)) {
         add(problem);
     }
+    for (const QJsonValue &value : Problems::records({u"sparky-stereo-vram-boost"_s})) {
+        const QJsonObject record = value.toObject();
+        QVariantList actions;
+        const auto commands = record.value(u"actions"_s).toArray();
+        const auto labels = record.value(u"labels"_s).toArray();
+        for (qsizetype i = 0; i < commands.size(); ++i) {
+            actions.append(QVariantMap{{u"id"_s, commands.at(i).toObject().value(u"id"_s).toString()},
+                                       {u"text"_s, labels.at(i).toString()}});
+        }
+        list.append(QVariantMap{{u"package"_s, record.value(u"package"_s).toString()},
+                                {u"key"_s, record.value(u"key"_s).toString()},
+                                {u"text"_s, record.value(u"text"_s).toString()},
+                                {u"gpus"_s, QVariantList()}, {u"actions"_s, actions}});
+    }
     return list;
+}
+
+void GraphicsKcm::runProblemAction(const QString &package, const QString &key, const QString &id)
+{
+    if (package != u"sparky-stereo-vram-boost"_s) {
+        return;
+    }
+    for (const QJsonValue &value : Problems::records({package})) {
+        const auto record = value.toObject();
+        if (record.value(u"key"_s).toString() != key) {
+            continue;
+        }
+        for (const QJsonValue &value : record.value(u"actions"_s).toArray()) {
+            const auto action = value.toObject();
+            if (action.value(u"id"_s).toString() != id) {
+                continue;
+            }
+            QStringList command;
+            for (const auto &arg : action.value(u"command"_s).toArray()) {
+                command.append(arg.toString());
+            }
+            if (!command.isEmpty() && !QProcess::startDetached(command.first(), command.mid(1))) {
+                m_errorText = i18nc("@info", "The problem action could not be started.");
+                Q_EMIT changed();
+            }
+        }
+    }
+}
+
+bool GraphicsKcm::vramProtection() const
+{
+    return m_vramProtection;
+}
+
+void GraphicsKcm::setVramProtection(bool enabled)
+{
+    if (m_vramProtection != enabled) {
+        m_vramProtection = enabled;
+        updateState();
+        setNeedsSave(true);
+    }
 }
 
 void GraphicsKcm::useGpu(const QString &key, const QString &id)
@@ -238,6 +299,9 @@ void GraphicsKcm::useGpu(const QString &key, const QString &id)
 
 void GraphicsKcm::save()
 {
+    if (m_savingVram) {
+        return;
+    }
     m_errorText.clear();
     if (!m_settings.save()) {
         m_errorText = i18nc("@info", "The graphics settings could not be saved.");
@@ -253,6 +317,27 @@ void GraphicsKcm::save()
             m_errorText = i18nc("@info", "The power setting could not be changed. The power profile service may not allow it.");
         }
     }
+    if (m_vramProtection != m_savedVramProtection) {
+        KAuth::Action action(u"org.sparkylinux.sparkystereo.graphics.savevram"_s);
+        action.setHelperId(u"org.sparkylinux.sparkystereo.graphics"_s);
+        action.setArguments({{u"enabled"_s, m_vramProtection}});
+        auto *job = action.execute();
+        m_savingVram = true;
+        connect(job, &KJob::result, this, [this, job] {
+            m_savingVram = false;
+            const bool success = job->error() == KJob::NoError;
+            if (success) {
+                load();
+            } else {
+                m_errorText = i18nc("@info", "The graphics settings could not be saved.") + u" "_s + job->errorString();
+                setNeedsSave(true);
+            }
+            Q_EMIT changed();
+            Q_EMIT saveFinished(success);
+        });
+        job->start();
+        return;
+    }
     const QString error = m_errorText;
     load();
     m_errorText = error;
@@ -261,6 +346,7 @@ void GraphicsKcm::save()
 
 void GraphicsKcm::defaults()
 {
+    m_vramProtection = false;
     m_settings.resetToDefaults();
     updateState();
     setNeedsSave(true);
@@ -270,7 +356,7 @@ void GraphicsKcm::updateState()
 {
     Q_EMIT changed();
     Q_EMIT appsChanged();
-    setRepresentsDefaults(m_settings.isDefault());
+    setRepresentsDefaults(m_settings.isDefault() && !m_vramProtection);
 }
 
 QVariantList GraphicsKcm::gpus() const

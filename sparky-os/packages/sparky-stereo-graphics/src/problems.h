@@ -74,6 +74,7 @@ bool keep(Problem problem, const QString &dir);
 bool clear(const QString &key, const QString &dir);
 QList<Problem> read(const QString &dir, bool system = false);
 // The person's and the machine's, the machine's first
+QJsonArray records(const QStringList &packages);
 QList<Problem> all(const QString &root = QStringLiteral("/"));
 
 QString title(const Problem &problem);

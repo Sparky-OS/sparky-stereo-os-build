@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack)
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.22)
-project(sparky-stereo-graphics VERSION 0.2.5)
+project(sparky-stereo-graphics VERSION 0.2.6)
 
 set(QT_MIN_VERSION "6.8.0")
 set(KF_MIN_VERSION "6.10.0")
@@ -15,13 +15,14 @@ include(KDECompilerSettings NO_POLICY_SCOPE)
 include(ECMQmlModule)
 
 find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Core DBus Quick)
-find_package(KF6 ${KF_MIN_VERSION} REQUIRED COMPONENTS Config CoreAddons I18n KCMUtils)
+find_package(KF6 ${KF_MIN_VERSION} REQUIRED COMPONENTS Auth Config CoreAddons I18n KCMUtils)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(PROBLEMS REQUIRED IMPORTED_TARGET GLOBAL sparky-stereo-problems)
 
 add_definitions(-DTRANSLATION_DOMAIN=\"kcm_sparkystereo_graphics\")
 
 add_subdirectory(src)
+add_subdirectory(src/helper)
 
 if(BUILD_TESTING)
     find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Test)

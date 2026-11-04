@@ -50,3 +50,11 @@ target_link_libraries(hostprobe sparkystereo_graphics Qt::Quick KF6::CoreAddons 
 
 add_executable(pluginprobe pluginprobe.cpp)
 target_link_libraries(pluginprobe Qt::Quick KF6::CoreAddons KF6::I18n KF6::KCMUtils KF6::KCMUtilsQuick)
+
+add_executable(vramkcmtest vramkcmtest.cpp ../src/graphicskcm.cpp ../src/graphicskcm.h fixtures.h)
+target_include_directories(vramkcmtest PRIVATE ../src)
+target_compile_definitions(vramkcmtest PRIVATE SOURCE_UI="${CMAKE_CURRENT_SOURCE_DIR}/../src/ui/main.qml")
+target_link_libraries(vramkcmtest sparkystereo_graphics Qt::Test Qt::Quick KF6::Service KF6::CoreAddons KF6::I18n KF6::KCMUtils KF6::KCMUtilsQuick PkgConfig::PROBLEMS)
+# The save tests require a private system bus and real KAuth activation; run-vram-kauth-test.sh supplies them.
+add_executable(fakepolkit fakepolkit.cpp)
+target_link_libraries(fakepolkit Qt::Core Qt::DBus)

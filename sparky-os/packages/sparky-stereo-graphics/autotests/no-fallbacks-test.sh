@@ -14,7 +14,7 @@ BIN=${BIN:?}
 SRC=${SRC:?}
 DEBIAN=${DEBIAN:-$SRC/share/debian}
 T=$(mktemp -d)
-trap 'kill $BUS 2>/dev/null; rm -rf "$T"' EXIT
+trap 'rm -rf "$T"' EXIT
 pass=0 fail=0
 check() { # name got expected
 	if [ "$2" = "$3" ]; then pass=$((pass + 1)); echo "PASS $1"; else fail=$((fail + 1)); echo "FAIL $1: got '$2', expected '$3'"; fi
