@@ -1,0 +1,105 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 3 Nov 2026 22:51:54 -0300
+Subject: [PATCH 06/19] kcm: Add X and Y fields for the position of a screen
+
+Two spin boxes beside the arrangement view hold the coordinates KWin holds for the
+selected screen, counted from the top left corner of all the screens. Typing a number
+places the screen there exactly, without snapping, as the Shift drag and the arrow keys
+do by hand. The arrangement is counted from its new corner afterwards, as for a drag.
+
+Assisted-by: Claude Sonnet 5.5
+---
+ kcm/output_model.cpp   | 13 +++++++++++++
+ kcm/output_model.h     |  5 +++++
+ kcm/ui/OutputPanel.qml | 37 +++++++++++++++++++++++++++++++++++++
+ 3 files changed, 55 insertions(+)
+
+diff --git a/kcm/output_model.cpp b/kcm/output_model.cpp
+index b6a2fa41..d5df3e21 100644
+--- a/kcm/output_model.cpp
++++ b/kcm/output_model.cpp
+@@ -361,6 +361,19 @@ bool OutputModel::setPosition(int outputIndex, const QPoint &valToPoint, bool sn
+     return true;
+ }
+ 
++bool OutputModel::setNormalizedPosition(int outputIndex, const QPoint &position)
++{
++    if (outputIndex < 0 || outputIndex >= m_outputs.count()) {
++        return false;
++    }
++    const Output &output = m_outputs[outputIndex];
++    const QPoint current = output.ptr->pos();
++    if (current == position) {
++        return false;
++    }
++    return setPosition(outputIndex, output.pos + position - current, false);
++}
++
+ bool OutputModel::setData(const QModelIndex &index, const QVariant &value, int role)
+ {
+     if (index.row() < 0 || index.row() >= m_outputs.count()) {
+diff --git a/kcm/output_model.h b/kcm/output_model.h
+index da26a13b..2ca29ab2 100644
+--- a/kcm/output_model.h
++++ b/kcm/output_model.h
+@@ -121,6 +121,11 @@ public:
+ 
+     bool isMoving() const;
+     Q_INVOKABLE bool setPosition(int outputIndex, const QPoint &valToPoint, bool snapEnabled = true);
++    /**
++     * Places an output at the given coordinates, counted from the most northwest display corner like
++     * the positions KWin holds, without snapping. The arrangement is counted from its new corner after.
++     */
++    Q_INVOKABLE bool setNormalizedPosition(int outputIndex, const QPoint &position);
+ 
+ Q_SIGNALS:
+     void positionChanged();
+diff --git a/kcm/ui/OutputPanel.qml b/kcm/ui/OutputPanel.qml
+index 456d9f21..377a448b 100644
+--- a/kcm/ui/OutputPanel.qml
++++ b/kcm/ui/OutputPanel.qml
+@@ -332,6 +332,43 @@ Kirigami.FormLayout {
+         }
+     }
+ 
++    RowLayout {
++        Kirigami.FormData.label: i18nc("@label position of the screen among the others", "Position:")
++        Kirigami.FormData.buddyFor: positionXField
++
++        visible: kcm.multipleScreensAvailable && element.enabled && element.replicationSourceIndex === 0
++
++        QQC2.Label {
++            text: i18nc("@label x coordinate of the screen", "X:")
++        }
++        QQC2.SpinBox {
++            id: positionXField
++            objectName: "positionXField"
++            Layout.maximumWidth: root.maxSpinboxWidth
++            from: -32768
++            to: 32767
++            editable: true
++            value: element.normalizedPosition.x
++            onValueModified: kcm.outputModel.sourceModel.setNormalizedPosition(element.index, Qt.point(value, element.normalizedPosition.y))
++        }
++        QQC2.Label {
++            text: i18nc("@label y coordinate of the screen", "Y:")
++        }
++        QQC2.SpinBox {
++            id: positionYField
++            objectName: "positionYField"
++            Layout.maximumWidth: root.maxSpinboxWidth
++            from: -32768
++            to: 32767
++            editable: true
++            value: element.normalizedPosition.y
++            onValueModified: kcm.outputModel.sourceModel.setNormalizedPosition(element.index, Qt.point(element.normalizedPosition.x, value))
++        }
++        Kirigami.ContextualHelpButton {
++            toolTipText: i18nc("@info", "The corner of the screen, in pixels from the top left corner of all the screens. The screen goes exactly where the numbers say, without snapping.")
++        }
++    }
++
+     Orientation {}
+ 
+     RowLayout {

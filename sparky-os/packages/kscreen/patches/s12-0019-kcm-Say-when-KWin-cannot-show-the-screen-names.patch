@@ -1,0 +1,144 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 3 Nov 2026 23:21:50 -0300
+Subject: [PATCH 19/19] kcm: Say when KWin cannot show the screen names
+
+The calls to KWin's OutputLocator effect are asynchronous now, and when KWin answers an
+error to a request for the names, the view says "Screen names cannot be shown" with KWin's
+reason above the View button, as it does for the screen contents, and asks again when
+Show Screen Names is switched on again.
+
+Assisted-by: Claude Sonnet 5.5
+---
+ kcm/ui/main.qml     | 13 +++++++++++++
+ kcm/viewoptions.cpp | 32 +++++++++++++++++++++++++++++++-
+ kcm/viewoptions.h   |  7 +++++++
+ 3 files changed, 51 insertions(+), 1 deletion(-)
+
+diff --git a/kcm/ui/main.qml b/kcm/ui/main.qml
+index e9555c38..d4e4d9e6 100644
+--- a/kcm/ui/main.qml
++++ b/kcm/ui/main.qml
+@@ -413,6 +413,19 @@ KCM.AbstractKCM {
+                 text: i18nc("@info:status %1 is the reason KWin gives", "Screen contents cannot be shown: %1", kcm.screenContents.errorString)
+             }
+ 
++            QQC2.Label {
++                objectName: "screenNamesErrorLabel"
++                anchors.left: parent.left
++                anchors.right: screenEdit.left
++                anchors.bottom: screenViewOptions.top
++                anchors.margins: Kirigami.Units.smallSpacing
++                anchors.bottomMargin: kcm.screenContents.shown && kcm.screenContents.errorString.length > 0 ? Kirigami.Units.gridUnit * 3 : Kirigami.Units.smallSpacing
++                visible: kcm.viewOptions.errorString.length > 0
++                wrapMode: Text.Wrap
++                font: Kirigami.Theme.smallFont
++                text: i18nc("@info:status %1 is the reason KWin gives", "Screen names cannot be shown: %1", kcm.viewOptions.errorString)
++            }
++
+             QQC2.ToolButton {
+                 id: screenViewOptions
+                 anchors.left: parent.left
+diff --git a/kcm/viewoptions.cpp b/kcm/viewoptions.cpp
+index c4c0c0ca..3410064f 100644
+--- a/kcm/viewoptions.cpp
++++ b/kcm/viewoptions.cpp
+@@ -10,6 +10,8 @@
+ 
+ #include <QDBusConnection>
+ #include <QDBusMessage>
++#include <QDBusPendingCallWatcher>
++#include <QDBusPendingReply>
+ 
+ using namespace Qt::StringLiterals;
+ 
+@@ -92,21 +94,49 @@ void ViewOptions::setActive(bool active)
+     updateNames();
+ }
+ 
++QString ViewOptions::errorString() const
++{
++    return m_errorString;
++}
++
++void ViewOptions::setErrorString(const QString &errorString)
++{
++    if (m_errorString == errorString) {
++        return;
++    }
++    m_errorString = errorString;
++    Q_EMIT errorStringChanged();
++}
++
+ void ViewOptions::updateNames()
+ {
+     const bool wanted = m_showScreenNames && m_active;
+     if (wanted && !m_timer.isActive()) {
++        // Ask KWin again, in case it could not before
++        setErrorString(QString());
+         m_timer.start();
+         m_shown = true;
+         sendToKWin(u"show"_s);
+     } else if (!wanted && m_timer.isActive()) {
+         m_timer.stop();
+         m_shown = false;
++        setErrorString(QString());
+         sendToKWin(u"hide"_s);
+     }
+ }
+ 
+ void ViewOptions::sendToKWin(const QString &method)
+ {
+-    QDBusConnection::sessionBus().send(QDBusMessage::createMethodCall(s_locatorService, s_locatorPath, s_locatorInterface, method));
++    const QDBusMessage message = QDBusMessage::createMethodCall(s_locatorService, s_locatorPath, s_locatorInterface, method);
++    auto *watcher = new QDBusPendingCallWatcher(QDBusConnection::sessionBus().asyncCall(message), this);
++    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this, method](QDBusPendingCallWatcher *call) {
++        call->deleteLater();
++        const QDBusPendingReply<> reply = *call;
++        // Only what asks for the names is an error the person should hear of; hiding what is not there is not
++        if (reply.isError() && method == u"show"_s && m_timer.isActive()) {
++            setErrorString(reply.error().message());
++        } else if (!reply.isError() && method == u"show"_s) {
++            setErrorString(QString());
++        }
++    });
+ }
+diff --git a/kcm/viewoptions.h b/kcm/viewoptions.h
+index b774caf7..4824f09a 100644
+--- a/kcm/viewoptions.h
++++ b/kcm/viewoptions.h
+@@ -23,6 +23,7 @@ class ViewOptions : public QObject
+     Q_PROPERTY(bool showScreenNames READ showScreenNames WRITE setShowScreenNames NOTIFY showScreenNamesChanged)
+     Q_PROPERTY(bool wheelPans READ wheelPans WRITE setWheelPans NOTIFY wheelPansChanged)
+     Q_PROPERTY(bool active READ isActive WRITE setActive NOTIFY activeChanged)
++    Q_PROPERTY(QString errorString READ errorString NOTIFY errorStringChanged)
+ 
+ public:
+     explicit ViewOptions(QObject *parent = nullptr);
+@@ -38,20 +39,26 @@ public:
+     bool isActive() const;
+     void setActive(bool active);
+ 
++    // Why the names cannot be shown, when KWin says so; empty otherwise
++    QString errorString() const;
++
+     static constexpr int refreshInterval = 2000;
+ 
+ Q_SIGNALS:
+     void showScreenNamesChanged();
+     void wheelPansChanged();
+     void activeChanged();
++    void errorStringChanged();
+ 
+ private:
+     void updateNames();
+     void sendToKWin(const QString &method);
++    void setErrorString(const QString &errorString);
+ 
+     QTimer m_timer;
+     bool m_showScreenNames = false;
+     bool m_wheelPans = false;
+     bool m_active = false;
+     bool m_shown = false;
++    QString m_errorString;
+ };

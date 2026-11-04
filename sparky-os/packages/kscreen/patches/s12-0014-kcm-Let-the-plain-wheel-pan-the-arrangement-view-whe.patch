@@ -1,0 +1,78 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 3 Nov 2026 23:03:38 -0300
+Subject: [PATCH 14/19] kcm: Let the plain wheel pan the arrangement view when
+ it is chosen
+
+A Wheel Pans the View item in the View menu makes a notch of the wheel over the view move
+the arrangement sixty pixels, up and down, sideways with Shift or with a sideways wheel, as
+the wheel scrolls the view in wdisplays. Ctrl and the wheel still zoom. The choice is kept
+in kcm_kscreenrc and is off until the person switches it on, so the wheel does nothing over
+the view until then, as before.
+
+Assisted-by: Claude Sonnet 5.5
+---
+ kcm/ui/ScreenView.qml | 29 +++++++++++++++++++++++++++++
+ kcm/ui/main.qml       |  9 +++++++++
+ 2 files changed, 38 insertions(+)
+
+diff --git a/kcm/ui/ScreenView.qml b/kcm/ui/ScreenView.qml
+index 61993c2d..7f4151a6 100644
+--- a/kcm/ui/ScreenView.qml
++++ b/kcm/ui/ScreenView.qml
+@@ -90,6 +90,35 @@ QQC2.ScrollView {
+         }
+     }
+ 
++    // The plain wheel pans the view when the person chose it: a notch moves it sixty pixels, Shift or a
++    // sideways wheel move it sideways
++    readonly property int wheelPanStep: 60
++
++    function panByWheel(event, sideways) {
++        const horizontal = sideways ? event.angleDelta.y : event.angleDelta.x;
++        const vertical = sideways ? 0 : event.angleDelta.y;
++        pan = Qt.point(pan.x + horizontal / 120 * wheelPanStep, pan.y + vertical / 120 * wheelPanStep);
++    }
++
++    WheelHandler {
++        enabled: kcm.viewOptions.wheelPans
++        acceptedModifiers: Qt.NoModifier
++        onWheel: event => screenView.panByWheel(event, false)
++    }
++
++    WheelHandler {
++        enabled: kcm.viewOptions.wheelPans
++        orientation: Qt.Horizontal
++        acceptedModifiers: Qt.NoModifier
++        onWheel: event => screenView.panByWheel(event, false)
++    }
++
++    WheelHandler {
++        enabled: kcm.viewOptions.wheelPans
++        acceptedModifiers: Qt.ShiftModifier
++        onWheel: event => screenView.panByWheel(event, true)
++    }
++
+     // Drag the empty arrangement, or anywhere with the middle button, to pan
+     DragHandler {
+         id: panHandler
+diff --git a/kcm/ui/main.qml b/kcm/ui/main.qml
+index fd59bd80..5ba9ebf0 100644
+--- a/kcm/ui/main.qml
++++ b/kcm/ui/main.qml
+@@ -477,6 +477,15 @@ KCM.AbstractKCM {
+                             onTriggered: kcm.screenContents.shown = checked
+                         }
+                     }
++                    QQC2.MenuItem {
++                        action: QQC2.Action {
++                            objectName: "wheelPansAction"
++                            text: i18nc("@option:check The mouse wheel moves the view of the screen arrangement", "Wheel Pans the View")
++                            checkable: true
++                            checked: kcm.viewOptions.wheelPans
++                            onTriggered: kcm.viewOptions.wheelPans = checked
++                        }
++                    }
+                 }
+             }
+ 

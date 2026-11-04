@@ -1,0 +1,211 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 3 Nov 2026 22:55:46 -0300
+Subject: [PATCH 09/19] tests: Expect custom modes in the settings of a screen
+
+libkscreen carries custom modes and KWin makes them, but only kscreen-doctor asks for
+one. The page should list the custom modes of a screen, add one from a width, a height
+and a refresh rate, with reduced blanking if wanted, remove one, apply them to KWin, and
+offer only what the screen's compositor can do.
+
+Assisted-by: Claude Sonnet 5.5
+---
+ tests/arrangementview.cpp | 67 ++++++++++++++++++++++++++++
+ tests/outputmenus.cpp     | 92 +++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 159 insertions(+)
+
+diff --git a/tests/arrangementview.cpp b/tests/arrangementview.cpp
+index b08ed265..3f6871c4 100644
+--- a/tests/arrangementview.cpp
++++ b/tests/arrangementview.cpp
+@@ -71,6 +71,7 @@ private Q_SLOTS:
+     void testFlipReachesKWin();
+     void testPositionFieldsReachKWin();
+     void testPhysicalSizeShown();
++    void testCustomModeReachesKWin();
+ 
+ private:
+     struct Screen {
+@@ -523,6 +524,72 @@ void ArrangementViewTest::testPhysicalSizeShown()
+     capture(u"physical-size"_s, QJsonObject{{u"screen"_s, name}, {u"size"_s, expected}});
+ }
+ 
++static bool hasMode(const QJsonObject &output, const QSize &size)
++{
++    const QJsonArray modes = output.value(u"modes"_s).toArray();
++    return std::any_of(modes.cbegin(), modes.cend(), [&size](const QJsonValue &mode) {
++        const QJsonObject modeSize = mode.toObject().value(u"size"_s).toObject();
++        return modeSize.value(u"width"_s).toInt() == size.width() && modeSize.value(u"height"_s).toInt() == size.height();
++    });
++}
++
++void ArrangementViewTest::testCustomModeReachesKWin()
++{
++    QObject *toggle = findObject(u"customModesToggle"_s);
++    QVERIFY2(toggle, "no custom modes in the settings of the screen");
++    const QString name = evaluate(qobject_cast<QQuickItem *>(toggle), u"element.name"_s).toString();
++    int row = -1;
++    for (const Screen &screen : screens()) {
++        if (screen.name == name) {
++            row = screen.row;
++        }
++    }
++    QVERIFY(row >= 0);
++    const QSize custom(1000, 700);
++    QVERIFY2(!hasMode(doctorOutput(name), custom), "the screen has a mode of the size already");
++    QCOMPARE(modelValue(row, "customModes").toStringList().size(), 0);
++
++    activate(toggle);
++    QObject *width = findObject(u"customModeWidthField"_s);
++    QObject *height = findObject(u"customModeHeightField"_s);
++    QObject *refresh = findObject(u"customModeRefreshField"_s);
++    QObject *add = findObject(u"customModeAddButton"_s);
++    QVERIFY2(width && height && refresh && add, "no fields for a custom mode");
++    const auto enter = [this](QObject *field, const QString &text) {
++        auto *item = qobject_cast<QQuickItem *>(field);
++        item->forceActiveFocus(Qt::TabFocusReason);
++        QTest::keyClick(m_window.get(), Qt::Key_A, Qt::ControlModifier);
++        type(text);
++        QTest::keyClick(m_window.get(), Qt::Key_Return);
++        QTest::qWait(50);
++    };
++    enter(width, u"1000"_s);
++    enter(height, u"700"_s);
++    enter(refresh, u"60"_s);
++    activate(add);
++    QCOMPARE(modelValue(row, "customModes").toStringList().size(), 1);
++    capture(u"custom-mode-added"_s, QJsonObject{{u"screen"_s, name}, {u"mode"_s, u"1000x700"_s}});
++    apply();
++    // KWin makes the mode and lists it
++    QTRY_VERIFY_WITH_TIMEOUT(hasMode(doctorOutput(name), custom), 10000);
++
++    reload();
++    QCOMPARE(modelValue(row, "customModes").toStringList().size(), 1);
++    const QStringList resolutions = modelValue(row, "resolutions").toStringList();
++    QVERIFY2(std::any_of(resolutions.cbegin(), resolutions.cend(), [](const QString &text) {
++                 return text.contains(u"1000"_s) && text.contains(u"700"_s);
++             }),
++             qPrintable(resolutions.join(u", "_s)));
++
++    // and the mode goes again
++    QObject *remove = findObject(u"customModeRemoveButton"_s);
++    QVERIFY2(remove, "no way to remove a custom mode");
++    activate(remove);
++    QCOMPARE(modelValue(row, "customModes").toStringList().size(), 0);
++    apply();
++    QTRY_VERIFY_WITH_TIMEOUT(!hasMode(doctorOutput(name), custom), 10000);
++}
++
+ void ArrangementViewTest::testScreenContentsFollowBattery()
+ {
+     if (qEnvironmentVariableIsEmpty("KSCREEN_TEST_UPOWER_MOCK")) {
+diff --git a/tests/outputmenus.cpp b/tests/outputmenus.cpp
+index cf40f620..b84bbec4 100644
+--- a/tests/outputmenus.cpp
++++ b/tests/outputmenus.cpp
+@@ -64,6 +64,33 @@ class OutputMenusTest : public QObject
+         return model->roleNames().key(QByteArray(name), -1);
+     }
+ 
++    static bool addCustomMode(QAbstractItemModel *model, int row, int width, int height, double refresh, bool reduced)
++    {
++        bool done = false;
++        const bool found = QMetaObject::invokeMethod(model,
++                                                     "addCustomMode",
++                                                     Q_RETURN_ARG(bool, done),
++                                                     Q_ARG(int, row),
++                                                     Q_ARG(int, width),
++                                                     Q_ARG(int, height),
++                                                     Q_ARG(double, refresh),
++                                                     Q_ARG(bool, reduced));
++        if (!found) {
++            QTest::qFail("no addCustomMode method", __FILE__, __LINE__);
++        }
++        return done;
++    }
++
++    static bool removeCustomMode(QAbstractItemModel *model, int row, int index)
++    {
++        bool done = false;
++        const bool found = QMetaObject::invokeMethod(model, "removeCustomMode", Q_RETURN_ARG(bool, done), Q_ARG(int, row), Q_ARG(int, index));
++        if (!found) {
++            QTest::qFail("no removeCustomMode method", __FILE__, __LINE__);
++        }
++        return done;
++    }
++
+ private Q_SLOTS:
+     void initTestCase()
+     {
+@@ -223,6 +250,71 @@ private Q_SLOTS:
+         QVERIFY(model->setData(model->index(0, 0), QVariant::fromValue(KScreen::Output::Left), role(model, "rotation")));
+         QCOMPARE(model->data(model->index(0, 0), role(model, "physicalSize")).toSize(), QSize(527, 296));
+     }
++
++
++    void customModesAreAddedAndRemoved()
++    {
++        ConfigHandler handler;
++        Setup setup;
++        setup.capabilities = KScreen::Output::Capability::CustomModes;
++        auto output = configure(handler, setup);
++        auto model = handler.outputModel();
++        const int custom = role(model, "customModes");
++        QVERIFY2(custom >= 0, "no customModes role");
++        const auto row = model->index(0, 0);
++        QCOMPARE(model->data(row, custom).toStringList().size(), 0);
++
++        QSignalSpy dirty(&handler, &ConfigHandler::needsSaveChecked);
++        QVERIFY(addCustomMode(model, 0, 1000, 700, 60.0, false));
++        QCOMPARE(output->customModes().size(), 1);
++        QCOMPARE(output->customModes().first().size, QSize(1000, 700));
++        QCOMPARE(output->customModes().first().refreshRate, 60.0f);
++        QVERIFY(output->customModes().first().flags & KScreen::ModeInfo::Flag::Custom);
++        QVERIFY(!(output->customModes().first().flags & KScreen::ModeInfo::Flag::ReducedBlanking));
++        QCOMPARE(model->data(row, custom).toStringList().size(), 1);
++        QVERIFY2(model->data(row, custom).toStringList().first().contains(QStringLiteral("1000")), "the list names the mode");
++        QVERIFY(!dirty.isEmpty());
++        QVERIFY2(dirty.last().first().toBool(), "a new custom mode is something to apply");
++
++        QVERIFY(addCustomMode(model, 0, 1920, 1080, 144.0, true));
++        QCOMPARE(output->customModes().size(), 2);
++        QVERIFY(output->customModes().last().flags & KScreen::ModeInfo::Flag::ReducedBlanking);
++
++        // a custom mode that is already there is no new one
++        QVERIFY(!addCustomMode(model, 0, 1000, 700, 60.0, false));
++        QCOMPARE(output->customModes().size(), 2);
++
++        QVERIFY(removeCustomMode(model, 0, 0));
++        QCOMPARE(output->customModes().size(), 1);
++        QCOMPARE(output->customModes().first().size, QSize(1920, 1080));
++        QVERIFY(!removeCustomMode(model, 0, 5));
++        QVERIFY(!removeCustomMode(model, 0, -1));
++        QVERIFY(removeCustomMode(model, 0, 0));
++        QVERIFY(!dirty.last().first().toBool());
++    }
++
++    void customModesNeedTheCapabilityAndSaneNumbers()
++    {
++        {
++            // KWin without custom modes: nothing to add
++            ConfigHandler handler;
++            auto output = configure(handler, {});
++            QVERIFY(!addCustomMode(handler.outputModel(), 0, 1000, 700, 60.0, false));
++            QCOMPARE(output->customModes().size(), 0);
++        }
++        ConfigHandler handler;
++        Setup setup;
++        setup.capabilities = KScreen::Output::Capability::CustomModes;
++        auto output = configure(handler, setup);
++        auto model = handler.outputModel();
++        QVERIFY(!addCustomMode(model, 0, 0, 700, 60.0, false));
++        QVERIFY(!addCustomMode(model, 0, 1000, -1, 60.0, false));
++        QVERIFY(!addCustomMode(model, 0, 100000, 700, 60.0, false));
++        QVERIFY(!addCustomMode(model, 0, 1000, 700, 0.0, false));
++        QVERIFY(!addCustomMode(model, 0, 1000, 700, 5000.0, false));
++        QVERIFY(!addCustomMode(model, 3, 1000, 700, 60.0, false));
++        QCOMPARE(output->customModes().size(), 0);
++    }
+ };
+ 
+ QTEST_MAIN(OutputMenusTest)

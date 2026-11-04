@@ -1,0 +1,330 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 3 Nov 2026 22:45:51 -0300
+Subject: [PATCH 03/19] tests: Expect flipped transforms in the Display
+ Settings
+
+libkscreen has the four flipped transforms of wl_output (a mirroring about the vertical
+axis, then the turn) and KWin applies them, but the page only offers the four turns.
+The model should show the mirroring apart from the turn, keep it when the screen is
+turned, and the change should reach KWin.
+
+Assisted-by: Claude Sonnet 5.5
+---
+ tests/CMakeLists.txt      |   7 ++
+ tests/arrangementview.cpp |  99 +++++++++++++++++++++++++-
+ tests/outputmenus.cpp     | 145 ++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 250 insertions(+), 1 deletion(-)
+ create mode 100644 tests/outputmenus.cpp
+
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+index d7e33ebc..f6cdd253 100644
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -54,3 +54,10 @@ if(HAVE_KSCREEN_STEREO_SEQUENTIAL_DISPLAYPORT)
+         LINK_LIBRARIES Qt6::Test Qt6::Gui Qt6::DBus KF6::Screen KF6::I18n KF6::ConfigCore KF6::CoreAddons kscreen_common)
+     target_include_directories(sequentialdisplayport PRIVATE ${CMAKE_BINARY_DIR}/kcm)
+ endif()
++
++ecm_add_test(outputmenus.cpp
++    ../kcm/output_model.cpp ../kcm/config_handler.cpp
++    ${CMAKE_BINARY_DIR}/kcm/kcm_screen_debug.cpp
++    TEST_NAME outputmenus
++    LINK_LIBRARIES Qt6::Test Qt6::Gui Qt6::DBus KF6::Screen KF6::I18n KF6::ConfigCore KF6::CoreAddons kscreen_common)
++target_include_directories(outputmenus PRIVATE ${CMAKE_BINARY_DIR}/kcm)
+diff --git a/tests/arrangementview.cpp b/tests/arrangementview.cpp
+index a599e9b7..a724c7f7 100644
+--- a/tests/arrangementview.cpp
++++ b/tests/arrangementview.cpp
+@@ -34,6 +34,7 @@
+ #include <QQmlEngine>
+ #include <QQmlExpression>
+ #include <QQuickItem>
++#include <QProcess>
+ #include <QQuickWindow>
+ #include <QTest>
+ #include <QTimer>
+@@ -64,6 +65,7 @@ private Q_SLOTS:
+     void testScreenContentsShown();
+     void testScreenContentsRefused();
+     void testScreenContentsShowOneEye();
++    void testFlipReachesKWin();
+ 
+ private:
+     struct Screen {
+@@ -84,6 +86,10 @@ private:
+     void wheel(QPointF at, int angle, Qt::KeyboardModifiers modifiers);
+     void capture(const QString &name, const QJsonObject &expectation = {});
+     void reload();
++    QVariant modelValue(int row, const char *role) const;
++    QJsonObject doctorOutput(const QString &name) const;
++    void activate(QObject *control);
++    void apply();
+ 
+     KQuickConfigModule *m_module = nullptr;
+     std::unique_ptr<QQuickWindow> m_window;
+@@ -241,7 +247,13 @@ QPoint ArrangementViewTest::modelPosition(int row) const
+ 
+ QObject *ArrangementViewTest::findObject(const QString &objectName) const
+ {
+-    return m_module->mainUi()->findChild<QObject *>(objectName);
++    if (QObject *object = m_module->mainUi()->findChild<QObject *>(objectName)) {
++        return object;
++    }
++    // Controls made by a Loader or a delegate hang from the scene, not from the QObject tree
++    return findItem(m_module->mainUi(), [&objectName](QQuickItem *item) {
++        return item->objectName() == objectName;
++    });
+ }
+ 
+ QPointF ArrangementViewTest::emptyPoint() const
+@@ -319,6 +331,47 @@ void ArrangementViewTest::capture(const QString &name, const QJsonObject &expect
+     file.write(QJsonDocument(record).toJson());
+ }
+ 
++QVariant ArrangementViewTest::modelValue(int row, const char *role) const
++{
++    auto model = m_module->property("outputModel").value<QAbstractItemModel *>();
++    return model->data(model->index(row, 0), model->roleNames().key(role));
++}
++
++// What KWin holds for an output, as kscreen-doctor reads it from the compositor
++QJsonObject ArrangementViewTest::doctorOutput(const QString &name) const
++{
++    QProcess doctor;
++    doctor.start(u"kscreen-doctor"_s, {u"-j"_s});
++    if (!doctor.waitForFinished(15000)) {
++        return {};
++    }
++    const QJsonDocument document = QJsonDocument::fromJson(doctor.readAllStandardOutput());
++    const QJsonArray outputs = document.object().value(u"outputs"_s).toArray();
++    for (const QJsonValue &value : outputs) {
++        if (value.toObject().value(u"name"_s).toString() == name) {
++            return value.toObject();
++        }
++    }
++    return {};
++}
++
++// Operates a control with the keyboard, as a person would
++void ArrangementViewTest::activate(QObject *control)
++{
++    auto *item = qobject_cast<QQuickItem *>(control);
++    QVERIFY(item);
++    item->forceActiveFocus(Qt::TabFocusReason);
++    QTest::keyClick(m_window.get(), Qt::Key_Space);
++    QTest::qWait(100);
++}
++
++// Applies what the page holds to the compositor, and waits for the page to take KWin's answer
++void ArrangementViewTest::apply()
++{
++    m_module->save();
++    QTest::qWait(500);
++}
++
+ void ArrangementViewTest::testViewMenuHoldsItsItems()
+ {
+     // Zoom In, Zoom Out, Fit All, a separator and Show Screen Contents are the menu's own items,
+@@ -333,6 +386,50 @@ void ArrangementViewTest::testViewMenuHoldsItsItems()
+     QVERIFY2(count >= 5, qPrintable(u"the View menu holds %1 items"_s.arg(count)));
+ }
+ 
++void ArrangementViewTest::testFlipReachesKWin()
++{
++    QObject *flip = findObject(u"flipCheckBox"_s);
++    QVERIFY2(flip, "no flip control in the orientation settings");
++    const QString name = evaluate(qobject_cast<QQuickItem *>(flip), u"element.name"_s).toString();
++    QVERIFY(!name.isEmpty());
++    int row = -1;
++    for (const Screen &screen : screens()) {
++        if (screen.name == name) {
++            row = screen.row;
++        }
++    }
++    QVERIFY(row >= 0);
++    QCOMPARE(doctorOutput(name).value(u"rotation"_s).toInt(), 1);
++
++    activate(flip);
++    QCOMPARE(modelValue(row, "flipped").toBool(), true);
++    // the screen in the view says so
++    QList<QQuickItem *> indicators;
++    findItems(m_view, [](QQuickItem *item) {
++        return item->objectName() == u"flippedIndicator"_s;
++    }, indicators);
++    int shown = 0;
++    for (QQuickItem *indicator : indicators) {
++        shown += indicator->isVisible() ? 1 : 0;
++    }
++    QCOMPARE(shown, 1);
++    capture(u"flipped-screen"_s, QJsonObject{{u"flipped"_s, name}});
++    apply();
++    QTRY_COMPARE_WITH_TIMEOUT(doctorOutput(name).value(u"rotation"_s).toInt(), 16, 10000);
++
++    // turning the screen keeps the mirroring
++    reload();
++    flip = findObject(u"flipCheckBox"_s);
++    QVERIFY(flip);
++    QCOMPARE(flip->property("checked").toBool(), true);
++    QCOMPARE(modelValue(row, "rotation").toInt(), 1);
++
++    activate(flip);
++    QCOMPARE(modelValue(row, "flipped").toBool(), false);
++    apply();
++    QTRY_COMPARE_WITH_TIMEOUT(doctorOutput(name).value(u"rotation"_s).toInt(), 1, 10000);
++}
++
+ void ArrangementViewTest::testScreenContentsFollowBattery()
+ {
+     if (qEnvironmentVariableIsEmpty("KSCREEN_TEST_UPOWER_MOCK")) {
+diff --git a/tests/outputmenus.cpp b/tests/outputmenus.cpp
+new file mode 100644
+index 00000000..c5f11a78
+--- /dev/null
++++ b/tests/outputmenus.cpp
+@@ -0,0 +1,145 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++#include "../kcm/config_handler.h"
++#include "../kcm/output_model.h"
++
++#include <KLocalizedString>
++#include <KScreen/Screen>
++#include <QMetaObject>
++#include <QSignalSpy>
++#include <QStandardPaths>
++#include <QTest>
++
++// The output model behind the extra menus of the Display Settings page: flipped transforms, X and Y
++// position, the physical size and custom modes. The roles and methods are looked up by their QML names,
++// so the test builds against a model without them and fails there.
++class OutputMenusTest : public QObject
++{
++    Q_OBJECT
++
++    struct Setup {
++        QSize modeSize = QSize(1920, 1080);
++        KScreen::Output::Rotation rotation = KScreen::Output::None;
++        QSize sizeMm = QSize(-1, -1);
++        KScreen::Output::Capabilities capabilities;
++        int outputs = 1;
++    };
++
++    static KScreen::OutputPtr configure(ConfigHandler &handler, const Setup &setup)
++    {
++        KScreen::ConfigPtr config(new KScreen::Config);
++        config->setScreen(KScreen::ScreenPtr(new KScreen::Screen));
++        config->setSupportedFeatures(KScreen::Config::Feature::PerOutputScaling);
++        KScreen::OutputPtr first;
++        for (int i = 0; i < setup.outputs; ++i) {
++            KScreen::ModePtr mode(new KScreen::Mode);
++            mode->setId(QStringLiteral("m%1").arg(i));
++            mode->setSize(setup.modeSize);
++            mode->setRefreshRate(60);
++            KScreen::OutputPtr output(new KScreen::Output);
++            output->setId(i + 1);
++            output->setName(QStringLiteral("HDMI-A-%1").arg(i + 1));
++            output->setConnected(true);
++            output->setEnabled(true);
++            output->setCapabilities(setup.capabilities);
++            output->setSizeMm(setup.sizeMm);
++            KScreen::ModeList list;
++            list.insert(mode->id(), mode);
++            output->setModes(list);
++            output->setCurrentModeId(mode->id());
++            output->setRotation(setup.rotation);
++            output->setPos(QPoint(i * setup.modeSize.width(), 0));
++            output->setSize(setup.modeSize);
++            output->setExplicitLogicalSize(setup.modeSize);
++            config->addOutput(output);
++            if (!first) {
++                first = output;
++            }
++        }
++        handler.setConfig(config);
++        return first;
++    }
++
++    static int role(QAbstractItemModel *model, const char *name)
++    {
++        return model->roleNames().key(QByteArray(name), -1);
++    }
++
++private Q_SLOTS:
++    void initTestCase()
++    {
++        QStandardPaths::setTestModeEnabled(true);
++        qputenv("KSCREEN_BACKEND", "Fake");
++        KLocalizedString::setApplicationDomain("kcm_kscreen");
++        KLocalizedString::setLanguages({QStringLiteral("en_US")});
++    }
++
++    void flippingKeepsTheRotation()
++    {
++        ConfigHandler handler;
++        auto output = configure(handler, {});
++        auto model = handler.outputModel();
++        const auto row = model->index(0, 0);
++        const int flipped = role(model, "flipped");
++        QVERIFY2(flipped >= 0, "no flipped role");
++        const int rotation = role(model, "rotation");
++        QCOMPARE(model->data(row, flipped).toBool(), false);
++
++        QSignalSpy dirty(&handler, &ConfigHandler::needsSaveChecked);
++        QVERIFY(model->setData(row, true, flipped));
++        QCOMPARE(output->rotation(), KScreen::Output::Flipped);
++        QCOMPARE(model->data(row, flipped).toBool(), true);
++        // the rotation buttons keep meaning the turn alone
++        QCOMPARE(model->data(row, rotation).toInt(), int(KScreen::Output::None));
++        QVERIFY(!dirty.isEmpty());
++        QVERIFY(dirty.last().first().toBool());
++
++        QVERIFY(model->setData(row, QVariant::fromValue(KScreen::Output::Left), rotation));
++        QCOMPARE(output->rotation(), KScreen::Output::Flipped90);
++        QCOMPARE(model->data(row, flipped).toBool(), true);
++        QCOMPARE(model->data(row, rotation).toInt(), int(KScreen::Output::Left));
++
++        QVERIFY(model->setData(row, QVariant::fromValue(KScreen::Output::Inverted), rotation));
++        QCOMPARE(output->rotation(), KScreen::Output::Flipped180);
++        QVERIFY(model->setData(row, QVariant::fromValue(KScreen::Output::Right), rotation));
++        QCOMPARE(output->rotation(), KScreen::Output::Flipped270);
++
++        QVERIFY(model->setData(row, false, flipped));
++        QCOMPARE(output->rotation(), KScreen::Output::Right);
++        QCOMPARE(model->data(row, flipped).toBool(), false);
++        QVERIFY(model->setData(row, QVariant::fromValue(KScreen::Output::None), rotation));
++        QVERIFY(!dirty.last().first().toBool());
++    }
++
++    void anOutputKWinReportsFlippedShowsItsFlip()
++    {
++        ConfigHandler handler;
++        Setup setup;
++        setup.rotation = KScreen::Output::Flipped270;
++        configure(handler, setup);
++        auto model = handler.outputModel();
++        const auto row = model->index(0, 0);
++        QVERIFY(role(model, "flipped") >= 0);
++        QCOMPARE(model->data(row, role(model, "flipped")).toBool(), true);
++        QCOMPARE(model->data(row, role(model, "rotation")).toInt(), int(KScreen::Output::Right));
++    }
++
++    void aQuarterTurnAndAFlipSwapTheSize()
++    {
++        ConfigHandler handler;
++        auto output = configure(handler, {});
++        auto model = handler.outputModel();
++        const auto row = model->index(0, 0);
++        const int flipped = role(model, "flipped");
++        QVERIFY(flipped >= 0);
++        QCOMPARE(model->data(row, role(model, "size")).toSize(), QSize(1920, 1080));
++        QVERIFY(model->setData(row, true, flipped));
++        QCOMPARE(model->data(row, role(model, "size")).toSize(), QSize(1920, 1080));
++        QVERIFY(model->setData(row, QVariant::fromValue(KScreen::Output::Left), role(model, "rotation")));
++        QCOMPARE(output->rotation(), KScreen::Output::Flipped90);
++        QCOMPARE(model->data(row, role(model, "size")).toSize(), QSize(1080, 1920));
++    }
++};
++
++QTEST_MAIN(OutputMenusTest)
++
++#include "outputmenus.moc"

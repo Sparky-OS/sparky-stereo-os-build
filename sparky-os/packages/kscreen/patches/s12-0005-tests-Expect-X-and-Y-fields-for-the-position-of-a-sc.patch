@@ -1,0 +1,163 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 3 Nov 2026 22:50:09 -0300
+Subject: [PATCH 05/19] tests: Expect X and Y fields for the position of a
+ screen
+
+The page places a screen only by dragging it or by the arrow keys. Typed numbers should
+place it exactly, without snapping, count from the top left corner of all the screens
+like KWin's own coordinates, and reach KWin.
+
+Assisted-by: Claude Sonnet 5.5
+---
+ tests/arrangementview.cpp | 53 +++++++++++++++++++++++++++++++++++++++
+ tests/outputmenus.cpp     | 51 +++++++++++++++++++++++++++++++++++++
+ 2 files changed, 104 insertions(+)
+
+diff --git a/tests/arrangementview.cpp b/tests/arrangementview.cpp
+index a724c7f7..2908a912 100644
+--- a/tests/arrangementview.cpp
++++ b/tests/arrangementview.cpp
+@@ -66,6 +66,7 @@ private Q_SLOTS:
+     void testScreenContentsRefused();
+     void testScreenContentsShowOneEye();
+     void testFlipReachesKWin();
++    void testPositionFieldsReachKWin();
+ 
+ private:
+     struct Screen {
+@@ -89,6 +90,7 @@ private:
+     QVariant modelValue(int row, const char *role) const;
+     QJsonObject doctorOutput(const QString &name) const;
+     void activate(QObject *control);
++    void type(const QString &text);
+     void apply();
+ 
+     KQuickConfigModule *m_module = nullptr;
+@@ -365,6 +367,13 @@ void ArrangementViewTest::activate(QObject *control)
+     QTest::qWait(100);
+ }
+ 
++void ArrangementViewTest::type(const QString &text)
++{
++    for (const QChar character : text) {
++        QTest::keyClick(m_window.get(), character.toLatin1());
++    }
++}
++
+ // Applies what the page holds to the compositor, and waits for the page to take KWin's answer
+ void ArrangementViewTest::apply()
+ {
+@@ -430,6 +439,50 @@ void ArrangementViewTest::testFlipReachesKWin()
+     QTRY_COMPARE_WITH_TIMEOUT(doctorOutput(name).value(u"rotation"_s).toInt(), 1, 10000);
+ }
+ 
++void ArrangementViewTest::testPositionFieldsReachKWin()
++{
++    QObject *xField = findObject(u"positionXField"_s);
++    QObject *yField = findObject(u"positionYField"_s);
++    QVERIFY2(xField && yField, "no X and Y fields for the position of the screen");
++    const QString name = evaluate(qobject_cast<QQuickItem *>(xField), u"element.name"_s).toString();
++    int row = -1;
++    for (const Screen &screen : screens()) {
++        if (screen.name == name) {
++            row = screen.row;
++        }
++    }
++    QVERIFY(row >= 0);
++    // the fields hold the coordinates KWin holds
++    const QJsonObject before = doctorOutput(name).value(u"pos"_s).toObject();
++    QCOMPARE(xField->property("value").toInt(), before.value(u"x"_s).toInt());
++    QCOMPARE(yField->property("value").toInt(), before.value(u"y"_s).toInt());
++
++    // type 120 into Y
++    auto *item = qobject_cast<QQuickItem *>(yField);
++    item->forceActiveFocus(Qt::TabFocusReason);
++    QTest::keyClick(m_window.get(), Qt::Key_A, Qt::ControlModifier);
++    type(u"120"_s);
++    QTest::keyClick(m_window.get(), Qt::Key_Return);
++    QTest::qWait(100);
++    QCOMPARE(modelValue(row, "normalizedPosition").toPoint().y(), 120);
++    capture(u"position-typed"_s, QJsonObject{{u"moved"_s, name}, {u"y"_s, 120}});
++    apply();
++    QTRY_COMPARE_WITH_TIMEOUT(doctorOutput(name).value(u"pos"_s).toObject().value(u"y"_s).toInt(), 120, 10000);
++    QCOMPARE(doctorOutput(name).value(u"pos"_s).toObject().value(u"x"_s).toInt(), before.value(u"x"_s).toInt());
++
++    reload();
++    yField = findObject(u"positionYField"_s);
++    QCOMPARE(yField->property("value").toInt(), 120);
++    item = qobject_cast<QQuickItem *>(yField);
++    item->forceActiveFocus(Qt::TabFocusReason);
++    QTest::keyClick(m_window.get(), Qt::Key_A, Qt::ControlModifier);
++    type(QString::number(before.value(u"y"_s).toInt()));
++    QTest::keyClick(m_window.get(), Qt::Key_Return);
++    QTest::qWait(100);
++    apply();
++    QTRY_COMPARE_WITH_TIMEOUT(doctorOutput(name).value(u"pos"_s).toObject().value(u"y"_s).toInt(), before.value(u"y"_s).toInt(), 10000);
++}
++
+ void ArrangementViewTest::testScreenContentsFollowBattery()
+ {
+     if (qEnvironmentVariableIsEmpty("KSCREEN_TEST_UPOWER_MOCK")) {
+diff --git a/tests/outputmenus.cpp b/tests/outputmenus.cpp
+index c5f11a78..e426c009 100644
+--- a/tests/outputmenus.cpp
++++ b/tests/outputmenus.cpp
+@@ -138,6 +138,57 @@ private Q_SLOTS:
+         QCOMPARE(output->rotation(), KScreen::Output::Flipped90);
+         QCOMPARE(model->data(row, role(model, "size")).toSize(), QSize(1080, 1920));
+     }
++    void aScreenGoesWhereTheNumbersSay()
++    {
++        ConfigHandler handler;
++        Setup setup;
++        setup.outputs = 2;
++        auto first = configure(handler, setup);
++        auto model = handler.outputModel();
++        const int normalized = role(model, "normalizedPosition");
++        QVERIFY(normalized >= 0);
++        const auto positionOf = [&](int row) {
++            return model->data(model->index(row, 0), normalized).toPoint();
++        };
++        QCOMPARE(positionOf(0), QPoint(0, 0));
++        QCOMPARE(positionOf(1), QPoint(1920, 0));
++
++        QSignalSpy dirty(&handler, &ConfigHandler::needsSaveChecked);
++        bool done = false;
++        QVERIFY2(QMetaObject::invokeMethod(model, "setNormalizedPosition", Q_RETURN_ARG(bool, done), Q_ARG(int, 1), Q_ARG(QPoint, QPoint(1920, 200))),
++                 "no setNormalizedPosition method");
++        QVERIFY(done);
++        QCOMPARE(positionOf(1), QPoint(1920, 200));
++        QCOMPARE(positionOf(0), QPoint(0, 0));
++        QCOMPARE(handler.config()->outputs().value(2)->pos(), QPoint(1920, 200));
++        QVERIFY(!dirty.isEmpty());
++        QVERIFY(dirty.last().first().toBool());
++
++        // the numbers are exact: nothing snaps the screen back to the edge of the other
++        QVERIFY(QMetaObject::invokeMethod(model, "setNormalizedPosition", Q_RETURN_ARG(bool, done), Q_ARG(int, 1), Q_ARG(QPoint, QPoint(1925, 3))));
++        QCOMPARE(positionOf(1), QPoint(1925, 3));
++        QCOMPARE(first->pos(), QPoint(0, 0));
++
++        // the place it already has is no change
++        QVERIFY(QMetaObject::invokeMethod(model, "setNormalizedPosition", Q_RETURN_ARG(bool, done), Q_ARG(int, 1), Q_ARG(QPoint, QPoint(1925, 3))));
++        QVERIFY(!done);
++    }
++
++    void positionsAreCountedFromTheTopLeftOfAllScreens()
++    {
++        ConfigHandler handler;
++        Setup setup;
++        setup.outputs = 2;
++        configure(handler, setup);
++        auto model = handler.outputModel();
++        const int normalized = role(model, "normalizedPosition");
++        bool done = false;
++        // left of the other screen: the arrangement is counted from its new top left corner
++        QVERIFY(QMetaObject::invokeMethod(model, "setNormalizedPosition", Q_RETURN_ARG(bool, done), Q_ARG(int, 1), Q_ARG(QPoint, QPoint(-100, -50))));
++        QVERIFY(done);
++        QCOMPARE(model->data(model->index(1, 0), normalized).toPoint(), QPoint(0, 0));
++        QCOMPARE(model->data(model->index(0, 0), normalized).toPoint(), QPoint(100, 50));
++    }
+ };
+ 
+ QTEST_MAIN(OutputMenusTest)
