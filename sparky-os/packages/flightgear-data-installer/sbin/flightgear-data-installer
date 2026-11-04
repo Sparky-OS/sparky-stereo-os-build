@@ -116,6 +116,12 @@ cleanup() {
 		rm -f "$PENDING.files" "$PENDING.dirs" "$PENDING.shared"
 	fi
 	[ -n "$CURL_LOG" ] && rm -f "$CURL_LOG"
+	if [ "$rc" -ne 0 ]; then
+		# a download that brought nothing leaves no part files; one that brought bytes keeps them for the next run
+		rm -f "$CACHE"/parts.*/*.failed "$CACHE"/parts.*/*.err "$CACHE"/parts.*/*.hdr "$CACHE"/parts.*/*.short 2>/dev/null || true
+		find "$CACHE" -maxdepth 2 -name 'part.*' -type f -empty -delete 2>/dev/null || true
+		rmdir "$CACHE"/parts.* 2>/dev/null || true
+	fi
 	if [ "$rc" -ne 0 ] && [ -z "$KEPT_FILE" ] && [ ! -f "$STATE/installed" ]; then
 		# a run that installed nothing leaves nothing, not even its empty folders
 		rm -f "$CACHE/lock" "$CACHE"/*.part 2>/dev/null || true
@@ -185,6 +191,8 @@ forget_ours() {
 fetch_part() {
 	local file=$1 start=$2 len=$3 have attempts=0 code rc now
 	local errf=$file.err cpid=
+	# this runs as a background job of its own: it handles every status itself
+	set +e
 	trap 'kill "$cpid" 2>/dev/null; exit 143' TERM
 	while :; do
 		have=0
@@ -211,6 +219,10 @@ fetch_part() {
 		[ -f "$file" ] && now=$(stat -c %s "$file")
 		if [ "$now" -gt "$have" ]; then
 			attempts=0
+		elif [ "$rc" -eq 0 ] || [ "$rc" -eq 33 ] || [ "$rc" -eq 36 ] || [ "$code" = 416 ]; then
+			# the server has no more bytes than it sent (or none at that place): its file is shorter than the recorded one
+			: >"$file.short"
+			return 0
 		else
 			attempts=$((attempts + 1))
 			if [ "$attempts" -ge 5 ]; then
@@ -225,7 +237,7 @@ fetch_part() {
 
 download() {
 	# leaves the parts of the data file in $PARTS, whole and in order
-	local n=$PARALLEL i start len chunk have total last=0 now cur d tty=0
+	local n=$PARALLEL i start len chunk have last=0 now cur d f tty=0 total got
 	case $PARALLEL in
 		'' | *[!0-9]*) die SETTING "$PARALLEL" ;;
 	esac
@@ -241,7 +253,8 @@ download() {
 	for ((i = 0; i < n; i++)); do
 		[ -f "$PARTS/part.$i" ] && have=$((have + $(stat -c %s "$PARTS/part.$i")))
 	done
-	rm -f "$PARTS"/*.failed "$PARTS"/*.err "$PARTS"/*.hdr
+	PARTS_N=$n
+	rm -f "$PARTS"/*.failed "$PARTS"/*.err "$PARTS"/*.hdr "$PARTS"/*.short
 	[ "$have" -ge "$SIZE" ] && return 0
 	if [ "$have" -gt 0 ]; then
 		say RESUMING "$(human "$have")" "$(human "$SIZE")"
@@ -268,9 +281,8 @@ download() {
 		done
 		if compgen -G "$PARTS/*.failed" >/dev/null; then
 			local why
-			why=$(cat "$PARTS"/*.failed | head -n 1)
+			why=$(for f in "$PARTS"/*.failed; do head -n 1 "$f"; break; done)
 			stop_workers
-			KEPT_FILE=$PARTS
 			die DOWNLOAD "$FETCH_URL" "${why:-curl}" "$CACHE" "$FILE_NAME"
 		fi
 		now=$(date +%s)
@@ -292,7 +304,12 @@ download() {
 		[ -f "$PARTS/part.$i" ] && total=$((total + $(stat -c %s "$PARTS/part.$i")))
 	done
 	if [ "$total" -ne "$SIZE" ]; then
-		KEPT_FILE=$PARTS
+		if compgen -G "$PARTS/*.short" >/dev/null; then
+			# the server's file ends before the recorded size: it is another file, said as a mismatch
+			got=$(stream_data | sha256sum | cut -d' ' -f1)
+			rm -rf "$PARTS"
+			die HASH "$got" "$SHA256"
+		fi
 		die DOWNLOAD "$FETCH_URL" "$(human "$total") of $(human "$SIZE") arrived" "$CACHE" "$FILE_NAME"
 	fi
 	return 0
@@ -367,7 +384,6 @@ install_data() {
 
 	if [ -z "$SOURCE_FILE" ]; then
 		download
-		PARTS_N=${PARTS##*parts.}
 	fi
 	say VERIFYING
 	got=$(stream_data | sha256sum | cut -d' ' -f1)

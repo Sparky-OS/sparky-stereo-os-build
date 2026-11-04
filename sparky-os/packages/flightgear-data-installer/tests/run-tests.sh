@@ -44,7 +44,7 @@ UNPACKED=$UNP
 TOP=fgdata_2024_1
 EOT
 conf() { printf 'MIRROR_URL=%s\n' "$1" >/etc/default/flightgear-data-installer; }
-tree_state() { { find "$DATA" "$STATE" "$CACHE" /usr/share/games -maxdepth 6 2>/dev/null | grep -v -e '/lock$' -e '\.txz$' -e 'cache/flightgear-data-installer$' -e 'lib/flightgear-data-installer$'; } | sort; }
+tree_state() { { find "$DATA" "$STATE" "$CACHE" /usr/share/games -maxdepth 6 2>/dev/null | grep -v -e '/lock$' -e '\.txz$' -e '/parts\.' -e 'cache/flightgear-data-installer$' -e 'lib/flightgear-data-installer$'; } | sort; }
 leftovers() { ! ls -d /usr/share/games/.flightgear-data-installer.* "$CACHE"/*.txz "$CACHE"/parts.* "$STATE"/pending.* "$STATE"/files.list "$STATE"/installed 2>/dev/null | grep -q .; }
 run() { OUTF=$W/out.txt; "$BIN" "$@" >"$OUTF" 2>&1; RC=$?; }
 rm -rf "$DATA" "$STATE" "$CACHE"
@@ -181,7 +181,7 @@ check "parallel: exit status 0 ($RC)" test "$RC" -eq 0
 check "parallel: the data is installed and the hash was checked" bash -c "[ \$(cat $DATA/version) = 2024.1.5 ] && grep -q 'Checking the file' $OUTF"
 check "parallel: four different byte ranges were asked for, covering the file" bash -c "[ \$(grep -c 'bytes=' $W/srv.log) -eq 4 ] && [ \$(grep -o 'bytes=[0-9]*' $W/srv.log | sort -u | wc -l) -eq 4 ] && grep -q 'bytes=0-' $W/srv.log && grep -q -- '-$((SIZE - 1))' $W/srv.log"
 check "parallel: the four requests overlapped in time (connections in parallel, not one after another)" bash -c "[ \$(awk '{print int(\$1*10)}' $W/srv.log | sort -u | wc -l) -le 4 ]"
-check "parallel: nothing of the download is left" leftovers
+check "parallel: nothing of the download is left" bash -c "! ls $CACHE/*.txz $CACHE/parts.* 2>/dev/null | grep -q ."
 unserve
 purge_state
 
@@ -190,7 +190,7 @@ serve cut 18444
 printf 'MIRROR_URL=https://127.0.0.1:18444/FlightGear-2024.1.5-data.txz\nPARALLEL=3\n' >/etc/default/flightgear-data-installer
 run install
 check "cut connections: exit status 0 ($RC)" test "$RC" -eq 0
-check "cut connections: installed, hash checked" test "$(cat "$DATA/version")" = 2024.1.5
+check "cut connections: installed, hash checked, nothing of the download is left" bash -c "[ \$(cat $DATA/version) = 2024.1.5 ] && ! ls $CACHE/parts.* 2>/dev/null | grep -q ."
 check "cut connections: every part was asked again from the byte it had (more requests than parts, the later ones start inside a part)" bash -c "[ \$(grep -c 'bytes=' $W/srv.log) -gt 3 ] && [ \$(grep -o 'bytes=[0-9]*' $W/srv.log | sort -u | wc -l) -gt 3 ]"
 unserve
 purge_state
@@ -210,12 +210,13 @@ serve slow 18446
 printf 'MIRROR_URL=https://127.0.0.1:18446/FlightGear-2024.1.5-data.txz\nPARALLEL=4\n' >/etc/default/flightgear-data-installer
 setsid "$BIN" install >"$W/out.txt" 2>&1 &
 pid=$!
-sleep 2.5
+sleep 4
 kill -TERM -- "-$pid" 2>/dev/null
 wait "$pid" 2>/dev/null
 got1=$(cat "$CACHE"/parts.4/part.* 2>/dev/null | wc -c)
 check "stopped run: part files stay (some bytes, not all: $got1 of $SIZE)" bash -c "[ $got1 -gt 0 ] && [ $got1 -lt $SIZE ]"
-check "stopped run: no curl is left running" bash -c "! pgrep -x curl >/dev/null"
+sleep 1
+check "stopped run: no curl is left running (zombies of a container without init do not count)" bash -c "! ps -eo stat=,comm= | awk '\$2 == \"curl\" && \$1 !~ /^Z/ { f = 1 } END { exit !f }'"
 check "stopped run: nothing is placed" test ! -e "$DATA/version"
 : >"$W/srv.log"
 run install
