@@ -2,7 +2,8 @@
 # Copyright 2026 Daniel Ramos (Capitain Jack), GPL-3.0-or-later
 # Runs only in a disposable container with the engine installed.
 set -eu
-exec python3 - "$@" <<'PY'
+HERE=$(cd "$(dirname "$0")/.." && pwd)
+exec python3 - "${1:?boot decision script}" "${2:-$HERE/share/default/sparky-stereo-vram-boost}" <<'PY'
 import json
 import os
 from pathlib import Path

@@ -367,6 +367,24 @@ QList<Problem> read(const QString &dir, bool system)
     return list;
 }
 
+QJsonArray records(const QStringList &packages)
+{
+    QJsonArray selected;
+    char *text = ssp_list_json(nullptr, nullptr);
+    if (!text) {
+        QTextStream(stderr) << "sparky-stereo-graphics: " << engineError() << '\n';
+        return selected;
+    }
+    const auto records = QJsonDocument::fromJson(QByteArray(text)).array();
+    ssp_free(text);
+    for (const auto &value : records) {
+        if (packages.contains(value.toObject().value(u"package"_s).toString())) {
+            selected.append(value);
+        }
+    }
+    return selected;
+}
+
 QList<Problem> all(const QString &root)
 {
     return read(systemDir(root), true) + read(userDir());

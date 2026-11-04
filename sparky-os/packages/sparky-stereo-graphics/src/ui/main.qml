@@ -34,6 +34,21 @@ KCM.SimpleKCM {
                     text: modelData.text
                 }
                 Flow {
+                    id: problemActions
+                    Layout.fillWidth: true
+                    spacing: Kirigami.Units.smallSpacing
+                    readonly property string problemPackage: modelData.package || ""
+                    readonly property string problemKey: modelData.key
+                    Repeater {
+                        model: modelData.actions || []
+                        delegate: QQC2.Button {
+                            required property var modelData
+                            text: modelData.text
+                            onClicked: kcm.runProblemAction(problemActions.problemPackage, problemActions.problemKey, modelData.id)
+                        }
+                    }
+                }
+                Flow {
                     id: problemGpus
                     Layout.fillWidth: true
                     visible: modelData.gpus.length > 0
@@ -50,6 +65,19 @@ KCM.SimpleKCM {
                     readonly property string problemKey: modelData.key
                 }
             }
+        }
+
+        QQC2.CheckBox {
+            objectName: "vramProtectionSwitch"
+            Layout.fillWidth: true
+            text: i18nc("@option:check", "Protect the video memory of the program in front")
+            checked: kcm.vramProtection
+            onToggled: kcm.vramProtection = checked
+        }
+        QQC2.Label {
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
+            text: i18nc("@info", "Background programs give up video memory first, and the program in front gets a higher CPU priority; changes take effect after a restart.")
         }
 
         Kirigami.Heading {
