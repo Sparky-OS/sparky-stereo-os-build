@@ -18,6 +18,11 @@
 #                                                     driver lock raises it; the file is
 #                                                     ../../apt/sparky-stereo, its one source)
 #   /etc/apt/apt.conf.d/60sparky-stereo-appstream-icons (AppStream's DEP-11 icon downloads enabled)
+#   /etc/apt/apt.conf.d/61sparky-install-downloads   (apt's JSON hook that announces install-time downloads on a metered connection, and the
+#                                                     setting Sparky::Install-Downloads::Announce; ORDER 399b)
+#   /usr/lib/sparky-stereo-apt/install-downloads, sparky_install_downloads.py and the nine languages in
+#                                                     /usr/share/sparky/sparky-stereo-apt/install-downloads/ (the one reader of the declaration:
+#                                                     apt's hook and Stereo APTus both use them)
 #   /etc/apt/apt.conf.d/00sparky-block-plain-http    (plain http:// sources refused until apt 3.3.6 is in Debian testing, ORDER 400;
 #                                                     the same file the main session wrote by hand on the station and the A10)
 # All six are conffiles (the original four since 20261031.1~sparky9~0; Debian Policy 10.7.3: "local changes must be
@@ -39,7 +44,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-$PWD}
-VERSION=${VERSION:-20261104.2~sparky9~0+lc1}
+VERSION=${VERSION:-20261104.3~sparky9~0+lc1}
 # the oldest sparky-stereo-keyring with the repository's one key (the key has not changed since; 20261016 is published)
 KEYRING_VERSION=${KEYRING_VERSION:-20261008.1~sparky9~0+lc1}
 PKG=sparky-stereo-apt
@@ -49,7 +54,12 @@ W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/apt-build.XXXXXX")
 trap 'rm -rf "${W:?}"' EXIT
 D=$W/$PKG
 mkdir -p "$D/DEBIAN" "$D/etc/apt/sources.list.d" "$D/etc/apt/preferences.d" "$D/etc/apt/apt.conf.d" "$D/usr/share/doc/$PKG"
-install -m644 "$HERE/60sparky-stereo-appstream-icons" "$HERE/00sparky-block-plain-http" "$D/etc/apt/apt.conf.d/"
+install -m644 "$HERE/60sparky-stereo-appstream-icons" "$HERE/00sparky-block-plain-http" "$HERE/61sparky-install-downloads" "$D/etc/apt/apt.conf.d/"
+mkdir -p "$D/usr/lib/$PKG" "$D/usr/share/sparky/$PKG/install-downloads" "$D/usr/bin"
+install -m755 "$HERE/install-downloads/install-downloads" "$D/usr/lib/$PKG/install-downloads"
+install -m644 "$HERE/install-downloads/sparky_install_downloads.py" "$D/usr/lib/$PKG/sparky_install_downloads.py"
+install -m644 "$HERE"/install-downloads/lang/*.json "$D/usr/share/sparky/$PKG/install-downloads/"
+ln -s "../lib/$PKG/install-downloads" "$D/usr/bin/sparky-install-downloads"
 
 cat >"$D/etc/apt/sources.list.d/sparky-stereo.sources" <<EOS
 Types: $TYPES
@@ -115,7 +125,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: apt (>= 2.9.26), sparky-apt, sparky-stereo-keyring (>= $KEYRING_VERSION), deb-multimedia-keyring
+Depends: apt (>= 2.9.26), python3, python3-apt, sparky-apt, sparky-stereo-keyring (>= $KEYRING_VERSION), deb-multimedia-keyring
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org
@@ -124,10 +134,13 @@ Description: Sparky Stereo OS apt source
   (https://repo.sparkyos.org/, codename mashtabba). The edition is built on
   SparkyLinux testing, so SparkyLinux's own repository comes with it, and on
   deb-multimedia's FFmpeg and mpv sources, so deb-multimedia's repository too.
+  It also tells, on a metered connection and before apt asks to continue, which
+  packages download data while they are installed, with the size and the source.
 EOS
 printf '%s\n' /etc/apt/sources.list.d/sparky-stereo.sources /etc/apt/sources.list.d/sparky-stereo-deb-multimedia.sources \
 	/etc/apt/preferences.d/sparky-stereo /etc/apt/preferences.d/sparky-stereo-only-ours \
-	/etc/apt/apt.conf.d/60sparky-stereo-appstream-icons /etc/apt/apt.conf.d/00sparky-block-plain-http >"$D/DEBIAN/conffiles"
+	/etc/apt/apt.conf.d/60sparky-stereo-appstream-icons /etc/apt/apt.conf.d/00sparky-block-plain-http \
+	/etc/apt/apt.conf.d/61sparky-install-downloads >"$D/DEBIAN/conffiles"
 install -m755 "$HERE/debian-scripts/preinst" "$HERE/debian-scripts/postinst" "$HERE/debian-scripts/postrm" "$D/DEBIAN/"
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT"
