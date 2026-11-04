@@ -13,8 +13,8 @@ mkdir -p "$SPARKY_STEREO_VRAM_BOOST_RUN"
 : >"$SPARKY_STEREO_VRAM_BOOST_RUN/enabled"
 printf 'decision=on\nreason=negative control\n' >"$SPARKY_STEREO_VRAM_BOOST_RUN/state"
 CONTROL
-sed 's/if \[ "$mode" = auto \] || \[ "$mode" = yes \]; then/if [ "$mode" = yes ]; then/' \
-	"$HERE/../bin/sparky-stereo-vram-boost" >"$T/amd-only"
+sed 's/if \[ "$mode" = yes \]; then/if [ "$mode" = yes ] \&\& [ "$driver" = amdgpu ]; then/' \
+    "$HERE/../bin/sparky-stereo-vram-boost" >"$T/amd-only"
 chmod +x "$T/always-on" "$T/amd-only"
 for control in always-on amd-only; do
 	if DETECT="$T/$control" bash "$HERE/detect-proof.sh" >"$T/$control.log" 2>&1; then
@@ -27,8 +27,8 @@ for control in always-on amd-only; do
 		grep -q '^FAIL no-dmem mode=auto ' "$T/$control.log"
 		grep -q '^FAIL no-region mode=auto ' "$T/$control.log"
 	else
-		grep -q '^FAIL amd-apu mode=auto ' "$T/$control.log"
-		grep -q '^FAIL intel-xe mode=auto ' "$T/$control.log"
+		grep -q '^FAIL intel-xe mode=yes ' "$T/$control.log"
+		grep -q '^FAIL nouveau mode=yes ' "$T/$control.log"
 	fi
 	echo "PASS negative control $control rejected on the required cases"
 done
