@@ -19,6 +19,8 @@ if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
 			rmdir -- "$d" 2>/dev/null || true
 		done
 	done
-	rm -rf "$S" /var/cache/flightgear-data-installer
+	# the state and the download cache: rm says by itself what it could not remove (a folder that is a mount point, for one), and the
+	# removal of the package goes on, since the data it placed is already gone
+	rm -rf "$S" /var/cache/flightgear-data-installer || true
 fi
 exit 0

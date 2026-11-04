@@ -189,7 +189,7 @@ forget_ours() {
 # release page gives 150 to 200 kB/s, so the ranges are what make the 1.75 GiB a matter of minutes (ORDER 399b measured both).
 # A part that is cut is continued from the bytes it already has, so a stopped run continues where it was.
 fetch_part() {
-	local file=$1 start=$2 len=$3 have attempts=0 code rc now
+	local file=$1 start=$2 len=$3 have attempts=0 oversize=0 code rc now
 	local errf=$file.err cpid=
 	# this runs as a background job of its own: it handles every status itself
 	set +e
@@ -201,8 +201,8 @@ fetch_part() {
 			# more bytes than the range holds: the server did not honour it; start this part again, and stop after a few tries
 			: >"$file"
 			have=0
-			attempts=$((attempts + 1))
-			if [ "$attempts" -ge 5 ]; then
+			oversize=$((oversize + 1))
+			if [ "$oversize" -ge 5 ]; then
 				echo "the server sent more bytes than the byte range asked for" >"$file.failed"
 				return 1
 			fi
