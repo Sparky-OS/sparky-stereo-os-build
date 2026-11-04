@@ -60,6 +60,7 @@ void SessionGate::resolve()
         }
         if (reply.isError()) {
             qWarning() << "CEC session lookup failed:" << reply.error().message();
+            Q_EMIT lookupFailed(reply.error().message());
             return;
         }
         m_path = reply.value().path();
@@ -78,9 +79,16 @@ void SessionGate::readActive()
     connect(watcher, &QDBusPendingCallWatcher::finished, this, [this, revision, watcher] {
         const QDBusPendingReply<QDBusVariant> reply = *watcher;
         watcher->deleteLater();
-        if (revision == m_revision && !reply.isError()) {
-            setActive(reply.value().variant().toBool());
+        if (revision != m_revision) {
+            return;
         }
+        if (reply.isError()) {
+            qWarning() << "CEC session state could not be read:" << reply.error().message();
+            Q_EMIT lookupFailed(reply.error().message());
+            return;
+        }
+        Q_EMIT lookupSucceeded();
+        setActive(reply.value().variant().toBool());
     });
 }
 

@@ -5,7 +5,9 @@
 # user could read the wheel's range, gain and effect levels but never set them.
 # This edition rule gives them the convention hid-fanatecff's own rules use:
 # group "games", group-writable. Nothing is opened to other users. The hidraw
-# node comes from sparky-sim-hidraw (uaccess). See README.Debian.
+# node comes from sparky-sim-hidraw (uaccess). The helper skips a control the model does
+# not have and says, through sparky-stereo-problems, one it has and cannot set
+# (sparky-stereo-wheel-access). See README.Debian.
 ACTION!="add|change|bind", GOTO="sparky_tmff2_end"
-SUBSYSTEM=="hid", DRIVER=="tmff2", RUN+="/bin/sh -c 'cd %S%p && (chown -f :games alternate_modes damper_level friction_level gain range spring_level; chmod -f g+w alternate_modes damper_level friction_level gain range spring_level) || true'"
+SUBSYSTEM=="hid", DRIVER=="tmff2", RUN+="/usr/lib/udev/sparky-stereo-wheel-access --mode g+w tmff2 %S%p alternate_modes damper_level friction_level gain range spring_level"
 LABEL="sparky_tmff2_end"

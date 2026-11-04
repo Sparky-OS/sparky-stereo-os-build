@@ -64,6 +64,9 @@ void CecController::rescan()
             adapter = new CecAdapter(device, m_command, this);
             m_adapters.insert(device.device, adapter);
             connect(adapter, &CecAdapter::failed, this, &CecController::failed);
+            connect(adapter, &CecAdapter::problem, this, [this, name = device.output](const QString &kind, const QString &detail, const QString &evidence) {
+                Q_EMIT problem(name, kind, detail, evidence);
+            });
             connect(adapter, &CecAdapter::skipped, this, &CecController::skipped);
             connect(adapter, &CecAdapter::transmitted, this, [this, name = device.output](bool on, bool acknowledged) {
                 Q_EMIT transmitted(name, on, acknowledged);

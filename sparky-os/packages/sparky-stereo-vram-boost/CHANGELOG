@@ -1,4 +1,14 @@
 -------------------------------------------------------------------------------
+  Version 0.1.2 (2026-11-04)
+-------------------------------------------------------------------------------
+
+  * Keep what cannot work where it should with sparky-stereo-problems (ORDER 346f-1): a SPARKY_STEREO_VRAM_BOOST
+    that is not a mode, a kernel without the dmem controller on a computer whose GPU (amdgpu, xe, nouveau) could use
+    it, a dmem.capacity that cannot be read, a bound GPU that registered no VRAM; cleared at the boot that finds the
+    cause gone. By design, and not problems: mode no, no GPU, and GPUs whose driver registers no VRAM (NVIDIA's own).
+  * The messages in the nine languages, as journal catalogs; Depends on sparky-stereo-problems (>= 0.1.2)
+
+-------------------------------------------------------------------------------
   Version 0.1.1 (2026-10-25)
 -------------------------------------------------------------------------------
 

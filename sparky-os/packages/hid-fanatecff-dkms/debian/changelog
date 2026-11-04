@@ -1,3 +1,16 @@
+hid-fanatecff-dkms (0+git20261010.bc2601b-1+stereo3d6) unstable; urgency=medium
+
+  * The udev rule no longer hides a control it could not set (ORDER 346f-1,
+    audit 343 U27, Daniel 2026-11-01: "nothing we do should silently fail"):
+    its "chown -f ... || true" commands run sparky-stereo-wheel-access, which
+    skips a control the wheel's model does not have and says, through
+    sparky-stereo-problems, one the model has and cannot be set for the games
+    group. Depends: sparky-stereo-wheel-access (>= 0.1.0). Upstream has no
+    fix for this: the Fanatec rules keep "|| true" and the other two drivers
+    ship no rules.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Wed, 04 Nov 2026 01:30:00 -0300
+
 hid-fanatecff-dkms (0+git20261010.bc2601b-1+stereo3d5) unstable; urgency=medium
 
   * Wheel-driver builds at install and update time are never capped (Daniel,

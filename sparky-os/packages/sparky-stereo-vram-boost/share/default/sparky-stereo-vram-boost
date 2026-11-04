@@ -4,5 +4,6 @@
 #   yes       same as auto, kept for existing configurations
 #   no        off
 # The decision and its reason are in /run/sparky-stereo-vram-boost/state and in the journal
-# (journalctl -u sparky-stereo-vram-boost). A new value counts from the next boot.
+# (journalctl -u sparky-stereo-vram-boost). A value that is not a mode, or a protection that
+# cannot work on a GPU that should have it, is kept by sparky-stereo-problems and shown in the session. A new value counts from the next boot.
 SPARKY_STEREO_VRAM_BOOST=auto

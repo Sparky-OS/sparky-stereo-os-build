@@ -1,11 +1,11 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/25
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/25
+# Last update 2026/11/04
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.1.1+lc1
+VERSION=0.1.2+lc1
 PACKAGE=sparky-stereo-vram-boost
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.vram-boost.XXXXXX")
@@ -21,6 +21,8 @@ for unit in dmemcg-booster-user plasma-foreground-booster; do
 	install -Dm644 "$HERE/share/systemd/user.conf" "$D/usr/lib/systemd/user/$unit.service.d/sparky-stereo-vram-boost.conf"
 done
 install -Dm644 "$HERE/share/default/sparky-stereo-vram-boost" "$D/etc/default/sparky-stereo-vram-boost"
+# what cannot work where it should is kept by the edition's one engine (ORDER 346f-1): the messages as journal catalogs
+sparky-stereo-problems catalog "$PACKAGE" "$HERE/lang" "$D/usr/lib/systemd/catalog" --subject LOCAL1
 install -m644 "$HERE/copyright" "$D/usr/share/doc/$PACKAGE/copyright"
 install -m644 "$HERE/README.md" "$D/usr/share/doc/$PACKAGE/README.md"
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
@@ -30,7 +32,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: bash, dmemcg-booster, systemd
+Depends: bash, dmemcg-booster, systemd, sparky-stereo-problems (>= 0.1.2)
 Recommends: plasma-foreground-booster
 Section: System
 Priority: optional
@@ -39,7 +41,17 @@ Description: Decide at every boot whether the window in front gets VRAM protecti
   Starts dmemcg-booster and plasma-foreground-booster only where they help:
   a kernel with the dmem cgroup controller and any GPU with registered VRAM.
   SPARKY_STEREO_VRAM_BOOST=auto, amd-dgpu, yes or no in its /etc/default file.
+  What cannot work where it should is kept by sparky-stereo-problems and shown in the session.
 CONTROL
 echo /etc/default/sparky-stereo-vram-boost >"$D/DEBIAN/conffiles"
+# a problem of a package that is gone cannot be repaired by it: the engine lets go of them (ORDER 350)
+cat >"$D/DEBIAN/postrm" <<'EOS'
+#!/bin/sh
+if [ "$1" = remove ] && command -v sparky-stereo-problems >/dev/null 2>&1; then
+    sparky-stereo-problems clear --all sparky-stereo-vram-boost
+fi
+exit 0
+EOS
+chmod 755 "$D/DEBIAN/postrm"
 (cd "$D" && find etc usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
-PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$HERE"
+PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$HERE" --build-dependency sparky-stereo-problems

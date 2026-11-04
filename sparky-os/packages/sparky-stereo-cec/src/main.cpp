@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack)
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "controller.h"
+#include "problems.h"
 #include "session.h"
 #include <KConfigGroup>
 #include <KSharedConfig>
@@ -28,6 +29,9 @@ int main(int argc, char **argv)
     SessionGate session(QDBusConnection::systemBus());
     QObject::connect(&session, &SessionGate::activeChanged, &controller, &CecController::setSessionActive);
     controller.setSessionActive(session.isActive());
+    // what failed is also kept by the edition's problem engine, shown in the session and cleared when the TV answers again
+    CecProblems problems;
+    problems.watch(controller, session);
     QObject::connect(&controller, &CecController::failed, &app, [](const QString &message) {
         qWarning().noquote() << message;
     });
