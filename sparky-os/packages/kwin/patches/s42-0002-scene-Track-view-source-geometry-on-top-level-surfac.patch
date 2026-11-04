@@ -1,0 +1,37 @@
+From 447338d5b706125f8baba709db0460e0fe8860f7 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 3 Nov 2026 19:49:10 -0300
+Subject: [PATCH] scene: Track view-source geometry on top-level surfaces too
+
+Keep the content ownership distinction while observing source geometry for every Wayland surface.
+
+Assisted-by: gpt-6-astra via Codex
+---
+ src/scene/surfaceitem_wayland.cpp | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/src/scene/surfaceitem_wayland.cpp b/src/scene/surfaceitem_wayland.cpp
+index fc60ab5038..049f978a32 100644
+--- a/src/scene/surfaceitem_wayland.cpp
++++ b/src/scene/surfaceitem_wayland.cpp
+@@ -58,13 +58,15 @@ SurfaceItemWayland::SurfaceItemWayland(SurfaceInterface *surface, Item *parent)
+             this, &SurfaceItemWayland::handleSurfaceMappedChanged);
+     setVisible(surface->isMapped());
+ 
++    setStereoViewSource(surface->stereoViewSource());
++    connect(surface, &SurfaceInterface::stereoContentChanged, this, [this, surface] {
++        setStereoViewSource(surface->stereoViewSource());
++    });
+     SubSurfaceInterface *subsurface = surface->subSurface();
+     if (subsurface) {
+         setStereoContent(surface->stereoContent());
+-        setStereoViewSource(surface->stereoViewSource());
+         connect(surface, &SurfaceInterface::stereoContentChanged, this, [this, surface] {
+             setStereoContent(surface->stereoContent());
+-            setStereoViewSource(surface->stereoViewSource());
+         });
+         connect(subsurface, &SubSurfaceInterface::positionChanged,
+                 this, &SurfaceItemWayland::handleSubSurfacePositionChanged);
+-- 
+2.53.0
+

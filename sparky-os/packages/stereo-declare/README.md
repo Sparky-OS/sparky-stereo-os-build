@@ -1,11 +1,12 @@
-# stereo-declare 1.8
+# stereo-declare 1.9
 
-The membership-only X11 API moves a child between owner lists without rewriting its content declaration or placement.
-Its release commit is `09f74f8bb2f880b1fbafc7b8d1fa8b763873286c` in [Sparky-OS/libstereo-declare](https://github.com/Sparky-OS/libstereo-declare).
+Protocol version 4 carries native fractional view-source rectangles without resizing the producer buffer or committing the surface.
+The existing membership-only X11 API and full side-by-side declaration remain unchanged.
+Its release commit is `8fe2c33689939d14dd2357106a3a63a2dc228c03` in [Sparky-OS/libstereo-declare](https://github.com/Sparky-OS/libstereo-declare).
 
 Run `build.sh source WORK CLONE IMAGE` once with `SPARKY_LC_TOOLKIT` pointing to the reviewed current toolkit.
 The prepared image needs the Debian source tools and the toolkit's prerequisites.
-The output has a plain source closure and the shared `1.8.0-1+lc1` closure under `WORK/source/lc`.
+The output has a plain source closure and the shared `1.9.0-1+lc1` closure under `WORK/source/lc`.
 Then run `build.sh binary WORK SOURCE_DIR PREVIOUS_DIR IMAGE ARCH` separately with prepared native amd64 and i386 images.
 Use the same LC descriptor for both builds; amd64 also builds the architecture-independent Python packages.
 `SPARKY_LC_ARCHIVE_DIR` supplies `sources.json` and its public keyrings, using paths beneath `/archive`.
