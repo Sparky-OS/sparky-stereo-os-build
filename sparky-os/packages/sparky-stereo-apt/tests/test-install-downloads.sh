@@ -105,7 +105,7 @@ out=$(run_apt n apt-get install data-pkg)
 echo "$out" | sed -n '/NEW packages/,$p' | head -n 14
 check "the notice says the connection is metered and what NetworkManager said" has "$out" "metered (NetworkManager says: yes)"
 check "the notice names the package, its size (117.7 MiB) and its source" has "$out" "data-pkg: 117.7 MiB from https://example.org/data-1.bin"
-check "the notice comes before apt's question" bash -c "n1=\$(grep -n 'data-pkg: 117.74' <<<'$out' | head -1 | cut -d: -f1); n2=\$(grep -n 'Do you want to continue' <<<'$out' | head -1 | cut -d: -f1); [ -n \"\$n1\" ] && [ -n \"\$n2\" ] && [ \$n1 -lt \$n2 ]"
+check "the notice comes before apt's question" bash -c "n1=\$(grep -n 'data-pkg: 117.7' <<<'$out' | head -1 | cut -d: -f1); n2=\$(grep -n 'Do you want to continue' <<<'$out' | head -1 | cut -d: -f1); [ -n \"\$n1\" ] && [ -n \"\$n2\" ] && [ \$n1 -lt \$n2 ]"
 check "it says answering n downloads nothing" has "$out" "Answer n to the question below and nothing is downloaded"
 check "answering n: nothing is installed" test "$(installed data-pkg)" != installed
 check "answering n: nothing was downloaded into apt's archive" bash -c "! ls /var/cache/apt/archives/data-pkg* 2>/dev/null | grep -q ."
@@ -138,7 +138,7 @@ check "not metered, answering y: installed, no notice" bash -c "test \$(dpkg-que
 metered 1
 out=$(run_apt n apt-get install plain-pkg)
 check "metered, a package without a declaration: nothing extra" bash -c "! grep -q -e 'metered' -e 'download more' <<<'$out'"
-apt-get -y -qq remove data-pkg >/dev/null 2>&1
+apt-get -y -qq purge data-pkg plain-pkg >/dev/null 2>&1
 
 echo "== -y: no question; the notice says so; and an install of only the named package: apt asks nothing, the notice says so"
 out=$(apt-get -y install data-pkg 2>&1)
@@ -184,7 +184,7 @@ Install-Download-Source: https://example.org/data-3.bin"
 reindex
 out=$(run_apt n apt-get install data-pkg)
 check "an upgrade with another size and source: announced with the new ones" has "$out" "data-pkg: 223.7 MiB from https://example.org/data-3.bin"
-apt-get -y -qq remove data-pkg >/dev/null 2>&1
+apt-get -y -qq purge data-pkg plain-pkg >/dev/null 2>&1
 
 echo "== the reader's own command (what Stereo APTus uses) and the languages"
 metered 1
@@ -200,6 +200,7 @@ check "check --json, not metered: announce false" python3 -c "import json,sys; d
 metered 1
 for pair in de_DE.UTF-8:"getaktet" fr_FR.UTF-8:"limitée" pl_PL.UTF-8:"taryfowane" pt_BR.UTF-8:"limitada" ja_JP.UTF-8:"従量制" ko_KR.UTF-8:"종량제" zh_CN.UTF-8:"按流量计费" zh_TW.UTF-8:"按流量計費" en_US.UTF-8:"is metered"; do
 	loc=${pair%%:*}; want=${pair#*:}
+	apt-get -y -qq purge data-pkg plain-pkg >/dev/null 2>&1
 	out=$(LC_ALL=$loc python3 /h/pty-answer.py n apt-get install data-pkg 2>&1)
 	check "language $loc" has "$out" "$want"
 done
