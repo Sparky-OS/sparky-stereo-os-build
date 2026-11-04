@@ -734,3 +734,27 @@ def test_a_case_that_uses_a_pinned_name_must_install_under_each_coinstallable_po
     q = context.qualify(deb(tmp_path, 'plain'), [main, legacy])
     assert json.loads((q.directory / 'policy-checks.json').read_text())['checks'] == []
     q.close()
+
+
+def test_a_candidate_one_policy_locks_is_not_asked_to_install_under_the_policy_that_pins_it_out(two_firmwares, tmp_path):
+    # libcuda1 580 beside the main lock: the legacy lock locks its version (1005) and the main lock pins every other version
+    # at 100, so the main lock's stack offers another version of it (NVIDIA's 615, in the archive) and the candidate's exact
+    # relations cannot be met. That is the other stack's package, not a failure of the case.
+    context = archive.Archive(two_firmwares, tmp_path / 'scratch', 'amd64')
+    template = (b'Package: firmware fw-user\nPin: version %s\nPin-Priority: 1005\n\n'
+                b'Package: firmware fw-user\nPin: version *\nPin-Priority: 100\n')
+    main = deb(tmp_path, 'main-lock', arch='all', extra='Conflicts: legacy-lock\n',
+               files={'etc/apt/preferences.d/10main-lock': template % b'1'})
+    legacy = deb(tmp_path, 'legacy-lock', arch='all', extra='Conflicts: main-lock\n',
+                 files={'etc/apt/preferences.d/09legacy-lock': template % b'2'})
+    user = deb(tmp_path, 'fw-user', '2', arch='all', depends='firmware (= 2)')
+    q = context.qualify(user, [main, legacy])
+    checks = json.loads((q.directory / 'policy-checks.json').read_text())
+    results = {c['policy'][0]: c['result'] for c in checks['checks']}
+    assert results['main-lock'].startswith('skipped: this version is pinned at 100 by main-lock and locked by legacy-lock')
+    assert results['legacy-lock'] in ('selected', 'selected solve')
+    q.close()
+    # A version no policy locks is still asked of both: here the legacy lock pins the candidate's version out too.
+    user3 = deb(tmp_path, 'fw-user', '3', arch='all', depends='firmware (= 1)')
+    with pytest.raises(package.Invalid, match='installable without legacy-lock but not under it'):
+        context.qualify(user3, [main, legacy])
