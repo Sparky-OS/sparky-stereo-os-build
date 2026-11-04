@@ -1,7 +1,7 @@
 #!/usr/bin/python3 -I
 # Created by Daniel Ramos (Capitain Jack) 2026/11/04
 # Copyright 2026 under the GNU GPL3 License
-"""translations-shipped.py [--repo DIR] [--cohort LIST] [STAGE_DIR ...]
+"""translations-shipped.py [--repo DIR] [--cohort LIST] [--only PATCH,...] [STAGE_DIR ...]
 
 For every *.po.patch in sparky-os/translations, finds the newest built package of its source and fails on any
 msgid the patch adds that the package's catalogues lack, naming the patch, the language and the string.
@@ -318,7 +318,10 @@ def check_packages(args):
     repo = args.repo or os.path.realpath('/var/tmp/sparky-repo-current')
     failed = 0
     unreadable = 0
+    only = set(args.only.split(',')) if args.only else None
     for patch in sorted(TRANSLATIONS.glob('*.po.patch')):
+        if only is not None and patch.name not in only:
+            continue
         if patch.name not in SOURCES:
             print(f'ERROR {patch.name}: not in SOURCES, so no package to look in')
             unreadable += 1
@@ -398,6 +401,7 @@ def main():
     ap.add_argument('stages', nargs='*', help='stage folders holding built .deb files')
     ap.add_argument('--cohort', default='/K3D/partners/round-next/cohort.list')
     ap.add_argument('--repo', help='the live repository (default: /var/tmp/sparky-repo-current)')
+    ap.add_argument('--only', help='comma-separated patch file names: check only these')
     ap.add_argument('--gettext', action='store_true', help='the arguments are patch files; ask glibc gettext')
     args = ap.parse_args()
     if args.gettext:
