@@ -62,13 +62,13 @@ def parse_patch_sections(patch_text, errors, patch_name):
             section = None
 
     def close_hunk():
-        nonlocal hunk_open, old_count, new_count, counted_old, counted_new, hunk_start_line
+        nonlocal hunk_open, counted_old, counted_new, hunk_start_line
         if hunk_open and (counted_old != old_count or counted_new != new_count):
             errors.append("%s: hunk at line %d: expected %d/%d lines, got %d/%d"
                           % (patch_name, hunk_start_line, old_count, new_count,
                              counted_old, counted_new))
         hunk_open = False
-        old_count = new_count = counted_old = counted_new = 0
+        counted_old = counted_new = 0
         hunk_start_line = 0
 
     while index < len(lines):
