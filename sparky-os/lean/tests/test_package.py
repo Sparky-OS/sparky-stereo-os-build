@@ -90,6 +90,15 @@ class Packages(unittest.TestCase):
         release.build_tree(root, out)
         return root, out, out / f'lc-demo_{version}_{arch}.deb'
 
+    @staticmethod
+    def write_md5sums(tree):
+        """The md5sums every real package carries: restore binds a record's original to its owner's md5sums (records
+        written before dpkg-stereo 0.1.27 hold no md5_orig for a file that is not a conffile)."""
+        sums = ''.join(f'{hashlib.md5(p.read_bytes()).hexdigest()}  {p.relative_to(tree)}\n'
+                       for p in sorted(tree.rglob('*')) if p.is_file() and not p.is_symlink()
+                       and p.relative_to(tree).parts[0] != 'DEBIAN')
+        (tree / 'DEBIAN/md5sums').write_text(sums)
+
     def system(self, name='system'):
         root = self.base / name
         (root / 'var/lib/dpkg/info').mkdir(parents=True)
@@ -333,6 +342,7 @@ class Packages(unittest.TestCase):
         authored = b'#version 330\n// Shader explanation\nvoid main() {}\n'
         lean = b'// HR pointer\n#version 330\n#line 3\nvoid main() {}\n'
         shader.write_bytes(authored)
+        self.write_md5sums(original)
         raw = self.base / 'lc-demo_0_all.deb'
         subprocess.run(['dpkg-deb', '--root-owner-group', '-b', str(original), str(raw)],
                        check=True, stdout=subprocess.DEVNULL)
@@ -393,6 +403,7 @@ class Packages(unittest.TestCase):
         for path, data in files.items():
             (original / path[1:]).parent.mkdir(parents=True, exist_ok=True)
             (original / path[1:]).write_bytes(data)
+        self.write_md5sums(original)
         raw = self.base / 'lc-demo_0_all.deb'
         subprocess.run(['dpkg-deb', '--root-owner-group', '-b', str(original), str(raw)],
                        check=True, stdout=subprocess.DEVNULL)
@@ -457,6 +468,46 @@ class Packages(unittest.TestCase):
             self.assertEqual(client.verify(P, [], True), 0)
         with patch.object(client, 'Records', side_effect=AssertionError('migration rescanned records')):
             self.assertEqual(client.repair_consumers(P), 0)
+
+    def older_restore(self, tamper):
+        """ORDER 397: restore takes back what an earlier renderer made (the 0.1.15 form), but only for a record the
+        owner's md5sums identify, and never over bytes that are not the recorded projection."""
+        root, P, raw, old = self.old_c_header()
+        cache = root / 'var/cache/apt/archives'
+        cache.mkdir(parents=True)
+        shutil.copy2(raw, cache)
+        records = client.Records(P)
+        if tamper == 'md5':
+            records[self.C_PATH] = dict(records[self.C_PATH], md5_orig='0' * 32)     # not what the owner's md5sums list
+            records.save()
+        elif tamper == 'md5ok':       # a record of 0.1.27 or later holds the md5 as well
+            records[self.C_PATH] = dict(records[self.C_PATH], md5_orig=client.md5(self.C_AUTHORED))
+            records.save()
+        elif tamper == 'edit':
+            (root / self.C_PATH[1:]).write_bytes(old + b'int mine;\n')
+        with contextlib.redirect_stdout(io.StringIO()):
+            client.restore(P, {self.C_PATH}, log=lambda m: None)
+        return (root / self.C_PATH[1:]).read_bytes(), old, client.Records(P)
+
+    def test_restore_takes_back_an_earlier_renderers_form(self):
+        data, old, records = self.older_restore(None)
+        self.assertEqual(data, self.C_AUTHORED)
+        self.assertNotIn(self.C_PATH, records)
+
+    def test_restore_takes_back_an_older_form_whose_record_holds_the_owners_md5(self):
+        data, old, records = self.older_restore('md5ok')
+        self.assertEqual(data, self.C_AUTHORED)
+        self.assertNotIn(self.C_PATH, records)
+
+    def test_restore_of_an_older_form_keeps_a_record_its_owner_does_not_identify(self):
+        data, old, records = self.older_restore('md5')
+        self.assertEqual(data, old)
+        self.assertIn(self.C_PATH, records)
+
+    def test_restore_of_an_older_form_keeps_a_persons_edit(self):
+        data, old, records = self.older_restore('edit')
+        self.assertEqual(data, old + b'int mine;\n')
+        self.assertNotIn(self.C_PATH, records)
 
     def test_c_migration_retries_only_the_files_whose_original_is_missing(self):
         second = '/usr/include/lc-demo/other.h'
@@ -649,7 +700,7 @@ class Packages(unittest.TestCase):
         root, P, raw, _ = self.old_c_header(extra)
         records = client.Records(P)
         for path, data in extra.items():       # recorded as projections whose lean bytes are what is installed
-            records[path] = dict(records[self.C_PATH], path=path, sha_orig=client.sha256(data), sha_lean=client.sha256(data))
+            records[path] = dict(records[self.C_PATH], path=path, sha_orig=client.sha256(data), md5_orig='', sha_lean=client.sha256(data))
         records.save()
         return P, {self.C_PATH: self.C_AUTHORED, **extra}
 
