@@ -51,7 +51,7 @@ esac
 
 cat > "$R/etc/apt/sources.list.d/debian.sources" <<'EOF'
 Types: deb
-URIs: http://deb.debian.org/debian
+URIs: https://deb.debian.org/debian
 Suites: testing
 Components: main contrib non-free non-free-firmware
 Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg

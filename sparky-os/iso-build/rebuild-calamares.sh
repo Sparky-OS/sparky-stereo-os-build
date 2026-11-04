@@ -13,7 +13,10 @@ NEW=${OLD%+stereo3d*}+stereo3d$(( ${OLD##*+stereo3d} + 1 ))
 mkdir -p "$OUT" "$WORK"
 cp "$DSC" "$(dirname "$DSC")"/calamares_"${OLD%-*}".orig.tar.xz "$(dirname "$DSC")"/calamares_"$OLD".debian.tar.xz "$WORK/"
 docker run --rm --name beta-iso-lutz-calamares --cpus 4 --memory 12g -v "$WORK:/w" -v "$OUT:/out" \
-	-e OLD="$OLD" -e NEW="$NEW" -e HOSTUID="$(id -u):$(id -g)" beta-iso-lutz-build:1 sh -ec '
+	-e OLD="$OLD" -e NEW="$NEW" -e HOSTUID="$(id -u):$(id -g)" \
+	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$(cd "$(dirname "$0")/../.." && pwd)/tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
+	beta-iso-lutz-build:1 sh -ec '
+sh /run/https-only-apt.sh
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq --no-install-recommends dpkg-dev devscripts equivs >/dev/null

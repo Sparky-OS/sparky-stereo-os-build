@@ -40,7 +40,7 @@ apt_in() { chroot $R apt-get -y -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-co
 if [ "$STEP" = base ] || [ "$STEP" = all ]; then
 	echo "== $(date -u +%T) base: minbase from Debian testing"
 	mmdebstrap --mode=root --variant=minbase --components=main,contrib,non-free,non-free-firmware --architectures=amd64 \
-		--include=ca-certificates,curl,gnupg,apt-utils,dpkg-dev testing $R http://deb.debian.org/debian
+		--include=ca-certificates,curl,gnupg,apt-utils,dpkg-dev testing $R https://deb.debian.org/debian
 	mounts
 	# the build's own apt sources (removed before packing), keys and the edition's pins
 	cp /build/apt-setup.sh $R/tmp/
