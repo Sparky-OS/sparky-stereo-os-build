@@ -84,8 +84,8 @@ def parse_patch_sections(patch_text, errors, patch_name):
             errors.append("%s: line %d: misplaced no-newline marker" % (patch_name, number))
             continue
 
-        if hunk_open and line[:1] in {"+", "-", " "}:
-            first = line[0]
+        if hunk_open and (not line or line[:1] in {"+", "-", " "}):
+            first = line[:1] if line else " "
             if first == "+" or first == "-":
                 section["added"].append(line[1:])
             if first != "-":
