@@ -21,7 +21,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 : "${SPARKY_PUBLISHED_TREE:?}" "${SPARKY_RELEASE_TOOLKIT:?}" "${SPARKY_LC_PREVIOUS_DIR:?}" "${BUILD_ROOT:?}" "${OUT:?}"
 : "${SPARKY_LC_ARCHIVE_CONFIG:?}" "${SPARKY_LC_SCRATCH:?}"
 PREDECESSOR=6.30.0-1+stereo3d7+lc1
-VERSION=6.30.0-1+stereo3d8+lc1
+VERSION=6.30.0-1+stereo3d9+lc1
 unset DISPLAY WAYLAND_DISPLAY XAUTHORITY
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=4
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
@@ -84,6 +84,10 @@ entry = (f'kf6-kio ({version}) testing; urgency=medium\n\n'
          '    before. Without the resolver nothing changes.\n'
          '  * Breaks sparky-stereo-graphics before 0.2.4, whose resolver gives\n'
          '    exit status 4 also where Automatic cannot place a browser.\n'
+         '  * +stereo3d8 predates two corrections of the French in\n'
+         '    kf6-kio-gpu-launch.po.patch (6b9ec4f, 767eaf9), so its French\n'
+         '    "crashed" message differs from the patch (ORDER 391): this build\n'
+         '    carries the catalogue patch as the build repository has it.\n'
          '  * The new messages in Polish, Brazilian Portuguese, French, German,\n'
          '    Japanese, Korean and Chinese (Simplified and Traditional).\n\n'
          ' -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + email.utils.formatdate(localtime=True) + '\n\n')

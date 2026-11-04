@@ -22,3 +22,22 @@ Upstream, the same strings go to each language's KDE translation team once the f
 - `kf6-kio-gpu-launch.po.patch` (ORDER 346g): the seven messages of a launch that does not start because the Graphics page's GPU cannot be applied (the program that was not started, and why sparky-stereo-gpu-env could not apply its GPU: it failed, crashed, could not be started or did not answer), in the eight translated languages, for KIO's `kio6` catalog; code half is `sparky-os/packages/kf6-kio/patches/EDITION-ONLY-start-no-application-whose-GPU-cannot-be-applied.patch`. The wording follows the published lines of sparky-stereo-gpu-run. Every catalog passes `msgfmt -c`. A first draft with AI assistance, pending review by native speakers. Carried last in kf6-kio's series by its build.sh.
 - `command-not-found-messages.po.patch` (ORDER 252b, J15): the messages Debian's command-not-found 23.04.0 prints that its catalogs leave untranslated in the nine languages: ten in pt_BR and zh_TW (its main header, "Command '%(command)s' not found, but can be installed with:", among them) and three in ja; pl, fr, de, ko and zh_CN are complete. Not a KDE catalog: command-not-found is Ubuntu's program, translated on Launchpad, so these are an offer for its translators there. Carried after `sparky-renamed-commands.patch` in command-not-found's series by its build-in-container.sh. Every catalog passes `msgfmt -c`; translated by Claude for Daniel Ramos (Capitain Jack), pt_BR for Daniel's review.
 - `kscreen-wdisplays-menus.po.patch` (ORDER 331): the 28 strings of Display Settings' extra menus (Flip horizontally, the X and Y position, the physical size, custom modes, Show Screen Names, Wheel Pans the View and the zoom percentage) in the eight translated languages, for the `kcm_kscreen` catalogs; code half is `sparky-os/packages/kscreen/patches/s12-*`. Every catalog passes `msgfmt -c` and `sparky-os/tests/validate-po-patches.py` (given the plain +stereo3d11 source). A first draft with AI assistance, pending review by native speakers (fr, ja, ko, zh_CN and zh_TW also lack a second-model check). Carried last in kscreen's series, after `kscreen-arrangement-view.po.patch`, by its build.
+
+## Which package carries each patch (ORDER 391)
+
+A patch ships only when a build names it last in the package's `debian/patches/series` (dpkg-source(1): the series "lists all patches that have to be applied"; a patch no series names never ships).
+Six of these patches were made "for the next package" and no build applied them.
+`sparky-os/packages/catalogue-rebuilds/` is the build that names one: the published source back to its plain form, the patch last in the series, one changelog entry.
+`sparky-os/tests/translations-shipped.py` keeps it from happening again: for every patch here it reads the newest built package of its source and fails on any added string the package's catalogues lack.
+
+| Patch | Source package | Carried by |
+| --- | --- | --- |
+| `kalgebra-stereo3d.po.patch` | kalgebra | 4:26.04.0-1+stereo3d3 |
+| `kalzium-stereo3d.po.patch` | kalzium | 4:26.04.3-1+stereo3d5 |
+| `kubrick-stereo3d.po.patch` | kubrick | 4:26.04.0-1+stereo3d3 |
+| `kinfocenter-stereo3d.po.patch` | kinfocenter | 4:6.7.4-1+stereo3d2 |
+| `kf6-kfilemetadata-stereo3d.po.patch` | kf6-kfilemetadata | 6.30.0-1+stereo3d5 |
+| `plasma-workspace-recovery.po.patch` | plasma-workspace | 4:6.7.4-2+stereo3d7 |
+| `powerdevil-graphics-link.po.patch` | powerdevil | 4:6.7.4-1+stereo3d2 (with the code half graphics-page-link.patch) |
+| `vlc-spatial-video.po.patch` | vlc (binary vlc-stereo) | 3.0.24-1+stereo3d16, already: debian/patches/vlc-spatial-video-translations.patch, catalogues in /usr/share/vlc-stereo/locale |
+| `kf6-kio-gpu-launch.po.patch` | kf6-kio | 6.30.0-1+stereo3d9 |
