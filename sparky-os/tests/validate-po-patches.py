@@ -49,7 +49,7 @@ def parse_patch_sections(patch_text, errors, patch_name):
     if first_diff is None:
         errors.append("%s: no file section" % patch_name)
         return sections
-    index = first_diff + 1
+    index = first_diff
     section = None
     hunk_open = False
     old_count = new_count = counted_old = counted_new = 0
