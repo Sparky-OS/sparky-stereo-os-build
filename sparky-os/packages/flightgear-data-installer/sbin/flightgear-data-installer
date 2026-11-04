@@ -300,6 +300,7 @@ install_data() {
 	: >"$PENDING.files"
 	: >"$PENDING.shared"
 	[ -d "$DATA_DIR" ] && echo "$DATA_DIR" >>"$PENDING.shared"
+	[ -d "$(dirname "$DATA_DIR")" ] && echo "$(dirname "$DATA_DIR")" >>"$PENDING.shared"
 	while IFS= read -r -d '' rel; do
 		src=$rel
 		rel=${rel#"$root"/}
