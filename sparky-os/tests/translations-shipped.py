@@ -35,7 +35,8 @@ from pathlib import Path
 
 TRANSLATIONS = Path(__file__).resolve().parent.parent / 'translations'
 
-# patch -> (source package, gettext domain for patches that name flat po/<lang>.po files)
+# patch -> (source package, gettext domain for patches that name flat po/<lang>.po files[, folder of the catalogues
+# when it is not usr/share/locale: VLC Stereo keeps its own under usr/share/vlc-stereo/locale])
 SOURCES = {
     'command-not-found-messages.po.patch': ('command-not-found', 'command-not-found'),
     'discover-backend-split.po.patch': ('plasma-discover', None),
@@ -54,7 +55,7 @@ SOURCES = {
     'plasma-workspace-recovery.po.patch': ('plasma-workspace', None),
     'plasma-workspace-wallpaper-cost.po.patch': ('plasma-workspace', None),
     'powerdevil-graphics-link.po.patch': ('powerdevil', None),
-    'vlc-spatial-video.po.patch': ('vlc', 'vlc'),
+    'vlc-spatial-video.po.patch': ('vlc', 'vlc', 'usr/share/vlc-stereo/locale'),
 }
 
 LOCALES = {'pl': 'pl_PL', 'pt_BR': 'pt_BR', 'fr': 'fr_FR', 'de': 'de_DE', 'ja': 'ja_JP', 'ko': 'ko_KR',
@@ -120,7 +121,7 @@ def parse_po(text):
 def added_entries(patch):
     """{(lang, domain): {(msgctxt, msgid): msgstr}} for the entries the patch adds or fills in: the post-image of each hunk
     (context and added lines), keeping the entries with at least one added line."""
-    flat_domain = SOURCES.get(patch.name, (None, None))[1]
+    flat_domain = (SOURCES.get(patch.name) or (None, None))[1]
     lines = {}
     cur = None
     in_hunk = False
@@ -275,7 +276,7 @@ class _Key:
         return compare_versions(self.v, o.v) < 0
 
 
-def catalogue(debs, wanted_domains):
+def catalogue(debs, wanted_domains, root_dir='usr/share/locale'):
     """{(lang, domain): {(msgctxt, msgid): msgstr}} read with msgunfmt from the debs' .mo files."""
     got = {}
     with tempfile.TemporaryDirectory(dir=os.environ.get('TMPDIR')) as t:
@@ -287,7 +288,7 @@ def catalogue(debs, wanted_domains):
                            stdin=tar.stdout, stderr=subprocess.DEVNULL)
             tar.stdout.close()
             tar.wait()
-            for mo in root.glob('usr/share/locale/*/LC_MESSAGES/*.mo'):
+            for mo in root.glob(root_dir + '/*/LC_MESSAGES/*.mo'):
                 lang, dom = mo.parts[-3], mo.stem
                 if dom not in wanted_domains:
                     continue
@@ -296,6 +297,11 @@ def catalogue(debs, wanted_domains):
                     raise SystemExit(f'{deb.name}: msgunfmt {lang}/{dom}.mo failed: {po.stderr.strip()}')
                 got[(lang, dom)] = parse_po(po.stdout)
     return got
+
+
+def locale_root(patch):
+    spec = SOURCES.get(patch.name, ())
+    return spec[2] if len(spec) > 2 else 'usr/share/locale'
 
 
 def short(ctxt, msgid):
@@ -326,7 +332,7 @@ def check_packages(args):
             continue
         version = newest(found)
         debs = found[version]
-        have = catalogue(debs, {d for (_, d) in added})
+        have = catalogue(debs, {d for (_, d) in added}, locale_root(patch))
         total = sum(len(v) for v in added.values())
         bad = 0
         for (lang, dom), entries in sorted(added.items()):
@@ -367,7 +373,7 @@ def check_gettext(args):
             except locale.Error:
                 print(f'ERROR locale {loc} is not generated (localedef -i {LOCALES.get(lang, lang)} -f UTF-8 {loc})')
                 return 2
-            libc.bindtextdomain(dom.encode(), b'/usr/share/locale')
+            libc.bindtextdomain(dom.encode(), ('/' + locale_root(patch)).encode())
             libc.bind_textdomain_codeset(dom.encode(), b'UTF-8')
             for (ctxt, msgid), msgstr in entries.items():
                 total += 1
