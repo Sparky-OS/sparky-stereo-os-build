@@ -5,9 +5,9 @@ set -euo pipefail
 unset DISPLAY WAYLAND_DISPLAY XAUTHORITY DBUS_SESSION_BUS_ADDRESS
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 export TMPDIR="${TMPDIR:?set a private assembly temporary directory}"
-rev=09f74f8bb2f880b1fbafc7b8d1fa8b763873286c
-version=1.8.0-1
-prefix=stereo-declare-1.8.0
+rev=8fe2c33689939d14dd2357106a3a63a2dc228c03
+version=1.9.0-1
+prefix=stereo-declare-1.9.0
 out=$(realpath -m "$1")
 clone=$(realpath "$2")
 toolkit=$(realpath "$3")
@@ -18,15 +18,29 @@ git -C "$clone" archive --format=tar --prefix="$prefix/" "$rev" | tar -x -C "$ou
 cp -a "$out/export/$prefix/debian" "$out/debian-export"
 rm -r "$out/export/$prefix/debian"
 stamp=$(git -C "$clone" log -1 --format=%ct "$rev")
-tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$stamp" -C "$out/export" -cf - "$prefix" | xz -T4 -6 > "$out/plain/stereo-declare_1.8.0.orig.tar.xz"
+tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$stamp" -C "$out/export" -cf - "$prefix" | xz -T4 -6 > "$out/plain/stereo-declare_1.9.0.orig.tar.xz"
 cd "$out/plain"
-tar -xf stereo-declare_1.8.0.orig.tar.xz
+tar -xf stereo-declare_1.9.0.orig.tar.xz
 cp -a "$out/debian-export" "$prefix/debian"
 dpkg-source -b "$prefix"
 cp ./*.tar.xz ./*.dsc "$out/lc/"
 cd "$out/lc"
 dpkg-source -x "stereo-declare_$version.dsc" source
 PYTHONPATH="$toolkit" python3 -m lean.debian_prepare "$out/lc/source" "$version+lc1" --toolkit "$toolkit" --build-dependency bubblewrap
+# Retain this release's recorded LC changelog date before source assembly.
+# The pipeline generates the entry; only its release timestamp is fixed here.
+python3 - <<'DATE'
+from pathlib import Path
+p = Path('source/debian/changelog')
+s = p.read_text()
+head = s.split('\n\n', 1)[0]
+assert head == 'stereo-declare (1.9.0-1+lc1) UNRELEASED; urgency=medium'
+lines = s.splitlines(keepends=True)
+index = next(i for i, line in enumerate(lines) if line.startswith(' -- '))
+assert lines[index].startswith(' -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ')
+lines[index] = lines[index].split('>  ', 1)[0] + '>  Tue, 03 Nov 2026 23:32:18 +0000\n'
+p.write_text(''.join(lines))
+DATE
 # The sole LC descriptor is shared by both native architecture builds.
 dpkg-source -b source
 sha256sum ./*.dsc ./*.tar.xz > source-closure.sha256

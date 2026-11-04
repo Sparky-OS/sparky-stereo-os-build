@@ -1,15 +1,14 @@
 #!/bin/bash
-# Sparky Stereo OS: builds kwin 4:6.7.4-2+stereo3d41+lc1 from the +stereo3d40 source package.
-# Created by Daniel Ramos (Capitain Jack) 2026/10/22, +stereo3d36 2026/10/29, +stereo3d37 to +stereo3d39 2026/10/30, +stereo3d40 2026/10/31,
-# +stereo3d41 2026/11/01
+# Sparky Stereo OS: builds kwin 4:6.7.4-2+stereo3d42+lc1 from the published +stereo3d41+lc1 source package.
+# Created by Daniel Ramos (Capitain Jack) 2026/10/22, updated 2026/11/04.
 # Copyright 2026 under the GNU GPL3 License
-# Source package once (the s41 patch after the series, the XREAL EDIDs in the debian tarball, changelog entry), then the
+# Source package once (the s42 patches after the series, the XREAL EDIDs in the debian tarball, changelog entry), then the
 # Lean Code source, then the build with the link and start gate against the earlier +lc1 builds. Candidates stay in WORK.
-# Usage: build.sh WORK PREVIOUS_DIR SOURCE_DIR EXTRA_DIR   (PREVIOUS_DIR: a folder holding the +stereo3d40+lc1 .deb files;
-#   SOURCE_DIR: the folder holding kwin_6.7.4-2+stereo3d40.dsc, its debian.tar.xz and the orig tarball with its .asc,
-#   plain-from-lc.py's from the published +stereo3d40+lc1 source;
+# Usage: build.sh WORK PREVIOUS_DIR SOURCE_DIR EXTRA_DIR   (PREVIOUS_DIR: a folder holding the +stereo3d41+lc1 .deb files;
+#   SOURCE_DIR: the folder holding kwin_6.7.4-2+stereo3d41+lc1.dsc, its debian.tar.xz and the orig tarball with its .asc,
+#   the published +stereo3d41+lc1 source;
 #   EXTRA_DIR: builds this one needs that the repository does not have yet, installed before its build dependencies;
-#   an empty folder when it has them all, as for +stereo3d41)
+#   an empty folder when it has them all, as for +stereo3d42)
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -29,4 +28,4 @@ docker run --rm --cpus 4 --platform linux/amd64 \
 	-v "$SPARKY_REPO_DIR":/repo:ro -v "$PREV":/prev:ro -v "$HERE/../..":/toolkit:ro -v "$HERE":/tools:ro \
 	-v "$HERE/patches":/patches:ro \
 	-v /usr/share/keyrings/deb-multimedia-keyring.pgp:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro \
-	sparky-lc-migration:20261020 bash -c 'bash /tools/build-in-container.sh > /work/build.log 2>&1'
+	"${SPARKY_BUILD_IMAGE:-sparky-lc-migration:20261020}" bash -c 'bash /tools/build-in-container.sh > /work/build.log 2>&1'

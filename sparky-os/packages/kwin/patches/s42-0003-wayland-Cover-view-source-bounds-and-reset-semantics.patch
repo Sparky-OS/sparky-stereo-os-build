@@ -1,0 +1,103 @@
+From 2dfd276ddba21cf0a8042161a2fcd64ea5eb235b Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 3 Nov 2026 19:49:10 -0300
+Subject: [PATCH] wayland: Cover view-source bounds and reset semantics
+
+Keep the depth child interface version compatible with its version-four manager.
+
+Assisted-by: gpt-6-astra via Codex
+---
+ autotests/integration/stereo_content_test.cpp | 56 +++++++++++++++++++
+ .../stereo/kde-stereo-content-v1.xml          |  2 +-
+ 2 files changed, 57 insertions(+), 1 deletion(-)
+
+diff --git a/autotests/integration/stereo_content_test.cpp b/autotests/integration/stereo_content_test.cpp
+index e7bcf45b58..e45cd3a990 100644
+--- a/autotests/integration/stereo_content_test.cpp
++++ b/autotests/integration/stereo_content_test.cpp
+@@ -40,6 +40,9 @@ private Q_SLOTS:
+     void testOneEyeWideViewportDestination();
+     void testSubsurface();
+     void testFractionalViewSource();
++    void testViewSourceSizeAndReset();
++    void testViewSourceInvalid_data();
++    void testViewSourceInvalid();
+     void testSetContentInvalidValue();
+     void testRemoveOnDestroy();
+     void testRecreateAfterDestroy();
+@@ -240,6 +243,59 @@ void StereoContentTest::testFractionalViewSource()
+     QCOMPARE(item->eyeQuads(StereoEye::Left).front()[1].u(), 3.0);
+ }
+ 
++void StereoContentTest::testViewSourceSizeAndReset()
++{
++    std::unique_ptr<KWayland::Client::Surface> surface(Test::createSurface());
++    std::unique_ptr<Test::XdgToplevel> shell(Test::createXdgToplevelSurface(surface.get()));
++    Window *window = Test::renderAndWaitForShown(surface.get(), QSize(6, 2), Qt::blue);
++    QVERIFY(window);
++    auto declaration = std::make_unique<Test::StereoContentV1>(Test::stereoContentManager()->create(*surface));
++    declaration->set_content(3);
++    declaration->set_view_source(wl_fixed_from_double(.25), 0, wl_fixed_from_double(2.5), wl_fixed_from_int(2));
++    QSignalSpy committed(window->surface(), &SurfaceInterface::committed);
++    surface->commit(KWayland::Client::Surface::CommitFlag::None);
++    QVERIFY(committed.wait());
++    QCOMPARE(window->surface()->size(), QSizeF(2.5, 2));
++    QCOMPARE(window->surfaceItem()->eyeQuads(StereoEye::Right).front()[0].u(), 3.25);
++    declaration->set_view_source(wl_fixed_from_int(-1), wl_fixed_from_int(-1), wl_fixed_from_int(-1), wl_fixed_from_int(-1));
++    surface->commit(KWayland::Client::Surface::CommitFlag::None);
++    QVERIFY(committed.wait());
++    QCOMPARE(window->surface()->size(), QSizeF(3, 2));
++    QCOMPARE(window->surfaceItem()->eyeQuads(StereoEye::Right).front()[0].u(), 3.0);
++    declaration->set_view_source(wl_fixed_from_double(.25), 0, wl_fixed_from_double(2.5), wl_fixed_from_int(2));
++    surface->commit(KWayland::Client::Surface::CommitFlag::None);
++    QVERIFY(committed.wait());
++    declaration.reset();
++    surface->commit(KWayland::Client::Surface::CommitFlag::None);
++    QVERIFY(committed.wait());
++    QCOMPARE(window->surface()->size(), QSizeF(6, 2));
++    QVERIFY(!window->surface()->stereoViewSource());
++}
++
++void StereoContentTest::testViewSourceInvalid_data()
++{
++    QTest::addColumn<RectF>("crop");
++    QTest::addRow("negative origin") << RectF(-.25, 0, 2, 2);
++    QTest::addRow("zero width") << RectF(0, 0, 0, 2);
++    QTest::addRow("past right eye edge") << RectF(.25, 0, 3, 2);
++    QTest::addRow("past bottom edge") << RectF(0, .25, 3, 2);
++}
++
++void StereoContentTest::testViewSourceInvalid()
++{
++    QFETCH(RectF, crop);
++    std::unique_ptr<KWayland::Client::Surface> surface(Test::createSurface());
++    std::unique_ptr<Test::XdgToplevel> shell(Test::createXdgToplevelSurface(surface.get()));
++    QVERIFY(Test::renderAndWaitForShown(surface.get(), QSize(6, 2), Qt::blue));
++    auto declaration = std::make_unique<Test::StereoContentV1>(Test::stereoContentManager()->create(*surface));
++    QSignalSpy error(Test::waylandConnection(), &KWayland::Client::ConnectionThread::errorOccurred);
++    declaration->set_content(3);
++    declaration->set_view_source(wl_fixed_from_double(crop.x()), wl_fixed_from_double(crop.y()),
++                                wl_fixed_from_double(crop.width()), wl_fixed_from_double(crop.height()));
++    surface->commit(KWayland::Client::Surface::CommitFlag::None);
++    QVERIFY(error.wait());
++}
++
+ // A value other than 0 or 3 is read as none.
+ void StereoContentTest::testSetContentInvalidValue()
+ {
+diff --git a/src/wayland/protocols/stereo/kde-stereo-content-v1.xml b/src/wayland/protocols/stereo/kde-stereo-content-v1.xml
+index b10baef8ff..094d494053 100644
+--- a/src/wayland/protocols/stereo/kde-stereo-content-v1.xml
++++ b/src/wayland/protocols/stereo/kde-stereo-content-v1.xml
+@@ -125,7 +125,7 @@
+   </request>
+ </interface>
+ 
+-<interface name="kde_stereo_depth_v1" version="3">
++<interface name="kde_stereo_depth_v1" version="4">
+   <description summary="desktop depth of one surface">
+     The compositor shows the desktop's own surfaces at depth levels: the
+     active window at the screen, the windows lying behind it sunk, menus,
+-- 
+2.53.0
+
