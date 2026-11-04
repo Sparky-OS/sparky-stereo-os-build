@@ -14,7 +14,7 @@ import unittest
 SUBJECT = Path(os.environ.get('SUBJECT', Path(__file__).resolve().parents[1] / 'check-no-install-downloads.py'))
 CLEAN = 'Package: bash\nStatus: install ok installed\nVersion: 5\nDescription: shell\n\nPackage: flightgear\nStatus: install ok installed\nVersion: 1\nDescription: sim\n'
 DECL = ('Package: flightgear-data-installer\nStatus: install ok installed\nVersion: 2024.1.5-1\nInstall-Download-Size: 1883333376\n'
-        'Install-Download-Source: https://sourceforge.net/x/download\nDescription: fetches\n')
+        'Sparky-Install-Download-Source: https://sourceforge.net/x/download\nDescription: fetches\n')
 
 
 def run(*args):
@@ -64,7 +64,7 @@ class Gate(unittest.TestCase):
             self.assertEqual(run('--status', str(path))[0], 0)
 
     def test_field_in_a_description_is_not_a_declaration(self):
-        text = CLEAN + '\nPackage: doc\nStatus: install ok installed\nDescription: explains\n Install-Download-Size: is a control field\n'
+        text = CLEAN + '\nPackage: doc\nStatus: install ok installed\nDescription: explains\n Sparky-Install-Download-Size: is a control field\n'
         self.assertEqual(run('--status', str(self.root(text) / 'var/lib/dpkg/status'))[0], 0)
 
     def test_unreadable_status_stops(self):

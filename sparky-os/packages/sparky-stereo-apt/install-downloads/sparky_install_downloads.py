@@ -5,13 +5,16 @@
 A package that downloads data while it is installed (its postinst fetches it) says so in its control file, which reaches
 the Packages index, so apt-cache show and every front end can read it before anything is fetched:
 
-    Install-Download-Size: 1883333376
-    Install-Download-Source: https://sourceforge.net/projects/flightgear/files/release-2024.1/FlightGear-2024.1.5-data.txz/download
+    Sparky-Install-Download-Size: 1883333376
+    Sparky-Install-Download-Source: https://sourceforge.net/projects/flightgear/files/release-2024.1/FlightGear-2024.1.5-data.txz/download
 
 Size is the number of bytes, Source the address (https). There is no name for this in Debian's control fields, apt or
 AppStream; the words are apt's own "Download size" and AppStream's <size type="download"> (bytes), after Debian's
-"Installed-Size", with "Install-" in front because the download happens when the package is installed. A source package
-carries them as XB-Install-Download-Size and XB-Install-Download-Source.
+"Installed-Size", with "Install-" in front because the download happens when the package is installed, and the edition's
+"Sparky-" in front because dpkg's own advice for user-defined fields is a prefix of one's own, so a future official field
+cannot collide (deb-src-control(5): "these user-defined fields will be using the global namespace, which might at some
+point in the future collide with officially recognized fields"; the edition's Sparky-Lean-Code field does the same). A source
+package carries them as XB-Sparky-Install-Download-Size and XB-Sparky-Install-Download-Source.
 
 Two front ends read it through this module: apt, in a terminal (the JSON hook of install-downloads), and Stereo APTus.
 """
@@ -20,8 +23,8 @@ import os
 import re
 import subprocess
 
-FIELD_SIZE = 'Install-Download-Size'
-FIELD_SOURCE = 'Install-Download-Source'
+FIELD_SIZE = 'Sparky-Install-Download-Size'
+FIELD_SOURCE = 'Sparky-Install-Download-Source'
 OPTION = 'Sparky::Install-Downloads::Announce'
 MODES = ('metered', 'always', 'never')
 LANGDIR = os.environ.get('SPARKY_INSTALL_DOWNLOADS_LANG', '/usr/share/sparky/sparky-stereo-apt/install-downloads')

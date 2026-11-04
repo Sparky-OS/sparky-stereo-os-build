@@ -66,22 +66,22 @@ mkpkg() { # name version extra-control-lines
 rm -rf /repo; mkdir -p /repo
 mkpkg plain-pkg 1 ""
 mkpkg data-pkg 1 "Depends: plain-pkg
-Install-Download-Size: 123456789
-Install-Download-Source: https://example.org/data-1.bin"
-mkpkg solo-pkg 1 "Install-Download-Size: 4096000
-Install-Download-Source: https://example.org/solo.bin"
-mkpkg bad-pkg 1 "Install-Download-Size: lots
-Install-Download-Source: https://example.org/x"
-mkpkg half-pkg 1 "Install-Download-Size: 5000"
+Sparky-Install-Download-Size: 123456789
+Sparky-Install-Download-Source: https://example.org/data-1.bin"
+mkpkg solo-pkg 1 "Sparky-Install-Download-Size: 4096000
+Sparky-Install-Download-Source: https://example.org/solo.bin"
+mkpkg bad-pkg 1 "Sparky-Install-Download-Size: lots
+Sparky-Install-Download-Source: https://example.org/x"
+mkpkg half-pkg 1 "Sparky-Install-Download-Size: 5000"
 cp /pkgs/flightgear-data-installer_*_all.deb /repo/
 reindex() { (cd /repo && dpkg-scanpackages -m . >Packages 2>/dev/null && gzip -kf Packages); echo 'deb [trusted=yes] file:/repo ./' >/etc/apt/sources.list.d/test.list; apt-get update -qq >/dev/null 2>&1; }
 reindex
 
 echo "== the declaration in the index"
 sh=$(apt-cache show flightgear-data-installer)
-check "apt-cache show flightgear-data-installer carries Install-Download-Size: 1883333376" has "$sh" "^Install-Download-Size: 1883333376"
-check "... and the source, an https address" has "$sh" "^Install-Download-Source: https://sourceforge.net/projects/flightgear/files/release-2024.1/FlightGear-2024.1.5-data.txz/download"
-check "the Packages index line is there for apt's own tools (grep of the index)" grep -q "^Install-Download-Size: 1883333376" /repo/Packages
+check "apt-cache show flightgear-data-installer carries Sparky-Install-Download-Size: 1883333376" has "$sh" "^Sparky-Install-Download-Size: 1883333376"
+check "... and the source, an https address" has "$sh" "^Sparky-Install-Download-Source: https://sourceforge.net/projects/flightgear/files/release-2024.1/FlightGear-2024.1.5-data.txz/download"
+check "the Packages index line is there for apt's own tools (grep of the index)" grep -q "^Sparky-Install-Download-Size: 1883333376" /repo/Packages
 
 nm_start
 run_apt() { # answer cmd...
@@ -173,14 +173,14 @@ apt-get -y -qq remove bad-pkg half-pkg >/dev/null 2>&1
 echo "== upgrades: announced only when the download changes"
 apt-get -y -qq install data-pkg >/dev/null 2>&1
 mkpkg data-pkg 2 "Depends: plain-pkg
-Install-Download-Size: 123456789
-Install-Download-Source: https://example.org/data-1.bin"
+Sparky-Install-Download-Size: 123456789
+Sparky-Install-Download-Source: https://example.org/data-1.bin"
 reindex; metered 1
 out=$(run_apt n apt-get install data-pkg)
 check "an upgrade with the same declaration: not announced (the data stays)" bash -c "! grep -q 'data-pkg: 117' <<<'$out'"
 mkpkg data-pkg 3 "Depends: plain-pkg
-Install-Download-Size: 234567890
-Install-Download-Source: https://example.org/data-3.bin"
+Sparky-Install-Download-Size: 234567890
+Sparky-Install-Download-Source: https://example.org/data-3.bin"
 reindex
 out=$(run_apt n apt-get install data-pkg)
 check "an upgrade with another size and source: announced with the new ones" has "$out" "data-pkg: 223.7 MiB from https://example.org/data-3.bin"

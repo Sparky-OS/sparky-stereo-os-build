@@ -5,8 +5,8 @@
 
 Daniel, 2026-11-04: "if the user choosed on install to include the games, that's already during install, so no big deal, and
 yes, we will not ship with the iso heavy files ... aiming to max out at 7.5 Gb"; memory image-ships-our-stereo-programs:
-"TORCS and FlightGear stay out". A package declares its install-time download in its control file (Install-Download-Size
-and Install-Download-Source, sparky-stereo-apt's reader); a package that does so runs a download in its postinst, which an
+"TORCS and FlightGear stay out". A package declares its install-time download in its control file (Sparky-Install-Download-Size
+and Sparky-Install-Download-Source, sparky-stereo-apt's reader); a package that does so runs a download in its postinst, which an
 image build must never do: it would put the data on the ISO or fail the build. This gate reads the image's dpkg status
 (dpkg keeps the fields) and refuses every installed package that declares one, and the data folder FlightGear's downloader
 fills.
@@ -19,7 +19,7 @@ Exit status: 0 nothing found; 1 refused; 2 usage or an unreadable status file (n
 import sys
 from pathlib import Path
 
-FIELD = 'Install-Download-Size'
+FIELD = 'Sparky-Install-Download-Size'
 DATA = ('usr/share/games/flightgear/version',)
 
 
@@ -33,7 +33,7 @@ def declared(status_text):
             key, _, value = line.partition(':')
             fields[key] = value.strip()
         if FIELD in fields and fields.get('Status', 'install ok installed').endswith('installed'):
-            found.append((fields.get('Package', '?'), fields[FIELD], fields.get('Install-Download-Source', '')))
+            found.append((fields.get('Package', '?'), fields[FIELD], fields.get('Sparky-Install-Download-Source', '')))
     return found
 
 

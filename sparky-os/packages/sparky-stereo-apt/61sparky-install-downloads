@@ -1,5 +1,5 @@
-// A package that downloads data while it is installed declares it in its control file (Install-Download-Size, in bytes, and
-// Install-Download-Source, an https address). apt tells the person which ones, with their size and source, right before it asks
+// A package that downloads data while it is installed declares it in its control file (Sparky-Install-Download-Size, in bytes, and
+// Sparky-Install-Download-Source, an https address). apt tells the person which ones, with their size and source, right before it asks
 // "Do you want to continue?", when the connection is metered (ORDER 399b; Daniel, 2026-11-04: "warn the user with current size").
 // Stereo APTus reads the same declaration. The hook is /usr/lib/sparky-stereo-apt/install-downloads; it never stops an install.
 AptCli::Hooks::Install:: "[ ! -x /usr/lib/sparky-stereo-apt/install-downloads ] || /usr/lib/sparky-stereo-apt/install-downloads";

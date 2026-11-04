@@ -9,8 +9,8 @@ under the GNU General Public License, version 3 or any later version.
 The declaration (ORDER 399b):
 -------------
 The control file says that installing this package downloads data, before anything is fetched:
-  Install-Download-Size: 1883333376 (bytes)
-  Install-Download-Source: https://sourceforge.net/projects/flightgear/files/release-2024.1/FlightGear-2024.1.5-data.txz/download
+  Sparky-Install-Download-Size: 1883333376 (bytes)
+  Sparky-Install-Download-Source: https://sourceforge.net/projects/flightgear/files/release-2024.1/FlightGear-2024.1.5-data.txz/download
 Both come from the recorded file the program reads. They reach the repository's Packages index, so `apt-cache show`, apt in a terminal (sparky-stereo-apt's hook,
 on a metered connection and before "Do you want to continue?") and Stereo APTus show the size and the source before the person installs. The package is never on the
 image: the games come when the person chooses them while installing.

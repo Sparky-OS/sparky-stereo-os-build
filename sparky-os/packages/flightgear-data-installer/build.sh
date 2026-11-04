@@ -44,8 +44,8 @@ Installed-Size: $SIZE
 Depends: bash (>= 4.3), ca-certificates, curl, xz-utils
 Provides: flightgear-data-all (= $DATA), flightgear-data-base (= $DATA), flightgear-data-ai (= $DATA), flightgear-data-models (= $DATA)
 Conflicts: flightgear-data-all, flightgear-data-base, flightgear-data-ai, flightgear-data-models
-Install-Download-Size: $SIZE_BYTES
-Install-Download-Source: $URL
+Sparky-Install-Download-Size: $SIZE_BYTES
+Sparky-Install-Download-Source: $URL
 Section: games
 Priority: optional
 Homepage: https://sparkylinux.org

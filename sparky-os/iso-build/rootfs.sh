@@ -127,7 +127,7 @@ if [ "$STEP" = packages ] || [ "$STEP" = all ]; then
 	cp /build/zram-check.py $R/tmp/
 	inr python3 /tmp/zram-check.py / || { echo "rootfs: zram or zswap is in the tree; see the gate's findings above" >&2; exit 1; }
 	rm -f $R/tmp/zram-check.py
-	# nothing that downloads data while it is installed (a package declaring Install-Download-Size, FlightGear's data): the games and
+	# nothing that downloads data while it is installed (a package declaring Sparky-Install-Download-Size, FlightGear's data): the games and
 	# their data come when the person chooses them while installing, never on the ISO (Daniel, 2026-11-04; ORDER 399b)
 	cp /build/check-no-install-downloads.py $R/tmp/
 	inr python3 /tmp/check-no-install-downloads.py / || { echo "rootfs: a package that downloads data while it is installed, or FlightGear's data, is in the tree; see the gate's findings above" >&2; exit 1; }
