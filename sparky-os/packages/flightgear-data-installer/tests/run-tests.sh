@@ -113,6 +113,27 @@ check "failure while placing: no state and no staging folder left" bash -c "! ls
 check "failure while placing: the verified download is kept and the message says so" bash -c "[ -f $CACHE/FlightGear-2024.1.5-data.txz ] && grep -q 'stays in $CACHE' $OUTF"
 rm -rf "$DATA" "$STATE" "$CACHE"
 
+# 5b a termination while unpacking (the whole process group, as Ctrl-C or a killed apt does) leaves nothing
+cat >"$W/fakebin/tar" <<'EOT'
+#!/bin/bash
+sleep 30
+EOT
+chmod 755 "$W/fakebin/tar"
+mkdir -p "$DATA/Nasal"
+echo mine >"$DATA/Nasal/sparky-stereo.nas"
+conf "file://$W/FlightGear-2024.1.5-data.txz"
+PATH=$W/fakebin:$PATH setsid "$BIN" install >"$W/out.txt" 2>&1 &
+sleep 4
+pid=$!
+kill -TERM -- "-$pid" 2>/dev/null
+wait "$pid" 2>/dev/null
+rc=$?
+check "termination while unpacking: the run ended with a signal status ($rc)" test "$rc" -ne 0
+check "termination while unpacking: no staging folder, no state, no list left" bash -c "! ls /usr/share/games/.flightgear-data-installer.* $STATE/files.list $STATE/installed $STATE/pending.* 2>/dev/null | grep -q ."
+check "termination while unpacking: the other package's file remains" test "$(cat "$DATA/Nasal/sparky-stereo.nas")" = mine
+rm -f "$W/fakebin/tar"
+rm -rf "$DATA" "$STATE" "$CACHE"
+
 # 6 the good run, beside a file that belongs to another package (flightgear's own)
 mkdir -p "$DATA/Nasal"
 echo mine >"$DATA/Nasal/sparky-stereo.nas"

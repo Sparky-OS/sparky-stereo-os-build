@@ -202,6 +202,7 @@ install_data() {
 	flock -n 9 || die BUSY
 	rm -rf "$(dirname "$DATA_DIR")"/.flightgear-data-installer.* "$CACHE"/curl.* "$CACHE"/tar.*
 	trap cleanup EXIT
+	trap 'exit 143' INT TERM HUP
 	# a run that stopped half way is taken out first, then our own incomplete or damaged data
 	if [ -f "$PENDING.files" ]; then
 		remove_listed "$PENDING.files" "$PENDING.dirs"
