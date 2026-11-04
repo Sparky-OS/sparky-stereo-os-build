@@ -13,4 +13,4 @@ RUN --mount=type=bind,from=https-only-apt,source=https-only-apt.sh,target=/run/h
  hyphen-pl hyphen-pt-br hyphen-pt-pt hyphen-de hyphen-en-us hyphen-fr \
  mythes-pl mythes-pt-br mythes-pt-pt mythes-de mythes-en-us mythes-fr \
  fcitx5 fcitx5-mozc fcitx5-chinese-addons fcitx5-chewing fcitx5-hangul fcitx5-unikey \
- && apt-get update && apt-get -y install sparky-remsu || true
+ && apt-get update --error-on=any && apt-get -y install sparky-remsu
