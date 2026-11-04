@@ -35,3 +35,4 @@ Six of these patches were made "for the next package" and no build applied them.
 | `kalzium-stereo3d.po.patch` | kalzium | 4:26.04.3-1+stereo3d5 |
 | `kubrick-stereo3d.po.patch` | kubrick | 4:26.04.0-1+stereo3d3 |
 | `kinfocenter-stereo3d.po.patch` | kinfocenter | 4:6.7.4-1+stereo3d2 |
+| `kf6-kfilemetadata-stereo3d.po.patch` | kf6-kfilemetadata | 6.30.0-1+stereo3d5 |
