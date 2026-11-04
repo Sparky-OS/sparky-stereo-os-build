@@ -9,6 +9,8 @@ It reads what the edition already records and invents nothing:
   - the .buildinfo files that exist beside builds.
 Only the Python standard library and license_expression (SPDX licence list) are used.
 """
+import base64
+import functools
 import gzip
 import hashlib
 import io
@@ -17,6 +19,7 @@ import lzma
 import os
 import re
 import tarfile
+import zlib
 from pathlib import Path
 
 TOOL_VERSION = '0.1.0'
@@ -156,10 +159,13 @@ def read_deb(path):
                 if pkg is None:
                     raise ReadError('data member before control member')
                 cr = './usr/share/doc/%s/copyright' % pkg
+                dd = './usr/share/doc/%s' % pkg
                 with _open_tar(f, off, size, name) as t:
                     for m in t:
                         n = m.name if m.name.startswith('./') else './' + m.name
-                        if n == cr:
+                        if n == dd and m.issym():   # dbgsym packages: the whole doc directory points at the package they debug
+                            facts['copyright_link'] = m.linkname.rstrip('/') + '/copyright'
+                        elif n == cr:
                             if m.issym():
                                 facts['copyright_link'] = m.linkname
                             elif m.isfile():
@@ -192,9 +198,14 @@ def summarise_lc(lc):
     }
 
 
-def _spdx_id_ok(expr):
+@functools.lru_cache(maxsize=1)
+def _licensing():
     from license_expression import get_spdx_licensing
-    get_spdx_licensing().parse(expr, validate=True)
+    return get_spdx_licensing()   # building it takes seconds: once per run
+
+
+def _spdx_id_ok(expr):
+    _licensing().parse(expr, validate=True)
 
 
 def _licref(name):
@@ -203,7 +214,7 @@ def _licref(name):
 
 def _split_top(expr, word):
     """Split on ' word ' outside nothing (DEP-5 has no parentheses); a comma before the word is kept as a marker."""
-    return re.split(r'\s+%s\s+' % word, expr)
+    return re.split(r'\s+%s\s+' % word, expr, flags=re.I)
 
 
 def dep5_expression(synopsis, texts, refs):
@@ -214,6 +225,19 @@ def dep5_expression(synopsis, texts, refs):
         m = re.match(r'^(.*?)\s+with\s+(.*?)\s+exception$', name, re.I)
         base, exc = (m.group(1), m.group(2)) if m else (name, None)
         spdx = DEP5_TO_SPDX.get(base.lower())
+        if spdx is None and base.startswith('LicenseRef-'):   # already an SPDX reference (KDE's copyright files write them)
+            ref = _licref(base[len('LicenseRef-'):])
+            refs.setdefault(ref, {'name': base, 'text': texts.get(base) or
+                                  'The copyright file names this licence "%s" and gives no text for it.' % base})
+            return ref if exc is None else ref
+        if spdx is None:   # an identifier of the SPDX licence list written as it is (case-insensitive)
+            try:
+                sym = _licensing().parse(base, validate=True)
+                text = str(sym)
+                if sym is not None and ((' ' not in text and not sym.is_exception) or re.fullmatch(r'\S+ WITH \S+', text)):
+                    spdx = text   # a bare exception identifier is not a licence: it stays a LicenseRef
+            except Exception:
+                spdx = None
         if spdx:
             try:
                 _spdx_id_ok(spdx)
@@ -236,11 +260,11 @@ def dep5_expression(synopsis, texts, refs):
         return ors[0] if len(ors) == 1 else '(' + ' OR '.join(ors) + ')'
 
     syn = ' '.join(synopsis.split())
-    m = re.search(r',\s+(and|or)\s+', syn)
+    m = re.search(r',\s+(and|or)\s+', syn, re.I)
     if m:   # the comma lowers the priority of the conjunction after it
         left, op, right = syn[:m.start()], m.group(1), syn[m.end():]
         parts = [group(left), group(right)]
-        return '(' + (' AND ' if op == 'and' else ' OR ').join(parts) + ')'
+        return '(' + (' AND ' if op.lower() == 'and' else ' OR ').join(parts) + ')'
     return group(syn)
 
 
@@ -313,25 +337,37 @@ class Inventory:
         self.sources = {}        # (name, version) -> dict
         self.notes = []          # facts the documents report (replacements, missing sources, mismatches)
 
-    def add_deb(self, path, cache=None, rel_filename=None, index_sha=None):
+    @staticmethod
+    def raw_facts(path, cache=None):
+        """The facts one .deb holds, read once and kept in the cache (the reading is the slow part)."""
         path = Path(path)
         st = path.stat()
         key = '%s|%d|%d' % (path, st.st_size, st.st_mtime_ns)
         hit = cache.get(key) if cache is not None else None
+        if hit is not None and hit.get('v') != 2:
+            hit = None   # recorded by an older reader
         if hit is None:
             sha = sha256_file(path)
             facts = read_deb(path)
-            refs = {}
-            fmt, expr, refs = licences_from_copyright(facts['copyright'])
-            hit = {'sha256': sha, 'size': st.st_size, 'control': facts['control'], 'copyright_link': facts['copyright_link'],
-                   'licence_format': fmt, 'licence': expr, 'licence_refs': refs, 'lc': summarise_lc(facts['lc'])}
+            hit = {'v': 2, 'sha256': sha, 'size': st.st_size, 'control': facts['control'], 'copyright_link': facts['copyright_link'],
+                   'copyright_z': base64.b64encode(zlib.compress(facts['copyright'].encode())).decode() if facts['copyright'] is not None else None,
+                   'lc': summarise_lc(facts['lc'])}
             if cache is not None:
                 cache[key] = hit
+        return hit
+
+    def add_deb(self, path, cache=None, rel_filename=None, index_sha=None):
+        path = Path(path)
+        hit = self.raw_facts(path, cache)
+        text = zlib.decompress(base64.b64decode(hit['copyright_z'])).decode() if hit['copyright_z'] is not None else None
+        hit = dict(hit)
+        hit['licence_format'], hit['licence'], hit['licence_refs'] = licences_from_copyright(text)
         if index_sha is not None and index_sha != hit['sha256']:
             raise ReadError('%s: the repository index says sha256 %s, the file is %s' % (path, index_sha, hit['sha256']))
         ctl = hit['control']
         sname, sver = _source_of(ctl)
         p = dict(hit)
+        p.pop('copyright_z', None)
         p.update({'path': str(path), 'filename': path.name, 'pool_filename': rel_filename, 'source': sname, 'source_version': sver})
         self.packages.append(p)
         return p
@@ -391,7 +427,7 @@ def find_dsc(name, version, dirs):
     return None
 
 
-def build_inventory(tree, cohort_list=None, suite='mashtabba', cache=None):
+def build_inventory(tree, cohort_list=None, suite='mashtabba', cache=None, workers=4):
     """The tree's packages, with the cohort's laid over them (a cohort package replaces the tree's for the same
     package and architecture)."""
     inv = Inventory()
@@ -399,11 +435,17 @@ def build_inventory(tree, cohort_list=None, suite='mashtabba', cache=None):
     index = read_packages_index(tree, suite)
     if not index:
         raise ReadError('no Packages index under %s/dists/%s/main' % (tree, suite))
+    entries = [Path(l.strip()) for l in Path(cohort_list).read_text().splitlines() if l.strip()] if cohort_list else []
+    if cache is not None and workers > 1:
+        from concurrent.futures import ThreadPoolExecutor
+        todo = [tree / fn for fn in index] + [e for e in entries if e.suffix == '.deb']
+        with ThreadPoolExecutor(workers) as ex:
+            list(ex.map(lambda f: Inventory.raw_facts(f, cache), todo))
+        cache.save()
     for fn, sha in index.items():
         inv.add_deb(tree / fn, cache, rel_filename=fn, index_sha=sha)
     source_dirs = {str(tree / Path(fn).parent) for fn in index}
     if cohort_list:
-        entries = [Path(l.strip()) for l in Path(cohort_list).read_text().splitlines() if l.strip()]
         for e in entries:
             if e.suffix == '.deb':
                 new = inv.add_deb(e, cache)

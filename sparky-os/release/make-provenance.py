@@ -3,7 +3,7 @@
 the tree with a round's cohort laid over it (ORDER 394). Unsigned statements; signing is the main session's step.
 
 Usage: make-provenance.py --tree TREE [--cohort-list FILE [--cohort-sha256 FILE]] [--buildinfo-dir DIR ...]
-                          --recipes-dir sparky-os/packages --out-dir DIR [--report FILE]
+                          --recipes-dir sparky-os/packages [--recipes-dir sparky-os/upstream] --out-dir DIR [--report FILE]
 
 One statement covers every .deb one source package version built for one architecture (the architecture:all
 packages go with the amd64 build). It records only what the files carry; what SLSA asks for and nothing records is
@@ -51,20 +51,22 @@ def buildinfo_index(dirs):
     return idx, seen
 
 
-def recipe_index(recipes_dir):
-    """source package name -> recipe directory, from directory names and the changelog files a recipe keeps."""
+def recipe_index(recipe_roots):
+    """source package name -> recipe directory, from directory names and the changelog files a recipe keeps,
+    below each root (sparky-os/packages, sparky-os/upstream)."""
     idx = {}
-    for d in sorted(Path(recipes_dir).iterdir()):
-        if not d.is_dir():
-            continue
-        idx.setdefault(d.name, d)
-        for cl in list(d.glob('changelog*')) + list(d.glob('debian/changelog')):
-            try:
-                m = re.match(r'^(\S+) \(', cl.read_text(errors='replace'))
-            except OSError:
+    for root in recipe_roots:
+        for d in sorted(Path(root).iterdir()):
+            if not d.is_dir():
                 continue
-            if m:
-                idx.setdefault(m.group(1), d)
+            idx.setdefault(d.name, d)
+            for cl in list(d.glob('changelog*')) + list(d.glob('debian/changelog')):
+                try:
+                    m = re.match(r'^(\S+) \(', cl.read_text(errors='replace'))
+                except OSError:
+                    continue
+                if m:
+                    idx.setdefault(m.group(1), d)
     return idx
 
 
@@ -104,9 +106,10 @@ def main():
     ap.add_argument('--cohort-list', type=Path)
     ap.add_argument('--cohort-sha256', type=Path)
     ap.add_argument('--buildinfo-dir', action='append', default=[], type=Path)
-    ap.add_argument('--recipes-dir', required=True, type=Path)
+    ap.add_argument('--recipes-dir', required=True, action='append', type=Path, help='a folder of recipe folders (repeat for sparky-os/packages and sparky-os/upstream)')
     ap.add_argument('--out-dir', required=True, type=Path)
     ap.add_argument('--report', type=Path)
+    ap.add_argument('--bundle', type=Path, help='also write every statement, one per line, to this .jsonl file (the in-toto bundle convention)')
     ap.add_argument('--cache', type=Path)
     a = ap.parse_args()
 
@@ -135,7 +138,7 @@ def main():
                 k = alts[0] if alts else (p['source'], p['source_version'], 'all')
             groups.setdefault(k, []).append(p)
 
-    gaps, written, total_subjects = {}, [], 0
+    gaps, written, total_subjects, lines = {}, [], 0, []
     for (src, sver, barch), pk in sorted(groups.items()):
         s = inv.sources.get((src, sver))
         rdir = recipes.get(src)
@@ -147,8 +150,8 @@ def main():
             g += ['build-environment', 'build-dependencies', 'build-finish-time']
         if s is None:
             g.append('source-dsc-missing')
-        key = rdir.name if rdir else 'unresolved:' + src
-        e = gaps.setdefault(key, {'recipe': (str(rdir.relative_to(a.recipes_dir.parent.parent)) if rdir else None),
+        key = '/'.join(rdir.parts[-3:]) if rdir else 'unresolved:' + src
+        e = gaps.setdefault(key, {'recipe': ('/'.join(rdir.parts[-3:]) if rdir else None),
                                   'pins_image_digest': recipe_facts(rdir)['pins_image_digest'] if rdir else None,
                                   'sources': set(), 'statements': 0, 'with_buildinfo': 0, 'gaps': set()})
         e['sources'].add(src)
@@ -178,7 +181,7 @@ def main():
                                           'buildOrigin': bi.get('Build-Origin'), 'buildArchitecture': bi.get('Build-Architecture')})
         ext = {'source': {'name': src, 'version': sver}, 'architecture': barch}
         if rdir:
-            ext['recipe'] = {'repository': BUILD_REPO, 'path': str(rdir.relative_to(a.recipes_dir.parent.parent))}
+            ext['recipe'] = {'repository': BUILD_REPO, 'path': '/'.join(rdir.parts[-3:])}
         run = {'builder': {'id': BUILDER_ID}}
         if bi:
             run['metadata'] = {'finishedOn': _utc(bi.get('Build-Date'))}
@@ -198,7 +201,10 @@ def main():
         name = urllib.parse.quote('%s_%s_%s' % (src, sver, barch), safe='.-_~+') + '.intoto.json'
         (a.out_dir / name).write_text(json.dumps(stmt, indent=1) + '\n')
         written.append(name)
+        lines.append(json.dumps(stmt, separators=(',', ':'), sort_keys=True))
 
+    if a.bundle:
+        a.bundle.write_text('\n'.join(lines) + '\n')
     rep = {'statements': len(written), 'subjects': total_subjects, 'binary_packages': len(inv.packages),
            'buildinfo_files_read': bseen, 'statements_with_buildinfo': sum(e['with_buildinfo'] for e in gaps.values()),
            'recipes_resolved': sum(1 for k in gaps if not k.startswith('unresolved:')),

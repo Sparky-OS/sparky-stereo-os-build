@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build a tiny repository tree for the supply-chain test: three binary packages of two sources, one with a
 Lean Code record and DEP-5 copyright, one with a free-form copyright, one architecture:all package whose
-copyright file is a symlink to its sibling's. Usage: make-fixture.py OUT_DIR  (needs dpkg-deb)."""
+copyright file is a symlink to its sibling's, one dbgsym package whose doc directory is a symlink. Usage: make-fixture.py OUT_DIR  (needs dpkg-deb)."""
 import gzip
 import hashlib
 import json
@@ -34,11 +34,15 @@ Files: vendor/*
 Copyright: 2020 Other
 License: Strange-1.0
 
+Files: llvm/*
+Copyright: 2020 LLVM
+License: Apache-2.0 and LLVM-exception
+
 License: GPL-2+
  This program is free software; see /usr/share/common-licenses/GPL-2.
 
 License: Strange-1.0
- Permission is granted to do strange things.
+ Permission is granted to do strange things. Ask someone@example.org.
 """
 
 
@@ -76,6 +80,8 @@ d2 = deb('alpha-lc-hr', '1.0-1+stereo3d1+lc1', 'amd64', 'fixsrc (1.0-1+stereo3d1
          {'usr/share/doc/alpha-lc-hr/copyright': 'free form text, no format line\n'})
 d3 = deb('alpha-data', '1.0-1+stereo3d1+lc1', 'all', 'fixsrc (1.0-1+stereo3d1+lc1)', '', {},
          links=[('usr/share/doc/alpha-data/copyright', '../alpha-lc-hr/copyright')])
+d5 = deb('alpha-dbgsym', '1.0-1+stereo3d1+lc1', 'amd64', 'fixsrc (1.0-1+stereo3d1+lc1)', 'Auto-Built-Package: debug-symbols\n', {},
+         links=[('usr/share/doc/alpha-dbgsym', 'alpha')])
 d4 = deb('beta', '2.0', 'amd64', None, '', {'usr/share/doc/beta/copyright': DEP5.replace('Strange-1.0', 'MIT')})
 
 
@@ -96,7 +102,7 @@ dsc('fixsrc', '1.0-1+stereo3d1+lc1', None)
 dsc('beta', '2.0', None)
 
 entries = []
-for d in (d1, d2, d3, d4):
+for d in (d1, d2, d3, d4, d5):
     ctl = subprocess.run(['dpkg-deb', '-f', str(d)], capture_output=True, text=True, check=True).stdout.rstrip('\n')
     entries.append('%s\nFilename: %s\nSize: %d\nSHA256: %s\n' % (ctl, d.relative_to(out), d.stat().st_size, sha(d)))
 for arch in ('amd64', 'all'):

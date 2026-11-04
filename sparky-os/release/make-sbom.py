@@ -9,6 +9,7 @@ not carry is NOASSERTION in the document and is counted in the report.
 import argparse
 import hashlib
 import json
+import re
 import subprocess
 import sys
 import urllib.parse
@@ -33,6 +34,18 @@ def spdxid(*parts):
 def purl(name, version, arch):
     q = lambda s: urllib.parse.quote(s, safe='.-_~')
     return 'pkg:deb/sparky-stereo-os/%s@%s?arch=%s&distro=%s' % (q(name), q(version), arch, SUITE)
+
+
+EMAIL = re.compile(r'[\w.+-]+@[\w-]+(?:\.[\w-]+)+')
+
+
+def _extracted(lid, v):
+    """A licence text as the copyright file gives it, without the e-mail addresses in it (nothing here carries a person's contact)."""
+    text, n = EMAIL.subn('<email omitted>', v['text'])
+    info = {'licenseId': lid, 'extractedText': text, 'name': v['name']}
+    if n:
+        info['comment'] = '%d e-mail address(es) in the original text were replaced by "<email omitted>".' % n
+    return info
 
 
 def main():
@@ -139,7 +152,7 @@ def main():
         'packages': packages, 'relationships': rels,
     }
     if refs:
-        doc['hasExtractedLicensingInfos'] = [{'licenseId': k, 'extractedText': v['text'], 'name': v['name']} for k, v in sorted(refs.items())]
+        doc['hasExtractedLicensingInfos'] = [_extracted(k, v) for k, v in sorted(refs.items())]
     a.out.parent.mkdir(parents=True, exist_ok=True)
     a.out.write_text(json.dumps(doc, indent=1, ensure_ascii=False, sort_keys=False) + '\n')
     rep = {'document': str(a.out), 'name': a.name, 'binary_packages': len(inv.packages), 'source_packages': len(inv.sources),

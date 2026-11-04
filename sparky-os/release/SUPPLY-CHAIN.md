@@ -6,8 +6,9 @@ Everything they write is unsigned; signing and publication are the main session'
 
 ## Formats
 
-- **Bill of materials: SPDX 2.3, JSON** (ISO/IEC 5962:2021 is SPDX 2.2.1; 2.3 is the current 2.x release of the same data model).
-  SPDX 3.0 was not chosen: Syft, Trivy, the SPDX project's own Python validator and Siemens' debsbom (the Debian-specific generator) read and write 2.3 today, and the SPDX 3.0 profile for Debian sources has no consumer among them.
+- **Bill of materials: SPDX 2.3, JSON.** SPDX is the international standard ISO/IEC 5962:2021 (spdx.dev, About); 2.3 is the 2.x release the tools read today.
+  Measured on 4 November 2026 with the pinned releases: Syft 1.55.0 writes SPDX 2.3 (`-o spdx-json`, default) and 2.2 (`spdx-json@2.2`) and lists no SPDX 3 output; Trivy 0.76.0 reads and writes `spdx` and `spdx-json`; the SPDX project's `spdx-tools` 0.8.5 validates "SPDX-2.2" and "SPDX-2.3".
+  SPDX 3.0 was therefore not chosen: none of the readers we want to satisfy takes it.
   Moving to 3.0 later changes the writer only: the reader (`supply_chain.py`) keeps the facts.
 - **Provenance: in-toto Statement v1 carrying the SLSA Provenance v1 predicate** (`https://in-toto.io/Statement/v1`, `https://slsa.dev/provenance/v1`).
   One statement per source package version and build architecture; its subjects are every `.deb` that build made.
@@ -56,7 +57,7 @@ Nothing records these today, so no statement states them:
 | --- | --- | --- |
 | `recipe-commit` | the build repository's commit the build ran from | the build script writes `git rev-parse HEAD` of the build repository into a file next to the `.deb` files (a `.buildinfo` Environment line or a `provenance.json`) |
 | `builder-image-digest` | the container image digest the build ran in (SLSA `builderDependencies`) | the build script records `docker inspect --format '{{.Image}}'` and the image's repo digest |
-| `build-environment`, `build-dependencies`, `build-finish-time` | with no `.buildinfo`, the installed build dependencies, the environment and the time | keep the `.buildinfo` that `dpkg-buildpackage` writes (18 of the 39 stage folders of the 4 November cohort have one; the publication tree copies none) |
+| `build-environment`, `build-dependencies`, `build-finish-time` | with no `.buildinfo`, the installed build dependencies, the environment and the time | keep the `.buildinfo` that `dpkg-buildpackage` writes (18 `.buildinfo` files exist in the 39 stage folders of the 4 November cohort; the publication tree copies none) |
 | `build-start-time`, `invocation-id` | no build records them | the build script writes both |
 | `recipe-unresolved` | no recipe folder with the source's name or changelog | register the source with its recipe |
 | `source-dsc-missing` | the `.dsc` was not beside the tree or the cohort | keep the `.dsc` in the stage folder |
@@ -66,6 +67,27 @@ Nothing records these today, so no statement states them:
 `check-supply-chain.py` uses the standards' own libraries: the SPDX project's `spdx-tools` (tools-python) for the document, in-toto's `in-toto-attestation` library (Statement v1 and the generated SLSA Provenance v1 protobuf, unknown fields refused) for the statements.
 `sparky-os/tests/supply-chain/test.sh` runs them on a small fixture repository, red on deliberately broken copies and green on the real ones.
 
-## A round
+## A round (a plan; the main session wires it)
 
-See the round plan in the lane report; in short: Part 1 runs `make-sbom.py` and `make-provenance.py` after `publish-tree.sh` on DEST, checks them with `check-supply-chain.py`, and Part 2 signs the documents with the official key and publishes them under `sbom/<round>/` beside the repository.
+The tools run in a container with Python 3.14, `dpkg-dev` and a virtual environment holding `spdx-tools` 0.8.5, `in-toto-attestation` 0.9.3 and `license-expression` 30.4.4 (versions measured on 4 November 2026); the Dockerfile is in the lane report.
+They read the finished DEST, so no cohort mode is needed in the round itself; the cohort mode (`--cohort-list`, `--cohort-sha256`) is for the check before Part 1 and for lanes.
+
+**Part 1, in `official-part1.sh`, after `publish-tree.sh` returns 0 and `sync`** (unsigned, nothing sent):
+
+1. `ROUND=r1103a; O=$W/supply-chain; mkdir -p $O`.
+2. In the tools container, with `$D` (DEST) and the build repository mounted read-only, `$W/stagedirs.txt` already written by Part 1:
+   - `make-sbom.py --tree $D --name sparky-stereo-os-mashtabba-$ROUND --out $O/sparky-stereo-os-mashtabba-$ROUND.spdx.json --report $O/sbom-report.json --cache $O/cache.json`
+   - `make-provenance.py --tree $D $(sed 's/^/--buildinfo-dir /' $W/stagedirs.txt) --recipes-dir $B/packages --recipes-dir $B/upstream --out-dir $O/provenance --bundle $O/provenance-$ROUND.intoto.jsonl --report $O/provenance-gaps.json --cache $O/cache.json`
+   - `check-supply-chain.py sbom ... --tree $D` and `check-supply-chain.py provenance $O/provenance --tree $D`; either exit code stops Part 1.
+3. `cd $O && sha256sum *.spdx.json *.intoto.jsonl provenance-gaps.json > SHA256SUMS`.
+
+**Part 2, signed by the main session with the official key** (the same key and call as `publish-tree.sh`'s Release signature):
+
+4. `gpg --homedir $SPARKY_REPO_GNUPG --local-user 10DFD38DAD1E4808BC688E5A945E5D079A2A0B9C --armor --detach-sign` on `SHA256SUMS`, and on each document if the documents are fetched singly (`.asc` beside each file).
+   This is the key apt clients already trust, so a person verifies with `gpgv` and the repository key they have.
+   A later step may wrap each statement in a DSSE envelope signed with the same key; the statements need no change.
+5. Publish after the repository itself is live (the documents describe it): `rsync` of `$O` to `sbom/$ROUND/` under the web root, then `sbom/latest` pointing at it.
+   `sync-to-server.sh` owns only `pool/` and `dists/` (its step 4 deletes only there), so a new `sbom/` tree is neither sent nor removed by it; a small `sync-supply-chain.sh` with the same dry run and `--go` is the one new script needed.
+6. `verify-online-repository.py` gains one check: the served `SHA256SUMS` matches `$O` and its signature verifies.
+
+What the documents give a person: `grep` of the SPDX file for a package gives its version, hash, origin, licence and source; the provenance line for the same `.deb` hash says what built it and what is not known.

@@ -14,7 +14,7 @@ expect() {  # expect green|red LABEL COMMAND...
     if [ "$got" = "$want" ]; then echo "ok   $want  $label"; else echo "FAIL want $want, got $got: $label"; sed 's/^/     /' "$W/last.out" | head -12; fail=1; fi
 }
 $PY "$T/make-fixture.py" "$W/tree" > /dev/null
-mkdir -p "$W/recipes/fixsrc" "$W/cohort"
+mkdir -p "$W/recipes/fixsrc" "$W/empty" "$W/cohort"
 printf 'fixsrc (1.0-1+stereo3d1+lc1) unstable; urgency=low\n' > "$W/recipes/fixsrc/changelog-1.txt"
 # a cohort: beta 2.1 replaces the published beta 2.0
 mkdir -p "$W/c/beta" "$W/c/beta/DEBIAN"
@@ -48,7 +48,7 @@ expect green "make-sbom on the tree"       $PY "$R/make-sbom.py" --tree "$W/tree
 expect green "check sbom (SPDX validator + tree)" $PY "$R/check-supply-chain.py" sbom "$W/sbom.json" --tree "$W/tree"
 expect green "make-sbom with a cohort"     $PY "$R/make-sbom.py" --tree "$W/tree" --cohort-list "$W/cohort.list" --cohort-sha256 "$W/cohort.sha256" --name fixture-next --out "$W/sbom-next.json" --created 2026-11-04T00:00:00Z
 expect green "check cohort sbom (no tree)" $PY "$R/check-supply-chain.py" sbom "$W/sbom-next.json"
-expect green "make-provenance"             $PY "$R/make-provenance.py" --tree "$W/tree" --buildinfo-dir "$W/bi" --recipes-dir "$W/recipes" --out-dir "$W/prov" --report "$W/prov.report.json"
+expect green "make-provenance"             $PY "$R/make-provenance.py" --tree "$W/tree" --buildinfo-dir "$W/bi" --recipes-dir "$W/recipes" --recipes-dir "$W/empty" --out-dir "$W/prov" --report "$W/prov.report.json"
 expect green "check provenance (in-toto + SLSA + tree)" $PY "$R/check-supply-chain.py" provenance "$W/prov" --tree "$W/tree"
 
 # the facts the documents must carry (analytic expectations, not the tool's own output)
@@ -61,11 +61,14 @@ assert 'LicenseRef-Strange-1.0' in p['alpha']['licenseDeclared'], p['alpha']['li
 assert 'GPL-2.0-or-later' in p['alpha']['licenseDeclared'] and 'BSD-3-Clause' in p['alpha']['licenseDeclared']
 assert p['alpha-lc-hr']['licenseDeclared'] == 'NOASSERTION'   # free-form copyright file
 assert p['alpha-data']['licenseDeclared'] == 'NOASSERTION'    # symlink to a sibling that has none
-assert p['beta']['licenseDeclared'].endswith('AND MIT') and 'LicenseRef' not in p['beta']['licenseDeclared']
+assert p['alpha-dbgsym']['licenseDeclared'] == p['alpha']['licenseDeclared'], p['alpha-dbgsym']['licenseDeclared']   # doc directory symlink
+assert p['beta']['licenseDeclared'].endswith('AND MIT')
 assert any('sparky:lean-code' in a['comment'] for a in p['alpha']['annotations'])
+assert 'LicenseRef-LLVM-exception' in p['alpha']['licenseDeclared'], p['alpha']['licenseDeclared']   # a bare exception id is no licence (found on the real cohort)
 assert p['alpha']['originator'] == 'Organization: Debian'
+assert '@' not in ' '.join(e['extractedText'] for e in d['hasExtractedLicensingInfos']), 'a contact leaked from a licence text'
 assert 'Capitain_Jack' not in json.dumps(d) and 'lists.debian.org' not in json.dumps(d), 'a contact leaked'
-assert {e['licenseId'] for e in d['hasExtractedLicensingInfos']} == {'LicenseRef-Strange-1.0'}
+assert {e['licenseId'] for e in d['hasExtractedLicensingInfos']} == {'LicenseRef-Strange-1.0', 'LicenseRef-LLVM-exception'}
 P
 expect green "the cohort replaces beta 2.0 by 2.1" $PY -I -c "
 import json,sys
@@ -75,7 +78,7 @@ import json, sys, glob
 s = {f.split('/')[-1]: json.load(open(f)) for f in glob.glob(sys.argv[1] + '/*.intoto.json')}
 a = s['fixsrc_1.0-1+stereo3d1+lc1_amd64.intoto.json']
 names = [x['name'] for x in a['subject']]
-assert names == ['alpha-data_1.0-1+stereo3d1+lc1_all.deb', 'alpha-lc-hr_1.0-1+stereo3d1+lc1_amd64.deb', 'alpha_1.0-1+stereo3d1+lc1_amd64.deb'], names
+assert names == ['alpha-data_1.0-1+stereo3d1+lc1_all.deb', 'alpha-dbgsym_1.0-1+stereo3d1+lc1_amd64.deb', 'alpha-lc-hr_1.0-1+stereo3d1+lc1_amd64.deb', 'alpha_1.0-1+stereo3d1+lc1_amd64.deb'], names
 rd = a['predicate']['buildDefinition']['resolvedDependencies']
 assert any(r.get('uri') == 'pkg:deb/debian/libc6@2.42-1?arch=amd64' for r in rd)
 assert any(r.get('annotations', {}).get('role') == 'source-file' for r in rd)
@@ -86,7 +89,8 @@ P
 expect green "gaps are listed, not filled" $PY -I -c "
 import json
 r=json.load(open('$W/prov.report.json')); g=r['gaps_by_recipe']
-assert 'recipe-commit' in g['fixsrc']['gaps'] and 'build-environment' not in g['fixsrc']['gaps']
+k = [x for x in g if x.endswith('/fixsrc')][0]
+assert 'recipe-commit' in g[k]['gaps'] and 'build-environment' not in g[k]['gaps']
 assert 'recipe-unresolved' in g['unresolved:beta']['gaps'] and 'build-environment' in g['unresolved:beta']['gaps']"
 
 # red: the validators must fail on broken copies
