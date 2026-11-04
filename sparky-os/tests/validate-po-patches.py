@@ -78,7 +78,7 @@ def parse_patch_sections(patch_text, errors, patch_name):
 
         if hunk_open:
             if line == r"\ No newline at end of file":
-                if counted_old == old_count or counted_new == new_count:
+                if counted_old <= old_count or counted_new <= new_count:
                     continue
                 errors.append("%s: line %d: misplaced no-newline marker" % (patch_name, number))
                 continue
