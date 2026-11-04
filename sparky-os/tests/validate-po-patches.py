@@ -86,6 +86,7 @@ def parse_patch_sections(patch_text, errors, patch_name):
             if not (section is not None and first in ("+", "-", " ")):
                 errors.append("%s: line %d: line outside hunk: %s"
                               % (patch_name, number, line or "<blank>"))
+                close_hunk()
                 continue
             if first != "+":
                 old_count += 1
@@ -105,6 +106,7 @@ def parse_patch_sections(patch_text, errors, patch_name):
             continue
 
         if line.startswith("diff --git "):
+            close_hunk()
             close_section()
             match = re.match(r"^diff --git\s+a/(\S+)\s+b/(\S+)$", line)
             if not match:
@@ -124,10 +126,13 @@ def parse_patch_sections(patch_text, errors, patch_name):
             continue
 
         if line.startswith("--- "):
+            close_hunk()
             section["old_path"] = clean_diff_path(line[4:].split()[0], "old")
         elif line.startswith("+++ "):
+            close_hunk()
             section["new_path"] = clean_diff_path(line[4:].split()[0], "new")
         elif line.startswith("@@ "):
+            close_hunk()
             match = HUNK_HEADER.match(line)
             if not match:
                 errors.append("%s: line %d: malformed hunk header" % (patch_name, number))
