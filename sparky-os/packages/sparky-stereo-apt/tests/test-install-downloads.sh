@@ -116,10 +116,8 @@ check "apt install: the notice is there too, with size and source" bash -c "grep
 check "apt install: answering n installs nothing" test "$(installed data-pkg)" != installed
 
 echo "== NetworkManager's other answers"
-for v in 3:guess-yes; do
-	metered "${v%%:*}"; out=$(run_apt n apt-get install data-pkg)
-	check "Metered=${v%%:*} (${v#*:}): shown" has "$out" "NetworkManager says: ${v#*:}"
-done
+metered 3; out=$(run_apt n apt-get install data-pkg)
+check "Metered=3 (guess-yes): shown" has "$out" "NetworkManager says: guess-yes"
 for v in 2:no 4:guess-no; do
 	metered "${v%%:*}"; out=$(run_apt n apt-get install data-pkg)
 	check "Metered=${v%%:*} (${v#*:}): nothing extra is shown" bash -c "! grep -q -e 'metered' -e 'data-pkg: 117' -e 'example.org/data-1' <<<'$out'"

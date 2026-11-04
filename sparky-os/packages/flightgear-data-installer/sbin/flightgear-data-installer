@@ -198,8 +198,14 @@ fetch_part() {
 		have=0
 		[ -f "$file" ] && have=$(stat -c %s "$file")
 		if [ "$have" -gt "$len" ]; then
+			# more bytes than the range holds: the server did not honour it; start this part again, and stop after a few tries
 			: >"$file"
 			have=0
+			attempts=$((attempts + 1))
+			if [ "$attempts" -ge 5 ]; then
+				echo "the server sent more bytes than the byte range asked for" >"$file.failed"
+				return 1
+			fi
 		fi
 		[ "$have" -eq "$len" ] && return 0
 		rm -f "$file.hdr"

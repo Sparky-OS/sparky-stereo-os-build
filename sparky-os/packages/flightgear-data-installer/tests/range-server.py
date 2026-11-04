@@ -4,7 +4,7 @@
 # MODE: normal   206 for every range
 #       cut      the first answer for each range start sends only half of the bytes asked, then closes the connection
 #       norange  ignores Range and always answers 200 with the whole file
-#       slow     sends 64 KiB per 0.4 s, so a run can be stopped half way
+#       slow     sends 64 KiB per second, so a run can be stopped half way
 import http.server, ssl, sys, time, threading
 
 port, path, mode, logp, cert, key = int(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6]
@@ -49,7 +49,7 @@ class H(http.server.BaseHTTPRequestHandler):
             for i in range(0, len(body), 65536):
                 self.wfile.write(body[i:i + 65536])
                 self.wfile.flush()
-                time.sleep(0.4)
+                time.sleep(1.0)
             return
         self.wfile.write(body)
 

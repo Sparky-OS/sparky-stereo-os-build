@@ -2,6 +2,7 @@
 # Logic tests of flightgear-data-installer, run as root in a disposable Debian container with the package installed.
 # They replace the recorded values by those of a small fixture archive (the real archive is 1.75 GiB), so each case runs in seconds;
 # the full run with the real recorded values is a separate test. Exit status 0 only when every check passes.
+# shellcheck disable=SC2010   # the tests check that nothing of ours is left with ls and grep, as they always did
 set -u
 umask 022
 BIN=/usr/sbin/flightgear-data-installer
@@ -205,13 +206,14 @@ check "no ranges: nothing was installed" test ! -e "$DATA/version"
 unserve
 purge_state
 
-# a run that is stopped half way (as Ctrl-C or a killed apt does) continues where it was, and downloads no byte twice
+# a run that is stopped half way (as a killed apt does) continues where it was, and downloads no byte twice
 serve slow 18446
 printf 'MIRROR_URL=https://127.0.0.1:18446/FlightGear-2024.1.5-data.txz\nPARALLEL=4\n' >/etc/default/flightgear-data-installer
 setsid "$BIN" install >"$W/out.txt" 2>&1 &
 pid=$!
-sleep 4
-kill -TERM -- "-$pid" 2>/dev/null
+sleep 3
+# only the program itself is told to stop (the way apt stops its child): its curls must end with it
+kill -TERM "$pid" 2>/dev/null
 wait "$pid" 2>/dev/null
 got1=$(cat "$CACHE"/parts.4/part.* 2>/dev/null | wc -c)
 check "stopped run: part files stay (some bytes, not all: $got1 of $SIZE)" bash -c "[ $got1 -gt 0 ] && [ $got1 -lt $SIZE ]"
