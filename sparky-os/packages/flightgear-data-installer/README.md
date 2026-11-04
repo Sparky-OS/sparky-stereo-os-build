@@ -44,7 +44,7 @@ Updating to another FlightGear data release means a new version of this package 
 
 Dependencies:
 -------------
-bash, ca-certificates, coreutils, curl, findutils, tar, util-linux, xz-utils
+bash, ca-certificates, curl, xz-utils (coreutils, findutils, tar and util-linux are Essential)
 
 Build:
 -------------

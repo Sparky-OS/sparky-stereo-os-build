@@ -36,7 +36,10 @@ load_language() {
 		*) cand=${l%%_*} ;;
 	esac
 	case $cand in
-		de | fr | ja | ko | pl | pt_BR | zh_CN | zh_TW) [ -r "$LANGDIR/$cand" ] && . "$LANGDIR/$cand" ;;
+		de | fr | ja | ko | pl | pt_BR | zh_CN | zh_TW)
+			# shellcheck source=/dev/null
+			[ -r "$LANGDIR/$cand" ] && . "$LANGDIR/$cand"
+			;;
 	esac
 	return 0
 }
@@ -152,7 +155,7 @@ forget_ours() {
 }
 
 download() {
-	local dest=$1 have=0 dev
+	local dest=$1 have=0
 	[ -f "$dest" ] && have=$(stat -c %s "$dest")
 	if [ "$have" -gt "$SIZE" ]; then
 		rm -f "$dest"

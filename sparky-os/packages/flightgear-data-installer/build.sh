@@ -36,7 +36,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: bash (>= 4.3), ca-certificates, coreutils, curl, findutils, tar, util-linux, xz-utils
+Depends: bash (>= 4.3), ca-certificates, curl, xz-utils
 Provides: flightgear-data-all (= $DATA), flightgear-data-base (= $DATA), flightgear-data-ai (= $DATA), flightgear-data-models (= $DATA)
 Conflicts: flightgear-data-all, flightgear-data-base, flightgear-data-ai, flightgear-data-models
 Section: games
