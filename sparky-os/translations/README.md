@@ -32,3 +32,4 @@ Six of these patches were made "for the next package" and no build applied them.
 | Patch | Source package | Carried by |
 | --- | --- | --- |
 | `kalgebra-stereo3d.po.patch` | kalgebra | 4:26.04.0-1+stereo3d3 |
+| `kalzium-stereo3d.po.patch` | kalzium | 4:26.04.3-1+stereo3d5 |
