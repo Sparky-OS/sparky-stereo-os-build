@@ -11,7 +11,7 @@ if [ "$1" = "purge" ]; then
 			rm -f -- "$f"
 		done <"$S/$l"
 	done
-	for l in dirs.list pending.dirs; do
+	for l in dirs.list pending.dirs shared.list pending.shared; do
 		[ -f "$S/$l" ] || continue
 		sort -r "$S/$l" | while IFS= read -r d; do
 			rmdir -- "$d" 2>/dev/null || true

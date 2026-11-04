@@ -20,8 +20,9 @@ check() {
 	if "$@"; then ok "$what"; else bad "$what"; fi
 }
 rm -rf "$W"
-mkdir -p "$W/fx/fgdata_2024_1/Nasal" "$W/fx/fgdata_2024_1/Aircraft/c172p" "$W/fx/fgdata_2024_1/Textures/Trees"
+mkdir -p "$W/fx/fgdata_2024_1/gui" "$W/fx/fgdata_2024_1/Nasal" "$W/fx/fgdata_2024_1/Aircraft/c172p" "$W/fx/fgdata_2024_1/Textures/Trees"
 echo 2024.1.5 >"$W/fx/fgdata_2024_1/version"
+echo '<x/>' >"$W/fx/fgdata_2024_1/gui/x.xml"
 echo 'print("a");' >"$W/fx/fgdata_2024_1/Nasal/a.nas"
 echo '<x/>' >"$W/fx/fgdata_2024_1/Aircraft/c172p/c172p.xml"
 echo '#!/usr/bin/perl' >"$W/fx/fgdata_2024_1/Textures/Trees/convert.pl"
@@ -134,9 +135,10 @@ check "termination while unpacking: the other package's file remains" test "$(ca
 rm -f "$W/fakebin/tar"
 rm -rf "$DATA" "$STATE" "$CACHE"
 
-# 6 the good run, beside a file that belongs to another package (flightgear's own)
-mkdir -p "$DATA/Nasal"
+# 6 the good run, beside files that belong to another package (flightgear's own)
+mkdir -p "$DATA/Nasal" "$DATA/gui"
 echo mine >"$DATA/Nasal/sparky-stereo.nas"
+echo other >"$DATA/gui/other.xml"
 run install
 check "install: exit status 0 ($RC)" test "$RC" -eq 0
 check "install: says it is done" grep -q "is installed in $DATA" "$OUTF"
@@ -177,10 +179,12 @@ for pair in de_DE.UTF-8:"Führen Sie" fr_FR.UTF-8:"Lancez ceci" pl_PL.UTF-8:"Uru
 	out=$(setpriv --reuid=65534 --regid=65534 --clear-groups env LC_ALL=$loc "$BIN" install 2>&1)
 	check "language $loc" bash -c 'grep -qF -- "$1" <<<"$2"' _ "$want" "$out"
 done
-# 8 purge (dpkg's own purge: the program is gone by then)
+# 8 purge (dpkg's own purge: the program is gone by then); the other package's file in gui/ is removed first, as removing that package does
+rm -f "$DATA/gui/other.xml"
 dpkg --purge flightgear-data-installer >"$W/purge.txt" 2>&1
 check "purge: exit status 0" test $? -eq 0
 check "purge: the data it placed is gone" test ! -e "$DATA/Aircraft" -a ! -e "$DATA/version" -a ! -e "$DATA/Nasal/a.nas"
+check "purge: a shared folder that is empty by then goes too, the one still holding a file stays" test ! -e "$DATA/gui" -a -d "$DATA/Nasal"
 check "purge: the other package's file stays" test "$(cat "$DATA/Nasal/sparky-stereo.nas")" = mine
 check "purge: state and cache are gone" test ! -e "$STATE" -a ! -e "$CACHE"
 

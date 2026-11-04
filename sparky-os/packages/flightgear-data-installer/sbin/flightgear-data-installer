@@ -98,7 +98,7 @@ cleanup() {
 	if [ -n "$LINKING" ]; then
 		# nothing half-made: what this run placed, and the folders it made, are taken out again
 		remove_listed "$PENDING.files" "$PENDING.dirs"
-		rm -f "$PENDING.files" "$PENDING.dirs"
+		rm -f "$PENDING.files" "$PENDING.dirs" "$PENDING.shared"
 	fi
 	[ -n "$CURL_LOG" ] && rm -f "$CURL_LOG"
 	if [ "$rc" -ne 0 ] && [ -z "$KEPT_FILE" ] && [ ! -f "$STATE/installed" ]; then
@@ -122,6 +122,15 @@ remove_listed() {
 			rmdir -- "$d" 2>/dev/null || true
 		done < <(sort -r "$dirs")
 	fi
+}
+
+remove_shared() {
+	# folders that were there before and held our files too: when nothing else is in them any more they go with the data
+	local d
+	[ -f "$1" ] || return 0
+	while IFS= read -r d; do
+		rmdir -- "$d" 2>/dev/null || true
+	done < <(sort -r "$1")
 }
 
 check_tools() {
@@ -151,7 +160,8 @@ data_ok() {
 forget_ours() {
 	remove_listed "$STATE/files.list" "$STATE/dirs.list"
 	remove_listed "$PENDING.files" "$PENDING.dirs"
-	rm -f "$STATE/installed" "$STATE/files.list" "$STATE/dirs.list" "$PENDING.files" "$PENDING.dirs"
+	remove_shared "$STATE/shared.list"
+	rm -f "$STATE/installed" "$STATE/files.list" "$STATE/dirs.list" "$STATE/shared.list" "$PENDING.files" "$PENDING.dirs" "$PENDING.shared"
 }
 
 download() {
@@ -209,7 +219,7 @@ install_data() {
 	# a run that stopped half way is taken out first, then our own incomplete or damaged data
 	if [ -f "$PENDING.files" ]; then
 		remove_listed "$PENDING.files" "$PENDING.dirs"
-		rm -f "$PENDING.files" "$PENDING.dirs"
+		rm -f "$PENDING.files" "$PENDING.dirs" "$PENDING.shared"
 	fi
 	if [ -z "$userfile" ] && data_ok; then
 		say PRESENT "$DATA_VERSION" "$DATA_DIR"
@@ -288,6 +298,7 @@ install_data() {
 	# every path is checked before anything is placed: a file that is already there and is not ours stops the install
 	local rel src target
 	: >"$PENDING.files"
+	: >"$PENDING.shared"
 	while IFS= read -r -d '' rel; do
 		src=$rel
 		rel=${rel#"$root"/}
@@ -295,6 +306,7 @@ install_data() {
 		if [ -d "$src" ] && [ ! -L "$src" ]; then
 			if [ -e "$target" ] || [ -L "$target" ]; then
 				[ -d "$target" ] && [ ! -L "$target" ] || die CONFLICT "$target"
+				echo "$target" >>"$PENDING.shared"
 			else
 				echo "$target" >>"$PENDING.dirs"
 			fi
@@ -314,6 +326,7 @@ install_data() {
 	printf '%s %s\n' "$DATA_VERSION" "$SHA256" >"$STATE/installed.new"
 	mv "$PENDING.files" "$STATE/files.list"
 	mv "$PENDING.dirs" "$STATE/dirs.list"
+	mv "$PENDING.shared" "$STATE/shared.list"
 	mv "$STATE/installed.new" "$STATE/installed"
 	rm -rf "$STAGE"
 	STAGE=
