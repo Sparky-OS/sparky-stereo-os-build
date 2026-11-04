@@ -13,6 +13,9 @@
 #   comes from SHA256SUMS in SOURCE_DIR when that lists it, else from the signed tree's Sources; PREVIOUS_DIR: the earlier
 #   +lc1 .deb files, for the link gate's predecessor; ENTRY: the changelog entry; PATCH: the file name in sparky-os/translations;
 #   PLAIN_OPTION: as plain-from-lc.py documents.
+# Optional environment: CODE_PATCH (a path under sparky-os, the code half, put before the translations in the series),
+#   CONTROL_PACKAGE, CONTROL_FIELD (Depends or Recommends) and CONTROL_ADD (a package added first to that field of that binary
+#   package: the dependency the code half needs).
 # Settings: SPARKY_PUBLISHED_TREE (the signed published tree, read only), SPARKY_LC_ARCHIVE_DIR (mounted at /archive:
 #   sources.json and the public keyrings it names; see sparky-os/lean/archive.md), SPARKY_BUILD_IMAGE (a debian:testing image
 #   with build-essential, devscripts and python3).
@@ -54,7 +57,7 @@ PY
 DSC_SHA256=$(cat "$WORK/dsc.sha256")
 docker run --rm --cpus 4 --platform linux/amd64 \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
-	-e DSC="$DSC" -e DSC_SHA256="$DSC_SHA256" -e PLAIN_OPTIONS="$PLAIN_OPTIONS" -e PATCH="$PATCH" \
+	-e DSC="$DSC" -e DSC_SHA256="$DSC_SHA256" -e PLAIN_OPTIONS="$PLAIN_OPTIONS" -e PATCH="$PATCH" -e CODE_PATCH="${CODE_PATCH:-}" -e CONTROL_PACKAGE="${CONTROL_PACKAGE:-}" -e CONTROL_FIELD="${CONTROL_FIELD:-}" -e CONTROL_ADD="${CONTROL_ADD:-}" \
 	-e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch \
 	-v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro -v "$SPARKY_PUBLISHED_TREE":/repo:ro \
 	-v "$WORK":/work -v "$SRC":/src:ro -v "$PREV":/prev:ro -v "$ENTRY":/entry:ro \

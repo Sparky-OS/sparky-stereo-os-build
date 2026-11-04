@@ -33,9 +33,34 @@ COPY
 dpkg-source -x "$DSC" t >/dev/null
 # shellcheck disable=SC2086
 python3 /toolkit/repo/plain-from-lc.py $PLAIN_OPTIONS t
+[ -z "$(tail -c1 t/debian/patches/series)" ] || echo >> t/debian/patches/series
+# the code half the translations belong to, when it was never built either (CODE_PATCH: a path under the toolkit)
+if [ -n "${CODE_PATCH:-}" ]; then
+    cp "/toolkit/$CODE_PATCH" t/debian/patches/
+    basename "$CODE_PATCH" >> t/debian/patches/series
+fi
+# the dependency that code half needs: a package added first to one field of one binary package (CONTROL_PACKAGE,
+# CONTROL_FIELD Depends or Recommends, CONTROL_ADD)
+if [ -n "${CONTROL_ADD:-}" ]; then
+    python3 - "$CONTROL_PACKAGE" "$CONTROL_FIELD" "$CONTROL_ADD" <<'CONTROL'
+import re, sys
+from pathlib import Path
+pkg, field, add = sys.argv[1:]
+p = Path('t/debian/control')
+text = p.read_text()
+stanzas = text.split('\n\n')
+for i, st in enumerate(stanzas):
+    if re.search(r'^Package: ' + re.escape(pkg) + r'$', st, re.M):
+        assert st.count('\n' + field + ': ') == 1, st
+        stanzas[i] = st.replace('\n' + field + ': ', '\n' + field + ': ' + add + ',\n ', 1)
+        break
+else:
+    sys.exit('no binary package ' + pkg)
+p.write_text('\n\n'.join(stanzas))
+CONTROL
+fi
 # the translations, last in the series
 cp "/toolkit/translations/$PATCH" t/debian/patches/
-[ -z "$(tail -c1 t/debian/patches/series)" ] || echo >> t/debian/patches/series
 echo "$PATCH" >> t/debian/patches/series
 # every patch of the series applies on the tarball (dpkg-source applies and unapplies the series)
 (cd t && dpkg-source --before-build . && dpkg-source --after-build .)
