@@ -32,7 +32,9 @@ def declared(status_text):
                 continue
             key, _, value = line.partition(':')
             fields[key] = value.strip()
-        if FIELD in fields and fields.get('Status', 'install ok installed').endswith('installed'):
+        # present on the system in any state but removed: installed, unpacked, half-installed, half-configured, triggers pending
+        wanted, _, state = fields.get('Status', 'install ok installed').rpartition(' ')
+        if FIELD in fields and wanted.startswith('install') and state not in ('not-installed', 'config-files'):
             found.append((fields.get('Package', '?'), fields[FIELD], fields.get('Sparky-Install-Download-Source', '')))
     return found
 

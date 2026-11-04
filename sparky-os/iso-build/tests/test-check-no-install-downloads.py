@@ -13,7 +13,7 @@ import unittest
 
 SUBJECT = Path(os.environ.get('SUBJECT', Path(__file__).resolve().parents[1] / 'check-no-install-downloads.py'))
 CLEAN = 'Package: bash\nStatus: install ok installed\nVersion: 5\nDescription: shell\n\nPackage: flightgear\nStatus: install ok installed\nVersion: 1\nDescription: sim\n'
-DECL = ('Package: flightgear-data-installer\nStatus: install ok installed\nVersion: 2024.1.5-1\nInstall-Download-Size: 1883333376\n'
+DECL = ('Package: flightgear-data-installer\nStatus: install ok installed\nVersion: 2024.1.5-1\nSparky-Install-Download-Size: 1883333376\n'
         'Sparky-Install-Download-Source: https://sourceforge.net/x/download\nDescription: fetches\n')
 
 
@@ -49,6 +49,10 @@ class Gate(unittest.TestCase):
     def test_removed_package_does_not_count(self):
         code, text = run(str(self.root(CLEAN + '\n' + DECL.replace('install ok installed', 'deinstall ok config-files'))))
         self.assertEqual(code, 0, text)
+
+    def test_unpacked_package_counts(self):
+        code, text = run(str(self.root(CLEAN + '\n' + DECL.replace('install ok installed', 'install ok unpacked'))))
+        self.assertEqual(code, 1, text)
 
     def test_data_folder_is_refused(self):
         code, text = run(str(self.root(CLEAN, data=True)))
