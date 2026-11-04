@@ -20,6 +20,7 @@
 # Last update 2026/11/01
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+. "$HERE/../repo/build-provenance.sh"
 WORK=$(realpath "${1:?work folder}") SRC=${2:?source folder} VERSION=${3:?lc1 version} REPO=$(realpath "${4:?repository}")
 IMAGE=${IMAGE:-sparky-lc-migration:20261020}
 [ -d "$WORK/$SRC/debian" ] || { echo "no $WORK/$SRC/debian" >&2; exit 2; }
@@ -30,13 +31,14 @@ if [ -n "${SPARKY_LC_PREVIOUS_DIR:-}" ]; then
 	PREV_MOUNT=(-v "$(realpath "$SPARKY_LC_PREVIOUS_DIR")":/prev:ro) PREV_ENV=(-e SPARKY_LC_PREVIOUS_DIR=/prev)
 fi
 mkdir -p "$WORK/out"
+sparky_provenance_init "$IMAGE"
 NAME=lean-dh-$(basename "$SRC" | sed 's/[^A-Za-z0-9_.-]/-/g')
 EXTRA_MOUNT=()
 [ -n "${EXTRA:-}" ] && EXTRA_MOUNT=(-v "$(realpath "$EXTRA")":/extra-debs:ro)
 # the gate isolates each case with bubblewrap, which needs the container's /proc unmasked
 docker run --rm --name "$NAME" --platform linux/amd64 --cpus "${CPUS:-4}" --memory 8g \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
-	-e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$ARCHIVE":/archive:ro \
+	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$ARCHIVE":/archive:ro \
 	"${PREV_MOUNT[@]}" "${PREV_ENV[@]}" \
 	-v "$WORK":/work -v "$HERE/..":/toolkit:ro -v "$REPO":/repo:ro "${EXTRA_MOUNT[@]}" \
 	-e SRC="$SRC" -e VERSION="$VERSION" -e OWNER="$(id -u):$(id -g)" "$IMAGE" bash -c '

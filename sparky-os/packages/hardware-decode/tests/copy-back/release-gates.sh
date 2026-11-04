@@ -25,9 +25,9 @@ print('flipped byte', offset, 'of', path.name)
 FLIP
 dpkg-deb -b "$work/tamper/root" "$work/tamper/$(basename "$deb")" >/dev/null 2>&1
 echo "== control: check-debs on the flipped payload (must fail)"
-python3 -m lean.release check-debs "$work/tamper/$(basename "$deb")"; tampered=$?
+python3 -m lean.release check-debs --no-record "$work/tamper/$(basename "$deb")"; tampered=$?
 echo "== check-debs on the cohort (must pass)"
-python3 -m lean.release check-debs "$new"/*.deb; debs=$?
+python3 -m lean.release check-debs --no-record "$new"/*.deb; debs=$?
 echo "== check-link of mpv and libmpv2 with libmedia-gpu-route0 $(dpkg-query -W -f='${Version}' libmedia-gpu-route0) installed"
 python3 -m lean.release check-link --previous-dir "$previous" "$new"/mpv_*_amd64.deb "$new"/libmpv2_*_amd64.deb; link=$?
 echo "tampered=$tampered debs=$debs link=$link"

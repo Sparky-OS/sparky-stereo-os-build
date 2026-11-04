@@ -6,7 +6,7 @@ export PYTHONPATH=/toolkit
 unset DISPLAY WAYLAND_DISPLAY XAUTHORITY
 cd /work
 original=/new/media-gpu-route-tools_0.1.0+lc1_amd64.deb
-python3 -m lean.release check-debs "$original" > check-debs-positive.log 2>&1
+python3 -m lean.release check-debs --no-record "$original" > check-debs-positive.log 2>&1
 python3 -m lean.release check-link "$original" /new/libmedia-gpu-route0_0.1.0+lc1_amd64.deb > check-link-positive.log 2>&1
 dpkg-deb -R "$original" unmarked >/dev/null
 python3 - <<'PY'
@@ -16,7 +16,7 @@ p.write_text(''.join(line for line in p.read_text().splitlines(keepends=True) if
 PY
 dpkg-deb --root-owner-group -b unmarked unmarked.deb >/dev/null
 set +e
-python3 -m lean.release check-debs unmarked.deb > check-debs-negative.log 2>&1
+python3 -m lean.release check-debs --no-record unmarked.deb > check-debs-negative.log 2>&1
 code=$?
 set -e
 printf '%s\n' "$code" > check-debs-negative.exit

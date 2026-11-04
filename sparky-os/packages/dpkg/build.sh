@@ -11,12 +11,14 @@
 # Last update 2026/11/03
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+. "$HERE/../../repo/build-provenance.sh"
 WORK=$(mkdir -p "$1" && cd "$1" && pwd)
 SRC=$(cd "$2" && pwd)
 : "${BUILD_IMAGE:=sparky-lc-migration:20261020}"
 [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
 name=dpkg-build-$$
-docker run -d --name "$name" --cpus 4 --memory 16g --platform linux/amd64 \
+sparky_provenance_init "$BUILD_IMAGE"
+docker run "${SPARKY_PROV_ARGS[@]}" -d --name "$name" --cpus 4 --memory 16g --platform linux/amd64 \
 	-v "$WORK":/work -v "$SRC":/src:ro -v "$HERE/../..":/toolkit:ro -v "$HERE":/tools:ro \
 	"$BUILD_IMAGE" bash -c 'bash /tools/build-in-container.sh > /work/container.log 2>&1' >/dev/null
 status=$(docker wait "$name")

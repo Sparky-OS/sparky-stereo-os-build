@@ -13,6 +13,7 @@
 # Last update 2026/11/02
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+. "$HERE/../../repo/build-provenance.sh"
 . "$HERE/../../config/local-config.sh"
 sparky_need SPARKY_REPO_DIR
 : "${SPARKY_LC_ARCHIVE_DIR:?the link gate's folder, mounted at /archive: sources.json (the public archives, and the edition's
@@ -24,9 +25,10 @@ PREV=$(cd "$2" && pwd)
 SRC=$(cd "$3" && pwd)
 [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
 name=command-not-found-build-$$
+sparky_provenance_init sparky-lc-migration:20261020
 docker run -d --name "$name" --cpus 4 --platform linux/amd64 \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
-	-e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro \
+	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro \
 	-v "$WORK":/work -v "$SRC":/src:ro -v "$REPO":/repo:ro -v "$PREV":/prev:ro \
 	-v "$HERE/../..":/toolkit:ro -v "$HERE":/tools:ro \
 	sparky-lc-migration:20261020 bash -c 'bash /tools/build-in-container.sh > /work/build.log 2>&1' >/dev/null
