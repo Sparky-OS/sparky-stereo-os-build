@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -73,7 +74,7 @@ def run_commands(runs, path, sysdir):
     results = []
     for command in runs:
         assert '/sys' + path in command, command
-        results.append(sh('sh', '-c', command.replace('/sys' + path, str(sysdir))))
+        results.append(sh('sh', '-c', command.replace('/sys' + path, shlex.quote(str(sysdir)))))
     return results
 
 
@@ -109,7 +110,7 @@ for rule in rules_dir.glob('*.rules'):
     shutil.copy(rule, etc / rule.name)
 clear_all()
 
-with tempfile.TemporaryDirectory(dir='/mnt/build/no-fallbacks-drivers-346f1/tmp') as scratch:
+with tempfile.TemporaryDirectory() as scratch:
     for label, vid, pid, driver, subsystem, leaf, tests, present, absent, want_mode in cases:
         text, path = fixture(vid, pid, driver, subsystem, leaf, attrs=tests)
         runs = udev_runs(text, path, scratch)
