@@ -127,6 +127,7 @@ for flavour in flavours[flavours.index(args.start_at):]:
     recipe = '''#!/bin/bash
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=4
+sh /run/https-only-apt.sh
 apt-get -y update
 apt-get -y --no-install-recommends build-dep /work/source
 useradd --create-home --uid 1000 builder
@@ -149,6 +150,8 @@ test ! -s /work/key-remnants.txt
                '--cpus', '4', '--memory', '32g', '-v', str(work) + ':/work',
                '-v', str(keydir) + ':/signing:ro',
                '-v', str(kit / 'sparky-os') + ':/toolkit:ro',
+               '-v', '/etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro',
+               '-v', str(Path(__file__).resolve().parents[2] / 'tools' / 'https-only-apt.sh') + ':/run/https-only-apt.sh:ro',
                'sparky-lc-migration:20261020', 'bash', '/work/run.sh']
     with (work / 'build.log').open('w') as log:
         process = start_build(command, container, log)

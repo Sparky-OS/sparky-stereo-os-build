@@ -5,6 +5,9 @@
 # the way back and a new install, which projects everything again.
 # Usage: migrate-test.sh OLD.deb NEW.deb
 set -u
+# apt over HTTPS only (ORDER 400b, CVE-2026-109518): the container mounts the host's CA bundle at /run/host-ca.crt and
+# tools/https-only-apt.sh at /run/https-only-apt.sh (read-only); a missing helper stops the script
+sh /run/https-only-apt.sh || exit 1
 OLD=$1 NEW=$2
 export DEBIAN_FRONTEND=noninteractive
 fail=0

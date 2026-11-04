@@ -62,4 +62,5 @@ docker run --rm --cpus 4 --platform linux/amd64 \
 	-v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro -v "$SPARKY_PUBLISHED_TREE":/repo:ro \
 	-v "$WORK":/work -v "$SRC":/src:ro -v "$PREV":/prev:ro -v "$ENTRY":/entry:ro \
 	-v "$HERE/../..":/toolkit:ro -v "$HERE":/tools:ro \
-	"$SPARKY_BUILD_IMAGE" bash -c 'bash /tools/build-in-container.sh > /work/container.log 2>&1'
+	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
+	"$SPARKY_BUILD_IMAGE" bash -c 'sh /run/https-only-apt.sh && bash /tools/build-in-container.sh > /work/container.log 2>&1'

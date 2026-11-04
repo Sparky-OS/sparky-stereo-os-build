@@ -40,9 +40,10 @@ run() {
 	name=$1; shift
 	# shellcheck disable=SC2086
 	docker run --rm --name "libc-dev-cross-proof-$name" --platform linux/amd64 --cpus 4 --memory 3g $HOST \
-		-v "$CAND":/proof/candidate:ro -v "$POOL":/proof/pool:ro ${START:+-v "$START":/proof/start:ro} ${NEXT:+-v "$NEXT":/proof/next:ro} -e CASE="$name" "$IMAGE" sh -eu -c "$INNER"
+		-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$(dirname "$(readlink -f "$0")")/../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro -v "$CAND":/proof/candidate:ro -v "$POOL":/proof/pool:ro ${START:+-v "$START":/proof/start:ro} ${NEXT:+-v "$NEXT":/proof/next:ro} -e CASE="$name" "$IMAGE" sh -eu -c "$INNER"
 }
 INNER='
+sh /run/https-only-apt.sh
 export DEBIAN_FRONTEND=noninteractive LC_ALL=C.UTF-8
 fail() { echo "FAIL: $*"; exit 1; }
 cand_libc=$(ls /proof/candidate/linux-libc-dev_*_all.deb 2>/dev/null | head -n 1)

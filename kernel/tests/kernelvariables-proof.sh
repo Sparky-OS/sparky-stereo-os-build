@@ -12,8 +12,9 @@ DEB=$(readlink -f "${1:?usage: kernelvariables-proof.sh HEADERS_DEB [OUT]}")
 OUT=$(mkdir -p "${2:-$PWD/kernelvariables-proof}" && cd "${2:-$PWD/kernelvariables-proof}" && pwd)
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 IMG=${IMG:-debian@sha256:fe4be93b807e7d05dccdaf54931173d9368b349f91a8170dadd787213aa3bf19}
-docker run --rm --platform linux/amd64 --cpus 2 -v "$DEB":/headers.deb:ro -v "$HERE":/kernel:ro -v "$OUT":/out "$IMG" bash -c '
+docker run --rm --platform linux/amd64 --cpus 2 -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$(dirname "$(readlink -f "$0")")/../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro -v "$DEB":/headers.deb:ro -v "$HERE":/kernel:ro -v "$OUT":/out "$IMG" bash -c '
 set -euo pipefail
+sh /run/https-only-apt.sh
 export DEBIAN_FRONTEND=noninteractive LC_ALL=C.UTF-8
 apt-get -qq update >/dev/null
 apt-get -y -qq --no-install-recommends install gcc-16-for-host make kmod libelf1t64 libssl3t64 pahole libc6-dev bc patch >/out/00-apt.log 2>&1

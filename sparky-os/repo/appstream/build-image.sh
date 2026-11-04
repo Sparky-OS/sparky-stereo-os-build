@@ -6,4 +6,4 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 VERSION=$(sed -n 's/.*appstream-generator=\([^[:space:]]*\).*/\1/p' "$HERE/Dockerfile")
 [ -n "$VERSION" ] || { echo "no appstream-generator version pinned in $HERE/Dockerfile" >&2; exit 1; }
-exec docker build -t "sparky-appstream-generator:$VERSION" "$@" "$HERE"
+exec "$HERE/../../../tools/https-only-build.sh" -t "sparky-appstream-generator:$VERSION" "$@" "$HERE"

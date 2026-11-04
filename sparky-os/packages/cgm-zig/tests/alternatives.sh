@@ -9,6 +9,9 @@
 #   alternatives.sh CGM_ZIG_DEB OTHER_ZIG_DIR [EARLIER_CGM_ZIG_DEB]
 # OTHER_ZIG_DIR holds zig_*.deb, zig0.16_*.deb and zig0.16-dev_*.deb.
 set -u
+# apt over HTTPS only (ORDER 400b, CVE-2026-109518): the container mounts the host's CA bundle at /run/host-ca.crt and
+# tools/https-only-apt.sh at /run/https-only-apt.sh (read-only); a missing helper stops the script
+sh /run/https-only-apt.sh || exit 1
 NEW=$(realpath "${1:?Usage: alternatives.sh CGM_ZIG_DEB OTHER_ZIG_DIR [EARLIER_CGM_ZIG_DEB]}")
 OTHER=$(realpath "${2:?Usage: alternatives.sh CGM_ZIG_DEB OTHER_ZIG_DIR [EARLIER_CGM_ZIG_DEB]}")
 OLD=${3:+$(realpath "$3")}

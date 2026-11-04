@@ -18,8 +18,9 @@ IMG=${IMG:-debian@sha256:fe4be93b807e7d05dccdaf54931173d9368b349f91a8170dadd7872
 for case in published map; do
 	mkdir -p "$OUT/$case"
 	docker run --rm --platform linux/amd64 --cpus 4 -e CASE=$case -v "$(dirname "$DSC")":/in:ro -v "$OUT/$case":/out \
-		-v "$HERE/debian/sparky-lean-payload-sources.json":/map.json:ro "$IMG" bash -c '
+		-v "$HERE/debian/sparky-lean-payload-sources.json":/map.json:ro -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$(dirname "$(readlink -f "$0")")/../../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro "$IMG" bash -c '
 set -euo pipefail
+sh /run/https-only-apt.sh
 export DEBIAN_FRONTEND=noninteractive LC_ALL=C.UTF-8 DEBFULLNAME="Daniel Ramos (Capitain Jack)" DEBEMAIL=Capitain_Jack@yahoo.com
 apt-get -qq update >/dev/null
 apt-get -y -qq --no-install-recommends install build-essential devscripts equivs dpkg-dev fakeroot python3 python3-yaml nodejs node-acorn perl gcc >/out/00-tools.log 2>&1

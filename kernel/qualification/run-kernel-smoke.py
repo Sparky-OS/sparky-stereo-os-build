@@ -28,6 +28,7 @@ if shutil.disk_usage(source).free < 3 * 1024**3:
 recipe = '''#!/bin/bash
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=4
+sh /run/https-only-apt.sh
 apt-get -y update
 apt-get -y --no-install-recommends build-dep /work/source
 useradd --create-home --uid 1000 builder
@@ -48,6 +49,8 @@ status = {'state': 'building', 'purpose': 'smoke test only; never publish these 
 command = ['docker', 'run', '--rm', '--platform', 'linux/amd64', '--name', container,
            '--cpus', '4', '-v', str(base) + ':/work', '-v', str(source) + ':/work/source',
            '-v', str(cfg.TREE / 'sparky-os') + ':/toolkit:ro',
+           '-v', '/etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro',
+           '-v', str(Path(__file__).resolve().parents[2] / 'tools' / 'https-only-apt.sh') + ':/run/https-only-apt.sh:ro',
            'sparky-lc-migration:20261020', 'bash', '/work/run.sh']
 start, stopped = time.time(), False
 with (base / 'build.log').open('w') as log:

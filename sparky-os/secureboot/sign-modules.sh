@@ -12,7 +12,7 @@ set -eu
 KEYDIR=$(cd "$1" && pwd); HDR=$(cd "$(dirname "$2")" && pwd)/$(basename "$2"); IN=$(cd "$3" && pwd)
 mkdir -p "$4"; OUT=$(cd "$4" && pwd)
 HERE=$(cd "$(dirname "$0")" && pwd)
-docker image inspect secureboot-modules-tools >/dev/null 2>&1 || docker build -q --platform linux/amd64 -t secureboot-modules-tools -f "$HERE/Dockerfile.sbmodules" "$HERE" >/dev/null
+docker image inspect secureboot-modules-tools >/dev/null 2>&1 || "$HERE/../../tools/https-only-build.sh" -q --platform linux/amd64 -t secureboot-modules-tools -f "$HERE/Dockerfile.sbmodules" "$HERE" >/dev/null
 docker run --rm --platform linux/amd64 --user "$(id -u):$(id -g)" \
 	-v "$KEYDIR:/key:ro" -v "$HDR:/in/headers.deb:ro" -v "$IN:/in/tree:ro" -v "$OUT:/out" secureboot-modules-tools sh -c '
 	set -e; w=$(mktemp -d); dpkg-deb -x /in/headers.deb "$w/h"

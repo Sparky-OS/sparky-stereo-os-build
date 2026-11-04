@@ -75,7 +75,7 @@ if [ "$(df -Pk "$OUT" | awk 'NR==2{print $1}')" != "$(df -Pk "$WORK" | awk 'NR==
 fi
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
     echo "== building the build image $IMAGE"
-    docker build --platform linux/amd64 -t "$IMAGE" "$HERE/docker"
+    "$HERE/../tools/https-only-build.sh" --platform linux/amd64 -t "$IMAGE" "$HERE/docker"
 fi
 rm -rf "$WORK/$RELEASE"; mkdir -p "$WORK/$RELEASE" "$OUT/$RELEASE"
 echo "== release $RELEASE  package version $PKGVER  flavour $FLAVOUR  tag $TAG  cpus $CPUS  memory $MEM"

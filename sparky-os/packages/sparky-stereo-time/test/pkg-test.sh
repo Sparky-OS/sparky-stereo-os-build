@@ -3,6 +3,9 @@
 # Copyright 2026 under the GNU GPL3 License
 # Install, use and purge of the .deb in a throwaway debian:testing container (needs root).
 # Last update 2026/10/02
+# apt over HTTPS only (ORDER 400b, CVE-2026-109518): the container mounts the host's CA bundle at /run/host-ca.crt and
+# tools/https-only-apt.sh at /run/https-only-apt.sh (read-only); a missing helper stops the script
+sh /run/https-only-apt.sh || exit 1
 DEB=${1:?usage: pkg-test.sh package.deb}
 FAILS=0
 ok() { if eval "$2"; then echo "PASS $1"; else echo "FAIL $1"; FAILS=$((FAILS + 1)); fi; }

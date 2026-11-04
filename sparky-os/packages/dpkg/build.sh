@@ -20,7 +20,8 @@ name=dpkg-build-$$
 sparky_provenance_init "$BUILD_IMAGE"
 docker run "${SPARKY_PROV_ARGS[@]}" -d --name "$name" --cpus 4 --memory 16g --platform linux/amd64 \
 	-v "$WORK":/work -v "$SRC":/src:ro -v "$HERE/../..":/toolkit:ro -v "$HERE":/tools:ro \
-	"$BUILD_IMAGE" bash -c 'bash /tools/build-in-container.sh > /work/container.log 2>&1' >/dev/null
+	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
+	"$BUILD_IMAGE" bash -c 'sh /run/https-only-apt.sh && bash /tools/build-in-container.sh > /work/container.log 2>&1' >/dev/null
 status=$(docker wait "$name")
 docker rm "$name" >/dev/null
 [ "$status" = 0 ] || { echo "the build failed (exit $status): $WORK/container.log" >&2; exit 1; }

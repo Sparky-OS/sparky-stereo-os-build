@@ -10,7 +10,9 @@ set -uo pipefail
 DEB=$(realpath "${1:?a sparky-stereo-hardware .deb}")
 TESTS=$(cd "$(dirname "$0")" && pwd)
 docker run --rm --platform linux/amd64 -e DEBIAN_FRONTEND=noninteractive -v "$DEB":/in/hardware.deb:ro -v "$TESTS":/tests:ro \
+	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$(dirname "$(readlink -f "$0")")/../../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
 	"${IMAGE:?an amd64 debian:testing image}" bash -c '
+sh /run/https-only-apt.sh
 apt-get update -qq >/dev/null && apt-get install -y -qq python3 >/dev/null
 dpkg-deb -x /in/hardware.deb / && dpkg-deb -f /in/hardware.deb Package Version
 mkdir -p /pkg-tests-run && cp -r /tests/. /pkg-tests-run/

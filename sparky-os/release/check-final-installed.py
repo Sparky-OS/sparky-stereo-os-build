@@ -134,6 +134,7 @@ export DEBIAN_FRONTEND=noninteractive
 [ "$(dpkg --print-architecture)" = amd64 ]
 printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d
 chmod 755 /usr/sbin/policy-rc.d
+sh /run/https-only-apt.sh
 apt-get update
 apt-get -y --no-install-recommends install ca-certificates python3 gpgv
 dpkg --add-architecture i386
@@ -155,6 +156,8 @@ command = ['docker', 'run', '--rm', '--platform', 'linux/amd64', '--name', name,
            '-v', '/etc/apt/sources.list.d/sparky.sources:/host-sparky.sources:ro',
            '-v', '/etc/apt/trusted.gpg.d/sparky-repo.asc:/bootstrap-sparky.asc:ro',
            '-v', '/usr/share/keyrings/deb-multimedia-keyring.pgp:/bootstrap-multimedia.pgp:ro',
+           '-v', '/etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro',
+           '-v', str(Path(__file__).resolve().parents[2] / 'tools' / 'https-only-apt.sh') + ':/run/https-only-apt.sh:ro',
            image, 'bash', '/proof/run.sh']
 with (out / 'driver.log').open('w') as log:
     process = start_build(command, name, log)

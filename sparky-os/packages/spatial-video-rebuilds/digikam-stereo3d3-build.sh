@@ -1,6 +1,9 @@
 # Sparky Stereo OS, ORDER 250: digikam +stereo3d3, the published +stereo3d2+lc1 source with native file opening and both MimeType lists added as its own patch, built through Lean Code. Runs as root inside a container of the published set (Debian forky, deb-multimedia and the edition's repository pinned at 1001); mounts: /in the +stereo3d2+lc1 source package, /toolkit sparky-os, /patch the patch, /prev the +stereo3d2+lc1 .deb files for the link and start gate, /out. Created by Daniel Ramos (Capitain Jack) 2026/10/25
 # Copyright 2026 under the GNU GPL3 License
 set -euo pipefail
+# apt over HTTPS only (ORDER 400b, CVE-2026-109518): the container mounts the host's CA bundle at /run/host-ca.crt and
+# tools/https-only-apt.sh at /run/https-only-apt.sh (read-only); a missing helper stops the script
+sh /run/https-only-apt.sh || exit 1
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=4 DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 P=stereo-photo-mimetypes.patch
 apt-get -y update >/dev/null 2>&1

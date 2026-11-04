@@ -11,7 +11,7 @@
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 IMAGE=${BENCH_IMAGE:-hibernate-bench:2}
-docker image inspect "$IMAGE" >/dev/null 2>&1 || docker build --platform linux/amd64 -t "$IMAGE" "$HERE"
+docker image inspect "$IMAGE" >/dev/null 2>&1 || "$HERE/../../../tools/https-only-build.sh" --platform linux/amd64 -t "$IMAGE" "$HERE"
 mkdir -p "$PWD/bench-work"
 MOUNTS=
 while [ "${1:-}" = "-m" ]; do MOUNTS="$MOUNTS -v $2"; shift 2; done

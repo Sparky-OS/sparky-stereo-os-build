@@ -13,4 +13,4 @@ here=$(dirname "$(readlink -f "$0")")
 gid=${SMOKE_RENDER_GID:-$(stat -c %g /dev/dri/renderD128)}
 exec docker run --rm --cap-add SYS_NICE --device /dev/dri/renderD128 --group-add "$gid" \
 	-e SMOKE_MODE="$mode" -e SMOKE_GID="$gid" ${debs:+-v "$debs":/debs:ro} \
-	-v "$here":/w:ro "${SMOKE_IMAGE:-qt-stereo-run:latest}" /w/outer.sh
+	-v "$here":/w:ro -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$here/../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro "${SMOKE_IMAGE:-qt-stereo-run:latest}" sh -c 'sh /run/https-only-apt.sh && exec /w/outer.sh'

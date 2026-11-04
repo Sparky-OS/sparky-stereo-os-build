@@ -37,8 +37,9 @@ rm -rf "$B" "$OUT"; mkdir -p "$B" "$OUT"
 docker run --rm --name "build-from-dsc-${NAME//[^A-Za-z0-9_.-]/-}-$ARCH" \
 	-v "$SRC_DIR":/src:ro -v "$B":/build -v "$OUT":/out \
 	-e DEBIAN_FRONTEND=noninteractive -e DSC="$DSC" -e FLAGS="$FLAGS" -e JOBS="$JOBS" \
-	-e OWNER="$(id -u):$(id -g)" "$IMG" bash -c '
+	-e OWNER="$(id -u):$(id -g)" -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro "$IMG" bash -c '
 	set -e
+	sh /run/https-only-apt.sh
 	cd /build
 	dpkg-source -x /src/$DSC tree >/dev/null
 	cd tree

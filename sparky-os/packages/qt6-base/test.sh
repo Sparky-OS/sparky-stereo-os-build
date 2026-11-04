@@ -22,6 +22,7 @@ if [ "$1" != debian ]; then
 fi
 status=0
 docker run --rm --cpus 4 --platform linux/amd64 "${MOUNTS[@]}" -v "$RESULTS":/t -v "$HERE":/tools:ro \
-	"$IMAGE" bash -c 'bash /tools/test-in-container.sh > /t/test.log 2>&1' || status=$?
+	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
+	"$IMAGE" bash -c 'sh /run/https-only-apt.sh && bash /tools/test-in-container.sh > /t/test.log 2>&1' || status=$?
 cat "$RESULTS/summary.txt" 2>/dev/null || tail -20 "$RESULTS/test.log"
 exit $status

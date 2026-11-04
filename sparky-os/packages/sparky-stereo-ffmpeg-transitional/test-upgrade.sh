@@ -8,10 +8,13 @@
 # by make-repo.sh) and the edition's pins are put in place, and a full-upgrade must hold nothing back and remove nothing
 # of the FFmpeg family. Without the transitional packages apt wants to remove libavcodec-extra63, libavformat-extra63
 # and libavfilter-extra12 (the first test of this folder's lane, 2026-10-08).
-# Usage: docker run --rm --cpus 2 [-e SCENARIO=A] -v OLD:/old:ro -v NEW:/new:ro -v ../../apt:/pins:ro -v THIS:/t:ro mdmo-proofbase:1 /t/test-upgrade.sh
+# Usage: docker run --rm --cpus 2 [-e SCENARIO=A] -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v BUILD-CHECKOUT/tools/https-only-apt.sh:/run/https-only-apt.sh:ro -v OLD:/old:ro -v NEW:/new:ro -v ../../apt:/pins:ro -v THIS:/t:ro mdmo-proofbase:1 /t/test-upgrade.sh
 #   SCENARIO=A: the old computer has the normal libraries of our Debian-based build, not the -extra ones (default B: the -extra ones)
 #   /new without the transitional packages is the control of scenario B that must fail
 # Last update 2026/10/08
+# apt over HTTPS only (ORDER 400b, CVE-2026-109518): the container mounts the host's CA bundle at /run/host-ca.crt and
+# tools/https-only-apt.sh at /run/https-only-apt.sh (read-only); a missing helper stops the script
+sh /run/https-only-apt.sh || exit 1
 export DEBIAN_FRONTEND=noninteractive
 PASS=0; FAIL=0
 ok() { echo "PASS $*"; PASS=$((PASS + 1)); }

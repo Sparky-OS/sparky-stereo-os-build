@@ -15,8 +15,9 @@ for direction in main legacy; do
 	docker run --rm -i --name "$NAME_PREFIX-$direction" --platform linux/amd64 \
 		-e DIRECTION="$direction" -e OWNER="$(id -u):$(id -g)" \
 		-v "$MAIN":/inputs/main.deb:ro -v "$LEGACY":/inputs/legacy.deb:ro \
-		-v "$CUDA":/inputs/cuda.deb:ro -v "$OUT/$direction":/out "$IMAGE" bash -s <<'EOF'
+		-v "$CUDA":/inputs/cuda.deb:ro -v "$OUT/$direction":/out -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$(dirname "$(readlink -f "$0")")/../../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro "$IMAGE" bash -s <<'EOF'
 set -euo pipefail
+sh /run/https-only-apt.sh
 export DEBIAN_FRONTEND=noninteractive
 trap 'chown -R "$OWNER" /out' EXIT
 run_case() {

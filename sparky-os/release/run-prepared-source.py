@@ -48,6 +48,7 @@ printf 'deb [trusted=yes] file:/repo ./\\n' > /etc/apt/sources.list.d/edition.li
 printf 'Package: *\\nPin: release o=Sparky Stereo OS\\nPin-Priority: 1001\\n' > /etc/apt/preferences.d/edition
 cd /work
 dpkg-source -x "$TASK_DSC" source
+sh /run/https-only-apt.sh
 apt-get -y update
 apt-get -y --no-install-recommends build-dep /work/source
 useradd --create-home --uid 1000 builder
@@ -90,6 +91,8 @@ command = ['docker', 'run', '--rm', '--platform', 'linux/amd64', '--name', conta
            '-e', 'TASK_DSC=' + descriptor.name, '-v', str(work) + ':/work',
            '-e', 'TASK_KIND=' + ('signed-upstream-release' if vendor_release else 'native'),
            '-v', str(cfg.path('SPARKY_REPO_DIR')) + ':/repo:ro', '-v', str(kit) + ':/toolkit:ro',
+           '-v', '/etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro',
+           '-v', str(Path(__file__).resolve().parents[2] / 'tools' / 'https-only-apt.sh') + ':/run/https-only-apt.sh:ro',
            'sparky-lc-migration:20261020', 'bash', '/work/run.sh']
 started, stopped = time.time(), False
 with (work / 'build.log').open('w') as log:

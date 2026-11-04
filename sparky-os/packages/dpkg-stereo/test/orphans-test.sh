@@ -26,6 +26,9 @@
 # Usage: orphans-test.sh OLD.deb (0.1.28) NEW.deb (the package under test) SYSTEMD.deb (the installed systemd's .deb)
 #   WORKDIR
 set -u
+# apt over HTTPS only (ORDER 400b, CVE-2026-109518): the container mounts the host's CA bundle at /run/host-ca.crt and
+# tools/https-only-apt.sh at /run/https-only-apt.sh (read-only); a missing helper stops the script
+sh /run/https-only-apt.sh || exit 1
 OLD=$1 NEW=$2 SYSTEMD_DEB=$3 W=$4
 export DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
 fail=0 passed=0 failed=0

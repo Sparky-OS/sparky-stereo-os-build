@@ -5,7 +5,9 @@ FROM debian@sha256:c57e2b343e3a8bd7e59f1c063fe34355f209d0fd8afa291ed96f65a8c1f08
 ENV DEBIAN_FRONTEND=noninteractive \
     DEBFULLNAME="Daniel Ramos (Capitain Jack)" \
     DEBEMAIL="Capitain_Jack@yahoo.com"
-RUN test "$(dpkg --print-architecture)" = amd64 \
+RUN --mount=type=bind,from=https-only-apt,source=https-only-apt.sh,target=/run/https-only-apt.sh \
+    --mount=type=bind,from=host-ca,source=ca-certificates.crt,target=/run/host-ca.crt \
+    sh /run/https-only-apt.sh && test "$(dpkg --print-architecture)" = amd64 \
     && apt-get -y update \
     && apt-get -y --no-install-recommends install \
        build-essential bubblewrap ca-certificates cmake chrpath debhelper devscripts dpkg-dev file git \
