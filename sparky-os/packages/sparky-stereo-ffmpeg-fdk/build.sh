@@ -147,7 +147,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: sparky-stereo-problems (>= 0.1.0), sparky-stereo-apt (>= 20261104.2~sparky9~0), dpkg (>= 1.20.6), apt, dpkg-dev, build-essential, fakeroot, python3, sudo | pkexec
+Depends: sparky-stereo-problems (>= 0.1.0), sparky-stereo-apt (>= 20261104.2~sparky9~0), apt, dpkg-dev, build-essential, fakeroot, python3, sudo | pkexec
 Recommends: powermgmt-base
 Section: sound
 Priority: optional
