@@ -26,4 +26,5 @@ docker run "${SPARKY_PROV_ARGS[@]}" --rm --name "full-sbs-$PKG" --cpus 4 --platf
 	-v "$HERE/../..":/toolkit:ro -v "$HERE/patches":/patches:ro -v "$HERE/changelog":/changelog:ro \
 	${FORK:+-v "$FORK":/fork:ro} \
 	-v /usr/share/keyrings/deb-multimedia-keyring.pgp:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro \
-	sparky-lc-migration:20261020 bash -c 'bash /toolkit/packages/full-sbs/build-in-container.sh > /work/build.log 2>&1'
+	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
+	sparky-lc-migration:20261020 bash -c 'sh /run/https-only-apt.sh && bash /toolkit/packages/full-sbs/build-in-container.sh > /work/build.log 2>&1'

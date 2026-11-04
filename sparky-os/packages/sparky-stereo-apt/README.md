@@ -18,6 +18,8 @@ Files:
 
 /etc/apt/apt.conf.d/60sparky-stereo-appstream-icons: enables AppStream's five DEP-11 icon targets for all repositories that advertise them, so Discover and KRunner can show cached program icons, including on HiDPI displays.
 
+/etc/apt/apt.conf.d/00sparky-block-plain-http: refuses every plain http:// apt source for now (see "Plain HTTP is refused for now" below). A conffile since 20261104.2~sparky9~0.
+
 The four source and pin files are conffiles since 20261031.1~sparky9~0; the icon setting is a conffile since 20261102.1~sparky9~0.
 Purge removes these conffiles.
 Debian Policy 10.7.3 says: "local changes must be preserved during a package upgrade", and "The easy way to achieve this behavior is to make the configuration file a conffile".
@@ -32,6 +34,16 @@ Run dpkg --configure -a at a terminal to answer, or dpkg --configure -a --force-
 An upgrade run with -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold, the usual way to upgrade without a terminal, keeps your file and saves the new one as FILE.dpkg-dist.
 The first upgrade to 20261031.1~sparky9~0 or later does the same: its preinst compares each file with what the installed version shipped (its md5sums), sets the unchanged ones aside so dpkg installs the new ones without asking, and leaves a changed one where it is, so dpkg asks about it.
 A file you deleted before that first upgrade comes back once, since the older versions did not mark it as yours; after it, dpkg keeps a deleted conffile deleted.
+
+Plain HTTP is refused for now (ORDER 400, 2026-11-04):
+-------------
+CVE-2026-109518 (Debian DSA-6607-1, found by Max Justicz; APT's announcement https://lists.debian.org/deity/2026/11/msg00005.html): with Acquire::Retries set (apt's default since 2.3.2), redirects and transient HTTP server errors let an attacker on the network path make apt overwrite a verified .deb with a chosen payload, which runs as root. The fix is in apt 3.3.6 (unstable); Debian testing has 3.3.5.
+Daniel, 2026-11-04: "change them to https", then "block http sources for now". This package does both:
+- On every install and upgrade, its postinst turns plain http:// into https:// in /etc/apt/sources.list, /etc/apt/sources.list.d/*.list and /etc/apt/sources.list.d/*.sources, in the lines that are not comments. Each file it changes is copied first to /var/backups/sparky-stereo-apt/<UTC date and time>/<the file's path>, and the screen names the file and the copy. The edition's own files already use https and are not touched. This is a change to files other packages or you wrote (Debian Policy 10.7.4 gives a shared configuration file one owner); it is done because it was asked for, it is said every time, and the copy keeps your original.
+- /etc/apt/apt.conf.d/00sparky-block-plain-http sets Acquire::http::Proxy to a name that cannot exist, so apt refuses every plain http:// source with the error "Could not resolve 'plain-http-blocked-cve-2026-109518.invalid'", and Acquire::https::Proxy "DIRECT", without which HTTPS would fall back to the http proxy setting and fail too (apt.conf(5), apt-transport-http(1)). It is a conffile, and 00 sorts first: if a file that sorts after it sets Acquire::http::Proxy, that value wins and the block is off.
+- A source whose server has no HTTPS fails at apt update with apt's own error. Nothing turns it back to http:// and nothing hides the failure.
+The block is temporary. It goes, as a new version of this package that removes the file, once apt 3.3.6 is in Debian testing. The change of http:// to https:// stays.
+To see what was changed: ls -R /var/backups/sparky-stereo-apt. To go back for one file, copy its backup over it (and expect apt update to be refused until the block file is gone).
 
 Keep your own pins in your own file:
 -------------

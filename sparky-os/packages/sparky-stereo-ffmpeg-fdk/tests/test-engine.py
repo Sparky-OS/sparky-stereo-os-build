@@ -119,7 +119,7 @@ class EngineChecks(unittest.TestCase):
                 self.sources(case)
                 result = self.run_hook()
                 self.assert_failure(result, 'has no source package ffmpeg-dmo')
-                self.assertIn('sparky-stereo-ffmpeg-src.sources', result.stderr)
+                self.assertIn('sparky-stereo.sources', result.stderr)
                 self.assertNotIn('update check failed', result.stderr)
 
     def test_failures_nothing_kept_fail_the_hook(self):

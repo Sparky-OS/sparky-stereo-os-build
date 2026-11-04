@@ -84,9 +84,8 @@ check "the helper is installed" dpkg -s $HELPER
 PIN=/etc/apt/preferences.d/sparky-stereo-ffmpeg-fdk
 check "no pin file before a build exists (each build writes its own)" test ! -e $PIN
 check "the hook file is installed" test -f /etc/apt/apt.conf.d/99sparky-stereo-ffmpeg-fdk
-check "the source line file is installed" test -f /etc/apt/sources.list.d/sparky-stereo-ffmpeg-src.sources
+check "the package ships no source line file of its own (sparky-stereo-apt's sparky-stereo.sources carries deb-src, ORDER 400)" test ! -e /etc/apt/sources.list.d/sparky-stereo-ffmpeg-src.sources
 eq "apt prints no warning about the package's files" "$(apt-cache policy ffmpeg 2>&1 | grep -c -E '^(W|E):')" 0
-rm -f /etc/apt/sources.list.d/sparky-stereo-ffmpeg-src.sources     # its URL is the real repository; the test has its own deb-src
 hook_out=$(apt-get update 2>&1 | grep -c -i 'Sparky Stereo OS:')
 eq "apt update says nothing about FFmpeg when no local build exists" "$hook_out" 0
 eq "nothing installed by the helper's presence" "$(ffmpeg -hide_banner -encoders 2>/dev/null | grep -c libfdk_aac)" 0

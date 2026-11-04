@@ -20,6 +20,8 @@ notes = cfg.path('SPARKY_RUN_RECORD')
 base = cfg.path('SPARKY_MIGRATION_WORK')
 repo = cfg.path('SPARKY_REPO_DIR')
 toolkit = (cfg.TREE / 'sparky-os')
+# the edition's one apt helper, mounted into every container as its first step (ORDER 400, CVE-2026-109518)
+HTTPS_ONLY_APT = cfg.TREE / 'tools' / 'https-only-apt.sh'
 inventory = json.loads((notes / "source-migration-inventory.json").read_text())["jobs"]
 requested = sys.argv[1:]
 if not requested:
@@ -39,7 +41,7 @@ export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.c
 export DEB_BUILD_OPTIONS=parallel=4
 printf 'deb [trusted=yes] file:/repo ./\n' > /etc/apt/sources.list.d/edition.list
 printf 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://www.deb-multimedia.org forky main non-free\n' > /etc/apt/sources.list.d/multimedia.list
-printf 'deb http://deb.debian.org/debian testing contrib non-free non-free-firmware\n' > /etc/apt/sources.list.d/debian-extra-components.list
+printf 'deb https://deb.debian.org/debian testing contrib non-free non-free-firmware\n' > /etc/apt/sources.list.d/debian-extra-components.list
 printf 'Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n' > /etc/apt/preferences.d/edition
 cd /work
 dpkg-source -x "$TASK_DSC" source
@@ -403,8 +405,10 @@ for name in requested:
         "-v", f"{work}:/work", "-v", f"{repo}:/repo:ro",
         "-v", f"{toolkit}:/toolkit:ro",
         "-v", "/usr/share/keyrings/deb-multimedia-keyring.pgp:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro",
+        "-v", "/etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro",
+        "-v", f"{HTTPS_ONLY_APT}:/run/https-only-apt.sh:ro",
         "sparky-lc-migration:20261020",
-        "bash", "/work/run.sh",
+        "sh", "-c", "sh /run/https-only-apt.sh && exec bash /work/run.sh",
     ]
     if name == 'ums':
         cache = base / 'ums-maven-cache'

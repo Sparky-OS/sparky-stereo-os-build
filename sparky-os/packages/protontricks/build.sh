@@ -12,13 +12,14 @@ WORK=${1:-${SPARKY_WORKSPACES:?}/hand-installed-apps/ptx/build}
 NEW=1.15.0
 OUR=$NEW+ds-1+sparky1
 mkdir -p "$WORK"
-docker run --rm -e HOST_UID=$(id -u) -e NEW=$NEW -e OUR=$OUR -v "$WORK":/out -v "$(dirname "$(readlink -f "$0")")/patches":/patches:ro sparky-pkg-base:amd64 bash -c '
+docker run --rm -e HOST_UID=$(id -u) -e NEW=$NEW -e OUR=$OUR -v "$WORK":/out -v "$(dirname "$(readlink -f "$0")")/patches":/patches:ro -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$(dirname "$(readlink -f "$0")")/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro sparky-pkg-base:amd64 bash -c '
 set -e
+sh /run/https-only-apt.sh
 sed -i "s/^Suites: unstable/Suites: testing testing-updates/" /etc/apt/sources.list.d/debian.sources
 export DEBIAN_FRONTEND=noninteractive LC_ALL=C DEBFULLNAME="Daniel Ramos (Capitain Jack)" DEBEMAIL=Capitain_Jack@yahoo.com
 apt-get update -qq >/dev/null; apt-get install -y -qq ca-certificates >/dev/null
 sed -i "s/^Components: main$/Components: main contrib/" /etc/apt/sources.list.d/debian.sources
-printf "Types: deb-src\nURIs: http://deb.debian.org/debian\nSuites: unstable\nComponents: main contrib\nSigned-By: /usr/share/keyrings/debian-archive-keyring.pgp\n" >/etc/apt/sources.list.d/u.sources
+printf "Types: deb-src\nURIs: https://deb.debian.org/debian\nSuites: unstable\nComponents: main contrib\nSigned-By: /usr/share/keyrings/debian-archive-keyring.pgp\n" >/etc/apt/sources.list.d/u.sources
 apt-get update -qq >/dev/null
 apt-get install -y -qq dpkg-dev devscripts build-essential fakeroot lintian xz-utils >/dev/null
 cd /out && rm -rf src && mkdir src && cd src

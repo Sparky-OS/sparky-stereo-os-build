@@ -1,14 +1,32 @@
 #!/bin/sh
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/31
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/31
+# Last update 2026/11/04 (ORDER 400)
 # The first upgrade that made the /etc files conffiles moved the unchanged ones aside (preinst); dpkg has installed the
 # new ones now, so the old copies go.
+# Plain http:// sources become https:// (Daniel, 2026-11-04: "change them to https"): apt 3.3.5's retries let an attacker on the
+# network path replace a verified package downloaded over plain HTTP (CVE-2026-109518, DSA-6607-1), and the block file this
+# package ships (apt.conf.d/00sparky-block-plain-http) refuses plain http:// until apt 3.3.6 is in Debian testing. Every file
+# changed is copied first to /var/backups/sparky-stereo-apt/STAMP/<its path> and named on the screen. Only text that is not a
+# comment is changed. A source whose server has no HTTPS then fails at apt update with apt's own error: it is never
+# turned back to http:// here, and nothing is skipped quietly. A failure here (a read-only /etc, no room for the copy) stops
+# the configuration with its own message, so the person is told.
 set -e
 FILES="/etc/apt/sources.list.d/sparky-stereo.sources /etc/apt/sources.list.d/sparky-stereo-deb-multimedia.sources
 /etc/apt/preferences.d/sparky-stereo /etc/apt/preferences.d/sparky-stereo-only-ours"
+BACKUPS=/var/backups/sparky-stereo-apt
 if [ "$1" = configure ]; then
 	for f in $FILES; do
 		rm -f "$f.dpkg-remove"
+	done
+	stamp=$(date -u +%Y%m%dT%H%M%SZ)
+	for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+		[ -f "$f" ] || continue
+		grep -q '^[[:space:]]*[^[:space:]#].*http://' "$f" || continue
+		copy=$BACKUPS/$stamp$f
+		mkdir -p "$(dirname "$copy")"
+		cp -p "$f" "$copy"
+		sed -i --follow-symlinks '/^[[:space:]]*#/!s|http://|https://|g' "$f"
+		echo "sparky-stereo-apt: $f: plain http:// sources changed to https:// (the file as it was: $copy)"
 	done
 fi

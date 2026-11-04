@@ -1,4 +1,13 @@
 -------------------------------------------------------------------------------
+  Version 20261104.2~sparky9~0 (2026-11-04)
+-------------------------------------------------------------------------------
+  * Plain-HTTP apt sources are refused for now (ORDER 400; CVE-2026-109518, DSA-6607-1; Daniel, 2026-11-04: "change them to https", "block http sources for now"): /etc/apt/apt.conf.d/00sparky-block-plain-http, a conffile, sets Acquire::http::Proxy to http://plain-http-blocked-cve-2026-109518.invalid/ and Acquire::https::Proxy to DIRECT, so a plain http:// source fails with "Could not resolve 'plain-http-blocked-cve-2026-109518.invalid'". The same file the main session wrote by hand on the station and the A10
+  * The postinst turns plain http:// into https:// in /etc/apt/sources.list and /etc/apt/sources.list.d/*.list and *.sources (lines that are not comments), copies every file it changes to /var/backups/sparky-stereo-apt/<UTC stamp>/<path> first, and prints each file and its copy. A source with no HTTPS fails at apt update with apt's own error
+  * THE BLOCK IS TEMPORARY: it leaves in the first version after apt 3.3.6 is in Debian testing (that version removes the file, rm_conffile). The conversion to https stays
+  * sparky-stereo.sources, with deb-src, is now the one place of the edition's source index: sparky-stereo-ffmpeg-fdk 20261104.1 removes its own sparky-stereo-ffmpeg-src.sources (the duplicate that made apt say "Target Sources ... is configured multiple times") and depends on this version. No image builds this package with DEB_SRC=0 (build.sh's default is 1; only refresh-final-metadata.py sets it, to 1)
+  * sparky-stereo-only-ours, sparky-stereo and the icon setting are unchanged from 20261104.1~sparky9~0
+
+-------------------------------------------------------------------------------
   Version 20261104.1~sparky9~0 (2026-11-04)
 -------------------------------------------------------------------------------
   * The edition's carried NVIDIA 580 user space is no candidate without a driver lock (ORDER 390): a record in sparky-stereo for the source packages the locks name (nvidia-graphics-drivers, nvidia-open, nvidia-modprobe, nvidia-persistenced, nvidia-settings, nvidia-xconfig, libnvidia-nscq, libnvsdm, nvidia-fabricmanager, nvidia-imex, cuda-drivers*), from the edition's repository only, at -1. The locks' own files sort first and raise them (1005 for the 580 set under the legacy lock), so a stack chosen by Hardware Setup is unchanged; this record applies on a system with neither lock

@@ -20,4 +20,5 @@ IMAGE=${3:-debian:testing}
 [ -z "$(ls -A "$OUT")" ] || { echo "$OUT is not empty" >&2; exit 1; }
 docker run --rm --cpus 4 --platform linux/amd64 --network bridge \
 	-v "$REPO":/repo:ro -v /usr/share/keyrings/deb-multimedia-keyring.pgp:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro -v "$CAND":/cand:ro -v "$HERE":/tests:ro -v "$OUT":/out \
-	"$IMAGE" bash -c 'trap "chown -R '"$(id -u):$(id -g)"' /out" EXIT; bash /tests/callers-in-container.sh' 2>&1 | tee "$OUT/test.log"
+	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
+	"$IMAGE" bash -c 'trap "chown -R '"$(id -u):$(id -g)"' /out" EXIT; sh /run/https-only-apt.sh && bash /tests/callers-in-container.sh' 2>&1 | tee "$OUT/test.log"

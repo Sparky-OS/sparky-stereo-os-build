@@ -22,4 +22,5 @@ docker run --rm --cpus 4 --platform linux/amd64 -v "$WORK":/work -v "$SOURCES":/
 	-v "$HERE/..":/patches:ro \
 	-v /usr/share/keyrings/deb-multimedia-keyring.pgp:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro \
 	-e BASE="${BASE:-3.0.24-1+stereo3d10}" -e VERSION="${VERSION:-3.0.24-1+stereo3d12}" -e FIRST="${FIRST:-39}" \
-	sparky-lc-migration:20261020 bash -c 'bash /tools/build-lc-in-container.sh > /work/build.log 2>&1'
+	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
+	sparky-lc-migration:20261020 bash -c 'sh /run/https-only-apt.sh && bash /tools/build-lc-in-container.sh > /work/build.log 2>&1'

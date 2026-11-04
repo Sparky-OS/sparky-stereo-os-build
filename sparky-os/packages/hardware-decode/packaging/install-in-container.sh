@@ -4,6 +4,9 @@
 set -euo pipefail
 unset DISPLAY WAYLAND_DISPLAY XAUTHORITY DBUS_SESSION_BUS_ADDRESS
 export DEBIAN_FRONTEND=noninteractive
+# The caller mounts /etc/ssl/certs/ca-certificates.crt at /run/host-ca.crt and tools/https-only-apt.sh at /run/https-only-apt.sh, both
+# read-only (ORDER 400, CVE-2026-109518); without them this stops here with the helper's own message.
+sh /run/https-only-apt.sh
 case "$PHASE" in before|after|publication) ;; *) echo 'unknown install phase' >&2; exit 2;; esac
 trap 'chown -R 1000:1000 /w' EXIT
 python3 - <<'APT_SOURCES'
@@ -16,7 +19,7 @@ for directory in (Path('/etc/apt/sources.list.d'),):
    path.rename(archive/path.name)
 Path('/etc/apt/sources.list').write_text('')
 APT_SOURCES
-printf 'deb http://deb.debian.org/debian testing main contrib non-free non-free-firmware\n' > /etc/apt/sources.list.d/debian.list
+printf 'deb https://deb.debian.org/debian testing main contrib non-free non-free-firmware\n' > /etc/apt/sources.list.d/debian.list
 printf 'deb [signed-by=/pub/sparky-stereo-repo.asc] file:/pub mashtabba main\n' > /etc/apt/sources.list.d/edition.list
 printf 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://www.deb-multimedia.org forky main non-free\n' > /etc/apt/sources.list.d/multimedia.list
 printf 'deb [signed-by=/sparky-repo.asc] https://repo.sparkylinux.org/ core main\ndeb [signed-by=/sparky-repo.asc] https://repo.sparkylinux.org/ tiamat main\n' > /etc/apt/sources.list.d/sparky.list

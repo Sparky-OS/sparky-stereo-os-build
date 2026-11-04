@@ -1,0 +1,5 @@
+// Plain-HTTP apt sources are refused until apt 3.3.6 (the fix for CVE-2026-109518, DSA-6607-1) reaches Debian testing.
+// Daniel, 2026-11-04: "change them to https", "then block http sources for now". Opus, ORDER 400. Remove this file then.
+// A plain http:// source fails with "Could not resolve plain-http-blocked-cve-2026-109518.invalid"; https:// goes direct.
+Acquire::http::Proxy "http://plain-http-blocked-cve-2026-109518.invalid/";
+Acquire::https::Proxy "DIRECT";

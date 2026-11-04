@@ -23,7 +23,7 @@ cp /repo/sparky-stereo-repo.asc /usr/share/keyrings/sparky-stereo-test.asc
 printf 'deb [signed-by=/usr/share/keyrings/sparky-stereo-test.asc] file:/repo mashtabba main\n' >/etc/apt/sources.list.d/edition.list
 printf 'Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n' >/etc/apt/preferences.d/edition
 # the edition's media stack sits on deb-multimedia (skill edition-packaging); plain HTTP, as the image has no CA store and apt checks the signature
-printf 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] http://www.deb-multimedia.org forky main non-free\n' >/etc/apt/sources.list.d/multimedia.list
+printf 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://www.deb-multimedia.org forky main non-free\n' >/etc/apt/sources.list.d/multimedia.list
 apt-get -y update >/out/apt-update-1.log 2>&1
 apt-get -y install --no-install-recommends command-not-found sparky-stereo-console sparky-stereo-integration zsh fish dbus \
 	python3-dbus python3-gi cmake g++ make libkf6runner-dev qt6-base-dev locales >/out/apt-install.log 2>&1

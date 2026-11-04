@@ -21,6 +21,8 @@ from lean.package import stanzas
 base = cfg.path('SPARKY_MIGRATION_WORK')
 repo = cfg.path('SPARKY_REPO_DIR')
 kit = (cfg.TREE / 'sparky-os')
+# the edition's one apt helper, mounted into every container as its first step (ORDER 400, CVE-2026-109518)
+HTTPS_ONLY_APT = cfg.TREE / 'tools' / 'https-only-apt.sh'
 architecture = os.environ.get('SECONDARY_ARCH', 'i386')
 if architecture not in ('i386', 'arm64'):
     raise SystemExit('Supported secondary architectures: i386, arm64')
@@ -31,7 +33,7 @@ export DEBIAN_FRONTEND=noninteractive
 export DEB_BUILD_OPTIONS=parallel=4
 printf 'deb [trusted=yes] file:/repo ./\n' >/etc/apt/sources.list.d/edition.list
 printf 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://www.deb-multimedia.org forky main non-free\n' >/etc/apt/sources.list.d/multimedia.list
-printf 'deb http://deb.debian.org/debian testing contrib non-free non-free-firmware\n' >/etc/apt/sources.list.d/debian-extra-components.list
+printf 'deb https://deb.debian.org/debian testing contrib non-free non-free-firmware\n' >/etc/apt/sources.list.d/debian-extra-components.list
 printf 'Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n' >/etc/apt/preferences.d/edition
 if [ "$TASK_ARCH" = arm64 ]; then
     # This is the standalone ARM receiver, not an ARM build of the desktop
@@ -132,7 +134,10 @@ for name in sys.argv[1:]:
                "-v", f"{work}:/work", "-v", f"{repo}:/repo:ro",
                "-v", f"{kit}:/toolkit:ro",
                "-v", "/usr/share/keyrings/deb-multimedia-keyring.pgp:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro",
-               "sparky-lc-migration:20261020-" + architecture, "bash", "/work/run.sh"]
+               "-v", "/etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro",
+               "-v", f"{HTTPS_ONLY_APT}:/run/https-only-apt.sh:ro",
+               "sparky-lc-migration:20261020-" + architecture,
+               "sh", "-c", "sh /run/https-only-apt.sh && exec bash /work/run.sh"]
     print(f"{name}: {architecture} from {dsc.name}", flush=True)
     start = time.time()
     stopped = False

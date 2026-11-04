@@ -36,7 +36,7 @@ Other commands:
 
 Dependencies:
 -------------
-sparky-stereo-apt, apt, dpkg-dev, build-essential, fakeroot, util-linux, python3, sudo | pkexec (recommended: powermgmt-base). `libfdk-aac-dev` and `libfdk-aac2` come from the user's own apt sources (deb-multimedia, which the edition adds, or Debian non-free).
+sparky-stereo-apt (>= 20261104.2~sparky9~0, the one place of the edition's deb-src line), apt, dpkg-dev, build-essential, fakeroot, util-linux, python3, sudo | pkexec (recommended: powermgmt-base). `libfdk-aac-dev` and `libfdk-aac2` come from the user's own apt sources (deb-multimedia, which the edition adds, or Debian non-free).
 
 Build:
 -------------
