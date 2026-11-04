@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Daniel Ramos (Capitain Jack) 2026/10/25
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/25
+# Last update 2026/11/04
 #
 # Decides at every boot whether dmemcg-booster and plasma-foreground-booster run, from the hardware and the kernel
 # (Daniel's hardware auto-detection rule), and writes the decision to /run/sparky-stereo-vram-boost: the file enabled
@@ -13,9 +13,19 @@
 #     yes       same as auto, kept for existing configurations
 #     no        off
 #
+# What cannot work where it should is kept by the edition's one engine, sparky-stereo-problems (ORDER 346f-1, Daniel
+# 2026-11-01: "either it works or not and the user must know") and cleared at the next boot that finds the cause gone:
+#   mode      SPARKY_STEREO_VRAM_BOOST is not a mode
+#   kernel    a GPU whose driver registers VRAM (amdgpu, xe, nouveau) is bound and the kernel has no dmem controller
+#   capacity  the kernel has the controller but dmem.capacity cannot be read
+#   region    a bound amdgpu, xe or nouveau GPU registered no region within the wait
+# Not problems, by design: SPARKY_STEREO_VRAM_BOOST=no (the person's choice), no GPU at all, and GPUs whose driver
+# registers no VRAM (NVIDIA's own driver, i915, virtio): protection is simply not for them.
 # The dmem regions are the lines of /sys/fs/cgroup/dmem.capacity, "drm/<PCI address>/vram<N> <bytes>"
 # (drmm_cgroup_register_region() and amdgpu_vram_mgr_init() in Linux 7.3).
 set -u
+PACKAGE=sparky-stereo-vram-boost
+ENGINE=${SPARKY_STEREO_VRAM_BOOST_ENGINE:-sparky-stereo-problems}
 RUN=${SPARKY_STEREO_VRAM_BOOST_RUN:-/run/sparky-stereo-vram-boost}
 CGROUP=${SPARKY_STEREO_VRAM_BOOST_CGROUP:-/sys/fs/cgroup}
 PCI=${SPARKY_STEREO_VRAM_BOOST_PCI:-/sys/bus/pci/devices}
@@ -32,7 +42,25 @@ decide() {
 	[ "$1" = on ] && : >"$RUN/enabled"
 	printf 'decision=%s\nmode=%s\nreason=%s\nregions=%s\n' "$1" "$mode" "$2" "${regions:-}" >"$RUN/state"
 	echo "VRAM protection $1: $2"
-	exit 0
+	finish
+}
+
+# finish: clear the problems whose cause is gone and exit; a problem the engine cannot keep fails the unit (systemd's
+# OnFailure handler keeps that), and is said here
+raised=
+problem() { # problem KEY MESSAGE [ARG...]
+	local key=$1; shift
+	raised="$raised $key "
+	echo "VRAM protection problem $key: $*"
+	"$ENGINE" keep --machine "$PACKAGE" "$key" "$@" || failed=1
+}
+failed=0
+finish() {
+	local key
+	for key in mode kernel capacity region; do
+		case "$raised" in *" $key "*) ;; *) "$ENGINE" clear --machine "$PACKAGE" "$key" || failed=1 ;; esac
+	done
+	exit "$failed"
 }
 
 driver_of() {
@@ -45,26 +73,43 @@ regions=
 case "$mode" in
 	auto|amd-dgpu|yes) ;;
 	no) decide off "SPARKY_STEREO_VRAM_BOOST=no" ;;
-	*) decide off "unknown SPARKY_STEREO_VRAM_BOOST=$mode (auto, amd-dgpu, yes or no)" ;;
+	*) problem mode LOCAL2 "$mode"; decide off "unknown SPARKY_STEREO_VRAM_BOOST=$mode (auto, amd-dgpu, yes or no)" ;;
 esac
-grep -qw dmem "$CGROUP/cgroup.controllers" 2>/dev/null || decide off "the kernel has no dmem cgroup controller"
 
-# amdgpu registers its VRAM at the end of its probe; wait for every bound amdgpu device to appear, a few seconds at most.
-amd=()
+# the GPUs bound to a driver that registers its VRAM with the dmem controller (Linux 7.3: amdgpu, xe, nouveau);
+# amd-dgpu is the person's narrower rule and expects amdgpu only
+case "$mode" in amd-dgpu) expect=" amdgpu " ;; *) expect=" amdgpu xe nouveau " ;; esac
+gpus=()
 for dev in "$PCI"/*; do
-	[ "$(driver_of "${dev##*/}")" = amdgpu ] && amd+=("${dev##*/}")
+	[ -e "$dev" ] || continue
+	driver=$(driver_of "${dev##*/}")
+	case "$expect" in *" $driver "*) gpus+=("${dev##*/}:$driver") ;; esac
 done
+gpulist=${gpus[*]:-}
+
+if ! grep -qw dmem "$CGROUP/cgroup.controllers" 2>/dev/null; then
+	[ "${#gpus[@]}" = 0 ] || problem kernel LOCAL3 "$(uname -r)" "${gpulist// /, }"
+	decide off "the kernel has no dmem cgroup controller"
+fi
+
+# amdgpu registers its VRAM at the end of its probe; wait for every bound device to appear, a few seconds at most.
 for ((i = 0; i < WAIT; i++)); do
 	missing=0
-	for a in "${amd[@]}"; do
-		grep -q "^drm/$a/" "$CGROUP/dmem.capacity" 2>/dev/null || missing=1
+	for g in "${gpus[@]}"; do
+		grep -q "^drm/${g%:*}/" "$CGROUP/dmem.capacity" 2>/dev/null || missing=1
 	done
 	[ "$missing" = 0 ] && break
 	sleep 1
 done
+for g in "${gpus[@]}"; do
+	grep -q "^drm/${g%:*}/" "$CGROUP/dmem.capacity" 2>/dev/null || [ ! -r "$CGROUP/dmem.capacity" ] || problem region LOCAL5 "${g%:*}" "${g##*:}" "$WAIT"
+done
 
 on=
-[ -r "$CGROUP/dmem.capacity" ] || decide off "no dmem.capacity in $CGROUP"
+if [ ! -r "$CGROUP/dmem.capacity" ]; then
+	[ "${#gpus[@]}" = 0 ] || problem capacity LOCAL4 "$CGROUP/dmem.capacity"
+	decide off "no dmem.capacity in $CGROUP"
+fi
 while read -r region size; do
 	[ -n "$region" ] || continue
 	regions="${regions:+$regions }$region=$size"

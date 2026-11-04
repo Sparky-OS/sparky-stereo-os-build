@@ -11,6 +11,7 @@ Dependencies:
 bash
 dmemcg-booster
 systemd
+sparky-stereo-problems >= 0.1.2
 plasma-foreground-booster (recommended)
 
 Build:
@@ -44,6 +45,11 @@ GPU with its own VRAM (mem_info_vram_vendor present) registered with dmem;
 yes is the same as auto, kept for existing configurations; no turns it off.
 With no registered VRAM it stays off, including NVIDIA's own driver,
 which registers none.
+What cannot work where it should is kept by the edition's one engine, sparky-stereo-problems, and shown by its
+session notifier and by `sparky-stereo-problems list`: a mode that is not auto, amd-dgpu, yes or no; a kernel without
+the dmem controller on a computer with an amdgpu, xe or nouveau GPU; a dmem.capacity that cannot be read; a bound GPU
+that registered no VRAM within the wait. The next boot that finds the cause gone clears the problem.
+Mode no, a computer with no GPU, and GPUs whose driver registers no VRAM (NVIDIA's own, i915) are not problems.
 Each person can also turn the foreground booster off for their own session
 with upstream's switch: autostart=false in the [Foreground Booster] group
 of ~/.config/kcgroupsrc.
