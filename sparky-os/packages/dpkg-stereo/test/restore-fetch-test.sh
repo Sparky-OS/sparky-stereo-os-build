@@ -98,7 +98,8 @@ for p in lean-snap lean-gone lean-net lean-net2 lean-sha lean-ver lean-file lean
 MAINT='Media Packager <m@example.org>' mk lean-dmo 1.0 all "$W/debs"
 mk lean-epoch 2:1.0-1 all "$W/debs"
 mk lean-arch 1.0 amd64 "$W/debs"
-dpkg -i "$W"/debs/*.deb >/dev/null 2>&1 || bad "install of the test packages"
+# This suite projects its named fixtures explicitly below; do not project the base image here.
+DPKG_STEREO_DISABLE=1 dpkg -i "$W"/debs/*.deb >/dev/null 2>&1 || bad "install of the test packages"
 serve lean-snap 1.0 all "$W/debs/lean-snap_1.0_all.deb"
 serve lean-epoch 2:1.0-1 all "$W/debs/lean-epoch_1.0-1_all.deb"
 serve lean-arch 1.0 amd64 "$W/debs/lean-arch_1.0_amd64.deb"
@@ -113,9 +114,6 @@ mk lean-ver 1.1 all "$W/wrong"
 serve lean-ver 1.0 all "$W/wrong/lean-ver_1.1_all.deb"
 mk lean-file 1.0 all "$W/wrong" other
 serve lean-file 1.0 all "$W/wrong/lean-file_1.0_all.deb"
-# lean-arch's twin of the other architecture, with other files, in APT's cache: never read for amd64
-mk lean-arch 1.0 i386 "$CACHE" other
-DECOY=$(sha256sum <"$CACHE/lean-arch_1.0_i386.deb")
 # another archive's package: a source whose Release says Origin: Example Vendor offers lean-vendor 2.0 only, and
 # lean-dmo 3.0 by lean-dmo 1.0's Maintainer; a source whose Release says Origin: Debian offers lean-deb 2.0 and
 # lean-dmo 2.0 by another Maintainer
@@ -133,6 +131,10 @@ MAINT='Debian Team <d@example.org>' mk lean-dmo 2.0 all /srv/debian
 flat /srv/vendor 'Example Vendor'
 flat /srv/debian Debian
 apt-get update -qq >/dev/null 2>&1 || bad "apt-get update of the local sources"
+# Refresh hooks in container images may empty APT’s cache; seed the control afterwards.
+# lean-arch's twin of the other architecture, with other files, in APT's cache: never read for amd64
+mk lean-arch 1.0 i386 "$CACHE" other
+DECOY=$(sha256sum <"$CACHE/lean-arch_1.0_i386.deb")
 mk lean-vendor 1.0 all "$W/wrong" other
 mkdir -p "$W/other-version" && cp /srv/vendor/lean-vendor_2.0_all.deb "$W/other-version/"
 

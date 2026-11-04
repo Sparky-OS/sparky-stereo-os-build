@@ -11,13 +11,13 @@ Third-party .deb files stay as their distributions built them. Our lc1-marked bu
 projected and are skipped after their manifests are checked. After dpkg installs unmarked packages,
 dpkg-stereo projects the text files they installed into their machine form (MR, the removable comments
 absent) through the qualified adapters of the lean package, checks every projection with the file's
-consumer, and records it. Before dpkg runs, every projected conffile whose bytes still equal its lean
-form is put back to its pristine bytes, so dpkg sees an unmodified conffile and never asks; a conffile
-the person edited is left alone and dpkg's usual rules apply. Everything is recorded and reversible.
+consumer, and records it. With conffile capability 2, dpkg validates a recorded projection against its
+genuine original and the installed renderer. Otherwise, pre-invoke restores matching lean conffiles
+to their pristine bytes. A conffile the person edited keeps dpkg's usual conflict handling. Everything is recorded and reversible.
 
 usage: dpkg-stereo [--root DIR] [--map /etc=DIR ...] COMMAND
   --project [PACKAGE...]   project these packages' files (all installed packages without a name)
-  --pre-invoke             before dpkg (dpkg's pre-invoke hook): projected conffiles back to pristine
+  --pre-invoke             before dpkg: restore projected conffiles only for older dpkg
   --post-invoke            after dpkg (dpkg's post-invoke hook): project what changed, reproject conffiles
   --verify [PACKAGE...]    projected files against their lean hashes, pristine records against dpkg's
   --restore [PACKAGE...]   the original files back (all packages without a name), records dropped; a package
@@ -87,6 +87,8 @@ class _Lazy:
 
 
 project = _Lazy('lean.project')
+conffile_projection = _Lazy('lean.conffile')
+conffile_events = _Lazy('conffile_events')
 locate = _Lazy('lean.locate')
 consumers = _Lazy('lean.consumers')
 lean_pkg = _Lazy('lean')
@@ -134,7 +136,8 @@ TAG = 'dpkg-stereo'
 REPAIR = 'sudo dpkg-stereo --repair'
 # the step's name in the messages; what --repair runs again for it
 STEPS = {'post-invoke': 'LOCAL1', 'pre-invoke': 'LOCAL2', 'project': 'LOCAL3', 'restore': 'LOCAL4',
-         'repair-consumers': 'LOCAL5', 'fetch-hr': 'LOCAL6', 'bytecode': 'LOCAL7', 'orphans': 'LOCAL55'}
+         'repair-consumers': 'LOCAL5', 'fetch-hr': 'LOCAL6', 'bytecode': 'LOCAL7',
+         'orphans': 'LOCAL55', 'conffiles': 'LOCAL61'}
 OUTPUT_LINES = 200
 # snapshot.debian.org, the Debian Project's archive of every package version Debian has published, and its
 # machine-readable interface: /mr/binary/NAME/VERSION/binfiles?fileinfo=1 names each architecture's .deb by its
@@ -570,7 +573,7 @@ def dpkg_db(P, files=None):
 INSTALLED_STATES = ('installed', 'triggers-pending', 'triggers-awaited', 'half-configured')
 
 
-def _installed(P, db):
+def _installed(P, db, states=INSTALLED_STATES):
     """(name, fields) of each installed package in dpkg's database (INSTALLED_STATES), named as its file list is:
     package:arch for a Multi-Arch: same package or one whose list carries the architecture, the package alone
     otherwise."""
@@ -579,7 +582,7 @@ def _installed(P, db):
     except FileNotFoundError:
         lists = set()
     for (pkg, arch), rec in (dpkg_db(P) if db is None else db).items():
-        if rec.get('Status', '').rsplit(' ', 1)[-1] not in INSTALLED_STATES:
+        if rec.get('Status', '').rsplit(' ', 1)[-1] not in states:
             continue
         name = pkg
         if rec.get('Multi-Arch') == 'same' or f'{pkg}:{arch}.list' in lists:
@@ -1156,8 +1159,50 @@ def configurable(P, names):
     return {n for n in names if n not in installed}
 
 
+def native_conffiles():
+    """Both the invoking binary and its installed package advertise the lean conffile contract."""
+    # The database may describe a newer dpkg than the process invoking this hook.
+    if os.environ.get('DPKG_LEAN_CODE_VERSION') != '2':
+        return False
+    result = subprocess.run(['/usr/bin/dpkg-query', '-W', '-f=${Provides}', 'dpkg'],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    if result.returncode:
+        raise RuntimeError('cannot query dpkg conffile capability: ' + result.stderr.decode(errors='replace'))
+    return bool(re.search(r'(?:^|,)\s*dpkg-lean-code\s*\(=\s*([2-9][0-9]*|1[0-9]+)\s*\)(?:,|$)',
+                          result.stdout.decode()))
+
+
+def recorded_projection(P, path, rec, original, current, owners, metadata):
+    """Validate a record against its owner's database, then reproduce its bytes.
+
+    OWNERS and METADATA live only for this operation. No acceptance survives a
+    renderer change, and the record never selects the reader.
+    """
+    package = rec['package']
+    owner = owners.get(package, {})
+    if package not in metadata:
+        metadata[package] = (set(package_files(P, package)), None)
+    paths, sums = metadata[package]
+    if path not in paths:
+        return 'owner-mismatch', 'the owning package does not list this path'
+    if rec.get('conffile') == '1':
+        baseline = owner.get('Conffiles', {}).get(path)
+    else:
+        if owner.get('Version') != rec.get('version'):
+            return 'owner-mismatch', 'the recorded version is not the installed version'
+        if sums is None:
+            sums = md5sums(P, package)
+            metadata[package] = (paths, sums)
+        baseline = sums.get(path)
+    if not baseline or baseline != rec.get('md5_orig'):
+        return 'original-mismatch', 'the original is not identified by the owning package'
+    return conffile_projection.validate(path, original, current, package, baseline,
+                                        rec['sha_orig'], rec['sha_lean'])
+
+
 def pre_invoke(P, action=None):
-    """Projected conffiles still in their lean form go back to their pristine bytes, so dpkg finds them
+    """Capability 2 keeps conffiles on disk. With older dpkg, matching projections go back to pristine.
+    Projected conffiles still in their lean form go back to their pristine bytes, so older dpkg finds them
     unmodified; a conffile the person edited (its bytes are no longer the lean ones) is left alone.
     dpkg runs this hook before it takes its lock, so a dpkg started while another one runs gets here, then
     stops at the lock and never runs post-invoke: the list for post-invoke is added to, never replaced,
@@ -1170,8 +1215,18 @@ def pre_invoke(P, action=None):
     compares those of the packages it unpacks (src/main/unpack.c and archives.c, md5hash), which no hook is told, so
     every lean one goes back, as before."""
     _migrate(P)
-    files = read_table(P.state(CONFFILES), FILE_COLS)
-    only = configurable(P, {rec['package'] for rec in files.values()}) if action == 'configure' and files else None
+    files, only = None, None
+    if action == 'configure':
+        files = read_table(P.state(CONFFILES), FILE_COLS)
+        only = configurable(P, {rec['package'] for rec in files.values()}) if files else set()
+        if not only:
+            # dpkg compares no conffile of an already configured package.
+            # No restoration decision needs a capability query in this run.
+            return 0
+    if native_conffiles():
+        return 0
+    if files is None:
+        files = read_table(P.state(CONFFILES), FILE_COLS)
     n = 0
     try:
         with open(P.state('restored-for-dpkg'), encoding='utf-8', errors='surrogateescape') as f:
@@ -1179,6 +1234,7 @@ def pre_invoke(P, action=None):
     except FileNotFoundError:
         restored = []
     listed = set(restored)
+    owners, metadata, refused = None, {}, []
     for path, rec in files.items():
         if rec.get('conffile') != '1' or (only is not None and rec['package'] not in only):
             continue
@@ -1195,6 +1251,12 @@ def pre_invoke(P, action=None):
         orig = load_pristine(P, rec['sha_orig'])
         if orig is None or sha256(orig) != rec['sha_orig']:
             continue
+        if owners is None:
+            owners = dict(_installed(P, dpkg_db(P), INSTALLED_STATES + ('unpacked', 'half-installed', 'config-files')))
+        reason, detail = recorded_projection(P, path, rec, orig, data, owners, metadata)
+        if reason != 'ok':
+            refused.append(f"{rec['package']}: {path}: {reason}: {detail}; dpkg will settle the new version at {path}.dpkg-new")
+            continue
         write_lean(real, data, orig, os.lstat(real))
         if path not in listed:
             restored.append(path)
@@ -1204,6 +1266,8 @@ def pre_invoke(P, action=None):
     with open(tmp, 'w', encoding='utf-8', errors='surrogateescape') as f:
         f.write(''.join(p + '\n' for p in restored))
     os.replace(tmp, P.state('restored-for-dpkg'))
+    if refused:
+        raise RuntimeError('\n'.join(refused))
     return n
 
 
@@ -1233,7 +1297,9 @@ def post_invoke(P, jobs):
                                           if recorded.get(k, {}).get('version') != v[0]
                                           or recorded.get(k, {}).get('list_mtime') != list_mtime(P, v[1])
                                           or racy(recorded.get(k, {})))
-    gone = set() if unchanged else {k for k in recorded if k not in pkgs}
+    # An unpacked package still owns the conffile whose old projection dpkg
+    # will compare during a later configure. It is pending, not removed.
+    pending = set() if unchanged else {n for n, _ in _installed(P, db, ('unpacked', 'half-installed'))}
     ch = set(changed)
     try:
         with open(P.state('restored-for-dpkg'), encoding='utf-8', errors='surrogateescape') as f:
@@ -1241,6 +1307,10 @@ def post_invoke(P, jobs):
     except FileNotFoundError:
         restored = []
     conf_idx = read_table(P.state(CONFFILES), FILE_COLS)
+    # packages.tsv omits unpacked packages. The conffile index still names
+    # their retained records if they are purged before configure.
+    conf_owners = {r['package'] for r in conf_idx.values() if r.get('conffile') == '1'}
+    gone = set() if unchanged else (set(recorded) | conf_owners) - set(pkgs) - (pending & conf_owners)
     # a recorded conffile in its package's bytes was restored for some dpkg run and never projected again
     # (that run stopped before its post-invoke, or its list was lost): it is projected now, like the list
     listed = set(restored)
@@ -1409,8 +1479,9 @@ def removed_conffile_back(P, path, rec, db):
         # its original is nowhere: it stays lean, and an install of the package again will call it changed
         say('LOCAL59', [path, rec['package']])
         return False
-    r = project.project(path, orig, name, check=False)
-    if r.status != 'projected' or r.sha_out != sha256(data):
+    reason, _ = conffile_projection.validate(path, orig, data, rec['package'],
+                                               stanza['Conffiles'][path], rec['sha_orig'], rec['sha_lean'])
+    if reason != 'ok':
         # not our projection of its package's file, whatever its record says: it may be the person's
         say('LOCAL60', [path, rec['package']])
         return False
@@ -2016,9 +2087,9 @@ def verify(P, names, deep=False):
                 bad += 1
                 continue
         if orig is not None:
-            r = project.project(path, orig, rec['package'].split(':')[0], check=False)
-            if r.sha_out != rec['sha_lean']:
-                print(f'MISMATCH  {path} (the original does not render to the installed lean file)')
+            reason, detail = conffile_projection.projection_matches(path, orig, data, rec['package'])
+            if reason != 'ok':
+                print(f'MISMATCH  {path} ({reason}: {detail})')
                 bad += 1
                 continue
     left = Records(P, 'left')
@@ -2245,6 +2316,8 @@ def restore(P, names, drop_hold=False, pkgs=None, log=print, progress=None, fetc
             return m, ('given', given[(package, version)]), w and ('given', w[1], None)
         return fetch_originals(P, package, version, arch, wanted, plans, offline, fetch, unreachable, note, deb_errors)
 
+    owners = dict(_installed(P, dpkg_db(P), INSTALLED_STATES + ('unpacked', 'half-installed', 'config-files')))
+    metadata = {}
     t0 = said = time.time()
     seen = 0
     # package by package: the originals without a pristine copy come from one pass of the package's .deb
@@ -2283,6 +2356,12 @@ def restore(P, names, drop_hold=False, pkgs=None, log=print, progress=None, fetc
                 stuck.append(path)
                 fail += 1
                 continue
+            reason, detail = recorded_projection(P, path, rec, orig, data, owners, metadata)
+            if reason != 'ok':
+                stuck.append(path)
+                fail += 1
+                why = ('other-bytes', f'{package}: {path}: {reason}: {detail}; current bytes kept', None)
+                continue
             real = P.real(path)
             write_lean(real, data, orig, os.lstat(real))
             if path.endswith('.py'):
@@ -2294,7 +2373,7 @@ def restore(P, names, drop_hold=False, pkgs=None, log=print, progress=None, fetc
             more = f' (and {len(stuck) - 1} more files)' if len(stuck) > 1 else ''
             src = ' from snapshot.debian.org' if source and source[0] == 'snapshot' else \
                 f' {os.path.basename(source[1])}' if source else ''
-            if from_deb.get(first) is not None:
+            if why is None and from_deb.get(first) is not None:
                 why = ('other-bytes', f'{first}: its .deb{src} holds other bytes than the recorded original{more}', None)
             elif why is None:
                 why = ('other-bytes', f'{first}: its .deb{src} does not hold it{more}' if source or first in wanted
@@ -3395,7 +3474,12 @@ def show_problems(P):
             print(f'  (en) {problem_text(entry, "en")}')
         # each package version whose files stay lean, with why and what brings it back (restore, ORDER 365)
         for item in entry.get('items', []):
-            if isinstance(item, dict) and item.get('why') in WHY:
+            if entry.get('step') == 'conffiles' and isinstance(item, dict):
+                args = [item['package'], item['path'], [conffile_events.REASONS[item['reason']]], item['location']]
+                print('  ' + text('LOCAL54', args, lang))
+                if lang != 'en':
+                    print('    (en) ' + text('LOCAL54', args, 'en'))
+            elif isinstance(item, dict) and item.get('why') in WHY:
                 print('  ' + stays_lean(item, lang))
                 if lang != 'en':
                     print(f'    (en) {stays_lean(item, "en")}')
@@ -3419,7 +3503,9 @@ def repair(P, jobs):
     for step, entry in sorted(kept.items(), key=lambda kv: kv[1].get('time', '')):
         FAILED_STEPS.clear()
         try:
-            if step == 'bytecode':
+            if step == 'conffiles':
+                ok = conffile_events.report(P, sys.modules[__name__], refresh=True)
+            elif step == 'bytecode':
                 failed = recompile_pyc(sorted({i['source'] for i in entry.get('items', []) if i.get('source')}))
                 keep_bytecode(P, failed, replace=True)
                 ok = not failed
@@ -3497,6 +3583,12 @@ def hook(P, pre, jobs=4):
             print(f'{TAG}: {P.state("error.log")}: {error}', file=sys.stderr)
         keep_problem(P, step, error_line(e), detail=detail)
         say('LOCAL11')
+    if not pre:
+        try:
+            with Lock(P):
+                conffile_events.report(P, sys.modules[__name__])
+        except Exception as e:
+            keep_problem(P, 'conffiles', error_line(e), detail=error_detail())
     return 0
 
 

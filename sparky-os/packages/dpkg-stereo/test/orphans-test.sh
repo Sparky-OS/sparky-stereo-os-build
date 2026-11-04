@@ -149,8 +149,6 @@ check "control: the fragment lean, unrecorded" bash -c "$(declare -f lean record
 echo "== the package under test installed over it"
 # where the originals are: systemd's and orph-watch's .deb in APT's cache, orph-src's offered by a configured source,
 # orph-gone's nowhere
-cp "$SYSTEMD_DEB" "$CACHE/systemd_$(dpkg-deb -f "$SYSTEMD_DEB" Version | sed 's/:/%3a/')_amd64.deb"
-cp "$W/debs/orph-watch_1.0_all.deb" "$CACHE/"
 cp "$W/debs/orph-src_1.0_all.deb" /srv/orph/
 (cd /srv/orph && dpkg-scanpackages . >Packages 2>/dev/null &&
 	printf 'Origin: Orph\nLabel: Orph\nSuite: stable\nCodename: orph\nDate: Tue, 03 Nov 2026 00:00:00 UTC\nSHA256:\n %s %s Packages\n' \
@@ -158,6 +156,9 @@ cp "$W/debs/orph-src_1.0_all.deb" /srv/orph/
 echo 'deb [trusted=yes] file:/srv/orph ./' >/etc/apt/sources.list.d/orph.list
 apt-get update -qq >/dev/null 2>&1 || bad "apt-get update of the local source"
 chmod -R a+rX /srv/orph
+# Container APT update hooks may empty the cache: place the test originals after refreshing indexes.
+cp "$SYSTEMD_DEB" "$CACHE/systemd_$(dpkg-deb -f "$SYSTEMD_DEB" Version | sed 's/:/%3a/')_amd64.deb"
+cp "$W/debs/orph-watch_1.0_all.deb" "$CACHE/"
 dpkg -i "$NEW" </dev/null >"$W/new.log" 2>&1 || bad "install $NEW: $(tail -3 "$W/new.log")"
 cat "$W/new.log"
 NEWV=$(dpkg-deb -f "$NEW" Version)

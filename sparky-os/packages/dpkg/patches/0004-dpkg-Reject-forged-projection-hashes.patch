@@ -1,0 +1,39 @@
+From 1b1e6a39009a19db05d1301bd12fdf7e52764293 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 3 Nov 2026 13:24:33 -0300
+Subject: [PATCH] dpkg: Expose forged projection hashes hiding conffile edits
+
+Keep the original and its package baseline genuine while changing only sha_lean to the edited file digest. The hash-only recognition rule currently accepts the forged record and silently replaces the edit; this regression must block packaging until the projection binding is resolved.
+
+Assisted-by: gpt-6-astra via Codex
+---
+ tests/t-conffile-leancode/test.py | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/tests/t-conffile-leancode/test.py b/tests/t-conffile-leancode/test.py
+index bda00d7..a0897a7 100644
+--- a/tests/t-conffile-leancode/test.py
++++ b/tests/t-conffile-leancode/test.py
+@@ -176,6 +176,19 @@ class ConffileTest(unittest.TestCase):
+         self.assert_prompt(self.upgrade())
+         self.assertEqual(self.file.read_bytes(), EDITED)
+ 
++    def test_forged_projection_cannot_hide_edit(self):
++        record, _ = self.record()
++        self.file.write_bytes(EDITED)
++        # Only the projection hash is forged. The original, its pristine
++        # copy and the owning package's Conffiles entry remain genuine.
++        record.write_text(record.read_text().replace(sha(LEAN), sha(EDITED)))
++        result = self.upgrade()
++        self.assertNotEqual(result.returncode, 0,
++                            'A forged sha_lean hid the personal edit; after upgrade: '
++                            + repr(self.file.read_bytes()))
++        self.assert_prompt(result)
++        self.assertEqual(self.file.read_bytes(), EDITED)
++
+     def test_original_cache_hash_mismatch(self):
+         _, cache = self.record()
+         cache.write_bytes(lzma.compress(b'not the recorded original'))
+-- 
+2.53.0
+

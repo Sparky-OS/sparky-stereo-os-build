@@ -42,6 +42,23 @@ EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
 
+  * A configure with no pending conffile needs no native-capability subprocess;
+    use the existing package snapshot to return before querying dpkg.
+  * Reconcile 0.1.31 orphan recovery; apply exact independent reproduction
+    to older-dpkg pre-invoke and explicit restore before writing a file.
+  * Skip pre-invoke conffile restoration only when the running dpkg and
+    its installed Provides advertise conffile capability 2.
+  * Keep native refusals in the problems engine with their package, path,
+    reason and candidate file; repair rechecks without replacing edits.
+  * Retain pending conffile records across unpack/configure, cleaning them
+    when the unpacked owner is purged before configuration.
+  * Share exact original-to-projection validation with the read-only
+    conffile verifier for the edition's dpkg (ORDER 376).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Wed, 04 Nov 2026 12:00:00 -0300
+
+dpkg-stereo (0.1.31) unstable; urgency=medium
+
   * The records dpkg-stereo 0.1.28 and older lost come back, once: a lean
     file left without its record is recorded again when it is exactly the
     projection of its package's own file at the installed version; any

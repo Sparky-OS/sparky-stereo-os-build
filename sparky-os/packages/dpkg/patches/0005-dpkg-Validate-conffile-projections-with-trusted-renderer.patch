@@ -1,0 +1,298 @@
+From dca43f950239c7eb2e58a5c09aa48127c91ca43b Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 3 Nov 2026 15:20:59 -0300
+Subject: [PATCH] dpkg: bind recorded conffiles to a trusted renderer
+
+Execute the checked fixed-path verifier descriptor only after both native hashes pass. Fall back to ordinary conffile comparison on every refusal and journal the result for dpkg-stereo. Tell invoke hooks which capability this running binary implements.
+
+Assisted-by: gpt-6-astra via Codex
+---
+ src/main/archives.c               | 167 +++++++++++++++++++++++++++++-
+ src/main/main.c                   |   2 +
+ tests/t-conffile-leancode/test.py |  42 +++++++-
+ 3 files changed, 205 insertions(+), 6 deletions(-)
+
+diff --git a/src/main/archives.c b/src/main/archives.c
+index 137585d..f9dd2c9 100644
+--- a/src/main/archives.c
++++ b/src/main/archives.c
+@@ -28,6 +28,8 @@
+ #include <sys/types.h>
+ #include <sys/time.h>
+ #include <sys/stat.h>
++#include <sys/wait.h>
++#include <sys/file.h>
+ 
+ #include <errno.h>
+ #include <string.h>
+@@ -620,6 +622,148 @@ leancode_original_matches(const char *original, const char *expected)
+ #endif
+ }
+ 
++/* The executable belongs to dpkg-stereo, not the target --root. */
++#define LEANCODE_VERIFIER "/usr/lib/dpkg-stereo/conffile-verify"
++
++static int
++leancode_verifier_open(void)
++{
++	static const char *parts[] = { "usr", "lib", "dpkg-stereo", "conffile-verify" };
++	struct stat st;
++	int fd, next;
++	size_t i;
++
++	fd = open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
++	for (i = 0; fd >= 0; i++) {
++		if (fstat(fd, &st) < 0 || st.st_uid != 0 || (st.st_mode & 022))
++			break;
++		if (i == (sizeof(parts) / sizeof(parts[0]))) {
++			if (S_ISREG(st.st_mode) && (st.st_mode & 0111)) {
++				next = fcntl(fd, F_DUPFD_CLOEXEC, 3);
++				close(fd);
++				return next;
++			}
++			break;
++		}
++		if (!S_ISDIR(st.st_mode))
++			break;
++		next = openat(fd, parts[i], O_RDONLY | O_NOFOLLOW | O_NONBLOCK |
++		              O_CLOEXEC | (i + 1 < (sizeof(parts) / sizeof(parts[0])) ? O_DIRECTORY : 0));
++		close(fd);
++		fd = next;
++	}
++	if (fd >= 0)
++		close(fd);
++	return -1;
++}
++
++/* A compact diagnostic journal, consumed by dpkg-stereo's post-invoke hook.
++ * Hex paths keep tabs and newlines in filenames out of the record framing. */
++static void
++leancode_conffile_event(struct pkginfo *pkg, const char *name, int reason)
++{
++	struct varbuf line = VARBUF_INIT;
++	struct stat st;
++	const unsigned char *p;
++	char *dir;
++	int dirfd, fd = -1;
++	bool saved = false;
++
++	dir = dpkg_fsys_get_path("/var/lib/dpkg-stereo");
++	dirfd = open(dir, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
++	if (dirfd >= 0 && fstat(dirfd, &st) == 0 && st.st_uid == geteuid() &&
++	    !(st.st_mode & 022))
++		fd = openat(dirfd, "conffile-events", O_WRONLY | O_APPEND | O_CREAT |
++		            O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0600);
++	if (fd >= 0 && fstat(fd, &st) == 0 && S_ISREG(st.st_mode) &&
++	    st.st_uid == geteuid() && !(st.st_mode & 022) && flock(fd, LOCK_EX) == 0) {
++		varbuf_add_fmt(&line, "%s\t", pkgbin_name(pkg, &pkg->installed, pnaw_same));
++		for (p = (const unsigned char *)name; *p; p++)
++			varbuf_add_fmt(&line, "%02x", *p);
++		varbuf_add_fmt(&line, "\t%d\n", reason);
++		saved = fd_write(fd, line.buf, line.used) == (ssize_t)line.used;
++	}
++	if (!saved)
++		warning("dpkg-stereo: cannot record conffile decision for %s:%s (reason %d)",
++		        pkg_name(pkg, pnaw_nonambig), name, reason);
++	if (fd >= 0)
++		close(fd);
++	if (dirfd >= 0)
++		close(dirfd);
++	varbuf_destroy(&line);
++	free(dir);
++}
++
++static int
++leancode_conffile_render(struct pkginfo *pkg, const char *fn, const char *name,
++                         const char *expected, const struct leancode_entry *record)
++{
++	struct stat st;
++	char *dir, *original;
++	char current_arg[32];
++	int executable, original_fd = -1, current_fd = -1;
++	int status, result = 17;
++	pid_t pid, waited;
++
++	executable = leancode_verifier_open();
++	if (executable < 0)
++		return 14;
++	dir = dpkg_fsys_get_path("/var/lib/dpkg-stereo/pristine");
++	original = str_fmt("%s/%s.xz", dir, record->hash);
++	free(dir);
++	original_fd = open(original, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
++	free(original);
++	current_fd = open(fn, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
++	if (current_fd >= 0 && current_fd < 3) {
++		int highfd = fcntl(current_fd, F_DUPFD_CLOEXEC, 3);
++		close(current_fd);
++		current_fd = highfd;
++	}
++	if (original_fd < 0 || current_fd < 0 ||
++	    fstat(original_fd, &st) < 0 || !S_ISREG(st.st_mode) ||
++	    fstat(current_fd, &st) < 0 || !S_ISREG(st.st_mode))
++		goto out;
++	snprintf(current_arg, sizeof(current_arg), "%d", current_fd);
++	pid = fork();
++	if (pid == 0) {
++		const char *args[] = { LEANCODE_VERIFIER,
++			pkgbin_name(pkg, &pkg->installed, pnaw_same), name, expected,
++			record->hash, record->lean, current_arg, NULL };
++		int nullfd;
++
++		if (dup2(original_fd, STDIN_FILENO) < 0 ||
++		    fcntl(STDIN_FILENO, F_SETFD, 0) < 0 ||
++		    fcntl(current_fd, F_SETFD, 0) < 0 ||
++		    fcntl(executable, F_SETFD, 0) < 0)
++			_exit(17);
++		/* The private hash action's stdout must remain just its digest. */
++		nullfd = open("/dev/null", O_WRONLY);
++		if (nullfd < 0 || dup2(nullfd, STDOUT_FILENO) < 0)
++			_exit(17);
++		if (nullfd > STDERR_FILENO)
++			close(nullfd);
++		fexecve(executable, (char *const *)args, environ);
++		_exit(17);
++	}
++	if (pid < 0)
++		goto out;
++	do {
++		waited = waitpid(pid, &status, 0);
++	} while (waited < 0 && errno == EINTR);
++	if (waited == pid && WIFEXITED(status)) {
++		result = WEXITSTATUS(status);
++		if (result != 0 && (result < 10 || result > 15))
++			result = 17;
++	}
++ out:
++	close(executable);
++	if (original_fd >= 0)
++		close(original_fd);
++	if (current_fd >= 0)
++		close(current_fd);
++	return result;
++}
++
+ static bool
+ leancode_conffile_projection(struct pkginfo *pkg, const char *fn,
+                              const char *name, const char *expected)
+@@ -629,6 +773,7 @@ leancode_conffile_projection(struct pkginfo *pkg, const char *fn,
+ 	struct leancode_index *index;
+ 	char *dir, *filename;
+ 	size_t pos;
++	int reason;
+ 
+ 	if (name[0] != '/' || !leancode_is_hash(expected, MD5HASHLEN))
+ 		return false;
+@@ -654,11 +799,27 @@ leancode_conffile_projection(struct pkginfo *pkg, const char *fn,
+ 	pos = record - index->entries;
+ 	if ((pos > 0 && strcmp(index->entries[pos - 1].name, record->name) == 0) ||
+ 	    (pos + 1 < index->entries_used &&
+-	     strcmp(index->entries[pos + 1].name, record->name) == 0))
++	     strcmp(index->entries[pos + 1].name, record->name) == 0)) {
++		leancode_conffile_event(pkg, name, 16);
+ 		return false;
++	}
++
++	if (!leancode_sha256_is(fn, record->lean)) {
++		char current[MD5HASHLEN + 1];
+ 
+-	return leancode_sha256_is(fn, record->lean) &&
+-	       leancode_original_matches(record->hash, expected);
++		md5hash(pkg, current, fn);
++		if (strcmp(current, expected) == 0) {
++			leancode_conffile_event(pkg, name, 0);
++			return false;
++		}
++		reason = 11;
++	}
++	else if (!leancode_original_matches(record->hash, expected))
++		reason = 10;
++	else
++		reason = leancode_conffile_render(pkg, fn, name, expected, record);
++	leancode_conffile_event(pkg, name, reason);
++	return reason == 0;
+ }
+ 
+ /* Only installed conffile decisions use this logical digest. */
+diff --git a/src/main/main.c b/src/main/main.c
+index 2e5d772..244ff5e 100644
+--- a/src/main/main.c
++++ b/src/main/main.c
+@@ -613,6 +613,7 @@ run_invoke_hooks(const char *action, struct invoke_list *hook_list)
+ 	struct invoke_hook *hook;
+ 
+ 	setenv("DPKG_HOOK_ACTION", action, 1);
++	setenv("DPKG_LEAN_CODE_VERSION", "2", 1);
+ 
+ 	for (hook = hook_list->head; hook; hook = hook->next) {
+ 		int status;
+@@ -626,6 +627,7 @@ run_invoke_hooks(const char *action, struct invoke_list *hook_list)
+ 	}
+ 
+ 	unsetenv("DPKG_HOOK_ACTION");
++	unsetenv("DPKG_LEAN_CODE_VERSION");
+ }
+ 
+ static void
+diff --git a/tests/t-conffile-leancode/test.py b/tests/t-conffile-leancode/test.py
+index a0897a7..573aa03 100644
+--- a/tests/t-conffile-leancode/test.py
++++ b/tests/t-conffile-leancode/test.py
+@@ -14,9 +14,10 @@ import unittest
+ 
+ 
+ NAME = 'pkg-conff-leancode'
+-PATH = '/etc/leancode.conf'
+-ORIGINAL = b'# The distributed setting, with its explanation.\nvalue=old\n'
+-LEAN = b'value=old\n'
++PATH = '/etc/default/leancode.conf'
++ORIGINAL = b'# The distributed setting, with its explanation.\n' * 20 + b'value=old\n'
++LEAN = (b'# Lean Code: HR in /usr/share/doc/pkg-conff-leancode/hr/, '
++        b'repo.sparkyos.org/lean-code\nvalue=old\n')
+ NEW = b'# The updated distributed setting.\nvalue=new\n'
+ EDITED = b'value=personal\n'
+ 
+@@ -318,6 +319,41 @@ class ConffileTest(unittest.TestCase):
+                 self.assertEqual(self.file.read_bytes(), LEAN if projected else ORIGINAL)
+                 self.assertEqual(Path(str(self.file) + '.dpkg-new').read_bytes(), NEW)
+ 
++    @unittest.skipUnless(os.geteuid() == 0, 'requires a disposable root container')
++    def test_missing_and_untrusted_verifier(self):
++        verifier = Path('/usr/lib/dpkg-stereo/conffile-verify')
++        saved = verifier.read_bytes()
++        info = verifier.stat()
++        for case in ('missing', 'writable', 'nonroot', 'symlink', 'failed'):
++            with self.subTest(case=case):
++                self.setUp()
++                self.record()
++                try:
++                    if case == 'missing':
++                        verifier.unlink()
++                    elif case == 'writable':
++                        verifier.chmod(0o777)
++                    elif case == 'nonroot':
++                        os.chown(verifier, 1000, 1000)
++                    elif case == 'symlink':
++                        verifier.unlink()
++                        verifier.symlink_to('/usr/bin/true')
++                    else:
++                        verifier.write_text('#!/bin/sh\nexit 99\n')
++                    result = self.upgrade()
++                    self.assert_prompt(result)
++                    self.assertEqual(self.file.read_bytes(), LEAN)
++                    self.assertEqual(Path(str(self.file) + '.dpkg-new').read_bytes(), NEW)
++                    events = (self.state / 'conffile-events').read_text()
++                    expected = 17 if case == 'failed' else 14
++                    self.assertIn('\t' + str(expected) + '\n', events)
++                finally:
++                    if verifier.is_symlink():
++                        verifier.unlink()
++                    verifier.write_bytes(saved)
++                    os.chown(verifier, info.st_uid, info.st_gid)
++                    verifier.chmod(info.st_mode & 0o7777)
++
+     def test_verify_still_hashes_physical_bytes(self):
+         self.record()
+         result = self.dpkg('--verify', NAME)
+-- 
+2.53.0
+
