@@ -36,3 +36,4 @@ Six of these patches were made "for the next package" and no build applied them.
 | `kubrick-stereo3d.po.patch` | kubrick | 4:26.04.0-1+stereo3d3 |
 | `kinfocenter-stereo3d.po.patch` | kinfocenter | 4:6.7.4-1+stereo3d2 |
 | `kf6-kfilemetadata-stereo3d.po.patch` | kf6-kfilemetadata | 6.30.0-1+stereo3d5 |
+| `plasma-workspace-recovery.po.patch` | plasma-workspace | 4:6.7.4-2+stereo3d7 |
