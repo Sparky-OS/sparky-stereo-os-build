@@ -39,3 +39,7 @@ Hardware Setup owns driver choices.
 Build with OUT=/scratch/output APTUS_SOURCE=/path/to/the/fork bash build.sh inside the package build container.
 The default source is the build repository's APTus submodule.
 The recipe uses the shared Lean Code standalone pipeline and retains the authored payload in its source package.
+
+An entry that is not installed shows, beside its button, the install-time downloads it brings: the packages apt would install for it whose control file declares Install-Download-Size and Install-Download-Source, with the size and the source, on a metered connection (NetworkManager says yes or guess-yes) and, said, when NetworkManager cannot be read (ORDER 399b; Daniel, 2026-11-04: "warn the user with current size on stereo aptus interface or apt depending from where the user came").
+The declaration, the metered test, the setting Sparky::Install-Downloads::Announce and the nine languages belong to sparky-stereo-apt (its reader, /usr/lib/sparky-stereo-apt/sparky_install_downloads.py), which apt's own notice uses too: one declaration, one reader, two front ends. This package depends on the version that has it.
+FlightGear is an entry since 0.1.4; its data downloader, flightgear-data-installer, declares 1.75 GiB from SourceForge.
