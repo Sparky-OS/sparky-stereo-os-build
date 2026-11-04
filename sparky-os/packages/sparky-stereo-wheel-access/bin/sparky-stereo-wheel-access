@@ -49,7 +49,8 @@ for attr in "$@"; do
 		continue
 	fi
 	failed="${failed:+$failed, }$attr"
-	reason="${reason:+$reason; }$(printf '%s' "$out" | tr '\n' ' ' | sed 's/^[a-z]*: //')"
+	why=$(printf '%s' "$out" | tr '\n' ' ' | sed 's/^[a-z]*: //')
+	case "$reason" in *"$why"*) ;; *) reason="${reason:+$reason; }$why" ;; esac
 done
 
 if [ -z "$failed" ]; then
