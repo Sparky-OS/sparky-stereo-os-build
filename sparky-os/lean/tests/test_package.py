@@ -468,6 +468,38 @@ class Packages(unittest.TestCase):
         with patch.object(client, 'Records', side_effect=AssertionError('migration rescanned records')):
             self.assertEqual(client.repair_consumers(P), 0)
 
+    def older_restore(self, tamper):
+        """ORDER 397: restore takes back what an earlier renderer made (the 0.1.15 form), but only for a record the
+        owner's md5sums identify, and never over bytes that are not the recorded projection."""
+        root, P, raw, old = self.old_c_header()
+        cache = root / 'var/cache/apt/archives'
+        cache.mkdir(parents=True)
+        shutil.copy2(raw, cache)
+        records = client.Records(P)
+        if tamper == 'md5':
+            records[self.C_PATH] = dict(records[self.C_PATH], md5_orig='0' * 32)     # not what the owner's md5sums list
+            records.save()
+        elif tamper == 'edit':
+            (root / self.C_PATH[1:]).write_bytes(old + b'int mine;\n')
+        with contextlib.redirect_stdout(io.StringIO()):
+            client.restore(P, {self.C_PATH}, log=lambda m: None)
+        return (root / self.C_PATH[1:]).read_bytes(), old, client.Records(P)
+
+    def test_restore_takes_back_an_earlier_renderers_form(self):
+        data, old, records = self.older_restore(None)
+        self.assertEqual(data, self.C_AUTHORED)
+        self.assertNotIn(self.C_PATH, records)
+
+    def test_restore_of_an_older_form_keeps_a_record_its_owner_does_not_identify(self):
+        data, old, records = self.older_restore('md5')
+        self.assertEqual(data, old)
+        self.assertIn(self.C_PATH, records)
+
+    def test_restore_of_an_older_form_keeps_a_persons_edit(self):
+        data, old, records = self.older_restore('edit')
+        self.assertEqual(data, old + b'int mine;\n')
+        self.assertNotIn(self.C_PATH, records)
+
     def test_c_migration_retries_only_the_files_whose_original_is_missing(self):
         second = '/usr/include/lc-demo/other.h'
         authored = b'// Another explanation for people, long enough to be worth its own projection here.\nint other;\n'
