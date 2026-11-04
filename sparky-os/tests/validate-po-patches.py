@@ -91,7 +91,7 @@ def parse_patch_sections(patch_text, errors, patch_name):
                 old_count += 1
             if first != "-":
                 new_count += 1
-            if first == "+":
+            if first == "+" or first == "-":
                 section["added"].append(line[1:])
             if first != "-":
                 counted_new += 1
@@ -124,9 +124,9 @@ def parse_patch_sections(patch_text, errors, patch_name):
             continue
 
         if line.startswith("--- "):
-            section["old_path"] = clean_diff_path(line[4:], "old")
+            section["old_path"] = clean_diff_path(line[4:].split()[0], "old")
         elif line.startswith("+++ "):
-            section["new_path"] = clean_diff_path(line[4:], "new")
+            section["new_path"] = clean_diff_path(line[4:].split()[0], "new")
         elif line.startswith("@@ "):
             match = HUNK_HEADER.match(line)
             if not match:
