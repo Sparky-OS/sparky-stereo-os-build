@@ -16,12 +16,16 @@
 #   IMAGE  a container image of that architecture with the build tools
 #   JOBS   parallel jobs (default 4)
 # OUT defaults to SPARKY_STAGING_DIR/<dsc name>-<arch>; FLAGS overrides -b/-B.
-# Last update 2026/10/22
+# The container runs apt-get update first and the build stops, with apt's output, when it fails (a source that cannot be reached
+# counts). APT_UPDATE=no skips it, said in the output, for an image whose package lists are the ones to build from (offline).
+# Last update 2026/11/04
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "$HERE/../config/local-config.sh"
 [ $# -ge 3 ] || { sed -n '/^# Usage/,/^# Last/p' "$0" | sed 's/^# \?//' >&2; exit 2; }
 DSC=$1 ARCH=$2 IMG=$3 JOBS=${4:-4}
+APT_UPDATE=${APT_UPDATE:-yes}
+case $APT_UPDATE in yes | no) ;; *) echo "APT_UPDATE must be yes or no" >&2; exit 2 ;; esac
 case $ARCH in
 amd64) FLAGS=${FLAGS:--b} ;;
 i386) FLAGS=${FLAGS:--B} ;;
@@ -36,19 +40,29 @@ B=$SPARKY_BUILD_SCRATCH/build-from-dsc/$NAME-$ARCH
 rm -rf "$B" "$OUT"; mkdir -p "$B" "$OUT"
 docker run --rm --name "build-from-dsc-${NAME//[^A-Za-z0-9_.-]/-}-$ARCH" \
 	-v "$SRC_DIR":/src:ro -v "$B":/build -v "$OUT":/out \
-	-e DEBIAN_FRONTEND=noninteractive -e DSC="$DSC" -e FLAGS="$FLAGS" -e JOBS="$JOBS" \
+	-e DEBIAN_FRONTEND=noninteractive -e DSC="$DSC" -e APT_UPDATE="$APT_UPDATE" -e FLAGS="$FLAGS" -e JOBS="$JOBS" \
 	-e OWNER="$(id -u):$(id -g)" -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro "$IMG" bash -c '
 	set -e
+	# a stopped build leaves its files owned by you too, so the next run can clear them
+	trap "chown -R \"$OWNER\" /out /build" EXIT
 	sh /run/https-only-apt.sh
 	cd /build
 	dpkg-source -x /src/$DSC tree >/dev/null
 	cd tree
-	apt-get -qq update >/dev/null 2>&1 || true
+	if [ "$APT_UPDATE" = no ]; then
+		echo "build-from-dsc: apt-get update skipped (APT_UPDATE=no, your choice): build-dep uses the package lists this image already holds" >&2
+	else
+		# --error-on=any: without it apt-get update exits 0 when a source cannot be reached (only W: lines), and build-dep
+		# would then run on stale lists.
+		apt-get -qq update --error-on=any >/build/apt-update.log 2>&1 || {
+			tail -20 /build/apt-update.log
+			echo "build-from-dsc: apt-get update failed, so build-dep would run on old package lists. Fix the source or the network above and run again; to build from the lists the image already holds, run again with APT_UPDATE=no." >&2
+			exit 1; }
+	fi
 	apt-get -y -qq build-dep ./ >/build/build-dep.log 2>&1 || { tail -20 /build/build-dep.log; exit 1; }
 	dpkg-buildpackage -us -uc $FLAGS -j$JOBS >/build/build.log 2>&1 || { tail -40 /build/build.log; exit 1; }
 	cd /build
-	cp *.deb *.changes *.buildinfo build.log /out/
-	chown -R "$OWNER" /out /build'
+	cp *.deb *.changes *.buildinfo build.log /out/'
 (cd "$OUT" && sha256sum *.deb *.changes *.buildinfo > SHA256SUMS)
 sync
 echo "$NAME $ARCH: $(ls "$OUT"/*.deb | wc -l) packages in $OUT"
