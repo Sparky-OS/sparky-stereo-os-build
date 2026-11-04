@@ -37,3 +37,6 @@ Six of these patches were made "for the next package" and no build applied them.
 | `kinfocenter-stereo3d.po.patch` | kinfocenter | 4:6.7.4-1+stereo3d2 |
 | `kf6-kfilemetadata-stereo3d.po.patch` | kf6-kfilemetadata | 6.30.0-1+stereo3d5 |
 | `plasma-workspace-recovery.po.patch` | plasma-workspace | 4:6.7.4-2+stereo3d7 |
+| `powerdevil-graphics-link.po.patch` | powerdevil | 4:6.7.4-1+stereo3d2 (with the code half graphics-page-link.patch) |
+| `vlc-spatial-video.po.patch` | vlc (binary vlc-stereo) | 3.0.24-1+stereo3d16, already: debian/patches/vlc-spatial-video-translations.patch, catalogues in /usr/share/vlc-stereo/locale |
+| `kf6-kio-gpu-launch.po.patch` | kf6-kio | 6.30.0-1+stereo3d9 |

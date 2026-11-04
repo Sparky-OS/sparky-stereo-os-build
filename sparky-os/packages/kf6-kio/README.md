@@ -1,6 +1,6 @@
 # kf6-kio: Plasma's launcher on the Graphics page's GPU
 
-Rebuild the edition's published kf6-kio 6.30.0-1+stereo3d7+lc1 as 6.30.0-1+stereo3d8+lc1 with the patches in `patches/` that its series does not carry yet (`EDITION-ONLY-start-no-application-whose-GPU-cannot-be-applied.patch`, ORDER 346g), then `sparky-os/translations/kf6-kio-gpu-launch.po.patch`.
+Rebuild the edition's published kf6-kio 6.30.0-1+stereo3d7+lc1 as 6.30.0-1+stereo3d9+lc1 with the patches in `patches/` that its series does not carry yet (`EDITION-ONLY-start-no-application-whose-GPU-cannot-be-applied.patch`, ORDER 346g), then `sparky-os/translations/kf6-kio-gpu-launch.po.patch`.
 The two earlier patches, `EDITION-ONLY-run-applications-on-the-GPU-of-the-graphics-settings.patch` and `EDITION-ONLY-start-activatable-applications-on-their-GPU.patch` (+stereo3d6, ORDER 239), are already in the published series.
 
 KIO decides where an application started from its desktop entry runs in one place, `KProcessRunner::fromApplication` (`src/gui/kprocessrunner.cpp`): an entry with `PrefersNonDefaultGPU=true` gets `KIO::discreteGpuEnvironment()` (`src/gui/gpudetection.cpp`, from switcheroo-control, else Solid's `hasDualGpu`), every other entry starts with the session's environment.
