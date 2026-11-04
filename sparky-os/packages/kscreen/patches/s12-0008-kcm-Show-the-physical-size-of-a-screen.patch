@@ -1,0 +1,72 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 3 Nov 2026 22:55:03 -0300
+Subject: [PATCH 08/19] kcm: Show the physical size of a screen
+
+The size KWin reports for each screen, in millimetres, shows under the resolution with
+its diagonal in inches, as the sizes wdisplays lists. Nothing shows for a screen that
+does not say its size, like a virtual output.
+
+Assisted-by: Claude Sonnet 5.5
+---
+ kcm/output_model.cpp   |  3 +++
+ kcm/output_model.h     |  2 ++
+ kcm/ui/OutputPanel.qml | 11 +++++++++++
+ 3 files changed, 16 insertions(+)
+
+diff --git a/kcm/output_model.cpp b/kcm/output_model.cpp
+index d5df3e21..6929a426 100644
+--- a/kcm/output_model.cpp
++++ b/kcm/output_model.cpp
+@@ -107,6 +107,8 @@ QVariant OutputModel::data(const QModelIndex &index, int role) const
+         return unflipped(output->rotation());
+     case FlippedRole:
+         return isFlipped(output->rotation());
++    case PhysicalSizeRole:
++        return output->sizeMm();
+     case ScaleRole:
+         return output->scale();
+     case ResolutionIndexRole:
+@@ -655,6 +657,7 @@ QHash<int, QByteArray> OutputModel::roleNames() const
+     roles[AutoRotateRole] = "autoRotate";
+     roles[RotationRole] = "rotation";
+     roles[FlippedRole] = "flipped";
++    roles[PhysicalSizeRole] = "physicalSize";
+     roles[ScaleRole] = "scale";
+     roles[ResolutionIndexRole] = "resolutionIndex";
+     roles[ResolutionsRole] = "resolutions";
+diff --git a/kcm/output_model.h b/kcm/output_model.h
+index 2ca29ab2..dbe5818e 100644
+--- a/kcm/output_model.h
++++ b/kcm/output_model.h
+@@ -95,6 +95,8 @@ public:
+         AbmLevelRole,
+         /** The output is mirrored before it is turned: the flipped transforms of Wayland's wl_output. */
+         FlippedRole,
++        /** The size of the picture area in millimetres, as the display or KWin says it; not positive when unknown. */
++        PhysicalSizeRole,
+     };
+     Q_ENUM(OutputRoles)
+ 
+diff --git a/kcm/ui/OutputPanel.qml b/kcm/ui/OutputPanel.qml
+index 377a448b..50bcd520 100644
+--- a/kcm/ui/OutputPanel.qml
++++ b/kcm/ui/OutputPanel.qml
+@@ -280,6 +280,17 @@ Kirigami.FormLayout {
+         }
+     }
+ 
++    QQC2.Label {
++        id: physicalSizeLabel
++        objectName: "physicalSizeLabel"
++        Kirigami.FormData.label: i18nc("@label size of the screen in millimetres", "Physical size:")
++
++        readonly property size physicalSize: element.physicalSize
++        visible: physicalSize.width > 0 && physicalSize.height > 0
++        text: i18nc("@info width and height of the screen in millimetres, then its diagonal in inches", "%1 × %2 mm (%3″ diagonal)",
++                    physicalSize.width, physicalSize.height, (Math.hypot(physicalSize.width, physicalSize.height) / 25.4).toFixed(1))
++    }
++
+     RowLayout {
+         Layout.fillWidth: true
+         // Set the same limit as the device ComboBox

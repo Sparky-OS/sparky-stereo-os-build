@@ -1,0 +1,36 @@
+kscreen (4:6.7.4-1+stereo3d12) unstable; urgency=medium
+
+  * The rest of what wdisplays offers, as extra menus of Display Settings
+    (Daniel, 2026-10-31: "if any functionality from it is still missing,
+    add as extra menus to ours"). Auto-apply stays out: the page applies on
+    confirmation, with its revert timer.
+    - Flip horizontally, beside the four turns: the four flipped transforms
+      of wl_output (a mirroring about the vertical axis, then the turn)
+      that libkscreen and KWin carry; the turn buttons keep their meaning
+      and a mirrored screen carries an icon in the arrangement view
+      (s12-0003 and s12-0004).
+    - X and Y fields for the position of the screen, exact and without
+      snapping, counted from the top left corner of all the screens like
+      KWin's own coordinates (s12-0005 and s12-0006).
+    - The physical size of the screen in millimetres with its diagonal in
+      inches, when KWin knows it (s12-0007 and s12-0008).
+    - Custom modes where KWin offers them (Capability::CustomModes): list,
+      add by width, height and refresh rate with reduced blanking if wanted,
+      remove, applied with the other settings (s12-0009 and s12-0010).
+    - Show Screen Names in the View menu: the labels of Identify Screens
+      stay on the screens while the view is open, off until switched on
+      (s12-0011 and s12-0012); when KWin cannot show them the view says why
+      (s12-0018 and s12-0019).
+    - Wheel Pans the View in the View menu: a notch moves the arrangement
+      sixty pixels, sideways with Shift, off until switched on
+      (s12-0013 and s12-0014).
+    - A Zoom percentage beside the View button (s12-0015 and s12-0016).
+    - Show Screen Contents and its separator were written inside the Fit All
+      item of the View menu, so +stereo3d11's menu held three items and did
+      not list them; they are the menu's own items now (s12-0001 and
+      s12-0002).
+    The arrangementview and outputmenus tests drive all of it, in a compositor
+    and on the model; the package build does not run them (BUILD_TESTING
+    stays off). s12-0017 answers the page's revert dialog in the tests.
+  * The new strings in pl, pt_BR, fr, de, ja, ko, zh_CN and zh_TW
+    (kscreen-wdisplays-menus.po.patch, after kscreen-arrangement-view.po.patch).

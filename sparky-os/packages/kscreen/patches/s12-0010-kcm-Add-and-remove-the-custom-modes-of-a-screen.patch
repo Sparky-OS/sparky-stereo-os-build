@@ -1,0 +1,312 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 3 Nov 2026 22:59:38 -0300
+Subject: [PATCH 10/19] kcm: Add and remove the custom modes of a screen
+
+Where the compositor offers custom modes (libkscreen's Capability::CustomModes), a Custom
+modes row under the refresh rate lists those of the screen, with a button to remove each,
+and has fields for a width, a height and a refresh rate in hertz, with reduced blanking if
+wanted, and an Add button. The mode is asked of KWin when the settings are applied, and
+then shows under Resolution. A custom mode that is already there is not added twice, and
+the sizes and rates are bounded as kscreen-doctor's addCustomMode leaves them open. What
+is changed counts as something to apply.
+
+Assisted-by: Claude Sonnet 5.5
+---
+ kcm/config_handler.cpp |   1 +
+ kcm/output_model.cpp   |  85 ++++++++++++++++++++++++++++++
+ kcm/output_model.h     |  11 ++++
+ kcm/ui/OutputPanel.qml | 115 +++++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 212 insertions(+)
+
+diff --git a/kcm/config_handler.cpp b/kcm/config_handler.cpp
+index d34b432c..b60f68bc 100644
+--- a/kcm/config_handler.cpp
++++ b/kcm/config_handler.cpp
+@@ -197,6 +197,7 @@ bool ConfigHandler::checkSaveandTestCommon(bool isSaveCheck)
+ #if HAVE_KSCREEN_STEREO_SWAP_EYES
+                     || output->stereoSwapEyes() != config->stereoSwapEyes()
+ #endif
++                    || output->customModes() != config->customModes()
+                     || output->abmLevel() != config->abmLevel()) {
+                         return true;
+                     }
+diff --git a/kcm/output_model.cpp b/kcm/output_model.cpp
+index 6929a426..c447d2e0 100644
+--- a/kcm/output_model.cpp
++++ b/kcm/output_model.cpp
+@@ -6,6 +6,8 @@
+ */
+ #include "output_model.h"
+ 
++#include <algorithm>
++#include <cmath>
+ #include <cstdint>
+ 
+ #include <kscreen/edid.h>
+@@ -59,6 +61,24 @@ static KScreen::Output::Rotation flipped(KScreen::Output::Rotation rotation)
+     }
+ }
+ 
++static QString customModeLabel(const KScreen::ModeInfo &info)
++{
++    const QString mode = i18nc("@item:inlistbox Width, height and refresh rate of a custom mode", "%1 × %2 at %3 Hz",
++                               QString::number(info.size.width()), QString::number(info.size.height()), QString::number(info.refreshRate, 'f', 2));
++    if (info.flags & KScreen::ModeInfo::Flag::ReducedBlanking) {
++        return i18nc("@item:inlistbox A custom mode, and that it uses reduced blanking timings", "%1, reduced blanking", mode);
++    }
++    return mode;
++}
++
++// The compositor makes a mode with the nearest timings it can, so a refresh rate asked for and the one
++// it makes differ by a fraction of a hertz
++static constexpr float s_sameRefreshRate = 0.5;
++static constexpr int s_minimumCustomModeSize = 64;
++static constexpr int s_maximumCustomModeSize = 16384;
++static constexpr double s_minimumCustomModeRefreshRate = 1;
++static constexpr double s_maximumCustomModeRefreshRate = 1000;
++
+ OutputModel::OutputModel(ConfigHandler *configHandler)
+     : QAbstractListModel(configHandler)
+     , m_config(configHandler)
+@@ -109,6 +129,14 @@ QVariant OutputModel::data(const QModelIndex &index, int role) const
+         return isFlipped(output->rotation());
+     case PhysicalSizeRole:
+         return output->sizeMm();
++    case CustomModesRole: {
++        QStringList labels;
++        const auto customModes = output->customModes();
++        for (const auto &info : customModes) {
++            labels << customModeLabel(info);
++        }
++        return labels;
++    }
+     case ScaleRole:
+         return output->scale();
+     case ResolutionIndexRole:
+@@ -363,6 +391,62 @@ bool OutputModel::setPosition(int outputIndex, const QPoint &valToPoint, bool sn
+     return true;
+ }
+ 
++bool OutputModel::addCustomMode(int outputIndex, int width, int height, double refreshRate, bool reducedBlanking)
++{
++    if (outputIndex < 0 || outputIndex >= m_outputs.count()) {
++        return false;
++    }
++    const KScreen::OutputPtr &output = m_outputs[outputIndex].ptr;
++    if (!(output->capabilities() & KScreen::Output::Capability::CustomModes)) {
++        return false;
++    }
++    if (width < s_minimumCustomModeSize || width > s_maximumCustomModeSize || height < s_minimumCustomModeSize || height > s_maximumCustomModeSize
++        || refreshRate < s_minimumCustomModeRefreshRate || refreshRate > s_maximumCustomModeRefreshRate) {
++        return false;
++    }
++
++    auto modes = output->customModes();
++    const QSize size(width, height);
++    const bool known = std::ranges::any_of(modes, [&](const KScreen::ModeInfo &info) {
++        return info.size == size && std::abs(info.refreshRate - refreshRate) < s_sameRefreshRate;
++    });
++    if (known) {
++        return false;
++    }
++    KScreen::ModeInfo::Flags flags = KScreen::ModeInfo::Flag::Custom;
++    if (reducedBlanking) {
++        flags |= KScreen::ModeInfo::Flag::ReducedBlanking;
++    }
++    modes.push_back(KScreen::ModeInfo{
++        .size = size,
++        .refreshRate = float(refreshRate),
++        .flags = flags,
++    });
++    output->setCustomModes(modes);
++
++    const QModelIndex index = createIndex(outputIndex, 0);
++    Q_EMIT dataChanged(index, index, {CustomModesRole});
++    return true;
++}
++
++bool OutputModel::removeCustomMode(int outputIndex, int modeIndex)
++{
++    if (outputIndex < 0 || outputIndex >= m_outputs.count()) {
++        return false;
++    }
++    const KScreen::OutputPtr &output = m_outputs[outputIndex].ptr;
++    auto modes = output->customModes();
++    if (modeIndex < 0 || modeIndex >= modes.size()) {
++        return false;
++    }
++    modes.erase(modes.begin() + modeIndex);
++    output->setCustomModes(modes);
++
++    const QModelIndex index = createIndex(outputIndex, 0);
++    Q_EMIT dataChanged(index, index, {CustomModesRole});
++    return true;
++}
++
+ bool OutputModel::setNormalizedPosition(int outputIndex, const QPoint &position)
+ {
+     if (outputIndex < 0 || outputIndex >= m_outputs.count()) {
+@@ -658,6 +742,7 @@ QHash<int, QByteArray> OutputModel::roleNames() const
+     roles[RotationRole] = "rotation";
+     roles[FlippedRole] = "flipped";
+     roles[PhysicalSizeRole] = "physicalSize";
++    roles[CustomModesRole] = "customModes";
+     roles[ScaleRole] = "scale";
+     roles[ResolutionIndexRole] = "resolutionIndex";
+     roles[ResolutionsRole] = "resolutions";
+diff --git a/kcm/output_model.h b/kcm/output_model.h
+index dbe5818e..2408ba7f 100644
+--- a/kcm/output_model.h
++++ b/kcm/output_model.h
+@@ -97,6 +97,8 @@ public:
+         FlippedRole,
+         /** The size of the picture area in millimetres, as the display or KWin says it; not positive when unknown. */
+         PhysicalSizeRole,
++        /** The custom modes of the output, as the lines of a list: width, height and refresh rate. */
++        CustomModesRole,
+     };
+     Q_ENUM(OutputRoles)
+ 
+@@ -129,6 +131,15 @@ public:
+      */
+     Q_INVOKABLE bool setNormalizedPosition(int outputIndex, const QPoint &position);
+ 
++    /**
++     * Asks the compositor for a custom mode of the output when the configuration is applied: the mode
++     * of the given size and refresh rate in Hz, with reduced blanking timings if wanted. Only an output
++     * with Capability::CustomModes takes one, and a custom mode that is already there is no new one.
++     */
++    Q_INVOKABLE bool addCustomMode(int outputIndex, int width, int height, double refreshRate, bool reducedBlanking);
++    /** Drops the custom mode at the given place of the output's list of custom modes. */
++    Q_INVOKABLE bool removeCustomMode(int outputIndex, int index);
++
+ Q_SIGNALS:
+     void positionChanged();
+     void sizeChanged();
+diff --git a/kcm/ui/OutputPanel.qml b/kcm/ui/OutputPanel.qml
+index 50bcd520..6ba0d2c1 100644
+--- a/kcm/ui/OutputPanel.qml
++++ b/kcm/ui/OutputPanel.qml
+@@ -409,6 +409,121 @@ Kirigami.FormLayout {
+         }
+     }
+ 
++    ColumnLayout {
++        id: customModes
++
++        Kirigami.FormData.label: i18nc("@label modes the person adds for the screen", "Custom modes:")
++        Kirigami.FormData.labelAlignment: Qt.AlignTop
++        Kirigami.FormData.buddyFor: customModesToggle
++
++        visible: element.enabled && (element.capabilities & KScreen.Output.Capability.CustomModes) && element.replicationSourceIndex === 0
++
++        QQC2.CheckBox {
++            id: customModesToggle
++            objectName: "customModesToggle"
++            text: i18nc("@option:check Show the custom modes of the screen and the fields to add one", "Add or remove custom modes")
++        }
++
++        ColumnLayout {
++            visible: customModesToggle.checked
++
++            QQC2.Label {
++                visible: element.customModes.length === 0
++                text: i18nc("@info:placeholder", "No custom modes")
++                font: Kirigami.Theme.smallFont
++            }
++
++            Repeater {
++                model: element.customModes
++
++                RowLayout {
++                    required property string modelData
++                    required property int index
++
++                    QQC2.Label {
++                        text: parent.modelData
++                    }
++                    QQC2.ToolButton {
++                        objectName: "customModeRemoveButton"
++                        icon.name: "list-remove"
++                        text: i18nc("@action:button Remove this custom mode", "Remove")
++                        display: QQC2.AbstractButton.IconOnly
++                        Accessible.name: i18nc("@action:button %1 is a custom mode", "Remove %1", parent.modelData)
++                        QQC2.ToolTip.text: text
++                        QQC2.ToolTip.visible: hovered
++                        onClicked: kcm.outputModel.sourceModel.removeCustomMode(element.index, parent.index)
++                    }
++                }
++            }
++
++            RowLayout {
++                QQC2.SpinBox {
++                    id: customModeWidth
++                    objectName: "customModeWidthField"
++                    Layout.maximumWidth: root.maxSpinboxWidth
++                    from: 64
++                    to: 16384
++                    value: 1920
++                    editable: true
++                    Accessible.name: i18nc("@label width of a custom mode in pixels", "Width")
++                }
++                QQC2.Label {
++                    text: i18nc("@label between the width and the height of a custom mode", "×")
++                }
++                QQC2.SpinBox {
++                    id: customModeHeight
++                    objectName: "customModeHeightField"
++                    Layout.maximumWidth: root.maxSpinboxWidth
++                    from: 64
++                    to: 16384
++                    value: 1080
++                    editable: true
++                    Accessible.name: i18nc("@label height of a custom mode in pixels", "Height")
++                }
++                QQC2.Label {
++                    text: i18nc("@label between the height and the refresh rate of a custom mode", "at")
++                }
++                QQC2.TextField {
++                    id: customModeRefresh
++                    objectName: "customModeRefreshField"
++                    // The refresh rate in hertz, with fractions: 59.94
++                    readonly property real realValue: acceptableInput ? Number.fromLocaleString(Qt.locale(), text) : 0
++                    Layout.preferredWidth: root.maxSpinboxWidth
++                    text: Number(60).toLocaleString(Qt.locale(), 'f', 2)
++                    inputMethodHints: Qt.ImhFormattedNumbersOnly
++                    validator: DoubleValidator {
++                        bottom: 1
++                        top: 1000
++                        decimals: 3
++                        notation: DoubleValidator.StandardNotation
++                    }
++                    Accessible.name: i18nc("@label refresh rate of a custom mode in hertz", "Refresh rate")
++                }
++                QQC2.Label {
++                    text: i18nc("@label unit of the refresh rate of a custom mode", "Hz")
++                }
++            }
++
++            RowLayout {
++                QQC2.CheckBox {
++                    id: customModeReducedBlanking
++                    objectName: "customModeReducedBlankingBox"
++                    text: i18nc("@option:check Use reduced blanking timings for the new mode", "Reduced blanking")
++                }
++                Kirigami.ContextualHelpButton {
++                    toolTipText: i18nc("@info", "Shorter blanking intervals, for a mode the display takes at a higher refresh rate than the usual timings allow. The compositor makes the timings of the mode when the settings are applied, and the mode then shows under Resolution.")
++                }
++                QQC2.Button {
++                    objectName: "customModeAddButton"
++                    text: i18nc("@action:button Add the custom mode written in the fields", "Add")
++                    icon.name: "list-add"
++                    enabled: customModeRefresh.acceptableInput
++                    onClicked: kcm.outputModel.sourceModel.addCustomMode(element.index, customModeWidth.value, customModeHeight.value, customModeRefresh.realValue, customModeReducedBlanking.checked)
++                }
++            }
++        }
++    }
++
+     QQC2.ComboBox {
+         Kirigami.FormData.label: i18n("Adaptive sync:")
+         Layout.minimumWidth: root.comboboxWidth
