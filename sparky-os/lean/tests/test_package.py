@@ -92,7 +92,8 @@ class Packages(unittest.TestCase):
 
     @staticmethod
     def write_md5sums(tree):
-        """The md5sums every real package carries: restore binds a record to its owner's md5sums."""
+        """The md5sums every real package carries: restore binds a record's original to its owner's md5sums (records
+        written before dpkg-stereo 0.1.27 hold no md5_orig for a file that is not a conffile)."""
         sums = ''.join(f'{hashlib.md5(p.read_bytes()).hexdigest()}  {p.relative_to(tree)}\n'
                        for p in sorted(tree.rglob('*')) if p.is_file() and not p.is_symlink()
                        and p.relative_to(tree).parts[0] != 'DEBIAN')
@@ -350,7 +351,7 @@ class Packages(unittest.TestCase):
         (root / path[1:]).write_bytes(lean)
         files = client.Records(P)
         files[path] = dict(path=path, package='lc-demo', version='0', conffile='0',
-                          sha_orig=client.sha256(authored), md5_orig=client.md5(authored), sha_lean=client.sha256(lean),
+                          sha_orig=client.sha256(authored), md5_orig='', sha_lean=client.sha256(lean),
                           handler='c', variant='c', bytes_orig=len(authored), bytes_lean=len(lean))
         files.save()
         return root, P, path, raw, authored, lean
@@ -413,7 +414,7 @@ class Packages(unittest.TestCase):
         (root / self.C_PATH[1:]).write_bytes(old)
         records = client.Records(P)
         records[self.C_PATH] = dict(path=self.C_PATH, package='lc-demo', version='0', conffile='0',
-                                    sha_orig=client.sha256(self.C_AUTHORED), md5_orig=client.md5(self.C_AUTHORED), sha_lean=client.sha256(old),
+                                    sha_orig=client.sha256(self.C_AUTHORED), md5_orig='', sha_lean=client.sha256(old),
                                     handler='c', variant='c', bytes_orig=len(self.C_AUTHORED), bytes_lean=len(old))
         records.save()
         return root, P, raw, old
@@ -479,6 +480,9 @@ class Packages(unittest.TestCase):
         if tamper == 'md5':
             records[self.C_PATH] = dict(records[self.C_PATH], md5_orig='0' * 32)     # not what the owner's md5sums list
             records.save()
+        elif tamper == 'md5ok':       # a record of 0.1.27 or later holds the md5 as well
+            records[self.C_PATH] = dict(records[self.C_PATH], md5_orig=client.md5(self.C_AUTHORED))
+            records.save()
         elif tamper == 'edit':
             (root / self.C_PATH[1:]).write_bytes(old + b'int mine;\n')
         with contextlib.redirect_stdout(io.StringIO()):
@@ -487,6 +491,11 @@ class Packages(unittest.TestCase):
 
     def test_restore_takes_back_an_earlier_renderers_form(self):
         data, old, records = self.older_restore(None)
+        self.assertEqual(data, self.C_AUTHORED)
+        self.assertNotIn(self.C_PATH, records)
+
+    def test_restore_takes_back_an_older_form_whose_record_holds_the_owners_md5(self):
+        data, old, records = self.older_restore('md5ok')
         self.assertEqual(data, self.C_AUTHORED)
         self.assertNotIn(self.C_PATH, records)
 
@@ -691,7 +700,7 @@ class Packages(unittest.TestCase):
         root, P, raw, _ = self.old_c_header(extra)
         records = client.Records(P)
         for path, data in extra.items():       # recorded as projections whose lean bytes are what is installed
-            records[path] = dict(records[self.C_PATH], path=path, sha_orig=client.sha256(data), md5_orig=client.md5(data), sha_lean=client.sha256(data))
+            records[path] = dict(records[self.C_PATH], path=path, sha_orig=client.sha256(data), md5_orig='', sha_lean=client.sha256(data))
         records.save()
         return P, {self.C_PATH: self.C_AUTHORED, **extra}
 

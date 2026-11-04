@@ -8,6 +8,10 @@
     forms and the old GLSL form stayed in their old form for good, and the
     migrations that restore them could never end). A conffile still needs
     the exact render. Lean itself is unchanged (0.1.26).
+  * Restore binds a file that is not a conffile to its owner by the owner's
+    md5sums: records written before 0.1.27 hold an empty md5_orig for such
+    files (0.1.32 refused all of them as "not identified by the owning
+    package"); a recorded md5, when there is one, must still agree.
 
 -------------------------------------------------------------------------------
   Version 0.1.33 (2026-11-04)

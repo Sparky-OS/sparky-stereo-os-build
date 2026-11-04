@@ -1200,7 +1200,11 @@ def recorded_projection(P, path, rec, original, current, owners, metadata, any_r
             sums = md5sums(P, package)
             metadata[package] = (paths, sums)
         baseline = sums.get(path)
-    if not baseline or baseline != rec.get('md5_orig'):
+    # a conffile's record always holds the md5 dpkg keeps for it; a record of any other file holds it only from
+    # 0.1.27 on (0.1.0 to 0.1.26 wrote an empty md5_orig), so for those the owner's md5sums identify the original
+    # and a recorded md5 must agree with them when there is one
+    recorded = rec.get('md5_orig')
+    if not baseline or ((rec.get('conffile') == '1' or recorded) and baseline != recorded):
         return 'original-mismatch', 'the original is not identified by the owning package'
     if any_renderer and rec.get('conffile') != '1':
         if (md5(original) != baseline or sha256(original) != rec['sha_orig']):
