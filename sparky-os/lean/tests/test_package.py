@@ -90,6 +90,14 @@ class Packages(unittest.TestCase):
         release.build_tree(root, out)
         return root, out, out / f'lc-demo_{version}_{arch}.deb'
 
+    @staticmethod
+    def write_md5sums(tree):
+        """The md5sums every real package carries: restore binds a record to its owner's md5sums."""
+        sums = ''.join(f'{hashlib.md5(p.read_bytes()).hexdigest()}  {p.relative_to(tree)}\n'
+                       for p in sorted(tree.rglob('*')) if p.is_file() and not p.is_symlink()
+                       and p.relative_to(tree).parts[0] != 'DEBIAN')
+        (tree / 'DEBIAN/md5sums').write_text(sums)
+
     def system(self, name='system'):
         root = self.base / name
         (root / 'var/lib/dpkg/info').mkdir(parents=True)
@@ -333,6 +341,7 @@ class Packages(unittest.TestCase):
         authored = b'#version 330\n// Shader explanation\nvoid main() {}\n'
         lean = b'// HR pointer\n#version 330\n#line 3\nvoid main() {}\n'
         shader.write_bytes(authored)
+        self.write_md5sums(original)
         raw = self.base / 'lc-demo_0_all.deb'
         subprocess.run(['dpkg-deb', '--root-owner-group', '-b', str(original), str(raw)],
                        check=True, stdout=subprocess.DEVNULL)
@@ -341,7 +350,7 @@ class Packages(unittest.TestCase):
         (root / path[1:]).write_bytes(lean)
         files = client.Records(P)
         files[path] = dict(path=path, package='lc-demo', version='0', conffile='0',
-                          sha_orig=client.sha256(authored), md5_orig='', sha_lean=client.sha256(lean),
+                          sha_orig=client.sha256(authored), md5_orig=client.md5(authored), sha_lean=client.sha256(lean),
                           handler='c', variant='c', bytes_orig=len(authored), bytes_lean=len(lean))
         files.save()
         return root, P, path, raw, authored, lean
@@ -393,6 +402,7 @@ class Packages(unittest.TestCase):
         for path, data in files.items():
             (original / path[1:]).parent.mkdir(parents=True, exist_ok=True)
             (original / path[1:]).write_bytes(data)
+        self.write_md5sums(original)
         raw = self.base / 'lc-demo_0_all.deb'
         subprocess.run(['dpkg-deb', '--root-owner-group', '-b', str(original), str(raw)],
                        check=True, stdout=subprocess.DEVNULL)
@@ -403,7 +413,7 @@ class Packages(unittest.TestCase):
         (root / self.C_PATH[1:]).write_bytes(old)
         records = client.Records(P)
         records[self.C_PATH] = dict(path=self.C_PATH, package='lc-demo', version='0', conffile='0',
-                                    sha_orig=client.sha256(self.C_AUTHORED), md5_orig='', sha_lean=client.sha256(old),
+                                    sha_orig=client.sha256(self.C_AUTHORED), md5_orig=client.md5(self.C_AUTHORED), sha_lean=client.sha256(old),
                                     handler='c', variant='c', bytes_orig=len(self.C_AUTHORED), bytes_lean=len(old))
         records.save()
         return root, P, raw, old
@@ -649,7 +659,7 @@ class Packages(unittest.TestCase):
         root, P, raw, _ = self.old_c_header(extra)
         records = client.Records(P)
         for path, data in extra.items():       # recorded as projections whose lean bytes are what is installed
-            records[path] = dict(records[self.C_PATH], path=path, sha_orig=client.sha256(data), sha_lean=client.sha256(data))
+            records[path] = dict(records[self.C_PATH], path=path, sha_orig=client.sha256(data), md5_orig=client.md5(data), sha_lean=client.sha256(data))
         records.save()
         return P, {self.C_PATH: self.C_AUTHORED, **extra}
 

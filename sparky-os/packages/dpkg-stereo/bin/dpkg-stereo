@@ -1172,11 +1172,17 @@ def native_conffiles():
                           result.stdout.decode()))
 
 
-def recorded_projection(P, path, rec, original, current, owners, metadata):
+def recorded_projection(P, path, rec, original, current, owners, metadata, any_renderer=False):
     """Validate a record against its owner's database, then reproduce its bytes.
 
     OWNERS and METADATA live only for this operation. No acceptance survives a
     renderer change, and the record never selects the reader.
+
+    ANY_RENDERER (restore of a file that is not a conffile): the way back from a projection an earlier renderer made
+    (the `#line` form, the kept-empty-line form, the old GLSL form), which today's renderer does not reproduce, so
+    every migration of an older form would stay stuck. The owner's md5sums, the original's digests and the installed
+    bytes (the recorded projection, so nothing the person changed) are still checked. A conffile is the person's
+    to edit and dpkg compares it: it always needs the exact render.
     """
     package = rec['package']
     owner = owners.get(package, {})
@@ -1196,6 +1202,12 @@ def recorded_projection(P, path, rec, original, current, owners, metadata):
         baseline = sums.get(path)
     if not baseline or baseline != rec.get('md5_orig'):
         return 'original-mismatch', 'the original is not identified by the owning package'
+    if any_renderer and rec.get('conffile') != '1':
+        if (md5(original) != baseline or sha256(original) != rec['sha_orig']):
+            return 'original-mismatch', 'the pristine bytes do not match the owning package and record'
+        if sha256(current) != rec['sha_lean']:
+            return 'current-mismatch', 'the installed bytes no longer match the recorded projection'
+        return 'ok', ''
     return conffile_projection.validate(path, original, current, package, baseline,
                                         rec['sha_orig'], rec['sha_lean'])
 
@@ -2356,7 +2368,7 @@ def restore(P, names, drop_hold=False, pkgs=None, log=print, progress=None, fetc
                 stuck.append(path)
                 fail += 1
                 continue
-            reason, detail = recorded_projection(P, path, rec, orig, data, owners, metadata)
+            reason, detail = recorded_projection(P, path, rec, orig, data, owners, metadata, any_renderer=True)
             if reason != 'ok':
                 stuck.append(path)
                 fail += 1
