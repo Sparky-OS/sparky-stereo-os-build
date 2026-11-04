@@ -2,12 +2,15 @@
 """Write one in-toto Statement (SLSA Provenance v1 predicate) per source package build in a repository tree, or in
 the tree with a round's cohort laid over it (ORDER 394). Unsigned statements; signing is the main session's step.
 
-Usage: make-provenance.py --tree TREE [--cohort-list FILE [--cohort-sha256 FILE]] [--buildinfo-dir DIR ...]
+Usage: make-provenance.py --tree TREE [--cohort-list FILE [--cohort-sha256 FILE]] [--build-dir DIR ...]
                           --recipes-dir sparky-os/packages [--recipes-dir sparky-os/upstream] --out-dir DIR [--report FILE]
 
 One statement covers every .deb one source package version built for one architecture (the architecture:all
 packages go with the amd64 build). It records only what the files carry; what SLSA asks for and nothing records is
 written to the gap report per recipe, never filled in.
+A build made after ORDER 394b leaves a build record beside its .deb files (lean/buildrecord.py): the build repository's
+commit, the builder image, an invocation id and the times. --build-dir folders are searched, below, for those records and
+for .buildinfo files. A damaged record stops the run; a fact the record lists as unrecorded stays a gap.
 """
 import argparse
 import json
@@ -48,6 +51,26 @@ def buildinfo_index(dirs):
                     f = line.split()
                     if len(f) == 3:
                         idx[f[0]] = bi
+    return idx, seen
+
+
+def record_index(dirs):
+    """sha256 of a listed .deb -> its build record, from *.sparky-build.json files below the directories."""
+    idx, seen = {}, 0
+    for d in dirs:
+        for root, _, files in os.walk(d, followlinks=False):
+            for fn in files:
+                if not fn.endswith(sc.RECORD_SUFFIX):
+                    continue
+                path = Path(root) / fn
+                try:
+                    rec = sc.read_build_record(path)
+                except sc.ReadError as exc:
+                    sys.exit('damaged build record, stopping: %s' % exc)
+                seen += 1
+                rec['_path'], rec['_sha256'] = str(path), sc.sha256_file(path)
+                for row in rec['debs']:
+                    idx.setdefault(row['sha256'], rec)
     return idx, seen
 
 
@@ -105,7 +128,8 @@ def main():
     ap.add_argument('--tree', required=True, type=Path)
     ap.add_argument('--cohort-list', type=Path)
     ap.add_argument('--cohort-sha256', type=Path)
-    ap.add_argument('--buildinfo-dir', action='append', default=[], type=Path)
+    ap.add_argument('--build-dir', '--buildinfo-dir', dest='build_dirs', action='append', default=[], type=Path,
+                    help='a folder searched for build records and .buildinfo files (repeat; --buildinfo-dir is the older name)')
     ap.add_argument('--recipes-dir', required=True, action='append', type=Path, help='a folder of recipe folders (repeat for sparky-os/packages and sparky-os/upstream)')
     ap.add_argument('--out-dir', required=True, type=Path)
     ap.add_argument('--report', type=Path)
@@ -121,7 +145,8 @@ def main():
     inv = sc.build_inventory(a.tree, a.cohort_list, 'mashtabba', cache)
     if cache:
         cache.save()
-    bidx, bseen = buildinfo_index(a.buildinfo_dir)
+    bidx, bseen = buildinfo_index(a.build_dirs)
+    ridx, rseen = record_index(a.build_dirs)
     recipes = recipe_index(a.recipes_dir)
     a.out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -143,20 +168,29 @@ def main():
         s = inv.sources.get((src, sver))
         rdir = recipes.get(src)
         bi = next((bidx[p['sha256']] for p in pk if p['sha256'] in bidx), None)
-        g = ['recipe-commit', 'builder-image-digest', 'build-start-time', 'invocation-id']
+        rec = next((ridx[p['sha256']] for p in pk if p['sha256'] in ridx), None)
+        if rec is None:
+            g = ['recipe-commit', 'builder-image-digest', 'build-start-time', 'invocation-id']
+        else:
+            g = [gap for fact, gap in (('recipeCommit', 'recipe-commit'), ('builderImage', 'builder-image-digest'),
+                                       ('startedOn', 'build-start-time'), ('invocationId', 'invocation-id'))
+                 if fact in rec['unrecorded']]
         if rdir is None:
             g.append('recipe-unresolved')
         if bi is None:
-            g += ['build-environment', 'build-dependencies', 'build-finish-time']
+            g += ['build-environment', 'build-dependencies']
+            if rec is None:
+                g.append('build-finish-time')
         if s is None:
             g.append('source-dsc-missing')
         key = '/'.join(rdir.parts[-3:]) if rdir else 'unresolved:' + src
         e = gaps.setdefault(key, {'recipe': ('/'.join(rdir.parts[-3:]) if rdir else None),
                                   'pins_image_digest': recipe_facts(rdir)['pins_image_digest'] if rdir else None,
-                                  'sources': set(), 'statements': 0, 'with_buildinfo': 0, 'gaps': set()})
+                                  'sources': set(), 'statements': 0, 'with_buildinfo': 0, 'with_record': 0, 'gaps': set()})
         e['sources'].add(src)
         e['statements'] += 1
         e['with_buildinfo'] += 1 if bi else 0
+        e['with_record'] += 1 if rec else 0
         e['gaps'].update(g)
 
         resolved = []
@@ -167,6 +201,9 @@ def main():
                 resolved.append({'name': f['name'], 'digest': {'sha256': f['sha256']}, 'annotations': {'role': 'source-file'}})
         if bi:
             resolved += build_deps(bi)
+        if rec and 'recipeCommit' in rec:
+            resolved.append({'name': 'recipe-repository', 'uri': 'git+' + BUILD_REPO, 'digest': {'gitCommit': rec['recipeCommit']},
+                             'annotations': {'role': 'recipe-repository', 'worktreeDiffersFromCommit': rec['recipeDirty']}})
         lcs = [p['lc'] for p in pk if p['lc']]
         internal = {
             'leanCode': {'packagesWithRecord': len(lcs), 'packages': len(pk),
@@ -175,7 +212,12 @@ def main():
                          'hrPackages': sorted({l['hr_package'] for l in lcs if l['hr_package']}),
                          'filesByStatus': {st: sum(l['files'].get(st, 0) for l in lcs) for st in sorted({k for l in lcs for k in l['files']})}},
             'buildinfo': {'present': bi is not None},
+            'buildRecord': {'present': rec is not None},
         }
+        if rec:
+            internal['buildRecord'].update({'buildArchitecture': rec['buildArchitecture'], 'startBasis': rec.get('startBasis'),
+                                            'unrecorded': rec['unrecorded']})
+            internal['buildRecord'] = {k: v for k, v in internal['buildRecord'].items() if v is not None}
         if bi:
             internal['buildinfo'].update({'environment': bi.get('Environment', '').strip().split('\n'),
                                           'buildOrigin': bi.get('Build-Origin'), 'buildArchitecture': bi.get('Build-Architecture')})
@@ -186,6 +228,17 @@ def main():
         if bi:
             run['metadata'] = {'finishedOn': _utc(bi.get('Build-Date'))}
             run['byproducts'] = [{'name': Path(bi['_path']).name, 'digest': {'sha256': bi['_sha256']}, 'annotations': {'role': 'buildinfo'}}]
+        if rec:
+            meta = run.setdefault('metadata', {})
+            meta.update({'invocationId': rec.get('invocationId'), 'startedOn': rec.get('startedOn'), 'finishedOn': rec['finishedOn']})
+            if 'builderImage' in rec:
+                image = {'name': rec.get('builderImageName', 'builder-image'), 'digest': {'sha256': rec['builderImage'].split(':', 1)[1]},
+                         'annotations': {'role': 'builder-image'}}
+                if rec.get('builderImageRepoDigests'):
+                    image['annotations']['repoDigests'] = rec['builderImageRepoDigests']
+                run['builder']['builderDependencies'] = [image]
+            run.setdefault('byproducts', []).append({'name': Path(rec['_path']).name, 'digest': {'sha256': rec['_sha256']},
+                                                     'annotations': {'role': 'build-record'}})
         run['metadata'] = {k: v for k, v in run.get('metadata', {}).items() if v}
         if not run['metadata']:
             del run['metadata']
@@ -207,6 +260,7 @@ def main():
         a.bundle.write_text('\n'.join(lines) + '\n')
     rep = {'statements': len(written), 'subjects': total_subjects, 'binary_packages': len(inv.packages),
            'buildinfo_files_read': bseen, 'statements_with_buildinfo': sum(e['with_buildinfo'] for e in gaps.values()),
+           'build_records_read': rseen, 'statements_with_build_record': sum(e['with_record'] for e in gaps.values()),
            'recipes_resolved': sum(1 for k in gaps if not k.startswith('unresolved:')),
            'sources_without_recipe': sorted(s for k, e in gaps.items() if k.startswith('unresolved:') for s in e['sources']),
            'gaps_by_recipe': {k: {**e, 'sources': sorted(e['sources']), 'gaps': sorted(e['gaps'])} for k, e in sorted(gaps.items())},
