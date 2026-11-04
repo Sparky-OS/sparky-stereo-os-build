@@ -146,3 +146,83 @@ def assess(downloads, mode='metered', question='asked', state=None):
     lines.append({'asked': msg['ask'], 'not-asked': msg['noquestion'], 'unattended': msg['unattended']}[question])
     result['text'] = lines
     return result
+
+
+def declaring(cache=None):
+    """{package name: declaration, or the ValueError that says what is wrong with it} for the candidate version of every package in apt's
+    cache that declares an install-time download: one pass over the records, the text tested before it is parsed. Returns it with the cache."""
+    import apt_pkg
+    apt_pkg.init()
+    cache = cache or apt_pkg.Cache(None)
+    policy = apt_pkg.Policy(cache)
+    records = apt_pkg.PackageRecords(cache)
+    found = {}
+    for package in cache.packages:
+        version = policy.get_candidate_ver(package)
+        if version is None or not version.file_list:
+            continue
+        records.lookup(version.file_list[0])
+        text = records.record
+        if FIELD_SIZE not in text and FIELD_SOURCE not in text:
+            continue
+        try:
+            wanted = declaration(apt_pkg.TagSection(text))
+        except ValueError as error:
+            found[package.name] = error
+            continue
+        if wanted:
+            wanted['version'] = version.ver_str
+            found[package.name] = wanted
+    return found, cache
+
+
+def installed_declaration(cache, name):
+    """The declaration of the version of NAME that is installed now, or None (not installed, or it declares nothing)."""
+    import apt_pkg
+    try:
+        package = cache[name]
+    except KeyError:
+        return None
+    version = package.current_ver
+    if version is None or not version.file_list:
+        return None
+    records = apt_pkg.PackageRecords(cache)
+    for entry in version.file_list:
+        records.lookup(entry)
+        try:
+            found = declaration(apt_pkg.TagSection(records.record))
+        except ValueError:
+            return None
+        if found:
+            return found
+    return None
+
+
+def dependants(cache, names):
+    """The names of every package that depends, through Depends, Pre-Depends or Recommends (and through what a package Provides), on one of
+    NAMES: the packages whose installation can bring one of them in. A superset of what apt would choose; the exact answer is apt's own."""
+    import apt_pkg
+    kinds = {'Depends', 'PreDepends', 'Recommends'}
+    seen = set()
+    queue = list(names)
+    while queue:
+        name = queue.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        try:
+            package = cache[name]
+        except KeyError:
+            continue
+        called = {name}
+        for version in package.version_list:
+            called.update(provided[0] for provided in version.provides_list)
+        for each in called:
+            try:
+                target = cache[each]
+            except KeyError:
+                continue
+            for dependency in target.rev_depends_list:
+                if dependency.dep_type in kinds:
+                    queue.append(dependency.parent_pkg.name)
+    return seen

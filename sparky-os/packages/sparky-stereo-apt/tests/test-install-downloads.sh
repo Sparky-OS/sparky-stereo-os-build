@@ -21,6 +21,8 @@ check() { local d=$1; shift; if "$@" >/dev/null 2>&1; then ok "$d"; else bad "$d
 has() { grep -q -- "$2" <<<"$1"; }
 W=/tmp/idt; mkdir -p $W
 sh /run/https-only-apt.sh >/dev/null 2>&1
+# a system's package lists are plain files; Docker images set Acquire::GzipIndexes, which makes every record lookup decompress from the start
+echo 'Acquire::GzipIndexes "false";' >/etc/apt/apt.conf.d/zz-plain-lists
 apt-get update -qq >/dev/null 2>&1
 apt-get install -y -qq --no-install-recommends dbus python3-dbus python3-gi python3-apt dpkg-dev systemd procps util-linux python3 xz-utils >/dev/null 2>&1 || { echo "FAIL cannot install the test tools"; exit 1; }
 
@@ -213,6 +215,20 @@ for f in files:
     assert set(t)==set(en), f
     for k in en:
         assert {x for _,x,_,_ in string.Formatter().parse(en[k]) if x}=={x for _,x,_,_ in string.Formatter().parse(t[k]) if x}, (f,k)
+PY
+echo "== the reader's index scan and reverse dependencies (what Stereo APTus uses to find the entries a download can reach)"
+python3 - <<'PY' && ok "declaring() finds data-pkg and the real downloader, dependants() finds what depends on them, and a malformed one is an error value" || bad "declaring/dependants"
+import sys
+sys.path.insert(0, '/usr/lib/sparky-stereo-apt')
+import sparky_install_downloads as r
+found, cache = r.declaring()
+assert found['data-pkg'] == {'size': 123456789, 'source': 'https://example.org/data-1.bin', 'version': '3'} or found['data-pkg']['size'] in (123456789, 234567890), found['data-pkg']
+assert found['flightgear-data-installer']['size'] == 1883333376, found
+assert isinstance(found['bad-pkg'], ValueError) and isinstance(found['half-pkg'], ValueError), found
+assert 'plain-pkg' not in found
+reach = r.dependants(cache, ['data-pkg'])
+assert 'data-pkg' in reach and 'plain-pkg' not in reach, reach
+assert r.installed_declaration(cache, 'data-pkg') is None
 PY
 nm_stop; kill "$(cat $W/dbus.pid)" 2>/dev/null
 echo "== $PASS passed, $FAIL failed"
