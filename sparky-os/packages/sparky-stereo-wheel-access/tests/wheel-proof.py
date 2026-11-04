@@ -100,6 +100,7 @@ cases = [
     ('new-lg4ff', '046d', 'c24f', 'logitech', 'hid', None, ['range'], ['range', 'gain', 'autocenter'], ['ffb_leds'], 'g+w'),
     ('hid-tmff2', '044f', 'b66e', 'tmff2', 'hid', None, ['range'], ['range', 'gain'], ['alternate_modes'], 'g+w'),
     ('fanatec wheel', '0eb7', '0006', 'fanatec', 'hid', None, [], ['range', 'display'], ['load', 'rumble'], None),
+    ('fanatec tuning', '0eb7', '0006', 'fanatec', 'ftec_tuning', 'ftec_tuning/0003:0EB7:0006.0001', [], ['advanced_mode', 'SLOT'], ['RESET'], None),
     ('fanatec leds', '0eb7', '0006', 'fanatec', 'leds', 'leds/0003:0EB7:0006.0001::RPM1', [], ['brightness', 'multi_intensity'], [], '660'),
 ]
 etc = Path('/etc/udev/rules.d')
