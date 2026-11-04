@@ -24,3 +24,9 @@ says to use it only on a Steam Deck. The hidraw node of the T300RS and T248
 
 Test: study/packages/rigs/check-wheel-udev.py (simulated devices; fails on the
 previous build, which shipped no rule). Not verified on a wheel.
+
+A control the wheel's model has and that cannot be set for the games group (a
+read-only /sys, a missing games group) is no longer ignored: the rule runs
+/usr/lib/udev/sparky-stereo-wheel-access (package sparky-stereo-wheel-access),
+which keeps the failure with sparky-stereo-problems, shown in the session with
+Repair. A control the model does not have is skipped, as before.
