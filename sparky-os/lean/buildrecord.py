@@ -70,10 +70,9 @@ def dpkg_buildpackage_started():
 
 
 def note_start(build_dir):
-    """Called by lean.debhelper in the build: keep the first start seen in the folder that will hold the .deb files."""
-    path = Path(build_dir) / START
-    if not path.exists():
-        path.write_text(json.dumps({'dpkgBuildpackageStartedOn': dpkg_buildpackage_started()}) + '\n')
+    """Called by lean.debhelper in the build (once per dpkg-buildpackage): write the start into the folder that will hold the
+    .deb files, replacing what an earlier build left."""
+    (Path(build_dir) / START).write_text(json.dumps({'dpkgBuildpackageStartedOn': dpkg_buildpackage_started()}) + '\n')
 
 
 def _file_row(path):

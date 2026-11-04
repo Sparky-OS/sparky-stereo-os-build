@@ -91,6 +91,12 @@ class Record(TestCase):
             paths = buildrecord.record([make_deb(d, 'one'), make_deb(d, 'two')], environ=HOST)
             self.assertEqual(sorted(p.name.split('_')[0] for p in paths), ['one', 'two'])
 
+    def test_note_start_replaces_an_earlier_builds_start(self):
+        with TemporaryDirectory() as d:
+            (Path(d) / buildrecord.START).write_text(json.dumps({'dpkgBuildpackageStartedOn': '2026-01-01T00:00:00Z'}))
+            buildrecord.note_start(d)
+            self.assertIsNone(json.loads((Path(d) / buildrecord.START).read_text())['dpkgBuildpackageStartedOn'])   # no dpkg-buildpackage here
+
     def test_dpkg_buildpackage_start_is_read_from_proc(self):
         self.assertRegex(buildrecord.stamp(), buildrecord.STAMP)
         self.assertIsNone(buildrecord.dpkg_buildpackage_started())      # this test runs under no dpkg-buildpackage

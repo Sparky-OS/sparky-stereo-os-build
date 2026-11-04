@@ -13,6 +13,8 @@
 #   STAGEDIRS  a file with one folder per line (the round's stage folders); build records and .buildinfo files are searched
 #              below each, read only
 # The image is SPARKY_SUPPLY_CHAIN_IMAGE (default sparky-supply-chain-tools:1, built from release/supply-chain-image).
+# A DEST made of symlinks (a publication copy that links the pool) needs the folders its links point into:
+# SPARKY_SUPPLY_CHAIN_MOUNTS="/abs/dir /abs/dir2" mounts each read only at the same path.
 # Last update 2026/11/04
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -36,9 +38,18 @@ while IFS= read -r dir || [ -n "$dir" ]; do
 	MOUNTS+=(-v "$dir":"$dir":ro)
 	printf '%s\n' "$dir" >> "$OUT/work/stagedirs.txt"
 done < "$STAGEDIRS"
+for dir in ${SPARKY_SUPPLY_CHAIN_MOUNTS:-}; do
+	case $dir in /*) [ -d "$dir" ] && MOUNTS+=(-v "$dir":"$dir":ro) || { echo "SPARKY_SUPPLY_CHAIN_MOUNTS: $dir is not a folder" >&2; exit 1; } ;;
+	*) echo "SPARKY_SUPPLY_CHAIN_MOUNTS: $dir is not an absolute path" >&2; exit 1 ;;
+	esac
+done
 [ -s "$OUT/work/stagedirs.txt" ] || { echo "STAGEDIRS lists no folder" >&2; exit 1; }
+# the container writes its output to OUT/work/round.log (the docker stream can lose the last lines of a short run)
+status=0
 docker run --rm --network none --user "$(id -u):$(id -g)" --cpus 4 -e HOME=/out -e ROUND="$ROUND" \
 	-v "$DEST":/dest:ro -v "$HERE/..":/toolkit:ro -v "$OUT":/out "${MOUNTS[@]}" \
-	"$IMAGE" bash /toolkit/release/round-supply-chain-inner.sh
+	"$IMAGE" bash /toolkit/release/round-supply-chain-inner.sh || status=$?
+cat "$OUT/work/round.log" 2>/dev/null || true
+[ "$status" = 0 ] || { echo "round-supply-chain.sh: the container failed with exit $status; see $OUT/work/round.log" >&2; exit "$status"; }
 echo "== supply chain of $ROUND is in $OUT/publish (unsigned):"
 cat "$OUT/publish/SHA256SUMS"

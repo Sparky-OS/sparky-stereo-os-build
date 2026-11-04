@@ -8,6 +8,7 @@ R=/toolkit/release PY=/opt/v/bin/python
 : "${ROUND:?}"
 NAME=sparky-stereo-os-mashtabba-$ROUND
 P=/out/publish W=/out/work
+exec > "$W/round.log" 2>&1
 BUILD_DIRS=()
 while IFS= read -r dir; do BUILD_DIRS+=(--build-dir "$dir"); done < "$W/stagedirs.txt"
 "$PY" -I "$R/make-sbom.py" --tree /dest --name "$NAME" --out "$P/$NAME.spdx.json" --report "$W/sbom-report.json" --cache "$W/cache.json"

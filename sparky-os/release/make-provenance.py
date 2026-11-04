@@ -141,12 +141,12 @@ def main():
         r = subprocess.run(['sha256sum', '-c', '--quiet', str(a.cohort_sha256.resolve())], cwd='/', capture_output=True, text=True)
         if r.returncode != 0:
             sys.exit('the cohort files differ from %s:\n%s' % (a.cohort_sha256, r.stdout + r.stderr))
+    ridx, rseen = record_index(a.build_dirs)      # a damaged record stops the run before the long read of the tree
+    bidx, bseen = buildinfo_index(a.build_dirs)
     cache = sc.Cache(a.cache) if a.cache else None
     inv = sc.build_inventory(a.tree, a.cohort_list, 'mashtabba', cache)
     if cache:
         cache.save()
-    bidx, bseen = buildinfo_index(a.build_dirs)
-    ridx, rseen = record_index(a.build_dirs)
     recipes = recipe_index(a.recipes_dir)
     a.out_dir.mkdir(parents=True, exist_ok=True)
 
